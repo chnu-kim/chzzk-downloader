@@ -16,7 +16,7 @@ import (
 	"chzzk-downloader/internal/utils"
 )
 
-const VERSION = "0.2.3"
+const VERSION = "0.2.1"
 
 // 로컬 의존성 확인 함수(setup 패키지의 함수를 사용)
 func checkDependencies() bool {

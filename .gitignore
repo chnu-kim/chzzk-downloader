@@ -27,5 +27,3 @@ go.work.sum
 
 # IntelliJ IDEA
 .idea/
-
-build/

@@ -36,18 +36,6 @@ var dependencies = []Dependency{
 		DesiredName:  "streamlink",
 		IsExecutable: false,
 	},
-	{
-		Name:         "aria2c",
-		URL:          "https://github.com/aria2/aria2/releases/download/release-1.37.0/aria2-1.37.0-win-64bit-build1.zip",
-		DesiredName:  "aria2c",
-		IsExecutable: false,
-	},
-	{
-		Name:         "yt-dlp",
-		URL:          "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe",
-		DesiredName:  "yt-dlp",
-		IsExecutable: true,
-	},
 }
 
 // DownloadFile URL에서 파일을 다운로드하는 함수
@@ -210,7 +198,6 @@ func CheckDependencies() bool {
 	// 필요한 의존성 파일 경로들
 	paths := []string{
 		config.GetFFmpeg(),
-		config.GetAria2c(),
 		config.GetStreamlink(),
 	}
 

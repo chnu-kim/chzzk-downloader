@@ -261,86 +261,10 @@ func main() {
 			break
 		}
 
-		// HLS/DASH 분기 처리 (개선된 UI)
-		var downloadSection string
-		if vodInfo.InKey == "" {
-			fmt.Println("\n[알림] 빠른 다시보기(HLS)는 구간 다운로드가 지원되지 않습니다.")
-			fmt.Println("      전체 다운로드로 진행합니다.")
-			downloadSection = ""
-		} else {
-			// DASH 분기
-			fmt.Println("\n[ 다운로드 구간 설정 ]")
-			fmt.Println("전체 영상을 다운로드하려면 Enter를 누르세요.")
-			fmt.Println("특정 구간만 다운로드하려면 시작~종료 형식으로 입력하세요 (예: 00:10:30~01:20:45)")
-
-			for {
-				fmt.Print("다운로드 구간 (전체: Enter): ")
-				scanner.Scan()
-				sectionInput := strings.TrimSpace(scanner.Text())
-
-				if sectionInput == "" {
-					fmt.Println("전체 영상을 다운로드합니다.")
-					downloadSection = ""
-					break
-				}
-
-				if matched, _ := utils.ValidateTimeRange(sectionInput); !matched {
-					fmt.Println("입력 형식이 올바르지 않습니다. 00:00:00~00:00:00 형식으로 입력해주세요.")
-					continue
-				}
-
-				downloadSection = sectionInput
-				fmt.Printf("설정된 구간: %s\n", downloadSection)
-				break
-			}
-		}
-
-		// 다운로드 속도 옵션 선택 (개선된 UI)
-		var speedOption string
-		if vodInfo.VodStatus == "UPLOAD" || vodInfo.VodStatus == "NONE" {
-			speedOption = "100%"
-			fmt.Println("\n[알림] VOD 상태에 따라 최대 속도(100%)로 다운로드됩니다.")
-		} else {
-			fmt.Println("\n[ 다운로드 속도 설정 ]")
-			fmt.Println("--------------------")
-			fmt.Println("1. 100% (16분할) - 최대 속도")
-			fmt.Println("2. 75%  (12분할) - 빠른 속도")
-			fmt.Println("3. 50%  (8분할)  - 중간 속도")
-			fmt.Println("4. 25%  (4분할)  - 낮은 속도")
-			fmt.Println("5. 분할 없음     - 서버 친화적")
-			fmt.Println("--------------------")
-
-			speedMapping := map[int]string{
-				1: "100%",
-				2: "75%",
-				3: "50%",
-				4: "25%",
-				5: "분할 없음",
-			}
-
-			for {
-				fmt.Print("속도 옵션 (Enter = 1번): ")
-				scanner.Scan()
-				speedChoice := strings.TrimSpace(scanner.Text())
-
-				// 기본값 (1번) 사용
-				if speedChoice == "" {
-					speedOption = "100%"
-					fmt.Println("최대 속도(100%)로 다운로드합니다.")
-					break
-				}
-
-				sp, err := strconv.Atoi(speedChoice)
-				if err != nil || sp < 1 || sp > 5 {
-					fmt.Println("잘못된 선택입니다. 1~5 사이의 번호를 입력해주세요.")
-					continue
-				}
-
-				speedOption = speedMapping[sp]
-				fmt.Printf("선택된 속도: %s\n", speedOption)
-				break
-			}
-		}
+		// 구간 다운로드 관련 코드 제거 - HLS만 사용
+		fmt.Println("\n[알림] HLS 방식으로 전체 다운로드를 진행합니다.")
+		downloadSection := "" // 항상 전체 다운로드
+		speedOption := "100%" // 속도 옵션은 사용하지 않지만 기본값 유지
 
 		// 최종 정보 확인 (개선된 UI)
 		fmt.Println("\n┌─────────────────────────────────────────────┐")
@@ -362,16 +286,6 @@ func main() {
 			}
 		}
 		fmt.Printf("│ 화질: %-40s │\n", qualityDisplay)
-
-		// 속도 표시
-		fmt.Printf("│ 다운로드 속도: %-31s │\n", speedOption)
-
-		// 구간 정보 표시
-		sectionDisplay := "전체"
-		if downloadSection != "" {
-			sectionDisplay = downloadSection
-		}
-		fmt.Printf("│ 다운로드 구간: %-31s │\n", sectionDisplay)
 
 		// 성인 컨텐츠 인증 정보 표시
 		if isAdultContent {

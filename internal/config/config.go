@@ -30,20 +30,6 @@ func GetDependentDir() string {
 }
 
 // 의존성 파일들 경로 반환 함수들
-func GetYtDlp() string {
-	if runtime.GOOS == "windows" {
-		return filepath.Join(GetDependentDir(), "yt-dlp", "yt-dlp.exe")
-	}
-	return filepath.Join(GetDependentDir(), "yt-dlp", "yt-dlp")
-}
-
-func GetAria2c() string {
-	if runtime.GOOS == "windows" {
-		return filepath.Join(GetDependentDir(), "aria2c", "aria2c.exe")
-	}
-	return filepath.Join(GetDependentDir(), "aria2c", "aria2c")
-}
-
 func GetFFmpeg() string {
 	if runtime.GOOS == "windows" {
 		return filepath.Join(GetDependentDir(), "ffmpeg", "bin", "ffmpeg.exe")

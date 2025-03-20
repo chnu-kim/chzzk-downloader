@@ -4,13 +4,10 @@ import (
 	"bufio"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
 
-	"chzzk-downloader/internal/config"
 	"chzzk-downloader/internal/utils"
 )
 
@@ -65,34 +62,6 @@ func printDownloadStatus(currentBytes int64, totalBytes int64, speed string, eta
 	fmt.Printf("\r%s\r%s", clearStr, statusText)
 }
 
-// aria2c 출력 파싱 함수
-func parseAria2cOutput(line string) (progress float64, speed string, eta string) {
-	// 예시: [#7b54a1 16MiB/158MiB(10%) CN:16 DL:1.1MiB ETA:2m6s]
-
-	// 진행률 추출 (10% 등)
-	progressRegex := regexp.MustCompile(`\((\d+)%\)`)
-	if matches := progressRegex.FindStringSubmatch(line); len(matches) > 1 {
-		progressVal, err := strconv.ParseFloat(matches[1], 64)
-		if err == nil {
-			progress = progressVal / 100.0
-		}
-	}
-
-	// 다운로드 속도 추출 (1.1MiB 등)
-	speedRegex := regexp.MustCompile(`DL:([0-9.]+[KMGT]?i?B)`)
-	if matches := speedRegex.FindStringSubmatch(line); len(matches) > 1 {
-		speed = matches[1]
-	}
-
-	// 남은 시간 추출 (2m6s 등)
-	etaRegex := regexp.MustCompile(`ETA:([0-9dhms]+)`)
-	if matches := etaRegex.FindStringSubmatch(line); len(matches) > 1 {
-		eta = matches[1]
-	}
-
-	return
-}
-
 // ffmpeg 출력 파싱 함수
 func parseFFmpegOutput(line string) (progress float64, timeInfo string) {
 	// 예시: frame= 1000 fps=25 q=-1.0 size=   10240kB time=00:00:40.00 bitrate=2097.2kbits/s speed=1x
@@ -145,51 +114,6 @@ func CheckDuplicateFile(outputFile string) (bool, string) {
 		}
 	}
 	return true, ""
-}
-
-// 파일 크기를 가져오는 함수
-func getFileSize(url string) (int64, error) {
-	// curl을 사용하여 HEAD 요청으로 Content-Length 헤더를 가져옴
-	curlPath, err := exec.LookPath("curl")
-	if err != nil {
-		return 0, fmt.Errorf("curl을 찾을 수 없습니다: %v", err)
-	}
-
-	headers := config.GetCookieHeaders()
-	cookieStr := headers["Cookie"]
-	userAgentStr := headers["User-Agent"]
-	refererStr := headers["Referer"]
-
-	args := []string{"-I", "-s"}
-	if cookieStr != "" {
-		args = append(args, "-b", cookieStr)
-	}
-	if userAgentStr != "" {
-		args = append(args, "-A", userAgentStr)
-	}
-	if refererStr != "" {
-		args = append(args, "-e", refererStr)
-	}
-	args = append(args, url)
-
-	cmd := exec.Command(curlPath, args...)
-	output, err := cmd.Output()
-	if err != nil {
-		return 0, fmt.Errorf("HEAD 요청 실패: %v", err)
-	}
-
-	// Content-Length 헤더 파싱
-	contentLengthRegex := regexp.MustCompile(`Content-Length: (\d+)`)
-	matches := contentLengthRegex.FindSubmatch(output)
-	if len(matches) > 1 {
-		size, err := strconv.ParseInt(string(matches[1]), 10, 64)
-		if err != nil {
-			return 0, fmt.Errorf("Content-Length 파싱 실패: %v", err)
-		}
-		return size, nil
-	}
-
-	return 0, fmt.Errorf("Content-Length 헤더를 찾을 수 없습니다")
 }
 
 // PrepareOutputPath 출력 경로 및 파일명 준비

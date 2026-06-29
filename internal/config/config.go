@@ -2,7 +2,9 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -48,19 +50,58 @@ func GetDependentDir() string {
 	return filepath.Join(GetBaseDir(), "dependent")
 }
 
-// 의존성 파일들 경로 반환 함수들
-func GetFFmpeg() string {
+// exeName OS에 맞는 실행 파일 이름을 반환 (Windows는 .exe 확장자 부여)
+func exeName(name string) string {
 	if runtime.GOOS == "windows" {
-		return filepath.Join(GetDependentDir(), "ffmpeg", "bin", "ffmpeg.exe")
+		return name + ".exe"
 	}
-	return filepath.Join(GetDependentDir(), "ffmpeg", "bin", "ffmpeg")
+	return name
+}
+
+// resolveBinary 바이너리를 먼저 시스템 PATH에서 찾고, 없으면 번들 경로로 폴백한다.
+// PATH에서 찾으면 exec.LookPath가 절대 경로를 돌려주므로 OS와 무관하게 동작한다.
+func resolveBinary(name, bundledPath string) string {
+	if path, err := exec.LookPath(name); err == nil {
+		return path
+	}
+	return bundledPath
+}
+
+// 의존성 파일들 경로 반환 함수들
+// 시스템에 설치된 바이너리(PATH)를 우선 사용하고, 없으면 dependent/ 번들로 폴백한다.
+func GetFFmpeg() string {
+	bundled := filepath.Join(GetDependentDir(), "ffmpeg", "bin", exeName("ffmpeg"))
+	return resolveBinary("ffmpeg", bundled)
 }
 
 func GetStreamlink() string {
-	if runtime.GOOS == "windows" {
-		return filepath.Join(GetDependentDir(), "streamlink", "bin", "streamlink.exe")
+	bundled := filepath.Join(GetDependentDir(), "streamlink", "bin", exeName("streamlink"))
+	return resolveBinary("streamlink", bundled)
+}
+
+// EnsureBinaries 실행에 필요한 외부 프로그램(ffmpeg/streamlink)이
+// PATH 또는 번들 경로에 존재하는지 확인하고, 없으면 설치 방법을 안내하는 오류를 반환한다.
+func EnsureBinaries() error {
+	checks := []struct {
+		name string
+		path string
+		hint string
+	}{
+		{"ffmpeg", GetFFmpeg(), "brew install ffmpeg (macOS) / sudo apt install ffmpeg (Linux) 또는 dependent/ffmpeg/bin 에 직접 배치"},
+		{"streamlink", GetStreamlink(), "pip install streamlink 또는 dependent/streamlink/bin 에 직접 배치"},
 	}
-	return filepath.Join(GetDependentDir(), "streamlink", "bin", "streamlink")
+
+	var missing []string
+	for _, c := range checks {
+		if _, err := os.Stat(c.path); err != nil {
+			missing = append(missing, "- "+c.name+": "+c.hint)
+		}
+	}
+
+	if len(missing) > 0 {
+		return fmt.Errorf("필요한 외부 프로그램을 찾을 수 없습니다. 설치 후 다시 실행하세요:\n%s", strings.Join(missing, "\n"))
+	}
+	return nil
 }
 
 // AddRecentVod 최근 VOD 목록에 VOD 정보를 추가하는 함수

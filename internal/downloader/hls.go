@@ -141,8 +141,8 @@ func DownloadHLS(hlsURL string, quality string, outputFile string) error {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		defer ffmpegStdin.Close()
-		io.Copy(ffmpegStdin, streamlinkStdout)
+		defer func() { _ = ffmpegStdin.Close() }()
+		func() { _, _ = io.Copy(ffmpegStdin, streamlinkStdout) }()
 	}()
 
 	// streamlink stderr 출력 (간략히 표시)
@@ -269,7 +269,7 @@ func DownloadHLS(hlsURL string, quality string, outputFile string) error {
 	// 최종 다운로드 정보 출력
 	fmt.Println("\n완료!")
 
-	fmt.Println("[INFO] 치지직 빠른 다시보기 다운로드 완료. 파일을 확인하세요.\n")
+	fmt.Println("[INFO] 치지직 빠른 다시보기 다운로드 완료. 파일을 확인하세요.")
 
 	return nil
 }

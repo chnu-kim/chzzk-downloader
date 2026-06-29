@@ -36,16 +36,6 @@ func TestGetFFmpeg_ResolvesFromPath(t *testing.T) {
 	}
 }
 
-func TestGetStreamlink_ResolvesFromPath(t *testing.T) {
-	dir := t.TempDir()
-	want := writeFakeBinary(t, dir, "streamlink")
-	t.Setenv("PATH", dir)
-
-	if got := GetStreamlink(); got != want {
-		t.Errorf("GetStreamlink() = %q, PATH의 바이너리 %q 를 기대", got, want)
-	}
-}
-
 func TestGetFFmpeg_FallsBackToBundled(t *testing.T) {
 	// PATH를 빈 디렉토리로 설정해 ffmpeg를 찾지 못하게 함
 	t.Setenv("PATH", t.TempDir())
@@ -60,22 +50,9 @@ func TestGetFFmpeg_FallsBackToBundled(t *testing.T) {
 	}
 }
 
-func TestGetStreamlink_FallsBackToBundled(t *testing.T) {
-	t.Setenv("PATH", t.TempDir())
-
-	got := GetStreamlink()
-	if filepath.Base(got) != execName("streamlink") {
-		t.Errorf("GetStreamlink() = %q, 번들 바이너리 경로를 기대", got)
-	}
-	if !filepath.IsAbs(got) {
-		t.Errorf("GetStreamlink() = %q, 절대 경로를 기대", got)
-	}
-}
-
 func TestEnsureBinaries_AllPresentReturnsNil(t *testing.T) {
 	dir := t.TempDir()
 	writeFakeBinary(t, dir, "ffmpeg")
-	writeFakeBinary(t, dir, "streamlink")
 	t.Setenv("PATH", dir)
 
 	if err := EnsureBinaries(); err != nil {
@@ -84,7 +61,7 @@ func TestEnsureBinaries_AllPresentReturnsNil(t *testing.T) {
 }
 
 func TestEnsureBinaries_MissingReturnsActionableError(t *testing.T) {
-	// PATH를 비우고 번들도 없는 상태 → 두 바이너리 모두 없음
+	// PATH를 비우고 번들도 없는 상태 → ffmpeg 없음
 	t.Setenv("PATH", t.TempDir())
 
 	err := EnsureBinaries()
@@ -92,7 +69,7 @@ func TestEnsureBinaries_MissingReturnsActionableError(t *testing.T) {
 		t.Fatal("EnsureBinaries() = nil, 오류를 기대")
 	}
 	msg := err.Error()
-	for _, want := range []string{"ffmpeg", "streamlink", "brew", "pip"} {
+	for _, want := range []string{"ffmpeg", "brew"} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("EnsureBinaries() 오류에 %q 안내가 없음: %s", want, msg)
 		}

@@ -22,18 +22,12 @@ type Dependency struct {
 	IsExecutable bool
 }
 
-// 다운로드 의존성 목록
+// 다운로드 의존성 목록 (Windows 수동 설치 보조용; win64 빌드)
 var dependencies = []Dependency{
 	{
 		Name:         "ffmpeg",
 		URL:          "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip",
 		DesiredName:  "ffmpeg",
-		IsExecutable: false,
-	},
-	{
-		Name:         "streamlink",
-		URL:          "https://github.com/streamlink/windows-builds/releases/download/7.1.2-2/streamlink-7.1.2-2-py312-x86_64.zip",
-		DesiredName:  "streamlink",
 		IsExecutable: false,
 	},
 }
@@ -198,7 +192,6 @@ func CheckDependencies() bool {
 	// 필요한 의존성 파일 경로들
 	paths := []string{
 		config.GetFFmpeg(),
-		config.GetStreamlink(),
 	}
 
 	// 모든 의존성 파일 존재 여부 확인
@@ -292,13 +285,6 @@ func InstallDependencies() error {
 		}
 
 		fmt.Printf("==== %s 설치 완료 ====\n\n", dep.Name)
-	}
-
-	// streamlink의 중복 ffmpeg 제거
-	streamlinkFFmpeg := filepath.Join(dependentDir, "streamlink", "ffmpeg")
-	if _, err := os.Stat(streamlinkFFmpeg); err == nil {
-		os.RemoveAll(streamlinkFFmpeg)
-		fmt.Printf("중복된 ffmpeg 폴더 삭제 완료: %s\n", streamlinkFFmpeg)
 	}
 
 	return nil

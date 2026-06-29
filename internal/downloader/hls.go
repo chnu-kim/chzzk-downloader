@@ -3,10 +3,10 @@ package downloader
 import (
 	"bufio"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -16,58 +16,82 @@ import (
 	"chzzk-downloader/internal/utils"
 )
 
-// DownloadHLS HLS 스트림 다운로드 함수 (streamlink + ffmpeg)
-func DownloadHLS(hlsURL string, quality string, outputFile string) error {
-	fmt.Println("\n[INFO] 치지직 빠른 다시보기 => streamlink+ffmpeg 전체 다운로드")
+// buildFFmpegArgs ffmpeg로 sourceURL을 받아 outputFile로 저장하는 인자 목록을 만든다.
+// headers의 User-Agent는 -user_agent로, 나머지(Referer/Cookie 등)는 -headers로 전달한다.
+// -headers 블록은 키를 정렬해 구성하므로 결과가 결정적이다(테스트 가능).
+func buildFFmpegArgs(sourceURL, outputFile string, headers map[string]string) []string {
+	var args []string
 
-	// streamlink 명령어 준비
-	streamlinkPath := config.GetStreamlink()
-	streamlinkCmd := exec.Command(streamlinkPath, hlsURL, quality, "--stdout")
+	if ua := headers["User-Agent"]; ua != "" {
+		args = append(args, "-user_agent", ua)
+	}
 
-	fmt.Printf("streamlink CMD: %s\n", streamlinkCmd.String())
+	keys := make([]string, 0, len(headers))
+	for k := range headers {
+		if k == "User-Agent" {
+			continue
+		}
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
 
-	// ffmpeg 명령어 준비 - 진행 정보 출력 강화
-	ffmpegPath := config.GetFFmpeg()
-	ffmpegCmd := exec.Command(
-		ffmpegPath,
-		"-i", "pipe:0",
+	if len(keys) > 0 {
+		var b strings.Builder
+		for _, k := range keys {
+			b.WriteString(k)
+			b.WriteString(": ")
+			b.WriteString(headers[k])
+			b.WriteString("\r\n")
+		}
+		args = append(args, "-headers", b.String())
+	}
+
+	args = append(args,
+		"-i", sourceURL,
 		"-c", "copy",
 		"-y",
 		"-stats",
 		"-progress", "pipe:2", // 진행 상황을 stderr로 출력
 		"-loglevel", "info",
-		outputFile)
+		outputFile,
+	)
+	return args
+}
 
-	fmt.Printf("ffmpeg CMD: %s\n\n", ffmpegCmd.String())
-
-	// 파이프 연결
-	streamlinkStdout, err := streamlinkCmd.StdoutPipe()
-	if err != nil {
-		return fmt.Errorf("streamlink stdout pipe 생성 실패: %v", err)
+// redactedCmdString 로그 출력용 ffmpeg 명령 문자열을 만든다.
+// -headers 블록 안의 Cookie 라인 값은 민감 정보(NID_AUT/NID_SES)이므로 마스킹한다.
+func redactedCmdString(ffmpegPath string, args []string) string {
+	redacted := make([]string, len(args))
+	copy(redacted, args)
+	for i := 0; i+1 < len(redacted); i++ {
+		if redacted[i] == "-headers" {
+			redacted[i+1] = cookieRedactRe.ReplaceAllString(redacted[i+1], "Cookie: [redacted]")
+		}
 	}
+	return ffmpegPath + " " + strings.Join(redacted, " ")
+}
 
-	streamlinkStderr, err := streamlinkCmd.StderrPipe()
-	if err != nil {
-		return fmt.Errorf("streamlink stderr pipe 생성 실패: %v", err)
-	}
+// cookieRedactRe -headers 블록에서 Cookie 라인(다음 \r\n 또는 끝까지)을 매칭한다.
+var cookieRedactRe = regexp.MustCompile(`Cookie: [^\r\n]*`)
 
-	ffmpegStdin, err := ffmpegCmd.StdinPipe()
-	if err != nil {
-		return fmt.Errorf("ffmpeg stdin pipe 생성 실패: %v", err)
-	}
+// DownloadWithFFmpeg HLS(m3u8) 또는 DASH(BaseURL) 소스를 ffmpeg로 직접 받아 저장한다.
+// 외부 streamlink 없이 ffmpeg 단일 프로세스로 다운로드하며, 진행률을 텍스트로 표시한다.
+func DownloadWithFFmpeg(sourceURL string, outputFile string, headers map[string]string) error {
+	fmt.Println("\n[INFO] ffmpeg로 다운로드를 시작합니다.")
+
+	ffmpegPath := config.GetFFmpeg()
+	args := buildFFmpegArgs(sourceURL, outputFile, headers)
+	ffmpegCmd := exec.Command(ffmpegPath, args...)
+
+	// Cookie 등 민감 헤더는 마스킹해 출력 (자격증명 노출 방지)
+	fmt.Printf("ffmpeg CMD: %s\n\n", redactedCmdString(ffmpegPath, args))
 
 	ffmpegStderr, err := ffmpegCmd.StderrPipe()
 	if err != nil {
 		return fmt.Errorf("ffmpeg stderr pipe 생성 실패: %v", err)
 	}
 
-	// 명령어 실행
-	if err := streamlinkCmd.Start(); err != nil {
-		return fmt.Errorf("streamlink 실행 실패: %v", err)
-	}
-
 	if err := ffmpegCmd.Start(); err != nil {
-		streamlinkCmd.Process.Kill()
 		return fmt.Errorf("ffmpeg 실행 실패: %v", err)
 	}
 
@@ -129,32 +153,9 @@ func DownloadHLS(hlsURL string, quality string, outputFile string) error {
 				updateStatusDisplay()
 
 				// 명령어가 완료되었는지 확인
-				if ffmpegCmd.ProcessState != nil && ffmpegCmd.ProcessState.Exited() &&
-					streamlinkCmd.ProcessState != nil && streamlinkCmd.ProcessState.Exited() {
+				if ffmpegCmd.ProcessState != nil && ffmpegCmd.ProcessState.Exited() {
 					return
 				}
-			}
-		}
-	}()
-
-	// streamlink stdout -> ffmpeg stdin 복사
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		defer func() { _ = ffmpegStdin.Close() }()
-		func() { _, _ = io.Copy(ffmpegStdin, streamlinkStdout) }()
-	}()
-
-	// streamlink stderr 출력 (간략히 표시)
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		scanner := bufio.NewScanner(streamlinkStderr)
-		for scanner.Scan() {
-			line := scanner.Text()
-			// 중요 정보만 출력 (에러나 경고)
-			if strings.Contains(line, "error") || strings.Contains(line, "warning") {
-				fmt.Printf("\r[STREAMLINK] %s\n", line)
 			}
 		}
 	}()
@@ -262,14 +263,16 @@ func DownloadHLS(hlsURL string, quality string, outputFile string) error {
 	}()
 
 	// 명령어 종료 대기
-	ffmpegCmd.Wait()
-	streamlinkCmd.Wait()
+	err = ffmpegCmd.Wait()
 	wg.Wait()
+
+	if err != nil {
+		return fmt.Errorf("ffmpeg 다운로드 실패: %v", err)
+	}
 
 	// 최종 다운로드 정보 출력
 	fmt.Println("\n완료!")
-
-	fmt.Println("[INFO] 치지직 빠른 다시보기 다운로드 완료. 파일을 확인하세요.")
+	fmt.Println("[INFO] 다운로드 완료. 파일을 확인하세요.")
 
 	return nil
 }

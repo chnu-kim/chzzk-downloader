@@ -67,39 +67,19 @@ func resolveBinary(name, bundledPath string) string {
 	return bundledPath
 }
 
-// 의존성 파일들 경로 반환 함수들
+// GetFFmpeg ffmpeg 바이너리 경로를 반환한다.
 // 시스템에 설치된 바이너리(PATH)를 우선 사용하고, 없으면 dependent/ 번들로 폴백한다.
 func GetFFmpeg() string {
 	bundled := filepath.Join(GetDependentDir(), "ffmpeg", "bin", exeName("ffmpeg"))
 	return resolveBinary("ffmpeg", bundled)
 }
 
-func GetStreamlink() string {
-	bundled := filepath.Join(GetDependentDir(), "streamlink", "bin", exeName("streamlink"))
-	return resolveBinary("streamlink", bundled)
-}
-
-// EnsureBinaries 실행에 필요한 외부 프로그램(ffmpeg/streamlink)이
-// PATH 또는 번들 경로에 존재하는지 확인하고, 없으면 설치 방법을 안내하는 오류를 반환한다.
+// EnsureBinaries 실행에 필요한 외부 프로그램(ffmpeg)이 PATH 또는 번들 경로에
+// 존재하는지 확인하고, 없으면 설치 방법을 안내하는 오류를 반환한다.
 func EnsureBinaries() error {
-	checks := []struct {
-		name string
-		path string
-		hint string
-	}{
-		{"ffmpeg", GetFFmpeg(), "brew install ffmpeg (macOS) / sudo apt install ffmpeg (Linux) 또는 dependent/ffmpeg/bin 에 직접 배치"},
-		{"streamlink", GetStreamlink(), "pip install streamlink 또는 dependent/streamlink/bin 에 직접 배치"},
-	}
-
-	var missing []string
-	for _, c := range checks {
-		if _, err := os.Stat(c.path); err != nil {
-			missing = append(missing, "- "+c.name+": "+c.hint)
-		}
-	}
-
-	if len(missing) > 0 {
-		return fmt.Errorf("필요한 외부 프로그램을 찾을 수 없습니다. 설치 후 다시 실행하세요:\n%s", strings.Join(missing, "\n"))
+	if _, err := os.Stat(GetFFmpeg()); err != nil {
+		return fmt.Errorf("필요한 외부 프로그램을 찾을 수 없습니다. 설치 후 다시 실행하세요:\n" +
+			"- ffmpeg: brew install ffmpeg (macOS) / sudo apt install ffmpeg (Linux) 또는 dependent/ffmpeg/bin 에 직접 배치")
 	}
 	return nil
 }

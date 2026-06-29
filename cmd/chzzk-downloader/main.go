@@ -15,7 +15,7 @@ import (
 	"chzzk-downloader/internal/utils"
 )
 
-const VERSION = "0.2.1"
+const VERSION = "0.3.0"
 
 // 성인 컨텐츠 확인 및 인증 처리 함수
 func setupAdultContent(scanner *bufio.Scanner) bool {
@@ -120,7 +120,7 @@ func displayRecentVods(vods []config.RecentVodInfo) {
 func main() {
 	fmt.Printf("==== 치지직 다운로더 (v%s) ====\n\n", VERSION)
 
-	// 외부 프로그램(ffmpeg/streamlink) 확인 — PATH 또는 dependent/ 번들에서 탐색
+	// 외부 프로그램(ffmpeg) 확인 — PATH 또는 dependent/ 번들에서 탐색
 	if err := config.EnsureBinaries(); err != nil {
 		fmt.Println(err)
 		fmt.Print("\n종료하려면 Enter 키를 누르세요...")

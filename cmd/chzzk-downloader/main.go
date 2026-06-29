@@ -153,14 +153,14 @@ func displayRecentVods(vods []config.RecentVodInfo) {
 
 func main() {
 	fmt.Printf("==== 치지직 다운로더 (v%s) ====\n\n", VERSION)
-
-	// 의존성 확인 및 설치
-	if !ensureDependencies() {
-		fmt.Println("프로그램 실행에 필요한 의존성이 없습니다.")
-		fmt.Print("\n종료하려면 Enter 키를 누르세요...")
-		bufio.NewReader(os.Stdin).ReadBytes('\n')
-		return
-	}
+	//
+	//// 의존성 확인 및 설치
+	//if !ensureDependencies() {
+	//	fmt.Println("프로그램 실행에 필요한 의존성이 없습니다.")
+	//	fmt.Print("\n종료하려면 Enter 키를 누르세요...")
+	//	bufio.NewReader(os.Stdin).ReadBytes('\n')
+	//	return
+	//}
 
 	scanner := bufio.NewScanner(os.Stdin)
 

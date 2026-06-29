@@ -141,8 +141,8 @@ func DownloadHLS(hlsURL string, quality string, outputFile string) error {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		defer ffmpegStdin.Close()
-		io.Copy(ffmpegStdin, streamlinkStdout)
+		defer func() { _ = ffmpegStdin.Close() }()
+		func() { _, _ = io.Copy(ffmpegStdin, streamlinkStdout) }()
 	}()
 
 	// streamlink stderr 출력 (간략히 표시)

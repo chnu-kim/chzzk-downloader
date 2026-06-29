@@ -184,16 +184,23 @@ func main() {
 			vodURL = vodURLInput
 		}
 
-		// 치지직 VOD 다운로드 처리
-		if !strings.Contains(vodURL, "chzzk.naver.com/video/") {
-			fmt.Println("치지직 VOD 주소가 아닙니다.")
+		// 치지직 VOD/클립 다운로드 처리
+		isClip := api.IsClipURL(vodURL)
+		if !isClip && !strings.Contains(vodURL, "chzzk.naver.com/video/") {
+			fmt.Println("치지직 VOD 또는 클립 주소가 아닙니다.")
 			fmt.Print("계속하려면 Enter를 누르세요.")
 			scanner.Scan()
 			continue
 		}
 
-		// VOD 품질 정보 가져오기
-		qualities, vodInfo, err := api.GetVODQualities(vodURL)
+		// 품질 정보 가져오기 (VOD/클립 분기)
+		var qualities []api.Quality
+		var vodInfo api.VodInfo
+		if isClip {
+			qualities, vodInfo, err = api.GetClipQualities(vodURL)
+		} else {
+			qualities, vodInfo, err = api.GetVODQualities(vodURL)
+		}
 		if err != nil {
 			fmt.Printf("품질 정보를 가져오는 중 오류 발생: %v\n", err)
 
@@ -231,8 +238,13 @@ func main() {
 		// 파일명 자동 생성 (날짜 형식으로 고정)
 		_, startTimeStr := utils.FormatLiveDate(vodInfo.LiveOpenDate)
 
-		// 항상 옵션 2번(날짜 형식) 사용
-		autoFilename := fmt.Sprintf("[%s] %s %s.mp4", startTimeStr, channelName, videoTitle)
+		// 클립 등 날짜 정보가 없는 경우 날짜 없이 파일명 생성
+		var autoFilename string
+		if startTimeStr == "" {
+			autoFilename = fmt.Sprintf("[%s] %s.mp4", channelName, videoTitle)
+		} else {
+			autoFilename = fmt.Sprintf("[%s] %s %s.mp4", startTimeStr, channelName, videoTitle)
+		}
 		autoFilename = utils.SanitizeFilename(autoFilename)
 		fmt.Printf("\n생성된 파일명: %s\n", autoFilename)
 
@@ -368,8 +380,12 @@ func main() {
 			break
 		}
 
-		// 구간 다운로드 관련 코드 제거 - HLS만 사용
-		fmt.Println("\n[알림] HLS 방식으로 전체 다운로드를 진행합니다.")
+		// 구간 다운로드 관련 코드 제거 - 전체 다운로드만 사용
+		if isClip {
+			fmt.Println("\n[알림] 클립 직접 다운로드를 진행합니다.")
+		} else {
+			fmt.Println("\n[알림] HLS 방식으로 전체 다운로드를 진행합니다.")
+		}
 		downloadSection := "" // 항상 전체 다운로드
 		speedOption := "100%" // 속도 옵션은 사용하지 않지만 기본값 유지
 
@@ -413,7 +429,11 @@ func main() {
 		// 다운로드 시작 시간 기록
 		downloadStartTime := time.Now()
 
-		err = downloader.DownloadVOD(vodURL, selectedQuality, outputFolder, autoFilename, speedOption, downloadSection)
+		if isClip {
+			err = downloader.DownloadClip(vodURL, selectedQuality, outputFolder, autoFilename)
+		} else {
+			err = downloader.DownloadVOD(vodURL, selectedQuality, outputFolder, autoFilename, speedOption, downloadSection)
+		}
 
 		// 다운로드 종료 시간으로 소요 시간 계산
 		elapsedTime := time.Since(downloadStartTime)

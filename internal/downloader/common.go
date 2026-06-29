@@ -116,6 +116,52 @@ func CheckDuplicateFile(outputFile string) (bool, string) {
 	return true, ""
 }
 
+// CheckDuplicateFileDirect 직접 다운로드(클립 등) 중복 파일 처리 함수
+// 단일 완성 mp4를 그대로 받으므로 부분 이어받기는 지원하지 않고 덮어쓰기/건너뛰기만 제공한다.
+func CheckDuplicateFileDirect(outputFile string) bool {
+	if _, err := os.Stat(outputFile); err != nil {
+		return true
+	}
+
+	fmt.Printf("파일 '%s'이(가) 이미 존재합니다.\n", outputFile)
+	scanner := bufio.NewScanner(os.Stdin)
+	for {
+		fmt.Println("어떻게 하시겠습니까?")
+		fmt.Println("1. 중복파일 덮어쓰기")
+		fmt.Println("2. 해당파일 건너뛰기")
+		fmt.Print("번호를 선택하세요 (1/2): ")
+
+		scanner.Scan()
+		ans := strings.TrimSpace(scanner.Text())
+
+		proceed, valid := directDuplicateChoice(ans)
+		if !valid {
+			fmt.Println("잘못된 입력입니다. 1 또는 2를 입력해주세요.")
+			continue
+		}
+		if proceed {
+			fmt.Println("기존 파일을 덮어쓰고 재다운로드합니다.")
+		} else {
+			fmt.Println("완성된 파일이 있으므로 건너뜁니다.")
+		}
+		return proceed
+	}
+}
+
+// directDuplicateChoice 직접 다운로드 중복 처리 입력을 해석한다.
+// 클립 등 직접 다운로드는 덮어쓰기(1)/건너뛰기(2)만 제공하며 이어받기는 없다.
+// proceed=덮어쓰고 진행 여부, valid=유효한 입력 여부
+func directDuplicateChoice(ans string) (proceed bool, valid bool) {
+	switch ans {
+	case "1":
+		return true, true
+	case "2":
+		return false, true
+	default:
+		return false, false
+	}
+}
+
 // PrepareOutputPath 출력 경로 및 파일명 준비
 func PrepareOutputPath(options *DownloadOptions) (string, error) {
 	autoFilename := options.Filename

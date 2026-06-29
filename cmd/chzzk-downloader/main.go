@@ -12,44 +12,10 @@ import (
 	"chzzk-downloader/internal/api"
 	"chzzk-downloader/internal/config"
 	"chzzk-downloader/internal/downloader"
-	"chzzk-downloader/internal/setup"
 	"chzzk-downloader/internal/utils"
 )
 
 const VERSION = "0.2.1"
-
-// 로컬 의존성 확인 함수(setup 패키지의 함수를 사용)
-func checkDependencies() bool {
-	return setup.CheckDependencies()
-}
-
-// 의존성 자동 설치 여부 확인 및 설치 진행
-func ensureDependencies() bool {
-	if checkDependencies() {
-		return true
-	}
-
-	fmt.Println("필요한 의존성 파일이 없습니다.")
-	fmt.Print("자동으로 설치를 진행할까요? (y/n): ")
-
-	scanner := bufio.NewScanner(os.Stdin)
-	scanner.Scan()
-	answer := strings.ToLower(strings.TrimSpace(scanner.Text()))
-
-	if answer != "y" {
-		fmt.Println("사용자가 설치를 거부했습니다.")
-		return false
-	}
-
-	fmt.Println("\n==== 의존성 설치 시작 ====")
-	err := setup.InstallDependencies()
-	if err != nil {
-		fmt.Printf("의존성 설치 중 오류 발생: %v\n", err)
-		return false
-	}
-	fmt.Println("==== 의존성 설치 완료 ====\n")
-	return true
-}
 
 // 성인 컨텐츠 확인 및 인증 처리 함수
 func setupAdultContent(scanner *bufio.Scanner) bool {
@@ -153,14 +119,14 @@ func displayRecentVods(vods []config.RecentVodInfo) {
 
 func main() {
 	fmt.Printf("==== 치지직 다운로더 (v%s) ====\n\n", VERSION)
-	//
-	//// 의존성 확인 및 설치
-	//if !ensureDependencies() {
-	//	fmt.Println("프로그램 실행에 필요한 의존성이 없습니다.")
-	//	fmt.Print("\n종료하려면 Enter 키를 누르세요...")
-	//	bufio.NewReader(os.Stdin).ReadBytes('\n')
-	//	return
-	//}
+
+	// 외부 프로그램(ffmpeg/streamlink) 확인 — PATH 또는 dependent/ 번들에서 탐색
+	if err := config.EnsureBinaries(); err != nil {
+		fmt.Println(err)
+		fmt.Print("\n종료하려면 Enter 키를 누르세요...")
+		bufio.NewReader(os.Stdin).ReadBytes('\n')
+		return
+	}
 
 	scanner := bufio.NewScanner(os.Stdin)
 

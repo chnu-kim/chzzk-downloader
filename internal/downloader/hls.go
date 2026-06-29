@@ -269,7 +269,7 @@ func DownloadHLS(hlsURL string, quality string, outputFile string) error {
 	// 최종 다운로드 정보 출력
 	fmt.Println("\n완료!")
 
-	fmt.Println("[INFO] 치지직 빠른 다시보기 다운로드 완료. 파일을 확인하세요.\n")
+	fmt.Println("[INFO] 치지직 빠른 다시보기 다운로드 완료. 파일을 확인하세요.")
 
 	return nil
 }

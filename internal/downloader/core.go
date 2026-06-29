@@ -1,6 +1,8 @@
 package downloader
 
 import (
+	"fmt"
+
 	"chzzk-downloader/internal/api"
 	"chzzk-downloader/internal/config"
 )
@@ -23,30 +25,30 @@ func DownloadVOD(vodURL, quality, outputFolder, autoFilename, speedOption, downl
 		return err
 	}
 
-	// 중복 파일 처리
-	proceed, resumeOption := CheckDuplicateFile(outputFile)
-	if !proceed {
+	// 중복 파일 처리 (완성 파일을 받으므로 덮어쓰기/건너뛰기만 제공)
+	if !CheckDuplicateFileDirect(outputFile) {
 		return nil
 	}
-	options.ResumeOption = resumeOption
 
-	// VOD 정보 가져오기
-	_, _, err = api.GetVODQualities(vodURL)
+	// 다운로드 소스 URL과 종류 가져오기 (선택한 품질을 전달해야 DASH에서 올바른 BaseURL을 해석한다)
+	source, err := api.GetVODUrl(vodURL, quality)
 	if err != nil {
 		return err
 	}
 
-	// 다운로드 소스 URL 가져오기 (선택한 품질을 전달해야 DASH에서 올바른 BaseURL을 해석한다)
-	// 참고: chzzk DASH의 video/mp4 Representation(PD_*)은 영상+음성이 합쳐진 progressive
-	// 파일(codecs에 mp4a 포함)이라 단일 BaseURL만으로 오디오까지 포함된다. 별도 audio
-	// AdaptationSet을 쓰는 포맷이 등장하면 이 가정이 깨지므로 그때 MPD 직접 전달로 전환해야 한다.
-	sourceURL, err := api.GetVODUrl(vodURL, quality)
-	if err != nil {
-		return err
+	switch source.Kind {
+	case api.KindProgressive:
+		// 클립·DASH는 완성된 단일 mp4라 외부 바이너리 없이 순수 Go HTTP로 받는다.
+		return downloadDirectMP4(source.URL, outputFile, mediaHeaders())
+	case api.KindHLS:
+		// HLS "빠른 다시보기"만 ffmpeg가 필요하다. 진입 시점에 lazy하게 확인한다.
+		if err := config.EnsureBinaries(); err != nil {
+			return err
+		}
+		return DownloadWithFFmpeg(source.URL, outputFile, mediaHeaders())
+	default:
+		return fmt.Errorf("알 수 없는 소스 종류입니다: %v", source.Kind)
 	}
-
-	// ffmpeg로 직접 다운로드 (HLS m3u8 / DASH BaseURL 공통)
-	return DownloadWithFFmpeg(sourceURL, outputFile, mediaHeaders())
 }
 
 // mediaHeaders 미디어 요청에 필요한 헤더만 추린다.

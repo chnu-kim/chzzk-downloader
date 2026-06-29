@@ -15,7 +15,7 @@ import (
 	"chzzk-downloader/internal/utils"
 )
 
-const VERSION = "0.3.0"
+const VERSION = "0.4.0"
 
 // 성인 컨텐츠 확인 및 인증 처리 함수
 func setupAdultContent(scanner *bufio.Scanner) bool {
@@ -120,13 +120,9 @@ func displayRecentVods(vods []config.RecentVodInfo) {
 func main() {
 	fmt.Printf("==== 치지직 다운로더 (v%s) ====\n\n", VERSION)
 
-	// 외부 프로그램(ffmpeg) 확인 — PATH 또는 dependent/ 번들에서 탐색
-	if err := config.EnsureBinaries(); err != nil {
-		fmt.Println(err)
-		fmt.Print("\n종료하려면 Enter 키를 누르세요...")
-		bufio.NewReader(os.Stdin).ReadBytes('\n')
-		return
-	}
+	// ffmpeg는 HLS "빠른 다시보기" 다운로드 진입 시점에만 lazy하게 확인한다.
+	// 클립·일반 VOD(progressive)는 외부 바이너리 없이 순수 Go HTTP로 받으므로
+	// 시작 시 게이트를 두지 않는다.
 
 	scanner := bufio.NewScanner(os.Stdin)
 

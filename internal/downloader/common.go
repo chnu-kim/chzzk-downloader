@@ -78,44 +78,6 @@ func parseFFmpegOutput(line string) (progress float64, timeInfo string) {
 	return
 }
 
-// CheckDuplicateFile 중복 파일 처리 함수
-func CheckDuplicateFile(outputFile string) (bool, string) {
-	if _, err := os.Stat(outputFile); err == nil {
-		fmt.Printf("파일 '%s'이(가) 이미 존재합니다.\n", outputFile)
-
-		scanner := bufio.NewScanner(os.Stdin)
-		for {
-			fmt.Println("어떻게 하시겠습니까?")
-			fmt.Println("1. 중복파일 덮어쓰기")
-			fmt.Println("2. 해당파일 이어받기")
-			fmt.Println("3. 해당파일 건너뛰기")
-			fmt.Print("번호를 선택하세요 (1/2/3): ")
-
-			scanner.Scan()
-			ans := strings.TrimSpace(scanner.Text())
-
-			if ans == "3" {
-				fmt.Println("완성된 파일이 있으므로 건너뜁니다.")
-				return false, ""
-			} else if ans == "1" {
-				err := os.Remove(outputFile)
-				if err != nil {
-					fmt.Printf("파일 삭제 실패: %v\n", err)
-					return false, ""
-				}
-				fmt.Println("기존 파일을 삭제하고 재다운로드합니다.")
-				return true, ""
-			} else if ans == "2" {
-				fmt.Println("이어받기를 시도합니다.")
-				return true, "--continue"
-			} else {
-				fmt.Println("잘못된 입력입니다. 1, 2, 또는 3을 입력해주세요.")
-			}
-		}
-	}
-	return true, ""
-}
-
 // CheckDuplicateFileDirect 직접 다운로드(클립 등) 중복 파일 처리 함수
 // 단일 완성 mp4를 그대로 받으므로 부분 이어받기는 지원하지 않고 덮어쓰기/건너뛰기만 제공한다.
 func CheckDuplicateFileDirect(outputFile string) bool {

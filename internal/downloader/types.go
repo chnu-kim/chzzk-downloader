@@ -8,5 +8,4 @@ type DownloadOptions struct {
 	Filename        string
 	SpeedOption     string
 	DownloadSection string
-	ResumeOption    string
 }

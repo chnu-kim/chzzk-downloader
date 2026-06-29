@@ -18,6 +18,22 @@ const (
 	ChzzkVodUriAPI  = "https://apis.naver.com/neonplayer/vodplay/v2/playback/%s?key=%s"
 )
 
+// SourceKind 다운로드 소스의 종류
+type SourceKind int
+
+const (
+	// KindProgressive 완성된 단일 mp4(클립·일반 VOD/DASH의 PD_* BaseURL). 순수 Go HTTP로 받는다.
+	KindProgressive SourceKind = iota
+	// KindHLS HLS "빠른 다시보기"(라이브 리와인드). ffmpeg가 필요하다.
+	KindHLS
+)
+
+// VODSource 다운로드 소스 URL과 그 종류를 함께 담는다.
+type VODSource struct {
+	URL  string
+	Kind SourceKind
+}
+
 // Quality 품질 정보 구조체
 type Quality struct {
 	ID        string `json:"id"`
@@ -237,10 +253,10 @@ func GetVODQualities(vodURL string) ([]Quality, VodInfo, error) {
 	return qualities, vodInfo, nil
 }
 
-// GetVODUrl VOD URL을 가져오는 함수
-func GetVODUrl(vodURL string, quality string) (string, error) {
+// GetVODUrl 다운로드 소스 URL과 그 종류(Progressive/HLS)를 가져오는 함수
+func GetVODUrl(vodURL string, quality string) (VODSource, error) {
 	if !strings.Contains(vodURL, "chzzk.naver.com/video/") {
-		return "", errors.New("치지직 VOD URL이 아닙니다")
+		return VODSource{}, errors.New("치지직 VOD URL이 아닙니다")
 	}
 
 	parts := strings.Split(strings.TrimRight(vodURL, "/"), "/")
@@ -250,7 +266,7 @@ func GetVODUrl(vodURL string, quality string) (string, error) {
 	headers := config.GetCookieHeaders()
 	req, err := http.NewRequest("GET", infoApiURL, nil)
 	if err != nil {
-		return "", err
+		return VODSource{}, err
 	}
 
 	for k, v := range headers {
@@ -260,22 +276,22 @@ func GetVODUrl(vodURL string, quality string) (string, error) {
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", err
+		return VODSource{}, err
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", err
+		return VODSource{}, err
 	}
 
 	var chzzkResp ChzzkResponse
 	if err := json.Unmarshal(body, &chzzkResp); err != nil {
-		return "", err
+		return VODSource{}, err
 	}
 
 	if chzzkResp.Code != 200 {
-		return "", fmt.Errorf("VOD info API 오류: %s", chzzkResp.Message)
+		return VODSource{}, fmt.Errorf("VOD info API 오류: %s", chzzkResp.Message)
 	}
 
 	vodInfo := chzzkResp.Content
@@ -287,47 +303,47 @@ func GetVODUrl(vodURL string, quality string) (string, error) {
 		// liveRewindPlaybackJson 필드가 없을 수 있어서 직접 추출
 		var respData map[string]interface{}
 		if err := json.Unmarshal(body, &respData); err != nil {
-			return "", err
+			return VODSource{}, err
 		}
 
 		content, ok := respData["content"].(map[string]interface{})
 		if !ok {
-			return "", errors.New("content 필드가 올바르지 않습니다")
+			return VODSource{}, errors.New("content 필드가 올바르지 않습니다")
 		}
 
 		liveRewindPlaybackJson, ok := content["liveRewindPlaybackJson"].(string)
 		if !ok || liveRewindPlaybackJson == "" {
-			return "", errors.New("liveRewindPlaybackJson 정보가 없습니다")
+			return VODSource{}, errors.New("liveRewindPlaybackJson 정보가 없습니다")
 		}
 
 		if err := json.Unmarshal([]byte(liveRewindPlaybackJson), &liveData); err != nil {
-			return "", err
+			return VODSource{}, err
 		}
 
 		mediaList, ok := liveData["media"].([]interface{})
 		if !ok || len(mediaList) == 0 {
-			return "", errors.New("HLS 미디어 정보가 없습니다")
+			return VODSource{}, errors.New("HLS 미디어 정보가 없습니다")
 		}
 
 		media := mediaList[0].(map[string]interface{})
 		path, ok := media["path"].(string)
 		if !ok {
-			return "", errors.New("HLS 미디어 경로 정보가 없습니다")
+			return VODSource{}, errors.New("HLS 미디어 경로 정보가 없습니다")
 		}
 
-		return path, nil
+		return VODSource{URL: path, Kind: KindHLS}, nil
 	} else {
 		// DASH 분기
 		videoId := vodInfo.VideoID
 		inKey := vodInfo.InKey
 		if videoId == "" || inKey == "" {
-			return "", errors.New("필수 videoId 또는 inKey 값이 없습니다")
+			return VODSource{}, errors.New("필수 videoId 또는 inKey 값이 없습니다")
 		}
 
 		mpdURL := fmt.Sprintf(ChzzkVodUriAPI, videoId, inKey)
 		req, err := http.NewRequest("GET", mpdURL, nil)
 		if err != nil {
-			return "", err
+			return VODSource{}, err
 		}
 
 		for k, v := range headers {
@@ -337,18 +353,18 @@ func GetVODUrl(vodURL string, quality string) (string, error) {
 
 		resp2, err := client.Do(req)
 		if err != nil {
-			return "", err
+			return VODSource{}, err
 		}
 		defer resp2.Body.Close()
 
 		body2, err := io.ReadAll(resp2.Body)
 		if err != nil {
-			return "", err
+			return VODSource{}, err
 		}
 
 		var mpdRoot MPDRoot
 		if err := xml.Unmarshal(body2, &mpdRoot); err != nil {
-			return "", err
+			return VODSource{}, err
 		}
 
 		// 품질 정보에서 숫자만 추출
@@ -358,10 +374,12 @@ func GetVODUrl(vodURL string, quality string) (string, error) {
 		if len(matches) > 1 {
 			desiredQuality = matches[1]
 		} else {
-			return "", errors.New("올바른 품질 정보가 전달되지 않았습니다")
+			return VODSource{}, errors.New("올바른 품질 정보가 전달되지 않았습니다")
 		}
 
-		// 원하는 품질의 BaseURL 찾기
+		// 원하는 품질의 BaseURL 찾기.
+		// chzzk DASH의 video/mp4 Representation(PD_*)은 영상+음성이 합쳐진 progressive
+		// mp4라 단일 BaseURL만으로 완성 파일이며, 그대로 순수 Go HTTP로 받을 수 있다.
 		for _, adaptationSet := range mpdRoot.AdaptationSet {
 			if strings.Contains(adaptationSet.MimeType, "video/mp4") {
 				for _, rep := range adaptationSet.Representations {
@@ -378,12 +396,12 @@ func GetVODUrl(vodURL string, quality string) (string, error) {
 					}
 
 					if repResolution == desiredQuality && len(rep.BaseURL) > 0 {
-						return rep.BaseURL[0], nil
+						return VODSource{URL: rep.BaseURL[0], Kind: KindProgressive}, nil
 					}
 				}
 			}
 		}
 
-		return "", errors.New("원하는 품질의 BaseURL을 찾을 수 없습니다")
+		return VODSource{}, errors.New("원하는 품질의 BaseURL을 찾을 수 없습니다")
 	}
 }

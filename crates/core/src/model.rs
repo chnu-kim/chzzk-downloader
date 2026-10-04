@@ -2,6 +2,20 @@
 
 use serde::{Deserialize, Serialize};
 
+/// 사용자가 준 주소가 가리키는 컨텐츠. `url::parse_content_url`로 만든다.
+///
+/// 직렬화 형태: `{"kind":"video","videoNo":123}`, `{"kind":"clip","clipId":"abc"}`.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum ContentRef {
+    Video { video_no: u64 },
+    Clip { clip_id: String },
+}
+
 /// 컨텐츠 종류.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ContentKind {

@@ -692,3 +692,5 @@ tokio    = { version = "1.53.2", features = ["net", "test-util"] }
    - 날짜는 `live_open_date`가 없거나 **파싱에 실패하면** `publish_date`로 넘어간다. `parse_live_date`는 자릿수에 더해 월 1–12, 일 1–31 범위도 검사한다.
    - 길이 초과 시 제목을 먼저 자르되 제목은 최소 60바이트(또는 원래 길이)를 남기고, 그래도 넘치면 채널을 자른다. 자른 뒤 trim(Windows는 끝 `.`/공백도)을 다시 한다. 제목이 비면 `_`.
    - `sanitize_filename`은 길이를 자르지 않는다. 사용자가 준 이름은 `output_path`가 `.mp4`를 붙인 뒤 200바이트로 자른다(확장자 보존).
+7. **(4단계) `ContentRef` 직렬화 필드도 camelCase.** `#[serde(tag = "kind", rename_all = "camelCase")]`만으로는 변형 이름만 바뀌고 필드는 `video_no`로 남는다. `rename_all_fields = "camelCase"`를 더해 `{"kind":"video","videoNo":123}`, `{"kind":"clip","clipId":"abc"}`로 고정했다(셸·sidecar 공통).
+8. **(4단계) URL 해석 세부.** 앞뒤 공백은 지운다. 스킴 없이 붙여 넣은 `chzzk.naver.com/video/123`은 `https://`를 붙여 읽는다. 스킴은 http/https만, 끝 `/`는 하나만 허용한다(`clips/abc//`는 오류). videoNo는 ASCII 숫자만 받고 `u64` 범위를 넘으면 오류다. §8.1 `url::clip_detection`의 "true 5건"은 TestIsClipURL의 실제 true 3건으로 이식했다(나머지 둘은 `clip_id`에 있다).

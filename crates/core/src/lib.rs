@@ -7,8 +7,10 @@ pub mod error;
 pub mod model;
 pub mod naming;
 pub mod progress;
+pub mod url;
 
 pub use error::{Error, ErrorKind, Unsupported};
-pub use model::{ContentKind, ContentMeta};
+pub use model::{ContentKind, ContentMeta, ContentRef};
 pub use naming::Platform;
 pub use progress::{Phase, Progress};
+pub use url::parse_content_url;

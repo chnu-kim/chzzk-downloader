@@ -188,6 +188,9 @@ pub(crate) async fn run(
                     let fresh = acquire(job, None).await?;
                     let st = p.staged().hls.unwrap_or_default();
                     if let Some(d) = fresh.mismatch(&st) {
+                        // CDN이 잠깐 다른 playlist를 줬을 수 있다. 받은 바이트는 sidecar 지문과
+                        // 맞으므로 남기고, 다음 실행이 지문을 다시 검사한다(설계 §8.2).
+                        job.keep_partial = true;
                         return Err(Error::SourceChanged { detail: d });
                     }
                     loaded = fresh;

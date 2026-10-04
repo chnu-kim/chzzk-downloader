@@ -643,9 +643,10 @@ async fn refresh_fingerprint_mismatch() {
         .await;
         assert!(matches!(r, Err(Error::SourceChanged { .. })), "{r:?}");
         assert!(requests(&server, "/g1/144p/seg5.m4v").await.is_empty());
-        // 이어받을 수 없는 오류라 지운다(구현 중 변경 32).
-        let (part, sidecar) = part_files(&out);
-        assert!(!part.exists() && !sidecar.exists());
+        // 작업 도중 재조회의 지문 불일치는 `.part`를 남긴다(설계 §8.2, 구현 중 변경 35).
+        let (part, _) = part_files(&out);
+        assert_eq!(std::fs::read(part).unwrap(), synth_expected(5));
+        assert_eq!(sidecar_json(&out)["hls"]["nextIndex"], 5);
     }
 }
 

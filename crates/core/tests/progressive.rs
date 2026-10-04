@@ -677,3 +677,64 @@ async fn progress_throttled() {
     assert_eq!(last.bytes, SIZE as u64);
     assert_eq!(last.total_bytes, Some(SIZE as u64));
 }
+
+/// 이어받는 중 info API가 403(로그인 만료 등)이어도 받은 `.part`는 지우지 않는다.
+#[tokio::test]
+async fn api_auth_error_keeps_partial() {
+    let body = test_bytes(SIZE, 12);
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_path(&dir);
+    make_partial(&out, &body[..1000], Some(SIZE as u64)).await;
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path(format!("/service/v2/videos/{VOD_NO}")))
+        .respond_with(ResponseTemplate::new(403))
+        .mount(&server)
+        .await;
+    let r = download(config(&server), &out, &Events::default()).await;
+    assert!(
+        matches!(r, Err(Error::AuthRequired { status: 403 })),
+        "{r:?}"
+    );
+    let (part, sidecar) = part_files(&out);
+    assert_eq!(std::fs::read(part).unwrap(), &body[..1000]);
+    assert!(sidecar.exists());
+}
+
+/// 재조회(403 뒤) 때 info API가 403이어도 받은 `.part`는 남는다.
+#[tokio::test]
+async fn reresolve_api_error_keeps_partial() {
+    let body = test_bytes(SIZE, 13);
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_path(&dir);
+    make_partial(&out, &body[..2000], Some(SIZE as u64)).await;
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path(format!("/service/v2/videos/{VOD_NO}")))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_raw(fixture("testdata/vod/video_info.json"), "application/json"),
+        )
+        .up_to_n_times(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("/service/v2/videos/{VOD_NO}")))
+        .respond_with(ResponseTemplate::new(401))
+        .mount(&server)
+        .await;
+    mount_mpd(&server, &format!("{}{MEDIA_PATH}", server.uri()), None).await;
+    Mock::given(method("GET"))
+        .and(path(MEDIA_PATH))
+        .respond_with(ResponseTemplate::new(403))
+        .mount(&server)
+        .await;
+    let r = download(config(&server), &out, &Events::default()).await;
+    assert!(
+        matches!(r, Err(Error::AuthRequired { status: 401 })),
+        "{r:?}"
+    );
+    let (part, sidecar) = part_files(&out);
+    assert_eq!(std::fs::read(part).unwrap(), &body[..2000]);
+    assert!(sidecar.exists());
+}

@@ -13,6 +13,7 @@
 //! 5. `Finalizing`: checkpoint → `.part` → 최종 파일.
 //!
 //! 실패·취소 시 `.part`와 sidecar를 남긴다(checkpoint 후). `is_resumable() == false`인 오류만 지운다.
+//! 단 `resolve` 실패와 작업 도중 재조회의 지문 불일치는 남긴다(`Job::keep_partial`).
 
 pub mod part;
 pub(crate) mod progressive;
@@ -135,6 +136,12 @@ pub(crate) struct Job<'a> {
     cancel: &'a CancellationToken,
     pub(crate) report: Reporter<'a>,
     pub(crate) refreshes: u32,
+    /// `is_resumable() == false`여도 `.part`를 남길 오류인가.
+    ///
+    /// `resolve` 자체의 실패(예: 로그인 만료로 API 403 → `AuthRequired`)와 작업 도중 재조회한
+    /// playlist의 지문 불일치는 이미 받은 바이트가 틀렸다는 증거가 아니다. 다음 실행의
+    /// sidecar 동일성·지문 검사가 정말 낡은 `.part`를 거른다.
+    pub(crate) keep_partial: bool,
 }
 
 impl Job<'_> {
@@ -154,9 +161,16 @@ impl Job<'_> {
 
     /// `resolve` 후 방식이 요청과 같은지 확인한다.
     async fn resolve(&mut self) -> Result<Resolved, Error> {
-        let r = self
+        let r = match self
             .cancellable(self.chzzk.resolve(&self.req.content))
-            .await??;
+            .await?
+        {
+            Ok(r) => r,
+            Err(e) => {
+                self.keep_partial = true;
+                return Err(e);
+            }
+        };
         let now = r.kind();
         if now != self.req.expected_kind {
             return Err(Error::PlaybackChanged {
@@ -211,6 +225,7 @@ impl Chzzk {
             cancel: &cancel,
             report: Reporter::new(on_progress, self.config().progress_interval),
             refreshes: 0,
+            keep_partial: false,
         };
         let resumed_from = part.as_ref().map_or(0, PartFile::written);
         job.report.p.resumed_from = resumed_from;
@@ -219,7 +234,8 @@ impl Chzzk {
         match result {
             Ok(o) => Ok(o),
             Err(e) => {
-                cleanup(part, &e).await;
+                let keep = e.is_resumable() || job.keep_partial;
+                cleanup(part, keep, &e).await;
                 Err(e)
             }
         }
@@ -239,10 +255,11 @@ async fn run(job: &mut Job<'_>, part: &mut Option<PartFile>) -> Result<DownloadO
     }
 }
 
-/// 실패 뒤 정리: 이어받을 수 있으면 checkpoint해서 남기고, 아니면 지운다.
-async fn cleanup(part: Option<PartFile>, e: &Error) {
+/// 실패 뒤 정리: `keep`이면 checkpoint해서 남기고, 아니면 지운다.
+async fn cleanup(part: Option<PartFile>, keep: bool, e: &Error) {
     let Some(mut p) = part else { return };
-    if e.is_resumable() {
+    tracing::debug!(error = %e, keep, "다운로드 실패 정리");
+    if keep {
         if let Err(ce) = p.checkpoint(|_| {}).await {
             tracing::warn!(error = %ce, "실패 후 checkpoint 실패");
         }

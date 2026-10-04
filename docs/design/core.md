@@ -754,7 +754,7 @@ tokio    = { version = "1.53.2", features = ["net", "test-util"] }
     - master·media playlist는 API와 같은 8 MiB 상한(`read_capped`)으로 읽는다. 세그먼트·init 본문은 상한 없이 `bytes()`로 읽고 `Content-Length` 불일치는 재시도한다. 첫 상자 검사 실패는 `Retry(Parse { what: "segment" | "init segment" })`다.
     - variant는 `track_id` 정확 일치, 없으면 `tracks`에서 같은 id의 `height`로 고른다(26번의 §4.1 기준).
     - 재시도 횟수는 세그먼트(요청)마다 따로 센다. 취소는 writer 루프의 `select!`가 받고, stream을 drop해 진행 중인 fetch도 취소된다.
-    - **`SourceChanged`는 `.part`를 지운다.** §8.2의 `refresh_fingerprint_mismatch` 행은 ".part 보존"이라고 했지만 §3.6·§4.2는 `SourceChanged`를 이어받을 수 없는 오류(삭제)로 정했고 1단계부터 `is_resumable() == false`다. 남겨 두어도 다음 실행이 같은 지문 검사에서 또 `SourceChanged`로 끝나므로 §3.6을 따른다.
+    - 재개 시작 때(sidecar와 비교) 지문이 다르면 `SourceChanged`이고 `.part`를 지운다(durable한 sidecar와 비교한 결과다). 작업 도중 재조회의 불일치는 35번을 본다.
 33. **(12단계) 동시 fetch와 재조회 세부.**
     - 동시 요청 수는 `min(req.concurrency, 8)`이다. 더 큰 값은 오류가 아니라 8로 줄인다.
     - `buffered`가 입력 순서대로 내놓으므로 writer가 받는 첫 `Err`는 늘 `next_index` 세그먼트의 것이다. 403이면 stream을 drop해 앞서 시작한 fetch까지 모두 취소하고, 재조회 → master·media·init을 다시 받아 지문을 비교한 뒤 `next_index`부터 새 stream을 만든다. 이미 받아 버퍼에 있던 뒤쪽 세그먼트는 버리고 다시 받는다(메모리 상한 유지, 단순함).
@@ -762,3 +762,6 @@ tokio    = { version = "1.53.2", features = ["net", "test-util"] }
     - 재조회 결과가 DASH로 바뀐 것은 `Job::reresolve`의 방식 검사가 `PlaybackChanged`로 잡는다(재조회 `resolve`가 MPD까지 받은 뒤다).
     - `HlsState`에 `Default`를 붙였다(sidecar에 HLS 상태가 없으면 지문 불일치로 끝내기 위해).
 34. **(13단계) `Meter` 세부.** `Meter::observe(&mut Progress, now, force) -> bool`가 `speed_bps`·`eta_secs`를 채우고 보낼지 정한다. 시각은 인자로 받아 테스트가 시계를 직접 넘긴다(일시 정지 런타임·sleep 없음). 보내는 조건은 첫 이벤트, 단계 변경, `force`, `progress_interval` 경과다. 다운로드의 마지막 이벤트는 `Finalizing` 단계 변경이라 늘 나간다. 속도는 최근 5초 창(100ms 간격 표본, 창 시작을 대신할 표본 하나 유지)의 바이트 증가율이고, 바이트가 줄면(Range 무시 후 처음부터) 창을 새로 시작한다. 이어받은 바이트는 첫 표본에 들어가므로 속도에 섞이지 않는다. 속도가 0이면 `speed_bps`는 `None`이다. HLS ETA는 `total_bytes`가 없을 때 `media_secs`의 처리율로 계산한다. `Meter`는 crate 루트에서 재노출한다(셸이 자체 이벤트에 재사용할 수 있게).
+35. **(13단계 뒤 수정) `is_resumable() == false`여도 `.part`를 남기는 두 경우.** `download`의 정리 단계는 `e.is_resumable() || Job::keep_partial`이면 checkpoint해서 남기고, 아니면 지운다. `is_resumable`의 분류(§3.6, 12번)는 그대로이고, UI는 어차피 `kind()`로 분기한다.
+    - **`resolve` 자체의 실패**(처음 조회와 403 뒤 재조회 모두): 예를 들어 로그인 쿠키가 만료되어 info API가 401/403이면 `AuthRequired`인데, §3.6이 지우라고 한 것은 **미디어** 403 뒤의 `AuthRequired`다. API 오류는 받은 바이트가 틀렸다는 증거가 아니므로 수 시간 받은 `.part`를 지우지 않는다. 범위는 `resolve`가 낸 모든 오류로 넓혔다(`EncryptedVod`, `NoPlayback` 포함. 남겨도 다음 실행이 같은 곳에서 멈출 뿐이고 사용자가 `discard_partial`로 지울 수 있다). `resolve`가 성공한 뒤의 방식 검사(`PlaybackChanged`)는 여전히 지운다.
+    - **작업 도중 재조회한 HLS playlist의 지문 불일치**(`SourceChanged`): §8.2 `refresh_fingerprint_mismatch` 행대로 남긴다. 받은 바이트는 sidecar 지문(재조회 전)과 맞고, CDN이 잠깐 다른 playlist를 준 것이라면 다음 실행의 재개 지문 검사가 통과해 이어받는다. 정말 바뀌었으면 그 검사가 `SourceChanged`로 지운다. 재개 시작 때의 불일치와 progressive의 `Content-Range` total 불일치는 그대로 지운다.

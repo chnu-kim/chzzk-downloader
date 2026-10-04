@@ -180,6 +180,30 @@ mod tests {
         assert_eq!(r.default_quality(Some("480p")), 1);
         // 옛 Go 형식 이름은 일치하지 않으므로 최대 해상도로 폴백
         assert_eq!(r.default_quality(Some("720P_1280_2048_192")), 4);
+
+        // 클립(세로 영상): height(1280/854)가 아니라 resolution 라벨(720/480) 기준
+        let reps = crate::mpd::parse_mpd(&crate::testutil::fixture_str(
+            "internal/api/testdata/clip_multi.mpd",
+        ))
+        .unwrap();
+        let (meta, _) = crate::info::parse_clip_info(&fixture(
+            "internal/api/testdata/clip_multi_playinfo.json",
+        ))
+        .unwrap();
+        let clip = Resolved {
+            content: ContentRef::Clip {
+                clip_id: "x".into(),
+            },
+            meta,
+            source: Source::Progressive {
+                reps: crate::mpd::pd_reps(&reps).unwrap(),
+            },
+        };
+        assert_eq!(clip.kind(), PlaybackKind::Progressive);
+        assert_eq!(clip.default_quality(None), 0);
+        assert_eq!(clip.default_quality(Some("480p")), 1);
+        // 옛 Go `lastQualityName`(qualityId 라벨)은 일치하지 않아 폴백
+        assert_eq!(clip.default_quality(Some("720P_1280_2048_192")), 0);
     }
 
     #[test]

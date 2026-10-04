@@ -6,7 +6,9 @@
 pub mod error;
 pub mod info;
 pub mod model;
+pub mod mpd;
 pub mod naming;
+pub mod ownership;
 pub mod progress;
 pub mod url;
 
@@ -19,5 +21,6 @@ pub use model::{
     ContentKind, ContentMeta, ContentRef, PdRep, PlaybackKind, Quality, Resolved, Source,
 };
 pub use naming::Platform;
+pub use ownership::is_own_content;
 pub use progress::{Phase, Progress};
 pub use url::parse_content_url;

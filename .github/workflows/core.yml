@@ -10,6 +10,7 @@ on:
       - "testdata/**"
       - "internal/api/testdata/**"
       - ".github/workflows/core.yml"
+      - ".gitattributes"
   pull_request:
     paths:
       - "Cargo.toml"
@@ -18,6 +19,7 @@ on:
       - "testdata/**"
       - "internal/api/testdata/**"
       - ".github/workflows/core.yml"
+      - ".gitattributes"
 
 permissions:
   contents: read

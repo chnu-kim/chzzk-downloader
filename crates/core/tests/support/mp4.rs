@@ -59,7 +59,8 @@ pub fn walk_boxes(b: &[u8]) -> Result<BoxWalk, String> {
             return Err(format!("offset {off}: {ty} 크기 {size}가 헤더보다 작음"));
         }
         boxes.push((ty, size));
-        if off + size > len {
+        // largesize가 u64 끝 가까이면 덧셈이 넘친다. 넘치면 파일 끝을 넘는 것과 같다.
+        if off.checked_add(size).is_none_or(|end| end > len) {
             return Ok(BoxWalk {
                 boxes,
                 truncated: true,

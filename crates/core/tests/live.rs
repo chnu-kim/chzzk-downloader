@@ -109,13 +109,33 @@ async fn live_dash_partial() {
         dir.path(),
     )
     .await;
-    assert!(matches!(res, Err(Error::Cancelled)), "{res:?}");
-    let part = std::fs::read(part_path(&out)).unwrap();
-    assert!(part.len() as u64 >= limit, "{}", part.len());
-    let w = mp4::walk_boxes(&part).unwrap();
-    println!("DASH .part {} B, 상자 {:?}", part.len(), w.types());
-    assert_eq!(w.types().first(), Some(&"ftyp"));
-    assert!(w.types().contains(&"mdat") || w.types().contains(&"moov"));
+    // 최저 화질이 상한보다 작은 짧은 VOD는 끝까지 받는다. 그때는 완성 파일을 검사한다.
+    let (bytes, truncated_expected) = match &res {
+        Err(Error::Cancelled) => {
+            let part = std::fs::read(part_path(&out)).unwrap();
+            assert!(part.len() as u64 >= limit, "{}", part.len());
+            (part, true)
+        }
+        Ok(DownloadOutcome::Completed { path, bytes, .. }) => {
+            assert_eq!(path, &out);
+            let file = std::fs::read(path).unwrap();
+            assert_eq!(file.len() as u64, *bytes);
+            assert!((*bytes) < limit, "{bytes}");
+            (file, false)
+        }
+        other => panic!("{other:?}"),
+    };
+    let w = mp4::walk_boxes(&bytes).unwrap();
+    let types = w.types();
+    println!(
+        "DASH {} B, 상자 {types:?}, 잘림 {}",
+        bytes.len(),
+        w.truncated
+    );
+    // progressive는 바이트 단위로 멈추므로 취소했으면 마지막 상자(mdat)가 잘려 있다.
+    assert_eq!(w.truncated, truncated_expected, "{types:?}");
+    assert_eq!(&types[..2], ["ftyp", "moov"]);
+    assert!(types.contains(&"mdat"), "{types:?}");
 }
 
 #[tokio::test]
@@ -173,4 +193,13 @@ fn walk_boxes_on_fixture() {
     let w = mp4::walk_boxes(&big).unwrap();
     assert_eq!(w.types(), ["mdat", "free"]);
     assert!(!w.truncated);
+    // 두 번째 상자의 largesize가 u64::MAX여도 넘치지 않고 잘린 것으로 본다.
+    let mut huge = vec![0, 0, 0, 8];
+    huge.extend_from_slice(b"free");
+    huge.extend_from_slice(&[0, 0, 0, 1]);
+    huge.extend_from_slice(b"mdat");
+    huge.extend_from_slice(&u64::MAX.to_be_bytes());
+    let w = mp4::walk_boxes(&huge).unwrap();
+    assert_eq!(w.types(), ["free", "mdat"]);
+    assert!(w.truncated);
 }

@@ -63,7 +63,10 @@ fn parse_args() -> Result<Args, String> {
                     .ok_or("--limit-mb 값이 없습니다")?
                     .parse()
                     .map_err(|_| "--limit-mb는 정수입니다")?;
-                a.limit_bytes = Some(n * 1024 * 1024);
+                a.limit_bytes = Some(
+                    n.checked_mul(1 << 20)
+                        .ok_or("--limit-mb 값이 너무 큽니다")?,
+                );
             }
             s if s.starts_with("--") => return Err(format!("모르는 옵션: {s}")),
             s => a.url = s.to_string(),

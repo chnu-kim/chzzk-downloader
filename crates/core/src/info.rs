@@ -5,15 +5,20 @@
 //! - 문자열 필드는 전부 `Option<String>`으로 받고 `None`과 `""`를 같게 본다(Go는 null을 `""`로 읽었다).
 //! - 오류 메시지에 서명 토큰이 든 원문 URL을 넣지 않는다.
 
+use std::fmt;
+
 use ::url::Url;
 use serde::Deserialize;
 use serde_json::Value;
 
 use crate::error::{Error, Unsupported};
+use crate::http::{DebugUrl, Secret, masked};
 use crate::model::{ContentKind, ContentMeta, Quality};
 
 /// VOD info(`/service/v2/videos/{no}`)의 `content`에서 읽는 필드.
-#[derive(Clone, Debug, Default, Deserialize)]
+///
+/// `Debug`는 `in_key`와 `live_rewind_playback_json`(서명 주소 포함)을 `***`로 가린다.
+#[derive(Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct VideoContent {
     pub video_id: Option<String>,
@@ -31,6 +36,27 @@ pub struct VideoContent {
     pub channel: Option<ChannelRef>,
 }
 
+impl fmt::Debug for VideoContent {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("VideoContent")
+            .field("video_id", &self.video_id)
+            .field("video_title", &self.video_title)
+            .field("in_key", &masked(&self.in_key))
+            .field("encryption_type", &self.encryption_type)
+            .field(
+                "live_rewind_playback_json",
+                &masked(&self.live_rewind_playback_json),
+            )
+            .field("live_open_date", &self.live_open_date)
+            .field("publish_date", &self.publish_date)
+            .field("vod_status", &self.vod_status)
+            .field("adult", &self.adult)
+            .field("duration", &self.duration)
+            .field("channel", &self.channel)
+            .finish()
+    }
+}
+
 /// `content.channel` / `content.ownerChannel`.
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -40,7 +66,9 @@ pub struct ChannelRef {
 }
 
 /// 재생 방식. `classify`·`parse_clip_info`가 만든다.
-#[derive(Clone, Debug, PartialEq, Eq)]
+///
+/// `Debug`는 `in_key`를 `***`로, `master_url`을 `http::redact_url`로 가린다.
+#[derive(Clone, PartialEq, Eq)]
 pub enum Playback {
     /// 일반 VOD·클립. vodplay API에서 MPD를 받는다.
     Dash { video_id: String, in_key: String },
@@ -55,6 +83,33 @@ pub enum Playback {
         video_id: String,
         in_key: Option<String>,
     },
+}
+
+impl fmt::Debug for Playback {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Playback::Dash { video_id, .. } => f
+                .debug_struct("Dash")
+                .field("video_id", video_id)
+                .field("in_key", &Secret::new(()))
+                .finish(),
+            Playback::LiveRewind { master_url, tracks } => f
+                .debug_struct("LiveRewind")
+                .field("master_url", &DebugUrl(master_url))
+                .field("tracks", tracks)
+                .finish(),
+            Playback::Encrypted {
+                method,
+                video_id,
+                in_key,
+            } => f
+                .debug_struct("Encrypted")
+                .field("method", method)
+                .field("video_id", video_id)
+                .field("in_key", &masked(in_key))
+                .finish(),
+        }
+    }
 }
 
 /// 응답 봉투. `content`는 `code`를 확인한 뒤에 해석한다.

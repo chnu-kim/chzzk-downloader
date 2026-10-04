@@ -4,14 +4,19 @@
 //!   local name으로 찾는다.
 //! - VOD와 클립이 같은 파서·같은 PD 필터·같은 선택 규칙(`id` 정확 일치)을 쓴다.
 
+use std::fmt;
+
 use ::url::Url;
 use roxmltree::{Document, Node};
 
 use crate::error::Error;
+use crate::http;
 use crate::model::{PdRep, Quality};
 
 /// MPD의 Representation 하나. 문자열 속성은 원문 그대로다.
-#[derive(Clone, Debug, PartialEq, Eq)]
+///
+/// `Debug`는 `base_urls`의 서명 쿼리(`_lsu_sa_` 등)를 지운다.
+#[derive(Clone, PartialEq, Eq)]
 pub struct Representation {
     pub id: String,
     /// Representation@mimeType, 없으면 AdaptationSet@mimeType
@@ -26,6 +31,31 @@ pub struct Representation {
     pub base_urls: Vec<String>,
     /// AdaptationSet 또는 Representation에 `ContentProtection`이 있다(AES 2차 방어).
     pub protected: bool,
+}
+
+impl fmt::Debug for Representation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let base_urls: Vec<String> = self
+            .base_urls
+            .iter()
+            .map(|s| match Url::parse(s) {
+                Ok(u) => http::redact_url(&u),
+                // 상대 주소 등: 쿼리부터 버린다.
+                Err(_) => s.split(['?', '#']).next().unwrap_or("").to_string(),
+            })
+            .collect();
+        f.debug_struct("Representation")
+            .field("id", &self.id)
+            .field("mime", &self.mime)
+            .field("bandwidth", &self.bandwidth)
+            .field("width", &self.width)
+            .field("height", &self.height)
+            .field("frame_rate", &self.frame_rate)
+            .field("labels", &self.labels)
+            .field("base_urls", &base_urls)
+            .field("protected", &self.protected)
+            .finish()
+    }
 }
 
 impl Representation {

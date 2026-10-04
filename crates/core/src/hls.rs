@@ -7,12 +7,15 @@
 //!   MAP URI의 자체 쿼리(`?type=hls&filetype=.m4s`)는 그대로 남는다.
 //! - 오류 메시지에 서명 토큰이 든 주소를 넣지 않는다.
 
+use std::fmt;
+
 use ::url::Url;
 
 use crate::error::{Error, Unsupported};
+use crate::http::DebugUrl;
 
-/// master playlist의 variant 하나.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// master playlist의 variant 하나. `Debug`는 주소를 `http::redact_url`로 가린다.
+#[derive(Clone, PartialEq, Eq)]
 pub struct Variant {
     pub uri: Url,
     /// master 디렉토리 기준 첫 path 세그먼트. encodingTrackId(`"720p"`)와 같다.
@@ -22,8 +25,8 @@ pub struct Variant {
     pub height: Option<u32>,
 }
 
-/// media playlist.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// media playlist. `Debug`는 주소를 `http::redact_url`로 가린다.
+#[derive(Clone, PartialEq, Eq)]
 pub struct MediaPlaylist {
     pub media_sequence: u64,
     /// `EXT-X-MAP`(fMP4 init). TS playlist면 `None`.
@@ -32,14 +35,45 @@ pub struct MediaPlaylist {
     pub total_duration_ms: u64,
 }
 
-/// 세그먼트 하나.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// 세그먼트 하나. `Debug`는 주소를 `http::redact_url`로 가린다.
+#[derive(Clone, PartialEq, Eq)]
 pub struct Segment {
     /// media sequence number(`EXT-X-MEDIA-SEQUENCE` + index)
     pub msn: u64,
     /// EXTINF를 ms로 반올림한 값
     pub duration_ms: u32,
     pub uri: Url,
+}
+
+impl fmt::Debug for Variant {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Variant")
+            .field("uri", &DebugUrl(&self.uri))
+            .field("track_id", &self.track_id)
+            .field("height", &self.height)
+            .finish()
+    }
+}
+
+impl fmt::Debug for MediaPlaylist {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("MediaPlaylist")
+            .field("media_sequence", &self.media_sequence)
+            .field("init", &self.init.as_ref().map(DebugUrl))
+            .field("segments", &self.segments)
+            .field("total_duration_ms", &self.total_duration_ms)
+            .finish()
+    }
+}
+
+impl fmt::Debug for Segment {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Segment")
+            .field("msn", &self.msn)
+            .field("duration_ms", &self.duration_ms)
+            .field("uri", &DebugUrl(&self.uri))
+            .finish()
+    }
 }
 
 fn parse_err(what: &'static str, detail: impl Into<String>) -> Error {

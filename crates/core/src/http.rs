@@ -51,6 +51,20 @@ impl<T> fmt::Display for Secret<T> {
     }
 }
 
+/// `Debug`에서 서명 주소를 `redact_url`로 보여 주는 래퍼(쿼리·`hdntl` 토큰 제거).
+pub(crate) struct DebugUrl<'a>(pub &'a Url);
+
+impl fmt::Debug for DebugUrl<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(&redact_url(self.0), f)
+    }
+}
+
+/// 비밀 문자열 `Option`을 `Debug`용으로 바꾼다. 있으면 `Some(***)`, 없으면 `None`.
+pub(crate) fn masked<T>(o: &Option<T>) -> Option<Secret<()>> {
+    o.as_ref().map(|_| Secret::new(()))
+}
+
 /// 네이버 로그인 쿠키(성인 인증용).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NaverCookies {
@@ -306,6 +320,75 @@ mod tests {
             assert_clean(&e.to_string());
             assert_clean(&format!("{e:?}"));
         }
+    }
+
+    /// 리뷰 수정: 서명 주소·inKey를 품은 공개 타입의 `Debug`에 토큰이 나오지 않는다(실물 fixture).
+    #[test]
+    fn signed_types_debug_redacted() {
+        use crate::hls::{parse_master, parse_media};
+        use crate::info::{Playback, classify, parse_video_info};
+        use crate::model::{ContentRef, Resolved, Source};
+        use crate::mpd::{parse_mpd, pd_reps};
+        use crate::testutil::{fixture, fixture_str};
+
+        // 실물 inKey 값도 나오면 안 된다.
+        let raw: serde_json::Value =
+            serde_json::from_slice(&fixture("testdata/vod/video_info.json")).unwrap();
+        let in_key = raw["content"]["inKey"].as_str().unwrap().to_string();
+        let check = |s: &str| {
+            for secret in ["hmac", "hdnts", "hdntl=exp", "_lsu_sa_", &in_key] {
+                assert!(!s.contains(secret), "{secret:?}가 노출됐다: {s}");
+            }
+        };
+
+        // 빠른 다시보기: VideoContent(playback JSON), Playback::LiveRewind(master hdnts)
+        let (meta, v) = parse_video_info(&fixture("testdata/hls/video_info.json")).unwrap();
+        check(&format!("{v:?}"));
+        let pb = classify(&v).unwrap();
+        assert!(matches!(pb, Playback::LiveRewind { .. }));
+        check(&format!("{pb:?}"));
+        let Playback::LiveRewind { master_url, tracks } = pb else {
+            unreachable!()
+        };
+        let resolved = Resolved {
+            content: ContentRef::Video { video_no: 1 },
+            meta,
+            source: Source::LiveRewindHls {
+                master_url: master_url.clone(),
+                tracks,
+            },
+        };
+        check(&format!("{resolved:?}"));
+
+        // HLS variant(hdntl 경로 토큰)·media playlist·segment
+        let variants = parse_master(&fixture_str("testdata/hls/master.m3u8"), &master_url).unwrap();
+        check(&format!("{variants:?}"));
+        let media = parse_media(&fixture_str("testdata/hls/media.m3u8"), &variants[3].uri).unwrap();
+        check(&format!("{media:?}"));
+        check(&format!("{:?}", media.segments[0]));
+
+        // DASH: VideoContent·Playback::Dash(inKey), Representation·PdRep(_lsu_sa_ 쿼리)
+        let (meta, v) = parse_video_info(&fixture("testdata/vod/video_info.json")).unwrap();
+        check(&format!("{v:?}"));
+        let pb = classify(&v).unwrap();
+        assert!(matches!(pb, Playback::Dash { .. }));
+        check(&format!("{pb:?}"));
+        let enc = Playback::Encrypted {
+            method: "AES".into(),
+            video_id: "x".into(),
+            in_key: Some(in_key.clone()),
+        };
+        check(&format!("{enc:?}"));
+        let reps = parse_mpd(&fixture_str("testdata/vod/playback.mpd")).unwrap();
+        check(&format!("{reps:?}"));
+        let pd = pd_reps(&reps).unwrap();
+        assert!(!pd.is_empty());
+        let resolved = Resolved {
+            content: ContentRef::Video { video_no: 1 },
+            meta,
+            source: Source::Progressive { reps: pd },
+        };
+        check(&format!("{resolved:?}"));
     }
 
     #[test]

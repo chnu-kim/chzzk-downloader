@@ -1,7 +1,11 @@
 //! 코어가 주고받는 데이터 모델.
 
+use std::fmt;
+
 use ::url::Url;
 use serde::{Deserialize, Serialize};
+
+use crate::http::DebugUrl;
 
 /// 사용자가 준 주소가 가리키는 컨텐츠. `url::parse_content_url`로 만든다.
 ///
@@ -80,15 +84,26 @@ pub enum PlaybackKind {
 }
 
 /// PD(progressive mp4) 화질 하나와 그 다운로드 주소.
-#[derive(Clone, Debug, PartialEq, Eq)]
+///
+/// `Debug`는 주소를 `http::redact_url`로 가린다.
+#[derive(Clone, PartialEq, Eq)]
 pub struct PdRep {
     pub quality: Quality,
     /// 서명 쿼리가 든 주소. 로그·오류에는 `http::redact_url`을 거친다.
     pub url: Url,
 }
 
-/// 다운로드 소스.
-#[derive(Clone, Debug, PartialEq, Eq)]
+impl fmt::Debug for PdRep {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PdRep")
+            .field("quality", &self.quality)
+            .field("url", &DebugUrl(&self.url))
+            .finish()
+    }
+}
+
+/// 다운로드 소스. `Debug`는 서명 주소를 가린다.
+#[derive(Clone, PartialEq, Eq)]
 pub enum Source {
     /// PD 필터를 통과한 rep만
     Progressive { reps: Vec<PdRep> },
@@ -97,6 +112,21 @@ pub enum Source {
         master_url: Url,
         tracks: Vec<Quality>,
     },
+}
+
+impl fmt::Debug for Source {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Source::Progressive { reps } => {
+                f.debug_struct("Progressive").field("reps", reps).finish()
+            }
+            Source::LiveRewindHls { master_url, tracks } => f
+                .debug_struct("LiveRewindHls")
+                .field("master_url", &DebugUrl(master_url))
+                .field("tracks", tracks)
+                .finish(),
+        }
+    }
 }
 
 /// `resolve` 결과.

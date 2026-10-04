@@ -82,6 +82,10 @@ pub enum Unsupported {
     MissingMap,
     NotEnded,
     NoHlsMedia,
+    /// `EXT-X-GAP`: 표시된 세그먼트가 없다
+    Gap,
+    /// `EXT-X-SKIP`: delta playlist라 세그먼트가 빠져 있다
+    Skip,
 }
 
 /// UI 분기용 오류 종류. `Error::kind()`로 얻는다.

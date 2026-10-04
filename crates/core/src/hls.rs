@@ -16,6 +16,7 @@ use crate::error::{Error, Unsupported};
 pub struct Variant {
     pub uri: Url,
     /// master 디렉토리 기준 첫 path 세그먼트. encodingTrackId(`"720p"`)와 같다.
+    /// 디렉토리 밖의 URI면 해석한 URL의 첫 path 세그먼트다.
     pub track_id: String,
     /// `RESOLUTION=WxH`의 H
     pub height: Option<u32>,
@@ -136,11 +137,16 @@ pub fn parse_master(text: &str, base: &Url) -> Result<Vec<Variant>, Error> {
             continue;
         };
         let uri = join(base, line, WHAT)?;
-        let rel = uri
-            .as_str()
-            .strip_prefix(dir.as_str())
-            .unwrap_or_else(|| line.trim_start_matches('/'));
-        let track_id = rel.split(['/', '?']).next().unwrap_or("").to_string();
+        let track_id = match uri.as_str().strip_prefix(dir.as_str()) {
+            Some(rel) => rel.split(['/', '?']).next().unwrap_or(""),
+            // 디렉토리 밖이면 해석한 URL의 첫 비어 있지 않은 path 세그먼트를 쓴다
+            // (원문을 자르면 절대 URI에서 스킴 `https:`가 나온다).
+            None => uri
+                .path_segments()
+                .and_then(|mut s| s.find(|p| !p.is_empty()))
+                .unwrap_or(""),
+        }
+        .to_string();
         out.push(Variant {
             uri,
             track_id,
@@ -157,8 +163,9 @@ pub fn parse_master(text: &str, base: &Url) -> Result<Vec<Variant>, Error> {
 ///
 /// - 허용: 빈 줄, 주석, PDT, DATERANGE, `KEY:METHOD=NONE`, EXTINF > TARGETDURATION, 모르는 `#EXT` 태그(경고)
 /// - 거부(`Error::Unsupported`): DISCONTINUITY, 두 번째 MAP(또는 세그먼트 뒤의 MAP),
-///   KEY(METHOD≠NONE), BYTERANGE(태그·MAP 속성), ENDLIST 없음
-/// - 세그먼트가 없거나 EXTINF 없는 URI, 숫자가 아닌 값은 `Error::Parse`
+///   KEY(METHOD≠NONE), BYTERANGE(태그·MAP 속성), GAP, SKIP, ENDLIST 없음
+/// - 세그먼트가 없거나 EXTINF 없는 URI, URI 없는 EXTINF, 숫자가 아닌 값,
+///   u64를 넘는 msn은 `Error::Parse`
 pub fn parse_media(text: &str, base: &Url) -> Result<MediaPlaylist, Error> {
     const WHAT: &str = "media playlist";
     check_header(text, WHAT)?;
@@ -201,6 +208,9 @@ pub fn parse_media(text: &str, base: &Url) -> Result<MediaPlaylist, Error> {
                     .map_err(|_| parse_err(WHAT, "EXT-X-MEDIA-SEQUENCE가 숫자가 아닙니다"))?;
             }
             "#EXTINF" => {
+                if pending.is_some() {
+                    return Err(parse_err(WHAT, "URI 없이 EXTINF가 두 번 나왔습니다"));
+                }
                 let secs = value.split(',').next().unwrap_or("").trim();
                 pending = Some(parse_duration_ms(secs).ok_or_else(|| {
                     parse_err(WHAT, format!("EXTINF 값이 올바르지 않습니다: {secs}"))
@@ -230,6 +240,10 @@ pub fn parse_media(text: &str, base: &Url) -> Result<MediaPlaylist, Error> {
             }
             "#EXT-X-DISCONTINUITY" => return Err(Error::Unsupported(Unsupported::Discontinuity)),
             "#EXT-X-BYTERANGE" => return Err(Error::Unsupported(Unsupported::ByteRange)),
+            // 표시된 세그먼트가 없거나(GAP) 목록에서 세그먼트가 빠진(SKIP, delta playlist) 경우라
+            // 이어 붙이면 구멍 난 파일이 된다. PART·PRELOAD-HINT는 전체 세그먼트가 함께 있으므로 무시한다.
+            "#EXT-X-GAP" => return Err(Error::Unsupported(Unsupported::Gap)),
+            "#EXT-X-SKIP" => return Err(Error::Unsupported(Unsupported::Skip)),
             "#EXT-X-ENDLIST" => ended = true,
             "#EXT-X-STREAM-INF" => {
                 return Err(parse_err(WHAT, "master playlist입니다"));
@@ -240,9 +254,16 @@ pub fn parse_media(text: &str, base: &Url) -> Result<MediaPlaylist, Error> {
     if !ended {
         return Err(Error::Unsupported(Unsupported::NotEnded));
     }
+    if pending.is_some() {
+        return Err(parse_err(WHAT, "URI 없는 EXTINF로 끝납니다"));
+    }
     if uris.is_empty() {
         return Err(parse_err(WHAT, "세그먼트가 없습니다"));
     }
+    // 마지막 msn이 u64 안에 들어가는지 한 번에 확인한다(이후 덧셈은 넘치지 않는다).
+    media_sequence
+        .checked_add(uris.len() as u64 - 1)
+        .ok_or_else(|| parse_err(WHAT, "EXT-X-MEDIA-SEQUENCE가 너무 큽니다"))?;
     let total_duration_ms = durations.iter().map(|&d| u64::from(d)).sum();
     let segments = uris
         .into_iter()
@@ -338,6 +359,17 @@ mod tests {
         let vs = parse_master(text, &base).unwrap();
         assert_eq!(vs[0].track_id, "360p");
         assert_eq!(vs[0].height, Some(360));
+    }
+
+    /// 리뷰 수정: 디렉토리 밖 URI의 track_id가 스킴(`https:`)이 되지 않는다.
+    #[test]
+    fn master_outside_dir_track_id() {
+        let base = Url::parse("https://h/a/master.m3u8?hdnts=x").unwrap();
+        let text = "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1,RESOLUTION=1280x720\nhttps://cdn2.example/b/720p/x/chunk.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=1\n/zz/360p/x.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=1\nhttps://cdn2.example//c/x.m3u8\n";
+        let vs = parse_master(text, &base).unwrap();
+        let ids: Vec<_> = vs.iter().map(|v| v.track_id.as_str()).collect();
+        assert_eq!(ids, ["b", "zz", "c"]);
+        assert_eq!(vs[0].height, Some(720));
     }
 
     #[test]
@@ -448,6 +480,42 @@ mod tests {
         ));
     }
 
+    /// 리뷰 수정: msn이 정확히 u64::MAX에서 끝나면 받는다.
+    #[test]
+    fn media_sequence_at_u64_max() {
+        let text = "#EXTM3U\n#EXT-X-MEDIA-SEQUENCE:18446744073709551614\n#EXTINF:1,\na.ts\n#EXTINF:1,\nb.ts\n#EXT-X-ENDLIST\n";
+        let p = parse_media(text, &media_base()).unwrap();
+        assert_eq!(p.segments[1].msn, u64::MAX);
+    }
+
+    /// 리뷰 수정: URI 없는 EXTINF가 남아도 ENDLIST가 없으면 NotEnded가 먼저다.
+    #[test]
+    fn dangling_extinf_without_endlist_is_not_ended() {
+        let text = "#EXTM3U\n#EXTINF:1,\na.ts\n#EXTINF:1,\n";
+        assert!(matches!(
+            parse_media(text, &media_base()),
+            Err(Error::Unsupported(Unsupported::NotEnded))
+        ));
+    }
+
+    /// 리뷰 수정: GAP·SKIP은 거부하고 LL-HLS PART·PRELOAD-HINT는 무시한다.
+    #[test]
+    fn rejects_gap_and_skip_ignores_parts() {
+        let b = media_base();
+        let gap = "#EXTM3U\n#EXT-X-GAP\n#EXTINF:1,\na.ts\n#EXT-X-ENDLIST\n";
+        assert!(matches!(
+            parse_media(gap, &b),
+            Err(Error::Unsupported(Unsupported::Gap))
+        ));
+        let skip = "#EXTM3U\n#EXT-X-SKIP:SKIPPED-SEGMENTS=3\n#EXTINF:1,\na.ts\n#EXT-X-ENDLIST\n";
+        assert!(matches!(
+            parse_media(skip, &b),
+            Err(Error::Unsupported(Unsupported::Skip))
+        ));
+        let parts = "#EXTM3U\n#EXT-X-PART:DURATION=1,URI=\"p.mp4\"\n#EXTINF:1,\na.ts\n#EXT-X-PRELOAD-HINT:TYPE=PART,URI=\"q.mp4\"\n#EXT-X-ENDLIST\n";
+        assert_eq!(parse_media(parts, &b).unwrap().segments.len(), 1);
+    }
+
     #[test]
     fn allows_key_none() {
         let p = synthetic("media_key_none.m3u8").unwrap();
@@ -500,6 +568,11 @@ mod tests {
             "#EXTM3U\n#EXT-X-ENDLIST\n",
             "#EXTM3U\n#EXT-X-MAP:BYTERANGE_X=1\n#EXTINF:2,\na.m4v\n#EXT-X-ENDLIST\n",
             "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\nv/x.m3u8\n",
+            // 리뷰 수정: URI 없는 EXTINF(연속 두 개, 끝에 남음)
+            "#EXTM3U\n#EXTINF:2,\n#EXTINF:5,\na.m4v\n#EXT-X-ENDLIST\n",
+            "#EXTM3U\n#EXTINF:5,\na.m4v\n#EXTINF:9,\n#EXT-X-ENDLIST\n",
+            // 리뷰 수정: msn이 u64를 넘음(패닉이 아니라 Parse)
+            "#EXTM3U\n#EXT-X-MEDIA-SEQUENCE:18446744073709551615\n#EXTINF:1,\na.ts\n#EXTINF:1,\nb.ts\n#EXT-X-ENDLIST\n",
         ];
         for t in bad {
             assert!(

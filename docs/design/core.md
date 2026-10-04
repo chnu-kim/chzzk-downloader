@@ -710,7 +710,7 @@ tokio    = { version = "1.53.2", features = ["net", "test-util"] }
     - `EXT-X-MAP`이 세그먼트 뒤에 처음 나와도(앞 세그먼트는 init 없음) init이 바뀌는 지점이므로 `SecondMap`으로 거부한다. MAP의 `BYTERANGE` 속성도 `ByteRange`로 거부한다. media playlist 자리에 master(`EXT-X-STREAM-INF`)가 오면 `Parse`다.
     - `EXTINF`는 ms로 반올림(가장 가까운 정수)한다. `1.666667` → `1667`. 음수·NaN·숫자 아님은 `Parse`. 세그먼트가 0개이거나 EXTINF 없는 URI 줄은 `Parse`. `ENDLIST` 검사는 세그먼트 수 검사보다 먼저다.
     - `durations_crc`는 각 `duration_ms`를 u32 little-endian 4바이트로 이어 붙인 바이트열의 crc32다(fixture 30×2000ms = `0x84944746`).
-    - master의 `track_id`는 variant URL을 master 디렉토리(`base.join("./")`) 기준 상대 경로로 바꾼 첫 세그먼트다. 디렉토리 밖의 절대 URI면 원문의 첫 세그먼트를 쓴다. `height`는 `RESOLUTION=WxH`의 H다.
+    - master의 `track_id`는 variant URL을 master 디렉토리(`base.join("./")`) 기준 상대 경로로 바꾼 첫 세그먼트다. 디렉토리 밖의 URI면 해석한 URL의 첫 비어 있지 않은 path 세그먼트를 쓴다(26번). `height`는 `RESOLUTION=WxH`의 H다.
     - 모르는 `#EXT` 태그 경고에 `tracing`을 이 단계에서 의존성으로 넣는다(`crc32fast`도 함께).
 21. **(8단계) TLS provider.** `reqwest`의 `rustls` feature는 `hyper-rustls`의 `aws-lc-rs` provider를 켠다(`cargo tree -e features -i rustls`로 확인). 설계대로 그대로 쓴다. `aws-lc-sys` 0.45.0의 빌드 스크립트를 읽어 보면 Windows x86_64에서는 `nasm`이 PATH에 있거나 `prebuilt-nasm` feature 또는 `AWS_LC_SYS_PREBUILT_NASM=1` 환경 변수가 있어야 하고, reqwest는 그 feature를 켜지 않는다. 그래서 NASM이 없는 `windows-latest` 러너와 로컬 Windows 빌드가 실패할 수 있다(macOS에서는 확인 불가). 실패하면 (a) `core.yml`의 Windows 작업에 `AWS_LC_SYS_PREBUILT_NASM=1`(또는 NASM 설치)을 넣거나 (b) `rustls-no-provider` + `rustls/ring` 조합으로 바꾼다. 결정은 CI 결과를 보고 한다. 다른 crate가 feature 통합으로 압축 해제를 켜도 꺼지도록 `no_gzip`·`no_brotli`·`no_deflate`·`no_zstd`를 모두 호출한다. `json` feature는 넣었지만 응답은 `serde_json::from_slice`로 읽는다.
 22. **(8단계) `ClientConfig.retry`는 9단계에서 넣는다.** `RetryPolicy`가 `download/retry.rs`(9단계)에 생기기 때문이다. `ClientConfig`와 `Endpoints`는 `Default`(실서버 주소, 200ms, 10s, 30s)를 구현한다.
@@ -722,3 +722,8 @@ tokio    = { version = "1.53.2", features = ["net", "test-util"] }
     - `redact_url`은 쿼리·fragment·사용자 정보를 지우고, `hdntl=`로 시작하는 세그먼트부터 `hmac=`이 든 세그먼트까지(토큰의 `acl=*/kr/*`에 `/`가 있어 여러 세그먼트에 걸친다)를 `hdntl=***` 하나로 바꾼다.
     - 빠른 다시보기의 `encodingTrack`이 비면 `resolve`가 `NoQualities`를 낸다.
 25. **(8단계) UA의 Chrome 메이저는 `141`이다.** OS별 UA 세 개가 `chrome_major!()` 하나를 쓴다. 실서버가 UA를 검사한다는 증거는 없으므로 값은 15단계 스모크 때 필요하면 올린다. 실서버 스모크 `resolve::live_smoke`는 `#[ignore]` + `CHZZK_LIVE_VIDEO`로만 돈다.
+26. **(5~8단계 리뷰 수정)**
+    - **HLS track_id.** 디렉토리 밖 variant의 track_id를 원문이 아니라 `join`한 URL의 첫 비어 있지 않은 path 세그먼트로 바꿨다. 원문을 자르면 절대 URI에서 스킴 `https:`가 나왔다. 파일명 바로 앞 세그먼트는 쓰지 않는다(실물 경로에서는 `hdntl` 토큰 조각이다). 디렉토리 밖 URI는 여전히 받으며, 고르는 쪽은 §4.1 388행의 `height` 폴백에 기댄다. §4.1 464행("없으면 `QualityNotFound`")은 388행과 어긋나며 388행(폴백 있음)을 기준으로 본다.
+    - **URI 없는 EXTINF.** URI 전에 EXTINF가 또 나오거나 URI 없는 EXTINF로 끝나면 `Parse`다. 끝 검사는 ENDLIST 검사 뒤라서, ENDLIST 없이 잘린 playlist는 그대로 `NotEnded`다.
+    - **msn 범위.** `EXT-X-MEDIA-SEQUENCE + (세그먼트 수 - 1)`이 u64를 넘으면 패닉 대신 `Parse`다.
+    - **GAP·SKIP 거부.** `EXT-X-GAP`은 `Unsupported::Gap`, `EXT-X-SKIP`(delta playlist)은 `Unsupported::Skip`이다. 둘 다 이어 붙이면 구멍 난 파일이 된다. LL-HLS의 `EXT-X-PART`·`EXT-X-PRELOAD-HINT`는 ENDLIST playlist에서도 전체 세그먼트가 함께 나열되므로 거부하지 않고 모르는 태그로 무시한다.

@@ -782,3 +782,13 @@ tokio    = { version = "1.53.2", features = ["net", "test-util"] }
     - `settings.json`과 `cookie.json`이 둘 다 없으면 `None`. `settings.json`에 `schemaVersion`이 있으면 새 형식이므로 `None`(셸의 설정 폴더와 옛 exe 폴더가 같은 경우). 옛 `settings.json`이 깨졌으면 `Settings` 오류(값이 섞이지 않게 serde 메시지를 버린다)이고 파일은 그대로다. `cookie.json`을 읽지 못하면 Go처럼 건너뛰되 경고를 남긴다.
     - `recentVods`(없으면 `recentVodURLs` → `"제목 없음"`)는 URL이 빈 항목을 버리고 5개로 자른다. `lastQualityName`은 `^\d+p$` 그대로, `^\d+P_` → `"{n}p"`, 그 밖은 버린다(정규식 crate 없이 손으로). `downloadFolder`가 실재하지 않으면 버리고 경고한다. 평문 쿠키 경고는 settings·cookie.json 어느 쪽이든 값이 남아 있으면 낸다.
     - 결과의 `settings.imported_from = Some(dir)`이다. 저장은 셸이 `SettingsStore::update`·`CredentialStore::save`로 한다.
+45. **(15단계) 실서버 스모크 결과(2026-10-05, 비로그인).** `sortType=LATEST` 목록에서 고른 공개·비성인 컨텐츠로 `examples/dl.rs`와 `tests/live.rs`(`#[ignore]`)를 돌렸다. 모두 통과했고 코어 수정은 필요 없었다.
+    | 대상 | 방식 | 확인한 것 |
+    |---|---|---|
+    | VOD 9000007 | 빠른 다시보기 HLS(5화질, 144p로) | 약 5 MB에서 취소 → `.part`가 상자 경계에서 끝나고 `ftyp moov moof mdat emsg styp moof …`(상자 761개). `--keep`으로 2 MB에서 멈춘 뒤 다시 실행하면 3.1 MB부터 이어받음 |
+    | VOD 9000006 | DASH PD(144p) | 3 MB에서 취소 → `ftyp moov free mdat`(mdat 잘림). 2 MB에서 멈춘 뒤 Range로 이어받음 |
+    | 클립 TestClip01 | PD 720p(세로) | 끝까지 13,264,697 B, `ftyp moov free mdat`, `.part` 없음 |
+    - `tests/live.rs`는 `CHZZK_LIVE_HLS`·`CHZZK_LIVE_DASH`·`CHZZK_LIVE_CLIP`으로 대상을 받고, 없으면 조용히 통과하지 않고 패닉한다(`--ignored`로 일부러 돌릴 때만 쓰이므로). 대상은 시간이 지나면 지워지므로 고정하지 않는다. 설계 §8의 `CHZZK_LIVE_VIDEO`는 `resolve::live_smoke`(8단계)에 그대로 남는다.
+    - MP4 상자 검사기는 `tests/support/mp4.rs` 하나를 `tests/live.rs`와 `examples/dl.rs`가 `#[path]`로 함께 쓴다(크기 1 largesize, 0 끝까지, 마지막 상자 잘림 허용). 검사기 자체는 오프라인 테스트 `live::walk_boxes_on_fixture`가 실물 fixture로 검사한다.
+    - UA의 Chrome 141(25번)로 막히지 않았다.
+    - **성인 PD 쿠키 필요 여부는 미실측이다.** 로그인 쿠키가 필요한데, 저장소의 실제 사용자 파일(루트 `settings.json`, `dependent/`)은 읽지 않는다는 작업 규칙 때문에 쓸 수 있는 쿠키가 없었다. `examples/dl.rs`가 `CHZZK_NID_AUT`·`CHZZK_NID_SES`(+`CHZZK_COOKIES_ON_MEDIA=1`)로 쿠키를 받으므로 사용자가 직접 실측할 수 있다. 그때까지 결정 8(미디어에 쿠키 없음)과 `cookies_on_media` 스위치를 그대로 둔다.

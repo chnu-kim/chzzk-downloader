@@ -149,6 +149,30 @@ fn concurrent_updates_are_not_lost() {
     assert_eq!(reopened.get(), store.get());
 }
 
+/// 갱신 하나라도 잃으면 합이 모자란다(최근 VOD는 5개 상한이라 잃은 갱신을 가린다).
+#[test]
+fn concurrent_updates_all_survive() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = std::sync::Arc::new(SettingsStore::open(dir.path().to_path_buf()).unwrap());
+    let start = store.get().segment_concurrency;
+    let handles: Vec<_> = (0..8)
+        .map(|_| {
+            let store = store.clone();
+            std::thread::spawn(move || {
+                for _ in 0..10 {
+                    store.update(|s| s.segment_concurrency += 1).unwrap();
+                }
+            })
+        })
+        .collect();
+    for h in handles {
+        h.join().unwrap();
+    }
+    assert_eq!(store.get().segment_concurrency, start + 80);
+    let reopened = SettingsStore::open(dir.path().to_path_buf()).unwrap();
+    assert_eq!(reopened.get().segment_concurrency, start + 80);
+}
+
 mod credentials {
     use super::*;
 
@@ -182,7 +206,9 @@ mod credentials {
         use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
         let store = CredentialStore::new(dir.path().to_path_buf());
-        // 넓은 권한의 파일이 이미 있어도 저장 뒤에는 0600이다.
+        // 넓은 권한의 파일이 이미 있어도 저장 뒤에는 0600이다. 끝 상태만 본다: 원자적 쓰기가
+        // 새 inode로 바꾸므로 이 경우는 chmod까지 가지 않아도 통과한다. chmod 자체는
+        // `credentials::tests::restrict_permissions_narrows`가 검사한다.
         std::fs::write(store.path(), b"{}").unwrap();
         std::fs::set_permissions(store.path(), std::fs::Permissions::from_mode(0o644)).unwrap();
         store.save(&NaverCookies::new("a", "b")).unwrap();
@@ -370,6 +396,59 @@ mod legacy {
         let imp = import_legacy(dir.path()).unwrap().unwrap();
         assert_eq!(imp.settings.download_folder, None);
         assert!(!imp.warnings.is_empty());
+    }
+
+    /// 셸의 설정 폴더가 옛 exe 폴더와 같은 경우: `SettingsStore`가 먼저 열고 써도
+    /// 옛 원본은 `settings.json.v1`로 남고, `import_legacy`가 그것을 읽는다.
+    #[test]
+    fn same_folder_store_then_import() {
+        let s = go_settings(
+            r#"{"isAdultContent":true,"nidAut":"A","nidSes":"S","lastQualityName":"720P_1280_2500_192"}"#,
+        );
+        let (dir, snap) = legacy_dir(Some(&s), None);
+        let store = SettingsStore::open(dir.path().to_path_buf()).unwrap();
+        store.update(|_| {}).unwrap();
+        store.update(|s| s.last_url = Some("u".into())).unwrap();
+
+        let v1 = dir.path().join(chzzk_core::settings::LEGACY_BACKUP_FILE);
+        assert_eq!(std::fs::read(&v1).unwrap(), snap);
+        let imp = import_legacy(dir.path()).unwrap().unwrap();
+        assert_eq!(imp.cookies, Some(NaverCookies::new("A", "S")));
+        assert!(imp.settings.use_naver_cookies);
+        assert_eq!(imp.settings.last_quality_label.as_deref(), Some("720p"));
+
+        // 새 형식 파일을 연 저장소는 .v1을 만들지 않는다.
+        let fresh = tempfile::tempdir().unwrap();
+        let store = SettingsStore::open(fresh.path().to_path_buf()).unwrap();
+        store.update(|_| {}).unwrap();
+        let store = SettingsStore::open(fresh.path().to_path_buf()).unwrap();
+        store.update(|_| {}).unwrap();
+        assert!(
+            !fresh
+                .path()
+                .join(chzzk_core::settings::LEGACY_BACKUP_FILE)
+                .exists()
+        );
+        assert!(import_legacy(fresh.path()).unwrap().is_none());
+    }
+
+    /// 상대 경로 `downloadFolder`는 현재 작업 폴더가 아니라 옛 폴더 기준이다.
+    #[test]
+    fn import_relative_download_folder() {
+        // 테스트의 작업 폴더(crates/core)에 있는 이름이라 예전 구현은 이것을 남겼다.
+        let s = go_settings(r#"{"downloadFolder":"src"}"#);
+        let (dir, _) = legacy_dir(Some(&s), None);
+        let imp = import_legacy(dir.path()).unwrap().unwrap();
+        assert_eq!(imp.settings.download_folder, None);
+        assert!(!imp.warnings.is_empty());
+
+        let s = go_settings(r#"{"downloadFolder":"videos"}"#);
+        let (dir, _) = legacy_dir(Some(&s), None);
+        std::fs::create_dir(dir.path().join("videos")).unwrap();
+        let imp = import_legacy(dir.path()).unwrap().unwrap();
+        let got = imp.settings.download_folder.unwrap();
+        assert!(got.is_absolute(), "{got:?}");
+        assert_eq!(got, dir.path().join("videos"));
     }
 
     #[test]

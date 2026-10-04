@@ -4,9 +4,11 @@
 //! `CredentialStore::save`)이다.
 //!
 //! 옛 위치: `{dir}/settings.json`, `{dir}/dependent/cookie.json`(dir은 옛 실행 파일 폴더).
+//! 셸의 설정 폴더와 옛 폴더가 같아 `SettingsStore`가 이미 새 형식으로 덮어썼으면,
+//! 그때 보존한 `{dir}/settings.json.v1`을 읽는다.
 
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use serde::Deserialize;
 
@@ -15,8 +17,8 @@ use crate::error::Error;
 use crate::fsutil::map_io_error;
 use crate::http::NaverCookies;
 use crate::settings::{
-    MAX_RECENT_VODS, RecentVod, SETTINGS_FILE, UserSettings, empty_str_as_none, null_as_default,
-    parse_object,
+    LEGACY_BACKUP_FILE, MAX_RECENT_VODS, RecentVod, SETTINGS_FILE, UserSettings, empty_str_as_none,
+    null_as_default, parse_object,
 };
 
 /// 옛 쿠키 파일(`{dir}/dependent/cookie.json`).
@@ -75,7 +77,9 @@ struct GoRecentVod {
 /// `dir`의 옛 설정을 읽어 새 형식으로 바꾼다.
 ///
 /// - `settings.json`과 `dependent/cookie.json`이 둘 다 없으면 `None`.
-/// - `settings.json`이 이미 새 형식(`schemaVersion` 있음)이면 `None`(옛 파일이 아니다).
+/// - `settings.json`이 이미 새 형식(`schemaVersion` 있음)이면 `settings.json.v1`(덮어쓰기 전에
+///   보존한 원본)을 대신 읽는다. 그것도 없으면 `None`(옛 파일이 아니다).
+/// - 상대 경로 `downloadFolder`는 `dir` 기준으로 풀어 절대 경로로 저장한다(Go는 exe 폴더에서 실행됐다).
 /// - `settings.json`이 깨졌으면 `Settings` 오류. 파일은 그대로 둔다.
 /// - `cookie.json`을 읽을 수 없으면 경고만 남긴다(Go도 조용히 빈 맵으로 처리했다).
 pub fn import_legacy(dir: &Path) -> Result<Option<LegacyImport>, Error> {
@@ -104,11 +108,16 @@ pub fn import_legacy(dir: &Path) -> Result<Option<LegacyImport>, Error> {
     }
 
     let go: GoSettings = match &settings_bytes {
-        Some(b) => parse_object(b).map_err(|_| {
-            // serde 메시지에는 값 조각이 들어갈 수 있다(평문 쿠키). 원문 오류는 버린다.
-            Error::Settings("옛 settings.json 형식이 올바르지 않습니다".to_string())
-        })?,
+        Some(b) => parse_legacy(b)?,
         None => GoSettings::default(),
+    };
+    let go = if go.schema_version.is_some() {
+        match read_optional(&dir.join(LEGACY_BACKUP_FILE))? {
+            Some(b) => parse_legacy(&b)?,
+            None => return Ok(None),
+        }
+    } else {
+        go
     };
     if go.schema_version.is_some() {
         return Ok(None);
@@ -131,7 +140,7 @@ pub fn import_legacy(dir: &Path) -> Result<Option<LegacyImport>, Error> {
         warnings.push(WARN_PLAINTEXT_COOKIES.to_string());
     }
 
-    let download_folder = match go.download_folder.map(PathBuf::from) {
+    let download_folder = match go.download_folder.map(|p| dir.join(p)) {
         Some(p) if p.is_dir() => Some(p),
         Some(_) => {
             warnings.push("옛 다운로드 폴더가 없어 기본 폴더를 씁니다".to_string());
@@ -178,6 +187,14 @@ pub fn import_legacy(dir: &Path) -> Result<Option<LegacyImport>, Error> {
         cookies,
         warnings,
     }))
+}
+
+/// 옛 settings.json을 읽는다.
+fn parse_legacy(b: &[u8]) -> Result<GoSettings, Error> {
+    parse_object(b).map_err(|_| {
+        // serde 메시지에는 값 조각이 들어갈 수 있다(평문 쿠키). 원문 오류는 버린다.
+        Error::Settings("옛 settings.json 형식이 올바르지 않습니다".to_string())
+    })
 }
 
 /// 옛 `lastQualityName`을 새 라벨로 바꾼다.

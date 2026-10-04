@@ -112,4 +112,18 @@ mod tests {
             NaverCookies::new("a", "b")
         );
     }
+
+    /// 원자적 쓰기가 0600을 보장하지 못하는 경우(다른 umask·파일 시스템)를 위한 이중 방어 자체.
+    #[cfg(unix)]
+    #[test]
+    fn restrict_permissions_narrows() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("c.json");
+        std::fs::write(&p, b"{}").unwrap();
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o644)).unwrap();
+        restrict_permissions(&p).unwrap();
+        let mode = std::fs::metadata(&p).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
 }

@@ -111,7 +111,7 @@ Content-Type: application/json
 
 | 항목 | 기존 웹 앱 방식 | 데스크톱(Worker) 재사용 |
 |---|---|---|
-| state/CSRF | `crypto.randomUUID()`를 httpOnly 쿠키(`__Host-oauth_state`, SameSite=Lax, 10분)에 저장, 콜백에서 쿼리 `state`와 비교. 불일치·누락은 실패 처리, `code`만 없고 state가 맞으면 취소로 간주 | 쿠키 대신 **Worker KV에 state -> 세션 id 매핑**(TTL 10분)으로 바꾼다. 데스크톱이 시작한 요청과 브라우저 콜백이 같은 쿠키 항아리를 쓰지 않을 수 있어서다. 일회용 소비 후 삭제는 유지 |
+| state/CSRF | `crypto.randomUUID()`를 httpOnly 쿠키(`__Host-oauth_state`, SameSite=Lax, 10분)에 저장, 콜백에서 쿼리 `state`와 비교. 불일치·누락은 실패 처리, `code`만 없고 state가 맞으면 취소로 간주 | 쿠키 대신 **Durable Object(`LoginBroker`)에 state -> 세션 id 매핑**(10분 만료)으로 바꾼다. KV는 최종 일관성이라 일회용 소비를 보장하지 못한다. 데스크톱이 시작한 요청과 브라우저 콜백이 같은 쿠키 항아리를 쓰지 않을 수 있어서다. 일회용 소비 후 삭제는 유지 |
 | 오픈 리다이렉트 | `next` 경로 검증(`sanitizeNextPath`) | 불필요. 랜딩 페이지 로그인에만 필요 |
 | 토큰 교환 | JSON POST, 10초 타임아웃, `content ?? json` 폴백, 오류 본문은 버리고 `code`만 로깅 | 그대로 이식(Worker의 `fetch` + `AbortSignal.timeout`). 오류 본문 비로깅 원칙 유지 |
 | CHZZK 토큰 보관 | **저장하지 않는다.** `users/me` 조회에만 쓰고 버림 | 동일하게 버린다. 앱은 CHZZK 토큰이 필요 없다(채널 ID만 필요). 갱신·폐기 구현도 불필요. 필요하면 로그인 직후 `revoke`로 정리 가능하나, 그 동작은 같은 앱의 모든 토큰을 지우니 샘플 앱 동시 사용 시 주의 |
@@ -131,8 +131,8 @@ Redirect 규칙이 불확실하므로 **Worker 콜백(HTTPS 고정 URL 하나)�
 앱(Tauri)            Worker                        시스템 브라우저          치지직
  |  POST /auth/start    |                              |                    |
  |--------------------->| sid=랜덤 128bit, state=랜덤    |                    |
- |                      | KV: state -> {sid}, TTL 10m  |                    |
- |                      | KV: sid  -> {status:pending}  |                    |
+ |                      | DO: state -> {sid}, 만료 10m  |                    |
+ |                      | DO: sid  -> {status:pending}  |                    |
  |<---------------------| {sid, loginUrl}               |                    |
  | 시스템 브라우저로 loginUrl 열기 (open::that)            |                    |
  |-------------------------------------------------->  GET loginUrl         |
@@ -141,20 +141,22 @@ Redirect 규칙이 불확실하므로 **Worker 콜백(HTTPS 고정 URL 하나)�
  |                      |------------------------------------------------->  |
  |                      |                               사용자 로그인/동의      |
  |                      |<------------------------- 302 /auth/callback?code&state
- |                      | KV에서 state 조회 후 즉시 삭제 (CSRF, 일회용)          |
+ |                      | DO에서 state 조회·삭제를 한 트랜잭션으로 (CSRF, 일회용) |
  |                      | POST /auth/v1/token (code, state, secret) --------->|
  |                      | GET /open/v1/users/me --------------------------->  |
  |                      | channelId 허용목록 검사                              |
- |                      | 앱 세션 토큰 발급, KV: sid -> {status:ok, token}, TTL 2m |
+ |                      | 앱 세션 토큰 발급, DO: sid -> {status:ok, token}, 만료 2m |
  |                      |----------------------------->  "로그인 완료, 앱으로 돌아가세요" 페이지
  |  GET /auth/poll?sid  |                              |                    |
  |--------------------->| (2초 간격, 최대 약 5분)                              |
  |<---------------------| {pending} ... {ok, token, channelId, channelName}     |
- |                      | 응답 직후 sid 항목 삭제 (1회 수령)                     |
- | 토큰을 OS 키체인(또는 앱 데이터 디렉토리 파일)에 저장                          |
+ |                      | 같은 트랜잭션에서 읽고 삭제 (1회 수령)                 |
+ | 토큰을 앱 데이터 디렉토리의 credentials.json(0600)에 저장 (docs/design/core.md §1-15) |
 ```
 
 ### 설계 메모
+
+- **저장소는 강한 일관성이 필수다.** state·sid 발급과 소비는 싱글턴 Durable Object(`LoginBroker`, SQLite 스토리지) 하나가 직렬화한다. 소비는 "조회 → 상태 확인 → 삭제"를 `transactionSync` 안에서 처리해, 동시·중복 콜백이나 폴링이 같은 토큰을 두 번 받지 못하게 한다. 만료는 레코드의 `expiresAt` 비교와 DO alarm 정리로 처리한다. KV는 이 흐름에 쓰지 않는다(허용목록처럼 비밀이 아니고 60초 전파 지연이 허용되는 데이터에만 쓸 수 있다).
 
 - `sid`는 폴링 비밀이다. 128bit 이상 랜덤, 유출 시 토큰 탈취가 가능하므로 `start`를 호출한 앱만 알도록 하고(브라우저 URL에는 `state`만 싣는다), poll 응답은 1회 수령 후 삭제한다. 앱에서 `sid`와 별도로 **poll secret**(앱이 만든 랜덤 값의 해시를 start에서 저장)을 쓰면 더 안전하다. PKCE와 같은 발상이다.
 - 허용목록 불일치면 `status:denied`로 종결하고 토큰을 발급하지 않는다.
@@ -166,7 +168,7 @@ Redirect 규칙이 불확실하므로 **Worker 콜백(HTTPS 고정 URL 하나)�
 
 | 방식 | 장점 | 단점/리스크 |
 |---|---|---|
-| **Worker 콜백 + 폴링 (권장)** | 등록 URL이 HTTPS 하나로 고정, 플랫폼 차이 없음, 규칙 확인 불필요 | 폴링 필요, 서버 상태(KV) 필요 |
+| **Worker 콜백 + 폴링 (권장)** | 등록 URL이 HTTPS 하나로 고정, 플랫폼 차이 없음, 규칙 확인 불필요 | 폴링 필요, 서버 상태(Durable Object) 필요 |
 | 딥링크(`chzzkdl://`) | 즉시 복귀 | 커스텀 스킴 등록 허용 여부 확인 불가. Linux AppImage·미서명 macOS에서 스킴 등록 불안정 |
 | loopback 임의 포트 | 서버 불필요 | 임의 포트 일치 규칙 확인 불가. 방화벽·보안 소프트웨어 영향 |
 

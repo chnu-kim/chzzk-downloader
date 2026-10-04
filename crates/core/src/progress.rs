@@ -82,8 +82,8 @@ pub struct Meter {
     interval: Duration,
     last_emit: Option<Instant>,
     last_phase: Option<Phase>,
-    /// (시각, 바이트, 처리한 미디어 초)
-    samples: VecDeque<(Instant, u64, f64)>,
+    /// (시각, 바이트, 처리한 미디어 초). 미디어 초는 HLS에서만 있다.
+    samples: VecDeque<(Instant, u64, Option<f64>)>,
 }
 
 impl Meter {
@@ -98,9 +98,15 @@ impl Meter {
 
     /// `p`를 관찰해 `speed_bps`·`eta_secs`를 채우고, 지금 보내야 하면 true.
     pub fn observe(&mut self, p: &mut Progress, now: Instant, force: bool) -> bool {
-        let media_done = p.media_secs.map_or(0.0, |(d, _)| d);
+        let media_done = p.media_secs.map(|(d, _)| d);
         // 이어받기·처음부터 다시(바이트 감소)면 창을 새로 시작한다.
-        if self.samples.back().is_some_and(|&(_, b, _)| p.bytes < b) {
+        // 미디어 초가 처음 들어올 때도 새로 시작한다. 이어받기면 그 값에 이미 받은 분량이 들어 있어
+        // 0초부터 잰 처리율이 부풀고 ETA가 터무니없이 작아진다.
+        if self
+            .samples
+            .back()
+            .is_some_and(|&(_, b, m)| p.bytes < b || (m.is_none() && media_done.is_some()))
+        {
             self.samples.clear();
         }
         let push = self
@@ -149,7 +155,7 @@ impl Meter {
                 Some(((total - p.bytes) as f64 / bytes_rate) as u64)
             }
             (None, Some((done, total))) => {
-                let media_rate = (done - m0) / dt;
+                let media_rate = (done - m0.unwrap_or(0.0)) / dt;
                 (media_rate > 0.0 && done < total).then(|| ((total - done) / media_rate) as u64)
             }
             _ => None,
@@ -344,6 +350,27 @@ mod tests {
         m.observe(&mut p, t0 + Duration::from_secs(2), false);
         assert_eq!(p.speed_bps, Some(500));
         assert_eq!(p.eta_secs, Some(18));
+    }
+
+    /// 이어받기: 첫 보고는 이어받은 바이트만 있고 미디어 초가 없다. 그다음 보고의 미디어 초(이미 받은 194초)를
+    /// 방금 받은 것으로 세면 ETA가 터무니없이 작다.
+    #[test]
+    fn eta_after_resume() {
+        let t0 = Instant::now();
+        let s = |ms: u64| t0 + Duration::from_millis(ms);
+        let mut m = Meter::new(Duration::ZERO);
+        let mut p = progress(Phase::Resolving, 5_000_000);
+        m.observe(&mut p, s(0), false);
+        p.phase = Phase::Downloading;
+        p.media_secs = Some((194.0, 3565.0));
+        p.bytes = 5_100_000;
+        m.observe(&mut p, s(1000), false);
+        assert!(p.eta_secs.is_none_or(|e| e > 600), "{:?}", p.eta_secs);
+        // 2초에 미디어 10초 → 5배속, 남은 3361초 → 672초
+        p.media_secs = Some((204.0, 3565.0));
+        p.bytes = 5_200_000;
+        m.observe(&mut p, s(3000), false);
+        assert_eq!(p.eta_secs, Some(672));
     }
 
     /// 5초 창: 오래된 표본은 속도에 들어가지 않는다.

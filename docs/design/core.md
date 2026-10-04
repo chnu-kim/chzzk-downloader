@@ -740,3 +740,11 @@ tokio    = { version = "1.53.2", features = ["net", "test-util"] }
 28. **(9단계) 재시도 세부.** `RetryPolicy.max_attempts`는 첫 시도를 **포함한** 횟수(기본 5)이고 `RetryPolicy::none()`(1회)이 테스트의 `ZeroRetry`다. `delay(n) = min(base·2ⁿ, cap) × [0.75, 1.25]`. `Failure::Retry`는 재시도 소진 시 낼 오류를 담는다(`Retry(Error)`). `classify_failure`는 `reqwest::Error`를 소유로 받는다(`Error::Network`로 옮기기 위해). 408도 `Retry`다(24번의 `is_resumable`과 맞춤). builder·redirect 오류는 `Fatal`.
 29. **(9단계) fsutil 세부.** `map_io_error`는 `ErrorKind::StorageFull`을 먼저 보고, 원시 코드는 OS별로 본다: unix 28(ENOSPC), Windows 112·39. Linux 112는 EHOSTDOWN, 39는 ENOTEMPTY이고 Windows 28은 용지 없음이라 §8.2의 "28/112/39" 테스트도 cfg로 나눴다. `rename_with_retry`는 `PermissionDenied`(모든 OS)와 Windows 32·33을 일시 잠금으로 보고 100·200·400·800·1600ms 뒤 재시도하며(합 3.1초), 끝내 실패하면 `FileLocked { path: 최종 경로 }`다. `atomic_write`는 같은 디렉토리의 `tempfile` → `sync_all` → `persist`다.
 30. **(9단계) 의존성.** `tokio`를 일반 의존성(`rt`, `macros`, `time`, `sync`)으로 옮기고 `tokio-util`·`futures-util`·`tempfile`을 넣었다. `ClientConfig.retry`(22번)를 넣었고 통합 테스트 설정은 대기 1~4ms 정책을 쓴다.
+31. **(10단계) 다운로드 골격 세부.**
+    - 오류로 끝날 때 `download`가 한 곳에서 정리한다. `is_resumable()`이면 `checkpoint(|_| {})`로 받은 만큼 남기고, 아니면 잠금을 쥔 채 `discard`한다. 엔진은 쓰기 직후 `PartFile::stage`로 다음 checkpoint 상태(HLS `next_index` 등)를 갱신해 두므로, 이 공통 checkpoint가 쓴 바이트와 맞지 않는 sidecar를 남기지 않는다.
+    - 재시도 횟수(`attempts`)는 "진전 없이 연달아 실패한 요청 수"다. 바이트를 받은 뒤 끊기면 0으로 돌린다. 긴 다운로드가 드문 끊김을 합산해 실패하지 않게 하려는 것이다. 재조회 횟수는 작업 전체로 센다(상한 8, 9번째 요청에서 `RefreshExhausted`).
+    - "재조회 직후 같은 요청"은 재조회 뒤 2xx(또는 완료 판정 416)를 받기 전까지다. 그 사이 403이면 `AuthRequired { 403 }`이고 `.part`를 지운다(§3.6).
+    - 416은 `offset > 0`, `Content-Range: bytes */N`의 N(없으면 sidecar 값)이 offset과 같고 sidecar 값과도 어긋나지 않을 때만 완료다.
+    - 2xx 중 200·206이 아닌 응답은 `Parse { what: "media" }`다. `resolve`(재조회 포함)의 네트워크 오류는 재시도하지 않고 그대로 낸다(`.part`는 남는다).
+    - 이 단계에서 진행률은 매 이벤트를 그대로 보낸다(스로틀·속도·ETA는 13단계 `Meter`). 빠른 다시보기 분기는 11단계에서 연결한다.
+    - `tokio_util::sync::CancellationToken`을 crate 루트에서 재노출한다. `download::DEFAULT_CONCURRENCY`(4)·`MAX_CONCURRENCY`(8) 상수를 둔다.

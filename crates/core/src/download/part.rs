@@ -106,7 +106,10 @@ pub struct PartFile {
     part: PathBuf,
     sidecar_path: PathBuf,
     final_path: PathBuf,
+    /// 마지막으로 디스크에 기록한 sidecar
     sidecar: Sidecar,
+    /// 다음 checkpoint에 기록할 상태. 엔진은 쓴 바이트와 맞도록 `stage`로 갱신한다.
+    staged: Sidecar,
     /// 쓴 바이트 수(버퍼 포함)
     written: u64,
 }
@@ -206,6 +209,7 @@ impl PartFile {
             sidecar_path: sc_path,
             final_path: final_path.to_path_buf(),
             written: sidecar.committed_len,
+            staged: sidecar.clone(),
             sidecar,
         }))
     }
@@ -227,6 +231,7 @@ impl PartFile {
             sidecar_path: sc_path,
             final_path: final_path.to_path_buf(),
             written: 0,
+            staged: sidecar.clone(),
             sidecar,
         })
     }
@@ -251,6 +256,19 @@ impl PartFile {
         &self.part
     }
 
+    /// 다음 checkpoint에 기록할 상태를 바꾼다(디스크에는 아직 쓰지 않는다).
+    ///
+    /// 엔진은 쓴 바이트와 상태(예: HLS `next_index`)가 늘 맞도록 쓰기 직후에 부른다.
+    /// 그래야 오류·취소 경로의 `checkpoint(|_| {})`가 일관된 sidecar를 남긴다.
+    pub fn stage(&mut self, update: impl FnOnce(&mut Sidecar)) {
+        update(&mut self.staged);
+    }
+
+    /// 다음 checkpoint에 기록할 상태.
+    pub fn staged(&self) -> &Sidecar {
+        &self.staged
+    }
+
     /// 버퍼에 쓴다. 디스크 부족은 `DiskFull`.
     pub fn write(&mut self, buf: &[u8]) -> Result<(), Error> {
         self.w
@@ -262,15 +280,15 @@ impl PartFile {
 
     /// 지금까지 쓴 바이트를 durable하게 만들고 sidecar를 갱신한다.
     ///
-    /// 순서: `flush` → `sync_data` → `committed_len = written`, `update` 적용 → sidecar 원자적 쓰기.
-    /// 어느 단계에서 실패해도 기억한 sidecar(`committed_len`)는 바뀌지 않는다.
+    /// 순서: `flush` → `sync_data` → `committed_len = written`, `update`를 staged 상태에 적용 →
+    /// sidecar 원자적 쓰기. 어느 단계에서 실패해도 기록된 sidecar(`committed_len`)는 바뀌지 않는다.
     pub async fn checkpoint(&mut self, update: impl FnOnce(&mut Sidecar)) -> Result<(), Error> {
         self.w
             .flush()
             .map_err(|e| map_io_error("write", &self.part, e))?;
-        let mut next = self.sidecar.clone();
+        update(&mut self.staged);
+        let mut next = self.staged.clone();
         next.committed_len = self.written;
-        update(&mut next);
         let f = self
             .w
             .get_ref()
@@ -290,6 +308,7 @@ impl PartFile {
             path: self.part.clone(),
             source: io::Error::other(e.to_string()),
         })??;
+        self.staged = next.clone();
         self.sidecar = next;
         Ok(())
     }
@@ -462,6 +481,22 @@ mod tests {
         assert_eq!(std::fs::read(&path).unwrap(), b"hello world");
         assert!(!part_path(&out).exists());
         assert!(!sidecar_path(&out).exists());
+    }
+
+    /// stage한 상태는 다음 checkpoint에 함께 기록된다.
+    #[tokio::test]
+    async fn staged_state_goes_with_checkpoint() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("a.mp4");
+        let mut p = PartFile::create(&out, sidecar()).unwrap();
+        p.write(b"seg").unwrap();
+        p.stage(|s| s.hls.as_mut().unwrap().next_index = 1);
+        assert_eq!(p.sidecar().hls.unwrap().next_index, 0);
+        p.checkpoint(|_| {}).await.unwrap();
+        assert_eq!(p.sidecar().hls.unwrap().next_index, 1);
+        assert_eq!(p.sidecar().committed_len, 3);
+        let on_disk = read_sidecar(&sidecar_path(&out)).unwrap();
+        assert_eq!(on_disk, *p.sidecar());
     }
 
     /// 크래시로 `.part`가 `committed_len`보다 길면 꼬리를 잘라 내고 이어 쓴다.

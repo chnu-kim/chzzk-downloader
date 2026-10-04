@@ -1,7 +1,7 @@
 //! 치지직 클라이언트: 엔드포인트·설정과 `resolve`(설계 §3.3·§4.1).
 //!
 //! `resolve`는 목록 조회와 다운로드 직전 재조회에 같은 함수를 쓴다(서명 URL이 만료되므로).
-//! `download`는 다운로드 단계에서 붙인다.
+//! `download`는 `download/mod.rs`에 있다.
 
 use std::time::Duration;
 
@@ -194,6 +194,16 @@ impl Chzzk {
             return Err(Error::HttpStatus { status, kind });
         }
         read_capped(resp, MAX_API_BODY).await
+    }
+
+    /// 미디어 GET 요청(`RequestKind::Media` 헤더). 상태 코드 해석은 다운로드 엔진이 한다.
+    pub(crate) fn media_get(&self, url: &Url) -> reqwest::RequestBuilder {
+        tracing::debug!(url = %http::redact_url(url), "GET media");
+        self.http.get(url.clone()).headers(http::headers(
+            RequestKind::Media,
+            self.cookie.as_ref(),
+            self.cfg.cookies_on_media,
+        ))
     }
 }
 

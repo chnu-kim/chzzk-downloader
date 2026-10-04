@@ -21,7 +21,9 @@ pub mod url;
 mod testutil;
 
 pub use client::{Chzzk, ClientConfig, Endpoints};
-pub use download::{RetryPolicy, discard_partial};
+pub use download::{
+    DownloadOutcome, DownloadRequest, DuplicatePolicy, RetryPolicy, discard_partial,
+};
 pub use error::{Error, ErrorKind, Unsupported};
 pub use http::{NaverCookies, RequestKind, Secret};
 pub use info::Playback;
@@ -31,4 +33,5 @@ pub use model::{
 pub use naming::Platform;
 pub use ownership::is_own_content;
 pub use progress::{Phase, Progress};
+pub use tokio_util::sync::CancellationToken;
 pub use url::parse_content_url;

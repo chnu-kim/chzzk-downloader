@@ -124,15 +124,30 @@ impl Error {
 
     /// `.part`가 남아 있어 같은 요청으로 이어받을 수 있는가.
     ///
-    /// false인 오류로 끝나면 코어가 `.part`와 sidecar를 지운다.
+    /// false인 오류로 끝나면 코어가 `.part`와 sidecar를 지운다. 지우기는 되돌릴 수 없으므로
+    /// 받은 바이트가 틀렸거나 같은 요청이 끝내 완료될 수 없음을 증명하는 오류만 false다.
+    /// 나머지는 `.part`를 남긴다(재개 시 sidecar 동일성·지문 검증이 낡은 `.part`를 거른다).
+    /// 새 변형이 분류 없이 들어오지 않도록 `_` arm을 두지 않는다.
     pub fn is_resumable(&self) -> bool {
-        matches!(
-            self,
+        match self {
+            Error::LengthMismatch { .. }
+            | Error::SourceChanged { .. }
+            | Error::AuthRequired { .. }
+            | Error::EncryptedVod { .. }
+            | Error::Unsupported(_) => false,
             Error::RefreshExhausted
-                | Error::Cancelled
-                | Error::DiskFull { .. }
-                | Error::FileLocked { .. }
-        )
+            | Error::Cancelled
+            | Error::DiskFull { .. }
+            | Error::FileLocked { .. }
+            | Error::Io { .. }
+            | Error::Parse { .. }
+            | Error::Api { .. }
+            | Error::NoPlayback { .. }
+            | Error::InvalidUrl
+            | Error::NoQualities
+            | Error::QualityNotFound { .. }
+            | Error::Settings(_) => true,
+        }
     }
 }
 
@@ -190,6 +205,42 @@ mod tests {
             .is_resumable()
         );
         assert!(!Error::SourceChanged { detail: "x".into() }.is_resumable());
+        assert!(
+            !Error::EncryptedVod {
+                method: "AES-128".into()
+            }
+            .is_resumable()
+        );
+        assert!(!Error::Unsupported(Unsupported::Discontinuity).is_resumable());
+    }
+
+    /// 일시적일 수 있는 오류는 `.part`를 지우지 않는다(리뷰 회귀).
+    #[test]
+    fn transient_errors_keep_part() {
+        assert!(
+            Error::Io {
+                op: "write",
+                path: PathBuf::from("a.part"),
+                source: std::io::Error::other("EIO"),
+            }
+            .is_resumable()
+        );
+        assert!(
+            Error::Parse {
+                what: "video info",
+                detail: "html body".into()
+            }
+            .is_resumable()
+        );
+        assert!(
+            Error::Api {
+                code: 500,
+                message: None
+            }
+            .is_resumable()
+        );
+        assert!(Error::NoPlayback { adult: false }.is_resumable());
+        assert!(Error::Settings("x".into()).is_resumable());
     }
 
     #[test]

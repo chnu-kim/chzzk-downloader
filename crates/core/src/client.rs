@@ -213,7 +213,7 @@ pub(crate) const MAX_API_BODY: usize = 8 * 1024 * 1024;
 /// 응답 본문을 `max` 바이트까지만 읽는다. 넘으면 `Error::Parse`.
 ///
 /// `read_timeout`은 idle만 끊으므로, 계속 흘러오는 본문은 이 상한으로 막는다.
-async fn read_capped(mut resp: reqwest::Response, max: usize) -> Result<Bytes, Error> {
+pub(crate) async fn read_capped(mut resp: reqwest::Response, max: usize) -> Result<Bytes, Error> {
     let too_large = || Error::Parse {
         what: "response",
         detail: format!("응답이 너무 큽니다(상한 {max}바이트)"),

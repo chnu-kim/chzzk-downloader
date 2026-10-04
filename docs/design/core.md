@@ -748,3 +748,10 @@ tokio    = { version = "1.53.2", features = ["net", "test-util"] }
     - 2xx 중 200·206이 아닌 응답은 `Parse { what: "media" }`다. `resolve`(재조회 포함)의 네트워크 오류는 재시도하지 않고 그대로 낸다(`.part`는 남는다).
     - 이 단계에서 진행률은 매 이벤트를 그대로 보낸다(스로틀·속도·ETA는 13단계 `Meter`). 빠른 다시보기 분기는 11단계에서 연결한다.
     - `tokio_util::sync::CancellationToken`을 crate 루트에서 재노출한다. `download::DEFAULT_CONCURRENCY`(4)·`MAX_CONCURRENCY`(8) 상수를 둔다.
+32. **(11단계) HLS 엔진 세부.**
+    - 지문 비교는 세그먼트 수·EXTINF crc·init 길이다(결정 13). `media_sequence`는 sidecar에 기록만 하고 비교하지 않는다(§5.4 2번과 다름). 세그먼트를 playlist 안 위치(index)로 고르므로 msn이 바뀌어도 이어 붙이는 바이트는 같고, research §11.2(갱신 후 MSN)는 미관찰이라 이 값 하나로 `.part`를 버리지 않는다.
+    - init은 재개·재조회 때도 다시 받아 길이를 비교한다(1 KB 남짓). sidecar에 `committed_len == 0`이면 init을 아직 쓰지 않은 것으로 보고 init부터 쓴다(`create` 직후 죽은 경우). init 쓰기와 첫 checkpoint가 함께 일어나므로 `committed_len > 0`이면 init은 이미 들어 있다.
+    - master·media playlist는 API와 같은 8 MiB 상한(`read_capped`)으로 읽는다. 세그먼트·init 본문은 상한 없이 `bytes()`로 읽고 `Content-Length` 불일치는 재시도한다. 첫 상자 검사 실패는 `Retry(Parse { what: "segment" | "init segment" })`다.
+    - variant는 `track_id` 정확 일치, 없으면 `tracks`에서 같은 id의 `height`로 고른다(26번의 §4.1 기준).
+    - 재시도 횟수는 세그먼트(요청)마다 따로 센다. 취소는 writer 루프의 `select!`가 받고, stream을 drop해 진행 중인 fetch도 취소된다.
+    - **`SourceChanged`는 `.part`를 지운다.** §8.2의 `refresh_fingerprint_mismatch` 행은 ".part 보존"이라고 했지만 §3.6·§4.2는 `SourceChanged`를 이어받을 수 없는 오류(삭제)로 정했고 1단계부터 `is_resumable() == false`다. 남겨 두어도 다음 실행이 같은 지문 검사에서 또 `SourceChanged`로 끝나므로 §3.6을 따른다.

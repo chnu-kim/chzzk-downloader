@@ -171,3 +171,108 @@ pub fn truncating_server(total: usize, body: Vec<u8>) -> (String, std::thread::J
     });
     (format!("http://{addr}"), h)
 }
+
+// ---- HLS 테스트 도구 ----
+
+/// 요청 path가 접미사로 끝나는지 보는 matcher. HLS 경로에 `*`, `~`, `=`가 있어 정확 일치가 번거롭다.
+pub struct PathSuffix(pub String);
+
+impl wiremock::Match for PathSuffix {
+    fn matches(&self, r: &Request) -> bool {
+        r.url.path().ends_with(&self.0)
+    }
+}
+
+pub fn suffix(s: &str) -> PathSuffix {
+    PathSuffix(s.to_string())
+}
+
+/// 빠른 다시보기 info fixture의 HLS master 주소를 `master_url`로 바꾼다.
+pub fn hls_info(master_url: &str) -> Vec<u8> {
+    let mut v: serde_json::Value =
+        serde_json::from_slice(&fixture("testdata/hls/video_info.json")).unwrap();
+    let inner = v["content"]["liveRewindPlaybackJson"].as_str().unwrap();
+    let mut pb: serde_json::Value = serde_json::from_str(inner).unwrap();
+    for m in pb["media"].as_array_mut().unwrap() {
+        if m["protocol"] == "HLS" {
+            m["path"] = serde_json::Value::String(master_url.to_string());
+        }
+    }
+    v["content"]["liveRewindPlaybackJson"] = serde_json::Value::String(pb.to_string());
+    serde_json::to_vec(&v).unwrap()
+}
+
+/// 합성 fMP4 init(`ftyp`로 시작).
+pub fn synth_init() -> Vec<u8> {
+    let mut v = vec![0, 0, 0, 16];
+    v.extend_from_slice(b"ftypiso6");
+    v.extend_from_slice(&[0, 0, 0, 1]);
+    v.extend_from_slice(&[0, 0, 0, 12]);
+    v.extend_from_slice(b"moov");
+    v.extend_from_slice(b"INIT");
+    v
+}
+
+/// 합성 세그먼트 `i`(`styp`로 시작, 약 1 KB, 세그먼트마다 다른 바이트).
+pub fn synth_segment(i: usize) -> Vec<u8> {
+    let mut v = vec![0, 0, 0, 8];
+    v.extend_from_slice(b"styp");
+    v.extend(test_bytes(1024, i as u8));
+    v.extend_from_slice(format!("seg{i}").as_bytes());
+    v
+}
+
+/// 합성 media playlist. 세그먼트 `n`개, 각 `extinf`초, init `init.m4s?type=hls`.
+pub fn synth_media(n: usize, extinf: &str) -> String {
+    let mut s = String::from(
+        "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:0\n\
+         #EXT-X-MAP:URI=\"init.m4s?type=hls\"\n",
+    );
+    for i in 0..n {
+        s.push_str(&format!("#EXTINF:{extinf},\nseg{i}.m4v\n"));
+    }
+    s.push_str("#EXT-X-ENDLIST\n");
+    s
+}
+
+/// 144p variant 하나짜리 합성 master.
+pub const SYNTH_MASTER: &str =
+    "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=192000,RESOLUTION=256x144\n144p/media.m3u8\n";
+
+/// `{prefix}/master.m3u8`, `{prefix}/144p/media.m3u8`, init, 세그먼트 `n`개를 mount한다.
+/// 세그먼트 응답 앞에 따로 mount한 mock이 있으면 그것이 먼저 쓰인다.
+pub async fn mount_synth_hls(server: &MockServer, prefix: &str, n: usize) {
+    use wiremock::Mock;
+    use wiremock::matchers::{method, path};
+    Mock::given(method("GET"))
+        .and(path(format!("{prefix}/master.m3u8")))
+        .respond_with(ResponseTemplate::new(200).set_body_string(SYNTH_MASTER))
+        .mount(server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("{prefix}/144p/media.m3u8")))
+        .respond_with(ResponseTemplate::new(200).set_body_string(synth_media(n, "2.000")))
+        .mount(server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("{prefix}/144p/init.m4s")))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(synth_init()))
+        .mount(server)
+        .await;
+    for i in 0..n {
+        Mock::given(method("GET"))
+            .and(path(format!("{prefix}/144p/seg{i}.m4v")))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(synth_segment(i)))
+            .mount(server)
+            .await;
+    }
+}
+
+/// 합성 HLS의 기대 출력(init ‖ seg0 ‖ … ‖ seg(n-1)).
+pub fn synth_expected(n: usize) -> Vec<u8> {
+    let mut v = synth_init();
+    for i in 0..n {
+        v.extend(synth_segment(i));
+    }
+    v
+}

@@ -3,6 +3,7 @@
 //! - `part`: `.part`·sidecar와 크래시 불변식
 //! - `retry`: 재시도 정책과 실패 분류
 //! - `progressive`: PD mp4 단일 GET + Range 이어받기
+//! - `segmented`: 빠른 다시보기 HLS fMP4, 순서 보장 동시 fetch
 //!
 //! 공통 골격(`Chzzk::download`):
 //! 1. 최종 파일이 있으면 `Skip` → `Skipped`(네트워크 0회), `Overwrite` → 계속.
@@ -16,6 +17,7 @@
 pub mod part;
 pub(crate) mod progressive;
 pub mod retry;
+pub(crate) mod segmented;
 
 use std::future::Future;
 use std::num::NonZeroU8;
@@ -226,10 +228,9 @@ async fn run(job: &mut Job<'_>, part: &mut Option<PartFile>) -> Result<DownloadO
     job.report.phase(Phase::Downloading);
     match resolved.source {
         Source::Progressive { reps } => progressive::run(job, reps, part).await,
-        Source::LiveRewindHls { .. } => Err(Error::Parse {
-            what: "download",
-            detail: "빠른 다시보기 다운로드는 아직 연결되지 않았습니다".into(),
-        }),
+        Source::LiveRewindHls { master_url, tracks } => {
+            segmented::run(job, master_url, tracks, part).await
+        }
     }
 }
 

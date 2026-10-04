@@ -8,8 +8,26 @@ use crate::error::Error;
 
 /// `path`에 `bytes`를 원자적으로 쓴다. 같은 디렉토리의 임시 파일에 쓰고 `sync_all`한 뒤 rename한다.
 ///
-/// 중간에 프로세스가 죽어도 `path`는 예전 내용이거나 새 내용 둘 중 하나다.
+/// 중간에 프로세스가 죽어도 `path`는 예전 내용이거나 새 내용 둘 중 하나다. rename은
+/// `rename_with_retry`와 같이 Windows 일시 잠금(백신·색인기가 이전 파일을 잡은 경우)을 재시도한다.
 pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), Error> {
+    atomic_write_using(
+        path,
+        bytes,
+        |a, b| std::fs::rename(a, b),
+        is_transient_lock,
+        std::thread::sleep,
+    )
+}
+
+/// `atomic_write`의 본체. rename, 일시 잠금 판정, sleep을 주입받아 테스트한다.
+fn atomic_write_using(
+    path: &Path,
+    bytes: &[u8],
+    rename: impl FnMut(&Path, &Path) -> io::Result<()>,
+    is_transient: impl Fn(&io::Error) -> bool,
+    sleep: impl FnMut(Duration),
+) -> Result<(), Error> {
     let dir = match path.parent() {
         Some(d) if !d.as_os_str().is_empty() => d,
         _ => Path::new("."),
@@ -21,8 +39,11 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), Error> {
     tmp.as_file()
         .sync_all()
         .map_err(|e| map_io_error("sync", tmp.path(), e))?;
-    tmp.persist(path)
-        .map_err(|e| map_io_error("rename", path, e.error))?;
+    // 핸들을 닫고 경로만 남긴다(Windows는 열린 파일을 옮길 수 없다). 실패하면 drop이 임시 파일을 지운다.
+    let tmp = tmp.into_temp_path();
+    rename_with_retry_using(&tmp, path, rename, is_transient, sleep)?;
+    // 옮긴 뒤에는 drop이 지울 파일이 없다. 같은 이름이 새로 생겨도 지우지 않도록 해제한다.
+    let _ = tmp.keep();
     Ok(())
 }
 
@@ -125,6 +146,51 @@ mod tests {
         atomic_write(&p, b"two").unwrap();
         assert_eq!(std::fs::read(&p).unwrap(), b"two");
         // 임시 파일이 남지 않는다.
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+
+    /// 이전 파일이 잠깐 잠겨 rename이 실패해도 재시도해 쓴다(Windows 일시 잠금).
+    #[test]
+    fn atomic_write_retries_transient_lock() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("a.part.json");
+        std::fs::write(&p, b"old").unwrap();
+        let locked = |e: &io::Error| e.kind() == io::ErrorKind::PermissionDenied;
+        let calls = Cell::new(0);
+        let slept = Cell::new(Duration::ZERO);
+        atomic_write_using(
+            &p,
+            b"new",
+            |a, b| {
+                calls.set(calls.get() + 1);
+                if calls.get() <= 2 {
+                    Err(io::Error::from(io::ErrorKind::PermissionDenied))
+                } else {
+                    std::fs::rename(a, b)
+                }
+            },
+            locked,
+            |d| slept.set(slept.get() + d),
+        )
+        .unwrap();
+        assert_eq!(calls.get(), 3);
+        assert_eq!(slept.get(), Duration::from_millis(300));
+        assert_eq!(std::fs::read(&p).unwrap(), b"new");
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+
+        // 끝내 잠겨 있으면 FileLocked이고 이전 파일은 그대로, 임시 파일은 남지 않는다.
+        let r = atomic_write_using(
+            &p,
+            b"newer",
+            |_, _| Err(io::Error::from(io::ErrorKind::PermissionDenied)),
+            locked,
+            |_| {},
+        );
+        assert!(
+            matches!(r, Err(Error::FileLocked { ref path }) if path == &p),
+            "{r:?}"
+        );
+        assert_eq!(std::fs::read(&p).unwrap(), b"new");
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
     }
 

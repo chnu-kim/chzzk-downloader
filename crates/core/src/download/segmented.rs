@@ -42,7 +42,21 @@ enum Body {
     Segment,
 }
 
+/// 세그먼트 본문 상한. 실물 세그먼트는 2초 분량으로 1080p도 수 MB다.
+const MAX_SEGMENT_BODY: usize = 256 * 1024 * 1024;
+/// init 본문 상한. 실물 init은 1 KB 남짓이다.
+const MAX_INIT_BODY: usize = 16 * 1024 * 1024;
+
 impl Body {
+    /// 본문 크기 상한.
+    fn limit(self) -> usize {
+        match self {
+            Body::Playlist => MAX_API_BODY,
+            Body::Init => MAX_INIT_BODY,
+            Body::Segment => MAX_SEGMENT_BODY,
+        }
+    }
+
     /// 오류의 `Parse.what`.
     fn what(self) -> &'static str {
         match self {
@@ -370,20 +384,21 @@ async fn fetch_once(chzzk: &Chzzk, url: &Url, body: Body) -> Result<Bytes, Failu
         return Err(classify_failure(Some(status.as_u16()), None));
     }
     let expected = resp.content_length();
-    let bytes = if body == Body::Playlist {
-        read_capped(resp, MAX_API_BODY).await.map_err(|e| match e {
-            Error::Network(_) => Failure::Retry(e),
-            e => Failure::Fatal(e),
-        })?
-    } else {
-        match resp.bytes().await {
-            Ok(b) => b,
-            Err(e) => return Err(classify_failure(None, Some(e))),
-        }
-    };
+    let bytes = read_body(resp, body.limit()).await?;
     check_length(expected, &bytes, body)?;
     check_box(&bytes, body)?;
     Ok(bytes)
+}
+
+/// 본문을 `max`바이트까지 읽는다. 네트워크 오류는 재시도하고, 상한 초과는 `Parse`(`.part`는 남는다)다.
+///
+/// `read_timeout`은 idle만 끊으므로, 길이 없이 계속 흘러오는 응답(잘못 연결된 라이브 등)은 이
+/// 상한이 막는다. 동시 요청 수만큼 본문을 메모리에 들고 있으므로 상한이 곧 메모리 상한이다.
+async fn read_body(resp: reqwest::Response, max: usize) -> Result<Bytes, Failure> {
+    read_capped(resp, max).await.map_err(|e| match e {
+        Error::Network(_) => Failure::Retry(e),
+        e => Failure::Fatal(e),
+    })
 }
 
 /// `Content-Length`와 받은 본문 길이가 같은지 검사한다. 다르면 재시도할 `Parse`.
@@ -420,6 +435,34 @@ fn check_box(b: &[u8], body: Body) -> Result<(), Failure> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 세그먼트·init도 상한까지만 읽는다. 넘으면 재시도하지 않는 `Parse`(`.part`는 남는다).
+    #[tokio::test]
+    async fn media_body_capped() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        assert!(Body::Segment.limit() > Body::Init.limit());
+        assert_eq!(Body::Playlist.limit(), MAX_API_BODY);
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(vec![b'x'; 100]))
+            .mount(&server)
+            .await;
+        let http = reqwest::Client::new();
+        let get = || http.get(server.uri()).send();
+        assert_eq!(
+            read_body(get().await.unwrap(), 100).await.unwrap().len(),
+            100
+        );
+        match read_body(get().await.unwrap(), 99).await {
+            Err(Failure::Fatal(e)) => {
+                assert!(matches!(e, Error::Parse { .. }), "{e:?}");
+                assert!(e.is_resumable());
+            }
+            r => panic!("{r:?}"),
+        }
+    }
 
     /// 길이 불일치는 재시도하고, 재시도를 다 써도 `.part`를 남기는 오류다.
     #[test]

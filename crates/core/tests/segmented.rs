@@ -411,6 +411,63 @@ async fn resume_durations_mismatch() {
     assert!(matches!(r, Err(Error::SourceChanged { .. })), "{r:?}");
 }
 
+/// 길이가 다른 init(`ftyp`로 시작). 지문의 init 길이만 바뀐다.
+fn longer_init() -> Vec<u8> {
+    let mut v = common::synth_init();
+    v.extend_from_slice(b"MORE");
+    v
+}
+
+/// init 길이만 바뀌어도(playlist는 같음) 재개 때 `SourceChanged`이고 `.part`를 지운다(결정 13).
+#[tokio::test]
+async fn resume_init_len_mismatch() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_path(&dir);
+    let server = MockServer::start().await;
+    mount_info(&server, "/g0", None).await;
+    Mock::given(method("GET"))
+        .and(path("/g0/144p/seg2.m4v"))
+        .respond_with(ResponseTemplate::new(503))
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    mount_synth_hls(&server, "/g0", 4).await;
+    let cfg = ClientConfig {
+        retry: chzzk_core::RetryPolicy::none(),
+        ..config(&server)
+    };
+    assert!(
+        run(cfg, request(&out, 1), CancellationToken::new(), &|_| {})
+            .await
+            .is_err()
+    );
+    assert_eq!(sidecar_json(&out)["hls"]["nextIndex"], 2);
+
+    let server = MockServer::start().await;
+    mount_info(&server, "/g0", None).await;
+    Mock::given(method("GET"))
+        .and(path("/g0/144p/init.m4s"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(longer_init()))
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    mount_synth_hls(&server, "/g0", 4).await;
+    let r = run(
+        config(&server),
+        request(&out, 1),
+        CancellationToken::new(),
+        &|_| {},
+    )
+    .await;
+    match r {
+        Err(Error::SourceChanged { ref detail }) => assert!(detail.contains("init"), "{detail}"),
+        r => panic!("{r:?}"),
+    }
+    assert!(requests(&server, "/g0/144p/seg2.m4v").await.is_empty());
+    let (part, sidecar) = part_files(&out);
+    assert!(!part.exists() && !sidecar.exists());
+}
+
 /// 없는 화질은 `QualityNotFound`(세그먼트 요청 없음).
 #[tokio::test]
 async fn quality_not_found() {
@@ -648,6 +705,46 @@ async fn refresh_fingerprint_mismatch() {
         assert_eq!(std::fs::read(part).unwrap(), synth_expected(5));
         assert_eq!(sidecar_json(&out)["hls"]["nextIndex"], 5);
     }
+}
+
+/// 재조회 뒤 init 길이만 바뀌면 `SourceChanged`이고, 작업 도중이므로 `.part`는 남긴다(구현 중 변경 35).
+#[tokio::test]
+async fn refresh_init_len_mismatch() {
+    let server = MockServer::start().await;
+    mount_info(&server, "/g0", Some(1)).await;
+    mount_info(&server, "/g1", None).await;
+    Mock::given(method("GET"))
+        .and(path("/g0/144p/seg5.m4v"))
+        .respond_with(ResponseTemplate::new(403))
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/g1/144p/init.m4s"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(longer_init()))
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    mount_synth_hls(&server, "/g0", 12).await;
+    mount_synth_hls(&server, "/g1", 12).await;
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_path(&dir);
+    let r = run(
+        config(&server),
+        request(&out, 1),
+        CancellationToken::new(),
+        &|_| {},
+    )
+    .await;
+    match r {
+        Err(Error::SourceChanged { ref detail }) => assert!(detail.contains("init"), "{detail}"),
+        r => panic!("{r:?}"),
+    }
+    assert_eq!(requests(&server, "/g1/144p/init.m4s").await.len(), 1);
+    assert!(requests(&server, "/g1/144p/seg5.m4v").await.is_empty());
+    let (part, _) = part_files(&out);
+    assert_eq!(std::fs::read(part).unwrap(), synth_expected(5));
+    assert_eq!(sidecar_json(&out)["hls"]["nextIndex"], 5);
 }
 
 /// 재조회 결과에 `inKey`가 생겼으면(DASH) `PlaybackChanged`.

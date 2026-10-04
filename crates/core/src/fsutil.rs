@@ -46,7 +46,15 @@ fn atomic_write_using(
         .map_err(|e| map_io_error("sync", tmp.path(), e))?;
     // 핸들을 닫고 경로만 남긴다(Windows는 열린 파일을 옮길 수 없다). 실패하면 drop이 임시 파일을 지운다.
     let tmp = tmp.into_temp_path();
-    rename_with_retry_using(&tmp, path, rename, is_transient, sleep)?;
+    // 오류에는 무작위 임시 이름이 아니라 대상 경로를 담는다.
+    rename_with_retry_using(&tmp, path, rename, is_transient, sleep).map_err(|e| match e {
+        Error::Io { op, source, .. } => Error::Io {
+            op,
+            path: path.to_path_buf(),
+            source,
+        },
+        e => e,
+    })?;
     // 옮긴 뒤에는 drop이 지울 파일이 없다. 같은 이름이 새로 생겨도 지우지 않도록 해제한다.
     let _ = tmp.keep();
     Ok(())
@@ -238,6 +246,20 @@ mod tests {
             "{r:?}"
         );
         assert_eq!(std::fs::read(&p).unwrap(), b"new");
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+
+        // 잠김이 아닌 rename 오류는 대상 경로로 보고한다.
+        let r = atomic_write_using(
+            &p,
+            b"newer",
+            |_, _| Err(io::Error::from(io::ErrorKind::NotFound)),
+            locked,
+            |_| {},
+        );
+        assert!(
+            matches!(r, Err(Error::Io { op: "rename", ref path, .. }) if path == &p),
+            "{r:?}"
+        );
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
     }
 

@@ -34,21 +34,28 @@ const RENAME_DELAYS_MS: [u64; 5] = [100, 200, 400, 800, 1600];
 /// Windows에서 백신·탐색기 미리보기가 잠깐 파일을 잡으면 `ERROR_SHARING_VIOLATION`/`ACCESS_DENIED`가
 /// 나므로 약 3초 동안 재시도한다. 끝내 잠겨 있으면 `FileLocked { path: to }`다.
 pub fn rename_with_retry(from: &Path, to: &Path) -> Result<(), Error> {
-    rename_with_retry_using(from, to, |a, b| std::fs::rename(a, b), std::thread::sleep)
+    rename_with_retry_using(
+        from,
+        to,
+        |a, b| std::fs::rename(a, b),
+        is_transient_lock,
+        std::thread::sleep,
+    )
 }
 
-/// `rename_with_retry`의 본체. rename과 sleep을 주입받아 테스트한다.
+/// `rename_with_retry`의 본체. rename, 일시 잠금 판정, sleep을 주입받아 테스트한다.
 pub(crate) fn rename_with_retry_using(
     from: &Path,
     to: &Path,
     mut rename: impl FnMut(&Path, &Path) -> io::Result<()>,
+    is_transient: impl Fn(&io::Error) -> bool,
     mut sleep: impl FnMut(Duration),
 ) -> Result<(), Error> {
     let mut delays = RENAME_DELAYS_MS.iter();
     loop {
         match rename(from, to) {
             Ok(()) => return Ok(()),
-            Err(e) if is_transient_lock(&e) => match delays.next() {
+            Err(e) if is_transient(&e) => match delays.next() {
                 Some(ms) => sleep(Duration::from_millis(*ms)),
                 None => {
                     return Err(Error::FileLocked {
@@ -62,12 +69,14 @@ pub(crate) fn rename_with_retry_using(
 }
 
 /// 다른 프로세스가 잠깐 잡고 있어서 나는 오류인가.
+///
+/// Windows만 해당한다. 백신·색인기가 파일을 잡으면 `ERROR_ACCESS_DENIED`(5, `PermissionDenied`),
+/// `ERROR_SHARING_VIOLATION`(32), `ERROR_LOCK_VIOLATION`(33)이 난다. Unix의 rename EACCES/EPERM은
+/// 권한 문제(읽기 전용 디렉토리 등)라 기다려도 풀리지 않으므로 바로 `Io`로 낸다.
 fn is_transient_lock(e: &io::Error) -> bool {
-    if e.kind() == io::ErrorKind::PermissionDenied {
-        return true;
-    }
-    // ERROR_SHARING_VIOLATION(32), ERROR_LOCK_VIOLATION(33)
-    cfg!(windows) && matches!(e.raw_os_error(), Some(32 | 33))
+    cfg!(windows)
+        && (e.kind() == io::ErrorKind::PermissionDenied
+            || matches!(e.raw_os_error(), Some(5 | 32 | 33)))
 }
 
 /// 디스크 공간 부족을 나타내는 OS 오류 코드인가.
@@ -125,6 +134,8 @@ mod tests {
         let b = Path::new("b");
         let slept = Cell::new(Duration::ZERO);
         let sleep = |d| slept.set(slept.get() + d);
+        // 재시도 루프를 OS와 무관하게 검사하려고 `PermissionDenied`를 잠김으로 본다.
+        let locked = |e: &io::Error| e.kind() == io::ErrorKind::PermissionDenied;
 
         // 잠김 두 번 뒤 성공
         let calls = Cell::new(0);
@@ -139,6 +150,7 @@ mod tests {
                     Ok(())
                 }
             },
+            locked,
             sleep,
         );
         assert!(r.is_ok());
@@ -155,6 +167,7 @@ mod tests {
                 calls.set(calls.get() + 1);
                 Err(io::Error::from(io::ErrorKind::PermissionDenied))
             },
+            locked,
             sleep,
         );
         assert!(matches!(r, Err(Error::FileLocked { ref path }) if path == b));
@@ -170,10 +183,69 @@ mod tests {
                 calls.set(calls.get() + 1);
                 Err(io::Error::from(io::ErrorKind::NotFound))
             },
+            locked,
             sleep,
         );
         assert!(matches!(r, Err(Error::Io { op: "rename", .. })));
         assert_eq!(calls.get(), 1);
+    }
+
+    /// 일시 잠금은 Windows 코드뿐이다. Unix의 EACCES/EPERM은 권한 문제라 재시도하지 않는다.
+    #[test]
+    fn transient_lock_is_windows_only() {
+        let denied = io::Error::from(io::ErrorKind::PermissionDenied);
+        #[cfg(unix)]
+        {
+            assert!(!is_transient_lock(&denied));
+            assert!(!is_transient_lock(&io::Error::from_raw_os_error(13))); // EACCES
+            assert!(!is_transient_lock(&io::Error::from_raw_os_error(1))); // EPERM
+            // 주입 없는 실제 경로도 기다리지 않고 바로 Io다.
+            let calls = Cell::new(0);
+            let r = rename_with_retry_using(
+                Path::new("a"),
+                Path::new("b"),
+                |_, _| {
+                    calls.set(calls.get() + 1);
+                    Err(io::Error::from_raw_os_error(13))
+                },
+                is_transient_lock,
+                |_| panic!("Unix 권한 오류에 재시도했다"),
+            );
+            assert!(matches!(r, Err(Error::Io { op: "rename", .. })), "{r:?}");
+            assert_eq!(calls.get(), 1);
+        }
+        #[cfg(windows)]
+        {
+            assert!(is_transient_lock(&denied));
+            for code in [5, 32, 33] {
+                assert!(is_transient_lock(&io::Error::from_raw_os_error(code)));
+            }
+        }
+        assert!(!is_transient_lock(&io::Error::from(
+            io::ErrorKind::NotFound
+        )));
+    }
+
+    /// 읽기 전용 디렉토리로 옮기면 3초 기다리지 않고 바로 `Io`다(`FileLocked` 아님).
+    #[cfg(unix)]
+    #[test]
+    fn rename_into_readonly_dir_is_io() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("a.part");
+        std::fs::write(&a, b"x").unwrap();
+        let ro = dir.path().join("ro");
+        std::fs::create_dir(&ro).unwrap();
+        std::fs::set_permissions(&ro, std::fs::Permissions::from_mode(0o555)).unwrap();
+        let start = std::time::Instant::now();
+        let r = super::rename_with_retry(&a, &ro.join("b.mp4"));
+        std::fs::set_permissions(&ro, std::fs::Permissions::from_mode(0o755)).unwrap();
+        // root로 돌면 권한 검사가 없어 성공한다. 그 경우는 검사하지 않는다.
+        if r.is_ok() {
+            return;
+        }
+        assert!(matches!(r, Err(Error::Io { op: "rename", .. })), "{r:?}");
+        assert!(start.elapsed() < Duration::from_millis(100));
     }
 
     #[test]

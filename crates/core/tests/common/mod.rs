@@ -5,7 +5,7 @@
 
 use std::time::Duration;
 
-use chzzk_core::{ClientConfig, Endpoints};
+use chzzk_core::{ClientConfig, Endpoints, RetryPolicy};
 use url::Url;
 use wiremock::MockServer;
 
@@ -39,6 +39,12 @@ pub fn config(server: &MockServer) -> ClientConfig {
         endpoints: Endpoints {
             chzzk_api: base.clone(),
             vodplay_api: base,
+        },
+        // 재시도 테스트가 빨리 끝나도록 대기를 1ms로 줄인다.
+        retry: RetryPolicy {
+            max_attempts: 5,
+            base: Duration::from_millis(1),
+            cap: Duration::from_millis(4),
         },
         progress_interval: Duration::ZERO,
         connect_timeout: Duration::from_secs(5),

@@ -9,6 +9,7 @@ use ::url::Url;
 use bytes::Bytes;
 use reqwest::header::HeaderValue;
 
+use crate::download::RetryPolicy;
 use crate::error::Error;
 use crate::http::{self, NaverCookies, RequestKind};
 use crate::info::{self, Playback};
@@ -41,6 +42,8 @@ pub struct ClientConfig {
     pub cookies: Option<NaverCookies>,
     /// 기본 false. 성인 PD 실측 후 필요하면 true
     pub cookies_on_media: bool,
+    /// 미디어 요청 재시도 정책
+    pub retry: RetryPolicy,
     /// 진행률 콜백 최소 간격. 기본 200ms, 테스트 0
     pub progress_interval: Duration,
     /// 기본 10초
@@ -55,6 +58,7 @@ impl Default for ClientConfig {
             endpoints: Endpoints::default(),
             cookies: None,
             cookies_on_media: false,
+            retry: RetryPolicy::default(),
             progress_interval: Duration::from_millis(200),
             connect_timeout: Duration::from_secs(10),
             read_timeout: Duration::from_secs(30),

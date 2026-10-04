@@ -683,3 +683,12 @@ tokio    = { version = "1.53.2", features = ["net", "test-util"] }
 1. **(1단계) 의존성은 단계별로 추가한다.** §9 목록을 한 번에 넣지 않고 그 crate를 처음 쓰는 단계에서 넣는다(1단계 `serde`·`thiserror`, 4단계 `url`, 8단계 `reqwest` 등). `reqwest`의 TLS provider 확인(§9 끝)을 HTTP 단계로 미루기 위해서다. `serde_json`은 1단계부터 dev-dependency다.
 2. **(1단계) `Error` 변형도 단계별로 추가한다.** 다른 모듈 타입에 기대는 `HttpStatus`(`RequestKind`, 8단계), `PlaybackChanged`(`PlaybackKind`, 5단계), `Network`(`reqwest::Error`, 8단계)는 그 타입이 생기는 단계에서 `kind()`·`is_resumable()` arm과 함께 넣는다. `Error`가 `#[non_exhaustive]`라 공개 API 호환에는 영향이 없다. `ErrorKind`는 처음부터 전체 목록을 둔다.
 3. **(1단계) CI 명령.** §8의 `cargo clippy -p chzzk-core -- -D warnings`에 `--all-targets`를 더해 테스트 코드도 검사하고, `cargo fmt --all --check`, `--locked`를 쓴다. Windows 러너가 fixture를 CRLF로 바꾸지 않도록 checkout 전에 `core.autocrlf=false`를 설정한다.
+4. **(3단계) `model.rs`를 3단계에서 만든다.** `default_filename`이 `ContentMeta`·`ContentKind`를 받으므로 그 둘을 먼저 넣고, `ContentRef`는 4단계, 나머지 모델은 5단계에서 더한다. `naming` 테스트는 info 파서 없이 fixture JSON의 `content`에서 제목·채널·날짜만 직접 읽는다.
+5. **(3단계) §8.1 Windows sanitize golden 정정.** `x:y*z?"<>|(){}[]/\.mp4`의 Windows 결과는 `x_y_z_____(){}[]__.mp4`다(`z` 뒤 `?"<>|` 다섯 글자가 각각 `_`). 표의 `x_y_z____…`(밑줄 넷)는 오타다. 표의 `\|`는 마크다운 이스케이프이고 실제 입력에 백슬래시가 없다.
+6. **(3단계) sanitize 세부.** 모호했던 부분을 이렇게 정했다.
+   - 문자 규칙(금지 문자, 제어문자, 공백 정규화·병합)은 확장자까지 이름 전체에 적용한다. trim·빈 값 `_`·끝 `.`/공백 제거·예약어는 확장자 앞 base에 적용한다. 확장자 분리는 Go와 같다(`.`을 포함하고 `.`으로 끝나지 않으면 마지막 `.` 뒤).
+   - Windows 예약어는 **첫 `.` 앞**으로 판단한다(Windows는 `NUL.tar.gz`도 막는다). `CON.mp4` → `CON_.mp4`, `NUL.tar.gz` → `NUL_.tar.gz`.
+   - `default_filename`은 채널·제목에 문자 규칙만 적용해 조립한 뒤 전체에 `sanitize_filename`을 한 번 더 적용한다(멱등). 그래서 제목 `CON` 같은 조각에 불필요한 `_`가 붙지 않고, 이름 전체가 예약어일 때만 붙는다. "채널이 비었는가"는 정리 후 빈 문자열인지로 본다.
+   - 날짜는 `live_open_date`가 없거나 **파싱에 실패하면** `publish_date`로 넘어간다. `parse_live_date`는 자릿수에 더해 월 1–12, 일 1–31 범위도 검사한다.
+   - 길이 초과 시 제목을 먼저 자르되 제목은 최소 60바이트(또는 원래 길이)를 남기고, 그래도 넘치면 채널을 자른다. 자른 뒤 trim(Windows는 끝 `.`/공백도)을 다시 한다. 제목이 비면 `_`.
+   - `sanitize_filename`은 길이를 자르지 않는다. 사용자가 준 이름은 `output_path`가 `.mp4`를 붙인 뒤 200바이트로 자른다(확장자 보존).

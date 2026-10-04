@@ -4,7 +4,11 @@
 //! 설계 기준은 `docs/design/core.md`다.
 
 pub mod error;
+pub mod model;
+pub mod naming;
 pub mod progress;
 
 pub use error::{Error, ErrorKind, Unsupported};
+pub use model::{ContentKind, ContentMeta};
+pub use naming::Platform;
 pub use progress::{Phase, Progress};

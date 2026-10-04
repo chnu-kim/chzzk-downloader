@@ -244,21 +244,41 @@ fn parse_with_version(bytes: &[u8]) -> Result<(UserSettings, bool), Error> {
     Ok((s, v.get("schemaVersion").is_none()))
 }
 
-/// 옛 형식 `settings.json`을 `settings.json.v1`로 복사한다. 이미 있으면 그대로 둔다
-/// (처음 보존한 원본이 가장 오래된 진짜 옛 파일이다).
+/// 옛 형식 `settings.json`을 `settings.json.v1`로 복사한다.
+///
+/// `.v1`이 이미 있으면 덮어쓰지 않는다(`import_legacy`가 읽는 처음 원본). 내용이 다르면(옛 앱을 다시
+/// 써서 옛 형식 파일이 또 생긴 경우) `settings.json.v1-{unix_ts}`(겹치면 `-1`, `-2` …)로 따로 남긴다.
 fn preserve_legacy(dir: &Path) -> Result<(), Error> {
     let src = dir.join(SETTINGS_FILE);
-    let dst = dir.join(LEGACY_BACKUP_FILE);
-    if dst.exists() {
-        return Ok(());
-    }
     let bytes = match std::fs::read(&src) {
         Ok(b) => b,
         // 그사이 누가 지웠으면 보존할 것이 없다.
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
         Err(e) => return Err(map_io_error("read", &src, e)),
     };
+    let first = dir.join(LEGACY_BACKUP_FILE);
+    let dst = match std::fs::read(&first) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => first,
+        Ok(old) if old == bytes => return Ok(()),
+        Ok(_) => unique_sibling(&first, "-"),
+        Err(e) => return Err(map_io_error("read", &first, e)),
+    };
     atomic_write(&dst, &bytes)
+}
+
+/// `{path}{sep}{unix_ts}`, 이미 있으면 `-1`, `-2` …를 붙인 없는 경로.
+fn unique_sibling(path: &Path, sep: &str) -> PathBuf {
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let mut p = with_suffix(path, &format!("{sep}{ts}"));
+    let mut n = 1;
+    while p.exists() {
+        p = with_suffix(path, &format!("{sep}{ts}-{n}"));
+        n += 1;
+    }
+    p
 }
 
 /// 최상위가 JSON object일 때만 `T`로 읽는다.
@@ -277,16 +297,7 @@ pub(crate) fn parse_object<T: serde::de::DeserializeOwned>(
 ///
 /// Windows 일시 잠금은 `rename_with_retry`로 재시도한다.
 fn backup_corrupt(path: &Path) -> Result<PathBuf, Error> {
-    let ts = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    let mut bad = with_suffix(path, &format!(".bad-{ts}"));
-    let mut n = 1;
-    while bad.exists() {
-        bad = with_suffix(path, &format!(".bad-{ts}-{n}"));
-        n += 1;
-    }
+    let bad = unique_sibling(path, ".bad-");
     rename_with_retry(path, &bad)?;
     Ok(bad)
 }

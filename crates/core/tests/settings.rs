@@ -417,6 +417,23 @@ mod legacy {
         assert!(imp.settings.use_naver_cookies);
         assert_eq!(imp.settings.last_quality_label.as_deref(), Some("720p"));
 
+        // 옛 앱을 다시 써서 옛 형식 파일이 또 생겨도 덮어쓰기 전에 따로 남는다(.v1은 그대로).
+        let second = go_settings(r#"{"lastVodURL":"https://chzzk.naver.com/video/9"}"#);
+        std::fs::write(dir.path().join(SETTINGS_FILE), &second).unwrap();
+        let store = SettingsStore::open(dir.path().to_path_buf()).unwrap();
+        store.update(|_| {}).unwrap();
+        assert_eq!(std::fs::read(&v1).unwrap(), snap);
+        let kept: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(|e| e.ok()?.file_name().into_string().ok())
+            .filter(|n| n.starts_with("settings.json.v1-"))
+            .collect();
+        assert_eq!(kept.len(), 1, "{kept:?}");
+        assert_eq!(
+            std::fs::read(dir.path().join(&kept[0])).unwrap(),
+            second.as_bytes()
+        );
+
         // 새 형식 파일을 연 저장소는 .v1을 만들지 않는다.
         let fresh = tempfile::tempdir().unwrap();
         let store = SettingsStore::open(fresh.path().to_path_buf()).unwrap();

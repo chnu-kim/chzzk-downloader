@@ -268,6 +268,34 @@ async fn truncated_body_resumes() {
     assert_no_partial(&out);
 }
 
+/// 206이 계속 짧게(빈 본문) 끝나 재시도를 다 써도, 받은 바이트는 Content-Range로 확인된 것이므로
+/// 이어받을 수 있는 오류로 끝나고 `.part`를 남긴다.
+#[tokio::test]
+async fn short_body_exhausted_keeps_part() {
+    let body = test_bytes(1000, 9);
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_path(&dir);
+    make_partial(&out, &body[..300], Some(1000)).await;
+    let server = MockServer::start().await;
+    setup(&server).await;
+    Mock::given(method("GET"))
+        .and(path(MEDIA_PATH))
+        .respond_with(
+            ResponseTemplate::new(206).insert_header("content-range", "bytes 300-999/1000"),
+        )
+        .mount(&server)
+        .await;
+    let r = download(config(&server), &out, &Events::default()).await;
+    let e = r.unwrap_err();
+    assert!(e.is_resumable(), "{e:?}");
+    assert!(!matches!(e, Error::LengthMismatch { .. }), "{e:?}");
+    assert_eq!(media_requests(&server, MEDIA_PATH).await.len(), 5);
+    let (part, sidecar) = part_files(&out);
+    assert_eq!(std::fs::read(&part).unwrap(), &body[..300]);
+    let sc: serde_json::Value = serde_json::from_slice(&std::fs::read(&sidecar).unwrap()).unwrap();
+    assert_eq!(sc["committedLen"], 300);
+}
+
 /// 끊긴 본문도 재시도가 있으면 같은 실행 안에서 Range로 잇는다.
 #[tokio::test]
 async fn truncated_body_retries_with_range() {

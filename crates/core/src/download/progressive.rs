@@ -208,10 +208,12 @@ async fn attempt(
     }
     let written = p.written();
     match total {
-        // 조기 EOF: 재시도해서 Range로 이어 받는다. 재시도를 다 쓰면 LengthMismatch.
-        Some(t) if written < t => Err(Failure::Retry(Error::LengthMismatch {
-            expected: t,
-            actual: written,
+        // 조기 EOF: 재시도해서 Range로 이어 받는다. 쓴 바이트는 모두 Content-Range로 위치를 확인한
+        // 것이라 틀린 바이트가 아니다. 그래서 재시도를 다 써도 `.part`를 지우는 `LengthMismatch`가
+        // 아니라 이어받을 수 있는 `Parse`로 끝낸다(구현 중 변경 36). 초과 수신만 `LengthMismatch`다.
+        Some(t) if written < t => Err(Failure::Retry(Error::Parse {
+            what: "media",
+            detail: format!("본문이 일찍 끝났습니다: 전체 {t}바이트 중 {written}바이트"),
         })),
         _ => Ok(()),
     }

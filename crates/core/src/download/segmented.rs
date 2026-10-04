@@ -42,6 +42,17 @@ enum Body {
     Segment,
 }
 
+impl Body {
+    /// 오류의 `Parse.what`.
+    fn what(self) -> &'static str {
+        match self {
+            Body::Playlist => "playlist",
+            Body::Init => "init segment",
+            Body::Segment => "segment",
+        }
+    }
+}
+
 /// 받은 playlist와 init.
 struct Loaded {
     playlist: MediaPlaylist,
@@ -370,16 +381,23 @@ async fn fetch_once(chzzk: &Chzzk, url: &Url, body: Body) -> Result<Bytes, Failu
             Err(e) => return Err(classify_failure(None, Some(e))),
         }
     };
-    if let Some(n) = expected
-        && n != bytes.len() as u64
-    {
-        return Err(Failure::Retry(Error::LengthMismatch {
-            expected: n,
-            actual: bytes.len() as u64,
-        }));
-    }
+    check_length(expected, &bytes, body)?;
     check_box(&bytes, body)?;
     Ok(bytes)
+}
+
+/// `Content-Length`와 받은 본문 길이가 같은지 검사한다. 다르면 재시도할 `Parse`.
+///
+/// 본문은 검사를 통과해야 `.part`에 쓰므로 틀린 바이트가 남지 않는다. 재시도를 다 써도 앞서 받은
+/// 세그먼트를 지우지 않도록 `.part`를 지우는 `LengthMismatch`가 아니라 `Parse`로 낸다(구현 중 변경 36).
+fn check_length(expected: Option<u64>, b: &[u8], body: Body) -> Result<(), Failure> {
+    match expected {
+        Some(n) if n != b.len() as u64 => Err(Failure::Retry(Error::Parse {
+            what: body.what(),
+            detail: format!("Content-Length {n}, 받은 본문 {}바이트", b.len()),
+        })),
+        _ => Ok(()),
+    }
 }
 
 /// 첫 상자의 종류를 검사한다. 다르면 재시도할 `Parse`.
@@ -394,11 +412,7 @@ fn check_box(b: &[u8], body: Body) -> Result<(), Failure> {
         return Ok(());
     }
     Err(Failure::Retry(Error::Parse {
-        what: if body == Body::Init {
-            "init segment"
-        } else {
-            "segment"
-        },
+        what: body.what(),
         detail: "fMP4 상자로 시작하지 않습니다(오류 페이지일 수 있습니다)".into(),
     }))
 }
@@ -406,6 +420,31 @@ fn check_box(b: &[u8], body: Body) -> Result<(), Failure> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 길이 불일치는 재시도하고, 재시도를 다 써도 `.part`를 남기는 오류다.
+    #[test]
+    fn length_mismatch_is_resumable() {
+        assert!(check_length(Some(3), b"abc", Body::Segment).is_ok());
+        assert!(check_length(None, b"abc", Body::Segment).is_ok());
+        for n in [2, 4] {
+            match check_length(Some(n), b"abc", Body::Segment) {
+                Err(Failure::Retry(e)) => {
+                    assert!(e.is_resumable(), "{e:?}");
+                    assert!(
+                        matches!(
+                            e,
+                            Error::Parse {
+                                what: "segment",
+                                ..
+                            }
+                        ),
+                        "{e:?}"
+                    );
+                }
+                r => panic!("{r:?}"),
+            }
+        }
+    }
 
     #[test]
     fn box_check() {

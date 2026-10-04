@@ -183,6 +183,7 @@ pub fn redact_url(u: &Url) -> String {
     let _ = u.set_password(None);
     // 토큰 안의 `acl=*/kr/*`에 `/`가 있어 토큰이 여러 세그먼트에 걸친다.
     // `hdntl=`로 시작하는 세그먼트부터 `hmac=`이 든 세그먼트까지를 하나로 가린다.
+    // `hmac=`이 없으면(토큰 형식 변경) 마지막 세그먼트(파일명) 앞까지 가린다.
     let segs: Vec<&str> = u.path().split('/').collect();
     let mut path: Vec<&str> = Vec::with_capacity(segs.len());
     let mut i = 0;
@@ -191,7 +192,7 @@ pub fn redact_url(u: &Url) -> String {
             let end = segs[i..]
                 .iter()
                 .position(|s| s.contains("hmac="))
-                .map_or(i, |k| i + k);
+                .map_or_else(|| i.max(segs.len().saturating_sub(2)), |k| i + k);
             path.push("hdntl=***");
             i = end + 1;
         } else {
@@ -312,6 +313,14 @@ mod tests {
         let u =
             Url::parse("https://user:pw@h.example/a/hdntl=exp=1~hmac=x/b.m3u8?hdnts=1#f").unwrap();
         assert_eq!(redact_url(&u), "https://h.example/a/hdntl=***/b.m3u8");
+        // 리뷰 수정: `hmac=`이 없는 토큰도 파일명 앞까지 가린다.
+        let sig =
+            Url::parse("https://c/kr/144p/hdntl=exp=1~acl=*/kr/*~data=hdntl~sig=SECRETSIG/seg.m4v")
+                .unwrap();
+        assert_eq!(redact_url(&sig), "https://c/kr/144p/hdntl=***/seg.m4v");
+        // 토큰이 마지막 세그먼트면 그것만 가린다.
+        let last = Url::parse("https://c/a/hdntl=exp=1~sig=S").unwrap();
+        assert_eq!(redact_url(&last), "https://c/a/hdntl=***");
         let plain = Url::parse("https://h.example/a/b.mp4").unwrap();
         assert_eq!(redact_url(&plain), "https://h.example/a/b.mp4");
     }

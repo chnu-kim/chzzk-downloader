@@ -727,3 +727,4 @@ tokio    = { version = "1.53.2", features = ["net", "test-util"] }
     - **URI 없는 EXTINF.** URI 전에 EXTINF가 또 나오거나 URI 없는 EXTINF로 끝나면 `Parse`다. 끝 검사는 ENDLIST 검사 뒤라서, ENDLIST 없이 잘린 playlist는 그대로 `NotEnded`다.
     - **msn 범위.** `EXT-X-MEDIA-SEQUENCE + (세그먼트 수 - 1)`이 u64를 넘으면 패닉 대신 `Parse`다.
     - **GAP·SKIP 거부.** `EXT-X-GAP`은 `Unsupported::Gap`, `EXT-X-SKIP`(delta playlist)은 `Unsupported::Skip`이다. 둘 다 이어 붙이면 구멍 난 파일이 된다. LL-HLS의 `EXT-X-PART`·`EXT-X-PRELOAD-HINT`는 ENDLIST playlist에서도 전체 세그먼트가 함께 나열되므로 거부하지 않고 모르는 태그로 무시한다.
+    - **redact_url.** `hdntl=` 뒤에 `hmac=` 세그먼트가 없으면(토큰 형식이 바뀐 경우) 마지막 세그먼트(파일명) 앞까지를 `hdntl=***`로 가린다. `hdntl=` 세그먼트가 마지막이면 그것만 가린다.

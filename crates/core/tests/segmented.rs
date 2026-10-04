@@ -429,3 +429,343 @@ async fn quality_not_found() {
     let (part, _) = part_files(&out);
     assert!(!part.exists());
 }
+
+// ---- 12단계: 동시 요청과 재조회 ----
+
+/// 무작위 지연이 있어도 동시 6개로 받은 결과의 순서가 입력 순서와 같다.
+#[tokio::test]
+async fn ordered_with_jitter() {
+    const N: usize = 30;
+    let server = MockServer::start().await;
+    mount_info(&server, "/g0", None).await;
+    for i in 0..N {
+        // 결정적인 "무작위" 지연(0~45ms). 뒤 세그먼트가 먼저 끝나기도 한다.
+        let ms = ((i * 37 + 11) % 10) as u64 * 5;
+        Mock::given(method("GET"))
+            .and(path(format!("/g0/144p/seg{i}.m4v")))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_bytes(synth_segment(i))
+                    .set_delay(Duration::from_millis(ms)),
+            )
+            .with_priority(1)
+            .mount(&server)
+            .await;
+    }
+    mount_synth_hls(&server, "/g0", N).await;
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_path(&dir);
+    let events = Events::default();
+    let cb = events.callback();
+    run(
+        config(&server),
+        request(&out, 6),
+        CancellationToken::new(),
+        &cb,
+    )
+    .await
+    .unwrap();
+    assert_eq!(std::fs::read(&out).unwrap(), synth_expected(N));
+    // 진행률의 세그먼트 수는 하나씩 늘어난다.
+    let ks: Vec<u32> = events
+        .all()
+        .iter()
+        .filter(|p| p.phase == Phase::Downloading)
+        .filter_map(|p| p.segments.map(|(k, _)| k))
+        .collect();
+    assert_eq!(ks, (0..=N as u32).collect::<Vec<_>>());
+}
+
+/// 상한(8)보다 큰 동시 요청 수도 받아들인다.
+#[tokio::test]
+async fn concurrency_clamped() {
+    let server = MockServer::start().await;
+    mount_info(&server, "/g0", None).await;
+    mount_synth_hls(&server, "/g0", 12).await;
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_path(&dir);
+    run(
+        config(&server),
+        request(&out, 200),
+        CancellationToken::new(),
+        &|_| {},
+    )
+    .await
+    .unwrap();
+    assert_eq!(std::fs::read(&out).unwrap(), synth_expected(12));
+}
+
+/// 503 두 번 뒤 성공하면 이어 간다.
+#[tokio::test]
+async fn retry_5xx() {
+    let server = MockServer::start().await;
+    mount_info(&server, "/g0", None).await;
+    Mock::given(method("GET"))
+        .and(path("/g0/144p/seg3.m4v"))
+        .respond_with(ResponseTemplate::new(503))
+        .up_to_n_times(2)
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    mount_synth_hls(&server, "/g0", 8).await;
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_path(&dir);
+    run(
+        config(&server),
+        request(&out, 4),
+        CancellationToken::new(),
+        &|_| {},
+    )
+    .await
+    .unwrap();
+    assert_eq!(std::fs::read(&out).unwrap(), synth_expected(8));
+    assert_eq!(requests(&server, "/g0/144p/seg3.m4v").await.len(), 3);
+}
+
+/// seg k≥5에서 403 → info를 다시 받아(`/g0/` → `/g1/`) 같은 index부터 잇는다.
+#[tokio::test]
+async fn expired_resume_same_index() {
+    const N: usize = 12;
+    let server = MockServer::start().await;
+    mount_info(&server, "/g0", Some(1)).await;
+    mount_info(&server, "/g1", None).await;
+    for i in 5..N {
+        Mock::given(method("GET"))
+            .and(path(format!("/g0/144p/seg{i}.m4v")))
+            .respond_with(ResponseTemplate::new(403))
+            .with_priority(1)
+            .mount(&server)
+            .await;
+    }
+    mount_synth_hls(&server, "/g0", N).await;
+    mount_synth_hls(&server, "/g1", N).await;
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_path(&dir);
+    let events = Events::default();
+    let cb = events.callback();
+    let r = run(
+        config(&server),
+        request(&out, 4),
+        CancellationToken::new(),
+        &cb,
+    )
+    .await
+    .unwrap();
+    assert!(matches!(
+        r,
+        DownloadOutcome::Completed {
+            resumed_from: 0,
+            ..
+        }
+    ));
+    assert_eq!(std::fs::read(&out).unwrap(), synth_expected(N));
+    assert_eq!(requests(&server, INFO_PATH).await.len(), 2);
+    for i in 0..5 {
+        assert_eq!(
+            requests(&server, &format!("/g0/144p/seg{i}.m4v"))
+                .await
+                .len(),
+            1
+        );
+        assert!(
+            requests(&server, &format!("/g1/144p/seg{i}.m4v"))
+                .await
+                .is_empty()
+        );
+    }
+    for i in 5..N {
+        assert_eq!(
+            requests(&server, &format!("/g1/144p/seg{i}.m4v"))
+                .await
+                .len(),
+            1
+        );
+    }
+    assert_eq!(events.last().refreshes, 1);
+    assert!(events.all().iter().any(|p| p.phase == Phase::Reresolving));
+}
+
+/// playlist(master) 요청이 403이어도 재조회한다.
+#[tokio::test]
+async fn expired_playlist_reresolves() {
+    let server = MockServer::start().await;
+    mount_info(&server, "/g0", Some(1)).await;
+    mount_info(&server, "/g1", None).await;
+    Mock::given(method("GET"))
+        .and(path("/g0/master.m3u8"))
+        .respond_with(ResponseTemplate::new(403))
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    mount_synth_hls(&server, "/g1", 3).await;
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_path(&dir);
+    run(
+        config(&server),
+        request(&out, 2),
+        CancellationToken::new(),
+        &|_| {},
+    )
+    .await
+    .unwrap();
+    assert_eq!(std::fs::read(&out).unwrap(), synth_expected(3));
+}
+
+/// 재조회한 media playlist의 세그먼트 수·EXTINF가 다르면 `SourceChanged`.
+#[tokio::test]
+async fn refresh_fingerprint_mismatch() {
+    for changed in [synth_media(13, "2.000"), synth_media(12, "1.000")] {
+        let server = MockServer::start().await;
+        mount_info(&server, "/g0", Some(1)).await;
+        mount_info(&server, "/g1", None).await;
+        Mock::given(method("GET"))
+            .and(path("/g0/144p/seg5.m4v"))
+            .respond_with(ResponseTemplate::new(403))
+            .with_priority(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/g1/144p/media.m3u8"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(changed))
+            .with_priority(1)
+            .mount(&server)
+            .await;
+        mount_synth_hls(&server, "/g0", 12).await;
+        mount_synth_hls(&server, "/g1", 12).await;
+        let dir = tempfile::tempdir().unwrap();
+        let out = out_path(&dir);
+        let r = run(
+            config(&server),
+            request(&out, 1),
+            CancellationToken::new(),
+            &|_| {},
+        )
+        .await;
+        assert!(matches!(r, Err(Error::SourceChanged { .. })), "{r:?}");
+        assert!(requests(&server, "/g1/144p/seg5.m4v").await.is_empty());
+        // 이어받을 수 없는 오류라 지운다(구현 중 변경 32).
+        let (part, sidecar) = part_files(&out);
+        assert!(!part.exists() && !sidecar.exists());
+    }
+}
+
+/// 재조회 결과에 `inKey`가 생겼으면(DASH) `PlaybackChanged`.
+#[tokio::test]
+async fn refresh_became_dash() {
+    let server = MockServer::start().await;
+    mount_info(&server, "/g0", Some(1)).await;
+    Mock::given(method("GET"))
+        .and(path(INFO_PATH))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_raw(fixture("testdata/vod/video_info.json"), "application/json"),
+        )
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!(
+            "/neonplayer/vodplay/v2/playback/{}",
+            common::VOD_VIDEO_ID
+        )))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_raw(fixture("testdata/vod/playback.mpd"), "application/dash+xml"),
+        )
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/g0/144p/seg5.m4v"))
+        .respond_with(ResponseTemplate::new(403))
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    mount_synth_hls(&server, "/g0", 8).await;
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_path(&dir);
+    let r = run(
+        config(&server),
+        request(&out, 2),
+        CancellationToken::new(),
+        &|_| {},
+    )
+    .await;
+    assert!(
+        matches!(
+            r,
+            Err(Error::PlaybackChanged {
+                was: PlaybackKind::LiveRewindHls,
+                now: PlaybackKind::Progressive
+            })
+        ),
+        "{r:?}"
+    );
+}
+
+/// 재조회 직후 같은 세그먼트가 또 403이면 `AuthRequired`이고 `.part`를 지운다.
+#[tokio::test]
+async fn forbidden_after_refresh() {
+    let server = MockServer::start().await;
+    mount_info(&server, "/g0", None).await;
+    Mock::given(method("GET"))
+        .and(path("/g0/144p/seg5.m4v"))
+        .respond_with(ResponseTemplate::new(403))
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    mount_synth_hls(&server, "/g0", 8).await;
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_path(&dir);
+    let r = run(
+        config(&server),
+        request(&out, 3),
+        CancellationToken::new(),
+        &|_| {},
+    )
+    .await;
+    assert!(
+        matches!(r, Err(Error::AuthRequired { status: 403 })),
+        "{r:?}"
+    );
+    assert_eq!(requests(&server, INFO_PATH).await.len(), 2);
+    assert_eq!(requests(&server, "/g0/144p/seg5.m4v").await.len(), 2);
+    let (part, sidecar) = part_files(&out);
+    assert!(!part.exists() && !sidecar.exists());
+}
+
+/// 세그먼트마다 한 번씩 403(매번 재조회 후 성공) → 9번째 재조회에서 `RefreshExhausted`.
+/// 이어받을 수 있으므로 `.part`는 남는다.
+#[tokio::test]
+async fn refresh_exhausted() {
+    const N: usize = 12;
+    let server = MockServer::start().await;
+    mount_info(&server, "/g0", None).await;
+    for i in 1..N {
+        Mock::given(method("GET"))
+            .and(path(format!("/g0/144p/seg{i}.m4v")))
+            .respond_with(ResponseTemplate::new(403))
+            .up_to_n_times(1)
+            .with_priority(1)
+            .mount(&server)
+            .await;
+    }
+    mount_synth_hls(&server, "/g0", N).await;
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_path(&dir);
+    let events = Events::default();
+    let cb = events.callback();
+    let r = run(
+        config(&server),
+        request(&out, 1),
+        CancellationToken::new(),
+        &cb,
+    )
+    .await;
+    assert!(matches!(r, Err(Error::RefreshExhausted)), "{r:?}");
+    assert_eq!(events.last().refreshes, 8);
+    let sc = sidecar_json(&out);
+    assert_eq!(sc["hls"]["nextIndex"], 9);
+    assert_eq!(
+        std::fs::read(part_files(&out).0).unwrap(),
+        synth_expected(9)
+    );
+}

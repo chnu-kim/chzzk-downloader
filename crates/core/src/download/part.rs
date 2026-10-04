@@ -73,7 +73,7 @@ pub struct ProgressiveState {
 }
 
 /// HLS 이어받기 상태와 playlist 지문.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HlsState {
     /// 다음에 받을 세그먼트 index(0부터, playlist 안 위치)

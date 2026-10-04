@@ -8,6 +8,8 @@
 //! 4. 세그먼트마다 2xx, `Content-Length` 일치, 첫 상자(`styp`/`moof`/`sidx`, init은 `ftyp`)를 검사한다.
 //!    CDN의 HTML 오류 페이지를 이어 붙이지 않기 위해서다. 통과하면 쓰고 `next_index += 1`.
 //!    `committed_len`은 항상 세그먼트 경계다.
+//! 5. 403: stream을 drop(진행 중 fetch 취소) → `Reresolving` → 1~2단계 재실행(지문 검증) →
+//!    `next_index`부터 계속. 재조회 직후 같은 세그먼트가 또 403이면 `AuthRequired`.
 
 use std::time::{Duration, Instant};
 
@@ -18,11 +20,11 @@ use futures_util::stream;
 
 use super::part::{HlsState, PartFile, Sidecar};
 use super::retry::{Failure, RetryPolicy, classify_failure};
-use super::{DownloadOutcome, Job, finish};
+use super::{DownloadOutcome, Job, MAX_CONCURRENCY, finish};
 use crate::client::{Chzzk, MAX_API_BODY, read_capped};
 use crate::error::{Error, Unsupported};
 use crate::hls::{self, MediaPlaylist, Variant};
-use crate::model::{PlaybackKind, Quality};
+use crate::model::{PlaybackKind, Quality, Source};
 
 /// 세그먼트 수 기준 checkpoint 주기.
 const CHECKPOINT_SEGMENTS: u32 = 32;
@@ -94,9 +96,8 @@ pub(crate) async fn run(
     part: &mut Option<PartFile>,
 ) -> Result<DownloadOutcome, Error> {
     let mut resumed_from = part.as_ref().map_or(0, PartFile::written);
-    let loaded = acquire(job, &master_url, &tracks).await?;
-    // 동시 요청 수. 11단계는 순차(1)다.
-    let concurrency = 1usize;
+    let mut loaded = acquire(job, Some((master_url, tracks))).await?;
+    let concurrency = usize::from(job.req.concurrency.get().min(MAX_CONCURRENCY));
 
     // 재개면 지문을 확인하고, 아니면 `.part`를 만들어 init을 쓴다.
     let p = match part {
@@ -162,49 +163,92 @@ pub(crate) async fn run(
 
     let policy = job.chzzk.config().retry;
     let chzzk = job.chzzk;
-    let uris: Vec<Url> = loaded.playlist.segments[next as usize..]
-        .iter()
-        .map(|s| s.uri.clone())
-        .collect();
-    let mut segs = stream::iter(uris)
-        .map(|u| async move { fetch(chzzk, policy, &u, Body::Segment).await })
-        .buffered(concurrency);
     let mut last_cp = Instant::now();
     let mut since_cp = 0u32;
-    while let Some(r) = job.cancellable(segs.next()).await? {
-        let bytes = match r {
-            Ok(b) => b,
-            // 12단계에서 재조회로 바꾼다.
-            Err(Failure::Expired) => return Err(Error::AuthRequired { status: 403 }),
-            Err(Failure::Retry(e) | Failure::Fatal(e)) => return Err(e),
-        };
-        p.write(&bytes)?;
-        done_ms += u64::from(durations[next as usize]);
-        next += 1;
-        p.stage(|s| {
-            if let Some(h) = s.hls.as_mut() {
-                h.next_index = next;
+    // 재조회한 뒤 아직 받지 못한 세그먼트 index. 그 세그먼트가 또 403이면 인증 문제다.
+    let mut refreshed_at: Option<u32> = None;
+    'refresh: loop {
+        let uris: Vec<Url> = loaded.playlist.segments[next as usize..]
+            .iter()
+            .map(|s| s.uri.clone())
+            .collect();
+        // `buffered`는 완료 순서와 무관하게 입력 순서대로 내놓는다. 그래서 첫 `Err`는 늘 `next`의 것이다.
+        let mut segs = stream::iter(uris)
+            .map(|u| async move { fetch(chzzk, policy, &u, Body::Segment).await })
+            .buffered(concurrency);
+        while let Some(r) = job.cancellable(segs.next()).await? {
+            let bytes = match r {
+                Ok(b) => b,
+                Err(Failure::Expired) => {
+                    // 진행 중인 fetch를 모두 취소한다.
+                    drop(segs);
+                    if refreshed_at == Some(next) {
+                        return Err(Error::AuthRequired { status: 403 });
+                    }
+                    let fresh = acquire(job, None).await?;
+                    let st = p.staged().hls.unwrap_or_default();
+                    if let Some(d) = fresh.mismatch(&st) {
+                        return Err(Error::SourceChanged { detail: d });
+                    }
+                    loaded = fresh;
+                    refreshed_at = Some(next);
+                    continue 'refresh;
+                }
+                Err(Failure::Retry(e) | Failure::Fatal(e)) => return Err(e),
+            };
+            p.write(&bytes)?;
+            done_ms += u64::from(durations[next as usize]);
+            next += 1;
+            refreshed_at = None;
+            p.stage(|s| {
+                if let Some(h) = s.hls.as_mut() {
+                    h.next_index = next;
+                }
+            });
+            since_cp += 1;
+            report(job, p.written(), next, done_ms);
+            if since_cp >= CHECKPOINT_SEGMENTS || last_cp.elapsed() >= CHECKPOINT_EVERY {
+                p.checkpoint(|_| {}).await?;
+                since_cp = 0;
+                last_cp = Instant::now();
             }
-        });
-        since_cp += 1;
-        report(job, p.written(), next, done_ms);
-        if since_cp >= CHECKPOINT_SEGMENTS || last_cp.elapsed() >= CHECKPOINT_EVERY {
-            p.checkpoint(|_| {}).await?;
-            since_cp = 0;
-            last_cp = Instant::now();
         }
+        break;
     }
-    drop(segs);
     finish(job, part, resumed_from).await
 }
 
-/// master·media playlist와 init을 받는다.
-async fn acquire(job: &mut Job<'_>, master_url: &Url, tracks: &[Quality]) -> Result<Loaded, Error> {
-    match load(job, master_url, tracks).await {
-        Ok(l) => Ok(l),
-        // 12단계에서 재조회로 바꾼다.
-        Err(Failure::Expired) => Err(Error::AuthRequired { status: 403 }),
-        Err(Failure::Retry(e) | Failure::Fatal(e)) => Err(e),
+/// playlist와 init을 받는다. `src`가 없으면 먼저 재조회한다.
+///
+/// 403이면 재조회해서 다시 받는다. 재조회 직후에 또 403이면 `AuthRequired`.
+/// 재조회 결과가 DASH(`inKey`)로 바뀌었으면 `Job::reresolve`가 `PlaybackChanged`를 낸다.
+async fn acquire(job: &mut Job<'_>, mut src: Option<(Url, Vec<Quality>)>) -> Result<Loaded, Error> {
+    let mut just_refreshed = false;
+    loop {
+        let (master_url, tracks) = match src.take() {
+            Some(x) => x,
+            None => {
+                let r = job.reresolve().await?;
+                just_refreshed = true;
+                match r.source {
+                    Source::LiveRewindHls { master_url, tracks } => (master_url, tracks),
+                    Source::Progressive { .. } => {
+                        return Err(Error::PlaybackChanged {
+                            was: PlaybackKind::LiveRewindHls,
+                            now: PlaybackKind::Progressive,
+                        });
+                    }
+                }
+            }
+        };
+        match load(job, &master_url, &tracks).await {
+            Ok(l) => return Ok(l),
+            Err(Failure::Expired) if just_refreshed => {
+                return Err(Error::AuthRequired { status: 403 });
+            }
+            Err(Failure::Expired) => {}
+            Err(Failure::Retry(e) | Failure::Fatal(e)) => return Err(e),
+        }
     }
 }
 

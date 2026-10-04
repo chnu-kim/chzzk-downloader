@@ -755,3 +755,9 @@ tokio    = { version = "1.53.2", features = ["net", "test-util"] }
     - variant는 `track_id` 정확 일치, 없으면 `tracks`에서 같은 id의 `height`로 고른다(26번의 §4.1 기준).
     - 재시도 횟수는 세그먼트(요청)마다 따로 센다. 취소는 writer 루프의 `select!`가 받고, stream을 drop해 진행 중인 fetch도 취소된다.
     - **`SourceChanged`는 `.part`를 지운다.** §8.2의 `refresh_fingerprint_mismatch` 행은 ".part 보존"이라고 했지만 §3.6·§4.2는 `SourceChanged`를 이어받을 수 없는 오류(삭제)로 정했고 1단계부터 `is_resumable() == false`다. 남겨 두어도 다음 실행이 같은 지문 검사에서 또 `SourceChanged`로 끝나므로 §3.6을 따른다.
+33. **(12단계) 동시 fetch와 재조회 세부.**
+    - 동시 요청 수는 `min(req.concurrency, 8)`이다. 더 큰 값은 오류가 아니라 8로 줄인다.
+    - `buffered`가 입력 순서대로 내놓으므로 writer가 받는 첫 `Err`는 늘 `next_index` 세그먼트의 것이다. 403이면 stream을 drop해 앞서 시작한 fetch까지 모두 취소하고, 재조회 → master·media·init을 다시 받아 지문을 비교한 뒤 `next_index`부터 새 stream을 만든다. 이미 받아 버퍼에 있던 뒤쪽 세그먼트는 버리고 다시 받는다(메모리 상한 유지, 단순함).
+    - "같은 요청"은 재조회 때의 `next_index`다. 그 세그먼트를 받기 전에 또 403이면 `AuthRequired`다. playlist·init 요청도 403이면 재조회하고, 재조회 직후의 playlist·init 403도 `AuthRequired`다.
+    - 재조회 결과가 DASH로 바뀐 것은 `Job::reresolve`의 방식 검사가 `PlaybackChanged`로 잡는다(재조회 `resolve`가 MPD까지 받은 뒤다).
+    - `HlsState`에 `Default`를 붙였다(sidecar에 HLS 상태가 없으면 지문 불일치로 끝내기 위해).

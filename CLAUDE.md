@@ -21,10 +21,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## 명령
 
 ```bash
-# 검증 게이트: 커밋 전에 셋 다 통과해야 한다(CI와 같음)
-cargo fmt --all
-cargo clippy -p chzzk-core --all-targets -- -D warnings
-cargo test -p chzzk-core
+cargo fmt --all                                         # 포맷 적용
+
+# 검증 게이트: 커밋 전에 셋 다 통과해야 한다(.github/workflows/core.yml과 같은 명령)
+cargo fmt --all --check
+cargo clippy -p chzzk-core --all-targets --locked -- -D warnings
+cargo test -p chzzk-core --locked
 
 cargo test -p chzzk-core --test segmented <이름>      # 통합 테스트 하나
 cargo test -p chzzk-core --lib naming::                # 단위 테스트 모듈 하나
@@ -37,11 +39,14 @@ CHZZK_LIVE_HLS=<빠른 다시보기 no> CHZZK_LIVE_DASH=<일반 VOD no> CHZZK_LI
 ```
 
 - 일반 테스트는 모두 오프라인이다(127.0.0.1 mock). 실서버는 `#[ignore]` 테스트와 `examples/dl.rs`로만 접속한다.
+- `live_hls_partial`은 최저 화질로 4 MiB 넘게 받을 수 있는 빠른 다시보기를 골라야 한다(그 전에 끝나면 실패). `live_dash_partial`은 짧은 VOD면 끝까지 받고 완성 파일을 검사한다.
 - 레거시 Go: `go build -o main ./cmd/chzzk-downloader`, `go test ./...`(삭제 전까지만).
 
 ## 작업 규칙
 
-- 브랜치에서 설계 §10 단계마다 커밋한다. 메시지는 Conventional Commit `type: 한국어 요약`.
+- 브랜치에서 설계 §10 단계마다 커밋한다. 메시지는 Conventional Commit `type: 한국어 요약`. 단계별 stacked PR이고, PR을 만든 뒤 글로벌 지침의 Codex 리뷰를 따른다.
+- **단계(체크박스)를 끝낼 때마다 `docs/ROADMAP.md`의 "현재 위치"와 체크리스트를 갱신한다**(세션이 요약돼도 이 파일이 남는다).
+- **Go 코드가 행동 명세다.** Rust가 이식된 Go 테스트·fixture를 통과하는 PR(§10-16)에서만 Go를 삭제한다.
 - 코드 주석은 한국어, 식별자는 영어(설계 문서의 이름을 따른다).
 - 설계가 틀렸거나 모호하면 가장 작은 타당한 선택을 하고 `docs/design/core.md`의 "구현 중 변경"에 번호를 붙여 적는다.
 - 행동을 바꾸면 해당 테스트를 함께 추가한다. 파서·선택 규칙은 실물 fixture로 고정한다.

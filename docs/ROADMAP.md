@@ -4,7 +4,7 @@
 
 ## 현재 위치
 
-- 현재: Phase 1 코어(`crates/core`, 설계 §10-1~15) 구현 완료, 브랜치 `feat/rust-core`. 오프라인 테스트는 macOS에서 전체 녹색(push 전이라 3 OS CI는 아직 돌지 않음), 실서버 스모크(빠른 다시보기 HLS·DASH VOD·클립) 통과(2026-10-05, 설계 "구현 중 변경" 45)
+- 현재: Phase 1 코어(`crates/core`, 설계 §10-1~15) 구현 완료, 브랜치 `feat/rust-core`. 오프라인 테스트는 macOS에서 전체 녹색(push 전이라 3 OS CI는 아직 돌지 않음), 실서버 스모크(빠른 다시보기 HLS·DASH VOD·클립) 통과(2026-10-05, 설계 "구현 중 변경" 45). 14~15단계 리뷰 수정(옛 형식 settings.json 보존, 이어받기 ETA 등, 구현 중 변경 47~51) 반영
 - 남은 것: 3 OS CI 확인(push 후, Windows `aws-lc-sys` NASM 문제는 설계 구현 중 변경 21대로 CI 결과를 보고 결정), 성인 PD에 미디어 쿠키가 필요한지 실측(로그인 쿠키 필요, `examples/dl.rs`의 `CHZZK_NID_AUT`·`CHZZK_NID_SES`로 사용자가 직접), AES 지원 여부 결정(설계 §11)
 - 다음: §10-16 Go 코드 삭제(별도 PR) → Phase 2 Tauri 셸
 

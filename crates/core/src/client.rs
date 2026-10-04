@@ -274,6 +274,36 @@ mod tests {
         ));
     }
 
+    /// 리뷰 수정: `Content-Length` 없이 계속 흘러오는(chunked) 본문도 상한에서 끊는다.
+    #[tokio::test]
+    async fn read_capped_limits_chunked_body() {
+        use std::io::{Read, Write};
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut s, _) = listener.accept().unwrap();
+            let mut req = [0u8; 1024];
+            let _ = s.read(&mut req);
+            let chunk = format!("40\r\n{}\r\n", "x".repeat(64));
+            let _ = s.write_all(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n");
+            let _ = s.write_all(chunk.as_bytes());
+            let _ = s.write_all(chunk.as_bytes());
+            let _ = s.write_all(b"0\r\n\r\n");
+        });
+        let http = http::build_client(Duration::from_secs(5), Duration::from_secs(5)).unwrap();
+        let resp = http.get(format!("http://{addr}/")).send().await.unwrap();
+        assert_eq!(resp.content_length(), None);
+        assert!(matches!(
+            read_capped(resp, 100).await,
+            Err(Error::Parse {
+                what: "response",
+                ..
+            })
+        ));
+        server.join().unwrap();
+    }
+
     #[test]
     fn new_rejects_bad_endpoint() {
         let cfg = ClientConfig {

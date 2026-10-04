@@ -723,7 +723,7 @@ tokio    = { version = "1.53.2", features = ["net", "test-util"] }
     - 빠른 다시보기의 `encodingTrack`이 비면 `resolve`가 `NoQualities`를 낸다.
 25. **(8단계) UA의 Chrome 메이저는 `141`이다.** OS별 UA 세 개가 `chrome_major!()` 하나를 쓴다. 실서버가 UA를 검사한다는 증거는 없으므로 값은 15단계 스모크 때 필요하면 올린다. 실서버 스모크 `resolve::live_smoke`는 `#[ignore]` + `CHZZK_LIVE_VIDEO`로만 돈다.
 26. **(5~8단계 리뷰 수정)**
-    - **HLS track_id.** 디렉토리 밖 variant의 track_id를 원문이 아니라 `join`한 URL의 첫 비어 있지 않은 path 세그먼트로 바꿨다. 원문을 자르면 절대 URI에서 스킴 `https:`가 나왔다. 파일명 바로 앞 세그먼트는 쓰지 않는다(실물 경로에서는 `hdntl` 토큰 조각이다). 디렉토리 밖 URI는 여전히 받으며, 고르는 쪽은 §4.1 388행의 `height` 폴백에 기댄다. §4.1 464행("없으면 `QualityNotFound`")은 388행과 어긋나며 388행(폴백 있음)을 기준으로 본다.
+    - **HLS track_id.** 디렉토리 밖 variant의 track_id를 원문이 아니라 `join`한 URL의 첫 비어 있지 않은 path 세그먼트로 바꿨다. 원문을 자르면 절대 URI에서 스킴 `https:`가 나왔다. 파일명 바로 앞 세그먼트는 쓰지 않는다(실물 경로에서는 `hdntl` 토큰 조각이다). 디렉토리 밖 URI는 여전히 받으며, 고르는 쪽은 §4.1의 `height` 폴백에 기댄다. §5.4 1번("없으면 `QualityNotFound`")은 §4.1과 어긋나며 §4.1(폴백 있음)을 기준으로 본다.
     - **URI 없는 EXTINF.** URI 전에 EXTINF가 또 나오거나 URI 없는 EXTINF로 끝나면 `Parse`다. 끝 검사는 ENDLIST 검사 뒤라서, ENDLIST 없이 잘린 playlist는 그대로 `NotEnded`다.
     - **msn 범위.** `EXT-X-MEDIA-SEQUENCE + (세그먼트 수 - 1)`이 u64를 넘으면 패닉 대신 `Parse`다.
     - **GAP·SKIP 거부.** `EXT-X-GAP`은 `Unsupported::Gap`, `EXT-X-SKIP`(delta playlist)은 `Unsupported::Skip`이다. 둘 다 이어 붙이면 구멍 난 파일이 된다. LL-HLS의 `EXT-X-PART`·`EXT-X-PRELOAD-HINT`는 ENDLIST playlist에서도 전체 세그먼트가 함께 나열되므로 거부하지 않고 모르는 태그로 무시한다.

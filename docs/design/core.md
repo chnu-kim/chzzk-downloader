@@ -1,0 +1,675 @@
+# crates/core 설계 (Phase 1, 확정안)
+
+세 설계안(fidelity / robustness / consumer)과 AES 조사 보고를 대조해 판정한 최종 설계다. 기준 문서는 `docs/ROADMAP.md`, `docs/spec/core-behavior.md`(이하 spec), `docs/research/hls-live-rewind.md`(이하 research), `docs/research/stack.md`, `docs/research/chzzk-oauth.md`다. fixture는 `internal/api/testdata/`(클립), `testdata/hls/`(빠른 다시보기), `testdata/vod/`(일반 VOD, 이번 판정에서 확보)다.
+
+## 0. 판정 요약
+
+- **베이스는 fidelity 안**이다. 모듈 수가 기능 수와 맞고, trait 없이 mock 서버로 테스트하며, spec §8의 테스트를 1:1로 매핑했다.
+- robustness 안에서 가져온 것: 크래시 일관성 불변식(`sync_data` → sidecar 원자적 쓰기, 재개 시 `committed_len`으로 truncate), 재조회 후 playlist 지문 검증(세그먼트 수 + EXTINF crc32 + init 길이), "갱신 직후 같은 요청이 다시 403이면 즉시 실패", `.part`는 상태 코드 확인 뒤에만 생성, Windows rename 재시도, 디스크 부족 `io::Error` 매핑, `std::fs::File::try_lock`으로 이중 다운로드 방지, `Secret` 마스킹, `Error::is_resumable()`.
+- consumer 안에서 가져온 것: 직렬화 가능한 `ErrorKind`(UI 분기용), `ownership::is_own_content`(Phase 3 seam), `MediaPlaylist.init: Option<Url>`(AES/TS 대비 최소 seam), 레거시 `lastQualityName`의 `^(\d+)P_` → `"{n}p"` 변환.
+- 버린 것(현재 기능에 불필요): 다운로드 큐·JobId·상태 머신·history.json(consumer), `SourceResolver`/`CredentialStore`/`SegmentTransform` trait·offline grace·`fs4` 사전 디스크 점검·EWMA·64 MiB playlist 상한(robustness), `ConflictPolicy::Ask/Rename`, `keyring`/`directories` optional feature. 큐와 Ask는 Phase 2 셸에서 필요해지면 코어 `download()` 위에 얹는다.
+
+### 판정 중 실측으로 확인한 것 (2026-10-05)
+
+| 주장 | 결과 |
+|---|---|
+| AES VOD에도 `inKey`가 있다 → `encryptionType`을 먼저 봐야 한다 | **확인**. 9000003: `encryptionType:"AES"`, `inKey` 있음, `vodStatus:"ABR_HLS"` |
+| 비성인 PD mp4는 쿠키 없이 받아진다 | **확인**. 9000002 PD URL에 쿠키·Referer 없이 `HEAD` 200, `Range: bytes=0-99` 206. 호스트는 `vod.example.invalid`(클립과 다름). 성인 VOD는 미확인 |
+| 일반 VOD MPD 구조(research §10) | **확인 + fixture 확보** `testdata/vod/`: `video/mp4`(PD_144P, PD_720P) + `video/mp2t`(UUID) + `audio/mp4`. `ContentProtection` 없음 |
+| reqwest 0.13.5에 `read_timeout`, `no_gzip`, `pool_max_idle_per_host`가 있다 | **확인**(docs.rs). feature 이름은 `rustls`, `stream`, `json`, `gzip` |
+| crate 최신 안정판 | reqwest 0.13.5, tokio 1.53.2, tokio-util 0.7.19, futures-util 0.3.34, bytes 1.12.1, url 2.5.8, serde 1.0.229, serde_json 1.0.151, roxmltree 0.21.1, thiserror 2.0.21, tracing 0.1.44, wiremock 0.6.5, tempfile 3.27.0, crc32fast 1.5.2 |
+
+### 점수 (5점 만점)
+
+| 기준 | fidelity | robustness | consumer |
+|---|---|---|---|
+| spec 정합성(테스트 매핑, 버그 수정 반영) | 5 | 4 | 4 |
+| 견고성(장시간 다운로드, 크래시, 토큰 만료) | 3 | 5 | 4 |
+| 소비자(Tauri 셸) 적합성 | 3 | 3 | 5 |
+| 단순성(현재 기능 대비) | 5 | 2 | 2 |
+| 테스트 용이성(오프라인, trait 없이) | 5 | 4 | 3 |
+| **합** | **21** | **18** | **18** |
+
+---
+
+## 1. 결정 (각 한 줄 근거)
+
+1. **package 이름은 `chzzk-core`**(lib `chzzk_core`, 디렉토리 `crates/core`). `core`는 내장 crate와 겹친다. `cargo test -p chzzk-core`.
+2. **워크스페이스**: 루트 `Cargo.toml`, `resolver = "3"`, `edition = "2024"`, `rust-version = "1.90"`(Tauri 2.12 기준, 로컬 1.96.1). 지금 멤버는 `crates/core`뿐이고 `app/src-tauri`는 Phase 2에 추가한다.
+3. **Tauri 의존 없음**. 진행률은 `&dyn Fn(Progress)` 콜백, 취소는 `tokio_util::sync::CancellationToken`. 셸이 Channel로 브리지한다.
+4. **`inKey` 분기는 순수 함수 `classify` 한 곳**. `encryptionType` → `inKey` → `liveRewindPlaybackJson` 순서. AES VOD에도 `inKey`가 있으므로 순서가 중요하다(실측).
+5. **AES seam은 `Playback::Encrypted` 하나**. `resolve`의 match arm이 `Err(Error::EncryptedVod)`를 낸다. 지원 여부는 사용자 결정(§11). 2차 방어로 MPD `ContentProtection`과 playlist `EXT-X-KEY`(METHOD≠NONE)도 거부한다.
+6. **화질 선택은 정확 일치**(`Quality.id`). 숫자열 추출은 없다. `label`(`"{resolution}p"`)은 표시·마지막 화질 기억에만 쓴다. 소스 종류가 바뀌면 `PlaybackChanged`로 멈추고 사용자가 다시 고른다.
+7. **HTTP 클라이언트 하나, 압축 해제 없음**(`gzip` feature 미사용). 자동 해제는 `Content-Length`와 Range offset을 깨뜨린다. API JSON은 작다.
+8. **쿠키는 API 요청에만**, `cfg.cookies`가 `Some`일 때만. 미디어에는 보내지 않는다(HLS는 research §7, PD는 이번 실측). 성인 PD가 틀리면 `cookies_on_media` 스위치로 되돌린다.
+9. **헤더는 요청 종류(`RequestKind`)로 정한다**. 호스트로 정하지 않는다. 그래야 127.0.0.1 mock으로 검증된다.
+10. **`.part` + sidecar(`.part.json`)로 이어받기**. progressive는 Range, HLS는 같은 index부터. 실패·취소 시 둘 다 남긴다. 이어받을 수 없는 오류만 지운다.
+11. **크래시 불변식**: sidecar의 `committed_len`은 항상 durable한 바이트 수 이하. 순서는 `flush` → `sync_data` → sidecar 원자적 쓰기. 재개 시 `.part`를 `committed_len`으로 truncate.
+12. **403 처리**: 미디어 403은 `Expired`로 보고 `resolve`를 다시 한다. 재조회 직후 같은 요청이 다시 403이면 `AuthRequired`로 끝낸다(무한 루프 방지). 작업당 재조회 상한은 8회.
+13. **재조회 후 동일성 검증**: progressive는 `Content-Range` total, HLS는 `segment_count` + EXTINF(ms) 시퀀스 crc32 + init 길이. 다르면 `SourceChanged`. research §11.2(갱신 후 MSN 유지)는 미관찰이므로 추측으로 이어 붙이지 않는다.
+14. **파일명**: `[YYMMDD] 채널 - 제목.mp4`, 클립 `[클립] 채널 - 제목.mp4`. 대괄호·소괄호·중괄호 유지. sanitize는 `Platform` 인자(Windows/MacOs/Linux)로 받아 한 호스트에서 세 OS 규칙을 테스트한다. 길이는 UTF-8 **200바이트**(`.part.json` 접미사 + 한글 3바이트 여유).
+15. **설정 위치는 셸이 주입**(`config_dir`, `default_download_dir`). `directories` 미사용. 자격증명은 `credentials.json`(unix 0600). 키체인은 미서명 배포(macOS ACL 프롬프트)와 Linux secret-service 때문에 쓰지 않는다.
+16. **레거시 가져오기는 `import_legacy(dir)` 하나**. 새 앱은 옛 exe 위치를 모르므로 첫 실행 때 `current_exe().parent()`를 한 번 살피고, 설정 화면의 "가져오기"가 주 경로다.
+17. **HLS 손 파서**(m3u8-rs 미사용). 필요한 태그가 적고 미지원 태그를 명시적으로 거부해야 한다.
+18. **테스트는 wiremock + raw TcpListener**. wiremock으로 상태 코드 순서·Range·헤더 기록을 다루고, 본문 절단만 raw TCP로 한다. axum을 dev-dependency로 추가하지 않는다.
+
+---
+
+## 2. 모듈 트리
+
+```
+Cargo.toml                      # [workspace] resolver="3", members=["crates/core"]
+                                # [workspace.package] edition="2024", rust-version="1.90"
+crates/core/
+  Cargo.toml                    # package "chzzk-core"
+  src/
+    lib.rs                      # 재노출
+    error.rs                    # Error, ErrorKind, Unsupported
+    url.rs                      # parse_content_url
+    model.rs                    # ContentRef, ContentKind, ContentMeta, Quality, PlaybackKind, Source, PdRep, Resolved
+    info.rs                     # 순수: VideoContent, ClipContent, parse_video_info, parse_clip_info, classify  ← 유일한 inKey 분기
+    mpd.rs                      # 순수: parse_mpd(roxmltree, local-name), pd_reps, has_content_protection
+    hls.rs                      # 순수: parse_master, parse_media, Variant, MediaPlaylist, Segment
+    http.rs                     # build_client, RequestKind, 헤더, UA 상수, NaverCookies(Secret), redact_url
+    client.rs                   # Endpoints, ClientConfig, Chzzk { resolve(), download() }
+    ownership.rs                # is_own_content
+    download/
+      mod.rs                    # download 진입점: DuplicatePolicy, 사전 검사, 재조회 루프, finalize
+      part.rs                   # PartFile(.part 잠금·append·checkpoint·truncate·finalize), Sidecar(.part.json)
+      progressive.rs            # 단일 GET + Range 이어받기
+      segmented.rs              # HLS fMP4: init + 순서 보장 동시 fetch
+      retry.rs                  # RetryPolicy, Failure{Retry,Expired,Fatal}, classify_failure
+    progress.rs                 # Progress, Phase, Meter(스로틀), speed_eta, format_bytes, format_hms
+    naming.rs                   # Platform, default_filename, sanitize_filename, output_path, parse_live_date
+    fsutil.rs                   # atomic_write, rename_with_retry, map_io_error
+    settings.rs                 # UserSettings, RecentVod, SettingsStore, add_recent_vod
+    credentials.rs              # CredentialStore(load/save/clear, 0600)
+    legacy.rs                   # import_legacy(dir) -> Option<LegacyImport>
+  tests/
+    common/mod.rs               # fixture 로더, 호스트 재작성, 경로 접미사 응답기, raw TCP 서버
+    resolve.rs  progressive.rs  segmented.rs  download.rs  settings.rs
+  examples/dl.rs                # 수동 스모크 CLI(실서버). format_bytes/format_hms 소비자
+testdata/
+  hls/   vod/   (clip/ ← Go 삭제 PR에서 internal/api/testdata 이동)
+  synthetic/
+    README.md                   # 합성임을 명시
+    vod_info_aes.json           # testdata/vod/video_info.json에 encryptionType:"AES"만 추가
+    media_{discontinuity,two_maps,key_aes,key_none,byterange,no_endlist,long_extinf}.m3u8
+```
+
+fixture 경로는 `concat!(env!("CARGO_MANIFEST_DIR"), "/../../testdata/...")`와 `"/../../internal/api/testdata/..."`를 `tests/common::fixture(path)` 하나로 읽는다.
+
+---
+
+## 3. 공개 API
+
+### 3.1 URL과 모델
+
+```rust
+// url.rs
+pub fn parse_content_url(s: &str) -> Result<ContentRef, Error>;
+// url crate. host ∈ {"chzzk.naver.com", "m.chzzk.naver.com"}. path 세그먼트:
+//   ["video", digits] → Video, ["clips", id] | ["embed","clip", id] → Clip (id: [A-Za-z0-9_-]+)
+// 쿼리·fragment 무시, 뒤 '/' 허용. 그 밖은 Error::InvalidUrl.
+
+// model.rs
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum ContentRef { Video { video_no: u64 }, Clip { clip_id: String } }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ContentKind { Video, Clip }
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContentMeta {
+    pub kind: ContentKind,
+    pub title: String,                 // trim
+    pub channel_name: String,
+    pub channel_id: Option<String>,    // VOD content.channel.channelId / 클립 ownerChannel.channelId, 소문자화
+    pub live_open_date: Option<String>,// "YYYY-MM-DD HH:MM:SS" (KST 문자열 그대로)
+    pub publish_date: Option<String>,  // 파일명 날짜 폴백
+    pub adult: bool,
+    pub duration_secs: Option<f64>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Quality {
+    pub id: String,                // 정확 일치 키: DASH rep@id("PD_720P_1280_2048_192") / HLS encodingTrackId("720p")
+    pub label: String,             // 표시·last 선택용: "{resolution}p", 없으면 id
+    pub resolution: Option<u32>,   // DASH Label[kind=resolution] / HLS videoHeight (짧은 변)
+    pub width: Option<u32>, pub height: Option<u32>,
+    pub bandwidth: Option<u64>,
+    pub frame_rate: Option<String>,// 실물이 문자열("60.0", "30")
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PlaybackKind { Progressive, LiveRewindHls }
+
+pub struct PdRep { pub quality: Quality, pub url: Url }
+pub enum Source {
+    Progressive { reps: Vec<PdRep> },                        // PD 필터 통과분만
+    LiveRewindHls { master_url: Url, tracks: Vec<Quality> },
+}
+pub struct Resolved { pub content: ContentRef, pub meta: ContentMeta, pub source: Source }
+impl Resolved {
+    pub fn kind(&self) -> PlaybackKind;
+    pub fn qualities(&self) -> Vec<&Quality>;               // 원래 순서(정렬하지 않음)
+    pub fn default_quality(&self, last_label: Option<&str>) -> usize;
+    //   last_label == label인 첫 항목 → 없으면 resolution.or(height) 최대(같으면 앞) → 없으면 0
+}
+```
+
+### 3.2 순수 파서
+
+```rust
+// info.rs
+pub struct VideoContent { /* serde: 문자열은 전부 Option<String>, None == "" (spec §3.1) */ }
+pub enum Playback {
+    Dash { video_id: String, in_key: String },
+    LiveRewind { master_url: Url, tracks: Vec<Quality> },
+    Encrypted { method: String, video_id: String, in_key: Option<String> },   // AES seam
+}
+pub fn parse_video_info(body: &[u8]) -> Result<(ContentMeta, VideoContent), Error>; // code != 200 → Error::Api
+pub fn classify(v: &VideoContent) -> Result<Playback, Error>;
+//   1) encryptionType 비어 있지 않음 → Encrypted (MPD를 받지 않는다)
+//   2) inKey 비어 있지 않음 → Dash (videoId 비면 Error::Parse)
+//   3) liveRewindPlaybackJson 이중 디코드 → media 중 protocol=="HLS"인 첫 항목 → LiveRewind
+//        tracks: encodingTrack 순서 그대로. videoBitRate/videoWidth/videoHeight는 Option<u64>/<u32>, videoFrameRate는 Option<String>
+//   4) 그 밖 → Error::NoPlayback { adult }
+pub fn parse_clip_info(body: &[u8]) -> Result<(ContentMeta, Playback /* 항상 Dash */), Error>;
+//   videoId/inKey 비면 Error::Parse. channel_id는 ownerChannel.channelId
+
+// mpd.rs
+pub struct Representation { pub id: String, pub mime: String, pub bandwidth: Option<u64>,
+    pub width: Option<u32>, pub height: Option<u32>, pub frame_rate: Option<String>,
+    pub labels: Vec<(String, String)>, pub base_urls: Vec<String>, pub protected: bool }
+pub fn parse_mpd(xml: &str) -> Result<Vec<Representation>, Error>;  // 모든 Period/AdaptationSet, local-name 매칭
+//   AdaptationSet@mimeType을 Representation으로 상속. ContentProtection(AdaptationSet/Representation)이 있으면 protected=true
+pub fn pd_reps(reps: &[Representation]) -> Result<Vec<PdRep>, Error>;
+//   mime ∋ "video/mp4" && id ^= "PD_" && base_urls[0] ∋ "/pd/" && !protected. 비면 Error::NoQualities
+//   Quality.label = Label[kind=resolution]+"p" (없으면 id), resolution = 그 값
+
+// hls.rs
+pub struct Variant { pub uri: Url, pub track_id: String /* 첫 path 세그먼트 */, pub height: Option<u32> }
+pub struct MediaPlaylist { pub media_sequence: u64, pub init: Option<Url>, pub segments: Vec<Segment>, pub total_duration_ms: u64 }
+pub struct Segment { pub msn: u64, pub duration_ms: u32, pub uri: Url }
+pub fn parse_master(text: &str, base: &Url) -> Result<Vec<Variant>, Error>;
+pub fn parse_media(text: &str, base: &Url) -> Result<MediaPlaylist, Error>;
+//   허용: 빈 줄, PDT, DATERANGE, 모르는 #EXT 태그(경고 로그), KEY:METHOD=NONE, EXTINF > TARGETDURATION
+//   거부(Error::Unsupported): DISCONTINUITY, 두 번째 MAP, KEY(METHOD≠NONE → Unsupported::Encrypted(method)), BYTERANGE, ENDLIST 없음
+//   init은 Option(fMP4면 Some). MAP URI의 쿼리(?type=hls&filetype=.m4s) 보존. master의 hdnts 쿼리는 전파하지 않는다
+pub fn durations_crc(p: &MediaPlaylist) -> u32;   // EXTINF ms 시퀀스의 crc32 (sidecar 지문)
+```
+
+### 3.3 클라이언트
+
+```rust
+// http.rs
+pub enum RequestKind { Api, Mpd, Media }
+pub struct NaverCookies { pub nid_aut: Secret<String>, pub nid_ses: Secret<String> } // Debug/Display = "***"
+pub fn user_agent() -> &'static str;   // cfg!(target_os): Windows NT 10.0 / Macintosh / X11 Linux. Chrome major 상수 하나
+pub fn redact_url(u: &Url) -> String;  // 쿼리 제거 + 경로의 "hdntl=..." 세그먼트를 "hdntl=***"로
+
+// client.rs
+pub struct Endpoints { pub chzzk_api: Url /* https://api.chzzk.naver.com/ */, pub vodplay_api: Url /* https://apis.naver.com/ */ }
+pub struct ClientConfig {
+    pub endpoints: Endpoints,
+    pub cookies: Option<NaverCookies>,   // 사용자가 켰고 값이 있을 때만 Some (spec §9.1-11)
+    pub cookies_on_media: bool,          // 기본 false. 성인 PD 실측 후 필요하면 true
+    pub retry: RetryPolicy,
+    pub progress_interval: Duration,     // 기본 200ms, 테스트 0
+    pub connect_timeout: Duration,       // 10s
+    pub read_timeout: Duration,          // 30s (idle). 전체 timeout은 두지 않는다
+}
+pub struct Chzzk { /* reqwest::Client, ClientConfig */ }
+impl Chzzk {
+    pub fn new(cfg: ClientConfig) -> Result<Self, Error>;
+    pub async fn resolve(&self, c: &ContentRef) -> Result<Resolved, Error>;
+    pub async fn download(&self, req: DownloadRequest, cancel: CancellationToken,
+                          on_progress: &(dyn Fn(Progress) + Send + Sync)) -> Result<DownloadOutcome, Error>;
+}
+```
+
+헤더 정책(요청 종류 기준):
+
+| RequestKind | 헤더 |
+|---|---|
+| `Api` | UA, `Referer: https://chzzk.naver.com/`, `Origin: https://chzzk.naver.com`, `Accept: application/json, */*`, `Cookie`(cookies가 Some일 때, `NID_AUT=..; NID_SES=..` 고정 순서) |
+| `Mpd` | `Api`와 같되 `Accept: application/dash+xml, application/xml, */*` |
+| `Media` | UA, Referer. `Cookie`는 `cookies_on_media`일 때만 |
+
+상태 코드: `Api`/`Mpd`는 2xx가 아니면 `HttpStatus`, 401/403은 `AuthRequired`. 그다음 JSON `code`를 본다. `Media`의 403은 공개 오류가 아니라 내부 `Failure::Expired`다.
+
+### 3.4 다운로드
+
+```rust
+// download/mod.rs
+pub enum DuplicatePolicy { Overwrite, Skip }     // spec §6.3. 최종 파일에만 적용. .part는 자동 처리
+pub struct DownloadRequest {
+    pub content: ContentRef,
+    pub quality_id: String,
+    pub expected_kind: PlaybackKind,  // 목록을 보여 줄 때의 종류. 재조회 결과가 다르면 PlaybackChanged
+    pub output: PathBuf,              // 최종 경로(naming::output_path). 부모 디렉토리는 코어가 만든다
+    pub on_existing: DuplicatePolicy,
+    pub concurrency: NonZeroU8,       // HLS, 기본 4, 상한 8
+}
+pub enum DownloadOutcome {
+    Completed { path: PathBuf, bytes: u64, resumed_from: u64 },
+    Skipped { path: PathBuf },
+}
+pub fn discard_partial(output: &Path) -> Result<(), Error>;   // .part + sidecar 삭제 (UI "처음부터")
+
+// progress.rs
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Progress {
+    pub phase: Phase,                        // Resolving | Downloading | Reresolving | Finalizing
+    pub bytes: u64,                          // .part 누적(이어받은 분 포함)
+    pub total_bytes: Option<u64>,            // progressive만
+    pub total_bytes_estimate: Option<u64>,   // HLS: bytes / media_done * media_total
+    pub segments: Option<(u32, u32)>,        // (완료, 전체) HLS만
+    pub media_secs: Option<(f64, f64)>,      // (완료, 전체) HLS만
+    pub speed_bps: Option<u64>,              // 이번 실행 바이트 / 경과(최근 5초 창)
+    pub eta_secs: Option<u64>,
+    pub resumed_from: u64,
+    pub refreshes: u32,
+}
+pub fn speed_eta(written: u64, total: Option<u64>, elapsed: Duration) -> (Option<u64>, Option<u64>); // spec §6.1 규칙
+pub fn format_bytes(n: u64) -> String;   // spec §6.1 표
+pub fn format_hms(secs: u64) -> String;  // spec §6.6
+```
+
+- `Meter`는 `progress_interval`마다 한 번만 콜백한다. phase가 바뀔 때와 마지막에는 무조건 보낸다.
+- ETA: progressive는 `(total − written) / speed`. HLS는 `(media_total − media_done) / (미디어초 처리율)`. 세그먼트 수 비율은 쓰지 않는다(마지막 세그먼트가 짧고 크기가 제각각).
+
+### 3.5 파일명·설정·자격증명·소유
+
+```rust
+// naming.rs
+pub enum Platform { Windows, MacOs, Linux }  impl Platform { pub fn current() -> Self }
+pub fn default_filename(meta: &ContentMeta, p: Platform) -> String;  // §6
+pub fn sanitize_filename(name: &str, p: Platform) -> String;         // 멱등
+pub fn output_path(folder: &Path, filename: &str, p: Platform) -> PathBuf; // 확장자 .mp4 고정(대소문자 무시), __mp4 규칙 폐기
+pub fn parse_live_date(raw: &str) -> Option<(u16, u8, u8)>;         // "YYYY-MM-DD[ |T]..." 자릿수 검증, panic 없음
+
+// settings.rs  (키는 camelCase, 모든 필드 #[serde(default)], null 배열 → 빈 Vec)
+pub struct UserSettings {
+    pub schema_version: u32,                 // 2
+    pub download_folder: Option<PathBuf>,    // None → 셸이 준 기본값
+    pub use_naver_cookies: bool,             // 쿠키 전송의 유일한 스위치
+    pub last_quality_label: Option<String>,  // "720p"
+    pub last_url: Option<String>,
+    pub recent_vods: Vec<RecentVod>,         // 최대 5
+    pub segment_concurrency: u8,             // 4
+    pub imported_from: Option<PathBuf>,
+}
+pub struct RecentVod { pub url: String, pub title: String }
+pub fn add_recent_vod(s: &mut UserSettings, url: &str, title: &str); // 같은 URL 제거 후 맨 앞, 5개, 50자 초과면 47자+"..." (char)
+pub struct SettingsStore { /* dir, Mutex<UserSettings> */ }
+impl SettingsStore {
+    pub fn open(dir: PathBuf) -> Result<Self, Error>;  // 없으면 기본값. 깨졌으면 settings.json.bad-{ts}로 옮기고 기본값
+    pub fn get(&self) -> UserSettings;
+    pub fn update<F: FnOnce(&mut UserSettings)>(&self, f: F) -> Result<UserSettings, Error>; // lock → f → atomic_write
+}
+
+// credentials.rs
+pub struct CredentialStore { /* dir */ }   // {dir}/credentials.json, unix 0600
+impl CredentialStore { pub fn load(&self) -> Result<Option<NaverCookies>, Error>;
+                       pub fn save(&self, c: &NaverCookies) -> Result<(), Error>; pub fn clear(&self) -> Result<(), Error>; }
+
+// legacy.rs
+pub struct LegacyImport { pub settings: UserSettings, pub cookies: Option<NaverCookies>, pub warnings: Vec<String> }
+pub fn import_legacy(dir: &Path) -> Result<Option<LegacyImport>, Error>; // {dir}/settings.json (+ dependent/cookie.json)
+
+// ownership.rs
+pub fn is_own_content(meta: &ContentMeta, my_channel_id: &str) -> Option<bool>; // channel_id 없으면 None. 소문자 정확 일치
+```
+
+### 3.6 오류
+
+```rust
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum Error {
+    #[error("치지직 VOD 또는 클립 주소가 아닙니다")]                InvalidUrl,
+    #[error("API 오류 {code}: {message:?}")]                         Api { code: i64, message: Option<String> },
+    #[error("HTTP {status}")]                                        HttpStatus { status: u16, kind: RequestKind },
+    #[error("로그인/성인 인증이 필요합니다 (HTTP {status})")]         AuthRequired { status: u16 },
+    #[error("재생 정보가 없습니다")]                                  NoPlayback { adult: bool },
+    #[error("암호화된 VOD({method})는 지원하지 않습니다")]             EncryptedVod { method: String },
+    #[error("다운로드 가능한 화질이 없습니다")]                       NoQualities,
+    #[error("선택한 화질({requested})을 찾을 수 없습니다")]           QualityNotFound { requested: String, available: Vec<String> },
+    #[error("재생 방식이 바뀌었습니다. 화질을 다시 고르세요")]         PlaybackChanged { was: PlaybackKind, now: PlaybackKind },
+    #[error("원본이 바뀌어 이어받을 수 없습니다: {detail}")]          SourceChanged { detail: String },
+    #[error("토큰 갱신 한도를 넘었습니다")]                           RefreshExhausted,
+    #[error("지원하지 않는 스트림: {0:?}")]                           Unsupported(Unsupported),
+    #[error("응답 형식 오류({what}): {detail}")]                     Parse { what: &'static str, detail: String },
+    #[error("길이 불일치: 예상 {expected}, 실제 {actual}")]           LengthMismatch { expected: u64, actual: u64 },
+    #[error("네트워크 오류: {0}")]                                    Network(#[source] reqwest::Error),
+    #[error("디스크 공간이 부족합니다: {path}")]                      DiskFull { path: PathBuf },
+    #[error("다른 프로그램이 파일을 사용 중입니다: {path}")]           FileLocked { path: PathBuf },
+    #[error("파일 오류({op}) {path}: {source}")]                     Io { op: &'static str, path: PathBuf, #[source] source: std::io::Error },
+    #[error("설정 파일 오류: {0}")]                                   Settings(String),
+    #[error("취소됨")]                                                Cancelled,
+}
+pub enum Unsupported { Discontinuity, SecondMap, Encrypted(String), ByteRange, MissingMap, NotEnded, NoHlsMedia }
+#[derive(Serialize, Clone, Copy)] #[serde(rename_all = "camelCase")]
+pub enum ErrorKind { InvalidUrl, Api, Http, AuthRequired, NoPlayback, Encrypted, NoQualities, QualityNotFound,
+                     PlaybackChanged, SourceChanged, RefreshExhausted, Unsupported, Parse, LengthMismatch,
+                     Network, DiskFull, FileLocked, Io, Settings, Cancelled }
+impl Error {
+    pub fn kind(&self) -> ErrorKind;      // Tauri가 직렬화해 UI가 분기
+    pub fn is_resumable(&self) -> bool;   // .part가 남아 있어 같은 요청으로 이어받을 수 있는가
+}
+```
+
+- `Display`와 `Debug` 어디에도 Cookie 값·`hdnts`·`hdntl` 토큰이 들어가지 않는다. URL은 `redact_url`을 거친다. `reqwest::Error`는 URL을 품으므로 `Network`의 Display는 `without_url()`을 적용한 메시지를 쓴다.
+- `is_resumable`: Network, HttpStatus(5xx), RefreshExhausted, Cancelled, DiskFull, FileLocked → true. LengthMismatch, SourceChanged, PlaybackChanged, AuthRequired(미디어 403), 4xx → false(코어가 `.part`를 지운다).
+
+---
+
+## 4. 소스별 데이터 흐름
+
+### 4.1 `resolve` (목록 조회와 다운로드 직전 재조회가 같은 함수)
+
+```
+Video: GET {chzzk_api}/service/v2/videos/{no}            [Api]   2xx 검사, 401/403 → AuthRequired
+       → parse_video_info → classify
+          Dash        → GET {vodplay_api}/neonplayer/vodplay/v2/playback/{videoId}?key={inKey}   [Mpd]
+                         → parse_mpd → pd_reps → Source::Progressive            (reps가 비면 NoQualities)
+          LiveRewind  → Source::LiveRewindHls { master_url, tracks }          (master는 download 때 받는다)
+          Encrypted   → Err(EncryptedVod { method })                           ← AES seam (§11)
+Clip:  GET {chzzk_api}/service/v1/play-info/clip/{id}    [Api]   → parse_clip_info → Dash 경로와 동일
+```
+
+- `videoId`/`inKey`는 `query_pairs_mut`로 인코딩한다. 관찰된 값은 영숫자뿐이라 결과가 같다.
+- 화질 선택은 `Resolved` 안에서 `id` 정확 일치. progressive는 `reps[i].quality.id == quality_id`, HLS는 master variant의 `track_id == quality_id`(없으면 `height == tracks[q].height` 폴백 후 그래도 없으면 `QualityNotFound`).
+
+### 4.2 `download` 공통 골격
+
+1. 최종 파일이 있으면 `Skip` → `Skipped`(네트워크 0회), `Overwrite` → 계속.
+2. `.part`와 sidecar를 읽는다. `(content, quality_id, kind)`가 같으면 재개 후보. 다르거나 sidecar가 없으면 둘 다 지우고 새로 시작.
+3. `Phase::Resolving`: `resolve`. `kind != expected_kind` → `PlaybackChanged`.
+4. 엔진 실행(§5). 403 → `Phase::Reresolving` → 3번으로(동일성 검증 포함, 상한 8회).
+5. `Phase::Finalizing`: 마지막 checkpoint → 잠금 해제·핸들 drop → `rename_with_retry(.part → final)` → sidecar 삭제.
+6. `Completed { resumed_from }`.
+
+실패·취소 시 `.part`와 sidecar를 남긴다. `is_resumable() == false`인 오류만 둘 다 지운다.
+
+---
+
+## 5. 다운로드 엔진
+
+### 5.1 PartFile과 Sidecar (`download/part.rs`)
+
+```rust
+#[derive(Serialize, Deserialize)]
+pub struct Sidecar {
+    pub v: u8,                               // 1
+    pub content: ContentRef, pub quality_id: String, pub kind: PlaybackKind,
+    pub committed_len: u64,                  // durable한 바이트 수 (불변식: ≤ 실제 fsync된 길이)
+    pub progressive: Option<ProgressiveState>,  // { total_len: u64 }
+    pub hls: Option<HlsState>,               // { next_index: u32, segment_count: u32, durations_crc: u32, init_len: u32, media_sequence: u64 }
+}
+pub struct PartFile { /* File(BufWriter 1 MiB), part, sidecar, final_path, written, committed */ }
+impl PartFile {
+    pub fn open(final_path: &Path, sidecar: Option<Sidecar>) -> Result<(Self, u64 /* resume offset */), Error>;
+    pub fn write(&mut self, buf: &[u8]) -> Result<(), Error>;      // map_io_error: StorageFull/ENOSPC/112/39 → DiskFull
+    pub fn checkpoint(&mut self, update: impl FnOnce(&mut Sidecar)) -> Result<(), Error>;
+    pub fn finalize(self, dup: DuplicatePolicy) -> Result<PathBuf, Error>;
+}
+```
+
+- **잠금**: `File::try_lock()`(std, 1.89+)로 `.part`를 배타 잠금. 실패하면 `FileLocked`. Windows는 강제, Unix는 advisory.
+- **checkpoint 순서**: `flush` → `sync_data`(`spawn_blocking`) → `committed = written` → `fsutil::atomic_write(sidecar)`(tmp → sync → rename). 주기는 HLS 세그먼트 32개 또는 5초, progressive 64 MiB 또는 5초.
+- **재개**: `.part` 길이 > `committed_len`이면 truncate(크래시 꼬리). 작으면 sidecar 불일치로 보고 새로 시작.
+- **`.part`는 첫 응답의 상태 코드를 확인한 뒤에만 만든다.** 404면 아무 파일도 남지 않는다.
+- **finalize**: 핸들을 닫은 뒤 `rename_with_retry`(100ms부터 약 3초까지 지수 재시도, Windows `ERROR_SHARING_VIOLATION`/`ACCESS_DENIED` 대비). 최종 파일이 열려 있으면 `FileLocked`, `.part` 보존. `std::fs::rename`은 Windows에서도 덮어쓴다.
+
+### 5.2 재시도와 403 (`download/retry.rs`)
+
+```rust
+pub struct RetryPolicy { pub max_attempts: u32 /*5*/, pub base: Duration /*500ms*/, pub cap: Duration /*8s*/ }
+pub enum Failure { Retry, Expired, Fatal(Error) }
+pub fn classify_failure(status: Option<u16>, err: Option<&reqwest::Error>) -> Failure;
+```
+
+| 결과 | 판정 |
+|---|---|
+| 연결 실패, read timeout, reset, 조기 EOF, 5xx, 429 | `Retry` — 지수 백오프(jitter는 `base * 2^n`에 ±25%, std `RandomState` 해시로 충분) |
+| 403 (Media) | `Expired` → 재조회 |
+| 404, 410, 그 밖의 4xx | `Fatal(HttpStatus)` |
+
+- 재조회 직후 **같은 요청**이 다시 403이면 `AuthRequired { status: 403 }`로 즉시 실패(ACL·지역·성인 제한). 작업당 재조회 상한 8회를 넘기면 `RefreshExhausted`.
+- 취소는 모든 await를 `tokio::select!`로 `cancel.cancelled()`와 함께 기다린다. 취소되면 checkpoint 후 `Cancelled`.
+
+### 5.3 progressive (`download/progressive.rs`)
+
+1. `offset = committed_len`. `offset > 0`이면 `Range: bytes={offset}-`.
+2. 응답 분기:
+   - `206`: `Content-Range: bytes {start}-*/{total}`. `start != offset`이거나 `total != sidecar.total_len` → `SourceChanged`.
+   - `200`, `offset == 0`: 정상. `total = Content-Length`를 sidecar에 기록(없으면 `total=None`, ETA 없음).
+   - `200`, `offset > 0`: 서버가 Range를 무시. truncate(0) 후 처음부터(`resumed_from = 0`).
+   - `416`, `offset == total`: 완료로 finalize. 아니면 `SourceChanged`.
+   - `403`: `Expired`. `resolve` → 같은 `quality_id`의 새 URL → Range로 계속.
+   - 그 밖: §5.2.
+3. `bytes_stream()`을 `select!`로 소비하며 `part.write`. 바이트·시간 기준 checkpoint.
+4. 스트림이 끝났을 때 `written != total`이면 `Retry`로 보고 같은 루프에서 Range로 이어 받는다. 재시도 소진 시 `LengthMismatch`(hyper도 조기 EOF를 오류로 내지만 길이 없는 응답까지 막기 위해 명시 검사).
+5. PD URL은 약 8시간(MPD `expireTime`)에 만료되므로 긴 VOD에서 403 → 재조회 → Range 재개가 실제로 쓰인다.
+
+### 5.4 HLS fMP4 (`download/segmented.rs`)
+
+1. master GET(`Media`) → `parse_master` → `track_id == quality_id` variant. 없으면 `QualityNotFound`.
+2. media GET → `parse_media`. 지문 `(segment_count, durations_crc, media_sequence)`를 계산.
+   - 새로 시작: init GET → `part.write` → checkpoint(`next_index=0`, `init_len`, 지문).
+   - 재개: sidecar 지문과 비교. 다르면 `SourceChanged`. init 길이가 다르면 `SourceChanged`.
+3. `stream::iter(next_index..n).map(fetch_segment).buffered(concurrency)`. `buffered`가 순서를 보장하므로 writer는 단일 루프다. 메모리 상한은 약 `concurrency × 세그먼트 크기`(1080p 2 MB × 8 = 16 MB).
+4. 각 세그먼트: 2xx 검사, `Content-Length`가 있으면 길이 일치 검사, 첫 4~8바이트의 box type이 `styp`/`moof`/`sidx` 중 하나인지 검사(CDN의 HTML 오류 페이지 방어; init은 `ftyp`). 통과하면 `part.write` → `next_index += 1` → 주기적 checkpoint. `committed_len`은 항상 세그먼트 경계다.
+5. 403: stream을 drop(진행 중 fetch 취소) → `Reresolving` → 1~2단계 재실행(지문 검증) → `next_index`부터 계속. 재조회 직후 같은 세그먼트가 403이면 `AuthRequired`. 재조회 결과 `inKey`가 생겼으면 `PlaybackChanged`.
+6. 진행률: `bytes`, `segments=(k, n)`, `media_secs`, `total_bytes_estimate`, `speed_bps`, `eta_secs`.
+
+---
+
+## 6. 파일명 (`naming.rs`)
+
+- **VOD**: `[YYMMDD] {채널} - {제목}.mp4`. 날짜는 `live_open_date` → `publish_date` 순. 둘 다 없으면 `{채널} - {제목}.mp4`. 채널이 비면 `[YYMMDD] {제목}.mp4`.
+- **클립**: `[클립] {채널} - {제목}.mp4`. 채널이 비면 `[클립] {제목}.mp4`.
+- 제목은 trim. 날짜 파싱은 std로 직접(`YYYY-MM-DD`로 시작, 구분자 공백 또는 `T`, 자릿수 검증).
+- **sanitize는 채널과 제목 각각에 적용한 뒤 조립**한다(접두어와 ` - `는 코어가 넣으므로 이중 적용 문제 없음). 사용자가 `file_name`을 직접 줄 때는 전체에 한 번 적용(멱등).
+  - 공통: 전각 공백·NBSP → 공백, U+0000–001F·U+007F 제거, 연속 공백 하나로, trim, `/` → `_`, 빈 결과 `_`.
+  - Windows: `\ : * ? " < > |` → `_`, 끝의 `.`과 공백 제거, 예약어(`CON PRN AUX NUL COM1-9 LPT1-9`, 확장자 앞 base, 대소문자 무시)면 `_` 접미.
+  - macOS: `:` → `_`. Linux: 공통만.
+  - `[ ] ( ) { }`는 모든 OS에서 유지(사용자 결정).
+- **길이**: `{name}.mp4`를 UTF-8 **200바이트** 이하로. 제목부터 char 경계에서 자르고, 다음 채널. Windows의 UTF-16 255 단위 제한은 UTF-8 200바이트면 자동으로 만족한다(한글은 UTF-8 3바이트·UTF-16 1단위).
+- 참고(결정 보류): OS별 규칙이라 macOS에서 만든 `?` 포함 파일을 exFAT/NTFS로 옮기면 실패한다. "항상 Windows 규칙" 설정은 Phase 2에서 필요하면 추가.
+
+---
+
+## 7. 설정·자격증명·마이그레이션
+
+- 파일: `{config_dir}/settings.json`, `{config_dir}/credentials.json`(unix 0600). 쓰기는 모두 `fsutil::atomic_write`(tempfile persist). 쓰기 소유자는 `SettingsStore` 하나(Mutex).
+- 깨진 `settings.json`은 `settings.json.bad-{unix_ts}`로 옮기고 기본값으로 계속한다(Go의 "깨지면 이후 저장 불가" 버그 제거).
+- `recentVodURLs`는 쓰지 않는다. 레거시 읽기에만 쓴다.
+- `last_quality_label`로 통일. HLS `"720p"`와 DASH label `"720p"`가 같은 문자열이라 소스 종류를 넘어 기억이 유지된다.
+- **마이그레이션** `import_legacy(dir)`:
+  - Go DTO는 전 필드 `#[serde(default)]`, 배열 `null` → 빈 Vec.
+  - 쿠키: `dependent/cookie.json`의 `NID_AUT`/`NID_SES` 우선, 없으면 settings의 `nidAut`/`nidSes`. 다른 키는 버린다.
+  - `use_naver_cookies = isAdultContent && 쿠키 둘 다 비어 있지 않음`.
+  - `recentVods`가 비면 `recentVodURLs`를 `"제목 없음"`으로 채운다.
+  - `lastQualityName`: `"720p"`는 그대로, `^(\d+)P_`는 `"{n}p"`, 그 밖은 버린다.
+  - `downloadFolder`는 디렉토리가 실재할 때만.
+  - 원본은 지우지 않는다. 결과에 `warnings`("옛 파일에 평문 쿠키가 남아 있습니다")를 담는다. 가져오면 `imported_from`을 기록해 다시 묻지 않는다.
+  - 호출 경로: (1) 첫 실행(새 settings.json 없음) 때 셸이 `current_exe().parent()`를 한 번 시도, (2) 설정 화면 "이전 버전 설정 가져오기"(폴더 선택).
+
+---
+
+## 8. 테스트 계획
+
+공통 도구(`tests/common`): `fixture(path)`, `rewrite_hosts(bytes, mock_uri)`(`hls.example.invalid`, `clip.example.invalid`, `vod.example.invalid`을 mock 주소로 치환. 이중 인코딩 JSON 안에서도 단순 replace로 된다), 경로 접미사 응답기(custom `Respond`: HLS 경로에 `*`, `~`, `=`가 있어 접미사 매칭이 필요), raw `TcpListener` 절단 서버, `ZeroRetry`, `progress_interval = 0`.
+
+### 8.1 spec §8 이식 (1:1)
+
+| spec 출처 | 상태 | Rust 테스트 | fixture/mock | 기대값 |
+|---|---|---|---|---|
+| §8.1 TestIsClipURL (6) | 유지 | `url::clip_detection` | — | true 5건은 `Ok(Clip)`, `/video/1234567`은 `Ok(Video)`, `https://chzzk.naver.com/`과 `""`은 Err |
+| §8.1 TestParseClipID (6) | 유지 | `url::clip_id` | — | 6개 그대로 |
+| §1.1 golden 5~7행 | **변경**(§9.1-2) | `url::clip_rejects_bad` | — | `embed/clip/`은 Err, `abc#frag`는 `abc`, `evil.com/?chzzk...`은 Err |
+| §1.2 | **변경**(§9.1-1) | `url::video_no` | — | `123?t=10`, `123/?t=10`, `123?a=b/c` → 123. `/video/`, `/video/abc` → Err. `m.chzzk.naver.com/video/1` → 1 |
+| §3.1/§4.1 | 유지+보강 | `info::live_rewind_fixture` | `hls/video_info.json` | 제목 `123`, 채널 `테스트채널`, channel_id `2795e2a0…`, live_open_date `2026-01-02 12:00:00`, master path, tracks 5개 encodingTrack 순서(bandwidth u64 `3000000`…, frame_rate `"60.0"`) |
+| §3.1 DASH info | **신규(실물)** | `info::dash_fixture` | `vod/video_info.json` | `Playback::Dash`, channel_id `bb2a278c…`, 채널 `가상채널` |
+| §4.4 classify | 신규 | `info::classify_{dash,aes_precedence,no_playback,inkey_empty_string}` | `synthetic/vod_info_aes.json`, Value 변형 | AES+inKey → Encrypted, inKey `""`와 null은 같음, 셋 다 없으면 NoPlayback |
+| §8.1 clip fixture | 신규 | `info::clip_fixtures` | `clip_playinfo.json`, `clip_multi_playinfo.json` | §8.1 끝 기대값 + channel_id `9381e7d6…` |
+| §8.1 TestParseClipQualitiesFromMPD | 유지+§5.4 표 | `mpd::clip_pd_qualities` | `clip_multi.mpd` | 2개. label `720p`/`480p`, resolution 720/480, bandwidth/width/height/frameRate 표 전체 |
+| §8.1 TestSelectClipBaseURLFromMPD | 유지 | `mpd::select_exact` | `clip_multi.mpd` | `PD_720P_…`는 `/pd/`와 `.mp4` 포함, `PD_NONEXISTENT`는 QualityNotFound, UUID rep는 선택 불가 |
+| §5.1 namespace | 신규 | `mpd::nvod_label_localname` | `clip_multi.mpd` | `nvod:Label`을 읽는다 |
+| §9.1-3 VOD PD 필터 | **신규(실물)** | `mpd::vod_pd_filter` | `vod/playback.mpd` | PD_144P, PD_720P 2개. mp2t/audio UUID rep 제외. `protected == false` |
+| AES 2차 방어 | 신규 | `mpd::content_protection_rejected` | `vod/playback.mpd`에 `ContentProtection` 삽입(테스트 코드) | `pd_reps`가 NoQualities |
+| §5.6 기본 선택 | **변경**(resolution 기준, label 비교) | `model::default_quality` | 두 fixture | HLS는 4(`1080p`), 클립은 0, `last_label="480p"`면 1, 옛 `720P_1280_…`은 폴백 |
+| research §9 master | 신규 | `hls::master_join` | `master.m3u8` | 5개. 144p URI가 `…/144p/hdntl=…/vod_chunklist.m3u8`, `hdnts` 쿼리 없음 |
+| research §9 media | 신규 | `hls::media_parse` | `media.m3u8` | 30개, msn 0..29, init `?type=hls&filetype=.m4s` 보존, total 60000ms, `durations_crc` 고정값 |
+| research §5 미지원 태그 | 신규 | `hls::rejects_{disc,map2,key_aes,byterange,no_endlist}`, `hls::allows_{key_none,long_extinf}` | `synthetic/media_*.m3u8` | 각 Unsupported / Ok |
+| 대형 playlist | 신규 | `hls::large_playlist_30k` | 테스트 코드 생성 30,000개 | 개수·crc, 디버그 1초 이내(느슨) |
+| §8.2 ByteIdentity | 유지 | `progressive::byte_identity` | wiremock 140000B | 바이트 동일, `.part`·sidecar 없음, `resumed_from == 0` |
+| §8.2 SendsHeaders | **변경**(§4.2) | `resolve::api_headers_cookie_opt_in`, `progressive::media_no_cookie` | wiremock 요청 기록 | API: UA·Referer·Origin·`Cookie: NID_AUT=a; NID_SES=b`. Media: UA·Referer만. `cookies: None`이면 API에도 없음. `cookies_on_media=true`면 Media에도 |
+| §8.2 Non200DeletesPartial | 유지 | `progressive::status_404_creates_nothing` | wiremock 404 | HttpStatus, 최종 파일·`.part`·sidecar 없음 |
+| §8.2 권장(중간 끊김) | **변경**(남긴다) | `progressive::truncated_body_resumes` | raw TCP 500/1000B 후 wiremock 206 | ZeroRetry면 LengthMismatch가 아니라 `.part` 500B 보존(Network). 재실행 시 `Range: bytes=500-` 후 바이트 동일 |
+| §8.2 TestComputeSpeedETA | 유지(숫자화) | `progress::speed_eta_golden` | — | (1MiB,2MiB,1s)→(1048576, 1). elapsed 0→(None,None). total None→eta None. (2048,2048,1s)→eta None |
+| §6.1 formatBytes | 유지 | `progress::format_bytes_golden` | — | 8행 |
+| §6.6 SecondsToHms | 유지(-1 행 삭제) | `progress::format_hms` | — | 0, 59, 3661, 86399, 360000 |
+| §8.3 TestDirectDuplicateChoice | **변경**(정책 enum) | `download::duplicate_{skip,overwrite}` | wiremock | Skip → `Skipped`, 요청 0회. Overwrite → 교체 |
+| §8.4 Redact 의도 | 의도 이식 | `http::secrets_never_in_debug_or_error` | — | `format!("{:?}")`(cookies, config), 모든 Error Display, `redact_url`에 `secretAUT`/`hmac=`/`hdntl=exp` 없음 |
+| §8.4 ffmpeg/EnsureBinaries 7건 | **삭제** | — | — | — |
+| §6.4 FormatLiveDate | **변경** | `naming::parse_live_date` | — | `2024-01-02 12:34:56`, `2024-01-02`, `2024-01-02T12:34:56`→(2024,1,2). `2024/01/02`, `""`, `24-01-02…`→None. fixture `2026-01-02 12:00:00`→`261005` |
+| §6.4 SanitizeFilename | **변경**(괄호 유지, OS별) | `naming::sanitize_{windows,macos,linux}` | — | `[2024-01-02] 채널 제목.mp4` 그대로. `x:y*z?"<>\|(){}[]/\.mp4`: Win `x_y_z____(){}[]__.mp4`, Mac `x_y*z?"<>\|(){}[]_\.mp4`, Linux `x:y*z?"<>\|(){}[]_\.mp4`. `CON.mp4`: Win `CON_.mp4`. `제목.  .mp4`: Win `제목.mp4`. 공백·제어문자·빈 값 행 유지 |
+| §6.4 fixture 파일명 | **변경**(사용자 결정) | `naming::default_filename_fixtures` | 세 fixture | `[261005] 테스트채널 - 123.mp4`, `[261004] 가상채널 - 가상 일반 VOD ….mp4`, `[클립] 클립채널 - 테스트 클립 하나.mp4` |
+| 길이 제한 | 신규 | `naming::truncate_utf8_200` | — | 한글 긴 제목이 char 경계에서 잘리고 `.mp4` 보존, 채널은 남음 |
+| §6.5 PrepareOutputPath | **변경**(§9.1-15) | `naming::output_path` | — | `[x] t`→`[x] t.mp4`, `a/b`→`a_b.mp4`, `T.MP4` 그대로, `t__mp4`→`t__mp4.mp4` |
+| §7.2 AddRecentVod | 유지(char) | `settings::recent_vods` | — | 5개 제한, 중복 URL 맨 앞, 한글 51자→47자+`...` |
+| §7.2 null 배열·키 누락 | 유지 | `settings::tolerates_go_file` | Go 형식 JSON | 파싱 성공 |
+| §7.2 깨진 파일 | **변경** | `settings::corrupt_backed_up` | tempdir | `.bad-*` 생성, 이후 저장 가능 |
+| §7.2 레거시 | 유지 | `legacy::import_{fills_title,cookie_json_preferred,quality_label_map,adult_flag}` | tempdir | `"제목 없음"`, 쿠키 우선순위, `720P_1280_…`→`720p`, `use_naver_cookies` 규칙, 원본 보존 |
+
+### 8.2 새 테스트
+
+| 영역 | 테스트 | 입력 |
+|---|---|---|
+| resolve | `resolve::{live_rewind,dash,clip}` | wiremock info(+MPD). `expected` Source 종류와 qualities |
+| resolve | `resolve::aes_rejected_without_mpd` | synthetic AES info → `EncryptedVod`, MPD 요청 0회 |
+| resolve | `resolve::api_401_403_auth_required`, `resolve::api_code_not_200` | wiremock |
+| progressive | `range_resume_206`, `range_ignored_200_restarts`, `content_range_total_mismatch`, `416_complete` | wiremock Range 핸들러 |
+| progressive | `expired_403_reresolves_and_ranges` | MPD 2회(다른 BaseURL), 첫 URL 403 → 같은 offset부터, 바이트 동일, `refreshes == 1` |
+| progressive | `forbidden_after_refresh_is_auth` | 영구 403 → `AuthRequired`, `.part` 삭제 |
+| progressive | `5xx_then_ok`, `404_no_retry` | `up_to_n_times` |
+| segmented | `fixture_concat_box_order` | init/seg0/seg1 응답기 → 출력 == init‖seg0‖seg1, box `ftyp moov styp moof mdat emsg …` |
+| segmented | `ordered_with_jitter` | 30개 합성 세그먼트(각 1 KB 고유 바이트, `styp` 헤더), 무작위 지연, concurrency 6 → 순서 일치 |
+| segmented | `retry_5xx`, `html_body_rejected` | 503 2회 / 200에 HTML 본문 → Parse 후 재시도 |
+| segmented | `expired_resume_same_index` | seg k≥5에서 403, info 2회(path `/g0/`→`/g1/`) → info 2회, seg0~4는 1회씩, 바이트 동일 |
+| segmented | `refresh_fingerprint_mismatch` | 재조회 media 세그먼트 수·EXTINF 다름 → `SourceChanged`, `.part` 보존 |
+| segmented | `refresh_became_dash` | 재조회 info에 inKey → `PlaybackChanged` |
+| segmented | `forbidden_after_refresh`, `refresh_exhausted` | 영구 403 / 8회 초과 |
+| segmented | `cancel_then_resume_byte_identical` | seg10 지연 중 cancel → `Cancelled`, sidecar `next_index ≤ 10`. 재실행 시 커밋된 세그먼트 재요청 없음, 바이트 동일 |
+| part | `crash_tail_truncated` | `.part`를 `committed_len`보다 길게 만든 뒤 재개 → 완주 |
+| part | `incompatible_sidecar_restarts` | quality_id 다른 sidecar |
+| part | `double_download_file_locked` | 같은 output으로 동시 2회 → 두 번째 `FileLocked` |
+| fsutil | `rename_with_retry`, `map_io_error_storage_full` | 클로저 주입 / `from_raw_os_error(28/112/39)` |
+| progress | `throttle_and_final_event`, `eta_by_media_time` | `progress_interval` 0/큰 값 |
+| ownership | `is_own_content` | fixture channel_id, 대소문자, None |
+| credentials | `unix_mode_0600` | `#[cfg(unix)]` |
+
+CI(`.github/workflows/core.yml`): `ubuntu-22.04`, `macos-latest`, `windows-latest` × `cargo fmt --check`, `cargo clippy -p chzzk-core -- -D warnings`, `cargo test -p chzzk-core`. 모두 오프라인. 실서버 스모크는 `examples/dl.rs`와 `#[ignore]` 테스트(`CHZZK_LIVE_VIDEO` 환경 변수)로만 한다.
+
+---
+
+## 9. 의존성 (crates.io 2026-10-05 확인)
+
+```toml
+[workspace.package]
+edition = "2024"
+rust-version = "1.90"
+
+[dependencies]
+reqwest      = { version = "0.13.5", default-features = false, features = ["rustls", "stream", "json"] }  # gzip 없음
+tokio        = { version = "1.53.2", features = ["rt-multi-thread", "macros", "fs", "io-util", "sync", "time"] }
+tokio-util   = "0.7.19"      # CancellationToken
+futures-util = "0.3.34"      # buffered, bytes_stream
+bytes        = "1.12.1"
+url          = "2.5.8"
+serde        = { version = "1.0.229", features = ["derive"] }
+serde_json   = "1.0.151"
+roxmltree    = "0.21.1"
+thiserror    = "2.0.21"
+tracing      = "0.1.44"
+crc32fast    = "1.5.2"       # sidecar 지문
+tempfile     = "3.27.0"      # atomic_write (persist)
+
+[dev-dependencies]
+wiremock = "0.6.5"
+tokio    = { version = "1.53.2", features = ["net", "test-util"] }
+```
+
+쓰지 않는 것: `m3u8-rs`(손 파서), `chrono`(날짜 형식 하나), `directories`/`keyring`(셸 주입·파일 저장), `axum`(wiremock으로 충분), `fs4`(사전 디스크 점검 불필요), `fastrand`(jitter는 std 해시), `anyhow`, `async-trait`. `reqwest`의 `rustls` feature가 TLS provider를 포함하는지는 `cargo add` 후 `cargo tree -e features`로 확인하고, 아니면 `rustls` + 기본 provider 조합을 고정한다.
+
+---
+
+## 10. 구현 순서 (작은 커밋, 각 커밋은 해당 테스트와 함께)
+
+| # | 커밋 | 파일 | 통과해야 할 테스트 |
+|---|---|---|---|
+| 1 | workspace 골격 | `Cargo.toml`, `crates/core/{Cargo.toml,src/lib.rs,src/error.rs}`, `.github/workflows/core.yml` | `cargo test -p chzzk-core`(빈), 3 OS CI 녹색 |
+| 2 | 순수 포맷 | `progress.rs`(format_bytes, format_hms, speed_eta) | `progress::{format_bytes_golden,format_hms,speed_eta_golden}` |
+| 3 | 파일명 | `naming.rs` | `naming::{parse_live_date,sanitize_*,default_filename_fixtures,truncate_utf8_200,output_path}` |
+| 4 | URL | `url.rs`, `model.rs`(ContentRef) | `url::*` |
+| 5 | info 파서 | `model.rs`, `info.rs`, `testdata/synthetic/vod_info_aes.json` | `info::*`, `model::default_quality`(HLS) |
+| 6 | MPD | `mpd.rs` | `mpd::*`, `model::default_quality`(클립), `ownership::is_own_content` |
+| 7 | HLS 파서 | `hls.rs`, `testdata/synthetic/media_*.m3u8` | `hls::*` |
+| 8 | HTTP + resolve | `http.rs`, `client.rs`(resolve만), `tests/common`, `tests/resolve.rs` | `resolve::*`, `http::secrets_never_in_debug_or_error` |
+| 9 | 파일 기반 | `fsutil.rs`, `download/part.rs`, `download/retry.rs` | `fsutil::*`, `part::{crash_tail_truncated,incompatible_sidecar_restarts,double_download_file_locked}` |
+| 10 | progressive | `download/progressive.rs`, `download/mod.rs`(골격), `tests/progressive.rs` | `progressive::*`, `download::duplicate_*` |
+| 11 | segmented (순차) | `download/segmented.rs` concurrency 1, `tests/segmented.rs` | `fixture_concat_box_order`, `html_body_rejected`, `cancel_then_resume_byte_identical` |
+| 12 | segmented (동시·재조회) | `download/segmented.rs` buffered(N) + 403 루프 | `ordered_with_jitter`, `retry_5xx`, `expired_resume_same_index`, `refresh_*`, `forbidden_after_refresh` |
+| 13 | 진행률 연결 | `progress.rs`(Meter), `download/mod.rs`(phase·콜백) | `progress::{throttle_and_final_event,eta_by_media_time}` |
+| 14 | 설정·자격증명·레거시 | `settings.rs`, `credentials.rs`, `legacy.rs`, `tests/settings.rs` | `settings::*`, `legacy::*`, `credentials::unix_mode_0600` |
+| 15 | 스모크·문서 | `examples/dl.rs`, `#[ignore]` 실서버 테스트, `CLAUDE.md`·ROADMAP·spec §10 정정 | 수동: 공개 VOD 1개(HLS), 1개(DASH), 클립 1개. 성인 PD 쿠키 필요 여부 실측 |
+| 16 | (별도 PR) Go 삭제 | `cmd/`, `internal/`, `go.mod` 삭제, `internal/api/testdata` → `testdata/clip/` | 전체 테스트 녹색 |
+
+---
+
+## 11. AES 암호화 VOD
+
+### 사실 (조사 보고 + 이번 실측)
+
+- `tvAppViewingPolicyType`은 판별 신호가 아니다.
+
+### 코어의 기본 seam (이 설계에 포함, 결정과 무관하게 구현)
+
+1. `classify`가 `encryptionType`을 **가장 먼저** 보고 `Playback::Encrypted { method }`를 낸다. `resolve`는 MPD를 받지 않고 `Error::EncryptedVod { method }`를 낸다. 메시지: "암호화된 VOD(AES)는 지원하지 않습니다".
+2. 2차 방어: `pd_reps`는 `ContentProtection`이 붙은 rep를 제외하고, `parse_media`는 `EXT-X-KEY`(METHOD≠NONE)를 `Unsupported::Encrypted(method)`로 거부한다.
+3. `MediaPlaylist.init: Option<Url>`로 두어 TS(MAP 없음) playlist 파싱 자체는 가능하게 한다. 그 이상(복호화·TS 처리)은 넣지 않는다.
+
+### 사용자가 고를 선택지
+
+| 선택지 | 내용 | 비용·위험 |
+|---|---|---|
+| **A. 거부(권고, 기본값)** | 위 seam 그대로. 분명한 오류 메시지. 주기적으로 최신 VOD의 `encryptionType`을 샘플링해 확산을 감시 | 영향 범위가 작다(일반 VOD 0/195). 코드 추가 없음 |
+| C. `.ts` → `.mp4` remux까지 | B + 순수 Rust MPEG-TS demux(PES·ADTS·Annex-B)와 MP4 mux(avcC, PTS/DTS) | B의 위험 그대로 + 큰 구현·테스트 부담(크레이트 성숙도 낮음, `hls-transmux` 미검증). 오프라인 fixture는 자체 테스트 키로 암호화한 합성 TS가 필요 |
+
+
+---
+
+## 12. spec·research 정정 사항 (15단계에서 문서에 반영)
+
+1. stack.md `cargo test -p core` → `-p chzzk-core`. reqwest 권장 feature에서 `gzip` 제거.
+2. spec §4.4 `Playback`에 `Encrypted` 추가, `encryptionType` 우선 순서 명시, `select_source`는 동기 함수가 아니라 `download` 안의 variant 선택.
+3. spec §5.6 기본 화질은 `height`가 아니라 `resolution` 라벨(짧은 변) 기준.
+4. spec §6.2 ETA는 세그먼트 수가 아니라 EXTINF 누적 비율.
+5. spec §6.1-5·§8.2 "실패 시 파일 삭제" → "`.part` 보존, 최종 파일 없음". 상태 확인 전에는 `.part`를 만들지 않는다.
+6. spec §7.1 "첫 실행 때 옛 위치 마이그레이션" → 자동은 best-effort, 수동 가져오기가 주 경로.
+7. spec §9.1-17 길이 제한은 255바이트가 아니라 `.part.json` 접미사 몫을 뺀 200바이트. 예약어·끝 `.`은 Windows 프로필만.
+8. spec §9.1-20 키체인 → 0600 파일. spec §2.2·§10.4 미디어 쿠키 → 보내지 않음(비성인 PD 실측 완료, 성인 미확인).
+9. research §9 "403 = 토큰 만료" → 재조회 직후 재403은 인증 오류. §11.2 미관찰이므로 지문 검증 필수.
+10. research §5 거부 목록에 `ENDLIST 없음` 추가, `KEY:METHOD=NONE`은 허용.
+11. spec §4.1·§9.1-5 `media[0]` 고정 → `protocol == "HLS"`인 첫 항목.
+12. spec §10.1 "VOD MPD fixture 없음" → `testdata/vod/` 확보됨.
+13. ROADMAP "AES 지원하지 않음(확정)" → "기본값 거부, 지원 여부는 사용자 결정(§11)".

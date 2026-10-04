@@ -4,8 +4,8 @@
 
 ## 현재 위치
 
-- 현재: Phase 0 완료 (PR 리뷰 대기). 사전 조사 산출물: `docs/spec/core-behavior.md`(이식 명세), `docs/research/{hls-live-rewind,chzzk-oauth,stack}.md`, `testdata/hls/`
-- 다음: Phase 1 — Rust 코어 이식 (설계 판정 → 구현 → 검증)
+- 현재: Phase 1 설계 판정 완료 (`docs/design/core.md`). 다음 커밋은 설계 §10-1(workspace 골격)
+- 다음: Phase 1 구현 — 설계 §10 순서대로 작은 커밋, 각 단계는 해당 테스트와 함께
 
 ## 확정된 결정 (2026-10-05, 사용자 인터뷰)
 
@@ -26,7 +26,7 @@
 ## 사전 조사로 확정된 사실 (2026-10-05)
 
 - 빠른 다시보기 HLS는 **fMP4**(init + `styp/moof/mdat` 세그먼트, 2초), 암호화·byte-range·discontinuity 없음, 상대 URI(경로 안 토큰 서명), 헤더 불필요. **서명 토큰이 약 17시간 뒤 만료**되므로 긴 VOD는 403 시 info→master→media 재조회 후 같은 sequence부터 이어받아야 한다.
-- 일반 VOD 중 `encryptionType: "AES"`인 것은 PD_* progressive URL이 없다 → **지원하지 않고 명확한 오류**를 낸다(기본값, 필요 시 재논의).
+- 일반 VOD 중 `encryptionType: "AES"`인 것은 PD_* progressive URL이 없다(AES에도 `inKey`는 있으므로 `encryptionType`을 먼저 본다). **기본값은 명확한 오류로 거부**. 지원 여부는 사용자 결정 대기 — 사실과 선택지는 `docs/design/core.md` §11.
 - 현 Go 코드의 VOD 화질 선택은 깨져 있다(ID에서 숫자만 뽑아 해상도 비교). Rust에서는 Representation ID 정확 일치로 바꾼다. 버그 목록은 `docs/spec/core-behavior.md` §9.
 - OAuth: PKCE 없음 → Worker 대행 확정. 리디렉트 URI의 loopback 허용 여부는 문서에 없음 → **Worker 콜백 + 일회용 sid 폴링**으로 설계. 일회용 sid 저장소는 KV가 아닌 D1/Durable Object(KV는 최종 일관성).
 - 본인 영상 판정: VOD는 `content.channel.channelId`, 클립은 `ownerChannel.channelId`(제작자 `makerChannel` 아님). OAuth `users/me`의 `channelId`와 같은 식별자인지는 Phase 3에서 실측.
@@ -41,12 +41,19 @@
 - [x] `.gitignore` 정리 (런타임 데이터·VM·산출물)
 
 ### Phase 1 — Rust 코어 이식
+
+설계는 `docs/design/core.md`(확정안). 아래 번호는 그 문서 §10의 구현 단계다.
+
 - [x] 사전 조사: 라이브 리와인드 HLS 실물 fixture 확보 (`testdata/hls/`, 결과 `docs/research/hls-live-rewind.md`)
-- [ ] Cargo workspace: `crates/core`(Tauri 의존 없음) — api / mpd / hls / download / settings / utils
-- [ ] `inKey` 분기(HLS vs DASH) 중복을 한 함수로 통합
-- [ ] Go 테스트·fixture 이식 후 통과
-- [ ] CI 테스트 워크플로 (PR마다 `cargo test` 등)
-- [ ] Go 코드 삭제
+- [x] 설계 판정 (`docs/design/core.md`) + 일반 VOD DASH fixture 확보 (`testdata/vod/`)
+- [ ] §10-1 workspace 골격 + 3 OS CI (`cargo test -p chzzk-core`)
+- [ ] §10-2~4 순수 함수: progress 포맷, naming, url
+- [ ] §10-5~7 순수 파서: info/`classify`(inKey 분기 통합, AES seam), mpd, hls
+- [ ] §10-8 http + `resolve` (wiremock)
+- [ ] §10-9~13 다운로드 엔진: part/retry → progressive → segmented(순차 → 동시·403 재조회) → 진행률
+- [ ] §10-14 settings / credentials / legacy import
+- [ ] §10-15 실서버 스모크(`examples/dl.rs`) + 문서 정정(§12), 성인 PD 쿠키 실측
+- [ ] §10-16 (별도 PR) Go 코드 삭제, `internal/api/testdata` → `testdata/clip/`
 
 ### Phase 2 — GUI (Tauri + Svelte)
 - [ ] `app/` Tauri 셸: 코어를 command/event로 노출

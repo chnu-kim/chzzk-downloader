@@ -4,6 +4,7 @@
 //! 설계 기준은 `docs/design/core.md`다.
 
 pub mod error;
+pub mod hls;
 pub mod info;
 pub mod model;
 pub mod mpd;

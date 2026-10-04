@@ -705,3 +705,10 @@ tokio    = { version = "1.53.2", features = ["net", "test-util"] }
 17. **(5단계) `PlaybackChanged` 추가.** `kind() = PlaybackChanged`, `is_resumable() = false`. 단위 테스트의 fixture 로더는 `src/testutil.rs`(`#[cfg(test)]`)에 둔다. `serde_json`은 이 단계부터 일반 의존성이다.
 18. **(6단계) MPD 세부.** PD 판정(`Representation::is_pd`)은 §3.2 조건 그대로이며 `!protected`를 포함한다. PD rep의 첫 BaseURL이 절대 URL로 파싱되지 않으면 `Parse`다(서명 쿼리가 있어 원문은 오류에 넣지 않는다). MPD·Period 수준 `BaseURL` 상속과 상대 BaseURL은 실물에 없어 다루지 않는다. `bandwidth`·`width`·`height`가 숫자가 아니면 `None`이다. 정확 일치 선택은 `mpd::select_pd(reps, quality_id)`로 두어 다운로드 단계가 재사용한다(`QualityNotFound { available }`는 PD id 목록).
 19. **(6단계) `is_own_content`.** `my_channel_id`는 trim 후 비교하고, 비어 있으면 `Some(false)`다(컨텐츠에 채널 ID가 없을 때만 `None`).
+20. **(7단계) HLS 파서 세부.**
+    - 태그 이름은 `:` 앞까지 정확히 비교하고, 속성 목록은 따옴표 안의 `,`를 구분자로 보지 않는 파서 하나로 STREAM-INF·MAP·KEY를 읽는다. 앞 BOM과 줄 끝 `\r`은 지운다. `#EXT`로 시작하지 않는 `#` 줄은 주석이다.
+    - `EXT-X-MAP`이 세그먼트 뒤에 처음 나와도(앞 세그먼트는 init 없음) init이 바뀌는 지점이므로 `SecondMap`으로 거부한다. MAP의 `BYTERANGE` 속성도 `ByteRange`로 거부한다. media playlist 자리에 master(`EXT-X-STREAM-INF`)가 오면 `Parse`다.
+    - `EXTINF`는 ms로 반올림(가장 가까운 정수)한다. `1.666667` → `1667`. 음수·NaN·숫자 아님은 `Parse`. 세그먼트가 0개이거나 EXTINF 없는 URI 줄은 `Parse`. `ENDLIST` 검사는 세그먼트 수 검사보다 먼저다.
+    - `durations_crc`는 각 `duration_ms`를 u32 little-endian 4바이트로 이어 붙인 바이트열의 crc32다(fixture 30×2000ms = `0x84944746`).
+    - master의 `track_id`는 variant URL을 master 디렉토리(`base.join("./")`) 기준 상대 경로로 바꾼 첫 세그먼트다. 디렉토리 밖의 절대 URI면 원문의 첫 세그먼트를 쓴다. `height`는 `RESOLUTION=WxH`의 H다.
+    - 모르는 `#EXT` 태그 경고에 `tracing`을 이 단계에서 의존성으로 넣는다(`crc32fast`도 함께).

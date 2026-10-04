@@ -761,3 +761,4 @@ tokio    = { version = "1.53.2", features = ["net", "test-util"] }
     - "같은 요청"은 재조회 때의 `next_index`다. 그 세그먼트를 받기 전에 또 403이면 `AuthRequired`다. playlist·init 요청도 403이면 재조회하고, 재조회 직후의 playlist·init 403도 `AuthRequired`다.
     - 재조회 결과가 DASH로 바뀐 것은 `Job::reresolve`의 방식 검사가 `PlaybackChanged`로 잡는다(재조회 `resolve`가 MPD까지 받은 뒤다).
     - `HlsState`에 `Default`를 붙였다(sidecar에 HLS 상태가 없으면 지문 불일치로 끝내기 위해).
+34. **(13단계) `Meter` 세부.** `Meter::observe(&mut Progress, now, force) -> bool`가 `speed_bps`·`eta_secs`를 채우고 보낼지 정한다. 시각은 인자로 받아 테스트가 시계를 직접 넘긴다(일시 정지 런타임·sleep 없음). 보내는 조건은 첫 이벤트, 단계 변경, `force`, `progress_interval` 경과다. 다운로드의 마지막 이벤트는 `Finalizing` 단계 변경이라 늘 나간다. 속도는 최근 5초 창(100ms 간격 표본, 창 시작을 대신할 표본 하나 유지)의 바이트 증가율이고, 바이트가 줄면(Range 무시 후 처음부터) 창을 새로 시작한다. 이어받은 바이트는 첫 표본에 들어가므로 속도에 섞이지 않는다. 속도가 0이면 `speed_bps`는 `None`이다. HLS ETA는 `total_bytes`가 없을 때 `media_secs`의 처리율로 계산한다. `Meter`는 crate 루트에서 재노출한다(셸이 자체 이벤트에 재사용할 수 있게).

@@ -3,7 +3,8 @@
 //! `format_bytes`·`format_hms`·`speed_eta`는 Go 구현(spec §6.1, §6.6)의 golden을 그대로 따른다.
 //! 셸은 `Progress`의 숫자를 받아 직접 표시하고, 문자열 포맷은 CLI(`examples/dl.rs`)가 쓴다.
 
-use std::time::Duration;
+use std::collections::VecDeque;
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
 
@@ -61,6 +62,99 @@ pub fn speed_eta(
         _ => None,
     };
     (Some(speed), eta)
+}
+
+/// 속도를 재는 창.
+const SPEED_WINDOW: Duration = Duration::from_secs(5);
+/// 창에 표본을 넣는 최소 간격(표본 수를 50개 안팎으로 묶는다).
+const SAMPLE_EVERY: Duration = Duration::from_millis(100);
+
+/// 진행률 스로틀과 속도·ETA 계산기.
+///
+/// - 콜백은 `interval`마다 한 번만 보낸다. 단계가 바뀔 때와 `force`일 때는 무조건 보낸다.
+/// - 속도는 최근 5초 창의 (바이트 증가 / 경과)다. 이어받은 바이트는 들어가지 않는다(이번 실행 기준).
+/// - ETA: `total_bytes`가 있으면(progressive) `(total − bytes) / 속도`.
+///   없고 `media_secs`가 있으면(HLS) `(media_total − media_done) / 미디어초 처리율`.
+///   세그먼트 수 비율은 쓰지 않는다(마지막 세그먼트가 짧고 크기가 제각각이다).
+/// - 시각은 인자로 받는다(테스트가 시계를 직접 넘긴다).
+#[derive(Debug)]
+pub struct Meter {
+    interval: Duration,
+    last_emit: Option<Instant>,
+    last_phase: Option<Phase>,
+    /// (시각, 바이트, 처리한 미디어 초)
+    samples: VecDeque<(Instant, u64, f64)>,
+}
+
+impl Meter {
+    pub fn new(interval: Duration) -> Self {
+        Meter {
+            interval,
+            last_emit: None,
+            last_phase: None,
+            samples: VecDeque::new(),
+        }
+    }
+
+    /// `p`를 관찰해 `speed_bps`·`eta_secs`를 채우고, 지금 보내야 하면 true.
+    pub fn observe(&mut self, p: &mut Progress, now: Instant, force: bool) -> bool {
+        let media_done = p.media_secs.map_or(0.0, |(d, _)| d);
+        // 이어받기·처음부터 다시(바이트 감소)면 창을 새로 시작한다.
+        if self.samples.back().is_some_and(|&(_, b, _)| p.bytes < b) {
+            self.samples.clear();
+        }
+        let push = self
+            .samples
+            .back()
+            .is_none_or(|&(t, _, _)| now.saturating_duration_since(t) >= SAMPLE_EVERY);
+        if push {
+            self.samples.push_back((now, p.bytes, media_done));
+        }
+        // 창 밖 표본은 버리되, 창 시작을 대신할 표본 하나는 남긴다.
+        while self.samples.len() > 2
+            && self
+                .samples
+                .get(1)
+                .is_some_and(|&(t, _, _)| now.saturating_duration_since(t) >= SPEED_WINDOW)
+        {
+            self.samples.pop_front();
+        }
+        self.fill_rates(p, now);
+
+        let phase_changed = self.last_phase != Some(p.phase);
+        let due = self
+            .last_emit
+            .is_none_or(|t| now.saturating_duration_since(t) >= self.interval);
+        if force || phase_changed || due {
+            self.last_emit = Some(now);
+            self.last_phase = Some(p.phase);
+            true
+        } else {
+            false
+        }
+    }
+
+    fn fill_rates(&self, p: &mut Progress, now: Instant) {
+        let Some(&(t0, b0, m0)) = self.samples.front() else {
+            return;
+        };
+        let dt = now.saturating_duration_since(t0).as_secs_f64();
+        if dt <= 0.0 {
+            return;
+        }
+        let bytes_rate = p.bytes.saturating_sub(b0) as f64 / dt;
+        p.speed_bps = (bytes_rate > 0.0).then_some(bytes_rate as u64);
+        p.eta_secs = match (p.total_bytes, p.media_secs) {
+            (Some(total), _) if bytes_rate > 0.0 && p.bytes < total => {
+                Some(((total - p.bytes) as f64 / bytes_rate) as u64)
+            }
+            (None, Some((done, total))) => {
+                let media_rate = (done - m0) / dt;
+                (media_rate > 0.0 && done < total).then(|| ((total - done) / media_rate) as u64)
+            }
+            _ => None,
+        };
+    }
 }
 
 /// 1024진법 크기 표기. `1023 B`, `1.5 KB`, `1024.0 KB`(1048575), `1.0 MB` …
@@ -167,5 +261,124 @@ mod tests {
             speed_eta(3, Some(6), Duration::from_secs(2)),
             (Some(1), Some(2))
         );
+    }
+
+    fn progress(phase: Phase, bytes: u64) -> Progress {
+        Progress {
+            phase,
+            bytes,
+            total_bytes: None,
+            total_bytes_estimate: None,
+            segments: None,
+            media_secs: None,
+            speed_bps: None,
+            eta_secs: None,
+            resumed_from: 0,
+            refreshes: 0,
+        }
+    }
+
+    #[test]
+    fn throttle_and_final_event() {
+        let t0 = Instant::now();
+        let ms = |n: u64| t0 + Duration::from_millis(n);
+        let mut m = Meter::new(Duration::from_secs(1));
+        let mut p = progress(Phase::Resolving, 0);
+        assert!(m.observe(&mut p, ms(0), false), "첫 이벤트");
+        p.phase = Phase::Downloading;
+        assert!(m.observe(&mut p, ms(10), false), "단계 변경");
+        p.bytes = 100;
+        assert!(!m.observe(&mut p, ms(500), false), "간격 안");
+        p.bytes = 200;
+        assert!(m.observe(&mut p, ms(1010), false), "간격 지남");
+        p.bytes = 300;
+        assert!(!m.observe(&mut p, ms(1100), false));
+        assert!(m.observe(&mut p, ms(1100), true), "force");
+        p.phase = Phase::Finalizing;
+        assert!(
+            m.observe(&mut p, ms(1150), false),
+            "마지막(Finalizing)은 무조건"
+        );
+
+        // 간격 0이면 매번 보낸다.
+        let mut m = Meter::new(Duration::ZERO);
+        let mut p = progress(Phase::Downloading, 0);
+        for i in 0..5 {
+            p.bytes = i;
+            assert!(m.observe(&mut p, t0, false));
+        }
+    }
+
+    #[test]
+    fn speed_and_eta_progressive() {
+        let t0 = Instant::now();
+        let mut m = Meter::new(Duration::ZERO);
+        // 이어받은 1000바이트에서 시작: 속도에 넣지 않는다.
+        let mut p = progress(Phase::Downloading, 1000);
+        p.total_bytes = Some(11_000);
+        m.observe(&mut p, t0, false);
+        assert_eq!((p.speed_bps, p.eta_secs), (None, None));
+        p.bytes = 3000;
+        m.observe(&mut p, t0 + Duration::from_secs(2), false);
+        // 2000B / 2s = 1000B/s, 남은 8000B → 8초
+        assert_eq!(p.speed_bps, Some(1000));
+        assert_eq!(p.eta_secs, Some(8));
+        p.bytes = 11_000;
+        m.observe(&mut p, t0 + Duration::from_secs(4), false);
+        assert_eq!(p.eta_secs, None, "다 받았으면 ETA 없음");
+    }
+
+    /// HLS ETA는 세그먼트 수가 아니라 미디어 시간 처리율로 계산한다.
+    #[test]
+    fn eta_by_media_time() {
+        let t0 = Instant::now();
+        let mut m = Meter::new(Duration::ZERO);
+        let mut p = progress(Phase::Downloading, 0);
+        p.segments = Some((0, 50));
+        p.media_secs = Some((0.0, 100.0));
+        m.observe(&mut p, t0, false);
+        // 2초 동안 미디어 10초(세그먼트 1개, 크기 1000B) 처리 → 5배속, 남은 90초 → 18초
+        p.bytes = 1000;
+        p.segments = Some((1, 50));
+        p.media_secs = Some((10.0, 100.0));
+        m.observe(&mut p, t0 + Duration::from_secs(2), false);
+        assert_eq!(p.speed_bps, Some(500));
+        assert_eq!(p.eta_secs, Some(18));
+    }
+
+    /// 5초 창: 오래된 표본은 속도에 들어가지 않는다.
+    #[test]
+    fn speed_uses_recent_window() {
+        let t0 = Instant::now();
+        let s = |n: u64| t0 + Duration::from_secs(n);
+        let mut m = Meter::new(Duration::ZERO);
+        let mut p = progress(Phase::Downloading, 0);
+        m.observe(&mut p, s(0), false);
+        // 처음 10초는 초당 100B
+        for i in 1..=10 {
+            p.bytes = i * 100;
+            m.observe(&mut p, s(i), false);
+        }
+        // 다음 10초는 초당 1000B
+        for i in 1..=10 {
+            p.bytes = 1000 + i * 1000;
+            m.observe(&mut p, s(10 + i), false);
+        }
+        let speed = p.speed_bps.unwrap();
+        assert!((1000..=1250).contains(&speed), "{speed}");
+    }
+
+    #[test]
+    fn restart_resets_window() {
+        let t0 = Instant::now();
+        let mut m = Meter::new(Duration::ZERO);
+        let mut p = progress(Phase::Downloading, 5000);
+        m.observe(&mut p, t0, false);
+        // 서버가 Range를 무시해 처음부터: 바이트가 줄면 창을 새로 시작한다.
+        p.bytes = 0;
+        m.observe(&mut p, t0 + Duration::from_secs(1), false);
+        p.bytes = 2000;
+        m.observe(&mut p, t0 + Duration::from_secs(3), false);
+        assert_eq!(p.speed_bps, Some(1000));
     }
 }

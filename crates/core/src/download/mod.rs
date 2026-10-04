@@ -22,7 +22,7 @@ pub(crate) mod segmented;
 use std::future::Future;
 use std::num::NonZeroU8;
 use std::path::PathBuf;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tokio_util::sync::CancellationToken;
 
@@ -30,7 +30,7 @@ use crate::client::Chzzk;
 use crate::error::Error;
 use crate::fsutil::map_io_error;
 use crate::model::{ContentRef, PlaybackKind, Resolved, Source};
-use crate::progress::{Phase, Progress};
+use crate::progress::{Meter, Phase, Progress};
 
 pub use part::{PartFile, Sidecar, discard_partial};
 pub use retry::{Failure, RetryPolicy};
@@ -82,15 +82,18 @@ pub enum DownloadOutcome {
 }
 
 /// 진행률 콜백 연결. 엔진은 상태를 바꾸고 `update`/`phase`를 부른다.
+/// `Meter`가 `progress_interval`로 스로틀하고 속도·ETA를 채운다.
 pub(crate) struct Reporter<'a> {
     cb: &'a (dyn Fn(Progress) + Send + Sync),
+    meter: Meter,
     pub(crate) p: Progress,
 }
 
 impl<'a> Reporter<'a> {
-    fn new(cb: &'a (dyn Fn(Progress) + Send + Sync)) -> Self {
+    fn new(cb: &'a (dyn Fn(Progress) + Send + Sync), interval: Duration) -> Self {
         Reporter {
             cb,
+            meter: Meter::new(interval),
             p: Progress {
                 phase: Phase::Resolving,
                 bytes: 0,
@@ -106,20 +109,22 @@ impl<'a> Reporter<'a> {
         }
     }
 
-    /// 단계를 바꾸고 알린다.
+    /// 단계를 바꾸고 알린다(스로틀하지 않는다).
     pub(crate) fn phase(&mut self, phase: Phase) {
         self.p.phase = phase;
-        self.emit();
+        self.emit(true);
     }
 
-    /// 값을 바꾸고 알린다.
+    /// 값을 바꾸고, 간격이 지났으면 알린다.
     pub(crate) fn update(&mut self, f: impl FnOnce(&mut Progress)) {
         f(&mut self.p);
-        self.emit();
+        self.emit(false);
     }
 
-    fn emit(&self) {
-        (self.cb)(self.p.clone());
+    fn emit(&mut self, force: bool) {
+        if self.meter.observe(&mut self.p, Instant::now(), force) {
+            (self.cb)(self.p.clone());
+        }
     }
 }
 
@@ -204,7 +209,7 @@ impl Chzzk {
             chzzk: self,
             req: &req,
             cancel: &cancel,
-            report: Reporter::new(on_progress),
+            report: Reporter::new(on_progress, self.config().progress_interval),
             refreshes: 0,
         };
         let resumed_from = part.as_ref().map_or(0, PartFile::written);

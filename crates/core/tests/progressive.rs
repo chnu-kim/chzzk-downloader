@@ -648,3 +648,32 @@ async fn cancelled_before_start() {
     assert!(matches!(r, Err(Error::Cancelled)));
     assert!(server.received_requests().await.unwrap().is_empty());
 }
+
+/// 간격이 길면 청크마다 보내지 않는다. 단계가 바뀔 때(마지막 `Finalizing` 포함)는 반드시 보낸다.
+#[tokio::test]
+async fn progress_throttled() {
+    let body = test_bytes(SIZE, 11);
+    let server = MockServer::start().await;
+    setup(&server).await;
+    Mock::given(method("GET"))
+        .and(path(MEDIA_PATH))
+        .respond_with(RangeBody(body.clone()))
+        .mount(&server)
+        .await;
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_path(&dir);
+    let events = Events::default();
+    let cfg = ClientConfig {
+        progress_interval: std::time::Duration::from_secs(3600),
+        ..config(&server)
+    };
+    download(cfg, &out, &events).await.unwrap();
+    let phases: Vec<Phase> = events.all().iter().map(|p| p.phase).collect();
+    assert_eq!(
+        phases,
+        [Phase::Resolving, Phase::Downloading, Phase::Finalizing]
+    );
+    let last = events.last();
+    assert_eq!(last.bytes, SIZE as u64);
+    assert_eq!(last.total_bytes, Some(SIZE as u64));
+}

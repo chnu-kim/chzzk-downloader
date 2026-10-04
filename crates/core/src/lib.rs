@@ -32,6 +32,6 @@ pub use model::{
 };
 pub use naming::Platform;
 pub use ownership::is_own_content;
-pub use progress::{Phase, Progress};
+pub use progress::{Meter, Phase, Progress};
 pub use tokio_util::sync::CancellationToken;
 pub use url::parse_content_url;

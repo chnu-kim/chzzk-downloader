@@ -673,3 +673,13 @@ tokio    = { version = "1.53.2", features = ["net", "test-util"] }
 11. spec §4.1·§9.1-5 `media[0]` 고정 → `protocol == "HLS"`인 첫 항목.
 12. spec §10.1 "VOD MPD fixture 없음" → `testdata/vod/` 확보됨.
 13. ROADMAP "AES 지원하지 않음(확정)" → "기본값 거부, 지원 여부는 사용자 결정(§11)".
+
+---
+
+## 구현 중 변경
+
+구현하면서 설계와 달라졌거나 설계가 모호해 고른 내용이다. 단계 번호는 §10 기준이다.
+
+1. **(1단계) 의존성은 단계별로 추가한다.** §9 목록을 한 번에 넣지 않고 그 crate를 처음 쓰는 단계에서 넣는다(1단계 `serde`·`thiserror`, 4단계 `url`, 8단계 `reqwest` 등). `reqwest`의 TLS provider 확인(§9 끝)을 HTTP 단계로 미루기 위해서다. `serde_json`은 1단계부터 dev-dependency다.
+2. **(1단계) `Error` 변형도 단계별로 추가한다.** 다른 모듈 타입에 기대는 `HttpStatus`(`RequestKind`, 8단계), `PlaybackChanged`(`PlaybackKind`, 5단계), `Network`(`reqwest::Error`, 8단계)는 그 타입이 생기는 단계에서 `kind()`·`is_resumable()` arm과 함께 넣는다. `Error`가 `#[non_exhaustive]`라 공개 API 호환에는 영향이 없다. `ErrorKind`는 처음부터 전체 목록을 둔다.
+3. **(1단계) CI 명령.** §8의 `cargo clippy -p chzzk-core -- -D warnings`에 `--all-targets`를 더해 테스트 코드도 검사하고, `cargo fmt --all --check`, `--locked`를 쓴다. Windows 러너가 fixture를 CRLF로 바꾸지 않도록 checkout 전에 `core.autocrlf=false`를 설정한다.

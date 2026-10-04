@@ -712,3 +712,13 @@ tokio    = { version = "1.53.2", features = ["net", "test-util"] }
     - `durations_crc`는 각 `duration_ms`를 u32 little-endian 4바이트로 이어 붙인 바이트열의 crc32다(fixture 30×2000ms = `0x84944746`).
     - master의 `track_id`는 variant URL을 master 디렉토리(`base.join("./")`) 기준 상대 경로로 바꾼 첫 세그먼트다. 디렉토리 밖의 절대 URI면 원문의 첫 세그먼트를 쓴다. `height`는 `RESOLUTION=WxH`의 H다.
     - 모르는 `#EXT` 태그 경고에 `tracing`을 이 단계에서 의존성으로 넣는다(`crc32fast`도 함께).
+21. **(8단계) TLS provider.** `reqwest`의 `rustls` feature는 `hyper-rustls`의 `aws-lc-rs` provider를 켠다(`cargo tree -e features -i rustls`로 확인). 설계대로 그대로 쓴다. `aws-lc-sys`는 C 빌드가 필요하므로 Windows(MSVC) CI 빌드는 macOS에서 확인하지 못했다. CI가 실패하면 `rustls-no-provider` + `rustls/ring` 조합으로 바꾼다. 다른 crate가 feature 통합으로 압축 해제를 켜도 꺼지도록 `no_gzip`·`no_brotli`·`no_deflate`·`no_zstd`를 모두 호출한다. `json` feature는 넣었지만 응답은 `serde_json::from_slice`로 읽는다.
+22. **(8단계) `ClientConfig.retry`는 9단계에서 넣는다.** `RetryPolicy`가 `download/retry.rs`(9단계)에 생기기 때문이다. `ClientConfig`와 `Endpoints`는 `Default`(실서버 주소, 200ms, 10s, 30s)를 구현한다.
+23. **(8단계) 요청 URL은 `path_segments_mut`로 만든다.** `join` 대신 기본 주소의 세그먼트 뒤에 `pop_if_empty().extend(...)`로 붙이므로 기본 주소 끝의 `/` 유무와 무관하고, ID에 `/`·`?`가 섞여도 인코딩된다. `Chzzk::new`는 http(s) 기본 주소가 아닌 엔드포인트를 `Parse { what: "endpoint" }`로 거부한다. `inKey`는 `query_pairs_mut().append_pair("key", …)`로 붙인다.
+24. **(8단계) 오류 세부.**
+    - `HttpStatus`의 `is_resumable`: 4xx는 false이되 408·429는 일시적이라 true다. 5xx와 그 밖은 true. `Network`는 true.
+    - `Network`는 `Error::network(e)`(crate 내부)로만 만들고 `e.without_url()`을 적용한다. `#[from]`은 두지 않는다.
+    - 쿠키 `Cookie` 헤더 값은 `Chzzk::new`에서 한 번 만들고 `set_sensitive(true)`로 표시한다. 헤더로 보낼 수 없는 문자가 있으면 `Error::Settings`다.
+    - `redact_url`은 쿼리·fragment·사용자 정보를 지우고, `hdntl=`로 시작하는 세그먼트부터 `hmac=`이 든 세그먼트까지(토큰의 `acl=*/kr/*`에 `/`가 있어 여러 세그먼트에 걸친다)를 `hdntl=***` 하나로 바꾼다.
+    - 빠른 다시보기의 `encodingTrack`이 비면 `resolve`가 `NoQualities`를 낸다.
+25. **(8단계) UA의 Chrome 메이저는 `141`이다.** OS별 UA 세 개가 `chrome_major!()` 하나를 쓴다. 실서버가 UA를 검사한다는 증거는 없으므로 값은 15단계 스모크 때 필요하면 올린다. 실서버 스모크 `resolve::live_smoke`는 `#[ignore]` + `CHZZK_LIVE_VIDEO`로만 돈다.

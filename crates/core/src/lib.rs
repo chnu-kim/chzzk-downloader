@@ -3,8 +3,10 @@
 //! Tauri에 의존하지 않는다. 진행률은 콜백, 취소는 `CancellationToken`으로 셸과 연결한다.
 //! 설계 기준은 `docs/design/core.md`다.
 
+pub mod client;
 pub mod error;
 pub mod hls;
+pub mod http;
 pub mod info;
 pub mod model;
 pub mod mpd;
@@ -16,7 +18,9 @@ pub mod url;
 #[cfg(test)]
 mod testutil;
 
+pub use client::{Chzzk, ClientConfig, Endpoints};
 pub use error::{Error, ErrorKind, Unsupported};
+pub use http::{NaverCookies, RequestKind, Secret};
 pub use info::Playback;
 pub use model::{
     ContentKind, ContentMeta, ContentRef, PdRep, PlaybackKind, Quality, Resolved, Source,

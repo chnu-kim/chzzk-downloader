@@ -4,13 +4,13 @@
 //! - `ErrorKind`는 UI가 분기할 수 있도록 직렬화되는 오류 종류다(Tauri가 그대로 넘긴다).
 //! - `Display`와 `Debug` 어디에도 쿠키 값이나 서명 토큰이 들어가서는 안 된다.
 //!
-//! 다른 모듈의 타입에 의존하는 변형(`HttpStatus`, `Network`)은
-//! 그 타입을 만드는 구현 단계에서 추가한다(설계 문서 `## 구현 중 변경` 참고).
+//! - `Network`는 `Error::network`로만 만든다. reqwest 오류에 든 URL(서명 토큰 포함)을 지운다.
 
 use std::path::PathBuf;
 
 use serde::Serialize;
 
+use crate::http::RequestKind;
 use crate::model::PlaybackKind;
 
 /// 코어의 모든 공개 오류.
@@ -21,6 +21,8 @@ pub enum Error {
     InvalidUrl,
     #[error("API 오류 {code}: {message:?}")]
     Api { code: i64, message: Option<String> },
+    #[error("HTTP {status}")]
+    HttpStatus { status: u16, kind: RequestKind },
     #[error("로그인/성인 인증이 필요합니다 (HTTP {status})")]
     AuthRequired { status: u16 },
     #[error("재생 정보가 없습니다")]
@@ -49,6 +51,9 @@ pub enum Error {
     Parse { what: &'static str, detail: String },
     #[error("길이 불일치: 예상 {expected}, 실제 {actual}")]
     LengthMismatch { expected: u64, actual: u64 },
+    /// `Error::network`로 만든다(URL 제거).
+    #[error("네트워크 오류: {0}")]
+    Network(#[source] reqwest::Error),
     #[error("디스크 공간이 부족합니다: {path}")]
     DiskFull { path: PathBuf },
     #[error("다른 프로그램이 파일을 사용 중입니다: {path}")]
@@ -106,11 +111,17 @@ pub enum ErrorKind {
 }
 
 impl Error {
+    /// reqwest 오류를 URL 없이 감싼다. `Network`는 반드시 이 함수로 만든다.
+    pub(crate) fn network(e: reqwest::Error) -> Self {
+        Error::Network(e.without_url())
+    }
+
     /// 직렬화 가능한 오류 종류.
     pub fn kind(&self) -> ErrorKind {
         match self {
             Error::InvalidUrl => ErrorKind::InvalidUrl,
             Error::Api { .. } => ErrorKind::Api,
+            Error::HttpStatus { .. } => ErrorKind::Http,
             Error::AuthRequired { .. } => ErrorKind::AuthRequired,
             Error::NoPlayback { .. } => ErrorKind::NoPlayback,
             Error::EncryptedVod { .. } => ErrorKind::Encrypted,
@@ -122,6 +133,7 @@ impl Error {
             Error::Unsupported(_) => ErrorKind::Unsupported,
             Error::Parse { .. } => ErrorKind::Parse,
             Error::LengthMismatch { .. } => ErrorKind::LengthMismatch,
+            Error::Network(_) => ErrorKind::Network,
             Error::DiskFull { .. } => ErrorKind::DiskFull,
             Error::FileLocked { .. } => ErrorKind::FileLocked,
             Error::Io { .. } => ErrorKind::Io,
@@ -144,7 +156,12 @@ impl Error {
             | Error::AuthRequired { .. }
             | Error::EncryptedVod { .. }
             | Error::Unsupported(_) => false,
+            // 4xx는 같은 요청이 끝내 실패한다. 408(timeout)·429(rate limit)는 일시적이다.
+            Error::HttpStatus { status, .. } => {
+                !(400..500).contains(status) || matches!(status, 408 | 429)
+            }
             Error::RefreshExhausted
+            | Error::Network(_)
             | Error::Cancelled
             | Error::DiskFull { .. }
             | Error::FileLocked { .. }
@@ -227,6 +244,21 @@ mod tests {
             .is_resumable()
         );
         assert!(!Error::Unsupported(Unsupported::Discontinuity).is_resumable());
+    }
+
+    #[test]
+    fn http_status_resumable() {
+        let st = |status| Error::HttpStatus {
+            status,
+            kind: RequestKind::Media,
+        };
+        assert_eq!(st(404).kind(), ErrorKind::Http);
+        assert!(!st(404).is_resumable());
+        assert!(!st(410).is_resumable());
+        assert!(st(408).is_resumable());
+        assert!(st(429).is_resumable());
+        assert!(st(500).is_resumable());
+        assert!(st(503).is_resumable());
     }
 
     /// 일시적일 수 있는 오류는 `.part`를 지우지 않는다(리뷰 회귀).

@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::error::Error;
-use crate::fsutil::{atomic_write, map_io_error, rename_with_retry};
+use crate::fsutil::{atomic_write, map_io_error, remove_stale_temps, rename_with_retry};
 use crate::model::{ContentRef, PlaybackKind};
 
 /// sidecar 형식 버전.
@@ -179,6 +179,8 @@ impl PartFile {
             }
             Err(e) => return Err(e),
         };
+        // 잠금을 쥐었으니 이 sidecar를 쓰는 다른 작업은 없다. 죽은 작업이 남긴 임시 파일을 치운다.
+        remove_stale_temps(&sc_path);
         let len = f
             .metadata()
             .map_err(|e| map_io_error("stat", &part, e))?
@@ -221,6 +223,7 @@ impl PartFile {
         let part = part_path(final_path);
         let sc_path = sidecar_path(final_path);
         let f = open_locked(&part, true)?;
+        remove_stale_temps(&sc_path);
         f.set_len(0)
             .map_err(|e| map_io_error("truncate", &part, e))?;
         sidecar.committed_len = 0;
@@ -413,6 +416,7 @@ pub fn discard_partial(final_path: &Path) -> Result<(), Error> {
     let sc = sidecar_path(final_path);
     match open_locked(&part, false) {
         Ok(f) => {
+            remove_stale_temps(&sc);
             let res = remove_if_exists(&sc).and(remove_if_exists(&part));
             drop(f);
             res
@@ -683,6 +687,26 @@ mod tests {
         assert_eq!(path, out);
         assert_eq!(std::fs::read(&out).unwrap(), b"done");
         assert!(!part_path(&out).exists());
+    }
+
+    /// 재개·처음부터(`discard_partial`)는 잠금을 쥔 뒤 죽은 작업의 sidecar 임시 파일을 치운다.
+    #[tokio::test]
+    async fn stale_sidecar_temps_cleaned() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("a.mp4");
+        let stale = dir.path().join("a.mp4.part.json.Ab12Cd.tmp");
+        let mut p = PartFile::create(&out, sidecar()).unwrap();
+        p.write(b"x").unwrap();
+        p.checkpoint(|_| {}).await.unwrap();
+        drop(p);
+        std::fs::write(&stale, b"{").unwrap();
+        let p = resume(&out, "720p").unwrap().unwrap();
+        assert!(!stale.exists());
+        drop(p);
+        std::fs::write(&stale, b"{").unwrap();
+        discard_partial(&out).unwrap();
+        assert!(!stale.exists());
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
     }
 
     #[tokio::test]

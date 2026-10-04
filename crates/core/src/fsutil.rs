@@ -32,8 +32,13 @@ fn atomic_write_using(
         Some(d) if !d.as_os_str().is_empty() => d,
         _ => Path::new("."),
     };
-    let mut tmp =
-        tempfile::NamedTempFile::new_in(dir).map_err(|e| map_io_error("create temp", dir, e))?;
+    // `{이름}.XXXXXX.tmp`: 죽어서 남아도 어느 파일의 것인지 알 수 있고 `remove_stale_temps`가 찾는다.
+    let mut tmp = tempfile::Builder::new()
+        .prefix(&temp_prefix(path))
+        .suffix(TEMP_SUFFIX)
+        .rand_bytes(TEMP_RAND)
+        .tempfile_in(dir)
+        .map_err(|e| map_io_error("create temp", dir, e))?;
     tmp.write_all(bytes)
         .map_err(|e| map_io_error("write", tmp.path(), e))?;
     tmp.as_file()
@@ -45,6 +50,48 @@ fn atomic_write_using(
     // 옮긴 뒤에는 drop이 지울 파일이 없다. 같은 이름이 새로 생겨도 지우지 않도록 해제한다.
     let _ = tmp.keep();
     Ok(())
+}
+
+/// 임시 파일 이름 끝.
+const TEMP_SUFFIX: &str = ".tmp";
+/// 임시 파일 이름의 무작위 글자 수.
+const TEMP_RAND: usize = 6;
+
+/// `path`의 임시 파일 이름 앞부분(`{파일 이름}.`).
+fn temp_prefix(path: &Path) -> std::ffi::OsString {
+    let mut p = path.file_name().unwrap_or_default().to_owned();
+    p.push(".");
+    p
+}
+
+/// `atomic_write(path, …)` 도중 프로세스가 죽어 남은 임시 파일(`{이름}.XXXXXX.tmp`)을 지운다.
+///
+/// 같은 `path`에 쓰는 작업이 없을 때만 부른다(`.part` 잠금을 쥔 채). 실패는 무시한다.
+pub(crate) fn remove_stale_temps(path: &Path) {
+    let dir = match path.parent() {
+        Some(d) if !d.as_os_str().is_empty() => d,
+        _ => Path::new("."),
+    };
+    let Some(prefix) = temp_prefix(path).into_string().ok() else {
+        return;
+    };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        let is_temp = name
+            .strip_prefix(&prefix)
+            .and_then(|r| r.strip_suffix(TEMP_SUFFIX))
+            .is_some_and(|r| r.len() == TEMP_RAND && r.bytes().all(|b| b.is_ascii_alphanumeric()));
+        if is_temp
+            && entry.file_type().is_ok_and(|t| t.is_file())
+            && let Err(e) = std::fs::remove_file(entry.path())
+        {
+            tracing::debug!(error = %e, file = name, "남은 임시 파일 삭제 실패");
+        }
+    }
 }
 
 /// rename을 재시도 간격. 100ms부터 두 배씩, 합 약 3초(100+200+400+800+1600).
@@ -192,6 +239,54 @@ mod tests {
         );
         assert_eq!(std::fs::read(&p).unwrap(), b"new");
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+
+    /// 임시 파일은 대상 이름으로 시작하고, 남은 것은 그 대상의 것만 지운다.
+    #[test]
+    fn stale_temps_named_and_removed() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("a.mp4.part.json");
+        // 쓰는 도중의 임시 파일 이름을 확인한다.
+        let seen = std::cell::RefCell::new(None);
+        atomic_write_using(
+            &p,
+            b"x",
+            |a, b| {
+                *seen.borrow_mut() = Some(a.file_name().unwrap().to_str().unwrap().to_owned());
+                std::fs::rename(a, b)
+            },
+            |_| false,
+            |_| {},
+        )
+        .unwrap();
+        let name = seen.into_inner().unwrap();
+        assert!(
+            name.starts_with("a.mp4.part.json.") && name.ends_with(".tmp"),
+            "{name}"
+        );
+
+        let keep = [
+            "a.mp4",
+            "a.mp4.part",
+            "a.mp4.part.json",
+            "b.mp4.part.json.abc123.tmp",
+            "a.mp4.part.json.toolong1.tmp",
+            "a.mp4.part.json.abc123.mp4",
+        ];
+        for n in keep {
+            std::fs::write(dir.path().join(n), b"k").unwrap();
+        }
+        std::fs::write(dir.path().join(&name), b"stale").unwrap();
+        std::fs::write(dir.path().join("a.mp4.part.json.Zz9xY0.tmp"), b"stale").unwrap();
+        remove_stale_temps(&p);
+        let mut left: Vec<String> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .collect();
+        left.sort();
+        let mut want: Vec<String> = keep.iter().map(|s| s.to_string()).collect();
+        want.sort();
+        assert_eq!(left, want);
     }
 
     #[test]

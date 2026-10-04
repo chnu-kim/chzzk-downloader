@@ -4,12 +4,14 @@
 //! - `ErrorKind`는 UI가 분기할 수 있도록 직렬화되는 오류 종류다(Tauri가 그대로 넘긴다).
 //! - `Display`와 `Debug` 어디에도 쿠키 값이나 서명 토큰이 들어가서는 안 된다.
 //!
-//! 다른 모듈의 타입에 의존하는 변형(`HttpStatus`, `PlaybackChanged`, `Network`)은
+//! 다른 모듈의 타입에 의존하는 변형(`HttpStatus`, `Network`)은
 //! 그 타입을 만드는 구현 단계에서 추가한다(설계 문서 `## 구현 중 변경` 참고).
 
 use std::path::PathBuf;
 
 use serde::Serialize;
+
+use crate::model::PlaybackKind;
 
 /// 코어의 모든 공개 오류.
 #[derive(Debug, thiserror::Error)]
@@ -31,6 +33,11 @@ pub enum Error {
     QualityNotFound {
         requested: String,
         available: Vec<String>,
+    },
+    #[error("재생 방식이 바뀌었습니다. 화질을 다시 고르세요")]
+    PlaybackChanged {
+        was: PlaybackKind,
+        now: PlaybackKind,
     },
     #[error("원본이 바뀌어 이어받을 수 없습니다: {detail}")]
     SourceChanged { detail: String },
@@ -109,6 +116,7 @@ impl Error {
             Error::EncryptedVod { .. } => ErrorKind::Encrypted,
             Error::NoQualities => ErrorKind::NoQualities,
             Error::QualityNotFound { .. } => ErrorKind::QualityNotFound,
+            Error::PlaybackChanged { .. } => ErrorKind::PlaybackChanged,
             Error::SourceChanged { .. } => ErrorKind::SourceChanged,
             Error::RefreshExhausted => ErrorKind::RefreshExhausted,
             Error::Unsupported(_) => ErrorKind::Unsupported,
@@ -132,6 +140,7 @@ impl Error {
         match self {
             Error::LengthMismatch { .. }
             | Error::SourceChanged { .. }
+            | Error::PlaybackChanged { .. }
             | Error::AuthRequired { .. }
             | Error::EncryptedVod { .. }
             | Error::Unsupported(_) => false,
@@ -205,6 +214,12 @@ mod tests {
             .is_resumable()
         );
         assert!(!Error::SourceChanged { detail: "x".into() }.is_resumable());
+        let changed = Error::PlaybackChanged {
+            was: PlaybackKind::LiveRewindHls,
+            now: PlaybackKind::Progressive,
+        };
+        assert!(!changed.is_resumable());
+        assert_eq!(changed.kind(), ErrorKind::PlaybackChanged);
         assert!(
             !Error::EncryptedVod {
                 method: "AES-128".into()

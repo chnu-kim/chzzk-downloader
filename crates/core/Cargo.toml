@@ -11,8 +11,6 @@ name = "chzzk_core"
 
 [dependencies]
 serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
 thiserror = "2.0.21"
 url = "2.5.8"
-
-[dev-dependencies]
-serde_json = "1.0.151"

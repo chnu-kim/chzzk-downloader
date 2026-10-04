@@ -4,13 +4,20 @@
 //! 설계 기준은 `docs/design/core.md`다.
 
 pub mod error;
+pub mod info;
 pub mod model;
 pub mod naming;
 pub mod progress;
 pub mod url;
 
+#[cfg(test)]
+mod testutil;
+
 pub use error::{Error, ErrorKind, Unsupported};
-pub use model::{ContentKind, ContentMeta, ContentRef};
+pub use info::Playback;
+pub use model::{
+    ContentKind, ContentMeta, ContentRef, PdRep, PlaybackKind, Quality, Resolved, Source,
+};
 pub use naming::Platform;
 pub use progress::{Phase, Progress};
 pub use url::parse_content_url;

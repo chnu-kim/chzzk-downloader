@@ -417,9 +417,12 @@ async fn double_download_file_locked() {
             Chzzk::new(cfg).unwrap().download(req, cancel, &cb).await
         }
     });
-    // init이 durable해질 때까지 기다린다.
+    // init이 durable해지고 seg0 요청(지연 응답을 소비)이 닿을 때까지 기다린다.
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
-    while !(sidecar.exists() && sidecar_json(&out)["committedLen"].as_u64() > Some(0)) {
+    while !(sidecar.exists()
+        && sidecar_json(&out)["committedLen"].as_u64() > Some(0)
+        && !requests(&server, "/g0/144p/seg0.m4v").await.is_empty())
+    {
         assert!(
             std::time::Instant::now() < deadline,
             "1번 작업이 시작하지 않았다"

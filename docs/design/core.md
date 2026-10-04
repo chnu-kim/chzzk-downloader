@@ -792,3 +792,4 @@ tokio    = { version = "1.53.2", features = ["net", "test-util"] }
     - MP4 상자 검사기는 `tests/support/mp4.rs` 하나를 `tests/live.rs`와 `examples/dl.rs`가 `#[path]`로 함께 쓴다(크기 1 largesize, 0 끝까지, 마지막 상자 잘림 허용). 검사기 자체는 오프라인 테스트 `live::walk_boxes_on_fixture`가 실물 fixture로 검사한다.
     - UA의 Chrome 141(25번)로 막히지 않았다.
     - **성인 PD 쿠키 필요 여부는 미실측이다.** 로그인 쿠키가 필요한데, 저장소의 실제 사용자 파일(루트 `settings.json`, `dependent/`)은 읽지 않는다는 작업 규칙 때문에 쓸 수 있는 쿠키가 없었다. `examples/dl.rs`가 `CHZZK_NID_AUT`·`CHZZK_NID_SES`(+`CHZZK_COOKIES_ON_MEDIA=1`)로 쿠키를 받으므로 사용자가 직접 실측할 수 있다. 그때까지 결정 8(미디어에 쿠키 없음)과 `cookies_on_media` 스위치를 그대로 둔다.
+46. **(15단계) §12 문서 정정 반영.** 1번은 `docs/research/stack.md`, 2~8·11·12번은 `docs/spec/core-behavior.md`(원래 Go 서술은 남기고 해당 자리에 "정정(설계 §12-n)"을 붙였다), 9·10번은 `docs/research/hls-live-rewind.md`에 반영했다. 10번의 거부 목록에는 구현에서 더한 `GAP`·`SKIP`(26번)도 적었다. 13번(ROADMAP의 AES 문구)은 설계 판정 커밋 때 이미 "기본값 거부, 지원 여부는 사용자 결정"으로 고쳐져 있어 바꾸지 않았다. 8번의 성인 PD는 45번대로 미실측으로 적었다.

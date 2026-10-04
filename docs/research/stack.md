@@ -84,7 +84,7 @@ chzzk-downloader/
 - 빌드 산출물은 **워크스페이스 루트의 `target/`**으로 간다(Cargo 기본 동작). 그래서 CI의 Rust 캐시 설정은 `workspaces: ". -> target"`로 잡는다(공식 예제의 `./src-tauri -> target`은 비워크스페이스용이다).
 - `tauri-action`은 `projectPath`로 Tauri 프로젝트를 가리키고, 산출물 경로는 출력 `artifactPaths`로 받는다(https://github.com/tauri-apps/tauri-action). 프런트 락파일 탐지는 v1에서 워크스페이스를 위해 상위 디렉터리까지 올라가도록 개선됐다.
 - `tauri.conf.json`의 `build.frontendDist`, `build.beforeDevCommand`, `build.beforeBuildCommand`는 `app/` 기준으로 상대 경로를 맞춘다. SvelteKit adapter-static의 출력 폴더는 `build/`이므로 `frontendDist: "../build"`가 된다(템플릿이 이미 이렇게 생성해 줄 것이다. 확인 필요).
-- 코어 crate는 Tauri와 무관하게 `cargo test -p core`로 테스트되어야 한다(ROADMAP 요구).
+- 코어 crate는 Tauri와 무관하게 `cargo test -p chzzk-core`로 테스트되어야 한다(ROADMAP 요구). package 이름은 내장 `core` crate와 겹치지 않게 `chzzk-core`다(설계 결정 1).
 
 ### 1.4 플러그인
 
@@ -244,7 +244,7 @@ crates.io 조회(2026-10-05):
 
 | crate | 버전 | 메모 |
 |---|---|---|
-| `reqwest` | **0.13.5** (2026-09-08) | 기능 플래그에 `rustls`, `stream`, `json`, `gzip`, `brotli`, `deflate`, `zstd`, `cookies`, `http2`가 있다. 0.13에서 TLS 기본이 rustls 계열로 바뀌었는지는 확인하지 못했다. `default-features = false, features = ["rustls", "stream", "json", "gzip"]`처럼 **명시 지정**을 권장 |
+| `reqwest` | **0.13.5** (2026-09-08) | 기능 플래그에 `rustls`, `stream`, `json`, `gzip`, `brotli`, `deflate`, `zstd`, `cookies`, `http2`가 있다. 0.13에서 TLS 기본이 rustls 계열로 바뀌었는지는 확인하지 못했다. `default-features = false, features = ["rustls", "stream", "json"]`처럼 **명시 지정**을 권장. **`gzip`은 넣지 않는다**: 자동 압축 해제는 `Content-Length`와 Range offset을 깨뜨린다(설계 결정 7) |
 | `tokio` | 1.53.2 (2026-10-03) | `features = ["rt-multi-thread", "macros", "fs", "io-util", "sync", "time"]` |
 | `quick-xml` | 0.42.0 | 기능: `serialize`(serde), `async-tokio`, `encoding` |
 | `roxmltree` | 0.21.1 (2025-10-12) | 읽기 전용 DOM, 의존성 없음 |

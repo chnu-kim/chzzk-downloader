@@ -4,8 +4,9 @@
 
 ## 현재 위치
 
-- 현재: Phase 1 설계 판정 완료 (`docs/design/core.md`). 다음 커밋은 설계 §10-1(workspace 골격)
-- 다음: Phase 1 구현 — 설계 §10 순서대로 작은 커밋, 각 단계는 해당 테스트와 함께
+- 현재: Phase 1 코어(`crates/core`, 설계 §10-1~15) 구현 완료, 브랜치 `feat/rust-core`. 오프라인 테스트는 macOS에서 전체 녹색(push 전이라 3 OS CI는 아직 돌지 않음), 실서버 스모크(빠른 다시보기 HLS·DASH VOD·클립) 통과(2026-10-05, 설계 "구현 중 변경" 45)
+- 남은 것: 3 OS CI 확인(push 후, Windows `aws-lc-sys` NASM 문제는 설계 구현 중 변경 21대로 CI 결과를 보고 결정), 성인 PD에 미디어 쿠키가 필요한지 실측(로그인 쿠키 필요, `examples/dl.rs`의 `CHZZK_NID_AUT`·`CHZZK_NID_SES`로 사용자가 직접), AES 지원 여부 결정(설계 §11)
+- 다음: §10-16 Go 코드 삭제(별도 PR) → Phase 2 Tauri 셸
 
 ## 확정된 결정 (2026-10-05, 사용자 인터뷰)
 
@@ -46,13 +47,15 @@
 
 - [x] 사전 조사: 라이브 리와인드 HLS 실물 fixture 확보 (`testdata/hls/`, 결과 `docs/research/hls-live-rewind.md`)
 - [x] 설계 판정 (`docs/design/core.md`) + 일반 VOD DASH fixture 확보 (`testdata/vod/`)
-- [ ] §10-1 workspace 골격 + 3 OS CI (`cargo test -p chzzk-core`)
-- [ ] §10-2~4 순수 함수: progress 포맷, naming, url
-- [ ] §10-5~7 순수 파서: info/`classify`(inKey 분기 통합, AES seam), mpd, hls
-- [ ] §10-8 http + `resolve` (wiremock)
-- [ ] §10-9~13 다운로드 엔진: part/retry → progressive → segmented(순차 → 동시·403 재조회) → 진행률
-- [ ] §10-14 settings / credentials / legacy import
-- [ ] §10-15 실서버 스모크(`examples/dl.rs`) + 문서 정정(§12), 성인 PD 쿠키 실측
+- [x] §10-1 workspace 골격 + 3 OS CI 설정 (`cargo test -p chzzk-core`)
+- [ ] §10-1 남은 항목: 3 OS CI 녹색 확인(push 전 미실행, Windows NASM 미결)
+- [x] §10-2~4 순수 함수: progress 포맷, naming, url
+- [x] §10-5~7 순수 파서: info/`classify`(inKey 분기 통합, AES seam), mpd, hls
+- [x] §10-8 http + `resolve` (wiremock)
+- [x] §10-9~13 다운로드 엔진: part/retry → progressive → segmented(순차 → 동시·403 재조회) → 진행률
+- [x] §10-14 settings / credentials / legacy import
+- [x] §10-15 실서버 스모크(`examples/dl.rs`, `tests/live.rs`) + 문서 정정(§12) + CLAUDE.md 갱신
+- [ ] §10-15 남은 항목: 성인 PD 쿠키 실측(로그인 쿠키가 있어야 해서 미실측)
 - [ ] §10-16 (별도 PR) Go 코드 삭제, `internal/api/testdata` → `testdata/clip/`
 
 ### Phase 2 — GUI (Tauri + Svelte)
@@ -84,3 +87,4 @@
 하네스(규칙·skill·agent·hook)를 늘릴 때 이유를 한 줄로 남긴다.
 
 - 2026-10-05: 초기화. CLAUDE.md + settings.json만 둔다.
+- 2026-10-05: CLAUDE.md를 Rust 코어 기준으로 재작성(레이아웃, 검증 게이트 fmt·clippy·test, 실서버 스모크 실행법). Go는 레거시로 표시.

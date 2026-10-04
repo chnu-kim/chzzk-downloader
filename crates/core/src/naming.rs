@@ -40,9 +40,14 @@ impl Platform {
 
 /// 메타데이터로 기본 파일명을 만든다. 결과는 `sanitize_filename`을 거친 값이고 200바이트 이하다.
 pub fn default_filename(meta: &ContentMeta, p: Platform) -> String {
-    // "채널이 비었는가"는 sanitize 전 값으로 판단한다(sanitize는 빈 값을 "_"로 바꾼다).
+    // "채널이 비었는가"는 문자 규칙을 적용하고 trim한 뒤의 값으로 판단한다.
     let channel = clean_component(&meta.channel_name, p);
-    let title = clean_component(&meta.title, p);
+    // 제목은 `.mp4` 바로 앞에 오므로, Windows에서는 끝 `.`·공백을 미리 지운다.
+    // 그래야 빈 제목 `_` 대체가 조립 전에 정해지고 길이 예산에 들어간다.
+    let mut title = trim_piece(&clean_component(&meta.title, p), p);
+    if title.is_empty() {
+        title.push('_');
+    }
 
     let prefix = match meta.kind {
         ContentKind::Clip => "[클립] ".to_string(),
@@ -62,12 +67,14 @@ pub fn default_filename(meta: &ContentMeta, p: Platform) -> String {
 
     // 접두어·구분자·확장자를 뺀 나머지를 채널과 제목이 나눠 쓴다.
     let avail = MAX_FILENAME_BYTES.saturating_sub(prefix.len() + sep.len() + EXT.len());
-    let (channel, title) = fit_channel_title(&channel, &title, avail, p);
-    let title = if title.is_empty() {
-        "_".to_string()
-    } else {
-        title
-    };
+    let (mut channel, mut title) = fit_channel_title(&channel, &title, avail, p);
+    // 자른 제목이 `. . .`처럼 trim으로 다 지워지면 `_`로 채우고 그 1바이트를 채널에서 뺀다.
+    if title.is_empty() {
+        title.push('_');
+        channel = trim_piece(truncate_utf8(&channel, avail.saturating_sub(1)), p);
+    }
+    // 자른 뒤 채널이 비었으면(Windows 끝 `.`/공백 제거) 구분자도 뺀다. 길이는 줄기만 한다.
+    let sep = if channel.is_empty() { "" } else { sep };
 
     sanitize_filename(&format!("{prefix}{channel}{sep}{title}{EXT}"), p)
 }
@@ -132,17 +139,19 @@ fn normalize_chars(s: &str, p: Platform) -> String {
     out
 }
 
-/// Windows 예약 장치명(대소문자 무시).
+/// Windows 예약 장치명(대소문자 무시). `stem`은 끝 공백을 지운 값이다.
+///
+/// `CON PRN AUX NUL CONIN$ CONOUT$`, `COM`/`LPT` + `1`–`9` 또는 위첨자 `¹ ² ³`.
 fn is_windows_reserved(stem: &str) -> bool {
-    const NAMES: [&str; 4] = ["CON", "PRN", "AUX", "NUL"];
+    const NAMES: [&str; 6] = ["CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"];
     let upper = stem.to_ascii_uppercase();
     if NAMES.contains(&upper.as_str()) {
         return true;
     }
-    let b = upper.as_bytes();
-    b.len() == 4
+    let chars: Vec<char> = upper.chars().collect();
+    chars.len() == 4
         && (upper.starts_with("COM") || upper.starts_with("LPT"))
-        && (b'1'..=b'9').contains(&b[3])
+        && matches!(chars[3], '1'..='9' | '\u{00B9}' | '\u{00B2}' | '\u{00B3}')
 }
 
 /// 파일명 전체를 OS 규칙에 맞게 정리한다. 멱등이다(두 번 적용해도 같다).
@@ -152,12 +161,17 @@ fn is_windows_reserved(stem: &str) -> bool {
 /// - macOS: `:` → `_`
 /// - `[ ] ( ) { }`는 모든 OS에서 유지
 ///
+/// Windows는 이름 전체의 끝 `.`·공백을 먼저 지운 뒤 확장자를 나눈다. 그래야 두 번째 적용에서
+/// 앞쪽 `.`이 새 확장자 구분자가 되지 않는다(`.x.` → `_.x`).
 /// 확장자는 Go와 같이 "`.`을 포함하고 `.`으로 끝나지 않으면 마지막 `.` 뒤"로 나눈다.
-/// trim과 빈 값 처리는 확장자 앞 base에 적용한다(`.mp4` → `_.mp4`).
+/// 그다음 trim·끝 `.`/공백 제거(Windows)·빈 값 처리를 확장자 앞 base에 적용한다(`.mp4` → `_.mp4`).
 /// 길이 제한은 하지 않는다(`output_path`와 `default_filename`이 한다).
 pub fn sanitize_filename(name: &str, p: Platform) -> String {
     let whole = normalize_chars(name, p);
-    let whole = whole.trim();
+    let mut whole = whole.trim();
+    if p == Platform::Windows {
+        whole = whole.trim_end_matches(['.', ' ']);
+    }
 
     let (base, ext) = match whole.rfind('.') {
         Some(i) if !whole.ends_with('.') => whole.split_at(i),
@@ -174,10 +188,12 @@ pub fn sanitize_filename(name: &str, p: Platform) -> String {
     };
 
     // 예약어는 첫 `.` 앞 이름으로 판단한다(Windows는 `CON.tar.gz`도 막는다).
+    // 끝 공백은 지우고 비교한다(`CON .x` → `CON_ .x`).
     if p == Platform::Windows {
         let stem_end = base.find('.').unwrap_or(base.len());
-        if is_windows_reserved(&base[..stem_end]) {
-            base.insert(stem_end, '_');
+        let stem = base[..stem_end].trim_end_matches(' ');
+        if is_windows_reserved(stem) {
+            base.insert(stem.len(), '_');
         }
     }
     base + ext
@@ -388,12 +404,67 @@ mod tests {
             "",
             ". .",
             "a\t \tb",
+            // 리뷰 fuzz가 찾은 Windows 비멱등 입력(앞·안쪽 `.` + 끝 `.`)
+            ".x.",
+            "a .b.",
+            "a ..b.",
+            "\u{3000}.|.",
+            ".1O\t.\t",
+            "1Oxx\u{3000}..N?.",
+            "\u{a0}a:L\u{3000}.NN.",
+            "aP\u{3000}.?\u{a0} :\"P.",
+            "CON .x.mp4",
+            "COM\u{00B9} .mp4",
         ];
         for p in ALL {
             for s in inputs {
                 let once = sanitize_filename(s, p);
                 assert_eq!(sanitize_filename(&once, p), once, "{p:?} {s:?}");
             }
+        }
+        assert_eq!(sanitize_filename(".x.", Windows), "_.x");
+        assert_eq!(sanitize_filename("a .b.", Windows), "a.b");
+    }
+
+    /// 작은 알파벳의 길이 1–6 문자열 전부에 대해 멱등을 확인한다.
+    #[test]
+    fn sanitize_idempotent_exhaustive() {
+        const ALPHABET: [char; 6] = ['.', ' ', 'a', '?', ':', '\u{3000}'];
+        let mut buf = Vec::new();
+        for len in 1..=6u32 {
+            for mut n in 0..ALPHABET.len().pow(len) {
+                buf.clear();
+                for _ in 0..len {
+                    buf.push(ALPHABET[n % ALPHABET.len()]);
+                    n /= ALPHABET.len();
+                }
+                let s: String = buf.iter().collect();
+                for p in ALL {
+                    let once = sanitize_filename(&s, p);
+                    assert_eq!(sanitize_filename(&once, p), once, "{p:?} {s:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn windows_reserved_extended() {
+        let p = Windows;
+        assert_eq!(sanitize_filename("COM\u{00B9}.mp4", p), "COM\u{00B9}_.mp4");
+        assert_eq!(sanitize_filename("lpt\u{00B3}", p), "lpt\u{00B3}_");
+        assert_eq!(sanitize_filename("LPT\u{00B2}.mp4", p), "LPT\u{00B2}_.mp4");
+        assert_eq!(sanitize_filename("CONIN$.mp4", p), "CONIN$_.mp4");
+        assert_eq!(sanitize_filename("conout$.mp4", p), "conout$_.mp4");
+        assert_eq!(sanitize_filename("CON .x.mp4", p), "CON_ .x.mp4");
+        assert_eq!(sanitize_filename("COM\u{2074}.mp4", p), "COM\u{2074}.mp4");
+        assert_eq!(sanitize_filename("CONIN.mp4", p), "CONIN.mp4");
+        let folder = Path::new("dl");
+        assert_eq!(
+            super::output_path(folder, "COM\u{00B9}", p),
+            folder.join("COM\u{00B9}_.mp4")
+        );
+        for other in [MacOs, Linux] {
+            assert_eq!(sanitize_filename("CONIN$.mp4", other), "CONIN$.mp4");
         }
     }
 
@@ -479,6 +550,54 @@ mod tests {
         assert!(name.starts_with("[클립] 채"), "{name}");
         assert_eq!(name.matches('가').count(), MIN_TITLE_BYTES / 3);
         assert!(name.contains(" - "));
+    }
+
+    #[test]
+    fn default_filename_budget_edges() {
+        // 긴 채널 + 빈 제목: `_` 1바이트도 예산에 들어간다.
+        let long_ch = "a".repeat(300);
+        let cases = [
+            (long_ch.clone(), String::new()),
+            (long_ch.clone(), "..".to_string()),
+            (long_ch.clone(), "  ".to_string()),
+            (".".repeat(300), "제목".to_string()),
+            ("ch".to_string(), ". ".repeat(150)),
+            ("채".repeat(100), ". ".repeat(150)),
+            (long_ch.clone(), format!("{}x", ". ".repeat(150))),
+        ];
+        for p in ALL {
+            for kind in [ContentKind::Clip, ContentKind::Video] {
+                for (ch, title) in &cases {
+                    let m = meta(kind, ch, title, Some("2024-01-02"));
+                    let name = default_filename(&m, p);
+                    assert!(
+                        name.len() <= MAX_FILENAME_BYTES,
+                        "{p:?} {ch:?} {title:?} -> {} bytes",
+                        name.len()
+                    );
+                    assert!(name.ends_with(".mp4"), "{name}");
+                    assert_eq!(sanitize_filename(&name, p), name);
+                }
+            }
+        }
+        let m = meta(ContentKind::Clip, &long_ch, "", None);
+        assert_eq!(
+            default_filename(&m, Linux),
+            format!("[클립] {} - _.mp4", "a".repeat(183))
+        );
+    }
+
+    #[test]
+    fn default_filename_windows_trailing_dots() {
+        // 잘라서 비게 된 채널에는 구분자를 붙이지 않는다.
+        let m = meta(ContentKind::Clip, &".".repeat(300), "제목", None);
+        assert_eq!(default_filename(&m, Windows), "[클립] 제목.mp4");
+        // 마침표뿐인 제목은 Windows에서 비므로 `_`가 된다.
+        let m = meta(ContentKind::Video, "ch", "..", None);
+        assert_eq!(default_filename(&m, Windows), "ch - _.mp4");
+        assert_eq!(default_filename(&m, Linux), "ch - ...mp4");
+        let m = meta(ContentKind::Video, "ch", "제목. .", None);
+        assert_eq!(default_filename(&m, Windows), "ch - 제목.mp4");
     }
 
     #[test]

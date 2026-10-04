@@ -328,11 +328,20 @@ impl PartFile {
         self.checkpoint(update).await
     }
 
-    /// 최종 파일로 옮긴다. 핸들을 닫아 잠금을 푼 뒤 `rename_with_retry`, 그다음 sidecar를 지운다.
+    /// 최종 파일로 옮긴다. `rename_with_retry`, 그다음 sidecar를 지운다.
     ///
     /// 최종 파일이 있으면 덮어쓴다(`Skip`은 다운로드 전에 이미 걸렀다).
     /// 최종 파일이 잠겨 있으면 `FileLocked`이고 `.part`는 남는다.
+    /// 옮긴 뒤의 sidecar 삭제 실패는 경고만 남긴다(다운로드는 끝났다).
     pub async fn finalize(self) -> Result<PathBuf, Error> {
+        self.finalize_using(rename_with_retry).await
+    }
+
+    /// `finalize`의 본체. rename을 주입받아 잠금을 쥔 채 옮기는지 테스트한다.
+    async fn finalize_using(
+        self,
+        rename: impl FnOnce(&Path, &Path) -> Result<(), Error> + Send + 'static,
+    ) -> Result<PathBuf, Error> {
         let PartFile {
             mut w,
             part,
@@ -348,9 +357,20 @@ impl PartFile {
         let target = final_path.clone();
         tokio::task::spawn_blocking(move || {
             f.sync_data().map_err(|e| map_io_error("sync", &part, e))?;
-            drop(f); // 잠금을 풀고 핸들을 닫는다. Windows는 열린 파일을 옮길 수 없다.
-            rename_with_retry(&part, &target)?;
-            remove_if_exists(&sidecar_path)
+            // Windows는 열린 파일을 옮길 수 없어 먼저 닫는다(잠금도 풀린다). Unix는 잠금을 쥔 채
+            // 옮겨, 그 사이에 같은 출력의 다른 작업이 `.part`를 잠그고 지우거나 자르지 못하게 한다.
+            let held = if cfg!(windows) {
+                drop(f);
+                None
+            } else {
+                Some(f)
+            };
+            rename(&part, &target)?;
+            if let Err(e) = remove_if_exists(&sidecar_path) {
+                tracing::warn!(error = %e, "완료 후 sidecar 삭제 실패");
+            }
+            drop(held);
+            Ok(())
         })
         .await
         .map_err(|e| Error::Io {
@@ -613,6 +633,56 @@ mod tests {
         p.checkpoint(|_| {}).await.unwrap();
         let path = p.finalize().await.unwrap();
         assert_eq!(std::fs::read(path).unwrap(), b"new");
+    }
+
+    /// Unix는 잠금을 쥔 채 rename한다. 그 순간 다른 작업은 `.part`를 잠글 수 없다.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn finalize_renames_while_locked() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("a.mp4");
+        let mut p = PartFile::create(&out, sidecar()).unwrap();
+        p.write(b"done").unwrap();
+        let path = p
+            .finalize_using(|from, to| {
+                assert!(matches!(
+                    open_locked(from, false),
+                    Err(Error::FileLocked { .. })
+                ));
+                assert!(matches!(
+                    PartFile::create(&final_of(from), sidecar()),
+                    Err(Error::FileLocked { .. })
+                ));
+                rename_with_retry(from, to)
+            })
+            .await
+            .unwrap();
+        assert_eq!(std::fs::read(path).unwrap(), b"done");
+        assert!(!part_path(&out).exists() && !sidecar_path(&out).exists());
+    }
+
+    /// `{final}.part` → `{final}`
+    #[cfg(unix)]
+    fn final_of(part: &Path) -> PathBuf {
+        PathBuf::from(part.to_str().unwrap().strip_suffix(".part").unwrap())
+    }
+
+    /// 옮긴 뒤 sidecar를 지우지 못해도 완료로 본다.
+    #[tokio::test]
+    async fn finalize_ok_when_sidecar_remove_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("a.mp4");
+        let mut p = PartFile::create(&out, sidecar()).unwrap();
+        p.write(b"done").unwrap();
+        // sidecar 자리를 비어 있지 않은 디렉토리로 바꿔 remove_file이 실패하게 한다.
+        let sc = sidecar_path(&out);
+        std::fs::remove_file(&sc).unwrap();
+        std::fs::create_dir(&sc).unwrap();
+        std::fs::write(sc.join("x"), b"x").unwrap();
+        let path = p.finalize().await.unwrap();
+        assert_eq!(path, out);
+        assert_eq!(std::fs::read(&out).unwrap(), b"done");
+        assert!(!part_path(&out).exists());
     }
 
     #[tokio::test]

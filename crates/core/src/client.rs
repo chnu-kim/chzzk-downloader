@@ -189,8 +189,32 @@ impl Chzzk {
         if !resp.status().is_success() {
             return Err(Error::HttpStatus { status, kind });
         }
-        resp.bytes().await.map_err(Error::network)
+        read_capped(resp, MAX_API_BODY).await
     }
+}
+
+/// API·MPD 응답 크기 상한. 실물은 KB 단위다(fixture 100KB 미만).
+pub(crate) const MAX_API_BODY: usize = 8 * 1024 * 1024;
+
+/// 응답 본문을 `max` 바이트까지만 읽는다. 넘으면 `Error::Parse`.
+///
+/// `read_timeout`은 idle만 끊으므로, 계속 흘러오는 본문은 이 상한으로 막는다.
+async fn read_capped(mut resp: reqwest::Response, max: usize) -> Result<Bytes, Error> {
+    let too_large = || Error::Parse {
+        what: "response",
+        detail: format!("응답이 너무 큽니다(상한 {max}바이트)"),
+    };
+    if resp.content_length().is_some_and(|n| n > max as u64) {
+        return Err(too_large());
+    }
+    let mut buf = Vec::new();
+    while let Some(chunk) = resp.chunk().await.map_err(Error::network)? {
+        if buf.len() + chunk.len() > max {
+            return Err(too_large());
+        }
+        buf.extend_from_slice(&chunk);
+    }
+    Ok(Bytes::from(buf))
 }
 
 /// 기본 주소 뒤에 path 세그먼트를 붙인다. 세그먼트는 인코딩되므로 `/`·`?`가 섞여도 경로가 바뀌지 않는다.
@@ -224,6 +248,30 @@ mod tests {
                 "http://127.0.0.1:9/prefix/clip/a%2Fb%3Fc"
             );
         }
+    }
+
+    /// 리뷰 수정: 상한을 넘는 본문은 `Parse`, 상한까지는 받는다.
+    #[tokio::test]
+    async fn read_capped_limits_body() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(vec![b'x'; 100]))
+            .mount(&server)
+            .await;
+        let http = http::build_client(Duration::from_secs(5), Duration::from_secs(5)).unwrap();
+        let get = || http.get(server.uri()).send();
+        let ok = read_capped(get().await.unwrap(), 100).await.unwrap();
+        assert_eq!(ok.len(), 100);
+        assert!(matches!(
+            read_capped(get().await.unwrap(), 99).await,
+            Err(Error::Parse {
+                what: "response",
+                ..
+            })
+        ));
     }
 
     #[test]

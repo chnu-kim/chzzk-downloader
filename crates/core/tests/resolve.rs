@@ -224,6 +224,29 @@ async fn api_401_403_auth_required() {
     assert!(matches!(err, Error::AuthRequired { status: 403 }));
 }
 
+/// 리뷰 수정: 8 MiB를 넘는 API 응답은 메모리에 다 읽지 않고 `Parse`로 끊는다.
+#[tokio::test]
+async fn api_body_too_large() {
+    let server = MockServer::start().await;
+    mount_info(
+        &server,
+        &format!("/service/v2/videos/{VOD_NO}"),
+        vec![b' '; 8 * 1024 * 1024 + 1],
+    )
+    .await;
+    let err = chzzk(&server).resolve(&video(VOD_NO)).await.unwrap_err();
+    assert!(
+        matches!(
+            err,
+            Error::Parse {
+                what: "response",
+                ..
+            }
+        ),
+        "{err:?}"
+    );
+}
+
 #[tokio::test]
 async fn api_http_status() {
     let server = MockServer::start().await;

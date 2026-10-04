@@ -4,5 +4,7 @@
 //! 설계 기준은 `docs/design/core.md`다.
 
 pub mod error;
+pub mod progress;
 
 pub use error::{Error, ErrorKind, Unsupported};
+pub use progress::{Phase, Progress};

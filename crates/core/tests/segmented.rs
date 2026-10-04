@@ -324,6 +324,144 @@ async fn cancel_then_resume_byte_identical() {
     assert!(!part.exists() && !sidecar.exists());
 }
 
+/// `create` 직후(init을 쓰고 첫 checkpoint 전) 죽은 sidecar(`committedLen 0`, `nextIndex 0`)에서
+/// 재개하면 꼬리를 잘라 init부터 다시 쓴다(구현 중 변경 32). init이 두 번 들어가지 않는다.
+#[tokio::test]
+async fn resume_from_empty_commit_writes_init() {
+    const N: usize = 4;
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_path(&dir);
+
+    // 1회차: seg0이 503이고 재시도가 없어 init만 쓰고 끝난다.
+    let server = MockServer::start().await;
+    mount_info(&server, "/g0", None).await;
+    Mock::given(method("GET"))
+        .and(path("/g0/144p/seg0.m4v"))
+        .respond_with(ResponseTemplate::new(503))
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    mount_synth_hls(&server, "/g0", N).await;
+    let cfg = ClientConfig {
+        retry: chzzk_core::RetryPolicy::none(),
+        ..config(&server)
+    };
+    assert!(
+        run(cfg, request(&out, 1), CancellationToken::new(), &|_| {})
+            .await
+            .is_err()
+    );
+    // init을 쓴 뒤 checkpoint 전에 죽은 상태로 만든다: `.part`에는 init이 있고 sidecar는 0이다.
+    let (part, sidecar) = part_files(&out);
+    assert_eq!(std::fs::read(&part).unwrap(), common::synth_init());
+    let mut sc = sidecar_json(&out);
+    sc["committedLen"] = 0.into();
+    sc["hls"]["nextIndex"] = 0.into();
+    std::fs::write(&sidecar, serde_json::to_vec(&sc).unwrap()).unwrap();
+
+    let server = MockServer::start().await;
+    mount_info(&server, "/g0", None).await;
+    mount_synth_hls(&server, "/g0", N).await;
+    let r = run(
+        config(&server),
+        request(&out, 2),
+        CancellationToken::new(),
+        &|_| {},
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        r,
+        DownloadOutcome::Completed {
+            path: out.clone(),
+            bytes: synth_expected(N).len() as u64,
+            resumed_from: 0,
+        }
+    );
+    assert_eq!(std::fs::read(&out).unwrap(), synth_expected(N));
+    assert_eq!(requests(&server, "/g0/144p/init.m4s").await.len(), 1);
+    assert!(!part.exists() && !sidecar.exists());
+}
+
+/// 같은 출력으로 두 번째 다운로드를 시작하면 `FileLocked`이고, 먼저 받는 작업의 `.part`·sidecar는
+/// 건드리지 않는다(§8.2 `double_download_file_locked`의 다운로드 수준 검사).
+#[tokio::test]
+async fn double_download_file_locked() {
+    const N: usize = 3;
+    let server = MockServer::start().await;
+    mount_info(&server, "/g0", None).await;
+    // seg0을 오래 붙잡아 1번 작업이 init만 쓴 채 잠금을 쥐고 있게 한다.
+    Mock::given(method("GET"))
+        .and(path("/g0/144p/seg0.m4v"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_bytes(synth_segment(0))
+                .set_delay(Duration::from_secs(30)),
+        )
+        .up_to_n_times(1)
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    mount_synth_hls(&server, "/g0", N).await;
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_path(&dir);
+    let (part, sidecar) = part_files(&out);
+
+    let cancel = CancellationToken::new();
+    let first = tokio::spawn({
+        let cfg = config(&server);
+        let req = request(&out, 1);
+        let cancel = cancel.clone();
+        async move {
+            let cb = |_: Progress| {};
+            Chzzk::new(cfg).unwrap().download(req, cancel, &cb).await
+        }
+    });
+    // init이 durable해질 때까지 기다린다.
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while !(sidecar.exists() && sidecar_json(&out)["committedLen"].as_u64() > Some(0)) {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "1번 작업이 시작하지 않았다"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let part_before = std::fs::read(&part).unwrap();
+    let sidecar_before = std::fs::read(&sidecar).unwrap();
+
+    let r = run(
+        config(&server),
+        request(&out, 1),
+        CancellationToken::new(),
+        &|_| {},
+    )
+    .await;
+    assert!(matches!(r, Err(Error::FileLocked { .. })), "{r:?}");
+    // 다른 화질로 시작해도(불일치 정리 경로) 지우지 않는다.
+    let mut other = request(&out, 1);
+    other.quality_id = "1080p".into();
+    let r = run(config(&server), other, CancellationToken::new(), &|_| {}).await;
+    assert!(matches!(r, Err(Error::FileLocked { .. })), "{r:?}");
+    assert!(!first.is_finished());
+    assert_eq!(std::fs::read(&part).unwrap(), part_before);
+    assert_eq!(std::fs::read(&sidecar).unwrap(), sidecar_before);
+
+    // 1번 작업은 취소하면 `.part`를 남기고, 이어서 끝까지 받을 수 있다.
+    cancel.cancel();
+    let r = first.await.unwrap();
+    assert!(matches!(r, Err(Error::Cancelled)), "{r:?}");
+    assert_eq!(std::fs::read(&part).unwrap(), part_before);
+    run(
+        config(&server),
+        request(&out, 1),
+        CancellationToken::new(),
+        &|_| {},
+    )
+    .await
+    .unwrap();
+    assert_eq!(std::fs::read(&out).unwrap(), synth_expected(N));
+}
+
 /// 이어받기 전에 playlist가 바뀌었으면(세그먼트 수) `SourceChanged`. 이어받을 수 없으므로 지운다.
 #[tokio::test]
 async fn resume_fingerprint_mismatch() {

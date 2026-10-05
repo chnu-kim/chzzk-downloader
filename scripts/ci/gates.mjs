@@ -295,7 +295,8 @@ export const GATES = {
   pins: {
     desc: '핀 SHA 온라인 검증(nightly, GH_TOKEN): uses: 주석의 태그가 고정 SHA를 가리키는지(pin-actions.mjs) + zizmor 온라인 audit(impostor commit·알려진 취약 action 등)',
     needs: ['zizmor', 'gh'],
-    steps: [{ cmd: ['node', S('pin-actions.mjs')] }, { cmd: ['zizmor', '--pedantic', '--config', 'zizmor.yml', '.'] }],
+    // -v: 온라인 audit이 실제로 예약됐는지("scheduling impostor-commit …")가 로그에 남는다
+    steps: [{ cmd: ['node', S('pin-actions.mjs')] }, { cmd: ['zizmor', '-v', '--pedantic', '--config', 'zizmor.yml', '.'] }],
   },
   toolchain: {
     desc: 'rust-toolchain.toml channel이 최신 stable인지(weekly, static.rust-lang.org). 낮으면 실패해 ci-loop:toolchain 이슈',

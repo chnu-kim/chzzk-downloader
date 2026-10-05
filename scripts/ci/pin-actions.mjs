@@ -36,6 +36,12 @@ function main(argv) {
     console.error('사용법: pin-actions.mjs [--write]');
     return 2;
   }
+  // nightly pins gate는 이어서 zizmor 온라인 audit을 돈다. 토큰이 없으면 zizmor는 온라인 audit(impostor-commit·
+  // ref-confusion·known-vulnerable-actions)을 조용히 건너뛴다(실측). CI에서는 토큰이 없으면 실패한다
+  if (process.env.CI === 'true' && !process.env.GH_TOKEN && !process.env.GITHUB_TOKEN) {
+    console.error('::error::pin-actions: GH_TOKEN이 없다(zizmor 온라인 audit이 건너뛴다)');
+    return 2;
+  }
   const write = argv.includes('--write');
   const dir = join(ROOT, '.github', 'workflows');
   let bad = 0;

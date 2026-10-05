@@ -4,19 +4,25 @@
 //   node scripts/ci/parity.mjs [--root <dir>]
 //
 // 규칙
-//   run-entry   워크플로의 모든 `run:` 명령 줄은 `node scripts/ci/run.mjs <gate|하위 명령>`이거나 setup 허용 목록이다.
+//   run-entry   워크플로의 모든 `run:` 명령 줄은 `node scripts/ci/run.mjs <gate|하위 명령> [인자]`이거나 setup 허용 목록이다.
+//               인자는 셸 메타문자 없는 토큰뿐이다(`|| true`, `; exit 0`으로 gate를 무력화하지 못한다).
 //               (raw cargo·pnpm·public-scan을 부르면 훅과 CI의 결과가 갈릴 수 있다)
 //   gate-known  run.mjs에 넘긴 이름이 gates.mjs의 gate이거나 하위 명령이다.
-//   tool-pin    `tool:` 입력의 도구@버전이 scripts/ci/tools.json과 같다.
-//   ci-ok       작업 id `ci-ok`는 ci.yml에만, 정확히 한 번 있다.
-//   hook-entry  .githooks/의 훅은 run.mjs 또는 public-scan.mjs만 exec한다.
+//   soften      `continue-on-error`, `shell:`(run: 해석을 바꾼다)을 쓰지 않는다. run.mjs 단계의 `if:`는 없거나
+//               `${{ !cancelled() }}`뿐이다(`if: false`로 gate를 끄지 못한다).
+//   tool-pin    `tool:` 입력의 도구@버전이 scripts/ci/tools.json과 같고, taiki-e/install-action 단계는 `fallback: none`이다.
+//   ci-ok       작업 id `ci-ok`는 ci.yml에만, 정확히 한 번 있다. ci-ok의 needs는 ci.yml의 다른 모든 작업이고
+//               (CI_OK_EXEMPT 제외), `if: always()`이며, 식으로만 판정하는 guard 단계(CI_OK_GUARD)를 글자 그대로 갖는다.
+//   job-if      ci.yml 작업 수준 `if:`는 ci-ok의 `always()`와 `needs.changes.outputs.code == 'true'`뿐이고,
+//               후자를 단 작업의 집합은 gates.mjs CODE_GATED_JOBS와 같다.
+//   hook-entry  .githooks/의 훅은 run.mjs만 exec한다.
 // 위반이 있으면 1, 없으면 0.
 
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { COMMANDS, GATES } from './gates.mjs';
+import { CODE_GATED_JOBS, COMMANDS, GATES } from './gates.mjs';
 
 const ROOT_DEFAULT = join(fileURLToPath(import.meta.url), '..', '..', '..');
 
@@ -26,8 +32,26 @@ export const SETUP_ALLOW = [
   /^rustup toolchain install$/,
   /^sudo apt-get update$/,
   /^sudo apt-get install -y --no-install-recommends [a-z0-9.+\- ]+$/,
+  // ci-ok guard: 실패만 할 수 있다
+  /^exit 1$/,
 ];
-const ENTRY = /^node scripts\/ci\/run\.mjs ([a-z0-9-]+)(?: .*)?$/;
+export const ENTRY = /^node scripts\/ci\/run\.mjs ([a-z0-9-]+)(?: [A-Za-z0-9._@\/=:+,-]+)*$/;
+
+// ci-ok의 needs에서 뺄 수 있는 작업(D14 관찰 기간의 E2E 등). 넣을 때는 cicd.md에 이유를 적는다.
+export const CI_OK_EXEMPT = [];
+
+// ci-ok 첫 단계. 저장소 코드 없이 needs 결과만으로 판정한다(run.mjs ci-ok는 두 번째 판정).
+export const CI_OK_GUARD = [
+  '- name: guard',
+  'if: >-',
+  "needs.changes.result != 'success' || needs.lint.result != 'success'",
+  "|| needs.scripts-windows.result != 'success'",
+  "|| contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')",
+  "|| (contains(needs.*.result, 'skipped')",
+  "&& (github.event_name != 'pull_request' || needs.changes.outputs.code != 'false'))",
+  'run: exit 1',
+];
+const CODE_IF = "needs.changes.outputs.code == 'true'";
 
 // 워크플로 본문 → run: 명령 줄 [{line, cmd}]. 블록 스칼라(| >)와 `\` 줄 잇기를 푼다.
 export function runCommands(text) {
@@ -78,6 +102,111 @@ export function toolInputs(text) {
   return out;
 }
 
+// 줄 i가 속한 단계(`- ` 항목)의 범위 [start, end)와 키 들여쓰기. 단계 밖이면 null.
+function stepRange(lines, i) {
+  let start = i;
+  while (start >= 0 && !/^\s*-\s/.test(lines[start])) start--;
+  if (start < 0) return null;
+  const ind = /^ */.exec(lines[start])[0].length;
+  let end = start + 1;
+  while (end < lines.length && (lines[end].trim() === '' || /^ */.exec(lines[end])[0].length > ind)) end++;
+  return { start, end, keyIndent: ind + 2 };
+}
+
+// 단계 범위에서 키 들여쓰기에 있는 `key:`의 값(없으면 null)
+function stepKey(lines, r, key) {
+  const re = new RegExp(`^ {${r.keyIndent}}(?:- )?${key}:\\s*(.*?)\\s*$`);
+  const first = new RegExp(`^ *- ${key}:\\s*(.*?)\\s*$`);
+  for (let j = r.start; j < r.end; j++) {
+    const m = (j === r.start ? first : re).exec(lines[j]);
+    if (m) return { line: j, value: m[1] };
+  }
+  return null;
+}
+
+// 워크플로 본문 → { id: { line, needs: [..], if: string|null, lines: [줄 번호...] } } (jobs: 아래 두 칸 들여쓴 작업)
+export function parseJobs(text) {
+  const lines = text.replace(/\r\n/g, '\n').split('\n');
+  const jobs = {};
+  const at = lines.findIndex((l) => /^jobs:\s*(#.*)?$/.test(l));
+  if (at < 0) return jobs;
+  let cur = null;
+  for (let j = at + 1; j < lines.length; j++) {
+    const t = lines[j];
+    if (/^\S/.test(t)) break;
+    const job = /^ {2}([A-Za-z0-9_-]+):\s*(#.*)?$/.exec(t);
+    if (job) {
+      cur = jobs[job[1]] = { line: j + 1, needs: [], if: null, body: [] };
+      continue;
+    }
+    if (!cur) continue;
+    cur.body.push(t);
+    const needs = /^ {4}needs:\s*(.*?)\s*(#.*)?$/.exec(t);
+    if (needs) {
+      const v = needs[1];
+      if (v.startsWith('[')) cur.needs = v.replace(/[[\]]/g, '').split(',').map((x) => x.trim()).filter(Boolean);
+      else if (v) cur.needs = [v];
+      else {
+        for (let k = j + 1; k < lines.length && /^ {6,}- /.test(lines[k]); k++) cur.needs.push(lines[k].replace(/^\s*- /, '').trim());
+      }
+    }
+    const iff = /^ {4}if:\s*(.*?)\s*$/.exec(t);
+    if (iff) cur.if = iff[1].replace(/^\$\{\{\s*|\s*\}\}$/g, '');
+  }
+  return jobs;
+}
+
+function checkCiJobs(text, add) {
+  const rel = '.github/workflows/ci.yml';
+  const jobs = parseJobs(text);
+  const ids = Object.keys(jobs);
+  const ciOk = jobs['ci-ok'];
+  if (!ciOk) return;
+  const want = ids.filter((id) => id !== 'ci-ok' && !CI_OK_EXEMPT.includes(id)).sort();
+  const have = [...ciOk.needs].sort();
+  const missing = want.filter((id) => !have.includes(id));
+  const extra = have.filter((id) => !want.includes(id));
+  if (missing.length) add(rel, ciOk.line, 'ci-ok', `ci-ok needs에 없는 작업: ${missing.join(', ')}`);
+  if (extra.length) add(rel, ciOk.line, 'ci-ok', `ci-ok needs에 있으면 안 되는 작업: ${extra.join(', ')}`);
+  if (ciOk.if !== 'always()') add(rel, ciOk.line, 'ci-ok', `ci-ok는 if: always()여야 한다(지금: ${ciOk.if})`);
+  const body = ciOk.body.map((l) => l.trim()).filter((l) => l !== '' && !l.startsWith('#'));
+  const g0 = body.indexOf(CI_OK_GUARD[0]);
+  const firstStep = body.findIndex((l) => l.startsWith('- '));
+  if (g0 < 0 || g0 !== firstStep || CI_OK_GUARD.some((l, k) => body[g0 + k] !== l)) {
+    add(rel, ciOk.line, 'ci-ok', 'ci-ok의 첫 단계가 parity.mjs CI_OK_GUARD와 글자 그대로 같지 않다');
+  }
+  const gated = [];
+  for (const [id, j] of Object.entries(jobs)) {
+    if (id === 'ci-ok' || j.if === null) continue;
+    if (j.if === CODE_IF) gated.push(id);
+    else add(rel, j.line, 'job-if', `작업 ${id}의 if는 ${CODE_IF}만 허용한다(지금: ${j.if})`);
+  }
+  const g = gated.sort().join(',');
+  const w = [...CODE_GATED_JOBS].sort().join(',');
+  if (g !== w) add(rel, 0, 'job-if', `code로 건너뛰는 작업 [${g}] ≠ gates.mjs CODE_GATED_JOBS [${w}]`);
+}
+
+// continue-on-error·shell·run.mjs 단계의 if·taiki-e fallback
+function checkSoften(rel, text, add) {
+  const lines = text.replace(/\r\n/g, '\n').split('\n');
+  lines.forEach((l, i) => {
+    const t = l.replace(/\s+#.*$/, '');
+    if (/^\s*(-\s+)?continue-on-error\s*:/.test(t)) add(rel, i + 1, 'soften', 'continue-on-error를 쓰지 않는다(실패가 성공으로 보고된다)');
+    if (/^\s*(-\s+)?shell\s*:/.test(t)) add(rel, i + 1, 'soften', 'shell:을 쓰지 않는다(run: 해석이 바뀌어 run-entry 검사를 피한다)');
+    if (/^\s*(-\s+)?uses:\s*taiki-e\/install-action@/.test(t)) {
+      const r = stepRange(lines, i);
+      const with_ = r && lines.slice(r.start, r.end).some((x) => /^\s*fallback:\s*none\s*(#.*)?$/.test(x));
+      if (!with_) add(rel, i + 1, 'tool-pin', 'taiki-e/install-action에 fallback: none이 없다(manifest에 없는 버전을 다른 경로로 받는다)');
+    }
+  });
+  for (const { line, cmd } of runCommands(text)) {
+    if (!ENTRY.test(cmd)) continue;
+    const r = stepRange(lines, line - 1);
+    const iff = r && stepKey(lines, r, 'if');
+    if (iff && iff.value !== '${{ !cancelled() }}') add(rel, iff.line + 1, 'soften', `run.mjs 단계의 if는 \${{ !cancelled() }}만 허용한다: ${iff.value}`);
+  }
+}
+
 export function checkParity(root) {
   const out = [];
   const add = (file, line, rule, msg) => out.push({ file, line, rule, msg });
@@ -96,6 +225,8 @@ export function checkParity(root) {
         add(rel, line, 'run-entry', `run.mjs를 거치지 않는 명령: ${cmd}`);
       }
     }
+    checkSoften(rel, text, add);
+    if (f === 'ci.yml') checkCiJobs(text, add);
     for (const t of toolInputs(text)) {
       const spec = tools[t.name];
       if (!spec) add(rel, t.line, 'tool-pin', `tools.json에 없는 도구: ${t.name}`);
@@ -116,9 +247,9 @@ export function checkParity(root) {
       lines.forEach((l, i) => {
         const t = l.trim();
         if (t === '' || t.startsWith('#') || /^set -[eu]+$/.test(t)) return;
-        if (!/^exec node "\$\(git rev-parse --show-toplevel\)\/scripts\/ci\/(run|public-scan)\.mjs"( .*)?$/.test(t)) {
-          add(`.githooks/${h}`, i + 1, 'hook-entry', `훅은 scripts/ci 진입점만 exec한다: ${t}`);
-        }
+        const m = /^exec node "\$\(git rev-parse --show-toplevel\)\/scripts\/ci\/run\.mjs" ([a-z0-9-]+)( "\$@")?$/.exec(t);
+        if (!m) add(`.githooks/${h}`, i + 1, 'hook-entry', `훅은 run.mjs <gate>만 exec한다: ${t}`);
+        else if (!Object.hasOwn(GATES, m[1])) add(`.githooks/${h}`, i + 1, 'hook-entry', `모르는 gate: ${m[1]}`);
       });
     }
   }
@@ -140,6 +271,7 @@ export function main(argv) {
   return found.length ? 1 : 0;
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+// 심볼릭 링크 경로(/tmp → /private/tmp 등)로 불러도 main이 돌도록 실제 경로로 비교한다. 안 돌면 조용히 0으로 끝난다.
+if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
   process.exit(main(process.argv.slice(2)));
 }

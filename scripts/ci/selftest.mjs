@@ -1,40 +1,27 @@
 #!/usr/bin/env node
-// gate 자체 검사(docs/design/cicd.md §2 `selftest`). 임시 폴더에 씨앗(깨끗한 것·위반)을 만들고
-// gate가 쓰는 같은 도구를 돌려 깨끗하면 0, 위반이면 0이 아닌 코드를 내는지 본다. 검사기가 조용히 망가져
-// 무엇이든 통과시키는 것을 막는다. 씨앗 문자열은 실행 중에 조립한다(이 파일이 누출 검사에 걸리지 않게).
+// gate 자체 검사(docs/design/cicd.md §2 `selftest`). 임시 저장소에 이 저장소의 scripts/ci·설정·ci.yml을 복사하고
+// 씨앗(깨끗한 것·위반)을 넣은 뒤, 그 사본의 진입점 `node <tmp>/scripts/ci/run.mjs <gate>`를 돌린다.
+// 그래서 도구가 아니라 gates.mjs의 gate 정의(인자 포함)를 검사한다: 예를 들어 fmt에서 --check를 빼면 씨앗이
+// 통과해 여기서 실패한다(씨앗으로 드러나지 않는 플래그는 run.test.mjs가 본다). 깨끗하면 0, 위반이면 0이 아닌 코드여야 한다.
+// 씨앗 문자열은 실행 중에 조립한다(이 파일이 누출 검사에 걸리지 않게).
 //
 //   node scripts/ci/selftest.mjs
 //
 // 도구가 없으면 로컬은 그 줄을 건너뛰고(skip), CI(CI=true)는 실패로 센다. 모두 기대대로면 0, 아니면 1.
 
 import { spawnSync } from 'node:child_process';
-import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 
 import { ROOT } from './gates.mjs';
 import { inCI, which } from './run.mjs';
 
-const HERE = dirname(fileURLToPath(import.meta.url));
 const NODE = process.execPath;
-const SHA = 'a'.repeat(8) + 'b'.repeat(8) + 'c'.repeat(8) + 'd'.repeat(8) + 'e'.repeat(8);
+const CI_YML = readFileSync(join(ROOT, '.github/workflows/ci.yml'), 'utf8');
 
 const tmp = mkdtempSync(join(tmpdir(), 'ci-selftest-'));
 const results = [];
-
-function write(rel, text) {
-  const p = join(tmp, rel);
-  mkdirSync(dirname(p), { recursive: true });
-  writeFileSync(p, text);
-  return p;
-}
-
-function sub(name) {
-  const d = join(tmp, name);
-  mkdirSync(d, { recursive: true });
-  return d;
-}
 
 // 한 줄: gate 이름, 씨앗, 기대(0 | 'nonzero'), 실행 함수(종료 코드를 돌려준다), 필요한 도구
 function expect(gate, seed, want, run, needs = []) {
@@ -53,171 +40,140 @@ function expect(gate, seed, want, run, needs = []) {
   results.push({ gate, seed, want, got, ok });
 }
 
-const exec = (bin, args, cwd = ROOT, env = process.env) => {
-  const r = spawnSync(bin === 'node' ? NODE : which(bin) ?? bin, args, { cwd, env, encoding: 'utf8', shell: false });
+const exec = (bin, args, cwd, env = process.env) => {
+  const r = spawnSync(bin === 'node' ? NODE : (which(bin) ?? bin), args, { cwd, env, encoding: 'utf8', shell: false });
   if (r.error) throw r.error;
+  if (r.status !== 0 && process.env.SELFTEST_VERBOSE) console.error(`${bin} ${args.join(' ')} →\n${r.stdout}${r.stderr}`);
   return r.status;
 };
 
-// ---- scan: 누출 검사기 ----
-{
-  const repo = sub('scan');
-  exec('git', ['init', '-q'], repo);
-  write('scan/clean.txt', 'hello\n');
-  exec('git', ['add', '.'], repo);
-  expect('scan', '깨끗한 파일', 0, () => exec('node', [join(HERE, 'public-scan.mjs')], repo), ['git']);
-  write('scan/leak.txt', 'https://h.example.invalid/a/hdntl=exp=' + '17000' + '00000' + '~acl=*/x\n');
-  exec('git', ['add', '.'], repo);
-  expect('scan', '서명 토큰', 'nonzero', () => exec('node', [join(HERE, 'public-scan.mjs')], repo), ['git']);
+// 사본 저장소: scripts/ci 전체, 설정, ci.yml, 최소 Cargo 워크스페이스와 app 버전 파일. files로 덮어쓴다.
+// git 저장소로 만들고 모두 add한다(scan은 인덱스, actionlint는 저장소 루트를 본다).
+function mkRoot(name, files = {}) {
+  const d = join(tmp, name);
+  mkdirSync(d, { recursive: true });
+  cpSync(join(ROOT, 'scripts/ci'), join(d, 'scripts/ci'), { recursive: true });
+  for (const f of ['rust-toolchain.toml', 'zizmor.yml', '_typos.toml']) cpSync(join(ROOT, f), join(d, f));
+  const base = {
+    '.github/workflows/ci.yml': CI_YML,
+    'Cargo.toml': '[workspace]\nresolver = "3"\nmembers = ["a"]\n\n[workspace.package]\nversion = "0.1.0"\nrust-version = "1.90"\n',
+    'a/Cargo.toml': '[package]\nname = "a"\nversion.workspace = true\nedition = "2024"\n',
+    'a/src/lib.rs': 'pub fn one() -> u32 {\n    1\n}\n',
+    'app/package.json': JSON.stringify({ name: 'x', version: '0.1.0' }) + '\n',
+    'app/src-tauri/tauri.conf.json': JSON.stringify({ version: '0.1.0' }) + '\n',
+  };
+  for (const [rel, text] of Object.entries({ ...base, ...files })) {
+    if (text === null) continue;
+    const p = join(d, rel);
+    mkdirSync(dirname(p), { recursive: true });
+    writeFileSync(p, text);
+  }
+  exec('git', ['init', '-q'], d);
+  exec('git', ['add', '-A'], d);
+  return d;
 }
 
-// ---- fmt: rustfmt(cargo fmt가 부르는 것) ----
+// 사본의 진입점으로 gate를 돌린다. 사본의 ROOT는 사본 폴더다(gates.mjs가 자기 위치로 정한다).
+const gate = (d, name, ...args) => exec('node', [join(d, 'scripts/ci/run.mjs'), name, ...args], d);
+
+// ci.yml 한 군데를 바꾼 사본. 바꿀 곳이 없으면 예외(씨앗이 조용히 깨끗해지지 않게).
+const ciWith = (from, to) => {
+  if (!CI_YML.includes(from)) throw new Error(`ci.yml에 없음: ${from.slice(0, 40)}`);
+  return { '.github/workflows/ci.yml': CI_YML.replace(from, to) };
+};
+const RUST_RUN = '        run: node scripts/ci/run.mjs rust\n';
+
+// ---- scan ----
 {
-  const good = write('fmt/good.rs', 'fn main() {\n    let x = 1;\n    println!("{x}");\n}\n');
-  const bad = write('fmt/bad.rs', 'fn main(){let x=1;println!("{x}");}\n');
-  const fmt = (f) => exec('rustfmt', ['--check', '--edition', '2024', f]);
-  expect('fmt', '맞춘 .rs', 0, () => fmt(good), ['rustfmt']);
-  expect('fmt', '안 맞춘 .rs', 'nonzero', () => fmt(bad), ['rustfmt']);
+  expect('scan', '깨끗한 사본', 0, () => gate(mkRoot('scan-clean'), 'scan'), ['git']);
+  const leak = 'https://h.example.invalid/a/hdntl=exp=' + '17000' + '00000' + '~acl=*/x\n';
+  expect('scan', '서명 토큰', 'nonzero', () => gate(mkRoot('scan-leak', { 'leak.txt': leak }), 'scan'), ['git']);
+  expect('scan-staged', '인덱스의 서명 토큰', 'nonzero', () => gate(mkRoot('staged-leak', { 'leak.txt': leak }), 'scan-staged'), ['git']);
+}
+
+// ---- fmt ----
+{
+  expect('fmt', '맞춘 .rs', 0, () => gate(mkRoot('fmt-clean'), 'fmt'), ['cargo', 'rustfmt']);
+  const bad = { 'a/src/lib.rs': 'pub fn one()->u32{1}\n' };
+  expect('fmt', '안 맞춘 .rs', 'nonzero', () => gate(mkRoot('fmt-bad', bad), 'fmt'), ['cargo', 'rustfmt']);
 }
 
 // ---- typos ----
 {
-  const d = sub('typos');
-  write('typos/good.md', 'the quick brown fox\n');
-  write('typos/bad.md', 'the quick ' + 'te' + 'h fox\n');
-  expect('typos', '오타 없음', 0, () => exec('typos', ['good.md'], d), ['typos']);
-  expect('typos', '오타', 'nonzero', () => exec('typos', ['bad.md'], d), ['typos']);
+  expect('typos', '오타 없음', 0, () => gate(mkRoot('typos-clean'), 'typos'), ['typos']);
+  const bad = { 'note.md': 'the quick ' + 'te' + 'h fox\n' };
+  expect('typos', '오타', 'nonzero', () => gate(mkRoot('typos-bad', bad), 'typos'), ['typos']);
 }
 
-// ---- workflows: pin-check · actionlint · zizmor ----
-const CLEAN_WF = `name: seed
-on:
-  push:
-    branches: [master]
-permissions: {}
-concurrency:
-  group: seed-\${{ github.ref }}
-  cancel-in-progress: true
-jobs:
-  seed:
-    name: seed
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    permissions:
-      contents: read # checkout
-    steps:
-      - uses: actions/checkout@${SHA} # v7.0.1
-        with:
-          persist-credentials: false
-      - name: hello
-        run: node scripts/ci/run.mjs list
-`;
+// ---- workflows: pin-check → actionlint → zizmor. 씨앗마다 앞 단계는 통과하고 그 단계에서 걸리게 만든다 ----
 {
-  const clean = sub('wf-clean');
-  write('wf-clean/.github/workflows/seed.yml', CLEAN_WF);
-  const unpinned = sub('wf-unpinned');
-  write('wf-unpinned/.github/workflows/seed.yml', CLEAN_WF.replace(`@${SHA} # v7.0.1`, '@v' + '4'));
-  const creds = sub('wf-creds');
-  write('wf-creds/.github/workflows/seed.yml', CLEAN_WF.replace('        with:\n          persist-credentials: false\n', ''));
-  const noTimeout = sub('wf-timeout');
-  write('wf-timeout/.github/workflows/seed.yml', CLEAN_WF.replace('    timeout-minutes: 5\n', ''));
-  const pin = (d) => exec('node', [join(HERE, 'pin-check.mjs'), '--root', d]);
-  expect('workflows', 'pin-check 깨끗함', 0, () => pin(clean));
-  expect('workflows', 'pin-check uses @v4', 'nonzero', () => pin(unpinned));
-  expect('workflows', 'pin-check persist-credentials 없음', 'nonzero', () => pin(creds));
-  expect('workflows', 'pin-check timeout 없음', 'nonzero', () => pin(noTimeout));
-
-  const wf = join(clean, '.github/workflows/seed.yml');
-  const broken = write('wf-broken/seed.yml', CLEAN_WF.replace('    timeout-minutes: 5\n', '    timeout-minutes: 5\n    bogus-key: 1\n'));
-  expect('workflows', 'actionlint 깨끗함', 0, () => exec('actionlint', [wf]), ['actionlint']);
-  expect('workflows', 'actionlint 모르는 키', 'nonzero', () => exec('actionlint', [broken]), ['actionlint']);
-
-  const inject = write(
-    'wf-inject/.github/workflows/seed.yml',
-    CLEAN_WF.replace('run: node scripts/ci/run.mjs list', 'run: echo "${{ github.event.head_commit.message }}"'),
-  );
-  const zz = (f) => exec('zizmor', ['--offline', '--pedantic', '--config', join(ROOT, 'zizmor.yml'), f]);
-  expect('workflows', 'zizmor 깨끗함', 0, () => zz(wf), ['zizmor']);
-  expect('workflows', 'zizmor 템플릿 주입', 'nonzero', () => zz(inject), ['zizmor']);
+  const W = ['actionlint', 'zizmor'];
+  expect('workflows', '저장소 ci.yml 그대로', 0, () => gate(mkRoot('wf-clean'), 'workflows'), W);
+  const pinLine = /uses: actions\/checkout@[0-9a-f]{40} # v[0-9.]+/.exec(CI_YML)[0];
+  const seeds = [
+    ['pin-check uses @v4', ciWith(pinLine, 'uses: actions/checkout@v' + '4')],
+    ['pin-check persist-credentials 없음', ciWith('        with:\n          persist-credentials: false\n      # packageManager', '      # packageManager')],
+    ['pin-check timeout 없음', ciWith('    timeout-minutes: 45\n', '')],
+    ['actionlint 모르는 키', ciWith('    timeout-minutes: 45\n', '    timeout-minutes: 45\n    bogus-key: 1\n')],
+    ['zizmor 과한 권한', ciWith('    permissions:\n      contents: read # checkout\n    steps:\n      # Windows 러너가 fixture·bindings', '    permissions: write-all\n    steps:\n      # Windows 러너가 fixture·bindings')],
+    // --pedantic이 빠지는 것은 씨앗으로 드러나지 않아 run.test.mjs가 인자를 직접 본다
+    ['zizmor run:에 needs 출력 전개', ciWith(RUST_RUN, '        run: echo "${{ needs.changes.outputs.code }}"\n')],
+  ];
+  seeds.forEach(([seed, files], i) => expect('workflows', seed, 'nonzero', () => gate(mkRoot(`wf-${i}`, files), 'workflows'), W));
 }
 
 // ---- parity ----
 {
-  const mk = (name, wf) => {
-    const d = sub(name);
-    cpSync(join(HERE, 'tools.json'), join(d, 'scripts/ci/tools.json'), { recursive: true });
-    write(`${name}/.github/workflows/ci.yml`, wf);
-    return d;
-  };
-  const withCiOk = (s) =>
-    s +
-    `  ci-ok:
-    name: ci-ok
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    steps:
-      - run: node scripts/ci/run.mjs ci-ok
-`;
-  const par = (d) => exec('node', [join(HERE, 'parity.mjs'), '--root', d]);
-  expect('parity', '깨끗함', 0, () => par(mk('par-clean', withCiOk(CLEAN_WF))));
-  expect(
-    'parity',
-    'run:에 raw cargo',
-    'nonzero',
-    () => par(mk('par-raw', withCiOk(CLEAN_WF.replace('run: node scripts/ci/run.mjs list', 'run: cargo test --locked')))),
-  );
-  expect(
-    'parity',
-    'tool: 버전 불일치',
-    'nonzero',
-    () =>
-      par(
-        mk(
-          'par-tool',
-          withCiOk(
-            CLEAN_WF.replace(
-              '      - name: hello\n',
-              `      - uses: taiki-e/install-action@${SHA} # v2.0.0\n        with:\n          tool: typos@0.0.1\n      - name: hello\n`,
-            ),
-          ),
-        ),
-      ),
-  );
-  expect('parity', 'ci-ok 없음', 'nonzero', () => par(mk('par-nociok', CLEAN_WF)));
+  expect('parity', '저장소 ci.yml 그대로', 0, () => gate(mkRoot('par-clean'), 'parity'));
+  const tool = /tool: typos@([0-9.]+)/.exec(CI_YML);
+  const seeds = [
+    ['run:에 raw cargo', ciWith(RUST_RUN, '        run: cargo test --locked\n')],
+    ['run.mjs 뒤 || true', ciWith(RUST_RUN, '        run: node scripts/ci/run.mjs rust || true\n')],
+    ['continue-on-error', ciWith('      - name: fmt\n', '      - name: fmt\n        continue-on-error: true\n')],
+    ['run.mjs 단계 if: false', ciWith('      - name: fmt\n        if: ${{ !cancelled() }}\n', '      - name: fmt\n        if: false\n')],
+    ['tool: 버전 불일치', ciWith(tool[0], 'tool: typos@0.0.1')],
+    ['fallback: none 없음', ciWith('          fallback: none\n', '')],
+    ['ci-ok needs에서 작업 빠짐', ciWith(', tauri]', ']')],
+    ['ci-ok guard 바뀜', ciWith('        run: exit 1\n', '        run: exit 0\n')],
+    ['ci-ok 없음', { '.github/workflows/ci.yml': CI_YML.slice(0, CI_YML.indexOf('  # 필수 체크는 이 작업 하나다')) }],
+    ['훅이 run.mjs를 거치지 않음', { '.githooks/pre-commit': '#!/bin/sh\nexec node "$(git rev-parse --show-toplevel)/scripts/ci/public-scan.mjs" --staged\n' }],
+  ];
+  seeds.forEach(([seed, files], i) => expect('parity', seed, 'nonzero', () => gate(mkRoot(`par-${i}`, files), 'parity')));
 }
 
 // ---- versions ----
 {
-  const mk = (name, { crate = '0.1.0', conf = '0.1.0', pkg = '0.1.0' }) => {
-    const d = sub(name);
-    write(`${name}/Cargo.toml`, `[workspace]\nresolver = "3"\nmembers = ["a"]\n\n[workspace.package]\nversion = "${crate}"\n`);
-    write(`${name}/a/Cargo.toml`, '[package]\nname = "a"\nversion.workspace = true\nedition = "2024"\n');
-    write(`${name}/a/src/lib.rs`, '');
-    write(`${name}/app/package.json`, JSON.stringify({ name: 'x', version: pkg }));
-    write(`${name}/app/src-tauri/tauri.conf.json`, JSON.stringify({ version: conf }));
-    return d;
-  };
-  const vc = (d, ...extra) => exec('node', [join(HERE, 'version-check.mjs'), '--root', d, ...extra]);
-  const same = mk('ver-same', {});
-  expect('versions', '모두 같음', 0, () => vc(same), ['cargo']);
-  expect('versions', '모두 같음 + 같은 태그', 0, () => vc(same, '--tag', 'v0.1.0'), ['cargo']);
-  expect('versions', 'tauri.conf.json만 다름', 'nonzero', () => vc(mk('ver-conf', { conf: '0.2.0' })), ['cargo']);
-  expect('versions', 'package.json만 다름', 'nonzero', () => vc(mk('ver-pkg', { pkg: '0.1.1' })), ['cargo']);
-  expect('versions', '태그 다름', 'nonzero', () => vc(same, '--tag', 'v0.1.1'), ['cargo']);
+  const C = ['cargo'];
+  const same = mkRoot('ver-same');
+  expect('versions', '모두 같음', 0, () => gate(same, 'versions'), C);
+  expect('versions', '모두 같음 + 같은 태그', 0, () => gate(same, 'versions', '--tag', 'v0.1.0'), C);
+  const conf = { 'app/src-tauri/tauri.conf.json': JSON.stringify({ version: '0.2.0' }) };
+  expect('versions', 'tauri.conf.json만 다름', 'nonzero', () => gate(mkRoot('ver-conf', conf), 'versions'), C);
+  const pkg = { 'app/package.json': JSON.stringify({ name: 'x', version: '0.1.1' }) };
+  expect('versions', 'package.json만 다름', 'nonzero', () => gate(mkRoot('ver-pkg', pkg), 'versions'), C);
+  expect('versions', '태그 다름', 'nonzero', () => gate(same, 'versions', '--tag', 'v0.1.1'), C);
 }
 
 // ---- ci-ok ----
 {
-  const ciok = (needs) =>
-    exec('node', [join(HERE, 'run.mjs'), 'ci-ok'], ROOT, { ...process.env, NEEDS: JSON.stringify(needs), GITHUB_STEP_SUMMARY: '' });
+  const ciok = (needs, event = 'pull_request') =>
+    exec('node', [join(ROOT, 'scripts/ci/run.mjs'), 'ci-ok'], ROOT, {
+      ...process.env,
+      NEEDS: JSON.stringify(needs),
+      EVENT: event,
+      GITHUB_STEP_SUMMARY: '',
+    });
   const ok = { result: 'success', outputs: {} };
   const changes = (code) => ({ result: 'success', outputs: { code: String(code) } });
+  const skipped = { result: 'skipped' };
   expect('ci-ok', '모두 success', 0, () => ciok({ changes: changes(true), lint: ok, rust: ok }));
   expect('ci-ok', '작업 하나 failure', 'nonzero', () => ciok({ changes: changes(true), lint: ok, rust: { result: 'failure' } }));
   expect('ci-ok', '작업 하나 cancelled', 'nonzero', () => ciok({ changes: changes(true), lint: { result: 'cancelled' } }));
-  expect('ci-ok', '문서만: 무거운 작업 skipped', 0, () => ciok({ changes: changes(false), lint: ok, rust: { result: 'skipped' } }));
-  expect('ci-ok', '코드 변경인데 skipped', 'nonzero', () => ciok({ changes: changes(true), lint: ok, rust: { result: 'skipped' } }));
-  expect('ci-ok', 'lint skipped', 'nonzero', () => ciok({ changes: changes(false), lint: { result: 'skipped' } }));
+  expect('ci-ok', 'PR 문서만: 무거운 작업 skipped', 0, () => ciok({ changes: changes(false), lint: ok, rust: skipped }));
+  expect('ci-ok', 'push인데 skipped', 'nonzero', () => ciok({ changes: changes(false), lint: ok, rust: skipped }, 'push'));
+  expect('ci-ok', 'dispatch인데 skipped', 'nonzero', () => ciok({ changes: changes(false), lint: ok, rust: skipped }, 'workflow_dispatch'));
+  expect('ci-ok', '코드 변경인데 skipped', 'nonzero', () => ciok({ changes: changes(true), lint: ok, rust: skipped }));
+  expect('ci-ok', 'lint skipped', 'nonzero', () => ciok({ changes: changes(false), lint: skipped }));
 }
 
 rmSync(tmp, { recursive: true, force: true });

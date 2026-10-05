@@ -47,6 +47,10 @@ export const GATES = {
     desc: '추적 중인 파일 누출 검사',
     steps: [{ cmd: ['node', S('public-scan.mjs')] }],
   },
+  'scan-staged': {
+    desc: '인덱스(커밋될 내용) 누출 검사 — pre-commit 훅',
+    steps: [{ cmd: ['node', S('public-scan.mjs'), '--staged'] }],
+  },
   'scan-history': {
     desc: '모든 ref의 이력 누출 검사(공개 저장소의 새 클론에서만)',
     ciOnly: true,

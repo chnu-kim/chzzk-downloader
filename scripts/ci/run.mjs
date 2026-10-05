@@ -13,8 +13,7 @@
 
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import { delimiter, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -26,9 +25,9 @@ const GHA = process.env.GITHUB_ACTIONS === 'true';
 
 // ---- 실행 파일 찾기 ----
 
-// PATH(+Windows PATHEXT)에서 실행 파일 경로를 찾는다. 없으면 null.
+// PATH(+Windows PATHEXT)와 install-tool 폴더(toolDir)에서 실행 파일 경로를 찾는다. 없으면 null.
 export function which(name, env = process.env) {
-  const dirs = (env.PATH ?? env.Path ?? '').split(delimiter).filter(Boolean);
+  const dirs = [...(env.PATH ?? env.Path ?? '').split(delimiter).filter(Boolean), toolDir(env)];
   const exts = IS_WIN ? (env.PATHEXT ?? '.EXE;.CMD;.BAT;.COM').split(';').filter(Boolean) : [''];
   for (const d of dirs) {
     for (const e of exts) {
@@ -134,8 +133,9 @@ export function runGate(name, extra = [], env = process.env) {
 
 // ---- changes ----
 
-// 이 패턴에만 맞는 변경은 코드가 아니다(문서). 모르는 경로는 코드로 본다(안전한 쪽).
-const NON_CODE = [/^docs\//, /\.md$/i, /^\.claude\//, /^LICENSE(\.|$)/i];
+// 문서로 보는 경로의 허용 목록. 여기에 맞지 않는 파일이 하나라도 있으면 code다(모르는 경로도 code, 안전한 쪽).
+// *.md 전체가 아니라 루트의 *.md만 문서다: testdata/README.md처럼 테스트가 읽는 .md가 있다.
+const NON_CODE = [/^docs\//, /^[^/]+\.md$/i, /^\.claude\//, /^LICENSE(\.[^/]*)?$/i];
 const RELEASE = [/^xtask\//, /^release\//, /^\.github\/workflows\/(release|rollback)\.yml$/];
 
 // 바뀐 파일 목록 → { code, release, docs_only }. 목록이 없으면(판단 불가) 전부 실행한다.
@@ -148,7 +148,8 @@ export function classify(files) {
 
 const ZERO = /^0+$/;
 
-// env: CHANGES_EVENT, CHANGES_BASE, CHANGES_HEAD. git 오류·기준 없음은 전부 실행(fail-safe).
+// env: CHANGES_BASE, CHANGES_HEAD. git 오류·기준 없음은 전부 실행(fail-safe).
+// ci.yml은 CHANGES_BASE를 pull_request에서만 준다. push·dispatch는 늘 전부 실행한다(master의 녹색 ci-ok는 빌드를 뜻한다).
 export function changedFiles(env = process.env) {
   const base = (env.CHANGES_BASE ?? '').trim();
   const head = (env.CHANGES_HEAD ?? '').trim() || 'HEAD';
@@ -171,22 +172,28 @@ function cmdChanges(env = process.env) {
 
 // ---- ci-ok ----
 
-// needs(toJSON(needs)) → { ok, lines }. 규칙(docs/design/cicd.md §2):
-//   changes는 success여야 한다. 그 밖의 작업은 success, 또는 changes.code == 'false'일 때 CODE_GATED_JOBS의 skipped만 허용.
-export function decideCiOk(needs, gated = CODE_GATED_JOBS) {
+// needs(toJSON(needs)), event(github.event_name) → { ok, lines }. 규칙(docs/design/cicd.md §2):
+//   changes는 success여야 한다. 그 밖의 작업은 success, 또는 pull_request에서 changes.code == 'false'일 때
+//   CODE_GATED_JOBS의 skipped만 허용한다. push·workflow_dispatch에서는 skipped를 하나도 허용하지 않는다.
+// ci.yml의 ci-ok guard 단계가 같은 규칙을 식(expression)으로 먼저 판정한다. 이 함수는 두 번째 판정이다.
+export function decideCiOk(needs, event, gated = CODE_GATED_JOBS) {
   const lines = [];
   let ok = true;
   const changes = needs?.changes;
   if (!changes) {
     return { ok: false, lines: ['changes: needs에 없음'] };
   }
-  const codeFalse = changes.result === 'success' && changes.outputs?.code === 'false';
+  const skipAllowed = event === 'pull_request' && changes.result === 'success' && changes.outputs?.code === 'false';
   for (const [job, v] of Object.entries(needs).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
     const r = v?.result;
     let good = r === 'success';
-    if (!good && r === 'skipped' && job !== 'changes' && codeFalse && gated.includes(job)) good = true;
+    if (!good && r === 'skipped' && job !== 'changes' && skipAllowed && gated.includes(job)) good = true;
     if (!good) ok = false;
     lines.push(`${good ? 'ok  ' : 'FAIL'} ${job}: ${r}`);
+  }
+  if (!event) {
+    ok = false;
+    lines.push('FAIL EVENT 환경 변수가 없다(github.event_name)');
   }
   return { ok, lines };
 }
@@ -199,7 +206,7 @@ function cmdCiOk(env = process.env) {
     console.error('::error::NEEDS 환경 변수가 JSON이 아니다(toJSON(needs))');
     return 2;
   }
-  const { ok, lines } = decideCiOk(needs);
+  const { ok, lines } = decideCiOk(needs, env.EVENT);
   for (const l of lines) console.log(l);
   if (env.GITHUB_STEP_SUMMARY) {
     appendFileSync(env.GITHUB_STEP_SUMMARY, `### ci-ok: ${ok ? 'success' : 'failure'}\n\n\`\`\`\n${lines.join('\n')}\n\`\`\`\n`);
@@ -241,13 +248,20 @@ function cmdInstallHooks() {
   return cmdDoctor();
 }
 
+// install-tool이 설치하는 곳. CI는 RUNNER_TEMP, 로컬은 저장소 안의 무시되는 폴더(target/ci-tools/bin)다.
+export function toolDir(env = process.env) {
+  return env.RUNNER_TEMP ? join(env.RUNNER_TEMP, 'ci-tools', 'bin') : join(ROOT, 'target', 'ci-tools', 'bin');
+}
+
 // tools.json의 download 항목으로 도구를 설치한다. 해시가 다르면 설치하지 않고 실패한다.
+// 키는 <os>-<arch>(linux-x64, darwin-arm64, windows-x64 …). .zip·.tar.gz 모두 tar(bsdtar·GNU tar)로 푼다.
 async function cmdInstallTool(name, env = process.env) {
   const spec = TOOLS[name];
-  const key = `${process.platform === 'win32' ? 'windows' : process.platform}-${process.arch}`;
+  const key = `${IS_WIN ? 'windows' : process.platform}-${process.arch}`;
   const dl = spec?.download?.[key];
   if (!dl) {
-    console.error(`install-tool: ${name}에 ${key}용 download 항목이 없다(tools.json)`);
+    const keys = Object.keys(spec?.download ?? {}).join(', ') || '없음';
+    console.error(`install-tool: ${name}에 ${key}용 download 항목이 없다(tools.json: ${keys}). 직접 설치한다: ${spec?.version ?? ''}`);
     return 2;
   }
   const res = await fetch(dl.url);
@@ -261,14 +275,17 @@ async function cmdInstallTool(name, env = process.env) {
     console.error(`::error::install-tool: ${name} sha256 불일치(기대 ${dl.sha256}, 받음 ${got})`);
     return 1;
   }
-  const dir = join(env.RUNNER_TEMP || tmpdir(), 'ci-tools', 'bin');
+  const dir = toolDir(env);
   mkdirSync(dir, { recursive: true });
-  const archive = join(dir, `${name}.tar.gz`);
+  const zip = dl.url.endsWith('.zip');
+  const archive = join(dir, `${name}${zip ? '.zip' : '.tar.gz'}`);
   writeFileSync(archive, buf);
-  const r = spawnSync('tar', ['-xzf', archive, '-C', dir, spec.bin], { stdio: 'inherit' });
+  const member = spec.bin + (IS_WIN ? '.exe' : '');
+  const r = spawnSync('tar', ['-xf', archive, '-C', dir, member], { stdio: 'inherit' });
   if (r.status !== 0) return r.status ?? 2;
-  if (env.GITHUB_PATH) appendFileSync(env.GITHUB_PATH, dir + '\n');
   console.log(`install-tool: ${name} ${spec.version} → ${dir} (sha256 ${got})`);
+  if (env.GITHUB_PATH) appendFileSync(env.GITHUB_PATH, dir + '\n');
+  else console.log(`PATH에 더한다: ${IS_WIN ? `$env:Path = "${dir};$env:Path"` : `export PATH="${dir}:$PATH"`}`);
   return 0;
 }
 
@@ -300,7 +317,8 @@ export function main(argv, env = process.env) {
   }
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+// 심볼릭 링크 경로(/tmp → /private/tmp 등)로 불러도 main이 돌도록 실제 경로로 비교한다. 안 돌면 조용히 0으로 끝난다.
+if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
   Promise.resolve(main(process.argv.slice(2))).then(
     (code) => process.exit(code),
     (e) => {

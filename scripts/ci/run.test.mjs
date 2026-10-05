@@ -6,11 +6,17 @@ import { CODE_GATED_JOBS, GATES, msrv, testFiles } from './gates.mjs';
 import { classify, decideCiOk, firstSemver } from './run.mjs';
 
 test('classify: 문서만 바뀌면 code=false', () => {
-  assert.deepEqual(classify(['docs/design/cicd.md', 'README.md', 'CLAUDE.md', 'testdata/README.md']), {
+  assert.deepEqual(classify(['docs/design/cicd.md', 'README.md', 'CLAUDE.md', '.claude/x.json', 'LICENSE']), {
     code: false,
     release: false,
     docs_only: true,
   });
+});
+
+test('classify: 루트 밖의 .md는 코드다(테스트가 읽는 fixture일 수 있다)', () => {
+  for (const f of ['testdata/README.md', 'crates/core/README.md', 'app/README.md', 'scripts/x.md', '.github/x.md']) {
+    assert.equal(classify([f]).code, true, f);
+  }
 });
 
 test('classify: 코드·설정·모르는 경로는 code=true', () => {
@@ -44,29 +50,38 @@ test('classify: release 경로', () => {
 
 const ok = { result: 'success', outputs: {} };
 const changes = (code, result = 'success') => ({ result, outputs: { code: String(code) } });
+const PR = 'pull_request';
 
 test('ci-ok: 모두 success면 통과', () => {
-  assert.equal(decideCiOk({ changes: changes(true), lint: ok, rust: ok }).ok, true);
+  assert.equal(decideCiOk({ changes: changes(true), lint: ok, rust: ok }, PR).ok, true);
 });
 
 test('ci-ok: failure·cancelled는 실패', () => {
-  assert.equal(decideCiOk({ changes: changes(true), lint: ok, rust: { result: 'failure' } }).ok, false);
-  assert.equal(decideCiOk({ changes: changes(true), lint: { result: 'cancelled' } }).ok, false);
+  assert.equal(decideCiOk({ changes: changes(true), lint: ok, rust: { result: 'failure' } }, PR).ok, false);
+  assert.equal(decideCiOk({ changes: changes(true), lint: { result: 'cancelled' } }, PR).ok, false);
 });
 
 test('ci-ok: skipped는 code=false일 때 무거운 작업만 허용', () => {
   for (const job of CODE_GATED_JOBS) {
-    assert.equal(decideCiOk({ changes: changes(false), lint: ok, [job]: { result: 'skipped' } }).ok, true, job);
-    assert.equal(decideCiOk({ changes: changes(true), lint: ok, [job]: { result: 'skipped' } }).ok, false, job);
+    assert.equal(decideCiOk({ changes: changes(false), lint: ok, [job]: { result: 'skipped' } }, PR).ok, true, job);
+    assert.equal(decideCiOk({ changes: changes(true), lint: ok, [job]: { result: 'skipped' } }, PR).ok, false, job);
   }
-  assert.equal(decideCiOk({ changes: changes(false), lint: { result: 'skipped' } }).ok, false);
-  assert.equal(decideCiOk({ changes: changes(false), 'scripts-windows': { result: 'skipped' } }).ok, false);
+  assert.equal(decideCiOk({ changes: changes(false), lint: { result: 'skipped' } }, PR).ok, false);
+  assert.equal(decideCiOk({ changes: changes(false), 'scripts-windows': { result: 'skipped' } }, PR).ok, false);
+});
+
+test('ci-ok: push·dispatch는 skipped를 허용하지 않는다', () => {
+  for (const ev of ['push', 'workflow_dispatch', 'schedule']) {
+    assert.equal(decideCiOk({ changes: changes(false), lint: ok, rust: { result: 'skipped' } }, ev).ok, false, ev);
+    assert.equal(decideCiOk({ changes: changes(true), lint: ok, rust: ok }, ev).ok, true, ev);
+  }
+  assert.equal(decideCiOk({ changes: changes(true), lint: ok }, undefined).ok, false);
 });
 
 test('ci-ok: changes가 실패·skipped·없으면 실패', () => {
-  assert.equal(decideCiOk({ changes: changes(false, 'failure'), rust: { result: 'skipped' } }).ok, false);
-  assert.equal(decideCiOk({ changes: { result: 'skipped' } }).ok, false);
-  assert.equal(decideCiOk({ lint: ok }).ok, false);
+  assert.equal(decideCiOk({ changes: changes(false, 'failure'), rust: { result: 'skipped' } }, PR).ok, false);
+  assert.equal(decideCiOk({ changes: { result: 'skipped' } }, PR).ok, false);
+  assert.equal(decideCiOk({ lint: ok }, PR).ok, false);
 });
 
 test('firstSemver', () => {
@@ -83,4 +98,29 @@ test('gate 표: 모든 단계가 명령을 갖고 scripts-test가 테스트 파�
   assert.ok(testFiles().includes('scripts/ci/run.test.mjs'));
   assert.ok(testFiles().includes('scripts/ci/public-scan.test.mjs'));
   assert.match(msrv(), /^\d+\.\d+(\.\d+)?$/);
+});
+
+// 각 gate가 검사를 실제로 켜는 인자를 갖는지(빼면 gate가 조용히 통과한다). selftest가 씨앗으로 동작을 보고,
+// 여기서는 씨앗으로 드러나지 않는 플래그를 본다.
+test('gate 표: 검사를 켜는 플래그', () => {
+  const cmds = (g) => GATES[g].steps.map((s) => s.cmd.join(' '));
+  assert.deepEqual(cmds('fmt'), ['cargo fmt --all --check']);
+  assert.deepEqual(cmds('workflows'), [
+    'node scripts/ci/pin-check.mjs',
+    'actionlint',
+    'zizmor --offline --pedantic --config zizmor.yml .',
+  ]);
+  assert.deepEqual(cmds('scan'), ['node scripts/ci/public-scan.mjs']);
+  assert.deepEqual(cmds('scan-staged'), ['node scripts/ci/public-scan.mjs --staged']);
+  assert.deepEqual(cmds('scan-history'), ['node scripts/ci/public-scan.mjs --all-history']);
+  assert.equal(GATES['scan-history'].ciOnly, true);
+  assert.deepEqual(cmds('fixtures'), ['node scripts/fixtures/gen-fixtures.mjs --check']);
+  for (const g of ['rust', 'tauri']) {
+    for (const c of cmds(g).filter((c) => c.startsWith('cargo clippy'))) assert.ok(c.endsWith('--locked -- -D warnings'), c);
+    assert.ok(cmds(g).some((c) => c.startsWith('cargo test') && c.endsWith('--locked')), g);
+  }
+  assert.ok(cmds('frontend').includes('pnpm install --frozen-lockfile'));
+  assert.deepEqual(cmds('deny'), ['cargo deny --locked check bans licenses sources']);
+  // 로컬과 CI가 같은 표를 쓰므로 CI 전용은 scan-history 하나뿐이다
+  assert.deepEqual(Object.keys(GATES).filter((g) => GATES[g].ciOnly), ['scan-history']);
 });

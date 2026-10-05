@@ -2,4 +2,4 @@
 # 커밋될 내용(인덱스)에 누출이 없는지 본다. 켜기(선택): git config core.hooksPath .githooks
 # 비공개 denylist도 쓰려면 PUBLIC_SCAN_DENYLIST=<파일>을 환경에 둔다.
 set -eu
-exec node "$(git rev-parse --show-toplevel)/scripts/ci/public-scan.mjs" --staged
+exec node "$(git rev-parse --show-toplevel)/scripts/ci/run.mjs" scan-staged

@@ -22,7 +22,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `.github/workflows/nightly.yml` | 예약 고리. 매일: 네이티브 E2E Linux, 실서버 `drift`(환경 `drift`의 본인 영상 secret, kind만 출력, 2회 연속 실패에 이슈, `no_target`은 3회), `advisories`, `pins`(핀 SHA·zizmor 온라인), `ruleset-drift`(환경 `audit`의 `RULESET_READ_TOKEN`), `fuzz`(4 target, 고정 nightly). 매주: Windows 네이티브 E2E(코드 PR에서도), `toolchain`, `mutants`(shard 4개 → `mutants_missed` ratchet). 작업마다 `ci-loop:<작업 id>` 이슈(`run.mjs report-loop`, 건너뛴 작업도 마지막 성공이 오래되면 연다), `drift-log` 작업이 drift 작업 로그를 `drift-log-check`로 다시 본다(`ci-loop:drift-log`), 앞 실행의 report 자신의 실패는 `ci-loop:nightly-report`. dispatch 입력 `only`·`weekly`·`simulate`(drift 합성 출력)·`loop_test`. master가 아닌 브랜치의 dispatch는 `ci-loop-test:`에만 쓴다. PR 경로 필터는 `paths-ignore` = `gates.mjs NON_CODE_GLOBS`뿐(parity `pr-paths`) |
 | `xtask/` | **릴리스 도구**(`cargo xtask release <명령>`, `.cargo/config.toml` alias, `--locked`). `collect`(OS별 bundles.json → 표·해시 확인)·`sign`(minisign, Tauri 키 형식)·`verify-sig`(updater와 같은 `minisign-verify` + 1바이트·comment 변조 음성 검사)·`sums`·`manifest`(`release/latest.schema.json` 검증)·`put`(R2 S3 API, SigV4 직접 서명, `If-None-Match: *`)·`promote`(`releases/latest.json` CAS, 마지막)·`verify`·`rollback`. 골든 `xtask/testdata/tauri-cli/`(tauri-cli가 만든 공개 키·서명) |
 | `release/` | `expected-artifacts.json`(OS별 번들·updater 산출물 표, 플랫폼 키), `latest.schema.json`(updater 매니페스트), `tauri.release.json`(`createUpdaterArtifacts`, 릴리스 빌드만), `updater.pub`(공개 키 = `tauri.conf.json` `plugins.updater.pubkey`, `pubkey` gate). 개인 키는 저장소에 두지 않는다(누출 규칙 `signing-key`) |
-| `.github/workflows/release.yml`, `rollback.yml` | CD. 태그 `v*`: `gate`(버전 = 태그, 단조 증가, master 조상, 그 커밋의 master `ci-ok` 녹색) → `build`(3 OS, 임시 키, 시크릿 없음) → `smoke` → `sign-publish`(환경 `release`, R2 업로드, `latest.json`은 마지막) → `verify`(다시 받아 확인, 실패하면 prev로 되돌림) → `deploy-worker`(Phase 3 seam) → `report`(`ci-loop:release`). dispatch·매주 schedule은 리허설: preflight에서 "릴리스 시크릿 없음"으로 멈추는 것이 설계대로다(`ci-loop:release-rehearsal`은 그 밖의 실패만). `rollback.yml`(dispatch, 입력 `version`)은 `latest.json`을 그 버전으로 되돌린다. 바이너리는 GitHub Release에 올리지 않는다 |
+| `.github/workflows/release.yml`, `rollback.yml` | CD. 태그 `v*`: `gate`(버전 = 태그, 단조 증가, master 조상, 그 커밋의 master `ci-ok` 녹색) → `xtask`(한 번 빌드, sha256 출력) → `build`(3 OS, 임시 키, 시크릿 없음) → `smoke` → `stage`(받은 3 OS 산출물로 publish·verify를 가짜 S3에, 시크릿 없음) → `sign-publish`(태그만, 환경 `release`, 컴파일 없음, R2 업로드, `latest.json`은 마지막) → `verify`(늘 돈다, 결정표대로 확인, 판정 실패면 prev로 되돌림, 5xx 재시도 뒤에는 되돌리지 않고 exit 2) → `deploy-worker`(Phase 3 seam) → `report`(`ci-loop:release`). dispatch·매주 schedule은 리허설: `stage`에서 녹색으로 끝난다(업로드 경계, `ci-loop:release-rehearsal`). `rollback.yml`(dispatch, 입력 `version`)은 `latest.json`을 그 버전으로 바꾼다(되돌리기·잘못 되돌린 뒤 다시 올리기). 바이너리는 GitHub Release에 올리지 않는다 |
 | `fuzz/` | cargo-fuzz 대상(`url`·`info`·`mpd`·`hls`). 루트와 따로인 워크스페이스(자기 `Cargo.lock`, 루트 `exclude`), 고정 nightly(`tools.json` `rust-nightly`)로만 빌드. seed는 실행 때 `testdata/`에서 복사(`scripts/ci/fuzz.mjs`) |
 | `ci/ratchet.json`, `ci/RATCHET_LOG.md`, `release/expected-artifacts.json` | 커버리지·테스트 수·크기·살아남은 mutant ratchet 기준(나빠지면 CI 실패, 느슨하게 하면 로그에 키와 이유), OS별 번들 기대 집합 |
 | `scripts/ci/repo-settings.json` | 저장소 설정 선언(nightly `ruleset-drift`가 실제 값과 비교, 환경 `release`의 배포 정책 포함). ruleset 선언은 `.github/rulesets/`(G7) |
@@ -46,7 +46,7 @@ node scripts/ci/run.mjs scripts-test         # scripts/**/*.test.mjs
 node scripts/ci/run.mjs workflows            # .github/를 바꿨을 때: pin-check + actionlint + zizmor
 node scripts/ci/run.mjs versions             # 버전 원천 일치(Cargo 멤버·tauri.conf.json·app/package.json)
 node scripts/ci/run.mjs pubkey               # release/updater.pub == tauri.conf.json plugins.updater.pubkey
-node scripts/ci/run.mjs release-selftest     # 릴리스 경로(xtask)를 가짜 S3(scripts/ci/s3-fake.mjs)에 합성 산출물로: 업로드·CAS·변조→rollback·멱등·preflight
+node scripts/ci/run.mjs release-selftest     # release.mjs publish·verify·rollback 진입점을 가짜 S3(scripts/ci/s3-fake.mjs, 장애 주입)에 합성 산출물로: 업로드·CAS·변조→rollback·멱등·preflight·경계·5xx
 node scripts/ci/run.mjs smoke-bin            # tauri gate의 debug 빌드를 --smoke로 띄워 마커 확인(창이 잠깐 뜬다)
 node scripts/ci/run.mjs coverage             # llvm-cov + vitest 커버리지 → ci/ratchet.json 비교(test-count는 테스트 수)
 node scripts/ci/run.mjs e2e-web              # app/: build → Playwright chromium 설치(처음 한 번) → 웹 E2E(mockIPC·axe) → 통과 수 ratchet
@@ -65,7 +65,7 @@ node scripts/ci/run.mjs fuzz-lock            # (PR lint) fuzz/Cargo.lock 최신�
 DRIFT_SIMULATE=target_gone node scripts/ci/run.mjs drift   # drift 경로를 합성 출력으로. 실서버는 CHZZK_LIVE_HLS·_DASH·_CLIP(본인 영상)
 gh workflow run nightly.yml --ref <브랜치> -f only=drift -f simulate=target_gone -f loop_test=true   # 고리 확인(ci-loop-test:)
 
-# 릴리스(release.yml). 태그 push가 진짜 릴리스, dispatch는 리허설(3 OS 빌드·수집·설치 스모크 → preflight에서 멈춤)
+# 릴리스(release.yml). 태그 push가 진짜 릴리스, dispatch는 리허설(3 OS 빌드·설치 스모크 → stage: 가짜 S3 publish·verify, 녹색)
 gh workflow run release.yml --ref <브랜치>                 # 리허설. -f tag=v9.9.9면 버전 불일치로 gate가 빨개진다(음성 확인)
 gh workflow run rollback.yml -f version=<X.Y.Z|none>      # latest.json 되돌리기(환경 release, master)
 cargo xtask release verify --version <v> --pubkey release/updater.pub --base-url <DIST_BASE_URL>   # R2_* env로 다시 받아 확인

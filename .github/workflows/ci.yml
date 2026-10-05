@@ -234,6 +234,10 @@ jobs:
       # tests/bindings.rs가 app/src/lib/bindings가 최신인지도 검사한다
       - name: rust
         run: node scripts/ci/run.mjs rust
+      # 릴리스 경로(xtask: 서명·업로드·승격·검증·되돌리기)를 가짜 S3에 합성 산출물로 3 OS에서 돌린다(docs/design/cicd.md §5.8)
+      - name: release-selftest
+        if: ${{ !cancelled() }}
+        run: node scripts/ci/run.mjs release-selftest
 
   frontend:
     name: frontend

@@ -187,7 +187,11 @@ test('hookGates: 바뀐 경로로 조건부 gate를 고른다', () => {
   assert.deepEqual(hookGates('pre-push', ['app/src/App.svelte']), ['frontend']);
   assert.deepEqual(hookGates('pre-push', ['app/src-tauri/src/lib.rs']), []);
   assert.deepEqual(hookGates('pre-push', ['scripts/ci/run.mjs']), ['scripts-test']);
-  assert.deepEqual(hookGates('pre-push', ['Cargo.lock']), ['rust', 'deny', 'fuzz-lock']);
+  assert.deepEqual(hookGates('pre-push', ['Cargo.lock']), ['rust', 'release-selftest', 'deny', 'fuzz-lock']);
+  assert.deepEqual(hookGates('pre-push', ['xtask/src/s3.rs']), ['rust', 'release-selftest']);
+  assert.deepEqual(hookGates('pre-push', ['scripts/ci/release.mjs']), ['release-selftest', 'scripts-test']);
+  assert.deepEqual(hookGates('pre-commit', ['release/updater.pub']), ['typos', 'pubkey']);
+  assert.deepEqual(hookGates('pre-commit', ['app/src-tauri/tauri.conf.json']), ['typos', 'versions', 'pubkey']);
   assert.deepEqual(hookGates('pre-push', ['fuzz/fuzz_targets/url.rs']), ['fuzz-lock']);
   // 훅·.gitattributes만 바뀌어도 parity(인덱스 모드 100755 등)를 본다
   assert.deepEqual(hookGates('pre-push', ['.githooks/pre-push']), ['scripts-test']);

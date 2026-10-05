@@ -333,6 +333,46 @@ export const GATES = {
     desc: 'shard 요약을 모아(정확히 0..n-1) 살아남은 mutant 수 → ci/ratchet.json mutants_missed(늘면 실패). mutants-shard 작업들의 artifact를 받은 뒤',
     steps: [{ cmd: ['node', S('measure.mjs'), 'mutants'] }, { cmd: ['node', S('ratchet.mjs'), 'check', 'mutants'] }],
   },
+  // ---- 릴리스(docs/design/cicd.md §5, release.yml·rollback.yml). 순서·판정은 release.mjs, 무거운 일은 xtask ----
+  'release-gate': {
+    desc: '릴리스 gate: 태그 = 버전 파일, 단조 증가, master 조상, 그 커밋의 master ci-ok 녹색(30초 간격으로 기다림). env RELEASE_MODE·RELEASE_TAG·GITHUB_SHA·GH_TOKEN',
+    needs: ['cargo', 'git'],
+    steps: [{ cmd: ['node', S('release.mjs'), 'gate'] }],
+  },
+  'release-build': {
+    desc: '릴리스 번들(임시 키, release/tauri.release.json의 updater 산출물) → collect --release → Tauri CLI·xtask 서명 형식 자체 확인',
+    needs: ['cargo', 'pnpm'],
+    steps: [
+      { cmd: ['pnpm', 'install', '--frozen-lockfile'], cwd: 'app' },
+      { cmd: ['node', S('release.mjs'), 'build'] },
+    ],
+  },
+  'release-xtask': {
+    desc: 'xtask 빌드(시크릿 없는 단계. 시크릿이 있는 단계는 빌드하지 않고 이 바이너리만 부른다)',
+    needs: ['cargo'],
+    steps: [{ cmd: ['node', S('release.mjs'), 'xtask'] }],
+  },
+  'release-preflight': {
+    desc: '릴리스 시크릿·변수가 모두 있는지(없으면 "릴리스 시크릿 없음: <이름들>…"으로 실패, 리허설은 늘 여기서 멈춘다)',
+    steps: [{ cmd: ['node', S('release.mjs'), 'preflight'] }],
+  },
+  'release-publish': {
+    desc: 'collect → sign → verify-sig(release/updater.pub) → sums → manifest → put(If-None-Match) → promote(latest.json CAS, 마지막)',
+    steps: [{ cmd: ['node', S('release.mjs'), 'publish'] }],
+  },
+  'release-verify': {
+    desc: '올린 객체를 다시 받아 해시·서명·스키마·버전·latest.json 확인. 실패하면 RELEASE_PREV로 rollback하고 1',
+    steps: [{ cmd: ['node', S('release.mjs'), 'verify'] }],
+  },
+  'release-rollback': {
+    desc: 'latest.json을 ROLLBACK_VERSION으로(그 버전 객체 확인 → CAS 교체 → 다시 확인, none이면 지운다)',
+    steps: [{ cmd: ['node', S('release.mjs'), 'rollback'] }],
+  },
+  'release-selftest': {
+    desc: '가짜 S3(s3-fake.mjs, SigV4 검증·조건부 쓰기)에 합성 산출물로 릴리스 경로 시나리오: happy path, CAS·단조 증가, 변조 → rollback(latest.json 바이트 동일), 재실행 멱등, preflight 메시지, 첫 릴리스 되돌리기',
+    needs: ['cargo'],
+    steps: [{ cmd: ['node', S('release.mjs'), 'selftest'] }],
+  },
   'ratchet-log': {
     desc: 'ci/ratchet.json 모양(0은 $pending만) + 기준을 느슨하게 했으면 ci/RATCHET_LOG.md에 그 키를 적은 줄이 더해졌는지(env RATCHET_BASE)',
     steps: [{ cmd: ['node', S('ratchet.mjs'), 'lint'] }, { cmd: ['node', S('ratchet.mjs'), 'log-check'] }],
@@ -367,6 +407,7 @@ export const HOOKS = {
     fastSkip: true,
     when: [
       { gate: 'rust', paths: [/^crates\//, /^xtask\//, /^release\//, /^testdata\//, /^Cargo\.(toml|lock)$/, /^rust-toolchain\.toml$/, /^\.cargo\//] },
+      { gate: 'release-selftest', paths: [/^xtask\//, /^release\//, /^scripts\/ci\/(release|s3-fake|bundle)\.mjs$/, /^Cargo\.lock$/] },
       { gate: 'frontend', paths: [/^app\/(?!src-tauri\/)/] },
       { gate: 'scripts-test', paths: [/^scripts\//, /^\.githooks\//, /^\.gitattributes$/] },
       { gate: 'deny', paths: [/^Cargo\.lock$/, /^deny\.toml$/, /(^|\/)Cargo\.toml$/] },

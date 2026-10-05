@@ -58,11 +58,12 @@ fn gh_output(k: &str, v: &str) -> Res<()> {
 pub fn dispatch(cmd: &str, a: &Args) -> Res<()> {
     match cmd {
         "collect" => {
-            a.only(&["from", "out", "version"])?;
+            a.only(&["from", "out", "version", "os"])?;
             collect(
                 Path::new(&a.req("from")?),
                 Path::new(&a.req("out")?),
                 &version_arg(a)?,
+                a.opt("os").as_deref(),
             )
         }
         "sign" => {
@@ -181,14 +182,23 @@ pub fn read_pubkey(p: &Path) -> Res<String> {
 // ---- collect ----
 
 /// OS별 bundles.json(bundle.mjs collect --release가 쓴 폴더들)을 모은다. 기대 집합과 정확히 같고 해시가 맞아야 한다.
-pub fn collect(from: &Path, out: &Path, version: &str) -> Res<()> {
-    let exp = manifest::expected()?;
-    let mut by_os: BTreeMap<String, PathBuf> = BTreeMap::new();
-    let mut dirs: Vec<PathBuf> = std::fs::read_dir(from)
-        .map_err(|e| input(format!("{}: {e}", from.display())))?
-        .filter_map(|e| e.ok().map(|e| e.path()))
-        .filter(|p| p.is_dir())
+/// from: bundles.json이 있는 폴더 하나, 또는 그런 폴더들을 담은 폴더(OS별 artifact를 받은 곳).
+/// only_os: 그 OS 하나만 기대한다(빌드 작업의 자체 확인). 없으면 표의 모든 OS가 정확히 하나씩 있어야 한다.
+pub fn collect(from: &Path, out: &Path, version: &str, only_os: Option<&str>) -> Res<()> {
+    let exp: Vec<Expected> = manifest::expected()?
+        .into_iter()
+        .filter(|e| only_os.is_none_or(|o| e.os == o))
         .collect();
+    let mut by_os: BTreeMap<String, PathBuf> = BTreeMap::new();
+    let mut dirs: Vec<PathBuf> = if from.join("bundles.json").exists() {
+        vec![from.to_path_buf()]
+    } else {
+        std::fs::read_dir(from)
+            .map_err(|e| input(format!("{}: {e}", from.display())))?
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.is_dir())
+            .collect()
+    };
     dirs.sort();
     for d in dirs {
         let bj = d.join("bundles.json");
@@ -214,7 +224,11 @@ pub fn collect(from: &Path, out: &Path, version: &str) -> Res<()> {
             return fail(format!("OS {os}의 bundles.json이 둘 이상이다"));
         }
     }
-    let want_os: BTreeSet<String> = manifest::OSES.iter().map(|s| s.to_string()).collect();
+    let want_os: BTreeSet<String> = match only_os {
+        Some(o) if manifest::OSES.contains(&o) => [o.to_string()].into(),
+        Some(o) => return usage(format!("--os {o}: {}", manifest::OSES.join("|"))),
+        None => manifest::OSES.iter().map(|s| s.to_string()).collect(),
+    };
     let got_os: BTreeSet<String> = by_os.keys().cloned().collect();
     if want_os != got_os {
         return fail(format!("OS 집합 {got_os:?} ≠ {want_os:?}"));

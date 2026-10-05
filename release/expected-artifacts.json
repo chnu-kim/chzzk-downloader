@@ -6,7 +6,7 @@
     "extraDirs": [],
     "artifacts": [
       { "kind": "appimage", "dir": "appimage", "ext": ".AppImage", "name": "linux-x86_64.AppImage", "smoke": "appimage", "size": "linux-AppImage", "updater": ["linux-x86_64"] },
-      { "kind": "deb", "dir": "deb", "ext": ".deb", "name": "linux-x86_64.deb", "smoke": "deb", "size": "linux-deb" }
+      { "kind": "deb", "dir": "deb", "ext": ".deb", "name": "linux-x86_64.deb", "smoke": "deb", "size": "linux-deb", "updater": ["linux-x86_64-deb"] }
     ]
   },
   "darwin": {

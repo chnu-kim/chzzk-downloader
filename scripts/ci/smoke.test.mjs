@@ -59,8 +59,9 @@ test('pick --release: updater 산출물의 .sig는 정확히 있어야 하고 �
   assert.deepEqual(pick({ dmg: ['a.dmg'], macos: [] }, D).picks.map((p) => p.artifact.kind), ['dmg']);
   assert.match(pick({ dmg: ['a.dmg'], macos: ['a.app.tar.gz'] }, D, { release: true }).problems.join(), /a\.app\.tar\.gz\.sig가 없다/);
   assert.match(pick({ dmg: ['a.dmg', 'a.dmg.sig'], macos: ['a.app.tar.gz', 'a.app.tar.gz.sig'] }, D, { release: true }).problems.join(), /a\.dmg\.sig: 표의 updater 산출물이 아닌데/);
-  assert.match(pick({ appimage: ['a.AppImage', 'a.AppImage.sig'], deb: ['a.deb', 'a.deb.sig'] }, LINUX, { release: true }).problems.join(), /deb\/a\.deb\.sig/);
-  assert.equal(pick({ appimage: ['a.AppImage', 'a.AppImage.sig'], deb: ['a.deb'] }, LINUX, { release: true }).ok, true);
+  // deb도 updater 산출물이다(Tauri 2.12가 .deb.sig를 만든다, 첫 리허설 실측)
+  assert.equal(pick({ appimage: ['a.AppImage', 'a.AppImage.sig'], deb: ['a.deb', 'a.deb.sig'] }, LINUX, { release: true }).ok, true);
+  assert.match(pick({ appimage: ['a.AppImage', 'a.AppImage.sig'], deb: ['a.deb'] }, LINUX, { release: true }).problems.join(), /deb\/a\.deb\.sig가 없다/);
 });
 
 test('msiInstallDir: 설치 로그의 마지막 INSTALLDIR', () => {

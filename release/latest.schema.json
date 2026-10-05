@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "release/latest.schema.json",
   "title": "chzzk-downloader updater 매니페스트(releases/<v>/manifest.json, releases/latest.json)",
-  "$comment": "Tauri updater 정적 JSON 형식. xtask(xtask/src/schema.rs)가 이 파일로 검증한다: 지원하는 키워드만 쓴다(모르는 키워드는 오류). 플랫폼 키는 release/expected-artifacts.json의 updater 키 전부와 같아야 한다(xtask 테스트 table_and_schema_agree). windows-x86_64는 NSIS(updater가 {target}-{installer}를 먼저 찾고 없으면 {target}), MSI 설치본은 windows-x86_64-msi를 쓴다. url 접두(DIST_BASE_URL)·버전 폴더는 xtask check_manifest가 본다.",
+  "$comment": "Tauri updater 정적 JSON 형식. xtask(xtask/src/schema.rs)가 이 파일로 검증한다: 지원하는 키워드만 쓴다(모르는 키워드는 오류). 플랫폼 키는 release/expected-artifacts.json의 updater 키 전부와 같아야 한다(xtask 테스트 table_and_schema_agree). linux-x86_64는 AppImage, deb 설치본은 linux-x86_64-deb, windows-x86_64는 NSIS(updater가 {target}-{installer}를 먼저 찾고 없으면 {target}), MSI 설치본은 windows-x86_64-msi를 쓴다. url 접두(DIST_BASE_URL)·버전 폴더는 xtask check_manifest가 본다.",
   "type": "object",
   "required": ["version", "pub_date", "platforms"],
   "additionalProperties": false,
@@ -17,10 +17,11 @@
     },
     "platforms": {
       "type": "object",
-      "required": ["linux-x86_64", "darwin-aarch64", "windows-x86_64", "windows-x86_64-nsis", "windows-x86_64-msi"],
+      "required": ["linux-x86_64", "linux-x86_64-deb", "darwin-aarch64", "windows-x86_64", "windows-x86_64-nsis", "windows-x86_64-msi"],
       "additionalProperties": false,
       "properties": {
         "linux-x86_64": { "$comment": "AppImage", "type": "object", "required": ["signature", "url"], "additionalProperties": false, "properties": { "signature": { "type": "string", "minLength": 100, "pattern": "^[A-Za-z0-9+/]+=*$" }, "url": { "type": "string", "pattern": "^https://[^/?#]+(/[^?#]*)?/releases/[^/]+/chzzk-downloader_[^/]+_linux-x86_64\\.AppImage$" } } },
+        "linux-x86_64-deb": { "$comment": "deb 설치본(updater가 {target}-deb를 먼저 찾는다)", "type": "object", "required": ["signature", "url"], "additionalProperties": false, "properties": { "signature": { "type": "string", "minLength": 100, "pattern": "^[A-Za-z0-9+/]+=*$" }, "url": { "type": "string", "pattern": "^https://[^/?#]+(/[^?#]*)?/releases/[^/]+/chzzk-downloader_[^/]+_linux-x86_64\\.deb$" } } },
         "darwin-aarch64": { "$comment": ".app.tar.gz", "type": "object", "required": ["signature", "url"], "additionalProperties": false, "properties": { "signature": { "type": "string", "minLength": 100, "pattern": "^[A-Za-z0-9+/]+=*$" }, "url": { "type": "string", "pattern": "^https://[^/?#]+(/[^?#]*)?/releases/[^/]+/chzzk-downloader_[^/]+_darwin-aarch64\\.app\\.tar\\.gz$" } } },
         "windows-x86_64": { "$comment": "NSIS(기본)", "type": "object", "required": ["signature", "url"], "additionalProperties": false, "properties": { "signature": { "type": "string", "minLength": 100, "pattern": "^[A-Za-z0-9+/]+=*$" }, "url": { "type": "string", "pattern": "^https://[^/?#]+(/[^?#]*)?/releases/[^/]+/chzzk-downloader_[^/]+_windows-x86_64-setup\\.exe$" } } },
         "windows-x86_64-nsis": { "$comment": "NSIS", "type": "object", "required": ["signature", "url"], "additionalProperties": false, "properties": { "signature": { "type": "string", "minLength": 100, "pattern": "^[A-Za-z0-9+/]+=*$" }, "url": { "type": "string", "pattern": "^https://[^/?#]+(/[^?#]*)?/releases/[^/]+/chzzk-downloader_[^/]+_windows-x86_64-setup\\.exe$" } } },

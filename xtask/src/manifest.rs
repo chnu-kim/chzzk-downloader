@@ -431,8 +431,9 @@ mod tests {
     fn expected_set_has_sigs_for_updater_artifacts() {
         let files = expected_files(&exp(), "0.2.0");
         assert!(files.contains("chzzk-downloader_0.2.0_linux-x86_64.AppImage.sig"));
-        assert!(files.contains("chzzk-downloader_0.2.0_linux-x86_64.deb"));
-        assert!(!files.contains("chzzk-downloader_0.2.0_linux-x86_64.deb.sig"));
+        assert!(files.contains("chzzk-downloader_0.2.0_linux-x86_64.deb.sig"));
+        assert!(files.contains("chzzk-downloader_0.2.0_darwin-aarch64.dmg"));
+        assert!(!files.contains("chzzk-downloader_0.2.0_darwin-aarch64.dmg.sig"));
         assert!(files.contains("chzzk-downloader_0.2.0_darwin-aarch64.app.tar.gz.sig"));
     }
 }

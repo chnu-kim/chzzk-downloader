@@ -36,7 +36,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const log = (m) => console.log(`e2e-native: ${m}`);
 
 // W3C WebDriver 요소 키
-const ELEMENT = 'element-6066-11e4-a952-4a6000c22a71';
+const ELEMENT = 'element-6066-11e4-a52e-4f735466cecf';
 
 // 요소 찾기 응답 → 요소 id. W3C 키가 표준이지만 옛 JSON Wire 키(ELEMENT)로 오는 드라이버도 받는다.
 // 둘 다 없으면 응답을 보여 주며 실패한다(조용히 거짓이 되어 시간 초과로만 보이지 않게).

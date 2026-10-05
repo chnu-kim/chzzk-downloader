@@ -46,7 +46,7 @@ test('until: 참 값을 돌려주고, 시간이 지나면 마지막 오류와 �
 
 test('elementId: W3C 키·옛 ELEMENT 키를 받고, 없으면 응답을 보여 주며 실패', async () => {
   const { elementId } = await import('./e2e-native.mjs');
-  assert.equal(elementId({ 'element-6066-11e4-a952-4a6000c22a71': 'a' }), 'a');
+  assert.equal(elementId({ 'element-6066-11e4-a52e-4f735466cecf': 'a' }), 'a');
   assert.equal(elementId({ ELEMENT: 'b' }), 'b');
   assert.throws(() => elementId({ other: 'c' }), /요소 응답에 id가 없다: \{"other":"c"\}/);
   assert.throws(() => elementId(null), /id가 없다/);

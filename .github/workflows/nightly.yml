@@ -1,19 +1,22 @@
 name: nightly
 
-# 예약 고리(docs/design/cicd.md §2 위치 N·W, §4). 커밋과 무관하게 환경(러너 이미지·WebView 드라이버)이 바뀌어 빨개질 수 있는
-# 검사를 PR 밖에서 돌리고, 실패하면 이슈를 열고 다음 녹색에 닫는다(issue.mjs, report 작업).
-#   - nightly e2e-native (linux): 매일. ci.yml e2e-native(코드 PR·master)와 같은 gate다(러너 이미지가 바뀌어도 매일 확인한다).
+# 예약 고리(docs/design/cicd.md §2 위치 N·W, §4). 커밋과 무관하게 환경(러너 이미지·WebView 드라이버·실서버·권고 DB)이
+# 바뀌어 빨개질 수 있는 검사를 PR 밖에서 돌리고, 실패하면 작업마다 이슈를 열고 다음 녹색에 닫는다(issue.mjs, report 작업).
+#   매일(17 18 * * *): nightly e2e-native (linux), nightly drift
+#   매주(47 18 * * 0): nightly e2e-native (windows)
+#   - e2e-native (linux): ci.yml e2e-native(코드 PR·master)와 같은 gate다(러너 이미지가 바뀌어도 매일 확인한다).
 #     PR에서는 ci.yml이 돌리므로 여기서는 돌지 않는다.
-#   - nightly e2e-native (windows): 매주, 그리고 코드가 바뀐 PR(paths-ignore = gates.mjs NON_CODE_GLOBS, parity pr-paths).
+#   - e2e-native (windows): 매주, 그리고 코드가 바뀐 PR(paths-ignore = gates.mjs NON_CODE_GLOBS, parity pr-paths).
 #     러너 이미지의 msedgedriver를 쓰고, WebView2 런타임과 버전이 다르면 받지 않고 실패한다(e2e-native.mjs). 이미지가
 #     바뀌면 빨개질 수 있어 ci-ok에 넣지 않는다(PR에서는 참고 신호, 예약 실행은 고리).
+#   - drift: 실서버(본인 영상, 환경 drift의 secret). 2회 연속 실패에 이슈(no_target은 3회). 출력은 kind만(§4.3).
 # 이슈 고리는 예약 실행(master)만 진짜 이름공간에 쓴다(브랜치 loop_test dispatch는 ci-loop-test:, issue.mjs).
-# G5가 drift·advisories·fuzz 등을 이 파일에 더한다.
+# 새 작업은 그 작업 id를 issue.mjs NEEDS_LOOPS와 report의 needs에 더한다(issue.test가 맞춘다).
 
 on:
   schedule:
-    - cron: "17 18 * * *" # 매일 KST 03:17
-    - cron: "47 18 * * 0" # 매주 월 KST 03:47(Windows 포함). 바꾸면 아래 e2e-native-windows의 if도 바꾼다(parity schedule)
+    - cron: "17 18 * * *" # 매일 KST 03:17. 바꾸면 아래 매일 작업들의 if도 바꾼다(parity schedule)
+    - cron: "47 18 * * 0" # 매주 월 KST 03:47. 바꾸면 아래 매주 작업들의 if도 바꾼다(parity schedule)
   pull_request:
     paths-ignore:
       - docs/**
@@ -23,10 +26,20 @@ on:
       - LICENSE.*
   workflow_dispatch:
     inputs:
-      windows:
-        description: "Windows 네이티브 E2E도 돌린다(예약 실행은 매주 월요일에만)"
+      only:
+        description: "이 작업만 돌린다(all이면 매일 작업 전부, 매주 작업은 weekly도 켜야 돈다)"
+        type: choice
+        default: all
+        options: [all, e2e-native, drift]
+      weekly:
+        description: "only=all일 때 매주 작업(Windows 네이티브 E2E)도 돌린다"
         type: boolean
         default: false
+      simulate:
+        description: "drift: 실서버 대신 합성 출력(secret 없이, 환경 drift 밖에서 돈다). none이면 실서버"
+        type: choice
+        default: none
+        options: [none, ok, target_gone, http_5xx, http_4xx, no_target, schema_mismatch, media_invalid, auth, timeout, network, panic, unknown]
       loop_test:
         description: "고리 확인용: 이 dispatch 실행에서도 report(이슈 열기·닫기)를 돌린다"
         type: boolean
@@ -47,7 +60,7 @@ env:
 jobs:
   e2e-native-linux:
     name: nightly e2e-native (linux)
-    if: github.event_name != 'pull_request'
+    if: github.event.schedule == '17 18 * * *' || (github.event_name == 'workflow_dispatch' && (inputs.only == 'all' || inputs.only == 'e2e-native'))
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:
@@ -94,7 +107,9 @@ jobs:
   # 8일보다 오래면 stale로 연다(issue.mjs NEEDS_LOOPS staleHours: 예약 누락·조건식 어긋남).
   e2e-native-windows:
     name: nightly e2e-native (windows)
-    if: github.event_name == 'pull_request' || github.event.schedule == '47 18 * * 0' || inputs.windows
+    if: >-
+      github.event_name == 'pull_request' || github.event.schedule == '47 18 * * 0'
+      || (github.event_name == 'workflow_dispatch' && ((inputs.only == 'all' && inputs.weekly) || inputs.only == 'e2e-native'))
     runs-on: windows-latest
     timeout-minutes: 75
     permissions:
@@ -135,11 +150,47 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
+  # 실서버 drift(§4.3). 대상은 사용자 본인 영상이고 secret은 환경 drift(배포 브랜치 master만)에만 있다. simulate는 합성
+  # 출력이라 secret이 필요 없어 환경 밖에서 돈다(브랜치 dispatch로 고리·로그 위생을 확인한다, 구현 중 변경 50).
+  # 출력은 drift.mjs가 메모리로만 받고 테스트 이름·kind만 찍는다. artifact를 올리지 않는다. report가 이 작업의 실제 로그를
+  # drift-log-check로 다시 본다(canary·허용 밖 줄 0).
+  drift:
+    name: nightly drift
+    if: github.event.schedule == '17 18 * * *' || (github.event_name == 'workflow_dispatch' && (inputs.only == 'all' || inputs.only == 'drift'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    environment: ${{ (inputs.simulate == '' || inputs.simulate == 'none') && 'drift' || '' }}
+    permissions:
+      contents: read # checkout
+    outputs:
+      kinds: ${{ steps.drift.outputs.kinds }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - name: rust toolchain
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: ". -> target"
+          save-if: ${{ github.ref == 'refs/heads/master' }}
+      - id: drift
+        name: drift
+        run: node scripts/ci/run.mjs drift
+        env:
+          CHZZK_LIVE_HLS: ${{ secrets.CHZZK_LIVE_HLS }}
+          CHZZK_LIVE_DASH: ${{ secrets.CHZZK_LIVE_DASH }}
+          CHZZK_LIVE_CLIP: ${{ secrets.CHZZK_LIVE_CLIP }}
+          DRIFT_SIMULATE: ${{ inputs.simulate }}
+
   # 고리: 예약 실행(master)의 결과로 작업마다 ci-loop:<작업 id> 이슈를 열고 닫는다(건너뛴 작업은 오래됐을 때만 연다).
   # PR 실행은 보고하지 않는다. master가 아닌 브랜치의 loop_test dispatch는 ci-loop-test:<작업 id>에만 쓴다.
   report:
     name: nightly report
-    needs: [e2e-native-linux, e2e-native-windows]
+    needs: [e2e-native-linux, e2e-native-windows, drift]
     if: always() && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.loop_test))
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -156,6 +207,13 @@ jobs:
           node-version: 24
       - name: report-loop
         run: node scripts/ci/run.mjs report-loop
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NEEDS: ${{ toJSON(needs) }}
+      # drift 작업의 실제 로그: 합성 제목(canary)·허용 밖 줄이 없는지(drift.mjs checkDriftLog). 고리 보고 뒤에 돈다
+      - name: drift-log-check
+        if: ${{ !cancelled() }}
+        run: node scripts/ci/run.mjs drift-log-check
         env:
           GH_TOKEN: ${{ github.token }}
           NEEDS: ${{ toJSON(needs) }}

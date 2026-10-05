@@ -274,6 +274,11 @@ export const GATES = {
       { cmd: ['node', S('ratchet.mjs'), 'check', 'tests'] },
     ],
   },
+  drift: {
+    desc: '실서버 drift(nightly, 환경 drift의 본인 영상 secret): 라이브 테스트 3개 + examples/dl, 출력은 메모리로만 받아 kind만 찍는다. env DRIFT_SIMULATE=<ok|kind>면 합성 출력',
+    needs: ['cargo'],
+    steps: [{ cmd: ['node', S('drift.mjs')] }],
+  },
   'ratchet-log': {
     desc: 'ci/ratchet.json 모양(0은 $pending만) + 기준을 느슨하게 했으면 ci/RATCHET_LOG.md에 그 키를 적은 줄이 더해졌는지(env RATCHET_BASE)',
     steps: [{ cmd: ['node', S('ratchet.mjs'), 'lint'] }, { cmd: ['node', S('ratchet.mjs'), 'log-check'] }],
@@ -281,7 +286,7 @@ export const GATES = {
 };
 
 // run.mjs가 gate 말고도 받는 하위 명령
-export const COMMANDS = ['changes', 'ci-ok', 'doctor', 'hook', 'install-hooks', 'install-rustup', 'install-tool', 'list', 'report', 'report-loop'];
+export const COMMANDS = ['changes', 'ci-ok', 'doctor', 'drift-log-check', 'hook', 'install-hooks', 'install-rustup', 'install-tool', 'list', 'report', 'report-loop'];
 
 // 훅(docs/design/cicd.md §3.2). .githooks/<이름>은 `run.mjs hook <이름> "$@"`만 exec한다(parity hook-entry).
 //   always: 항상 도는 gate(순서대로). when: 바뀐 경로(pre-commit은 staged, pre-push는 push 범위 커밋이 건드린 경로)가

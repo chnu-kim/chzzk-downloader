@@ -44,6 +44,7 @@ export const LOOPS = {
 export const NEEDS_LOOPS = {
   'e2e-native-linux': { name: 'nightly e2e-native (linux)', staleHours: 72 },
   'e2e-native-windows': { name: 'nightly e2e-native (windows)', staleHours: 8 * 24 },
+  drift: { name: 'nightly drift', staleHours: 72, consecutive: 2, consecutiveKinds: { no_target: 3 } },
 };
 export const LOOP_WORKFLOW = 'nightly.yml';
 export const KINDS = [
@@ -342,19 +343,35 @@ export function threshold(spec, kinds) {
   return spec.consecutive ?? 1;
 }
 
-// branch의 workflow 완료 실행(pull_request 실행 제외)을 새것부터 runs개 보고, 작업 jobName이 돈(skipped가 아닌) 실행의
-// conclusion 목록(새것부터)을 돌려준다. excludeRunId는 지금 실행(아직 완료되지 않았지만 혹시 섞이지 않게).
-export function jobHistory(gh, { repo, workflow, branch, jobName, runs = 30, excludeRunId }) {
-  const ids = gh(['api', `repos/${repo}/actions/workflows/${workflow}/runs?branch=${encodeURIComponent(branch)}&status=completed&per_page=${runs}`, '--jq', '.workflow_runs[] | select(.event != "pull_request") | .id'])
-    .split('\n')
-    .map((s) => s.trim())
-    .filter((s) => /^\d+$/.test(s) && s !== String(excludeRunId));
+// branch의 workflow 완료 실행 기록. 실행 목록과 실행별 작업 목록을 한 번씩만 읽어(report-loop가 고리 여럿에 나눠 쓴다)
+// API 호출 수를 고리 수와 무관하게 둔다. 실행은 새것부터다.
+export const RUNS_JQ = '[.workflow_runs[] | {id, event}]';
+export const JOBS_JQ = '[.jobs[] | {name, conclusion, completed_at}]';
+export function runHistory(gh, { repo, workflow, branch, runs = 30 }) {
+  let list = null;
+  const jobs = new Map();
+  return {
+    runs() {
+      if (!list) {
+        const out = gh(['api', `repos/${repo}/actions/workflows/${workflow}/runs?branch=${encodeURIComponent(branch)}&status=completed&per_page=${runs}`, '--jq', RUNS_JQ]);
+        list = (JSON.parse(out || '[]') ?? []).filter((r) => Number.isInteger(r?.id)).map((r) => ({ id: String(r.id), event: r.event }));
+      }
+      return list;
+    },
+    jobs(id) {
+      if (!jobs.has(id)) jobs.set(id, JSON.parse(gh(['api', `repos/${repo}/actions/runs/${id}/jobs?per_page=100`, '--jq', JOBS_JQ]) || '[]') ?? []);
+      return jobs.get(id);
+    },
+  };
+}
+
+// 작업 jobName이 돈(skipped가 아닌) 실행의 conclusion 목록(새것부터). pull_request 실행은 뺀다(브랜치에서는 PR 실행이
+// 같은 브랜치 이름으로 섞이고 그 실행에서는 예약 작업이 건너뛴다). excludeRunId는 지금 실행.
+export function jobHistory(h, { jobName, excludeRunId }) {
   const out = [];
-  for (const id of ids) {
-    const c = gh(['api', `repos/${repo}/actions/runs/${id}/jobs?per_page=100`, '--jq', `.jobs[] | select(.name == ${JSON.stringify(jobName)}) | .conclusion // ""`])
-      .split('\n')
-      .map((s) => s.trim())
-      .find(Boolean);
+  for (const r of h.runs()) {
+    if (r.event === 'pull_request' || r.id === String(excludeRunId)) continue;
+    const c = h.jobs(r.id).find((j) => j.name === jobName)?.conclusion;
     if (c && c !== 'skipped') out.push(c);
   }
   return out;
@@ -370,25 +387,18 @@ export const leadingFailures = (history) => {
   return n;
 };
 
-// 작업(표시 이름 jobName)이 branch의 workflow 실행에서 마지막으로 성공한 시각(ISO) 또는 null. 최근 완료 실행 runs개를
-// 새것부터 본다(워크플로 전체가 빨개도 그 작업은 성공했을 수 있어 status=success로 거르지 않는다).
-export function lastJobSuccess(gh, { repo, workflow, branch, jobName, runs = 30 }) {
-  const ids = gh(['api', `repos/${repo}/actions/workflows/${workflow}/runs?branch=${encodeURIComponent(branch)}&status=completed&per_page=${runs}`, '--jq', '.workflow_runs[].id'])
-    .split('\n')
-    .map((s) => s.trim())
-    .filter((s) => /^\d+$/.test(s));
-  for (const id of ids) {
-    const t = gh(['api', `repos/${repo}/actions/runs/${id}/jobs?per_page=100`, '--jq', `.jobs[] | select(.name == ${JSON.stringify(jobName)} and .conclusion == "success") | .completed_at`])
-      .split('\n')
-      .map((s) => s.trim())
-      .find(Boolean);
+// 작업(표시 이름 jobName)이 마지막으로 성공한 시각(ISO) 또는 null. 워크플로 전체가 빨개도 그 작업은 성공했을 수 있어
+// 실행을 status=success로 거르지 않는다.
+export function lastJobSuccess(h, { jobName }) {
+  for (const r of h.runs()) {
+    const t = h.jobs(r.id).find((j) => j.name === jobName && j.conclusion === 'success')?.completed_at;
     if (t) return t;
   }
   return null;
 }
 
 // 건너뛴 작업이 staleHours 넘게 성공하지 못했는지. 워크플로가 기본 브랜치에 없으면(404) false.
-function skippedStale(gh, { repo, branch, loop, now, loops }) {
+function skippedStale(gh, h, { repo, branch, loop, now, loops }) {
   const { name, staleHours } = loops[loop];
   let wf;
   try {
@@ -397,7 +407,7 @@ function skippedStale(gh, { repo, branch, loop, now, loops }) {
     if (notFound(e)) return false;
     throw e;
   }
-  const last = lastJobSuccess(gh, { repo, workflow: LOOP_WORKFLOW, branch, jobName: name });
+  const last = lastJobSuccess(h, { jobName: name });
   const s = isStale({ lastSuccess: last, created: wf.created_at ?? null }, now, staleHours);
   console.log(`${loop}: 건너뜀, '${name}'의 마지막 성공 ${last ?? '없음'}(${branch}) → ${s ? `stale(${staleHours}시간 초과)` : 'ok'}`);
   return s;
@@ -425,20 +435,21 @@ export function reportLoop(env, gh, { deny, now = Date.now(), loops = NEEDS_LOOP
   }
   const runUrl = `https://github.com/${repo}/actions/runs/${env.GITHUB_RUN_ID}`;
   let bad = 0;
+  const h = runHistory(gh, { repo, workflow: LOOP_WORKFLOW, branch: scope.branch });
   for (const { loop, status: st, kinds: k } of sts) {
     try {
       let status = st;
       let kinds = k;
       if (!status) {
         // 건너뜀: 마지막 성공이 오래됐으면 fail(stale), 아니면 이슈를 건드리지 않는다(매주 도는 Windows가 건너뛴 날 닫지 않는다)
-        if (!skippedStale(gh, { repo, branch: scope.branch, loop, now, loops })) continue;
+        if (!skippedStale(gh, h, { repo, branch: scope.branch, loop, now, loops })) continue;
         status = 'fail';
         kinds = ['stale'];
       } else if (status === 'fail') {
         // 연속 실패 규칙(drift 2회, no_target 3회): 문턱 아래면 이슈를 열지도, 댓글을 달지도, 닫지도 않는다
         const need = threshold(loops[loop], kinds);
         if (need > 1) {
-          const prior = leadingFailures(jobHistory(gh, { repo, workflow: LOOP_WORKFLOW, branch: scope.branch, jobName: loops[loop].name, excludeRunId: env.GITHUB_RUN_ID }));
+          const prior = leadingFailures(jobHistory(h, { jobName: loops[loop].name, excludeRunId: env.GITHUB_RUN_ID }));
           const n = Math.min(prior + 1, need);
           console.log(`${loop}: 실패 ${kinds.join(',') || '-'} — 연속 ${prior + 1}회(문턱 ${need}회)`);
           if (n < need) continue;

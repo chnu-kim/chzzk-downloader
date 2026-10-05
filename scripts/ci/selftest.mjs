@@ -343,6 +343,15 @@ const hook = (d, name, args, input) => exec('node', [join(d, 'scripts/ci/run.mjs
   expect('ratchet-log', '기준 낮춤, 기록 있음', 0, () => logCheck(logRoot('rlog-2', 79, '| 2026-10-05 | `coverage_lines.rust` | 80 → 79 | 씨앗 |')));
 }
 
+// ---- drift: 사본의 진입점으로 합성 출력(simulate). 실서버·secret 없이 gate 정의(진입점 → drift.mjs → 분류 → 종료 코드)를 본다 ----
+{
+  const d = mkRoot('drift');
+  const drift = (sim) => exec('node', [join(d, 'scripts/ci/run.mjs'), 'drift'], d, { ...process.env, DRIFT_SIMULATE: sim, CHZZK_LIVE_HLS: '', CHZZK_LIVE_DASH: '', CHZZK_LIVE_CLIP: '', GITHUB_OUTPUT: '', GITHUB_STEP_SUMMARY: '' });
+  expect('drift', 'simulate ok', 0, () => drift('ok'), ['cargo']);
+  expect('drift', 'simulate target_gone', 'nonzero', () => drift('target_gone'), ['cargo']);
+  expect('drift', '대상 secret 없음(no_target)', 'nonzero', () => drift(''), ['cargo']);
+}
+
 rmSync(tmp, { recursive: true, force: true });
 
 let bad = 0;

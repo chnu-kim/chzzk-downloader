@@ -496,6 +496,10 @@ export function main(argv, env = process.env) {
       // 예약 워크플로(nightly.yml)의 report 작업. env: NEEDS·GITHUB_REPOSITORY·GITHUB_RUN_ID·GITHUB_SHA·GH_TOKEN
       if (rest.length) return 2;
       return import('./issue.mjs').then((m) => m.reportLoop(env, m.realGh(env)));
+    case 'drift-log-check':
+      // nightly.yml report 작업: drift 작업의 실제 로그에 canary·허용 밖 줄이 없는지(docs/design/cicd.md §4.3)
+      if (rest.length) return 2;
+      return Promise.all([import('./drift.mjs'), import('./issue.mjs')]).then(([d, i]) => d.driftLogCheck(env, i.realGh(env)));
     case 'list':
       return cmdList();
     default:

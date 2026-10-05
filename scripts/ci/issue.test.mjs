@@ -8,7 +8,7 @@ import { test } from 'node:test';
 import { readFileSync } from 'node:fs';
 
 import { ROOT } from './gates.mjs';
-import { assertPublishable, body, isStale, jobHistory, KIND_NOTES, label, lastJobSuccess, leadingFailures, loopStatuses, marker, masterStatus, NEEDS_LOOPS, refScope, reportLoop, report, scheduledWorkflows, sync, threshold, title, validate } from './issue.mjs';
+import { assertPublishable, body, isStale, jobHistory, JOBS_JQ, KIND_NOTES, label, lastJobSuccess, leadingFailures, loopStatuses, marker, masterStatus, NEEDS_LOOPS, refScope, reportLoop, report, runHistory, RUNS_JQ, scheduledWorkflows, sync, threshold, title, validate } from './issue.mjs';
 import { parseJobs } from './parity.mjs';
 
 const REPO = 'o/r';
@@ -16,7 +16,7 @@ const SHA = 'a'.repeat(40);
 const URL = 'https://github.com/o/r/actions/runs/123';
 
 // 이슈 저장소를 흉내 내는 gh. calls에 인자를 남긴다.
-function fakeGh({ issues = [], jobs = '', workflows = {}, runs = {}, heads = { master: SHA }, runIds = {}, runJobs = {}, history = {} } = {}) {
+function fakeGh({ issues = [], jobs = '', workflows = {}, runs = {}, heads = { master: SHA }, history = {} } = {}) {
   const calls = [];
   let next = 100;
   const gh = (args, input) => {
@@ -61,22 +61,13 @@ function fakeGh({ issues = [], jobs = '', workflows = {}, runs = {}, heads = { m
       }
       return JSON.stringify(workflows[f]);
     }
-    // jobHistory: pull_request 실행을 뺀 완료 실행 id, 그 실행에서 이름이 같은 작업의 conclusion
-    if (a === 'api' && /\/runs\?/.test(b) && args.includes('.workflow_runs[] | select(.event != "pull_request") | .id')) {
+    // runHistory: 완료 실행 목록({id, event})과 실행별 작업 목록({name, conclusion, completed_at})
+    if (a === 'api' && /\/runs\?/.test(b) && args.includes(RUNS_JQ)) {
       assert.match(b, /status=completed/);
-      return (history.ids ?? []).join('\n') + '\n';
+      return JSON.stringify((history.runs ?? []).map((r) => (typeof r === 'object' ? r : { id: Number(r), event: 'schedule' })));
     }
-    if (a === 'api' && /\/runs\/\d+\/jobs\?/.test(b) && args[args.indexOf('--jq') + 1].endsWith('| .conclusion // ""')) {
-      const want = /\.name == ("[^"]*")/.exec(args[args.indexOf('--jq') + 1])[1];
-      return (history.jobs?.[`${b.split('/')[5]}:${JSON.parse(want)}`] ?? '') + '\n';
-    }
-    if (a === 'api' && /\/runs\?/.test(b) && args.includes('.workflow_runs[].id')) {
-      assert.match(b, /status=completed/);
-      return (runIds[`${b.split('/')[5]}@${/branch=([^&]+)/.exec(b)[1]}`] ?? '') + '\n';
-    }
-    if (a === 'api' && /\/runs\/\d+\/jobs\?/.test(b)) {
-      const want = /\.name == ("[^"]*")/.exec(args[args.indexOf('--jq') + 1])[1];
-      return (runJobs[`${b.split('/')[5]}:${JSON.parse(want)}`] ?? '') + '\n';
+    if (a === 'api' && /\/runs\/\d+\/jobs\?/.test(b) && args.includes(JOBS_JQ)) {
+      return JSON.stringify(history.jobs?.[b.split('/')[5]] ?? []);
     }
     if (a === 'api' && /\/runs\?/.test(b)) {
       // nightly-stale은 워크플로 전체의 성공이 아니라 마지막 완료 예약 실행을 본다(구현 중 변경 49)
@@ -331,15 +322,14 @@ test('reportLoop: 건너뛴 작업의 마지막 성공이 staleHours보다 오�
   // 최근 실행 3개 중 Windows는 10일 전에만 성공 → stale
   const fk = fakeGh({
     workflows,
-    runIds: { 'nightly.yml@master': '30\n20\n10' },
-    runJobs: { [`10:${W}`]: '2026-10-10T00:00:00Z' },
+    history: { runs: [30, 20, 10], jobs: { 10: [{ name: W, conclusion: 'success', completed_at: '2026-10-10T00:00:00Z' }] } },
   });
   assert.equal(reportLoop({ ...env, NEEDS: needs('success', 'skipped') }, fk.gh, { now }), 0);
   const win = fk.issues.find((x) => x.labels.includes(label('e2e-native-windows')));
   assert.ok(win && win.open);
   assert.match(win.body, /`stale`/);
   // 7일 전에 성공했으면(한계 8일) 건드리지 않는다: 새 저장소(이슈 없음)
-  const fk2 = fakeGh({ workflows, runIds: { 'nightly.yml@master': '30\n20' }, runJobs: { [`20:${W}`]: '2026-10-13T00:00:00Z' } });
+  const fk2 = fakeGh({ workflows, history: { runs: [30, 20], jobs: { 20: [{ name: W, conclusion: 'success', completed_at: '2026-10-13T00:00:00Z' }] } } });
   assert.equal(reportLoop({ ...env, NEEDS: needs('success', 'skipped') }, fk2.gh, { now }), 0);
   assert.equal(fk2.issues.length, 0);
   // 성공 기록이 없어도 워크플로가 새것이면(생성 8일 안) 유예, 워크플로가 기본 브랜치에 없으면(404) 건너뜀
@@ -355,9 +345,14 @@ test('reportLoop: 건너뛴 작업의 마지막 성공이 staleHours보다 오�
 });
 
 test('lastJobSuccess: 새 실행부터 그 이름의 작업이 success인 첫 시각, 없으면 null', () => {
-  const fk = fakeGh({ runIds: { 'nightly.yml@master': '3\n2\n1' }, runJobs: { '2:x': '2026-10-02T00:00:00Z', '1:x': '2026-10-01T00:00:00Z' } });
-  assert.equal(lastJobSuccess(fk.gh, { repo: REPO, workflow: 'nightly.yml', branch: 'master', jobName: 'x' }), '2026-10-02T00:00:00Z');
-  assert.equal(lastJobSuccess(fk.gh, { repo: REPO, workflow: 'nightly.yml', branch: 'master', jobName: 'y' }), null);
+  const j = (c, t) => [{ name: 'x', conclusion: c, completed_at: t }];
+  const fk = fakeGh({ history: { runs: [3, 2, 1], jobs: { 3: j('failure', '2026-10-03T00:00:00Z'), 2: j('success', '2026-10-02T00:00:00Z'), 1: j('success', '2026-10-01T00:00:00Z') } } });
+  const h = runHistory(fk.gh, { repo: REPO, workflow: 'nightly.yml', branch: 'master' });
+  assert.equal(lastJobSuccess(h, { jobName: 'x' }), '2026-10-02T00:00:00Z');
+  assert.equal(lastJobSuccess(h, { jobName: 'y' }), null);
+  // 실행 목록·실행별 작업 목록은 한 번씩만 읽는다(고리 수와 무관한 API 호출 수)
+  const apis = fk.calls.filter(([a]) => a[0] === 'api').map(([a]) => a[1]);
+  assert.equal(apis.length, new Set(apis).size);
 });
 
 // stale 판정은 작업 표시 이름으로 찾으므로 nightly.yml의 name:과 같아야 한다(이름을 바꾸면 여기서 걸린다)
@@ -386,20 +381,27 @@ test('threshold·leadingFailures: kind별 문턱, 새것부터 이어지는 실�
 });
 
 test('jobHistory: PR 실행·작업이 없거나 건너뛴 실행은 빼고, 지금 실행은 넣지 않는다', () => {
-  const fk = fakeGh({ history: { ids: ['50', '40', '30', '20'], jobs: { '50:nightly drift': 'failure', '40:nightly drift': 'skipped', '20:nightly drift': 'success' } } });
-  assert.deepEqual(jobHistory(fk.gh, { repo: REPO, workflow: 'nightly.yml', branch: 'master', jobName: 'nightly drift' }), ['failure', 'success']);
-  assert.deepEqual(jobHistory(fk.gh, { repo: REPO, workflow: 'nightly.yml', branch: 'master', jobName: 'nightly drift', excludeRunId: '50' }), ['success']);
+  const d = (c) => [{ name: 'nightly drift', conclusion: c, completed_at: null }, { name: 'other', conclusion: 'failure', completed_at: null }];
+  const fk = fakeGh({
+    history: {
+      runs: [{ id: 55, event: 'pull_request' }, 50, 45, 40, 30, 20],
+      jobs: { 55: d('failure'), 50: d('failure'), 40: d('skipped'), 30: [{ name: 'other', conclusion: 'success' }], 20: d('success') },
+    },
+  });
+  const h = () => runHistory(fk.gh, { repo: REPO, workflow: 'nightly.yml', branch: 'master' });
+  assert.deepEqual(jobHistory(h(), { jobName: 'nightly drift' }), ['failure', 'success']);
+  assert.deepEqual(jobHistory(h(), { jobName: 'nightly drift', excludeRunId: '50' }), ['success']);
 });
 
 test('reportLoop(drift): 한 번 실패는 아무것도 안 하고, 두 번 연속이면 열고(kind·할 일 문구), 성공 한 번에 닫는다', () => {
   const env = { GITHUB_REPOSITORY: REPO, GITHUB_RUN_ID: '60', GITHUB_SHA: SHA, GITHUB_REF: 'refs/heads/master' };
   const needs = (result, kinds) => JSON.stringify({ drift: { result, outputs: kinds ? { kinds } : {} } });
   // 첫 실패(앞 실행은 성공): 문턱 아래 → 이슈 없음, 댓글 없음
-  const fk = fakeGh({ history: { ids: ['59'], jobs: { '59:nightly drift': 'success' } } });
+  const fk = fakeGh({ history: { runs: [59], jobs: { 59: [{ name: 'nightly drift', conclusion: 'success' }] } } });
   assert.equal(reportLoop({ ...env, NEEDS: needs('failure', 'target_gone') }, fk.gh, { loops: LOOPS2 }), 0);
   assert.equal(fk.issues.length, 0);
   // 두 번째 연속 실패: 연다. 본문에 kind와 고정 할 일 문구
-  const fk2 = fakeGh({ history: { ids: ['59', '58'], jobs: { '59:nightly drift': 'failure', '58:nightly drift': 'success' } } });
+  const fk2 = fakeGh({ history: { runs: [59, 58], jobs: { 59: [{ name: 'nightly drift', conclusion: 'failure' }], 58: [{ name: 'nightly drift', conclusion: 'success' }] } } });
   assert.equal(reportLoop({ ...env, NEEDS: needs('failure', 'target_gone') }, fk2.gh, { loops: LOOPS2 }), 0);
   assert.equal(fk2.issues.length, 1);
   const d = fk2.issues[0];
@@ -418,15 +420,15 @@ test('reportLoop(drift): 문턱 아래의 실패는 열린 이슈에 댓글도 �
   const env = { GITHUB_REPOSITORY: REPO, GITHUB_RUN_ID: '70', GITHUB_SHA: SHA, GITHUB_REF: 'refs/heads/master' };
   const needs = (kinds) => JSON.stringify({ drift: { result: 'failure', outputs: { kinds } } });
   const open = { number: 9, body: `${marker('drift')}\n\n실패`, open: true, labels: [label('drift')], comments: [] };
-  const fk = fakeGh({ issues: [open], history: { ids: ['69'], jobs: { '69:nightly drift': 'success' } } });
+  const fk = fakeGh({ issues: [open], history: { runs: [69], jobs: { 69: [{ name: 'nightly drift', conclusion: 'success' }] } } });
   assert.equal(reportLoop({ ...env, NEEDS: needs('http_5xx') }, fk.gh, { loops: LOOPS2 }), 0);
   assert.deepEqual(open.comments, []);
   assert.equal(open.open, true);
   // no_target: 두 번 연속은 아직, 세 번이면 연다
-  const two = fakeGh({ history: { ids: ['69', '68'], jobs: { '69:nightly drift': 'failure', '68:nightly drift': 'success' } } });
+  const two = fakeGh({ history: { runs: [69, 68], jobs: { 69: [{ name: 'nightly drift', conclusion: 'failure' }], 68: [{ name: 'nightly drift', conclusion: 'success' }] } } });
   assert.equal(reportLoop({ ...env, NEEDS: needs('no_target') }, two.gh, { loops: LOOPS2 }), 0);
   assert.equal(two.issues.length, 0);
-  const three = fakeGh({ history: { ids: ['69', '68'], jobs: { '69:nightly drift': 'failure', '68:nightly drift': 'failure' } } });
+  const three = fakeGh({ history: { runs: [69, 68], jobs: { 69: [{ name: 'nightly drift', conclusion: 'failure' }], 68: [{ name: 'nightly drift', conclusion: 'failure' }] } } });
   assert.equal(reportLoop({ ...env, NEEDS: needs('no_target') }, three.gh, { loops: LOOPS2 }), 0);
   assert.equal(three.issues.length, 1);
   assert.ok(three.issues[0].body.includes(KIND_NOTES.no_target));

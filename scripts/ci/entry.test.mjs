@@ -26,6 +26,8 @@ const SCRIPTS = [
   'scripts/ci/issue.mjs',
   'scripts/ci/e2e-native.mjs',
   'scripts/ci/e2e-fixture-server.mjs',
+  'scripts/ci/drift.mjs',
+  'scripts/ci/drift-classify.mjs',
   'scripts/fixtures/gen-fixtures.mjs',
 ];
 

@@ -136,8 +136,9 @@ async fn blocked_jobs_json_write_does_not_hold_state_lock() {
     tokio::task::spawn_blocking(move || m.flush())
         .await
         .unwrap();
-    // 열 때의 목록(막혀 있던 것) + 밀린 것 중 가장 최근 것 하나
-    assert_eq!(writes.load(Ordering::SeqCst), 2);
+    // 밀린 목록은 합쳐진다: 쓰기 스레드가 열 때의 목록을 먼저 집었으면 2번, 늦게 깼으면 가장 최근 것 1번
+    let n = writes.load(Ordering::SeqCst);
+    assert!(matches!(n, 1..=2), "쓰기 {n}번");
     let v: serde_json::Value =
         serde_json::from_slice(&std::fs::read(dir.path().join("data/jobs.json")).unwrap()).unwrap();
     assert_eq!(v["jobs"][0]["status"], "paused");

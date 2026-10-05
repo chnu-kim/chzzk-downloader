@@ -98,11 +98,11 @@
 설계 판정은 2026-10-05에 끝났다(`docs/design/cicd.md`). 원칙: 결정적 판정만(종료 코드·골든·해시·스키마·실제 빌드/실행), 훅과 CI는 같은 진입점 `scripts/ci/run.mjs`, CI가 최종 권위. 아래 그룹 번호는 그 문서 §10이다. 수락 기준은 실제 Actions 실행으로 확인한다.
 
 - [x] 설계 판정 (`docs/design/cicd.md`): 단일 `ci.yml` + `ci-ok` 집계, `.githooks` shim 훅, 집합 차 push-guard, R2 S3 API 배포와 `latest.json` 마지막 쓰기, 검증 실패 시 자동 롤백, ruleset 둘
-- [x] G1 진입점·단일 CI·공급망 기본: `run.mjs`/`gates.mjs`/`tools.json`, 버전 원천 통합, `ci.yml`(기존 세 워크플로 삭제), SHA 핀·zizmor·actionlint·dependabot. PR #1에서 `ci-ok` success(실행 37283860770, zizmor·actionlint 0, selftest 29개), 씨앗(`@v4`+fmt 위반)에 `ci-ok` failure(37284980199). 차이는 cicd.md "구현 중 변경" 1~12
+- [x] G1 진입점·단일 CI·공급망 기본: `run.mjs`/`gates.mjs`/`tools.json`, 버전 원천 통합, `ci.yml`(기존 세 워크플로 삭제), SHA 핀·zizmor·actionlint·dependabot. PR #1에서 `ci-ok` success(실행 37283860770, zizmor·actionlint 0, selftest 29개), 씨앗(`@v4`+fmt 위반)에 `ci-ok` failure(37284980199). 차이는 cicd.md "구현 중 변경" 1~13. 리뷰 반영(13): ci-ok 식 guard, push·dispatch는 건너뛰기 없음, 문서 판정 허용 목록, parity 강화, 진입점 selftest(씨앗 38개)
 - [ ] G2 훅과 비공개 이력 가드: `public-scan --rev-range/--message-file`, `push-guard`, `.githooks/{pre-commit,commit-msg,pre-push}`, parity 테스트
 - [ ] G3 스모크·ratchet·master 고리: 앱 `--smoke`, PR 3 OS 스모크, master 번들 설치 스모크, `ci/ratchet.json`, master 실패 이슈·스케줄 keep-alive
 - [ ] G4 E2E: Playwright(mockIPC) PR, tauri-driver Linux(master·nightly)·Windows(weekly), cargo feature `e2e`, 2주 관찰 뒤 `ci-ok` 편입
-- [ ] G5 Nightly·weekly 고리: 실서버 drift(본인 영상 secret, 일반화된 kind만 출력, 2회 연속 실패 시 이슈), advisories, ruleset drift, fuzz, mutants ratchet
+- [ ] G5 Nightly·weekly 고리: 실서버 drift(본인 영상 secret, 일반화된 kind만 출력, 2회 연속 실패 시 이슈), advisories, ruleset drift, fuzz, mutants ratchet, 핀 SHA 온라인 검증(zizmor 온라인·`pin-actions.mjs`, 어긋나면 이슈)
 - [ ] G6 CD: `xtask release`, `release/updater.pub`, `release.yml`(gate → build → smoke → sign-publish → verify/rollback → Worker seam), `rollback.yml`, MinIO 리허설
 - [ ] G7 보호: `.github/rulesets/{master,tags}.json`을 `gh api`로 적용(사용자 승인), 저장소 설정 선언, drift 검사
 - [ ] Worker 배포 작업은 G6의 `deploy-worker` seam을 Phase 3에서 채운다

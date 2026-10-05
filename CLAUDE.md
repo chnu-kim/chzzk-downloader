@@ -13,7 +13,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `crates/core/tests/` | wiremock·raw TCP 통합 테스트(오프라인). `live.rs`는 실서버 `#[ignore]` 스모크, `support/mp4.rs`는 MP4 상자 검사기 |
 | `crates/core/examples/dl.rs` | 실서버 수동 스모크 CLI |
 | `testdata/{hls,vod,clip,synthetic}/` | 합성 fixture(`testdata/README.md`, 생성기 `scripts/fixtures/gen-fixtures.mjs`). 바이트 그대로 체크아웃한다(`.gitattributes`의 `-text`) |
-| `scripts/ci/` | CI 스크립트(아래 `run.mjs`)와 공개 누출 검사기 `public-scan.mjs`(+`public-denylist.txt` blob 해시 목록, `public-scan.test.mjs`). `--all-history`로 이력 전체, `--staged`로 인덱스 검사(`.githooks/pre-commit`). 비공개 denylist는 `--denylist`로 넘긴다 |
+| `scripts/ci/` | CI 스크립트(아래 `run.mjs`)와 공개 누출 검사기 `public-scan.mjs`(+`public-denylist.txt` blob 해시 목록, `public-scan.test.mjs`). `--all-history`로 이력 전체, `--staged`로 인덱스 검사(`.githooks/pre-commit`이 `run.mjs scan-staged`로 부른다). 비공개 denylist는 `--denylist`로 넘긴다 |
 | `crates/shell/` | **`chzzk-shell`**(Tauri 비의존 앱 셸). DTO·오류 DTO(ts-rs bindings), `Backend` trait, `DownloadManager`(큐·상태 머신·`jobs.json`), `SettingsService`, `App`(command 몸통). 테스트는 `tests/`(가짜 Backend `tests/common/fake.rs`) |
 | `app/` | Vite + Svelte 5 + TS 프런트(`pnpm`, `packageManager`로 버전 고정). `src/lib/api.ts`(command 래퍼), `src/lib/bindings/`(생성물, 손대지 않는다), `src/lib/copy/`(copy deck), `src/lib/components/`·`views/`, vitest는 `*.test.ts` |
 | `app/src-tauri/` | **`chzzk-app`**(lib `chzzk_app_lib`, bin `chzzk-app`). Tauri Builder·플러그인·command 배선·`ChannelSink`·로그·창 닫기 가드, `capabilities/default.json`, `tests/ipc.rs`(mock 런타임 IPC) |

@@ -9,7 +9,8 @@
 - 완료: §10-16 Go 코드 삭제(`cmd/`·`internal/`·`go.mod`), 클립 fixture는 `testdata/clip/`으로 이동(브랜치 `chore/remove-go`)
 - 완료: Phase 2 설계 판정 `docs/design/app.md`(UX안·셸안 대조, 2026-10-05). 열린 질문 8개는 app.md §16
 - 완료: Phase 2 §15-1 골격(`app/` Vite+Svelte 5, `app/src-tauri`, 빈 `crates/shell`, identifier `io.github.chnu-kim.chzzk-downloader`). 확인 항목은 app.md "구현 중 변경" 1~13
-- 다음: Phase 2 §15-2 `crates/shell` 오류 DTO
+- 완료: Phase 2 §15-2 `crates/shell` 오류 DTO(`AppError`, `ErrorKind` 20종 매핑)와 ts-rs bindings 생성·최신 검사. 변경은 app.md "구현 중 변경" 14~18
+- 다음: Phase 2 §15-3 나머지 DTO
 
 ## 확정된 결정 (2026-10-05, 사용자 인터뷰)
 

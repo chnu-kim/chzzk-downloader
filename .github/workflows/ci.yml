@@ -117,6 +117,9 @@ jobs:
       - name: parity
         if: ${{ !cancelled() }}
         run: node scripts/ci/run.mjs parity
+      - name: fuzz-lock
+        if: ${{ !cancelled() }}
+        run: node scripts/ci/run.mjs fuzz-lock
       - name: ratchet-log
         if: ${{ !cancelled() }}
         run: node scripts/ci/run.mjs ratchet-log

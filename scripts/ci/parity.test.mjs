@@ -222,3 +222,24 @@ test('pr-paths: pull_request paths:는 거부, paths-ignore는 NON_CODE_GLOBS와
   assert.ok(nightlyRules((t) => t.replace('      - LICENSE.*\n', '')).includes('pr-paths'));
   assert.ok(nightlyRules((t) => t.replace('      - docs/**\n', '      - docs/**\n      - app/**\n')).includes('pr-paths'));
 });
+
+// 리뷰(G5): ratchet mutants_missed는 살아남은 수만 본다. mutant를 범위에서 빼면(skip·설정 파일) 수가 줄어 조용히 통과한다
+test('mutants-scope: crates/의 mutants::skip과 cargo-mutants 설정 파일은 거부', () => {
+  const d = mkdtempSync(join(tmpdir(), 'parity-mut-'));
+  try {
+    mkdirSync(join(d, 'scripts/ci'), { recursive: true });
+    cpSync(join(ROOT, 'scripts/ci/tools.json'), join(d, 'scripts/ci/tools.json'));
+    cpSync(join(ROOT, '.githooks'), join(d, '.githooks'), { recursive: true });
+    mkdirSync(join(d, 'crates/core/src'), { recursive: true });
+    writeFileSync(join(d, 'crates/core/src/a.rs'), 'fn a() {}\n');
+    assert.deepEqual(checkParity(d).filter((v) => v.rule === 'mutants-scope'), []);
+    writeFileSync(join(d, 'crates/core/src/b.rs'), 'fn a() {}\n#[cfg_attr(test, mutants :: skip)]\nfn b() {}\n');
+    const v = checkParity(d).filter((x) => x.rule === 'mutants-scope');
+    assert.deepEqual(v.map((x) => `${x.file}:${x.line}`), ['crates/core/src/b.rs:2']);
+    mkdirSync(join(d, '.cargo'));
+    writeFileSync(join(d, '.cargo/mutants.toml'), 'exclude_re = ["x"]\n');
+    assert.equal(checkParity(d).filter((x) => x.rule === 'mutants-scope').length, 2);
+  } finally {
+    rmSync(d, { recursive: true, force: true });
+  }
+});

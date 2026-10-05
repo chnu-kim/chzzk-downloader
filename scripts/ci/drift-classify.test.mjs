@@ -1,13 +1,14 @@
 // node --test scripts/ci/drift-classify.test.mjs — drift 분류기와 drift.mjs의 로그 위생(docs/design/cicd.md §4.3).
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
 import { CANARY, classify, DRIFT_TESTS, RULES, SIMULATE, SYNTHETIC, syntheticOutput } from './drift-classify.mjs';
-import { checkDriftLog, dlTarget, driftLogCheck, judgeRun, summarize } from './drift.mjs';
+import { BUILD_BEGIN, BUILD_END, BUILD_STEPS, BUILD_TIMEOUT_MS, buildEnv, checkDriftLog, dlArgs, dlTarget, driftLogCheck, judgeDl, judgeLive, judgeRun, logKinds, nonEmptyFileCount, RUN_TIMEOUT_MS, SETUP_MARGIN_MS, summarize } from './drift.mjs';
+import { parseJobs } from './parity.mjs';
 import { ROOT } from './gates.mjs';
 import { KINDS } from './issue.mjs';
 
@@ -163,8 +164,18 @@ test('checkDriftLog: drift 단계의 실제 출력은 통과, canary·허용 밖
   const odd = checkDriftLog(jobLog([...step, 'HLS .part 4194304 B, 상자 12개']).replace(new RegExp(`.*${CANARY.channel}.*\\n`), ''));
   assert.deepEqual(odd.map((b) => b.rule), ['shape']);
   assert.deepEqual(checkDriftLog('2026-10-06T00:00:00Z nothing').map((b) => b.rule), ['no-step']);
-  // 실서버 경로의 빌드 줄
-  assert.deepEqual(checkDriftLog(jobLog(['drift: cargo test -p chzzk-core --test live --locked --no-run', '   Compiling chzzk-core v0.1.0 (/home/runner/work/x/x/crates/core)', '    Finished `test` profile [unoptimized + debuginfo] target(s) in 41.12s', '  Executable tests/live.rs (target/debug/deps/live-0123abcd)', ...step])).filter((b) => b.rule !== 'canary'), []);
+  // 실서버 경로의 빌드 줄: 성공은 고정 한 줄, cargo 진행 줄은 찍지 않는다(찍히면 모양 위반)
+  const built = ['drift: cargo test -p chzzk-core --test live --locked --no-run', 'drift: 빌드 통과', 'drift: cargo build -p chzzk-core --example dl --locked', 'drift: 빌드 통과'];
+  assert.deepEqual(checkDriftLog(jobLog([...built, ...step])).filter((b) => b.rule !== 'canary'), []);
+  assert.deepEqual(checkDriftLog(jobLog([built[0], '   Compiling chzzk-core v0.1.0 (/home/runner/work/x/x/crates/core)', ...step])).filter((b) => b.rule !== 'canary').map((b) => b.rule), ['shape']);
+  // 빌드 실패: 표시 사이의 컴파일러 출력(warning·error·코드 줄)은 모양을 보지 않는다. canary는 거기서도 잡는다. 끝 표시가 없으면 위반
+  const compiler = ['warning: unused variable: `x`', '  --> crates/core/src/lib.rs:3:9', '   |', '3  |     let x = 1;', '   |         ^ help: if this is intentional, prefix it with an underscore: `_x`', 'error[E0425]: cannot find function `nope` in this scope', 'error: could not compile `chzzk-core` (lib) due to 1 previous error'];
+  const failed = [built[0], BUILD_BEGIN, ...compiler, BUILD_END, 'drift: 빌드 실패(exit 101)', ...step];
+  assert.deepEqual(checkDriftLog(jobLog(failed)).filter((b) => b.rule !== 'canary'), []);
+  const strip = (t) => t.replace(new RegExp(`.*${CANARY.channel}.*\\n`), '');
+  assert.deepEqual(checkDriftLog(strip(jobLog([built[0], BUILD_BEGIN, `x ${CANARY.title}`, BUILD_END, ...step]))).map((b) => b.rule), ['canary']);
+  assert.ok(checkDriftLog(strip(jobLog([built[0], BUILD_BEGIN, ...compiler]))).some((b) => b.rule === 'shape'));
+  assert.deepEqual(logKinds([{ rule: 'shape' }, { rule: 'canary' }, { rule: 'no-step' }]), ['log_canary', 'log_shape']);
 });
 
 test('driftLogCheck: drift가 건너뛰면 0, 작업 로그를 받아 판정, 작업이 없으면 1', async () => {
@@ -184,4 +195,80 @@ test('driftLogCheck: drift가 건너뛰면 0, 작업 로그를 받아 판정, �
   assert.equal(await driftLogCheck({ ...env, NEEDS: needs }, gh(), fl(real)), 0);
   assert.equal(await driftLogCheck({ ...env, NEEDS: needs }, gh(), fl(log + `\n${CANARY.title}`)), 1);
   assert.equal(await driftLogCheck({ ...env, NEEDS: needs }, gh(''), fl(log)), 1);
+  // 실패는 kind를 GITHUB_OUTPUT에 낸다(report가 ci-loop:drift-log 이슈로 연다). 로그를 받지 못하면 network
+  const d = mkdtempSync(join(tmpdir(), 'dlc-'));
+  try {
+    const out = join(d, 'out');
+    const kinds = async (g, f) => {
+      writeFileSync(out, '');
+      const code = await driftLogCheck({ ...env, NEEDS: needs, GITHUB_OUTPUT: out }, g, f);
+      return `${code} ${readFileSync(out, 'utf8').trim()}`.trim();
+    };
+    assert.equal(await kinds(gh(), fl(real)), '0');
+    assert.equal(await kinds(gh(), fl(log + `\n${CANARY.title}`)), '1 kinds=log_canary');
+    assert.equal(await kinds(gh(), fl(log.replace('drift: dl pass', 'drift: dl pass\nHLS .part 4194304 B'))), '1 kinds=log_shape');
+    assert.equal(await kinds(gh(), async () => { throw new Error('작업 로그 HTTP 502'); }), '1 kinds=network');
+    assert.equal(await kinds(() => { throw new Error('gh: HTTP 500'); }, fl(real)), '1 kinds=network');
+  } finally {
+    rmSync(d, { recursive: true, force: true });
+  }
+});
+
+// 리뷰(G5): `--exact`에 맞는 테스트가 없으면 cargo는 "running 0 tests … ok"로 exit 0이다(실측). 통과로 보면 실서버를 보지
+// 않은 녹색이 ci-loop:drift를 닫는다
+test('judgeLive: exit 0이어도 정확히 1개가 돌아 통과해야 pass, 0개면 kind test', () => {
+  const zero = 'running 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 4 filtered out; finished in 0.00s\n';
+  assert.deepEqual(judgeLive({ status: 0, stdout: zero, stderr: '' }), { result: 'fail', kind: 'test' });
+  assert.deepEqual(judgeLive({ status: 0, stdout: syntheticOutput('ok', 'live_hls_partial'), stderr: '' }), { result: 'pass', kind: null });
+  const real = 'running 1 test\ntest live_hls_partial ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 9.87s\n';
+  assert.deepEqual(judgeLive({ status: 0, stdout: real, stderr: '' }), { result: 'pass', kind: null });
+  assert.deepEqual(judgeLive({ status: 0, stdout: real.replace('1 passed', '2 passed'), stderr: '' }), { result: 'fail', kind: 'test' });
+  assert.deepEqual(judgeLive({ status: 101, stdout: syntheticOutput('http_5xx', 'live_hls_partial'), stderr: '' }), { result: 'fail', kind: 'http_5xx' });
+});
+
+// 리뷰(G5): dl이 아무것도 쓰지 않고 0으로 끝나도 통과였다
+test('judgeDl·nonEmptyFileCount: exit 0이어도 크기 > 0인 파일이 없으면 media_invalid, 하위 폴더도 센다', () => {
+  const d = mkdtempSync(join(tmpdir(), 'dl-'));
+  try {
+    assert.equal(nonEmptyFileCount(d), 0);
+    writeFileSync(join(d, 'empty.mp4'), '');
+    assert.equal(nonEmptyFileCount(d), 0);
+    mkdirSync(join(d, 'sub'));
+    writeFileSync(join(d, 'sub', `${CANARY.title}.mp4`), 'x');
+    assert.equal(nonEmptyFileCount(d), 1);
+  } finally {
+    rmSync(d, { recursive: true, force: true });
+  }
+  assert.deepEqual(judgeDl({ status: 0, stdout: '' }, 0), { result: 'fail', kind: 'media_invalid' });
+  assert.deepEqual(judgeDl({ status: 0, stdout: '' }, 1), { result: 'pass', kind: null });
+  assert.deepEqual(judgeDl({ status: 1, stdout: '\n실패: HTTP 503' }, 0), { result: 'fail', kind: 'http_5xx' });
+  // dl은 --limit-mb로 멈추면 --keep 없이는 .part를 지운다: 그러면 실서버 dl이 늘 media_invalid다
+  const dl = readFileSync(join(ROOT, 'crates/core/examples/dl.rs'), 'utf8');
+  assert.match(dl, /"--keep" =>/);
+  assert.match(dl, /if !args\.keep \{\s*discard_partial/);
+  const a = dlArgs('https://chzzk.naver.com/video/1', '/tmp/x');
+  assert.ok(a.includes('--keep') && a.includes('--limit-mb'));
+});
+
+// 리뷰(G5): 빌드(의존성 build.rs·proc-macro)가 영상 번호 secret을 읽을 수 있었다
+test('buildEnv: CHZZK_LIVE_*와 RUST_LOG를 빼고 나머지는 둔다', () => {
+  const e = buildEnv({ PATH: '/bin', CHZZK_LIVE_HLS: '1', CHZZK_LIVE_DASH: '2', CHZZK_LIVE_CLIP: '3', chzzk_live_x: '4', RUST_LOG: 'debug', DRIFT_SIMULATE: 'none' });
+  assert.deepEqual(Object.keys(e).sort(), ['CARGO_TERM_COLOR', 'DRIFT_SIMULATE', 'PATH', 'RUST_BACKTRACE']);
+});
+
+// 리뷰(G5): 작업 제한(45분)이 스크립트 제한 합(빌드 2×30 + 실행 4×10)보다 짧아 시간 초과가 kind 없는 실패가 됐다
+test('drift 시간: 빌드·실행 제한 합 + 여유 ≤ nightly.yml drift 작업의 timeout-minutes', () => {
+  const body = parseJobs(readFileSync(join(ROOT, '.github/workflows/nightly.yml'), 'utf8')).drift.body.join('\n');
+  const minutes = Number(/^ {4}timeout-minutes: (\d+)/m.exec(body)?.[1]);
+  assert.ok(minutes > 0, 'drift 작업의 timeout-minutes를 읽지 못했다');
+  const worst = BUILD_STEPS * BUILD_TIMEOUT_MS + DRIFT_TESTS.length * RUN_TIMEOUT_MS + SETUP_MARGIN_MS;
+  assert.ok(worst <= minutes * 60 * 1000, `최악 ${worst / 60000}분 > 작업 제한 ${minutes}분`);
+});
+
+// 리뷰(G5): DRIFT_TESTS와 live.rs의 함수 이름을 잇는 것이 없었다(이름을 바꾸면 drift가 영원히 녹색)
+test('DRIFT_TESTS(dl 제외) = crates/core/tests/live.rs의 #[ignore] 테스트 함수 이름', () => {
+  const src = readFileSync(join(ROOT, 'crates/core/tests/live.rs'), 'utf8');
+  // #[ignore…] 뒤 속성들 다음의 (async) fn 이름
+  const ignored = [...src.matchAll(/#\[ignore\b[^\]]*\]\s*(?:#\[[^\]]*\]\s*)*(?:pub\s+)?(?:async\s+)?fn\s+([a-z0-9_]+)/g)].map((m) => m[1]).sort();
+  assert.deepEqual(ignored, DRIFT_TESTS.filter((t) => t !== 'dl').sort());
 });

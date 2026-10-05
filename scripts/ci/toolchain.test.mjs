@@ -26,16 +26,20 @@ test('toolchain.mjs: 고정값이 최신이면 0, 낮으면 1, 못 읽으면 2',
   const d = mkdtempSync(join(tmpdir(), 'tc-'));
   try {
     const pinned = pinnedChannel(readFileSync(join(ROOT, 'rust-toolchain.toml'), 'utf8'));
+    // 종료 코드와 GITHUB_OUTPUT kinds(이슈 kind: 제목이 원인을 단정하지 않는다, 리뷰 G5)
     const run = (text) => {
       const f = join(d, 's.toml');
+      const out = join(d, 'out');
       writeFileSync(f, text);
-      return spawnSync(process.execPath, [join(ROOT, 'scripts/ci/toolchain.mjs')], { env: { ...process.env, TOOLCHAIN_STABLE_TOML: f }, encoding: 'utf8' }).status;
+      writeFileSync(out, '');
+      const r = spawnSync(process.execPath, [join(ROOT, 'scripts/ci/toolchain.mjs')], { env: { ...process.env, TOOLCHAIN_STABLE_TOML: f, GITHUB_OUTPUT: out }, encoding: 'utf8' });
+      return `${r.status} ${readFileSync(out, 'utf8').trim()}`.trim();
     };
-    assert.equal(run(STABLE(pinned)), 0);
+    assert.equal(run(STABLE(pinned)), '0');
     const [a, b, c] = pinned.split('.').map(Number);
-    assert.equal(run(STABLE(`${a}.${b}.${c + 1}`)), 1);
-    assert.equal(run(STABLE(`${a}.${b + 1}.0`)), 1);
-    assert.equal(run('깨짐'), 2);
+    assert.equal(run(STABLE(`${a}.${b}.${c + 1}`)), '1 kinds=outdated');
+    assert.equal(run(STABLE(`${a}.${b + 1}.0`)), '1 kinds=outdated');
+    assert.equal(run('깨짐'), '2 kinds=network');
   } finally {
     rmSync(d, { recursive: true, force: true });
   }

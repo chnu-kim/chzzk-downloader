@@ -8,7 +8,7 @@ import { test } from 'node:test';
 import { readFileSync } from 'node:fs';
 
 import { ROOT } from './gates.mjs';
-import { assertPublishable, body, isStale, jobHistory, JOBS_JQ, KIND_NOTES, KINDS, label, lastJobSuccess, leadingFailures, loopStatuses, marker, masterStatus, NEEDS_LOOPS, refScope, reportLoop, report, runHistory, RUNS_JQ, scheduledWorkflows, sync, threshold, title, validate } from './issue.mjs';
+import { assertPublishable, body, isStale, REPORT_JOB_NAME, reportJobStatus, SCHEDULE_ONLY, jobHistory, JOBS_JQ, KIND_NOTES, KINDS, label, lastJobSuccess, leadingFailures, loopStatuses, marker, masterStatus, NEEDS_LOOPS, refScope, reportLoop, report, runHistory, RUNS_JQ, scheduledWorkflows, sync, threshold, title, validate } from './issue.mjs';
 import { parseJobs } from './parity.mjs';
 
 const REPO = 'o/r';
@@ -64,7 +64,7 @@ function fakeGh({ issues = [], jobs = '', workflows = {}, runs = {}, heads = { m
     // runHistory: 완료 실행 목록({id, event})과 실행별 작업 목록({name, conclusion, completed_at})
     if (a === 'api' && /\/runs\?/.test(b) && args.includes(RUNS_JQ)) {
       assert.match(b, /status=completed/);
-      return JSON.stringify((history.runs ?? []).map((r) => (typeof r === 'object' ? r : { id: Number(r), event: 'schedule' })));
+      return JSON.stringify((history.runs ?? []).map((r) => ({ head_repository: REPO, ...(typeof r === 'object' ? r : { id: Number(r), event: 'schedule' }) })));
     }
     if (a === 'api' && /\/runs\/\d+\/jobs\?/.test(b) && args.includes(JOBS_JQ)) {
       return JSON.stringify(history.jobs?.[b.split('/')[5]] ?? []);
@@ -197,7 +197,7 @@ test('report: 예약 워크플로 — 꺼졌으면 켜고, 72시간 넘게 성�
         'nightly.yml': { id: 1, state: 'disabled_inactivity', created_at: '2026-01-01T00:00:00Z' },
         'weekly.yml': { id: 2, state: 'active', created_at: '2026-01-01T00:00:00Z' },
       },
-      runs: { 'nightly.yml': '2026-10-04T12:00:00Z', 'weekly.yml': '2026-09-20T00:00:00Z' },
+      runs: { 'nightly.yml': '1001\t2026-10-04T12:00:00Z', 'weekly.yml': '1002\t2026-09-20T00:00:00Z' },
     });
     const env = { GITHUB_REPOSITORY: REPO, GITHUB_RUN_ID: '9', GITHUB_SHA: SHA, GITHUB_REF: 'refs/heads/master', CI_OK_RESULT: 'success' };
     assert.equal(report(env, fk.gh, { root, now }), 0);
@@ -487,4 +487,80 @@ test('reportLoop: 성공 기록이 없을 때 stale 기준은 워크플로 생�
   const old = fakeGh({ workflows: W, history: { runs: [{ id: 6, event: 'schedule', created_at: '2026-10-31T00:00:00Z' }, { id: 5, event: 'schedule', created_at: '2026-10-20T00:00:00Z' }] } });
   assert.equal(reportLoop({ ...env, NEEDS: needs }, old.gh, { now }), 0);
   assert.equal(old.issues.filter((i) => i.labels.includes(label('e2e-native-windows'))).length, 1);
+});
+
+// 리뷰(G5): PR 실행(fork의 master 브랜치 PR 포함)의 작업 성공이 매주 작업의 stale을 가렸다(37345297740의 Windows E2E)
+test('runHistory: 진짜 이름공간은 질의에 event=schedule을 붙이고, 다른 저장소(fork)·다른 event의 실행은 세지 않는다', () => {
+  const W = 'nightly e2e-native (windows)';
+  const ok = (t) => [{ name: W, conclusion: 'success', completed_at: t }];
+  const fk = fakeGh({
+    history: {
+      runs: [
+        { id: 9, event: 'pull_request', head_repository: 'fork/r' },
+        { id: 8, event: 'schedule', head_repository: 'fork/r' },
+        { id: 7, event: 'pull_request' },
+        { id: 6, event: 'workflow_dispatch' },
+        { id: 5, event: 'schedule' },
+      ],
+      jobs: { 9: ok('2026-10-09T00:00:00Z'), 8: ok('2026-10-08T00:00:00Z'), 7: ok('2026-10-07T00:00:00Z'), 6: ok('2026-10-06T00:00:00Z'), 5: ok('2026-10-01T00:00:00Z') },
+    },
+  });
+  const real = runHistory(fk.gh, { repo: REPO, workflow: 'nightly.yml', branch: 'master', events: SCHEDULE_ONLY });
+  assert.deepEqual(real.runs().map((r) => r.id), ['5']);
+  assert.equal(lastJobSuccess(real, { jobName: W }), '2026-10-01T00:00:00Z');
+  assert.ok(fk.calls.some(([a]) => a[0] === 'api' && /runs\?branch=master&event=schedule&status=completed/.test(a[1])));
+  // 시험 이름공간: pull_request만 빼고 dispatch는 센다. fork 실행은 여기서도 뺀다
+  const t = runHistory(fk.gh, { repo: REPO, workflow: 'nightly.yml', branch: 'ci/x' });
+  assert.deepEqual(t.runs().map((r) => r.id), ['6', '5']);
+  assert.equal(lastJobSuccess(t, { jobName: W }), '2026-10-06T00:00:00Z');
+});
+
+// 리뷰(G5): report 작업 자신의 실패(gh 오류·NEEDS 어긋남)는 아무도 보지 않았다
+test('reportLoop: 앞 실행의 nightly report가 실패면 nightly-report를 열고, 성공이면 닫는다', () => {
+  const env = { GITHUB_REPOSITORY: REPO, GITHUB_RUN_ID: '50', GITHUB_SHA: SHA, GITHUB_REF: 'refs/heads/master' };
+  const needs = JSON.stringify({ 'e2e-native-linux': { result: 'success' } });
+  const rep = (c) => [{ name: REPORT_JOB_NAME, conclusion: c, completed_at: null }];
+  const fk = fakeGh({ history: { runs: [{ id: 50, event: 'schedule' }, { id: 49, event: 'workflow_dispatch' }, { id: 48, event: 'schedule' }], jobs: { 50: rep('success'), 49: rep('success'), 48: rep('failure') } } });
+  assert.equal(reportLoop({ ...env, NEEDS: needs }, fk.gh), 0);
+  const nr = fk.issues.find((i) => i.labels.includes(label('nightly-report')));
+  assert.ok(nr && nr.open, '지금 실행(50)과 dispatch(49)는 빼고 앞 예약 실행(48)의 실패를 본다');
+  assert.match(nr.body, /`nightly report`/);
+  const h = (jobs) => runHistory(fakeGh({ history: { runs: [3, 2], jobs } }).gh, { repo: REPO, workflow: 'nightly.yml', branch: 'master', events: SCHEDULE_ONLY });
+  assert.equal(reportJobStatus(h({ 3: rep('success') }), { excludeRunId: '3' }), null, '앞 실행에 report가 없다');
+  assert.equal(reportJobStatus(h({ 2: rep('cancelled') }), { excludeRunId: '3' }), null);
+  assert.equal(reportJobStatus(h({ 2: rep('success') }), { excludeRunId: '3' }), 'ok');
+  const fk2 = fakeGh({ issues: fk.issues, history: { runs: [{ id: 51, event: 'schedule' }, { id: 50, event: 'schedule' }], jobs: { 50: rep('success') } } });
+  assert.equal(reportLoop({ ...env, GITHUB_RUN_ID: '51', NEEDS: needs }, fk2.gh), 0);
+  assert.equal(nr.open, false);
+});
+
+test('report(ci.yml): 마지막 예약 실행의 nightly report가 실패면 nightly-report를 연다(조용한 저장소에서는 push가 있어야 돈다)', () => {
+  const root = mkdtempSync(join(tmpdir(), 'report-'));
+  try {
+    mkdirSync(join(root, '.github/workflows'), { recursive: true });
+    writeFileSync(join(root, '.github/workflows/nightly.yml'), 'on:\n  schedule:\n    - cron: "17 18 * * *"\n');
+    const now = Date.parse('2026-10-05T00:00:00Z');
+    const fk = fakeGh({
+      workflows: { 'nightly.yml': { id: 1, state: 'active', created_at: '2026-01-01T00:00:00Z' } },
+      runs: { 'nightly.yml': '1001\t2026-10-04T12:00:00Z' },
+      history: { jobs: { 1001: [{ name: REPORT_JOB_NAME, conclusion: 'failure' }] } },
+    });
+    const env = { GITHUB_REPOSITORY: REPO, GITHUB_RUN_ID: '9', GITHUB_SHA: SHA, GITHUB_REF: 'refs/heads/master', CI_OK_RESULT: 'success' };
+    assert.equal(report(env, fk.gh, { root, now }), 0);
+    assert.equal(fk.issues.filter((i) => i.labels.includes(label('nightly-stale'))).length, 0, '스케줄러는 살아 있다');
+    const nr = fk.issues.find((i) => i.labels.includes(label('nightly-report')));
+    assert.ok(nr && nr.open);
+    assert.match(nr.body, /`nightly\.yml`/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// 리뷰(G5): 제목이 원인을 단정했다(조회 실패에도 '새 Rust stable이 나왔다')
+test('LOOPS 제목은 원인을 단정하지 않고, kind별 할 일 문구가 원인을 말한다', () => {
+  for (const loop of ['toolchain', 'advisories', 'ruleset-drift', 'fuzz', 'pins', 'mutants']) assert.match(title(loop), /검사가 실패했다/, loop);
+  assert.ok(body(validate({ loop: 'toolchain', status: 'fail', repo: REPO, kinds: ['outdated'] })).includes(KIND_NOTES.toolchain.outdated));
+  assert.equal(threshold(NEEDS_LOOPS.toolchain, ['network']), 2);
+  assert.equal(threshold(NEEDS_LOOPS.toolchain, ['outdated']), 1);
+  assert.equal(threshold(NEEDS_LOOPS['drift-log'], ['log_canary']), 1);
 });

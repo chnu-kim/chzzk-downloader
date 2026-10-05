@@ -27,6 +27,8 @@
 //               조건이 영원히 거짓이 되어 작업이 조용히 꺼진다).
 //   pr-paths    pull_request 트리거는 `paths:`를 쓰지 않고, `paths-ignore:`를 쓰면 run.mjs NON_CODE_GLOBS와 같다(코드 변경은
 //               ci.yml의 changes와 같은 기준으로 모두 돈다: 의존 파일을 손으로 나열하면 빠진다).
+//   mutants-scope  crates/의 .rs에 `mutants::skip`이 없고 `.cargo/mutants.toml`·`mutants.toml`이 없다. ratchet
+//               mutants_missed는 살아남은 수만 보므로, mutant를 범위에서 빼면 수가 줄어 조용히 통과한다(리뷰 G5).
 // 위반이 있으면 1, 없으면 0.
 
 import { spawnSync } from 'node:child_process';
@@ -345,6 +347,31 @@ function checkWorkflowShape(rel, text, add) {
   }
 }
 
+// cargo-mutants 범위를 줄이는 것(살아남은 mutant를 숨긴다). 바꾸려면 이 규칙과 ratchet을 함께 고치는 PR로 한다.
+export const MUTANTS_SKIP = /\bmutants\s*::\s*skip\b/;
+export const MUTANTS_CONFIGS = ['.cargo/mutants.toml', 'mutants.toml'];
+function rsFiles(dir) {
+  if (!existsSync(dir)) return [];
+  const out = [];
+  for (const e of readdirSync(dir, { withFileTypes: true })) {
+    if (e.name === 'target') continue;
+    const p = join(dir, e.name);
+    if (e.isDirectory()) out.push(...rsFiles(p));
+    else if (e.isFile() && e.name.endsWith('.rs')) out.push(p);
+  }
+  return out;
+}
+function checkMutantsScope(root, add) {
+  for (const f of MUTANTS_CONFIGS) if (existsSync(join(root, f))) add(f, 0, 'mutants-scope', `${f}가 있다: cargo-mutants 범위를 줄이면 ratchet mutants_missed가 살아남은 mutant를 놓친다`);
+  for (const p of rsFiles(join(root, 'crates'))) {
+    readFileSync(p, 'utf8')
+      .split('\n')
+      .forEach((l, i) => {
+        if (MUTANTS_SKIP.test(l)) add(p.slice(root.length + 1).split('\\').join('/'), i + 1, 'mutants-scope', 'mutants::skip은 쓰지 않는다(살아남은 mutant를 숨긴다). 테스트로 잡는다');
+      });
+  }
+}
+
 export function checkParity(root) {
   const out = [];
   const add = (file, line, rule, msg) => out.push({ file, line, rule, msg });
@@ -388,6 +415,7 @@ export function checkParity(root) {
   if (files.includes('ci.yml') && inCi.length !== 1) add('.github/workflows/ci.yml', 0, 'ci-ok', `ci-ok 작업이 ${inCi.length}개다(1개여야 한다)`);
 
   checkHooks(root, add, ciGates);
+  checkMutantsScope(root, add);
   return out;
 }
 

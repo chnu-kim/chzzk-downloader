@@ -307,6 +307,11 @@ export const GATES = {
     needs: ['gh'],
     steps: [{ cmd: ['node', S('repo-settings.mjs'), '--check'] }],
   },
+  'fuzz-lock': {
+    desc: 'fuzz/Cargo.lock이 최신(cargo metadata --locked)이고 루트 Cargo.lock과 같은 버전인지, fuzz target이 stable로 컴파일되는지(cargo check, PR lint)',
+    needs: ['cargo'],
+    steps: [{ cmd: ['node', S('fuzz.mjs'), '--lock-check'] }],
+  },
   fuzz: {
     desc: 'cargo-fuzz 4 target(url·info·mpd·hls), 고정 nightly(tools.json rust-nightly), seed는 testdata 합성 fixture, target당 FUZZ_SECONDS(기본 300)초',
     needs: ['cargo', 'rustup', 'cargo-fuzz'],
@@ -360,6 +365,8 @@ export const HOOKS = {
       { gate: 'frontend', paths: [/^app\/(?!src-tauri\/)/] },
       { gate: 'scripts-test', paths: [/^scripts\//, /^\.githooks\//, /^\.gitattributes$/] },
       { gate: 'deny', paths: [/^Cargo\.lock$/, /^deny\.toml$/, /(^|\/)Cargo\.toml$/] },
+      // 코어 API 변경이 fuzz target을 깨뜨린다(crates/core)
+      { gate: 'fuzz-lock', paths: [/^Cargo\.lock$/, /(^|\/)Cargo\.toml$/, /^fuzz\//, /^crates\/core\//] },
     ],
   },
 };

@@ -183,11 +183,12 @@ test('hookGates: 바뀐 경로로 조건부 gate를 고른다', () => {
   assert.deepEqual(hookGates('pre-commit', ['testdata/hls/a.m3u8']), ['typos', 'fixtures']);
   assert.deepEqual(hookGates('pre-commit', []), []);
   assert.deepEqual(hookGates('pre-push', ['docs/x.md']), []);
-  assert.deepEqual(hookGates('pre-push', ['crates/core/src/lib.rs']), ['rust']);
+  assert.deepEqual(hookGates('pre-push', ['crates/core/src/lib.rs']), ['rust', 'fuzz-lock']);
   assert.deepEqual(hookGates('pre-push', ['app/src/App.svelte']), ['frontend']);
   assert.deepEqual(hookGates('pre-push', ['app/src-tauri/src/lib.rs']), []);
   assert.deepEqual(hookGates('pre-push', ['scripts/ci/run.mjs']), ['scripts-test']);
-  assert.deepEqual(hookGates('pre-push', ['Cargo.lock']), ['rust', 'deny']);
+  assert.deepEqual(hookGates('pre-push', ['Cargo.lock']), ['rust', 'deny', 'fuzz-lock']);
+  assert.deepEqual(hookGates('pre-push', ['fuzz/fuzz_targets/url.rs']), ['fuzz-lock']);
   // 훅·.gitattributes만 바뀌어도 parity(인덱스 모드 100755 등)를 본다
   assert.deepEqual(hookGates('pre-push', ['.githooks/pre-push']), ['scripts-test']);
   assert.deepEqual(hookGates('pre-push', ['.gitattributes']), ['scripts-test']);

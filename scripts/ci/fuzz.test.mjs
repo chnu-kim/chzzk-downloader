@@ -33,3 +33,13 @@ test('seconds·nightly 핀: 1~3600 정수만, 날짜가 박힌 nightly', () => {
   for (const bad of ['0', '3601', '1.5', '-1', 'x', '']) assert.equal(seconds({ FUZZ_SECONDS: bad }), null, bad);
   assert.match(NIGHTLY, /^nightly-\d{4}-\d{2}-\d{2}$/);
 });
+
+test('lockDrift: 루트에도 있는 패키지는 같은 버전이어야 하고, fuzz 전용은 무관, 지금 저장소의 두 lock은 같다', async () => {
+  const { lockDrift, lockPackages } = await import('./fuzz.mjs');
+  const pkg = (n, v) => `[[package]]\nname = "${n}"\nversion = "${v}"\nsource = "registry+https://github.com/rust-lang/crates.io-index"\n`;
+  const root = 'version = 4\n\n' + pkg('url', '2.5.8') + pkg('serde', '1.0.229') + pkg('syn', '1.0.109') + pkg('syn', '2.0.1');
+  assert.deepEqual(lockDrift(root, pkg('url', '2.5.8') + pkg('libfuzzer-sys', '0.4.13') + pkg('syn', '2.0.1')), []);
+  assert.deepEqual(lockDrift(root, pkg('url', '2.5.7') + pkg('serde', '1.0.229')), ['url@2.5.7'], 'fuzz가 낡은 파서 의존성을 쓴다');
+  assert.deepEqual([...lockPackages(root).get('syn')].sort(), ['1.0.109', '2.0.1']);
+  assert.deepEqual(lockDrift(readFileSync(join(ROOT, 'Cargo.lock'), 'utf8'), readFileSync(join(ROOT, 'fuzz/Cargo.lock'), 'utf8')), []);
+});

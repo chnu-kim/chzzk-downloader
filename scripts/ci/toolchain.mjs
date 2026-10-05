@@ -7,8 +7,10 @@
 //   env TOOLCHAIN_STABLE_TOML=<파일>         # 테스트용: 네트워크 대신 이 파일
 //
 // 종료: 최신 0, 새 stable 있음 1, 입력·네트워크 오류 2.
+// GITHUB_OUTPUT kinds: 1이면 outdated, 2이면 network(입력 오류도 2지만 고정 파일이라 CI에서는 조회 실패다). nightly report가
+// 이슈 kind로 쓴다(제목이 원인을 단정하지 않고, network는 2회 연속에만 연다: issue.mjs NEEDS_LOOPS).
 
-import { readFileSync, realpathSync } from 'node:fs';
+import { appendFileSync, readFileSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -39,6 +41,13 @@ export function cmp(a, b) {
 }
 
 export async function main(argv, env = process.env) {
+  const code = await check(argv, env);
+  const kind = { 1: 'outdated', 2: 'network' }[code];
+  if (env.GITHUB_OUTPUT && kind) appendFileSync(env.GITHUB_OUTPUT, `kinds=${kind}\n`);
+  return code;
+}
+
+async function check(argv, env) {
   if (argv.length) {
     console.error('사용법: toolchain.mjs');
     return 2;

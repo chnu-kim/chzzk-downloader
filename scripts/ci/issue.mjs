@@ -24,12 +24,15 @@ export const LOOPS = {
   'master-failure': 'master CI(ci-ok)가 실패했다',
   'nightly-stale': '예약 워크플로가 72시간 넘게 예약 실행을 끝내지 못했다',
   drift: '실서버 drift 검사가 실패했다',
-  advisories: '의존성 보안 권고가 있다',
-  fuzz: 'fuzz가 crash를 찾았다',
-  mutants: '살아남은 mutant가 늘었다',
-  'ruleset-drift': '저장소 ruleset·설정이 선언과 다르다',
-  toolchain: '새 Rust stable이 나왔다',
-  pins: '워크플로 핀 SHA 또는 온라인 audit이 어긋났다',
+  'drift-log': 'drift 작업 로그 검사가 실패했다(공개 로그 위생)',
+  'nightly-report': '예약 워크플로의 고리 보고 작업(nightly report)이 실패했다',
+  // 제목은 원인을 단정하지 않는다(네트워크 오류도 같은 작업 실패다). 원인은 본문의 종류(kind)와 할 일 문구가 말한다
+  advisories: '의존성 보안 권고 검사가 실패했다',
+  fuzz: 'fuzz 검사가 실패했다',
+  mutants: '살아남은 mutant 검사가 실패했다',
+  'ruleset-drift': '저장소 ruleset·설정 검사가 실패했다',
+  toolchain: '툴체인 검사가 실패했다',
+  pins: '워크플로 핀 SHA·온라인 audit 검사가 실패했다',
   release: '릴리스 파이프라인이 실패했다',
   'e2e-native-linux': '예약 네이티브 E2E(Linux, 매일)가 실패했다',
   'e2e-native-windows': '예약 네이티브 E2E(Windows, 매주)가 실패했거나 오래 돌지 않았다',
@@ -45,14 +48,19 @@ export const NEEDS_LOOPS = {
   'e2e-native-linux': { name: 'nightly e2e-native (linux)', staleHours: 72 },
   'e2e-native-windows': { name: 'nightly e2e-native (windows)', staleHours: 8 * 24 },
   drift: { name: 'nightly drift', staleHours: 72, consecutive: 2, consecutiveKinds: { no_target: 3 } },
+  // drift 작업 로그의 canary·허용 밖 줄(drift.mjs checkDriftLog). 로그를 받지 못한 것(network)은 한 번은 넘긴다
+  'drift-log': { name: 'nightly drift-log', staleHours: 72, consecutiveKinds: { network: 2 } },
   advisories: { name: 'nightly advisories', staleHours: 72 },
   pins: { name: 'nightly pins', staleHours: 72 },
   'ruleset-drift': { name: 'nightly ruleset-drift', staleHours: 72 },
   fuzz: { name: 'nightly fuzz', staleHours: 72 },
-  toolchain: { name: 'nightly toolchain', staleHours: 8 * 24 },
+  toolchain: { name: 'nightly toolchain', staleHours: 8 * 24, consecutiveKinds: { network: 2 } },
   mutants: { name: 'nightly mutants', staleHours: 8 * 24 },
 };
 export const LOOP_WORKFLOW = 'nightly.yml';
+// 예약 워크플로에서 고리를 보고하는 작업의 표시 이름. 그 작업 자신의 실패는 다음 보고(다음 예약 실행의 report-loop, master
+// push의 ci.yml report)가 nightly-report 고리로 본다(감시자를 감시한다).
+export const REPORT_JOB_NAME = 'nightly report';
 export const KINDS = [
   'build',
   'test',
@@ -68,6 +76,10 @@ export const KINDS = [
   'stale',
   'network',
   'settings_mismatch',
+  'log_canary',
+  'log_shape',
+  'outdated',
+  'crash',
   'unknown',
 ];
 // 고리·kind마다 이슈에 붙이는 고정 문구(자유 문자열이 아니다). 사람이 할 일을 알려 준다.
@@ -77,6 +89,18 @@ export const KIND_NOTES = {
     no_target: 'drift 대상 secret이 없다: 환경 drift에 CHZZK_LIVE_HLS·CHZZK_LIVE_DASH·CHZZK_LIVE_CLIP을 넣는다(docs/design/cicd.md §8)',
     auth: '실서버가 인증을 요구했다: 대상이 본인 공개 영상인지 확인한다',
     schema_mismatch: '치지직 응답 형식이 바뀌었을 수 있다: 코어 파서(info·mpd·hls)를 확인한다',
+  },
+  'drift-log': {
+    log_canary: '공개된 drift 작업 로그에 합성 canary(또는 서버 응답)가 보였다: 이 실행의 로그를 사람이 지우고(실행 화면의 Delete all logs), drift.mjs의 출력 경로를 고친다',
+    log_shape: 'drift 작업 로그에 허용 모양 밖의 줄이 있다: 실행 로그에서 그 줄 번호를 보고, 서버 응답이면 로그를 지우고 출력 경로를 고치며, 무해한 도구 출력이면 drift.mjs LOG_ALLOW에 모양을 더한다',
+  },
+  toolchain: {
+    outdated: '새 Rust stable이 나왔다: rust-toolchain.toml channel을 올리고 CI(rust·tauri·coverage)가 녹색인지 본다',
+    network: 'static.rust-lang.org를 읽지 못했다(연속 2회): 네트워크·배포 서버 상태를 본다',
+  },
+  fuzz: {
+    build: 'fuzz target이 컴파일되지 않는다: 코어 API 변경을 fuzz/fuzz_targets에 반영한다(PR의 fuzz-lock gate가 같은 검사를 stable로 한다)',
+    crash: 'fuzz가 crash·timeout 입력을 찾았다: 실행의 artifact fuzz-artifacts를 받아 재현하고 코어를 고친다',
   },
   'ruleset-drift': {
     auth: '이 토큰으로는 저장소 설정을 읽을 수 없다: 저장소 Administration 읽기 권한의 fine-grained PAT를 환경 audit의 secret RULESET_READ_TOKEN으로 넣는다(docs/design/cicd.md §8)',
@@ -222,6 +246,8 @@ export function isStale({ lastSuccess, created }, now, hours = STALE_HOURS) {
   return now - t > limit;
 }
 
+// 마지막 완료 예약 실행 → "id<TAB>updated_at"(없으면 빈 줄)
+export const LAST_RUN_JQ = '.workflow_runs[0] // {} | [(.id // "" | tostring), (.updated_at // "")] | @tsv';
 const notFound = (e) => /HTTP 404|Not Found/.test(`${e.message}\n${e.stderr ?? ''}`);
 
 // master-failure 상태(순수). ci-ok가 success가 아니거나, D14 관찰 작업(OBSERVED_JOBS, ci-ok에 없다)이 실패·취소됐으면
@@ -297,6 +323,7 @@ export function report(env, gh, { root = ROOT, now = Date.now(), deny } = {}) {
   // 2. 예약 워크플로: 꺼졌으면 켜고(keep-alive), 72시간 넘게 완료된 예약 실행이 없으면 nightly-stale
   step('nightly-stale', () => {
     const stale = [];
+    let reportStatus = null;
     const files = scheduledWorkflows(root);
     if (!files.length) console.log('예약 워크플로 없음(nightly.yml은 G5에서 생긴다)');
     for (const f of files) {
@@ -317,13 +344,24 @@ export function report(env, gh, { root = ROOT, now = Date.now(), deny } = {}) {
       // 워크플로 전체의 성공이 아니라 **완료된 마지막 예약 실행**을 본다(G5, 구현 중 변경 49): 예약 워크플로에는 설계상
       // 빨간 작업이 있다(drift no_target, 새 stable이 나온 toolchain, crash를 찾은 fuzz). 그 작업들의 건강은 작업별 고리
       // (report-loop, staleHours 포함)가 보고, 여기서는 스케줄러가 살아 있는지만 본다.
-      const last = gh(['api', `repos/${repo}/actions/workflows/${f}/runs?branch=master&event=schedule&status=completed&per_page=1`, '--jq', '.workflow_runs[0].updated_at // ""']).trim();
+      const [lastId = '', last = ''] = gh(['api', `repos/${repo}/actions/workflows/${f}/runs?branch=master&event=schedule&status=completed&per_page=1`, '--jq', LAST_RUN_JQ]).trim().split('\t');
       const s = isStale({ lastSuccess: last || null, created: wf.created_at ?? null }, now);
       console.log(`${f}: 마지막 완료 예약 실행 ${last || '없음'} → ${s ? 'stale' : 'ok'}`);
       if (s) stale.push(f);
+      // 감시자 감시(nightly.yml만: report 작업이 있는 예약 워크플로): 그 실행의 report 작업 자신이 실패했는가
+      if (f === LOOP_WORKFLOW && /^\d+$/.test(lastId)) {
+        const c = (JSON.parse(gh(['api', `repos/${repo}/actions/runs/${lastId}/jobs?per_page=100`, '--jq', JOBS_JQ]) || '[]') ?? []).find((j) => j.name === REPORT_JOB_NAME)?.conclusion;
+        const st = c === 'failure' || c === 'timed_out' ? 'fail' : c === 'success' ? 'ok' : null;
+        console.log(`${f}: 그 실행의 '${REPORT_JOB_NAME}' ${c ?? '없음'} → ${st ?? '판단 없음'}`);
+        if (st) reportStatus = st;
+      }
     }
     const r = sync({ loop: 'nightly-stale', status: stale.length ? 'fail' : 'ok', repo, runUrl, sha, workflows: stale, test: scope?.test !== false }, gh, deny);
     console.log(`${label('nightly-stale', scope?.test !== false)}: ${r.action} ${r.numbers.join(',')}`);
+    if (reportStatus) {
+      const r2 = sync({ loop: 'nightly-report', status: reportStatus, repo, runUrl, sha, jobs: reportStatus === 'fail' ? [REPORT_JOB_NAME] : [], workflows: [LOOP_WORKFLOW], test: scope?.test !== false }, gh, deny);
+      console.log(`${label('nightly-report', scope?.test !== false)}: ${reportStatus} → ${r2.action} ${r2.numbers.join(',')}`);
+    }
   });
   return bad ? 1 : 0;
 }
@@ -360,16 +398,25 @@ export function threshold(spec, kinds) {
 
 // branch의 workflow 완료 실행 기록. 실행 목록과 실행별 작업 목록을 한 번씩만 읽어(report-loop가 고리 여럿에 나눠 쓴다)
 // API 호출 수를 고리 수와 무관하게 둔다. 실행은 새것부터다.
-export const RUNS_JQ = '[.workflow_runs[] | {id, event, created_at}]';
+// 셀 실행(연속 횟수·마지막 성공·관찰 시작 모두): 이 저장소에서 온 실행(head_repository)만이고, events가 있으면 그 event만
+// (진짜 이름공간 = ['schedule']: 질의에 event=schedule을 붙여 PR·dispatch 실행이 30개 창을 채우지 못하게 한다), 없으면
+// pull_request만 뺀다(시험 이름공간). API의 branch 필터는 head_branch를 보므로 fork의 `master` 브랜치에서 연 PR도
+// branch=master에 나온다(리뷰 G5: PR 실행의 Windows E2E 성공이 매주 작업의 stale을 가렸다, 37345297740).
+export const RUNS_JQ = '[.workflow_runs[] | {id, event, created_at, head_repository: .head_repository.full_name}]';
 export const JOBS_JQ = '[.jobs[] | {name, conclusion, completed_at}]';
-export function runHistory(gh, { repo, workflow, branch, runs = 30 }) {
+export const SCHEDULE_ONLY = ['schedule'];
+export function runHistory(gh, { repo, workflow, branch, runs = 30, events = null }) {
   let list = null;
   const jobs = new Map();
+  const only = events?.length === 1 ? `&event=${encodeURIComponent(events[0])}` : '';
   return {
     runs() {
       if (!list) {
-        const out = gh(['api', `repos/${repo}/actions/workflows/${workflow}/runs?branch=${encodeURIComponent(branch)}&status=completed&per_page=${runs}`, '--jq', RUNS_JQ]);
-        list = (JSON.parse(out || '[]') ?? []).filter((r) => Number.isInteger(r?.id)).map((r) => ({ id: String(r.id), event: r.event, created_at: r.created_at ?? null }));
+        const out = gh(['api', `repos/${repo}/actions/workflows/${workflow}/runs?branch=${encodeURIComponent(branch)}${only}&status=completed&per_page=${runs}`, '--jq', RUNS_JQ]);
+        list = (JSON.parse(out || '[]') ?? [])
+          .filter((r) => Number.isInteger(r?.id) && r.head_repository === repo)
+          .filter((r) => (events ? events.includes(r.event) : r.event !== 'pull_request'))
+          .map((r) => ({ id: String(r.id), event: r.event, created_at: r.created_at ?? null }));
       }
       return list;
     },
@@ -381,13 +428,12 @@ export function runHistory(gh, { repo, workflow, branch, runs = 30 }) {
 }
 
 // 작업 jobName이 돈(skipped가 아닌) 실행의 conclusion 목록(새것부터). excludeRunId는 지금 실행.
-// events: 셀 실행의 event. 진짜 이름공간(master)은 예약 실행만 센다(dispatch, 특히 simulate의 합성 결과가 실제 연속을
-// 늘이거나 끊지 않게). 시험 이름공간(브랜치)은 pull_request만 뺀다(브랜치 dispatch로 고리를 확인한다).
-export function jobHistory(h, { jobName, excludeRunId, events = null }) {
+// 셀 실행은 runHistory의 events가 정한다: 진짜 이름공간(master)은 예약 실행만 센다(dispatch, 특히 simulate의 합성 결과가
+// 실제 연속을 늘이거나 끊지 않게). 시험 이름공간(브랜치)은 pull_request만 뺀다(브랜치 dispatch로 고리를 확인한다).
+export function jobHistory(h, { jobName, excludeRunId }) {
   const out = [];
   for (const r of h.runs()) {
     if (r.id === String(excludeRunId)) continue;
-    if (events ? !events.includes(r.event) : r.event === 'pull_request') continue;
     const c = h.jobs(r.id).find((j) => j.name === jobName)?.conclusion;
     if (c && c !== 'skipped') out.push(c);
   }
@@ -415,6 +461,12 @@ export function lastJobSuccess(h, { jobName }) {
 }
 
 // 건너뛴 작업이 staleHours 넘게 성공하지 못했는지. 워크플로가 기본 브랜치에 없으면(404) false.
+// 바로 앞 실행(지금 실행 제외)에서 report 작업 자신의 결과 → 'fail' | 'ok' | null(돌지 않았거나 취소)
+export function reportJobStatus(h, { excludeRunId } = {}) {
+  const c = jobHistory(h, { jobName: REPORT_JOB_NAME, excludeRunId })[0];
+  return c === 'failure' || c === 'timed_out' ? 'fail' : c === 'success' ? 'ok' : null;
+}
+
 function skippedStale(gh, h, { repo, branch, loop, now, loops }) {
   const { name, staleHours } = loops[loop];
   let wf;
@@ -460,13 +512,16 @@ export function reportLoop(env, gh, { deny, now = Date.now(), loops = NEEDS_LOOP
   }
   const runUrl = `https://github.com/${repo}/actions/runs/${env.GITHUB_RUN_ID}`;
   let bad = 0;
-  const h = runHistory(gh, { repo, workflow: LOOP_WORKFLOW, branch: scope.branch });
+  // 이름공간마다 셀 실행이 다르다(runHistory): 진짜는 예약 실행만, 시험은 pull_request만 뺀다. 필요할 때만 읽는다
+  const hs = {};
+  const hist = (test) => (hs[test] ??= runHistory(gh, { repo, workflow: LOOP_WORKFLOW, branch: scope.branch, events: test ? null : SCHEDULE_ONLY }));
   for (const { loop, status: st, kinds: k, simulated } of sts) {
     try {
       let status = st;
       let kinds = k;
       // 합성 결과(simulate)는 master에서도 시험 이름공간에만 쓴다(G4 48 (라)와 같은 종류: 시험이 진짜 이슈를 닫지 않게)
       const test = scope.test || simulated;
+      const h = hist(test);
       if (simulated && !scope.test) console.log(`${loop}: 합성 결과(simulate) — 시험 이름공간(${label(loop, true)})에만 쓴다`);
       if (!status) {
         // 건너뜀: 마지막 성공이 오래됐으면 fail(stale), 아니면 이슈를 건드리지 않는다(매주 도는 Windows가 건너뛴 날 닫지 않는다)
@@ -477,7 +532,7 @@ export function reportLoop(env, gh, { deny, now = Date.now(), loops = NEEDS_LOOP
         // 연속 실패 규칙(drift 2회, no_target 3회): 문턱 아래면 이슈를 열지도, 댓글을 달지도, 닫지도 않는다
         const need = threshold(loops[loop], kinds);
         if (need > 1) {
-          const prior = leadingFailures(jobHistory(h, { jobName: loops[loop].name, excludeRunId: env.GITHUB_RUN_ID, events: test ? null : ['schedule'] }));
+          const prior = leadingFailures(jobHistory(h, { jobName: loops[loop].name, excludeRunId: env.GITHUB_RUN_ID }));
           const n = Math.min(prior + 1, need);
           console.log(`${loop}: 실패 ${kinds.join(',') || '-'} — 연속 ${prior + 1}회(문턱 ${need}회)`);
           if (n < need) continue;
@@ -489,6 +544,18 @@ export function reportLoop(env, gh, { deny, now = Date.now(), loops = NEEDS_LOOP
       bad++;
       console.error(`::error::report-loop ${loop}: ${e.message}`);
     }
+  }
+  // 감시자 감시: 앞 실행의 report 작업 자신이 실패했으면(gh 오류, NEEDS 어긋남 등) nightly-report를 연다. 성공이면 닫는다
+  try {
+    const st = reportJobStatus(hist(scope.test), { excludeRunId: env.GITHUB_RUN_ID });
+    console.log(`nightly-report: 앞 실행의 '${REPORT_JOB_NAME}' → ${st ?? '판단 없음(돌지 않음·취소)'}`);
+    if (st) {
+      const r = sync({ loop: 'nightly-report', status: st, repo, runUrl, sha: env.GITHUB_SHA, jobs: st === 'fail' ? [REPORT_JOB_NAME] : [], test: scope.test }, gh, deny);
+      console.log(`${label('nightly-report', scope.test)}: ${st} → ${r.action} ${r.numbers.join(',')}`);
+    }
+  } catch (e) {
+    bad++;
+    console.error(`::error::report-loop nightly-report: ${e.message}`);
   }
   return bad ? 1 : 0;
 }

@@ -2,15 +2,22 @@
 // cargo-fuzz 4 target(docs/design/cicd.md §2 `fuzz`, 구현 중 변경 54). `node scripts/ci/run.mjs fuzz`가 부른다.
 //
 //   env FUZZ_SECONDS   target마다 시간(초, 기본 300, 1~3600)
+//   node scripts/ci/fuzz.mjs --lock-check   # (gate fuzz-lock, PR lint) fuzz/Cargo.lock이 최신이고 루트 Cargo.lock과 같은
+//                                           # 버전을 쓰는지, fuzz target이 기본(stable) 툴체인으로 컴파일되는지(cargo check,
+//                                           # nightly·sanitizer 없음) 본다. lock 다시 만들기:
+//                                           #   cp Cargo.lock fuzz/Cargo.lock && (cd fuzz && cargo metadata --format-version 1 >/dev/null)
 //
 // 1. fuzz/Cargo.lock이 최신인지 본다(`cargo metadata --locked`: cargo fuzz에는 --locked가 없다).
+// 1'. `cargo fuzz build`로 모든 target을 먼저 빌드한다. 여기서 실패하면 kind build(crash가 아니다).
 // 2. target마다 seed corpus를 target/ci/fuzz/corpus/<t>에 만든다: testdata/의 합성 fixture(실제 응답이 아니다)와 고정 주소 몇 개.
 // 3. `cargo +<nightly> fuzz run <t> <corpus> -- -max_total_time=<s>`. crash·timeout·oom 입력은 target/ci/fuzz/artifacts/<t>/에
 //    남고(합성 seed에서 변이한 입력이라 공개해도 된다) 워크플로가 artifact로 올린다.
 // 모든 target이 끝까지 돈다. 하나라도 실패하면 1, 입력 오류 2. 툴체인은 tools.json의 rust-nightly(gate의 첫 단계가 깐다).
+// GITHUB_OUTPUT kinds: lock·빌드 실패는 build, 실행 실패(crash·timeout·oom 입력, 비정상 종료)는 crash(nightly report가 이슈
+// kind로 쓴다).
 
 import { spawnSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -43,6 +50,56 @@ export const URL_SEEDS = [
   'ftp://chzzk.naver.com/video/1',
 ];
 
+// Cargo.lock 본문 → Map(이름 → Set(버전))
+export function lockPackages(text) {
+  const m = new Map();
+  for (const block of text.split('[[package]]').slice(1)) {
+    const n = /^name = "([^"]+)"/m.exec(block)?.[1];
+    const v = /^version = "([^"]+)"/m.exec(block)?.[1];
+    if (!n || !v) continue;
+    if (!m.has(n)) m.set(n, new Set());
+    m.get(n).add(v);
+  }
+  return m;
+}
+
+// fuzz lock의 패키지 중 루트 lock에도 이름이 있는 것은 같은 버전이어야 한다(fuzz가 앱이 쓰는 것보다 낡은 파서를 시험하지
+// 않게). 루트에 이름이 없는 것(libfuzzer-sys·arbitrary·chzzk-fuzz)은 fuzz 전용이다. → 어긋난 "이름@버전" 목록
+export function lockDrift(rootText, fuzzText) {
+  const root = lockPackages(rootText);
+  const out = [];
+  for (const [n, vs] of lockPackages(fuzzText)) {
+    if (!root.has(n)) continue;
+    for (const v of vs) if (!root.get(n).has(v)) out.push(`${n}@${v}`);
+  }
+  return out.sort();
+}
+
+export const LOCK_FIX = 'cp Cargo.lock fuzz/Cargo.lock && (cd fuzz && cargo metadata --format-version 1 >/dev/null)';
+function lockCheck() {
+  // 기본 툴체인(rust-toolchain.toml)으로 충분하다: metadata는 컴파일하지 않는다. 출력(JSON)은 크고 쓸모없어 버린다
+  const r = spawnSync('cargo', ['metadata', '--locked', '--format-version', '1', '--manifest-path', 'fuzz/Cargo.toml'], { cwd: ROOT, stdio: ['ignore', 'ignore', 'inherit'] });
+  if (r.status !== 0) {
+    console.error(`::error::fuzz-lock: fuzz/Cargo.lock이 최신이 아니다(코어 의존성이 바뀌었다). 다시 만들기: ${LOCK_FIX}`);
+    return 1;
+  }
+  const drift = lockDrift(readFileSync(join(ROOT, 'Cargo.lock'), 'utf8'), readFileSync(join(ROOT, 'fuzz/Cargo.lock'), 'utf8'));
+  if (drift.length) {
+    console.error(`::error::fuzz-lock: fuzz/Cargo.lock의 버전이 루트 Cargo.lock과 다르다: ${drift.join(', ')}. 다시 만들기: ${LOCK_FIX}`);
+    return 1;
+  }
+  console.log('fuzz-lock: fuzz/Cargo.lock이 최신이고 루트와 같은 버전이다');
+  // target 컴파일(리뷰 G5: fuzz/는 워크스페이스 밖이라 PR의 clippy·test가 보지 않아, 코어 API 변경이 녹색으로 머지되고 다음
+  // nightly가 crash로 보고했다). check는 libfuzzer-sys의 C++도 빌드 스크립트로 컴파일한다(로컬 약 25초)
+  const c = spawnSync('cargo', ['check', '--manifest-path', 'fuzz/Cargo.toml', '--locked', '--bins'], { cwd: ROOT, stdio: 'inherit' });
+  if (c.status !== 0) {
+    console.error('::error::fuzz-lock: fuzz target(fuzz/fuzz_targets)이 컴파일되지 않는다. 코어 API 변경을 반영한다');
+    return 1;
+  }
+  console.log('fuzz-lock: fuzz target 4개가 컴파일된다');
+  return 0;
+}
+
 export function seconds(env = process.env) {
   const v = env.FUZZ_SECONDS ?? '300';
   if (!/^\d{1,4}$/.test(v) || Number(v) < 1 || Number(v) > 3600) return null;
@@ -60,8 +117,9 @@ function prepareCorpus(t) {
 }
 
 export function main(argv, env = process.env) {
+  if (argv.length === 1 && argv[0] === '--lock-check') return lockCheck();
   if (argv.length) {
-    console.error('사용법: fuzz.mjs (env FUZZ_SECONDS)');
+    console.error('사용법: fuzz.mjs [--lock-check] (env FUZZ_SECONDS)');
     return 2;
   }
   const secs = seconds(env);
@@ -70,9 +128,20 @@ export function main(argv, env = process.env) {
     return 2;
   }
   const tc = `+${NIGHTLY}`;
+  const kinds = (k) => {
+    if (env.GITHUB_OUTPUT) appendFileSync(env.GITHUB_OUTPUT, `kinds=${k}\n`);
+  };
   const lock = spawnSync('cargo', [tc, 'metadata', '--locked', '--format-version', '1', '--manifest-path', 'fuzz/Cargo.toml'], { cwd: ROOT, stdio: ['ignore', 'ignore', 'inherit'] });
   if (lock.status !== 0) {
-    console.error('::error::fuzz: fuzz/Cargo.lock이 최신이 아니다(cd fuzz && cargo +<nightly> metadata로 갱신해 커밋한다)');
+    console.error(`::error::fuzz: fuzz/Cargo.lock이 최신이 아니다. 다시 만들기: ${LOCK_FIX}`);
+    kinds('build');
+    return 1;
+  }
+  // 실행 전에 모두 빌드한다: 빌드 실패를 crash로 보고하지 않는다(cargo fuzz run은 같은 설정이라 다시 빌드하지 않는다)
+  const b = spawnSync('cargo', [tc, 'fuzz', 'build', '--fuzz-dir', 'fuzz'], { cwd: ROOT, stdio: 'inherit' });
+  if (b.status !== 0) {
+    console.error(`::error::fuzz: target 빌드 실패(exit ${b.status ?? b.signal}) — crash가 아니다`);
+    kinds('build');
     return 1;
   }
   const failed = [];
@@ -95,6 +164,7 @@ export function main(argv, env = process.env) {
   if (env.GITHUB_STEP_SUMMARY) {
     writeFileSync(env.GITHUB_STEP_SUMMARY, `### fuzz (${NIGHTLY}, target당 ${secs}초)\n\n${TARGETS.map((t) => `- \`${t}\`: ${failed.includes(t) ? '실패' : '통과'}`).join('\n')}\n`, { flag: 'a' });
   }
+  if (failed.length) kinds('crash');
   return failed.length ? 1 : 0;
 }
 

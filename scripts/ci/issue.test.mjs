@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
-import { assertPublishable, body, isStale, label, loopStatus, marker, masterStatus, reportLoop, report, scheduledWorkflows, sync, title, validate } from './issue.mjs';
+import { assertPublishable, body, isStale, label, loopStatuses, marker, masterStatus, reportLoop, report, scheduledWorkflows, sync, title, validate } from './issue.mjs';
 
 const REPO = 'o/r';
 const SHA = 'a'.repeat(40);
@@ -232,27 +232,30 @@ test('isStale: 마지막 성공(없으면 워크플로 생성 시각)이 72시�
   assert.equal(isStale({ lastSuccess: null, created: null }, now), true);
 });
 
-test('loopStatus: 실패·취소된 작업만 고르고 skipped는 ok', () => {
-  assert.deepEqual(loopStatus(JSON.stringify({ 'e2e-native-linux': { result: 'success' }, 'e2e-native-windows': { result: 'skipped' } })), { status: 'ok', jobs: [] });
-  assert.deepEqual(loopStatus(JSON.stringify({ 'e2e-native-windows': { result: 'failure' }, 'e2e-native-linux': { result: 'cancelled' } })), {
-    status: 'fail',
-    jobs: ['e2e-native-linux', 'e2e-native-windows'],
-  });
-  assert.throws(() => loopStatus('{}'), /비었거나/);
-  assert.throws(() => loopStatus('[]'), /비었거나/);
+test('loopStatuses: 작업마다 fail·ok, skipped는 null, 고리 없는 작업·빈 값은 오류', () => {
+  assert.deepEqual(loopStatuses(JSON.stringify({ 'e2e-native-windows': { result: 'skipped' }, 'e2e-native-linux': { result: 'success' } })), [
+    { loop: 'e2e-native-linux', status: 'ok' },
+    { loop: 'e2e-native-windows', status: null },
+  ]);
+  assert.deepEqual(loopStatuses(JSON.stringify({ 'e2e-native-linux': { result: 'cancelled' }, 'e2e-native-windows': { result: 'failure' } })).map((x) => x.status), ['fail', 'fail']);
+  assert.throws(() => loopStatuses(JSON.stringify({ rust: { result: 'success' } })), /고리가 없는 작업/);
+  assert.throws(() => loopStatuses('{}'), /비었거나/);
 });
 
-test('reportLoop: 실패면 ci-loop:e2e-native 이슈를 열고 녹색에 닫는다. 모르는 고리·입력은 2', () => {
+test('reportLoop: Windows 실패 이슈는 Windows가 건너뛴 다음 날(Linux 녹색)에도 열려 있고, Windows 녹색에 닫힌다', () => {
   const fk = fakeGh();
-  const env = { GITHUB_REPOSITORY: REPO, GITHUB_RUN_ID: '77', GITHUB_SHA: SHA, LOOP: 'e2e-native', NEEDS: JSON.stringify({ 'e2e-native-linux': { result: 'failure' } }) };
-  assert.equal(reportLoop(env, fk.gh), 0);
-  const i = fk.issues.find((x) => x.labels.includes(label('e2e-native')));
-  assert.ok(i.open);
-  assert.match(i.body, /`e2e-native-linux`/);
-  assert.match(i.body, /actions\/runs\/77/);
-  assert.equal(reportLoop({ ...env, NEEDS: JSON.stringify({ 'e2e-native-linux': { result: 'success' } }) }, fk.gh), 0);
-  assert.equal(i.open, false);
-  assert.equal(reportLoop({ ...env, LOOP: 'master-failure' }, fk.gh), 2);
+  const env = { GITHUB_REPOSITORY: REPO, GITHUB_RUN_ID: '77', GITHUB_SHA: SHA };
+  const needs = (lin, win) => JSON.stringify({ 'e2e-native-linux': { result: lin }, 'e2e-native-windows': { result: win } });
+  assert.equal(reportLoop({ ...env, NEEDS: needs('success', 'failure') }, fk.gh), 0);
+  const win = () => fk.issues.find((x) => x.labels.includes(label('e2e-native-windows')));
+  assert.ok(win().open);
+  assert.match(win().body, /`e2e-native-windows`/);
+  assert.match(win().body, /actions\/runs\/77/);
+  assert.equal(fk.issues.filter((x) => x.labels.includes(label('e2e-native-linux'))).length, 0);
+  assert.equal(reportLoop({ ...env, NEEDS: needs('success', 'skipped') }, fk.gh), 0);
+  assert.ok(win().open, '건너뛴 Windows가 이슈를 닫으면 안 된다');
+  assert.equal(reportLoop({ ...env, NEEDS: needs('success', 'success') }, fk.gh), 0);
+  assert.equal(win().open, false);
   assert.equal(reportLoop({ ...env, NEEDS: '깨짐' }, fk.gh), 2);
-  assert.equal(reportLoop({ ...env, GITHUB_RUN_ID: '' }, fk.gh), 2);
+  assert.equal(reportLoop({ ...env, NEEDS: needs('success', 'success'), GITHUB_RUN_ID: '' }, fk.gh), 2);
 });

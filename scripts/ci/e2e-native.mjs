@@ -259,7 +259,25 @@ export async function run(exe) {
       const r = await fetch(`http://127.0.0.1:${DRIVER_PORT}/status`).catch(() => null);
       return r?.ok;
     }, READY_MS);
-    sid = await wd.newSession(exe);
+    // Windows 진단(cicd.md 구현 중 변경 44): 세션을 기다리는 동안 WebView2 프로세스 명령줄을 남긴다. msedgedriver가
+    // 넘긴 --remote-debugging-port·--user-data-dir가 실제 WebView2 프로세스에 닿았는지로 가설을 가른다.
+    const probe = IS_WIN
+      ? setTimeout(() => {
+          const r = spawnSync(
+            'powershell',
+            ['-NoProfile', '-Command', "Get-CimInstance Win32_Process | Where-Object { $_.Name -in @('msedgewebview2.exe','chzzk-app.exe','msedgedriver.exe') } | ForEach-Object { $_.Name + ' :: ' + $_.CommandLine }"],
+            { encoding: 'utf8', timeout: 30_000 },
+          );
+          const text = `${r.stdout ?? ''}${r.stderr ?? ''}`;
+          driverLog.push(`\n--- 프로세스 명령줄(세션 요청 30초 뒤) ---\n${text}\n`);
+          log(`프로세스 명령줄(세션 요청 30초 뒤):\n${text.slice(0, 6000)}`);
+        }, 30_000)
+      : null;
+    try {
+      sid = await wd.newSession(exe);
+    } finally {
+      if (probe) clearTimeout(probe);
+    }
     log(`세션 ${sid}`);
 
     const input = await until('주소 입력줄', () => wd.find(sid, 'css selector', '#url-input'), STEP_MS);

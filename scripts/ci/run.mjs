@@ -494,7 +494,7 @@ export function main(argv, env = process.env) {
       if (rest.length) return 2;
       return import('./issue.mjs').then((m) => m.report(env, m.realGh(env)));
     case 'report-loop':
-      // 예약 워크플로(nightly.yml)의 report 작업. env: LOOP·NEEDS·GITHUB_REPOSITORY·GITHUB_RUN_ID·GITHUB_SHA·GH_TOKEN
+      // 예약 워크플로(nightly.yml)의 report 작업. env: NEEDS·GITHUB_REPOSITORY·GITHUB_RUN_ID·GITHUB_SHA·GH_TOKEN
       if (rest.length) return 2;
       return import('./issue.mjs').then((m) => m.reportLoop(env, m.realGh(env)));
     case 'list':

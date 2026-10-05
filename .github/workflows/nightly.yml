@@ -85,7 +85,7 @@ jobs:
           if-no-files-found: ignore
 
   # 미해결(cicd.md 구현 중 변경 44): 세션 생성이 msedgedriver의 DevToolsActivePort 시간 초과로 실패한다. 매주 실패가
-  # ci-loop:e2e-native 이슈로 남는다. PR에서는 돌리지 않는다(고치는 동안 dispatch windows=true로 확인한다).
+  # ci-loop:e2e-native-windows 이슈로 남는다. PR에서는 돌리지 않는다(고치는 동안 dispatch windows=true로 확인한다).
   e2e-native-windows:
     name: e2e-native (windows)
     if: github.event.schedule == '47 18 * * 0' || inputs.windows
@@ -129,7 +129,8 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
-  # 고리: 예약 실행(master)의 결과로 ci-loop:e2e-native 이슈를 열고 닫는다. PR 실행은 보고하지 않는다.
+  # 고리: 예약 실행(master)의 결과로 작업마다 ci-loop:<작업 id> 이슈를 열고 닫는다(건너뛴 작업은 건드리지 않는다).
+  # PR 실행은 보고하지 않는다.
   report:
     name: report
     needs: [e2e-native-linux, e2e-native-windows]
@@ -150,5 +151,4 @@ jobs:
         run: node scripts/ci/run.mjs report-loop
         env:
           GH_TOKEN: ${{ github.token }}
-          LOOP: e2e-native
           NEEDS: ${{ toJSON(needs) }}

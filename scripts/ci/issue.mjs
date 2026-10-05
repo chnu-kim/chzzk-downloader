@@ -28,10 +28,12 @@ export const LOOPS = {
   'ruleset-drift': '저장소 ruleset·설정이 선언과 다르다',
   toolchain: '새 Rust stable이 나왔다',
   release: '릴리스 파이프라인이 실패했다',
-  'e2e-native': '예약 네이티브 E2E(Linux 매일·Windows 매주)가 실패했다',
+  'e2e-native-linux': '예약 네이티브 E2E(Linux, 매일)가 실패했다',
+  'e2e-native-windows': '예약 네이티브 E2E(Windows, 매주)가 실패했다',
 };
-// report-loop(예약 워크플로의 report 작업)이 다루는 고리. needs 결과만으로 판정하는 고리다.
-export const NEEDS_LOOPS = ['e2e-native'];
+// report-loop(예약 워크플로의 report 작업)이 다루는 고리. 고리 이름 = nightly.yml 작업 id이고, 작업마다 따로 연다(한
+// 작업이 건너뛴 날 다른 작업의 녹색이 그 이슈를 닫지 않게).
+export const NEEDS_LOOPS = ['e2e-native-linux', 'e2e-native-windows'];
 export const KINDS = [
   'build',
   'test',
@@ -275,45 +277,52 @@ export function report(env, gh, { root = ROOT, now = Date.now(), deny } = {}) {
   return bad ? 1 : 0;
 }
 
-// 예약 워크플로의 report 작업(nightly.yml): needs 결과로 고리 하나를 열고 닫는다.
-// env: LOOP(NEEDS_LOOPS 중 하나), NEEDS(toJSON(needs)), GITHUB_REPOSITORY·GITHUB_RUN_ID·GITHUB_SHA. 실패·취소된 작업이
-// 하나라도 있으면 fail(작업 id를 이슈에 적는다), 그 밖(success·skipped)이면 ok. → 0 | 1(gh 실패) | 2(입력 오류)
-export function loopStatus(needsJson) {
+// 예약 워크플로의 report 작업(nightly.yml): needs의 작업마다 그 이름의 고리(NEEDS_LOOPS)를 열고 닫는다.
+// env: NEEDS(toJSON(needs)), GITHUB_REPOSITORY·GITHUB_RUN_ID·GITHUB_SHA. 작업 결과 → failure·cancelled면 fail, success면 ok,
+// skipped면 아무것도 하지 않는다(매주 도는 Windows가 건너뛴 날 그 이슈를 닫지 않는다). → 0 | 1(gh 실패) | 2(입력 오류)
+export function loopStatuses(needsJson) {
   const needs = JSON.parse(needsJson);
   if (!needs || typeof needs !== 'object' || Array.isArray(needs) || !Object.keys(needs).length) throw new Error('NEEDS가 비었거나 객체가 아니다');
-  const failed = Object.entries(needs)
-    .filter(([, v]) => ['failure', 'cancelled'].includes(v?.result))
-    .map(([k]) => k)
-    .sort();
-  return { status: failed.length ? 'fail' : 'ok', jobs: failed };
+  const out = [];
+  for (const [job, v] of Object.entries(needs).sort(([a], [b]) => (a < b ? -1 : 1))) {
+    if (!NEEDS_LOOPS.includes(job)) throw new Error(`고리가 없는 작업: ${job}(issue.mjs NEEDS_LOOPS)`);
+    const r = v?.result;
+    if (r === 'failure' || r === 'cancelled') out.push({ loop: job, status: 'fail' });
+    else if (r === 'success') out.push({ loop: job, status: 'ok' });
+    else out.push({ loop: job, status: null });
+  }
+  return out;
 }
 
 export function reportLoop(env, gh, { deny } = {}) {
   const repo = env.GITHUB_REPOSITORY;
-  const loop = env.LOOP;
-  if (!NEEDS_LOOPS.includes(loop ?? '')) {
-    console.error(`report-loop: LOOP는 ${NEEDS_LOOPS.join('|')} 중 하나다(받음: ${loop})`);
-    return 2;
-  }
   if (!RE.repo.test(repo ?? '') || !/^\d+$/.test(env.GITHUB_RUN_ID ?? '')) {
     console.error('report-loop: GITHUB_REPOSITORY·GITHUB_RUN_ID가 필요하다');
     return 2;
   }
-  let st;
+  let sts;
   try {
-    st = loopStatus(env.NEEDS ?? '');
+    sts = loopStatuses(env.NEEDS ?? '');
   } catch (e) {
     console.error(`report-loop: NEEDS(toJSON(needs)): ${e.message}`);
     return 2;
   }
-  try {
-    const r = sync({ loop, status: st.status, repo, runUrl: `https://github.com/${repo}/actions/runs/${env.GITHUB_RUN_ID}`, sha: env.GITHUB_SHA, jobs: st.jobs }, gh, deny);
-    console.log(`${loop}: ${st.status}${st.jobs.length ? `(${st.jobs.join(', ')})` : ''} → ${r.action} ${r.numbers.join(',')}`);
-    return 0;
-  } catch (e) {
-    console.error(`::error::report-loop ${loop}: ${e.message}`);
-    return 1;
+  const runUrl = `https://github.com/${repo}/actions/runs/${env.GITHUB_RUN_ID}`;
+  let bad = 0;
+  for (const { loop, status } of sts) {
+    if (!status) {
+      console.log(`${loop}: 건너뜀(이번 실행에서 돌지 않았다) — 이슈를 건드리지 않는다`);
+      continue;
+    }
+    try {
+      const r = sync({ loop, status, repo, runUrl, sha: env.GITHUB_SHA, jobs: status === 'fail' ? [loop] : [] }, gh, deny);
+      console.log(`${loop}: ${status} → ${r.action} ${r.numbers.join(',')}`);
+    } catch (e) {
+      bad++;
+      console.error(`::error::report-loop ${loop}: ${e.message}`);
+    }
   }
+  return bad ? 1 : 0;
 }
 
 // ---- CLI ----

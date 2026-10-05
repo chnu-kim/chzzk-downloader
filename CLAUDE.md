@@ -19,8 +19,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `app/src-tauri/` | **`chzzk-app`**(lib `chzzk_app_lib`, bin `chzzk-app`). Tauri Builder·플러그인·command 배선·`ChannelSink`·로그·창 닫기 가드, `capabilities/default.json`, `tests/ipc.rs`(mock 런타임 IPC) |
 | `scripts/ci/run.mjs` | **훅과 CI의 단일 진입점** `node scripts/ci/run.mjs <gate>`. gate 표는 `gates.mjs`, 도구 버전은 `tools.json`, 설계는 `docs/design/cicd.md`(끝의 "구현 중 변경"이 본문보다 우선) |
 | `.github/workflows/ci.yml` | 경로 필터 없는 단일 CI: `changes`(문서만 바뀌면 무거운 작업 건너뜀) · `lint` · `scripts (windows)` · `supply` · `rust`(3 OS) · `frontend` · `tauri`(3 OS, debug 빌드 + `smoke-bin`) · `coverage`(커버리지·테스트 수 ratchet) · `e2e-web`(Playwright) · `e2e-native (linux)`(코드 PR·push·dispatch, 두 E2E는 D14 관찰 중이라 `ci-ok` 밖) · `bundle (linux)`(ubuntu 22.04 컨테이너)·`smoke-install (linux)`·`bundle (macOS·Windows)` · 집계 `ci-ok`(필수 체크는 이것 하나) · `report`(master 실패 이슈 열기·닫기, 예약 워크플로 keep-alive). 모든 `uses:`는 커밋 SHA 고정(`scripts/ci/pin-actions.mjs`) |
-| `.github/workflows/nightly.yml` | 예약 고리: 네이티브 E2E Linux(매일)·Windows(매주, 코드 PR에서도), 작업마다 `ci-loop:<작업 id>` 이슈(`run.mjs report-loop`, 건너뛴 작업도 마지막 성공이 오래되면 연다). master가 아닌 브랜치의 `loop_test` dispatch는 `ci-loop-test:`에만 쓴다. PR 경로 필터는 `paths-ignore` = `gates.mjs NON_CODE_GLOBS`뿐(parity `pr-paths`). G5가 drift 등을 더한다 |
-| `ci/ratchet.json`, `ci/RATCHET_LOG.md`, `release/expected-artifacts.json` | 커버리지·테스트 수·크기 ratchet 기준(내려가면 CI 실패, 느슨하게 하면 로그에 키와 이유), OS별 번들 기대 집합 |
+| `.github/workflows/nightly.yml` | 예약 고리. 매일: 네이티브 E2E Linux, 실서버 `drift`(환경 `drift`의 본인 영상 secret, kind만 출력, 2회 연속 실패에 이슈, `no_target`은 3회), `advisories`, `pins`(핀 SHA·zizmor 온라인), `ruleset-drift`(환경 `audit`의 `RULESET_READ_TOKEN`), `fuzz`(4 target, 고정 nightly). 매주: Windows 네이티브 E2E(코드 PR에서도), `toolchain`, `mutants`(shard 4개 → `mutants_missed` ratchet). 작업마다 `ci-loop:<작업 id>` 이슈(`run.mjs report-loop`, 건너뛴 작업도 마지막 성공이 오래되면 연다), report가 drift 작업 로그를 `drift-log-check`로 다시 본다. dispatch 입력 `only`·`weekly`·`simulate`(drift 합성 출력)·`loop_test`. master가 아닌 브랜치의 dispatch는 `ci-loop-test:`에만 쓴다. PR 경로 필터는 `paths-ignore` = `gates.mjs NON_CODE_GLOBS`뿐(parity `pr-paths`) |
+| `fuzz/` | cargo-fuzz 대상(`url`·`info`·`mpd`·`hls`). 루트와 따로인 워크스페이스(자기 `Cargo.lock`, 루트 `exclude`), 고정 nightly(`tools.json` `rust-nightly`)로만 빌드. seed는 실행 때 `testdata/`에서 복사(`scripts/ci/fuzz.mjs`) |
+| `ci/ratchet.json`, `ci/RATCHET_LOG.md`, `release/expected-artifacts.json` | 커버리지·테스트 수·크기·살아남은 mutant ratchet 기준(나빠지면 CI 실패, 느슨하게 하면 로그에 키와 이유), OS별 번들 기대 집합 |
+| `scripts/ci/repo-settings.json` | 저장소 설정 선언(nightly `ruleset-drift`가 실제 값과 비교). ruleset 선언은 `.github/rulesets/`(G7) |
 | `rust-toolchain.toml`, `deny.toml`, `_typos.toml`, `zizmor.yml`, `.github/dependabot.yml` | 툴체인 고정(1.96.1, MSRV는 `rust-version` 1.90), cargo-deny, typos, zizmor, Dependabot 설정 |
 
 `crates/core/src` 모듈: `url`(parse_content_url) · `info`(`classify`: **inKey 분기는 이 한 곳**, `encryptionType` → `inKey` → `liveRewindPlaybackJson` 순) · `mpd` · `hls` · `http`(요청 종류별 헤더, `Secret`, `redact_url`) · `client`(`Chzzk::resolve`) · `download/`(`part`·`retry`·`progressive`·`segmented`) · `progress`(`Meter`) · `naming` · `fsutil` · `settings` · `credentials` · `legacy` · `ownership` · `error`.
@@ -46,7 +48,16 @@ node scripts/ci/run.mjs e2e-web              # app/: build → Playwright chromi
                                              #   하나만: (app/에서) pnpm exec playwright test flow --headed. 실패 trace는 target/e2e-web/results/
 node scripts/ci/run.mjs e2e-native           # Linux·Windows만(macOS는 건너뜀): --features e2e 앱 + tauri-driver로 받기 흐름 하나.
                                              #   먼저 run.mjs install-tool tauri-driver, Linux는 apt webkit2gtk-driver xvfb
-node scripts/ci/ratchet.mjs write --from-run <run id>   # CI 측정값으로 ratchet 기준을 조인다(올리기만)
+node scripts/ci/ratchet.mjs write --from-run <run id>   # CI 측정값으로 ratchet 기준을 조인다(올리기만, ci.yml·nightly.yml 실행)
+
+# 예약(nightly.yml) gate. 로컬에서도 돈다(네트워크·도구 필요)
+node scripts/ci/run.mjs advisories           # cargo deny check advisories + pnpm audit --audit-level high
+node scripts/ci/run.mjs pins                 # 핀 SHA가 태그와 같은지(gh) + zizmor 온라인(GH_TOKEN)
+node scripts/ci/run.mjs toolchain            # rust-toolchain.toml이 최신 stable인지(낮으면 1)
+node scripts/ci/run.mjs ruleset-drift        # 저장소 설정·ruleset ↔ repo-settings.json·.github/rulesets/(소유자 gh 로그인 필요)
+FUZZ_SECONDS=20 node scripts/ci/run.mjs fuzz # cargo-fuzz 4 target(먼저 run.mjs install-tool cargo-fuzz, nightly는 gate가 깐다)
+DRIFT_SIMULATE=target_gone node scripts/ci/run.mjs drift   # drift 경로를 합성 출력으로. 실서버는 CHZZK_LIVE_HLS·_DASH·_CLIP(본인 영상)
+gh workflow run nightly.yml --ref <브랜치> -f only=drift -f simulate=target_gone -f loop_test=true   # 고리 확인(ci-loop-test:)
 node scripts/ci/run.mjs doctor               # 로컬 도구 유무·버전(tools.json). 없는 도구의 gate는 로컬에서 건너뛰고 CI가 본다
 node scripts/ci/run.mjs install-hooks        # 훅 켜기(core.hooksPath=.githooks). 클론마다 한 번. pre-commit·commit-msg·pre-push가
                                              #   run.mjs hook <이름>으로 gates.mjs HOOKS를 돈다(pre-push의 push-guard·scan-range는 끌 수 없다.

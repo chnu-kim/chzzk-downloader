@@ -5,7 +5,7 @@
 ## 현재 위치
 
 - **완료**: Phase 0(#11), Phase 1 Rust 코어(#12, 3 OS CI 녹색), Go 삭제(#13), Phase 2 Tauri 앱(#14, macOS 실제 실행 확인). PR은 #11→#12→#13→#14로 쌓여 있고 아직 머지 전이다. #13은 #14와 함께 머지한다.
-- **Phase 4 CI/CD 구현 중**(`docs/design/cicd.md`, 브랜치 `ci/pipeline`, 공개 저장소 PR #1). G1(단일 진입점 `scripts/ci/run.mjs`·`ci.yml`·공급망 기본)과 G2(훅·비공개 이력 가드, `node scripts/ci/run.mjs install-hooks`)를 올렸다. 다음은 G3(스모크·ratchet·master 고리). 훅·CI 명령은 CLAUDE.md "명령".
+- **Phase 4 CI/CD 구현 중**(`docs/design/cicd.md`, 브랜치 `ci/pipeline`, 공개 저장소 PR #1). G1~G5(단일 진입점 `scripts/ci/run.mjs`·`ci.yml`·훅·비공개 이력 가드·스모크·ratchet·E2E·nightly/weekly 고리)를 올렸다. 다음은 G6(CD). 훅 설치는 `node scripts/ci/run.mjs install-hooks`, 훅·CI 명령은 CLAUDE.md "명령".
 - **다음**: Phase 3+4 (Worker: 로그인·허용목록·랜딩·R2 배포 게이트·업데이트). 설계·오프라인 구현은 가능하지만 **끝까지 확인하려면 사용자의 외부 준비가 필요**하다(아래 "사용자가 준비해야 할 외부 항목").
 - **Phase 3의 핵심 미확인 사실**: OAuth `users/me`의 `channelId`가 VOD `content.channel.channelId`·클립 `ownerChannel.channelId`와 같은 값인지. 실제 로그인으로만 확인할 수 있으므로 별도 단계로 둔다.
 - **남은 확인(사용자)**: 성인 VOD PD 미디어 요청에 쿠키가 필요한지(`examples/dl.rs` + `CHZZK_NID_AUT`/`CHZZK_NID_SES`), Windows·Linux 실제 실행(app.md 수동 테스트 목록), macOS Dock 종료·로그아웃 때 D1 생략 수용 여부.
@@ -104,7 +104,8 @@
 - [x] G4 E2E 구현: Playwright 웹 E2E(`app/e2e/`, 프로덕션 dist + mockIPC 가짜 백엔드 + axe, PR), cargo feature `e2e`와 fixture 서버, 네이티브 E2E(tauri-driver, 코드 PR·master·nightly Linux, 코드 PR·weekly Windows, `nightly.yml`의 작업별 고리 `ci-loop:e2e-native-linux`·`-windows`), `hygiene-seed`, ratchet `tests.playwright` 7. 차이는 cicd.md "구현 중 변경" 36~48(수락 실행은 47, 2차 리뷰 48)
 - [x] G4 Windows 네이티브 E2E: wry의 WebView2 인자가 msedgedriver의 디버깅 포트를 덮어쓰던 것을 E2E 빌드에서 합쳐 고쳤다(cicd.md 구현 중 변경 47). 고리 `ci-loop:e2e-native-windows` 열기(#3)·닫기를 실제 실행으로 확인
 - [ ] G4 편입: 두 작업은 D14 관찰 중(`gates.mjs` `OBSERVED_JOBS`, `ci-ok` 밖, master 실패는 `master-failure` 이슈). 관찰 시작은 master에 머지된 뒤 첫 master·예약 실행 날(브랜치의 첫 녹색은 2026-10-05), 편입은 **그 14일 뒤 이후**에 관찰 기간의 실패가 환경 요인이 아니었으면 `OBSERVED_JOBS`에서 빼고 `ci-ok` needs·guard에 넣는 PR(cicd.md 구현 중 변경 36 "편입")
-- [ ] G5 Nightly·weekly 고리: 실서버 drift(본인 영상 secret, 일반화된 kind만 출력, 2회 연속 실패 시 이슈), advisories, ruleset drift, fuzz, mutants ratchet, 핀 SHA 온라인 검증(zizmor 온라인·`pin-actions.mjs`, 어긋나면 이슈)
+- [x] G5 Nightly·weekly 고리(`nightly.yml`): 실서버 drift(환경 `drift`, 출력은 kind만, 2회 연속 실패 시 이슈·`no_target` 3회, `simulate` 입력, report의 `drift-log-check`), advisories, pins(핀 SHA·zizmor 온라인), ruleset-drift(`repo-settings.json`, 환경 `audit`), toolchain(매주), fuzz 4 target(`fuzz/`, 고정 nightly), mutants shard 4개 + ratchet `mutants_missed`(매주). 고리 확인: 37340094385(1회, 아무것도 안 함) → 37340384932(2회, `ci-loop-test:drift` #4 열림) → 37341022990(ok, #4 닫힘), 세 실행 로그의 canary 0건. 차이는 cicd.md "구현 중 변경" 49~58
+- [ ] G5 뒤 사용자 할 일: 환경 `drift`에 본인 영상 secret 셋(없으면 `no_target` 3회 연속에 이슈), 환경 `audit`에 `RULESET_READ_TOKEN`(Administration 읽기 fine-grained PAT, `GITHUB_TOKEN`은 403), `rust-toolchain.toml`을 최신 stable로 올릴지(지금 `toolchain` 고리가 빨갛다), 첫 weekly mutants 실행 뒤 `ratchet.mjs write --from-run <id>`로 `mutants_missed` 기준 채우기
 - [ ] G6 CD: `xtask release`, `release/updater.pub`, `release.yml`(gate → build → smoke → sign-publish → verify/rollback → Worker seam), `rollback.yml`, MinIO 리허설
 - [ ] G7 보호: `.github/rulesets/{master,tags}.json`을 `gh api`로 적용(사용자 승인), 저장소 설정 선언, drift 검사
 - [ ] Worker 배포 작업은 G6의 `deploy-worker` seam을 Phase 3에서 채운다
@@ -130,4 +131,5 @@
 - 2026-10-05: G1. CLAUDE.md의 검증 게이트를 `node scripts/ci/run.mjs <gate>`로 바꾸고 훅 설치 명령(`run.mjs install-hooks`)을 적었다. `core.yml`·`app.yml`·`public-scan.yml`은 `ci.yml`로 합쳤다.
 - 2026-10-05: G2. 훅 세 개를 `run.mjs hook <이름>`으로 바꾸고 pre-push에 비공개 이력 가드(`push-guard.mjs`)를 넣었다. "private에는 push하지 않는다"를 CLAUDE.md·public-release.md에 적었다.
 - 2026-10-05: G2 리뷰 반영. 커밋 메시지는 원문 전체를 검사하고, 저장된 제목은 CI `subjects`가 본다. 비공개에만 있는 커밋 133개의 지문(`scripts/ci/private-commits.txt`)을 CI `scan-history`와 push-guard가 함께 쓴다. 훅의 조건부 gate는 작업 트리가 아니라 커밋·push될 내용(임시 worktree)에서 돈다.
+- 2026-10-06: G5. nightly·weekly 고리(drift·advisories·pins·ruleset-drift·fuzz·toolchain·mutants)를 더하고 CLAUDE.md "명령"에 예약 gate와 고리 확인 dispatch를 적었다. 고리는 작업마다 이슈를 열고, 연속 실패 문턱과 고정 할 일 문구를 둔다.
 - 2026-10-05: G4. E2E 두 층(웹 Playwright PR, 네이티브 tauri-driver master·nightly·weekly)을 더했다. 새 E2E 작업은 2주 관찰 규칙(D14)대로 `OBSERVED_JOBS`로 시작해 `ci-ok`를 막지 않고, master 실패는 이슈로 온다. CLAUDE.md에 `e2e-web`·`e2e-native` gate와 E2E 빌드 명령을 적었다.

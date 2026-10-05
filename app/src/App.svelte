@@ -1,9 +1,11 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import AppBanners from './lib/components/app/AppBanners.svelte';
   import AppHeader from './lib/components/app/AppHeader.svelte';
   import GlobalShortcuts from './lib/components/app/GlobalShortcuts.svelte';
   import LiveAnnouncer from './lib/components/app/LiveAnnouncer.svelte';
   import Toaster from './lib/components/app/Toaster.svelte';
+  import { jobs } from './lib/stores/jobs.svelte';
   import { settings } from './lib/stores/settings.svelte';
   import { ui } from './lib/stores/ui.svelte';
   import HomeView from './lib/views/HomeView.svelte';
@@ -14,12 +16,14 @@
 
   onMount(() => {
     void settings.load();
+    // 앱 수명 동안 구독 하나(§0). 웹뷰를 새로 고치면 여기서 다시 구독하고 스냅샷으로 맞춘다.
+    void jobs.start();
   });
 </script>
 
 <div class="app">
   <AppHeader view={ui.view} onsettings={() => ui.goSettings()} onback={() => ui.goHome()} />
-  <!-- AppBanners(B1·B2)는 §15-15·16에서 헤더 바로 아래에 둔다 -->
+  <AppBanners />
   <main class="main">
     {#if ui.view === 'settings'}
       <SettingsView />

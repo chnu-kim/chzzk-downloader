@@ -15,7 +15,7 @@
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
-import { delimiter, extname, join } from 'node:path';
+import { delimiter, dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { CODE_GATED_JOBS, COMMANDS, GATES, HOOKS, MASTER_ONLY_JOBS, ROOT } from './gates.mjs';
@@ -77,6 +77,8 @@ export function probeTool(name) {
   const path = which(bin);
   if (!path) return { name, found: false, want: spec?.version ?? null, have: null, ok: false };
   if (!spec) return { name, found: true, path, want: null, have: null, ok: true };
+  // 버전 플래그가 없는 도구(tauri-driver)는 install-tool이 정확한 버전으로 깐다. 여기서는 있는지만 본다
+  if (!spec.versionArgs) return { name, found: true, path, want: spec.version, have: null, ok: true };
   const r = spawn(bin, spec.versionArgs, { stdio: 'pipe', encoding: 'utf8' });
   const have = firstSemver(`${r.stdout ?? ''}\n${r.stderr ?? ''}`);
   return { name, found: true, path, want: spec.version, have, ok: have === spec.version };
@@ -98,6 +100,16 @@ export function runGate(name, extra = [], env = process.env, { input } = {}) {
   const gate = GATES[name];
   if (gate.ciOnly && !inCI(env)) {
     console.warn(`[${name}] 건너뜀: CI 전용 gate(로컬 클론에는 비공개 원격 ref가 있을 수 있다)`);
+    return 0;
+  }
+  // 이 OS에서는 돌 수 없는 gate(예: e2e-native는 macOS에 WebDriver가 없다). CI는 그 OS의 작업에서만 부른다
+  if (gate.platforms && !gate.platforms.includes(process.platform)) {
+    const msg = `[${name}] ${process.platform}에서는 돌지 않는다(${gate.platforms.join('·')} 전용)`;
+    if (inCI(env)) {
+      console.error(`::error::${msg}`);
+      return 2;
+    }
+    console.warn(`${msg} — 건너뜀: CI가 검사한다`);
     return 0;
   }
   for (const t of gate.needs ?? []) {
@@ -397,8 +409,25 @@ async function downloadVerified(name) {
   return { buf, dl, sha: got };
 }
 
+// cargo install로 까는 도구(tools.json cargoInstall). --locked는 그 crate가 배포한 Cargo.lock을 쓴다.
+function installCargoTool(name, spec, env) {
+  const dir = toolDir(env);
+  const root = dirname(dir);
+  mkdirSync(dir, { recursive: true });
+  const r = spawn('cargo', ['install', '--locked', '--version', spec.version, '--root', root, spec.cargoInstall], { env });
+  if (r.error || r.status !== 0) {
+    console.error(`::error::install-tool: cargo install ${spec.cargoInstall}@${spec.version} 실패(${r.error?.message ?? r.status})`);
+    return r.status || 2;
+  }
+  console.log(`install-tool: ${name} ${spec.version} (cargo install --locked) → ${dir}`);
+  if (env.GITHUB_PATH) appendFileSync(env.GITHUB_PATH, dir + '\n');
+  else console.log(`PATH에 더한다: ${IS_WIN ? `$env:Path = "${dir};$env:Path"` : `export PATH="${dir}:$PATH"`}`);
+  return 0;
+}
+
 async function cmdInstallTool(name, env = process.env) {
   const spec = TOOLS[name];
+  if (spec?.cargoInstall) return installCargoTool(name, spec, env);
   const d = await downloadVerified(name);
   if (d.code !== undefined) return d.code;
   const { buf, dl, sha: got } = d;
@@ -464,6 +493,10 @@ export function main(argv, env = process.env) {
       // ci.yml report 작업(docs/design/cicd.md §4.1·§4.4). env: GITHUB_REPOSITORY·GITHUB_RUN_ID·GITHUB_SHA·CI_OK_RESULT·GH_TOKEN
       if (rest.length) return 2;
       return import('./issue.mjs').then((m) => m.report(env, m.realGh(env)));
+    case 'report-loop':
+      // 예약 워크플로(nightly.yml)의 report 작업. env: LOOP·NEEDS·GITHUB_REPOSITORY·GITHUB_RUN_ID·GITHUB_SHA·GH_TOKEN
+      if (rest.length) return 2;
+      return import('./issue.mjs').then((m) => m.reportLoop(env, m.realGh(env)));
     case 'list':
       return cmdList();
     default:

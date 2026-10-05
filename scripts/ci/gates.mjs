@@ -184,6 +184,37 @@ export const GATES = {
       { cmd: ['pnpm', 'tauri', 'build', '--ci', '--debug', '--no-bundle'], cwd: 'app' },
     ],
   },
+  'e2e-web': {
+    desc: 'Playwright(chromium) + vite preview(프로덕션 dist) + mockIPC 가짜 백엔드 + axe 위반 0, 통과 수 ≥ ci/ratchet.json tests.playwright',
+    needs: ['pnpm'],
+    steps: [
+      { cmd: ['pnpm', 'install', '--frozen-lockfile'], cwd: 'app' },
+      { cmd: ['pnpm', 'build'], cwd: 'app' },
+      // 브라우저는 @playwright/test 버전이 고른 빌드를 받는다(lockfile이 버전을 고정한다). 이미 있으면 받지 않는다
+      { cmd: ['pnpm', 'exec', 'playwright', 'install', 'chromium'], cwd: 'app' },
+      { cmd: ['pnpm', 'exec', 'playwright', 'test'], cwd: 'app' },
+      { cmd: ['node', S('measure.mjs'), 'tests-playwright'] },
+      { cmd: ['node', S('ratchet.mjs'), 'check', 'tests'] },
+    ],
+  },
+  'e2e-native': {
+    desc: 'tauri-driver + WebKitWebDriver(Linux)·msedgedriver(Windows)로 --features e2e 앱을 띄워 받기 흐름 하나(fixture 서버, 결과 sha256)',
+    needs: ['cargo', 'pnpm', 'tauri-driver'],
+    platforms: ['linux', 'win32'],
+    steps: [
+      { cmd: ['pnpm', 'install', '--frozen-lockfile'], cwd: 'app' },
+      // e2e feature 코드도 같은 lint·테스트를 받는다(보통 빌드는 이 코드를 컴파일하지 않는다)
+      { cmd: ['cargo', 'clippy', '-p', 'chzzk-app', '--features', 'e2e', ...CLIPPY] },
+      { cmd: ['cargo', 'test', '-p', 'chzzk-app', '--locked', '--features', 'e2e', '--lib', '--', 'e2e::'] },
+      { cmd: ['pnpm', 'tauri', 'build', '--ci', '--debug', '--no-bundle', '--features', 'e2e'], cwd: 'app' },
+      { cmd: ['node', S('e2e-native.mjs')] },
+    ],
+  },
+  'hygiene-seed': {
+    desc: 'release-hygiene의 씨앗: --features e2e 빌드(target/debug)에는 E2E 표식이 있고 cargo tree에 e2e가 보여야 한다. e2e-native gate 뒤',
+    needs: ['cargo'],
+    steps: [{ cmd: ['node', S('artifact-check.mjs'), 'hygiene-seed'] }],
+  },
   'smoke-bin': {
     desc: 'debug 빌드를 --smoke로 띄워 60초 안 exit 0 + 마커 JSON(Linux는 xvfb-run). tauri gate 뒤',
     steps: [{ cmd: ['node', S('smoke.mjs'), 'bin'] }],
@@ -247,7 +278,7 @@ export const GATES = {
 };
 
 // run.mjs가 gate 말고도 받는 하위 명령
-export const COMMANDS = ['changes', 'ci-ok', 'doctor', 'hook', 'install-hooks', 'install-rustup', 'install-tool', 'list', 'report'];
+export const COMMANDS = ['changes', 'ci-ok', 'doctor', 'hook', 'install-hooks', 'install-rustup', 'install-tool', 'list', 'report', 'report-loop'];
 
 // 훅(docs/design/cicd.md §3.2). .githooks/<이름>은 `run.mjs hook <이름> "$@"`만 exec한다(parity hook-entry).
 //   always: 항상 도는 gate(순서대로). when: 바뀐 경로(pre-commit은 staged, pre-push는 push 범위 커밋이 건드린 경로)가
@@ -299,3 +330,11 @@ export const CODE_GATED_JOBS = ['supply', 'rust', 'frontend', 'tauri', 'coverage
 // pull_request에서는 돌지 않는 작업(ci.yml 작업 id, `if: github.event_name != 'pull_request'`). push(master)·dispatch에서
 // 돈다. ci-ok는 pull_request에서만 이 작업들의 skipped를 허용한다(docs/design/cicd.md §2 "bundle (3 OS; push master만)").
 export const MASTER_ONLY_JOBS = ['bundle', 'bundle-linux', 'smoke-install-linux'];
+
+// D14 관찰 중인 작업(docs/design/cicd.md §1 D14, 구현 중 변경 36). 결정적이라고 설계했어도 러너 환경 요인은 실측으로만
+// 드러나므로 2주 동안 ci-ok에 넣지 않고 지켜본다. 값은 작업 if 종류('code' = CODE_IF, 'master' = MASTER_IF)다.
+//   - ci-ok의 needs·guard·decideCiOk에 없다(빨개져도 머지를 막지 않는다).
+//   - report의 needs에 있다: master에서 실패하면 ci-ok가 녹색이어도 master-failure 이슈를 연다(issue.mjs masterStatus).
+//   - 관찰 시작은 첫 녹색 실행, 편입 예정일은 그 14일 뒤다(ROADMAP Phase 4). 편입은 여기서 빼고 CODE_GATED_JOBS·
+//     MASTER_ONLY_JOBS로 옮긴 뒤 ci.yml ci-ok needs·guard를 고치는 한 변경이다(parity가 둘을 맞춘다).
+export const OBSERVED_JOBS = { 'e2e-web': 'code', 'e2e-native': 'master' };

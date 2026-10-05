@@ -35,6 +35,12 @@
     "cargo-machete": { "version": "0.9.2", "bin": "cargo-machete", "versionArgs": ["--version"] },
     "cargo-hack": { "version": "0.6.45", "bin": "cargo-hack", "versionArgs": ["hack", "--version"] },
     "cargo-llvm-cov": { "version": "0.9.1", "bin": "cargo-llvm-cov", "versionArgs": ["llvm-cov", "--version"] },
+    "tauri-driver": {
+      "version": "2.1.0",
+      "bin": "tauri-driver",
+      "cargoInstall": "tauri-driver",
+      "$comment": "e2e-native 작업(Linux·Windows)만 쓴다. taiki-e/install-action의 manifest에 없고 릴리스 바이너리도 없어 run.mjs install-tool이 cargo install --locked --version으로 깐다(crates.io, 그 crate의 Cargo.lock). --version 플래그가 없어 버전은 설치 명령이 고정한다(probe하지 않는다)"
+    },
     "rustup-init": {
       "version": "1.29.1",
       "bin": "rustup-init",

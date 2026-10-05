@@ -15,7 +15,7 @@ import { existsSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { ROOT } from './gates.mjs';
+import { OBSERVED_JOBS, ROOT } from './gates.mjs';
 import { loadDenylist, scanText } from './public-scan.mjs';
 
 export const LOOPS = {
@@ -28,7 +28,10 @@ export const LOOPS = {
   'ruleset-drift': '저장소 ruleset·설정이 선언과 다르다',
   toolchain: '새 Rust stable이 나왔다',
   release: '릴리스 파이프라인이 실패했다',
+  'e2e-native': '예약 네이티브 E2E(Linux 매일·Windows 매주)가 실패했다',
 };
+// report-loop(예약 워크플로의 report 작업)이 다루는 고리. needs 결과만으로 판정하는 고리다.
+export const NEEDS_LOOPS = ['e2e-native'];
 export const KINDS = [
   'build',
   'test',
@@ -172,6 +175,21 @@ export function isStale({ lastSuccess, created }, now, hours = STALE_HOURS) {
 
 const notFound = (e) => /HTTP 404|Not Found/.test(`${e.message}\n${e.stderr ?? ''}`);
 
+// master-failure 상태(순수). ci-ok가 success가 아니거나, D14 관찰 작업(OBSERVED_JOBS, ci-ok에 없다)이 실패·취소됐으면
+// 'fail'. needsJson은 report 작업의 toJSON(needs)(없거나 깨졌으면 관찰 작업은 보지 않는다: ci-ok 판정이 먼저다).
+// 관찰 작업의 skipped는 실패가 아니다(dispatch의 force_fail처럼 앞 작업이 건너뛰게 한 경우).
+export function masterStatus(ciOkResult, needsJson, observed = Object.keys(OBSERVED_JOBS)) {
+  if (ciOkResult !== 'success') return { status: 'fail', observedFailed: [] };
+  let needs = {};
+  try {
+    needs = JSON.parse(needsJson ?? '{}') ?? {};
+  } catch {
+    needs = {};
+  }
+  const observedFailed = observed.filter((id) => ['failure', 'cancelled'].includes(needs[id]?.result)).sort();
+  return { status: observedFailed.length ? 'fail' : 'ok', observedFailed };
+}
+
 // env → 0(보고함) | 1(gh 실패) | 2(입력 오류)
 export function report(env, gh, { root = ROOT, now = Date.now(), deny } = {}) {
   const repo = env.GITHUB_REPOSITORY;
@@ -209,7 +227,8 @@ export function report(env, gh, { root = ROOT, now = Date.now(), deny } = {}) {
       return;
     }
     const result = env.CI_OK_RESULT;
-    const status = result === 'success' ? 'ok' : 'fail';
+    const { status, observedFailed } = masterStatus(result, env.NEEDS);
+    if (observedFailed.length) console.log(`master-failure: ci-ok는 ${result}지만 관찰 작업(D14)이 실패했다: ${observedFailed.join(', ')}`);
     let jobs = [];
     if (status === 'fail') {
       const out = gh([
@@ -254,6 +273,47 @@ export function report(env, gh, { root = ROOT, now = Date.now(), deny } = {}) {
     console.log(`nightly-stale: ${r.action} ${r.numbers.join(',')}`);
   });
   return bad ? 1 : 0;
+}
+
+// 예약 워크플로의 report 작업(nightly.yml): needs 결과로 고리 하나를 열고 닫는다.
+// env: LOOP(NEEDS_LOOPS 중 하나), NEEDS(toJSON(needs)), GITHUB_REPOSITORY·GITHUB_RUN_ID·GITHUB_SHA. 실패·취소된 작업이
+// 하나라도 있으면 fail(작업 id를 이슈에 적는다), 그 밖(success·skipped)이면 ok. → 0 | 1(gh 실패) | 2(입력 오류)
+export function loopStatus(needsJson) {
+  const needs = JSON.parse(needsJson);
+  if (!needs || typeof needs !== 'object' || Array.isArray(needs) || !Object.keys(needs).length) throw new Error('NEEDS가 비었거나 객체가 아니다');
+  const failed = Object.entries(needs)
+    .filter(([, v]) => ['failure', 'cancelled'].includes(v?.result))
+    .map(([k]) => k)
+    .sort();
+  return { status: failed.length ? 'fail' : 'ok', jobs: failed };
+}
+
+export function reportLoop(env, gh, { deny } = {}) {
+  const repo = env.GITHUB_REPOSITORY;
+  const loop = env.LOOP;
+  if (!NEEDS_LOOPS.includes(loop ?? '')) {
+    console.error(`report-loop: LOOP는 ${NEEDS_LOOPS.join('|')} 중 하나다(받음: ${loop})`);
+    return 2;
+  }
+  if (!RE.repo.test(repo ?? '') || !/^\d+$/.test(env.GITHUB_RUN_ID ?? '')) {
+    console.error('report-loop: GITHUB_REPOSITORY·GITHUB_RUN_ID가 필요하다');
+    return 2;
+  }
+  let st;
+  try {
+    st = loopStatus(env.NEEDS ?? '');
+  } catch (e) {
+    console.error(`report-loop: NEEDS(toJSON(needs)): ${e.message}`);
+    return 2;
+  }
+  try {
+    const r = sync({ loop, status: st.status, repo, runUrl: `https://github.com/${repo}/actions/runs/${env.GITHUB_RUN_ID}`, sha: env.GITHUB_SHA, jobs: st.jobs }, gh, deny);
+    console.log(`${loop}: ${st.status}${st.jobs.length ? `(${st.jobs.join(', ')})` : ''} → ${r.action} ${r.numbers.join(',')}`);
+    return 0;
+  } catch (e) {
+    console.error(`::error::report-loop ${loop}: ${e.message}`);
+    return 1;
+  }
 }
 
 // ---- CLI ----

@@ -198,3 +198,25 @@ test('hookGates: 바뀐 경로로 조건부 gate를 고른다', () => {
 test('runGate: 인자를 받지 않는 gate에 인자를 주면 2', () => {
   assert.equal(runGate('parity', ['--x'], { ...process.env, CI: '' }), 2);
 });
+
+test('OBSERVED_JOBS(D14 관찰 작업)는 ci-ok 규칙의 작업 목록과 겹치지 않고 종류는 code·master뿐이다', async () => {
+  const { OBSERVED_JOBS } = await import('./gates.mjs');
+  for (const [id, kind] of Object.entries(OBSERVED_JOBS)) {
+    assert.ok(['code', 'master'].includes(kind), id);
+    assert.ok(!CODE_GATED_JOBS.includes(id) && !MASTER_ONLY_JOBS.includes(id), id);
+  }
+});
+
+test('gate platforms: 다른 OS에서는 로컬은 건너뛰고(0) CI는 실패(2)', async () => {
+  const { GATES: G } = await import('./gates.mjs');
+  const other = process.platform === 'linux' ? 'win32' : 'linux';
+  G['__platform_probe'] = { desc: 'test', platforms: [other], steps: [{ cmd: ['node', '-e', 'process.exit(7)'] }] };
+  try {
+    assert.equal(runGate('__platform_probe', [], { ...process.env, CI: '' }), 0);
+    assert.equal(runGate('__platform_probe', [], { ...process.env, CI: 'true' }), 2);
+    G['__platform_probe'].platforms = [process.platform];
+    assert.equal(runGate('__platform_probe', [], { ...process.env, CI: '' }), 7);
+  } finally {
+    delete G['__platform_probe'];
+  }
+});

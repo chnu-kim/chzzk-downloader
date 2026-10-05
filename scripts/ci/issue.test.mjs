@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
-import { assertPublishable, body, isStale, label, marker, report, scheduledWorkflows, sync, title, validate } from './issue.mjs';
+import { assertPublishable, body, isStale, label, loopStatus, marker, masterStatus, reportLoop, report, scheduledWorkflows, sync, title, validate } from './issue.mjs';
 
 const REPO = 'o/r';
 const SHA = 'a'.repeat(40);
@@ -135,6 +135,37 @@ test('report: ci-ok 실패면 실패한 작업 이름으로 이슈, 성공이면
   }
 });
 
+test('masterStatus: ci-ok가 녹색이어도 D14 관찰 작업이 실패·취소면 fail, skipped·없음은 ok', () => {
+  const needs = (r) => JSON.stringify({ 'ci-ok': { result: 'success' }, 'e2e-web': { result: 'success' }, 'e2e-native': { result: r } });
+  assert.deepEqual(masterStatus('success', needs('success')), { status: 'ok', observedFailed: [] });
+  assert.deepEqual(masterStatus('success', needs('failure')), { status: 'fail', observedFailed: ['e2e-native'] });
+  assert.deepEqual(masterStatus('success', needs('cancelled')), { status: 'fail', observedFailed: ['e2e-native'] });
+  assert.deepEqual(masterStatus('success', needs('skipped')), { status: 'ok', observedFailed: [] });
+  assert.deepEqual(masterStatus('success', undefined), { status: 'ok', observedFailed: [] });
+  assert.deepEqual(masterStatus('success', '{깨진'), { status: 'ok', observedFailed: [] });
+  assert.equal(masterStatus('failure', needs('success')).status, 'fail');
+  // 관찰 목록 밖의 작업은 보지 않는다(ci-ok가 판정한다)
+  assert.equal(masterStatus('success', JSON.stringify({ rust: { result: 'failure' } })).status, 'ok');
+});
+
+test('report: ci-ok 녹색 + 관찰 작업 실패면 master-failure를 열고, 다음 녹색에 닫는다', () => {
+  const root = mkdtempSync(join(tmpdir(), 'report-'));
+  try {
+    mkdirSync(join(root, '.github/workflows'), { recursive: true });
+    writeFileSync(join(root, '.github/workflows/ci.yml'), 'on:\n  push:\n');
+    const fk = fakeGh({ jobs: 'e2e-native (linux)\n' });
+    const env = { GITHUB_REPOSITORY: REPO, GITHUB_RUN_ID: '123', GITHUB_RUN_ATTEMPT: '1', GITHUB_SHA: SHA, GITHUB_REF: 'refs/heads/master', CI_OK_RESULT: 'success', NEEDS: JSON.stringify({ 'ci-ok': { result: 'success' }, 'e2e-native': { result: 'failure' } }) };
+    assert.equal(report(env, fk.gh, { root }), 0);
+    const mf = fk.issues.find((i) => i.labels.includes(label('master-failure')));
+    assert.ok(mf.open);
+    assert.match(mf.body, /`e2e-native \(linux\)`/);
+    assert.equal(report({ ...env, NEEDS: JSON.stringify({ 'e2e-native': { result: 'success' } }) }, fk.gh, { root }), 0);
+    assert.equal(mf.open, false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('report: 예약 워크플로 — 꺼졌으면 켜고, 72시간 넘게 성공이 없으면 nightly-stale, 기본 브랜치에 없으면 건너뜀', () => {
   const root = mkdtempSync(join(tmpdir(), 'report-'));
   try {
@@ -199,4 +230,29 @@ test('isStale: 마지막 성공(없으면 워크플로 생성 시각)이 72시�
   assert.equal(isStale({ lastSuccess: null, created: '2026-10-04T00:00:00Z' }, now), false, '새 워크플로는 72시간 유예');
   assert.equal(isStale({ lastSuccess: null, created: '2026-09-01T00:00:00Z' }, now), true);
   assert.equal(isStale({ lastSuccess: null, created: null }, now), true);
+});
+
+test('loopStatus: 실패·취소된 작업만 고르고 skipped는 ok', () => {
+  assert.deepEqual(loopStatus(JSON.stringify({ 'e2e-native-linux': { result: 'success' }, 'e2e-native-windows': { result: 'skipped' } })), { status: 'ok', jobs: [] });
+  assert.deepEqual(loopStatus(JSON.stringify({ 'e2e-native-windows': { result: 'failure' }, 'e2e-native-linux': { result: 'cancelled' } })), {
+    status: 'fail',
+    jobs: ['e2e-native-linux', 'e2e-native-windows'],
+  });
+  assert.throws(() => loopStatus('{}'), /비었거나/);
+  assert.throws(() => loopStatus('[]'), /비었거나/);
+});
+
+test('reportLoop: 실패면 ci-loop:e2e-native 이슈를 열고 녹색에 닫는다. 모르는 고리·입력은 2', () => {
+  const fk = fakeGh();
+  const env = { GITHUB_REPOSITORY: REPO, GITHUB_RUN_ID: '77', GITHUB_SHA: SHA, LOOP: 'e2e-native', NEEDS: JSON.stringify({ 'e2e-native-linux': { result: 'failure' } }) };
+  assert.equal(reportLoop(env, fk.gh), 0);
+  const i = fk.issues.find((x) => x.labels.includes(label('e2e-native')));
+  assert.ok(i.open);
+  assert.match(i.body, /`e2e-native-linux`/);
+  assert.match(i.body, /actions\/runs\/77/);
+  assert.equal(reportLoop({ ...env, NEEDS: JSON.stringify({ 'e2e-native-linux': { result: 'success' } }) }, fk.gh), 0);
+  assert.equal(i.open, false);
+  assert.equal(reportLoop({ ...env, LOOP: 'master-failure' }, fk.gh), 2);
+  assert.equal(reportLoop({ ...env, NEEDS: '깨짐' }, fk.gh), 2);
+  assert.equal(reportLoop({ ...env, GITHUB_RUN_ID: '' }, fk.gh), 2);
 });

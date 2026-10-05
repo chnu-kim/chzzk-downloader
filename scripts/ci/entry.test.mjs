@@ -24,6 +24,8 @@ const SCRIPTS = [
   'scripts/ci/ratchet.mjs',
   'scripts/ci/measure.mjs',
   'scripts/ci/issue.mjs',
+  'scripts/ci/e2e-native.mjs',
+  'scripts/ci/e2e-fixture-server.mjs',
   'scripts/fixtures/gen-fixtures.mjs',
 ];
 

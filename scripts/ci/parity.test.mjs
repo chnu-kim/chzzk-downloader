@@ -123,7 +123,7 @@ test('job-if: PR에서 건너뛰는 작업은 MASTER_ONLY_JOBS와 같고 report�
   assert.ok(rulesFor(once(`    needs: [changes, bundle-linux]\n${MIF}`, `    needs: [bundle-linux]\n${MIF}`)).includes('job-if'));
   // report의 if를 바꿈, report가 ci-ok 뒤가 아님
   assert.ok(rulesFor(once("(github.event_name == 'workflow_dispatch' && inputs.loop_test))", "github.event_name == 'workflow_dispatch')")).includes('job-if'));
-  assert.ok(rulesFor(once('    needs: ci-ok\n', '    needs: changes\n')).includes('ci-ok'));
+  assert.ok(rulesFor(once('    needs: [ci-ok, e2e-web, e2e-native]\n', '    needs: [changes, e2e-web, e2e-native]\n')).includes('ci-ok'));
 });
 
 const shim = (name) => `#!/bin/sh\nset -eu\nexec node "$(git rev-parse --show-toplevel)/scripts/ci/run.mjs" hook ${name} "$@"\n`;
@@ -167,4 +167,15 @@ test('parseJobs: 흐름·블록 needs', () => {
   assert.deepEqual(j.b.needs, ['x']);
   assert.deepEqual(j.c.needs, ['x', 'y']);
   assert.equal(j.c.if, 'always()');
+});
+
+test('observed: 관찰 작업은 ci-ok needs에 없고, ci-ok 뒤가 아니며, report needs에 있다', () => {
+  // ci-ok needs에 넣으면(편입했는데 OBSERVED_JOBS에서 빼지 않음) 있으면 안 되는 작업이 된다
+  assert.ok(rulesFor(once(', smoke-install-linux, bundle]', ', smoke-install-linux, bundle, e2e-web]')).includes('ci-ok'));
+  // report needs에서 빼면 master 실패가 이슈로 열리지 않는다
+  assert.ok(rulesFor(once('    needs: [ci-ok, e2e-web, e2e-native]\n', '    needs: [ci-ok, e2e-web]\n')).includes('observed'));
+  // 관찰 작업의 if를 바꾸면 code·master 집합이 달라진다
+  assert.ok(rulesFor(once("  e2e-web:\n    name: e2e-web\n    needs: changes\n    if: needs.changes.outputs.code == 'true'\n", '  e2e-web:\n    name: e2e-web\n    needs: changes\n')).includes('job-if'));
+  // 관찰 작업이 ci.yml에서 사라짐
+  assert.ok(rulesFor((t) => t.replace(/\n {2}e2e-web:\n[\s\S]*?\n\n/, '\n').replace('needs: [ci-ok, e2e-web, e2e-native]', 'needs: [ci-ok, e2e-native]')).includes('observed'));
 });

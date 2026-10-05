@@ -14,7 +14,10 @@
 //   ci-ok       작업 id `ci-ok`는 ci.yml에만, 정확히 한 번 있다. ci-ok의 needs는 ci.yml의 다른 모든 작업이고
 //               (CI_OK_EXEMPT 제외), `if: always()`이며, 식으로만 판정하는 guard 단계(CI_OK_GUARD)를 글자 그대로 갖는다.
 //   job-if      ci.yml 작업 수준 `if:`는 ci-ok의 `always()`, CODE_IF, MASTER_IF, report의 REPORT_IF뿐이고,
-//               CODE_IF를 단 작업 = gates.mjs CODE_GATED_JOBS, MASTER_IF를 단 작업 = MASTER_ONLY_JOBS다.
+//               CODE_IF를 단 작업 = gates.mjs CODE_GATED_JOBS(+ OBSERVED_JOBS의 'code'), MASTER_IF를 단 작업 =
+//               MASTER_ONLY_JOBS(+ OBSERVED_JOBS의 'master')다.
+//   observed    gates.mjs OBSERVED_JOBS(D14 관찰 중)는 ci.yml에 있고, ci-ok needs에 없고, ci-ok를 needs에 두지 않으며,
+//               report의 needs에 있다(master 실패는 master-failure 이슈로 본다).
 //   hook-entry  .githooks/의 파일 집합은 gates.mjs HOOKS와 같고, 각 훅은 `run.mjs hook <자기 이름> "$@"`만 exec한다.
 //               LF 줄끝, #!/bin/sh, (git 저장소면) 인덱스 모드 100755.
 //   hook-gate   훅이 부르는 gate ⊂ ci.yml의 gate ∪ HOOK_ONLY 짝(짝이 모두 ci.yml에 있어야 한다). CI가 최종 권위다.
@@ -25,7 +28,7 @@ import { existsSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { CODE_GATED_JOBS, COMMANDS, GATES, HOOK_ONLY, HOOKS, MASTER_ONLY_JOBS } from './gates.mjs';
+import { CODE_GATED_JOBS, COMMANDS, GATES, HOOK_ONLY, HOOKS, MASTER_ONLY_JOBS, OBSERVED_JOBS } from './gates.mjs';
 
 const ROOT_DEFAULT = join(fileURLToPath(import.meta.url), '..', '..', '..');
 
@@ -43,7 +46,7 @@ export const SETUP_ALLOW = [
 ];
 export const ENTRY = /^node scripts\/ci\/run\.mjs ([a-z0-9-]+)(?: [A-Za-z0-9._@\/=:+,-]+)*$/;
 
-// ci-ok의 needs에서 뺄 수 있는 작업과 이유(D14 관찰 기간의 E2E 등). 넣을 때는 cicd.md에 이유를 적는다.
+// ci-ok 뒤에 도는, ci-ok의 needs에서 뺀 작업과 이유. 넣을 때는 cicd.md에 이유를 적는다(D14 관찰 작업은 gates.mjs OBSERVED_JOBS).
 //   report: ci-ok의 결과를 읽어 이슈를 여닫는다(ci-ok 뒤에 돈다). 실패해도 커밋의 녹색 여부와 무관하다.
 export const CI_OK_EXEMPT = ['report'];
 
@@ -181,7 +184,8 @@ function checkCiJobs(text, add) {
   const ids = Object.keys(jobs);
   const ciOk = jobs['ci-ok'];
   if (!ciOk) return;
-  const want = ids.filter((id) => id !== 'ci-ok' && !CI_OK_EXEMPT.includes(id)).sort();
+  const observed = Object.keys(OBSERVED_JOBS);
+  const want = ids.filter((id) => id !== 'ci-ok' && !CI_OK_EXEMPT.includes(id) && !observed.includes(id)).sort();
   const have = [...ciOk.needs].sort();
   const missing = want.filter((id) => !have.includes(id));
   const extra = have.filter((id) => !want.includes(id));
@@ -206,8 +210,18 @@ function checkCiJobs(text, add) {
     else add(rel, j.line, 'job-if', `작업 ${id}의 if는 CODE_IF·MASTER_IF(report는 REPORT_IF)만 허용한다(지금: ${j.if})`);
   }
   const same = (a, b) => [...a].sort().join(',') === [...b].sort().join(',');
-  if (!same(gated, CODE_GATED_JOBS)) add(rel, 0, 'job-if', `code로 건너뛰는 작업 [${gated.sort()}] ≠ gates.mjs CODE_GATED_JOBS [${[...CODE_GATED_JOBS].sort()}]`);
-  if (!same(masterOnly, MASTER_ONLY_JOBS)) add(rel, 0, 'job-if', `PR에서 건너뛰는 작업 [${masterOnly.sort()}] ≠ gates.mjs MASTER_ONLY_JOBS [${[...MASTER_ONLY_JOBS].sort()}]`);
+  const wantGated = [...CODE_GATED_JOBS, ...observed.filter((id) => OBSERVED_JOBS[id] === 'code')];
+  const wantMaster = [...MASTER_ONLY_JOBS, ...observed.filter((id) => OBSERVED_JOBS[id] === 'master')];
+  if (!same(gated, wantGated)) add(rel, 0, 'job-if', `code로 건너뛰는 작업 [${gated.sort()}] ≠ gates.mjs CODE_GATED_JOBS + OBSERVED_JOBS(code) [${wantGated.sort()}]`);
+  if (!same(masterOnly, wantMaster)) add(rel, 0, 'job-if', `PR에서 건너뛰는 작업 [${masterOnly.sort()}] ≠ gates.mjs MASTER_ONLY_JOBS + OBSERVED_JOBS(master) [${wantMaster.sort()}]`);
+  for (const id of observed) {
+    if (!jobs[id]) {
+      add(rel, 0, 'observed', `OBSERVED_JOBS의 ${id}가 ci.yml에 없다(편입했으면 gates.mjs에서 뺀다)`);
+      continue;
+    }
+    if (jobs[id].needs.includes('ci-ok')) add(rel, jobs[id].line, 'observed', `관찰 작업 ${id}는 ci-ok 뒤에 돌지 않는다(needs에서 ci-ok를 뺀다)`);
+    if (!jobs.report?.needs.includes(id)) add(rel, jobs[id].line, 'observed', `관찰 작업 ${id}가 report의 needs에 없다(master 실패가 이슈로 열리지 않는다)`);
+  }
   for (const id of CI_OK_EXEMPT) {
     if (jobs[id] && !jobs[id].needs.includes('ci-ok')) add(rel, jobs[id].line, 'ci-ok', `ci-ok에서 뺀 작업 ${id}는 ci-ok 뒤에 돌아야 한다(needs: ci-ok)`);
   }

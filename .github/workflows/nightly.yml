@@ -1,0 +1,152 @@
+name: nightly
+
+# 예약 고리(docs/design/cicd.md §2 위치 N·W, §4). 커밋과 무관하게 환경(러너 이미지·WebView 드라이버)이 바뀌어 빨개질 수 있는
+# 검사를 PR 밖에서 돌리고, 실패하면 이슈를 열고 다음 녹색에 닫는다(issue.mjs, report 작업).
+#   - e2e-native (linux): 매일. ci.yml의 master 실행과 같은 gate다(러너 이미지가 바뀌어도 매일 확인한다).
+#   - e2e-native (windows): 매주. msedgedriver는 러너의 Edge·WebView2 버전을 따라가 재현할 수 없어 PR·master에 두지 않는다.
+# 이 워크플로나 네이티브 E2E 실행기를 고치는 PR에서도 두 작업이 돈다(머지 전에 확인한다. 이슈 고리는 돌지 않는다).
+# G5가 drift·advisories·fuzz 등을 이 파일에 더한다.
+
+on:
+  schedule:
+    - cron: "17 18 * * *" # 매일 KST 03:17
+    - cron: "47 18 * * 0" # 매주 월 KST 03:47(Windows 포함)
+  pull_request:
+    paths:
+      - .github/workflows/nightly.yml
+      - scripts/ci/e2e-native.mjs
+      - scripts/ci/e2e-fixture-server.mjs
+      - app/src-tauri/src/e2e.rs
+  workflow_dispatch:
+    inputs:
+      windows:
+        description: "Windows 네이티브 E2E도 돌린다(예약 실행은 매주 월요일에만)"
+        type: boolean
+        default: false
+      loop_test:
+        description: "고리 확인용: 이 dispatch 실행에서도 report(이슈 열기·닫기)를 돌린다"
+        type: boolean
+        default: false
+
+permissions: {}
+
+concurrency:
+  group: nightly-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  AWS_LC_SYS_PREBUILT_NASM: "1"
+
+jobs:
+  e2e-native-linux:
+    name: e2e-native (linux)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read # checkout
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: linux deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev build-essential \
+            libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev xvfb xauth webkit2gtk-driver
+      - name: rust toolchain
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: ". -> target"
+          save-if: ${{ github.ref == 'refs/heads/master' }}
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          package_json_file: app/package.json
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: app/pnpm-lock.yaml
+      - name: install tauri-driver
+        run: node scripts/ci/run.mjs install-tool tauri-driver
+      - name: e2e-native
+        run: node scripts/ci/run.mjs e2e-native
+      - name: hygiene-seed
+        if: ${{ !cancelled() }}
+        run: node scripts/ci/run.mjs hygiene-seed
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: ${{ !cancelled() }}
+        with:
+          name: e2e-native-linux
+          path: target/ci/e2e-native/
+          retention-days: 7
+          if-no-files-found: ignore
+
+  e2e-native-windows:
+    name: e2e-native (windows)
+    if: github.event_name == 'pull_request' || github.event.schedule == '47 18 * * 0' || inputs.windows
+    runs-on: windows-latest
+    timeout-minutes: 75
+    permissions:
+      contents: read # checkout
+    steps:
+      - name: disable autocrlf
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: rust toolchain
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: ". -> target"
+          save-if: ${{ github.ref == 'refs/heads/master' }}
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          package_json_file: app/package.json
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: app/pnpm-lock.yaml
+      - name: install tauri-driver
+        run: node scripts/ci/run.mjs install-tool tauri-driver
+      # msedgedriver는 러너 이미지의 것(EDGEWEBDRIVER)을 쓴다(e2e-native.mjs)
+      - name: e2e-native
+        run: node scripts/ci/run.mjs e2e-native
+      - name: hygiene-seed
+        if: ${{ !cancelled() }}
+        run: node scripts/ci/run.mjs hygiene-seed
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: ${{ !cancelled() }}
+        with:
+          name: e2e-native-windows
+          path: target/ci/e2e-native/
+          retention-days: 7
+          if-no-files-found: ignore
+
+  # 고리: 예약 실행(master)의 결과로 ci-loop:e2e-native 이슈를 열고 닫는다. PR 실행은 보고하지 않는다.
+  report:
+    name: report
+    needs: [e2e-native-linux, e2e-native-windows]
+    if: always() && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.loop_test))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read # checkout
+      issues: write # 고리 이슈 열기·댓글·닫기, label 만들기
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - name: report-loop
+        run: node scripts/ci/run.mjs report-loop
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LOOP: e2e-native
+          NEEDS: ${{ toJSON(needs) }}

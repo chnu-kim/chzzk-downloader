@@ -18,7 +18,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `app/` | Vite + Svelte 5 + TS 프런트(`pnpm`, `packageManager`로 버전 고정). `src/lib/api.ts`(command 래퍼), `src/lib/bindings/`(생성물, 손대지 않는다), `src/lib/copy/`(copy deck), `src/lib/components/`·`views/`, vitest는 `*.test.ts` |
 | `app/src-tauri/` | **`chzzk-app`**(lib `chzzk_app_lib`, bin `chzzk-app`). Tauri Builder·플러그인·command 배선·`ChannelSink`·로그·창 닫기 가드, `capabilities/default.json`, `tests/ipc.rs`(mock 런타임 IPC) |
 | `scripts/ci/run.mjs` | **훅과 CI의 단일 진입점** `node scripts/ci/run.mjs <gate>`. gate 표는 `gates.mjs`, 도구 버전은 `tools.json`, 설계는 `docs/design/cicd.md`(끝의 "구현 중 변경"이 본문보다 우선) |
-| `.github/workflows/ci.yml` | 경로 필터 없는 단일 CI: `changes`(문서만 바뀌면 무거운 작업 건너뜀) · `lint` · `scripts (windows)` · `supply` · `rust`(3 OS) · `frontend` · `tauri`(3 OS) · 집계 `ci-ok`(필수 체크는 이것 하나). 모든 `uses:`는 커밋 SHA 고정(`scripts/ci/pin-actions.mjs`) |
+| `.github/workflows/ci.yml` | 경로 필터 없는 단일 CI: `changes`(문서만 바뀌면 무거운 작업 건너뜀) · `lint` · `scripts (windows)` · `supply` · `rust`(3 OS) · `frontend` · `tauri`(3 OS, debug 빌드 + `smoke-bin`) · `coverage`(커버리지·테스트 수 ratchet) · push·dispatch에서만 `bundle (linux)`(ubuntu 22.04 컨테이너)·`smoke-install (linux)`·`bundle (macOS·Windows)` · 집계 `ci-ok`(필수 체크는 이것 하나) · `report`(master 실패 이슈 열기·닫기, 예약 워크플로 keep-alive). 모든 `uses:`는 커밋 SHA 고정(`scripts/ci/pin-actions.mjs`) |
+| `ci/ratchet.json`, `ci/RATCHET_LOG.md`, `release/expected-artifacts.json` | 커버리지·테스트 수·크기 ratchet 기준(내려가면 CI 실패, 느슨하게 하면 로그에 키와 이유), OS별 번들 기대 집합 |
 | `rust-toolchain.toml`, `deny.toml`, `_typos.toml`, `zizmor.yml`, `.github/dependabot.yml` | 툴체인 고정(1.96.1, MSRV는 `rust-version` 1.90), cargo-deny, typos, zizmor, Dependabot 설정 |
 
 `crates/core/src` 모듈: `url`(parse_content_url) · `info`(`classify`: **inKey 분기는 이 한 곳**, `encryptionType` → `inKey` → `liveRewindPlaybackJson` 순) · `mpd` · `hls` · `http`(요청 종류별 헤더, `Secret`, `redact_url`) · `client`(`Chzzk::resolve`) · `download/`(`part`·`retry`·`progressive`·`segmented`) · `progress`(`Meter`) · `naming` · `fsutil` · `settings` · `credentials` · `legacy` · `ownership` · `error`.
@@ -38,6 +39,9 @@ node scripts/ci/run.mjs scan                 # 공개 누출 검사(추적 파�
 node scripts/ci/run.mjs scripts-test         # scripts/**/*.test.mjs
 node scripts/ci/run.mjs workflows            # .github/를 바꿨을 때: pin-check + actionlint + zizmor
 node scripts/ci/run.mjs versions             # 버전 원천 일치(Cargo 멤버·tauri.conf.json·app/package.json)
+node scripts/ci/run.mjs smoke-bin            # tauri gate의 debug 빌드를 --smoke로 띄워 마커 확인(창이 잠깐 뜬다)
+node scripts/ci/run.mjs coverage             # llvm-cov + vitest 커버리지 → ci/ratchet.json 비교(test-count는 테스트 수)
+node scripts/ci/ratchet.mjs write --from-run <run id>   # CI 측정값으로 ratchet 기준을 조인다(올리기만)
 node scripts/ci/run.mjs doctor               # 로컬 도구 유무·버전(tools.json). 없는 도구의 gate는 로컬에서 건너뛰고 CI가 본다
 node scripts/ci/run.mjs install-hooks        # 훅 켜기(core.hooksPath=.githooks). 클론마다 한 번. pre-commit·commit-msg·pre-push가
                                              #   run.mjs hook <이름>으로 gates.mjs HOOKS를 돈다(pre-push의 push-guard·scan-range는 끌 수 없다.
@@ -48,6 +52,7 @@ UPDATE_BINDINGS=1 cargo test -p chzzk-shell --test bindings   # DTO를 바꾼 �
 # 앱 실행·빌드 (app/에서)
 pnpm tauri dev                                   # 개발 실행(Vite devUrl)
 pnpm tauri build --debug --no-bundle             # dist를 넣은 debug 바이너리 → target/debug/chzzk-app
+CHZZK_SMOKE_OUT=/tmp/m.json ../target/debug/chzzk-app --smoke   # 기동 스모크: 임시 데이터 폴더, 프런트 신호 뒤 exit 0(60초 넘으면 2)
 
 cargo test -p chzzk-core --test segmented <이름>      # 통합 테스트 하나
 cargo test -p chzzk-core --lib naming::                # 단위 테스트 모듈 하나

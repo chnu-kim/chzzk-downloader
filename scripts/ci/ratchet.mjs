@@ -35,9 +35,6 @@ export const KINDS = { coverage: 'coverage_lines', tests: 'tests', size: 'size' 
 const SETTINGS = new Set(['tolerance_pp', 'tolerance_pct']);
 // 기준 0(아직 안 잼)으로 둘 수 있는 키. 다른 키가 0이면 lint가 실패한다. tests.playwright는 G4, mutants는 G5가 채운다.
 export const PENDING_ALLOWED = ['tests.playwright'];
-// G3_FILL: 첫 CI 측정으로 채우기 전까지 잠깐 허용하는 키. 채우는 커밋에서 이 목록을 지운다.
-const G3_FILL = ['coverage_lines.frontend', 'coverage_lines.rust', 'size.binary.darwin', 'size.binary.linux', 'size.binary.windows', 'size.bundle.darwin-dmg', 'size.bundle.linux-AppImage', 'size.bundle.linux-deb', 'size.bundle.windows-msi', 'size.bundle.windows-setup', 'size.dist_gz', 'tests.app.darwin', 'tests.app.linux', 'tests.app.windows', 'tests.rust', 'tests.vitest'];
-PENDING_ALLOWED.push(...G3_FILL);
 
 // 객체 → { "a.b.c": 숫자 } (설정 키·$comment·null 제외)
 export function flatten(obj, prefix = '') {

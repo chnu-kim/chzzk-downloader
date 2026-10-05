@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 | 경로 | 내용 |
 |---|---|
-| `Cargo.toml` | Rust workspace(`resolver = "3"`, edition 2024, MSRV 1.90). 멤버는 `crates/core`·`crates/shell`·`app/src-tauri`. 버전은 `[workspace.package] version` 하나이고 `tauri.conf.json`·`app/package.json`과 같아야 한다(`versions` gate) |
+| `Cargo.toml` | Rust workspace(`resolver = "3"`, edition 2024, MSRV 1.90). 멤버는 `crates/core`·`crates/shell`·`app/src-tauri`·`xtask`. 버전은 `[workspace.package] version` 하나이고 `tauri.conf.json`·`app/package.json`과 같아야 한다(`versions` gate) |
 | `crates/core/` | **`chzzk-core`**(lib `chzzk_core`). Tauri 비의존 코어: URL 해석, info/MPD/HLS 파서, `resolve`, 다운로드 엔진(`.part` 이어받기), 파일명, 설정·자격증명·레거시 가져오기 |
 | `crates/core/tests/` | wiremock·raw TCP 통합 테스트(오프라인). `live.rs`는 실서버 `#[ignore]` 스모크, `support/mp4.rs`는 MP4 상자 검사기 |
 | `crates/core/examples/dl.rs` | 실서버 수동 스모크 CLI |
@@ -20,9 +20,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `scripts/ci/run.mjs` | **훅과 CI의 단일 진입점** `node scripts/ci/run.mjs <gate>`. gate 표는 `gates.mjs`, 도구 버전은 `tools.json`, 설계는 `docs/design/cicd.md`(끝의 "구현 중 변경"이 본문보다 우선) |
 | `.github/workflows/ci.yml` | 경로 필터 없는 단일 CI: `changes`(문서만 바뀌면 무거운 작업 건너뜀) · `lint` · `scripts (windows)` · `supply` · `rust`(3 OS) · `frontend` · `tauri`(3 OS, debug 빌드 + `smoke-bin`) · `coverage`(커버리지·테스트 수 ratchet) · `e2e-web`(Playwright) · `e2e-native (linux)`(코드 PR·push·dispatch, 두 E2E는 D14 관찰 중이라 `ci-ok` 밖) · `bundle (linux)`(ubuntu 22.04 컨테이너)·`smoke-install (linux)`·`bundle (macOS·Windows)` · 집계 `ci-ok`(필수 체크는 이것 하나) · `report`(master 실패 이슈 열기·닫기, 예약 워크플로 keep-alive). 모든 `uses:`는 커밋 SHA 고정(`scripts/ci/pin-actions.mjs`) |
 | `.github/workflows/nightly.yml` | 예약 고리. 매일: 네이티브 E2E Linux, 실서버 `drift`(환경 `drift`의 본인 영상 secret, kind만 출력, 2회 연속 실패에 이슈, `no_target`은 3회), `advisories`, `pins`(핀 SHA·zizmor 온라인), `ruleset-drift`(환경 `audit`의 `RULESET_READ_TOKEN`), `fuzz`(4 target, 고정 nightly). 매주: Windows 네이티브 E2E(코드 PR에서도), `toolchain`, `mutants`(shard 4개 → `mutants_missed` ratchet). 작업마다 `ci-loop:<작업 id>` 이슈(`run.mjs report-loop`, 건너뛴 작업도 마지막 성공이 오래되면 연다), `drift-log` 작업이 drift 작업 로그를 `drift-log-check`로 다시 본다(`ci-loop:drift-log`), 앞 실행의 report 자신의 실패는 `ci-loop:nightly-report`. dispatch 입력 `only`·`weekly`·`simulate`(drift 합성 출력)·`loop_test`. master가 아닌 브랜치의 dispatch는 `ci-loop-test:`에만 쓴다. PR 경로 필터는 `paths-ignore` = `gates.mjs NON_CODE_GLOBS`뿐(parity `pr-paths`) |
+| `xtask/` | **릴리스 도구**(`cargo xtask release <명령>`, `.cargo/config.toml` alias, `--locked`). `collect`(OS별 bundles.json → 표·해시 확인)·`sign`(minisign, Tauri 키 형식)·`verify-sig`(updater와 같은 `minisign-verify` + 1바이트·comment 변조 음성 검사)·`sums`·`manifest`(`release/latest.schema.json` 검증)·`put`(R2 S3 API, SigV4 직접 서명, `If-None-Match: *`)·`promote`(`releases/latest.json` CAS, 마지막)·`verify`·`rollback`. 골든 `xtask/testdata/tauri-cli/`(tauri-cli가 만든 공개 키·서명) |
+| `release/` | `expected-artifacts.json`(OS별 번들·updater 산출물 표, 플랫폼 키), `latest.schema.json`(updater 매니페스트), `tauri.release.json`(`createUpdaterArtifacts`, 릴리스 빌드만), `updater.pub`(공개 키 = `tauri.conf.json` `plugins.updater.pubkey`, `pubkey` gate). 개인 키는 저장소에 두지 않는다(누출 규칙 `signing-key`) |
+| `.github/workflows/release.yml`, `rollback.yml` | CD. 태그 `v*`: `gate`(버전 = 태그, 단조 증가, master 조상, 그 커밋의 master `ci-ok` 녹색) → `build`(3 OS, 임시 키, 시크릿 없음) → `smoke` → `sign-publish`(환경 `release`, R2 업로드, `latest.json`은 마지막) → `verify`(다시 받아 확인, 실패하면 prev로 되돌림) → `deploy-worker`(Phase 3 seam) → `report`(`ci-loop:release`). dispatch·매주 schedule은 리허설: preflight에서 "릴리스 시크릿 없음"으로 멈추는 것이 설계대로다(`ci-loop:release-rehearsal`은 그 밖의 실패만). `rollback.yml`(dispatch, 입력 `version`)은 `latest.json`을 그 버전으로 되돌린다. 바이너리는 GitHub Release에 올리지 않는다 |
 | `fuzz/` | cargo-fuzz 대상(`url`·`info`·`mpd`·`hls`). 루트와 따로인 워크스페이스(자기 `Cargo.lock`, 루트 `exclude`), 고정 nightly(`tools.json` `rust-nightly`)로만 빌드. seed는 실행 때 `testdata/`에서 복사(`scripts/ci/fuzz.mjs`) |
 | `ci/ratchet.json`, `ci/RATCHET_LOG.md`, `release/expected-artifacts.json` | 커버리지·테스트 수·크기·살아남은 mutant ratchet 기준(나빠지면 CI 실패, 느슨하게 하면 로그에 키와 이유), OS별 번들 기대 집합 |
-| `scripts/ci/repo-settings.json` | 저장소 설정 선언(nightly `ruleset-drift`가 실제 값과 비교). ruleset 선언은 `.github/rulesets/`(G7) |
+| `scripts/ci/repo-settings.json` | 저장소 설정 선언(nightly `ruleset-drift`가 실제 값과 비교, 환경 `release`의 배포 정책 포함). ruleset 선언은 `.github/rulesets/`(G7) |
 | `rust-toolchain.toml`, `deny.toml`, `_typos.toml`, `zizmor.yml`, `.github/dependabot.yml` | 툴체인 고정(1.96.1, MSRV는 `rust-version` 1.90), cargo-deny, typos, zizmor, Dependabot 설정 |
 
 `crates/core/src` 모듈: `url`(parse_content_url) · `info`(`classify`: **inKey 분기는 이 한 곳**, `encryptionType` → `inKey` → `liveRewindPlaybackJson` 순) · `mpd` · `hls` · `http`(요청 종류별 헤더, `Secret`, `redact_url`) · `client`(`Chzzk::resolve`) · `download/`(`part`·`retry`·`progressive`·`segmented`) · `progress`(`Meter`) · `naming` · `fsutil` · `settings` · `credentials` · `legacy` · `ownership` · `error`.
@@ -35,13 +38,15 @@ cargo fmt --all                                         # 포맷 적용
 # 검증 게이트: CI(ci.yml)와 같은 명령이다. 커밋 전에 건드린 쪽을 통과시킨다
 node scripts/ci/run.mjs list                 # gate 목록
 node scripts/ci/run.mjs fmt                  # cargo fmt --all --check
-node scripts/ci/run.mjs rust                 # chzzk-core·chzzk-shell clippy -D warnings + test
+node scripts/ci/run.mjs rust                 # chzzk-core·chzzk-shell·xtask clippy -D warnings + test
 node scripts/ci/run.mjs tauri                # chzzk-app clippy + test + debug 빌드(app/ pnpm install 포함)
 node scripts/ci/run.mjs frontend             # app/: pnpm install --frozen-lockfile, check, test, build
 node scripts/ci/run.mjs scan                 # 공개 누출 검사(추적 파일)
 node scripts/ci/run.mjs scripts-test         # scripts/**/*.test.mjs
 node scripts/ci/run.mjs workflows            # .github/를 바꿨을 때: pin-check + actionlint + zizmor
 node scripts/ci/run.mjs versions             # 버전 원천 일치(Cargo 멤버·tauri.conf.json·app/package.json)
+node scripts/ci/run.mjs pubkey               # release/updater.pub == tauri.conf.json plugins.updater.pubkey
+node scripts/ci/run.mjs release-selftest     # 릴리스 경로(xtask)를 가짜 S3(scripts/ci/s3-fake.mjs)에 합성 산출물로: 업로드·CAS·변조→rollback·멱등·preflight
 node scripts/ci/run.mjs smoke-bin            # tauri gate의 debug 빌드를 --smoke로 띄워 마커 확인(창이 잠깐 뜬다)
 node scripts/ci/run.mjs coverage             # llvm-cov + vitest 커버리지 → ci/ratchet.json 비교(test-count는 테스트 수)
 node scripts/ci/run.mjs e2e-web              # app/: build → Playwright chromium 설치(처음 한 번) → 웹 E2E(mockIPC·axe) → 통과 수 ratchet
@@ -59,6 +64,11 @@ FUZZ_SECONDS=20 node scripts/ci/run.mjs fuzz # cargo-fuzz 4 target(먼저 run.mj
 node scripts/ci/run.mjs fuzz-lock            # (PR lint) fuzz/Cargo.lock 최신·루트와 같은 버전 + fuzz target cargo check. lock 고치기: cp Cargo.lock fuzz/Cargo.lock && (cd fuzz && cargo metadata --format-version 1 >/dev/null)
 DRIFT_SIMULATE=target_gone node scripts/ci/run.mjs drift   # drift 경로를 합성 출력으로. 실서버는 CHZZK_LIVE_HLS·_DASH·_CLIP(본인 영상)
 gh workflow run nightly.yml --ref <브랜치> -f only=drift -f simulate=target_gone -f loop_test=true   # 고리 확인(ci-loop-test:)
+
+# 릴리스(release.yml). 태그 push가 진짜 릴리스, dispatch는 리허설(3 OS 빌드·수집·설치 스모크 → preflight에서 멈춤)
+gh workflow run release.yml --ref <브랜치>                 # 리허설. -f tag=v9.9.9면 버전 불일치로 gate가 빨개진다(음성 확인)
+gh workflow run rollback.yml -f version=<X.Y.Z|none>      # latest.json 되돌리기(환경 release, master)
+cargo xtask release verify --version <v> --pubkey release/updater.pub --base-url <DIST_BASE_URL>   # R2_* env로 다시 받아 확인
 node scripts/ci/run.mjs doctor               # 로컬 도구 유무·버전(tools.json). 없는 도구의 gate는 로컬에서 건너뛰고 CI가 본다
 node scripts/ci/run.mjs install-hooks        # 훅 켜기(core.hooksPath=.githooks). 클론마다 한 번. pre-commit·commit-msg·pre-push가
                                              #   run.mjs hook <이름>으로 gates.mjs HOOKS를 돈다(pre-push의 push-guard·scan-range는 끌 수 없다.
@@ -83,7 +93,7 @@ CHZZK_LIVE_HLS=<빠른 다시보기 no> CHZZK_LIVE_DASH=<일반 VOD no> CHZZK_LI
   cargo test -p chzzk-core --test live -- --ignored --nocapture
 ```
 
-- `chzzk-app`(app/src-tauri)은 `app/dist` 없이도 `cargo` 직접 실행으로 컴파일된다(app.md 구현 중 변경 6). Linux에서는 webkit2gtk 4.1 등 개발 패키지가 필요하다(목록은 `ci.yml`의 `tauri` 작업). 그래서 `rust` gate는 `-p chzzk-core -p chzzk-shell`만 돌고, `chzzk-app`은 apt를 설치하는 `tauri` 작업이 본다. `pnpm tauri build`는 `beforeBuildCommand`로 `dist`를 먼저 만든다.
+- `chzzk-app`(app/src-tauri)은 `app/dist` 없이도 `cargo` 직접 실행으로 컴파일된다(app.md 구현 중 변경 6). Linux에서는 webkit2gtk 4.1 등 개발 패키지가 필요하다(목록은 `ci.yml`의 `tauri` 작업). 그래서 `rust` gate는 `-p chzzk-core -p chzzk-shell -p xtask`만 돌고(같은 작업이 `release-selftest`도 돈다), `chzzk-app`은 apt를 설치하는 `tauri` 작업이 본다. `pnpm tauri build`는 `beforeBuildCommand`로 `dist`를 먼저 만든다.
 - CI 워크플로의 `run:`은 setup(autocrlf·rustup·apt)을 빼면 `node scripts/ci/run.mjs …`만 부른다(`parity` gate가 강제). 검사를 더하거나 바꿀 때는 `gates.mjs`를 고치고, 새 도구는 `tools.json`에 버전을 적는다. 워크플로에 `uses:`를 더하면 `node scripts/ci/pin-actions.mjs --write`로 SHA를 고정한다.
 - 앱의 macOS 설정·데이터는 `~/Library/Application Support/io.github.chnu-kim.chzzk-downloader`, 로그는 `~/Library/Logs/io.github.chnu-kim.chzzk-downloader`다.
 - 일반 테스트는 모두 오프라인이다(127.0.0.1 mock). 실서버는 `#[ignore]` 테스트와 `examples/dl.rs`로만 접속한다.

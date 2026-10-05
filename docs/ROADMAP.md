@@ -5,7 +5,7 @@
 ## 현재 위치
 
 - **완료**: Phase 0(#11), Phase 1 Rust 코어(#12, 3 OS CI 녹색), Go 삭제(#13), Phase 2 Tauri 앱(#14, macOS 실제 실행 확인). PR은 #11→#12→#13→#14로 쌓여 있고 아직 머지 전이다. #13은 #14와 함께 머지한다.
-- **Phase 4 CI/CD 구현 중**(`docs/design/cicd.md`, 브랜치 `ci/pipeline`, 공개 저장소 PR #1). G1~G5(단일 진입점 `scripts/ci/run.mjs`·`ci.yml`·훅·비공개 이력 가드·스모크·ratchet·E2E·nightly/weekly 고리)를 올렸다. 다음은 G6(CD). 훅 설치는 `node scripts/ci/run.mjs install-hooks`, 훅·CI 명령은 CLAUDE.md "명령".
+- **Phase 4 CI/CD 구현 중**(`docs/design/cicd.md`, 브랜치 `ci/pipeline`, 공개 저장소 PR #1). G1~G6(단일 진입점 `scripts/ci/run.mjs`·`ci.yml`·훅·비공개 이력 가드·스모크·ratchet·E2E·nightly/weekly 고리·CD `release.yml`/`xtask`)를 올렸다. 다음은 G7(보호: ruleset 적용). 훅 설치는 `node scripts/ci/run.mjs install-hooks`, 훅·CI 명령은 CLAUDE.md "명령".
 - **다음**: Phase 3+4 (Worker: 로그인·허용목록·랜딩·R2 배포 게이트·업데이트). 설계·오프라인 구현은 가능하지만 **끝까지 확인하려면 사용자의 외부 준비가 필요**하다(아래 "사용자가 준비해야 할 외부 항목").
 - **Phase 3의 핵심 미확인 사실**: OAuth `users/me`의 `channelId`가 VOD `content.channel.channelId`·클립 `ownerChannel.channelId`와 같은 값인지. 실제 로그인으로만 확인할 수 있으므로 별도 단계로 둔다.
 - **남은 확인(사용자)**: 성인 VOD PD 미디어 요청에 쿠키가 필요한지(`examples/dl.rs` + `CHZZK_NID_AUT`/`CHZZK_NID_SES`), Windows·Linux 실제 실행(app.md 수동 테스트 목록), macOS Dock 종료·로그아웃 때 D1 생략 수용 여부.
@@ -106,7 +106,8 @@
 - [ ] G4 편입: 두 작업은 D14 관찰 중(`gates.mjs` `OBSERVED_JOBS`, `ci-ok` 밖, master 실패는 `master-failure` 이슈). 관찰 시작은 master에 머지된 뒤 첫 master·예약 실행 날(브랜치의 첫 녹색은 2026-10-05), 편입은 **그 14일 뒤 이후**에 관찰 기간의 실패가 환경 요인이 아니었으면 `OBSERVED_JOBS`에서 빼고 `ci-ok` needs·guard에 넣는 PR(cicd.md 구현 중 변경 36 "편입")
 - [x] G5 Nightly·weekly 고리(`nightly.yml`): 실서버 drift(환경 `drift`, 출력은 kind만, 2회 연속 실패 시 이슈·`no_target` 3회, `simulate` 입력, `drift-log` 작업의 로그 위생 검사), advisories, pins(핀 SHA·zizmor 온라인), ruleset-drift(`repo-settings.json`, 환경 `audit`), toolchain(매주), fuzz 4 target(`fuzz/`, 고정 nightly), mutants shard 4개 + ratchet `mutants_missed`(매주, 765개 중 100개 살아남음, shard당 30~34분). 고리 확인: 37340094385(1회, 아무것도 안 함) → 37340384932(2회, `ci-loop-test:drift` #4 열림) → 37341022990(ok, #4 닫힘), 세 실행 로그의 canary 0건. 차이는 cicd.md "구현 중 변경" 49~63
 - [ ] G5 뒤 사용자 할 일: 환경 `drift`에 본인 영상 secret 셋(없으면 `no_target` 3회 연속에 이슈), 환경 `audit`에 `RULESET_READ_TOKEN`(Administration 읽기 fine-grained PAT, `GITHUB_TOKEN`은 403), `rust-toolchain.toml`을 최신 stable로 올릴지(지금 `toolchain` 고리가 빨갛다). `mutants_missed` 기준은 100으로 채웠다(37342266385). 줄이면 weekly 실행 번호로 `ratchet.mjs write --from-run <id>`(그 실행의 `nightly mutants` 작업이 녹색이면 된다)
-- [ ] G6 CD: `xtask release`, `release/updater.pub`, `release.yml`(gate → build → smoke → sign-publish → verify/rollback → Worker seam), `rollback.yml`, MinIO 리허설
+- [x] G6 CD: `xtask`(collect·sign·verify-sig·sums·manifest·put·promote·verify·rollback, 변조 음성 테스트, SigV4 직접 서명), `release/{updater.pub,expected-artifacts.json,latest.schema.json,tauri.release.json}`, updater plugin 등록·`pubkey` gate·누출 규칙 `signing-key`, `release.yml`(gate → build 3 OS → smoke → sign-publish → verify/rollback → deploy-worker seam → report), `rollback.yml`, 환경 `release`(태그 `v*`·master). MinIO 이미지를 받을 수 없어 Node 가짜 S3로 `release-selftest`(41개, `rust` 작업 3 OS). 차이는 cicd.md "구현 중 변경" 64~
+- [ ] G6 뒤 사용자 할 일: 환경 `release`에 시크릿·변수(cicd.md §8). 서명 키는 이 작업에서 로컬 `~/.tauri/chzzk-downloader-updater.key`(+`.password`)로 만들었고 공개 키만 커밋했다(백업할 것. 바꾸려면 첫 릴리스 전에 `release/updater.pub`·`tauri.conf.json`을 함께). R2 버킷·S3 토큰·`DIST_BASE_URL`은 Phase 3. 그 뒤 첫 실제 태그에서 `verify` 녹색과 `latest.json` 버전 = 태그를 확인한다
 - [ ] G7 보호: `.github/rulesets/{master,tags}.json`을 `gh api`로 적용(사용자 승인), 저장소 설정 선언, drift 검사
 - [ ] Worker 배포 작업은 G6의 `deploy-worker` seam을 Phase 3에서 채운다
 
@@ -118,7 +119,7 @@
 
 - [ ] 치지직 개발자 앱 등록 (client id / secret, Redirect URI = Worker 콜백 URL)
 - [ ] Cloudflare: Worker, R2 버킷, KV 또는 D1, (선택) 커스텀 도메인
-- [ ] GitHub Environment `release`·`drift`의 시크릿·변수 (정확한 이름은 `docs/design/cicd.md` §8): Tauri updater 서명 키쌍(`pnpm tauri signer generate --ci`), R2 S3 토큰, 본인 영상 drift 대상, Phase 3에 Cloudflare API 토큰
+- [ ] GitHub Environment `release`·`drift`의 시크릿·변수 (정확한 이름은 `docs/design/cicd.md` §8): Tauri updater 서명 키(로컬 `~/.tauri/chzzk-downloader-updater.key`·`.password`, 공개 키는 `release/updater.pub`), R2 S3 토큰, 본인 영상 drift 대상, Phase 3에 Cloudflare API 토큰. 환경 `release`는 만들어 두었다(배포 정책 태그 `v*`·master)
 
 ## 하네스 변경 이력
 

@@ -1115,6 +1115,22 @@ jobs:
 
 구현하면서 설계와 달라졌거나 설계가 모호해 고른 내용이다. 단계 번호는 §15 기준이다.
 
+**읽는 법.** 번호는 적은 순서이고 고치지 않는다. 같은 주제를 뒤 항목이 다시 다루면 **뒤 항목이 이긴다**. 위 본문(§0~§17)보다 이 절이 우선하고, 이 절보다 §16 "사용자 답변"이 우선한다. 본문을 읽다가 아래 주제에 닿으면 오른쪽 항목을 먼저 본다.
+
+| 주제 (본문 위치) | 지금 기준 |
+|---|---|
+| identifier·플러그인 다섯 개·JS 플러그인 권한 없음 (§2·§11) | 1, 2 (클립보드도 Rust command `clipboard_link`로 읽는다, 37) |
+| bindings 생성·최신 검사 (§2·§14의 `git diff`) | 14 (`cargo test -p chzzk-shell --test bindings`) |
+| 코어 `UserSettings` 필드 (§1·§3 "코어 API 그대로") | 28 (22를 앞당김, core.md 구현 중 변경 53) |
+| `jobs.json` 쓰기 위치 (§7.1·29(다)) | 32 (잠금 밖 쓰기 스레드) |
+| `quit`이 멈춘 작업 상태 (§6.1) | 30 (`interrupted`), 종료 한 번만은 38(가) |
+| 쿠키 가져오기·토글 (§7.2·34) | 36 |
+| 드래그 앤 드롭·`dragDropEnabled: false` (§11) | 5, 44(가) |
+| 상태별 버튼 (§8.5 그림) | 45 (ui-visual §6.5) |
+| 완료 알림 (§6.1·§16) | 37, 47 (실패에도 OS 알림) |
+| CI 작업 (§14) | 35 (`shell`), 49 (`frontend`·`tauri`) |
+| 컴포넌트 나눔 (§10) | 48 "하지 않은 것" (3) |
+| 웹뷰·OS 수동 확인 (§15 14·17행) | 아래 "수동 스모크 체크리스트 결과" 표. 미확인 항목은 사람이 3 OS에서 본다 |
 
 1. **§15-1 identifier.** §2의 `io.github.chnu-kim.vod-downloader` 대신 §16 답변대로 `io.github.chnu-kim.chzzk-downloader`를 쓴다. `app/src/tauri-conf.test.ts`가 identifier·창 크기·CSP·`withGlobalTauri`·`dragDropEnabled`를 고정한다.
 2. **§15-1 플러그인.** §0·§11의 세 개에 더해 §16 답변대로 `tauri-plugin-notification` 2.5.1·`tauri-plugin-clipboard-manager` 2.4.1을 골격에서부터 Builder에 등록한다. 다섯 개 모두 Rust에서만 부르므로 JS 패키지(`@tauri-apps/plugin-*`)와 capabilities 플러그인 권한은 넣지 않았다. 클립보드를 JS에서 읽기로 하면 그때 `clipboard-manager:allow-read-text` 하나만 더한다.
@@ -1274,6 +1290,8 @@ jobs:
     - (마) **액션 버전**: 새 액션은 §14대로 `pnpm/action-setup@v6`·`actions/setup-node@v7`(node 24)과 `actions/upload-artifact@v7`(2026-10-05 최신). `actions/checkout`은 `core.yml`·`shell`과 같게 `@v4`로 둔다(한 파일 안에서 갈리지 않게, 올리려면 두 워크플로를 함께).
     - (바) `frontend`는 `ubuntu-22.04` 하나, `tauri`는 3 OS `needs: [shell, frontend]`, `fail-fast: false`. `tauri`의 rust-toolchain은 `clippy`만(fmt는 `shell`이 본다).
     - **확인한 것**: `actionlint` 통과. macOS에서 `pnpm tauri build --ci --debug --no-bundle`(custom-protocol, `dist`를 바이너리에 넣는 경로)이 성공하고 그 바이너리가 시작 로그를 남기며 떴다(아래 표). Linux는 `ubuntu:22.04` 컨테이너(arm64, Docker)에서 위 apt 목록으로 `cargo clippy -p chzzk-app --all-targets --locked -- -D warnings`와 `cargo test -p chzzk-app --locked`(IPC 17개 포함)가 화면·D-Bus 없이 통과했다. 그래서 `xvfb-run`은 두지 않는다. **GitHub에서 3 OS로 돌려 보지는 않았다**(푸시 금지). Windows `tauri` 작업과 Linux `targets: all` 번들(AppImage·deb·rpm, linuxdeploy 내려받기)은 첫 master 실행에서 확인한다.
+
+50. **§15-19 문서 정리.** 1~49는 고치거나 다시 번호를 매기지 않고, 이 절 머리에 "읽는 법"(뒤 항목 우선, 우선순위 §16 > 이 절 > 본문)과 주제별 "지금 기준" 표를 더했다. 본문(§0~§17)은 설계 당시 기록으로 두고 고치지 않는다(§14의 `git diff`·`pnpm build` 선행 같은 어긋남은 표가 35·49로 보낸다). CLAUDE.md는 레이아웃(`crates/shell`·`app/`·`app/src-tauri`·`app.yml`), 앱 실행·빌드 명령, Linux 의존성 메모, app.md 기준 규칙으로 갱신했다.
 
 ### 수동 스모크 체크리스트 결과 (§15 17행, 2026-10-05 macOS)
 

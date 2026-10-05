@@ -11,6 +11,7 @@
 //   signed-token   hdnts=/hdntl= 토큰에 실제 시각(9자리 이상 숫자)이 든 것
 //   hmac           hmac= 뒤 8자리 이상 hex가 0이 아닌 것(%3D 인코딩 포함)
 //   pd-signature   _lsu_sa_= 뒤 16자리 이상 hex가 0이 아닌 것
+//   key-endpoint   암호화 키 주소의 경로 조각
 //   naver-cookie   NID_AUT / NID_SES 뒤에 20자 이상 값
 //   hex-id         32·36자리 hex 토큰 중 허용 목록(가짜 ID)에 없는 것
 //   denylist       scripts/ci/public-denylist.txt의 해시와 같은 토큰·n-gram·blob

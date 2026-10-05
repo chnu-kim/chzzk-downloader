@@ -39,7 +39,20 @@
     e.preventDefault();
     ui.urlTarget.paste(text);
   }
+
+  // 창 어디에 무엇을 떨어뜨려도 웹뷰가 그곳으로 이동하지 않게 한다(파일·링크). 네이티브 드롭을 꺼 두었으므로
+  // (tauri.conf `dragDropEnabled: false`) 막지 않으면 웹뷰의 기본 동작이 돈다. 홈의 DropOverlay가 받는 주소 글은
+  // 그쪽이 먼저 막고 dropEffect를 정한다.
+  function ondragover(e: DragEvent) {
+    if (e.defaultPrevented) return;
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'none';
+  }
+
+  function ondrop(e: DragEvent) {
+    e.preventDefault();
+  }
 </script>
 
-<svelte:window {onkeydown} />
+<svelte:window {onkeydown} {ondragover} {ondrop} />
 <svelte:document {onpaste} />

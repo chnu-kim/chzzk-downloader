@@ -219,7 +219,8 @@
     <OwnershipNotice ownership={view.ownership} channelName={view.meta.channelName} />
     {#if errCopy}
       <InlineAlert tone="danger" title={errCopy.title}>
-        {#if errCopy.body}{errCopy.body}{/if}
+        {#if errCopy.body}<p class="err-line">{errCopy.body}</p>{/if}
+        {#if errCopy.detail}<p class="err-line detail">{errCopy.detail}</p>{/if}
         {#snippet actions()}
           {#each errCopy.actions as a (a)}
             <Button size="sm" onclick={() => onErrorAction(a)}>{actionLabel(a)}</Button>
@@ -300,6 +301,12 @@
     display: flex;
     flex-direction: column;
     gap: var(--space-1);
+  }
+  .err-line {
+    margin: 0;
+  }
+  .err-line.detail {
+    color: var(--fg-muted);
   }
   .actions {
     display: flex;

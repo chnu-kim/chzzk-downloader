@@ -18,6 +18,7 @@ vi.mock('../../api', () => ({
 const api = await import('../../api');
 const { resolver } = await import('../../stores/resolve.svelte');
 const { settings } = await import('../../stores/settings.svelte');
+const { ui } = await import('../../stores/ui.svelte');
 const { default: InputPanel } = await import('./InputPanel.svelte');
 
 const settingsDto: SettingsDto = {
@@ -104,8 +105,9 @@ describe('UrlBar', () => {
     const { container } = render(InputPanel);
     await user.type(screen.getByLabelText('영상 주소'), 'https://chzzk.naver.com/video/1{Enter}');
     expect(container.querySelector('[aria-busy="true"]')).not.toBeNull();
-    // GlobalShortcuts가 없는 테스트라 store를 직접 부른다(Esc 스택은 ui.test.ts)
-    resolver.cancel();
+    // Esc 키는 GlobalShortcuts가 ui.escape()로 넘긴다(그 연결은 shortcuts.test.ts). 여기서는 InputPanel이 쌓은 처리기를 본다.
+    expect(ui.escape()).toBe(true);
+    expect(resolver.state.kind).toBe('idle');
     finish(resolved());
     await Promise.resolve();
     await Promise.resolve();
@@ -125,6 +127,13 @@ describe('ResolveCard', () => {
     // 4 Mbps × 11565초 / 8
     expect(radios[1]).toHaveTextContent('약 5.4 GB');
     expect(screen.getByRole('heading', { name: /금요/ })).toHaveFocus();
+  });
+
+  it('Esc(ui.escape)는 카드를 닫는다', async () => {
+    await openCard();
+    expect(ui.escape()).toBe(true);
+    await waitFor(() => expect(screen.queryByRole('heading', { name: /금요/ })).toBeNull());
+    expect(resolver.state.kind).toBe('idle');
   });
 
   it('충돌 없음 → 검사 결과가 온 뒤 다운로드, 카드를 접고 입력줄로', async () => {

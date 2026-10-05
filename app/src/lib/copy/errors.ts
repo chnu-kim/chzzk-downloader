@@ -121,6 +121,8 @@ export function errorCopy(raw: AppError, ctx: ErrorContext): ErrorCopy {
   const again: ActionId = job ? (hasPart ? 'resume' : 'retry') : 'retry';
   // "닫기 / 목록에서 지우기"
   const dismiss: ActionId = job ? 'remove' : 'close';
+  // "폴더 열기"는 작업의 폴더다(reveal_output(id)). 불러오기 카드에는 열 작업이 없다.
+  const folderActions: ActionId[] = job ? [again, 'openFolder'] : [again];
 
   switch (e.code) {
     case 'invalidUrl':
@@ -271,7 +273,7 @@ export function errorCopy(raw: AppError, ctx: ErrorContext): ErrorCopy {
         path
           ? `${path}가 있는 디스크의 공간을 비운 뒤 이어받으세요.`
           : '저장 폴더가 있는 디스크의 공간을 비운 뒤 이어받으세요.',
-        [again, 'openFolder'],
+        folderActions,
       );
     }
 
@@ -279,7 +281,7 @@ export function errorCopy(raw: AppError, ctx: ErrorContext): ErrorCopy {
       return copy(
         '다른 프로그램이 파일을 쓰고 있어요',
         '이 파일을 연 플레이어나 백신 검사가 끝난 뒤 다시 시도해 주세요.',
-        [again, 'openFolder'],
+        folderActions,
         pathOf(e),
       );
 
@@ -287,7 +289,7 @@ export function errorCopy(raw: AppError, ctx: ErrorContext): ErrorCopy {
       return copy(
         '파일을 저장하지 못했어요',
         '폴더에 쓸 권한이 있는지 확인해 주세요.',
-        [again, 'openFolder'],
+        folderActions,
         pathOf(e),
       );
 
@@ -302,7 +304,13 @@ export function errorCopy(raw: AppError, ctx: ErrorContext): ErrorCopy {
       return copy(t('conflict.inQueue'), '', ['showInList']);
 
     case 'fileMissing':
-      return copy('파일을 찾을 수 없어요. 옮기거나 지웠을 수 있어요', '', ['openFolder'], pathOf(e));
+      // 완료 항목의 [파일 열기]에서 나온다(토스트·항목). 폴더는 그 작업의 폴더다.
+      return copy(
+        '파일을 찾을 수 없어요. 옮기거나 지웠을 수 있어요',
+        '',
+        ctx.place === 'resolve' ? [] : ['openFolder'],
+        pathOf(e),
+      );
 
     case 'invalidInput':
       return ctx.place === 'cookie'

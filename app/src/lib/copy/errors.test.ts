@@ -36,7 +36,7 @@ describe('errorCopy 전체 표', () => {
             if (place === 'job' && partialBytes != null && code !== 'settings') expect(c.actions).not.toContain('retry');
             // R에는 목록 동작이 없다.
             if (place === 'resolve') {
-              const jobOnly: ActionId[] = ['resume', 'restartFresh', 'remove', 'reresolve'];
+              const jobOnly: ActionId[] = ['resume', 'restartFresh', 'remove', 'reresolve', 'openFolder'];
               for (const a of jobOnly) expect(c.actions).not.toContain(a);
             }
           }

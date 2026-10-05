@@ -3,7 +3,8 @@
 //
 //   node scripts/ci/measure.mjs coverage   # cargo llvm-cov(chzzk-core·chzzk-shell) 줄 커버리지 + vitest v8 줄 커버리지
 //   node scripts/ci/measure.mjs tests      # cargo test 목록 수(llvm-cov 빌드를 다시 쓴다) + vitest 통과 테스트 수
-//   node scripts/ci/measure.mjs tests-app  # chzzk-app 테스트 목록 수(tauri gate의 테스트 빌드를 다시 쓴다) → tests.app.<os>
+//   node scripts/ci/measure.mjs tests-app  # chzzk-app 테스트 목록 수(tauri gate의 테스트 빌드를 다시 쓴다) → tests.app.<os>,
+//                                          # e2e:: 테스트 수(--features e2e) → tests.app_e2e.<os>(0이면 실패)
 //   node scripts/ci/measure.mjs tests-playwright  # e2e-web(Playwright) 통과 테스트 수(target/e2e-web/report.json) → tests.playwright
 //   node scripts/ci/measure.mjs size       # app/dist gzip 합, 릴리스 바이너리, 수집한 번들(target/ci/bundle/bundles.json)
 //
@@ -126,9 +127,16 @@ function tests() {
 }
 
 // chzzk-app(webkit2gtk 등 OS 의존)은 coverage 작업이 아니라 tauri 작업(3 OS)에서 센다. OS별 #[cfg] 테스트가 있어 키도 OS별이다.
+// e2e:: 테스트(--features e2e --lib)도 따로 센다: `cargo test -- e2e::`는 필터가 아무것도 고르지 않아도 0으로 끝난다
+// (모듈 이름을 바꾸거나 테스트를 지우면 조용히 통과한다). 0개면 기준과 무관하게 실패한다.
+export const E2E_FILTER = 'e2e::';
 function testsApp() {
-  const list = (extra) => run('cargo', ['test', '-p', 'chzzk-app', '--locked', '--', '--list', ...extra, '--format', 'terse'], { capture: true });
-  save('tests', { [`tests.app.${osKey()}`]: countActive(list([]), list(['--ignored'])) });
+  const list = (feat, extra) => run('cargo', ['test', '-p', 'chzzk-app', '--locked', ...feat, '--', '--list', ...extra, '--format', 'terse'], { capture: true });
+  const app = countActive(list([], []), list([], ['--ignored']));
+  const e2eFeat = ['--features', 'e2e', '--lib'];
+  const e2e = countActive(list(e2eFeat, [E2E_FILTER]), list(e2eFeat, ['--ignored', E2E_FILTER]));
+  if (e2e === 0) throw new Error(`--features e2e --lib에서 ${E2E_FILTER} 테스트가 0개다(tauri gate의 cargo test 필터가 아무것도 돌리지 않는다)`);
+  save('tests', { [`tests.app.${osKey()}`]: app, [`tests.app_e2e.${osKey()}`]: e2e });
 }
 
 function testsPlaywright() {

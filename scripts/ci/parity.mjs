@@ -21,6 +21,12 @@
 //   hook-entry  .githooks/의 파일 집합은 gates.mjs HOOKS와 같고, 각 훅은 `run.mjs hook <자기 이름> "$@"`만 exec한다.
 //               LF 줄끝, #!/bin/sh, (git 저장소면) 인덱스 모드 100755.
 //   hook-gate   훅이 부르는 gate ⊂ ci.yml의 gate ∪ HOOK_ONLY 짝(짝이 모두 ci.yml에 있어야 한다). CI가 최종 권위다.
+//   job-name    작업 표시 이름(name:, 없으면 id)은 모든 워크플로를 통틀어 하나뿐이다(같은 이름의 체크가 둘이면 필수 체크·
+//               stale 판정이 다른 작업에 만족된다).
+//   schedule    `github.event.schedule == '<cron>'`(또는 !=)의 글자는 그 파일의 `- cron:` 중 하나다(cron을 고치면
+//               조건이 영원히 거짓이 되어 작업이 조용히 꺼진다).
+//   pr-paths    pull_request 트리거는 `paths:`를 쓰지 않고, `paths-ignore:`를 쓰면 run.mjs NON_CODE_GLOBS와 같다(코드 변경은
+//               ci.yml의 changes와 같은 기준으로 모두 돈다: 의존 파일을 손으로 나열하면 빠진다).
 // 위반이 있으면 1, 없으면 0.
 
 import { spawnSync } from 'node:child_process';
@@ -28,7 +34,7 @@ import { existsSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { CODE_GATED_JOBS, COMMANDS, GATES, HOOK_ONLY, HOOKS, MASTER_ONLY_JOBS, OBSERVED_JOBS } from './gates.mjs';
+import { CODE_GATED_JOBS, COMMANDS, GATES, HOOK_ONLY, HOOKS, MASTER_ONLY_JOBS, NON_CODE_GLOBS, OBSERVED_JOBS } from './gates.mjs';
 
 const ROOT_DEFAULT = join(fileURLToPath(import.meta.url), '..', '..', '..');
 
@@ -146,7 +152,7 @@ function stepKey(lines, r, key) {
   return null;
 }
 
-// 워크플로 본문 → { id: { line, needs: [..], if: string|null, lines: [줄 번호...] } } (jobs: 아래 두 칸 들여쓴 작업)
+// 워크플로 본문 → { id: { line, name, needs: [..], if: string|null, body: [줄...] } } (jobs: 아래 두 칸 들여쓴 작업)
 export function parseJobs(text) {
   const lines = text.replace(/\r\n/g, '\n').split('\n');
   const jobs = {};
@@ -158,7 +164,7 @@ export function parseJobs(text) {
     if (/^\S/.test(t)) break;
     const job = /^ {2}([A-Za-z0-9_-]+):\s*(#.*)?$/.exec(t);
     if (job) {
-      cur = jobs[job[1]] = { line: j + 1, needs: [], if: null, body: [] };
+      cur = jobs[job[1]] = { line: j + 1, name: null, needs: [], if: null, body: [] };
       continue;
     }
     if (!cur) continue;
@@ -172,6 +178,8 @@ export function parseJobs(text) {
         for (let k = j + 1; k < lines.length && /^ {6,}- /.test(lines[k]); k++) cur.needs.push(lines[k].replace(/^\s*- /, '').trim());
       }
     }
+    const name = /^ {4}name:\s*(.*?)\s*(#.*)?$/.exec(t);
+    if (name) cur.name = name[1].replace(/^(["'])(.*)\1$/, '$2');
     const iff = /^ {4}if:\s*(.*?)\s*$/.exec(t);
     if (iff) cur.if = iff[1].replace(/^\$\{\{\s*|\s*\}\}$/g, '');
   }
@@ -298,6 +306,45 @@ function checkHooks(root, add, ciGates) {
   }
 }
 
+// on.schedule의 cron 문자열들
+export function crons(text) {
+  return [...text.matchAll(/^\s*-\s*cron:\s*["']([^"']+)["']/gm)].map((m) => m[1]);
+}
+// on.pull_request 아래 키(paths·paths-ignore) → 값 목록 | null(키 없음). pull_request가 없으면 null.
+export function prFilters(text) {
+  const lines = text.replace(/\r\n/g, '\n').split('\n');
+  const at = lines.findIndex((l) => /^ {2}pull_request:\s*(#.*)?$/.test(l));
+  if (at < 0) return null;
+  const out = {};
+  let key = null;
+  for (let j = at + 1; j < lines.length && (lines[j].trim() === '' || /^ {4}/.test(lines[j])); j++) {
+    const k = /^ {4}([a-z-]+):\s*(.*?)\s*(#.*)?$/.exec(lines[j]);
+    if (k) {
+      key = k[1];
+      out[key] = k[2] ? [k[2]] : [];
+      continue;
+    }
+    const item = /^ {6}-\s*["']?(.*?)["']?\s*(#.*)?$/.exec(lines[j]);
+    if (item && key) out[key].push(item[1]);
+  }
+  return out;
+}
+
+function checkWorkflowShape(rel, text, add) {
+  const cs = crons(text);
+  text.split(/\r?\n/).forEach((l, i) => {
+    for (const m of l.matchAll(/github\.event\.schedule\s*[!=]=\s*'([^']*)'/g)) {
+      if (!cs.includes(m[1])) add(rel, i + 1, 'schedule', `'${m[1]}'은 이 파일의 cron(${cs.map((c) => `'${c}'`).join(', ') || '없음'})이 아니다 — 조건이 늘 같아진다`);
+    }
+  });
+  const pr = prFilters(text);
+  if (!pr) return;
+  if (pr.paths) add(rel, 0, 'pr-paths', 'pull_request에 paths:를 쓰지 않는다(의존 파일을 손으로 나열하면 빠진다). 코드가 아닌 경로는 paths-ignore로 뺀다');
+  if (pr['paths-ignore'] && pr['paths-ignore'].join('\n') !== NON_CODE_GLOBS.join('\n')) {
+    add(rel, 0, 'pr-paths', `pull_request paths-ignore [${pr['paths-ignore']}] ≠ gates.mjs NON_CODE_GLOBS [${NON_CODE_GLOBS}]`);
+  }
+}
+
 export function checkParity(root) {
   const out = [];
   const add = (file, line, rule, msg) => out.push({ file, line, rule, msg });
@@ -306,6 +353,7 @@ export function checkParity(root) {
   const files = existsSync(wfDir) ? readdirSync(wfDir).filter((f) => /\.ya?ml$/.test(f)).sort() : [];
   const ciOkIn = [];
   const ciGates = new Set();
+  const names = new Map();
   for (const f of files) {
     const rel = `.github/workflows/${f}`;
     const text = readFileSync(join(wfDir, f), 'utf8');
@@ -319,7 +367,13 @@ export function checkParity(root) {
       }
     }
     checkSoften(rel, text, add);
+    checkWorkflowShape(rel, text, add);
     if (f === 'ci.yml') checkCiJobs(text, add);
+    for (const [id, j] of Object.entries(parseJobs(text))) {
+      const n = j.name ?? id;
+      if (names.has(n)) add(rel, j.line, 'job-name', `작업 이름 '${n}'이 ${names.get(n)}에도 있다(체크 이름이 겹친다)`);
+      else names.set(n, `${rel}:${j.line}`);
+    }
     for (const t of toolInputs(text)) {
       const spec = tools[t.name];
       if (!spec) add(rel, t.line, 'tool-pin', `tools.json에 없는 도구: ${t.name}`);

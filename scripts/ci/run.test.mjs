@@ -220,3 +220,18 @@ test('gate platforms: 다른 OS에서는 로컬은 건너뛰고(0) CI는 실패(
     delete G['__platform_probe'];
   }
 });
+
+// nightly.yml pull_request paths-ignore(NON_CODE_GLOBS)와 classify(NON_CODE)가 같은 경로를 코드가 아니라고 본다.
+// GitHub 필터 glob: `*`는 `/`를 넘지 않고 `**`는 넘는다(대소문자 구별).
+test('NON_CODE_GLOBS와 NON_CODE 정규식이 같은 경로를 고른다', async () => {
+  const { NON_CODE, NON_CODE_GLOBS } = await import('./gates.mjs');
+  const globRe = (g) => new RegExp(`^${g.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*\*/g, '\u0000').replace(/\*/g, '[^/]*').replace(/\u0000/g, '.*')}$`);
+  const byGlob = (f) => NON_CODE_GLOBS.some((g) => globRe(g).test(f));
+  const byRe = (f) => NON_CODE.some((re) => re.test(f));
+  const samples = [
+    'docs/design/cicd.md', 'docs/a/b/c.png', 'README.md', 'CLAUDE.md', 'README.MD', 'x.md', '.claude/settings.json', 'LICENSE', 'LICENSE.txt', 'LICENSEX',
+    'license', 'ci/RATCHET_LOG.md', 'testdata/README.md', 'app/src/App.svelte', 'app/src-tauri/src/lib.rs', 'Cargo.lock', 'scripts/ci/e2e-native.mjs',
+    'docsx/a', '.github/workflows/nightly.yml', 'testdata/hls/x.m4s',
+  ];
+  for (const f of samples) assert.equal(byGlob(f), byRe(f), f);
+});

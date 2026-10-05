@@ -175,12 +175,17 @@ export const GATES = {
     ],
   },
   tauri: {
-    desc: 'chzzk-app clippy + test + debug 빌드(번들 없음)',
+    desc: 'chzzk-app clippy + test(보통·--features e2e) + debug 빌드(번들 없음, e2e 없음)',
     needs: ['cargo', 'pnpm'],
     steps: [
       { cmd: ['pnpm', 'install', '--frozen-lockfile'], cwd: 'app' },
       { cmd: ['cargo', 'clippy', '-p', 'chzzk-app', ...CLIPPY] },
+      // e2e feature 코드(Windows 전용 #[cfg] 블록 포함)도 3 OS의 모든 코드 PR에서 컴파일·lint·테스트한다(리뷰 G4: 보통
+      // 빌드는 이 코드를 컴파일하지 않아 네이티브 E2E 작업에서만 깨짐이 드러났다). 테스트 수는 test-count-app이 센다.
+      { cmd: ['cargo', 'clippy', '-p', 'chzzk-app', '--features', 'e2e', ...CLIPPY] },
       { cmd: ['cargo', 'test', '-p', 'chzzk-app', '--locked'] },
+      { cmd: ['cargo', 'test', '-p', 'chzzk-app', '--locked', '--features', 'e2e', '--lib', '--', 'e2e::'] },
+      // 마지막: smoke-bin은 e2e가 없는 이 debug 빌드를 띄운다
       { cmd: ['pnpm', 'tauri', 'build', '--ci', '--debug', '--no-bundle'], cwd: 'app' },
     ],
   },
@@ -203,9 +208,7 @@ export const GATES = {
     platforms: ['linux', 'win32'],
     steps: [
       { cmd: ['pnpm', 'install', '--frozen-lockfile'], cwd: 'app' },
-      // e2e feature 코드도 같은 lint·테스트를 받는다(보통 빌드는 이 코드를 컴파일하지 않는다)
-      { cmd: ['cargo', 'clippy', '-p', 'chzzk-app', '--features', 'e2e', ...CLIPPY] },
-      { cmd: ['cargo', 'test', '-p', 'chzzk-app', '--locked', '--features', 'e2e', '--lib', '--', 'e2e::'] },
+      // e2e feature 코드의 lint·단위 테스트는 tauri gate(3 OS, 코드 PR)가 한다
       { cmd: ['pnpm', 'tauri', 'build', '--ci', '--debug', '--no-bundle', '--features', 'e2e'], cwd: 'app' },
       { cmd: ['node', S('e2e-native.mjs')] },
     ],
@@ -264,7 +267,7 @@ export const GATES = {
     ],
   },
   'test-count-app': {
-    desc: 'chzzk-app 테스트 목록 수(#[ignore] 제외) ≥ ci/ratchet.json tests.app.<os>. tauri gate 뒤(그 테스트 빌드를 쓴다)',
+    desc: 'chzzk-app 테스트 목록 수(#[ignore] 제외) ≥ ci/ratchet.json tests.app.<os>, e2e:: 테스트(--features e2e) 수 ≥ tests.app_e2e.<os>이고 0이 아니다. tauri gate 뒤(그 테스트 빌드를 쓴다)',
     needs: ['cargo'],
     steps: [
       { cmd: ['node', S('measure.mjs'), 'tests-app'] },
@@ -324,6 +327,11 @@ export const HOOK_ONLY = {
   'push-guard': ['scan-history'],
 };
 
+// 코드가 아닌 경로(changes가 code=false로 보는 것). 정규식은 run.mjs classify가, glob은 PR 경로 필터가 있는 워크플로
+// (nightly.yml pull_request paths-ignore, parity pr-paths)가 쓴다. 둘이 같은 경로를 고르는지는 run.test.mjs가 본다.
+export const NON_CODE = [/^docs\//, /^[^/]+\.md$/, /^\.claude\//, /^LICENSE(\.[^/]*)?$/];
+export const NON_CODE_GLOBS = ['docs/**', '*.md', '.claude/**', 'LICENSE', 'LICENSE.*'];
+
 // changes.code == 'false'일 때 건너뛰는 작업(ci.yml 작업 id). ci-ok는 이 작업들의 skipped만 허용한다.
 export const CODE_GATED_JOBS = ['supply', 'rust', 'frontend', 'tauri', 'coverage'];
 
@@ -337,4 +345,5 @@ export const MASTER_ONLY_JOBS = ['bundle', 'bundle-linux', 'smoke-install-linux'
 //   - report의 needs에 있다: master에서 실패하면 ci-ok가 녹색이어도 master-failure 이슈를 연다(issue.mjs masterStatus).
 //   - 관찰 시작은 첫 녹색 실행, 편입 예정일은 그 14일 뒤다(ROADMAP Phase 4). 편입은 여기서 빼고 CODE_GATED_JOBS·
 //     MASTER_ONLY_JOBS로 옮긴 뒤 ci.yml ci-ok needs·guard를 고치는 한 변경이다(parity가 둘을 맞춘다).
-export const OBSERVED_JOBS = { 'e2e-web': 'code', 'e2e-native': 'master' };
+//   - e2e-native도 'code'다(리뷰 G4): master에서만 돌면 편입한 뒤에도 PR이 네이티브 E2E를 깨고 녹색으로 머지된다.
+export const OBSERVED_JOBS = { 'e2e-web': 'code', 'e2e-native': 'code' };

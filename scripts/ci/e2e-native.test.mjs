@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import { HLS_VIDEO_NO } from './e2e-fixture-server.mjs';
-import { judge, until } from './e2e-native.mjs';
+import { judge, pickWindowsDriver, until } from './e2e-native.mjs';
 
 const EXP = { sha256: 'a'.repeat(64), bytes: 10 };
 const LOG = [
@@ -66,4 +66,13 @@ test('parseRegPv: reg query /s 출력에서 이름이 WebView2 런타임인 키�
   ].join('\r\n');
   assert.equal(parseRegPv(out), '141.0.3537.57');
   assert.equal(parseRegPv('nothing'), null);
+});
+
+// 리뷰(G4): 버전이 다르면 해시를 고정할 수 없는 드라이버를 받아 실행하지 않고 실패한다
+test('pickWindowsDriver: 러너 드라이버가 WebView2와 같은 버전일 때만 쓰고, 아니면 두 버전을 적고 실패', () => {
+  const image = 'C:\\SeleniumWebDrivers\\EdgeDriver\\msedgedriver.exe';
+  assert.equal(pickWindowsDriver({ webview2: '153.0.4234.48', image, imageVersion: '153.0.4234.48' }), image);
+  assert.throws(() => pickWindowsDriver({ webview2: '153.0.4234.48', image, imageVersion: '154.0.1.2' }), /154\.0\.1\.2 ≠ WebView2 런타임 153\.0\.4234\.48/);
+  assert.throws(() => pickWindowsDriver({ webview2: '153.0.4234.48', image: null, imageVersion: null }), /msedgedriver가 없다/);
+  assert.throws(() => pickWindowsDriver({ webview2: null, image, imageVersion: '153.0.4234.48' }), /WebView2 런타임 버전/);
 });

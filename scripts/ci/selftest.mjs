@@ -157,6 +157,22 @@ const hook = (d, name, args, input) => exec('node', [join(d, 'scripts/ci/run.mjs
   seeds.forEach(([seed, files], i) => expect('parity', seed, 'nonzero', () => gate(mkRoot(`par-${i}`, files), 'parity')));
 }
 
+// ---- parity: nightly.yml(리뷰 G4: 겹치는 체크 이름, cron과 어긋난 조건식, 손으로 나열한 PR 경로) ----
+{
+  const NIGHTLY = readFileSync(join(ROOT, '.github/workflows/nightly.yml'), 'utf8');
+  const nightlyWith = (from, to) => {
+    if (!NIGHTLY.includes(from)) throw new Error(`nightly.yml에 없음: ${from.slice(0, 40)}`);
+    return { '.github/workflows/nightly.yml': NIGHTLY.replace(from, to) };
+  };
+  expect('parity', '저장소 ci.yml + nightly.yml 그대로', 0, () => gate(mkRoot('par-n-clean', { '.github/workflows/nightly.yml': NIGHTLY }), 'parity'));
+  const seeds = [
+    ['nightly 작업 이름이 ci.yml e2e-native와 같음', nightlyWith('name: nightly e2e-native (linux)', 'name: e2e-native (linux)')],
+    ['weekly cron을 바꾸고 조건식은 그대로', nightlyWith('- cron: "47 18 * * 0"', '- cron: "50 18 * * 0"')],
+    ['nightly PR 트리거가 paths: 나열', nightlyWith('    paths-ignore:\n', '    paths:\n')],
+  ];
+  seeds.forEach(([seed, files], i) => expect('parity', seed, 'nonzero', () => gate(mkRoot(`par-n-${i}`, files), 'parity')));
+}
+
 // ---- 훅: commit-msg·pre-commit ----
 {
   const d = mkRoot('hook-msg');

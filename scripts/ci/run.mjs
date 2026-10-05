@@ -18,7 +18,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, stat
 import { delimiter, dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { CODE_GATED_JOBS, COMMANDS, GATES, HOOKS, MASTER_ONLY_JOBS, ROOT } from './gates.mjs';
+import { CODE_GATED_JOBS, COMMANDS, GATES, HOOKS, MASTER_ONLY_JOBS, NON_CODE, ROOT } from './gates.mjs';
 import { isPrivateTarget, parseLines, pushedPaths, scanRanges } from './push-guard.mjs';
 import { runHookGates } from './snapshot.mjs';
 
@@ -164,7 +164,6 @@ export function runGate(name, extra = [], env = process.env, { input } = {}) {
 
 // 문서로 보는 경로의 허용 목록. 여기에 맞지 않는 파일이 하나라도 있으면 code다(모르는 경로도 code, 안전한 쪽).
 // *.md 전체가 아니라 루트의 *.md만 문서다: testdata/README.md처럼 테스트가 읽는 .md가 있다.
-const NON_CODE = [/^docs\//, /^[^/]+\.md$/i, /^\.claude\//, /^LICENSE(\.[^/]*)?$/i];
 const RELEASE = [/^xtask\//, /^release\//, /^\.github\/workflows\/(release|rollback)\.yml$/];
 
 // 바뀐 파일 목록 → { code, release, docs_only }. 목록이 없으면(판단 불가) 전부 실행한다.

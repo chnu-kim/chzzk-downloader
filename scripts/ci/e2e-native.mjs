@@ -150,27 +150,27 @@ function webview2Version() {
 }
 const driverVersion = (exe) => /(\d+(?:\.\d+){3})/.exec(spawnSync(exe, ['--version'], { encoding: 'utf8' }).stdout ?? '')?.[1] ?? null;
 
-// msedgedriver는 앱이 쓰는 WebView2 런타임과 같은 버전이어야 한다(다르면 세션 생성이 DevToolsActivePort 오류로 실패한다,
-// 실측 37320692512). 러너 이미지의 것(EDGEWEBDRIVER, Edge 브라우저 버전)이 다르면 그 WebView2 버전의 드라이버를
-// Microsoft 배포처에서 받는다. 버전이 러너에 따라 바뀌어 해시를 미리 고정할 수 없다: 그래서 이 작업은 weekly다(§6).
-async function windowsDriver() {
+// msedgedriver는 앱이 쓰는 WebView2 런타임과 같은 버전이어야 한다(Microsoft의 WebView2 자동화 안내). 러너 이미지의
+// 것(EDGEWEBDRIVER, Edge 브라우저 버전)만 쓰고, 버전이 다르면 두 버전을 적고 실패한다. 다른 버전을 네트워크에서 받아
+// 실행하지 않는다: 버전이 러너에 따라 바뀌어 해시를 고정할 수 없고(tools.json의 downloadVerified를 쓸 수 없다), 이 작업은
+// 코드 PR에서도 돈다(리뷰 G4). 어긋남은 러너 이미지 변화라 예약 실행의 고리 이슈(ci-loop:e2e-native-windows)로 드러난다.
+// (37320692512의 DevToolsActivePort 실패는 버전 차이가 아니었다: 두 버전 모두 153.0.4234.48이었고 원인은 wry의
+// AdditionalBrowserArguments가 msedgedriver의 WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS를 덮은 것이다. d598c82, cicd.md 47.)
+export function pickWindowsDriver({ webview2, image, imageVersion }) {
+  if (!image) throw new Error('러너에 msedgedriver가 없다(EDGEWEBDRIVER·PATH)');
+  if (!webview2) throw new Error('WebView2 런타임 버전을 레지스트리에서 찾지 못했다');
+  if (imageVersion !== webview2) {
+    throw new Error(`러너 msedgedriver ${imageVersion ?? '알 수 없음'} ≠ WebView2 런타임 ${webview2}: 버전이 같은 드라이버가 필요하다(받지 않는다)`);
+  }
+  return image;
+}
+function windowsDriver() {
   const wv = webview2Version();
   const d = process.env.EDGEWEBDRIVER;
   const img = d && existsSync(join(d, 'msedgedriver.exe')) ? join(d, 'msedgedriver.exe') : which('msedgedriver');
   const have = img ? driverVersion(img) : null;
   log(`WebView2 런타임 ${wv ?? '알 수 없음'}, 러너 msedgedriver ${have ?? '없음'} (${img ?? '-'})`);
-  if (!wv || (img && have === wv)) return img;
-  const dir = mkdtempSync(join(tmpdir(), 'msedgedriver-'));
-  const zip = join(dir, 'edgedriver_win64.zip');
-  const url = `https://msedgedriver.microsoft.com/${wv}/edgedriver_win64.zip`;
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`${url} → HTTP ${res.status}`);
-  const buf = Buffer.from(await res.arrayBuffer());
-  writeFileSync(zip, buf);
-  log(`msedgedriver ${wv} 받음: ${url} (sha256 ${createHash('sha256').update(buf).digest('hex')})`);
-  const r = spawnSync('tar', ['-xf', zip, '-C', dir, 'msedgedriver.exe'], { stdio: 'inherit' });
-  if (r.status !== 0) throw new Error('msedgedriver 압축 풀기 실패');
-  return join(dir, 'msedgedriver.exe');
+  return pickWindowsDriver({ webview2: wv, image: img, imageVersion: have });
 }
 
 async function nativeDriver() {

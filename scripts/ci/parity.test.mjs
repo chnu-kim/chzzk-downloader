@@ -179,3 +179,46 @@ test('observed: 관찰 작업은 ci-ok needs에 없고, ci-ok 뒤가 아니며, 
   // 관찰 작업이 ci.yml에서 사라짐
   assert.ok(rulesFor((t) => t.replace(/\n {2}e2e-web:\n[\s\S]*?\n\n/, '\n').replace('needs: [ci-ok, e2e-web, e2e-native]', 'needs: [ci-ok, e2e-native]')).includes('observed'));
 });
+
+// nightly.yml을 바꾼 사본(ci.yml은 그대로)의 위반 규칙
+const NIGHTLY = readFileSync(join(ROOT, '.github/workflows/nightly.yml'), 'utf8');
+function nightlyRules(mutate) {
+  const d = mkdtempSync(join(tmpdir(), 'parity-n-'));
+  try {
+    mkdirSync(join(d, '.github/workflows'), { recursive: true });
+    mkdirSync(join(d, 'scripts/ci'), { recursive: true });
+    cpSync(join(ROOT, 'scripts/ci/tools.json'), join(d, 'scripts/ci/tools.json'));
+    cpSync(join(ROOT, '.githooks'), join(d, '.githooks'), { recursive: true });
+    writeFileSync(join(d, '.github/workflows/ci.yml'), CI);
+    const text = mutate(NIGHTLY);
+    assert.notEqual(text, NIGHTLY, '변형이 적용되지 않았다');
+    writeFileSync(join(d, '.github/workflows/nightly.yml'), text);
+    return checkParity(d).map((v) => v.rule);
+  } finally {
+    rmSync(d, { recursive: true, force: true });
+  }
+}
+
+test('nightly.yml 사본: 변형하지 않으면 깨끗하다', () => {
+  assert.deepEqual(nightlyRules((t) => t + '\n'), []);
+});
+
+// 리뷰(G4): ci.yml e2e-native와 nightly 작업이 같은 체크 이름이었다
+test('job-name: 워크플로를 통틀어 작업 표시 이름이 겹치면 거부', () => {
+  assert.ok(nightlyRules((t) => t.replace('name: nightly e2e-native (linux)', 'name: e2e-native (linux)')).includes('job-name'));
+  assert.ok(nightlyRules((t) => t.replace('name: nightly report', 'name: report')).includes('job-name'));
+  assert.equal(parseJobs('jobs:\n  a:\n    name: "x (y)" # c\n').a.name, 'x (y)');
+});
+
+// 리뷰(G4): cron을 고치면 weekly 조건식이 영원히 거짓이 되어 Windows가 조용히 꺼진다
+test('schedule: github.event.schedule 비교 글자가 그 파일의 cron이 아니면 거부', () => {
+  assert.ok(nightlyRules((t) => t.replace('- cron: "47 18 * * 0"', '- cron: "50 18 * * 0"')).includes('schedule'));
+  assert.ok(nightlyRules((t) => t.replace("github.event.schedule == '47 18 * * 0'", "github.event.schedule == '47 18 * * 1'")).includes('schedule'));
+});
+
+// 리뷰(G4): 손으로 나열한 paths가 lib.rs·Cargo.lock·crates 등 네이티브 E2E의 입력을 빠뜨렸다
+test('pr-paths: pull_request paths:는 거부, paths-ignore는 NON_CODE_GLOBS와 같아야 한다', () => {
+  assert.ok(nightlyRules((t) => t.replace('    paths-ignore:\n', '    paths:\n')).includes('pr-paths'));
+  assert.ok(nightlyRules((t) => t.replace('      - LICENSE.*\n', '')).includes('pr-paths'));
+  assert.ok(nightlyRules((t) => t.replace('      - docs/**\n', '      - docs/**\n      - app/**\n')).includes('pr-paths'));
+});

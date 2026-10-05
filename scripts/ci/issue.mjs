@@ -9,6 +9,8 @@
 //
 // 멱등: label `ci-loop:<이름>` + 본문 첫 줄의 숨은 마커 `<!-- ci-loop:<이름> -->`. fail: 열린 이슈가 없으면 만들고 있으면 댓글.
 // ok: 열린 이슈가 있으면 복구 댓글을 달고 닫는다. gh CLI(GH_TOKEN)를 쓴다. 종료 코드: 0, gh 실패 1, 입력 오류 2.
+// master가 아닌 브랜치의 실행(loop_test dispatch)은 시험 이름공간 `ci-loop-test:<이름>`에만 쓴다: 브랜치의 녹색이
+// master·예약 실행이 연 진짜 고리 이슈를 닫지 못한다(실측: 브랜치 dispatch 37328558124가 #3을 닫았다).
 
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
@@ -29,11 +31,17 @@ export const LOOPS = {
   toolchain: '새 Rust stable이 나왔다',
   release: '릴리스 파이프라인이 실패했다',
   'e2e-native-linux': '예약 네이티브 E2E(Linux, 매일)가 실패했다',
-  'e2e-native-windows': '예약 네이티브 E2E(Windows, 매주)가 실패했다',
+  'e2e-native-windows': '예약 네이티브 E2E(Windows, 매주)가 실패했거나 오래 돌지 않았다',
 };
 // report-loop(예약 워크플로의 report 작업)이 다루는 고리. 고리 이름 = nightly.yml 작업 id이고, 작업마다 따로 연다(한
-// 작업이 건너뛴 날 다른 작업의 녹색이 그 이슈를 닫지 않게).
-export const NEEDS_LOOPS = ['e2e-native-linux', 'e2e-native-windows'];
+// 작업이 건너뛴 날 다른 작업의 녹색이 그 이슈를 닫지 않게). name은 그 작업의 표시 이름(nightly.yml name:, issue.test가
+// 맞춘다), staleHours는 건너뛴 실행에서 그 작업의 마지막 성공이 이보다 오래면 fail(kind stale)로 보는 한계다: 예약이
+// 떨어지거나(GitHub가 부하로 건너뜀) 조건식이 cron과 어긋나 작업이 조용히 꺼지는 것을 잡는다.
+export const NEEDS_LOOPS = {
+  'e2e-native-linux': { name: 'nightly e2e-native (linux)', staleHours: 72 },
+  'e2e-native-windows': { name: 'nightly e2e-native (windows)', staleHours: 8 * 24 },
+};
+export const LOOP_WORKFLOW = 'nightly.yml';
 export const KINDS = [
   'build',
   'test',
@@ -46,6 +54,7 @@ export const KINDS = [
   'media_invalid',
   'panic',
   'no_target',
+  'stale',
   'unknown',
 ];
 export const STALE_HOURS = 72;
@@ -59,9 +68,17 @@ const RE = {
   branchRef: /^refs\/heads\/([A-Za-z0-9._][A-Za-z0-9._\/-]{0,200})$/,
 };
 
-export const label = (loop) => `ci-loop:${loop}`;
-export const marker = (loop) => `<!-- ci-loop:${loop} -->`;
-export const title = (loop) => `[ci-loop] ${loop}: ${LOOPS[loop]}`;
+// test: 시험 이름공간(master가 아닌 브랜치의 실행)
+const ns = (test) => (test ? 'ci-loop-test' : 'ci-loop');
+export const label = (loop, test = false) => `${ns(test)}:${loop}`;
+export const marker = (loop, test = false) => `<!-- ${ns(test)}:${loop} -->`;
+export const title = (loop, test = false) => `[${ns(test)}] ${loop}: ${LOOPS[loop]}`;
+export const DEFAULT_BRANCH = 'master';
+// GITHUB_REF → { branch, test }(브랜치가 아니면 null). test = 기본 브랜치가 아니다.
+export function refScope(ref) {
+  const m = RE.branchRef.exec(ref ?? '');
+  return m ? { branch: m[1], test: m[1] !== DEFAULT_BRANCH } : null;
+}
 
 // 입력 → 검사한 필드. 어긋나면 예외(이슈를 쓰지 않는다).
 export function validate(o) {
@@ -83,13 +100,14 @@ export function validate(o) {
   const workflows = list(o.workflows, RE.workflow, 'workflows', 20);
   const kinds = list(o.kinds, /./, 'kinds', KINDS.length);
   for (const k of kinds) if (!KINDS.includes(k)) err(`모르는 kind: ${k}`);
-  return { loop: o.loop, status: o.status, repo: o.repo, runUrl: o.runUrl, sha: o.sha, jobs, kinds, workflows };
+  if (o.test !== undefined && typeof o.test !== 'boolean') err(`test는 boolean: ${o.test}`);
+  return { loop: o.loop, status: o.status, repo: o.repo, runUrl: o.runUrl, sha: o.sha, jobs, kinds, workflows, test: o.test === true };
 }
 
 // 검사한 필드 → 본문(첫 이슈) / 댓글
 export function body(f, { first = false } = {}) {
   const lines = [];
-  if (first) lines.push(marker(f.loop), '');
+  if (first) lines.push(marker(f.loop, f.test), '');
   lines.push(f.status === 'fail' ? `**실패** — ${LOOPS[f.loop]}` : `**복구** — 다음 실행이 성공했다`);
   lines.push('');
   if (f.runUrl) lines.push(`- 실행: ${f.runUrl}`);
@@ -129,8 +147,9 @@ export function sync(fields, gh, deny) {
   const f = validate(fields);
   if (!f.repo) throw new Error('repo가 없다');
   const R = ['-R', f.repo];
-  const open = JSON.parse(gh(['issue', 'list', ...R, '--label', label(f.loop), '--state', 'open', '--json', 'number,body', '--limit', '50']) || '[]')
-    .filter((i) => typeof i.body === 'string' && i.body.startsWith(marker(f.loop)))
+  const lab = label(f.loop, f.test);
+  const open = JSON.parse(gh(['issue', 'list', ...R, '--label', lab, '--state', 'open', '--json', 'number,body', '--limit', '50']) || '[]')
+    .filter((i) => typeof i.body === 'string' && i.body.startsWith(marker(f.loop, f.test)))
     .map((i) => i.number)
     .sort((a, b) => a - b);
   if (f.status === 'fail') {
@@ -142,9 +161,10 @@ export function sync(fields, gh, deny) {
     }
     const text = body(f, { first: true });
     assertPublishable(text, deny);
-    assertPublishable(title(f.loop), deny);
-    gh(['label', 'create', label(f.loop), ...R, '--color', 'B60205', '--description', 'CI 닫힌 고리 자동 이슈(scripts/ci/issue.mjs)', '--force']);
-    const out = gh(['issue', 'create', ...R, '--title', title(f.loop), '--label', label(f.loop), '--body-file', '-'], text);
+    assertPublishable(title(f.loop, f.test), deny);
+    const desc = f.test ? 'CI 닫힌 고리 시험(브랜치 loop_test dispatch, scripts/ci/issue.mjs)' : 'CI 닫힌 고리 자동 이슈(scripts/ci/issue.mjs)';
+    gh(['label', 'create', lab, ...R, '--color', f.test ? 'C5DEF5' : 'B60205', '--description', desc, '--force']);
+    const out = gh(['issue', 'create', ...R, '--title', title(f.loop, f.test), '--label', lab, '--body-file', '-'], text);
     const n = Number(/\/issues\/(\d+)/.exec(out)?.[1]);
     return { action: 'created', numbers: Number.isFinite(n) ? [n] : [] };
   }
@@ -219,13 +239,14 @@ export function report(env, gh, { root = ROOT, now = Date.now(), deny } = {}) {
 
   // 1. master-failure. 실행은 커밋 순서대로 끝나지 않는다(느린 옛 커밋이 새 커밋보다 늦게 끝난다).
   // 이 실행의 커밋이 지금 그 브랜치의 머리일 때만 열고 닫는다. 머리가 아니면 머리 커밋의 실행이 보고한다.
+  // master가 아닌 브랜치(loop_test dispatch)는 시험 이름공간에 쓴다(refScope).
+  const scope = refScope(env.GITHUB_REF);
   step('master-failure', () => {
-    const ref = RE.branchRef.exec(env.GITHUB_REF ?? '');
-    if (!ref) throw new Error(`GITHUB_REF가 브랜치가 아니다: ${env.GITHUB_REF}`);
+    if (!scope) throw new Error(`GITHUB_REF가 브랜치가 아니다: ${env.GITHUB_REF}`);
     if (!RE.sha.test(sha ?? '')) throw new Error(`GITHUB_SHA 형식: ${sha}`);
-    const head = gh(['api', `repos/${repo}/git/ref/heads/${ref[1]}`, '--jq', '.object.sha']).trim();
+    const head = gh(['api', `repos/${repo}/git/ref/heads/${scope.branch}`, '--jq', '.object.sha']).trim();
     if (head !== sha) {
-      console.log(`master-failure: 이 실행의 커밋 ${sha}는 ${ref[1]}의 머리(${head || '없음'})가 아니다 — 건너뜀(머리 커밋의 실행이 보고한다)`);
+      console.log(`master-failure: 이 실행의 커밋 ${sha}는 ${scope.branch}의 머리(${head || '없음'})가 아니다 — 건너뜀(머리 커밋의 실행이 보고한다)`);
       return;
     }
     const result = env.CI_OK_RESULT;
@@ -242,8 +263,8 @@ export function report(env, gh, { root = ROOT, now = Date.now(), deny } = {}) {
       ]);
       jobs = out.split('\n').map((s) => s.trim()).filter((s) => s && s !== 'report');
     }
-    const r = sync({ loop: 'master-failure', status, repo, runUrl, sha, jobs: jobs.slice(0, 40), kinds: [] }, gh, deny);
-    console.log(`master-failure: ci-ok ${result} → ${r.action} ${r.numbers.join(',')}`);
+    const r = sync({ loop: 'master-failure', status, repo, runUrl, sha, jobs: jobs.slice(0, 40), kinds: [], test: scope.test }, gh, deny);
+    console.log(`${label('master-failure', scope.test)}: ci-ok ${result} → ${r.action} ${r.numbers.join(',')}`);
   });
 
   // 2. 예약 워크플로: 꺼졌으면 켜고(keep-alive), 72시간 넘게 성공이 없으면 nightly-stale
@@ -271,8 +292,8 @@ export function report(env, gh, { root = ROOT, now = Date.now(), deny } = {}) {
       console.log(`${f}: 마지막 성공 ${last || '없음'} → ${s ? 'stale' : 'ok'}`);
       if (s) stale.push(f);
     }
-    const r = sync({ loop: 'nightly-stale', status: stale.length ? 'fail' : 'ok', repo, runUrl, sha, workflows: stale }, gh, deny);
-    console.log(`nightly-stale: ${r.action} ${r.numbers.join(',')}`);
+    const r = sync({ loop: 'nightly-stale', status: stale.length ? 'fail' : 'ok', repo, runUrl, sha, workflows: stale, test: scope?.test !== false }, gh, deny);
+    console.log(`${label('nightly-stale', scope?.test !== false)}: ${r.action} ${r.numbers.join(',')}`);
   });
   return bad ? 1 : 0;
 }
@@ -285,7 +306,7 @@ export function loopStatuses(needsJson) {
   if (!needs || typeof needs !== 'object' || Array.isArray(needs) || !Object.keys(needs).length) throw new Error('NEEDS가 비었거나 객체가 아니다');
   const out = [];
   for (const [job, v] of Object.entries(needs).sort(([a], [b]) => (a < b ? -1 : 1))) {
-    if (!NEEDS_LOOPS.includes(job)) throw new Error(`고리가 없는 작업: ${job}(issue.mjs NEEDS_LOOPS)`);
+    if (!Object.hasOwn(NEEDS_LOOPS, job)) throw new Error(`고리가 없는 작업: ${job}(issue.mjs NEEDS_LOOPS)`);
     const r = v?.result;
     if (r === 'failure' || r === 'cancelled') out.push({ loop: job, status: 'fail' });
     else if (r === 'success') out.push({ loop: job, status: 'ok' });
@@ -294,12 +315,52 @@ export function loopStatuses(needsJson) {
   return out;
 }
 
-export function reportLoop(env, gh, { deny } = {}) {
+// 작업(표시 이름 jobName)이 branch의 workflow 실행에서 마지막으로 성공한 시각(ISO) 또는 null. 최근 완료 실행 runs개를
+// 새것부터 본다(워크플로 전체가 빨개도 그 작업은 성공했을 수 있어 status=success로 거르지 않는다).
+export function lastJobSuccess(gh, { repo, workflow, branch, jobName, runs = 30 }) {
+  const ids = gh(['api', `repos/${repo}/actions/workflows/${workflow}/runs?branch=${encodeURIComponent(branch)}&status=completed&per_page=${runs}`, '--jq', '.workflow_runs[].id'])
+    .split('\n')
+    .map((s) => s.trim())
+    .filter((s) => /^\d+$/.test(s));
+  for (const id of ids) {
+    const t = gh(['api', `repos/${repo}/actions/runs/${id}/jobs?per_page=100`, '--jq', `.jobs[] | select(.name == ${JSON.stringify(jobName)} and .conclusion == "success") | .completed_at`])
+      .split('\n')
+      .map((s) => s.trim())
+      .find(Boolean);
+    if (t) return t;
+  }
+  return null;
+}
+
+// 건너뛴 작업이 staleHours 넘게 성공하지 못했는지. 워크플로가 기본 브랜치에 없으면(404) false.
+function skippedStale(gh, { repo, branch, loop, now }) {
+  const { name, staleHours } = NEEDS_LOOPS[loop];
+  let wf;
+  try {
+    wf = JSON.parse(gh(['api', `repos/${repo}/actions/workflows/${LOOP_WORKFLOW}`]));
+  } catch (e) {
+    if (notFound(e)) return false;
+    throw e;
+  }
+  const last = lastJobSuccess(gh, { repo, workflow: LOOP_WORKFLOW, branch, jobName: name });
+  const s = isStale({ lastSuccess: last, created: wf.created_at ?? null }, now, staleHours);
+  console.log(`${loop}: 건너뜀, '${name}'의 마지막 성공 ${last ?? '없음'}(${branch}) → ${s ? `stale(${staleHours}시간 초과)` : 'ok'}`);
+  return s;
+}
+
+export function reportLoop(env, gh, { deny, now = Date.now() } = {}) {
   const repo = env.GITHUB_REPOSITORY;
   if (!RE.repo.test(repo ?? '') || !/^\d+$/.test(env.GITHUB_RUN_ID ?? '')) {
     console.error('report-loop: GITHUB_REPOSITORY·GITHUB_RUN_ID가 필요하다');
     return 2;
   }
+  // 고리는 커밋이 아니라 환경을 보므로 머리 커밋 검사는 하지 않는다. 다만 master가 아니면 시험 이름공간에만 쓴다.
+  const scope = refScope(env.GITHUB_REF);
+  if (!scope) {
+    console.error(`report-loop: GITHUB_REF가 브랜치가 아니다: ${env.GITHUB_REF}`);
+    return 2;
+  }
+  if (scope.test) console.log(`report-loop: ${scope.branch}는 ${DEFAULT_BRANCH}가 아니다 — 시험 이름공간(${label('…', true)})에만 쓴다`);
   let sts;
   try {
     sts = loopStatuses(env.NEEDS ?? '');
@@ -309,14 +370,18 @@ export function reportLoop(env, gh, { deny } = {}) {
   }
   const runUrl = `https://github.com/${repo}/actions/runs/${env.GITHUB_RUN_ID}`;
   let bad = 0;
-  for (const { loop, status } of sts) {
-    if (!status) {
-      console.log(`${loop}: 건너뜀(이번 실행에서 돌지 않았다) — 이슈를 건드리지 않는다`);
-      continue;
-    }
+  for (const { loop, status: st } of sts) {
     try {
-      const r = sync({ loop, status, repo, runUrl, sha: env.GITHUB_SHA, jobs: status === 'fail' ? [loop] : [] }, gh, deny);
-      console.log(`${loop}: ${status} → ${r.action} ${r.numbers.join(',')}`);
+      let status = st;
+      let kinds = [];
+      if (!status) {
+        // 건너뜀: 마지막 성공이 오래됐으면 fail(stale), 아니면 이슈를 건드리지 않는다(매주 도는 Windows가 건너뛴 날 닫지 않는다)
+        if (!skippedStale(gh, { repo, branch: scope.branch, loop, now })) continue;
+        status = 'fail';
+        kinds = ['stale'];
+      }
+      const r = sync({ loop, status, repo, runUrl, sha: env.GITHUB_SHA, jobs: status === 'fail' ? [loop] : [], kinds, test: scope.test }, gh, deny);
+      console.log(`${label(loop, scope.test)}: ${status} → ${r.action} ${r.numbers.join(',')}`);
     } catch (e) {
       bad++;
       console.error(`::error::report-loop ${loop}: ${e.message}`);

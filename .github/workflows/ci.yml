@@ -398,12 +398,13 @@ jobs:
           if-no-files-found: ignore
 
   # 네이티브 E2E(Linux, docs/design/cicd.md §6): --features e2e 앱 + tauri-driver(WebKitWebDriver, xvfb) + 로컬 fixture 서버.
-  # push master·dispatch에서만 돈다. D14 관찰 중(OBSERVED_JOBS). 끝에 hygiene-seed가 release-hygiene의 검사가 이 e2e 빌드를
-  # 실제로 알아보는지 증명한다. nightly.yml이 매일(Linux)·매주(Windows) 같은 gate를 돌린다.
+  # 코드가 바뀐 PR·push master·dispatch에서 돈다(머지 전에 네이티브 신호를 받는다). D14 관찰 중(OBSERVED_JOBS, 편입하면
+  # CODE_GATED_JOBS로 옮겨 PR 필수 체크가 된다). 끝에 hygiene-seed가 release-hygiene의 검사가 이 e2e 빌드를
+  # 실제로 알아보는지 증명한다. nightly.yml이 매일(Linux)·매주와 코드 PR(Windows) 같은 gate를 돌린다.
   e2e-native:
     name: e2e-native (linux)
     needs: changes
-    if: github.event_name != 'pull_request' && needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:

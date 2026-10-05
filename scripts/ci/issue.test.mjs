@@ -5,14 +5,18 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
-import { assertPublishable, body, isStale, label, loopStatuses, marker, masterStatus, reportLoop, report, scheduledWorkflows, sync, title, validate } from './issue.mjs';
+import { readFileSync } from 'node:fs';
+
+import { ROOT } from './gates.mjs';
+import { assertPublishable, body, isStale, label, lastJobSuccess, loopStatuses, marker, masterStatus, NEEDS_LOOPS, refScope, reportLoop, report, scheduledWorkflows, sync, title, validate } from './issue.mjs';
+import { parseJobs } from './parity.mjs';
 
 const REPO = 'o/r';
 const SHA = 'a'.repeat(40);
 const URL = 'https://github.com/o/r/actions/runs/123';
 
 // 이슈 저장소를 흉내 내는 gh. calls에 인자를 남긴다.
-function fakeGh({ issues = [], jobs = '', workflows = {}, runs = {}, heads = { master: SHA } } = {}) {
+function fakeGh({ issues = [], jobs = '', workflows = {}, runs = {}, heads = { master: SHA }, runIds = {}, runJobs = {} } = {}) {
   const calls = [];
   let next = 100;
   const gh = (args, input) => {
@@ -56,6 +60,14 @@ function fakeGh({ issues = [], jobs = '', workflows = {}, runs = {}, heads = { m
         throw e;
       }
       return JSON.stringify(workflows[f]);
+    }
+    if (a === 'api' && /\/runs\?/.test(b) && args.includes('.workflow_runs[].id')) {
+      assert.match(b, /status=completed/);
+      return (runIds[`${b.split('/')[5]}@${/branch=([^&]+)/.exec(b)[1]}`] ?? '') + '\n';
+    }
+    if (a === 'api' && /\/runs\/\d+\/jobs\?/.test(b)) {
+      const want = /\.name == ("[^"]*")/.exec(args[args.indexOf('--jq') + 1])[1];
+      return (runJobs[`${b.split('/')[5]}:${JSON.parse(want)}`] ?? '') + '\n';
     }
     if (a === 'api' && /\/runs\?/.test(b)) return (runs[b.split('/')[5]] ?? '') + '\n';
     if (a === 'workflow' && b === 'enable') return '';
@@ -215,6 +227,7 @@ test('report: 머리가 아닌 커밋의 실행은 master-failure를 열지도 �
     const fk3 = fakeGh({ jobs: 'lint\n', heads: { 'ci/pipeline': OLD } });
     assert.equal(report({ ...base, GITHUB_REF: 'refs/heads/ci/pipeline', GITHUB_SHA: OLD, CI_OK_RESULT: 'failure' }, fk3.gh, { root }), 0);
     assert.equal(fk3.issues.length, 1);
+    assert.deepEqual(fk3.issues[0].labels, [label('master-failure', true)], '브랜치 dispatch는 시험 이름공간에만 쓴다');
     // 브랜치가 아닌 ref·브랜치가 없으면 실패(1)로 보고한다
     assert.equal(report({ ...base, GITHUB_REF: 'refs/tags/v1', GITHUB_SHA: SHA, CI_OK_RESULT: 'success' }, fakeGh().gh, { root }), 1);
     assert.equal(report({ ...base, GITHUB_REF: 'refs/heads/gone', GITHUB_SHA: SHA, CI_OK_RESULT: 'success' }, fakeGh().gh, { root }), 1);
@@ -244,7 +257,7 @@ test('loopStatuses: 작업마다 fail·ok, skipped는 null, 고리 없는 작업
 
 test('reportLoop: Windows 실패 이슈는 Windows가 건너뛴 다음 날(Linux 녹색)에도 열려 있고, Windows 녹색에 닫힌다', () => {
   const fk = fakeGh();
-  const env = { GITHUB_REPOSITORY: REPO, GITHUB_RUN_ID: '77', GITHUB_SHA: SHA };
+  const env = { GITHUB_REPOSITORY: REPO, GITHUB_RUN_ID: '77', GITHUB_SHA: SHA, GITHUB_REF: 'refs/heads/master' };
   const needs = (lin, win) => JSON.stringify({ 'e2e-native-linux': { result: lin }, 'e2e-native-windows': { result: win } });
   assert.equal(reportLoop({ ...env, NEEDS: needs('success', 'failure') }, fk.gh), 0);
   const win = () => fk.issues.find((x) => x.labels.includes(label('e2e-native-windows')));
@@ -258,4 +271,85 @@ test('reportLoop: Windows 실패 이슈는 Windows가 건너뛴 다음 날(Linux
   assert.equal(win().open, false);
   assert.equal(reportLoop({ ...env, NEEDS: '깨짐' }, fk.gh), 2);
   assert.equal(reportLoop({ ...env, NEEDS: needs('success', 'success'), GITHUB_RUN_ID: '' }, fk.gh), 2);
+});
+
+test('refScope: master만 진짜 이름공간, 다른 브랜치는 시험, 브랜치가 아니면 null', () => {
+  assert.deepEqual(refScope('refs/heads/master'), { branch: 'master', test: false });
+  assert.deepEqual(refScope('refs/heads/ci/pipeline'), { branch: 'ci/pipeline', test: true });
+  assert.equal(refScope('refs/tags/v1'), null);
+  assert.equal(refScope(undefined), null);
+  assert.equal(label('e2e-native-linux', true), 'ci-loop-test:e2e-native-linux');
+  assert.ok(!marker('e2e-native-linux', true).startsWith(marker('e2e-native-linux').slice(0, -4)), '시험 마커는 진짜 마커의 접두가 아니다');
+});
+
+// 리뷰(G4): 브랜치 loop_test dispatch의 녹색이 master·예약 실행이 연 진짜 이슈(#3)를 닫았다
+test('reportLoop: master가 아닌 브랜치는 ci-loop: 이슈를 열지도 닫지도 않고 ci-loop-test:에만 쓴다', () => {
+  const real = { number: 3, body: `${marker('e2e-native-windows')}\n\n실패`, open: true, labels: [label('e2e-native-windows')], comments: [] };
+  const fk = fakeGh({ issues: [real] });
+  const env = { GITHUB_REPOSITORY: REPO, GITHUB_RUN_ID: '78', GITHUB_SHA: SHA, GITHUB_REF: 'refs/heads/ci/pipeline' };
+  const needs = (lin, win) => JSON.stringify({ 'e2e-native-linux': { result: lin }, 'e2e-native-windows': { result: win } });
+  assert.equal(reportLoop({ ...env, NEEDS: needs('failure', 'success') }, fk.gh), 0);
+  assert.equal(real.open, true);
+  assert.deepEqual(real.comments, []);
+  for (const [args] of fk.calls) {
+    const i = args.indexOf('--label');
+    if (i >= 0) assert.match(args[i + 1], /^ci-loop-test:/);
+    if (args[0] === 'label') assert.match(args[2], /^ci-loop-test:/);
+  }
+  const t = fk.issues.find((x) => x.labels.includes(label('e2e-native-linux', true)));
+  assert.ok(t && t.open && t.body.startsWith(marker('e2e-native-linux', true)));
+  assert.equal(reportLoop({ ...env, NEEDS: needs('success', 'success') }, fk.gh), 0);
+  assert.equal(t.open, false);
+  assert.equal(real.open, true, '진짜 이슈는 그대로');
+  assert.equal(reportLoop({ ...env, GITHUB_REF: 'refs/tags/v1', NEEDS: needs('success', 'success') }, fk.gh), 2);
+  assert.equal(reportLoop({ ...env, GITHUB_REF: undefined, NEEDS: needs('success', 'success') }, fk.gh), 2);
+});
+
+// 리뷰(G4): 매주 Windows 작업이 예약 누락·조건식 어긋남으로 조용히 꺼져도 고리가 열려야 한다
+test('reportLoop: 건너뛴 작업의 마지막 성공이 staleHours보다 오래면 fail(stale)로 열고, 그 작업이 녹색이면 닫는다', () => {
+  const now = Date.parse('2026-10-20T00:00:00Z');
+  const W = NEEDS_LOOPS['e2e-native-windows'].name;
+  const env = { GITHUB_REPOSITORY: REPO, GITHUB_RUN_ID: '79', GITHUB_SHA: SHA, GITHUB_REF: 'refs/heads/master' };
+  const needs = (lin, win) => JSON.stringify({ 'e2e-native-linux': { result: lin }, 'e2e-native-windows': { result: win } });
+  const workflows = { 'nightly.yml': { id: 1, state: 'active', created_at: '2026-09-01T00:00:00Z' } };
+  // 최근 실행 3개 중 Windows는 10일 전에만 성공 → stale
+  const fk = fakeGh({
+    workflows,
+    runIds: { 'nightly.yml@master': '30\n20\n10' },
+    runJobs: { [`10:${W}`]: '2026-10-10T00:00:00Z' },
+  });
+  assert.equal(reportLoop({ ...env, NEEDS: needs('success', 'skipped') }, fk.gh, { now }), 0);
+  const win = fk.issues.find((x) => x.labels.includes(label('e2e-native-windows')));
+  assert.ok(win && win.open);
+  assert.match(win.body, /`stale`/);
+  // 7일 전에 성공했으면(한계 8일) 건드리지 않는다: 새 저장소(이슈 없음)
+  const fk2 = fakeGh({ workflows, runIds: { 'nightly.yml@master': '30\n20' }, runJobs: { [`20:${W}`]: '2026-10-13T00:00:00Z' } });
+  assert.equal(reportLoop({ ...env, NEEDS: needs('success', 'skipped') }, fk2.gh, { now }), 0);
+  assert.equal(fk2.issues.length, 0);
+  // 성공 기록이 없어도 워크플로가 새것이면(생성 8일 안) 유예, 워크플로가 기본 브랜치에 없으면(404) 건너뜀
+  const fk3 = fakeGh({ workflows: { 'nightly.yml': { id: 1, created_at: '2026-10-15T00:00:00Z' } } });
+  assert.equal(reportLoop({ ...env, NEEDS: needs('success', 'skipped') }, fk3.gh, { now }), 0);
+  assert.equal(fk3.issues.length, 0);
+  const fk4 = fakeGh();
+  assert.equal(reportLoop({ ...env, NEEDS: needs('success', 'skipped') }, fk4.gh, { now }), 0);
+  assert.equal(fk4.issues.length, 0);
+  // 열린 stale 이슈는 Windows 녹색에 닫힌다
+  assert.equal(reportLoop({ ...env, NEEDS: needs('success', 'success') }, fk.gh, { now }), 0);
+  assert.equal(win.open, false);
+});
+
+test('lastJobSuccess: 새 실행부터 그 이름의 작업이 success인 첫 시각, 없으면 null', () => {
+  const fk = fakeGh({ runIds: { 'nightly.yml@master': '3\n2\n1' }, runJobs: { '2:x': '2026-10-02T00:00:00Z', '1:x': '2026-10-01T00:00:00Z' } });
+  assert.equal(lastJobSuccess(fk.gh, { repo: REPO, workflow: 'nightly.yml', branch: 'master', jobName: 'x' }), '2026-10-02T00:00:00Z');
+  assert.equal(lastJobSuccess(fk.gh, { repo: REPO, workflow: 'nightly.yml', branch: 'master', jobName: 'y' }), null);
+});
+
+// stale 판정은 작업 표시 이름으로 찾으므로 nightly.yml의 name:과 같아야 한다(이름을 바꾸면 여기서 걸린다)
+test('NEEDS_LOOPS: 키는 nightly.yml 작업 id, name은 그 작업의 name:, report의 needs와 같다', () => {
+  const jobs = parseJobs(readFileSync(`${ROOT}/.github/workflows/nightly.yml`, 'utf8'));
+  for (const [id, { name }] of Object.entries(NEEDS_LOOPS)) {
+    assert.ok(jobs[id], `nightly.yml에 작업 ${id}가 없다`);
+    assert.equal(jobs[id].name, name);
+  }
+  assert.deepEqual([...jobs.report.needs].sort(), Object.keys(NEEDS_LOOPS).sort());
 });

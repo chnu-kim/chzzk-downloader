@@ -34,7 +34,8 @@ export const MEASURE_DIR = 'target/ci/measure';
 export const KINDS = { coverage: 'coverage_lines', tests: 'tests', size: 'size' };
 const SETTINGS = new Set(['tolerance_pp', 'tolerance_pct']);
 // 기준 0(아직 안 잼)으로 둘 수 있는 키. 다른 키가 0이면 lint가 실패한다. tests.playwright는 G4에서 채웠다(실행 37324424781). mutants는 G5가 더한다.
-export const PENDING_ALLOWED = [];
+// tests.app_e2e.*는 G4 리뷰에서 더했다(첫 측정 실행으로 채운 뒤 비운다).
+export const PENDING_ALLOWED = ['tests.app_e2e.linux', 'tests.app_e2e.darwin', 'tests.app_e2e.windows'];
 
 // 객체 → { "a.b.c": 숫자 } (설정 키·$comment·null 제외)
 export function flatten(obj, prefix = '') {

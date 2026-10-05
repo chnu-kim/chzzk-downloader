@@ -146,6 +146,7 @@ jobs:
     permissions:
       contents: read # checkout
       issues: write # 고리 이슈 열기·댓글·닫기, label 만들기
+      actions: read # 건너뛴 작업의 마지막 성공 찾기(워크플로·실행의 작업 목록, issue.mjs lastJobSuccess)
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

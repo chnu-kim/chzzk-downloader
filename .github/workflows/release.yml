@@ -12,15 +12,6 @@ name: release
 on:
   push:
     tags: ["v*"]
-  # 임시(구현 중 변경 G6): 기본 브랜치에 없는 워크플로는 한 번 실행돼야 dispatch할 수 있다. PR에서는 모든 작업을 건너뛴다.
-  # 브랜치 dispatch로 리허설을 확인한 뒤 이 트리거를 지운다
-  pull_request:
-    paths-ignore:
-      - docs/**
-      - "*.md"
-      - .claude/**
-      - LICENSE
-      - LICENSE.*
   schedule:
     - cron: "23 19 * * 0" # 매주 월 KST 04:23 리허설(태그가 드물어 경로가 썩지 않게)
   workflow_dispatch:
@@ -48,7 +39,6 @@ env:
 jobs:
   gate:
     name: release gate
-    if: github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
     # release.mjs gate의 ci-ok 대기(CI_WAIT_TIMEOUT 1800초) + 이력 검사 + 여유
     timeout-minutes: 45
@@ -336,7 +326,7 @@ jobs:
   report:
     name: release report
     needs: [gate, build-linux, smoke-linux, build, sign-publish, verify, deploy-worker]
-    if: ${{ !cancelled() && github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || inputs.loop_test) }}
+    if: ${{ !cancelled() && (github.event_name != 'workflow_dispatch' || inputs.loop_test) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:

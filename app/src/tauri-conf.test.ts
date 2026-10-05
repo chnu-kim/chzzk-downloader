@@ -9,6 +9,11 @@ describe('tauri.conf.json 불변식', () => {
     expect(conf.productName).toBe('치지직 다운로더');
   });
 
+  // 한글 제품 이름은 WiX 기본(en-US, 코드 페이지 1252)으로 MSI를 만들 때 LGHT0311로 실패한다(app.md 구현 중 변경 49(사))
+  it('MSI는 한국어(코드 페이지 949)로 만든다', () => {
+    expect(conf.bundle.windows.wix.language).toBe('ko-KR');
+  });
+
   it('프런트 빌드 연결', () => {
     expect(conf.build.frontendDist).toBe('../dist');
     expect(conf.build.devUrl).toBe('http://localhost:1420');

@@ -213,6 +213,8 @@ describe('상태 줄(§8.11)', () => {
     ).toBe('완료 · 4.0 GB · 오후 9:41');
     expect(line(job(1, { status: 'completed', missing: true }))).toBe('완료 · 파일을 찾을 수 없어요');
     expect(line(job(1, { status: 'skipped' }))).toBe('이미 같은 이름의 파일이 있어 받지 않았어요');
+    // 받는 동안 같은 이름의 파일이 생겨 덮어쓰지 않았다(받은 .part가 남음)
+    expect(line(job(1, { status: 'skipped', partialBytes: 1024 }))).toBe('받는 동안 같은 이름의 파일이 생겨 저장하지 않았어요');
     expect(statusParts(job(1, { status: 'failed', error: err('network') }), null)).toEqual([]);
   });
 });

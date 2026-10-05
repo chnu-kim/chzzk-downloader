@@ -119,6 +119,51 @@ pub fn rename_with_retry(from: &Path, to: &Path) -> Result<(), Error> {
     )
 }
 
+/// `from`을 `to`로 옮기되 `to`가 이미 있으면 옮기지 않고 `Ok(false)`를 돌려준다(덮어쓰지 않는다).
+///
+/// 일시 잠금 재시도는 `rename_with_retry`와 같다. 확인과 옮기기 사이에 다른 프로그램이 `to`를 만들어도
+/// 덮어쓰지 않도록 OS의 덮어쓰지 않는 rename을 쓴다(`rename_noclobber`).
+pub fn rename_noclobber_with_retry(from: &Path, to: &Path) -> Result<bool, Error> {
+    match rename_with_retry_using(
+        from,
+        to,
+        rename_noclobber,
+        is_transient_lock,
+        std::thread::sleep,
+    ) {
+        Ok(()) => Ok(true),
+        Err(Error::Io { source, .. }) if source.kind() == io::ErrorKind::AlreadyExists => Ok(false),
+        Err(e) => Err(e),
+    }
+}
+
+/// 덮어쓰지 않는 rename. `to`가 있으면 `AlreadyExists`.
+///
+/// `tempfile`의 `persist_noclobber`가 OS 기능을 쓴다: Linux `renameat2(RENAME_NOREPLACE)`, macOS
+/// `renamex_np(RENAME_EXCL)`, 그 밖의 Unix는 hard link 후 unlink, Windows는 `REPLACE_EXISTING` 없는
+/// `MoveFileExW`. 파일 시스템이 이를 지원하지 않으면(exFAT·FAT의 hard link, Windows 긴 경로 등)
+/// 있는지 확인한 뒤 보통 rename으로 옮긴다. 이때는 확인과 rename 사이의 아주 짧은 틈만 남는다.
+pub(crate) fn rename_noclobber(from: &Path, to: &Path) -> io::Result<()> {
+    let mut tp = tempfile::TempPath::try_from_path(from)?;
+    // 실패해 돌아온 `TempPath`가 drop될 때 `.part`를 지우지 않게 먼저 끈다.
+    tp.disable_cleanup(true);
+    let e = match tp.persist_noclobber(to) {
+        Ok(()) => return Ok(()),
+        Err(e) => e,
+    };
+    // Windows는 실패 때 원본에 임시 파일 속성을 다시 붙이므로 되돌린다(Unix는 아무것도 하지 않는다).
+    let _ = e.path.keep();
+    let err = e.error;
+    if err.kind() == io::ErrorKind::AlreadyExists || is_transient_lock(&err) {
+        return Err(err);
+    }
+    tracing::debug!(error = %err, "덮어쓰지 않는 rename을 쓸 수 없어 확인 후 옮긴다");
+    if std::fs::symlink_metadata(to).is_ok() {
+        return Err(io::Error::from(io::ErrorKind::AlreadyExists));
+    }
+    std::fs::rename(from, to)
+}
+
 /// `rename_with_retry`의 본체. rename, 일시 잠금 판정, sleep을 주입받아 테스트한다.
 pub(crate) fn rename_with_retry_using(
     from: &Path,
@@ -441,6 +486,35 @@ mod tests {
         super::rename_with_retry(&a, &b).unwrap();
         assert_eq!(std::fs::read(&b).unwrap(), b"new");
         assert!(!a.exists());
+    }
+
+    /// 덮어쓰지 않는 rename: 대상이 있으면 둘 다 그대로 두고 `false`, 없으면 옮기고 `true`.
+    #[test]
+    fn rename_noclobber_real_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("a.part");
+        let b = dir.path().join("b.mp4");
+        std::fs::write(&a, b"new").unwrap();
+        std::fs::write(&b, b"old").unwrap();
+        assert!(!super::rename_noclobber_with_retry(&a, &b).unwrap());
+        assert_eq!(std::fs::read(&b).unwrap(), b"old");
+        assert_eq!(std::fs::read(&a).unwrap(), b"new");
+
+        std::fs::remove_file(&b).unwrap();
+        assert!(super::rename_noclobber_with_retry(&a, &b).unwrap());
+        assert_eq!(std::fs::read(&b).unwrap(), b"new");
+        assert!(!a.exists());
+    }
+
+    /// 원본이 없는 등 다른 오류는 `Io`로 낸다(원본을 지우거나 대상을 만들지 않는다).
+    #[test]
+    fn rename_noclobber_missing_source_is_io() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("a.part");
+        let b = dir.path().join("b.mp4");
+        let r = super::rename_noclobber_with_retry(&a, &b);
+        assert!(matches!(r, Err(Error::Io { op: "rename", .. })), "{r:?}");
+        assert!(!b.exists());
     }
 
     #[test]

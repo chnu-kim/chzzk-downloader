@@ -44,7 +44,7 @@ describe('buildEnqueueRequest (§6.4 표)', () => {
   const r = resolved();
   const q = r.qualities[1];
 
-  it('충돌이 없으면 검사한 이름 그대로, restart=false, overwrite', () => {
+  it('충돌이 없으면 검사한 이름 그대로, restart=false, skip(그사이 생긴 파일을 덮어쓰지 않는다)', () => {
     const req = buildEnqueueRequest(r, q, null, check({ fileName: '정리된 이름' }), DEFAULT_CHOICES);
     expect(req).toEqual({
       url: r.url,
@@ -57,17 +57,18 @@ describe('buildEnqueueRequest (§6.4 표)', () => {
       expectedKind: 'liveRewindHls',
       folder: null,
       fileName: '정리된 이름',
-      onExisting: 'overwrite',
+      onExisting: 'skip',
       restart: false,
     });
   });
 
-  it('완성 파일: 번호(기본)는 freeFileName, 덮어쓰기는 그 이름', () => {
+  it('완성 파일: 번호(기본)는 freeFileName + skip, 덮어쓰기는 그 이름 + overwrite', () => {
     const c = check({ exists: true, freeFileName: '이름 (2)' });
+    // 번호 붙인 새 이름은 검사 뒤에 생긴 같은 이름의 파일을 덮어쓰면 안 된다.
     expect(buildEnqueueRequest(r, q, '/v', c, DEFAULT_CHOICES)).toMatchObject({
       fileName: '이름 (2)',
       folder: '/v',
-      onExisting: 'overwrite',
+      onExisting: 'skip',
       restart: false,
     });
     expect(buildEnqueueRequest(r, q, '/v', c, { existing: 'overwrite', partialFresh: false })).toMatchObject({
@@ -75,6 +76,14 @@ describe('buildEnqueueRequest (§6.4 표)', () => {
       onExisting: 'overwrite',
       restart: false,
     });
+  });
+
+  it('덮어쓰기는 완성 파일이 있을 때 직접 고른 경우에만', () => {
+    // 파일이 없으면 덮어쓰기 선택이 남아 있어도(이전 입력) skip이다.
+    expect(buildEnqueueRequest(r, q, null, check(), { existing: 'overwrite', partialFresh: false }).onExisting).toBe('skip');
+    // 같은 작업의 .part만 있을 때도 skip(이어받아 마무리할 때 그사이 생긴 파일을 덮어쓰지 않는다).
+    const p = check({ partial: { bytes: 5, sameJob: true } });
+    expect(buildEnqueueRequest(r, q, null, p, DEFAULT_CHOICES).onExisting).toBe('skip');
   });
 
   it('같은 작업의 .part: 이어받기 false / 처음부터 true', () => {

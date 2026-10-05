@@ -425,7 +425,7 @@ pub trait EventSink: Send + Sync { fn send(&self, e: JobEvent) -> bool; }
 | `interrupted` | O | 중단됨 · N 받음 | 앱이 꺼질 때 `running`·`pausing`·`queued`였던 항목 |
 | `failed` | O | 오류 문구(§9) | `error`, `partial_bytes` |
 | `completed` | O | 완료 · 크기 · 시각 | `missing`이면 "파일을 찾을 수 없어요" |
-| `skipped` | O | 이미 같은 이름의 파일이 있어 받지 않았어요 | `DownloadOutcome::Skipped` |
+| `skipped` | O | 이미 같은 이름의 파일이 있어 받지 않았어요 (받은 `.part`가 남았으면 "받는 동안 같은 이름의 파일이 생겨 저장하지 않았어요") | `DownloadOutcome::Skipped`, `partial_bytes`(구현 중 변경 53) |
 
 ```
                  enqueue
@@ -471,12 +471,12 @@ UI는 결과로 **서로 독립인 세 안내**를 한다(§8.3 ConflictNotice).
 
 | 상황 | 안내 | `enqueue`에 넘기는 값 |
 |---|---|---|
-| `exists` | "같은 이름의 파일이 이미 있어요" (●) 번호 붙여 새로 저장 ( ) 덮어쓰기 | 번호: `file_name = free_file_name`. 덮어쓰기: 그대로. 둘 다 `on_existing = overwrite` |
+| `exists` | "같은 이름의 파일이 이미 있어요" (●) 번호 붙여 새로 저장 ( ) 덮어쓰기 | 번호: `file_name = free_file_name`, `on_existing = skip`. 덮어쓰기: 그대로, `on_existing = overwrite`(구현 중 변경 53) |
 | `partial.same_job` | "이전에 받다 만 파일이 있어요 (1.2 GB). 이어서 받아요" [처음부터 받기] | 이어받기: `restart = false`. 처음부터: `restart = true` |
 | `partial && !same_job` | "다른 화질로 받다 만 파일이 있어요. 처음부터 받아요" (안내만) | `restart = false`(코어가 지우고 새로 시작) |
 | `duplicate_job_id` | "이 파일은 이미 다운로드 목록에 있어요" [목록에서 보기]. 다운로드 버튼 비활성 | - |
 
-`.part`만 있고 완성 파일이 없으면 중복이 아니라 이어받기 후보다. 코어 `DuplicatePolicy::Skip`은 UI에서 쓰지 않는다(받지 않을 거면 추가하지 않는다).
+`.part`만 있고 완성 파일이 없으면 중복이 아니라 이어받기 후보다. ~~코어 `DuplicatePolicy::Skip`은 UI에서 쓰지 않는다~~ → 덮어쓰기를 직접 고른 때만 `overwrite`, 그 밖은 모두 `skip`이다(구현 중 변경 53).
 
 ---
 
@@ -842,7 +842,7 @@ denied                                       expired / cancelled / error
 | `job.phase.resolving` / `.downloading` / `.reresolving` / `.finalizing` | 준비 중 / 받는 중 / 영상 링크를 새로 받는 중이에요 / 마무리 중 |
 | `job.pausing` / `job.paused` / `job.interrupted` | 멈추는 중… / 일시정지됨 · {bytes} 받음 / 중단됨 · {bytes} 받음 |
 | `job.completed` / `job.completedMissing` | 완료 · {size} · {time} / 완료 · 파일을 찾을 수 없어요 |
-| `job.skipped` | 이미 같은 이름의 파일이 있어 받지 않았어요 |
+| `job.skipped` / `job.skippedMeanwhile` | 이미 같은 이름의 파일이 있어 받지 않았어요 / 받는 동안 같은 이름의 파일이 생겨 저장하지 않았어요 |
 | `job.eta` / `job.etaUnknown` / `job.segments` / `job.resumedFrom` | {t} 남음 / 남은 시간 계산 중 / 조각 {done}/{total} / {size}부터 이어받음 |
 | `action.pause` / `.resume` / `.retry` / `.restartFresh` / `.cancel` | 일시정지 / 이어받기 / 다시 시도 / 처음부터 다시 받기 / 취소 |
 | `action.openFile` / `.openFolder` / `.remove` / `.copyUrl` / `.copyReport` | 파일 열기 / 폴더 열기 / 목록에서 지우기 / 주소 복사 / 문제 보고용 정보 복사 |
@@ -1132,6 +1132,8 @@ jobs:
 | CI 작업 (§14) | 35 (`shell`), 49 (`frontend`·`tauri`), 51(가)(Linux 패키지 이름) |
 | 다른 프로세스 막기 (§6.1 "중복 방지 세 겹"의 (2)) | 51(다) (single-instance + 데이터 폴더 `app.lock`) |
 | 컴포넌트 나눔 (§10) | 48 "하지 않은 것" (3) |
+| `on_existing`·`skipped`의 `.part` (§6.4 표·§6.1 상태 표) | 53 |
+| 경로 열쇠·`..` 거부 (§6.1 중복 방지·§6.4) | 54 |
 | 웹뷰·OS 수동 확인 (§15 14·17행) | 아래 "수동 스모크 체크리스트 결과" 표. 미확인 항목은 사람이 3 OS에서 본다 |
 
 1. **§15-1 identifier.** §2의 `io.github.chnu-kim.vod-downloader` 대신 §16 답변대로 `io.github.chnu-kim.chzzk-downloader`를 쓴다. `app/src/tauri-conf.test.ts`가 identifier·창 크기·CSP·`withGlobalTauri`·`dragDropEnabled`를 고정한다.
@@ -1303,6 +1305,13 @@ jobs:
     - (라) **실제 실행(2026-10-05 macOS).** `pnpm tauri build --ci --debug --no-bundle` 성공. 다른 세션이 띄워 둔 debug 앱(부모가 끝난 고아 프로세스)이 돌고 있어 기본 identifier 바이너리는 single-instance로 그 창에 포커스를 넘기고 시작 로그 없이 끝났다(순차 실행 넘기기 확인). 그 프로세스는 건드리지 않고 `--config '{"identifier":"io.github.chnu-kim.chzzk-downloader.smoke"}'`로 소켓·데이터·로그 폴더가 따로인 사본을 만들어 봤다. (1) 혼자 실행: 떠 있고, 시작 로그(기본 폴더 `~/Movies/치지직`)와 데이터 폴더의 `app.lock`·`jobs.json`이 생겼다. (2) 한 줄에서 두 개 실행: 시작 로그 두 줄(10ms 차)로 **둘 다 single-instance를 지났고**(경합 재현), 뒤의 것이 `다른 실행이 데이터 폴더를 쓰는 중이라 이 실행을 끝냄`을 남기고 끝나 하나만 남았다. 확인 뒤 기본 identifier로 다시 빌드했다.
 
 52. **Phase 2 최종 리뷰(macOS 실행): Cmd+Q·메뉴 Quit이 D1을 지나쳤다.** 37의 "macOS Cmd+Q·Dock 종료는 `ExitRequested { code: None }`로 온다"는 틀렸다. Tauri 기본 macOS 메뉴(`Menu::default`)의 Quit(=Cmd+Q)은 muda `PredefinedMenuItem::quit`이고 macOS에서는 `NSApp terminate:` 셀렉터다. tao 0.37.1의 앱 델리게이트는 `applicationShouldTerminate:`를 두지 않고 `applicationWillTerminate:`에서 `AppState::exit()` → `LoopDestroyed` → `RunEvent::Exit`만 보내므로(소스 확인), 받는 중에 메뉴 Quit을 누르면 D1 없이 프로세스가 끝나고 `manager.quit`이 돌지 않아 작업이 `running`으로 남았다(실측: `jobs.json`에 `running`, 다음 실행의 reconcile이 `interrupted`로 바꿈. `RunEvent::Exit`의 flush는 돌아 데이터는 안전했다). 고침: macOS에서만 `Builder::menu`로 기본 메뉴와 같은 구성(앱·File·Edit·View·Window)을 만들되 Quit을 보통 `MenuItem`(id `quit`, "Quit {앱 이름}", `CmdOrCtrl+Q`)으로 두고 `on_menu_event`에서 `request_quit`(= `guard_close` → 막히지 않으면 `app.exit(0)`)을 부른다. Edit 메뉴의 predefined 항목은 WKWebView의 붙여넣기·전체 선택이 responder chain으로 받으므로 그대로 둔다. **남는 것**: Dock의 "종료", AppleScript `quit`, 로그아웃·시스템 종료는 여전히 `terminate:`라 가드를 지나친다(데이터는 flush + reconcile로 안전, D1만 없다). 막으려면 tao 델리게이트 클래스에 objc 런타임으로 `applicationShouldTerminate:`를 덧붙여야 해 후속으로 둔다. 테스트: IPC `quit_menu_is_guarded_while_a_job_runs`(받는 중이면 `close-requested` 한 번·끝내지 않음, `quit` 중이면 조용히 막음). 실제 메뉴 Quit → D1 → [닫기] → `interrupted` 저장 → 종료 → 재시작 B1 → 이어받기 완료까지 GUI로 확인했다(아래 표).
+
+53. **PR #14 Codex 리뷰: 번호 붙인 새 이름이 그사이 생긴 파일을 덮어쓸 수 있었다.** §6.4 표는 번호·덮어쓰기 모두 `on_existing = overwrite`였고, 코어 `finalize`는 정책과 상관없이 덮어썼다(core.md 구현 중 변경 27). 그래서 `check_output`이 빈 이름 `이름 (2)`를 준 뒤 다운로드가 끝나기 전(몇 분~몇 시간)에 다른 프로그램이나 다른 실행이 같은 이름을 만들면 마무리 rename이 그 파일을 지웠다. 고친 것:
+    - (가) **프런트**: `buildEnqueueRequest`는 완성 파일이 있고 사용자가 덮어쓰기를 직접 고른 때만 `overwrite`, 그 밖(번호 붙인 새 이름·충돌 없음·`.part`만 있음)은 `skip`을 보낸다.
+    - (나) **코어 `finalize(policy)`**: `Skip`이면 덮어쓰지 않는 rename(`fsutil::rename_noclobber_with_retry`)을 쓴다. 시작 전 `exists()` 검사만으로는 받는 동안 생긴 파일을 막지 못하기 때문이다. 대상이 있으면 옮기지 않고 `Finalized::TargetExists` → `DownloadOutcome::Skipped`이고, 받은 `.part`와 sidecar는 남는다(core.md 구현 중 변경 55).
+    - (다) **셸**: `Skipped`로 끝나면 `partial_bytes`를 채운다(reconcile도 `skipped`를 본다). 받은 `.part`가 남은 `skipped`는 "완료 지우기"·`MAX_FINISHED` 정리가 레코드만 지우지 않는다(`Job::clearable`, 지우면 수 GB `.part`가 주인 없이 남는다). `remove`는 `failed`와 같은 규칙으로 `.part`도 지운다.
+    - (라) **알림**: 새 문구 없이 기존 흐름을 쓴다. 작업 줄은 `job.skippedMeanwhile`("받는 동안 같은 이름의 파일이 생겨 저장하지 않았어요")이고 [파일 열기][덮어쓰고 받기]는 그대로다. "덮어쓰고 받기"(`resume` → `overwrite`)는 남은 `.part`를 이어받아(점진 다운로드는 `416, offset == total`, HLS는 `next_index == n`) 바로 마무리한다.
+    - 테스트: 코어 `finalize_skip_does_not_clobber_file_created_meanwhile`·`finalize_skip_moves_when_free`·`rename_noclobber_real_file`·`rename_noclobber_missing_source_is_io`, 셸 `skipped_with_partial_is_kept_and_removable`·`skipped_without_partial_clears`, 프런트 `receive.test.ts`(번호·충돌 없음 → `skip`, 덮어쓰기 → `overwrite`)·`jobs.test.ts`·`stores/jobs.test.ts`.
 
 ### 수동 스모크 체크리스트 결과 (§15 17행, 2026-10-05 macOS)
 

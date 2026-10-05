@@ -176,6 +176,13 @@ describe('JobsStore 동작', () => {
     expect(api.removeJob).toHaveBeenLastCalledWith(2);
   });
 
+  it('완료 지우기 대상: 받은 .part가 남은 건너뜀은 셸이 남기므로 세지 않는다', async () => {
+    const { s } = await loaded([job(1, { status: 'skipped', partialBytes: 7 })]);
+    expect(s.hasFinished).toBe(false);
+    const { s: s2 } = await loaded([job(1, { status: 'skipped' })]);
+    expect(s2.hasFinished).toBe(true);
+  });
+
   it('처음부터 다시 받기는 restart, 덮어쓰고 받기는 resume', async () => {
     const { s } = await loaded([job(1, { status: 'failed', partialBytes: 5, error: err('network') }), job(2, { status: 'skipped' })]);
     await s.act(1, 'restartFresh');

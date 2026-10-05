@@ -157,6 +157,14 @@ export function barView(job: JobDto, p: ProgressDto | null | undefined): BarView
   };
 }
 
+/**
+ * 건너뜀 문구. 받은 `.part`가 남았으면(`partialBytes`) 시작 전이 아니라 받는 동안 같은 이름의 파일이 생겨
+ * 덮어쓰지 않은 것이다(번호 붙인 새 이름이나 충돌 없던 이름은 `onExisting = skip`).
+ */
+function skippedKey(job: JobDto): CopyKey {
+  return job.partialBytes != null ? 'job.skippedMeanwhile' : 'job.skipped';
+}
+
 /** 상태를 한 낱말로(스크린 리더·알림) */
 export function statusWord(job: JobDto, p: ProgressDto | null | undefined): string {
   switch (job.status) {
@@ -173,7 +181,7 @@ export function statusWord(job: JobDto, p: ProgressDto | null | undefined): stri
     case 'completed':
       return t('job.word.completed');
     case 'skipped':
-      return t('job.skipped');
+      return t(skippedKey(job));
     case 'failed':
       return job.error ? errorCopy(job.error, { place: 'job', partialBytes: job.partialBytes }).title : '';
   }
@@ -273,7 +281,7 @@ export function statusParts(job: JobDto, p: ProgressDto | null | undefined, ctx:
       ];
     }
     case 'skipped':
-      return [{ text: t('job.skipped') }];
+      return [{ text: t(skippedKey(job)) }];
     case 'failed':
       return [];
   }

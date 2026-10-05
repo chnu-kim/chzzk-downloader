@@ -52,7 +52,12 @@ export class JobsStore {
   groups = $derived(groupJobs(this.state.jobs.values()));
   order = $derived(visibleOrder(this.groups));
   interruptedCount = $derived([...this.state.jobs.values()].filter((j) => j.status === 'interrupted').length);
-  hasFinished = $derived([...this.state.jobs.values()].some((j) => j.status === 'completed' || j.status === 'skipped'));
+  /** "완료 지우기"가 지울 것이 있는가. 받은 `.part`가 남은 건너뜀은 셸이 남긴다(manager `Job::clearable`). */
+  hasFinished = $derived(
+    [...this.state.jobs.values()].some(
+      (j) => j.status === 'completed' || (j.status === 'skipped' && j.partialBytes == null),
+    ),
+  );
   /** B1을 보일까: 중단된 작업이 있고 닫지 않았다 */
   showInterruptedBanner = $derived(this.interruptedCount > 0 && !this.bannerDismissed);
 

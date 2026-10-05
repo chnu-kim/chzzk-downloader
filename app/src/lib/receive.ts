@@ -98,7 +98,10 @@ export function notices(check: OutputCheck, choices: CardChoices): Notices {
 
 /**
  * `EnqueueRequest`(§6.4 표).
- * - 완성 파일이 있음: 번호 → `freeFileName`, 덮어쓰기 → 그 이름 그대로. 둘 다 `onExisting = overwrite`.
+ * - 완성 파일이 있음: 번호 → `freeFileName`, 덮어쓰기 → 그 이름 그대로.
+ * - `onExisting`: 덮어쓰기를 직접 고른 때만 `overwrite`, 그 밖(충돌 없음·번호 붙인 새 이름)은 `skip`.
+ *   검사 뒤 받는 동안 같은 이름의 파일이 생겨도 덮어쓰지 않는다(코어가 덮어쓰지 않고 마무리해 `skipped`로
+ *   끝나고, 받은 `.part`는 남아 "덮어쓰고 받기"로 이어받는다).
  * - 같은 작업의 `.part`: 이어받기 `restart = false`, 처음부터 `restart = true`.
  * - 다른 `.part`: `restart = false`(코어가 sidecar 불일치로 지우고 새로 시작).
  * 이름은 `check_output`이 정리한 `fileName`을 보낸다(검사한 경로와 같게).
@@ -124,7 +127,7 @@ export function buildEnqueueRequest(
     expectedKind: r.playbackKind,
     folder,
     fileName,
-    onExisting: 'overwrite',
+    onExisting: check.exists && choices.existing === 'overwrite' ? 'overwrite' : 'skip',
     restart,
   };
 }

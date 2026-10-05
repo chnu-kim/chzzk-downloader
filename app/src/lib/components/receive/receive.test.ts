@@ -176,7 +176,7 @@ describe('ResolveCard', () => {
     const user = await openCard();
     await user.click(await downloadButton());
     expect(api.enqueue).toHaveBeenCalledWith(
-      expect.objectContaining({ qualityId: 'q1080', fileName: check().fileName, restart: false, onExisting: 'overwrite' }),
+      expect.objectContaining({ qualityId: 'q1080', fileName: check().fileName, restart: false, onExisting: 'skip' }),
     );
     await waitFor(() => expect(screen.queryByRole('heading', { name: /금요/ })).toBeNull());
     expect(screen.getByLabelText('영상 주소')).toHaveValue('');
@@ -191,7 +191,7 @@ describe('ResolveCard', () => {
     await user.click(await downloadButton());
     expect(vi.mocked(api.enqueue).mock.lastCall?.[0]).toMatchObject({
       fileName: '[251003] 채널이름 - 금요 노가리 방송 (2)',
-      onExisting: 'overwrite',
+      onExisting: 'skip',
     });
   });
 

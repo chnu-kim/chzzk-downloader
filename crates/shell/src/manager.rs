@@ -133,6 +133,17 @@ impl Job {
         self.removing || self.rec.status.is_active()
     }
 
+    /// "완료 지우기"·오래된 기록 정리가 레코드만 지워도 되는가. `completed`와 `.part`가 없는 `skipped`.
+    /// 받는 동안 같은 이름의 파일이 생겨 건너뛴 작업은 받은 `.part`가 남아 있어("덮어쓰고 받기"로 쓸 수
+    /// 있다) 레코드만 지우면 파일이 버려진 채 남으므로 정리하지 않는다(`remove`로 지운다).
+    fn clearable(&self) -> bool {
+        match self.rec.status {
+            JobStatus::Completed => true,
+            JobStatus::Skipped => self.rec.partial_bytes.is_none(),
+            _ => false,
+        }
+    }
+
     fn busy(&self) -> bool {
         matches!(self.rec.status, JobStatus::Running | JobStatus::Pausing)
     }
@@ -491,7 +502,8 @@ impl<B: Backend> DownloadManager<B> {
 
     /// 목록에서 지운다(UX의 "취소"도 이것이다).
     ///
-    /// - `completed`·`skipped`: 레코드만 지운다(파일은 둔다).
+    /// - `completed`·`skipped`: 레코드만 지운다(파일은 둔다). 단 받는 동안 같은 이름의 파일이 생겨 건너뛴
+    ///   `skipped`(받은 `.part`가 남음, `partial_bytes`가 있음)는 `failed`처럼 `.part`도 지운다.
     /// - `running`·`pausing`: 취소 → 태스크 종료 대기(잠금 밖) → `discard_partial` → 지운다.
     ///   종료 중(`quit` 뒤)에는 아무것도 하지 않는다(`quit`이 핸들을 가져가 기다릴 수 없고, 곧 `interrupted`로 저장된다).
     /// - `queued`·`paused`·`interrupted`·`failed`: `discard_partial` → 지운다(다시 줄 선 작업도 `.part`가 있을 수 있다).
@@ -508,9 +520,13 @@ impl<B: Backend> DownloadManager<B> {
             };
             let output = job.rec.output.clone();
             let records_only = match job.rec.status {
-                JobStatus::Completed | JobStatus::Skipped => true,
+                JobStatus::Completed => true,
+                // 건너뛴 작업은 받다 남긴 `.part`가 있을 때만 지운다(받는 동안 같은 이름의 파일이 생긴 경우)
+                JobStatus::Skipped if job.rec.partial_bytes.is_none() => true,
                 // 경로를 다른 활성 작업이 가져갔다. `.part`는 그 작업의 것이다
-                JobStatus::Failed => st.active_with_output(&output, Some(id)).is_some(),
+                JobStatus::Failed | JobStatus::Skipped => {
+                    st.active_with_output(&output, Some(id)).is_some()
+                }
                 // 종료 중: `quit`이 이미 태스크를 멈추고 핸들을 가져갔다. 기다릴 수 없으니 `.part`를 건드리지 않고
                 // `quit`이 `interrupted`로 저장하게 둔다(앱이 곧 꺼진다).
                 JobStatus::Running | JobStatus::Pausing if quitting => return Ok(()),
@@ -579,13 +595,13 @@ impl<B: Backend> DownloadManager<B> {
         }
     }
 
-    /// `completed`·`skipped`를 모두 지운다(파일은 둔다).
+    /// `completed`·`skipped`를 모두 지운다(파일은 둔다). 받은 `.part`가 남은 `skipped`는 남긴다(`Job::clearable`).
     pub fn clear_finished(&self) {
         let mut st = self.inner.lock();
         let ids: Vec<JobId> = st
             .jobs
             .values()
-            .filter(|j| matches!(j.rec.status, JobStatus::Completed | JobStatus::Skipped))
+            .filter(|j| j.clearable())
             .map(|j| j.rec.id)
             .collect();
         if ids.is_empty() {
@@ -840,7 +856,8 @@ impl<B: Backend> Inner<B> {
                 End::Done(DownloadOutcome::Skipped { .. }) => {
                     r.status = JobStatus::Skipped;
                     r.finished_at = Some(now_secs());
-                    r.partial_bytes = None;
+                    // 받는 동안 같은 이름의 파일이 생겼으면 코어가 `.part`를 남긴다("덮어쓰고 받기"로 이어받는다).
+                    r.partial_bytes = partial_bytes(r);
                     job.last_progress = None;
                 }
                 End::Cancelled => match stop {
@@ -884,7 +901,7 @@ impl<B: Backend> Inner<B> {
         let mut finished: Vec<(u64, JobId)> = st
             .jobs
             .values()
-            .filter(|j| matches!(j.rec.status, JobStatus::Completed | JobStatus::Skipped))
+            .filter(|j| j.clearable())
             .map(|j| (j.rec.finished_at.unwrap_or(0), j.rec.id))
             .collect();
         if finished.len() <= MAX_FINISHED {

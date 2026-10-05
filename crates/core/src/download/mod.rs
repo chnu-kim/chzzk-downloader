@@ -10,7 +10,8 @@
 //! 2. 같은 작업의 `.part`가 있으면 잠그고 이어받는다. 다르면 지우고 새로 시작한다.
 //! 3. `Resolving`: `resolve`. 방식이 바뀌었으면 `PlaybackChanged`.
 //! 4. 엔진 실행. 403이면 `Reresolving` → 재조회(상한 8회).
-//! 5. `Finalizing`: checkpoint → `.part` → 최종 파일.
+//! 5. `Finalizing`: checkpoint → `.part` → 최종 파일. `Skip`이면 덮어쓰지 않는 rename을 쓰고, 받는 동안
+//!    최종 파일이 생겼으면 `.part`를 남긴 채 `Skipped`다.
 //!
 //! 실패·취소 시 `.part`와 sidecar를 남긴다(checkpoint 후). `is_resumable() == false`인 오류만 지운다.
 //! 단 `resolve` 실패와 작업 도중 재조회의 지문 불일치는 남긴다(`Job::keep_partial`).
@@ -33,7 +34,7 @@ use crate::fsutil::map_io_error;
 use crate::model::{ContentRef, PlaybackKind, Resolved, Source};
 use crate::progress::{Meter, Phase, Progress};
 
-pub use part::{PartFile, Sidecar, discard_partial};
+pub use part::{Finalized, PartFile, Sidecar, discard_partial};
 pub use retry::{Failure, RetryPolicy};
 
 /// 작업당 재조회 상한.
@@ -77,9 +78,9 @@ pub enum DownloadOutcome {
         /// 이어받기 시작 위치(새로 받았으면 0)
         resumed_from: u64,
     },
-    Skipped {
-        path: PathBuf,
-    },
+    /// `Skip`인데 최종 파일이 있었다. 시작 전에 있었으면 네트워크 0회, 받는 동안 생겼으면 받은 `.part`와
+    /// sidecar가 남는다(같은 요청을 `Overwrite`로 다시 부르면 이어받아 곧바로 마무리된다).
+    Skipped { path: PathBuf },
 }
 
 /// 진행률 콜백 연결. 엔진은 상태를 바꾸고 `update`/`phase`를 부른다.
@@ -284,10 +285,14 @@ pub(crate) async fn finish(
         return Err(e);
     }
     let bytes = p.written();
-    let path = p.finalize().await?;
-    Ok(DownloadOutcome::Completed {
-        path,
-        bytes,
-        resumed_from,
-    })
+    match p.finalize(job.req.on_existing).await? {
+        Finalized::Moved(path) => Ok(DownloadOutcome::Completed {
+            path,
+            bytes,
+            resumed_from,
+        }),
+        Finalized::TargetExists => Ok(DownloadOutcome::Skipped {
+            path: job.req.output.clone(),
+        }),
+    }
 }

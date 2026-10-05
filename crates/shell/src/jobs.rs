@@ -265,7 +265,7 @@ fn parse(bytes: &[u8]) -> Result<JobsFile, String> {
 /// | 저장된 상태 | 파일 | 결과 |
 /// |---|---|---|
 /// | `running`·`pausing`·`queued` | - | `interrupted`(자동 재개는 매니저가 설정을 보고 따로 한다) |
-/// | `paused`·`interrupted`·`failed` | `.part`·sidecar가 있고 같은 작업 | `partial_bytes = committed_len` |
+/// | `paused`·`interrupted`·`failed`·`skipped` | `.part`·sidecar가 있고 같은 작업 | `partial_bytes = committed_len` |
 /// | 〃 | 그 밖 | `partial_bytes = None` |
 /// | `completed` | 최종 파일 없음 | `missing = true` |
 ///
@@ -281,7 +281,7 @@ pub fn reconcile(file: &mut JobsFile) {
         j.partial_bytes = None;
         j.missing = false;
         match j.status {
-            JobStatus::Paused | JobStatus::Interrupted | JobStatus::Failed => {
+            JobStatus::Paused | JobStatus::Interrupted | JobStatus::Failed | JobStatus::Skipped => {
                 j.partial_bytes = partial_bytes(j);
             }
             JobStatus::Completed => j.missing = !j.output.exists(),

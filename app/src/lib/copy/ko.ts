@@ -87,6 +87,7 @@ export const ko = {
   'job.completed': '완료 · {size} · {time}',
   'job.completedMissing': '완료 · 파일을 찾을 수 없어요',
   'job.skipped': '이미 같은 이름의 파일이 있어 받지 않았어요',
+  'job.skippedMeanwhile': '받는 동안 같은 이름의 파일이 생겨 저장하지 않았어요',
   'job.eta': '{t} 남음',
   'job.etaUnknown': '남은 시간 계산 중',
   'job.segments': '조각 {done}/{total}',

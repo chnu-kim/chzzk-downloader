@@ -695,3 +695,60 @@ async fn output_of_returns_path_and_status() {
         ErrorCode::JobNotFound
     );
 }
+
+/// 받는 동안 같은 이름의 파일이 생겨 코어가 `.part`를 남기고 건너뛰면(`Skip`의 덮어쓰지 않는 마무리)
+/// `partial_bytes`를 보여 주고, "완료 지우기"는 남기며, `remove`는 `.part`까지 지우고, "덮어쓰고 받기"는
+/// `overwrite`로 다시 받는다.
+#[tokio::test(start_paused = true)]
+async fn skipped_with_partial_is_kept_and_removable() {
+    let h = Harness::new(1);
+    let out = h.output("a");
+    let mut r = request("a");
+    r.on_existing = chzzk_shell::dto::OnExisting::Skip;
+    // 코어가 마무리 직전에 남긴 `.part`(끝까지 받은 상태)
+    checkpoint(&out, 7, 7);
+    h.fake.script_for(
+        &out,
+        Script::new().ends(Ok(DownloadOutcome::Skipped { path: out.clone() })),
+    );
+    let id = h.mgr.enqueue(r, &h.defaults()).unwrap().id;
+    until("건너뜀", || h.status(id) == JobStatus::Skipped).await;
+    assert_eq!(h.job(id).partial_bytes, Some(7));
+
+    // 재시작해도 그대로 보인다(reconcile).
+    let again = h.reopen(1);
+    let j = again.list().into_iter().find(|j| j.id == id).unwrap();
+    assert_eq!(j.partial_bytes, Some(7));
+    drop(again);
+
+    // "완료 지우기"는 받은 `.part`가 남은 건너뜀을 지우지 않는다.
+    h.mgr.clear_finished();
+    assert_eq!(h.status(id), JobStatus::Skipped);
+    assert!(has_partial(&out));
+
+    // 목록에서 지우면 `.part`도 지운다.
+    h.mgr.remove(id).await.unwrap();
+    assert!(h.mgr.list().is_empty());
+    assert!(!has_partial(&out));
+}
+
+/// `.part` 없이 건너뛴 작업은 지금처럼 레코드만 지우고, "완료 지우기"로도 지워진다.
+#[tokio::test(start_paused = true)]
+async fn skipped_without_partial_clears() {
+    let h = Harness::new(1);
+    let out = h.output("a");
+    std::fs::create_dir_all(out.parent().unwrap()).unwrap();
+    std::fs::write(&out, b"theirs").unwrap();
+    let mut r = request("a");
+    r.on_existing = chzzk_shell::dto::OnExisting::Skip;
+    h.fake.script_for(
+        &out,
+        Script::new().ends(Ok(DownloadOutcome::Skipped { path: out.clone() })),
+    );
+    let id = h.mgr.enqueue(r, &h.defaults()).unwrap().id;
+    until("건너뜀", || h.status(id) == JobStatus::Skipped).await;
+    assert_eq!(h.job(id).partial_bytes, None);
+    h.mgr.clear_finished();
+    assert!(h.mgr.list().is_empty());
+    assert_eq!(std::fs::read(&out).unwrap(), b"theirs");
+}

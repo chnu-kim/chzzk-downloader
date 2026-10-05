@@ -38,6 +38,16 @@ const log = (m) => console.log(`e2e-native: ${m}`);
 // W3C WebDriver 요소 키
 const ELEMENT = 'element-6066-11e4-a952-4a6000c22a71';
 
+// 요소 찾기 응답 → 요소 id. W3C 키가 표준이지만 옛 JSON Wire 키(ELEMENT)로 오는 드라이버도 받는다.
+// 둘 다 없으면 응답을 보여 주며 실패한다(조용히 거짓이 되어 시간 초과로만 보이지 않게).
+export function elementId(v) {
+  const id = v?.[ELEMENT] ?? v?.ELEMENT;
+  if (typeof id !== 'string' || !id) throw new Error(`요소 응답에 id가 없다: ${JSON.stringify(v).slice(0, 200)}`);
+  return id;
+}
+// 스크립트 인자로 넘길 요소 참조(두 키 모두)
+export const elementRef = (id) => ({ [ELEMENT]: id, ELEMENT: id });
+
 // 최소 W3C WebDriver 클라이언트(fetch). WebdriverIO 대신 쓴다: 의존성 트리 없이 필요한 명령 여섯 개뿐이다.
 export function client(base) {
   const call = async (method, path, body) => {
@@ -66,7 +76,7 @@ export function client(base) {
       const v = await call('POST', 'session', { capabilities: { alwaysMatch: { 'tauri:options': { application } } } });
       return v.sessionId;
     },
-    find: (sid, using, value) => call('POST', `session/${sid}/element`, { using, value }).then((e) => e[ELEMENT]),
+    find: (sid, using, value) => call('POST', `session/${sid}/element`, { using, value }).then(elementId),
     click: (sid, el) => call('POST', `session/${sid}/element/${el}/click`, {}),
     type: (sid, el, text) => call('POST', `session/${sid}/element/${el}/value`, { text }),
     exec: (sid, script, args = []) => call('POST', `session/${sid}/execute/sync`, { script, args }),
@@ -214,7 +224,7 @@ export async function run(exe) {
       '영상 카드의 다운로드 버튼',
       async () => {
         const el = await wd.find(sid, 'xpath', DL);
-        const enabled = await wd.exec(sid, 'return !arguments[0].disabled', [{ [ELEMENT]: el }]);
+        const enabled = await wd.exec(sid, 'return !arguments[0].disabled', [elementRef(el)]);
         return enabled ? el : null;
       },
       STEP_MS,

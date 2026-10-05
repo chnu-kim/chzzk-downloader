@@ -66,3 +66,14 @@ test('pull_request_target·workflow_run 금지', () => {
   assert.deepEqual(rules(WF.replace('on: [push]', 'on:\n  pull_request_target:')), ['trigger']);
   assert.deepEqual(rules(WF.replace('on: [push]', 'on: [push, workflow_run]')), ['trigger']);
 });
+
+test('container·services 이미지는 digest로 고정한다', () => {
+  const D = 'ubuntu:22.04@sha256:' + 'b'.repeat(64);
+  const withC = (c) => WF.replace('    runs-on: ubuntu-24.04\n    timeout-minutes: 5\n    steps:\n      - uses: org', `    runs-on: ubuntu-24.04\n${c}    timeout-minutes: 5\n    steps:\n      - uses: org`);
+  assert.deepEqual(rules(withC(`    container: ${D}\n`)), []);
+  assert.deepEqual(rules(withC(`    container:\n      image: ${D}\n`)), []);
+  assert.deepEqual(rules(withC('    container: ubuntu:22.04\n')), ['image']);
+  assert.deepEqual(rules(withC('    container:\n      image: ubuntu:22.04\n')), ['image']);
+  assert.deepEqual(rules(withC('    container:\n      image: ${{ matrix.image }}\n')), ['image']);
+  assert.deepEqual(rules(withC(`    services:\n      s3:\n        image: minio/minio:latest\n`)), ['image']);
+});

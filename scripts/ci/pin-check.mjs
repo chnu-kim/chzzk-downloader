@@ -9,6 +9,7 @@
 //   credentials  actions/checkout 단계마다 `persist-credentials: false`
 //   timeout      모든 작업에 `timeout-minutes`
 //   trigger      pull_request_target·workflow_run 트리거 없음
+//   image        `container:`·`image:`의 이미지는 글자 그대로 `<이름>@sha256:<64 hex>`(태그만 쓰거나 식으로 고르지 않는다)
 // 위반이 있으면 1, 없으면 0, 사용법 오류 2.
 
 import { existsSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
@@ -38,6 +39,14 @@ export function checkWorkflow(text) {
       return;
     }
     if (!PINNED.test(m[1])) add('pin', i, `SHA로 고정하지 않았거나 버전 주석이 없다: ${v}`);
+  });
+
+  // container·services 이미지 digest
+  lines.forEach((l, i) => {
+    const m = /^\s*(?:-\s+)?(container|image):\s*(.*?)\s*$/.exec(stripComment(l));
+    if (!m || m[2] === '') return; // `container:` 다음 줄의 image:가 따로 걸린다
+    const v = m[2].replace(/^["']|["']$/g, '');
+    if (!/^[a-z0-9][a-z0-9._\/-]*(?::[A-Za-z0-9._-]+)?@sha256:[0-9a-f]{64}$/.test(v)) add('image', i, `digest로 고정하지 않은 이미지: ${v}`);
   });
 
   // permissions: {}

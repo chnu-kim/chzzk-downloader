@@ -270,6 +270,9 @@ describe('취소 확인(D2): 512 MiB 초과일 때만', () => {
     expect(needsCancelConfirm(job(1, { status: 'failed', partialBytes: CANCEL_CONFIRM_BYTES * 2 }), null)).toBe(true);
     expect(needsCancelConfirm(job(1, { status: 'queued', partialBytes: CANCEL_CONFIRM_BYTES * 2 }), null)).toBe(false);
     expect(needsCancelConfirm(job(1, { status: 'completed', finalBytes: CANCEL_CONFIRM_BYTES * 2 }), null)).toBe(false);
+    // 받는 동안 같은 이름의 파일이 생겨 건너뛴 작업: 지우면 다 받은 .part도 지워지므로 묻는다
+    expect(needsCancelConfirm(job(1, { status: 'skipped', partialBytes: CANCEL_CONFIRM_BYTES * 2 }), null)).toBe(true);
+    expect(needsCancelConfirm(job(1, { status: 'skipped' }), null)).toBe(false);
   });
 });
 

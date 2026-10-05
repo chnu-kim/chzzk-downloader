@@ -766,3 +766,58 @@ async fn reresolve_api_error_keeps_partial() {
     assert_eq!(std::fs::read(part).unwrap(), &body[..2000]);
     assert!(sidecar.exists());
 }
+
+/// `Skip`: 시작 전 검사를 지난 뒤(받는 중) 같은 이름의 파일이 생기면 마무리에서 덮어쓰지 않고 `Skipped`다.
+/// 받은 `.part`·sidecar는 남고, 같은 요청을 `Overwrite`로 다시 부르면 416으로 이어받아 곧바로 마무리한다.
+#[tokio::test]
+async fn skip_does_not_clobber_file_created_while_downloading() {
+    let server = MockServer::start().await;
+    setup(&server).await;
+    let body = test_bytes(SIZE, 9);
+    Mock::given(method("GET"))
+        .and(path(MEDIA_PATH))
+        .respond_with(RangeBody(body.clone()))
+        .mount(&server)
+        .await;
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_path(&dir);
+
+    let theirs = out.clone();
+    let written = std::sync::atomic::AtomicBool::new(false);
+    let cb = move |p: chzzk_core::Progress| {
+        if p.phase == Phase::Downloading && !written.swap(true, std::sync::atomic::Ordering::SeqCst)
+        {
+            std::fs::write(&theirs, b"theirs").unwrap();
+        }
+    };
+    let mut req = request(&out);
+    req.on_existing = DuplicatePolicy::Skip;
+    let r = Chzzk::new(config(&server))
+        .unwrap()
+        .download(req.clone(), CancellationToken::new(), &cb)
+        .await
+        .unwrap();
+    assert_eq!(r, DownloadOutcome::Skipped { path: out.clone() });
+    assert_eq!(std::fs::read(&out).unwrap(), b"theirs");
+    let (p, s) = part_files(&out);
+    assert_eq!(std::fs::read(&p).unwrap(), body);
+    assert!(s.exists());
+
+    // "덮어쓰고 받기": 다 받은 `.part`라 Range 416으로 곧바로 마무리한다.
+    req.on_existing = DuplicatePolicy::Overwrite;
+    let r = Chzzk::new(config(&server))
+        .unwrap()
+        .download(req, CancellationToken::new(), &|_| {})
+        .await
+        .unwrap();
+    assert_eq!(
+        r,
+        DownloadOutcome::Completed {
+            path: out.clone(),
+            bytes: SIZE as u64,
+            resumed_from: SIZE as u64
+        }
+    );
+    assert_eq!(std::fs::read(&out).unwrap(), body);
+    assert_no_partial(&out);
+}

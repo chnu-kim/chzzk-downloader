@@ -102,6 +102,8 @@ export function receivedBytes(job: JobDto, progress: ProgressDto | null | undefi
     case 'paused':
     case 'interrupted':
     case 'failed':
+    // 받는 동안 같은 이름의 파일이 생겨 건너뛴 작업은 다 받은 `.part`가 남고, 지우면 그것도 지운다(구현 중 변경 53)
+    case 'skipped':
       return job.partialBytes ?? 0;
     default:
       return 0;
@@ -434,7 +436,8 @@ export const CANCEL_CONFIRM_BYTES = 512 * 1024 * 1024;
 
 /**
  * `remove_job`이 받은 부분(`.part`)을 지우기 전에 D2로 물을까. 대기 중이거나 0바이트면 묻지 않는다.
- * 실패 항목의 "목록에서 지우기"도 `.part`를 지우므로 같은 규칙이다(구현 중 변경 45).
+ * 실패 항목의 "목록에서 지우기"도 `.part`를 지우므로 같은 규칙이다(구현 중 변경 45). 받은 `.part`가 남은
+ * 건너뜀도 같다(구현 중 변경 53).
  */
 export function needsCancelConfirm(job: JobDto, p: ProgressDto | null | undefined): boolean {
   if (job.status === 'queued') return false;

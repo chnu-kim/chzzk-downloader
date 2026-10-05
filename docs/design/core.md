@@ -420,7 +420,7 @@ impl PartFile {
     pub fn open(final_path: &Path, sidecar: Option<Sidecar>) -> Result<(Self, u64 /* resume offset */), Error>;
     pub fn write(&mut self, buf: &[u8]) -> Result<(), Error>;      // map_io_error: StorageFull/ENOSPC/112/39 → DiskFull
     pub fn checkpoint(&mut self, update: impl FnOnce(&mut Sidecar)) -> Result<(), Error>;
-    pub fn finalize(self, dup: DuplicatePolicy) -> Result<PathBuf, Error>;
+    pub fn finalize(self, dup: DuplicatePolicy) -> Result<Finalized, Error>; // Moved(PathBuf) | TargetExists (구현 중 변경 55)
 }
 ```
 
@@ -428,7 +428,7 @@ impl PartFile {
 - **checkpoint 순서**: `flush` → `sync_data`(`spawn_blocking`) → `committed = written` → `fsutil::atomic_write(sidecar)`(tmp → sync → rename). 주기는 HLS 세그먼트 32개 또는 5초, progressive 64 MiB 또는 5초.
 - **재개**: `.part` 길이 > `committed_len`이면 truncate(크래시 꼬리). 작으면 sidecar 불일치로 보고 새로 시작.
 - **`.part`는 첫 응답의 상태 코드를 확인한 뒤에만 만든다.** 404면 아무 파일도 남지 않는다.
-- **finalize**: 핸들을 닫은 뒤 `rename_with_retry`(100ms부터 약 3초까지 지수 재시도, Windows `ERROR_SHARING_VIOLATION`/`ACCESS_DENIED` 대비). 최종 파일이 열려 있으면 `FileLocked`, `.part` 보존. `std::fs::rename`은 Windows에서도 덮어쓴다.
+- **finalize**: 핸들을 닫은 뒤 `rename_with_retry`(100ms부터 약 3초까지 지수 재시도, Windows `ERROR_SHARING_VIOLATION`/`ACCESS_DENIED` 대비). 최종 파일이 열려 있으면 `FileLocked`, `.part` 보존. `std::fs::rename`은 Windows에서도 덮어쓴다. `Skip`은 덮어쓰지 않는 rename이다(구현 중 변경 55).
 
 ### 5.2 재시도와 403 (`download/retry.rs`)
 

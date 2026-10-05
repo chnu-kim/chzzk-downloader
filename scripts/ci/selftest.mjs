@@ -15,6 +15,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 import { ROOT } from './gates.mjs';
+import { hashCommit } from './public-scan.mjs';
 import { PRIVATE_URL } from './push-guard.mjs';
 import { inCI, which } from './run.mjs';
 import { gitEnv, gitOk } from './test-git.mjs';
@@ -162,9 +163,24 @@ const hook = (d, name, args, input) => exec('node', [join(d, 'scripts/ci/run.mjs
   expect('scan-msg', '제목 형식 틀림', 'nonzero', () => hook(d, 'commit-msg', [msg('m1', 'Add feature\n')]));
   const hexId = 'ab'.repeat(16);
   expect('scan-msg', '메시지의 실제 ID', 'nonzero', () => hook(d, 'commit-msg', [msg('m2', `fix: 고침\n\nid ${hexId}\n`)]));
+  // -m·--cleanup=verbatim이면 # 줄도 이력에 남는다
+  expect('scan-msg', '# 줄의 실제 ID', 'nonzero', () => hook(d, 'commit-msg', [msg('m3', `fix: 고침\n\n# id ${hexId}\n`)]));
   expect('pre-commit', '깨끗한 인덱스', 0, () => hook(mkRoot('hook-pc-clean'), 'pre-commit', []));
   const leak = 'https://h.example.invalid/a/hdntl=exp=' + '17000' + '00000' + '~acl=*/x\n';
   expect('pre-commit', '인덱스의 서명 토큰', 'nonzero', () => hook(mkRoot('hook-pc-leak', { 'leak.txt': leak }), 'pre-commit', []));
+  // 조건부 gate는 작업 트리가 아니라 인덱스에서 돈다: 인덱스에는 틀린 훅, 작업 트리는 원래대로 → parity가 걸려야 한다
+  {
+    const pc = mkRoot('hook-pc-index');
+    const good = readFileSync(join(pc, '.githooks/pre-push'), 'utf8');
+    writeFileSync(join(pc, '.githooks/pre-push'), '#!/bin/sh\nexec node "$(git rev-parse --show-toplevel)/scripts/ci/run.mjs" push-guard "$@"\n');
+    gitOk(pc, ['add', '.githooks/pre-push']);
+    writeFileSync(join(pc, '.githooks/pre-push'), good);
+    expect('pre-commit', '인덱스만 틀린 훅(작업 트리는 맞음)', 'nonzero', () => hook(pc, 'pre-commit', []));
+    // 반대: 인덱스는 맞고 작업 트리만 틀리면 통과
+    const pc2 = mkRoot('hook-pc-index2');
+    writeFileSync(join(pc2, '.githooks/pre-push'), '#!/bin/sh\nexec node "$(git rev-parse --show-toplevel)/scripts/ci/run.mjs" push-guard "$@"\n');
+    expect('pre-commit', '작업 트리만 틀린 훅(인덱스는 맞음)', 0, () => hook(pc2, 'pre-commit', []));
+  }
 }
 
 // ---- 훅: pre-push(push-guard → scan-range). 가짜 origin·private(같은 루트) ----
@@ -184,6 +200,9 @@ const hook = (d, name, args, input) => exec('node', [join(d, 'scripts/ci/run.mjs
   g('add', 'research.txt');
   g('commit', '-q', '-m', 'docs: 비공개');
   g('push', '-q', 'private', 'pv:refs/heads/master');
+  // 사본의 지문 목록은 이 임시 저장소의 비공개 커밋으로 바꾼다(저장소의 실제 목록은 여기 커밋을 모른다)
+  const fpFile = join(d, 'scripts/ci/private-commits.txt');
+  writeFileSync(fpFile, hashCommit(g('rev-parse', 'HEAD')) + '\n');
   g('fetch', '-q', 'origin');
   g('fetch', '-q', 'private');
   const Z = '0'.repeat(40);
@@ -206,6 +225,11 @@ const hook = (d, name, args, input) => exec('node', [join(d, 'scripts/ci/run.mjs
   expect('pre-push', 'private/master:refs/heads/x', 'nonzero', () => hook(d, 'pre-push', ['origin', origin], `refs/remotes/private/master ${pm} refs/heads/x ${Z}\n`));
   expect('pre-push', '새 커밋 blob의 서명 토큰', 'nonzero', () => hook(d, 'pre-push', ['origin', origin], leaky));
   expect('pre-push', 'private 원격으로', 0, () => hook(d, 'pre-push', ['private', priv], merged));
+  // 지문 목록이 낡으면(로컬 P에 목록 밖 커밋) 정상 브랜치도 거부한다. 끝나면 되돌린다
+  const fpText = readFileSync(fpFile, 'utf8');
+  writeFileSync(fpFile, '');
+  expect('pre-push', '지문 목록 낡음', 'nonzero', () => hook(d, 'pre-push', ['origin', origin], clean));
+  writeFileSync(fpFile, fpText);
 }
 
 // ---- versions ----

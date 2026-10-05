@@ -62,6 +62,11 @@ export const GATES = {
     passArgs: true,
     steps: [{ cmd: ['node', S('public-scan.mjs'), '--message-file'] }, { cmd: ['node', S('commit-msg.mjs')] }],
   },
+  subjects: {
+    desc: '저장된 커밋 제목 형식(HEAD에서 닿고 기준선에서 안 닿는 커밋, 첫 줄 그대로)',
+    passArgs: true,
+    steps: [{ cmd: ['node', S('commit-msg.mjs'), '--stored'] }],
+  },
   'push-guard': {
     desc: '비공개 이력 가드 — pre-push 훅(인자: 원격 이름 URL, stdin: git pre-push 줄)',
     passArgs: true,
@@ -168,6 +173,8 @@ export const COMMANDS = ['changes', 'ci-ok', 'doctor', 'hook', 'install-hooks', 
 // 훅(docs/design/cicd.md §3.2). .githooks/<이름>은 `run.mjs hook <이름> "$@"`만 exec한다(parity hook-entry).
 //   always: 항상 도는 gate(순서대로). when: 바뀐 경로(pre-commit은 staged, pre-push는 push 범위 커밋이 건드린 경로)가
 //   paths 중 하나에 맞을 때만 도는 gate. fastSkip: CHZZK_HOOK_FAST=1이면 when을 건너뛴다(always는 끌 수 없다).
+// parity가 보는 훅·워크플로·진입점 표(빠르다)
+const HOOK_FILES = [/^\.githooks\//, /^\.gitattributes$/, /^\.github\//, /^scripts\/ci\/(?:gates\.mjs|tools\.json)$/];
 const VERSION_FILES = [/(^|\/)Cargo\.toml$/, /^app\/package\.json$/, /^app\/src-tauri\/tauri\.conf\.json$/];
 export const HOOKS = {
   'pre-commit': {
@@ -178,6 +185,7 @@ export const HOOKS = {
       { gate: 'workflows', paths: [/^\.github\//, /^zizmor\.yml$/] },
       { gate: 'versions', paths: VERSION_FILES },
       { gate: 'fixtures', paths: [/^testdata\//, /^scripts\/fixtures\//] },
+      { gate: 'parity', paths: HOOK_FILES },
     ],
   },
   'commit-msg': { always: ['scan-msg'], when: [] },
@@ -187,22 +195,23 @@ export const HOOKS = {
     when: [
       { gate: 'rust', paths: [/^crates\//, /^testdata\//, /^Cargo\.(toml|lock)$/, /^rust-toolchain\.toml$/] },
       { gate: 'frontend', paths: [/^app\/(?!src-tauri\/)/] },
-      { gate: 'scripts-test', paths: [/^scripts\//] },
+      { gate: 'scripts-test', paths: [/^scripts\//, /^\.githooks\//, /^\.gitattributes$/] },
       { gate: 'deny', paths: [/^Cargo\.lock$/, /^deny\.toml$/, /(^|\/)Cargo\.toml$/] },
     ],
   },
 };
 
-// 훅에서만 도는 gate와, CI에서 같은 위험을 보는 gate(parity: 훅 gate ⊂ ci.yml gate ∪ 이 표의 짝).
+// 훅에서만 도는 gate와, CI에서 같은 위험을 보는 gate들(parity: 훅 gate ⊂ ci.yml gate ∪ 이 표의 짝, 짝은 모두 ci.yml에 있어야 한다).
 //   scan-staged: 인덱스 대신 CI는 체크아웃한 트리(scan)를 본다.
-//   scan-msg·scan-range·push-guard: CI의 새 클론에는 비공개 ref가 없으므로 공개 저장소의 모든 이력(scan-history)이
-//   메시지·작성자·blob을 본다. push-guard 로직 자체는 scripts-test(push-guard.test.mjs)가 ubuntu·windows에서 검사한다.
-//   commit-msg의 제목 형식은 로컬 관례다(CI는 강제하지 않는다).
+//   scan-msg: 누출은 공개 이력 전체의 메시지(scan-history), 제목 형식은 저장된 첫 줄(subjects).
+//   scan-range: 공개 이력 전체(scan-history)가 blob·경로·메시지·작성자를 본다.
+//   push-guard: 비공개에만 있는 커밋의 지문(public-denylist.txt의 commit:)을 scan-history가 공개 이력의 모든 커밋과
+//   맞춘다(CI의 새 클론에는 비공개 ref가 없다). 가드 로직 자체는 scripts-test(push-guard.test.mjs)가 ubuntu·windows에서 본다.
 export const HOOK_ONLY = {
-  'scan-staged': 'scan',
-  'scan-msg': 'scan-history',
-  'scan-range': 'scan-history',
-  'push-guard': 'scan-history',
+  'scan-staged': ['scan'],
+  'scan-msg': ['scan-history', 'subjects'],
+  'scan-range': ['scan-history'],
+  'push-guard': ['scan-history'],
 };
 
 // changes.code == 'false'일 때 건너뛰는 작업(ci.yml 작업 id). ci-ok는 이 작업들의 skipped만 허용한다.

@@ -83,6 +83,9 @@ jobs:
       - name: scan-history
         if: ${{ !cancelled() }}
         run: node scripts/ci/run.mjs scan-history
+      - name: subjects
+        if: ${{ !cancelled() }}
+        run: node scripts/ci/run.mjs subjects
       - name: fixtures
         if: ${{ !cancelled() }}
         run: node scripts/ci/run.mjs fixtures

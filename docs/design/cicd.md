@@ -59,7 +59,8 @@
 | gate | 실제 명령 | 위치 | 오라클 |
 |---|---|---|---|
 | `scan-staged` | `public-scan.mjs --staged` (+`PUBLIC_SCAN_DENYLIST`) | C | exit |
-| `scan-msg` | `public-scan.mjs --message-file $1` + `^(feat|fix|docs|chore|refactor|test|ci|build|perf|style|revert)(\(.+\))?: .+` 정규식 | CM | exit |
+| `scan-msg` | `public-scan.mjs --message-file $1`(원문 전체) + `commit-msg.mjs $1`(`^(feat|fix|docs|chore|refactor|test|ci|build|perf|style|revert)(\(.+\))?: .+` 정규식) | CM | exit |
+| `subjects` | `commit-msg.mjs --stored`(HEAD에서 닿고 기준선 `0b66887`에서 안 닿는 커밋의 저장된 첫 줄) | PR·M | exit |
 | `push-guard` | §3 알고리즘 | P | exit, 거부 SHA 목록 |
 | `scan-range` | `public-scan.mjs --rev-range <remote_sha|origin/master>..<local_sha>` | P | exit |
 | `scan` | `public-scan.mjs` + `--all-history`(`fetch-depth: 0`, 공개 저장소에서만) | PR·M·R | exit |
@@ -170,21 +171,24 @@ exec node "$(git rev-parse --show-toplevel)/scripts/ci/run.mjs" hook pre-push "$
 
 | 훅 | 예산 | 내용 |
 |---|---|---|
-| pre-commit | <5초 | 항상 `scan-staged`. staged 경로에 따라 `fmt`(.rs), `typos`, `workflows`(.github), `versions`(버전 파일), `fixtures`. 컴파일·svelte-check 없음 |
+| pre-commit | <5초 | 항상 `scan-staged`. staged 경로에 따라 `fmt`(.rs), `typos`, `workflows`(.github), `versions`(버전 파일), `fixtures`, `parity`(.githooks·.gitattributes·.github·gates.mjs·tools.json). 컴파일·svelte-check 없음. 조건부 gate는 **인덱스**에서 돈다(작업 트리가 인덱스와 다르면 임시 worktree) |
 | commit-msg | <1초 | `scan-msg`(공개 이력에 남는 메시지의 누출·형식) |
-| pre-push | warm ≤3분 | 1 `push-guard` → 2 `scan-range` → 3 `rust`(crates 변경) → 4 `frontend`(app 변경) → 5 `scripts-test`(scripts 변경) → 6 `deny`(lock 변경). `CHZZK_HOOK_FAST=1`이면 3–6을 건너뛴다. **1·2는 끌 수 없다** |
+| pre-push | warm ≤3분 | 1 `push-guard` → 2 `scan-range` → 3 `rust`(crates 변경) → 4 `frontend`(app 변경) → 5 `scripts-test`(scripts·.githooks·.gitattributes 변경) → 6 `deny`(lock 변경). `CHZZK_HOOK_FAST=1`이면 3–6을 건너뛴다. **1·2는 끌 수 없다**. 3–6은 **push할 커밋**에서 돈다(HEAD가 아니거나 작업 트리가 더러우면 임시 worktree) |
 
 ### 3.3 `push-guard` 알고리즘(결정적)
 
-git이 stdin으로 주는 `<local_ref> <local_sha> <remote_ref> <remote_sha>`를 읽는다. 원격 이름은 `$1`, URL은 `$2`다.
+git이 stdin으로 주는 `<local_ref> <local_sha> <remote_ref> <remote_sha>`를 읽는다. 원격 이름은 `$1`, URL은 `$2`다. (구현 중 변경 18·25가 이 절을 정리한 결과다.)
 
-1. URL이 `chzzk-downloader-private`(원격 `private`)이면 통과한다(보관용). 단 **"private에는 더 이상 push하지 않는다"**를 문서에 적는다(5번 규칙 오탐 방지).
+1. URL이 `chzzk-downloader-private`이거나 원격 이름이 `private`이면 통과한다(보관용). **"private에는 더 이상 push하지 않는다"**를 문서에 적는다.
 2. `local_sha`가 0(삭제)이면 통과한다. master 삭제는 ruleset이 막는다.
-3. `local_ref`가 `refs/remotes/private/*`이거나 `local_sha`가 어떤 `refs/remotes/private/*` 끝과 같으면 거부한다(`git push origin private/master:x` 같은 경우).
-4. **주 규칙**: `N = rev-list <local_sha> --not --remotes=origin`, `P = rev-list --remotes=private --not --remotes=origin`. `N ∩ P ≠ ∅`이면 거부하고 교집합 SHA(최대 20개)와 해결 힌트(`git rebase --onto origin/master <base>` 또는 cherry-pick)를 찍는다. 태그 push는 `^{commit}`으로 벗겨 같은 규칙을 적용한다.
+3. `local_ref`가 `refs/remotes/private/*`면 거부한다(`git push origin private/master:x`). "`local_sha`가 private 끝과 같으면"은 4번이 같은 것을 잡고 오탐이 있어 뺐다(18 (가)).
+4. **주 규칙**: `N = rev-list <local_sha> --not --remotes=<원격>`, `P = (rev-list --remotes=private --not --remotes=origin) ∪ (scripts/ci/private-commits.txt의 commit: 지문)`. `N ∩ P ≠ ∅`이면 거부하고 교집합 SHA(최대 20개)와 해결 힌트(`git rebase --onto origin/master <base>` 또는 cherry-pick)를 찍는다. 태그 push는 `^{commit}`으로 벗겨 같은 규칙을 적용한다. 지문은 저장소에 커밋돼 있으므로 private 원격이 없거나 fetch하지 않은 클론에서도 막는다.
 5. `remote_ref`가 `refs/heads/*`도 `refs/tags/v*`도 아니면 거부한다.
-6. `refs/remotes/private/master`가 없거나 30일보다 오래됐으면 경고한다(P가 불완전할 수 있다). 없으면 통과시키되 경고한다 — CI의 `--all-history`가 두 번째 그물이다.
-7. 이어서 `scan-range`가 `<remote_sha(0이면 origin/master)>..<local_sha>`의 blob·경로·메시지·작성자를 본다.
+6. `private` 원격이 설정돼 있는데 `refs/remotes/private/*`가 하나도 없으면 경고한다(지문만으로 검사한다). 30일 경과 경고는 결정적 원천이 없어 뺐다(18 (나)).
+7. 로컬 `rev-list --remotes=private --not --remotes=origin`에 지문 목록에 없는 커밋이 있으면 거부하고 목록을 다시 만드는 명령을 찍는다(목록이 낡으면 CI가 그 커밋을 알아볼 수 없다).
+8. 이어서 `scan-range`가 `<local_sha> --not --remotes=<원격>`의 blob·경로·메시지·작성자와 커밋 지문을 본다(17).
+
+**CI의 짝**: `scan-history`(`--all-history`)가 공개 저장소의 모든 커밋 SHA를 같은 지문과 맞춘다(`private-commit` 규칙). 그래서 `--no-verify`로 가드를 우회해 비공개 커밋을 올려도, 그 내용이 denylist에 걸리지 않더라도 CI가 실패한다.
 
 테스트(`push-guard.test.mjs`, ubuntu·windows): 임시 bare 저장소 둘(가짜 origin·private, **같은 루트**를 공유)로 새 브랜치, 삭제, 태그, `private/x:refs/heads/x`, 비공개 커밋 merge, 정상 공개 커밋, private 원격으로의 push → 기대 코드 0/0/0/1/1/0/0.
 
@@ -354,7 +358,7 @@ fork PR과 일반 브랜치에는 어느 것도 주어지지 않는다.
 - **공개 artifact**: 보관 1일 artifact는 로그인한 누구나 받는다. 서명 전 파일만 거치고 R2 객체는 거치지 않는다. 더 줄이려면 D10을 포기하고 build 작업에서 바로 올려야 한다(사용자 결정).
 - **drift 대상 만료**: HLS 빠른 다시보기는 만료된다. `target_gone`은 이슈에 "secret 교체 필요"로 표시되며 사람이 바꿔야 한다.
 - **Windows WebDriver**·**advisories**·**fuzz 시간**·**실서버**는 재현 불가라 PR을 막지 않는다.
-- **push-guard의 P 집합**은 로컬 `refs/remotes/private/*` 최신성에 의존한다. 경고만 하고 CI 이력 검사가 받친다.
+- **push-guard의 P 집합**은 로컬 `refs/remotes/private/*`와 커밋된 지문(`scripts/ci/private-commits.txt`)의 합집합이다. CI의 `scan-history`가 같은 지문으로 공개 이력 전체를 본다. 남는 한계: 비공개 커밋을 rebase·cherry-pick해 **새 SHA**로 만든 것은 지문이 모른다(내용은 `scan-history`의 규칙·denylist가 본다). private에 새 커밋이 생기면 7번 규칙이 목록 갱신 전까지 push를 막는다.
 - **MSRV 검사**는 `cargo hack --rust-version`으로 crate별 `rust-version`을 쓰므로 `rust-toolchain.toml`과 별개다. MSRV 툴체인은 `dtolnay/rust-toolchain`에 `1.90`을 준다.
 
 ---
@@ -435,3 +439,13 @@ fork PR과 일반 브랜치에는 어느 것도 주어지지 않는다.
 22. **가드 테스트(`push-guard.test.mjs`, 9개).** 임시 bare 저장소 둘(가짜 origin과 `chzzk-downloader-private.git`, 같은 루트)과 작업 클론으로 §3.3의 7개 시나리오(새 브랜치, 삭제, 태그, `private/x:refs/heads/x`, 비공개 커밋 merge, 정상 공개 커밋, private 원격으로의 push → 0/0/0/1/1/0/0)를 돌린다. 더해서 교집합 SHA와 해결 문구 출력, 비공개 커밋 위의 태그 거부, `refs/heads/*`·`refs/tags/v*` 밖 거부, URL로 push, 여러 ref 중 하나 위반, 형식 오류 2, `scanRanges`·`pushedPaths`, 그리고 **실제 `git push`**(임시 hooksPath의 pre-push가 `push-guard.mjs`를 exec)로 git이 주는 stdin 형식에서 거부된 push가 원격에 닿지 않고 공개 브랜치는 닿는지 본다.
 23. **수락 기준 대체: 로컬 `git push origin private/master:refs/heads/x`.** 실제 push는 하지 않았다. 가드에 버그가 있으면 비공개 커밋 128개가 공개 저장소에 올라가고(아직 ruleset도 없다), GitHub 캐시·fork 때문에 되돌릴 수 없다. 대신 이 클론에서 훅 shim을 git과 같은 인자·stdin으로 직접 불렀다: `.githooks/pre-push origin https://github.com/chnu-kim/chzzk-downloader.git` < `refs/remotes/private/master <private/master sha> refs/heads/x 0…0` → **exit 1**, 3번 규칙 위반과 교집합 SHA 128개 중 20개 + "외 108개"와 해결 문구를 찍었다. git → 훅 stdin 경로는 22의 임시 저장소 실제 push 테스트가 본다.
 24. **selftest 씨앗(51개, G1의 38개에 13개를 더했다).** parity: 훅이 gate를 직접 부름(`run.mjs push-guard`), 훅 이름이 파일과 다름, 훅 gate의 CI 짝(`scan-history`)이 ci.yml에 없음(기존 "훅이 run.mjs를 거치지 않음"은 그대로). 훅 진입점(사본의 `run.mjs hook …`, 격리된 git): commit-msg(형식 맞음 0, 형식 틀림, 메시지의 실제 ID 모양), pre-commit(깨끗한 인덱스 0, 인덱스의 서명 토큰), pre-push(가짜 origin·private로 정상 공개 브랜치 0, 비공개 커밋 merge, `private/master:refs/heads/x`, 새 커밋 blob의 서명 토큰, private 원격으로 0). pre-push 씨앗은 `CHZZK_HOOK_FAST=1`로 조건부 gate를 끈다(끌 수 없는 `push-guard`·`scan-range`만 본다).
+25. **G2 리뷰 반영(16 (나)·18·20·14·15를 바꾼다).**
+    (가) **`--message-file`은 원문 전체.** 16 (나)의 "`#` 줄과 scissors 아래를 버림"은 git이 `cleanup=strip`일 때만 맞다. `git commit -m`·`-F`·`--cleanup=verbatim|whitespace`는 `#` 줄과 scissors 아래도 이력에 남긴다(실측: `-m 'fix: x' -m '# …'`가 `%B`에 남았다). 훅은 cleanup 모드를 알 수 없으므로 원문 전체를 본다(모든 모드의 상위 집합). 대가: `commit -v`로 누출을 지우는 커밋을 만들면 scissors 아래 diff의 지운 줄이 걸린다(`-v` 없이 커밋한다). `cleanMessage`는 지웠다. 재발 검사: `public-scan.test.mjs`(`#` 줄·scissors 아래·denylist), selftest 씨앗 "# 줄의 실제 ID".
+    (나) **제목 형식은 CI도 강제(`subjects` gate, 20을 바꾼다).** 훅(`commit-msg.mjs <파일>`)은 편집기 기준으로 첫 비주석 줄을 제목으로 본다(`core.commentChar`, 없거나 `auto`면 `#`; `rebase -i` 템플릿이 `#` 줄로 시작하므로 첫 줄 그대로는 쓸 수 없다). 그래서 `-m '# x' -m 'fix: y'`(저장된 제목은 `# x`)는 훅을 지난다. CI의 `subjects`(`commit-msg.mjs --stored`, lint 작업)는 `HEAD --not 0b66887…`(규칙을 시작한 공개 master, `SUBJECT_BASELINE`)의 저장된 메시지 첫 줄을 그대로 본다. 기준선 이전 이력에는 규칙 이전 제목("Update .gitignore" 등)이 있다. 기준선이 없으면(얕은 클론) 2. 실패 로그에는 제목 원문 없이 SHA와 이유만 찍는다. merge·`Revert "`·`fixup!` 등 git이 만드는 제목은 통과(PR 체크아웃의 `Merge <sha> into <sha>` 포함). Dependabot 커밋은 `commit-message.prefix`(`ci`·`build`, `include: scope`)로 `ci(deps): …`·`build(deps): …`가 된다.
+    (다) **비공개 커밋 지문(18·15를 바꾼다).** `scripts/ci/private-commits.txt`는 `git rev-list --remotes=private --not --remotes=origin`(fetch 직후 133개)의 `commit:<sha256(salt, "commit", sha)>` 줄을 정렬·중복 제거한 것이다(`public-scan.mjs --hash-commit`, 다시 만들면 바이트 동일: `cmp`로 확인). public-scan은 이 파일을 기본 denylist로 읽고, 이력·범위 검사에서 커밋 SHA가 맞으면 `private-commit`으로 실패한다(`commit:` 항목은 글자 n-gram을 켜지 않는다). 실측: 공개 저장소의 새 클론에서 `--all-history` 깨끗함(exit 0), 이 클론에서 `--rev-range private/master --not-remote origin`은 `private-commit` 128건으로 exit 1. push-guard는 P에 지문을 더하고(3.3 4번), 목록이 낡으면 거부한다(3.3 7번). 테스트·selftest는 임시 저장소의 지문 파일을 쓴다(`PUSH_GUARD_FINGERPRINTS`, 없는 경로면 2. selftest는 사본의 `private-commits.txt`를 바꾼다). `HOOK_ONLY`의 값은 배열이고 짝이 모두 ci.yml에 있어야 한다: `scan-staged` → `scan`, `scan-msg` → `scan-history`·`subjects`, `scan-range`·`push-guard` → `scan-history`. 블롭 지문은 두지 않았다: 작은 비공개 blob(빈 파일, 공용 설정)이 공개 이력에 정당하게 다시 나올 수 있다.
+    (라) **조건부 gate는 커밋·push될 내용에서 돈다(14를 바꾼다, `scripts/ci/snapshot.mjs`).** 전에는 작업 트리에서 돌아 올리지 않은 변경·추적하지 않는 파일이 결과를 바꿨다(실측: 추적하지 않는 훅 파일 때문에 `scripts-test`가 1/76 실패). pre-commit: 작업 트리 = 인덱스(`git diff --quiet`, 무시되지 않는 새 파일 없음)면 제자리, 아니면 인덱스(`GIT_INDEX_FILE`을 따른다: `commit -a`·`commit <경로>`의 임시 인덱스)를 `write-tree`·`commit-tree --no-gpg-sign`으로 커밋 객체로 만들고(ref 없음) 임시 `git worktree add --detach`에서 돌린다. pre-push: push할 커밋마다(태그는 벗긴다, 같은 커밋은 한 번) 그 커밋 = HEAD이고 `git status --porcelain --untracked-files=all`이 비면 제자리, 아니면 그 커밋의 임시 worktree. 어느 쪽이든 **그 트리의 진입점** `node <트리>/scripts/ci/run.mjs <gate>`를 부른다(CI가 체크아웃한 커밋에서 하는 것과 같다). 임시 worktree에는 바깥 저장소의 install-tool 폴더를 PATH에 더하고 `CARGO_TARGET_DIR`을 바깥 `target/`으로 준다(없으면). `GIT_DIR`·`GIT_INDEX_FILE` 등은 지운다. worktree는 `finally`에서 지운다. 재발 검사: `snapshot.test.mjs`(가짜 진입점으로 인덱스 bad/작업 트리 good → 1, 그 반대 → 0, 새 파일, 임시 인덱스, 커밋 bad/작업 트리 good → 1, HEAD 아닌 커밋, worktree가 남지 않음), selftest 씨앗 "인덱스만 틀린 훅"(nonzero)·"작업 트리만 틀린 훅"(0).
+    (마) **경로 조건.** pre-push `scripts-test`는 `.githooks/`·`.gitattributes`에도 돈다(parity.test의 100755 검사). pre-commit에 `parity`(빠르다)를 `.githooks/`·`.gitattributes`·`.github/`·`gates.mjs`·`tools.json`에 더했다. `app/src-tauri/`만 바뀐 push는 여전히 로컬 컴파일을 하지 않는다(14): `chzzk-app` 빌드는 `generate_context`가 `app/dist`를 포함해 frontend 빌드가 먼저 필요하므로 가볍지 않다. CI가 3 OS로 본다.
+    (바) **merge 커밋의 경로.** `pushedPaths`의 `git log --name-only`는 merge 커밋의 경로를 내지 않아, 충돌 해결이나 merge 안에서만 고친 파일이 조건부 gate를 깨우지 못했다. `-m`(부모마다 비교, 넘치는 쪽이 안전)을 붙였다. 재발 검사: `push-guard.test.mjs`의 evil merge 시나리오(`-m`을 빼면 실패함을 확인했다).
+    (사) **반영하지 않은 것.** 3.3의 "private 끝과 같으면 거부"·"30일 경고"는 18 (가)·(나)의 이유로 넣지 않고 본문을 18에 맞췄다. "private 원격이 있는데 ref가 없으면 실패"는 지문이 그 경우를 막으므로 경고로 남겼다.
+    (아) **selftest 씨앗 55개**(24의 51개에 "# 줄의 실제 ID", "지문 목록 낡음", "인덱스만 틀린 훅", "작업 트리만 틀린 훅(0)"을 더했다).
+    (자) **유지보수자 클론.** `node scripts/ci/run.mjs install-hooks`로 `core.hooksPath = .githooks`를 켰다. G2 커밋과 push가 실제 훅(pre-commit·commit-msg·pre-push의 `push-guard`·`scan-range`·`scripts-test`)을 거쳤다.

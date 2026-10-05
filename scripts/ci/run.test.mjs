@@ -125,7 +125,8 @@ test('gate 표: 검사를 켜는 플래그', () => {
   assert.deepEqual(cmds('scan-range'), ['node scripts/ci/public-scan.mjs --rev-range']);
   assert.deepEqual(cmds('push-guard'), ['node scripts/ci/push-guard.mjs']);
   assert.equal(GATES['push-guard'].stdin, true);
-  for (const g of ['scan-msg', 'scan-range', 'push-guard', 'versions']) assert.equal(GATES[g].passArgs, true, g);
+  assert.deepEqual(cmds('subjects'), ['node scripts/ci/commit-msg.mjs --stored']);
+  for (const g of ['scan-msg', 'scan-range', 'push-guard', 'versions', 'subjects']) assert.equal(GATES[g].passArgs, true, g);
   // 로컬과 CI가 같은 표를 쓰므로 CI 전용은 scan-history 하나뿐이다
   assert.deepEqual(Object.keys(GATES).filter((g) => GATES[g].ciOnly), ['scan-history']);
 });
@@ -135,13 +136,17 @@ test('훅 표: 끌 수 없는 gate와 조건부 gate', () => {
   assert.deepEqual(HOOKS['commit-msg'].always, ['scan-msg']);
   assert.deepEqual(HOOKS['pre-push'].always, ['push-guard', 'scan-range']);
   assert.equal(HOOKS['pre-commit'].fastSkip, undefined, 'CHZZK_HOOK_FAST는 pre-push의 조건부 gate만 끈다');
-  for (const g of Object.keys(HOOK_ONLY)) assert.ok(Object.hasOwn(GATES, g) && Object.hasOwn(GATES, HOOK_ONLY[g]), g);
+  for (const [g, pairs] of Object.entries(HOOK_ONLY)) {
+    assert.ok(Object.hasOwn(GATES, g) && Array.isArray(pairs) && pairs.length > 0, g);
+    for (const c of pairs) assert.ok(Object.hasOwn(GATES, c), `${g} → ${c}`);
+  }
+  assert.deepEqual(HOOK_ONLY['scan-msg'], ['scan-history', 'subjects'], '메시지 누출과 제목 형식 모두 CI 짝이 있다');
 });
 
 test('hookGates: 바뀐 경로로 조건부 gate를 고른다', () => {
   assert.deepEqual(hookGates('pre-commit', ['docs/x.md']), ['typos']);
   assert.deepEqual(hookGates('pre-commit', ['crates/core/src/lib.rs']), ['fmt', 'typos']);
-  assert.deepEqual(hookGates('pre-commit', ['.github/workflows/ci.yml']), ['typos', 'workflows']);
+  assert.deepEqual(hookGates('pre-commit', ['.github/workflows/ci.yml']), ['typos', 'workflows', 'parity']);
   assert.deepEqual(hookGates('pre-commit', ['app/package.json']), ['typos', 'versions']);
   assert.deepEqual(hookGates('pre-commit', ['crates/core/Cargo.toml']), ['typos', 'versions']);
   assert.deepEqual(hookGates('pre-commit', ['testdata/hls/a.m3u8']), ['typos', 'fixtures']);
@@ -152,6 +157,11 @@ test('hookGates: 바뀐 경로로 조건부 gate를 고른다', () => {
   assert.deepEqual(hookGates('pre-push', ['app/src-tauri/src/lib.rs']), []);
   assert.deepEqual(hookGates('pre-push', ['scripts/ci/run.mjs']), ['scripts-test']);
   assert.deepEqual(hookGates('pre-push', ['Cargo.lock']), ['rust', 'deny']);
+  // 훅·.gitattributes만 바뀌어도 parity(인덱스 모드 100755 등)를 본다
+  assert.deepEqual(hookGates('pre-push', ['.githooks/pre-push']), ['scripts-test']);
+  assert.deepEqual(hookGates('pre-push', ['.gitattributes']), ['scripts-test']);
+  assert.deepEqual(hookGates('pre-commit', ['.githooks/pre-push']), ['typos', 'parity']);
+  assert.deepEqual(hookGates('pre-commit', ['scripts/ci/gates.mjs']), ['typos', 'parity']);
 });
 
 test('runGate: 인자를 받지 않는 gate에 인자를 주면 2', () => {

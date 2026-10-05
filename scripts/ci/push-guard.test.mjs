@@ -10,6 +10,7 @@ import { dirname, join } from 'node:path';
 import { after, before, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
+import { hashCommit } from './public-scan.mjs';
 import { parseLines, PRIVATE_URL, pushedPaths, scanRanges } from './push-guard.mjs';
 import { gitEnv, gitOk, gitRun } from './test-git.mjs';
 
@@ -20,6 +21,8 @@ let d; // 임시 폴더
 let work; // 작업 클론
 let originUrl;
 let privateUrl;
+let fp; // 이 임시 저장소의 지문 파일(비공개 커밋 B)
+let fpEmpty; // 빈 지문 파일(낡은 목록)
 const sha = {};
 
 const g = (...args) => gitOk(work, args);
@@ -47,6 +50,10 @@ before(() => {
   g('checkout', '-q', '-b', 'pv');
   sha.B = commit('research.txt', 'private notes\n', 'docs: 비공개 조사');
   g('push', '-q', 'private', 'pv:master');
+  fp = join(d, 'private-commits.txt');
+  writeFileSync(fp, hashCommit(sha.B) + '\n');
+  fpEmpty = join(d, 'empty-commits.txt');
+  writeFileSync(fpEmpty, '');
   g('checkout', '-q', 'master');
   g('branch', '-q', '-D', 'pv');
   g('fetch', '-q', 'origin');
@@ -71,10 +78,10 @@ before(() => {
 after(() => rmSync(d, { recursive: true, force: true }));
 
 // push-guard를 git처럼 부른다: 인자 <원격 이름> <URL>, stdin 줄들
-function guard(lines, remote = 'origin', url = remote === 'private' ? privateUrl : originUrl) {
+function guard(lines, remote = 'origin', url = remote === 'private' ? privateUrl : originUrl, { cwd = work, fingerprints = fp } = {}) {
   const r = spawnSync(process.execPath, [GUARD, remote, url], {
-    cwd: work,
-    env: gitEnv(),
+    cwd,
+    env: gitEnv({ extra: { PUSH_GUARD_FINGERPRINTS: fingerprints } }),
     input: lines.map((l) => l.join(' ')).join('\n') + '\n',
     encoding: 'utf8',
   });
@@ -131,6 +138,30 @@ test('여러 ref 중 하나라도 위반이면 거부한다', () => {
   assert.equal(r.code, 1);
 });
 
+test('지문: private 원격이 없거나 fetch하지 않은 클론에서도 비공개 커밋을 막는다', () => {
+  // 공개 원격만 있는 새 클론(비공개 ref 없음)에 merged 브랜치를 가져온다
+  const solo = join(d, 'solo');
+  gitOk(d, ['clone', '-q', originUrl, solo]);
+  gitOk(solo, ['fetch', '-q', work, 'merged:merged']);
+  const lines = [['refs/heads/merged', sha.M, 'refs/heads/merged', Z]];
+  assert.equal(guard(lines, 'origin', originUrl, { cwd: solo }).code, 1, '지문만으로 거부해야 한다');
+  assert.equal(guard(lines, 'origin', originUrl, { cwd: solo, fingerprints: fpEmpty }).code, 0, '지문이 없으면 이 클론은 알아볼 수 없다(대조군)');
+  // private 원격은 있는데 추적 ref가 없으면: 경고 + 지문으로 거부
+  gitOk(solo, ['remote', 'add', 'private', privateUrl]);
+  const r = guard(lines, 'origin', originUrl, { cwd: solo });
+  assert.equal(r.code, 1);
+  assert.match(r.out, /경고: 원격 private가 있는데/);
+});
+
+test('로컬 P에 지문 목록에 없는 커밋이 있으면 거부한다(목록이 낡음)', () => {
+  const r = guard([['refs/heads/feat', sha.C, 'refs/heads/feat', Z]], 'origin', originUrl, { fingerprints: fpEmpty });
+  assert.equal(r.code, 1);
+  assert.match(r.out, /지문 목록\(scripts\/ci\/private-commits\.txt\)에 없다/);
+  assert.match(r.out, /--hash-commit > scripts\/ci\/private-commits\.txt/);
+  // 지문 파일 경로가 없으면 2(조용히 빈 목록이 되지 않는다)
+  assert.equal(guard([['refs/heads/feat', sha.C, 'refs/heads/feat', Z]], 'origin', originUrl, { fingerprints: join(d, 'nope.txt') }).code, 2);
+});
+
 test('stdin 형식 오류·사용법 오류는 2', () => {
   const bad = spawnSync(process.execPath, [GUARD, 'origin', originUrl], { cwd: work, env: gitEnv(), input: 'garbage\n', encoding: 'utf8' });
   assert.equal(bad.status, 2);
@@ -146,6 +177,23 @@ test('scan-range 범위와 바뀐 경로: 공개 원격에서 닿지 않는 커�
   assert.deepEqual(pushedPaths(work, 'origin', refs), ['feature.txt']);
 });
 
+test('pushedPaths: merge 커밋에서만 바뀐 파일(충돌 해결·evil merge)도 잡는다', () => {
+  // 공개 쪽에 side 브랜치를 올리고, master에서 그것을 merge하면서 merge 커밋 안에서만 crates/x.rs를 고친다
+  g('checkout', '-q', '-b', 'side', sha.A);
+  commit('side.txt', 'side\n', 'feat: side');
+  g('push', '-q', 'origin', 'side');
+  g('checkout', '-q', '-b', 'mr', sha.A);
+  g('merge', '-q', '--no-ff', '--no-commit', 'origin/side');
+  mkdirSync(join(work, 'crates'), { recursive: true });
+  writeFileSync(join(work, 'crates', 'x.rs'), 'fn x() {}\n');
+  g('add', 'crates/x.rs');
+  g('commit', '-q', '-m', 'Merge side');
+  const m = g('rev-parse', 'HEAD');
+  const paths = pushedPaths(work, 'origin', parseLines(`refs/heads/mr ${m} refs/heads/mr ${Z}\n`));
+  assert.ok(paths.includes('crates/x.rs'), paths.join(','));
+  g('checkout', '-q', 'master');
+});
+
 test('실제 git push: pre-push 훅이 비공개 이력을 막고 공개 브랜치는 보낸다', () => {
   const hooks = join(d, 'hooks');
   mkdirSync(hooks, { recursive: true });
@@ -153,7 +201,8 @@ test('실제 git push: pre-push 훅이 비공개 이력을 막고 공개 브랜�
   const script = GUARD.replace(/\\/g, '/');
   writeFileSync(join(hooks, 'pre-push'), `#!/bin/sh\nexec "${node}" "${script}" "$@"\n`);
   chmodSync(join(hooks, 'pre-push'), 0o755);
-  const push = (...args) => gitRun(work, ['-c', `core.hooksPath=${hooks.replace(/\\/g, '/')}`, 'push', ...args]);
+  const push = (...args) =>
+    gitRun(work, ['-c', `core.hooksPath=${hooks.replace(/\\/g, '/')}`, 'push', ...args], { extra: { PUSH_GUARD_FINGERPRINTS: fp } });
   const remoteHas = (ref) => gitRun(originUrl, ['rev-parse', '--verify', '--quiet', ref]).status === 0;
 
   const denied = push('origin', 'refs/remotes/private/master:refs/heads/x');

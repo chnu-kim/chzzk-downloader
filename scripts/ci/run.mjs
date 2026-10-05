@@ -20,6 +20,7 @@ import { fileURLToPath } from 'node:url';
 
 import { CODE_GATED_JOBS, COMMANDS, GATES, HOOKS, ROOT } from './gates.mjs';
 import { isPrivateTarget, parseLines, pushedPaths, scanRanges } from './push-guard.mjs';
+import { runHookGates } from './snapshot.mjs';
 
 const IS_WIN = process.platform === 'win32';
 export const inCI = (env = process.env) => env.CI === 'true' || env.CI === '1';
@@ -246,6 +247,15 @@ function runAll(gates, env) {
   return 0;
 }
 
+// 조건부 gate는 커밋·push될 내용에서 돈다(snapshot.mjs). install-tool 폴더와 cargo 빌드 캐시는 이 저장소 것을 나눠 쓴다.
+const snapOpts = (env) => ({ extraPath: toolDir(env), targetDir: join(ROOT, 'target') });
+
+// push할 ref → 커밋 SHA(태그는 벗긴다). 커밋이 아니면 null.
+function peel(sha) {
+  const r = spawnSync('git', ['rev-parse', '--verify', '--quiet', `${sha}^{commit}`], { cwd: ROOT, encoding: 'utf8' });
+  return r.status === 0 ? r.stdout.trim() : null;
+}
+
 // .githooks/<hook>이 부른다. 훅과 CI가 같은 gate 표를 쓰므로 결과가 갈리지 않는다.
 function cmdHook(hook, args, env = process.env) {
   if (!Object.hasOwn(HOOKS, hook)) {
@@ -260,7 +270,9 @@ function cmdHook(hook, args, env = process.env) {
       console.error('pre-commit: staged 경로를 읽지 못했다');
       return 2;
     }
-    return runAll([...h.always.map((g) => [g]), ...hookGates(hook, files).map((g) => [g])], env);
+    const code = runAll(h.always.map((g) => [g]), env); // scan-staged는 인덱스를 직접 읽는다
+    if (code !== 0) return code;
+    return runHookGates(ROOT, { index: true }, hookGates(hook, files), env, snapOpts(env));
   }
   if (hook === 'commit-msg') {
     if (args.length < 1) {
@@ -287,7 +299,20 @@ function cmdHook(hook, args, env = process.env) {
     console.warn('pre-push: CHZZK_HOOK_FAST=1 — 빌드·테스트 gate를 건너뛴다(CI가 검사한다)');
     return 0;
   }
-  return runAll(hookGates(hook, pushedPaths(ROOT, remote, refs)).map((g) => [g]), env);
+  // 커밋마다(같은 커밋은 한 번) 그 커밋이 새로 가져오는 경로로 gate를 고르고 그 커밋의 트리에서 돌린다
+  const bySha = new Map();
+  for (const r of refs) {
+    const sha = peel(r.localSha);
+    if (!sha) continue; // 삭제·커밋이 아닌 객체
+    const gates = new Set([...(bySha.get(sha) ?? []), ...hookGates(hook, pushedPaths(ROOT, remote, [r]))]);
+    bySha.set(sha, gates);
+  }
+  for (const [sha, gates] of bySha) {
+    const ordered = h.when.map((w) => w.gate).filter((g) => gates.has(g));
+    const c = runHookGates(ROOT, { sha }, ordered, env, snapOpts(env));
+    if (c !== 0) return c;
+  }
+  return 0;
 }
 
 // ---- doctor / install-hooks / list ----

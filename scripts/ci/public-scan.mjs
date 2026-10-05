@@ -8,10 +8,11 @@
 //                                                   # 범위(B에서 닿고 A에서 안 닿는 것)만 같은 방식으로 검사. pre-push용.
 //                                                   # B 하나만 주면 B의 모든 조상, --not-remote는 그 원격 추적 ref에서 닿는 것을 뺀다.
 //                                                   # --ref는 push할 원격 ref 이름도 검사한다.
-//   node scripts/ci/public-scan.mjs --message-file f  # 커밋 메시지 파일(# 주석 줄·scissors 아래 제외). commit-msg 훅용
+//   node scripts/ci/public-scan.mjs --message-file f  # 커밋 메시지 파일 원문 전체(# 줄·scissors 아래 포함). commit-msg 훅용
 //   ... --denylist <파일>                           # 저장소 밖 비공개 denylist를 더한다(여러 번 줄 수 있다)
 //   node scripts/ci/public-scan.mjs --hash < list   # 줄마다 denylist 항목(해시)을 만든다
 //   node scripts/ci/public-scan.mjs --hash-file f…  # 파일 내용 전체의 blob: 항목을 만든다
+//   node scripts/ci/public-scan.mjs --hash-commit < shas  # 줄마다 커밋 SHA의 commit: 항목(비공개 저장소에만 있는 커밋 지문)
 //
 // 환경 변수 PUBLIC_SCAN_DENYLIST(경로, 여러 개면 OS 경로 구분자로 잇는다)도 --denylist와 같다.
 // 찾으면 종료 코드 1, 깨끗하면 0, 사용법·git 오류는 2. 결과에는 일치한 원문을 싣지 않는다.
@@ -29,6 +30,7 @@
 //   hex-id         32·36자리 hex, 대시 UUID, V1로 시작하는 inKey 중 가짜(0으로 채운 값)가 아닌 것
 //   keyed-hex      sig·signature·token·secret 뒤 40자리 이상 hex
 //   denylist       denylist의 해시와 같은 토큰·토큰 안 6~13글자·n-gram·한글 부분 문자열·blob
+//   private-commit (이력) 커밋 SHA가 denylist의 commit: 지문(비공개 저장소에만 있는 커밋)과 같은 것
 //   identity       (이력) 작성자·커미터·태거 이메일이 허용 목록(noreply 주소, 공개하기로 한 작성자 이메일)에 없는 것
 
 import { spawnSync } from 'node:child_process';
@@ -39,6 +41,11 @@ import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const DENYLIST_PATH = join(HERE, 'public-denylist.txt');
+// 비공개 저장소에만 있는 커밋의 지문(commit: 줄만, 주석 없음). 다시 만들면 바이트까지 같다:
+//   git fetch origin && git fetch private &&
+//   git rev-list --remotes=private --not --remotes=origin | node scripts/ci/public-scan.mjs --hash-commit > scripts/ci/private-commits.txt
+export const PRIVATE_COMMITS_PATH = join(HERE, 'private-commits.txt');
+const DEFAULT_LISTS = [DENYLIST_PATH, PRIVATE_COMMITS_PATH];
 const SALT = 'chzzk-public-scan\0';
 
 // 가짜 ID 허용 목록(소문자). testdata/README.md와 scripts/fixtures/gen-fixtures.mjs의 값이다.
@@ -188,6 +195,10 @@ export function candidates(line) {
 
 export const hashCandidate = (s) => createHash('sha256').update(SALT + s).digest('hex');
 export const hashBlob = (buf) => 'blob:' + createHash('sha256').update(buf).digest('hex');
+/** 커밋 지문: 비공개 저장소에만 있는 커밋의 SHA(소문자 hex)를 salt와 함께 해시한다. */
+export const hashCommit = (sha) => 'commit:' + createHash('sha256').update(`${SALT}commit\0${sha.trim().toLowerCase()}`).digest('hex');
+// 글자 n-gram을 켜지 않는 항목 종류(내용 전체·커밋 지문)
+const NON_TEXT = /^(?:blob|commit):/;
 
 /**
  * denylist 항목: 정규화한 문자열(토큰을 공백 하나로 이은 것)의 해시.
@@ -202,7 +213,7 @@ export function entriesFor(raw) {
   return [...new Set(out)];
 }
 
-export function loadDenylist(paths = [DENYLIST_PATH]) {
+export function loadDenylist(paths = DEFAULT_LISTS) {
   const set = new Set();
   for (const path of [].concat(paths)) {
     if (!existsSync(path)) continue;
@@ -216,7 +227,7 @@ export function loadDenylist(paths = [DENYLIST_PATH]) {
 
 const textEntries = new WeakMap();
 function hasTextEntries(deny) {
-  if (!textEntries.has(deny)) textEntries.set(deny, [...deny].some((e) => !e.startsWith('blob:')));
+  if (!textEntries.has(deny)) textEntries.set(deny, [...deny].some((e) => !NON_TEXT.test(e)));
   return textEntries.get(deny);
 }
 
@@ -449,8 +460,10 @@ function scanRevs(cwd, deny, revs, refNames = []) {
     .toString()
     .split('\0');
   for (let i = 0; i + 5 < log.length; i += 6) {
-    const sha = log[i].trim().slice(0, 12);
+    const full = log[i].trim();
+    const sha = full.slice(0, 12);
     const [an, ae, cn, ce, body] = log.slice(i + 1, i + 6);
+    if (deny.has(hashCommit(full))) out.push({ where: `커밋 ${sha}`, rule: 'private-commit' });
     for (const f of scanText(body, deny)) out.push({ where: `커밋 ${sha} 메시지:${f.line}`, rule: f.rule });
     for (const [who, name, email] of [
       ['작성자', an, ae],
@@ -503,21 +516,8 @@ export function parseRange(spec) {
   return parts.length === 2 ? [parts[1], `^${parts[0]}`] : [parts[0]];
 }
 
-/**
- * 커밋 메시지 파일에서 이력에 남을 부분만 남긴다. git의 기본 cleanup(strip·`commit -v`의 scissors)과 같게:
- * `#`로 시작하는 줄을 지우고, scissors 줄(`# ------------------------ >8 ------------------------`) 아래를 버린다.
- */
-export function cleanMessage(text) {
-  const lines = text.replace(/\r\n/g, '\n').split('\n');
-  const cut = lines.findIndex((l) => /^# -+ >8 -+$/.test(l));
-  return (cut < 0 ? lines : lines.slice(0, cut))
-    .filter((l) => !l.startsWith('#'))
-    .join('\n')
-    .trim();
-}
-
 function parseArgs(argv) {
-  const opts = { mode: 'tree', denylists: [DENYLIST_PATH], bad: [], modes: 0, notRemotes: [], refs: [] };
+  const opts = { mode: 'tree', denylists: [...DEFAULT_LISTS], bad: [], modes: 0, notRemotes: [], refs: [] };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     const val = () => (i + 1 < argv.length ? argv[++i] : (opts.bad.push(`${a}(값 없음)`), null));
@@ -562,6 +562,17 @@ function main(argv) {
     }
     return 0;
   }
+  if (argv.includes('--hash-commit')) {
+    const shas = readFileSync(0, 'utf8').split('\n').map((l) => l.trim()).filter(Boolean);
+    const bad = shas.filter((l) => !/^[0-9a-f]{40}([0-9a-f]{24})?$/i.test(l));
+    if (bad.length) {
+      process.stderr.write(`커밋 SHA가 아닌 줄 ${bad.length}개\n`);
+      return 2;
+    }
+    // 정렬·중복 제거: 같은 입력이면 바이트까지 같은 출력
+    for (const e of [...new Set(shas.map(hashCommit))].sort()) console.log(e);
+    return 0;
+  }
   if (argv.includes('--hash-file')) {
     for (const p of argv.slice(argv.indexOf('--hash-file') + 1)) console.log(hashBlob(readFileSync(p)));
     return 0;
@@ -571,7 +582,7 @@ function main(argv) {
     process.stderr.write(`알 수 없는 인자: ${opts.bad.join(' ')}\n`);
     return 2;
   }
-  const missing = opts.denylists.slice(1).filter((p) => !existsSync(p));
+  const missing = opts.denylists.slice(DEFAULT_LISTS.length).filter((p) => !existsSync(p));
   if (missing.length) {
     process.stderr.write(`denylist 파일이 없다: ${missing.join(' ')}\n`);
     return 2;
@@ -583,7 +594,8 @@ function main(argv) {
     staged: scanStaged,
     history: scanHistory,
     range: (c, d) => scanRevs(c, d, [...opts.revs, ...opts.notRemotes.flatMap((r) => ['--not', `--remotes=${r}`])], opts.refs),
-    message: (_c, d) => scanText(cleanMessage(readFileSync(opts.messageFile, 'utf8')), d).map((f) => ({ where: `메시지:${f.line}`, rule: f.rule })),
+    // 원문 그대로 본다: git은 -m·-F·--cleanup=verbatim|whitespace에서 # 줄과 scissors 아래도 이력에 남긴다(어느 cleanup 모드든 이 검사의 부분집합이다)
+    message: (_c, d) => scanText(readFileSync(opts.messageFile, 'utf8').replace(/\r\n/g, '\n'), d).map((f) => ({ where: `메시지:${f.line}`, rule: f.rule })),
   }[opts.mode];
   if (opts.mode === 'message' && !existsSync(opts.messageFile)) {
     process.stderr.write(`메시지 파일이 없다: ${opts.messageFile}\n`);

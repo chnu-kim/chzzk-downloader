@@ -1,8 +1,12 @@
 # docs/design/cicd.md §7. 주 1회, minor+patch는 묶고, 나온 지 7일 지난 버전만 올린다. 자동 머지는 없다.
+# 커밋 제목은 subjects gate 형식(`ci(deps): …`·`build(deps): …`)을 따른다(commit-message prefix).
 # github-actions PR은 `uses: o/r@<sha> # <태그>` 형식을 유지한다(pin-check가 본다).
 version: 2
 updates:
   - package-ecosystem: github-actions
+    commit-message:
+      prefix: ci
+      include: scope
     directory: /
     schedule:
       interval: weekly
@@ -14,6 +18,9 @@ updates:
         update-types: [minor, patch]
 
   - package-ecosystem: cargo
+    commit-message:
+      prefix: build
+      include: scope
     directory: /
     schedule:
       interval: weekly
@@ -25,6 +32,9 @@ updates:
         update-types: [minor, patch]
 
   - package-ecosystem: npm
+    commit-message:
+      prefix: build
+      include: scope
     directory: /app
     schedule:
       interval: weekly

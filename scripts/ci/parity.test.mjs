@@ -136,8 +136,8 @@ test('hook-entry: 훅은 run.mjs hook <자기 이름>만, 파일 집합은 HOOKS
 });
 
 test('hook-gate: 훅 gate는 ci.yml에 있거나 HOOK_ONLY 짝이 ci.yml에 있다', () => {
-  // scan-staged의 짝 scan, scan-msg·scan-range·push-guard의 짝 scan-history, pre-commit의 fmt를 ci.yml에서 빼 본다
-  for (const g of ['scan', 'scan-history', 'fmt', 'typos', 'rust', 'deny']) {
+  // scan-staged의 짝 scan, scan-msg·scan-range·push-guard의 짝 scan-history, scan-msg의 짝 subjects, pre-commit의 fmt를 ci.yml에서 빼 본다
+  for (const g of ['scan', 'scan-history', 'subjects', 'fmt', 'typos', 'rust', 'deny']) {
     const all = (t) => t.replaceAll(`        run: node scripts/ci/run.mjs ${g}\n`, '        run: node scripts/ci/run.mjs list\n');
     assert.ok(rulesFor(all).includes('hook-gate'), g);
   }

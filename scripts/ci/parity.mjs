@@ -17,7 +17,7 @@
 //               후자를 단 작업의 집합은 gates.mjs CODE_GATED_JOBS와 같다.
 //   hook-entry  .githooks/의 파일 집합은 gates.mjs HOOKS와 같고, 각 훅은 `run.mjs hook <자기 이름> "$@"`만 exec한다.
 //               LF 줄끝, #!/bin/sh, (git 저장소면) 인덱스 모드 100755.
-//   hook-gate   훅이 부르는 gate ⊂ ci.yml의 gate ∪ HOOK_ONLY 짝(짝이 ci.yml에 있어야 한다). CI가 최종 권위다.
+//   hook-gate   훅이 부르는 gate ⊂ ci.yml의 gate ∪ HOOK_ONLY 짝(짝이 모두 ci.yml에 있어야 한다). CI가 최종 권위다.
 // 위반이 있으면 1, 없으면 0.
 
 import { spawnSync } from 'node:child_process';
@@ -255,7 +255,7 @@ function checkHooks(root, add, ciGates) {
       if (!Object.hasOwn(GATES, g)) add(`scripts/ci/gates.mjs`, 0, 'hook-gate', `HOOKS.${h}의 모르는 gate: ${g}`);
       else if (ciGates.has(g)) continue;
       else if (!Object.hasOwn(HOOK_ONLY, g)) add('.github/workflows/ci.yml', 0, 'hook-gate', `훅 gate ${g}(${h})가 ci.yml에 없다(CI가 최종 권위다)`);
-      else if (!ciGates.has(HOOK_ONLY[g])) add('.github/workflows/ci.yml', 0, 'hook-gate', `훅 전용 gate ${g}의 CI 짝 ${HOOK_ONLY[g]}이 ci.yml에 없다`);
+      else for (const c of HOOK_ONLY[g]) if (!ciGates.has(c)) add('.github/workflows/ci.yml', 0, 'hook-gate', `훅 전용 gate ${g}의 CI 짝 ${c}이 ci.yml에 없다`);
     }
   }
 }

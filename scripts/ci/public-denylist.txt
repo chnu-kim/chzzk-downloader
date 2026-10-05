@@ -5,6 +5,8 @@
 # 그런 항목은 저장소 밖 비공개 denylist에 두고 --denylist <파일>(또는 PUBLIC_SCAN_DENYLIST)로 넘긴다
 # (docs/public-release.md). 공개 CI는 규칙과 아래 blob 해시만으로 검사한다.
 #
+# 비공개 저장소에만 있는 커밋의 지문(commit:)은 scripts/ci/private-commits.txt에 따로 둔다(만드는 법은 public-scan.mjs 머리말).
+#
 # 옛 실물 fixture(testdata/, internal/api/testdata/)의 모든 이력 버전
 blob:07303ddfdde66c0942613ee4a612d26990ee0c84b3ad7386e2079deb6bec714e
 blob:0b931bf78132699bc58bac1031bb27e253723f4a5bdc6f57dff72fc82ec20998

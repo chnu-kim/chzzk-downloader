@@ -3,21 +3,23 @@
 
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import {
-  cleanMessage,
   decode,
+  DENYLIST_PATH,
   emailAllowed,
   entriesFor,
   hashBlob,
+  hashCommit,
   lineRules,
   loadDenylist,
   parseRange,
+  PRIVATE_COMMITS_PATH,
   scanBuffer,
   scanText,
 } from './public-scan.mjs';
@@ -166,10 +168,17 @@ test('작성자 이메일 허용 목록', () => {
   }
 });
 
-test('저장소 denylist는 blob 해시만 담는다(대입으로 되돌릴 수 있는 항목은 비공개 목록에)', () => {
-  const deny = loadDenylist();
+test('저장소 denylist는 blob·commit 해시만 담는다(대입으로 되돌릴 수 있는 항목은 비공개 목록에)', () => {
+  const deny = loadDenylist([DENYLIST_PATH]);
   assert.ok(deny.size > 0);
   for (const e of deny) assert.match(e, /^blob:[0-9a-f]{64}$/);
+  // 커밋 지문 파일: commit: 줄만, 정렬·중복 없음, 주석 없음(--hash-commit 출력과 바이트 동일해야 다시 만들 수 있다)
+  const raw = readFileSync(PRIVATE_COMMITS_PATH, 'utf8');
+  const lines = raw.split('\n').filter(Boolean);
+  assert.ok(lines.length > 0);
+  for (const l of lines) assert.match(l, /^commit:[0-9a-f]{64}$/);
+  assert.deepEqual(lines, [...new Set(lines)].sort());
+  assert.equal(raw, lines.join('\n') + '\n');
 });
 
 test('지금 저장소의 추적 파일은 깨끗하다', () => {
@@ -362,20 +371,54 @@ test('--rev-range·--message-file 사용법 오류는 2', () => {
   assert.equal(scan(ROOT, '--message-file', join(ROOT, 'no-such-file')).status, 2);
 });
 
-test('cleanMessage: # 주석 줄과 scissors 아래를 버린다', () => {
-  const msg = 'feat: x\n\nbody\n# comment ' + PLANTED.hmac + '\n# ------------------------ >8 ------------------------\n' + PLANTED['hex-id'] + '\n';
-  assert.equal(cleanMessage(msg), 'feat: x\n\nbody');
-  assert.equal(cleanMessage('a\r\n# c\r\nb\r\n'), 'a\nb');
-});
-
-test('--message-file: 이력에 남는 부분의 누출만 잡는다', (t) => {
+test('--message-file: 원문 전체를 본다(# 줄·scissors 아래도 -m·--cleanup=verbatim이면 이력에 남는다)', (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'public-scan-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const f = join(dir, 'COMMIT_EDITMSG');
-  writeFileSync(f, 'fix: 고침\n\n# ' + PLANTED.hmac + '\n');
+  writeFileSync(f, 'fix: 고침\n\n본문\n');
   assert.equal(scan(dir, '--message-file', f).status, 0);
   writeFileSync(f, 'fix: 고침\n\n' + PLANTED.hmac + '\n');
   const r = scan(dir, '--message-file', f);
   assert.equal(r.status, 1);
   assert.match(r.stdout.toString(), /메시지:3 {2}\[hmac\]/);
+  // # 로 시작하는 줄
+  writeFileSync(f, 'fix: 고침\n\n# ' + PLANTED.hmac + '\n');
+  assert.equal(scan(dir, '--message-file', f).status, 1);
+  // scissors 줄 아래
+  writeFileSync(f, 'fix: 고침\n# ------------------------ >8 ------------------------\n' + PLANTED['hex-id'] + '\n');
+  assert.equal(scan(dir, '--message-file', f).status, 1);
+  // denylist 항목이 # 줄에 있어도 잡는다
+  const deny = join(dir, 'deny.txt');
+  writeFileSync(deny, entriesFor('zebracanyon').join('\n') + '\n');
+  writeFileSync(f, 'fix: x\n# zebracanyon\n');
+  const d = scan(dir, '--message-file', f, '--denylist', deny);
+  assert.equal(d.status, 1);
+  assert.match(d.stdout.toString(), /\[denylist\]/);
+});
+
+test('commit: 지문 — 비공개 저장소에만 있는 커밋을 이력·범위에서 잡는다', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'public-scan-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  git(dir, 'init', '-q');
+  writeFileSync(join(dir, 'a.txt'), 'a\n');
+  git(dir, 'add', 'a.txt');
+  git(dir, 'commit', '-qm', 'pub');
+  const pub = gitRun(dir, ['rev-parse', 'HEAD']).stdout.trim();
+  git(dir, 'commit', '-q', '--allow-empty', '-m', 'priv');
+  const priv = gitRun(dir, ['rev-parse', 'HEAD']).stdout.trim();
+  const deny = join(dir, '..', `commit-deny-${process.pid}-${Date.now()}.txt`);
+  t.after(() => rmSync(deny, { force: true }));
+  // --hash-commit은 정렬·중복 제거한 commit: 줄을 낸다
+  const h = spawnSync(process.execPath, [SCANNER, '--hash-commit'], { input: `${priv}\n${priv}\n` });
+  assert.equal(h.status, 0);
+  assert.equal(h.stdout.toString(), hashCommit(priv) + '\n');
+  assert.equal(spawnSync(process.execPath, [SCANNER, '--hash-commit'], { input: 'not-a-sha\n' }).status, 2);
+  writeFileSync(deny, h.stdout);
+  const hist = scan(dir, '--all-history', '--denylist', deny);
+  assert.equal(hist.status, 1);
+  assert.match(hist.stdout.toString(), new RegExp(`커밋 ${priv.slice(0, 12)} {2}\\[private-commit\\]`));
+  assert.equal(scan(dir, '--rev-range', pub, '--denylist', deny).status, 0);
+  assert.equal(scan(dir, '--rev-range', priv, '--denylist', deny).status, 1);
+  // commit: 항목만 있으면 글자 n-gram을 켜지 않는다(깨끗한 트리는 그대로 깨끗하다)
+  assert.equal(scan(dir, '--denylist', deny).status, 0);
 });

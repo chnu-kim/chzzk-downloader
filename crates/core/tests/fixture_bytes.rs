@@ -4,9 +4,9 @@
 //! `.gitattributes`의 `-text`가 빠지거나 무시되면 Windows 클론에서 이 테스트가 먼저 실패한다.
 
 const TEXT_FIXTURES: [&str; 20] = [
-    "internal/api/testdata/clip_multi.mpd",
-    "internal/api/testdata/clip_multi_playinfo.json",
-    "internal/api/testdata/clip_playinfo.json",
+    "testdata/clip/clip_multi.mpd",
+    "testdata/clip/clip_multi_playinfo.json",
+    "testdata/clip/clip_playinfo.json",
     "testdata/hls/live_rewind_playback.decoded.json",
     "testdata/hls/master.m3u8",
     "testdata/hls/media.m3u8",

@@ -132,15 +132,10 @@ async fn clip() {
     mount_info(
         &server,
         &format!("/service/v1/play-info/clip/{CLIP_ID}"),
-        fixture("internal/api/testdata/clip_playinfo.json"),
+        fixture("testdata/clip/clip_playinfo.json"),
     )
     .await;
-    mount_mpd(
-        &server,
-        CLIP_VIDEO_ID,
-        "internal/api/testdata/clip_multi.mpd",
-    )
-    .await;
+    mount_mpd(&server, CLIP_VIDEO_ID, "testdata/clip/clip_multi.mpd").await;
 
     let r = chzzk(&server).resolve(&clip_ref(CLIP_ID)).await.unwrap();
     assert_eq!(r.content, clip_ref(CLIP_ID));
@@ -207,7 +202,7 @@ async fn api_401_403_auth_required() {
     mount_info(
         &server,
         &format!("/service/v1/play-info/clip/{CLIP_ID}"),
-        fixture("internal/api/testdata/clip_playinfo.json"),
+        fixture("testdata/clip/clip_playinfo.json"),
     )
     .await;
     Mock::given(method("GET"))
@@ -341,15 +336,10 @@ async fn api_headers_cookie_opt_in() {
         mount_info(
             &server,
             &format!("/service/v1/play-info/clip/{CLIP_ID}"),
-            fixture("internal/api/testdata/clip_playinfo.json"),
+            fixture("testdata/clip/clip_playinfo.json"),
         )
         .await;
-        mount_mpd(
-            &server,
-            CLIP_VIDEO_ID,
-            "internal/api/testdata/clip_multi.mpd",
-        )
-        .await;
+        mount_mpd(&server, CLIP_VIDEO_ID, "testdata/clip/clip_multi.mpd").await;
         let cfg = ClientConfig {
             cookies: with_cookies.then(|| NaverCookies::new("a", "b")),
             ..config(&server)

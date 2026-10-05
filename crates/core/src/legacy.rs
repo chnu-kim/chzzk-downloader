@@ -41,7 +41,7 @@ pub struct LegacyImport {
     pub warnings: Vec<String>,
 }
 
-/// Go `UserSettings`(`internal/config/config.go`). 모든 필드가 없거나 `null`이어도 된다.
+/// Go `UserSettings`(옛 Go 코드). 모든 필드가 없거나 `null`이어도 된다.
 #[derive(Deserialize, Default)]
 #[serde(rename_all = "camelCase", default)]
 struct GoSettings {

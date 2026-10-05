@@ -480,7 +480,7 @@ mod tests {
                 "[261004] 가상채널 - 가상 일반 VOD 제목 (괄호) 테스트.mp4"
             );
             assert_eq!(
-                default_filename(&fixture_meta("internal/api/testdata/clip_playinfo.json"), p),
+                default_filename(&fixture_meta("testdata/clip/clip_playinfo.json"), p),
                 "[클립] 클립채널 - 테스트 클립 하나.mp4"
             );
         }

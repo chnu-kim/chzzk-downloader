@@ -176,7 +176,7 @@ mod tests {
     use crate::testutil::fixture_str;
 
     fn clip_reps() -> Vec<Representation> {
-        parse_mpd(&fixture_str("internal/api/testdata/clip_multi.mpd")).unwrap()
+        parse_mpd(&fixture_str("testdata/clip/clip_multi.mpd")).unwrap()
     }
 
     fn vod_mpd() -> String {

@@ -213,13 +213,12 @@ mod tests {
 
         // 클립(세로 영상): height(1280/854)가 아니라 resolution 라벨(720/480) 기준
         let reps = crate::mpd::parse_mpd(&crate::testutil::fixture_str(
-            "internal/api/testdata/clip_multi.mpd",
+            "testdata/clip/clip_multi.mpd",
         ))
         .unwrap();
-        let (meta, _) = crate::info::parse_clip_info(&fixture(
-            "internal/api/testdata/clip_multi_playinfo.json",
-        ))
-        .unwrap();
+        let (meta, _) =
+            crate::info::parse_clip_info(&fixture("testdata/clip/clip_multi_playinfo.json"))
+                .unwrap();
         let clip = Resolved {
             content: ContentRef::Clip {
                 clip_id: "x".into(),

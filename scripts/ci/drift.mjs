@@ -163,8 +163,10 @@ export const LOG_ALLOW = [
 ];
 
 // 작업 로그 전체 → 위반 [{line, rule}] (내용은 담지 않는다)
+// Actions 로그는 BOM으로 시작하고 단계 머리의 명령 줄에 ANSI 색 코드가 있다(실측 37340094385)
+const ANSI = /\x1b\[[0-9;]*m/g;
 export function checkDriftLog(log) {
-  const lines = log.replace(/\r\n/g, '\n').split('\n').map((l) => l.replace(TS, ''));
+  const lines = log.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n').split('\n').map((l) => l.replace(ANSI, '').replace(/^\uFEFF/, '').replace(TS, ''));
   const bad = [];
   lines.forEach((l, i) => {
     for (const v of Object.values(CANARY)) if (l.includes(v)) bad.push({ line: i + 1, rule: 'canary' });
@@ -179,8 +181,17 @@ export function checkDriftLog(log) {
   return bad;
 }
 
-// env: NEEDS, GITHUB_REPOSITORY, GITHUB_RUN_ID, GITHUB_RUN_ATTEMPT. drift 작업이 돌지 않았으면 0.
-export function driftLogCheck(env, gh) {
+// 작업 로그(텍스트). gh api는 버전에 따라 ANSI가 든 응답을 거부해(--allow-escape-sequences) REST를 직접 부른다.
+export async function fetchJobLog(repo, id, env = process.env) {
+  const res = await fetch(`https://api.github.com/repos/${repo}/actions/jobs/${id}/logs`, {
+    headers: { Authorization: `Bearer ${env.GH_TOKEN ?? ''}`, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' },
+  });
+  if (!res.ok) throw new Error(`작업 로그 HTTP ${res.status}`);
+  return res.text();
+}
+
+// env: NEEDS, GITHUB_REPOSITORY, GITHUB_RUN_ID, GITHUB_RUN_ATTEMPT, GH_TOKEN. drift 작업이 돌지 않았으면 0.
+export async function driftLogCheck(env, gh, fetchLog = (repo, id) => fetchJobLog(repo, id, env)) {
   let needs;
   try {
     needs = JSON.parse(env.NEEDS ?? '');
@@ -207,7 +218,7 @@ export function driftLogCheck(env, gh) {
     console.error(`::error::drift-log-check: '${DRIFT_JOB_NAME}' 작업이 ${ids.length}개다`);
     return 1;
   }
-  const log = gh(['api', `repos/${repo}/actions/jobs/${ids[0]}/logs`]);
+  const log = await fetchLog(repo, ids[0]);
   const bad = checkDriftLog(log);
   const n = log.split('\n').length;
   if (bad.length) {

@@ -167,15 +167,21 @@ test('checkDriftLog: drift 단계의 실제 출력은 통과, canary·허용 밖
   assert.deepEqual(checkDriftLog(jobLog(['drift: cargo test -p chzzk-core --test live --locked --no-run', '   Compiling chzzk-core v0.1.0 (/home/runner/work/x/x/crates/core)', '    Finished `test` profile [unoptimized + debuginfo] target(s) in 41.12s', '  Executable tests/live.rs (target/debug/deps/live-0123abcd)', ...step])).filter((b) => b.rule !== 'canary'), []);
 });
 
-test('driftLogCheck: drift가 건너뛰면 0, 작업 로그를 받아 판정, 작업이 없으면 1', () => {
+test('driftLogCheck: drift가 건너뛰면 0, 작업 로그를 받아 판정, 작업이 없으면 1', async () => {
   const env = { GITHUB_REPOSITORY: 'o/r', GITHUB_RUN_ID: '5', GITHUB_RUN_ATTEMPT: '1' };
-  assert.equal(driftLogCheck({ ...env, NEEDS: JSON.stringify({ drift: { result: 'skipped' } }) }, () => assert.fail('gh를 부르면 안 된다')), 0);
-  assert.equal(driftLogCheck({ ...env, NEEDS: '깨짐' }, () => ''), 2);
+  assert.equal(await driftLogCheck({ ...env, NEEDS: JSON.stringify({ drift: { result: 'skipped' } }) }, () => assert.fail('gh를 부르면 안 된다')), 0);
+  assert.equal(await driftLogCheck({ ...env, NEEDS: '깨짐' }, () => ''), 2);
   const step = runDrift({ DRIFT_SIMULATE: 'ok' }).text.split('\n').filter(Boolean).map((l) => l.replace(/^::error::/, '##[error]'));
   const log = jobLog(step).replace(new RegExp(`.*${CANARY.channel}.*\\n`), '');
-  const gh = (logText, ids = '42\n') => (args) => (args[1].endsWith('/logs') ? logText : ids);
+  const gh = (ids = '42\n') => () => ids;
+  const fl = (text) => async (repo, id) => {
+    assert.equal(id, '42');
+    return text;
+  };
   const needs = JSON.stringify({ drift: { result: 'success' } });
-  assert.equal(driftLogCheck({ ...env, NEEDS: needs }, gh(log)), 0);
-  assert.equal(driftLogCheck({ ...env, NEEDS: needs }, gh(log + `\n${CANARY.title}`)), 1);
-  assert.equal(driftLogCheck({ ...env, NEEDS: needs }, gh(log, '')), 1);
+  // 실제 로그처럼 BOM과 ANSI 색 코드가 섞여도 통과한다
+  const real = '\uFEFF' + log.replace('Z node scripts/ci/run.mjs drift', 'Z \x1b[36;1mnode scripts/ci/run.mjs drift\x1b[0m');
+  assert.equal(await driftLogCheck({ ...env, NEEDS: needs }, gh(), fl(real)), 0);
+  assert.equal(await driftLogCheck({ ...env, NEEDS: needs }, gh(), fl(log + `\n${CANARY.title}`)), 1);
+  assert.equal(await driftLogCheck({ ...env, NEEDS: needs }, gh(''), fl(log)), 1);
 });

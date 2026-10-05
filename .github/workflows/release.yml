@@ -27,8 +27,10 @@ on:
 
 permissions: {}
 
+# 그룹에는 대기 실행이 하나뿐이라 새 실행이 대기 중인 실행을 취소한다. 리허설(dispatch·schedule)은 따로 묶어 태그 실행이
+# 리허설에 밀려 취소되지 않게 한다(리허설은 환경·R2에 닿지 않아 함께 돌아도 안전하다). 태그 실행과 rollback.yml은 한 그룹이다
 concurrency:
-  group: release
+  group: ${{ github.event_name == 'push' && 'release' || 'release-rehearsal' }}
   cancel-in-progress: false
 
 env:

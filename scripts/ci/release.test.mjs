@@ -97,3 +97,12 @@ test('preflight: 정확한 메시지, 리허설은 시크릿이 있어도 멈춘
   assert.equal(preflight({ ...all, RELEASE_MODE: '' }).code, 1);
   assert.deepEqual(preflight({ ...all, R2_BUCKET: '', RELEASE_MODE: 'tag' }).missing, ['R2_BUCKET']);
 });
+
+test('concurrency: 태그 실행과 rollback.yml은 같은 그룹, 리허설은 다른 그룹(대기 실행이 서로 취소하지 않게)', () => {
+  const rel = readFileSync(join(ROOT, '.github/workflows/release.yml'), 'utf8');
+  const rb = readFileSync(join(ROOT, '.github/workflows/rollback.yml'), 'utf8');
+  const group = (t) => /^concurrency:\n {2}group: (.+)$/m.exec(t)?.[1];
+  assert.equal(group(rel), "${{ github.event_name == 'push' && 'release' || 'release-rehearsal' }}");
+  assert.equal(group(rb), 'release');
+  assert.match(rel, /^ {4}tags: \["v\*"\]$/m);
+});

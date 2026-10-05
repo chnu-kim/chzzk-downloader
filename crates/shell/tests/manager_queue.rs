@@ -439,7 +439,7 @@ async fn finished_jobs_are_capped() {
     );
 }
 
-/// 같은 파일을 가리키는 다른 표기(`.`·겹친 구분자·끝 구분자)도 같은 경로로 본다.
+/// 같은 파일을 가리키는 다른 표기(겹친 구분자·끝 구분자)도 같은 경로로 본다. `.`·`..`는 아래에서 거부한다.
 #[tokio::test(start_paused = true)]
 async fn duplicate_output_normalizes_path_spelling() {
     let h = Harness::new(1);
@@ -448,11 +448,7 @@ async fn duplicate_output_normalizes_path_spelling() {
     let a = h.enqueue("a").id;
     let base = h.downloads().to_string_lossy().into_owned();
     let sep = std::path::MAIN_SEPARATOR;
-    for folder in [
-        format!("{base}{sep}.{sep}"),
-        format!("{base}{sep}{sep}"),
-        format!("{base}{sep}"),
-    ] {
+    for folder in [format!("{base}{sep}{sep}"), format!("{base}{sep}")] {
         let mut r = request("a");
         r.folder = Some(folder.clone());
         let e = h.mgr.enqueue(r, &h.defaults()).unwrap_err();
@@ -461,6 +457,106 @@ async fn duplicate_output_normalizes_path_spelling() {
             Some(ErrorPayload::DuplicateOutput { job_id: a }),
             "{folder}"
         );
+    }
+}
+
+/// `.`·`..` 구성 요소가 있는 폴더는 `enqueue`·`check_output` 모두 `invalidInput`이다. 받아 주면
+/// `/tmp/videos/a`와 `/tmp/videos/../videos/a`처럼 같은 파일의 열쇠가 달라 중복 경로 검사를 지나친다.
+#[tokio::test(start_paused = true)]
+async fn dot_segments_in_folder_are_rejected() {
+    let h = Harness::new(1);
+    h.fake
+        .script_for(h.output("a"), Script::new().wait_cancel());
+    h.enqueue("a");
+    let base = h.downloads().to_string_lossy().into_owned();
+    let name = h
+        .downloads()
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    let sep = std::path::MAIN_SEPARATOR;
+    let content = chzzk_core::ContentRef::Video { video_no: 1 };
+    for folder in [
+        format!("{base}{sep}..{sep}{name}"),
+        format!("{base}{sep}..{sep}{name}{sep}"),
+        format!("{base}{sep}.{sep}"),
+        format!("{base}{sep}."),
+        format!("{base}{sep}.."),
+    ] {
+        let mut r = request("a");
+        r.folder = Some(folder.clone());
+        let e = h.mgr.enqueue(r, &h.defaults()).unwrap_err();
+        assert_eq!(e.code, ErrorCode::InvalidInput, "{folder}");
+        let e = h
+            .mgr
+            .check_output(
+                Some(&folder),
+                &h.downloads(),
+                "a",
+                &content,
+                "720p",
+                chzzk_core::PlaybackKind::LiveRewindHls,
+            )
+            .unwrap_err();
+        assert_eq!(e.code, ErrorCode::InvalidInput, "{folder}");
+    }
+    // 설정에서 온 기본 폴더도 같다(옛 설정·손으로 고친 settings.json).
+    let defaults = JobDefaults {
+        download_folder: h.downloads().join("..").join(&name),
+        segment_concurrency: 4,
+    };
+    let e = h.mgr.enqueue(request("a"), &defaults).unwrap_err();
+    assert_eq!(e.code, ErrorCode::InvalidInput);
+    // `..`가 이름의 일부일 뿐이면 괜찮다.
+    let mut r = request("b");
+    r.folder = Some(format!("{base}{sep}..videos"));
+    h.mgr.enqueue(r, &h.defaults()).unwrap();
+    assert_eq!(h.mgr.list().len(), 2);
+}
+
+/// Windows: 드라이브 글자·경로의 대소문자와 구분자가 달라도 같은 열쇠이고, `\`로 쓴 `..`도 거부한다.
+#[cfg(windows)]
+#[tokio::test(start_paused = true)]
+async fn windows_path_variants_are_keyed_consistently() {
+    use chzzk_shell::manager::output_key;
+    use std::path::Path;
+
+    assert_eq!(
+        output_key(Path::new(r"C:\Videos\a.mp4")),
+        output_key(Path::new("c:/videos/A.MP4"))
+    );
+    assert_eq!(
+        output_key(Path::new(r"C:\Videos\\a.mp4")),
+        output_key(Path::new(r"c:\VIDEOS\a.mp4"))
+    );
+
+    let h = Harness::new(1);
+    h.fake
+        .script_for(h.output("a"), Script::new().wait_cancel());
+    let a = h.enqueue("a").id;
+    let base = h.downloads().to_string_lossy().into_owned();
+    let name = h
+        .downloads()
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    // 대소문자만 다른 폴더 → 같은 작업
+    let mut r = request("a");
+    r.folder = Some(base.to_uppercase());
+    let e = h.mgr.enqueue(r, &h.defaults()).unwrap_err();
+    assert_eq!(e.payload, Some(ErrorPayload::DuplicateOutput { job_id: a }));
+    // `\..\`·`/../` 섞어 쓴 별칭 → 거부
+    for folder in [
+        format!(r"{base}\..\{name}"),
+        format!("{}/../{name}", base.replace('\\', "/")),
+        format!(r"{base}\.\"),
+    ] {
+        let mut r = request("a");
+        r.folder = Some(folder.clone());
+        let e = h.mgr.enqueue(r, &h.defaults()).unwrap_err();
+        assert_eq!(e.code, ErrorCode::InvalidInput, "{folder}");
     }
 }
 

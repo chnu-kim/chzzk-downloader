@@ -163,7 +163,14 @@ fn defaults_and_patch_rules() {
         .unwrap();
     assert_eq!(d.download_folder, None);
 
-    for bad in ["", "   ", "relative/dir"] {
+    for bad in [
+        "",
+        "   ",
+        "relative/dir",
+        "/tmp/videos/../videos",
+        "/tmp/videos/./x",
+        "/tmp/videos/..",
+    ] {
         let e = svc
             .update(SettingsPatch {
                 download_folder: Nullable::Set(bad.into()),

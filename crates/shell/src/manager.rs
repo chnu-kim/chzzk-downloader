@@ -216,8 +216,12 @@ impl State {
 
 /// 같은 파일인지 비교할 열쇠.
 ///
-/// - 경로 구성 요소로 다시 조립해 `.`·겹친 구분자·끝 구분자를 없앤다. Windows는 `/`와 `\`가 하나가 된다
-///   (옛 Go 설정의 `D:/Videos`와 폴더 선택기의 `D:\Videos`가 같은 파일을 가리킨다). `..`는 풀지 않는다.
+/// - 경로 구성 요소로 다시 조립해 겹친 구분자·끝 구분자를 없앤다. Windows는 `/`와 `\`가 하나가 된다
+///   (옛 Go 설정의 `D:/Videos`와 폴더 선택기의 `D:\Videos`가 같은 파일을 가리킨다).
+/// - `.`·`..`는 여기서 풀지 않는다. 열쇠에 들어오는 경로는 모두 `resolve_folder`를 지난 폴더로 만들어지고
+///   (`check_output`·`enqueue`, `resume`은 그렇게 저장된 `rec.output`), 거기서 `.`·`..` 구성 요소를 거부한다
+///   (`check_folder_segments`). `..`를 글자로 풀면 심볼릭 링크를 지날 때 틀린 열쇠가 된다.
+///   심볼릭 링크 별칭(macOS `/tmp` 대 `/private/tmp` 등)은 같은 파일로 보지 않는다.
 /// - Windows·macOS 기본 파일 시스템은 대소문자를 구분하지 않으므로 소문자로 비교한다.
 ///   (macOS의 유니코드 정규화 차이는 보지 않는다. 이름은 모두 같은 코드 경로로 만들어진다.)
 pub fn output_key(p: &Path) -> String {
@@ -690,7 +694,8 @@ impl<B: Backend> DownloadManager<B> {
     }
 }
 
-/// 요청 폴더(공백뿐이면 무시) → 기본 폴더. 절대 경로가 아니거나 UTF-8이 아니면 `invalidInput`.
+/// 요청 폴더(공백뿐이면 무시) → 기본 폴더. 절대 경로가 아니거나, UTF-8이 아니거나, `.`·`..` 구성 요소가 있으면
+/// `invalidInput`. 기본 폴더(설정 폴더)도 같이 검사한다(옛 설정이나 손으로 고친 `settings.json`).
 ///
 /// UTF-8 검사는 기본 폴더 때문이다(요청 폴더는 이미 `&str`). Linux의 XDG 동영상 폴더처럼 OS가 준 경로는 아무
 /// 바이트나 담을 수 있는데, serde는 `PathBuf`를 UTF-8로만 쓰므로 그런 작업 하나가 `jobs.json` 저장 전체를 막는다.
@@ -711,7 +716,26 @@ fn resolve_folder(folder: Option<&str>, default: &Path) -> Result<PathBuf, AppEr
             folder.display()
         )));
     }
+    if let Some(f) = folder.to_str() {
+        check_folder_segments(f, "저장 폴더")?;
+    }
     Ok(folder)
+}
+
+/// 폴더 경로에 `.`·`..` 구성 요소가 있으면 `invalidInput`.
+///
+/// 같은 파일을 다른 글자로 가리키는 길을 막아 중복 경로 검사(`output_key`)를 지키려는 것이다.
+/// `/tmp/videos/../videos`는 `/tmp/videos`와 같은 파일인데 열쇠는 다르다. `..`를 글자로 풀지 않고 거부하는
+/// 것은 심볼릭 링크를 지나면 글자로 푼 결과가 실제 위치와 다르기 때문이다. `Path::components()`는 중간의
+/// `.`를 말없이 버리므로 원래 글자를 구분자로 나눠 본다(Windows는 `/`와 `\` 둘 다).
+pub fn check_folder_segments(folder: &str, what: &str) -> Result<(), AppError> {
+    let is_sep = |c: char| c == '/' || (cfg!(windows) && c == '\\');
+    if folder.split(is_sep).any(|seg| seg == "." || seg == "..") {
+        return Err(AppError::invalid_input(format!(
+            "{what}에 `.`이나 `..`를 쓸 수 없습니다. 폴더를 다시 골라 주세요: {folder}"
+        )));
+    }
+    Ok(())
 }
 
 impl<B: Backend> Inner<B> {

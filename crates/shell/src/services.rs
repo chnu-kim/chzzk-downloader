@@ -555,6 +555,7 @@ fn absolute_dir(s: &str, what: &str) -> Result<PathBuf, AppError> {
             "{what}는 전체 경로여야 합니다: {t}"
         )));
     }
+    crate::manager::check_folder_segments(t, what)?;
     Ok(p)
 }
 

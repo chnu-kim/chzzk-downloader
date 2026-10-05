@@ -156,7 +156,8 @@ test('gate 표: 검사를 켜는 플래그', () => {
   assert.deepEqual(cmds('size'), ['node scripts/ci/measure.mjs size', 'node scripts/ci/ratchet.mjs check size']);
   assert.deepEqual(cmds('coverage').slice(1), ['node scripts/ci/measure.mjs coverage', 'node scripts/ci/ratchet.mjs check coverage']);
   assert.deepEqual(cmds('test-count').slice(1), ['node scripts/ci/measure.mjs tests', 'node scripts/ci/ratchet.mjs check tests']);
-  assert.deepEqual(cmds('ratchet-log'), ['node scripts/ci/ratchet.mjs log-check']);
+  assert.deepEqual(cmds('ratchet-log'), ['node scripts/ci/ratchet.mjs lint', 'node scripts/ci/ratchet.mjs log-check']);
+  assert.deepEqual(cmds('test-count-app'), ['node scripts/ci/measure.mjs tests-app', 'node scripts/ci/ratchet.mjs check tests']);
   // 로컬과 CI가 같은 표를 쓰므로 CI 전용은 scan-history 하나뿐이다
   assert.deepEqual(Object.keys(GATES).filter((g) => GATES[g].ciOnly), ['scan-history']);
 });

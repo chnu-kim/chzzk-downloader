@@ -70,12 +70,45 @@ function log(msg) {
 }
 
 // 바깥 명령(설치·제거). 실패하면 예외.
-// 설치기·제거기가 멈춰도 작업 시간 제한(75분)까지 끌지 않도록 명령마다 시간 제한(SH_TIMEOUT_MS)을 둔다.
-export const SH_TIMEOUT_MS = 300_000;
+// 설치기·제거기가 멈춰도 단계 시간 제한까지 끌지 않도록 명령마다 시간 제한(SH_TIMEOUT_MS)을 둔다. 최악의 합은
+// installBudgetMs()이고 smoke.test.mjs가 ci.yml smoke-install 단계의 timeout-minutes보다 작은지 본다.
+export const SH_TIMEOUT_MS = 240_000;
+export const DIAG_TIMEOUT_MS = 30_000;
+export const WAIT_GONE_MS = 60_000;
+// OS별 설치 스모크의 바깥 명령(sh) 수와 앱 실행(runSmoke) 수. 함수를 고치면 같이 고친다.
+export const INSTALL_STEPS = {
+  linux: { sh: 4, smoke: 2, wait: 0 }, // dpkg-deb, apt-get install, dpkg -L, apt-get purge
+  darwin: { sh: 5, smoke: 1, wait: 0 }, // hdiutil attach, ditto, xattr, plutil, hdiutil detach
+  windows: { sh: 4, smoke: 2, wait: 1 }, // NSIS setup, uninstall, msiexec /i, /x + waitGone
+};
+// 최악의 경우(모든 명령이 시간 제한까지 가고, Windows는 그때마다 진단 두 개도 시간 제한까지): ms
+export function installBudgetMs(os) {
+  const n = INSTALL_STEPS[os];
+  const diag = os === 'windows' ? 2 * DIAG_TIMEOUT_MS : 0;
+  return n.sh * (SH_TIMEOUT_MS + diag) + n.smoke * (SMOKE_KILL_MS + diag) + n.wait * WAIT_GONE_MS;
+}
+
+// 시간 제한에 걸린 뒤(Windows): 남은 프로세스 목록을 남기고 그 pid의 트리를 끝까지 죽여 본다.
+// spawnSync는 직계 자식만 죽인다. 자식이 이미 끝났으면 /T가 손주(NSIS 제거기 사본·msiexec)에 닿지 못할 수 있어
+// 목록이 원인 추적의 근거다.
+function afterTimeout(pid) {
+  if (!IS_WIN) return;
+  for (const [bin, args] of [
+    ['tasklist', ['/v']],
+    ['taskkill', ['/T', '/F', '/PID', String(pid)]],
+  ]) {
+    const r = spawnSync(bin, args, { encoding: 'utf8', timeout: DIAG_TIMEOUT_MS, killSignal: 'SIGKILL', maxBuffer: 1 << 24 });
+    console.error(`--- ${bin} ${args.join(' ')} → ${r.status ?? r.error?.code}\n${(r.stdout ?? '').slice(-8000)}${(r.stderr ?? '').slice(-2000)}`);
+  }
+}
+
 function sh(bin, args, { ok = [0], input, quiet = false, env, timeout = SH_TIMEOUT_MS } = {}) {
   log(`$ ${basename(bin)} ${args.join(' ')}`);
   const r = spawnSync(bin, args, { encoding: 'utf8', input, env: env ?? process.env, maxBuffer: 1 << 26, timeout, killSignal: 'SIGKILL' });
-  if (r.error?.code === 'ETIMEDOUT') throw new Error(`${bin} ${args.join(' ')}: ${timeout / 1000}초 안에 끝나지 않았다`);
+  if (r.error?.code === 'ETIMEDOUT') {
+    afterTimeout(r.pid);
+    throw new Error(`${bin} ${args.join(' ')}: ${timeout / 1000}초 안에 끝나지 않았다`);
+  }
   if (r.error) throw new Error(`${bin}: ${r.error.message}`);
   if (!ok.includes(r.status)) {
     throw new Error(`${bin} ${args.join(' ')} → exit ${r.status ?? r.signal}\n${(r.stdout ?? '').slice(-4000)}${(r.stderr ?? '').slice(-4000)}`);
@@ -111,7 +144,10 @@ export function runSmoke(exe, { env = {}, label = basename(exe) } = {}) {
   const secs = ((Date.now() - started) / 1000).toFixed(1);
   try {
     if (r.error && r.error.code !== 'ETIMEDOUT') return { ok: false, why: `실행 실패: ${r.error.message}` };
-    if (r.status === null) return { ok: false, why: `${secs}초 뒤 신호 ${r.signal}로 멈췄다(바깥 제한 ${SMOKE_KILL_MS / 1000}초)` };
+    if (r.status === null) {
+      if (r.error?.code === 'ETIMEDOUT') afterTimeout(r.pid);
+      return { ok: false, why: `${secs}초 뒤 신호 ${r.signal}로 멈췄다(바깥 제한 ${SMOKE_KILL_MS / 1000}초)` };
+    }
     const text = existsSync(out) ? readFileSync(out, 'utf8') : null;
     if (text !== null) log(`${label}: 마커 ${text.trim()}`);
     if (r.status !== 0) return { ok: false, why: `exit ${r.status}(${secs}초)${r.status === 2 ? ' — 60초 안에 frontend_ready가 오지 않았다' : ''}` };
@@ -239,7 +275,7 @@ function smokeNsis(setup) {
   if (!existsSync(uninstall)) throw new Error(`${uninstall}가 없다`);
   sh(uninstall, ['/S']);
   // NSIS 제거기는 자신을 임시 폴더로 복사해 다시 띄우고 곧바로 끝난다. 폴더가 사라질 때까지 기다린다
-  if (!waitGone(dir, 60_000)) throw new Error(`제거 뒤 60초가 지나도 ${dir}가 남아 있다: ${readdirSync(dir).join(', ')}`);
+  if (!waitGone(dir, WAIT_GONE_MS)) throw new Error(`제거 뒤 ${WAIT_GONE_MS / 1000}초가 지나도 ${dir}가 남아 있다: ${readdirSync(dir).join(', ')}`);
   if (!r.ok) throw new Error(r.why);
   log('NSIS: 설치·실행·제거 통과');
 }

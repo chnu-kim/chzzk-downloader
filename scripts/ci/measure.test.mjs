@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { gzipSync } from 'node:zlib';
 import { test } from 'node:test';
 
-import { countListed, gzipTotal, llvmLinesPct, vitestCount, vitestLinesPct } from './measure.mjs';
+import { countActive, countListed, gzipTotal, llvmLinesPct, vitestCount, vitestLinesPct } from './measure.mjs';
 
 test('llvm-cov·vitest 커버리지 JSON', () => {
   assert.equal(llvmLinesPct({ data: [{ totals: { lines: { count: 3, covered: 2, percent: 66.666666 } } }] }), 66.67);
@@ -20,10 +20,21 @@ test('cargo test --list --format terse 출력에서 테스트만 센다', () => 
   assert.equal(countListed(out), 3);
 });
 
-test('vitest json: 수를 세고 실패가 있으면 오류', () => {
-  assert.equal(vitestCount({ numTotalTests: 5, numFailedTests: 0, success: true }), 5);
-  assert.throws(() => vitestCount({ numTotalTests: 5, numFailedTests: 1, success: false }), /실패/);
-  assert.throws(() => vitestCount({}), /numTotalTests/);
+test('#[ignore] 테스트는 세지 않는다(--list − --list --ignored)', () => {
+  const all = ['a: test', 'live_x: test', 'b: test', 'doc (line 3): test'].join('\n');
+  assert.equal(countActive(all, 'live_x: test\n'), 3);
+  assert.equal(countActive(all, ''), 4);
+  // 테스트 하나를 #[ignore]로 바꾸면 전체 목록은 그대로지만 수가 준다
+  assert.equal(countActive(all, 'live_x: test\nb: test\n'), 2);
+  assert.throws(() => countActive('a: test', 'a: test\nb: test'), /많다/);
+});
+
+test('vitest json: 통과한 수만 센다(skip·todo 제외), 실패가 있으면 오류', () => {
+  assert.equal(vitestCount({ numTotalTests: 5, numPassedTests: 5, numFailedTests: 0, success: true }), 5);
+  // it.skip 하나, it.todo 하나: 전체 수는 그대로지만 통과 수가 준다
+  assert.equal(vitestCount({ numTotalTests: 5, numPassedTests: 3, numPendingTests: 1, numTodoTests: 1, numFailedTests: 0, success: true }), 3);
+  assert.throws(() => vitestCount({ numTotalTests: 5, numPassedTests: 4, numFailedTests: 1, success: false }), /실패/);
+  assert.throws(() => vitestCount({ numTotalTests: 5 }), /numPassedTests/);
 });
 
 test('gzipTotal: 파일마다 gzip(level 9) 크기의 합, 결정적', () => {

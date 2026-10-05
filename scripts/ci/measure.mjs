@@ -2,7 +2,8 @@
 // ratchet 측정(docs/design/cicd.md §4.2). 결과는 target/ci/measure/<kind>.json(평평한 키 경로)이고 ratchet.mjs가 판정한다.
 //
 //   node scripts/ci/measure.mjs coverage   # cargo llvm-cov(chzzk-core·chzzk-shell) 줄 커버리지 + vitest v8 줄 커버리지
-//   node scripts/ci/measure.mjs tests      # cargo test 목록 수(llvm-cov 빌드를 다시 쓴다) + vitest 실행 테스트 수
+//   node scripts/ci/measure.mjs tests      # cargo test 목록 수(llvm-cov 빌드를 다시 쓴다) + vitest 통과 테스트 수
+//   node scripts/ci/measure.mjs tests-app  # chzzk-app 테스트 목록 수(tauri gate의 테스트 빌드를 다시 쓴다) → tests.app.<os>
 //   node scripts/ci/measure.mjs size       # app/dist gzip 합, 릴리스 바이너리, 수집한 번들(target/ci/bundle/bundles.json)
 //
 // 값은 CI 러너에서만 기준으로 삼는다(ratchet.mjs write --from-run). 종료 코드: 0, 측정 실패 1, 사용법 2.
@@ -39,11 +40,19 @@ export function countListed(stdout) {
   return stdout.split('\n').filter((l) => /: test$/.test(l.trim())).length;
 }
 
-// vitest json reporter → 테스트 수. 실패가 있으면 오류(측정이 아니라 테스트 실패다).
+// 실제로 도는 Rust 테스트 수 = `--list` − `--list --ignored`. #[ignore]로 끈 테스트는 세지 않는다
+// (끄면 수가 줄어 ratchet이 잡는다).
+export function countActive(all, ignored) {
+  const n = countListed(all) - countListed(ignored);
+  if (n < 0) throw new Error(`--ignored 목록(${countListed(ignored)})이 전체(${countListed(all)})보다 많다`);
+  return n;
+}
+
+// vitest json reporter → **통과한** 테스트 수(skip·todo 제외). 실패가 있으면 오류(측정이 아니라 테스트 실패다).
 export function vitestCount(json) {
-  if (typeof json?.numTotalTests !== 'number') throw new Error('vitest JSON에 numTotalTests가 없다');
+  if (typeof json?.numPassedTests !== 'number') throw new Error('vitest JSON에 numPassedTests가 없다');
   if (json.success !== true || json.numFailedTests) throw new Error(`vitest 실패 ${json.numFailedTests}개`);
-  return json.numTotalTests;
+  return json.numPassedTests;
 }
 
 // 폴더 아래 파일마다 gzip(level 9) 크기의 합. 순서는 경로순(결정적).
@@ -94,13 +103,20 @@ function coverage() {
 
 function tests() {
   // llvm-cov의 계측 빌드를 coverage와 같이 쓴다(목록만 내고 실행하지 않는다)
-  const list = run('cargo', ['llvm-cov', ...RUST_PKGS, '--no-report', '--', '--list', '--format', 'terse'], { capture: true });
+  const list = (extra) => run('cargo', ['llvm-cov', ...RUST_PKGS, '--no-report', '--', '--list', ...extra, '--format', 'terse'], { capture: true });
+  const rust = countActive(list([]), list(['--ignored']));
   const vjson = join(outDir(), 'vitest-report.json');
   run('pnpm', ['exec', 'vitest', 'run', '--reporter=dot', '--reporter=json', `--outputFile.json=${vjson}`], { cwd: join(ROOT, 'app') });
   save('tests', {
-    'tests.rust': countListed(list),
+    'tests.rust': rust,
     'tests.vitest': vitestCount(JSON.parse(readFileSync(vjson, 'utf8'))),
   });
+}
+
+// chzzk-app(webkit2gtk 등 OS 의존)은 coverage 작업이 아니라 tauri 작업(3 OS)에서 센다. OS별 #[cfg] 테스트가 있어 키도 OS별이다.
+function testsApp() {
+  const list = (extra) => run('cargo', ['test', '-p', 'chzzk-app', '--locked', '--', '--list', ...extra, '--format', 'terse'], { capture: true });
+  save('tests', { [`tests.app.${osKey()}`]: countActive(list([]), list(['--ignored'])) });
 }
 
 function size() {
@@ -118,7 +134,7 @@ function size() {
   save('size', values);
 }
 
-const MODES = { coverage, tests, size };
+const MODES = { coverage, tests, 'tests-app': testsApp, size };
 
 export function main(argv) {
   if (argv.length !== 1 || !Object.hasOwn(MODES, argv[0])) {

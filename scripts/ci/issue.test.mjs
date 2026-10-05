@@ -12,7 +12,7 @@ const SHA = 'a'.repeat(40);
 const URL = 'https://github.com/o/r/actions/runs/123';
 
 // 이슈 저장소를 흉내 내는 gh. calls에 인자를 남긴다.
-function fakeGh({ issues = [], jobs = '', workflows = {}, runs = {} } = {}) {
+function fakeGh({ issues = [], jobs = '', workflows = {}, runs = {}, heads = { master: SHA } } = {}) {
   const calls = [];
   let next = 100;
   const gh = (args, input) => {
@@ -39,6 +39,15 @@ function fakeGh({ issues = [], jobs = '', workflows = {}, runs = {} } = {}) {
       return '';
     }
     if (a === 'api' && /\/jobs$/.test(b)) return jobs;
+    if (a === 'api' && /\/git\/ref\/heads\//.test(b)) {
+      const h = heads[b.split('/git/ref/heads/')[1]];
+      if (!h) {
+        const e = new Error('gh api → exit 1: HTTP 404');
+        e.stderr = 'HTTP 404: Not Found';
+        throw e;
+      }
+      return `${h}\n`;
+    }
     if (a === 'api' && /actions\/workflows\/[^/]+$/.test(b)) {
       const f = b.split('/').at(-1);
       if (!workflows[f]) {
@@ -111,7 +120,7 @@ test('report: ci-ok 실패면 실패한 작업 이름으로 이슈, 성공이면
     mkdirSync(join(root, '.github/workflows'), { recursive: true });
     writeFileSync(join(root, '.github/workflows/ci.yml'), 'on:\n  push:\n');
     const fk = fakeGh({ jobs: 'rust (windows-latest)\nci-ok\nreport\n' });
-    const env = { GITHUB_REPOSITORY: REPO, GITHUB_RUN_ID: '123', GITHUB_RUN_ATTEMPT: '1', GITHUB_SHA: SHA, CI_OK_RESULT: 'failure' };
+    const env = { GITHUB_REPOSITORY: REPO, GITHUB_RUN_ID: '123', GITHUB_RUN_ATTEMPT: '1', GITHUB_SHA: SHA, GITHUB_REF: 'refs/heads/master', CI_OK_RESULT: 'failure' };
     assert.equal(report(env, fk.gh, { root }), 0);
     const mf = fk.issues.find((i) => i.labels.includes(label('master-failure')));
     assert.ok(mf.open);
@@ -143,13 +152,41 @@ test('report: 예약 워크플로 — 꺼졌으면 켜고, 72시간 넘게 성�
       },
       runs: { 'nightly.yml': '2026-10-04T12:00:00Z', 'weekly.yml': '2026-09-20T00:00:00Z' },
     });
-    const env = { GITHUB_REPOSITORY: REPO, GITHUB_RUN_ID: '9', GITHUB_SHA: SHA, CI_OK_RESULT: 'success' };
+    const env = { GITHUB_REPOSITORY: REPO, GITHUB_RUN_ID: '9', GITHUB_SHA: SHA, GITHUB_REF: 'refs/heads/master', CI_OK_RESULT: 'success' };
     assert.equal(report(env, fk.gh, { root, now }), 0);
     assert.ok(fk.calls.some(([a]) => a[0] === 'workflow' && a[1] === 'enable' && a[2] === '1'));
     const st = fk.issues.find((i) => i.labels.includes(label('nightly-stale')));
     assert.ok(st && st.open);
     assert.match(st.body, /`weekly\.yml`/);
     assert.doesNotMatch(st.body, /nightly\.yml|new\.yml/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('report: 머리가 아닌 커밋의 실행은 master-failure를 열지도 닫지도 않는다(늦게 끝난 옛 실행)', () => {
+  const root = mkdtempSync(join(tmpdir(), 'report-'));
+  try {
+    mkdirSync(join(root, '.github/workflows'), { recursive: true });
+    const OLD = 'b'.repeat(40);
+    const base = { GITHUB_REPOSITORY: REPO, GITHUB_RUN_ID: '5', GITHUB_RUN_ATTEMPT: '1', GITHUB_REF: 'refs/heads/master' };
+    // 열린 이슈가 있고 머리(SHA)는 아직 빨갛다: 옛 커밋 OLD의 녹색 실행이 늦게 끝나도 닫지 않는다
+    const open = { number: 3, body: `${marker('master-failure')}\n\n실패`, open: true, labels: [label('master-failure')], comments: [] };
+    const fk = fakeGh({ issues: [open], jobs: 'lint\n' });
+    assert.equal(report({ ...base, GITHUB_SHA: OLD, CI_OK_RESULT: 'success' }, fk.gh, { root }), 0);
+    assert.equal(open.open, true);
+    assert.deepEqual(open.comments, []);
+    // 머리는 녹색인데 옛 커밋의 빨간 실행이 늦게 끝나도 열지 않는다
+    const fk2 = fakeGh({ jobs: 'lint\n' });
+    assert.equal(report({ ...base, GITHUB_SHA: OLD, CI_OK_RESULT: 'failure' }, fk2.gh, { root }), 0);
+    assert.equal(fk2.issues.length, 0);
+    // 머리 커밋의 실행이면 연다. 브랜치 dispatch(loop_test)는 그 브랜치의 머리와 비교한다
+    const fk3 = fakeGh({ jobs: 'lint\n', heads: { 'ci/pipeline': OLD } });
+    assert.equal(report({ ...base, GITHUB_REF: 'refs/heads/ci/pipeline', GITHUB_SHA: OLD, CI_OK_RESULT: 'failure' }, fk3.gh, { root }), 0);
+    assert.equal(fk3.issues.length, 1);
+    // 브랜치가 아닌 ref·브랜치가 없으면 실패(1)로 보고한다
+    assert.equal(report({ ...base, GITHUB_REF: 'refs/tags/v1', GITHUB_SHA: SHA, CI_OK_RESULT: 'success' }, fakeGh().gh, { root }), 1);
+    assert.equal(report({ ...base, GITHUB_REF: 'refs/heads/gone', GITHUB_SHA: SHA, CI_OK_RESULT: 'success' }, fakeGh().gh, { root }), 1);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

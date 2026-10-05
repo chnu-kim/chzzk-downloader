@@ -297,6 +297,17 @@ jobs:
       # 방금 만든 debug 바이너리를 --smoke로 띄운다(dist 로드·CSP·IPC, 60초 안 exit 0 + 마커)
       - name: smoke-bin
         run: node scripts/ci/run.mjs smoke-bin
+      # chzzk-app 테스트 수 ratchet(tests.app.<os>). tauri gate의 테스트 빌드를 다시 쓴다
+      - name: test-count-app
+        if: ${{ !cancelled() }}
+        run: node scripts/ci/run.mjs test-count-app
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: ${{ !cancelled() }}
+        with:
+          name: ratchet-measurements-tests-app-${{ matrix.os }}
+          path: target/ci/measure/tests.json
+          retention-days: 7
+          if-no-files-found: ignore
 
   # 커버리지·테스트 수 ratchet(ci/ratchet.json). 측정값은 artifact로 남겨 ratchet.mjs write --from-run이 읽는다
   coverage:
@@ -417,7 +428,8 @@ jobs:
     needs: [changes, bundle-linux]
     if: github.event_name != 'pull_request' && needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    # smoke.mjs installBudgetMs('linux')(20분) + 준비. smoke.test.mjs가 비교한다
+    timeout-minutes: 30
     permissions:
       contents: read # checkout
     steps:
@@ -480,10 +492,11 @@ jobs:
       - name: size
         if: ${{ !cancelled() }}
         run: node scripts/ci/run.mjs size
-      # 설치기가 멈춰도 로그가 남도록 단계에도 시간 제한을 둔다(작업 취소는 로그를 잃는다)
+      # 설치기가 멈춰도 로그가 남도록 단계에도 시간 제한을 둔다(작업 취소는 로그를 잃는다).
+      # smoke.mjs의 명령별 시간 제한 합(installBudgetMs, Windows 27분)보다 커야 안쪽 제한이 먼저 걸린다(smoke.test.mjs)
       - name: smoke-install
         if: ${{ !cancelled() }}
-        timeout-minutes: 20
+        timeout-minutes: 30
         run: node scripts/ci/run.mjs smoke-install
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: ${{ !cancelled() }}
@@ -544,8 +557,10 @@ jobs:
     if: always() && ((github.event_name == 'push' && github.ref == 'refs/heads/master') || (github.event_name == 'workflow_dispatch' && inputs.loop_test))
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    # 커밋마다 따로 둔다: 한 그룹에 대기 작업은 하나뿐이라 공유하면 늦게 온 (옛 커밋의) 보고가 머리 커밋의 대기 보고를
+    # 취소한다. 머리가 아닌 커밋의 보고는 아무것도 하지 않으므로(issue.mjs) 서로 다른 커밋의 보고가 겹쳐도 하나만 쓴다.
     concurrency:
-      group: ci-report
+      group: ci-report-${{ github.sha }}
       cancel-in-progress: false
     permissions:
       contents: read # checkout

@@ -18,6 +18,7 @@ import { ROOT } from './gates.mjs';
 import { hashCommit } from './public-scan.mjs';
 import { PRIVATE_URL } from './push-guard.mjs';
 import { inCI, which } from './run.mjs';
+import { osKey } from './smoke.mjs';
 import { gitEnv, gitOk } from './test-git.mjs';
 
 const NODE = process.execPath;
@@ -284,10 +285,12 @@ const hook = (d, name, args, input) => exec('node', [join(d, 'scripts/ci/run.mjs
 // ---- ratchet: 사본의 ci/ratchet.json 기준과 가짜 측정값(target/ci/measure/<kind>.json) ----
 {
   const R = {
+    $pending: ['tests.playwright'],
     coverage_lines: { rust: 80, frontend: 90, tolerance_pp: 0.1 },
-    tests: { rust: 300, vitest: 400, playwright: 0 },
+    tests: { rust: 300, vitest: 400, playwright: 0, app: { linux: 30, darwin: 30, windows: 30 } },
     size: { dist_gz: 1000, binary: { linux: 10000, darwin: 10000, windows: 10000 }, bundle: {}, tolerance_pct: 3 },
   };
+  const bin = `size.binary.${osKey()}`;
   const rjson = (r) => JSON.stringify(r, null, 2) + '\n';
   const withMeasure = (name, kind, m) => mkRoot(name, { 'ci/ratchet.json': rjson(R), [`target/ci/measure/${kind}.json`]: JSON.stringify(m) });
   const check = (d, kind) => exec('node', [join(d, 'scripts/ci/ratchet.mjs'), 'check', kind], d, { ...process.env, GITHUB_STEP_SUMMARY: '' });
@@ -296,9 +299,12 @@ const hook = (d, name, args, input) => exec('node', [join(d, 'scripts/ci/run.mjs
     ['coverage −1pp', 'coverage', { 'coverage_lines.rust': 79, 'coverage_lines.frontend': 90 }, 'nonzero'],
     ['tests 그대로', 'tests', { 'tests.rust': 300, 'tests.vitest': 400 }, 0],
     ['tests −1', 'tests', { 'tests.rust': 299, 'tests.vitest': 400 }, 'nonzero'],
-    ['size +2%', 'size', { 'size.dist_gz': 1020, 'size.binary.linux': 10200 }, 0],
-    ['size +5%', 'size', { 'size.dist_gz': 1000, 'size.binary.linux': 10500 }, 'nonzero'],
-    ['size 모르는 키', 'size', { 'size.binary.freebsd': 1 }, 'nonzero'],
+    ['tests playwright 0($pending)', 'tests', { 'tests.rust': 300, 'tests.vitest': 400, 'tests.playwright': 3 }, 0],
+    ['tests app −1(#[ignore] 하나)', 'tests', { [`tests.app.${osKey()}`]: 29 }, 'nonzero'],
+    ['size +2%', 'size', { 'size.dist_gz': 1020, [bin]: 10200 }, 0],
+    ['size +5%', 'size', { 'size.dist_gz': 1000, [bin]: 10500 }, 'nonzero'],
+    ['size 이 OS 바이너리 빠짐', 'size', { 'size.dist_gz': 1000 }, 'nonzero'],
+    ['size 모르는 키', 'size', { 'size.dist_gz': 1000, [bin]: 10000, 'size.binary.freebsd': 1 }, 'nonzero'],
   ];
   seeds.forEach(([seed, kind, m, want], i) => expect('ratchet', seed, want, () => check(withMeasure(`rat-${i}`, kind, m), kind)));
   // log-check: 기준 커밋에서 기준을 낮추면 ci/RATCHET_LOG.md에 키를 적은 줄이 있어야 한다

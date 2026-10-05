@@ -51,6 +51,7 @@ const RE = {
   sha: /^[0-9a-f]{40}$/,
   job: /^[A-Za-z0-9 ()._,\/-]{1,80}$/,
   workflow: /^[A-Za-z0-9._-]+\.ya?ml$/,
+  branchRef: /^refs\/heads\/([A-Za-z0-9._][A-Za-z0-9._\/-]{0,200})$/,
 };
 
 export const label = (loop) => `ci-loop:${loop}`;
@@ -196,8 +197,17 @@ export function report(env, gh, { root = ROOT, now = Date.now(), deny } = {}) {
     }
   };
 
-  // 1. master-failure
+  // 1. master-failure. 실행은 커밋 순서대로 끝나지 않는다(느린 옛 커밋이 새 커밋보다 늦게 끝난다).
+  // 이 실행의 커밋이 지금 그 브랜치의 머리일 때만 열고 닫는다. 머리가 아니면 머리 커밋의 실행이 보고한다.
   step('master-failure', () => {
+    const ref = RE.branchRef.exec(env.GITHUB_REF ?? '');
+    if (!ref) throw new Error(`GITHUB_REF가 브랜치가 아니다: ${env.GITHUB_REF}`);
+    if (!RE.sha.test(sha ?? '')) throw new Error(`GITHUB_SHA 형식: ${sha}`);
+    const head = gh(['api', `repos/${repo}/git/ref/heads/${ref[1]}`, '--jq', '.object.sha']).trim();
+    if (head !== sha) {
+      console.log(`master-failure: 이 실행의 커밋 ${sha}는 ${ref[1]}의 머리(${head || '없음'})가 아니다 — 건너뜀(머리 커밋의 실행이 보고한다)`);
+      return;
+    }
     const result = env.CI_OK_RESULT;
     const status = result === 'success' ? 'ok' : 'fail';
     let jobs = [];

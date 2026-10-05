@@ -1,9 +1,12 @@
 // node --test scripts/ci/smoke.test.mjs — 마커 판정과 번들 수집 표(docs/design/cicd.md §6)
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { test } from 'node:test';
 
 import { pick } from './bundle.mjs';
-import { bundleSpec, checkMarker, msiInstallDir } from './smoke.mjs';
+import { ROOT } from './gates.mjs';
+import { bundleSpec, checkMarker, INSTALL_STEPS, installBudgetMs, msiInstallDir } from './smoke.mjs';
 
 test('마커: 정확히 {version, ready:true}', () => {
   assert.equal(checkMarker('{"version":"0.1.0","ready":true}\n', '0.1.0').ok, true);
@@ -51,4 +54,27 @@ test('msiInstallDir: 설치 로그의 마지막 INSTALLDIR', () => {
   const log = 'MSI (s) x\r\nProperty(S): INSTALLDIR = C:\\A\\\r\nProperty(S): INSTALLDIR = C:\\Users\\u\\AppData\\Local\\앱\\\r\nProperty(S): X = 1\r\n';
   assert.equal(msiInstallDir(log), 'C:\\Users\\u\\AppData\\Local\\앱');
   assert.equal(msiInstallDir('nothing'), null);
+});
+
+// ci.yml에서 작업 하나의 본문(두 칸 들여쓴 작업 키부터 다음 작업 키 전까지)
+function jobBody(yml, id) {
+  const lines = yml.split('\n');
+  const at = lines.findIndex((l) => l === `  ${id}:`);
+  assert.ok(at >= 0, `ci.yml에 작업 ${id}가 없다`);
+  const end = lines.findIndex((l, i) => i > at && /^ {2}[A-Za-z0-9_-]+:\s*$/.test(l));
+  return lines.slice(at, end < 0 ? undefined : end).join('\n');
+}
+
+test('설치 스모크 최악 시간 < CI 시간 제한(안쪽 명령 제한이 먼저 걸려 로그가 남는다)', () => {
+  const yml = readFileSync(join(ROOT, '.github/workflows/ci.yml'), 'utf8');
+  // linux: smoke-install (linux) 작업 전체 시간 제한
+  const linuxJob = Number(/^ {4}timeout-minutes: (\d+)$/m.exec(jobBody(yml, 'smoke-install-linux'))[1]);
+  // darwin·windows: bundle 작업의 smoke-install 단계 시간 제한
+  const step = /- name: smoke-install\n(?: {8}.*\n)*? {8}timeout-minutes: (\d+)/.exec(jobBody(yml, 'bundle'));
+  assert.ok(step, 'bundle 작업의 smoke-install 단계에 timeout-minutes가 없다');
+  const stepMin = Number(step[1]);
+  const margin = 60_000; // 준비·출력 여유
+  assert.ok(installBudgetMs('linux') + margin <= linuxJob * 60_000, `linux ${installBudgetMs('linux')}ms vs ${linuxJob}분`);
+  for (const os of ['darwin', 'windows']) assert.ok(installBudgetMs(os) + margin <= stepMin * 60_000, `${os} ${installBudgetMs(os)}ms vs ${stepMin}분`);
+  assert.deepEqual(Object.keys(INSTALL_STEPS).sort(), Object.keys(bundleSpec()).filter((k) => !k.startsWith('$')).sort());
 });

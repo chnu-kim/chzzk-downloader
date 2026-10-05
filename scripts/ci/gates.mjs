@@ -224,7 +224,7 @@ export const GATES = {
     ],
   },
   'test-count': {
-    desc: 'cargo test 목록 수 + vitest 테스트 수 ≥ ci/ratchet.json tests',
+    desc: 'cargo test 목록 수(#[ignore] 제외) + vitest 통과 수(skip·todo 제외) ≥ ci/ratchet.json tests',
     needs: ['cargo', 'cargo-llvm-cov', 'pnpm'],
     steps: [
       { cmd: ['pnpm', 'install', '--frozen-lockfile'], cwd: 'app' },
@@ -232,9 +232,17 @@ export const GATES = {
       { cmd: ['node', S('ratchet.mjs'), 'check', 'tests'] },
     ],
   },
+  'test-count-app': {
+    desc: 'chzzk-app 테스트 목록 수(#[ignore] 제외) ≥ ci/ratchet.json tests.app.<os>. tauri gate 뒤(그 테스트 빌드를 쓴다)',
+    needs: ['cargo'],
+    steps: [
+      { cmd: ['node', S('measure.mjs'), 'tests-app'] },
+      { cmd: ['node', S('ratchet.mjs'), 'check', 'tests'] },
+    ],
+  },
   'ratchet-log': {
-    desc: 'ci/ratchet.json 기준을 느슨하게 했으면 ci/RATCHET_LOG.md에 그 키를 적은 줄이 더해졌는지(env RATCHET_BASE)',
-    steps: [{ cmd: ['node', S('ratchet.mjs'), 'log-check'] }],
+    desc: 'ci/ratchet.json 모양(0은 $pending만) + 기준을 느슨하게 했으면 ci/RATCHET_LOG.md에 그 키를 적은 줄이 더해졌는지(env RATCHET_BASE)',
+    steps: [{ cmd: ['node', S('ratchet.mjs'), 'lint'] }, { cmd: ['node', S('ratchet.mjs'), 'log-check'] }],
   },
 };
 

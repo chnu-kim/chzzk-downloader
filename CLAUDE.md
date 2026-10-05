@@ -22,10 +22,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```bash
 cargo fmt --all                                         # 포맷 적용
 
-# 검증 게이트: 커밋 전에 셋 다 통과해야 한다(.github/workflows/core.yml과 같은 명령)
+# 검증 게이트: 커밋 전에 건드린 쪽을 모두 통과해야 한다
 cargo fmt --all --check
-cargo clippy -p chzzk-core --all-targets --locked -- -D warnings
-cargo test -p chzzk-core --locked
+cargo clippy --workspace --all-targets --locked -- -D warnings   # core·shell·app(chzzk-app)
+cargo test --workspace --locked
+(cd app && pnpm install --frozen-lockfile && pnpm check && pnpm test)   # app/을 건드렸을 때
+
+# CI와 같은 패키지 단위 명령(.github/workflows/core.yml·app.yml)
+cargo clippy -p chzzk-core --all-targets --locked -- -D warnings && cargo test -p chzzk-core --locked
+cargo clippy -p chzzk-shell --all-targets --locked -- -D warnings && cargo test -p chzzk-shell --locked
+UPDATE_BINDINGS=1 cargo test -p chzzk-shell --test bindings   # DTO를 바꾼 뒤 app/src/lib/bindings 다시 만들기
 
 cargo test -p chzzk-core --test segmented <이름>      # 통합 테스트 하나
 cargo test -p chzzk-core --lib naming::                # 단위 테스트 모듈 하나
@@ -37,6 +43,7 @@ CHZZK_LIVE_HLS=<빠른 다시보기 no> CHZZK_LIVE_DASH=<일반 VOD no> CHZZK_LI
   cargo test -p chzzk-core --test live -- --ignored --nocapture
 ```
 
+- `chzzk-app`(app/src-tauri)은 `app/dist` 없이도 `cargo` 직접 실행으로 컴파일된다(app.md 구현 중 변경 6). 다만 Linux에서는 webkit 개발 패키지가 있어야 하므로 CI의 `shell` 작업은 `-p chzzk-shell`만 돈다. 앱 빌드(`pnpm tauri build`)만 `pnpm build`가 먼저 필요하다.
 - 일반 테스트는 모두 오프라인이다(127.0.0.1 mock). 실서버는 `#[ignore]` 테스트와 `examples/dl.rs`로만 접속한다.
 - `live_hls_partial`은 최저 화질로 4 MiB 넘게 받을 수 있는 빠른 다시보기를 골라야 한다(그 전에 끝나면 실패). `live_dash_partial`은 짧은 VOD면 끝까지 받고 완성 파일을 검사한다.
 

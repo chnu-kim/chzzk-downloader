@@ -18,7 +18,8 @@
 - 완료: Phase 2 §15-7 `DownloadManager` 큐(설정한 동시 작업 수, FIFO, 이벤트 순서, sink, 구독 스냅샷, 중복 경로). 변경은 app.md "구현 중 변경" 28~29
 - 완료: Phase 2 §15-8 매니저 제어(pause/resume/remove/quit/restart, `check_output`, `partial_bytes`, 재시작 후 자동 이어받기). 변경은 app.md "구현 중 변경" 30~31
 - 완료: Phase 2 §15-9 `SettingsService`(기본 폴더 폴백, 쿠키 토글 클라이언트 교체, 첫 실행 legacy 후보 1회, 동시 작업 수 반영, 비밀 누출 테스트). 변경은 app.md "구현 중 변경" 34
-- 다음: Phase 2 §15-10 `app.yml`의 `shell` 작업
+- 완료: Phase 2 §15-10 `app.yml`의 `shell` 작업(3 OS fmt·clippy·test, actionlint 통과, 3 OS 녹색은 푸시 뒤 확인)과 CLAUDE.md 게이트. 변경은 app.md "구현 중 변경" 35
+- 다음: PR A(`crates/shell`, §15-1~10) 3 OS CI 녹색 확인 → Phase 2 §15-11 command 배선
 
 ## 확정된 결정 (2026-10-05, 사용자 인터뷰)
 
@@ -81,7 +82,7 @@
 - [x] §15-5~6 `JobStore`(jobs.json) + 시작 때 reconcile
 - [x] §15-7~8 `DownloadManager`: 큐(동시 작업 수 설정 1~3)·sink·중복 → pause/resume/remove/quit/restart, `check_output`, `partial_bytes`, 재시작 후 자동 이어받기
 - [x] §15-9 `SettingsService`: 경로 폴백, 쿠키 토글 클라이언트 교체, 첫 실행 legacy 후보, 비밀 누출 테스트
-- [ ] §15-10 `app.yml`의 `shell` 작업 3 OS 녹색, CLAUDE.md 게이트 갱신
+- [x] §15-10 `app.yml`의 `shell` 작업, CLAUDE.md 게이트 갱신 (푸시 전이라 3 OS 녹색은 PR A에서 확인)
 - [ ] §15-11 command 배선: commands·ChannelSink·setup·AppManifest·capabilities·CSP, 창 닫기 이벤트
 - [ ] §15-12~13 프런트 기반(`api.ts`, `applyEvent`, copy deck, `errorCopy`, format golden) + UI 기본 요소
 - [ ] §15-14 받기 화면: UrlBar → ResolveCard(화질·폴더·파일 이름·충돌 안내) → enqueue

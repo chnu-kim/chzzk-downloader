@@ -1,0 +1,64 @@
+name: app
+
+# 앱 셸(crates/shell) 검사. webkit·프런트 빌드 없이 3 OS에서 돈다(docs/design/app.md §14).
+# frontend·tauri 작업은 §15-18에서 더한다.
+on:
+  push:
+    branches: [master]
+    paths:
+      - "app/**"
+      - "crates/**"
+      - "testdata/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".cargo/**"
+      - ".github/workflows/app.yml"
+  pull_request:
+    paths:
+      - "app/**"
+      - "crates/**"
+      - "testdata/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".cargo/**"
+      - ".github/workflows/app.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: app-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  # reqwest(rustls) → aws-lc-sys가 Windows에서 nasm 없이 빌드되도록 prebuilt 오브젝트를 쓴다(core.yml과 같다).
+  AWS_LC_SYS_PREBUILT_NASM: "1"
+
+jobs:
+  shell:
+    name: shell (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      # Windows 러너가 fixture·bindings를 CRLF로 바꾸면 바이트 비교가 깨진다
+      - name: Disable autocrlf
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+      - name: fmt
+        run: cargo fmt --all --check
+      - name: clippy
+        run: cargo clippy -p chzzk-shell --all-targets --locked -- -D warnings
+      # tests/bindings.rs가 app/src/lib/bindings가 최신인지도 검사한다(구현 중 변경 14)
+      - name: test
+        run: cargo test -p chzzk-shell --locked

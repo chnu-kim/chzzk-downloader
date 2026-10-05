@@ -11,7 +11,8 @@
 - 완료: Phase 2 §15-1 골격(`app/` Vite+Svelte 5, `app/src-tauri`, 빈 `crates/shell`, identifier `io.github.chnu-kim.chzzk-downloader`). 확인 항목은 app.md "구현 중 변경" 1~13
 - 완료: Phase 2 §15-2 `crates/shell` 오류 DTO(`AppError`, `ErrorKind` 20종 매핑)와 ts-rs bindings 생성·최신 검사. 변경은 app.md "구현 중 변경" 14~18
 - 완료: Phase 2 §15-3 나머지 DTO(`ResolvedDto`·`OutputCheck`·`EnqueueRequest`·`JobDto`·`ProgressDto`·`JobEvent`·`SettingsDto`·`AppInfo`)와 JSON 스냅샷. 변경은 app.md "구현 중 변경" 19~23
-- 다음: Phase 2 §15-4 `Backend` trait + 가짜 Backend
+- 완료: Phase 2 §15-4 `Backend` trait + 대본형 가짜 Backend, Send 컴파일 검사. 변경은 app.md "구현 중 변경" 24
+- 다음: Phase 2 §15-5 `JobStore`(jobs.json)
 
 ## 확정된 결정 (2026-10-05, 사용자 인터뷰)
 
@@ -70,7 +71,7 @@
 - [x] 설계 판정 (`docs/design/app.md`): 순수 Vite+Svelte 5, `crates/shell`(Tauri 비의존) + `app/src-tauri`, 구독 하나 Channel, jobs.json, 상태 8개
 - [x] §15-1 골격: `app/`(Vite+Svelte) + `app/src-tauri` + workspace 멤버. 확인 항목(frontendDist 없이 컴파일, tokio Handle, TLS provider, 권한 식별자, log 경로, CSP)을 app.md "구현 중 변경"에 기록
 - [x] §15-2~3 `crates/shell` 오류 DTO(`AppError`, `ErrorKind` 전체 매핑)와 나머지 DTO, ts-rs bindings
-- [ ] §15-4 `Backend` trait + 가짜 Backend, Send 컴파일 검사
+- [x] §15-4 `Backend` trait + 가짜 Backend, Send 컴파일 검사
 - [ ] §15-5~6 `JobStore`(jobs.json) + 시작 때 reconcile
 - [ ] §15-7~8 `DownloadManager`: 큐(동시 2)·sink·중복 → pause/resume/remove/quit/restart, `check_output`, `partial_bytes`
 - [ ] §15-9 `SettingsService`: 경로 폴백, 쿠키 토글 클라이언트 교체, 첫 실행 legacy 후보, 비밀 누출 테스트

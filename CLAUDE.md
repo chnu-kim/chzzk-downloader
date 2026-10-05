@@ -18,7 +18,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `app/` | Vite + Svelte 5 + TS 프런트(`pnpm`, `packageManager`로 버전 고정). `src/lib/api.ts`(command 래퍼), `src/lib/bindings/`(생성물, 손대지 않는다), `src/lib/copy/`(copy deck), `src/lib/components/`·`views/`, vitest는 `*.test.ts` |
 | `app/src-tauri/` | **`chzzk-app`**(lib `chzzk_app_lib`, bin `chzzk-app`). Tauri Builder·플러그인·command 배선·`ChannelSink`·로그·창 닫기 가드, `capabilities/default.json`, `tests/ipc.rs`(mock 런타임 IPC) |
 | `scripts/ci/run.mjs` | **훅과 CI의 단일 진입점** `node scripts/ci/run.mjs <gate>`. gate 표는 `gates.mjs`, 도구 버전은 `tools.json`, 설계는 `docs/design/cicd.md`(끝의 "구현 중 변경"이 본문보다 우선) |
-| `.github/workflows/ci.yml` | 경로 필터 없는 단일 CI: `changes`(문서만 바뀌면 무거운 작업 건너뜀) · `lint` · `scripts (windows)` · `supply` · `rust`(3 OS) · `frontend` · `tauri`(3 OS, debug 빌드 + `smoke-bin`) · `coverage`(커버리지·테스트 수 ratchet) · push·dispatch에서만 `bundle (linux)`(ubuntu 22.04 컨테이너)·`smoke-install (linux)`·`bundle (macOS·Windows)` · 집계 `ci-ok`(필수 체크는 이것 하나) · `report`(master 실패 이슈 열기·닫기, 예약 워크플로 keep-alive). 모든 `uses:`는 커밋 SHA 고정(`scripts/ci/pin-actions.mjs`) |
+| `.github/workflows/ci.yml` | 경로 필터 없는 단일 CI: `changes`(문서만 바뀌면 무거운 작업 건너뜀) · `lint` · `scripts (windows)` · `supply` · `rust`(3 OS) · `frontend` · `tauri`(3 OS, debug 빌드 + `smoke-bin`) · `coverage`(커버리지·테스트 수 ratchet) · `e2e-web`(Playwright) · push·dispatch에서만 `e2e-native (linux)`(두 E2E는 D14 관찰 중이라 `ci-ok` 밖) · `bundle (linux)`(ubuntu 22.04 컨테이너)·`smoke-install (linux)`·`bundle (macOS·Windows)` · 집계 `ci-ok`(필수 체크는 이것 하나) · `report`(master 실패 이슈 열기·닫기, 예약 워크플로 keep-alive). 모든 `uses:`는 커밋 SHA 고정(`scripts/ci/pin-actions.mjs`) |
+| `.github/workflows/nightly.yml` | 예약 고리: 네이티브 E2E Linux(매일)·Windows(매주), 작업마다 `ci-loop:<작업 id>` 이슈(`run.mjs report-loop`). G5가 drift 등을 더한다 |
 | `ci/ratchet.json`, `ci/RATCHET_LOG.md`, `release/expected-artifacts.json` | 커버리지·테스트 수·크기 ratchet 기준(내려가면 CI 실패, 느슨하게 하면 로그에 키와 이유), OS별 번들 기대 집합 |
 | `rust-toolchain.toml`, `deny.toml`, `_typos.toml`, `zizmor.yml`, `.github/dependabot.yml` | 툴체인 고정(1.96.1, MSRV는 `rust-version` 1.90), cargo-deny, typos, zizmor, Dependabot 설정 |
 
@@ -74,7 +75,7 @@ CHZZK_LIVE_HLS=<빠른 다시보기 no> CHZZK_LIVE_DASH=<일반 VOD no> CHZZK_LI
 - CI 워크플로의 `run:`은 setup(autocrlf·rustup·apt)을 빼면 `node scripts/ci/run.mjs …`만 부른다(`parity` gate가 강제). 검사를 더하거나 바꿀 때는 `gates.mjs`를 고치고, 새 도구는 `tools.json`에 버전을 적는다. 워크플로에 `uses:`를 더하면 `node scripts/ci/pin-actions.mjs --write`로 SHA를 고정한다.
 - 앱의 macOS 설정·데이터는 `~/Library/Application Support/io.github.chnu-kim.chzzk-downloader`, 로그는 `~/Library/Logs/io.github.chnu-kim.chzzk-downloader`다.
 - 일반 테스트는 모두 오프라인이다(127.0.0.1 mock). 실서버는 `#[ignore]` 테스트와 `examples/dl.rs`로만 접속한다.
-- E2E는 두 층이다(cicd.md §6, 구현 중 변경 36~): `app/e2e/`의 Playwright(PR, 가짜 백엔드 `app/e2e/mock/backend.ts`)와 네이티브(`scripts/ci/e2e-native.mjs`, master·nightly Linux, weekly Windows — Windows는 아직 실패, cicd.md 구현 중 변경 44). command·DTO·화면 문구를 바꾸면 가짜 백엔드와 spec도 같이 고친다. 두 작업은 D14 관찰 중이라 `ci-ok`에 없고(`gates.mjs` `OBSERVED_JOBS`) master 실패는 `master-failure` 이슈로 온다. `--features e2e` 코드는 `app/src-tauri/src/e2e.rs`에만 둔다(`release-hygiene`·`hygiene-seed`가 확인한다).
+- E2E는 두 층이다(cicd.md §6, 구현 중 변경 36~): `app/e2e/`의 Playwright(PR, 가짜 백엔드 `app/e2e/mock/backend.ts`)와 네이티브(`scripts/ci/e2e-native.mjs`, master·nightly Linux, weekly Windows). 예약 실패는 작업마다 `ci-loop:e2e-native-<os>` 이슈. command·DTO·화면 문구를 바꾸면 가짜 백엔드와 spec도 같이 고친다. 두 작업은 D14 관찰 중이라 `ci-ok`에 없고(`gates.mjs` `OBSERVED_JOBS`) master 실패는 `master-failure` 이슈로 온다. `--features e2e` 코드는 `app/src-tauri/src/e2e.rs`에만 둔다(`release-hygiene`·`hygiene-seed`가 확인한다).
 - `live_hls_partial`은 최저 화질로 4 MiB 넘게 받을 수 있는 빠른 다시보기를 골라야 한다(그 전에 끝나면 실패). `live_dash_partial`은 짧은 VOD면 끝까지 받고 완성 파일을 검사한다.
 
 ## 작업 규칙

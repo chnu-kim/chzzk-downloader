@@ -1,4 +1,5 @@
 import { svelte } from '@sveltejs/vite-plugin-svelte';
+import { svelteTesting } from '@testing-library/svelte/vite';
 import { defineConfig } from 'vitest/config';
 
 // Tauri dev 서버 규약: 고정 포트 1420, 포트가 차 있으면 실패, Rust 오류를 지우지 않는다.
@@ -6,7 +7,8 @@ import { defineConfig } from 'vitest/config';
 const host = process.env.TAURI_DEV_HOST;
 
 export default defineConfig({
-  plugins: [svelte()],
+  // svelteTesting: 테스트에서 Svelte 브라우저 빌드를 쓰고 매 테스트 뒤 DOM을 치운다(VITEST일 때만 동작).
+  plugins: [svelte(), svelteTesting()],
   clearScreen: false,
   // TAURI_ 전체가 아니라 TAURI_ENV_만 노출한다(TAURI_SIGNING_PRIVATE_KEY 등이 번들에 들어가지 않게).
   envPrefix: ['VITE_', 'TAURI_ENV_'],

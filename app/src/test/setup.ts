@@ -1,4 +1,5 @@
 // vitest 공통 준비(app.md §13).
+import '@testing-library/jest-dom/vitest';
 import { clearMocks } from '@tauri-apps/api/mocks';
 import { afterEach } from 'vitest';
 

@@ -44,3 +44,26 @@ textarea,
 .tnum {
   font-variant-numeric: tabular-nums;
 }
+
+/* 화면에는 없고 스크린 리더만 읽는 글(LiveAnnouncer, 숨긴 라벨) */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* reduced-motion이면 animation도 즉시 끝낸다(transition은 --dur-* 0ms로 꺼진다) */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}

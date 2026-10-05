@@ -49,6 +49,104 @@ pub fn close_decision(quitting: bool, running: usize, has_main: bool) -> CloseDe
     }
 }
 
+/// macOS 앱 메뉴의 종료 항목 id(구현 중 변경 52).
+pub const QUIT_MENU_ID: &str = "quit";
+
+/// 메뉴·Cmd+Q의 종료 요청. `guard_close`를 거쳐 막히지 않으면 `app.exit(0)`(`RunEvent::Exit`가 flush한다).
+/// 막혔으면(D1을 띄웠거나 `quit` 중) `false`.
+///
+/// Tauri 기본 macOS 메뉴의 Quit(=Cmd+Q)은 muda가 `NSApp terminate:`로 보내고, tao 0.37은
+/// `applicationShouldTerminate:`를 두지 않아 `ExitRequested` 없이 `applicationWillTerminate:` → `LoopDestroyed`
+/// → `RunEvent::Exit`로 곧장 끝난다(실측: 받는 중 메뉴 Quit에 D1 없이 종료, 작업은 `running`으로 남음). 그래서
+/// 기본 메뉴 대신 같은 모양의 메뉴에 보통 항목으로 Quit을 두고 여기로 보낸다.
+pub fn request_quit<R: Runtime>(app: &AppHandle<R>) -> bool {
+    if guard_close(app) {
+        return false;
+    }
+    app.exit(0);
+    true
+}
+
+/// Tauri 기본 메뉴(`Menu::default`)와 같은 구성에서 Quit만 `QUIT_MENU_ID` 보통 항목으로 바꾼 macOS 메뉴.
+/// Edit 메뉴의 predefined 항목은 WKWebView의 붙여넣기·전체 선택이 responder chain으로 받으므로 그대로 둔다.
+#[cfg(target_os = "macos")]
+fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<tauri::menu::Menu<R>> {
+    use tauri::menu::{AboutMetadata, Menu, MenuItem, PredefinedMenuItem, Submenu};
+    let pkg = app.package_info();
+    let name = pkg.name.clone();
+    let about = AboutMetadata {
+        name: Some(name.clone()),
+        version: Some(pkg.version.to_string()),
+        copyright: app.config().bundle.copyright.clone(),
+        authors: app.config().bundle.publisher.clone().map(|p| vec![p]),
+        ..Default::default()
+    };
+    Menu::with_items(
+        app,
+        &[
+            &Submenu::with_items(
+                app,
+                &name,
+                true,
+                &[
+                    &PredefinedMenuItem::about(app, None, Some(about))?,
+                    &PredefinedMenuItem::separator(app)?,
+                    &PredefinedMenuItem::services(app, None)?,
+                    &PredefinedMenuItem::separator(app)?,
+                    &PredefinedMenuItem::hide(app, None)?,
+                    &PredefinedMenuItem::hide_others(app, None)?,
+                    &PredefinedMenuItem::show_all(app, None)?,
+                    &PredefinedMenuItem::separator(app)?,
+                    &MenuItem::with_id(
+                        app,
+                        QUIT_MENU_ID,
+                        format!("Quit {name}"),
+                        true,
+                        Some("CmdOrCtrl+Q"),
+                    )?,
+                ],
+            )?,
+            &Submenu::with_items(
+                app,
+                "File",
+                true,
+                &[&PredefinedMenuItem::close_window(app, None)?],
+            )?,
+            &Submenu::with_items(
+                app,
+                "Edit",
+                true,
+                &[
+                    &PredefinedMenuItem::undo(app, None)?,
+                    &PredefinedMenuItem::redo(app, None)?,
+                    &PredefinedMenuItem::separator(app)?,
+                    &PredefinedMenuItem::cut(app, None)?,
+                    &PredefinedMenuItem::copy(app, None)?,
+                    &PredefinedMenuItem::paste(app, None)?,
+                    &PredefinedMenuItem::select_all(app, None)?,
+                ],
+            )?,
+            &Submenu::with_items(
+                app,
+                "View",
+                true,
+                &[&PredefinedMenuItem::fullscreen(app, None)?],
+            )?,
+            &Submenu::with_items(
+                app,
+                "Window",
+                true,
+                &[
+                    &PredefinedMenuItem::minimize(app, None)?,
+                    &PredefinedMenuItem::maximize(app, None)?,
+                    &PredefinedMenuItem::separator(app)?,
+                    &PredefinedMenuItem::close_window(app, None)?,
+                ],
+            )?,
+        ],
+    )
+}
+
 /// 셸이 코어 태스크를 띄울 tokio 런타임 핸들. Tauri가 만든 런타임을 그대로 쓴다.
 pub fn tokio_handle() -> tokio::runtime::Handle {
     tauri::async_runtime::handle().inner().clone()
@@ -300,6 +398,15 @@ pub fn run() {
     let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
         focus_main(app);
     }));
+
+    // macOS: 기본 메뉴의 Quit은 `terminate:`라 닫기 가드를 지나치지 않는다(구현 중 변경 52). 같은 메뉴에 보통
+    // 항목으로 두고 `request_quit`으로 보낸다. Dock의 "종료"·AppleScript `quit`은 여전히 `terminate:`다.
+    #[cfg(target_os = "macos")]
+    let builder = builder.menu(build_menu).on_menu_event(|app, e| {
+        if e.id().0 == QUIT_MENU_ID {
+            request_quit(app);
+        }
+    });
 
     let app = builder
         // 아래 플러그인은 Rust에서만 부른다. capabilities에 플러그인 권한을 주지 않는다.

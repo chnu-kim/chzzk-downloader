@@ -29,6 +29,7 @@
 - 완료: Phase 2 §15-17 창 닫기 D1 ↔ `quit`, 완료·실패 OS 알림, 시작 실패 안내, 접근성 점검(뷰 전환 포커스, 이름 없는 컨트롤 검사). 3 OS 수동 스모크는 체크리스트만(app.md "구현 중 변경" 47 표). 변경은 47
 - 완료: Phase 2 §15-18 `app.yml`의 `frontend`(ubuntu check·test·build)·`tauri`(3 OS clippy·test, PR debug no-bundle, master·수동 실행 서명 없는 번들 7일) 작업. actionlint, Linux(ubuntu 22.04 컨테이너) `chzzk-app` clippy·test, macOS `pnpm tauri build --debug --no-bundle` 실행 확인. GitHub 3 OS 녹색은 푸시 뒤. 변경은 app.md "구현 중 변경" 49
 - 완료: Phase 2 §15-19 문서(CLAUDE.md 레이아웃·명령·규칙, app.md "구현 중 변경" 읽는 법 표). 변경은 50
+- 완료: Phase 2 최종 리뷰(macOS 실행): macOS 메뉴 Quit·Cmd+Q가 D1을 지나치던 것을 고침(app.md 구현 중 변경 52). Dock 종료·AppleScript quit은 여전히 가드 밖(데이터는 안전)
 - 다음: PR A(`crates/shell`, §15-1~10)·PR B(앱, §15-11~19) 3 OS CI 녹색 확인(첫 master 실행에서 Windows `tauri`·Linux 번들), §15-17 수동 스모크(사람이 3 OS에서, app.md 표의 미확인 항목), 그 뒤 Phase 3
 
 ## 확정된 결정 (2026-10-05, 사용자 인터뷰)
@@ -99,7 +100,7 @@
 - [x] §15-15 작업 목록 화면: JobsStore 재구독, 상태별 버튼, B1 배너, D2 (app.md 구현 중 변경 45)
 - [x] §15-16 설정 화면: 폴더, 동시 다운로드 수, 연결 수, 자동 이어받기, 쿠키(값 미복원), 이전 버전 가져오기(D3), 정보, B2 (app.md 구현 중 변경 46)
 - [x] §15-17 창 닫기(D1 ↔ `quit`), `request_user_attention`·완료/실패 OS 알림, 시작 실패 안내, 접근성 점검 (app.md 구현 중 변경 47)
-- [ ] §15-17 남은 항목: 3 OS 수동 스모크(§15-14에서 넘어온 웹뷰 CSP·실제 resolve·텍스트 드롭·창 포커스·입력칸 밖 붙여넣기 포함, 체크리스트와 현재 결과는 app.md 구현 중 변경 47 표)
+- [ ] §15-17 남은 항목: 3 OS 수동 스모크(macOS는 최종 리뷰에서 클립 받기·일시정지·D1·B1·클립보드 제안·설정 화면까지 확인, app.md 구현 중 변경 52와 47 표. 남은 것: 빠른 다시보기·일반 VOD 받기, 텍스트 드롭·붙여넣기, OS 알림, 720px, Windows·Linux 전부)
 - [x] §15-18 `app.yml`의 `frontend`·`tauri` 작업 작성 (app.md 구현 중 변경 49, Linux 패키지 이름·데이터 폴더 잠금은 51)
 - [ ] §15-18 남은 항목: GitHub에서 3 OS 녹색 + 번들(Windows MSI ko-KR, Linux deb·rpm·AppImage). PR B 또는 `workflow_dispatch`로 한 번 돌린 뒤 체크
 - [x] §15-19 문서: ROADMAP·CLAUDE.md·app.md "구현 중 변경" 정리 (구현 중 변경 50)

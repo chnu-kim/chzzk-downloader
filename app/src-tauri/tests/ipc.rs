@@ -9,7 +9,9 @@ use std::time::{Duration, Instant};
 
 use chzzk_app_lib::commands::begin_quit;
 use chzzk_app_lib::sink::{ChannelSink, Notice, Notifier};
-use chzzk_app_lib::{COMMANDS, Quitting, focus_main, guard_close, handler, on_run_event};
+use chzzk_app_lib::{
+    COMMANDS, Quitting, focus_main, guard_close, handler, on_run_event, request_quit,
+};
 use chzzk_shell::services::AppPaths;
 use chzzk_shell::{App, EventSink};
 use serde_json::{Value, json};
@@ -546,6 +548,25 @@ fn close_is_guarded_while_a_job_runs() {
     let asked = close_requests(h);
     assert!(guard_close(h));
     assert_eq!(*asked.lock().unwrap(), vec![json!({ "running": 1 })]);
+    stop_all(h);
+}
+
+#[test]
+fn quit_menu_is_guarded_while_a_job_runs() {
+    // macOS 메뉴·Cmd+Q의 종료는 `request_quit`으로 온다(구현 중 변경 52). 받는 중이면 D1을 띄우고 끝내지 않는다.
+    // (끝내는 쪽 `app.exit`은 mock 런타임이 패닉하므로 막히는 가지만 본다. 작업이 없으면 `close_decision`이
+    // `Allow`인 것은 lib.rs 단위 테스트가 본다.)
+    let server = hanging_server();
+    let f = fixture_on(&server);
+    start_hanging_job(&f);
+    let h = f.app.handle();
+    let asked = close_requests(h);
+    assert!(!request_quit(h));
+    assert_eq!(*asked.lock().unwrap(), vec![json!({ "running": 1 })]);
+    // 종료 중에도 끝내지 않는다(D1 없이 조용히).
+    h.state::<Quitting>().0.store(true, Ordering::SeqCst);
+    assert!(!request_quit(h));
+    assert_eq!(asked.lock().unwrap().len(), 1);
     stop_all(h);
 }
 

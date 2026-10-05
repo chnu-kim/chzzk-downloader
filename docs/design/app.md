@@ -1128,6 +1128,7 @@ jobs:
 | 드래그 앤 드롭·`dragDropEnabled: false` (§11) | 5, 44(가) |
 | 상태별 버튼 (§8.5 그림) | 45 (ui-visual §6.5) |
 | 완료 알림 (§6.1·§16) | 37, 47 (실패에도 OS 알림) |
+| macOS Cmd+Q·메뉴 Quit (§6.1 D1, 37 "창 닫기와 앱 종료") | 52 (기본 메뉴의 Quit은 가드를 지나친다 → 보통 메뉴 항목 + `request_quit`) |
 | CI 작업 (§14) | 35 (`shell`), 49 (`frontend`·`tauri`), 51(가)(Linux 패키지 이름) |
 | 다른 프로세스 막기 (§6.1 "중복 방지 세 겹"의 (2)) | 51(다) (single-instance + 데이터 폴더 `app.lock`) |
 | 컴포넌트 나눔 (§10) | 48 "하지 않은 것" (3) |
@@ -1301,23 +1302,27 @@ jobs:
     - (다) **데이터 폴더 잠금(`<app_data_dir>/app.lock`).** macOS의 `tauri-plugin-single-instance` 2.5.2는 소켓 확인(`NotFound`)과 생성 사이에 경합이 있어, 거의 동시에(debug 빌드에서 약 2초 안) 뜬 두 실행이 둘 다 첫 실행이 되고(뒤의 것이 앞의 소켓을 지운다) 각자 매니저로 같은 `jobs.json`을 덮어써 한쪽 작업이 사라졌다(리뷰어 실측: 두 "앱 시작" 로그 3ms 차, 둘 다 살아 있음). setup이 `App::open` 전에 `acquire_instance_lock`으로 `File::try_lock`(코어 `.part`와 같은 방식)을 쥐고 프로세스 끝까지 `manage`해 둔다. 이미 잡혀 있으면 main 창을 숨기고 경고 로그를 남긴 뒤 `exit(0)`한다(시작 실패 창은 띄우지 않는다. 다른 실행이 멀쩡히 돈다). 잠금 파일을 열지 못하면 잠금 없이 계속한다(폴더 문제는 `App::open`이 시작 실패 창으로 알린다). 그래서 §6.1 "중복 방지 세 겹"의 (2)는 single-instance(창 포커스 넘기기) + `app.lock`(상태 단일 소유)이다. 남는 것: 경합에서 진 쪽이 살아 있는 소켓의 주인이었다면 이긴 쪽은 소켓이 없어, 이후 명령줄 실행(`open -n` 등)은 포커스를 넘기지 못하고 잠금에 막혀 조용히 끝난다. 데이터는 안전하고, Finder·Dock 실행은 macOS가 이미 떠 있는 앱을 앞으로 가져오므로 받아들인다. `lib.rs` 단위 테스트가 두 번째 잠금이 `HeldElsewhere`이고 놓으면 다시 잡히는지 고정한다.
     - (라) **실제 실행(2026-10-05 macOS).** `pnpm tauri build --ci --debug --no-bundle` 성공. 다른 세션이 띄워 둔 debug 앱(부모가 끝난 고아 프로세스)이 돌고 있어 기본 identifier 바이너리는 single-instance로 그 창에 포커스를 넘기고 시작 로그 없이 끝났다(순차 실행 넘기기 확인). 그 프로세스는 건드리지 않고 `--config '{"identifier":"io.github.chnu-kim.chzzk-downloader.smoke"}'`로 소켓·데이터·로그 폴더가 따로인 사본을 만들어 봤다. (1) 혼자 실행: 떠 있고, 시작 로그(기본 폴더 `~/Movies/치지직`)와 데이터 폴더의 `app.lock`·`jobs.json`이 생겼다. (2) 한 줄에서 두 개 실행: 시작 로그 두 줄(10ms 차)로 **둘 다 single-instance를 지났고**(경합 재현), 뒤의 것이 `다른 실행이 데이터 폴더를 쓰는 중이라 이 실행을 끝냄`을 남기고 끝나 하나만 남았다. 확인 뒤 기본 identifier로 다시 빌드했다.
 
+52. **Phase 2 최종 리뷰(macOS 실행): Cmd+Q·메뉴 Quit이 D1을 지나쳤다.** 37의 "macOS Cmd+Q·Dock 종료는 `ExitRequested { code: None }`로 온다"는 틀렸다. Tauri 기본 macOS 메뉴(`Menu::default`)의 Quit(=Cmd+Q)은 muda `PredefinedMenuItem::quit`이고 macOS에서는 `NSApp terminate:` 셀렉터다. tao 0.37.1의 앱 델리게이트는 `applicationShouldTerminate:`를 두지 않고 `applicationWillTerminate:`에서 `AppState::exit()` → `LoopDestroyed` → `RunEvent::Exit`만 보내므로(소스 확인), 받는 중에 메뉴 Quit을 누르면 D1 없이 프로세스가 끝나고 `manager.quit`이 돌지 않아 작업이 `running`으로 남았다(실측: `jobs.json`에 `running`, 다음 실행의 reconcile이 `interrupted`로 바꿈. `RunEvent::Exit`의 flush는 돌아 데이터는 안전했다). 고침: macOS에서만 `Builder::menu`로 기본 메뉴와 같은 구성(앱·File·Edit·View·Window)을 만들되 Quit을 보통 `MenuItem`(id `quit`, "Quit {앱 이름}", `CmdOrCtrl+Q`)으로 두고 `on_menu_event`에서 `request_quit`(= `guard_close` → 막히지 않으면 `app.exit(0)`)을 부른다. Edit 메뉴의 predefined 항목은 WKWebView의 붙여넣기·전체 선택이 responder chain으로 받으므로 그대로 둔다. **남는 것**: Dock의 "종료", AppleScript `quit`, 로그아웃·시스템 종료는 여전히 `terminate:`라 가드를 지나친다(데이터는 flush + reconcile로 안전, D1만 없다). 막으려면 tao 델리게이트 클래스에 objc 런타임으로 `applicationShouldTerminate:`를 덧붙여야 해 후속으로 둔다. 테스트: IPC `quit_menu_is_guarded_while_a_job_runs`(받는 중이면 `close-requested` 한 번·끝내지 않음, `quit` 중이면 조용히 막음). 실제 메뉴 Quit → D1 → [닫기] → `interrupted` 저장 → 종료 → 재시작 B1 → 이어받기 완료까지 GUI로 확인했다(아래 표).
+
 ### 수동 스모크 체크리스트 결과 (§15 17행, 2026-10-05 macOS)
+
+**최종 리뷰 추가 실행(2026-10-05, macOS, 52를 고친 debug 바이너리).** CLI에서 `screencapture`로 창을 찍고 `cliclick`·System Events로 눌러 확인했다(합성 키 입력은 메뉴 가속키(Cmd+A·V·Q)에 닿지 않고 한글 IME가 켜져 있으면 글자가 깨져, 붙여넣기·Cmd+Q 자체는 사람이 확인해야 한다). 확인한 것: 창이 디자인대로 그려짐(다크, 토큰·레이아웃, 런타임 CSP로 깨진 스타일 없음) · 실제 주소 `resolve`(없는 VOD → `notFound` 카드, 잘못된 주소 → `invalidUrl` 카드, 클립 2건 → 카드에 종류 배지·제목·채널·화질 1~2개·폴더·파일 이름) · 창 포커스 때 클립보드 제안(블러 뒤 다시 포커스하면 "복사한 주소가 있어요", 이미 불러온 주소는 다시 제안하지 않음) · 제안 [불러오기] → [다운로드] → 목록 "받는 중"(막대·크기·속도·남은 시간) → 완료 토스트·"완료 · 12.7 MB · 오후 2:12" · 일시정지(95%, "일시정지됨 · 12.4 MB 받음") → 이어받기 → 완료 · 메뉴 Quit(작업 없음) → "앱 종료" 로그 · 메뉴 Quit(받는 중) → D1 → [닫기] → `interrupted` + `.part`·sidecar → 종료 · 재시작 → B1 "지난번에 받다가 멈춘 다운로드가 1개 있어요" → [모두 이어받기] → 완료 · 최근 VOD 2건 · 설정 화면 다섯 섹션(기본 폴더 `~/Movies/치지직`, 동시 2, 연결 4, 자동 이어받기 꺼짐, 고급 접힘, 이전 버전, 버전 0.1.0 (코어 0.1.0)). 번들 없는 debug 바이너리라 메뉴 바 앱 이름은 `chzzk-app`이다(.app 번들에서는 `productName`).
 
 CLI 세션에서는 웹뷰 화면·개발자 도구를 조작할 수 없어 대부분을 실행하지 못했다. 자동 테스트가 같은 판단을 대신 보는 항목은 "대신 본 것"에 적었다. **미확인 항목은 사람이 3 OS에서 돌려야 한다.**
 
 | 항목 | 결과 | 대신 본 것 |
 |---|---|---|
-| 웹뷰 콘솔 런타임 CSP 위반 없음 | 미확인 | `csp.test.ts`(템플릿 `style=`·`{@html}` 없음), `pnpm build` 결과 정적 검사 |
-| 실제 주소로 `resolve` → 빠른 다시보기·일반 VOD·클립 각 1건 받기 | 미확인 | 셸 `tests/secrets.rs`·IPC `channel_sink_delivers_job_events…`(wiremock 끝까지 받기) |
-| 일시정지 → D1 → 재시작 → B1 → 이어받기 → 완료 → 파일 열기·폴더 열기 | 미확인 | 매니저 전이·`quit` 테스트, `jobs.test.ts`·`closeguard.test.ts`·`a11y.test.ts` |
+| 웹뷰 콘솔 런타임 CSP 위반 없음 | **화면으로 확인**(콘솔은 미확인) | `csp.test.ts`(템플릿 `style=`·`{@html}` 없음), `pnpm build` 결과 정적 검사 |
+| 실제 주소로 `resolve` → 빠른 다시보기·일반 VOD·클립 각 1건 받기 | **클립 2건 확인**(빠른 다시보기·일반 VOD는 미확인) | 셸 `tests/secrets.rs`·IPC `channel_sink_delivers_job_events…`(wiremock 끝까지 받기) |
+| 일시정지 → D1 → 재시작 → B1 → 이어받기 → 완료 → 파일 열기·폴더 열기 | **확인**(파일 열기·폴더 열기 버튼은 미확인, 52) | 매니저 전이·`quit` 테스트, `jobs.test.ts`·`closeguard.test.ts`·`a11y.test.ts` |
 | 같은 경로 두 번 추가(`duplicateOutput`), 완성 파일 이름으로 추가(번호 붙이기) | 미확인 | 셸 매니저 테스트, `receive.test.ts` 충돌 세 형태 |
-| D1 `[닫기]` 두 번·3초 대기 중 Cmd+Q(`ExitRequested`로 오는지) | 미확인 | IPC `quit_runs_once_and_blocks_close_silently_meanwhile`, `closeguard.test.ts` |
+| D1 `[닫기]` 두 번·3초 대기 중 Cmd+Q(`ExitRequested`로 오는지) | **메뉴 Quit → D1 확인**(52에서 고침). 두 번 누르기·대기 중 Cmd+Q는 미확인 | IPC `quit_runs_once_and_blocks_close_silently_meanwhile`, `closeguard.test.ts` |
 | 읽을 수 없는 `jobs.json`으로 시작 → 시작 실패 창 | 미확인 | `startup_failure_message` 단위 테스트, Tauri 소스 확인(위) |
 | 쿠키 넣고 켜기·끄기, 옛 폴더 가져오기 | 미확인 | `settings.test.ts`, 셸 `SettingsService` 테스트 |
-| 텍스트 드래그 앤 드롭·창 포커스 클립보드 제안·입력칸 밖 붙여넣기(3 OS 웹뷰가 이벤트를 주는지) | 미확인 | `receive.test.ts`·`shortcuts.test.ts`(jsdom 이벤트) |
+| 텍스트 드래그 앤 드롭·창 포커스 클립보드 제안·입력칸 밖 붙여넣기(3 OS 웹뷰가 이벤트를 주는지) | **macOS 클립보드 제안 확인**(드롭·붙여넣기는 미확인) | `receive.test.ts`·`shortcuts.test.ts`(jsdom 이벤트) |
 | 끌던 요소가 사라진 뒤 바깥 드롭 한 번 놓침(44(가)) | 미확인 | - |
 | 창 포커스가 없을 때 완료·실패 OS 알림과 Dock·작업 표시줄 주의(서명 안 된 debug 빌드) | 미확인 | `sink.rs` 단위 테스트(알릴 일·본문·`should_notify`), IPC 완료·실패 알림 큐 |
-| 창 폭 720 레이아웃, 다크 모드 | 미확인 | `tokens.test.ts`(다크 토큰·대비). 960px 브라우저(mock IPC)에서 작업 메뉴·상태 줄·토스트는 48(가)에서 봤다 |
+| 창 폭 720 레이아웃, 다크 모드 | **다크 모드 확인**(960px). 720은 미확인 | `tokens.test.ts`(다크 토큰·대비). 960px 브라우저(mock IPC)에서 작업 메뉴·상태 줄·토스트는 48(가)에서 봤다 |
 | debug 바이너리 시작·로그 | **확인** | `~/Library/Logs/…/chzzk-downloader.*.log`에 시작 로그, 패닉 없음 |
 | `pnpm tauri build --ci --debug --no-bundle`(넣은 `dist`) 바이너리 시작(§15-18, 49) | **확인**(창 내용은 미확인) | 빌드 성공, `target/debug/chzzk-app`이 떠서 시작 로그(기본 폴더 `~/Movies/치지직`)를 남기고 패닉 없이 돌다 종료 신호로 끝남. 창이 다른 앱 뒤에 떠 화면 캡처로 내용을 보지 못했다 |
 | 거의 동시 두 실행 → 하나만 남음(51(다)) | **확인**(`.smoke` identifier 사본) | `instance_lock_admits_one_holder_and_frees_on_drop` |

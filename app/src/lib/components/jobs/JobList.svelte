@@ -117,9 +117,6 @@
 <section class="list" aria-labelledby="list-title">
   <div class="head">
     <h2 id="list-title" class="list-title" tabindex="-1" bind:this={headingEl}>{t('list.title')}</h2>
-    <Button variant="link" disabled={!jobs.hasFinished} onclick={() => void jobs.clearFinished()}>
-      {t('list.clearFinished')}
-    </Button>
   </div>
 
   {#if jobs.ready && jobs.order.length === 0}

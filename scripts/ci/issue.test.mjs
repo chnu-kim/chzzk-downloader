@@ -8,7 +8,7 @@ import { test } from 'node:test';
 import { readFileSync } from 'node:fs';
 
 import { ROOT } from './gates.mjs';
-import { assertPublishable, body, isStale, label, lastJobSuccess, loopStatuses, marker, masterStatus, NEEDS_LOOPS, refScope, reportLoop, report, scheduledWorkflows, sync, title, validate } from './issue.mjs';
+import { assertPublishable, body, isStale, jobHistory, KIND_NOTES, label, lastJobSuccess, leadingFailures, loopStatuses, marker, masterStatus, NEEDS_LOOPS, refScope, reportLoop, report, scheduledWorkflows, sync, threshold, title, validate } from './issue.mjs';
 import { parseJobs } from './parity.mjs';
 
 const REPO = 'o/r';
@@ -16,7 +16,7 @@ const SHA = 'a'.repeat(40);
 const URL = 'https://github.com/o/r/actions/runs/123';
 
 // 이슈 저장소를 흉내 내는 gh. calls에 인자를 남긴다.
-function fakeGh({ issues = [], jobs = '', workflows = {}, runs = {}, heads = { master: SHA }, runIds = {}, runJobs = {} } = {}) {
+function fakeGh({ issues = [], jobs = '', workflows = {}, runs = {}, heads = { master: SHA }, runIds = {}, runJobs = {}, history = {} } = {}) {
   const calls = [];
   let next = 100;
   const gh = (args, input) => {
@@ -61,6 +61,15 @@ function fakeGh({ issues = [], jobs = '', workflows = {}, runs = {}, heads = { m
       }
       return JSON.stringify(workflows[f]);
     }
+    // jobHistory: pull_request 실행을 뺀 완료 실행 id, 그 실행에서 이름이 같은 작업의 conclusion
+    if (a === 'api' && /\/runs\?/.test(b) && args.includes('.workflow_runs[] | select(.event != "pull_request") | .id')) {
+      assert.match(b, /status=completed/);
+      return (history.ids ?? []).join('\n') + '\n';
+    }
+    if (a === 'api' && /\/runs\/\d+\/jobs\?/.test(b) && args[args.indexOf('--jq') + 1].endsWith('| .conclusion // ""')) {
+      const want = /\.name == ("[^"]*")/.exec(args[args.indexOf('--jq') + 1])[1];
+      return (history.jobs?.[`${b.split('/')[5]}:${JSON.parse(want)}`] ?? '') + '\n';
+    }
     if (a === 'api' && /\/runs\?/.test(b) && args.includes('.workflow_runs[].id')) {
       assert.match(b, /status=completed/);
       return (runIds[`${b.split('/')[5]}@${/branch=([^&]+)/.exec(b)[1]}`] ?? '') + '\n';
@@ -69,7 +78,11 @@ function fakeGh({ issues = [], jobs = '', workflows = {}, runs = {}, heads = { m
       const want = /\.name == ("[^"]*")/.exec(args[args.indexOf('--jq') + 1])[1];
       return (runJobs[`${b.split('/')[5]}:${JSON.parse(want)}`] ?? '') + '\n';
     }
-    if (a === 'api' && /\/runs\?/.test(b)) return (runs[b.split('/')[5]] ?? '') + '\n';
+    if (a === 'api' && /\/runs\?/.test(b)) {
+      // nightly-stale은 워크플로 전체의 성공이 아니라 마지막 완료 예약 실행을 본다(구현 중 변경 49)
+      assert.match(b, /event=schedule&status=completed/);
+      return (runs[b.split('/')[5]] ?? '') + '\n';
+    }
     if (a === 'workflow' && b === 'enable') return '';
     throw new Error(`예상 밖 gh 호출: ${args.join(' ')}`);
   };
@@ -247,9 +260,12 @@ test('isStale: 마지막 성공(없으면 워크플로 생성 시각)이 72시�
 
 test('loopStatuses: 작업마다 fail·ok, skipped는 null, 고리 없는 작업·빈 값은 오류', () => {
   assert.deepEqual(loopStatuses(JSON.stringify({ 'e2e-native-windows': { result: 'skipped' }, 'e2e-native-linux': { result: 'success' } })), [
-    { loop: 'e2e-native-linux', status: 'ok' },
-    { loop: 'e2e-native-windows', status: null },
+    { loop: 'e2e-native-linux', status: 'ok', kinds: [] },
+    { loop: 'e2e-native-windows', status: null, kinds: [] },
   ]);
+  // outputs.kinds는 KINDS enum만: 모르는 값은 글자를 옮기지 않고 unknown
+  const k = loopStatuses(JSON.stringify({ 'e2e-native-linux': { result: 'failure', outputs: { kinds: 'http_5xx, 비밀제목,target_gone,http_5xx' } } }));
+  assert.deepEqual(k[0].kinds, ['http_5xx', 'target_gone', 'unknown']);
   assert.deepEqual(loopStatuses(JSON.stringify({ 'e2e-native-linux': { result: 'cancelled' }, 'e2e-native-windows': { result: 'failure' } })).map((x) => x.status), ['fail', 'fail']);
   assert.throws(() => loopStatuses(JSON.stringify({ rust: { result: 'success' } })), /고리가 없는 작업/);
   assert.throws(() => loopStatuses('{}'), /비었거나/);
@@ -352,4 +368,72 @@ test('NEEDS_LOOPS: 키는 nightly.yml 작업 id, name은 그 작업의 name:, re
     assert.equal(jobs[id].name, name);
   }
   assert.deepEqual([...jobs.report.needs].sort(), Object.keys(NEEDS_LOOPS).sort());
+});
+
+// G5: drift는 2회 연속 실패에 연다(no_target은 3회). 연속은 같은 브랜치의 완료된 비-PR 실행에서 그 작업이 돈 것만 센다.
+const DRIFT = { name: 'nightly drift', staleHours: 72, consecutive: 2, consecutiveKinds: { no_target: 3 } };
+const LOOPS2 = { drift: DRIFT };
+
+test('threshold·leadingFailures: kind별 문턱, 새것부터 이어지는 실패 수', () => {
+  assert.equal(threshold(DRIFT, ['http_5xx']), 2);
+  assert.equal(threshold(DRIFT, ['no_target']), 3);
+  assert.equal(threshold(DRIFT, ['no_target', 'http_5xx']), 2, '섞이면 기본 문턱');
+  assert.equal(threshold(DRIFT, []), 2);
+  assert.equal(threshold({ name: 'x', staleHours: 1 }, ['no_target']), 1);
+  assert.equal(leadingFailures(['failure', 'cancelled', 'success', 'failure']), 2);
+  assert.equal(leadingFailures(['success', 'failure']), 0);
+  assert.equal(leadingFailures([]), 0);
+});
+
+test('jobHistory: PR 실행·작업이 없거나 건너뛴 실행은 빼고, 지금 실행은 넣지 않는다', () => {
+  const fk = fakeGh({ history: { ids: ['50', '40', '30', '20'], jobs: { '50:nightly drift': 'failure', '40:nightly drift': 'skipped', '20:nightly drift': 'success' } } });
+  assert.deepEqual(jobHistory(fk.gh, { repo: REPO, workflow: 'nightly.yml', branch: 'master', jobName: 'nightly drift' }), ['failure', 'success']);
+  assert.deepEqual(jobHistory(fk.gh, { repo: REPO, workflow: 'nightly.yml', branch: 'master', jobName: 'nightly drift', excludeRunId: '50' }), ['success']);
+});
+
+test('reportLoop(drift): 한 번 실패는 아무것도 안 하고, 두 번 연속이면 열고(kind·할 일 문구), 성공 한 번에 닫는다', () => {
+  const env = { GITHUB_REPOSITORY: REPO, GITHUB_RUN_ID: '60', GITHUB_SHA: SHA, GITHUB_REF: 'refs/heads/master' };
+  const needs = (result, kinds) => JSON.stringify({ drift: { result, outputs: kinds ? { kinds } : {} } });
+  // 첫 실패(앞 실행은 성공): 문턱 아래 → 이슈 없음, 댓글 없음
+  const fk = fakeGh({ history: { ids: ['59'], jobs: { '59:nightly drift': 'success' } } });
+  assert.equal(reportLoop({ ...env, NEEDS: needs('failure', 'target_gone') }, fk.gh, { loops: LOOPS2 }), 0);
+  assert.equal(fk.issues.length, 0);
+  // 두 번째 연속 실패: 연다. 본문에 kind와 고정 할 일 문구
+  const fk2 = fakeGh({ history: { ids: ['59', '58'], jobs: { '59:nightly drift': 'failure', '58:nightly drift': 'success' } } });
+  assert.equal(reportLoop({ ...env, NEEDS: needs('failure', 'target_gone') }, fk2.gh, { loops: LOOPS2 }), 0);
+  assert.equal(fk2.issues.length, 1);
+  const d = fk2.issues[0];
+  assert.ok(d.open && d.labels.includes(label('drift')));
+  assert.match(d.body, /`target_gone`/);
+  assert.ok(d.body.includes(KIND_NOTES.target_gone));
+  // 다시 실패: 댓글
+  assert.equal(reportLoop({ ...env, NEEDS: needs('failure', 'target_gone') }, fk2.gh, { loops: LOOPS2 }), 0);
+  assert.equal(d.comments.length, 1);
+  // 성공 한 번에 닫는다(연속 규칙은 여는 쪽에만)
+  assert.equal(reportLoop({ ...env, NEEDS: needs('success') }, fk2.gh, { loops: LOOPS2 }), 0);
+  assert.equal(d.open, false);
+});
+
+test('reportLoop(drift): 문턱 아래의 실패는 열린 이슈에 댓글도 닫기도 하지 않는다, no_target은 3회', () => {
+  const env = { GITHUB_REPOSITORY: REPO, GITHUB_RUN_ID: '70', GITHUB_SHA: SHA, GITHUB_REF: 'refs/heads/master' };
+  const needs = (kinds) => JSON.stringify({ drift: { result: 'failure', outputs: { kinds } } });
+  const open = { number: 9, body: `${marker('drift')}\n\n실패`, open: true, labels: [label('drift')], comments: [] };
+  const fk = fakeGh({ issues: [open], history: { ids: ['69'], jobs: { '69:nightly drift': 'success' } } });
+  assert.equal(reportLoop({ ...env, NEEDS: needs('http_5xx') }, fk.gh, { loops: LOOPS2 }), 0);
+  assert.deepEqual(open.comments, []);
+  assert.equal(open.open, true);
+  // no_target: 두 번 연속은 아직, 세 번이면 연다
+  const two = fakeGh({ history: { ids: ['69', '68'], jobs: { '69:nightly drift': 'failure', '68:nightly drift': 'success' } } });
+  assert.equal(reportLoop({ ...env, NEEDS: needs('no_target') }, two.gh, { loops: LOOPS2 }), 0);
+  assert.equal(two.issues.length, 0);
+  const three = fakeGh({ history: { ids: ['69', '68'], jobs: { '69:nightly drift': 'failure', '68:nightly drift': 'failure' } } });
+  assert.equal(reportLoop({ ...env, NEEDS: needs('no_target') }, three.gh, { loops: LOOPS2 }), 0);
+  assert.equal(three.issues.length, 1);
+  assert.ok(three.issues[0].body.includes(KIND_NOTES.no_target));
+});
+
+test('본문: 할 일 문구는 실패에만, 고정 문구라 누출 검사를 통과한다', () => {
+  for (const k of Object.keys(KIND_NOTES)) assertPublishable(KIND_NOTES[k]);
+  const f = validate({ loop: 'drift', status: 'ok', repo: REPO, kinds: ['target_gone'] });
+  assert.doesNotMatch(body(f), /할 일/);
 });

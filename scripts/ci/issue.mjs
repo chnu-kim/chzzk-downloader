@@ -22,13 +22,14 @@ import { loadDenylist, scanText } from './public-scan.mjs';
 
 export const LOOPS = {
   'master-failure': 'master CI(ci-ok)가 실패했다',
-  'nightly-stale': '예약 워크플로가 72시간 넘게 성공하지 못했다',
+  'nightly-stale': '예약 워크플로가 72시간 넘게 예약 실행을 끝내지 못했다',
   drift: '실서버 drift 검사가 실패했다',
   advisories: '의존성 보안 권고가 있다',
   fuzz: 'fuzz가 crash를 찾았다',
   mutants: '살아남은 mutant가 늘었다',
   'ruleset-drift': '저장소 ruleset·설정이 선언과 다르다',
   toolchain: '새 Rust stable이 나왔다',
+  pins: '워크플로 핀 SHA 또는 온라인 audit이 어긋났다',
   release: '릴리스 파이프라인이 실패했다',
   'e2e-native-linux': '예약 네이티브 E2E(Linux, 매일)가 실패했다',
   'e2e-native-windows': '예약 네이티브 E2E(Windows, 매주)가 실패했거나 오래 돌지 않았다',
@@ -37,6 +38,9 @@ export const LOOPS = {
 // 작업이 건너뛴 날 다른 작업의 녹색이 그 이슈를 닫지 않게). name은 그 작업의 표시 이름(nightly.yml name:, issue.test가
 // 맞춘다), staleHours는 건너뛴 실행에서 그 작업의 마지막 성공이 이보다 오래면 fail(kind stale)로 보는 한계다: 예약이
 // 떨어지거나(GitHub가 부하로 건너뜀) 조건식이 cron과 어긋나 작업이 조용히 꺼지는 것을 잡는다.
+// consecutive(기본 1)는 이슈를 여는 연속 실패 횟수다(이번 실행 포함). consecutiveKinds는 이번 실패의 kind가 모두 그 kind일
+// 때의 횟수다(drift: 실서버는 한 번 흔들릴 수 있어 2회, 대상 secret이 없는 no_target은 3회, docs/design/cicd.md §4.3).
+// 연속 횟수는 같은 브랜치의 완료된 실행(pull_request 실행 제외)에서 그 작업이 돈 것만 새것부터 센다(jobHistory).
 export const NEEDS_LOOPS = {
   'e2e-native-linux': { name: 'nightly e2e-native (linux)', staleHours: 72 },
   'e2e-native-windows': { name: 'nightly e2e-native (windows)', staleHours: 8 * 24 },
@@ -55,8 +59,16 @@ export const KINDS = [
   'panic',
   'no_target',
   'stale',
+  'network',
   'unknown',
 ];
+// kind마다 이슈에 붙이는 고정 문구(자유 문자열이 아니다). 사람이 할 일을 알려 준다.
+export const KIND_NOTES = {
+  target_gone: 'drift 대상이 만료·삭제됐다: 환경 drift의 secret(CHZZK_LIVE_*)을 본인의 다른 영상으로 교체 필요',
+  no_target: 'drift 대상 secret이 없다: 환경 drift에 CHZZK_LIVE_HLS·CHZZK_LIVE_DASH·CHZZK_LIVE_CLIP을 넣는다(docs/design/cicd.md §8)',
+  auth: '실서버가 인증을 요구했다: 대상이 본인 공개 영상인지 확인한다',
+  schema_mismatch: '치지직 응답 형식이 바뀌었을 수 있다: 코어 파서(info·mpd·hls)를 확인한다',
+};
 export const STALE_HOURS = 72;
 
 const RE = {
@@ -115,6 +127,7 @@ export function body(f, { first = false } = {}) {
   if (f.jobs.length) lines.push(`- 실패한 작업: ${f.jobs.map((j) => `\`${j}\``).join(', ')}`);
   if (f.kinds.length) lines.push(`- 종류: ${f.kinds.map((k) => `\`${k}\``).join(', ')}`);
   if (f.workflows.length) lines.push(`- 워크플로: ${f.workflows.map((w) => `\`${w}\``).join(', ')}`);
+  if (f.status === 'fail') for (const k of f.kinds) if (KIND_NOTES[k]) lines.push(`- 할 일(${k}): ${KIND_NOTES[k]}`);
   if (first) {
     lines.push('');
     lines.push('이 이슈는 `scripts/ci/issue.mjs`가 열었고 같은 고리의 다음 성공 실행이 닫는다. 본문은 허용 목록 필드만 담는다(docs/design/cicd.md §4.1). 자세한 내용은 실행 로그를 본다.');
@@ -267,7 +280,7 @@ export function report(env, gh, { root = ROOT, now = Date.now(), deny } = {}) {
     console.log(`${label('master-failure', scope.test)}: ci-ok ${result} → ${r.action} ${r.numbers.join(',')}`);
   });
 
-  // 2. 예약 워크플로: 꺼졌으면 켜고(keep-alive), 72시간 넘게 성공이 없으면 nightly-stale
+  // 2. 예약 워크플로: 꺼졌으면 켜고(keep-alive), 72시간 넘게 완료된 예약 실행이 없으면 nightly-stale
   step('nightly-stale', () => {
     const stale = [];
     const files = scheduledWorkflows(root);
@@ -287,9 +300,12 @@ export function report(env, gh, { root = ROOT, now = Date.now(), deny } = {}) {
         gh(['workflow', 'enable', String(wf.id), '-R', repo]);
         console.log(`${f}: 60일 비활성으로 꺼져 있어 다시 켰다(keep-alive)`);
       } else console.log(`${f}: state ${wf.state}`);
-      const last = gh(['api', `repos/${repo}/actions/workflows/${f}/runs?branch=master&status=success&per_page=1`, '--jq', '.workflow_runs[0].updated_at // ""']).trim();
+      // 워크플로 전체의 성공이 아니라 **완료된 마지막 예약 실행**을 본다(G5, 구현 중 변경 49): 예약 워크플로에는 설계상
+      // 빨간 작업이 있다(drift no_target, 새 stable이 나온 toolchain, crash를 찾은 fuzz). 그 작업들의 건강은 작업별 고리
+      // (report-loop, staleHours 포함)가 보고, 여기서는 스케줄러가 살아 있는지만 본다.
+      const last = gh(['api', `repos/${repo}/actions/workflows/${f}/runs?branch=master&event=schedule&status=completed&per_page=1`, '--jq', '.workflow_runs[0].updated_at // ""']).trim();
       const s = isStale({ lastSuccess: last || null, created: wf.created_at ?? null }, now);
-      console.log(`${f}: 마지막 성공 ${last || '없음'} → ${s ? 'stale' : 'ok'}`);
+      console.log(`${f}: 마지막 완료 예약 실행 ${last || '없음'} → ${s ? 'stale' : 'ok'}`);
       if (s) stale.push(f);
     }
     const r = sync({ loop: 'nightly-stale', status: stale.length ? 'fail' : 'ok', repo, runUrl, sha, workflows: stale, test: scope?.test !== false }, gh, deny);
@@ -301,19 +317,58 @@ export function report(env, gh, { root = ROOT, now = Date.now(), deny } = {}) {
 // 예약 워크플로의 report 작업(nightly.yml): needs의 작업마다 그 이름의 고리(NEEDS_LOOPS)를 열고 닫는다.
 // env: NEEDS(toJSON(needs)), GITHUB_REPOSITORY·GITHUB_RUN_ID·GITHUB_SHA. 작업 결과 → failure·cancelled면 fail, success면 ok,
 // skipped면 아무것도 하지 않는다(매주 도는 Windows가 건너뛴 날 그 이슈를 닫지 않는다). → 0 | 1(gh 실패) | 2(입력 오류)
-export function loopStatuses(needsJson) {
+// 작업의 outputs.kinds(쉼표 목록)는 KINDS enum만 받는다. 모르는 값은 글자를 옮기지 않고 'unknown'으로 바꾼다.
+export function loopStatuses(needsJson, loops = NEEDS_LOOPS) {
   const needs = JSON.parse(needsJson);
   if (!needs || typeof needs !== 'object' || Array.isArray(needs) || !Object.keys(needs).length) throw new Error('NEEDS가 비었거나 객체가 아니다');
   const out = [];
   for (const [job, v] of Object.entries(needs).sort(([a], [b]) => (a < b ? -1 : 1))) {
-    if (!Object.hasOwn(NEEDS_LOOPS, job)) throw new Error(`고리가 없는 작업: ${job}(issue.mjs NEEDS_LOOPS)`);
+    if (!Object.hasOwn(loops, job)) throw new Error(`고리가 없는 작업: ${job}(issue.mjs NEEDS_LOOPS)`);
     const r = v?.result;
-    if (r === 'failure' || r === 'cancelled') out.push({ loop: job, status: 'fail' });
-    else if (r === 'success') out.push({ loop: job, status: 'ok' });
-    else out.push({ loop: job, status: null });
+    const raw = typeof v?.outputs?.kinds === 'string' ? v.outputs.kinds.split(',').map((k) => k.trim()).filter(Boolean) : [];
+    const kinds = [...new Set(raw.map((k) => (KINDS.includes(k) ? k : 'unknown')))].sort();
+    if (r === 'failure' || r === 'cancelled') out.push({ loop: job, status: 'fail', kinds });
+    else if (r === 'success') out.push({ loop: job, status: 'ok', kinds: [] });
+    else out.push({ loop: job, status: null, kinds: [] });
   }
   return out;
 }
+
+// 이슈를 열 연속 실패 횟수(이번 실행 포함). kind가 모두 consecutiveKinds의 같은 kind면 그 값.
+export function threshold(spec, kinds) {
+  const byKind = spec.consecutiveKinds ?? {};
+  const ks = kinds.filter((k) => Object.hasOwn(byKind, k));
+  if (kinds.length && ks.length === kinds.length && new Set(ks.map((k) => byKind[k])).size === 1) return byKind[ks[0]];
+  return spec.consecutive ?? 1;
+}
+
+// branch의 workflow 완료 실행(pull_request 실행 제외)을 새것부터 runs개 보고, 작업 jobName이 돈(skipped가 아닌) 실행의
+// conclusion 목록(새것부터)을 돌려준다. excludeRunId는 지금 실행(아직 완료되지 않았지만 혹시 섞이지 않게).
+export function jobHistory(gh, { repo, workflow, branch, jobName, runs = 30, excludeRunId }) {
+  const ids = gh(['api', `repos/${repo}/actions/workflows/${workflow}/runs?branch=${encodeURIComponent(branch)}&status=completed&per_page=${runs}`, '--jq', '.workflow_runs[] | select(.event != "pull_request") | .id'])
+    .split('\n')
+    .map((s) => s.trim())
+    .filter((s) => /^\d+$/.test(s) && s !== String(excludeRunId));
+  const out = [];
+  for (const id of ids) {
+    const c = gh(['api', `repos/${repo}/actions/runs/${id}/jobs?per_page=100`, '--jq', `.jobs[] | select(.name == ${JSON.stringify(jobName)}) | .conclusion // ""`])
+      .split('\n')
+      .map((s) => s.trim())
+      .find(Boolean);
+    if (c && c !== 'skipped') out.push(c);
+  }
+  return out;
+}
+
+// 새것부터 이어지는 실패(failure·cancelled·timed_out) 수
+export const leadingFailures = (history) => {
+  let n = 0;
+  for (const c of history) {
+    if (!['failure', 'cancelled', 'timed_out'].includes(c)) break;
+    n++;
+  }
+  return n;
+};
 
 // 작업(표시 이름 jobName)이 branch의 workflow 실행에서 마지막으로 성공한 시각(ISO) 또는 null. 최근 완료 실행 runs개를
 // 새것부터 본다(워크플로 전체가 빨개도 그 작업은 성공했을 수 있어 status=success로 거르지 않는다).
@@ -333,8 +388,8 @@ export function lastJobSuccess(gh, { repo, workflow, branch, jobName, runs = 30 
 }
 
 // 건너뛴 작업이 staleHours 넘게 성공하지 못했는지. 워크플로가 기본 브랜치에 없으면(404) false.
-function skippedStale(gh, { repo, branch, loop, now }) {
-  const { name, staleHours } = NEEDS_LOOPS[loop];
+function skippedStale(gh, { repo, branch, loop, now, loops }) {
+  const { name, staleHours } = loops[loop];
   let wf;
   try {
     wf = JSON.parse(gh(['api', `repos/${repo}/actions/workflows/${LOOP_WORKFLOW}`]));
@@ -348,7 +403,7 @@ function skippedStale(gh, { repo, branch, loop, now }) {
   return s;
 }
 
-export function reportLoop(env, gh, { deny, now = Date.now() } = {}) {
+export function reportLoop(env, gh, { deny, now = Date.now(), loops = NEEDS_LOOPS } = {}) {
   const repo = env.GITHUB_REPOSITORY;
   if (!RE.repo.test(repo ?? '') || !/^\d+$/.test(env.GITHUB_RUN_ID ?? '')) {
     console.error('report-loop: GITHUB_REPOSITORY·GITHUB_RUN_ID가 필요하다');
@@ -363,22 +418,31 @@ export function reportLoop(env, gh, { deny, now = Date.now() } = {}) {
   if (scope.test) console.log(`report-loop: ${scope.branch}는 ${DEFAULT_BRANCH}가 아니다 — 시험 이름공간(${label('…', true)})에만 쓴다`);
   let sts;
   try {
-    sts = loopStatuses(env.NEEDS ?? '');
+    sts = loopStatuses(env.NEEDS ?? '', loops);
   } catch (e) {
     console.error(`report-loop: NEEDS(toJSON(needs)): ${e.message}`);
     return 2;
   }
   const runUrl = `https://github.com/${repo}/actions/runs/${env.GITHUB_RUN_ID}`;
   let bad = 0;
-  for (const { loop, status: st } of sts) {
+  for (const { loop, status: st, kinds: k } of sts) {
     try {
       let status = st;
-      let kinds = [];
+      let kinds = k;
       if (!status) {
         // 건너뜀: 마지막 성공이 오래됐으면 fail(stale), 아니면 이슈를 건드리지 않는다(매주 도는 Windows가 건너뛴 날 닫지 않는다)
-        if (!skippedStale(gh, { repo, branch: scope.branch, loop, now })) continue;
+        if (!skippedStale(gh, { repo, branch: scope.branch, loop, now, loops })) continue;
         status = 'fail';
         kinds = ['stale'];
+      } else if (status === 'fail') {
+        // 연속 실패 규칙(drift 2회, no_target 3회): 문턱 아래면 이슈를 열지도, 댓글을 달지도, 닫지도 않는다
+        const need = threshold(loops[loop], kinds);
+        if (need > 1) {
+          const prior = leadingFailures(jobHistory(gh, { repo, workflow: LOOP_WORKFLOW, branch: scope.branch, jobName: loops[loop].name, excludeRunId: env.GITHUB_RUN_ID }));
+          const n = Math.min(prior + 1, need);
+          console.log(`${loop}: 실패 ${kinds.join(',') || '-'} — 연속 ${prior + 1}회(문턱 ${need}회)`);
+          if (n < need) continue;
+        }
       }
       const r = sync({ loop, status, repo, runUrl, sha: env.GITHUB_SHA, jobs: status === 'fail' ? [loop] : [], kinds, test: scope.test }, gh, deny);
       console.log(`${label(loop, scope.test)}: ${status} → ${r.action} ${r.numbers.join(',')}`);

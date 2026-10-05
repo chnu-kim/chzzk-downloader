@@ -1,0 +1,18 @@
+[package]
+name = "xtask"
+version.workspace = true
+description = "릴리스 도구: updater 서명·검증, R2(S3) 업로드, SHA256SUMS, 매니페스트, 검증·롤백 (docs/design/cicd.md §5)"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+base64 = "0.22.1"
+hex = "0.4.3"
+hmac = "0.12.1"
+minisign = "0.10.0"
+minisign-verify = "0.2.5"
+regex = "1.13.1"
+reqwest = { version = "0.13.5", default-features = false, features = ["rustls", "blocking"] }
+serde_json = "1.0.151"
+sha2 = "0.10.9"

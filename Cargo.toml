@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/core", "crates/shell", "app/src-tauri"]
+members = ["crates/core", "crates/shell", "app/src-tauri", "xtask"]
 # fuzz/는 자기 [workspace]와 Cargo.lock을 가진 별도 워크스페이스다(고정 nightly로만 빌드, gate `fuzz`)
 exclude = ["fuzz"]
 

@@ -154,7 +154,7 @@ test('저장소의 ci/ratchet.json: 키가 측정 키와 맞고 lint를 통과�
   }
   const spec = JSON.parse(readFileSync(join(ROOT, 'release/expected-artifacts.json'), 'utf8'));
   // 번들 크기 키 = 번들 표에서 만든 집합(양방향). 표에서 산출물을 지우면 키도 지워야 하고, 지우는 것은 느슨하게 하기라 로그가 필요하다
-  const want = ['linux', 'darwin', 'windows'].flatMap((os) => spec[os].artifacts.map((a) => `size.bundle.${a.size}`)).sort();
+  const want = ['linux', 'darwin', 'windows'].flatMap((os) => spec[os].artifacts.filter((a) => a.size).map((a) => `size.bundle.${a.size}`)).sort();
   assert.deepEqual(keys.filter((k) => k.startsWith('size.bundle.')), want);
   assert.equal(typeof r.coverage_lines.tolerance_pp, 'number');
   assert.equal(typeof r.size.tolerance_pct, 'number');

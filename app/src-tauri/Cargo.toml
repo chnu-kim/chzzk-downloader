@@ -6,6 +6,10 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
+# serde_json은 generate_context! 매크로 전개에서만 쓰여 cargo-machete가 보지 못한다
+[package.metadata.cargo-machete]
+ignored = ["serde_json"]
+
 [lib]
 name = "chzzk_app_lib"
 crate-type = ["rlib"]
@@ -25,6 +29,8 @@ tauri-plugin-notification = "2.5.1"
 tauri-plugin-clipboard-manager = "2.4.1"
 chzzk-core = { path = "../../crates/core" }
 chzzk-shell = { path = "../../crates/shell" }
+# tauri::generate_context!()가 tauri.conf.json의 plugins(updater pubkey)를 serde_json 값으로 펼친다
+serde_json = "1.0.151"
 tokio = { version = "1.53.2", default-features = false, features = ["rt", "sync"] }
 tracing = "0.1.44"
 tracing-appender = "0.2.5"
@@ -41,3 +47,4 @@ tokio = { version = "1.53.2", default-features = false, features = ["macros", "r
 
 [target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
 tauri-plugin-single-instance = "2.5.2"
+tauri-plugin-updater = "2.13.1"

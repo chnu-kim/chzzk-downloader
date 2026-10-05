@@ -491,6 +491,11 @@ pub fn run() {
         }
     });
 
+    // updater: 공개 키는 tauri.conf.json `plugins.updater.pubkey`(= release/updater.pub, pubkey gate). 업데이트 확인·설치와
+    // 엔드포인트(Worker)는 Phase 3에서 붙인다. 지금은 등록만 한다(capabilities에 권한 없음, docs/design/cicd.md G6).
+    #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
+    let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+
     let app = builder
         // 아래 플러그인은 Rust에서만 부른다. capabilities에 플러그인 권한을 주지 않는다.
         .plugin(tauri_plugin_dialog::init())

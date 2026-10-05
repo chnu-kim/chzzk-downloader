@@ -131,6 +131,10 @@ export const GATES = {
     passArgs: true,
     steps: [{ cmd: ['node', S('version-check.mjs')] }],
   },
+  pubkey: {
+    desc: 'release/updater.pub == tauri.conf.json plugins.updater.pubkey(바이트 동일, minisign 공개 키 형식, 플랫폼 conf도 같거나 없음)',
+    steps: [{ cmd: ['node', S('release.mjs'), 'pubkey'] }],
+  },
   parity: {
     desc: '훅·워크플로·tools.json이 같은 진입점·버전을 쓰는지',
     steps: [{ cmd: ['node', S('parity.mjs')] }],
@@ -162,11 +166,11 @@ export const GATES = {
     ],
   },
   rust: {
-    desc: 'chzzk-core·chzzk-shell clippy + test',
+    desc: 'chzzk-core·chzzk-shell·xtask(릴리스 도구) clippy + test',
     needs: ['cargo'],
     steps: [
-      { cmd: ['cargo', 'clippy', '-p', 'chzzk-core', '-p', 'chzzk-shell', ...CLIPPY] },
-      { cmd: ['cargo', 'test', '-p', 'chzzk-core', '-p', 'chzzk-shell', '--locked'] },
+      { cmd: ['cargo', 'clippy', '-p', 'chzzk-core', '-p', 'chzzk-shell', '-p', 'xtask', ...CLIPPY] },
+      { cmd: ['cargo', 'test', '-p', 'chzzk-core', '-p', 'chzzk-shell', '-p', 'xtask', '--locked'] },
     ],
   },
   frontend: {
@@ -352,6 +356,7 @@ export const HOOKS = {
       { gate: 'typos', paths: [/./] },
       { gate: 'workflows', paths: [/^\.github\//, /^zizmor\.yml$/] },
       { gate: 'versions', paths: VERSION_FILES },
+      { gate: 'pubkey', paths: [/^release\/updater\.pub$/, /^app\/src-tauri\/tauri(\.[a-z0-9-]+)?\.conf\.json$/] },
       { gate: 'fixtures', paths: [/^testdata\//, /^scripts\/fixtures\//] },
       { gate: 'parity', paths: HOOK_FILES },
     ],
@@ -361,7 +366,7 @@ export const HOOKS = {
     always: ['push-guard', 'scan-range'],
     fastSkip: true,
     when: [
-      { gate: 'rust', paths: [/^crates\//, /^testdata\//, /^Cargo\.(toml|lock)$/, /^rust-toolchain\.toml$/] },
+      { gate: 'rust', paths: [/^crates\//, /^xtask\//, /^release\//, /^testdata\//, /^Cargo\.(toml|lock)$/, /^rust-toolchain\.toml$/, /^\.cargo\//] },
       { gate: 'frontend', paths: [/^app\/(?!src-tauri\/)/] },
       { gate: 'scripts-test', paths: [/^scripts\//, /^\.githooks\//, /^\.gitattributes$/] },
       { gate: 'deny', paths: [/^Cargo\.lock$/, /^deny\.toml$/, /(^|\/)Cargo\.toml$/] },

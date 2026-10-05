@@ -1,0 +1,3 @@
+# cargo xtask … = 저장소의 릴리스 도구(xtask/, docs/design/cicd.md §5). --locked: Cargo.lock 그대로만 빌드한다
+[alias]
+xtask = "run -p xtask --locked --quiet --"

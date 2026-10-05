@@ -267,6 +267,19 @@ const hook = (d, name, args, input) => exec('node', [join(d, 'scripts/ci/run.mjs
   expect('versions', '태그 다름', 'nonzero', () => gate(same, 'versions', '--tag', 'v0.1.1'), C);
 }
 
+// ---- pubkey(updater 공개 키) · signing-key(누출 규칙) ----
+{
+  const pub = readFileSync(join(ROOT, 'release/updater.pub'), 'utf8');
+  const conf = (pubkey) => ({ 'app/src-tauri/tauri.conf.json': JSON.stringify({ version: '0.1.0', plugins: { updater: { pubkey } } }) + '\n' });
+  expect('pubkey', 'conf = release/updater.pub', 0, () => gate(mkRoot('pub-same', conf(pub)), 'pubkey'));
+  expect('pubkey', 'conf의 키가 다름', 'nonzero', () => gate(mkRoot('pub-diff', conf(pub.slice(0, -4) + 'AAAA')), 'pubkey'));
+  expect('pubkey', 'updater.pub 끝 줄바꿈', 'nonzero', () => gate(mkRoot('pub-nl', { ...conf(pub), 'release/updater.pub': `${pub}\n` }), 'pubkey'));
+  // Tauri 형식 개인 키(머리줄 텍스트의 base64)를 커밋하면 scan이 막는다
+  const head = ['untrusted comment:', 'rsign', 'encrypted', 'secret', 'key'].join(' ');
+  const key = Buffer.from(`${head}\n${'RWRT' + 'Y0I' + 'y'}${'B'.repeat(140)}\n`).toString('base64');
+  expect('scan', 'updater 개인 키(base64)', 'nonzero', () => gate(mkRoot('scan-key', { 'app/updater.key': key }), 'scan'), ['git']);
+}
+
 // ---- ci-ok ----
 {
   const ciok = (needs, event = 'pull_request') =>

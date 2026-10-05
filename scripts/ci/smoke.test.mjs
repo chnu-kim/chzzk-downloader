@@ -6,7 +6,7 @@ import { test } from 'node:test';
 
 import { pick } from './bundle.mjs';
 import { ROOT } from './gates.mjs';
-import { bundleSpec, checkMarker, INSTALL_STEPS, installBudgetMs, msiInstallDir } from './smoke.mjs';
+import { bundleSpec, checkMarker, INSTALL_STEPS, INSTALLERS, installBudgetMs, msiInstallDir } from './smoke.mjs';
 
 test('마커: 정확히 {version, ready:true}', () => {
   assert.equal(checkMarker('{"version":"0.1.0","ready":true}\n', '0.1.0').ok, true);
@@ -29,7 +29,7 @@ test('번들 표: OS마다 arch·bundles·artifacts가 있고 이름이 겹치�
     for (const a of spec[os].artifacts) {
       assert.ok(!names.has(a.name), a.name);
       names.add(a.name);
-      assert.ok(['deb', 'appimage', 'dmg', 'nsis', 'msi'].includes(a.smoke), a.smoke);
+      assert.ok(Object.hasOwn(INSTALLERS, a.smoke), a.smoke);
     }
   }
 });
@@ -48,6 +48,19 @@ test('pick: 없음·둘·모르는 번들 폴더는 실패', () => {
   assert.match(pick({ appimage: ['a.AppImage'], deb: ['a.deb'], rpm: ['a.rpm'] }, LINUX).problems.join(), /모르는 번들 폴더 bundle\/rpm/);
   // macOS는 app 번들 폴더(macos)를 허용한다
   assert.equal(pick({ dmg: ['a.dmg'], macos: [] }, bundleSpec().darwin).ok, true);
+});
+
+test('pick --release: updater 산출물의 .sig는 정확히 있어야 하고 그 밖의 .sig는 없어야 한다', () => {
+  const D = bundleSpec().darwin;
+  const listing = { dmg: ['a.dmg'], macos: ['a.app.tar.gz', 'a.app.tar.gz.sig'] };
+  assert.equal(pick(listing, D, { release: true }).ok, true);
+  assert.deepEqual(pick(listing, D, { release: true }).picks.map((p) => p.artifact.kind), ['dmg', 'app-tar']);
+  // 보통 모드는 release 전용 항목을 찾지 않는다
+  assert.deepEqual(pick({ dmg: ['a.dmg'], macos: [] }, D).picks.map((p) => p.artifact.kind), ['dmg']);
+  assert.match(pick({ dmg: ['a.dmg'], macos: ['a.app.tar.gz'] }, D, { release: true }).problems.join(), /a\.app\.tar\.gz\.sig가 없다/);
+  assert.match(pick({ dmg: ['a.dmg', 'a.dmg.sig'], macos: ['a.app.tar.gz', 'a.app.tar.gz.sig'] }, D, { release: true }).problems.join(), /a\.dmg\.sig: 표의 updater 산출물이 아닌데/);
+  assert.match(pick({ appimage: ['a.AppImage', 'a.AppImage.sig'], deb: ['a.deb', 'a.deb.sig'] }, LINUX, { release: true }).problems.join(), /deb\/a\.deb\.sig/);
+  assert.equal(pick({ appimage: ['a.AppImage', 'a.AppImage.sig'], deb: ['a.deb'] }, LINUX, { release: true }).ok, true);
 });
 
 test('msiInstallDir: 설치 로그의 마지막 INSTALLDIR', () => {

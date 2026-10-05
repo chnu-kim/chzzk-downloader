@@ -114,6 +114,9 @@ jobs:
       - name: versions
         if: ${{ !cancelled() }}
         run: node scripts/ci/run.mjs versions
+      - name: pubkey
+        if: ${{ !cancelled() }}
+        run: node scripts/ci/run.mjs pubkey
       - name: parity
         if: ${{ !cancelled() }}
         run: node scripts/ci/run.mjs parity
@@ -588,10 +591,11 @@ jobs:
         if: ${{ !cancelled() }}
         run: node scripts/ci/run.mjs size
       # 설치기가 멈춰도 로그가 남도록 단계에도 시간 제한을 둔다(작업 취소는 로그를 잃는다).
-      # smoke.mjs의 명령별 시간 제한 합(installBudgetMs, Windows 27분)보다 커야 안쪽 제한이 먼저 걸린다(smoke.test.mjs)
+      # smoke.mjs의 명령별 시간 제한 합(installBudgetMs, macOS 릴리스 36분·Windows 27분)보다 커야 안쪽 제한이 먼저
+      # 걸린다(smoke.test.mjs, release.yml build도 같은 값)
       - name: smoke-install
         if: ${{ !cancelled() }}
-        timeout-minutes: 30
+        timeout-minutes: 40
         run: node scripts/ci/run.mjs smoke-install
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: ${{ !cancelled() }}

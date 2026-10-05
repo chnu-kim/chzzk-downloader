@@ -158,7 +158,8 @@ function size() {
   values[`size.binary.${os}`] = statSync(bin).size;
   const manifest = join(ROOT, 'target/ci/bundle/bundles.json');
   if (!existsSync(manifest)) throw new Error(`${manifest}가 없다(bundle gate의 collect)`);
-  for (const a of JSON.parse(readFileSync(manifest, 'utf8')).artifacts) values[`size.bundle.${a.size}`] = a.bytes;
+  // size가 null인 항목(release 전용 .app.tar.gz)은 재지 않는다
+  for (const a of JSON.parse(readFileSync(manifest, 'utf8')).artifacts) if (a.size) values[`size.bundle.${a.size}`] = a.bytes;
   save('size', values);
 }
 

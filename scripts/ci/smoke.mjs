@@ -8,7 +8,8 @@
 // exit 2로 끝나고, 여기서는 그보다 긴 바깥 시간 제한(SMOKE_KILL_MS)으로 멈춘 프로세스를 죽인다.
 // Linux는 DISPLAY가 없으면 `xvfb-run -a`로 감싼다. 설치 스모크는 설치 → 실행 → 제거 → 제거 확인까지 한다:
 //   linux:   deb(apt-get install ./x.deb → /usr/bin의 실행 파일 → apt-get purge → dpkg -s 실패), AppImage(풀어서 실행)
-//   darwin:  dmg(hdiutil attach → .app 복사 → quarantine 제거 → Contents/MacOS/<CFBundleExecutable> → detach)
+//   darwin:  dmg(hdiutil attach → .app 복사 → quarantine 제거 → Contents/MacOS/<CFBundleExecutable> → detach),
+//            릴리스면 updater의 .app.tar.gz도(풀기 → quarantine 제거 → 실행)
 //   windows: NSIS(setup.exe /S → 설치 폴더의 exe → uninstall.exe /S → 폴더 사라짐), 그다음 MSI(msiexec /i → exe → /x)
 // 종료 코드: 모두 통과 0, 실패 1, 사용법·환경 오류 2.
 
@@ -78,7 +79,8 @@ export const WAIT_GONE_MS = 60_000;
 // OS별 설치 스모크의 바깥 명령(sh) 수와 앱 실행(runSmoke) 수. 함수를 고치면 같이 고친다.
 export const INSTALL_STEPS = {
   linux: { sh: 4, smoke: 2, wait: 0 }, // dpkg-deb, apt-get install, dpkg -L, apt-get purge
-  darwin: { sh: 5, smoke: 1, wait: 0 }, // hdiutil attach, ditto, xattr, plutil, hdiutil detach
+  // hdiutil attach, ditto, xattr, plutil, hdiutil detach + 릴리스의 .app.tar.gz: tar, xattr, plutil
+  darwin: { sh: 8, smoke: 2, wait: 0 },
   windows: { sh: 4, smoke: 2, wait: 1 }, // NSIS setup, uninstall, msiexec /i, /x + waitGone
 };
 // 최악의 경우(모든 명령이 시간 제한까지 가고, Windows는 그때마다 진단 두 개도 시간 제한까지): ms
@@ -167,12 +169,12 @@ export function bundleSpec(root = ROOT) {
   return JSON.parse(readFileSync(join(root, 'release/expected-artifacts.json'), 'utf8'));
 }
 
-// collect가 쓴 bundles.json → { kind: 파일 경로 }
+// collect가 쓴 bundles.json → { release, files: { kind: 파일 경로 } }
 function collected(dir) {
   const p = join(dir, 'bundles.json');
   if (!existsSync(p)) throw new Error(`${p}가 없다(bundle gate가 먼저 돌아야 한다)`);
-  const list = JSON.parse(readFileSync(p, 'utf8')).artifacts;
-  return Object.fromEntries(list.map((a) => [a.kind, join(dir, a.file)]));
+  const b = JSON.parse(readFileSync(p, 'utf8'));
+  return { release: b.release === true, files: Object.fromEntries(b.artifacts.map((a) => [a.kind, join(dir, a.file)])) };
 }
 
 const productName = (os) => {
@@ -256,6 +258,24 @@ function smokeDmg(dmg) {
   log('dmg: 설치·실행 통과');
 }
 
+// updater가 받는 .app.tar.gz(릴리스): 풀어서 그 안의 .app이 뜨는지
+function smokeAppTar(tgz) {
+  const work = mkdtempSync(join(tmpdir(), 'chzzk-apptar-'));
+  try {
+    sh('tar', ['-xzf', resolve(tgz), '-C', work]);
+    const app = one(readdirSync(work).filter((n) => n.endsWith('.app')), '.app.tar.gz 안의 .app');
+    sh('xattr', ['-dr', 'com.apple.quarantine', join(work, app)]);
+    const exeName = sh('plutil', ['-extract', 'CFBundleExecutable', 'raw', '-o', '-', join(work, app, 'Contents/Info.plist')], { quiet: true }).trim();
+    const exe = join(work, app, 'Contents/MacOS', exeName);
+    if (!existsSync(exe)) throw new Error(`CFBundleExecutable ${exeName}이 ${app}에 없다`);
+    const r = runSmoke(exe, { label: `app.tar.gz ${app}` });
+    if (!r.ok) throw new Error(r.why);
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+  log('app.tar.gz: 풀기·실행 통과');
+}
+
 // ---- windows ----
 
 const exeIn = (dir) => one(readdirSync(dir).filter((n) => /\.exe$/i.test(n) && !/^uninstall\.exe$/i.test(n)), `${dir}의 앱 exe`);
@@ -319,7 +339,7 @@ function smokeMsi(msi) {
   log('MSI: 설치·실행·제거 통과');
 }
 
-const INSTALLERS = { deb: smokeDeb, appimage: smokeAppImage, dmg: smokeDmg, nsis: smokeNsis, msi: smokeMsi };
+export const INSTALLERS = { deb: smokeDeb, appimage: smokeAppImage, dmg: smokeDmg, apptar: smokeAppTar, nsis: smokeNsis, msi: smokeMsi };
 
 function cmdInstall(dir) {
   const os = osKey();
@@ -328,9 +348,10 @@ function cmdInstall(dir) {
     console.error(`smoke install: ${os}의 번들 표가 없다(release/expected-artifacts.json)`);
     return 2;
   }
-  const files = collected(dir);
+  const { release, files } = collected(dir);
   let bad = 0;
-  for (const a of spec) {
+  // release 전용 항목(.app.tar.gz)은 릴리스로 모은 폴더에만 있다
+  for (const a of spec.filter((x) => release || !x.release)) {
     const f = files[a.kind];
     try {
       if (!f || !existsSync(f)) throw new Error(`${a.kind} 파일이 없다(${dir})`);

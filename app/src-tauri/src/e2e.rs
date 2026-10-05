@@ -98,6 +98,23 @@ impl E2eConfig {
     }
 }
 
+/// msedgedriver가 WebView2에 디버깅 포트 등을 넘기는 환경 변수(Windows).
+pub const WEBVIEW2_ARGS_ENV: &str = "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS";
+/// wry가 `additional_browser_args`가 없을 때 쓰는 기본값(wry 0.57 `webview2/mod.rs`). 직접 줄 때 잃지 않게 앞에 둔다.
+pub const WRY_DEFAULT_ARGS: &str = "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection";
+
+/// Windows 네이티브 E2E(cicd.md 구현 중 변경 48): wry는 WebView2 환경을 `AdditionalBrowserArguments`로 직접 만들고 그
+/// 값이 msedgedriver가 넣은 `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS`(`--remote-debugging-port` 등)를 덮어써 세션이
+/// `DevToolsActivePort` 시간 초과로 실패했다(실측: WebView2 명령줄에 디버깅 포트가 없었다). 환경 변수가 있으면 wry 기본값
+/// 뒤에 붙인 값을 창 설정에 준다. 없거나 비었으면 `None`(설정을 바꾸지 않는다).
+pub fn webview2_args(env_value: Option<&str>) -> Option<String> {
+    let v = env_value?.trim();
+    if v.is_empty() {
+        return None;
+    }
+    Some(format!("{WRY_DEFAULT_ARGS} {v}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -110,6 +127,18 @@ mod tests {
     const DIR: &str = "/tmp/e2e";
     #[cfg(windows)]
     const DIR: &str = "C:\\e2e";
+
+    #[test]
+    fn webview2_args_keep_wry_defaults_and_append_driver_args() {
+        assert_eq!(webview2_args(None), None);
+        assert_eq!(webview2_args(Some("  ")), None);
+        assert_eq!(
+            webview2_args(Some("--remote-debugging-port=0")).as_deref(),
+            Some(
+                "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --remote-debugging-port=0"
+            )
+        );
+    }
 
     #[test]
     fn both_absent_or_empty_is_off() {

@@ -448,6 +448,22 @@ fn setup<R: Runtime>(
     Ok(())
 }
 
+/// 앱 context. E2E 빌드에서 E2E가 켜졌으면(Windows) msedgedriver의 WebView2 인자를 창 설정에 합친다(`e2e::webview2_args`).
+fn context() -> tauri::Context<tauri::Wry> {
+    #[allow(unused_mut)]
+    let mut ctx = tauri::generate_context!();
+    #[cfg(all(feature = "e2e", windows))]
+    if matches!(e2e::E2eConfig::from_env(), Ok(Some(_))) {
+        let env = std::env::var(e2e::WEBVIEW2_ARGS_ENV).ok();
+        if let Some(args) = e2e::webview2_args(env.as_deref()) {
+            for w in ctx.config_mut().app.windows.iter_mut() {
+                w.additional_browser_args = Some(args.clone());
+            }
+        }
+    }
+    ctx
+}
+
 pub fn run() {
     let smoke = SmokeConfig::from_env();
     let e2e = e2e_override();
@@ -483,7 +499,7 @@ pub fn run() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .setup(move |app| setup(app, smoke, e2e))
         .invoke_handler(handler())
-        .build(tauri::generate_context!())
+        .build(context())
         .expect("Tauri 앱 만들기 실패");
 
     app.run(on_run_event);

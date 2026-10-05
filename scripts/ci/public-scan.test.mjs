@@ -75,6 +75,19 @@ test('규칙마다 심은 표본을 잡는다', () => {
   }
 });
 
+test('signing-key: Tauri updater 개인 키(base64 텍스트·풀어 쓴 텍스트)는 잡고 공개 키·서명은 통과한다', () => {
+  // 이 파일도 scan 대상이라 머리줄을 글자 그대로 두지 않는다
+  const head = ['untrusted comment:', 'rsign', 'encrypted', 'secret', 'key'].join(' ');
+  const raw = `${head}\n${'RWRT' + 'Y0I' + 'y'}${'A'.repeat(140)}\n`;
+  const rules = (t) => [...new Set(scanText(t, new Set()).map((f) => f.rule))];
+  assert.deepEqual(rules(raw), ['signing-key']);
+  assert.deepEqual(rules(Buffer.from(raw).toString('base64')), ['signing-key']);
+  assert.deepEqual(rules(`TAURI_SIGNING_PRIVATE_KEY=${Buffer.from(raw).toString('base64')}`), ['signing-key']);
+  const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+  assert.deepEqual(rules(readFileSync(join(root, 'release/updater.pub'), 'utf8')), []);
+  assert.deepEqual(rules(readFileSync(join(root, 'xtask/testdata/tauri-cli/sample.bin.sig'), 'utf8')), []);
+});
+
 test('자리표시자와 가짜 ID는 통과한다', () => {
   const ok = [
     'https://hls.example.invalid/a/144p/hdntl=exp=0~acl=*/kr/*~data=hdntl~hmac=0000/x.m4v',

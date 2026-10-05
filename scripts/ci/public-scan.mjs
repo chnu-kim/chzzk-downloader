@@ -147,6 +147,9 @@ function rulesOf(s, hits) {
     if (!/^0+[0-9a-f]{0,2}$/.test(m[1])) hits.add('hex-id'); // 가짜 inKey: 0으로 채우고 끝 두 글자만 다르다
   }
   if (/(?:sig|signature|token|secret)["']?\s*[=:]\s*["']?[0-9a-f]{40,}/i.test(s)) hits.add('keyed-hex');
+  // minisign·Tauri updater 개인 키(머리줄, 또는 scrypt 암호화 상자 "EdSc"의 base64). Tauri 형식은 이 텍스트 전체의 base64라
+  // base64Texts가 풀어서 같은 규칙에 건다. 공개 키(release/updater.pub)·서명은 걸리지 않는다
+  if (/(?:rsign|minisign) encrypted secret\s+key/i.test(s) || /(?<![A-Za-z0-9+/])RWRTY0I[y][A-Za-z0-9+/]{40,}/.test(s)) hits.add('signing-key');
 }
 
 /** 한 줄에서 규칙 위반 이름 목록(원문과 디코드한 형태 모두). */

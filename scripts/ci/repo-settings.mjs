@@ -10,7 +10,7 @@
 // G7이 --apply를 더한다.
 
 import { spawnSync } from 'node:child_process';
-import { existsSync, readdirSync, readFileSync, realpathSync } from 'node:fs';
+import { appendFileSync, existsSync, readdirSync, readFileSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -113,16 +113,22 @@ export function main(argv, env = process.env, gh = realGh(env), root = ROOT) {
     return 2;
   }
   const settings = JSON.parse(readFileSync(join(root, 'scripts/ci/repo-settings.json'), 'utf8')).settings;
+  // nightly report가 이슈 kind로 쓴다(auth: 토큰이 못 읽음, settings_mismatch: 선언과 다름)
+  const kinds = (k) => env.GITHUB_OUTPUT && appendFileSync(env.GITHUB_OUTPUT, `kinds=${k}\n`);
   let problems;
   try {
     problems = check({ repo, settings, rulesets: declaredRulesets(root), gh });
   } catch (e) {
     const forbidden = /HTTP 403|HTTP 404|Resource not accessible/.test(`${e.message}\n${e.stderr ?? ''}`);
     console.error(`::error::repo-settings: 읽기 실패: ${e.message}`);
-    if (forbidden) console.error('::error::repo-settings: 이 토큰으로는 읽을 수 없다. 저장소 관리 읽기 권한이 있는 fine-grained PAT를 환경 audit의 secret RULESET_READ_TOKEN으로 준다(docs/design/cicd.md §8)');
+    if (forbidden) {
+      console.error('::error::repo-settings: 이 토큰으로는 읽을 수 없다. 저장소 Administration 읽기 권한이 있는 fine-grained PAT를 환경 audit의 secret RULESET_READ_TOKEN으로 준다(docs/design/cicd.md §8)');
+      kinds('auth');
+    }
     return 2;
   }
   for (const p of problems) console.error(`::error::ruleset-drift: ${p}`);
+  if (problems.length) kinds('settings_mismatch');
   if (!problems.length) console.log(`repo-settings: ${repo}의 설정 ${Object.keys(settings).length}종·ruleset ${declaredRulesets(root).length}개가 선언과 같다`);
   return problems.length ? 1 : 0;
 }

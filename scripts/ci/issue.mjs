@@ -50,6 +50,7 @@ export const NEEDS_LOOPS = {
   'ruleset-drift': { name: 'nightly ruleset-drift', staleHours: 72 },
   fuzz: { name: 'nightly fuzz', staleHours: 72 },
   toolchain: { name: 'nightly toolchain', staleHours: 8 * 24 },
+  mutants: { name: 'nightly mutants', staleHours: 8 * 24 },
 };
 export const LOOP_WORKFLOW = 'nightly.yml';
 export const KINDS = [
@@ -66,14 +67,21 @@ export const KINDS = [
   'no_target',
   'stale',
   'network',
+  'settings_mismatch',
   'unknown',
 ];
-// kind마다 이슈에 붙이는 고정 문구(자유 문자열이 아니다). 사람이 할 일을 알려 준다.
+// 고리·kind마다 이슈에 붙이는 고정 문구(자유 문자열이 아니다). 사람이 할 일을 알려 준다.
 export const KIND_NOTES = {
-  target_gone: 'drift 대상이 만료·삭제됐다: 환경 drift의 secret(CHZZK_LIVE_*)을 본인의 다른 영상으로 교체 필요',
-  no_target: 'drift 대상 secret이 없다: 환경 drift에 CHZZK_LIVE_HLS·CHZZK_LIVE_DASH·CHZZK_LIVE_CLIP을 넣는다(docs/design/cicd.md §8)',
-  auth: '실서버가 인증을 요구했다: 대상이 본인 공개 영상인지 확인한다',
-  schema_mismatch: '치지직 응답 형식이 바뀌었을 수 있다: 코어 파서(info·mpd·hls)를 확인한다',
+  drift: {
+    target_gone: 'drift 대상이 만료·삭제됐다: 환경 drift의 secret(CHZZK_LIVE_*)을 본인의 다른 영상으로 교체 필요',
+    no_target: 'drift 대상 secret이 없다: 환경 drift에 CHZZK_LIVE_HLS·CHZZK_LIVE_DASH·CHZZK_LIVE_CLIP을 넣는다(docs/design/cicd.md §8)',
+    auth: '실서버가 인증을 요구했다: 대상이 본인 공개 영상인지 확인한다',
+    schema_mismatch: '치지직 응답 형식이 바뀌었을 수 있다: 코어 파서(info·mpd·hls)를 확인한다',
+  },
+  'ruleset-drift': {
+    auth: '이 토큰으로는 저장소 설정을 읽을 수 없다: 저장소 Administration 읽기 권한의 fine-grained PAT를 환경 audit의 secret RULESET_READ_TOKEN으로 넣는다(docs/design/cicd.md §8)',
+    settings_mismatch: '저장소 설정·ruleset이 선언(scripts/ci/repo-settings.json, .github/rulesets/)과 다르다: 실행 로그의 항목을 보고 설정을 되돌리거나 선언을 고친다',
+  },
 };
 export const STALE_HOURS = 72;
 
@@ -133,7 +141,7 @@ export function body(f, { first = false } = {}) {
   if (f.jobs.length) lines.push(`- 실패한 작업: ${f.jobs.map((j) => `\`${j}\``).join(', ')}`);
   if (f.kinds.length) lines.push(`- 종류: ${f.kinds.map((k) => `\`${k}\``).join(', ')}`);
   if (f.workflows.length) lines.push(`- 워크플로: ${f.workflows.map((w) => `\`${w}\``).join(', ')}`);
-  if (f.status === 'fail') for (const k of f.kinds) if (KIND_NOTES[k]) lines.push(`- 할 일(${k}): ${KIND_NOTES[k]}`);
+  if (f.status === 'fail') for (const k of f.kinds) if (KIND_NOTES[f.loop]?.[k]) lines.push(`- 할 일(${k}): ${KIND_NOTES[f.loop][k]}`);
   if (first) {
     lines.push('');
     lines.push('이 이슈는 `scripts/ci/issue.mjs`가 열었고 같은 고리의 다음 성공 실행이 닫는다. 본문은 허용 목록 필드만 담는다(docs/design/cicd.md §4.1). 자세한 내용은 실행 로그를 본다.');

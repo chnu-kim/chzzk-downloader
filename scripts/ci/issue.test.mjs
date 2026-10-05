@@ -8,7 +8,7 @@ import { test } from 'node:test';
 import { readFileSync } from 'node:fs';
 
 import { ROOT } from './gates.mjs';
-import { assertPublishable, body, isStale, jobHistory, JOBS_JQ, KIND_NOTES, label, lastJobSuccess, leadingFailures, loopStatuses, marker, masterStatus, NEEDS_LOOPS, refScope, reportLoop, report, runHistory, RUNS_JQ, scheduledWorkflows, sync, threshold, title, validate } from './issue.mjs';
+import { assertPublishable, body, isStale, jobHistory, JOBS_JQ, KIND_NOTES, KINDS, label, lastJobSuccess, leadingFailures, loopStatuses, marker, masterStatus, NEEDS_LOOPS, refScope, reportLoop, report, runHistory, RUNS_JQ, scheduledWorkflows, sync, threshold, title, validate } from './issue.mjs';
 import { parseJobs } from './parity.mjs';
 
 const REPO = 'o/r';
@@ -407,7 +407,7 @@ test('reportLoop(drift): 한 번 실패는 아무것도 안 하고, 두 번 연�
   const d = fk2.issues[0];
   assert.ok(d.open && d.labels.includes(label('drift')));
   assert.match(d.body, /`target_gone`/);
-  assert.ok(d.body.includes(KIND_NOTES.target_gone));
+  assert.ok(d.body.includes(KIND_NOTES.drift.target_gone));
   // 다시 실패: 댓글
   assert.equal(reportLoop({ ...env, NEEDS: needs('failure', 'target_gone') }, fk2.gh, { loops: LOOPS2 }), 0);
   assert.equal(d.comments.length, 1);
@@ -431,11 +431,20 @@ test('reportLoop(drift): 문턱 아래의 실패는 열린 이슈에 댓글도 �
   const three = fakeGh({ history: { runs: [69, 68], jobs: { 69: [{ name: 'nightly drift', conclusion: 'failure' }], 68: [{ name: 'nightly drift', conclusion: 'failure' }] } } });
   assert.equal(reportLoop({ ...env, NEEDS: needs('no_target') }, three.gh, { loops: LOOPS2 }), 0);
   assert.equal(three.issues.length, 1);
-  assert.ok(three.issues[0].body.includes(KIND_NOTES.no_target));
+  assert.ok(three.issues[0].body.includes(KIND_NOTES.drift.no_target));
 });
 
 test('본문: 할 일 문구는 실패에만, 고정 문구라 누출 검사를 통과한다', () => {
-  for (const k of Object.keys(KIND_NOTES)) assertPublishable(KIND_NOTES[k]);
+  for (const [loop, notes] of Object.entries(KIND_NOTES)) {
+    assert.ok(Object.hasOwn(NEEDS_LOOPS, loop), loop);
+    for (const [k, t] of Object.entries(notes)) {
+      assert.ok(KINDS.includes(k), k);
+      assertPublishable(t);
+    }
+  }
   const f = validate({ loop: 'drift', status: 'ok', repo: REPO, kinds: ['target_gone'] });
   assert.doesNotMatch(body(f), /할 일/);
+  // 문구는 고리마다: 같은 kind라도 다른 고리에는 붙지 않는다
+  assert.doesNotMatch(body(validate({ loop: 'fuzz', status: 'fail', repo: REPO, kinds: ['auth'] })), /할 일/);
+  assert.ok(body(validate({ loop: 'ruleset-drift', status: 'fail', repo: REPO, kinds: ['auth'] })).includes('RULESET_READ_TOKEN'));
 });

@@ -5,6 +5,7 @@
 ## 현재 위치
 
 - **완료**: Phase 0(#11), Phase 1 Rust 코어(#12, 3 OS CI 녹색), Go 삭제(#13), Phase 2 Tauri 앱(#14, macOS 실제 실행 확인). PR은 #11→#12→#13→#14로 쌓여 있고 아직 머지 전이다. #13은 #14와 함께 머지한다.
+- **Phase 4 CI/CD 설계 완료**(`docs/design/cicd.md`, 브랜치 `ci/pipeline`). 구현은 G1부터 순서대로.
 - **다음**: Phase 3+4 (Worker: 로그인·허용목록·랜딩·R2 배포 게이트·업데이트). 설계·오프라인 구현은 가능하지만 **끝까지 확인하려면 사용자의 외부 준비가 필요**하다(아래 "사용자가 준비해야 할 외부 항목").
 - **Phase 3의 핵심 미확인 사실**: OAuth `users/me`의 `channelId`가 VOD `content.channel.channelId`·클립 `ownerChannel.channelId`와 같은 값인지. 실제 로그인으로만 확인할 수 있으므로 별도 단계로 둔다.
 - **남은 확인(사용자)**: 성인 VOD PD 미디어 요청에 쿠키가 필요한지(`examples/dl.rs` + `CHZZK_NID_AUT`/`CHZZK_NID_SES`), Windows·Linux 실제 실행(app.md 수동 테스트 목록), macOS Dock 종료·로그아웃 때 D1 생략 수용 여부.
@@ -22,7 +23,7 @@
 | 인증 | **전용 Cloudflare Worker**가 치지직 OAuth 코드→토큰 교환을 대행 (client secret은 Worker에만) | 구현 참고: 같은 OAuth를 이미 쓰는 비공개 웹 앱의 구현(`docs/research/chzzk-oauth.md` §8) |
 | 본인 영상 제한 | **정책·명분 수준**. 클라이언트에서 로그인 채널 ID == VOD/클립 채널 ID 검사 | 우회 불가능할 필요는 없음 |
 | 네이버 쿠키 | `NID_AUT`/`NID_SES` 기반 접근은 **고급 설정으로 유지** | 연령 제한·구독자 전용 VOD용. Open API 토큰으로는 재생 URL을 못 받음 |
-| 배포 | **repo private 유지**, 본인·지인만. Worker가 **로그인 랜딩 페이지 + 허용목록(채널 ID) + R2 다운로드 게이트** | 앱 사용도 같은 허용목록으로 제한. 업데이트 매니페스트·산출물도 인증 필요 |
+| 배포 | ~~repo private 유지~~ → **2026-10-05 공개 저장소로 전환**(`chnu-kim/chzzk-downloader`, 절차는 `docs/public-release.md`). 배포 자체는 본인·지인만. Worker가 **로그인 랜딩 페이지 + 허용목록(채널 ID) + R2 다운로드 게이트** | 앱 사용도 같은 허용목록으로 제한. 업데이트 매니페스트·산출물도 인증 필요 |
 | 코드 서명 | **미서명 배포** (Apple Developer 계정 없음) | 랜딩 페이지에 Gatekeeper/SmartScreen 해제 안내. Tauri updater 서명 키는 별개로 필요 |
 | 진행 방식 | **자율 진행**, 단계별 stacked PR | 각 PR 후 Codex 리뷰를 원문 전달. 반영·머지는 사용자가 결정 |
 
@@ -92,9 +93,21 @@
 - [ ] R2 산출물 + Tauri updater 매니페스트를 인증 뒤에서 제공
 - [ ] 앱: 로그인 화면, 본인 채널 검사
 
-### Phase 4 — 릴리스 파이프라인
-- [ ] 태그 push → Win/macOS/Linux 빌드 → R2 업로드 → 매니페스트 갱신
-- [ ] Worker 배포 워크플로
+### Phase 4 — CI/CD (설계: `docs/design/cicd.md`)
+
+설계 판정은 2026-10-05에 끝났다(`docs/design/cicd.md`). 원칙: 결정적 판정만(종료 코드·골든·해시·스키마·실제 빌드/실행), 훅과 CI는 같은 진입점 `scripts/ci/run.mjs`, CI가 최종 권위. 아래 그룹 번호는 그 문서 §10이다. 수락 기준은 실제 Actions 실행으로 확인한다.
+
+- [x] 설계 판정 (`docs/design/cicd.md`): 단일 `ci.yml` + `ci-ok` 집계, `.githooks` shim 훅, 집합 차 push-guard, R2 S3 API 배포와 `latest.json` 마지막 쓰기, 검증 실패 시 자동 롤백, ruleset 둘
+- [ ] G1 진입점·단일 CI·공급망 기본: `run.mjs`/`gates.mjs`/`tools.json`, 버전 원천 통합, `ci.yml`(기존 세 워크플로 삭제), SHA 핀·zizmor·actionlint·dependabot
+- [ ] G2 훅과 비공개 이력 가드: `public-scan --rev-range/--message-file`, `push-guard`, `.githooks/{pre-commit,commit-msg,pre-push}`, parity 테스트
+- [ ] G3 스모크·ratchet·master 고리: 앱 `--smoke`, PR 3 OS 스모크, master 번들 설치 스모크, `ci/ratchet.json`, master 실패 이슈·스케줄 keep-alive
+- [ ] G4 E2E: Playwright(mockIPC) PR, tauri-driver Linux(master·nightly)·Windows(weekly), cargo feature `e2e`, 2주 관찰 뒤 `ci-ok` 편입
+- [ ] G5 Nightly·weekly 고리: 실서버 drift(본인 영상 secret, 일반화된 kind만 출력, 2회 연속 실패 시 이슈), advisories, ruleset drift, fuzz, mutants ratchet
+- [ ] G6 CD: `xtask release`, `release/updater.pub`, `release.yml`(gate → build → smoke → sign-publish → verify/rollback → Worker seam), `rollback.yml`, MinIO 리허설
+- [ ] G7 보호: `.github/rulesets/{master,tags}.json`을 `gh api`로 적용(사용자 승인), 저장소 설정 선언, drift 검사
+- [ ] Worker 배포 작업은 G6의 `deploy-worker` seam을 Phase 3에서 채운다
+
+사용자가 더해야 할 시크릿·변수의 정확한 이름은 `docs/design/cicd.md` §8.
 
 ## 사용자가 준비해야 할 외부 항목
 
@@ -102,7 +115,7 @@
 
 - [ ] 치지직 개발자 앱 등록 (client id / secret, Redirect URI = Worker 콜백 URL)
 - [ ] Cloudflare: Worker, R2 버킷, KV 또는 D1, (선택) 커스텀 도메인
-- [ ] GitHub Secrets: Cloudflare API 토큰, R2 자격, Tauri updater 서명 키쌍 (`pnpm tauri signer generate`)
+- [ ] GitHub Environment `release`·`drift`의 시크릿·변수 (정확한 이름은 `docs/design/cicd.md` §8): Tauri updater 서명 키쌍(`pnpm tauri signer generate --ci`), R2 S3 토큰, 본인 영상 drift 대상, Phase 3에 Cloudflare API 토큰
 
 ## 하네스 변경 이력
 
@@ -111,3 +124,4 @@
 - 2026-10-05: 초기화. CLAUDE.md + settings.json만 둔다.
 - 2026-10-05: CLAUDE.md를 Rust 코어 기준으로 재작성(레이아웃, 검증 게이트 fmt·clippy·test, 실서버 스모크 실행법). Go는 레거시로 표시.
 - 2026-10-05: 공개 저장소 준비. fixture를 합성으로 바꾸고(`scripts/fixtures/gen-fixtures.mjs`), 누출 검사기 `scripts/ci/public-scan.mjs`와 CI `public-scan.yml`을 더했다. 이력 정리 절차는 `docs/public-release.md`.
+- 2026-10-05: CI/CD 설계(`docs/design/cicd.md`). 훅·CI 단일 진입점 `scripts/ci/run.mjs`, 집계 체크 `ci-ok` 하나, 결정적 판정만. 새 E2E 작업은 2주 관찰 뒤 필수로 올린다.

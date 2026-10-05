@@ -15,7 +15,9 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 import { ROOT } from './gates.mjs';
+import { PRIVATE_URL } from './push-guard.mjs';
 import { inCI, which } from './run.mjs';
+import { gitEnv, gitOk } from './test-git.mjs';
 
 const NODE = process.execPath;
 const CI_YML = readFileSync(join(ROOT, '.github/workflows/ci.yml'), 'utf8');
@@ -40,8 +42,8 @@ function expect(gate, seed, want, run, needs = []) {
   results.push({ gate, seed, want, got, ok });
 }
 
-const exec = (bin, args, cwd, env = process.env) => {
-  const r = spawnSync(bin === 'node' ? NODE : (which(bin) ?? bin), args, { cwd, env, encoding: 'utf8', shell: false });
+const exec = (bin, args, cwd, env = process.env, input = undefined) => {
+  const r = spawnSync(bin === 'node' ? NODE : (which(bin) ?? bin), args, { cwd, env, encoding: 'utf8', shell: false, input });
   if (r.error) throw r.error;
   if (r.status !== 0 && process.env.SELFTEST_VERBOSE) console.error(`${bin} ${args.join(' ')} →\n${r.stdout}${r.stderr}`);
   return r.status;
@@ -53,6 +55,7 @@ function mkRoot(name, files = {}) {
   const d = join(tmp, name);
   mkdirSync(d, { recursive: true });
   cpSync(join(ROOT, 'scripts/ci'), join(d, 'scripts/ci'), { recursive: true });
+  cpSync(join(ROOT, '.githooks'), join(d, '.githooks'), { recursive: true }); // 모드(실행 비트)를 유지한다
   for (const f of ['rust-toolchain.toml', 'zizmor.yml', '_typos.toml']) cpSync(join(ROOT, f), join(d, f));
   const base = {
     '.github/workflows/ci.yml': CI_YML,
@@ -68,8 +71,8 @@ function mkRoot(name, files = {}) {
     mkdirSync(dirname(p), { recursive: true });
     writeFileSync(p, text);
   }
-  exec('git', ['init', '-q'], d);
-  exec('git', ['add', '-A'], d);
+  gitOk(d, ['init', '-q']);
+  gitOk(d, ['add', '-A']);
   return d;
 }
 
@@ -82,6 +85,9 @@ const ciWith = (from, to) => {
   return { '.github/workflows/ci.yml': CI_YML.replace(from, to) };
 };
 const RUST_RUN = '        run: node scripts/ci/run.mjs rust\n';
+const HOOK = (name) => `#!/bin/sh\nset -eu\nexec node "$(git rev-parse --show-toplevel)/scripts/ci/run.mjs" hook ${name} "$@"\n`;
+// 사본의 진입점으로 훅을 돌린다(.githooks/<이름>이 exec하는 것과 같은 명령). 격리된 git 환경을 쓴다.
+const hook = (d, name, args, input) => exec('node', [join(d, 'scripts/ci/run.mjs'), 'hook', name, ...args], d, gitEnv({ extra: { CHZZK_HOOK_FAST: '1' } }), input);
 
 // ---- scan ----
 {
@@ -137,8 +143,69 @@ const RUST_RUN = '        run: node scripts/ci/run.mjs rust\n';
     ['ci-ok guard 바뀜', ciWith('        run: exit 1\n', '        run: exit 0\n')],
     ['ci-ok 없음', { '.github/workflows/ci.yml': CI_YML.slice(0, CI_YML.indexOf('  # 필수 체크는 이 작업 하나다')) }],
     ['훅이 run.mjs를 거치지 않음', { '.githooks/pre-commit': '#!/bin/sh\nexec node "$(git rev-parse --show-toplevel)/scripts/ci/public-scan.mjs" --staged\n' }],
+    ['훅이 gate를 직접 부름', { '.githooks/pre-push': '#!/bin/sh\nexec node "$(git rev-parse --show-toplevel)/scripts/ci/run.mjs" push-guard "$@"\n' }],
+    ['훅 이름이 파일과 다름', { '.githooks/pre-push': HOOK('pre-commit') }],
+    ['훅 gate의 CI 짝이 ci.yml에 없음', { '.github/workflows/ci.yml': CI_YML.replace('        run: node scripts/ci/run.mjs scan-history\n', '        run: node scripts/ci/run.mjs list\n') }],
   ];
   seeds.forEach(([seed, files], i) => expect('parity', seed, 'nonzero', () => gate(mkRoot(`par-${i}`, files), 'parity')));
+}
+
+// ---- 훅: commit-msg·pre-commit ----
+{
+  const d = mkRoot('hook-msg');
+  const msg = (name, text) => {
+    const f = join(d, name);
+    writeFileSync(f, text);
+    return f;
+  };
+  expect('scan-msg', '형식 맞는 메시지', 0, () => hook(d, 'commit-msg', [msg('m0', 'feat: 기능\n\n# 주석\n')]));
+  expect('scan-msg', '제목 형식 틀림', 'nonzero', () => hook(d, 'commit-msg', [msg('m1', 'Add feature\n')]));
+  const hexId = 'ab'.repeat(16);
+  expect('scan-msg', '메시지의 실제 ID', 'nonzero', () => hook(d, 'commit-msg', [msg('m2', `fix: 고침\n\nid ${hexId}\n`)]));
+  expect('pre-commit', '깨끗한 인덱스', 0, () => hook(mkRoot('hook-pc-clean'), 'pre-commit', []));
+  const leak = 'https://h.example.invalid/a/hdntl=exp=' + '17000' + '00000' + '~acl=*/x\n';
+  expect('pre-commit', '인덱스의 서명 토큰', 'nonzero', () => hook(mkRoot('hook-pc-leak', { 'leak.txt': leak }), 'pre-commit', []));
+}
+
+// ---- 훅: pre-push(push-guard → scan-range). 가짜 origin·private(같은 루트) ----
+{
+  const d = mkRoot('hook-push');
+  const origin = join(tmp, 'hook-push-origin.git');
+  const priv = join(tmp, `${PRIVATE_URL}.git`);
+  const g = (...a) => gitOk(d, a);
+  g('commit', '-q', '-m', 'chore: 루트');
+  gitOk(tmp, ['init', '-q', '--bare', origin]);
+  gitOk(tmp, ['init', '-q', '--bare', priv]);
+  g('remote', 'add', 'origin', origin);
+  g('remote', 'add', 'private', priv);
+  g('push', '-q', 'origin', 'HEAD:refs/heads/master');
+  g('checkout', '-q', '-b', 'pv');
+  writeFileSync(join(d, 'research.txt'), 'private\n');
+  g('add', 'research.txt');
+  g('commit', '-q', '-m', 'docs: 비공개');
+  g('push', '-q', 'private', 'pv:refs/heads/master');
+  g('fetch', '-q', 'origin');
+  g('fetch', '-q', 'private');
+  const Z = '0'.repeat(40);
+  const branch = (name, file, text, mergePrivate = false) => {
+    g('checkout', '-q', '-b', name, 'origin/master');
+    if (mergePrivate) g('merge', '-q', '--no-ff', '-m', 'Merge private', 'private/master');
+    else {
+      writeFileSync(join(d, file), text);
+      g('add', file);
+      g('commit', '-q', '-m', `feat: ${name}`);
+    }
+    return `refs/heads/${name} ${g('rev-parse', 'HEAD')} refs/heads/${name} ${Z}\n`;
+  };
+  const clean = branch('clean', 'f.txt', 'ok\n');
+  const merged = branch('merged', '', '', true);
+  const leaky = branch('leaky', 'leak.txt', 'https://h.example.invalid/a/hdntl=exp=' + '17000' + '00000' + '~acl=*/x\n');
+  const pm = g('rev-parse', 'private/master');
+  expect('pre-push', '정상 공개 브랜치', 0, () => hook(d, 'pre-push', ['origin', origin], clean));
+  expect('pre-push', '비공개 커밋 merge', 'nonzero', () => hook(d, 'pre-push', ['origin', origin], merged));
+  expect('pre-push', 'private/master:refs/heads/x', 'nonzero', () => hook(d, 'pre-push', ['origin', origin], `refs/remotes/private/master ${pm} refs/heads/x ${Z}\n`));
+  expect('pre-push', '새 커밋 blob의 서명 토큰', 'nonzero', () => hook(d, 'pre-push', ['origin', origin], leaky));
+  expect('pre-push', 'private 원격으로', 0, () => hook(d, 'pre-push', ['private', priv], merged));
 }
 
 // ---- versions ----

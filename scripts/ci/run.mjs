@@ -5,6 +5,7 @@
 //   node scripts/ci/run.mjs list              # gate 목록
 //   node scripts/ci/run.mjs doctor            # 도구 유무·버전 표(tools.json과 비교)
 //   node scripts/ci/run.mjs install-hooks     # git config core.hooksPath .githooks
+//   node scripts/ci/run.mjs hook <pre-commit|commit-msg|pre-push> [git 인자]  # .githooks/*가 부른다(gates.mjs HOOKS)
 //   node scripts/ci/run.mjs install-tool <t>  # tools.json download의 릴리스 파일을 받아 sha256 확인 후 설치(CI는 GITHUB_PATH에 더한다)
 //   node scripts/ci/run.mjs changes           # (CI) 바뀐 경로로 code/release/docs_only 출력
 //   node scripts/ci/run.mjs ci-ok             # (CI) env NEEDS(toJSON(needs))로 집계 판정
@@ -17,7 +18,8 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, stat
 import { delimiter, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { CODE_GATED_JOBS, COMMANDS, GATES, ROOT } from './gates.mjs';
+import { CODE_GATED_JOBS, COMMANDS, GATES, HOOKS, ROOT } from './gates.mjs';
+import { isPrivateTarget, parseLines, pushedPaths, scanRanges } from './push-guard.mjs';
 
 const IS_WIN = process.platform === 'win32';
 export const inCI = (env = process.env) => env.CI === 'true' || env.CI === '1';
@@ -87,7 +89,7 @@ function group(title, fn) {
   }
 }
 
-export function runGate(name, extra = [], env = process.env) {
+export function runGate(name, extra = [], env = process.env, { input } = {}) {
   const gate = GATES[name];
   if (gate.ciOnly && !inCI(env)) {
     console.warn(`[${name}] 건너뜀: CI 전용 gate(로컬 클론에는 비공개 원격 ref가 있을 수 있다)`);
@@ -112,12 +114,19 @@ export function runGate(name, extra = [], env = process.env) {
       console.warn(`경고: ${msg}`);
     }
   }
+  if (!gate.passArgs && extra.length) {
+    console.error(`[${name}] 인자를 받지 않는 gate다: ${extra.join(' ')}`);
+    return 2;
+  }
+  // stdin gate는 표준 입력을 한 번 읽어 모든 단계에 같은 내용으로 넘긴다(훅은 input으로 직접 준다)
+  const stdinText = gate.stdin ? (input ?? readFileSync(0, 'utf8')) : undefined;
+  const io = gate.stdin ? { input: stdinText, stdio: ['pipe', 'inherit', 'inherit'] } : {};
   const steps = gate.steps;
   for (let i = 0; i < steps.length; i++) {
     const { cmd, cwd } = steps[i];
-    const args = [...cmd.slice(1), ...(gate.passArgs && i === steps.length - 1 ? extra : [])];
+    const args = [...cmd.slice(1), ...(gate.passArgs ? extra : [])];
     const title = `${name}: ${[cmd[0], ...args].join(' ')}${cwd ? ` (in ${cwd})` : ''}`;
-    const r = group(title, () => spawn(cmd[0], args, { cwd: join(ROOT, cwd ?? '.') }));
+    const r = group(title, () => spawn(cmd[0], args, { cwd: join(ROOT, cwd ?? '.'), ...io }));
     if (r.error) {
       console.error(`::error::[${name}] 실행 실패: ${r.error.message}`);
       return 2;
@@ -215,6 +224,72 @@ function cmdCiOk(env = process.env) {
   return ok ? 0 : 1;
 }
 
+// ---- hook ----
+
+// 바뀐 경로 목록 → HOOKS[hook].when에서 돌 gate 이름(표 순서)
+export function hookGates(hook, files) {
+  return HOOKS[hook].when.filter((w) => files.some((f) => w.paths.some((re) => re.test(f)))).map((w) => w.gate);
+}
+
+// 인덱스에 올린 경로(GIT_INDEX_FILE을 따른다). 처음 커밋도 된다(빈 트리와 비교).
+function stagedPaths() {
+  const r = spawnSync('git', ['diff', '--cached', '--name-only', '-z', '--no-renames'], { cwd: ROOT, encoding: 'utf8' });
+  return r.status === 0 ? r.stdout.split('\0').filter(Boolean) : null;
+}
+
+// 첫 0이 아닌 코드에서 멈춘다(훅은 빨리 실패한다)
+function runAll(gates, env) {
+  for (const [g, args, opts] of gates) {
+    const code = runGate(g, args ?? [], env, opts ?? {});
+    if (code !== 0) return code;
+  }
+  return 0;
+}
+
+// .githooks/<hook>이 부른다. 훅과 CI가 같은 gate 표를 쓰므로 결과가 갈리지 않는다.
+function cmdHook(hook, args, env = process.env) {
+  if (!Object.hasOwn(HOOKS, hook)) {
+    console.error(`사용법: node scripts/ci/run.mjs hook <${Object.keys(HOOKS).join('|')}> [git 인자]`);
+    return 2;
+  }
+  const h = HOOKS[hook];
+  const fast = h.fastSkip && env.CHZZK_HOOK_FAST === '1';
+  if (hook === 'pre-commit') {
+    const files = stagedPaths();
+    if (files === null) {
+      console.error('pre-commit: staged 경로를 읽지 못했다');
+      return 2;
+    }
+    return runAll([...h.always.map((g) => [g]), ...hookGates(hook, files).map((g) => [g])], env);
+  }
+  if (hook === 'commit-msg') {
+    if (args.length < 1) {
+      console.error('commit-msg: 메시지 파일 인자가 없다');
+      return 2;
+    }
+    return runAll([['scan-msg', [args[0]]]], env);
+  }
+  // pre-push: stdin을 한 번만 읽어 push-guard에 넘기고, 같은 줄로 scan-range 범위와 바뀐 경로를 계산한다
+  const [remote, url = remote] = args;
+  if (!remote) {
+    console.error('pre-push: 원격 이름 인자가 없다');
+    return 2;
+  }
+  const input = readFileSync(0, 'utf8');
+  const guardCode = runGate('push-guard', [remote, url], env, { input });
+  if (guardCode !== 0) return guardCode;
+  if (isPrivateTarget(remote, url)) return 0;
+  const refs = parseLines(input) ?? [];
+  const ranges = scanRanges(ROOT, remote, refs);
+  const code = runAll(ranges.map((r) => ['scan-range', r.args]), env);
+  if (code !== 0) return code;
+  if (fast) {
+    console.warn('pre-push: CHZZK_HOOK_FAST=1 — 빌드·테스트 gate를 건너뛴다(CI가 검사한다)');
+    return 0;
+  }
+  return runAll(hookGates(hook, pushedPaths(ROOT, remote, refs)).map((g) => [g]), env);
+}
+
 // ---- doctor / install-hooks / list ----
 
 function cmdDoctor() {
@@ -304,6 +379,8 @@ export function main(argv, env = process.env) {
       return cmdCiOk(env);
     case 'doctor':
       return cmdDoctor();
+    case 'hook':
+      return cmdHook(rest[0], rest.slice(1), env);
     case 'install-hooks':
       return cmdInstallHooks();
     case 'install-tool':

@@ -1,3 +1,6 @@
 # 테스트 fixture는 바이트 그대로 둔다(줄끝 변환 금지).
 # Windows의 core.autocrlf=true 클론에서도 crc32·바이트 비교 golden이 깨지지 않게 한다.
 testdata/** -text
+
+# 훅 shim은 sh가 읽는다. CRLF면 Git for Windows의 sh가 shebang·명령을 잘못 읽는다.
+.githooks/* text eol=lf

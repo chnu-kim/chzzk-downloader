@@ -13,7 +13,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `crates/core/tests/` | wiremock·raw TCP 통합 테스트(오프라인). `live.rs`는 실서버 `#[ignore]` 스모크, `support/mp4.rs`는 MP4 상자 검사기 |
 | `crates/core/examples/dl.rs` | 실서버 수동 스모크 CLI |
 | `testdata/{hls,vod,clip,synthetic}/` | 합성 fixture(`testdata/README.md`, 생성기 `scripts/fixtures/gen-fixtures.mjs`). 바이트 그대로 체크아웃한다(`.gitattributes`의 `-text`) |
-| `scripts/ci/` | CI 스크립트(아래 `run.mjs`)와 공개 누출 검사기 `public-scan.mjs`(+`public-denylist.txt` blob 해시 목록, `public-scan.test.mjs`). `--all-history`로 이력 전체, `--staged`로 인덱스 검사(`.githooks/pre-commit`이 `run.mjs scan-staged`로 부른다). 비공개 denylist는 `--denylist`로 넘긴다 |
+| `scripts/ci/` | CI 스크립트(아래 `run.mjs`)와 공개 누출 검사기 `public-scan.mjs`(+`public-denylist.txt` blob 해시 목록, `public-scan.test.mjs`). `--all-history`로 이력 전체, `--staged`로 인덱스, `--rev-range`로 push 범위, `--message-file`로 커밋 메시지를 검사한다. 비공개 이력 가드 `push-guard.mjs`. 비공개 denylist는 `--denylist`로 넘긴다 |
 | `crates/shell/` | **`chzzk-shell`**(Tauri 비의존 앱 셸). DTO·오류 DTO(ts-rs bindings), `Backend` trait, `DownloadManager`(큐·상태 머신·`jobs.json`), `SettingsService`, `App`(command 몸통). 테스트는 `tests/`(가짜 Backend `tests/common/fake.rs`) |
 | `app/` | Vite + Svelte 5 + TS 프런트(`pnpm`, `packageManager`로 버전 고정). `src/lib/api.ts`(command 래퍼), `src/lib/bindings/`(생성물, 손대지 않는다), `src/lib/copy/`(copy deck), `src/lib/components/`·`views/`, vitest는 `*.test.ts` |
 | `app/src-tauri/` | **`chzzk-app`**(lib `chzzk_app_lib`, bin `chzzk-app`). Tauri Builder·플러그인·command 배선·`ChannelSink`·로그·창 닫기 가드, `capabilities/default.json`, `tests/ipc.rs`(mock 런타임 IPC) |
@@ -39,7 +39,9 @@ node scripts/ci/run.mjs scripts-test         # scripts/**/*.test.mjs
 node scripts/ci/run.mjs workflows            # .github/를 바꿨을 때: pin-check + actionlint + zizmor
 node scripts/ci/run.mjs versions             # 버전 원천 일치(Cargo 멤버·tauri.conf.json·app/package.json)
 node scripts/ci/run.mjs doctor               # 로컬 도구 유무·버전(tools.json). 없는 도구의 gate는 로컬에서 건너뛰고 CI가 본다
-node scripts/ci/run.mjs install-hooks        # 훅 켜기(core.hooksPath=.githooks). 한 번만
+node scripts/ci/run.mjs install-hooks        # 훅 켜기(core.hooksPath=.githooks). 클론마다 한 번. pre-commit·commit-msg·pre-push가
+                                             #   run.mjs hook <이름>으로 gates.mjs HOOKS를 돈다(pre-push의 push-guard·scan-range는 끌 수 없다.
+                                             #   CHZZK_HOOK_FAST=1이면 빌드·테스트만 건너뛴다)
 
 UPDATE_BINDINGS=1 cargo test -p chzzk-shell --test bindings   # DTO를 바꾼 뒤 app/src/lib/bindings 다시 만들기
 
@@ -72,7 +74,7 @@ CHZZK_LIVE_HLS=<빠른 다시보기 no> CHZZK_LIVE_DASH=<일반 VOD no> CHZZK_LI
 - 설계가 틀렸거나 모호하면 가장 작은 타당한 선택을 하고 해당 설계 문서(`core.md` 또는 `app.md`)의 "구현 중 변경"에 번호를 붙여 적는다.
 - UI 문구는 한국어이고 app.md §9 copy deck(`app/src/lib/copy/ko.ts`)을 따른다. DTO를 바꾸면 `UPDATE_BINDINGS=1`로 bindings를 다시 만든다.
 - 행동을 바꾸면 해당 테스트를 함께 추가한다. 파서·선택 규칙은 `testdata/`의 합성 fixture로 고정한다. fixture는 `scripts/fixtures/gen-fixtures.mjs`를 고쳐 다시 만든다(`--check`로 확인).
-- **공개 저장소 규칙**: 실제 채널 이름·ID, 영상 번호·클립 ID, 서명 토큰·inKey, 비공개 내부 동작 조사 내용을 코드·테스트·문서·커밋 메시지에 넣지 않는다. 시각·길이 같은 준식별자도 실제 값을 옮기지 않는다. 커밋 전에 `node scripts/ci/run.mjs scan`(CI `ci.yml`의 `lint`, 이력 전체는 `scan-history`)이 통과해야 한다. 커밋 이메일은 GitHub noreply 주소를 쓴다.
+- **공개 저장소 규칙**: 실제 채널 이름·ID, 영상 번호·클립 ID, 서명 토큰·inKey, 비공개 내부 동작 조사 내용을 코드·테스트·문서·커밋 메시지에 넣지 않는다. 시각·길이 같은 준식별자도 실제 값을 옮기지 않는다. 커밋 전에 `node scripts/ci/run.mjs scan`(CI `ci.yml`의 `lint`, 이력 전체는 `scan-history`)이 통과해야 한다. 커밋 이메일은 GitHub noreply 주소를 쓴다. **비공개 저장소(`private` 원격)에는 push하지 않는다**(보관용). 로컬의 `refs/remotes/private/*`는 지우지 않는다: pre-push 가드(`push-guard.mjs`)가 이것으로 비공개에만 있는 커밋이 공개 push 범위에 섞였는지 본다. 자세한 규칙은 `docs/public-release.md` "이후 규칙".
 
 ## 주의사항
 

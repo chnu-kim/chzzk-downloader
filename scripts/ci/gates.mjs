@@ -5,7 +5,8 @@
 //   - needs는 실행 전에 PATH에서 찾는 도구 이름이다(tools.json에 있으면 버전도 본다).
 //     로컬에서 없으면 "건너뜀: CI가 검사함"으로 0, CI(CI=true)에서 없으면 2.
 //   - ciOnly: CI가 아니면 건너뛴다(예: --all-history는 비공개 원격 ref가 있는 로컬 클론에서 반드시 걸린다).
-//   - passArgs: run.mjs <gate> 뒤의 인자를 마지막 단계 명령에 붙인다.
+//   - passArgs: run.mjs <gate> 뒤의 인자를 모든 단계 명령 끝에 붙인다.
+//   - stdin: gate가 표준 입력을 읽는다(push-guard). run.mjs는 한 번 읽어 단계에 input으로 넘긴다.
 
 import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -55,6 +56,22 @@ export const GATES = {
     desc: '모든 ref의 이력 누출 검사(공개 저장소의 새 클론에서만)',
     ciOnly: true,
     steps: [{ cmd: ['node', S('public-scan.mjs'), '--all-history'] }],
+  },
+  'scan-msg': {
+    desc: '커밋 메시지 누출 검사 + 제목 형식 — commit-msg 훅(인자: 메시지 파일)',
+    passArgs: true,
+    steps: [{ cmd: ['node', S('public-scan.mjs'), '--message-file'] }, { cmd: ['node', S('commit-msg.mjs')] }],
+  },
+  'push-guard': {
+    desc: '비공개 이력 가드 — pre-push 훅(인자: 원격 이름 URL, stdin: git pre-push 줄)',
+    passArgs: true,
+    stdin: true,
+    steps: [{ cmd: ['node', S('push-guard.mjs')] }],
+  },
+  'scan-range': {
+    desc: 'push 범위 이력 누출 검사 — pre-push 훅(인자: <rev> [--not-remote r] [--ref name] 또는 A..B)',
+    passArgs: true,
+    steps: [{ cmd: ['node', S('public-scan.mjs'), '--rev-range'] }],
   },
   fixtures: {
     desc: 'testdata/가 생성기 출력과 바이트 동일',
@@ -146,7 +163,47 @@ export const GATES = {
 };
 
 // run.mjs가 gate 말고도 받는 하위 명령
-export const COMMANDS = ['changes', 'ci-ok', 'doctor', 'install-hooks', 'install-tool', 'list'];
+export const COMMANDS = ['changes', 'ci-ok', 'doctor', 'hook', 'install-hooks', 'install-tool', 'list'];
+
+// 훅(docs/design/cicd.md §3.2). .githooks/<이름>은 `run.mjs hook <이름> "$@"`만 exec한다(parity hook-entry).
+//   always: 항상 도는 gate(순서대로). when: 바뀐 경로(pre-commit은 staged, pre-push는 push 범위 커밋이 건드린 경로)가
+//   paths 중 하나에 맞을 때만 도는 gate. fastSkip: CHZZK_HOOK_FAST=1이면 when을 건너뛴다(always는 끌 수 없다).
+const VERSION_FILES = [/(^|\/)Cargo\.toml$/, /^app\/package\.json$/, /^app\/src-tauri\/tauri\.conf\.json$/];
+export const HOOKS = {
+  'pre-commit': {
+    always: ['scan-staged'],
+    when: [
+      { gate: 'fmt', paths: [/\.rs$/] },
+      { gate: 'typos', paths: [/./] },
+      { gate: 'workflows', paths: [/^\.github\//, /^zizmor\.yml$/] },
+      { gate: 'versions', paths: VERSION_FILES },
+      { gate: 'fixtures', paths: [/^testdata\//, /^scripts\/fixtures\//] },
+    ],
+  },
+  'commit-msg': { always: ['scan-msg'], when: [] },
+  'pre-push': {
+    always: ['push-guard', 'scan-range'],
+    fastSkip: true,
+    when: [
+      { gate: 'rust', paths: [/^crates\//, /^testdata\//, /^Cargo\.(toml|lock)$/, /^rust-toolchain\.toml$/] },
+      { gate: 'frontend', paths: [/^app\/(?!src-tauri\/)/] },
+      { gate: 'scripts-test', paths: [/^scripts\//] },
+      { gate: 'deny', paths: [/^Cargo\.lock$/, /^deny\.toml$/, /(^|\/)Cargo\.toml$/] },
+    ],
+  },
+};
+
+// 훅에서만 도는 gate와, CI에서 같은 위험을 보는 gate(parity: 훅 gate ⊂ ci.yml gate ∪ 이 표의 짝).
+//   scan-staged: 인덱스 대신 CI는 체크아웃한 트리(scan)를 본다.
+//   scan-msg·scan-range·push-guard: CI의 새 클론에는 비공개 ref가 없으므로 공개 저장소의 모든 이력(scan-history)이
+//   메시지·작성자·blob을 본다. push-guard 로직 자체는 scripts-test(push-guard.test.mjs)가 ubuntu·windows에서 검사한다.
+//   commit-msg의 제목 형식은 로컬 관례다(CI는 강제하지 않는다).
+export const HOOK_ONLY = {
+  'scan-staged': 'scan',
+  'scan-msg': 'scan-history',
+  'scan-range': 'scan-history',
+  'push-guard': 'scan-history',
+};
 
 // changes.code == 'false'일 때 건너뛰는 작업(ci.yml 작업 id). ci-ok는 이 작업들의 skipped만 허용한다.
 export const CODE_GATED_JOBS = ['supply', 'rust', 'frontend', 'tauri'];

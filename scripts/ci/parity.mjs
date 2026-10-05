@@ -15,14 +15,17 @@
 //               (CI_OK_EXEMPT 제외), `if: always()`이며, 식으로만 판정하는 guard 단계(CI_OK_GUARD)를 글자 그대로 갖는다.
 //   job-if      ci.yml 작업 수준 `if:`는 ci-ok의 `always()`와 `needs.changes.outputs.code == 'true'`뿐이고,
 //               후자를 단 작업의 집합은 gates.mjs CODE_GATED_JOBS와 같다.
-//   hook-entry  .githooks/의 훅은 run.mjs만 exec한다.
+//   hook-entry  .githooks/의 파일 집합은 gates.mjs HOOKS와 같고, 각 훅은 `run.mjs hook <자기 이름> "$@"`만 exec한다.
+//               LF 줄끝, #!/bin/sh, (git 저장소면) 인덱스 모드 100755.
+//   hook-gate   훅이 부르는 gate ⊂ ci.yml의 gate ∪ HOOK_ONLY 짝(짝이 ci.yml에 있어야 한다). CI가 최종 권위다.
 // 위반이 있으면 1, 없으면 0.
 
+import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { CODE_GATED_JOBS, COMMANDS, GATES } from './gates.mjs';
+import { CODE_GATED_JOBS, COMMANDS, GATES, HOOK_ONLY, HOOKS } from './gates.mjs';
 
 const ROOT_DEFAULT = join(fileURLToPath(import.meta.url), '..', '..', '..');
 
@@ -207,6 +210,56 @@ function checkSoften(rel, text, add) {
   }
 }
 
+export const HOOK_LINE = /^exec node "\$\(git rev-parse --show-toplevel\)\/scripts\/ci\/run\.mjs" hook ([a-z-]+) "\$@"$/;
+
+// .githooks/: 파일 집합 = HOOKS 키, 각 파일은 `run.mjs hook <자기 이름> "$@"`만 exec, LF 줄끝, (git 저장소면) 인덱스 모드 100755.
+// 훅이 부르는 gate는 ci.yml에도 있거나(같은 gate) HOOK_ONLY의 짝이 ci.yml에 있어야 한다.
+function checkHooks(root, add, ciGates) {
+  const hookDir = join(root, '.githooks');
+  if (!existsSync(hookDir)) {
+    add('.githooks', 0, 'hook-entry', '.githooks/가 없다');
+    return;
+  }
+  const files = readdirSync(hookDir).sort();
+  for (const h of Object.keys(HOOKS)) if (!files.includes(h)) add(`.githooks/${h}`, 0, 'hook-entry', `훅 파일이 없다(gates.mjs HOOKS에 있음)`);
+  for (const h of files) {
+    const rel = `.githooks/${h}`;
+    if (!Object.hasOwn(HOOKS, h)) add(rel, 0, 'hook-entry', `gates.mjs HOOKS에 없는 훅`);
+    const raw = readFileSync(join(hookDir, h), 'utf8');
+    if (raw.includes('\r')) add(rel, 0, 'hook-entry', 'CRLF 줄끝(sh가 잘못 읽는다)');
+    const lines = raw.split(/\r?\n/);
+    if (lines[0] !== '#!/bin/sh') add(rel, 1, 'hook-entry', '첫 줄은 #!/bin/sh여야 한다');
+    let execs = 0;
+    lines.forEach((l, i) => {
+      const t = l.trim();
+      if (t === '' || t.startsWith('#') || /^set -[eu]+$/.test(t)) return;
+      const m = HOOK_LINE.exec(t);
+      if (!m) add(rel, i + 1, 'hook-entry', `훅은 run.mjs hook <이름> "$@"만 exec한다: ${t}`);
+      else if (m[1] !== h) add(rel, i + 1, 'hook-entry', `훅 이름(${m[1]})이 파일 이름(${h})과 다르다`);
+      else execs++;
+    });
+    if (execs !== 1) add(rel, 0, 'hook-entry', `exec 줄이 ${execs}개다(1개여야 한다)`);
+  }
+  // git이 실행하려면 실행 비트가 있어야 한다. 인덱스의 모드를 본다(Windows 체크아웃도 같은 값)
+  const ls = spawnSync('git', ['ls-files', '-s', '--', '.githooks'], { cwd: root, encoding: 'utf8' });
+  if (ls.status === 0 && ls.stdout.trim() !== '') {
+    for (const l of ls.stdout.split('\n').filter(Boolean)) {
+      const [mode] = l.split(' ');
+      const path = l.slice(l.indexOf('\t') + 1);
+      if (mode !== '100755') add(path, 0, 'hook-entry', `인덱스 모드 ${mode}(100755여야 git이 실행한다: git update-index --chmod=+x)`);
+    }
+  }
+  if (ciGates.size === 0) return; // ci.yml이 없는 사본
+  for (const [h, spec] of Object.entries(HOOKS)) {
+    for (const g of [...spec.always, ...spec.when.map((w) => w.gate)]) {
+      if (!Object.hasOwn(GATES, g)) add(`scripts/ci/gates.mjs`, 0, 'hook-gate', `HOOKS.${h}의 모르는 gate: ${g}`);
+      else if (ciGates.has(g)) continue;
+      else if (!Object.hasOwn(HOOK_ONLY, g)) add('.github/workflows/ci.yml', 0, 'hook-gate', `훅 gate ${g}(${h})가 ci.yml에 없다(CI가 최종 권위다)`);
+      else if (!ciGates.has(HOOK_ONLY[g])) add('.github/workflows/ci.yml', 0, 'hook-gate', `훅 전용 gate ${g}의 CI 짝 ${HOOK_ONLY[g]}이 ci.yml에 없다`);
+    }
+  }
+}
+
 export function checkParity(root) {
   const out = [];
   const add = (file, line, rule, msg) => out.push({ file, line, rule, msg });
@@ -214,11 +267,13 @@ export function checkParity(root) {
   const wfDir = join(root, '.github', 'workflows');
   const files = existsSync(wfDir) ? readdirSync(wfDir).filter((f) => /\.ya?ml$/.test(f)).sort() : [];
   const ciOkIn = [];
+  const ciGates = new Set();
   for (const f of files) {
     const rel = `.github/workflows/${f}`;
     const text = readFileSync(join(wfDir, f), 'utf8');
     for (const { line, cmd } of runCommands(text)) {
       const m = ENTRY.exec(cmd);
+      if (m && f === 'ci.yml') ciGates.add(m[1]);
       if (m) {
         if (!Object.hasOwn(GATES, m[1]) && !COMMANDS.includes(m[1])) add(rel, line, 'gate-known', `모르는 gate: ${m[1]}`);
       } else if (!SETUP_ALLOW.some((re) => re.test(cmd))) {
@@ -240,19 +295,7 @@ export function checkParity(root) {
   for (const c of ciOkIn.filter((c) => c.rel !== '.github/workflows/ci.yml')) add(c.rel, c.line, 'ci-ok', 'ci-ok 작업은 ci.yml에만 둔다');
   if (files.includes('ci.yml') && inCi.length !== 1) add('.github/workflows/ci.yml', 0, 'ci-ok', `ci-ok 작업이 ${inCi.length}개다(1개여야 한다)`);
 
-  const hookDir = join(root, '.githooks');
-  if (existsSync(hookDir)) {
-    for (const h of readdirSync(hookDir).sort()) {
-      const lines = readFileSync(join(hookDir, h), 'utf8').split(/\r?\n/);
-      lines.forEach((l, i) => {
-        const t = l.trim();
-        if (t === '' || t.startsWith('#') || /^set -[eu]+$/.test(t)) return;
-        const m = /^exec node "\$\(git rev-parse --show-toplevel\)\/scripts\/ci\/run\.mjs" ([a-z0-9-]+)( "\$@")?$/.exec(t);
-        if (!m) add(`.githooks/${h}`, i + 1, 'hook-entry', `훅은 run.mjs <gate>만 exec한다: ${t}`);
-        else if (!Object.hasOwn(GATES, m[1])) add(`.githooks/${h}`, i + 1, 'hook-entry', `모르는 gate: ${m[1]}`);
-      });
-    }
-  }
+  checkHooks(root, add, ciGates);
   return out;
 }
 

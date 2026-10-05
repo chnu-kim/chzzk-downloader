@@ -4,6 +4,11 @@
 //   node scripts/ci/public-scan.mjs                 # 추적 중인 파일(작업 트리)을 검사
 //   node scripts/ci/public-scan.mjs --staged        # 인덱스에 올린 내용(커밋될 내용)을 검사. pre-commit 훅용
 //   node scripts/ci/public-scan.mjs --all-history   # 모든 ref의 blob·경로·커밋/태그 메시지·ref 이름·작성자를 검사
+//   node scripts/ci/public-scan.mjs --rev-range A..B [--not-remote origin] [--ref refs/heads/x]
+//                                                   # 범위(B에서 닿고 A에서 안 닿는 것)만 같은 방식으로 검사. pre-push용.
+//                                                   # B 하나만 주면 B의 모든 조상, --not-remote는 그 원격 추적 ref에서 닿는 것을 뺀다.
+//                                                   # --ref는 push할 원격 ref 이름도 검사한다.
+//   node scripts/ci/public-scan.mjs --message-file f  # 커밋 메시지 파일(# 주석 줄·scissors 아래 제외). commit-msg 훅용
 //   ... --denylist <파일>                           # 저장소 밖 비공개 denylist를 더한다(여러 번 줄 수 있다)
 //   node scripts/ci/public-scan.mjs --hash < list   # 줄마다 denylist 항목(해시)을 만든다
 //   node scripts/ci/public-scan.mjs --hash-file f…  # 파일 내용 전체의 blob: 항목을 만든다
@@ -393,15 +398,24 @@ function scanStaged(cwd, deny) {
   return out;
 }
 
-/** 모든 ref에서 닿는 blob(경로 포함), 커밋·태그 메시지, ref 이름, 작성자·커미터·태거를 검사한다. */
-function scanHistory(cwd, deny) {
+/**
+ * rev 인자(revs)로 닿는 blob(경로 포함), 커밋·태그 메시지, 작성자·커미터·태거를 검사한다.
+ * revs가 ['--all']이면 모든 ref(이름 포함)를, 아니면 그 범위(예: ['B', '^A'] 또는 ['B', '--not', '--remotes=origin'])를 본다.
+ * refNames는 추가로 검사할 ref 이름이다(push할 원격 ref 이름은 공개 저장소에 그대로 남는다).
+ */
+function scanRevs(cwd, deny, revs, refNames = []) {
+  const all = revs.length === 1 && revs[0] === '--all';
   const out = [];
-  const objs = git(['rev-list', '--all', '--objects'], { cwd }).toString().split('\n').filter(Boolean);
+  const objs = git(['rev-list', '--objects', ...revs, '--'], { cwd }).toString().split('\n').filter(Boolean);
   const pathOf = new Map();
   const paths = new Set();
+  const bare = [];
   for (const l of objs) {
     const sp = l.indexOf(' ');
-    if (sp < 0) continue;
+    if (sp < 0) {
+      bare.push(l); // 커밋·루트 트리
+      continue;
+    }
     const sha = l.slice(0, sp);
     const p = l.slice(sp + 1);
     paths.add(p);
@@ -410,7 +424,8 @@ function scanHistory(cwd, deny) {
   for (const p of paths) {
     for (const f of scanText(p, deny)) out.push({ where: `${p} (경로)`, rule: f.rule });
   }
-  const shas = [...pathOf.keys()];
+  const shas = [...pathOf.keys(), ...bare];
+  const types = new Map();
   if (shas.length) {
     const check = git(['cat-file', '--batch-check=%(objectname) %(objecttype)'], {
       cwd,
@@ -419,14 +434,18 @@ function scanHistory(cwd, deny) {
       .toString()
       .split('\n')
       .filter(Boolean);
-    const blobs = check.filter((l) => l.endsWith(' blob')).map((l) => l.split(' ')[0]);
+    for (const l of check) {
+      const [sha, type] = l.split(' ');
+      types.set(sha, type);
+    }
+    const blobs = [...pathOf.keys()].filter((sha) => types.get(sha) === 'blob');
     for (const [sha, body] of readBlobs(cwd, blobs)) {
       for (const f of scanBuffer(body, deny)) {
         out.push({ where: `${pathOf.get(sha)}@${sha.slice(0, 12)}:${f.line}`, rule: f.rule });
       }
     }
   }
-  const log = git(['log', '--all', '--format=%H%x00%an%x00%ae%x00%cn%x00%ce%x00%B%x00'], { cwd })
+  const log = git(['log', '--no-show-signature', ...revs, '--format=%H%x00%an%x00%ae%x00%cn%x00%ce%x00%B%x00', '--'], { cwd })
     .toString()
     .split('\0');
   for (let i = 0; i + 5 < log.length; i += 6) {
@@ -441,30 +460,95 @@ function scanHistory(cwd, deny) {
       for (const f of scanText(name, deny)) out.push({ where: `커밋 ${sha} ${who} 이름`, rule: f.rule });
     }
   }
-  const tags = git(['for-each-ref', 'refs/tags', '--format=%(refname)%00%(taggeremail)%00%(contents)%00'], { cwd })
-    .toString()
-    .split('\0');
-  for (let i = 0; i + 2 < tags.length; i += 3) {
-    const ref = tags[i].trim();
-    const email = tags[i + 1].replace(/^<|>$/g, '');
-    if (email && !emailAllowed(email)) out.push({ where: `${ref} 태거 이메일`, rule: 'identity' });
-    for (const f of scanText(tags[i + 2], deny)) out.push({ where: `${ref}:${f.line}`, rule: f.rule });
+  // 태그: 전체 이력은 refs/tags 전부, 범위는 범위 안의 태그 객체(annotated tag push)
+  // rev-list --objects는 태그 객체를 `<sha> <태그 이름>`으로 낸다(경로처럼 보인다)
+  const tagTargets = all ? ['refs/tags'] : shas.filter((sha) => types.get(sha) === 'tag');
+  if (tagTargets.length) {
+    const tags = git(['for-each-ref', '--format=%(refname)%00%(taggeremail)%00%(contents)%00', ...(all ? tagTargets : [])], { cwd })
+      .toString()
+      .split('\0');
+    const scanTag = (where, email, body) => {
+      if (email && !emailAllowed(email)) out.push({ where: `${where} 태거 이메일`, rule: 'identity' });
+      for (const f of scanText(body, deny)) out.push({ where: `${where}:${f.line}`, rule: f.rule });
+    };
+    if (all) {
+      for (let i = 0; i + 2 < tags.length; i += 3) scanTag(tags[i].trim(), tags[i + 1].replace(/^<|>$/g, ''), tags[i + 2]);
+    } else {
+      for (const sha of tagTargets) {
+        const raw = git(['cat-file', 'tag', sha], { cwd }).toString();
+        const blank = raw.indexOf('\n\n');
+        const head = blank < 0 ? raw : raw.slice(0, blank);
+        const body = blank < 0 ? '' : raw.slice(blank + 2);
+        const tagger = /^tagger .*<([^>]*)>/m.exec(head)?.[1] ?? '';
+        const name = /^tag (.*)$/m.exec(head)?.[1] ?? '';
+        scanTag(`태그 객체 ${sha.slice(0, 12)}`, tagger, body);
+        for (const f of scanText(name, deny)) out.push({ where: `태그 객체 ${sha.slice(0, 12)} 이름`, rule: f.rule });
+      }
+    }
   }
-  for (const ref of git(['for-each-ref', '--format=%(refname)'], { cwd }).toString().split('\n').filter(Boolean)) {
+  const refs = all ? git(['for-each-ref', '--format=%(refname)'], { cwd }).toString().split('\n').filter(Boolean) : refNames;
+  for (const ref of refs) {
     for (const f of scanText(ref, deny)) out.push({ where: `${ref} (ref 이름)`, rule: f.rule });
   }
   return out;
 }
 
+const scanHistory = (cwd, deny) => scanRevs(cwd, deny, ['--all']);
+
+/** `A..B` → ['B', '^A'], `B` → ['B']. 옵션처럼 보이는 값과 빈 쪽은 거부한다(git 인자 주입 방지). */
+export function parseRange(spec) {
+  const REV = /^[0-9A-Za-z][0-9A-Za-z._\/@{}^~-]*$/;
+  const parts = spec.split('..');
+  if (parts.length > 2 || parts.some((p) => !REV.test(p) || p.includes('..'))) return null;
+  return parts.length === 2 ? [parts[1], `^${parts[0]}`] : [parts[0]];
+}
+
+/**
+ * 커밋 메시지 파일에서 이력에 남을 부분만 남긴다. git의 기본 cleanup(strip·`commit -v`의 scissors)과 같게:
+ * `#`로 시작하는 줄을 지우고, scissors 줄(`# ------------------------ >8 ------------------------`) 아래를 버린다.
+ */
+export function cleanMessage(text) {
+  const lines = text.replace(/\r\n/g, '\n').split('\n');
+  const cut = lines.findIndex((l) => /^# -+ >8 -+$/.test(l));
+  return (cut < 0 ? lines : lines.slice(0, cut))
+    .filter((l) => !l.startsWith('#'))
+    .join('\n')
+    .trim();
+}
+
 function parseArgs(argv) {
-  const opts = { mode: 'tree', denylists: [DENYLIST_PATH], bad: [] };
+  const opts = { mode: 'tree', denylists: [DENYLIST_PATH], bad: [], modes: 0, notRemotes: [], refs: [] };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a === '--all-history') opts.mode = 'history';
-    else if (a === '--staged') opts.mode = 'staged';
-    else if (a === '--denylist' && i + 1 < argv.length) opts.denylists.push(argv[++i]);
-    else opts.bad.push(a);
+    const val = () => (i + 1 < argv.length ? argv[++i] : (opts.bad.push(`${a}(값 없음)`), null));
+    if (a === '--all-history') (opts.mode = 'history'), opts.modes++;
+    else if (a === '--staged') (opts.mode = 'staged'), opts.modes++;
+    else if (a === '--rev-range') {
+      opts.mode = 'range';
+      opts.modes++;
+      const v = val();
+      if (v !== null) {
+        opts.revs = parseRange(v);
+        if (!opts.revs) opts.bad.push(`--rev-range ${v}`);
+      }
+    } else if (a === '--message-file') {
+      opts.mode = 'message';
+      opts.modes++;
+      opts.messageFile = val();
+    } else if (a === '--not-remote') {
+      const v = val();
+      if (v !== null && /^[A-Za-z0-9._-]+$/.test(v)) opts.notRemotes.push(v);
+      else if (v !== null) opts.bad.push(`--not-remote ${v}`);
+    } else if (a === '--ref') {
+      const v = val();
+      if (v !== null) opts.refs.push(v);
+    } else if (a === '--denylist') {
+      const v = val();
+      if (v !== null) opts.denylists.push(v);
+    } else opts.bad.push(a);
   }
+  if (opts.modes > 1) opts.bad.push('(모드는 하나만: --staged | --all-history | --rev-range | --message-file)');
+  if ((opts.notRemotes.length || opts.refs.length) && opts.mode !== 'range') opts.bad.push('--not-remote·--ref는 --rev-range와 함께만');
   const env = process.env.PUBLIC_SCAN_DENYLIST;
   if (env) opts.denylists.push(...env.split(delimiter).filter(Boolean));
   return opts;
@@ -494,11 +578,21 @@ function main(argv) {
   }
   const deny = loadDenylist(opts.denylists);
   const cwd = process.cwd();
-  const scan = { tree: scanWorkTree, staged: scanStaged, history: scanHistory }[opts.mode];
+  const scan = {
+    tree: scanWorkTree,
+    staged: scanStaged,
+    history: scanHistory,
+    range: (c, d) => scanRevs(c, d, [...opts.revs, ...opts.notRemotes.flatMap((r) => ['--not', `--remotes=${r}`])], opts.refs),
+    message: (_c, d) => scanText(cleanMessage(readFileSync(opts.messageFile, 'utf8')), d).map((f) => ({ where: `메시지:${f.line}`, rule: f.rule })),
+  }[opts.mode];
+  if (opts.mode === 'message' && !existsSync(opts.messageFile)) {
+    process.stderr.write(`메시지 파일이 없다: ${opts.messageFile}\n`);
+    return 2;
+  }
   const found = scan(cwd, deny);
   const uniq = [...new Map(found.map((f) => [`${f.where} ${f.rule}`, f])).values()];
   for (const f of uniq) console.log(`${f.where}  [${f.rule}]`);
-  const scope = { tree: '추적 중인 파일', staged: '인덱스', history: '전체 이력' }[opts.mode];
+  const scope = { tree: '추적 중인 파일', staged: '인덱스', history: '전체 이력', range: '범위 이력', message: '커밋 메시지' }[opts.mode];
   if (uniq.length) {
     console.error(`public-scan: ${scope}에서 ${uniq.length}건 발견`);
     return 1;

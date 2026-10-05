@@ -1,5 +1,5 @@
 #!/bin/sh
-# 커밋될 내용(인덱스)에 누출이 없는지 본다. 켜기(선택): git config core.hooksPath .githooks
-# 비공개 denylist도 쓰려면 PUBLIC_SCAN_DENYLIST=<파일>을 환경에 둔다.
+# 켜기: node scripts/ci/run.mjs install-hooks (git config core.hooksPath .githooks)
+# 로직은 scripts/ci/run.mjs hook pre-commit → gates.mjs HOOKS에 있다(CI와 같은 gate 표). Windows는 Git for Windows의 sh가 실행한다.
 set -eu
-exec node "$(git rev-parse --show-toplevel)/scripts/ci/run.mjs" scan-staged
+exec node "$(git rev-parse --show-toplevel)/scripts/ci/run.mjs" hook pre-commit "$@"

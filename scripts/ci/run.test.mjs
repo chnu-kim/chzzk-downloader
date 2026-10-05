@@ -2,8 +2,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { CODE_GATED_JOBS, GATES, msrv, testFiles } from './gates.mjs';
-import { classify, decideCiOk, firstSemver } from './run.mjs';
+import { CODE_GATED_JOBS, GATES, HOOK_ONLY, HOOKS, msrv, testFiles } from './gates.mjs';
+import { classify, decideCiOk, firstSemver, hookGates, runGate } from './run.mjs';
 
 test('classify: 문서만 바뀌면 code=false', () => {
   assert.deepEqual(classify(['docs/design/cicd.md', 'README.md', 'CLAUDE.md', '.claude/x.json', 'LICENSE']), {
@@ -121,6 +121,39 @@ test('gate 표: 검사를 켜는 플래그', () => {
   }
   assert.ok(cmds('frontend').includes('pnpm install --frozen-lockfile'));
   assert.deepEqual(cmds('deny'), ['cargo deny --locked check bans licenses sources']);
+  assert.deepEqual(cmds('scan-msg'), ['node scripts/ci/public-scan.mjs --message-file', 'node scripts/ci/commit-msg.mjs']);
+  assert.deepEqual(cmds('scan-range'), ['node scripts/ci/public-scan.mjs --rev-range']);
+  assert.deepEqual(cmds('push-guard'), ['node scripts/ci/push-guard.mjs']);
+  assert.equal(GATES['push-guard'].stdin, true);
+  for (const g of ['scan-msg', 'scan-range', 'push-guard', 'versions']) assert.equal(GATES[g].passArgs, true, g);
   // 로컬과 CI가 같은 표를 쓰므로 CI 전용은 scan-history 하나뿐이다
   assert.deepEqual(Object.keys(GATES).filter((g) => GATES[g].ciOnly), ['scan-history']);
+});
+
+test('훅 표: 끌 수 없는 gate와 조건부 gate', () => {
+  assert.deepEqual(HOOKS['pre-commit'].always, ['scan-staged']);
+  assert.deepEqual(HOOKS['commit-msg'].always, ['scan-msg']);
+  assert.deepEqual(HOOKS['pre-push'].always, ['push-guard', 'scan-range']);
+  assert.equal(HOOKS['pre-commit'].fastSkip, undefined, 'CHZZK_HOOK_FAST는 pre-push의 조건부 gate만 끈다');
+  for (const g of Object.keys(HOOK_ONLY)) assert.ok(Object.hasOwn(GATES, g) && Object.hasOwn(GATES, HOOK_ONLY[g]), g);
+});
+
+test('hookGates: 바뀐 경로로 조건부 gate를 고른다', () => {
+  assert.deepEqual(hookGates('pre-commit', ['docs/x.md']), ['typos']);
+  assert.deepEqual(hookGates('pre-commit', ['crates/core/src/lib.rs']), ['fmt', 'typos']);
+  assert.deepEqual(hookGates('pre-commit', ['.github/workflows/ci.yml']), ['typos', 'workflows']);
+  assert.deepEqual(hookGates('pre-commit', ['app/package.json']), ['typos', 'versions']);
+  assert.deepEqual(hookGates('pre-commit', ['crates/core/Cargo.toml']), ['typos', 'versions']);
+  assert.deepEqual(hookGates('pre-commit', ['testdata/hls/a.m3u8']), ['typos', 'fixtures']);
+  assert.deepEqual(hookGates('pre-commit', []), []);
+  assert.deepEqual(hookGates('pre-push', ['docs/x.md']), []);
+  assert.deepEqual(hookGates('pre-push', ['crates/core/src/lib.rs']), ['rust']);
+  assert.deepEqual(hookGates('pre-push', ['app/src/App.svelte']), ['frontend']);
+  assert.deepEqual(hookGates('pre-push', ['app/src-tauri/src/lib.rs']), []);
+  assert.deepEqual(hookGates('pre-push', ['scripts/ci/run.mjs']), ['scripts-test']);
+  assert.deepEqual(hookGates('pre-push', ['Cargo.lock']), ['rust', 'deny']);
+});
+
+test('runGate: 인자를 받지 않는 gate에 인자를 주면 2', () => {
+  assert.equal(runGate('parity', ['--x'], { ...process.env, CI: '' }), 2);
 });

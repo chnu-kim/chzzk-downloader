@@ -10,7 +10,7 @@
 //    이름이 섞이고 secret 마스킹은 영상 번호만 가린다. 그래서 원문을 찍지도, 파일·artifact로 남기지도 않는다.
 // 3. drift-classify.mjs가 실패 출력마다 kind 하나를 고른다. 찍는 것은 `drift: <테스트 이름> <pass|fail> [kind]`와 요약 JSON뿐이다.
 // 4. dl이 받은 파일(이름에 제목이 든다)이 있는 임시 폴더는 지운다.
-// GITHUB_OUTPUT: status=ok|fail, kinds=<쉼표 목록>(nightly report-loop가 이슈 kind로 쓴다). 종료: 모두 통과 0, 실패 1, 입력 오류 2.
+// GITHUB_OUTPUT: status=ok|fail, kinds=<쉼표 목록>(nightly report-loop가 이슈 kind로 쓴다), simulated=true|false. 종료: 모두 통과 0, 실패 1, 입력 오류 2.
 
 import { spawnSync } from 'node:child_process';
 import { appendFileSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
@@ -125,7 +125,8 @@ export function main(argv, env = process.env) {
   const s = summarize(rows);
   for (const r of s.tests) console.log(`drift: ${r.test} ${r.result}${r.kind ? ` ${r.kind}` : ''}`);
   console.log(JSON.stringify({ status: s.status, kinds: s.kinds, simulated: Boolean(simulated) }));
-  if (env.GITHUB_OUTPUT) appendFileSync(env.GITHUB_OUTPUT, `status=${s.status}\nkinds=${s.kinds.join(',')}\n`);
+  // simulated: report-loop가 합성 결과를 진짜 고리(master의 ci-loop:drift)에 쓰지 않게 한다
+  if (env.GITHUB_OUTPUT) appendFileSync(env.GITHUB_OUTPUT, `status=${s.status}\nkinds=${s.kinds.join(',')}\nsimulated=${Boolean(simulated)}\n`);
   if (env.GITHUB_STEP_SUMMARY) {
     const lines = s.tests.map((r) => `| \`${r.test}\` | ${r.result} | ${r.kind ? `\`${r.kind}\`` : ''} |`);
     appendFileSync(env.GITHUB_STEP_SUMMARY, `### drift: ${s.status}${simulated ? ` (simulate ${sim})` : ''}\n\n| 테스트 | 결과 | kind |\n|---|---|---|\n${lines.join('\n')}\n`);

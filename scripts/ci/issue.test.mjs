@@ -251,8 +251,8 @@ test('isStale: 마지막 성공(없으면 워크플로 생성 시각)이 72시�
 
 test('loopStatuses: 작업마다 fail·ok, skipped는 null, 고리 없는 작업·빈 값은 오류', () => {
   assert.deepEqual(loopStatuses(JSON.stringify({ 'e2e-native-windows': { result: 'skipped' }, 'e2e-native-linux': { result: 'success' } })), [
-    { loop: 'e2e-native-linux', status: 'ok', kinds: [] },
-    { loop: 'e2e-native-windows', status: null, kinds: [] },
+    { loop: 'e2e-native-linux', status: 'ok', kinds: [], simulated: false },
+    { loop: 'e2e-native-windows', status: null, kinds: [], simulated: false },
   ]);
   // outputs.kinds는 KINDS enum만: 모르는 값은 글자를 옮기지 않고 unknown
   const k = loopStatuses(JSON.stringify({ 'e2e-native-linux': { result: 'failure', outputs: { kinds: 'http_5xx, 비밀제목,target_gone,http_5xx' } } }));
@@ -447,4 +447,44 @@ test('본문: 할 일 문구는 실패에만, 고정 문구라 누출 검사를 
   // 문구는 고리마다: 같은 kind라도 다른 고리에는 붙지 않는다
   assert.doesNotMatch(body(validate({ loop: 'fuzz', status: 'fail', repo: REPO, kinds: ['auth'] })), /할 일/);
   assert.ok(body(validate({ loop: 'ruleset-drift', status: 'fail', repo: REPO, kinds: ['auth'] })).includes('RULESET_READ_TOKEN'));
+});
+
+// 리뷰(G5): master의 simulate dispatch가 진짜 ci-loop:drift를 열거나 닫으면 안 되고, dispatch 결과가 예약 실행의 연속을 바꾸면 안 된다
+test('reportLoop(drift): 합성 결과(simulated)는 master에서도 시험 이름공간에만, 진짜 연속은 예약 실행만 센다', () => {
+  const env = { GITHUB_REPOSITORY: REPO, GITHUB_RUN_ID: '80', GITHUB_SHA: SHA, GITHUB_REF: 'refs/heads/master' };
+  const real = { number: 11, body: `${marker('drift')}\n\n실패`, open: true, labels: [label('drift')], comments: [] };
+  const fk = fakeGh({ issues: [real], history: { runs: [79], jobs: { 79: [{ name: 'nightly drift', conclusion: 'failure' }] } } });
+  // simulate=ok가 진짜 이슈를 닫지 않는다
+  assert.equal(reportLoop({ ...env, NEEDS: JSON.stringify({ drift: { result: 'success', outputs: { simulated: 'true' } } }) }, fk.gh, { loops: LOOPS2 }), 0);
+  assert.equal(real.open, true);
+  // simulate=target_gone 두 번째(앞 실행 실패)는 시험 이름공간에 연다
+  assert.equal(reportLoop({ ...env, NEEDS: JSON.stringify({ drift: { result: 'failure', outputs: { kinds: 'target_gone', simulated: 'true' } } }) }, fk.gh, { loops: LOOPS2 }), 0);
+  assert.deepEqual(real.comments, []);
+  assert.ok(fk.issues.some((i) => i.open && i.labels.includes(label('drift', true))));
+  // 진짜 이름공간: 앞의 dispatch 실패는 세지 않는다(예약 실행만) → 첫 실패라 아무것도 안 함
+  const fk2 = fakeGh({ history: { runs: [{ id: 79, event: 'workflow_dispatch' }, { id: 78, event: 'schedule' }], jobs: { 79: [{ name: 'nightly drift', conclusion: 'failure' }], 78: [{ name: 'nightly drift', conclusion: 'success' }] } } });
+  assert.equal(reportLoop({ ...env, NEEDS: JSON.stringify({ drift: { result: 'failure', outputs: { kinds: 'http_5xx', simulated: 'false' } } }) }, fk2.gh, { loops: LOOPS2 }), 0);
+  assert.equal(fk2.issues.length, 0);
+  // 앞의 예약 실행이 실패였으면 연다
+  const fk3 = fakeGh({ history: { runs: [{ id: 79, event: 'workflow_dispatch' }, { id: 78, event: 'schedule' }], jobs: { 79: [{ name: 'nightly drift', conclusion: 'success' }], 78: [{ name: 'nightly drift', conclusion: 'failure' }] } } });
+  assert.equal(reportLoop({ ...env, NEEDS: JSON.stringify({ drift: { result: 'failure', outputs: { kinds: 'http_5xx' } } }) }, fk3.gh, { loops: LOOPS2 }), 0);
+  assert.equal(fk3.issues.length, 1);
+  assert.ok(fk3.issues[0].labels.includes(label('drift')));
+});
+
+// 리뷰(G5): 머지 뒤 첫 예약 실행이 매주 작업(성공 기록 없음, 워크플로 생성은 오래 전)을 바로 stale로 열면 안 된다
+test('reportLoop: 성공 기록이 없을 때 stale 기준은 워크플로 생성과 이 브랜치의 가장 오래된 완료 실행 중 늦은 쪽, 실행이 없으면 유예', () => {
+  const now = Date.parse('2026-11-01T00:00:00Z');
+  const env = { GITHUB_REPOSITORY: REPO, GITHUB_RUN_ID: '90', GITHUB_SHA: SHA, GITHUB_REF: 'refs/heads/master' };
+  const W = { 'nightly.yml': { id: 1, state: 'active', created_at: '2026-10-05T00:00:00Z' } };
+  const needs = JSON.stringify({ 'e2e-native-linux': { result: 'success' }, 'e2e-native-windows': { result: 'skipped' } });
+  const fk = fakeGh({ workflows: W });
+  assert.equal(reportLoop({ ...env, NEEDS: needs }, fk.gh, { now }), 0);
+  assert.equal(fk.issues.filter((i) => i.labels.includes(label('e2e-native-windows'))).length, 0, '완료 실행이 없으면 유예');
+  const recent = fakeGh({ workflows: W, history: { runs: [{ id: 5, event: 'schedule', created_at: '2026-10-30T00:00:00Z' }] } });
+  assert.equal(reportLoop({ ...env, NEEDS: needs }, recent.gh, { now }), 0);
+  assert.equal(recent.issues.length, 0, '관찰 시작(첫 실행) 뒤 8일이 안 됐다');
+  const old = fakeGh({ workflows: W, history: { runs: [{ id: 6, event: 'schedule', created_at: '2026-10-31T00:00:00Z' }, { id: 5, event: 'schedule', created_at: '2026-10-20T00:00:00Z' }] } });
+  assert.equal(reportLoop({ ...env, NEEDS: needs }, old.gh, { now }), 0);
+  assert.equal(old.issues.filter((i) => i.labels.includes(label('e2e-native-windows'))).length, 1);
 });

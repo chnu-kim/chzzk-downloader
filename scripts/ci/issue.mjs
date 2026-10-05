@@ -341,9 +341,11 @@ export function loopStatuses(needsJson, loops = NEEDS_LOOPS) {
     const r = v?.result;
     const raw = typeof v?.outputs?.kinds === 'string' ? v.outputs.kinds.split(',').map((k) => k.trim()).filter(Boolean) : [];
     const kinds = [...new Set(raw.map((k) => (KINDS.includes(k) ? k : 'unknown')))].sort();
-    if (r === 'failure' || r === 'cancelled') out.push({ loop: job, status: 'fail', kinds });
-    else if (r === 'success') out.push({ loop: job, status: 'ok', kinds: [] });
-    else out.push({ loop: job, status: null, kinds: [] });
+    // 합성 결과(drift simulate)는 진짜 고리에 쓰지 않는다(reportLoop가 시험 이름공간으로 보낸다)
+    const simulated = v?.outputs?.simulated === 'true';
+    if (r === 'failure' || r === 'cancelled') out.push({ loop: job, status: 'fail', kinds, simulated });
+    else if (r === 'success') out.push({ loop: job, status: 'ok', kinds: [], simulated });
+    else out.push({ loop: job, status: null, kinds: [], simulated });
   }
   return out;
 }
@@ -358,7 +360,7 @@ export function threshold(spec, kinds) {
 
 // branch의 workflow 완료 실행 기록. 실행 목록과 실행별 작업 목록을 한 번씩만 읽어(report-loop가 고리 여럿에 나눠 쓴다)
 // API 호출 수를 고리 수와 무관하게 둔다. 실행은 새것부터다.
-export const RUNS_JQ = '[.workflow_runs[] | {id, event}]';
+export const RUNS_JQ = '[.workflow_runs[] | {id, event, created_at}]';
 export const JOBS_JQ = '[.jobs[] | {name, conclusion, completed_at}]';
 export function runHistory(gh, { repo, workflow, branch, runs = 30 }) {
   let list = null;
@@ -367,7 +369,7 @@ export function runHistory(gh, { repo, workflow, branch, runs = 30 }) {
     runs() {
       if (!list) {
         const out = gh(['api', `repos/${repo}/actions/workflows/${workflow}/runs?branch=${encodeURIComponent(branch)}&status=completed&per_page=${runs}`, '--jq', RUNS_JQ]);
-        list = (JSON.parse(out || '[]') ?? []).filter((r) => Number.isInteger(r?.id)).map((r) => ({ id: String(r.id), event: r.event }));
+        list = (JSON.parse(out || '[]') ?? []).filter((r) => Number.isInteger(r?.id)).map((r) => ({ id: String(r.id), event: r.event, created_at: r.created_at ?? null }));
       }
       return list;
     },
@@ -378,12 +380,14 @@ export function runHistory(gh, { repo, workflow, branch, runs = 30 }) {
   };
 }
 
-// 작업 jobName이 돈(skipped가 아닌) 실행의 conclusion 목록(새것부터). pull_request 실행은 뺀다(브랜치에서는 PR 실행이
-// 같은 브랜치 이름으로 섞이고 그 실행에서는 예약 작업이 건너뛴다). excludeRunId는 지금 실행.
-export function jobHistory(h, { jobName, excludeRunId }) {
+// 작업 jobName이 돈(skipped가 아닌) 실행의 conclusion 목록(새것부터). excludeRunId는 지금 실행.
+// events: 셀 실행의 event. 진짜 이름공간(master)은 예약 실행만 센다(dispatch, 특히 simulate의 합성 결과가 실제 연속을
+// 늘이거나 끊지 않게). 시험 이름공간(브랜치)은 pull_request만 뺀다(브랜치 dispatch로 고리를 확인한다).
+export function jobHistory(h, { jobName, excludeRunId, events = null }) {
   const out = [];
   for (const r of h.runs()) {
-    if (r.event === 'pull_request' || r.id === String(excludeRunId)) continue;
+    if (r.id === String(excludeRunId)) continue;
+    if (events ? !events.includes(r.event) : r.event === 'pull_request') continue;
     const c = h.jobs(r.id).find((j) => j.name === jobName)?.conclusion;
     if (c && c !== 'skipped') out.push(c);
   }
@@ -421,7 +425,15 @@ function skippedStale(gh, h, { repo, branch, loop, now, loops }) {
     throw e;
   }
   const last = lastJobSuccess(h, { jobName: name });
-  const s = isStale({ lastSuccess: last, created: wf.created_at ?? null }, now, staleHours);
+  // 성공 기록이 없으면 "관찰을 시작한 때"부터 센다: 워크플로 생성 시각과 이 브랜치의 가장 오래된 완료 실행 중 늦은 쪽.
+  // 이 브랜치에 완료 실행이 하나도 없으면 유예한다(머지 뒤 첫 예약 실행이 매주 작업을 바로 stale로 열지 않게).
+  const runs = h.runs();
+  if (!last && !runs.length) {
+    console.log(`${loop}: 건너뜀, ${branch}에 완료 실행이 아직 없다 — 유예`);
+    return false;
+  }
+  const since = [wf.created_at, runs.at(-1)?.created_at].filter((t) => Number.isFinite(Date.parse(t ?? ''))).sort().at(-1) ?? null;
+  const s = isStale({ lastSuccess: last, created: since }, now, staleHours);
   console.log(`${loop}: 건너뜀, '${name}'의 마지막 성공 ${last ?? '없음'}(${branch}) → ${s ? `stale(${staleHours}시간 초과)` : 'ok'}`);
   return s;
 }
@@ -449,10 +461,13 @@ export function reportLoop(env, gh, { deny, now = Date.now(), loops = NEEDS_LOOP
   const runUrl = `https://github.com/${repo}/actions/runs/${env.GITHUB_RUN_ID}`;
   let bad = 0;
   const h = runHistory(gh, { repo, workflow: LOOP_WORKFLOW, branch: scope.branch });
-  for (const { loop, status: st, kinds: k } of sts) {
+  for (const { loop, status: st, kinds: k, simulated } of sts) {
     try {
       let status = st;
       let kinds = k;
+      // 합성 결과(simulate)는 master에서도 시험 이름공간에만 쓴다(G4 48 (라)와 같은 종류: 시험이 진짜 이슈를 닫지 않게)
+      const test = scope.test || simulated;
+      if (simulated && !scope.test) console.log(`${loop}: 합성 결과(simulate) — 시험 이름공간(${label(loop, true)})에만 쓴다`);
       if (!status) {
         // 건너뜀: 마지막 성공이 오래됐으면 fail(stale), 아니면 이슈를 건드리지 않는다(매주 도는 Windows가 건너뛴 날 닫지 않는다)
         if (!skippedStale(gh, h, { repo, branch: scope.branch, loop, now, loops })) continue;
@@ -462,14 +477,14 @@ export function reportLoop(env, gh, { deny, now = Date.now(), loops = NEEDS_LOOP
         // 연속 실패 규칙(drift 2회, no_target 3회): 문턱 아래면 이슈를 열지도, 댓글을 달지도, 닫지도 않는다
         const need = threshold(loops[loop], kinds);
         if (need > 1) {
-          const prior = leadingFailures(jobHistory(h, { jobName: loops[loop].name, excludeRunId: env.GITHUB_RUN_ID }));
+          const prior = leadingFailures(jobHistory(h, { jobName: loops[loop].name, excludeRunId: env.GITHUB_RUN_ID, events: test ? null : ['schedule'] }));
           const n = Math.min(prior + 1, need);
           console.log(`${loop}: 실패 ${kinds.join(',') || '-'} — 연속 ${prior + 1}회(문턱 ${need}회)`);
           if (n < need) continue;
         }
       }
-      const r = sync({ loop, status, repo, runUrl, sha: env.GITHUB_SHA, jobs: status === 'fail' ? [loop] : [], kinds, test: scope.test }, gh, deny);
-      console.log(`${label(loop, scope.test)}: ${status} → ${r.action} ${r.numbers.join(',')}`);
+      const r = sync({ loop, status, repo, runUrl, sha: env.GITHUB_SHA, jobs: status === 'fail' ? [loop] : [], kinds, test }, gh, deny);
+      console.log(`${label(loop, test)}: ${status} → ${r.action} ${r.numbers.join(',')}`);
     } catch (e) {
       bad++;
       console.error(`::error::report-loop ${loop}: ${e.message}`);

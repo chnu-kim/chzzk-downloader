@@ -100,7 +100,7 @@ test('drift.mjs simulate: kind마다 exit 1·kinds 출력, ok는 0, 어디에도
   for (const kind of ['target_gone', 'http_5xx', 'schema_mismatch', 'no_target', 'panic', 'unknown']) {
     const r = runDrift({ DRIFT_SIMULATE: kind });
     assert.equal(r.status, 1, kind);
-    assert.match(r.output, new RegExp(`^status=fail\\nkinds=${kind}\\n$`));
+    assert.match(r.output, new RegExp(`^status=fail\\nkinds=${kind}\\nsimulated=true\\n$`));
     for (const t of DRIFT_TESTS) assert.match(r.text, new RegExp(`drift: ${t} fail ${kind}`));
     noCanary(r.text, `${kind} 로그`);
     noCanary(r.summary, `${kind} 요약`);
@@ -108,14 +108,14 @@ test('drift.mjs simulate: kind마다 exit 1·kinds 출력, ok는 0, 어디에도
   }
   const ok = runDrift({ DRIFT_SIMULATE: 'ok' });
   assert.equal(ok.status, 0);
-  assert.equal(ok.output, 'status=ok\nkinds=\n');
+  assert.equal(ok.output, "status=ok\nkinds=\nsimulated=true\n");
   noCanary(ok.text, 'ok 로그');
 });
 
 test('drift.mjs: 대상 secret이 하나도 없으면 빌드 없이 no_target(exit 1), 잘못된 simulate는 2', () => {
   const r = runDrift({});
   assert.equal(r.status, 1);
-  assert.equal(r.output, 'status=fail\nkinds=no_target\n');
+  assert.equal(r.output, "status=fail\nkinds=no_target\nsimulated=false\n");
   assert.doesNotMatch(r.text, /cargo/);
   assert.equal(runDrift({ DRIFT_SIMULATE: '$(id)' }).status, 2);
 });

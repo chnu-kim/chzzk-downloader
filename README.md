@@ -1,4 +1,13 @@
 # chzzk-downloader
- [![GitHub release](https://img.shields.io/github/v/release/chnu-kim/chzzk-downloader.svg?style=flat-square)](https://github.com/chnu-kim/chzzk-downloader/releases/latest)
- 
- VOD downloader for Naver's Chzzk platform.
+
+치지직(CHZZK) 스트리머가 **자신의 VOD·클립**을 내려받기 위한 데스크톱 앱(Tauri v2 + Svelte 5, Rust 코어)이다.
+
+## 이용 범위
+
+- 이 저장소는 소스 열람과 CI를 위해 공개한다. **라이선스를 부여하지 않는다.** 사용·수정·재배포를 허가하지 않으며 모든 권리는 저작자에게 있다.
+- 앱은 치지직 로그인으로 본인 채널의 영상만 받도록 제한하고, 실행 파일은 허용된 사용자에게만 배포한다.
+- 암호화(AES) VOD는 지원하지 않는다.
+
+## 개발
+
+명령과 검증 게이트는 [`CLAUDE.md`](CLAUDE.md), 진행 상황은 [`docs/ROADMAP.md`](docs/ROADMAP.md)에 있다.

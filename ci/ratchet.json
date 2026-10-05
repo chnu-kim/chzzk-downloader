@@ -25,15 +25,15 @@
     "dist_gz": 57260,
     "binary": {
       "linux": 28181752,
-      "darwin": 19101600,
-      "windows": 18455552
+      "darwin": 20303840,
+      "windows": 19681792
     },
     "bundle": {
       "linux-AppImage": 86813176,
       "linux-deb": 9262424,
-      "darwin-dmg": 7086358,
-      "windows-setup": 4440275,
-      "windows-msi": 6500352
+      "darwin-dmg": 7688326,
+      "windows-setup": 4718577,
+      "windows-msi": 7057408
     },
     "tolerance_pct": 3
   },

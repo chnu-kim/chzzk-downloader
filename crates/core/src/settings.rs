@@ -29,6 +29,12 @@ pub const SCHEMA_VERSION: u32 = 2;
 /// 최근 VOD 목록 길이 상한.
 pub const MAX_RECENT_VODS: usize = 5;
 
+/// 동시에 받는 작업 수 기본값.
+pub const DEFAULT_PARALLEL_DOWNLOADS: u8 = 2;
+
+/// 동시에 받는 작업 수 상한. 더 큰 숫자는 이 값으로 읽는다.
+pub const MAX_PARALLEL_DOWNLOADS: u8 = 3;
+
 /// 최근 VOD 제목 길이 상한(문자 수). 넘으면 47자 + `...`.
 const RECENT_TITLE_MAX_CHARS: usize = 50;
 const RECENT_TITLE_KEEP_CHARS: usize = 47;
@@ -56,6 +62,12 @@ pub struct UserSettings {
     /// HLS 동시 요청 수. 1~255가 아닌 값(0, 음수, 범위 밖, 숫자 아님)은 기본값(4)으로 읽는다.
     #[serde(deserialize_with = "concurrency_or_default")]
     pub segment_concurrency: u8,
+    /// 동시에 받는 작업 수(1~3, 기본 2). 앱 셸의 작업 큐가 쓴다. 3보다 큰 정수는 3으로,
+    /// 1 미만·숫자 아님은 기본값으로 읽는다.
+    #[serde(deserialize_with = "parallel_or_default")]
+    pub max_parallel_downloads: u8,
+    /// 앱을 다시 열 때 멈춘(`interrupted`) 작업을 자동으로 이어받는다(기본 꺼짐).
+    pub auto_resume_interrupted: bool,
     /// 옛 버전 설정을 가져온 폴더. 있으면 다시 묻지 않는다.
     pub imported_from: Option<PathBuf>,
 }
@@ -70,6 +82,8 @@ impl Default for UserSettings {
             last_url: None,
             recent_vods: Vec::new(),
             segment_concurrency: DEFAULT_CONCURRENCY.get(),
+            max_parallel_downloads: DEFAULT_PARALLEL_DOWNLOADS,
+            auto_resume_interrupted: false,
             imported_from: None,
         }
     }
@@ -118,6 +132,20 @@ where
         .and_then(|n| u8::try_from(n).ok())
         .filter(|&n| n > 0)
         .unwrap_or(DEFAULT_CONCURRENCY.get()))
+}
+
+/// 동시 작업 수. 정수 1 이상은 1~3으로 자르고, 그 밖의 값(0, 음수, 소수, 문자열)은 기본값(2)으로 읽는다.
+/// 손으로 고친 값 하나 때문에 파일 전체가 깨진 것으로 처리되지 않게 어떤 JSON 값이든 받는다.
+fn parallel_or_default<'de, D>(d: D) -> Result<u8, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let v = Option::<serde_json::Value>::deserialize(d)?;
+    Ok(v.as_ref()
+        .and_then(serde_json::Value::as_u64)
+        .filter(|&n| n > 0)
+        .map(|n| n.min(u64::from(MAX_PARALLEL_DOWNLOADS)) as u8)
+        .unwrap_or(DEFAULT_PARALLEL_DOWNLOADS))
 }
 
 /// 최근 VOD에 넣는다. 같은 URL은 지우고 맨 앞에 넣은 뒤 5개로 자른다. `last_url`도 바꾼다.
@@ -318,6 +346,8 @@ mod tests {
         let s = UserSettings::default();
         assert_eq!(s.schema_version, 2);
         assert_eq!(s.segment_concurrency, 4);
+        assert_eq!(s.max_parallel_downloads, 2);
+        assert!(!s.auto_resume_interrupted);
         assert_eq!(parse(b"{}").unwrap(), s);
     }
 
@@ -328,6 +358,8 @@ mod tests {
             use_naver_cookies: true,
             last_quality_label: Some("720p".into()),
             segment_concurrency: 6,
+            max_parallel_downloads: 3,
+            auto_resume_interrupted: true,
             ..Default::default()
         };
         add_recent_vod(&mut s, "https://chzzk.naver.com/video/1", "제목");
@@ -340,6 +372,8 @@ mod tests {
             "lastUrl",
             "recentVods",
             "segmentConcurrency",
+            "maxParallelDownloads",
+            "autoResumeInterrupted",
             "importedFrom",
         ] {
             assert!(v.get(k).is_some(), "{k}");
@@ -377,6 +411,35 @@ mod tests {
                 .unwrap()
                 .segment_concurrency,
             255
+        );
+    }
+
+    /// 동시 작업 수: 정수는 1~3으로 자르고, 그 밖은 그 필드만 기본값(2)이다. 나머지 키는 남는다.
+    #[test]
+    fn parallel_downloads_is_clamped_or_default() {
+        for (raw, want) in [
+            ("1", 1),
+            ("2", 2),
+            ("3", 3),
+            ("4", 3),
+            ("300", 3),
+            ("0", 2),
+            ("-1", 2),
+            ("1.5", 2),
+            ("\"3\"", 2),
+            ("null", 2),
+        ] {
+            let s = parse(
+                format!(r#"{{"downloadFolder":"/x","maxParallelDownloads":{raw}}}"#).as_bytes(),
+            )
+            .unwrap_or_else(|e| panic!("{raw}: {e}"));
+            assert_eq!(s.max_parallel_downloads, want, "{raw}");
+            assert_eq!(s.download_folder.as_deref(), Some(Path::new("/x")), "{raw}");
+        }
+        assert!(
+            parse(br#"{"autoResumeInterrupted":true}"#)
+                .unwrap()
+                .auto_resume_interrupted
         );
     }
 

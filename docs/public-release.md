@@ -5,8 +5,7 @@
 ## 준비물
 
 - `git-filter-repo` 2.47 이상(`pip install git-filter-repo`)과 Node 18 이상.
-- 치환 규칙 파일 `filter-repo-replacements.txt`. **원문(실제 이름·ID·토큰)이 들어 있어 저장소에 커밋하지 않는다.** 이 작업 세션에서 다음 위치에 만들었다. 임시 폴더이므로 바로 비공개 보관소로 옮긴다.
-  `<비공개 보관소>/filter-repo-replacements.txt`
+- 치환 규칙 파일 `<비공개 보관소>/filter-repo-replacements.txt`. **원문(실제 이름·ID·토큰)이 들어 있어 저장소에 커밋하지 않는다.** 공개 준비 작업(2026-10-05) 때 만들어 저장소 밖 비공개 보관소에 둔다. 아래 명령은 이 파일을 `../filter-repo-replacements.txt`로 복사해 두었다고 본다.
   - 내용: 실제 채널 이름·채널 ID·영상 번호·영상 ID·클립 ID·inKey·스트림 경로 키·제목·미디어 호스트를 합성 fixture와 같은 가짜 값(`testdata/README.md`)으로 바꾸는 줄, 암호화 키 주소와 AES 조사 줄을 지우는 줄, 그리고 아래의 일반 규칙이다.
   - 원문이 없는 일반 규칙(그대로 옮겨 둔다):
 
@@ -72,5 +71,7 @@ cargo test --workspace --locked
 
 ## 이후 규칙
 
+- 검사기는 `node scripts/ci/public-scan.mjs`로 부른다. POSIX는 `scripts/ci/public-scan.sh`, Windows PowerShell은 `scripts/ci/public-scan.ps1` 래퍼도 쓸 수 있다.
+- denylist 해시의 salt는 공개 소스에 있으므로, 경우의 수가 적은 항목(8자리 영상 번호, 짧은 채널 이름)은 대입으로 되돌릴 수 있다. 막는 효과는 그대로지만 "목록 자체가 원문을 숨긴다"는 보장은 hex ID·inKey·여러 단어 제목·blob 해시에만 있다.
 - 새 실제 값을 막으려면 원문을 커밋하지 말고 해시만 `scripts/ci/public-denylist.txt`에 더한다: `printf '%s\n' '<원문>' | node scripts/ci/public-scan.mjs --hash`.
 - fixture는 `scripts/fixtures/gen-fixtures.mjs`로만 바꾼다. 실제 응답을 저장소에 넣지 않는다.

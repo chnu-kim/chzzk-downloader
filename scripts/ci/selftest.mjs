@@ -66,7 +66,8 @@ function mkRoot(name, files = {}) {
     'a/Cargo.toml': '[package]\nname = "a"\nversion.workspace = true\nedition = "2024"\n',
     'a/src/lib.rs': 'pub fn one() -> u32 {\n    1\n}\n',
     'app/package.json': JSON.stringify({ name: 'x', version: '0.1.0' }) + '\n',
-    'app/src-tauri/tauri.conf.json': JSON.stringify({ version: '0.1.0' }) + '\n',
+    // 사본도 pubkey gate를 통과해야 한다(훅 씨앗이 release/·tauri.conf.json을 함께 스테이징한다)
+    'app/src-tauri/tauri.conf.json': JSON.stringify({ version: '0.1.0', plugins: { updater: { pubkey: readFileSync(join(ROOT, 'release/updater.pub'), 'utf8') } } }) + '\n',
   };
   for (const [rel, text] of Object.entries({ ...base, ...files })) {
     if (text === null) continue;

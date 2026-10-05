@@ -37,8 +37,7 @@ mod tests {
         );
         assert_eq!(super::is_own_content(&vod, ""), Some(false));
 
-        let (clip, _) =
-            parse_clip_info(&fixture("internal/api/testdata/clip_playinfo.json")).unwrap();
+        let (clip, _) = parse_clip_info(&fixture("testdata/clip/clip_playinfo.json")).unwrap();
         assert_eq!(
             super::is_own_content(&clip, "000000000000000000000000000000c3"),
             Some(true)

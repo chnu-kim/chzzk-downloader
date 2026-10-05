@@ -6,7 +6,8 @@
 
 - 현재: Phase 1 코어(`crates/core`, 설계 §10-1~15) 구현 완료, 브랜치 `feat/rust-core`. 3 OS CI 녹색(PR #12, Windows 잠금 테스트 수정 후), 실서버 스모크(빠른 다시보기 HLS·DASH VOD·클립) 통과(2026-10-05, 설계 "구현 중 변경" 45). 14~15단계 리뷰 수정(옛 형식 settings.json 보존, 이어받기 ETA 등, 구현 중 변경 47~51) 반영
 - 남은 것: 성인 PD에 미디어 쿠키가 필요한지 실측(로그인 쿠키 필요, `examples/dl.rs`의 `CHZZK_NID_AUT`·`CHZZK_NID_SES`로 사용자가 직접)
-- 다음: §10-16 Go 코드 삭제(별도 PR) → Phase 2 Tauri 셸
+- 완료: §10-16 Go 코드 삭제(`cmd/`·`internal/`·`go.mod`), 클립 fixture는 `testdata/clip/`으로 이동(브랜치 `chore/remove-go`)
+- 다음: Phase 2 Tauri 셸
 
 ## 확정된 결정 (2026-10-05, 사용자 인터뷰)
 
@@ -56,7 +57,7 @@
 - [x] §10-14 settings / credentials / legacy import
 - [x] §10-15 실서버 스모크(`examples/dl.rs`, `tests/live.rs`) + 문서 정정(§12) + CLAUDE.md 갱신
 - [ ] §10-15 남은 항목: 성인 PD 쿠키 실측(로그인 쿠키가 있어야 해서 미실측)
-- [ ] §10-16 (별도 PR) Go 코드 삭제, `internal/api/testdata` → `testdata/clip/`
+- [x] §10-16 Go 코드 삭제, `internal/api/testdata` → `testdata/clip/` (브랜치 `chore/remove-go`)
 
 ### Phase 2 — GUI (Tauri + Svelte)
 - [ ] `app/` Tauri 셸: 코어를 command/event로 노출

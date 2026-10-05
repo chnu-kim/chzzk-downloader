@@ -1,4 +1,3 @@
 # 테스트 fixture는 바이트 그대로 둔다(줄끝 변환 금지).
 # Windows의 core.autocrlf=true 클론에서도 crc32·바이트 비교 golden이 깨지지 않게 한다.
 testdata/** -text
-internal/api/testdata/** -text

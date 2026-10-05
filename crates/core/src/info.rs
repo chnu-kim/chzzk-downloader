@@ -612,12 +612,12 @@ mod tests {
     fn clip_fixtures() {
         let cases = [
             (
-                "internal/api/testdata/clip_playinfo.json",
+                "testdata/clip/clip_playinfo.json",
                 "테스트 클립 하나",
                 "0000000000000000000000000000000000C03",
             ),
             (
-                "internal/api/testdata/clip_multi_playinfo.json",
+                "testdata/clip/clip_multi_playinfo.json",
                 "테스트 클립 둘 - A vs B | 여러 화질 #태그",
                 "0000000000000000000000000000000000C04",
             ),
@@ -644,7 +644,7 @@ mod tests {
     #[test]
     fn clip_missing_keys() {
         let mut v: Value =
-            serde_json::from_slice(&fixture("internal/api/testdata/clip_playinfo.json")).unwrap();
+            serde_json::from_slice(&fixture("testdata/clip/clip_playinfo.json")).unwrap();
         v["content"]["inKey"] = "".into();
         assert!(matches!(
             parse_clip_info(&serde_json::to_vec(&v).unwrap()),

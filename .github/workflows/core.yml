@@ -8,7 +8,6 @@ on:
       - "Cargo.lock"
       - "crates/**"
       - "testdata/**"
-      - "internal/api/testdata/**"
       - ".github/workflows/core.yml"
       - ".gitattributes"
   pull_request:
@@ -17,7 +16,6 @@ on:
       - "Cargo.lock"
       - "crates/**"
       - "testdata/**"
-      - "internal/api/testdata/**"
       - ".github/workflows/core.yml"
       - ".gitattributes"
 

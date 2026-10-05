@@ -1,19 +1,14 @@
-/* §15-1 골격의 최소 기본값. 색 토큰 전체(라이트/다크)는 §15-12에서 채운다. */
+/* 전역 기본값. 토큰(색·글꼴·간격·움직임)은 styles/tokens.css 한 곳에만 둔다(docs/design/ui-visual.md). */
+@import './styles/tokens.css';
+
 :root {
-  color-scheme: light dark;
-  --bg: #ffffff;
-  --fg: #1a1c1e;
-  font-family: system-ui, 'Apple SD Gothic Neo', 'Malgun Gothic', 'Noto Sans KR', sans-serif;
+  font-family: var(--font-sans);
   font-size: 14px;
+  line-height: var(--leading-normal);
   word-break: keep-all;
   overflow-wrap: anywhere;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #17191b;
-    --fg: #e6e8ea;
-  }
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 *,
@@ -26,4 +21,26 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--fg);
+  /* 데스크톱 앱: 본문 글자·빈 영역은 드래그 선택되지 않게. 입력칸은 다시 켠다. */
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+input,
+textarea,
+[contenteditable] {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+/* 포커스는 키보드로 왔을 때만 링을 보인다. 모든 컴포넌트가 같은 링을 쓴다. */
+:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  border-radius: var(--radius-md);
+}
+
+/* 숫자(크기·속도·남은 시간·퍼센트)는 고정폭 숫자로 흔들리지 않게 */
+.tnum {
+  font-variant-numeric: tabular-nums;
 }

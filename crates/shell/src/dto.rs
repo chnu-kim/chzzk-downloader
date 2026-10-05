@@ -5,7 +5,10 @@
 //! - 서명 URL·쿠키 값은 어떤 DTO에도 없다.
 //! - 코어 타입(`ContentRef`·`PlaybackKind`·`Phase`)은 코어 직렬화를 그대로 쓰고, ts-rs를 코어에 넣지 않으려고
 //!   같은 serde 속성을 가진 셸 미러(`*Ts`)를 `#[ts(as = "...")]`로 붙인다. 미러는 TS 모양을 적는 데만 쓰며,
-//!   `tests/dto_json.rs`가 코어 직렬화와 미러 직렬화가 같은지 검사한다.
+//!   미러마다 `_` arm 없는 `From<코어>`가 있어 코어에 변형이 늘면 셸 컴파일이 깨진다. `tests/dto_json.rs`는
+//!   이 변환을 거쳐 코어 직렬화와 미러 직렬화가 같은지 검사한다.
+//! - 코어 구조체를 옮기는 `From`(`Progress`·`ContentMeta`·`Quality`)은 `..` 없이 구조 분해한다. 코어에 필드가
+//!   늘면 컴파일이 깨져, 그 필드를 경계 너머로 보낼지 정하게 한다.
 
 use chzzk_core::{
     ContentKind, ContentMeta, ContentRef, DuplicatePolicy, LegacyImport, Phase, Platform,
@@ -56,6 +59,42 @@ pub enum PhaseTs {
     Downloading,
     Reresolving,
     Finalizing,
+}
+
+impl From<PlaybackKind> for PlaybackKindTs {
+    /// 빠짐없는 match. 코어에 방식이 늘면 여기서 컴파일이 깨진다.
+    fn from(k: PlaybackKind) -> Self {
+        match k {
+            PlaybackKind::Progressive => PlaybackKindTs::Progressive,
+            PlaybackKind::LiveRewindHls => PlaybackKindTs::LiveRewindHls,
+        }
+    }
+}
+
+impl From<&ContentRef> for ContentRefTs {
+    /// 빠짐없는 match. 코어에 컨텐츠 종류가 늘면 여기서 컴파일이 깨진다.
+    fn from(c: &ContentRef) -> Self {
+        match c {
+            ContentRef::Video { video_no } => ContentRefTs::Video {
+                video_no: *video_no,
+            },
+            ContentRef::Clip { clip_id } => ContentRefTs::Clip {
+                clip_id: clip_id.clone(),
+            },
+        }
+    }
+}
+
+impl From<Phase> for PhaseTs {
+    /// 빠짐없는 match. 코어에 단계가 늘면 여기서 컴파일이 깨진다.
+    fn from(p: Phase) -> Self {
+        match p {
+            Phase::Resolving => PhaseTs::Resolving,
+            Phase::Downloading => PhaseTs::Downloading,
+            Phase::Reresolving => PhaseTs::Reresolving,
+            Phase::Finalizing => PhaseTs::Finalizing,
+        }
+    }
 }
 
 /// 컨텐츠 종류. 코어 `ContentKind`는 `"Video"`로 직렬화되므로 §5대로 `"video"`가 되게 셸이 옮긴다.
@@ -287,15 +326,26 @@ pub struct ContentMetaDto {
 
 impl From<&ContentMeta> for ContentMetaDto {
     fn from(m: &ContentMeta) -> Self {
+        // `..` 없이 분해한다. 코어에 필드가 늘면 여기서 컴파일이 깨진다.
+        let ContentMeta {
+            kind,
+            title,
+            channel_name,
+            channel_id,
+            live_open_date,
+            publish_date,
+            adult,
+            duration_secs,
+        } = m;
         ContentMetaDto {
-            kind: m.kind.into(),
-            title: m.title.clone(),
-            channel_name: m.channel_name.clone(),
-            channel_id: m.channel_id.clone(),
-            live_open_date: m.live_open_date.clone(),
-            publish_date: m.publish_date.clone(),
-            adult: m.adult,
-            duration_secs: m.duration_secs,
+            kind: (*kind).into(),
+            title: title.clone(),
+            channel_name: channel_name.clone(),
+            channel_id: channel_id.clone(),
+            live_open_date: live_open_date.clone(),
+            publish_date: publish_date.clone(),
+            adult: *adult,
+            duration_secs: *duration_secs,
         }
     }
 }
@@ -317,14 +367,24 @@ pub struct QualityDto {
 
 impl From<&Quality> for QualityDto {
     fn from(q: &Quality) -> Self {
+        // `..` 없이 분해한다. 코어에 필드가 늘면 여기서 컴파일이 깨진다.
+        let Quality {
+            id,
+            label,
+            resolution,
+            width,
+            height,
+            bandwidth,
+            frame_rate,
+        } = q;
         QualityDto {
-            id: q.id.clone(),
-            label: q.label.clone(),
-            resolution: q.resolution,
-            width: q.width,
-            height: q.height,
-            bandwidth: q.bandwidth,
-            frame_rate: q.frame_rate.clone(),
+            id: id.clone(),
+            label: label.clone(),
+            resolution: *resolution,
+            width: *width,
+            height: *height,
+            bandwidth: *bandwidth,
+            frame_rate: frame_rate.clone(),
         }
     }
 }
@@ -495,19 +555,32 @@ pub struct ProgressDto {
 
 impl From<&Progress> for ProgressDto {
     fn from(p: &Progress) -> Self {
+        // `..` 없이 분해한다. 코어에 필드가 늘면 여기서 컴파일이 깨진다.
+        let Progress {
+            phase,
+            bytes,
+            total_bytes,
+            total_bytes_estimate,
+            segments,
+            media_secs,
+            speed_bps,
+            eta_secs,
+            resumed_from,
+            refreshes,
+        } = p;
         ProgressDto {
-            phase: p.phase,
-            bytes: p.bytes,
-            total_bytes: p.total_bytes,
-            total_bytes_estimate: p.total_bytes_estimate,
-            segments_done: p.segments.map(|s| s.0),
-            segments_total: p.segments.map(|s| s.1),
-            media_secs_done: p.media_secs.map(|m| m.0),
-            media_secs_total: p.media_secs.map(|m| m.1),
-            speed_bps: p.speed_bps,
-            eta_secs: p.eta_secs,
-            resumed_from: p.resumed_from,
-            refreshes: p.refreshes,
+            phase: *phase,
+            bytes: *bytes,
+            total_bytes: *total_bytes,
+            total_bytes_estimate: *total_bytes_estimate,
+            segments_done: segments.map(|s| s.0),
+            segments_total: segments.map(|s| s.1),
+            media_secs_done: media_secs.map(|m| m.0),
+            media_secs_total: media_secs.map(|m| m.1),
+            speed_bps: *speed_bps,
+            eta_secs: *eta_secs,
+            resumed_from: *resumed_from,
+            refreshes: *refreshes,
         }
     }
 }

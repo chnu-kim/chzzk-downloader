@@ -5,7 +5,8 @@
 //! - 대기 단계(`Sleep`·`Hold`·`WaitCancel`)는 취소 토큰을 함께 기다리고, 취소되면 `Err(Cancelled)`로 끝난다
 //!   (코어가 체크포인트를 쓰고 `Cancelled`를 돌려주는 것과 같은 모양). 시작할 때와 진행률 단계 뒤에도
 //!   취소를 확인하므로, 이미 취소된 토큰이면 대본에 대기 단계가 없어도 `Cancelled`다.
-//! - 호출 기록(`calls`)과 동시 실행 수(`active`·`max_active`)를 남겨 매니저의 동시성 상한을 검사한다.
+//! - 호출 기록(`calls`), `download`가 받은 요청 전체(`download_requests`: 이어받기 정책·화질·방식·동시 요청 수를
+//!   매니저가 제대로 넘겼는지 보려고)와 동시 실행 수(`active`·`max_active`)를 남겨 매니저의 동시성 상한을 검사한다.
 
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
@@ -119,6 +120,7 @@ pub struct FakeBackend {
     by_output: Mutex<HashMap<PathBuf, VecDeque<Script>>>,
     shared: Mutex<VecDeque<Script>>,
     calls: Mutex<Vec<Call>>,
+    requests: Mutex<Vec<DownloadRequest>>,
     active: AtomicUsize,
     max_active: AtomicUsize,
 }
@@ -160,6 +162,11 @@ impl FakeBackend {
                 Call::Resolve(_) => None,
             })
             .collect()
+    }
+
+    /// `download`가 받은 요청 전체(호출 순서). `DownloadRequest`는 `PartialEq`가 아니라 `Call`과 따로 둔다.
+    pub fn download_requests(&self) -> Vec<DownloadRequest> {
+        self.requests.lock().unwrap().clone()
     }
 
     /// 지금 실행 중인 `download` 수.
@@ -217,6 +224,7 @@ impl Backend for FakeBackend {
             .lock()
             .unwrap()
             .push(Call::Download(req.output.clone()));
+        self.requests.lock().unwrap().push(req.clone());
         let now = self.active.fetch_add(1, Ordering::SeqCst) + 1;
         self.max_active.fetch_max(now, Ordering::SeqCst);
         let _guard = ActiveGuard(&self.active);

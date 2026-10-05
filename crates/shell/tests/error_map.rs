@@ -277,3 +277,31 @@ fn display_is_message() {
     let app = AppError::from(Error::NoQualities);
     assert_eq!(app.to_string(), "다운로드 가능한 화질이 없습니다");
 }
+
+/// HLS playlist의 `EXT-X-KEY`(코어 kind `unsupported`)도 사용자에게는 "보호된 영상"(`encrypted`)이다.
+/// 다른 `Unsupported`는 그대로 `unsupported`.
+#[test]
+fn playlist_encryption_maps_to_encrypted() {
+    let e = Error::Unsupported(Unsupported::Encrypted("AES-128".into()));
+    assert_eq!(e.kind(), ErrorKind::Unsupported);
+    let app = AppError::from(&e);
+    assert_eq!(app.code, ErrorCode::Encrypted);
+    assert_eq!(to_json(&app.code), json!("encrypted"));
+    assert_eq!(app.message, e.to_string());
+    assert!(!app.resumable);
+    assert_eq!(app.payload, None);
+
+    for u in [
+        Unsupported::Discontinuity,
+        Unsupported::SecondMap,
+        Unsupported::ByteRange,
+        Unsupported::MissingMap,
+        Unsupported::NotEnded,
+        Unsupported::NoHlsMedia,
+        Unsupported::Gap,
+        Unsupported::Skip,
+    ] {
+        let app = AppError::from(Error::Unsupported(u.clone()));
+        assert_eq!(app.code, ErrorCode::Unsupported, "{u:?}");
+    }
+}

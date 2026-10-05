@@ -1,6 +1,8 @@
 //! 프런트로 가는 오류(`AppError`)와 코어 오류의 매핑(docs/design/app.md §5 "오류 DTO").
 //!
 //! - `code`는 `ErrorKind`를 빠짐없이 match해서 정한다(`_` arm 없음). 코어에 종류가 늘면 컴파일이 깨진다.
+//!   예외 하나: HLS 미디어 playlist의 `EXT-X-KEY`(코어 `Unsupported::Encrypted`, kind `unsupported`)는
+//!   `encrypted`로 올린다. 사용자에게는 정보 API의 `EncryptedVod`와 같은 "보호된 영상"이다(app.md 구현 중 변경).
 //! - `payload`는 `Error` 변형을 match해서 정한다. `Error`는 crate 밖에서 `#[non_exhaustive]`라 `_ => None`이 필요하다.
 //! - `message`는 코어 `Display`만 쓴다. 쿠키·서명 토큰이 없다는 것은 코어 불변식이다.
 //! - `Deserialize`도 붙인다. 작업 저장(`jobs.json`의 `lastError`)이 그대로 읽어 들인다.
@@ -8,7 +10,7 @@
 use std::fmt;
 use std::path::Path;
 
-use chzzk_core::{Error, ErrorKind, PlaybackKind, RequestKind};
+use chzzk_core::{Error, ErrorKind, PlaybackKind, RequestKind, Unsupported};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
@@ -161,6 +163,14 @@ pub enum ErrorPayload {
     },
 }
 
+/// UI 분기 키. `ErrorKind`를 그대로 옮기되 playlist 암호화만 `encrypted`로 올린다.
+fn code_of(e: &Error) -> ErrorCode {
+    match e {
+        Error::Unsupported(Unsupported::Encrypted(_)) => ErrorCode::Encrypted,
+        _ => e.kind().into(),
+    }
+}
+
 fn path_payload(p: &Path) -> Option<ErrorPayload> {
     Some(ErrorPayload::Path {
         path: p.to_string_lossy().into_owned(),
@@ -281,7 +291,7 @@ impl From<Error> for AppError {
 impl From<&Error> for AppError {
     fn from(e: &Error) -> Self {
         AppError {
-            code: e.kind().into(),
+            code: code_of(e),
             message: e.to_string(),
             stage: None,
             resumable: e.is_resumable(),

@@ -286,3 +286,35 @@ async fn fake_resolve_is_scripted_and_recorded() {
     assert!(matches!(fake.resolve(&c).await, Err(Error::Parse { .. })));
     assert_eq!(fake.calls(), vec![Call::Resolve(c); 3]);
 }
+
+/// 가짜는 `download` 요청을 통째로 남긴다(매니저가 넘긴 정책·화질·방식·동시 요청 수를 검사할 수 있게).
+#[tokio::test]
+async fn fake_records_full_download_request() {
+    let fake = FakeBackend::new();
+    let mut req = request("/x/b.mp4");
+    req.content = ContentRef::Clip {
+        clip_id: "c1".into(),
+    };
+    req.quality_id = "1080p".into();
+    req.expected_kind = PlaybackKind::Progressive;
+    req.on_existing = DuplicatePolicy::Skip;
+    req.concurrency = NonZeroU8::new(2).unwrap();
+    fake.download(req, CancellationToken::new(), &|_| {})
+        .await
+        .unwrap();
+
+    let reqs = fake.download_requests();
+    assert_eq!(reqs.len(), 1);
+    let r = &reqs[0];
+    assert_eq!(
+        r.content,
+        ContentRef::Clip {
+            clip_id: "c1".into()
+        }
+    );
+    assert_eq!(r.quality_id, "1080p");
+    assert_eq!(r.expected_kind, PlaybackKind::Progressive);
+    assert_eq!(r.output, PathBuf::from("/x/b.mp4"));
+    assert_eq!(r.on_existing, DuplicatePolicy::Skip);
+    assert_eq!(r.concurrency.get(), 2);
+}

@@ -5,9 +5,9 @@ use chzzk_core::{
     Phase, Platform, PlaybackKind, Progress, Quality, RecentVod, Resolved, Source, UserSettings,
 };
 use chzzk_shell::dto::{
-    AuthStatusDto, ContentKindDto, ContentRefTs, EnqueueRequest, JobDto, JobEvent, JobStatus,
-    LegacyImportDto, Nullable, OnExisting, Ownership, PhaseTs, PlaybackKindTs, ProgressDto,
-    ResolvedDto, SettingsPatch,
+    AuthStatusDto, ContentKindDto, ContentMetaDto, ContentRefTs, EnqueueRequest, JobDto, JobEvent,
+    JobStatus, LegacyImportDto, Nullable, OnExisting, Ownership, PhaseTs, PlaybackKindTs,
+    ProgressDto, QualityDto, ResolvedDto, SettingsPatch,
 };
 use chzzk_shell::{AppError, JobId, Stage};
 use serde_json::{Value, json};
@@ -20,65 +20,48 @@ fn to_json<T: serde::Serialize>(v: &T) -> Value {
 // 코어 타입과 TS 미러
 // ---------------------------------------------------------------------------
 
+// 미러는 `_` arm 없는 `From<코어>`로 만든다. 코어에 변형이 늘면 셸 컴파일이 깨지고, 아래 검사는
+// 그 변환을 거친 미러가 코어와 같은 JSON인지 본다.
+
 #[test]
 fn content_ref_mirror_matches_core() {
-    let pairs = [
+    for (core, s) in [
         (
-            to_json(&ContentRef::Video { video_no: 123 }),
-            to_json(&ContentRefTs::Video { video_no: 123 }),
+            ContentRef::Video { video_no: 123 },
+            json!({"kind": "video", "videoNo": 123}),
         ),
         (
-            to_json(&ContentRef::Clip {
+            ContentRef::Clip {
                 clip_id: "abc".into(),
-            }),
-            to_json(&ContentRefTs::Clip {
-                clip_id: "abc".into(),
-            }),
+            },
+            json!({"kind": "clip", "clipId": "abc"}),
         ),
-    ];
-    for (core, ts) in pairs {
-        assert_eq!(core, ts);
+    ] {
+        assert_eq!(to_json(&core), to_json(&ContentRefTs::from(&core)));
+        assert_eq!(to_json(&core), s);
     }
-    assert_eq!(
-        to_json(&ContentRef::Video { video_no: 123 }),
-        json!({"kind": "video", "videoNo": 123})
-    );
-    assert_eq!(
-        to_json(&ContentRef::Clip {
-            clip_id: "abc".into()
-        }),
-        json!({"kind": "clip", "clipId": "abc"})
-    );
 }
 
 #[test]
 fn playback_kind_mirror_matches_core() {
-    for (core, ts, s) in [
-        (
-            PlaybackKind::Progressive,
-            PlaybackKindTs::Progressive,
-            "progressive",
-        ),
-        (
-            PlaybackKind::LiveRewindHls,
-            PlaybackKindTs::LiveRewindHls,
-            "liveRewindHls",
-        ),
+    for (core, s) in [
+        (PlaybackKind::Progressive, "progressive"),
+        (PlaybackKind::LiveRewindHls, "liveRewindHls"),
     ] {
-        assert_eq!(to_json(&core), to_json(&ts));
+        assert_eq!(to_json(&core), to_json(&PlaybackKindTs::from(core)));
         assert_eq!(to_json(&core), json!(s));
     }
 }
 
 #[test]
 fn phase_mirror_matches_core() {
-    for (core, ts, s) in [
-        (Phase::Resolving, PhaseTs::Resolving, "resolving"),
-        (Phase::Downloading, PhaseTs::Downloading, "downloading"),
-        (Phase::Reresolving, PhaseTs::Reresolving, "reresolving"),
-        (Phase::Finalizing, PhaseTs::Finalizing, "finalizing"),
+    for (core, s) in [
+        (Phase::Resolving, "resolving"),
+        (Phase::Downloading, "downloading"),
+        (Phase::Reresolving, "reresolving"),
+        (Phase::Finalizing, "finalizing"),
     ] {
-        assert_eq!(to_json(&core), to_json(&ts));
+        assert_eq!(to_json(&core), to_json(&PhaseTs::from(core)));
         assert_eq!(to_json(&core), json!(s));
     }
 }
@@ -490,4 +473,58 @@ fn auth_status_disabled() {
         to_json(&AuthStatusDto::disabled()),
         json!({"state": "disabled", "channelId": null, "channelName": null})
     );
+}
+
+// ---------------------------------------------------------------------------
+// 코어 구조체 → DTO가 필드를 흘리지 않는다
+// ---------------------------------------------------------------------------
+
+/// `ContentMeta`의 모든 필드가 DTO에 같은 이름·값으로 간다(`kind`만 소문자로 옮긴다).
+#[test]
+fn content_meta_dto_keeps_every_core_field() {
+    let m = ContentMeta {
+        kind: ContentKind::Clip,
+        title: "제목".into(),
+        channel_name: "채널".into(),
+        channel_id: Some("abc".into()),
+        live_open_date: Some("2026-01-02 03:04:05".into()),
+        publish_date: Some("2026-01-03 00:00:00".into()),
+        adult: true,
+        duration_secs: Some(12.5),
+    };
+    let mut core = to_json(&m);
+    core["kind"] = json!("clip");
+    assert_eq!(to_json(&ContentMetaDto::from(&m)), core);
+}
+
+/// `Quality`의 모든 필드가 DTO에 같은 이름·값으로 간다.
+#[test]
+fn quality_dto_keeps_every_core_field() {
+    let q = Quality {
+        id: "PD_720P".into(),
+        label: "720p".into(),
+        resolution: Some(720),
+        width: Some(1280),
+        height: Some(720),
+        bandwidth: Some(2_048_000),
+        frame_rate: Some("60.0".into()),
+    };
+    assert_eq!(to_json(&QualityDto::from(&q)), to_json(&q));
+}
+
+/// `Progress`의 모든 필드가 DTO에 간다. 튜플 두 개만 `*Done`·`*Total`로 펼친다.
+#[test]
+fn progress_dto_keeps_every_core_field() {
+    let p = hls_progress();
+    let mut core = to_json(&p);
+    let obj = core.as_object_mut().unwrap();
+    for (tuple, done, total) in [
+        ("segments", "segmentsDone", "segmentsTotal"),
+        ("mediaSecs", "mediaSecsDone", "mediaSecsTotal"),
+    ] {
+        let v = obj.remove(tuple).unwrap();
+        obj.insert(done.into(), v[0].clone());
+        obj.insert(total.into(), v[1].clone());
+    }
+    assert_eq!(to_json(&ProgressDto::from(&p)), core);
 }

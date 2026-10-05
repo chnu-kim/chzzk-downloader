@@ -179,11 +179,13 @@ test('mutants_missed: 늘면 실패, 0도 실제 기준, $pending이면 알림, 
   // lint: 0인데 $pending 밖이어도 된다(mutants만)
   assert.deepEqual(lintRatchet(M(0)), []);
   assert.deepEqual(lintRatchet(M(0, [k]), [k]), []);
+  assert.equal(lintRatchet(M(0, [k]), []).length, 1, '$pending은 PENDING_ALLOWED 안이어야 한다');
   // loosened: 키우기·지우기는 느슨하게 하기, 0 → 5도
   assert.deepEqual(loosened(M(10), M(12)), [k]);
   assert.deepEqual(loosened(M(0), M(5)), [k]);
   assert.deepEqual(loosened(M(10), M(8)), []);
   assert.deepEqual(loosened(M(10), {}), [k]);
+  assert.deepEqual(loosened(M(0, [k]), M(100)), [], '안 잼($pending) → 첫 기준은 느슨하게 하기가 아니다');
 });
 
 test('runProvenance: nightly.yml(schedule·dispatch)은 실행 전체가 아니라 측정 작업(nightly mutants)의 성공을 본다', () => {

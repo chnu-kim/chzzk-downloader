@@ -40,8 +40,9 @@ const ZERO_IS_REAL = new Set(['mutants_missed']);
 const LOWER_IS_BETTER = new Set(['size', 'mutants_missed']);
 const SETTINGS = new Set(['tolerance_pp', 'tolerance_pct']);
 // 기준 0(아직 안 잼)으로 둘 수 있는 키. 다른 키가 0이면 lint가 실패한다. tests.playwright는 G4에서 채웠다(실행 37324424781).
-// tests.app_e2e.*는 G4 2차 리뷰에서 더해 실행 37334258200으로 채웠다. mutants_missed는 G5가 더하고 첫 weekly 실행으로 채운다.
-export const PENDING_ALLOWED = ['mutants_missed.chzzk-core'];
+// tests.app_e2e.*는 G4 2차 리뷰에서 더해 실행 37334258200으로 채웠다. mutants_missed.chzzk-core는 G5에서 더해 nightly 실행
+// 37342266385(only=mutants, shard 4개)로 채웠다(100).
+export const PENDING_ALLOWED = [];
 
 // 객체 → { "a.b.c": 숫자 } (설정 키·$comment·null 제외)
 export function flatten(obj, prefix = '') {
@@ -225,6 +226,7 @@ export function loosened(oldR, newR) {
     if (!Object.hasOwn(KIND_BY_AREA, area(key))) continue;
     const nv = n[key];
     if (nv === undefined) out.push(key);
+    else if (pendingOf(oldR).includes(key)) continue; // 안 잼 → 첫 기준은 느슨하게 하기가 아니다
     else if (ov === 0 && !ZERO_IS_REAL.has(area(key))) continue;
     else if (nv === 0 && !ZERO_IS_REAL.has(area(key))) out.push(key);
     else if (LOWER_IS_BETTER.has(area(key)) ? nv > ov : nv < ov) out.push(key);

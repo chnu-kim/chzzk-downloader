@@ -4,33 +4,11 @@
 
 ## 현재 위치
 
-- 현재: Phase 1 코어(`crates/core`, 설계 §10-1~15) 구현 완료, 브랜치 `feat/rust-core`. 3 OS CI 녹색(PR #12, Windows 잠금 테스트 수정 후), 실서버 스모크(빠른 다시보기 HLS·DASH VOD·클립) 통과(2026-10-05, 설계 "구현 중 변경" 45). 14~15단계 리뷰 수정(옛 형식 settings.json 보존, 이어받기 ETA 등, 구현 중 변경 47~51) 반영
-- 남은 것: 성인 PD에 미디어 쿠키가 필요한지 실측(로그인 쿠키 필요, `examples/dl.rs`의 `CHZZK_NID_AUT`·`CHZZK_NID_SES`로 사용자가 직접)
-- 완료: §10-16 Go 코드 삭제(`cmd/`·`internal/`·`go.mod`), 클립 fixture는 `testdata/clip/`으로 이동(브랜치 `chore/remove-go`)
-- 완료: Phase 2 설계 판정 `docs/design/app.md`(UX안·셸안 대조, 2026-10-05). 열린 질문 8개는 app.md §16
-- 완료: Phase 2 §15-1 골격(`app/` Vite+Svelte 5, `app/src-tauri`, 빈 `crates/shell`, identifier `io.github.chnu-kim.chzzk-downloader`). 확인 항목은 app.md "구현 중 변경" 1~13
-- 완료: Phase 2 §15-2 `crates/shell` 오류 DTO(`AppError`, `ErrorKind` 20종 매핑)와 ts-rs bindings 생성·최신 검사. 변경은 app.md "구현 중 변경" 14~18
-- 완료: Phase 2 §15-3 나머지 DTO(`ResolvedDto`·`OutputCheck`·`EnqueueRequest`·`JobDto`·`ProgressDto`·`JobEvent`·`SettingsDto`·`AppInfo`)와 JSON 스냅샷. 변경은 app.md "구현 중 변경" 19~23
-- 완료: Phase 2 §15-4 `Backend` trait + 대본형 가짜 Backend, Send 컴파일 검사. 변경은 app.md "구현 중 변경" 24
-- 완료: Phase 2 §15-5 `JobStore`(jobs.json 왕복·nextId·깨진 파일). 변경은 app.md "구현 중 변경" 26
-- 완료: Phase 2 §15-6 시작 때 reconcile(§7.1 표 각 행). 변경은 app.md "구현 중 변경" 27
-- 완료: 코어 `UserSettings`에 `maxParallelDownloads`(1~3, 기본 2)·`autoResumeInterrupted`(기본 꺼짐) 추가(app.md §16, core.md 구현 중 변경 53)
-- 완료: Phase 2 §15-7 `DownloadManager` 큐(설정한 동시 작업 수, FIFO, 이벤트 순서, sink, 구독 스냅샷, 중복 경로). 변경은 app.md "구현 중 변경" 28~29
-- 완료: Phase 2 §15-8 매니저 제어(pause/resume/remove/quit/restart, `check_output`, `partial_bytes`, 재시작 후 자동 이어받기). 변경은 app.md "구현 중 변경" 30~31
-- 완료: Phase 2 §15-9 `SettingsService`(기본 폴더 폴백, 쿠키 토글 클라이언트 교체, 첫 실행 legacy 후보 1회, 동시 작업 수 반영, 비밀 누출 테스트). 변경은 app.md "구현 중 변경" 34
-- 완료: Phase 2 §15-10 `app.yml`의 `shell` 작업(3 OS fmt·clippy·test, actionlint 통과, 3 OS 녹색은 푸시 뒤 확인)과 CLAUDE.md 게이트. 변경은 app.md "구현 중 변경" 35
-- 완료: Phase 2 §15-11 command 배선(셸 `App`, commands 21개, `ChannelSink`+완료 알림 태스크, setup·로그, 창 닫기·Cmd+Q 가드, AppManifest·capabilities, IPC 테스트). 변경은 app.md "구현 중 변경" 37
-- 완료: 시각 설계 `docs/design/ui-visual.md`(색·글자·간격·움직임·아이콘·컴포넌트·화면 레이아웃)와 디자인 토큰 `app/src/styles/tokens.css`(라이트·다크, WCAG 대비 테스트). 변경은 app.md "구현 중 변경" 39
-- 완료: Phase 2 §15-12 프런트 기반(`api.ts` 21개, `applyEvent`, copy deck, `errorCopy` 표, `format` golden, vitest jsdom). 변경은 app.md "구현 중 변경" 40
-- 완료: Phase 2 §15-13 UI 기본 요소(`components/ui` 20개, 뷰 전환, AppHeader·Toaster·LiveAnnouncer·GlobalShortcuts, CSP 가드 테스트). 변경은 app.md "구현 중 변경" 41
-- 완료: Phase 2 §15-14 받기 화면(UrlBar·붙여넣기·드래그 앤 드롭·클립보드 제안, ResolveCard 화질·폴더·파일 이름·충돌 안내 → enqueue). 웹뷰 수동 확인(CSP·실제 resolve·3 OS 드롭/포커스)은 §15-17로 이월. 변경은 app.md "구현 중 변경" 42
-- 완료: Phase 2 §15-15 작업 목록 화면(JobsStore 구독·재구독, 그룹·상태별 버튼, D2, B1, 키보드). 변경은 app.md "구현 중 변경" 45
-- 완료: Phase 2 §15-16 설정 화면(저장·다운로드(동시 수 1~3, 연결 수, 자동 이어받기)·쿠키(값 미복원)·이전 버전(D3)·정보, B2, `open_app_folder` command). 변경은 app.md "구현 중 변경" 46
-- 완료: Phase 2 §15-17 창 닫기 D1 ↔ `quit`, 완료·실패 OS 알림, 시작 실패 안내, 접근성 점검(뷰 전환 포커스, 이름 없는 컨트롤 검사). 3 OS 수동 스모크는 체크리스트만(app.md "구현 중 변경" 47 표). 변경은 47
-- 완료: Phase 2 §15-18 `app.yml`의 `frontend`(ubuntu check·test·build)·`tauri`(3 OS clippy·test, PR debug no-bundle, master·수동 실행 서명 없는 번들 7일) 작업. actionlint, Linux(ubuntu 22.04 컨테이너) `chzzk-app` clippy·test, macOS `pnpm tauri build --debug --no-bundle` 실행 확인. GitHub 3 OS 녹색은 푸시 뒤. 변경은 app.md "구현 중 변경" 49
-- 완료: Phase 2 §15-19 문서(CLAUDE.md 레이아웃·명령·규칙, app.md "구현 중 변경" 읽는 법 표). 변경은 50
-- 완료: Phase 2 최종 리뷰(macOS 실행): macOS 메뉴 Quit·Cmd+Q가 D1을 지나치던 것을 고침(app.md 구현 중 변경 52). Dock 종료·AppleScript quit은 여전히 가드 밖(데이터는 안전)
-- 다음: PR A(`crates/shell`, §15-1~10)·PR B(앱, §15-11~19) 3 OS CI 녹색 확인(첫 master 실행에서 Windows `tauri`·Linux 번들), §15-17 수동 스모크(사람이 3 OS에서, app.md 표의 미확인 항목), 그 뒤 Phase 3
+- **완료**: Phase 0(#11), Phase 1 Rust 코어(#12, 3 OS CI 녹색), Go 삭제(#13), Phase 2 Tauri 앱(#14, macOS 실제 실행 확인). PR은 #11→#12→#13→#14로 쌓여 있고 아직 머지 전이다. #13은 #14와 함께 머지한다.
+- **다음**: Phase 3+4 (Worker: 로그인·허용목록·랜딩·R2 배포 게이트·업데이트). 설계·오프라인 구현은 가능하지만 **끝까지 확인하려면 사용자의 외부 준비가 필요**하다(아래 "사용자가 준비해야 할 외부 항목").
+- **Phase 3의 핵심 미확인 사실**: OAuth `users/me`의 `channelId`가 VOD `content.channel.channelId`·클립 `ownerChannel.channelId`와 같은 값인지. 실제 로그인으로만 확인할 수 있으므로 별도 단계로 둔다.
+- **남은 확인(사용자)**: 성인 VOD PD 미디어 요청에 쿠키가 필요한지(`examples/dl.rs` + `CHZZK_NID_AUT`/`CHZZK_NID_SES`), Windows·Linux 실제 실행(app.md 수동 테스트 목록), macOS Dock 종료·로그아웃 때 D1 생략 수용 여부.
+- 단계별 상세 기록은 아래 체크리스트와 `docs/design/{core,app}.md`의 "구현 중 변경"에 있다.
 
 ## 확정된 결정 (2026-10-05, 사용자 인터뷰)
 

@@ -427,11 +427,11 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
-      # AppImage는 GL 드라이버(libEGL)를 번들하지 않고 사용자 시스템 것을 쓴다(데스크톱에는 있다). deb는 apt가 의존성을 깐다
+      # AppImage는 GL 스택(libEGL·libGLESv2·mesa)을 번들하지 않고 사용자 시스템 것을 쓴다(데스크톱에는 있다). deb는 apt가 의존성을 깐다
       - name: linux deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends xvfb xauth libegl1
+          sudo apt-get install -y --no-install-recommends xvfb xauth libegl1 libgles2 libegl-mesa0 libgl1-mesa-dri
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: bundle-linux
@@ -480,8 +480,10 @@ jobs:
       - name: size
         if: ${{ !cancelled() }}
         run: node scripts/ci/run.mjs size
+      # 설치기가 멈춰도 로그가 남도록 단계에도 시간 제한을 둔다(작업 취소는 로그를 잃는다)
       - name: smoke-install
         if: ${{ !cancelled() }}
+        timeout-minutes: 20
         run: node scripts/ci/run.mjs smoke-install
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: ${{ !cancelled() }}

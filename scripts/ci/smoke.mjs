@@ -70,8 +70,12 @@ function log(msg) {
 }
 
 // 바깥 명령(설치·제거). 실패하면 예외.
-function sh(bin, args, { ok = [0], input, quiet = false, env } = {}) {
-  const r = spawnSync(bin, args, { encoding: 'utf8', input, env: env ?? process.env, maxBuffer: 1 << 26 });
+// 설치기·제거기가 멈춰도 작업 시간 제한(75분)까지 끌지 않도록 명령마다 시간 제한(SH_TIMEOUT_MS)을 둔다.
+export const SH_TIMEOUT_MS = 300_000;
+function sh(bin, args, { ok = [0], input, quiet = false, env, timeout = SH_TIMEOUT_MS } = {}) {
+  log(`$ ${basename(bin)} ${args.join(' ')}`);
+  const r = spawnSync(bin, args, { encoding: 'utf8', input, env: env ?? process.env, maxBuffer: 1 << 26, timeout, killSignal: 'SIGKILL' });
+  if (r.error?.code === 'ETIMEDOUT') throw new Error(`${bin} ${args.join(' ')}: ${timeout / 1000}초 안에 끝나지 않았다`);
   if (r.error) throw new Error(`${bin}: ${r.error.message}`);
   if (!ok.includes(r.status)) {
     throw new Error(`${bin} ${args.join(' ')} → exit ${r.status ?? r.signal}\n${(r.stdout ?? '').slice(-4000)}${(r.stderr ?? '').slice(-4000)}`);

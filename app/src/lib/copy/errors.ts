@@ -270,9 +270,8 @@ export function errorCopy(raw: AppError, ctx: ErrorContext): ErrorCopy {
       const path = pathOf(e);
       return copy(
         '저장 공간이 부족해요',
-        path
-          ? `${path}가 있는 디스크의 공간을 비운 뒤 이어받으세요.`
-          : '저장 폴더가 있는 디스크의 공간을 비운 뒤 이어받으세요.',
+        // 불러오기 카드에는 이어받을 `.part`가 없다: 동작([다시 시도])과 같은 말을 쓴다
+        `${path ?? '저장 폴더'}가 있는 디스크의 공간을 비운 뒤 ${ctx.place === 'resolve' ? '다시 시도해 주세요' : '이어받으세요'}.`,
         folderActions,
       );
     }

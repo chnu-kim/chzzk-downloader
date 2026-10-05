@@ -42,7 +42,8 @@
 >
   {#if icon}<Icon name={icon} size={size === 'sm' ? 16 : 20} />{/if}
   {#if children}<span class="label">{@render children()}</span>{/if}
-  {#if kbd}<Kbd>{kbd}</Kbd>{/if}
+  <!-- 단축키 표시는 보이기만 한다: 버튼 이름("다운로드")에 들어가지 않게 -->
+  {#if kbd}<span class="kbd-hint" aria-hidden="true"><Kbd>{kbd}</Kbd></span>{/if}
 </button>
 
 <style>
@@ -71,7 +72,8 @@
     padding: 0 10px;
     font-size: var(--text-sm);
   }
-  .btn :global(.kbd) {
+  .kbd-hint {
+    display: inline-flex;
     margin-left: 2px;
   }
 

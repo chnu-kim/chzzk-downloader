@@ -802,7 +802,7 @@ denied                                       expired / cancelled / error
 | `parse` | R·D | 치지직 응답을 읽지 못했어요 / 치지직이 바뀌었을 수 있어요. 잠시 뒤 다시 시도하고, 계속되면 앱을 업데이트해 주세요. | 다시 시도 / 이어받기, 문제 보고용 정보 복사 |
 | `lengthMismatch` | D | 받은 파일이 손상됐어요 / 받은 크기가 예상과 달라 받던 부분을 지웠어요. 처음부터 다시 받아 주세요. | 처음부터 다시 |
 | `network` | R·D | 인터넷 연결이 불안정해요 / 연결을 확인한 뒤 다시 시도해 주세요. (D에 `.part`가 있으면: 받은 부분은 남아 있어요.) | 다시 시도 / 이어받기 |
-| `diskFull` | D | 저장 공간이 부족해요 / `{path}`가 있는 디스크의 공간을 비운 뒤 이어받으세요. | 이어받기, 폴더 열기 |
+| `diskFull` | D | 저장 공간이 부족해요 / `{path}`가 있는 디스크의 공간을 비운 뒤 이어받으세요. (R이면 "…비운 뒤 다시 시도해 주세요.", 구현 중 변경 44) | 이어받기, 폴더 열기 |
 | `fileLocked` | D | 다른 프로그램이 파일을 쓰고 있어요 / 이 파일을 연 플레이어나 백신 검사가 끝난 뒤 다시 시도해 주세요. `{path}` | 이어받기, 폴더 열기 |
 | `io` | D(드물게 R) | 파일을 저장하지 못했어요 / 폴더에 쓸 권한이 있는지 확인해 주세요. `{path}` | 다시 시도 / 이어받기, 폴더 열기 |
 | `settings` | B2 | 설정을 저장하지 못했어요 / 설정 폴더에 쓸 수 없어요. 디스크 공간과 권한을 확인해 주세요. | `[설정 폴더 열기]`, `[다시 시도]` |
@@ -848,6 +848,7 @@ denied                                       expired / cancelled / error
 | `action.openFile` / `.openFolder` / `.remove` / `.copyUrl` / `.copyReport` | 파일 열기 / 폴더 열기 / 목록에서 지우기 / 주소 복사 / 문제 보고용 정보 복사 |
 | `action.reresolve` / `action.overwriteAndDownload` | 다시 불러오기 / 덮어쓰고 받기 |
 | `toast.completed` / `toast.copied` / `toast.reportHasPath` | '{title}' 다운로드를 마쳤어요 / 복사했어요 / 복사한 정보에 파일 경로가 들어 있어요 |
+| `toast.copyFailed` | 복사하지 못했어요. 다시 시도해 주세요. |
 | `banner.interrupted` / `banner.resumeAll` | 지난번에 받다가 멈춘 다운로드가 {n}개 있어요. / 모두 이어받기 |
 | `dialog.close.*` | 다운로드를 멈추고 닫을까요? / 받는 중인 영상이 {n}개 있어요. 닫으면 일시정지되고, 다음에 앱을 열면 이어받을 수 있어요. / 계속 받기 / 닫기 |
 | `dialog.cancel.*` | 다운로드를 취소할까요? / 지금까지 받은 {size}도 함께 지워져요. / 취소하고 지우기 / 돌아가기 |
@@ -1059,10 +1060,10 @@ jobs:
 | 11 | command 배선 | `commands.rs`, `sink.rs`, `lib.rs`(setup·로그·창 닫기 이벤트·`request_user_attention`), `build.rs` AppManifest, `capabilities/default.json` | IPC 테스트, CSP 위반 없음, `pnpm tauri dev`로 `resolve` 수동 확인 |
 | 12 | 프런트 기반 | `api.ts`, `bindings` import, `stores/jobs.apply.ts`, `copy/ko.ts`, `copy/errors.ts`, `format/*`, vitest 설정, `test/setup.ts`, `app.css` | `applyEvent`, `errorCopy` 표, `format` golden, `mockIPC` |
 | 13 | UI 기본 요소 | `components/ui/*`, `App.svelte` 뷰 전환, AppHeader, Toaster, LiveAnnouncer, GlobalShortcuts | 컴포넌트 테스트(Dialog 포커스 가둠, RadioGroup) |
-| 14 | 받기 화면 | UrlBar(세대 번호), ResolveSkeleton, ResolveError, RecentList, ResolveCard 일체(QualityPicker, FolderField, FilenameField, ConflictNotice, OwnershipNotice 슬롯) | 컴포넌트 테스트: `invalidUrl`, 기본 화질, 충돌 세 형태 → `EnqueueRequest`. `pnpm tauri dev`에서 웹뷰 콘솔에 CSP 위반 없음, 실제 주소로 `resolve` 수동 확인(11에서 이월, 38(마)) |
+| 14 | 받기 화면 | UrlBar(세대 번호), ResolveSkeleton, ResolveError, RecentList, ResolveCard 일체(QualityPicker, FolderField, FilenameField, ConflictNotice, OwnershipNotice 슬롯) | 컴포넌트 테스트: `invalidUrl`, 기본 화질, 충돌 세 형태 → `EnqueueRequest`. (웹뷰 수동 확인 — CSP 위반 없음, 실제 주소로 `resolve` — 은 17행으로 옮겼다, 구현 중 변경 42·44) |
 | 15 | 작업 목록 화면 | JobsStore(재구독), JobList·JobGroup·JobItem·JobProgress·JobStatusLine·JobActions·JobMenu, EmptyJobs, D2, B1 | 상태별 버튼 표, 정렬·그룹, 512 MiB 확인, 모두 이어받기 |
 | 16 | 설정 화면 | SettingsView 다섯 섹션, D3, B2 | 쿠키 값 미복원, 즉시 저장, 가져오기 warnings InlineAlert |
-| 17 | 창 닫기·마무리 | CloseGuard(D1) ↔ `close-requested`·`quit`, `request_user_attention`, 접근성 점검(aria, 포커스 복귀, reduced-motion), setup 실패 안내(38(바)) | 수동 3 OS 스모크 체크리스트 |
+| 17 | 창 닫기·마무리 | CloseGuard(D1) ↔ `close-requested`·`quit`, `request_user_attention`, 접근성 점검(aria, 포커스 복귀, reduced-motion), setup 실패 안내(38(바)) | 수동 3 OS 스모크 체크리스트(14에서 옮긴 `pnpm tauri dev` 웹뷰 콘솔 CSP 위반 없음·실제 주소로 `resolve`·텍스트 드롭·창 포커스·입력칸 밖 붙여넣기 포함) |
 | 18 | 앱 CI | `app.yml`의 `frontend`·`tauri` 작업 | 3 OS 녹색 |
 | 19 | 문서 | ROADMAP, CLAUDE.md(레이아웃·명령·게이트), 이 문서 "구현 중 변경" 정리 | - |
 
@@ -1220,3 +1221,4 @@ jobs:
     - **확인하지 못한 것**(§15 표 14행의 수동 확인): `pnpm tauri dev` 웹뷰 콘솔의 런타임 CSP 위반과 실제 주소로의 `resolve`, 3 OS 웹뷰에서 텍스트 드래그 앤 드롭·창 `focus` 이벤트·입력칸 밖 `paste` 이벤트가 실제로 오는지. CLI에서 웹뷰 화면·콘솔을 조작할 수 없어 하지 못했다. 정적으로는 `pnpm build` 결과에 `style="`·`setAttribute("style"`이 없고 `src/csp.test.ts`가 통과한다. §15-17 스모크 체크리스트로 넘긴다.
 43. **§15-12~14 자체 점검 수정.** (가) **불러오기(R) 자리에 `폴더 열기`를 두지 않는다.** `diskFull`·`fileLocked`·`io`는 R에서도(`check_output`·`enqueue`·`pick_folder`) 나오지만, 여는 command가 작업 id를 받는 `reveal_output`뿐이라 카드에서 누르면 아무 일도 없는 버튼이었다. `openFolder`는 D(작업)와 토스트(`fileMissing`, 그 작업의 폴더)에만 붙이고 표 테스트의 "R에 없는 동작"에 넣었다. 같은 종류인 `settings`의 `openConfigFolder`는 B2(§15-16, 설정 폴더 열기 command와 함께)에서만 나오므로 그대로 둔다. (나) **파일·링크 드롭 막기를 창 전체로.** 기본 동작을 막는 처리가 홈의 DropOverlay에만 있어 설정 화면에서 파일이나 링크를 떨어뜨리면 웹뷰가 그곳으로 이동할 수 있었다. `GlobalShortcuts`가 window `dragover`(`dropEffect = 'none'`)·`drop`을 늘 막고, 주소 글은 홈의 DropOverlay가 먼저 받아 `copy`로 둔다(`defaultPrevented`면 덮지 않는다). (다) Esc 테스트가 store를 직접 부르던 것을 `ui.escape()`로 바꿔 InputPanel이 쌓은 처리기(불러오기 취소·카드 닫기)를 검사하고, `GlobalShortcuts`의 Esc·Mod+,·드롭 막기 테스트를 더했다. (라) 카드 안 오류에도 `detail`(경로)을 보인다.
     - **알려진 빈자리(§15-16까지)**: 오류 동작 `openCookieSettings`·`reenterCookies`는 설정 뷰로 가지만 설정 화면이 아직 비어 있다.
+44. **§15-12~14 리뷰 반영.** (가) **창 안에서 시작한 끌기는 주소 드롭이 아니다.** 카드의 파일 이름 글을 끌어 옮기면 DropOverlay가 받아 카드를 버리고 `invalidUrl`로 바꿨다. `lib/inPageDrag.ts`가 window `dragstart`(capture)에 표시하고 `dragend`·`pointerdown`에 푼다(바깥에서 끌어오면 이 창에 `dragstart`가 없다). DropOverlay는 창 안 끌기를 받지 않고, GlobalShortcuts는 창 안 끌기를 입력칸에 놓을 때만 기본 동작(글 옮기기)을 두고 그 밖은 그대로 막는다(웹뷰 이동 방지). 또 카드·오류·불러오기가 열려 있으면 치지직 주소(`pickChzzkLink`)를 놓았을 때만 바꾼다. (나) **클립보드 제안은 주소마다 한 번.** 어느 길로든 불러오기 시작한 주소(`loading.url`)를 `dismissed`에 넣고, 입력줄에 글이 생기면 숨긴 제안을 버린다. 붙여넣기로 받아 목록에 넣은 주소가 입력줄이 비자마자 다시 제안되던 문제다. (다) **닫기·취소 뒤 포커스를 입력줄로.** 카드 [닫기]·[취소], 오류 [닫기], Esc(취소·닫기)가 누르던 버튼을 없애 포커스가 `body`로 떨어졌다. 다운로드 뒤처럼 `tick` 뒤 `ui.urlTarget.focus()`(§8.10). (라) Button의 단축키 표시(`Kbd`)를 `aria-hidden`으로 감싸 버튼 이름이 "다운로드"로 남는다. (마) R의 `diskFull` 설명은 "이어받으세요" 대신 "다시 시도해 주세요"(카드에는 이어받을 `.part`가 없고 동작도 [다시 시도]). `fileLocked`·`io`의 설명은 원래 이어받기 말이 없어 그대로다. (바) 문제 보고용 정보 복사가 실패하면 `toast.copyFailed`(danger)를 띄운다. (사) §15 표 14행의 웹뷰 수동 확인 조건을 17행으로 옮겨 ROADMAP 체크와 맞췄다(42의 "확인하지 못한 것").

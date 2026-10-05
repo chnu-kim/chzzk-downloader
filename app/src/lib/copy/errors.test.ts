@@ -149,6 +149,12 @@ describe('errorCopy 분기', () => {
       body: 'D:\\영상가 있는 디스크의 공간을 비운 뒤 이어받으세요.',
       actions: ['resume', 'openFolder'],
     });
+    // 불러오기 카드에는 이어받을 것이 없다: [다시 시도]와 같은 말
+    expect(errorCopy(err('diskFull', path), R)).toMatchObject({
+      body: 'D:\\영상가 있는 디스크의 공간을 비운 뒤 다시 시도해 주세요.',
+      actions: ['retry'],
+    });
+    expect(errorCopy(err('diskFull'), R).body).not.toContain('이어받');
     expect(errorCopy(err('fileLocked', path), D).detail).toBe('D:\\영상');
     expect(errorCopy(err('io', path), D).detail).toBe('D:\\영상');
     expect(errorCopy(err('io'), D).detail).toBeNull();

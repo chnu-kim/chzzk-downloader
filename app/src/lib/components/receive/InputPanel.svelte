@@ -1,9 +1,10 @@
 <script lang="ts">
   // 입력 영역(§10 InputPanel): UrlBar · 클립보드 제안 · 불러오기 상태별 카드 · 최근 VOD · 드롭.
-  import { onMount, tick } from 'svelte';
+  import { onMount, tick, untrack } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import * as api from '../../api';
   import type { AppError } from '../../bindings';
+  import { pickChzzkLink } from '../../chzzkUrl';
   import type { ActionId } from '../../copy/errors';
   import { shouldSuggestClipboard } from '../../receive';
   import { copyReport } from '../../report';
@@ -28,6 +29,17 @@
   let suggestion: string | null = $state(null);
   /** 닫았거나 이미 불러온 주소는 다시 제안하지 않는다 */
   const dismissed = new SvelteSet<string>();
+
+  // 어느 길(붙여넣기·Enter·드롭·최근 VOD·제안)로든 불러온 주소는 다시 제안하지 않는다(ui-visual §6.4 "한 번만")
+  $effect(() => {
+    const s = resolver.state;
+    if (s.kind === 'loading') untrack(() => dismissed.add(s.url));
+  });
+
+  // 입력줄에 글이 생겨 숨긴 제안은 버린다(비우면 다음 창 포커스 때 다시 묻는다)
+  $effect(() => {
+    if (resolver.input.trim() !== '') untrack(() => (suggestion = null));
+  });
 
   const showSuggestion = $derived(
     shouldSuggestClipboard(suggestion, {
@@ -67,10 +79,32 @@
     suggestion = null;
   }
 
-  async function added() {
-    resolver.finish();
+  // 카드·오류·불러오기를 접으면 누르던 버튼이 사라지므로 포커스를 입력줄로 돌려 둔다(§8.10)
+  async function focusInput() {
     await tick();
     ui.urlTarget?.focus();
+  }
+
+  async function added() {
+    resolver.finish();
+    await focusInput();
+  }
+
+  function close() {
+    resolver.close();
+    void focusInput();
+  }
+
+  function cancel() {
+    resolver.cancel();
+    void focusInput();
+  }
+
+  // 창 밖에서 끌어다 놓은 글. 카드·오류·불러오기가 열려 있으면 진짜 치지직 주소일 때만 바꾼다
+  // (주소가 아닌 글로 고르던 카드를 버리지 않는다).
+  function ondropurl(text: string) {
+    if (!resolver.idle && !pickChzzkLink(text)) return;
+    void resolver.load(text);
   }
 
   function onaction(a: ActionId, err: AppError) {
@@ -81,7 +115,7 @@
         break;
       }
       case 'close':
-        resolver.close();
+        close();
         break;
       case 'openCookieSettings':
       case 'reenterCookies':
@@ -106,8 +140,8 @@
     // Esc: 불러오기 취소 → 카드·오류 닫기(§10 단축키)
     const off = ui.onEscape(() => {
       const kind = resolver.state.kind;
-      if (kind === 'loading') resolver.cancel();
-      else if (kind === 'ready' || kind === 'error') resolver.close();
+      if (kind === 'loading') cancel();
+      else if (kind === 'ready' || kind === 'error') close();
       else return false;
       return true;
     });
@@ -118,7 +152,7 @@
   });
 </script>
 
-<DropOverlay ondropurl={(text) => void resolver.load(text)} />
+<DropOverlay {ondropurl} />
 
 <div class="input">
   <UrlBar />
@@ -138,14 +172,14 @@
     {#key resolver.state.gen}
       <ResolveCard
         view={resolver.state.view}
-        onclose={() => resolver.close()}
+        onclose={close}
         onadded={added}
         {onaction}
         {onshowjob}
       />
     {/key}
   {:else if resolver.state.kind === 'loading'}
-    <ResolveSkeleton oncancel={() => resolver.cancel()} />
+    <ResolveSkeleton oncancel={cancel} />
   {:else}
     <RecentList items={settings.dto?.recentVods ?? []} onreopen={(url) => void resolver.load(url)} />
   {/if}

@@ -3,16 +3,21 @@
   // `dragDropEnabled: false`, app.md 구현 중 변경 5) 웹뷰의 HTML5 drag 이벤트로 받는다.
   // dragover 동안에는 브라우저가 글 내용을 보여 주지 않으므로(보호 모드) 종류만 보고 띄우고, 놓았을 때 고른다.
   // 파일 드롭은 받지 않는다: 막지 않으면 웹뷰가 그 파일로 이동해 버린다.
+  // 창 안에서 시작한 끌기(입력칸 글 옮기기 등)는 받지 않고 브라우저 기본 동작에 맡긴다(`inPageDrag`).
   import { textFromDrop } from '../../chzzkUrl';
+  import { isInPageDrag, trackInPageDrags } from '../../inPageDrag';
   import { t } from '../../copy/ko';
   import Icon from '../ui/Icon.svelte';
 
   let { ondropurl }: { ondropurl: (text: string) => void } = $props();
 
+  trackInPageDrags();
+
   let depth = 0;
   let active = $state(false);
 
   function accepts(dt: DataTransfer | null): boolean {
+    if (isInPageDrag()) return false;
     const types = dt ? Array.from(dt.types ?? []) : [];
     return !types.includes('Files') && (types.includes('text/uri-list') || types.includes('text/plain'));
   }
@@ -25,6 +30,7 @@
   }
 
   function ondragover(e: DragEvent) {
+    if (isInPageDrag()) return;
     e.preventDefault();
     if (e.dataTransfer) e.dataTransfer.dropEffect = accepts(e.dataTransfer) ? 'copy' : 'none';
   }
@@ -36,9 +42,10 @@
   }
 
   function ondrop(e: DragEvent) {
-    e.preventDefault();
     depth = 0;
     active = false;
+    if (isInPageDrag()) return;
+    e.preventDefault();
     const dt = e.dataTransfer;
     if (!dt || !accepts(dt)) return;
     const text = textFromDrop((type) => dt.getData(type));

@@ -106,6 +106,7 @@ export const ko = {
 
   'toast.completed': "'{title}' 다운로드를 마쳤어요",
   'toast.copied': '복사했어요',
+  'toast.copyFailed': '복사하지 못했어요. 다시 시도해 주세요.',
   'toast.reportHasPath': '복사한 정보에 파일 경로가 들어 있어요',
 
   'banner.interrupted': '지난번에 받다가 멈춘 다운로드가 {n}개 있어요.',

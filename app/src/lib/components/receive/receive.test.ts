@@ -83,10 +83,27 @@ describe('UrlBar', () => {
     expect(input).toHaveValue('https://chzzk.naver.com/live/abcd');
     expect(input).toHaveAttribute('aria-invalid', 'true');
     expect(api.resolve).toHaveBeenCalledWith('https://chzzk.naver.com/live/abcd');
+    // §9 "입력 선택": 입력 전체가 골라져 있다
+    const el = input as HTMLInputElement;
+    expect([el.selectionStart, el.selectionEnd]).toEqual([0, el.value.length]);
 
     // [다시 시도]는 같은 주소로 다시 부른다
     await user.click(within(alert).getByRole('button', { name: '다시 시도' }));
     expect(api.resolve).toHaveBeenCalledTimes(2);
+    expect(api.resolve).toHaveBeenLastCalledWith('https://chzzk.naver.com/live/abcd');
+  });
+
+  it('오류를 [닫기]로 닫으면 포커스가 입력줄로 돌아온다', async () => {
+    vi.mocked(api.resolve).mockRejectedValue(
+      appError('http', { payload: { type: 'http', status: 404, requestKind: 'api' } }),
+    );
+    const user = userEvent.setup();
+    render(InputPanel);
+    await user.type(screen.getByLabelText('영상 주소'), 'https://chzzk.naver.com/video/1{Enter}');
+    const alert = await screen.findByRole('alert');
+    await user.click(within(alert).getByRole('button', { name: '닫기' }));
+    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+    await waitFor(() => expect(screen.getByLabelText('영상 주소')).toHaveFocus());
   });
 
   it('빈 칸에 붙여넣으면 바로 불러온다', async () => {
@@ -129,11 +146,30 @@ describe('ResolveCard', () => {
     expect(screen.getByRole('heading', { name: /금요/ })).toHaveFocus();
   });
 
-  it('Esc(ui.escape)는 카드를 닫는다', async () => {
+  it('Esc(ui.escape)는 카드를 닫고 포커스를 입력줄로 돌린다', async () => {
     await openCard();
+    expect(screen.getByRole('heading', { name: /금요/ })).toHaveFocus();
     expect(ui.escape()).toBe(true);
     await waitFor(() => expect(screen.queryByRole('heading', { name: /금요/ })).toBeNull());
     expect(resolver.state.kind).toBe('idle');
+    await waitFor(() => expect(screen.getByLabelText('영상 주소')).toHaveFocus());
+  });
+
+  it('카드 [닫기]·[취소]는 포커스를 입력줄로 돌린다', async () => {
+    const user = await openCard();
+    await user.click(screen.getByRole('button', { name: '닫기' }));
+    await waitFor(() => expect(screen.getByLabelText('영상 주소')).toHaveFocus());
+
+    await user.click(screen.getByRole('button', { name: '불러오기' }));
+    await screen.findByRole('heading', { name: /금요/ });
+    await user.click(screen.getByRole('button', { name: '취소' }));
+    await waitFor(() => expect(screen.queryByRole('heading', { name: /금요/ })).toBeNull());
+    await waitFor(() => expect(screen.getByLabelText('영상 주소')).toHaveFocus());
+  });
+
+  it('다운로드 버튼 이름에 단축키 표시가 들어가지 않는다', async () => {
+    await openCard();
+    expect(screen.getByRole('button', { name: '다운로드' })).toBeInTheDocument();
   });
 
   it('충돌 없음 → 검사 결과가 온 뒤 다운로드, 카드를 접고 입력줄로', async () => {
@@ -240,6 +276,34 @@ describe('드래그 앤 드롭', () => {
     expect(api.enqueue).not.toHaveBeenCalled();
   });
 
+  it('카드가 열려 있으면 주소가 아닌 글을 놓아도 카드를 버리지 않는다', async () => {
+    await openCard();
+    const data = dt({ 'text/plain': 'abc' });
+    await fireEvent.dragEnter(window, { dataTransfer: data });
+    await fireEvent.drop(window, { dataTransfer: data });
+    expect(api.resolve).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('heading', { name: /금요/ })).toBeInTheDocument();
+  });
+
+  it('창 안에서 시작한 끌기(입력칸 글 옮기기)는 주소 드롭으로 받지 않고 기본 동작에 맡긴다', async () => {
+    await openCard();
+    const name = screen.getByLabelText('파일 이름');
+    const data = dt({ 'text/plain': 'https://chzzk.naver.com/video/9' });
+    await fireEvent.dragStart(name, { dataTransfer: data });
+    await fireEvent.dragEnter(name, { dataTransfer: data });
+    expect(screen.queryByText('여기에 놓으면 불러와요')).toBeNull();
+    // 기본 동작(글 옮기기)을 막지 않는다
+    expect(await fireEvent.drop(name, { dataTransfer: data })).toBe(true);
+    await fireEvent.dragEnd(name, { dataTransfer: data });
+    expect(api.resolve).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('heading', { name: /금요/ })).toBeInTheDocument();
+
+    // 끌기가 끝나면 바깥에서 놓은 주소는 다시 받는다
+    vi.mocked(api.resolve).mockResolvedValue(resolved());
+    await fireEvent.drop(window, { dataTransfer: data });
+    expect(api.resolve).toHaveBeenLastCalledWith('https://chzzk.naver.com/video/9');
+  });
+
   it('파일은 받지 않는다', async () => {
     render(InputPanel);
     const data = dt({ 'text/plain': 'x' }, ['Files']);
@@ -282,6 +346,25 @@ describe('클립보드 제안', () => {
     await fireEvent.focus(window);
     await screen.findByRole('group', { name: '복사한 주소가 있어요' });
     await user.type(screen.getByLabelText('영상 주소'), 'a');
+    expect(screen.queryByRole('group', { name: '복사한 주소가 있어요' })).toBeNull();
+  });
+
+  it('다른 길(붙여넣기)로 불러와 목록에 넣은 주소는 다시 제안하지 않는다', async () => {
+    vi.mocked(api.clipboardLink).mockResolvedValue(link);
+    vi.mocked(api.resolve).mockResolvedValue(resolved());
+    const user = userEvent.setup();
+    render(InputPanel);
+    await screen.findByRole('group', { name: '복사한 주소가 있어요' });
+    await user.click(screen.getByLabelText('영상 주소'));
+    await user.paste(link);
+    expect(api.resolve).toHaveBeenCalledWith(link);
+    await screen.findByRole('heading', { name: /금요/ });
+    await user.click(await downloadButton());
+    await waitFor(() => expect(screen.getByLabelText('영상 주소')).toHaveValue(''));
+    expect(screen.queryByRole('group', { name: '복사한 주소가 있어요' })).toBeNull();
+    // 다음 창 포커스에도 묻지 않는다
+    await fireEvent.focus(window);
+    await waitFor(() => expect(api.clipboardLink).toHaveBeenCalledTimes(2));
     expect(screen.queryByRole('group', { name: '복사한 주소가 있어요' })).toBeNull();
   });
 

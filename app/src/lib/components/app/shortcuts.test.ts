@@ -15,6 +15,20 @@ describe('GlobalShortcuts', () => {
     expect(await fireEvent.drop(window, { dataTransfer })).toBe(false);
   });
 
+  it('창 안에서 시작한 끌기를 입력칸에 놓으면 막지 않고, 입력칸 밖이면 막는다', async () => {
+    const { container } = render(GlobalShortcuts);
+    const input = document.createElement('input');
+    container.appendChild(input);
+    const dataTransfer = { types: ['text/plain'], getData: () => 'abc', dropEffect: 'move' };
+    await fireEvent.dragStart(input, { dataTransfer });
+    expect(await fireEvent.dragOver(input, { dataTransfer })).toBe(true);
+    expect(await fireEvent.drop(input, { dataTransfer })).toBe(true);
+    expect(await fireEvent.drop(container, { dataTransfer })).toBe(false);
+    await fireEvent.dragEnd(input, { dataTransfer });
+    // 바깥에서 끌어온 글은 입력칸 위라도 막는다(웹뷰 이동 방지는 그대로)
+    expect(await fireEvent.drop(input, { dataTransfer })).toBe(false);
+  });
+
   it('Esc는 ui.escape로, Mod+,는 설정으로', async () => {
     render(GlobalShortcuts);
     const mac = /Mac/.test(navigator.platform);

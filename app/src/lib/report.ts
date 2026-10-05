@@ -29,6 +29,7 @@ export async function copyReport(err: AppError, info: AppInfo | null): Promise<v
     await navigator.clipboard.writeText(buildReport(err, info));
     toasts.push(t('toast.copied'), 'copied');
   } catch {
-    // 클립보드 쓰기가 막히면 조용히 넘긴다(토스트만 남지 않게 경고 토스트는 그대로 둔다)
+    // 막혔으면 알린다: 경로 경고 토스트만 남으면 복사된 줄 안다
+    toasts.push(t('toast.copyFailed'), 'danger');
   }
 }

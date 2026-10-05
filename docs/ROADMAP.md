@@ -90,7 +90,7 @@
 - [x] §15-10 `app.yml`의 `shell` 작업, CLAUDE.md 게이트 갱신 (푸시 전이라 3 OS 녹색은 PR A에서 확인)
 - [x] §15-11 command 배선: commands·ChannelSink·setup·AppManifest·capabilities·CSP, 창 닫기 이벤트, 완료 OS 알림, 클립보드 링크 command, 리뷰 반영(종료 한 번만·닫기 가드·진행 Channel 검사, app.md 구현 중 변경 38). 런타임 CSP·`resolve` 수동 확인은 §15-14 통과 조건, setup 실패 안내는 §15-17로 이월
 - [x] §15-12~13 프런트 기반(`api.ts`, `applyEvent`, copy deck, `errorCopy`, format golden) + UI 기본 요소 — 시각 설계·토큰은 완료(`docs/design/ui-visual.md`, `app/src/styles/tokens.css`)
-- [x] §15-14 받기 화면: UrlBar → ResolveCard(화질·폴더·파일 이름·충돌 안내) → enqueue, 드래그 앤 드롭·클립보드 제안. 웹뷰 수동 확인은 §15-17 스모크로 이월
+- [x] §15-14 받기 화면: UrlBar → ResolveCard(화질·폴더·파일 이름·충돌 안내) → enqueue, 드래그 앤 드롭·클립보드 제안. 웹뷰 수동 확인(CSP·실제 resolve)은 통과 조건째 §15-17 스모크로 옮김(app.md §15 표, 구현 중 변경 44)
 - [ ] §15-15 작업 목록 화면: JobsStore 재구독, 상태별 버튼, B1 배너, D2
 - [ ] §15-16 설정 화면: 폴더, 연결 수, 쿠키(값 미복원), 이전 버전 가져오기(D3), 정보
 - [ ] §15-17 창 닫기(D1 ↔ `quit`), `request_user_attention`, 접근성 점검, 3 OS 수동 스모크(§15-14에서 넘어온 웹뷰 CSP·실제 resolve·텍스트 드롭·창 포커스·입력칸 밖 붙여넣기 포함)

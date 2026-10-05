@@ -596,6 +596,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+ "tracing",
  "ts-rs",
  "url",
 ]

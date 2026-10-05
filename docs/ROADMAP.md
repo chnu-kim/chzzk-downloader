@@ -12,7 +12,8 @@
 - 완료: Phase 2 §15-2 `crates/shell` 오류 DTO(`AppError`, `ErrorKind` 20종 매핑)와 ts-rs bindings 생성·최신 검사. 변경은 app.md "구현 중 변경" 14~18
 - 완료: Phase 2 §15-3 나머지 DTO(`ResolvedDto`·`OutputCheck`·`EnqueueRequest`·`JobDto`·`ProgressDto`·`JobEvent`·`SettingsDto`·`AppInfo`)와 JSON 스냅샷. 변경은 app.md "구현 중 변경" 19~23
 - 완료: Phase 2 §15-4 `Backend` trait + 대본형 가짜 Backend, Send 컴파일 검사. 변경은 app.md "구현 중 변경" 24
-- 다음: Phase 2 §15-5 `JobStore`(jobs.json)
+- 완료: Phase 2 §15-5 `JobStore`(jobs.json 왕복·nextId·깨진 파일). 변경은 app.md "구현 중 변경" 26
+- 다음: Phase 2 §15-6 시작 때 reconcile
 
 ## 확정된 결정 (2026-10-05, 사용자 인터뷰)
 

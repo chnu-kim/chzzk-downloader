@@ -21,7 +21,8 @@
 - 완료: Phase 2 §15-10 `app.yml`의 `shell` 작업(3 OS fmt·clippy·test, actionlint 통과, 3 OS 녹색은 푸시 뒤 확인)과 CLAUDE.md 게이트. 변경은 app.md "구현 중 변경" 35
 - 완료: Phase 2 §15-11 command 배선(셸 `App`, commands 21개, `ChannelSink`+완료 알림 태스크, setup·로그, 창 닫기·Cmd+Q 가드, AppManifest·capabilities, IPC 테스트). 변경은 app.md "구현 중 변경" 37
 - 완료: 시각 설계 `docs/design/ui-visual.md`(색·글자·간격·움직임·아이콘·컴포넌트·화면 레이아웃)와 디자인 토큰 `app/src/styles/tokens.css`(라이트·다크, WCAG 대비 테스트). 변경은 app.md "구현 중 변경" 39
-- 다음: PR A(`crates/shell`, §15-1~10) 3 OS CI 녹색 확인, Phase 2 §15-12 프런트 기반
+- 완료: Phase 2 §15-12 프런트 기반(`api.ts` 21개, `applyEvent`, copy deck, `errorCopy` 표, `format` golden, vitest jsdom). 변경은 app.md "구현 중 변경" 40
+- 다음: PR A(`crates/shell`, §15-1~10) 3 OS CI 녹색 확인, Phase 2 §15-13 UI 기본 요소
 
 ## 확정된 결정 (2026-10-05, 사용자 인터뷰)
 

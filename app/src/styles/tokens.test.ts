@@ -1,3 +1,4 @@
+// @vitest-environment node
 /// <reference types="node" />
 // vitest는 CSS import를 빈 문자열로 바꾸므로(`?raw`도) 파일을 직접 읽는다. 이 파일만 node 타입을 쓴다.
 import { readFileSync } from 'node:fs';

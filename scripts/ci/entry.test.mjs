@@ -28,6 +28,10 @@ const SCRIPTS = [
   'scripts/ci/e2e-fixture-server.mjs',
   'scripts/ci/drift.mjs',
   'scripts/ci/drift-classify.mjs',
+  'scripts/ci/fuzz.mjs',
+  'scripts/ci/toolchain.mjs',
+  'scripts/ci/repo-settings.mjs',
+  'scripts/ci/pin-actions.mjs',
   'scripts/fixtures/gen-fixtures.mjs',
 ];
 

@@ -49,6 +49,11 @@ export function workspaceVersion(root = ROOT) {
   return m[1];
 }
 
+// scripts/ci/tools.json rust-nightly(fuzz가 쓰는 고정 nightly 툴체인 이름)
+export function nightly(root = ROOT) {
+  return JSON.parse(readFileSync(join(root, 'scripts/ci/tools.json'), 'utf8')).tools['rust-nightly'].version;
+}
+
 const CLIPPY = ['--all-targets', '--locked', '--', '-D', 'warnings'];
 
 // 이 OS의 번들 종류(release/expected-artifacts.json). gate 표를 읽는 OS에서 정해진다.
@@ -278,6 +283,36 @@ export const GATES = {
     desc: '실서버 drift(nightly, 환경 drift의 본인 영상 secret): 라이브 테스트 3개 + examples/dl, 출력은 메모리로만 받아 kind만 찍는다. env DRIFT_SIMULATE=<ok|kind>면 합성 출력',
     needs: ['cargo'],
     steps: [{ cmd: ['node', S('drift.mjs')] }],
+  },
+  advisories: {
+    desc: '의존성 보안 권고(nightly): cargo deny check advisories(deny.toml) + pnpm audit --audit-level high(app/). 권고 DB가 날마다 바뀌어 PR에 두지 않는다',
+    needs: ['cargo', 'cargo-deny', 'pnpm'],
+    steps: [
+      { cmd: ['cargo', 'deny', '--locked', 'check', 'advisories'] },
+      { cmd: ['pnpm', 'audit', '--audit-level', 'high'], cwd: 'app' },
+    ],
+  },
+  pins: {
+    desc: '핀 SHA 온라인 검증(nightly, GH_TOKEN): uses: 주석의 태그가 고정 SHA를 가리키는지(pin-actions.mjs) + zizmor 온라인 audit(impostor commit·알려진 취약 action 등)',
+    needs: ['zizmor', 'gh'],
+    steps: [{ cmd: ['node', S('pin-actions.mjs')] }, { cmd: ['zizmor', '--pedantic', '--config', 'zizmor.yml', '.'] }],
+  },
+  toolchain: {
+    desc: 'rust-toolchain.toml channel이 최신 stable인지(weekly, static.rust-lang.org). 낮으면 실패해 ci-loop:toolchain 이슈',
+    steps: [{ cmd: ['node', S('toolchain.mjs')] }],
+  },
+  'ruleset-drift': {
+    desc: '저장소 설정·ruleset이 scripts/ci/repo-settings.json·.github/rulesets/*.json 선언과 같은지(nightly, GH_TOKEN)',
+    needs: ['gh'],
+    steps: [{ cmd: ['node', S('repo-settings.mjs'), '--check'] }],
+  },
+  fuzz: {
+    desc: 'cargo-fuzz 4 target(url·info·mpd·hls), 고정 nightly(tools.json rust-nightly), seed는 testdata 합성 fixture, target당 FUZZ_SECONDS(기본 300)초',
+    needs: ['cargo', 'rustup', 'cargo-fuzz'],
+    steps: [
+      { cmd: ['rustup', 'toolchain', 'install', nightly(), '--profile', 'minimal', '--no-self-update'] },
+      { cmd: ['node', S('fuzz.mjs')] },
+    ],
   },
   'ratchet-log': {
     desc: 'ci/ratchet.json 모양(0은 $pending만) + 기준을 느슨하게 했으면 ci/RATCHET_LOG.md에 그 키를 적은 줄이 더해졌는지(env RATCHET_BASE)',

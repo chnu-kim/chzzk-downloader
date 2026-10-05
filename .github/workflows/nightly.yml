@@ -2,8 +2,9 @@ name: nightly
 
 # 예약 고리(docs/design/cicd.md §2 위치 N·W, §4). 커밋과 무관하게 환경(러너 이미지·WebView 드라이버·실서버·권고 DB)이
 # 바뀌어 빨개질 수 있는 검사를 PR 밖에서 돌리고, 실패하면 작업마다 이슈를 열고 다음 녹색에 닫는다(issue.mjs, report 작업).
-#   매일(17 18 * * *): nightly e2e-native (linux), nightly drift
-#   매주(47 18 * * 0): nightly e2e-native (windows)
+#   매일(17 18 * * *): nightly e2e-native (linux), nightly drift, nightly advisories, nightly pins, nightly ruleset-drift,
+#                       nightly fuzz
+#   매주(47 18 * * 0): nightly e2e-native (windows), nightly toolchain
 #   - e2e-native (linux): ci.yml e2e-native(코드 PR·master)와 같은 gate다(러너 이미지가 바뀌어도 매일 확인한다).
 #     PR에서는 ci.yml이 돌리므로 여기서는 돌지 않는다.
 #   - e2e-native (windows): 매주, 그리고 코드가 바뀐 PR(paths-ignore = gates.mjs NON_CODE_GLOBS, parity pr-paths).
@@ -30,9 +31,9 @@ on:
         description: "이 작업만 돌린다(all이면 매일 작업 전부, 매주 작업은 weekly도 켜야 돈다)"
         type: choice
         default: all
-        options: [all, e2e-native, drift]
+        options: [all, e2e-native, drift, advisories, pins, ruleset-drift, fuzz, toolchain]
       weekly:
-        description: "only=all일 때 매주 작업(Windows 네이티브 E2E)도 돌린다"
+        description: "only=all일 때 매주 작업(Windows 네이티브 E2E, toolchain)도 돌린다"
         type: boolean
         default: false
       simulate:
@@ -186,11 +187,129 @@ jobs:
           CHZZK_LIVE_CLIP: ${{ secrets.CHZZK_LIVE_CLIP }}
           DRIFT_SIMULATE: ${{ inputs.simulate }}
 
+  # 의존성 보안 권고(§2 advisories). 권고 DB는 커밋과 무관하게 날마다 바뀌어 PR이 아니라 여기서 본다(구현 중 변경 51).
+  advisories:
+    name: nightly advisories
+    if: github.event.schedule == '17 18 * * *' || (github.event_name == 'workflow_dispatch' && (inputs.only == 'all' || inputs.only == 'advisories'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read # checkout
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: rust toolchain
+        run: rustup toolchain install
+      - uses: taiki-e/install-action@e407f7bafb71fd004bc5c2da3032e5470cbb6ef0 # v2.87.24
+        with:
+          tool: cargo-deny@0.20.2
+          fallback: none
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          package_json_file: app/package.json
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - name: advisories
+        run: node scripts/ci/run.mjs advisories
+
+  # 핀 SHA 온라인 검증(구현 중 변경 13 (자)): 주석의 태그가 지금도 고정 SHA를 가리키는지, zizmor 온라인 audit.
+  pins:
+    name: nightly pins
+    if: github.event.schedule == '17 18 * * *' || (github.event_name == 'workflow_dispatch' && (inputs.only == 'all' || inputs.only == 'pins'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read # checkout
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - uses: taiki-e/install-action@e407f7bafb71fd004bc5c2da3032e5470cbb6ef0 # v2.87.24
+        with:
+          tool: zizmor@1.30.1
+          fallback: none
+      - name: pins
+        run: node scripts/ci/run.mjs pins
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+  # 저장소 설정·ruleset drift(§4.4). 선언은 scripts/ci/repo-settings.json·.github/rulesets/(G7).
+  ruleset-drift:
+    name: nightly ruleset-drift
+    if: github.event.schedule == '17 18 * * *' || (github.event_name == 'workflow_dispatch' && (inputs.only == 'all' || inputs.only == 'ruleset-drift'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read # checkout
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - name: ruleset-drift
+        run: node scripts/ci/run.mjs ruleset-drift
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+  # cargo-fuzz 4 target(url·info·mpd·hls), 고정 nightly(tools.json rust-nightly), target당 300초. crash 입력은 artifact로.
+  fuzz:
+    name: nightly fuzz
+    if: github.event.schedule == '17 18 * * *' || (github.event_name == 'workflow_dispatch' && (inputs.only == 'all' || inputs.only == 'fuzz'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read # checkout
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - name: rust toolchain
+        run: rustup toolchain install
+      - name: install cargo-fuzz
+        run: node scripts/ci/run.mjs install-tool cargo-fuzz
+      - name: fuzz
+        run: node scripts/ci/run.mjs fuzz
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: ${{ failure() }}
+        with:
+          name: fuzz-artifacts
+          path: target/ci/fuzz/artifacts/
+          retention-days: 14
+          if-no-files-found: ignore
+
+  # 툴체인(§4.4, 매주): rust-toolchain.toml이 최신 stable보다 낮으면 실패해 ci-loop:toolchain 이슈를 연다.
+  toolchain:
+    name: nightly toolchain
+    if: github.event.schedule == '47 18 * * 0' || (github.event_name == 'workflow_dispatch' && ((inputs.only == 'all' && inputs.weekly) || inputs.only == 'toolchain'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read # checkout
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - name: toolchain
+        run: node scripts/ci/run.mjs toolchain
+
   # 고리: 예약 실행(master)의 결과로 작업마다 ci-loop:<작업 id> 이슈를 열고 닫는다(건너뛴 작업은 오래됐을 때만 연다).
   # PR 실행은 보고하지 않는다. master가 아닌 브랜치의 loop_test dispatch는 ci-loop-test:<작업 id>에만 쓴다.
   report:
     name: nightly report
-    needs: [e2e-native-linux, e2e-native-windows, drift]
+    needs: [e2e-native-linux, e2e-native-windows, drift, advisories, pins, ruleset-drift, fuzz, toolchain]
     if: always() && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.loop_test))
     runs-on: ubuntu-24.04
     timeout-minutes: 10

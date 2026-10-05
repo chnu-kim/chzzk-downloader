@@ -45,6 +45,11 @@ export const NEEDS_LOOPS = {
   'e2e-native-linux': { name: 'nightly e2e-native (linux)', staleHours: 72 },
   'e2e-native-windows': { name: 'nightly e2e-native (windows)', staleHours: 8 * 24 },
   drift: { name: 'nightly drift', staleHours: 72, consecutive: 2, consecutiveKinds: { no_target: 3 } },
+  advisories: { name: 'nightly advisories', staleHours: 72 },
+  pins: { name: 'nightly pins', staleHours: 72 },
+  'ruleset-drift': { name: 'nightly ruleset-drift', staleHours: 72 },
+  fuzz: { name: 'nightly fuzz', staleHours: 72 },
+  toolchain: { name: 'nightly toolchain', staleHours: 8 * 24 },
 };
 export const LOOP_WORKFLOW = 'nightly.yml';
 export const KINDS = [

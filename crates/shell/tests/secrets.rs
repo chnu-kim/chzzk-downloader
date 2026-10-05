@@ -4,7 +4,7 @@
 //! 끝까지 돌린다. 쿠키가 실제로 API 요청에 실렸는지(양성 대조)를 먼저 확인하고, 그 값이 로그·모든 `JobEvent`
 //! JSON·`SettingsDto`·`ResolvedDto`·`AppError`·`settings.json`·`jobs.json`·`Debug` 출력 어디에도 없는지 본다.
 //!
-//! 로그는 스레드 기본 subscriber로 잡으므로 current-thread 런타임에서 돈다(매니저 태스크도 같은 스레드).
+//! 로그는 전역 subscriber로 모든 스레드에서 잡는다(이 바이너리에는 테스트가 하나뿐이다).
 
 use std::io::Write;
 use std::path::Path;
@@ -198,7 +198,8 @@ async fn cookies_never_leak() {
                 .with_target("chzzk_core", tracing::Level::TRACE)
                 .with_target("chzzk_shell", tracing::Level::TRACE),
         );
-    let _guard = tracing::subscriber::set_default(subscriber);
+    // 이 테스트 바이너리에는 테스트가 하나뿐이라 전역 subscriber로 모든 스레드(쓰기 스레드·spawn_blocking)를 잡는다.
+    tracing::subscriber::set_global_default(subscriber).unwrap();
 
     let server = mock_server().await;
     let t = tempfile::tempdir().unwrap();

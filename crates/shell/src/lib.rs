@@ -11,6 +11,8 @@ pub mod events;
 pub mod jobs;
 pub mod manager;
 pub mod output;
+pub mod ownership;
+pub mod services;
 mod writer;
 
 pub use backend::Backend;
@@ -19,3 +21,5 @@ pub use error::{AppError, ErrorCode, ErrorPayload, RequestKindDto, Stage};
 pub use events::EventSink;
 pub use jobs::{JobRecord, JobStore, JobsFile, reconcile};
 pub use manager::{DownloadManager, JobDefaults, ManagerConfig};
+pub use ownership::OwnershipGate;
+pub use services::{AppPaths, SettingsService};

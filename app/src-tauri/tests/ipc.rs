@@ -3,7 +3,7 @@
 //! 진행 이벤트 Channel·완료 알림 큐, 창 닫기·앱 종료 가드(mock 이벤트 루프)를 본다.
 
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -45,11 +45,15 @@ fn fixture() -> Fixture {
     fixture_with(dir, state)
 }
 
-/// 실제 처리기·capabilities·창 이벤트 처리를 붙인 mock 앱(창 없음).
-fn mock_app(state: App) -> (tauri::App<MockRuntime>, UnboundedReceiver<String>) {
+/// 실제 처리기·capabilities를 붙인 mock 앱(창 없음). clipboard-manager 플러그인은 `clipboard_link`를 실제로
+/// 부르는 테스트만 등록한다(AppKit 대지를 여는 범위를 줄인다).
+fn mock_app(state: App, clipboard: bool) -> (tauri::App<MockRuntime>, UnboundedReceiver<String>) {
     let (notifier, notify_rx) = Notifier::new();
-    let app = mock_builder()
-        .plugin(tauri_plugin_clipboard_manager::init())
+    let mut builder = mock_builder();
+    if clipboard {
+        builder = builder.plugin(tauri_plugin_clipboard_manager::init());
+    }
+    let app = builder
         .manage(state)
         .manage(Quitting::default())
         .manage(notifier)
@@ -60,7 +64,11 @@ fn mock_app(state: App) -> (tauri::App<MockRuntime>, UnboundedReceiver<String>) 
 }
 
 fn fixture_with(dir: TempDir, state: App) -> Fixture {
-    let (app, notify_rx) = mock_app(state);
+    fixture_full(dir, state, false)
+}
+
+fn fixture_full(dir: TempDir, state: App, clipboard: bool) -> Fixture {
+    let (app, notify_rx) = mock_app(state, clipboard);
     let main = WebviewWindowBuilder::new(&app, "main", Default::default())
         .build()
         .unwrap();
@@ -370,7 +378,9 @@ fn close_requests(h: &AppHandle<MockRuntime>) -> Arc<Mutex<Vec<Value>>> {
 fn every_command_is_wired() {
     // command_names.rs(AppManifest·capabilities)와 `generate_handler!` 목록이 같은지: 모든 이름을 main 창에서
     // 불러, ACL 거부(`not allowed`)도 처리기 없음(`Command … not found`)도 아니어야 한다. 인자 누락 오류는 괜찮다.
-    let f = fixture();
+    let dir = TempDir::new().unwrap();
+    let state = App::open(paths(dir.path()), None, chzzk_app_lib::tokio_handle()).unwrap();
+    let f = fixture_full(dir, state, true);
     // `quit`이 `app.exit`(mock에서 패닉)를 부르지 않게 종료 중으로 둔다(두 번째 `quit`은 아무것도 안 한다).
     f.app.state::<Quitting>().0.store(true, Ordering::SeqCst);
     for name in COMMANDS {
@@ -531,6 +541,7 @@ fn quit_runs_once_and_blocks_close_silently_meanwhile() {
 }
 
 /// mock 이벤트 루프(`App::run_return`)를 돌리고 `drive`를 다른 스레드에서 실행한다. 루프가 끝나면 `drive`의 결과.
+/// `drive`는 루프가 받은 `ExitRequested { code: None }` 수를 본다(mock은 막지 않은 닫기 바로 뒤에 보낸다).
 /// main 창은 루프가 설정(`tauri.conf.json`)대로 만든다. 루프가 30초 안에 끝나지 않으면(닫기·종료가 잘못 막힘)
 /// 프로세스를 끝낸다.
 ///
@@ -538,12 +549,16 @@ fn quit_runs_once_and_blocks_close_silently_meanwhile() {
 /// 테스트 스레드에서 동시에 그리면 AppKit이 죽는다(SIGTRAP, 실측).
 fn run_loop<T: Send + 'static>(
     state: App,
-    drive: impl FnOnce(AppHandle<MockRuntime>, WebviewWindow<MockRuntime>) -> T + Send + 'static,
+    drive: impl FnOnce(AppHandle<MockRuntime>, WebviewWindow<MockRuntime>, Arc<AtomicUsize>) -> T
+    + Send
+    + 'static,
 ) -> T {
     static ONE_LOOP: Mutex<()> = Mutex::new(());
     let _one = ONE_LOOP.lock().unwrap_or_else(|e| e.into_inner());
-    let (app, _rx) = mock_app(state);
+    let (app, _rx) = mock_app(state, false);
     let h = app.handle().clone();
+    let exits = Arc::new(AtomicUsize::new(0));
+    let seen_exits = exits.clone();
     let done = Arc::new(AtomicBool::new(false));
     let watch = done.clone();
     std::thread::spawn(move || {
@@ -566,9 +581,14 @@ fn run_loop<T: Send + 'static>(
             assert!(Instant::now() < deadline, "main 창이 생기지 않음");
             std::thread::sleep(Duration::from_millis(10));
         };
-        drive(h, main)
+        drive(h, main, exits)
     });
-    app.run_return(on_run_event);
+    app.run_return(move |h, e| {
+        if matches!(e, tauri::RunEvent::ExitRequested { code: None, .. }) {
+            seen_exits.fetch_add(1, Ordering::SeqCst);
+        }
+        on_run_event(h, e)
+    });
     done.store(true, Ordering::SeqCst);
     driver.join().unwrap()
 }
@@ -577,7 +597,11 @@ fn run_loop<T: Send + 'static>(
 fn closing_the_main_window_exits_without_running_jobs() {
     let dir = TempDir::new().unwrap();
     let state = App::open(paths(dir.path()), None, chzzk_app_lib::tokio_handle()).unwrap();
-    run_loop(state, |_, main| main.close().unwrap());
+    let exits = run_loop(state, |_, main, exits| {
+        main.close().unwrap();
+        exits
+    });
+    assert_eq!(exits.load(Ordering::SeqCst), 1);
 }
 
 #[test]
@@ -591,23 +615,35 @@ fn closing_the_main_window_is_blocked_while_downloading() {
         chzzk_app_lib::tokio_handle(),
     )
     .unwrap();
-    let (alive, asked) = run_loop(state, |h, main| {
+    let (exits_while_running, asked) = run_loop(state, |h, main, exits| {
         let req = serde_json::from_value(enqueue_body(1, "720p", None)["req"].clone()).unwrap();
         let job = h.state::<App>().enqueue(req).unwrap();
         assert_eq!(job.status, chzzk_shell::dto::JobStatus::Running);
         let asked = close_requests(&h);
         main.close().unwrap();
-        // mock 루프는 한 바퀴에 1초 쉰다.
-        std::thread::sleep(Duration::from_millis(2500));
-        let alive = h.get_webview_window("main").is_some();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while asked.lock().unwrap().is_empty() {
+            assert!(Instant::now() < deadline, "close-requested가 오지 않음");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        // 닫기를 막았으면 mock은 창을 지우지 않고 종료 요청도 보내지 않는다.
+        let exits_while_running = exits.load(Ordering::SeqCst);
+        if exits_while_running != 0 {
+            // mock이 창을 이미 지워 루프를 끝낼 방법이 없다: 이유를 남기고 바로 끝낸다.
+            eprintln!("받는 중인데 main 창 닫기를 막지 않았다");
+            std::process::exit(1);
+        }
         let asked = asked.lock().unwrap().clone();
         // 작업을 멈추면 닫힌다. mock 런타임은 `Destroyed` 창 이벤트를 보내지 않아 Tauri 쪽 창 목록에 main이
         // 남으므로, "창이 없어진 뒤의 종료 요청은 막지 않는다"(`close_decision`의 `has_main`)는 여기서 재현하지
         // 못하고 lib.rs 단위 테스트가 본다.
         stop_all(&h);
         main.destroy().unwrap();
-        (alive, asked)
+        (exits_while_running, asked)
     });
-    assert!(alive, "받는 중인데 main 창이 닫혔다");
+    assert_eq!(
+        exits_while_running, 0,
+        "받는 중인데 main 창 닫기를 막지 않았다"
+    );
     assert_eq!(asked, vec![json!({ "running": 1 })]);
 }

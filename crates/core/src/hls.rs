@@ -344,7 +344,7 @@ mod tests {
     use crate::testutil::fixture_str;
 
     const MASTER_BASE: &str = "https://hls.example.invalid/live_rewind/kr/streamkey0/vod_playlist.m3u8?hdnts=st=0~exp=0~acl=*/kr/*~hmac=0000";
-    const MEDIA_BASE: &str = "https://hls.example.invalid/live_rewind/kr/streamkey0/144p/hdntl=exp=0~acl=*/kr/*~data=hdntl~hmac=0000/vod_chunklist.m3u8";
+    const MEDIA_BASE: &str = "https://hls.example.invalid/live_rewind/kr/streamkey0/144p/hdntl=exp=0~acl=*/kr/*~data=hdntl~hmac=fakepath/vod_chunklist.m3u8";
 
     fn media_base() -> Url {
         Url::parse(MEDIA_BASE).unwrap()
@@ -377,7 +377,7 @@ mod tests {
         let v144 = &vs[3];
         assert_eq!(
             v144.uri.as_str(),
-            "https://hls.example.invalid/live_rewind/kr/streamkey0/144p/hdntl=exp=0~acl=*/kr/*~data=hdntl~hmac=0000/vod_chunklist.m3u8"
+            "https://hls.example.invalid/live_rewind/kr/streamkey0/144p/hdntl=exp=0~acl=*/kr/*~data=hdntl~hmac=fakepath/vod_chunklist.m3u8"
         );
         // master의 hdnts 쿼리는 전파하지 않는다.
         for v in &vs {
@@ -433,13 +433,13 @@ mod tests {
         assert_eq!(init.query(), Some("type=hls&filetype=.m4s"));
         assert!(
             init.as_str()
-                .ends_with("/144p/hdntl=exp=0~acl=*/kr/*~data=hdntl~hmac=0000/144p_0_0_0.m4s?type=hls&filetype=.m4s")
+                .ends_with("/144p/hdntl=exp=0~acl=*/kr/*~data=hdntl~hmac=fakepath/144p_0_0_0.m4s?type=hls&filetype=.m4s")
         );
         assert!(
             p.segments[0]
                 .uri
                 .as_str()
-                .ends_with("~hmac=0000/144p_seg0.m4v")
+                .ends_with("~hmac=fakepath/144p_seg0.m4v")
         );
         assert!(p.segments[29].uri.as_str().ends_with("/144p_seg29.m4v"));
 
@@ -568,7 +568,7 @@ mod tests {
         let p = parse_media(text, &media_base()).unwrap();
         assert_eq!(p.init, None);
         assert_eq!(p.segments[0].duration_ms, 1667);
-        assert!(p.segments[0].uri.as_str().ends_with("~hmac=0000/a.ts"));
+        assert!(p.segments[0].uri.as_str().ends_with("~hmac=fakepath/a.ts"));
     }
 
     /// `#EXT-X-DISCONTINUITY-SEQUENCE`는 이름이 겹쳐도 거부하지 않는다(접두어 비교 금지).
@@ -624,7 +624,7 @@ mod tests {
         );
     }
 
-    /// 16시간 방송 규모(30,000개). 개수·지문이 맞고 디버그 빌드에서도 1초 안에 끝난다(느슨).
+    /// 16시간 남짓 방송 규모(30,000개). 개수·지문이 맞고 디버그 빌드에서도 1초 안에 끝난다(느슨).
     #[test]
     fn large_playlist_30k() {
         const N: usize = 30_000;
@@ -633,7 +633,7 @@ mod tests {
         );
         let mut ms = Vec::with_capacity(N);
         for i in 0..N {
-            let d = if i + 1 == N { 1667 } else { 2000 };
+            let d = if i + 1 == N { 1500 } else { 2000 };
             ms.push(d);
             text.push_str(&format!(
                 "#EXT-X-PROGRAM-DATE-TIME:2026-01-01T00:00:00.000Z\n#EXTINF:{}.{:03},\n1080p_{i}_0_{i}.m4v\n",
@@ -648,7 +648,7 @@ mod tests {
         assert_eq!(p.segments.len(), N);
         assert_eq!(p.segments[N - 1].msn, (N - 1) as u64);
         assert_eq!(durations_crc(&p), crc_of(&ms));
-        assert_eq!(p.total_duration_ms, 2000 * (N as u64 - 1) + 1667);
+        assert_eq!(p.total_duration_ms, 2000 * (N as u64 - 1) + 1500);
         assert!(elapsed.as_secs_f64() < 1.0, "{elapsed:?}");
     }
 }

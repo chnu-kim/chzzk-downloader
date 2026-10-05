@@ -1,0 +1,32 @@
+# public-scan 공개 denylist. 원문을 되돌릴 수 없는 항목만 둔다.
+#   blob:<64 hex>   파일 내용 전체의 sha256(옛 실물 fixture). 만들기: node scripts/ci/public-scan.mjs --hash-file <파일>
+#
+# 실제 채널 이름·영상 번호·클립 ID·제목 같은 항목은 경우의 수가 적어, salt가 공개된 해시로는 대입해 되돌릴 수 있다.
+# 그런 항목은 저장소 밖 비공개 denylist에 두고 --denylist <파일>(또는 PUBLIC_SCAN_DENYLIST)로 넘긴다
+# (docs/public-release.md). 공개 CI는 규칙과 아래 blob 해시만으로 검사한다.
+#
+# 옛 실물 fixture(testdata/, internal/api/testdata/)의 모든 이력 버전
+blob:07303ddfdde66c0942613ee4a612d26990ee0c84b3ad7386e2079deb6bec714e
+blob:0b931bf78132699bc58bac1031bb27e253723f4a5bdc6f57dff72fc82ec20998
+blob:3066a31766538992cbb8971224cb73a7757c486d9c79f04b811d411507ecfe82
+blob:3ff0c8caf85b8162c293c0c3b5fe3badc1defbdc2a3c461dd17cd139e1f7482a
+blob:5819f917f378e4b9d93fc0f52a64df6c33e8c86671d8cf53a0de5d012be70e0a
+blob:5a4f0582fea8c2c34a8767e1f94b5499b1ed5157ee62bcc0b016dd6ec30af6c1
+blob:5d9b60d8de8d6ab30b918a23bf7451545cbd5103c0f406f8b814fbf073aa96e7
+blob:64cac80b70580fa423ca520da322f057097c9f3f92fdcb721612f686df467d41
+blob:64df8a6cd43f435b57cfe52ea9035ac299222d0a93383147c3b383068a31df93
+blob:84ab05424b4f247e50195c3b492475952770d0f3915347a67887b2b7058d82f7
+blob:8a2b31b1d0f5d6f38793209d1e9829011acc2485dcc2698f011a445560824edd
+blob:a2893af51ed60e5c8554f3fd9eef59987ec9b1c948cffc60bfd80f8029d29908
+blob:a64f56d6a42327aa8ade788f6ae93b250e33c67336d44d40b50f7c0cd148d374
+blob:aab12982a0fa52a8bb969133601877067a2f4362dc2105c6f4cc309747ddafc7
+blob:ab6c30eb7220f56db2bb58b7bb9ccb166e5f2a691ae4b4ca6f4a4fef0c9e2c78
+blob:adcc54fb2c4797603076f12be95875aee37b8ef8d9a4c63885dc926afc832c1a
+blob:b710f08a8c3f0f98ac36d37fbffedea029582425d1d430f32897cc12ec320100
+blob:bdbf68dd5c4bdce87640accf79a52394bf50afe20cf10f74dc5e8ffe3c6169df
+blob:be4fc4b66933a178d5c64c3e723236aba445e8566d26ee228be5a8f055dfea92
+blob:bf6a8e415a2f631acc0c8c9b083ec3d3722ce0e74b8c81556ba86cc746fdd466
+blob:bfa4ecd3f0ab9bf94fa9dff0f246c9456663dfbf581aaeb71f4635ca1adcf4f1
+blob:e92843ca0c512e38bbf110e80c1adf2faddea4ea844ced3075b6056c718eb417
+blob:eba320fbaeb46566b83cc5a574658e5813ad73b28086fd3c394335d15a3bd07c
+blob:ff294bc6d75328270d45bdbcfa668b67d782db399ab862f9681a551b8566f580

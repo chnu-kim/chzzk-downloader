@@ -1,6 +1,6 @@
 # 치지직 OAuth 조사 (Phase 3 사전 확인)
 
-조사일: 2026-10-05. 근거 우선순위는 (a) `../기존 웹 앱` 코드, (b) chzzk MCP, (c) 공식 문서(`https://chzzk.gitbook.io/chzzk/llms-full.txt` 전문)다. 각 항목에 근거를 표기했다. "확인 불가"는 어느 출처에도 없다는 뜻이다.
+조사일: 2026-10-05. 근거 우선순위는 (a) 같은 OAuth를 이미 쓰는 비공개 웹 앱의 구현(이하 "기존 웹 앱"), (b) chzzk MCP, (c) 공식 문서(`https://chzzk.gitbook.io/chzzk/llms-full.txt` 전문)다. 각 항목에 근거를 표기했다. "확인 불가"는 어느 출처에도 없다는 뜻이다.
 
 ## 1. 요약
 
@@ -12,7 +12,7 @@
 
 ## 2. 인가 요청
 
-근거: 공식 문서(인증 코드 요청), MCP `GET /account-interlock`, 기존 웹 앱 `buildAuthorizationUrl`.
+근거: 공식 문서(인증 코드 요청), MCP `GET /account-interlock`, 기존 웹 앱의 인가 URL 생성.
 
 ```
 GET https://chzzk.naver.com/account-interlock
@@ -29,12 +29,12 @@ GET https://chzzk.naver.com/account-interlock
 
 - `scope` 파라미터는 없다. 스코프는 개발자 센터에서 앱에 신청하는 방식이다. 인가 요청에 스코프를 싣는 방법은 문서에 없다.
 - 콜백: `redirectUri?code={code}&state={state}` (GET 리다이렉트).
-- 취소/오류 시 콜백 형태는 문서에 없다. 기존 웹 앱는 `code`가 없으면 취소로 간주한다.
+- 취소/오류 시 콜백 형태는 문서에 없다. 기존 웹 앱은 `code`가 없으면 취소로 간주한다.
 - code의 유효 시간, 일회성 여부: 확인 불가(통상 일회성이라고 가정하고 즉시 교환한다).
 
 ## 3. 토큰 발급
 
-근거: 공식 문서, MCP `POST /auth/v1/token`, 기존 웹 앱 `exchangeCode`.
+근거: 공식 문서, MCP `POST /auth/v1/token`, 기존 웹 앱의 토큰 교환.
 
 ```
 POST https://openapi.chzzk.naver.com/auth/v1/token
@@ -46,7 +46,7 @@ Content-Type: application/json
 ```
 
 - 본문은 **JSON**이다(form-urlencoded 아님). 필드는 camelCase(`grantType`).
-- 응답 공통 래퍼: `{ "code": 200, "message": null, "content": { ... } }`. 기존 웹 앱는 `json.content ?? json`으로 래퍼 유무 양쪽을 처리한다. 래퍼가 실제로 오는지 샘플 응답을 직접 받아 확인한 적은 없다(자격증명 없음). 양쪽 모두 처리하도록 구현한다.
+- 응답 공통 래퍼: `{ "code": 200, "message": null, "content": { ... } }`. 기존 웹 앱은 `json.content ?? json`으로 래퍼 유무 양쪽을 처리한다. 래퍼가 실제로 오는지 샘플 응답을 직접 받아 확인한 적은 없다(자격증명 없음). 양쪽 모두 처리하도록 구현한다.
 - `content` 필드:
 
 | 필드 | 타입 | 비고 |
@@ -73,7 +73,7 @@ Content-Type: application/json
 
 ## 5. 사용자 식별 (`users/me`)
 
-근거: 공식 문서 User 절, MCP `GET /open/v1/users/me`, 기존 웹 앱 `getUserInfo`.
+근거: 공식 문서 User 절, MCP `GET /open/v1/users/me`, 기존 웹 앱의 사용자 조회.
 
 ```
 GET https://openapi.chzzk.naver.com/open/v1/users/me
@@ -85,7 +85,7 @@ Content-Type: application/json
 - 응답 `content`: `channelId`(string), `channelName`(string). 문서 예시 `909501f048b44cf0d5c1d28XXXXXXXX`(32자). 프로필 이미지는 이 엔드포인트에 없다.
 - 문서: "치지직의 모든 유저는 채널을 소유합니다. 채널ID는 채널의 고유 식별자이며 유저의 고유 식별자로 사용할 수 있습니다."
 - 필요한 스코프: **`유저 정보 조회`** 하나면 된다. 본인 식별 용도로는 이 외에 필요한 것이 없다. 앱 신청 때 이것만 요청한다(최소 권한).
-- 기존 웹 앱는 `id ?? channelId`, `nickname ?? channelName` 폴백을 둔다. 실제 필드는 `channelId/channelName`이다.
+- 기존 웹 앱은 `id ?? channelId`, `nickname ?? channelName` 폴백을 둔다. 실제 필드는 `channelId/channelName`이다.
 
 ## 6. Redirect URI 등록 규칙
 
@@ -107,7 +107,7 @@ Content-Type: application/json
 
 ## 8. 기존 웹 앱의 구현 (재사용 판단)
 
-근거: `src/lib/chzzk.ts`, `src/app/api/auth/{login,callback,logout,me}/route.ts`, `src/lib/auth.ts`, `docs/AUTH.md`.
+근거: 기존 웹 앱의 OAuth 클라이언트, 로그인·콜백·로그아웃·사용자 조회 라우트, 세션 코드와 인증 문서.
 
 | 항목 | 기존 웹 앱 방식 | 데스크톱(Worker) 재사용 |
 |---|---|---|

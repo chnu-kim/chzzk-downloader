@@ -171,11 +171,11 @@ fixture `testdata/hls/video_info.json`로 확인했다. research에 따르면 �
 
 | ID = Quality | Bandwidth | Width | Height | FrameRate |
 |---|---|---|---|---|
-| `720p` | `3e+06` | `1280` | `720` | `60.0` |
-| `480p` | `1.5e+06` | `852` | `480` | `30.0` |
-| `360p` | `600000` | `640` | `360` | `30.0` |
-| `144p` | `128000` | `256` | `144` | `30.0` |
-| `1080p` | `8.192e+06` | `1920` | `1080` | `60.0` |
+| `720p` | `2.5e+06` | `1280` | `720` | `60.0` |
+| `480p` | `1.2e+06` | `854` | `480` | `30.0` |
+| `360p` | `500000` | `640` | `360` | `30.0` |
+| `144p` | `100000` | `256` | `144` | `30.0` |
+| `1080p` | `6e+06` | `1920` | `1080` | `60.0` |
 - 다음 위치의 type assertion은 검사하지 않아 형태가 다르면 **panic**한다: `vod.go:169` (`media[0]`이 object가 아닐 때), `:176` (track이 object가 아닐 때), `:177` (`encodingTrackId`가 string이 아닐 때)
 
 **GetVODUrl** (`vod.go:328-334`):
@@ -206,7 +206,7 @@ fixture `testdata/hls/video_info.json`로 확인했다. research에 따르면 �
 |---|---|---|---|
 | AdaptationSet 범위 | 첫 video/mp4만 | 모든 video/mp4 | 목록에 없는 rep가 선택될 수 있다 |
 | PD 필터 | 없음 | 없음 | 클립 경로(`isPDRepresentation`)와 다르다. non-PD rep의 BaseURL(HLS 디렉토리 등)을 고를 수 있다 |
-| 화질 식별 | `qualityId` 라벨 / `rep.id` | `rep.id`의 첫 숫자열을 `resolution` 라벨이나 `height`와 비교 | non-PD id(UUID 등, 예: `265e4b14-...`에서 `265`)면 실패한다. 같은 해상도가 둘이면(60fps/30fps 등) 항상 첫 번째가 선택된다 |
+| 화질 식별 | `qualityId` 라벨 / `rep.id` | `rep.id`의 첫 숫자열을 `resolution` 라벨이나 `height`와 비교 | non-PD id(UUID 등, 예: `144e0000-...`에서 `144`)면 실패한다. 같은 해상도가 둘이면(60fps/30fps 등) 항상 첫 번째가 선택된다 |
 | HLS 화질 | encodingTrack 목록 제공 | 무시 | 사용자 선택이 효과가 없다 |
 | 클립과의 차이 | 라벨 `qualityId` | — | 클립 목록 라벨은 `resolution`+`"p"`(`720p`) |
 
@@ -265,7 +265,7 @@ pub fn select_source(r: &Resolved, quality_id: &str) -> Result<VodSource, Error>
 - AdaptationSet 1: `mimeType="video/mp4"`
   - `PD_720P_1280_2048_192`: bandwidth `1800000`, width `720`, height `1280`, frameRate `30`. 라벨 qualityId `720P_1280_2048_192`, fps `30`, resolution `720`. BaseURL `https://{미디어 호스트}/.../pd/.../{uuid}.mp4?hdnts=...`
   - `PD_480P_854_1024_128`: bandwidth `1000000`, width `480`, height `854`, frameRate `30`. resolution `480`. BaseURL은 `/pd/` 경로의 `.mp4`
-- AdaptationSet 2: `mimeType="video/mp2t"`(HLS, `nvod:m3u` 속성). Representation id는 UUID이고 BaseURL은 `.../hls/` 디렉토리다.
+- AdaptationSet 2: `mimeType="video/mp2t"`(HLS, `nvod:m3u` 속성). Representation id는 UUID이고 BaseURL은 `.../hls/` 디렉토리다. PD와 같은 qualityId·fps·resolution 라벨과 SegmentTemplate을 가진 미끼라, PD 판정(mime·`PD_`·`/pd/`)만이 이것을 거른다. AdaptationSet 3(`audio/mp4`)도 qualityId 라벨·BaseURL·SegmentList가 있다.
 - 세로 영상이라 `height`(1280)와 `resolution` 라벨(720)이 **다르다.** 해상도 표기는 라벨을 우선해야 한다.
 
 ### 5.3 PD 판정 (`clip.go:133-138`)
@@ -403,7 +403,7 @@ autoFilename = SanitizeFilename(위 문자열)
 | `""` | (`""`, `""`) |
 | `24-01-02 01:02:03` | (`0102_010203`, `24-01-02`) (자릿수 검증 없음) |
 | `2024-01-02T12:34:56` | (`240102T12:34:56_000000`, `2024-01-02T12:34:56`) (ISO 형식이면 날짜가 아니라 문자열 전체가 startTime이 된다) |
-| `2026-01-02 12:00:00` (fixture) | (`260102_060835`, `2026-01-02`) → 파일명 `_2026-01-02_ 테스트채널 테스트 다시보기.mp4` |
+| `2026-01-02 12:00:00` (fixture) | (`260102_120000`, `2026-01-02`) → 파일명 `_2026-01-02_ 테스트채널 테스트 다시보기.mp4` |
 
 `SanitizeFilename(name)` (`utils.go:12-42`):
 1. 확장자 분리: `.`을 포함하고 `.`으로 끝나지 않으면 마지막 `.` 뒤를 확장자로 본다. 확장자에는 아무것도 하지 않는다.
@@ -551,7 +551,7 @@ ok  	chzzk-downloader/internal/downloader	1.383s
 - **TestSelectClipBaseURLFromMPD** (`testdata/clip_multi.mpd`)
   - `PD_720P_1280_2048_192` → URL이 `/pd/`와 `.mp4`를 포함한다.
   - `PD_NONEXISTENT` → 오류
-- fixture `clip_playinfo.json`, `clip_multi_playinfo.json`은 **어떤 테스트에서도 쓰지 않는다.** Rust에서는 `parse_clip_info` 테스트에 쓴다. 기대값: code 200, `contentTitle`, videoId, inKey가 비어 있지 않음, adult false, `ownerChannel`의 channelName·channelId(값은 합성 fixture를 따른다).
+- fixture `clip_playinfo.json`, `clip_multi_playinfo.json`은 **어떤 테스트에서도 쓰지 않는다.** Rust에서는 `parse_clip_info` 테스트에 쓴다. 기대값: code 200, `contentTitle`, videoId, inKey가 비어 있지 않음, adult false, `ownerChannel`의 channelName·channelId(값은 합성 fixture를 따른다). 합성 fixture의 `makerChannel`은 소유 채널과 다른 값(`…d4`, `제작자채널`)이라 둘을 바꿔 읽으면 테스트가 실패한다.
 
 ### 8.2 `internal/downloader/direct_test.go` → download
 

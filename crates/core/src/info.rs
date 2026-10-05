@@ -404,7 +404,7 @@ mod tests {
                     "720p",
                     "720p",
                     Some(720),
-                    Some(3_000_000),
+                    Some(2_500_000),
                     Some(1280),
                     Some(720),
                     Some("60.0")
@@ -413,8 +413,8 @@ mod tests {
                     "480p",
                     "480p",
                     Some(480),
-                    Some(1_500_000),
-                    Some(852),
+                    Some(1_200_000),
+                    Some(854),
                     Some(480),
                     Some("30.0")
                 ),
@@ -422,7 +422,7 @@ mod tests {
                     "360p",
                     "360p",
                     Some(360),
-                    Some(600_000),
+                    Some(500_000),
                     Some(640),
                     Some(360),
                     Some("30.0")
@@ -431,7 +431,7 @@ mod tests {
                     "144p",
                     "144p",
                     Some(144),
-                    Some(128_000),
+                    Some(100_000),
                     Some(256),
                     Some(144),
                     Some("30.0")
@@ -440,7 +440,7 @@ mod tests {
                     "1080p",
                     "1080p",
                     Some(1080),
-                    Some(8_192_000),
+                    Some(6_000_000),
                     Some(1920),
                     Some(1080),
                     Some("60.0")
@@ -622,10 +622,12 @@ mod tests {
             let (meta, pb) = parse_clip_info(&fixture(rel)).unwrap();
             assert_eq!(meta.kind, ContentKind::Clip);
             assert_eq!(meta.title, title);
-            assert_eq!(meta.channel_name, "클립채널");
+            // 원 채널(ownerChannel)이다. fixture의 makerChannel(`…d4`, 제작자채널)과 다르다.
+            assert_eq!(meta.channel_name, "클립채널", "{rel}");
             assert_eq!(
                 meta.channel_id.as_deref(),
-                Some("000000000000000000000000000000c3")
+                Some("000000000000000000000000000000c3"),
+                "{rel}"
             );
             assert!(!meta.adult);
             assert_eq!(meta.live_open_date, None);

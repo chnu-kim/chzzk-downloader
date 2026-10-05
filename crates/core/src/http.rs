@@ -380,6 +380,13 @@ mod tests {
         };
         check(&format!("{enc:?}"));
         let reps = parse_mpd(&fixture_str("testdata/vod/playback.mpd")).unwrap();
+        // PD가 아닌 rep(video/mp2t 미끼, audio)의 BaseURL에도 서명이 있어야 가림을 검사한 셈이다.
+        assert!(
+            reps.iter()
+                .filter(|r| !r.is_pd())
+                .all(|r| r.base_urls.iter().any(|u| u.contains("_lsu_sa_")))
+        );
+        assert_eq!(reps.iter().filter(|r| !r.is_pd()).count(), 3);
         check(&format!("{reps:?}"));
         let pd = pd_reps(&reps).unwrap();
         assert!(!pd.is_empty());

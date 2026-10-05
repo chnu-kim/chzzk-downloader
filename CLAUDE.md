@@ -13,7 +13,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `crates/core/tests/` | wiremock·raw TCP 통합 테스트(오프라인). `live.rs`는 실서버 `#[ignore]` 스모크, `support/mp4.rs`는 MP4 상자 검사기 |
 | `crates/core/examples/dl.rs` | 실서버 수동 스모크 CLI |
 | `testdata/{hls,vod,clip,synthetic}/` | 합성 fixture(`testdata/README.md`, 생성기 `scripts/fixtures/gen-fixtures.mjs`). 바이트 그대로 체크아웃한다(`.gitattributes`의 `-text`) |
-| `scripts/ci/` | 공개 누출 검사기 `public-scan.mjs`(+`public-denylist.txt` 해시 목록, `public-scan.test.mjs`). `--all-history`로 이력 전체 검사 |
+| `scripts/ci/` | 공개 누출 검사기 `public-scan.mjs`(+`public-denylist.txt` blob 해시 목록, `public-scan.test.mjs`). `--all-history`로 이력 전체, `--staged`로 인덱스 검사(`.githooks/pre-commit`, 선택). 비공개 denylist는 `--denylist`로 넘긴다 |
 | `crates/shell/` | **`chzzk-shell`**(Tauri 비의존 앱 셸). DTO·오류 DTO(ts-rs bindings), `Backend` trait, `DownloadManager`(큐·상태 머신·`jobs.json`), `SettingsService`, `App`(command 몸통). 테스트는 `tests/`(가짜 Backend `tests/common/fake.rs`) |
 | `app/` | Vite + Svelte 5 + TS 프런트(`pnpm`, `packageManager`로 버전 고정). `src/lib/api.ts`(command 래퍼), `src/lib/bindings/`(생성물, 손대지 않는다), `src/lib/copy/`(copy deck), `src/lib/components/`·`views/`, vitest는 `*.test.ts` |
 | `app/src-tauri/` | **`chzzk-app`**(lib `chzzk_app_lib`, bin `chzzk-app`). Tauri Builder·플러그인·command 배선·`ChannelSink`·로그·창 닫기 가드, `capabilities/default.json`, `tests/ipc.rs`(mock 런타임 IPC) |
@@ -66,7 +66,7 @@ CHZZK_LIVE_HLS=<빠른 다시보기 no> CHZZK_LIVE_DASH=<일반 VOD no> CHZZK_LI
 - 설계가 틀렸거나 모호하면 가장 작은 타당한 선택을 하고 해당 설계 문서(`core.md` 또는 `app.md`)의 "구현 중 변경"에 번호를 붙여 적는다.
 - UI 문구는 한국어이고 app.md §9 copy deck(`app/src/lib/copy/ko.ts`)을 따른다. DTO를 바꾸면 `UPDATE_BINDINGS=1`로 bindings를 다시 만든다.
 - 행동을 바꾸면 해당 테스트를 함께 추가한다. 파서·선택 규칙은 `testdata/`의 합성 fixture로 고정한다. fixture는 `scripts/fixtures/gen-fixtures.mjs`를 고쳐 다시 만든다(`--check`로 확인).
-- **공개 저장소 규칙**: 실제 채널 이름·ID, 영상 번호·클립 ID, 서명 토큰·inKey, 비공개 내부 동작 조사 내용을 코드·테스트·문서·커밋 메시지에 넣지 않는다. 커밋 전에 `node scripts/ci/public-scan.mjs`(CI `public-scan.yml`)가 통과해야 한다.
+- **공개 저장소 규칙**: 실제 채널 이름·ID, 영상 번호·클립 ID, 서명 토큰·inKey, 비공개 내부 동작 조사 내용을 코드·테스트·문서·커밋 메시지에 넣지 않는다. 시각·길이 같은 준식별자도 실제 값을 옮기지 않는다. 커밋 전에 `node scripts/ci/public-scan.mjs`(CI `public-scan.yml`)가 통과해야 한다. 커밋 이메일은 GitHub noreply 주소를 쓴다.
 
 ## 주의사항
 

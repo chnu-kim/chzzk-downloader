@@ -153,7 +153,8 @@ async fn clip() {
         .find(|(k, _)| k == "key")
         .unwrap()
         .1;
-    assert!(key.starts_with("V1") && key.ends_with("c3"));
+    // 클립 fixture의 inKey 그대로(VOD `…b2`·클립 둘 `…c4`와 다르다).
+    assert_eq!(key, format!("V1{}c3", "0".repeat(80)));
 }
 
 /// AES VOD는 MPD를 받지 않고 `EncryptedVod`로 끝난다(설계 §11).

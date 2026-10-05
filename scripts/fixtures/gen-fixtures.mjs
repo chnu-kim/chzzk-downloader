@@ -5,7 +5,7 @@
 //   node scripts/fixtures/gen-fixtures.mjs --check   # 저장소의 파일과 바이트가 같은지만 본다(다르면 1)
 //
 // 값은 모두 가짜다: 채널 ID는 0으로 채운 32자리 hex, 호스트는 *.example.invalid,
-// 서명 토큰은 exp=0·hmac=0000 같은 자리표시자다. 테스트가 기대는 구조(필드 이름, inKey 분기,
+// 서명 토큰은 exp=0·hmac=0000 같은 자리표시자다. 시각·길이·비트레이트도 둥근 가짜 값이다. 테스트가 기대는 구조(필드 이름, inKey 분기,
 // 이중 인코딩 JSON, variant 5개, 세그먼트 30개, MPD의 PD/UUID/audio 구성, fMP4 상자 순서)는 그대로 둔다.
 
 import { createHash } from 'node:crypto';
@@ -33,6 +33,11 @@ export const FAKE = {
     title: '가상 일반 VOD 제목 (괄호) 테스트',
     inKey: 'V1' + '0'.repeat(80) + 'b2',
   },
+  // 클립을 만든 사람의 채널. 소유(원 채널)와 달라야 owner/maker를 헷갈린 버그가 드러난다.
+  maker: {
+    channelId: '000000000000000000000000000000d4',
+    channelName: '제작자채널',
+  },
   clip: {
     clipId: 'TestClip01',
     videoId: '000000000000000000000000000000000C03',
@@ -55,16 +60,18 @@ const CLIP_HOST = 'https://clip.example.invalid';
 const IMG_HOST = 'https://img.example.invalid';
 const HLS_DIR = `${HLS_HOST}/live_rewind/kr/streamkey0`;
 const HDNTS = 'hdnts=st=0~exp=0~acl=*/kr/*~hmac=0000';
-const HDNTL = 'hdntl=exp=0~acl=*/kr/*~data=hdntl~hmac=0000';
+// master 쿼리(hdnts)와 variant 경로 토큰(hdntl)의 hmac 자리를 서로 다르게 둔다(경로에 쿼리 값을 잘못 옮기면 드러나게).
+// hex가 아닌 글자로 시작하므로 검사기·이력 치환 규칙(hmac=<hex>)에 걸리지 않는다.
+const HDNTL = 'hdntl=exp=0~acl=*/kr/*~data=hdntl~hmac=fakepath';
 
 // ---- 빠른 다시보기(inKey 없음) ----
 
 const TRACKS = [
-  ['720p', 'high', 3000000, 192000, '60.0', 1280, 720],
-  ['480p', 'main', 1500000, 192000, '30.0', 852, 480],
-  ['360p', 'main', 600000, 96000, '30.0', 640, 360],
-  ['144p', 'main', 128000, 64000, '30.0', 256, 144],
-  ['1080p', 'high', 8192000, 192000, '60.0', 1920, 1080],
+  ['720p', 'high', 2500000, 160000, '60.0', 1280, 720],
+  ['480p', 'main', 1200000, 128000, '30.0', 854, 480],
+  ['360p', 'main', 500000, 96000, '30.0', 640, 360],
+  ['144p', 'main', 100000, 64000, '30.0', 256, 144],
+  ['1080p', 'high', 6000000, 160000, '60.0', 1920, 1080],
 ];
 
 function livePlayback() {
@@ -197,9 +204,9 @@ function vodVideoInfo(encryptionType) {
 function masterM3u8() {
   const inf = [
     'BANDWIDTH=2660000,CODECS="avc1.640028,mp4a.40.2",RESOLUTION=1280x720,FRAME-RATE=60.00',
-    'BANDWIDTH=1328000,CODECS="avc1.4D001F,mp4a.40.2",RESOLUTION=852x480,FRAME-RATE=30.00',
+    'BANDWIDTH=1328000,CODECS="avc1.4D001F,mp4a.40.2",RESOLUTION=854x480,FRAME-RATE=30.00',
     'BANDWIDTH=596000,CODECS="avc1.4D001E,mp4a.40.2",RESOLUTION=640x360,FRAME-RATE=30.00',
-    'BANDWIDTH=192000,CODECS="avc1.4D000C,mp4a.40.2",RESOLUTION=256x144,FRAME-RATE=30.00',
+    'BANDWIDTH=164000,CODECS="avc1.4D000C,mp4a.40.2",RESOLUTION=256x144,FRAME-RATE=30.00',
     'BANDWIDTH=6160000,CODECS="avc1.64002A,mp4a.40.2",RESOLUTION=1920x1080,FRAME-RATE=60.00',
   ];
   let s = '#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-INDEPENDENT-SEGMENTS\n\n';
@@ -216,9 +223,10 @@ const HEADER =
   '#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-DISCONTINUITY-SEQUENCE:0\n';
 
 function mediaM3u8() {
-  let s = HEADER + '#EXT-X-DATERANGE:ID="test-daterange",START-DATE="2026-01-01T03:00:00.000Z"\n\n';
+  let s = HEADER + '#EXT-X-DATERANGE:ID="test-daterange",START-DATE="2026-01-02T03:00:00.000Z"\n\n';
   s += MAP + '\n';
-  const t0 = Date.UTC(2026, 0, 1, 21, 8, 36, 630);
+  // liveOpenDate(KST 12:00)와 같은 시각의 UTC
+  const t0 = Date.UTC(2026, 0, 2, 3, 0, 0, 0);
   for (let i = 0; i < 30; i++) {
     s += `#EXT-X-PROGRAM-DATE-TIME:${new Date(t0 + i * 2000).toISOString()}\n`;
     s += `#EXTINF:2.000000,\n${seg(i)}\n`;
@@ -273,10 +281,26 @@ function pdRep({ id, bandwidth, width, height, fps, codecs, url }) {
   );
 }
 
-function hlsRep(uuid, { bandwidth, width, height, fps, host, sig }) {
+// PD가 아닌 미끼: PD와 같은 qualityId·fps·resolution 라벨, 서명이 붙은 BaseURL(/hls/), SegmentTemplate.
+// PD 판정(mime·id·/pd/)만이 이것을 걸러야 한다.
+function hlsRep(uuid, { q, bandwidth, width, height, fps, host, sig }) {
+  const res = q.split('P_')[0];
   return (
     `<Representation id="${uuid}" bandwidth="${bandwidth}" width="${width}" height="${height}" frameRate="${fps}" codecs="avc1.4d401f,mp4a.40.2" ` +
-    `nvod:m3u="${host}/hls/${uuid}.m3u8?${sig}"/>\n`
+    `nvod:m3u="${host}/hls/${uuid}.m3u8?${sig}">` +
+    `<nvod:Label kind="qualityId">${q}</nvod:Label><nvod:Label kind="fps">${fps}</nvod:Label>` +
+    `<nvod:Label kind="resolution">${res}</nvod:Label><BaseURL>${host}/hls/${uuid}/?${sig}</BaseURL>` +
+    '<SegmentTemplate media="seg_$Number$.ts" initialization="init.ts" timescale="1000" duration="2000" startNumber="1"/>' +
+    '</Representation>\n'
+  );
+}
+
+function audioRep(uuid, { bandwidth, url }) {
+  return (
+    `<Representation id="${uuid}" bandwidth="${bandwidth}" mimeType="audio/mp4" codecs="mp4a.40.2">` +
+    `<nvod:Label kind="qualityId">AUDIO_${bandwidth / 1000}</nvod:Label><BaseURL>${url}</BaseURL>` +
+    '<SegmentList timescale="1000" duration="2000"><Initialization range="0-999"/><SegmentURL mediaRange="1000-1999"/></SegmentList>' +
+    '</Representation>\n'
   );
 }
 
@@ -309,6 +333,7 @@ function vodMpd() {
     // video/mp2t: mimeType은 AdaptationSet에서 상속된다.
     `<AdaptationSet maxWidth="1280" maxHeight="720" mimeType="video/mp2t" nvod:m3u="${VOD_HOST}/hls/master.m3u8?${sig}">\n` +
     hlsRep('00000000-0000-0000-0000-0000000000b1', {
+      q: '720P_1280_4000_192',
       bandwidth: 3200000,
       width: 1280,
       height: 720,
@@ -317,6 +342,7 @@ function vodMpd() {
       sig,
     }) +
     hlsRep('00000000-0000-0000-0000-0000000000b2', {
+      q: '144P_256_128_64',
       bandwidth: 200000,
       width: 256,
       height: 144,
@@ -326,7 +352,7 @@ function vodMpd() {
     }) +
     '</AdaptationSet>\n' +
     '<AdaptationSet mimeType="audio/mp4">\n' +
-    `<Representation id="00000000-0000-0000-0000-0000000000b3" bandwidth="192000" mimeType="audio/mp4" codecs="mp4a.40.2"><BaseURL>${VOD_HOST}/vod/${v}/audio/0.m4a?${sig}</BaseURL></Representation>\n` +
+    audioRep('00000000-0000-0000-0000-0000000000b3', { bandwidth: 128000, url: `${VOD_HOST}/vod/${v}/audio/0.m4a?${sig}` }) +
     '</AdaptationSet>\n</Period>\n</MPD>\n'
   );
 }
@@ -360,6 +386,7 @@ function clipMultiMpd() {
     '</AdaptationSet>\n' +
     `<AdaptationSet maxWidth="720" maxHeight="1280" mimeType="video/mp2t" nvod:m3u="${CLIP_HOST}/hls/master.m3u8?${sig}">\n` +
     hlsRep('00000000-0000-0000-0000-0000000000c1', {
+      q: '720P_1280_2048_192',
       bandwidth: 1800000,
       width: 720,
       height: 1280,
@@ -368,6 +395,7 @@ function clipMultiMpd() {
       sig,
     }) +
     hlsRep('00000000-0000-0000-0000-0000000000c2', {
+      q: '480P_854_1024_128',
       bandwidth: 1000000,
       width: 480,
       height: 854,
@@ -377,18 +405,18 @@ function clipMultiMpd() {
     }) +
     '</AdaptationSet>\n' +
     '<AdaptationSet mimeType="audio/mp4">\n' +
-    `<Representation id="00000000-0000-0000-0000-0000000000c3" bandwidth="128000" mimeType="audio/mp4" codecs="mp4a.40.2"><BaseURL>${CLIP_HOST}/clip/${v}/audio/0.m4a?${sig}</BaseURL></Representation>\n` +
+    audioRep('00000000-0000-0000-0000-0000000000c3', { bandwidth: 128000, url: `${CLIP_HOST}/clip/${v}/audio/0.m4a?${sig}` }) +
     '</AdaptationSet>\n</Period>\n</MPD>\n'
   );
 }
 
 function clipPlayinfo(o) {
-  const ch = {
-    channelId: FAKE.clip.channelId,
-    channelName: FAKE.clip.channelName,
-    channelImageUrl: `${IMG_HOST}/channel/${FAKE.clip.channelId}.png`,
+  const chan = ({ channelId, channelName }) => ({
+    channelId,
+    channelName,
+    channelImageUrl: `${IMG_HOST}/channel/${channelId}.png`,
     verifiedMark: false,
-  };
+  });
   return (
     JSON.stringify({
       code: 200,
@@ -407,8 +435,8 @@ function clipPlayinfo(o) {
         readCount: 0,
         commentCount: 0,
         userAdultStatus: 'NOT_LOGIN_USER',
-        ownerChannel: ch,
-        makerChannel: ch,
+        ownerChannel: chan(FAKE.clip),
+        makerChannel: chan(FAKE.maker),
         tvAppViewingPolicyType: 'ALLOWED',
       },
     }) + '\n'

@@ -31,6 +31,9 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: "0"
+  # reqwest(rustls) → aws-lc-sys는 Windows x86_64에서 PATH에 nasm이 없으면 빌드가 실패한다.
+  # 이 변수가 있으면 nasm이 없을 때 crate에 든 prebuilt 오브젝트를 쓴다(nasm이 있거나 다른 OS면 무시).
+  AWS_LC_SYS_PREBUILT_NASM: "1"
 
 jobs:
   check:

@@ -4,8 +4,8 @@
 
 ## 현재 위치
 
-- 현재: Phase 1 코어(`crates/core`, 설계 §10-1~15) 구현 완료, 브랜치 `feat/rust-core`. 오프라인 테스트는 macOS에서 전체 녹색(push 전이라 3 OS CI는 아직 돌지 않음), 실서버 스모크(빠른 다시보기 HLS·DASH VOD·클립) 통과(2026-10-05, 설계 "구현 중 변경" 45). 14~15단계 리뷰 수정(옛 형식 settings.json 보존, 이어받기 ETA 등, 구현 중 변경 47~51) 반영
-- 남은 것: 3 OS CI 확인(push 후, Windows `aws-lc-sys` NASM 문제는 설계 구현 중 변경 21대로 CI 결과를 보고 결정), 성인 PD에 미디어 쿠키가 필요한지 실측(로그인 쿠키 필요, `examples/dl.rs`의 `CHZZK_NID_AUT`·`CHZZK_NID_SES`로 사용자가 직접)
+- 현재: Phase 1 코어(`crates/core`, 설계 §10-1~15) 구현 완료, 브랜치 `feat/rust-core`. 3 OS CI 녹색(PR #12, Windows 잠금 테스트 수정 후), 실서버 스모크(빠른 다시보기 HLS·DASH VOD·클립) 통과(2026-10-05, 설계 "구현 중 변경" 45). 14~15단계 리뷰 수정(옛 형식 settings.json 보존, 이어받기 ETA 등, 구현 중 변경 47~51) 반영
+- 남은 것: 성인 PD에 미디어 쿠키가 필요한지 실측(로그인 쿠키 필요, `examples/dl.rs`의 `CHZZK_NID_AUT`·`CHZZK_NID_SES`로 사용자가 직접)
 - 다음: §10-16 Go 코드 삭제(별도 PR) → Phase 2 Tauri 셸
 
 ## 확정된 결정 (2026-10-05, 사용자 인터뷰)
@@ -48,7 +48,7 @@
 - [x] 사전 조사: 라이브 리와인드 HLS 실물 fixture 확보 (`testdata/hls/`, 결과 `docs/research/hls-live-rewind.md`)
 - [x] 설계 판정 (`docs/design/core.md`) + 일반 VOD DASH fixture 확보 (`testdata/vod/`)
 - [x] §10-1 workspace 골격 + 3 OS CI 설정 (`cargo test -p chzzk-core`)
-- [ ] §10-1 남은 항목: 3 OS CI 녹색 확인(push 전 미실행, Windows NASM 미결)
+- [x] §10-1 남은 항목: 3 OS CI 녹색 확인 (2026-10-05)
 - [x] §10-2~4 순수 함수: progress 포맷, naming, url
 - [x] §10-5~7 순수 파서: info/`classify`(inKey 분기 통합, AES seam), mpd, hls
 - [x] §10-8 http + `resolve` (wiremock)

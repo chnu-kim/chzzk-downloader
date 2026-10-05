@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use chzzk_core::download::MAX_CONCURRENCY;
+use chzzk_core::download::part::{Sidecar, part_path, sidecar_path};
 use chzzk_core::fsutil::{atomic_write, map_io_error, rename_with_retry};
 use chzzk_core::{ContentRef, DownloadRequest, Error, PlaybackKind};
 use serde::{Deserialize, Serialize};
@@ -223,6 +224,57 @@ fn parse(bytes: &[u8]) -> Result<JobsFile, String> {
         return Err(format!("모르는 형식 버전 {}", file.v));
     }
     Ok(file)
+}
+
+/// 시작 때 한 번 저장된 목록을 실제 파일과 맞춘다(§7.1 reconcile 표).
+///
+/// | 저장된 상태 | 파일 | 결과 |
+/// |---|---|---|
+/// | `running`·`pausing`·`queued` | - | `interrupted`(자동 재개는 매니저가 설정을 보고 따로 한다) |
+/// | `paused`·`interrupted`·`failed` | `.part`·sidecar가 있고 같은 작업 | `partial_bytes = committed_len` |
+/// | 〃 | 그 밖 | `partial_bytes = None` |
+/// | `completed` | 최종 파일 없음 | `missing = true` |
+///
+/// 목록에 없는 고아 `.part`는 찾지 않는다.
+pub fn reconcile(file: &mut JobsFile) {
+    for j in &mut file.jobs {
+        if matches!(
+            j.status,
+            JobStatus::Running | JobStatus::Pausing | JobStatus::Queued
+        ) {
+            j.status = JobStatus::Interrupted;
+        }
+        j.partial_bytes = None;
+        j.missing = false;
+        match j.status {
+            JobStatus::Paused | JobStatus::Interrupted | JobStatus::Failed => {
+                j.partial_bytes = partial_bytes(j);
+            }
+            JobStatus::Completed => j.missing = !j.output.exists(),
+            _ => {}
+        }
+    }
+}
+
+/// 이 작업이 이어받을 수 있는 `.part`의 바이트(sidecar `committed_len`).
+///
+/// `.part`와 sidecar가 모두 있고 sidecar가 같은 작업(컨텐츠·화질·방식)일 때만 `Some`이다.
+/// sidecar가 없거나 깨졌거나 다른 작업이면 코어가 재개 때 새로 시작하므로 `None`이다.
+/// (`check_output`은 이와 달리 sidecar가 없으면 `.part` 길이를 보여 준다. 섞지 않는다.)
+/// sidecar는 잠그지 않고 읽기만 한다(`atomic_write`로 쓰이므로 반쯤 쓴 파일은 없다).
+pub fn partial_bytes(j: &JobRecord) -> Option<u64> {
+    if !part_path(&j.output).is_file() {
+        return None;
+    }
+    let sc = read_sidecar(&j.output)?;
+    sc.same_job(&j.content, &j.quality_id, j.expected_kind)
+        .then_some(sc.committed_len)
+}
+
+/// `{output}.part.json`을 읽는다. 없거나 깨졌으면 `None`.
+pub fn read_sidecar(output: &Path) -> Option<Sidecar> {
+    let bytes = std::fs::read(sidecar_path(output)).ok()?;
+    serde_json::from_slice(&bytes).ok()
 }
 
 /// 지금 unix 초.

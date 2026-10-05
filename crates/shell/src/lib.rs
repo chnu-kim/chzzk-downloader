@@ -12,4 +12,4 @@ pub mod jobs;
 pub use backend::Backend;
 pub use dto::JobId;
 pub use error::{AppError, ErrorCode, ErrorPayload, RequestKindDto, Stage};
-pub use jobs::{JobRecord, JobStore, JobsFile};
+pub use jobs::{JobRecord, JobStore, JobsFile, reconcile};

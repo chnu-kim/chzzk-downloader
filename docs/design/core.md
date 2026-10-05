@@ -648,7 +648,9 @@ tokio    = { version = "1.53.2", features = ["net", "test-util"] }
 2. 2차 방어: `pd_reps`는 `ContentProtection`이 붙은 rep를 제외하고, `parse_media`는 `EXT-X-KEY`(METHOD≠NONE)를 `Unsupported::Encrypted(method)`로 거부한다.
 3. `MediaPlaylist.init: Option<Url>`로 두어 TS(MAP 없음) playlist 파싱 자체는 가능하게 한다. 그 이상(복호화·TS 처리)은 넣지 않는다.
 
-### 사용자가 고를 선택지
+### 결정: A 거부 (사용자 확정, 2026-10-05)
+
+### 검토했던 선택지
 
 | 선택지 | 내용 | 비용·위험 |
 |---|---|---|

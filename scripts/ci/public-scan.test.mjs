@@ -157,10 +157,10 @@ test('NUL이 든 파일도 글자 조각과 UTF-16을 본다', () => {
 });
 
 test('작성자 이메일 허용 목록', () => {
-  for (const ok of ['1+someone@users.noreply.github.com', 'someone@users.noreply.github.com', 'noreply@github.com', 'noreply@anthropic.com', 't@example.invalid', '49699333+dependabot[bot]@users.noreply.github.com']) {
+  for (const ok of ['1+someone@users.noreply.github.com', 'someone@users.noreply.github.com', 'noreply@github.com', 'noreply@anthropic.com', 't@example.invalid', '49699333+dependabot[bot]@users.noreply.github.com', '114627259+chnu-kim@users.noreply.github.com', 'chanuuuu@naver.com', 'Chanuuuu@Naver.com']) {
     assert.ok(emailAllowed(ok), ok);
   }
-  for (const bad of ['someone@example.com', 'a@users.noreply.github.com.evil.example', '']) {
+  for (const bad of ['someone@example.com', 'a@users.noreply.github.com.evil.example', '', 'chanwoo@company.co.kr', 'other@naver.com', 'xchanuuuu@naver.com', 'chanuuuu@naver.com.evil.example', 'chanuuuu@naver.co']) {
     assert.ok(!emailAllowed(bad), bad);
   }
 });
@@ -241,6 +241,11 @@ test('--all-history: 작성자 이메일과 ref 이름, --denylist로 넘긴 비
   assert.equal(viaEnv.status, 1);
   assert.equal(scan(dir, '--denylist', join(dir, 'nope.txt')).status, 2);
   git(dir, 'branch', '-D', 'clip-Zq7Kp2Lm9X');
+
+  // 공개하기로 한 작성자 이메일은 통과한다
+  const kept = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=chanuuuu@naver.com', 'commit', '-q', '--allow-empty', '-m', 'k'], { cwd: dir });
+  assert.equal(kept.status, 0);
+  assert.equal(scan(dir, '--all-history').status, 0);
 
   const r = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=person@example.com', 'commit', '-q', '--allow-empty', '-m', 'x'], { cwd: dir });
   assert.equal(r.status, 0);

@@ -24,7 +24,7 @@
 //   hex-id         32·36자리 hex, 대시 UUID, V1로 시작하는 inKey 중 가짜(0으로 채운 값)가 아닌 것
 //   keyed-hex      sig·signature·token·secret 뒤 40자리 이상 hex
 //   denylist       denylist의 해시와 같은 토큰·토큰 안 6~13글자·n-gram·한글 부분 문자열·blob
-//   identity       (이력) 작성자·커미터·태거 이메일이 noreply 허용 목록에 없는 것
+//   identity       (이력) 작성자·커미터·태거 이메일이 허용 목록(noreply 주소, 공개하기로 한 작성자 이메일)에 없는 것
 
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -96,7 +96,14 @@ export function decode(s) {
 
 // ---- 규칙 ----
 
-const EMAIL_OK = [/^(?:\d+\+)?[A-Za-z0-9-]+(?:\[bot\])?@users\.noreply\.github\.com$/i, /^noreply@github\.com$/i, /^noreply@anthropic\.com$/i, /@[a-z0-9.-]+\.invalid$/i];
+// 작성자 개인 이메일(chanuuuu@naver.com)은 공개 이력에 그대로 두기로 했다(사용자 결정). 다른 주소는 계속 잡는다.
+const EMAIL_OK = [
+  /^(?:\d+\+)?[A-Za-z0-9-]+(?:\[bot\])?@users\.noreply\.github\.com$/i,
+  /^noreply@github\.com$/i,
+  /^noreply@anthropic\.com$/i,
+  /^chanuuuu@naver\.com$/i,
+  /@[a-z0-9.-]+\.invalid$/i,
+];
 export const emailAllowed = (e) => EMAIL_OK.some((re) => re.test(e.trim()));
 
 function rulesOf(s, hits) {

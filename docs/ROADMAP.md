@@ -7,7 +7,8 @@
 - 현재: Phase 1 코어(`crates/core`, 설계 §10-1~15) 구현 완료, 브랜치 `feat/rust-core`. 3 OS CI 녹색(PR #12, Windows 잠금 테스트 수정 후), 실서버 스모크(빠른 다시보기 HLS·DASH VOD·클립) 통과(2026-10-05, 설계 "구현 중 변경" 45). 14~15단계 리뷰 수정(옛 형식 settings.json 보존, 이어받기 ETA 등, 구현 중 변경 47~51) 반영
 - 남은 것: 성인 PD에 미디어 쿠키가 필요한지 실측(로그인 쿠키 필요, `examples/dl.rs`의 `CHZZK_NID_AUT`·`CHZZK_NID_SES`로 사용자가 직접)
 - 완료: §10-16 Go 코드 삭제(`cmd/`·`internal/`·`go.mod`), 클립 fixture는 `testdata/clip/`으로 이동(브랜치 `chore/remove-go`)
-- 다음: Phase 2 Tauri 셸
+- 완료: Phase 2 설계 판정 `docs/design/app.md`(UX안·셸안 대조, 2026-10-05). 열린 질문 8개는 app.md §16
+- 다음: Phase 2 §15-1 골격(`app/` + `crates/shell` + `app/src-tauri`). 그 전에 app.md §16-5 `identifier` 확정 필요
 
 ## 확정된 결정 (2026-10-05, 사용자 인터뷰)
 
@@ -60,8 +61,26 @@
 - [x] §10-16 Go 코드 삭제, `internal/api/testdata` → `testdata/clip/` (브랜치 `chore/remove-go`)
 
 ### Phase 2 — GUI (Tauri + Svelte)
-- [ ] `app/` Tauri 셸: 코어를 command/event로 노출
-- [ ] 화면: URL 입력 → 품질 선택 → 저장 경로 → 진행률, 최근 VOD, 설정(다운로드 폴더, 네이버 쿠키)
+
+설계는 `docs/design/app.md`(확정안). 아래 번호는 그 문서 §15의 구현 단계다. 1~10은 Tauri 없이 `crates/shell`만으로 진행하고(PR A), 11~19가 앱과 화면이다(PR B). 결정 요약은 app.md §0, 사용자가 답할 질문은 §16.
+
+- [x] 설계 판정 (`docs/design/app.md`): 순수 Vite+Svelte 5, `crates/shell`(Tauri 비의존) + `app/src-tauri`, 구독 하나 Channel, jobs.json, 상태 8개
+- [ ] §15-1 골격: `app/`(Vite+Svelte) + `app/src-tauri` + workspace 멤버. 확인 항목(frontendDist 없이 컴파일, tokio Handle, TLS provider, 권한 식별자, log 경로, CSP)을 app.md "구현 중 변경"에 기록
+- [ ] §15-2~3 `crates/shell` 오류 DTO(`AppError`, `ErrorKind` 전체 매핑)와 나머지 DTO, ts-rs bindings
+- [ ] §15-4 `Backend` trait + 가짜 Backend, Send 컴파일 검사
+- [ ] §15-5~6 `JobStore`(jobs.json) + 시작 때 reconcile
+- [ ] §15-7~8 `DownloadManager`: 큐(동시 2)·sink·중복 → pause/resume/remove/quit/restart, `check_output`, `partial_bytes`
+- [ ] §15-9 `SettingsService`: 경로 폴백, 쿠키 토글 클라이언트 교체, 첫 실행 legacy 후보, 비밀 누출 테스트
+- [ ] §15-10 `app.yml`의 `shell` 작업 3 OS 녹색, CLAUDE.md 게이트 갱신
+- [ ] §15-11 command 배선: commands·ChannelSink·setup·AppManifest·capabilities·CSP, 창 닫기 이벤트
+- [ ] §15-12~13 프런트 기반(`api.ts`, `applyEvent`, copy deck, `errorCopy`, format golden) + UI 기본 요소
+- [ ] §15-14 받기 화면: UrlBar → ResolveCard(화질·폴더·파일 이름·충돌 안내) → enqueue
+- [ ] §15-15 작업 목록 화면: JobsStore 재구독, 상태별 버튼, B1 배너, D2
+- [ ] §15-16 설정 화면: 폴더, 연결 수, 쿠키(값 미복원), 이전 버전 가져오기(D3), 정보
+- [ ] §15-17 창 닫기(D1 ↔ `quit`), `request_user_attention`, 접근성 점검, 3 OS 수동 스모크
+- [ ] §15-18 `app.yml`의 `frontend`·`tauri` 작업 3 OS 녹색
+- [ ] §15-19 문서: ROADMAP·CLAUDE.md·app.md "구현 중 변경" 정리
+- Phase 3 자리는 Phase 2에서 미리 둔다(app.md §12): `features.auth=false`, `OwnershipGate` 항상 허용, `ResolvedDto.ownership`, `JobRecord.channelId`, `auth_status` command, AccountSlot·AuthGate·OwnershipNotice 빈 슬롯
 
 ### Phase 3 — Worker (인증·랜딩·배포 게이트)
 - [ ] 사전 확인: 치지직 OAuth 엔드포인트·토큰 형태·`users/me`의 channelId (chzzk MCP + 기존 웹 앱 코드), loopback redirect 허용 여부, VOD 응답 채널 ID와 OAuth channelId가 같은 식별자인지

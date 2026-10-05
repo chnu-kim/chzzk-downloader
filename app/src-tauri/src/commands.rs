@@ -9,8 +9,8 @@ use std::sync::atomic::Ordering;
 use chzzk_core::{ContentRef, PlaybackKind};
 use chzzk_shell::app::{Reveal, chzzk_link};
 use chzzk_shell::dto::{
-    AppInfo, AuthStatusDto, EnqueueRequest, JobDto, JobEvent, LegacyImportDto, OutputCheck,
-    ResolvedDto, SettingsDto, SettingsPatch,
+    AppFolder, AppInfo, AuthStatusDto, EnqueueRequest, JobDto, JobEvent, LegacyImportDto,
+    OutputCheck, ResolvedDto, SettingsDto, SettingsPatch,
 };
 use chzzk_shell::manager::QUIT_TIMEOUT;
 use chzzk_shell::{App, AppError, JobId};
@@ -210,6 +210,19 @@ pub async fn quit<R: Runtime>(
         app.exit(0);
     }
     Ok(())
+}
+
+/// 설정 화면의 "설정 폴더 열기 / 로그 폴더 열기"와 저장 폴더 "폴더 열기"(S2). JS에 opener 권한이 없어 Rust가 연다.
+#[tauri::command]
+pub async fn open_app_folder<R: Runtime>(
+    app: AppHandle<R>,
+    state: State<'_, App>,
+    kind: AppFolder,
+) -> Res<()> {
+    let dir = state.folder_target(kind)?;
+    app.opener()
+        .open_path(dir.to_string_lossy(), None::<&str>)
+        .map_err(|e| internal("폴더 열기", e))
 }
 
 #[tauri::command]

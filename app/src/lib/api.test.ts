@@ -43,7 +43,7 @@ async function record(run: () => Promise<unknown>): Promise<Call[]> {
 
 describe('api.ts', () => {
   it('command 목록을 읽었다', () => {
-    expect(COMMANDS).toHaveLength(21);
+    expect(COMMANDS).toHaveLength(22);
   });
 
   // Channel은 생성 때 IPC 내부를 쓰므로 mockIPC 뒤(호출 안)에서 만든다.
@@ -74,6 +74,7 @@ describe('api.ts', () => {
     [() => api.quit(), 'quit', {}],
     [() => api.authStatus(), 'auth_status', {}],
     [() => api.clipboardLink(), 'clipboard_link', {}],
+    [() => api.openAppFolder('logs'), 'open_app_folder', { kind: 'logs' }],
   ];
 
   it('모든 Rust command에 함수가 하나씩 있다', () => {

@@ -11,7 +11,7 @@ use tokio::runtime::Handle;
 
 use crate::JobId;
 use crate::dto::{
-    AppInfo, EnqueueRequest, Features, JobDto, OutputCheck, SettingsDto, SettingsPatch,
+    AppFolder, AppInfo, EnqueueRequest, Features, JobDto, OutputCheck, SettingsDto, SettingsPatch,
 };
 use crate::error::AppError;
 use crate::jobs::JobStore;
@@ -158,6 +158,25 @@ impl App {
             Some(dir) => Err(AppError::file_missing(dir)),
             None => Err(AppError::file_missing(&path)),
         }
+    }
+}
+
+impl App {
+    /// `open_app_folder`가 열 폴더. 없으면 만든다(저장 폴더는 첫 다운로드 때 코어가 만들므로 아직 없을 수 있다).
+    pub fn folder_target(&self, which: AppFolder) -> Result<PathBuf, AppError> {
+        let dir = match which {
+            AppFolder::Config => self.paths.config.clone(),
+            AppFolder::Logs => self.paths.log.clone(),
+            AppFolder::Downloads => self.settings.effective_download_folder(),
+        };
+        std::fs::create_dir_all(&dir).map_err(|source| {
+            AppError::from(chzzk_core::Error::Io {
+                op: "create_dir",
+                path: dir.clone(),
+                source,
+            })
+        })?;
+        Ok(dir)
     }
 }
 

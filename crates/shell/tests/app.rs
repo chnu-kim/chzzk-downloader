@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use chzzk_core::{ClientConfig, ContentRef, Endpoints, PlaybackKind, RetryPolicy};
 use chzzk_shell::app::Reveal;
-use chzzk_shell::dto::{JobStatus, Nullable, SettingsPatch};
+use chzzk_shell::dto::{AppFolder, JobStatus, Nullable, SettingsPatch};
 use chzzk_shell::services::AppPaths;
 use chzzk_shell::{App, ErrorCode, ErrorPayload, JobId};
 use common::harness::request;
@@ -184,4 +184,48 @@ async fn open_and_reveal_targets() {
 
     let e = app.open_target(JobId(999)).unwrap_err();
     assert_eq!(e.code, ErrorCode::JobNotFound);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn folder_targets_follow_paths_and_settings() {
+    let t = TempDir::new().unwrap();
+    let server = MockServer::start().await;
+    let app = open(t.path(), &server);
+    assert_eq!(
+        app.folder_target(AppFolder::Config).unwrap(),
+        t.path().join("config")
+    );
+    // 로그 폴더가 아직 없어도 만들고 연다.
+    let log = app.folder_target(AppFolder::Logs).unwrap();
+    assert_eq!(log, t.path().join("log"));
+    assert!(log.is_dir());
+    // 저장 폴더: 설정이 없으면 기본 폴더({data}/downloads), 아직 없으면 만든다.
+    let def = app.folder_target(AppFolder::Downloads).unwrap();
+    assert_eq!(def, t.path().join("data").join("downloads"));
+    assert!(def.is_dir());
+    // 설정 폴더를 바꾸면 그 폴더.
+    let mine = t.path().join("내 영상");
+    app.update_settings(SettingsPatch {
+        download_folder: Nullable::Set(mine.to_string_lossy().into_owned()),
+        ..SettingsPatch::default()
+    })
+    .unwrap();
+    assert_eq!(app.folder_target(AppFolder::Downloads).unwrap(), mine);
+    assert!(mine.is_dir());
+    // 만들 수 없으면(같은 이름의 파일) io 오류와 경로.
+    let blocked = t.path().join("막힘");
+    std::fs::write(&blocked, b"x").unwrap();
+    app.update_settings(SettingsPatch {
+        download_folder: Nullable::Set(blocked.to_string_lossy().into_owned()),
+        ..SettingsPatch::default()
+    })
+    .unwrap();
+    let e = app.folder_target(AppFolder::Downloads).unwrap_err();
+    assert_eq!(e.code, ErrorCode::Io);
+    assert_eq!(
+        e.payload,
+        Some(ErrorPayload::Path {
+            path: blocked.to_string_lossy().into_owned()
+        })
+    );
 }

@@ -3,6 +3,7 @@
 // (`toAppError`). 그래서 호출하는 쪽은 `catch (e)`의 `e`를 `AppError`로 다룬다.
 import { Channel, invoke, type InvokeArgs } from '@tauri-apps/api/core';
 import type {
+  AppFolder,
   AppInfo,
   AuthStatusDto,
   ContentRef,
@@ -64,5 +65,7 @@ export const authStatus = () => call<AuthStatusDto>('auth_status');
  * 클립보드의 다른 글은 Rust 밖으로 나오지 않는다.
  */
 export const clipboardLink = () => call<string | null>('clipboard_link');
+/** 설정·로그·저장 폴더를 파일 탐색기로 연다(S2). 저장 폴더가 아직 없으면 Rust가 만든다. */
+export const openAppFolder = (kind: AppFolder) => call<void>('open_app_folder', { kind });
 
 export { Channel };

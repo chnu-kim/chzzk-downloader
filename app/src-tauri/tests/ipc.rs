@@ -402,6 +402,23 @@ fn every_command_is_wired() {
 }
 
 #[test]
+fn open_app_folder_takes_camel_case_kind() {
+    // 실제 폴더 창을 열지 않으려고 거부되는 값만 보낸다. 받는 값(`config`·`logs`·`downloads`)과 경로는
+    // 셸 `App::folder_target` 테스트(crates/shell/tests/app.rs)가 본다.
+    let f = fixture();
+    for bad in [
+        json!({}),
+        json!({ "kind": "Config" }),
+        json!({ "kind": "settings" }),
+    ] {
+        let e = invoke(&f.main, "open_app_folder", bad)
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("kind"), "{e}");
+    }
+}
+
+#[test]
 fn subscribe_jobs_takes_an_on_event_channel() {
     let f = fixture();
     assert_eq!(

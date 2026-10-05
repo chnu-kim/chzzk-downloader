@@ -613,6 +613,18 @@ pub enum JobEvent {
 // 창 이벤트(emit)
 // ---------------------------------------------------------------------------
 
+/// `open_app_folder`가 여는 폴더(S2 저장·정보 섹션). 프런트에 opener 권한이 없어 Rust가 연다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub enum AppFolder {
+    /// 설정 폴더(`settings.json`·`credentials.json`)
+    Config,
+    /// 로그 폴더
+    Logs,
+    /// 지금 저장 폴더(설정 폴더, 없으면 기본 폴더)
+    Downloads,
+}
+
 /// `close-requested` 이벤트(§4). Rust가 창 닫기·앱 종료를 막았을 때 받는 중인 작업 수와 함께 보낸다(D1).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]

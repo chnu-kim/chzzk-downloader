@@ -33,3 +33,23 @@ export async function copyReport(err: AppError, info: AppInfo | null): Promise<v
     toasts.push(t('toast.copyFailed'), 'danger');
   }
 }
+
+/**
+ * 설정 > 정보의 "문제 보고용 정보 복사": 오류 없이 앱·OS·시각만. 경로는 넣지 않는다(사용자 이름이 들어갈 수 있다).
+ */
+export function buildAppReport(info: AppInfo | null, now = new Date()): string {
+  return [
+    `앱: ${info ? `${info.version} (코어 ${info.coreVersion})` : '알 수 없음'}`,
+    `OS: ${typeof navigator === 'undefined' ? '' : navigator.userAgent}`,
+    `시각: ${now.toISOString()}`,
+  ].join('\n');
+}
+
+export async function copyAppReport(info: AppInfo | null): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(buildAppReport(info));
+    toasts.push(t('toast.copied'), 'copied');
+  } catch {
+    toasts.push(t('toast.copyFailed'), 'danger');
+  }
+}

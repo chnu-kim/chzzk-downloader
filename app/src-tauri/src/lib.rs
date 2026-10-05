@@ -78,6 +78,7 @@ pub fn handler<R: Runtime>() -> impl Fn(Invoke<R>) -> bool + Send + Sync + 'stat
         commands::quit,
         commands::auth_status,
         commands::clipboard_link,
+        commands::open_app_folder,
     ]
 }
 

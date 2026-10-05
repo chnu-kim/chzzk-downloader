@@ -5,6 +5,7 @@
   import GlobalShortcuts from './lib/components/app/GlobalShortcuts.svelte';
   import LiveAnnouncer from './lib/components/app/LiveAnnouncer.svelte';
   import Toaster from './lib/components/app/Toaster.svelte';
+  import LegacyFound from './lib/components/settings/LegacyFound.svelte';
   import { jobs } from './lib/stores/jobs.svelte';
   import { settings } from './lib/stores/settings.svelte';
   import { ui } from './lib/stores/ui.svelte';
@@ -32,6 +33,8 @@
     {/if}
   </main>
 </div>
+<!-- 대화상자: D1(창 닫기)은 §15-17, D2(취소 확인)는 JobList, D3(이전 설정 찾음)는 여기 -->
+<LegacyFound />
 <Toaster />
 <LiveAnnouncer />
 <GlobalShortcuts />

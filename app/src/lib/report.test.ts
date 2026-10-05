@@ -33,3 +33,25 @@ describe('copyReport', () => {
     ]);
   });
 });
+
+describe('buildAppReport(설정 > 정보)', () => {
+  it('앱·OS·시각만, 경로 없음', async () => {
+    const { buildAppReport } = await import('./report');
+    const text = buildAppReport(
+      {
+        version: '0.1.0',
+        coreVersion: '0.2.0',
+        configDir: '/Users/me/config',
+        dataDir: '/Users/me/data',
+        logDir: '/Users/me/log',
+        defaultDownloadFolder: '/Users/me/Movies',
+        features: { auth: false },
+        legacyCandidate: null,
+      },
+      new Date('2026-10-05T00:00:00Z'),
+    );
+    expect(text.split('\n')[0]).toBe('앱: 0.1.0 (코어 0.2.0)');
+    expect(text).toContain('시각: 2026-10-05T00:00:00.000Z');
+    expect(text).not.toContain('/Users/me');
+  });
+});

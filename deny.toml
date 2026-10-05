@@ -5,7 +5,12 @@
 all-features = false
 
 [advisories]
-# nightly 전용. 값은 기본을 따른다.
+# nightly 전용(gate `advisories`). 값은 기본을 따른다. 무시는 id마다 이유를 적고, 그 이유가 사라지면 지운다.
+ignore = [
+  # proc-macro-error(unmaintained): Linux GTK3 스택(tauri → wry·tao·muda → gtk 0.18 → glib-macros)의 빌드 시점 proc-macro다.
+  # 취약점이 아니라 관리 중단 알림이고 우리가 바꿀 수 없는 전이 의존성이다. tauri가 GTK4·glib 0.19+로 옮기면 지운다.
+  { id = "RUSTSEC-2024-0370", reason = "unmaintained proc-macro, tauri GTK3 스택의 전이 의존성(바꿀 수 없음)" },
+]
 
 [licenses]
 # 의존성 트리에서 실제로 쓰는 라이선스만 허용한다. 새 라이선스는 이 목록에 이유와 함께 더한다.

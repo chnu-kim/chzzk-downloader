@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // 워크플로의 `uses:`를 커밋 SHA로 고정한다(docs/design/cicd.md §7). 네트워크(gh api)를 쓰므로 gate가 아니라 사람이 돌린다.
 //
-//   node scripts/ci/pin-actions.mjs            # 확인만: 주석의 태그를 다시 해석해 SHA가 같은지 본다(다르면 1)
+//   node scripts/ci/pin-actions.mjs            # 확인만: 주석의 태그를 다시 해석해 SHA가 같은지 본다(다르면 1).
+//                                              # nightly `pins` gate가 매일 돌린다(GH_TOKEN, 구현 중 변경 13 (자))
 //   node scripts/ci/pin-actions.mjs --write    # `uses: o/r@<태그>`를 `uses: o/r@<sha> # <태그>`로 바꾼다
 //
 // annotated tag는 tag 객체를 한 번 더 벗겨 커밋 SHA를 쓴다. Dependabot이 올린 PR도 이 형식을 유지한다.
@@ -31,6 +32,10 @@ export function resolveTag(repo, tag) {
 }
 
 function main(argv) {
+  if (argv.some((a) => a !== '--write')) {
+    console.error('사용법: pin-actions.mjs [--write]');
+    return 2;
+  }
   const write = argv.includes('--write');
   const dir = join(ROOT, '.github', 'workflows');
   let bad = 0;

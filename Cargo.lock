@@ -557,7 +557,6 @@ version = "0.1.0"
 dependencies = [
  "chzzk-core",
  "chzzk-shell",
- "serde",
  "serde_json",
  "tauri",
  "tauri-build",

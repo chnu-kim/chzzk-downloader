@@ -1,6 +1,6 @@
 [package]
 name = "chzzk-app"
-version = "0.1.0"
+version.workspace = true
 description = "치지직 다운로더 데스크톱 앱 (Tauri 셸)"
 edition.workspace = true
 rust-version.workspace = true
@@ -21,7 +21,6 @@ tauri-plugin-notification = "2.5.1"
 tauri-plugin-clipboard-manager = "2.4.1"
 chzzk-core = { path = "../../crates/core" }
 chzzk-shell = { path = "../../crates/shell" }
-serde = { version = "1.0.229", features = ["derive"] }
 tokio = { version = "1.53.2", default-features = false, features = ["rt", "sync"] }
 tracing = "0.1.44"
 tracing-appender = "0.2.5"

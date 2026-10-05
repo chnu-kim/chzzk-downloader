@@ -23,6 +23,14 @@ fn to_json<T: serde::Serialize>(v: &T) -> Value {
 // 미러는 `_` arm 없는 `From<코어>`로 만든다. 코어에 변형이 늘면 셸 컴파일이 깨지고, 아래 검사는
 // 그 변환을 거친 미러가 코어와 같은 JSON인지 본다.
 
+/// 기대 JSON. `_` arm이 없어 코어에 컨텐츠 종류가 늘면 테스트도 컴파일이 깨진다.
+fn content_ref_json(c: &ContentRef) -> Value {
+    match c {
+        ContentRef::Video { video_no } => json!({"kind": "video", "videoNo": video_no}),
+        ContentRef::Clip { clip_id } => json!({"kind": "clip", "clipId": clip_id}),
+    }
+}
+
 #[test]
 fn content_ref_mirror_matches_core() {
     for (core, s) in [
@@ -39,30 +47,46 @@ fn content_ref_mirror_matches_core() {
     ] {
         assert_eq!(to_json(&core), to_json(&ContentRefTs::from(&core)));
         assert_eq!(to_json(&core), s);
+        assert_eq!(content_ref_json(&core), s);
+    }
+}
+
+/// 기대 JSON. `_` arm이 없어 코어에 방식이 늘면 테스트도 컴파일이 깨진다.
+fn playback_kind_json(k: PlaybackKind) -> &'static str {
+    match k {
+        PlaybackKind::Progressive => "progressive",
+        PlaybackKind::LiveRewindHls => "liveRewindHls",
     }
 }
 
 #[test]
 fn playback_kind_mirror_matches_core() {
-    for (core, s) in [
-        (PlaybackKind::Progressive, "progressive"),
-        (PlaybackKind::LiveRewindHls, "liveRewindHls"),
-    ] {
+    for core in [PlaybackKind::Progressive, PlaybackKind::LiveRewindHls] {
         assert_eq!(to_json(&core), to_json(&PlaybackKindTs::from(core)));
-        assert_eq!(to_json(&core), json!(s));
+        assert_eq!(to_json(&core), json!(playback_kind_json(core)));
+    }
+}
+
+/// 기대 JSON. `_` arm이 없어 코어에 단계가 늘면 테스트도 컴파일이 깨진다.
+fn phase_json(p: Phase) -> &'static str {
+    match p {
+        Phase::Resolving => "resolving",
+        Phase::Downloading => "downloading",
+        Phase::Reresolving => "reresolving",
+        Phase::Finalizing => "finalizing",
     }
 }
 
 #[test]
 fn phase_mirror_matches_core() {
-    for (core, s) in [
-        (Phase::Resolving, "resolving"),
-        (Phase::Downloading, "downloading"),
-        (Phase::Reresolving, "reresolving"),
-        (Phase::Finalizing, "finalizing"),
+    for core in [
+        Phase::Resolving,
+        Phase::Downloading,
+        Phase::Reresolving,
+        Phase::Finalizing,
     ] {
         assert_eq!(to_json(&core), to_json(&PhaseTs::from(core)));
-        assert_eq!(to_json(&core), json!(s));
+        assert_eq!(to_json(&core), json!(phase_json(core)));
     }
 }
 

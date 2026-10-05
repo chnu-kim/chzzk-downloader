@@ -99,7 +99,7 @@
 
 - [x] 설계 판정 (`docs/design/cicd.md`): 단일 `ci.yml` + `ci-ok` 집계, `.githooks` shim 훅, 집합 차 push-guard, R2 S3 API 배포와 `latest.json` 마지막 쓰기, 검증 실패 시 자동 롤백, ruleset 둘
 - [x] G1 진입점·단일 CI·공급망 기본: `run.mjs`/`gates.mjs`/`tools.json`, 버전 원천 통합, `ci.yml`(기존 세 워크플로 삭제), SHA 핀·zizmor·actionlint·dependabot. PR #1에서 `ci-ok` success(실행 37283860770, zizmor·actionlint 0, selftest 29개), 씨앗(`@v4`+fmt 위반)에 `ci-ok` failure(37284980199). 차이는 cicd.md "구현 중 변경" 1~13. 리뷰 반영(13): ci-ok 식 guard, push·dispatch는 건너뛰기 없음, 문서 판정 허용 목록, parity 강화, 진입점 selftest(씨앗 38개)
-- [ ] G2 훅과 비공개 이력 가드: `public-scan --rev-range/--message-file`, `push-guard`(집합 차, 임시 저장소 테스트), `.githooks/{pre-commit,commit-msg,pre-push}` → `run.mjs hook`, parity 훅 규칙·selftest 씨앗. 구현 완료, Actions 확인 중. 차이는 cicd.md "구현 중 변경" 14~24
+- [x] G2 훅과 비공개 이력 가드: `public-scan --rev-range/--message-file`, `push-guard`(집합 차, 임시 저장소 테스트), `.githooks/{pre-commit,commit-msg,pre-push}` → `run.mjs hook`, parity 훅 규칙·selftest 씨앗, 리뷰 반영(메시지 원문 검사·`subjects` gate·비공개 커밋 지문·훅 gate를 커밋 내용에서 실행). 실행 37297700019 녹색(ubuntu·windows). 차이는 cicd.md "구현 중 변경" 14~25
 - [ ] G3 스모크·ratchet·master 고리: 앱 `--smoke`, PR 3 OS 스모크, master 번들 설치 스모크, `ci/ratchet.json`, master 실패 이슈·스케줄 keep-alive
 - [ ] G4 E2E: Playwright(mockIPC) PR, tauri-driver Linux(master·nightly)·Windows(weekly), cargo feature `e2e`, 2주 관찰 뒤 `ci-ok` 편입
 - [ ] G5 Nightly·weekly 고리: 실서버 drift(본인 영상 secret, 일반화된 kind만 출력, 2회 연속 실패 시 이슈), advisories, ruleset drift, fuzz, mutants ratchet, 핀 SHA 온라인 검증(zizmor 온라인·`pin-actions.mjs`, 어긋나면 이슈)
@@ -127,3 +127,4 @@
 - 2026-10-05: CI/CD 설계(`docs/design/cicd.md`). 훅·CI 단일 진입점 `scripts/ci/run.mjs`, 집계 체크 `ci-ok` 하나, 결정적 판정만. 새 E2E 작업은 2주 관찰 뒤 필수로 올린다.
 - 2026-10-05: G1. CLAUDE.md의 검증 게이트를 `node scripts/ci/run.mjs <gate>`로 바꾸고 훅 설치 명령(`run.mjs install-hooks`)을 적었다. `core.yml`·`app.yml`·`public-scan.yml`은 `ci.yml`로 합쳤다.
 - 2026-10-05: G2. 훅 세 개를 `run.mjs hook <이름>`으로 바꾸고 pre-push에 비공개 이력 가드(`push-guard.mjs`)를 넣었다. "private에는 push하지 않는다"를 CLAUDE.md·public-release.md에 적었다.
+- 2026-10-05: G2 리뷰 반영. 커밋 메시지는 원문 전체를 검사하고, 저장된 제목은 CI `subjects`가 본다. 비공개에만 있는 커밋 133개의 지문(`scripts/ci/private-commits.txt`)을 CI `scan-history`와 push-guard가 함께 쓴다. 훅의 조건부 gate는 작업 트리가 아니라 커밋·push될 내용(임시 worktree)에서 돈다.

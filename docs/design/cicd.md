@@ -449,3 +449,4 @@ fork PR과 일반 브랜치에는 어느 것도 주어지지 않는다.
     (사) **반영하지 않은 것.** 3.3의 "private 끝과 같으면 거부"·"30일 경고"는 18 (가)·(나)의 이유로 넣지 않고 본문을 18에 맞췄다. "private 원격이 있는데 ref가 없으면 실패"는 지문이 그 경우를 막으므로 경고로 남겼다.
     (아) **selftest 씨앗 55개**(24의 51개에 "# 줄의 실제 ID", "지문 목록 낡음", "인덱스만 틀린 훅", "작업 트리만 틀린 훅(0)"을 더했다).
     (자) **유지보수자 클론.** `node scripts/ci/run.mjs install-hooks`로 `core.hooksPath = .githooks`를 켰다. G2 커밋과 push가 실제 훅(pre-commit·commit-msg·pre-push의 `push-guard`·`scan-range`·`scripts-test`)을 거쳤다.
+    (차) **수락 실행.** 678f3e6(G2 첫 커밋) 실행 37296642999, 3704269(리뷰 반영) 실행 37297700019 모두 `ci-ok` success. 37297700019에서 lint의 `scan-history`(지문 157개 중 commit: 133개로 공개 이력 깨끗함), `subjects`(16개 통과), `selftest`(55개), `scripts-test`(ubuntu 86개·windows 85개, push-guard 실제 push·지문·evil merge·snapshot 포함)가 녹색이다.

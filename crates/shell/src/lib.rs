@@ -7,9 +7,13 @@ pub mod backend;
 pub mod bindings;
 pub mod dto;
 pub mod error;
+pub mod events;
 pub mod jobs;
+pub mod manager;
 
 pub use backend::Backend;
 pub use dto::JobId;
 pub use error::{AppError, ErrorCode, ErrorPayload, RequestKindDto, Stage};
+pub use events::EventSink;
 pub use jobs::{JobRecord, JobStore, JobsFile, reconcile};
+pub use manager::{DownloadManager, JobDefaults, ManagerConfig};

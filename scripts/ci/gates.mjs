@@ -142,7 +142,7 @@ export const GATES = {
 };
 
 // run.mjs가 gate 말고도 받는 하위 명령
-export const COMMANDS = ['changes', 'ci-ok', 'doctor', 'install-hooks', 'list'];
+export const COMMANDS = ['changes', 'ci-ok', 'doctor', 'install-hooks', 'install-tool', 'list'];
 
 // changes.code == 'false'일 때 건너뛰는 작업(ci.yml 작업 id). ci-ok는 이 작업들의 skipped만 허용한다.
 export const CODE_GATED_JOBS = ['supply', 'rust', 'frontend', 'tauri'];

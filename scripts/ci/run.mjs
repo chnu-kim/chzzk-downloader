@@ -5,13 +5,16 @@
 //   node scripts/ci/run.mjs list              # gate 목록
 //   node scripts/ci/run.mjs doctor            # 도구 유무·버전 표(tools.json과 비교)
 //   node scripts/ci/run.mjs install-hooks     # git config core.hooksPath .githooks
+//   node scripts/ci/run.mjs install-tool <t>  # tools.json download의 릴리스 파일을 받아 sha256 확인 후 설치(CI는 GITHUB_PATH에 더한다)
 //   node scripts/ci/run.mjs changes           # (CI) 바뀐 경로로 code/release/docs_only 출력
 //   node scripts/ci/run.mjs ci-ok             # (CI) env NEEDS(toJSON(needs))로 집계 판정
 //
 // 종료 코드: gate가 낸 첫 0이 아닌 코드. 도구가 없으면 로컬은 0(경고), CI는 2. 사용법 오류 2.
 
 import { spawnSync } from 'node:child_process';
-import { appendFileSync, existsSync, readFileSync, statSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { delimiter, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -238,6 +241,37 @@ function cmdInstallHooks() {
   return cmdDoctor();
 }
 
+// tools.json의 download 항목으로 도구를 설치한다. 해시가 다르면 설치하지 않고 실패한다.
+async function cmdInstallTool(name, env = process.env) {
+  const spec = TOOLS[name];
+  const key = `${process.platform === 'win32' ? 'windows' : process.platform}-${process.arch}`;
+  const dl = spec?.download?.[key];
+  if (!dl) {
+    console.error(`install-tool: ${name}에 ${key}용 download 항목이 없다(tools.json)`);
+    return 2;
+  }
+  const res = await fetch(dl.url);
+  if (!res.ok) {
+    console.error(`install-tool: ${dl.url} → HTTP ${res.status}`);
+    return 1;
+  }
+  const buf = Buffer.from(await res.arrayBuffer());
+  const got = createHash('sha256').update(buf).digest('hex');
+  if (got !== dl.sha256) {
+    console.error(`::error::install-tool: ${name} sha256 불일치(기대 ${dl.sha256}, 받음 ${got})`);
+    return 1;
+  }
+  const dir = join(env.RUNNER_TEMP || tmpdir(), 'ci-tools', 'bin');
+  mkdirSync(dir, { recursive: true });
+  const archive = join(dir, `${name}.tar.gz`);
+  writeFileSync(archive, buf);
+  const r = spawnSync('tar', ['-xzf', archive, '-C', dir, spec.bin], { stdio: 'inherit' });
+  if (r.status !== 0) return r.status ?? 2;
+  if (env.GITHUB_PATH) appendFileSync(env.GITHUB_PATH, dir + '\n');
+  console.log(`install-tool: ${name} ${spec.version} → ${dir} (sha256 ${got})`);
+  return 0;
+}
+
 function cmdList() {
   for (const [n, g] of Object.entries(GATES)) console.log(`${n.padEnd(14)}${g.desc}`);
   console.log(`\n하위 명령: ${COMMANDS.join(', ')}`);
@@ -255,6 +289,8 @@ export function main(argv, env = process.env) {
       return cmdDoctor();
     case 'install-hooks':
       return cmdInstallHooks();
+    case 'install-tool':
+      return cmdInstallTool(rest[0], env);
     case 'list':
       return cmdList();
     default:
@@ -265,5 +301,11 @@ export function main(argv, env = process.env) {
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
-  process.exit(main(process.argv.slice(2)));
+  Promise.resolve(main(process.argv.slice(2))).then(
+    (code) => process.exit(code),
+    (e) => {
+      console.error(e);
+      process.exit(2);
+    },
+  );
 }

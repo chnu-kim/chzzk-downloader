@@ -287,9 +287,9 @@ const hook = (d, name, args, input) => exec('node', [join(d, 'scripts/ci/run.mjs
 // ---- ratchet: 사본의 ci/ratchet.json 기준과 가짜 측정값(target/ci/measure/<kind>.json) ----
 {
   const R = {
-    $pending: ['tests.playwright'],
+    $pending: [],
     coverage_lines: { rust: 80, frontend: 90, tolerance_pp: 0.1 },
-    tests: { rust: 300, vitest: 400, playwright: 0, app: { linux: 30, darwin: 30, windows: 30 } },
+    tests: { rust: 300, vitest: 400, playwright: 7, app: { linux: 30, darwin: 30, windows: 30 } },
     size: { dist_gz: 1000, binary: { linux: 10000, darwin: 10000, windows: 10000 }, bundle: {}, tolerance_pct: 3 },
   };
   const bin = `size.binary.${osKey()}`;
@@ -301,7 +301,8 @@ const hook = (d, name, args, input) => exec('node', [join(d, 'scripts/ci/run.mjs
     ['coverage −1pp', 'coverage', { 'coverage_lines.rust': 79, 'coverage_lines.frontend': 90 }, 'nonzero'],
     ['tests 그대로', 'tests', { 'tests.rust': 300, 'tests.vitest': 400 }, 0],
     ['tests −1', 'tests', { 'tests.rust': 299, 'tests.vitest': 400 }, 'nonzero'],
-    ['tests playwright 0($pending)', 'tests', { 'tests.rust': 300, 'tests.vitest': 400, 'tests.playwright': 3 }, 0],
+    ['tests playwright 7 그대로', 'tests', { 'tests.playwright': 7 }, 0],
+    ['tests playwright −1(e2e spec을 끔)', 'tests', { 'tests.playwright': 6 }, 1],
     ['tests app −1(#[ignore] 하나)', 'tests', { [`tests.app.${osKey()}`]: 29 }, 'nonzero'],
     ['size +2%', 'size', { 'size.dist_gz': 1020, [bin]: 10200 }, 0],
     ['size +5%', 'size', { 'size.dist_gz': 1000, [bin]: 10500 }, 'nonzero'],

@@ -4,7 +4,7 @@ name: nightly
 # 검사를 PR 밖에서 돌리고, 실패하면 이슈를 열고 다음 녹색에 닫는다(issue.mjs, report 작업).
 #   - e2e-native (linux): 매일. ci.yml의 master 실행과 같은 gate다(러너 이미지가 바뀌어도 매일 확인한다).
 #   - e2e-native (windows): 매주. msedgedriver는 러너의 Edge·WebView2 버전을 따라가 재현할 수 없어 PR·master에 두지 않는다.
-# 이 워크플로나 네이티브 E2E 실행기를 고치는 PR에서도 두 작업이 돈다(머지 전에 확인한다. 이슈 고리는 돌지 않는다).
+# 이 워크플로나 네이티브 E2E 실행기를 고치는 PR에서도 Linux 작업이 돈다(머지 전에 확인한다. 이슈 고리는 돌지 않는다).
 # G5가 drift·advisories·fuzz 등을 이 파일에 더한다.
 
 on:
@@ -84,9 +84,11 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
+  # 미해결(cicd.md 구현 중 변경 44): 세션 생성이 msedgedriver의 DevToolsActivePort 시간 초과로 실패한다. 매주 실패가
+  # ci-loop:e2e-native 이슈로 남는다. PR에서는 돌리지 않는다(고치는 동안 dispatch windows=true로 확인한다).
   e2e-native-windows:
     name: e2e-native (windows)
-    if: github.event_name == 'pull_request' || github.event.schedule == '47 18 * * 0' || inputs.windows
+    if: github.event.schedule == '47 18 * * 0' || inputs.windows
     runs-on: windows-latest
     timeout-minutes: 75
     permissions:

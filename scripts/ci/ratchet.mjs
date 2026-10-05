@@ -33,8 +33,8 @@ export const LOG_PATH = 'ci/RATCHET_LOG.md';
 export const MEASURE_DIR = 'target/ci/measure';
 export const KINDS = { coverage: 'coverage_lines', tests: 'tests', size: 'size' };
 const SETTINGS = new Set(['tolerance_pp', 'tolerance_pct']);
-// 기준 0(아직 안 잼)으로 둘 수 있는 키. 다른 키가 0이면 lint가 실패한다. tests.playwright는 G4, mutants는 G5가 채운다.
-export const PENDING_ALLOWED = ['tests.playwright'];
+// 기준 0(아직 안 잼)으로 둘 수 있는 키. 다른 키가 0이면 lint가 실패한다. tests.playwright는 G4에서 채웠다(실행 37324424781). mutants는 G5가 더한다.
+export const PENDING_ALLOWED = [];
 
 // 객체 → { "a.b.c": 숫자 } (설정 키·$comment·null 제외)
 export function flatten(obj, prefix = '') {

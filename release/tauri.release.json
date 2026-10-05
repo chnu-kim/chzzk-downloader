@@ -1,5 +1,4 @@
 {
-  "$comment": "릴리스 빌드에만 겹치는 Tauri 설정(`tauri build --config release/tauri.release.json`, docs/design/cicd.md §5 build). updater 산출물(.AppImage·.app.tar.gz·-setup.exe·.msi와 각 .sig)을 만든다. 빌드 작업은 임시 키로 서명하고(그 .sig는 형식 확인 뒤 버린다), 진짜 서명은 sign-publish 작업의 xtask가 한다(D10). master bundle gate는 이 파일을 쓰지 않는다.",
   "bundle": {
     "createUpdaterArtifacts": true
   }

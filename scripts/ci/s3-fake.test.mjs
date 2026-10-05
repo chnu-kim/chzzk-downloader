@@ -70,3 +70,37 @@ test('조건부 쓰기·서명 거부', async () => {
     server.close();
   }
 });
+
+test('장애 주입: before는 적용하지 않고, after는 적용한 뒤 응답만 바꾸며, times번 뒤 사라진다', async () => {
+  const { server, store } = createFakeS3({ bucket: 'b', access: 'a', secret: 's' });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const port = server.address().port;
+  const fault = (f) =>
+    new Promise((res, rej) => {
+      const r = request({ host: '127.0.0.1', port, method: 'POST', path: '/__fault' }, (resp) => {
+        resp.resume();
+        resp.on('end', () => res(resp.statusCode));
+      });
+      r.on('error', rej);
+      r.end(JSON.stringify(f));
+    });
+  try {
+    assert.equal(await fault({ method: 'PUT', key: 'k', mode: 'before', status: 503, times: 1 }), 204);
+    assert.equal((await call(port, 'PUT', 'k', 'v1', { 'if-none-match': '*' })).status, 503);
+    assert.equal(store.has('k'), false);
+    assert.equal((await call(port, 'PUT', 'k', 'v1', { 'if-none-match': '*' })).status, 200);
+    assert.equal(await fault({ method: 'PUT', key: 'k', mode: 'after', status: 500, times: 1 }), 204);
+    const g = await call(port, 'GET', 'k');
+    assert.equal((await call(port, 'PUT', 'k', 'v2', { 'if-match': g.etag })).status, 500);
+    assert.equal(store.get('k').body.toString(), 'v2');
+    // 같은 요청을 다시 보내면 412(이미 적용됨)
+    assert.equal((await call(port, 'PUT', 'k', 'v2', { 'if-match': g.etag })).status, 412);
+    assert.equal(await fault({ method: 'GET', key: 'k', mode: 'before', status: 429, times: 2 }), 204);
+    assert.equal((await call(port, 'GET', 'k')).status, 429);
+    assert.equal((await call(port, 'GET', 'k')).status, 429);
+    assert.equal((await call(port, 'GET', 'k')).status, 200);
+    assert.equal(await fault({ method: 'GET', key: 'k', mode: 'sideways', status: 500, times: 1 }), 400);
+  } finally {
+    server.close();
+  }
+});

@@ -4,6 +4,7 @@
 // 서명이 틀린 요청은 403으로 거부하고, R2·S3의 조건부 쓰기를 흉내 낸다:
 //   PUT  If-None-Match: * → 있으면 412, If-Match: <etag> → 없으면 404·다르면 412, x-amz-checksum-sha256·x-amz-content-sha256 불일치 400
 //   GET  200 + ETag(본문 md5, 따옴표 포함) / 404,  DELETE 204,  다른 버킷 404
+//   POST /__fault: 장애 주입(아래 matchFault)
 // 저장은 메모리뿐이다. 경로 방식(/<bucket>/<key>)만 받는다.
 //
 //   node scripts/ci/s3-fake.mjs --bucket <b> --access <id> --secret <키> [--region auto]   # stdout 첫 줄: "listening <port>"
@@ -35,20 +36,43 @@ export function expectedSignature({ method, path, query, headers, signed, payloa
 
 const xmlErr = (code) => `<?xml version="1.0" encoding="UTF-8"?><Error><Code>${code}</Code></Error>`;
 
+// 장애 주입(selftest가 기반 시설 오류를 재현한다). POST /__fault {method, key, mode, status, times}:
+//   mode 'before': 요청을 적용하지 않고 status로 답한다(일시 오류 5xx·429).
+//   mode 'after':  요청을 적용한 뒤 응답만 status로 바꾼다(서버는 썼는데 응답을 잃은 경우).
+//   times번 쓰면 사라진다. 서명 검사 전에 처리하는 시험 전용 경로다(가짜 서버는 127.0.0.1에만 열린다).
+export function matchFault(faults, method, key) {
+  const f = faults.find((x) => x.times > 0 && x.method === method && x.key === key);
+  if (f) f.times--;
+  return f ?? null;
+}
+
 export function createFakeS3({ bucket, access, secret, region = 'auto', now = () => Date.now() }) {
   const store = new Map();
-  const counts = { requests: 0, rejectedAuth: 0 };
+  const faults = [];
+  const counts = { requests: 0, rejectedAuth: 0, faults: 0 };
   const server = createServer((req, res) => {
     const chunks = [];
     req.on('data', (c) => chunks.push(c));
     req.on('end', () => {
       counts.requests++;
       const body = Buffer.concat(chunks);
+      let override = null;
       const send = (status, data = '', headers = {}) => {
+        if (override !== null) [status, data, headers] = [override, xmlErr('InternalError'), {}];
         res.writeHead(status, { 'content-length': Buffer.byteLength(data), ...headers });
         res.end(data);
       };
       const url = new URL(req.url, 'http://x');
+      if (url.pathname === '/__fault' && req.method === 'POST') {
+        try {
+          const f = JSON.parse(body.toString('utf8'));
+          if (!['GET', 'PUT', 'DELETE'].includes(f.method) || typeof f.key !== 'string' || !['before', 'after'].includes(f.mode) || !Number.isInteger(f.status) || !Number.isInteger(f.times)) throw new Error('형식');
+          faults.push({ method: f.method, key: f.key, mode: f.mode, status: f.status, times: f.times });
+          return send(204);
+        } catch {
+          return send(400, xmlErr('BadFault'));
+        }
+      }
       const auth = parseAuth(req.headers.authorization);
       const amzDate = req.headers['x-amz-date'] ?? '';
       const payloadHash = req.headers['x-amz-content-sha256'] ?? '';
@@ -70,6 +94,10 @@ export function createFakeS3({ bucket, access, secret, region = 'auto', now = ()
       const m = /^\/([^/]+)\/(.+)$/.exec(url.pathname);
       if (!m || decodeURIComponent(m[1]) !== bucket) return send(404, xmlErr('NoSuchBucket'));
       const key = decodeURIComponent(m[2]);
+      const fault = matchFault(faults, req.method, key);
+      if (fault) counts.faults++;
+      if (fault?.mode === 'before') return send(fault.status, xmlErr('InternalError'));
+      if (fault?.mode === 'after') override = fault.status;
       const cur = store.get(key);
       if (req.method === 'GET' || req.method === 'HEAD') {
         if (!cur) return send(404, xmlErr('NoSuchKey'));
@@ -95,7 +123,7 @@ export function createFakeS3({ bucket, access, secret, region = 'auto', now = ()
       return send(405, xmlErr('MethodNotAllowed'));
     });
   });
-  return { server, store, counts };
+  return { server, store, counts, faults };
 }
 
 function main(argv) {

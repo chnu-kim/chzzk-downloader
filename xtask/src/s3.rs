@@ -11,7 +11,7 @@ use base64::engine::general_purpose::STANDARD;
 use hmac::{Hmac, Mac};
 use sha2::{Digest, Sha256};
 
-use crate::cli::{Res, check, env, input};
+use crate::cli::{Res, env, infra, input};
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -118,6 +118,27 @@ pub fn amz_date(unix: u64) -> String {
         (secs / 60) % 60,
         secs % 60
     )
+}
+
+/// 다시 시도할 HTTP 상태: 5xx와 429(R2의 일시 오류·속도 제한)
+pub fn retryable(status: u16) -> bool {
+    status == 429 || (500..=599).contains(&status)
+}
+
+/// 시도 횟수(env XTASK_RETRY_ATTEMPTS, 기본 4, 1..=10)
+fn retry_attempts() -> u32 {
+    env("XTASK_RETRY_ATTEMPTS")
+        .and_then(|v| v.parse().ok())
+        .filter(|n| (1..=10).contains(n))
+        .unwrap_or(4)
+}
+
+/// n번째 다시 시도 전 대기: base·2^(n-1)(env XTASK_RETRY_BASE_MS, 기본 2000. selftest는 짧게 준다)
+fn backoff(n: u32) -> Duration {
+    let base = env("XTASK_RETRY_BASE_MS")
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(2000);
+    Duration::from_millis(base.saturating_mul(1 << (n - 1).min(6)))
 }
 
 pub struct Resp {
@@ -237,10 +258,13 @@ impl S3 {
         );
         let m = reqwest::Method::from_bytes(method.as_bytes()).map_err(|e| input(e.to_string()))?;
         let mut last = String::new();
-        // 네트워크 오류만 다시 시도한다(조건부 쓰기의 결과는 상태 코드로 판정하므로 같은 요청을 다시 보내도 안전하다)
-        for attempt in 0..3 {
+        let attempts = retry_attempts();
+        // 네트워크 오류·본문 읽기 오류·HTTP 5xx·429는 다시 시도한다. 모든 요청이 같은 요청을 다시 보내도 안전하다: GET·DELETE는
+        // 멱등이고, PUT은 조건부(If-None-Match·If-Match)라 먼저 보낸 요청이 이미 적용됐으면 412가 오고 호출자가 다시 읽어
+        // 판정한다(put_immutable·promote). 끝까지 안 되면 기반 시설 오류(exit 2)다: 내용이 틀렸다는 판정이 아니다.
+        for attempt in 0..attempts {
             if attempt > 0 {
-                std::thread::sleep(Duration::from_secs(2 * attempt));
+                std::thread::sleep(backoff(attempt));
             }
             let mut req = self
                 .http
@@ -262,20 +286,33 @@ impl S3 {
                         .get("etag")
                         .and_then(|v| v.to_str().ok())
                         .map(str::to_string);
-                    let body = r
-                        .bytes()
-                        .map_err(|e| check(format!("{method} {key}: 본문 읽기 {e}")))?
-                        .to_vec();
-                    return Ok(Resp { status, etag, body });
+                    let body = match r.bytes() {
+                        Ok(b) => b.to_vec(),
+                        Err(e) => {
+                            last = format!("본문 읽기 {e}");
+                            continue;
+                        }
+                    };
+                    let resp = Resp { status, etag, body };
+                    if retryable(status) && attempt + 1 < attempts {
+                        last = format!("HTTP {status} {}", resp.code());
+                        eprintln!(
+                            "s3: {method} {key}: {last} — 다시 시도({}/{attempts})",
+                            attempt + 2
+                        );
+                        continue;
+                    }
+                    return Ok(resp);
                 }
                 Err(e) => last = format!("{e}"),
             }
         }
-        Err(check(format!("{method} {key}: 네트워크 오류 3회({last})")))
+        Err(infra(format!("{method} {key}: {attempts}회 실패({last})")))
     }
 
+    /// 판정할 수 없는 응답(5xx·429를 다시 시도한 뒤, 403 등)은 기반 시설 오류(exit 2)다
     fn unexpected(&self, what: &str, key: &str, r: &Resp) -> crate::cli::Fail {
-        check(format!("{what} {key}: HTTP {} {}", r.status, r.code()))
+        infra(format!("{what} {key}: HTTP {} {}", r.status, r.code()))
     }
 
     /// 없으면 None
@@ -286,7 +323,7 @@ impl S3 {
                 let etag = r
                     .etag
                     .clone()
-                    .ok_or_else(|| check(format!("GET {key}: ETag 없음")))?;
+                    .ok_or_else(|| infra(format!("GET {key}: ETag 없음")))?;
                 Ok(Some((r.body, etag)))
             }
             404 => Ok(None),
@@ -387,6 +424,17 @@ mod tests {
             "releases/0.2.0/a%20b%2Bc.AppImage"
         );
         assert_eq!(uri_encode("a/b", false), "a%2Fb");
+    }
+
+    #[test]
+    fn retry_statuses() {
+        for s in [429, 500, 502, 503, 504, 599] {
+            assert!(retryable(s), "{s}");
+        }
+        // 판정 가능한 응답은 다시 시도하지 않는다(412는 조건부 쓰기의 결과, 404는 없음, 403은 자격 증명)
+        for s in [200, 201, 204, 400, 403, 404, 412, 499] {
+            assert!(!retryable(s), "{s}");
+        }
     }
 
     #[test]

@@ -11,7 +11,11 @@ use crate::schema;
 pub const PREFIX: &str = "chzzk-downloader";
 pub const OSES: &[&str] = &["linux", "darwin", "windows"];
 
+/// 저장소 루트. 미리 빌드한 xtask를 다른 작업에서 부를 때는 release.mjs가 XTASK_ROOT를 준다(컴파일한 경로에 기대지 않게)
 pub fn root() -> PathBuf {
+    if let Some(r) = crate::cli::env("XTASK_ROOT") {
+        return PathBuf::from(r);
+    }
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .expect("xtask는 저장소 루트 아래에 있다")

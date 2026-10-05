@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
-/// 실패: code 1 = 검사 실패(판정), 2 = 사용법·입력·환경 오류.
+/// 실패: code 1 = 검사 실패(판정: 내용·해시·서명이 틀림, 객체 없음), 2 = 사용법·입력·환경·기반 시설 오류(네트워크, HTTP 5xx 등).
 #[derive(Debug)]
 pub struct Fail {
     pub code: i32,
@@ -39,6 +39,11 @@ pub fn input(msg: impl Into<String>) -> Fail {
         code: 2,
         msg: msg.into(),
     }
+}
+
+/// 기반 시설 오류(exit 2): 네트워크·HTTP 5xx·429·인증 등. 검증의 판정(내용이 틀림)이 아니므로 되돌리지 않는다
+pub fn infra(msg: impl Into<String>) -> Fail {
+    input(msg)
 }
 
 pub fn check(msg: impl Into<String>) -> Fail {

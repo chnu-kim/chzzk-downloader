@@ -10,7 +10,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
 
-use crate::cli::{Args, Res, check, env, fail, input, usage};
+use crate::cli::{Args, Res, check, env, fail, infra, input, usage};
 use crate::manifest::{self, Expected, Item};
 use crate::s3::{Put, S3, sha256_hex};
 use crate::semver;
@@ -421,7 +421,7 @@ fn put_immutable(s3: &S3, k: &str, data: &[u8]) -> Res<&'static str> {
         Put::Precondition => {
             let (cur, _) = s3
                 .get(k)?
-                .ok_or_else(|| check(format!("{k}: 412인데 객체가 없다")))?;
+                .ok_or_else(|| infra(format!("{k}: 412인데 객체가 없다(동시에 지워졌다)")))?;
             if sha256_hex(&cur) == sha256_hex(data) {
                 Ok("이미 같은 내용")
             } else {
@@ -478,7 +478,9 @@ pub fn promote(s3: &S3, dir: &Path, version: &str) -> Res<String> {
                     .ok_or_else(|| check("이미 승격됐는데 previous가 없다"))?;
                 let p = text("previous", p.0)?;
                 println!("promote: 이미 {version}(prev {p})");
-                gh_output("prev", &p)?;
+                if let Err(e) = gh_output("prev", &p) {
+                    eprintln!("::warning::promote: prev 출력 기록 실패({})", e.msg);
+                }
                 return Ok(p);
             }
             let (cv, nv) = (
@@ -492,17 +494,33 @@ pub fn promote(s3: &S3, dir: &Path, version: &str) -> Res<String> {
             c
         }
     };
-    put_immutable(s3, &key(version, "previous"), prev.as_bytes())
-        .map_err(|f| check(format!("previous 기록: {}", f.msg)))?;
+    put_immutable(s3, &key(version, "previous"), prev.as_bytes()).map_err(|f| {
+        crate::cli::Fail {
+            code: f.code,
+            msg: format!("previous 기록: {}", f.msg),
+        }
+    })?;
     let r = match &cur {
         None => s3.put_new(LATEST, &new)?,
         Some((_, etag)) => s3.put_if_match(LATEST, &new, etag)?,
     };
     if let Put::Precondition = r {
-        return fail("latest.json이 읽은 뒤에 바뀌었다(CAS 실패) — 다시 실행한다");
+        // 먼저 보낸 요청이 적용됐는데 응답만 잃고 다시 보낸 요청이 412를 받았을 수 있다: 다시 읽어 이미 우리 매니페스트면 성공
+        match s3.get(LATEST)? {
+            Some((b, _)) if b == new => {
+                println!("promote: CAS 412였지만 latest.json이 이미 이번 manifest.json이다")
+            }
+            _ => return fail("latest.json이 읽은 뒤에 바뀌었다(CAS 실패) — 다시 실행한다"),
+        }
     }
     println!("promote: latest.json = {version} (prev {prev})");
-    gh_output("prev", &prev)?;
+    // latest.json은 이미 바뀌었다. 출력 기록이 실패해도 verify가 releases/<v>/previous를 읽으므로 실패로 만들지 않는다
+    if let Err(e) = gh_output("prev", &prev) {
+        eprintln!(
+            "::warning::promote: prev 출력 기록 실패({}) — verify가 releases/{version}/previous를 읽는다",
+            e.msg
+        );
+    }
     Ok(prev)
 }
 
@@ -545,16 +563,26 @@ impl Source<'_> {
             Source::S3(s) => Ok(s.get(k)?.map(|x| x.0)),
             Source::Owned(s) => Ok(s.get(k)?.map(|x| x.0)),
             Source::Worker { base, token, http } => {
-                let r = http
-                    .get(format!("{base}/{k}"))
-                    .bearer_auth(token)
-                    .send()
-                    .map_err(|e| check(format!("GET {k}: {e}")))?;
-                match r.status().as_u16() {
-                    200 => Ok(Some(r.bytes().map_err(|e| check(e.to_string()))?.to_vec())),
-                    404 => Ok(None),
-                    s => fail(format!("GET {k}: HTTP {s}")),
+                // S3 경로와 같은 규칙: 네트워크·5xx·429는 다시 시도하고, 끝까지 안 되면 기반 시설 오류(exit 2)
+                let mut last = String::new();
+                for attempt in 0..4u32 {
+                    if attempt > 0 {
+                        std::thread::sleep(std::time::Duration::from_secs(2u64 << attempt));
+                    }
+                    match http.get(format!("{base}/{k}")).bearer_auth(token).send() {
+                        Ok(r) => match r.status().as_u16() {
+                            200 => match r.bytes() {
+                                Ok(b) => return Ok(Some(b.to_vec())),
+                                Err(e) => last = e.to_string(),
+                            },
+                            404 => return Ok(None),
+                            s if crate::s3::retryable(s) => last = format!("HTTP {s}"),
+                            s => return Err(infra(format!("GET {k}: HTTP {s}"))),
+                        },
+                        Err(e) => last = e.to_string(),
+                    }
                 }
+                Err(infra(format!("GET {k}: 4회 실패({last})")))
             }
         }
     }
@@ -660,8 +688,10 @@ pub fn rollback(
         println!("rollback: latest.json 없음(첫 릴리스 전 상태)");
         return Ok(());
     }
-    verify(src, to, pubkey, base_url, false)
-        .map_err(|f| check(format!("되돌릴 버전 {to}의 객체 확인 실패: {}", f.msg)))?;
+    verify(src, to, pubkey, base_url, false).map_err(|f| crate::cli::Fail {
+        code: f.code,
+        msg: format!("되돌릴 버전 {to}의 객체 확인 실패: {}", f.msg),
+    })?;
     let target = s3
         .get(&key(to, "manifest.json"))?
         .ok_or_else(|| check(format!("releases/{to}/manifest.json이 없다")))?

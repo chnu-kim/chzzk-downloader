@@ -1,7 +1,11 @@
 name: app
 
-# 앱 셸(crates/shell) 검사. webkit·프런트 빌드 없이 3 OS에서 돈다(docs/design/app.md §14).
-# frontend·tauri 작업은 §15-18에서 더한다.
+# docs/design/app.md §14.
+# - shell: crates/shell 검사. webkit·프런트 빌드 없이 3 OS
+# - frontend: app/ 타입 검사·vitest·vite build (ubuntu)
+# - tauri: chzzk-app clippy·test와 앱 빌드 (3 OS, shell·frontend 뒤)
+#   PR은 debug --no-bundle, master push·수동 실행은 서명 없는 번들을 7일 올린다.
+#   updater 산출물(createUpdaterArtifacts)·서명 키는 쓰지 않는다(Phase 4).
 on:
   push:
     branches: [master]
@@ -22,6 +26,7 @@ on:
       - "Cargo.lock"
       - ".cargo/**"
       - ".github/workflows/app.yml"
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -62,3 +67,88 @@ jobs:
       # tests/bindings.rs가 app/src/lib/bindings가 최신인지도 검사한다(구현 중 변경 14)
       - name: test
         run: cargo test -p chzzk-shell --locked
+
+  frontend:
+    name: frontend
+    runs-on: ubuntu-22.04
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+      # packageManager 필드가 루트가 아니라 app/package.json에 있다
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: app/package.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: app/pnpm-lock.yaml
+      - name: install
+        run: pnpm install --frozen-lockfile
+      - name: check
+        run: pnpm check
+      - name: test
+        run: pnpm test
+      - name: build
+        run: pnpm build
+
+  tauri:
+    name: tauri (${{ matrix.os }})
+    needs: [shell, frontend]
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Disable autocrlf
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@v4
+      # wry(webkit2gtk 4.1)·tray·clipboard 링크에 필요한 개발 패키지. patchelf는 AppImage 번들용
+      - name: Linux deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file \
+            libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: app/package.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: app/pnpm-lock.yaml
+      - name: pnpm install
+        working-directory: app
+        run: pnpm install --frozen-lockfile
+      # cargo 직접 실행은 app/dist 없이 컴파일된다(구현 중 변경 6). dist는 tauri build의 beforeBuildCommand가 만든다
+      - name: clippy
+        run: cargo clippy -p chzzk-app --all-targets --locked -- -D warnings
+      - name: test
+        run: cargo test -p chzzk-app --locked
+      - name: build (debug, no bundle)
+        if: github.event_name == 'pull_request'
+        working-directory: app
+        run: pnpm tauri build --ci --debug --no-bundle
+      - name: build (release bundle, unsigned)
+        if: github.event_name != 'pull_request'
+        working-directory: app
+        run: pnpm tauri build --ci --no-sign
+      # workspace target/ 아래에 번들이 생긴다(app/src-tauri/target이 아니다)
+      - name: upload bundle
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v7
+        with:
+          name: chzzk-downloader-${{ runner.os }}
+          path: target/release/bundle/
+          retention-days: 7
+          if-no-files-found: error

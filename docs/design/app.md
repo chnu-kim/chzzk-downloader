@@ -1115,6 +1115,7 @@ jobs:
 
 구현하면서 설계와 달라졌거나 설계가 모호해 고른 내용이다. 단계 번호는 §15 기준이다.
 
+
 1. **§15-1 identifier.** §2의 `io.github.chnu-kim.vod-downloader` 대신 §16 답변대로 `io.github.chnu-kim.chzzk-downloader`를 쓴다. `app/src/tauri-conf.test.ts`가 identifier·창 크기·CSP·`withGlobalTauri`·`dragDropEnabled`를 고정한다.
 2. **§15-1 플러그인.** §0·§11의 세 개에 더해 §16 답변대로 `tauri-plugin-notification` 2.5.1·`tauri-plugin-clipboard-manager` 2.4.1을 골격에서부터 Builder에 등록한다. 다섯 개 모두 Rust에서만 부르므로 JS 패키지(`@tauri-apps/plugin-*`)와 capabilities 플러그인 권한은 넣지 않았다. 클립보드를 JS에서 읽기로 하면 그때 `clipboard-manager:allow-read-text` 하나만 더한다.
 3. **§15-1 `crates/shell` 앞당김.** workspace members를 §2대로 한 번에 맞추려고 의존성 없는 `crates/shell`(빈 `lib.rs`)을 1단계에 만들었다. 내용은 §15-2부터 채운다.
@@ -1265,6 +1266,15 @@ jobs:
     - (차) a11y 테스트의 "색만으로 말하지 않는다"를 상태 줄 안의 아이콘으로 좁혔다(버튼 아이콘 때문에 실패할 수 없었다). 멈춤 아이콘을 지우면 실패하는 것을 확인했다.
     - **하지 않은 것**: (1) §8.11 "`refreshes`는 툴팁"은 넣지 않는다. copy deck에 문구가 없고, `title` 툴팁은 키보드·화면 낭독기에 닿지 않으며 상태 줄 문구와 줄무늬 막대로 링크 갱신은 이미 알린다. (2) `subscribe_jobs` 실패 시 목록 자리의 오류·다시 시도는 두지 않는다. 그 실패는 상태 없음(시작 실패, 이제 창이 보이지 않는다, (아))이나 ACL 거부(IPC `capabilities_allow_exactly_the_app_commands`가 막는다)뿐이라 사용자에게 닿을 길이 없다. 토스트는 그대로다. (3) **컴포넌트 나눔**: §10·§15-15의 `JobGroup`·`EmptyJobs`는 `JobList.svelte`에, `JobProgress`·`JobStatusLine`·`JobActions`·`JobMenu`는 `JobItem.svelte`에 합쳤다. 판단은 `lib/jobs.ts` 순수 함수에 있어(45) 컴포넌트는 그리기만 하고, 나누면 props만 늘어난다.
 
+49. **§15-18 앱 CI.** `app.yml`에 `frontend`·`tauri` 작업을 더했다(`shell`은 35 그대로). §14와 다른 점:
+    - (가) **`tauri` 작업은 `pnpm build`를 따로 돌리지 않는다.** `cargo clippy/test -p chzzk-app`은 `app/dist` 없이 컴파일되고(6), 앱 빌드는 `pnpm tauri build`의 `beforeBuildCommand`가 `dist`를 만든다. `pnpm install`만 앞에 둔다(`tauri` CLI가 `node_modules`에 있다).
+    - (나) **pnpm은 `package_json_file: app/package.json`으로 고정한다.** `pnpm/action-setup`은 루트 `package.json`의 `packageManager`만 읽는데 이 저장소의 `package.json`은 `app/`에 있다. `setup-node`의 pnpm 캐시도 `cache-dependency-path: app/pnpm-lock.yaml`.
+    - (다) **번들은 `push`(master)·`workflow_dispatch`에서만**(`if: github.event_name != 'pull_request'`): `pnpm tauri build --ci --no-sign` 뒤 workspace `target/release/bundle/`(`app/src-tauri/target`이 아니다)을 `upload-artifact` 7일, 없으면 실패. PR은 `--ci --debug --no-bundle`. `createUpdaterArtifacts`·서명 키 환경 변수는 두지 않는다(updater는 Phase 4). `workflow_dispatch`를 트리거에 더했다.
+    - (라) **Linux apt는 §14 목록 + `patchelf`**를 clippy 전에 설치한다(clippy도 webkit2gtk에 링크한다). 러너는 `ubuntu-22.04` 그대로.
+    - (마) **액션 버전**: 새 액션은 §14대로 `pnpm/action-setup@v6`·`actions/setup-node@v7`(node 24)과 `actions/upload-artifact@v7`(2026-10-05 최신). `actions/checkout`은 `core.yml`·`shell`과 같게 `@v4`로 둔다(한 파일 안에서 갈리지 않게, 올리려면 두 워크플로를 함께).
+    - (바) `frontend`는 `ubuntu-22.04` 하나, `tauri`는 3 OS `needs: [shell, frontend]`, `fail-fast: false`. `tauri`의 rust-toolchain은 `clippy`만(fmt는 `shell`이 본다).
+    - **확인한 것**: `actionlint` 통과. macOS에서 `pnpm tauri build --ci --debug --no-bundle`(custom-protocol, `dist`를 바이너리에 넣는 경로)이 성공하고 그 바이너리가 시작 로그를 남기며 떴다(아래 표). Linux는 `ubuntu:22.04` 컨테이너(arm64, Docker)에서 위 apt 목록으로 `cargo clippy -p chzzk-app --all-targets --locked -- -D warnings`와 `cargo test -p chzzk-app --locked`(IPC 17개 포함)가 화면·D-Bus 없이 통과했다. 그래서 `xvfb-run`은 두지 않는다. **GitHub에서 3 OS로 돌려 보지는 않았다**(푸시 금지). Windows `tauri` 작업과 Linux `targets: all` 번들(AppImage·deb·rpm, linuxdeploy 내려받기)은 첫 master 실행에서 확인한다.
+
 ### 수동 스모크 체크리스트 결과 (§15 17행, 2026-10-05 macOS)
 
 CLI 세션에서는 웹뷰 화면·개발자 도구를 조작할 수 없어 대부분을 실행하지 못했다. 자동 테스트가 같은 판단을 대신 보는 항목은 "대신 본 것"에 적었다. **미확인 항목은 사람이 3 OS에서 돌려야 한다.**
@@ -1283,3 +1293,4 @@ CLI 세션에서는 웹뷰 화면·개발자 도구를 조작할 수 없어 대�
 | 창 포커스가 없을 때 완료·실패 OS 알림과 Dock·작업 표시줄 주의(서명 안 된 debug 빌드) | 미확인 | `sink.rs` 단위 테스트(알릴 일·본문·`should_notify`), IPC 완료·실패 알림 큐 |
 | 창 폭 720 레이아웃, 다크 모드 | 미확인 | `tokens.test.ts`(다크 토큰·대비). 960px 브라우저(mock IPC)에서 작업 메뉴·상태 줄·토스트는 48(가)에서 봤다 |
 | debug 바이너리 시작·로그 | **확인** | `~/Library/Logs/…/chzzk-downloader.*.log`에 시작 로그, 패닉 없음 |
+| `pnpm tauri build --ci --debug --no-bundle`(넣은 `dist`) 바이너리 시작(§15-18, 49) | **확인**(창 내용은 미확인) | 빌드 성공, `target/debug/chzzk-app`이 떠서 시작 로그(기본 폴더 `~/Movies/치지직`)를 남기고 패닉 없이 돌다 종료 신호로 끝남. 창이 다른 앱 뒤에 떠 화면 캡처로 내용을 보지 못했다 |

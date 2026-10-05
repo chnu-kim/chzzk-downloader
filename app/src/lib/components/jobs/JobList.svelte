@@ -1,7 +1,7 @@
 <script lang="ts">
   // 다운로드 목록(§10 JobList): 헤더(완료 항목 지우기) · 그룹 · 항목 · 빈 상태 · D2(취소 확인).
   // 키보드: 항목 사이 위·아래(roving tabindex), Space 일시정지·이어받기, Enter 기본 동작, Delete 지우기·취소(§10 단축키).
-  import { tick } from 'svelte';
+  import { onDestroy, tick, untrack } from 'svelte';
   import type { JobDto, JobId } from '../../bindings';
   import { t } from '../../copy/ko';
   import { deleteAction, enterAction, jobButtons, queueAhead, spaceAction, type JobAction } from '../../jobs';
@@ -60,12 +60,17 @@
     });
   });
 
-  // [목록에서 보기]·다른 곳에서 항목을 보여 달라고 할 때
+  // [목록에서 보기]·다른 곳에서 항목을 보여 달라고 할 때. 요청은 한 번 쓰고 비운다(남겨 두면 설정에서 돌아와
+  // 목록이 다시 그려질 때 옛 항목으로 포커스를 빼앗는다).
   $effect(() => {
     const req = jobs.focusRequest;
     if (!req) return;
+    untrack(() => (jobs.focusRequest = null));
     void tick().then(() => focusItem(req.id));
   });
+
+  // D2는 이 목록 안에 있다. 열린 채 뷰가 바뀌면(Mod+,) 돌아왔을 때 다시 뜨지 않게 닫는다.
+  onDestroy(() => jobs.cancelConfirm());
 
   function onkeydown(e: KeyboardEvent, job: JobDto) {
     // 항목 안 버튼·메뉴의 키는 그쪽이 받는다(Space·Enter가 두 번 돌지 않게)

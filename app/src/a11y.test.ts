@@ -48,6 +48,7 @@ vi.mock('./lib/api', () => ({
 
 const { default: App } = await import('./App.svelte');
 const { ui } = await import('./lib/stores/ui.svelte');
+const { jobs } = await import('./lib/stores/jobs.svelte');
 
 beforeEach(() => {
   ui.goHome();
@@ -97,6 +98,25 @@ describe('접근성', () => {
     await waitFor(() => expect(screen.getByRole('heading', { level: 1, name: '설정' })).toHaveFocus());
     await user.keyboard('{Escape}');
     await waitFor(() => expect(screen.getByLabelText('영상 주소')).toHaveFocus());
+  });
+
+  it('[목록에서 보기] 요청은 한 번만 쓰이고, D2는 뷰를 떠나면 닫힌다', async () => {
+    const user = userEvent.setup();
+    render(App);
+    await screen.findByRole('article', { name: '영상 1' });
+    jobs.reveal(2);
+    await waitFor(() => expect(screen.getByRole('article', { name: '영상 2' })).toHaveFocus());
+    await user.click(screen.getByRole('button', { name: '설정' }));
+    await user.click(await screen.findByRole('button', { name: '뒤로' }));
+    await waitFor(() => expect(screen.getByLabelText('영상 주소')).toHaveFocus());
+
+    jobs.confirm = { id: 2, title: '영상 2', bytes: 600 * 1024 * 1024 };
+    expect(await screen.findByRole('dialog', { name: '다운로드를 취소할까요?' })).toBeInTheDocument();
+    ui.goSettings();
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    ui.goHome();
+    await screen.findByRole('article', { name: '영상 1' });
+    expect(screen.queryByRole('dialog')).toBeNull();
   });
 
   it('상태는 색만으로 말하지 않는다: 멈춤·완료 항목에 아이콘과 문구', async () => {

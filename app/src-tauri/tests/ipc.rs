@@ -419,6 +419,19 @@ fn open_app_folder_takes_camel_case_kind() {
 }
 
 #[test]
+fn main_window_may_listen_for_close_requested() {
+    // D1은 프런트의 `listen("close-requested")`에 기댄다. capabilities의 `core:default`가 실제 ACL에서
+    // `plugin:event|listen`을 허락하는지 본다(막히면 D1이 영영 뜨지 않는다).
+    let f = fixture();
+    invoke(
+        &f.main,
+        "plugin:event|listen",
+        json!({ "event": "close-requested", "target": { "kind": "Any" }, "handler": 1 }),
+    )
+    .unwrap();
+}
+
+#[test]
 fn subscribe_jobs_takes_an_on_event_channel() {
     let f = fixture();
     assert_eq!(

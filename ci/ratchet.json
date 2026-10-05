@@ -1,0 +1,11 @@
+{
+  "$comment": "회귀 ratchet 기준(docs/design/cicd.md §4.2). 값은 CI 러너에서 잰 것만 쓴다: node scripts/ci/ratchet.mjs write --from-run <run id>(조이기만 한다). 0은 아직 안 잼(통과, 알림만). 기준을 느슨하게 하는 커밋은 같은 변경에서 ci/RATCHET_LOG.md에 그 키(예: coverage_lines.rust)와 이유를 적은 줄을 더해야 한다(lint의 ratchet-log gate). coverage_lines는 %(소수 둘째 자리), size는 바이트다.",
+  "coverage_lines": { "rust": 0, "frontend": 0, "tolerance_pp": 0.1 },
+  "tests": { "rust": 0, "vitest": 0, "playwright": 0 },
+  "size": {
+    "dist_gz": 0,
+    "binary": { "linux": 0, "darwin": 0, "windows": 0 },
+    "bundle": { "linux-AppImage": 0, "linux-deb": 0, "darwin-dmg": 0, "windows-setup": 0, "windows-msi": 0 },
+    "tolerance_pct": 3
+  }
+}

@@ -8,7 +8,7 @@
 //   - passArgs: run.mjs <gate> 뒤의 인자를 모든 단계 명령 끝에 붙인다.
 //   - stdin: gate가 표준 입력을 읽는다(push-guard). run.mjs는 한 번 읽어 단계에 input으로 넘긴다.
 
-import { readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -41,7 +41,26 @@ export function msrv(root = ROOT) {
   return m[1];
 }
 
+// Cargo.toml [workspace.package] version(앱 버전의 Rust 쪽 원천, versions gate가 나머지와 맞춘다)
+export function workspaceVersion(root = ROOT) {
+  const toml = readFileSync(join(root, 'Cargo.toml'), 'utf8');
+  const m = /^\[workspace\.package\][^[]*?^version\s*=\s*"([^"]+)"/ms.exec(toml);
+  if (!m) throw new Error('Cargo.toml [workspace.package]에 version이 없다');
+  return m[1];
+}
+
 const CLIPPY = ['--all-targets', '--locked', '--', '-D', 'warnings'];
+
+// 이 OS의 번들 종류(release/expected-artifacts.json). gate 표를 읽는 OS에서 정해진다.
+const OS_KEY = process.platform === 'win32' ? 'windows' : process.platform;
+// 표가 없는 사본(selftest의 최소 저장소 등)에서도 gate 표는 읽혀야 하므로 없으면 'none'이다(bundle.mjs collect가 실패한다).
+function osBundles(root = ROOT) {
+  const p = join(root, 'release/expected-artifacts.json');
+  const spec = existsSync(p) ? JSON.parse(readFileSync(p, 'utf8'))[OS_KEY] : null;
+  return spec ? spec.bundles.join(',') : 'none';
+}
+// linuxdeploy(AppImage)는 FUSE 없이 풀어서 돈다(컨테이너·러너에 libfuse2가 없다)
+const BUNDLE_ENV = process.platform === 'linux' ? { APPIMAGE_EXTRACT_AND_RUN: '1' } : undefined;
 
 export const GATES = {
   scan: {
@@ -165,10 +184,62 @@ export const GATES = {
       { cmd: ['pnpm', 'tauri', 'build', '--ci', '--debug', '--no-bundle'], cwd: 'app' },
     ],
   },
+  'smoke-bin': {
+    desc: 'debug 빌드를 --smoke로 띄워 60초 안 exit 0 + 마커 JSON(Linux는 xvfb-run). tauri gate 뒤',
+    steps: [{ cmd: ['node', S('smoke.mjs'), 'bin'] }],
+  },
+  bundle: {
+    desc: `릴리스 번들(--no-sign, 이 OS: ${osBundles()})을 만들고 기대 집합과 정확히 같은지 확인해 target/ci/bundle에 모은다`,
+    needs: ['cargo', 'pnpm'],
+    steps: [
+      { cmd: ['pnpm', 'install', '--frozen-lockfile'], cwd: 'app' },
+      { cmd: ['pnpm', 'tauri', 'build', '--ci', '--no-sign', '--bundles', osBundles()], cwd: 'app', env: BUNDLE_ENV },
+      { cmd: ['node', S('bundle.mjs'), 'collect'] },
+    ],
+  },
+  'smoke-install': {
+    desc: '모은 번들을 설치 → --smoke → 제거(deb·AppImage / dmg / NSIS·MSI). bundle gate 뒤',
+    steps: [{ cmd: ['node', S('smoke.mjs'), 'install'] }],
+  },
+  'glibc-floor': {
+    desc: `릴리스 바이너리의 GLIBC_ 심볼 최댓값 ≤ 2.35(Linux, ubuntu 22.04 컨테이너 빌드)`,
+    steps: [{ cmd: ['node', S('artifact-check.mjs'), 'glibc'] }],
+  },
+  'release-hygiene': {
+    desc: '릴리스 바이너리에 E2E 표식 없음 + chzzk-app feature 트리에 e2e 없음',
+    needs: ['cargo'],
+    steps: [{ cmd: ['node', S('artifact-check.mjs'), 'hygiene'] }],
+  },
+  size: {
+    desc: 'dist gzip·릴리스 바이너리·번들 크기 → ci/ratchet.json size(+3% 넘으면 실패). bundle gate 뒤',
+    steps: [{ cmd: ['node', S('measure.mjs'), 'size'] }, { cmd: ['node', S('ratchet.mjs'), 'check', 'size'] }],
+  },
+  coverage: {
+    desc: 'cargo llvm-cov(chzzk-core·chzzk-shell) + vitest v8 줄 커버리지 → ci/ratchet.json(−0.1pp 넘게 내려가면 실패)',
+    needs: ['cargo', 'cargo-llvm-cov', 'pnpm'],
+    steps: [
+      { cmd: ['pnpm', 'install', '--frozen-lockfile'], cwd: 'app' },
+      { cmd: ['node', S('measure.mjs'), 'coverage'] },
+      { cmd: ['node', S('ratchet.mjs'), 'check', 'coverage'] },
+    ],
+  },
+  'test-count': {
+    desc: 'cargo test 목록 수 + vitest 테스트 수 ≥ ci/ratchet.json tests',
+    needs: ['cargo', 'cargo-llvm-cov', 'pnpm'],
+    steps: [
+      { cmd: ['pnpm', 'install', '--frozen-lockfile'], cwd: 'app' },
+      { cmd: ['node', S('measure.mjs'), 'tests'] },
+      { cmd: ['node', S('ratchet.mjs'), 'check', 'tests'] },
+    ],
+  },
+  'ratchet-log': {
+    desc: 'ci/ratchet.json 기준을 느슨하게 했으면 ci/RATCHET_LOG.md에 그 키를 적은 줄이 더해졌는지(env RATCHET_BASE)',
+    steps: [{ cmd: ['node', S('ratchet.mjs'), 'log-check'] }],
+  },
 };
 
 // run.mjs가 gate 말고도 받는 하위 명령
-export const COMMANDS = ['changes', 'ci-ok', 'doctor', 'hook', 'install-hooks', 'install-tool', 'list'];
+export const COMMANDS = ['changes', 'ci-ok', 'doctor', 'hook', 'install-hooks', 'install-rustup', 'install-tool', 'list', 'report'];
 
 // 훅(docs/design/cicd.md §3.2). .githooks/<이름>은 `run.mjs hook <이름> "$@"`만 exec한다(parity hook-entry).
 //   always: 항상 도는 gate(순서대로). when: 바뀐 경로(pre-commit은 staged, pre-push는 push 범위 커밋이 건드린 경로)가
@@ -215,4 +286,8 @@ export const HOOK_ONLY = {
 };
 
 // changes.code == 'false'일 때 건너뛰는 작업(ci.yml 작업 id). ci-ok는 이 작업들의 skipped만 허용한다.
-export const CODE_GATED_JOBS = ['supply', 'rust', 'frontend', 'tauri'];
+export const CODE_GATED_JOBS = ['supply', 'rust', 'frontend', 'tauri', 'coverage'];
+
+// pull_request에서는 돌지 않는 작업(ci.yml 작업 id, `if: github.event_name != 'pull_request'`). push(master)·dispatch에서
+// 돈다. ci-ok는 pull_request에서만 이 작업들의 skipped를 허용한다(docs/design/cicd.md §2 "bundle (3 OS; push master만)").
+export const MASTER_ONLY_JOBS = ['bundle', 'bundle-linux', 'smoke-install-linux'];

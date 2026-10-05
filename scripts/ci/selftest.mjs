@@ -58,6 +58,7 @@ function mkRoot(name, files = {}) {
   cpSync(join(ROOT, 'scripts/ci'), join(d, 'scripts/ci'), { recursive: true });
   cpSync(join(ROOT, '.githooks'), join(d, '.githooks'), { recursive: true }); // 모드(실행 비트)를 유지한다
   for (const f of ['rust-toolchain.toml', 'zizmor.yml', '_typos.toml']) cpSync(join(ROOT, f), join(d, f));
+  for (const dir of ['ci', 'release']) cpSync(join(ROOT, dir), join(d, dir), { recursive: true });
   const base = {
     '.github/workflows/ci.yml': CI_YML,
     'Cargo.toml': '[workspace]\nresolver = "3"\nmembers = ["a"]\n\n[workspace.package]\nversion = "0.1.0"\nrust-version = "1.90"\n',
@@ -140,7 +141,9 @@ const hook = (d, name, args, input) => exec('node', [join(d, 'scripts/ci/run.mjs
     ['run.mjs 단계 if: false', ciWith('      - name: fmt\n        if: ${{ !cancelled() }}\n', '      - name: fmt\n        if: false\n')],
     ['tool: 버전 불일치', ciWith(tool[0], 'tool: typos@0.0.1')],
     ['fallback: none 없음', ciWith('          fallback: none\n', '')],
-    ['ci-ok needs에서 작업 빠짐', ciWith(', tauri]', ']')],
+    ['ci-ok needs에서 작업 빠짐', ciWith(', bundle]', ']')],
+    ['bundle 작업이 PR에서도 돎', ciWith("  bundle:\n    name: bundle (${{ matrix.os }})\n    needs: changes\n    if: github.event_name != 'pull_request' && needs.changes.outputs.code == 'true'\n", "  bundle:\n    name: bundle (${{ matrix.os }})\n    needs: changes\n    if: needs.changes.outputs.code == 'true'\n")],
+    ['report가 ci-ok 뒤가 아님', ciWith('    needs: ci-ok\n', '    needs: changes\n')],
     ['ci-ok guard 바뀜', ciWith('        run: exit 1\n', '        run: exit 0\n')],
     ['ci-ok 없음', { '.github/workflows/ci.yml': CI_YML.slice(0, CI_YML.indexOf('  # 필수 체크는 이 작업 하나다')) }],
     ['훅이 run.mjs를 거치지 않음', { '.githooks/pre-commit': '#!/bin/sh\nexec node "$(git rev-parse --show-toplevel)/scripts/ci/public-scan.mjs" --staged\n' }],
@@ -265,6 +268,54 @@ const hook = (d, name, args, input) => exec('node', [join(d, 'scripts/ci/run.mjs
   expect('ci-ok', 'dispatch인데 skipped', 'nonzero', () => ciok({ changes: changes(false), lint: ok, rust: skipped }, 'workflow_dispatch'));
   expect('ci-ok', '코드 변경인데 skipped', 'nonzero', () => ciok({ changes: changes(true), lint: ok, rust: skipped }));
   expect('ci-ok', 'lint skipped', 'nonzero', () => ciok({ changes: changes(false), lint: skipped }));
+  expect('ci-ok', 'PR에서 bundle skipped', 0, () => ciok({ changes: changes(true), lint: ok, rust: ok, bundle: skipped }));
+  expect('ci-ok', 'push에서 bundle skipped', 'nonzero', () => ciok({ changes: changes(true), lint: ok, rust: ok, bundle: skipped }, 'push'));
+  expect('ci-ok', 'force_fail', 'nonzero', () =>
+    exec('node', [join(ROOT, 'scripts/ci/run.mjs'), 'ci-ok'], ROOT, {
+      ...process.env,
+      NEEDS: JSON.stringify({ changes: changes(true), lint: ok }),
+      EVENT: 'workflow_dispatch',
+      CI_FORCE_FAIL: 'true',
+      GITHUB_STEP_SUMMARY: '',
+    }),
+  );
+}
+
+// ---- ratchet: 사본의 ci/ratchet.json 기준과 가짜 측정값(target/ci/measure/<kind>.json) ----
+{
+  const R = {
+    coverage_lines: { rust: 80, frontend: 90, tolerance_pp: 0.1 },
+    tests: { rust: 300, vitest: 400, playwright: 0 },
+    size: { dist_gz: 1000, binary: { linux: 10000, darwin: 10000, windows: 10000 }, bundle: {}, tolerance_pct: 3 },
+  };
+  const rjson = (r) => JSON.stringify(r, null, 2) + '\n';
+  const withMeasure = (name, kind, m) => mkRoot(name, { 'ci/ratchet.json': rjson(R), [`target/ci/measure/${kind}.json`]: JSON.stringify(m) });
+  const check = (d, kind) => exec('node', [join(d, 'scripts/ci/ratchet.mjs'), 'check', kind], d, { ...process.env, GITHUB_STEP_SUMMARY: '' });
+  const seeds = [
+    ['coverage −0.05pp(허용치 안)', 'coverage', { 'coverage_lines.rust': 79.95, 'coverage_lines.frontend': 90 }, 0],
+    ['coverage −1pp', 'coverage', { 'coverage_lines.rust': 79, 'coverage_lines.frontend': 90 }, 'nonzero'],
+    ['tests 그대로', 'tests', { 'tests.rust': 300, 'tests.vitest': 400 }, 0],
+    ['tests −1', 'tests', { 'tests.rust': 299, 'tests.vitest': 400 }, 'nonzero'],
+    ['size +2%', 'size', { 'size.dist_gz': 1020, 'size.binary.linux': 10200 }, 0],
+    ['size +5%', 'size', { 'size.dist_gz': 1000, 'size.binary.linux': 10500 }, 'nonzero'],
+    ['size 모르는 키', 'size', { 'size.binary.freebsd': 1 }, 'nonzero'],
+  ];
+  seeds.forEach(([seed, kind, m, want], i) => expect('ratchet', seed, want, () => check(withMeasure(`rat-${i}`, kind, m), kind)));
+  // log-check: 기준 커밋에서 기준을 낮추면 ci/RATCHET_LOG.md에 키를 적은 줄이 있어야 한다
+  const logRoot = (name, lower, logLine) => {
+    const d = mkRoot(name, { 'ci/ratchet.json': rjson(R) });
+    gitOk(d, ['commit', '-q', '-m', 'chore: 기준']);
+    const base = gitOk(d, ['rev-parse', 'HEAD']);
+    const r2 = structuredClone(R);
+    r2.coverage_lines.rust = lower;
+    writeFileSync(join(d, 'ci/ratchet.json'), rjson(r2));
+    if (logLine) writeFileSync(join(d, 'ci/RATCHET_LOG.md'), readFileSync(join(d, 'ci/RATCHET_LOG.md'), 'utf8') + logLine + '\n');
+    return { d, base };
+  };
+  const logCheck = ({ d, base }) => exec('node', [join(d, 'scripts/ci/run.mjs'), 'ratchet-log'], d, gitEnv({ extra: { RATCHET_BASE: base } }));
+  expect('ratchet-log', '기준 올림(조임)', 0, () => logCheck(logRoot('rlog-0', 81, null)));
+  expect('ratchet-log', '기준 낮춤, 기록 없음', 'nonzero', () => logCheck(logRoot('rlog-1', 79, null)));
+  expect('ratchet-log', '기준 낮춤, 기록 있음', 0, () => logCheck(logRoot('rlog-2', 79, '| 2026-10-05 | `coverage_lines.rust` | 80 → 79 | 씨앗 |')));
 }
 
 rmSync(tmp, { recursive: true, force: true });

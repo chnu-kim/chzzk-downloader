@@ -98,7 +98,7 @@ test('tool-pin: taiki-e/install-action은 fallback: none', () => {
 });
 
 test('ci-ok: needs가 모든 작업을 덮고 guard가 글자 그대로 있다', () => {
-  assert.ok(rulesFor(once('needs: [changes, lint, scripts-windows, supply, rust, frontend, tauri]', 'needs: [changes, lint, scripts-windows, supply, rust, frontend]')).includes('ci-ok'));
+  assert.ok(rulesFor(once(', smoke-install-linux, bundle]', ', smoke-install-linux]')).includes('ci-ok'));
   // 새 작업을 더하고 ci-ok needs에 넣지 않음
   assert.ok(
     rulesFor(once('  # 필수 체크는 이 작업 하나다', '  extra:\n    runs-on: ubuntu-24.04\n    timeout-minutes: 5\n    steps:\n      - run: node scripts/ci/run.mjs list\n\n  # 필수 체크는 이 작업 하나다')).includes('ci-ok'),
@@ -113,6 +113,17 @@ test('job-if: code로 건너뛰는 작업은 CODE_GATED_JOBS와 같다', () => {
   assert.ok(rulesFor(once('  lint:\n    name: lint\n', "  lint:\n    name: lint\n    needs: changes\n    if: needs.changes.outputs.code == 'true'\n")).includes('job-if'));
   // rust의 if를 다른 식으로
   assert.ok(rulesFor(once("    if: needs.changes.outputs.code == 'true'\n    strategy:", "    if: false\n    strategy:")).includes('job-if'));
+});
+
+test('job-if: PR에서 건너뛰는 작업은 MASTER_ONLY_JOBS와 같고 report는 ci-ok 뒤다', () => {
+  const MIF = "    if: github.event_name != 'pull_request' && needs.changes.outputs.code == 'true'\n";
+  // bundle-linux를 PR에서도 돌게 하면 MASTER_ONLY_JOBS와 달라진다
+  assert.ok(rulesFor(once(`  bundle-linux:\n    name: bundle (linux)\n    needs: changes\n${MIF}`, '  bundle-linux:\n    name: bundle (linux)\n    needs: changes\n')).includes('job-if'));
+  // master 전용 작업이 changes를 needs에 두지 않음
+  assert.ok(rulesFor(once(`    needs: [changes, bundle-linux]\n${MIF}`, `    needs: [bundle-linux]\n${MIF}`)).includes('job-if'));
+  // report의 if를 바꿈, report가 ci-ok 뒤가 아님
+  assert.ok(rulesFor(once("(github.event_name == 'workflow_dispatch' && inputs.loop_test))", "github.event_name == 'workflow_dispatch')")).includes('job-if'));
+  assert.ok(rulesFor(once('    needs: ci-ok\n', '    needs: changes\n')).includes('ci-ok'));
 });
 
 const shim = (name) => `#!/bin/sh\nset -eu\nexec node "$(git rev-parse --show-toplevel)/scripts/ci/run.mjs" hook ${name} "$@"\n`;

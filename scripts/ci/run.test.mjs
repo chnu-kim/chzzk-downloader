@@ -2,8 +2,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { CODE_GATED_JOBS, GATES, HOOK_ONLY, HOOKS, msrv, testFiles } from './gates.mjs';
-import { classify, decideCiOk, firstSemver, hookGates, runGate } from './run.mjs';
+import { CODE_GATED_JOBS, GATES, HOOK_ONLY, HOOKS, MASTER_ONLY_JOBS, msrv, testFiles } from './gates.mjs';
+import { classify, decideCiOk, firstSemver, forceFail, hookGates, runGate } from './run.mjs';
 
 test('classify: 문서만 바뀌면 code=false', () => {
   assert.deepEqual(classify(['docs/design/cicd.md', 'README.md', 'CLAUDE.md', '.claude/x.json', 'LICENSE']), {
@@ -78,6 +78,26 @@ test('ci-ok: push·dispatch는 skipped를 허용하지 않는다', () => {
   assert.equal(decideCiOk({ changes: changes(true), lint: ok }, undefined).ok, false);
 });
 
+test('ci-ok: MASTER_ONLY_JOBS의 skipped는 pull_request에서만 허용', () => {
+  for (const job of MASTER_ONLY_JOBS) {
+    assert.equal(decideCiOk({ changes: changes(true), lint: ok, [job]: { result: 'skipped' } }, PR).ok, true, job);
+    assert.equal(decideCiOk({ changes: changes(false), lint: ok, [job]: { result: 'skipped' } }, PR).ok, true, job);
+    for (const ev of ['push', 'workflow_dispatch']) {
+      assert.equal(decideCiOk({ changes: changes(true), lint: ok, [job]: { result: 'skipped' } }, ev).ok, false, `${job} ${ev}`);
+    }
+  }
+  assert.equal(decideCiOk({ changes: changes(true), lint: ok, bundle: { result: 'failure' } }, PR).ok, false);
+  // 겹치지 않는다(같은 작업이 두 규칙에 걸리면 판정이 모호하다)
+  assert.deepEqual(CODE_GATED_JOBS.filter((j) => MASTER_ONLY_JOBS.includes(j)), []);
+});
+
+test('ci-ok: force_fail이면 모두 success여도 실패', () => {
+  assert.equal(decideCiOk({ changes: changes(true), lint: ok }, 'workflow_dispatch', CODE_GATED_JOBS, MASTER_ONLY_JOBS, { force: true }).ok, false);
+  assert.equal(forceFail({ CI_FORCE_FAIL: 'true' }), true);
+  assert.equal(forceFail({ CI_FORCE_FAIL: 'false' }), false);
+  assert.equal(forceFail({ CI_FORCE_FAIL: '' }), false);
+});
+
 test('ci-ok: changes가 실패·skipped·없으면 실패', () => {
   assert.equal(decideCiOk({ changes: changes(false, 'failure'), rust: { result: 'skipped' } }, PR).ok, false);
   assert.equal(decideCiOk({ changes: { result: 'skipped' } }, PR).ok, false);
@@ -127,6 +147,16 @@ test('gate 표: 검사를 켜는 플래그', () => {
   assert.equal(GATES['push-guard'].stdin, true);
   assert.deepEqual(cmds('subjects'), ['node scripts/ci/commit-msg.mjs --stored']);
   for (const g of ['scan-msg', 'scan-range', 'push-guard', 'versions', 'subjects']) assert.equal(GATES[g].passArgs, true, g);
+  assert.deepEqual(cmds('smoke-bin'), ['node scripts/ci/smoke.mjs bin']);
+  assert.deepEqual(cmds('smoke-install'), ['node scripts/ci/smoke.mjs install']);
+  assert.ok(cmds('bundle')[1].startsWith('pnpm tauri build --ci --no-sign --bundles '), cmds('bundle')[1]);
+  assert.equal(cmds('bundle')[2], 'node scripts/ci/bundle.mjs collect');
+  assert.deepEqual(cmds('glibc-floor'), ['node scripts/ci/artifact-check.mjs glibc']);
+  assert.deepEqual(cmds('release-hygiene'), ['node scripts/ci/artifact-check.mjs hygiene']);
+  assert.deepEqual(cmds('size'), ['node scripts/ci/measure.mjs size', 'node scripts/ci/ratchet.mjs check size']);
+  assert.deepEqual(cmds('coverage').slice(1), ['node scripts/ci/measure.mjs coverage', 'node scripts/ci/ratchet.mjs check coverage']);
+  assert.deepEqual(cmds('test-count').slice(1), ['node scripts/ci/measure.mjs tests', 'node scripts/ci/ratchet.mjs check tests']);
+  assert.deepEqual(cmds('ratchet-log'), ['node scripts/ci/ratchet.mjs log-check']);
   // 로컬과 CI가 같은 표를 쓰므로 CI 전용은 scan-history 하나뿐이다
   assert.deepEqual(Object.keys(GATES).filter((g) => GATES[g].ciOnly), ['scan-history']);
 });

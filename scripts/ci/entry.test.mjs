@@ -18,6 +18,12 @@ const SCRIPTS = [
   'scripts/ci/public-scan.mjs',
   'scripts/ci/push-guard.mjs',
   'scripts/ci/commit-msg.mjs',
+  'scripts/ci/smoke.mjs',
+  'scripts/ci/bundle.mjs',
+  'scripts/ci/artifact-check.mjs',
+  'scripts/ci/ratchet.mjs',
+  'scripts/ci/measure.mjs',
+  'scripts/ci/issue.mjs',
   'scripts/fixtures/gen-fixtures.mjs',
 ];
 

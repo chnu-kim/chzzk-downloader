@@ -18,7 +18,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, stat
 import { delimiter, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { CODE_GATED_JOBS, COMMANDS, GATES, HOOKS, ROOT } from './gates.mjs';
+import { CODE_GATED_JOBS, COMMANDS, GATES, HOOKS, MASTER_ONLY_JOBS, ROOT } from './gates.mjs';
 import { isPrivateTarget, parseLines, pushedPaths, scanRanges } from './push-guard.mjs';
 import { runHookGates } from './snapshot.mjs';
 
@@ -47,6 +47,10 @@ export function which(name, env = process.env) {
 
 // Windows의 .cmd/.bat 래퍼(pnpm 등)는 shell:false로 띄울 수 없다(CVE-2024-27980 이후 EINVAL).
 // 그때만 cmd.exe로 띄운다. 인자는 gates.mjs의 고정 값뿐이라 셸 해석 위험이 없고, 공백이 있으면 따옴표로 감싼다.
+export function spawnTool(bin, args, opts) {
+  return spawn(bin, args, opts);
+}
+
 function spawn(bin, args, opts) {
   if (bin === 'node') return spawnSync(process.execPath, args, { stdio: 'inherit', ...opts });
   const path = which(bin);
@@ -124,10 +128,13 @@ export function runGate(name, extra = [], env = process.env, { input } = {}) {
   const io = gate.stdin ? { input: stdinText, stdio: ['pipe', 'inherit', 'inherit'] } : {};
   const steps = gate.steps;
   for (let i = 0; i < steps.length; i++) {
-    const { cmd, cwd } = steps[i];
+    const { cmd, cwd, env: stepEnv } = steps[i];
     const args = [...cmd.slice(1), ...(gate.passArgs ? extra : [])];
-    const title = `${name}: ${[cmd[0], ...args].join(' ')}${cwd ? ` (in ${cwd})` : ''}`;
-    const r = group(title, () => spawn(cmd[0], args, { cwd: join(ROOT, cwd ?? '.'), ...io }));
+    const envNote = stepEnv ? ` [${Object.entries(stepEnv).map(([k, v]) => `${k}=${v}`).join(' ')}]` : '';
+    const title = `${name}: ${[cmd[0], ...args].join(' ')}${cwd ? ` (in ${cwd})` : ''}${envNote}`;
+    const r = group(title, () =>
+      spawn(cmd[0], args, { cwd: join(ROOT, cwd ?? '.'), ...io, ...(stepEnv ? { env: { ...process.env, ...stepEnv } } : {}) }),
+    );
     if (r.error) {
       console.error(`::error::[${name}] 실행 실패: ${r.error.message}`);
       return 2;
@@ -169,9 +176,14 @@ export function changedFiles(env = process.env) {
   return { files: r.stdout.split('\0').filter(Boolean), why: null };
 }
 
+// workflow_dispatch 입력 force_fail(env CI_FORCE_FAIL=true): 무거운 작업을 건너뛰게 해(code=false) ci-ok가 실패하게 한다.
+// master 실패 고리(report)를 빨리·싸게 확인하는 용도다. push·dispatch에서 skipped는 ci-ok가 거부한다.
+export const forceFail = (env = process.env) => env.CI_FORCE_FAIL === 'true';
+
 function cmdChanges(env = process.env) {
   const { files, why } = changedFiles(env);
-  const c = classify(files);
+  const c = forceFail(env) ? { code: false, release: false, docs_only: false } : classify(files);
+  if (forceFail(env)) console.log('::warning::force_fail: 무거운 작업을 건너뛰고 ci-ok를 실패시킨다(고리 확인용)');
   const out = Object.entries(c).map(([k, v]) => `${k}=${v}`);
   console.log(why ? `전부 실행: ${why}` : `바뀐 파일 ${files.length}개`);
   if (files) for (const f of files.slice(0, 200)) console.log(`  ${f}`);
@@ -186,24 +198,30 @@ function cmdChanges(env = process.env) {
 //   changes는 success여야 한다. 그 밖의 작업은 success, 또는 pull_request에서 changes.code == 'false'일 때
 //   CODE_GATED_JOBS의 skipped만 허용한다. push·workflow_dispatch에서는 skipped를 하나도 허용하지 않는다.
 // ci.yml의 ci-ok guard 단계가 같은 규칙을 식(expression)으로 먼저 판정한다. 이 함수는 두 번째 판정이다.
-export function decideCiOk(needs, event, gated = CODE_GATED_JOBS) {
+export function decideCiOk(needs, event, gated = CODE_GATED_JOBS, masterOnly = MASTER_ONLY_JOBS, { force = false } = {}) {
   const lines = [];
   let ok = true;
   const changes = needs?.changes;
   if (!changes) {
     return { ok: false, lines: ['changes: needs에 없음'] };
   }
-  const skipAllowed = event === 'pull_request' && changes.result === 'success' && changes.outputs?.code === 'false';
+  const isPr = event === 'pull_request';
+  const skipAllowed = isPr && changes.result === 'success' && changes.outputs?.code === 'false';
   for (const [job, v] of Object.entries(needs).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
     const r = v?.result;
     let good = r === 'success';
     if (!good && r === 'skipped' && job !== 'changes' && skipAllowed && gated.includes(job)) good = true;
+    if (!good && r === 'skipped' && isPr && masterOnly.includes(job)) good = true;
     if (!good) ok = false;
     lines.push(`${good ? 'ok  ' : 'FAIL'} ${job}: ${r}`);
   }
   if (!event) {
     ok = false;
     lines.push('FAIL EVENT 환경 변수가 없다(github.event_name)');
+  }
+  if (force) {
+    ok = false;
+    lines.push('FAIL force_fail 입력(workflow_dispatch)');
   }
   return { ok, lines };
 }
@@ -216,7 +234,7 @@ function cmdCiOk(env = process.env) {
     console.error('::error::NEEDS 환경 변수가 JSON이 아니다(toJSON(needs))');
     return 2;
   }
-  const { ok, lines } = decideCiOk(needs, env.EVENT);
+  const { ok, lines } = decideCiOk(needs, env.EVENT, CODE_GATED_JOBS, MASTER_ONLY_JOBS, { force: forceFail(env) });
   for (const l of lines) console.log(l);
   if (env.GITHUB_STEP_SUMMARY) {
     appendFileSync(env.GITHUB_STEP_SUMMARY, `### ci-ok: ${ok ? 'success' : 'failure'}\n\n\`\`\`\n${lines.join('\n')}\n\`\`\`\n`);
@@ -355,26 +373,35 @@ export function toolDir(env = process.env) {
 
 // tools.json의 download 항목으로 도구를 설치한다. 해시가 다르면 설치하지 않고 실패한다.
 // 키는 <os>-<arch>(linux-x64, darwin-arm64, windows-x64 …). .zip·.tar.gz 모두 tar(bsdtar·GNU tar)로 푼다.
-async function cmdInstallTool(name, env = process.env) {
+// tools.json download 항목을 받아 sha256이 같을 때만 { buf, dl, sha }를 돌려준다. 아니면 { code }.
+async function downloadVerified(name) {
   const spec = TOOLS[name];
   const key = `${IS_WIN ? 'windows' : process.platform}-${process.arch}`;
   const dl = spec?.download?.[key];
   if (!dl) {
     const keys = Object.keys(spec?.download ?? {}).join(', ') || '없음';
     console.error(`install-tool: ${name}에 ${key}용 download 항목이 없다(tools.json: ${keys}). 직접 설치한다: ${spec?.version ?? ''}`);
-    return 2;
+    return { code: 2 };
   }
   const res = await fetch(dl.url);
   if (!res.ok) {
     console.error(`install-tool: ${dl.url} → HTTP ${res.status}`);
-    return 1;
+    return { code: 1 };
   }
   const buf = Buffer.from(await res.arrayBuffer());
   const got = createHash('sha256').update(buf).digest('hex');
   if (got !== dl.sha256) {
     console.error(`::error::install-tool: ${name} sha256 불일치(기대 ${dl.sha256}, 받음 ${got})`);
-    return 1;
+    return { code: 1 };
   }
+  return { buf, dl, sha: got };
+}
+
+async function cmdInstallTool(name, env = process.env) {
+  const spec = TOOLS[name];
+  const d = await downloadVerified(name);
+  if (d.code !== undefined) return d.code;
+  const { buf, dl, sha: got } = d;
   const dir = toolDir(env);
   mkdirSync(dir, { recursive: true });
   const zip = dl.url.endsWith('.zip');
@@ -386,6 +413,27 @@ async function cmdInstallTool(name, env = process.env) {
   console.log(`install-tool: ${name} ${spec.version} → ${dir} (sha256 ${got})`);
   if (env.GITHUB_PATH) appendFileSync(env.GITHUB_PATH, dir + '\n');
   else console.log(`PATH에 더한다: ${IS_WIN ? `$env:Path = "${dir};$env:Path"` : `export PATH="${dir}:$PATH"`}`);
+  return 0;
+}
+
+// rustup이 없는 컨테이너(bundle-linux의 ubuntu:22.04)에 rustup을 깐다. rustup-init은 tools.json의 sha256으로 확인하고
+// 툴체인은 깔지 않는다(다음 setup 단계 `rustup toolchain install`이 rust-toolchain.toml을 읽는다).
+async function cmdInstallRustup(env = process.env) {
+  if (IS_WIN) {
+    console.error('install-rustup: Linux·macOS 전용');
+    return 2;
+  }
+  const d = await downloadVerified('rustup-init');
+  if (d.code !== undefined) return d.code;
+  const dir = toolDir(env);
+  mkdirSync(dir, { recursive: true });
+  const init = join(dir, 'rustup-init');
+  writeFileSync(init, d.buf, { mode: 0o755 });
+  const r = spawnSync(init, ['-y', '--no-modify-path', '--default-toolchain', 'none', '--profile', 'minimal'], { stdio: 'inherit' });
+  if (r.status !== 0) return r.status ?? 2;
+  const bin = join(env.CARGO_HOME ?? join(env.HOME ?? '', '.cargo'), 'bin');
+  console.log(`install-rustup: rustup-init ${TOOLS['rustup-init'].version} (sha256 ${d.sha}) → ${bin}`);
+  if (env.GITHUB_PATH) appendFileSync(env.GITHUB_PATH, bin + '\n');
   return 0;
 }
 
@@ -410,6 +458,12 @@ export function main(argv, env = process.env) {
       return cmdInstallHooks();
     case 'install-tool':
       return cmdInstallTool(rest[0], env);
+    case 'install-rustup':
+      return rest.length ? 2 : cmdInstallRustup(env);
+    case 'report':
+      // ci.yml report 작업(docs/design/cicd.md §4.1·§4.4). env: GITHUB_REPOSITORY·GITHUB_RUN_ID·GITHUB_SHA·CI_OK_RESULT·GH_TOKEN
+      if (rest.length) return 2;
+      return import('./issue.mjs').then((m) => m.report(env, m.realGh(env)));
     case 'list':
       return cmdList();
     default:

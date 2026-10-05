@@ -1,0 +1,111 @@
+#!/usr/bin/env node
+// 릴리스 바이너리 검사(docs/design/cicd.md §2 `glibc-floor`, `release-hygiene`).
+//
+//   node scripts/ci/artifact-check.mjs glibc [--max 2.35] [--file <경로>]   # objdump -T의 GLIBC_x.y 최댓값 ≤ max(Linux)
+//   node scripts/ci/artifact-check.mjs hygiene [--file <경로>]               # 바이너리에 E2E 표식 없음 + cargo tree에 e2e feature 없음
+//
+// 기본 파일은 <target>/release/chzzk-app[.exe]. 종료 코드: 통과 0, 위반 1, 사용법·도구 오류 2.
+
+import { spawnSync } from 'node:child_process';
+import { existsSync, readFileSync, realpathSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+import { ROOT } from './gates.mjs';
+import { spawnTool } from './run.mjs';
+import { osKey, targetDir } from './smoke.mjs';
+
+export const GLIBC_MAX = '2.35'; // ubuntu 22.04(컨테이너 빌드)의 glibc
+// E2E 빌드(G4 cargo feature `e2e`)만 읽는 환경 변수 접두사. 릴리스 바이너리에 이 글자가 있으면 e2e 코드가 들어간 것이다.
+// 이 파일 자체가 걸리지 않게 조각을 잇는다.
+export const E2E_MARK = 'CHZZK_' + 'E2E_';
+
+const cmpVer = (a, b) => {
+  const [x, y] = [a.split('.').map(Number), b.split('.').map(Number)];
+  for (let i = 0; i < Math.max(x.length, y.length); i++) if ((x[i] ?? 0) !== (y[i] ?? 0)) return (x[i] ?? 0) - (y[i] ?? 0);
+  return 0;
+};
+
+// objdump -T 출력 → 가장 높은 GLIBC_ 버전(없으면 null)
+export function maxGlibc(text) {
+  let max = null;
+  for (const m of text.matchAll(/\bGLIBC_(\d+(?:\.\d+)+)\b/g)) if (max === null || cmpVer(m[1], max) > 0) max = m[1];
+  return max;
+}
+
+export const glibcOk = (found, limit) => found !== null && cmpVer(found, limit) <= 0;
+
+// cargo tree -e features 출력에서 이 워크스페이스 crate의 e2e feature 줄(서드파티의 같은 이름 feature는 무관하다)
+export function e2eFeatureLines(text) {
+  return text.split('\n').filter((l) => /\bchzzk-(?:app|core|shell) feature "e2e"/.test(l));
+}
+
+const defaultBin = () => join(targetDir(), 'release', `chzzk-app${osKey() === 'windows' ? '.exe' : ''}`);
+
+function cmdGlibc(file, max) {
+  if (!existsSync(file)) {
+    console.error(`glibc: ${file}가 없다`);
+    return 2;
+  }
+  const r = spawnSync('objdump', ['-T', file], { encoding: 'utf8', maxBuffer: 1 << 28 });
+  if (r.error || r.status !== 0) {
+    console.error(`glibc: objdump -T 실패: ${r.error?.message ?? r.stderr}`);
+    return 2;
+  }
+  const found = maxGlibc(r.stdout);
+  console.log(`glibc: ${file} 최대 GLIBC_${found ?? '(없음)'} (한도 ${max})`);
+  if (!glibcOk(found, max)) {
+    console.error(`::error::glibc-floor: GLIBC_${found ?? '?'} > ${max} — 더 새 glibc에서만 실행된다(빌드 컨테이너를 확인한다)`);
+    return 1;
+  }
+  return 0;
+}
+
+function cmdHygiene(file) {
+  if (!existsSync(file)) {
+    console.error(`hygiene: ${file}가 없다`);
+    return 2;
+  }
+  let bad = 0;
+  if (readFileSync(file).includes(Buffer.from(E2E_MARK))) {
+    console.error(`::error::release-hygiene: ${file}에 ${E2E_MARK} 글자가 있다(e2e 코드가 릴리스에 들어갔다)`);
+    bad++;
+  } else console.log(`hygiene: ${file}에 ${E2E_MARK} 없음`);
+  const r = spawnTool('cargo', ['tree', '-e', 'features', '-p', 'chzzk-app', '--locked', '--target', 'all'], {
+    cwd: ROOT,
+    stdio: ['ignore', 'pipe', 'inherit'],
+    encoding: 'utf8',
+    maxBuffer: 1 << 28,
+  });
+  if (r.error || r.status !== 0) {
+    console.error(`hygiene: cargo tree 실패: ${r.error?.message ?? r.status}`);
+    return 2;
+  }
+  const lines = e2eFeatureLines(r.stdout);
+  if (lines.length) {
+    console.error(`::error::release-hygiene: 기본 feature 트리에 e2e가 켜져 있다:\n${lines.join('\n')}`);
+    bad++;
+  } else console.log('hygiene: cargo tree -e features -p chzzk-app에 e2e 없음');
+  return bad ? 1 : 0;
+}
+
+export function main(argv) {
+  const [cmd, ...rest] = argv;
+  const opts = {};
+  for (let i = 0; i < rest.length; i += 2) {
+    if (!['--file', '--max'].includes(rest[i]) || rest[i + 1] === undefined) {
+      opts.bad = true;
+      break;
+    }
+    opts[rest[i].slice(2)] = rest[i + 1];
+  }
+  if (!opts.bad && cmd === 'glibc') return cmdGlibc(resolve(opts.file ?? defaultBin()), opts.max ?? GLIBC_MAX);
+  if (!opts.bad && cmd === 'hygiene' && opts.max === undefined) return cmdHygiene(resolve(opts.file ?? defaultBin()));
+  console.error('사용법: artifact-check.mjs glibc [--max x.y] [--file <경로>] | hygiene [--file <경로>]');
+  return 2;
+}
+
+// 심볼릭 링크 경로(/tmp → /private/tmp 등)로 불러도 main이 돌도록 실제 경로로 비교한다. 안 돌면 조용히 0으로 끝난다.
+if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  process.exit(main(process.argv.slice(2)));
+}

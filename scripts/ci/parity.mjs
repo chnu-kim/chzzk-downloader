@@ -13,8 +13,8 @@
 //   tool-pin    `tool:` 입력의 도구@버전이 scripts/ci/tools.json과 같고, taiki-e/install-action 단계는 `fallback: none`이다.
 //   ci-ok       작업 id `ci-ok`는 ci.yml에만, 정확히 한 번 있다. ci-ok의 needs는 ci.yml의 다른 모든 작업이고
 //               (CI_OK_EXEMPT 제외), `if: always()`이며, 식으로만 판정하는 guard 단계(CI_OK_GUARD)를 글자 그대로 갖는다.
-//   job-if      ci.yml 작업 수준 `if:`는 ci-ok의 `always()`와 `needs.changes.outputs.code == 'true'`뿐이고,
-//               후자를 단 작업의 집합은 gates.mjs CODE_GATED_JOBS와 같다.
+//   job-if      ci.yml 작업 수준 `if:`는 ci-ok의 `always()`, CODE_IF, MASTER_IF, report의 REPORT_IF뿐이고,
+//               CODE_IF를 단 작업 = gates.mjs CODE_GATED_JOBS, MASTER_IF를 단 작업 = MASTER_ONLY_JOBS다.
 //   hook-entry  .githooks/의 파일 집합은 gates.mjs HOOKS와 같고, 각 훅은 `run.mjs hook <자기 이름> "$@"`만 exec한다.
 //               LF 줄끝, #!/bin/sh, (git 저장소면) 인덱스 모드 100755.
 //   hook-gate   훅이 부르는 gate ⊂ ci.yml의 gate ∪ HOOK_ONLY 짝(짝이 모두 ci.yml에 있어야 한다). CI가 최종 권위다.
@@ -25,7 +25,7 @@ import { existsSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { CODE_GATED_JOBS, COMMANDS, GATES, HOOK_ONLY, HOOKS } from './gates.mjs';
+import { CODE_GATED_JOBS, COMMANDS, GATES, HOOK_ONLY, HOOKS, MASTER_ONLY_JOBS } from './gates.mjs';
 
 const ROOT_DEFAULT = join(fileURLToPath(import.meta.url), '..', '..', '..');
 
@@ -35,26 +35,42 @@ export const SETUP_ALLOW = [
   /^rustup toolchain install$/,
   /^sudo apt-get update$/,
   /^sudo apt-get install -y --no-install-recommends [a-z0-9.+\- ]+$/,
+  // ubuntu:22.04 컨테이너 작업(bundle-linux)은 root라 sudo가 없다
+  /^apt-get update$/,
+  /^apt-get install -y --no-install-recommends [a-z0-9.+\- ]+$/,
   // ci-ok guard: 실패만 할 수 있다
   /^exit 1$/,
 ];
 export const ENTRY = /^node scripts\/ci\/run\.mjs ([a-z0-9-]+)(?: [A-Za-z0-9._@\/=:+,-]+)*$/;
 
-// ci-ok의 needs에서 뺄 수 있는 작업(D14 관찰 기간의 E2E 등). 넣을 때는 cicd.md에 이유를 적는다.
-export const CI_OK_EXEMPT = [];
+// ci-ok의 needs에서 뺄 수 있는 작업과 이유(D14 관찰 기간의 E2E 등). 넣을 때는 cicd.md에 이유를 적는다.
+//   report: ci-ok의 결과를 읽어 이슈를 여닫는다(ci-ok 뒤에 돈다). 실패해도 커밋의 녹색 여부와 무관하다.
+export const CI_OK_EXEMPT = ['report'];
+
+// 작업 수준 if 허용 목록. code: CODE_GATED_JOBS, master: MASTER_ONLY_JOBS, report: 고리 작업.
+export const CODE_IF = "needs.changes.outputs.code == 'true'";
+export const MASTER_IF = "github.event_name != 'pull_request' && needs.changes.outputs.code == 'true'";
+export const REPORT_IF =
+  "always() && ((github.event_name == 'push' && github.ref == 'refs/heads/master') || (github.event_name == 'workflow_dispatch' && inputs.loop_test))";
 
 // ci-ok 첫 단계. 저장소 코드 없이 needs 결과만으로 판정한다(run.mjs ci-ok는 두 번째 판정).
-export const CI_OK_GUARD = [
-  '- name: guard',
-  'if: >-',
-  "needs.changes.result != 'success' || needs.lint.result != 'success'",
-  "|| needs.scripts-windows.result != 'success'",
-  "|| contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')",
-  "|| (contains(needs.*.result, 'skipped')",
-  "&& (github.event_name != 'pull_request' || needs.changes.outputs.code != 'false'))",
-  'run: exit 1',
-];
-const CODE_IF = "needs.changes.outputs.code == 'true'";
+//   push·dispatch: skipped가 하나라도 있으면 실패. pull_request: MASTER_ONLY_JOBS의 skipped는 허용,
+//   CODE_GATED_JOBS의 skipped는 changes.code == 'false'일 때만 허용. 그 밖의 작업은 skipped가 될 수 없다
+//   (작업 if가 위 둘뿐이고 needs가 성공해야 돈다: 앞 작업 실패는 failure 검사가 잡는다).
+export function ciOkGuard(gated = CODE_GATED_JOBS) {
+  return [
+    '- name: guard',
+    'if: >-',
+    "needs.changes.result != 'success' || needs.lint.result != 'success'",
+    "|| needs.scripts-windows.result != 'success'",
+    "|| contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')",
+    "|| (github.event_name != 'pull_request' && contains(needs.*.result, 'skipped'))",
+    "|| (needs.changes.outputs.code != 'false'",
+    `&& (${gated.map((j) => `needs.${j}.result == 'skipped'`).join(' || ')}))`,
+    'run: exit 1',
+  ];
+}
+export const CI_OK_GUARD = ciOkGuard();
 
 // 워크플로 본문 → run: 명령 줄 [{line, cmd}]. 블록 스칼라(| >)와 `\` 줄 잇기를 푼다.
 export function runCommands(text) {
@@ -179,14 +195,22 @@ function checkCiJobs(text, add) {
     add(rel, ciOk.line, 'ci-ok', 'ci-ok의 첫 단계가 parity.mjs CI_OK_GUARD와 글자 그대로 같지 않다');
   }
   const gated = [];
+  const masterOnly = [];
   for (const [id, j] of Object.entries(jobs)) {
     if (id === 'ci-ok' || j.if === null) continue;
     if (j.if === CODE_IF) gated.push(id);
-    else add(rel, j.line, 'job-if', `작업 ${id}의 if는 ${CODE_IF}만 허용한다(지금: ${j.if})`);
+    else if (j.if === MASTER_IF) {
+      masterOnly.push(id);
+      if (!j.needs.includes('changes')) add(rel, j.line, 'job-if', `작업 ${id}는 needs에 changes가 있어야 한다(if가 changes 출력을 읽는다)`);
+    } else if (id === 'report' && j.if === REPORT_IF) continue;
+    else add(rel, j.line, 'job-if', `작업 ${id}의 if는 CODE_IF·MASTER_IF(report는 REPORT_IF)만 허용한다(지금: ${j.if})`);
   }
-  const g = gated.sort().join(',');
-  const w = [...CODE_GATED_JOBS].sort().join(',');
-  if (g !== w) add(rel, 0, 'job-if', `code로 건너뛰는 작업 [${g}] ≠ gates.mjs CODE_GATED_JOBS [${w}]`);
+  const same = (a, b) => [...a].sort().join(',') === [...b].sort().join(',');
+  if (!same(gated, CODE_GATED_JOBS)) add(rel, 0, 'job-if', `code로 건너뛰는 작업 [${gated.sort()}] ≠ gates.mjs CODE_GATED_JOBS [${[...CODE_GATED_JOBS].sort()}]`);
+  if (!same(masterOnly, MASTER_ONLY_JOBS)) add(rel, 0, 'job-if', `PR에서 건너뛰는 작업 [${masterOnly.sort()}] ≠ gates.mjs MASTER_ONLY_JOBS [${[...MASTER_ONLY_JOBS].sort()}]`);
+  for (const id of CI_OK_EXEMPT) {
+    if (jobs[id] && !jobs[id].needs.includes('ci-ok')) add(rel, jobs[id].line, 'ci-ok', `ci-ok에서 뺀 작업 ${id}는 ci-ok 뒤에 돌아야 한다(needs: ci-ok)`);
+  }
 }
 
 // continue-on-error·shell·run.mjs 단계의 if·taiki-e fallback

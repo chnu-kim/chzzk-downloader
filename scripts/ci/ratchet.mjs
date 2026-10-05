@@ -1,0 +1,297 @@
+#!/usr/bin/env node
+// Ratchet(docs/design/cicd.md §4.2). 기준값은 저장소의 ci/ratchet.json, 측정값은 measure.mjs가 쓴 target/ci/measure/<kind>.json.
+//
+//   node scripts/ci/ratchet.mjs check <coverage|tests|size>     # 측정값을 기준과 비교(내려가면 실패)
+//   node scripts/ci/ratchet.mjs write --from <폴더>              # 폴더 아래 측정 JSON으로 기준을 조인다(올리기만)
+//   node scripts/ci/ratchet.mjs write --from-run <run id>        # gh run download로 CI 측정값을 받아 write
+//   node scripts/ci/ratchet.mjs log-check                         # env RATCHET_BASE 대비 기준을 느슨하게 했으면
+//                                                                 # ci/RATCHET_LOG.md에 그 키를 적은 줄이 더해졌는지
+//
+// 측정값은 평평한 키 경로다: {"coverage_lines.rust": 87.1, "tests.vitest": 491, "size.binary.linux": 12345}.
+// 판정(순수 함수 judge):
+//   coverage_lines.*  현재 < 기준 − tolerance_pp 이면 실패
+//   tests.*           현재 < 기준 이면 실패
+//   size.*            현재 > 기준 × (1 + tolerance_pct/100) 이면 실패
+//   기준 0은 "아직 안 잼"이라 통과(알림만). ratchet.json에 없는 키는 실패(오타·스키마 어긋남).
+// 종료 코드: 통과 0, 위반 1, 사용법·입력 오류 2.
+
+import { spawnSync } from 'node:child_process';
+import { appendFileSync, existsSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+import { ROOT } from './gates.mjs';
+
+export const RATCHET_PATH = 'ci/ratchet.json';
+export const LOG_PATH = 'ci/RATCHET_LOG.md';
+export const MEASURE_DIR = 'target/ci/measure';
+export const KINDS = { coverage: 'coverage_lines', tests: 'tests', size: 'size' };
+const SETTINGS = new Set(['tolerance_pp', 'tolerance_pct']);
+
+// 객체 → { "a.b.c": 숫자 } (설정 키·$comment·null 제외)
+export function flatten(obj, prefix = '') {
+  const out = {};
+  for (const [k, v] of Object.entries(obj ?? {})) {
+    if (k.startsWith('$')) continue;
+    const p = prefix ? `${prefix}.${k}` : k;
+    if (v !== null && typeof v === 'object') Object.assign(out, flatten(v, p));
+    else if (typeof v === 'number' && !SETTINGS.has(k)) out[p] = v;
+  }
+  return out;
+}
+
+function getPath(obj, path) {
+  return path.split('.').reduce((o, k) => (o && Object.hasOwn(o, k) ? o[k] : undefined), obj);
+}
+
+function setPath(obj, path, value) {
+  const ks = path.split('.');
+  let o = obj;
+  for (const k of ks.slice(0, -1)) o = o[k];
+  o[ks.at(-1)] = value;
+}
+
+const area = (key) => key.split('.')[0];
+
+// 기준(ratchet.json 객체), 측정({키: 값}) → { ok, rows: [{key, floor, value, state, note}] }
+// state: ok | fail | unmeasured | unknown
+export function judge(ratchet, measured) {
+  const rows = [];
+  const tolPp = ratchet.coverage_lines?.tolerance_pp ?? 0;
+  const tolPct = ratchet.size?.tolerance_pct ?? 0;
+  for (const key of Object.keys(measured).sort()) {
+    const value = measured[key];
+    const floor = getPath(ratchet, key);
+    if (typeof floor !== 'number' || SETTINGS.has(key.split('.').at(-1)) || !Object.hasOwn(KIND_BY_AREA, area(key))) {
+      rows.push({ key, floor: null, value, state: 'unknown', note: `${RATCHET_PATH}에 없는 키` });
+      continue;
+    }
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+      rows.push({ key, floor, value, state: 'fail', note: '측정값이 0 이상의 수가 아니다' });
+      continue;
+    }
+    if (floor === 0) {
+      rows.push({ key, floor, value, state: 'unmeasured', note: `기준 없음(0). write로 ${value}을(를) 기준으로 삼을 수 있다` });
+      continue;
+    }
+    let fail = false;
+    let note = '';
+    if (area(key) === 'coverage_lines') {
+      fail = value < floor - tolPp - 1e-9;
+      note = fail ? `${floor} − ${tolPp}pp 아래` : value > floor ? `기준을 ${value}(으)로 올릴 수 있다` : '';
+    } else if (area(key) === 'tests') {
+      fail = value < floor;
+      note = fail ? `기준 ${floor}보다 적다(테스트가 사라졌다)` : value > floor ? `기준을 ${value}(으)로 올릴 수 있다` : '';
+    } else {
+      const max = floor * (1 + tolPct / 100);
+      fail = value > max;
+      const pct = (((value - floor) / floor) * 100).toFixed(2);
+      note = fail ? `${pct}% 커졌다(허용 ${tolPct}%)` : value < floor ? `기준을 ${value}(으)로 낮출(조일) 수 있다` : '';
+    }
+    rows.push({ key, floor, value, state: fail ? 'fail' : 'ok', note });
+  }
+  return { ok: rows.every((r) => r.state === 'ok' || r.state === 'unmeasured'), rows };
+}
+
+const KIND_BY_AREA = { coverage_lines: 'coverage', tests: 'tests', size: 'size' };
+
+// 기준을 조인다(느슨하게 하지 않는다). 측정 → 새 ratchet 객체와 바뀐 키 목록
+export function tighten(ratchet, measured) {
+  const next = structuredClone(ratchet);
+  const changed = [];
+  for (const [key, value] of Object.entries(measured).sort(([a], [b]) => (a < b ? -1 : 1))) {
+    const floor = getPath(next, key);
+    if (typeof floor !== 'number' || !Object.hasOwn(KIND_BY_AREA, area(key))) throw new Error(`${RATCHET_PATH}에 없는 키: ${key}`);
+    let nv = floor;
+    if (floor === 0) nv = value;
+    else if (area(key) === 'size') nv = Math.min(floor, value);
+    else nv = Math.max(floor, value);
+    if (nv !== floor) {
+      setPath(next, key, nv);
+      changed.push({ key, from: floor, to: nv });
+    }
+  }
+  return { next, changed };
+}
+
+// 옛 기준 → 새 기준에서 느슨해진 키(기준 0으로 되돌린 것, 키 삭제, 허용치 확대 포함)
+export function loosened(oldR, newR) {
+  const out = [];
+  const o = flatten(oldR);
+  const n = flatten(newR);
+  for (const [key, ov] of Object.entries(o)) {
+    if (!Object.hasOwn(KIND_BY_AREA, area(key))) continue;
+    const nv = n[key];
+    if (nv === undefined) out.push(key);
+    else if (ov === 0) continue;
+    else if (nv === 0) out.push(key);
+    else if (area(key) === 'size' ? nv > ov : nv < ov) out.push(key);
+  }
+  for (const [path, wider] of [
+    ['coverage_lines.tolerance_pp', (a, b) => b > a],
+    ['size.tolerance_pct', (a, b) => b > a],
+  ]) {
+    const a = getPath(oldR, path);
+    const b = getPath(newR, path);
+    if (typeof a === 'number' && (typeof b !== 'number' || wider(a, b))) out.push(path);
+  }
+  return out.sort();
+}
+
+// 느슨해진 키 각각이 로그에 더해진 줄(diff의 + 줄)에 글자 그대로 있는지 → 빠진 키
+export function missingLogKeys(keys, addedLines) {
+  return keys.filter((k) => !addedLines.some((l) => l.includes(k)));
+}
+
+// ---- 입출력 ----
+
+const readJson = (p) => JSON.parse(readFileSync(p, 'utf8'));
+
+function loadMeasured(root, kind) {
+  const p = join(root, MEASURE_DIR, `${kind}.json`);
+  if (!existsSync(p)) throw new Error(`${p}가 없다(measure.mjs ${kind}가 먼저 돌아야 한다)`);
+  return readJson(p);
+}
+
+function summary(title, rows, ok) {
+  const lines = rows.map((r) => `| \`${r.key}\` | ${r.floor ?? '—'} | ${r.value} | ${r.state} | ${r.note} |`);
+  const md = `### ratchet ${title}: ${ok ? '통과' : '실패'}\n\n| 키 | 기준 | 측정 | 판정 | 메모 |\n|---|---|---|---|---|\n${lines.join('\n')}\n`;
+  if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, md + '\n');
+}
+
+function cmdCheck(root, kind) {
+  if (!Object.hasOwn(KINDS, kind)) {
+    console.error(`ratchet check: 모르는 종류 ${kind}(${Object.keys(KINDS).join('|')})`);
+    return 2;
+  }
+  const ratchet = readJson(join(root, RATCHET_PATH));
+  const measured = loadMeasured(root, kind);
+  const foreign = Object.keys(measured).filter((k) => area(k) !== KINDS[kind]);
+  if (foreign.length) {
+    console.error(`ratchet check ${kind}: 다른 종류의 키 ${foreign.join(', ')}`);
+    return 2;
+  }
+  const { ok, rows } = judge(ratchet, measured);
+  for (const r of rows) {
+    const mark = { ok: 'ok  ', fail: 'FAIL', unmeasured: 'new ', unknown: 'FAIL' }[r.state];
+    console.log(`${mark} ${r.key.padEnd(28)} 기준 ${String(r.floor ?? '—').padEnd(12)} 측정 ${String(r.value).padEnd(12)} ${r.note}`);
+    if (r.state === 'unmeasured' && process.env.GITHUB_ACTIONS === 'true') console.log(`::notice::ratchet ${r.key}: ${r.note}`);
+  }
+  summary(kind, rows, ok);
+  if (!ok) console.error(`::error::ratchet ${kind}: 기준보다 나빠졌다. 의도한 것이면 ${RATCHET_PATH}를 고치고 ${LOG_PATH}에 키 이름과 이유를 적는다`);
+  return ok ? 0 : 1;
+}
+
+// 폴더 아래 모든 *.json 측정 파일(키 경로 객체)을 합친다. 같은 키가 다른 값으로 두 번 나오면 오류.
+function collectMeasured(dir) {
+  const out = {};
+  const walk = (d) => {
+    for (const e of readdirSync(d, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1))) {
+      const p = join(d, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (Object.keys(KINDS).some((k) => e.name === `${k}.json`)) {
+        for (const [k, v] of Object.entries(readJson(p))) {
+          if (Object.hasOwn(out, k) && out[k] !== v) throw new Error(`측정값이 둘이다: ${k} = ${out[k]} / ${v}`);
+          out[k] = v;
+        }
+      }
+    }
+  };
+  walk(dir);
+  return out;
+}
+
+function cmdWrite(root, from, runId) {
+  let dir = from;
+  let tmp = null;
+  if (runId) {
+    if (!/^\d+$/.test(runId)) {
+      console.error('ratchet write: --from-run은 숫자 run id다');
+      return 2;
+    }
+    tmp = mkdtempSync(join(tmpdir(), 'ratchet-'));
+    const r = spawnSync('gh', ['run', 'download', runId, '--pattern', 'ratchet-measurements-*', '--dir', tmp], { cwd: root, stdio: 'inherit' });
+    if (r.status !== 0) return 2;
+    dir = tmp;
+  }
+  try {
+    if (!dir || !existsSync(dir) || !statSync(dir).isDirectory()) {
+      console.error(`ratchet write: 폴더가 없다: ${dir}`);
+      return 2;
+    }
+    const measured = collectMeasured(dir);
+    const path = join(root, RATCHET_PATH);
+    const { next, changed } = tighten(readJson(path), measured);
+    for (const c of changed) console.log(`${c.key}: ${c.from} → ${c.to}`);
+    if (!changed.length) console.log('바뀐 기준 없음');
+    writeFileSync(path, JSON.stringify(next, null, 2) + '\n');
+    return 0;
+  } finally {
+    if (tmp) rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
+function git(root, args) {
+  return spawnSync('git', args, { cwd: root, encoding: 'utf8', maxBuffer: 1 << 26 });
+}
+
+function cmdLogCheck(root, base) {
+  const b = (base ?? '').trim();
+  if (!b || /^0+$/.test(b)) {
+    console.log('ratchet log-check: 기준 커밋 없음(RATCHET_BASE) — 건너뜀');
+    return 0;
+  }
+  if (!/^[0-9a-f]{7,40}$/i.test(b)) {
+    console.error(`ratchet log-check: RATCHET_BASE가 커밋 SHA가 아니다: ${b}`);
+    return 2;
+  }
+  if (git(root, ['cat-file', '-e', `${b}^{commit}`]).status !== 0) {
+    console.warn(`ratchet log-check: 기준 커밋 ${b}가 이 클론에 없다 — 건너뜀`);
+    return 0;
+  }
+  const old = git(root, ['show', `${b}:${RATCHET_PATH}`]);
+  if (old.status !== 0) {
+    console.log(`ratchet log-check: ${b}에 ${RATCHET_PATH}가 없다 — 처음 만드는 것`);
+    return 0;
+  }
+  const keys = loosened(JSON.parse(old.stdout), readJson(join(root, RATCHET_PATH)));
+  if (!keys.length) {
+    console.log('ratchet log-check: 느슨해진 기준 없음');
+    return 0;
+  }
+  const diff = git(root, ['diff', '--no-color', '--unified=0', b, '--', LOG_PATH]);
+  if (diff.status !== 0) {
+    console.error(`ratchet log-check: git diff 실패: ${diff.stderr}`);
+    return 2;
+  }
+  const added = diff.stdout.split('\n').filter((l) => l.startsWith('+') && !l.startsWith('+++'));
+  const missing = missingLogKeys(keys, added);
+  console.log(`느슨해진 기준: ${keys.join(', ')}`);
+  if (missing.length) {
+    console.error(`::error::ratchet log-check: ${LOG_PATH}에 이유를 적은 줄이 없는 키: ${missing.join(', ')}`);
+    return 1;
+  }
+  console.log(`ratchet log-check: ${LOG_PATH}에 모두 적혀 있다`);
+  return 0;
+}
+
+export function main(argv, env = process.env, root = ROOT) {
+  const [cmd, ...rest] = argv;
+  try {
+    if (cmd === 'check' && rest.length === 1) return cmdCheck(root, rest[0]);
+    if (cmd === 'write' && rest.length === 2 && rest[0] === '--from') return cmdWrite(root, resolve(rest[1]), null);
+    if (cmd === 'write' && rest.length === 2 && rest[0] === '--from-run') return cmdWrite(root, null, rest[1]);
+    if (cmd === 'log-check' && rest.length === 0) return cmdLogCheck(root, env.RATCHET_BASE);
+  } catch (e) {
+    console.error(`ratchet: ${e.message}`);
+    return 2;
+  }
+  console.error('사용법: ratchet.mjs check <coverage|tests|size> | write --from <폴더> | write --from-run <id> | log-check');
+  return 2;
+}
+
+// 심볼릭 링크 경로(/tmp → /private/tmp 등)로 불러도 main이 돌도록 실제 경로로 비교한다. 안 돌면 조용히 0으로 끝난다.
+if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  process.exit(main(process.argv.slice(2)));
+}

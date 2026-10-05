@@ -259,11 +259,13 @@ pub fn reconcile(file: &mut JobsFile) {
 /// 이 작업이 이어받을 수 있는 `.part`의 바이트(sidecar `committed_len`).
 ///
 /// `.part`와 sidecar가 모두 있고 sidecar가 같은 작업(컨텐츠·화질·방식)일 때만 `Some`이다.
+/// `discard_on_start`(처음부터)가 켜져 있으면 늘 `None`이다.
 /// sidecar가 없거나 깨졌거나 다른 작업이면 코어가 재개 때 새로 시작하므로 `None`이다.
 /// (`check_output`은 이와 달리 sidecar가 없으면 `.part` 길이를 보여 준다. 섞지 않는다.)
 /// sidecar는 잠그지 않고 읽기만 한다(`atomic_write`로 쓰이므로 반쯤 쓴 파일은 없다).
 pub fn partial_bytes(j: &JobRecord) -> Option<u64> {
-    if !part_path(&j.output).is_file() {
+    // "처음부터"로 표시된 작업은 다음 시작 때 `.part`를 지우므로 이어받을 것이 없다.
+    if j.discard_on_start || !part_path(&j.output).is_file() {
         return None;
     }
     let sc = read_sidecar(&j.output)?;

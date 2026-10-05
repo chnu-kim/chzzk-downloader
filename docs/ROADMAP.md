@@ -16,7 +16,7 @@
 - 완료: Phase 2 §15-6 시작 때 reconcile(§7.1 표 각 행). 변경은 app.md "구현 중 변경" 27
 - 완료: 코어 `UserSettings`에 `maxParallelDownloads`(1~3, 기본 2)·`autoResumeInterrupted`(기본 꺼짐) 추가(app.md §16, core.md 구현 중 변경 53)
 - 완료: Phase 2 §15-7 `DownloadManager` 큐(설정한 동시 작업 수, FIFO, 이벤트 순서, sink, 구독 스냅샷, 중복 경로). 변경은 app.md "구현 중 변경" 28~29
-- 완료: Phase 2 §15-8 매니저 제어(pause/resume/remove/quit/restart, `check_output`, `partial_bytes`, 재시작 후 자동 이어받기). 변경은 app.md "구현 중 변경" 30
+- 완료: Phase 2 §15-8 매니저 제어(pause/resume/remove/quit/restart, `check_output`, `partial_bytes`, 재시작 후 자동 이어받기). 변경은 app.md "구현 중 변경" 30~31
 - 다음: Phase 2 §15-9 `SettingsService`
 
 ## 확정된 결정 (2026-10-05, 사용자 인터뷰)

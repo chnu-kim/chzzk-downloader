@@ -431,6 +431,51 @@ async fn finished_jobs_are_capped() {
     assert_eq!(list.len(), MAX_FINISHED);
     assert!(list.iter().all(|j| j.id != ids[0]));
     assert!(h.rec.trace(ids[0]).ends_with(&["removed".to_string()]));
+    // 방금 끝난 작업의 Status가 정리(Removed)보다 먼저다
+    let ev = h.rec.events();
+    assert!(matches!(ev.last(), Some(JobEvent::Removed { id }) if *id == ids[0]));
+    assert!(
+        matches!(&ev[ev.len() - 2], JobEvent::Status { job } if job.id == *ids.last().unwrap())
+    );
+}
+
+/// 같은 파일을 가리키는 다른 표기(`.`·겹친 구분자·끝 구분자)도 같은 경로로 본다.
+#[tokio::test(start_paused = true)]
+async fn duplicate_output_normalizes_path_spelling() {
+    let h = Harness::new(1);
+    h.fake
+        .script_for(h.output("a"), Script::new().wait_cancel());
+    let a = h.enqueue("a").id;
+    let base = h.downloads().to_string_lossy().into_owned();
+    let sep = std::path::MAIN_SEPARATOR;
+    for folder in [
+        format!("{base}{sep}.{sep}"),
+        format!("{base}{sep}{sep}"),
+        format!("{base}{sep}"),
+    ] {
+        let mut r = request("a");
+        r.folder = Some(folder.clone());
+        let e = h.mgr.enqueue(r, &h.defaults()).unwrap_err();
+        assert_eq!(
+            e.payload,
+            Some(ErrorPayload::DuplicateOutput { job_id: a }),
+            "{folder}"
+        );
+    }
+}
+
+/// Windows는 `/`와 `\`가 같은 구분자다(옛 Go 설정의 `D:/Videos` 대 폴더 선택기의 `D:\Videos`).
+#[cfg(windows)]
+#[tokio::test(start_paused = true)]
+async fn duplicate_output_unifies_separators_on_windows() {
+    let h = Harness::new(1);
+    h.fake
+        .script_for(h.output("a"), Script::new().wait_cancel());
+    let a = h.enqueue("a").id;
+    let mut r = request("a");
+    r.folder = Some(h.downloads().to_string_lossy().replace('\\', "/"));
+    let e = h.mgr.enqueue(r, &h.defaults()).unwrap_err();
+    assert_eq!(e.payload, Some(ErrorPayload::DuplicateOutput { job_id: a }));
 }
 
 /// 다중 스레드 런타임(앱과 같은 모양)에서도 작업마다 `Added` → `Status(running)` → `Progress`… → `Status(끝)`이다.

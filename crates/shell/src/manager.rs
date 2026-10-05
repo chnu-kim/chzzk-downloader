@@ -172,6 +172,15 @@ impl State {
             .ok_or_else(|| AppError::job_not_found(id))
     }
 
+    /// 제어 동작의 대상. 없으면 `jobNotFound`, 지우는 중이면 `None`(두 번 누른 "취소" 등은 조용히 넘긴다).
+    fn target(&mut self, id: JobId) -> Result<Option<&mut Job>, AppError> {
+        match self.jobs.get_mut(&id) {
+            None => Err(AppError::job_not_found(id)),
+            Some(j) if j.removing => Ok(None),
+            Some(j) => Ok(Some(j)),
+        }
+    }
+
     /// `output`과 같은 파일을 쓰는 활성 작업(`except` 제외).
     fn active_with_output(&self, output: &Path, except: Option<JobId>) -> Option<JobId> {
         let key = output_key(output);
@@ -186,10 +195,15 @@ impl State {
     }
 }
 
-/// 같은 파일인지 비교할 열쇠. Windows·macOS 기본 파일 시스템은 대소문자를 구분하지 않는다.
-/// (macOS의 유니코드 정규화 차이는 보지 않는다. 이름은 모두 같은 코드 경로로 만들어진다.)
+/// 같은 파일인지 비교할 열쇠.
+///
+/// - 경로 구성 요소로 다시 조립해 `.`·겹친 구분자·끝 구분자를 없앤다. Windows는 `/`와 `\`가 하나가 된다
+///   (옛 Go 설정의 `D:/Videos`와 폴더 선택기의 `D:\Videos`가 같은 파일을 가리킨다). `..`는 풀지 않는다.
+/// - Windows·macOS 기본 파일 시스템은 대소문자를 구분하지 않으므로 소문자로 비교한다.
+///   (macOS의 유니코드 정규화 차이는 보지 않는다. 이름은 모두 같은 코드 경로로 만들어진다.)
 pub fn output_key(p: &Path) -> String {
-    let s = p.to_string_lossy();
+    let normalized: PathBuf = p.components().collect();
+    let s = normalized.to_string_lossy();
     if cfg!(any(windows, target_os = "macos")) {
         s.to_lowercase()
     } else {
@@ -371,7 +385,9 @@ impl<B: Backend> DownloadManager<B> {
     /// 이미 멈춘 작업에는 아무것도 하지 않는다.
     pub fn pause(&self, id: JobId) -> Result<(), AppError> {
         let mut st = self.inner.lock();
-        let job = st.visible(id)?;
+        let Some(job) = st.target(id)? else {
+            return Ok(());
+        };
         match job.rec.status {
             JobStatus::Running => {
                 job.stop = Some(StopReason::Pause);
@@ -400,7 +416,9 @@ impl<B: Backend> DownloadManager<B> {
     /// - `queued`·`running`·`pausing`에는 아무것도 하지 않는다. `completed`는 `invalidInput`.
     pub fn resume(&self, id: JobId, restart: bool) -> Result<(), AppError> {
         let mut st = self.inner.lock();
-        let job = st.visible(id)?;
+        let Some(job) = st.target(id)? else {
+            return Ok(());
+        };
         match job.rec.status {
             JobStatus::Paused | JobStatus::Failed | JobStatus::Interrupted | JobStatus::Skipped => {
             }
@@ -467,7 +485,10 @@ impl<B: Backend> DownloadManager<B> {
     pub async fn remove(&self, id: JobId) -> Result<(), AppError> {
         let (handle, output) = {
             let mut st = self.inner.lock();
-            let job = st.visible(id)?;
+            let Some(job) = st.target(id)? else {
+                // 이미 지우는 중이다
+                return Ok(());
+            };
             match job.rec.status {
                 JobStatus::Completed | JobStatus::Skipped => {
                     st.jobs.remove(&id);
@@ -808,9 +829,10 @@ impl<B: Backend> Inner<B> {
                 }
             }
             let dto = job.dto();
+            // Status를 먼저 보낸다. 방금 끝난 작업이 정리 대상이면 Removed가 뒤에 와야 프런트에 유령이 남지 않는다.
+            st.emit(JobEvent::Status { job: dto });
             self.prune_finished(&mut st);
             self.save(&st);
-            st.emit(JobEvent::Status { job: dto });
         }
         self.pump(&mut st);
     }

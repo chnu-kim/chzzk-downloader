@@ -366,6 +366,33 @@ async fn remove_running_waits_then_discards() {
     );
 }
 
+/// 지우는 중에 다시 누른 취소·일시정지·이어받기는 조용히 넘긴다(`jobNotFound` 토스트를 띄우지 않는다).
+#[tokio::test(start_paused = true)]
+async fn controls_during_remove_are_no_ops() {
+    let h = Harness::new(1);
+    h.fake.script_for(
+        h.output("a"),
+        Script::new()
+            .until_cancelled()
+            .linger(Duration::from_millis(50))
+            .fails(Error::Cancelled),
+    );
+    let id = h.enqueue("a").id;
+    settle().await;
+    let mgr = h.mgr.clone();
+    let first = tokio::spawn(async move { mgr.remove(id).await });
+    until("지우는 중", || h.status(id) == JobStatus::Pausing).await;
+    h.mgr.remove(id).await.unwrap();
+    h.mgr.pause(id).unwrap();
+    h.mgr.resume(id, false).unwrap();
+    first.await.unwrap().unwrap();
+    assert!(h.mgr.list().is_empty());
+    assert_eq!(
+        h.rec.trace(id).iter().filter(|t| *t == "removed").count(),
+        1
+    );
+}
+
 #[tokio::test(start_paused = true)]
 async fn remove_stopped_discards_partial() {
     let h = Harness::new(1);

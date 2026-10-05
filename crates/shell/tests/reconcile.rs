@@ -183,6 +183,20 @@ fn skipped_is_untouched() {
     assert_eq!(got[0].partial_bytes, None);
 }
 
+/// "처음부터"로 표시된 작업은 옛 `.part`가 있어도 이어받을 것이 없다(다음 시작 때 지운다).
+#[test]
+fn discard_on_start_hides_partial() {
+    let dir = tempfile::tempdir().unwrap();
+    let o = dir.path().join("a.mp4");
+    write_partial(&o, Some(same_sidecar(64)), 64);
+    let mut r = record(1, JobStatus::Queued, o);
+    r.discard_on_start = true;
+    let got = run(vec![r]);
+    assert_eq!(got[0].status, JobStatus::Interrupted);
+    assert_eq!(got[0].partial_bytes, None);
+    assert!(got[0].discard_on_start);
+}
+
 #[test]
 fn partial_bytes_helper_matches_table() {
     let dir = tempfile::tempdir().unwrap();

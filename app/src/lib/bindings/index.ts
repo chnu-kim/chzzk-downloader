@@ -4,6 +4,7 @@ export type * from "./AppError";
 export type * from "./AppInfo";
 export type * from "./AuthState";
 export type * from "./AuthStatusDto";
+export type * from "./CloseRequestedPayload";
 export type * from "./ContentKind";
 export type * from "./ContentMetaDto";
 export type * from "./ContentRef";

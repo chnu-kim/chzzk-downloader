@@ -3,6 +3,7 @@
 //! 설계 기준은 `docs/design/app.md`다. 프런트로 가는 타입은 `dto`·`error`에 있고, TS 정의는
 //! `bindings::export`가 `app/src/lib/bindings`에 만든다(`tests/bindings.rs`가 최신인지 검사한다).
 
+pub mod app;
 pub mod backend;
 pub mod bindings;
 pub mod dto;
@@ -15,6 +16,7 @@ pub mod ownership;
 pub mod services;
 mod writer;
 
+pub use app::App;
 pub use backend::Backend;
 pub use dto::JobId;
 pub use error::{AppError, ErrorCode, ErrorPayload, RequestKindDto, Stage};

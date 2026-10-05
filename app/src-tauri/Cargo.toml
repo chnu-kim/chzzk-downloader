@@ -19,8 +19,21 @@ tauri-plugin-dialog = "2.8.1"
 tauri-plugin-opener = "2.7.0"
 tauri-plugin-notification = "2.5.1"
 tauri-plugin-clipboard-manager = "2.4.1"
+chzzk-core = { path = "../../crates/core" }
+chzzk-shell = { path = "../../crates/shell" }
 serde = { version = "1.0.229", features = ["derive"] }
-tokio = { version = "1.53.2", default-features = false, features = ["rt"] }
+tokio = { version = "1.53.2", default-features = false, features = ["rt", "sync"] }
+tracing = "0.1.44"
+tracing-appender = "0.2.5"
+tracing-subscriber = { version = "0.3.23", default-features = false, features = ["ansi", "env-filter", "fmt", "registry", "std"] }
+
+[dev-dependencies]
+tauri = { version = "2.12.1", features = ["test"] }
+serde_json = "1.0.151"
+tempfile = "3.27.0"
+url = "2.5.8"
+wiremock = "0.6.5"
+tokio = { version = "1.53.2", default-features = false, features = ["macros", "rt", "rt-multi-thread", "sync"] }
 
 [target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
 tauri-plugin-single-instance = "2.5.2"

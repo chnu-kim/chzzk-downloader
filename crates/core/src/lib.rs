@@ -1,0 +1,43 @@
+//! 치지직 VOD·클립 다운로드 코어.
+//!
+//! Tauri에 의존하지 않는다. 진행률은 콜백, 취소는 `CancellationToken`으로 셸과 연결한다.
+//! 설계 기준은 `docs/design/core.md`다.
+
+pub mod client;
+pub mod credentials;
+pub mod download;
+pub mod error;
+pub mod fsutil;
+pub mod hls;
+pub mod http;
+pub mod info;
+pub mod legacy;
+pub mod model;
+pub mod mpd;
+pub mod naming;
+pub mod ownership;
+pub mod progress;
+pub mod settings;
+pub mod url;
+
+#[cfg(test)]
+mod testutil;
+
+pub use client::{Chzzk, ClientConfig, Endpoints};
+pub use credentials::CredentialStore;
+pub use download::{
+    DownloadOutcome, DownloadRequest, DuplicatePolicy, RetryPolicy, discard_partial,
+};
+pub use error::{Error, ErrorKind, Unsupported};
+pub use http::{NaverCookies, RequestKind, Secret};
+pub use info::Playback;
+pub use legacy::{LegacyImport, import_legacy};
+pub use model::{
+    ContentKind, ContentMeta, ContentRef, PdRep, PlaybackKind, Quality, Resolved, Source,
+};
+pub use naming::Platform;
+pub use ownership::is_own_content;
+pub use progress::{Meter, Phase, Progress};
+pub use settings::{RecentVod, SettingsStore, UserSettings, add_recent_vod};
+pub use tokio_util::sync::CancellationToken;
+pub use url::parse_content_url;

@@ -71,6 +71,8 @@ MPD 요청은 위 헤더에 `Accept: application/dash+xml, application/xml, */*`
 
 `GetCookieHeaders()` 결과 중 `User-Agent`, `Referer`, `Cookie`만, 값이 빈 문자열이 아닐 때 보낸다. pstatic CDN에도 NID 쿠키를 보낸다는 점에 유의한다.
 
+> **정정(설계 §12-8)**: Rust는 미디어 요청에 쿠키를 **보내지 않는다**(UA·Referer만). HLS CDN은 서명만으로 받아지고(research §7), 비성인 PD mp4도 쿠키·Referer 없이 200/206임을 실측했다. 성인 PD는 미실측이며, 필요하면 `ClientConfig.cookies_on_media`로 되돌린다.
+
 ### 2.3 공통 동작과 누락
 
 - `http.Client{}` / `http.DefaultClient`: **타임아웃과 취소가 없다.**
@@ -153,6 +155,7 @@ fixture `testdata/hls/video_info.json`로 확인했다. research에 따르면 �
 1. 응답 body를 `map[string]interface{}`로 다시 파싱하고 `content.liveRewindPlaybackJson`을 문자열로 꺼낸다. 문자열이 아니거나 비어 있으면 `liveRewindPlaybackJson 정보가 없습니다`. `content`가 object가 아니면 `content 필드가 올바르지 않습니다`
 2. 그 문자열을 다시 JSON으로 파싱한다(이중 인코딩).
 3. `media`가 배열이 아니거나 비어 있으면 `HLS 미디어 정보가 없습니다`. **`media[0]`만** 쓴다.
+   - **정정(설계 §12-11)**: Rust는 `media[0]`에 고정하지 않고 `protocol == "HLS"`인 첫 항목을 쓴다. 없으면 `Unsupported(NoHlsMedia)`.
 
 **GetVODQualities** (`vod.go:169-186`):
 - `media[0].encodingTrack`이 배열이 아니면 `encodingTrack 정보가 없습니다`
@@ -218,6 +221,7 @@ pub fn parse_content_url(url: &str) -> Result<ContentRef, UrlError>;   // url cr
 pub struct ContentMeta { title: String, channel_name: String, channel_id: Option<String>,
                          live_open_date: Option<String>, adult: Option<bool> }
 pub enum Playback {
+    Encrypted { method: String, video_id: String },            // encryptionType 있음(정정 §12-2)
     LiveRewind { media_path: String, tracks: Vec<HlsTrack> }, // inKey 없음
     Dash { video_id: String, in_key: String },                 // inKey 있음
 }
@@ -233,8 +237,10 @@ pub fn select_source(r: &Resolved, quality_id: &str) -> Result<VodSource, Error>
 // VodSource { url, kind: Progressive | Hls { variant_url } }
 ```
 
+> **정정(설계 §12-2)**: `Playback`에 `Encrypted`를 더했다. 판정 순서는 `encryptionType` → `inKey` → `liveRewindPlaybackJson`이다(AES VOD에도 `inKey`가 있으므로 `encryptionType`을 먼저 본다, 9000003 실측). 이 분기는 순수 함수 `info::classify` 한 곳에만 있다. `select_source`는 동기 함수로 두지 않고 `Chzzk::download` 안에서 재조회 결과의 variant·rep를 고른다. 확정 API는 `docs/design/core.md` §3.
+
 - 선택 규칙은 **`rep.id` 정확 일치**와 PD 필터다. 숫자열 추출은 버린다.
-  - 근거: `vod.go:380-382`의 작성자 주석과 research §10의 관찰(비암호화 VOD 4개의 MPD에 `video/mp4` PD_1080P/PD_720P/PD_144P + `video/mp2t` + `audio/mp4`). 다만 VOD MPD **fixture 파일은 아직 없다**(§10.1). 확보하면 PD 필터 테스트를 VOD에도 건다.
+  - 근거: `vod.go:380-382`의 작성자 주석과 research §10의 관찰(비암호화 VOD 4개의 MPD에 `video/mp4` PD_1080P/PD_720P/PD_144P + `video/mp2t` + `audio/mp4`). VOD MPD fixture는 `testdata/vod/`로 확보했고 PD 필터 테스트(`mpd::vod_pd_filter`)를 VOD에도 걸었다(정정 §12-12).
 - HLS도 `quality_id`(encodingTrackId)로 variant를 고르게 한다. variant URI의 첫 디렉토리 이름이 encodingTrackId와 같다(`720p/hdntl=.../vod_chunklist.m3u8`, research §3).
 - 서명 URL이 만료되므로 `resolve`는 다운로드 직전에 다시 호출한다. Go처럼 목록 조회 때 받은 URL을 오래 들고 있지 않는다.
 - 재조회 사이에 재생 종류가 바뀔 수 있다(빠른 다시보기 → 인코딩 완료 후 `inKey` 생김). Go는 이때 `"720p"`에서 `720`을 뽑아 DASH `resolution` 라벨과 **우연히** 맞춘다. Rust는 목록 때의 `Playback` 종류와 다르면 화질 목록을 다시 보여 주거나 오류를 낸다.
@@ -285,6 +291,7 @@ pub fn select_source(r: &Resolved, quality_id: &str) -> Result<VodSource, Error>
 - **어디서도 정렬하지 않는다.** 목록은 MPD나 encodingTrack 순서 그대로다.
 - 기본 선택(main.go:252-307): `Height`를 정수로 바꿨을 때 값이 가장 큰 항목(같으면 앞의 것)이 "최고 품질"이다. 모든 Height가 0이거나 정수가 아니면 index 0이다. `LastQualityName`과 `Quality` 문자열이 정확히 같은 첫 항목이 있으면 그것이 우선한다.
   - golden: 빠른 다시보기 fixture(§4.1 표)는 index 4(`1080p`), 클립 fixture는 index 0(`PD_720P_...`, Height 1280. 세로 영상이라 Height가 해상도 라벨과 다르다)
+- **정정(설계 §12-3)**: Rust의 기본 선택은 `Height`가 아니라 `resolution`(짧은 변 라벨, DASH `Label[kind=resolution]`, HLS `min(videoWidth, videoHeight)`)이 가장 큰 항목이고, 없으면 `height`다. 마지막 화질은 `Quality` 문자열이 아니라 `label`(`"720p"`)로 비교한다(`Resolved::default_quality`).
 
 ---
 
@@ -299,6 +306,7 @@ pub fn select_source(r: &Resolved, quality_id: &str) -> Result<VodSource, Error>
 5. 파일을 먼저 닫고(Windows에서 열린 파일은 지울 수 없다), copy 오류나 close 오류가 있으면 `os.Remove(outputFile)` 뒤 오류를 반환한다.
    - 오류 문자열: `다운로드 중 오류: ...` / `파일 저장 실패: ...`
    - Content-Length보다 짧게 끊기면 Go transport가 `unexpected EOF`를 내므로 삭제 경로로 간다. **Rust에서는 명시해야 한다**: Content-Length를 알고 `written != Content-Length`면 오류를 내고 파일을 지운다.
+   - **정정(설계 §12-5)**: Rust는 실패·취소 시 **`.part`(+ sidecar)를 보존하고 최종 파일은 만들지 않는다**. 다음 실행이 Range로 이어받는다. 지우는 것은 받은 바이트가 틀렸음이 증명된 오류(`Error::is_resumable() == false`)뿐이다. 상태 코드를 확인하기 전에는 `.part`를 만들지 않는다.
 6. 성공하면 최종 진행률을 한 번 출력한다.
 7. 프로세스가 강제 종료되면 최종 파일명으로 부분 파일이 남는다. 다음 실행의 중복 검사는 이 파일을 "완성된 파일"로 보고 건너뛰기를 제안한다(버그).
 
@@ -348,7 +356,8 @@ pub fn select_source(r: &Resolved, quality_id: &str) -> Result<VodSource, Error>
 Rust 대체 요구사항(ROADMAP Phase 1):
 - master playlist에서 encodingTrackId에 해당하는 variant를 고르고, media playlist의 세그먼트를 차례로 받아 이어 붙인다. 사전 조사 결과(`docs/research/hls-live-rewind.md`, fixture `testdata/hls/`): **fMP4**(`EXT-X-MAP` init + `.m4v` 세그먼트, 오디오·비디오 muxed), `EXT-X-KEY` 없음, 모든 URI는 상대경로, 서명은 master의 `hdnts` 쿼리와 media·세그먼트 경로 안의 `hdntl=...` 디렉토리다. UA·Referer·쿠키는 필요 없다. 지원하지 않는 태그(DISCONTINUITY, 두 번째 MAP, KEY)를 만나면 실패한다.
 - 진행률은 세그먼트 수와 누적 바이트로, ETA는 세그먼트 비율로 계산한다.
-- 실패하면 `.part`를 지우거나, 재개 가능하게 남긴다.
+  - **정정(설계 §12-4)**: ETA는 세그먼트 수가 아니라 **EXTINF 누적 비율**(받은 미디어 초 / 전체 미디어 초)로 계산한다. 마지막 세그먼트가 짧아도 왜곡되지 않는다.
+- 실패하면 `.part`를 지우거나, 재개 가능하게 남긴다.(→ 남긴다. 정정 §12-5)
 
 ### 6.3 중복 파일 처리 (`CheckDuplicateFileDirect`, `common.go:83-125`)
 
@@ -460,6 +469,8 @@ autoFilename = SanitizeFilename(위 문자열)
 
 Rust/Tauri에서는 `app_config_dir()`나 `app_data_dir()`로 옮긴다. 실행 파일 디렉토리는 macOS `.app`이나 Program Files에서 쓰기가 막힐 수 있다. 첫 실행 때 옛 위치에서 마이그레이션하는 것을 검토한다.
 
+> **정정(설계 §12-6)**: 첫 실행 때의 자동 마이그레이션(`current_exe().parent()`를 한 번 살핌)은 best-effort다. 새 앱은 옛 exe 위치를 모르므로 **설정 화면의 "이전 버전 설정 가져오기"(폴더 선택)가 주 경로**다. 둘 다 `chzzk_core::import_legacy(dir)`를 쓴다(읽기 전용, 원본 보존).
+
 ### 7.2 `settings.json`: `UserSettings` (`config.go:26-35`)
 
 `json.MarshalIndent(_, "", "  ")`로 쓰고, 권한은 `0644`다.
@@ -547,6 +558,7 @@ ok  	chzzk-downloader/internal/downloader	1.383s
 - **TestDownloadDirectMP4_Non200DeletesPartial**: 404이면 오류를 반환하고 출력 파일이 없어야 한다.
   - 한계: Go는 상태 검사(`direct.go:37`)가 `os.Create`(`:41`)보다 앞이라 삭제 경로를 실제로 거치지 않는다.
   - **추가 권장**: 스트림 중간에 끊기는 경우(Content-Length보다 적게 보내고 연결을 닫음)에 오류를 내고 파일이 없는지 확인하는 테스트(`:55`, `:59` 경로)
+  - **정정(설계 §12-5)**: Rust 테스트는 "파일 삭제"가 아니라 "**`.part` 보존, 최종 파일 없음**"을 본다(`progressive::truncated_body_resumes`). 404는 상태 확인이 먼저라 `.part`도 sidecar도 만들지 않는다(`progressive::status_404_creates_nothing`).
 - **TestComputeSpeedETA**
   - (1MiB, 2MiB, 1s) → speed와 eta가 비어 있지 않음. golden은 `1.0 MB/s`, `00:00:01`
   - (1024, 2048, 0) → Go는 panic이 없는지만 보고 `t.Logf`만 한다. **Rust는 `("", "")`를 assert한다.**
@@ -581,7 +593,7 @@ ok  	chzzk-downloader/internal/downloader	1.383s
 2. **클립 URL** (`clip.go:50-57`): `/embed/clip/`이면 ID가 `clip`이 되고, `#frag`가 남고, 호스트 검사가 없다. path 세그먼트 기준으로 `clips/{id}` 또는 `embed/clip/{id}`만 허용한다.
 3. **DASH 화질 선택 불일치** (§4.3, `vod.go:222-250`과 `:370-405`): 숫자열 추출 대신 `rep.id` 정확 일치와 PD 필터를 쓰고 클립과 공유한다.
 4. **HLS 화질 무시** (`vod.go:328-334`): encodingTrackId로 variant를 고른다.
-5. **unchecked type assertion으로 인한 panic** (`vod.go:169`, `:176`, `:177`, `:328`): serde 구조체와 `Option`으로 바꾼다.
+5. **unchecked type assertion으로 인한 panic** (`vod.go:169`, `:176`, `:177`, `:328`): serde 구조체와 `Option`으로 바꾼다. `media[0]` 고정 대신 `protocol == "HLS"`인 첫 항목을 쓴다(정정 §12-11).
 6. **`%v` float 포맷** (`vod.go:181-184`): `3e+06`, `<nil>`. 숫자 필드(`videoBitRate`, `videoWidth`, `videoHeight`)는 `Option<u64>`로 둔다. `videoFrameRate`는 실물에서 문자열(`"60.0"`)이므로 `Option<String>`으로 받고 필요하면 따로 파싱한다.
 7. **HTTP 상태 미검사** (`vod.go:117-135`, `:206-219`, `clip.go:231-237`): 2xx가 아니면 상태 코드를 담은 오류를 낸다. 401/403은 "인증 필요" 오류 종류로 분리한다. main의 성인 오류 판정(`main.go:204-207`)은 서버 message 문자열에 "성인/adult/unauthorized/인증"이 우연히 들어 있어야만 동작한다. Go 쪽 오류 문자열 중에는 이 단어를 만드는 것이 없다.
 8. **타임아웃/취소 없음**: connect와 read 타임아웃을 두고 취소 토큰을 지원한다(GUI 취소 버튼).
@@ -594,9 +606,11 @@ ok  	chzzk-downloader/internal/downloader	1.383s
 15. **`PrepareOutputPath` 대소문자** (`common.go:132-133`): `a__MP4`면 확장자가 붙지 않는다. `__mp4` 레거시 규칙 자체를 없애고 확장자는 코어가 결정한다.
 16. **파일명 형식** (main.go:235-244): `[YYMMDD_HHMMSS]`는 버리고 `YYYY-MM-DD`를 쓰며, 대괄호는 sanitize로 `_`가 된다. 형식을 새로 정한다(열린 질문). sanitize 규칙에서 `[]()`를 금지 문자에서 뺄지도 같이 정한다(Windows에서는 합법적인 문자다).
 17. **`SanitizeFilename` 보강** (`utils.go:12-42`): Windows 예약어(`CON`, `PRN`, `AUX`, `NUL`, `COM1-9`, `LPT1-9`), 끝의 `.`과 공백, 그 밖의 제어문자(U+0000-001F), 길이 제한(255바이트, 확장자 보존), 두 번 적용하는 문제를 처리한다.
+    - **정정(설계 §12-7)**: 길이 제한은 255바이트가 아니라 **UTF-8 200바이트**다(`.part.json` 접미사 몫과 한글 3바이트 여유). 예약어·끝 `.`/공백 규칙은 **Windows 프로필에만** 적용한다(`sanitize_filename(name, Platform)`).
 18. **`FormatLiveDate` panic** (`utils.go:71`, `y[2:]`): `chrono`로 파싱하고 실패하면 날짜 없이 처리한다.
 19. **`SecondsToHms` 음수** (`utils.go:109-114`): `-1`이 `00:00:-1`이 된다. `u64`를 받게 한다.
 20. **평문 자격증명 중복 저장** (settings.json의 `nidAut`/`nidSes`와 cookie.json, 권한 `0644`): 한 곳(가능하면 OS 키체인, 아니면 `0600` 파일)에만 저장한다. 미디어 CDN에 쿠키를 보내야 하는지 확인하고, 필요 없으면 API에만 보낸다(`core.go:57-66`).
+    - **정정(설계 §12-8)**: 키체인은 쓰지 않고 `{config_dir}/credentials.json`(Unix `0600`, `CredentialStore`) 하나에만 저장한다(미서명 배포의 macOS ACL 프롬프트, Linux secret-service 의존 때문). 미디어에는 쿠키를 보내지 않는다(§2.2 정정).
 21. **설정 쓰기 경쟁** (`config.go:197-206`): Load-수정-Save에 잠금이 없고 원자적 쓰기도 아니다. 임시 파일과 rename을 쓰고, 단일 소유자(Tauri state)만 쓴다.
 22. **중복 조회**: Go는 화질 목록용과 URL용으로 info와 MPD를 두 번씩 받는다. 서명 URL이 만료되므로 재조회 자체는 맞다. 다만 같은 코드를 두 벌 두지 말고 `resolve()` 하나를 재사용한다.
 23. **ffmpeg 경로의 data race** (`hls.go:156`, `:177`): 경로 자체를 버리므로 기록만 남긴다.
@@ -617,7 +631,7 @@ ok  	chzzk-downloader/internal/downloader	1.383s
 
 ## 10. 열린 질문·추가로 확보할 것
 
-1. **fixture 부족**: 빠른 다시보기(inKey 없음)는 `testdata/hls/`로 확보했다. **일반 VOD(inKey 있음)의 info JSON과 MPD는 아직 fixture 파일이 없다.** 남은 확인 사항:
+1. **fixture 부족**: 빠른 다시보기(inKey 없음)는 `testdata/hls/`로 확보했다. ~~일반 VOD(inKey 있음)의 info JSON과 MPD는 아직 fixture 파일이 없다.~~ **정정(설계 §12-12)**: 일반 VOD의 info와 MPD는 `testdata/vod/`로 확보했다(`video/mp4` PD_144P·PD_720P + `video/mp2t` + `audio/mp4`, `ContentProtection` 없음). AES 지원 여부는 설계 §11(기본값 거부). 당시 남은 확인 사항:
    - VOD MPD fixture 파일 확보. research §10은 비암호화 VOD 4개에서 `PD_*` + `/pd/` rep를 관찰했다. 이 관찰을 테스트로 고정해야 Rust PD 필터를 VOD에도 확정할 수 있다.
    - `encryptionType: "AES"` VOD를 지원할지(research §11.1). 지원하지 않으면 §3.1처럼 info 단계에서 명확한 오류를 낸다.
    - `media[]`에 둘 이상이 오는 경우가 있는지(표본에서는 1개)
@@ -625,5 +639,5 @@ ok  	chzzk-downloader/internal/downloader	1.383s
    - 참고: research §10은 AES VOD에서 Go가 "원하는 품질의 BaseURL을 찾을 수 없습니다"로 실패한다고 적었지만, 실제로는 그 전에 `GetVODQualities`가 빈 목록을 돌려주고 main이 `사용 가능한 품질 정보를 찾지 못했습니다`에서 멈춘다(§3.1).
 2. **성인/구독자 전용 컨텐츠 오류 형태**: 쿠키가 없을 때 info API가 어떤 code와 message를 주는지, `inKey`와 `liveRewindPlaybackJson`이 비어서 오는지
 3. **파일명 형식**: 현재 `_YYYY-MM-DD_ 채널 제목.mp4`(사실상 의도치 않은 결과)를 유지할지, `[YYMMDD_HHMMSS]`나 `[YYYY-MM-DD]`로 바꿀지
-4. **미디어 요청 Cookie**: HLS CDN(`navercdn.com`)은 UA·Referer·쿠키 없이 URL 서명만으로 받아진다(research §7). PD mp4의 pstatic CDN이 쿠키 없이도 받아지는지는 아직 확인하지 않았다.
+4. **미디어 요청 Cookie**: HLS CDN(`navercdn.com`)은 UA·Referer·쿠키 없이 URL 서명만으로 받아진다(research §7). PD mp4의 pstatic CDN이 쿠키 없이도 받아지는지는 아직 확인하지 않았다. **정정(설계 §12-8)**: 비성인 PD는 쿠키·Referer 없이 받아짐을 실측했다(2026-10-05, 9000002·9000006·클립 TestClip01). Rust는 미디어에 쿠키를 보내지 않는다. 성인 PD는 미실측(`cookies_on_media` 스위치로 대비).
 5. **문서 정합성**: `CLAUDE.md`가 옛 내용이다(streamlink, `DownloadHLS`, 이어받기, 주석 처리된 `ensureDependencies` 호출 모두 현재 코드에 없음). Phase 1에서 함께 갱신한다.

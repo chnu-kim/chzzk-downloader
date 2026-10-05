@@ -6,8 +6,14 @@
 
 - `git-filter-repo` 2.47 이상(`pip install git-filter-repo`)과 Node 18 이상.
 - 저장소 밖 비공개 보관소의 파일 세 개. **원문(실제 이름·ID·토큰·개인 이메일)이나 대입으로 되돌릴 수 있는 해시가 들어 있어 저장소에 커밋하지 않는다.** 아래 명령은 이 파일들을 `../`에 복사해 두었다고 본다.
-  - `filter-repo-replacements.txt`: 실제 채널 이름·채널 ID·영상 번호·영상 ID·클립 ID·inKey·스트림 경로 키·제목·미디어 호스트·비공개 형제 프로젝트 이름, 옛 테스트에 남았던 실제 시각·길이·세그먼트 이름, 옛 문서의 로컬 임시 경로를 합성 fixture와 같은 가짜 값(`testdata/README.md`)으로 바꾸는 줄, 암호화 키 주소와 AES 조사 줄을 지우는 줄, 그리고 아래의 일반 규칙이다.
+  - `filter-repo-replacements.txt`: 실제 채널 이름·채널 ID·영상 번호·영상 ID·클립 ID·inKey·스트림 경로 키·제목·미디어 호스트·비공개 형제 프로젝트 이름, 옛 테스트에 남았던 실제 시각·길이·세그먼트 이름, 옛 문서의 로컬 임시 경로를 합성 fixture와 같은 가짜 값(`testdata/README.md`)으로 바꾸는 줄, 암호화 키 주소와 AES 조사 줄을 지우는 줄, 그리고 아래의 일반 규칙이다. 원문은 fixture 밖에도 있었으므로 아래 "원문 집합"으로 빠짐없이 채운다.
+  - 원문 집합(2026-10-05에 이력 전체 blob을 뽑아 대조한 결과). fixture·삭제 경로 **밖**의 옛 blob에 남아 있어 `--replace-text`로만 지워지는 것들이다:
+    - 영상 번호: 설계 문서 "구현 중 변경"의 스모크 기록(`docs/design/core.md` 5개, `docs/spec/core-behavior.md` 3개), 옛 코어 테스트·`model.rs`·`crates/shell/tests/secrets.rs`의 fixture 영상 번호 2개, OAuth 조사의 영상 번호 1개. 재생 정보의 `liveId`·`streamSeq`(8자리)도 영상 번호와 같이 다룬다.
+    - 32자리 채널 ID 10개(`info.rs`·`ownership.rs`·spec·OAuth 조사), 36자리 영상 ID 4개, 클립 ID 4개(`url.rs`·`clip_test.go`·OAuth 조사 포함), inKey 3개(`V1…` 모양, `info.rs`·`resolve.rs`), hmac 64자리와 그 앞부분 조각(`hls.rs`·`core.md` 인용), `st=`/`exp=` 시각, 스트림 경로 키(30자리), 세그먼트 이름(`144p_…_…`).
+    - 채널 이름 3개와 제목 4개(`naming.rs`·`info.rs`·`resolve.rs`·spec·`core.md`), 미디어·CDN 호스트 6개(비공개 원문 목록에만 적는다)와 썸네일 URL의 base64 경로 조각, 형제 프로젝트 이름(`chzzk-oauth.md`·`ROADMAP.md`), 암호화 키 주소(`core.md`·spec), 개인 이메일(mailmap과 별개로 본문에도 있으면).
+    - 치환 파일을 만든 뒤에는 아래 "확인"의 원문 대조 명령으로 이력에서 한 번 더 찾는다.
   - `private-denylist.txt`: 위 원문들(채널 이름·영상 번호·클립 ID·제목 구절·미디어 호스트·세그먼트 번호·태그 등)의 해시. `printf '%s\n' '<원문>' | node scripts/ci/public-scan.mjs --hash`로 만든다. 공개 `scripts/ci/public-denylist.txt`에는 되돌릴 수 없는 `blob:` 해시만 둔다(salt가 공개돼 있어 짧은 원문의 해시는 사전 대입으로 풀린다).
+  - `private-values.txt`: 치환 파일의 왼쪽 값(원문)만 한 줄에 하나씩 모은 목록. 아래 "확인"의 원문 대조에 쓴다.
   - `mailmap.txt`: 옛 커밋의 개인 이메일을 GitHub noreply 주소로 바꾸는 한 줄. `chnu-kim <114627259+chnu-kim@users.noreply.github.com> <개인 이메일>` 모양이다.
   - 원문이 없는 일반 규칙(그대로 옮겨 둔다):
 
@@ -58,7 +64,8 @@ git filter-repo \
 - 옛 `scripts/ci/public-denylist.txt` 버전도 같은 방법으로 지운다. 그 파일이 처음 생긴 커밋에서는 파일이 빠진다.
 - `--mailmap`이 모든 커밋의 작성자·커미터 이메일을 noreply 주소로 바꾼다.
 - 그 결과 옛 커밋에서는 fixture 파일이 빠져 테스트가 돌지 않는다. 마지막 커밋만 빌드·테스트 대상이다.
-- 태그(`v0.2.0`, `v0.2.1`)도 다시 쓰인다. 공개할지 정해서 push한다.
+- 태그(`v0.2.0`, `v0.2.1`)는 master의 조상이라 `--single-branch` 클론에도 따라오고, 다시 쓰인다. 공개할지 정해서 push한다.
+- `LICENSE`는 옛 커밋("remove docs")에서 지워져 지금 트리에 없다. 공개 저장소에 둘 라이선스를 정해 push 전에 더한다.
 
 ## 확인
 
@@ -74,6 +81,11 @@ git log --all --format='%ae%n%ce' | sort -u
 
 # 옛 denylist 버전이 남지 않았다: 출력이 없어야 한다
 git log --all -p -- scripts/ci/public-denylist.txt | grep -E '^\+[0-9a-f]{64}$'
+
+# 원문 대조: 비공개 원문 목록(한 줄에 하나, 치환 파일의 왼쪽 값)을 이력 전체 blob에서 찾는다. 출력이 없어야 한다
+git rev-list --objects --all | awk 'NF==2{print $1}' | sort -u \
+  | while read h; do [ "$(git cat-file -t "$h")" = blob ] && git cat-file -p "$h" | LC_ALL=C grep -F -q -f ../private-values.txt && echo "남음: $h"; done
+git log --all --format='%H %s%n%b' | LC_ALL=C grep -F -f ../private-values.txt
 
 # 현재 트리 검사와 게이트
 node scripts/ci/public-scan.mjs

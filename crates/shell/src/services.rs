@@ -231,15 +231,27 @@ impl SettingsService {
     ///
     /// 동시 작업 수를 매니저에 반영하려면 `update_and_apply`를 쓴다.
     pub fn update(&self, patch: SettingsPatch) -> Result<SettingsDto, AppError> {
-        let _ops = lock(&self.ops);
+        let ops = lock(&self.ops);
+        self.update_locked(&ops, patch)
+    }
+
+    /// `ops` 잠금을 쥔 채 부른다.
+    fn update_locked(
+        &self,
+        _ops: &MutexGuard<'_, ()>,
+        patch: SettingsPatch,
+    ) -> Result<SettingsDto, AppError> {
         let folder = match patch.download_folder {
             Nullable::Keep => None,
             Nullable::Clear => Some(None),
             Nullable::Set(s) => Some(Some(absolute_dir(&s, "저장 폴더")?)),
         };
         let current = self.store.get();
+        // 실제로 쿠키를 보내는지와 비교한다. 설정은 켜짐인데 저장 쿠키를 못 읽어 쿠키 없이 시작했으면
+        // `true` 패치가 쿠키를 다시 읽어 바꿔 끼운다(조용한 무시가 되지 않게).
+        let sending = current.use_naver_cookies && self.sending_cookies();
         let new_client = match patch.use_naver_cookies {
-            Some(on) if on != current.use_naver_cookies => {
+            Some(on) if on != sending => {
                 let cookies = if on {
                     match self.creds.load()? {
                         Some(c) => Some(c),
@@ -280,12 +292,16 @@ impl SettingsService {
     }
 
     /// `update`한 뒤 동시 작업 수를 매니저에 반영한다(늘리면 바로 대기 작업이 시작된다).
+    ///
+    /// 저장과 반영을 `ops` 잠금 하나 안에서 해, 동시에 온 패치가 저장 순서와 다른 순서로 매니저에
+    /// 반영되지 않게 한다(매니저 값 = 마지막으로 저장된 값).
     pub fn update_and_apply<B: Backend>(
         &self,
         patch: SettingsPatch,
         manager: &DownloadManager<B>,
     ) -> Result<SettingsDto, AppError> {
-        let dto = self.update(patch)?;
+        let ops = lock(&self.ops);
+        let dto = self.update_locked(&ops, patch)?;
         manager.set_max_parallel(dto.max_parallel_downloads);
         Ok(dto)
     }
@@ -302,9 +318,14 @@ impl SettingsService {
         let cookies = NaverCookies::new(aut, ses);
         let _ops = lock(&self.ops);
         // 저장하기 전에 헤더로 보낼 수 있는지 본다. 값은 메시지에 넣지 않는다.
-        let with_cookies = self.build(Some(cookies.clone())).map_err(|_| {
-            AppError::invalid_input("쿠키 값에 쓸 수 없는 문자가 있습니다. 다시 복사해 주세요")
-        })?;
+        let with_cookies = match self.try_build(Some(cookies.clone()))? {
+            Ok(c) => c,
+            Err(()) => {
+                return Err(AppError::invalid_input(
+                    "쿠키 값에 쓸 수 없는 문자가 있습니다. 다시 복사해 주세요",
+                ));
+            }
+        };
         self.creds.save(&cookies)?;
         let s = self.store.get();
         if s.use_naver_cookies {
@@ -327,8 +348,9 @@ impl SettingsService {
     /// `import_legacy`. `dir`이 `None`이면 첫 실행 후보 폴더(없으면 `Ok(None)`).
     ///
     /// 옛 값이 있는 항목(폴더·마지막 화질·마지막 주소)만 덮고, 최근 VOD는 지금 목록 뒤에 옛 목록을 붙여
-    /// 5개로 자른다. 동시 작업 수 같은 새 설정은 그대로 둔다. 옛 쿠키가 있으면 저장하고 옛 "성인 컨텐츠" 값으로
-    /// 사용 여부를 정한 뒤 클라이언트를 바꾼다. 헤더로 보낼 수 없는 옛 쿠키는 건너뛰고 경고를 남긴다.
+    /// 5개로 자른다. 동시 작업 수 같은 새 설정은 그대로 둔다. 옛 쿠키는 **저장된 쿠키가 없을 때만** 저장하고
+    /// 그때만 옛 "성인 컨텐츠" 값으로 사용 여부를 정한다(이미 있으면 지금 쿠키·사용 여부를 지키고 경고).
+    /// 헤더로 보낼 수 없는 옛 쿠키는 건너뛰고 경고를 남긴다. 설정 저장이 실패하면 방금 저장한 옛 쿠키를 지운다.
     pub fn import_legacy(&self, dir: Option<&str>) -> Result<Option<LegacyImportDto>, AppError> {
         let _ops = lock(&self.ops);
         let dir = match dir {
@@ -343,11 +365,21 @@ impl SettingsService {
         };
         let mut warnings = li.warnings.clone();
         let cookies = match li.cookies {
-            Some(c) if self.build(Some(c.clone())).is_ok() => Some(c),
-            Some(_) => {
-                warnings.push("옛 쿠키 값에 쓸 수 없는 문자가 있어 건너뛰었습니다".to_string());
+            // 깨진 credentials.json은 쓸 수 없으므로 없는 것으로 본다.
+            Some(_) if matches!(self.creds.load(), Ok(Some(_))) => {
+                warnings.push(
+                    "이미 저장된 네이버 로그인 정보가 있어 옛 쿠키는 가져오지 않았습니다"
+                        .to_string(),
+                );
                 None
             }
+            Some(c) => match self.try_build(Some(c.clone()))? {
+                Ok(_) => Some(c),
+                Err(()) => {
+                    warnings.push("옛 쿠키 값에 쓸 수 없는 문자가 있어 건너뛰었습니다".to_string());
+                    None
+                }
+            },
             None => None,
         };
         if let Some(c) = &cookies {
@@ -355,7 +387,7 @@ impl SettingsService {
         }
         let old = &li.settings;
         let has_cookies = cookies.is_some();
-        let s = self.store.update(|s| {
+        let saved = self.store.update(|s| {
             if old.download_folder.is_some() {
                 s.download_folder.clone_from(&old.download_folder);
             }
@@ -375,7 +407,17 @@ impl SettingsService {
             }
             s.recent_vods.truncate(MAX_RECENT_VODS);
             s.imported_from.clone_from(&old.imported_from);
-        })?;
+        });
+        let s = match saved {
+            Ok(s) => s,
+            Err(e) => {
+                // 가져오기가 실패했으므로 방금 저장한 옛 쿠키를 되돌린다(전에는 저장된 쿠키가 없었다).
+                if has_cookies && let Err(ce) = self.creds.clear() {
+                    tracing::warn!(error = %ce, "가져오기 실패 뒤 옛 쿠키를 지우지 못함");
+                }
+                return Err(e.into());
+            }
+        };
         let saved = if s.use_naver_cookies {
             load_cookies(&self.creds)
         } else {
@@ -426,7 +468,8 @@ impl SettingsService {
         SettingsDto {
             download_folder: s.download_folder.as_deref().map(path_string),
             effective_download_folder: path_string(&effective_folder(s, &self.default_download)),
-            use_naver_cookies: s.use_naver_cookies,
+            // 실제로 쿠키를 보낼 때만 켜짐이다(저장 쿠키를 못 읽어 쿠키 없이 시작했으면 꺼짐으로 보인다).
+            use_naver_cookies: s.use_naver_cookies && self.sending_cookies(),
             naver_cookies_saved: matches!(self.creds.load(), Ok(Some(_))),
             last_quality_label: s.last_quality_label.clone(),
             last_url: s.last_url.clone(),
@@ -443,6 +486,24 @@ impl SettingsService {
             cookies,
             ..self.base.clone()
         })?)
+    }
+
+    /// 쿠키로 클라이언트를 만든다. 쿠키를 헤더로 보낼 수 없으면 `Ok(Err(()))`, 다른 실패(HTTP 클라이언트
+    /// 초기화·엔드포인트)는 그대로 `Err`. 코어는 `Chzzk::new`에서 `Error::Settings`를 쿠키 헤더 검사에서만 낸다.
+    fn try_build(&self, cookies: Option<NaverCookies>) -> Result<Result<Chzzk, ()>, AppError> {
+        match Chzzk::new(ClientConfig {
+            cookies,
+            ..self.base.clone()
+        }) {
+            Ok(c) => Ok(Ok(c)),
+            Err(chzzk_core::Error::Settings(_)) => Ok(Err(())),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// 지금 클라이언트가 쿠키를 보내는지.
+    fn sending_cookies(&self) -> bool {
+        self.client().config().cookies.is_some()
     }
 
     fn swap(&self, c: Chzzk) {

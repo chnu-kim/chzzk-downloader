@@ -565,19 +565,20 @@ test('LOOPS 제목은 원인을 단정하지 않고, kind별 할 일 문구가 �
   assert.equal(threshold(NEEDS_LOOPS['drift-log'], ['log_canary']), 1);
 });
 
-test('release report: 태그 실행은 release 고리, 리허설의 preflight 멈춤은 설계대로', async () => {
+test('release report: 태그 실행은 release 고리, 리허설은 stage까지 녹색이어야 ok(예외 규칙 없음)', async () => {
   const { releaseStatus, releaseScope } = await import('./issue.mjs');
   const ok = { result: 'success', outputs: {} };
-  const needs = (o) => JSON.stringify({ gate: ok, 'build-linux': ok, 'smoke-linux': ok, build: ok, 'sign-publish': ok, verify: ok, 'deploy-worker': { result: 'skipped' }, ...o });
+  const skip = { result: 'skipped', outputs: {} };
+  const needs = (o) => JSON.stringify({ gate: ok, xtask: ok, 'build-linux': ok, 'smoke-linux': ok, build: ok, stage: ok, 'sign-publish': ok, verify: ok, 'deploy-worker': skip, ...o });
   assert.deepEqual(releaseStatus('tag', needs({})), { loop: 'release', status: 'ok', jobs: [] });
   assert.deepEqual(releaseStatus('tag', needs({ verify: { result: 'failure' } })), { loop: 'release', status: 'fail', jobs: ['verify'] });
-  // 태그 실행에서 preflight 멈춤은 실패다(시크릿이 없으면 배포되지 않았다)
-  const pre = { result: 'failure', outputs: { stopped: 'preflight' } };
-  assert.equal(releaseStatus('tag', needs({ 'sign-publish': pre, verify: { result: 'skipped' } })).status, 'fail');
-  assert.deepEqual(releaseStatus('rehearsal', needs({ 'sign-publish': pre, verify: { result: 'skipped' } })), { loop: 'release-rehearsal', status: 'ok', jobs: [] });
-  // 리허설에서 preflight 밖의 실패(빌드·스모크, preflight를 지난 sign-publish)는 연다
-  assert.deepEqual(releaseStatus('rehearsal', needs({ 'sign-publish': pre, build: { result: 'failure' } })).jobs, ['build']);
-  assert.deepEqual(releaseStatus('rehearsal', needs({ 'sign-publish': { result: 'failure', outputs: { stopped: '' } } })).jobs, ['sign-publish']);
+  // 태그 실행에서 시크릿이 없어 sign-publish가 멈추면 실패다(배포되지 않았다)
+  assert.deepEqual(releaseStatus('tag', needs({ 'sign-publish': { result: 'failure', outputs: {} }, verify: { result: 'failure' } })).jobs, ['sign-publish', 'verify']);
+  // 리허설: sign-publish·verify는 건너뛰고 stage까지 녹색이면 ok
+  assert.deepEqual(releaseStatus('rehearsal', needs({ 'sign-publish': skip, verify: skip })), { loop: 'release-rehearsal', status: 'ok', jobs: [] });
+  assert.deepEqual(releaseStatus('rehearsal', needs({ stage: { result: 'failure' }, 'sign-publish': skip, verify: skip })).jobs, ['stage']);
+  // 예전 preflight 멈춤 표식(outputs.stopped)은 더 이상 실패를 가리지 않는다
+  assert.deepEqual(releaseStatus('rehearsal', needs({ 'sign-publish': { result: 'failure', outputs: { stopped: 'preflight' } } })).jobs, ['sign-publish']);
   assert.equal(releaseStatus('rehearsal', needs({ 'smoke-linux': { result: 'cancelled' } })).status, 'fail');
   assert.throws(() => releaseStatus('x', needs({})));
   assert.throws(() => releaseStatus('tag', '{}'));

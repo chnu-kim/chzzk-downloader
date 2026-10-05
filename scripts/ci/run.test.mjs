@@ -8,7 +8,6 @@ import { classify, decideCiOk, firstSemver, forceFail, hookGates, runGate } from
 test('classify: 문서만 바뀌면 code=false', () => {
   assert.deepEqual(classify(['docs/design/cicd.md', 'README.md', 'CLAUDE.md', '.claude/x.json', 'LICENSE']), {
     code: false,
-    release: false,
     docs_only: true,
   });
 });
@@ -37,15 +36,13 @@ test('classify: 코드·설정·모르는 경로는 code=true', () => {
 });
 
 test('classify: 목록이 없거나 비면 전부 실행(fail-safe)', () => {
-  assert.deepEqual(classify(null), { code: true, release: true, docs_only: false });
-  assert.deepEqual(classify([]), { code: true, release: true, docs_only: false });
+  assert.deepEqual(classify(null), { code: true, docs_only: false });
+  assert.deepEqual(classify([]), { code: true, docs_only: false });
 });
 
-test('classify: release 경로', () => {
-  assert.equal(classify(['xtask/src/main.rs']).release, true);
-  assert.equal(classify(['release/updater.pub']).release, true);
-  assert.equal(classify(['.github/workflows/release.yml']).release, true);
-  assert.equal(classify(['crates/core/src/lib.rs']).release, false);
+test('classify: 릴리스 경로를 따로 가르지 않는다', () => {
+  // 릴리스 경로만 따로 가르는 출력은 없다(쓰는 작업이 없으면 죽은 출력이다, 리뷰 G6)
+  assert.equal('release' in classify(['xtask/src/main.rs']), false);
 });
 
 const ok = { result: 'success', outputs: {} };
@@ -186,11 +183,14 @@ test('hookGates: 바뀐 경로로 조건부 gate를 고른다', () => {
   assert.deepEqual(hookGates('pre-push', ['crates/core/src/lib.rs']), ['rust', 'fuzz-lock']);
   assert.deepEqual(hookGates('pre-push', ['app/src/App.svelte']), ['frontend']);
   assert.deepEqual(hookGates('pre-push', ['app/src-tauri/src/lib.rs']), []);
-  assert.deepEqual(hookGates('pre-push', ['scripts/ci/run.mjs']), ['scripts-test']);
+  // run.mjs는 release.mjs의 import 그래프에 있다(release-selftest도 돈다)
+  assert.deepEqual(hookGates('pre-push', ['scripts/ci/run.mjs']), ['release-selftest', 'scripts-test']);
+  assert.deepEqual(hookGates('pre-push', ['scripts/ci/issue.mjs']), ['scripts-test']);
   assert.deepEqual(hookGates('pre-push', ['Cargo.lock']), ['rust', 'release-selftest', 'deny', 'fuzz-lock']);
   assert.deepEqual(hookGates('pre-push', ['xtask/src/s3.rs']), ['rust', 'release-selftest']);
   assert.deepEqual(hookGates('pre-push', ['scripts/ci/release.mjs']), ['release-selftest', 'scripts-test']);
   assert.deepEqual(hookGates('pre-commit', ['release/updater.pub']), ['typos', 'pubkey']);
+  assert.deepEqual(hookGates('pre-commit', ['release/tauri.release.json']), ['typos', 'pubkey']);
   assert.deepEqual(hookGates('pre-commit', ['app/src-tauri/tauri.conf.json']), ['typos', 'versions', 'pubkey']);
   assert.deepEqual(hookGates('pre-push', ['fuzz/fuzz_targets/url.rs']), ['fuzz-lock']);
   // 훅·.gitattributes만 바뀌어도 parity(인덱스 모드 100755 등)를 본다

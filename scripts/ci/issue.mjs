@@ -567,16 +567,15 @@ export function reportLoop(env, gh, { deny, now = Date.now(), loops = NEEDS_LOOP
 // ---- release.yml report ----
 
 // 릴리스 실행의 needs → { loop, status, jobs }(순수). 태그 실행은 release 고리: 실패·취소가 하나라도 있으면 fail, 아니면 ok.
-// 리허설(schedule·dispatch)은 release-rehearsal 고리: sign-publish가 preflight에서 멈춘 것(outputs.stopped == 'preflight')은
-// 설계대로이고 그 뒤 작업의 skipped도 그렇다. 그 밖의 실패·취소만 fail이다.
+// 리허설(schedule·dispatch)은 release-rehearsal 고리로 같은 규칙이다: 리허설은 stage(가짜 S3 publish·verify)에서 녹색으로 끝나고
+// sign-publish 뒤는 건너뛴다(skipped는 실패가 아니다). 예외 규칙을 두지 않는다(리뷰 G6: 늘 빨간 리허설은 진짜 회귀를 가린다).
 export const RELEASE_REPORT_JOB = 'report';
 export function releaseStatus(mode, needsJson) {
   const needs = JSON.parse(needsJson);
   if (!needs || typeof needs !== 'object' || Array.isArray(needs) || !Object.keys(needs).length) throw new Error('NEEDS가 비었거나 객체가 아니다');
   if (!['tag', 'rehearsal'].includes(mode)) throw new Error(`RELEASE_MODE는 tag|rehearsal: ${mode}`);
   const bad = Object.entries(needs)
-    .filter(([id, v]) => ['failure', 'cancelled'].includes(v?.result))
-    .filter(([id, v]) => !(mode === 'rehearsal' && id === 'sign-publish' && v?.outputs?.stopped === 'preflight'))
+    .filter(([, v]) => ['failure', 'cancelled'].includes(v?.result))
     .map(([id]) => id)
     .sort();
   return { loop: mode === 'tag' ? 'release' : 'release-rehearsal', status: bad.length ? 'fail' : 'ok', jobs: bad };

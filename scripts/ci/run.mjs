@@ -7,7 +7,7 @@
 //   node scripts/ci/run.mjs install-hooks     # git config core.hooksPath .githooks
 //   node scripts/ci/run.mjs hook <pre-commit|commit-msg|pre-push> [git 인자]  # .githooks/*가 부른다(gates.mjs HOOKS)
 //   node scripts/ci/run.mjs install-tool <t>  # tools.json download의 릴리스 파일을 받아 sha256 확인 후 설치(CI는 GITHUB_PATH에 더한다)
-//   node scripts/ci/run.mjs changes           # (CI) 바뀐 경로로 code/release/docs_only 출력
+//   node scripts/ci/run.mjs changes           # (CI) 바뀐 경로로 code/docs_only 출력
 //   node scripts/ci/run.mjs ci-ok             # (CI) env NEEDS(toJSON(needs))로 집계 판정
 //
 // 종료 코드: gate가 낸 첫 0이 아닌 코드. 도구가 없으면 로컬은 0(경고), CI는 2. 사용법 오류 2.
@@ -164,14 +164,12 @@ export function runGate(name, extra = [], env = process.env, { input } = {}) {
 
 // 문서로 보는 경로의 허용 목록. 여기에 맞지 않는 파일이 하나라도 있으면 code다(모르는 경로도 code, 안전한 쪽).
 // *.md 전체가 아니라 루트의 *.md만 문서다: testdata/README.md처럼 테스트가 읽는 .md가 있다.
-const RELEASE = [/^xtask\//, /^release\//, /^\.github\/workflows\/(release|rollback)\.yml$/];
-
-// 바뀐 파일 목록 → { code, release, docs_only }. 목록이 없으면(판단 불가) 전부 실행한다.
+// 바뀐 파일 목록 → { code, docs_only }. 목록이 없으면(판단 불가) 전부 실행한다. 릴리스 경로만 따로 가르지 않는다: 릴리스 빌드는
+// 코드가 바뀐 모든 PR에서 돈다(bundle-linux, 리뷰 G6. 따로 고른 경로 목록은 의존 파일이 빠진다).
 export function classify(files) {
-  if (!files || files.length === 0) return { code: true, release: true, docs_only: false };
+  if (!files || files.length === 0) return { code: true, docs_only: false };
   const code = files.some((f) => !NON_CODE.some((re) => re.test(f)));
-  const release = files.some((f) => RELEASE.some((re) => re.test(f)));
-  return { code, release, docs_only: !code };
+  return { code, docs_only: !code };
 }
 
 const ZERO = /^0+$/;
@@ -193,7 +191,7 @@ export const forceFail = (env = process.env) => env.CI_FORCE_FAIL === 'true';
 
 function cmdChanges(env = process.env) {
   const { files, why } = changedFiles(env);
-  const c = forceFail(env) ? { code: false, release: false, docs_only: false } : classify(files);
+  const c = forceFail(env) ? { code: false, docs_only: false } : classify(files);
   if (forceFail(env)) console.log('::warning::force_fail: 무거운 작업을 건너뛰고 ci-ok를 실패시킨다(고리 확인용)');
   const out = Object.entries(c).map(([k, v]) => `${k}=${v}`);
   console.log(why ? `전부 실행: ${why}` : `바뀐 파일 ${files.length}개`);
@@ -498,7 +496,7 @@ export function main(argv, env = process.env) {
       if (rest.length) return 2;
       return import('./issue.mjs').then((m) => m.reportLoop(env, m.realGh(env)));
     case 'report-release':
-      // release.yml report 작업: 태그 실행은 release 고리, 리허설은 release-rehearsal 고리(preflight 멈춤은 설계대로)
+      // release.yml report 작업: 태그 실행은 release 고리, 리허설은 release-rehearsal 고리
       if (rest.length) return 2;
       return import('./issue.mjs').then((m) => m.releaseReport(env, m.realGh(env)));
     case 'drift-log-check':

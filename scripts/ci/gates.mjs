@@ -348,12 +348,16 @@ export const GATES = {
     ],
   },
   'release-xtask': {
-    desc: 'xtask 빌드(시크릿 없는 단계. 시크릿이 있는 단계는 빌드하지 않고 이 바이너리만 부른다)',
+    desc: 'xtask 빌드 → target/ci/xtask-bin + sha256 출력(시크릿·환경 없는 작업. 시크릿 작업은 컴파일하지 않고 sha256을 맞춘 이 바이너리만 부른다)',
     needs: ['cargo'],
     steps: [{ cmd: ['node', S('release.mjs'), 'xtask'] }],
   },
+  'release-stage': {
+    desc: '받은 3 OS 릴리스 산출물(target/ci/release-in)로 publish → verify를 가짜 S3에(임시 키, 시크릿·환경 없음). 리허설은 여기서 끝난다(업로드 경계)',
+    steps: [{ cmd: ['node', S('release.mjs'), 'stage'] }],
+  },
   'release-preflight': {
-    desc: '릴리스 시크릿·변수가 모두 있는지(없으면 "릴리스 시크릿 없음: <이름들>…"으로 실패, 리허설은 늘 여기서 멈춘다)',
+    desc: '릴리스 시크릿·변수가 모두 있는지(없으면 "릴리스 시크릿 없음: <이름들>…"으로 실패). 태그 실행 sign-publish의 첫 단계',
     steps: [{ cmd: ['node', S('release.mjs'), 'preflight'] }],
   },
   'release-publish': {
@@ -361,7 +365,7 @@ export const GATES = {
     steps: [{ cmd: ['node', S('release.mjs'), 'publish'] }],
   },
   'release-verify': {
-    desc: '올린 객체를 다시 받아 해시·서명·스키마·버전·latest.json 확인. 실패하면 RELEASE_PREV로 rollback하고 1',
+    desc: 'latest.json 상태로 결정표(full|superseded|not-promoted)를 고른 뒤 다시 받아 해시·서명·스키마·버전 확인. 판정 실패면 RELEASE_PREV(없으면 releases/<v>/previous)로 rollback하고 1, 기반 시설 오류는 되돌리지 않고 2',
     steps: [{ cmd: ['node', S('release.mjs'), 'verify'] }],
   },
   'release-rollback': {
@@ -373,7 +377,7 @@ export const GATES = {
     steps: [{ cmd: ['node', S('release.mjs'), 'worker'] }],
   },
   'release-selftest': {
-    desc: '가짜 S3(s3-fake.mjs, SigV4 검증·조건부 쓰기)에 합성 산출물로 릴리스 경로 시나리오: happy path, CAS·단조 증가, 변조 → rollback(latest.json 바이트 동일), 재실행 멱등, preflight 메시지, 첫 릴리스 되돌리기',
+    desc: '가짜 S3(s3-fake.mjs, SigV4 검증·조건부 쓰기·장애 주입)에 합성 산출물로 release.mjs publish·verify·rollback 진입점을 하위 프로세스로: happy path, CAS·단조 증가, 변조 → previous로 rollback(latest.json 바이트 동일), 재실행 멱등, preflight·경계, 일시·계속 5xx와 응답 잃은 CAS, superseded·not-promoted, 되돌리기·다시 올리기',
     needs: ['cargo'],
     steps: [{ cmd: ['node', S('release.mjs'), 'selftest'] }],
   },
@@ -391,6 +395,11 @@ export const COMMANDS = ['changes', 'ci-ok', 'doctor', 'drift-log-check', 'hook'
 //   paths 중 하나에 맞을 때만 도는 gate. fastSkip: CHZZK_HOOK_FAST=1이면 when을 건너뛴다(always는 끌 수 없다).
 // parity가 보는 훅·워크플로·진입점 표(빠르다)
 const HOOK_FILES = [/^\.githooks\//, /^\.gitattributes$/, /^\.github\//, /^scripts\/ci\/(?:gates\.mjs|tools\.json)$/];
+// pubkey gate(release.mjs checkPubkey)가 읽는 파일. release.test.mjs가 checkPubkey가 읽는 경로와 맞춘다
+export const PUBKEY_FILES = [/^release\/updater\.pub$/, /^release\/tauri\.release\.json$/, /^app\/src-tauri\/tauri(\.[a-z0-9-]+)?\.conf\.json$/];
+// release-selftest가 기대는 파일: xtask, release/ 표, release.mjs와 그 상대 import 전부(release.test.mjs가 import 그래프로
+// 이 목록이 빠짐없는지 확인한다, 리뷰 G6), Cargo.lock(xtask 의존성)
+export const RELEASE_SELFTEST_FILES = [/^xtask\//, /^release\//, /^scripts\/ci\/(release|s3-fake|bundle|smoke|version-check|gates|run|push-guard|snapshot|public-scan)\.mjs$/, /^Cargo\.lock$/];
 const VERSION_FILES = [/(^|\/)Cargo\.toml$/, /^app\/package\.json$/, /^app\/src-tauri\/tauri\.conf\.json$/];
 export const HOOKS = {
   'pre-commit': {
@@ -400,7 +409,7 @@ export const HOOKS = {
       { gate: 'typos', paths: [/./] },
       { gate: 'workflows', paths: [/^\.github\//, /^zizmor\.yml$/] },
       { gate: 'versions', paths: VERSION_FILES },
-      { gate: 'pubkey', paths: [/^release\/updater\.pub$/, /^app\/src-tauri\/tauri(\.[a-z0-9-]+)?\.conf\.json$/] },
+      { gate: 'pubkey', paths: PUBKEY_FILES },
       { gate: 'fixtures', paths: [/^testdata\//, /^scripts\/fixtures\//] },
       { gate: 'parity', paths: HOOK_FILES },
     ],
@@ -411,7 +420,7 @@ export const HOOKS = {
     fastSkip: true,
     when: [
       { gate: 'rust', paths: [/^crates\//, /^xtask\//, /^release\//, /^testdata\//, /^Cargo\.(toml|lock)$/, /^rust-toolchain\.toml$/, /^\.cargo\//] },
-      { gate: 'release-selftest', paths: [/^xtask\//, /^release\//, /^scripts\/ci\/(release|s3-fake|bundle)\.mjs$/, /^Cargo\.lock$/] },
+      { gate: 'release-selftest', paths: RELEASE_SELFTEST_FILES },
       { gate: 'frontend', paths: [/^app\/(?!src-tauri\/)/] },
       { gate: 'scripts-test', paths: [/^scripts\//, /^\.githooks\//, /^\.gitattributes$/] },
       { gate: 'deny', paths: [/^Cargo\.lock$/, /^deny\.toml$/, /(^|\/)Cargo\.toml$/] },
@@ -440,11 +449,12 @@ export const NON_CODE = [/^docs\//, /^[^/]+\.md$/, /^\.claude\//, /^LICENSE(\.[^
 export const NON_CODE_GLOBS = ['docs/**', '*.md', '.claude/**', 'LICENSE', 'LICENSE.*'];
 
 // changes.code == 'false'일 때 건너뛰는 작업(ci.yml 작업 id). ci-ok는 이 작업들의 skipped만 허용한다.
-export const CODE_GATED_JOBS = ['supply', 'rust', 'frontend', 'tauri', 'coverage'];
+export const CODE_GATED_JOBS = ['supply', 'rust', 'frontend', 'tauri', 'coverage', 'bundle-linux', 'smoke-install-linux'];
 
 // pull_request에서는 돌지 않는 작업(ci.yml 작업 id, `if: github.event_name != 'pull_request'`). push(master)·dispatch에서
-// 돈다. ci-ok는 pull_request에서만 이 작업들의 skipped를 허용한다(docs/design/cicd.md §2 "bundle (3 OS; push master만)").
-export const MASTER_ONLY_JOBS = ['bundle', 'bundle-linux', 'smoke-install-linux'];
+// 돈다. ci-ok는 pull_request에서만 이 작업들의 skipped를 허용한다. Linux 릴리스 번들·설치 스모크는 PR에서도 돈다(CODE_GATED_JOBS,
+// 리뷰 G6: 릴리스 빌드를 깨는 PR이 녹색으로 머지되지 않게). macOS·Windows는 push master에서만.
+export const MASTER_ONLY_JOBS = ['bundle'];
 
 // D14 관찰 중인 작업(docs/design/cicd.md §1 D14, 구현 중 변경 36). 결정적이라고 설계했어도 러너 환경 요인은 실측으로만
 // 드러나므로 2주 동안 ci-ok에 넣지 않고 지켜본다. 값은 작업 if 종류('code' = CODE_IF, 'master' = MASTER_IF)다.

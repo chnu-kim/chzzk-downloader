@@ -117,10 +117,12 @@ test('job-if: code로 건너뛰는 작업은 CODE_GATED_JOBS와 같다', () => {
 
 test('job-if: PR에서 건너뛰는 작업은 MASTER_ONLY_JOBS와 같고 report는 ci-ok 뒤다', () => {
   const MIF = "    if: github.event_name != 'pull_request' && needs.changes.outputs.code == 'true'\n";
-  // bundle-linux를 PR에서도 돌게 하면 MASTER_ONLY_JOBS와 달라진다
-  assert.ok(rulesFor(once(`  bundle-linux:\n    name: bundle (linux)\n    needs: changes\n${MIF}`, '  bundle-linux:\n    name: bundle (linux)\n    needs: changes\n')).includes('job-if'));
+  // macOS·Windows bundle을 PR에서도 돌게 하면 MASTER_ONLY_JOBS와 달라진다
+  assert.ok(rulesFor(once(`    needs: changes\n${MIF}`, '    needs: changes\n')).includes('job-if'));
+  // bundle-linux를 다시 master 전용으로 돌리면 CODE_GATED_JOBS·MASTER_ONLY_JOBS와 달라진다(리뷰 G6: PR에서 릴리스 빌드)
+  assert.ok(rulesFor(once("  bundle-linux:\n    name: bundle (linux)\n    needs: changes\n    if: needs.changes.outputs.code == 'true'\n", `  bundle-linux:\n    name: bundle (linux)\n    needs: changes\n${MIF}`)).includes('job-if'));
   // master 전용 작업이 changes를 needs에 두지 않음
-  assert.ok(rulesFor(once(`    needs: [changes, bundle-linux]\n${MIF}`, `    needs: [bundle-linux]\n${MIF}`)).includes('job-if'));
+  assert.ok(rulesFor(once(`    needs: changes\n${MIF}`, `    needs: [lint]\n${MIF}`)).includes('job-if'));
   // report의 if를 바꿈, report가 ci-ok 뒤가 아님
   assert.ok(rulesFor(once("(github.event_name == 'workflow_dispatch' && inputs.loop_test))", "github.event_name == 'workflow_dispatch')")).includes('job-if'));
   assert.ok(rulesFor(once('    needs: [ci-ok, e2e-web, e2e-native]\n', '    needs: [changes, e2e-web, e2e-native]\n')).includes('ci-ok'));

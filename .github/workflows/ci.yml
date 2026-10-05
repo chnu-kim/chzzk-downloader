@@ -5,8 +5,9 @@ name: ci
 # 일어난다: push·dispatch는 CHANGES_BASE가 비어 늘 전부 돌므로, master의 녹색 ci-ok는 그 커밋을 빌드했다는 뜻이다.
 # 모든 run:은 setup(autocrlf·rustup·apt)을 빼면 `node scripts/ci/run.mjs <gate>`만 부른다(parity gate가 강제).
 # 도구 버전은 scripts/ci/tools.json, Rust 툴체인은 rust-toolchain.toml이 원천이다.
-# bundle·smoke-install 작업은 pull_request에서 돌지 않는다(push master·dispatch). report는 ci-ok 뒤에 master 실패 이슈를
-# 열고 닫는다(docs/design/cicd.md §4).
+# bundle 작업은 릴리스 설정(release/tauri.release.json, 임시 키, collect --release)으로 만든다(release-build gate, release.yml과
+# 같다). Linux 번들·설치 스모크는 코드가 바뀐 PR에서도 돌아 릴리스 빌드를 깨는 PR이 녹색으로 머지되지 않는다(리뷰 G6).
+# macOS·Windows 번들은 push master·dispatch에서만 돈다. report는 ci-ok 뒤에 master 실패 이슈를 열고 닫는다(docs/design/cicd.md §4).
 
 on:
   pull_request:
@@ -45,7 +46,6 @@ jobs:
       contents: read # checkout
     outputs:
       code: ${{ steps.classify.outputs.code }}
-      release: ${{ steps.classify.outputs.release }}
       docs_only: ${{ steps.classify.outputs.docs_only }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -459,11 +459,12 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
-  # 릴리스 번들(Linux). glibc 하한을 위해 ubuntu 22.04 컨테이너에서 만든다. 설치 스모크는 24.04 호스트(smoke-install-linux)
+  # 릴리스 번들(Linux, 릴리스 설정). glibc 하한을 위해 ubuntu 22.04 컨테이너에서 만든다. 설치 스모크는 24.04 호스트(smoke-install-linux).
+  # 코드가 바뀐 PR에서도 돈다(CODE_GATED_JOBS): 릴리스 설정·collect --release·updater 서명·크기 기준을 머지 전에 본다
   bundle-linux:
     name: bundle (linux)
     needs: changes
-    if: github.event_name != 'pull_request' && needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04
     container:
       image: ubuntu:22.04@sha256:5ec03bb3441e8b0bf3b4f9cd4629a1ae763010dc3035bb8da3ae6cf026486401
@@ -499,8 +500,8 @@ jobs:
         with:
           workspaces: ". -> target"
           save-if: ${{ github.ref == 'refs/heads/master' }}
-      - name: bundle
-        run: node scripts/ci/run.mjs bundle
+      - name: release-build
+        run: node scripts/ci/run.mjs release-build
       - name: glibc-floor
         if: ${{ !cancelled() }}
         run: node scripts/ci/run.mjs glibc-floor
@@ -528,7 +529,7 @@ jobs:
   smoke-install-linux:
     name: smoke-install (linux)
     needs: [changes, bundle-linux]
-    if: github.event_name != 'pull_request' && needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04
     # smoke.mjs installBudgetMs('linux')(20분) + 준비. smoke.test.mjs가 비교한다
     timeout-minutes: 30
@@ -553,7 +554,7 @@ jobs:
       - name: smoke-install
         run: node scripts/ci/run.mjs smoke-install
 
-  # 릴리스 번들(macOS·Windows): 만들고 → 위생·크기 → 설치 스모크까지 한 작업에서 한다
+  # 릴리스 번들(macOS·Windows, 릴리스 설정): 만들고 → 위생·크기 → 설치 스모크까지 한 작업에서 한다(push master·dispatch)
   bundle:
     name: bundle (${{ matrix.os }})
     needs: changes
@@ -586,8 +587,8 @@ jobs:
           node-version: 24
           cache: pnpm
           cache-dependency-path: app/pnpm-lock.yaml
-      - name: bundle
-        run: node scripts/ci/run.mjs bundle
+      - name: release-build
+        run: node scripts/ci/run.mjs release-build
       - name: release-hygiene
         if: ${{ !cancelled() }}
         run: node scripts/ci/run.mjs release-hygiene
@@ -628,7 +629,7 @@ jobs:
       contents: read # checkout
     steps:
       # 저장소 코드를 받기 전에 식만으로 판정한다. run.mjs(PR이 고칠 수 있는 코드)가 망가져도 이 단계가 막는다.
-      # push·dispatch는 skipped를 하나도 허용하지 않는다. pull_request는 bundle류(MASTER_ONLY_JOBS)의 skipped와,
+      # push·dispatch는 skipped를 하나도 허용하지 않는다. pull_request는 macOS·Windows bundle(MASTER_ONLY_JOBS)의 skipped와,
       # changes.code == 'false'일 때 무거운 작업(CODE_GATED_JOBS)의 skipped만 허용한다. 이 식은 parity가 글자 그대로 요구한다.
       - name: guard
         if: >-
@@ -637,7 +638,7 @@ jobs:
           || contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
           || (github.event_name != 'pull_request' && contains(needs.*.result, 'skipped'))
           || (needs.changes.outputs.code != 'false'
-          && (needs.supply.result == 'skipped' || needs.rust.result == 'skipped' || needs.frontend.result == 'skipped' || needs.tauri.result == 'skipped' || needs.coverage.result == 'skipped'))
+          && (needs.supply.result == 'skipped' || needs.rust.result == 'skipped' || needs.frontend.result == 'skipped' || needs.tauri.result == 'skipped' || needs.coverage.result == 'skipped' || needs.bundle-linux.result == 'skipped' || needs.smoke-install-linux.result == 'skipped'))
         run: exit 1
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

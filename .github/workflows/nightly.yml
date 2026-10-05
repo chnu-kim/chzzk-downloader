@@ -4,7 +4,7 @@ name: nightly
 # 바뀌어 빨개질 수 있는 검사를 PR 밖에서 돌리고, 실패하면 작업마다 이슈를 열고 다음 녹색에 닫는다(issue.mjs, report 작업).
 #   매일(17 18 * * *): nightly e2e-native (linux), nightly drift, nightly advisories, nightly pins, nightly ruleset-drift,
 #                       nightly fuzz
-#   매주(47 18 * * 0): nightly e2e-native (windows), nightly toolchain
+#   매주(47 18 * * 0): nightly e2e-native (windows), nightly toolchain, nightly mutants(shard 4개 → 합 → ratchet)
 #   - e2e-native (linux): ci.yml e2e-native(코드 PR·master)와 같은 gate다(러너 이미지가 바뀌어도 매일 확인한다).
 #     PR에서는 ci.yml이 돌리므로 여기서는 돌지 않는다.
 #   - e2e-native (windows): 매주, 그리고 코드가 바뀐 PR(paths-ignore = gates.mjs NON_CODE_GLOBS, parity pr-paths).
@@ -31,9 +31,9 @@ on:
         description: "이 작업만 돌린다(all이면 매일 작업 전부, 매주 작업은 weekly도 켜야 돈다)"
         type: choice
         default: all
-        options: [all, e2e-native, drift, advisories, pins, ruleset-drift, fuzz, toolchain]
+        options: [all, e2e-native, drift, advisories, pins, ruleset-drift, fuzz, toolchain, mutants]
       weekly:
-        description: "only=all일 때 매주 작업(Windows 네이티브 E2E, toolchain)도 돌린다"
+        description: "only=all일 때 매주 작업(Windows 네이티브 E2E, toolchain, mutants)도 돌린다"
         type: boolean
         default: false
       simulate:
@@ -244,8 +244,13 @@ jobs:
     if: github.event.schedule == '17 18 * * *' || (github.event_name == 'workflow_dispatch' && (inputs.only == 'all' || inputs.only == 'ruleset-drift'))
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    # 저장소 설정 읽기는 Administration 읽기 권한이 필요하다(GITHUB_TOKEN은 403, 실측 37341605288). PAT RULESET_READ_TOKEN은
+    # 환경 audit(배포 브랜치 master만)에만 둔다. 없으면 GITHUB_TOKEN으로 읽다가 kind auth로 실패해 이슈가 할 일을 알린다.
+    environment: ${{ github.ref == 'refs/heads/master' && 'audit' || '' }}
     permissions:
       contents: read # checkout
+    outputs:
+      kinds: ${{ steps.check.outputs.kinds }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -253,10 +258,11 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
-      - name: ruleset-drift
+      - id: check
+        name: ruleset-drift
         run: node scripts/ci/run.mjs ruleset-drift
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.RULESET_READ_TOKEN || github.token }}
 
   # cargo-fuzz 4 target(url·info·mpd·hls), 고정 nightly(tools.json rust-nightly), target당 300초. crash 입력은 artifact로.
   fuzz:
@@ -305,11 +311,83 @@ jobs:
       - name: toolchain
         run: node scripts/ci/run.mjs toolchain
 
+  # 살아남은 mutant(§2 mutants, 매주): chzzk-core를 shard 4개로 나눠 돌리고(약 190개씩) 합을 ratchet mutants_missed와 비교한다.
+  mutants-shard:
+    name: nightly mutants shard (${{ matrix.shard }})
+    if: github.event.schedule == '47 18 * * 0' || (github.event_name == 'workflow_dispatch' && ((inputs.only == 'all' && inputs.weekly) || inputs.only == 'mutants'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    permissions:
+      contents: read # checkout
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ["0/4", "1/4", "2/4", "3/4"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - name: rust toolchain
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: ". -> target"
+          save-if: ${{ github.ref == 'refs/heads/master' }}
+      - uses: taiki-e/install-action@e407f7bafb71fd004bc5c2da3032e5470cbb6ef0 # v2.87.24
+        with:
+          tool: cargo-mutants@27.1.0
+          fallback: none
+      - name: mutants-shard
+        run: node scripts/ci/run.mjs mutants-shard
+        env:
+          MUTANTS_SHARD: ${{ matrix.shard }}
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: ${{ !cancelled() }}
+        with:
+          name: mutants-shard-${{ strategy.job-index }}
+          path: target/ci/mutants/
+          retention-days: 14
+          if-no-files-found: ignore
+
+  mutants:
+    name: nightly mutants
+    needs: mutants-shard
+    if: always() && (github.event.schedule == '47 18 * * 0' || (github.event_name == 'workflow_dispatch' && ((inputs.only == 'all' && inputs.weekly) || inputs.only == 'mutants')))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read # checkout
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: mutants-shard-*
+          path: target/ci/mutants/
+          merge-multiple: true
+      - name: mutants
+        run: node scripts/ci/run.mjs mutants
+      # ratchet.mjs write --from-run <이 실행>이 읽는다(조이기·첫 기준)
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: ${{ !cancelled() }}
+        with:
+          name: ratchet-measurements-mutants
+          path: target/ci/measure/
+          retention-days: 7
+          if-no-files-found: ignore
+
   # 고리: 예약 실행(master)의 결과로 작업마다 ci-loop:<작업 id> 이슈를 열고 닫는다(건너뛴 작업은 오래됐을 때만 연다).
   # PR 실행은 보고하지 않는다. master가 아닌 브랜치의 loop_test dispatch는 ci-loop-test:<작업 id>에만 쓴다.
   report:
     name: nightly report
-    needs: [e2e-native-linux, e2e-native-windows, drift, advisories, pins, ruleset-drift, fuzz, toolchain]
+    needs: [e2e-native-linux, e2e-native-windows, drift, advisories, pins, ruleset-drift, fuzz, toolchain, mutants]
     if: always() && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.loop_test))
     runs-on: ubuntu-24.04
     timeout-minutes: 10

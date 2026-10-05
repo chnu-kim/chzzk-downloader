@@ -596,6 +596,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "ts-rs",
+ "url",
 ]
 
 [[package]]

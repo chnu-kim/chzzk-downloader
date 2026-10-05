@@ -10,6 +10,10 @@ use std::path::{Path, PathBuf};
 
 use ts_rs::{Config, TS};
 
+use crate::dto::{
+    AppInfo, AuthStatusDto, EnqueueRequest, JobDto, JobEvent, LegacyImportDto, OutputCheck,
+    ResolvedDto, SettingsDto, SettingsPatch,
+};
 use crate::error::AppError;
 
 /// 생성 폴더(저장소 기준 `app/src/lib/bindings`).
@@ -34,7 +38,18 @@ fn ts_err(e: ts_rs::ExportError) -> io::Error {
 pub fn export(dir: &Path) -> io::Result<()> {
     std::fs::create_dir_all(dir)?;
     let cfg = config(dir);
+    // command 인자·반환 타입. 의존 타입(JobId·ContentRef·…)은 함께 나간다.
     AppError::export_all(&cfg).map_err(ts_err)?;
+    AppInfo::export_all(&cfg).map_err(ts_err)?;
+    SettingsDto::export_all(&cfg).map_err(ts_err)?;
+    SettingsPatch::export_all(&cfg).map_err(ts_err)?;
+    LegacyImportDto::export_all(&cfg).map_err(ts_err)?;
+    ResolvedDto::export_all(&cfg).map_err(ts_err)?;
+    OutputCheck::export_all(&cfg).map_err(ts_err)?;
+    EnqueueRequest::export_all(&cfg).map_err(ts_err)?;
+    JobDto::export_all(&cfg).map_err(ts_err)?;
+    JobEvent::export_all(&cfg).map_err(ts_err)?;
+    AuthStatusDto::export_all(&cfg).map_err(ts_err)?;
 
     let mut names: Vec<String> = std::fs::read_dir(dir)?
         .filter_map(|e| e.ok())

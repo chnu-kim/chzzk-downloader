@@ -24,4 +24,5 @@
     "auth_status",
     "clipboard_link",
     "open_app_folder",
+    "frontend_ready",
 ]

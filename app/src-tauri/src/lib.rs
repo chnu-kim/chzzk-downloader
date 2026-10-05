@@ -4,6 +4,7 @@
 pub mod commands;
 mod logging;
 pub mod sink;
+pub mod smoke;
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -15,6 +16,7 @@ use tauri::ipc::Invoke;
 use tauri::{AppHandle, Emitter, Manager, RunEvent, Runtime, WindowEvent};
 
 use crate::sink::{Notifier, spawn_notifier};
+use crate::smoke::{SMOKE_TIMEOUT, SmokeConfig, SmokeState, spawn_watchdog};
 
 /// 앱 command 이름(AppManifest·capabilities와 같은 목록).
 pub const COMMANDS: &[&str] = include!("command_names.rs");
@@ -177,6 +179,7 @@ pub fn handler<R: Runtime>() -> impl Fn(Invoke<R>) -> bool + Send + Sync + 'stat
         commands::auth_status,
         commands::clipboard_link,
         commands::open_app_folder,
+        commands::frontend_ready,
     ]
 }
 
@@ -332,19 +335,39 @@ pub fn acquire_instance_lock(data_dir: &Path) -> InstanceLockState {
 }
 
 /// 앱 상태(설정·매니저)를 열어 `manage`한다. 로그는 그 전에 시작한다.
-fn setup<R: Runtime>(app: &tauri::App<R>) -> Result<(), Box<dyn std::error::Error>> {
+fn setup<R: Runtime>(
+    app: &tauri::App<R>,
+    smoke: Option<SmokeConfig>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let p = app.path();
-    let log_dir = p.app_log_dir()?;
+    // 스모크는 임시 폴더만 쓴다(사용자 데이터·로그를 건드리지 않는다). 감시자는 로그보다 먼저 건다.
+    if let Some(cfg) = &smoke {
+        let (state, rx) = SmokeState::new(cfg.clone());
+        spawn_watchdog(
+            rx,
+            cfg.out.clone(),
+            app.package_info().version.to_string(),
+            SMOKE_TIMEOUT,
+        );
+        app.manage(state);
+    }
+    let log_dir = match &smoke {
+        Some(cfg) => cfg.log_dir(),
+        None => p.app_log_dir()?,
+    };
     if let Some(guard) = logging::init(&log_dir) {
         app.manage(guard);
     }
-    let paths = AppPaths::new(
-        p.app_config_dir()?,
-        p.app_data_dir()?,
-        log_dir,
-        p.video_dir().ok(),
-        p.download_dir().ok(),
-    );
+    let paths = match &smoke {
+        Some(cfg) => AppPaths::new(cfg.config_dir(), cfg.data_dir(), log_dir, None, None),
+        None => AppPaths::new(
+            p.app_config_dir()?,
+            p.app_data_dir()?,
+            log_dir,
+            p.video_dir().ok(),
+            p.download_dir().ok(),
+        ),
+    };
     tracing::info!(
         version = %app.package_info().version,
         config = %paths.config.display(),
@@ -353,9 +376,14 @@ fn setup<R: Runtime>(app: &tauri::App<R>) -> Result<(), Box<dyn std::error::Erro
         default_download = %paths.default_download.display(),
         "앱 시작"
     );
-    let legacy_dir: Option<PathBuf> = std::env::current_exe()
-        .ok()
-        .and_then(|e| e.parent().map(PathBuf::from));
+    // 스모크는 실행 파일 옆 옛 설정을 찾지 않는다(설치 폴더 내용과 무관하게 같은 결과를 내도록).
+    let legacy_dir: Option<PathBuf> = if smoke.is_some() {
+        None
+    } else {
+        std::env::current_exe()
+            .ok()
+            .and_then(|e| e.parent().map(PathBuf::from))
+    };
     match acquire_instance_lock(&paths.data) {
         InstanceLockState::Acquired(lock) => {
             app.manage(lock);
@@ -391,13 +419,19 @@ fn setup<R: Runtime>(app: &tauri::App<R>) -> Result<(), Box<dyn std::error::Erro
 }
 
 pub fn run() {
+    let smoke = SmokeConfig::from_env();
     let builder = tauri::Builder::default();
 
     // single-instance는 반드시 첫 플러그인이어야 한다. 두 번째 실행은 기존 창에 포커스만 준다.
+    // `--smoke`는 쓰지 않는다: 이미 떠 있는 앱에 포커스만 주고 끝나면 스모크가 아무것도 증명하지 못한다.
     #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
-    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
-        focus_main(app);
-    }));
+    let builder = if smoke.is_none() {
+        builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            focus_main(app);
+        }))
+    } else {
+        builder
+    };
 
     // macOS: 기본 메뉴의 Quit은 `terminate:`라 닫기 가드를 지나치지 않는다(구현 중 변경 52). 같은 메뉴에 보통
     // 항목으로 두고 `request_quit`으로 보낸다. Dock의 "종료"·AppleScript `quit`은 여전히 `terminate:`다.
@@ -414,7 +448,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_clipboard_manager::init())
-        .setup(|app| setup(app))
+        .setup(move |app| setup(app, smoke))
         .invoke_handler(handler())
         .build(tauri::generate_context!())
         .expect("Tauri 앱 만들기 실패");

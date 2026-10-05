@@ -159,3 +159,36 @@ test('저장소의 ci/ratchet.json: 키가 측정 키와 맞고 lint를 통과�
   assert.equal(typeof r.coverage_lines.tolerance_pp, 'number');
   assert.equal(typeof r.size.tolerance_pct, 'number');
 });
+
+// G5: mutants_missed는 작을수록 좋고, 0은 실제 기준일 수 있다('안 잼'은 $pending으로만)
+test('mutants_missed: 늘면 실패, 0도 실제 기준, $pending이면 알림, 조이기는 최소, 느슨하게 하기 감지', () => {
+  const M = (floor, pending = []) => ({ $pending: pending, mutants_missed: { 'chzzk-core': floor } });
+  const k = 'mutants_missed.chzzk-core';
+  assert.equal(judge(M(10), { [k]: 10 }).ok, true);
+  assert.equal(judge(M(10), { [k]: 9 }).ok, true);
+  assert.equal(judge(M(10), { [k]: 11 }).ok, false);
+  assert.equal(judge(M(0), { [k]: 0 }).ok, true, '0개는 실제 기준이다');
+  assert.equal(judge(M(0), { [k]: 1 }).ok, false);
+  assert.equal(judge(M(0, [k]), { [k]: 40 }).rows[0].state, 'unmeasured');
+  // tighten: $pending이면 측정값, 아니면 최소. 채우면 $pending에서 빠진다(0을 재도)
+  assert.deepEqual(tighten(M(0, [k]), { [k]: 40 }).next, M(40));
+  assert.deepEqual(tighten(M(0, [k]), { [k]: 0 }).next, M(0));
+  assert.deepEqual(tighten(M(40), { [k]: 45 }).next, M(40));
+  assert.deepEqual(tighten(M(40), { [k]: 31 }).next, M(31));
+  assert.deepEqual(tighten(M(0), { [k]: 3 }).next, M(0), '0에서 올리지 않는다');
+  // lint: 0인데 $pending 밖이어도 된다(mutants만)
+  assert.deepEqual(lintRatchet(M(0)), []);
+  assert.deepEqual(lintRatchet(M(0, [k]), [k]), []);
+  // loosened: 키우기·지우기는 느슨하게 하기, 0 → 5도
+  assert.deepEqual(loosened(M(10), M(12)), [k]);
+  assert.deepEqual(loosened(M(0), M(5)), [k]);
+  assert.deepEqual(loosened(M(10), M(8)), []);
+  assert.deepEqual(loosened(M(10), {}), [k]);
+});
+
+test('runProvenance: nightly.yml(schedule·dispatch)도 출처가 될 수 있다(weekly mutants)', () => {
+  const run = { event: 'schedule', head_repository: { full_name: 'o/r' }, repository: { full_name: 'o/r' }, conclusion: 'success', path: '.github/workflows/nightly.yml' };
+  assert.deepEqual(runProvenance(run, 'o/r'), []);
+  assert.equal(runProvenance({ ...run, path: '.github/workflows/other.yml' }, 'o/r').length, 1);
+  assert.equal(runProvenance({ ...run, event: 'pull_request' }, 'o/r').length, 1);
+});

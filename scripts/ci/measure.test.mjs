@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { gzipSync } from 'node:zlib';
 import { test } from 'node:test';
 
-import { countActive, countListed, gzipTotal, llvmLinesPct, playwrightCount, vitestCount, vitestLinesPct } from './measure.mjs';
+import { countActive, countListed, gzipTotal, llvmLinesPct, MUTANTS_OK_CODES, parseShard, playwrightCount, shardSummary, sumShards, vitestCount, vitestLinesPct } from './measure.mjs';
 
 test('llvm-cov·vitest 커버리지 JSON', () => {
   assert.equal(llvmLinesPct({ data: [{ totals: { lines: { count: 3, covered: 2, percent: 66.666666 } } }] }), 66.67);
@@ -58,4 +58,22 @@ test('Playwright: 통과한 테스트만 세고, 실패·flaky가 있으면 오�
   assert.throws(() => playwrightCount({}), /stats\.expected/);
   // skip을 늘리면 수가 준다(ratchet이 잡는다)
   assert.ok(playwrightCount({ stats: { expected: 5, skipped: 2 } }) < playwrightCount({ stats: { expected: 7, skipped: 0 } }));
+});
+
+test('mutants: shard 표기, outcomes 요약, shard 합(빠지거나 겹치면 오류)', () => {
+  assert.deepEqual(parseShard('0/4'), { k: 0, n: 4 });
+  assert.deepEqual(parseShard('3/4'), { k: 3, n: 4 });
+  for (const bad of ['4/4', '1/0', 'x', '', undefined, '0/17', '-1/4']) assert.throws(() => parseShard(bad), /MUTANTS_SHARD/, String(bad));
+  const o = { total_mutants: 20, missed: 3, caught: 13, timeout: 0, unviable: 4, success: 0, cargo_mutants_version: '27.1.0', outcomes: [] };
+  const s0 = shardSummary(o, { k: 0, n: 2 });
+  assert.deepEqual(s0, { shard: 0, of: 2, total_mutants: 20, missed: 3, caught: 13, timeout: 0, unviable: 4, cargo_mutants_version: '27.1.0' });
+  assert.throws(() => shardSummary({ ...o, missed: undefined }, { k: 0, n: 2 }), /missed/);
+  const s1 = { ...s0, shard: 1, missed: 2, total_mutants: 10 };
+  assert.deepEqual(sumShards([s1, s0]), { shards: 2, total: 30, missed: 5, caught: 26, timeout: 0, unviable: 8 });
+  assert.throws(() => sumShards([s0]), /정확히/, '빠진 shard');
+  assert.throws(() => sumShards([s0, s0]), /정확히/, '겹친 shard');
+  assert.throws(() => sumShards([s0, { ...s1, of: 3 }]), /정확히/);
+  assert.throws(() => sumShards([s0, { ...s1, cargo_mutants_version: '26.0.0' }]), /버전/);
+  assert.throws(() => sumShards([]), /없다/);
+  assert.deepEqual(MUTANTS_OK_CODES, [0, 2, 3]);
 });

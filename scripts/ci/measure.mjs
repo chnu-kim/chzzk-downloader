@@ -7,6 +7,9 @@
 //                                          # e2e:: 테스트 수(--features e2e) → tests.app_e2e.<os>(0이면 실패)
 //   node scripts/ci/measure.mjs tests-playwright  # e2e-web(Playwright) 통과 테스트 수(target/e2e-web/report.json) → tests.playwright
 //   node scripts/ci/measure.mjs size       # app/dist gzip 합, 릴리스 바이너리, 수집한 번들(target/ci/bundle/bundles.json)
+//   node scripts/ci/measure.mjs mutants-shard  # env MUTANTS_SHARD=k/n: cargo mutants -p chzzk-core의 한 shard →
+//                                              # target/ci/mutants/shard-<k>/summary.json(weekly mutants-shard 작업)
+//   node scripts/ci/measure.mjs mutants    # shard 요약을 모두 모아(정확히 0..n-1) 살아남은 mutant 수 → mutants_missed.chzzk-core
 //
 // 값은 CI 러너에서만 기준으로 삼는다(ratchet.mjs write --from-run). 종료 코드: 0, 측정 실패 1, 사용법 2.
 
@@ -159,7 +162,72 @@ function size() {
   save('size', values);
 }
 
-const MODES = { coverage, tests, 'tests-app': testsApp, 'tests-playwright': testsPlaywright, size };
+// ---- mutants(weekly) ----
+// cargo-mutants 27의 종료 코드: 0 모두 잡힘, 2 살아남은 mutant 있음, 3 시간 초과 있음 — 셋 다 측정 성공이다(판정은 ratchet).
+// 1(사용법)·4(기준 빌드·테스트 실패) 등은 측정 실패다.
+export const MUTANTS_DIR = 'target/ci/mutants';
+export const MUTANTS_OK_CODES = [0, 2, 3];
+export const MUTANTS_PKG = 'chzzk-core';
+
+// "k/n" → {k, n}. 0 ≤ k < n ≤ 16
+export function parseShard(s) {
+  const m = /^(\d{1,2})\/(\d{1,2})$/.exec(s ?? '');
+  const k = Number(m?.[1]);
+  const n = Number(m?.[2]);
+  if (!m || n < 1 || n > 16 || k >= n) throw new Error(`MUTANTS_SHARD는 k/n(0 ≤ k < n ≤ 16)이다: ${s}`);
+  return { k, n };
+}
+
+// mutants.out/outcomes.json → 요약(정수만)
+export function shardSummary(outcomes, { k, n }) {
+  const out = { shard: k, of: n };
+  for (const f of ['total_mutants', 'missed', 'caught', 'timeout', 'unviable']) {
+    if (!Number.isInteger(outcomes?.[f]) || outcomes[f] < 0) throw new Error(`outcomes.json에 ${f}(0 이상의 정수)가 없다`);
+    out[f] = outcomes[f];
+  }
+  out.cargo_mutants_version = String(outcomes.cargo_mutants_version ?? '');
+  return out;
+}
+
+// shard 요약 목록 → 합. 정확히 0..n-1이 한 번씩 있고 n과 cargo-mutants 버전이 같아야 한다(빠진 shard는 수를 줄인다).
+export function sumShards(list) {
+  if (!list.length) throw new Error('shard 요약이 없다');
+  const n = list[0].of;
+  const ks = list.map((x) => x.shard).sort((a, b) => a - b);
+  if (list.some((x) => x.of !== n) || ks.join(',') !== [...Array(n).keys()].join(',')) throw new Error(`shard가 0..${n - 1}을 정확히 덮지 않는다: ${ks.join(',')} (of ${[...new Set(list.map((x) => x.of))].join(',')})`);
+  const versions = new Set(list.map((x) => x.cargo_mutants_version));
+  if (versions.size !== 1) throw new Error(`shard마다 cargo-mutants 버전이 다르다: ${[...versions].join(', ')}`);
+  const sum = (f) => list.reduce((a, x) => a + x[f], 0);
+  return { shards: n, total: sum('total_mutants'), missed: sum('missed'), caught: sum('caught'), timeout: sum('timeout'), unviable: sum('unviable') };
+}
+
+function mutantsShard() {
+  const shard = parseShard(process.env.MUTANTS_SHARD);
+  const out = join(ROOT, MUTANTS_DIR, `shard-${shard.k}`);
+  mkdirSync(out, { recursive: true });
+  // 순서 고정(--no-shuffle), 작업 2개(러너 4 vCPU). 기준(baseline) 테스트는 shard마다 돈다
+  const args = ['mutants', '-p', MUTANTS_PKG, '--shard', `${shard.k}/${shard.n}`, '--no-shuffle', '--jobs', '2', '--output', out];
+  const r = spawnTool('cargo', args, { cwd: ROOT, stdio: 'inherit' });
+  if (r.error) throw new Error(`cargo: ${r.error.message}`);
+  if (!MUTANTS_OK_CODES.includes(r.status)) throw new Error(`cargo ${args.join(' ')} → exit ${r.status ?? r.signal}(측정 실패)`);
+  const summary = shardSummary(JSON.parse(readFileSync(join(out, 'mutants.out', 'outcomes.json'), 'utf8')), shard);
+  writeFileSync(join(out, 'summary.json'), JSON.stringify(summary, null, 2) + '\n');
+  console.log(`mutants shard ${shard.k}/${shard.n}: ${JSON.stringify(summary)}`);
+}
+
+function mutants() {
+  const dir = join(ROOT, MUTANTS_DIR);
+  if (!existsSync(dir)) throw new Error(`${dir}가 없다(mutants-shard 작업의 artifact를 받아야 한다)`);
+  const list = readdirSync(dir)
+    .filter((d) => /^shard-\d+$/.test(d) && existsSync(join(dir, d, 'summary.json')))
+    .sort()
+    .map((d) => JSON.parse(readFileSync(join(dir, d, 'summary.json'), 'utf8')));
+  const s = sumShards(list);
+  console.log(`mutants: shard ${s.shards}개, mutant ${s.total}개(잡힘 ${s.caught}, 살아남음 ${s.missed}, 시간 초과 ${s.timeout}, 빌드 안 됨 ${s.unviable})`);
+  save('mutants', { [`mutants_missed.${MUTANTS_PKG}`]: s.missed });
+}
+
+const MODES = { coverage, tests, 'tests-app': testsApp, 'tests-playwright': testsPlaywright, size, 'mutants-shard': mutantsShard, mutants };
 
 export function main(argv) {
   if (argv.length !== 1 || !Object.hasOwn(MODES, argv[0])) {

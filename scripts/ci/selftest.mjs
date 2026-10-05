@@ -307,6 +307,7 @@ const hook = (d, name, args, input) => exec('node', [join(d, 'scripts/ci/run.mjs
     coverage_lines: { rust: 80, frontend: 90, tolerance_pp: 0.1 },
     tests: { rust: 300, vitest: 400, playwright: 7, app: { linux: 30, darwin: 30, windows: 30 } },
     size: { dist_gz: 1000, binary: { linux: 10000, darwin: 10000, windows: 10000 }, bundle: {}, tolerance_pct: 3 },
+    mutants_missed: { 'chzzk-core': 10 },
   };
   const bin = `size.binary.${osKey()}`;
   const rjson = (r) => JSON.stringify(r, null, 2) + '\n';
@@ -324,6 +325,8 @@ const hook = (d, name, args, input) => exec('node', [join(d, 'scripts/ci/run.mjs
     ['size +5%', 'size', { 'size.dist_gz': 1000, [bin]: 10500 }, 'nonzero'],
     ['size 이 OS 바이너리 빠짐', 'size', { 'size.dist_gz': 1000 }, 'nonzero'],
     ['size 모르는 키', 'size', { 'size.dist_gz': 1000, [bin]: 10000, 'size.binary.freebsd': 1 }, 'nonzero'],
+    ['mutants 살아남음 그대로', 'mutants', { 'mutants_missed.chzzk-core': 10 }, 0],
+    ['mutants 살아남음 +1', 'mutants', { 'mutants_missed.chzzk-core': 11 }, 'nonzero'],
   ];
   seeds.forEach(([seed, kind, m, want], i) => expect('ratchet', seed, want, () => check(withMeasure(`rat-${i}`, kind, m), kind)));
   // log-check: 기준 커밋에서 기준을 낮추면 ci/RATCHET_LOG.md에 키를 적은 줄이 있어야 한다

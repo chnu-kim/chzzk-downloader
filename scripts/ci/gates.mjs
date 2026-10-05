@@ -314,6 +314,15 @@ export const GATES = {
       { cmd: ['node', S('fuzz.mjs')] },
     ],
   },
+  'mutants-shard': {
+    desc: 'cargo mutants -p chzzk-core의 shard 하나(env MUTANTS_SHARD=k/n, weekly) → target/ci/mutants/shard-<k>/summary.json',
+    needs: ['cargo', 'cargo-mutants'],
+    steps: [{ cmd: ['node', S('measure.mjs'), 'mutants-shard'] }],
+  },
+  mutants: {
+    desc: 'shard 요약을 모아(정확히 0..n-1) 살아남은 mutant 수 → ci/ratchet.json mutants_missed(늘면 실패). mutants-shard 작업들의 artifact를 받은 뒤',
+    steps: [{ cmd: ['node', S('measure.mjs'), 'mutants'] }, { cmd: ['node', S('ratchet.mjs'), 'check', 'mutants'] }],
+  },
   'ratchet-log': {
     desc: 'ci/ratchet.json 모양(0은 $pending만) + 기준을 느슨하게 했으면 ci/RATCHET_LOG.md에 그 키를 적은 줄이 더해졌는지(env RATCHET_BASE)',
     steps: [{ cmd: ['node', S('ratchet.mjs'), 'lint'] }, { cmd: ['node', S('ratchet.mjs'), 'log-check'] }],

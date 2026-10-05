@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Ratchet(docs/design/cicd.md §4.2). 기준값은 저장소의 ci/ratchet.json, 측정값은 measure.mjs가 쓴 target/ci/measure/<kind>.json.
 //
-//   node scripts/ci/ratchet.mjs check <coverage|tests|size>     # 측정값을 기준과 비교(내려가면 실패)
+//   node scripts/ci/ratchet.mjs check <coverage|tests|size|mutants>  # 측정값을 기준과 비교(나빠지면 실패)
 //   node scripts/ci/ratchet.mjs write --from <폴더>              # 폴더 아래 측정 JSON으로 기준을 조인다(올리기만)
 //   node scripts/ci/ratchet.mjs write --from-run <run id>        # gh run download로 CI 측정값을 받아 write
 //                                                                 # (이 저장소의 성공한 push·dispatch 실행만 받는다)
@@ -15,7 +15,9 @@
 //   coverage_lines.*  현재 < 기준 − tolerance_pp 이면 실패
 //   tests.*           현재 < 기준 이면 실패
 //   size.*            현재 > 기준 × (1 + tolerance_pct/100) 이면 실패
-//   기준 0은 $pending(아직 안 잼)에 있을 때만 통과(알림만)하고, 없으면 실패한다. ratchet.json에 없는 키는 실패.
+//   mutants_missed.*  현재 > 기준 이면 실패(살아남은 mutant가 늘었다). 0은 실제 기준일 수 있다: 이 영역만 '안 잼'을
+//                     값이 아니라 $pending에 있는지로만 정한다.
+//   기준 0은 $pending(아직 안 잼)에 있을 때만 통과(알림만)하고, 없으면 실패한다(mutants_missed 제외). ratchet.json에 없는 키는 실패.
 //   size는 이 OS의 기준 키(dist_gz, binary.<os>, bundle.<os>-*)가 측정에 빠져도 실패한다(번들 표에서 지운 것을 잡는다).
 // 종료 코드: 통과 0, 위반 1, 사용법·입력 오류 2.
 
@@ -31,11 +33,15 @@ import { osKey } from './smoke.mjs';
 export const RATCHET_PATH = 'ci/ratchet.json';
 export const LOG_PATH = 'ci/RATCHET_LOG.md';
 export const MEASURE_DIR = 'target/ci/measure';
-export const KINDS = { coverage: 'coverage_lines', tests: 'tests', size: 'size' };
+export const KINDS = { coverage: 'coverage_lines', tests: 'tests', size: 'size', mutants: 'mutants_missed' };
+// 0이 실제 기준일 수 있는 영역(살아남은 mutant 0개는 목표다). '안 잼'은 $pending으로만 정한다.
+const ZERO_IS_REAL = new Set(['mutants_missed']);
+// 작을수록 좋은 영역
+const LOWER_IS_BETTER = new Set(['size', 'mutants_missed']);
 const SETTINGS = new Set(['tolerance_pp', 'tolerance_pct']);
-// 기준 0(아직 안 잼)으로 둘 수 있는 키. 다른 키가 0이면 lint가 실패한다. tests.playwright는 G4에서 채웠다(실행 37324424781). mutants는 G5가 더한다.
-// tests.app_e2e.*는 G4 2차 리뷰에서 더해 실행 37334258200으로 채웠다.
-export const PENDING_ALLOWED = [];
+// 기준 0(아직 안 잼)으로 둘 수 있는 키. 다른 키가 0이면 lint가 실패한다. tests.playwright는 G4에서 채웠다(실행 37324424781).
+// tests.app_e2e.*는 G4 2차 리뷰에서 더해 실행 37334258200으로 채웠다. mutants_missed는 G5가 더하고 첫 weekly 실행으로 채운다.
+export const PENDING_ALLOWED = ['mutants_missed.chzzk-core'];
 
 // 객체 → { "a.b.c": 숫자 } (설정 키·$comment·null 제외)
 export function flatten(obj, prefix = '') {
@@ -92,9 +98,12 @@ export function judge(ratchet, measured, expected = []) {
       rows.push({ key, floor, value, state: 'fail', note: '측정값이 0 이상의 수가 아니다' });
       continue;
     }
-    if (floor === 0) {
-      if (pending.includes(key)) rows.push({ key, floor, value, state: 'unmeasured', note: `기준 없음($pending). write로 ${value}을(를) 기준으로 삼을 수 있다` });
-      else rows.push({ key, floor, value, state: 'fail', note: '기준이 0인데 $pending에 없다' });
+    if (pending.includes(key)) {
+      rows.push({ key, floor, value, state: 'unmeasured', note: `기준 없음($pending). write로 ${value}을(를) 기준으로 삼을 수 있다` });
+      continue;
+    }
+    if (floor === 0 && !ZERO_IS_REAL.has(area(key))) {
+      rows.push({ key, floor, value, state: 'fail', note: '기준이 0인데 $pending에 없다' });
       continue;
     }
     let fail = false;
@@ -105,6 +114,9 @@ export function judge(ratchet, measured, expected = []) {
     } else if (area(key) === 'tests') {
       fail = value < floor;
       note = fail ? `기준 ${floor}보다 적다(테스트가 사라졌다)` : value > floor ? `기준을 ${value}(으)로 올릴 수 있다` : '';
+    } else if (area(key) === 'mutants_missed') {
+      fail = value > floor;
+      note = fail ? `살아남은 mutant가 ${value - floor}개 늘었다(기준 ${floor})` : value < floor ? `기준을 ${value}(으)로 낮출(조일) 수 있다` : '';
     } else {
       const max = floor * (1 + tolPct / 100);
       fail = value > max;
@@ -116,7 +128,7 @@ export function judge(ratchet, measured, expected = []) {
   return { ok: rows.every((r) => r.state === 'ok' || r.state === 'unmeasured'), rows };
 }
 
-const KIND_BY_AREA = { coverage_lines: 'coverage', tests: 'tests', size: 'size' };
+const KIND_BY_AREA = { coverage_lines: 'coverage', tests: 'tests', size: 'size', mutants_missed: 'mutants' };
 
 // 측정값 하나가 그 종류로 말이 되는지. 아니면 예외(기준에 넣지 않는다).
 export function assertMeasureValue(key, value) {
@@ -141,15 +153,20 @@ export function tighten(ratchet, measured) {
     assertMeasureValue(key, value);
     const v = area(key) === 'coverage_lines' ? coverageFloor(value) : value;
     let nv = floor;
-    if (floor === 0) nv = v;
-    else if (area(key) === 'size') nv = Math.min(floor, v);
+    const pending = Array.isArray(next.$pending) && next.$pending.includes(key);
+    if (pending || (floor === 0 && !ZERO_IS_REAL.has(area(key)))) nv = v;
+    else if (LOWER_IS_BETTER.has(area(key))) nv = Math.min(floor, v);
     else nv = Math.max(floor, v);
+    // 채운 키는 $pending에서 뺀다. 0이 '안 잼'인 영역에서 0을 쟀으면 그대로 둔다(lint가 0을 $pending 밖에 두지 않는다)
+    if (pending && (nv !== 0 || ZERO_IS_REAL.has(area(key)))) {
+      next.$pending = next.$pending.filter((k) => k !== key);
+      if (nv === floor) changed.push({ key, from: '$pending', to: nv });
+    }
     if (nv !== floor) {
       setPath(next, key, nv);
       changed.push({ key, from: floor, to: nv });
     }
   }
-  if (Array.isArray(next.$pending)) next.$pending = next.$pending.filter((k) => getPath(next, k) === 0);
   return { next, changed };
 }
 
@@ -162,7 +179,7 @@ export function lintRatchet(ratchet, allowed = PENDING_ALLOWED) {
   const p = pendingOf(ratchet);
   for (const [k, v] of Object.entries(flat)) {
     if (!Object.hasOwn(KIND_BY_AREA, area(k))) continue;
-    if (v === 0 && !p.includes(k)) errs.push(`${k}: 기준이 0인데 $pending에 없다(ratchet.mjs write --from-run으로 채운다)`);
+    if (v === 0 && !p.includes(k) && !ZERO_IS_REAL.has(area(k))) errs.push(`${k}: 기준이 0인데 $pending에 없다(ratchet.mjs write --from-run으로 채운다)`);
     if (v < 0 || !Number.isFinite(v)) errs.push(`${k}: 기준이 0 이상의 수가 아니다`);
   }
   for (const k of p) {
@@ -176,11 +193,12 @@ export function lintRatchet(ratchet, allowed = PENDING_ALLOWED) {
 // gh api repos/<repo>/actions/runs/<id> 응답 → 기준으로 쓸 수 없는 이유 목록. pull_request 실행(fork 코드가 측정)을 막는다.
 export function runProvenance(run, repo) {
   const errs = [];
-  if (!['push', 'workflow_dispatch'].includes(run?.event)) errs.push(`event ${run?.event}(push·workflow_dispatch만)`);
+  if (!['push', 'workflow_dispatch', 'schedule'].includes(run?.event)) errs.push(`event ${run?.event}(push·workflow_dispatch·schedule만)`);
   if (run?.head_repository?.full_name !== repo) errs.push(`head 저장소 ${run?.head_repository?.full_name} ≠ ${repo}`);
   if (run?.repository?.full_name !== repo) errs.push(`저장소 ${run?.repository?.full_name} ≠ ${repo}`);
   if (run?.conclusion !== 'success') errs.push(`conclusion ${run?.conclusion}(success만)`);
-  if (run?.path !== '.github/workflows/ci.yml') errs.push(`워크플로 ${run?.path}(ci.yml만)`);
+  // nightly.yml은 weekly mutants의 측정(ratchet-measurements-mutants)을 낸다
+  if (!['.github/workflows/ci.yml', '.github/workflows/nightly.yml'].includes(run?.path)) errs.push(`워크플로 ${run?.path}(ci.yml·nightly.yml만)`);
   return errs;
 }
 
@@ -199,9 +217,9 @@ export function loosened(oldR, newR) {
     if (!Object.hasOwn(KIND_BY_AREA, area(key))) continue;
     const nv = n[key];
     if (nv === undefined) out.push(key);
-    else if (ov === 0) continue;
-    else if (nv === 0) out.push(key);
-    else if (area(key) === 'size' ? nv > ov : nv < ov) out.push(key);
+    else if (ov === 0 && !ZERO_IS_REAL.has(area(key))) continue;
+    else if (nv === 0 && !ZERO_IS_REAL.has(area(key))) out.push(key);
+    else if (LOWER_IS_BETTER.has(area(key)) ? nv > ov : nv < ov) out.push(key);
   }
   for (const [path, wider] of [
     ['coverage_lines.tolerance_pp', (a, b) => b > a],
@@ -385,7 +403,7 @@ export function main(argv, env = process.env, root = ROOT) {
     console.error(`ratchet: ${e.message}`);
     return 2;
   }
-  console.error('사용법: ratchet.mjs check <coverage|tests|size> | write --from <폴더> | write --from-run <id> | log-check | lint');
+  console.error('사용법: ratchet.mjs check <coverage|tests|size|mutants> | write --from <폴더> | write --from-run <id> | log-check | lint');
   return 2;
 }
 

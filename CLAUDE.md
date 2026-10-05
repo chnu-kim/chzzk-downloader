@@ -41,6 +41,10 @@ node scripts/ci/run.mjs workflows            # .github/를 바꿨을 때: pin-ch
 node scripts/ci/run.mjs versions             # 버전 원천 일치(Cargo 멤버·tauri.conf.json·app/package.json)
 node scripts/ci/run.mjs smoke-bin            # tauri gate의 debug 빌드를 --smoke로 띄워 마커 확인(창이 잠깐 뜬다)
 node scripts/ci/run.mjs coverage             # llvm-cov + vitest 커버리지 → ci/ratchet.json 비교(test-count는 테스트 수)
+node scripts/ci/run.mjs e2e-web              # app/: build → Playwright chromium 설치(처음 한 번) → 웹 E2E(mockIPC·axe) → 통과 수 ratchet
+                                             #   하나만: (app/에서) pnpm exec playwright test flow --headed. 실패 trace는 target/e2e-web/results/
+node scripts/ci/run.mjs e2e-native           # Linux·Windows만(macOS는 건너뜀): --features e2e 앱 + tauri-driver로 받기 흐름 하나.
+                                             #   먼저 run.mjs install-tool tauri-driver, Linux는 apt webkit2gtk-driver xvfb
 node scripts/ci/ratchet.mjs write --from-run <run id>   # CI 측정값으로 ratchet 기준을 조인다(올리기만)
 node scripts/ci/run.mjs doctor               # 로컬 도구 유무·버전(tools.json). 없는 도구의 gate는 로컬에서 건너뛰고 CI가 본다
 node scripts/ci/run.mjs install-hooks        # 훅 켜기(core.hooksPath=.githooks). 클론마다 한 번. pre-commit·commit-msg·pre-push가
@@ -53,6 +57,8 @@ UPDATE_BINDINGS=1 cargo test -p chzzk-shell --test bindings   # DTO를 바꾼 �
 pnpm tauri dev                                   # 개발 실행(Vite devUrl)
 pnpm tauri build --debug --no-bundle             # dist를 넣은 debug 바이너리 → target/debug/chzzk-app
 CHZZK_SMOKE_OUT=/tmp/m.json ../target/debug/chzzk-app --smoke   # 기동 스모크: 임시 데이터 폴더, 프런트 신호 뒤 exit 0(60초 넘으면 2)
+pnpm tauri build --debug --no-bundle --features e2e   # E2E 빌드: CHZZK_E2E_API_BASE(루프백 http)·CHZZK_E2E_DIR(절대 경로) 둘 다 있으면
+                                                       #   node ../scripts/ci/e2e-fixture-server.mjs가 띄운 testdata 서버에 붙는다. 릴리스엔 없다
 
 cargo test -p chzzk-core --test segmented <이름>      # 통합 테스트 하나
 cargo test -p chzzk-core --lib naming::                # 단위 테스트 모듈 하나
@@ -68,6 +74,7 @@ CHZZK_LIVE_HLS=<빠른 다시보기 no> CHZZK_LIVE_DASH=<일반 VOD no> CHZZK_LI
 - CI 워크플로의 `run:`은 setup(autocrlf·rustup·apt)을 빼면 `node scripts/ci/run.mjs …`만 부른다(`parity` gate가 강제). 검사를 더하거나 바꿀 때는 `gates.mjs`를 고치고, 새 도구는 `tools.json`에 버전을 적는다. 워크플로에 `uses:`를 더하면 `node scripts/ci/pin-actions.mjs --write`로 SHA를 고정한다.
 - 앱의 macOS 설정·데이터는 `~/Library/Application Support/io.github.chnu-kim.chzzk-downloader`, 로그는 `~/Library/Logs/io.github.chnu-kim.chzzk-downloader`다.
 - 일반 테스트는 모두 오프라인이다(127.0.0.1 mock). 실서버는 `#[ignore]` 테스트와 `examples/dl.rs`로만 접속한다.
+- E2E는 두 층이다(cicd.md §6, 구현 중 변경 36~): `app/e2e/`의 Playwright(PR, 가짜 백엔드 `app/e2e/mock/backend.ts`)와 네이티브(`scripts/ci/e2e-native.mjs`, master·nightly Linux, weekly Windows — Windows는 아직 실패, cicd.md 구현 중 변경 44). command·DTO·화면 문구를 바꾸면 가짜 백엔드와 spec도 같이 고친다. 두 작업은 D14 관찰 중이라 `ci-ok`에 없고(`gates.mjs` `OBSERVED_JOBS`) master 실패는 `master-failure` 이슈로 온다. `--features e2e` 코드는 `app/src-tauri/src/e2e.rs`에만 둔다(`release-hygiene`·`hygiene-seed`가 확인한다).
 - `live_hls_partial`은 최저 화질로 4 MiB 넘게 받을 수 있는 빠른 다시보기를 골라야 한다(그 전에 끝나면 실패). `live_dash_partial`은 짧은 VOD면 끝까지 받고 완성 파일을 검사한다.
 
 ## 작업 규칙

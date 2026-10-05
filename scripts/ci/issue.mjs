@@ -34,6 +34,8 @@ export const LOOPS = {
   toolchain: '툴체인 검사가 실패했다',
   pins: '워크플로 핀 SHA·온라인 audit 검사가 실패했다',
   release: '릴리스 파이프라인이 실패했다',
+  // 예약 리허설(release.yml schedule): 설계상 sign-publish의 preflight에서 멈춘다. 그 밖의 실패만 이 고리로 연다
+  'release-rehearsal': '릴리스 리허설(빌드·수집·설치 스모크)이 실패했다',
   'e2e-native-linux': '예약 네이티브 E2E(Linux, 매일)가 실패했다',
   'e2e-native-windows': '예약 네이티브 E2E(Windows, 매주)가 실패했거나 오래 돌지 않았다',
 };
@@ -108,6 +110,8 @@ export const KIND_NOTES = {
   },
 };
 export const STALE_HOURS = 72;
+// 매주 예약 워크플로의 stale 한계(그 밖은 STALE_HOURS). 예약이 한 번 떨어진 것까지는 기다린다
+export const WORKFLOW_STALE_HOURS = { 'release.yml': 8 * 24 };
 
 const RE = {
   repo: /^[A-Za-z0-9-]+\/[A-Za-z0-9._-]+$/,
@@ -345,7 +349,7 @@ export function report(env, gh, { root = ROOT, now = Date.now(), deny } = {}) {
       // 빨간 작업이 있다(drift no_target, 새 stable이 나온 toolchain, crash를 찾은 fuzz). 그 작업들의 건강은 작업별 고리
       // (report-loop, staleHours 포함)가 보고, 여기서는 스케줄러가 살아 있는지만 본다.
       const [lastId = '', last = ''] = gh(['api', `repos/${repo}/actions/workflows/${f}/runs?branch=master&event=schedule&status=completed&per_page=1`, '--jq', LAST_RUN_JQ]).trim().split('\t');
-      const s = isStale({ lastSuccess: last || null, created: wf.created_at ?? null }, now);
+      const s = isStale({ lastSuccess: last || null, created: wf.created_at ?? null }, now, WORKFLOW_STALE_HOURS[f] ?? STALE_HOURS);
       console.log(`${f}: 마지막 완료 예약 실행 ${last || '없음'} → ${s ? 'stale' : 'ok'}`);
       if (s) stale.push(f);
       // 감시자 감시(nightly.yml만: report 작업이 있는 예약 워크플로): 그 실행의 report 작업 자신이 실패했는가
@@ -558,6 +562,57 @@ export function reportLoop(env, gh, { deny, now = Date.now(), loops = NEEDS_LOOP
     console.error(`::error::report-loop nightly-report: ${e.message}`);
   }
   return bad ? 1 : 0;
+}
+
+// ---- release.yml report ----
+
+// 릴리스 실행의 needs → { loop, status, jobs }(순수). 태그 실행은 release 고리: 실패·취소가 하나라도 있으면 fail, 아니면 ok.
+// 리허설(schedule·dispatch)은 release-rehearsal 고리: sign-publish가 preflight에서 멈춘 것(outputs.stopped == 'preflight')은
+// 설계대로이고 그 뒤 작업의 skipped도 그렇다. 그 밖의 실패·취소만 fail이다.
+export const RELEASE_REPORT_JOB = 'report';
+export function releaseStatus(mode, needsJson) {
+  const needs = JSON.parse(needsJson);
+  if (!needs || typeof needs !== 'object' || Array.isArray(needs) || !Object.keys(needs).length) throw new Error('NEEDS가 비었거나 객체가 아니다');
+  if (!['tag', 'rehearsal'].includes(mode)) throw new Error(`RELEASE_MODE는 tag|rehearsal: ${mode}`);
+  const bad = Object.entries(needs)
+    .filter(([id, v]) => ['failure', 'cancelled'].includes(v?.result))
+    .filter(([id, v]) => !(mode === 'rehearsal' && id === 'sign-publish' && v?.outputs?.stopped === 'preflight'))
+    .map(([id]) => id)
+    .sort();
+  return { loop: mode === 'tag' ? 'release' : 'release-rehearsal', status: bad.length ? 'fail' : 'ok', jobs: bad };
+}
+
+// GITHUB_REF → 이름공간. 태그(릴리스)는 진짜 이름공간이다. 브랜치는 refScope와 같다
+export function releaseScope(ref) {
+  if (/^refs\/tags\/v[0-9A-Za-z.+-]{1,60}$/.test(ref ?? '')) return { test: false };
+  return refScope(ref);
+}
+
+export function releaseReport(env, gh, { deny } = {}) {
+  const repo = env.GITHUB_REPOSITORY;
+  const runId = env.GITHUB_RUN_ID;
+  if (!RE.repo.test(repo ?? '') || !/^\d+$/.test(runId ?? '') || !RE.sha.test(env.GITHUB_SHA ?? '')) {
+    console.error('release report: GITHUB_REPOSITORY·GITHUB_RUN_ID·GITHUB_SHA가 필요하다');
+    return 2;
+  }
+  let st;
+  let scope;
+  try {
+    st = releaseStatus(env.RELEASE_MODE, env.NEEDS ?? '');
+    scope = releaseScope(env.GITHUB_REF);
+    if (!scope) throw new Error(`GITHUB_REF가 태그·브랜치가 아니다: ${env.GITHUB_REF}`);
+  } catch (e) {
+    console.error(`::error::release report: ${e.message}`);
+    return 2;
+  }
+  try {
+    const r = sync({ loop: st.loop, status: st.status, repo, runUrl: `https://github.com/${repo}/actions/runs/${runId}`, sha: env.GITHUB_SHA, jobs: st.jobs, workflows: ['release.yml'], test: scope.test }, gh, deny);
+    console.log(`${label(st.loop, scope.test)}: ${st.status} → ${r.action} ${r.numbers.join(',')}`);
+    return 0;
+  } catch (e) {
+    console.error(`::error::release report: ${e.message}`);
+    return 1;
+  }
 }
 
 // ---- CLI ----

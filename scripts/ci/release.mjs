@@ -10,7 +10,8 @@
 //   node scripts/ci/release.mjs publish       # collect → sign → verify-sig → sums → manifest → put → promote(latest.json은 마지막)
 //   node scripts/ci/release.mjs verify        # 다시 받아 확인. 실패하면 prev로 rollback하고 1
 //   node scripts/ci/release.mjs rollback      # rollback.yml: ROLLBACK_VERSION으로 latest.json을 되돌린다
-//   node scripts/ci/release.mjs selftest      # 가짜 S3(s3-fake.mjs)에 합성 산출물로 (a)~(f) 시나리오(release-selftest gate)
+//   node scripts/ci/release.mjs selftest      # 가짜 S3(s3-fake.mjs)에 합성 산출물로 (a)~(g) 시나리오(release-selftest gate)
+//   node scripts/ci/release.mjs worker        # Phase 3 seam: Worker 배포·확인. worker/가 생기기 전에는 늘 실패한다
 //
 // 종료 코드: 0 통과, 1 검사 실패, 2 사용법·환경 오류.
 
@@ -511,10 +512,21 @@ async function cmdSelftest(env) {
   return bad ? 1 : 0;
 }
 
+// Phase 3 seam(docs/design/cicd.md §5.5). worker/가 생기면 여기서 wrangler(고정 버전) 배포 → /health 200 → updater 엔드포인트가
+// prev 버전 요청에 200 + 새 버전, 새 버전 요청에 204인지 확인한다. 그 전에는 켜도(vars.WORKER_DEPLOY_ENABLED) 녹색이 되지 않는다.
+function cmdWorker() {
+  if (!existsSync(join(ROOT, 'worker'))) {
+    err('worker: worker/가 없다(Phase 3 seam). vars.WORKER_DEPLOY_ENABLED를 끄거나 Worker를 먼저 더한다');
+    return 1;
+  }
+  err('worker: 배포·확인 단계가 아직 없다(Phase 3에서 이 함수를 채운다)');
+  return 1;
+}
+
 export function main(argv, env = process.env) {
   const [cmd, ...rest] = argv;
   if (rest.length) {
-    console.error('사용법: release.mjs <pubkey|gate|build|xtask|preflight|publish|verify|rollback|selftest>');
+    console.error('사용법: release.mjs <pubkey|gate|build|xtask|preflight|publish|verify|rollback|selftest|worker>');
     return 2;
   }
   switch (cmd) {
@@ -536,8 +548,10 @@ export function main(argv, env = process.env) {
       return cmdRollback(env);
     case 'selftest':
       return cmdSelftest(env);
+    case 'worker':
+      return cmdWorker();
     default:
-      console.error('사용법: release.mjs <pubkey|gate|build|xtask|preflight|publish|verify|rollback|selftest>');
+      console.error('사용법: release.mjs <pubkey|gate|build|xtask|preflight|publish|verify|rollback|selftest|worker>');
       return 2;
   }
 }

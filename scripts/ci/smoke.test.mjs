@@ -73,7 +73,7 @@ test('msiInstallDir: 설치 로그의 마지막 INSTALLDIR', () => {
 function jobBody(yml, id) {
   const lines = yml.split('\n');
   const at = lines.findIndex((l) => l === `  ${id}:`);
-  assert.ok(at >= 0, `ci.yml에 작업 ${id}가 없다`);
+  assert.ok(at >= 0, `워크플로에 작업 ${id}가 없다`);
   const end = lines.findIndex((l, i) => i > at && /^ {2}[A-Za-z0-9_-]+:\s*$/.test(l));
   return lines.slice(at, end < 0 ? undefined : end).join('\n');
 }
@@ -90,4 +90,11 @@ test('설치 스모크 최악 시간 < CI 시간 제한(안쪽 명령 제한이 
   assert.ok(installBudgetMs('linux') + margin <= linuxJob * 60_000, `linux ${installBudgetMs('linux')}ms vs ${linuxJob}분`);
   for (const os of ['darwin', 'windows']) assert.ok(installBudgetMs(os) + margin <= stepMin * 60_000, `${os} ${installBudgetMs(os)}ms vs ${stepMin}분`);
   assert.deepEqual(Object.keys(INSTALL_STEPS).sort(), Object.keys(bundleSpec()).filter((k) => !k.startsWith('$')).sort());
+  // release.yml도 같은 예산이다(릴리스는 macOS .app.tar.gz 스모크가 더해져 가장 길다)
+  const rel = readFileSync(join(ROOT, '.github/workflows/release.yml'), 'utf8');
+  const relLinux = Number(/^ {4}timeout-minutes: (\d+)$/m.exec(jobBody(rel, 'smoke-linux'))[1]);
+  const relStep = /- name: smoke-install\n(?: {8}.*\n)*? {8}timeout-minutes: (\d+)/.exec(jobBody(rel, 'build'));
+  assert.ok(relStep, 'release.yml build 작업의 smoke-install 단계에 timeout-minutes가 없다');
+  assert.ok(installBudgetMs('linux') + margin <= relLinux * 60_000);
+  for (const os of ['darwin', 'windows']) assert.ok(installBudgetMs(os) + margin <= Number(relStep[1]) * 60_000, `release ${os}`);
 });

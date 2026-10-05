@@ -368,6 +368,10 @@ export const GATES = {
     desc: 'latest.json을 ROLLBACK_VERSION으로(그 버전 객체 확인 → CAS 교체 → 다시 확인, none이면 지운다)',
     steps: [{ cmd: ['node', S('release.mjs'), 'rollback'] }],
   },
+  'release-worker': {
+    desc: 'Phase 3 seam: Worker 배포·확인(release.yml deploy-worker, vars.WORKER_DEPLOY_ENABLED). worker/가 생기기 전에는 늘 실패',
+    steps: [{ cmd: ['node', S('release.mjs'), 'worker'] }],
+  },
   'release-selftest': {
     desc: '가짜 S3(s3-fake.mjs, SigV4 검증·조건부 쓰기)에 합성 산출물로 릴리스 경로 시나리오: happy path, CAS·단조 증가, 변조 → rollback(latest.json 바이트 동일), 재실행 멱등, preflight 메시지, 첫 릴리스 되돌리기',
     needs: ['cargo'],
@@ -380,7 +384,7 @@ export const GATES = {
 };
 
 // run.mjs가 gate 말고도 받는 하위 명령
-export const COMMANDS = ['changes', 'ci-ok', 'doctor', 'drift-log-check', 'hook', 'install-hooks', 'install-rustup', 'install-tool', 'list', 'report', 'report-loop'];
+export const COMMANDS = ['changes', 'ci-ok', 'doctor', 'drift-log-check', 'hook', 'install-hooks', 'install-rustup', 'install-tool', 'list', 'report', 'report-loop', 'report-release'];
 
 // 훅(docs/design/cicd.md §3.2). .githooks/<이름>은 `run.mjs hook <이름> "$@"`만 exec한다(parity hook-entry).
 //   always: 항상 도는 gate(순서대로). when: 바뀐 경로(pre-commit은 staged, pre-push는 push 범위 커밋이 건드린 경로)가

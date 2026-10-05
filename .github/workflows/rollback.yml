@@ -1,0 +1,55 @@
+name: rollback
+
+# 수동 되돌리기(docs/design/cicd.md §5.7). releases/latest.json을 입력한 버전으로 바꾼다: 그 버전의 객체를 다시 받아
+# 해시·서명·스키마를 확인 → latest.json을 그 버전의 manifest.json으로 CAS 교체 → 다시 확인. none이면 latest.json을 지운다
+# (첫 릴리스 전 상태). 환경 release의 시크릿을 쓴다(배포 정책: 태그 v*와 master, 구현 중 변경 G6). release.yml과 같은
+# concurrency 그룹이라 릴리스와 겹치지 않는다.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "되돌릴 버전(X.Y.Z, releases/<v>/가 있어야 한다) 또는 none"
+        type: string
+        required: true
+
+permissions: {}
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  rollback:
+    name: rollback
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: release
+    permissions:
+      contents: read # checkout
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          # 릴리스는 캐시를 쓰지 않는다(§7 릴리스 격리, zizmor cache-poisoning)
+          package-manager-cache: false
+      - name: rust toolchain
+        run: rustup toolchain install
+      - name: release-xtask
+        run: node scripts/ci/run.mjs release-xtask
+      - name: release-rollback
+        run: node scripts/ci/run.mjs release-rollback
+        env:
+          ROLLBACK_VERSION: ${{ inputs.version }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ACCOUNT_ID: ${{ vars.R2_ACCOUNT_ID }}
+          R2_BUCKET: ${{ vars.R2_BUCKET }}
+          DIST_BASE_URL: ${{ vars.DIST_BASE_URL }}

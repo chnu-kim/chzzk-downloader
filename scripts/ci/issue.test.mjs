@@ -564,3 +564,38 @@ test('LOOPS 제목은 원인을 단정하지 않고, kind별 할 일 문구가 �
   assert.equal(threshold(NEEDS_LOOPS.toolchain, ['outdated']), 1);
   assert.equal(threshold(NEEDS_LOOPS['drift-log'], ['log_canary']), 1);
 });
+
+test('release report: 태그 실행은 release 고리, 리허설의 preflight 멈춤은 설계대로', async () => {
+  const { releaseStatus, releaseScope } = await import('./issue.mjs');
+  const ok = { result: 'success', outputs: {} };
+  const needs = (o) => JSON.stringify({ gate: ok, 'build-linux': ok, 'smoke-linux': ok, build: ok, 'sign-publish': ok, verify: ok, 'deploy-worker': { result: 'skipped' }, ...o });
+  assert.deepEqual(releaseStatus('tag', needs({})), { loop: 'release', status: 'ok', jobs: [] });
+  assert.deepEqual(releaseStatus('tag', needs({ verify: { result: 'failure' } })), { loop: 'release', status: 'fail', jobs: ['verify'] });
+  // 태그 실행에서 preflight 멈춤은 실패다(시크릿이 없으면 배포되지 않았다)
+  const pre = { result: 'failure', outputs: { stopped: 'preflight' } };
+  assert.equal(releaseStatus('tag', needs({ 'sign-publish': pre, verify: { result: 'skipped' } })).status, 'fail');
+  assert.deepEqual(releaseStatus('rehearsal', needs({ 'sign-publish': pre, verify: { result: 'skipped' } })), { loop: 'release-rehearsal', status: 'ok', jobs: [] });
+  // 리허설에서 preflight 밖의 실패(빌드·스모크, preflight를 지난 sign-publish)는 연다
+  assert.deepEqual(releaseStatus('rehearsal', needs({ 'sign-publish': pre, build: { result: 'failure' } })).jobs, ['build']);
+  assert.deepEqual(releaseStatus('rehearsal', needs({ 'sign-publish': { result: 'failure', outputs: { stopped: '' } } })).jobs, ['sign-publish']);
+  assert.equal(releaseStatus('rehearsal', needs({ 'smoke-linux': { result: 'cancelled' } })).status, 'fail');
+  assert.throws(() => releaseStatus('x', needs({})));
+  assert.throws(() => releaseStatus('tag', '{}'));
+  assert.deepEqual(releaseScope('refs/tags/v0.2.0'), { test: false });
+  assert.equal(releaseScope('refs/heads/master').test, false);
+  assert.equal(releaseScope('refs/heads/ci/pipeline').test, true);
+  assert.equal(releaseScope('refs/tags/x;y'), null);
+});
+
+test('release.yml의 report needs = 다른 모든 작업, 고리 이름이 LOOPS에 있다', async () => {
+  const { LOOPS, WORKFLOW_STALE_HOURS, STALE_HOURS } = await import('./issue.mjs');
+  const yml = readFileSync(join(ROOT, '.github/workflows/release.yml'), 'utf8');
+  const ids = Object.keys(parseJobs(yml));
+  const report = /^ {2}report:\n(?:.*\n)*? {4}needs: \[([^\]]+)\]/m.exec(yml);
+  assert.ok(report, 'release.yml report 작업의 needs가 없다');
+  assert.deepEqual(report[1].split(',').map((s) => s.trim()).sort(), ids.filter((i) => i !== 'report').sort());
+  assert.ok(LOOPS.release && LOOPS['release-rehearsal']);
+  // 매주 리허설(schedule)은 72시간 stale 한계로 보면 늘 stale이다
+  assert.ok(/^\s+schedule:\s*$/m.test(yml));
+  assert.ok(WORKFLOW_STALE_HOURS['release.yml'] > 7 * 24 && STALE_HOURS < 7 * 24);
+});

@@ -512,3 +512,40 @@ async fn event_order_on_multi_thread_runtime() {
         );
     }
 }
+
+/// UTF-8이 아닌 기본 폴더(Linux XDG 동영상 폴더 등)는 `invalidInput`으로 막는다. 받아들이면 serde가 그 경로를
+/// 쓰지 못해 그 뒤 모든 `jobs.json` 저장이 실패한다. `check_output`도 같다.
+#[cfg(unix)]
+#[tokio::test(start_paused = true)]
+async fn non_utf8_default_folder_is_rejected() {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+
+    let h = Harness::new(1);
+    let bad = h.dir.path().join(OsStr::from_bytes(b"vid\xffeos"));
+    let defaults = JobDefaults {
+        download_folder: bad.clone(),
+        segment_concurrency: 4,
+    };
+    let e = h.mgr.enqueue(request("a"), &defaults).unwrap_err();
+    assert_eq!(e.code, ErrorCode::InvalidInput);
+    let e = h
+        .mgr
+        .check_output(
+            None,
+            &bad,
+            "a",
+            &chzzk_core::ContentRef::Video { video_no: 1 },
+            "720p",
+            chzzk_core::PlaybackKind::LiveRewindHls,
+        )
+        .unwrap_err();
+    assert_eq!(e.code, ErrorCode::InvalidInput);
+    assert!(h.rec.events().is_empty());
+    assert!(h.mgr.list().is_empty());
+
+    // 저장은 계속된다
+    let id = h.enqueue("b").id;
+    until("완료", || h.status(id) == JobStatus::Completed).await;
+    assert_eq!(h.jobs_json()["jobs"][0]["status"], "completed");
+}

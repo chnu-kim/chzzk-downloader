@@ -487,6 +487,64 @@ async fn remove_reports_locked_partial_and_keeps_record() {
     assert!(!has_partial(&h.output("p")));
 }
 
+/// 실패한 작업의 경로를 새 작업이 가져갔으면, 옛 작업을 지워도 새 작업의 `.part`·sidecar는 남는다.
+#[tokio::test(start_paused = true)]
+async fn remove_failed_keeps_partial_of_new_owner() {
+    let h = Harness::new(1);
+    h.fake.script_for(
+        h.output("a"),
+        Script::new().fails(Error::AuthRequired { status: 401 }),
+    );
+    let old = h.enqueue("a").id;
+    until("실패", || h.status(old) == JobStatus::Failed).await;
+    h.fake
+        .script_for(h.output("a"), Script::new().wait_cancel());
+    let new = h.enqueue("a").id;
+    settle().await;
+    checkpoint(&h.output("a"), 10, 10);
+    h.mgr.pause(new).unwrap();
+    until("새 작업 멈춤", || h.status(new) == JobStatus::Paused).await;
+    assert_eq!(h.job(new).partial_bytes, Some(10));
+
+    h.mgr.remove(old).await.unwrap();
+    assert_eq!(h.rec.trace(old).last().unwrap(), "removed");
+    assert!(part_path(&h.output("a")).exists());
+    assert!(sidecar_path(&h.output("a")).exists());
+    assert_eq!(h.job(new).partial_bytes, Some(10));
+    let ids: Vec<_> = h.mgr.list().iter().map(|j| j.id).collect();
+    assert_eq!(ids, [new]);
+}
+
+/// 종료 대기 중에 온 `remove`는 아무것도 하지 않는다(`quit`이 태스크 핸들을 가져가 기다릴 수 없다).
+/// 작업은 `quit`대로 `interrupted`가 되고 `.part`는 남는다.
+#[tokio::test(start_paused = true)]
+async fn remove_during_quit_is_ignored() {
+    let h = Harness::new(1);
+    h.fake.script_for(
+        h.output("a"),
+        Script::new()
+            .until_cancelled()
+            .linger(Duration::from_secs(1))
+            .fails(Error::Cancelled),
+    );
+    let id = h.enqueue("a").id;
+    settle().await;
+    checkpoint(&h.output("a"), 10, 10);
+    let m = h.mgr.clone();
+    let quit = tokio::spawn(async move { m.quit(QUIT_TIMEOUT).await });
+    settle().await;
+    assert_eq!(h.status(id), JobStatus::Pausing);
+
+    h.mgr.remove(id).await.unwrap();
+    quit.await.unwrap();
+    let j = h.job(id);
+    assert_eq!(j.status, JobStatus::Interrupted);
+    assert_eq!(j.error, None);
+    assert_eq!(j.partial_bytes, Some(10));
+    assert!(has_partial(&h.output("a")));
+    assert!(!h.rec.trace(id).contains(&"removed".to_owned()));
+}
+
 /// 종료: 받는 중 → `interrupted`, 사용자가 멈춘 것 → `paused`, 대기 중은 그대로(다음 시작 때 reconcile).
 /// 새 작업은 시작하지 않는다.
 #[tokio::test(start_paused = true)]

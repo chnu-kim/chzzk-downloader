@@ -11,8 +11,8 @@
 //!   밖에서 한다. 디스크가 느려도 진행률 콜백과 command가 상태 잠금에서 기다리지 않는다. 쓰기 스레드는 가장
 //!   최근 목록만 쓴다. 쓰기 실패는 로그만 남기고 작업을 멈추지 않는다(메모리 상태가 기준이고, 다음 전이 때
 //!   다시 쓴다). `quit`은 마지막에 `flush`해 종료 전에 디스크에 닿게 한다.
-//! - **중복 방지**: 같은 최종 경로의 활성 작업(`queued·running·pausing·paused·interrupted`)이 있으면
-//!   `duplicateOutput`. 경로 비교는 Windows·macOS에서 대소문자를 무시한다(NTFS·APFS 기본이 그렇다).
+//! - **중복 방지**: 같은 최종 경로의 활성 작업(`queued·running·pausing·paused·interrupted`)이나 지우는 중인
+//!   작업이 있으면 `duplicateOutput`. 경로 비교는 Windows·macOS에서 대소문자를 무시한다(NTFS·APFS 기본이 그렇다).
 //!   두 작업이 같은 파일을 마무리(rename)하는 경합을 여기서 막는다. `enqueue`와 `resume`이 모두 검사한다.
 //! - **멈춤**: `pause`·`remove`·`quit`은 `stop`을 먼저 적고 토큰을 취소한다. 코어는 셋 다 `Error::Cancelled`로
 //!   끝나므로 `stop`으로 구분한다: `Pause` → `paused`, `Quit` → `interrupted`(다음 시작 때 이어받을 대상),
@@ -127,6 +127,12 @@ impl Job {
         self.rec.to_dto(self.last_progress.clone())
     }
 
+    /// 중복 검사에서 이 작업이 최종 경로를 차지하는가. 활성 상태이거나, 지우는 중이다(곧 `.part`를 지운다.
+    /// `failed`를 지우는 동안 새 작업이 같은 경로를 가져가면 그 작업의 `.part`를 지우게 된다).
+    fn holds_output(&self) -> bool {
+        self.removing || self.rec.status.is_active()
+    }
+
     fn busy(&self) -> bool {
         matches!(self.rec.status, JobStatus::Running | JobStatus::Pausing)
     }
@@ -191,9 +197,7 @@ impl State {
         self.jobs
             .values()
             .find(|j| {
-                Some(j.rec.id) != except
-                    && j.rec.status.is_active()
-                    && output_key(&j.rec.output) == key
+                Some(j.rec.id) != except && j.holds_output() && output_key(&j.rec.output) == key
             })
             .map(|j| j.rec.id)
     }
@@ -370,7 +374,7 @@ impl<B: Backend> DownloadManager<B> {
             let st = self.inner.lock();
             st.jobs
                 .values()
-                .filter(|j| j.rec.status.is_active())
+                .filter(|j| j.holds_output())
                 .map(|j| (output_key(&j.rec.output), j.rec.id))
                 .collect()
         };
@@ -489,49 +493,56 @@ impl<B: Backend> DownloadManager<B> {
     ///
     /// - `completed`·`skipped`: 레코드만 지운다(파일은 둔다).
     /// - `running`·`pausing`: 취소 → 태스크 종료 대기(잠금 밖) → `discard_partial` → 지운다.
+    ///   종료 중(`quit` 뒤)에는 아무것도 하지 않는다(`quit`이 핸들을 가져가 기다릴 수 없고, 곧 `interrupted`로 저장된다).
     /// - `queued`·`paused`·`interrupted`·`failed`: `discard_partial` → 지운다(다시 줄 선 작업도 `.part`가 있을 수 있다).
+    ///   단 `failed`의 경로를 다른 활성 작업이 가져갔으면 `.part`는 그 작업의 것이므로 레코드만 지운다.
     ///
     /// `.part`를 지우지 못하면(다른 프로그램이 잠금 등) 오류를 돌려주고 레코드를 멈춘 상태로 남긴다.
     pub async fn remove(&self, id: JobId) -> Result<(), AppError> {
         let (handle, output) = {
             let mut st = self.inner.lock();
+            let quitting = !st.scheduler_enabled;
             let Some(job) = st.target(id)? else {
                 // 이미 지우는 중이다
                 return Ok(());
             };
-            match job.rec.status {
-                JobStatus::Completed | JobStatus::Skipped => {
-                    st.jobs.remove(&id);
-                    self.inner.save(&st);
-                    st.emit(JobEvent::Removed { id });
-                    return Ok(());
-                }
-                JobStatus::Running | JobStatus::Pausing => {
-                    job.removing = true;
-                    job.stop = Some(StopReason::Remove);
-                    job.rec.status = JobStatus::Pausing;
-                    if let Some(c) = &job.cancel {
-                        c.cancel();
-                    }
-                    let handle = job.handle.take();
-                    let output = job.rec.output.clone();
-                    let dto = job.dto();
-                    self.inner.save(&st);
-                    st.emit(JobEvent::Status { job: dto });
-                    (handle, output)
-                }
-                JobStatus::Queued
-                | JobStatus::Paused
-                | JobStatus::Interrupted
-                | JobStatus::Failed => {
-                    job.removing = true;
-                    if job.rec.status == JobStatus::Queued {
-                        // 지우는 동안 pump가 시작하지 않게(이벤트는 보내지 않는다. 곧 Removed다)
-                        job.rec.status = JobStatus::Paused;
-                    }
-                    (None, job.rec.output.clone())
-                }
+            let output = job.rec.output.clone();
+            let records_only = match job.rec.status {
+                JobStatus::Completed | JobStatus::Skipped => true,
+                // 경로를 다른 활성 작업이 가져갔다. `.part`는 그 작업의 것이다
+                JobStatus::Failed => st.active_with_output(&output, Some(id)).is_some(),
+                // 종료 중: `quit`이 이미 태스크를 멈추고 핸들을 가져갔다. 기다릴 수 없으니 `.part`를 건드리지 않고
+                // `quit`이 `interrupted`로 저장하게 둔다(앱이 곧 꺼진다).
+                JobStatus::Running | JobStatus::Pausing if quitting => return Ok(()),
+                _ => false,
+            };
+            if records_only {
+                st.jobs.remove(&id);
+                self.inner.save(&st);
+                st.emit(JobEvent::Removed { id });
+                return Ok(());
             }
+            let job = st.visible(id)?;
+            job.removing = true;
+            let handle = if job.busy() {
+                job.stop = Some(StopReason::Remove);
+                job.rec.status = JobStatus::Pausing;
+                if let Some(c) = &job.cancel {
+                    c.cancel();
+                }
+                let handle = job.handle.take();
+                let dto = job.dto();
+                self.inner.save(&st);
+                st.emit(JobEvent::Status { job: dto });
+                handle
+            } else {
+                if job.rec.status == JobStatus::Queued {
+                    // 지우는 동안 pump가 시작하지 않게(이벤트는 보내지 않는다. 곧 Removed다)
+                    job.rec.status = JobStatus::Paused;
+                }
+                None
+            };
+            (handle, output)
         };
         if let Some(h) = handle {
             // 바깥 태스크는 패닉을 안쪽에서 받으므로 여기서 JoinError가 나는 것은 런타임 종료뿐이다.
@@ -663,12 +674,21 @@ impl<B: Backend> DownloadManager<B> {
     }
 }
 
-/// 요청 폴더(공백뿐이면 무시) → 기본 폴더. 절대 경로가 아니면 `invalidInput`.
+/// 요청 폴더(공백뿐이면 무시) → 기본 폴더. 절대 경로가 아니거나 UTF-8이 아니면 `invalidInput`.
+///
+/// UTF-8 검사는 기본 폴더 때문이다(요청 폴더는 이미 `&str`). Linux의 XDG 동영상 폴더처럼 OS가 준 경로는 아무
+/// 바이트나 담을 수 있는데, serde는 `PathBuf`를 UTF-8로만 쓰므로 그런 작업 하나가 `jobs.json` 저장 전체를 막는다.
 fn resolve_folder(folder: Option<&str>, default: &Path) -> Result<PathBuf, AppError> {
     let folder = match folder.map(str::trim) {
         Some(f) if !f.is_empty() => PathBuf::from(f),
         _ => default.to_path_buf(),
     };
+    if folder.to_str().is_none() {
+        return Err(AppError::invalid_input(format!(
+            "저장 폴더 경로에 쓸 수 없는 글자가 있습니다: {}",
+            folder.display()
+        )));
+    }
     if !folder.is_absolute() {
         return Err(AppError::invalid_input(format!(
             "저장 폴더가 절대 경로가 아닙니다: {}",

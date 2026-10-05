@@ -44,5 +44,3 @@ pub use progress::{Meter, Phase, Progress};
 pub use settings::{RecentVod, SettingsStore, UserSettings, add_recent_vod};
 pub use tokio_util::sync::CancellationToken;
 pub use url::parse_content_url;
-
-pub fn ci_negative_seed( ) -> u8 {1}

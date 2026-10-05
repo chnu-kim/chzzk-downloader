@@ -157,7 +157,7 @@ test('NUL이 든 파일도 글자 조각과 UTF-16을 본다', () => {
 });
 
 test('작성자 이메일 허용 목록', () => {
-  for (const ok of ['1+someone@users.noreply.github.com', 'someone@users.noreply.github.com', 'noreply@github.com', 'noreply@anthropic.com', 't@example.invalid']) {
+  for (const ok of ['1+someone@users.noreply.github.com', 'someone@users.noreply.github.com', 'noreply@github.com', 'noreply@anthropic.com', 't@example.invalid', '49699333+dependabot[bot]@users.noreply.github.com']) {
     assert.ok(emailAllowed(ok), ok);
   }
   for (const bad of ['someone@example.com', 'a@users.noreply.github.com.evil.example', '']) {

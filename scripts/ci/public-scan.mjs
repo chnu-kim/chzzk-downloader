@@ -96,7 +96,7 @@ export function decode(s) {
 
 // ---- 규칙 ----
 
-const EMAIL_OK = [/^(?:\d+\+)?[A-Za-z0-9-]+@users\.noreply\.github\.com$/i, /^noreply@github\.com$/i, /^noreply@anthropic\.com$/i, /@[a-z0-9.-]+\.invalid$/i];
+const EMAIL_OK = [/^(?:\d+\+)?[A-Za-z0-9-]+(?:\[bot\])?@users\.noreply\.github\.com$/i, /^noreply@github\.com$/i, /^noreply@anthropic\.com$/i, /@[a-z0-9.-]+\.invalid$/i];
 export const emailAllowed = (e) => EMAIL_OK.some((re) => re.test(e.trim()));
 
 function rulesOf(s, hits) {

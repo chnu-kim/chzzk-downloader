@@ -100,7 +100,8 @@
 - [x] §15-16 설정 화면: 폴더, 동시 다운로드 수, 연결 수, 자동 이어받기, 쿠키(값 미복원), 이전 버전 가져오기(D3), 정보, B2 (app.md 구현 중 변경 46)
 - [x] §15-17 창 닫기(D1 ↔ `quit`), `request_user_attention`·완료/실패 OS 알림, 시작 실패 안내, 접근성 점검 (app.md 구현 중 변경 47)
 - [ ] §15-17 남은 항목: 3 OS 수동 스모크(§15-14에서 넘어온 웹뷰 CSP·실제 resolve·텍스트 드롭·창 포커스·입력칸 밖 붙여넣기 포함, 체크리스트와 현재 결과는 app.md 구현 중 변경 47 표)
-- [x] §15-18 `app.yml`의 `frontend`·`tauri` 작업 (푸시 전이라 3 OS 녹색은 PR B에서 확인, app.md 구현 중 변경 49)
+- [x] §15-18 `app.yml`의 `frontend`·`tauri` 작업 작성 (app.md 구현 중 변경 49, Linux 패키지 이름·데이터 폴더 잠금은 51)
+- [ ] §15-18 남은 항목: GitHub에서 3 OS 녹색 + 번들(Windows MSI ko-KR, Linux deb·rpm·AppImage). PR B 또는 `workflow_dispatch`로 한 번 돌린 뒤 체크
 - [x] §15-19 문서: ROADMAP·CLAUDE.md·app.md "구현 중 변경" 정리 (구현 중 변경 50)
 - Phase 3 자리는 Phase 2에서 미리 둔다(app.md §12): `features.auth=false`, `OwnershipGate` 항상 허용, `ResolvedDto.ownership`, `JobRecord.channelId`, `auth_status` command, AccountSlot·AuthGate·OwnershipNotice 빈 슬롯
 

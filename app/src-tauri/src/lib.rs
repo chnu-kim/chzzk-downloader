@@ -189,6 +189,50 @@ fn startup_failed<R: Runtime>(app: &AppHandle<R>, log_dir: &Path, e: &AppError) 
         .show(move |_| handle.exit(1));
 }
 
+/// 데이터 폴더의 잠금 파일 이름.
+pub const INSTANCE_LOCK_FILE: &str = "app.lock";
+
+/// 프로세스가 끝날 때까지 쥐는 데이터 폴더 잠금(`manage`해 둔다. 프로세스가 끝나면 OS가 푼다).
+#[derive(Debug)]
+pub struct InstanceLock(#[allow(dead_code)] std::fs::File);
+
+/// 데이터 폴더 잠금 결과.
+#[derive(Debug)]
+pub enum InstanceLockState {
+    /// 이 프로세스가 쥐었다.
+    Acquired(InstanceLock),
+    /// 다른 프로세스가 쥐고 있다(그 프로세스가 같은 `jobs.json`·설정을 쓰는 중).
+    HeldElsewhere,
+    /// 잠금 파일을 열거나 잠그지 못했다(잠금 없이 계속한다. 폴더 문제는 `App::open`이 알린다).
+    Unavailable(std::io::Error),
+}
+
+/// `<data>/app.lock`을 배타 잠근다(코어 `.part`와 같은 `File::try_lock`, 구현 중 변경 51(다)).
+///
+/// single-instance 플러그인은 macOS에서 거의 동시에 뜬 두 실행을 둘 다 첫 실행으로 보낼 수 있다(소켓 확인과
+/// 생성 사이 경합). 그러면 두 매니저가 같은 `jobs.json`을 번갈아 덮어써 한쪽 작업이 사라진다. 이 잠금이
+/// 매니저를 열기 전의 마지막 관문이다.
+pub fn acquire_instance_lock(data_dir: &Path) -> InstanceLockState {
+    use std::fs::{File, OpenOptions, TryLockError};
+    let open = || -> std::io::Result<File> {
+        std::fs::create_dir_all(data_dir)?;
+        OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(data_dir.join(INSTANCE_LOCK_FILE))
+    };
+    let f = match open() {
+        Ok(f) => f,
+        Err(e) => return InstanceLockState::Unavailable(e),
+    };
+    match f.try_lock() {
+        Ok(()) => InstanceLockState::Acquired(InstanceLock(f)),
+        Err(TryLockError::WouldBlock) => InstanceLockState::HeldElsewhere,
+        Err(TryLockError::Error(e)) => InstanceLockState::Unavailable(e),
+    }
+}
+
 /// 앱 상태(설정·매니저)를 열어 `manage`한다. 로그는 그 전에 시작한다.
 fn setup<R: Runtime>(app: &tauri::App<R>) -> Result<(), Box<dyn std::error::Error>> {
     let p = app.path();
@@ -214,6 +258,23 @@ fn setup<R: Runtime>(app: &tauri::App<R>) -> Result<(), Box<dyn std::error::Erro
     let legacy_dir: Option<PathBuf> = std::env::current_exe()
         .ok()
         .and_then(|e| e.parent().map(PathBuf::from));
+    match acquire_instance_lock(&paths.data) {
+        InstanceLockState::Acquired(lock) => {
+            app.manage(lock);
+        }
+        InstanceLockState::HeldElsewhere => {
+            // 같은 순간에 뜬 다른 실행이 이미 상태를 열었다. 창을 보이지 않고 조용히 끝낸다.
+            tracing::warn!("다른 실행이 데이터 폴더를 쓰는 중이라 이 실행을 끝냄");
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.hide();
+            }
+            app.handle().exit(0);
+            return Ok(());
+        }
+        InstanceLockState::Unavailable(e) => {
+            tracing::warn!(error = %e, "데이터 폴더 잠금을 쥐지 못해 잠금 없이 계속함");
+        }
+    }
     let log_dir = paths.log.clone();
     let state = match App::open(paths, legacy_dir.as_deref(), tokio_handle()) {
         Ok(s) => s,
@@ -256,9 +317,33 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{CloseDecision, close_decision, startup_failure_message};
+    use super::{
+        CloseDecision, INSTANCE_LOCK_FILE, InstanceLockState, acquire_instance_lock,
+        close_decision, startup_failure_message,
+    };
     use chzzk_shell::AppError;
     use std::path::Path;
+
+    // 거의 동시에 뜬 두 실행이 둘 다 single-instance를 지나도 매니저는 하나만 연다(구현 중 변경 51(다)).
+    #[test]
+    fn instance_lock_admits_one_holder_and_frees_on_drop() {
+        let tmp = tempfile::tempdir().unwrap();
+        let data = tmp.path().join("data");
+        let first = match acquire_instance_lock(&data) {
+            InstanceLockState::Acquired(l) => l,
+            other => panic!("첫 잠금 실패: {other:?}"),
+        };
+        assert!(data.join(INSTANCE_LOCK_FILE).is_file());
+        assert!(matches!(
+            acquire_instance_lock(&data),
+            InstanceLockState::HeldElsewhere
+        ));
+        drop(first);
+        assert!(matches!(
+            acquire_instance_lock(&data),
+            InstanceLockState::Acquired(_)
+        ));
+    }
 
     #[test]
     fn startup_failure_message_names_log_folder_and_error() {

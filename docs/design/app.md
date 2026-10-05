@@ -1128,7 +1128,8 @@ jobs:
 | 드래그 앤 드롭·`dragDropEnabled: false` (§11) | 5, 44(가) |
 | 상태별 버튼 (§8.5 그림) | 45 (ui-visual §6.5) |
 | 완료 알림 (§6.1·§16) | 37, 47 (실패에도 OS 알림) |
-| CI 작업 (§14) | 35 (`shell`), 49 (`frontend`·`tauri`) |
+| CI 작업 (§14) | 35 (`shell`), 49 (`frontend`·`tauri`), 51(가)(Linux 패키지 이름) |
+| 다른 프로세스 막기 (§6.1 "중복 방지 세 겹"의 (2)) | 51(다) (single-instance + 데이터 폴더 `app.lock`) |
 | 컴포넌트 나눔 (§10) | 48 "하지 않은 것" (3) |
 | 웹뷰·OS 수동 확인 (§15 14·17행) | 아래 "수동 스모크 체크리스트 결과" 표. 미확인 항목은 사람이 3 OS에서 본다 |
 
@@ -1294,6 +1295,12 @@ jobs:
 
 50. **§15-19 문서 정리.** 1~49는 고치거나 다시 번호를 매기지 않고, 이 절 머리에 "읽는 법"(뒤 항목 우선, 우선순위 §16 > 이 절 > 본문)과 주제별 "지금 기준" 표를 더했다. 본문(§0~§17)은 설계 당시 기록으로 두고 고치지 않는다(§14의 `git diff`·`pnpm build` 선행 같은 어긋남은 표가 35·49로 보낸다). CLAUDE.md는 레이아웃(`crates/shell`·`app/`·`app/src-tauri`·`app.yml`), 앱 실행·빌드 명령, Linux 의존성 메모, app.md 기준 규칙으로 갱신했다.
 
+51. **§15-18~19 리뷰 반영.**
+    - (가) **Linux에서는 `productName`을 ASCII로 덮는다.** 49(사)는 deb·rpm 패키지 이름을 첫 master 번들 실패 때 고치기로 했지만 실패하지 않는다. tauri-bundler가 `.deb`를 `ar`·`tar` crate로 직접 만들고 `dpkg-deb`를 부르지 않아, 빌드는 `Package: 치지직-다운로더`로 통과하고 설치(`dpkg -i`)에서야 거부된다(dpkg 패키지 이름은 소문자 ASCII·숫자·`+-.`만). Tauri 설정에 deb·rpm 패키지 이름 항목이 없어 `app/src-tauri/tauri.linux.conf.json`(Tauri CLI가 Linux에서 합치는 플랫폼 설정)에 `productName: "chzzk-downloader"` 하나만 둔다. 창 제목(`windows[].title`)·알림 제목(`sink::NOTIFY_TITLE`)·앱 데이터 폴더(identifier)는 따로 정해지므로 그대로고, Windows·macOS 번들 이름도 그대로다. Linux 메뉴의 `.desktop` `Name`이 `chzzk-downloader`가 되는 것은 받아들인다(한글로 하려면 `bundle.linux.deb.desktopTemplate`를 둔다, 후속). `tauri-conf.test.ts`가 합친 이름의 kebab이 `/^[a-z0-9][a-z0-9+.-]*$/`인지 고정한다. Linux에서 CLI가 실제로 합치는지는 첫 master·수동 번들 실행에서 본다.
+    - (나) **ROADMAP §15-18을 둘로 나눴다.** 작업을 쓴 것은 끝, "3 OS 녹색 + 번들(Windows MSI ko-KR, Linux deb·rpm·AppImage)"은 GitHub에서 한 번 돌 때까지 열어 둔다(`workflow_dispatch`로 머지 전에 돌릴 수 있다).
+    - (다) **데이터 폴더 잠금(`<app_data_dir>/app.lock`).** macOS의 `tauri-plugin-single-instance` 2.5.2는 소켓 확인(`NotFound`)과 생성 사이에 경합이 있어, 거의 동시에(debug 빌드에서 약 2초 안) 뜬 두 실행이 둘 다 첫 실행이 되고(뒤의 것이 앞의 소켓을 지운다) 각자 매니저로 같은 `jobs.json`을 덮어써 한쪽 작업이 사라졌다(리뷰어 실측: 두 "앱 시작" 로그 3ms 차, 둘 다 살아 있음). setup이 `App::open` 전에 `acquire_instance_lock`으로 `File::try_lock`(코어 `.part`와 같은 방식)을 쥐고 프로세스 끝까지 `manage`해 둔다. 이미 잡혀 있으면 main 창을 숨기고 경고 로그를 남긴 뒤 `exit(0)`한다(시작 실패 창은 띄우지 않는다. 다른 실행이 멀쩡히 돈다). 잠금 파일을 열지 못하면 잠금 없이 계속한다(폴더 문제는 `App::open`이 시작 실패 창으로 알린다). 그래서 §6.1 "중복 방지 세 겹"의 (2)는 single-instance(창 포커스 넘기기) + `app.lock`(상태 단일 소유)이다. 남는 것: 경합에서 진 쪽이 살아 있는 소켓의 주인이었다면 이긴 쪽은 소켓이 없어, 이후 명령줄 실행(`open -n` 등)은 포커스를 넘기지 못하고 잠금에 막혀 조용히 끝난다. 데이터는 안전하고, Finder·Dock 실행은 macOS가 이미 떠 있는 앱을 앞으로 가져오므로 받아들인다. `lib.rs` 단위 테스트가 두 번째 잠금이 `HeldElsewhere`이고 놓으면 다시 잡히는지 고정한다.
+    - (라) **실제 실행(2026-10-05 macOS).** `pnpm tauri build --ci --debug --no-bundle` 성공. 다른 세션이 띄워 둔 debug 앱(부모가 끝난 고아 프로세스)이 돌고 있어, 새 바이너리는 single-instance로 그 창에 포커스를 넘기고 시작 로그 없이 바로 끝났다(순차 실행 넘기기 확인). 그 프로세스를 끝낼 권한이 없어 새 바이너리의 setup(잠금 포함) 실행과 동시 실행 경합 재현은 하지 못했다. 아래 표에 미확인으로 둔다.
+
 ### 수동 스모크 체크리스트 결과 (§15 17행, 2026-10-05 macOS)
 
 CLI 세션에서는 웹뷰 화면·개발자 도구를 조작할 수 없어 대부분을 실행하지 못했다. 자동 테스트가 같은 판단을 대신 보는 항목은 "대신 본 것"에 적었다. **미확인 항목은 사람이 3 OS에서 돌려야 한다.**
@@ -1313,3 +1320,5 @@ CLI 세션에서는 웹뷰 화면·개발자 도구를 조작할 수 없어 대�
 | 창 폭 720 레이아웃, 다크 모드 | 미확인 | `tokens.test.ts`(다크 토큰·대비). 960px 브라우저(mock IPC)에서 작업 메뉴·상태 줄·토스트는 48(가)에서 봤다 |
 | debug 바이너리 시작·로그 | **확인** | `~/Library/Logs/…/chzzk-downloader.*.log`에 시작 로그, 패닉 없음 |
 | `pnpm tauri build --ci --debug --no-bundle`(넣은 `dist`) 바이너리 시작(§15-18, 49) | **확인**(창 내용은 미확인) | 빌드 성공, `target/debug/chzzk-app`이 떠서 시작 로그(기본 폴더 `~/Movies/치지직`)를 남기고 패닉 없이 돌다 종료 신호로 끝남. 창이 다른 앱 뒤에 떠 화면 캡처로 내용을 보지 못했다 |
+| 거의 동시 두 실행 → 하나만 남음(51(다)) | 미확인 | `instance_lock_admits_one_holder_and_frees_on_drop` |
+| 51 고친 바이너리 시작(`app.lock` 생성·시작 로그) | 미확인 | 빌드 성공. 다른 세션의 앱이 떠 있어 실행이 그쪽으로 넘어갔다(51(라)) |

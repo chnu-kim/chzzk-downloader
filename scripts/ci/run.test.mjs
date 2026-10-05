@@ -1,0 +1,86 @@
+// node --test scripts/ci/run.test.mjs — 진입점의 순수 함수(changes 분류, ci-ok 판정)와 gate 표
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+
+import { CODE_GATED_JOBS, GATES, msrv, testFiles } from './gates.mjs';
+import { classify, decideCiOk, firstSemver } from './run.mjs';
+
+test('classify: 문서만 바뀌면 code=false', () => {
+  assert.deepEqual(classify(['docs/design/cicd.md', 'README.md', 'CLAUDE.md', 'testdata/README.md']), {
+    code: false,
+    release: false,
+    docs_only: true,
+  });
+});
+
+test('classify: 코드·설정·모르는 경로는 code=true', () => {
+  for (const f of [
+    'crates/core/src/lib.rs',
+    'app/src/App.svelte',
+    'Cargo.lock',
+    '.github/workflows/ci.yml',
+    'scripts/ci/run.mjs',
+    'testdata/hls/media.m3u8',
+    'rust-toolchain.toml',
+    'deny.toml',
+    '.gitattributes',
+    'something-new',
+  ]) {
+    assert.equal(classify(['docs/x.md', f]).code, true, f);
+  }
+});
+
+test('classify: 목록이 없거나 비면 전부 실행(fail-safe)', () => {
+  assert.deepEqual(classify(null), { code: true, release: true, docs_only: false });
+  assert.deepEqual(classify([]), { code: true, release: true, docs_only: false });
+});
+
+test('classify: release 경로', () => {
+  assert.equal(classify(['xtask/src/main.rs']).release, true);
+  assert.equal(classify(['release/updater.pub']).release, true);
+  assert.equal(classify(['.github/workflows/release.yml']).release, true);
+  assert.equal(classify(['crates/core/src/lib.rs']).release, false);
+});
+
+const ok = { result: 'success', outputs: {} };
+const changes = (code, result = 'success') => ({ result, outputs: { code: String(code) } });
+
+test('ci-ok: 모두 success면 통과', () => {
+  assert.equal(decideCiOk({ changes: changes(true), lint: ok, rust: ok }).ok, true);
+});
+
+test('ci-ok: failure·cancelled는 실패', () => {
+  assert.equal(decideCiOk({ changes: changes(true), lint: ok, rust: { result: 'failure' } }).ok, false);
+  assert.equal(decideCiOk({ changes: changes(true), lint: { result: 'cancelled' } }).ok, false);
+});
+
+test('ci-ok: skipped는 code=false일 때 무거운 작업만 허용', () => {
+  for (const job of CODE_GATED_JOBS) {
+    assert.equal(decideCiOk({ changes: changes(false), lint: ok, [job]: { result: 'skipped' } }).ok, true, job);
+    assert.equal(decideCiOk({ changes: changes(true), lint: ok, [job]: { result: 'skipped' } }).ok, false, job);
+  }
+  assert.equal(decideCiOk({ changes: changes(false), lint: { result: 'skipped' } }).ok, false);
+  assert.equal(decideCiOk({ changes: changes(false), 'scripts-windows': { result: 'skipped' } }).ok, false);
+});
+
+test('ci-ok: changes가 실패·skipped·없으면 실패', () => {
+  assert.equal(decideCiOk({ changes: changes(false, 'failure'), rust: { result: 'skipped' } }).ok, false);
+  assert.equal(decideCiOk({ changes: { result: 'skipped' } }).ok, false);
+  assert.equal(decideCiOk({ lint: ok }).ok, false);
+});
+
+test('firstSemver', () => {
+  assert.equal(firstSemver('typos-cli 1.50.3'), '1.50.3');
+  assert.equal(firstSemver('1.7.12\ninstalled by go'), '1.7.12');
+  assert.equal(firstSemver('none'), null);
+});
+
+test('gate 표: 모든 단계가 명령을 갖고 scripts-test가 테스트 파일을 찾는다', () => {
+  for (const [name, g] of Object.entries(GATES)) {
+    assert.ok(g.steps.length > 0, name);
+    for (const s of g.steps) assert.ok(Array.isArray(s.cmd) && s.cmd.length > 0, name);
+  }
+  assert.ok(testFiles().includes('scripts/ci/run.test.mjs'));
+  assert.ok(testFiles().includes('scripts/ci/public-scan.test.mjs'));
+  assert.match(msrv(), /^\d+\.\d+(\.\d+)?$/);
+});

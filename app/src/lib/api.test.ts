@@ -129,3 +129,16 @@ describe('api.ts', () => {
     expect(got).toEqual([{ type: 'removed', id: 4 }]);
   });
 });
+
+describe('close-requested', () => {
+  it('Rust가 보낸 받는 중 작업 수를 넘기고, 그만 들으면 더 받지 않는다', async () => {
+    mockIPC(() => undefined, { shouldMockEvents: true });
+    const { emit } = await import('@tauri-apps/api/event');
+    const got: number[] = [];
+    const off = await api.onCloseRequested((n) => got.push(n));
+    await emit(api.CLOSE_REQUESTED, { running: 2 });
+    off();
+    await emit(api.CLOSE_REQUESTED, { running: 3 });
+    expect(got).toEqual([2]);
+  });
+});

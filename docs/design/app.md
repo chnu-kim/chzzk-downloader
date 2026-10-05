@@ -1246,3 +1246,28 @@ jobs:
     - **B2와 B1**: 배너는 하나만 보이고 B2가 먼저다(ui-visual §6.6). B2의 [설정 폴더 열기]는 `open_app_folder("config")`.
     - **반응 폭**: 720~839에서 "기본 저장 폴더" 행의 값이 라벨 아래로 내려간다(ui-visual §8). 섹션 묶음·행 48·도움말 13 `fg-muted`는 ui-visual §6.8 그대로다.
     - 테스트: `components/settings/settings.test.ts`(즉시 저장 3종, B2와 되돌림·다시 시도, 입력 오류는 화면 안, 폴더 열기 3종·버전, 쿠키 값 미복원·저장 뒤 비움·둘 다 필요·비활성·지우기, 오류 동작으로 펼침, 가져오기 경고·마지막 경로·못 찾음, D3 가져오기·나중에), `report.test.ts`(`buildAppReport`에 경로 없음), 셸 `folder_targets_follow_paths_and_settings`, IPC `open_app_folder_takes_camel_case_kind`.
+47. **§15-17 창 닫기·알림·접근성·마무리 세부.**
+    - **D1 `CloseGuard`**: `api.onCloseRequested`(이 파일만 `listen`을 부른다, `core:default`의 이벤트 권한으로 충분하다)로 `close-requested`를 듣고 `{running}`을 문구에 넣는다. 열린 채 다시 오면 수만 바꾼다. [계속 받기](기본 포커스)·Esc는 닫기만, [닫기]는 `quit()`을 **한 번만** 부르고 그동안 버튼을 막는다(Rust도 38(가)로 한 번만 돈다). `quit`이 실패하면 토스트로 알리고 다시 누를 수 있게 한다. `ConfirmDialog`의 버튼에 `disabled`를 더했다.
+    - **OS 알림을 실패에도 띄운다**(§16 "완료 OS 알림"을 완료·실패로 넓힘). 받는 동안 창을 내려 둔 사용자가 실패를 놓치면 다시 열 때까지 아무 일도 없기 때문이다. `sink::notice_of`가 `Status(completed)`→`Completed`, `Status(failed)`→`Failed`를 큐에 넣고(`Added`·건너뜀·멈춤은 알리지 않는다), 알림 태스크는 그대로 main 창에 포커스가 없을 때만 `request_user_attention(Informational)`과 OS 알림을 띄운다. 실패 본문은 copy deck `job.failed`("'{title}' 다운로드에 실패했어요", LiveAnnouncer와 같은 문구)이고 `sink.rs`에도 있다. `quit`이 멈춘 작업은 `interrupted`라 종료 때 실패 알림이 쏟아지지 않는다.
+    - **시작 실패 안내(38(바))**: `App::open`이 실패하면 `setup`이 오류를 삼키고 main 창을 숨긴 뒤 dialog 플러그인의 비동기 오류 창(제목 "치지직 다운로더를 시작하지 못했어요", 본문 `startup_failure_message`: 할 일 + 로그 폴더 + 원문 오류)을 띄우고 닫으면 `exit(1)`한다. Tauri 2.12.1 소스로 확인한 것: config 창은 사용자 `setup`보다 먼저 만들어지고(`app.rs` `setup()`), 상태가 없는 command는 패닉하지 않고 "state not managed" 오류를 돌려준다(`state.rs`). 닫기 가드는 상태가 없으면 막지 않는다. `blocking_show`는 메인 스레드(setup)에서 멈추므로 `show(콜백)`을 쓴다. 이 문구는 웹뷰가 뜨기 전이라 Rust에만 있다. **GUI 경로는 확인하지 못했다**(아래 스모크 표).
+    - **접근성 점검**: (가) 뷰를 바꾸면 누르던 버튼이 사라져 포커스가 body로 떨어지던 것을, 설정은 제목(`h1 tabindex=-1`), 홈은 입력줄로 옮긴다(다른 곳이 이미 옮겼으면 두고, 쿠키 섹션 펼치기는 첫 입력칸). (나) `src/a11y.test.ts`가 앱 전체를 그려 랜드마크(`banner`·`main`·"다운로드" 구획), 홈·설정의 모든 버튼·스위치·셀렉트·진행 막대에 이름이 있는지, 뷰 전환·Esc 뒤 포커스, 멈춤·완료 항목이 아이콘과 문구를 함께 쓰는지 본다. (다) reduced-motion: 새 항목 강조는 CSS에서 끈다(줄무늬·스피너·스켈레톤은 41에서 이미). (라) 진행 막대 `aria-valuetext`("57퍼센트, 2분 18초 남음")·대화상자 포커스 가둠·복귀는 45·41의 테스트가 본다.
+    - 빌드 확인(macOS, 2026-10-05): `pnpm build` 결과에 `style="`·`setAttribute("style"`이 없고, `pnpm tauri build --debug --no-bundle`이 통과하며 그 바이너리가 setup을 끝까지 돌아 시작 로그를 남긴다(패닉 없음).
+
+### 수동 스모크 체크리스트 결과 (§15 17행, 2026-10-05 macOS)
+
+CLI 세션에서는 웹뷰 화면·개발자 도구를 조작할 수 없어 대부분을 실행하지 못했다. 자동 테스트가 같은 판단을 대신 보는 항목은 "대신 본 것"에 적었다. **미확인 항목은 사람이 3 OS에서 돌려야 한다.**
+
+| 항목 | 결과 | 대신 본 것 |
+|---|---|---|
+| 웹뷰 콘솔 런타임 CSP 위반 없음 | 미확인 | `csp.test.ts`(템플릿 `style=`·`{@html}` 없음), `pnpm build` 결과 정적 검사 |
+| 실제 주소로 `resolve` → 빠른 다시보기·일반 VOD·클립 각 1건 받기 | 미확인 | 셸 `tests/secrets.rs`·IPC `channel_sink_delivers_job_events…`(wiremock 끝까지 받기) |
+| 일시정지 → D1 → 재시작 → B1 → 이어받기 → 완료 → 파일 열기·폴더 열기 | 미확인 | 매니저 전이·`quit` 테스트, `jobs.test.ts`·`closeguard.test.ts`·`a11y.test.ts` |
+| 같은 경로 두 번 추가(`duplicateOutput`), 완성 파일 이름으로 추가(번호 붙이기) | 미확인 | 셸 매니저 테스트, `receive.test.ts` 충돌 세 형태 |
+| D1 `[닫기]` 두 번·3초 대기 중 Cmd+Q(`ExitRequested`로 오는지) | 미확인 | IPC `quit_runs_once_and_blocks_close_silently_meanwhile`, `closeguard.test.ts` |
+| 읽을 수 없는 `jobs.json`으로 시작 → 시작 실패 창 | 미확인 | `startup_failure_message` 단위 테스트, Tauri 소스 확인(위) |
+| 쿠키 넣고 켜기·끄기, 옛 폴더 가져오기 | 미확인 | `settings.test.ts`, 셸 `SettingsService` 테스트 |
+| 텍스트 드래그 앤 드롭·창 포커스 클립보드 제안·입력칸 밖 붙여넣기(3 OS 웹뷰가 이벤트를 주는지) | 미확인 | `receive.test.ts`·`shortcuts.test.ts`(jsdom 이벤트) |
+| 끌던 요소가 사라진 뒤 바깥 드롭 한 번 놓침(44(가)) | 미확인 | - |
+| 창 포커스가 없을 때 완료·실패 OS 알림과 Dock·작업 표시줄 주의(서명 안 된 debug 빌드) | 미확인 | `sink.rs` 단위 테스트(알릴 일·본문) |
+| 창 폭 720 레이아웃, 다크 모드 | 미확인 | `tokens.test.ts`(다크 토큰·대비) |
+| debug 바이너리 시작·로그 | **확인** | `~/Library/Logs/…/chzzk-downloader.*.log`에 시작 로그, 패닉 없음 |

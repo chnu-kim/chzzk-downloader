@@ -5,6 +5,8 @@
     onclick: () => void;
     /** 처음 포커스를 받는 기본 버튼(안전한 쪽) */
     autofocus?: boolean;
+    /** 한 번만 누를 수 있는 동작(D1 [닫기])이 진행 중일 때 */
+    disabled?: boolean;
   }
 </script>
 
@@ -28,7 +30,12 @@
   {body}
   {#snippet actions()}
     {#each buttons as b (b.label)}
-      <Button variant={b.variant} data-autofocus={b.autofocus ? '' : undefined} onclick={b.onclick}>
+      <Button
+        variant={b.variant}
+        data-autofocus={b.autofocus ? '' : undefined}
+        disabled={b.disabled}
+        onclick={b.onclick}
+      >
         {b.label}
       </Button>
     {/each}

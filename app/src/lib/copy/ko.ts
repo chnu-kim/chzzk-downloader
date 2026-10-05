@@ -1,6 +1,7 @@
 // copy deck(docs/design/app.md §9 "그 밖의 문구", ui-visual.md §9). 화면 문구는 여기에만 둔다.
 // 해요체. `{name}` 자리는 `t(key, { name })`가 채운다.
-// `toast.completed`와 앱 이름은 Rust(`app/src-tauri/src/sink.rs`, OS 알림)에도 있다. 고치면 함께 고친다.
+// `toast.completed`·`job.failed`와 앱 이름은 Rust(`app/src-tauri/src/sink.rs`, OS 알림)에도 있다. 고치면 함께 고친다.
+// 시작 실패 창 문구는 웹뷰가 뜨기 전이라 Rust(`app/src-tauri/src/lib.rs`)에만 있다.
 
 export const ko = {
   'app.title': '치지직 다운로더',

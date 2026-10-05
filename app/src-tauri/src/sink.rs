@@ -1,8 +1,8 @@
-//! `ChannelSink`: 매니저 이벤트를 웹뷰 Channel로 보내는 sink(§6.1), 그리고 완료 알림.
+//! `ChannelSink`: 매니저 이벤트를 웹뷰 Channel로 보내는 sink(§6.1), 그리고 완료·실패 알림.
 //!
 //! 매니저는 상태 잠금을 쥔 채 sink를 부른다. 창 API(`is_focused`·`request_user_attention`)와 OS 알림은
 //! 메인 스레드를 오가므로 여기서 부르면, 메인 스레드에서 같은 잠금을 기다리는 창 닫기 처리(`running_count`)와
-//! 교착할 수 있다. 그래서 sink는 완료된 작업 제목을 큐에 넣기만 하고, 알림은 별도 태스크(`spawn_notifier`)가 한다.
+//! 교착할 수 있다. 그래서 sink는 알릴 일을 큐에 넣기만 하고, 알림은 별도 태스크(`spawn_notifier`)가 한다.
 
 use chzzk_shell::EventSink;
 use chzzk_shell::dto::{JobEvent, JobStatus};
@@ -19,27 +19,55 @@ pub fn completed_body(title: &str) -> String {
     format!("'{title}' 다운로드를 마쳤어요")
 }
 
-/// 완료 알림 큐의 입구. 구독이 바뀌어도(웹뷰 새로고침) 같은 큐를 쓴다.
+/// 실패 알림 본문(copy deck `job.failed`).
+pub fn failed_body(title: &str) -> String {
+    format!("'{title}' 다운로드에 실패했어요")
+}
+
+/// 알릴 일 하나(작업 제목).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Notice {
+    Completed(String),
+    Failed(String),
+}
+
+impl Notice {
+    /// OS 알림 본문.
+    pub fn body(&self) -> String {
+        match self {
+            Notice::Completed(t) => completed_body(t),
+            Notice::Failed(t) => failed_body(t),
+        }
+    }
+}
+
+/// 알림 큐의 입구. 구독이 바뀌어도(웹뷰 새로고침) 같은 큐를 쓴다.
 #[derive(Clone, Debug)]
-pub struct Notifier(UnboundedSender<String>);
+pub struct Notifier(UnboundedSender<Notice>);
 
 impl Notifier {
     /// 큐와 그 출구. 출구는 `spawn_notifier`에 넘긴다(테스트는 직접 읽는다).
-    pub fn new() -> (Notifier, UnboundedReceiver<String>) {
+    pub fn new() -> (Notifier, UnboundedReceiver<Notice>) {
         let (tx, rx) = unbounded_channel();
         (Notifier(tx), rx)
     }
 
-    fn completed(&self, title: String) {
+    fn push(&self, n: Notice) {
         // 출구가 없으면(앱 종료 중) 버린다.
-        let _ = self.0.send(title);
+        let _ = self.0.send(n);
     }
 }
 
-/// 완료 이벤트면 작업 제목. 건너뜀·실패·완료 항목 정리는 알리지 않는다.
-pub fn completed_title(e: &JobEvent) -> Option<&str> {
+/// 상태가 완료·실패로 바뀐 `Status` 이벤트면 알릴 일. 건너뜀·완료 항목 정리·`Added`(복원된 항목)는 알리지 않는다.
+/// 매니저는 전이할 때만 `Status`를 보내므로 같은 작업을 두 번 알리지 않는다.
+pub fn notice_of(e: &JobEvent) -> Option<Notice> {
     match e {
-        JobEvent::Status { job } if job.status == JobStatus::Completed => Some(&job.title),
+        JobEvent::Status { job } if job.status == JobStatus::Completed => {
+            Some(Notice::Completed(job.title.clone()))
+        }
+        JobEvent::Status { job } if job.status == JobStatus::Failed => {
+            Some(Notice::Failed(job.title.clone()))
+        }
         _ => None,
     }
 }
@@ -58,18 +86,18 @@ impl ChannelSink {
 
 impl EventSink for ChannelSink {
     fn send(&self, e: JobEvent) -> bool {
-        if let Some(t) = completed_title(&e) {
-            self.notifier.completed(t.to_string());
+        if let Some(n) = notice_of(&e) {
+            self.notifier.push(n);
         }
         self.channel.send(e).is_ok()
     }
 }
 
-/// 완료 알림 태스크. main 창에 포커스가 없을 때만 작업 표시줄·Dock 주의 요청과 OS 알림을 띄운다
-/// (포커스가 있으면 프런트 토스트로 충분하다).
-pub fn spawn_notifier<R: Runtime>(app: AppHandle<R>, mut rx: UnboundedReceiver<String>) {
+/// 알림 태스크. main 창에 포커스가 없을 때만 작업 표시줄·Dock 주의 요청과 OS 알림을 띄운다
+/// (포커스가 있으면 완료는 프런트 토스트, 실패는 목록의 오류 줄로 충분하다).
+pub fn spawn_notifier<R: Runtime>(app: AppHandle<R>, mut rx: UnboundedReceiver<Notice>) {
     tauri::async_runtime::spawn(async move {
-        while let Some(title) = rx.recv().await {
+        while let Some(notice) = rx.recv().await {
             let Some(w) = app.get_webview_window("main") else {
                 continue;
             };
@@ -83,10 +111,10 @@ pub fn spawn_notifier<R: Runtime>(app: AppHandle<R>, mut rx: UnboundedReceiver<S
                 .notification()
                 .builder()
                 .title(NOTIFY_TITLE)
-                .body(completed_body(&title))
+                .body(notice.body())
                 .show()
             {
-                tracing::warn!(error = %e, "완료 알림을 띄우지 못함");
+                tracing::warn!(error = %e, "알림을 띄우지 못함");
             }
         }
     });
@@ -121,36 +149,54 @@ mod tests {
     }
 
     #[test]
-    fn only_completed_status_notifies() {
-        let done = JobEvent::Status {
-            job: job(JobStatus::Completed),
-        };
-        assert_eq!(completed_title(&done), Some("제목"));
-        for s in [JobStatus::Skipped, JobStatus::Failed, JobStatus::Running] {
-            assert_eq!(completed_title(&JobEvent::Status { job: job(s) }), None);
+    fn only_completed_and_failed_status_notify() {
+        let st = |s| JobEvent::Status { job: job(s) };
+        assert_eq!(
+            notice_of(&st(JobStatus::Completed)),
+            Some(Notice::Completed("제목".into()))
+        );
+        assert_eq!(
+            notice_of(&st(JobStatus::Failed)),
+            Some(Notice::Failed("제목".into()))
+        );
+        for s in [
+            JobStatus::Skipped,
+            JobStatus::Running,
+            JobStatus::Queued,
+            JobStatus::Pausing,
+            JobStatus::Paused,
+            JobStatus::Interrupted,
+        ] {
+            assert_eq!(notice_of(&st(s)), None, "{s:?}");
         }
-        // 추가(복원된 완료 항목 포함)·정리는 알리지 않는다.
-        let added = JobEvent::Added {
-            job: job(JobStatus::Completed),
-        };
-        assert_eq!(completed_title(&added), None);
-        assert_eq!(completed_title(&JobEvent::Removed { id: JobId(1) }), None);
+        // 추가(복원된 완료·실패 항목 포함)·정리는 알리지 않는다.
+        for s in [JobStatus::Completed, JobStatus::Failed] {
+            assert_eq!(notice_of(&JobEvent::Added { job: job(s) }), None);
+        }
+        assert_eq!(notice_of(&JobEvent::Removed { id: JobId(1) }), None);
     }
 
     #[test]
     fn body_follows_copy_deck() {
-        assert_eq!(completed_body("제목"), "'제목' 다운로드를 마쳤어요");
+        assert_eq!(
+            Notice::Completed("제목".into()).body(),
+            "'제목' 다운로드를 마쳤어요"
+        );
+        assert_eq!(
+            Notice::Failed("제목".into()).body(),
+            "'제목' 다운로드에 실패했어요"
+        );
     }
 
     #[tokio::test]
-    async fn notifier_queues_titles() {
+    async fn notifier_queues_notices() {
         let (n, mut rx) = Notifier::new();
-        n.completed("가".into());
-        n.completed("나".into());
-        assert_eq!(rx.recv().await.as_deref(), Some("가"));
-        assert_eq!(rx.recv().await.as_deref(), Some("나"));
+        n.push(Notice::Completed("가".into()));
+        n.push(Notice::Failed("나".into()));
+        assert_eq!(rx.recv().await, Some(Notice::Completed("가".into())));
+        assert_eq!(rx.recv().await, Some(Notice::Failed("나".into())));
         drop(rx);
         // 출구가 사라져도 패닉하지 않는다.
-        n.completed("다".into());
+        n.push(Notice::Completed("다".into()));
     }
 }

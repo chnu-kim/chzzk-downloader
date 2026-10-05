@@ -5,12 +5,12 @@ pub mod commands;
 mod logging;
 pub mod sink;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use chzzk_shell::App;
 use chzzk_shell::dto::CloseRequestedPayload;
 use chzzk_shell::services::AppPaths;
+use chzzk_shell::{App, AppError};
 use tauri::ipc::Invoke;
 use tauri::{AppHandle, Emitter, Manager, RunEvent, Runtime, WindowEvent};
 
@@ -152,6 +152,36 @@ pub fn on_run_event<R: Runtime>(app: &AppHandle<R>, e: RunEvent) {
     }
 }
 
+/// 시작 실패 창의 제목.
+pub const STARTUP_FAILED_TITLE: &str = "치지직 다운로더를 시작하지 못했어요";
+
+/// 시작 실패 창의 본문(§15-17, 구현 중 변경 38(바)). 무엇을 하면 되는지와 로그 폴더, 원문 오류를 적는다.
+/// 오류 문구는 코어·셸 Display라 비밀이 없다.
+pub fn startup_failure_message(log_dir: &Path, e: &AppError) -> String {
+    format!(
+        "작업 목록이나 설정 파일을 열지 못했어요. 디스크 공간과 폴더 권한을 확인한 뒤 다시 실행해 주세요.\n\n로그 폴더: {}\n오류: {}",
+        log_dir.display(),
+        e.message
+    )
+}
+
+/// 앱 상태를 열지 못했을 때: main 창을 숨기고 오류 창을 띄운 뒤, 닫으면 `exit(1)`.
+///
+/// 릴리스 Windows 빌드는 콘솔이 없어 패닉(`expect`)이면 아무것도 보이지 않는다. 상태가 없으므로 command는
+/// "state not managed" 오류를 돌려주고(패닉하지 않는다), 닫기 가드는 상태가 없으면 막지 않는다.
+fn startup_failed<R: Runtime>(app: &AppHandle<R>, log_dir: &Path, e: &AppError) {
+    use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.hide();
+    }
+    let handle = app.clone();
+    app.dialog()
+        .message(startup_failure_message(log_dir, e))
+        .title(STARTUP_FAILED_TITLE)
+        .kind(MessageDialogKind::Error)
+        .show(move |_| handle.exit(1));
+}
+
 /// 앱 상태(설정·매니저)를 열어 `manage`한다. 로그는 그 전에 시작한다.
 fn setup<R: Runtime>(app: &tauri::App<R>) -> Result<(), Box<dyn std::error::Error>> {
     let p = app.path();
@@ -177,9 +207,15 @@ fn setup<R: Runtime>(app: &tauri::App<R>) -> Result<(), Box<dyn std::error::Erro
     let legacy_dir: Option<PathBuf> = std::env::current_exe()
         .ok()
         .and_then(|e| e.parent().map(PathBuf::from));
-    let state = App::open(paths, legacy_dir.as_deref(), tokio_handle()).inspect_err(|e| {
-        tracing::error!(code = ?e.code, error = %e.message, "앱 상태를 열지 못함");
-    })?;
+    let log_dir = paths.log.clone();
+    let state = match App::open(paths, legacy_dir.as_deref(), tokio_handle()) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::error!(code = ?e.code, error = %e.message, "앱 상태를 열지 못함");
+            startup_failed(app.handle(), &log_dir, &e);
+            return Ok(());
+        }
+    };
     app.manage(state);
     app.manage(Quitting::default());
     let (notifier, rx) = Notifier::new();
@@ -213,7 +249,21 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{CloseDecision, close_decision};
+    use super::{CloseDecision, close_decision, startup_failure_message};
+    use chzzk_shell::AppError;
+    use std::path::Path;
+
+    #[test]
+    fn startup_failure_message_names_log_folder_and_error() {
+        let e = AppError::internal("jobs.json을 읽지 못함: 권한 없음");
+        let m = startup_failure_message(Path::new("/logs/app"), &e);
+        assert!(
+            m.starts_with("작업 목록이나 설정 파일을 열지 못했어요."),
+            "{m}"
+        );
+        assert!(m.contains("로그 폴더: /logs/app"), "{m}");
+        assert!(m.ends_with("오류: jobs.json을 읽지 못함: 권한 없음"), "{m}");
+    }
 
     #[test]
     fn close_decision_table() {

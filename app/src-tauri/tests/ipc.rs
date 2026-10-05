@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use chzzk_app_lib::commands::begin_quit;
-use chzzk_app_lib::sink::{ChannelSink, Notifier};
+use chzzk_app_lib::sink::{ChannelSink, Notice, Notifier};
 use chzzk_app_lib::{COMMANDS, Quitting, guard_close, handler, on_run_event};
 use chzzk_shell::services::AppPaths;
 use chzzk_shell::{App, EventSink};
@@ -25,7 +25,7 @@ use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
 struct Fixture {
     app: tauri::App<MockRuntime>,
     main: WebviewWindow<MockRuntime>,
-    notify_rx: UnboundedReceiver<String>,
+    notify_rx: UnboundedReceiver<Notice>,
     dir: TempDir,
 }
 
@@ -47,7 +47,7 @@ fn fixture() -> Fixture {
 
 /// 실제 처리기·capabilities를 붙인 mock 앱(창 없음). clipboard-manager 플러그인은 `clipboard_link`를 실제로
 /// 부르는 테스트만 등록한다(AppKit 대지를 여는 범위를 줄인다).
-fn mock_app(state: App, clipboard: bool) -> (tauri::App<MockRuntime>, UnboundedReceiver<String>) {
+fn mock_app(state: App, clipboard: bool) -> (tauri::App<MockRuntime>, UnboundedReceiver<Notice>) {
     let (notifier, notify_rx) = Notifier::new();
     let mut builder = mock_builder();
     if clipboard {
@@ -495,7 +495,10 @@ fn channel_sink_delivers_job_events_and_queues_completion_notice() {
             .all(|e| e["type"] != json!("status") || e["job"]["id"] == job["id"])
     );
     // 완료 제목이 알림 큐에 들어간다(OS 알림은 spawn_notifier 태스크가 띄운다). 완료 하나에 한 번.
-    assert_eq!(f.notify_rx.try_recv().ok().as_deref(), Some("제목"));
+    assert_eq!(
+        f.notify_rx.try_recv().ok(),
+        Some(Notice::Completed("제목".into()))
+    );
     assert!(f.notify_rx.try_recv().is_err());
 }
 

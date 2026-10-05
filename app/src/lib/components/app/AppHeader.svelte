@@ -16,7 +16,8 @@
 <header class="header">
   {#if view === 'settings'}
     <IconButton icon="arrow-left" size="md" label={t('header.back')} onclick={onback} />
-    <h1 class="title settings">{t('settings.title')}</h1>
+    <!-- 뷰가 바뀌어 누르던 버튼이 사라지면 App이 이 제목으로 포커스를 옮긴다 -->
+    <h1 class="title settings" tabindex="-1" data-view-heading>{t('settings.title')}</h1>
   {:else}
     <span class="mark"><Icon name="drop" size={16} /></span>
     <h1 class="title">{t('app.title')}</h1>
@@ -61,5 +62,8 @@
     .header {
       padding-left: var(--gutter-wide);
     }
+  }
+  .title:focus {
+    outline: none;
   }
 </style>

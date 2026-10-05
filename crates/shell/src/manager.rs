@@ -3,11 +3,14 @@
 //! - **큐**: `enqueue`는 `queued`로 넣고 `pump()`한다. `pump()`는 스케줄러가 켜져 있고 `running + pausing`이
 //!   동시 작업 수(설정 `max_parallel_downloads`, 1~3)보다 적은 동안 가장 먼저 줄 선 `queued`를 시작한다.
 //!   `pausing`도 센다. 태스크가 아직 연결과 `.part` 잠금을 쥐고 있기 때문이다.
-//! - **이벤트 순서**: 상태를 바꾸고 저장하고 이벤트를 보내는 일을 모두 상태 잠금 안에서 한다. 그래서
+//! - **이벤트 순서**: 상태를 바꾸고 저장할 목록을 넘기고 이벤트를 보내는 일을 모두 상태 잠금 안에서 한다. 그래서
 //!   `Added` → `Status(running)` → `Progress`… → `Status(끝)` 순서가 실제 전이 순서와 같고, `subscribe`의
 //!   스냅샷과 그 뒤 이벤트 사이에 빠지거나 겹치는 것이 없다. 잠금 순서는 상태 → sink 하나뿐이다.
-//! - **저장**: `jobs.json`은 상태가 바뀔 때만 쓴다(진행률 틱마다 쓰지 않는다). 쓰기 실패는 로그만 남기고
-//!   작업을 멈추지 않는다(메모리 상태가 기준이고, 다음 전이 때 다시 쓴다).
+//! - **저장**: `jobs.json`은 상태가 바뀔 때만 쓴다(진행률 틱마다 쓰지 않는다). 잠금 안에서는 목록을 바이트로
+//!   만들어 쓰기 스레드(`writer`)에 넘기기만 하고, `fsync`와 Windows rename 재시도(최대 약 3초 sleep)는 잠금
+//!   밖에서 한다. 디스크가 느려도 진행률 콜백과 command가 상태 잠금에서 기다리지 않는다. 쓰기 스레드는 가장
+//!   최근 목록만 쓴다. 쓰기 실패는 로그만 남기고 작업을 멈추지 않는다(메모리 상태가 기준이고, 다음 전이 때
+//!   다시 쓴다). `quit`은 마지막에 `flush`해 종료 전에 디스크에 닿게 한다.
 //! - **중복 방지**: 같은 최종 경로의 활성 작업(`queued·running·pausing·paused·interrupted`)이 있으면
 //!   `duplicateOutput`. 경로 비교는 Windows·macOS에서 대소문자를 무시한다(NTFS·APFS 기본이 그렇다).
 //!   두 작업이 같은 파일을 마무리(rename)하는 경합을 여기서 막는다. `enqueue`와 `resume`이 모두 검사한다.
@@ -42,6 +45,7 @@ use crate::jobs::{
     JOBS_VERSION, JobRecord, JobStore, JobsFile, now_secs, partial_bytes, reconcile,
 };
 use crate::output::{OutputQuery, check_output};
+use crate::writer::{Flusher, JobsWriter};
 
 /// 작업 시작 시점의 코어 클라이언트를 준다(쿠키 토글 때 셸이 클라이언트를 바꾼다).
 pub type ClientFn<B> = Arc<dyn Fn() -> Arc<B> + Send + Sync>;
@@ -213,9 +217,9 @@ pub fn output_key(p: &Path) -> String {
 
 struct Inner<B> {
     client: ClientFn<B>,
-    store: JobStore,
     runtime: Handle,
     state: Mutex<State>,
+    writer: JobsWriter,
 }
 
 /// 다운로드 작업 관리자. 복제하면 같은 매니저를 가리킨다.
@@ -254,9 +258,9 @@ impl<B: Backend> DownloadManager<B> {
         }
         let inner = Arc::new(Inner {
             client: cfg.client,
-            store: cfg.store,
             runtime: cfg.runtime,
             state: Mutex::new(st),
+            writer: JobsWriter::spawn(cfg.store),
         });
         let mgr = DownloadManager { inner };
         {
@@ -268,6 +272,12 @@ impl<B: Backend> DownloadManager<B> {
             tracing::info!(count = n, "멈춘 작업을 자동으로 이어받는다");
         }
         Ok(mgr)
+    }
+
+    /// 지금까지 바뀐 상태의 `jobs.json` 쓰기 시도가 끝날 때까지 막는다(실패해도 돌아온다).
+    /// async 문맥에서는 워커를 막지 않도록 `spawn_blocking`으로 부른다. `quit`은 스스로 부른다.
+    pub fn flush(&self) {
+        self.inner.writer.flusher().flush();
     }
 
     /// 지금 목록(재동기화용 스냅샷, id 순).
@@ -627,18 +637,28 @@ impl<B: Backend> DownloadManager<B> {
         if tokio::time::timeout(timeout, all).await.is_err() {
             tracing::warn!("종료 대기 시간 안에 멈추지 않은 작업이 있다");
         }
-        let mut st = self.inner.lock();
-        let mut late = Vec::new();
-        for job in st.jobs.values_mut() {
-            if job.busy() && !job.removing {
-                job.rec.status = JobStatus::Interrupted;
-                job.rec.partial_bytes = partial_bytes(&job.rec);
-                late.push(job.dto());
+        {
+            let mut st = self.inner.lock();
+            let mut late = Vec::new();
+            for job in st.jobs.values_mut() {
+                if job.busy() && !job.removing {
+                    job.rec.status = JobStatus::Interrupted;
+                    job.rec.partial_bytes = partial_bytes(&job.rec);
+                    late.push(job.dto());
+                }
+            }
+            self.inner.save(&st);
+            for dto in late {
+                st.emit(JobEvent::Status { job: dto });
             }
         }
-        self.inner.save(&st);
-        for dto in late {
-            st.emit(JobEvent::Status { job: dto });
+        // 프로세스가 끝나기 전에 마지막 목록이 디스크에 닿게 한다.
+        let flusher: Flusher = self.inner.writer.flusher();
+        if tokio::task::spawn_blocking(move || flusher.flush())
+            .await
+            .is_err()
+        {
+            tracing::warn!("작업 목록 저장을 기다리지 못했다");
         }
     }
 }
@@ -682,9 +702,11 @@ impl<B: Backend> Inner<B> {
         self.state.lock().unwrap_or_else(|e| e.into_inner())
     }
 
+    /// 목록을 바이트로 만들어 쓰기 스레드에 넘긴다(잠금 안에서 불러 제출 순서 = 전이 순서). 막지 않는다.
     fn save(&self, st: &State) {
-        if let Err(e) = self.store.save(&st.file()) {
-            tracing::warn!(error = %e, path = %self.store.path().display(), "작업 목록을 저장하지 못했다");
+        match JobStore::encode(&st.file()) {
+            Ok(bytes) => self.writer.submit(bytes),
+            Err(e) => tracing::warn!(error = %e, "작업 목록을 직렬화하지 못했다"),
         }
     }
 

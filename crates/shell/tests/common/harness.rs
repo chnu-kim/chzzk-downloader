@@ -71,11 +71,12 @@ pub fn status_name(s: JobStatus) -> String {
         .to_string()
 }
 
+/// 필드 순서가 drop 순서다. 매니저(쓰기 스레드)가 임시 폴더보다 먼저 사라져야 지운 폴더를 다시 만들지 않는다.
 pub struct Harness {
-    pub dir: TempDir,
-    pub fake: Arc<FakeBackend>,
     pub mgr: DownloadManager<FakeBackend>,
+    pub fake: Arc<FakeBackend>,
     pub rec: Recorder,
+    pub dir: TempDir,
 }
 
 impl Harness {
@@ -87,15 +88,16 @@ impl Harness {
         let rec = Recorder::new();
         mgr.subscribe(rec.sink());
         Harness {
-            dir,
-            fake,
             mgr,
+            fake,
             rec,
+            dir,
         }
     }
 
-    /// 같은 데이터 폴더로 매니저를 다시 연다(앱 재시작).
+    /// 같은 데이터 폴더로 매니저를 다시 연다(앱 재시작). 지금 매니저의 밀린 쓰기를 먼저 끝낸다.
     pub fn reopen(&self, parallel: u8) -> DownloadManager<FakeBackend> {
+        self.mgr.flush();
         open(self.dir.path(), &self.fake, parallel)
     }
 
@@ -133,7 +135,9 @@ impl Harness {
         self.job(id).status
     }
 
+    /// 매니저의 밀린 쓰기를 끝낸 뒤 `jobs.json`을 읽는다.
     pub fn jobs_json(&self) -> serde_json::Value {
+        self.mgr.flush();
         serde_json::from_slice(&std::fs::read(self.dir.path().join("data/jobs.json")).unwrap())
             .unwrap()
     }
@@ -149,16 +153,28 @@ pub fn open_with(
     parallel: u8,
     auto_resume: bool,
 ) -> DownloadManager<FakeBackend> {
+    open_store(JobStore::new(dir.join("data")), fake, parallel, auto_resume)
+}
+
+/// `store`로 매니저를 연다. 열 때 쓴 목록이 디스크에 닿은 뒤 돌려준다.
+pub fn open_store(
+    store: JobStore,
+    fake: &Arc<FakeBackend>,
+    parallel: u8,
+    auto_resume: bool,
+) -> DownloadManager<FakeBackend> {
     let f = Arc::clone(fake);
     let client: ClientFn<FakeBackend> = Arc::new(move || Arc::clone(&f));
-    DownloadManager::open(ManagerConfig {
+    let mgr = DownloadManager::open(ManagerConfig {
         client,
-        store: JobStore::new(dir.join("data")),
+        store,
         runtime: tokio::runtime::Handle::current(),
         max_parallel: parallel,
         auto_resume,
     })
-    .unwrap()
+    .unwrap();
+    mgr.flush();
+    mgr
 }
 
 /// 파일 이름 `name`, 기본 폴더로 받는 요청.

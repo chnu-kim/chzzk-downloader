@@ -10,6 +10,7 @@
 use std::ffi::OsString;
 use std::num::NonZeroU8;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use chzzk_core::download::MAX_CONCURRENCY;
@@ -155,10 +156,23 @@ pub struct Loaded {
     pub backup: Option<PathBuf>,
 }
 
+/// 파일 쓰기 함수(테스트가 느린·막힌 디스크를 흉내 내려고 바꾼다).
+pub type WriteFn = Arc<dyn Fn(&Path, &[u8]) -> Result<(), Error> + Send + Sync>;
+
 /// `jobs.json` 저장소.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct JobStore {
     path: PathBuf,
+    write: Option<WriteFn>,
+}
+
+impl std::fmt::Debug for JobStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("JobStore")
+            .field("path", &self.path)
+            .field("custom_write", &self.write.is_some())
+            .finish()
+    }
 }
 
 impl JobStore {
@@ -166,7 +180,15 @@ impl JobStore {
     pub fn new(data_dir: impl Into<PathBuf>) -> Self {
         JobStore {
             path: data_dir.into().join(JOBS_FILE),
+            write: None,
         }
+    }
+
+    /// 마지막 파일 쓰기(`atomic_write`)를 `write`로 바꾼다. 폴더 만들기는 그대로 한다. 테스트용.
+    #[doc(hidden)]
+    pub fn with_write_fn(mut self, write: WriteFn) -> Self {
+        self.write = Some(write);
+        self
     }
 
     pub fn path(&self) -> &Path {
@@ -204,12 +226,24 @@ impl JobStore {
 
     /// 원자적으로 쓴다. 폴더가 없으면 만든다.
     pub fn save(&self, file: &JobsFile) -> Result<(), Error> {
+        self.write_bytes(&Self::encode(file)?)
+    }
+
+    /// 저장할 바이트. 매니저는 상태 잠금 안에서 이것만 하고 쓰기는 잠금 밖의 쓰기 스레드에 넘긴다.
+    pub fn encode(file: &JobsFile) -> Result<Vec<u8>, Error> {
+        serde_json::to_vec_pretty(file)
+            .map_err(|e| Error::Settings(format!("작업 목록 직렬화 실패: {e}")))
+    }
+
+    /// `encode`한 바이트를 원자적으로 쓴다. 폴더가 없으면 만든다.
+    pub fn write_bytes(&self, bytes: &[u8]) -> Result<(), Error> {
         if let Some(dir) = self.path.parent().filter(|d| !d.as_os_str().is_empty()) {
             std::fs::create_dir_all(dir).map_err(|e| map_io_error("create dir", dir, e))?;
         }
-        let bytes = serde_json::to_vec_pretty(file)
-            .map_err(|e| Error::Settings(format!("작업 목록 직렬화 실패: {e}")))?;
-        atomic_write(&self.path, &bytes)
+        match &self.write {
+            Some(w) => w(&self.path, bytes),
+            None => atomic_write(&self.path, bytes),
+        }
     }
 }
 

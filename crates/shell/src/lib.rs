@@ -11,6 +11,7 @@ pub mod events;
 pub mod jobs;
 pub mod manager;
 pub mod output;
+mod writer;
 
 pub use backend::Backend;
 pub use dto::JobId;

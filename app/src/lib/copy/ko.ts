@@ -27,6 +27,7 @@ export const ko = {
   'card.close': '닫기',
   'card.download': '다운로드',
   'card.cancel': '취소',
+  'card.added': '다운로드 목록에 넣었어요',
 
   'kind.liveRewind': '빠른 다시보기',
   'kind.vod': '일반 VOD',
@@ -55,6 +56,7 @@ export const ko = {
   'conflict.partial': '이전에 받다 만 파일이 있어요 ({size}). 이어서 받아요.',
   'conflict.partial.fresh': '처음부터 받기',
   'conflict.partial.continue': '이어서 받기',
+  'conflict.partial.freshChosen': '받다 만 파일을 지우고 처음부터 받아요.',
   'conflict.partialOther': '다른 화질로 받다 만 파일이 있어요. 처음부터 받아요.',
   'conflict.inQueue': '이 파일은 이미 다운로드 목록에 있어요.',
   'conflict.showInList': '목록에서 보기',

@@ -23,7 +23,8 @@
 - 완료: 시각 설계 `docs/design/ui-visual.md`(색·글자·간격·움직임·아이콘·컴포넌트·화면 레이아웃)와 디자인 토큰 `app/src/styles/tokens.css`(라이트·다크, WCAG 대비 테스트). 변경은 app.md "구현 중 변경" 39
 - 완료: Phase 2 §15-12 프런트 기반(`api.ts` 21개, `applyEvent`, copy deck, `errorCopy` 표, `format` golden, vitest jsdom). 변경은 app.md "구현 중 변경" 40
 - 완료: Phase 2 §15-13 UI 기본 요소(`components/ui` 20개, 뷰 전환, AppHeader·Toaster·LiveAnnouncer·GlobalShortcuts, CSP 가드 테스트). 변경은 app.md "구현 중 변경" 41
-- 다음: PR A(`crates/shell`, §15-1~10) 3 OS CI 녹색 확인, Phase 2 §15-14 받기 화면
+- 완료: Phase 2 §15-14 받기 화면(UrlBar·붙여넣기·드래그 앤 드롭·클립보드 제안, ResolveCard 화질·폴더·파일 이름·충돌 안내 → enqueue). 웹뷰 수동 확인(CSP·실제 resolve·3 OS 드롭/포커스)은 §15-17로 이월. 변경은 app.md "구현 중 변경" 42
+- 다음: PR A(`crates/shell`, §15-1~10) 3 OS CI 녹색 확인, Phase 2 §15-15 작업 목록 화면
 
 ## 확정된 결정 (2026-10-05, 사용자 인터뷰)
 
@@ -89,10 +90,10 @@
 - [x] §15-10 `app.yml`의 `shell` 작업, CLAUDE.md 게이트 갱신 (푸시 전이라 3 OS 녹색은 PR A에서 확인)
 - [x] §15-11 command 배선: commands·ChannelSink·setup·AppManifest·capabilities·CSP, 창 닫기 이벤트, 완료 OS 알림, 클립보드 링크 command, 리뷰 반영(종료 한 번만·닫기 가드·진행 Channel 검사, app.md 구현 중 변경 38). 런타임 CSP·`resolve` 수동 확인은 §15-14 통과 조건, setup 실패 안내는 §15-17로 이월
 - [x] §15-12~13 프런트 기반(`api.ts`, `applyEvent`, copy deck, `errorCopy`, format golden) + UI 기본 요소 — 시각 설계·토큰은 완료(`docs/design/ui-visual.md`, `app/src/styles/tokens.css`)
-- [ ] §15-14 받기 화면: UrlBar → ResolveCard(화질·폴더·파일 이름·충돌 안내) → enqueue
+- [x] §15-14 받기 화면: UrlBar → ResolveCard(화질·폴더·파일 이름·충돌 안내) → enqueue, 드래그 앤 드롭·클립보드 제안. 웹뷰 수동 확인은 §15-17 스모크로 이월
 - [ ] §15-15 작업 목록 화면: JobsStore 재구독, 상태별 버튼, B1 배너, D2
 - [ ] §15-16 설정 화면: 폴더, 연결 수, 쿠키(값 미복원), 이전 버전 가져오기(D3), 정보
-- [ ] §15-17 창 닫기(D1 ↔ `quit`), `request_user_attention`, 접근성 점검, 3 OS 수동 스모크
+- [ ] §15-17 창 닫기(D1 ↔ `quit`), `request_user_attention`, 접근성 점검, 3 OS 수동 스모크(§15-14에서 넘어온 웹뷰 CSP·실제 resolve·텍스트 드롭·창 포커스·입력칸 밖 붙여넣기 포함)
 - [ ] §15-18 `app.yml`의 `frontend`·`tauri` 작업 3 OS 녹색
 - [ ] §15-19 문서: ROADMAP·CLAUDE.md·app.md "구현 중 변경" 정리
 - Phase 3 자리는 Phase 2에서 미리 둔다(app.md §12): `features.auth=false`, `OwnershipGate` 항상 허용, `ResolvedDto.ownership`, `JobRecord.channelId`, `auth_status` command, AccountSlot·AuthGate·OwnershipNotice 빈 슬롯

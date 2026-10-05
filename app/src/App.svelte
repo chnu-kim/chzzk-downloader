@@ -1,14 +1,20 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import AppHeader from './lib/components/app/AppHeader.svelte';
   import GlobalShortcuts from './lib/components/app/GlobalShortcuts.svelte';
   import LiveAnnouncer from './lib/components/app/LiveAnnouncer.svelte';
   import Toaster from './lib/components/app/Toaster.svelte';
+  import { settings } from './lib/stores/settings.svelte';
   import { ui } from './lib/stores/ui.svelte';
   import HomeView from './lib/views/HomeView.svelte';
   import SettingsView from './lib/views/SettingsView.svelte';
 
   // 뷰는 셋(home·settings·login)이다. login(S3)은 Phase 3이고 AuthGate가 features.auth로만 연다.
   // Phase 2에는 들어갈 길이 없으므로 아직 그리지 않는다(§12).
+
+  onMount(() => {
+    void settings.load();
+  });
 </script>
 
 <div class="app">

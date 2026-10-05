@@ -51,3 +51,19 @@ test('elementId: W3C 키·옛 ELEMENT 키를 받고, 없으면 응답을 보여 
   assert.throws(() => elementId({ other: 'c' }), /요소 응답에 id가 없다: \{"other":"c"\}/);
   assert.throws(() => elementId(null), /id가 없다/);
 });
+
+test('parseRegPv: reg query /s 출력에서 이름이 WebView2 런타임인 키의 pv만', async () => {
+  const { parseRegPv } = await import('./e2e-native.mjs');
+  const out = [
+    'HKEY_LOCAL_MACHINE\\SOFTWARE\\WOW6432Node\\Microsoft\\EdgeUpdate\\Clients\\{edge}',
+    '    name    REG_SZ    Microsoft Edge',
+    '    pv    REG_SZ    142.0.1.1',
+    '',
+    'HKEY_LOCAL_MACHINE\\SOFTWARE\\WOW6432Node\\Microsoft\\EdgeUpdate\\Clients\\{webview}',
+    '    name    REG_SZ    Microsoft Edge WebView2 Runtime',
+    '    pv    REG_SZ    141.0.3537.57',
+    '',
+  ].join('\r\n');
+  assert.equal(parseRegPv(out), '141.0.3537.57');
+  assert.equal(parseRegPv('nothing'), null);
+});

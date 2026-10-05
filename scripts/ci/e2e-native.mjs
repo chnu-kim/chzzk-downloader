@@ -125,14 +125,57 @@ export function judge({ files, sha256, bytes }, serverLog, expected) {
   return bad;
 }
 
-function nativeDriver() {
-  if (process.platform === 'linux') return which('WebKitWebDriver');
-  if (IS_WIN) {
-    // GitHub Windows 러너는 EDGEWEBDRIVER(폴더)에 msedgedriver.exe를 둔다. 버전은 러너 Edge를 따른다(cicd.md §6: 재현 불가라 weekly)
-    const d = process.env.EDGEWEBDRIVER;
-    if (d && existsSync(join(d, 'msedgedriver.exe'))) return join(d, 'msedgedriver.exe');
-    return which('msedgedriver');
+// WebView2 런타임 버전: EdgeUpdate Clients 아래에서 이름이 "Microsoft Edge WebView2 Runtime"인 키의 pv(Windows 레지스트리).
+// 앱 GUID를 적지 않고 이름으로 찾는다. 없으면 null.
+export const EDGEUPDATE_CLIENTS = [
+  'HKLM\\SOFTWARE\\WOW6432Node\\Microsoft\\EdgeUpdate\\Clients',
+  'HKCU\\Software\\Microsoft\\EdgeUpdate\\Clients',
+];
+// `reg query <Clients> /s` 출력 → WebView2 런타임 pv
+export function parseRegPv(text) {
+  for (const block of (text ?? '').split(/\r?\n(?=HKEY_)/)) {
+    if (!/\bname\s+REG_SZ\s+Microsoft Edge WebView2 Runtime\s*$/m.test(block)) continue;
+    const v = /\bpv\s+REG_SZ\s+(\d+(?:\.\d+){3})/.exec(block)?.[1];
+    if (v) return v;
   }
+  return null;
+}
+function webview2Version() {
+  for (const k of EDGEUPDATE_CLIENTS) {
+    const r = spawnSync('reg', ['query', k, '/s'], { encoding: 'utf8', maxBuffer: 1 << 24 });
+    const v = r.status === 0 ? parseRegPv(r.stdout) : null;
+    if (v) return v;
+  }
+  return null;
+}
+const driverVersion = (exe) => /(\d+(?:\.\d+){3})/.exec(spawnSync(exe, ['--version'], { encoding: 'utf8' }).stdout ?? '')?.[1] ?? null;
+
+// msedgedriver는 앱이 쓰는 WebView2 런타임과 같은 버전이어야 한다(다르면 세션 생성이 DevToolsActivePort 오류로 실패한다,
+// 실측 37320692512). 러너 이미지의 것(EDGEWEBDRIVER, Edge 브라우저 버전)이 다르면 그 WebView2 버전의 드라이버를
+// Microsoft 배포처에서 받는다. 버전이 러너에 따라 바뀌어 해시를 미리 고정할 수 없다: 그래서 이 작업은 weekly다(§6).
+async function windowsDriver() {
+  const wv = webview2Version();
+  const d = process.env.EDGEWEBDRIVER;
+  const img = d && existsSync(join(d, 'msedgedriver.exe')) ? join(d, 'msedgedriver.exe') : which('msedgedriver');
+  const have = img ? driverVersion(img) : null;
+  log(`WebView2 런타임 ${wv ?? '알 수 없음'}, 러너 msedgedriver ${have ?? '없음'} (${img ?? '-'})`);
+  if (!wv || (img && have === wv)) return img;
+  const dir = mkdtempSync(join(tmpdir(), 'msedgedriver-'));
+  const zip = join(dir, 'edgedriver_win64.zip');
+  const url = `https://msedgedriver.microsoft.com/${wv}/edgedriver_win64.zip`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`${url} → HTTP ${res.status}`);
+  const buf = Buffer.from(await res.arrayBuffer());
+  writeFileSync(zip, buf);
+  log(`msedgedriver ${wv} 받음: ${url} (sha256 ${createHash('sha256').update(buf).digest('hex')})`);
+  const r = spawnSync('tar', ['-xf', zip, '-C', dir, 'msedgedriver.exe'], { stdio: 'inherit' });
+  if (r.status !== 0) throw new Error('msedgedriver 압축 풀기 실패');
+  return join(dir, 'msedgedriver.exe');
+}
+
+async function nativeDriver() {
+  if (process.platform === 'linux') return which('WebKitWebDriver');
+  if (IS_WIN) return windowsDriver();
   return null;
 }
 
@@ -181,7 +224,13 @@ export async function run(exe) {
     return 2;
   }
   const driver = which('tauri-driver');
-  const native = nativeDriver();
+  let native;
+  try {
+    native = await nativeDriver();
+  } catch (e) {
+    console.error(`::error::e2e-native: 네이티브 드라이버 준비 실패: ${e.message}`);
+    return 1;
+  }
   if (!driver || !native) {
     console.error(`e2e-native: tauri-driver(${driver ?? '없음'})·네이티브 드라이버(${native ?? '없음'})가 필요하다(run.mjs install-tool tauri-driver, Linux는 apt webkit2gtk-driver)`);
     return 2;

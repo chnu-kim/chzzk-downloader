@@ -186,17 +186,29 @@ pub async fn reveal_output<R: Runtime>(
     r.map_err(|e| internal("폴더 열기", e))
 }
 
-/// D1에서 `[닫기]`: 받는 중인 작업을 멈춰(최대 3초) 저장한 뒤 종료한다.
+/// 종료 준비: 받는 중인 작업을 멈춰(최대 3초) 저장한다. 이 호출이 종료를 맡았으면 `true`.
+///
+/// 한 번만 돈다. 두 번째 호출(D1 `[닫기]` 두 번 누르기 등)이 첫 호출의 대기 중에 다시 돌면, 이미 멈추는 중인
+/// 작업(사용자 일시정지로 `pausing`인 것 포함)을 곧바로 `interrupted`로 저장하고 먼저 끝내 버린다.
+pub async fn begin_quit(state: &App, quitting: &Quitting) -> bool {
+    if quitting.0.swap(true, Ordering::SeqCst) {
+        return false;
+    }
+    state.manager.quit(QUIT_TIMEOUT).await;
+    true
+}
+
+/// D1에서 `[닫기]`: 받는 중인 작업을 멈춰 저장한 뒤 종료한다. 이미 종료 중이면 아무것도 하지 않는다.
 #[tauri::command]
 pub async fn quit<R: Runtime>(
     app: AppHandle<R>,
     state: State<'_, App>,
     quitting: State<'_, Quitting>,
 ) -> Res<()> {
-    // 종료하는 동안 창 닫기·앱 종료 요청을 다시 막지 않는다(D1이 다시 뜨지 않게).
-    quitting.0.store(true, Ordering::SeqCst);
-    state.manager.quit(QUIT_TIMEOUT).await;
-    app.exit(0);
+    // `Quitting`이 서 있는 동안 창 닫기·앱 종료 요청은 D1 없이 막힌다(`guard_close`).
+    if begin_quit(&state, &quitting).await {
+        app.exit(0);
+    }
     Ok(())
 }
 

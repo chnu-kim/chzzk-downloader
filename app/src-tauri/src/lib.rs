@@ -22,9 +22,32 @@ pub const COMMANDS: &[&str] = include!("command_names.rs");
 /// 프런트가 D1을 띄우라는 이벤트 이름(§4).
 pub const CLOSE_REQUESTED: &str = "close-requested";
 
-/// `quit` 진행 중. 이때는 창 닫기·앱 종료를 다시 막지 않는다.
+/// `quit` 진행 중. 이때 온 창 닫기·앱 종료 요청은 D1 없이 조용히 막는다(`quit`이 저장을 마치고 직접 끝낸다).
 #[derive(Debug, Default)]
 pub struct Quitting(pub AtomicBool);
+
+/// 창 닫기·앱 종료(code 없음) 요청을 어떻게 할지.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CloseDecision {
+    /// 그대로 닫는다.
+    Allow,
+    /// 막기만 한다. `quit`이 받는 중인 작업을 멈추고 저장하는 중이다(최대 3초 뒤 `quit`이 `exit(0)`).
+    PreventSilently,
+    /// 막고 D1을 띄운다(받는 중인 작업 수).
+    Ask(u32),
+}
+
+/// 닫기 판단. main 창이 이미 없으면 D1을 띄울 곳이 없으므로 막지 않는다
+/// (막으면 창 없는 프로세스만 남는다. 남은 `running`은 다음 실행의 reconcile이 `interrupted`로 바꾼다).
+pub fn close_decision(quitting: bool, running: usize, has_main: bool) -> CloseDecision {
+    if quitting {
+        CloseDecision::PreventSilently
+    } else if running == 0 || !has_main {
+        CloseDecision::Allow
+    } else {
+        CloseDecision::Ask(u32::try_from(running).unwrap_or(u32::MAX))
+    }
+}
 
 /// 셸이 코어 태스크를 띄울 tokio 런타임 핸들. Tauri가 만든 런타임을 그대로 쓴다.
 pub fn tokio_handle() -> tokio::runtime::Handle {
@@ -66,31 +89,66 @@ fn focus_main<R: Runtime>(app: &AppHandle<R>) {
     }
 }
 
-/// 받는 중인 작업이 있어 닫기·종료를 막아야 하면 그 수. 막았으면 main 창에 `close-requested`를 보낸다.
+/// 닫기·종료를 막아야 하면 `true`. D1이 필요하면 main 창을 앞으로 가져와 `close-requested`를 보낸다.
 ///
-/// `quit` 중이거나 상태가 아직 없으면(setup 실패) 막지 않는다.
+/// 상태가 아직 없으면(setup 실패) 막지 않는다.
 pub fn guard_close<R: Runtime>(app: &AppHandle<R>) -> bool {
-    if app
+    let quitting = app
         .try_state::<Quitting>()
-        .is_some_and(|q| q.0.load(Ordering::SeqCst))
-    {
-        return false;
-    }
-    let Some(state) = app.try_state::<App>() else {
-        return false;
+        .is_some_and(|q| q.0.load(Ordering::SeqCst));
+    let running = if quitting {
+        0
+    } else {
+        app.try_state::<App>()
+            .map_or(0, |s| s.manager.running_count())
     };
-    let running = state.manager.running_count();
-    if running == 0 {
-        return false;
+    let has_main = app.get_webview_window("main").is_some();
+    match close_decision(quitting, running, has_main) {
+        CloseDecision::Allow => false,
+        CloseDecision::PreventSilently => true,
+        CloseDecision::Ask(running) => {
+            focus_main(app);
+            if let Err(e) = app.emit_to("main", CLOSE_REQUESTED, CloseRequestedPayload { running })
+            {
+                tracing::warn!(error = %e, "close-requested를 보내지 못함");
+            }
+            true
+        }
     }
-    let payload = CloseRequestedPayload {
-        running: u32::try_from(running).unwrap_or(u32::MAX),
-    };
-    focus_main(app);
-    if let Err(e) = app.emit_to("main", CLOSE_REQUESTED, payload) {
-        tracing::warn!(error = %e, "close-requested를 보내지 못함");
+}
+
+/// `App::run`의 이벤트 처리: main 창 닫기와 앱 종료(code 없음)를 `guard_close`로 거르고, 끝날 때 `jobs.json`을 flush한다.
+///
+/// 창 닫기를 `Builder::on_window_event`가 아니라 여기(`RunEvent::WindowEvent`)서 막는다. wry는 둘 다 같은
+/// `CloseRequested` 신호를 보고 막을 수 있고, mock 런타임은 이쪽만 부르므로 IPC 테스트가 실제 처리를 돌릴 수 있다.
+pub fn on_run_event<R: Runtime>(app: &AppHandle<R>, e: RunEvent) {
+    match e {
+        RunEvent::WindowEvent {
+            label,
+            event: WindowEvent::CloseRequested { api, .. },
+            ..
+        } => {
+            if label == "main" && guard_close(app) {
+                api.prevent_close();
+            }
+        }
+        // macOS Cmd+Q·Dock 종료는 창 닫기 없이 여기로 온다(code None). `quit`의 `app.exit(0)`은 Some(0).
+        RunEvent::ExitRequested {
+            code: None, api, ..
+        } => {
+            if guard_close(app) {
+                api.prevent_exit();
+            }
+        }
+        RunEvent::Exit => {
+            // 쓰기 스레드에 밀린 jobs.json을 디스크에 닿게 한다(완료 직후 창을 닫은 경우 등).
+            if let Some(state) = app.try_state::<App>() {
+                state.manager.flush();
+            }
+            tracing::info!("앱 종료");
+        }
+        _ => {}
     }
-    true
 }
 
 /// 앱 상태(설정·매니저)를 열어 `manage`한다. 로그는 그 전에 시작한다.
@@ -145,34 +203,33 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .setup(|app| setup(app))
-        .on_window_event(|w, e| {
-            if let WindowEvent::CloseRequested { api, .. } = e
-                && w.label() == "main"
-                && guard_close(w.app_handle())
-            {
-                api.prevent_close();
-            }
-        })
         .invoke_handler(handler())
         .build(tauri::generate_context!())
         .expect("Tauri 앱 만들기 실패");
 
-    app.run(|app, e| match e {
-        // macOS Cmd+Q·Dock 종료는 창 닫기 없이 여기로 온다(code None). `quit`의 `app.exit(0)`은 Some(0).
-        RunEvent::ExitRequested {
-            code: None, api, ..
-        } => {
-            if guard_close(app) {
-                api.prevent_exit();
-            }
-        }
-        RunEvent::Exit => {
-            // 쓰기 스레드에 밀린 jobs.json을 디스크에 닿게 한다(완료 직후 창을 닫은 경우 등).
-            if let Some(state) = app.try_state::<App>() {
-                state.manager.flush();
-            }
-            tracing::info!("앱 종료");
-        }
-        _ => {}
-    });
+    app.run(on_run_event);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CloseDecision, close_decision};
+
+    #[test]
+    fn close_decision_table() {
+        // 받는 중인 작업이 없으면 그대로 닫는다.
+        assert_eq!(close_decision(false, 0, true), CloseDecision::Allow);
+        // 받는 중이면 D1.
+        assert_eq!(close_decision(false, 2, true), CloseDecision::Ask(2));
+        // main 창이 이미 없으면 D1을 띄울 곳이 없다: 막지 않는다(창 없는 프로세스가 남지 않게).
+        assert_eq!(close_decision(false, 1, false), CloseDecision::Allow);
+        // quit 중에는 작업 수·창과 무관하게 조용히 막는다(quit이 저장을 마치고 직접 끝낸다).
+        assert_eq!(
+            close_decision(true, 0, true),
+            CloseDecision::PreventSilently
+        );
+        assert_eq!(
+            close_decision(true, 3, false),
+            CloseDecision::PreventSilently
+        );
+    }
 }

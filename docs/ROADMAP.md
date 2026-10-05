@@ -84,7 +84,7 @@
 - [x] §15-7~8 `DownloadManager`: 큐(동시 작업 수 설정 1~3)·sink·중복 → pause/resume/remove/quit/restart, `check_output`, `partial_bytes`, 재시작 후 자동 이어받기
 - [x] §15-9 `SettingsService`: 경로 폴백, 쿠키 토글 클라이언트 교체, 첫 실행 legacy 후보, 비밀 누출 테스트
 - [x] §15-10 `app.yml`의 `shell` 작업, CLAUDE.md 게이트 갱신 (푸시 전이라 3 OS 녹색은 PR A에서 확인)
-- [x] §15-11 command 배선: commands·ChannelSink·setup·AppManifest·capabilities·CSP, 창 닫기 이벤트, 완료 OS 알림, 클립보드 링크 command (런타임 CSP·`resolve` 수동 확인은 화면 단계로 이월)
+- [x] §15-11 command 배선: commands·ChannelSink·setup·AppManifest·capabilities·CSP, 창 닫기 이벤트, 완료 OS 알림, 클립보드 링크 command, 리뷰 반영(종료 한 번만·닫기 가드·진행 Channel 검사, app.md 구현 중 변경 38). 런타임 CSP·`resolve` 수동 확인은 §15-14 통과 조건, setup 실패 안내는 §15-17로 이월
 - [ ] §15-12~13 프런트 기반(`api.ts`, `applyEvent`, copy deck, `errorCopy`, format golden) + UI 기본 요소
 - [ ] §15-14 받기 화면: UrlBar → ResolveCard(화질·폴더·파일 이름·충돌 안내) → enqueue
 - [ ] §15-15 작업 목록 화면: JobsStore 재구독, 상태별 버튼, B1 배너, D2

@@ -10,6 +10,7 @@ pub mod error;
 pub mod events;
 pub mod jobs;
 pub mod manager;
+pub mod output;
 
 pub use backend::Backend;
 pub use dto::JobId;

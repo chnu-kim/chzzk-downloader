@@ -432,3 +432,38 @@ async fn finished_jobs_are_capped() {
     assert!(list.iter().all(|j| j.id != ids[0]));
     assert!(h.rec.trace(ids[0]).ends_with(&["removed".to_string()]));
 }
+
+/// 다중 스레드 런타임(앱과 같은 모양)에서도 작업마다 `Added` → `Status(running)` → `Progress`… → `Status(끝)`이다.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn event_order_on_multi_thread_runtime() {
+    let h = Harness::new(3);
+    let names: Vec<String> = (0..12).map(|i| format!("m{i}")).collect();
+    for n in &names {
+        h.fake.script_for(
+            h.output(n),
+            Script::new()
+                .bytes(1, Some(3))
+                .bytes(2, Some(3))
+                .bytes(3, Some(3)),
+        );
+    }
+    let ids: Vec<_> = names.iter().map(|n| h.enqueue(n).id).collect();
+    until("모두 완료", || {
+        ids.iter().all(|&i| h.status(i) == JobStatus::Completed)
+    })
+    .await;
+    assert!(h.fake.max_active() <= 3);
+    for id in ids {
+        assert_eq!(
+            h.rec.trace(id),
+            [
+                "added:queued",
+                "status:running",
+                "progress",
+                "progress",
+                "progress",
+                "status:completed"
+            ]
+        );
+    }
+}

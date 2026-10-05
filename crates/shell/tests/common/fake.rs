@@ -5,6 +5,8 @@
 //! - 대기 단계(`Sleep`·`Hold`·`WaitCancel`)는 취소 토큰을 함께 기다리고, 취소되면 `Err(Cancelled)`로 끝난다
 //!   (코어가 체크포인트를 쓰고 `Cancelled`를 돌려주는 것과 같은 모양). 시작할 때와 진행률 단계 뒤에도
 //!   취소를 확인하므로, 이미 취소된 토큰이면 대본에 대기 단계가 없어도 `Cancelled`다.
+//!   예외로 `UntilCancelled`는 취소 뒤에도 다음 단계로 넘어가고 `Linger`는 취소를 무시한다(취소 뒤 체크포인트를
+//!   쓰는 코어, 늦게 끝나는 태스크를 흉내 낸다). `Write`는 파일을 쓴다.
 //! - 호출 기록(`calls`), `download`가 받은 요청 전체(`download_requests`: 이어받기 정책·화질·방식·동시 요청 수를
 //!   매니저가 제대로 넘겼는지 보려고)와 동시 실행 수(`active`·`max_active`)를 남겨 매니저의 동시성 상한을 검사한다.
 
@@ -31,6 +33,12 @@ pub enum Step {
     Hold(Arc<Notify>),
     /// 취소될 때까지 기다린 뒤 `Cancelled`
     WaitCancel,
+    /// 취소될 때까지 기다리고 **다음 단계로 넘어간다**(취소 뒤의 체크포인트 쓰기 흉내)
+    UntilCancelled,
+    /// 취소를 무시하고 그만큼 머문다(늦게 끝나는 태스크)
+    Linger(Duration),
+    /// 파일을 쓴다(코어의 `.part`·sidecar 쓰기 흉내)
+    Write(PathBuf, Vec<u8>),
 }
 
 /// `download` 한 번의 대본.
@@ -76,6 +84,22 @@ impl Script {
     /// 취소될 때까지 멈춰 있는다. 이 뒤의 단계와 결과는 쓰이지 않는다.
     pub fn wait_cancel(mut self) -> Self {
         self.steps.push(Step::WaitCancel);
+        self
+    }
+
+    /// 취소될 때까지 기다린 뒤 이어지는 단계를 계속한다. 결과는 `ends`로 정한다(보통 `Err(Cancelled)`).
+    pub fn until_cancelled(mut self) -> Self {
+        self.steps.push(Step::UntilCancelled);
+        self
+    }
+
+    pub fn linger(mut self, d: Duration) -> Self {
+        self.steps.push(Step::Linger(d));
+        self
+    }
+
+    pub fn write(mut self, path: impl Into<PathBuf>, bytes: impl Into<Vec<u8>>) -> Self {
+        self.steps.push(Step::Write(path.into(), bytes.into()));
         self
     }
 
@@ -259,6 +283,9 @@ impl Backend for FakeBackend {
                     cancel.cancelled().await;
                     return Err(Error::Cancelled);
                 }
+                Step::UntilCancelled => cancel.cancelled().await,
+                Step::Linger(d) => tokio::time::sleep(d).await,
+                Step::Write(p, b) => std::fs::write(&p, b).unwrap(),
             }
         }
         script.end.unwrap_or(Ok(DownloadOutcome::Completed {

@@ -140,6 +140,15 @@ impl Harness {
 }
 
 fn open(dir: &Path, fake: &Arc<FakeBackend>, parallel: u8) -> DownloadManager<FakeBackend> {
+    open_with(dir, fake, parallel, false)
+}
+
+pub fn open_with(
+    dir: &Path,
+    fake: &Arc<FakeBackend>,
+    parallel: u8,
+    auto_resume: bool,
+) -> DownloadManager<FakeBackend> {
     let f = Arc::clone(fake);
     let client: ClientFn<FakeBackend> = Arc::new(move || Arc::clone(&f));
     DownloadManager::open(ManagerConfig {
@@ -147,6 +156,7 @@ fn open(dir: &Path, fake: &Arc<FakeBackend>, parallel: u8) -> DownloadManager<Fa
         store: JobStore::new(dir.join("data")),
         runtime: tokio::runtime::Handle::current(),
         max_parallel: parallel,
+        auto_resume,
     })
     .unwrap()
 }

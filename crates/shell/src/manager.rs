@@ -10,7 +10,13 @@
 //!   작업을 멈추지 않는다(메모리 상태가 기준이고, 다음 전이 때 다시 쓴다).
 //! - **중복 방지**: 같은 최종 경로의 활성 작업(`queued·running·pausing·paused·interrupted`)이 있으면
 //!   `duplicateOutput`. 경로 비교는 Windows·macOS에서 대소문자를 무시한다(NTFS·APFS 기본이 그렇다).
-//!   두 작업이 같은 파일을 마무리(rename)하는 경합을 여기서 막는다.
+//!   두 작업이 같은 파일을 마무리(rename)하는 경합을 여기서 막는다. `enqueue`와 `resume`이 모두 검사한다.
+//! - **멈춤**: `pause`·`remove`·`quit`은 `stop`을 먼저 적고 토큰을 취소한다. 코어는 셋 다 `Error::Cancelled`로
+//!   끝나므로 `stop`으로 구분한다: `Pause` → `paused`, `Quit` → `interrupted`(다음 시작 때 이어받을 대상),
+//!   `Remove` → 지운다. 이유 없이 `Cancelled`가 오면 `failed{internal}`이다.
+//! - **`remove`의 순서**: 태스크의 `JoinHandle`을 꺼내 **잠금을 놓은 뒤** 기다리고, 그다음 `discard_partial`을
+//!   부른다. 끝나는 태스크가 같은 잠금을 잡으므로 잡은 채 기다리면 교착이고, 먼저 지우면 `.part` 잠금 때문에
+//!   `FileLocked`다(코어가 취소 뒤 체크포인트를 쓰는 중일 수도 있다).
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -19,18 +25,23 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use chzzk_core::naming::output_path;
 use chzzk_core::{
     CancellationToken, ContentRef, DownloadOutcome, DownloadRequest, Error, Phase, Platform,
-    Progress, discard_partial,
+    PlaybackKind, Progress, discard_partial,
 };
+use std::time::Duration;
 use tokio::runtime::Handle;
 use tokio::task::JoinHandle;
 
 use crate::backend::Backend;
-use crate::dto::{ContentKindDto, EnqueueRequest, JobDto, JobEvent, JobId, JobStatus, ProgressDto};
+use crate::dto::{
+    ContentKindDto, EnqueueRequest, JobDto, JobEvent, JobId, JobStatus, OnExisting, OutputCheck,
+    ProgressDto,
+};
 use crate::error::{AppError, Stage};
 use crate::events::EventSink;
 use crate::jobs::{
     JOBS_VERSION, JobRecord, JobStore, JobsFile, now_secs, partial_bytes, reconcile,
 };
+use crate::output::{OutputQuery, check_output};
 
 /// 작업 시작 시점의 코어 클라이언트를 준다(쿠키 토글 때 셸이 클라이언트를 바꾼다).
 pub type ClientFn<B> = Arc<dyn Fn() -> Arc<B> + Send + Sync>;
@@ -50,6 +61,19 @@ pub struct ManagerConfig<B> {
     pub runtime: Handle,
     /// 설정 `max_parallel_downloads`. 1~3으로 자른다
     pub max_parallel: u8,
+    /// 설정 `auto_resume_interrupted`. 켜져 있으면 열자마자 `interrupted`를 모두 다시 줄 세운다
+    pub auto_resume: bool,
+}
+
+/// 앱 종료(`quit`) 때 멈추기를 기다리는 시간.
+pub const QUIT_TIMEOUT: Duration = Duration::from_secs(3);
+
+/// 태스크가 멈춘 이유. 코어는 일시정지·제거·종료 모두 `Error::Cancelled`로 끝나므로 이것으로 구분한다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StopReason {
+    Pause,
+    Remove,
+    Quit,
 }
 
 /// `enqueue` 때 설정에서 오는 값.
@@ -75,6 +99,9 @@ struct Job {
     cancel: Option<CancellationToken>,
     handle: Option<JoinHandle<()>>,
     last_progress: Option<ProgressDto>,
+    stop: Option<StopReason>,
+    /// `remove`가 진행 중이다. 다른 동작은 이 작업을 없는 것으로 본다(중복 검사에는 남는다)
+    removing: bool,
     /// 줄 선 순서(FIFO). `queued`가 될 때마다 새로 받는다
     queue_seq: u64,
 }
@@ -86,6 +113,8 @@ impl Job {
             cancel: None,
             handle: None,
             last_progress: None,
+            stop: None,
+            removing: false,
             queue_seq,
         }
     }
@@ -133,6 +162,14 @@ impl State {
 
     fn snapshot(&self) -> Vec<JobDto> {
         self.jobs.values().map(Job::dto).collect()
+    }
+
+    /// 사용자에게 보이는 작업(지우는 중이 아닌 것).
+    fn visible(&mut self, id: JobId) -> Result<&mut Job, AppError> {
+        self.jobs
+            .get_mut(&id)
+            .filter(|j| !j.removing)
+            .ok_or_else(|| AppError::job_not_found(id))
     }
 
     /// `output`과 같은 파일을 쓰는 활성 작업(`except` 제외).
@@ -207,11 +244,16 @@ impl<B: Backend> DownloadManager<B> {
             runtime: cfg.runtime,
             state: Mutex::new(st),
         });
+        let mgr = DownloadManager { inner };
         {
-            let st = inner.lock();
-            inner.save(&st);
+            let st = mgr.inner.lock();
+            mgr.inner.save(&st);
         }
-        Ok(DownloadManager { inner })
+        if cfg.auto_resume {
+            let n = mgr.resume_interrupted();
+            tracing::info!(count = n, "멈춘 작업을 자동으로 이어받는다");
+        }
+        Ok(mgr)
     }
 
     /// 지금 목록(재동기화용 스냅샷, id 순).
@@ -242,16 +284,7 @@ impl<B: Backend> DownloadManager<B> {
     ///
     /// 소유 검사(`OwnershipGate`)와 설정의 최근 VOD·마지막 화질 갱신은 부르는 쪽(command)이 한다.
     pub fn enqueue(&self, req: EnqueueRequest, defaults: &JobDefaults) -> Result<JobDto, AppError> {
-        let folder = match req.folder.as_deref().map(str::trim) {
-            Some(f) if !f.is_empty() => PathBuf::from(f),
-            _ => defaults.download_folder.clone(),
-        };
-        if !folder.is_absolute() {
-            return Err(AppError::invalid_input(format!(
-                "저장 폴더가 절대 경로가 아닙니다: {}",
-                folder.display()
-            )));
-        }
+        let folder = resolve_folder(req.folder.as_deref(), &defaults.download_folder)?;
         let output = output_path(&folder, &req.file_name, Platform::current());
 
         let mut st = self.inner.lock();
@@ -296,9 +329,333 @@ impl<B: Backend> DownloadManager<B> {
         self.inner.pump(&mut st);
         Ok(st.jobs[&id].dto())
     }
+
+    /// 최종 경로와 충돌을 미리 본다(§6.4). 폴더 규칙은 `enqueue`와 같다.
+    pub fn check_output(
+        &self,
+        folder: Option<&str>,
+        default_folder: &Path,
+        file_name: &str,
+        content: &ContentRef,
+        quality_id: &str,
+        kind: PlaybackKind,
+    ) -> Result<OutputCheck, AppError> {
+        let folder = resolve_folder(folder, default_folder)?;
+        // 파일 시스템을 보는 동안 잠금을 쥐지 않도록 활성 경로를 먼저 떠 둔다.
+        let active: Vec<(String, JobId)> = {
+            let st = self.inner.lock();
+            st.jobs
+                .values()
+                .filter(|j| j.rec.status.is_active())
+                .map(|j| (output_key(&j.rec.output), j.rec.id))
+                .collect()
+        };
+        let find = |p: &Path| {
+            let k = output_key(p);
+            active.iter().find(|(a, _)| *a == k).map(|(_, id)| *id)
+        };
+        Ok(check_output(
+            &OutputQuery {
+                folder: &folder,
+                file_name,
+                content,
+                quality_id,
+                kind,
+                platform: Platform::current(),
+            },
+            &find,
+        ))
+    }
+
+    /// 일시정지. `running` → `pausing` → (태스크가 끝나면) `paused`, `queued` → `paused`. `.part`는 남는다.
+    /// 이미 멈춘 작업에는 아무것도 하지 않는다.
+    pub fn pause(&self, id: JobId) -> Result<(), AppError> {
+        let mut st = self.inner.lock();
+        let job = st.visible(id)?;
+        match job.rec.status {
+            JobStatus::Running => {
+                job.stop = Some(StopReason::Pause);
+                job.rec.status = JobStatus::Pausing;
+                if let Some(c) = &job.cancel {
+                    c.cancel();
+                }
+            }
+            JobStatus::Queued => {
+                job.rec.status = JobStatus::Paused;
+                job.rec.partial_bytes = partial_bytes(&job.rec);
+            }
+            _ => return Ok(()),
+        }
+        let dto = job.dto();
+        self.inner.save(&st);
+        st.emit(JobEvent::Status { job: dto });
+        Ok(())
+    }
+
+    /// 다시 줄 세운다. `paused`·`failed`·`interrupted`·`skipped` → `queued`.
+    ///
+    /// - `restart`면 시작 직후 `download()` 전에 `.part`를 지운다(`discard_on_start`).
+    /// - `skipped`는 `on_existing = overwrite`로 바꾼다("덮어쓰고 받기").
+    /// - 같은 최종 경로의 다른 활성 작업이 있으면 `duplicateOutput`(끝난 작업의 경로는 새 작업이 가져갈 수 있다).
+    /// - `queued`·`running`·`pausing`에는 아무것도 하지 않는다. `completed`는 `invalidInput`.
+    pub fn resume(&self, id: JobId, restart: bool) -> Result<(), AppError> {
+        let mut st = self.inner.lock();
+        let job = st.visible(id)?;
+        match job.rec.status {
+            JobStatus::Paused | JobStatus::Failed | JobStatus::Interrupted | JobStatus::Skipped => {
+            }
+            JobStatus::Queued | JobStatus::Running | JobStatus::Pausing => return Ok(()),
+            JobStatus::Completed => {
+                return Err(AppError::invalid_input(
+                    "완료된 작업은 다시 받을 수 없습니다",
+                ));
+            }
+        }
+        let output = job.rec.output.clone();
+        if let Some(other) = st.active_with_output(&output, Some(id)) {
+            return Err(AppError::duplicate_output(other));
+        }
+        let seq = st.seq();
+        let job = st.visible(id)?;
+        self.inner.requeue(job, seq, restart);
+        let dto = job.dto();
+        self.inner.save(&st);
+        st.emit(JobEvent::Status { job: dto });
+        self.inner.pump(&mut st);
+        Ok(())
+    }
+
+    /// `interrupted`를 모두 다시 줄 세운다(id 순). 같은 경로의 활성 작업이 있으면 그 작업은 건너뛴다.
+    /// 재시작 후 자동 이어받기(설정)에 쓴다. 줄 세운 수를 돌려준다.
+    pub fn resume_interrupted(&self) -> usize {
+        let mut st = self.inner.lock();
+        let ids: Vec<JobId> = st
+            .jobs
+            .values()
+            .filter(|j| !j.removing && j.rec.status == JobStatus::Interrupted)
+            .map(|j| j.rec.id)
+            .collect();
+        let mut n = 0;
+        for id in ids {
+            let output = st.jobs[&id].rec.output.clone();
+            if st.active_with_output(&output, Some(id)).is_some() {
+                continue;
+            }
+            let seq = st.seq();
+            let Some(job) = st.jobs.get_mut(&id) else {
+                continue;
+            };
+            self.inner.requeue(job, seq, false);
+            let dto = job.dto();
+            st.emit(JobEvent::Status { job: dto });
+            n += 1;
+        }
+        if n > 0 {
+            self.inner.save(&st);
+            self.inner.pump(&mut st);
+        }
+        n
+    }
+
+    /// 목록에서 지운다(UX의 "취소"도 이것이다).
+    ///
+    /// - `completed`·`skipped`: 레코드만 지운다(파일은 둔다).
+    /// - `running`·`pausing`: 취소 → 태스크 종료 대기(잠금 밖) → `discard_partial` → 지운다.
+    /// - `queued`·`paused`·`interrupted`·`failed`: `discard_partial` → 지운다(다시 줄 선 작업도 `.part`가 있을 수 있다).
+    ///
+    /// `.part`를 지우지 못하면(다른 프로그램이 잠금 등) 오류를 돌려주고 레코드를 멈춘 상태로 남긴다.
+    pub async fn remove(&self, id: JobId) -> Result<(), AppError> {
+        let (handle, output) = {
+            let mut st = self.inner.lock();
+            let job = st.visible(id)?;
+            match job.rec.status {
+                JobStatus::Completed | JobStatus::Skipped => {
+                    st.jobs.remove(&id);
+                    self.inner.save(&st);
+                    st.emit(JobEvent::Removed { id });
+                    return Ok(());
+                }
+                JobStatus::Running | JobStatus::Pausing => {
+                    job.removing = true;
+                    job.stop = Some(StopReason::Remove);
+                    job.rec.status = JobStatus::Pausing;
+                    if let Some(c) = &job.cancel {
+                        c.cancel();
+                    }
+                    let handle = job.handle.take();
+                    let output = job.rec.output.clone();
+                    let dto = job.dto();
+                    self.inner.save(&st);
+                    st.emit(JobEvent::Status { job: dto });
+                    (handle, output)
+                }
+                JobStatus::Queued
+                | JobStatus::Paused
+                | JobStatus::Interrupted
+                | JobStatus::Failed => {
+                    job.removing = true;
+                    if job.rec.status == JobStatus::Queued {
+                        // 지우는 동안 pump가 시작하지 않게(이벤트는 보내지 않는다. 곧 Removed다)
+                        job.rec.status = JobStatus::Paused;
+                    }
+                    (None, job.rec.output.clone())
+                }
+            }
+        };
+        if let Some(h) = handle {
+            // 바깥 태스크는 패닉을 안쪽에서 받으므로 여기서 JoinError가 나는 것은 런타임 종료뿐이다.
+            let _ = h.await;
+        }
+        let discarded = discard_partial(&output);
+
+        let mut st = self.inner.lock();
+        match discarded {
+            Ok(()) => {
+                if st.jobs.remove(&id).is_some() {
+                    self.inner.save(&st);
+                    st.emit(JobEvent::Removed { id });
+                }
+                self.inner.pump(&mut st);
+                Ok(())
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, job = id.0, "지우려던 작업의 .part를 지우지 못했다");
+                if let Some(job) = st.jobs.get_mut(&id) {
+                    job.removing = false;
+                    job.stop = None;
+                    if job.busy() {
+                        // 태스크 종료를 기다리지 못한 경우(런타임 종료). 멈춘 것으로 둔다
+                        job.rec.status = JobStatus::Paused;
+                    }
+                    job.rec.partial_bytes = partial_bytes(&job.rec);
+                    let dto = job.dto();
+                    self.inner.save(&st);
+                    st.emit(JobEvent::Status { job: dto });
+                }
+                Err(AppError::from(&e))
+            }
+        }
+    }
+
+    /// `completed`·`skipped`를 모두 지운다(파일은 둔다).
+    pub fn clear_finished(&self) {
+        let mut st = self.inner.lock();
+        let ids: Vec<JobId> = st
+            .jobs
+            .values()
+            .filter(|j| matches!(j.rec.status, JobStatus::Completed | JobStatus::Skipped))
+            .map(|j| j.rec.id)
+            .collect();
+        if ids.is_empty() {
+            return;
+        }
+        for id in ids {
+            st.jobs.remove(&id);
+            st.emit(JobEvent::Removed { id });
+        }
+        self.inner.save(&st);
+    }
+
+    /// 작업의 최종 경로와 상태(`open_output`·`reveal_output`용).
+    pub fn output_of(&self, id: JobId) -> Result<(PathBuf, JobStatus), AppError> {
+        let mut st = self.inner.lock();
+        let j = st.visible(id)?;
+        Ok((j.rec.output.clone(), j.rec.status))
+    }
+
+    /// 앱 종료 준비. 새 작업을 시작하지 않고, 받는 중인 작업을 모두 멈춰 최대 `timeout`까지 기다린다.
+    ///
+    /// 멈춘 작업은 `interrupted`로 저장한다(사용자가 일시정지한 `pausing`은 `paused`). 시간 안에 끝나지 않은
+    /// 작업도 `interrupted`로 저장한다. 코어의 크래시 불변식(`committed_len`) 덕분에 다음 시작 때 이어받을 수 있다.
+    /// 대기 중(`queued`)인 작업은 그대로 저장되고 다음 시작 때 reconcile이 `interrupted`로 바꾼다.
+    /// 프로세스 종료(`app.exit`)는 부르는 쪽이 한다.
+    pub async fn quit(&self, timeout: Duration) {
+        let handles: Vec<JoinHandle<()>> = {
+            let mut st = self.inner.lock();
+            st.scheduler_enabled = false;
+            let mut handles = Vec::new();
+            let mut changed = Vec::new();
+            for job in st.jobs.values_mut() {
+                if job.rec.status == JobStatus::Running {
+                    job.stop = Some(StopReason::Quit);
+                    job.rec.status = JobStatus::Pausing;
+                    if let Some(c) = &job.cancel {
+                        c.cancel();
+                    }
+                    changed.push(job.dto());
+                }
+                if job.busy()
+                    && let Some(h) = job.handle.take()
+                {
+                    handles.push(h);
+                }
+            }
+            if !changed.is_empty() {
+                self.inner.save(&st);
+            }
+            for dto in changed {
+                st.emit(JobEvent::Status { job: dto });
+            }
+            handles
+        };
+        let all = async {
+            for h in handles {
+                let _ = h.await;
+            }
+        };
+        if tokio::time::timeout(timeout, all).await.is_err() {
+            tracing::warn!("종료 대기 시간 안에 멈추지 않은 작업이 있다");
+        }
+        let mut st = self.inner.lock();
+        let mut late = Vec::new();
+        for job in st.jobs.values_mut() {
+            if job.busy() && !job.removing {
+                job.rec.status = JobStatus::Interrupted;
+                job.rec.partial_bytes = partial_bytes(&job.rec);
+                late.push(job.dto());
+            }
+        }
+        self.inner.save(&st);
+        for dto in late {
+            st.emit(JobEvent::Status { job: dto });
+        }
+    }
+}
+
+/// 요청 폴더(공백뿐이면 무시) → 기본 폴더. 절대 경로가 아니면 `invalidInput`.
+fn resolve_folder(folder: Option<&str>, default: &Path) -> Result<PathBuf, AppError> {
+    let folder = match folder.map(str::trim) {
+        Some(f) if !f.is_empty() => PathBuf::from(f),
+        _ => default.to_path_buf(),
+    };
+    if !folder.is_absolute() {
+        return Err(AppError::invalid_input(format!(
+            "저장 폴더가 절대 경로가 아닙니다: {}",
+            folder.display()
+        )));
+    }
+    Ok(folder)
 }
 
 impl<B: Backend> Inner<B> {
+    /// 멈춘 작업을 다시 줄 세운다.
+    fn requeue(&self, job: &mut Job, seq: u64, restart: bool) {
+        let r = &mut job.rec;
+        if r.status == JobStatus::Skipped {
+            r.on_existing = OnExisting::Overwrite;
+        }
+        if restart {
+            r.discard_on_start = true;
+            r.partial_bytes = None;
+            job.last_progress = None;
+        }
+        r.status = JobStatus::Queued;
+        r.last_error = None;
+        r.finished_at = None;
+        job.stop = None;
+        job.queue_seq = seq;
+    }
+
     fn lock(&self) -> MutexGuard<'_, State> {
         // 잠금 안에서 패닉해도 상태는 한 전이 단위로만 바뀐다. 계속 쓴다.
         self.state.lock().unwrap_or_else(|e| e.into_inner())
@@ -341,6 +698,7 @@ impl<B: Backend> Inner<B> {
         r.final_bytes = None;
         r.partial_bytes = None;
         r.missing = false;
+        job.stop = None;
         let cancel = CancellationToken::new();
         job.cancel = Some(cancel.clone());
         let req = job.rec.to_request();
@@ -400,6 +758,13 @@ impl<B: Backend> Inner<B> {
         if let Some(job) = st.jobs.get_mut(&id) {
             job.cancel = None;
             job.handle = None;
+            let stop = job.stop.take();
+            if job.removing {
+                // `remove`가 이어서 `.part`를 지우고 레코드를 없앤다. 그때까지 중복 검사에는 남도록 멈춘 상태로 둔다.
+                job.rec.status = JobStatus::Paused;
+                self.pump(&mut st);
+                return;
+            }
             let r = &mut job.rec;
             match end {
                 End::Done(DownloadOutcome::Completed { bytes, .. }) => {
@@ -415,11 +780,21 @@ impl<B: Backend> Inner<B> {
                     r.partial_bytes = None;
                     job.last_progress = None;
                 }
-                End::Cancelled => {
-                    r.status = JobStatus::Failed;
-                    r.last_error = Some(AppError::internal("멈춘 이유 없이 취소되었습니다"));
-                    r.partial_bytes = partial_bytes(r);
-                }
+                End::Cancelled => match stop {
+                    Some(StopReason::Pause) => {
+                        r.status = JobStatus::Paused;
+                        r.partial_bytes = partial_bytes(r);
+                    }
+                    Some(StopReason::Quit) => {
+                        r.status = JobStatus::Interrupted;
+                        r.partial_bytes = partial_bytes(r);
+                    }
+                    Some(StopReason::Remove) | None => {
+                        r.status = JobStatus::Failed;
+                        r.last_error = Some(AppError::internal("멈춘 이유 없이 취소되었습니다"));
+                        r.partial_bytes = partial_bytes(r);
+                    }
+                },
                 End::Error(e) => {
                     let stage = stage_of(job.last_progress.as_ref());
                     r.status = JobStatus::Failed;

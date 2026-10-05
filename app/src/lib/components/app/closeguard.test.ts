@@ -59,7 +59,7 @@ describe('D1 창 닫기 확인', () => {
     expect(api.quit).not.toHaveBeenCalled();
   });
 
-  it('[닫기]는 quit을 한 번만 부르고 그동안 버튼을 막는다', async () => {
+  it('[닫기]는 quit을 한 번만 부르고 그동안 두 버튼을 다 막는다', async () => {
     let done!: () => void;
     vi.mocked(api.quit).mockReturnValue(new Promise<void>((r) => (done = r)));
     const user = userEvent.setup();
@@ -69,6 +69,8 @@ describe('D1 창 닫기 확인', () => {
     const close = within(d).getByRole('button', { name: '닫기' });
     await user.click(close);
     await waitFor(() => expect(close).toBeDisabled());
+    // 종료 중에는 [계속 받기]도 막는다(눌러도 아무 일이 없던 버튼)
+    expect(within(d).getByRole('button', { name: '계속 받기' })).toBeDisabled();
     await user.click(close);
     expect(api.quit).toHaveBeenCalledTimes(1);
     done();
@@ -84,7 +86,9 @@ describe('D1 창 닫기 확인', () => {
     await waitFor(() => expect(toasts.items.map((t) => t.kind)).toEqual(['danger']));
     expect(screen.queryByRole('dialog')).toBeNull();
     fire(1);
-    expect(within(await screen.findByRole('dialog')).getByRole('button', { name: '닫기' })).toBeEnabled();
+    const again = within(await screen.findByRole('dialog'));
+    expect(again.getByRole('button', { name: '닫기' })).toBeEnabled();
+    expect(again.getByRole('button', { name: '계속 받기' })).toBeEnabled();
   });
 
   it('사라지면 그만 듣는다', async () => {

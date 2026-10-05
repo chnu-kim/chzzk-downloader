@@ -2,10 +2,22 @@
 
 export type ToastKind = 'success' | 'copied' | 'danger' | 'info';
 
+/** 토스트 안의 버튼 하나(예: `fileMissing`의 [폴더 열기]). 누르면 실행하고 토스트를 닫는다 */
+export interface ToastAction {
+  label: string;
+  run: () => void;
+}
+
 export interface ToastItem {
   id: number;
   kind: ToastKind;
   message: string;
+  action?: ToastAction;
+}
+
+export interface ToastOptions {
+  timeout?: number;
+  action?: ToastAction;
 }
 
 interface Timer {
@@ -21,9 +33,9 @@ export class ToastStore {
   #next = 1;
   #timers = new Map<number, Timer>();
 
-  push(message: string, kind: ToastKind = 'info', timeout = TOAST_MS): number {
+  push(message: string, kind: ToastKind = 'info', { timeout = TOAST_MS, action }: ToastOptions = {}): number {
     const id = this.#next++;
-    this.items = [...this.items, { id, kind, message }];
+    this.items = [...this.items, action ? { id, kind, message, action } : { id, kind, message }];
     this.#timers.set(id, { handle: null, remaining: timeout, startedAt: 0 });
     this.resume(id);
     return id;

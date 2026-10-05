@@ -63,7 +63,9 @@
       padding-left: var(--gutter-wide);
     }
   }
+  /* 뷰 전환·지운 뒤 프로그램으로 주는 포커스라 링을 보이지 않는다(전역 :focus-visible은 box-shadow다) */
   .title:focus {
     outline: none;
+    box-shadow: none;
   }
 </style>

@@ -1252,6 +1252,18 @@ jobs:
     - **시작 실패 안내(38(바))**: `App::open`이 실패하면 `setup`이 오류를 삼키고 main 창을 숨긴 뒤 dialog 플러그인의 비동기 오류 창(제목 "치지직 다운로더를 시작하지 못했어요", 본문 `startup_failure_message`: 할 일 + 로그 폴더 + 원문 오류)을 띄우고 닫으면 `exit(1)`한다. Tauri 2.12.1 소스로 확인한 것: config 창은 사용자 `setup`보다 먼저 만들어지고(`app.rs` `setup()`), 상태가 없는 command는 패닉하지 않고 "state not managed" 오류를 돌려준다(`state.rs`). 닫기 가드는 상태가 없으면 막지 않는다. `blocking_show`는 메인 스레드(setup)에서 멈추므로 `show(콜백)`을 쓴다. 이 문구는 웹뷰가 뜨기 전이라 Rust에만 있다. **GUI 경로는 확인하지 못했다**(아래 스모크 표).
     - **접근성 점검**: (가) 뷰를 바꾸면 누르던 버튼이 사라져 포커스가 body로 떨어지던 것을, 설정은 제목(`h1 tabindex=-1`), 홈은 입력줄로 옮긴다(다른 곳이 이미 옮겼으면 두고, 쿠키 섹션 펼치기는 첫 입력칸). (나) `src/a11y.test.ts`가 앱 전체를 그려 랜드마크(`banner`·`main`·"다운로드" 구획), 홈·설정의 모든 버튼·스위치·셀렉트·진행 막대에 이름이 있는지, 뷰 전환·Esc 뒤 포커스, 멈춤·완료 항목이 아이콘과 문구를 함께 쓰는지 본다. (다) reduced-motion: 새 항목 강조는 CSS에서 끈다(줄무늬·스피너·스켈레톤은 41에서 이미). (마) 자체 점검 수정: [목록에서 보기] 포커스 요청을 한 번 쓰고 비운다(남아 있으면 설정에서 돌아와 목록이 다시 그려질 때 옛 항목이 입력줄 포커스를 빼앗았다). JobList가 사라지면(뷰 전환) 열린 D2를 닫는다(돌아왔을 때 다시 뜨지 않게). (라) 진행 막대 `aria-valuetext`("57퍼센트, 2분 18초 남음")·대화상자 포커스 가둠·복귀는 45·41의 테스트가 본다.
     - 빌드 확인(macOS, 2026-10-05): `pnpm build` 결과에 `style="`·`setAttribute("style"`이 없고, `pnpm tauri build --debug --no-bundle`이 통과하며 그 바이너리가 setup을 끝까지 돌아 시작 로그를 남긴다(패닉 없음).
+48. **§15-15~17 리뷰 반영.**
+    - (가) **작업 항목을 `overflow: hidden`으로 깎지 않는다.** [⋯] 메뉴가 항목 테두리에서 잘리고, 메뉴를 열며 첫 항목에 포커스를 주면 브라우저가 항목 안을 스크롤해 제목·오류 줄이 사라졌다. 레일은 항목 전체를 덮는 `::before`(테두리 안쪽 radius, `pointer-events: none`)에 레일 폭만 그라디언트로 칠한다. Menu는 `focus({ preventScroll: true })`. Vite + mock IPC로 960px에서 중단·실패 항목의 메뉴가 모두 보이고 눌리며 `scrollTop`이 0임을 확인했다. 테스트: `styles.test.ts`(소스 검사), `ui.test.ts` Menu `preventScroll`.
+    - (나) **상태 줄 구분점은 ` · `.** Svelte가 요소 안 빈칸을 깎아 `받는 중· 2.3 GB`가 됐다. 조각 사이 빈칸을 문자열로만 넣는다(`{' · '}`). `components/jobs/jobs.test.ts`가 글을 본다.
+    - (다) **쿠키 스위치의 `settings` 오류는 B2에만**(46과 같은 규칙). 화면 안 알림이 B2 [다시 시도] 뒤에도 남았다.
+    - (라) **`fileMissing` 토스트**: §9 문구 그대로(경로를 붙이지 않는다) + [폴더 열기](그 작업의 `reveal_output`). 토스트에 동작 버튼 하나(`ToastAction`)를 더했고, 누르면 실행하고 닫는다. 동작 버튼이 있으므로 마우스뿐 아니라 포커스가 안에 있어도 타이머를 멈춘다. 작업 id가 없는 자리의 오류 토스트에는 버튼을 달지 않는다. 항목을 `missing`으로 바꾸지는 않는다(Rust가 다음 스냅샷에서 정한다).
+    - (마) **실패 토스트는 `role=alert`**, 나머지는 `role=status`. 시간(5초)은 그대로다(멈춤은 위 (라)).
+    - (바) **D1 종료 중에는 [계속 받기]도 막는다.** 눌러도 아무 일이 없는 살아 있는 버튼이었다.
+    - (사) **프로그램으로 준 제목 포커스에 링을 그리지 않는다.** 전역 `:focus-visible`이 `box-shadow`라 `.title:focus { outline: none }`만으로는 설정 제목·목록 제목에 링이 남았다. `box-shadow: none`을 더했다(`styles.test.ts`).
+    - (아) **두 번째 실행은 상태가 없으면 창을 꺼내지 않는다.** 시작에 실패해 숨긴 빈 창(command마다 "state not managed")이 앞으로 나왔다. `focus_main`이 `try_state::<App>()`을 먼저 본다. IPC `second_instance_does_not_reveal_the_window_of_a_failed_startup`.
+    - (자) **알림 판단을 순수 함수로**: `sink::should_notify(has_main, focused)`(포커스가 있으면 안 함, 묻지 못하면 포커스 없음으로 봄) 단위 테스트, IPC `channel_sink_queues_failure_notice`(404 → `Notice::Failed` 한 번). OS 알림·주의 요청 자체는 여전히 수동 확인이다.
+    - (차) a11y 테스트의 "색만으로 말하지 않는다"를 상태 줄 안의 아이콘으로 좁혔다(버튼 아이콘 때문에 실패할 수 없었다). 멈춤 아이콘을 지우면 실패하는 것을 확인했다.
+    - **하지 않은 것**: (1) §8.11 "`refreshes`는 툴팁"은 넣지 않는다. copy deck에 문구가 없고, `title` 툴팁은 키보드·화면 낭독기에 닿지 않으며 상태 줄 문구와 줄무늬 막대로 링크 갱신은 이미 알린다. (2) `subscribe_jobs` 실패 시 목록 자리의 오류·다시 시도는 두지 않는다. 그 실패는 상태 없음(시작 실패, 이제 창이 보이지 않는다, (아))이나 ACL 거부(IPC `capabilities_allow_exactly_the_app_commands`가 막는다)뿐이라 사용자에게 닿을 길이 없다. 토스트는 그대로다. (3) **컴포넌트 나눔**: §10·§15-15의 `JobGroup`·`EmptyJobs`는 `JobList.svelte`에, `JobProgress`·`JobStatusLine`·`JobActions`·`JobMenu`는 `JobItem.svelte`에 합쳤다. 판단은 `lib/jobs.ts` 순수 함수에 있어(45) 컴포넌트는 그리기만 하고, 나누면 props만 늘어난다.
 
 ### 수동 스모크 체크리스트 결과 (§15 17행, 2026-10-05 macOS)
 
@@ -1268,6 +1280,6 @@ CLI 세션에서는 웹뷰 화면·개발자 도구를 조작할 수 없어 대�
 | 쿠키 넣고 켜기·끄기, 옛 폴더 가져오기 | 미확인 | `settings.test.ts`, 셸 `SettingsService` 테스트 |
 | 텍스트 드래그 앤 드롭·창 포커스 클립보드 제안·입력칸 밖 붙여넣기(3 OS 웹뷰가 이벤트를 주는지) | 미확인 | `receive.test.ts`·`shortcuts.test.ts`(jsdom 이벤트) |
 | 끌던 요소가 사라진 뒤 바깥 드롭 한 번 놓침(44(가)) | 미확인 | - |
-| 창 포커스가 없을 때 완료·실패 OS 알림과 Dock·작업 표시줄 주의(서명 안 된 debug 빌드) | 미확인 | `sink.rs` 단위 테스트(알릴 일·본문) |
-| 창 폭 720 레이아웃, 다크 모드 | 미확인 | `tokens.test.ts`(다크 토큰·대비) |
+| 창 포커스가 없을 때 완료·실패 OS 알림과 Dock·작업 표시줄 주의(서명 안 된 debug 빌드) | 미확인 | `sink.rs` 단위 테스트(알릴 일·본문·`should_notify`), IPC 완료·실패 알림 큐 |
+| 창 폭 720 레이아웃, 다크 모드 | 미확인 | `tokens.test.ts`(다크 토큰·대비). 960px 브라우저(mock IPC)에서 작업 메뉴·상태 줄·토스트는 48(가)에서 봤다 |
 | debug 바이너리 시작·로그 | **확인** | `~/Library/Logs/…/chzzk-downloader.*.log`에 시작 로그, 패닉 없음 |

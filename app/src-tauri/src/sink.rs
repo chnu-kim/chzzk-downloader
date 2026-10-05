@@ -93,17 +93,22 @@ impl EventSink for ChannelSink {
     }
 }
 
-/// 알림 태스크. main 창에 포커스가 없을 때만 작업 표시줄·Dock 주의 요청과 OS 알림을 띄운다
-/// (포커스가 있으면 완료는 프런트 토스트, 실패는 목록의 오류 줄로 충분하다).
+/// 알릴 일 하나를 OS로 내보낼까. main 창이 있고 포커스가 없을 때만이다(포커스가 있으면 완료는 프런트 토스트,
+/// 실패는 목록의 오류 줄로 충분하다). 포커스를 묻지 못하면(`None`) 포커스가 없는 것으로 본다.
+/// 내보낼 때는 주의 요청(작업 표시줄·Dock)과 OS 알림을 함께 한다.
+pub fn should_notify(has_main: bool, focused: Option<bool>) -> bool {
+    has_main && !focused.unwrap_or(false)
+}
+
+/// 알림 태스크. `should_notify`가 참일 때만 작업 표시줄·Dock 주의 요청과 OS 알림을 띄운다.
 pub fn spawn_notifier<R: Runtime>(app: AppHandle<R>, mut rx: UnboundedReceiver<Notice>) {
     tauri::async_runtime::spawn(async move {
         while let Some(notice) = rx.recv().await {
-            let Some(w) = app.get_webview_window("main") else {
+            let w = app.get_webview_window("main");
+            let focused = w.as_ref().and_then(|w| w.is_focused().ok());
+            let (true, Some(w)) = (should_notify(w.is_some(), focused), w) else {
                 continue;
             };
-            if w.is_focused().unwrap_or(false) {
-                continue;
-            }
             if let Err(e) = w.request_user_attention(Some(UserAttentionType::Informational)) {
                 tracing::debug!(error = %e, "주의 요청 실패");
             }
@@ -186,6 +191,18 @@ mod tests {
             Notice::Failed("제목".into()).body(),
             "'제목' 다운로드에 실패했어요"
         );
+    }
+
+    #[test]
+    fn notify_only_without_focus() {
+        // 포커스가 있으면 알리지 않는다(토스트·오류 줄로 충분하다).
+        assert!(!should_notify(true, Some(true)));
+        // 포커스가 없거나 묻지 못하면 주의 요청과 OS 알림.
+        assert!(should_notify(true, Some(false)));
+        assert!(should_notify(true, None));
+        // main 창이 없으면(닫는 중) 알리지 않는다.
+        assert!(!should_notify(false, None));
+        assert!(!should_notify(false, Some(false)));
     }
 
     #[tokio::test]

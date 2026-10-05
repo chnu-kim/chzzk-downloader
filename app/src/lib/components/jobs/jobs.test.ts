@@ -68,6 +68,10 @@ describe('JobList', () => {
     const bar = within(running).getByRole('progressbar');
     expect(bar).toHaveAttribute('aria-valuenow', '57');
     expect(bar).toHaveAttribute('aria-valuetext', '57퍼센트, 2분 18초 남음');
+    // 상태 줄 구분점은 양쪽에 빈칸(` · `, copy deck과 같은 모양). Svelte가 요소 안 빈칸을 깎아 `받는 중· …`이 됐다
+    const status = running.querySelector('.status-row .status')?.textContent ?? '';
+    expect(status).toMatch(/받는 중 · \S/);
+    expect(status).not.toMatch(/\S·/);
     await user.click(within(running).getByRole('button', { name: '일시정지' }));
     expect(api.pauseJob).toHaveBeenCalledWith(1);
 

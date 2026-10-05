@@ -149,7 +149,12 @@ export class JobsStore {
           this.requestRemove(job);
           break;
         case 'openFile':
-          await api.openOutput(id);
+          try {
+            await api.openOutput(id);
+          } catch (e) {
+            // 파일이 없으면 그 작업의 폴더를 여는 버튼을 토스트에 단다(§9 `fileMissing` T, 43(가))
+            this.#toastError(e as AppError, id);
+          }
           break;
         case 'openFolder':
           await api.revealOutput(id);
@@ -248,10 +253,21 @@ export class JobsStore {
     }
   }
 
-  #toastError(err: AppError) {
+  /**
+   * 오류 토스트. `jobId`를 주면 문구의 `openFolder` 동작을 그 작업의 폴더 열기 버튼으로 단다.
+   * `fileMissing`은 §9 문구 그대로(경로는 폴더 열기가 보여 준다), 그 밖은 원문·경로를 괄호로 붙인다.
+   */
+  #toastError(err: AppError, jobId?: JobId) {
     const c = errorCopy(err, { place: 'other', cookiesEnabled: settings.cookiesEnabled });
-    const text = c.detail ? `${c.title} (${c.detail})` : c.title;
-    toasts.push(text, 'danger');
+    const text = c.detail && err.code !== 'fileMissing' ? `${c.title} (${c.detail})` : c.title;
+    const action =
+      jobId != null && c.actions.includes('openFolder')
+        ? {
+            label: t('action.openFolder'),
+            run: () => void api.revealOutput(jobId).catch((e: AppError) => this.#toastError(e)),
+          }
+        : undefined;
+    toasts.push(text, 'danger', { action });
   }
 }
 

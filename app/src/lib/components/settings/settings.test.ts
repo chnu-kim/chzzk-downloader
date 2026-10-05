@@ -187,6 +187,21 @@ describe('설정: 네이버 로그인 정보', () => {
     );
     expect(ui.openCookieSection).toBe(false);
   });
+  it('사용 스위치 저장이 설정 파일 오류로 실패하면 B2에만 보이고, B2 [다시 시도] 뒤 남는 알림이 없다', async () => {
+    settings.dto = { ...base, naverCookiesSaved: true };
+    vi.mocked(api.updateSettings).mockRejectedValueOnce(appError('settings'));
+    const user = userEvent.setup();
+    const view = within(render(SettingsView).container);
+    const banner = within(render(AppBanners).container);
+    await openCookies(user);
+    await user.click(view.getByRole('switch', { name: '로그인 정보 사용' }));
+    expect(await banner.findByText(/설정을 저장하지 못했어요/)).toBeInTheDocument();
+    expect(view.queryByText(/설정을 저장하지 못했어요/)).toBeNull();
+    await user.click(banner.getByRole('button', { name: '다시 시도' }));
+    expect(api.updateSettings).toHaveBeenLastCalledWith({ useNaverCookies: true });
+    await waitFor(() => expect(banner.queryByText(/설정을 저장하지 못했어요/)).toBeNull());
+    expect(view.queryByText(/설정을 저장하지 못했어요/)).toBeNull();
+  });
 });
 
 describe('이전 버전 가져오기', () => {

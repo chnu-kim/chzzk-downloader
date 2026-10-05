@@ -23,7 +23,8 @@
 
   const saved = $derived(settings.dto?.naverCookiesSaved ?? false);
   const enabled = $derived(settings.dto?.useNaverCookies ?? false);
-  const errCopy = $derived(error ? errorCopy(error, { place: 'cookie' }) : null);
+  // `settings`(설정 파일을 못 씀)는 B2 배너가 알리고 다시 보낸다(46). 여기서 또 보이면 B2로 고친 뒤에도 남는다.
+  const errCopy = $derived(error && error.code !== 'settings' ? errorCopy(error, { place: 'cookie' }) : null);
   const steps = $derived(
     t('settings.cookie.howto.steps')
       .split(/\s*\d\.\s+/)

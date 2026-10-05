@@ -127,3 +127,41 @@ describe('Switch·ProgressBar', () => {
     expect(screen.getByRole('progressbar')).not.toHaveAttribute('aria-valuenow');
   });
 });
+
+describe('Menu 스크롤', () => {
+  it('열 때 메뉴 항목 포커스가 둘레를 스크롤하지 않는다(preventScroll)', async () => {
+    const user = userEvent.setup();
+    const focus = vi.spyOn(HTMLElement.prototype, 'focus');
+    render(Menu, { label: '더 보기', items: [{ label: '주소 복사', onselect: () => {} }] });
+    await user.click(screen.getByRole('button', { name: '더 보기' }));
+    const item = screen.getByRole('menuitem', { name: '주소 복사' });
+    expect(item).toHaveFocus();
+    const call = focus.mock.contexts.findIndex((c) => c === item);
+    expect(call).toBeGreaterThanOrEqual(0);
+    expect(focus.mock.calls[call][0]).toEqual({ preventScroll: true });
+    focus.mockRestore();
+  });
+});
+
+describe('Toast', () => {
+  it('실패는 role=alert, 나머지는 role=status. 동작 버튼은 실행하고 닫는다', async () => {
+    const { default: Toast } = await import('./Toast.svelte');
+    const user = userEvent.setup();
+    const run = vi.fn();
+    const ondismiss = vi.fn();
+    const { unmount } = render(Toast, {
+      item: { id: 1, kind: 'danger', message: '파일을 찾을 수 없어요', action: { label: '폴더 열기', run } },
+      ondismiss,
+      onpause: () => {},
+      onresume: () => {},
+    });
+    expect(screen.getByRole('alert')).toHaveTextContent('파일을 찾을 수 없어요');
+    await user.click(screen.getByRole('button', { name: '폴더 열기' }));
+    expect(run).toHaveBeenCalledOnce();
+    expect(ondismiss).toHaveBeenCalledOnce();
+    unmount();
+    render(Toast, { item: { id: 2, kind: 'success', message: '완료' }, ondismiss, onpause: () => {}, onresume: () => {} });
+    expect(screen.getByRole('status')).toHaveTextContent('완료');
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+});

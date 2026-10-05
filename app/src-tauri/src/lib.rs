@@ -82,12 +82,19 @@ pub fn handler<R: Runtime>() -> impl Fn(Invoke<R>) -> bool + Send + Sync + 'stat
     ]
 }
 
-fn focus_main<R: Runtime>(app: &AppHandle<R>) {
-    if let Some(w) = app.get_webview_window("main") {
-        let _ = w.show();
-        let _ = w.unminimize();
-        let _ = w.set_focus();
+/// 두 번째 실행: 기존 main 창을 앞으로 가져온다. 시작에 실패해 상태가 없으면(38(바)) 숨겨 둔 창을 꺼내지 않는다.
+/// 그 창은 command마다 "state not managed"라 빈 화면이고, 시작 실패 안내 창이 이미 떠 있다. 창을 꺼냈으면 `true`.
+pub fn focus_main<R: Runtime>(app: &AppHandle<R>) -> bool {
+    if app.try_state::<App>().is_none() {
+        return false;
     }
+    let Some(w) = app.get_webview_window("main") else {
+        return false;
+    };
+    let _ = w.show();
+    let _ = w.unminimize();
+    let _ = w.set_focus();
+    true
 }
 
 /// 닫기·종료를 막아야 하면 `true`. D1이 필요하면 main 창을 앞으로 가져와 `close-requested`를 보낸다.

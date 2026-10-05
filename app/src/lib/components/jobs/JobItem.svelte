@@ -135,14 +135,12 @@
         {:else if job.status === 'completed' && !job.missing}<span class="lead ok"><Icon name="check" size={16} /></span>
         {:else if job.status === 'paused' || job.status === 'interrupted'}<span class="lead"><Icon name="pause" size={16} /></span>
         {/if}
-        {#each parts as part, i (i)}
-          {#if i > 0 && !part.faint}<span class="dot" class:wide-only={part.wideOnly} aria-hidden="true"> · </span>{/if}
-          {#if part.faint}{' '}{/if}<span
-            class:value={part.value}
-            class:faint={part.faint}
-            class:wide-only={part.wideOnly}>{part.text}</span
-          >
-        {/each}
+        <!-- 조각 사이 빈칸은 문자열로만 넣는다(태그 사이 줄바꿈 빈칸이 끼면 `·  2.3 GB`처럼 두 칸이 된다) -->
+        {#each parts as part, i (i)}{#if i > 0 && !part.faint}<span class="dot" class:wide-only={part.wideOnly} aria-hidden="true"
+              >{' · '}</span
+            >{:else if i > 0}{' '}{/if}<span class:value={part.value} class:faint={part.faint} class:wide-only={part.wideOnly}
+            >{part.text}</span
+          >{/each}
       </p>
     {:else}
       <span class="status"></span>
@@ -171,27 +169,31 @@
     border: 1px solid var(--border);
     border-radius: var(--radius-md);
     background: var(--surface);
-    overflow: hidden;
   }
-  /* 왼쪽 레일: 모서리 안쪽, radius를 따라 깎인다(overflow: hidden) */
+  /* 왼쪽 레일: 항목 전체를 덮는 층에 레일 폭만 칠하고, 그 층을 테두리 안쪽 radius로 깎는다.
+     항목 자체를 overflow로 깎으면 [⋯] 메뉴가 잘리고, 메뉴 항목에 포커스를 줄 때 항목 안이 스크롤된다. */
   .item::before {
     content: '';
     position: absolute;
-    inset: 0 auto 0 0;
-    width: var(--rail-w);
-    background: var(--border-strong);
+    inset: 0;
+    border-radius: calc(var(--radius-md) - 1px);
+    background: linear-gradient(to right, var(--rail-color) var(--rail-w), transparent var(--rail-w));
+    pointer-events: none;
   }
-  .rail-accent::before {
-    background: var(--accent);
+  .item {
+    --rail-color: var(--border-strong);
   }
-  .rail-muted::before {
-    background: var(--fg-muted);
+  .rail-accent {
+    --rail-color: var(--accent);
   }
-  .rail-danger::before {
-    background: var(--danger);
+  .rail-muted {
+    --rail-color: var(--fg-muted);
   }
-  .rail-success::before {
-    background: var(--success);
+  .rail-danger {
+    --rail-color: var(--danger);
+  }
+  .rail-success {
+    --rail-color: var(--success);
   }
   .item.failed {
     border-color: var(--danger);

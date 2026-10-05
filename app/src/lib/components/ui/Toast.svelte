@@ -1,6 +1,7 @@
 <script lang="ts">
   import { t } from '../../copy/ko';
   import type { ToastItem } from '../../stores/toast.svelte';
+  import Button from './Button.svelte';
   import Icon from './Icon.svelte';
   import IconButton from './IconButton.svelte';
   import type { IconName } from './icons';
@@ -22,9 +23,27 @@
   };
 </script>
 
-<div class="toast" role="status" onmouseenter={onpause} onmouseleave={onresume}>
+<!-- 실패는 놓치지 않게 role=alert(§10), 나머지는 role=status. 마우스·키보드가 안에 있으면 사라지지 않는다 -->
+<div
+  class="toast"
+  role={item.kind === 'danger' ? 'alert' : 'status'}
+  onmouseenter={onpause}
+  onmouseleave={onresume}
+  onfocusin={onpause}
+  onfocusout={onresume}
+>
   <span class="icon {item.kind}"><Icon name={ICON[item.kind]} /></span>
   <p class="msg">{item.message}</p>
+  {#if item.action}
+    {@const action = item.action}
+    <Button
+      size="sm"
+      onclick={() => {
+        ondismiss();
+        action.run();
+      }}>{action.label}</Button
+    >
+  {/if}
   <IconButton icon="x" label={t('common.close')} onclick={ondismiss} />
 </div>
 

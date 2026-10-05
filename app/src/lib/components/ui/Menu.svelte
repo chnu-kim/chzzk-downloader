@@ -38,7 +38,8 @@
     open = true;
     queueMicrotask(() => {
       const e = entries();
-      e[(focusIndex + e.length) % e.length]?.focus();
+      // 메뉴를 여는 것으로 둘레(목록·항목)가 스크롤되지 않게
+      e[(focusIndex + e.length) % e.length]?.focus({ preventScroll: true });
     });
   }
 

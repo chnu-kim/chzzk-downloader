@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use chzzk_app_lib::commands::begin_quit;
 use chzzk_app_lib::sink::{ChannelSink, Notice, Notifier};
-use chzzk_app_lib::{COMMANDS, Quitting, guard_close, handler, on_run_event};
+use chzzk_app_lib::{COMMANDS, Quitting, focus_main, guard_close, handler, on_run_event};
 use chzzk_shell::services::AppPaths;
 use chzzk_shell::{App, EventSink};
 use serde_json::{Value, json};
@@ -679,4 +679,59 @@ fn closing_the_main_window_is_blocked_while_downloading() {
         "받는 중인데 main 창 닫기를 막지 않았다"
     );
     assert_eq!(asked, vec![json!({ "running": 1 })]);
+}
+
+#[test]
+fn channel_sink_queues_failure_notice() {
+    // 영상 정보가 404면 작업이 실패한다. 실패도 알림 큐에 한 번 들어간다(47, §16 알림을 실패로 넓힘).
+    let server = tauri::async_runtime::block_on(async {
+        let s = MockServer::start().await;
+        Mock::given(any())
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&s)
+            .await;
+        s
+    });
+    let mut f = fixture_on(&server);
+    let notifier = f.app.state::<Notifier>().inner().clone();
+    let failed = Arc::new(AtomicBool::new(false));
+    let seen = failed.clone();
+    let channel = Channel::new(move |body| {
+        let e = body.deserialize::<Value>().unwrap();
+        if e["type"] == json!("status") && e["job"]["status"] == json!("failed") {
+            seen.store(true, Ordering::SeqCst);
+        }
+        Ok(())
+    });
+    f.app
+        .state::<App>()
+        .manager
+        .subscribe(Box::new(ChannelSink::new(channel, notifier)));
+    invoke(&f.main, "enqueue", enqueue_body(VOD_NO, QUALITY, None)).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !failed.load(Ordering::SeqCst) {
+        assert!(Instant::now() < deadline, "실패하지 않음");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert_eq!(
+        f.notify_rx.try_recv().ok(),
+        Some(Notice::Failed("제목".into()))
+    );
+    assert!(f.notify_rx.try_recv().is_err());
+}
+
+#[test]
+fn second_instance_does_not_reveal_the_window_of_a_failed_startup() {
+    // 시작에 실패하면 상태를 manage하지 않고 main 창을 숨긴다(38(바)). 두 번째 실행이 그 빈 창을 꺼내면 안 된다.
+    let app = mock_builder()
+        .invoke_handler(handler())
+        .build(tauri::generate_context!(test = true))
+        .unwrap();
+    WebviewWindowBuilder::new(&app, "main", Default::default())
+        .build()
+        .unwrap();
+    assert!(!focus_main(app.handle()));
+    // 상태가 있으면 꺼낸다.
+    let f = fixture();
+    assert!(focus_main(f.app.handle()));
 }

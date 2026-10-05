@@ -122,10 +122,14 @@ describe('접근성', () => {
   it('상태는 색만으로 말하지 않는다: 멈춤·완료 항목에 아이콘과 문구', async () => {
     render(App);
     const paused = await screen.findByRole('article', { name: '영상 2' });
-    expect(paused.textContent).toContain('일시정지됨');
-    expect(paused.querySelector('svg')).not.toBeNull();
+    // 아이콘은 상태 줄 안의 것만 센다(버튼 아이콘은 늘 있어 검사가 실패할 수 없었다)
+    const pausedStatus = paused.querySelector('.status-row .status');
+    expect(pausedStatus?.textContent).toContain('일시정지됨');
+    expect(pausedStatus?.querySelector('.lead svg')).not.toBeNull();
     const done = screen.getByRole('article', { name: '영상 3' });
-    expect(done.textContent).toContain('완료');
+    const doneStatus = done.querySelector('.status-row .status');
+    expect(doneStatus?.textContent).toContain('완료');
+    expect(doneStatus?.querySelector('.lead svg')).not.toBeNull();
     // 재시작 직후 배너(B1)
     expect(screen.getByText('지난번에 받다가 멈춘 다운로드가 1개 있어요.')).toBeInTheDocument();
   });

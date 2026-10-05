@@ -12,6 +12,8 @@ vi.mock('../api', () => ({
   resumeJob: vi.fn(),
   removeJob: vi.fn(),
   pauseJob: vi.fn(),
+  openOutput: vi.fn(),
+  revealOutput: vi.fn(),
   resolve: vi.fn(),
 }));
 
@@ -191,5 +193,26 @@ describe('JobsStore 동작', () => {
     expect(toasts.items.map((t) => [t.message, t.kind])).toEqual([
       ['문제가 생겼어요. 앱을 다시 시작해 주세요. (job 1)', 'danger'],
     ]);
+  });
+
+  it('[파일 열기]에서 파일이 없으면 §9 문구 그대로, [폴더 열기]는 그 작업의 폴더를 연다', async () => {
+    const { s } = await loaded([job(4, { status: 'completed' })]);
+    vi.mocked(api.openOutput).mockRejectedValueOnce(err('fileMissing', { payload: { type: 'path', path: '/v/4.mp4' } }));
+    vi.mocked(api.revealOutput).mockResolvedValueOnce();
+    await s.act(4, 'openFile');
+    expect(toasts.items).toHaveLength(1);
+    const [toast] = toasts.items;
+    expect(toast.message).toBe('파일을 찾을 수 없어요. 옮기거나 지웠을 수 있어요');
+    expect(toast.kind).toBe('danger');
+    expect(toast.action?.label).toBe('폴더 열기');
+    toast.action!.run();
+    expect(api.revealOutput).toHaveBeenCalledWith(4);
+  });
+
+  it('작업 id 없이 난 오류 토스트에는 동작 버튼이 없다', async () => {
+    const { s } = await loaded([job(1, { status: 'paused' })]);
+    vi.mocked(api.resumeJob).mockRejectedValueOnce(err('fileMissing'));
+    await s.act(1, 'resume');
+    expect(toasts.items[0].action).toBeUndefined();
   });
 });

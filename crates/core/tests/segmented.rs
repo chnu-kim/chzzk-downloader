@@ -429,7 +429,8 @@ async fn double_download_file_locked() {
         );
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
-    let part_before = std::fs::read(&part).unwrap();
+    // Windows의 바이트 범위 잠금은 다른 핸들의 읽기도 막으므로, 잠긴 동안에는 내용 대신 길이를 본다.
+    let part_len_before = std::fs::metadata(&part).unwrap().len();
     let sidecar_before = std::fs::read(&sidecar).unwrap();
 
     let r = run(
@@ -446,14 +447,21 @@ async fn double_download_file_locked() {
     let r = run(config(&server), other, CancellationToken::new(), &|_| {}).await;
     assert!(matches!(r, Err(Error::FileLocked { .. })), "{r:?}");
     assert!(!first.is_finished());
-    assert_eq!(std::fs::read(&part).unwrap(), part_before);
+    assert_eq!(std::fs::metadata(&part).unwrap().len(), part_len_before);
     assert_eq!(std::fs::read(&sidecar).unwrap(), sidecar_before);
 
     // 1번 작업은 취소하면 `.part`를 남기고, 이어서 끝까지 받을 수 있다.
     cancel.cancel();
     let r = first.await.unwrap();
     assert!(matches!(r, Err(Error::Cancelled)), "{r:?}");
-    assert_eq!(std::fs::read(&part).unwrap(), part_before);
+    // 잠금이 풀린 뒤 내용 확인: 두 번째·세 번째 시도가 쓴 바이트가 없고, 커밋된 길이 그대로다.
+    let part_after = std::fs::read(&part).unwrap();
+    assert_eq!(part_after.len() as u64, part_len_before);
+    assert_eq!(
+        Some(part_len_before),
+        serde_json::from_slice::<serde_json::Value>(&sidecar_before).unwrap()["committedLen"]
+            .as_u64()
+    );
     run(
         config(&server),
         request(&out, 1),

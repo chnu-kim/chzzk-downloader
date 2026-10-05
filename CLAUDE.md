@@ -25,7 +25,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `.github/workflows/release.yml`, `rollback.yml` | CD. 태그 `v*`: `gate`(버전 = 태그, 단조 증가, master 조상, 그 커밋의 master `ci-ok` 녹색) → `xtask`(한 번 빌드, sha256 출력) → `build`(3 OS, 임시 키, 시크릿 없음) → `smoke` → `stage`(받은 3 OS 산출물로 publish·verify를 가짜 S3에, 시크릿 없음) → `sign-publish`(태그만, 환경 `release`, 컴파일 없음, R2 업로드, `latest.json`은 마지막) → `verify`(늘 돈다, 결정표대로 확인, 판정 실패면 prev로 되돌림, 5xx 재시도 뒤에는 되돌리지 않고 exit 2) → `deploy-worker`(Phase 3 seam) → `report`(`ci-loop:release`). dispatch·매주 schedule은 리허설: `stage`에서 녹색으로 끝난다(업로드 경계, `ci-loop:release-rehearsal`). `rollback.yml`(dispatch, 입력 `version`)은 `latest.json`을 그 버전으로 바꾼다(되돌리기·잘못 되돌린 뒤 다시 올리기). 바이너리는 GitHub Release에 올리지 않는다 |
 | `fuzz/` | cargo-fuzz 대상(`url`·`info`·`mpd`·`hls`). 루트와 따로인 워크스페이스(자기 `Cargo.lock`, 루트 `exclude`), 고정 nightly(`tools.json` `rust-nightly`)로만 빌드. seed는 실행 때 `testdata/`에서 복사(`scripts/ci/fuzz.mjs`) |
 | `ci/ratchet.json`, `ci/RATCHET_LOG.md`, `release/expected-artifacts.json` | 커버리지·테스트 수·크기·살아남은 mutant ratchet 기준(나빠지면 CI 실패, 느슨하게 하면 로그에 키와 이유), OS별 번들 기대 집합 |
-| `scripts/ci/repo-settings.json` | 저장소 설정 선언(nightly `ruleset-drift`가 실제 값과 비교, 환경 `release`의 배포 정책 포함). ruleset 선언은 `.github/rulesets/`(G7) |
+| `scripts/ci/repo-settings.json`, `.github/rulesets/` | 저장소 설정·ruleset 선언(Actions 허용 목록·SHA 핀 강제·fork 승인, 환경 `release`·`audit`·`drift`의 배포 정책·protection_rules, ruleset `master`(필수 `ci-ok`·최신화·force push·삭제 금지)·`tags`(`v*`는 관리자만)). nightly `ruleset-drift`가 실제 값과 비교하고 `repo-settings.mjs --apply`가 적용한다 |
 | `rust-toolchain.toml`, `deny.toml`, `_typos.toml`, `zizmor.yml`, `.github/dependabot.yml` | 툴체인 고정(1.96.1, MSRV는 `rust-version` 1.90), cargo-deny, typos, zizmor, Dependabot 설정 |
 
 `crates/core/src` 모듈: `url`(parse_content_url) · `info`(`classify`: **inKey 분기는 이 한 곳**, `encryptionType` → `inKey` → `liveRewindPlaybackJson` 순) · `mpd` · `hls` · `http`(요청 종류별 헤더, `Secret`, `redact_url`) · `client`(`Chzzk::resolve`) · `download/`(`part`·`retry`·`progressive`·`segmented`) · `progress`(`Meter`) · `naming` · `fsutil` · `settings` · `credentials` · `legacy` · `ownership` · `error`.
@@ -60,6 +60,7 @@ node scripts/ci/run.mjs advisories           # cargo deny check advisories + pnp
 node scripts/ci/run.mjs pins                 # 핀 SHA가 태그와 같은지(gh) + zizmor 온라인(GH_TOKEN)
 node scripts/ci/run.mjs toolchain            # rust-toolchain.toml이 최신 stable인지(낮으면 1)
 node scripts/ci/run.mjs ruleset-drift        # 저장소 설정·ruleset ↔ repo-settings.json·.github/rulesets/(소유자 gh 로그인 필요)
+node scripts/ci/repo-settings.mjs --apply   # 선언을 저장소에 적용할 계획만 찍는다. --apply --yes면 쓰고 --check로 끝난다(소유자 gh 로그인, 사람이 실행)
 FUZZ_SECONDS=20 node scripts/ci/run.mjs fuzz # cargo-fuzz 4 target(먼저 run.mjs install-tool cargo-fuzz, nightly는 gate가 깐다)
 node scripts/ci/run.mjs fuzz-lock            # (PR lint) fuzz/Cargo.lock 최신·루트와 같은 버전 + fuzz target cargo check. lock 고치기: cp Cargo.lock fuzz/Cargo.lock && (cd fuzz && cargo metadata --format-version 1 >/dev/null)
 DRIFT_SIMULATE=target_gone node scripts/ci/run.mjs drift   # drift 경로를 합성 출력으로. 실서버는 CHZZK_LIVE_HLS·_DASH·_CLIP(본인 영상)

@@ -5,7 +5,7 @@
 ## 현재 위치
 
 - **완료**: Phase 0(#11), Phase 1 Rust 코어(#12, 3 OS CI 녹색), Go 삭제(#13), Phase 2 Tauri 앱(#14, macOS 실제 실행 확인). PR은 #11→#12→#13→#14로 쌓여 있고 아직 머지 전이다. #13은 #14와 함께 머지한다.
-- **Phase 4 CI/CD 구현 중**(`docs/design/cicd.md`, 브랜치 `ci/pipeline`, 공개 저장소 PR #1). G1~G6(단일 진입점 `scripts/ci/run.mjs`·`ci.yml`·훅·비공개 이력 가드·스모크·ratchet·E2E·nightly/weekly 고리·CD `release.yml`/`xtask`)를 올렸다. 다음은 G7(보호: ruleset 적용). 훅 설치는 `node scripts/ci/run.mjs install-hooks`, 훅·CI 명령은 CLAUDE.md "명령".
+- **Phase 4 CI/CD 구현 중**(`docs/design/cicd.md`, 브랜치 `ci/pipeline`, 공개 저장소 PR #1). G1~G6(단일 진입점 `scripts/ci/run.mjs`·`ci.yml`·훅·비공개 이력 가드·스모크·ratchet·E2E·nightly/weekly 고리·CD `release.yml`/`xtask`)를 올렸다. G7(보호)은 선언·`--apply`까지 올렸고 적용(사용자)과 그 뒤 수락이 남았다. 훅 설치는 `node scripts/ci/run.mjs install-hooks`, 훅·CI 명령은 CLAUDE.md "명령".
 - **다음**: Phase 3+4 (Worker: 로그인·허용목록·랜딩·R2 배포 게이트·업데이트). 설계·오프라인 구현은 가능하지만 **끝까지 확인하려면 사용자의 외부 준비가 필요**하다(아래 "사용자가 준비해야 할 외부 항목").
 - **Phase 3의 핵심 미확인 사실**: OAuth `users/me`의 `channelId`가 VOD `content.channel.channelId`·클립 `ownerChannel.channelId`와 같은 값인지. 실제 로그인으로만 확인할 수 있으므로 별도 단계로 둔다.
 - **남은 확인(사용자)**: 성인 VOD PD 미디어 요청에 쿠키가 필요한지(`examples/dl.rs` + `CHZZK_NID_AUT`/`CHZZK_NID_SES`), Windows·Linux 실제 실행(app.md 수동 테스트 목록), macOS Dock 종료·로그아웃 때 D1 생략 수용 여부.
@@ -108,7 +108,7 @@
 - [ ] G5 뒤 사용자 할 일: 환경 `drift`에 본인 영상 secret 셋(없으면 `no_target` 3회 연속에 이슈), 환경 `audit`에 `RULESET_READ_TOKEN`(Administration 읽기 fine-grained PAT, `GITHUB_TOKEN`은 403), `rust-toolchain.toml`을 최신 stable로 올릴지(지금 `toolchain` 고리가 빨갛다). `mutants_missed` 기준은 100으로 채웠다(37342266385). 줄이면 weekly 실행 번호로 `ratchet.mjs write --from-run <id>`(그 실행의 `nightly mutants` 작업이 녹색이면 된다)
 - [x] G6 CD: `xtask`(collect·sign·verify-sig·sums·manifest·put·promote·verify·rollback, 변조 음성 테스트, SigV4 직접 서명), `release/{updater.pub,expected-artifacts.json,latest.schema.json,tauri.release.json}`, updater plugin 등록·`pubkey` gate·누출 규칙 `signing-key`, `release.yml`(gate → build 3 OS → smoke → sign-publish → verify/rollback → deploy-worker seam → report), `rollback.yml`, 환경 `release`(태그 `v*`·master). MinIO 이미지를 받을 수 없어 Node 가짜 S3로 `release-selftest`(41개, `rust` 작업 3 OS). 차이는 cicd.md "구현 중 변경" 64~72(수락 실행 71: 리허설 37378960529, 버전 불일치 37379000360·고리 #7 열림→37380543379 닫힘). 리뷰 반영 72: 리허설은 stage(받은 3 OS 산출물로 가짜 S3 publish·verify)에서 녹색, 시크릿 작업은 컴파일하지 않음(xtask 작업 + sha256), verify는 늘 돌고 결정표·5xx 재시도, PR에서 Linux 릴리스 빌드, `release/tauri.release.json` 허용 목록
 - [ ] G6 뒤 사용자 할 일: 환경 `release`에 시크릿·변수(cicd.md §8). 서명 키는 이 작업에서 로컬 `~/.tauri/chzzk-downloader-updater.key`(+`.password`)로 만들었고 공개 키만 커밋했다(백업할 것. 바꾸려면 첫 릴리스 전에 `release/updater.pub`·`tauri.conf.json`을 함께). R2 버킷·S3 토큰·`DIST_BASE_URL`은 Phase 3. 그 뒤 첫 실제 태그(버린 pre-release 버전)에서 `verify` 녹색과 `latest.json` 버전 = 태그, 변조 → rollback을 실제 R2에서 확인한다
-- [ ] G7 보호: `.github/rulesets/{master,tags}.json`을 `gh api`로 적용(사용자 승인), 저장소 설정 선언, drift 검사. `tags.json`은 `v*` 만들기·바꾸기·지우기를 관리자만(cicd.md 72), 환경 `release` wait timer
+- [ ] G7 보호: 선언·도구는 올렸다(5dcfb5c): `.github/rulesets/{master,tags}.json`, `repo-settings.mjs --apply`(기본 계획, `--yes`로 쓰고 `--check`), 환경 셋의 배포 정책·protection_rules·관리자 우회, Actions 허용 목록·서버 측 SHA 핀, fork 승인 `all_external_contributors`, wait timer 0(cicd.md 74). **적용은 사용자가 한다**: `node scripts/ci/repo-settings.mjs --apply`로 계획 확인 → `--apply --yes`(끝의 `--check` exit 0). 그 뒤 수락: `rules/branches/master`, 빨간 `ci-ok`에 PR BLOCKED, 비관리자 `v*` 태그 생성 거부, 머지 뒤 `audit`에 `RULESET_READ_TOKEN`을 넣고 nightly `ruleset-drift` 녹색
 - [ ] Worker 배포 작업은 G6의 `deploy-worker` seam을 Phase 3에서 채운다
 
 사용자가 더해야 할 시크릿·변수의 정확한 이름은 `docs/design/cicd.md` §8.

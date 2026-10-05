@@ -242,7 +242,7 @@ mod tests {
         assert!(r.url.as_str().contains("/pd/"));
         assert!(r.url.path().ends_with(".mp4"));
         // %xx 인코딩된 서명 쿼리는 그대로 보존된다.
-        assert!(r.url.query().unwrap().starts_with("hdnts=exp%3D0"));
+        assert!(r.url.query().unwrap().starts_with("hdnts=exp%3D0%7E"));
 
         let Err(Error::QualityNotFound {
             requested,

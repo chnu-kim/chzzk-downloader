@@ -322,7 +322,7 @@ mod tests {
         }
     }
 
-    /// 리뷰 수정: 서명 주소·inKey를 품은 공개 타입의 `Debug`에 토큰이 나오지 않는다(실물 fixture).
+    /// 리뷰 수정: 서명 주소·inKey를 품은 공개 타입의 `Debug`에 토큰이 나오지 않는다(fixture).
     #[test]
     fn signed_types_debug_redacted() {
         use crate::hls::{parse_master, parse_media};
@@ -331,7 +331,7 @@ mod tests {
         use crate::mpd::{parse_mpd, pd_reps};
         use crate::testutil::{fixture, fixture_str};
 
-        // 실물 inKey 값도 나오면 안 된다.
+        // fixture의 inKey 값도 나오면 안 된다.
         let raw: serde_json::Value =
             serde_json::from_slice(&fixture("testdata/vod/video_info.json")).unwrap();
         let in_key = raw["content"]["inKey"].as_str().unwrap().to_string();
@@ -380,6 +380,13 @@ mod tests {
         };
         check(&format!("{enc:?}"));
         let reps = parse_mpd(&fixture_str("testdata/vod/playback.mpd")).unwrap();
+        // PD가 아닌 rep(video/mp2t 미끼, audio)의 BaseURL에도 서명이 있어야 가림을 검사한 셈이다.
+        assert!(
+            reps.iter()
+                .filter(|r| !r.is_pd())
+                .all(|r| r.base_urls.iter().any(|u| u.contains("_lsu_sa_")))
+        );
+        assert_eq!(reps.iter().filter(|r| !r.is_pd()).count(), 3);
         check(&format!("{reps:?}"));
         let pd = pd_reps(&reps).unwrap();
         assert!(!pd.is_empty());

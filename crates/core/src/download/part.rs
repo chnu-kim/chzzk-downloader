@@ -14,8 +14,11 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use super::DuplicatePolicy;
 use crate::error::Error;
-use crate::fsutil::{atomic_write, map_io_error, remove_stale_temps, rename_with_retry};
+use crate::fsutil::{
+    atomic_write, map_io_error, remove_stale_temps, rename_noclobber_with_retry, rename_with_retry,
+};
 use crate::model::{ContentRef, PlaybackKind};
 
 /// sidecar 형식 버전.
@@ -98,6 +101,15 @@ fn with_suffix(p: &Path, suffix: &str) -> PathBuf {
     let mut s = p.as_os_str().to_owned();
     s.push(suffix);
     PathBuf::from(s)
+}
+
+/// `PartFile::finalize`의 결과.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Finalized {
+    /// 최종 경로로 옮겼다
+    Moved(PathBuf),
+    /// `Skip`인데 최종 파일이 이미 있어 옮기지 않았다(`.part`와 sidecar는 남는다)
+    TargetExists,
 }
 
 /// 잠근 `.part` 파일.
@@ -331,20 +343,31 @@ impl PartFile {
         self.checkpoint(update).await
     }
 
-    /// 최종 파일로 옮긴다. `rename_with_retry`, 그다음 sidecar를 지운다.
+    /// 최종 파일로 옮긴다. 옮긴 뒤 sidecar를 지운다.
     ///
-    /// 최종 파일이 있으면 덮어쓴다(`Skip`은 다운로드 전에 이미 걸렀다).
+    /// - `Overwrite`: 최종 파일이 있으면 덮어쓴다(`rename_with_retry`).
+    /// - `Skip`: 덮어쓰지 않는다(`rename_noclobber_with_retry`). 다운로드를 시작한 뒤에 같은 이름의 파일이
+    ///   생겼으면 옮기지 않고 `TargetExists`다. 이때 `.part`와 sidecar는 그대로 남아, 덮어쓰기로 다시
+    ///   시작하면 받은 내용으로 곧바로 마무리된다.
+    ///
     /// 최종 파일이 잠겨 있으면 `FileLocked`이고 `.part`는 남는다.
     /// 옮긴 뒤의 sidecar 삭제 실패는 경고만 남긴다(다운로드는 끝났다).
-    pub async fn finalize(self) -> Result<PathBuf, Error> {
-        self.finalize_using(rename_with_retry).await
+    pub async fn finalize(self, policy: DuplicatePolicy) -> Result<Finalized, Error> {
+        match policy {
+            DuplicatePolicy::Overwrite => {
+                self.finalize_using(|a, b| rename_with_retry(a, b).map(|()| true))
+                    .await
+            }
+            DuplicatePolicy::Skip => self.finalize_using(rename_noclobber_with_retry).await,
+        }
     }
 
     /// `finalize`의 본체. rename을 주입받아 잠금을 쥔 채 옮기는지 테스트한다.
+    /// `rename`은 옮겼으면 `true`, 최종 파일이 있어 옮기지 않았으면 `false`다.
     async fn finalize_using(
         self,
-        rename: impl FnOnce(&Path, &Path) -> Result<(), Error> + Send + 'static,
-    ) -> Result<PathBuf, Error> {
+        rename: impl FnOnce(&Path, &Path) -> Result<bool, Error> + Send + 'static,
+    ) -> Result<Finalized, Error> {
         let PartFile {
             mut w,
             part,
@@ -358,7 +381,7 @@ impl PartFile {
             map_io_error("write", &p, e.into_error())
         })?;
         let target = final_path.clone();
-        tokio::task::spawn_blocking(move || {
+        let moved = tokio::task::spawn_blocking(move || {
             f.sync_data().map_err(|e| map_io_error("sync", &part, e))?;
             // Windows는 열린 파일을 옮길 수 없어 먼저 닫는다(잠금도 풀린다). Unix는 잠금을 쥔 채
             // 옮겨, 그 사이에 같은 출력의 다른 작업이 `.part`를 잠그고 지우거나 자르지 못하게 한다.
@@ -368,12 +391,12 @@ impl PartFile {
             } else {
                 Some(f)
             };
-            rename(&part, &target)?;
-            if let Err(e) = remove_if_exists(&sidecar_path) {
+            let moved = rename(&part, &target)?;
+            if moved && let Err(e) = remove_if_exists(&sidecar_path) {
                 tracing::warn!(error = %e, "완료 후 sidecar 삭제 실패");
             }
             drop(held);
-            Ok(())
+            Ok::<bool, Error>(moved)
         })
         .await
         .map_err(|e| Error::Io {
@@ -381,7 +404,12 @@ impl PartFile {
             path: final_path.clone(),
             source: io::Error::other(e.to_string()),
         })??;
-        Ok(final_path)
+        if moved {
+            Ok(Finalized::Moved(final_path))
+        } else {
+            tracing::info!(path = %final_path.display(), "받는 동안 같은 이름의 파일이 생겨 덮어쓰지 않았다");
+            Ok(Finalized::TargetExists)
+        }
     }
 
     /// 잠금을 쥔 채 `.part`와 sidecar를 지운다(이어받을 수 없는 오류).
@@ -448,6 +476,13 @@ mod tests {
         s
     }
 
+    fn moved(f: Finalized) -> PathBuf {
+        match f {
+            Finalized::Moved(p) => p,
+            Finalized::TargetExists => panic!("옮기지 않았다"),
+        }
+    }
+
     fn resume(out: &Path, quality: &str) -> Result<Option<PartFile>, Error> {
         PartFile::resume(out, &content(), quality, PlaybackKind::LiveRewindHls)
     }
@@ -501,7 +536,7 @@ mod tests {
         assert_eq!(p.sidecar().hls.unwrap().next_index, 2);
         p.write(b" world").unwrap();
         p.checkpoint(|_| {}).await.unwrap();
-        let path = p.finalize().await.unwrap();
+        let path = moved(p.finalize(DuplicatePolicy::Overwrite).await.unwrap());
         assert_eq!(std::fs::read(&path).unwrap(), b"hello world");
         assert!(!part_path(&out).exists());
         assert!(!sidecar_path(&out).exists());
@@ -545,7 +580,7 @@ mod tests {
         assert_eq!(p.written(), 4);
         p.write(b"4567").unwrap();
         p.checkpoint(|_| {}).await.unwrap();
-        let path = p.finalize().await.unwrap();
+        let path = moved(p.finalize(DuplicatePolicy::Overwrite).await.unwrap());
         assert_eq!(std::fs::read(path).unwrap(), b"01234567");
     }
 
@@ -620,7 +655,7 @@ mod tests {
         // 첫 작업은 그대로 끝난다.
         first.write(b"def").unwrap();
         first.checkpoint(|_| {}).await.unwrap();
-        let path = first.finalize().await.unwrap();
+        let path = moved(first.finalize(DuplicatePolicy::Overwrite).await.unwrap());
         assert_eq!(std::fs::read(path).unwrap(), b"abcdef");
     }
 
@@ -635,7 +670,7 @@ mod tests {
         assert_eq!(p.committed(), 0);
         p.write(b"new").unwrap();
         p.checkpoint(|_| {}).await.unwrap();
-        let path = p.finalize().await.unwrap();
+        let path = moved(p.finalize(DuplicatePolicy::Overwrite).await.unwrap());
         assert_eq!(std::fs::read(path).unwrap(), b"new");
     }
 
@@ -657,10 +692,11 @@ mod tests {
                     PartFile::create(&final_of(from), sidecar()),
                     Err(Error::FileLocked { .. })
                 ));
-                rename_with_retry(from, to)
+                rename_with_retry(from, to).map(|()| true)
             })
             .await
             .unwrap();
+        let path = moved(path);
         assert_eq!(std::fs::read(path).unwrap(), b"done");
         assert!(!part_path(&out).exists() && !sidecar_path(&out).exists());
     }
@@ -683,7 +719,7 @@ mod tests {
         std::fs::remove_file(&sc).unwrap();
         std::fs::create_dir(&sc).unwrap();
         std::fs::write(sc.join("x"), b"x").unwrap();
-        let path = p.finalize().await.unwrap();
+        let path = moved(p.finalize(DuplicatePolicy::Overwrite).await.unwrap());
         assert_eq!(path, out);
         assert_eq!(std::fs::read(&out).unwrap(), b"done");
         assert!(!part_path(&out).exists());
@@ -716,7 +752,7 @@ mod tests {
         std::fs::write(&out, b"old").unwrap();
         let mut p = PartFile::create(&out, sidecar()).unwrap();
         p.write(b"new").unwrap();
-        p.finalize().await.unwrap();
+        p.finalize(DuplicatePolicy::Overwrite).await.unwrap();
         assert_eq!(std::fs::read(&out).unwrap(), b"new");
 
         let p = PartFile::create(&out, sidecar()).unwrap();
@@ -731,5 +767,41 @@ mod tests {
         discard_partial(&out).unwrap();
         assert!(!part_path(&out).exists());
         assert!(!sidecar_path(&out).exists());
+    }
+
+    /// `Skip`: 받는 동안 같은 이름의 파일이 생겼으면 덮어쓰지 않는다. `.part`와 sidecar는 남아 이어받을 수 있다.
+    #[tokio::test]
+    async fn finalize_skip_does_not_clobber_file_created_meanwhile() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("a (2).mp4");
+        let mut p = PartFile::create(&out, sidecar()).unwrap();
+        p.write(b"new").unwrap();
+        p.checkpoint(|_| {}).await.unwrap();
+        // 사전 검사 뒤 다른 프로그램(또는 사용자)이 같은 이름을 만들었다.
+        std::fs::write(&out, b"theirs").unwrap();
+        let r = p.finalize(DuplicatePolicy::Skip).await.unwrap();
+        assert_eq!(r, Finalized::TargetExists);
+        assert_eq!(std::fs::read(&out).unwrap(), b"theirs");
+        assert_eq!(std::fs::read(part_path(&out)).unwrap(), b"new");
+        assert!(sidecar_path(&out).exists());
+        // 남은 `.part`는 같은 작업으로 이어받을 수 있고, 덮어쓰기로 마무리된다.
+        let p = resume(&out, "720p").unwrap().unwrap();
+        assert_eq!(p.written(), 3);
+        let path = moved(p.finalize(DuplicatePolicy::Overwrite).await.unwrap());
+        assert_eq!(std::fs::read(path).unwrap(), b"new");
+        assert!(!part_path(&out).exists() && !sidecar_path(&out).exists());
+    }
+
+    /// `Skip`이어도 최종 파일이 없으면 보통처럼 옮긴다.
+    #[tokio::test]
+    async fn finalize_skip_moves_when_free() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("a.mp4");
+        let mut p = PartFile::create(&out, sidecar()).unwrap();
+        p.write(b"done").unwrap();
+        let path = moved(p.finalize(DuplicatePolicy::Skip).await.unwrap());
+        assert_eq!(path, out);
+        assert_eq!(std::fs::read(&out).unwrap(), b"done");
+        assert!(!part_path(&out).exists() && !sidecar_path(&out).exists());
     }
 }

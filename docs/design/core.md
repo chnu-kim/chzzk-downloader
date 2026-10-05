@@ -1,6 +1,6 @@
 # crates/core 설계 (Phase 1, 확정안)
 
-세 설계안(fidelity / robustness / consumer)과 AES 조사 보고를 대조해 판정한 최종 설계다. 기준 문서는 `docs/ROADMAP.md`, `docs/spec/core-behavior.md`(이하 spec), `docs/research/hls-live-rewind.md`(이하 research), `docs/research/stack.md`, `docs/research/chzzk-oauth.md`다. fixture는 `internal/api/testdata/`(클립), `testdata/hls/`(빠른 다시보기), `testdata/vod/`(일반 VOD, 이번 판정에서 확보)다.
+세 설계안(fidelity / robustness / consumer)과 AES 조사 보고를 대조해 판정한 최종 설계다. 기준 문서는 `docs/ROADMAP.md`, `docs/spec/core-behavior.md`(이하 spec), `docs/research/stack.md`, `docs/research/chzzk-oauth.md`다. fixture는 `testdata/`의 합성 파일이다(`testdata/README.md`). 본문의 "research §n"은 비공개 사전 조사 기록을 가리키며 공개 저장소에는 없다.
 
 ## 0. 판정 요약
 
@@ -13,9 +13,9 @@
 
 | 주장 | 결과 |
 |---|---|
-| AES VOD에도 `inKey`가 있다 → `encryptionType`을 먼저 봐야 한다 | **확인**. 9000003: `encryptionType:"AES"`, `inKey` 있음, `vodStatus:"ABR_HLS"` |
-| 비성인 PD mp4는 쿠키 없이 받아진다 | **확인**. 9000002 PD URL에 쿠키·Referer 없이 `HEAD` 200, `Range: bytes=0-99` 206. 호스트는 `vod.example.invalid`(클립과 다름). 성인 VOD는 미확인 |
-| 일반 VOD MPD 구조(research §10) | **확인 + fixture 확보** `testdata/vod/`: `video/mp4`(PD_144P, PD_720P) + `video/mp2t`(UUID) + `audio/mp4`. `ContentProtection` 없음 |
+| AES VOD에도 `inKey`가 있다 → `encryptionType`을 먼저 봐야 한다 | **확인**. AES 표본에 `encryptionType:"AES"`와 `inKey`가 함께 있었다 |
+| 비성인 PD mp4는 쿠키 없이 받아진다 | **확인**. 공개 VOD 표본의 PD URL이 쿠키·Referer 없이 `HEAD` 200, `Range: bytes=0-99` 206. 미디어 호스트는 클립과 다르다. 성인 VOD는 미확인 |
+| 일반 VOD MPD 구조(research §10) | **확인**. 같은 구조로 합성 fixture `testdata/vod/`를 만들었다: `video/mp4`(PD_144P, PD_720P) + `video/mp2t`(UUID) + `audio/mp4`. `ContentProtection` 없음 |
 | reqwest 0.13.5에 `read_timeout`, `no_gzip`, `pool_max_idle_per_host`가 있다 | **확인**(docs.rs). feature 이름은 `rustls`, `stream`, `json`, `gzip` |
 | crate 최신 안정판 | reqwest 0.13.5, tokio 1.53.2, tokio-util 0.7.19, futures-util 0.3.34, bytes 1.12.1, url 2.5.8, serde 1.0.229, serde_json 1.0.151, roxmltree 0.21.1, thiserror 2.0.21, tracing 0.1.44, wiremock 0.6.5, tempfile 3.27.0, crc32fast 1.5.2 |
 
@@ -303,6 +303,8 @@ pub struct UserSettings {
     pub last_url: Option<String>,
     pub recent_vods: Vec<RecentVod>,         // 최대 5
     pub segment_concurrency: u8,             // 4
+    pub max_parallel_downloads: u8,          // 2 (1~3, 앱 작업 큐. 구현 중 변경 53)
+    pub auto_resume_interrupted: bool,       // false (구현 중 변경 53)
     pub imported_from: Option<PathBuf>,
 }
 pub struct RecentVod { pub url: String, pub title: String }
@@ -418,7 +420,7 @@ impl PartFile {
     pub fn open(final_path: &Path, sidecar: Option<Sidecar>) -> Result<(Self, u64 /* resume offset */), Error>;
     pub fn write(&mut self, buf: &[u8]) -> Result<(), Error>;      // map_io_error: StorageFull/ENOSPC/112/39 → DiskFull
     pub fn checkpoint(&mut self, update: impl FnOnce(&mut Sidecar)) -> Result<(), Error>;
-    pub fn finalize(self, dup: DuplicatePolicy) -> Result<PathBuf, Error>;
+    pub fn finalize(self, dup: DuplicatePolicy) -> Result<Finalized, Error>; // Moved(PathBuf) | TargetExists (구현 중 변경 55)
 }
 ```
 
@@ -426,7 +428,7 @@ impl PartFile {
 - **checkpoint 순서**: `flush` → `sync_data`(`spawn_blocking`) → `committed = written` → `fsutil::atomic_write(sidecar)`(tmp → sync → rename). 주기는 HLS 세그먼트 32개 또는 5초, progressive 64 MiB 또는 5초.
 - **재개**: `.part` 길이 > `committed_len`이면 truncate(크래시 꼬리). 작으면 sidecar 불일치로 보고 새로 시작.
 - **`.part`는 첫 응답의 상태 코드를 확인한 뒤에만 만든다.** 404면 아무 파일도 남지 않는다.
-- **finalize**: 핸들을 닫은 뒤 `rename_with_retry`(100ms부터 약 3초까지 지수 재시도, Windows `ERROR_SHARING_VIOLATION`/`ACCESS_DENIED` 대비). 최종 파일이 열려 있으면 `FileLocked`, `.part` 보존. `std::fs::rename`은 Windows에서도 덮어쓴다.
+- **finalize**: 핸들을 닫은 뒤 `rename_with_retry`(100ms부터 약 3초까지 지수 재시도, Windows `ERROR_SHARING_VIOLATION`/`ACCESS_DENIED` 대비). 최종 파일이 열려 있으면 `FileLocked`, `.part` 보존. `std::fs::rename`은 Windows에서도 덮어쓴다. `Skip`은 덮어쓰지 않는 rename이다(구현 중 변경 55).
 
 ### 5.2 재시도와 403 (`download/retry.rs`)
 
@@ -507,7 +509,7 @@ pub fn classify_failure(status: Option<u16>, err: Option<&reqwest::Error>) -> Fa
 
 ## 8. 테스트 계획
 
-공통 도구(`tests/common`): `fixture(path)`, `rewrite_hosts(bytes, mock_uri)`(`hls.example.invalid`, `clip.example.invalid`, `vod.example.invalid`을 mock 주소로 치환. 이중 인코딩 JSON 안에서도 단순 replace로 된다), 경로 접미사 응답기(custom `Respond`: HLS 경로에 `*`, `~`, `=`가 있어 접미사 매칭이 필요), raw `TcpListener` 절단 서버, `ZeroRetry`, `progress_interval = 0`.
+공통 도구(`tests/common`): `fixture(path)`, `rewrite_hosts(bytes, mock_uri)`(합성 fixture의 미디어 호스트 `hls.example.invalid`, `clip.example.invalid`, `vod.example.invalid`를 mock 주소로 치환. 이중 인코딩 JSON 안에서도 단순 replace로 된다), 경로 접미사 응답기(custom `Respond`: HLS 경로에 `*`, `~`, `=`가 있어 접미사 매칭이 필요), raw `TcpListener` 절단 서버, `ZeroRetry`, `progress_interval = 0`.
 
 ### 8.1 spec §8 이식 (1:1)
 
@@ -517,14 +519,14 @@ pub fn classify_failure(status: Option<u16>, err: Option<&reqwest::Error>) -> Fa
 | §8.1 TestParseClipID (6) | 유지 | `url::clip_id` | — | 6개 그대로 |
 | §1.1 golden 5~7행 | **변경**(§9.1-2) | `url::clip_rejects_bad` | — | `embed/clip/`은 Err, `abc#frag`는 `abc`, `evil.com/?chzzk...`은 Err |
 | §1.2 | **변경**(§9.1-1) | `url::video_no` | — | `123?t=10`, `123/?t=10`, `123?a=b/c` → 123. `/video/`, `/video/abc` → Err. `m.chzzk.naver.com/video/1` → 1 |
-| §3.1/§4.1 | 유지+보강 | `info::live_rewind_fixture` | `hls/video_info.json` | 제목 `123`, 채널 `테스트채널`, channel_id `2795e2a0…`, live_open_date `2026-01-02 12:00:00`, master path, tracks 5개 encodingTrack 순서(bandwidth u64 `3000000`…, frame_rate `"60.0"`) |
-| §3.1 DASH info | **신규(실물)** | `info::dash_fixture` | `vod/video_info.json` | `Playback::Dash`, channel_id `bb2a278c…`, 채널 `가상채널` |
+| §3.1/§4.1 | 유지+보강 | `info::live_rewind_fixture` | `hls/video_info.json` | 제목 `테스트 다시보기`, 채널 `테스트채널`, channel_id `000…a1`, live_open_date `2026-01-02 12:00:00`, master path, tracks 5개 encodingTrack 순서(bandwidth u64 `2500000`…, frame_rate `"60.0"`) |
+| §3.1 DASH info | **신규** | `info::dash_fixture` | `vod/video_info.json` | `Playback::Dash`, channel_id `000…b2`, 채널 `가상채널` |
 | §4.4 classify | 신규 | `info::classify_{dash,aes_precedence,no_playback,inkey_empty_string}` | `synthetic/vod_info_aes.json`, Value 변형 | AES+inKey → Encrypted, inKey `""`와 null은 같음, 셋 다 없으면 NoPlayback |
-| §8.1 clip fixture | 신규 | `info::clip_fixtures` | `clip_playinfo.json`, `clip_multi_playinfo.json` | §8.1 끝 기대값 + channel_id `9381e7d6…` |
+| §8.1 clip fixture | 신규 | `info::clip_fixtures` | `clip_playinfo.json`, `clip_multi_playinfo.json` | §8.1 끝 기대값(합성 제목) + channel_id `000…c3` |
 | §8.1 TestParseClipQualitiesFromMPD | 유지+§5.4 표 | `mpd::clip_pd_qualities` | `clip_multi.mpd` | 2개. label `720p`/`480p`, resolution 720/480, bandwidth/width/height/frameRate 표 전체 |
 | §8.1 TestSelectClipBaseURLFromMPD | 유지 | `mpd::select_exact` | `clip_multi.mpd` | `PD_720P_…`는 `/pd/`와 `.mp4` 포함, `PD_NONEXISTENT`는 QualityNotFound, UUID rep는 선택 불가 |
 | §5.1 namespace | 신규 | `mpd::nvod_label_localname` | `clip_multi.mpd` | `nvod:Label`을 읽는다 |
-| §9.1-3 VOD PD 필터 | **신규(실물)** | `mpd::vod_pd_filter` | `vod/playback.mpd` | PD_144P, PD_720P 2개. mp2t/audio UUID rep 제외. `protected == false` |
+| §9.1-3 VOD PD 필터 | **신규** | `mpd::vod_pd_filter` | `vod/playback.mpd` | PD_144P, PD_720P 2개. mp2t/audio UUID rep 제외. `protected == false` |
 | AES 2차 방어 | 신규 | `mpd::content_protection_rejected` | `vod/playback.mpd`에 `ContentProtection` 삽입(테스트 코드) | `pd_reps`가 NoQualities |
 | §5.6 기본 선택 | **변경**(resolution 기준, label 비교) | `model::default_quality` | 두 fixture | HLS는 4(`1080p`), 클립은 0, `last_label="480p"`면 1, 옛 `720P_1280_…`은 폴백 |
 | research §9 master | 신규 | `hls::master_join` | `master.m3u8` | 5개. 144p URI가 `…/144p/hdntl=…/vod_chunklist.m3u8`, `hdnts` 쿼리 없음 |
@@ -541,9 +543,9 @@ pub fn classify_failure(status: Option<u16>, err: Option<&reqwest::Error>) -> Fa
 | §8.3 TestDirectDuplicateChoice | **변경**(정책 enum) | `download::duplicate_{skip,overwrite}` | wiremock | Skip → `Skipped`, 요청 0회. Overwrite → 교체 |
 | §8.4 Redact 의도 | 의도 이식 | `http::secrets_never_in_debug_or_error` | — | `format!("{:?}")`(cookies, config), 모든 Error Display, `redact_url`에 `secretAUT`/`hmac=`/`hdntl=exp` 없음 |
 | §8.4 ffmpeg/EnsureBinaries 7건 | **삭제** | — | — | — |
-| §6.4 FormatLiveDate | **변경** | `naming::parse_live_date` | — | `2024-01-02 12:34:56`, `2024-01-02`, `2024-01-02T12:34:56`→(2024,1,2). `2024/01/02`, `""`, `24-01-02…`→None. fixture `2026-01-02 12:00:00`→`261005` |
+| §6.4 FormatLiveDate | **변경** | `naming::parse_live_date` | — | `2024-01-02 12:34:56`, `2024-01-02`, `2024-01-02T12:34:56`→(2024,1,2). `2024/01/02`, `""`, `24-01-02…`→None. fixture `2026-01-02 12:00:00`→`260102` |
 | §6.4 SanitizeFilename | **변경**(괄호 유지, OS별) | `naming::sanitize_{windows,macos,linux}` | — | `[2024-01-02] 채널 제목.mp4` 그대로. `x:y*z?"<>\|(){}[]/\.mp4`: Win `x_y_z____(){}[]__.mp4`, Mac `x_y*z?"<>\|(){}[]_\.mp4`, Linux `x:y*z?"<>\|(){}[]_\.mp4`. `CON.mp4`: Win `CON_.mp4`. `제목.  .mp4`: Win `제목.mp4`. 공백·제어문자·빈 값 행 유지 |
-| §6.4 fixture 파일명 | **변경**(사용자 결정) | `naming::default_filename_fixtures` | 세 fixture | `[261005] 테스트채널 - 123.mp4`, `[261004] 가상채널 - 가상 일반 VOD ….mp4`, `[클립] 클립채널 - 테스트 클립 하나.mp4` |
+| §6.4 fixture 파일명 | **변경**(사용자 결정) | `naming::default_filename_fixtures` | 세 fixture | `[260102] 테스트채널 - 테스트 다시보기.mp4`, `[260101] 가상채널 - 가상 일반 VOD 제목 (괄호) 테스트.mp4`, `[클립] 클립채널 - 테스트 클립 하나.mp4` |
 | 길이 제한 | 신규 | `naming::truncate_utf8_200` | — | 한글 긴 제목이 char 경계에서 잘리고 `.mp4` 보존, 채널은 남음 |
 | §6.5 PrepareOutputPath | **변경**(§9.1-15) | `naming::output_path` | — | `[x] t`→`[x] t.mp4`, `a/b`→`a_b.mp4`, `T.MP4` 그대로, `t__mp4`→`t__mp4.mp4` |
 | §7.2 AddRecentVod | 유지(char) | `settings::recent_vods` | — | 5개 제한, 중복 URL 맨 앞, 한글 51자→47자+`...` |
@@ -638,25 +640,13 @@ tokio    = { version = "1.53.2", features = ["net", "test-util"] }
 
 ## 11. AES 암호화 VOD
 
-### 사실 (조사 보고 + 이번 실측)
+**정책: 암호화(AES) VOD는 지원하지 않으며 명확한 오류로 거부한다**(사용자 확정, 2026-10-05). 복호화·키 요청 기능은 넣지 않는다.
 
-- `tvAppViewingPolicyType`은 판별 신호가 아니다.
+판별 규칙(코드가 구현하는 것):
 
-### 코어의 기본 seam (이 설계에 포함, 결정과 무관하게 구현)
-
-1. `classify`가 `encryptionType`을 **가장 먼저** 보고 `Playback::Encrypted { method }`를 낸다. `resolve`는 MPD를 받지 않고 `Error::EncryptedVod { method }`를 낸다. 메시지: "암호화된 VOD(AES)는 지원하지 않습니다".
-2. 2차 방어: `pd_reps`는 `ContentProtection`이 붙은 rep를 제외하고, `parse_media`는 `EXT-X-KEY`(METHOD≠NONE)를 `Unsupported::Encrypted(method)`로 거부한다.
-3. `MediaPlaylist.init: Option<Url>`로 두어 TS(MAP 없음) playlist 파싱 자체는 가능하게 한다. 그 이상(복호화·TS 처리)은 넣지 않는다.
-
-### 결정: A 거부 (사용자 확정, 2026-10-05)
-
-### 검토했던 선택지
-
-| 선택지 | 내용 | 비용·위험 |
-|---|---|---|
-| **A. 거부(권고, 기본값)** | 위 seam 그대로. 분명한 오류 메시지. 주기적으로 최신 VOD의 `encryptionType`을 샘플링해 확산을 감시 | 영향 범위가 작다(일반 VOD 0/195). 코드 추가 없음 |
-| C. `.ts` → `.mp4` remux까지 | B + 순수 Rust MPEG-TS demux(PES·ADTS·Annex-B)와 MP4 mux(avcC, PTS/DTS) | B의 위험 그대로 + 큰 구현·테스트 부담(크레이트 성숙도 낮음, `hls-transmux` 미검증). 오프라인 fixture는 자체 테스트 키로 암호화한 합성 TS가 필요 |
-
+1. `classify`가 `encryptionType`을 **가장 먼저** 본다. 값이 있으면(빈 문자열 제외) `inKey`가 있어도 `Playback::Encrypted { method }`이고, `resolve`는 MPD를 받지 않고 `Error::EncryptedVod { method }`를 낸다. 메시지: "암호화된 VOD(AES)는 지원하지 않습니다".
+2. 2차 방어: MPD의 AdaptationSet·Representation에 `ContentProtection`이 있으면 그 rep는 PD로 쓰지 않는다(`pd_reps`). media playlist에 `EXT-X-KEY`(METHOD≠NONE)가 있으면 `Unsupported::Encrypted(method)`로 거부한다.
+3. `MediaPlaylist.init: Option<Url>`이라 MAP 없는(TS) playlist도 파싱은 된다. 그 이상(복호화·TS 처리)은 넣지 않는다.
 
 ---
 
@@ -674,7 +664,7 @@ tokio    = { version = "1.53.2", features = ["net", "test-util"] }
 10. research §5 거부 목록에 `ENDLIST 없음` 추가, `KEY:METHOD=NONE`은 허용.
 11. spec §4.1·§9.1-5 `media[0]` 고정 → `protocol == "HLS"`인 첫 항목.
 12. spec §10.1 "VOD MPD fixture 없음" → `testdata/vod/` 확보됨.
-13. ROADMAP "AES 지원하지 않음(확정)" → "기본값 거부, 지원 여부는 사용자 결정(§11)".
+13. ROADMAP의 AES 문구 → §11 정책(거부)과 맞춘다.
 
 ---
 
@@ -730,7 +720,7 @@ tokio    = { version = "1.53.2", features = ["net", "test-util"] }
     - **msn 범위.** `EXT-X-MEDIA-SEQUENCE + (세그먼트 수 - 1)`이 u64를 넘으면 패닉 대신 `Parse`다.
     - **GAP·SKIP 거부.** `EXT-X-GAP`은 `Unsupported::Gap`, `EXT-X-SKIP`(delta playlist)은 `Unsupported::Skip`이다. 둘 다 이어 붙이면 구멍 난 파일이 된다. LL-HLS의 `EXT-X-PART`·`EXT-X-PRELOAD-HINT`는 ENDLIST playlist에서도 전체 세그먼트가 함께 나열되므로 거부하지 않고 모르는 태그로 무시한다.
     - **redact_url.** `hdntl=` 뒤에 `hmac=` 세그먼트가 없으면(토큰 형식이 바뀐 경우) 마지막 세그먼트(파일명) 앞까지를 `hdntl=***`로 가린다. `hdntl=` 세그먼트가 마지막이면 그것만 가린다.
-    - **서명 값이 든 타입의 `Debug`.** `info::VideoContent`·`info::Playback`·`mpd::Representation`·`model::PdRep`·`model::Source`·`hls::Variant`·`hls::MediaPlaylist`·`hls::Segment`는 `Debug`를 손으로 구현한다. URL은 `redact_url`을 거치고, `in_key`·`live_rewind_playback_json`은 `***`, `Representation.base_urls`는 쿼리를 지운다. `Resolved`는 `Source`를 통해 함께 가려진다. 필드 타입은 그대로 `Url`이다(`Secret<Url>` 같은 newtype은 공개 필드 타입을 바꾸므로 쓰지 않았다). `http::signed_types_debug_redacted`가 실물 fixture로 `hmac`·`hdnts`·`hdntl=exp`·`_lsu_sa_`·실제 inKey 값이 없음을 검사한다.
+    - **서명 값이 든 타입의 `Debug`.** `info::VideoContent`·`info::Playback`·`mpd::Representation`·`model::PdRep`·`model::Source`·`hls::Variant`·`hls::MediaPlaylist`·`hls::Segment`는 `Debug`를 손으로 구현한다. URL은 `redact_url`을 거치고, `in_key`·`live_rewind_playback_json`은 `***`, `Representation.base_urls`는 쿼리를 지운다. `Resolved`는 `Source`를 통해 함께 가려진다. 필드 타입은 그대로 `Url`이다(`Secret<Url>` 같은 newtype은 공개 필드 타입을 바꾸므로 쓰지 않았다). `http::signed_types_debug_redacted`가 합성 fixture로 `hmac`·`hdnts`·`hdntl=exp`·`_lsu_sa_`·fixture inKey 값이 없음을 검사한다. PD가 아닌 rep(HLS 미끼·audio)의 BaseURL에도 서명 쿼리가 있어 그 가림도 함께 검사된다.
     - **`mpd::has_content_protection`(§2) 없음.** ContentProtection 여부는 `Representation.protected` 필드로 노출하고 `is_pd`가 `!protected`를 본다(18번). 별도 함수는 두지 않는다.
     - **API·MPD 응답 상한.** `Chzzk::fetch`는 본문을 8 MiB(`MAX_API_BODY`)까지만 읽는다. `Content-Length`가 넘으면 바로, 아니면 `chunk()`로 읽다가 넘는 순간 `Parse { what: "response" }`다. `read_timeout`은 idle만 끊으므로 계속 흘러오는 본문을 이것으로 막는다. 미디어 다운로드에는 적용하지 않는다.
 27. **(9단계) `PartFile` 생성은 `resume`과 `create` 둘로 나눈다.** §5.1의 `open(final_path, Option<Sidecar>)` 하나로는 "재개 offset을 요청 전에 알아야 한다"와 "새 `.part`는 상태 코드 확인 뒤에 만든다"를 함께 지킬 수 없다.
@@ -787,17 +777,20 @@ tokio    = { version = "1.53.2", features = ["net", "test-util"] }
 45. **(15단계) 실서버 스모크 결과(2026-10-05, 비로그인).** `sortType=LATEST` 목록에서 고른 공개·비성인 컨텐츠로 `examples/dl.rs`와 `tests/live.rs`(`#[ignore]`)를 돌렸다. 모두 통과했고 코어 수정은 필요 없었다.
     | 대상 | 방식 | 확인한 것 |
     |---|---|---|
-    | VOD 9000007 | 빠른 다시보기 HLS(5화질, 144p로) | 약 5 MB에서 취소 → `.part`가 상자 경계에서 끝나고 `ftyp moov moof mdat emsg styp moof …`(상자 761개). `--keep`으로 2 MB에서 멈춘 뒤 다시 실행하면 3.1 MB부터 이어받음 |
-    | VOD 9000006 | DASH PD(144p) | 3 MB에서 취소 → `ftyp moov free mdat`(mdat 잘림). 2 MB에서 멈춘 뒤 Range로 이어받음 |
-    | 클립 TestClip01 | PD 720p(세로) | 끝까지 13,264,697 B, `ftyp moov free mdat`, `.part` 없음 |
+    | 공개 VOD(표본 1) | 빠른 다시보기 HLS(5화질, 144p로) | 약 5 MB에서 취소 → `.part`가 상자 경계에서 끝나고 `ftyp moov moof mdat emsg styp moof …`(상자 761개). `--keep`으로 2 MB에서 멈춘 뒤 다시 실행하면 3.1 MB부터 이어받음 |
+    | 공개 VOD(표본 2) | DASH PD(144p) | 3 MB에서 취소 → `ftyp moov free mdat`(mdat 잘림). 2 MB에서 멈춘 뒤 Range로 이어받음 |
+    | 공개 클립(표본 3) | PD 720p(세로) | 끝까지 받음, `ftyp moov free mdat`, `.part` 없음 |
     - `tests/live.rs`는 `CHZZK_LIVE_HLS`·`CHZZK_LIVE_DASH`·`CHZZK_LIVE_CLIP`으로 대상을 받고, 없으면 조용히 통과하지 않고 패닉한다(`--ignored`로 일부러 돌릴 때만 쓰이므로). 대상은 시간이 지나면 지워지므로 고정하지 않는다. 설계 §8의 `CHZZK_LIVE_VIDEO`는 `resolve::live_smoke`(8단계)에 그대로 남는다.
-    - MP4 상자 검사기는 `tests/support/mp4.rs` 하나를 `tests/live.rs`와 `examples/dl.rs`가 `#[path]`로 함께 쓴다(크기 1 largesize, 0 끝까지, 마지막 상자 잘림 허용). 검사기 자체는 오프라인 테스트 `live::walk_boxes_on_fixture`가 실물 fixture로 검사한다.
+    - MP4 상자 검사기는 `tests/support/mp4.rs` 하나를 `tests/live.rs`와 `examples/dl.rs`가 `#[path]`로 함께 쓴다(크기 1 largesize, 0 끝까지, 마지막 상자 잘림 허용). 검사기 자체는 오프라인 테스트 `live::walk_boxes_on_fixture`가 합성 fixture로 검사한다.
     - UA의 Chrome 141(25번)로 막히지 않았다.
     - **성인 PD 쿠키 필요 여부는 미실측이다.** 로그인 쿠키가 필요한데, 저장소의 실제 사용자 파일(루트 `settings.json`, `dependent/`)은 읽지 않는다는 작업 규칙 때문에 쓸 수 있는 쿠키가 없었다. `examples/dl.rs`가 `CHZZK_NID_AUT`·`CHZZK_NID_SES`(+`CHZZK_COOKIES_ON_MEDIA=1`)로 쿠키를 받으므로 사용자가 직접 실측할 수 있다. 그때까지 결정 8(미디어에 쿠키 없음)과 `cookies_on_media` 스위치를 그대로 둔다.
-46. **(15단계) §12 문서 정정 반영.** 1번은 `docs/research/stack.md`, 2~8·11·12번은 `docs/spec/core-behavior.md`(원래 Go 서술은 남기고 해당 자리에 "정정(설계 §12-n)"을 붙였다), 9·10번은 `docs/research/hls-live-rewind.md`에 반영했다. 10번의 거부 목록에는 구현에서 더한 `GAP`·`SKIP`(26번)도 적었다. 13번(ROADMAP의 AES 문구)은 설계 판정 커밋 때 이미 "기본값 거부, 지원 여부는 사용자 결정"으로 고쳐져 있어 바꾸지 않았다. 8번의 성인 PD는 45번대로 미실측으로 적었다.
+46. **(15단계) §12 문서 정정 반영.** 1번은 `docs/research/stack.md`, 2~8·11·12번은 `docs/spec/core-behavior.md`(원래 Go 서술은 남기고 해당 자리에 "정정(설계 §12-n)"을 붙였다), 9·10번은 사전 조사 기록(비공개)에 반영했다. 10번의 거부 목록에는 구현에서 더한 `GAP`·`SKIP`(26번)도 적었다. 13번(ROADMAP의 AES 문구)은 설계 판정 커밋 때 이미 "기본값 거부, 지원 여부는 사용자 결정"으로 고쳐져 있어 바꾸지 않았다. 8번의 성인 PD는 45번대로 미실측으로 적었다.
 47. **(14~15단계 리뷰 수정) 옛 형식 `settings.json` 보존.** 셸의 설정 폴더가 옛 exe 폴더와 같으면 `SettingsStore::open`이 Go 파일을 그대로 읽고, 첫 `update`가 Go 전용 키(`nidAut`·`nidSes`·`isAdultContent`·`lastQualityName`·`lastVodURL`·`recentVodURLs`)를 버린 채 덮어써 §7의 "원본은 지우지 않는다"를 어겼다. 44번의 "`schemaVersion`이 있으면 `None`"이 그 뒤의 가져오기도 막았다. 이제 `open`은 원본 JSON에 `schemaVersion` 키가 없으면 옛 형식으로 표시하고, 첫 `update`가 쓰기 직전에 원본을 고정 이름 `settings.json.v1`(`settings::LEGACY_BACKUP_FILE`)로 복사한다(이미 있으면 덮어쓰지 않고, 내용이 다르면 옛 앱을 다시 써서 생긴 새 옛 파일이므로 `settings.json.v1-{unix_ts}`로 따로 남긴다. 복사에 실패하면 덮어쓰지 않고 `Err`). `import_legacy(dir)`는 `settings.json`이 새 형식이면 `settings.json.v1`을 대신 읽고, 그것도 없을 때만 `None`이다. 메모리 값의 `schema_version`은 여전히 기본 2로 읽는다(옛 형식 여부는 따로 들고 있다).
 48. **(14~15단계 리뷰 수정) 레거시 `downloadFolder` 상대 경로.** Go는 사용자가 친 문자열을 그대로 저장했고 exe 폴더에서 실행되었으므로, 상대 경로는 `dir` 기준으로 풀어(`dir.join`) 절대 경로로 확인·저장한다. 프로세스 작업 폴더 기준으로 보던 것을 고쳤다.
 49. **(14~15단계 리뷰 수정) 설정 세부 보강.** `segmentConcurrency`는 어떤 JSON 값이든 받고 1~255 정수가 아니면(0, 음수, 범위 밖, 소수, 문자열) 그 필드만 4로 읽는다. 값 하나 때문에 파일 전체가 `.bad-*`로 가지 않는다(42번 보강). 깨진 파일 백업 이름은 `OsString`에 접미사를 붙여 만들고(UTF-8이 아닌 경로), `rename_with_retry`로 옮긴다. 재시도 뒤에도 옮기지 못하면 기본값으로 계속하지 않고 `Err`다. 계속하면 첫 `update`가 백업 없이 덮어쓴다.
 50. **(14~15단계 리뷰 수정) 이어받은 HLS의 ETA.** `Meter`의 표본은 미디어 초를 `Option`으로 들고, 미디어 초가 없다가 처음 생기면 창을 새로 시작한다. 이어받기의 첫 보고는 이어받은 바이트만 있고 미디어 초가 없어, 다음 보고의 미디어 초(이미 받은 분량)를 방금 처리한 것으로 세어 ETA가 수 초로 나오던 것을 고쳤다(§12-4의 EXTINF 비율 ETA).
-51. **(14~15단계 리뷰 수정) 스모크 보강.** `tests/support/mp4.rs`는 `off + size`를 `checked_add`로 계산한다(largesize가 u64 끝 가까이면 debug 빌드가 패닉했다). `examples/dl.rs`의 `--limit-mb`도 `checked_mul`이다. `live_dash_partial`은 취소(`.part` ≥ 3 MiB, 마지막 상자 잘림)와 완주(짧은 VOD, 잘림 없음) 둘 다 받고, 두 경우 모두 `[ftyp, moov, …]` 순서와 `mdat`을 확인한다. 2026-10-05에 VOD 9000008(35초, 완주 344,682 B)와 9000005(35분, 취소 3,161,447 B)로 두 갈래를 실서버에서 확인했고, 빠른 다시보기 9000009을 3 MB에서 멈췄다가 이어받아 ETA가 바이트 기준과 맞는 것(3.7/82.7 MB, 4.4 MB/s, ETA 17초)도 확인했다. 성인 PD 쿠키 실측은 45번대로 여전히 사용자 몫이다.
+51. **(14~15단계 리뷰 수정) 스모크 보강.** `tests/support/mp4.rs`는 `off + size`를 `checked_add`로 계산한다(largesize가 u64 끝 가까이면 debug 빌드가 패닉했다). `examples/dl.rs`의 `--limit-mb`도 `checked_mul`이다. `live_dash_partial`은 취소(`.part` ≥ 3 MiB, 마지막 상자 잘림)와 완주(짧은 VOD, 잘림 없음) 둘 다 받고, 두 경우 모두 `[ftyp, moov, …]` 순서와 `mdat`을 확인한다. 2026-10-05에 짧은 VOD(35초, 완주)와 긴 VOD(35분, 취소)로 두 갈래를 실서버에서 확인했고, 빠른 다시보기 하나를 3 MB에서 멈췄다가 이어받아 ETA가 바이트 기준과 맞는 것(3.7/82.7 MB, 4.4 MB/s, ETA 17초)도 확인했다. 성인 PD 쿠키 실측은 45번대로 여전히 사용자 몫이다.
 52. **(최종 리뷰) CI Windows의 NASM.** 21번의 "결정은 CI 결과를 보고 한다"를 (a)로 확정했다. `aws-lc-sys` 0.45.0의 빌드 스크립트(`use_prebuilt_nasm`)를 읽어 보면 Windows x86_64에서 PATH에 `nasm`이 없고 `AWS_LC_SYS_PREBUILT_NASM`도 없으면 "Missing dependency: nasm"으로 실패한다. GitHub 러너 이미지에 NASM이 들어 있어 지금은 통과하더라도 이미지에 기대는 것이라, `core.yml`의 작업 공통 `env`에 `AWS_LC_SYS_PREBUILT_NASM: "1"`을 넣었다. nasm이 있거나 Windows가 아니면 무시되는 값이라 다른 OS에는 영향이 없다. 로컬 Windows(win10 VM)에서 빌드할 때도 같은 변수를 두거나 NASM을 설치해야 한다. `rustls-no-provider` + `ring`(b안)으로 바꾸는 것은 TLS provider 교체라 Phase 2에서 Tauri 쪽 의존성과 함께 볼 때 다시 판단한다.
+53. **(Phase 2, app.md §16) 앱 설정 필드 두 개.** 사용자 결정(app.md §16)에 따라 `UserSettings`에 `max_parallel_downloads: u8`(기본 2, `settings::{DEFAULT_PARALLEL_DOWNLOADS, MAX_PARALLEL_DOWNLOADS}`)와 `auto_resume_interrupted: bool`(기본 false)을 더했다. 둘 다 구조체 수준 `#[serde(default)]`로 옛 파일·Go 파일을 그대로 읽는다. `maxParallelDownloads`는 `segmentConcurrency`(49번)처럼 어떤 JSON 값이든 받는다: 1 이상 정수는 1~3으로 자르고(300 → 3), 0·음수·소수·문자열·`null`은 그 필드만 2다. 코어 다운로드 경로는 이 두 값을 쓰지 않는다(앱 셸의 작업 큐가 쓴다). 셸이 같은 `settings.json`에 모르는 키를 쓰면 `SettingsStore::update`가 지우므로 코어 구조체에 둔다(app.md §0).
+54. **(Phase 2, app.md 구현 중 변경 37) `VERSION`.** 앱 정보(`AppInfo.coreVersion`, S2 "버전 {app} (코어 {core})")에 쓰려고 `chzzk_core::VERSION = env!("CARGO_PKG_VERSION")`을 더했다. API 추가만이다.
+55. **(Phase 2, app.md 구현 중 변경 53) `finalize`가 `DuplicatePolicy`를 받는다.** 27번의 "`finalize`는 `DuplicatePolicy`를 받지 않고 항상 덮어쓴다"를 바꿨다. `Skip`은 시작 전 `exists()`로만 걸러져, 받는 동안 같은 이름의 파일이 생기면 마무리 rename이 덮어썼다. 이제 `PartFile::finalize(policy) -> Finalized`이고 `Skip`은 `fsutil::rename_noclobber_with_retry`를 쓴다. 덮어쓰지 않는 rename은 이미 의존하는 `tempfile`의 `TempPath::persist_noclobber`다(Linux `renameat2(RENAME_NOREPLACE)`, macOS `renamex_np(RENAME_EXCL)`, 그 밖 Unix hard link + unlink, Windows `REPLACE_EXISTING` 없는 `MoveFileExW`). `TempPath`는 만들자마자 `disable_cleanup(true)`로 바꿔 실패해도 `.part`를 지우지 않고, 실패 뒤 `keep()`으로 Windows가 다시 붙인 임시 파일 속성을 되돌린다. 파일 시스템이 지원하지 않으면(exFAT·FAT의 hard link, Windows 긴 경로) 대상이 있는지 본 뒤 보통 rename으로 옮긴다(확인과 rename 사이의 아주 짧은 틈만 남는다). Unix는 39번대로 `.part` 잠금을 쥔 채 옮긴다. 대상이 있으면 `Finalized::TargetExists` → `DownloadOutcome::Skipped`이고 `.part`·sidecar는 남아, 같은 요청을 `Overwrite`로 다시 부르면 이어받아 곧바로 마무리한다. Windows 경로는 이 Mac에서 컴파일·실행하지 못했다(CI에서 본다).

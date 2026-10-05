@@ -15,7 +15,7 @@ pub fn fixture(rel: &str) -> Vec<u8> {
     std::fs::read(&path).unwrap_or_else(|e| panic!("{path}: {e}"))
 }
 
-/// 실물 fixture의 미디어 호스트.
+/// 합성 fixture의 미디어 호스트.
 pub const MEDIA_HOSTS: [&str; 3] = [
     "hls.example.invalid",
     "clip.example.invalid",
@@ -63,7 +63,7 @@ use wiremock::{Request, Respond, ResponseTemplate};
 
 /// 일반 VOD fixture(`testdata/vod/video_info.json`)의 videoNo·videoId.
 pub const VOD_NO: u64 = 9000002;
-pub const VOD_VIDEO_ID: &str = "0000000000000000000000000000000000B02";
+pub const VOD_VIDEO_ID: &str = "000000000000000000000000000000000B02";
 /// 빠른 다시보기 fixture(`testdata/hls/video_info.json`)의 videoNo.
 pub const HLS_NO: u64 = 9000001;
 

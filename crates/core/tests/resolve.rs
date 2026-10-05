@@ -11,13 +11,14 @@ use common::{config, fixture, rewrite_hosts};
 use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, Request, ResponseTemplate};
 
+// 합성 fixture(`testdata/`)의 가짜 식별자.
 const VOD_NO: u64 = 9000002;
-const VOD_VIDEO_ID: &str = "0000000000000000000000000000000000B02";
+const VOD_VIDEO_ID: &str = "000000000000000000000000000000000B02";
 const VOD_IN_KEY: &str =
     "V100000000000000000000000000000000000000000000000000000000000000000000000000000000b2";
 const HLS_NO: u64 = 9000001;
 const CLIP_ID: &str = "TestClip01";
-const CLIP_VIDEO_ID: &str = "0000000000000000000000000000000000C03";
+const CLIP_VIDEO_ID: &str = "000000000000000000000000000000000C03";
 
 fn video(no: u64) -> ContentRef {
     ContentRef::Video { video_no: no }
@@ -80,7 +81,7 @@ async fn live_rewind() {
     let r = chzzk(&server).resolve(&video(HLS_NO)).await.unwrap();
     assert_eq!(r.content, video(HLS_NO));
     assert_eq!(r.kind(), PlaybackKind::LiveRewindHls);
-    assert_eq!(r.meta.title, "123");
+    assert_eq!(r.meta.title, "테스트 다시보기");
     assert_eq!(r.meta.channel_name, "테스트채널");
     let Source::LiveRewindHls { master_url, tracks } = &r.source else {
         panic!("LiveRewindHls가 아니다");
@@ -152,7 +153,8 @@ async fn clip() {
         .find(|(k, _)| k == "key")
         .unwrap()
         .1;
-    assert!(key.starts_with("V1"));
+    // 클립 fixture의 inKey 그대로(VOD `…b2`·클립 둘 `…c4`와 다르다).
+    assert_eq!(key, format!("V1{}c3", "0".repeat(80)));
 }
 
 /// AES VOD는 MPD를 받지 않고 `EncryptedVod`로 끝난다(설계 §11).

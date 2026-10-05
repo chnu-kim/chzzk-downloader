@@ -42,6 +42,11 @@ mod tests {
             super::is_own_content(&clip, "000000000000000000000000000000c3"),
             Some(true)
         );
+        // 클립을 만든 사람(makerChannel `…d4`)은 소유자가 아니다.
+        assert_eq!(
+            super::is_own_content(&clip, "000000000000000000000000000000d4"),
+            Some(false)
+        );
 
         let mut none = vod.clone();
         none.channel_id = None;

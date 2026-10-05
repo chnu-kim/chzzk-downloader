@@ -1,0 +1,136 @@
+// 접근성 점검(§10 "접근성·시각 기본", §15-17): 랜드마크, 이름 없는 버튼, 뷰 전환 뒤 포커스.
+import { render, screen, waitFor } from '@testing-library/svelte';
+import userEvent from '@testing-library/user-event';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { SettingsDto } from './lib/bindings';
+import { job, prog } from './test/jobFixtures';
+
+class FakeChannel {
+  onmessage: (e: unknown) => void = () => {};
+}
+
+const dto: SettingsDto = {
+  downloadFolder: null,
+  effectiveDownloadFolder: '/Movies/치지직',
+  useNaverCookies: false,
+  naverCookiesSaved: true,
+  lastQualityLabel: null,
+  lastUrl: null,
+  recentVods: [{ url: 'https://chzzk.naver.com/video/1', title: '최근 영상' }],
+  segmentConcurrency: 4,
+  maxParallelDownloads: 2,
+  autoResumeInterrupted: false,
+  importedFrom: null,
+};
+
+vi.mock('./lib/api', () => ({
+  Channel: FakeChannel,
+  getSettings: vi.fn(async () => dto),
+  appInfo: vi.fn(async () => ({
+    version: '0.1.0',
+    coreVersion: '0.1.0',
+    configDir: '/c',
+    dataDir: '/d',
+    logDir: '/l',
+    defaultDownloadFolder: '/Movies/치지직',
+    features: { auth: false },
+    legacyCandidate: null,
+  })),
+  subscribeJobs: vi.fn(async () => [
+    job(1, { status: 'running', progress: prog() }),
+    job(2, { status: 'paused', partialBytes: 100 }),
+    job(3, { status: 'completed', finalBytes: 10 }),
+    job(4, { status: 'interrupted' }),
+  ]),
+  clipboardLink: vi.fn(async () => null),
+  onCloseRequested: vi.fn(async () => () => {}),
+}));
+
+const { default: App } = await import('./App.svelte');
+const { ui } = await import('./lib/stores/ui.svelte');
+const { jobs } = await import('./lib/stores/jobs.svelte');
+
+beforeEach(() => {
+  ui.goHome();
+});
+
+/** 접근 가능한 이름: aria-label, aria-labelledby, 아니면 글자 */
+function nameOf(el: HTMLElement): string {
+  const label = el.getAttribute('aria-label');
+  if (label) return label;
+  const by = el.getAttribute('aria-labelledby');
+  if (by) return by.split(' ').map((id) => document.getElementById(id)?.textContent ?? '').join(' ').trim();
+  return (el.textContent ?? '').trim();
+}
+
+describe('접근성', () => {
+  it('랜드마크와 목록 구획, 모든 버튼·스위치·진행 막대에 이름이 있다', async () => {
+    const user = userEvent.setup();
+    render(App);
+    await screen.findByRole('article', { name: '영상 1' });
+    expect(screen.getByRole('banner')).toBeInTheDocument();
+    expect(screen.getByRole('main')).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: '다운로드' })).toBeInTheDocument();
+    for (const el of [...screen.getAllByRole('button'), ...screen.getAllByRole('progressbar')]) {
+      expect(nameOf(el), el.outerHTML).not.toBe('');
+    }
+    // 설정 화면도
+    await user.click(screen.getByRole('button', { name: '설정' }));
+    await user.click(await screen.findByRole('button', { name: '고급: 네이버 로그인 정보' }));
+    for (const el of [
+      ...screen.getAllByRole('button'),
+      ...screen.getAllByRole('switch'),
+      ...screen.getAllByRole('combobox'),
+    ]) {
+      expect(nameOf(el), el.outerHTML).not.toBe('');
+    }
+  });
+
+  it('뷰가 바뀌면 포커스가 body로 떨어지지 않는다: 설정은 제목, 홈은 입력줄', async () => {
+    const user = userEvent.setup();
+    render(App);
+    await user.click(screen.getByRole('button', { name: '설정' }));
+    await waitFor(() => expect(screen.getByRole('heading', { level: 1, name: '설정' })).toHaveFocus());
+    await user.click(screen.getByRole('button', { name: '뒤로' }));
+    await waitFor(() => expect(screen.getByLabelText('영상 주소')).toHaveFocus());
+    // Esc로 돌아와도
+    await user.click(screen.getByRole('button', { name: '설정' }));
+    await waitFor(() => expect(screen.getByRole('heading', { level: 1, name: '설정' })).toHaveFocus());
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.getByLabelText('영상 주소')).toHaveFocus());
+  });
+
+  it('[목록에서 보기] 요청은 한 번만 쓰이고, D2는 뷰를 떠나면 닫힌다', async () => {
+    const user = userEvent.setup();
+    render(App);
+    await screen.findByRole('article', { name: '영상 1' });
+    jobs.reveal(2);
+    await waitFor(() => expect(screen.getByRole('article', { name: '영상 2' })).toHaveFocus());
+    await user.click(screen.getByRole('button', { name: '설정' }));
+    await user.click(await screen.findByRole('button', { name: '뒤로' }));
+    await waitFor(() => expect(screen.getByLabelText('영상 주소')).toHaveFocus());
+
+    jobs.confirm = { id: 2, title: '영상 2', bytes: 600 * 1024 * 1024 };
+    expect(await screen.findByRole('dialog', { name: '다운로드를 취소할까요?' })).toBeInTheDocument();
+    ui.goSettings();
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    ui.goHome();
+    await screen.findByRole('article', { name: '영상 1' });
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('상태는 색만으로 말하지 않는다: 멈춤·완료 항목에 아이콘과 문구', async () => {
+    render(App);
+    const paused = await screen.findByRole('article', { name: '영상 2' });
+    // 아이콘은 상태 줄 안의 것만 센다(버튼 아이콘은 늘 있어 검사가 실패할 수 없었다)
+    const pausedStatus = paused.querySelector('.status-row .status');
+    expect(pausedStatus?.textContent).toContain('일시정지됨');
+    expect(pausedStatus?.querySelector('.lead svg')).not.toBeNull();
+    const done = screen.getByRole('article', { name: '영상 3' });
+    const doneStatus = done.querySelector('.status-row .status');
+    expect(doneStatus?.textContent).toContain('완료');
+    expect(doneStatus?.querySelector('.lead svg')).not.toBeNull();
+    // 재시작 직후 배너(B1)
+    expect(screen.getByText('지난번에 받다가 멈춘 다운로드가 1개 있어요.')).toBeInTheDocument();
+  });
+});

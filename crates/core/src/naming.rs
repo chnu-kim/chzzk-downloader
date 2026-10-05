@@ -262,33 +262,13 @@ mod tests {
         }
     }
 
-    /// fixture의 VOD info(`content`)에서 파일명에 쓰는 값만 읽는다.
-    /// info 파서(5단계) 없이 실물 값과 맞물리게 하려는 것이다.
+    /// fixture를 실제 info 파서로 읽는다(클립은 원 채널 `ownerChannel`을 파서가 고른다).
     fn fixture_meta(rel: &str) -> ContentMeta {
-        let path = format!("{}/../../{rel}", env!("CARGO_MANIFEST_DIR"));
-        let body = std::fs::read(&path).unwrap_or_else(|e| panic!("{path}: {e}"));
-        let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        let c = &v["content"];
-        let s = |v: &serde_json::Value| v.as_str().map(str::to_string);
-        let is_clip = c.get("contentTitle").is_some_and(|t| !t.is_null());
-        let (title, channel) = if is_clip {
-            (&c["contentTitle"], &c["ownerChannel"]["channelName"])
+        let body = crate::testutil::fixture(rel);
+        if rel.starts_with("testdata/clip/") {
+            crate::info::parse_clip_info(&body).unwrap().0
         } else {
-            (&c["videoTitle"], &c["channel"]["channelName"])
-        };
-        ContentMeta {
-            kind: if is_clip {
-                ContentKind::Clip
-            } else {
-                ContentKind::Video
-            },
-            title: s(title).unwrap().trim().to_string(),
-            channel_name: s(channel).unwrap(),
-            channel_id: None,
-            live_open_date: s(&c["liveOpenDate"]),
-            publish_date: s(&c["publishDate"]),
-            adult: false,
-            duration_secs: None,
+            crate::info::parse_video_info(&body).unwrap().0
         }
     }
 
@@ -313,7 +293,7 @@ mod tests {
         }
         assert_eq!(
             super::parse_live_date("2026-01-02 12:00:00"),
-            Some((2026, 10, 5))
+            Some((2026, 1, 2))
         );
     }
 
@@ -473,11 +453,11 @@ mod tests {
         for p in ALL {
             assert_eq!(
                 default_filename(&fixture_meta("testdata/hls/video_info.json"), p),
-                "[261005] 테스트채널 - 123.mp4"
+                "[260102] 테스트채널 - 테스트 다시보기.mp4"
             );
             assert_eq!(
                 default_filename(&fixture_meta("testdata/vod/video_info.json"), p),
-                "[261004] 가상채널 - 가상 일반 VOD 제목 (괄호) 테스트.mp4"
+                "[260101] 가상채널 - 가상 일반 VOD 제목 (괄호) 테스트.mp4"
             );
             assert_eq!(
                 default_filename(&fixture_meta("testdata/clip/clip_playinfo.json"), p),
@@ -492,10 +472,10 @@ mod tests {
         // live_open_date가 없으면 publish_date
         let mut m = meta(ContentKind::Video, "채널", "제목", None);
         m.publish_date = Some("2026-03-04 05:06:07".into());
-        assert_eq!(default_filename(&m, p), "[261005] 채널 - 제목.mp4");
+        assert_eq!(default_filename(&m, p), "[260304] 채널 - 제목.mp4");
         // live_open_date가 깨졌으면 publish_date
         m.live_open_date = Some("garbage".into());
-        assert_eq!(default_filename(&m, p), "[261005] 채널 - 제목.mp4");
+        assert_eq!(default_filename(&m, p), "[260304] 채널 - 제목.mp4");
         // 날짜 없음
         let m = meta(ContentKind::Video, "채널", "제목", None);
         assert_eq!(default_filename(&m, p), "채널 - 제목.mp4");

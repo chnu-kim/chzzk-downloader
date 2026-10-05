@@ -6,7 +6,7 @@
 
 - `git-filter-repo` 2.47 이상(`pip install git-filter-repo`)과 Node 18 이상.
 - 저장소 밖 비공개 보관소의 파일 세 개. **원문(실제 이름·ID·토큰·개인 이메일)이나 대입으로 되돌릴 수 있는 해시가 들어 있어 저장소에 커밋하지 않는다.** 아래 명령은 이 파일들을 `../`에 복사해 두었다고 본다.
-  - `filter-repo-replacements.txt`: 실제 채널 이름·채널 ID·영상 번호·영상 ID·클립 ID·inKey·스트림 경로 키·제목·미디어 호스트·비공개 형제 프로젝트 이름, 옛 테스트에 남았던 실제 시각·길이를 합성 fixture와 같은 가짜 값(`testdata/README.md`)으로 바꾸는 줄, 암호화 키 주소와 AES 조사 줄을 지우는 줄, 그리고 아래의 일반 규칙이다.
+  - `filter-repo-replacements.txt`: 실제 채널 이름·채널 ID·영상 번호·영상 ID·클립 ID·inKey·스트림 경로 키·제목·미디어 호스트·비공개 형제 프로젝트 이름, 옛 테스트에 남았던 실제 시각·길이·세그먼트 이름, 옛 문서의 로컬 임시 경로를 합성 fixture와 같은 가짜 값(`testdata/README.md`)으로 바꾸는 줄, 암호화 키 주소와 AES 조사 줄을 지우는 줄, 그리고 아래의 일반 규칙이다.
   - `private-denylist.txt`: 위 원문들(채널 이름·영상 번호·클립 ID·제목 구절·미디어 호스트·세그먼트 번호·태그 등)의 해시. `printf '%s\n' '<원문>' | node scripts/ci/public-scan.mjs --hash`로 만든다. 공개 `scripts/ci/public-denylist.txt`에는 되돌릴 수 없는 `blob:` 해시만 둔다(salt가 공개돼 있어 짧은 원문의 해시는 사전 대입으로 풀린다).
   - `mailmap.txt`: 옛 커밋의 개인 이메일을 GitHub noreply 주소로 바꾸는 한 줄. `chnu-kim <114627259+chnu-kim@users.noreply.github.com> <개인 이메일>` 모양이다.
   - 원문이 없는 일반 규칙(그대로 옮겨 둔다):
@@ -32,7 +32,7 @@ git log --all --format=%H -- testdata internal/api/testdata \
   | while read c; do git ls-tree -r "$c" -- testdata internal/api/testdata; done \
   | awk '{print $3}' | sort -u > ../hist-blobs.txt
 git ls-tree -r HEAD -- testdata | awk '{print $3}' | sort -u > ../cur-blobs.txt
-comm -23 ../hist-blobs.txt ../cur-blobs.txt > ../strip-blob-ids.txt   # 2026-10-05 기준 24개
+comm -23 ../hist-blobs.txt ../cur-blobs.txt > ../strip-blob-ids.txt   # 2026-10-05(fixture 재생성 뒤) 기준 34개
 
 # 2-1. 옛 denylist(대입으로 되돌릴 수 있는 해시가 들었던 버전): 지금 HEAD의 것만 남긴다
 git log --all --format=%H -- scripts/ci/public-denylist.txt \
@@ -82,7 +82,7 @@ node scripts/fixtures/gen-fixtures.mjs --check
 cargo test --workspace --locked
 ```
 
-2026-10-05에 `feat/tauri-app`(머지 전 master와 같은 내용)의 클론으로 위 절차를 돌려 `same-tree`와 `--all-history` 종료 코드 0을 확인했다.
+2026-10-05에 `feat/tauri-app`(머지 전 master와 같은 내용)의 클론으로 위 절차를 돌려 `same-tree`, noreply 이메일만 남음, 옛 denylist 해시 없음, `--all-history --denylist` 종료 코드 0을 확인했다. 비공개 파일을 고쳤거나 master에 커밋이 더 쌓였으면 다시 돌린다.
 
 통과하면 새 공개 저장소를 원격으로 더해 push한다(`git remote add origin <공개 저장소>`, `git push origin master`). 공개 저장소에서는 CI `public-scan.yml`이 매 push·PR마다 현재 트리와 이력 전체를 검사한다(비공개 저장소에서는 이력 검사를 건너뛴다).
 

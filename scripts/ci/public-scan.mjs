@@ -20,7 +20,7 @@
 //   pd-signature   _lsu_sa_ 뒤 16자리 이상 hex가 0이 아닌 것
 //   key-endpoint   암호화 키 주소의 경로 조각
 //   aes-research   암호화 조사 기록의 용어
-//   naver-cookie   NID_AUT / NID_SES 뒤에 8자 이상 값(헤더·JSON·쿠키 내보내기 모양)
+//   naver-cookie   NID_AUT / NID_SES 뒤에 12자 이상 값(헤더·JSON·쿠키 내보내기 모양)
 //   hex-id         32·36자리 hex, 대시 UUID, V1로 시작하는 inKey 중 가짜(0으로 채운 값)가 아닌 것
 //   keyed-hex      sig·signature·token·secret 뒤 40자리 이상 hex
 //   denylist       denylist의 해시와 같은 토큰·토큰 안 6~13글자·n-gram·한글 부분 문자열·blob
@@ -111,8 +111,8 @@ function rulesOf(s, hits) {
   if (KEY_ENDPOINT.some((re) => re.test(s))) hits.add('key-endpoint');
   if (AES_RESEARCH.test(s)) hits.add('aes-research');
   if (
-    /NID_(?:AUT|SES)["'\s:=]+[A-Za-z0-9+/=_%.-]{8,}/.test(s) ||
-    /NID_(?:AUT|SES)["']?\s*,\s*["']?value["']?\s*:\s*["'][^"']{8,}["']/i.test(s)
+    /NID_(?:AUT|SES)["'\s:=]+[A-Za-z0-9+/=_%.-]{12,}/.test(s) ||
+    /NID_(?:AUT|SES)["']?\s*,\s*["']?value["']?\s*:\s*["'][^"']{12,}["']/i.test(s)
   ) {
     hits.add('naver-cookie');
   }

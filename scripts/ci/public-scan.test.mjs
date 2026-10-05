@@ -52,7 +52,7 @@ const EVASIONS = {
   '키 주소 대시': ['key-endpoint', 'aes' + '-key'],
   '쿠키 내보내기 모양': ['naver-cookie', '{"name":"NID_' + 'AUT","value":"' + 'Zx8'.repeat(4) + '"}'],
   '쿠키 %3D': ['naver-cookie', 'Cookie: NID_' + 'AUT%3D' + 'Zx8'.repeat(4)],
-  '쿠키 짧은 값': ['naver-cookie', 'NID_' + 'SES=' + 'Zx8Zx8Zx8'],
+  '쿠키 12자 값': ['naver-cookie', 'NID_' + 'SES=' + 'Zx8'.repeat(4)],
   '대시 UUID': ['hex-id', 'id="' + ['1a2b3c4d', '72ca', '11f1', '8066', hex('a5', 6)].join('-') + '"'],
   'inKey 모양': ['hex-id', 'key=V1' + hex('3e', 41)],
 };
@@ -79,6 +79,7 @@ test('자리표시자와 가짜 ID는 통과한다', () => {
     'hdnts=exp%3D0%7Eacl%3D%2Fclip%2F*%7Ehmac%3D0000',
     'a.mp4?_lsu_sa_=0000',
     'Cookie: NID_AUT=a; NID_SES=b',
+    'Cookie: NID_AUT=placeholder; NID_SES=placeholder', // 테스트 자리표시자(12자 미만)
     '"channelId": "000000000000000000000000000000a1"',
     'video 000000000000000000000000000000000B02',
     'sha256 ' + hex('ab', 32), // 64자리 hex(잠금 파일 체크섬)는 ID가 아니다

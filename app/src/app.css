@@ -1,0 +1,29 @@
+/* §15-1 골격의 최소 기본값. 색 토큰 전체(라이트/다크)는 §15-12에서 채운다. */
+:root {
+  color-scheme: light dark;
+  --bg: #ffffff;
+  --fg: #1a1c1e;
+  font-family: system-ui, 'Apple SD Gothic Neo', 'Malgun Gothic', 'Noto Sans KR', sans-serif;
+  font-size: 14px;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #17191b;
+    --fg: #e6e8ea;
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+}

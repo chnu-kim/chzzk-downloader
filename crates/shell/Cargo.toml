@@ -1,0 +1,12 @@
+[package]
+name = "chzzk-shell"
+version = "0.1.0"
+description = "치지직 다운로더 앱 셸 로직 (Tauri 비의존): 작업 관리·DTO·오류 매핑"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lib]
+name = "chzzk_shell"
+
+[dependencies]

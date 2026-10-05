@@ -8,7 +8,8 @@
 - 남은 것: 성인 PD에 미디어 쿠키가 필요한지 실측(로그인 쿠키 필요, `examples/dl.rs`의 `CHZZK_NID_AUT`·`CHZZK_NID_SES`로 사용자가 직접)
 - 완료: §10-16 Go 코드 삭제(`cmd/`·`internal/`·`go.mod`), 클립 fixture는 `testdata/clip/`으로 이동(브랜치 `chore/remove-go`)
 - 완료: Phase 2 설계 판정 `docs/design/app.md`(UX안·셸안 대조, 2026-10-05). 열린 질문 8개는 app.md §16
-- 다음: Phase 2 §15-1 골격(`app/` + `crates/shell` + `app/src-tauri`). 그 전에 app.md §16-5 `identifier` 확정 필요
+- 완료: Phase 2 §15-1 골격(`app/` Vite+Svelte 5, `app/src-tauri`, 빈 `crates/shell`, identifier `io.github.chnu-kim.chzzk-downloader`). 확인 항목은 app.md "구현 중 변경" 1~13
+- 다음: Phase 2 §15-2 `crates/shell` 오류 DTO
 
 ## 확정된 결정 (2026-10-05, 사용자 인터뷰)
 
@@ -65,7 +66,7 @@
 설계는 `docs/design/app.md`(확정안). 아래 번호는 그 문서 §15의 구현 단계다. 1~10은 Tauri 없이 `crates/shell`만으로 진행하고(PR A), 11~19가 앱과 화면이다(PR B). 결정 요약은 app.md §0, 사용자가 답할 질문은 §16.
 
 - [x] 설계 판정 (`docs/design/app.md`): 순수 Vite+Svelte 5, `crates/shell`(Tauri 비의존) + `app/src-tauri`, 구독 하나 Channel, jobs.json, 상태 8개
-- [ ] §15-1 골격: `app/`(Vite+Svelte) + `app/src-tauri` + workspace 멤버. 확인 항목(frontendDist 없이 컴파일, tokio Handle, TLS provider, 권한 식별자, log 경로, CSP)을 app.md "구현 중 변경"에 기록
+- [x] §15-1 골격: `app/`(Vite+Svelte) + `app/src-tauri` + workspace 멤버. 확인 항목(frontendDist 없이 컴파일, tokio Handle, TLS provider, 권한 식별자, log 경로, CSP)을 app.md "구현 중 변경"에 기록
 - [ ] §15-2~3 `crates/shell` 오류 DTO(`AppError`, `ErrorKind` 전체 매핑)와 나머지 DTO, ts-rs bindings
 - [ ] §15-4 `Backend` trait + 가짜 Backend, Send 컴파일 검사
 - [ ] §15-5~6 `JobStore`(jobs.json) + 시작 때 reconcile

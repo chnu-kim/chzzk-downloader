@@ -27,3 +27,25 @@ go.work.sum
 
 # IntelliJ IDEA
 .idea/
+
+# 런타임 데이터·산출물 (로컬 전용)
+/main
+.DS_Store
+/settings.json
+/dependent/
+/downloads/
+/output/
+
+# 로컬 Windows 테스트 VM (dockurr/windows) 설정과 디스크
+/win10/
+/compose.yml
+
+# Rust / Node / Worker 빌드 산출물
+target/
+node_modules/
+.wrangler/
+dist/
+
+# Claude Code 로컬 상태
+.claude/settings.local.json
+.claude/worktrees/

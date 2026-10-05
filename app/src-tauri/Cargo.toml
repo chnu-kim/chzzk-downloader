@@ -10,6 +10,10 @@ publish.workspace = true
 name = "chzzk_app_lib"
 crate-type = ["rlib"]
 
+[features]
+# 네이티브 E2E 빌드 전용(src/e2e.rs, docs/design/cicd.md §6). 릴리스·번들 빌드는 켜지 않는다(release-hygiene가 확인한다).
+e2e = ["dep:url"]
+
 [build-dependencies]
 tauri-build = { version = "2.7.1", features = [] }
 
@@ -25,6 +29,7 @@ tokio = { version = "1.53.2", default-features = false, features = ["rt", "sync"
 tracing = "0.1.44"
 tracing-appender = "0.2.5"
 tracing-subscriber = { version = "0.3.23", default-features = false, features = ["ansi", "env-filter", "fmt", "registry", "std"] }
+url = { version = "2.5.8", optional = true }
 
 [dev-dependencies]
 tauri = { version = "2.12.1", features = ["test"] }

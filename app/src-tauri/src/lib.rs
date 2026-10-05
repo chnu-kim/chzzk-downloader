@@ -2,6 +2,8 @@
 //! 플러그인, setup(경로·로그·상태), command, 창 닫기·앱 종료 처리, 완료 알림.
 
 pub mod commands;
+#[cfg(feature = "e2e")]
+pub mod e2e;
 mod logging;
 pub mod sink;
 pub mod smoke;
@@ -334,11 +336,27 @@ pub fn acquire_instance_lock(data_dir: &Path) -> InstanceLockState {
     }
 }
 
+/// 격리 실행의 경로·클라이언트 설정(E2E 빌드에서 환경 변수가 있을 때, `e2e.rs`). 보통 빌드는 늘 `None`이고
+/// 이 함수 말고는 E2E 코드가 없다(`release-hygiene`가 릴리스 바이너리로 확인한다).
+type Override = Option<(AppPaths, chzzk_core::ClientConfig)>;
+
+#[cfg(feature = "e2e")]
+fn e2e_override() -> Result<Override, String> {
+    Ok(e2e::E2eConfig::from_env()?.map(|c| (c.paths(), c.client())))
+}
+
+#[cfg(not(feature = "e2e"))]
+fn e2e_override() -> Result<Override, String> {
+    Ok(None)
+}
+
 /// 앱 상태(설정·매니저)를 열어 `manage`한다. 로그는 그 전에 시작한다.
 fn setup<R: Runtime>(
     app: &tauri::App<R>,
     smoke: Option<SmokeConfig>,
+    e2e: Result<Override, String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let e2e = e2e?;
     let p = app.path();
     // 스모크는 임시 폴더만 쓴다(사용자 데이터·로그를 건드리지 않는다). 감시자는 로그보다 먼저 건다.
     if let Some(cfg) = &smoke {
@@ -351,21 +369,29 @@ fn setup<R: Runtime>(
         );
         app.manage(state);
     }
-    let log_dir = match &smoke {
-        Some(cfg) => cfg.log_dir(),
-        None => p.app_log_dir()?,
+    let log_dir = match (&e2e, &smoke) {
+        (Some((paths, _)), _) => paths.log.clone(),
+        (None, Some(cfg)) => cfg.log_dir(),
+        (None, None) => p.app_log_dir()?,
     };
     if let Some(guard) = logging::init(&log_dir) {
         app.manage(guard);
     }
-    let paths = match &smoke {
-        Some(cfg) => AppPaths::new(cfg.config_dir(), cfg.data_dir(), log_dir, None, None),
-        None => AppPaths::new(
-            p.app_config_dir()?,
-            p.app_data_dir()?,
-            log_dir,
-            p.video_dir().ok(),
-            p.download_dir().ok(),
+    let (paths, client) = match (e2e, &smoke) {
+        (Some((paths, client)), _) => (paths, Some(client)),
+        (None, Some(cfg)) => (
+            AppPaths::new(cfg.config_dir(), cfg.data_dir(), log_dir, None, None),
+            None,
+        ),
+        (None, None) => (
+            AppPaths::new(
+                p.app_config_dir()?,
+                p.app_data_dir()?,
+                log_dir,
+                p.video_dir().ok(),
+                p.download_dir().ok(),
+            ),
+            None,
         ),
     };
     tracing::info!(
@@ -376,8 +402,8 @@ fn setup<R: Runtime>(
         default_download = %paths.default_download.display(),
         "앱 시작"
     );
-    // 스모크는 실행 파일 옆 옛 설정을 찾지 않는다(설치 폴더 내용과 무관하게 같은 결과를 내도록).
-    let legacy_dir: Option<PathBuf> = if smoke.is_some() {
+    // 스모크·E2E는 실행 파일 옆 옛 설정을 찾지 않는다(설치 폴더 내용과 무관하게 같은 결과를 내도록).
+    let legacy_dir: Option<PathBuf> = if smoke.is_some() || client.is_some() {
         None
     } else {
         std::env::current_exe()
@@ -402,7 +428,11 @@ fn setup<R: Runtime>(
         }
     }
     let log_dir = paths.log.clone();
-    let state = match App::open(paths, legacy_dir.as_deref(), tokio_handle()) {
+    let opened = match client {
+        Some(client) => App::open_with(paths, client, legacy_dir.as_deref(), tokio_handle()),
+        None => App::open(paths, legacy_dir.as_deref(), tokio_handle()),
+    };
+    let state = match opened {
         Ok(s) => s,
         Err(e) => {
             tracing::error!(code = ?e.code, error = %e.message, "앱 상태를 열지 못함");
@@ -420,12 +450,15 @@ fn setup<R: Runtime>(
 
 pub fn run() {
     let smoke = SmokeConfig::from_env();
+    let e2e = e2e_override();
+    // 격리 실행(스모크·E2E)은 single-instance를 쓰지 않는다
+    let isolated = smoke.is_some() || !matches!(e2e, Ok(None));
     let builder = tauri::Builder::default();
 
     // single-instance는 반드시 첫 플러그인이어야 한다. 두 번째 실행은 기존 창에 포커스만 준다.
     // `--smoke`는 쓰지 않는다: 이미 떠 있는 앱에 포커스만 주고 끝나면 스모크가 아무것도 증명하지 못한다.
     #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
-    let builder = if smoke.is_none() {
+    let builder = if !isolated {
         builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             focus_main(app);
         }))
@@ -448,7 +481,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_clipboard_manager::init())
-        .setup(move |app| setup(app, smoke))
+        .setup(move |app| setup(app, smoke, e2e))
         .invoke_handler(handler())
         .build(tauri::generate_context!())
         .expect("Tauri 앱 만들기 실패");

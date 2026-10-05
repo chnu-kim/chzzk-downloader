@@ -1,0 +1,20 @@
+# typos 설정(docs/design/cicd.md §2 `typos` gate). 오탐은 이유와 함께 여기에 적는다.
+
+[files]
+extend-exclude = [
+  # 합성 fixture: 바이트 그대로 고정한 데이터
+  "testdata/",
+  # 해시 목록
+  "scripts/ci/public-denylist.txt",
+  "*.lock",
+  "app/pnpm-lock.yaml",
+  # 생성물(ts-rs bindings)
+  "app/src/lib/bindings/",
+]
+
+[default.extend-words]
+# MP4 상자 이름(ISO/IEC 14496-12)
+trak = "trak"
+trun = "trun"
+# MP4 메타데이터 '©nam'(제목) 상자 흉내
+nam = "nam"

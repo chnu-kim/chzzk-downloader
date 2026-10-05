@@ -1,0 +1,40 @@
+# cargo deny 설정(docs/design/cicd.md §7). PR의 supply 작업은 bans·licenses·sources만 본다.
+# advisories는 시간에 따라 바뀌므로 nightly에서 본다(G5).
+
+[graph]
+all-features = false
+
+[advisories]
+# nightly 전용. 값은 기본을 따른다.
+
+[licenses]
+# 의존성 트리에서 실제로 쓰는 라이선스만 허용한다. 새 라이선스는 이 목록에 이유와 함께 더한다.
+allow = [
+  "MIT",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-3-Clause",
+  "BSL-1.0",
+  "CDLA-Permissive-2.0",
+  "ISC",
+  "MPL-2.0",
+  "Unicode-3.0",
+  "Zlib",
+]
+confidence-threshold = 0.93
+
+# 워크스페이스 crate(publish = false)는 라이선스 필드가 없다
+[licenses.private]
+ignore = true
+
+[bans]
+multiple-versions = "allow"
+wildcards = "deny"
+# 워크스페이스 안 path 의존성은 버전이 없지만 모두 publish = false다
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

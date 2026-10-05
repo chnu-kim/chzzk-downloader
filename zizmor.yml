@@ -1,0 +1,3 @@
+# zizmor 설정(docs/design/cicd.md §7). PR gate는 `--offline --pedantic`으로 돈다.
+# 규칙을 끌 때는 줄마다 이유를 적는다.
+rules: {}

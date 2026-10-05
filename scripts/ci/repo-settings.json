@@ -1,13 +1,18 @@
 {
-  "$comment": "저장소 설정의 선언(docs/design/cicd.md §7, §4.4 설정 drift). nightly ruleset-drift가 repo-settings.mjs --check로 GitHub API의 실제 값과 비교하고 다르면 ci-loop:ruleset-drift 이슈를 연다. 키마다 endpoint의 응답에서 선언한 필드만 본다(응답에 필드가 없으면 일치가 아니다). ruleset은 .github/rulesets/*.json(G7)이 선언하고 실제 ruleset 이름 집합과 같아야 한다(지금은 둘 다 비어 있다). 값은 2026-10-06에 읽은 실제 값이다. fork PR 승인을 all_external_contributors로 바꾸는 것은 G7의 --apply와 함께 한다.",
+  "$comment": "저장소 설정의 선언(docs/design/cicd.md §7, §4.4 설정 drift). nightly ruleset-drift가 repo-settings.mjs --check로 GitHub API의 실제 값과 비교하고 다르면 ci-loop:ruleset-drift 이슈를 연다. 키마다 endpoint의 응답에서 선언한 필드만 본다(응답에 필드가 없으면 일치가 아니다). ruleset은 .github/rulesets/*.json(G7)이 선언하고 실제 ruleset 이름 집합과 같아야 한다(지금은 둘 다 비어 있다). 값은 2026-10-06에 읽은 실제 값이다. 환경 release(G6)는 배포 정책이 사용자 지정(태그 v*, 브랜치 master)이어야 한다(정책 목록은 id가 섞여 여기서 보지 않는다). fork PR 승인을 all_external_contributors로 바꾸는 것은 G7의 --apply와 함께 한다.",
   "settings": {
     "actions_workflow_permissions": {
       "endpoint": "repos/{repo}/actions/permissions/workflow",
-      "expect": { "default_workflow_permissions": "read", "can_approve_pull_request_reviews": false }
+      "expect": {
+        "default_workflow_permissions": "read",
+        "can_approve_pull_request_reviews": false
+      }
     },
     "fork_pr_contributor_approval": {
       "endpoint": "repos/{repo}/actions/permissions/fork-pr-contributor-approval",
-      "expect": { "approval_policy": "first_time_contributors" }
+      "expect": {
+        "approval_policy": "first_time_contributors"
+      }
     },
     "repository": {
       "endpoint": "repos/{repo}",
@@ -15,8 +20,22 @@
         "visibility": "public",
         "default_branch": "master",
         "security_and_analysis": {
-          "secret_scanning": { "status": "enabled" },
-          "secret_scanning_push_protection": { "status": "enabled" }
+          "secret_scanning": {
+            "status": "enabled"
+          },
+          "secret_scanning_push_protection": {
+            "status": "enabled"
+          }
+        }
+      }
+    },
+    "environment_release": {
+      "endpoint": "repos/{repo}/environments/release",
+      "expect": {
+        "name": "release",
+        "deployment_branch_policy": {
+          "protected_branches": false,
+          "custom_branch_policies": true
         }
       }
     }

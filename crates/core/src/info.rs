@@ -184,7 +184,7 @@ pub fn parse_video_info(body: &[u8]) -> Result<(ContentMeta, VideoContent), Erro
 
 /// 재생 방식을 정한다. `encryptionType` → `inKey` → `liveRewindPlaybackJson` 순서다.
 ///
-/// AES VOD에도 `inKey`가 있으므로(실측) `encryptionType`을 가장 먼저 본다.
+/// AES VOD에도 `inKey`가 있으므로 `encryptionType`을 가장 먼저 본다.
 pub fn classify(v: &VideoContent) -> Result<Playback, Error> {
     if let Some(method) = non_empty(&v.encryption_type) {
         return Ok(Playback::Encrypted {
@@ -340,6 +340,10 @@ mod tests {
     use super::*;
     use crate::testutil::fixture;
 
+    /// 합성 fixture `testdata/vod/video_info.json`의 inKey(자리표시자).
+    const VOD_IN_KEY: &str =
+        "V100000000000000000000000000000000000000000000000000000000000000000000000000000000b2";
+
     fn video_content(rel: &str) -> (ContentMeta, VideoContent) {
         parse_video_info(&fixture(rel)).unwrap()
     }
@@ -357,34 +361,26 @@ mod tests {
     fn live_rewind_fixture() {
         let (meta, v) = video_content("testdata/hls/video_info.json");
         assert_eq!(meta.kind, ContentKind::Video);
-        assert_eq!(meta.title, "123");
+        assert_eq!(meta.title, "테스트 다시보기");
         assert_eq!(meta.channel_name, "테스트채널");
         assert_eq!(
             meta.channel_id.as_deref(),
             Some("000000000000000000000000000000a1")
         );
         assert_eq!(meta.live_open_date.as_deref(), Some("2026-01-02 12:00:00"));
-        assert_eq!(meta.publish_date.as_deref(), Some("2026-03-04 05:06:07"));
+        assert_eq!(meta.publish_date.as_deref(), Some("2026-01-02 13:00:00"));
         assert!(!meta.adult);
         assert_eq!(meta.duration_secs, Some(740.0));
 
         let Playback::LiveRewind { master_url, tracks } = classify(&v).unwrap() else {
             panic!("LiveRewind가 아니다");
         };
-        assert_eq!(
-            master_url.host_str(),
-            Some("hls.example.invalid")
-        );
+        assert_eq!(master_url.host_str(), Some("hls.example.invalid"));
         assert_eq!(
             master_url.path(),
-            "/chzzk/kr/live_rewind/c/live_rewind_kr/streamkey0/vod_playlist.m3u8"
+            "/live_rewind/kr/streamkey0/vod_playlist.m3u8"
         );
-        assert!(
-            master_url
-                .query()
-                .unwrap()
-                .starts_with("hdnts=st=0~exp=0")
-        );
+        assert!(master_url.query().unwrap().starts_with("hdnts=st=0~exp=0"));
 
         // spec §4.1 표: encodingTrack 순서 그대로
         let rows: Vec<_> = tracks
@@ -462,12 +458,12 @@ mod tests {
             Some("000000000000000000000000000000b2")
         );
         assert!(meta.title.starts_with("가상 일반 VOD"));
-        assert_eq!(meta.live_open_date.as_deref(), Some("2026-10-04 23:00:00"));
+        assert_eq!(meta.live_open_date.as_deref(), Some("2026-01-01 23:00:00"));
         assert_eq!(
             classify(&v).unwrap(),
             Playback::Dash {
-                video_id: "0000000000000000000000000000000000B02".into(),
-                in_key: "V100000000000000000000000000000000000000000000000000000000000000000000000000000000b2".into(),
+                video_id: "000000000000000000000000000000000B02".into(),
+                in_key: VOD_IN_KEY.into(),
             }
         );
     }
@@ -481,7 +477,7 @@ mod tests {
         assert!(matches!(classify(&v).unwrap(), Playback::Dash { in_key, .. } if in_key == "K"));
     }
 
-    /// AES VOD에도 inKey가 있다(실측). encryptionType이 먼저다.
+    /// AES VOD에도 inKey가 있다. encryptionType이 먼저다.
     #[test]
     fn classify_aes_precedence() {
         let (_, v) = video_content("testdata/synthetic/vod_info_aes.json");
@@ -489,8 +485,8 @@ mod tests {
             classify(&v).unwrap(),
             Playback::Encrypted {
                 method: "AES".into(),
-                video_id: "0000000000000000000000000000000000B02".into(),
-                in_key: Some("V100000000000000000000000000000000000000000000000000000000000000000000000000000000b2".into()),
+                video_id: "000000000000000000000000000000000B02".into(),
+                in_key: Some(VOD_IN_KEY.into()),
             }
         );
     }
@@ -614,12 +610,12 @@ mod tests {
             (
                 "testdata/clip/clip_playinfo.json",
                 "테스트 클립 하나",
-                "0000000000000000000000000000000000C03",
+                "000000000000000000000000000000000C03",
             ),
             (
                 "testdata/clip/clip_multi_playinfo.json",
                 "테스트 클립 둘 - A vs B | 여러 화질 #태그",
-                "0000000000000000000000000000000000C04",
+                "000000000000000000000000000000000C04",
             ),
         ];
         for (rel, title, vid) in cases {

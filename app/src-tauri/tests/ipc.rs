@@ -254,7 +254,7 @@ fn hanging_server() -> MockServer {
 }
 
 const VOD_NO: u64 = 9000002;
-const VOD_VIDEO_ID: &str = "0000000000000000000000000000000000B02";
+const VOD_VIDEO_ID: &str = "000000000000000000000000000000000B02";
 const QUALITY: &str = "PD_720P_TEST";
 const MEDIA_PATH: &str = "/m1/pd/a.mp4";
 

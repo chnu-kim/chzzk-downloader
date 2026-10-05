@@ -1,4 +1,4 @@
-//! HLS master·media playlist 손 파서(설계 §3.2·§1-17, research §3·§5·§6).
+//! HLS master·media playlist 손 파서(설계 §3.2·§1-17).
 //!
 //! - 필요한 태그만 해석하고, 조용히 이어 붙이면 깨진 파일이 나오는 태그는 `Error::Unsupported`로 거부한다.
 //! - 태그 이름은 `:` 앞까지를 **정확히** 비교한다(`#EXT-X-DISCONTINUITY-SEQUENCE`는 허용,
@@ -343,8 +343,8 @@ mod tests {
     use super::*;
     use crate::testutil::fixture_str;
 
-    const MASTER_BASE: &str = "https://hls.example.invalid/chzzk/kr/live_rewind/c/live_rewind_kr/streamkey0/vod_playlist.m3u8?hdnts=st=0~exp=0~acl=*/kr/*~hmac=0000";
-    const MEDIA_BASE: &str = "https://hls.example.invalid/chzzk/kr/live_rewind/c/live_rewind_kr/streamkey0/144p/hdntl=exp=0~acl=*/kr/*~data=hdntl~hmac=0000/vod_chunklist.m3u8";
+    const MASTER_BASE: &str = "https://hls.example.invalid/live_rewind/kr/streamkey0/vod_playlist.m3u8?hdnts=st=0~exp=0~acl=*/kr/*~hmac=0000";
+    const MEDIA_BASE: &str = "https://hls.example.invalid/live_rewind/kr/streamkey0/144p/hdntl=exp=0~acl=*/kr/*~data=hdntl~hmac=0000/vod_chunklist.m3u8";
 
     fn media_base() -> Url {
         Url::parse(MEDIA_BASE).unwrap()
@@ -377,7 +377,7 @@ mod tests {
         let v144 = &vs[3];
         assert_eq!(
             v144.uri.as_str(),
-            "https://hls.example.invalid/chzzk/kr/live_rewind/c/live_rewind_kr/streamkey0/144p/hdntl=exp=0~acl=*/kr/*~data=hdntl~hmac=0000/vod_chunklist.m3u8"
+            "https://hls.example.invalid/live_rewind/kr/streamkey0/144p/hdntl=exp=0~acl=*/kr/*~data=hdntl~hmac=0000/vod_chunklist.m3u8"
         );
         // master의 hdnts 쿼리는 전파하지 않는다.
         for v in &vs {
@@ -439,14 +439,9 @@ mod tests {
             p.segments[0]
                 .uri
                 .as_str()
-                .ends_with("~hmac=0000/144p_1000_1700000000000_0_0_0.m4v")
+                .ends_with("~hmac=0000/144p_seg0.m4v")
         );
-        assert!(
-            p.segments[29]
-                .uri
-                .as_str()
-                .ends_with("/144p_1000_1700000000000_58_0_29.m4v")
-        );
+        assert!(p.segments[29].uri.as_str().ends_with("/144p_seg29.m4v"));
 
         // 지문: 2000ms × 30의 crc32. 고정값은 Python `zlib.crc32(struct.pack("<30I", *[2000]*30))`로 따로 계산했다.
         assert_eq!(durations_crc(&p), crc_of(&[2000; 30]));

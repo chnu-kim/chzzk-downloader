@@ -1,0 +1,43 @@
+name: public-scan
+
+# 공개 저장소 누출 검사(scripts/ci/public-scan.mjs). 경로 필터 없이 모든 push·PR에서 돈다.
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: public-scan-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  scan:
+    name: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Disable autocrlf
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@v4
+        with:
+          # --all-history가 모든 커밋을 보려면 얕은 클론이면 안 된다
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: scanner tests
+        run: node --test scripts/ci/public-scan.test.mjs
+      - name: fixtures match generator
+        run: node scripts/fixtures/gen-fixtures.mjs --check
+      - name: scan tracked files
+        run: node scripts/ci/public-scan.mjs
+      # 비공개 원본 저장소의 이력에는 원본이 남아 있다. 공개 저장소(filter-repo 결과)에서만 이력을 본다.
+      - name: scan all history
+        if: ${{ !github.event.repository.private }}
+        run: node scripts/ci/public-scan.mjs --all-history

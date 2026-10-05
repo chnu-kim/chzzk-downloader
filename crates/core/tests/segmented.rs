@@ -31,7 +31,7 @@ fn request(out: &Path, concurrency: u8) -> DownloadRequest {
 }
 
 fn out_path(dir: &tempfile::TempDir) -> PathBuf {
-    dir.path().join("[261005] 테스트채널 - 123.mp4")
+    dir.path().join("[260102] 테스트채널 - 테스트 다시보기.mp4")
 }
 
 /// info가 `{server}{prefix}/master.m3u8`를 가리키게 mount한다. `times`면 그 횟수만.
@@ -86,7 +86,7 @@ fn box_types(mut b: &[u8]) -> Vec<String> {
     out
 }
 
-/// 실물 fixture(init·seg0·seg1)로 이어 붙인 결과가 init‖seg0‖seg1이고 상자 순서가 맞다.
+/// 합성 fixture(init·seg0·seg1)로 이어 붙인 결과가 init‖seg0‖seg1이고 상자 순서가 맞다.
 #[tokio::test]
 async fn fixture_concat_box_order() {
     let server = MockServer::start().await;
@@ -96,7 +96,7 @@ async fn fixture_concat_box_order() {
         .respond_with(ResponseTemplate::new(200).set_body_raw(info, "application/json"))
         .mount(&server)
         .await;
-    // 실물 media playlist에서 앞 두 세그먼트만 남긴다.
+    // fixture media playlist에서 앞 두 세그먼트만 남긴다.
     let media = String::from_utf8(fixture("testdata/hls/media.m3u8")).unwrap();
     let mut kept = Vec::new();
     let mut uris = 0;
@@ -114,14 +114,8 @@ async fn fixture_concat_box_order() {
         ("/vod_playlist.m3u8", fixture("testdata/hls/master.m3u8")),
         ("/vod_chunklist.m3u8", media.into_bytes()),
         ("/144p_0_0_0.m4s", fixture("testdata/hls/init.mp4")),
-        (
-            "/144p_1000_1700000000000_0_0_0.m4v",
-            fixture("testdata/hls/seg0.m4v"),
-        ),
-        (
-            "/144p_1000_1700000000000_2_0_1.m4v",
-            fixture("testdata/hls/seg1.m4v"),
-        ),
+        ("/144p_seg0.m4v", fixture("testdata/hls/seg0.m4v")),
+        ("/144p_seg1.m4v", fixture("testdata/hls/seg1.m4v")),
     ];
     for (s, body) in mounts {
         Mock::given(method("GET"))

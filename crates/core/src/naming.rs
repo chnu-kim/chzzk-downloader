@@ -473,11 +473,11 @@ mod tests {
         for p in ALL {
             assert_eq!(
                 default_filename(&fixture_meta("testdata/hls/video_info.json"), p),
-                "[261005] 테스트채널 - 123.mp4"
+                "[260102] 테스트채널 - 테스트 다시보기.mp4"
             );
             assert_eq!(
                 default_filename(&fixture_meta("testdata/vod/video_info.json"), p),
-                "[261004] 가상채널 - 가상 일반 VOD 제목 (괄호) 테스트.mp4"
+                "[260101] 가상채널 - 가상 일반 VOD 제목 (괄호) 테스트.mp4"
             );
             assert_eq!(
                 default_filename(&fixture_meta("testdata/clip/clip_playinfo.json"), p),

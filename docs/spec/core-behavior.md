@@ -1,12 +1,12 @@
 # 코어 행동 명세 (Go → Rust 이식 기준)
 
-> 참고: Go 소스(`cmd/`, `internal/`)는 §10-16 커밋에서 삭제됐다. 이 문서가 옛 동작의 기록으로 남는다. 클립 fixture는 `testdata/clip/`으로 옮겼다.
+> 참고: Go 소스(`cmd/`, `internal/`)는 §10-16 커밋에서 삭제됐다. 이 문서가 옛 동작의 기록으로 남는다. fixture는 모두 `testdata/`의 합성 파일이다.
 
 Rust 코어(`crates/core`)를 만들고 테스트할 때 기준으로 삼는 문서다. 기준 시점은 `fa21e56`(브랜치 `chore/harness-reset`)의 Go 코드다.
 
 - 이 문서는 **코드가 실제로 하는 일**을 적는다. `CLAUDE.md`나 작업 지시문의 설명과 다르면 코드를 따른다(차이는 §10에 모았다).
 - 아래 golden 값은 손으로 계산하지 않았다. 저장소를 건드리지 않는 `go test -overlay`로 Go 함수를 직접 실행해 뽑았다.
-- 실물 fixture는 두 묶음이다. 클립(`internal/api/testdata/`)과 빠른 다시보기(`testdata/hls/`: VOD info JSON(`inKey: null`), `liveRewindPlaybackJson`, master/media m3u8, fMP4 세그먼트. 조사 기록은 `docs/research/hls-live-rewind.md`)다. **일반 VOD(DASH, `inKey` 있음)의 info JSON과 MPD는 fixture 파일이 없다.** 이 부분의 서술은 "Go 코드가 읽는 경로와 research 문서 §10의 관찰 기준"이며, 본문에서는 `[실물 미확인]`으로 표시한다.
+- fixture는 실물 응답의 구조를 본뜬 합성 파일이다(`testdata/README.md`). 클립(`testdata/clip/`)과 빠른 다시보기(`testdata/hls/`: VOD info JSON(`inKey: null`), `liveRewindPlaybackJson`, master/media m3u8, fMP4 세그먼트)가 있다. 본문의 "research §n"은 비공개 사전 조사 기록을 가리킨다. **일반 VOD(DASH, `inKey` 있음)의 info JSON과 MPD는 fixture 파일이 없다.** 이 부분의 서술은 "Go 코드가 읽는 경로와 research 문서 §10의 관찰 기준"이며, 본문에서는 `[실물 미확인]`으로 표시한다.
 
 ---
 
@@ -102,11 +102,11 @@ MPD 요청은 위 헤더에 `Accept: application/dash+xml, application/xml, */*`
 | `content.vodStatus` | string, 빠른 다시보기 `"NONE"`, 인코딩 후 `"ABR_HLS"`(research §1) | 파싱하지만 사용하지 않는다 |
 | `content.channel.channelName` | string | 파일명, 제목 |
 | `content.liveRewindPlaybackJson` | **JSON을 담은 문자열** (fixture로 확인) | inKey가 없을 때만 쓴다 (§4.1) |
-| `content.encryptionType` | string \| null (`"AES"` 가능, research §10) | **파싱하지 않는다** |
+| `content.encryptionType` | string \| null (`"AES"` 가능) | **파싱하지 않는다** |
 
 - Go `encoding/json`은 string 필드에 온 `null`을 조용히 `""`로 둔다(Go로 확인). **Rust serde의 `String`은 null에서 실패한다.** 이 필드들은 `Option<String>`으로 받고 `None`과 `""`를 같게 취급한다.
-- `content.channel.channelId`는 **파싱하지 않는다.** fixture에 `content.channel.channelId`(`000000000000000000000000000000a1`)로 있으므로 Phase 3 본인 채널 검사에 이 경로를 쓴다. `content.adult`(bool)도 있지만 읽지 않는다.
-- `encryptionType: "AES"` VOD(research §10)는 MPD에 `video/mp4` AdaptationSet이 없다. Go에서는 `GetVODQualities`가 **오류 없이 빈 목록**을 돌려주고, main이 `사용 가능한 품질 정보를 찾지 못했습니다`를 출력한다(`main.go:217-222`). Rust는 info 단계에서 `encryptionType`을 보고 "암호화 VOD 미지원" 오류를 따로 낸다.
+- `content.channel.channelId`는 **파싱하지 않는다.** fixture에 `content.channel.channelId`(32자리 hex)로 있으므로 Phase 3 본인 채널 검사에 이 경로를 쓴다. `content.adult`(bool)도 있지만 읽지 않는다.
+- 암호화(AES) VOD는 지원하지 않으며 명확한 오류로 거부한다. Rust는 info 단계에서 `encryptionType`을 보고 "암호화 VOD 미지원" 오류를 따로 낸다(설계 §11).
 
 ### 3.2 클립 정보
 
@@ -125,7 +125,7 @@ MPD 요청은 위 헤더에 `Accept: application/dash+xml, application/xml, */*`
 | `content.adult` | bool | **파싱하지만 사용하지 않는다** |
 | `content.ownerChannel.channelName` | string | VodInfo.Channel.ChannelName으로 매핑 |
 
-fixture에는 있지만 읽지 않는 필드: `content.ownerChannel.channelId`(예: `000000000000000000000000000000c3`, Phase 3에 필요), `contentId`, `contentType`(`"CLIP"`), `userAdultStatus`(`"NOT_LOGIN_USER"`), `makerChannel`. 클립에는 `liveOpenDate`가 없으므로 VodInfo.LiveOpenDate는 `""`이다.
+fixture에는 있지만 읽지 않는 필드: `content.ownerChannel.channelId`(32자리 hex, Phase 3에 필요), `contentId`, `contentType`(`"CLIP"`), `userAdultStatus`(`"NOT_LOGIN_USER"`), `makerChannel`. 클립에는 `liveOpenDate`가 없으므로 VodInfo.LiveOpenDate는 `""`이다.
 
 ### 3.3 재생 MPD (VOD DASH와 클립이 같은 API)
 
@@ -239,10 +239,10 @@ pub fn select_source(r: &Resolved, quality_id: &str) -> Result<VodSource, Error>
 // VodSource { url, kind: Progressive | Hls { variant_url } }
 ```
 
-> **정정(설계 §12-2)**: `Playback`에 `Encrypted`를 더했다. 판정 순서는 `encryptionType` → `inKey` → `liveRewindPlaybackJson`이다(AES VOD에도 `inKey`가 있으므로 `encryptionType`을 먼저 본다, 9000003 실측). 이 분기는 순수 함수 `info::classify` 한 곳에만 있다. `select_source`는 동기 함수로 두지 않고 `Chzzk::download` 안에서 재조회 결과의 variant·rep를 고른다. 확정 API는 `docs/design/core.md` §3.
+> **정정(설계 §12-2)**: `Playback`에 `Encrypted`를 더했다. 판정 순서는 `encryptionType` → `inKey` → `liveRewindPlaybackJson`이다(AES VOD에도 `inKey`가 있으므로 `encryptionType`을 먼저 본다). 이 분기는 순수 함수 `info::classify` 한 곳에만 있다. `select_source`는 동기 함수로 두지 않고 `Chzzk::download` 안에서 재조회 결과의 variant·rep를 고른다. 확정 API는 `docs/design/core.md` §3.
 
 - 선택 규칙은 **`rep.id` 정확 일치**와 PD 필터다. 숫자열 추출은 버린다.
-  - 근거: `vod.go:380-382`의 작성자 주석과 research §10의 관찰(비암호화 VOD 4개의 MPD에 `video/mp4` PD_1080P/PD_720P/PD_144P + `video/mp2t` + `audio/mp4`). VOD MPD fixture는 `testdata/vod/`로 확보했고 PD 필터 테스트(`mpd::vod_pd_filter`)를 VOD에도 걸었다(정정 §12-12).
+  - 근거: `vod.go:380-382`의 작성자 주석과 research §10의 관찰(비암호화 VOD 4개의 MPD에 `video/mp4` PD_1080P/PD_720P/PD_144P + `video/mp2t` + `audio/mp4`). VOD MPD 구조는 합성 fixture `testdata/vod/`로 고정했고 PD 필터 테스트(`mpd::vod_pd_filter`)를 VOD에도 걸었다(정정 §12-12).
 - HLS도 `quality_id`(encodingTrackId)로 variant를 고르게 한다. variant URI의 첫 디렉토리 이름이 encodingTrackId와 같다(`720p/hdntl=.../vod_chunklist.m3u8`, research §3).
 - 서명 URL이 만료되므로 `resolve`는 다운로드 직전에 다시 호출한다. Go처럼 목록 조회 때 받은 URL을 오래 들고 있지 않는다.
 - 재조회 사이에 재생 종류가 바뀔 수 있다(빠른 다시보기 → 인코딩 완료 후 `inKey` 생김). Go는 이때 `"720p"`에서 `720`을 뽑아 DASH `resolution` 라벨과 **우연히** 맞춘다. Rust는 목록 때의 `Playback` 종류와 다르면 화질 목록을 다시 보여 주거나 오류를 낸다.
@@ -263,9 +263,9 @@ pub fn select_source(r: &Resolved, quality_id: &str) -> Result<VodSource, Error>
 
 - `MPD@type="static"`, `mediaPresentationDuration="PT30.000S"`, `nvod:expireTime`
 - AdaptationSet 1: `mimeType="video/mp4"`
-  - `PD_720P_1280_2048_192`: bandwidth `1800000`, width `720`, height `1280`, frameRate `30`. 라벨 qualityId `720P_1280_2048_192`, fps `30`, resolution `720`. BaseURL `https://clip.example.invalid/glive-clip/.../pd/.../1f2a4548-....mp4?hdnts=...`
+  - `PD_720P_1280_2048_192`: bandwidth `1800000`, width `720`, height `1280`, frameRate `30`. 라벨 qualityId `720P_1280_2048_192`, fps `30`, resolution `720`. BaseURL `https://{미디어 호스트}/.../pd/.../{uuid}.mp4?hdnts=...`
   - `PD_480P_854_1024_128`: bandwidth `1000000`, width `480`, height `854`, frameRate `30`. resolution `480`. BaseURL은 `/pd/` 경로의 `.mp4`
-- AdaptationSet 2: `mimeType="video/mp2t"`(HLS, `nvod:m3u` 속성). Representation id는 UUID(`00000000-0000-0000-0000-0000000000c1` 등)이고 BaseURL은 `.../hls/` 디렉토리다.
+- AdaptationSet 2: `mimeType="video/mp2t"`(HLS, `nvod:m3u` 속성). Representation id는 UUID이고 BaseURL은 `.../hls/` 디렉토리다.
 - 세로 영상이라 `height`(1280)와 `resolution` 라벨(720)이 **다르다.** 해상도 표기는 라벨을 우선해야 한다.
 
 ### 5.3 PD 판정 (`clip.go:133-138`)
@@ -356,7 +356,7 @@ pub fn select_source(r: &Resolved, quality_id: &str) -> Result<VodSource, Error>
 - 알려진 문제: `state.durationFound`를 잠금 없이 읽고(`hls.go:177`), `ffmpegCmd.ProcessState`를 다른 고루틴에서 읽는다(`:156`, data race). 루프 안에서 매번 `regexp.MustCompile`한다.
 
 Rust 대체 요구사항(ROADMAP Phase 1):
-- master playlist에서 encodingTrackId에 해당하는 variant를 고르고, media playlist의 세그먼트를 차례로 받아 이어 붙인다. 사전 조사 결과(`docs/research/hls-live-rewind.md`, fixture `testdata/hls/`): **fMP4**(`EXT-X-MAP` init + `.m4v` 세그먼트, 오디오·비디오 muxed), `EXT-X-KEY` 없음, 모든 URI는 상대경로, 서명은 master의 `hdnts` 쿼리와 media·세그먼트 경로 안의 `hdntl=...` 디렉토리다. UA·Referer·쿠키는 필요 없다. 지원하지 않는 태그(DISCONTINUITY, 두 번째 MAP, KEY)를 만나면 실패한다.
+- master playlist에서 encodingTrackId에 해당하는 variant를 고르고, media playlist의 세그먼트를 차례로 받아 이어 붙인다. 사전 조사 결과(비공개 조사 기록, 구조는 합성 fixture `testdata/hls/`): **fMP4**(`EXT-X-MAP` init + `.m4v` 세그먼트, 오디오·비디오 muxed), `EXT-X-KEY` 없음, 모든 URI는 상대경로, 서명은 master의 `hdnts` 쿼리와 media·세그먼트 경로 안의 `hdntl=...` 디렉토리다. UA·Referer·쿠키는 필요 없다. 지원하지 않는 태그(DISCONTINUITY, 두 번째 MAP, KEY)를 만나면 실패한다.
 - 진행률은 세그먼트 수와 누적 바이트로, ETA는 세그먼트 비율로 계산한다.
   - **정정(설계 §12-4)**: ETA는 세그먼트 수가 아니라 **EXTINF 누적 비율**(받은 미디어 초 / 전체 미디어 초)로 계산한다. 마지막 세그먼트가 짧아도 왜곡되지 않는다.
 - 실패하면 `.part`를 지우거나, 재개 가능하게 남긴다.(→ 남긴다. 정정 §12-5)
@@ -403,7 +403,7 @@ autoFilename = SanitizeFilename(위 문자열)
 | `""` | (`""`, `""`) |
 | `24-01-02 01:02:03` | (`0102_010203`, `24-01-02`) (자릿수 검증 없음) |
 | `2024-01-02T12:34:56` | (`240102T12:34:56_000000`, `2024-01-02T12:34:56`) (ISO 형식이면 날짜가 아니라 문자열 전체가 startTime이 된다) |
-| `2026-01-02 12:00:00` (fixture) | (`261005_060835`, `2026-10-05`) → 파일명 `_2026-10-05_ 테스트채널 123.mp4` |
+| `2026-01-02 12:00:00` (fixture) | (`260102_060835`, `2026-01-02`) → 파일명 `_2026-01-02_ 테스트채널 테스트 다시보기.mp4` |
 
 `SanitizeFilename(name)` (`utils.go:12-42`):
 1. 확장자 분리: `.`을 포함하고 `.`으로 끝나지 않으면 마지막 `.` 뒤를 확장자로 본다. 확장자에는 아무것도 하지 않는다.
@@ -551,7 +551,7 @@ ok  	chzzk-downloader/internal/downloader	1.383s
 - **TestSelectClipBaseURLFromMPD** (`testdata/clip_multi.mpd`)
   - `PD_720P_1280_2048_192` → URL이 `/pd/`와 `.mp4`를 포함한다.
   - `PD_NONEXISTENT` → 오류
-- fixture `clip_playinfo.json`, `clip_multi_playinfo.json`은 **어떤 테스트에서도 쓰지 않는다.** Rust에서는 `parse_clip_info` 테스트에 쓴다. 기대값: code 200, `contentTitle`(`테스트 클립 하나` / `테스트 클립 둘 - A vs B | 여러 화질 #태그`), videoId(`0000000000000000000000000000000000C03` / `0000000000000000000000000000000000C04`), inKey가 비어 있지 않음, adult false, channelName `클립채널`, channelId `000000000000000000000000000000c3`
+- fixture `clip_playinfo.json`, `clip_multi_playinfo.json`은 **어떤 테스트에서도 쓰지 않는다.** Rust에서는 `parse_clip_info` 테스트에 쓴다. 기대값: code 200, `contentTitle`, videoId, inKey가 비어 있지 않음, adult false, `ownerChannel`의 channelName·channelId(값은 합성 fixture를 따른다).
 
 ### 8.2 `internal/downloader/direct_test.go` → download
 
@@ -633,13 +633,12 @@ ok  	chzzk-downloader/internal/downloader	1.383s
 
 ## 10. 열린 질문·추가로 확보할 것
 
-1. **fixture 부족**: 빠른 다시보기(inKey 없음)는 `testdata/hls/`로 확보했다. ~~일반 VOD(inKey 있음)의 info JSON과 MPD는 아직 fixture 파일이 없다.~~ **정정(설계 §12-12)**: 일반 VOD의 info와 MPD는 `testdata/vod/`로 확보했다(`video/mp4` PD_144P·PD_720P + `video/mp2t` + `audio/mp4`, `ContentProtection` 없음). AES 지원 여부는 설계 §11(기본값 거부). 당시 남은 확인 사항:
-   - VOD MPD fixture 파일 확보. research §10은 비암호화 VOD 4개에서 `PD_*` + `/pd/` rep를 관찰했다. 이 관찰을 테스트로 고정해야 Rust PD 필터를 VOD에도 확정할 수 있다.
-   - `encryptionType: "AES"` VOD를 지원할지(research §11.1). 지원하지 않으면 §3.1처럼 info 단계에서 명확한 오류를 낸다.
+1. **fixture 부족**: 빠른 다시보기(inKey 없음)는 `testdata/hls/`로 확보했다. ~~일반 VOD(inKey 있음)의 info JSON과 MPD는 아직 fixture 파일이 없다.~~ **정정(설계 §12-12)**: 일반 VOD의 info와 MPD 구조를 확인하고 합성 fixture `testdata/vod/`로 고정했다(`video/mp4` PD_144P·PD_720P + `video/mp2t` + `audio/mp4`, `ContentProtection` 없음). AES 지원 여부는 설계 §11(기본값 거부). 당시 남은 확인 사항:
+   - VOD MPD fixture 파일 확보. 비암호화 VOD의 `PD_*` + `/pd/` rep 관찰을 테스트로 고정해야 Rust PD 필터를 VOD에도 확정할 수 있다.
+   - 암호화(AES) VOD: 지원하지 않으며 명확한 오류로 거부한다(설계 §11).
    - `media[]`에 둘 이상이 오는 경우가 있는지(표본에서는 1개)
    - (해결됨) `encodingTrackId` 형식(`"720p"`)과 variant 디렉토리의 대응, VOD 응답의 `channel.channelId` 경로
-   - 참고: research §10은 AES VOD에서 Go가 "원하는 품질의 BaseURL을 찾을 수 없습니다"로 실패한다고 적었지만, 실제로는 그 전에 `GetVODQualities`가 빈 목록을 돌려주고 main이 `사용 가능한 품질 정보를 찾지 못했습니다`에서 멈춘다(§3.1).
 2. **성인/구독자 전용 컨텐츠 오류 형태**: 쿠키가 없을 때 info API가 어떤 code와 message를 주는지, `inKey`와 `liveRewindPlaybackJson`이 비어서 오는지
 3. **파일명 형식**: 현재 `_YYYY-MM-DD_ 채널 제목.mp4`(사실상 의도치 않은 결과)를 유지할지, `[YYMMDD_HHMMSS]`나 `[YYYY-MM-DD]`로 바꿀지
-4. **미디어 요청 Cookie**: HLS CDN(`navercdn.com`)은 UA·Referer·쿠키 없이 URL 서명만으로 받아진다(research §7). PD mp4의 pstatic CDN이 쿠키 없이도 받아지는지는 아직 확인하지 않았다. **정정(설계 §12-8)**: 비성인 PD는 쿠키·Referer 없이 받아짐을 실측했다(2026-10-05, 9000002·9000006·클립 TestClip01). Rust는 미디어에 쿠키를 보내지 않는다. 성인 PD는 미실측(`cookies_on_media` 스위치로 대비).
+4. **미디어 요청 Cookie**: HLS CDN(`navercdn.com`)은 UA·Referer·쿠키 없이 URL 서명만으로 받아진다(research §7). PD mp4의 pstatic CDN이 쿠키 없이도 받아지는지는 아직 확인하지 않았다. **정정(설계 §12-8)**: 비성인 PD는 쿠키·Referer 없이 받아짐을 실측했다(2026-10-05, 공개 VOD 2개·클립 1개). Rust는 미디어에 쿠키를 보내지 않는다. 성인 PD는 미실측(`cookies_on_media` 스위치로 대비).
 5. **문서 정합성**: `CLAUDE.md`가 옛 내용이다(streamlink, `DownloadHLS`, 이어받기, 주석 처리된 `ensureDependencies` 호출 모두 현재 코드에 없음). Phase 1에서 함께 갱신한다.

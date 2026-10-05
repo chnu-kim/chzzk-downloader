@@ -7,7 +7,7 @@
 - 인가 URL은 `https://chzzk.naver.com/account-interlock`, 토큰 API는 `https://openapi.chzzk.naver.com`이다. 파라미터 이름은 camelCase(`clientId`, `redirectUri`)다.
 - PKCE는 없다. 토큰 교환은 `clientSecret`이 필수라 데스크톱 앱이 직접 교환할 수 없다. Worker 대행이 맞다.
 - **Redirect URI는 앱 등록 시 입력한 값과 정확히 일치해야 한다.** loopback 임의 포트와 커스텀 스킴 허용 여부는 확인 불가다. 문서 예시가 `http://localhost:8080/api/path`이긴 하나 규칙 문서는 아니다. 설계는 "HTTPS Worker 콜백 하나만 등록"으로 가정해 이 불확실성을 피한다.
-- OAuth `channelId`와 비공식 서비스 API의 `channelId`는 같은 32자리 hex 형식이다. 비공식 API 쪽 세 경로(videos v3, play-info/clip, channels)가 서로 같은 값을 주는 것은 실측으로 확인했다. 단 **OAuth `users/me` 값과의 직접 대조는 실제 로그인이 필요해 미실시**다(10절).
+- OAuth `channelId`와 서비스 API(영상 정보·클립 play-info)의 `channelId`는 같은 32자리 hex 형식이다. 단 **OAuth `users/me` 값과의 직접 대조는 실제 로그인이 필요해 미실시**다(10절).
 - 클립은 `ownerChannel`(스트리머)과 `makerChannel`(클립 만든 사람)이 다르다. "본인 영상" 검사 기준을 정해야 한다.
 
 ## 2. 인가 요청
@@ -174,25 +174,16 @@ Redirect 규칙이 불확실하므로 **Worker 콜백(HTTPS 고정 URL 하나)�
 
 가능하면 개발자 센터에 앱을 등록할 때 loopback·커스텀 스킴이 입력 가능한지만이라도 실제로 시험해 이 문서에 반영한다.
 
-## 10. 채널 ID 동일성 (OAuth vs 비공식 서비스 API)
+## 10. 채널 ID 동일성 (OAuth vs 서비스 API)
 
-실측 (2026-10-05, 공개 채널 `표본채널`):
+공개 채널 하나로 확인했다(2026-10-05).
 
-| 출처 | 필드 | 값 | 길이 |
-|---|---|---|---|
-| `GET api.chzzk.naver.com/service/v3/videos/9000004` | `content.channel.channelId` | `000000000000000000000000000000a1` | 32 hex |
-| `GET api.chzzk.naver.com/service/v1/play-info/clip/TestClip03` | `content.ownerChannel.channelId` | `000000000000000000000000000000a1` | 32 hex |
-| `GET api.chzzk.naver.com/service/v1/channels/{id}/clips` | `data[].ownerChannelId` | 동일 | |
-| `GET api.chzzk.naver.com/service/v1/channels/{id}` | `content.channelId` | 동일 | |
-| 공식 Open API 문서 `users/me`, `lives`, 후원/채팅 이벤트 | `channelId` | 예시 32자 hex | |
-
-- 비공식 서비스 API의 영상·클립·채널 세 갈래가 같은 ID 체계를 쓴다는 것은 확인했다.
-- 공식 Open API가 같은 체계인가: **간접 근거만 있다.** 공식 문서는 라이브 목록의 `channelId`를 "채널 ID(채널 식별자)"라 하고 `users/me`의 예시도 32자 hex인데, 비공식 라이브 목록(`service/v1/lives`)의 `channel.channelId`도 32 hex다. 형식은 같지만 공식 API 응답과의 직접 대조는 못 했다(Open API 호출에 Client-Id/Secret 또는 사용자 토큰이 필요하고 이 조사에는 자격증명이 없다).
-- 검증 방법(자격증명이 생기면 5분): 본인 계정으로 로그인해 `users/me`의 `channelId`와, 본인이 올린 VOD의 `v3/videos/{no}` -> `content.channel.channelId`를 비교한다. 이 비교를 Phase 3 첫 작업으로 넣는다. 일치하지 않으면 앱 쪽 "본인 영상" 검사 설계를 다시 한다.
+- 코어가 읽는 두 경로, 영상 정보의 `content.channel.channelId`와 클립 play-info의 `content.ownerChannel.channelId`는 같은 채널에 대해 같은 값을 준다. 형식은 32자리 소문자 hex다.
+- 공식 Open API 문서의 `users/me`·`lives` 예시 `channelId`도 32자리 hex다. 형식은 같지만 **공식 API 응답과 직접 대조하지는 못했다**(Client-Id/Secret이나 사용자 토큰이 필요한데 이 조사에는 자격증명이 없었다).
+- 검증 방법(자격증명이 생기면 5분): 본인 계정으로 로그인해 `users/me`의 `channelId`와, 본인이 올린 VOD의 영상 정보 `content.channel.channelId`를 비교한다. 이 비교를 Phase 3 첫 작업으로 넣는다. 일치하지 않으면 앱 쪽 "본인 영상" 검사 설계를 다시 한다.
 - 추가 주의:
-  - 클립 `play-info`에는 `ownerChannel`(예: `표본채널`)과 `makerChannel`(클립 제작자, 별개 ID)이 모두 있다. **"본인 영상" 검사는 `ownerChannel.channelId` 기준**으로 하되, 제작자 기준 허용 여부는 정책 결정이 필요하다.
-  - 현재 Go 코드(`internal/api/vod.go`의 `ChannelInfo`, `clip.go`)는 `channelName`만 파싱하고 `channelId`는 버린다. Rust 이식 때 `channelId`를 모델에 추가해야 한다.
-  - ID 비교는 소문자 hex 문자열 정확 일치로 한다.
+  - 클립 `play-info`에는 `ownerChannel`(스트리머)과 `makerChannel`(클립 제작자, 별개 ID)이 모두 있다. **"본인 영상" 검사는 `ownerChannel.channelId` 기준**으로 하되, 제작자 기준 허용 여부는 정책 결정이 필요하다.
+  - ID 비교는 소문자 hex 문자열 정확 일치로 한다(`ownership::is_own_content`).
 
 ## 11. 열린 질문
 

@@ -29,7 +29,7 @@
 ## 사전 조사로 확정된 사실 (2026-10-05)
 
 - 빠른 다시보기 HLS는 **fMP4**(init + `styp/moof/mdat` 세그먼트, 2초), 암호화·byte-range·discontinuity 없음, 상대 URI(경로 안 토큰 서명), 헤더 불필요. **서명 토큰이 약 17시간 뒤 만료**되므로 긴 VOD는 403 시 info→master→media 재조회 후 같은 sequence부터 이어받아야 한다.
-- 일반 VOD 중 `encryptionType: "AES"`인 것은 PD_* progressive URL이 없다(AES에도 `inKey`는 있으므로 `encryptionType`을 먼저 본다). **명확한 오류로 거부(사용자 확정, 2026-10-05)**. 제3자 중계권 콘텐츠의 접근 통제 키 우회 위험 때문. 사실은 `docs/design/core.md` §11.
+- **암호화(AES) VOD는 지원하지 않으며 명확한 오류로 거부한다**(사용자 확정, 2026-10-05). 판별은 `encryptionType` → MPD `ContentProtection` → playlist `EXT-X-KEY` 순이다(`docs/design/core.md` §11).
 - 현 Go 코드의 VOD 화질 선택은 깨져 있다(ID에서 숫자만 뽑아 해상도 비교). Rust에서는 Representation ID 정확 일치로 바꾼다. 버그 목록은 `docs/spec/core-behavior.md` §9.
 - OAuth: PKCE 없음 → Worker 대행 확정. 리디렉트 URI의 loopback 허용 여부는 문서에 없음 → **Worker 콜백 + 일회용 sid 폴링**으로 설계. 일회용 sid 저장소는 KV가 아닌 D1/Durable Object(KV는 최종 일관성).
 - 본인 영상 판정: VOD는 `content.channel.channelId`, 클립은 `ownerChannel.channelId`(제작자 `makerChannel` 아님). OAuth `users/me`의 `channelId`와 같은 식별자인지는 Phase 3에서 실측.
@@ -47,8 +47,8 @@
 
 설계는 `docs/design/core.md`(확정안). 아래 번호는 그 문서 §10의 구현 단계다.
 
-- [x] 사전 조사: 라이브 리와인드 HLS 실물 fixture 확보 (`testdata/hls/`, 결과 `docs/research/hls-live-rewind.md`)
-- [x] 설계 판정 (`docs/design/core.md`) + 일반 VOD DASH fixture 확보 (`testdata/vod/`)
+- [x] 사전 조사: 라이브 리와인드 HLS 구조 확인 (조사 기록은 비공개, fixture는 합성 `testdata/hls/`)
+- [x] 설계 판정 (`docs/design/core.md`) + 일반 VOD DASH 구조 확인 (합성 fixture `testdata/vod/`)
 - [x] §10-1 workspace 골격 + 3 OS CI 설정 (`cargo test -p chzzk-core`)
 - [x] §10-1 남은 항목: 3 OS CI 녹색 확인 (2026-10-05)
 - [x] §10-2~4 순수 함수: progress 포맷, naming, url
@@ -110,3 +110,4 @@
 
 - 2026-10-05: 초기화. CLAUDE.md + settings.json만 둔다.
 - 2026-10-05: CLAUDE.md를 Rust 코어 기준으로 재작성(레이아웃, 검증 게이트 fmt·clippy·test, 실서버 스모크 실행법). Go는 레거시로 표시.
+- 2026-10-05: 공개 저장소 준비. fixture를 합성으로 바꾸고(`scripts/fixtures/gen-fixtures.mjs`), 누출 검사기 `scripts/ci/public-scan.mjs`와 CI `public-scan.yml`을 더했다. 이력 정리 절차는 `docs/public-release.md`.

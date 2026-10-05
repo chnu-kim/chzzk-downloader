@@ -347,7 +347,8 @@ function cmdHook(hook, args, env = process.env) {
 // ---- doctor / install-hooks / list ----
 
 function cmdDoctor() {
-  const names = [...new Set(['node', 'git', 'cargo', 'rustup', 'pnpm', ...Object.keys(TOOLS)])];
+  // toolchain 항목(rust-nightly)은 실행 파일이 아니다(rustup 툴체인 이름)
+  const names = [...new Set(['node', 'git', 'cargo', 'rustup', 'pnpm', ...Object.keys(TOOLS).filter((k) => !TOOLS[k].toolchain)])];
   let bad = 0;
   for (const n of names) {
     const p = probeTool(n);

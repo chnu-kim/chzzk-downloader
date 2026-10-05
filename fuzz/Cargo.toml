@@ -1,0 +1,47 @@
+# cargo-fuzz 대상(docs/design/cicd.md §2 `fuzz`, 구현 중 변경). 루트 워크스페이스와 따로 둔다(자기 [workspace]와 Cargo.lock):
+# 루트의 --locked·cargo deny·machete·hack --workspace와 stable 툴체인에 영향을 주지 않는다. 빌드는 고정한 nightly로만
+# 한다(scripts/ci/tools.json rust-nightly, gate `fuzz`). seed corpus는 testdata/의 합성 fixture를 실행 때 복사한다(fuzz.mjs).
+[package]
+name = "chzzk-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4.12"
+chzzk-core = { path = "../crates/core" }
+url = "2.5.8"
+
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "url"
+path = "fuzz_targets/url.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "info"
+path = "fuzz_targets/info.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "mpd"
+path = "fuzz_targets/mpd.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "hls"
+path = "fuzz_targets/hls.rs"
+test = false
+doc = false
+bench = false

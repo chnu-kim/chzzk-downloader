@@ -41,6 +41,24 @@
       "cargoInstall": "tauri-driver",
       "$comment": "e2e-native 작업(Linux·Windows)만 쓴다. taiki-e/install-action의 manifest에 없고 릴리스 바이너리도 없어 run.mjs install-tool이 cargo install --locked --version으로 깐다(crates.io, 그 crate의 Cargo.lock). --version 플래그가 없어 버전은 설치 명령이 고정한다(probe하지 않는다)"
     },
+    "cargo-fuzz": {
+      "version": "0.13.2",
+      "bin": "cargo-fuzz",
+      "versionArgs": ["--version"],
+      "cargoInstall": "cargo-fuzz",
+      "$comment": "nightly fuzz 작업만 쓴다. taiki-e/install-action manifest에 없어 run.mjs install-tool이 cargo install --locked --version으로 깐다"
+    },
+    "cargo-mutants": {
+      "version": "27.1.0",
+      "bin": "cargo-mutants",
+      "versionArgs": ["mutants", "--version"],
+      "$comment": "weekly mutants 작업만 쓴다(taiki-e/install-action tool:)"
+    },
+    "rust-nightly": {
+      "version": "nightly-2026-10-01",
+      "toolchain": true,
+      "$comment": "fuzz gate가 rustup toolchain install로 까는 고정 nightly(실행 파일이 아니라 툴체인 이름). 바꾸면 fuzz gate가 fuzz/Cargo.lock 그대로 빌드되는지 본다"
+    },
     "rustup-init": {
       "version": "1.29.1",
       "bin": "rustup-init",

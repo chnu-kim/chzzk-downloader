@@ -4,6 +4,7 @@
 //   node scripts/ci/measure.mjs coverage   # cargo llvm-cov(chzzk-core·chzzk-shell) 줄 커버리지 + vitest v8 줄 커버리지
 //   node scripts/ci/measure.mjs tests      # cargo test 목록 수(llvm-cov 빌드를 다시 쓴다) + vitest 통과 테스트 수
 //   node scripts/ci/measure.mjs tests-app  # chzzk-app 테스트 목록 수(tauri gate의 테스트 빌드를 다시 쓴다) → tests.app.<os>
+//   node scripts/ci/measure.mjs tests-playwright  # e2e-web(Playwright) 통과 테스트 수(target/e2e-web/report.json) → tests.playwright
 //   node scripts/ci/measure.mjs size       # app/dist gzip 합, 릴리스 바이너리, 수집한 번들(target/ci/bundle/bundles.json)
 //
 // 값은 CI 러너에서만 기준으로 삼는다(ratchet.mjs write --from-run). 종료 코드: 0, 측정 실패 1, 사용법 2.
@@ -54,6 +55,17 @@ export function vitestCount(json) {
   if (json.success !== true || json.numFailedTests) throw new Error(`vitest 실패 ${json.numFailedTests}개`);
   return json.numPassedTests;
 }
+
+// Playwright json reporter → 통과한 테스트 수(stats.expected). 실패·flaky가 있으면 오류(재시도 없이 돌므로 flaky는 0이어야
+// 한다), 건너뛴 테스트(skip·fixme)는 세지 않는다.
+export function playwrightCount(json) {
+  const s = json?.stats;
+  if (!s || typeof s.expected !== 'number') throw new Error('Playwright JSON에 stats.expected가 없다');
+  if (s.unexpected || s.flaky) throw new Error(`Playwright 실패 ${s.unexpected ?? 0}개, flaky ${s.flaky ?? 0}개`);
+  return s.expected;
+}
+
+export const PLAYWRIGHT_REPORT = 'target/e2e-web/report.json';
 
 // 폴더 아래 파일마다 gzip(level 9) 크기의 합. 순서는 경로순(결정적).
 export function gzipTotal(dir) {
@@ -119,6 +131,11 @@ function testsApp() {
   save('tests', { [`tests.app.${osKey()}`]: countActive(list([]), list(['--ignored'])) });
 }
 
+function testsPlaywright() {
+  const p = join(ROOT, PLAYWRIGHT_REPORT);
+  if (!existsSync(p)) throw new Error(`${p}가 없다(e2e-web gate의 playwright test가 먼저 돌아야 한다)`);
+  save('tests', { 'tests.playwright': playwrightCount(JSON.parse(readFileSync(p, 'utf8'))) });
+}
 function size() {
   const os = osKey();
   const values = {};
@@ -134,7 +151,7 @@ function size() {
   save('size', values);
 }
 
-const MODES = { coverage, tests, 'tests-app': testsApp, size };
+const MODES = { coverage, tests, 'tests-app': testsApp, 'tests-playwright': testsPlaywright, size };
 
 export function main(argv) {
   if (argv.length !== 1 || !Object.hasOwn(MODES, argv[0])) {

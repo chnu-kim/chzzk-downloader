@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { gzipSync } from 'node:zlib';
 import { test } from 'node:test';
 
-import { countActive, countListed, gzipTotal, llvmLinesPct, vitestCount, vitestLinesPct } from './measure.mjs';
+import { countActive, countListed, gzipTotal, llvmLinesPct, playwrightCount, vitestCount, vitestLinesPct } from './measure.mjs';
 
 test('llvm-cov·vitest 커버리지 JSON', () => {
   assert.equal(llvmLinesPct({ data: [{ totals: { lines: { count: 3, covered: 2, percent: 66.666666 } } }] }), 66.67);
@@ -49,4 +49,13 @@ test('gzipTotal: 파일마다 gzip(level 9) 크기의 합, 결정적', () => {
   } finally {
     rmSync(d, { recursive: true, force: true });
   }
+});
+
+test('Playwright: 통과한 테스트만 세고, 실패·flaky가 있으면 오류', () => {
+  assert.equal(playwrightCount({ stats: { expected: 7, unexpected: 0, flaky: 0, skipped: 2 } }), 7);
+  assert.throws(() => playwrightCount({ stats: { expected: 6, unexpected: 1, flaky: 0, skipped: 0 } }), /실패 1개/);
+  assert.throws(() => playwrightCount({ stats: { expected: 6, unexpected: 0, flaky: 1, skipped: 0 } }), /flaky 1개/);
+  assert.throws(() => playwrightCount({}), /stats\.expected/);
+  // skip을 늘리면 수가 준다(ratchet이 잡는다)
+  assert.ok(playwrightCount({ stats: { expected: 5, skipped: 2 } }) < playwrightCount({ stats: { expected: 7, skipped: 0 } }));
 });

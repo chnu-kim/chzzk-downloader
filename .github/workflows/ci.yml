@@ -427,10 +427,11 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
+      # AppImage는 GL 드라이버(libEGL)를 번들하지 않고 사용자 시스템 것을 쓴다(데스크톱에는 있다). deb는 apt가 의존성을 깐다
       - name: linux deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends xvfb xauth
+          sudo apt-get install -y --no-install-recommends xvfb xauth libegl1
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: bundle-linux

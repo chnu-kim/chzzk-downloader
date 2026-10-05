@@ -240,15 +240,23 @@ function smokeNsis(setup) {
   log('NSIS: 설치·실행·제거 통과');
 }
 
+// msiexec /l*v 로그(UTF-16LE를 푼 글) → 마지막 `Property(S): INSTALLDIR = <경로>`(끝의 \ 제거). 없으면 null
+export function msiInstallDir(text) {
+  let dir = null;
+  for (const m of text.matchAll(/^Property\(S\): INSTALLDIR = (.+?)\s*$/gm)) dir = m[1];
+  return dir ? dir.replace(/[\\/]+$/, '') : null;
+}
+
 function smokeMsi(msi) {
-  const name = productName('windows');
   const work = mkdtempSync(join(tmpdir(), 'chzzk-msi-'));
   const abs = resolve(msi);
   try {
     // 3010 = 성공, 재부팅 필요(/norestart)
     sh('msiexec', ['/i', abs, '/qn', '/norestart', '/l*v', join(work, 'install.log')], { ok: [0, 3010] });
-    const pf = [process.env.ProgramFiles, process.env['ProgramFiles(x86)']].filter(Boolean);
-    const dir = installedDir(pf.map((p) => join(p, name)), 'MSI');
+    // 설치 폴더는 WiX 템플릿이 정한다(실측: Program Files\<productName>이 아니었다). 설치 로그의 INSTALLDIR을 읽는다
+    const dir = msiInstallDir(readFileSync(join(work, 'install.log')).toString('utf16le'));
+    if (!dir || !existsSync(dir)) throw new Error(`MSI 설치 로그의 INSTALLDIR(${dir ?? '없음'})이 없다`);
+    log(`MSI 설치 폴더: ${dir}`);
     const exe = join(dir, exeIn(dir));
     const r = runSmoke(exe, { label: `MSI ${basename(exe)}` });
     sh('msiexec', ['/x', abs, '/qn', '/norestart', '/l*v', join(work, 'uninstall.log')], { ok: [0, 3010] });

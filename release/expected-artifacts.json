@@ -12,7 +12,7 @@
   "darwin": {
     "arch": "arm64",
     "bundles": ["app", "dmg"],
-    "extraDirs": ["macos"],
+    "extraDirs": ["macos", "share"],
     "artifacts": [
       { "kind": "dmg", "dir": "dmg", "ext": ".dmg", "name": "darwin-aarch64.dmg", "smoke": "dmg", "size": "darwin-dmg" }
     ]

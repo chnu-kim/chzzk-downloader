@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import { pick } from './bundle.mjs';
-import { bundleSpec, checkMarker } from './smoke.mjs';
+import { bundleSpec, checkMarker, msiInstallDir } from './smoke.mjs';
 
 test('마커: 정확히 {version, ready:true}', () => {
   assert.equal(checkMarker('{"version":"0.1.0","ready":true}\n', '0.1.0').ok, true);
@@ -45,4 +45,10 @@ test('pick: 없음·둘·모르는 번들 폴더는 실패', () => {
   assert.match(pick({ appimage: ['a.AppImage'], deb: ['a.deb'], rpm: ['a.rpm'] }, LINUX).problems.join(), /모르는 번들 폴더 bundle\/rpm/);
   // macOS는 app 번들 폴더(macos)를 허용한다
   assert.equal(pick({ dmg: ['a.dmg'], macos: [] }, bundleSpec().darwin).ok, true);
+});
+
+test('msiInstallDir: 설치 로그의 마지막 INSTALLDIR', () => {
+  const log = 'MSI (s) x\r\nProperty(S): INSTALLDIR = C:\\A\\\r\nProperty(S): INSTALLDIR = C:\\Users\\u\\AppData\\Local\\앱\\\r\nProperty(S): X = 1\r\n';
+  assert.equal(msiInstallDir(log), 'C:\\Users\\u\\AppData\\Local\\앱');
+  assert.equal(msiInstallDir('nothing'), null);
 });

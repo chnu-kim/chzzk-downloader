@@ -191,14 +191,22 @@ export function lintRatchet(ratchet, allowed = PENDING_ALLOWED) {
 }
 
 // gh api repos/<repo>/actions/runs/<id> 응답 → 기준으로 쓸 수 없는 이유 목록. pull_request 실행(fork 코드가 측정)을 막는다.
-export function runProvenance(run, repo) {
+// ci.yml은 실행 전체가 성공해야 한다. nightly.yml은 실행 전체가 설계상 빨갈 수 있어(toolchain·secret 전의 drift 등) 측정을 낸
+// 작업(MEASURING_JOBS)이 성공했는지를 본다(jobs: 그 실행의 [{name, conclusion}]).
+export const MEASURING_JOBS = { '.github/workflows/nightly.yml': ['nightly mutants'] };
+export function runProvenance(run, repo, jobs = []) {
   const errs = [];
   if (!['push', 'workflow_dispatch', 'schedule'].includes(run?.event)) errs.push(`event ${run?.event}(push·workflow_dispatch·schedule만)`);
   if (run?.head_repository?.full_name !== repo) errs.push(`head 저장소 ${run?.head_repository?.full_name} ≠ ${repo}`);
   if (run?.repository?.full_name !== repo) errs.push(`저장소 ${run?.repository?.full_name} ≠ ${repo}`);
-  if (run?.conclusion !== 'success') errs.push(`conclusion ${run?.conclusion}(success만)`);
-  // nightly.yml은 weekly mutants의 측정(ratchet-measurements-mutants)을 낸다
-  if (!['.github/workflows/ci.yml', '.github/workflows/nightly.yml'].includes(run?.path)) errs.push(`워크플로 ${run?.path}(ci.yml·nightly.yml만)`);
+  if (run?.path === '.github/workflows/ci.yml') {
+    if (run?.conclusion !== 'success') errs.push(`conclusion ${run?.conclusion}(success만)`);
+  } else if (Object.hasOwn(MEASURING_JOBS, run?.path ?? '')) {
+    for (const name of MEASURING_JOBS[run.path]) {
+      const c = jobs.find((j) => j.name === name)?.conclusion;
+      if (c !== 'success') errs.push(`작업 '${name}' ${c ?? '없음'}(success만)`);
+    }
+  } else errs.push(`워크플로 ${run?.path}(ci.yml·nightly.yml만)`);
   return errs;
 }
 
@@ -313,7 +321,17 @@ function cmdWrite(root, from, runId) {
       console.error(`ratchet write: 실행 ${runId}을(를) 읽지 못했다: ${v.stderr}`);
       return 2;
     }
-    const errs = runProvenance(JSON.parse(v.stdout), repo);
+    const run = JSON.parse(v.stdout);
+    let jobs = [];
+    if (Object.hasOwn(MEASURING_JOBS, run.path ?? '')) {
+      const j = spawnSync('gh', ['api', `repos/${repo}/actions/runs/${runId}/jobs?per_page=100`, '--jq', '[.jobs[] | {name, conclusion}]'], { cwd: root, encoding: 'utf8' });
+      if (j.status !== 0) {
+        console.error(`ratchet write: 실행 ${runId}의 작업 목록을 읽지 못했다: ${j.stderr}`);
+        return 2;
+      }
+      jobs = JSON.parse(j.stdout || '[]');
+    }
+    const errs = runProvenance(run, repo, jobs);
     if (errs.length) {
       console.error(`ratchet write: 실행 ${runId}은(는) 기준으로 쓸 수 없다: ${errs.join('; ')}`);
       return 2;

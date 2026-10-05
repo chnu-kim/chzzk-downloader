@@ -186,9 +186,15 @@ test('mutants_missed: 늘면 실패, 0도 실제 기준, $pending이면 알림, 
   assert.deepEqual(loosened(M(10), {}), [k]);
 });
 
-test('runProvenance: nightly.yml(schedule·dispatch)도 출처가 될 수 있다(weekly mutants)', () => {
-  const run = { event: 'schedule', head_repository: { full_name: 'o/r' }, repository: { full_name: 'o/r' }, conclusion: 'success', path: '.github/workflows/nightly.yml' };
-  assert.deepEqual(runProvenance(run, 'o/r'), []);
-  assert.equal(runProvenance({ ...run, path: '.github/workflows/other.yml' }, 'o/r').length, 1);
-  assert.equal(runProvenance({ ...run, event: 'pull_request' }, 'o/r').length, 1);
+test('runProvenance: nightly.yml(schedule·dispatch)은 실행 전체가 아니라 측정 작업(nightly mutants)의 성공을 본다', () => {
+  const run = { event: 'schedule', head_repository: { full_name: 'o/r' }, repository: { full_name: 'o/r' }, conclusion: 'failure', path: '.github/workflows/nightly.yml' };
+  const ok = [{ name: 'nightly toolchain', conclusion: 'failure' }, { name: 'nightly mutants', conclusion: 'success' }];
+  assert.deepEqual(runProvenance(run, 'o/r', ok), [], '다른 작업(toolchain)이 빨개도 된다');
+  assert.equal(runProvenance(run, 'o/r', [{ name: 'nightly mutants', conclusion: 'failure' }]).length, 1);
+  assert.equal(runProvenance(run, 'o/r', []).length, 1, '측정 작업이 없으면 안 된다');
+  assert.equal(runProvenance({ ...run, path: '.github/workflows/other.yml' }, 'o/r', ok).length, 1);
+  assert.equal(runProvenance({ ...run, event: 'pull_request' }, 'o/r', ok).length, 1);
+  // ci.yml은 그대로 실행 전체의 성공
+  assert.equal(runProvenance({ ...run, path: '.github/workflows/ci.yml' }, 'o/r', ok).length, 1);
+  assert.deepEqual(runProvenance({ ...run, path: '.github/workflows/ci.yml', conclusion: 'success' }, 'o/r'), []);
 });

@@ -8,17 +8,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 | 경로 | 내용 |
 |---|---|
-| `Cargo.toml` | Rust workspace(`resolver = "3"`, edition 2024, MSRV 1.90). 멤버는 `crates/core`·`crates/shell`·`app/src-tauri` |
+| `Cargo.toml` | Rust workspace(`resolver = "3"`, edition 2024, MSRV 1.90). 멤버는 `crates/core`·`crates/shell`·`app/src-tauri`. 버전은 `[workspace.package] version` 하나이고 `tauri.conf.json`·`app/package.json`과 같아야 한다(`versions` gate) |
 | `crates/core/` | **`chzzk-core`**(lib `chzzk_core`). Tauri 비의존 코어: URL 해석, info/MPD/HLS 파서, `resolve`, 다운로드 엔진(`.part` 이어받기), 파일명, 설정·자격증명·레거시 가져오기 |
 | `crates/core/tests/` | wiremock·raw TCP 통합 테스트(오프라인). `live.rs`는 실서버 `#[ignore]` 스모크, `support/mp4.rs`는 MP4 상자 검사기 |
 | `crates/core/examples/dl.rs` | 실서버 수동 스모크 CLI |
 | `testdata/{hls,vod,clip,synthetic}/` | 합성 fixture(`testdata/README.md`, 생성기 `scripts/fixtures/gen-fixtures.mjs`). 바이트 그대로 체크아웃한다(`.gitattributes`의 `-text`) |
-| `scripts/ci/` | 공개 누출 검사기 `public-scan.mjs`(+`public-denylist.txt` blob 해시 목록, `public-scan.test.mjs`). `--all-history`로 이력 전체, `--staged`로 인덱스 검사(`.githooks/pre-commit`, 선택). 비공개 denylist는 `--denylist`로 넘긴다 |
+| `scripts/ci/` | CI 스크립트(아래 `run.mjs`)와 공개 누출 검사기 `public-scan.mjs`(+`public-denylist.txt` blob 해시 목록, `public-scan.test.mjs`). `--all-history`로 이력 전체, `--staged`로 인덱스 검사(`.githooks/pre-commit`). 비공개 denylist는 `--denylist`로 넘긴다 |
 | `crates/shell/` | **`chzzk-shell`**(Tauri 비의존 앱 셸). DTO·오류 DTO(ts-rs bindings), `Backend` trait, `DownloadManager`(큐·상태 머신·`jobs.json`), `SettingsService`, `App`(command 몸통). 테스트는 `tests/`(가짜 Backend `tests/common/fake.rs`) |
 | `app/` | Vite + Svelte 5 + TS 프런트(`pnpm`, `packageManager`로 버전 고정). `src/lib/api.ts`(command 래퍼), `src/lib/bindings/`(생성물, 손대지 않는다), `src/lib/copy/`(copy deck), `src/lib/components/`·`views/`, vitest는 `*.test.ts` |
 | `app/src-tauri/` | **`chzzk-app`**(lib `chzzk_app_lib`, bin `chzzk-app`). Tauri Builder·플러그인·command 배선·`ChannelSink`·로그·창 닫기 가드, `capabilities/default.json`, `tests/ipc.rs`(mock 런타임 IPC) |
-| `.github/workflows/core.yml` | 3 OS(ubuntu-22.04, macOS, Windows) fmt·clippy·test (`-p chzzk-core`) |
-| `.github/workflows/app.yml` | `shell`(3 OS), `frontend`(ubuntu: check·test·build), `tauri`(3 OS: clippy·test `-p chzzk-app`, PR은 debug no-bundle 빌드, master·수동 실행은 서명 없는 번들 업로드) |
+| `scripts/ci/run.mjs` | **훅과 CI의 단일 진입점** `node scripts/ci/run.mjs <gate>`. gate 표는 `gates.mjs`, 도구 버전은 `tools.json`, 설계는 `docs/design/cicd.md`(끝의 "구현 중 변경"이 본문보다 우선) |
+| `.github/workflows/ci.yml` | 경로 필터 없는 단일 CI: `changes`(문서만 바뀌면 무거운 작업 건너뜀) · `lint` · `scripts (windows)` · `supply` · `rust`(3 OS) · `frontend` · `tauri`(3 OS) · 집계 `ci-ok`(필수 체크는 이것 하나). 모든 `uses:`는 커밋 SHA 고정(`scripts/ci/pin-actions.mjs`) |
+| `rust-toolchain.toml`, `deny.toml`, `_typos.toml`, `zizmor.yml`, `.github/dependabot.yml` | 툴체인 고정(1.96.1, MSRV는 `rust-version` 1.90), cargo-deny, typos, zizmor, Dependabot 설정 |
 
 `crates/core/src` 모듈: `url`(parse_content_url) · `info`(`classify`: **inKey 분기는 이 한 곳**, `encryptionType` → `inKey` → `liveRewindPlaybackJson` 순) · `mpd` · `hls` · `http`(요청 종류별 헤더, `Secret`, `redact_url`) · `client`(`Chzzk::resolve`) · `download/`(`part`·`retry`·`progressive`·`segmented`) · `progress`(`Meter`) · `naming` · `fsutil` · `settings` · `credentials` · `legacy` · `ownership` · `error`.
 
@@ -27,15 +28,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```bash
 cargo fmt --all                                         # 포맷 적용
 
-# 검증 게이트: 커밋 전에 건드린 쪽을 모두 통과해야 한다
-cargo fmt --all --check
-cargo clippy --workspace --all-targets --locked -- -D warnings   # core·shell·app(chzzk-app)
-cargo test --workspace --locked
-(cd app && pnpm install --frozen-lockfile && pnpm check && pnpm test)   # app/을 건드렸을 때
+# 검증 게이트: CI(ci.yml)와 같은 명령이다. 커밋 전에 건드린 쪽을 통과시킨다
+node scripts/ci/run.mjs list                 # gate 목록
+node scripts/ci/run.mjs fmt                  # cargo fmt --all --check
+node scripts/ci/run.mjs rust                 # chzzk-core·chzzk-shell clippy -D warnings + test
+node scripts/ci/run.mjs tauri                # chzzk-app clippy + test + debug 빌드(app/ pnpm install 포함)
+node scripts/ci/run.mjs frontend             # app/: pnpm install --frozen-lockfile, check, test, build
+node scripts/ci/run.mjs scan                 # 공개 누출 검사(추적 파일)
+node scripts/ci/run.mjs scripts-test         # scripts/**/*.test.mjs
+node scripts/ci/run.mjs workflows            # .github/를 바꿨을 때: pin-check + actionlint + zizmor
+node scripts/ci/run.mjs versions             # 버전 원천 일치(Cargo 멤버·tauri.conf.json·app/package.json)
+node scripts/ci/run.mjs doctor               # 로컬 도구 유무·버전(tools.json). 없는 도구의 gate는 로컬에서 건너뛰고 CI가 본다
+node scripts/ci/run.mjs install-hooks        # 훅 켜기(core.hooksPath=.githooks). 한 번만
 
-# CI와 같은 패키지 단위 명령(.github/workflows/core.yml·app.yml)
-cargo clippy -p chzzk-core --all-targets --locked -- -D warnings && cargo test -p chzzk-core --locked
-cargo clippy -p chzzk-shell --all-targets --locked -- -D warnings && cargo test -p chzzk-shell --locked
 UPDATE_BINDINGS=1 cargo test -p chzzk-shell --test bindings   # DTO를 바꾼 뒤 app/src/lib/bindings 다시 만들기
 
 # 앱 실행·빌드 (app/에서)
@@ -52,7 +57,8 @@ CHZZK_LIVE_HLS=<빠른 다시보기 no> CHZZK_LIVE_DASH=<일반 VOD no> CHZZK_LI
   cargo test -p chzzk-core --test live -- --ignored --nocapture
 ```
 
-- `chzzk-app`(app/src-tauri)은 `app/dist` 없이도 `cargo` 직접 실행으로 컴파일된다(app.md 구현 중 변경 6). Linux에서는 webkit2gtk 4.1 등 개발 패키지가 필요하다(목록은 `app.yml`의 `tauri` 작업). 그래서 CI의 `shell` 작업은 `-p chzzk-shell`만 돌고, `chzzk-app`은 apt를 설치하는 `tauri` 작업이 본다. `pnpm tauri build`는 `beforeBuildCommand`로 `dist`를 먼저 만든다.
+- `chzzk-app`(app/src-tauri)은 `app/dist` 없이도 `cargo` 직접 실행으로 컴파일된다(app.md 구현 중 변경 6). Linux에서는 webkit2gtk 4.1 등 개발 패키지가 필요하다(목록은 `ci.yml`의 `tauri` 작업). 그래서 `rust` gate는 `-p chzzk-core -p chzzk-shell`만 돌고, `chzzk-app`은 apt를 설치하는 `tauri` 작업이 본다. `pnpm tauri build`는 `beforeBuildCommand`로 `dist`를 먼저 만든다.
+- CI 워크플로의 `run:`은 setup(autocrlf·rustup·apt)을 빼면 `node scripts/ci/run.mjs …`만 부른다(`parity` gate가 강제). 검사를 더하거나 바꿀 때는 `gates.mjs`를 고치고, 새 도구는 `tools.json`에 버전을 적는다. 워크플로에 `uses:`를 더하면 `node scripts/ci/pin-actions.mjs --write`로 SHA를 고정한다.
 - 앱의 macOS 설정·데이터는 `~/Library/Application Support/io.github.chnu-kim.chzzk-downloader`, 로그는 `~/Library/Logs/io.github.chnu-kim.chzzk-downloader`다.
 - 일반 테스트는 모두 오프라인이다(127.0.0.1 mock). 실서버는 `#[ignore]` 테스트와 `examples/dl.rs`로만 접속한다.
 - `live_hls_partial`은 최저 화질로 4 MiB 넘게 받을 수 있는 빠른 다시보기를 골라야 한다(그 전에 끝나면 실패). `live_dash_partial`은 짧은 VOD면 끝까지 받고 완성 파일을 검사한다.
@@ -66,7 +72,7 @@ CHZZK_LIVE_HLS=<빠른 다시보기 no> CHZZK_LIVE_DASH=<일반 VOD no> CHZZK_LI
 - 설계가 틀렸거나 모호하면 가장 작은 타당한 선택을 하고 해당 설계 문서(`core.md` 또는 `app.md`)의 "구현 중 변경"에 번호를 붙여 적는다.
 - UI 문구는 한국어이고 app.md §9 copy deck(`app/src/lib/copy/ko.ts`)을 따른다. DTO를 바꾸면 `UPDATE_BINDINGS=1`로 bindings를 다시 만든다.
 - 행동을 바꾸면 해당 테스트를 함께 추가한다. 파서·선택 규칙은 `testdata/`의 합성 fixture로 고정한다. fixture는 `scripts/fixtures/gen-fixtures.mjs`를 고쳐 다시 만든다(`--check`로 확인).
-- **공개 저장소 규칙**: 실제 채널 이름·ID, 영상 번호·클립 ID, 서명 토큰·inKey, 비공개 내부 동작 조사 내용을 코드·테스트·문서·커밋 메시지에 넣지 않는다. 시각·길이 같은 준식별자도 실제 값을 옮기지 않는다. 커밋 전에 `node scripts/ci/public-scan.mjs`(CI `public-scan.yml`)가 통과해야 한다. 커밋 이메일은 GitHub noreply 주소를 쓴다.
+- **공개 저장소 규칙**: 실제 채널 이름·ID, 영상 번호·클립 ID, 서명 토큰·inKey, 비공개 내부 동작 조사 내용을 코드·테스트·문서·커밋 메시지에 넣지 않는다. 시각·길이 같은 준식별자도 실제 값을 옮기지 않는다. 커밋 전에 `node scripts/ci/run.mjs scan`(CI `ci.yml`의 `lint`, 이력 전체는 `scan-history`)이 통과해야 한다. 커밋 이메일은 GitHub noreply 주소를 쓴다.
 
 ## 주의사항
 

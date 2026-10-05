@@ -95,7 +95,7 @@ cargo test --workspace --locked
 
 2026-10-05에 `feat/tauri-app`(머지 전 master와 같은 내용)의 클론으로 위 절차를 돌려 `same-tree`, 허용 목록 밖 이메일 없음, 옛 denylist 해시 없음, `--all-history --denylist` 종료 코드 0을 확인했다. 비공개 파일을 고쳤거나 master에 커밋이 더 쌓였으면 다시 돌린다.
 
-통과하면 새 공개 저장소를 원격으로 더해 push한다(`git remote add origin <공개 저장소>`, `git push origin master`). 공개 저장소에서는 CI `public-scan.yml`이 매 push·PR마다 현재 트리와 이력 전체를 검사한다(비공개 저장소에서는 이력 검사를 건너뛴다).
+통과하면 새 공개 저장소를 원격으로 더해 push한다(`git remote add origin <공개 저장소>`, `git push origin master`). 공개 저장소에서는 CI `ci.yml`의 `lint` 작업이 매 push·PR마다 현재 트리(`run.mjs scan`)와 이력 전체(`run.mjs scan-history`, CI의 새 클론에서만)를 검사한다(2026-10-05 이전에는 `public-scan.yml`이었다).
 
 ## 이후 규칙
 

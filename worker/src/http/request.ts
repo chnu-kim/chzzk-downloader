@@ -74,3 +74,18 @@ export function sameOriginPost(req: Request, publicOrigin: string): boolean {
   const site = req.headers.get("Sec-Fetch-Site");
   return site === null || site === "same-origin";
 }
+
+/** 폼 본문 상한(바이트). 웹 POST 필드는 csrf(43자)·채널 ID(32자)·메모(64자)뿐이다 */
+export const FORM_MAX = 4096;
+
+/** Content-Type의 미디어 형식이 application/x-www-form-urlencoded다(대소문자 무시, ;charset 같은 매개변수는 허용) */
+export function isFormContentType(req: Request): boolean {
+  const type = (req.headers.get("Content-Type") ?? "").split(";")[0] ?? "";
+  return type.trim().toLowerCase() === "application/x-www-form-urlencoded";
+}
+
+/** 같은 이름이 정확히 하나일 때만 그 값, 아니면 null(중복 필드로 검사를 우회하지 못하게 한다) */
+export function oneField(form: URLSearchParams, name: string): string | null {
+  const all = form.getAll(name);
+  return all.length === 1 ? (all[0] ?? null) : null;
+}

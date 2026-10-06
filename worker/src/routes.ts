@@ -1,23 +1,26 @@
 // 경로 표(데이터)와 진입 처리(docs/design/worker.md §4). 라우터 의존성 없이 표 + 정확한 경로 비교다.
 //
-// W5까지: /health, 로그인 흐름(/auth/*), 앱 세션(/auth/refresh·/auth/logout·/api/me), 릴리스 읽기(/update/:current·/releases/**). W6이 경로를 더하고,
-// auth 값(자격 종류 §4)으로 자격 × 경로 행렬 테스트를 만든다(§4.5).
+// W6까지: /health, 로그인 흐름(/auth/*), 앱 세션(/auth/refresh·/auth/logout·/api/me), 릴리스 읽기(/update/:current·/releases/**),
+// 랜딩(/)·스타일시트(/assets/:file)·웹 로그아웃·내 기기(/me/*)·관리(/admin*). auth 값(자격 종류 §4)으로 자격 × 경로 행렬 테스트를 만든다(§4.5).
 // 처리 순서: 설정 검사(실패하면 모든 경로 500, /health는 503) → 요청 출처 = PUBLIC_ORIGIN → 경로 표 → 핸들러.
 // 패턴의 ":이름" 조각은 비어 있지 않은 조각 하나와 맞는다(디코드하지 않는다. 값 검사는 핸들러가 한다, 구현 중 변경 27 (마)).
 
 import { type Config, CALLBACK_PATH, loadConfig } from "./config";
 import { type CookieSpec, cookieSpec } from "./core/cookies";
 import { log } from "./core/log";
+import { adminAllow, adminDeniedAllow, adminDeniedDismiss, adminDisallow, adminPage, adminRevokeSession } from "./http/admin";
 import { authStart, callback, done, loginContinue, loginPageGet, poll, webStart } from "./http/auth";
 import { health } from "./http/health";
+import { landing, meRevoke, webLogout } from "./http/landing";
 import { errorJson, json, withCommonHeaders } from "./http/respond";
 import { logout, me, refresh } from "./http/session";
+import { siteCss } from "./http/site-css";
 import { update } from "./http/update";
 import { releases } from "./http/releases";
 import { AUTH_STORE_NAME, type AuthStore } from "./store/AuthStore";
 
-/** 자격 종류(§4): 없음 · F(흐름 쿠키) · A(앱 access) · R(본문 refresh) · A 또는 R · release(A·W·CI) · update(A·CI) */
-export type Auth = "none" | "flow" | "app" | "refresh" | "app_or_refresh" | "release" | "update";
+/** 자격 종류(§4): 없음 · F(흐름 쿠키) · A(앱 access) · R(본문 refresh) · A 또는 R · release(A·W·CI) · update(A·CI) · web_optional(W 선택) · web(W) · admin(W+admin) */
+export type Auth = "none" | "flow" | "app" | "refresh" | "app_or_refresh" | "release" | "update" | "web_optional" | "web" | "admin";
 export type Method = "GET" | "HEAD" | "POST";
 
 export interface Ctx {
@@ -57,6 +60,16 @@ export const ROUTES: readonly Route[] = [
   { method: "GET", pattern: "/update/:current", auth: "update", handler: update },
   { method: "GET", pattern: "/releases/**", auth: "release", handler: releases },
   { method: "HEAD", pattern: "/releases/**", auth: "release", handler: releases },
+  { method: "GET", pattern: "/", auth: "web_optional", handler: landing },
+  { method: "GET", pattern: "/assets/:file", auth: "none", handler: siteCss },
+  { method: "POST", pattern: "/auth/web/logout", auth: "web", handler: webLogout },
+  { method: "POST", pattern: "/me/sessions/:id/revoke", auth: "web", handler: meRevoke },
+  { method: "GET", pattern: "/admin", auth: "admin", handler: adminPage },
+  { method: "POST", pattern: "/admin/allow", auth: "admin", handler: adminAllow },
+  { method: "POST", pattern: "/admin/disallow", auth: "admin", handler: adminDisallow },
+  { method: "POST", pattern: "/admin/sessions/:id/revoke", auth: "admin", handler: adminRevokeSession },
+  { method: "POST", pattern: "/admin/denied/:channelId/allow", auth: "admin", handler: adminDeniedAllow },
+  { method: "POST", pattern: "/admin/denied/:channelId/dismiss", auth: "admin", handler: adminDeniedDismiss },
 ];
 
 /** "/**"로 끝나는 패턴은 앞부분 뒤의 비지 않은 나머지와 맞는다(조각 수 무관, 디코드하지 않는다). 그 밖에는 패턴 조각 수 = 경로 조각 수, ":이름"은 비지 않은 조각 하나(디코드하지 않는다), 나머지는 글자 그대로 */

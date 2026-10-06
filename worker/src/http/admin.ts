@@ -1,0 +1,103 @@
+// 관리 화면과 POST 동작(docs/design/worker.md §8.1·§4.4, 구현 중 변경 35). 모든 POST는 guardWebPost(관리자, csrf)를 지난 뒤에만 움직이고,
+// 경로 값 검사는 늘 그 뒤다(세션이 없으면 매개변수와 상관없이 303 /). 신원은 로그인 채널이다.
+import { log } from "../core/log";
+import { isId } from "../core/token";
+import type { Ctx } from "../routes";
+import { CHANNEL_ID } from "../store/allowlist";
+import { adminBody } from "./admin-view";
+import { COPY } from "./copy";
+import { htmlPage, noticePage } from "./pages";
+import { oneField } from "./request";
+import { guardWebPost, readWebSession, seeOther, toHome } from "./web-session";
+
+const notFound = (ctx: Ctx): Response => {
+  log("admin.rejected", { route: ctx.route, reason: "not_found" });
+  return noticePage(ctx.config, 404, COPY.notFound);
+};
+
+const badChannel = (ctx: Ctx): Response => {
+  log("admin.rejected", { route: ctx.route, reason: "bad_channel_id" });
+  return noticePage(ctx.config, 400, COPY.badChannelId);
+};
+
+/** GET /admin: 부트스트랩 403 → 세션 없음 303 / → 관리자 아님 403 → 200 */
+export async function adminPage(req: Request, ctx: Ctx): Promise<Response> {
+  if (ctx.config.adminChannelIds.length === 0) {
+    log("web.page.rejected", { level: "warn", route: ctx.route, reason: "bootstrap" });
+    return noticePage(ctx.config, 403, COPY.bootstrapAdmin);
+  }
+  const r = await readWebSession(req, ctx);
+  if (!r.ok) return toHome(r.clear);
+  if (!r.s.isAdmin) {
+    log("web.page.rejected", { level: "warn", route: ctx.route, reason: "not_admin" });
+    return noticePage(ctx.config, 403, COPY.notAdmin);
+  }
+  const view = await ctx.store.adminView(ctx.now);
+  return htmlPage(ctx.config, 200, COPY.adminTitle, adminBody(view, ctx.config.adminChannelIds, r.s.csrf));
+}
+
+/** POST /admin/allow */
+export async function adminAllow(req: Request, ctx: Ctx): Promise<Response> {
+  const g = await guardWebPost(req, ctx, { admin: true });
+  if (!g.ok) return g.response;
+  const channelId = oneField(g.form, "channelId");
+  if (channelId === null || !CHANNEL_ID.test(channelId)) return badChannel(ctx);
+  // 메모는 store가 64자로 자른다. 같은 이름이 둘 이상이면 어느 쪽이 맞는지 알 수 없어 거절한다
+  const notes = g.form.getAll("note");
+  if (notes.length > 1) {
+    log("admin.rejected", { route: ctx.route, reason: "bad_body" });
+    return noticePage(ctx.config, 400, COPY.badBody);
+  }
+  const r = await ctx.store.allow(channelId, notes[0] ?? "", g.s.channelId, ctx.now);
+  if (!r.ok) return badChannel(ctx);
+  log("admin.allow", { route: ctx.route });
+  return seeOther("/admin");
+}
+
+/** POST /admin/disallow */
+export async function adminDisallow(req: Request, ctx: Ctx): Promise<Response> {
+  const g = await guardWebPost(req, ctx, { admin: true });
+  if (!g.ok) return g.response;
+  const channelId = oneField(g.form, "channelId");
+  if (channelId === null || !CHANNEL_ID.test(channelId)) return badChannel(ctx);
+  const r = await ctx.store.disallow(channelId, g.s.channelId, ctx.config.adminChannelIds, ctx.now);
+  if (r.ok) {
+    log("admin.disallow", { route: ctx.route });
+    return seeOther("/admin");
+  }
+  if (r.code === "is_admin") {
+    log("admin.rejected", { route: ctx.route, reason: "is_admin" });
+    return noticePage(ctx.config, 409, COPY.isAdmin);
+  }
+  return badChannel(ctx);
+}
+
+/** POST /admin/sessions/:id/revoke */
+export async function adminRevokeSession(req: Request, ctx: Ctx): Promise<Response> {
+  const g = await guardWebPost(req, ctx, { admin: true });
+  if (!g.ok) return g.response;
+  const id = ctx.params.id;
+  if (!isId(id) || !(await ctx.store.revoke(id, "admin", g.s.channelId, ctx.now))) return notFound(ctx);
+  log("admin.revoke_session", { route: ctx.route });
+  return seeOther("/admin");
+}
+
+/** POST /admin/denied/:channelId/allow */
+export async function adminDeniedAllow(req: Request, ctx: Ctx): Promise<Response> {
+  const g = await guardWebPost(req, ctx, { admin: true });
+  if (!g.ok) return g.response;
+  const id = ctx.params.channelId ?? "";
+  if (!CHANNEL_ID.test(id) || !(await ctx.store.allowDenied(id, g.s.channelId, ctx.now))) return notFound(ctx);
+  log("admin.denied_allow", { route: ctx.route });
+  return seeOther("/admin");
+}
+
+/** POST /admin/denied/:channelId/dismiss */
+export async function adminDeniedDismiss(req: Request, ctx: Ctx): Promise<Response> {
+  const g = await guardWebPost(req, ctx, { admin: true });
+  if (!g.ok) return g.response;
+  const id = ctx.params.channelId ?? "";
+  if (!CHANNEL_ID.test(id) || !(await ctx.store.dismissDenied(id, g.s.channelId, ctx.now))) return notFound(ctx);
+  log("admin.denied_dismiss", { route: ctx.route });
+  return seeOther("/admin");
+}

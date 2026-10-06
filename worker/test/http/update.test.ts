@@ -156,7 +156,10 @@ describe("deploy-worker 검사 계약(§9.4, 구현 중 변경 36 (아), 표는 
   for (const row of DEPLOY_CONTRACT) {
     it(`${row.id}: ${row.cred} ${row.path}`, async () => {
       const headers: Record<string, string> = row.cred === "garbage" ? { Authorization: `Bearer ${GARBAGE_BEARER}` } : {};
-      const res = await get(contractPath(row, version), row.cred === "garbage" ? "none" : row.cred, headers);
+      // 표가 3xx를 기대하는 행(neg-admin, W6부터 303 /)만 afterEach의 "3xx 0건" 단언에서 뺀다(구현 중 변경 36 (아)). 나머지 행은 그대로 센다
+      const cred = row.cred === "garbage" ? "none" : row.cred;
+      const res = await viaExports(ORIGIN + contractPath(row, version), { method: "GET", headers: { ...credHeaders(creds, cred), ...headers } });
+      if (!(row.status !== undefined && row.status >= 300 && row.status < 400)) statuses.push(res.status);
       if (row.notOk) expect(res.status < 200 || res.status > 299).toBe(true);
       else expect(res.status).toBe(row.status);
       const body = await bytes(res);

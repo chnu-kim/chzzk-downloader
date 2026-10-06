@@ -44,6 +44,8 @@ export interface Creds {
   readonly access: Record<AppCred, string>;
   readonly refresh: Record<AppCred, string>;
   readonly cookie: Record<"web" | "webAdmin", string>;
+  /** 웹 세션의 폼 토큰(POST 본문 csrf) */
+  readonly csrf: Record<"web" | "webAdmin", string>;
 }
 
 /** store 도우미(test/store/helpers.ts allowedLogin·webLogin)로 now = Date.now()에 만든다 */
@@ -64,6 +66,7 @@ export async function makeCreds(): Promise<Creds> {
     access: { app: app.bundle.accessToken, appRevoked: revoked.bundle.accessToken, appDisallowed: disallowed.bundle.accessToken },
     refresh: { app: app.bundle.refreshToken, appRevoked: revoked.bundle.refreshToken, appDisallowed: disallowed.bundle.refreshToken },
     cookie: { web: web.cookieToken, webAdmin: webAdmin.cookieToken },
+    csrf: { web: web.csrf, webAdmin: webAdmin.csrf },
   };
 }
 
@@ -102,6 +105,8 @@ export interface CountingOpts {
   readonly throwOnRange?: boolean;
   /** 실제 obj.range를 이 값으로 바꿔 보고한다(R2가 range 모양을 다르게 돌려주는 경우) */
   readonly rangeReport?: (real: R2Range | undefined) => R2Range | undefined;
+  /** 이 키는 실제 객체 대신 이 바이트를 돌려준다(latest.json 이상 사례) */
+  readonly override?: Readonly<Record<string, Uint8Array>>;
 }
 
 const zero = (): R2Calls => ({ get: 0, head: 0, list: 0, put: 0, delete: 0, multipart: 0 });
@@ -118,6 +123,10 @@ export function countingDist(o: CountingOpts = {}): { dist: R2Bucket; calls: R2C
     async get(k: string, opts?: R2GetOptions) {
       calls.get++;
       if (hidden.has(k)) return null;
+      const over = o.override?.[k];
+      if (over !== undefined) {
+        return { size: over.byteLength, httpEtag: '"override"', range: undefined, body: new Response(over).body, arrayBuffer: async () => over.slice().buffer } as unknown as R2ObjectBody;
+      }
       if (o.throwOnRange === true && opts?.range !== undefined) throw new Error("get: The requested range is not satisfiable (10039)");
       const real = await env.DIST.get(k, opts as R2GetOptions);
       if (o.rangeReport !== undefined && real !== null) {

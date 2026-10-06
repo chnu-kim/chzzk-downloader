@@ -1,9 +1,10 @@
-// HTML 응답(docs/design/worker.md §4 "공통"·§8.1, 구현 중 변경 27 (아)). W4 최소 골격: 스타일시트 링크와 나머지 화면은 W6.
+// HTML 응답(docs/design/worker.md §4 "공통"·§8.1, 구현 중 변경 27 (아)). W6: 모든 페이지가 한 골격(htmlPage)·스타일시트를 쓴다.
 // 모든 값은 html 태그드 템플릿을 거쳐 이스케이프된다(이스케이프 없는 삽입 함수는 쓰지 않는다).
 import type { Config } from "../config";
 import { html, renderHtml, type SafeHtml } from "../core/html";
 import type { DoneView } from "../store/types";
 import { COPY } from "./copy";
+import { SITE_CSS_PATH } from "./site-css";
 
 export type DoneR = "ok" | "denied" | "cancelled" | "failed";
 
@@ -27,12 +28,12 @@ export function htmlPage(config: Config, status: number, title: string, body: Sa
     // 같은 이름(Set-Cookie)이 여럿일 수 있어 덮지 않고 더한다
     new Headers(extra).forEach((v, k) => headers.append(k, v));
   }
-  const doc = html`<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${title} · ${COPY.siteName}</title></head><body><main>${body}</main></body></html>`;
+  const doc = html`<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${title} · ${COPY.siteName}</title><link rel="stylesheet" href="${SITE_CSS_PATH}"></head><body><main><header><a href="/">${COPY.siteName}</a></header>${body}</main></body></html>`;
   return new Response(renderHtml(doc), { status, headers });
 }
 
 export function noticePage(config: Config, status: number, message: string, extra?: HeadersInit): Response {
-  return htmlPage(config, status, COPY.noticeTitle, html`<h1>${COPY.noticeTitle}</h1><p>${message}</p>`, extra);
+  return htmlPage(config, status, COPY.noticeTitle, html`<h1>${COPY.noticeTitle}</h1><p>${message}</p><p><a href="/">${COPY.home}</a></p>`, extra);
 }
 
 /** 확인 페이지: 폼에 action 속성이 없어(현재 주소로 POST) handle이 본문에 나오지 않는다 */

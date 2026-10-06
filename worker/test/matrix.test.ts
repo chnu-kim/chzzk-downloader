@@ -1,12 +1,15 @@
 // 자격 × 경로 행렬(docs/design/worker.md §4.5, 구현 중 변경 31 (타)). 표의 키는 경로 표(ROUTES)와 같아야 한다:
-// 경로를 더하고 기대를 정하지 않으면 실패한다. W6이 /admin*·/me/*·/·/auth/web/logout을 더한다.
+// 경로를 더하고 기대를 정하지 않으면 실패한다. W6이 더한 /·/assets/:file·/auth/web/logout·/me/*·/admin*까지 24쌍이다.
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { newId, newSecret, sha256B64url } from "../src/core/token";
 import { type Auth, ROUTES } from "../src/routes";
+import { LATEST_VIEW_CACHE } from "../src/http/landing";
 import { SUMS_CACHE } from "../src/http/releases";
+import { SITE_CSS_PATH } from "../src/http/site-css";
 import { createFakeChzzk } from "./fake-chzzk.mjs";
-import { ORIGIN, useClock, viaExports } from "./http/harness";
+import { formBody, ORIGIN, useClock, viaExports } from "./http/harness";
 import { type Cred, type Creds, credHeaders, DMG, makeCreds, seedDist, V2 } from "./http/release-fixture";
+import { C3 } from "./store/helpers";
 import { installFakeChzzk, type FakeNet } from "./network";
 
 const CREDS: readonly Cred[] = ["none", "app", "appRevoked", "appDisallowed", "web", "webAdmin", "ci", "garbage"];
@@ -38,6 +41,17 @@ const form = (path: string): MatrixCase["request"] => (c, cred) => ({
     body: "",
   },
 });
+// 웹 POST: 웹 자격이면 그 세션의 폼 토큰을 싣는다. 헤더는 맞는 Origin·Sec-Fetch-Site·form이다
+const webForm =
+  (path: string | (() => string), fields: Record<string, string> = {}): MatrixCase["request"] =>
+  (c, cred) => ({
+    path: typeof path === "string" ? path : path(),
+    init: {
+      method: "POST",
+      headers: { ...credHeaders(c, cred), Origin: ORIGIN, "Sec-Fetch-Site": "same-origin", "Content-Type": "application/x-www-form-urlencoded" },
+      body: formBody({ ...fields, ...(cred === "web" || cred === "webAdmin" ? { csrf: c.csrf[cred] } : {}) }),
+    },
+  });
 const jsonPost = (path: string, body: (c: Creds, cred: Cred) => unknown | Promise<unknown>): MatrixCase["request"] => async (c, cred) => ({
   path,
   init: { method: "POST", headers: { ...credHeaders(c, cred), "Content-Type": "application/json" }, body: JSON.stringify(await body(c, cred)) },
@@ -84,6 +98,17 @@ const MATRIX: Readonly<Record<string, readonly MatrixCase[]>> = {
     { name: "DMG", request: plain(R(DMG), "HEAD"), expect: by(401, 200, 401, 403, 200, 200, 200, 401) },
     { name: "latest.json", request: plain("/releases/latest.json", "HEAD"), expect: by(401, 403, 401, 403, 403, 403, 200, 401) },
   ],
+  // W6: 웹 화면. 세션이 없으면(앱·CI·쓰레기 Bearer 포함) 303 /, 관리 경로는 웹 세션이어도 관리자가 아니면 403
+  "GET /": [{ name: "랜딩", request: plain("/"), expect: all(200) }],
+  "GET /assets/:file": [{ name: "스타일시트", request: plain(SITE_CSS_PATH), expect: all(200) }],
+  "POST /auth/web/logout": [{ name: "로그아웃", request: webForm("/auth/web/logout"), expect: all(303) }],
+  "POST /me/sessions/:id/revoke": [{ name: "모르는 세션", request: webForm(() => `/me/sessions/${newId()}/revoke`), expect: by(303, 303, 303, 303, 404, 404, 303, 303) }],
+  "GET /admin": [{ name: "관리 화면", request: plain("/admin"), expect: by(303, 303, 303, 303, 403, 200, 303, 303) }],
+  "POST /admin/allow": [{ name: "허용", request: webForm("/admin/allow", { channelId: C3 }), expect: by(303, 303, 303, 303, 403, 303, 303, 303) }],
+  "POST /admin/disallow": [{ name: "빼기", request: webForm("/admin/disallow", { channelId: C3 }), expect: by(303, 303, 303, 303, 403, 303, 303, 303) }],
+  "POST /admin/sessions/:id/revoke": [{ name: "모르는 세션", request: webForm(() => `/admin/sessions/${newId()}/revoke`), expect: by(303, 303, 303, 303, 403, 404, 303, 303) }],
+  "POST /admin/denied/:channelId/allow": [{ name: "거부 기록 없음", request: webForm(`/admin/denied/${C3}/allow`), expect: by(303, 303, 303, 303, 403, 404, 303, 303) }],
+  "POST /admin/denied/:channelId/dismiss": [{ name: "거부 기록 없음", request: webForm(`/admin/denied/${C3}/dismiss`), expect: by(303, 303, 303, 303, 403, 404, 303, 303) }],
 };
 
 const keyOf = (r: { method: string; pattern: string }) => `${r.method} ${r.pattern}`;
@@ -100,7 +125,11 @@ function expectFor(auth: Auth): "public" | "flow" | "credentialed" {
     case "app_or_refresh":
     case "release":
     case "update":
+    case "web":
+    case "admin":
       return "credentialed";
+    case "web_optional":
+      return "public";
     default: {
       const x: never = auth;
       throw new Error(`모르는 자격 종류 ${String(x)}`);
@@ -151,6 +180,7 @@ describe("실행", () => {
     useClock();
     net = installFakeChzzk(createFakeChzzk());
     SUMS_CACHE.clear();
+    LATEST_VIEW_CACHE.clear();
     creds = await makeCreds();
   });
 
@@ -167,9 +197,14 @@ describe("실행", () => {
         for (const cred of CREDS) {
           const { path, init } = await c.request(creds, cred);
           const res = await viaExports(ORIGIN + path, init);
-          await res.arrayBuffer();
+          const text = await res.text();
           statuses.push(res.status);
           expect([key, c.name, cred, res.status]).toEqual([key, c.name, cred, c.expect[cred]]);
+          // HTML 응답은 CSP가 있고 스크립트·인라인 스타일이 없다(CSP 'style-src self'가 막는다)
+          if ((res.headers.get("Content-Type") ?? "").startsWith("text/html")) {
+            expect([key, c.name, cred, res.headers.has("Content-Security-Policy")]).toEqual([key, c.name, cred, true]);
+            expect([key, c.name, cred, /<script|<style|\sstyle=/i.test(text)]).toEqual([key, c.name, cred, false]);
+          }
           // 릴리스 읽기는 리디렉션이 없다(304는 조건부 적중이라 여기서는 나오지 않는다)
           if (key.includes("/releases/") || key.includes("/update/")) expect(res.status < 300 || res.status >= 400).toBe(true);
         }

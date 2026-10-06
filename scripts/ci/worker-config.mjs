@@ -36,6 +36,9 @@
 //   store 순수성    src/**에서 sql.exec는 src/store/db.ts에만, transactionSync(async …)는 어디에도 없다. src/store/** 중
 //                   AuthStore.ts가 아닌 파일의 원문에 async·await·cloudflare:·시각 함수(core와 같은 네 모양)가 없다. worker.md 구현 중 변경 21.
 //   raw 허용 목록   src/**의 raw 식별자 토큰 수(주석·문자열·별칭 포함)가 RAW_ALLOWLIST(파일별 정확한 수)와 같다(목록 밖 파일은 0).
+//   html 호출형·인라인  src/**(src/core/html.ts 밖)에서 html(·html?.(·html.call·apply·bind·html as 별칭·값으로 넘김·대입 별칭이 없고
+//                   (태그드 템플릿과 core/html import 선언만), src/** 전체에 <script·<style·style= 속성이 없다(CSP, 스크립트 0개).
+//                   worker.md 구현 중 변경 36, cicd.md 96.
 //   바깥 요청       src/**의 원문(주석 포함)에서 낱말 fetch 수(deps.fetch·속성 키 fetch:는 빼고)가 OUTBOUND_ALLOWLIST와 같다
 //                   (src/http/auth.ts 1개, 목록 밖 파일은 0). globalThis·self·Reflect·Function·eval·동적 import(·WebSocket·
 //                   cloudflare:sockets는 src/** 어디에도 없다. worker.md 구현 중 변경 27 (자)·28, cicd.md 92·93.
@@ -689,6 +692,37 @@ export function checkReleaseSources(files, { all = false } = {}) {
   return errs;
 }
 
+// html 호출형·인라인 금지(W6, worker.md 구현 중 변경 36·cicd.md 96). 이스케이프는 html 태그드 템플릿 하나로만 만든다: 호출형은
+// 정적 조각(strings) 자리에 임의 배열을 넘길 수 있어 이스케이프 보장이 깨진다. 한계: 계산된 속성(obj["html"](…))·동적 import는 리뷰가 본다.
+// core/html import 선언은 지운 텍스트로 본다(html, 를 값으로 넘김으로 오인하지 않게). 'orig' 규칙은 원문 그대로 본다(import 선언 안의 별칭)
+const IMPORT_HTML = /import\s*(?:type\s+)?\{[^}]*\}\s*from\s*["'][^"']*core\/html["']\s*;?/g;
+export const HTML_CALL_FORBIDDEN = [
+  [/(?<![\w$.])html\s+as\b/, 'html 별칭 import', 'orig'],
+  [/(?<![\w$.])html\s*(?:\?\.\s*)?\(/, '호출형 html('],
+  [/(?<![\w$.])html\s*\??\.\s*(?:call|apply|bind)\b/, 'html.call·apply·bind'],
+  [/(?<![\w$./])html(?=\s*[,;)\]}])/, 'html을 값으로 넘김(인자·배열·축약 속성·재수출)'],
+  [/=\s*html(?![\w$`])/, 'html 대입 별칭'],
+];
+export const HTML_INLINE_FORBIDDEN = [
+  [/<script\b/i, '<script(스크립트 0개, CSP)'],
+  [/<style\b/i, "<style(CSP style-src 'self')"],
+  [/\bstyle\s*=\s*["']/i, "style 속성(CSP style-src 'self')"],
+];
+
+// files: [{ rel(worker/ 기준), text }]
+export function checkHtmlSources(files) {
+  const errs = [];
+  const msg = (rel, why) => `${rel}: ${why}를 쓰지 않는다(html은 태그드 템플릿으로만, worker.md 구현 중 변경 36)`;
+  for (const { rel, text } of files) {
+    if (!rel.startsWith('src/')) continue;
+    for (const [re, why] of HTML_INLINE_FORBIDDEN) if (re.test(text)) errs.push(msg(rel, why));
+    if (rel === 'src/core/html.ts') continue;
+    const stripped = text.replace(IMPORT_HTML, '');
+    for (const [re, why, mode] of HTML_CALL_FORBIDDEN) if (re.test(mode === 'orig' ? text : stripped)) errs.push(msg(rel, why));
+  }
+  return errs;
+}
+
 // dir 아래 일반 파일(심볼릭 링크·FIFO 제외)을 worker/ 기준 경로로. node_modules·dist·.wrangler는 들어가지 않는다
 function listFiles(workerRoot, rel) {
   const out = [];
@@ -780,6 +814,7 @@ export function checkWorker(root) {
   errs.push(...checkCorePurity(files).map((m) => `${WORKER_DIR}/${m}`));
   errs.push(...checkStorePurity(files).map((m) => `${WORKER_DIR}/${m}`));
   errs.push(...checkRawAllowlist(files, { all: true }).map((m) => `${WORKER_DIR}/${m}`));
+  errs.push(...checkHtmlSources(files).map((m) => `${WORKER_DIR}/${m}`));
   errs.push(...checkOutbound(files, { all: true }).map((m) => `${WORKER_DIR}/${m}`));
   errs.push(...checkReleaseSources(files, { all: true }).map((m) => `${WORKER_DIR}/${m}`));
   return errs;

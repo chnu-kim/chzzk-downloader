@@ -1,6 +1,6 @@
 // 경로 표(데이터)와 진입 처리(docs/design/worker.md §4). 라우터 의존성 없이 표 + 정확한 경로 비교다.
 //
-// W4까지: /health, 로그인 흐름(/auth/*), 앱 세션(/auth/refresh·/auth/logout·/api/me). W5~W6이 경로를 더하고,
+// W5까지: /health, 로그인 흐름(/auth/*), 앱 세션(/auth/refresh·/auth/logout·/api/me), 릴리스 읽기(/update/:current·/releases/**). W6이 경로를 더하고,
 // auth 값(자격 종류 §4)으로 자격 × 경로 행렬 테스트를 만든다(§4.5).
 // 처리 순서: 설정 검사(실패하면 모든 경로 500, /health는 503) → 요청 출처 = PUBLIC_ORIGIN → 경로 표 → 핸들러.
 // 패턴의 ":이름" 조각은 비어 있지 않은 조각 하나와 맞는다(디코드하지 않는다. 값 검사는 핸들러가 한다, 구현 중 변경 27 (마)).
@@ -12,10 +12,12 @@ import { authStart, callback, done, loginContinue, loginPageGet, poll, webStart 
 import { health } from "./http/health";
 import { errorJson, json, withCommonHeaders } from "./http/respond";
 import { logout, me, refresh } from "./http/session";
+import { update } from "./http/update";
+import { releases } from "./http/releases";
 import { AUTH_STORE_NAME, type AuthStore } from "./store/AuthStore";
 
-/** 자격 종류(§4): 없음 · F(흐름 쿠키) · A(앱 access) · R(본문 refresh) · A 또는 R */
-export type Auth = "none" | "flow" | "app" | "refresh" | "app_or_refresh";
+/** 자격 종류(§4): 없음 · F(흐름 쿠키) · A(앱 access) · R(본문 refresh) · A 또는 R · release(A·W·CI) · update(A·CI) */
+export type Auth = "none" | "flow" | "app" | "refresh" | "app_or_refresh" | "release" | "update";
 export type Method = "GET" | "HEAD" | "POST";
 
 export interface Ctx {
@@ -52,10 +54,18 @@ export const ROUTES: readonly Route[] = [
   { method: "POST", pattern: "/auth/refresh", auth: "refresh", handler: refresh },
   { method: "POST", pattern: "/auth/logout", auth: "app_or_refresh", handler: logout },
   { method: "GET", pattern: "/api/me", auth: "app", handler: me },
+  { method: "GET", pattern: "/update/:current", auth: "update", handler: update },
+  { method: "GET", pattern: "/releases/**", auth: "release", handler: releases },
+  { method: "HEAD", pattern: "/releases/**", auth: "release", handler: releases },
 ];
 
-/** 패턴 조각 수 = 경로 조각 수, ":이름"은 비지 않은 조각 하나(디코드하지 않는다), 나머지는 글자 그대로 */
+/** "/**"로 끝나는 패턴은 앞부분 뒤의 비지 않은 나머지와 맞는다(조각 수 무관, 디코드하지 않는다). 그 밖에는 패턴 조각 수 = 경로 조각 수, ":이름"은 비지 않은 조각 하나(디코드하지 않는다), 나머지는 글자 그대로 */
 export function matchPattern(pattern: string, pathname: string): Record<string, string> | null {
+  // params["**"] = 나머지
+  if (pattern.endsWith("/**")) {
+    const prefix = pattern.slice(0, -2);
+    return pathname.startsWith(prefix) && pathname.length > prefix.length ? { "**": pathname.slice(prefix.length) } : null;
+  }
   const want = pattern.split("/");
   const got = pathname.split("/");
   if (want.length !== got.length) return null;

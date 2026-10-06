@@ -1,7 +1,19 @@
 // core/keys(docs/design/worker.md §9.1, 구현 중 변경 14 (라)): 경로 문법·SHA256SUMS 해석(xtask parse_sums와 같은 규칙)·보이는 키.
 import { describe, expect, it } from "vitest";
 import expectedArtifacts from "../../../release/expected-artifacts.json?raw";
-import { CI_ONLY_FILES, isUserVisible, META_FILES, parseReleasePath, parseSha256Sums, parseSha256SumsBytes, sumsKey } from "../../src/core/keys";
+import {
+  CI_ONLY_FILES,
+  isUserVisible,
+  LATEST_KEY,
+  META_FILES,
+  parseReleasePath,
+  parseSha256Sums,
+  parseSha256SumsBytes,
+  releaseContentType,
+  releaseDisposition,
+  sumsKey,
+  userVisibility,
+} from "../../src/core/keys";
 
 describe("parseReleasePath", () => {
   it("latest.json", () => {
@@ -159,5 +171,49 @@ describe("isUserVisible", () => {
     ["app.dmg", new Map(), false],
   ] as const)("%s → %s", (f, s, want) => {
     expect(isUserVisible(f, s)).toBe(want);
+  });
+});
+
+describe("userVisibility·헤더 표(§9.2)", () => {
+  it("LATEST_KEY는 latest 경로의 키다", () => {
+    expect(LATEST_KEY).toBe("releases/latest.json");
+    expect(parseReleasePath("/releases/latest.json")).toEqual({ kind: "latest", key: LATEST_KEY });
+  });
+
+  it.each([
+    ["SHA256SUMS", "always"],
+    ["manifest.json", "always"],
+    ["previous", "never"],
+    ["latest.json", "never"],
+    ["x.dmg", "sums"],
+    ["x.sig", "sums"],
+  ])("userVisibility(%s) = %s", (f, want) => {
+    expect(userVisibility(f)).toBe(want);
+  });
+
+  it.each([
+    ["latest.json", "application/json"],
+    ["manifest.json", "application/json"],
+    ["SHA256SUMS", "text/plain; charset=utf-8"],
+    ["previous", "text/plain; charset=utf-8"],
+    ["a.AppImage.sig", "text/plain; charset=utf-8"],
+    ["x.dmg", "application/octet-stream"],
+    ["x.deb", "application/octet-stream"],
+    ["x.msi", "application/octet-stream"],
+    ["x-setup.exe", "application/octet-stream"],
+    ["x.app.tar.gz", "application/octet-stream"],
+    ["x.AppImage", "application/octet-stream"],
+  ])("releaseContentType(%s) = %s", (f, want) => {
+    expect(releaseContentType(f)).toBe(want);
+  });
+
+  it.each([
+    ["manifest.json", "inline"],
+    ["SHA256SUMS", "inline"],
+    ["x.dmg", 'attachment; filename="x.dmg"'],
+    ["previous", 'attachment; filename="previous"'],
+    ["x.sig", 'attachment; filename="x.sig"'],
+  ])("releaseDisposition(%s) = %s", (f, want) => {
+    expect(releaseDisposition(f)).toBe(want);
   });
 });

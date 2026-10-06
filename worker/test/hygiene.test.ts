@@ -295,3 +295,36 @@ it("전 흐름을 돌려도 로그와 응답에 카나리가 새지 않는다", 
   expect(pages.length).toBeGreaterThan(0);
   for (const e of pages) for (const [v, l] of labels) if (l.kind === "handle") expect(e.text.includes(v)).toBe(false);
 });
+
+// CI 토큰(CI_VERIFY_TOKEN)은 어느 응답·로그에도 나오지 않는다(docs/design/worker.md §14, 구현 중 변경 31 (나)). 이 파일은 R2 seed가 없어 릴리스 읽기는 404가 정상이다.
+it("CI 토큰은 로그·응답에 나오지 않는다", async () => {
+  const CI_CANARY = "hyg-ci-" + crypto.randomUUID();
+  const send = viaEnv({ CI_VERIFY_TOKEN: CI_CANARY });
+  const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+  const bearer = (t: string) => ({ Authorization: `Bearer ${t}` });
+  const texts: string[] = [];
+  const statuses: number[] = [];
+  const hit = async (path: string, headers: Record<string, string>) => {
+    const res = await send(`http://localhost:8787${path}`, { method: "GET", headers });
+    statuses.push(res.status);
+    const lines = [...res.headers].map(([k, v]) => `${k}: ${v}`).join("\n") + "\n" + res.headers.getSetCookie().join("\n");
+    texts.push(`${res.status}\n${lines}\n${await res.text()}`);
+  };
+  await hit("/releases/latest.json", bearer(CI_CANARY));
+  await hit("/releases/latest.json", bearer(CI_CANARY + "x"));
+  await hit("/releases/latest.json", {});
+  await hit("/releases/0.2.0/x.dmg", bearer(CI_CANARY));
+  await hit("/update/0.1.0", bearer(CI_CANARY));
+  await hit("/update/0.1.0", bearer(CI_CANARY + "x"));
+  await hit("/api/me", bearer(CI_CANARY));
+  // 맞는 토큰이면 인증을 지나 R2 없음(404·204), 틀리면 401. /api/me는 CI 토큰을 모른다(401)
+  expect(statuses).toEqual([404, 401, 401, 404, 204, 401, 401]);
+  for (const t of texts) expect(t).not.toContain(CI_CANARY);
+  const lines = logSpy.mock.calls.map((c) => String(c[0]));
+  for (const line of lines) {
+    const parsed = JSON.parse(line) as Record<string, unknown>;
+    for (const k of Object.keys(parsed)) expect([line, LOG_KEYS.has(k)]).toEqual([line, true]);
+    expect(line).not.toContain(CI_CANARY);
+  }
+  expect(lines.map((l) => JSON.parse(l) as Record<string, unknown>)).toContainEqual(expect.objectContaining({ event: "release.auth.rejected" }));
+});

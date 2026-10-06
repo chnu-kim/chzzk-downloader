@@ -24,8 +24,22 @@ describe("matchPattern", () => {
   });
 });
 
+describe("matchPattern: /** 패턴(나머지 전부, 디코드하지 않는다)", () => {
+  it.each([
+    ["/releases/x", { "**": "x" }],
+    ["/releases/a/b/c", { "**": "a/b/c" }],
+    ["/releases/a%2Fb", { "**": "a%2Fb" }],
+    ["/releases/", null],
+    ["/releases", null],
+    ["/releasesx/y", null],
+    ["/Releases/x", null],
+  ])("%s", (path, want) => {
+    expect(matchPattern("/releases/**", path)).toEqual(want);
+  });
+});
+
 describe("경로 표", () => {
-  it("W4까지의 11쌍이 정확히 이 순서다", () => {
+  it("W5까지의 14쌍이 정확히 이 순서다", () => {
     expect(ROUTES.map((r) => `${r.method} ${r.pattern}`)).toEqual([
       "GET /health",
       "POST /auth/start",
@@ -38,6 +52,9 @@ describe("경로 표", () => {
       "POST /auth/refresh",
       "POST /auth/logout",
       "GET /api/me",
+      "GET /update/:current",
+      "GET /releases/**",
+      "HEAD /releases/**",
     ]);
   });
 
@@ -48,6 +65,9 @@ describe("경로 표", () => {
     expect(auth("POST", "/auth/logout")).toBe("app_or_refresh");
     expect(auth("GET", "/api/me")).toBe("app");
     expect(auth("POST", "/auth/start")).toBe("none");
+    expect(auth("GET", "/update/:current")).toBe("update");
+    expect(auth("GET", "/releases/**")).toBe("release");
+    expect(auth("HEAD", "/releases/**")).toBe("release");
   });
 });
 

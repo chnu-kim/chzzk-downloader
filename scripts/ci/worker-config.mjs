@@ -39,6 +39,11 @@
 //   바깥 요청       src/**의 원문(주석 포함)에서 낱말 fetch 수(deps.fetch·속성 키 fetch:는 빼고)가 OUTBOUND_ALLOWLIST와 같다
 //                   (src/http/auth.ts 1개, 목록 밖 파일은 0). globalThis·self·Reflect·Function·eval·동적 import(·WebSocket·
 //                   cloudflare:sockets는 src/** 어디에도 없다. worker.md 구현 중 변경 27 (자)·28, cicd.md 92·93.
+//   릴리스 읽기     src/**의 원문(주석 포함): 낱말 ciVerifyToken은 src/config.ts·src/http/release-auth.ts에만, releaseAuth는
+//                   release-auth.ts·releases.ts·update.ts에만, R2 바인딩 이름(DIST)은 R2_ALLOWLIST(src/http/r2.ts 1개)에만.
+//                   어디에도 낱말 put·list·멀티파트 업로드가 없고(Worker는 R2를 읽기만, list는 요청 경로에서 0회), 낱말 delete 수는
+//                   DELETE_ALLOWLIST(Map.delete 파일, 목록 밖 0)와 같다. 릴리스 네 파일(r2·release-auth·releases·update)에는
+//                   Location·redirect(대소문자 무시)가 없다(3xx 0건). worker.md 구현 중 변경 31 (차), cicd.md 94·95.
 //   --dist          dist/bundle-meta.json(esbuild metafile)의 입력이 모두 src/*.ts(런타임 의존성 0), dist/index.js 있음,
 //                   dist/wrangler.json이 있으면(W8 worker-bundle이 만든다) 금지 키·vars 규칙.
 //   --sentinel      plant: worker/.dev.vars를 LEAK_SENTINEL 한 줄로 새로 만든다(pnpm check·vitest 전). check: 그 파일을
@@ -614,6 +619,41 @@ export function checkOutbound(files, { all = false } = {}) {
   return errs;
 }
 
+// 릴리스 읽기(W5, worker.md 구현 중 변경 31 (차), cicd.md 94). 원문(주석 포함)을 본다: 85 (나)의 CI_VERIFY_TOKEN 문자열 검사는 env 키만 막고
+// 설정 필드 ciVerifyToken은 어디서나 읽을 수 있었다. 한계: 계산된 속성(ctx.config["ciVerify" + "Token"])은 못 잡는다(93 (라)와 같이 리뷰 범위)
+export const CI_TOKEN_IDENT_FILES = ['src/config.ts', 'src/http/release-auth.ts'];
+export const RELEASE_AUTH_FILES = ['src/http/release-auth.ts', 'src/http/releases.ts', 'src/http/update.ts'];
+export const R2_ALLOWLIST = { 'src/http/r2.ts': 1 };
+export const RELEASE_FILES = ['src/http/r2.ts', 'src/http/release-auth.ts', 'src/http/releases.ts', 'src/http/update.ts'];
+// 낱말 delete 수(주석·문자열 포함)는 이 표와 같다(목록 밖 0, RAW_ALLOWLIST와 같은 방식). Map.delete만 있는 파일이다(cicd.md 95)
+export const DELETE_ALLOWLIST = { 'src/core/lru.ts': 3, 'src/store/flows.ts': 5 };
+const word = (w) => new RegExp(String.raw`(?<![\w$])${w}(?![\w$])`, 'g');
+// 낱말 수라 .list?.(·["list"](·{ list } =·typeof v?.list·주석도 센다(cicd.md 95, 93의 fetch와 같은 방식)
+const R2_WRITE_LIST_WORD = word('(?:put|list|createMultipartUpload|resumeMultipartUpload)');
+const count = (re, text) => (text.match(re) ?? []).length;
+
+// files: [{ rel(worker/ 기준), text }]. all이면(checkWorker) 목록의 파일이 모두 있어야 한다(지운 파일의 낡은 항목)
+export function checkReleaseSources(files, { all = false } = {}) {
+  const errs = [];
+  const seen = new Set();
+  for (const { rel, text } of files) {
+    if (!rel.startsWith('src/')) continue;
+    seen.add(rel);
+    if (!CI_TOKEN_IDENT_FILES.includes(rel) && count(word('ciVerifyToken'), text) > 0) errs.push(`${rel}: 낱말 ciVerifyToken은 ${CI_TOKEN_IDENT_FILES.join('·')}에서만 쓴다(CI 토큰 값은 releaseAuth 한 곳에서 읽는다, 주석에도 쓰지 않는다)`);
+    if (!RELEASE_AUTH_FILES.includes(rel) && count(word('releaseAuth'), text) > 0) errs.push(`${rel}: 낱말 releaseAuth는 ${RELEASE_AUTH_FILES.join('·')}에서만 쓴다(releases.ts·update.ts만 부른다, 주석에도 쓰지 않는다)`);
+    const got = count(word('DIST'), text);
+    const want = Object.hasOwn(R2_ALLOWLIST, rel) ? R2_ALLOWLIST[rel] : 0;
+    if (got !== want) errs.push(`${rel}: R2 바인딩 이름(DIST) ${got}개 ≠ 허용 목록 ${want}개(R2는 src/http/r2.ts 한 줄에서만 만진다. 주석에도 쓰지 않는다)`);
+    if (count(R2_WRITE_LIST_WORD, text) > 0) errs.push(`${rel}: 낱말 put·list·멀티파트(.put(·.list(·옵셔널 호출·대괄호·구조 분해 포함)를 주석에도 쓰지 않는다(Worker는 R2를 읽기만 하고 list는 요청 경로에서 0회, worker.md 구현 중 변경 11 (라))`);
+    const del = count(word('delete'), text);
+    const delWant = Object.hasOwn(DELETE_ALLOWLIST, rel) ? DELETE_ALLOWLIST[rel] : 0;
+    if (del !== delWant) errs.push(`${rel}: 낱말 delete ${del}개 ≠ 허용 목록 ${delWant}개(R2 .delete(를 막는다. Map.delete 같은 것은 scripts/ci/worker-config.mjs DELETE_ALLOWLIST에 파일과 수를 함께 적는다. 릴리스 네 파일은 0, 주석·문자열도 센다)`);
+    if (RELEASE_FILES.includes(rel) && count(new RegExp(word('(?:Location|redirect)').source, 'gi'), text) > 0) errs.push(`${rel}: 릴리스 경로는 리다이렉트를 만들지 않는다(Location·redirect를 주석에도 쓰지 않는다, 3xx 0건, worker.md §9.2)`);
+  }
+  if (all) for (const rel of new Set([...Object.keys(R2_ALLOWLIST), ...RELEASE_FILES, ...Object.keys(DELETE_ALLOWLIST)])) if (!seen.has(rel)) errs.push(`${rel}: 릴리스 읽기 검사 목록에 있는데 파일이 없다`);
+  return errs;
+}
+
 // dir 아래 일반 파일(심볼릭 링크·FIFO 제외)을 worker/ 기준 경로로. node_modules·dist·.wrangler는 들어가지 않는다
 function listFiles(workerRoot, rel) {
   const out = [];
@@ -687,6 +727,7 @@ export function checkWorker(root) {
   errs.push(...checkStorePurity(files).map((m) => `${WORKER_DIR}/${m}`));
   errs.push(...checkRawAllowlist(files, { all: true }).map((m) => `${WORKER_DIR}/${m}`));
   errs.push(...checkOutbound(files, { all: true }).map((m) => `${WORKER_DIR}/${m}`));
+  errs.push(...checkReleaseSources(files, { all: true }).map((m) => `${WORKER_DIR}/${m}`));
   return errs;
 }
 

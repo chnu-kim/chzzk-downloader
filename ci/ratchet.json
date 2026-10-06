@@ -10,7 +10,7 @@
     "rust": 348,
     "vitest": 491,
     "playwright": 7,
-    "worker": 57,
+    "worker": 1148,
     "app": {
       "linux": 32,
       "darwin": 32,
@@ -31,7 +31,7 @@
     },
     "bundle": {
       "linux-AppImage": 86813176,
-      "linux-deb": 9728510,
+      "linux-deb": 9728508,
       "darwin-dmg": 7444649,
       "windows-setup": 4699475,
       "windows-msi": 6995968

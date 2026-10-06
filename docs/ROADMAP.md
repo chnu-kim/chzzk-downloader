@@ -4,12 +4,14 @@
 
 ## 현재 위치
 
-- **완료**: Phase 0(#11), Phase 1 Rust 코어(#12, 3 OS CI 녹색), Go 삭제(#13), Phase 2 Tauri 앱(#14, macOS 실제 실행 확인). PR은 #11→#12→#13→#14로 쌓여 있고 아직 머지 전이다. #13은 #14와 함께 머지한다.
-- **Phase 4 CI/CD 구현 중**(`docs/design/cicd.md`, 브랜치 `ci/pipeline`, 공개 저장소 PR #1). G1~G6(단일 진입점 `scripts/ci/run.mjs`·`ci.yml`·훅·비공개 이력 가드·스모크·ratchet·E2E·nightly/weekly 고리·CD `release.yml`/`xtask`)를 올렸다. G7(보호)은 선언·`--apply`까지 올렸고 적용(사용자)과 그 뒤 수락이 남았다. 훅 설치는 `node scripts/ci/run.mjs install-hooks`, 훅·CI 명령은 CLAUDE.md "명령".
-- **다음**: Phase 3+4 (Worker: 로그인·허용목록·랜딩·R2 배포 게이트·업데이트). 설계·오프라인 구현은 가능하지만 **끝까지 확인하려면 사용자의 외부 준비가 필요**하다(아래 "사용자가 준비해야 할 외부 항목").
-- **Phase 3의 핵심 미확인 사실**: OAuth `users/me`의 `channelId`가 VOD `content.channel.channelId`·클립 `ownerChannel.channelId`와 같은 값인지. 실제 로그인으로만 확인할 수 있으므로 별도 단계로 둔다.
+- **저장소**: 개발은 public `chnu-kim/chzzk-downloader`(remote `origin`)에서 한다. `chnu-kim/chzzk-downloader-private`(remote `private`)는 공개 전 원본 이력·연구 문서·실물 fixture·비공개 원문 목록(`public-release/`)의 보관소이며 **그쪽 ref를 origin에 push하지 않는다**(pre-push 가드가 막는다). 공개 절차는 `docs/public-release.md`.
+- **완료(2026-10-06 기준, 모두 master에 머지)**: Phase 0 하네스, Phase 1 Rust 코어, Go 삭제, Phase 2 Tauri 앱(macOS 실제 실행 확인), Phase 4 CI/CD(public PR #1: 단일 진입점·`ci.yml`/`ci-ok`·훅·비공개 이력 가드·스모크·ratchet·E2E·nightly/weekly 고리·CD `release.yml`/`xtask`·ruleset master/tags·저장소 설정 drift 0), CI 단축·Rust 1.99(#12), Windows 네이티브 E2E를 PR마다 관찰(#14).
+- **다음**: Phase 3 — Cloudflare Worker(치지직 OAuth 대행·허용목록·로그인 랜딩·R2 배포 게이트·업데이트 매니페스트)와 앱 로그인·본인 채널 검사. 설계·오프라인 구현(wrangler dev·테스트)부터 한다. 실제 로그인·배포 확인은 아래 "사용자가 준비해야 할 외부 항목"이 갖춰진 뒤.
+- **Phase 3의 핵심 미확인 사실**: OAuth `users/me`의 `channelId`가 VOD `content.channel.channelId`·클립 `ownerChannel.channelId`와 같은 값인지. 실제 로그인으로만 확인하므로 별도 게이트 단계로 둔다.
+- **관찰 중**: `e2e-native (linux)`·`e2e-native (windows)`는 2026-10-06(master 첫 실행 37411321875 녹색)부터 14일 관찰 → 2026-10-20 이후 `ci-ok` 편입 판단(cicd.md 36·79). Actions 캐시가 10.99GB로 한도(10GB)를 조금 넘음 — 계속 넘으면 캐시 키 정리.
+- **사용자 할 일**: 환경 `drift`에 본인 영상 URL 3개(`CHZZK_LIVE_HLS/DASH/CLIP`), 환경 `audit`에 `RULESET_READ_TOKEN`(읽기 전용 fine-grained PAT). 서명 키는 `release` 환경 시크릿과 1Password Environment `chzzk-downloader-release`에 있다.
 - **남은 확인(사용자)**: 성인 VOD PD 미디어 요청에 쿠키가 필요한지(`examples/dl.rs` + `CHZZK_NID_AUT`/`CHZZK_NID_SES`), Windows·Linux 실제 실행(app.md 수동 테스트 목록), macOS Dock 종료·로그아웃 때 D1 생략 수용 여부.
-- 단계별 상세 기록은 아래 체크리스트와 `docs/design/{core,app}.md`의 "구현 중 변경"에 있다.
+- 단계별 상세 기록은 아래 체크리스트와 `docs/design/{core,app,cicd}.md`의 "구현 중 변경"에 있다.
 
 ## 확정된 결정 (2026-10-05, 사용자 인터뷰)
 

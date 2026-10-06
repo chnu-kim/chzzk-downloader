@@ -8,11 +8,10 @@ name: nightly
 #   매주(47 18 * * 0): nightly e2e-native (windows), nightly toolchain, nightly mutants(shard 4개 → 합 → ratchet)
 #   - e2e-native (linux): ci.yml e2e-native(코드 PR·master)와 같은 gate다(러너 이미지가 바뀌어도 매일 확인한다).
 #     PR에서는 ci.yml이 돌리므로 여기서는 돌지 않는다.
-#   - e2e-native (windows): 매주와 dispatch(only=e2e-native). PR에서는 돌지 않는다(구현 중 변경 78: 이 워크플로는
-#     pull_request 트리거가 없다. PR이 바꾼 워크플로 문법은 ci.yml lint의 workflows·parity·selftest가 본다). 러너 이미지의
-#     msedgedriver를 쓰고, WebView2 런타임과 버전이 다르면 받지 않고 실패한다(e2e-native.mjs). 이미지가 바뀌면 빨개질 수
-#     있어 ci-ok에 넣지 않는다(예약 실행은 고리). Windows 전용 e2e 코드의 컴파일·clippy·단위 테스트는 ci.yml
-#     tauri-clippy·tauri(windows)가 코드 PR마다 한다.
+#   - e2e-native (windows): ci.yml e2e-native-windows(코드 PR·master, 구현 중 변경 79)와 같은 gate다. 여기서는 매주와
+#     dispatch(only=e2e-native)에 돌아 커밋이 없어도 러너 이미지 drift를 본다. PR에서는 ci.yml이 돌리므로 여기서는 돌지
+#     않는다(이 워크플로는 pull_request 트리거가 없다, 78). 러너 이미지의 msedgedriver를 쓰고, WebView2 런타임과 버전이
+#     다르면 받지 않고 실패한다(e2e-native.mjs). ci.yml 작업은 D14 관찰 중이라 ci-ok 밖이다(gates.mjs OBSERVED_JOBS).
 #   - drift: 실서버(본인 영상, 환경 drift의 secret). 2회 연속 실패에 이슈(no_target은 3회). 출력은 kind만(§4.3).
 #   - drift-log: drift가 돈 모든 실행(예약·dispatch, simulate 포함)에서 그 작업의 실제 로그를 다시 본다(canary·허용 밖 줄).
 # 이슈 고리는 예약 실행(master)만 진짜 이름공간에 쓴다(브랜치 loop_test dispatch는 ci-loop-test:, issue.mjs).
@@ -54,7 +53,7 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: "0"
   AWS_LC_SYS_PREBUILT_NASM: "1"
-  # ci.yml과 같은 값(구현 중 변경 78): rust-cache 키의 환경 해시가 같아야 e2e-native-linux 캐시를 ci.yml e2e-native와 나눈다
+  # ci.yml과 같은 값(구현 중 변경 78): rust-cache 키의 환경 해시가 같아야 e2e-native-linux·-windows 캐시를 ci.yml과 나눈다
   CARGO_PROFILE_DEV_DEBUG: line-tables-only
 
 jobs:
@@ -127,6 +126,8 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: ". -> target"
+          # ci.yml e2e-native-windows와 같은 gate·OS·env라 캐시 하나를 같이 쓴다(구현 중 변경 79)
+          shared-key: e2e-native-windows
           save-if: ${{ github.ref == 'refs/heads/master' }}
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
         with:

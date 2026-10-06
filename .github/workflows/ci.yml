@@ -460,7 +460,7 @@ jobs:
   # 네이티브 E2E(Linux, docs/design/cicd.md §6): --features e2e 앱 + tauri-driver(WebKitWebDriver, xvfb) + 로컬 fixture 서버.
   # 코드가 바뀐 PR·push master·dispatch에서 돈다(머지 전에 네이티브 신호를 받는다). D14 관찰 중(OBSERVED_JOBS, 편입하면
   # CODE_GATED_JOBS로 옮겨 PR 필수 체크가 된다). 끝에 hygiene-seed가 release-hygiene의 검사가 이 e2e 빌드를
-  # 실제로 알아보는지 증명한다. nightly.yml이 매일(Linux)·매주와 코드 PR(Windows) 같은 gate를 돌린다.
+  # 실제로 알아보는지 증명한다. Windows는 아래 e2e-native-windows, nightly.yml이 매일(Linux)·매주(Windows) 같은 gate를 돌린다.
   e2e-native:
     name: e2e-native (linux)
     needs: changes
@@ -507,6 +507,56 @@ jobs:
         if: ${{ !cancelled() }}
         with:
           name: e2e-native-linux
+          path: target/ci/e2e-native/
+          retention-days: 7
+          if-no-files-found: ignore
+
+  # 네이티브 E2E(Windows, 구현 중 변경 79): 실제 Windows 앱(WebView2) + tauri-driver + 러너 이미지의 msedgedriver.
+  # WebView2 런타임과 드라이버 버전이 다르면 받지 않고 실패한다(e2e-native.mjs). Linux 작업과 같은 조건(코드 PR·push master·
+  # dispatch)이고 같은 D14 관찰 규칙이다(OBSERVED_JOBS, ci-ok 밖이라 PR의 ci-ok 경로를 늘리지 않는다, master 실패는 report).
+  # nightly.yml e2e-native-windows(매주·dispatch, 러너 이미지 drift)와 같은 gate·캐시 키다.
+  e2e-native-windows:
+    name: e2e-native (windows)
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 75
+    permissions:
+      contents: read # checkout
+    steps:
+      - name: disable autocrlf
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: rust toolchain
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: ". -> target"
+          # nightly.yml e2e-native-windows와 같은 gate·OS·env라 캐시 하나를 같이 쓴다(구현 중 변경 78·79)
+          shared-key: e2e-native-windows
+          save-if: ${{ github.ref == 'refs/heads/master' }}
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          package_json_file: app/package.json
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: app/pnpm-lock.yaml
+      - name: install tauri-driver
+        run: node scripts/ci/run.mjs install-tool tauri-driver
+      # msedgedriver는 러너 이미지의 것(EDGEWEBDRIVER)만 쓴다. WebView2 런타임과 버전이 다르면 실패한다(e2e-native.mjs)
+      - name: e2e-native
+        run: node scripts/ci/run.mjs e2e-native
+      - name: hygiene-seed
+        if: ${{ !cancelled() }}
+        run: node scripts/ci/run.mjs hygiene-seed
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: ${{ !cancelled() }}
+        with:
+          name: e2e-native-windows
           path: target/ci/e2e-native/
           retention-days: 7
           if-no-files-found: ignore
@@ -709,8 +759,8 @@ jobs:
   # 꺼졌으면 다시 켜고(keep-alive), 72시간 넘게 성공이 없으면 nightly-stale 이슈를 연다. ci-ok에서 뺀 작업이다(parity CI_OK_EXEMPT).
   report:
     name: report
-    # e2e-web·e2e-native는 D14 관찰 중이라 ci-ok에 없지만 master에서 실패하면 이 작업이 master-failure 이슈를 연다
-    needs: [ci-ok, e2e-web, e2e-native]
+    # e2e-web·e2e-native(linux·windows)는 D14 관찰 중이라 ci-ok에 없지만 master에서 실패하면 이 작업이 master-failure 이슈를 연다
+    needs: [ci-ok, e2e-web, e2e-native, e2e-native-windows]
     if: always() && ((github.event_name == 'push' && github.ref == 'refs/heads/master') || (github.event_name == 'workflow_dispatch' && inputs.loop_test))
     runs-on: ubuntu-24.04
     timeout-minutes: 10

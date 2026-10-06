@@ -485,4 +485,5 @@ export const MASTER_ONLY_JOBS = ['bundle'];
 //   - 관찰 시작은 첫 녹색 실행, 편입 예정일은 그 14일 뒤다(ROADMAP Phase 4). 편입은 여기서 빼고 CODE_GATED_JOBS·
 //     MASTER_ONLY_JOBS로 옮긴 뒤 ci.yml ci-ok needs·guard를 고치는 한 변경이다(parity가 둘을 맞춘다).
 //   - e2e-native도 'code'다(리뷰 G4): master에서만 돌면 편입한 뒤에도 PR이 네이티브 E2E를 깨고 녹색으로 머지된다.
-export const OBSERVED_JOBS = { 'e2e-web': 'code', 'e2e-native': 'code' };
+//   - e2e-native-windows(구현 중 변경 79, 사용자 결정 2026-10-06)는 Linux와 따로 관찰·편입한다(작업 id가 달라 하나씩 옮긴다).
+export const OBSERVED_JOBS = { 'e2e-web': 'code', 'e2e-native': 'code', 'e2e-native-windows': 'code' };

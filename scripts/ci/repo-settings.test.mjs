@@ -215,3 +215,15 @@ test('main --check: allowed_actions가 all로 돌아가 selected-actions가 409�
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('선언한 ruleset은 GitHub이 돌려주는 정규형이다(기본값 parameters를 적지 않는다)', () => {
+  // GitHub은 update 규칙의 update_allows_fetch_and_merge가 기본값 false면 응답에서 parameters를 뺀다.
+  // 선언에 기본값을 적으면 적용 직후 --check가 거짓 drift를 낸다(2026-10-06 실측).
+  const dir = join(ROOT, '.github', 'rulesets');
+  for (const f of readdirSync(dir).filter((f) => f.endsWith('.json'))) {
+    const decl = JSON.parse(readFileSync(join(dir, f), 'utf8'));
+    for (const r of decl.rules ?? []) {
+      if (r.type === 'update') assert.notEqual(r.parameters?.update_allows_fetch_and_merge, false, `${f}: update 규칙에 기본값 parameters`);
+    }
+  }
+});

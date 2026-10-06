@@ -10,12 +10,14 @@ import { createWriteStream, mkdirSync, mkdtempSync, readFileSync, rmSync, writeF
 import net from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { finished } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
 import { parseJsonc } from "../../scripts/ci/worker-config.mjs";
 import { FAKE_ACCOUNTS } from "../test/fake-chzzk.mjs";
 import {
   browserPostHeaders,
   checkEvents,
+  childEnvFor,
   classifyLine,
   CookieJar,
   cookieAttrs,
@@ -61,6 +63,10 @@ const IP_T4B = "203.0.113.8";
 const IP_T6A = "2001:db8:7:7::1";
 const IP_T6B = "2001:db8:7:7::2";
 const IP_T6C = "2001:db8:7:8::1";
+
+// E17이 요구하는 카나리 종류와 최소 수(2026-10-07 실측 119개: 고정 19 + 동적 100)
+const REQUIRED_CANARY_LABELS = ["ip", "cookie.cdl_s", "cookie.cdl_f", "state", "sessionId", "csrf", "pollSecret", "pollVerifier", "loginId", "userCode", "handle", "access", "refresh", "chzzk.code", "chzzk.token"];
+const MIN_CANARIES = 100;
 
 const POLL_GAP_MS = 1600; // 서버의 폴링 간격(1.5초)보다 조금 길게
 const LATEST = E2E_VERSIONS[E2E_VERSIONS.length - 1];
@@ -120,7 +126,14 @@ async function req(method, url, { headers = {}, body, jar, ip } = {}) {
     const c = jar.header();
     if (c) h.set("Cookie", c);
   }
-  const res = await fetch(u, { method, headers: h, body, redirect: "manual", signal: AbortSignal.timeout(10_000) });
+  let res;
+  try {
+    res = await fetch(u, { method, headers: h, body, redirect: "manual", signal: AbortSignal.timeout(10_000) });
+  } catch (e) {
+    // 준비 뒤 wrangler가 죽었으면 판정이 아니라 환경(종료 코드 2)
+    if (ours && wrangler?.isDone()) throw new EnvError(`wrangler dev가 도중에 끝났다(${e?.name ?? "Error"})\n${tail(wrangler.lines, 30)}`);
+    throw e;
+  }
   const bytes = new Uint8Array(await res.arrayBuffer());
   if (ours) {
     const sc = res.headers.getSetCookie();
@@ -169,7 +182,7 @@ const pageCsrf = (page, what) => {
 async function authorizeToCallback(res) {
   isStatus(res, 303, "인가로 보내는 응답");
   const loc = res.headers.get("location") ?? "";
-  must(loc.startsWith(`${FAKE_ORIGIN}/account-interlock?`), "인가 주소가 가짜 치지직이 아니다(--var 적용 확인)");
+  must(loc.startsWith(`${FAKE_ORIGIN}/account-interlock?`), "인가 주소가 가짜 치지직이 아니다");
   const q = new URL(loc).searchParams;
   must(q.get("clientId") === DEV.CHZZK_CLIENT_ID, "인가 주소의 clientId가 .dev.vars.example 값과 다르다");
   must(q.get("redirectUri") === DEV.CHZZK_REDIRECT_URI, "인가 주소의 redirectUri가 등록된 콜백과 다르다");
@@ -251,7 +264,7 @@ const tail = (lines, n) => lines.slice(-n).join("\n");
 
 function childEnv() {
   // 허용 목록: CLOUDFLARE_*·GITHUB_* 등은 넘기지 않는다
-  return { PATH: process.env.PATH ?? "", HOME: join(TMP, "home"), XDG_CONFIG_HOME: join(TMP, "xdg"), WRANGLER_SEND_METRICS: "false", CI: "true", ...(process.env.TMPDIR ? { TMPDIR: process.env.TMPDIR } : {}) };
+  return childEnvFor({ tmpRoot: TMP, parentEnv: process.env });
 }
 
 /** 로컬 R2에 씨앗을 넣는다. 같은 폴더를 동시에 쓰면 SQLITE_READONLY로 실패해 하나씩 순서대로 넣는다 */
@@ -298,7 +311,11 @@ function startWrangler(args) {
     child.once("close", (code, signal) => {
       done = true;
       log.end();
-      r({ code, signal });
+      // 파일에 마지막 줄까지 쓰인 뒤에 끝난 것으로 본다(곧 process.exit한다)
+      finished(log).then(
+        () => r({ code, signal }),
+        () => r({ code, signal }),
+      );
     }),
   );
   const kill = (sig) => {
@@ -394,7 +411,11 @@ const scenarios = [
   [
     "E02-boot",
     async () => {
-      fakeServer = await startFakeChzzkServer();
+      try {
+        fakeServer = await startFakeChzzkServer();
+      } catch (e) {
+        throw new EnvError(String(e?.message ?? e)); // 8788 경합(E00 확인 뒤 다른 프로세스가 잡음)은 환경
+      }
       S.nonce = `e2e-${Date.now().toString(36)}${Math.floor(Math.random() * 1679616).toString(36).padStart(4, "0")}`;
       wrangler = startWrangler(wranglerDevArgs({ persistTo: join(TMP, "persist"), buildId: S.nonce, fakeOrigin: fakeServer.origin }));
       const health = await waitReady(S.nonce, wrangler);
@@ -412,6 +433,8 @@ const scenarios = [
         canaries.add("secret", "channelName", a.channelName);
         canaries.add("path", "channelId", a.channelId);
       }
+      // 스로틀용 합성 IP(§14 "IP 원문" 금지). 요청 줄·배너에는 클라이언트 IP가 찍히지 않아 비밀 종류다. 127.0.0.1은 배너에 찍혀 넣지 않는다
+      for (const ip of [IP_ADMIN, IP_B2, IP_C3, IP_CANCEL, IP_T4, IP_T4B, IP_T6A, IP_T6B, IP_T6C]) canaries.add("secret", "ip", ip);
     },
   ],
   [
@@ -445,7 +468,7 @@ const scenarios = [
       isStatus(home, 200, "로그인 랜딩");
       must(home.policy === "same-origin", "랜딩의 Referrer-Policy가 same-origin이 아니다");
       const csp = home.res.headers.get("content-security-policy") ?? "";
-      must(csp.includes(`form-action 'self' ${FAKE_ORIGIN}`), "CSP form-action에 가짜 치지직 출처가 없다(--var 적용 확인)");
+      must(csp.includes(`form-action 'self' ${FAKE_ORIGIN}`), "CSP form-action에 가짜 치지직 출처가 없다");
       must(home.html.includes('href="/admin"'), "관리자 랜딩에 /admin 링크가 없다");
       const links = extractDownloadLinks(home.html);
       must(links.length === 5, `다운로드 링크 ${links.length}개(필요 5)`);
@@ -729,6 +752,11 @@ const scenarios = [
       // 가짜 치지직이 낸 모든 code·토큰
       for (const c of state.issuedCodes) canaries.add("secret", "chzzk.code", c);
       for (const t of state.issuedTokens) canaries.add("secret", "chzzk.token", t);
+      // 동적 카나리가 실제로 등록됐는지(고정 카나리만으로 녹색이 되지 않게). 값은 메시지에 싣지 않는다
+      const labels = new Set(canaries.list().map((c) => c.label));
+      const missing = REQUIRED_CANARY_LABELS.filter((l) => !labels.has(l));
+      must(missing.length === 0, `등록되지 않은 카나리 종류: ${missing.join(", ")}`);
+      must(canaries.list().length >= MIN_CANARIES, `카나리 ${canaries.list().length}개(필요 ≥${MIN_CANARIES})`);
       const r = scanLogs(wrangler.lines, canaries);
       S.scan = r;
       const problems = [...r.violations, ...checkEvents(r.events)];
@@ -739,6 +767,13 @@ const scenarios = [
 ];
 
 // ---- 실행 ----
+
+/** 카나리 label별 수(값은 싣지 않는다) */
+function canaryLabelCounts() {
+  const out = {};
+  for (const c of canaries.list()) out[c.label] = (out[c.label] ?? 0) + 1;
+  return out;
+}
 
 async function cleanup() {
   try {
@@ -755,6 +790,8 @@ async function cleanup() {
 }
 
 async function main() {
+  // 앞 실행의 wrangler.log가 새 result.json 옆에 남지 않게 비운다
+  rmSync(OUT, { recursive: true, force: true });
   mkdirSync(OUT, { recursive: true });
   TMP = mkdtempSync(join(tmpdir(), "chzzk-worker-e2e-"));
   for (const d of ["persist", "seed", "home", "xdg"]) mkdirSync(join(TMP, d), { recursive: true });
@@ -795,7 +832,7 @@ async function main() {
     const scan = S.scan ?? scanLogs(lines, canaries);
     writeFileSync(
       join(OUT, "result.json"),
-      `${JSON.stringify({ ok: exit === 0, exit, scenarios: results, events: scan.events, lineCounts: { ...scan.counts, total: lines.filter((l) => classifyLine(l) !== "blank").length }, wranglerVersion: WRANGLER_VERSION }, null, 2)}\n`,
+      `${JSON.stringify({ ok: exit === 0, exit, scenarios: results, events: scan.events, lineCounts: { ...scan.counts, total: lines.filter((l) => classifyLine(l) !== "blank").length }, canaryLabels: canaryLabelCounts(), wranglerVersion: WRANGLER_VERSION }, null, 2)}\n`,
     );
   }
   return exit;

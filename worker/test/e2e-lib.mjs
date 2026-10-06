@@ -64,6 +64,20 @@ export function wranglerDevArgs({ persistTo, buildId, fakeOrigin, startRate = E2
   ];
 }
 
+// wrangler 자식에게 넘기는 env 키(허용 목록). CLOUDFLARE_*·로그 등급 env(WRANGLER_LOG)·GITHUB_*는 넘기지 않는다
+export const CHILD_ENV_KEYS = ["PATH", "HOME", "XDG_CONFIG_HOME", "WRANGLER_SEND_METRICS", "CI", "TMPDIR"];
+
+/**
+ * wrangler 자식 env(허용 목록만). 부모 env에서는 PATH·TMPDIR만 옮기고 HOME·XDG_CONFIG_HOME은 임시 폴더라 OAuth 캐시도 없다.
+ * 정적 검사(worker-config.mjs checkE2eSources)는 보조이고, 실제 방어는 이 목록·인자 배열 고정(단위 테스트)과 필요 이벤트 수다
+ */
+export function childEnvFor({ tmpRoot, parentEnv }) {
+  if (typeof tmpRoot !== "string" || !tmpRoot.startsWith("/")) throw new Error("tmpRoot는 절대 경로여야 한다");
+  const env = { PATH: parentEnv.PATH ?? "", HOME: `${tmpRoot}/home`, XDG_CONFIG_HOME: `${tmpRoot}/xdg`, WRANGLER_SEND_METRICS: "false", CI: "true" };
+  if (parentEnv.TMPDIR) env.TMPDIR = parentEnv.TMPDIR;
+  return env;
+}
+
 /** 로컬 R2에 한 객체를 넣는 wrangler 인자(--local만. 실제 R2도 묶음 put도 쓰지 않는다) */
 export function wranglerR2PutArgs({ key, file, persistTo }) {
   if (typeof key !== "string" || !R2_KEY_RE.test(key) || key.split("/").some((seg) => seg === "." || seg === "..")) throw new Error("R2 키 형식이 틀렸다");

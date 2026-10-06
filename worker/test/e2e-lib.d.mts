@@ -14,6 +14,8 @@ export declare const REQUIRED_EVENTS: Readonly<Record<string, number>>;
 export declare const EXACT_EVENTS: Readonly<Record<string, number>>;
 
 export declare function wranglerDevArgs(o: { persistTo: string; buildId: string; fakeOrigin: string; startRate?: number }): string[];
+export declare const CHILD_ENV_KEYS: readonly string[];
+export declare function childEnvFor(o: { tmpRoot: string; parentEnv: Readonly<Record<string, string | undefined>> }): Record<string, string>;
 export declare function wranglerR2PutArgs(o: { key: string; file: string; persistTo: string }): string[];
 export declare function parseDevVars(text: string): Record<string, string>;
 export declare function cookieAttrs(setCookie: string): { name: string; value: string; attrs: string[] };

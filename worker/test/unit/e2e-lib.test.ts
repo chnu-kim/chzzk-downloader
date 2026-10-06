@@ -3,7 +3,9 @@ import { describe, expect, it } from "vitest";
 import { formatLog, type LogFields } from "../../src/core/log";
 import {
   browserPostHeaders,
+  CHILD_ENV_KEYS,
   checkEvents,
+  childEnvFor,
   classifyLine,
   CookieJar,
   E2E_BUCKET,
@@ -26,6 +28,34 @@ const REMOTE = ["--re", "mote"].join("");
 const LOG_LEVEL = ["--log", "-level"].join("");
 
 const DEV = { persistTo: "/tmp/p", buildId: "e2e-abc", fakeOrigin: "http://127.0.0.1:8788" };
+
+describe("childEnvFor", () => {
+  const parentEnv = {
+    PATH: "/usr/bin",
+    TMPDIR: "/tmp/t",
+    HOME: "/home/me",
+    WRANGLER_LOG: "warn",
+    CLOUDFLARE_API_TOKEN: "x-token",
+    CLOUDFLARE_ACCOUNT_ID: "x-account",
+    GITHUB_TOKEN: "x-gh",
+    XDG_CONFIG_HOME: "/home/me/.config",
+  };
+
+  it("허용 목록의 키만 넘기고 HOME·XDG_CONFIG_HOME은 임시 폴더다", () => {
+    const env = childEnvFor({ tmpRoot: "/tmp/e2e", parentEnv });
+    expect(env).toEqual({ PATH: "/usr/bin", HOME: "/tmp/e2e/home", XDG_CONFIG_HOME: "/tmp/e2e/xdg", WRANGLER_SEND_METRICS: "false", CI: "true", TMPDIR: "/tmp/t" });
+    expect(Object.keys(env).every((k) => CHILD_ENV_KEYS.includes(k))).toBe(true);
+    expect(CHILD_ENV_KEYS).toEqual(["PATH", "HOME", "XDG_CONFIG_HOME", "WRANGLER_SEND_METRICS", "CI", "TMPDIR"]);
+  });
+
+  it("TMPDIR이 없으면 넣지 않는다", () => {
+    expect(Object.keys(childEnvFor({ tmpRoot: "/tmp/e2e", parentEnv: { PATH: "/usr/bin" } }))).toEqual(["PATH", "HOME", "XDG_CONFIG_HOME", "WRANGLER_SEND_METRICS", "CI"]);
+  });
+
+  it("상대 경로 tmpRoot는 거부한다", () => {
+    expect(() => childEnvFor({ tmpRoot: "tmp/e2e", parentEnv })).toThrow();
+  });
+});
 
 describe("wranglerDevArgs", () => {
   it("pnpm dev와 같은 모양에 임시 R2 폴더와 --var만 더한다", () => {
@@ -56,6 +86,7 @@ describe("wranglerDevArgs", () => {
     expect(args[i + 1]).toBe(".dev.vars.example");
     expect(args[i + 2]?.startsWith("-")).toBe(true);
     expect(args).not.toContain(REMOTE);
+    expect(args).not.toContain("-r"); // 원격 R2 플래그의 별칭(정적 검사는 이 글자를 보지 않는다)
     expect(args.some((a) => a.startsWith(LOG_LEVEL))).toBe(false);
   });
 

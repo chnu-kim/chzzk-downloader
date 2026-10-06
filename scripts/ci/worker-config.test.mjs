@@ -16,6 +16,7 @@ import {
   checkDevVarsExample,
   checkOutbound,
   checkReleaseSources,
+  DELETE_ALLOWLIST,
   checkDist,
   checkPackage,
   checkRawAllowlist,
@@ -585,7 +586,7 @@ test('씨앗: 바깥 요청(낱말 fetch)은 src/http/auth.ts 한 곳, 전역 �
   assert.ok(checkWorker(copy({ 'worker/src/http/auth.ts': null })).some((e) => e.includes('OUTBOUND_ALLOWLIST')));
 });
 
-test('씨앗: 릴리스 읽기 소스(worker.md 구현 중 변경 31 (차), cicd.md 94)', () => {
+test('씨앗: 릴리스 읽기 소스(worker.md 구현 중 변경 31 (차), cicd.md 94·95)', () => {
   const R2 = 'src/http/r2.ts';
   const r2 = read(R2);
   assert.deepEqual(R2_ALLOWLIST, { [R2]: 1 });
@@ -607,6 +608,17 @@ test('씨앗: 릴리스 읽기 소스(worker.md 구현 중 변경 31 (차), cicd
     ['Location 헤더', 'src/http/releases.ts', 'headers.set("Location", u);'],
     ['릴리스 파일의 .delete(', 'src/http/update.ts', 'cache.delete(k);'],
     ['멀티파트', R2, `${r2}\nb.createMultipartUpload(k);\n`],
+    // 모양 검사가 놓치던 것(cicd.md 95): 옵셔널 호출·대괄호·구조 분해·DIST 없이 바인딩 얻기
+    ['.list?.(', 'src/http/update.ts', 'await b.list?.({ prefix: "releases/" });'],
+    ['.put?.(', 'src/http/releases.ts', 'await b.put?.(k, v);'],
+    ['["list"](', 'src/http/landing.ts', 'await b["list"]({});'],
+    ['{ list } 구조 분해', 'src/http/landing.ts', 'const { list } = b; await list({});'],
+    ['typeof v?.list', 'src/http/landing.ts', 'Object.values(ctx.env).find((v) => typeof v?.list === "function");'],
+    ['릴리스 파일의 .delete?.(', 'src/http/releases.ts', 'await b.delete?.(k);'],
+    ['릴리스 파일의 ["delete"](', 'src/http/update.ts', 'await b["delete"](k);'],
+    ['목록 밖 파일의 Map.delete', 'src/http/health.ts', 'm.delete(k);'],
+    ['lru.ts에 delete 하나 더', 'src/core/lru.ts', `${read('src/core/lru.ts')}\nb.delete(k);\n`],
+    ['flows.ts의 delete 하나 덜', 'src/store/flows.ts', read('src/store/flows.ts').replace('map.delete(key);', 'void key;')],
   ];
   for (const [name, rel, text] of seeds) {
     const files = rel === R2 && text.startsWith(r2) ? [{ rel, text }] : [{ rel: R2, text: r2 }, { rel, text }];
@@ -616,9 +628,11 @@ test('씨앗: 릴리스 읽기 소스(worker.md 구현 중 변경 31 (차), cicd
   assert.notDeepEqual(checkReleaseSources([], { all: true }), [], '목록 파일 없음');
   assert.deepEqual(checkReleaseSources([]), []);
   // 통과: 다른 파일의 Map.delete, 허용된 파일의 낱말, src 밖(test)
+  assert.deepEqual(DELETE_ALLOWLIST, { 'src/core/lru.ts': 3, 'src/store/flows.ts': 5 });
   const clean = [
-    ['Lru의 Map.delete', 'src/core/lru.ts', 'this.#map.delete(k);'],
-    ['다른 파일의 Map.delete', 'src/store/flows.ts', 'map.delete(k);'],
+    ['Lru의 Map.delete(실제 파일)', 'src/core/lru.ts', read('src/core/lru.ts')],
+    ['flows의 Map.delete(실제 파일)', 'src/store/flows.ts', read('src/store/flows.ts')],
+    ['낱말이 아닌 put·list', 'src/http/health.ts', 'const input = listing; const outputs = putative; const deleted = 1;'],
     ['설정 필드', 'src/config.ts', 'ciVerifyToken: required(env, "CI_VERIFY_TOKEN", devMode),'],
     ['release-auth의 낱말', 'src/http/release-auth.ts', 'const ci = ctx.config.ciVerifyToken; export async function releaseAuth() {}'],
     ['releaseAuth 호출', 'src/http/releases.ts', 'const who = await releaseAuth(req, ctx, true);'],
@@ -629,5 +643,7 @@ test('씨앗: 릴리스 읽기 소스(worker.md 구현 중 변경 31 (차), cicd
   // 사본: 다른 파일에 .put(을 더하거나 r2.ts를 지우면 checkWorker가 실패
   const health = read('src/http/health.ts');
   assert.ok(checkWorker(copy({ 'worker/src/http/health.ts': `${health}\nawait env.X.put(k);\n` })).some((e) => e.includes('src/http/health.ts') && e.includes('.put(')));
+  assert.ok(checkWorker(copy({ 'worker/src/http/health.ts': `${health}\nawait b.list?.({});\n` })).some((e) => e.includes('src/http/health.ts') && e.includes('list')));
   assert.ok(checkWorker(copy({ 'worker/src/http/r2.ts': null })).some((e) => e.includes('릴리스 읽기 검사 목록')));
+  assert.ok(checkWorker(copy({ 'worker/src/core/lru.ts': null })).some((e) => e.includes('src/core/lru.ts') && e.includes('릴리스 읽기 검사 목록')));
 });

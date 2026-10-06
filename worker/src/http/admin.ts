@@ -15,6 +15,11 @@ const notFound = (ctx: Ctx): Response => {
   return noticePage(ctx.config, 404, COPY.notFound);
 };
 
+const badBody = (ctx: Ctx): Response => {
+  log("admin.rejected", { route: ctx.route, reason: "bad_body" });
+  return noticePage(ctx.config, 400, COPY.badBody);
+};
+
 const badChannel = (ctx: Ctx): Response => {
   log("admin.rejected", { route: ctx.route, reason: "bad_channel_id" });
   return noticePage(ctx.config, 400, COPY.badChannelId);
@@ -46,15 +51,14 @@ export async function adminPage(req: Request, ctx: Ctx): Promise<Response> {
 export async function adminAllow(req: Request, ctx: Ctx): Promise<Response> {
   const g = await guardWebPost(req, ctx, { admin: true });
   if (!g.ok) return g.response;
+  // 같은 이름이 둘 이상이면 어느 쪽이 맞는지 알 수 없어 bad_body, 없음·형식 틀림은 bad_channel_id
+  if (g.form.getAll("channelId").length > 1) return badBody(ctx);
   const channelId = oneField(g.form, "channelId");
   if (channelId === null || !CHANNEL_ID.test(channelId)) return badChannel(ctx);
   if (ctx.config.adminChannelIds.includes(channelId)) return adminChannel(ctx);
   // 메모는 store가 64자로 자르고, 비어 있으면 있던 메모를 그대로 둔다(구현 중 변경 38 (카)). 같은 이름이 둘 이상이면 어느 쪽이 맞는지 알 수 없어 거절한다
   const notes = g.form.getAll("note");
-  if (notes.length > 1) {
-    log("admin.rejected", { route: ctx.route, reason: "bad_body" });
-    return noticePage(ctx.config, 400, COPY.badBody);
-  }
+  if (notes.length > 1) return badBody(ctx);
   const r = await ctx.store.allow(channelId, notes[0] ?? "", g.s.channelId, ctx.now);
   if (!r.ok) return badChannel(ctx);
   log("admin.allow", { route: ctx.route });
@@ -65,6 +69,8 @@ export async function adminAllow(req: Request, ctx: Ctx): Promise<Response> {
 export async function adminDisallow(req: Request, ctx: Ctx): Promise<Response> {
   const g = await guardWebPost(req, ctx, { admin: true });
   if (!g.ok) return g.response;
+  // 같은 이름이 둘 이상이면 어느 쪽이 맞는지 알 수 없어 bad_body, 없음·형식 틀림은 bad_channel_id
+  if (g.form.getAll("channelId").length > 1) return badBody(ctx);
   const channelId = oneField(g.form, "channelId");
   if (channelId === null || !CHANNEL_ID.test(channelId)) return badChannel(ctx);
   const r = await ctx.store.disallow(channelId, g.s.channelId, ctx.config.adminChannelIds, ctx.now);

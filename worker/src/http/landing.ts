@@ -70,8 +70,7 @@ async function readDownloads(ctx: Ctx): Promise<Downloads> {
 export async function landing(req: Request, ctx: Ctx): Promise<Response> {
   const r = await readWebSession(req, ctx);
   if (!r.ok) return htmlPage(ctx.config, 200, COPY.landingTitle, anonymousBody(), r.clear === null ? undefined : { "Set-Cookie": r.clear });
-  const downloads = await loadDownloads(ctx);
-  const devices = await ctx.store.mySessions(r.s.channelId, ctx.now);
+  const [downloads, devices] = await Promise.all([loadDownloads(ctx), ctx.store.mySessions(r.s.channelId, ctx.now)]);
   return htmlPage(
     ctx.config,
     200,

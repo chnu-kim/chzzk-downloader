@@ -599,6 +599,14 @@ export function checkStorePurity(files) {
   return errs;
 }
 
+// 낱말 검사 공통 전처리: 유니코드 이스케이프 \uXXXX·\u{…}를 디코드한 텍스트로 센다(fe\u0074ch 같은 우회, cicd.md 99 (가)).
+// 잘못된 코드 포인트(> 10FFFF)는 그대로 둔다
+export const decodeUnicodeEscapes = (text) =>
+  text.replace(/\\u(?:\{([0-9a-fA-F]{1,8})\}|([0-9a-fA-F]{4}))/g, (m, a, b) => {
+    const cp = Number.parseInt(a ?? b, 16);
+    return cp <= 0x10ffff ? String.fromCodePoint(cp) : m;
+  });
+
 const RAW_TOKEN = /(?<![\w$])raw(?![\w$])/g;
 
 // 바깥 요청(전역 fetch)은 이 파일·이 횟수만(worker.md 구현 중 변경 27 (자)·28). 치지직 호출이 한 곳이라는 것을 고정한다
@@ -627,8 +635,9 @@ export const outboundCount = (text) => (text.match(FETCH_WORD) ?? []).length - (
 export function checkRawAllowlist(files, { all = false } = {}) {
   const errs = [];
   const seen = new Set();
-  for (const { rel, text } of files) {
+  for (const { rel, text: rawText } of files) {
     if (!rel.startsWith('src/')) continue;
+    const text = decodeUnicodeEscapes(rawText);
     seen.add(rel);
     const got = (text.match(RAW_TOKEN) ?? []).length;
     const want = Object.hasOwn(RAW_ALLOWLIST, rel) ? RAW_ALLOWLIST[rel] : 0;
@@ -643,8 +652,9 @@ export function checkRawAllowlist(files, { all = false } = {}) {
 export function checkOutbound(files, { all = false } = {}) {
   const errs = [];
   const seen = new Set();
-  for (const { rel, text } of files) {
+  for (const { rel, text: rawText } of files) {
     if (!rel.startsWith('src/')) continue;
+    const text = decodeUnicodeEscapes(rawText);
     seen.add(rel);
     const got = outboundCount(text);
     const want = Object.hasOwn(OUTBOUND_ALLOWLIST, rel) ? OUTBOUND_ALLOWLIST[rel] : 0;
@@ -674,8 +684,9 @@ const count = (re, text) => (text.match(re) ?? []).length;
 export function checkReleaseSources(files, { all = false } = {}) {
   const errs = [];
   const seen = new Set();
-  for (const { rel, text } of files) {
+  for (const { rel, text: rawText } of files) {
     if (!rel.startsWith('src/')) continue;
+    const text = decodeUnicodeEscapes(rawText);
     seen.add(rel);
     if (!CI_TOKEN_IDENT_FILES.includes(rel) && count(word('ciVerifyToken'), text) > 0) errs.push(`${rel}: 낱말 ciVerifyToken은 ${CI_TOKEN_IDENT_FILES.join('·')}에서만 쓴다(CI 토큰 값은 releaseAuth 한 곳에서 읽는다, 주석에도 쓰지 않는다)`);
     if (!RELEASE_AUTH_FILES.includes(rel) && count(word('releaseAuth'), text) > 0) errs.push(`${rel}: 낱말 releaseAuth는 ${RELEASE_AUTH_FILES.join('·')}에서만 쓴다(releases.ts·update.ts만 부른다, 주석에도 쓰지 않는다)`);
@@ -703,7 +714,7 @@ export function checkReleaseSources(files, { all = false } = {}) {
 const IMPORT_HTML = /import\s*(?:type\s+)?\{[^}]*\}\s*from\s*["'][^"']*\/html["']\s*;?/g;
 const HTML_WORD = /(?<![\w$])html(?![\w$])/g;
 const HTML_ALLOWED = [/(?<![\w$])html(?=\s*`)/g, /<\/?html(?![\w$])/gi, /doctype\s+html(?![\w$])/gi, /text\/html(?![\w$])/gi];
-export const HTML_ALIAS = /(?<![\w$.])html\s+as\b/;
+export const HTML_ALIAS = /(?<![\w$.])html(?:\s|\/\*[\s\S]*?\*\/|\/\/[^\n]*\n)+as\b/;
 export const HTML_MODULE_FORBIDDEN = [
   [/(?<![\w$.])import\s*\*\s*as\b/, 'import * as(네임스페이스로 html을 꺼내는 길)'],
   [/(?<![\w$.])export\s*\*/, 'export *(네임스페이스 재수출)'],
@@ -725,11 +736,17 @@ export function htmlWordCount(text) {
 export function checkHtmlSources(files) {
   const errs = [];
   const msg = (rel, why) => `${rel}: ${why}를 쓰지 않는다(html은 태그드 템플릿으로만, worker.md 구현 중 변경 39)`;
-  for (const { rel, text } of files) {
+  for (const { rel, text: rawText } of files) {
     if (!rel.startsWith('src/')) continue;
+    const text = decodeUnicodeEscapes(rawText);
     for (const [re, why] of HTML_INLINE_FORBIDDEN) if (re.test(text)) errs.push(msg(rel, why));
     for (const [re, why] of HTML_MODULE_FORBIDDEN) if (re.test(text)) errs.push(msg(rel, why));
-    if (rel === 'src/core/html.ts') continue;
+    if (rel === 'src/core/html.ts') {
+      // SafeHtml을 만드는 곳은 html·raw 둘뿐이다(세 번째 mint는 이스케이프 보장을 깬다)
+      const mints = (text.match(/\bnew\s+SafeHtml\s*\(/g) ?? []).length;
+      if (mints !== 2) errs.push(`${rel}: new SafeHtml( ${mints}개 ≠ 2개(html·raw만 SafeHtml을 만든다, worker.md 구현 중 변경 39)`);
+      continue;
+    }
     if (HTML_ALIAS.test(text)) errs.push(msg(rel, 'html 별칭 import(html as)'));
     const n = htmlWordCount(text);
     if (n > 0) errs.push(msg(rel, `태그드 템플릿 밖의 낱말 html ${n}개(호출형·값으로 넘김·속성 접근·재수출·주석, 주석에서는 "HTML"로 쓴다)`));

@@ -27,6 +27,7 @@ import {
   checkWorker,
   checkSentinel,
   checkWrangler,
+  decodeUnicodeEscapes,
   configKeys,
   DEPLOY_MAIN,
   DEPLOY_PKG_NAME,
@@ -541,6 +542,11 @@ test('씨앗: html 호출형·인라인 스크립트·스타일(worker.md 구현
   const check = (rel, text) => checkHtmlSources([{ rel, text }]);
   const fails = [
     'html(["<b>"] as any)',
+    'html([...a], x)',
+    '\\u0068tml(["<b>"])',
+    'import { html/**/as h } from "../core/html";',
+    'import { html /* x */ as h } from "../core/html";',
+    'import { html // x\nas h } from "../core/html";',
     'html?.([])',
     'html.call(null, [])',
     'html .apply(null,[[]])',
@@ -581,8 +587,20 @@ test('씨앗: html 호출형·인라인 스크립트·스타일(worker.md 구현
     'import {\n  html,\n  renderHtml,\n} from "../core/html";',
   ];
   for (const text of passes) assert.deepEqual(check('src/http/x.ts', text), [], text);
+  // 유니코드 이스케이프로 낱말을 가린 우회(공통 전처리 decodeUnicodeEscapes)
+  assert.notDeepEqual(checkOutbound([{ rel: 'src/http/x.ts', text: 'fe\\u0074ch(u)' }]), []);
+  assert.notDeepEqual(checkOutbound([{ rel: 'src/http/x.ts', text: '\\u{66}etch(u)' }]), []);
+  assert.notDeepEqual(checkReleaseSources([{ rel: 'src/http/x.ts', text: 'b.\\u0070ut(k)' }]), []);
+  assert.notDeepEqual(checkReleaseSources([{ rel: 'src/http/x.ts', text: 'b.l\\u0069st()' }]), []);
+  assert.notDeepEqual(checkReleaseSources([{ rel: 'src/http/x.ts', text: 'm.d\\u0065lete(k)' }]), []);
+  assert.equal(decodeUnicodeEscapes('a\\u0041\\u{1F600}\\u{110000}'), 'aA\u{1F600}\\u{110000}');
+  // SafeHtml mint는 html·raw 둘뿐
+  assert.deepEqual(check('src/core/html.ts', 'a = new SafeHtml(K, s); b = new SafeHtml(K, t);'), []);
+  assert.notDeepEqual(check('src/core/html.ts', 'a = new SafeHtml(K, s); b = new SafeHtml(K, t); c = new SafeHtml(K, u);'), []);
+  assert.notDeepEqual(check('src/core/html.ts', 'a = new SafeHtml(K, s);'), []);
+  assert.deepEqual(check('src/core/html.ts', read('src/core/html.ts')), []);
   // 정의 파일은 호출형 검사 밖(인라인 검사는 받는다), src 밖(테스트)은 어느 쪽도 보지 않는다
-  assert.deepEqual(check('src/core/html.ts', 'export function html(strings, ...values) {}'), []);
+  assert.deepEqual(check('src/core/html.ts', 'export function html(strings, ...values) {} new SafeHtml(K, a); new SafeHtml(K, b);'), []);
   assert.notDeepEqual(check('src/core/html.ts', 'const s = "<script>";'), []);
   assert.deepEqual(check('test/x.ts', 'html([]); const s = "<script>";'), []);
   // 메시지는 파일과 이유를 담는다

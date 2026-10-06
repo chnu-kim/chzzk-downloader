@@ -300,7 +300,10 @@ describe("동작", () => {
     const s = await session("a1");
     for (const channelId of ["ABC", "A".repeat(32), "0".repeat(31), "g".repeat(32), ""]) expect((await post(s, "/admin/allow", { channelId })).status).toBe(400);
     expect((await s.b.post("/admin/allow", undefined, formBody({ csrf: s.csrf }))).status).toBe(400);
-    expect((await s.b.post("/admin/allow", undefined, `csrf=${s.csrf}&channelId=${C3}&channelId=${D4}`)).status).toBe(400);
+    const dup = await s.b.post("/admin/allow", undefined, `csrf=${s.csrf}&channelId=${C3}&channelId=${D4}`);
+    expect(dup.status).toBe(400);
+    expect(await dup.text()).toContain("요청을 읽지 못했어요."); // 중복은 bad_body, 없음·형식 틀림은 bad_channel_id
+    expect(await (await s.b.post("/admin/allow", undefined, formBody({ csrf: s.csrf }))).text()).not.toContain("요청을 읽지 못했어요.");
   });
 
   it("allow: 메모 100자는 store가 64자로 자른다, 감사 기록이 남는다", async () => {

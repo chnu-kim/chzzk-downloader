@@ -73,18 +73,19 @@ D=$(mktemp -d) && mkdir -p "$D/home" && tar -xzf target/ci/worker-bundle/worker-
 
 ### 2.2 자격과 wrangler 함수
 
-로컬 `wrangler login`이 아니라 **릴리스의 배포 토큰**으로 한다. 그래야 deploy-worker가 태그에서 쓸 토큰의 권한(배포·secret 목록)을 태그 전에 확인한다. env는 release.mjs와 같은 허용 목록이다(구현 중 변경 36 (바)): 빈 임시 `HOME`이라 로컬 로그인 상태를 쓰지 않는다.
+로컬 `wrangler login`이 아니라 **릴리스의 배포 토큰**으로 한다. 그래야 deploy-worker가 태그에서 쓸 토큰의 권한(배포·secret 목록)을 태그 전에 확인한다. 값은 release.mjs와 같다(구현 중 변경 36 (바)): 빈 임시 `HOME`이라 로컬 로그인 상태를 쓰지 않는다. 토큰은 셸 접두 대입으로 넘겨 어떤 프로세스의 인자에도 싣지 않는다(`env -i … CLOUDFLARE_API_TOKEN=…`처럼 쓰면 `env`의 인자로 `ps`에 보인다).
 
 ```sh
 printf 'CLOUDFLARE_API_TOKEN: '; read -rs CF_TOKEN; echo
 printf 'CLOUDFLARE_ACCOUNT_ID: '; read -rs CF_ACCOUNT; echo
 printf 'DIST_BASE_URL(<Worker 주소>): '; read -rs BASE; echo
-w() { (cd "$D" && env -i PATH="$PATH" HOME="$D/home" XDG_CONFIG_HOME="$D/home/.config" CI=true WRANGLER_SEND_METRICS=false \
+w() { (cd "$D" && HOME="$D/home" XDG_CONFIG_HOME="$D/home/.config" CI=true WRANGLER_SEND_METRICS=false \
   CLOUDFLARE_API_TOKEN="$CF_TOKEN" CLOUDFLARE_ACCOUNT_ID="$CF_ACCOUNT" \
-  node deploy/node_modules/wrangler/bin/wrangler.js "$@"); }
+  env -u CLOUDFLARE_API_BASE_URL -u WRANGLER_LOG node deploy/node_modules/wrangler/bin/wrangler.js "$@"); }
+env | cut -d= -f1 | grep -E '^(CLOUDFLARE|WRANGLER|CF)_'   # 아무것도 안 나와야 한다(이름만 찍는다). 나오면 새 터미널에서 한다
 ```
 
-`CI=true`라 wrangler는 묻지 않고, `secret put`은 값을 표준 입력에서 읽는다.
+`CI=true`라 wrangler는 묻지 않고, `secret put`은 값을 표준 입력에서 읽는다. 36 (바) 허용 목록과 다른 점: 완전한 `env -i`가 아니라 셸의 나머지 env를 물려받고 `CLOUDFLARE_API_BASE_URL`·`WRANGLER_LOG`만 지운다(위 확인 줄이 나머지 `CLOUDFLARE_*`·`WRANGLER_*`가 없음을 본다).
 
 ### 2.3 배포
 
@@ -160,11 +161,13 @@ auth "$CI_TOKEN"     | st -H @- "$BASE/update/0.0.0"              # 204(R2에 la
 node worker/scripts/code-binding-check.mjs
 ```
 
-터미널에 나온 `http://localhost:8787/auth/login`을 브라우저로 열어 로그인한다. 도구가 받은 code 하나로 ① 새 state로 교환 ② (①이 수락이 아니면) 원래 state로 교환 ③ (앞 교환 중 하나가 수락이면) 같은 code 재교환을 하고, 단계별 거부/수락·성공/실패와 결론만 찍는다(ID·토큰·code·state 없음). 받은 치지직 토큰은 쓰지 않고 버리며 revoke하지 않는다(공용 테스트 앱이라 다른 서비스 로그인까지 끊긴다).
+터미널에 나온 `http://localhost:8787/auth/login`을 브라우저로 열어 로그인한다. 도구가 받은 code 하나로 ① 새 state로 교환 ② (①이 수락이 아니면) 원래 state로 교환하고, **①·② 모두 거부면 대조**를 한다: 터미널이 한 번 더 로그인하라고 하면 같은 주소로 다시 로그인한다. 도구는 그 새 code를 그 로그인의 원래 state로 **먼저** 교환한다. 끝으로 ③ (앞 교환 중 하나가 수락이면) 수락된 교환과 같은 code를 재교환한다. 단계별 거부/수락·성공/실패와 결론만 찍는다(ID·토큰·code·state 없음, HTTP 상태와 치지직 오류 code 이름은 찍는다). 받은 치지직 토큰은 쓰지 않고 버리며 revoke하지 않는다(공용 테스트 앱이라 다른 서비스 로그인까지 끊긴다).
 
 - 기대: ① 거부 ② 성공 ③ 거부.
 - ① 수락 또는 ③ 수락이면 그 사실만 알리고, 대응(교환 전 code를 흐름에 묶는 다른 길, 또는 위험 수용)은 사용자와 정한다(29).
-- "판정 불가"면(연결 실패, 또는 ①·② 모두 실패) 다시 돌린다.
+- ① 거부 ② 실패 대조 성공이면 결론은 "묶인다(다른 state 거부) + 실패한 교환이 code를 소모할 수 있다"이다. 그대로 적는다.
+- ① 거부 ② 실패 **대조도 실패**면 자격·만료 문제로 판정 불가다. **다시 돌리지 않고** ①·②·대조 줄의 HTTP 상태와 오류 code 이름을 에이전트에 알린다.
+- 그 밖의 "판정 불가"(연결 실패·본문 끊김·5xx·408·429, 두 번째 로그인 실패)는 거부로 세지 않은 것이다. 429면 잠시 뒤, 나머지는 바로 처음부터 다시 돌린다.
 
 ### 3.2 Workers Logs에 URL이 없다
 
@@ -203,7 +206,7 @@ Cloudflare 계정을 다른 Worker들과 함께 쓰므로 하루 요청 한도�
 |---|---|---|
 | 5-1 | `gh variable set WORKER_DEPLOY_ENABLED --body false`(저장소 변수) → `gh variable delete WORKER_DEPLOY_ENABLED --env release`. deploy-worker의 작업 수준 `if:`는 환경 변수를 보지 못한다. `VERIFY_VIA`는 환경 `release`에 그대로 둔다 | 36 (차), cicd.md 96 (아) |
 | 5-2 | §2.6이 통과했으면 `gh variable set WORKER_DEPLOY_ENABLED --body true`. 첫 태그의 deploy-worker가 손으로 올린 Worker를 같은 묶음 방식으로 다시 배포하고 health + 일곱을 본다 | §13.4, 36 |
-| 5-3 | 태그 전 확인: 태그할 커밋이 `origin/master`에 있고 그 커밋의 master `ci-ok`가 녹색, 버전 파일이 0.1.0(`node scripts/ci/run.mjs versions`) | release.yml `gate` |
+| 5-3 | 태그 전 확인: 태그할 커밋이 `origin/master`에 있고 그 커밋의 master `ci-ok`가 녹색, 버전 파일이 0.1.0(`node scripts/ci/run.mjs versions`), `git ls-remote --tags origin 'refs/tags/v*'`가 비어 있다(origin에 `v*` 태그가 하나라도 있으면 멈추고 알린다: 0.1.0보다 큰 태그가 있으면 `gate`의 단조 증가 검사가 거부한다) | release.yml `gate`, 42 (마) |
 | 5-4 | **사용자 승인 뒤** `git fetch origin && git tag v0.1.0 <그 커밋> && git push origin refs/tags/v0.1.0`. **`git push --tags`는 쓰지 않는다**: 이 클론에는 비공개 저장소에서 온 `v*` 태그가 있다(`git tag -l`). 그것이 origin에 올라가면 `gate`의 단조 증가 검사가 `v0.1.0`과 이후 0.1.x를 영영 거부한다. 같은 이유로 이 클론에서 tag 모드 `release.mjs gate`를 로컬로 돌리면 실패한다(CI 체크아웃에는 그 태그가 없다) | 42 (마) |
 | 5-5 | 흐름: gate → xtask → build×3 → smoke → stage → sign-publish(R2, `latest.json`은 마지막) → verify(`VERIFY_VIA=s3`) → prune → deploy-worker(secret 이름 → superseded 가드 → 재배포 → health의 build 일치 + 일곱). 녹색 뒤 로컬에서 `CI_VERIFY_TOKEN="$CI_TOKEN" node scripts/ci/release.mjs worker --check-only --base "$BASE" --version 0.1.0 --build <태그 커밋 앞 7자>` → exit 0, §4 표, §1의 list-keys 재실행(`releases/0.1.0/…` 키) | §9.4, 36 (자) |
 | 5-6 | Worker로 다시 받아 확인: `VERIFY_VIA=worker CI_VERIFY_TOKEN="$CI_TOKEN" cargo xtask release verify --version 0.1.0 --pubkey release/updater.pub --base-url "$BASE"` → exit 0. GitHub의 verify 작업을 다시 돌리지 않는다(판정 실패면 `latest.json`을 되돌린다) | cicd.md §5 4(verify 실패 → rollback) |
@@ -220,7 +223,7 @@ Cloudflare 계정을 다른 Worker들과 함께 쓰므로 하루 요청 한도�
 | 자원 | Free 한도 | 넘으면 | 볼 곳 |
 |---|---|---|---|
 | Workers 요청 | 10만/일(00:00 UTC 초기화) | Error 1027(과금 없음) | Workers & Pages 개요(계정), Worker Metrics(이 Worker) |
-| DO `AuthStore` | 쓰기 10만 행/일, 저장 5GB | 그 연산 실패(과금 없음) | Durable Objects 화면 |
+| DO `AuthStore` | 요청 10만/일, 읽기 500만 행/일, 쓰기 10만 행/일, 저장 5GB(Cloudflare 문서 2026-10-07 확인) | 그 종류의 연산이 오류로 실패(과금 없음) | Durable Objects 화면(요청 수·읽기/쓰기 행·저장) |
 | R2 | Class A 100만/월, Class B 1000만/월, 저장 10GB-월 | **청구** | R2 → 버킷 Metrics |
 | Workers Logs | 이벤트 20만/일, 보존 3일. 2026-12-01부터 계정 Observability 0.5GB/일 수집 | 2026-12-01부터는 수집을 멈추고 00:00 UTC에 재개(Free는 추가 수집을 살 수 없어 과금 없음). 그 전 Free 초과 동작은 문서에 없다 **[확인 필요]** | Workers Logs·Observability 사용량 |
 
@@ -231,7 +234,7 @@ Cloudflare 계정을 다른 Worker들과 함께 쓰므로 하루 요청 한도�
 ROADMAP Phase 3 W9 줄과 "현재 위치"에 **날짜와 결과 낱말만** 적는다. 예:
 
 - `수동 첫 배포 통과(날짜): exports DO 그대로, secret 넷, 배포 토큰 secret list 통과`
-- `code 묶임(날짜): ① 거부 ② 성공 ③ 거부`
+- `code 묶임(날짜): ① 거부 ② 성공 ③ 거부`(대조를 돌렸으면 `① 거부 ② 실패 대조 성공 ③ 거부`처럼 대조를 넣는다)
 - `Workers Logs URL 없음 / 관리 POST 통과 / Range 416(또는 200) / Content-Length 있음 / 압축 없음 / 마스킹 0`
 - `v0.1.0 승격(날짜), --check-only 통과, Worker verify 통과, VERIFY_VIA=worker`
 - `무료 한도(날짜): 각 자원 한도의 몇 % 이하`(정확한 요청 수·주소는 적지 않는다)

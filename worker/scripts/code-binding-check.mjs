@@ -5,7 +5,10 @@
 // 받은 code 하나에 대해 다음을 차례로 본다(순서가 중요하다: code가 일회용이면 먼저 쓴 교환이 code를 써 버린다).
 //   ① 새로 만든 다른 state로 토큰 교환 → 거부/수락
 //   ② (①이 수락이 아니면) 원래 state로 교환 → 성공해야 ①의 거부가 state 때문이다
-//   ③ (앞 교환 중 하나가 수락이면) 같은 code로 원래 state 한 번 더 → 거부/수락
+//   대조 (①·② 모두 거부면) 두 번째 로그인을 받아 그 code를 원래 state로 **먼저** 교환 → 성공이면 "state 묶임 +
+//        실패한 교환이 code를 소모할 수 있음", 실패면 자격·만료 문제로 판정 불가(다시 돌리지 않는다)
+//   ③ (앞 교환 중 하나가 수락이면) 수락된 교환과 같은 code·state로 한 번 더 → 거부/수락
+// 5xx·408·429·연결 실패·본문 끊김은 거부로 세지 않는다(판정 불가).
 // **어떤 ID·토큰·code·state도 출력하지 않고** 단계별 거부/수락·성공/실패와 HTTP 상태·치지직 오류 code만 찍는다.
 // 판정 규칙은 worker/test/code-binding-lib.mjs(순수 함수, vitest가 고정한다).
 //
@@ -23,7 +26,7 @@ import { createServer } from 'node:http';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { judgeExchange, needSecond, needThird, reportLines, unreachable } from '../test/code-binding-lib.mjs';
+import { judgeExchange, needControl, needSecond, reportLines, thirdTarget, unreachable } from '../test/code-binding-lib.mjs';
 
 const PORT = 8787;
 const REDIRECT_URI = `http://localhost:${PORT}/auth/callback`;
@@ -65,21 +68,25 @@ const newState = () => randomBytes(16).toString('hex');
 
 // 토큰 교환 한 번(worker/src/core/chzzk.ts tokenRequest와 같은 모양: JSON POST, state를 본문에 싣는다). 응답 본문은 판정에만 쓰고 버린다
 async function exchange(vars, code, state) {
-  let status;
-  let body;
+  let res;
   try {
-    const res = await fetch(`${OPENAPI}/auth/v1/token`, {
+    res = await fetch(`${OPENAPI}/auth/v1/token`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ grantType: 'authorization_code', clientId: vars.CHZZK_CLIENT_ID, clientSecret: vars.CHZZK_CLIENT_SECRET, code, state }),
       signal: AbortSignal.timeout(10_000),
     });
-    status = res.status;
-    body = await res.text();
   } catch (e) {
     return unreachable(e?.name === 'TimeoutError');
   }
-  return judgeExchange(status, body);
+  let body;
+  try {
+    body = await res.text();
+  } catch (e) {
+    // 상태를 받은 뒤 본문이 끊겼다: 거부로 세지 않는다(2xx면 토큰이 발급돼 code가 쓰였을 수 있다)
+    return unreachable(e?.name === 'TimeoutError', res.status);
+  }
+  return judgeExchange(res.status, body);
 }
 
 // 로그인 한 번 → 콜백의 code(메모리에만)
@@ -127,25 +134,42 @@ function waitForCode(vars, state) {
         handler(req, res).catch(() => res.writeHead(500).end());
       });
       srv.on('error', (e) => {
-        if (host === '127.0.0.1') reject(new Error(`포트 ${PORT}을 열지 못했다(${e.code}). wrangler dev·pnpm dev:real·channel-id-check가 떠 있으면 끈다`));
+        // IPv6이 없는 기계(::1에 EADDRNOTAVAIL)만 넘긴다. ::1의 점유(EADDRINUSE) 등은 localhost 요청이 다른 프로세스로 갈 수 있어 멈춘다
+        if (host === '::1' && e.code === 'EADDRNOTAVAIL') return;
+        reject(new Error(`${host === '::1' ? '[::1]' : host}:${PORT}을 열지 못했다(${e.code}). wrangler dev·pnpm dev:real·channel-id-check가 떠 있으면 끈다`));
       });
       srv.listen(PORT, host);
       servers.push(srv);
     }
   });
-  return done.finally(() => {
-    for (const srv of servers) srv.close();
-  });
+  // 두 번째 로그인(대조)에서 같은 포트를 다시 열므로 브라우저의 keep-alive 연결까지 닫고 닫힘을 기다린다
+  // (남은 연결이 새 /auth/login을 옛 state의 처리기로 보내지 않게). 듣지 않던 서버의 close 오류는 무시한다
+  return done.finally(() =>
+    Promise.all(
+      servers.map(
+        (srv) =>
+          new Promise((resolve) => {
+            srv.close(() => resolve());
+            srv.closeAllConnections();
+          }),
+      ),
+    ),
+  );
+}
+
+// 로그인 한 번을 안내하고 code를 기다린다
+function login(vars, state, what) {
+  console.log(`브라우저에서 http://localhost:${PORT}/auth/login 을 열어 치지직으로 로그인하세요(${what}, 10분 대기).`);
+  return waitForCode(vars, state);
 }
 
 async function main() {
   if (process.argv.length > 2) fail('인자를 받지 않는다');
   const vars = readDevVars();
   const state = newState();
-  console.log(`브라우저에서 http://localhost:${PORT}/auth/login 을 열어 치지직으로 로그인하세요(10분 대기).`);
   let code;
   try {
-    code = await waitForCode(vars, state);
+    code = await login(vars, state, '첫 로그인');
   } catch (e) {
     fail(e.message);
   }
@@ -156,13 +180,36 @@ async function main() {
   const first = await exchange(vars, code, other);
   // ② 원래 state(①이 수락이 아닐 때만)
   const second = needSecond(first) ? await exchange(vars, code, state) : null;
-  // ③ 같은 code 재교환(앞 교환 중 하나가 수락일 때만)
-  const third = needThird(first, second) ? await exchange(vars, code, state) : null;
+
+  // 대조(①·② 모두 거부일 때만): 두 번째 로그인의 새 code를 그 원래 state로 먼저 교환한다.
+  // 두 번째 로그인을 받지 못해도 ①·②의 결과는 찍는다("login_failed")
+  let control = null;
+  let code2 = null;
+  let state2 = null;
+  if (needControl(first, second)) {
+    console.log('');
+    console.log('①·② 모두 거부됐다. 대조를 위해 한 번 더 로그인한다.');
+    state2 = newState();
+    while (sameText(state2, state) || sameText(state2, other)) state2 = newState();
+    try {
+      code2 = await login(vars, state2, '대조용 두 번째 로그인');
+    } catch (e) {
+      console.error(`두 번째 로그인 실패: ${e.message}`);
+      control = 'login_failed';
+    }
+    if (code2 !== null) control = await exchange(vars, code2, state2);
+  }
+
+  // ③ 수락된 교환과 같은 code·state로 한 번 더(수락된 교환이 없으면 건너뜀)
+  const target = thirdTarget(first, second, control);
+  let third = null;
+  if (target === 'original') third = await exchange(vars, code, state);
+  else if (target === 'control') third = await exchange(vars, code2, state2);
 
   console.log('');
-  for (const line of reportLines({ first, second, third })) console.log(line);
+  for (const line of reportLines({ first, second, control, third })) console.log(line);
   console.log('');
-  console.log('ROADMAP에는 ①·②·③의 거부/수락·성공/실패와 결론만 적는다(값·시각을 옮기지 않는다).');
+  console.log('ROADMAP에는 ①·②·대조·③의 거부/수락·성공/실패와 결론만 적는다(값·시각을 옮기지 않는다).');
 }
 
 main().catch(() => fail('예상하지 못한 오류(세부는 출력하지 않는다)'));

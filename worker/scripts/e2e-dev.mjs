@@ -4,8 +4,10 @@
 // Worker의 로그 줄에 카나리(비밀값)가 없는지 본다. 실제 비밀값 파일도, 실제 R2도, 실제 치지직도 쓰지 않는다. 값은 모두 합성이다.
 //
 // 종료 코드: 0 통과 · 1 판정 실패(단언) · 2 환경(포트 점유·씨앗 실패·wrangler 기동 실패·준비 시간 초과·전체 10분 초과)
+//   전체 10분은 씨앗·check-only 같은 자식 프로세스까지 센다(모두 비동기 spawn, 호출마다 시간 제한 = min(개별 제한, 남은 예산)).
+//   10분 초과·SIGINT·SIGTERM도 result.json에 exit 2와 abort(timeout|SIGINT|SIGTERM)를 써 두고 끝난다(프로세스 종료 코드는 신호면 130, 시간 초과면 2).
 // 결과: target/ci/worker-e2e/{wrangler.log,result.json}. Linux·macOS 전용(프로세스 그룹째 끈다).
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { createWriteStream, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import { tmpdir } from "node:os";
@@ -267,14 +269,68 @@ function childEnv() {
   return childEnvFor({ tmpRoot: TMP, parentEnv: process.env });
 }
 
+const TOTAL_BUDGET_MS = 600_000;
+let DEADLINE = Date.now() + TOTAL_BUDGET_MS;
+const activeChildren = new Set();
+
+/** 호출마다 시간 제한 = min(개별 제한, 남은 전체 예산). 예산이 없으면 환경 오류 */
+function budgetMs(limit) {
+  const left = DEADLINE - Date.now();
+  if (left <= 0) throw new EnvError("전체 10분을 넘었다");
+  return Math.min(limit, left);
+}
+
+/** 자식을 비동기로 돌린다(spawnSync는 이벤트 루프를 막아 watchdog이 못 돈다). 시간 제한이 지나면 프로세스 그룹째 끈다 */
+function runChild(cmd, args, { cwd, env, timeout }) {
+  return new Promise((resolveRun) => {
+    const child = spawn(cmd, args, { cwd, env, detached: true, stdio: ["ignore", "pipe", "pipe"] });
+    activeChildren.add(child);
+    let stdout = "";
+    let stderr = "";
+    let timedOut = false;
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (d) => (stdout += d));
+    child.stderr.on("data", (d) => (stderr += d));
+    const killGroup = () => {
+      try {
+        process.kill(-child.pid, "SIGKILL");
+      } catch {
+        // 이미 끝났다
+      }
+    };
+    const timer = setTimeout(() => {
+      timedOut = true;
+      killGroup();
+    }, timeout);
+    const done = (status) => {
+      clearTimeout(timer);
+      activeChildren.delete(child);
+      resolveRun({ status, stdout, stderr, timedOut });
+    };
+    child.on("error", () => done(null));
+    child.on("close", (code) => done(code));
+  });
+}
+
+function killActiveChildren() {
+  for (const c of activeChildren) {
+    try {
+      process.kill(-c.pid, "SIGKILL");
+    } catch {
+      // 이미 끝났다
+    }
+  }
+}
+
 /** 로컬 R2에 씨앗을 넣는다. 같은 폴더를 동시에 쓰면 SQLITE_READONLY로 실패해 하나씩 순서대로 넣는다 */
-function seedR2(persist, seedDir) {
+async function seedR2(persist, seedDir) {
   let i = 0;
   for (const [key, bytes] of seed) {
     const file = join(seedDir, String(i++));
     writeFileSync(file, bytes);
-    const r = spawnSync(process.execPath, [WRANGLER_JS, ...wranglerR2PutArgs({ key, file, persistTo: persist })], { cwd: WORKER, env: childEnv(), timeout: 60_000, encoding: "utf8" });
-    if (r.status !== 0) throw new EnvError(`R2 씨앗 실패: ${key}(상태 ${r.status})\n${tail(stripAnsi(`${r.stdout}\n${r.stderr}`).split(/\r?\n/), 20)}`);
+    const r = await runChild(process.execPath, [WRANGLER_JS, ...wranglerR2PutArgs({ key, file, persistTo: persist })], { cwd: WORKER, env: childEnv(), timeout: budgetMs(60_000) });
+    if (r.status !== 0) throw new EnvError(`R2 씨앗 실패: ${key}(${r.timedOut ? "시간 초과" : `상태 ${r.status}`})\n${tail(stripAnsi(`${r.stdout}\n${r.stderr}`).split(/\r?\n/), 20)}`);
   }
 }
 
@@ -358,12 +414,12 @@ async function waitReady(nonce, w) {
   throw new EnvError(`wrangler dev 준비 시간 초과(60초)\n${tail(w.lines, 30)}`);
 }
 
-function runCheckOnly(version, build) {
-  const r = spawnSync(process.execPath, [join(REPO, "scripts/ci/release.mjs"), "worker", "--check-only", "--base", E2E_ORIGIN, "--version", version, "--build", build], {
+async function runCheckOnly(version, build) {
+  const r = await runChild(process.execPath, [join(REPO, "scripts/ci/release.mjs"), "worker", "--check-only", "--base", E2E_ORIGIN, "--version", version, "--build", build], {
     env: { PATH: process.env.PATH ?? "", CI_VERIFY_TOKEN: DEV.CI_VERIFY_TOKEN },
-    timeout: 120_000,
-    encoding: "utf8",
+    timeout: budgetMs(120_000),
   });
+  if (r.timedOut) throw new EnvError(`release.mjs worker --check-only(${version}) 시간 초과`);
   return { status: r.status, out: `${r.stdout}\n${r.stderr}` };
 }
 
@@ -402,10 +458,14 @@ const scenarios = [
         const m = /^([0-9a-f]{64}) {2}(.+)$/.exec(line);
         if (m) sums.set(m[2], m[1]);
       }
-      must(sums.size === 11, "SHA256SUMS 항목이 11개가 아니다");
+      // 기대값은 release/expected-artifacts.json 표에서 계산한다(산출물 + updater .sig = SHA256SUMS 항목, 키 목록에서 SHA256SUMS·manifest.json 둘을 뺀 수)
+      const wantSums = verifyKeys(TABLE, LATEST, false).length - 2;
+      must(sums.size === wantSums, `SHA256SUMS 항목 ${sums.size}개, 기대 ${wantSums}개(출처: release/expected-artifacts.json의 ${LATEST} 산출물과 .sig)`);
       mkdirSync(join(TMP, "seed"), { recursive: true });
-      seedR2(join(TMP, "persist"), join(TMP, "seed"));
-      must(seed.size === 29, "씨앗 객체가 29개가 아니다");
+      await seedR2(join(TMP, "persist"), join(TMP, "seed"));
+      // 버전마다 verifyKeys(latest 아님) + previous 하나, 그리고 releases/latest.json 하나
+      const wantSeed = E2E_VERSIONS.reduce((n, v) => n + verifyKeys(TABLE, v, false).length + 1, 0) + 1;
+      must(seed.size === wantSeed, `씨앗 객체 ${seed.size}개, 기대 ${wantSeed}개(출처: release/expected-artifacts.json × E2E_VERSIONS ${E2E_VERSIONS.join("·")}의 verifyKeys + previous + latest.json)`);
     },
   ],
   [
@@ -471,7 +531,9 @@ const scenarios = [
       must(csp.includes(`form-action 'self' ${FAKE_ORIGIN}`), "CSP form-action에 가짜 치지직 출처가 없다");
       must(home.html.includes('href="/admin"'), "관리자 랜딩에 /admin 링크가 없다");
       const links = extractDownloadLinks(home.html);
-      must(links.length === 5, `다운로드 링크 ${links.length}개(필요 5)`);
+      // 랜딩은 사람이 받는 설치 파일만 보인다: updater 전용 산출물(app-tar)은 표에 없다
+      const wantLinks = expectedArtifacts(TABLE, LATEST).filter((a) => a.kind !== "app-tar").length;
+      must(links.length === wantLinks, `다운로드 링크 ${links.length}개, 기대 ${wantLinks}개(출처: release/expected-artifacts.json의 ${LATEST} 산출물 중 app-tar 제외)`);
       for (const l of links) {
         must(l.href.startsWith(`/releases/${LATEST}/`), "다운로드 링크가 최신 버전이 아니다");
         must(sums.get(l.file) === l.sha256, "다운로드 표의 sha256이 씨앗의 SHA256SUMS와 다르다");
@@ -736,9 +798,9 @@ const scenarios = [
   [
     "E16-check-only",
     async () => {
-      const good = runCheckOnly(LATEST, S.nonce);
+      const good = await runCheckOnly(LATEST, S.nonce);
       must(good.status === 0, `release.mjs worker --check-only(${LATEST}) 종료 ${good.status}, 기대 0\n${good.out.split("\n").filter((l) => /fail|error/i.test(l)).slice(0, 12).join("\n")}`);
-      const wrong = runCheckOnly(E2E_VERSIONS[0], S.nonce);
+      const wrong = await runCheckOnly(E2E_VERSIONS[0], S.nonce);
       must(wrong.status === 1, `release.mjs worker --check-only(${E2E_VERSIONS[0]}) 종료 ${wrong.status}, 기대 1`);
     },
   ],
@@ -789,25 +851,42 @@ async function cleanup() {
   if (TMP) rmSync(TMP, { recursive: true, force: true });
 }
 
+const RUN = { results: [], exit: 0, written: false };
+
+/** result.json을 쓴다. 정상 종료·시간 초과·신호가 모두 이 함수 하나를 거친다(한 번만) */
+function writeResult(exit, { abort } = {}) {
+  if (RUN.written) return;
+  RUN.written = true;
+  const lines = wrangler?.lines ?? [];
+  const scan = S.scan ?? scanLogs(lines, canaries);
+  const body = { ok: exit === 0, exit, ...(abort ? { abort } : {}), scenarios: RUN.results, violations: scan.violations.length, events: scan.events, lineCounts: { ...scan.counts, total: lines.filter((l) => classifyLine(l) !== "blank").length }, canaryLabels: canaryLabelCounts(), wranglerVersion: WRANGLER_VERSION };
+  mkdirSync(OUT, { recursive: true });
+  writeFileSync(join(OUT, "result.json"), `${JSON.stringify(body, null, 2)}\n`);
+}
+
+/** 시간 초과·신호: 자식을 끄고 result.json(exit 2 + abort)을 쓴 뒤 끝낸다 */
+async function abortRun(abort, processExit, message) {
+  console.error(message);
+  killActiveChildren();
+  await cleanup();
+  RUN.exit = 2;
+  writeResult(2, { abort });
+  process.exit(processExit);
+}
+
 async function main() {
+  DEADLINE = Date.now() + TOTAL_BUDGET_MS;
   // 앞 실행의 wrangler.log가 새 result.json 옆에 남지 않게 비운다
   rmSync(OUT, { recursive: true, force: true });
   mkdirSync(OUT, { recursive: true });
   TMP = mkdtempSync(join(tmpdir(), "chzzk-worker-e2e-"));
   for (const d of ["persist", "seed", "home", "xdg"]) mkdirSync(join(TMP, d), { recursive: true });
-  const watchdog = setTimeout(async () => {
-    console.error("worker-e2e: 전체 10분을 넘었다");
-    await cleanup();
-    process.exit(2);
-  }, 600_000);
+  const watchdog = setTimeout(() => abortRun("timeout", 2, "worker-e2e: 전체 10분을 넘었다"), TOTAL_BUDGET_MS);
   watchdog.unref();
   for (const sig of ["SIGINT", "SIGTERM"]) {
-    process.on(sig, async () => {
-      await cleanup();
-      process.exit(130);
-    });
+    process.on(sig, () => abortRun(sig, 130, `worker-e2e: ${sig}로 중단`));
   }
-  const results = [];
+  const results = RUN.results;
   let exit = 0;
   try {
     for (const [id, fn] of scenarios) {
@@ -828,12 +907,13 @@ async function main() {
   } finally {
     await cleanup();
     const lines = wrangler?.lines ?? [];
-    if (exit !== 0 && lines.length > 0) console.error(`--- wrangler.log 끝 80줄 ---\n${tail(lines, 80)}`);
     const scan = S.scan ?? scanLogs(lines, canaries);
-    writeFileSync(
-      join(OUT, "result.json"),
-      `${JSON.stringify({ ok: exit === 0, exit, scenarios: results, events: scan.events, lineCounts: { ...scan.counts, total: lines.filter((l) => classifyLine(l) !== "blank").length }, canaryLabels: canaryLabelCounts(), wranglerVersion: WRANGLER_VERSION }, null, 2)}\n`,
-    );
+    if (exit !== 0 && lines.length > 0) {
+      // 로그 끝에 카나리가 있을 수 있어 위반이 있으면 원문 tail 대신 위치와 종류만 찍는다
+      if (scan.violations.length > 0) console.error(`--- wrangler.log 위반 ${scan.violations.length}건(원문은 찍지 않는다) ---\n${scan.violations.slice(0, 30).join("\n")}`);
+      else console.error(`--- wrangler.log 끝 80줄 ---\n${tail(lines, 80)}`);
+    }
+    writeResult(exit);
   }
   return exit;
 }

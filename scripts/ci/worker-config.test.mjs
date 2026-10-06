@@ -372,12 +372,15 @@ test('씨앗: E2E 소스(worker.md 구현 중 변경 40·41, cicd.md 100)', () =
     ['scripts에 원격 플래그', 'scripts/x.mjs', `["r2", "${remote}"]`],
     ['test의 로그 등급 플래그', 'test/e2e-lib.mjs', `["${level}", "warn"]`],
     ['주석의 낱말', 'scripts/e2e-dev.mjs', `// r2 ${bulk} put`],
-    ['대문자 낱말', 'test/x.ts', `const Q = "${bulk.toUpperCase()}"`],
+    ['대문자 낱말', 'scripts/x.mjs', `const Q = "${bulk.toUpperCase()}"`],
     ['--log-level=값 형태', 'scripts/x.mjs', `${level}=warn`],
   ];
   for (const [name, rel, text] of seeds) assert.notDeepEqual(checkE2eSources([{ rel, text }]), [], name);
   // src/는 보지 않는다(낱말 검사는 E2E 도구 폴더만)
   assert.deepEqual(checkE2eSources([{ rel: 'src/x.ts', text: `${bulk}` }]), []);
+  // 다른 vitest 파일의 "bulk revoke" 주석은 통과(낱말은 E2E_FILES·scripts/만), 원격·로그 등급 플래그는 test/ 전체에서 계속 막는다
+  assert.deepEqual(checkE2eSources([{ rel: 'test/other.test.ts', text: `// ${bulk} revoke` }]), []);
+  assert.notDeepEqual(checkE2eSources([{ rel: 'test/other.test.ts', text: `["r2", "${remote}"]` }]), []);
   // 파일 넷이 모두 있어야 한다(all)
   for (const f of E2E_FILES) assert.ok(checkE2eSources(clean.filter(({ rel }) => rel !== f), { all: true }).some((e) => e.startsWith(f)), `${f} 없음`);
   assert.deepEqual(checkE2eSources([]), []);

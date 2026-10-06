@@ -760,20 +760,26 @@ export function checkHtmlSources(files) {
 
 // wrangler dev E2E(worker.md 구현 중 변경 40·41, cicd.md 100): 파일 넷이 있고(all), worker/scripts·worker/test의 원문(주석 포함)에
 //   - 원격 R2 플래그: 씨앗은 로컬 miniflare 버킷뿐이다(실제 R2 금지)
-//   - 낱말 bulk: 숨은 묶음 put은 응답 상태를 보지 않는다(씨앗은 하나씩 object put)
+//   - 낱말 bulk(E2E_FILES·scripts/만): 숨은 묶음 put은 응답 상태를 보지 않는다(씨앗은 하나씩 object put)
 //   - 로그 등급 플래그: warn 이상이면 Worker의 JSON 로그 줄까지 사라져 카나리 검사가 빈 출력으로 통과한다(40 (가))
 // 가 없다. 금지 낱말은 이 검사를 위해 쓰는 파일(단위 테스트)도 이어 붙여 쓴다.
 export const E2E_FILES = ['scripts/e2e-dev.mjs', 'scripts/fake-chzzk-server.mjs', 'test/e2e-lib.mjs', 'test/e2e-lib.d.mts'];
+const E2E_BULK = /\bbulk\b/i;
 const E2E_FORBIDDEN = [
   [/--remote\b/, '--remote(E2E의 R2는 로컬 miniflare 버킷뿐이다)'],
-  [/\bbulk\b/i, '낱말 bulk(숨은 r2 묶음 put은 put 응답 상태를 보지 않는다. 하나씩 object put)'],
+  [E2E_BULK, '낱말 bulk(숨은 r2 묶음 put은 put 응답 상태를 보지 않는다. 하나씩 object put)'],
   [/--log-level\b/, '--log-level(Worker 로그 줄까지 지워 카나리 검사가 아무것도 보지 않고 통과한다, worker.md 구현 중 변경 40 (가))'],
 ];
 export function checkE2eSources(files, { all = false } = {}) {
   const errs = [];
   for (const { rel, text } of files) {
     if (!rel.startsWith('scripts/') && !rel.startsWith('test/')) continue;
-    for (const [re, msg] of E2E_FORBIDDEN) if (re.test(text)) errs.push(`${rel}: ${msg}`);
+    // 낱말 bulk는 E2E 도구(E2E_FILES·scripts/)만 본다: 다른 vitest 파일의 "bulk revoke" 같은 주석은 R2 묶음 put이 아니다
+    const toolFile = rel.startsWith('scripts/') || E2E_FILES.includes(rel);
+    for (const [re, msg] of E2E_FORBIDDEN) {
+      if (re === E2E_BULK && !toolFile) continue;
+      if (re.test(text)) errs.push(`${rel}: ${msg}`);
+    }
   }
   if (all) for (const f of E2E_FILES) if (!files.some(({ rel }) => rel === f)) errs.push(`${f}: E2E 파일이 없다(worker.md 구현 중 변경 41 (가))`);
   return errs;

@@ -2,6 +2,7 @@
 //
 // 앱 흐름: started(startApp) → redirected(확인 페이지 [계속]) → exchanging(콜백 consume) → ok | denied | cancelled | failed.
 // 웹 흐름은 start 때 바로 redirected이고 허용되면 그 자리에서 지운다. 흐름 하나가 만료를 앞당기지 못한다(종결해도 expires_at은 그대로 이상).
+// 예외 하나: 앱이 수령(claim ok)한 흐름은 now + 2분으로 앞당긴다(허용 채널의 로그인이 끝난 뒤라 슬롯 순환과 무관, 구현 중 변경 28 (마)).
 import { CHANNEL_ID, NAME_MAX, admission, clip, recordDenied, touchAllowedName } from "./allowlist";
 import type { Db } from "./db";
 import { activate, insertUnclaimed, insertWeb, type TokenPair } from "./sessions";

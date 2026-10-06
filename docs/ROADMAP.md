@@ -6,8 +6,9 @@
 
 - **저장소**: 개발은 public `chnu-kim/chzzk-downloader`(remote `origin`)에서 한다. `chnu-kim/chzzk-downloader-private`(remote `private`)는 공개 전 원본 이력·연구 문서·실물 fixture·비공개 원문 목록(`public-release/`)의 보관소이며 **그쪽 ref를 origin에 push하지 않는다**(pre-push 가드가 막는다). 공개 절차는 `docs/public-release.md`.
 - **완료(2026-10-06 기준, 모두 master에 머지)**: Phase 0 하네스, Phase 1 Rust 코어, Go 삭제, Phase 2 Tauri 앱(macOS 실제 실행 확인), Phase 4 CI/CD(public PR #1: 단일 진입점·`ci.yml`/`ci-ok`·훅·비공개 이력 가드·스모크·ratchet·E2E·nightly/weekly 고리·CD `release.yml`/`xtask`·ruleset master/tags·저장소 설정 적용(2026-10-06 사용자 `repo-settings --apply --yes`, `--check` 드리프트 0)), CI 단축·Rust 1.99(#12), Windows 네이티브 E2E를 PR마다 관찰(#14).
-- **다음**: Phase 3 — Cloudflare Worker(치지직 OAuth 대행·허용목록·로그인 랜딩·R2 배포 게이트·업데이트 매니페스트)와 앱 로그인·본인 채널 검사. 설계·오프라인 구현(wrangler dev·테스트)부터 한다. 실제 로그인·배포 확인은 아래 "사용자가 준비해야 할 외부 항목"이 갖춰진 뒤.
-- **Phase 3의 핵심 미확인 사실**: OAuth `users/me`의 `channelId`가 VOD `content.channel.channelId`·클립 `ownerChannel.channelId`와 같은 값인지. 실제 로그인으로만 확인하므로 별도 게이트 단계로 둔다.
+- **Phase 3 설계 완료(2026-10-06)**: `docs/design/worker.md`(Worker·DO `AuthStore`·R2 게이트·updater·앱 셸 계약, 열린 질문은 §17 "사용자 답변"으로 닫음). 코드 쪽 변경 기록은 cicd.md 80~84, app.md 59.
+- **다음**: Phase 3 **W1**(worker/ 골격 + CI gate `worker`). 이후 W2~W8은 오프라인(vitest·wrangler dev·가짜 치지직), W9는 아래 "사용자가 준비해야 할 외부 항목"이 갖춰진 뒤 사용자와 함께.
+- **Phase 3의 핵심 미확인 사실**: OAuth `users/me`의 `channelId`가 VOD `content.channel.channelId`·클립 `ownerChannel.channelId`와 같은 값인지. 아래 Phase 3 체크리스트의 **G-ID** 단계(사용자가 직접 실제 로그인)로 확인하고, 체크 전에는 앱의 `OwnershipGate`를 켜지 않는다.
 - **관찰 중**: `e2e-native (linux)`·`e2e-native (windows)`는 2026-10-06(master 첫 실행 37411321875 녹색)부터 14일 관찰 → 2026-10-20 이후 `ci-ok` 편입 판단(cicd.md 36·79). Actions 캐시가 10.99GB로 한도(10GB)를 조금 넘음 — 계속 넘으면 캐시 키 정리.
 - **사용자 할 일**: 환경 `drift`에 본인 영상 식별자 3개(`CHZZK_LIVE_HLS`·`CHZZK_LIVE_DASH`는 영상 번호 `videoNo` 숫자, `CHZZK_LIVE_CLIP`은 클립 ID. URL이 아니다), 환경 `audit`에 `RULESET_READ_TOKEN`(읽기 전용 fine-grained PAT). 서명 키는 `release` 환경 시크릿과 1Password Environment `chzzk-downloader-release`에 있다.
 - **남은 확인(사용자)**: 성인 VOD PD 미디어 요청에 쿠키가 필요한지(`examples/dl.rs` + `CHZZK_NID_AUT`/`CHZZK_NID_SES`), Windows·Linux 실제 실행(app.md 수동 테스트 목록), macOS Dock 종료·로그아웃 때 D1 생략 수용 여부.
@@ -28,6 +29,19 @@
 | 배포 | ~~repo private 유지~~ → **2026-10-05 공개 저장소로 전환**(`chnu-kim/chzzk-downloader`, 절차는 `docs/public-release.md`). 배포 자체는 본인·지인만. Worker가 **로그인 랜딩 페이지 + 허용목록(채널 ID) + R2 다운로드 게이트** | 앱 사용도 같은 허용목록으로 제한. 업데이트 매니페스트·산출물도 인증 필요 |
 | 코드 서명 | **미서명 배포** (Apple Developer 계정 없음) | 랜딩 페이지에 Gatekeeper/SmartScreen 해제 안내. Tauri updater 서명 키는 별개로 필요 |
 | 진행 방식 | **자율 진행**, 단계별 stacked PR | 각 PR 후 Codex 리뷰를 원문 전달. 반영·머지는 사용자가 결정 |
+
+### Phase 3 결정 (2026-10-06, 사용자 결정. 상세는 `docs/design/worker.md` §2·§17)
+
+| 주제 | 결정 | 근거·메모 |
+|---|---|---|
+| 허용목록 | Durable Object(`AuthStore`, SQLite)에 저장, 랜딩 `/admin` 관리 화면에서 편집. 관리자는 Worker secret `ADMIN_CHANNEL_IDS` | 강한 일관성 → 제외가 다음 요청부터 |
+| Worker 연결 불가 시 앱 | 마지막 성공 갱신부터 **3일 오프라인 유예**. 유예는 네트워크 계열 실패에만, Worker의 형식 있는 401·403은 즉시 차단 | 진행 중 다운로드는 늘 계속 |
+| 허용목록 재확인 | 앱 시작 + **24시간마다** | 그 사이 Worker에 닿는 요청도 DO 대조 |
+| 앱 세션 | refresh **30일 슬라이딩** rotation + **절대 상한 60일** | 60일 뒤 재로그인. 치지직 앱 90일 미사용 삭제(R7) 대책도 된다 |
+| 업데이트 | **시작 때 자동 확인**(세션 확인 성공 직후 한 번) → 배너, 설치는 사용자 | |
+| Worker 주소 | workers.dev, 주소는 저장소에 두지 않고 **저장소 secret `DIST_BASE_URL`** 하나가 원천 | Actions 로그 마스킹(cicd.md 84) |
+| 웹 세션 | 랜딩 쿠키 **12시간 절대** | 관리 권한이 붙는 세션은 짧게 |
+| 앱 로그인 피싱 대비 | **확인 코드 페이지** + [계속] | 공격자가 시작한 로그인을 눈에 보이게 |
 
 ## 사전 조사로 확정된 사실 (2026-10-05)
 
@@ -88,12 +102,22 @@
 - Phase 3 자리는 Phase 2에서 미리 둔다(app.md §12): `features.auth=false`, `OwnershipGate` 항상 허용, `ResolvedDto.ownership`, `JobRecord.channelId`, `auth_status` command, AccountSlot·AuthGate·OwnershipNotice 빈 슬롯
 
 ### Phase 3 — Worker (인증·랜딩·배포 게이트)
-- [ ] 사전 확인: 치지직 OAuth 엔드포인트·토큰 형태·`users/me`의 channelId (chzzk MCP + 기존 웹 앱 코드), loopback redirect 허용 여부, VOD 응답 채널 ID와 OAuth channelId가 같은 식별자인지
-- [ ] 데스크톱 로그인 플로우 (redirect가 Worker로 오면 일회용 id 폴링)
-- [ ] 허용목록, 앱 세션 토큰
-- [ ] 랜딩 페이지 (로그인 → 허용된 사람만 OS별 다운로드)
-- [ ] R2 산출물 + Tauri updater 매니페스트를 인증 뒤에서 제공
-- [ ] 앱: 로그인 화면, 본인 채널 검사
+
+설계는 `docs/design/worker.md`(확정안). 아래는 그 문서 §16의 묶음이다(묶음마다 stacked PR).
+
+- [x] 사전 확인: 치지직 OAuth 엔드포인트·토큰 형태·`users/me` 응답(`docs/research/chzzk-oauth.md`), 개발용 리디렉션 `http://localhost:8787/auth/callback` 등록(2026-10-06). loopback 임의 포트는 쓰지 않는다(Worker 콜백 + 폴링)
+- [ ] **G-ID**: OAuth `users/me` channelId == VOD `content.channel.channelId` == 클립 `content.ownerChannel.channelId`(실제 로그인, 사용자가 직접). `node worker/scripts/channel-id-check.mjs <본인 VOD> <본인 클립>`, 결과는 "같다/다르다"만 적는다(실제 값 금지). **체크 전에는 앱 `OwnershipGate`를 켜지 않는다**(worker.md §15, 다르면 대안 B `owner_channel_id`)
+- [x] W0 설계 문서: `worker.md`, cicd.md 80~84, app.md 59, ROADMAP·CLAUDE.md·chzzk-oauth.md, §17 사용자 답변 반영. 참고: vitest 풀 패키지는 `@cloudflare/vitest-pool-workers`(0.22.0에서 멈춤)가 아니라 이름이 바뀐 `@cloudflare/vitest-plugin`을 쓴다
+- [ ] W1 골격 + CI: `worker/` 패키지·`wrangler.jsonc`·config 가드·`/health`, gate `worker`·ci.yml 작업·`ci-ok`
+- [ ] W2 순수 core(token·cookies·range·keys·semver·chzzk·updater·html·usercode)
+- [ ] W3 DO `AuthStore`(스키마·flow·session·rotation·허용목록·alarm)
+- [ ] W4 OAuth 흐름(가짜 치지직, 앱·웹 로그인, refresh·logout, 카나리)
+- [ ] W5 R2·updater·CI 토큰(보이는 키 표, Range, 자격 × 경로 행렬)
+- [ ] W6 랜딩·관리 화면(CSRF·XSS, 내 기기)
+- [ ] W7 wrangler dev E2E(gate `worker-e2e`, D14 관찰)
+- [ ] W8 릴리스 연결(`release.mjs worker`·`worker-bundle`·`deploy-worker`, `vars.DIST_BASE_URL` → `secrets.`)
+- [ ] W9 배포 뒤(사용자와): Worker secret 4개, 수동 첫 배포, production 리디렉션 URL, 저장소 secret·변수, WAF 요청 수 규칙(Q4는 이때 정한다), 전환 스위치
+- [ ] Phase 3b A1~A5 앱: `SessionStore`·`AuthService` / command·DTO·`build.rs` 주소 규칙 / 로그인 화면·배너·copy deck / updater command / `OwnershipGate` 활성(G-ID 뒤)
 
 ### Phase 4 — CI/CD (설계: `docs/design/cicd.md`)
 
@@ -123,9 +147,9 @@
 자격증명 없이도 `wrangler dev`와 테스트로 개발은 진행한다. 실제 배포는 아래가 갖춰진 뒤 사용자와 함께 한다.
 
 - [x] 치지직 개발자 앱 등록 (2026-10-06): 로그인 리디렉션 URL은 **개발용 `http://localhost:8787/auth/callback`**(wrangler dev 기본 포트)을 등록했다. 자격증명은 1Password Environment `chzzk-downloader-worker`(`CHZZK_CLIENT_ID`, `CHZZK_CLIENT_SECRET`)에 있다 — 값을 대화·로그·저장소에 내지 말고 로컬 `.dev.vars`로만 쓴다
-- [ ] production 리디렉션 URL: 콜백 경로는 **`/auth/callback`으로 고정**(Worker는 이 경로와 로컬 포트 8787을 지킨다). 호스트는 Cloudflare 계정·Worker 이름(권장 `chzzk-downloader`) 또는 커스텀 도메인이 정해지면 `https://<호스트>/auth/callback`을 치지직 앱에 추가·교체한다
-- [ ] Cloudflare: Worker, R2 버킷, KV 또는 D1, (선택) 커스텀 도메인
-- [ ] GitHub Environment `release`·`drift`의 시크릿·변수 (정확한 이름은 `docs/design/cicd.md` §8): Tauri updater 서명 키(로컬 `~/.tauri/chzzk-downloader-updater.key`·`.password`, 공개 키는 `release/updater.pub`), R2 S3 토큰, 본인 영상 drift 대상, Phase 3에 Cloudflare API 토큰. 환경 `release`는 만들어 두었다(배포 정책 태그 `v*`·master)
+- [ ] production 리디렉션 URL: 콜백 경로는 **`/auth/callback`으로 고정**(Worker는 이 경로와 로컬 포트 8787을 지킨다). 호스트는 Cloudflare 계정·Worker 이름(권장 `chzzk-downloader`) 또는 커스텀 도메인이 정해지면 `https://<호스트>/auth/callback`을 치지직 앱에 추가한다(URL을 하나만 받으면 교체). 그 출처 `https://<호스트>`는 Worker `PUBLIC_ORIGIN`(= 저장소 secret `DIST_BASE_URL`)과 바이트까지 같아야 한다(Worker가 `redirectUri`를 `PUBLIC_ORIGIN + /auth/callback`으로 만든다)
+- [ ] Cloudflare: Worker(Durable Object(SQLite)·R2 바인딩), R2 버킷, (선택) 커스텀 도메인. Worker secret 4개(`CHZZK_CLIENT_ID`·`CHZZK_CLIENT_SECRET`·`ADMIN_CHANNEL_IDS`·`CI_VERIFY_TOKEN`)는 사용자가 `wrangler secret put`으로 넣는다. 전체 시크릿·변수 표는 `docs/design/worker.md` §10.3(`DIST_BASE_URL`은 저장소 secret, cicd.md 84)
+- [ ] GitHub Environment `release`·`drift`의 시크릿·변수 (정확한 이름은 `docs/design/cicd.md` §8. 단 `DIST_BASE_URL`은 환경이 아니라 **저장소 secret**, cicd.md 84): Tauri updater 서명 키(로컬 `~/.tauri/chzzk-downloader-updater.key`·`.password`, 공개 키는 `release/updater.pub`), R2 S3 토큰, 본인 영상 drift 대상, Phase 3에 Cloudflare API 토큰. 환경 `release`는 만들어 두었다(배포 정책 태그 `v*`·master)
 
 ## 하네스 변경 이력
 
@@ -142,3 +166,4 @@
 - 2026-10-05: G4. E2E 두 층(웹 Playwright PR, 네이티브 tauri-driver master·nightly·weekly)을 더했다. 새 E2E 작업은 2주 관찰 규칙(D14)대로 `OBSERVED_JOBS`로 시작해 `ci-ok`를 막지 않고, master 실패는 이슈로 온다. CLAUDE.md에 `e2e-web`·`e2e-native` gate와 E2E 빌드 명령을 적었다.
 - 2026-10-06: CI 속도·툴체인(브랜치 `ci/speedup`). Rust 1.99.0, CLAUDE.md 명령의 `tauri` gate가 셋(`tauri-clippy`·`tauri`·`tauri-build`)으로 나뉘었고, nightly에 비공개 denylist 고리 `private-scan`을 더했다.
 - 2026-10-06: Windows 네이티브 E2E를 코드 PR마다(브랜치 `ci/windows-e2e-pr`, cicd.md 79). ci.yml에 관찰 작업 `e2e-native (windows)`를 더하고 CLAUDE.md의 ci.yml·nightly.yml 설명을 고쳤다.
+- 2026-10-06: Phase 3 설계(`docs/design/worker.md`, 브랜치 `phase3/worker-design`). `worker/` 디렉터리(지금은 G-ID 도구 `scripts/channel-id-check.mjs`뿐)를 CLAUDE.md 레이아웃·명령에 적었다. `worker/.dev.vars`는 1Password Environment 마운트(FIFO)이고 `.gitignore`(`.dev.vars.example`만 커밋).

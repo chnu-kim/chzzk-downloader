@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-네이버 치지직(Chzzk) VOD·클립 다운로더다. Go CLI를 **Rust 코어(`crates/core`) + Tauri GUI**로 재구축하는 중이다. 진행 기록과 결정은 `docs/ROADMAP.md`, 코어 설계의 기준은 `docs/design/core.md`, 앱(셸·GUI) 설계의 기준은 `docs/design/app.md`(화면의 시각 규칙은 `docs/design/ui-visual.md`)다. 두 설계 문서 모두 끝의 "구현 중 변경"이 본문보다 우선한다(app.md는 그 절 머리의 "읽는 법" 표부터 본다). 옛 Go 동작 기록은 `docs/spec/core-behavior.md`다.
+네이버 치지직(Chzzk) VOD·클립 다운로더다. Go CLI를 **Rust 코어(`crates/core`) + Tauri GUI**로 재구축하는 중이다. 진행 기록과 결정은 `docs/ROADMAP.md`, 코어 설계의 기준은 `docs/design/core.md`, 앱(셸·GUI) 설계의 기준은 `docs/design/app.md`(화면의 시각 규칙은 `docs/design/ui-visual.md`), Phase 3 Worker(인증·랜딩·배포 게이트)와 앱 로그인 설계의 기준은 `docs/design/worker.md`다. 세 설계 문서 모두 끝의 "구현 중 변경"이 본문보다 우선한다(app.md는 그 절 머리의 "읽는 법" 표부터 본다). 옛 Go 동작 기록은 `docs/spec/core-behavior.md`다.
 
 ## 레이아웃
 
@@ -24,6 +24,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `release/` | `expected-artifacts.json`(OS별 번들·updater 산출물 표, 플랫폼 키), `latest.schema.json`(updater 매니페스트), `tauri.release.json`(`createUpdaterArtifacts`, 릴리스 빌드만), `updater.pub`(공개 키 = `tauri.conf.json` `plugins.updater.pubkey`, `pubkey` gate). 개인 키는 저장소에 두지 않는다(누출 규칙 `signing-key`) |
 | `.github/workflows/release.yml`, `rollback.yml` | CD. 태그 `v*`: `gate`(버전 = 태그, 단조 증가, master 조상, 그 커밋의 master `ci-ok` 녹색) → `xtask`(한 번 빌드, sha256 출력) → `build`(3 OS, 임시 키, 시크릿 없음) → `smoke` → `stage`(받은 3 OS 산출물로 publish·verify를 가짜 S3에, 시크릿 없음) → `sign-publish`(태그만, 환경 `release`, 컴파일 없음, R2 업로드, `latest.json`은 마지막) → `verify`(늘 돈다, 결정표대로 확인, 판정 실패면 prev로 되돌림, 5xx 재시도 뒤에는 되돌리지 않고 exit 2) → `deploy-worker`(Phase 3 seam) → `report`(`ci-loop:release`). dispatch·매주 schedule은 리허설: `stage`에서 녹색으로 끝난다(업로드 경계, `ci-loop:release-rehearsal`). `rollback.yml`(dispatch, 입력 `version`)은 `latest.json`을 그 버전으로 바꾼다(되돌리기·잘못 되돌린 뒤 다시 올리기). 바이너리는 GitHub Release에 올리지 않는다 |
 | `fuzz/` | cargo-fuzz 대상(`url`·`info`·`mpd`·`hls`). 루트와 따로인 워크스페이스(자기 `Cargo.lock`, 루트 `exclude`), 고정 nightly(`tools.json` `rust-nightly`)로만 빌드. seed는 실행 때 `testdata/`에서 복사(`scripts/ci/fuzz.mjs`) |
+| `worker/` | Cloudflare Worker(Phase 3, 설계 `docs/design/worker.md`). W1 전이라 지금은 G-ID 도구 `scripts/channel-id-check.mjs`(OAuth `users/me`와 VOD·클립 채널 ID가 같은지 "같다/다르다"만 출력)뿐이다. `.dev.vars`는 아래 주의사항 |
 | `ci/ratchet.json`, `ci/RATCHET_LOG.md`, `release/expected-artifacts.json` | 커버리지·테스트 수·크기·살아남은 mutant ratchet 기준(나빠지면 CI 실패, 느슨하게 하면 로그에 키와 이유), OS별 번들 기대 집합 |
 | `scripts/ci/repo-settings.json`, `.github/rulesets/` | 저장소 설정·ruleset 선언(Actions 허용 목록·SHA 핀 강제·fork 승인, 환경 `release`·`audit`·`drift`의 배포 정책·protection_rules, ruleset `master`(필수 `ci-ok`·최신화·force push·삭제 금지)·`tags`(`v*`는 관리자만)). nightly `ruleset-drift`가 실제 값과 비교하고 `repo-settings.mjs --apply`가 적용한다 |
 | `rust-toolchain.toml`, `deny.toml`, `_typos.toml`, `zizmor.yml`, `.github/dependabot.yml` | 툴체인 고정(1.99.0, MSRV는 `rust-version` 1.90), cargo-deny, typos, zizmor, Dependabot 설정 |
@@ -95,6 +96,9 @@ cargo run -p chzzk-core --example dl -- https://chzzk.naver.com/video/<no> --lis
 cargo run -p chzzk-core --example dl -- <주소> --lowest --limit-mb 5 --out <임시 폴더>
 CHZZK_LIVE_HLS=<빠른 다시보기 no> CHZZK_LIVE_DASH=<일반 VOD no> CHZZK_LIVE_CLIP=<clipId> \
   cargo test -p chzzk-core --test live -- --ignored --nocapture
+
+# Phase 3 G-ID(사용자가 직접, 본인 계정·본인 영상. 포트 8787을 쓰므로 wrangler dev를 먼저 끈다). 출력은 같다/다르다뿐이고 결과만 ROADMAP에 적는다
+node worker/scripts/channel-id-check.mjs <본인 VOD 주소> <본인 클립 주소>
 ```
 
 - `chzzk-app`(app/src-tauri)은 `app/dist` 없이도 `cargo` 직접 실행으로 컴파일된다(app.md 구현 중 변경 6). Linux에서는 webkit2gtk 4.1 등 개발 패키지가 필요하다(목록은 `ci.yml`의 `tauri` 작업). 그래서 `rust` gate는 `-p chzzk-core -p chzzk-shell -p xtask`만 돌고(같은 작업이 `release-selftest`도 돈다), `chzzk-app`은 apt를 설치하는 `tauri` 작업이 본다. `pnpm tauri build`는 `beforeBuildCommand`로 `dist`를 먼저 만든다.
@@ -113,7 +117,7 @@ CHZZK_LIVE_HLS=<빠른 다시보기 no> CHZZK_LIVE_DASH=<일반 VOD no> CHZZK_LI
 - 설계가 틀렸거나 모호하면 가장 작은 타당한 선택을 하고 해당 설계 문서(`core.md` 또는 `app.md`)의 "구현 중 변경"에 번호를 붙여 적는다.
 - UI 문구는 한국어이고 app.md §9 copy deck(`app/src/lib/copy/ko.ts`)을 따른다. DTO를 바꾸면 `UPDATE_BINDINGS=1`로 bindings를 다시 만든다.
 - 행동을 바꾸면 해당 테스트를 함께 추가한다. 파서·선택 규칙은 `testdata/`의 합성 fixture로 고정한다. fixture는 `scripts/fixtures/gen-fixtures.mjs`를 고쳐 다시 만든다(`--check`로 확인).
-- **공개 저장소 규칙**: 실제 채널 이름·ID, 영상 번호·클립 ID, 서명 토큰·inKey, 비공개 내부 동작 조사 내용을 코드·테스트·문서·커밋 메시지에 넣지 않는다. 시각·길이 같은 준식별자도 실제 값을 옮기지 않는다. 커밋 전에 `node scripts/ci/run.mjs scan`(CI `ci.yml`의 `lint`, 이력 전체는 `scan-history`)이 통과해야 한다. 커밋 이메일은 GitHub noreply 주소를 쓴다. **비공개 저장소(`private` 원격)에는 push하지 않는다**(보관용). 로컬의 `refs/remotes/private/*`는 지우지 않는다: pre-push 가드(`push-guard.mjs`)가 이것으로 비공개에만 있는 커밋이 공개 push 범위에 섞였는지 본다. 자세한 규칙은 `docs/public-release.md` "이후 규칙".
+- **공개 저장소 규칙**: 실제 채널 이름·ID, 영상 번호·클립 ID, 서명 토큰·inKey, 비공개 내부 동작 조사 내용을 코드·테스트·문서·커밋 메시지에 넣지 않는다. 시각·길이 같은 준식별자도 실제 값을 옮기지 않는다. 커밋 전에 `node scripts/ci/run.mjs scan`(CI `ci.yml`의 `lint`, 이력 전체는 `scan-history`)이 통과해야 한다. 커밋 이메일은 `chanuuuu@naver.com`을 쓴다(공개하기로 한 작성자 이메일, `public-scan` identity 허용 목록에 있다. noreply 주소도 허용된다). **비공개 저장소(`private` 원격)에는 push하지 않는다**(보관용). 로컬의 `refs/remotes/private/*`는 지우지 않는다: pre-push 가드(`push-guard.mjs`)가 이것으로 비공개에만 있는 커밋이 공개 push 범위에 섞였는지 본다. 자세한 규칙은 `docs/public-release.md` "이후 규칙".
 
 ## 주의사항
 
@@ -122,5 +126,6 @@ CHZZK_LIVE_HLS=<빠른 다시보기 no> CHZZK_LIVE_DASH=<일반 VOD no> CHZZK_LI
 - **OS별 분기**: 파일명 규칙은 `naming::Platform` 인자로 받아 한 호스트에서 세 OS를 테스트한다. Windows는 rename 일시 잠금 재시도, 디스크 부족 코드(112·39), 예약어가 다르다. macOS/Linux에서 개발해도 Windows 동작을 깨지 않게 양쪽을 고려한다.
 - 설정·자격증명 위치는 셸이 주입한다(`SettingsStore::open(config_dir)`, `CredentialStore::new(config_dir)`). 코어는 실행 파일 폴더를 쓰지 않는다.
 - 루트 `settings.json`과 `dependent/`는 **실제 사용자 데이터**(옛 Go 런타임 파일, 평문 쿠키 포함)다. 읽거나 고치지 않는다. 테스트용 Go 형식 JSON은 테스트 안에서 만든다.
+- `worker/.dev.vars`는 1Password Environment `chzzk-downloader-worker`의 **FIFO 마운트**(치지직 client id·secret)다. `cat`·Read로 열지 않는다(읽는 동안 막히고 값이 출력된다). 값을 대화·로그·저장소에 내지 않고, 고칠 수도 없다. 커밋하는 dev 설정은 `.dev.vars.example`뿐이다(W1).
 - `compose.yml`과 `win10/`은 `dockurr/windows`로 Windows 환경을 띄워 Windows 빌드·테스트를 하기 위한 것이다. 코드와 무관하며 건드리지 않는다.
 - 암호화(AES) VOD는 지원하지 않으며 명확한 오류로 거부한다(`Error::EncryptedVod`, 설계 §11).

@@ -1,0 +1,831 @@
+# Cloudflare Worker 설계 (Phase 3, 확정안)
+
+네 설계안(위협 모델 우선 / 운영 최소화 / 테스트·CI 우선 / 앱 UX·오프라인)을 "반드시 닫아야 할 구멍" 12개로 채점해 판정한 최종 설계다. 기준 문서는 `docs/ROADMAP.md`(사용자 결정 2026-10-06), `docs/research/chzzk-oauth.md` §8·§9, `docs/design/app.md` §8.9·§12, `docs/design/cicd.md` §5·§8, `release/latest.schema.json`, `release/expected-artifacts.json`, `crates/shell/src/ownership.rs`다. 참고한 웹 앱은 "기존 웹 앱"이라고만 부른다. 끝의 "구현 중 변경"이 본문보다 우선한다.
+
+용어: **앱**은 Tauri 데스크톱 앱(Rust 셸), **랜딩**은 Worker가 내주는 HTML 페이지, **허용 채널**은 `ADMIN_CHANNEL_IDS ∪ allowlist`, **DO**는 Durable Object다. 표기 **[확인 필요]**는 구현 묶음의 첫 테스트로 고정할 미검증 사실이다.
+
+## 0. 판정 요약
+
+- **베이스는 운영 최소화 안**이다. DO 클래스 하나·인스턴스 하나, Worker secret 4개, 런타임 의존성 0개, 토큰은 서명 없는 불투명 난수 + SHA-256 해시 저장, 인증 요청마다 DO 조회 하나. 서명 키와 키 교체 절차가 없고, 허용목록 제외·세션 끊기가 다음 요청부터 바로 듣는다.
+- 위협 모델 안에서 가져온 것: 공격자 표(A1~A11)와 **자격 × 경로 행렬**(CI 토큰은 릴리스 읽기 경로에서만 해석), 설정 가드(치지직 주소 덮어쓰기는 `PUBLIC_ORIGIN`이 루프백일 때만, 아니면 모든 경로 500), 흐름 결합 쿠키(앱·웹 콜백 모두 브라우저에 묶는다, A4), 앱 흐름의 **확인 코드 페이지**(공격자가 시작한 로그인을 눈에 보이게, A3), 랜딩의 "내 기기"(자기 세션 끊기), 거부 기록 dedupe·상한·이스케이프, 메모리 스로틀(IPv6 /64), updater 다운로드 URL **출처 대조**(A8), 404는 "R2에 없음"에만.
+- 테스트·CI 우선 안에서 가져온 것: 모듈 경계(순수 `core/` / `store/` DO / `http/` 핸들러), 경로 표가 데이터이고 **행렬 테스트가 자동 생성**, 가짜 치지직은 순수 핸들러 하나를 msw와 node:http가 감싼다, `wrangler types` 생성물은 커밋하지 않는다(머리줄 32-hex 해시가 public-scan에 걸린다, 실측), vitest가 `.dev.vars`를 읽으므로 `miniflare.bindings`로 덮는다, refresh rotation 표, wrangler dev E2E는 **D14 관찰 작업**(`worker-e2e`), D10을 지키는 `worker-bundle` → `--no-bundle` 배포, `tests.worker` ratchet, `0.0.0` 요청으로 첫 릴리스에도 성립하는 deploy-worker 검사.
+- 앱 UX·오프라인 안에서 가져온 것: 앱 셸 계약 전체(§11 — `AuthState::Checking`, `AuthReason`, `OfflineDto`, 낙관적 시작, 재시도 간격, 다운로드 계속·재개 규칙, 업데이트 설치 흐름, copy deck), 응답 유실 복구는 "후계가 아직 안 쓰였으면 후계를 폐기하고 새 쌍"(rid 없이), 유예 밖에서도 세션 파일을 지우지 않아 [다시 연결]로 복구, `session.json`의 `origin` 필드, `DIST_BASE_URL` 하나가 Worker 주소의 원천(저장소 변수로 옮김).
+- 버린 것: DO 두 개 분리(위협 — 상한·스로틀로 충분, 사용자 수가 허용목록 크기), HMAC·JWS access 토큰과 `SESSION_KEYS`·kid 회전(위협·테스트·UX — 어차피 요청마다 DO 대조라 서명이 주는 것은 쓰레기 거르기뿐), CI 토큰 해시 저장(Worker env가 새면 client secret이 먼저 샌다), `/updates/{target}/{arch}/…` 경로(정적 `latest.json`을 그대로 주므로 OS·arch는 플러그인이 고른다), `v ≤ latest` 버전 범위 제한(실패 경로 하나 늘고 보안 경계가 아니다), semver 공유 벡터 생성기(xtask 벡터를 테스트 상수로 옮긴다), `/download/<kind>` 302, `previous`를 사용자에게 제공, 랜딩 JS(OS 자동 감지는 CSS·서버 렌더 표로 대신), 폴링 레코드에 IP 행 저장, Range 미지원(단일 범위는 순수 함수 하나라 넣는다).
+
+### 채점 (구멍 12개, 5점 만점)
+
+| # | 구멍 | 위협 | 최소 | 테스트 | UX | 이긴 안 → 접붙인 것 |
+|---|---|---|---|---|---|---|
+| 1 | 랜딩 다운로드 대 Worker 계약 | 4 | 5 | 5 | 4 | 최소·테스트: SHA256SUMS 항목이 목록. 위협·UX의 "404는 R2 null에만, 정책 밖은 403" |
+| 2 | updater 경로·헤더·endpoint 주입 | 5 | 4 | 4 | 4 | 위협: 다운로드에도 헤더가 붙으니 셸이 `download_url` 출처 대조, `check()` 전 세션 판정. 최소의 `/update/{{current_version}}`. 테스트의 `0.0.0` 검사 |
+| 3 | CI 토큰은 읽기 경로만 | 5 | 4 | 5 | 4 | 테스트: 경로 표에서 행렬 자동 생성. 위협: "다른 경로에서 CI 토큰은 쓰레기 Bearer와 같다"(별도 분기 없음). 최소: 소스 검사(`CI_VERIFY_TOKEN` 참조는 `config.ts`·`http/release-auth.ts`뿐) |
+| 4 | 두 인증 방식·콜백 분기·CSRF | 5 | 3 | 4 | 4 | 위협: 흐름 결합 쿠키를 앱·웹 양쪽에, Origin + 폼 토큰 + Content-Type. 토큰은 HMAC 대신 **세션 행의 난수**(키 없음) |
+| 5 | 토큰 수명·rotation·유예 | 4 | 3 | 5 | 5 | 테스트: rotation 표. UX: 응답 유실은 "후계 미사용이면 후계 폐기·재발급". 위협: 유예는 Worker 형식 응답이 아닌 실패에만 |
+| 6 | `/auth/start` 남용 | 5 | 3 | 4 | 4 | 위협: 메모리 스로틀(IP, /64) → 전역 상한 → 그다음 쓰기, 폴링 간격은 메모리, 한도 계산표 |
+| 7 | 오프라인 끝까지 | 4 | 4 | 5 | 4 | 테스트: 가짜 치지직 하나를 msw·node로 감싸기, `.dev.vars` 덮어쓰기, R2 씨앗 Node 생성기. 위협: 루프백 가드 |
+| 8 | channelId 동일성 게이트 | 4 | 4 | 4 | 4 | 공통(미체크 단계·match/mismatch만 출력). 도구는 이미 있는 `worker/scripts/channel-id-check.mjs`(Worker 없이 Node만). 대안 B(`owner_channel_id` 열) |
+| 9 | account_id·DO 선언 | 5 | 4 | 4 | 4 | 위협: `worker-config.mjs`가 wrangler.jsonc 불변식을 검사(account_id·routes 없음, exports만, 클래스 이름 고정, vars에 `PUBLIC_ORIGIN` 없음) |
+| 10 | CI 편입 | 4 | 4 | 5 | 4 | 테스트: `worker` 필수 + `worker-e2e` 관찰, ratchet, D10 배포. 최소: 작업 하나(Linux), parity 체크리스트 |
+| 11 | fixture 채널 ID | 4 | 5 | 3 | 3 | 최소: 허용된 4개(`…a1` 관리자·`…b2` 허용·`…c3` 거부·`…d4` 기타 — 처음엔 거부, [허용] 시나리오용)로 충분, public-scan은 손대지 않는다 |
+| 12 | 비밀값 위생 | 5 | 4 | 5 | 4 | 위협·테스트: 허용 필드 로거, 카나리 테스트(응답·로그), `console.` 사용처 1곳, 콜백은 쿼리 없는 URL로 303 |
+| | **합** | **54** | **47** | **53** | **48** | 기조는 최소(운영 비용), 경계는 위협·테스트 |
+
+### 구멍별 결론 (한 줄씩)
+
+1. 사용자에게 보이는 키 = `releases/<v>/SHA256SUMS`에 적힌 파일(`.dmg`·`.deb`·`.sig` 포함) + `SHA256SUMS`·`manifest.json`. CI 토큰은 문법에 맞는 `releases/**` 전부 + `latest.json`. 정책 밖 403, R2 null 404(cicd.md 구현 중 변경 80).
+2. `GET /update/{{current_version}}` → `latest.json` 바이트 그대로 200 또는 204. endpoint는 앱이 런타임에 넣고 `tauri.conf.json`에 없다. 헤더가 다운로드에도 붙으므로 셸이 `Update.download_url` 출처를 Worker 출처와 대조한다.
+3. `CI_VERIFY_TOKEN`은 `GET·HEAD /releases/**`·`GET /update/*`에서만 해석하고 소스 검사·행렬 테스트·배포 뒤 음성 검사로 고정한다.
+4. 앱은 Bearer, 랜딩은 `__Host-cdl_s` 쿠키. 콜백 하나가 흐름 레코드의 `kind`로 가르고, 흐름 결합 쿠키 `__Host-cdl_f`가 두 흐름 모두를 시작한 브라우저에 묶는다. 관리 POST는 Lax 쿠키 + Origin 정확 일치 + 세션 폼 토큰 + form-urlencoded.
+5. access 24h·refresh 30일 슬라이딩 rotation + 절대 상한 60일(`created_at + 60d`, 사용자 결정 Q1), 해시만 저장. 쓴 토큰이 60초 안에 다시 오고 후계가 미사용이면 후계 폐기·재발급, 그 밖의 재사용은 세션 폐기. 3일 유예는 네트워크·5xx·429·형식 없는 응답에만.
+6. 메모리 스로틀(IP당 6회/10분) → 미만료 흐름 32개 상한(503) → 쓰기. 폴링 최소 간격 1.5초는 메모리. 10분 만료는 alarm이 멱등으로 정리.
+7. `CHZZK_AUTHORIZE_URL`·`CHZZK_API_BASE`는 `PUBLIC_ORIGIN`이 루프백일 때만 덮어쓸 수 있다. 가짜 치지직 핸들러 하나(msw·node), `.dev.vars.example`만 커밋. 앱 주소는 빌드 env, 릴리스는 https만.
+8. G-ID는 ROADMAP 미체크 단계. `channel-id-check.mjs`로 사용자 본인이 돌려 "같다/다르다"만 기록. 다르면 허용목록 `owner_channel_id` 열(대안 B), 앱 계약은 그대로.
+9. `wrangler.jsonc`에 `account_id` 없음(env `CLOUDFLARE_ACCOUNT_ID`). DO는 `exports` 형식, 클래스 `AuthStore`·바인딩 `AUTH`, 첫 배포 뒤 바꾸지 않는다. `worker-config.mjs`가 검사.
+10. gate `worker`(설치·불변식·types+tsc·vitest·dry-run) + 관찰 `worker-e2e`(wrangler dev), ci.yml 작업·`ci-ok` needs·guard·parity·pre-push·dependabot·advisories·typos·ratchet, `release.mjs worker` + `worker-bundle`(cicd.md 81~83).
+11. 채널 ID 리터럴은 허용된 4개만, 토큰·id는 base64url 또는 런타임 생성.
+12. 로거 하나·허용 필드, 쿼리·토큰·code·state·채널 id 금지, 카나리 테스트, invocation 로그 끔, 오류 본문은 `{code}`뿐.
+
+---
+
+## 1. 범위
+
+- **이번 구현**: `worker/`(TypeScript, Cloudflare Workers, DO SQLite, R2 읽기), CI 편입(§13), `release.mjs worker`·release.yml `worker-bundle`·`deploy-worker` 채우기, 문서(이 파일, cicd.md 80~83, app.md 59, ROADMAP, CLAUDE.md).
+- **설계만**(Phase 3b, §11): 앱 셸 `AuthService`·`SessionStore`·`OwnershipGate` 활성화·updater command, 프런트 로그인 화면·배너, 앱 E2E 확장.
+- **하지 않음**: 실제 배포, 실제 로그인, Cloudflare·치지직 개발자 앱 설정 변경. 모두 사용자가 준비한 뒤 함께 한다(§15·§16 W9).
+- **Worker가 진짜로 막는 것**은 설치 파일·업데이트 배포와 세션 발급이다. 본인 영상 제한과 허용목록의 앱 쪽 강제는 클라이언트 정책이다(ROADMAP "우회 불가능할 필요는 없음").
+
+## 2. 결정 표
+
+사용자 결정(2026-10-06)은 그대로 쓰고, 이 문서가 더한 선택은 근거를 적는다.
+
+| 주제 | 결정 | 근거 |
+|---|---|---|
+| 허용목록 저장 | DO `AuthStore`의 SQLite 테이블 `allowlist` | 사용자 결정. 강한 일관성 → 제외가 다음 요청부터 |
+| 허용목록 관리 | 랜딩 `/admin`. 관리자 = 요청마다 `ADMIN_CHANNEL_IDS`(secret)로 판정, 토큰·쿠키에 관리자 클레임 없음. 허용목록 편집·세션 끊기·거부된 시도에서 [허용]. 관리자는 허용목록에 없어도 늘 허용 | 사용자 결정 + 위협 안(저장소 조작으로 승격 불가, 잠김 방지) |
+| Worker 연결 불가 시 앱 | 마지막 **성공한 갱신**(`verifiedAt`)부터 3일 안이면 저장 세션으로 사용(`signedIn{offline}`), 지나면 로그인 화면. 유예는 네트워크 계열(연결·DNS·TLS·시간 초과·5xx·429·Worker 형식이 아닌 응답)에만. 형식 있는 401·403은 즉시 차단. 진행 중 다운로드는 항상 계속 | 사용자 결정 + 위협 안("Worker 형식 응답만 판정") |
+| 허용목록 재확인 | 앱 시작 + 24시간마다 refresh(= 대조 1회). 그 사이 Worker에 닿는 모든 요청도 DO 대조 | 사용자 결정 |
+| 앱 세션 | access 24h, refresh 30일 슬라이딩 rotation, DO에 SHA-256만, 폐기 가능. **절대 상한 60일**(`session.created_at + 60d`. access·refresh 만료와 세션 `expires_at`은 이 값을 넘지 않는다. 지나면 refresh는 형식 있는 401 `session_expired` → 재로그인) | 사용자 결정(30일 슬라이딩 2026-10-06, 60일 상한은 Q1 답변 2026-10-06). 상한은 R7(치지직 앱 90일 미사용 삭제) 대책도 된다 |
+| 업데이트 | 시작 때 세션 확인 성공 직후 한 번 자동 확인 → 배너, 설치는 사용자. 설정 > 정보에 수동 버튼 | 사용자 결정 |
+| Worker 주소 | 저장소에 없음. 원천은 저장소 변수 `DIST_BASE_URL` 하나. 앱은 빌드 env `CHZZK_WORKER_BASE`, Worker는 배포 `--var PUBLIC_ORIGIN` | 사용자 결정(workers.dev 서브도메인 비공개) |
+| DO 구성 | 클래스 `AuthStore` 하나, `idFromName("main")` 하나, `exports: {AuthStore: {type:"durable-object", storage:"sqlite"}}`(레거시 `migrations`와 섞지 않음) | 최소. dry-run·vitest 실측은 exports만. 무료 플랜은 SQLite DO만 |
+| 토큰 형식 | 불투명 32바이트 난수 base64url + 종류 접두(`cda_`·`cdr_`·`cdw_`·`cdf_`). 서명·클레임 없음. 검증 = SHA-256 해시로 DO 조회 | 최소(서명 키·회전 절차 없음). hex가 아니라 public-scan과 충돌 없음 |
+| 웹 세션 | 쿠키 `__Host-cdl_s`, 12시간 절대, 갱신 없음 | 관리 권한이 붙는 세션은 짧게(위협). 랜딩은 드물게 쓴다. **확정**(Q2 답변 2026-10-06) |
+| 앱 흐름 피싱(A3) | `/auth/login/:handle`이 확인 코드·경고 페이지를 보이고 [계속]을 눌러야 치지직으로 간다. 랜딩 "내 기기"에서 자기 세션을 끊을 수 있다 | 위협. 운영 비용 0, 클릭 하나. **확정**(Q3 답변 2026-10-06) |
+| 응답 유실 창 | 60초 | 위협(60)·최소/테스트(30)·UX(120)의 중간. 앱의 재시도는 1회. **확정**(Q7 답변 2026-10-06) |
+| 치지직 토큰 | 저장하지 않는다. `users/me` 뒤 버린다. revoke도 부르지 않는다(같은 앱의 다른 기기 토큰까지 지운다) | 기존 웹 앱과 같다(chzzk-oauth.md §8) |
+| 사용자 필드 | `channelId`만(폴백 없음). 없거나 `^[0-9a-f]{32}$`가 아니면 `failed(user_format)` | 폴백이 다른 식별자를 채널 ID로 오인하는 쪽이 더 위험(위협). 실제 필드는 G-ID 도구가 보여 준다 |
+| R2 버킷 이름 | `wrangler.jsonc`에 커밋(`chzzk-downloader-dist`). `R2_BUCKET`은 secret에서 변수로 | 이 문서가 더한 선택(cicd.md 72 (카)를 바꾼다, 82 (다)). wrangler가 `bucket_name`을 요구하고, 계정 id 없이 버킷 이름만으로는 접근 경로가 없다. 대안(자리표시 + 배포 때 치환)은 코드만 늘린다. **확정**(Q5 답변 2026-10-06) |
+| 라우터·HTML | 의존성 없이 경로 표 + `switch`, 서버 렌더 HTML, 스크립트 0개 | 공급망 표면이 우리 코드뿐. 행렬 테스트가 표를 열거 |
+| Range | 단일 범위만 206/416, 다중·문법 오류는 200 전체 | 순수 함수 하나. R2 `Headers` 위임은 만족 불가에도 200 전체를 준다(실측) |
+
+---
+
+## 3. 아키텍처
+
+```
+                 ┌──────────────────── Cloudflare(workers.dev, 주소는 DIST_BASE_URL) ────────────────────┐
+앱(Rust 셸) ─Bearer cda_─▶ /auth/start·poll  /auth/refresh·logout  /api/me  /update/:v  /releases/:v/:f │
+브라우저 ──────────────▶ /auth/login/:handle ─[계속]─▶ 303 치지직 account-interlock                      │
+          ◀────────────  /auth/callback?code&state (앱·웹 공용, 흐름 레코드 kind로 분기) → 303 /auth/done │
+브라우저 ─cookie cdw_──▶ /  /auth/web/start  /auth/web/logout  /admin*  /releases/:v/:f                  │
+CI verify ─CI token───▶ /releases/**  /update/:v  (읽기 전용, 그 밖은 쓰레기 Bearer와 같다)              │
+                        Worker fetch ─RPC─▶ DO AuthStore(SQLite: flow·session·refresh·allowlist·denied) │
+                                     └────▶ R2 DIST(releases/…)  직접 스트리밍, 리다이렉트 없음           │
+                 └──────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+- Worker는 상태가 없다. 상태 변경은 DO RPC 하나 = `transactionSync` 하나다. DO는 바깥 요청(치지직·R2)을 하지 않는다.
+- 치지직 Open API 호출은 로그인 때 두 번뿐(토큰 교환, `users/me`). 갱신·허용목록 대조는 DO만 본다.
+
+```
+worker/
+  package.json            type: module, private, packageManager pnpm@12.9.1(app과 같음), engines node ^22.12 || >=24
+  pnpm-lock.yaml          독립 lockfile(app과 워크스페이스 아님: app은 vitest 5, 여기는 4.1.11)
+  pnpm-workspace.yaml     빌드 스크립트 허용(workerd·esbuild), minimumReleaseAge 예외는 설치 실측 뒤 [확인 필요]
+  wrangler.jsonc          name chzzk-downloader, main, compatibility_date 고정, exports(AuthStore), durable_objects AUTH, r2_buckets DIST,
+                          vars(CHZZK_AUTHORIZE_URL·CHZZK_API_BASE 운영 기본값만), observability(invocation 로그 끔 [확인 필요]), workers_dev true, preview_urls false
+  .dev.vars.example       자리표시 값만(§10). .dev.vars·worker-configuration.d.ts·dist/·.wrangler/는 .gitignore
+  tsconfig.json           types: ["./worker-configuration.d.ts", "@cloudflare/workers-types", "@cloudflare/vitest-plugin/types"]
+  vitest.config.ts        cloudflareTest({ wrangler: { configPath } , miniflare: { bindings: <모든 secret·var를 자리표시로 덮음> } })
+  src/
+    index.ts              export default { fetch } + export { AuthStore }
+    routes.ts             경로 표(데이터): method·pattern·auth·handler
+    config.ts             env 파싱·검증(순수). 실패하면 모든 경로 500 config_error
+    core/                 순수 함수(cloudflare:* import 금지, 정적 테스트가 확인)
+      token.ts            난수·b64url·SHA-256·접두 판별·상수 시간 비교
+      cookies.ts          cookieSpec(origin): https면 __Host- + Secure, 루프백 http면 접두 없음
+      range.ts            Range → {offset,length} | 416 | 무시
+      keys.ts             /releases 경로 문법·보이는 키 판정·SHA256SUMS 파서
+      semver.ts           parse·compare(xtask semver.rs 벡터를 테스트 상수로)
+      chzzk.ts            토큰·users/me 응답 해석(content ?? json, 짧은 code만)
+      updater.ts          (latest bytes, current) → 200 | 204
+      html.ts             태그드 템플릿 html``(자동 이스케이프), raw()는 허용 목록, 페이지 템플릿
+      log.ts              한 줄 JSON, 허용 필드만(타입으로 강제)
+      usercode.ts         확인 코드(혼동 문자 뺀 32자 알파벳 8자, "K7QX-4MRA" 꼴)
+    store/
+      AuthStore.ts        DurableObject 클래스. RPC 메서드만, 로직은 아래에 위임
+      schema.ts           마이그레이션 배열(meta.schema_version)
+      flows.ts            start·continue·consume·finish·claim·sweep (sql, now 주입)
+      sessions.ts         admit·activate·check·rotate·revoke
+      allowlist.ts        allow·disallow·denied upsert·cap
+    http/                 핸들러 (req, ctx) → Response. ctx = {config, auth(DO stub), r2, now, log}
+      auth.ts releases.ts update.ts landing.ts admin.ts health.ts release-auth.ts(CI 토큰 해석 한 곳)
+  test/
+    fake-chzzk.mjs        가짜 치지직: (Request, state) → Response 하나(JSDoc 타입, Node·workerd 공용)
+    network.ts            @msw/cloudflare setupNetwork + fake-chzzk 핸들러
+    setup.ts              enable/reset/disable, console 수집(카나리)
+    seed-release.mjs      합성 릴리스 생성기(가짜 바이트·SHA256SUMS·schema를 만족하는 manifest·latest)
+    unit/  store/  http/  matrix.test.ts  hygiene.test.ts  xtask-keys.test.ts
+  scripts/
+    fake-chzzk-server.mjs node:http 래퍼(wrangler dev E2E·수동)
+    e2e-dev.mjs           wrangler dev + 가짜 서버 + 시나리오 + 로그 카나리(§12.3)
+    channel-id-check.mjs  G-ID 도구(이미 있음, §15)
+```
+
+규칙 셋: (1) `core/`는 `cloudflare:*`를 import하지 않는다(타입 import 제외). (2) `store/*.ts` 함수는 `SqlStorage`와 `now`를 인자로 받는다(시간은 늘 주입). (3) 핸들러는 `ctx.auth`(DO stub RPC)만 부른다. DO 메서드 안의 SQL 경로는 동기 함수만(await를 끼우지 않는다).
+
+---
+
+## 4. 엔드포인트
+
+자격 종류: **없음**, **A**(앱 access `Authorization: Bearer cda_…`), **R**(본문 refresh `cdr_…`), **W**(웹 세션 쿠키 `__Host-cdl_s=cdw_…`), **W+admin**(W이고 채널 ∈ `ADMIN_CHANNEL_IDS`), **CI**(`Authorization: Bearer <CI_VERIFY_TOKEN>`), **F**(흐름 결합 쿠키 `__Host-cdl_f=cdf_…`). A·W·R은 모두 허용 채널이어야 한다(관리자는 늘 허용).
+
+공통: 오류 본문은 JSON 경로에서 `{"code":"<소문자_밑줄>"}` 하나(입력 되풀이·원인 문자열 없음). 모든 응답 `Cache-Control: no-store`(R2 본문은 `private, no-store, no-transform`), `X-Content-Type-Options: nosniff`. HTML 응답은 `Content-Security-Policy: default-src 'none'; style-src 'self'; img-src 'self'; form-action 'self' <CHZZK_AUTHORIZE_URL의 출처>; frame-ancestors 'none'; base-uri 'none'`(스크립트 0개. `form-action`에 치지직 출처를 넣는 것은 폼 전송 뒤 302 대상에도 `form-action`을 적용하는 브라우저가 있어서다), `Referrer-Policy: same-origin`(**`no-referrer`가 아니다**: Fetch 표준은 정책이 `no-referrer`인 문서에서 보내는 GET·HEAD가 아닌 요청에 `Origin: null`을 싣는다. 그러면 [계속]·웹 로그인·관리 POST가 전부 Origin 검사에 막힌다. `same-origin`이면 같은 출처 POST에 Origin이 그대로 실리고 치지직으로 가는 303에는 referrer가 나가지 않는다), `Cross-Origin-Opener-Policy: same-origin`. `no-referrer`는 콜백의 303 응답에만 쓴다(§14). 비밀값은 URL에 싣지 않는다(치지직이 정한 콜백 `code`·`state`만 예외, 콜백은 즉시 303으로 쿼리 없는 URL로 간다).
+
+### 4.1 공개·로그인 흐름
+
+| 경로 | 메서드 | 인증 | 요청 | 성공 | 오류 |
+|---|---|---|---|---|---|
+| `/health` | GET | 없음 | — | 200 `{"ok":true,"schema":<n>,"build":"<sha7>"}` | 503 `{"ok":false,"code":"config_error"}`(이름·값 없음. 배포 `--var`를 빠뜨리면 deploy-worker가 빨개진다) |
+| `/` | GET | W 선택 | — | 200 HTML. 비로그인: 소개 + [치지직으로 로그인] 폼. 허용: 최신 버전·OS별 다운로드 표(SHA256SUMS에서)·미서명 해제 안내·내 기기. 관리자: [관리] 링크 | — |
+| `/assets/site.css` | GET | 없음 | — | 200 CSS(소스에 문자열, 해시 이름, 불변 캐시) | 404 |
+| `/auth/start` | POST | 없음 | JSON `{"pollVerifier":"<b64url SHA-256(pollSecret)>","client":"app/<버전> <os>"}` | 201 `{"loginId","loginUrl":"<PUBLIC_ORIGIN>/auth/login/<handle>","userCode":"K7QX-4MRA","expiresAt","pollIntervalMs":2000}` | 400 `bad_request`, 429 `rate_limited`(+`Retry-After`), 503 `busy`(상한) |
+| `/auth/login/:handle` | GET | 없음 | handle(128bit b64url) | 200 HTML 확인 페이지: 큰 글씨 코드, "치지직 다운로더 앱에서 직접 시작한 로그인이 아니면 이 창을 닫으세요. 다른 사람이 보낸 링크라면 계속하지 마세요.", [계속] 폼 | 404 HTML(만료·모름 구분 없음) |
+| `/auth/login/:handle` | POST | 없음 + Origin = `PUBLIC_ORIGIN` | form 빈 본문 | 303 → `CHZZK_AUTHORIZE_URL?clientId&redirectUri&state`(state 새로 발급), `Set-Cookie: __Host-cdl_f`(10분) | 403 `bad_origin`, 404, 409 `already_used` |
+| `/auth/web/start` | POST | 없음 + Origin | form 빈 본문 | 303 → 치지직, `Set-Cookie: __Host-cdl_f` | 403, 429, 503 `busy` |
+| `/auth/callback` | GET | F | 쿼리 `code`, `state` | 303 → `/auth/done?r=<ok|denied|cancelled|failed>`. **F 쿠키는 남긴다**(done 페이지가 읽고 지운다). 웹 흐름 허용이면 `Set-Cookie: __Host-cdl_s` + 303 `/`(이때는 F 삭제) | 늘 303 `/auth/done?r=failed`(상세 사유는 로그 이벤트로만) |
+| `/auth/done` | GET | F 선택 | `r` | 200 HTML. F 쿠키가 있으면 `binder_hash`로 종결된 flow 행을 찾아(2분 안) 표시 내용을 채우고 **F 쿠키를 지운다**: ok "로그인했어요. 앱으로 돌아가세요"(앱 흐름은 확인 코드를 다시 보인다) / denied "허가 없는 채널이에요: {이름} · 채널 ID {id}" / cancelled / failed. 쿠키가 없거나 행이 없으면 `r`만으로 이름·ID 없는 일반 문구 | — |
+| `/auth/poll` | POST | 없음(loginId + pollSecret) | JSON `{"loginId","pollSecret"}` | 200 `{"status":"pending"}` · `{"status":"ok", …토큰 묶음(§6.3)}`(1회, 행 삭제) · `{"status":"denied","channelName"}` · `{"status":"cancelled"}` · `{"status":"failed","code"}` | 404 `not_found`(모름·만료·verifier 불일치·이미 수령을 구분하지 않는다), 429 `too_soon`(1.5초 안, 쓰기 0) |
+| `/auth/web/logout` | POST | W + Origin + 폼 토큰 | form | 303 `/`, 쿠키 삭제, 세션 revoked | 403 |
+
+### 4.2 앱 세션
+
+| 경로 | 메서드 | 인증 | 요청 | 성공 | 오류 |
+|---|---|---|---|---|---|
+| `/auth/refresh` | POST | R | JSON `{"refreshToken"}` | 200 토큰 묶음 | 400, 401 `session_expired`(모름·만료), 401 `session_revoked`(로그아웃·관리자·재사용 감지), 403 `not_allowed`(허용 제외. 세션도 폐기) |
+| `/api/me` | GET | A | — | 200 `{"channelId","channelName","accessExpiresAt","serverTime"}`(`channelId`는 토큰 묶음과 같은 본인 판정용 값 = `owner_channel_id ?? 로그인 channelId`, §5) | 401 `invalid_token`(형식·모름·만료 → 앱은 refresh), 401 `session_revoked`, 403 `not_allowed` |
+| `/auth/logout` | POST | A 또는 R | JSON `{"refreshToken"?}` | 204, 세션 revoked(이미 끝난 세션도 204) | 400 |
+
+### 4.3 릴리스 읽기 (§9)
+
+| 경로 | 메서드 | 인증 | 성공 | 오류 |
+|---|---|---|---|---|
+| `/update/:current` | GET | A 또는 CI | 200 `releases/latest.json` 바이트 그대로(`latest.version > current`) / 204(같거나 높음, 또는 latest.json 없음) | 400 `bad_version`, 401/403 |
+| `/releases/latest.json` | GET·HEAD | CI만 | 200 바이트 그대로 | 403 `forbidden`(A·W), 404(R2 null) |
+| `/releases/:v/:file` | GET·HEAD | A, W, CI | 200·206 스트리밍, 304 | 400 `bad_key`(문법), 403 `forbidden`(이 자격에 보이지 않는 키), 404(보이는 키인데 R2 null), 416 |
+
+### 4.4 관리 (전부 W+admin. POST는 Origin + 폼 토큰 + `application/x-www-form-urlencoded`)
+
+| 경로 | 메서드 | 요청 | 성공 | 오류 |
+|---|---|---|---|---|
+| `/admin` | GET | — | 200 HTML: 관리자 목록(읽기 전용)·허용목록·거부된 시도·활성 세션·감사 50줄 | 403 HTML(관리자 아님), 비로그인은 303 `/` |
+| `/admin/allow` | POST | `channelId`(`^[0-9a-f]{32}$`), `note`(≤64자) | 303 `/admin`(같은 채널의 거부 기록 삭제) | 400 `bad_channel_id`, 403 |
+| `/admin/disallow` | POST | `channelId` | 303, 그 채널 세션 전부 revoked('disallowed') | 400, 403, 409 `is_admin` |
+| `/admin/sessions/:id/revoke` | POST | — | 303 | 404, 403 |
+| `/admin/denied/:channelId/allow` | POST | — | 303(허용목록 추가 + 거부 행 삭제, 한 트랜잭션) | 404, 403 |
+| `/admin/denied/:channelId/dismiss` | POST | — | 303 | 404, 403 |
+| `/me/sessions/:id/revoke` | POST | W + Origin + 폼 토큰 | — | 303 `/`(자기 채널의 세션만, `revoked_why='user'`) | 404, 403 |
+
+그 밖 경로는 404 `not_found`, 메서드가 다르면 405. `/auth/cancel`은 두지 않는다(앱이 폴링을 멈추면 10분 뒤 만료).
+
+### 4.5 자격 × 경로 행렬 (테스트로 고정)
+
+`routes.ts`가 표를 내보내고 `matrix.test.ts`가 **모든 경로 × 자격 8종**(없음 / A 정상 / A 폐기된 세션 / A 허용 제외 / W 일반 / W 관리자 / CI / 쓰레기 Bearer)을 요청해 표의 `auth` 값에서 기대 상태를 계산해 비교한다. 표에 경로를 더하고 기대를 안 정하면 테스트가 실패한다. 고정 단언: CI가 허용되는 경로 집합 = `{GET·HEAD /releases/**, GET /update/*}` 정확히. 핵심 칸:
+
+| 경로 | 없음 | A | W | W+admin | CI |
+|---|---|---|---|---|---|
+| `/update/:v` | 401 | 200/204 | 401 | 401 | 200/204 |
+| `/releases/latest.json` | 401 | 403 | 403 | 403 | 200 |
+| `/releases/:v/:file`(보이는 키) | 401 | 200 | 200 | 200 | 200 |
+| `/api/me`, `/auth/refresh`, `/auth/logout` | 401 | 200 | 401 | 401 | **401** |
+| `/admin*`, `/me/*` | 303 `/` | 303 `/` | 403 | 200/303 | **303 `/`**(Bearer 무시, 쿠키만) |
+| `/auth/start`·`poll`·`login/:h` | 동작 | 동작 | 동작 | 동작 | 동작(자격과 무관) |
+
+CI 토큰은 `http/release-auth.ts`의 `releaseAuth()` 함수 하나에서만 읽고, 그 함수는 `http/releases.ts`·`http/update.ts`만 부른다. 비교는 제시된 토큰과 `CI_VERIFY_TOKEN` **둘을 SHA-256한 뒤 `timingSafeEqual`**(길이가 늘 같아 throw가 없다). 다른 경로에서 CI 토큰은 쓰레기 Bearer와 같다(별도 분기가 없으니 실수로 넓어지지 않는다). 소스 검사 테스트가 `CI_VERIFY_TOKEN` 문자열이 **`src/config.ts`·`src/http/release-auth.ts`** 두 파일 밖에 없음을 단언한다(§0 3행·§13 모두 이 두 파일이다).
+
+---
+
+## 5. Durable Object `AuthStore` 스키마
+
+생성자에서 `blockConcurrencyWhile`로 `meta.schema_version`을 읽고 `schema.ts`의 배열(`[v1 SQL, …]`)을 그 번호부터 적용한다(되돌리지 않음). 테스트: 빈 DB → 최신, 각 중간 버전 → 최신의 `sqlite_master`가 같다. 시각은 epoch ms 정수, 해시는 SHA-256 hex(저장소 안에만, 로그·응답에 없다). 모든 쓰기는 `transactionSync` 안.
+
+```sql
+CREATE TABLE meta (k TEXT PRIMARY KEY, v TEXT NOT NULL);                  -- schema_version
+
+CREATE TABLE flow (                                                      -- 로그인 흐름(앱·웹)
+  id            TEXT PRIMARY KEY,                                        -- loginId(앱) / 내부 id(웹), 128bit b64url
+  kind          TEXT NOT NULL CHECK (kind IN ('app','web')),
+  handle_hash   TEXT UNIQUE,                                             -- 앱: SHA-256(handle), /auth/login/:handle
+  state_hash    TEXT UNIQUE,                                             -- 치지직 state 해시. 앱은 [계속] 때, 웹은 start 때. 콜백이 소비하면 NULL
+  binder_hash   TEXT,                                                    -- SHA-256(흐름 결합 쿠키)
+  poll_verifier TEXT,                                                    -- 앱: b64url(SHA-256(pollSecret))
+  user_code     TEXT,                                                    -- 앱: 확인 코드
+  client        TEXT,                                                    -- "app/0.2.0 macos"(64자 자름, 표시용)
+  status        TEXT NOT NULL CHECK (status IN ('started','redirected','exchanging','ok','denied','cancelled','failed')),
+  session_id    TEXT,                                                    -- ok: 세션 id(토큰은 저장하지 않는다)
+  channel_name  TEXT,                                                    -- denied 표시용(출력 때 이스케이프)
+  channel_id    TEXT,                                                    -- denied 표시용(done 페이지가 본인에게 보인다, §8.3)
+  fail_code     TEXT,                                                    -- failed: token|user|timeout|user_format|binder
+  created_at    INTEGER NOT NULL,
+  expires_at    INTEGER NOT NULL                                         -- started·redirected: +10분, 종결 뒤: +2분
+);
+CREATE INDEX flow_expires ON flow(expires_at);
+
+CREATE TABLE allowlist (
+  channel_id       TEXT PRIMARY KEY CHECK (length(channel_id) = 32),
+  channel_name     TEXT,                                                 -- 마지막으로 본 이름(표시용)
+  owner_channel_id TEXT,                                                 -- §15 대안 B 자리. 기본 NULL(= channel_id)
+  note             TEXT,
+  added_by         TEXT NOT NULL,                                        -- 관리자 채널 id
+  added_at         INTEGER NOT NULL
+);
+
+CREATE TABLE session (
+  id            TEXT PRIMARY KEY,                                        -- 128bit b64url
+  kind          TEXT NOT NULL CHECK (kind IN ('app','web')),
+  channel_id    TEXT NOT NULL,
+  channel_name  TEXT,
+  status        TEXT NOT NULL CHECK (status IN ('unclaimed','active','revoked')),
+  access_hash   TEXT UNIQUE,                                             -- app: 현재 access 해시, web: 쿠키 해시
+  access_exp    INTEGER,                                                 -- app: +24h, web: +12h
+  csrf          TEXT,                                                    -- web: 폼 토큰(난수 b64url). 비밀값: 로그·URL 금지, HTML hidden 필드에만
+  client        TEXT,
+  created_at    INTEGER NOT NULL,
+  last_seen_at  INTEGER NOT NULL,                                        -- refresh·웹 로그인 때만 갱신(요청마다 쓰지 않는다)
+  expires_at    INTEGER NOT NULL,                                        -- unclaimed: +2분, app: min(마지막 refresh +30일, created_at +60일), web: +12h
+  revoked_at    INTEGER,
+  revoked_why   TEXT CHECK (revoked_why IN ('logout','admin','disallowed','reuse','user'))
+);
+CREATE INDEX session_channel ON session(channel_id, status);
+CREATE INDEX session_expires ON session(expires_at);
+
+CREATE TABLE refresh (
+  hash        TEXT PRIMARY KEY,
+  session_id  TEXT NOT NULL REFERENCES session(id),
+  status      TEXT NOT NULL CHECK (status IN ('active','used')),
+  child_hash  TEXT,                                                      -- 이 토큰으로 발급한 다음 토큰
+  issued_at   INTEGER NOT NULL,
+  used_at     INTEGER,
+  expires_at  INTEGER NOT NULL
+);
+CREATE INDEX refresh_session ON refresh(session_id);
+
+CREATE TABLE denied (
+  channel_id   TEXT PRIMARY KEY,
+  channel_name TEXT,                                                     -- 공격자 제어 값. 128자 자름·제어 문자 제거, 출력 때 이스케이프
+  first_at     INTEGER NOT NULL, last_at INTEGER NOT NULL, attempts INTEGER NOT NULL
+);
+CREATE INDEX denied_last ON denied(last_at);
+
+CREATE TABLE audit (                                                     -- 500행 상한, 비밀값 없음
+  id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL,
+  actor TEXT NOT NULL, action TEXT NOT NULL, target TEXT                 -- allow|disallow|revoke_session|reuse_detected|refresh_recovered|dismiss
+);
+```
+
+- **허용 판정** `isAllowed(channelId) = channelId ∈ ADMIN_CHANNEL_IDS ∪ allowlist`. 관리자는 늘 허용(잠김 방지). 관리자를 `disallow`할 수 없다(409). **관리자도 `allowlist` 행을 가질 수 있다**(이름·메모·`owner_channel_id` 자리를 위해. 행이 없어도 허용은 변하지 않고, 행이 있어도 [빼기]는 409). 본인 판정용 채널 ID는 `ownerId(channelId) = allowlist.owner_channel_id ?? channelId`이고 토큰 묶음(§6.3)·`/api/me`·`check()`의 `channelId`가 모두 이 값이다(관리자 본인이 본인 영상 검사의 주 사용자이므로 §15 대안 B가 관리자에게도 적용된다).
+- **상한·스로틀**(쓰기 전에): 메모리 `Map<ipKey, 횟수>`(`ipKey = SHA-256(CF-Connecting-IP(IPv6는 /64) + 일 단위 소금)` 앞 16바이트) 10분 창 **`START_RATE_10M`회**(기본 6) → 429. 한도는 config 값이고 **dev 모드(§10.1)에서만** `.dev.vars`로 덮을 수 있다(운영은 늘 6). 헤더가 없으면 키는 상수 `"none"`(운영에서는 Cloudflare가 이 헤더를 늘 채우므로 생기지 않는다). vitest·wrangler dev는 한 IP(또는 없음)에서 6회를 금방 넘기므로 `.dev.vars.example`은 `START_RATE_10M=1000`으로 두고, 스로틀 자체의 429는 `store/flows.ts`의 순수 함수(`throttle(map, ipKey, limit, now)`)를 `runInDurableObject` 안에서 limit 6으로 직접 불러 고정한다(W3). 미처리 헤더는 테스트가 `CF-Connecting-IP`를 요청마다 바꿔 키 분리를 확인한다. 비만료 `flow` 행이 32개면 503 `busy`(메모리 카운터, 생성자에서 `SELECT count(*)`로 채움). 폴링 최소 간격 1.5초는 `Map<loginId, lastPollMs>`(행 쓰기 0). DO가 쫓겨나면 메모리가 비지만 상한 32행이 쓰기를 여전히 묶는다.
+- **alarm**: 쓰기 뒤 `setAlarm(min(가장 이른 flow.expires_at, 가장 이른 unclaimed session, 다음 하루 청소))`. `setAlarm`이 기존 알람을 덮어쓰는지는 **[확인 필요]**(조사에서 미검증). W3의 첫 테스트를 "`setAlarm`을 두 번 부르면 `getAlarm()`이 둘째 값"으로 고정하고, 아니면 `getAlarm()`으로 읽어 더 이른 쪽만 설정한다. `alarm()`은 만료 flow 삭제, `expires_at` 지난 session·refresh 삭제, revoked 세션은 30일 뒤 삭제, `denied` 30일·200행, `audit` 500행 정리, 남은 행이 있으면 다음 알람. at-least-once라 멱등. `runDurableObjectAlarm`로 테스트.
+- **거부 기록**: 같은 채널은 `last_at`이 1시간 넘게 지났을 때만 갱신(쓰기 절약), 200행 상한(오래된 `last_at`부터).
+- **무료 한도 계산**(최악, 하루): 공격자 start 32행 × 144순환 × 쓰기 2 ≈ 9,200, [계속] ≤ 4,600, 거부 기록 ≤ 4,800, 정상 사용자 20명 refresh 3회 × 3행 + 로그인 < 300 → **≈ 19,000 < 100,000**. 요청 수(10만/일)는 쓰기 없이도 소진될 수 있어 Cloudflare WAF 요청 수 제한 규칙은 배포 때 사용자와 넣는다(Q4). 폴링은 2초 × 10분 = 최대 300요청/로그인, 쓰기 0.
+
+### 5.1 RPC 목록
+
+`startApp(verifier, client, now)` · `startWeb(now)` · `continueApp(handleHash, now)` → `{state, binder}` · `consume(stateHash, binderHash, now)` → `{id, kind} | null`(state_hash를 NULL로, status exchanging) · `finish(id, outcome, now)` · `claim(loginId, verifierHash, now)` → 토큰 묶음 또는 상태 · `admit(channelId, name, kind, client, now)` → `{sessionId}` 또는 denied · `activate(sessionId, now)` → 첫 access·refresh 발급(`unclaimed → active` 한 번만) · `check(accessHash, now)` → `{sessionId, channelId, ownerChannelId, isAdmin}` | 사유 · `rotate(refreshHash, now)` · `revoke(sessionId, why)` · `logout(accessHash | refreshHash)` · `webLogin(channelId, name, now)` → `{cookieToken, csrf}` · `webCheck(cookieHash, now)` · `adminView()` · `allow(id, note, by)` · `disallow(id, by)` · `dismissDenied(id)` · `mySessions(channelId)` · `revokeMine(channelId, sessionId)`.
+
+### 5.2 refresh rotation (`rotate`, transactionSync 하나)
+
+| 찾은 행 | 조건 | 결과 | 상태 변화 |
+|---|---|---|---|
+| 없음 | — | 401 `session_expired` | 없음 |
+| 세션 revoked | — | 401 `session_revoked` | 없음 |
+| 세션·토큰 만료(절대 상한 `now ≥ created_at + 60일` 포함) | — | 401 `session_expired` | 없음(alarm이 지움) |
+| 채널이 허용 채널 아님 | — | 403 `not_allowed` | 세션 revoked('disallowed') |
+| `active` | — | 200 새 묶음 | 이 행 `used`(used_at=now, child_hash=새), 자식 `active` 삽입(`cap(now+30일)`), 새 access(`cap(now+24h)`, `access_hash` 교체), 세션 `last_seen_at`·`expires_at=cap(now+30일)`. `cap(t) = min(t, created_at+60일)` |
+| `used` | `now - used_at ≤ 60s` **이고** 자식이 `active`(한 번도 제시되지 않음) | 200 새 묶음 (응답 유실 복구) | 자식 삭제, 새 자식 삽입(만료는 `active` 행과 같이 `cap`), 이 행 `child_hash=새`(60초 안에 또 잃어도 같은 규칙), audit `refresh_recovered`(세션 id 앞 6자) — 60초 창 안에서 탈취자와 피해자가 번갈아 같은 부모를 내면 매번 복구로 끝나 `reuse_detected`가 남지 않으므로, 복구 자체를 기록하고 관리 화면 활성 세션에 복구 횟수를 보인다 |
+| `used` | 60초 넘음, 또는 자식이 이미 `used` | 401 `session_revoked` | 세션 revoked('reuse'), 그 세션의 refresh 행 전부 삭제, audit `reuse_detected` |
+
+- 동시 갱신은 앱 셸이 막는다(single-flight mutex, 앱 인스턴스 하나). 서버 유예는 "응답 유실 재시도" 한 가지뿐이다. 탈취자가 옛 토큰을 다시 내면 60초 안이라도 자식이 쓰인 뒤라 세션이 날아간다(피해자는 재로그인 1회, 그쪽으로 닫힌다).
+- 앱은 새 묶음을 `session.json`에 원자적으로 쓴 **뒤에** 상태를 바꾼다. 서버 커밋 뒤 로컬 쓰기 전에 앱이 죽으면 60초 안의 재시작은 복구되고, 넘으면 재로그인 1회로 수용한다.
+- **절대 상한 60일**(사용자 결정, Q1 답변 2026-10-06): 세션의 `created_at + 60일`을 넘는 만료는 발급하지 않는다(위 `cap`. access도 상한을 넘지 않으므로 60일이 지난 뒤 남은 access가 24시간 더 쓰이지 않는다). 상한이 지나면 refresh는 표의 "만료" 행대로 형식 있는 401 `session_expired`이고 앱은 재로그인한다(§11.3). `check()`도 `access_exp`로 같은 시점에 401 `invalid_token`이 된다. 테스트(W3): `created_at + 60일` 직전 rotate는 자식·access 만료가 상한으로 잘리고, 직후 rotate는 401 `session_expired`.
+
+---
+
+## 6. 토큰·쿠키
+
+### 6.1 공통
+
+- 난수는 `crypto.getRandomValues` 32바이트, base64url(패딩 없음). 비교는 해시끼리 또는 `crypto.subtle.timingSafeEqual`. 저장은 SHA-256(WebCrypto). CPU 10ms라 bcrypt류는 쓰지 않는다(256bit 난수라 필요 없다).
+- 접두로 종류를 가른다: access `cda_`, refresh `cdr_`, 웹 세션 `cdw_`, 흐름 결합 `cdf_`. 다른 자리에 다른 접두가 오면 401 `invalid_token`(행렬 테스트에 포함). 토큰·id가 hex가 아니라 테스트 픽스처에 박아도 public-scan `hex-id`·`keyed-hex`에 걸리지 않는다(그래도 테스트는 런타임 생성이 기본).
+
+| 토큰 | 형식 | 수명 | 저장(서버) | 운반·저장(클라이언트) |
+|---|---|---|---|---|
+| access(앱) | `cda_` + 32B | 24h(세션 절대 상한을 넘지 않음) | `session.access_hash`·`access_exp` | `Authorization: Bearer`, `session.json`(0600) |
+| refresh(앱) | `cdr_` + 32B | 30일 슬라이딩(쓸 때마다 새 토큰), 세션 절대 상한 60일(`created_at + 60d`) | `refresh.hash` | POST 본문, `session.json` |
+| 웹 세션 | `cdw_` + 32B | 12h 절대 | `session.access_hash` | 쿠키 `__Host-cdl_s` |
+| 흐름 결합 | `cdf_` + 32B | 10분 | `flow.binder_hash` | 쿠키 `__Host-cdl_f` |
+| loginId·handle | 16B b64url | 10분 | `flow.id`, `flow.handle_hash` | 앱 메모리 / 브라우저 URL(handle로는 폴링할 수 없다) |
+| pollSecret | 32B b64url | 10분 | `flow.poll_verifier`(해시) | 앱 메모리(`Secret`)만 |
+| state | 32B b64url | 10분 | `flow.state_hash` | 브라우저 URL(치지직 왕복) |
+| CI 토큰 | 사용자가 만든 난수(b64url 권장) | 수동 교체 | Worker secret `CI_VERIFY_TOKEN`(원문) | GitHub 환경 `release` secret 같은 이름·같은 값 |
+
+- access 검증 순서: 접두 → `check(SHA-256(token))`: 세션 `active`이고 **`kind='app'`**이고 `access_exp > now`이고 채널이 허용 채널. `webCheck`는 `kind='web'`을 SQL 조건에 넣는다(`access_hash`는 앱 access와 웹 쿠키가 함께 쓰는 UNIQUE 열이라 접두 검사와 이중 방어). 만료·모름은 401 `invalid_token`(앱은 refresh), revoked는 `session_revoked`, 허용 제외는 403 `not_allowed`(세션 revoked). 통과해도 `last_seen_at`은 쓰지 않는다(쓰기 절약, 슬라이딩은 refresh가 맡는다).
+- 수락 테스트: "관리자가 세션을 끊은 직후 같은 access로 `/releases/...`가 401", "허용목록에서 뺀 직후 403 `not_allowed`"(지연 0).
+
+### 6.2 쿠키
+
+`cookieSpec(PUBLIC_ORIGIN)` 하나가 만든다: https면 `__Host-` 접두 + `Secure`, 루프백 http(dev)면 접두 없는 `cdl_s`·`cdl_f`에 `Secure` 없음. 공통 `HttpOnly; SameSite=Lax; Path=/`(콜백이 `/auth/callback`이라 Path를 좁히면 `__Host-`가 허용하지 않는다). `__Host-cdl_s` Max-Age 43200, `__Host-cdl_f` Max-Age 600. 삭제는 `Max-Age=0`.
+
+### 6.3 토큰 묶음 (poll ok·refresh 성공 응답)
+
+```json
+{"status":"ok","accessToken":"cda_…","accessExpiresAt":"RFC3339","refreshToken":"cdr_…","refreshExpiresAt":"RFC3339",
+ "channelId":"<본인 판정용 32 hex = owner_channel_id ?? 로그인 channelId>","channelName":"…","isAdmin":false,"serverTime":"RFC3339"}
+```
+
+`channelId`는 앱의 본인 영상 판정에 쓰는 값이다(§15). `serverTime`은 시계 차이 진단용이고 유예 판정에는 쓰지 않는다.
+
+---
+
+## 7. 로그인 시퀀스
+
+### 7.1 앱 흐름
+
+```
+앱(Rust)                              Worker / DO                              브라우저                 치지직(또는 가짜)
+pollSecret = rand32(메모리만), verifier = b64url(SHA-256)
+POST /auth/start {pollVerifier, client} ─▶ 스로틀·상한 → startApp: loginId·handle·userCode, flow(started, +10m)
+◀─ 201 {loginId, loginUrl=/auth/login/<handle>, userCode, expiresAt, pollIntervalMs}
+화면 "브라우저에 코드 K7QX-4MRA가 보이는지 확인하세요", opener로 loginUrl ──────────▶ GET /auth/login/<handle>
+                                       확인 페이지(코드·경고·[계속])
+                                                                               POST [계속](Origin 검사)
+                                       continueApp: state·binder 생성, flow(redirected, state_hash, binder_hash)
+                                       303 → {AUTHORIZE_URL}?clientId&redirectUri&state, Set-Cookie cdl_f ─▶ 로그인·동의
+                                       ◀──────────────────────── GET /auth/callback?code&state (cdl_f 동반)
+                                       consume(H(state), H(binder)) 한 트랜잭션(일회용: state_hash NULL, exchanging)
+                                         없음·불일치 → failed(binder) / code 없음 → cancelled
+                                       POST {API_BASE}/auth/v1/token(10s) → GET /open/v1/users/me(10s) → 토큰 버림
+                                       admit(channelId, name, kind=app): 허용 → session(unclaimed, +2m), flow(ok, session_id, +2m)
+                                                                          거부 → denied upsert, flow(denied, channel_name, +2m)
+                                       303 /auth/done?r=ok (cdl_f 유지) ──▶ GET /auth/done: binder로 flow 조회 → 코드 다시 표시, cdl_f 삭제
+POST /auth/poll {loginId, pollSecret} 2초 간격 ─▶ claim: H(pollSecret) == verifier? 아니면 404
+                                                  ok → activate(session) → 토큰 묶음, flow 행 삭제(1회 수령)
+◀─ {status:"ok", …} → session.json(0600, atomic) → emit auth-changed
+```
+
+- 토큰은 콜백이 아니라 **첫 `ok` 폴링 때** 발급한다. 원문 토큰은 DO에 한순간도 저장되지 않는다(테스트: 콜백 뒤 모든 테이블 덤프에 토큰 원문이 없다).
+- 브라우저 이력·URL에 남는 것은 handle과 state뿐이고 둘로는 폴링할 수 없다.
+- 확인 코드는 앱 화면과 확인 페이지에 함께 보이고 사람이 눈으로 맞춘다(입력하지 않는다. 입력형은 폴링 탈취를 못 막고 마찰만 늘린다). 완료 페이지에도 코드를 다시 보인다.
+- `ok` 응답을 앱이 잃으면 다음 poll은 404다. 앱은 자기 `expiresAt`과 비교해 지났으면 `Expired{LoginTimeout}`, 아니면 `Error{LoginLost}`로 가른다(§11.3).
+
+### 7.2 웹 흐름
+
+`GET /` → [치지직으로 로그인] 폼 → `POST /auth/web/start`(Origin) → `startWeb`: flow(kind=web, state_hash, binder_hash, +10m), `Set-Cookie: cdl_f`, 303 치지직 → `GET /auth/callback` → consume(state, binder) → 교환·`users/me` → `admit(kind=web)`: 허용 → `webLogin`: session(web, active, +12h, access_hash=쿠키 해시, csrf) → `Set-Cookie: cdl_s`, 303 `/`. 거부 → denied upsert, flow(denied, channel_name·channel_id 보관, +2분) → 303 `/auth/done?r=denied`(F 쿠키 유지. done 페이지가 `binder_hash`로 그 flow 행을 찾아 이름·ID를 보이고 F를 지운다. 콜백이 state를 이미 소비했으므로 남은 F 쿠키로는 아무것도 할 수 없다). 거부된 사람에게는 세션 쿠키를 주지 않는다. `flow`에 `channel_id` 열을 둔다(denied 표시용, §5).
+
+- 로그인 CSRF(A4): 공격자가 자기 `code`·`state`를 피해자에게 열게 해도 피해자 브라우저의 `cdl_f` 해시가 그 흐름의 `binder_hash`와 다르다 → failed. 앱 흐름도 [계속]에서 같은 쿠키를 심으므로 규칙이 하나다.
+- 콜백의 kind는 쿼리가 아니라 **흐름 레코드**가 정한다. 앱 흐름을 웹 세션으로 바꾸거나 그 반대는 불가능하다(테스트: 같은 콜백에 app 행·web 행을 주고 응답 모양이 다름).
+
+### 7.3 치지직 호출 규칙 (기존 웹 앱 코드 이식, `core/chzzk.ts`)
+
+- 토큰 교환 `POST {CHZZK_API_BASE}/auth/v1/token` JSON `{grantType:"authorization_code", clientId, clientSecret, code, state}`; 사용자 `GET {CHZZK_API_BASE}/open/v1/users/me` `Authorization: Bearer`. 둘 다 `AbortSignal.timeout(10_000)`. 응답은 `json.content ?? json`. `redirectUri = PUBLIC_ORIGIN + "/auth/callback"`(요청 Host에서 만들지 않는다. 치지직 등록 값과 바이트가 같아야 한다 — 테스트).
+- 사용자 필드는 `channelId`만. 없거나 `^[0-9a-f]{32}$`가 아니면 `failed(user_format)`. `channelName`은 문자열이면 128자로 자르고 제어 문자를 지우며, 아니면 빈 값.
+- 실패는 `{stage:'token'|'user', status, code?(^[\w.-]{1,50}$), timedOut}`만. 응답 본문·토큰은 어떤 오류·로그에도 담지 않는다. 성공 본문이 JSON이 아니면(프록시 HTML) status만 담은 실패.
+- 치지직 토큰은 `users/me` 뒤 버린다. revoke는 부르지 않는다.
+
+---
+
+## 8. 허용목록·관리 화면
+
+### 8.1 `/admin` (서버 렌더, 스크립트 0개)
+
+1. **관리자**: `ADMIN_CHANNEL_IDS` 읽기 전용("secret에서만 바꿀 수 있어요").
+2. **허용목록**: 이름·ID·메모·추가자·시각·활성 세션 수, [빼기]. 아래 "채널 ID로 추가"(`^[0-9a-f]{32}$`, 메모 선택. 이름은 그 채널이 처음 로그인할 때 채운다).
+3. **거부된 시도**: 최근순 이름·ID·횟수·마지막 시각, **[허용]**(허용목록에 넣고 거부 행 삭제, 한 트랜잭션)·[지우기].
+4. **활성 세션**: 채널·종류(앱/웹)·client·만든 시각·마지막 갱신·복구 횟수(`refresh_recovered`가 0이 아니면 표시), [끊기].
+5. **감사 기록** 50줄.
+
+- 모든 출력은 태그드 템플릿 `html\`…\``의 자동 이스케이프를 거친다. 원문 삽입은 `raw()`만이고 테스트가 `raw(` 사용처를 허용 목록과 대조한다. XSS 테스트: 채널 이름 `<script>alert(1)</script>"'&`로 로그인 거부 → `/admin`·`/auth/done` 응답에 `<script`가 없다.
+- **CSRF 세 겹**: (1) `SameSite=Lax` 쿠키(교차 사이트 POST에 안 실린다), (2) `Origin`이 `PUBLIC_ORIGIN`과 정확히 같다(없거나 `null`이면 403; `Sec-Fetch-Site`가 있으면 `same-origin`이어야 한다. 이 검사가 실제 브라우저에서 통과하려면 HTML의 `Referrer-Policy`가 `same-origin`이어야 한다(§4 공통). W7 E2E에 "브라우저 규칙대로 Origin을 실은 POST가 통과, `Origin: null`은 403" 사례를 둔다), (3) hidden `csrf` = 세션 행의 `csrf` 난수(상수 시간 비교). 본문은 `application/x-www-form-urlencoded`만(아니면 415). 테스트: Origin 없음/다름/같음 × 토큰 없음/틀림/맞음 6사례, 비관리자 403.
+- "허용 빼기"는 그 채널의 모든 세션을 revoked('disallowed')로 같은 트랜잭션에서 바꾼다 → 앱은 다음 Worker 접촉에서 403 `not_allowed`.
+- 허용 채널이 로그인할 때마다 `allowlist.channel_name`을 갱신한다(표시용). Open API 채널 조회로 미리 채우는 것은 하지 않는다(바깥 호출 하나 = 실패 경로 하나).
+
+### 8.2 내 기기 (허용 사용자, 랜딩 `/`)
+
+내 채널의 활성 세션(앱·웹, client·만든 시각) 목록과 [끊기](`/me/sessions/:id/revoke`, CSRF 같음, `revoked_why='user'`). A3로 생긴 세션을 사용자가 알아채고 끊는 출구다.
+
+### 8.3 부트스트랩
+
+**부트스트랩 모드 = `ADMIN_CHANNEL_IDS`가 비어 있음(secret 없음)**. 이 모드에서는 허용 채널이 공집합이라 모든 로그인이 거부되고, `/admin*`은 403, `/health`는 200에 `"bootstrap":true`를 더한다(이름·값 없음). 첫 배포 뒤 사용자가 `/`에서 로그인하면 거부 화면(`/auth/done`, §4.1)이 **본인** 채널 이름과 ID를 보여 준다(본인에게 비밀이 아니다). 그 값을 `wrangler secret put ADMIN_CHANNEL_IDS`로 넣으면 운영 모드가 된다. 값이 있는데 형식이 틀리면 `config_error`(§10.1). ID는 저장소·대화에 옮기지 않는다. W1 config 가드 표에 "비어 있음 → 부트스트랩, 틀린 형식 → config_error"를 넣는다.
+
+---
+
+## 9. R2 게이트·updater·랜딩
+
+### 9.1 키 문법과 보이는 키 (구멍 1·3)
+
+R2 바인딩 `DIST`. Worker는 **읽기만** 한다(소스에 `DIST.put`·`DIST.delete`가 없음을 테스트가 확인). 경로 문법(정규식 하나, 안 맞으면 400 `bad_key`):
+
+```
+^/releases/latest\.json$
+^/releases/(?<v>\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)/(?<f>[A-Za-z0-9._-]{1,128})$     ('..'·'/'·'%' 불가, 대소문자 정확 일치)
+```
+
+| 자격 | 보이는 키 | 근거 |
+|---|---|---|
+| CI | `releases/latest.json`과 문법에 맞는 `releases/<v>/<f>` 전부(R2에 있으면 200, 없으면 404) | xtask `Source::Worker`(`xtask/src/release.rs` 529~)는 `SHA256SUMS`·`manifest.json`·SHA256SUMS의 각 파일(`.sig` 포함)·`latest.json`을 GET하고 **404를 "없음" → 판정 실패 → 롤백**으로 읽는다. 그래서 404는 "문법이 맞고 R2가 null"일 때만 낸다. 자격 실패·정책 거부는 401·403(xtask exit 2, 되돌리지 않음). `previous`는 xtask가 S3로 읽어 Worker를 지나지 않지만 CI에는 보인다 |
+| A·W | `releases/<v>/<f>` 중 `f`가 `releases/<v>/SHA256SUMS`의 항목(`.dmg`·`.deb`·`.sig` 모두 포함: xtask `put`이 표와 같을 때만 올린다)이거나 `SHA256SUMS`·`manifest.json`인 것. `previous`·`latest.json`은 403 | 랜딩이 `.dmg`·`.deb`를 줄 수 있다(cicd.md §5 "manifest의 키만"을 바꾼다, 구현 중 변경 80). 사용자에게는 존재 여부가 비밀이 아니라 403/404를 가른다 |
+
+- `SHA256SUMS` 해석 결과는 isolate 메모리에 버전별 캐시(불변 객체, LRU 8개). **`/update/*`·`/releases/latest.json`은 캐시 없이 매번 R2를 읽는다**(롤백 직후 isolate마다 되돌린 매니페스트를 60초 동안 주지 않게). `latest.json`의 60초 캐시는 랜딩 `/`의 최신 버전 표시에만 쓴다.
+- 계약 테스트 `xtask-keys.test.ts`: 합성 릴리스 2개(`seed-release.mjs`, `.sig` 포함)를 R2에 넣고 xtask verify가 요청하는 키 목록(테스트 안의 표, `release/expected-artifacts.json`에서 계산)을 CI 토큰으로 모두 GET → 200·바이트 동일. `.dmg`·`.deb`를 A·W로 200. 틀린 CI 토큰은 401(404가 아님).
+
+### 9.2 응답 규칙 (`http/releases.ts`)
+
+- **리다이렉트 없음**: `DIST.get` 결과를 `new Response(obj.body)`로 직접 스트리밍. presigned URL·302 금지(reqwest는 교차 호스트 리다이렉트에서 `Authorization`·Cookie 계열만 지우고 다른 헤더는 넘긴다). 테스트: 모든 `/releases` 응답이 3xx가 아님.
+- 헤더: `Content-Length`(전체면 `obj.size`, 부분이면 범위 길이), `ETag: obj.httpEtag`, `Content-Type`(확장자 표: json·text/plain·octet-stream), `Content-Disposition: attachment; filename="<f>"`(ASCII 문법만 통과하므로 `filename*` 불필요. `.json`·`SHA256SUMS`는 inline), `Accept-Ranges: bytes`, `Cache-Control: private, no-store, no-transform`, `Content-Encoding` 없음(xtask가 바이트 그대로 받는다).
+- Range: `core/range.ts`가 파싱. 단일 `bytes=a-b`·`a-`·`-n`만 인정하고 다중 범위·문법 오류는 무시하고 200 전체(RFC 9110 허용). 인정된 범위는 **`DIST.head(key)`로 `size`를 먼저 얻어**(없으면 404) 순수 함수 `resolveRange(spec, size) → {offset,length} | 416`으로 판정한다(`{offset,length}` 객체 형태는 범위를 벗어나면 throw하고, `Headers` 위임은 만족 불가에도 200 전체를 주므로 둘 다 416을 만들 수 없다 — 조사 사실). 만족 불가 → 416 + `Content-Range: bytes */<size>`. 아니면 `DIST.get(key, {range})` → 206, `Content-Range`는 `obj.range`·`obj.size`로. Range 요청은 Class B 연산 2회(head + get)이고 무료 한도 계산(§5)에 그대로 넣어도 여유가 있다(Range는 updater·브라우저 이어받기에만 쓰인다).
+- 조건부: `If-None-Match`는 `onlyIf`로, body 없는 결과면 304(ETag 유지). `If-Range`는 무시. HEAD는 같은 판정에 본문 없음.
+- 스트림 응답에 `Content-Length`가 실제 배포에서도 유지되는지는 첫 배포 체크리스트(§16 W9).
+
+### 9.3 updater (`http/update.ts`, 구멍 2)
+
+- 경로 `GET /update/{{current_version}}`. 앱이 런타임에 `app.updater_builder().endpoints(vec![format!("{base}/update/{{{{current_version}}}}")])?.header("Authorization", "Bearer <access>")?.build()?`로 넣는다. `tauri.conf.json`에는 endpoints를 커밋하지 않는다(pubkey만). 릴리스 빌드에서 http endpoint는 플러그인이 거부한다(`InsecureTransportProtocol`) — 이중 방어.
+- 판정: `latest.json`을 R2에서 읽어(없으면 204) `version`과 `current`를 semver 비교(xtask `semver.rs`와 같은 우선순위, prerelease 포함. 벡터를 `semver.test.ts`에 옮기고 주석에 원천을 적는다). `latest > current` → 200 바이트 그대로(정적 `platforms` 형식, 플랫폼 키 6개는 `latest.schema.json` 그대로, Worker는 키를 해석하지 않는다). 아니면 204. `current`가 semver가 아니면 400(`+`는 플러그인이 퍼센트 인코딩 → 디코드).
+- 플러그인 2.13.1 소스 사실: `header()`는 확인·다운로드 요청 모두에 붙는다(`updater.rs` 537·616·691·783·810), 204 = `Ok(None)`(624), 2xx 아닌 응답은 다음 endpoint로 넘어가 결국 `ReleaseNotFound`(644-647), `Update.download_url`은 공개 필드(752). 그래서 셸은 (가) `check()` 전에 세션 판정을 끝내고(`check()`는 401과 5xx를 구분 못 한다), (나) `download_url.origin()`이 `CHZZK_WORKER_BASE`와 다르면 받지 않고 `update_untrusted_url`로 끝낸다(토큰이 다른 호스트로 나가지 않는다). 매니페스트 `url`은 `DIST_BASE_URL` = Worker 출처라 정상이면 늘 같다.
+- 매니페스트 `url`이 `${DIST_BASE_URL}/releases/<v>/<file>`이므로 `DIST_BASE_URL`은 **경로 없는 출처**여야 한다. sign-publish preflight에 이 검사를 더한다(cicd.md 82).
+- `download()`는 전체를 메모리에 받는다(연구 사실). 범위 밖으로 받아들인다.
+
+### 9.4 deploy-worker 검사 계약 (release.yml, `release.mjs worker`)
+
+| 요청 | 기대 |
+|---|---|
+| (배포 전) `latest.json`의 `version` | 이번 태그보다 높으면 `superseded`: 배포·검사 없이 exit 0(태그마다 concurrency 그룹이 따로라 낮은 태그의 deploy-worker가 늦게 끝나 옛 Worker를 덮는 것을 막는다. cicd.md 81 (나)) |
+| `GET {DIST_BASE_URL}/health` | 200, `ok:true`(30초 간격 최대 5분, 전파 지연) |
+| `GET /update/0.0.0`(CI 토큰) | 200, 본문 = `latest.json`, `version == 이번 태그`. prev 대신 `0.0.0`을 써서 첫 릴리스에도 성립(§5의 "prev 버전 요청"을 바꾼다, cicd.md 81) |
+| `GET /update/<이번 태그>`(CI 토큰) | 204 |
+| 음성 | `GET /admin`(CI 토큰) → 200이 아님(303), `GET /releases/latest.json`(토큰 없음) → 401, `GET /api/me`(CI 토큰) → 401 |
+
+실패하면 exit 1 → `ci-loop:release`. Worker 되돌리기는 사람이 `wrangler rollback`(DO 선언 변경은 rollback으로 되돌아가지 않으므로 DO 선언을 바꾸는 PR은 따로 낸다). `VERIFY_VIA=worker`이면 verify는 **이미 배포된 Worker**로 읽으므로(deploy-worker가 verify 뒤) 키 계약은 버전 사이에 넓히기만 하고, 좁히는 변경은 Worker를 먼저 배포한다(cicd.md §5 "3단계 앞으로").
+
+### 9.5 랜딩 UX (`/`, 스크립트 없음)
+
+- 비로그인: "치지직 다운로더 — 허가된 채널만 받을 수 있어요." [치지직으로 로그인]. "앱을 이미 받았으면 앱 안에서 로그인해요."
+- 허용: 최신 버전·게시 날짜, OS별 표(macOS `.dmg`(Apple Silicon 전용 안내), Windows `-setup.exe` 기본·`.msi`, Linux AppImage·`.deb`)에 크기(R2 head)·SHA-256 [복사 없음, 텍스트]. 설치 안내 접힘 패널(`<details>`): macOS Gatekeeper "그래도 열기"(macOS 15 이후 문구는 실기기 확인 **[확인 필요]**)와 `xattr -dr com.apple.quarantine`, Windows SmartScreen "추가 정보 → 실행", Linux `chmod +x`·`apt install ./…deb`. "앱을 연 뒤 이 페이지와 같은 치지직 계정으로 로그인해 주세요." 아래 "내 기기". 관리자면 [관리].
+- 거부(`/auth/done?r=denied`): "이 채널은 사용 허가가 없어요 · 채널: {이름} · 채널 ID {id} · 관리자에게 채널 이름을 알려 주세요." "다른 계정으로 로그인하려면 네이버에서 먼저 로그아웃해 주세요."
+- 정적 문구는 `src/http/copy.ts` 한 곳(한국어, 해요체).
+
+---
+
+## 10. 설정·시크릿·변수
+
+### 10.1 설정 가드 (`config.ts`, A11)
+
+시작 때 `loadConfig(env)`가 검사하고 실패하면 **모든 경로가 500 `config_error`**(`/health`는 503)다. 응답에 이름·값 없음, 로그에 어긋난 키 이름만.
+
+- `PUBLIC_ORIGIN` 필수. 요청 URL의 출처가 `PUBLIC_ORIGIN`과 다르면 `config_error`(`/health` 포함 → deploy-worker가 설정 어긋남을 잡는다). dev에서 `127.0.0.1:8787`로 들어오면 500인 것은 문서로 안내한다(`localhost:8787`만).
+- **dev 모드 = `PUBLIC_ORIGIN`의 호스트가 루프백**(`localhost`·`127.0.0.1`·`[::1]`). 그때만 `CHZZK_AUTHORIZE_URL`·`CHZZK_API_BASE`가 http·다른 호스트일 수 있고 쿠키가 접두 없이 나간다. 아니면: 두 값이 없거나 정확히 `https://chzzk.naver.com/account-interlock`·`https://openapi.chzzk.naver.com`, `PUBLIC_ORIGIN`은 https, `CHZZK_CLIENT_ID`·`CHZZK_CLIENT_SECRET`·`CI_VERIFY_TOKEN` 비지 않음, `ADMIN_CHANNEL_IDS`는 **비어 있으면 부트스트랩 모드(§8.3)**, 있으면 쉼표 구분 `^[0-9a-f]{32}$`(하나라도 틀리면 config_error).
+- 커밋된 `wrangler.jsonc` `vars`에는 `PUBLIC_ORIGIN`을 두지 않는다(배포 설정이 vars를 싣고 `--no-bundle` 배포가 그대로 쓰므로 dev 값이 들어가면 운영 Worker가 dev 모드로 뜬다). 운영 값은 deploy-worker의 `--var PUBLIC_ORIGIN:$DIST_BASE_URL --var BUILD_ID:<sha7>`, dev 값은 `.dev.vars`. `worker-config.mjs`가 이를 검사한다(§13). **[확인 필요, W1]**: (가) `deploy --dry-run --outdir dist`가 리디렉트 설정 `dist/wrangler.json`을 쓰는지(조사에서 확인된 산출물은 `index.js`와 바인딩 목록뿐). 안 쓰면 `release.mjs worker-bundle`이 원본 `wrangler.jsonc`에서 `main: "dist/index.js"`·`no_bundle: true`만 바꾼 `dist/wrangler.json`을 직접 만든다(JSONC 주석 제거 뒤 JSON.parse, 키 추가 둘). `worker-config.mjs`의 "dist vars에 `PUBLIC_ORIGIN` 없음" 검사는 이 파일을 본다. (나) `--var PUBLIC_ORIGIN:https://…`처럼 값에 `:`이 있을 때 첫 `:`에서만 나뉘는지. 아니면 `--var`를 쓰지 않고 `dist/wrangler.json`의 `vars`에 배포 때 두 값을 써 넣는다(같은 생성 단계).
+
+### 10.2 `.dev.vars.example` (커밋하는 유일한 dev 설정)
+
+```
+PUBLIC_ORIGIN=http://localhost:8787
+CHZZK_AUTHORIZE_URL=http://127.0.0.1:8788/account-interlock
+CHZZK_API_BASE=http://127.0.0.1:8788
+CHZZK_CLIENT_ID=dev-client-id
+CHZZK_CLIENT_SECRET=dev-client-placeholder
+ADMIN_CHANNEL_IDS=000000000000000000000000000000a1
+CI_VERIFY_TOKEN=dev-ci-token
+BUILD_ID=dev
+START_RATE_10M=1000
+```
+
+- `START_RATE_10M`은 dev 모드에서만 읽는다(운영 `wrangler.jsonc` vars·`--var`에 있으면 `worker-config.mjs`가 실패). 실제 로그인(§15)과 수동 확인에서는 지워도 된다.
+
+- `.dev.vars`는 `.gitignore`(`.dev.vars`·`.dev.vars.*`, 예외 `.dev.vars.example`). 로컬의 `worker/.dev.vars`는 1Password Environment `chzzk-downloader-worker`의 **마운트(FIFO, 고칠 수 없음)**이고 `CHZZK_CLIENT_ID`·`CHZZK_CLIENT_SECRET` 두 줄만 있다. 그래서 dev 명령은 둘로 나누고 늘 `--env-file`을 명시한다(wrangler는 `--env-file`을 주면 기본 `.dev.vars`를 읽지 않는다 **[확인 필요, W1 첫 작업]**):
+  - `pnpm dev`(가짜 치지직): `wrangler dev --port 8787 --env-file .dev.vars.example` + 가짜 서버. 실제 자격증명이 로컬에 있어도 읽지 않는다.
+  - `pnpm dev:real`(실제 치지직 로그인): `wrangler dev --port 8787 --env-file .dev.vars --var PUBLIC_ORIGIN:http://localhost:8787`. `CHZZK_AUTHORIZE_URL`·`CHZZK_API_BASE`가 없으니 실제 주소를 쓰고, `ADMIN_CHANNEL_IDS`가 없으니 부트스트랩 모드(§8.3)다. 관리 화면까지 보려면 `--var ADMIN_CHANNEL_IDS:<본인 ID>`를 사용자가 직접 붙인다(값을 저장소·로그에 남기지 않는다).
+  - 포트 8787·경로 `/auth/callback`은 등록된 개발용 리디렉션 `http://localhost:8787/auth/callback`과 같아야 해서 바꾸지 않는다(`worker-config.mjs`가 `package.json` dev 스크립트의 `--port 8787`을, 라우트 표 테스트가 콜백 경로를 고정한다).
+- vitest는 `.dev.vars`를 읽으므로(실측) `vitest.config.ts`의 `miniflare.bindings`가 모든 키를 위 자리표시 값으로 덮고, 테스트 하나가 "각 바인딩 = 자리표시"를 단언한다(로컬에 실제 `.dev.vars`가 있어도 결과가 CI와 같고 실제 비밀이 테스트에 들어가지 않는다).
+
+### 10.3 시크릿·변수 표 (cicd.md §8과 ROADMAP에 더한다)
+
+| 위치 | 이름 | 종류 | 용도 |
+|---|---|---|---|
+| Worker secret(`wrangler secret put`, 사용자 수동, CI가 넣지 않는다) | `CHZZK_CLIENT_ID`, `CHZZK_CLIENT_SECRET` | secret | 치지직 앱 |
+| | `ADMIN_CHANNEL_IDS` | secret | 관리자 채널(쉼표 구분 32 hex) |
+| | `CI_VERIFY_TOKEN` | secret | GitHub 환경 `release`의 같은 이름과 같은 값 |
+| Worker var(배포 `--var`) | `PUBLIC_ORIGIN`(= `DIST_BASE_URL`), `BUILD_ID`(sha7) | var | 출처·콜백·쿠키 모드, `/health` 표시 |
+| Worker var(`wrangler.jsonc` 커밋) | `CHZZK_AUTHORIZE_URL`, `CHZZK_API_BASE` | var | 운영 기본값(공개 값). dev는 `.dev.vars`로 덮음 |
+| 저장소 변수(환경 `release`에서 옮김) | `DIST_BASE_URL` | variable | 매니페스트 url 접두 = Worker 출처 = 앱 빌드 `CHZZK_WORKER_BASE`. 경로 없는 https 출처 |
+| 저장소 변수 | `R2_BUCKET`(secret에서 옮김) | variable | 버킷 이름은 `wrangler.jsonc`에 커밋되므로 비밀이 아니다(cicd.md 82) |
+| 환경 `release` | `CLOUDFLARE_API_TOKEN`(Workers Scripts 편집, 계정 하나. R2 바인딩 배포에 R2 권한이 더 필요한지 **[확인 필요]**), **`CLOUDFLARE_ACCOUNT_ID`**(새 secret) | secret | deploy-worker. `wrangler.jsonc`에 `account_id`를 두지 않는다 |
+| 환경 `release` | `CI_VERIFY_TOKEN` | secret | verify(`VERIFY_VIA=worker`)와 deploy-worker 검사 |
+| 환경 `release` | `VERIFY_VIA`(`s3`→`worker`), `WORKER_DEPLOY_ENABLED`(`false`→`true`) | variable | 전환 스위치(§16 W9 순서) |
+
+---
+
+## 11. 앱 셸 계약 (이번에는 설계만. app.md §12를 대체한다 — app.md 구현 중 변경 59)
+
+### 11.1 빌드 설정·Worker 주소 (fail closed)
+
+- `app/src-tauri/build.rs`가 빌드 env `CHZZK_WORKER_BASE`를 읽어 `cargo:rustc-env`로 넘기고 **`cargo:rerun-if-env-changed=CHZZK_WORKER_BASE`**를 찍는다(없으면 값이 바뀌어도 캐시된 빌드가 옛 주소를 품는다). 검사 규칙은 `build.rs` 안의 순수 함수(`worker_base_rule(profile, value) -> Result`)로 빼서 단위 테스트한다(`build.rs`는 `#[cfg(test)]`를 못 쓰므로 같은 파일을 `include!`하는 테스트 하나). cargo feature `auth`는 만들지 않는다: **"주소가 있으면 켜짐"** 하나다(`features.auth = CHZZK_WORKER_BASE.is_some()`).
+  - 릴리스 프로필(`PROFILE=release`): 없거나 `https://`가 아니거나 경로·쿼리가 있으면 **컴파일 실패**(메시지에 이름만). 조용히 `features.auth=false`인 릴리스가 나가지 않게.
+  - debug: 없으면 `features.auth=false`(지금과 같은 개발 경험), 있으면 https 또는 루프백 http.
+  - `--features e2e`에서만 런타임 env `CHZZK_E2E_WORKER_BASE`(루프백 http)로 덮어쓴다. 코드는 `e2e.rs`에만(`release-hygiene`·`hygiene-seed`가 그대로 증명한다).
+- CI가 넣는 값: 태그 빌드는 저장소 변수 `DIST_BASE_URL`, PR·리허설·push master의 릴리스 프로필 빌드(`bundle (linux)`·`bundle`·release.yml `build`)는 `https://worker.example.invalid`. **태그 모드의 `release.mjs build`만** `CHZZK_WORKER_BASE == DIST_BASE_URL`이고 `example.invalid`가 아님을 확인하고, **태그 모드의 `stage`만** 바이너리에 placeholder 호스트 문자열이 있으면 실패한다(리허설 빌드는 일부러 placeholder를 넣으므로 리허설 `stage`는 이 검사를 건너뛴다 — cicd.md 82, `release.test.mjs`의 모드 × placeholder 표). debug 빌드(`tauri-build`·`e2e-native`·`tauri-clippy`·`tauri` test)는 영향 없다. 로컬 non-debug `pnpm tauri build`도 값이 필요하다(CLAUDE.md 명령에 적는다).
+- 앱 CSP는 그대로(`connect-src`에 Worker 없음). Worker 호출·opener·클립보드는 전부 Rust.
+
+### 11.2 저장 (`SessionStore`, `{app_config_dir}/session.json`)
+
+```json
+{"v":1,"origin":"https://…","channelId":"…","channelName":"…","isAdmin":false,
+ "accessToken":"cda_…","accessExpiresAt":"RFC3339","refreshToken":"cdr_…","refreshExpiresAt":"RFC3339","verifiedAt":"RFC3339"}
+```
+
+`refreshExpiresAt`은 토큰 묶음(§6.3)의 값 그대로이고 세션 절대 상한(60일)을 넘지 않는다. 오프라인 유예의 끝을 이 값으로 자른다(§11.3).
+
+`atomic_write` + 0600(Unix), `CredentialStore`(네이버 쿠키)와 분리. 토큰은 `Secret<String>`, 파일 타입의 `Debug`는 손으로(`***`). `origin`이 현재 빌드의 `CHZZK_WORKER_BASE`와 다르면 파일을 무시하고 signedOut(다른 Worker에 토큰을 보내지 않는다). 깨진 파일은 없는 것으로 보고 로그에 "session.json 손상"만. OS 키체인은 쓰지 않는다(core.md 결정 15와 같은 이유).
+
+### 11.3 `AuthService` 상태 머신 (`crates/shell/src/auth.rs`, Tauri 비의존, `WorkerApi`·`Clock` trait 주입)
+
+```
+시작 ─load─┬─ session.json 없음(또는 origin 다름) ─────────────▶ SignedOut
+           ├─ 있음, now < verifiedAt + 72h ──▶ SignedIn(낙관) ─bg refresh─┐
+           └─ 있음, 유예 밖 ────────────────▶ Checking ─refresh(10초)────┤
+                                                                         ▼
+refresh 결과:  200 → SignedIn{online}, session.json 교체, verifiedAt=now, (시작 때 1회) update_check
+               401 invalid_token/session_expired → Expired{SessionExpired}, 파일 삭제
+               401 session_revoked → Expired{Revoked|ReuseDetected}, 삭제
+               403 not_allowed → Denied{RemovedFromAllowlist, channelName}, 삭제
+               네트워크 계열* ─┬─ 유예 안 → SignedIn{offline{since, graceUntil}}, 파일 유지, 재시도 예약
+                               └─ 유예 밖 → Expired{GraceExpired}, **파일 유지**([다시 연결]이 로그인 없이 복구)
+SignedOut/Expired/Denied/Cancelled/Error ─auth_login─▶ Pending{userCode, expiresAt} ─poll─▶ SignedIn | Denied | Cancelled | Expired{LoginTimeout} | Error{Network|Server|LoginLost}
+SignedIn ─auth_logout─▶ SignedOut (POST /auth/logout 실패 무시 → 삭제)
+```
+
+- *네트워크 계열 = 연결·DNS·TLS 오류, 10초 시간 초과, 5xx, 429, `busy`·`config_error`·`internal`, Worker 형식(`{code}` JSON)이 아닌 응답(캡티브 포털 HTML 등), **그리고 형식 있는 401·403이 아닌 그 밖 4xx**(400 등 — 세션에 대한 판정이 아니므로 유예 규칙을 그대로 따른다: 유예 안이면 `SignedIn{offline}`, 밖이면 `Expired{GraceExpired}`. `reason`은 `Server`로 구분해 로그·툴팁에만 쓴다). **형식 있는 401·403만 즉시 차단**한다. `classify_verify` 표에는 "그 밖 4xx" 행이 따로 있고 기대값은 네트워크 행과 같다. 로그인 폴링의 `429 too_soon`은 상태를 바꾸지 않고 다음 간격까지 기다린다(`Pending` 유지, `LoginLost`·`Error`로 가지 않는다).
+- 판정은 Rust 순수 함수 `classify_verify(now, verified_at, refresh_expires_at, outcome) -> Next` 하나이고 표 주도 테스트다. 시계를 되돌려 `now < verifiedAt`이면 유예하지 않는다. 그림의 "유예 안"은 정확히 `now < min(verifiedAt + 72h, refreshExpiresAt)`이다: 세션 절대 상한(60일, §5.2)이 지난 세션은 Worker에 닿지 못해도 유예하지 않고 `Expired{SessionExpired}`(파일 삭제)로 간다. 상한이 Worker에 닿은 채로 오면 형식 있는 401 `session_expired`라 같은 결과다.
+- 재확인: 다음 갱신 = `verifiedAt + 24h`(access 만료 60초 전). 셸이 10분마다 벽시계로 확인하고, 창 포커스·절전 복귀에도 확인한다(tokio 타이머는 절전 동안 멈출 수 있다). 유예 중 재시도 1·2·5·10·30분, 이후 30분마다 + 포커스 때. `graceUntil`이 지나면 다음 틱에 `Expired{GraceExpired}`.
+- refresh는 `tokio::sync::Mutex` 하나로 직렬화(single-flight). 응답 유실은 같은 refresh로 **1회** 재시도(60초 창, §5.2).
+
+### 11.4 DTO·command·이벤트
+
+```rust
+pub struct AuthStatusDto { pub state: AuthState, pub channel_id: Option<String>, pub channel_name: Option<String>,
+    pub reason: Option<AuthReason>, pub pending: Option<PendingDto>, pub offline: Option<OfflineDto>, pub verified_at: Option<String> }
+pub enum AuthState { Disabled, Checking, SignedOut, Pending, SignedIn, Denied, Expired, Cancelled, Error }   // Checking만 새로
+pub enum AuthReason { LoginTimeout, SessionExpired, Revoked, RemovedFromAllowlist, ReuseDetected, GraceExpired, Network, Server, LoginLost }
+pub struct PendingDto { pub user_code: String, pub expires_at: String }
+pub struct OfflineDto { pub since: String, pub grace_until: String }
+pub struct UpdateInfoDto { pub version: String, pub current: String, pub notes: Option<String>, pub pub_date: Option<String> }
+pub enum UpdateProgressEvent { Started { total: Option<u64> }, Chunk { received: u64 }, Downloaded, Installing }
+```
+
+| command | 동작 |
+|---|---|
+| `auth_status` | 현재 상태 |
+| `auth_login` | start → opener → 폴링 태스크(2초, `expiresAt`까지). 이미 pending이면 그대로 |
+| `auth_reopen` | 같은 loginUrl 다시 열기(flow가 `started`면 유효) |
+| `auth_copy_login_url` | loginUrl을 클립보드에(Rust `clipboard-manager` 쓰기 권한 추가. URL에는 handle뿐) |
+| `auth_cancel` | 폴링 중지, pollSecret 버림 → SignedOut |
+| `auth_retry` | 지금 갱신 시도(오프라인·Checking 실패·유예 만료 화면의 [다시 연결]) |
+| `auth_logout` | 서버 logout(실패 무시) → 파일 삭제 → SignedOut. 다운로드는 계속 |
+| `update_check(manual)` | `ensure_fresh_access()` → 세션 판정 유효일 때만 `check()` → `Option<UpdateInfoDto>`. 실패는 조용히 로그 |
+| `update_install(on_progress, confirm_pause)` | §11.6 |
+
+이벤트 `auth-changed`(DTO 전체), `update-available`(UpdateInfoDto), `update-progress`. 새 command마다 `command_names.rs`·`capabilities/default.json`·`lib.rs` invoke_handler·`api.ts`·가짜 백엔드 `app/e2e/mock/backend.ts`·`tests/ipc.rs`·Playwright spec을 함께 고친다. bindings는 `UPDATE_BINDINGS=1`로 다시 만든다.
+
+### 11.5 OwnershipGate와 다운로드 규칙
+
+| 상황 | 동작 |
+|---|---|
+| `resolve` | `SignedIn`(온라인·오프라인 유예)이면 `ResolvedDto.ownership`을 `own/notOwn/unknown`으로, 아니면 `unchecked` + `notLoggedIn` 문구 |
+| `enqueue` | `OwnershipGate::check`: 로그인 아님 → `notLoggedIn`, 아니면 `verdict(is_own_content(meta, channel_id))`(None 거부, 이미 있는 함수). 최근 resolve 캐시 32개 |
+| 진행 중·대기 중 작업 | 인증 상태가 바뀌어도(로그아웃·만료·거부) **그대로 끝까지**(코어는 앱 세션을 쓰지 않는다) |
+| `resume_job` | `SignedIn`이고 `JobRecord.channel_id == channel_id`일 때만. 아니면 `notLoggedIn`/`notOwnContent`, `.part` 유지 |
+| 재시작 후 자동 이어받기 | `SignedIn`이 된 뒤에 돈다(유예 안 낙관 상태 포함). 유예 밖·로그아웃이면 보류하고 B1 배너 문구를 "로그인하면 이어받을 수 있어요"로. 같은 채널 작업만 |
+| 채널이 바뀜 | 다른 채널의 멈춘 작업에 "다른 채널로 로그인해 이어받을 수 없어요"(지우기만) |
+
+이 게이트는 §15 G-ID가 녹색일 때만 켠다(별 커밋). 그 전에는 로그인·허용목록만 동작하고 게이트는 늘 허용이다.
+
+### 11.6 업데이트
+
+- 자동 확인: 시작 후 **첫 성공 갱신 직후 한 번**(오프라인이면 안 함) → `update-available` → 배너 B4 "새 버전 {version}이 있어요 [지금 업데이트] [나중에]". [나중에]는 이번 실행 동안만.
+- 수동(설정 > 정보 [업데이트 확인]): 판정 먼저, 결과 "최신 버전이에요" / 배너 / "업데이트를 확인하지 못했어요" / 오프라인이면 "로그인 서버에 연결할 수 없어 확인하지 못했어요".
+- 설치: (1) `ensure_fresh_access()` 후 **빌더를 새로 만들어** `check()`(배너를 띄운 지 오래돼도 신선한 토큰). (2) `download_url.origin()` 대조(§9.3). (3) `download()`(진행률). 받는 중 작업이 있으면 프런트가 D1식 확인 대화상자 → `confirm_pause=true`로 다시 호출. (4) 매니저 `quit` 경로(일시정지 → `interrupted`, `jobs.json` flush, 종료 한 번만 가드 공유) → `install(bytes)` → macOS·Linux `app.restart()`, Windows는 설치기가 끝낸다. (5) 재시작 후 자동 이어받기 규칙이 작업을 되살린다. 설치 실패(서명 불일치 등)는 작업을 재개하고 "업데이트하지 못했어요". Linux `.deb` 설치본의 updater 권한(pkexec)과 macOS quarantine 재질문은 **[실기기 확인 필요]**.
+
+### 11.7 화면·copy deck 추가 (app.md §8.9·§9에 반영할 것, `app/src/lib/copy/ko.ts`)
+
+S3 로그인(§8.9)에 `checking`(최대 10초 뒤 [다시 연결]·[다시 로그인]), `grace expired`, pending의 확인 코드·[로그인 주소 복사]·남은 시간 10분(§8.9의 "약 5분"을 바꾼다)을 더하고, 메인 헤더 AccountSlot 옆에 오프라인 배지, 목록 위 업데이트 배너 B4(B1이 있으면 B1이 위).
+
+| 키 | 문구 |
+|---|---|
+| `auth.pending.code` | 브라우저에 이 코드가 보이는지 확인하세요: {code} |
+| `auth.pending.body`(변경) | 로그인을 마치면 자동으로 넘어가요. 남은 시간 {mmss} |
+| `auth.copyLoginUrl` / `auth.browserHelp` | 로그인 주소 복사 / 브라우저가 열리지 않나요? |
+| `auth.checking` / `auth.reconnect` | 로그인 정보를 확인하는 중이에요… / 다시 연결 |
+| `auth.offline.badge` / `auth.offline.tip` | 오프라인 · {until}까지 사용 가능 / 로그인 서버에 연결하지 못했어요. 다시 연결되면 자동으로 확인해요. |
+| `auth.graceExpired.title` / `.body` | 로그인 서버에 3일 넘게 연결하지 못했어요 / 인터넷 연결을 확인한 뒤 다시 연결해 주세요. 받던 다운로드는 계속돼요. |
+| `auth.revoked` | 관리자가 이 기기의 로그인을 끊었어요. 다시 로그인해 주세요. |
+| `auth.sessionExpired`(새, `Expired{SessionExpired}`) | 로그인한 지 오래돼 다시 로그인해야 해요. (30일 동안 쓰지 않았거나 60일 상한이 지났을 때. 60일마다 누구나 보는 화면이라 오류처럼 쓰지 않는다. 기존 `banner.sessionExpired`는 메인 배너에 그대로 쓴다) |
+| `auth.removed.title` / `.body` | 사용 허가가 취소됐어요 / 채널: {channelName}. 계속 쓰려면 관리자에게 문의해 주세요. |
+| `auth.reuse` / `auth.lost` | 보안을 위해 다시 로그인해 주세요. / 로그인을 마무리하지 못했어요. 다시 로그인해 주세요. |
+| `auth.otherAccount.help` | 다른 계정으로 로그인하려면 브라우저에서 네이버 로그아웃을 먼저 해 주세요. |
+| `banner.resumeNeedsLogin` / `job.otherChannel` | 지난번에 받다가 멈춘 다운로드가 {n}개 있어요. 로그인하면 이어받을 수 있어요. / 다른 채널로 로그인해 이어받을 수 없어요 |
+| `update.banner` / `.install` / `.later` | 새 버전 {version}이 있어요. / 지금 업데이트 / 나중에 |
+| `update.downloading` / `.installing` / `.failed` / `.untrusted` | 업데이트 받는 중 {pct} / 설치하고 다시 시작해요… / 업데이트하지 못했어요. 잠시 뒤 다시 시도해 주세요. / 업데이트 주소를 확인할 수 없어 받지 않았어요. |
+| `dialog.update.*` | 업데이트하고 다시 시작할까요? / 받는 중인 영상 {n}개가 일시정지되고, 다시 시작하면 이어받아요. / 업데이트하고 다시 시작 / 나중에 |
+| `settings.about.checkUpdate` / `.upToDate` / `.checkFailed` / `.checkOffline` | 업데이트 확인 / 최신 버전이에요 / 업데이트를 확인하지 못했어요. 잠시 뒤 다시 시도해 주세요. / 로그인 서버에 연결할 수 없어 확인하지 못했어요. |
+| `settings.account.*` | 계정 / 치지직 채널 {channelName} / 마지막 확인 {time} / 로그아웃 |
+
+---
+
+## 12. 오프라인 검증 (구멍 7)
+
+### 12.1 가짜 치지직 (`worker/test/fake-chzzk.mjs`)
+
+`createFakeChzzk(opts) → { handle(Request): Promise<Response>, state }` 순수 핸들러 하나. 등록 앱(clientId·secret·redirectUri **정확 일치**, 아니면 400 — 실제 규칙 흉내), 1회용 code 표, 합성 계정 4개(`…a1` 관리자, `…b2` 허용, `…c3` 거부 — 이름에 `<script>` 포함, `…d4` 기타: 처음엔 거부되고 관리 [허용] 시나리오에서 허용된다) + [취소](code 없이 돌려보냄). 스위치: `wrapped`(content 래퍼 유무), `expiresInType`(문자열/숫자), `authorize: approve|cancel`, `tokenFail: 401|429|500|html|timeout`, `userFail`, `userIdField: channelId|id`(폴백을 두지 않으므로 `id`면 failed가 나와야 한다), `codeReuse: reject`.
+
+- vitest: `network.use(http.all(/^http:\/\/127\.0\.0\.1:8788\//, ({request}) => fake.handle(request)))`(`miniflare.bindings`가 두 base를 그 주소로 덮는다). 핸들러 없는 외부 요청은 "internal error"로 실패하므로 `afterEach`가 "처리 안 된 요청 0"을 단언(msw 미처리 요청 옵션 이름 **[확인 필요]**).
+- wrangler dev: `scripts/fake-chzzk-server.mjs`가 같은 `handle`을 `node:http`로 감싼다(127.0.0.1:8788, Request/Response는 Node 22 전역). 인가 화면은 HTML 대신 바로 302(브라우저 없이 따라간다). 수동 확인은 `pnpm dev`(가짜 서버 + `wrangler dev --port 8787`) 뒤 `http://localhost:8787/`.
+
+### 12.2 vitest (`@cloudflare/vitest-plugin` 1.3.6, vitest 4.1.11, wrangler 4.147.0 정확 고정)
+
+- `cloudflareTest({ wrangler: { configPath } })`, `import { env, exports } from "cloudflare:workers"`, `runInDurableObject`·`runDurableObjectAlarm`(`cloudflare:test`). R2는 `r2_buckets` 선언만으로 로컬 시뮬레이션. 저장소 격리는 테스트 파일 단위. `runInDurableObject` 콜백 인자는 추론에 맡긴다(`any`면 TS2589).
+- 시간: `store/*` 함수는 `now`를 인자로 받으므로 테스트가 직접 넘긴다. DO 안 `Date.now()`에 `vi.setSystemTime`이 적용되는지는 첫 묶음에서 확인 **[확인 필요]**(적용되지 않아도 설계가 `now` 주입이라 영향 없음).
+- 카나리: `setup.ts`가 `console.*`를 감싸 모은 줄과 모든 응답 본문·헤더에 그 테스트의 code·state·sid·pollSecret·토큰·쿠키·채널 id가 없음을 단언(토큰 묶음·Set-Cookie·관리 화면의 채널 id처럼 있어야 하는 자리는 정확히 그 자리만 예외).
+
+### 12.3 wrangler dev E2E (`scripts/e2e-dev.mjs`, gate `worker-e2e`, D14 관찰)
+
+1. 임시 `--persist-to`, 가짜 서버 시작, `wrangler dev --port 8787 --ip 127.0.0.1 --env-file .dev.vars.example`(`WRANGLER_SEND_METRICS=false`, HOME 임시 폴더 — 자격증명 없음 보장. `--env-file`이 로컬 `.dev.vars`를 대신하는지 **[확인 필요]**, 아니면 `/health`에 dev 모드일 때만 넣는 설정 지문(자리표시 값 해시 앞 8자)을 단언).
+2. R2 씨앗: `seed-release.mjs`가 만든 합성 릴리스 2개(`0.1.0`, `0.2.0`, latest = `0.2.0`, 플랫폼 6개, 가짜 바이트·일관된 SHA256SUMS·`.sig` 자리표시·schema를 만족하는 manifest)를 `wrangler r2 object put <bucket>/<key> --file … --local --persist-to …`(자격증명 없이 동작 실측). cargo·xtask가 필요 없다(관찰 작업에 Rust 툴체인을 들이지 않는다). vitest의 R2 씨앗도 같은 생성기.
+3. 시나리오(쿠키 항아리 + 리다이렉트 수동 추적): 앱 로그인(start → 확인 페이지 코드 일치 → [계속] → 가짜 인가 b2 → 콜백 → poll ok) / 거부(c3, 이름 이스케이프) / 취소 / refresh rotation + 60초 복구 + 재사용 → revoked / `/update/0.1.0` 200·`/update/0.2.0` 204 / 다운로드 전체 sha256 = SHA256SUMS·Range 206·416 / 웹 로그인(a1) → `/admin/denied/c3/allow` → c3 재로그인 ok / 세션 끊기 → 401 / CI 토큰으로 `/admin` 303·`/api/me` 401 / xtask와 같은 규칙의 node 클라이언트(200=본문, 404=없음, 그 밖 infra)로 verify 순서의 키를 모두 GET해 404가 R2 null에서만.
+4. **로그 카나리**: `wrangler dev`는 요청마다 `[wrangler:info] GET /auth/callback?code=…&state=… 303` 꼴 줄을 자체적으로 찍으므로 stdout 전체를 보면 `code`·`state`가 늘 걸린다. 그래서 `--log-level warn`으로 wrangler 자신의 요청 줄을 끄고, 카나리는 Worker가 내는 JSON 줄(`log.ts` 형식, stdout에서 `{"event":`로 시작하는 줄)에만 적용한다. `--log-level warn`이 요청 줄을 실제로 끄는지는 **W7 첫 [확인 필요]**(안 끄면 `[wrangler:` 접두 줄을 걸러서 같은 판정). 운영의 invocation 로그 끄기(§14)는 같은 이유다.
+5. 프로세스·포트 정리(CI는 ubuntu만).
+
+---
+
+## 13. CI 편입 (구멍 9·10)
+
+### 13.1 패키지
+
+`worker/package.json` devDependencies(정확 버전): `wrangler 4.147.0`, `@cloudflare/vitest-plugin 1.3.6`(옛 `@cloudflare/vitest-pool-workers`는 0.22.0에서 멈춰 이름이 바뀌었다 — ROADMAP에 적는다), `vitest 4.1.11`(peer `^4.1.0`, 5.x 금지), `msw 3.0.2`, `@msw/cloudflare 0.2.0`, `typescript 7.0.2`, `@cloudflare/workers-types 5.20261006.1`. 런타임 의존성 0. scripts: `check` = `wrangler types --include-runtime=false --env-file .dev.vars.example && tsc --noEmit`(생성물은 커밋하지 않고 매번 만든다 — 그래서 `--check`를 쓰지 않는다), `test` = `vitest run`, `build` = `wrangler deploy --dry-run --outdir dist`, `dev`, `e2e` = `node scripts/e2e-dev.mjs`.
+
+### 13.2 gate (`gates.mjs`)
+
+```js
+worker: {
+  desc: 'worker/ 설치·wrangler.jsonc 불변식·wrangler types+tsc·vitest(workers, 가짜 치지직)·deploy --dry-run 번들·테스트 수 ratchet',
+  needs: ['pnpm'],
+  steps: [
+    { cmd: ['pnpm', 'install', '--frozen-lockfile'], cwd: 'worker' },
+    { cmd: ['node', S('worker-config.mjs')] },                  // wrangler.jsonc·dist 불변식(아래)
+    { cmd: ['pnpm', 'check'], cwd: 'worker' },
+    { cmd: ['node', S('measure.mjs'), 'tests-worker'] },        // vitest json reporter → tests.worker
+    { cmd: ['pnpm', 'build'], cwd: 'worker' },
+    { cmd: ['node', S('ratchet.mjs'), 'check', 'tests'] },
+  ],
+},
+'worker-e2e': { desc: 'wrangler dev + 가짜 치지직으로 로그인·회전·updater·R2·관리 흐름과 로그 카나리(D14 관찰)', needs: ['pnpm'],
+  steps: [{ cmd: ['pnpm', 'install', '--frozen-lockfile'], cwd: 'worker' }, { cmd: ['pnpm', 'e2e'], cwd: 'worker' }] },
+'release-worker-bundle': { desc: '시크릿 없는 작업: worker dry-run 번들 + 배포용 wrangler 설치 묶음, sha256 출력', steps: [{ cmd: ['node', S('release.mjs'), 'worker-bundle'] }] },
+```
+
+- `scripts/ci/worker-config.mjs`(+ `.test.mjs`, `scripts-test`가 돈다): `wrangler.jsonc`에 `account_id`·`routes`·`route`·`zone_id`·`custom_domain` 없음, `workers_dev: true`, `preview_urls: false`, DO는 `exports`만(`migrations` 키 없음), 클래스 `AuthStore`·바인딩 `AUTH`(바꾸면 실패 — 의도적 변경은 상수와 함께), `r2_buckets` 바인딩 `DIST`, `vars`에 `PUBLIC_ORIGIN`·`START_RATE_10M`·비밀처럼 보이는 키(`SECRET|TOKEN|KEY`)·`BUILD_ID` 없음, invocation 로그 꺼짐(키 이름 **[확인 필요]**), `worker/package.json`·`worker/deploy/package.json`(W8부터)·`tools.json`의 `wrangler` 버전이 같음, `.dev.vars.example`의 키 집합 = `config.ts`가 읽는 키 집합이고 값이 자리표시(`dev-`·루프백)인지, dry-run 뒤에는 `dist/wrangler.json` vars에 `PUBLIC_ORIGIN`이 없고 번들 모듈 목록이 `src/` 파일뿐인지(esbuild metafile).
+- `CODE_GATED_JOBS`에 `'worker'`, `OBSERVED_JOBS`에 `'worker-e2e': 'code'`.
+- 훅: pre-push `when`에 `{ gate: 'worker', paths: [/^worker\//, /^scripts\/ci\/worker-config/, /^release\/(latest\.schema|expected-artifacts)\.json$/] }`. pre-commit에는 넣지 않는다(무겁다).
+- ratchet: `measure.mjs` `MODES`에 `tests-worker`(vitest json reporter, `vitestCount` 재사용), `ratchet.mjs` `PENDING_ALLOWED`에 `tests.worker`로 시작해 첫 master 실행 뒤 `write --from-run`으로 채운다. 커버리지는 넣지 않는다(workers 풀은 istanbul만, Q6).
+- `advisories`: `{ cmd: ['pnpm','audit','--audit-level','high'], cwd: 'worker' }` 한 줄.
+
+### 13.3 `ci.yml`
+
+- 작업 `worker`(이름 `worker`, 전 워크플로 유일, ubuntu-24.04 하나 — Worker는 workerd에서 돈다, timeout 15, `permissions: contents: read`, `needs: changes`, `if:`는 `CODE_IF` 글자 그대로): checkout(persist-credentials false) → `pnpm/action-setup`(기존 SHA, `package_json_file: worker/package.json`) → `setup-node`(24, cache pnpm, `cache-dependency-path: worker/pnpm-lock.yaml`) → `run: node scripts/ci/run.mjs worker`, 측정 artifact `ratchet-measurements-worker`. 새 `uses:`는 없다.
+- 작업 `worker-e2e`(이름 `worker-e2e`) 같은 모양. `report`의 needs에는 있고 `ci-ok`에는 없다(관찰 시작은 첫 녹색 master 실행 날, ROADMAP에 기록).
+- `ci-ok` needs에 `worker`, guard 식에 `needs.worker.result == 'skipped'`를 parity `ciOkGuard()`가 만드는 순서 그대로. parity selftest 씨앗 둘 추가(needs에서 뺌 / guard에서 뺌 → 실패).
+- `changes`: `worker/`는 NON_CODE가 아니라 자동으로 code. 손댈 것 없음.
+- `_typos.toml` extend-exclude에 `worker/pnpm-lock.yaml`. `.gitignore`에 `worker/dist/`, `worker/.wrangler/`, `worker/node_modules/`, `worker/worker-configuration.d.ts`(`.dev.vars`는 이미).
+- `dependabot.yml`: npm `/worker`(주 1회, cooldown 7일, prefix `build`)와 W8부터 npm `/worker/deploy`(같은 설정, `_typos.toml`·`advisories`에도 함께). 그룹 `cloudflare` = `wrangler`·`@cloudflare/*`(플러그인이 wrangler를 정확 고정하므로 함께), `msw` = `msw`·`@msw/*`, `npm` minor+patch. ignore: `vitest` major(peer가 열릴 때까지), `@types/node` major.
+- public-scan: 손대지 않는다. 채널 ID 리터럴은 허용된 4개만(역할 고정 §12.1). 다섯 번째가 정말 필요하면 `HEX_ID_ALLOWLIST`·`public-scan.test.mjs`·`testdata/README.md`를 한 커밋에서.
+- CLAUDE.md 레이아웃 표·명령에 `worker/`·`worker` gate를 더한다.
+
+### 13.4 release.yml·`release.mjs worker` (D10, 구멍 3·10, cicd.md 81)
+
+```
+gate ─ xtask ─ build×3 ─ smoke ─ stage ─ sign-publish ─ verify ─┐
+                        worker-bundle(시크릿·환경 없음, 리허설에도) ─┴─ deploy-worker(환경 release, 태그 + WORKER_DEPLOY_ENABLED)
+```
+
+- **`worker-bundle`**: pnpm·node(캐시 없음) → `run.mjs release-worker-bundle` = `pnpm install --frozen-lockfile`(worker) + `pnpm build`(dry-run 번들 `dist/`) + 배포용 wrangler를 따로 설치(`worker/deploy/package.json`·`pnpm-lock.yaml`: 의존성 `wrangler 4.147.0` 하나, `--ignore-scripts`) → 결정적 tar(`dist/`·`wrangler.jsonc`·`deploy/`) → artifact `worker-bundle-<run_id>`(1일) + sha256 작업 출력.
+- **`deploy-worker`**: `needs: [gate, verify, worker-bundle]`, env `CLOUDFLARE_API_TOKEN`·`CLOUDFLARE_ACCOUNT_ID`·`CI_VERIFY_TOKEN`(secret)·`DIST_BASE_URL`·`RELEASE_VERSION`·`BUILD_ID`. `release.mjs worker`: (1) artifact sha256 = 출력(다르면 2), (2) 묶음 안의 wrangler로 `deploy --no-bundle -c dist/wrangler.json --var PUBLIC_ORIGIN:$DIST_BASE_URL --var BUILD_ID:<sha7>`(설치·컴파일 없음), (3) §9.4 검사(5xx·네트워크 4회 재시도, 판정 실패 1, 기반 시설 2). `--check-only --base <url>`는 배포 없이 (3)만(selftest·로컬). `pnpm dlx`는 쓰지 않는다(lockfile을 거치지 않는다, cicd.md §5 예시를 바꾼다).
+- **[확인 필요]**(묶음 W8 첫 dry-run): (가) `--no-bundle` + `exports` 선언 + `--var`가 함께 배포되는지, (나) `--ignore-scripts`로 깐 wrangler가 deploy에 workerd를 요구하지 않는지(npm 변형은 실측됨, pnpm 변형 확인). 안 되면 `release.mjs`가 Workers 스크립트 업로드 API(multipart: 번들 + metadata.json의 바인딩·DO)를 node fetch로 직접 부른다(설치되는 코드 0).
+- `release-selftest`에 사례 추가: `--check-only`를 로컬 가짜 Worker(작은 node:http 스텁)에 돌려 정상·204 틀림·200 틀림·음성 틀림 각각 exit 1.
+- Worker secret은 CI가 넣지 않는다(사용자 `wrangler secret put` 4개). API 토큰 권한은 그 Worker 스크립트 배포만.
+- `worker/deploy/`의 lockfile도 관리 대상이다: `dependabot.yml` npm `/worker/deploy`(그룹 `cloudflare`), `advisories`에 `pnpm audit`(cwd `worker/deploy`), `_typos.toml`에 `worker/deploy/pnpm-lock.yaml`, `worker-config.mjs`가 두 lockfile의 `wrangler` 버전이 같고 `tools.json` `wrangler`와 같은지 검사한다.
+- 시크릿 작업이 wrangler(전이 의존성 포함)를 실행하는 것은 D10의 글자("설치·컴파일 없음")는 지키지만 취지("시크릿 옆에서 서드파티 코드를 돌리지 않는다")에는 못 미친다. 그래도 API 직접 업로드를 기본으로 올리지 않은 이유: (1) `exports` 형식 DO의 업로드 API metadata 모양이 미확인이라 실패 경로가 하나 더 늘고, (2) 배포 토큰은 그 Worker 스크립트 편집 권한뿐이며, (3) 정말 위험한 자산(Worker secret)은 어느 경로든 번들 안의 코드가 읽는다(R3) — 번들은 `worker-bundle`이 만들고 거기엔 시크릿이 없다. 묶음 안 wrangler는 lockfile 고정 + `--ignore-scripts`라 설치 시점 실행 코드가 없다. W8 실측에서 (가)(나)가 안 되면 그때 API 경로로 간다.
+- D10의 한계(위험 R3): 시크릿 작업의 배포 토큰은 지키지만 `worker-bundle`에 들어온 악성 dev 의존성이 번들에 코드를 끼우면 운영 Worker 안에서 secret을 읽는다. 줄이는 수단: 런타임 의존성 0, 정확 고정 + lockfile + cooldown 7일, `worker-config.mjs`의 번들 모듈 목록 검사.
+
+---
+
+## 14. 비밀값 위생·로그 (구멍 12)
+
+- 로그는 `log(event, fields)` 하나. 한 줄 JSON, 허용 필드(타입으로 강제): `event, level, route(패턴, 실제 경로 아님), method, status, stage, timedOut, durationMs, flowKind, reason, sessionIdPrefix(앞 6자), chzzkCode`. **금지**: 쿼리스트링, 토큰·해시·쿠키, code·state·handle·loginId·pollSecret, 채널 id·이름(거부·허용 이벤트도 id 없이 — 관리 화면·audit 테이블이 그 역할), 외부 응답 본문, IP 원문. 이벤트 예: `auth.login.ok`, `auth.login.denied`, `auth.login.failed{stage}`, `auth.refresh.rejected{reason}`, `auth.refresh.reuse_detected`, `admin.allow`, `release.forbidden_key`, `config.error{key}`.
+- `console.*` 직접 호출 금지(테스트: 소스의 `console.` 사용처가 `log.ts` 하나뿐).
+- 예외가 라우터 밖으로 나가면 500 `internal`, 로그엔 `error.name`만(메시지에 URL이 들어 있을 수 있다).
+- 콜백은 처리 뒤 즉시 쿼리 없는 URL로 303 + `Referrer-Policy: no-referrer`. `wrangler.jsonc` observability의 invocation 로그는 끈다(URL에 `code`·`state`가 실린다. 키 이름 **[확인 필요]**, 없으면 `observability.enabled: false`로 두고 직접 로그만).
+- `hygiene.test.ts`: 카나리 값(code·state·client secret·토큰·채널 id·이름)을 넣고 모든 흐름·실패 경로를 돈 뒤 로그 수집기와 응답에 카나리가 없음을 단언(§12.2).
+- 앱 셸: Worker 응답 본문을 오류에 담지 않는다(`code`만). reqwest 오류는 `redact_url`. `Authorization` 헤더를 로그에 남기지 않는다. `session.json` 경로는 로그에 남겨도 내용은 안 된다.
+
+---
+
+## 15. channelId 동일성 게이트 (구멍 8)
+
+ROADMAP Phase 3에 **미체크 단계**로 둔다: `- [ ] G-ID: OAuth users/me channelId == VOD content.channel.channelId == 클립 content.ownerChannel.channelId (실제 로그인, 사용자가 직접)`. 이 단계가 체크되기 전에는 앱의 `OwnershipGate`를 켜지 않는다(본인 영상 검사가 전부 거부·전부 허용으로 틀어질 수 있다). 로그인·허용목록·업데이트는 그 전에도 릴리스에 켤 수 있다.
+
+**절차**(사용자 본인이 로컬에서, 5분). 도구는 이미 있는 `worker/scripts/channel-id-check.mjs`(Node만, Worker 불필요, 포트 8787에 자기 콜백 서버를 띄우므로 `wrangler dev`를 먼저 끈다):
+
+1. `worker/.dev.vars`를 1Password Environment `chzzk-downloader-worker`로 마운트한다(값은 대화·로그에 내지 않는다).
+2. `node worker/scripts/channel-id-check.mjs <본인 VOD 주소> <본인 클립 주소>` → 터미널의 `http://localhost:8787/auth/login`을 브라우저로 열어 로그인한다(등록된 개발용 리디렉션과 같다).
+3. 출력은 **형식 검사(32자리 소문자 hex인지)와 `같다`/`대소문자만 다르다`/`다르다`만**이다. ID·토큰·code·영상 번호는 출력하지 않고 디스크에 쓰지 않는다. 치지직 토큰은 폐기하지 않고 버린다(revoke는 같은 앱·사용자의 모든 토큰을 지운다, §2). VOD 하나와 클립 하나를 모두 받아야 돈다.
+4. ROADMAP에 "G-ID: 일치(날짜)" 또는 "불일치(날짜, 종류)"만 적는다. 실제 값은 적지 않는다.
+
+**다를 때의 대안**(작은 것부터):
+
+- (가) 대소문자·구분자만 다르면: 비교 전 정규화 함수 하나를 코어 `ownership`에 두고 fixture 테스트를 더한다(코어 한 곳).
+- (나) **값이 다르면(권장): `allowlist.owner_channel_id`**(자리는 이미 스키마에 있다). 관리 화면에서 관리자가 그 사람의 서비스 채널 ID(채널 페이지 주소에 들어 있다)를 넣고, 토큰 묶음·`/api/me`의 `channelId`가 이 값이 된다. 앱은 처음부터 "본인 판정용 channelId" 하나만 쓰므로 **앱을 고치지 않는다**. 관리자 본인에게도 적용된다(관리자도 `allowlist` 행을 가질 수 있다, §5). 관리 부담이 한 번 늘지만 추측이 없다.
+- (다) Open API 채널 조회(`/open/v1/channels`)로 대응을 찾는 것은 그 API가 서비스 ID를 주는지 미확인이라 (나) 뒤에 둔다.
+- 채널 이름 비교는 쓰지 않는다(바뀌고, A1이 마음대로 정한다). 클립은 `ownerChannel`만(제작자 `makerChannel` 제외, chzzk-oauth.md 열린 질문 5의 기본값).
+
+---
+
+## 16. 구현 묶음 (Worker + CI만. 묶음마다 Opus 구현 → 리뷰 2개 → 수정, stacked PR, PR마다 Codex 또는 서브에이전트 리뷰)
+
+| # | 묶음 | 산출물 | 수락 기준(이 묶음에서 새로 녹색이어야 하는 것) |
+|---|---|---|---|
+| **W0** | 설계 문서 | 이 파일, cicd.md 80~83, app.md 59, ROADMAP(결정 표·Phase 3 체크리스트·G-ID 미체크·플러그인 이름 변경·외부 항목 "KV 또는 D1" → "Durable Object(SQLite)·R2"·시크릿 표), CLAUDE.md(레이아웃·명령), chzzk-oauth.md(sid 저장소 = DO), §17 사용자 답변 반영 — 모두 끝(2026-10-06) | `scan`, `typos`. 문서만이라 `changes.code=false` |
+| **W1** | 골격 + CI | `worker/` 패키지·lock·workspace, `wrangler.jsonc`, `tsconfig`, `vitest.config.ts`(bindings 덮기), `config.ts`·`/health`·`routes.ts` 뼈대·`log.ts`, `.dev.vars.example`, `worker-config.mjs`(+test), gate `worker`, ci.yml 작업·`ci-ok`·guard, parity 씨앗, pre-push, dependabot, advisories, typos, gitignore, `$pending tests.worker` | `run.mjs worker`·`parity`·`scripts-test`·`ci-ok` 녹색. 테스트: health 200/503(부트스트랩 `bootstrap:true`), config 가드 표(루프백 덮어쓰기 허용·운영 http 거부·ADMIN 비어 있음 → 부트스트랩·ADMIN 형식 틀림 → config_error·출처 불일치·운영에서 `START_RATE_10M` 거부), 바인딩 = 자리표시, `console.` 사용처 1곳, `wrangler.jsonc`에 account_id를 넣은 씨앗은 실패. **[확인 필요] 첫 작업**: dry-run이 `dist/wrangler.json`을 쓰는지, `--var` 값의 `:` 분해(§10.1) |
+| **W2** | 순수 core | `token`·`cookies`·`range`·`keys`·`semver`(xtask 벡터)·`chzzk`·`updater`·`html`·`usercode` | 표 주도 단위 테스트(모듈마다 음성 사례), `core/`에 `cloudflare:*` import 없음(정적 테스트), `raw(` 허용 목록 |
+| **W3** | DO `AuthStore` | `schema.ts`·마이그레이션, `flows`(start·continue·consume·finish·claim·상한·스로틀·간격), `sessions`(§5.2 표 전 행·check·revoke), `allowlist`·`denied`, alarm | **첫 테스트: `setAlarm` 두 번 → `getAlarm()`이 둘째 값**(§5 [확인 필요]), `runInDurableObject` 표 테스트, `runDurableObjectAlarm` 멱등 청소, 마이그레이션 빈 DB → 최신, 상한 32·스로틀 429(순수 함수에 limit 6, `CF-Connecting-IP` 다른 값은 키 분리)·폴링 429에서 `rowsWritten` 0, 원문 토큰이 어떤 테이블에도 없음(덤프 검색), 관리자 `disallow` 409(행이 있어도), `check`·`webCheck`의 `kind` 조건(앱 access 해시를 웹 쿠키 자리에 → 거부), `refresh_recovered` audit, 절대 상한 60일 경계(직전 rotate는 만료가 상한으로 잘림, 직후 401 `session_expired`) |
+| **W4** | OAuth 흐름 | `fake-chzzk.mjs`·`network.ts`, `/auth/*`(앱·웹 start·login 페이지·[계속]·callback·done·poll), `/api/me`, `/auth/refresh`·`logout`, 카나리 | 전 흐름(승인·취소·거부·token 실패 5종·user 실패·래퍼 유무·expiresIn 두 형·`id` 필드면 failed·code 재사용), binder 불일치 → failed, state 일회용, redirectUri 바이트 일치, 확인 코드 = 앱 코드, rotation + 60초 복구 + 재사용 → revoked, 허용 제외 → 403 + access 401, `hygiene.test.ts` |
+| **W5** | R2·updater·CI 토큰 | `releases.ts`·`update.ts`·`releaseAuth`, `seed-release.mjs`, `xtask-keys.test.ts`, `matrix.test.ts`(이 시점 경로 전부) | 보이는 키 표(`.dmg`·`.deb`·`.sig` 200, `previous`·`latest.json` 사용자 403·CI 200, 문법 400, R2 null 404), Range 206·416·다중 무시·304, Content-Length·no-transform, 3xx 0건, `/update` 200/204/400, 틀린 CI 토큰 401, CI 토큰 × 전 경로, 소스 검사 |
+| **W6** | 랜딩·관리 | `/`·`/admin*`·`/me/*`·`/auth/web/logout`·`site.css`·`copy.ts`, CSP, CSRF | CSRF 6사례 + Content-Type 415, XSS 이스케이프, 비관리자 403, [허용] → 즉시 로그인 성공, [빼기]·[끊기] → 지연 0으로 401/403, 내 기기는 자기 세션만, 행렬 완성 |
+| **W7** | wrangler dev E2E | `fake-chzzk-server.mjs`, `e2e-dev.mjs`, gate `worker-e2e`, ci.yml 관찰 작업, `OBSERVED_JOBS` | **첫 [확인 필요]**: `--log-level warn`이 wrangler 요청 줄을 끄는지(§12.3 4). 로컬·CI 녹색, Worker JSON 로그 줄의 카나리 0건, 브라우저 규칙대로 Origin을 실은 POST 통과·`Origin: null` 403(§8.1), 관찰 시작일 ROADMAP 기록 |
+| **W8** | 릴리스 연결 | `release.mjs worker`·`worker-bundle`·`--check-only`, `worker/deploy/`, release.yml `worker-bundle`·`deploy-worker` env, selftest 사례, cicd.md §8 표, `[확인 필요]` (가)(나) 실측 기록 | `release-selftest` 새 사례(정상·204 틀림·200 틀림·음성 틀림), `workflows` gate, 리허설 dispatch 녹색(`worker-bundle`까지, deploy-worker는 skipped) |
+| **W9** | 배포 뒤(사용자와, 체크박스만) | Worker secret 4개 `wrangler secret put`, 수동 첫 배포(`--var PUBLIC_ORIGIN`), `/health` 200, `Content-Length` 실측, exports DO 실배포 확인, production 리디렉션 URL 등록, `DIST_BASE_URL`·`R2_BUCKET` 저장소 변수·`CLOUDFLARE_ACCOUNT_ID` secret, WAF 요청 수 규칙(Q4), `WORKER_DEPLOY_ENABLED=true` → 첫 실제 릴리스는 `VERIFY_VIA=s3` → Worker가 떠 있음을 확인한 뒤 `VERIFY_VIA=worker`와 태그 모드에서 worker 요구(cicd.md 72 "반영하지 않은 것" (2)), G-ID(§15) | 실제 실행 |
+| (Phase 3b) **A1~A5** | 앱 | A1 `SessionStore`·`classify_verify` 표·`WorkerApi` + reqwest 구현·`AuthService`(가짜 WorkerApi·Clock) / A2 command·DTO·bindings·`build.rs` 주소 규칙·`CHZZK_E2E_WORKER_BASE`·가짜 백엔드·ipc.rs / A3 프런트 LoginView·AccountSlot·오프라인 배지·업데이트 배너·대화상자·copy deck·Playwright / A4 updater command(출처 대조·설치 흐름) / A5 OwnershipGate·resume 규칙 활성(G-ID 녹색 뒤) + 네이티브 E2E(fixture 서버에 Worker 스텁 라우트) | 각각 Rust·vitest·Playwright. 상태 전이 표 전부, 72h 경계와 `refreshExpiresAt`(60일 상한)으로 잘린 유예, single-flight, 쓰기 실패, release-hygiene 확장 |
+
+---
+
+## 17. 위험·열린 질문
+
+### 위험
+
+- **R1 A3 사회공학**: 확인 코드·경고·내 기기로 줄이지만 피해자가 코드까지 맞다고 믿고 [계속]을 누르면 공격자가 세션을 받는다. 피해는 앱·설치 파일 사용(정책 수준)이고, 관리자는 세션 목록의 `client`·시각으로 찾아 끊는다.
+- **R2 새 로그인 잠금이 싸다**: 비만료 흐름 32개 상한은 공격자가 10분마다 32번 start하면 정상 사용자의 새 로그인을 막는다(503). IP 스로틀(IPv6 /64)이 단일 호스트를 막고, 분산 공격은 Q4(WAF)로. 이미 로그인한 사용자는 영향이 없다(상한은 `flow`만 묶는다).
+- **R3 D10은 배포 토큰을 지킬 뿐 번들을 지키지 않는다**(§13.4).
+- **R4 단일 DO 처리량**: 사용자 수가 허용목록 크기라 수용. 커지면 세션을 채널별 DO로 나눈다(이름 체계 이전 필요).
+- **R5 `exports` 선언 형식**은 2026-06 도입이라 실제 배포는 미실측. 첫 수동 배포에서 확인하고, 실패하면 아직 배포 전이라 레거시 `migrations [{tag:"v1", new_sqlite_classes:["AuthStore"]}]`로 바꿀 수 있다.
+- **R6 미검증 묶음**: `setAlarm` 덮어쓰기(W3 첫 테스트), dry-run의 `dist/wrangler.json` 생성·`--var` 값의 `:`(W1), `--log-level warn`의 요청 줄(W7), wrangler dev가 `CF-Connecting-IP`를 덮는지(W7), invocation 로그 키 이름, `--no-bundle`+exports+`--var`, `--ignore-scripts` pnpm 변형, pnpm 12 빌드 허용 키·`minimumReleaseAge`, msw 미처리 요청 옵션, `vi.setSystemTime`과 DO, `--env-file`, 스트림 `Content-Length` 실배포, Error 1027의 HTTP 상태(앱은 401·403이 아닌 4xx를 Error로 보므로 유예 표를 W9 뒤 고친다). 모두 해당 묶음의 첫 작업에서 실측한다.
+- **R7 치지직 앱 90일 미사용 삭제**: 갱신은 치지직을 부르지 않으므로 슬라이딩 세션만으로는 스코프 사용량이 0일 수 있다. 대책은 Q1 답변의 **절대 상한 60일**이다: 앱을 계속 쓰는 사용자도 60일마다 치지직으로 다시 로그인하므로(토큰 교환·`users/me`) 90일 창 안에 사용이 생긴다. 다만 무엇을 "사용"으로 세는지(인가·토큰 발급·API 호출 중 무엇인지)는 여전히 **[확인 필요]**이고, 앱 사용자가 아무도 없으면 관리자의 주기적 랜딩 로그인이 남은 대책이다.
+- **R8 updater가 전체를 메모리로 받는다**(수백 MB). 범위 밖.
+
+### 사용자 답변(2026-10-06)
+
+W1 전에 한 묶음으로 물은 열린 질문(Q1~Q9)의 답이다. **확정**은 본문에 반영했고, **보류**는 적힌 시점에 정한다.
+
+| # | 질문 | 답 | 상태 | 반영한 곳 |
+|---|---|---|---|---|
+| Q1 | refresh 절대 상한 | **60일**(`session.created_at + 60d`). 지나면 refresh는 형식 있는 401 `session_expired`(재로그인) | 확정 | §0 5, §2 "앱 세션", §5 `session.expires_at`, §5.2(`cap`), §6.1, §11.2 `refreshExpiresAt`, §11.3 유예 상한, §11.7 `auth.sessionExpired`, §16 W3·A1, R7, app.md 구현 중 변경 59 |
+| Q2 | 웹 세션 12시간 절대 | 그대로(버린 대안: 7일 슬라이딩 + 관리 POST만 최근 12시간 로그인 요구) | 확정 | §2 "웹 세션" |
+| Q3 | 확인 코드 페이지 + [계속] | 그대로(버린 대안: 페이지는 두고 [계속] 없이 자동 진행 + 경고. A3 가시성이 줄어든다) | 확정 | §2 "앱 흐름 피싱" |
+| Q4 | Cloudflare WAF 요청 수 제한 규칙 | W9(배포 때) 사용자와 정한다 | 보류 | §16 W9 |
+| Q5 | R2 버킷 이름 커밋 | 문서 기본값(`wrangler.jsonc`에 커밋, `R2_BUCKET`은 변수) | 확정 | §2 "R2 버킷 이름", cicd.md 82 (다) |
+| Q6 | Worker 커버리지 ratchet | 문서 기본값(테스트 수만) | 확정 | §13.2 |
+| Q7 | 응답 유실 창 60초 | 문서 기본값 | 확정 | §2 "응답 유실 창", §5.2 |
+| Q8 | 앱 태그 없이 Worker만 고칠 때 | 문서 기본값(다음 앱 태그 또는 사람이 수동 `wrangler deploy`, 별 트리거 없음) | 확정 | 이 표 |
+| Q9 | `DIST_BASE_URL`의 로그 노출 | **저장소 secret**(변수 아님). Actions 로그에서 마스킹된다 | 확정 | **cicd.md 구현 중 변경 84**(이 문서의 구현 중 변경 1) |
+
+- **Q9의 범위**: 본문 §0·§2 "Worker 주소"·§10.3 표·§11.1·§13.4·§16 W9의 "저장소 변수 `DIST_BASE_URL`"은 고치지 않았고 cicd.md 84가 이긴다. 환경 `release`의 secret이 아니라 **저장소** secret인 이유는 앱 릴리스 빌드(`build (os)`)가 환경 밖에서 `CHZZK_WORKER_BASE`로 그 값을 받아야 해서다(cicd.md 82 (가)의 "저장소로 옮김"은 그대로). 워크플로의 `vars.DIST_BASE_URL` → `secrets.DIST_BASE_URL` 교체는 W8에서 한다(바뀔 곳 목록은 cicd.md 84).
+
+### 적대적 검토(2026-10-06)에서 반영하지 않은 것
+
+- **API 직접 업로드를 deploy-worker 기본으로**(검토 10): §13.4에 이유를 적었다(exports DO의 업로드 metadata 미확인, 위험 자산은 번들 쪽, wrangler는 lockfile + `--ignore-scripts`). lockfile 관리 누락은 반영했다.
+- ~~**`DIST_BASE_URL`을 secret으로**(검토 13)~~: 처음에는 변수로 두고 Q9로 물었고, **사용자 결정(2026-10-06)으로 반영했다**(저장소 secret, cicd.md 84).
+- ~~**ROADMAP·CLAUDE.md 갱신**(검토 12)~~: W0의 남은 작업으로 두었다가 **W0에서 끝냈다**(2026-10-06).
+
+---
+
+## 구현 중 변경
+
+구현하면서 위 본문과 달라졌거나 본문이 모호해 고른 내용이다. 번호는 적은 순서이고 고치지 않는다. 같은 주제를 뒤 항목이 다시 다루면 뒤 항목이 이긴다. 이 절이 본문보다 우선한다.
+
+1. **`DIST_BASE_URL`은 저장소 secret이다(Q9 사용자 결정 2026-10-06, 로그 마스킹).** §0·§2 "Worker 주소"·§10.3 표·§11.1·§13.4·§16 W9의 "저장소 변수"를 바꾼다. 환경 `release`가 아니라 저장소 수준인 이유와 워크플로에서 바뀔 곳은 `docs/design/cicd.md` 구현 중 변경 84.

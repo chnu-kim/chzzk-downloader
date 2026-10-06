@@ -156,6 +156,8 @@ Redirect 규칙이 불확실하므로 **Worker 콜백(HTTPS 고정 URL 하나)�
 
 ### 설계 메모
 
+> 설계 확정은 `docs/design/worker.md`다(아래 메모의 `LoginBroker`·sid 저장소 = DO `AuthStore` 하나, 리디렉션은 치지직 앱에 등록된 `/auth/callback`). 이 절은 조사 당시 기록으로 남긴다.
+
 - **저장소는 강한 일관성이 필수다.** state·sid 발급과 소비는 싱글턴 Durable Object(`LoginBroker`, SQLite 스토리지) 하나가 직렬화한다. 소비는 "조회 → 상태 확인 → 삭제"를 `transactionSync` 안에서 처리해, 동시·중복 콜백이나 폴링이 같은 토큰을 두 번 받지 못하게 한다. 만료는 레코드의 `expiresAt` 비교와 DO alarm 정리로 처리한다. KV는 이 흐름에 쓰지 않는다(허용목록처럼 비밀이 아니고 60초 전파 지연이 허용되는 데이터에만 쓸 수 있다).
 
 - `sid`는 폴링 비밀이다. 128bit 이상 랜덤, 유출 시 토큰 탈취가 가능하므로 `start`를 호출한 앱만 알도록 하고(브라우저 URL에는 `state`만 싣는다), poll 응답은 1회 수령 후 삭제한다. 앱에서 `sid`와 별도로 **poll secret**(앱이 만든 랜덤 값의 해시를 start에서 저장)을 쓰면 더 안전하다. PKCE와 같은 발상이다.
@@ -187,7 +189,7 @@ Redirect 규칙이 불확실하므로 **Worker 콜백(HTTPS 고정 URL 하나)�
 
 ## 11. 열린 질문
 
-1. 개발자 센터에서 로그인 리디렉션 URL에 loopback(임의 포트)·커스텀 스킴·`http`가 입력 가능한가? (등록 시험 필요)
+1. 개발자 센터에서 로그인 리디렉션 URL에 loopback(임의 포트)·커스텀 스킴·`http`가 입력 가능한가? (등록 시험 필요) → 개발용 `http://localhost:8787/auth/callback` 등록됨(2026-10-06). 앱 흐름은 Worker 콜백 + 폴링이라 loopback·커스텀 스킴이 필요 없다(`docs/design/worker.md`)
 2. 앱 스코프 `유저 정보 조회`만 신청해도 인가 요청이 통과하는가? 신청·승인 소요는?
 3. Open API `users/me` channelId == 서비스 API channelId 직접 대조(10절).
 4. 토큰 응답이 `content` 래퍼로 오는가(문서의 응답 표는 래퍼 없이 필드만 보여 주지만 공통 응답 구조는 래퍼를 명시).

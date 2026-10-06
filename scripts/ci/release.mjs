@@ -11,6 +11,7 @@
 //   node scripts/ci/release.mjs publish       # collect → sign → verify-sig → sums → manifest → put → promote(latest.json은 마지막)
 //   node scripts/ci/release.mjs verify        # latest.json을 보고 결정표(verifyPlan)대로 확인. 판정 실패면 prev로 rollback하고 1
 //   node scripts/ci/release.mjs rollback      # rollback.yml: ROLLBACK_VERSION으로 latest.json을 바꾼다(되돌리기·다시 올리기)
+//   node scripts/ci/release.mjs prune         # R2 보존 상한: latest가 이번 버전일 때만 releases/를 최신 5개 + latest의 previous로(verify 뒤)
 //   node scripts/ci/release.mjs selftest      # 가짜 S3(s3-fake.mjs)에 합성 산출물로 publish·verify·rollback 진입점 시나리오(release-selftest gate)
 //   node scripts/ci/release.mjs worker        # Phase 3 seam: Worker 배포·확인. worker/가 생기기 전에는 늘 실패한다
 //
@@ -559,6 +560,71 @@ function cmdRollback(env) {
   return r.status === 0 ? 0 : r.status === 2 ? 2 : 1;
 }
 
+// ---- 보존 상한(prune, worker.md 구현 중 변경 11 (마), cicd.md 구현 중 변경 W8-2) ----
+
+// releases/ 아래에 남기는 버전 수(최신순). latest·그 previous는 이 수와 별개로 늘 남긴다
+export const RELEASE_KEEP = 5;
+
+// 목록 키(releases/<dir>/…) + latest + previous → { keep, delete, ignored, abort? }(순수, release.test.mjs가 표로 본다).
+// 지우는 것은 semver 디렉터리 중 (최신 keep개 ∪ latest ∪ previous) 밖이다. semver가 아닌 디렉터리는 건드리지 않는다(ignored).
+// latest가 semver가 아니거나 목록에 없으면 목록을 믿을 수 없으므로 아무것도 지우지 않는다(abort).
+export function prunePlan({ keys, latest, previous, keep = RELEASE_KEEP }) {
+  if (!Number.isInteger(keep) || keep < 1) throw new Error(`keep은 1 이상의 정수여야 한다: ${keep}`);
+  const dirs = [...new Set(keys.map((k) => /^releases\/([^/]+)\//.exec(k)?.[1]).filter((d) => d !== undefined))];
+  const ignored = dirs.filter((d) => !parseSemver(d)).sort();
+  const versions = dirs.filter((d) => parseSemver(d)).sort((a, b) => cmpSemver(b, a) || (a < b ? -1 : 1));
+  if (!parseSemver(latest)) return { keep: [], delete: [], ignored, abort: 'latest가 semver가 아니다' };
+  if (!versions.includes(latest)) return { keep: [], delete: [], ignored, abort: `latest(${latest})가 목록에 없다 — 목록을 믿을 수 없어 지우지 않는다` };
+  const keepSet = new Set([...versions.slice(0, keep), latest]);
+  if (parseSemver(previous)) keepSet.add(previous);
+  return { keep: versions.filter((v) => keepSet.has(v)), delete: versions.filter((v) => !keepSet.has(v)).reverse(), ignored };
+}
+
+// release.yml prune 작업·stage·selftest. latest가 이번 버전일 때만 지운다(latest를 가진 실행만): 나중 태그가 승격했거나 되돌려졌으면
+// 이번 실행은 아무것도 지우지 않는다. 지울 목록은 prunePlan이 정하고, 지우는 일은 xtask delete-version(latest·previous를 다시 확인)이 한다.
+function cmdPrune(env) {
+  const missing = ['R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY', 'R2_ACCOUNT_ID', 'R2_BUCKET'].filter((n) => !env[n]);
+  if (missing.length) {
+    console.error(`::error::${preflightMessage(missing)}`);
+    return 1;
+  }
+  if (begin('prune', env)) return 2;
+  const version = releaseVersion(env);
+  const cur = getObject(env, LATEST_KEY);
+  if (cur.code === 2) return 2;
+  const latest = cur.data ? versionOf(cur.data) : null;
+  if (latest !== version) {
+    console.log(`::notice::release prune: latest.json이 ${latest ?? '없음'}이라 ${version} 실행은 지우지 않는다(latest를 가진 실행이 지운다)`);
+    return 0;
+  }
+  const p = getObject(env, `releases/${version}/previous`);
+  if (p.code === 2) return 2;
+  if (p.code === 1) {
+    err(`prune: releases/${version}/previous가 없다 — 지우지 않는다`);
+    return 1;
+  }
+  const previous = p.data.toString('utf8');
+  if (!validPrev(previous)) {
+    err(`prune: releases/${version}/previous 형식이 아니다 — 지우지 않는다`);
+    return 1;
+  }
+  const ls = xtask(['list-keys', '--prefix', 'releases/'], env, { stdio: ['ignore', 'pipe', 'inherit'], encoding: 'utf8' });
+  if (ls.status !== 0) return ls.status === 1 ? 1 : 2;
+  const keys = (ls.stdout ?? '').split('\n').filter(Boolean);
+  const plan = prunePlan({ keys, latest, previous });
+  if (plan.abort) {
+    err(`prune: ${plan.abort}`);
+    return 1;
+  }
+  log(`prune: 남김 [${plan.keep.join(', ')}] 지움 [${plan.delete.join(', ')}] 모름 [${plan.ignored.join(', ')}]`);
+  for (const v of plan.delete) {
+    const c = xtask(['delete-version', '--version', v], env).status;
+    if (c !== 0) return c === 1 ? 1 : 2;
+  }
+  log(`prune: ${plan.delete.length}개 버전 지움`);
+  return 0;
+}
+
 // ---- 가짜 S3 실행(stage·selftest) ----
 
 export const FAKE_BASE = 'https://dist.example.invalid';
@@ -574,7 +640,10 @@ function startFake(creds) {
       const m = /listening (\d+)/.exec(buf);
       if (m) {
         const port = Number(m[1]);
-        const fault = (f) => fetch(`http://127.0.0.1:${port}/__fault`, { method: 'POST', body: JSON.stringify(f) }).then((r) => r.status);
+        // 가짜 서버는 5초 놀면 연결을 닫는다. 오래 걸리는 하위 프로세스 뒤에는 풀의 연결이 죽어 있을 수 있어 닫는 요청으로 보내고,
+        // 그래도 실패하면 한 번 더 시도한다
+        const post = (f) => fetch(`http://127.0.0.1:${port}/__fault`, { method: 'POST', body: JSON.stringify(f), headers: { connection: 'close' } }).then((r) => r.status);
+        const fault = (f) => post(f).catch(() => post(f));
         res({ port, fault, stop: () => p.kill() });
       }
     });
@@ -592,8 +661,8 @@ function dryEnv(env, creds, port, { key, pw, pub }) {
 }
 
 // release.mjs <cmd>를 하위 프로세스로(배포하는 진입점 그대로)
-function runRelease(cmd, env, capture = false) {
-  const r = spawnSync(process.execPath, [join(ROOT, 'scripts/ci/release.mjs'), cmd], { env, cwd: ROOT, encoding: 'utf8', stdio: capture ? 'pipe' : 'inherit', maxBuffer: 1 << 26 });
+function runRelease(cmd, env, capture = false, args = []) {
+  const r = spawnSync(process.execPath, [join(ROOT, 'scripts/ci/release.mjs'), cmd, ...args], { env, cwd: ROOT, encoding: 'utf8', stdio: capture ? 'pipe' : 'inherit', maxBuffer: 1 << 26 });
   return { status: r.status, out: capture ? `${r.stdout ?? ''}${r.stderr ?? ''}`.trim() : '' };
 }
 
@@ -644,8 +713,13 @@ async function cmdStage(env) {
       err('stage: verify(가짜 S3)가 실패했다');
       return 1;
     }
+    // verify 뒤 보존 상한(빈 버킷이라 지우는 것이 없다. 진짜 prune 작업과 같은 진입점이 도는지 본다)
+    if (runRelease('prune', { ...D, GITHUB_OUTPUT: join(work, 'prune.out') }).status !== 0) {
+      err('stage: prune(가짜 S3)이 실패했다');
+      return 1;
+    }
     const next = mode === 'tag' ? 'sign-publish가 진짜 키·R2로 같은 단계를 돈다' : '리허설은 여기서 끝난다(업로드 경계, 진짜 키·R2에는 닿지 않는다)';
-    console.log(`::notice::release stage: 받은 3 OS 산출물로 collect·서명·서명 검증·SHA256SUMS·매니페스트·put·promote·verify를 가짜 S3에서 통과. ${next}`);
+    console.log(`::notice::release stage: 받은 3 OS 산출물로 collect·서명·서명 검증·SHA256SUMS·매니페스트·put·promote·verify·prune을 가짜 S3에서 통과. ${next}`);
     return 0;
   } catch (e) {
     err(`stage: ${e.message}`);
@@ -818,6 +892,52 @@ async function cmdSelftest(env) {
     expect('(f) latest.json 없음', 0, get(LATEST_KEY) === null ? 0 : 1);
     // (g) 서명 검증 서버: 틀린 비밀 키는 403 → 기반 시설 오류(exit 2, 판정이 아니다)
     expect('(g) 틀린 S3 비밀 키는 exit 2', 2, x(['get', '--key', 'releases/1.0.0/SHA256SUMS', '--out', join(work, 'g.bin')], { R2_SECRET_ACCESS_KEY: 'wrong' }));
+    // (j) R2 보존 상한 prune(최신 5개 + latest의 previous). 상태는 1.0.0·1.1.0(변조)·1.2.0에 오래된 씨앗과 semver가 아닌 폴더를 더한다
+    const seed = join(work, 'seed.bin');
+    writeFileSync(seed, 'seed\n');
+    const putSeed = (k) => x(['put-raw', '--key', k, '--file', seed], { XTASK_ALLOW_RAW: '1' });
+    let seeded = 0;
+    for (const v of ['0.1.0', '0.2.0', '0.3.0', '1.2.1', '1.2.2', '1.2.3']) for (const f of ['SHA256SUMS', 'manifest.json']) seeded += putSeed(`releases/${v}/${f}`);
+    seeded += putSeed('releases/tmp/x.bin');
+    expect('(j) 씨앗 올림', 0, seeded);
+    expect('(j) rollback.yml 1.0.0(latest 없음 → 1.0.0)', 0, rollback('1.0.0'));
+    const p13 = publish('1.3.0', '2026-10-10T00:00:00Z');
+    expect('(j) publish 1.3.0', 0, p13.code);
+    expect('(j) prev 출력 = 1.0.0', 0, p13.prev === '1.0.0' ? 0 : 1);
+    expect('(j) verify 1.3.0', 0, verify('1.3.0', '1.0.0').code);
+    const listing = () => {
+      const r = spawnSync(xtaskBin(base0), ['release', 'list-keys', '--prefix', 'releases/'], { env: base0, cwd: ROOT, encoding: 'utf8' });
+      last = `${r.stdout ?? ''}${r.stderr ?? ''}`.trim();
+      return r.status === 0 ? (r.stdout ?? '').split('\n').filter(Boolean) : null;
+    };
+    const dirs = () => [...new Set((listing() ?? []).map((k) => /^releases\/([^/]+)\//.exec(k)?.[1]).filter(Boolean))].sort().join(',');
+    const prune = (v, extra = {}) => {
+      const r = runRelease('prune', { ...S, RELEASE_VERSION: v, ...extra }, true);
+      last = r.out;
+      return r.status;
+    };
+    expect('(j) 지우기 전 폴더 10개 + tmp', 0, dirs() === '0.1.0,0.2.0,0.3.0,1.0.0,1.1.0,1.2.0,1.2.1,1.2.2,1.2.3,1.3.0,tmp' ? 0 : 1);
+    const before13 = get(LATEST_KEY);
+    expect('(j) prune(latest = 1.3.0)', 0, prune('1.3.0'));
+    // 최신 5개(1.3.0·1.2.3·1.2.2·1.2.1·1.2.0) + latest + previous(1.0.0, 상위 5개 밖이어도 남긴다). semver가 아닌 tmp는 그대로
+    const kept = '1.0.0,1.2.0,1.2.1,1.2.2,1.2.3,1.3.0,tmp';
+    expect('(j) 남은 폴더', 0, dirs() === kept ? 0 : 1);
+    expect('(j) semver가 아닌 releases/tmp/x.bin은 남음', 0, (listing() ?? []).includes('releases/tmp/x.bin') ? 0 : 1);
+    expect('(j) latest.json 바이트 그대로(1.3.0 manifest)', 0, same(get(LATEST_KEY), before13) + same(before13, readFileSync(join(p13.st, 'manifest.json'))));
+    expect('(j) 지운 버전(1.1.0)으로는 rollback.yml 거부', 'nonzero', rollback('1.1.0'));
+    expect('(j) 거부 뒤 latest.json 그대로', 0, same(get(LATEST_KEY), before13));
+    expect('(j) previous(1.0.0)로는 rollback 가능', 0, rollback('1.0.0'));
+    expect('(j) 다시 1.3.0으로', 0, rollback('1.3.0'));
+    expect('(j) prune 멱등', 0, prune('1.3.0') + (dirs() === kept ? 0 : 1));
+    expect('(j) latest가 아닌 버전(1.2.0) 실행은 지우지 않고 0', 0, prune('1.2.0') + (dirs() === kept ? 0 : 1));
+    expect('(j) xtask delete-version 1.3.0(latest) 거부', 1, x(['delete-version', '--version', '1.3.0']));
+    expect('(j) xtask delete-version 1.0.0(previous) 거부', 1, x(['delete-version', '--version', '1.0.0']));
+    expect('(j) 거부 뒤 목록 그대로', 0, dirs() === kept ? 0 : 1);
+    putSeed('releases/0.0.1/SHA256SUMS');
+    expect('(j) 목록이 잘리면(max-keys 3) exit 2, 지우지 않음', 2, prune('1.3.0', { XTASK_LIST_MAX_KEYS: '3' }));
+    expect('(j) 잘린 뒤에도 0.0.1 그대로', 0, dirs().startsWith('0.0.1,1.0.0,') ? 0 : 1);
+    expect('(j) 장애 주입 LIST 503×2', 204, await fake.fault({ method: 'LIST', key: 'releases/', mode: 'before', status: 503, times: 2 }));
+    expect('(j) 일시 503 뒤 prune 통과, 0.0.1을 지움', 0, prune('1.3.0') + (dirs() === kept ? 0 : 1));
   } catch (e) {
     results.push({ name: `예외: ${e.message}`, want: 0, got: 'throw', ok: false, out: last });
   } finally {
@@ -848,7 +968,7 @@ function cmdWorker() {
 export function main(argv, env = process.env) {
   const [cmd, ...rest] = argv;
   if (rest.length) {
-    console.error('사용법: release.mjs <pubkey|gate|build|xtask|preflight|publish|verify|rollback|stage|selftest|worker>');
+    console.error('사용법: release.mjs <pubkey|gate|build|xtask|preflight|publish|verify|rollback|prune|stage|selftest|worker>');
     return 2;
   }
   switch (cmd) {
@@ -870,12 +990,14 @@ export function main(argv, env = process.env) {
       return cmdRollback(env);
     case 'stage':
       return cmdStage(env);
+    case 'prune':
+      return cmdPrune(env);
     case 'selftest':
       return cmdSelftest(env);
     case 'worker':
       return cmdWorker();
     default:
-      console.error('사용법: release.mjs <pubkey|gate|build|xtask|preflight|publish|verify|rollback|stage|selftest|worker>');
+      console.error('사용법: release.mjs <pubkey|gate|build|xtask|preflight|publish|verify|rollback|prune|stage|selftest|worker>');
       return 2;
   }
 }

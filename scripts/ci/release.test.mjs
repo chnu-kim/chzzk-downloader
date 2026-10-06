@@ -14,10 +14,12 @@ import {
   parseSemver,
   preflight,
   preflightMessage,
+  prunePlan,
   pubkeyProblems,
   RELEASE_CONF,
   RELEASE_SECRETS,
   REHEARSAL_MESSAGE,
+  RELEASE_KEEP,
   releaseConfProblems,
   tagProblems,
   verifyPlan,
@@ -212,4 +214,65 @@ test('경계: tag는 덮어쓰기를 받지 않고, dry는 루프백 엔드포�
   }
   assert.equal(boundaryProblems({ RELEASE_MODE: 'rehearsal' }).length, 1);
   assert.equal(boundaryProblems({}).length, 1);
+});
+
+// 보존 상한 prune의 지울 목록(release.mjs prunePlan). 키는 releases/<v>/…(버전 폴더)와 releases/latest.json이다
+const dirKeys = (vs) => ['releases/latest.json', ...vs.flatMap((v) => [`releases/${v}/SHA256SUMS`, `releases/${v}/manifest.json`])];
+const range = (a, b, major = 1) => Array.from({ length: b - a + 1 }, (_, i) => `${major}.${a + i}.0`);
+
+test('prune 판정: 최신 5개 ∪ latest ∪ previous를 남기고 나머지를 오래된 것부터 지운다', () => {
+  assert.equal(RELEASE_KEEP, 5);
+  const rows = [
+    { name: '다섯 개 이하는 그대로', vs: ['1.0.0', '1.1.0', '1.2.0'], latest: '1.2.0', prev: '1.1.0', del: [] },
+    { name: '일곱 개', vs: range(0, 6), latest: '1.6.0', prev: '1.5.0', del: ['1.0.0', '1.1.0'] },
+    { name: 'previous가 상위 5개 밖이면 남긴다', vs: range(0, 7), latest: '1.7.0', prev: '1.0.0', del: ['1.1.0', '1.2.0'] },
+    { name: '사전순이 아니라 semver 순', vs: range(8, 14, 0), latest: '0.14.0', prev: '0.13.0', del: ['0.8.0', '0.9.0'] },
+    { name: 'prerelease 순서', vs: ['1.0.0-rc.1', '1.0.0-rc.2', '1.0.0', '1.0.1', '1.1.0-beta.1', '1.1.0', '1.2.0'], latest: '1.2.0', prev: '1.1.0', del: ['1.0.0-rc.1', '1.0.0-rc.2'] },
+    { name: 'previous = none', vs: range(0, 6), latest: '1.6.0', prev: 'none', del: ['1.0.0', '1.1.0'] },
+    { name: 'previous 형식이 아니면 무시', vs: range(0, 6), latest: '1.6.0', prev: '?', del: ['1.0.0', '1.1.0'] },
+    { name: 'previous가 목록에 없어도 탈 없다', vs: range(0, 6), latest: '1.6.0', prev: '0.9.0', del: ['1.0.0', '1.1.0'] },
+    { name: 'keep=1: latest와 previous만', vs: ['1.0.0', '1.1.0', '1.2.0'], latest: '1.2.0', prev: '1.1.0', keep: 1, del: ['1.0.0'] },
+    { name: '낮은 버전이 latest(되돌린 뒤)여도 latest는 남긴다', vs: range(0, 7), latest: '1.1.0', prev: 'none', del: ['1.0.0', '1.2.0'] },
+  ];
+  for (const r of rows) {
+    const plan = prunePlan({ keys: dirKeys(r.vs), latest: r.latest, previous: r.prev, ...(r.keep ? { keep: r.keep } : {}) });
+    assert.equal(plan.abort, undefined, r.name);
+    assert.deepEqual(plan.delete, r.del, r.name);
+    // 남기는 것과 지우는 것은 겹치지 않고 합치면 전부다. latest·previous(목록에 있으면)는 늘 남는다
+    assert.deepEqual([...plan.keep, ...plan.delete].sort(), [...r.vs].sort(), r.name);
+    assert.ok(plan.keep.includes(r.latest), r.name);
+    if (r.vs.includes(r.prev)) assert.ok(plan.keep.includes(r.prev), r.name);
+  }
+});
+
+test('prune 판정: semver가 아닌 폴더는 건드리지 않고, 믿을 수 없는 목록은 아무것도 지우지 않는다', () => {
+  const vs = range(0, 6);
+  const plan = prunePlan({ keys: [...dirKeys(vs), 'releases/tmp/x.bin', 'releases/v1.0.0/a'], latest: '1.6.0', previous: '1.5.0' });
+  assert.deepEqual(plan.delete, ['1.0.0', '1.1.0']);
+  assert.deepEqual(plan.ignored, ['tmp', 'v1.0.0']);
+  assert.ok(!plan.keep.includes('tmp'));
+  for (const [latest, why] of [['2.0.0', '목록에 없음'], ['?', 'semver 아님'], ['', '빈 값'], [null, 'null']]) {
+    const a = prunePlan({ keys: dirKeys(vs), latest, previous: '1.5.0' });
+    assert.ok(a.abort, why);
+    assert.deepEqual([a.keep, a.delete], [[], []], why);
+  }
+  // 목록이 비어도(latest.json만) latest가 없으니 abort
+  assert.ok(prunePlan({ keys: ['releases/latest.json'], latest: '1.0.0', previous: 'none' }).abort);
+  // 같은 폴더의 키가 여럿이어도 한 번만 센다
+  assert.deepEqual(prunePlan({ keys: dirKeys(range(0, 5)), latest: '1.5.0', previous: '1.4.0' }).delete, ['1.0.0']);
+  for (const keep of [0, -1, 1.5, '5', NaN]) assert.throws(() => prunePlan({ keys: dirKeys(vs), latest: '1.6.0', previous: 'none', keep }), /keep/);
+});
+
+test('release.yml: prune는 verify 뒤 태그에서만 돌고, report가 보고하며 deploy-worker를 막지 않는다', () => {
+  const rel = readFileSync(join(ROOT, '.github/workflows/release.yml'), 'utf8');
+  const block = (id) => new RegExp(`^ {2}${id}:\n(?:(?: {4}|\n).*\n)+`, 'm').exec(rel)?.[0] ?? '';
+  const needsOf = (id) => (/^ {4}needs: \[([^\]]+)\]/m.exec(block(id))?.[1] ?? '').split(',').map((x) => x.trim());
+  const prune = block('prune');
+  assert.ok(prune, 'prune 작업이 없다');
+  assert.ok(needsOf('prune').includes('verify'));
+  assert.match(prune, /if: needs\.gate\.outputs\.mode == 'tag'/);
+  assert.match(prune, /environment: release/);
+  assert.match(prune, /run\.mjs release-prune/);
+  assert.ok(!needsOf('deploy-worker').includes('prune'), 'prune 실패가 배포를 막으면 안 된다');
+  assert.ok(needsOf('report').includes('prune'));
 });

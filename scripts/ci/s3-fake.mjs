@@ -4,7 +4,8 @@
 // 서명이 틀린 요청은 403으로 거부하고, R2·S3의 조건부 쓰기를 흉내 낸다:
 //   PUT  If-None-Match: * → 있으면 412, If-Match: <etag> → 없으면 404·다르면 412, x-amz-checksum-sha256·x-amz-content-sha256 불일치 400
 //   GET  200 + ETag(본문 md5, 따옴표 포함) / 404,  DELETE 204,  다른 버킷 404
-//   POST /__fault: 장애 주입(아래 matchFault)
+//   GET  /<bucket>?list-type=2&prefix=…&max-keys=…  ListObjectsV2(사전순 <Key>만, delimiter 없음. max-keys를 넘으면 IsTruncated true)
+//   POST /__fault: 장애 주입(아래 matchFault. 목록은 method LIST, key = 요청한 prefix)
 // 저장은 메모리뿐이다. 경로 방식(/<bucket>/<key>)만 받는다.
 //
 //   node scripts/ci/s3-fake.mjs --bucket <b> --access <id> --secret <키> [--region auto]   # stdout 첫 줄: "listening <port>"
@@ -32,6 +33,24 @@ export function expectedSignature({ method, path, query, headers, signed, payloa
   let k = hmac(`AWS4${secret}`, amzDate.slice(0, 8));
   for (const p of [region, service, 'aws4_request']) k = hmac(k, p);
   return createHmac('sha256', k).update(sts).digest('hex');
+}
+
+const xmlEscape = (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+// store(키 → 객체) → 목록(순수). 사전순, prefix로 거르고 maxKeys를 넘으면 잘린다(truncated)
+export function listObjects(store, { prefix = '', maxKeys = 1000 } = {}) {
+  const all = [...store.keys()].filter((k) => k.startsWith(prefix)).sort();
+  return { keys: all.slice(0, maxKeys), truncated: all.length > maxKeys };
+}
+
+// ListObjectsV2 응답 XML. 값은 & < > 이스케이프, 잘렸으면 NextContinuationToken(이어받기는 지원하지 않는다)
+export function listXml(bucket, prefix, maxKeys, { keys, truncated }) {
+  const contents = keys.map((k) => `<Contents><Key>${xmlEscape(k)}</Key><Size>0</Size></Contents>`).join('');
+  return (
+    '<?xml version="1.0" encoding="UTF-8"?>' +
+    `<ListBucketResult><Name>${xmlEscape(bucket)}</Name><Prefix>${xmlEscape(prefix)}</Prefix><KeyCount>${keys.length}</KeyCount><MaxKeys>${maxKeys}</MaxKeys>` +
+    `<IsTruncated>${truncated}</IsTruncated>${truncated ? '<NextContinuationToken>t1</NextContinuationToken>' : ''}${contents}</ListBucketResult>`
+  );
 }
 
 const xmlErr = (code) => `<?xml version="1.0" encoding="UTF-8"?><Error><Code>${code}</Code></Error>`;
@@ -66,7 +85,7 @@ export function createFakeS3({ bucket, access, secret, region = 'auto', now = ()
       if (url.pathname === '/__fault' && req.method === 'POST') {
         try {
           const f = JSON.parse(body.toString('utf8'));
-          if (!['GET', 'PUT', 'DELETE'].includes(f.method) || typeof f.key !== 'string' || !['before', 'after'].includes(f.mode) || !Number.isInteger(f.status) || !Number.isInteger(f.times)) throw new Error('형식');
+          if (!['GET', 'PUT', 'DELETE', 'LIST'].includes(f.method) || typeof f.key !== 'string' || !['before', 'after'].includes(f.mode) || !Number.isInteger(f.status) || !Number.isInteger(f.times)) throw new Error('형식');
           faults.push({ method: f.method, key: f.key, mode: f.mode, status: f.status, times: f.times });
           return send(204);
         } catch {
@@ -91,6 +110,18 @@ export function createFakeS3({ bucket, access, secret, region = 'auto', now = ()
       if (!timingSafeEqual(Buffer.from(want), Buffer.from(auth.signature))) return reject('SignatureDoesNotMatch');
       if (payloadHash !== sha256(body)) return send(400, xmlErr('XAmzContentSHA256Mismatch'));
 
+      // 목록: GET /<bucket>(끝 슬래시 허용) + list-type=2. 객체 경로보다 먼저 본다
+      const lm = /^\/([^/]+)\/?$/.exec(url.pathname);
+      if (req.method === 'GET' && lm && url.searchParams.get('list-type') === '2') {
+        if (decodeURIComponent(lm[1]) !== bucket) return send(404, xmlErr('NoSuchBucket'));
+        const prefix = url.searchParams.get('prefix') ?? '';
+        const mk = Number(url.searchParams.get('max-keys') ?? 1000);
+        const maxKeys = Number.isInteger(mk) && mk >= 1 && mk <= 1000 ? mk : 1000;
+        const lf = matchFault(faults, 'LIST', prefix);
+        if (lf) counts.faults++;
+        if (lf) return send(lf.status, xmlErr('InternalError'));
+        return send(200, listXml(bucket, prefix, maxKeys, listObjects(store, { prefix, maxKeys })), { 'content-type': 'application/xml' });
+      }
       const m = /^\/([^/]+)\/(.+)$/.exec(url.pathname);
       if (!m || decodeURIComponent(m[1]) !== bucket) return send(404, xmlErr('NoSuchBucket'));
       const key = decodeURIComponent(m[2]);

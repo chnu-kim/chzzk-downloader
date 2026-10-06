@@ -419,12 +419,16 @@ export const GATES = {
     desc: 'latest.json을 ROLLBACK_VERSION으로(그 버전 객체 확인 → CAS 교체 → 다시 확인, none이면 지운다)',
     steps: [{ cmd: ['node', S('release.mjs'), 'rollback'] }],
   },
+  'release-prune': {
+    desc: 'R2 보존 상한: latest가 이번 버전일 때만 releases/를 최신 5개 + latest의 previous로 줄인다(xtask list-keys·delete-version, 지울 목록은 release.mjs prunePlan). release.yml prune 작업(verify 뒤, 태그만)',
+    steps: [{ cmd: ['node', S('release.mjs'), 'prune'] }],
+  },
   'release-worker': {
     desc: 'Phase 3 seam: Worker 배포·확인(release.yml deploy-worker, vars.WORKER_DEPLOY_ENABLED). worker/가 생기기 전에는 늘 실패',
     steps: [{ cmd: ['node', S('release.mjs'), 'worker'] }],
   },
   'release-selftest': {
-    desc: '가짜 S3(s3-fake.mjs, SigV4 검증·조건부 쓰기·장애 주입)에 합성 산출물로 release.mjs publish·verify·rollback 진입점을 하위 프로세스로: happy path, CAS·단조 증가, 변조 → previous로 rollback(latest.json 바이트 동일), 재실행 멱등, preflight·경계, 일시·계속 5xx와 응답 잃은 CAS, superseded·not-promoted, 되돌리기·다시 올리기',
+    desc: '가짜 S3(s3-fake.mjs, SigV4 검증·조건부 쓰기·장애 주입)에 합성 산출물로 release.mjs publish·verify·rollback 진입점을 하위 프로세스로: happy path, CAS·단조 증가, 변조 → previous로 rollback(latest.json 바이트 동일), 재실행 멱등, preflight·경계, 일시·계속 5xx와 응답 잃은 CAS, superseded·not-promoted, 되돌리기·다시 올리기, 보존 상한 prune(최신 5개 + previous)',
     needs: ['cargo'],
     steps: [{ cmd: ['node', S('release.mjs'), 'selftest'] }],
   },

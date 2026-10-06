@@ -6,6 +6,7 @@ import {
   type ConfigEnv,
   type ConfigKey,
   DEFAULT_START_RATE_10M,
+  DEV_REDIRECT_URI,
   loadConfig,
   PROD_API_BASE,
   PROD_AUTHORIZE_URL,
@@ -19,6 +20,7 @@ const PROD_ORIGIN = "https://dist.example.test";
 // .dev.vars.example과 같은 모양(dev 모드)
 const DEV: ConfigEnv = {
   PUBLIC_ORIGIN: "http://localhost:8787",
+  CHZZK_REDIRECT_URI: "http://localhost:8787/auth/callback",
   CHZZK_AUTHORIZE_URL: "http://127.0.0.1:8788/account-interlock",
   CHZZK_API_BASE: "http://127.0.0.1:8788",
   CHZZK_CLIENT_ID: "dev-client-id",
@@ -61,6 +63,8 @@ describe("통과", () => {
     // 치지직 앱에 등록된 개발용 리디렉션 URL과 바이트가 같다
     expect(c.redirectUri).toBe("http://localhost:8787/auth/callback");
     expect(CALLBACK_PATH).toBe("/auth/callback");
+    expect(DEV_REDIRECT_URI).toBe("http://localhost:8787/auth/callback");
+    expect(DEV_REDIRECT_URI.endsWith(CALLBACK_PATH)).toBe(true);
     expect(c.authorizeUrl).toBe("http://127.0.0.1:8788/account-interlock");
     expect(c.apiBase).toBe("http://127.0.0.1:8788");
     expect(c.adminChannelIds).toEqual([A1]);
@@ -82,7 +86,7 @@ describe("통과", () => {
   });
 
   it("pnpm dev:real 모양(클라이언트 id·secret만 + --var PUBLIC_ORIGIN): 운영 치지직 주소, 부트스트랩", () => {
-    const c = ok({ PUBLIC_ORIGIN: "http://localhost:8787", CHZZK_CLIENT_ID: "dev-client-id", CHZZK_CLIENT_SECRET: "dev-client-placeholder" });
+    const c = ok({ PUBLIC_ORIGIN: "http://localhost:8787", CHZZK_REDIRECT_URI: "http://localhost:8787/auth/callback", CHZZK_CLIENT_ID: "dev-client-id", CHZZK_CLIENT_SECRET: "dev-client-placeholder" });
     expect(c.devMode).toBe(true);
     expect(c.authorizeUrl).toBe(PROD_AUTHORIZE_URL);
     expect(c.apiBase).toBe(PROD_API_BASE);
@@ -124,6 +128,14 @@ describe("통과", () => {
 describe("config_error(어긋난 키 이름만)", () => {
   // [설명, env, 어긋난 키]
   const cases: [string, ConfigEnv, ConfigKey][] = [
+    ["dev에 CHZZK_REDIRECT_URI 없음", without(DEV, "CHZZK_REDIRECT_URI"), "CHZZK_REDIRECT_URI"],
+    ["dev CHZZK_REDIRECT_URI 빈 값", { ...DEV, CHZZK_REDIRECT_URI: "" }, "CHZZK_REDIRECT_URI"],
+    ["dev CHZZK_REDIRECT_URI 끝 슬래시", { ...DEV, CHZZK_REDIRECT_URI: "http://localhost:8787/auth/callback/" }, "CHZZK_REDIRECT_URI"],
+    ["dev CHZZK_REDIRECT_URI 127.0.0.1", { ...DEV, CHZZK_REDIRECT_URI: "http://127.0.0.1:8787/auth/callback" }, "CHZZK_REDIRECT_URI"],
+    ["dev CHZZK_REDIRECT_URI 대문자", { ...DEV, CHZZK_REDIRECT_URI: "http://localhost:8787/auth/Callback" }, "CHZZK_REDIRECT_URI"],
+    ["dev CHZZK_REDIRECT_URI 포트", { ...DEV, CHZZK_REDIRECT_URI: "http://localhost:8788/auth/callback" }, "CHZZK_REDIRECT_URI"],
+    ["운영에 CHZZK_REDIRECT_URI 있음", { ...PROD, CHZZK_REDIRECT_URI: "https://dist.example.test/auth/callback" }, "CHZZK_REDIRECT_URI"],
+    ["dev CHZZK_REDIRECT_URI 문자열 아님", { ...DEV, CHZZK_REDIRECT_URI: 1 }, "CHZZK_REDIRECT_URI"],
     ["PUBLIC_ORIGIN 없음", without(PROD, "PUBLIC_ORIGIN"), "PUBLIC_ORIGIN"],
     ["운영 http 출처", { ...PROD, PUBLIC_ORIGIN: "http://dist.example.test" }, "PUBLIC_ORIGIN"],
     ["출처 끝 슬래시", { ...PROD, PUBLIC_ORIGIN: PROD_ORIGIN + "/" }, "PUBLIC_ORIGIN"],
@@ -160,6 +172,43 @@ describe("config_error(어긋난 키 이름만)", () => {
     const r = loadConfig({ ...PROD, CHZZK_CLIENT_SECRET: secret, ADMIN_CHANNEL_IDS: "bad" });
     expect(JSON.stringify(r)).not.toContain(secret);
     expect(JSON.stringify(r)).not.toContain("bad");
+  });
+});
+
+describe("dev 모드의 모르는 문자열 바인딩", () => {
+  const canary = "other-service-canary-value";
+  it("모르는 문자열 키가 있으면 config_error{키 이름}이고 값은 어디에도 없다", () => {
+    const e: Record<string, unknown> = { ...DEV, OTHER_SERVICE_SECRET: canary };
+    const r = loadConfig(e);
+    expect(r).toEqual({ ok: false, key: "OTHER_SERVICE_SECRET" });
+    expect(JSON.stringify(r)).not.toContain(canary);
+  });
+
+  it("모르는 키가 둘이면 이름 정렬의 첫 키", () => {
+    const e: Record<string, unknown> = { ...DEV, ZZZ_X: canary, AAA_Y: canary };
+    expect(loadConfig(e)).toEqual({ ok: false, key: "AAA_Y" });
+  });
+
+  it("이름 모양 밖이면 이름도 싣지 않는다", () => {
+    const e: Record<string, unknown> = { ...DEV, "bad-key": canary };
+    const r = loadConfig(e);
+    expect(r).toEqual({ ok: false, key: "(invalid_key_name)" });
+    expect(JSON.stringify(r)).not.toContain("bad-key");
+  });
+
+  it("문자열이 아닌 모르는 키(DO·R2·테스트 내부 바인딩)는 보지 않는다", () => {
+    const e: Record<string, unknown> = { ...DEV, AUTH_LIKE: {}, N: 1 };
+    expect(loadConfig(e).ok).toBe(true);
+  });
+
+  it("운영 모드는 검사하지 않는다", () => {
+    const e: Record<string, unknown> = { ...PROD, OTHER_SERVICE_SECRET: canary };
+    expect(loadConfig(e).ok).toBe(true);
+  });
+
+  it("출처가 먼저다: 모르는 키가 있어도 PUBLIC_ORIGIN이 없으면 PUBLIC_ORIGIN", () => {
+    const e: Record<string, unknown> = { ...without(DEV, "PUBLIC_ORIGIN"), OTHER_SERVICE_SECRET: canary };
+    expect(loadConfig(e)).toEqual({ ok: false, key: "PUBLIC_ORIGIN" });
   });
 });
 

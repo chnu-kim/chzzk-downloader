@@ -5,10 +5,15 @@
 //     START_RATE_10M을 읽는다.
 //   - 운영 모드: PUBLIC_ORIGIN은 https, 치지직 주소는 없거나 운영 값과 정확히 같고, 클라이언트 id·secret·CI 토큰이 있어야 한다.
 //   - ADMIN_CHANNEL_IDS가 비어 있으면 부트스트랩 모드(§8.3), 있으면 쉼표로 나눈 32자리 소문자 hex만.
+//   - dev 모드에서는 CHZZK_REDIRECT_URI가 있어야 하고 치지직 앱에 등록된 개발용 값(DEV_REDIRECT_URI)과 바이트까지 같아야 한다.
+//     운영 모드에서는 이 키가 있으면 오류다(운영 redirectUri는 PUBLIC_ORIGIN이 원천, 구현 중 변경 12 (라)·27 (다)).
+//   - dev 모드에서 CONFIG_KEYS 밖의 문자열 바인딩이 있으면 오류다(공용 1Password Environment에 다른 서비스의 키가 섞인 경우,
+//     구현 중 변경 12 (라)·27 (라)). 결과에는 키 이름만 있고 값은 어디에도 없다. 운영 모드는 검사하지 않는다.
 
 // 코드가 읽는 키 전부. worker/.dev.vars.example의 키 집합과 같아야 한다(scripts/ci/worker-config.mjs가 이 배열을 읽어 비교한다).
 export const CONFIG_KEYS = [
   "PUBLIC_ORIGIN",
+  "CHZZK_REDIRECT_URI",
   "CHZZK_AUTHORIZE_URL",
   "CHZZK_API_BASE",
   "CHZZK_CLIENT_ID",
@@ -27,6 +32,9 @@ export const PROD_AUTHORIZE_URL = "https://chzzk.naver.com/account-interlock";
 export const PROD_API_BASE = "https://openapi.chzzk.naver.com";
 // 치지직 앱에 등록된 리디렉션은 PUBLIC_ORIGIN + 이 경로와 바이트가 같아야 한다(개발용은 http://localhost:8787/auth/callback)
 export const CALLBACK_PATH = "/auth/callback";
+// dev 모드의 등록된 개발용 리디렉션 URL. 콜백 경로를 바꾸면 등록 값과 어긋나 여기서 드러난다(구현 중 변경 27 (다))
+export const DEV_ORIGIN = "http://localhost:8787";
+export const DEV_REDIRECT_URI = DEV_ORIGIN + CALLBACK_PATH;
 // 운영의 /auth/start IP당 10분 한도(§5). dev 모드에서만 START_RATE_10M으로 바꿀 수 있다
 export const DEFAULT_START_RATE_10M = 6;
 
@@ -34,6 +42,8 @@ const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 const CHANNEL_ID = /^[0-9a-f]{32}$/;
 const BUILD_ID = /^[0-9A-Za-z._-]{1,40}$/;
 const START_RATE = /^[1-9][0-9]{0,6}$/;
+// 결과·로그에 실을 수 있는 키 이름 모양. 아니면 이름도 싣지 않는다
+const KEY_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/;
 
 export interface Config {
   /** 요청 출처와 정확히 같아야 하는 Worker 출처(경로·끝 슬래시 없음) */
@@ -53,10 +63,10 @@ export interface Config {
   readonly startRate10m: number;
 }
 
-export type ConfigResult = { readonly ok: true; readonly config: Config } | { readonly ok: false; readonly key: ConfigKey };
+export type ConfigResult = { readonly ok: true; readonly config: Config } | { readonly ok: false; readonly key: string };
 
 class ConfigError extends Error {
-  constructor(readonly key: ConfigKey) {
+  constructor(readonly key: string) {
     super("config_error");
   }
 }
@@ -131,10 +141,29 @@ function buildId(env: ConfigEnv): string | null {
   return v;
 }
 
+// dev 모드: CONFIG_KEYS 밖의 문자열 바인딩이 있으면 이름 정렬의 첫 키로 오류. object 바인딩(DO·R2·테스트 내부)은 보지 않는다
+function rejectUnknownStrings(env: ConfigEnv): void {
+  const all = env as Readonly<Record<string, unknown>>;
+  const known = new Set<string>(CONFIG_KEYS);
+  const bad = Object.keys(all)
+    .filter((k) => !known.has(k) && typeof all[k] === "string")
+    .sort();
+  const first = bad[0];
+  if (first !== undefined) throw new ConfigError(KEY_NAME.test(first) ? first : "(invalid_key_name)");
+}
+
+// dev는 등록 값과 같아야 하고, 운영은 없어야 한다. 문자열이 아닌 값은 read가 같은 키로 거부한다
+function checkRedirectUri(env: ConfigEnv, devMode: boolean): void {
+  const reg = read(env, "CHZZK_REDIRECT_URI");
+  if (devMode ? reg !== DEV_REDIRECT_URI : reg !== undefined) throw new ConfigError("CHZZK_REDIRECT_URI");
+}
+
 function parse(env: ConfigEnv): Config {
   const origin = parseOrigin("PUBLIC_ORIGIN", read(env, "PUBLIC_ORIGIN"));
   const devMode = LOOPBACK_HOSTS.has(origin.hostname);
   if (!devMode && origin.protocol !== "https:") throw new ConfigError("PUBLIC_ORIGIN");
+  if (devMode) rejectUnknownStrings(env);
+  checkRedirectUri(env, devMode);
   const admins = adminIds(env);
   return {
     publicOrigin: origin.origin,

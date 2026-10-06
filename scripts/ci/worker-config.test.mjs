@@ -121,6 +121,7 @@ test('씨앗: wrangler.jsonc 불변식', () => {
     ['vars에 PUBLIC_ORIGIN', { vars: { ...WRANGLER.vars, PUBLIC_ORIGIN: 'http://localhost:8787' } }],
     ['vars에 START_RATE_10M', { vars: { ...WRANGLER.vars, START_RATE_10M: '1000' } }],
     ['vars에 BUILD_ID', { vars: { ...WRANGLER.vars, BUILD_ID: 'dev' } }],
+    ['vars에 CHZZK_REDIRECT_URI', { vars: { ...WRANGLER.vars, CHZZK_REDIRECT_URI: 'http://localhost:8787/auth/callback' } }],
     ['vars에 비밀처럼 보이는 키', { vars: { ...WRANGLER.vars, CHZZK_CLIENT_SECRET: 'x' } }],
     ['vars 치지직 주소가 가짜', { vars: { ...WRANGLER.vars, CHZZK_API_BASE: 'http://127.0.0.1:8788' } }],
     ['invocation 로그 켬', { observability: { enabled: true, logs: { invocation_logs: true } } }],
@@ -135,6 +136,9 @@ test('씨앗: wrangler.jsonc 불변식', () => {
   assert.deepEqual(checkWrangler(WRANGLER), []);
   // 사본 경로로도 같은 판정
   assert.notDeepEqual(checkWorker(copy({ 'worker/wrangler.jsonc': withWrangler({ routes: ['x'] }) })), []);
+  // CHZZK_REDIRECT_URI는 dev 전용이라 메시지에 그렇게 적는다
+  const redirect = checkWrangler({ ...WRANGLER, vars: { ...WRANGLER.vars, CHZZK_REDIRECT_URI: 'http://localhost:8787/auth/callback' } });
+  assert.ok(redirect.some((e) => e.includes('CHZZK_REDIRECT_URI') && e.includes('dev 전용')), JSON.stringify(redirect));
 });
 
 test('씨앗: package.json', () => {
@@ -216,6 +220,10 @@ test('씨앗: .dev.vars.example', () => {
     ['합성이 아닌 채널 ID', EXAMPLE.replace(/^ADMIN_CHANNEL_IDS=.*$/m, `ADMIN_CHANNEL_IDS=${'e5'.padStart(32, '0')}`)],
     ['따옴표 값', EXAMPLE.replace('BUILD_ID=dev', 'BUILD_ID="dev"')],
     ['키 중복', EXAMPLE + 'BUILD_ID=dev\n'],
+    ['CHZZK_REDIRECT_URI 키 빠짐', EXAMPLE.replace(/^CHZZK_REDIRECT_URI=.*\n/m, '')],
+    ['CHZZK_REDIRECT_URI 끝 슬래시', EXAMPLE.replace('/auth/callback', '/auth/callback/')],
+    ['CHZZK_REDIRECT_URI 127.0.0.1', EXAMPLE.replace('CHZZK_REDIRECT_URI=http://localhost:', 'CHZZK_REDIRECT_URI=http://127.0.0.1:')],
+    ['CHZZK_REDIRECT_URI 포트 8788', EXAMPLE.replace('CHZZK_REDIRECT_URI=http://localhost:8787', 'CHZZK_REDIRECT_URI=http://localhost:8788')],
   ];
   for (const [name, text] of seeds) assert.notDeepEqual(checkDevVarsExample(text, KEYS), [], name);
   assert.ok(checkWorker(copy({ 'worker/.dev.vars.example': null })).some((e) => e.includes('.dev.vars.example: 없다')));
@@ -334,7 +342,7 @@ test('씨앗: 소스 규칙', () => {
 });
 
 test('CONFIG_KEYS 추출', () => {
-  assert.ok(KEYS.includes('PUBLIC_ORIGIN') && KEYS.includes('START_RATE_10M'));
+  assert.ok(KEYS.includes('PUBLIC_ORIGIN') && KEYS.includes('START_RATE_10M') && KEYS.includes('CHZZK_REDIRECT_URI'));
   assert.equal(configKeys('export const X = 1;'), null);
 });
 

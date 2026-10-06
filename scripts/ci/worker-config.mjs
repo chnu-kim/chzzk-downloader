@@ -122,6 +122,8 @@ const isLoopbackHttp = (v) => {
 // .dev.vars.example 값 규칙(키마다 하나. 규칙이 없는 키는 실패한다: 키를 더하면 자리표시 규칙도 정한다)
 export const PLACEHOLDER_RULES = {
   PUBLIC_ORIGIN: (v) => v === `http://localhost:${DEV_PORT}`,
+  // 치지직 앱에 등록된 개발용 리디렉션 URL(src/config.ts DEV_REDIRECT_URI와 같다, worker.md 구현 중 변경 27 (다))
+  CHZZK_REDIRECT_URI: (v) => v === `http://localhost:${DEV_PORT}/auth/callback`,
   CHZZK_AUTHORIZE_URL: isLoopbackHttp,
   CHZZK_API_BASE: isLoopbackHttp,
   CHZZK_CLIENT_ID: (v) => /^dev-[a-z0-9-]+$/.test(v),
@@ -195,7 +197,7 @@ function varsErrors(vars) {
   if (!vars || typeof vars !== 'object' || Array.isArray(vars)) return ['vars는 객체다'];
   for (const [k, v] of Object.entries(vars)) {
     if (!Object.hasOwn(PROD_VARS, k)) {
-      const why = k === 'PUBLIC_ORIGIN' ? '(배포 --var로만, dev 값이 운영 Worker를 dev 모드로 띄운다)' : k === 'START_RATE_10M' ? '(dev 모드 전용)' : k === 'BUILD_ID' ? '(배포 --var로만)' : /SECRET|TOKEN|KEY|PASSWORD|ADMIN|CLIENT/.test(k) ? '(비밀값은 wrangler secret put)' : '';
+      const why = k === 'PUBLIC_ORIGIN' ? '(배포 --var로만, dev 값이 운영 Worker를 dev 모드로 띄운다)' : k === 'CHZZK_REDIRECT_URI' ? '(dev 전용 등록 기록. 운영 redirectUri는 PUBLIC_ORIGIN이 원천)' : k === 'START_RATE_10M' ? '(dev 모드 전용)' : k === 'BUILD_ID' ? '(배포 --var로만)' : /SECRET|TOKEN|KEY|PASSWORD|ADMIN|CLIENT/.test(k) ? '(비밀값은 wrangler secret put)' : '';
       errs.push(`vars에 ${k}를 두지 않는다${why}`);
     } else if (v !== PROD_VARS[k]) errs.push(`vars.${k}는 운영 값 ${PROD_VARS[k]}여야 한다`);
   }

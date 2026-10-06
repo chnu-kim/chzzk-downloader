@@ -1,11 +1,11 @@
 // 테스트 바인딩 = 자리표시(docs/design/worker.md §10.2, W1 수락 기준). vitest.config.ts가 모든 설정 키를 .dev.vars.example 값으로
-// 덮는다. 이 파일은 결과(값 = 자리표시, 문자열 바인딩 집합 = CONFIG_KEYS)를 고정할 뿐 "실제 비밀값 파일을 열지 않는다"의 지킴이는
+// 덮는다. 이 파일은 결과(값 = 자리표시, 문자열 바인딩 집합 = CONFIG_KEYS = CHZZK_REDIRECT_URI를 포함한 알려진 키)를 고정할 뿐 "실제 비밀값 파일을 열지 않는다"의 지킴이는
 // 아니다: 로컬의 그 파일은 CONFIG_KEYS 안의 두 키뿐이라 열려도 덮기에 가려진다. 지킴이는 둘이다(worker.md 구현 중 변경 5·9):
 // scripts/ci/worker-config.mjs가 vitest.config.ts의 environment "example"을 보고, CI에서는 worker gate가 그 자리에
 // LEAK_SENTINEL 키 하나만 담은 가짜 파일을 심어(--sentinel plant) 설정이 그 파일을 읽으면 아래 집합 비교가 실패한다.
 import { env } from "cloudflare:workers";
 import { expect, it } from "vitest";
-import { CONFIG_KEYS } from "../src/config";
+import { CALLBACK_PATH, CONFIG_KEYS, DEV_REDIRECT_URI } from "../src/config";
 import example from "../.dev.vars.example?raw";
 
 function parse(text: string): Record<string, string> {
@@ -40,6 +40,9 @@ it("자리표시 모양: 출처·치지직 주소는 루프백, 자격 값은 de
     expect(["localhost", "127.0.0.1"]).toContain(new URL(String(e[k])).hostname);
   }
   for (const k of ["CHZZK_CLIENT_ID", "CHZZK_CLIENT_SECRET", "CI_VERIFY_TOKEN"]) expect(String(e[k])).toMatch(/^dev-/);
+  // 치지직 앱에 등록된 개발용 리디렉션 URL = PUBLIC_ORIGIN + 콜백 경로(바이트까지)
+  expect(e.CHZZK_REDIRECT_URI).toBe(DEV_REDIRECT_URI);
+  expect(e.CHZZK_REDIRECT_URI).toBe(String(e.PUBLIC_ORIGIN) + CALLBACK_PATH);
 });
 
 it("DO·R2 바인딩 이름(AUTH·DIST)", () => {

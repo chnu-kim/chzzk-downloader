@@ -401,6 +401,8 @@ export function preflight(env) {
   const missing = RELEASE_SECRETS.filter((n) => !env[n]);
   if (missing.length) return { code: 1, message: preflightMessage(missing), missing };
   if (env.RELEASE_MODE !== 'tag' && env.RELEASE_MODE !== 'dry') return { code: 1, message: REHEARSAL_MESSAGE, missing };
+  // 매니페스트 url이 `${DIST_BASE_URL}/releases/<v>/<file>`이라 값은 경로 없는 https 출처여야 한다(cicd.md 82 (가)). 값은 찍지 않는다
+  if (distBaseProblems(env.DIST_BASE_URL).length) return { code: 1, message: 'DIST_BASE_URL은 경로 없는 https 출처여야 한다(값은 찍지 않는다)', missing: [] };
   return { code: 0, message: null, missing };
 }
 

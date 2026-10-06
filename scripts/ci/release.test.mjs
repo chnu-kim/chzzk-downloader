@@ -139,12 +139,42 @@ test('preflight: 정확한 메시지, 리허설은 시크릿이 있어도 멈춘
     '릴리스 시크릿 없음: R2_BUCKET, DIST_BASE_URL. 빌드·설치 스모크·수집·서명·매니페스트(가짜 S3, stage)까지는 통과, 업로드하지 않음',
   );
   assert.deepEqual(preflight({ RELEASE_MODE: 'tag' }).missing, RELEASE_SECRETS);
-  const all = Object.fromEntries(RELEASE_SECRETS.map((n) => [n, 'x']));
+  const all = { ...Object.fromEntries(RELEASE_SECRETS.map((n) => [n, 'x'])), DIST_BASE_URL: 'https://dist.example.test' };
   assert.equal(preflight({ ...all, RELEASE_MODE: 'tag' }).code, 0);
   assert.equal(preflight({ ...all, RELEASE_MODE: 'dry' }).code, 0);
   assert.equal(preflight({ ...all, RELEASE_MODE: 'rehearsal' }).message, REHEARSAL_MESSAGE);
   assert.equal(preflight({ ...all, RELEASE_MODE: '' }).code, 1);
   assert.deepEqual(preflight({ ...all, R2_BUCKET: '', RELEASE_MODE: 'tag' }).missing, ['R2_BUCKET']);
+});
+
+test('preflight: DIST_BASE_URL은 경로 없는 https 출처(값은 메시지에 없다), 리허설 판정이 먼저', () => {
+  const all = { ...Object.fromEntries(RELEASE_SECRETS.map((n) => [n, 'x'])), DIST_BASE_URL: 'https://dist.example.test' };
+  for (const bad of ['x', 'http://dist.example.test', 'https://dist.example.test/', 'https://dist.example.test/releases', 'https://u:p@dist.example.test', 'https://DIST.example.test']) {
+    for (const RELEASE_MODE of ['tag', 'dry']) {
+      const r = preflight({ ...all, DIST_BASE_URL: bad, RELEASE_MODE });
+      assert.equal(r.code, 1, `${RELEASE_MODE} ${bad}`);
+      assert.equal(r.message, 'DIST_BASE_URL은 경로 없는 https 출처여야 한다(값은 찍지 않는다)');
+      assert.deepEqual(r.missing, []);
+      assert.ok(!r.message.includes('example.test'));
+    }
+    // 리허설은 값이 틀려도 리허설 메시지다(업로드 경계가 먼저)
+    assert.equal(preflight({ ...all, DIST_BASE_URL: bad, RELEASE_MODE: 'rehearsal' }).message, REHEARSAL_MESSAGE);
+  }
+  // 없으면 시크릿 없음 메시지가 먼저
+  assert.deepEqual(preflight({ ...all, DIST_BASE_URL: '', RELEASE_MODE: 'tag' }).missing, ['DIST_BASE_URL']);
+});
+
+test('워크플로: DIST_BASE_URL은 저장소 secret, R2_BUCKET은 저장소 변수(cicd.md 구현 중 변경 82 (다)·84)', () => {
+  for (const f of ['release.yml', 'rollback.yml']) {
+    const t = readFileSync(join(ROOT, '.github/workflows', f), 'utf8');
+    assert.ok(!/vars\.DIST_BASE_URL/.test(t), `${f}: vars.DIST_BASE_URL`);
+    assert.ok(!/secrets\.R2_BUCKET/.test(t), `${f}: secrets.R2_BUCKET`);
+    for (const m of t.matchAll(/^\s+DIST_BASE_URL: (.+)$/gm)) assert.equal(m[1], '${{ secrets.DIST_BASE_URL }}', f);
+    for (const m of t.matchAll(/^\s+R2_BUCKET: (.+)$/gm)) assert.equal(m[1], '${{ vars.R2_BUCKET }}', f);
+  }
+  // 값이 있는 곳: 업로드·확인·되돌리기·배포 뒤 검사·보존 상한이 읽는 작업 전부
+  const rel = readFileSync(join(ROOT, '.github/workflows/release.yml'), 'utf8');
+  assert.equal([...rel.matchAll(/^\s+DIST_BASE_URL: /gm)].length, 4);
 });
 
 test('concurrency: 어떤 실행도 대기 중에 조용히 취소되지 않는다(태그마다 그룹, rollback은 실행마다, 리허설끼리만 묶음)', () => {

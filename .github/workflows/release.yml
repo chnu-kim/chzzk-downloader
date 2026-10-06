@@ -341,10 +341,10 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          # 계정 id·버킷 이름도 환경 시크릿이다(공개 로그의 단계 env에 값이 찍히지 않게, cicd.md §8)
+          # 계정 id는 환경 시크릿(공개 로그의 단계 env에 값이 찍히지 않게), 버킷 이름은 wrangler.jsonc에 커밋된 값이라 저장소 변수다(cicd.md 구현 중 변경 82 (다))
           R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
-          R2_BUCKET: ${{ secrets.R2_BUCKET }}
-          DIST_BASE_URL: ${{ vars.DIST_BASE_URL }}
+          R2_BUCKET: ${{ vars.R2_BUCKET }}
+          DIST_BASE_URL: ${{ secrets.DIST_BASE_URL }}
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: xtask-bin-${{ github.run_id }}
@@ -365,10 +365,10 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          # 계정 id·버킷 이름도 환경 시크릿이다(공개 로그의 단계 env에 값이 찍히지 않게, cicd.md §8)
+          # 계정 id는 환경 시크릿(공개 로그의 단계 env에 값이 찍히지 않게), 버킷 이름은 wrangler.jsonc에 커밋된 값이라 저장소 변수다(cicd.md 구현 중 변경 82 (다))
           R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
-          R2_BUCKET: ${{ secrets.R2_BUCKET }}
-          DIST_BASE_URL: ${{ vars.DIST_BASE_URL }}
+          R2_BUCKET: ${{ vars.R2_BUCKET }}
+          DIST_BASE_URL: ${{ secrets.DIST_BASE_URL }}
 
   # latest.json을 보고 결정표대로 확인한다(release.mjs verifyPlan): 이번 버전이면 다시 받아 sha256·서명(커밋된 release/updater.pub)·
   # 스키마·버전·latest.json을 확인하고, 판정 실패면 prev(없으면 releases/<v>/previous)로 되돌린 뒤 빨강 → report가 release 이슈.
@@ -404,10 +404,10 @@ jobs:
           XTASK_SHA256: ${{ needs.xtask.outputs.sha256 }}
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          # 계정 id·버킷 이름도 환경 시크릿이다(공개 로그의 단계 env에 값이 찍히지 않게, cicd.md §8)
+          # 계정 id는 환경 시크릿(공개 로그의 단계 env에 값이 찍히지 않게), 버킷 이름은 wrangler.jsonc에 커밋된 값이라 저장소 변수다(cicd.md 구현 중 변경 82 (다))
           R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
-          R2_BUCKET: ${{ secrets.R2_BUCKET }}
-          DIST_BASE_URL: ${{ vars.DIST_BASE_URL }}
+          R2_BUCKET: ${{ vars.R2_BUCKET }}
+          DIST_BASE_URL: ${{ secrets.DIST_BASE_URL }}
           # Phase 3: worker면 DIST_BASE_URL + CI_VERIFY_TOKEN으로 Worker를 거쳐 받는다(클라이언트가 받는 URL 그대로)
           VERIFY_VIA: ${{ vars.VERIFY_VIA }}
           CI_VERIFY_TOKEN: ${{ secrets.CI_VERIFY_TOKEN }}
@@ -489,7 +489,7 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CI_VERIFY_TOKEN: ${{ secrets.CI_VERIFY_TOKEN }}
-          DIST_BASE_URL: ${{ vars.DIST_BASE_URL }}
+          DIST_BASE_URL: ${{ secrets.DIST_BASE_URL }}
           # superseded 가드가 S3로 latest.json을 읽는다(VERIFY_VIA와 상관없이, W8-2 (마))
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}

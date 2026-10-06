@@ -123,7 +123,7 @@
 - [ ] W6 랜딩·관리 화면(CSRF·XSS, 내 기기)
 - [ ] W7 wrangler dev E2E(gate `worker-e2e`, D14 관찰)
 - [ ] W8 릴리스 연결(`release.mjs worker`·`worker-bundle`·`deploy-worker`, `vars.DIST_BASE_URL` → `secrets.`, R2 릴리스 보존 상한 prune — worker.md 구현 중 변경 11. prune 전에 `release.mjs` `cmpSemver`를 공유 `semver-vectors.json`을 읽는 `release.test.mjs`와 BigInt·u64 규칙으로 맞춘다 — 구현 중 변경 16 (마))
-- [ ] W9 배포 뒤(사용자와): Worker secret 4개, 수동 첫 배포, production 리디렉션 URL, 저장소 secret·변수, 전환 스위치(Q4 WAF는 쓰지 않음, worker.md 구현 중 변경 11), 무료 한도 사용량 확인(인증 없이 DO를 부르는 `/auth/login/:handle`·`/auth/done`·`/auth/poll`·`/api/me`·`/auth/refresh`·`/auth/logout`의 요청 수도 본다, 구현 중 변경 28 (차))
+- [ ] W9 배포 뒤(사용자와): 치지직 code 묶임 실측(worker.md 구현 중 변경 29: 다른 state·재사용 교환 거부 확인), Worker secret 4개, 수동 첫 배포, production 리디렉션 URL, 저장소 secret·변수, 전환 스위치(Q4 WAF는 쓰지 않음, worker.md 구현 중 변경 11), 무료 한도 사용량 확인(인증 없이 DO를 부르는 `/auth/login/:handle`·`/auth/done`·`/auth/poll`·`/api/me`·`/auth/refresh`·`/auth/logout`의 요청 수도 본다, 구현 중 변경 28 (차))
 - [ ] Phase 3b A1~A5 앱: `SessionStore`·`AuthService` / command·DTO·`build.rs` 주소 규칙 / 로그인 화면·배너·copy deck / updater command / `OwnershipGate` 활성(G-ID 뒤)
 
 ### Phase 4 — CI/CD (설계: `docs/design/cicd.md`)

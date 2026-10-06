@@ -32,6 +32,7 @@ const SCRIPTS = [
   'scripts/ci/toolchain.mjs',
   'scripts/ci/repo-settings.mjs',
   'scripts/ci/pin-actions.mjs',
+  'scripts/ci/private-scan.mjs',
   'scripts/fixtures/gen-fixtures.mjs',
 ];
 

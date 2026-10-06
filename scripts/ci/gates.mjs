@@ -311,6 +311,11 @@ export const GATES = {
     needs: ['gh'],
     steps: [{ cmd: ['node', S('repo-settings.mjs'), '--check'] }],
   },
+  'private-scan': {
+    desc: '비공개 denylist(nightly, 환경 audit의 secret PRIVATE_DENYLIST, env로 받는다)로 추적 트리와 공개 이력 전체를 검사. 위치만 찍는다. secret이 없거나 해시 목록이 아니면 실패',
+    ciOnly: true,
+    steps: [{ cmd: ['node', S('private-scan.mjs')] }],
+  },
   'fuzz-lock': {
     desc: 'fuzz/Cargo.lock이 최신(cargo metadata --locked)이고 루트 Cargo.lock과 같은 버전인지, fuzz target이 stable로 컴파일되는지(cargo check, PR lint)',
     needs: ['cargo'],

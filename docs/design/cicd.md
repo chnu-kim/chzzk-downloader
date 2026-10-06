@@ -209,7 +209,7 @@ git이 stdin으로 주는 `<local_ref> <local_sha> <remote_ref> <remote_sha>`를
 | `master-failure` | `ci.yml` `report`(push master, `ci-ok` 결과) | `issues: write`, `actions: write`(keep-alive) |
 | `nightly-stale` | `ci.yml` `report` | 위와 같음 |
 | `nightly-report` | `ci.yml` `report`(마지막 예약 실행의 `nightly report` 결과), `nightly.yml` `report`(앞 실행의 결과) | 각 작업의 권한 |
-| `drift`, `drift-log`, `advisories`, `pins`, `fuzz`, `mutants`, `ruleset-drift`, `toolchain`, `e2e-native-linux`, `e2e-native-windows` | `nightly.yml` `report`(검사 작업들은 `contents: read`, `drift-log`는 `actions: read`를 더한다) | `issues: write`, `actions: read` |
+| `drift`, `drift-log`, `advisories`, `pins`, `fuzz`, `mutants`, `ruleset-drift`, `private-scan`, `toolchain`, `e2e-native-linux`, `e2e-native-windows` | `nightly.yml` `report`(검사 작업들은 `contents: read`, `drift-log`는 `actions: read`를 더한다) | `issues: write`, `actions: read` |
 | `release` | `release.yml` `report`(실패·리허설 실패) | `issues: write` |
 
 ### 4.2 Ratchet(`ci/ratchet.json`)
@@ -346,6 +346,7 @@ D14에 따라 `e2e-web`·`e2e-native`는 2주 관찰 뒤 `ci-ok`에 넣는다. �
 | | `CLOUDFLARE_API_TOKEN`, `CI_VERIFY_TOKEN` | secret(Phase 3) | Worker 배포, Worker 경유 검증 |
 | Environment `drift` (branch: master) | `CHZZK_LIVE_HLS`, `CHZZK_LIVE_DASH`, `CHZZK_LIVE_CLIP` | secret | 사용자 본인 영상의 videoNo·clipId |
 | Environment `audit` (branch: master) | `RULESET_READ_TOKEN` | secret | 필수(`GITHUB_TOKEN`은 403, 구현 중 변경 53 (다)). 이 저장소 하나로 한정한 fine-grained PAT, 권한은 Administration·Environments 읽기(+ Metadata) |
+| | `PRIVATE_DENYLIST` | secret | 비공개 denylist(구현 중 변경 77): `public-scan.mjs --hash` 출력(줄마다 64 hex, `blob:`·`commit:` 접두). nightly `private-scan`이 트리·공개 이력 전체를 본다 |
 | 저장소 | `release/updater.pub` | 커밋 파일 | 공개 키(비밀 아님) |
 
 fork PR과 일반 브랜치에는 어느 것도 주어지지 않는다.
@@ -560,3 +561,5 @@ fork PR과 일반 브랜치에는 어느 것도 주어지지 않는다.
 ### 후속: 브랜치 `ci/speedup`(2026-10-06)
 
 76. **툴체인 1.96.1 → 1.99.0.** 54의 `toolchain` 고리가 빨갰던 것(최신 stable 1.99.0)을 닫는다. 고정 원천은 `rust-toolchain.toml` 하나다(워크플로·`tools.json`에 Rust 버전을 적지 않는다, 1). MSRV(`rust-version` 1.90)는 `msrv` gate가 `cargo hack --rust-version`으로 따로 보므로(§9) 올리지 않았다. 로컬(macOS) 확인: `fmt`·`rust`(clippy `-D warnings` + test)·`chzzk-app` clippy(보통·`--features e2e`)·`fuzz-lock`·`toolchain` 통과, 새 clippy 경고 없음. Windows·Linux 전용 `#[cfg]` 코드와 커버리지·크기 ratchet은 이 브랜치의 CI 실행이 본다(결과는 78). rust-cache 키에 rustc 버전이 들어가므로 이 변경 뒤 첫 master 실행까지 PR은 master 캐시를 못 쓴다(cold).
+
+77. **비공개 denylist 고리(nightly `private-scan`).** 공개 denylist(`public-denylist.txt`)에는 원문을 되돌릴 수 없는 항목만 둔다(salt가 공개라 짧은 값은 대입으로 풀린다). 그 밖의 항목(채널 이름·영상 번호 등의 해시)은 환경 `audit`의 secret `PRIVATE_DENYLIST`에 두고 이 작업이 매일(`17 18 * * *`)과 dispatch(`only=private-scan`)에 본다. PR에서는 돌지 않는다(작업 if에 `pull_request`가 없고 78이 nightly의 PR 트리거를 없앤다). (가) **gate `private-scan`**(`ciOnly`, 로컬 클론은 `refs/remotes/private/*` 때문에 `--all-history`가 늘 걸린다) = `private-scan.mjs`: secret을 단계 `env:`로만 받아 형식(줄마다 `^(blob:|commit:)?[0-9a-f]{64}$`, `#` 주석)을 확인하고 `$RUNNER_TEMP`의 임시 파일(0600)에 써서 `public-scan.mjs --denylist <파일>`(추적 트리)과 `--all-history --denylist <파일>`을 차례로 돌린 뒤 `finally`에서 지운다. 출력은 스캐너 그대로 위치(`파일:줄`, `경로@커밋:줄`, `커밋 <sha> 메시지:줄`, 경로·ref 이름)와 규칙 이름뿐이고 원문·해시는 찍지 않는다(테스트가 로그에 원문·해시가 없음을 본다). 단, 경로 이름이나 ref 이름 자체가 걸리면 위치로 그 이름이 찍힌다(이미 공개 저장소에 있는 이름이다). (나) **secret이 없거나 비면**(master가 아닌 ref는 환경 밖이라 늘 그렇다) `PRIVATE_DENYLIST가 없다`로, **해시 목록이 아니면**(원문을 잘못 넣음) 틀린 줄 번호만 찍고 실패한다. 둘 다 kind `no_secret`(새 kind). 발견은 kind `leak`(새 kind), 스캐너 오류(2)는 `unknown`. 이슈 본문은 다른 고리처럼 허용 목록 필드(실행 URL·SHA·작업·kind)와 고정 할 일 문구(`KIND_NOTES['private-scan']`)뿐이다. (다) **작업**: `environment: ${{ github.ref == 'refs/heads/master' && 'audit' || '' }}`(ruleset-drift와 같은 식: 환경 `audit`은 배포 브랜치가 master뿐이라 브랜치 dispatch에 환경을 주면 배포 보호로 실패한다), `permissions: contents: read`, `fetch-depth: 0`, `timeout-minutes: 15`(공개 클론 214커밋에 합성 목록으로 로컬 약 20초). 고리 `ci-loop:private-scan`(`NEEDS_LOOPS` `staleHours` 72), report needs·dispatch `only`에 더했다. (라) **확인의 한계**: 환경 `audit`이 master만 배포하므로 secret이 있는 녹색 실행은 머지 뒤 `gh workflow run nightly.yml --ref master -f only=private-scan`으로만 볼 수 있다. 브랜치에서는 dispatch(`only=private-scan loop_test=true`)로 `no_secret` 실패와 시험 이름공간 이슈(`ci-loop-test:private-scan`)를 확인했다(실행 번호는 78).

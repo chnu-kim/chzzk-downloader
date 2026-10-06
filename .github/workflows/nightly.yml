@@ -3,6 +3,7 @@ name: nightly
 # 예약 고리(docs/design/cicd.md §2 위치 N·W, §4). 커밋과 무관하게 환경(러너 이미지·WebView 드라이버·실서버·권고 DB)이
 # 바뀌어 빨개질 수 있는 검사를 PR 밖에서 돌리고, 실패하면 작업마다 이슈를 열고 다음 녹색에 닫는다(issue.mjs, report 작업).
 #   매일(17 18 * * *): nightly e2e-native (linux), nightly drift, nightly advisories, nightly pins, nightly ruleset-drift,
+#                       nightly private-scan(환경 audit의 비공개 denylist),
 #                       nightly fuzz
 #   매주(47 18 * * 0): nightly e2e-native (windows), nightly toolchain, nightly mutants(shard 4개 → 합 → ratchet)
 #   - e2e-native (linux): ci.yml e2e-native(코드 PR·master)와 같은 gate다(러너 이미지가 바뀌어도 매일 확인한다).
@@ -32,7 +33,7 @@ on:
         description: "이 작업만 돌린다(all이면 매일 작업 전부, 매주 작업은 weekly도 켜야 돈다)"
         type: choice
         default: all
-        options: [all, e2e-native, drift, advisories, pins, ruleset-drift, fuzz, toolchain, mutants]
+        options: [all, e2e-native, drift, advisories, pins, ruleset-drift, private-scan, fuzz, toolchain, mutants]
       weekly:
         description: "only=all일 때 매주 작업(Windows 네이티브 E2E, toolchain, mutants)도 돌린다"
         type: boolean
@@ -295,6 +296,36 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.RULESET_READ_TOKEN || github.token }}
 
+  # 비공개 denylist(구현 중 변경 77): 공개 denylist에 둘 수 없는 항목(되돌릴 수 있는 짧은 값의 해시)은 환경 audit의 secret
+  # PRIVATE_DENYLIST에만 있다. 추적 트리와 공개 이력 전체(--all-history, 그래서 fetch-depth 0)를 본다. secret은 단계 env로만
+  # 넘기고 private-scan.mjs가 임시 파일(0600)에 썼다가 지운다. 로그는 위치·규칙 이름뿐이다. 환경 audit은 master만 배포할 수
+  # 있어 master가 아닌 ref(브랜치 dispatch)는 환경 밖에서 돌고 secret이 없어 no_secret으로 실패한다(고리 확인용). PR에서는
+  # 돌지 않는다(if에 pull_request가 없다).
+  private-scan:
+    name: nightly private-scan
+    if: github.event.schedule == '17 18 * * *' || (github.event_name == 'workflow_dispatch' && (inputs.only == 'all' || inputs.only == 'private-scan'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: ${{ github.ref == 'refs/heads/master' && 'audit' || '' }}
+    permissions:
+      contents: read # checkout
+    outputs:
+      kinds: ${{ steps.scan.outputs.kinds }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # --all-history가 모든 커밋을 보려면 얕은 클론이면 안 된다
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - id: scan
+        name: private-scan
+        run: node scripts/ci/run.mjs private-scan
+        env:
+          PRIVATE_DENYLIST: ${{ secrets.PRIVATE_DENYLIST }}
+
   # cargo-fuzz 4 target(url·info·mpd·hls), 고정 nightly(tools.json rust-nightly), target당 300초. crash 입력은 artifact로.
   fuzz:
     name: nightly fuzz
@@ -426,7 +457,7 @@ jobs:
   # 시간 초과로 끝난 것은 실행 취소가 아니라 그대로 보고한다. 이 작업 자신의 실패는 다음 보고가 nightly-report로 본다.
   report:
     name: nightly report
-    needs: [e2e-native-linux, e2e-native-windows, drift, drift-log, advisories, pins, ruleset-drift, fuzz, toolchain, mutants]
+    needs: [e2e-native-linux, e2e-native-windows, drift, drift-log, advisories, pins, ruleset-drift, private-scan, fuzz, toolchain, mutants]
     if: >-
       !cancelled() && (github.event_name == 'schedule'
       || (github.event_name == 'workflow_dispatch' && (inputs.loop_test || needs.drift-log.result == 'failure')))

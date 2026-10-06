@@ -101,6 +101,12 @@ test('장애 주입: before는 적용하지 않고, after는 적용한 뒤 응�
     assert.equal((await call(port, 'GET', 'k')).status, 429);
     assert.equal((await call(port, 'GET', 'k')).status, 200);
     assert.equal(await fault({ method: 'GET', key: 'k', mode: 'sideways', status: 500, times: 1 }), 400);
+    // skip: 처음 skip번은 그대로 지나가고 그 뒤 times번 실패한다(두 번째 읽기만 실패시키기)
+    assert.equal(await fault({ method: 'GET', key: 'k', mode: 'before', status: 503, times: 1, skip: 1 }), 204);
+    assert.equal((await call(port, 'GET', 'k')).status, 200);
+    assert.equal((await call(port, 'GET', 'k')).status, 503);
+    assert.equal((await call(port, 'GET', 'k')).status, 200);
+    for (const skip of [-1, 1.5, '1']) assert.equal(await fault({ method: 'GET', key: 'k', mode: 'before', status: 503, times: 1, skip }), 400, String(skip));
   } finally {
     server.close();
   }

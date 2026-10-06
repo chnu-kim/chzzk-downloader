@@ -39,8 +39,16 @@ import {
   WORKER_CHECKS,
   WORKER_SECRETS,
   workerMissingMessage,
+  parseSecretNames,
+  secretCheck,
+  WORKER_CHECK_DEFAULTS,
+  WORKER_LIMITS,
+  WORKER_REQUIRED_SECRETS,
+  workerDeploySteps,
+  workerWorstCaseMs,
   wranglerDeployArgs,
   wranglerEnv,
+  wranglerSecretListArgs,
 } from './release.mjs';
 
 const PUB = readFileSync(join(ROOT, 'release/updater.pub'), 'utf8');
@@ -262,6 +270,9 @@ test('verify 결정표: latest.json 상태 → full | superseded | not-promoted'
 test('경계: tag는 덮어쓰기를 받지 않고, dry는 루프백 엔드포인트만', () => {
   assert.deepEqual(boundaryProblems({ RELEASE_MODE: 'tag' }), []);
   assert.ok(DRY_OVERRIDES.includes('WORKER_BUNDLE'), '묶음 위치 덮어쓰기도 tag 모드가 거부한다');
+  // secret list 출력 주입과 prune 목록 페이지 크기(잘림 시험용)도 dry에서만
+  assert.ok(DRY_OVERRIDES.includes('WORKER_SECRET_LIST'));
+  assert.ok(DRY_OVERRIDES.includes('XTASK_LIST_MAX_KEYS'));
   for (const n of DRY_OVERRIDES) assert.equal(boundaryProblems({ RELEASE_MODE: 'tag', [n]: 'x' }).length, 1, n);
   for (const e of ['http://127.0.0.1:9000', 'http://localhost:1', 'http://[::1]:65535']) assert.deepEqual(boundaryProblems({ RELEASE_MODE: 'dry', R2_ENDPOINT: e }), [], e);
   for (const e of ['', 'https://127.0.0.1:9000', 'http://127.0.0.1.evil:9000', 'https://acct.r2.cloudflarestorage.com', 'http://10.0.0.1:9000']) {
@@ -645,4 +656,131 @@ test('release.yml: worker-bundle(시크릿·환경 없음)·deploy-worker(묶음
   assert.match(dw, /worker-bundle-\$\{\{ github\.run_id \}\}/);
   for (const k of ['CLOUDFLARE_API_TOKEN', 'CLOUDFLARE_ACCOUNT_ID', 'CI_VERIFY_TOKEN']) assert.match(dw, new RegExp(`${k}: \\$\\{\\{ secrets\\.${k} \\}\\}`));
   assert.ok(needsOf('report').includes('worker-bundle'));
+  // Worker 배포는 저장소 공용 그룹에서 줄 서고, 진행 중인 배포를 취소하지 않는다(worker.md 구현 중 변경 36)
+  assert.match(dw, /^ {4}concurrency:\n {6}group: worker-deploy\n {6}cancel-in-progress: false\n/m);
+  // 작업 timeout은 release.mjs worker의 최악 시간 + 준비 여유(5분)보다 크다
+  const tm = Number(/^ {4}timeout-minutes: (\d+)$/m.exec(dw)?.[1]);
+  assert.ok(tm * 60_000 > workerWorstCaseMs() + 5 * 60_000, `timeout-minutes ${tm} vs 최악 ${workerWorstCaseMs()}ms`);
+});
+
+test('workerWorstCaseMs: 상한 합(기본값 1438초)이고 요청·하위 프로세스 상한을 모두 센다', () => {
+  assert.equal(workerWorstCaseMs(), 1_438_000);
+  assert.equal(WORKER_CHECKS.length, 7);
+  // 한 상한을 늘리면 최악 시간도 그만큼 는다(빠뜨린 항이 없다)
+  for (const [k, n] of [['s3ReadMs', 3], ['extractMs', 1], ['secretListMs', 1], ['deployMs', 1], ['requestMs', 1 + 7 * WORKER_CHECK_DEFAULTS.attempts]]) {
+    assert.equal(workerWorstCaseMs(WORKER_CHECK_DEFAULTS, { ...WORKER_LIMITS, [k]: WORKER_LIMITS[k] + 1 }) - workerWorstCaseMs(), n, k);
+  }
+  assert.equal(workerWorstCaseMs({ ...WORKER_CHECK_DEFAULTS, deadlineMs: WORKER_CHECK_DEFAULTS.deadlineMs + 1 }) - workerWorstCaseMs(), 1);
+});
+
+test('secret list: 인자는 묶음 설정의 이름만(json), 출력은 줄 머리 배열을 찾고 형식이 틀리면 error', () => {
+  assert.deepEqual(wranglerSecretListArgs(), ['secret', 'list', '--config', 'dist/wrangler.json', '--format', 'json']);
+  const j = (names) => JSON.stringify(names.map((name) => ({ name, type: 'secret_text' })), null, '  ');
+  assert.deepEqual(parseSecretNames(j(['A', 'B'])), { names: ['A', 'B'] });
+  assert.deepEqual(parseSecretNames('[]'), { names: [] });
+  // 앞뒤 안내 줄(대괄호가 있어도)은 건너뛴다
+  assert.deepEqual(parseSecretNames(`▲ [WARNING] x\n[note] y\n${j(['A'])}\n끝\n`), { names: ['A'] });
+  for (const bad of ['', 'nope', '{"name":"A"}', '[1,2]', '[{"type":"secret_text"}]', '[{"name":3}]', '[\n{"name":"A"']) assert.ok(parseSecretNames(bad).error, bad);
+  assert.deepEqual(WORKER_REQUIRED_SECRETS, ['CHZZK_CLIENT_ID', 'CHZZK_CLIENT_SECRET', 'CI_VERIFY_TOKEN']);
+  assert.deepEqual(secretCheck([...WORKER_REQUIRED_SECRETS, 'ADMIN_CHANNEL_IDS']), { missing: [], bootstrap: false });
+  // ADMIN_CHANNEL_IDS가 없으면 부트스트랩(§8.3): 필수가 아니다
+  assert.deepEqual(secretCheck(WORKER_REQUIRED_SECRETS), { missing: [], bootstrap: true });
+  assert.deepEqual(secretCheck(['CHZZK_CLIENT_ID', 'OTHER']), { missing: ['CHZZK_CLIENT_SECRET', 'CI_VERIFY_TOKEN'], bootstrap: true });
+});
+
+// 배포 순서(묶음 확인 뒤): 가짜 의존성으로 secret 확인·latest 다시 읽기·배포·검사·실패 뒤 다시 읽기를 본다
+const latestOf = (v) => ({ code: 0, data: Buffer.from(JSON.stringify({ version: v })) });
+function deployHarness({ secrets = [...WORKER_REQUIRED_SECRETS, 'ADMIN_CHANNEL_IDS'], listStatus = 0, listOut, reads = [latestOf('1.3.0')], deployCode = 0, checkCode = 0, dryRun = false } = {}) {
+  const calls = { list: 0, read: 0, deploy: 0, checks: [] };
+  const out = [];
+  const q = [...reads];
+  const run = workerDeploySteps({
+    version: '1.3.0',
+    dryRun,
+    listSecrets: () => {
+      calls.list++;
+      return { status: listStatus, stdout: listOut ?? JSON.stringify(secrets.map((name) => ({ name, type: 'secret_text' }))) };
+    },
+    readLatest: () => {
+      calls.read++;
+      return q.length > 1 ? q.shift() : q[0];
+    },
+    deploy: () => {
+      calls.deploy++;
+      return deployCode;
+    },
+    checks: async (bytes) => {
+      calls.checks.push(bytes && JSON.parse(bytes.toString()).version);
+      return { code: checkCode };
+    },
+    emit: (kind, m) => out.push(`${kind}: ${m}`),
+  });
+  return run.then((code) => ({ code, calls, out: out.join('\n') }));
+}
+
+test('workerDeploySteps: 정상은 secret 확인 → 다시 읽기 → 배포 → 검사(다시 읽은 바이트로) 0', async () => {
+  const r = await deployHarness();
+  assert.equal(r.code, 0);
+  assert.deepEqual({ list: r.calls.list, read: r.calls.read, deploy: r.calls.deploy }, { list: 1, read: 1, deploy: 1 });
+  assert.deepEqual(r.calls.checks, ['1.3.0']);
+  assert.equal(r.out, '');
+});
+
+test('workerDeploySteps: secret이 없으면 배포하지 않는다(필수 없음 1·목록 실패 2·출력 이상 2), ADMIN_CHANNEL_IDS만 없으면 경고 뒤 배포', async () => {
+  let r = await deployHarness({ secrets: ['CHZZK_CLIENT_ID', 'ADMIN_CHANNEL_IDS'] });
+  assert.equal(r.code, 1);
+  assert.equal(r.calls.deploy + r.calls.read, 0);
+  assert.match(r.out, /^error: .*Worker secret 없음: CHZZK_CLIENT_SECRET, CI_VERIFY_TOKEN\./m);
+  assert.doesNotMatch(r.out, /CHZZK_CLIENT_ID|ADMIN_CHANNEL_IDS/);
+  r = await deployHarness({ listStatus: 1 });
+  assert.equal(r.code, 2);
+  assert.equal(r.calls.deploy, 0);
+  assert.match(r.out, /secret list 실패\(exit 1\)/);
+  r = await deployHarness({ listOut: 'Error: not json' });
+  assert.equal(r.code, 2);
+  assert.equal(r.calls.deploy, 0);
+  assert.doesNotMatch(r.out, /not json/, '출력 내용은 싣지 않는다');
+  r = await deployHarness({ secrets: WORKER_REQUIRED_SECRETS });
+  assert.equal(r.code, 0);
+  assert.equal(r.calls.deploy, 1);
+  assert.match(r.out, /^warning: .*ADMIN_CHANNEL_IDS.*부트스트랩/m);
+});
+
+test('workerDeploySteps: 배포 직전 다시 읽기가 superseded면 배포 없이 0, 낮아졌으면 1, 읽지 못하면 2', async () => {
+  let r = await deployHarness({ reads: [latestOf('1.4.0')] });
+  assert.equal(r.code, 0);
+  assert.equal(r.calls.deploy, 0);
+  assert.equal(r.calls.checks.length, 0);
+  assert.match(r.out, /^notice: release worker: 배포 직전에 다시 읽은 latest\.json이 더 높은 1\.4\.0다.*superseded/m);
+  r = await deployHarness({ reads: [latestOf('1.2.0')] });
+  assert.equal(r.code, 1);
+  assert.equal(r.calls.deploy, 0);
+  r = await deployHarness({ reads: [{ code: 1, data: null }] });
+  assert.equal(r.code, 1, 'latest.json이 사라지면 not-promoted');
+  assert.equal(r.calls.deploy, 0);
+  r = await deployHarness({ reads: [{ code: 2, data: null }] });
+  assert.equal(r.code, 2);
+  assert.equal(r.calls.deploy, 0);
+  // dry는 다시 읽기까지 하고 배포 전에 멈춘다
+  r = await deployHarness({ dryRun: true });
+  assert.equal(r.code, 0);
+  assert.deepEqual({ read: r.calls.read, deploy: r.calls.deploy, checks: r.calls.checks.length }, { read: 1, deploy: 0, checks: 0 });
+  r = await deployHarness({ dryRun: true, reads: [latestOf('1.4.0')] });
+  assert.match(r.out, /superseded/);
+});
+
+test('workerDeploySteps: deploy 실패는 2(검사 없음), 검사 실패 뒤 다시 읽어 다른 태그가 승격됐으면 오류에 싣는다', async () => {
+  let r = await deployHarness({ deployCode: 1 });
+  assert.equal(r.code, 2);
+  assert.equal(r.calls.checks.length, 0);
+  r = await deployHarness({ checkCode: 1, reads: [latestOf('1.3.0'), latestOf('1.4.0')] });
+  assert.equal(r.code, 1);
+  assert.equal(r.calls.read, 2);
+  assert.match(r.out, /^error: worker: 배포 뒤 검사 실패\. 다른 태그 1\.4\.0가 승격됐다/m);
+  r = await deployHarness({ checkCode: 2, reads: [latestOf('1.3.0'), latestOf('1.3.0')] });
+  assert.equal(r.code, 2);
+  assert.doesNotMatch(r.out, /다른 태그/);
+  r = await deployHarness({ checkCode: 1, reads: [latestOf('1.3.0'), { code: 2, data: null }] });
+  assert.equal(r.code, 1, '다시 읽기 실패는 검사 결과를 바꾸지 않는다');
+  assert.doesNotMatch(r.out, /다른 태그/);
 });

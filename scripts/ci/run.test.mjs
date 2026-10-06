@@ -203,6 +203,8 @@ test('hookGates: 바뀐 경로로 조건부 gate를 고른다', () => {
   // 훅·.gitattributes만 바뀌어도 parity(인덱스 모드 100755 등)를 본다
   assert.deepEqual(hookGates('pre-push', ['.githooks/pre-push']), ['scripts-test']);
   assert.deepEqual(hookGates('pre-push', ['.gitattributes']), ['scripts-test']);
+  // release.test.mjs가 import하는 배포 뒤 검사 계약 표는 worker와 scripts-test 둘 다
+  assert.deepEqual(hookGates('pre-push', ['worker/test/deploy-contract.mjs']), ['worker', 'scripts-test']);
   assert.deepEqual(hookGates('pre-commit', ['.githooks/pre-push']), ['typos', 'parity']);
   assert.deepEqual(hookGates('pre-commit', ['scripts/ci/gates.mjs']), ['typos', 'parity']);
 });
@@ -218,6 +220,8 @@ test('gate 표: worker(worker.md §13.2, cicd.md 85)', () => {
       // 불변식이 설치보다 먼저(allowBuilds를 넓힌 변경이 설치 스크립트를 돌리기 전에 멈춘다, cicd.md 86)
       ['node scripts/ci/worker-config.mjs', '.'],
       ['pnpm install --frozen-lockfile', 'worker'],
+      // 배포용 wrangler의 따로인 lockfile(worker-bundle과 같은 인자)
+      ['pnpm install --frozen-lockfile --ignore-scripts', 'worker/deploy'],
       // (CI) 누출 씨앗은 wrangler types·vitest를 감싼다
       ['node scripts/ci/worker-config.mjs --sentinel plant', '.'],
       ['pnpm check', 'worker'],

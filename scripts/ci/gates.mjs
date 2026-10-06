@@ -197,6 +197,9 @@ export const GATES = {
     steps: [
       { cmd: ['node', S('worker-config.mjs')] },
       { cmd: ['pnpm', 'install', '--frozen-lockfile'], cwd: 'worker', env: WRANGLER_ENV },
+      // 배포용 wrangler(worker/deploy)의 따로인 lockfile도 PR에서 설치해 본다(릴리스 worker-bundle 작업과 같은 인자, cicd.md 구현 중 변경 96).
+      // --ignore-scripts라 설치 스크립트는 돌지 않는다
+      { cmd: ['pnpm', 'install', '--frozen-lockfile', '--ignore-scripts'], cwd: 'worker/deploy', env: WRANGLER_ENV },
       { cmd: ['node', S('worker-config.mjs'), '--sentinel', 'plant'] },
       { cmd: ['pnpm', 'check'], cwd: 'worker', env: WRANGLER_ENV },
       { cmd: ['node', S('measure.mjs'), 'tests-worker'], env: WRANGLER_ENV },
@@ -430,7 +433,7 @@ export const GATES = {
     steps: [{ cmd: ['node', S('release.mjs'), 'worker-bundle'] }],
   },
   'release-worker': {
-    desc: 'Worker 배포·확인(release.yml deploy-worker, 환경 release, 태그 + vars.WORKER_DEPLOY_ENABLED): 묶음 sha256·플랫폼·설정 동일성 → superseded 가드 → 묶음의 wrangler로 deploy --no-bundle → §9.4 배포 뒤 검사(health의 build 일치·updater 200/204·음성 셋)',
+    desc: 'Worker 배포·확인(release.yml deploy-worker, 환경 release, 태그 + vars.WORKER_DEPLOY_ENABLED): superseded 가드 → 묶음 sha256·플랫폼·설정 동일성 → 묶음의 wrangler로 secret list(필수 이름) → latest.json 다시 읽기(superseded) → deploy --no-bundle → §9.4 배포 뒤 검사(health의 build 일치·updater 200/204·음성 셋)',
     steps: [{ cmd: ['node', S('release.mjs'), 'worker'] }],
   },
   'release-selftest': {
@@ -482,7 +485,8 @@ export const HOOKS = {
       // pre-commit에는 넣지 않는다(무겁다). release/ 표는 W5 계약 테스트가 읽는다(worker.md §13.2). semver 벡터는 worker vitest가
       // xtask와 함께 읽는다(worker.md 구현 중 변경 14 (다), cicd.md 구현 중 변경 87)
       { gate: 'worker', paths: [/^worker\//, /^scripts\/ci\/worker-config/, /^release\/(latest\.schema|expected-artifacts)\.json$/, /^xtask\/testdata\/semver-vectors\.json$/] },
-      { gate: 'scripts-test', paths: [/^scripts\//, /^\.githooks\//, /^\.gitattributes$/] },
+      // release.test.mjs가 worker/test/deploy-contract.mjs(배포 뒤 검사 계약 표)를 import한다
+      { gate: 'scripts-test', paths: [/^scripts\//, /^\.githooks\//, /^\.gitattributes$/, /^worker\/test\/deploy-contract\.mjs$/] },
       { gate: 'deny', paths: [/^Cargo\.lock$/, /^deny\.toml$/, /(^|\/)Cargo\.toml$/] },
       // 코어 API 변경이 fuzz target을 깨뜨린다(crates/core)
       { gate: 'fuzz-lock', paths: [/^Cargo\.lock$/, /(^|\/)Cargo\.toml$/, /^fuzz\//, /^crates\/core\//] },

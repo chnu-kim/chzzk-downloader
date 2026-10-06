@@ -460,7 +460,14 @@ jobs:
     needs: [gate, xtask, verify, worker-bundle]
     if: vars.WORKER_DEPLOY_ENABLED == 'true' && needs.gate.outputs.mode == 'tag'
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    # release.mjs worker의 최악 시간 workerWorstCaseMs() = 1438초(≈24분: latest.json 읽기 3×90 + 풀기 60 + secret list 120 + deploy 300
+    # + health 310 + 나머지 검사 7×54) + 준비(checkout·setup-node·artifact 둘) 여유 5분 < 35분. release.test.mjs가 이 값을 읽어 본다
+    timeout-minutes: 35
+    # 태그 실행들의 Worker 배포를 저장소 하나로 줄 세운다(superseded 가드와 wrangler deploy 사이 경합을 줄인다, worker.md 구현 중 변경 36).
+    # 대기 자리가 하나뿐이라 세 번째 실행이 대기 중인 실행을 취소할 수 있다(남는 경합, 같은 항목)
+    concurrency:
+      group: worker-deploy
+      cancel-in-progress: false
     environment: release
     permissions:
       contents: read # checkout

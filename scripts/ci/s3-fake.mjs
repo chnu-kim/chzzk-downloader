@@ -55,12 +55,17 @@ export function listXml(bucket, prefix, maxKeys, { keys, truncated }) {
 
 const xmlErr = (code) => `<?xml version="1.0" encoding="UTF-8"?><Error><Code>${code}</Code></Error>`;
 
-// 장애 주입(selftest가 기반 시설 오류를 재현한다). POST /__fault {method, key, mode, status, times}:
+// 장애 주입(selftest가 기반 시설 오류를 재현한다). POST /__fault {method, key, mode, status, times, skip?}:
 //   mode 'before': 요청을 적용하지 않고 status로 답한다(일시 오류 5xx·429).
 //   mode 'after':  요청을 적용한 뒤 응답만 status로 바꾼다(서버는 썼는데 응답을 잃은 경우).
+//   skip(선택, 기본 0): 처음 skip번 맞는 요청은 그대로 지나가게 한다(두 번째 읽기만 실패시키기).
 //   times번 쓰면 사라진다. 서명 검사 전에 처리하는 시험 전용 경로다(가짜 서버는 127.0.0.1에만 열린다).
 export function matchFault(faults, method, key) {
   const f = faults.find((x) => x.times > 0 && x.method === method && x.key === key);
+  if (f && f.skip > 0) {
+    f.skip--;
+    return null;
+  }
   if (f) f.times--;
   return f ?? null;
 }
@@ -86,7 +91,8 @@ export function createFakeS3({ bucket, access, secret, region = 'auto', now = ()
         try {
           const f = JSON.parse(body.toString('utf8'));
           if (!['GET', 'PUT', 'DELETE', 'LIST'].includes(f.method) || typeof f.key !== 'string' || !['before', 'after'].includes(f.mode) || !Number.isInteger(f.status) || !Number.isInteger(f.times)) throw new Error('형식');
-          faults.push({ method: f.method, key: f.key, mode: f.mode, status: f.status, times: f.times });
+          if (f.skip !== undefined && !(Number.isInteger(f.skip) && f.skip >= 0)) throw new Error('형식');
+          faults.push({ method: f.method, key: f.key, mode: f.mode, status: f.status, times: f.times, skip: f.skip ?? 0 });
           return send(204);
         } catch {
           return send(400, xmlErr('BadFault'));

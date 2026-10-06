@@ -28,6 +28,9 @@ updates:
       default-days: 7
     open-pull-requests-limit: 3
     groups:
+      # hmac·sha2·digest는 같은 digest 메이저를 공유해야 해서 하나만 올리면 빌드가 깨진다(2026-10-06 #9·#11). 메이저도 함께 묶는다.
+      rustcrypto:
+        patterns: [hmac, sha2, digest]
       cargo:
         update-types: [minor, patch]
 
@@ -41,6 +44,10 @@ updates:
     cooldown:
       default-days: 7
     open-pull-requests-limit: 3
+    # @types/node는 지원 런타임(package.json engines: Node 22·24) 메이저를 넘기지 않는다. 넘으면 없는 API가 타입 검사를 통과한다.
+    ignore:
+      - dependency-name: "@types/node"
+        update-types: [version-update:semver-major]
     groups:
       npm:
         update-types: [minor, patch]

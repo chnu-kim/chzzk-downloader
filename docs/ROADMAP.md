@@ -122,7 +122,8 @@
 
 자격증명 없이도 `wrangler dev`와 테스트로 개발은 진행한다. 실제 배포는 아래가 갖춰진 뒤 사용자와 함께 한다.
 
-- [ ] 치지직 개발자 앱 등록 (client id / secret, Redirect URI = Worker 콜백 URL)
+- [x] 치지직 개발자 앱 등록 (2026-10-06): 로그인 리디렉션 URL은 **개발용 `http://localhost:8787/auth/callback`**(wrangler dev 기본 포트)을 등록했다. 자격증명은 1Password Environment `chzzk-downloader-worker`(`CHZZK_CLIENT_ID`, `CHZZK_CLIENT_SECRET`)에 있다 — 값을 대화·로그·저장소에 내지 말고 로컬 `.dev.vars`로만 쓴다
+- [ ] production 리디렉션 URL: 콜백 경로는 **`/auth/callback`으로 고정**(Worker는 이 경로와 로컬 포트 8787을 지킨다). 호스트는 Cloudflare 계정·Worker 이름(권장 `chzzk-downloader`) 또는 커스텀 도메인이 정해지면 `https://<호스트>/auth/callback`을 치지직 앱에 추가·교체한다
 - [ ] Cloudflare: Worker, R2 버킷, KV 또는 D1, (선택) 커스텀 도메인
 - [ ] GitHub Environment `release`·`drift`의 시크릿·변수 (정확한 이름은 `docs/design/cicd.md` §8): Tauri updater 서명 키(로컬 `~/.tauri/chzzk-downloader-updater.key`·`.password`, 공개 키는 `release/updater.pub`), R2 S3 토큰, 본인 영상 drift 대상, Phase 3에 Cloudflare API 토큰. 환경 `release`는 만들어 두었다(배포 정책 태그 `v*`·master)
 

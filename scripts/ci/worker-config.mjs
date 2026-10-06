@@ -419,6 +419,8 @@ export function checkVitestConfig(text) {
 
 // 실제 비밀값 파일 이름(.dev.vars 뒤에 . 또는 글자가 붙지 않는 것)
 export const BARE_DEV_VARS = /\.dev\.vars(?![.\w])/;
+// 소스에 리터럴로 두면 편집기·diff에서 줄이 다시 배열되어 보이는 문자(Trojan Source): ALM·LRM·RLM·LRE~RLO·LRI~PDI
+export const BIDI_LITERAL = /[\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/;
 
 // files: [{ rel(worker/ 기준), text }]
 export function checkSources(files) {
@@ -428,6 +430,7 @@ export function checkSources(files) {
     lines.forEach((l, i) => {
       const at = `${rel}:${i + 1}`;
       if (BARE_DEV_VARS.test(l) && !DEV_VARS_READERS.includes(rel)) errs.push(`${at}: 실제 비밀값 파일 이름(.dev.vars)을 쓰지 않는다(${EXAMPLE_FILE}만)`);
+      if (BIDI_LITERAL.test(l)) errs.push(`${at}: 표시 순서를 바꾸는 문자(bidi 제어·ALM)를 리터럴로 쓰지 않는다(\\u 이스케이프. 리뷰에서 보이지 않는다)`);
       if (rel.startsWith('src/')) {
         if (/\bconsole\s*\./.test(l) && rel !== LOG_FILE) errs.push(`${at}: console.은 ${LOG_FILE}에서만(log() 하나로 허용 필드만 남긴다)`);
         if (l.includes('CI_VERIFY_TOKEN') && !CI_TOKEN_FILES.includes(rel)) errs.push(`${at}: CI_VERIFY_TOKEN은 ${CI_TOKEN_FILES.join('·')}에서만 읽는다`);
@@ -441,9 +444,17 @@ export function checkSources(files) {
 // 주석으로 지울 수 있다(미탐). 그래서 core는 아래 이름을 주석에도 쓰지 않는다. 여러 줄·side-effect·동적·export … from 모두 잡힌다
 export const CORE_FORBIDDEN = [
   [/cloudflare:/, 'cloudflare:를 쓰지 않는다(타입 import 포함. core는 전역 타입만 쓴다)'],
-  [/["'`][^"'`\n]*\.\.\//, '../가 든 문자열(바깥 모듈 import)을 쓰지 않는다(core 안끼리 ./만)'],
+  // ../는 따옴표와 무관하게 원문 어디서도(문자열 줄 연속 "\⏎../x" 우회 포함), 맨 ".." 지정자는 import·from 뒤에서 본다
+  // (keys.ts의 pathname.includes("..")는 된다)
+  [/\.\.\//, '../를 쓰지 않는다(바깥 모듈 import. core 안끼리 ./만, 주석에도 쓰지 않는다)'],
+  [/(?<![\w$.])(?:from|import)\s*\(?\s*["'`]\.\.["'`]/, '".." 지정자(바깥 모듈 import)를 쓰지 않는다'],
   [/(?<![\w$.])fetch(?![\w$])(?!\s*\??\s*:)|\b(?:globalThis|self)\s*\.\s*fetch\b/, '전역 fetch를 쓰지 않는다(네트워크는 deps로 주입, 주석에도 쓰지 않는다)'],
+  // 위 규칙의 속성 선언 예외(fetch:)를 빠져나가는 두 모양: 삼항의 참 쪽, 전역 객체 구조 분해 별칭
+  [/\?\s*fetch\s*:|\{[^}]*\bfetch\s*:[^}]*\}\s*=\s*(?:globalThis|self)\b/, '전역 fetch를 쓰지 않는다(삼항·globalThis 구조 분해 별칭)'],
   [/\bDate\s*\.\s*now\b/, 'Date.now를 쓰지 않는다(시간은 인자로 주입, 주석에도 쓰지 않는다)'],
+  // 인자 없는 생성(new Date()·new Date;)은 현재 시각이다. 주입된 시각을 바꾸는 new Date(ms)는 된다
+  [/\bnew\s+Date\b(?!\s*\(\s*[^)\s])/, '인자 없는 new Date를 쓰지 않는다(시간은 인자로 주입)'],
+  [/\bperformance\s*\.\s*now\b/, 'performance.now를 쓰지 않는다(시간은 인자로 주입)'],
 ];
 const MATH_RANDOM = /\bMath\s*\.\s*random\b/;
 

@@ -8,7 +8,8 @@
 - **완료(2026-10-06 기준, 모두 master에 머지)**: Phase 0 하네스, Phase 1 Rust 코어, Go 삭제, Phase 2 Tauri 앱(macOS 실제 실행 확인), Phase 4 CI/CD(public PR #1: 단일 진입점·`ci.yml`/`ci-ok`·훅·비공개 이력 가드·스모크·ratchet·E2E·nightly/weekly 고리·CD `release.yml`/`xtask`·ruleset master/tags·저장소 설정 적용(2026-10-06 사용자 `repo-settings --apply --yes`, `--check` 드리프트 0)), CI 단축·Rust 1.99(#12), Windows 네이티브 E2E를 PR마다 관찰(#14).
 - **Phase 3 설계 완료(2026-10-06)**: `docs/design/worker.md`(Worker·DO `AuthStore`·R2 게이트·updater·앱 셸 계약, 열린 질문은 §17 "사용자 답변"으로 닫음). 코드 쪽 변경 기록은 cicd.md 80~84, app.md 59.
 - **Phase 3 W1 완료(2026-10-06, #20 머지, ratchet `tests.worker`=57 #21)**: `worker/` 골격과 gate `worker`·ci.yml `worker` 작업(`ci-ok` 필수). 이어서 문서 PR #23~#26(비용 0 제약·머지 위임·리디렉션·자격증명 분리).
-- **다음**: Phase 3 **W2→W8**을 에이전트가 자율로 진행한다(오프라인: vitest·wrangler dev·가짜 치지직, 단계마다 PR → Codex 리뷰 2종 → `ci-ok` 녹색 → 에이전트가 머지, ROADMAP 결정 표 "PR 머지"). **W9는 사용자와 함께**(외부 준비는 아래처럼 끝났다): 운영 치지직 자격증명(`chzzk-downloader-worker-prod`) Worker secret, 첫 수동 배포, 관리자 채널 ID. 릴리스 태그(pre-release 한 번, 1.0.0)는 사용자 승인.
+- **Phase 3 W2 완료(2026-10-06, 브랜치 `feat/w2-core`, PR 머지 대기)**: `worker/src/core/` 순수 모듈 아홉(vitest 441개, ratchet `tests.worker`는 머지 뒤 master 측정으로 올린다), 결정은 worker.md 구현 중 변경 13~16·cicd.md 87·88.
+- **다음**: W2 PR → Codex 리뷰 2종 → `ci-ok` 녹색 → 머지, 이어서 Phase 3 **W3→W8**을 에이전트가 자율로 진행한다(오프라인: vitest·wrangler dev·가짜 치지직, 단계마다 PR → Codex 리뷰 2종 → `ci-ok` 녹색 → 에이전트가 머지, ROADMAP 결정 표 "PR 머지"). **W9는 사용자와 함께**(외부 준비는 아래처럼 끝났다): 운영 치지직 자격증명(`chzzk-downloader-worker-prod`) Worker secret, 첫 수동 배포, 관리자 채널 ID. 릴리스 태그(pre-release 한 번, 1.0.0)는 사용자 승인.
 - **G-ID 일치(2026-10-06)**: OAuth `users/me`의 `channelId`가 VOD `content.channel.channelId`·클립 `ownerChannel.channelId`와 같은 값이다(사용자가 본인 계정·본인 업로드 VOD·클립으로 직접 확인, 셋 다 32자리 소문자 hex). 앱 `OwnershipGate`는 A5에서 켤 수 있다(대안 B `owner_channel_id`는 필요 없음).
 - **관찰 중**: `e2e-native (linux)`·`e2e-native (windows)`는 2026-10-06(master 첫 실행 37411321875 녹색)부터 14일 관찰 → 2026-10-20 이후 `ci-ok` 편입 판단(cicd.md 36·79). Actions 캐시가 10.99GB로 한도(10GB)를 조금 넘음 — 계속 넘으면 캐시 키 정리.
 - **W9 사전 준비 끝(2026-10-06), W9가 배포 가능한 상태는 아니다**: 남은 것은 W9 당일 사용자와 하는 Worker secret 4개(`CHZZK_CLIENT_ID`·`CHZZK_CLIENT_SECRET`은 `chzzk-downloader-worker-prod`, `ADMIN_CHANNEL_IDS`는 첫 배포 뒤 로그인으로, `CI_VERIFY_TOKEN`은 1Password `chzzk-downloader-release`)와 첫 수동 배포다. 끝난 사전 준비: Cloudflare R2 버킷(비공개)·토큰 하나(Workers Scripts Edit + 이 버킷 한정 Bucket Item Read/Write, 다른 버킷 403 실측), GitHub 저장소 secret `DIST_BASE_URL`·변수 `R2_BUCKET`, 환경 `release` secret `CI_VERIFY_TOKEN`·`R2_ACCOUNT_ID`·`CLOUDFLARE_ACCOUNT_ID`·`CLOUDFLARE_API_TOKEN`·`R2_ACCESS_KEY_ID`(토큰 id)·`R2_SECRET_ACCESS_KEY`(토큰 값의 SHA-256. 계정 API 토큰을 R2 S3 자격으로 쓸 때 Cloudflare가 정한 secret access key 형식이고, 다른 버킷 403 실측이 이 값으로 서명해 확인했다)과 변수 `VERIFY_VIA=s3`·`WORKER_DEPLOY_ENABLED=false`, 치지직 운영 리디렉션 URL, 로컬 테스트용 치지직 앱 + 1Password `chzzk-local-dev`(→ `worker/.dev.vars` 마운트, 운영 Environment는 마운트 없음), 로컬 `wrangler login`. 원본 기록은 1Password `chzzk-downloader-release`. 환경 `drift`는 `CHZZK_LIVE_DASH`·`CHZZK_LIVE_CLIP`만(라이브 다시보기 `CHZZK_LIVE_HLS`는 사용자가 방송한 뒤, 그때까지 drift `no_target` 이슈는 정상). 릴리스·배포를 막지 않지만 비어 있는 것: `audit`의 `RULESET_READ_TOKEN`(nightly `ruleset-drift`만 실패), `drift`의 `CHZZK_LIVE_HLS`(nightly `drift`의 HLS 항목만 `no_target`).
@@ -113,13 +114,13 @@
 - [x] W0 설계 문서: `worker.md`, cicd.md 80~84, app.md 59, ROADMAP·CLAUDE.md·chzzk-oauth.md, §17 사용자 답변 반영. 참고: vitest 풀 패키지는 `@cloudflare/vitest-pool-workers`(0.22.0에서 멈춤)가 아니라 이름이 바뀐 `@cloudflare/vitest-plugin`을 쓴다
 - [x] W1 골격 + CI: `worker/` 패키지·`wrangler.jsonc`·config 가드·`/health`, gate `worker`·ci.yml 작업·`ci-ok`. 실측 결과·고른 것은 worker.md 구현 중 변경 2~8, cicd.md 85. 로컬 `run.mjs worker`(vitest 57개)·`parity`·`scripts-test`·`scan`·`typos`·`workflows`·`versions`·`selftest`·`release-selftest`·`ratchet-log` 녹색, PR `ci-ok` 확인 대기
 - [x] W1 뒤: 첫 master 실행 37434910274로 `tests.worker` = 57을 채웠다(#21)
-- [ ] W2 순수 core(token·cookies·range·keys·semver·chzzk·updater·html·usercode)
+- [x] W2 순수 core(token·cookies·range·keys·semver·chzzk·updater·html·usercode): 표 주도 단위 테스트(vitest 441개), semver는 xtask와 공유 벡터 `xtask/testdata/semver-vectors.json`, core 순수성·`raw` 허용 목록·bidi 리터럴 정적 검사(`worker-config.mjs`). 고른 것·리뷰 반영은 worker.md 구현 중 변경 13~16, cicd.md 87·88. PR 머지 대기
 - [ ] W3 DO `AuthStore`(스키마·flow·session·rotation·허용목록·alarm)
 - [ ] W4 OAuth 흐름(가짜 치지직, 앱·웹 로그인, refresh·logout, 카나리, dev 모드 모르는 문자열 바인딩 → config_error — worker.md 구현 중 변경 12 (라))
-- [ ] W5 R2·updater·CI 토큰(보이는 키 표, Range, 자격 × 경로 행렬)
+- [ ] W5 R2·updater·CI 토큰(보이는 키 표, Range, 자격 × 경로 행렬. R2 호출 수 테스트에 "A·W + Range + SUMS 캐시 미스"를 넣고 Range는 `head` 없이 2회 이하 — worker.md 구현 중 변경 16 (다))
 - [ ] W6 랜딩·관리 화면(CSRF·XSS, 내 기기)
 - [ ] W7 wrangler dev E2E(gate `worker-e2e`, D14 관찰)
-- [ ] W8 릴리스 연결(`release.mjs worker`·`worker-bundle`·`deploy-worker`, `vars.DIST_BASE_URL` → `secrets.`, R2 릴리스 보존 상한 prune — worker.md 구현 중 변경 11)
+- [ ] W8 릴리스 연결(`release.mjs worker`·`worker-bundle`·`deploy-worker`, `vars.DIST_BASE_URL` → `secrets.`, R2 릴리스 보존 상한 prune — worker.md 구현 중 변경 11. prune 전에 `release.mjs` `cmpSemver`를 공유 `semver-vectors.json`을 읽는 `release.test.mjs`와 BigInt·u64 규칙으로 맞춘다 — 구현 중 변경 16 (마))
 - [ ] W9 배포 뒤(사용자와): Worker secret 4개, 수동 첫 배포, production 리디렉션 URL, 저장소 secret·변수, 전환 스위치(Q4 WAF는 쓰지 않음, worker.md 구현 중 변경 11), 무료 한도 사용량 확인
 - [ ] Phase 3b A1~A5 앱: `SessionStore`·`AuthService` / command·DTO·`build.rs` 주소 규칙 / 로그인 화면·배너·copy deck / updater command / `OwnershipGate` 활성(G-ID 뒤)
 

@@ -219,7 +219,11 @@ describe("sanitizeName", () => {
     [`<script>alert(1)</script>"'&`, `<script>alert(1)</script>"'&`],
     ["a\u0000b\u001fc\u007fd\u0085e", "abcde"],
     ["a\nb\tc", "abc"],
-    ["‮evil‬⁦x⁩‎‏", "evilx"],
+    ["\u202Eevil\u202C\u2066x\u2069\u200E\u200F", "evilx"],
+    ["a\u202Ab\u202Bc\u202Dd\u2067e\u2068f\u061Cg", "abcdefg"],
+    ["관리자\u200B", "관리자"],
+    ["관\u00ADe\u200Cf\u2060g\u2063h\uFEFF", "관efgh"],
+    ["👨\u200D👩\u200D👧", "👨\u200D👩\u200D👧"],
     ["이름 그대로", "이름 그대로"],
   ])("%j → %j", (v, want) => {
     expect(sanitizeName(v)).toBe(want);

@@ -45,8 +45,10 @@ const CODE = /^[\w.-]{1,50}$/;
 const CHANNEL_ID = /^[0-9a-f]{32}$/;
 // 헤더에 실을 수 있는 모양만(공백·제어 문자 없음). 아니면 토큰 단계 실패
 const ACCESS_TOKEN = /^[!-~]{1,8192}$/;
-// 제어 문자(Cc)와 bidi 제어(LRM·RLM·LRE~RLO·LRI~PDI)
-const UNSAFE_CHARS = /[\p{Cc}‎‏‪-‮⁦-⁩]/gu;
+// 보이지 않거나 표시 순서를 바꾸는 문자를 지운다(관리 화면에서 다른 이름과 구분되지 않게 하는 값, 구현 중 변경 16 (가)):
+// 제어 문자(Cc), soft hyphen, ALM, ZWSP·ZWNJ, LRM·RLM, LRE~RLO, WJ~보이지 않는 연산자, LRI~PDI, BOM.
+// ZWJ(U+200D)는 남긴다: 이모지 결합 순서에 쓰인다. 소스에 리터럴로 쓰지 않는다(\u 이스케이프, worker-config 검사)
+const UNSAFE_CHARS = /[\p{Cc}\u00AD\u061C\u200B\u200C\u200E\u200F\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF]/gu;
 const NAME_MAX = 128;
 
 const apiRoot = (app: ChzzkApp): string => app.apiBase.replace(/\/+$/, "");

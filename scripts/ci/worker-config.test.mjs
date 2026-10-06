@@ -310,6 +310,8 @@ test('씨앗: 소스 규칙', () => {
     { rel: 'src/core/log.ts', text: 'console.log(x);' },
     { rel: 'src/config.ts', text: '"CI_VERIFY_TOKEN",' },
     { rel: 'test/a.test.ts', text: 'vi.spyOn(console, "log"); console.log("x"); // .dev.vars.example' },
+    // 이스케이프로 쓴 bidi 제어와 ZWJ·ZWSP 리터럴은 된다
+    { rel: 'src/core/x.ts', text: 'const re = /[\\u202A-\\u202E]/u; const e = "a\u200Db\u200Bc";' },
   ];
   assert.deepEqual(checkSources(ok), []);
   const seeds = [
@@ -319,6 +321,8 @@ test('씨앗: 소스 규칙', () => {
     ['테스트가 실제 비밀값 파일 이름', { rel: 'test/a.test.ts', text: 'readFile(".dev.vars")' }],
     ['설정이 실제 비밀값 파일 이름', { rel: 'vitest.config.ts', text: 'envFiles: [".dev.vars"]' }],
     ['scripts/의 다른 도구가 실제 비밀값 파일 이름', { rel: 'scripts/e2e-dev.mjs', text: "['--env-file', '.dev.vars']" }],
+    // 구현 중 변경 16 (가): 표시 순서를 바꾸는 문자 리터럴(씨앗도 이스케이프로 만든다)
+    ...['\u202E', '\u202A', '\u2066', '\u2069', '\u200E', '\u200F', '\u061C'].map((c) => [`bidi 리터럴 U+${c.codePointAt(0).toString(16)}`, { rel: 'test/a.test.ts', text: `["${c}evil", "evil"]` }]),
   ];
   // G-ID 도구는 사용자가 직접 돌리며 실제 비밀값 파일을 읽는다(예외)
   assert.deepEqual(checkSources([{ rel: 'scripts/channel-id-check.mjs', text: "join(dir, '..', '.dev.vars')" }]), []);
@@ -356,6 +360,9 @@ test('씨앗: core 순수성(원문 전체, worker.md 구현 중 변경 15)', ()
     'export interface D { readonly fetch: FetchLike; readonly f?: FetchLike }',
     'const n = Math.min(a, b);',
     'const re = /[&<>"\']/g; const x = "./a";',
+    'if (pathname.includes("..")) return null;',
+    'const d = new Date(ms).toISOString(); const e = new Date( t );',
+    'const ok = a?.fetch ? 1 : 2; const { fetch: f } = deps;',
   ];
   for (const text of ok) assert.deepEqual(checkCorePurity(core(text)), [], text);
   const seeds = [
@@ -378,6 +385,19 @@ test('씨앗: core 순수성(원문 전체, worker.md 구현 중 변경 15)', ()
     ['Date . now', 'const t = Date . now();'],
     ['정규식 리터럴 뒤(주석 제거기 미탐 경로)', 'const re = /["]/g; const t = Date.now(); // "'],
     ['Math.random', 'const r = Math.random();'],
+    // 구현 중 변경 16 (나)
+    ['맨 .. export', 'export * from "..";'],
+    ['맨 .. import', "import x from '..';"],
+    ['맨 .. 동적 import', 'const m = await import(`..`);'],
+    ['문자열 줄 연속 ../', 'import { CONFIG_KEYS } from "\\\n../config";'],
+    ['주석 속 ../', '// ../config를 쓰지 않는다'],
+    ['삼항 속 fetch', 'const f = ok ? fetch : null;'],
+    ['globalThis 구조 분해 별칭', 'const { fetch: f } = globalThis; f(u);'],
+    ['self 구조 분해 별칭', 'const {\n  fetch: f,\n} = self;'],
+    ['new Date()', 'const t = new Date().toISOString();'],
+    ['new Date;', 'const t = +new Date;'],
+    ['new Date( )', 'const t = new Date( ).getTime();'],
+    ['performance.now', 'const t = performance.now();'],
   ];
   for (const [name, text] of seeds) assert.notDeepEqual(checkCorePurity(core(text)), [], name);
   // core 밖은 cloudflare:·fetch·Date.now가 된다(핸들러·DO·라우터). Math.random은 src/** 어디서도 안 된다

@@ -1,4 +1,4 @@
-// Worker 요청 하나가 부르는 R2 연산 수(docs/design/worker.md 구현 중 변경 11 (라)·16 (다)·31 (바)): get + head ≤ 2, list·쓰기 0.
+// Worker 요청 하나가 부르는 R2 연산 수(docs/design/worker.md 구현 중 변경 11 (라)·16 (다)·31 (바)·33 (나)): get + head ≤ 2, list·쓰기 0.
 // 모든 경로(200·206·304·416·404·403·401·400·CI 토큰·/update 200/204, SUMS 캐시 미스 포함)를 호출 계수 래퍼로 센다.
 // 이 파일의 부서진 fixture 버전: 0.5.0(목록에만 있고 객체는 없음).
 import { env } from "cloudflare:workers";
@@ -93,6 +93,10 @@ const ROWS: readonly Row[] = [
   { n: 38, cred: "app", path: "/update/0.1.0", opts: { hide: [LATEST.slice(1)] }, status: 204, get: 1, head: 0 },
   { n: 39, cred: "none", path: "/update/0.1.0", status: 401, get: 0, head: 0 },
   { n: 40, cred: "web", path: "/update/0.1.0", status: 401, get: 0, head: 0 },
+  // HEAD 조건부·HEAD + Range(Range는 무시, 구현 중 변경 33 (나))
+  { n: 41, cred: "ci", method: "HEAD", path: R(DMG), headers: INM, status: 304, get: 0, head: 1 },
+  { n: 42, cred: "app", method: "HEAD", path: R(DMG), headers: { Range: "bytes=0-9" }, cache: "miss", status: 200, get: 1, head: 1 },
+  { n: 43, cred: "app", method: "HEAD", path: R(DMG), headers: INM, cache: "miss", status: 304, get: 1, head: 1 },
 ];
 
 const authHeaders = (cred: Row["cred"]) => (cred === "ciWrong" ? { Authorization: "Bearer dev-ci-token-x" } : credHeaders(creds, cred));
@@ -101,8 +105,8 @@ it("etag를 읽었다", () => {
   expect(etag).toMatch(/^"[0-9a-f]+"$/);
 });
 
-it("표는 40행이고 번호가 1부터 이어진다", () => {
-  expect(ROWS.map((r) => r.n)).toEqual(Array.from({ length: 40 }, (_, i) => i + 1));
+it("표는 43행이고 번호가 1부터 이어진다", () => {
+  expect(ROWS.map((r) => r.n)).toEqual(Array.from({ length: 43 }, (_, i) => i + 1));
 });
 
 it.each(ROWS.map((r) => [`#${r.n} ${r.cred} ${r.method ?? "GET"} ${r.path} ${JSON.stringify(r.headers ?? {})} ${r.cache ?? ""}`, r] as const))("%s", async (_name, row) => {

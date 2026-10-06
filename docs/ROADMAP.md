@@ -115,7 +115,7 @@
 - [x] W1 뒤: 첫 master 실행 37434910274로 `tests.worker` = 57을 채웠다(#21)
 - [ ] W2 순수 core(token·cookies·range·keys·semver·chzzk·updater·html·usercode)
 - [ ] W3 DO `AuthStore`(스키마·flow·session·rotation·허용목록·alarm)
-- [ ] W4 OAuth 흐름(가짜 치지직, 앱·웹 로그인, refresh·logout, 카나리)
+- [ ] W4 OAuth 흐름(가짜 치지직, 앱·웹 로그인, refresh·logout, 카나리, dev 모드 모르는 문자열 바인딩 → config_error — worker.md 구현 중 변경 12 (라))
 - [ ] W5 R2·updater·CI 토큰(보이는 키 표, Range, 자격 × 경로 행렬)
 - [ ] W6 랜딩·관리 화면(CSRF·XSS, 내 기기)
 - [ ] W7 wrangler dev E2E(gate `worker-e2e`, D14 관찰)
@@ -151,7 +151,7 @@
 자격증명 없이도 `wrangler dev`와 테스트로 개발은 진행한다. 실제 배포는 아래가 갖춰진 뒤 사용자와 함께 한다.
 
 - [x] 치지직 개발자 앱 등록 (2026-10-06): 처음에는 개발용 `http://localhost:8787/auth/callback`(wrangler dev 기본 포트)을 등록했다. **지금 등록된 값은 아래 production 항목이다**(localhost는 빠졌다). 자격증명: 이 앱(운영)은 1Password Environment `chzzk-downloader-worker-prod`(마운트하지 않음). 로컬 테스트는 별도 치지직 앱(리디렉션 localhost)과 공용 Environment `chzzk-local-dev`(→ `worker/.dev.vars` 마운트)로 나눈다(2026-10-06, worker.md 구현 중 변경 12). 값을 대화·로그·저장소에 내지 않는다
-- [x] production 리디렉션 URL(2026-10-06): 운영 주소 `https://<Worker 주소>/auth/callback`을 등록했고 **개발용 localhost 주소는 교체돼 빠졌다**(치지직 앱에 하나만 등록된 상태). 그래서 실제 치지직 로그인이 필요한 로컬 작업(`pnpm dev:real`, G-ID 도구)은 localhost 주소를 다시 등록해야 돈다. W2~W8은 가짜 치지직이라 영향 없음. 주소 값은 공개 저장소에 두지 않는다. **원천과 확인 방법**: 운영 출처는 1Password Environment `chzzk-downloader-release`의 `DIST_BASE_URL`(읽을 수 있는 기록, 저장소 secret `DIST_BASE_URL`과 같은 값)이고, 치지직에 등록된 값은 정확히 그 값 + `/auth/callback`이어야 한다. `DIST_BASE_URL`·Worker 이름·서브도메인을 바꾸면 세 곳(1Password, 저장소 secret, 치지직 앱)을 함께 바꾼다. 원래 메모: 콜백 경로는 **`/auth/callback`으로 고정**(Worker는 이 경로와 로컬 포트 8787을 지킨다). 호스트는 Cloudflare 계정·Worker 이름(권장 `chzzk-downloader`) 또는 커스텀 도메인이 정해지면 `https://<호스트>/auth/callback`을 치지직 앱에 추가한다(URL을 하나만 받으면 교체). 그 출처 `https://<호스트>`는 Worker `PUBLIC_ORIGIN`(= 저장소 secret `DIST_BASE_URL`)과 바이트까지 같아야 한다(Worker가 `redirectUri`를 `PUBLIC_ORIGIN + /auth/callback`으로 만든다)
+- [x] production 리디렉션 URL(2026-10-06): 운영 주소 `https://<Worker 주소>/auth/callback`을 등록했고 **개발용 localhost 주소는 교체돼 빠졌다**(치지직 앱에 하나만 등록된 상태). 실제 치지직 로그인이 필요한 로컬 작업(`pnpm dev:real`, G-ID 도구)은 운영 앱을 고치지 않고 **로컬 테스트용 별도 앱**(`chzzk-local-dev`, 위 항목·worker.md 구현 중 변경 12)으로 한다. W2~W8은 가짜 치지직이라 영향 없음. 주소 값은 공개 저장소에 두지 않는다. **원천과 확인 방법**: 운영 출처는 1Password Environment `chzzk-downloader-release`의 `DIST_BASE_URL`(읽을 수 있는 기록, 저장소 secret `DIST_BASE_URL`과 같은 값)이고, 치지직에 등록된 값은 정확히 그 값 + `/auth/callback`이어야 한다. `DIST_BASE_URL`·Worker 이름·서브도메인을 바꾸면 세 곳(1Password, 저장소 secret, 치지직 앱)을 함께 바꾼다. 원래 메모: 콜백 경로는 **`/auth/callback`으로 고정**(Worker는 이 경로와 로컬 포트 8787을 지킨다). 호스트는 Cloudflare 계정·Worker 이름(권장 `chzzk-downloader`) 또는 커스텀 도메인이 정해지면 `https://<호스트>/auth/callback`을 치지직 앱에 추가한다(URL을 하나만 받으면 교체). 그 출처 `https://<호스트>`는 Worker `PUBLIC_ORIGIN`(= 저장소 secret `DIST_BASE_URL`)과 바이트까지 같아야 한다(Worker가 `redirectUri`를 `PUBLIC_ORIGIN + /auth/callback`으로 만든다)
 - [ ] Cloudflare: (2026-10-06 R2 버킷 `chzzk-downloader-dist` 생성, Standard, r2.dev 공개 꺼짐. 기존 계정을 다른 Worker들과 함께 쓰므로 무료 한도는 계정 합계다) Worker(Durable Object(SQLite)·R2 바인딩), R2 버킷, (선택) 커스텀 도메인. Worker secret 4개(`CHZZK_CLIENT_ID`·`CHZZK_CLIENT_SECRET`·`ADMIN_CHANNEL_IDS`·`CI_VERIFY_TOKEN`)는 사용자가 `wrangler secret put`으로 넣는다. 전체 시크릿·변수 표는 `docs/design/worker.md` §10.3(`DIST_BASE_URL`은 저장소 secret, cicd.md 84)
 - [ ] GitHub Environment `release`·`drift`의 시크릿·변수 (정확한 이름은 `docs/design/cicd.md` §8. 단 `DIST_BASE_URL`은 환경이 아니라 **저장소 secret**, cicd.md 84): Tauri updater 서명 키(로컬 `~/.tauri/chzzk-downloader-updater.key`·`.password`, 공개 키는 `release/updater.pub`), R2 S3 토큰, 본인 영상 drift 대상, Phase 3에 Cloudflare API 토큰. 환경 `release`는 만들어 두었다(배포 정책 태그 `v*`·master)
 

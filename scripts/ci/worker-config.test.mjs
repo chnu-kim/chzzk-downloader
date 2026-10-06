@@ -1,0 +1,347 @@
+// node --test scripts/ci/worker-config.test.mjs
+// 저장소 worker/ 그대로는 통과하고, 씨앗(불변식 하나를 깬 사본)은 실패해야 한다. 사본은 이름을 정한 파일과 src/·test/·scripts/만
+// 복사한다(worker/의 실제 비밀값 파일은 건드리지 않는다).
+import assert from 'node:assert/strict';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { after, test } from 'node:test';
+
+import { ROOT } from './gates.mjs';
+import {
+  allowedBuilds,
+  checkDevVarsExample,
+  checkDist,
+  checkPackage,
+  checkSources,
+  checkVitestConfig,
+  checkWorker,
+  checkSentinel,
+  checkWrangler,
+  configKeys,
+  EXPECTED_SCRIPTS,
+  main,
+  parseJsonc,
+  plantSentinel,
+  scriptCommands,
+  SENTINEL_TEXT,
+  stripJsComments,
+  stripJsonc,
+} from './worker-config.mjs';
+
+const W = join(ROOT, 'worker');
+const read = (rel) => readFileSync(join(W, rel), 'utf8');
+const WRANGLER = parseJsonc(read('wrangler.jsonc'));
+const PKG = JSON.parse(read('package.json'));
+const EXAMPLE = read('.dev.vars.example');
+const KEYS = configKeys(read('src/config.ts'));
+const VITEST = read('vitest.config.ts');
+const TOOLS_WRANGLER = JSON.parse(readFileSync(join(ROOT, 'scripts/ci/tools.json'), 'utf8')).tools.wrangler.version;
+const PM = JSON.parse(readFileSync(join(ROOT, 'app/package.json'), 'utf8')).packageManager;
+
+const tmp = mkdtempSync(join(tmpdir(), 'worker-config-'));
+after(() => rmSync(tmp, { recursive: true, force: true }));
+
+// 저장소 사본(이름을 정한 파일만). files로 덮어쓰고 null이면 지운다
+let seq = 0;
+function copy(files = {}) {
+  const d = join(tmp, `r${seq++}`);
+  const w = join(d, 'worker');
+  mkdirSync(w, { recursive: true });
+  for (const f of ['package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', 'wrangler.jsonc', 'tsconfig.json', 'vitest.config.ts', '.dev.vars.example']) {
+    cpSync(join(W, f), join(w, f));
+  }
+  for (const dir of ['src', 'test', 'scripts']) cpSync(join(W, dir), join(w, dir), { recursive: true });
+  mkdirSync(join(d, 'scripts/ci'), { recursive: true });
+  cpSync(join(ROOT, 'scripts/ci/tools.json'), join(d, 'scripts/ci/tools.json'));
+  mkdirSync(join(d, 'app'), { recursive: true });
+  cpSync(join(ROOT, 'app/package.json'), join(d, 'app/package.json'));
+  for (const [rel, text] of Object.entries(files)) {
+    const p = join(d, rel);
+    if (text === null) rmSync(p, { force: true });
+    else {
+      mkdirSync(dirname(p), { recursive: true });
+      writeFileSync(p, text);
+    }
+  }
+  return d;
+}
+const withWrangler = (patch) => JSON.stringify({ ...WRANGLER, ...patch }, null, 2);
+
+test('저장소 worker/는 위반이 없다', () => {
+  assert.deepEqual(checkWorker(ROOT), []);
+});
+
+test('사본도 위반이 없다(씨앗의 기준선)', () => {
+  assert.deepEqual(checkWorker(copy()), []);
+});
+
+test('JSONC: 문자열 안의 // 는 남기고 주석·끝 쉼표를 지운다', () => {
+  const text = '{\n  // 주석\n  "u": "https://a.example.test/x", /* 블록 */\n  "a": [1, 2,], // 끝\n}\n';
+  assert.deepEqual(JSON.parse(stripJsonc(text)), { u: 'https://a.example.test/x', a: [1, 2] });
+  assert.deepEqual(JSON.parse(stripJsonc('{"s": "a\\"//b", "t": 1 /* x */}')), { s: 'a"//b', t: 1 });
+});
+
+test('씨앗: wrangler.jsonc에 account_id를 넣으면 실패(gate 진입점으로)', () => {
+  const d = copy({ 'worker/wrangler.jsonc': read('wrangler.jsonc').replace('"name": "chzzk-downloader",', '"name": "chzzk-downloader",\n  "account_id": "0123",') });
+  assert.notDeepEqual(checkWorker(d), []);
+  assert.ok(checkWorker(d).some((e) => e.includes('account_id')));
+  // 진입점(run.mjs가 부르는 것과 같은 main)도 1
+  const err = console.error;
+  console.error = () => {};
+  try {
+    assert.equal(main(['--root', d]), 1);
+    assert.equal(main(['--root', copy()]), 0);
+  } finally {
+    console.error = err;
+  }
+});
+
+test('씨앗: wrangler.jsonc 불변식', () => {
+  const seeds = [
+    ['중첩 account_id', { r2_buckets: [{ binding: 'DIST', bucket_name: 'chzzk-downloader-dist', account_id: 'x' }] }],
+    ['routes', { routes: [{ pattern: 'x.example.test/*' }] }],
+    ['route', { route: 'x.example.test/*' }],
+    ['zone_id', { zone_id: 'z' }],
+    ['custom_domain', { observability: { enabled: true, logs: { invocation_logs: false }, custom_domain: true } }],
+    ['레거시 migrations', { migrations: [{ tag: 'v1', new_sqlite_classes: ['AuthStore'] }] }],
+    ['env 절', { env: { staging: {} } }],
+    ['workers_dev false', { workers_dev: false }],
+    ['preview_urls 없음', { preview_urls: undefined }],
+    ['send_metrics true', { send_metrics: true }],
+    ['DO 클래스 이름 바뀜', { exports: { Store: { type: 'durable-object', storage: 'sqlite' } } }],
+    ['DO 바인딩 이름 바뀜', { durable_objects: { bindings: [{ name: 'STORE', class_name: 'AuthStore' }] } }],
+    ['DO 저장소가 sqlite 아님', { exports: { AuthStore: { type: 'durable-object', storage: 'kv' } } }],
+    ['R2 바인딩 둘', { r2_buckets: [{ binding: 'DIST', bucket_name: 'chzzk-downloader-dist' }, { binding: 'X', bucket_name: 'x' }] }],
+    ['vars에 PUBLIC_ORIGIN', { vars: { ...WRANGLER.vars, PUBLIC_ORIGIN: 'http://localhost:8787' } }],
+    ['vars에 START_RATE_10M', { vars: { ...WRANGLER.vars, START_RATE_10M: '1000' } }],
+    ['vars에 BUILD_ID', { vars: { ...WRANGLER.vars, BUILD_ID: 'dev' } }],
+    ['vars에 비밀처럼 보이는 키', { vars: { ...WRANGLER.vars, CHZZK_CLIENT_SECRET: 'x' } }],
+    ['vars 치지직 주소가 가짜', { vars: { ...WRANGLER.vars, CHZZK_API_BASE: 'http://127.0.0.1:8788' } }],
+    ['invocation 로그 켬', { observability: { enabled: true, logs: { invocation_logs: true } } }],
+    ['invocation 로그 키 없음', { observability: { enabled: true } }],
+    ['모르는 최상위 키', { kv_namespaces: [] }],
+    ['main 바뀜', { main: 'src/other.ts' }],
+  ];
+  for (const [name, patch] of seeds) {
+    const cfg = JSON.parse(JSON.stringify({ ...WRANGLER, ...patch }));
+    assert.notDeepEqual(checkWrangler(cfg), [], name);
+  }
+  assert.deepEqual(checkWrangler(WRANGLER), []);
+  // 사본 경로로도 같은 판정
+  assert.notDeepEqual(checkWorker(copy({ 'worker/wrangler.jsonc': withWrangler({ routes: ['x'] }) })), []);
+});
+
+test('씨앗: package.json', () => {
+  const opts = { wrangler: TOOLS_WRANGLER, packageManager: PM };
+  assert.deepEqual(checkPackage(PKG, opts), []);
+  assert.deepEqual(PKG.scripts, { ...PKG.scripts, ...EXPECTED_SCRIPTS });
+  const s = (scripts) => ({ ...PKG, scripts: { ...PKG.scripts, ...scripts } });
+  const seeds = [
+    ['런타임 의존성', { ...PKG, dependencies: { hono: '4.0.0' } }],
+    ['범위 버전', { ...PKG, devDependencies: { ...PKG.devDependencies, vitest: '^4.1.11' } }],
+    ['wrangler ≠ tools.json', { ...PKG, devDependencies: { ...PKG.devDependencies, wrangler: '4.146.0' } }],
+    ['packageManager 다름', { ...PKG, packageManager: 'pnpm@11.0.0' }],
+    ['dev에 --env-file 없음', s({ dev: 'wrangler dev --config wrangler.jsonc --port 8787' })],
+    ['dev 포트 8788', s({ dev: 'wrangler dev --config wrangler.jsonc --port 8788 --env-file .dev.vars.example' })],
+    ['dev가 실제 비밀값 파일', s({ dev: 'wrangler dev --config wrangler.jsonc --port 8787 --env-file .dev.vars' })],
+    ['dev에 --config 없음', s({ dev: 'wrangler dev --port 8787 --env-file .dev.vars.example' })],
+    ['dev:real에 --env-file 없음', s({ 'dev:real': 'wrangler dev --config wrangler.jsonc --port 8787 --var PUBLIC_ORIGIN:http://localhost:8787' })],
+    ['check의 types에 --env-file 없음', s({ check: 'wrangler types worker-env.d.ts --config wrangler.jsonc --include-runtime=false && tsc --noEmit' })],
+    ['check의 types가 기본 출력 경로', s({ check: 'wrangler types --config wrangler.jsonc --include-runtime=false --env-file .dev.vars.example && tsc --noEmit' })],
+    ['build에 metafile 없음', s({ build: 'wrangler deploy --dry-run --config wrangler.jsonc --outdir dist' })],
+    ['build에 --config 없음', s({ build: 'wrangler deploy --dry-run --outdir dist --metafile' })],
+    ['test가 다른 설정', s({ test: 'vitest run --config other.config.ts' })],
+    ['알려진 스크립트 빠짐', { ...PKG, scripts: { ...PKG.scripts, dev: undefined } }],
+  ];
+  for (const [name, pkg] of seeds) assert.notDeepEqual(checkPackage(pkg, opts), [], name);
+  // 알려진 스크립트 밖의 스크립트(W7 도구 등)에도 일반 규칙이 걸린다. 각 씨앗의 사유 글자까지 본다(글자 고정 규칙에 가려지지 않게)
+  const extra = [
+    ['wrangler dev에 --env-file 없음', 'node x.mjs && wrangler dev --config wrangler.jsonc --port 8787', '--env-file이 없다'],
+    ['실제 비밀값 파일을 --env-file로', 'wrangler dev --config wrangler.jsonc --port 8787 --env-file .dev.vars', '실제 비밀값 파일'],
+    ['실제 비밀값 파일을 cat', 'cat .dev.vars', '실제 비밀값 파일'],
+    ['실제 비밀값 파일을 node -e', `node -e "require('fs').readFileSync('.dev.vars')"`, '실제 비밀값 파일'],
+    ['--env-file=값 형태', 'wrangler dev --config wrangler.jsonc --port 8787 --env-file .dev.vars.example --env-file=.dev.vars', '실제 비밀값 파일'],
+    ['--env-file 뒤 위치 인자가 env 파일로', 'wrangler types --config wrangler.jsonc --env-file .dev.vars.example worker-env.d.ts', '--env-file은'],
+    ['경로를 붙인 wrangler', 'node_modules/.bin/wrangler dev --port 8787', '--env-file이 없다'],
+    ['npx wrangler@버전', 'npx wrangler@4.147.0 dev --port 8787', '--env-file이 없다'],
+    ['wrangler.js 직접', 'node node_modules/wrangler/bin/wrangler.js dev --config wrangler.jsonc --port 8787', '--env-file이 없다'],
+    ['wrangler --config가 다른 파일', 'wrangler dev --config wrangler.json --port 8787 --env-file .dev.vars.example', '--config wrangler.jsonc'],
+    ['wrangler --config=다른 파일', 'wrangler deploy --dry-run --config=wrangler.toml', '--config wrangler.jsonc'],
+    ['wrangler -c 둘', 'wrangler deploy --dry-run -c wrangler.jsonc -c wrangler.json', '--config wrangler.jsonc'],
+    ['플래그 뒤 부명령도 본다', 'wrangler --config wrangler.jsonc dev --port 8787', '--env-file이 없다'],
+    ['wrangler --env', 'wrangler dev --config wrangler.jsonc --env staging --port 8787 --env-file .dev.vars.example', '--env를'],
+    ['dry-run 없는 deploy', 'wrangler deploy --config wrangler.jsonc', '--dry-run'],
+    ['wrangler login', 'wrangler login', '스크립트로 두지 않는다'],
+    ['wrangler secret', 'wrangler secret put X --config wrangler.jsonc', '스크립트로 두지 않는다'],
+    ['wrangler tail', 'wrangler tail --config wrangler.jsonc', '스크립트로 두지 않는다'],
+    ['dev:real을 pnpm으로', 'pnpm dev:real', '다른 스크립트에서 부르지 않는다'],
+    ['dev:real을 npm run으로', 'node x.mjs && npm run dev:real', '다른 스크립트에서 부르지 않는다'],
+    ['vitest --config', 'vitest run --config other.config.ts', '--config·--root'],
+    ['vitest -c=', 'pnpm exec vitest run -c=other.config.ts', '--config·--root'],
+    ['vitest --root', 'node_modules/.bin/vitest run --root ../x', '--config·--root'],
+  ];
+  for (const [name, cmd, why] of extra) {
+    const errs = checkPackage(s({ e2e: cmd }), opts);
+    assert.ok(errs.some((e) => e.startsWith('scripts.e2e') && e.includes(why)), `${name}: ${JSON.stringify(errs)}`);
+  }
+  // 알려진 dev:real만 실제 비밀값 파일을 쓴다(그 자체는 통과)
+  assert.deepEqual(checkPackage(s({ e2e: 'wrangler dev --config wrangler.jsonc --port 8787 --env-file .dev.vars.example' }), opts), []);
+  // 토큰화: 구분자·따옴표·--flag=값
+  assert.deepEqual(scriptCommands(`a&&"wrangler" dev --port=8787; b | c`), [['a'], ['wrangler', 'dev', '--port', '8787'], ['b'], ['c']]);
+});
+
+test('씨앗: pnpm-workspace.yaml allowBuilds', () => {
+  const ws = read('pnpm-workspace.yaml');
+  assert.deepEqual(allowedBuilds(ws), ['esbuild', 'workerd']);
+  assert.deepEqual(checkWorker(copy({ 'worker/pnpm-workspace.yaml': ws + '  sharp: true\n' })).length > 0, true);
+  assert.deepEqual(checkWorker(copy({ 'worker/pnpm-workspace.yaml': ws.replace('  workerd: true\n', '') })).length > 0, true);
+  assert.deepEqual(checkWorker(copy({ 'worker/pnpm-workspace.yaml': ws + 'dangerouslyAllowAllBuilds: true\n' })).length > 0, true);
+});
+
+test('씨앗: .dev.vars.example', () => {
+  assert.deepEqual(checkDevVarsExample(EXAMPLE, KEYS), []);
+  const seeds = [
+    ['키 빠짐', EXAMPLE.replace(/^BUILD_ID=.*\n/m, '')],
+    ['코드가 안 읽는 키', EXAMPLE + 'EXTRA_KEY=dev-x\n'],
+    ['실제 같은 secret', EXAMPLE.replace('CHZZK_CLIENT_SECRET=dev-client-placeholder', 'CHZZK_CLIENT_SECRET=Zx9realLooking')],
+    ['운영 출처', EXAMPLE.replace('PUBLIC_ORIGIN=http://localhost:8787', 'PUBLIC_ORIGIN=https://dist.example.test')],
+    ['포트 다름', EXAMPLE.replace('PUBLIC_ORIGIN=http://localhost:8787', 'PUBLIC_ORIGIN=http://localhost:8788')],
+    ['치지직 주소가 운영', EXAMPLE.replace('CHZZK_API_BASE=http://127.0.0.1:8788', 'CHZZK_API_BASE=https://openapi.chzzk.naver.com')],
+    ['합성이 아닌 채널 ID', EXAMPLE.replace(/^ADMIN_CHANNEL_IDS=.*$/m, `ADMIN_CHANNEL_IDS=${'e5'.padStart(32, '0')}`)],
+    ['따옴표 값', EXAMPLE.replace('BUILD_ID=dev', 'BUILD_ID="dev"')],
+    ['키 중복', EXAMPLE + 'BUILD_ID=dev\n'],
+  ];
+  for (const [name, text] of seeds) assert.notDeepEqual(checkDevVarsExample(text, KEYS), [], name);
+  assert.ok(checkWorker(copy({ 'worker/.dev.vars.example': null })).some((e) => e.includes('.dev.vars.example: 없다')));
+});
+
+test('씨앗: vitest.config.ts가 environment example을 잃음', () => {
+  assert.deepEqual(checkVitestConfig(VITEST), []);
+  const noEnv = VITEST.replace(/,\s*environment:\s*"example"/, '');
+  assert.notEqual(noEnv, VITEST);
+  const seeds = [
+    ['environment undefined', VITEST.replace(/environment:\s*"example"/, 'environment: undefined')],
+    ['environment 지움', noEnv],
+    ['지우고 주석으로 남김(줄 주석)', `${noEnv}\n// environment: "example"\n`],
+    ['지우고 주석으로 남김(블록 주석)', noEnv.replace('configPath:', '/* environment: "example", */ configPath:')],
+    ['wrangler 객체 밖에 둠', noEnv.replace('miniflare:', 'environment: "example", miniflare:')],
+    ['뒤에서 다시 덮음', VITEST.replace(/environment:\s*"example"/, 'environment: "example", environment: "other"')],
+    ['펼침으로 덮을 수 있음', VITEST.replace(/environment:\s*"example"/, 'environment: "example", ...extra')],
+    ['configPath 다른 파일', VITEST.replace('./wrangler.jsonc', './wrangler.json')],
+    ['.dev.vars.example 이름이 주석에만', VITEST.replace(/new URL\("\.\/\.dev\.vars\.example"/, 'new URL("./x.env"')],
+  ];
+  for (const [name, text] of seeds) {
+    assert.notEqual(text, VITEST, name);
+    assert.notDeepEqual(checkVitestConfig(text), [], name);
+  }
+  // 주석 지우기: 문자열 안의 // 와 따옴표 종류는 그대로
+  assert.equal(stripJsComments(`a("//x") /* b */ + 'c//d' + \`e/*f*/\` // g`), `a("//x")  + 'c//d' + \`e/*f*/\` `);
+});
+
+test('씨앗: 그림자 설정(wrangler.json·wrangler.toml·리디렉트·기본 타입 파일·다른 vitest 설정)', () => {
+  const cases = [
+    ['worker/wrangler.json', JSON.stringify({ ...WRANGLER, vars: { ...WRANGLER.vars, EXTRA: 'leak' } })],
+    ['worker/wrangler.toml', '[vars]\nX = "1"\n'],
+    ['worker/.wrangler/deploy/config.json', '{"configPath":"../../x.json"}'],
+    ['worker/worker-configuration.d.ts', '// 생성물'],
+    ['worker/vitest.config.mts', 'export default {}'],
+    ['worker/vite.config.ts', 'export default {}'],
+    ['worker/vitest.workspace.ts', 'export default []'],
+  ];
+  for (const [rel, text] of cases) {
+    const errs = checkWorker(copy({ [rel]: text }));
+    assert.ok(errs.some((e) => e.startsWith(rel)), `${rel}: ${JSON.stringify(errs)}`);
+  }
+});
+
+test('--sentinel: CI에서만 심고, 이미 있으면(FIFO 포함) 열지 않고 실패하고, 씨앗이 아니면 지우지 않는다', () => {
+  const CI = { CI: 'true' };
+  const quiet = (fn) => {
+    const [log, err] = [console.log, console.error];
+    console.log = console.error = () => {};
+    try {
+      return fn();
+    } finally {
+      [console.log, console.error] = [log, err];
+    }
+  };
+  // 로컬(CI 아님): 아무것도 만들지 않는다
+  const local = copy();
+  assert.deepEqual(plantSentinel(local, {}).errs, []);
+  assert.equal(existsSync(join(local, 'worker/.dev.vars')), false);
+  assert.deepEqual(checkSentinel(local, {}).errs, []);
+  // CI: 심기 → 두 번째 심기는 EEXIST → 타입 파일 정상이면 지우고 통과
+  const d = copy({ 'worker/worker-env.d.ts': 'interface Env { PUBLIC_ORIGIN: string }\n' });
+  assert.deepEqual(plantSentinel(d, CI).errs, []);
+  assert.equal(readFileSync(join(d, 'worker/.dev.vars'), 'utf8'), SENTINEL_TEXT);
+  assert.notDeepEqual(plantSentinel(d, CI).errs, []);
+  assert.deepEqual(checkSentinel(d, CI).errs, []);
+  assert.equal(existsSync(join(d, 'worker/.dev.vars')), false);
+  // 타입 파일에 씨앗 키가 있으면 실패(wrangler types가 실제 비밀값 파일을 읽었다)
+  const leaked = copy({ 'worker/worker-env.d.ts': 'interface Env { LEAK_SENTINEL: string }\n' });
+  plantSentinel(leaked, CI);
+  assert.ok(checkSentinel(leaked, CI).errs.some((e) => e.includes('LEAK_SENTINEL')));
+  // 씨앗 없이 check: 실패. 씨앗과 크기가 다른 파일은 지우지 않는다
+  assert.notDeepEqual(checkSentinel(copy({ 'worker/worker-env.d.ts': 'x' }), CI).errs, []);
+  const other = copy({ 'worker/worker-env.d.ts': 'x', 'worker/.dev.vars': 'CHZZK_CLIENT_ID=x\n' });
+  assert.notDeepEqual(checkSentinel(other, CI).errs, []);
+  assert.equal(existsSync(join(other, 'worker/.dev.vars')), true);
+  // 진입점
+  assert.equal(quiet(() => main(['--sentinel', 'plant', '--root', local], {})), 0);
+  assert.equal(quiet(() => main(['--sentinel', 'nope', '--root', local], {})), 2);
+  assert.equal(quiet(() => main(['--sentinel', '--root', local], {})), 2);
+  // FIFO(POSIX): 심기가 막히지 않고 EEXIST로 실패한다(1Password 마운트 자리를 열지 않는다)
+  if (process.platform !== 'win32') {
+    const f = copy();
+    execFileSync('mkfifo', [join(f, 'worker/.dev.vars')]);
+    assert.ok(plantSentinel(f, CI).errs.some((e) => e.includes('이미 있다')));
+    assert.ok(checkSentinel(f, CI).errs.some((e) => e.includes('씨앗이 아니다')));
+    assert.equal(existsSync(join(f, 'worker/.dev.vars')), true);
+  }
+});
+
+test('씨앗: 소스 규칙', () => {
+  const ok = [
+    { rel: 'src/core/log.ts', text: 'console.log(x);' },
+    { rel: 'src/config.ts', text: '"CI_VERIFY_TOKEN",' },
+    { rel: 'src/core/a.ts', text: 'import type { X } from "cloudflare:workers";' },
+    { rel: 'test/a.test.ts', text: 'vi.spyOn(console, "log"); console.log("x"); // .dev.vars.example' },
+  ];
+  assert.deepEqual(checkSources(ok), []);
+  const seeds = [
+    ['log.ts 밖 console.', { rel: 'src/routes.ts', text: 'console.error(e);' }],
+    ['console . 띄어 씀', { rel: 'src/http/x.ts', text: 'console .log(1)' }],
+    ['CI_VERIFY_TOKEN 다른 파일', { rel: 'src/http/admin.ts', text: 'env.CI_VERIFY_TOKEN' }],
+    ['core가 cloudflare:* 값 import', { rel: 'src/core/x.ts', text: 'import { env } from "cloudflare:workers";' }],
+    ['테스트가 실제 비밀값 파일 이름', { rel: 'test/a.test.ts', text: 'readFile(".dev.vars")' }],
+    ['설정이 실제 비밀값 파일 이름', { rel: 'vitest.config.ts', text: 'envFiles: [".dev.vars"]' }],
+    ['scripts/의 다른 도구가 실제 비밀값 파일 이름', { rel: 'scripts/e2e-dev.mjs', text: "['--env-file', '.dev.vars']" }],
+  ];
+  // G-ID 도구는 사용자가 직접 돌리며 실제 비밀값 파일을 읽는다(예외)
+  assert.deepEqual(checkSources([{ rel: 'scripts/channel-id-check.mjs', text: "join(dir, '..', '.dev.vars')" }]), []);
+  for (const [name, f] of seeds) assert.notDeepEqual(checkSources([f]), [], name);
+  // 사본: log.ts 밖에 console.을 넣으면 checkWorker가 실패
+  const routes = read('src/routes.ts');
+  assert.ok(checkWorker(copy({ 'worker/src/routes.ts': routes + '\nconsole.log("x");\n' })).some((e) => e.includes('console.')));
+});
+
+test('CONFIG_KEYS 추출', () => {
+  assert.ok(KEYS.includes('PUBLIC_ORIGIN') && KEYS.includes('START_RATE_10M'));
+  assert.equal(configKeys('export const X = 1;'), null);
+});
+
+test('--dist: metafile 입력은 src/*.ts만, dist/wrangler.json 규칙', () => {
+  const meta = (inputs) => JSON.stringify({ inputs: Object.fromEntries(inputs.map((i) => [i, {}])), outputs: {} });
+  const good = { 'worker/dist/bundle-meta.json': meta(['src/index.ts', 'src/routes.ts']), 'worker/dist/index.js': 'x' };
+  assert.deepEqual(checkDist(copy(good)), []);
+  assert.notDeepEqual(checkDist(copy({ ...good, 'worker/dist/bundle-meta.json': meta(['src/index.ts', 'node_modules/evil/index.js']) })), []);
+  assert.notDeepEqual(checkDist(copy({ ...good, 'worker/dist/bundle-meta.json': meta(['src/../x.ts']) })), []);
+  assert.notDeepEqual(checkDist(copy({ 'worker/dist/index.js': 'x' })), []);
+  assert.notDeepEqual(checkDist(copy({ 'worker/dist/bundle-meta.json': meta(['src/index.ts']) })), []);
+  const dw = (cfg) => ({ ...good, 'worker/dist/wrangler.json': JSON.stringify(cfg) });
+  assert.deepEqual(checkDist(copy(dw({ ...WRANGLER, main: 'index.js', no_bundle: true }))), []);
+  assert.notDeepEqual(checkDist(copy(dw({ ...WRANGLER, vars: { ...WRANGLER.vars, PUBLIC_ORIGIN: 'http://localhost:8787' } }))), []);
+  assert.notDeepEqual(checkDist(copy(dw({ ...WRANGLER, account_id: 'x' }))), []);
+});

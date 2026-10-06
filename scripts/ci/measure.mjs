@@ -6,6 +6,7 @@
 //   node scripts/ci/measure.mjs tests-app  # chzzk-app 테스트 목록 수(tauri gate의 테스트 빌드를 다시 쓴다) → tests.app.<os>,
 //                                          # e2e:: 테스트 수(--features e2e) → tests.app_e2e.<os>(0이면 실패)
 //   node scripts/ci/measure.mjs tests-playwright  # e2e-web(Playwright) 통과 테스트 수(target/e2e-web/report.json) → tests.playwright
+//   node scripts/ci/measure.mjs tests-worker      # worker/ vitest(Workers 런타임) 통과 테스트 수 → tests.worker(worker gate)
 //   node scripts/ci/measure.mjs size       # app/dist gzip 합, 릴리스 바이너리, 수집한 번들(target/ci/bundle/bundles.json)
 //   node scripts/ci/measure.mjs mutants-shard  # env MUTANTS_SHARD=k/n: cargo mutants -p chzzk-core의 한 shard →
 //                                              # target/ci/mutants/shard-<k>/summary.json(weekly mutants-shard 작업)
@@ -142,6 +143,13 @@ function testsApp() {
   save('tests', { [`tests.app.${osKey()}`]: app, [`tests.app_e2e.${osKey()}`]: e2e });
 }
 
+// worker/는 Workers 풀(vitest 4)이라 커버리지는 재지 않는다(istanbul만 된다, worker.md §13.2 Q6). 통과 수만 센다.
+function testsWorker() {
+  const vjson = join(outDir(), 'vitest-worker-report.json');
+  run('pnpm', ['exec', 'vitest', 'run', '--reporter=dot', '--reporter=json', `--outputFile.json=${vjson}`], { cwd: join(ROOT, 'worker') });
+  save('tests', { 'tests.worker': vitestCount(JSON.parse(readFileSync(vjson, 'utf8'))) });
+}
+
 function testsPlaywright() {
   const p = join(ROOT, PLAYWRIGHT_REPORT);
   if (!existsSync(p)) throw new Error(`${p}가 없다(e2e-web gate의 playwright test가 먼저 돌아야 한다)`);
@@ -228,7 +236,7 @@ function mutants() {
   save('mutants', { [`mutants_missed.${MUTANTS_PKG}`]: s.missed });
 }
 
-const MODES = { coverage, tests, 'tests-app': testsApp, 'tests-playwright': testsPlaywright, size, 'mutants-shard': mutantsShard, mutants };
+const MODES = { coverage, tests, 'tests-app': testsApp, 'tests-playwright': testsPlaywright, 'tests-worker': testsWorker, size, 'mutants-shard': mutantsShard, mutants };
 
 export function main(argv) {
   if (argv.length !== 1 || !Object.hasOwn(MODES, argv[0])) {

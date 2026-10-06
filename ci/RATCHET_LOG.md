@@ -13,3 +13,4 @@
 | 2026-10-06 | `size.bundle.linux-deb` | 9262424 → 9918794 | G6: tauri-plugin-updater 등록(릴리스 리허설 37377704140의 CI 측정값, +5~7%) |
 | 2026-10-06 | `size.binary.linux` | 29686784 → 32559736 | 툴체인 1.96.1 → 1.99.0(코드 변경 없음, PR #12 실행 37404351747의 CI 측정값, +9.7%). 같은 실행의 AppImage는 +0.5%, deb는 −1.9%라 배포 크기 차이는 작다(cicd.md 76) |
 | 2026-10-06 | `size.binary.darwin` | 20303840 → 22824784 | 툴체인 1.96.1 → 1.99.0(코드 변경 없음, ci.yml dispatch 37406016037의 CI 측정값, +12.4%). 같은 실행의 dmg는 −3.2%, Windows 바이너리는 −0.6%라 배포 크기는 줄었다(cicd.md 76) |
+| 2026-10-06 | `tests.worker` | 없음 → 0(`$pending`) | Phase 3 W1: worker/ vitest 통과 수를 새 키로 더했다(느슨하게 하기가 아니다). 첫 master 실행의 `ratchet-measurements-worker`로 `write --from-run`해 채우고 `PENDING_ALLOWED`에서 뺀다 |

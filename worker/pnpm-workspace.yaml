@@ -1,0 +1,5 @@
+# worker/는 app/과 따로인 pnpm 루트다(docs/design/worker.md §3: app은 vitest 5, 여기는 플러그인 peer에 맞춘 4.1.11).
+# 설치 스크립트는 이 둘만 허용한다(esbuild 네이티브 바이너리, workerd 런타임). 늘리면 scripts/ci/worker-config.mjs가 실패한다.
+allowBuilds:
+  esbuild: true
+  workerd: true

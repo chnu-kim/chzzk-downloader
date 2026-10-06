@@ -54,6 +54,11 @@
       "versionArgs": ["mutants", "--version"],
       "$comment": "weekly mutants 작업만 쓴다(taiki-e/install-action tool:)"
     },
+    "wrangler": {
+      "version": "4.147.0",
+      "npm": "worker",
+      "$comment": "Cloudflare Worker(worker/)의 wrangler. PATH 도구가 아니라 worker/package.json devDependencies가 정확히 이 버전으로 깔고(lockfile), worker-config.mjs가 같은지 본다(W8부터 worker/deploy/package.json도). doctor는 npm 항목을 건너뛴다"
+    },
     "rust-nightly": {
       "version": "nightly-2026-10-01",
       "toolchain": true,

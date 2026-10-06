@@ -64,6 +64,8 @@ function osBundles(root = ROOT) {
   const spec = existsSync(p) ? JSON.parse(readFileSync(p, 'utf8'))[OS_KEY] : null;
   return spec ? spec.bundles.join(',') : 'none';
 }
+// wrangler가 사용 통계를 보내지 않는다(wrangler.jsonc send_metrics: false와 이중). worker gate의 wrangler·vitest 단계
+const WRANGLER_ENV = { WRANGLER_SEND_METRICS: 'false' };
 // linuxdeploy(AppImage)는 FUSE 없이 풀어서 돈다(컨테이너·러너에 libfuse2가 없다)
 const BUNDLE_ENV = process.platform === 'linux' ? { APPIMAGE_EXTRACT_AND_RUN: '1' } : undefined;
 
@@ -181,6 +183,27 @@ export const GATES = {
       { cmd: ['pnpm', 'check'], cwd: 'app' },
       { cmd: ['pnpm', 'test'], cwd: 'app' },
       { cmd: ['pnpm', 'build'], cwd: 'app' },
+    ],
+  },
+  // Cloudflare Worker(docs/design/worker.md §13.2, cicd.md 구현 중 변경 83·85·86). frontend와 같은 모양(pnpm, cwd worker)이고
+  // 독립 lockfile이다. worker-config(의존성 없음)가 설치보다 먼저 돈다: allowBuilds를 넓힌 변경이 설치 스크립트를 돌리기 전에
+  // 멈춘다. wrangler·vitest는 worker/의 실제 비밀값 파일을 열지 않는다(--config·--env-file·environment example·타입 출력
+  // 경로, worker.md 구현 중 변경 4·5·9. worker-config.mjs가 그 설정을 고정한다). CI에서는 그 자리에 LEAK_SENTINEL 씨앗을
+  // 심고(--sentinel plant) pnpm check·vitest 뒤에 지우며 새지 않았는지 본다(--sentinel check, 로컬은 건너뜀).
+  // 테스트 수는 measure.mjs tests-worker → ratchet tests.worker.
+  worker: {
+    desc: 'worker/ 불변식(worker-config)·설치·wrangler types+tsc·vitest(Workers 런타임)·(CI) 비밀값 파일 누출 씨앗·deploy --dry-run 번들과 그 모듈 목록·테스트 수 ratchet',
+    needs: ['pnpm'],
+    steps: [
+      { cmd: ['node', S('worker-config.mjs')] },
+      { cmd: ['pnpm', 'install', '--frozen-lockfile'], cwd: 'worker', env: WRANGLER_ENV },
+      { cmd: ['node', S('worker-config.mjs'), '--sentinel', 'plant'] },
+      { cmd: ['pnpm', 'check'], cwd: 'worker', env: WRANGLER_ENV },
+      { cmd: ['node', S('measure.mjs'), 'tests-worker'], env: WRANGLER_ENV },
+      { cmd: ['node', S('worker-config.mjs'), '--sentinel', 'check'] },
+      { cmd: ['pnpm', 'build'], cwd: 'worker', env: WRANGLER_ENV },
+      { cmd: ['node', S('worker-config.mjs'), '--dist'] },
+      { cmd: ['node', S('ratchet.mjs'), 'check', 'tests'] },
     ],
   },
   // chzzk-app은 gate 셋이다(구현 중 변경 78): clippy(check)와 test·빌드(codegen)는 산출물을 나누지 않아 한 작업에서 차례로 돌면
@@ -306,11 +329,13 @@ export const GATES = {
     steps: [{ cmd: ['node', S('drift.mjs')] }],
   },
   advisories: {
-    desc: '의존성 보안 권고(nightly): cargo deny check advisories(deny.toml) + pnpm audit --audit-level high(app/). 권고 DB가 날마다 바뀌어 PR에 두지 않는다',
+    desc: '의존성 보안 권고(nightly): cargo deny check advisories(deny.toml) + pnpm audit --audit-level high(app/·worker/). 권고 DB가 날마다 바뀌어 PR에 두지 않는다',
     needs: ['cargo', 'cargo-deny', 'pnpm'],
     steps: [
       { cmd: ['cargo', 'deny', '--locked', 'check', 'advisories'] },
       { cmd: ['pnpm', 'audit', '--audit-level', 'high'], cwd: 'app' },
+      // worker/는 독립 lockfile이다(worker.md §13.2)
+      { cmd: ['pnpm', 'audit', '--audit-level', 'high'], cwd: 'worker' },
     ],
   },
   pins: {
@@ -444,6 +469,8 @@ export const HOOKS = {
       { gate: 'rust', paths: [/^crates\//, /^xtask\//, /^release\//, /^testdata\//, /^Cargo\.(toml|lock)$/, /^rust-toolchain\.toml$/, /^\.cargo\//] },
       { gate: 'release-selftest', paths: RELEASE_SELFTEST_FILES },
       { gate: 'frontend', paths: [/^app\/(?!src-tauri\/)/] },
+      // pre-commit에는 넣지 않는다(무겁다). release/ 표는 W5 계약 테스트가 읽는다(worker.md §13.2)
+      { gate: 'worker', paths: [/^worker\//, /^scripts\/ci\/worker-config/, /^release\/(latest\.schema|expected-artifacts)\.json$/] },
       { gate: 'scripts-test', paths: [/^scripts\//, /^\.githooks\//, /^\.gitattributes$/] },
       { gate: 'deny', paths: [/^Cargo\.lock$/, /^deny\.toml$/, /(^|\/)Cargo\.toml$/] },
       // 코어 API 변경이 fuzz target을 깨뜨린다(crates/core)
@@ -471,7 +498,7 @@ export const NON_CODE = [/^docs\//, /^[^/]+\.md$/, /^\.claude\//, /^LICENSE(\.[^
 export const NON_CODE_GLOBS = ['docs/**', '*.md', '.claude/**', 'LICENSE', 'LICENSE.*'];
 
 // changes.code == 'false'일 때 건너뛰는 작업(ci.yml 작업 id). ci-ok는 이 작업들의 skipped만 허용한다.
-export const CODE_GATED_JOBS = ['supply', 'rust', 'frontend', 'tauri-clippy', 'tauri', 'coverage', 'bundle-linux', 'smoke-install-linux'];
+export const CODE_GATED_JOBS = ['supply', 'rust', 'frontend', 'worker', 'tauri-clippy', 'tauri', 'coverage', 'bundle-linux', 'smoke-install-linux'];
 
 // pull_request에서는 돌지 않는 작업(ci.yml 작업 id, `if: github.event_name != 'pull_request'`). push(master)·dispatch에서
 // 돈다. ci-ok는 pull_request에서만 이 작업들의 skipped를 허용한다. Linux 릴리스 번들·설치 스모크는 PR에서도 돈다(CODE_GATED_JOBS,

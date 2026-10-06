@@ -1,6 +1,6 @@
 {
   "$comment": "회귀 ratchet 기준(docs/design/cicd.md §4.2). 값은 CI 러너에서 잰 것만 쓴다: node scripts/ci/ratchet.mjs write --from-run <run id>(이 저장소의 성공한 push·dispatch 실행만, 조이기만 한다). 0은 아직 안 잼이고 $pending에 있어야 하며 $pending은 ratchet.mjs PENDING_ALLOWED 안이어야 한다(lint의 ratchet-log gate). 기준을 느슨하게 하는 커밋은 같은 변경에서 ci/RATCHET_LOG.md에 그 키(예: coverage_lines.rust)와 이유를 적은 줄을 더해야 한다. coverage_lines는 %(0.1 단위로 내림), tests는 실제로 도는 수(#[ignore]·skip·todo 제외), size는 바이트, mutants_missed는 weekly cargo-mutants에서 살아남은 mutant 수(늘면 실패, 0도 실제 기준이라 '안 잼'은 $pending으로만 정한다)다.",
-  "$pending": [],
+  "$pending": ["tests.worker"],
   "coverage_lines": {
     "rust": 95.8,
     "frontend": 91,
@@ -10,6 +10,7 @@
     "rust": 348,
     "vitest": 491,
     "playwright": 7,
+    "worker": 0,
     "app": {
       "linux": 32,
       "darwin": 32,

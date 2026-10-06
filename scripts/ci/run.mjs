@@ -345,8 +345,8 @@ function cmdHook(hook, args, env = process.env) {
 // ---- doctor / install-hooks / list ----
 
 function cmdDoctor() {
-  // toolchain 항목(rust-nightly)은 실행 파일이 아니다(rustup 툴체인 이름)
-  const names = [...new Set(['node', 'git', 'cargo', 'rustup', 'pnpm', ...Object.keys(TOOLS).filter((k) => !TOOLS[k].toolchain)])];
+  // toolchain 항목(rust-nightly)은 실행 파일이 아니다(rustup 툴체인 이름). npm 항목(wrangler)은 그 폴더의 lockfile이 깐다
+  const names = [...new Set(['node', 'git', 'cargo', 'rustup', 'pnpm', ...Object.keys(TOOLS).filter((k) => !TOOLS[k].toolchain && !TOOLS[k].npm)])];
   let bad = 0;
   for (const n of names) {
     const p = probeTool(n);

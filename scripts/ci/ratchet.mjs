@@ -41,8 +41,9 @@ const LOWER_IS_BETTER = new Set(['size', 'mutants_missed']);
 const SETTINGS = new Set(['tolerance_pp', 'tolerance_pct']);
 // 기준 0(아직 안 잼)으로 둘 수 있는 키. 다른 키가 0이면 lint가 실패한다. tests.playwright는 G4에서 채웠다(실행 37324424781).
 // tests.app_e2e.*는 G4 2차 리뷰에서 더해 실행 37334258200으로 채웠다. mutants_missed.chzzk-core는 G5에서 더해 nightly 실행
-// 37342266385(only=mutants, shard 4개)로 채웠다(100).
-export const PENDING_ALLOWED = [];
+// 37342266385(only=mutants, shard 4개)로 채웠다(100). tests.worker는 Phase 3 W1에서 더했다: worker gate(ci.yml worker 작업)의
+// 첫 master 실행 뒤 write --from-run으로 채우고 여기서 뺀다(worker.md §13.2).
+export const PENDING_ALLOWED = ['tests.worker'];
 
 // 객체 → { "a.b.c": 숫자 } (설정 키·$comment·null 제외)
 export function flatten(obj, prefix = '') {

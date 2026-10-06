@@ -51,3 +51,29 @@ updates:
     groups:
       npm:
         update-types: [minor, patch]
+
+  # Cloudflare Worker(worker/, docs/design/worker.md §13.3). 독립 lockfile. wrangler와 @cloudflare/*는 함께 올린다
+  # (vitest 플러그인이 wrangler를 정확히 고정한다). vitest는 플러그인 peer(^4.1.0)가 열릴 때까지 메이저를 올리지 않는다.
+  # wrangler 버전은 scripts/ci/tools.json과 같아야 한다(worker-config.mjs): 이 PR이 빨개지면 tools.json을 함께 고친다.
+  - package-ecosystem: npm
+    commit-message:
+      prefix: build
+      include: scope
+    directory: /worker
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 3
+    ignore:
+      - dependency-name: vitest
+        update-types: [version-update:semver-major]
+      - dependency-name: "@types/node"
+        update-types: [version-update:semver-major]
+    groups:
+      cloudflare:
+        patterns: [wrangler, "@cloudflare/*"]
+      msw:
+        patterns: [msw, "@msw/*"]
+      npm:
+        update-types: [minor, patch]

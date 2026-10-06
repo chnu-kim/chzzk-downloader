@@ -266,6 +266,40 @@ jobs:
       - name: frontend
         run: node scripts/ci/run.mjs frontend
 
+  # Cloudflare Worker(docs/design/worker.md §13.3, cicd.md 구현 중 변경 83): 설치·불변식(worker-config)·wrangler types+tsc·
+  # vitest(Workers 런타임, 가짜 값만)·deploy --dry-run 번들. Worker는 workerd에서 돌아 OS 하나(Linux)로 충분하다.
+  # 자격증명은 쓰지 않는다(dry-run은 계정이 필요 없다). 테스트 수는 ratchet tests.worker(write --from-run이 artifact를 받는다).
+  worker:
+    name: worker
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read # checkout
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # worker/는 app/과 따로인 pnpm 루트다(같은 pnpm 버전, 독립 lockfile)
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          package_json_file: worker/package.json
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: worker/pnpm-lock.yaml
+      - name: worker
+        run: node scripts/ci/run.mjs worker
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: ${{ !cancelled() }}
+        with:
+          name: ratchet-measurements-worker
+          path: target/ci/measure/tests.json
+          retention-days: 7
+          if-no-files-found: ignore
+
   # chzzk-app clippy(보통·--features e2e)를 test·빌드와 다른 작업으로 돌린다(구현 중 변경 78): clippy(check)와 test(codegen)는
   # 산출물을 나누지 않아 한 작업에서는 두 전체 컴파일이 직렬이었다(Windows 약 3.5분 + 4.3분).
   tauri-clippy:
@@ -723,7 +757,7 @@ jobs:
   # needs는 ci.yml의 다른 모든 작업이다(parity가 강제).
   ci-ok:
     name: ci-ok
-    needs: [changes, lint, scripts-windows, supply, rust, frontend, tauri-clippy, tauri, coverage, bundle-linux, smoke-install-linux, bundle]
+    needs: [changes, lint, scripts-windows, supply, rust, frontend, worker, tauri-clippy, tauri, coverage, bundle-linux, smoke-install-linux, bundle]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -740,7 +774,7 @@ jobs:
           || contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
           || (github.event_name != 'pull_request' && contains(needs.*.result, 'skipped'))
           || (needs.changes.outputs.code != 'false'
-          && (needs.supply.result == 'skipped' || needs.rust.result == 'skipped' || needs.frontend.result == 'skipped' || needs.tauri-clippy.result == 'skipped' || needs.tauri.result == 'skipped' || needs.coverage.result == 'skipped' || needs.bundle-linux.result == 'skipped' || needs.smoke-install-linux.result == 'skipped'))
+          && (needs.supply.result == 'skipped' || needs.rust.result == 'skipped' || needs.frontend.result == 'skipped' || needs.worker.result == 'skipped' || needs.tauri-clippy.result == 'skipped' || needs.tauri.result == 'skipped' || needs.coverage.result == 'skipped' || needs.bundle-linux.result == 'skipped' || needs.smoke-install-linux.result == 'skipped'))
         run: exit 1
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

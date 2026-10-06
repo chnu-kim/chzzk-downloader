@@ -3,13 +3,17 @@
 //     그 밖(true·객체·함수·bigint·symbol·NaN)은 TypeError([object Object] 누출을 막는다).
 //   - 정적 조각은 cooked 문자열만 쓴다(cooked가 없으면 던진다).
 //   - 속성 값은 늘 따옴표로 감싼다(값이 따옴표 안에 있어야 이스케이프가 막는다).
-//   - SafeHtml은 비공개 필드 브랜드라 같은 모양의 객체로 위조할 수 없다. 클래스는 내보내지 않는다.
+//   - SafeHtml은 비공개 필드 브랜드라 같은 모양의 객체로 위조할 수 없다. 클래스는 내보내지 않고 생성자는 모듈 안의 열쇠를 요구한다.
 //   - 이스케이프 없이 넣는 함수는 아래 하나이고, scripts/ci/worker-config.mjs RAW_ALLOWLIST가 src/의 사용처 수를 파일별로 고정한다.
 //   - 페이지 골격은 W6에서 더한다.
 
+// 생성자 열쇠: 인스턴스에서 constructor를 꺼내 new로 만드는 길도 막는다(모듈 밖에서는 이 값을 얻을 수 없다)
+const MINT: unique symbol = Symbol("SafeHtml");
+
 class SafeHtml {
   readonly #html: string;
-  constructor(text: string) {
+  constructor(key: typeof MINT, text: string) {
+    if (key !== MINT || typeof text !== "string") throw new TypeError("SafeHtml은 html 모듈만 만든다");
     this.#html = text;
   }
   static is(v: unknown): v is SafeHtml {
@@ -49,13 +53,13 @@ export function html(strings: TemplateStringsArray, ...values: HtmlValue[]): Saf
     out += s;
     if (i < values.length) out += render(values[i]);
   }
-  return new SafeHtml(out);
+  return new SafeHtml(MINT, out);
 }
 
 /** 이스케이프 없이 넣는다. 문자열만 받는다 */
 export function raw(s: string): SafeHtml {
   if (typeof s !== "string") throw new TypeError("이스케이프 없는 삽입은 문자열만 받는다");
-  return new SafeHtml(s);
+  return new SafeHtml(MINT, s);
 }
 
 export function isSafeHtml(v: unknown): v is SafeHtml {

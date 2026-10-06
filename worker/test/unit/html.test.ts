@@ -66,6 +66,13 @@ describe("위조 차단·형식 오류", () => {
     expect(isSafeHtml("<x>")).toBe(false);
   });
 
+  it("인스턴스의 constructor로 new를 불러도 만들 수 없다", () => {
+    const Ctor = (Object.getPrototypeOf(html`x`) as { constructor: new (...a: unknown[]) => unknown }).constructor;
+    expect(() => new Ctor("<script>")).toThrow(TypeError);
+    expect(() => new Ctor(undefined, "<script>")).toThrow(TypeError);
+    expect(() => new Ctor(Symbol("SafeHtml"), "<script>")).toThrow(TypeError);
+  });
+
   it("원문 삽입은 문자열만", () => {
     expect(() => raw(123 as unknown as string)).toThrow(TypeError);
     expect(() => raw({ toString: () => "<x>" } as unknown as string)).toThrow(TypeError);

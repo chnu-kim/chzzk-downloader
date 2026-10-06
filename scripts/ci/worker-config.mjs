@@ -32,7 +32,7 @@
 //                        configPath ./wrangler.jsonc(vitest가 실제 비밀값 파일 대신 .dev.vars.example을 읽는다,
 //                        worker.md 구현 중 변경 5), .dev.vars.example 바인딩.
 //   소스            console.은 src/core/log.ts에서만, CI_VERIFY_TOKEN은 src/config.ts·src/http/release-auth.ts에서만,
-//                   src·test·scripts·설정에 실제 비밀값 파일 이름이 나오지 않는다(사용자가 직접 돌리는 scripts/channel-id-check.mjs만 예외).
+//                   src·test·scripts·설정에 실제 비밀값 파일 이름이 나오지 않는다(사용자가 직접 돌리는 scripts/channel-id-check.mjs·scripts/code-binding-check.mjs만 예외).
 //   core 순수성     src/core/**의 원문 전체(주석 포함)에 cloudflare:(타입 import 포함)·../가 든 문자열(바깥 import)·전역 fetch·
 //                   Date.now가 없다. src/** 전체에 Math.random이 없다(난수는 crypto). worker.md 구현 중 변경 15.
 //   store 순수성    src/**에서 sql.exec는 src/store/db.ts에만, transactionSync(async …)는 어디에도 없다. src/store/** 중
@@ -127,8 +127,8 @@ export const SQL_FILE = 'src/store/db.ts';
 // 이스케이프 없는 HTML 삽입(raw) 토큰 수를 파일별로 고정한다(worker.md §8.1, 구현 중 변경 15). 사용처를 더하면 파일과 수를 함께 올린다
 // (src/core/html.ts의 1 = 함수 선언). 주석·문자열의 낱말도 센다: 사용처 변화가 늘 이 표의 diff로 리뷰에 보인다
 export const RAW_ALLOWLIST = { 'src/core/html.ts': 1 };
-// 실제 비밀값 파일을 직접 읽어도 되는 도구(사용자가 직접 돌리는 G-ID 확인, worker.md §15)
-export const DEV_VARS_READERS = ['scripts/channel-id-check.mjs'];
+// 실제 비밀값 파일을 직접 읽어도 되는 도구(사용자가 직접 돌리는 G-ID 확인 worker.md §15, code 묶임 실측 구현 중 변경 42)
+export const DEV_VARS_READERS = ['scripts/channel-id-check.mjs', 'scripts/code-binding-check.mjs'];
 
 // 배포용 wrangler 묶음(worker/deploy, release.yml worker-bundle·deploy-worker, cicd.md 구현 중 변경 W8)
 export const DEPLOY_DIR = 'deploy';

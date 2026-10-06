@@ -173,7 +173,9 @@ async function main() {
         handler(req, res).catch(() => res.writeHead(500).end());
       });
       srv.on('error', (e) => {
-        if (host === '127.0.0.1') reject(new Error(`포트 ${PORT}을 열지 못했다(${e.code}). wrangler dev가 떠 있으면 끈다`));
+        // IPv6이 없는 기계(::1에 EADDRNOTAVAIL)만 넘긴다. ::1의 점유(EADDRINUSE) 등은 localhost 요청이 다른 프로세스로 갈 수 있어 멈춘다
+        if (host === '::1' && e.code === 'EADDRNOTAVAIL') return;
+        reject(new Error(`${host === '::1' ? '[::1]' : host}:${PORT}을 열지 못했다(${e.code}). wrangler dev가 떠 있으면 끈다`));
       });
       srv.listen(PORT, host);
       servers.push(srv);

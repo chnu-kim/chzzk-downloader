@@ -347,12 +347,29 @@ test('씨앗: 소스 규칙', () => {
     ['log.ts 밖 console.', { rel: 'src/routes.ts', text: 'console.error(e);' }],
     ['console . 띄어 씀', { rel: 'src/http/x.ts', text: 'console .log(1)' }],
     ['CI_VERIFY_TOKEN 다른 파일', { rel: 'src/http/admin.ts', text: 'env.CI_VERIFY_TOKEN' }],
+    // 구현 중 변경 43: 핸들러가 log를 직접 부르면 quiet 경로의 Ctx.log 차단을 건너뛴다
+    ['핸들러가 log를 값으로 import', { rel: 'src/http/auth.ts', text: 'import { log } from "../core/log";' }],
+    ['여러 줄 지정자 목록', { rel: 'src/http/admin.ts', text: 'import {\n  type LogFields,\n  log,\n} from "../core/log";' }],
+    ['확장자 붙은 지정자', { rel: 'src/http/x.ts', text: "import { log } from '../core/log.ts';" }],
+    ['다시 내보내기', { rel: 'src/http/x.ts', text: 'export { log } from "../core/log";' }],
+    ['부수 효과 import', { rel: 'src/http/x.ts', text: 'import "../core/log";' }],
+    ['core 안의 다른 파일', { rel: 'src/core/chzzk.ts', text: 'import { log } from "./log";' }],
+    ['store의 다른 파일', { rel: 'src/store/flows.ts', text: 'import { log } from "../core/log";' }],
+    ['공백 없는 import', { rel: 'src/http/x.ts', text: 'import{log}from"../core/log";' }],
+    ['type 뒤 공백 없음이 아닌 값 import', { rel: 'src/http/x.ts', text: 'import typeX, { log } from "../core/log";' }],
+    ['지정자의 유니코드 이스케이프', { rel: 'src/http/x.ts', text: 'import { log } from "../core/l\\u006fg";' }],
     ['테스트가 실제 비밀값 파일 이름', { rel: 'test/a.test.ts', text: 'readFile(".dev.vars")' }],
     ['설정이 실제 비밀값 파일 이름', { rel: 'vitest.config.ts', text: 'envFiles: [".dev.vars"]' }],
     ['scripts/의 다른 도구가 실제 비밀값 파일 이름', { rel: 'scripts/e2e-dev.mjs', text: "['--env-file', '.dev.vars']" }],
     // 구현 중 변경 16 (가): 표시 순서를 바꾸는 문자 리터럴(씨앗도 이스케이프로 만든다)
     ...['\u202E', '\u202A', '\u2066', '\u2069', '\u200E', '\u200F', '\u061C'].map((c) => [`bidi 리터럴 U+${c.codePointAt(0).toString(16)}`, { rel: 'test/a.test.ts', text: `["${c}evil", "evil"]` }]),
   ];
+  // log 값 import는 라우터·DO 경계만, 그 밖은 import type만(구현 중 변경 43)
+  assert.deepEqual(checkSources([{ rel: 'src/routes.ts', text: 'import { type Logger, log, silent } from "./core/log";' }]), []);
+  assert.deepEqual(checkSources([{ rel: 'src/store/AuthStore.ts', text: 'import { log } from "../core/log";' }]), []);
+  assert.deepEqual(checkSources([{ rel: 'src/store/types.ts', text: 'import type { LogFields } from "../core/log";' }]), []);
+  assert.deepEqual(checkSources([{ rel: 'src/store/types.ts', text: 'import type{LogFields}from"../core/log";' }]), []);
+  assert.deepEqual(checkSources([{ rel: 'src/http/auth.ts', text: 'import type {\n  LogFields,\n} from "../core/log";\nimport { x } from "./logger";' }]), []);
   // G-ID 도구는 사용자가 직접 돌리며 실제 비밀값 파일을 읽는다(예외)
   assert.deepEqual(checkSources([{ rel: 'scripts/channel-id-check.mjs', text: "join(dir, '..', '.dev.vars')" }]), []);
   // code 묶임 실측 도구도 같은 대우(worker.md 구현 중 변경 42). 그 순수 판정 모듈(test/)은 예외가 아니다

@@ -270,8 +270,8 @@ it("전 흐름을 돌려도 로그와 응답에 카나리가 새지 않는다", 
   // 실패 경로가 실제로 로그 줄을 남겼다(위 단언이 그 줄들도 본다)
   for (const want of [
     { event: "auth.login.failed", flowKind: "app", reason: "code_format" },
-    { event: "auth.login.failed", level: "error", reason: "internal", errorName: "RangeError" },
-    { event: "auth.continue.rejected", reason: "bad_origin" },
+    // 콜백·확인 페이지는 quiet 경로라 결과 이벤트는 DO가 남긴다. 확인 페이지의 Origin 거절(auth.continue.rejected)은 버렸다(구현 중 변경 43)
+    { event: "auth.login.failed", level: "error", flowKind: "app", reason: "internal", errorName: "RangeError" },
     { event: "auth.start.rejected", flowKind: "web", reason: "bad_origin" },
     { event: "auth.start.rejected", flowKind: "app", reason: "rate_limited" },
     { event: "auth.refresh.rejected", reason: "rate_limited" },

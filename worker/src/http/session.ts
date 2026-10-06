@@ -1,6 +1,5 @@
 // 앱 세션 핸들러(docs/design/worker.md §4.2·§6.3, 구현 중 변경 27 (바)(사)): refresh·logout·/api/me.
 // 자격이 없을 때: JSON이 깨졌거나 객체가 아니면 400, 토큰이 없거나 형식이 틀리면 401 invalid_token.
-import { log } from "../core/log";
 import { bearer, isToken, sha256Hex } from "../core/token";
 import type { Ctx } from "../routes";
 import type { TokenBundle } from "../store/types";
@@ -28,20 +27,20 @@ export async function refresh(req: Request, ctx: Ctx): Promise<Response> {
   if (body === null) return errorJson(400, "bad_request");
   const token = body.refreshToken;
   if (!isToken("refresh", token)) {
-    log("auth.refresh.rejected", { reason: "invalid_token" });
+    ctx.log("auth.refresh.rejected", { reason: "invalid_token" });
     return errorJson(401, "invalid_token");
   }
   const r = await ctx.store.rotate(await sha256Hex(token), ctx.config.adminChannelIds, ctx.now);
   if (r.ok) {
-    if (r.recovered) log("auth.refresh.recovered");
+    if (r.recovered) ctx.log("auth.refresh.recovered");
     return json(200, tokenBundleJson(r.bundle, ctx.now));
   }
   if (r.code === "rate_limited") {
-    log("auth.refresh.rejected", { reason: "rate_limited" });
+    ctx.log("auth.refresh.rejected", { reason: "rate_limited" });
     return errorJson(429, "rate_limited", { "Retry-After": String(r.retryAfterSec) });
   }
-  if (r.code === "session_revoked" && r.reuseDetected) log("auth.refresh.reuse_detected", { level: "warn" });
-  else log("auth.refresh.rejected", { reason: r.code });
+  if (r.code === "session_revoked" && r.reuseDetected) ctx.log("auth.refresh.reuse_detected", { level: "warn" });
+  else ctx.log("auth.refresh.rejected", { reason: r.code });
   return errorJson(r.code === "not_allowed" ? 403 : 401, r.code);
 }
 

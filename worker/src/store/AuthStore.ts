@@ -3,6 +3,8 @@
 // 이 파일이 DO 경계다: 비동기·시각·cloudflare:는 여기에만 있고(worker-config.mjs checkStorePurity), 나머지 src/store/*는
 // 동기 함수에 now 인자만 받는다. RPC 하나 = 앞 단계(해시·발급, 트랜잭션 밖) + transactionSync 하나.
 // 들어오는 자격 원문은 받지 않는다: Worker가 SHA-256 hex로 해시해 넘긴다. 새 토큰은 여기서 만들어 원문은 돌려주기만 하고 해시만 저장한다.
+// URL에 로그 금지 값이 실리는 경로(routes.ts quiet 행)의 이벤트는 Worker가 아니라 그 경로가 부르는 RPC가 여기서 남긴다
+// (Workers Logs가 Worker 호출의 로그 줄에 요청 URL 전체를 붙인다, 구현 중 변경 43). 값은 싣지 않는다(§14).
 import { DurableObject } from "cloudflare:workers";
 import { DEFAULT_START_RATE_10M } from "../config";
 import { ipBucket } from "../core/ip";
@@ -30,6 +32,7 @@ import {
   throttle,
   type StartWindow,
 } from "./flows";
+import { consumeEvent, finishEvent } from "./login-log";
 import { migrate } from "./schema";
 import { ROTATE_RATE_10M, check, logout, mySessions, revokeMine, revokeSession, rotate, webCheck } from "./sessions";
 import { SWEEP_DELAY_MS, SWEEP_INTERVAL_MS, sweep } from "./sweep";
@@ -43,6 +46,7 @@ import type {
   DisallowResult,
   DoneView,
   FinishResult,
+  LoginLogHint,
   LoginOutcome,
   LoginPageView,
   Minted,
@@ -167,17 +171,25 @@ export class AuthStore extends DurableObject<Env> {
   }
 
   async consume(stateHash: string, binderHash: string | null, now: number): Promise<ConsumeResult> {
-    if (!isHexHash(stateHash)) return { ok: false, code: "not_found" };
     const b = isHexHash(binderHash) ? binderHash : null;
-    return this.write(now, () => consume(this.db, stateHash, b, now));
+    const r: ConsumeResult = isHexHash(stateHash) ? await this.write(now, () => consume(this.db, stateHash, b, now)) : { ok: false, code: "not_found" };
+    const e = consumeEvent(r);
+    if (e !== null) log(...e);
+    return r;
   }
 
-  async finish(flowId: string, outcome: LoginOutcome, admins: readonly string[], now: number): Promise<FinishResult> {
-    if (!isId(flowId)) return { type: "gone" };
-    const sessionId = newId();
-    const cookie = await mint("web");
-    const csrf = newSecret();
-    return this.write(now, () => finish(this.db, flowId, outcome, { sessionId, cookie, csrf }, admins, now));
+  /** hint: 콜백이 아는 흐름 종류·실패 사유(로그에만 쓴다, 구현 중 변경 43) */
+  async finish(flowId: string, outcome: LoginOutcome, admins: readonly string[], now: number, hint?: LoginLogHint): Promise<FinishResult> {
+    let r: FinishResult;
+    if (!isId(flowId)) r = { type: "gone" };
+    else {
+      const sessionId = newId();
+      const cookie = await mint("web");
+      const csrf = newSecret();
+      r = await this.write(now, () => finish(this.db, flowId, outcome, { sessionId, cookie, csrf }, admins, now));
+    }
+    log(...finishEvent(outcome, r, hint));
+    return r;
   }
 
   async doneView(binderHash: string, now: number): Promise<DoneView | null> {
@@ -221,16 +233,21 @@ export class AuthStore extends DurableObject<Env> {
 
   async revoke(sessionId: string, why: "admin" | "logout", actor: string, now: number): Promise<boolean> {
     if (!isId(sessionId)) return false;
-    return this.write(now, () => {
-      const changed = revokeSession(this.db, sessionId, why, now);
-      if (changed && why === "admin") audit(this.db, "revoke_session", actor, sessionId.slice(0, 6), now);
-      return changed;
+    const changed = await this.write(now, () => {
+      const c = revokeSession(this.db, sessionId, why, now);
+      if (c && why === "admin") audit(this.db, "revoke_session", actor, sessionId.slice(0, 6), now);
+      return c;
     });
+    // 관리 화면의 끊기는 URL에 세션 id가 실리는 quiet 경로다: 성공 이벤트를 여기서 남긴다
+    if (changed && why === "admin") log("admin.revoke_session", { route: "/admin/sessions/:id/revoke" });
+    return changed;
   }
 
   async revokeMine(channelId: string, sessionId: string, now: number): Promise<boolean> {
     if (!isId(sessionId) || !CHANNEL_ID.test(channelId)) return false;
-    return this.write(now, () => revokeMine(this.db, channelId, sessionId, now));
+    const changed = await this.write(now, () => revokeMine(this.db, channelId, sessionId, now));
+    if (changed) log("me.revoke_session", { route: "/me/sessions/:id/revoke" });
+    return changed;
   }
 
   async mySessions(channelId: string, now: number): Promise<MySessionView[]> {
@@ -248,8 +265,11 @@ export class AuthStore extends DurableObject<Env> {
     return this.write(now, () => allow(this.db, channelId, note, by, now));
   }
 
+  // 거부 기록의 허용·지우기는 URL에 채널 id가 실리는 quiet 경로다: 성공 이벤트를 여기서 남긴다(채널 id는 싣지 않는다)
   async allowDenied(channelId: string, by: string, now: number): Promise<boolean> {
-    return this.write(now, () => allowDenied(this.db, channelId, by, now));
+    const changed = await this.write(now, () => allowDenied(this.db, channelId, by, now));
+    if (changed) log("admin.denied_allow", { route: "/admin/denied/:channelId/allow" });
+    return changed;
   }
 
   async disallow(channelId: string, by: string, admins: readonly string[], now: number): Promise<DisallowResult> {
@@ -257,6 +277,8 @@ export class AuthStore extends DurableObject<Env> {
   }
 
   async dismissDenied(channelId: string, by: string, now: number): Promise<boolean> {
-    return this.write(now, () => dismissDenied(this.db, channelId, by, now));
+    const changed = await this.write(now, () => dismissDenied(this.db, channelId, by, now));
+    if (changed) log("admin.denied_dismiss", { route: "/admin/denied/:channelId/dismiss" });
+    return changed;
   }
 }

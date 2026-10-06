@@ -7,7 +7,6 @@
 //   2) 헤더가 없고 allowWeb이면 세션 쿠키: 형식(cdw_)이 맞을 때만 DO webCheck → web | 401·403
 //   3) 그 밖 401 invalid_token
 import { readCookie } from "../core/cookies";
-import { log } from "../core/log";
 import { bearer, isToken, safeEqual, sha256Hex } from "../core/token";
 import type { Ctx } from "../routes";
 import { errorJson } from "./respond";
@@ -17,7 +16,7 @@ export type ReleaseAuthResult = { readonly ok: true; readonly caller: ReleaseCal
 
 // 거절 코드는 /api/me와 같다: not_allowed만 403, 나머지는 401. 성공은 로그를 남기지 않는다
 function reject(ctx: Ctx, code: string): ReleaseAuthResult {
-  log("release.auth.rejected", { route: ctx.route, reason: code });
+  ctx.log("release.auth.rejected", { route: ctx.route, reason: code });
   return { ok: false, response: errorJson(code === "not_allowed" ? 403 : 401, code) };
 }
 

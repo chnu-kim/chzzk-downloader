@@ -4,7 +4,6 @@
 import { ifNoneMatchHit } from "../core/conditional";
 import { LATEST_KEY, parseReleasePath, parseSha256SumsBytes, releaseContentType, releaseDisposition, sumsKey, userVisibility } from "../core/keys";
 import { Lru } from "../core/lru";
-import { log } from "../core/log";
 import { contentRange, normalizeR2Range, parseRange, resolveRange, unsatisfiedRange } from "../core/range";
 import type { Ctx } from "../routes";
 import { releaseBucket, type ReleaseBucket } from "./r2";
@@ -70,7 +69,7 @@ async function getObject(req: Request, ctx: Ctx, bucket: ReleaseBucket, key: str
   } catch (e) {
     if (spec !== null && e instanceof Error && NOT_SATISFIABLE.test(e.message)) {
       // 크기를 모르므로 Content-Range가 없고 세 번째 R2 호출도 하지 않는다
-      log("release.range_error", { level: "warn", route: ctx.route });
+      ctx.log("release.range_error", { level: "warn", route: ctx.route });
       return rangeFail(null);
     }
     throw e;
@@ -94,7 +93,7 @@ async function getObject(req: Request, ctx: Ctx, bucket: ReleaseBucket, key: str
   const n = normalizeR2Range(obj.range, obj.size);
   if (n.offset !== r.offset || n.length !== r.length) {
     await obj.body.cancel();
-    log("release.range_mismatch", { level: "error", route: ctx.route });
+    ctx.log("release.range_mismatch", { level: "error", route: ctx.route });
     return errorJson(500, "internal");
   }
   headers.set("Content-Length", String(r.length));
@@ -112,13 +111,13 @@ async function serve(req: Request, ctx: Ctx): Promise<Response> {
   if (who.caller !== "ci") {
     const vis = path.kind === "latest" ? "never" : userVisibility(path.file);
     if (vis === "never") {
-      log("release.forbidden_key", { route: ctx.route, reason: "ci_only" });
+      ctx.log("release.forbidden_key", { route: ctx.route, reason: "ci_only" });
       return errorJson(403, "forbidden");
     }
     if (vis === "sums" && path.kind === "file") {
       const sums = await loadSums(bucket, path.version);
       if (sums?.has(path.file) !== true) {
-        log("release.forbidden_key", { route: ctx.route, reason: "not_listed" });
+        ctx.log("release.forbidden_key", { route: ctx.route, reason: "not_listed" });
         return errorJson(403, "forbidden");
       }
     }

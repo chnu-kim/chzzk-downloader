@@ -31,7 +31,8 @@
 //   vitest.config.ts     주석을 지운 코드의 cloudflareTest({ wrangler: { … } }) 안에 environment "example" 하나와
 //                        configPath ./wrangler.jsonc(vitest가 실제 비밀값 파일 대신 .dev.vars.example을 읽는다,
 //                        worker.md 구현 중 변경 5), .dev.vars.example 바인딩.
-//   소스            console.은 src/core/log.ts에서만, CI_VERIFY_TOKEN은 src/config.ts·src/http/release-auth.ts에서만,
+//   소스            console.은 src/core/log.ts에서만, src/core/log를 값으로 import하는 곳은 LOG_IMPORTERS(routes.ts·store/AuthStore.ts)뿐
+//                   (나머지는 import type, worker.md 구현 중 변경 43), CI_VERIFY_TOKEN은 src/config.ts·src/http/release-auth.ts에서만,
 //                   src·test·scripts·설정에 실제 비밀값 파일 이름이 나오지 않는다(사용자가 직접 돌리는 scripts/channel-id-check.mjs·scripts/code-binding-check.mjs만 예외).
 //   core 순수성     src/core/**의 원문 전체(주석 포함)에 cloudflare:(타입 import 포함)·../가 든 문자열(바깥 import)·전역 fetch·
 //                   Date.now가 없다. src/** 전체에 Math.random이 없다(난수는 crypto). worker.md 구현 중 변경 15.
@@ -62,7 +63,7 @@
 
 import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, unlinkSync, writeFileSync } from 'node:fs';
 import { isDeepStrictEqual } from 'node:util';
-import { join, resolve } from 'node:path';
+import { join, posix, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT_DEFAULT = join(fileURLToPath(import.meta.url), '..', '..', '..');
@@ -119,6 +120,9 @@ export const SYNTHETIC_CHANNEL_IDS = ['a1', 'b2', 'c3', 'd4'].map((s) => s.padSt
 // CI 토큰을 읽어도 되는 소스(worker.md §4.5)
 export const CI_TOKEN_FILES = ['src/config.ts', 'src/http/release-auth.ts'];
 export const LOG_FILE = 'src/core/log.ts';
+// log.ts를 값으로 import해도 되는 파일(worker.md 구현 중 변경 43): 라우터(요청마다 Ctx.log를 만든다)와 DO 경계. 핸들러는 ctx.log만 쓴다
+// (quiet 경로에서는 아무것도 하지 않는다). 그 밖의 파일은 import type만 된다
+export const LOG_IMPORTERS = ['src/routes.ts', 'src/store/AuthStore.ts'];
 export const CORE_DIR = 'src/core/';
 // DO AuthStore 경계(worker.md 구현 중 변경 21, cicd.md 89): 이 파일만 비동기·시각·cloudflare:를 쓴다. SQL은 db.ts의 Db만 실행한다
 export const STORE_DIR = 'src/store/';
@@ -481,10 +485,31 @@ export const BARE_DEV_VARS = /\.dev\.vars(?![.\w])/;
 // 소스에 리터럴로 두면 편집기·diff에서 줄이 다시 배열되어 보이는 문자(Trojan Source): ALM·LRM·RLM·LRE~RLO·LRI~PDI
 export const BIDI_LITERAL = /[\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/;
 
+// import·export 문(지정자와 type 여부). 여러 줄 지정자 목록도 한 문으로 본다. 부수 효과 import "x"는 type이 아니다.
+// 공백 없는 모양(import{log}from"…")도 잡고, 지정자의 유니코드 이스케이프는 decodeUnicodeEscapes로 푼 뒤에 본다
+const IMPORT_STMT = /(?<![\w$.])(import|export)(?=[\s{*"'])\s*(type(?![\w$])\s*)?(?:[^;'"`]*?(?<![\w$])from\s*)?["']([^"']+)["']/g;
+
+/** src/ 파일이 log.ts를 값으로 import하는 문의 줄 번호 */
+export function valueLogImports(rel, text) {
+  const out = [];
+  for (const m of decodeUnicodeEscapes(text).matchAll(IMPORT_STMT)) {
+    const spec = m[3];
+    if (!spec.startsWith('.')) continue;
+    const target = posix.normalize(posix.join(posix.dirname(rel), spec)).replace(/\.ts$/, '');
+    if (target === LOG_FILE.replace(/\.ts$/, '') && m[2] === undefined) out.push(lineOf(text, m.index));
+  }
+  return out;
+}
+
 // files: [{ rel(worker/ 기준), text }]
 export function checkSources(files) {
   const errs = [];
   for (const { rel, text } of files) {
+    if (rel.startsWith('src/') && rel !== LOG_FILE && !LOG_IMPORTERS.includes(rel)) {
+      for (const n of valueLogImports(rel, text)) {
+        errs.push(`${rel}:${n}: core/log는 ${LOG_IMPORTERS.join('·')}만 값으로 import한다(핸들러는 ctx.log: quiet 경로에서 로그 0, 구현 중 변경 43)`);
+      }
+    }
     const lines = text.split(/\r?\n/);
     lines.forEach((l, i) => {
       const at = `${rel}:${i + 1}`;

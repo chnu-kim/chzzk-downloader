@@ -248,7 +248,8 @@ describe("재사용·결합", () => {
     expect(res.headers.get("Location")).toBe("/auth/done?r=failed");
     expect(finish).toHaveBeenCalledTimes(2);
     expect(await (await app.poll(body.loginId, pollSecret)).json()).toEqual({ status: "failed", code: "user" });
-    expect(logs(spy)).toContainEqual({ event: "auth.login.failed", level: "error", reason: "internal", errorName: "RangeError" });
+    // 이벤트는 정리 finish가 DO에서 남긴다(콜백은 quiet 경로, 구현 중 변경 43)
+    expect(logs(spy)).toContainEqual({ event: "auth.login.failed", level: "error", flowKind: "app", reason: "internal", errorName: "RangeError" });
   });
 
   it("같은 콜백을 다시 열면 failed, 토큰 교환은 한 번뿐", async () => {

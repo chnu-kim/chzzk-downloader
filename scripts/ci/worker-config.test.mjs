@@ -13,6 +13,7 @@ import {
   allowedBuilds,
   checkCorePurity,
   checkStorePurity,
+  checkDeployPackage,
   checkDevVarsExample,
   checkOutbound,
   checkReleaseSources,
@@ -26,7 +27,11 @@ import {
   checkSentinel,
   checkWrangler,
   configKeys,
+  DEPLOY_MAIN,
+  DEPLOY_PKG_NAME,
+  deployConfig,
   EXPECTED_SCRIPTS,
+  lockedVersions,
   main,
   OUTBOUND_ALLOWLIST,
   parseJsonc,
@@ -63,6 +68,8 @@ function copy(files = {}) {
     cpSync(join(W, f), join(w, f));
   }
   for (const dir of ['src', 'test', 'scripts']) cpSync(join(W, dir), join(w, dir), { recursive: true });
+  mkdirSync(join(w, 'deploy'), { recursive: true });
+  for (const f of ['package.json', 'pnpm-lock.yaml']) cpSync(join(W, 'deploy', f), join(w, 'deploy', f));
   mkdirSync(join(d, 'scripts/ci'), { recursive: true });
   cpSync(join(ROOT, 'scripts/ci/tools.json'), join(d, 'scripts/ci/tools.json'));
   mkdirSync(join(d, 'app'), { recursive: true });
@@ -361,7 +368,13 @@ test('--dist: metafile 입력은 src/*.ts만, dist/wrangler.json 규칙', () => 
   assert.notDeepEqual(checkDist(copy({ 'worker/dist/index.js': 'x' })), []);
   assert.notDeepEqual(checkDist(copy({ 'worker/dist/bundle-meta.json': meta(['src/index.ts']) })), []);
   const dw = (cfg) => ({ ...good, 'worker/dist/wrangler.json': JSON.stringify(cfg) });
+  assert.deepEqual(checkDist(copy(dw(deployConfig(WRANGLER)))), []);
   assert.deepEqual(checkDist(copy(dw({ ...WRANGLER, main: 'index.js', no_bundle: true }))), []);
+  // 원본에서 main·no_bundle만 바꾼 것이어야 한다(worker.md 구현 중 변경 35 (나): main은 설정 파일 위치 기준이라 index.js)
+  assert.notDeepEqual(checkDist(copy(dw({ ...WRANGLER, main: 'dist/index.js', no_bundle: true }))), []);
+  assert.notDeepEqual(checkDist(copy(dw({ ...deployConfig(WRANGLER), compatibility_flags: ['nodejs_compat'] }))), []);
+  assert.notDeepEqual(checkDist(copy(dw({ ...deployConfig(WRANGLER), workers_dev: false }))), []);
+  assert.notDeepEqual(checkDist(copy(dw({ ...WRANGLER, main: 'index.js' }))), []);
   assert.notDeepEqual(checkDist(copy(dw({ ...WRANGLER, vars: { ...WRANGLER.vars, PUBLIC_ORIGIN: 'http://localhost:8787' } }))), []);
   assert.notDeepEqual(checkDist(copy(dw({ ...WRANGLER, account_id: 'x' }))), []);
 });
@@ -648,4 +661,54 @@ test('씨앗: 릴리스 읽기 소스(worker.md 구현 중 변경 31 (차), cicd
   assert.ok(checkWorker(copy({ 'worker/src/http/health.ts': `${health}\nawait b.list?.({});\n` })).some((e) => e.includes('src/http/health.ts') && e.includes('list')));
   assert.ok(checkWorker(copy({ 'worker/src/http/r2.ts': null })).some((e) => e.includes('릴리스 읽기 검사 목록')));
   assert.ok(checkWorker(copy({ 'worker/src/core/lru.ts': null })).some((e) => e.includes('src/core/lru.ts') && e.includes('릴리스 읽기 검사 목록')));
+});
+
+test('deployConfig: 원본에서 main·no_bundle만 바꾸고 원본은 그대로', () => {
+  const before = structuredClone(WRANGLER);
+  const d = deployConfig(WRANGLER);
+  assert.deepEqual(WRANGLER, before);
+  assert.equal(d.main, DEPLOY_MAIN);
+  assert.equal(DEPLOY_MAIN, 'index.js');
+  assert.equal(d.no_bundle, true);
+  const { main: _m, no_bundle: _n, ...rest } = d;
+  const { main: _m0, ...orig } = WRANGLER;
+  assert.deepEqual(rest, orig);
+  assert.equal(d.$schema, WRANGLER.$schema);
+});
+
+test('worker/deploy: 저장소 그대로는 통과, package.json·lockfile 씨앗은 실패', () => {
+  const DEP = JSON.parse(read('deploy/package.json'));
+  const opts = { wrangler: TOOLS_WRANGLER, packageManager: PM };
+  assert.deepEqual(checkDeployPackage(DEP, opts), []);
+  assert.equal(DEP.name, DEPLOY_PKG_NAME);
+  const seeds = [
+    ['scripts 있음', { ...DEP, scripts: { postinstall: 'x' } }],
+    ['devDependencies 있음', { ...DEP, devDependencies: { vitest: '1.0.0' } }],
+    ['의존성 둘', { ...DEP, dependencies: { wrangler: TOOLS_WRANGLER, esbuild: '0.1.0' } }],
+    ['범위 버전', { ...DEP, dependencies: { wrangler: `^${TOOLS_WRANGLER}` } }],
+    ['다른 wrangler 버전', { ...DEP, dependencies: { wrangler: '4.0.0' } }],
+    ['name 다름', { ...DEP, name: 'x' }],
+    ['private 아님', { ...DEP, private: false }],
+    ['packageManager 다름', { ...DEP, packageManager: 'pnpm@1.0.0' }],
+    ['배열', []],
+  ];
+  for (const [name, pkg] of seeds) assert.notDeepEqual(checkDeployPackage(pkg, opts), [], name);
+  // 진입점으로: 사본의 deploy/package.json을 망가뜨리면 checkWorker가 실패한다
+  assert.ok(checkWorker(copy({ 'worker/deploy/package.json': JSON.stringify({ ...DEP, scripts: { x: 'y' } }) })).some((e) => e.includes('deploy/package.json')));
+  assert.ok(checkWorker(copy({ 'worker/deploy/package.json': null })).some((e) => e.includes('deploy/package.json')));
+  assert.ok(checkWorker(copy({ 'worker/deploy/pnpm-lock.yaml': null })).some((e) => e.includes('deploy/pnpm-lock.yaml')));
+});
+
+test('lockedVersions: 두 lockfile의 wrangler = tools.json, 다른 버전·peer 접미·CRLF', () => {
+  for (const f of ['pnpm-lock.yaml', 'deploy/pnpm-lock.yaml']) assert.deepEqual(lockedVersions(read(f), 'wrangler'), [TOOLS_WRANGLER], f);
+  const lock = (v) => `packages:\n\n  wrangler@${v}:\n    resolution: {}\n\nsnapshots:\n\n  wrangler@${v}(@x/y@1.0.0):\n    dependencies: {}\n  other-wrangler@9.9.9:\n    x: 1\n`;
+  assert.deepEqual(lockedVersions(lock('4.1.0'), 'wrangler'), ['4.1.0']);
+  assert.deepEqual(lockedVersions(lock('4.1.0') + '  wrangler@4.2.0:\n', 'wrangler'), ['4.1.0', '4.2.0']);
+  assert.deepEqual(lockedVersions(lock('4.1.0').replace(/\n/g, '\r\n'), 'wrangler'), ['4.1.0']);
+  assert.deepEqual(lockedVersions('nothing', 'wrangler'), []);
+  // 버전이 tools.json과 다른 lock은 checkWorker가 잡는다(둘 다)
+  for (const f of ['pnpm-lock.yaml', 'deploy/pnpm-lock.yaml']) {
+    const bad = read(f).replaceAll(`wrangler@${TOOLS_WRANGLER}`, 'wrangler@4.0.0');
+    assert.ok(checkWorker(copy({ [`worker/${f}`]: bad })).some((e) => e.includes(f) && e.includes('tools.json')), f);
+  }
 });

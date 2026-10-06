@@ -197,6 +197,9 @@ export const GATES = {
     steps: [
       { cmd: ['node', S('worker-config.mjs')] },
       { cmd: ['pnpm', 'install', '--frozen-lockfile'], cwd: 'worker', env: WRANGLER_ENV },
+      // 배포용 wrangler(worker/deploy)의 따로인 lockfile도 PR에서 설치해 본다(릴리스 worker-bundle 작업과 같은 인자, cicd.md 구현 중 변경 96).
+      // --ignore-scripts라 설치 스크립트는 돌지 않는다
+      { cmd: ['pnpm', 'install', '--frozen-lockfile', '--ignore-scripts'], cwd: 'worker/deploy', env: WRANGLER_ENV },
       { cmd: ['node', S('worker-config.mjs'), '--sentinel', 'plant'] },
       { cmd: ['pnpm', 'check'], cwd: 'worker', env: WRANGLER_ENV },
       { cmd: ['node', S('measure.mjs'), 'tests-worker'], env: WRANGLER_ENV },
@@ -329,13 +332,14 @@ export const GATES = {
     steps: [{ cmd: ['node', S('drift.mjs')] }],
   },
   advisories: {
-    desc: '의존성 보안 권고(nightly): cargo deny check advisories(deny.toml) + pnpm audit --audit-level high(app/·worker/). 권고 DB가 날마다 바뀌어 PR에 두지 않는다',
+    desc: '의존성 보안 권고(nightly): cargo deny check advisories(deny.toml) + pnpm audit --audit-level high(app/·worker/·worker/deploy). 권고 DB가 날마다 바뀌어 PR에 두지 않는다',
     needs: ['cargo', 'cargo-deny', 'pnpm'],
     steps: [
       { cmd: ['cargo', 'deny', '--locked', 'check', 'advisories'] },
       { cmd: ['pnpm', 'audit', '--audit-level', 'high'], cwd: 'app' },
-      // worker/는 독립 lockfile이다(worker.md §13.2)
+      // worker/는 독립 lockfile이다(worker.md §13.2). worker/deploy(배포용 wrangler 하나)도 따로인 lockfile이다(cicd.md 구현 중 변경 96)
       { cmd: ['pnpm', 'audit', '--audit-level', 'high'], cwd: 'worker' },
+      { cmd: ['pnpm', 'audit', '--audit-level', 'high'], cwd: 'worker/deploy' },
     ],
   },
   pins: {
@@ -419,12 +423,21 @@ export const GATES = {
     desc: 'latest.json을 ROLLBACK_VERSION으로(그 버전 객체 확인 → CAS 교체 → 다시 확인, none이면 지운다)',
     steps: [{ cmd: ['node', S('release.mjs'), 'rollback'] }],
   },
+  'release-prune': {
+    desc: 'R2 보존 상한: latest가 이번 버전일 때만 releases/를 latest 이하 최신 5개 + latest의 previous로 줄인다(높은 폴더는 남김)(xtask list-keys·delete-version, 지울 목록은 release.mjs prunePlan). release.yml prune 작업(verify 뒤, 태그만)',
+    steps: [{ cmd: ['node', S('release.mjs'), 'prune'] }],
+  },
+  'release-worker-bundle': {
+    desc: '시크릿 없는 작업(release.yml worker-bundle): worker 설치·dry-run 번들 → dist/wrangler.json(원본에서 main·no_bundle만) → worker-config --dist → 배포용 wrangler(worker/deploy, --ignore-scripts) → tar·sha256 → 묶음을 풀어 자격 없이 deploy --dry-run',
+    needs: ['pnpm'],
+    steps: [{ cmd: ['node', S('release.mjs'), 'worker-bundle'] }],
+  },
   'release-worker': {
-    desc: 'Phase 3 seam: Worker 배포·확인(release.yml deploy-worker, vars.WORKER_DEPLOY_ENABLED). worker/가 생기기 전에는 늘 실패',
+    desc: 'Worker 배포·확인(release.yml deploy-worker, 환경 release, 태그 + vars.WORKER_DEPLOY_ENABLED): superseded 가드 → 묶음 sha256·플랫폼·설정 동일성 → 묶음의 wrangler로 secret list(필수 이름) → latest.json 다시 읽기(superseded) → deploy --no-bundle → §9.4 배포 뒤 검사(health의 build 일치·updater 200/204·음성 셋)',
     steps: [{ cmd: ['node', S('release.mjs'), 'worker'] }],
   },
   'release-selftest': {
-    desc: '가짜 S3(s3-fake.mjs, SigV4 검증·조건부 쓰기·장애 주입)에 합성 산출물로 release.mjs publish·verify·rollback 진입점을 하위 프로세스로: happy path, CAS·단조 증가, 변조 → previous로 rollback(latest.json 바이트 동일), 재실행 멱등, preflight·경계, 일시·계속 5xx와 응답 잃은 CAS, superseded·not-promoted, 되돌리기·다시 올리기',
+    desc: '가짜 S3(s3-fake.mjs, SigV4 검증·조건부 쓰기·장애 주입)에 합성 산출물로 release.mjs publish·verify·rollback 진입점을 하위 프로세스로: happy path, CAS·단조 증가, 변조 → previous로 rollback(latest.json 바이트 동일), 재실행 멱등, preflight·경계, 일시·계속 5xx와 응답 잃은 CAS, superseded·not-promoted, 되돌리기·다시 올리기, 보존 상한 prune(최신 5개 + previous), 배포 뒤 검사(--check-only, 가짜 Worker worker-stub.mjs: 정상·204 틀림·200 틀림·음성 틀림·늦은 반영·5xx)와 배포 모드 가드(dry)',
     needs: ['cargo'],
     steps: [{ cmd: ['node', S('release.mjs'), 'selftest'] }],
   },
@@ -444,9 +457,9 @@ export const COMMANDS = ['changes', 'ci-ok', 'doctor', 'drift-log-check', 'hook'
 const HOOK_FILES = [/^\.githooks\//, /^\.gitattributes$/, /^\.github\//, /^scripts\/ci\/(?:gates\.mjs|tools\.json)$/];
 // pubkey gate(release.mjs checkPubkey)가 읽는 파일. release.test.mjs가 checkPubkey가 읽는 경로와 맞춘다
 export const PUBKEY_FILES = [/^release\/updater\.pub$/, /^release\/tauri\.release\.json$/, /^app\/src-tauri\/tauri(\.[a-z0-9-]+)?\.conf\.json$/];
-// release-selftest가 기대는 파일: xtask, release/ 표, release.mjs와 그 상대 import 전부(release.test.mjs가 import 그래프로
+// release-selftest가 기대는 파일: xtask, release/ 표, release.mjs와 그 상대 import 전부, 배포 설정 원본(worker/wrangler.jsonc, tools.json의 wrangler 버전)(release.test.mjs가 import 그래프로
 // 이 목록이 빠짐없는지 확인한다, 리뷰 G6), Cargo.lock(xtask 의존성)
-export const RELEASE_SELFTEST_FILES = [/^xtask\//, /^release\//, /^scripts\/ci\/(release|s3-fake|bundle|smoke|version-check|gates|run|push-guard|snapshot|public-scan)\.mjs$/, /^Cargo\.lock$/];
+export const RELEASE_SELFTEST_FILES = [/^xtask\//, /^release\//, /^scripts\/ci\/(release|s3-fake|bundle|smoke|version-check|gates|run|push-guard|snapshot|public-scan|worker-config|worker-stub)\.mjs$/, /^scripts\/ci\/tools\.json$/, /^worker\/wrangler\.jsonc$/, /^Cargo\.lock$/];
 const VERSION_FILES = [/(^|\/)Cargo\.toml$/, /^app\/package\.json$/, /^app\/src-tauri\/tauri\.conf\.json$/];
 export const HOOKS = {
   'pre-commit': {
@@ -472,7 +485,8 @@ export const HOOKS = {
       // pre-commit에는 넣지 않는다(무겁다). release/ 표는 W5 계약 테스트가 읽는다(worker.md §13.2). semver 벡터는 worker vitest가
       // xtask와 함께 읽는다(worker.md 구현 중 변경 14 (다), cicd.md 구현 중 변경 87)
       { gate: 'worker', paths: [/^worker\//, /^scripts\/ci\/worker-config/, /^release\/(latest\.schema|expected-artifacts)\.json$/, /^xtask\/testdata\/semver-vectors\.json$/] },
-      { gate: 'scripts-test', paths: [/^scripts\//, /^\.githooks\//, /^\.gitattributes$/] },
+      // release.test.mjs가 worker/test/deploy-contract.mjs(배포 뒤 검사 계약 표)를 import한다
+      { gate: 'scripts-test', paths: [/^scripts\//, /^\.githooks\//, /^\.gitattributes$/, /^worker\/test\/deploy-contract\.mjs$/] },
       { gate: 'deny', paths: [/^Cargo\.lock$/, /^deny\.toml$/, /(^|\/)Cargo\.toml$/] },
       // 코어 API 변경이 fuzz target을 깨뜨린다(crates/core)
       { gate: 'fuzz-lock', paths: [/^Cargo\.lock$/, /(^|\/)Cargo\.toml$/, /^fuzz\//, /^crates\/core\//] },

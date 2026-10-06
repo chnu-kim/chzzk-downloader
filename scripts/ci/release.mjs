@@ -11,8 +11,11 @@
 //   node scripts/ci/release.mjs publish       # collect → sign → verify-sig → sums → manifest → put → promote(latest.json은 마지막)
 //   node scripts/ci/release.mjs verify        # latest.json을 보고 결정표(verifyPlan)대로 확인. 판정 실패면 prev로 rollback하고 1
 //   node scripts/ci/release.mjs rollback      # rollback.yml: ROLLBACK_VERSION으로 latest.json을 바꾼다(되돌리기·다시 올리기)
+//   node scripts/ci/release.mjs prune         # R2 보존 상한: latest가 이번 버전일 때만 releases/를 latest 이하 최신 5개 + latest의 previous로(높은 폴더는 남김, verify 뒤)
 //   node scripts/ci/release.mjs selftest      # 가짜 S3(s3-fake.mjs)에 합성 산출물로 publish·verify·rollback 진입점 시나리오(release-selftest gate)
-//   node scripts/ci/release.mjs worker        # Phase 3 seam: Worker 배포·확인. worker/가 생기기 전에는 늘 실패한다
+//   node scripts/ci/release.mjs worker-bundle # worker 번들 + dist/wrangler.json + 배포용 wrangler → tgz·sha256, 풀어서 자격 없이 deploy --dry-run(시크릿 없음)
+//   node scripts/ci/release.mjs worker        # superseded 가드 → 묶음 sha256·플랫폼·설정 동일성 → secret 이름 확인 → latest.json 다시 읽기 → deploy --no-bundle → §9.4 배포 뒤 검사
+//   node scripts/ci/release.mjs worker --check-only --base <출처> --version <semver> [--build <id>]   # 배포 뒤 검사만(배포 없음)
 //
 // 종료 코드: 0 통과, 1 검사 실패(판정), 2 사용법·환경·기반 시설 오류(네트워크, HTTP 5xx: 되돌리지 않는다).
 
@@ -20,13 +23,15 @@ import { spawn, spawnSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import { appendFileSync, chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isDeepStrictEqual } from 'node:util';
 
 import { ROOT, workspaceVersion } from './gates.mjs';
 import { spawnTool } from './run.mjs';
 import { osKey, targetDir } from './smoke.mjs';
 import { main as versionCheck } from './version-check.mjs';
+import { DEPLOY_DIR, deployConfig, parseJsonc } from './worker-config.mjs';
 
 const IS_WIN = process.platform === 'win32';
 const log = (m) => console.log(`release: ${m}`);
@@ -53,10 +58,23 @@ function ghOutput(env, pairs) {
 
 // ---- semver ----
 
+// xtask/src/semver.rs와 같은 규칙이다(worker.md 구현 중 변경 16 (마)). 공유 벡터 xtask/testdata/semver-vectors.json을
+// release.test.mjs가 읽는다. 한쪽만 고치지 않는다.
 const SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/;
+const U64_MAX = '18446744073709551615';
+// 숫자 문자열 → BigInt(u64 범위) | null. 앞자리 0은 값으로 읽는다(Rust parse::<u64>)
+export function parseU64(s) {
+  if (!/^\d+$/.test(s)) return null;
+  const t = s.replace(/^0+(?=\d)/, '');
+  if (t.length > 20 || (t.length === 20 && t > U64_MAX)) return null;
+  return BigInt(t);
+}
 export function parseSemver(v) {
-  const m = SEMVER.exec(v ?? '');
-  return m ? { nums: [+m[1], +m[2], +m[3]], pre: m[4] ? m[4].split('.') : [] } : null;
+  const m = typeof v === 'string' ? SEMVER.exec(v) : null;
+  if (!m) return null;
+  const nums = [parseU64(m[1]), parseU64(m[2]), parseU64(m[3])];
+  if (nums.some((n) => n === null)) return null;
+  return { nums, pre: m[4] ? m[4].split('.') : [] };
 }
 export function cmpSemver(a, b) {
   const x = parseSemver(a);
@@ -66,10 +84,15 @@ export function cmpSemver(a, b) {
   if (!x.pre.length || !y.pre.length) return x.pre.length === y.pre.length ? 0 : x.pre.length ? -1 : 1;
   for (let i = 0; i < Math.min(x.pre.length, y.pre.length); i++) {
     const [p, q] = [x.pre[i], y.pre[i]];
-    const [pNum, qNum] = [/^\d+$/.test(p), /^\d+$/.test(q)];
     if (p === q) continue;
-    if (pNum && qNum) return +p < +q ? -1 : 1;
-    if (pNum !== qNum) return pNum ? -1 : 1;
+    const [pv, qv] = [parseU64(p), parseU64(q)];
+    if (pv !== null && qv !== null) {
+      if (pv !== qv) return pv < qv ? -1 : 1;
+      continue;
+    }
+    // 한쪽만 숫자면 숫자가 작다. 둘 다 숫자가 아니면(u64를 넘는 숫자열 포함) 문자열 비교
+    if (pv !== null) return -1;
+    if (qv !== null) return 1;
     return p < q ? -1 : 1;
   }
   return Math.sign(x.pre.length - y.pre.length);
@@ -346,12 +369,13 @@ function cmdBuild(env) {
 // ---- 모드·경계 ----
 
 // publish·verify·rollback의 RELEASE_MODE:
-//   tag: 진짜 릴리스(R2, 시크릿, 환경 release). R2_ENDPOINT·RELEASE_PUBKEY·RELEASE_VERSION·RELEASE_STAGE_DIR 덮어쓰기를 받지 않고
-//        미리 빌드한 xtask(XTASK_BIN + XTASK_SHA256)만 부른다.
+//   tag: 진짜 릴리스(R2, 시크릿, 환경 release). DRY_OVERRIDES(R2_ENDPOINT·RELEASE_PUBKEY·RELEASE_VERSION·RELEASE_STAGE_DIR·WORKER_BUNDLE·
+//        WORKER_SECRET_LIST·XTASK_LIST_MAX_KEYS) 덮어쓰기를 받지 않고 미리 빌드한 xtask(XTASK_BIN + XTASK_SHA256)만 부른다.
+//        WORKER_BUNDLE(묶음 위치)·WORKER_SECRET_LIST(secret list 출력 주입)·XTASK_LIST_MAX_KEYS(prune 목록 페이지 크기, 잘림 시험용)도 dry에서만 받는다.
 //   dry: 가짜 S3(release.yml stage 작업과 selftest). R2_ENDPOINT가 루프백이어야 하고 위 덮어쓰기를 받는다.
 // 같은 publish·verify 코드가 두 모드에서 돈다(selftest·stage가 배포하는 코드를 그대로 부른다, 리뷰 G6).
 export const LOOPBACK = /^http:\/\/(?:127\.0\.0\.1|localhost|\[::1\]):\d{1,5}$/;
-export const DRY_OVERRIDES = ['R2_ENDPOINT', 'RELEASE_PUBKEY', 'RELEASE_VERSION', 'RELEASE_STAGE_DIR'];
+export const DRY_OVERRIDES = ['R2_ENDPOINT', 'RELEASE_PUBKEY', 'RELEASE_VERSION', 'RELEASE_STAGE_DIR', 'WORKER_BUNDLE', 'WORKER_SECRET_LIST', 'XTASK_LIST_MAX_KEYS'];
 export function boundaryProblems(env) {
   const mode = env.RELEASE_MODE;
   if (mode === 'tag') return DRY_OVERRIDES.filter((n) => env[n]).map((n) => `tag 모드는 ${n}를 받지 않는다(진짜 릴리스를 다른 곳·키·버전으로 돌리지 못하게)`);
@@ -380,6 +404,8 @@ export function preflight(env) {
   const missing = RELEASE_SECRETS.filter((n) => !env[n]);
   if (missing.length) return { code: 1, message: preflightMessage(missing), missing };
   if (env.RELEASE_MODE !== 'tag' && env.RELEASE_MODE !== 'dry') return { code: 1, message: REHEARSAL_MESSAGE, missing };
+  // 매니페스트 url이 `${DIST_BASE_URL}/releases/<v>/<file>`이라 값은 경로 없는 https 출처여야 한다(cicd.md 82 (가)). 값은 찍지 않는다
+  if (distBaseProblems(env.DIST_BASE_URL).length) return { code: 1, message: 'DIST_BASE_URL은 경로 없는 https 출처여야 한다(값은 찍지 않는다)', missing: [] };
   return { code: 0, message: null, missing };
 }
 
@@ -425,14 +451,16 @@ function cmdPublish(env) {
 export const LATEST_KEY = 'releases/latest.json';
 
 // 객체 하나 → { code: 0 있음 | 1 없음 | 2 기반 시설 오류, data }
-function getObject(env, key) {
+// timeoutMs: 하위 프로세스 상한(deploy-worker만 준다, workerWorstCaseMs). 넘기면 status null → 기반 시설(2)
+function getObject(env, key, { timeoutMs } = {}) {
   const dir = mkdtempSync(join(env.RUNNER_TEMP || tmpdir(), 'release-get-'));
   try {
     const out = join(dir, 'obj');
-    const r = xtask(['get', '--key', key, '--out', out], env, { stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8' });
+    const r = xtask(['get', '--key', key, '--out', out], env, { stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8', ...(timeoutMs ? { timeout: timeoutMs } : {}) });
     if (r.status === 0) return { code: 0, data: readFileSync(out) };
     if (r.status === 1) return { code: 1, data: null };
     process.stderr.write(r.stderr ?? '');
+    if (r.status === null) err(`get ${key}: ${timeoutMs}ms 상한을 넘겼다(기반 시설)`);
     return { code: 2, data: null };
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -541,6 +569,77 @@ function cmdRollback(env) {
   return r.status === 0 ? 0 : r.status === 2 ? 2 : 1;
 }
 
+// ---- 보존 상한(prune, worker.md 구현 중 변경 11 (마), cicd.md 구현 중 변경 97) ----
+
+// releases/ 아래에 남기는 버전 수(최신순). latest·그 previous는 이 수와 별개로 늘 남긴다
+export const RELEASE_KEEP = 5;
+
+// 목록 키(releases/<dir>/…) + latest + previous → { keep, delete, ignored, abort? }(순수, release.test.mjs가 표로 본다).
+// keep개는 latest 이하 버전에서 최신순으로 센다. latest보다 높은 폴더(판정 실패로 되돌린 버전, 올리는 중인 버전, rollback.yml로
+// 다시 올릴 수 있는 버전)는 늘 남기고 자리로 세지 않는다(cicd.md 구현 중 변경 97 (나)). 지우는 것은 latest 이하 semver 디렉터리 중
+// (최신 keep개 ∪ latest ∪ previous) 밖이다. semver가 아닌 디렉터리는 건드리지 않는다(ignored).
+// latest가 semver가 아니거나 목록에 없으면 목록을 믿을 수 없으므로 아무것도 지우지 않는다(abort).
+export function prunePlan({ keys, latest, previous, keep = RELEASE_KEEP }) {
+  if (!Number.isInteger(keep) || keep < 1) throw new Error(`keep은 1 이상의 정수여야 한다: ${keep}`);
+  const dirs = [...new Set(keys.map((k) => /^releases\/([^/]+)\//.exec(k)?.[1]).filter((d) => d !== undefined))];
+  const ignored = dirs.filter((d) => !parseSemver(d)).sort();
+  const versions = dirs.filter((d) => parseSemver(d)).sort((a, b) => cmpSemver(b, a) || (a < b ? -1 : 1));
+  if (!parseSemver(latest)) return { keep: [], delete: [], ignored, abort: 'latest가 semver가 아니다' };
+  if (!versions.includes(latest)) return { keep: [], delete: [], ignored, abort: `latest(${latest})가 목록에 없다 — 목록을 믿을 수 없어 지우지 않는다` };
+  const above = versions.filter((v) => cmpSemver(v, latest) > 0);
+  const keepSet = new Set([...above, ...versions.filter((v) => cmpSemver(v, latest) <= 0).slice(0, keep), latest]);
+  if (parseSemver(previous)) keepSet.add(previous);
+  return { keep: versions.filter((v) => keepSet.has(v)), delete: versions.filter((v) => !keepSet.has(v)).reverse(), ignored };
+}
+
+// prune 작업에 R2 설정이 없을 때(sign-publish의 preflight 문구와 다르다: 업로드와 상관없는 작업이다)
+export const pruneMissingMessage = (missing) => `prune: R2 설정 없음(시크릿·변수): ${missing.join(', ')}. 지우지 않는다`;
+
+// release.yml prune 작업·stage·selftest. latest가 이번 버전일 때만 지운다(latest를 가진 실행만): 나중 태그가 승격했거나 되돌려졌으면
+// 이번 실행은 아무것도 지우지 않는다. 지울 목록은 prunePlan이 정하고, 지우는 일은 xtask delete-version(latest·previous를 다시 확인)이 한다.
+function cmdPrune(env) {
+  const missing = ['R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY', 'R2_ACCOUNT_ID', 'R2_BUCKET'].filter((n) => !env[n]);
+  if (missing.length) {
+    console.error(`::error::${pruneMissingMessage(missing)}`);
+    return 1;
+  }
+  if (begin('prune', env)) return 2;
+  const version = releaseVersion(env);
+  const cur = getObject(env, LATEST_KEY);
+  if (cur.code === 2) return 2;
+  const latest = cur.data ? versionOf(cur.data) : null;
+  if (latest !== version) {
+    console.log(`::notice::release prune: latest.json이 ${latest ?? '없음'}이라 ${version} 실행은 지우지 않는다(latest를 가진 실행이 지운다)`);
+    return 0;
+  }
+  const p = getObject(env, `releases/${version}/previous`);
+  if (p.code === 2) return 2;
+  if (p.code === 1) {
+    err(`prune: releases/${version}/previous가 없다 — 지우지 않는다`);
+    return 1;
+  }
+  const previous = p.data.toString('utf8');
+  if (!validPrev(previous)) {
+    err(`prune: releases/${version}/previous 형식이 아니다 — 지우지 않는다`);
+    return 1;
+  }
+  const ls = xtask(['list-keys', '--prefix', 'releases/'], env, { stdio: ['ignore', 'pipe', 'inherit'], encoding: 'utf8' });
+  if (ls.status !== 0) return ls.status === 1 ? 1 : 2;
+  const keys = (ls.stdout ?? '').split('\n').filter(Boolean);
+  const plan = prunePlan({ keys, latest, previous });
+  if (plan.abort) {
+    err(`prune: ${plan.abort}`);
+    return 1;
+  }
+  log(`prune: 남김 [${plan.keep.join(', ')}] 지움 [${plan.delete.join(', ')}] 모름 [${plan.ignored.join(', ')}]`);
+  for (const v of plan.delete) {
+    const c = xtask(['delete-version', '--version', v], env).status;
+    if (c !== 0) return c === 1 ? 1 : 2;
+  }
+  log(`prune: ${plan.delete.length}개 버전 지움`);
+  return 0;
+}
+
 // ---- 가짜 S3 실행(stage·selftest) ----
 
 export const FAKE_BASE = 'https://dist.example.invalid';
@@ -556,11 +655,32 @@ function startFake(creds) {
       const m = /listening (\d+)/.exec(buf);
       if (m) {
         const port = Number(m[1]);
-        const fault = (f) => fetch(`http://127.0.0.1:${port}/__fault`, { method: 'POST', body: JSON.stringify(f) }).then((r) => r.status);
+        // 가짜 서버는 5초 놀면 연결을 닫는다. 오래 걸리는 하위 프로세스 뒤에는 풀의 연결이 죽어 있을 수 있어 닫는 요청으로 보내고,
+        // 그래도 실패하면 한 번 더 시도한다
+        const post = (f) => fetch(`http://127.0.0.1:${port}/__fault`, { method: 'POST', body: JSON.stringify(f), headers: { connection: 'close' } }).then((r) => r.status);
+        const fault = (f) => post(f).catch(() => post(f));
         res({ port, fault, stop: () => p.kill() });
       }
     });
     p.on('exit', (c) => rej(new Error(`s3-fake가 끝났다(${c})`)));
+  });
+}
+
+// scripts/ci/worker-stub.mjs(가짜 Worker)를 별도 프로세스로 띄운다 → { port, set(설정), stop }
+function startWorkerStub({ token, version, build }) {
+  return new Promise((res, rej) => {
+    const p = spawn(process.execPath, [join(ROOT, 'scripts/ci/worker-stub.mjs'), '--token', token, '--version', version, '--build', build], { stdio: ['ignore', 'pipe', 'inherit'] });
+    let buf = '';
+    p.stdout.on('data', (c) => {
+      buf += c;
+      const m = /listening (\d+)/.exec(buf);
+      if (m) {
+        const port = Number(m[1]);
+        const post = (o) => fetch(`http://127.0.0.1:${port}/__set`, { method: 'POST', body: JSON.stringify(o), headers: { connection: 'close' } }).then((r) => r.status);
+        res({ port, set: (o) => post(o).catch(() => post(o)), stop: () => p.kill() });
+      }
+    });
+    p.on('exit', (c) => rej(new Error(`worker-stub이 끝났다(${c})`)));
   });
 }
 
@@ -574,8 +694,8 @@ function dryEnv(env, creds, port, { key, pw, pub }) {
 }
 
 // release.mjs <cmd>를 하위 프로세스로(배포하는 진입점 그대로)
-function runRelease(cmd, env, capture = false) {
-  const r = spawnSync(process.execPath, [join(ROOT, 'scripts/ci/release.mjs'), cmd], { env, cwd: ROOT, encoding: 'utf8', stdio: capture ? 'pipe' : 'inherit', maxBuffer: 1 << 26 });
+function runRelease(cmd, env, capture = false, args = []) {
+  const r = spawnSync(process.execPath, [join(ROOT, 'scripts/ci/release.mjs'), cmd, ...args], { env, cwd: ROOT, encoding: 'utf8', stdio: capture ? 'pipe' : 'inherit', maxBuffer: 1 << 26 });
   return { status: r.status, out: capture ? `${r.stdout ?? ''}${r.stderr ?? ''}`.trim() : '' };
 }
 
@@ -626,8 +746,13 @@ async function cmdStage(env) {
       err('stage: verify(가짜 S3)가 실패했다');
       return 1;
     }
+    // verify 뒤 보존 상한(빈 버킷이라 지우는 것이 없다. 진짜 prune 작업과 같은 진입점이 도는지 본다)
+    if (runRelease('prune', { ...D, GITHUB_OUTPUT: join(work, 'prune.out') }).status !== 0) {
+      err('stage: prune(가짜 S3)이 실패했다');
+      return 1;
+    }
     const next = mode === 'tag' ? 'sign-publish가 진짜 키·R2로 같은 단계를 돈다' : '리허설은 여기서 끝난다(업로드 경계, 진짜 키·R2에는 닿지 않는다)';
-    console.log(`::notice::release stage: 받은 3 OS 산출물로 collect·서명·서명 검증·SHA256SUMS·매니페스트·put·promote·verify를 가짜 S3에서 통과. ${next}`);
+    console.log(`::notice::release stage: 받은 3 OS 산출물로 collect·서명·서명 검증·SHA256SUMS·매니페스트·put·promote·verify·prune을 가짜 S3에서 통과. ${next}`);
     return 0;
   } catch (e) {
     err(`stage: ${e.message}`);
@@ -664,6 +789,7 @@ async function cmdSelftest(env) {
   const creds = fakeCreds();
   const fake = await startFake(creds);
   const results = [];
+  const stubs = [];
   const key = join(work, 'test.key');
   let last = '';
   // 다시 시도 대기를 짧게(가짜 서버의 일시 오류 시나리오)
@@ -800,10 +926,150 @@ async function cmdSelftest(env) {
     expect('(f) latest.json 없음', 0, get(LATEST_KEY) === null ? 0 : 1);
     // (g) 서명 검증 서버: 틀린 비밀 키는 403 → 기반 시설 오류(exit 2, 판정이 아니다)
     expect('(g) 틀린 S3 비밀 키는 exit 2', 2, x(['get', '--key', 'releases/1.0.0/SHA256SUMS', '--out', join(work, 'g.bin')], { R2_SECRET_ACCESS_KEY: 'wrong' }));
+    // (j) R2 보존 상한 prune(latest 이하 최신 5개 + latest의 previous). 상태는 1.0.0·1.1.0(변조)·1.2.0에 오래된 씨앗, latest보다 높은
+    //     폴더(1.9.0: 판정 실패로 되돌린 버전의 남은 객체 자리), semver가 아닌 폴더를 더한다
+    const seed = join(work, 'seed.bin');
+    writeFileSync(seed, 'seed\n');
+    const putSeed = (k) => x(['put-raw', '--key', k, '--file', seed], { XTASK_ALLOW_RAW: '1' });
+    let seeded = 0;
+    for (const v of ['0.1.0', '0.2.0', '0.3.0', '1.2.1', '1.2.2', '1.2.3', '1.9.0']) for (const f of ['SHA256SUMS', 'manifest.json']) seeded += putSeed(`releases/${v}/${f}`);
+    seeded += putSeed('releases/tmp/x.bin');
+    expect('(j) 씨앗 올림', 0, seeded);
+    expect('(j) rollback.yml 1.0.0(latest 없음 → 1.0.0)', 0, rollback('1.0.0'));
+    const p13 = publish('1.3.0', '2026-10-10T00:00:00Z');
+    expect('(j) publish 1.3.0', 0, p13.code);
+    expect('(j) prev 출력 = 1.0.0', 0, p13.prev === '1.0.0' ? 0 : 1);
+    expect('(j) verify 1.3.0', 0, verify('1.3.0', '1.0.0').code);
+    const listing = () => {
+      const r = spawnSync(xtaskBin(base0), ['release', 'list-keys', '--prefix', 'releases/'], { env: base0, cwd: ROOT, encoding: 'utf8' });
+      last = `${r.stdout ?? ''}${r.stderr ?? ''}`.trim();
+      return r.status === 0 ? (r.stdout ?? '').split('\n').filter(Boolean) : null;
+    };
+    const dirs = () => [...new Set((listing() ?? []).map((k) => /^releases\/([^/]+)\//.exec(k)?.[1]).filter(Boolean))].sort().join(',');
+    const prune = (v, extra = {}) => {
+      const r = runRelease('prune', { ...S, RELEASE_VERSION: v, ...extra }, true);
+      last = r.out;
+      return r.status;
+    };
+    expect('(j) 지우기 전 폴더 11개 + tmp', 0, dirs() === '0.1.0,0.2.0,0.3.0,1.0.0,1.1.0,1.2.0,1.2.1,1.2.2,1.2.3,1.3.0,1.9.0,tmp' ? 0 : 1);
+    const before13 = get(LATEST_KEY);
+    expect('(j) prune(latest = 1.3.0)', 0, prune('1.3.0'));
+    // latest 이하 최신 5개(1.3.0·1.2.3·1.2.2·1.2.1·1.2.0) + latest + previous(1.0.0, 상위 5개 밖이어도 남긴다). latest보다 높은 1.9.0은
+    // 남기되 자리로 세지 않는다(셌다면 1.2.0이 지워진다). semver가 아닌 tmp는 그대로
+    const kept = '1.0.0,1.2.0,1.2.1,1.2.2,1.2.3,1.3.0,1.9.0,tmp';
+    expect('(j) 남은 폴더', 0, dirs() === kept ? 0 : 1);
+    expect('(j) semver가 아닌 releases/tmp/x.bin은 남음', 0, (listing() ?? []).includes('releases/tmp/x.bin') ? 0 : 1);
+    expect('(j) latest.json 바이트 그대로(1.3.0 manifest)', 0, same(get(LATEST_KEY), before13) + same(before13, readFileSync(join(p13.st, 'manifest.json'))));
+    // 1.1.0은 (c)에서 변조돼 지우지 않았어도 rollback이 거부되므로 키가 실제로 없는지를 먼저 본다
+    expect('(j) 지운 버전(1.1.0)의 manifest.json·SHA256SUMS가 없다', 0, get('releases/1.1.0/manifest.json') === null && get('releases/1.1.0/SHA256SUMS') === null ? 0 : 1);
+    expect('(j) 지운 버전(1.1.0)으로는 rollback.yml 거부', 'nonzero', rollback('1.1.0'));
+    expect('(j) 거부 뒤 latest.json 그대로', 0, same(get(LATEST_KEY), before13));
+    expect('(j) previous(1.0.0)로는 rollback 가능', 0, rollback('1.0.0'));
+    expect('(j) 다시 1.3.0으로', 0, rollback('1.3.0'));
+    expect('(j) prune 멱등', 0, prune('1.3.0') + (dirs() === kept ? 0 : 1));
+    expect('(j) latest가 아닌 버전(1.2.0) 실행은 지우지 않고 0', 0, prune('1.2.0') + (dirs() === kept ? 0 : 1));
+    expect('(j) xtask delete-version 1.3.0(latest) 거부', 1, x(['delete-version', '--version', '1.3.0']));
+    expect('(j) xtask delete-version 1.0.0(previous) 거부', 1, x(['delete-version', '--version', '1.0.0']));
+    expect('(j) 거부 뒤 목록 그대로', 0, dirs() === kept ? 0 : 1);
+    putSeed('releases/0.0.1/SHA256SUMS');
+    expect('(j) 목록이 잘리면(max-keys 3) exit 2, 지우지 않음', 2, prune('1.3.0', { XTASK_LIST_MAX_KEYS: '3' }));
+    expect('(j) 잘린 뒤에도 0.0.1 그대로', 0, dirs().startsWith('0.0.1,1.0.0,') ? 0 : 1);
+    expect('(j) 장애 주입 LIST 503×2', 204, await fake.fault({ method: 'LIST', key: 'releases/', mode: 'before', status: 503, times: 2 }));
+    expect('(j) 일시 503 뒤 prune 통과, 0.0.1을 지움', 0, prune('1.3.0') + (dirs() === kept ? 0 : 1));
+    // (w) 배포 뒤 검사(--check-only): 가짜 Worker(별도 프로세스)에 정상·틀림 사례. 인자는 배포 모드가 부르는 runWorkerChecks와 같은 코드다
+    const TOKEN = 'ci-test-token';
+    const stub = await startWorkerStub({ token: TOKEN, version: '1.2.0', build: 'abc1234' });
+    stubs.push(stub);
+    const WB = `http://127.0.0.1:${stub.port}`;
+    const wenv = { PATH: env.PATH, SystemRoot: env.SystemRoot, CI_VERIFY_TOKEN: TOKEN, WORKER_CHECK_INTERVAL_MS: '20', WORKER_CHECK_DEADLINE_MS: '300', WORKER_CHECK_RETRY_BASE_MS: '5' };
+    const check = async (set, { args = ['--check-only', '--base', WB, '--version', '1.2.0', '--build', 'abc1234'], envOverride = {}, drop = [] } = {}) => {
+      await stub.set(set);
+      const e = { ...wenv, ...envOverride };
+      for (const n of drop) delete e[n];
+      const r = runRelease('worker', e, true, args);
+      last = r.out;
+      return r.status;
+    };
+    expect('(w) 정상', 0, await check({}));
+    expect('(w) 204 틀림: 이번 버전 요청이 200', 1, await check({ routes: { 'GET /update/1.2.0': { status: 200, json: { version: '1.2.0' } } } }));
+    expect('(w) 200 틀림: 0.0.0 요청의 버전이 다름', 1, await check({ routes: { 'GET /update/0.0.0': { status: 200, json: { version: '1.1.0' } } } }));
+    expect('(w) 200 틀림: 0.0.0 요청이 204', 1, await check({ routes: { 'GET /update/0.0.0': { status: 204 } } }));
+    expect('(w) 음성 틀림: /admin이 200', 1, await check({ routes: { 'GET /admin': { status: 200, body: 'x' } } }));
+    expect('(w) 음성 틀림: 토큰 없는 latest.json이 200', 1, await check({ routes: { 'GET /releases/latest.json': { status: 200, body: '{}' } } }));
+    expect('(w) 음성 틀림: /api/me가 200', 1, await check({ routes: { 'GET /api/me': { status: 200, body: '{}' } } }));
+    expect('(w) CI 토큰의 latest.json이 401', 1, await check({ routes: { 'GET /releases/latest.json': { status: 401, json: { code: 'invalid_token' } } } }));
+    expect('(w) 음성 틀림: 틀린 Bearer로 /update가 200(자격을 보지 않는 Worker)', 1, await check({ routes: { 'GET /update/0.0.0': { status: 200, json: { version: '1.2.0' } } } }));
+    expect('(w) 늦은 반영: 옛 build 둘 뒤 이번 build', 0, await check({ healthBuilds: ['old0000', 'old0000'] }));
+    expect('(w) 반영 안 됨: 끝까지 옛 build(판정 실패)', 1, await check({ healthBuilds: Array(1000).fill('old0000') }));
+    expect('(w) config_error는 기다리지 않고 실패', 1, await check({ routes: { 'GET /health': { status: 503, json: { ok: false, code: 'config_error' } } } }));
+    expect('(w) 계속된 5xx는 기반 시설 오류(exit 2)', 2, await check({ routes: { 'GET /update/0.0.0': { status: 503, body: '' } } }));
+    expect('(w) 틀린 토큰', 1, await check({}, { envOverride: { CI_VERIFY_TOKEN: 'wrong-token' } }));
+    expect('(w) 토큰 없음', 2, await check({}, { drop: ['CI_VERIFY_TOKEN'] }));
+    expect('(w) 나쁜 base(https도 루프백도 아님)', 2, await check({}, { args: ['--check-only', '--base', 'http://example.test', '--version', '1.2.0'] }));
+    expect('(w) 모르는 인자', 2, await check({}, { args: ['--check-only', '--nope'] }));
+    expect('(w) 로그에 base 호스트·토큰이 없다', 0, (await check({})) + (/127\.0\.0\.1|ci-test-token/.test(last) ? 1 : 0));
+    // (w-dry) 배포 모드 가드(RELEASE_MODE=dry: 묶음·설정·superseded 가드까지, wrangler·Cloudflare에는 닿지 않는다)
+    const tools = toolsWrangler();
+    const wrangler = parseJsonc(readFileSync(join(ROOT, 'worker/wrangler.jsonc'), 'utf8'));
+    const mkBundle = (name, { config = deployConfig(wrangler), meta = bundleMeta(tools) } = {}) => {
+      const d = join(work, `bundle-${name}`);
+      mkdirSync(join(d, 'dist'), { recursive: true });
+      mkdirSync(join(d, DEPLOY_DIR), { recursive: true });
+      writeFileSync(join(d, 'dist/wrangler.json'), `${JSON.stringify(config, null, 2)}\n`);
+      writeFileSync(join(d, 'dist/worker-bundle.json'), `${JSON.stringify(meta)}\n`);
+      writeFileSync(join(d, DEPLOY_DIR, '.keep'), '');
+      const tgz = join(work, `${name}.tgz`);
+      const r = spawnSync('tar', ['-czf', relative(d, tgz), 'dist', DEPLOY_DIR], { cwd: d, encoding: 'utf8' });
+      if (r.status !== 0) throw new Error(`tar 실패: ${r.stderr}`);
+      return { tgz, sha: sha256hex(readFileSync(tgz)) };
+    };
+    const good = mkBundle('good');
+    // wrangler secret list --format json 출력 모양(dry는 WORKER_SECRET_LIST로 받는다)
+    const secretList = (names) => JSON.stringify(names.map((name) => ({ name, type: 'secret_text' })), null, '  ');
+    const ALL_SECRETS = secretList(['ADMIN_CHANNEL_IDS', 'CHZZK_CLIENT_ID', 'CHZZK_CLIENT_SECRET', 'CI_VERIFY_TOKEN']);
+    const wd = (version, { bundle = good, sha = bundle?.sha ?? '0'.repeat(64), extra = {}, mode } = {}) => {
+      const e = { ...S, ...(mode ? { RELEASE_MODE: mode } : {}), RELEASE_VERSION: version, CLOUDFLARE_API_TOKEN: 'dry-token', CLOUDFLARE_ACCOUNT_ID: 'dry-account', CI_VERIFY_TOKEN: TOKEN, GITHUB_SHA: 'a'.repeat(40), WORKER_BUNDLE_SHA256: sha, WORKER_SECRET_LIST: ALL_SECRETS, ...(bundle ? { WORKER_BUNDLE: bundle.tgz } : {}), ...extra };
+      for (const n of Object.keys(extra)) if (extra[n] === undefined) delete e[n];
+      const r = runRelease('worker', e, true);
+      last = r.out;
+      return r.status;
+    };
+    expect('(w-dry) superseded: latest(1.3.0)가 더 높으면 배포 없이 0(묶음이 없어도)', 0, wd('1.2.0', { bundle: null }) + (/superseded/.test(last) ? 0 : 1));
+    expect('(w-dry) not-promoted: latest보다 높은 1.4.0은 1', 1, wd('1.4.0'));
+    expect('(w-dry) 묶음 sha256이 다르면 2', 2, wd('1.3.0', { sha: '0'.repeat(64) }));
+    expect('(w-dry) 묶음 dist/wrangler.json에 account_id가 끼면 1', 1, wd('1.3.0', { bundle: mkBundle('acct', { config: { ...deployConfig(wrangler), account_id: 'dry-account' } }) }));
+    expect('(w-dry) 묶음의 main이 다르면 1', 1, wd('1.3.0', { bundle: mkBundle('main', { config: { ...deployConfig(wrangler), main: 'dist/index.js' } }) }));
+    expect('(w-dry) 다른 플랫폼 묶음은 2', 2, wd('1.3.0', { bundle: mkBundle('arch', { meta: { ...bundleMeta(tools), arch: 'other' } }) }));
+    expect('(w-dry) 다른 wrangler 버전 묶음은 2', 2, wd('1.3.0', { bundle: mkBundle('ver', { meta: bundleMeta('0.0.1') }) }));
+    expect('(w-dry) 좋은 묶음은 dry에서 멈추고 0', 0, wd('1.3.0') + (/dry — 배포·검사하지 않는다/.test(last) ? 0 : 1));
+    // secret 이름 확인(배포 전, 값은 원래 나오지 않는다)
+    const noSecret = wd('1.3.0', { extra: { WORKER_SECRET_LIST: secretList(['ADMIN_CHANNEL_IDS', 'CHZZK_CLIENT_ID']) } });
+    expect('(w-dry) 필수 secret이 없으면 1, 없는 이름만', 0, noSecret === 1 && /Worker secret 없음: CHZZK_CLIENT_SECRET, CI_VERIFY_TOKEN\./.test(last) && !/dry — 배포/.test(last) ? 0 : 1);
+    const boot = wd('1.3.0', { extra: { WORKER_SECRET_LIST: secretList(['CHZZK_CLIENT_ID', 'CHZZK_CLIENT_SECRET', 'CI_VERIFY_TOKEN']) } });
+    expect('(w-dry) ADMIN_CHANNEL_IDS만 없으면 경고(부트스트랩) 뒤 0', 0, boot === 0 && /::warning::.*ADMIN_CHANNEL_IDS/.test(last) ? 0 : 1);
+    expect('(w-dry) secret list 출력이 JSON 배열이 아니면 2', 2, wd('1.3.0', { extra: { WORKER_SECRET_LIST: 'Error: not found' } }));
+    expect('(w-dry) secret list 결과가 없으면(dry 주입 없음) 2', 2, wd('1.3.0', { extra: { WORKER_SECRET_LIST: undefined } }));
+    // 배포 직전 다시 읽기: 첫 가드는 지나가고(skip 1) 두 번째 latest.json 읽기만 시도 3번(XTASK_RETRY_ATTEMPTS) 내내 503이면 배포하지 않고 2
+    expect('(w-dry) 장애 주입 latest.json 두 번째 GET부터 503×3', 204, await fake.fault({ method: 'GET', key: LATEST_KEY, mode: 'before', status: 503, times: 3, skip: 1 }));
+    const reread = wd('1.3.0');
+    expect('(w-dry) 배포 직전 latest.json을 다시 읽지 못하면 2(dry 멈춤 전)', 0, reread === 2 && /다시 읽지 못했다/.test(last) && !/dry — 배포/.test(last) ? 0 : 1);
+    expect('(w-dry) 장애를 다 쓴 뒤 latest.json은 다시 읽힌다', 0, get(LATEST_KEY) === null ? 1 : 0);
+    expect('(w-dry) GITHUB_SHA가 40자리 hex가 아니면 2', 2, wd('1.3.0', { extra: { GITHUB_SHA: 'abc' } }));
+    expect('(w-dry) DIST_BASE_URL에 경로가 있으면 1', 1, wd('1.3.0', { extra: { DIST_BASE_URL: 'https://dist.example.invalid/x' } }));
+    // exit 2만으로는 tag 모드의 'XTASK_BIN 없음'(begin의 다음 단계)과 갈리지 않아 경계 문구를 함께 본다
+    const tagBundle = wd('1.3.0', { mode: 'tag', extra: { RELEASE_VERSION: undefined, R2_ENDPOINT: undefined, RELEASE_PUBKEY: undefined, RELEASE_STAGE_DIR: undefined } });
+    expect('(w-dry) tag 모드는 WORKER_BUNDLE 덮어쓰기 거부(경계, exit 2 + 문구)', 0, tagBundle === 2 && last.includes('tag 모드는 WORKER_BUNDLE를 받지 않는다') ? 0 : 1);
+    expect('(w-dry) tag 모드는 WORKER_SECRET_LIST 주입 거부(경계)', 0, tagBundle === 2 && last.includes('tag 모드는 WORKER_SECRET_LIST를 받지 않는다') ? 0 : 1);
+    const tagPrune = prune('1.3.0', { RELEASE_MODE: 'tag', XTASK_LIST_MAX_KEYS: '3', RELEASE_VERSION: undefined, R2_ENDPOINT: undefined, RELEASE_PUBKEY: undefined, RELEASE_STAGE_DIR: undefined });
+    expect('(w-dry) tag 모드 prune은 XTASK_LIST_MAX_KEYS 거부(경계, exit 2 + 문구)', 0, tagPrune === 2 && last.includes('tag 모드는 XTASK_LIST_MAX_KEYS를 받지 않는다') ? 0 : 1);
+    const noTok = wd('1.3.0', { extra: { CLOUDFLARE_API_TOKEN: '' } });
+    expect('(w-dry) CLOUDFLARE_API_TOKEN 없으면 1과 정확한 메시지', 0, noTok === 1 && last.split('\n').includes('::error::Worker 배포 설정 없음(시크릿·변수): CLOUDFLARE_API_TOKEN. 배포하지 않는다') ? 0 : 1);
+    expect('(w-dry) 시크릿 값은 로그에 없다', 0, /dry-token|dry-account/.test(last) ? 1 : 0);
   } catch (e) {
     results.push({ name: `예외: ${e.message}`, want: 0, got: 'throw', ok: false, out: last });
   } finally {
     fake.stop();
+    for (const st of stubs) st.stop();
     rmSync(work, { recursive: true, force: true });
   }
   for (const r of results) {
@@ -816,21 +1082,551 @@ async function cmdSelftest(env) {
   return bad ? 1 : 0;
 }
 
-// Phase 3 seam(docs/design/cicd.md §5.5). worker/가 생기면 여기서 wrangler(고정 버전) 배포 → /health 200 → updater 엔드포인트가
-// prev 버전 요청에 200 + 새 버전, 새 버전 요청에 204인지 확인한다. 그 전에는 켜도(vars.WORKER_DEPLOY_ENABLED) 녹색이 되지 않는다.
-function cmdWorker() {
-  if (!existsSync(join(ROOT, 'worker'))) {
-    err('worker: worker/가 없다(Phase 3 seam). vars.WORKER_DEPLOY_ENABLED를 끄거나 Worker를 먼저 더한다');
+// ---- Worker 배포(worker-bundle·deploy-worker, docs/design/worker.md §9.4·§13.4, cicd.md 구현 중 변경 81·96) ----
+
+// DIST_BASE_URL(= Worker 출처 = PUBLIC_ORIGIN) → 문제 목록. 경로·쿼리·조각·끝 슬래시·대문자 호스트·기본 포트·사용자 정보가 없는 https 출처
+// (매니페스트 url이 `${DIST_BASE_URL}/releases/<v>/<file>`이고 Worker의 PUBLIC_ORIGIN과 글자가 같아야 한다, cicd.md 82 (가)). 값은 싣지 않는다
+export function distBaseProblems(v) {
+  let u;
+  try {
+    u = new URL(v);
+  } catch {
+    return ['URL이 아니다'];
+  }
+  const out = [];
+  if (u.protocol !== 'https:') out.push('https가 아니다');
+  if (u.username || u.password) out.push('사용자 정보가 있다');
+  if (v !== u.origin) out.push('경로·쿼리·조각·끝 슬래시·대문자·기본 포트가 없는 출처(scheme://host[:port])가 아니다');
+  return out;
+}
+
+// 로그에서 가릴 문자열(::add-mask::, cicd.md 84 (다)): 출처의 호스트와, <이름>.<계정 서브도메인>.workers.dev면 계정 서브도메인 조각.
+// 마스킹은 등록한 문자열이 그대로 나올 때만 가려서 출처 전체뿐 아니라 `https://`를 뗀 호스트도 등록한다
+export function maskValues(origin) {
+  let host;
+  try {
+    host = new URL(origin).hostname;
+  } catch {
+    return [];
+  }
+  if (!host) return [];
+  const parts = host.split('.');
+  const out = [host];
+  if (parts.length === 4 && parts[2] === 'workers' && parts[3] === 'dev' && parts[1].length >= 4) out.push(parts[1]);
+  return out;
+}
+
+// GITHUB_SHA → BUILD_ID(앞 7자). 40자리 소문자 hex가 아니면 null
+export const buildIdOf = (sha) => (/^[0-9a-f]{40}$/.test(sha ?? '') ? sha.slice(0, 7) : null);
+
+// `release.mjs worker` 인자. 없으면 배포. `--check-only --base <출처> --version <semver> [--build <id>]`면 검사만(배포 없음).
+// → {mode:'deploy'} | {mode:'check', base, version, build|null} | {error}
+export function parseWorkerArgs(argv) {
+  if (!argv.length) return { mode: 'deploy' };
+  const o = { checkOnly: false, base: undefined, version: undefined, build: undefined };
+  const names = { '--base': 'base', '--version': 'version', '--build': 'build' };
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === '--check-only') {
+      if (o.checkOnly) return { error: '--check-only가 두 번 있다' };
+      o.checkOnly = true;
+    } else if (names[a]) {
+      const v = argv[i + 1];
+      if (v === undefined || v.startsWith('--')) return { error: `${a}에 값이 없다` };
+      if (o[names[a]] !== undefined) return { error: `${a}가 두 번 있다` };
+      o[names[a]] = v;
+      i++;
+    } else return { error: `모르는 인자 ${a}` };
+  }
+  if (!o.checkOnly) return { error: '--check-only 없이는 인자를 받지 않는다(배포는 인자 없이)' };
+  if (!o.base) return { error: '--check-only는 --base <출처>가 필요하다' };
+  if (!o.version || !parseSemver(o.version)) return { error: '--check-only는 --version <semver>가 필요하다' };
+  if (o.build !== undefined && !/^[0-9A-Za-z._-]{1,40}$/.test(o.build)) return { error: '--build 형식이 아니다' };
+  return { mode: 'check', base: o.base, version: o.version, build: o.build ?? null };
+}
+
+// 배포 뒤 검사(§9.4, worker.md 구현 중 변경 36 (아)). health는 따로 돈다(배포 반영을 기다린다). 나머지는 순서대로. path는 version을 받는다.
+// cred: ci = CI 토큰, none = Authorization 없음, garbage = CI 토큰도 앱 토큰도 아닌 Bearer. 이 표는 worker/test/deploy-contract.mjs의
+// deploy 행과 같아야 한다(release.test.mjs가 대조하고, 같은 표를 worker/test/http/update.test.ts가 진짜 Worker로 본다)
+export const GARBAGE_BEARER = 'not-a-token';
+export const WORKER_CHECKS = [
+  { id: 'update-latest', path: () => '/update/0.0.0', cred: 'ci' },
+  { id: 'update-current', path: (v) => `/update/${v}`, cred: 'ci' },
+  { id: 'releases-latest-ci', path: () => '/releases/latest.json', cred: 'ci' },
+  { id: 'neg-admin', path: () => '/admin', cred: 'ci' },
+  { id: 'neg-latest-anon', path: () => '/releases/latest.json', cred: 'none' },
+  { id: 'neg-update-garbage', path: () => '/update/0.0.0', cred: 'garbage' },
+  { id: 'neg-me-ci', path: () => '/api/me', cred: 'ci' },
+];
+
+// 응답 하나의 판정(순수, release.test.mjs가 표로 본다). res: {status, body: Buffer} | {error: string}.
+// ctx: {version, build|null, latestBytes: Buffer|null} → 'pass' | 'fail' | 'retry'(네트워크·5xx·429) | 'wait'(health만: 아직 옛 Worker)
+export function judgeCheck(id, res, ctx) {
+  if (res.error !== undefined) return 'retry';
+  const { status } = res;
+  const json = () => {
+    try {
+      return JSON.parse(res.body.toString('utf8'));
+    } catch {
+      return undefined;
+    }
+  };
+  // 설정 가드(config_error)는 기다려도 낫지 않는다
+  if (id === 'health' && status === 503 && json()?.code === 'config_error') return 'fail';
+  if (status === 429 || status >= 500) return 'retry';
+  switch (id) {
+    case 'health': {
+      if (status !== 200) return 'fail';
+      const j = json();
+      if (!j || j.ok !== true) return 'fail';
+      // 옛 Worker도 200을 준다: 이번 BUILD_ID를 내놓을 때까지 기다린다
+      return ctx.build && j.build !== ctx.build ? 'wait' : 'pass';
+    }
+    case 'update-latest':
+    case 'releases-latest-ci': {
+      if (status !== 200) return 'fail';
+      if (json()?.version !== ctx.version) return 'fail';
+      return ctx.latestBytes && Buffer.compare(res.body, ctx.latestBytes) !== 0 ? 'fail' : 'pass';
+    }
+    case 'update-current':
+      return status === 204 ? 'pass' : 'fail';
+    case 'neg-admin':
+      // 로그인으로 보내는 303이든 아직 없는 경로의 404든 200이 아니면 된다
+      return status >= 300 && status <= 499 ? 'pass' : 'fail';
+    case 'neg-latest-anon':
+    case 'neg-update-garbage':
+    case 'neg-me-ci':
+      return status === 401 ? 'pass' : 'fail';
+    default:
+      throw new Error(`모르는 검사 ${id}`);
+  }
+}
+
+// 정수 1..600000(ms)만 받고 아니면 기본값
+export function envMs(env, name, def) {
+  const v = env[name];
+  return /^\d{1,6}$/.test(v ?? '') && +v >= 1 && +v <= 600_000 ? +v : def;
+}
+
+// deploy-worker 작업 안의 하위 프로세스·요청 상한(ms). release.yml deploy-worker의 timeout-minutes는 workerWorstCaseMs() + 준비 여유보다
+// 커야 한다(release.test.mjs가 워크플로 값을 읽어 본다). xtask get 하나는 reqwest 600초 × 4회까지 갈 수 있어 하위 프로세스에 상한을 준다
+export const WORKER_LIMITS = { s3ReadMs: 90_000, extractMs: 60_000, secretListMs: 120_000, deployMs: 300_000, requestMs: 10_000 };
+// 배포 뒤 검사 시간(기본값). 배포 모드의 tag 실행은 env WORKER_CHECK_*를 읽지 않고 늘 이 값이다(상한 계산이 깨지지 않게)
+export const WORKER_CHECK_DEFAULTS = { intervalMs: 30_000, deadlineMs: 300_000, retryBaseMs: 2_000, attempts: 4 };
+// 작업 안에서 release.mjs worker가 쓸 수 있는 최악의 시간(ms):
+//   latest.json 읽기 3번(첫 가드·배포 직전·검사 실패 뒤) + 묶음 풀기 + secret list + deploy
+//   + health(마지막 요청이 기한 직전에 시작: deadline + 요청 상한)
+//   + 나머지 검사 WORKER_CHECKS개 × (attempts × 요청 상한 + 대기 base·(1+2+…+2^(attempts-2)))
+// 기본값: 3×90 + 60 + 120 + 300 + (300 + 10) + 7 × (4×10 + 14) = 1438초 ≈ 24분
+export function workerWorstCaseMs(t = WORKER_CHECK_DEFAULTS, l = WORKER_LIMITS) {
+  const health = t.deadlineMs + l.requestMs;
+  const perCheck = t.attempts * l.requestMs + t.retryBaseMs * (2 ** (t.attempts - 1) - 1);
+  return 3 * l.s3ReadMs + l.extractMs + l.secretListMs + l.deployMs + health + WORKER_CHECKS.length * perCheck;
+}
+
+// 배포 뒤 검사 전부. → { code: 0 통과 | 1 판정 실패 | 2 기반 시설(5xx·429·네트워크가 끝까지 남음), results }
+// base·token은 로그에 찍지 않고, 네트워크 오류는 cause.code만 남긴다(메시지에 호스트가 들어간다)
+export async function runWorkerChecks({
+  base,
+  token,
+  version,
+  build = null,
+  latestBytes = null,
+  fetchImpl = fetch,
+  sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
+  now = Date.now,
+  intervalMs = 30_000,
+  deadlineMs = 300_000,
+  retryBaseMs = 2_000,
+  attempts = 4,
+  requestTimeoutMs = WORKER_LIMITS.requestMs,
+  log = (m) => console.log(`release: ${m}`),
+}) {
+  const ctx = { version, build, latestBytes };
+  const results = [];
+  const authHeaders = { ci: { authorization: `Bearer ${token}` }, garbage: { authorization: `Bearer ${GARBAGE_BEARER}` }, none: {} };
+  const get = async (path, cred) => {
+    try {
+      const r = await fetchImpl(base + path, { method: 'GET', redirect: 'manual', headers: authHeaders[cred], signal: AbortSignal.timeout(requestTimeoutMs) });
+      return { status: r.status, body: Buffer.from(await r.arrayBuffer()) };
+    } catch (e) {
+      const c = String(e?.cause?.code ?? e?.name ?? 'error');
+      return { error: /^[A-Za-z0-9_.-]{1,40}$/.test(c) ? c : 'error' };
+    }
+  };
+  const line = (id, path, outcome, res) => log(`worker check ${id} ${path}: ${outcome}${res.status !== undefined ? ` (HTTP ${res.status})` : ''}${res.error !== undefined ? ` (${res.error})` : ''}`);
+  const record = (id, outcome, res) => results.push({ id, outcome, ...(res.status !== undefined ? { status: res.status } : {}), ...(res.error !== undefined ? { cause: res.error } : {}) });
+
+  // 1) health: 이번 빌드가 보일 때까지 기다린다(전파 지연)
+  const start = now();
+  for (;;) {
+    const res = await get('/health', 'none');
+    const o = judgeCheck('health', res, ctx);
+    line('health', '/health', o, res);
+    if (o === 'pass') {
+      record('health', 'pass', res);
+      break;
+    }
+    if (o === 'fail') {
+      record('health', 'fail', res);
+      return { code: 1, results };
+    }
+    if (now() - start + intervalMs > deadlineMs) {
+      // 끝까지 옛 Worker(wait)면 반영이 안 된 판정 실패, 5xx·네트워크(retry)면 기반 시설
+      record('health', o === 'wait' ? 'fail' : 'infra', res);
+      return { code: o === 'wait' ? 1 : 2, results };
+    }
+    await sleep(intervalMs);
+  }
+
+  // 2) 나머지: 검사마다 5xx·429·네트워크는 다시 시도한다
+  for (const c of WORKER_CHECKS) {
+    const path = c.path(version);
+    let res;
+    let o;
+    for (let n = 1; n <= attempts; n++) {
+      res = await get(path, c.cred);
+      o = judgeCheck(c.id, res, ctx);
+      if (o !== 'retry') break;
+      if (n < attempts) {
+        line(c.id, path, `retry ${n}/${attempts}`, res);
+        await sleep(retryBaseMs * 2 ** (n - 1));
+      }
+    }
+    const outcome = o === 'pass' ? 'pass' : o === 'retry' ? 'infra' : 'fail';
+    line(c.id, path, outcome, res);
+    record(c.id, outcome, res);
+  }
+  const code = results.some((r) => r.outcome === 'fail') ? 1 : results.some((r) => r.outcome === 'infra') ? 2 : 0;
+  return { code, results };
+}
+
+// ---- wrangler 실행(묶음 안의 wrangler, 설치·컴파일 없음) ----
+
+export const WORKER_BUNDLE_DIR = 'target/ci/worker-bundle';
+export const WORKER_BUNDLE_FILE = `${WORKER_BUNDLE_DIR}/worker-bundle.tgz`;
+
+// deploy [--dry-run] 인자(dry-run과 실제가 같은 배열에 --dry-run만 더한다). PUBLIC_ORIGIN 값은 인자로만 간다(env로는 넘기지 않는다)
+export function wranglerDeployArgs({ origin, build, dryRun }) {
+  return ['deploy', '--no-bundle', '--config', 'dist/wrangler.json', '--var', `PUBLIC_ORIGIN:${origin}`, '--var', `BUILD_ID:${build}`, ...(dryRun ? ['--dry-run'] : [])];
+}
+
+// wrangler 하위 프로세스의 env(허용 목록). 넘기지 않는 것: CI_VERIFY_TOKEN, R2 자격, DIST_BASE_URL(값은 --var 인자로만), GITHUB_*,
+// CLOUDFLARE_API_BASE_URL, 로컬 wrangler login 상태(빈 임시 HOME). Cloudflare 자격은 실제 배포(credentials)에서만
+export function wranglerEnv(env, { home, credentials }) {
+  const out = { PATH: env.PATH ?? '', HOME: home, XDG_CONFIG_HOME: join(home, '.config'), CI: 'true', WRANGLER_SEND_METRICS: 'false' };
+  if (IS_WIN) {
+    out.USERPROFILE = home;
+    if (env.SystemRoot) out.SystemRoot = env.SystemRoot;
+  }
+  if (credentials) {
+    out.CLOUDFLARE_API_TOKEN = env.CLOUDFLARE_API_TOKEN ?? '';
+    out.CLOUDFLARE_ACCOUNT_ID = env.CLOUDFLARE_ACCOUNT_ID ?? '';
+  }
+  return out;
+}
+
+// 묶음의 실행 환경 표시(worker-bundle이 dist/worker-bundle.json으로 넣고 deploy-worker가 맞춰 본다). node_modules에 workerd
+// 플랫폼 바이너리가 들어가므로 묶음은 OS·arch 전용이다(worker.md 구현 중 변경 35 (다))
+export const bundleMeta = (wrangler) => ({ platform: process.platform, arch: process.arch, wrangler });
+const toolsWrangler = () => JSON.parse(readFileSync(join(ROOT, 'scripts/ci/tools.json'), 'utf8')).tools.wrangler.version;
+// .bin shim이 아니라 wrangler.js를 node로 직접 부른다(Windows .cmd·셸 해석을 피한다)
+const wranglerJs = (x) => join(x, DEPLOY_DIR, 'node_modules/wrangler/bin/wrangler.js');
+
+// 묶음 tgz를 새 임시 폴더에 푼다 → 폴더 | null. 작업 폴더의 .env·.env.local을 wrangler가 읽지 않게 늘 빈 새 폴더에서 돈다(worker.md 구현 중 변경 35 (사)).
+// tar는 cwd + 상대 경로로 부른다(Windows GNU tar가 `C:`를 원격 호스트로 읽는다)
+function extractBundle(tgz, env) {
+  const x = mkdtempSync(join(env.RUNNER_TEMP || tmpdir(), 'worker-bundle-x-'));
+  try {
+    cpSync(tgz, join(x, 'bundle.tgz'));
+    const r = spawnSync('tar', ['-xzf', 'bundle.tgz'], { cwd: x, stdio: 'inherit', timeout: WORKER_LIMITS.extractMs });
+    if (r.status !== 0) throw new Error(`tar -x exit ${r.status}`);
+    rmSync(join(x, 'bundle.tgz'));
+    return x;
+  } catch (e) {
+    err(`worker: 묶음을 풀지 못했다(${e.message})`);
+    rmSync(x, { recursive: true, force: true });
+    return null;
+  }
+}
+
+const readJson = (p) => {
+  try {
+    return JSON.parse(readFileSync(p, 'utf8'));
+  } catch {
+    return null;
+  }
+};
+
+// wrangler를 묶음 폴더에서(argv에 PUBLIC_ORIGIN이 실리므로 명령줄을 찍지 않고 오류에도 인자를 싣지 않는다) → exit code.
+// capture면 stdout을 찍지 않고 { status, stdout }을 돌려준다(stderr는 그대로 흘린다)
+function runWrangler(x, args, env, credentials, { timeoutMs = WORKER_LIMITS.deployMs, capture = false } = {}) {
+  const home = mkdtempSync(join(env.RUNNER_TEMP || tmpdir(), 'worker-home-'));
+  try {
+    const r = spawnSync(process.execPath, [wranglerJs(x), ...args], {
+      cwd: x,
+      env: wranglerEnv(env, { home, credentials }),
+      stdio: capture ? ['ignore', 'pipe', 'inherit'] : 'inherit',
+      timeout: timeoutMs,
+      ...(capture ? { encoding: 'utf8', maxBuffer: 1 << 20 } : {}),
+    });
+    if (r.status === null) err(`worker: wrangler ${args[0]}이 ${timeoutMs}ms 상한을 넘겼거나 시작하지 못했다`);
+    return capture ? { status: r.status ?? 2, stdout: r.stdout ?? '' } : (r.status ?? 2);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+}
+
+// ---- Worker secret 이름 확인(배포 전, worker.md 구현 중 변경 36) ----
+
+// 운영 모드에서 없으면 config_error인 secret(worker/src/config.ts: 클라이언트 id·secret·CI 토큰). 없으면 배포하지 않는다(1)
+export const WORKER_REQUIRED_SECRETS = ['CHZZK_CLIENT_ID', 'CHZZK_CLIENT_SECRET', 'CI_VERIFY_TOKEN'];
+// 없어도 되는 secret: ADMIN_CHANNEL_IDS가 비면 부트스트랩 모드다(worker.md §8.3, 첫 배포 뒤 로그인으로 값을 얻어 넣는다). 경고만 한다
+export const WORKER_OPTIONAL_SECRETS = ['ADMIN_CHANNEL_IDS'];
+
+// `wrangler secret list --format json` → 인자(이름만 나온다, 값은 API가 돌려주지 않는다)
+export const wranglerSecretListArgs = () => ['secret', 'list', '--config', 'dist/wrangler.json', '--format', 'json'];
+
+// secret list 출력 → { names } | { error }. 줄 머리의 `[`에서 시작하는 JSON 배열을 찾는다(앞뒤 안내 줄은 건너뛴다).
+// 항목은 { name: string }이어야 한다. error 문구에 출력 내용은 싣지 않는다
+export function parseSecretNames(text) {
+  const s = String(text ?? '');
+  const end = s.lastIndexOf(']');
+  for (const m of s.matchAll(/^\[/gm)) {
+    if (end < m.index) break;
+    let a;
+    try {
+      a = JSON.parse(s.slice(m.index, end + 1));
+    } catch {
+      continue;
+    }
+    if (!Array.isArray(a) || !a.every((e) => e && typeof e === 'object' && typeof e.name === 'string')) return { error: '배열 항목에 name이 없다' };
+    return { names: a.map((e) => e.name) };
+  }
+  return { error: 'JSON 배열을 찾지 못했다' };
+}
+
+// 이름 목록 → { missing: 필수 중 없는 것, bootstrap: ADMIN_CHANNEL_IDS가 없음 }
+export function secretCheck(names) {
+  const have = new Set(names);
+  return { missing: WORKER_REQUIRED_SECRETS.filter((n) => !have.has(n)), bootstrap: !have.has('ADMIN_CHANNEL_IDS') };
+}
+
+// ---- 배포 순서(묶음 확인 뒤, release.test.mjs가 가짜 의존성으로 본다) ----
+//   secret 이름 확인 → latest.json 다시 읽기(첫 superseded 가드 뒤에 다른 태그가 승격했으면 배포하지 않는다) → (dry면 멈춤)
+//   → wrangler deploy → 배포 뒤 검사 → 실패면 latest.json을 한 번 더 읽어 다른 태그의 승격을 오류에 싣는다.
+// 의존성: listSecrets() → { status, stdout }, readLatest() → getObject 모양 { code, data }, deploy() → exit code,
+// checks(latestBytes) → { code }, emit(kind: notice|warning|error|log, 문구)
+export async function workerDeploySteps({ version, dryRun = false, listSecrets, readLatest, deploy, checks, emit = defaultEmit }) {
+  const sl = await listSecrets();
+  if (sl.status !== 0) {
+    emit('error', `worker: wrangler secret list 실패(exit ${sl.status}). Worker가 아직 없으면 첫 배포는 사람이 한다(W9). 배포하지 않는다`);
+    return 2;
+  }
+  const parsed = parseSecretNames(sl.stdout);
+  if (parsed.error) {
+    emit('error', `worker: secret list 출력을 읽지 못했다(${parsed.error}). 배포하지 않는다`);
+    return 2;
+  }
+  const sc = secretCheck(parsed.names);
+  if (sc.missing.length) {
+    emit('error', `worker: Worker secret 없음: ${sc.missing.join(', ')}. wrangler secret put으로 넣은 뒤 deploy-worker를 다시 실행한다. 배포하지 않는다`);
     return 1;
   }
-  err('worker: 배포·확인 단계가 아직 없다(Phase 3에서 이 함수를 채운다)');
-  return 1;
+  if (sc.bootstrap) emit('warning', 'worker: ADMIN_CHANNEL_IDS secret이 없다 — 부트스트랩 모드로 뜬다(worker.md §8.3)');
+
+  const re = await readLatest();
+  if (re.code === 2) {
+    emit('error', 'worker: 배포 직전에 latest.json을 다시 읽지 못했다. 배포하지 않는다');
+    return 2;
+  }
+  const latest = re.data ? versionOf(re.data) : null;
+  const plan = verifyPlan(latest, version);
+  if (plan === 'superseded') {
+    emit('notice', `release worker: 배포 직전에 다시 읽은 latest.json이 더 높은 ${latest}다 — 배포하지 않는다(첫 가드 뒤 다른 태그가 승격했다, superseded)`);
+    return 0;
+  }
+  if (plan === 'not-promoted') {
+    emit('error', `worker: 배포 직전에 다시 읽은 latest.json이 ${latest ?? '없음'}이다 — ${version}이 승격된 상태가 아니라 배포하지 않는다`);
+    return 1;
+  }
+  if (dryRun) {
+    emit('log', 'worker: dry — 배포·검사하지 않는다(묶음·설정·secret 이름·superseded 가드 둘까지 확인)');
+    return 0;
+  }
+  const c = await deploy();
+  if (c !== 0) {
+    emit('error', 'worker: wrangler deploy 실패(판정 전이라 되돌릴 것이 없다). 원인을 고친 뒤 deploy-worker를 다시 실행한다');
+    return 2;
+  }
+  const r = await checks(re.data);
+  if (r.code !== 0) {
+    // 검사 중에 다른 태그가 승격했으면(/update 본문이 바뀐다) 그것을 함께 알린다
+    const post = await readLatest();
+    const now = post.code === 0 && post.data ? versionOf(post.data) : null;
+    const other = now && verifyPlan(now, version) === 'superseded' ? ` 다른 태그 ${now}가 승격됐다(검사 중 latest.json이 바뀌었을 수 있다. 그 태그의 deploy-worker를 본다).` : '';
+    emit('error', `worker: 배포 뒤 검사 실패.${other} 필요하면 사람이 wrangler rollback(docs/design/worker.md §9.4)`);
+  }
+  return r.code;
+}
+
+function defaultEmit(kind, m) {
+  if (kind === 'error') err(m);
+  else if (kind === 'log') log(m);
+  else console.log(`::${kind}::${m}`);
+}
+
+// release.yml worker-bundle 작업(시크릿·환경 없음, 태그·리허설 모두): worker 번들(dist) + dist/wrangler.json(원본에서 main·no_bundle만)
+// + 배포용 wrangler(worker/deploy, --ignore-scripts) → tar·sha256. 끝에 묶음을 풀어 자격 없이 deploy --dry-run을 돌린다(리허설마다 worker.md 구현 중 변경 35 (다) 확인)
+function cmdWorkerBundle(env) {
+  const wenv = { ...env, WRANGLER_SEND_METRICS: 'false' };
+  const workerDir = join(ROOT, 'worker');
+  const outDir = join(ROOT, WORKER_BUNDLE_DIR);
+  const tgz = join(ROOT, WORKER_BUNDLE_FILE);
+  rmSync(outDir, { recursive: true, force: true });
+  // 남은 dist·deploy/node_modules가 묶음에 섞이거나 옛 dist/wrangler.json 동일성 검사를 어지럽히지 않게
+  rmSync(join(workerDir, 'dist'), { recursive: true, force: true });
+  rmSync(join(workerDir, DEPLOY_DIR, 'node_modules'), { recursive: true, force: true });
+  mkdirSync(outDir, { recursive: true });
+  if (!step('worker 설치', spawnTool('pnpm', ['install', '--frozen-lockfile'], { cwd: workerDir, env: wenv }))) return 1;
+  if (!step('worker 빌드(deploy --dry-run)', spawnTool('pnpm', ['build'], { cwd: workerDir, env: wenv }))) return 1;
+  const wranglerVersion = toolsWrangler();
+  writeFileSync(join(workerDir, 'dist/wrangler.json'), `${JSON.stringify(deployConfig(parseJsonc(readFileSync(join(workerDir, 'wrangler.jsonc'), 'utf8'))), null, 2)}\n`);
+  writeFileSync(join(workerDir, 'dist/worker-bundle.json'), `${JSON.stringify(bundleMeta(wranglerVersion))}\n`);
+  if (!step('worker-config --dist', spawnSync(process.execPath, [join(ROOT, 'scripts/ci/worker-config.mjs'), '--dist'], { cwd: ROOT, stdio: 'inherit' }))) return 1;
+  if (!step('배포용 wrangler 설치(--ignore-scripts)', spawnTool('pnpm', ['install', '--frozen-lockfile', '--ignore-scripts'], { cwd: join(workerDir, DEPLOY_DIR), env: wenv }))) return 1;
+  if (!step('묶음 tar', spawnSync('tar', ['-czf', relative(workerDir, tgz), 'dist', DEPLOY_DIR], { cwd: workerDir, stdio: 'inherit' }))) return 1;
+  // 자체 확인: 묶음을 풀어 자격 없이 deploy --dry-run(묶음 안의 wrangler가 --no-bundle·exports·--var로 떠야 한다)
+  const x = extractBundle(tgz, env);
+  if (!x) return 1;
+  try {
+    const c = runWrangler(x, wranglerDeployArgs({ origin: 'https://worker.example.invalid', build: 'bundlecheck', dryRun: true }), env, false);
+    if (c !== 0) {
+      err(`worker-bundle: 묶음을 풀어 돌린 deploy --dry-run이 실패했다(exit ${c})`);
+      return 1;
+    }
+  } finally {
+    rmSync(x, { recursive: true, force: true });
+  }
+  const sha = sha256hex(readFileSync(tgz));
+  ghOutput(env, { sha256: sha });
+  log(`worker-bundle: ${WORKER_BUNDLE_FILE} sha256 ${sha}`);
+  return 0;
+}
+
+// release.yml deploy-worker 작업(환경 release, 태그 + vars.WORKER_DEPLOY_ENABLED). 인자 없이 = 배포 + 검사, `--check-only`면 검사만
+export const WORKER_SECRETS = ['CLOUDFLARE_API_TOKEN', 'CLOUDFLARE_ACCOUNT_ID', 'CI_VERIFY_TOKEN', 'DIST_BASE_URL', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY', 'R2_ACCOUNT_ID', 'R2_BUCKET'];
+
+// 시크릿(Cloudflare·CI_VERIFY_TOKEN·DIST_BASE_URL·R2 자격)과 저장소 변수(R2_BUCKET)가 섞여 있어 종류를 함께 적는다
+export const workerMissingMessage = (missing) => `Worker 배포 설정 없음(시크릿·변수): ${missing.join(', ')}. 배포하지 않는다`;
+
+async function cmdWorker(env, argv) {
+  const a = parseWorkerArgs(argv);
+  if (a.error) {
+    console.error(`사용법: release.mjs worker  |  release.mjs worker --check-only --base <출처> --version <semver> [--build <id>] (${a.error})`);
+    return 2;
+  }
+  const D = WORKER_CHECK_DEFAULTS;
+  const envTimes = { intervalMs: envMs(env, 'WORKER_CHECK_INTERVAL_MS', D.intervalMs), deadlineMs: envMs(env, 'WORKER_CHECK_DEADLINE_MS', D.deadlineMs), retryBaseMs: envMs(env, 'WORKER_CHECK_RETRY_BASE_MS', D.retryBaseMs) };
+  if (a.mode === 'check') {
+    const times = envTimes;
+    if (!env.CI_VERIFY_TOKEN) {
+      err('worker: CI_VERIFY_TOKEN이 없다');
+      return 2;
+    }
+    if (distBaseProblems(a.base).length && !LOOPBACK.test(a.base)) {
+      err('worker: --base는 경로 없는 https 출처 또는 루프백 http여야 한다(값은 찍지 않는다)');
+      return 2;
+    }
+    return (await runWorkerChecks({ base: a.base, token: env.CI_VERIFY_TOKEN, version: a.version, build: a.build, ...times })).code;
+  }
+
+  // ---- 배포 모드 ----
+  const missing = WORKER_SECRETS.filter((n) => !env[n]);
+  if (missing.length) {
+    console.error(`::error::${workerMissingMessage(missing)}`);
+    return 1;
+  }
+  if (distBaseProblems(env.DIST_BASE_URL).length) {
+    err('worker: DIST_BASE_URL은 경로 없는 https 출처여야 한다(값은 찍지 않는다)');
+    return 1;
+  }
+  // 출처와 workers.dev 계정 서브도메인 조각을 로그에서 가린다(wrangler 출력·오류에 실릴 수 있다)
+  for (const m of maskValues(env.DIST_BASE_URL)) console.log(`::add-mask::${m}`);
+  if (begin('worker', env)) return 2;
+  const build = buildIdOf(env.GITHUB_SHA);
+  if (!build) {
+    err('worker: GITHUB_SHA(40자리 hex)가 필요하다(BUILD_ID = 앞 7자)');
+    return 2;
+  }
+  if (!/^[0-9a-f]{64}$/.test(env.WORKER_BUNDLE_SHA256 ?? '')) {
+    err('worker: WORKER_BUNDLE_SHA256(worker-bundle 작업의 출력)이 필요하다');
+    return 2;
+  }
+  const version = releaseVersion(env);
+  // superseded 가드: VERIFY_VIA와 상관없이 S3로 latest.json을 읽는다(S3가 latest.json의 원천이라 Worker 상태와 무관하게 판정한다,
+  // worker.md 구현 중 변경 36 (마)). 고장 난 Worker의 복구는 이 작업이 아니다: verify가 실패하면 deploy-worker는 돌지 않는다
+  const readLatest = () => getObject(env, LATEST_KEY, { timeoutMs: WORKER_LIMITS.s3ReadMs });
+  const cur = readLatest();
+  if (cur.code === 2) return 2;
+  const latest = cur.data ? versionOf(cur.data) : null;
+  const plan = verifyPlan(latest, version);
+  if (plan === 'superseded') {
+    console.log(`::notice::release worker: latest.json은 더 높은 ${latest}다 — 배포하지 않는다(낮은 태그가 늦게 끝나 옛 Worker로 덮지 않게, superseded)`);
+    return 0;
+  }
+  if (plan === 'not-promoted') {
+    err(`worker: latest.json이 ${latest ?? '없음'}이다 — ${version}이 승격된 상태가 아니라 배포하지 않는다`);
+    return 1;
+  }
+  const tgz = dry(env) && env.WORKER_BUNDLE ? resolve(env.WORKER_BUNDLE) : join(ROOT, WORKER_BUNDLE_FILE);
+  if (!existsSync(tgz)) {
+    err(`worker: 묶음 ${relative(ROOT, tgz)}이 없다(worker-bundle artifact를 받지 않았다)`);
+    return 2;
+  }
+  const got = sha256hex(readFileSync(tgz));
+  if (got !== env.WORKER_BUNDLE_SHA256) {
+    err(`worker: 묶음 sha256 ${got} ≠ worker-bundle 작업의 출력 ${env.WORKER_BUNDLE_SHA256}`);
+    return 2;
+  }
+  const x = extractBundle(tgz, env);
+  if (!x) return 2;
+  try {
+    const meta = readJson(join(x, 'dist/worker-bundle.json'));
+    const want = bundleMeta(toolsWrangler());
+    if (!isDeepStrictEqual(meta, want)) {
+      err(`worker: 묶음은 ${meta?.platform}-${meta?.arch}(wrangler ${meta?.wrangler})용이다. 이 실행은 ${want.platform}-${want.arch}(wrangler ${want.wrangler})`);
+      return 2;
+    }
+    // 묶음의 dist/wrangler.json이 이 커밋의 원본에서 만든 배포 설정과 같아야 한다(worker-bundle 작업이 다른 설정을 끼우지 않았다)
+    const dist = readJson(join(x, 'dist/wrangler.json'));
+    if (!isDeepStrictEqual(dist, deployConfig(parseJsonc(readFileSync(join(ROOT, 'worker/wrangler.jsonc'), 'utf8'))))) {
+      err('worker: 묶음의 dist/wrangler.json이 이 커밋의 원본에서 만든 배포 설정과 다르다');
+      return 1;
+    }
+    // dry는 secret list 출력을 WORKER_SECRET_LIST로 받는다(selftest 묶음에는 wrangler가 없고 Cloudflare에 닿지 않는다). 없으면 기반 시설(2)
+    const listSecrets = dry(env)
+      ? () => (env.WORKER_SECRET_LIST === undefined ? { status: 2, stdout: '' } : { status: 0, stdout: env.WORKER_SECRET_LIST })
+      : () => runWrangler(x, wranglerSecretListArgs(), env, true, { timeoutMs: WORKER_LIMITS.secretListMs, capture: true });
+    // tag 실행은 env WORKER_CHECK_*를 읽지 않는다(workerWorstCaseMs 상한)
+    const times = dry(env) ? envTimes : { intervalMs: D.intervalMs, deadlineMs: D.deadlineMs, retryBaseMs: D.retryBaseMs };
+    return await workerDeploySteps({
+      version,
+      dryRun: dry(env),
+      listSecrets,
+      readLatest,
+      deploy: () => runWrangler(x, wranglerDeployArgs({ origin: env.DIST_BASE_URL, build, dryRun: false }), env, true),
+      checks: async (latestBytes) => runWorkerChecks({ base: env.DIST_BASE_URL, token: env.CI_VERIFY_TOKEN, version, build, latestBytes, ...times }),
+    });
+  } finally {
+    rmSync(x, { recursive: true, force: true });
+  }
 }
 
 export function main(argv, env = process.env) {
   const [cmd, ...rest] = argv;
-  if (rest.length) {
-    console.error('사용법: release.mjs <pubkey|gate|build|xtask|preflight|publish|verify|rollback|stage|selftest|worker>');
+  if (rest.length && cmd !== 'worker') {
+    console.error('사용법: release.mjs <pubkey|gate|build|xtask|preflight|publish|verify|rollback|prune|stage|selftest|worker-bundle|worker>');
     return 2;
   }
   switch (cmd) {
@@ -852,12 +1648,16 @@ export function main(argv, env = process.env) {
       return cmdRollback(env);
     case 'stage':
       return cmdStage(env);
+    case 'prune':
+      return cmdPrune(env);
     case 'selftest':
       return cmdSelftest(env);
     case 'worker':
-      return cmdWorker();
+      return cmdWorker(env, rest);
+    case 'worker-bundle':
+      return cmdWorkerBundle(env);
     default:
-      console.error('사용법: release.mjs <pubkey|gate|build|xtask|preflight|publish|verify|rollback|stage|selftest|worker>');
+      console.error('사용법: release.mjs <pubkey|gate|build|xtask|preflight|publish|verify|rollback|prune|stage|selftest|worker-bundle|worker>');
       return 2;
   }
 }

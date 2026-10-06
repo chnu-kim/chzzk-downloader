@@ -12,6 +12,8 @@
 //!   rollback   --to <v|none> --pubkey <파일> [--from <v>]       latest.json을 그 버전의 manifest.json으로 CAS 교체 → 다시 verify
 //!   keygen     --out <파일>                               Tauri 형식 키 쌍(env XTASK_KEY_PASSWORD, 시험용)
 //!   get        --key <키> --out <파일>                    객체 하나 받기(진단·selftest)
+//!   list-keys  --prefix releases/…                        접두 아래 키를 한 줄씩(ListObjectsV2, 잘리면 exit 2, 보존 상한 prune의 입력)
+//!   delete-version --version <v>                          releases/<v>/ 아래를 지운다(latest와 그 previous는 거부, prune 전용)
 //!   put-raw    --key <키> --file <파일>                   조건 없이 덮어쓰기(selftest의 변조 전용, env XTASK_ALLOW_RAW=1)
 //! 종료 코드: 0 통과, 1 검사 실패, 2 사용법·입력·환경 오류.
 

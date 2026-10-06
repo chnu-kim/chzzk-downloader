@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto';
 import { request } from 'node:http';
 import { test } from 'node:test';
 
-import { createFakeS3, expectedSignature, parseAuth } from './s3-fake.mjs';
+import { createFakeS3, expectedSignature, listObjects, listXml, parseAuth } from './s3-fake.mjs';
 
 const sha = (b) => createHash('sha256').update(b).digest('hex');
 
@@ -29,15 +29,16 @@ test('SigV4: get-vanilla 시험 벡터', () => {
 });
 
 // 가짜 서버에 서명한 요청(테스트 안의 서명기 = expectedSignature)
-function call(port, method, key, body = '', extra = {}, secret = 's') {
+// key가 ''이면 버킷 자체(목록), query는 정규 쿼리(키 정렬·인코딩 끝낸 문자열)
+function call(port, method, key, body = '', extra = {}, secret = 's', query = '') {
   const amzDate = new Date().toISOString().replace(/[-:]|\.\d{3}/g, '');
-  const path = `/b/${key}`;
+  const path = key === '' ? '/b' : `/b/${key}`;
   const headers = { host: `127.0.0.1:${port}`, 'x-amz-date': amzDate, 'x-amz-content-sha256': sha(body), ...extra };
   const signed = Object.keys(headers).sort();
-  const signature = expectedSignature({ method, path, query: '', headers, signed, payloadHash: sha(body), amzDate, region: 'auto', service: 's3', secret });
+  const signature = expectedSignature({ method, path, query, headers, signed, payloadHash: sha(body), amzDate, region: 'auto', service: 's3', secret });
   headers.authorization = `AWS4-HMAC-SHA256 Credential=a/${amzDate.slice(0, 8)}/auto/s3/aws4_request, SignedHeaders=${signed.join(';')}, Signature=${signature}`;
   return new Promise((res, rej) => {
-    const r = request({ host: '127.0.0.1', port, method, path, headers }, (resp) => {
+    const r = request({ host: '127.0.0.1', port, method, path: query ? `${path}?${query}` : path, headers }, (resp) => {
       const c = [];
       resp.on('data', (d) => c.push(d));
       resp.on('end', () => res({ status: resp.statusCode, etag: resp.headers.etag, body: Buffer.concat(c).toString() }));
@@ -100,6 +101,56 @@ test('장애 주입: before는 적용하지 않고, after는 적용한 뒤 응�
     assert.equal((await call(port, 'GET', 'k')).status, 429);
     assert.equal((await call(port, 'GET', 'k')).status, 200);
     assert.equal(await fault({ method: 'GET', key: 'k', mode: 'sideways', status: 500, times: 1 }), 400);
+    // skip: 처음 skip번은 그대로 지나가고 그 뒤 times번 실패한다(두 번째 읽기만 실패시키기)
+    assert.equal(await fault({ method: 'GET', key: 'k', mode: 'before', status: 503, times: 1, skip: 1 }), 204);
+    assert.equal((await call(port, 'GET', 'k')).status, 200);
+    assert.equal((await call(port, 'GET', 'k')).status, 503);
+    assert.equal((await call(port, 'GET', 'k')).status, 200);
+    for (const skip of [-1, 1.5, '1']) assert.equal(await fault({ method: 'GET', key: 'k', mode: 'before', status: 503, times: 1, skip }), 400, String(skip));
+  } finally {
+    server.close();
+  }
+});
+
+test('listObjects·listXml: prefix로 거르고 사전순, maxKeys에서 잘리고, XML은 이스케이프한다', () => {
+  const store = new Map([['releases/b', 1], ['releases/a', 1], ['other/x', 1], ['releases/c&d', 1]]);
+  assert.deepEqual(listObjects(store, { prefix: 'releases/' }), { keys: ['releases/a', 'releases/b', 'releases/c&d'], truncated: false });
+  assert.deepEqual(listObjects(store, { prefix: 'releases/', maxKeys: 2 }), { keys: ['releases/a', 'releases/b'], truncated: true });
+  assert.deepEqual(listObjects(store, { prefix: 'none/' }), { keys: [], truncated: false });
+  const xml = listXml('b', 'releases/', 3, listObjects(store, { prefix: 'releases/' }));
+  assert.match(xml, /<Key>releases\/c&amp;d<\/Key>/);
+  assert.match(xml, /<IsTruncated>false<\/IsTruncated>/);
+  assert.match(listXml('b', '', 1, { keys: ['k'], truncated: true }), /<IsTruncated>true<\/IsTruncated><NextContinuationToken>/);
+});
+
+test('ListObjectsV2: 서명한 목록 요청 → 200 XML, 다른 버킷·틀린 서명·장애 주입', async () => {
+  const { server, store } = createFakeS3({ bucket: 'b', access: 'a', secret: 's' });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const port = server.address().port;
+  const fault = (f) =>
+    new Promise((res, rej) => {
+      const r = request({ host: '127.0.0.1', port, method: 'POST', path: '/__fault' }, (resp) => {
+        resp.resume();
+        resp.on('end', () => res(resp.statusCode));
+      });
+      r.on('error', rej);
+      r.end(JSON.stringify(f));
+    });
+  const q = (prefix, max = '1000') => `list-type=2&max-keys=${max}&prefix=${encodeURIComponent(prefix)}`;
+  try {
+    for (const k of ['releases/1.0.0/a', 'releases/1.0.0/b', 'releases/latest.json', 'x']) assert.equal((await call(port, 'PUT', k, 'v')).status, 200);
+    const all = await call(port, 'GET', '', '', {}, 's', q('releases/'));
+    assert.equal(all.status, 200);
+    assert.deepEqual([...all.body.matchAll(/<Key>([^<]*)<\/Key>/g)].map((m) => m[1]), ['releases/1.0.0/a', 'releases/1.0.0/b', 'releases/latest.json']);
+    const cut = await call(port, 'GET', '', '', {}, 's', q('releases/', '2'));
+    assert.match(cut.body, /<IsTruncated>true<\/IsTruncated>/);
+    assert.equal((await call(port, 'GET', '', '', {}, 'wrong', q('releases/'))).status, 403);
+    // 장애 주입은 요청한 prefix와 정확히 같을 때만(delete-version의 하위 접두 목록에는 걸리지 않는다)
+    assert.equal(await fault({ method: 'LIST', key: 'releases/', mode: 'before', status: 503, times: 1 }), 204);
+    assert.equal((await call(port, 'GET', '', '', {}, 's', q('releases/1.0.0/'))).status, 200);
+    assert.equal((await call(port, 'GET', '', '', {}, 's', q('releases/'))).status, 503);
+    assert.equal((await call(port, 'GET', '', '', {}, 's', q('releases/'))).status, 200);
+    assert.equal(store.size, 4);
   } finally {
     server.close();
   }

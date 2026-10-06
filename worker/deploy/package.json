@@ -1,0 +1,8 @@
+{
+  "name": "chzzk-downloader-worker-deploy",
+  "private": true,
+  "packageManager": "pnpm@12.9.1",
+  "dependencies": {
+    "wrangler": "4.147.0"
+  }
+}

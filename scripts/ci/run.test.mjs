@@ -203,6 +203,8 @@ test('hookGates: 바뀐 경로로 조건부 gate를 고른다', () => {
   // 훅·.gitattributes만 바뀌어도 parity(인덱스 모드 100755 등)를 본다
   assert.deepEqual(hookGates('pre-push', ['.githooks/pre-push']), ['scripts-test']);
   assert.deepEqual(hookGates('pre-push', ['.gitattributes']), ['scripts-test']);
+  // release.test.mjs가 import하는 배포 뒤 검사 계약 표는 worker와 scripts-test 둘 다
+  assert.deepEqual(hookGates('pre-push', ['worker/test/deploy-contract.mjs']), ['worker', 'scripts-test']);
   assert.deepEqual(hookGates('pre-commit', ['.githooks/pre-push']), ['typos', 'parity']);
   assert.deepEqual(hookGates('pre-commit', ['scripts/ci/gates.mjs']), ['typos', 'parity']);
 });
@@ -218,6 +220,8 @@ test('gate 표: worker(worker.md §13.2, cicd.md 85)', () => {
       // 불변식이 설치보다 먼저(allowBuilds를 넓힌 변경이 설치 스크립트를 돌리기 전에 멈춘다, cicd.md 86)
       ['node scripts/ci/worker-config.mjs', '.'],
       ['pnpm install --frozen-lockfile', 'worker'],
+      // 배포용 wrangler의 따로인 lockfile(worker-bundle과 같은 인자)
+      ['pnpm install --frozen-lockfile --ignore-scripts', 'worker/deploy'],
       // (CI) 누출 씨앗은 wrangler types·vitest를 감싼다
       ['node scripts/ci/worker-config.mjs --sentinel plant', '.'],
       ['pnpm check', 'worker'],
@@ -232,15 +236,28 @@ test('gate 표: worker(worker.md §13.2, cicd.md 85)', () => {
   for (const s of w.steps.filter((s) => s.cmd[0] === 'pnpm' || s.cmd.includes('tests-worker'))) assert.equal(s.env?.WRANGLER_SEND_METRICS, 'false', s.cmd.join(' '));
   assert.ok(CODE_GATED_JOBS.includes('worker'));
   assert.ok(GATES.advisories.steps.some((s) => s.cmd.join(' ') === 'pnpm audit --audit-level high' && s.cwd === 'worker'));
+  // 배포용 wrangler(worker/deploy)도 따로인 lockfile이라 같이 본다(cicd.md 구현 중 변경 96)
+  assert.ok(GATES.advisories.steps.some((s) => s.cmd.join(' ') === 'pnpm audit --audit-level high' && s.cwd === 'worker/deploy'));
   const hook = HOOKS['pre-push'].when.find((x) => x.gate === 'worker');
   assert.ok(hook, 'pre-push에 worker');
   assert.equal(HOOKS['pre-commit'].when.some((x) => x.gate === 'worker'), false, 'pre-commit에는 넣지 않는다(무겁다)');
   assert.deepEqual(hookGates('pre-push', ['worker/src/config.ts']), ['worker']);
-  assert.deepEqual(hookGates('pre-push', ['worker/wrangler.jsonc']), ['worker']);
-  assert.deepEqual(hookGates('pre-push', ['scripts/ci/worker-config.mjs']), ['worker', 'scripts-test']);
+  // selftest(w-dry)가 원본 wrangler.jsonc에서 배포 설정을 만들어 묶음과 맞춰 본다
+  assert.deepEqual(hookGates('pre-push', ['worker/wrangler.jsonc']), ['release-selftest', 'worker']);
+  // release.mjs가 worker-config의 deployConfig·parseJsonc를 import하므로 release-selftest도 돈다(W8)
+  assert.deepEqual(hookGates('pre-push', ['scripts/ci/worker-config.mjs']), ['release-selftest', 'worker', 'scripts-test']);
   assert.ok(hookGates('pre-push', ['release/expected-artifacts.json']).includes('worker'));
   assert.ok(hookGates('pre-push', ['release/latest.schema.json']).includes('worker'));
   assert.equal(hookGates('pre-push', ['release/updater.pub']).includes('worker'), false);
+});
+
+// 릴리스의 Worker·보존 상한 gate(release.yml worker-bundle·deploy-worker·prune이 부른다): 진입점 인자를 고정한다
+test('gate 표: release-worker-bundle·release-worker·release-prune(W8)', () => {
+  assert.deepEqual(GATES['release-worker-bundle'].needs, ['pnpm']);
+  const cmd = (g) => GATES[g].steps.map((s) => s.cmd.join(' '));
+  assert.deepEqual(cmd('release-worker-bundle'), ['node scripts/ci/release.mjs worker-bundle']);
+  assert.deepEqual(cmd('release-worker'), ['node scripts/ci/release.mjs worker']);
+  assert.deepEqual(cmd('release-prune'), ['node scripts/ci/release.mjs prune']);
 });
 
 test('runGate: 인자를 받지 않는 gate에 인자를 주면 2', () => {

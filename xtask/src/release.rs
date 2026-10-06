@@ -157,6 +157,21 @@ pub fn dispatch(cmd: &str, a: &Args) -> Res<()> {
                 None => fail(format!("{k}가 없다")),
             }
         }
+        "list-keys" => {
+            a.only(&["prefix"])?;
+            let prefix = a.req("prefix")?;
+            if !prefix.starts_with("releases/") {
+                return usage("--prefix는 releases/로 시작해야 한다");
+            }
+            for k in S3::from_env()?.list(&prefix)? {
+                println!("{k}");
+            }
+            Ok(())
+        }
+        "delete-version" => {
+            a.only(&["version"])?;
+            delete_version(&S3::from_env()?, &version_arg(a)?)
+        }
         "put-raw" => {
             a.only(&["key", "file"])?;
             if env("XTASK_ALLOW_RAW").as_deref() != Some("1") {
@@ -522,6 +537,65 @@ pub fn promote(s3: &S3, dir: &Path, version: &str) -> Res<String> {
         );
     }
     Ok(prev)
+}
+
+// ---- 보존 상한(prune) ----
+
+/// releases/<version>/ 아래 객체를 지운다. 판정(어느 버전을 지우나)은 release.mjs `prunePlan`이 하고 여기서는 안전 확인만 다시 한다:
+/// latest와 그 previous(rollback 대상)는 지우지 않고, 자기 접두 목록으로 받은 키만 지운다. manifest.json을 먼저 지워 버전 폴더가
+/// 완결된 것처럼 보이는 상태를 오래 두지 않는다. 지운 뒤 다시 목록을 받아 비었는지 본다.
+pub fn delete_version(s3: &S3, version: &str) -> Res<()> {
+    if semver::parse(version).is_none() {
+        return usage(format!("--version {version}: semver가 아니다"));
+    }
+    let Some((lb, _)) = s3.get(LATEST)? else {
+        return fail("latest.json이 없다 — 지키는 버전을 몰라 지우지 않는다");
+    };
+    let latest = serde_json::from_slice::<Value>(&lb)
+        .ok()
+        .and_then(|v| v["version"].as_str().map(str::to_string))
+        .filter(|c| semver::parse(c).is_some())
+        .ok_or_else(|| check("latest.json의 version을 읽지 못했다 — 지우지 않는다"))?;
+    if latest == version {
+        return fail(format!("{version}은 지금 latest다 — 지우지 않는다"));
+    }
+    let prev = s3
+        .get(&key(&latest, "previous"))?
+        .ok_or_else(|| check(format!("releases/{latest}/previous가 없다 — 지우지 않는다")))?
+        .0;
+    if text("previous", prev)?.trim() == version {
+        return fail(format!(
+            "{version}은 latest {latest}의 previous다(rollback 대상) — 지우지 않는다"
+        ));
+    }
+    let prefix = format!("releases/{version}/");
+    let mut keys = s3.list(&prefix)?;
+    if keys.is_empty() {
+        println!("delete-version: releases/{version}/ 없음(이미 지웠다)");
+        return Ok(());
+    }
+    // 지우기 전에 전부 확인: 접두 바로 아래의 파일뿐이어야 한다(예상 밖 모양이면 아무것도 지우지 않는다)
+    for k in &keys {
+        let rest = k.strip_prefix(&prefix).unwrap_or("");
+        if rest.is_empty() || rest.contains('/') {
+            return Err(infra(format!("예상 밖 키 {k} — 지우지 않는다")));
+        }
+    }
+    keys.sort();
+    let manifest = key(version, "manifest.json");
+    keys.sort_by_key(|k| *k != manifest);
+    for k in &keys {
+        s3.delete(k)?;
+    }
+    let left = s3.list(&prefix)?;
+    if !left.is_empty() {
+        return Err(infra(format!(
+            "지운 뒤에도 {}개가 남았다(releases/{version}/)",
+            left.len()
+        )));
+    }
+    println!("delete-version: releases/{version}/ {}개 지움", keys.len());
+    Ok(())
 }
 
 // ---- verify / rollback ----

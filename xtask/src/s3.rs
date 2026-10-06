@@ -1,5 +1,6 @@
 //! 최소 S3 클라이언트(R2 S3 API, 시험은 MinIO). AWS SigV4 헤더 서명을 직접 한다(SDK 없음, 서명은 AWS 공개 시험 벡터로 고정).
 //! 경로 방식 URL `<endpoint>/<bucket>/<key>`, 본문 해시는 실제 sha256(UNSIGNED-PAYLOAD 아님), 올릴 때 `x-amz-checksum-sha256`.
+//! 목록(ListObjectsV2)은 `<endpoint>/<bucket>?list-type=2&prefix=…&max-keys=…`(정규 쿼리 서명). CI(S3 토큰)에서만 쓰고 Worker 경로에는 없다.
 //!
 //! 환경 변수: R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET, 그리고 R2_ENDPOINT(시험용 덮어쓰기) 또는 R2_ACCOUNT_ID
 //! (→ https://<id>.r2.cloudflarestorage.com), R2_REGION(기본 auto). 비밀 값은 로그에 찍지 않는다.
@@ -37,6 +38,20 @@ pub fn uri_encode(s: &str, keep_slash: bool) -> String {
         }
     }
     out
+}
+
+/// SigV4 정규 쿼리(순수): 키·값을 uri_encode(_, false)로 인코딩하고 (k, v) 순으로 정렬해 k=v를 &로 잇는다
+pub fn canonical_query(q: &[(&str, &str)]) -> String {
+    let mut pairs: Vec<(String, String)> = q
+        .iter()
+        .map(|(k, v)| (uri_encode(k, false), uri_encode(v, false)))
+        .collect();
+    pairs.sort();
+    pairs
+        .iter()
+        .map(|(k, v)| format!("{k}={v}"))
+        .collect::<Vec<_>>()
+        .join("&")
 }
 
 pub struct Signed {
@@ -172,6 +187,42 @@ pub struct S3 {
     http: reqwest::blocking::Client,
 }
 
+/// ListObjectsV2 응답에서 읽은 것
+pub struct Listing {
+    pub keys: Vec<String>,
+    pub truncated: bool,
+}
+
+/// ListObjectsV2 XML(순수). `<ListBucketResult`가 없으면 기반 시설 오류. `<Key>…</Key>` 텍스트를 전부 모으고(값에 `&`나 `<`가
+/// 있으면 이스케이프를 풀지 않으므로 거부한다: 릴리스 키는 ASCII 파일명뿐이다) `<IsTruncated>true</IsTruncated>`면 truncated
+pub fn parse_list(xml: &[u8]) -> Res<Listing> {
+    let t = std::str::from_utf8(xml).map_err(|_| infra("목록 응답이 UTF-8이 아니다"))?;
+    if !t.contains("<ListBucketResult") {
+        return Err(infra("목록 응답이 ListBucketResult가 아니다"));
+    }
+    let mut keys = vec![];
+    let mut rest = t;
+    // "<Key>"는 ">"까지 찾으므로 <KeyCount>에 걸리지 않는다
+    while let Some(a) = rest.find("<Key>") {
+        let after = &rest[a + "<Key>".len()..];
+        let Some(b) = after.find("</Key>") else {
+            return Err(infra("목록 응답의 <Key>가 닫히지 않았다"));
+        };
+        let k = &after[..b];
+        if k.contains('&') || k.contains('<') {
+            return Err(infra(
+                "목록 키에 XML 이스케이프가 있다 — 풀지 않고 거부한다",
+            ));
+        }
+        keys.push(k.to_string());
+        rest = &after[b + "</Key>".len()..];
+    }
+    Ok(Listing {
+        keys,
+        truncated: t.contains("<IsTruncated>true</IsTruncated>"),
+    })
+}
+
 pub enum Put {
     Created,
     /// 412: 조건이 맞지 않았다(이미 있음 / etag가 다름)
@@ -224,12 +275,31 @@ impl S3 {
         })
     }
 
-    fn request(&self, method: &str, key: &str, body: &[u8], extra: &[(&str, String)]) -> Res<Resp> {
-        let path = format!(
-            "/{}/{}",
-            uri_encode(&self.bucket, false),
-            uri_encode(key, true)
-        );
+    /// key가 비어 있으면 버킷 자체(`/<bucket>`, 목록)다. query는 서명하는 정규 쿼리로도, URL 쿼리로도 쓴다
+    fn request(
+        &self,
+        method: &str,
+        key: &str,
+        query: &[(&str, &str)],
+        body: &[u8],
+        extra: &[(&str, String)],
+    ) -> Res<Resp> {
+        let path = if key.is_empty() {
+            format!("/{}", uri_encode(&self.bucket, false))
+        } else {
+            format!(
+                "/{}/{}",
+                uri_encode(&self.bucket, false),
+                uri_encode(key, true)
+            )
+        };
+        let cquery = canonical_query(query);
+        let what = if key.is_empty() { "(목록)" } else { key };
+        let url = if cquery.is_empty() {
+            format!("{}{path}", self.endpoint)
+        } else {
+            format!("{}{path}?{cquery}", self.endpoint)
+        };
         let payload_hash = sha256_hex(body);
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -247,7 +317,7 @@ impl S3 {
         let signed = sign_v4(
             method,
             &path,
-            "",
+            &cquery,
             &headers,
             &payload_hash,
             &date,
@@ -268,7 +338,7 @@ impl S3 {
             }
             let mut req = self
                 .http
-                .request(m.clone(), format!("{}{path}", self.endpoint))
+                .request(m.clone(), &url)
                 .header("authorization", &signed.authorization);
             for (k, v) in &headers {
                 if k != "host" {
@@ -297,7 +367,7 @@ impl S3 {
                     if retryable(status) && attempt + 1 < attempts {
                         last = format!("HTTP {status} {}", resp.code());
                         eprintln!(
-                            "s3: {method} {key}: {last} — 다시 시도({}/{attempts})",
+                            "s3: {method} {what}: {last} — 다시 시도({}/{attempts})",
                             attempt + 2
                         );
                         continue;
@@ -307,7 +377,7 @@ impl S3 {
                 Err(e) => last = format!("{e}"),
             }
         }
-        Err(infra(format!("{method} {key}: {attempts}회 실패({last})")))
+        Err(infra(format!("{method} {what}: {attempts}회 실패({last})")))
     }
 
     /// 판정할 수 없는 응답(5xx·429를 다시 시도한 뒤, 403 등)은 기반 시설 오류(exit 2)다
@@ -317,7 +387,7 @@ impl S3 {
 
     /// 없으면 None
     pub fn get(&self, key: &str) -> Res<Option<(Vec<u8>, String)>> {
-        let r = self.request("GET", key, b"", &[])?;
+        let r = self.request("GET", key, &[], b"", &[])?;
         match r.status {
             200 => {
                 let etag = r
@@ -339,7 +409,7 @@ impl S3 {
         if let Some(c) = cond {
             extra.push(c);
         }
-        let r = self.request("PUT", key, body, &extra)?;
+        let r = self.request("PUT", key, &[], body, &extra)?;
         match r.status {
             200 | 201 => Ok(Put::Created),
             412 => Ok(Put::Precondition),
@@ -362,8 +432,37 @@ impl S3 {
         self.put(key, body, None).map(|_| ())
     }
 
+    /// 접두로 시작하는 키 전부(ListObjectsV2, delimiter 없음). 한 번에 max-keys개(env XTASK_LIST_MAX_KEYS, 1..=1000, 기본 1000)이고
+    /// 이어받기는 하지 않는다: 잘리면 아무것도 모른 채 지우지 않도록 기반 시설 오류(exit 2)다
+    pub fn list(&self, prefix: &str) -> Res<Vec<String>> {
+        let max = env("XTASK_LIST_MAX_KEYS")
+            .and_then(|v| v.parse::<u32>().ok())
+            .filter(|n| (1..=1000).contains(n))
+            .unwrap_or(1000);
+        let max_s = max.to_string();
+        let q = [
+            ("list-type", "2"),
+            ("prefix", prefix),
+            ("max-keys", max_s.as_str()),
+        ];
+        let r = self.request("GET", "", &q, b"", &[])?;
+        if r.status != 200 {
+            return Err(self.unexpected("LIST", prefix, &r));
+        }
+        let l = parse_list(&r.body)?;
+        if l.truncated {
+            return Err(infra(format!(
+                "목록이 잘렸다(max-keys {max}) — 이어받기는 하지 않는다. 지우지 않는다"
+            )));
+        }
+        if let Some(k) = l.keys.iter().find(|k| !k.starts_with(prefix)) {
+            return Err(infra(format!("목록에 접두 {prefix}가 아닌 키가 있다: {k}")));
+        }
+        Ok(l.keys)
+    }
+
     pub fn delete(&self, key: &str) -> Res<()> {
-        let r = self.request("DELETE", key, b"", &[])?;
+        let r = self.request("DELETE", key, &[], b"", &[])?;
         match r.status {
             200 | 204 | 404 => Ok(()),
             _ => Err(self.unexpected("DELETE", key, &r)),
@@ -435,6 +534,45 @@ mod tests {
         for s in [200, 201, 204, 400, 403, 404, 412, 499] {
             assert!(!retryable(s), "{s}");
         }
+    }
+
+    #[test]
+    fn canonical_query_sorted_and_encoded() {
+        assert_eq!(
+            canonical_query(&[
+                ("prefix", "releases/"),
+                ("list-type", "2"),
+                ("max-keys", "1000")
+            ]),
+            "list-type=2&max-keys=1000&prefix=releases%2F"
+        );
+        assert_eq!(canonical_query(&[]), "");
+        // 값이 같은 키는 값 순, 인코딩한 뒤 정렬한다
+        assert_eq!(canonical_query(&[("b", "2"), ("a", "z y")]), "a=z%20y&b=2");
+    }
+
+    #[test]
+    fn parse_list_cases() {
+        let ok = b"<?xml version=\"1.0\"?><ListBucketResult><Name>b</Name><Prefix>releases/</Prefix><KeyCount>2</KeyCount><IsTruncated>false</IsTruncated><Contents><Key>releases/1.0.0/a</Key></Contents><Contents><Key>releases/1.0.0/b</Key></Contents></ListBucketResult>";
+        let l = parse_list(ok).unwrap();
+        assert_eq!(l.keys, ["releases/1.0.0/a", "releases/1.0.0/b"]);
+        assert!(!l.truncated);
+        let t = b"<ListBucketResult><IsTruncated>true</IsTruncated><Contents><Key>k</Key></Contents></ListBucketResult>";
+        assert!(parse_list(t).unwrap().truncated);
+        assert!(parse_list(b"<Error><Code>x</Code></Error>").is_err());
+        assert!(
+            parse_list(
+                b"<ListBucketResult><Contents><Key>a&amp;b</Key></Contents></ListBucketResult>"
+            )
+            .is_err()
+        );
+        assert!(
+            parse_list(b"<ListBucketResult><Contents><Key>a</Contents></ListBucketResult>")
+                .is_err()
+        );
+        let empty =
+            parse_list(b"<ListBucketResult><KeyCount>0</KeyCount></ListBucketResult>").unwrap();
+        assert!(empty.keys.is_empty());
     }
 
     #[test]

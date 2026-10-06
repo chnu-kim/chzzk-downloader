@@ -26,7 +26,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `fuzz/` | cargo-fuzz 대상(`url`·`info`·`mpd`·`hls`). 루트와 따로인 워크스페이스(자기 `Cargo.lock`, 루트 `exclude`), 고정 nightly(`tools.json` `rust-nightly`)로만 빌드. seed는 실행 때 `testdata/`에서 복사(`scripts/ci/fuzz.mjs`) |
 | `ci/ratchet.json`, `ci/RATCHET_LOG.md`, `release/expected-artifacts.json` | 커버리지·테스트 수·크기·살아남은 mutant ratchet 기준(나빠지면 CI 실패, 느슨하게 하면 로그에 키와 이유), OS별 번들 기대 집합 |
 | `scripts/ci/repo-settings.json`, `.github/rulesets/` | 저장소 설정·ruleset 선언(Actions 허용 목록·SHA 핀 강제·fork 승인, 환경 `release`·`audit`·`drift`의 배포 정책·protection_rules, ruleset `master`(필수 `ci-ok`·최신화·force push·삭제 금지)·`tags`(`v*`는 관리자만)). nightly `ruleset-drift`가 실제 값과 비교하고 `repo-settings.mjs --apply`가 적용한다 |
-| `rust-toolchain.toml`, `deny.toml`, `_typos.toml`, `zizmor.yml`, `.github/dependabot.yml` | 툴체인 고정(1.96.1, MSRV는 `rust-version` 1.90), cargo-deny, typos, zizmor, Dependabot 설정 |
+| `rust-toolchain.toml`, `deny.toml`, `_typos.toml`, `zizmor.yml`, `.github/dependabot.yml` | 툴체인 고정(1.99.0, MSRV는 `rust-version` 1.90), cargo-deny, typos, zizmor, Dependabot 설정 |
 
 `crates/core/src` 모듈: `url`(parse_content_url) · `info`(`classify`: **inKey 분기는 이 한 곳**, `encryptionType` → `inKey` → `liveRewindPlaybackJson` 순) · `mpd` · `hls` · `http`(요청 종류별 헤더, `Secret`, `redact_url`) · `client`(`Chzzk::resolve`) · `download/`(`part`·`retry`·`progressive`·`segmented`) · `progress`(`Meter`) · `naming` · `fsutil` · `settings` · `credentials` · `legacy` · `ownership` · `error`.
 

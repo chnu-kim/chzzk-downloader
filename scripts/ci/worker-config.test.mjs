@@ -398,6 +398,8 @@ test('씨앗: core 순수성(원문 전체, worker.md 구현 중 변경 15)', ()
     ['new Date;', 'const t = +new Date;'],
     ['new Date( )', 'const t = new Date( ).getTime();'],
     ['performance.now', 'const t = performance.now();'],
+    ['new 없는 Date()', 'const s = Date();'],
+    ['new 없는 Date ( )', 'const s = String(Date ( ));'],
   ];
   for (const [name, text] of seeds) assert.notDeepEqual(checkCorePurity(core(text)), [], name);
   // core 밖은 cloudflare:·fetch·Date.now가 된다(핸들러·DO·라우터). Math.random은 src/** 어디서도 안 된다

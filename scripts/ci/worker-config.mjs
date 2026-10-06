@@ -454,6 +454,8 @@ export const CORE_FORBIDDEN = [
   [/\bDate\s*\.\s*now\b/, 'Date.now를 쓰지 않는다(시간은 인자로 주입, 주석에도 쓰지 않는다)'],
   // 인자 없는 생성(new Date()·new Date;)은 현재 시각이다. 주입된 시각을 바꾸는 new Date(ms)는 된다
   [/\bnew\s+Date\b(?!\s*\(\s*[^)\s])/, '인자 없는 new Date를 쓰지 않는다(시간은 인자로 주입)'],
+  // new 없이 부른 Date()도 현재 시각 문자열이다
+  [/(?<![\w$.])(?<!\bnew\s+)Date\s*\(/, 'new 없는 Date()를 쓰지 않는다(현재 시각, 시간은 인자로 주입)'],
   [/\bperformance\s*\.\s*now\b/, 'performance.now를 쓰지 않는다(시간은 인자로 주입)'],
 ];
 const MATH_RANDOM = /\bMath\s*\.\s*random\b/;

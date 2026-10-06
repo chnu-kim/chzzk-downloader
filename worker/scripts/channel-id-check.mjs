@@ -61,7 +61,7 @@ function parseContent(raw) {
   const segs = u.pathname.split('/').filter(Boolean);
   if (segs[0] === 'video' && /^\d+$/.test(segs[1] ?? '')) return { kind: 'VOD', path: `/service/v2/videos/${segs[1]}` };
   const clip = segs[0] === 'clips' ? segs[1] : segs[0] === 'embed' && segs[1] === 'clip' ? segs[2] : null;
-  if (clip && /^[A-Za-z0-9]+$/.test(clip)) return { kind: '클립', path: `/service/v1/play-info/clip/${clip}` };
+  if (clip && /^[A-Za-z0-9_-]+$/.test(clip)) return { kind: '클립', path: `/service/v1/play-info/clip/${clip}` };
   return null;
 }
 
@@ -114,7 +114,9 @@ async function main() {
     if (!t) fail('인자는 치지직 VOD(https://chzzk.naver.com/video/<번호>) 또는 클립(https://chzzk.naver.com/clips/<id>) 주소여야 한다');
     return t;
   });
-  if (targets.length === 0) fail('본인 VOD 주소와 본인 클립 주소를 인자로 준다');
+  // 게이트는 두 응답 모양(VOD channel, 클립 ownerChannel)을 모두 봐야 한다.
+  const kinds = targets.map((t) => t.kind).sort().join(',');
+  if (kinds !== ['VOD', '클립'].sort().join(',')) fail('본인 VOD 주소 하나와 본인 클립 주소 하나를 인자로 준다');
   const vars = readDevVars();
 
   // 서비스 API 쪽을 먼저 받아 둔다(로그인 뒤 기다리지 않게). 값은 메모리에만 둔다.
@@ -236,27 +238,7 @@ async function main() {
             : '다르다';
     console.log(`${s.kind} 채널 ID 형식: ${fmt} → users/me와 ${verdict}`);
   }
-
-  // 이 확인에만 쓴 토큰을 정리한다(같은 앱·사용자의 모든 토큰이 지워진다, chzzk-oauth.md §4).
-  try {
-    await fetchJson(
-      `${OPENAPI}/auth/v1/token/revoke`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          clientId: vars.CHZZK_CLIENT_ID,
-          clientSecret: vars.CHZZK_CLIENT_SECRET,
-          token: accessToken,
-          tokenTypeHint: 'access_token',
-        }),
-      },
-      '토큰 폐기',
-    );
-    console.log('토큰 폐기: 완료');
-  } catch (e) {
-    console.log(`토큰 폐기: ${e.message} (하루 뒤 만료된다)`);
-  }
+  // 치지직 토큰은 폐기하지 않고 버린다. revoke는 같은 앱·사용자의 모든 토큰을 지운다(chzzk-oauth.md §4, worker.md §2).
 }
 
 main().catch(() => fail('예상하지 못한 오류(세부는 출력하지 않는다)'));

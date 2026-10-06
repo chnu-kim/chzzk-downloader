@@ -167,6 +167,40 @@ describe("행 수 상한(무료 한도 계산의 전제, 구현 중 변경 19 (�
     expect(w1 + w2 + w3 + w4).toBeLessThanOrEqual(12);
   });
 
+  it("앱 로그인 한 번(start·[계속]·consume·finish(ok)·claim·청소) ≤ 30행", async () => {
+    const stub = freshStub();
+    await stub.allow(B2, "", A1, T0);
+    const verifier = await sha256B64url(newSecret());
+    let handle = "";
+    let loginId = "";
+    let state = "";
+    let binder = "";
+    let flowId = "";
+    const w1 = await delta(stub, async () => {
+      const s = await stub.startApp(verifier, "app/0.2.0 macos", "203.0.113.2", 6, T0);
+      if (!s.ok) throw new Error("start");
+      handle = s.handle;
+      loginId = s.loginId;
+    });
+    const w2 = await delta(stub, async () => {
+      const c = await stub.continueApp(await sha(handle), T0);
+      if (!c.ok) throw new Error("continue");
+      state = c.state;
+      binder = c.binder;
+    });
+    const w3 = await delta(stub, async () => {
+      const k = await stub.consume(await sha(state), await sha(binder), T0);
+      if (!k.ok) throw new Error("consume");
+      flowId = k.flowId;
+    });
+    const w4 = await delta(stub, async () => expect(await stub.finish(flowId, { type: "user", channelId: B2, channelName: "채널" }, ADMINS, T0)).toEqual({ type: "ok" }));
+    const w5 = await delta(stub, async () => expect((await stub.claim(loginId, verifier, ADMINS, T0)).status).toBe("ok"));
+    const w6 = await delta(stub, () => runInDurableObject(stub, (i) => sweep(i.db, T0 + 10 * 60_000)));
+    expect(await query(stub, "SELECT count(*) AS n FROM flow")).toEqual([{ n: 0 }]);
+    // 실측 27행 = 5+2+2+8+9+1(start·[계속]·consume·finish·claim·청소, 구현 중 변경 27 (가))
+    expect(w1 + w2 + w3 + w4 + w5 + w6).toBeLessThanOrEqual(30);
+  });
+
   it("회전 ≤ 8행, 응답 유실 복구 ≤ 10행", async () => {
     const stub = freshStub();
     const l = await appLogin(stub, { channelId: A1 });
@@ -252,7 +286,7 @@ describe("흐름 전이", () => {
 });
 
 describe("finish·claim 표", () => {
-  it("허용된 채널: unclaimed 세션 → claim으로 번들, 흐름 삭제, 다시 claim은 not_found", async () => {
+  it("허용된 채널: unclaimed 세션 → claim으로 번들, 흐름은 verifier만 지우고 남는다, 다시 claim은 not_found", async () => {
     const stub = freshStub();
     await stub.allow(B2, "", A1, T0);
     const b = await begin(stub);
@@ -263,7 +297,9 @@ describe("finish·claim 표", () => {
     expect(c.bundle).toMatchObject({ channelId: B2, channelName: "채널", isAdmin: false, accessExpiresAt: T0 + 86_400_000, refreshExpiresAt: T0 + 30 * 86_400_000 });
     expect(isToken("access", c.bundle.accessToken)).toBe(true);
     expect(isToken("refresh", c.bundle.refreshToken)).toBe(true);
-    expect(await query(stub, "SELECT count(*) AS n FROM flow")).toEqual([{ n: 0 }]);
+    // 행은 남는다(구현 중 변경 27 (가)): 완료 페이지가 binder로 확인 코드를 다시 보인다
+    expect(await query(stub, "SELECT status, poll_verifier, session_id FROM flow")).toEqual([{ status: "ok", poll_verifier: null, session_id: null }]);
+    expect(await stub.doneView(await sha(b.binder), T0 + 1000)).toEqual({ kind: "app", status: "ok", userCode: b.userCode, channelName: null, channelId: null });
     expect(await query(stub, "SELECT status FROM session")).toEqual([{ status: "active" }]);
     expect(await stub.claim(b.loginId, b.verifier, ADMINS, T0 + 1500)).toEqual({ status: "not_found" });
   });

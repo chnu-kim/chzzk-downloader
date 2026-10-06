@@ -210,7 +210,10 @@ export function doneView(db: Db, binderHash: string, now: number): DoneView | nu
   return r === null ? null : { kind: r.kind, status: r.status, userCode: r.user_code, channelName: r.channel_name, channelId: r.channel_id };
 }
 
-/** 앱 폴링. pollVerifier가 맞는 흐름만 본다. ok면 세션을 활성화하고 흐름을 지운다 */
+/**
+ * 앱 폴링. pollVerifier가 맞는 흐름만 본다. ok면 세션을 활성화하고, 흐름은 지우지 않고 verifier·세션 연결만 비운다:
+ * 다시 수령은 not_found이고, 행은 만료까지 남아 완료 페이지가 binder로 확인 코드를 다시 보인다(구현 중 변경 23·27 (가)).
+ */
 export function claim(
   db: Db,
   loginId: string,
@@ -238,8 +241,11 @@ export function claim(
       return { status: "denied", channelName: row.channel_name ?? "" };
     case "ok": {
       const a = row.session_id === null ? ({ ok: false, code: "gone" } as const) : activate(db, row.session_id, pair, admins, now);
+      if (a.ok) {
+        db.run("UPDATE flow SET poll_verifier = NULL, session_id = NULL WHERE id = ?", loginId);
+        return { status: "ok", bundle: a.bundle };
+      }
       db.run("DELETE FROM flow WHERE id = ?", loginId);
-      if (a.ok) return { status: "ok", bundle: a.bundle };
       if (a.code === "not_allowed") return { status: "denied", channelName: a.channelName };
       return { status: "failed", code: "session" };
     }

@@ -11,3 +11,4 @@
 | 2026-10-06 | `size.bundle.windows-msi` | 6500352 → 7057408 | G6: tauri-plugin-updater 등록(릴리스 리허설 37375444247의 CI 측정값, +6~9%). updater는 Phase 3 자동 업데이트의 전제다 |
 | 2026-10-06 | `size.binary.linux` | 28181752 → 29686784 | G6: tauri-plugin-updater 등록(릴리스 리허설 37377704140의 CI 측정값, +5~7%) |
 | 2026-10-06 | `size.bundle.linux-deb` | 9262424 → 9918794 | G6: tauri-plugin-updater 등록(릴리스 리허설 37377704140의 CI 측정값, +5~7%) |
+| 2026-10-06 | `size.binary.linux` | 29686784 → 32559736 | 툴체인 1.96.1 → 1.99.0(코드 변경 없음, PR #12 실행 37404351747의 CI 측정값, +9.7%). 같은 실행의 AppImage는 +0.5%, deb는 −1.9%라 배포 크기 차이는 작다(cicd.md 76) |

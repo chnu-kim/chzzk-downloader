@@ -145,8 +145,10 @@ const hook = (d, name, args, input) => exec('node', [join(d, 'scripts/ci/run.mjs
     ['fallback: none 없음', ciWith('          fallback: none\n', '')],
     ['ci-ok needs에서 작업 빠짐', ciWith(', bundle]', ']')],
     ['bundle 작업이 PR에서도 돎', ciWith("  bundle:\n    name: bundle (${{ matrix.os }})\n    needs: changes\n    if: github.event_name != 'pull_request' && needs.changes.outputs.code == 'true'\n", "  bundle:\n    name: bundle (${{ matrix.os }})\n    needs: changes\n    if: needs.changes.outputs.code == 'true'\n")],
-    ['report가 ci-ok 뒤가 아님', ciWith('    needs: [ci-ok, e2e-web, e2e-native]\n', '    needs: [changes, e2e-web, e2e-native]\n')],
-    ['관찰 작업(e2e-native)이 report needs에 없음', ciWith('    needs: [ci-ok, e2e-web, e2e-native]\n', '    needs: [ci-ok, e2e-web]\n')],
+    ['report가 ci-ok 뒤가 아님', ciWith('    needs: [ci-ok, e2e-web, e2e-native, e2e-native-windows]\n', '    needs: [changes, e2e-web, e2e-native, e2e-native-windows]\n')],
+    ['관찰 작업(e2e-native)이 report needs에 없음', ciWith('    needs: [ci-ok, e2e-web, e2e-native, e2e-native-windows]\n', '    needs: [ci-ok, e2e-web, e2e-native-windows]\n')],
+    ['관찰 작업(e2e-native-windows)이 report needs에 없음', ciWith('    needs: [ci-ok, e2e-web, e2e-native, e2e-native-windows]\n', '    needs: [ci-ok, e2e-web, e2e-native]\n')],
+    ['관찰 중인 e2e-native-windows를 ci-ok needs에 넣음(OBSERVED_JOBS와 다름)', ciWith(', smoke-install-linux, bundle]', ', smoke-install-linux, bundle, e2e-native-windows]')],
     ['관찰 중인 e2e-web을 ci-ok needs에 넣음(OBSERVED_JOBS와 다름)', ciWith(', smoke-install-linux, bundle]', ', smoke-install-linux, bundle, e2e-web]')],
     ['ci-ok guard 바뀜', ciWith('        run: exit 1\n', '        run: exit 0\n')],
     ['ci-ok 없음', { '.github/workflows/ci.yml': CI_YML.slice(0, CI_YML.indexOf('  # 필수 체크는 이 작업 하나다')) }],
@@ -168,6 +170,7 @@ const hook = (d, name, args, input) => exec('node', [join(d, 'scripts/ci/run.mjs
   expect('parity', '저장소 ci.yml + nightly.yml 그대로', 0, () => gate(mkRoot('par-n-clean', { '.github/workflows/nightly.yml': NIGHTLY }), 'parity'));
   const seeds = [
     ['nightly 작업 이름이 ci.yml e2e-native와 같음', nightlyWith('name: nightly e2e-native (linux)', 'name: e2e-native (linux)')],
+    ['nightly 작업 이름이 ci.yml e2e-native-windows와 같음', nightlyWith('name: nightly e2e-native (windows)', 'name: e2e-native (windows)')],
     ['weekly cron을 바꾸고 조건식은 그대로', nightlyWith('- cron: "47 18 * * 0"', '- cron: "50 18 * * 0"')],
     // nightly.yml에는 PR 트리거가 없다(구현 중 변경 78). 다시 더하면서 경로를 손으로 나열하면 pr-paths가 거부한다
     ['nightly PR 트리거가 paths: 나열', nightlyWith('on:\n  schedule:\n', 'on:\n  pull_request:\n    paths:\n      - crates/**\n  schedule:\n')],

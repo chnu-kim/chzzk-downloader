@@ -125,7 +125,7 @@ test('job-if: PR에서 건너뛰는 작업은 MASTER_ONLY_JOBS와 같고 report�
   assert.ok(rulesFor(once(`    needs: changes\n${MIF}`, `    needs: [lint]\n${MIF}`)).includes('job-if'));
   // report의 if를 바꿈, report가 ci-ok 뒤가 아님
   assert.ok(rulesFor(once("(github.event_name == 'workflow_dispatch' && inputs.loop_test))", "github.event_name == 'workflow_dispatch')")).includes('job-if'));
-  assert.ok(rulesFor(once('    needs: [ci-ok, e2e-web, e2e-native]\n', '    needs: [changes, e2e-web, e2e-native]\n')).includes('ci-ok'));
+  assert.ok(rulesFor(once('    needs: [ci-ok, e2e-web, e2e-native, e2e-native-windows]\n', '    needs: [changes, e2e-web, e2e-native, e2e-native-windows]\n')).includes('ci-ok'));
 });
 
 const shim = (name) => `#!/bin/sh\nset -eu\nexec node "$(git rev-parse --show-toplevel)/scripts/ci/run.mjs" hook ${name} "$@"\n`;
@@ -175,11 +175,16 @@ test('observed: 관찰 작업은 ci-ok needs에 없고, ci-ok 뒤가 아니며, 
   // ci-ok needs에 넣으면(편입했는데 OBSERVED_JOBS에서 빼지 않음) 있으면 안 되는 작업이 된다
   assert.ok(rulesFor(once(', smoke-install-linux, bundle]', ', smoke-install-linux, bundle, e2e-web]')).includes('ci-ok'));
   // report needs에서 빼면 master 실패가 이슈로 열리지 않는다
-  assert.ok(rulesFor(once('    needs: [ci-ok, e2e-web, e2e-native]\n', '    needs: [ci-ok, e2e-web]\n')).includes('observed'));
+  assert.ok(rulesFor(once('    needs: [ci-ok, e2e-web, e2e-native, e2e-native-windows]\n', '    needs: [ci-ok, e2e-web, e2e-native-windows]\n')).includes('observed'));
+  // Windows 관찰 작업(구현 중 변경 79)도 같다: report needs에서 빼거나 ci-ok needs에 넣으면 거부
+  assert.ok(rulesFor(once('    needs: [ci-ok, e2e-web, e2e-native, e2e-native-windows]\n', '    needs: [ci-ok, e2e-web, e2e-native]\n')).includes('observed'));
+  assert.ok(rulesFor(once(', smoke-install-linux, bundle]', ', smoke-install-linux, bundle, e2e-native-windows]')).includes('ci-ok'));
+  // Windows 관찰 작업을 PR에서 건너뛰게(master 전용) 하면 code 집합이 달라진다
+  assert.ok(rulesFor(once("  e2e-native-windows:\n    name: e2e-native (windows)\n    needs: changes\n    if: needs.changes.outputs.code == 'true'\n", "  e2e-native-windows:\n    name: e2e-native (windows)\n    needs: changes\n    if: github.event_name != 'pull_request' && needs.changes.outputs.code == 'true'\n")).includes('job-if'));
   // 관찰 작업의 if를 바꾸면 code·master 집합이 달라진다
   assert.ok(rulesFor(once("  e2e-web:\n    name: e2e-web\n    needs: changes\n    if: needs.changes.outputs.code == 'true'\n", '  e2e-web:\n    name: e2e-web\n    needs: changes\n')).includes('job-if'));
   // 관찰 작업이 ci.yml에서 사라짐
-  assert.ok(rulesFor((t) => t.replace(/\n {2}e2e-web:\n[\s\S]*?\n\n/, '\n').replace('needs: [ci-ok, e2e-web, e2e-native]', 'needs: [ci-ok, e2e-native]')).includes('observed'));
+  assert.ok(rulesFor((t) => t.replace(/\n {2}e2e-web:\n[\s\S]*?\n\n/, '\n').replace('needs: [ci-ok, e2e-web, e2e-native, e2e-native-windows]', 'needs: [ci-ok, e2e-native, e2e-native-windows]')).includes('observed'));
 });
 
 // nightly.yml을 바꾼 사본(ci.yml은 그대로)의 위반 규칙
@@ -208,6 +213,7 @@ test('nightly.yml 사본: 변형하지 않으면 깨끗하다', () => {
 // 리뷰(G4): ci.yml e2e-native와 nightly 작업이 같은 체크 이름이었다
 test('job-name: 워크플로를 통틀어 작업 표시 이름이 겹치면 거부', () => {
   assert.ok(nightlyRules((t) => t.replace('name: nightly e2e-native (linux)', 'name: e2e-native (linux)')).includes('job-name'));
+  assert.ok(nightlyRules((t) => t.replace('name: nightly e2e-native (windows)', 'name: e2e-native (windows)')).includes('job-name'));
   assert.ok(nightlyRules((t) => t.replace('name: nightly report', 'name: report')).includes('job-name'));
   assert.equal(parseJobs('jobs:\n  a:\n    name: "x (y)" # c\n').a.name, 'x (y)');
 });

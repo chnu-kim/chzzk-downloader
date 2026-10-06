@@ -11,6 +11,7 @@ import {
   checkPubkey,
   ciOkDecision,
   cmpSemver,
+  parseSemver,
   preflight,
   preflightMessage,
   pubkeyProblems,
@@ -80,6 +81,22 @@ test('semver 비교(xtask/src/semver.rs와 같은 표)', () => {
   assert.equal(cmpSemver('1.0.0-beta.11', '1.0.0-beta.2'), 1);
   assert.equal(cmpSemver('2.1.3', '2.1.3'), 0);
   assert.throws(() => cmpSemver('1.0', '1.0.0'));
+});
+
+// xtask(Rust)·worker(TS)와 같은 공유 벡터(worker.md 구현 중 변경 16 (마)). 한쪽만 고치지 않는다
+const VECTORS = JSON.parse(readFileSync(join(ROOT, 'xtask/testdata/semver-vectors.json'), 'utf8'));
+test('semver 공유 벡터(xtask/testdata/semver-vectors.json): 비교는 정·역방향, 유효·무효 목록', () => {
+  assert.ok(VECTORS.cmp.length >= 10, 'cmp 벡터가 비었다');
+  for (const [a, b, want] of VECTORS.cmp) {
+    assert.equal(cmpSemver(a, b), want, `${a} vs ${b}`);
+    assert.equal(cmpSemver(b, a), want === 0 ? 0 : -want, `${b} vs ${a}`);
+  }
+  for (const v of VECTORS.valid) assert.ok(parseSemver(v), `valid: ${JSON.stringify(v)}`);
+  assert.ok(VECTORS.invalid.length >= 10, 'invalid 벡터가 비었다');
+  for (const v of VECTORS.invalid) assert.equal(parseSemver(v), null, `invalid: ${JSON.stringify(v)}`);
+  assert.equal(parseSemver(undefined), null);
+  assert.equal(parseSemver(null), null);
+  assert.equal(parseSemver(1), null);
 });
 
 test('태그 단조 증가', () => {

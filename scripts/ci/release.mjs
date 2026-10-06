@@ -53,10 +53,23 @@ function ghOutput(env, pairs) {
 
 // ---- semver ----
 
+// xtask/src/semver.rs와 같은 규칙이다(worker.md 구현 중 변경 16 (마)). 공유 벡터 xtask/testdata/semver-vectors.json을
+// release.test.mjs가 읽는다. 한쪽만 고치지 않는다.
 const SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/;
+const U64_MAX = '18446744073709551615';
+// 숫자 문자열 → BigInt(u64 범위) | null. 앞자리 0은 값으로 읽는다(Rust parse::<u64>)
+export function parseU64(s) {
+  if (!/^\d+$/.test(s)) return null;
+  const t = s.replace(/^0+(?=\d)/, '');
+  if (t.length > 20 || (t.length === 20 && t > U64_MAX)) return null;
+  return BigInt(t);
+}
 export function parseSemver(v) {
-  const m = SEMVER.exec(v ?? '');
-  return m ? { nums: [+m[1], +m[2], +m[3]], pre: m[4] ? m[4].split('.') : [] } : null;
+  const m = typeof v === 'string' ? SEMVER.exec(v) : null;
+  if (!m) return null;
+  const nums = [parseU64(m[1]), parseU64(m[2]), parseU64(m[3])];
+  if (nums.some((n) => n === null)) return null;
+  return { nums, pre: m[4] ? m[4].split('.') : [] };
 }
 export function cmpSemver(a, b) {
   const x = parseSemver(a);
@@ -66,10 +79,15 @@ export function cmpSemver(a, b) {
   if (!x.pre.length || !y.pre.length) return x.pre.length === y.pre.length ? 0 : x.pre.length ? -1 : 1;
   for (let i = 0; i < Math.min(x.pre.length, y.pre.length); i++) {
     const [p, q] = [x.pre[i], y.pre[i]];
-    const [pNum, qNum] = [/^\d+$/.test(p), /^\d+$/.test(q)];
     if (p === q) continue;
-    if (pNum && qNum) return +p < +q ? -1 : 1;
-    if (pNum !== qNum) return pNum ? -1 : 1;
+    const [pv, qv] = [parseU64(p), parseU64(q)];
+    if (pv !== null && qv !== null) {
+      if (pv !== qv) return pv < qv ? -1 : 1;
+      continue;
+    }
+    // 한쪽만 숫자면 숫자가 작다. 둘 다 숫자가 아니면(u64를 넘는 숫자열 포함) 문자열 비교
+    if (pv !== null) return -1;
+    if (qv !== null) return 1;
     return p < q ? -1 : 1;
   }
   return Math.sign(x.pre.length - y.pre.length);

@@ -18,6 +18,7 @@ import {
   checkOutbound,
   checkReleaseSources,
   DELETE_ALLOWLIST,
+  DEV_VARS_READERS,
   checkDist,
   checkHtmlSources,
   checkPackage,
@@ -354,6 +355,10 @@ test('씨앗: 소스 규칙', () => {
   ];
   // G-ID 도구는 사용자가 직접 돌리며 실제 비밀값 파일을 읽는다(예외)
   assert.deepEqual(checkSources([{ rel: 'scripts/channel-id-check.mjs', text: "join(dir, '..', '.dev.vars')" }]), []);
+  // code 묶임 실측 도구도 같은 대우(worker.md 구현 중 변경 42). 그 순수 판정 모듈(test/)은 예외가 아니다
+  assert.deepEqual(DEV_VARS_READERS, ['scripts/channel-id-check.mjs', 'scripts/code-binding-check.mjs']);
+  assert.deepEqual(checkSources([{ rel: 'scripts/code-binding-check.mjs', text: "join(dir, '..', '.dev.vars')" }]), []);
+  assert.notDeepEqual(checkSources([{ rel: 'test/code-binding-lib.mjs', text: "'.dev.vars'" }]), []);
   for (const [name, f] of seeds) assert.notDeepEqual(checkSources([f]), [], name);
   // 사본: log.ts 밖에 console.을 넣으면 checkWorker가 실패
   const routes = read('src/routes.ts');

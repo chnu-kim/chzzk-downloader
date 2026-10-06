@@ -15,6 +15,7 @@ import {
   checkStorePurity,
   checkDevVarsExample,
   checkOutbound,
+  checkReleaseSources,
   checkDist,
   checkPackage,
   checkRawAllowlist,
@@ -29,6 +30,8 @@ import {
   OUTBOUND_ALLOWLIST,
   parseJsonc,
   plantSentinel,
+  R2_ALLOWLIST,
+  RELEASE_FILES,
   RAW_ALLOWLIST,
   scriptCommands,
   SENTINEL_TEXT,
@@ -580,4 +583,51 @@ test('씨앗: 바깥 요청(낱말 fetch)은 src/http/auth.ts 한 곳, 전역 �
   const session = read('src/http/session.ts');
   assert.ok(checkWorker(copy({ 'worker/src/http/session.ts': `${session}\nawait fetch(u);\n` })).some((e) => e.includes('src/http/session.ts') && e.includes('전역 fetch')));
   assert.ok(checkWorker(copy({ 'worker/src/http/auth.ts': null })).some((e) => e.includes('OUTBOUND_ALLOWLIST')));
+});
+
+test('씨앗: 릴리스 읽기 소스(worker.md 구현 중 변경 31 (차), cicd.md 94)', () => {
+  const R2 = 'src/http/r2.ts';
+  const r2 = read(R2);
+  assert.deepEqual(R2_ALLOWLIST, { [R2]: 1 });
+  assert.deepEqual(RELEASE_FILES, [R2, 'src/http/release-auth.ts', 'src/http/releases.ts', 'src/http/update.ts']);
+  assert.deepEqual(checkReleaseSources([{ rel: R2, text: r2 }]), []);
+  // 실패 씨앗(이름, 파일, 내용)
+  const seeds = [
+    ['ciVerifyToken 읽기', 'src/http/session.ts', 'const t = ctx.config.ciVerifyToken;'],
+    ['ciVerifyToken 구조 분해', 'src/http/session.ts', 'const { ciVerifyToken: t } = ctx.config;'],
+    ['ciVerifyToken 주석', 'src/routes.ts', '// ciVerifyToken'],
+    ['releaseAuth 호출', 'src/http/session.ts', 'await releaseAuth(req, ctx, true);'],
+    ['R2 바인딩이 r2.ts 밖', 'src/http/releases.ts', 'const b = ctx.env.DIST;'],
+    ['r2.ts 바인딩 2회', R2, `${r2}\nconst b = env.DIST;\n`],
+    ['r2.ts .put(', R2, `${r2}\nbucket.put(k, v);\n`],
+    ['r2.ts 주석 속 list', R2, `${r2}\n// list는 쓰지 않는다\n`],
+    ['.list(', 'src/http/update.ts', 'await b.list();'],
+    ['어디든 .put(', 'src/store/x.ts', 'env.X.put(k);'],
+    ['Response.redirect', 'src/http/releases.ts', 'return Response.redirect(u, 302);'],
+    ['Location 헤더', 'src/http/releases.ts', 'headers.set("Location", u);'],
+    ['릴리스 파일의 .delete(', 'src/http/update.ts', 'cache.delete(k);'],
+    ['멀티파트', R2, `${r2}\nb.createMultipartUpload(k);\n`],
+  ];
+  for (const [name, rel, text] of seeds) {
+    const files = rel === R2 && text.startsWith(r2) ? [{ rel, text }] : [{ rel: R2, text: r2 }, { rel, text }];
+    assert.notDeepEqual(checkReleaseSources(files), [], name);
+  }
+  // 목록 파일이 없다(낡은 항목): checkWorker 경로(all)에서만
+  assert.notDeepEqual(checkReleaseSources([], { all: true }), [], '목록 파일 없음');
+  assert.deepEqual(checkReleaseSources([]), []);
+  // 통과: 다른 파일의 Map.delete, 허용된 파일의 낱말, src 밖(test)
+  const clean = [
+    ['Lru의 Map.delete', 'src/core/lru.ts', 'this.#map.delete(k);'],
+    ['다른 파일의 Map.delete', 'src/store/flows.ts', 'map.delete(k);'],
+    ['설정 필드', 'src/config.ts', 'ciVerifyToken: required(env, "CI_VERIFY_TOKEN", devMode),'],
+    ['release-auth의 낱말', 'src/http/release-auth.ts', 'const ci = ctx.config.ciVerifyToken; export async function releaseAuth() {}'],
+    ['releaseAuth 호출', 'src/http/releases.ts', 'const who = await releaseAuth(req, ctx, true);'],
+    ['DIST_BASE_URL 같은 이름', 'src/http/health.ts', 'const u = DIST_BASE_URL;'],
+    ['test는 보지 않는다', 'test/x.test.ts', 'env.DIST.put(k, v); await b.list(); // Location redirect ciVerifyToken'],
+  ];
+  for (const [name, rel, text] of clean) assert.deepEqual(checkReleaseSources([{ rel: R2, text: r2 }, { rel, text }]), [], name);
+  // 사본: 다른 파일에 .put(을 더하거나 r2.ts를 지우면 checkWorker가 실패
+  const health = read('src/http/health.ts');
+  assert.ok(checkWorker(copy({ 'worker/src/http/health.ts': `${health}\nawait env.X.put(k);\n` })).some((e) => e.includes('src/http/health.ts') && e.includes('.put(')));
+  assert.ok(checkWorker(copy({ 'worker/src/http/r2.ts': null })).some((e) => e.includes('릴리스 읽기 검사 목록')));
 });

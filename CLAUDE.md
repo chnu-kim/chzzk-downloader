@@ -117,7 +117,7 @@ node worker/scripts/channel-id-check.mjs <본인 VOD 주소> <본인 클립 주�
 - 설계가 틀렸거나 모호하면 가장 작은 타당한 선택을 하고 해당 설계 문서(`core.md` 또는 `app.md`)의 "구현 중 변경"에 번호를 붙여 적는다.
 - UI 문구는 한국어이고 app.md §9 copy deck(`app/src/lib/copy/ko.ts`)을 따른다. DTO를 바꾸면 `UPDATE_BINDINGS=1`로 bindings를 다시 만든다.
 - 행동을 바꾸면 해당 테스트를 함께 추가한다. 파서·선택 규칙은 `testdata/`의 합성 fixture로 고정한다. fixture는 `scripts/fixtures/gen-fixtures.mjs`를 고쳐 다시 만든다(`--check`로 확인).
-- **공개 저장소 규칙**: 실제 채널 이름·ID, 영상 번호·클립 ID, 서명 토큰·inKey, 비공개 내부 동작 조사 내용을 코드·테스트·문서·커밋 메시지에 넣지 않는다. 시각·길이 같은 준식별자도 실제 값을 옮기지 않는다. 커밋 전에 `node scripts/ci/run.mjs scan`(CI `ci.yml`의 `lint`, 이력 전체는 `scan-history`)이 통과해야 한다. 커밋 이메일은 GitHub noreply 주소를 쓴다. **비공개 저장소(`private` 원격)에는 push하지 않는다**(보관용). 로컬의 `refs/remotes/private/*`는 지우지 않는다: pre-push 가드(`push-guard.mjs`)가 이것으로 비공개에만 있는 커밋이 공개 push 범위에 섞였는지 본다. 자세한 규칙은 `docs/public-release.md` "이후 규칙".
+- **공개 저장소 규칙**: 실제 채널 이름·ID, 영상 번호·클립 ID, 서명 토큰·inKey, 비공개 내부 동작 조사 내용을 코드·테스트·문서·커밋 메시지에 넣지 않는다. 시각·길이 같은 준식별자도 실제 값을 옮기지 않는다. 커밋 전에 `node scripts/ci/run.mjs scan`(CI `ci.yml`의 `lint`, 이력 전체는 `scan-history`)이 통과해야 한다. 커밋 이메일은 `chanuuuu@naver.com`을 쓴다(공개하기로 한 작성자 이메일, `public-scan` identity 허용 목록에 있다. noreply 주소도 허용된다). **비공개 저장소(`private` 원격)에는 push하지 않는다**(보관용). 로컬의 `refs/remotes/private/*`는 지우지 않는다: pre-push 가드(`push-guard.mjs`)가 이것으로 비공개에만 있는 커밋이 공개 push 범위에 섞였는지 본다. 자세한 규칙은 `docs/public-release.md` "이후 규칙".
 
 ## 주의사항
 

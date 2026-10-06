@@ -77,36 +77,44 @@ pub fn cmp(a: &Version, b: &Version) -> Ordering {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::Value;
 
-    fn c(a: &str, b: &str) -> Ordering {
-        cmp(&parse(a).unwrap(), &parse(b).unwrap())
+    // worker/src/core/semver.ts와 같은 표(docs/design/worker.md 구현 중 변경 14 (다)). 한쪽만 고치지 않는다
+    const VECTORS: &str = include_str!("../testdata/semver-vectors.json");
+
+    fn strs(v: &Value, key: &str) -> Vec<String> {
+        v[key]
+            .as_array()
+            .unwrap_or_else(|| panic!("{key} 배열"))
+            .iter()
+            .map(|s| s.as_str().expect("문자열").to_string())
+            .collect()
     }
 
     #[test]
-    fn precedence() {
-        assert_eq!(c("1.0.0", "0.9.9"), Ordering::Greater);
-        assert_eq!(c("0.10.0", "0.9.0"), Ordering::Greater);
-        assert_eq!(c("1.0.0-alpha", "1.0.0"), Ordering::Less);
-        assert_eq!(c("1.0.0-alpha.1", "1.0.0-alpha"), Ordering::Greater);
-        assert_eq!(c("1.0.0-alpha.beta", "1.0.0-alpha.1"), Ordering::Greater);
-        assert_eq!(c("1.0.0-rc.1", "1.0.0-beta.11"), Ordering::Greater);
-        assert_eq!(c("1.0.0-beta.11", "1.0.0-beta.2"), Ordering::Greater);
-        assert_eq!(c("2.1.3", "2.1.3"), Ordering::Equal);
-    }
-
-    #[test]
-    fn rejects_non_semver() {
-        for s in [
-            "1.0",
-            "v1.0.0",
-            "01.0.0",
-            "1.0.0-",
-            "1.0.0-a..b",
-            "1.0.0+b",
-            "1.0.x",
-            "",
-        ] {
-            assert!(parse(s).is_none(), "{s}");
+    fn shared_vectors() {
+        let v: Value = serde_json::from_str(VECTORS).expect("semver-vectors.json");
+        let cmps = v["cmp"].as_array().expect("cmp 배열");
+        assert!(cmps.len() >= 10, "cmp 벡터가 비었다");
+        for row in cmps {
+            let (a, b) = (row[0].as_str().unwrap(), row[1].as_str().unwrap());
+            let want = match row[2].as_i64().unwrap() {
+                -1 => Ordering::Less,
+                0 => Ordering::Equal,
+                1 => Ordering::Greater,
+                n => panic!("비교 결과는 -1·0·1: {n}"),
+            };
+            let (pa, pb) = (parse(a).expect(a), parse(b).expect(b));
+            assert_eq!(cmp(&pa, &pb), want, "{a} vs {b}");
+            assert_eq!(cmp(&pb, &pa), want.reverse(), "{b} vs {a}");
+        }
+        for s in strs(&v, "valid") {
+            assert!(parse(&s).is_some(), "valid: {s:?}");
+        }
+        let invalid = strs(&v, "invalid");
+        assert!(invalid.len() >= 10, "invalid 벡터가 비었다");
+        for s in invalid {
+            assert!(parse(&s).is_none(), "invalid: {s:?}");
         }
     }
 }

@@ -69,29 +69,29 @@ function read(env: ConfigEnv, key: ConfigKey): string | undefined {
   return v;
 }
 
-function parseOrigin(key: ConfigKey, raw: string | undefined): URL {
-  if (raw === undefined) throw new ConfigError(key);
+function parseOrigin(key: ConfigKey, text: string | undefined): URL {
+  if (text === undefined) throw new ConfigError(key);
   let u: URL;
   try {
-    u = new URL(raw);
+    u = new URL(text);
   } catch {
     throw new ConfigError(key);
   }
   // 직렬화한 출처와 글자가 같아야 한다(끝 슬래시·경로·기본 포트·대문자·자격 정보가 있으면 거부): redirectUri가 바이트 단위로 맞아야 한다
-  if ((u.protocol !== "http:" && u.protocol !== "https:") || u.origin !== raw) throw new ConfigError(key);
+  if ((u.protocol !== "http:" && u.protocol !== "https:") || u.origin !== text) throw new ConfigError(key);
   return u;
 }
 
 // dev 모드의 치지직 주소: http(s) 절대 URL이면 호스트는 자유(가짜 치지직)
-function parseDevUrl(key: ConfigKey, raw: string): string {
+function parseDevUrl(key: ConfigKey, text: string): string {
   let u: URL;
   try {
-    u = new URL(raw);
+    u = new URL(text);
   } catch {
     throw new ConfigError(key);
   }
   if ((u.protocol !== "http:" && u.protocol !== "https:") || u.username !== "" || u.password !== "") throw new ConfigError(key);
-  return raw;
+  return text;
 }
 
 function chzzkUrl(env: ConfigEnv, key: ConfigKey, prod: string, devMode: boolean): string {

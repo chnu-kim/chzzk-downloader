@@ -11,9 +11,11 @@ import { after, test } from 'node:test';
 import { ROOT } from './gates.mjs';
 import {
   allowedBuilds,
+  checkCorePurity,
   checkDevVarsExample,
   checkDist,
   checkPackage,
+  checkRawAllowlist,
   checkSources,
   checkVitestConfig,
   checkWorker,
@@ -24,6 +26,7 @@ import {
   main,
   parseJsonc,
   plantSentinel,
+  RAW_ALLOWLIST,
   scriptCommands,
   SENTINEL_TEXT,
   stripJsComments,
@@ -306,18 +309,20 @@ test('씨앗: 소스 규칙', () => {
   const ok = [
     { rel: 'src/core/log.ts', text: 'console.log(x);' },
     { rel: 'src/config.ts', text: '"CI_VERIFY_TOKEN",' },
-    { rel: 'src/core/a.ts', text: 'import type { X } from "cloudflare:workers";' },
     { rel: 'test/a.test.ts', text: 'vi.spyOn(console, "log"); console.log("x"); // .dev.vars.example' },
+    // 이스케이프로 쓴 bidi 제어와 ZWJ·ZWSP 리터럴은 된다
+    { rel: 'src/core/x.ts', text: 'const re = /[\\u202A-\\u202E]/u; const e = "a\u200Db\u200Bc";' },
   ];
   assert.deepEqual(checkSources(ok), []);
   const seeds = [
     ['log.ts 밖 console.', { rel: 'src/routes.ts', text: 'console.error(e);' }],
     ['console . 띄어 씀', { rel: 'src/http/x.ts', text: 'console .log(1)' }],
     ['CI_VERIFY_TOKEN 다른 파일', { rel: 'src/http/admin.ts', text: 'env.CI_VERIFY_TOKEN' }],
-    ['core가 cloudflare:* 값 import', { rel: 'src/core/x.ts', text: 'import { env } from "cloudflare:workers";' }],
     ['테스트가 실제 비밀값 파일 이름', { rel: 'test/a.test.ts', text: 'readFile(".dev.vars")' }],
     ['설정이 실제 비밀값 파일 이름', { rel: 'vitest.config.ts', text: 'envFiles: [".dev.vars"]' }],
     ['scripts/의 다른 도구가 실제 비밀값 파일 이름', { rel: 'scripts/e2e-dev.mjs', text: "['--env-file', '.dev.vars']" }],
+    // 구현 중 변경 16 (가): 표시 순서를 바꾸는 문자 리터럴(씨앗도 이스케이프로 만든다)
+    ...['\u202E', '\u202A', '\u2066', '\u2069', '\u200E', '\u200F', '\u061C'].map((c) => [`bidi 리터럴 U+${c.codePointAt(0).toString(16)}`, { rel: 'test/a.test.ts', text: `["${c}evil", "evil"]` }]),
   ];
   // G-ID 도구는 사용자가 직접 돌리며 실제 비밀값 파일을 읽는다(예외)
   assert.deepEqual(checkSources([{ rel: 'scripts/channel-id-check.mjs', text: "join(dir, '..', '.dev.vars')" }]), []);
@@ -344,4 +349,105 @@ test('--dist: metafile 입력은 src/*.ts만, dist/wrangler.json 규칙', () => 
   assert.deepEqual(checkDist(copy(dw({ ...WRANGLER, main: 'index.js', no_bundle: true }))), []);
   assert.notDeepEqual(checkDist(copy(dw({ ...WRANGLER, vars: { ...WRANGLER.vars, PUBLIC_ORIGIN: 'http://localhost:8787' } }))), []);
   assert.notDeepEqual(checkDist(copy(dw({ ...WRANGLER, account_id: 'x' }))), []);
+});
+
+test('씨앗: core 순수성(원문 전체, worker.md 구현 중 변경 15)', () => {
+  const core = (text) => [{ rel: 'src/core/x.ts', text }];
+  const ok = [
+    'import { b64url } from "./token";',
+    'import { parseVersion, type Version } from "./semver";',
+    'const res = await deps.fetch(url, init);',
+    'export interface D { readonly fetch: FetchLike; readonly f?: FetchLike }',
+    'const n = Math.min(a, b);',
+    'const re = /[&<>"\']/g; const x = "./a";',
+    'if (pathname.includes("..")) return null;',
+    'const d = new Date(ms).toISOString(); const e = new Date( t );',
+    'const ok = a?.fetch ? 1 : 2; const { fetch: f } = deps;',
+    'const d = new Date(/* 주입 */ ms); const e = new Date(// 주입\n  t);',
+    'const newDate = shift(t); const isDate = (x) => x instanceof Date;',
+  ];
+  for (const text of ok) assert.deepEqual(checkCorePurity(core(text)), [], text);
+  const seeds = [
+    ['여러 줄 import', 'import {\n  env\n} from "cloudflare:workers";'],
+    ['side-effect import', 'import "cloudflare:sockets";'],
+    ['동적 import', 'const m = await import("cloudflare:workers");'],
+    ['export … from', 'export { env } from "cloudflare:workers";'],
+    ['타입 import', 'import type { X } from "cloudflare:workers";'],
+    ['주석 속 cloudflare:', '// cloudflare:workers를 쓰지 않는다'],
+    ['바깥 모듈 import', 'import { CONFIG_KEYS } from "../config";'],
+    ['바깥 모듈 동적 import', "const c = await import('../config');"],
+    ['./../ 우회', 'import { x } from "./../config";'],
+    ['전역 fetch', 'const r = await fetch("http://x");'],
+    ['전역 fetch 띄어 씀', 'await fetch ("http://x");'],
+    ['전역 fetch 별칭', 'const f = fetch; f("http://x");'],
+    ['globalThis.fetch', 'await globalThis.fetch("http://x");'],
+    ['fetch 기본값 주입', 'export const DEFAULT = { fetch };'],
+    ['주석 속 fetch(', '// 여기서 fetch(를 부르지 않는다'],
+    ['Date.now', 'const t = Date.now();'],
+    ['Date . now', 'const t = Date . now();'],
+    ['정규식 리터럴 뒤(주석 제거기 미탐 경로)', 'const re = /["]/g; const t = Date.now(); // "'],
+    ['Math.random', 'const r = Math.random();'],
+    // 구현 중 변경 16 (나)
+    ['맨 .. export', 'export * from "..";'],
+    ['맨 .. import', "import x from '..';"],
+    ['맨 .. 동적 import', 'const m = await import(`..`);'],
+    ['문자열 줄 연속 ../', 'import { CONFIG_KEYS } from "\\\n../config";'],
+    ['주석 속 ../', '// ../config를 쓰지 않는다'],
+    ['삼항 속 fetch', 'const f = ok ? fetch : null;'],
+    ['globalThis 구조 분해 별칭', 'const { fetch: f } = globalThis; f(u);'],
+    ['self 구조 분해 별칭', 'const {\n  fetch: f,\n} = self;'],
+    ['new Date()', 'const t = new Date().toISOString();'],
+    ['new Date;', 'const t = +new Date;'],
+    ['new Date( )', 'const t = new Date( ).getTime();'],
+    ['performance.now', 'const t = performance.now();'],
+    ['new 없는 Date()', 'const s = Date();'],
+    ['new 없는 Date ( )', 'const s = String(Date ( ));'],
+    // 구현 중 변경 16: 괄호 안이 주석뿐이면 인자 없는 호출이다
+    ['new Date(블록 주석)', 'const t = new Date(/* 주입된 시각 */).getTime();'],
+    ['new Date(줄 주석+줄바꿈)', 'const t = new Date(// 주입된 시각\n);'],
+    ['new Date(주석 둘)', 'const t = new Date( /* a */ // b\n /* c */ );'],
+    ['new Date 주석;', 'const t = +new Date /* x */;'],
+    ['new 주석 Date()', 'const t = new /* x */ Date();'],
+    ['new Date 주석 ()', 'const t = new Date /* x */ ();'],
+    ['new 없는 Date 주석 ()', 'const s = Date /* x */ ();'],
+    ['뒤에 다른 */가 있어도', 'const t = new Date(/* a */); const u = f(/* b */ x);'],
+  ];
+  for (const [name, text] of seeds) assert.notDeepEqual(checkCorePurity(core(text)), [], name);
+  // core 밖은 cloudflare:·fetch·Date.now가 된다(핸들러·DO·라우터). Math.random은 src/** 어디서도 안 된다
+  assert.deepEqual(checkCorePurity([{ rel: 'src/routes.ts', text: 'import { env } from "cloudflare:workers"; await fetch(u); Date.now();' }]), []);
+  assert.notDeepEqual(checkCorePurity([{ rel: 'src/http/x.ts', text: 'const id = Math.random();' }]), []);
+  assert.deepEqual(checkCorePurity([{ rel: 'test/a.test.ts', text: 'Math.random(); fetch(u); import "cloudflare:test";' }]), []);
+  // 사본: core 파일에 타입 import 하나를 더하면 checkWorker가 실패
+  const log = read('src/core/log.ts');
+  assert.ok(checkWorker(copy({ 'worker/src/core/log.ts': `import type { X } from "cloudflare:workers";\n${log}` })).some((e) => e.includes('src/core/log.ts') && e.includes('cloudflare:')));
+});
+
+test('씨앗: raw 허용 목록(파일별 정확한 토큰 수)', () => {
+  const HTML = 'src/core/html.ts';
+  const html = read(HTML);
+  assert.deepEqual(Object.keys(RAW_ALLOWLIST), [HTML]);
+  assert.deepEqual(checkRawAllowlist([{ rel: HTML, text: html }]), []);
+  const seeds = [
+    ['html.ts 개수 +1', HTML, `${html}\nexport const y = raw("<b>");\n`],
+    ['html.ts 개수 -1(주석 낱말도 센다)', HTML, html.replace(/(?<![\w$])raw(?![\w$])/, 'rawX')],
+    ['목록 밖 파일의 호출', 'src/http/landing.ts', 'const p = html`${raw(x)}`;'],
+    ['별칭 import', 'src/http/landing.ts', 'import { raw as r } from "../core/html";'],
+    ['값 별칭', 'src/http/landing.ts', 'const r = raw;'],
+    ['계산된 속성', 'src/http/landing.ts', 'const r = h["raw"];'],
+    ['주석', 'src/http/landing.ts', '// raw 쓰지 않음'],
+  ];
+  for (const [name, rel, text] of seeds) {
+    const files = rel === HTML ? [{ rel, text }] : [{ rel: HTML, text: html }, { rel, text }];
+    assert.notDeepEqual(checkRawAllowlist(files), [], name);
+  }
+  // 통과: 테스트·다른 낱말(rawX·drawn·raw_x·$raw)
+  assert.deepEqual(checkRawAllowlist([{ rel: HTML, text: html }, { rel: 'test/a.test.ts', text: 'raw("<b>")' }]), []);
+  assert.deepEqual(checkRawAllowlist([{ rel: HTML, text: html }, { rel: 'src/http/x.ts', text: 'drawn rawX raw_x $raw raw$' }]), []);
+  // 낡은 항목: checkWorker 경로(all)에서는 목록의 파일이 있어야 한다
+  assert.notDeepEqual(checkRawAllowlist([], { all: true }), []);
+  assert.deepEqual(checkRawAllowlist([]), []);
+  // 사본: routes.ts에 raw(를 더하면 checkWorker가 실패
+  const routes = read('src/routes.ts');
+  assert.ok(checkWorker(copy({ 'worker/src/routes.ts': `${routes}\nraw("x");\n` })).some((e) => e.includes('src/routes.ts') && e.includes('raw')));
+  assert.ok(checkWorker(copy({ 'worker/src/core/html.ts': null })).some((e) => e.includes('RAW_ALLOWLIST')));
 });

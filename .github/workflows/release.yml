@@ -453,6 +453,8 @@ jobs:
   # 컴파일·설치 없음: worker-bundle이 만든 묶음(sha256을 작업 출력과 대조)의 wrangler로 `deploy --no-bundle`을 돈다. superseded 가드(latest가
   # 더 높으면 배포 없이 0)와 배포 뒤 검사(health의 build 일치, updater 200/204, 음성 셋)는 release.mjs worker가 한다. Worker secret은 CI가
   # 넣지 않는다(사용자가 wrangler secret put). DIST_BASE_URL은 저장소 secret이고 로그에서 가린다(cicd.md 84).
+  # WORKER_DEPLOY_ENABLED는 저장소 변수다: 작업 if:는 환경(release)에 들어가기 전에 평가돼 환경 변수가 보이지 않는다
+  # (cicd.md §8·cicd.md 구현 중 변경 W8-1 (아)). if:에 상태 함수가 없으므로 needs(verify 포함)가 모두 성공해야만 돈다.
   deploy-worker:
     name: release deploy-worker
     needs: [gate, xtask, verify, worker-bundle]
@@ -490,7 +492,7 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CI_VERIFY_TOKEN: ${{ secrets.CI_VERIFY_TOKEN }}
           DIST_BASE_URL: ${{ secrets.DIST_BASE_URL }}
-          # superseded 가드가 S3로 latest.json을 읽는다(VERIFY_VIA와 상관없이, W8-2 (마))
+          # superseded 가드가 S3로 latest.json을 읽는다(VERIFY_VIA와 상관없이, worker.md 구현 중 변경 W8-2 (마))
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}

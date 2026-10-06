@@ -370,7 +370,7 @@ test('--dist: metafile 입력은 src/*.ts만, dist/wrangler.json 규칙', () => 
   const dw = (cfg) => ({ ...good, 'worker/dist/wrangler.json': JSON.stringify(cfg) });
   assert.deepEqual(checkDist(copy(dw(deployConfig(WRANGLER)))), []);
   assert.deepEqual(checkDist(copy(dw({ ...WRANGLER, main: 'index.js', no_bundle: true }))), []);
-  // 원본에서 main·no_bundle만 바꾼 것이어야 한다(W8-1 (나): main은 설정 파일 위치 기준이라 index.js)
+  // 원본에서 main·no_bundle만 바꾼 것이어야 한다(worker.md 구현 중 변경 W8-1 (나): main은 설정 파일 위치 기준이라 index.js)
   assert.notDeepEqual(checkDist(copy(dw({ ...WRANGLER, main: 'dist/index.js', no_bundle: true }))), []);
   assert.notDeepEqual(checkDist(copy(dw({ ...deployConfig(WRANGLER), compatibility_flags: ['nodejs_compat'] }))), []);
   assert.notDeepEqual(checkDist(copy(dw({ ...deployConfig(WRANGLER), workers_dev: false }))), []);

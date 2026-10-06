@@ -22,6 +22,7 @@ import {
   parseWorkerArgs,
   preflight,
   preflightMessage,
+  pruneMissingMessage,
   prunePlan,
   pubkeyProblems,
   RELEASE_CONF,
@@ -33,6 +34,8 @@ import {
   tagProblems,
   verifyPlan,
   WORKER_CHECKS,
+  WORKER_SECRETS,
+  workerMissingMessage,
   wranglerDeployArgs,
   wranglerEnv,
 } from './release.mjs';
@@ -131,6 +134,14 @@ test('ci-ok 판정: 어느 master 실행이든 ci-ok 녹색이면 통과, 모두
   assert.equal(ciOkDecision([run('completed', 'failure'), run('queued')]), 'pending');
   // 작업 이름이 ci-ok가 아니면 세지 않는다
   assert.equal(ciOkDecision([{ status: 'completed', jobs: [{ name: 'ci-ok (x)', conclusion: 'success' }] }]), 'failure');
+});
+
+test('prune·worker의 설정 없음 메시지는 업로드용 preflight 문구를 쓰지 않고 종류(시크릿·변수)를 적는다', () => {
+  assert.equal(pruneMissingMessage(['R2_BUCKET']), 'prune: R2 설정 없음(시크릿·변수): R2_BUCKET. 지우지 않는다');
+  assert.equal(workerMissingMessage(['CLOUDFLARE_API_TOKEN', 'R2_BUCKET']), 'Worker 배포 설정 없음(시크릿·변수): CLOUDFLARE_API_TOKEN, R2_BUCKET. 배포하지 않는다');
+  // R2_BUCKET은 저장소 변수지만(cicd.md §8) 배포 모드가 S3로 latest.json을 읽으므로 함께 본다
+  assert.ok(WORKER_SECRETS.includes('R2_BUCKET'));
+  for (const m of [pruneMissingMessage(['x']), workerMissingMessage(['x'])]) assert.ok(!m.includes('업로드') && !m.includes('시크릿 없음'), m);
 });
 
 test('preflight: 정확한 메시지, 리허설은 시크릿이 있어도 멈춘다', () => {
@@ -261,7 +272,7 @@ test('경계: tag는 덮어쓰기를 받지 않고, dry는 루프백 엔드포�
 const dirKeys = (vs) => ['releases/latest.json', ...vs.flatMap((v) => [`releases/${v}/SHA256SUMS`, `releases/${v}/manifest.json`])];
 const range = (a, b, major = 1) => Array.from({ length: b - a + 1 }, (_, i) => `${major}.${a + i}.0`);
 
-test('prune 판정: 최신 5개 ∪ latest ∪ previous를 남기고 나머지를 오래된 것부터 지운다', () => {
+test('prune 판정: latest 이하 최신 5개 ∪ latest ∪ previous ∪ latest보다 높은 폴더를 남기고 나머지를 오래된 것부터 지운다', () => {
   assert.equal(RELEASE_KEEP, 5);
   const rows = [
     { name: '다섯 개 이하는 그대로', vs: ['1.0.0', '1.1.0', '1.2.0'], latest: '1.2.0', prev: '1.1.0', del: [] },
@@ -273,7 +284,10 @@ test('prune 판정: 최신 5개 ∪ latest ∪ previous를 남기고 나머지�
     { name: 'previous 형식이 아니면 무시', vs: range(0, 6), latest: '1.6.0', prev: '?', del: ['1.0.0', '1.1.0'] },
     { name: 'previous가 목록에 없어도 탈 없다', vs: range(0, 6), latest: '1.6.0', prev: '0.9.0', del: ['1.0.0', '1.1.0'] },
     { name: 'keep=1: latest와 previous만', vs: ['1.0.0', '1.1.0', '1.2.0'], latest: '1.2.0', prev: '1.1.0', keep: 1, del: ['1.0.0'] },
-    { name: '낮은 버전이 latest(되돌린 뒤)여도 latest는 남긴다', vs: range(0, 7), latest: '1.1.0', prev: 'none', del: ['1.0.0', '1.2.0'] },
+    // latest보다 높은 폴더는 rollback.yml로 다시 올릴 수 있는 버전이라 지우지 않고, 5개 자리로도 세지 않는다
+    { name: '낮은 버전이 latest(되돌린 뒤)면 높은 폴더는 모두 남긴다', vs: range(0, 7), latest: '1.1.0', prev: 'none', del: [] },
+    { name: '판정 실패로 남은 높은 폴더는 자리를 차지하지 않는다', vs: range(0, 6), latest: '1.5.0', prev: '1.4.0', del: ['1.0.0'] },
+    { name: '높은 폴더가 여럿이어도 latest 이하에서 5개', vs: [...range(0, 7), '2.0.0', '2.1.0-rc.1'], latest: '1.7.0', prev: '1.6.0', del: ['1.0.0', '1.1.0', '1.2.0'] },
   ];
   for (const r of rows) {
     const plan = prunePlan({ keys: dirKeys(r.vs), latest: r.latest, previous: r.prev, ...(r.keep ? { keep: r.keep } : {}) });
@@ -282,6 +296,8 @@ test('prune 판정: 최신 5개 ∪ latest ∪ previous를 남기고 나머지�
     // 남기는 것과 지우는 것은 겹치지 않고 합치면 전부다. latest·previous(목록에 있으면)는 늘 남는다
     assert.deepEqual([...plan.keep, ...plan.delete].sort(), [...r.vs].sort(), r.name);
     assert.ok(plan.keep.includes(r.latest), r.name);
+    // 지우는 버전은 모두 latest보다 낮다
+    for (const v of plan.delete) assert.ok(cmpSemver(v, r.latest) < 0, `${r.name}: ${v}`);
     if (r.vs.includes(r.prev)) assert.ok(plan.keep.includes(r.prev), r.name);
   }
 });

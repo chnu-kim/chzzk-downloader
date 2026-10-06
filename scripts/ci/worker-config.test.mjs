@@ -14,6 +14,7 @@ import {
   checkCorePurity,
   checkStorePurity,
   checkDevVarsExample,
+  checkOutbound,
   checkDist,
   checkPackage,
   checkRawAllowlist,
@@ -25,6 +26,7 @@ import {
   configKeys,
   EXPECTED_SCRIPTS,
   main,
+  OUTBOUND_ALLOWLIST,
   parseJsonc,
   plantSentinel,
   RAW_ALLOWLIST,
@@ -515,4 +517,44 @@ test('씨앗: raw 허용 목록(파일별 정확한 토큰 수)', () => {
   const routes = read('src/routes.ts');
   assert.ok(checkWorker(copy({ 'worker/src/routes.ts': `${routes}\nraw("x");\n` })).some((e) => e.includes('src/routes.ts') && e.includes('raw')));
   assert.ok(checkWorker(copy({ 'worker/src/core/html.ts': null })).some((e) => e.includes('RAW_ALLOWLIST')));
+});
+
+test('씨앗: 바깥 요청(전역 fetch)은 src/http/auth.ts 한 곳', () => {
+  const AUTH = 'src/http/auth.ts';
+  const auth = read(AUTH);
+  assert.deepEqual(OUTBOUND_ALLOWLIST, { [AUTH]: 1 });
+  assert.deepEqual(checkOutbound([{ rel: AUTH, text: auth }]), []);
+  // 실패 씨앗: 다른 파일·같은 파일 2회·globalThis·self 대괄호·주석
+  const seeds = [
+    ['다른 파일의 호출', 'src/http/session.ts', 'const r = await fetch("https://x.example.test");'],
+    ['공백이 낀 호출', 'src/http/session.ts', 'await fetch   (u);'],
+    ['목록 파일 2회', AUTH, `${auth}\nawait fetch(u);\n`],
+    ['globalThis.fetch', 'src/routes.ts', 'const f = globalThis.fetch;'],
+    ['globalThis . fetch', 'src/routes.ts', 'globalThis\n  .fetch(u);'],
+    ['self.fetch', 'src/routes.ts', 'self.fetch(u);'],
+    ['globalThis 대괄호', 'src/routes.ts', 'globalThis["fe" + "tch"](u);'],
+    ['self 대괄호', 'src/routes.ts', 'self["fetch"](u);'],
+    ['주석 속 호출', 'src/http/health.ts', '// 여기서 fetch(u)를 부르면 안 된다'],
+    ['목록 파일의 호출이 0개', AUTH, 'export const x = 1;'],
+  ];
+  for (const [name, rel, text] of seeds) {
+    const files = rel === AUTH ? [{ rel, text }] : [{ rel: AUTH, text: auth }, { rel, text }];
+    assert.notDeepEqual(checkOutbound(files), [], name);
+  }
+  // 통과: 메서드 호출 deps.fetch(·속성 fetch:·다른 낱말·src 밖
+  const clean = [
+    ['메서드 호출', 'const r = await deps.fetch(url, init);'],
+    ['속성 선언', 'const d = { fetch: (u) => g(u) };'],
+    ['낱말 일부', 'prefetch(u); fetchAll(u); refetch (u);'],
+    ['$ 접두', '$fetch(u);'],
+  ];
+  for (const [name, text] of clean) assert.deepEqual(checkOutbound([{ rel: AUTH, text: auth }, { rel: 'src/core/x.ts', text }]), [], name);
+  assert.deepEqual(checkOutbound([{ rel: AUTH, text: auth }, { rel: 'test/a.test.ts', text: 'await fetch(u); globalThis.fetch(u);' }]), []);
+  // 낡은 항목: checkWorker 경로(all)에서는 목록의 파일이 있어야 한다
+  assert.notDeepEqual(checkOutbound([], { all: true }), []);
+  assert.deepEqual(checkOutbound([]), []);
+  // 사본: 다른 파일에 fetch(를 더하거나, auth.ts를 지우면 checkWorker가 실패
+  const session = read('src/http/session.ts');
+  assert.ok(checkWorker(copy({ 'worker/src/http/session.ts': `${session}\nawait fetch(u);\n` })).some((e) => e.includes('src/http/session.ts') && e.includes('전역 fetch')));
+  assert.ok(checkWorker(copy({ 'worker/src/http/auth.ts': null })).some((e) => e.includes('OUTBOUND_ALLOWLIST')));
 });

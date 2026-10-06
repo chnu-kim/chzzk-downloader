@@ -24,7 +24,8 @@
 //                   dev는 --port 8787, deploy는 --dry-run, --env 금지, types는 출력 경로 worker-env.d.ts가 바로 뒤.
 //                   vitest는 --config·--root를 쓰지 않는다(vitest.config.ts만 검사된다). --flag=값은 --flag 값으로 본다.
 //   pnpm-workspace.yaml  설치 스크립트 허용(allowBuilds)은 esbuild·workerd만.
-//   .dev.vars.example    키 집합 = src/config.ts CONFIG_KEYS, 값은 자리표시(루프백·dev- 접두·합성 채널 ID).
+//   .dev.vars.example    키 집합 = src/config.ts CONFIG_KEYS, 값은 자리표시(루프백·dev- 접두·합성 채널 ID, CHZZK_REDIRECT_URI는 정확히
+//                        http://localhost:8787/auth/callback).
 //   vitest.config.ts     주석을 지운 코드의 cloudflareTest({ wrangler: { … } }) 안에 environment "example" 하나와
 //                        configPath ./wrangler.jsonc(vitest가 실제 비밀값 파일 대신 .dev.vars.example을 읽는다,
 //                        worker.md 구현 중 변경 5), .dev.vars.example 바인딩.
@@ -35,6 +36,8 @@
 //   store 순수성    src/**에서 sql.exec는 src/store/db.ts에만, transactionSync(async …)는 어디에도 없다. src/store/** 중
 //                   AuthStore.ts가 아닌 파일의 원문에 async·await·cloudflare:·시각 함수(core와 같은 네 모양)가 없다. worker.md 구현 중 변경 21.
 //   raw 허용 목록   src/**의 raw 식별자 토큰 수(주석·문자열·별칭 포함)가 RAW_ALLOWLIST(파일별 정확한 수)와 같다(목록 밖 파일은 0).
+//   바깥 요청       src/**의 원문(주석 포함)에서 전역 fetch( 호출·globalThis.fetch·self.fetch·globalThis[·self[ 의 수가 OUTBOUND_ALLOWLIST와
+//                   같다(src/http/auth.ts 1개, 목록 밖 파일은 0). deps.fetch(·속성 fetch:는 세지 않는다. worker.md 구현 중 변경 27 (자), cicd.md 92.
 //   --dist          dist/bundle-meta.json(esbuild metafile)의 입력이 모두 src/*.ts(런타임 의존성 0), dist/index.js 있음,
 //                   dist/wrangler.json이 있으면(W8 worker-bundle이 만든다) 금지 키·vars 규칙.
 //   --sentinel      plant: worker/.dev.vars를 LEAK_SENTINEL 한 줄로 새로 만든다(pnpm check·vitest 전). check: 그 파일을
@@ -554,6 +557,11 @@ export function checkStorePurity(files) {
 
 const RAW_TOKEN = /(?<![\w$])raw(?![\w$])/g;
 
+// 바깥 요청(전역 fetch)은 이 파일·이 횟수만(worker.md 구현 중 변경 27 (자)). 치지직 호출이 한 곳이라는 것을 고정한다
+// (DO는 바깥 요청을 하지 않는다, §3). 메서드 호출 deps.fetch(·속성 fetch:는 세지 않는다
+export const OUTBOUND_ALLOWLIST = { 'src/http/auth.ts': 1 };
+const GLOBAL_FETCH = /(?<![\w$.])fetch\s*\(|\b(?:globalThis|self)\s*\.\s*fetch\b|\b(?:globalThis|self)\s*\[/g;
+
 // src/**의 raw 토큰 수 = RAW_ALLOWLIST. all이면(checkWorker) 목록의 파일이 모두 있어야 한다(지운 파일의 낡은 항목)
 export function checkRawAllowlist(files, { all = false } = {}) {
   const errs = [];
@@ -566,6 +574,21 @@ export function checkRawAllowlist(files, { all = false } = {}) {
     if (got !== want) errs.push(`${rel}: raw 토큰 ${got}개 ≠ 허용 목록 ${want}개(이스케이프 없는 삽입은 scripts/ci/worker-config.mjs RAW_ALLOWLIST에 파일과 수를 함께 적는다. 주석·문자열·별칭도 센다)`);
   }
   if (all) for (const rel of Object.keys(RAW_ALLOWLIST)) if (!seen.has(rel)) errs.push(`${rel}: RAW_ALLOWLIST에 있는데 파일이 없다`);
+  return errs;
+}
+
+// src/** 원문(주석 포함)의 전역 fetch 사용 수 = OUTBOUND_ALLOWLIST. all이면 목록의 파일이 모두 있어야 한다
+export function checkOutbound(files, { all = false } = {}) {
+  const errs = [];
+  const seen = new Set();
+  for (const { rel, text } of files) {
+    if (!rel.startsWith('src/')) continue;
+    seen.add(rel);
+    const got = (text.match(GLOBAL_FETCH) ?? []).length;
+    const want = Object.hasOwn(OUTBOUND_ALLOWLIST, rel) ? OUTBOUND_ALLOWLIST[rel] : 0;
+    if (got !== want) errs.push(`${rel}: 전역 fetch 사용 ${got}개 ≠ 허용 목록 ${want}개(바깥 요청은 scripts/ci/worker-config.mjs OUTBOUND_ALLOWLIST의 파일·횟수만. 주석도 센다)`);
+  }
+  if (all) for (const rel of Object.keys(OUTBOUND_ALLOWLIST)) if (!seen.has(rel)) errs.push(`${rel}: OUTBOUND_ALLOWLIST에 있는데 파일이 없다`);
   return errs;
 }
 
@@ -641,6 +664,7 @@ export function checkWorker(root) {
   errs.push(...checkCorePurity(files).map((m) => `${WORKER_DIR}/${m}`));
   errs.push(...checkStorePurity(files).map((m) => `${WORKER_DIR}/${m}`));
   errs.push(...checkRawAllowlist(files, { all: true }).map((m) => `${WORKER_DIR}/${m}`));
+  errs.push(...checkOutbound(files, { all: true }).map((m) => `${WORKER_DIR}/${m}`));
   return errs;
 }
 

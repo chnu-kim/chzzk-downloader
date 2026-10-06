@@ -120,6 +120,7 @@ node worker/scripts/channel-id-check.mjs <본인 VOD 주소> <본인 클립 주�
 ## 작업 규칙
 
 - 브랜치에서 설계 단계마다 커밋한다(코어는 core.md §10, 앱은 app.md §15). 메시지는 Conventional Commit `type: 한국어 요약`. 단계별 stacked PR이고, PR을 만든 뒤 글로벌 지침의 Codex 리뷰를 따른다.
+- **동시 세션**: Claude 세션 여러 개가 같은 작업 트리를 쓰면 다른 세션이 브랜치를 바꿔 커밋이 엉뚱한 브랜치에 들어간다. 커밋·push 전에 `git status -sb`로 브랜치를 확인하고, 다른 세션이 돌고 있으면 `git worktree add`로 따로 작업한다.
 - **단계(체크박스)를 끝낼 때마다 `docs/ROADMAP.md`의 "현재 위치"와 체크리스트를 갱신한다**(세션이 요약돼도 이 파일이 남는다).
 - 옛 Go 코드는 삭제됐다(§10-16). 행동 기록은 `docs/spec/core-behavior.md`다.
 - 코드 주석은 한국어, 식별자는 영어(설계 문서의 이름을 따른다).

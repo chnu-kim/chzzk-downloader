@@ -186,3 +186,32 @@ test('선언: 워크플로가 쓰는 환경마다 설정·배포 정책 선언�
   for (const [n, s] of Object.entries(decl)) assert.ok(s.apply, `${n}에 apply가 없다`);
   assert.equal(decl.fork_pr_contributor_approval.expect.approval_policy, 'all_external_contributors');
 });
+
+test('main --check: allowed_actions가 all로 돌아가 selected-actions가 409면 읽기 실패(2)가 아니라 불일치(1, settings_mismatch)', () => {
+  const root = mkdtempSync(join(tmpdir(), 'rs-'));
+  try {
+    mkdirSync(join(root, 'scripts/ci'), { recursive: true });
+    const settings = {
+      perm: { endpoint: 'repos/{repo}/actions/permissions', expect: { allowed_actions: 'selected' } },
+      sel: { endpoint: 'repos/{repo}/actions/permissions/selected-actions', expect: { verified_allowed: false } },
+    };
+    writeFileSync(join(root, 'scripts/ci/repo-settings.json'), JSON.stringify({ settings }));
+    const out = join(root, 'out');
+    writeFileSync(out, '');
+    const gh = (args) => {
+      const p = args[1];
+      if (p === 'repos/o/r/actions/permissions') return JSON.stringify({ allowed_actions: 'all' });
+      if (p === 'repos/o/r/actions/permissions/selected-actions') {
+        const e = new Error('gh api → exit 1: gh: All actions and workflows are allowed on this repository (Conflict)');
+        e.stderr = 'gh: All actions and workflows are allowed on this repository (Conflict)';
+        throw e;
+      }
+      if (p.startsWith('repos/o/r/rulesets?')) return '[]';
+      throw new Error(`예상 밖: ${p}`);
+    };
+    assert.equal(main(['--check'], { GITHUB_REPOSITORY: 'o/r', GITHUB_OUTPUT: out }, gh, root, () => {}), 1);
+    assert.equal(readFileSync(out, 'utf8'), 'kinds=settings_mismatch\n');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

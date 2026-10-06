@@ -83,6 +83,7 @@ export function declaredRulesets(root = ROOT) {
 export const rulesetBody = (decl) => Object.fromEntries(['name', ...RULESET_FIELDS].filter((f) => Object.hasOwn(decl, f)).map((f) => [f, decl[f]]));
 
 const api = (gh, endpoint) => JSON.parse(gh(['api', endpoint]));
+const isConflict = (e) => /HTTP 409|\(Conflict\)/.test(`${e.message}\n${e.stderr ?? ''}`);
 const fill = (endpoint, repo) => endpoint.replaceAll('{repo}', repo);
 
 // 항목 하나: 실제 응답(원본) → {problems, calls}. calls: [{method, endpoint, body?, desc}] 또는 {manual: true, desc}
@@ -143,7 +144,18 @@ function readRulesets(repo, decls, gh) {
 // 선언·실제 → 문제 목록(문자열). gh(args) → stdout. 읽기 실패는 예외.
 export function check({ repo, settings, rulesets, gh }) {
   const problems = [];
-  for (const [name, s] of Object.entries(settings)) problems.push(...planEntry(name, s, repo, api(gh, fill(s.endpoint, repo))).problems);
+  for (const [name, s] of Object.entries(settings)) {
+    let actual;
+    try {
+      actual = api(gh, fill(s.endpoint, repo));
+    } catch (e) {
+      // 409: 설정 상태 때문에 읽을 수 없다(allowed_actions가 all이면 selected-actions가 409). 권한 문제가 아니라 불일치다.
+      if (!isConflict(e)) throw e;
+      problems.push(`${name}: 읽을 수 없는 상태다(409, 앞 설정이 선언과 다르다): ${e.message.split('\n')[0]}`);
+      continue;
+    }
+    problems.push(...planEntry(name, s, repo, actual).problems);
+  }
   const { list, full } = readRulesets(repo, rulesets, gh);
   problems.push(...planRulesets(repo, rulesets, list, full).problems);
   return problems;

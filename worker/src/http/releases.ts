@@ -17,7 +17,7 @@ export const SUMS_MAX = 65_536;
 export const BODY_CACHE_CONTROL = "private, no-store, no-transform";
 
 /** 이 요청의 R2 호출 1회: SHA256SUMS. 없으면 null(업로드 중일 수 있어 캐시하지 않는다), 해석 실패·64KiB 초과는 null을 캐시한다 */
-async function loadSums(bucket: ReleaseBucket, version: string): Promise<ReadonlyMap<string, string> | null> {
+export async function loadSums(bucket: ReleaseBucket, version: string): Promise<ReadonlyMap<string, string> | null> {
   const cached = SUMS_CACHE.get(version);
   if (cached !== undefined) return cached;
   const obj = await bucket.get(sumsKey(version), null);

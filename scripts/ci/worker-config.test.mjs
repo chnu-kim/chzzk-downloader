@@ -19,6 +19,7 @@ import {
   checkReleaseSources,
   DELETE_ALLOWLIST,
   checkDist,
+  checkHtmlSources,
   checkPackage,
   checkRawAllowlist,
   checkSources,
@@ -26,6 +27,7 @@ import {
   checkWorker,
   checkSentinel,
   checkWrangler,
+  decodeUnicodeEscapes,
   configKeys,
   DEPLOY_MAIN,
   DEPLOY_PKG_NAME,
@@ -534,6 +536,79 @@ test('씨앗: raw 허용 목록(파일별 정확한 토큰 수)', () => {
   const routes = read('src/routes.ts');
   assert.ok(checkWorker(copy({ 'worker/src/routes.ts': `${routes}\nraw("x");\n` })).some((e) => e.includes('src/routes.ts') && e.includes('raw')));
   assert.ok(checkWorker(copy({ 'worker/src/core/html.ts': null })).some((e) => e.includes('RAW_ALLOWLIST')));
+});
+
+test('씨앗: html 호출형·인라인 스크립트·스타일(worker.md 구현 중 변경 39, cicd.md 99)', () => {
+  const check = (rel, text) => checkHtmlSources([{ rel, text }]);
+  const fails = [
+    'html(["<b>"] as any)',
+    'html([...a], x)',
+    '\\u0068tml(["<b>"])',
+    'import { html/**/as h } from "../core/html";',
+    'import { html /* x */ as h } from "../core/html";',
+    'import { html // x\nas h } from "../core/html";',
+    'html?.([])',
+    'html.call(null, [])',
+    'html .apply(null,[[]])',
+    'import { html as h } from "../core/html";',
+    'const h = html;',
+    'const h = html\nh([])',
+    'f(html)',
+    '[html]',
+    'export { html };',
+    '({ html })',
+    'const o = { x: html }',
+    'html`<script>x</script>`',
+    'html`<style>a{}</style>`',
+    'html`<p style="x">`',
+    // 낱말 수 방식(cicd.md 99 (가)): 모양 목록이 놓치던 것
+    'const t = ok ? html : other;',
+    'const f = () => html\nf()',
+    'export default html\n',
+    'import * as H from "../core/html";\nexport const p = H.html(["<b>"], v);',
+    'H.html.call(null, [])',
+    'H["html"]([])',
+    'export * from "../core/html";',
+    'export { html } from "../core/html";',
+    'const { html: h } = H; h([]);',
+    'import * as X from "./other";',
+    'html`<p style=color:red>`',
+    '// 모든 값은 html 태그드 템플릿을 거친다(html`…`).',
+  ];
+  for (const text of fails) assert.notDeepEqual(check('src/http/x.ts', text), [], text);
+  const passes = [
+    'const d = html`<!doctype html><html lang="ko"><head></head></html>`;',
+    'h.set("Content-Type", "text/html; charset=utf-8");',
+    'import { html, renderHtml, type SafeHtml } from "../core/html";',
+    '// 모든 값은 HTML 태그드 템플릿을 거친다(html`…`).',
+    'return html`<p>${x}</p>`;',
+    'const css = "ul { list-style: none; }";',
+    'import type { SafeHtml } from "../core/html";',
+    'import {\n  html,\n  renderHtml,\n} from "../core/html";',
+  ];
+  for (const text of passes) assert.deepEqual(check('src/http/x.ts', text), [], text);
+  // 유니코드 이스케이프로 낱말을 가린 우회(공통 전처리 decodeUnicodeEscapes)
+  assert.notDeepEqual(checkOutbound([{ rel: 'src/http/x.ts', text: 'fe\\u0074ch(u)' }]), []);
+  assert.notDeepEqual(checkOutbound([{ rel: 'src/http/x.ts', text: '\\u{66}etch(u)' }]), []);
+  assert.notDeepEqual(checkReleaseSources([{ rel: 'src/http/x.ts', text: 'b.\\u0070ut(k)' }]), []);
+  assert.notDeepEqual(checkReleaseSources([{ rel: 'src/http/x.ts', text: 'b.l\\u0069st()' }]), []);
+  assert.notDeepEqual(checkReleaseSources([{ rel: 'src/http/x.ts', text: 'm.d\\u0065lete(k)' }]), []);
+  assert.equal(decodeUnicodeEscapes('a\\u0041\\u{1F600}\\u{110000}'), 'aA\u{1F600}\\u{110000}');
+  // SafeHtml mint는 html·raw 둘뿐
+  assert.deepEqual(check('src/core/html.ts', 'a = new SafeHtml(K, s); b = new SafeHtml(K, t);'), []);
+  assert.notDeepEqual(check('src/core/html.ts', 'a = new SafeHtml(K, s); b = new SafeHtml(K, t); c = new SafeHtml(K, u);'), []);
+  assert.notDeepEqual(check('src/core/html.ts', 'a = new SafeHtml(K, s);'), []);
+  assert.deepEqual(check('src/core/html.ts', read('src/core/html.ts')), []);
+  // 정의 파일은 호출형 검사 밖(인라인 검사는 받는다), src 밖(테스트)은 어느 쪽도 보지 않는다
+  assert.deepEqual(check('src/core/html.ts', 'export function html(strings, ...values) {} new SafeHtml(K, a); new SafeHtml(K, b);'), []);
+  assert.notDeepEqual(check('src/core/html.ts', 'const s = "<script>";'), []);
+  assert.deepEqual(check('test/x.ts', 'html([]); const s = "<script>";'), []);
+  // 메시지는 파일과 이유를 담는다
+  assert.ok(check('src/http/x.ts', 'html([])').some((e) => e.startsWith('src/http/x.ts:') && e.includes('낱말 html 1개')));
+  assert.ok(check('src/http/x.ts', 'import { html as h } from "../core/html";').some((e) => e.includes('html as')));
+  // 사본: 새 파일에 호출형이나 인라인 스크립트를 더하면 checkWorker가 실패
+  assert.ok(checkWorker(copy({ 'worker/src/http/x.ts': 'export const y = html(["<b>"]);\n' })).some((e) => e.includes('src/http/x.ts') && e.includes('낱말 html')));
+  assert.ok(checkWorker(copy({ 'worker/src/http/x.ts': 'export const y = "<script>";\n' })).some((e) => e.includes('src/http/x.ts') && e.includes('<script')));
 });
 
 test('씨앗: 바깥 요청(낱말 fetch)은 src/http/auth.ts 한 곳, 전역 객체·동적 실행·소켓은 0', () => {

@@ -1,11 +1,12 @@
 // HTTP 흐름 테스트 도우미(테스트 파일이 아니다). 시계·쿠키 항아리·앱 클라이언트·로그인 전 과정.
 // 흐름 테스트는 모두 redirect: "manual"로 303을 직접 따라간다(exports.default.fetch는 기본으로 따라간다, 구현 중 변경 26 (나)).
+import { runInDurableObject } from "cloudflare:test";
 import { env, exports } from "cloudflare:workers";
 import { expect, vi } from "vitest";
 import { newSecret, sha256B64url } from "../../src/core/token";
 import worker from "../../src/index";
 import { AUTH_STORE_NAME } from "../../src/store/AuthStore";
-import type { FakeChzzk } from "../fake-chzzk.mjs";
+import type { FakeAccountKey, FakeChzzk } from "../fake-chzzk.mjs";
 
 export const ORIGIN = "http://localhost:8787";
 export const HOUR = 3_600_000;
@@ -32,6 +33,13 @@ export const viaEnv =
     worker.fetch(new Request(u, i) as Parameters<typeof worker.fetch>[0], { ...env, ...patch } as Env);
 
 export const store = () => env.AUTH.get(env.AUTH.idFromName(AUTH_STORE_NAME));
+
+/** 한 파일의 테스트는 같은 DO 저장소를 쓴다: 세션·허용목록·거부 기록을 세어 보는 테스트는 먼저 비운다(흐름 표는 건드리지 않는다) */
+export async function resetStore(): Promise<void> {
+  await runInDurableObject(store(), (i) => {
+    for (const table of ["refresh", "session", "allowlist", "denied", "audit"]) i.db.run(`DELETE FROM ${table}`);
+  });
+}
 
 type HeaderPatch = Record<string, string | null>;
 
@@ -75,10 +83,10 @@ export class Browser {
     return this.absorb(await this.send(url, { method: "GET", headers: merge(this.cookieHeader(), headers) }));
   }
 
-  /** form 빈 본문. 기본 헤더: 맞는 Origin·Sec-Fetch-Site(null을 주면 그 헤더를 뺀다) */
-  async post(path: string, headers?: HeaderPatch): Promise<Response> {
+  /** form POST(본문 기본은 빈 문자열). 기본 헤더: 맞는 Origin·Sec-Fetch-Site·form Content-Type(null을 주면 그 헤더를 뺀다) */
+  async post(path: string, headers?: HeaderPatch, body: string | Uint8Array = ""): Promise<Response> {
     const base = { ...this.cookieHeader(), Origin: this.origin, "Sec-Fetch-Site": "same-origin", "Content-Type": "application/x-www-form-urlencoded" };
-    return this.absorb(await this.send(new URL(path, this.origin).toString(), { method: "POST", headers: merge(base, headers), body: "" }));
+    return this.absorb(await this.send(new URL(path, this.origin).toString(), { method: "POST", headers: merge(base, headers), body }));
   }
 
   /** [계속]·web start의 303 Location을 가짜 치지직에 직접 보내고(Worker는 인가 주소를 부르지 않는다) 콜백 URL을 돌려준다 */
@@ -169,3 +177,19 @@ export async function appFlow(o: { fake: FakeChzzk; browser?: Browser; app?: App
 
 /** 이 파일 공통 규약의 afterEach에서 쓴다 */
 export const allowedChannel = (channelId: string, by: string) => store().allow(channelId, "", by, Date.now());
+
+/** application/x-www-form-urlencoded 본문 */
+export const formBody = (f: Record<string, string>): string => new URLSearchParams(f).toString();
+
+/** 페이지의 첫 csrf 숨은 입력 값 */
+export const csrfIn = (t: string): string | null => /name="csrf" value="([A-Za-z0-9_-]{43})"/.exec(t)?.[1] ?? null;
+
+/** 웹 로그인 전 과정(승인): start → 가짜 치지직 → 콜백. 허용되지 않은 계정이면 세션 쿠키가 없다 */
+export async function webLoginHttp(fake: FakeChzzk, account: FakeAccountKey, browser = new Browser()): Promise<{ browser: Browser; callback: Response }> {
+  fake.state.account = account;
+  fake.state.authorize = "approve";
+  const start = await browser.post("/auth/web/start");
+  const callbackUrl = await browser.authorize(start, fake);
+  const callback = await browser.get(callbackUrl);
+  return { browser, callback };
+}

@@ -6,7 +6,7 @@
 //
 // 행: id, path("{version}" = 이번 태그 = latest.json의 version), cred("ci" = CI 토큰, "none" = Authorization 없음,
 // "garbage" = CI 토큰도 앱 토큰도 아닌 Bearer), 기대: status(숫자) 또는 notOk(2xx가 아니면 된다), body "latest"(latest.json 바이트 그대로),
-// code(오류 본문 {"code"}). deploy: true인 행만 release.mjs가 배포 뒤에 친다(health는 따로, 배포 반영을 기다린다).
+// code(오류 본문 {"code"}), location(Location 헤더). deploy: true인 행만 release.mjs가 배포 뒤에 친다(health는 따로, 배포 반영을 기다린다).
 // deploy: false 행은 가짜 Worker가 진짜와 같은 규칙인지 보는 대조 행이다.
 
 /** CI 토큰도 앱 토큰(cda_)도 아닌 Bearer 값 */
@@ -16,8 +16,9 @@ export const DEPLOY_CONTRACT = [
   { id: "update-latest", path: "/update/0.0.0", cred: "ci", status: 200, body: "latest", deploy: true },
   { id: "update-current", path: "/update/{version}", cred: "ci", status: 204, deploy: true },
   { id: "releases-latest-ci", path: "/releases/latest.json", cred: "ci", status: 200, body: "latest", deploy: true },
-  // /admin은 W6 전에는 경로가 없어 404, W6부터 로그인으로 보내는 303이다. 어느 쪽이든 2xx가 아니면 된다
-  { id: "neg-admin", path: "/admin", cred: "ci", notOk: true, deploy: true },
+  // /admin은 W6부터 세션 없음 = 303 /(CI 토큰은 웹 경로에서 쓰레기 Bearer와 같다, 구현 중 변경 32 (다)).
+  // release.mjs judgeCheck는 W6 전 Worker의 404도 통과로 보지만(2xx가 아니면 된다), 이 표는 지금 Worker의 답을 고정한다
+  { id: "neg-admin", path: "/admin", cred: "ci", status: 303, location: "/", deploy: true },
   { id: "neg-latest-anon", path: "/releases/latest.json", cred: "none", status: 401, code: "invalid_token", deploy: true },
   { id: "neg-update-garbage", path: "/update/0.0.0", cred: "garbage", status: 401, code: "invalid_token", deploy: true },
   { id: "neg-me-ci", path: "/api/me", cred: "ci", status: 401, code: "invalid_token", deploy: true },

@@ -50,11 +50,12 @@ export function audit(db: Db, action: AuditAction, actor: string, target: string
   db.run("INSERT INTO audit (at, actor, action, target) VALUES (?, ?, ?, ?)", now, actor, action, target);
 }
 
+/** 허용(upsert). 빈 메모는 있던 메모를 그대로 둔다(관리 화면 [추가]를 메모 없이 다시 눌러도 지워지지 않는다, worker.md 구현 중 변경 38 (카)) */
 export function allow(db: Db, channelId: string, note: string, by: string, now: number): AllowResult {
   if (!CHANNEL_ID.test(channelId)) return { ok: false, code: "bad_channel_id" };
   const n = clip(note, NOTE_MAX);
   db.run(
-    "INSERT INTO allowlist (channel_id, channel_name, owner_channel_id, note, added_by, added_at) VALUES (?, (SELECT channel_name FROM denied WHERE channel_id = ?), NULL, ?, ?, ?) ON CONFLICT(channel_id) DO UPDATE SET note = excluded.note",
+    "INSERT INTO allowlist (channel_id, channel_name, owner_channel_id, note, added_by, added_at) VALUES (?, (SELECT channel_name FROM denied WHERE channel_id = ?), NULL, ?, ?, ?) ON CONFLICT(channel_id) DO UPDATE SET note = COALESCE(excluded.note, allowlist.note)",
     channelId,
     channelId,
     n === "" ? null : n,
@@ -68,7 +69,7 @@ export function allow(db: Db, channelId: string, note: string, by: string, now: 
 
 /**
  * 거부 기록에서 [허용]. 기록이 없으면 false. 이미 허용목록에 있는 채널(부트스트랩 때 거부된 경우)은 행을 그대로 두고
- * 거부 기록만 지운다: allow의 upsert는 메모를 덮어써 관리자가 적은 메모가 사라진다
+ * 거부 기록만 지운다(행의 이름·추가한 사람·시각을 바꾸지 않는다)
  */
 export function allowDenied(db: Db, channelId: string, by: string, now: number): boolean {
   if (db.first("SELECT 1 AS x FROM denied WHERE channel_id = ?", channelId) === null) return false;
@@ -81,11 +82,15 @@ export function allowDenied(db: Db, channelId: string, by: string, now: number):
   return true;
 }
 
-/** 허용에서 뺀다: 행 삭제 + 그 채널의 세션 전부 revoked(disallowed). 관리자는 행이 있어도 409(is_admin)이고 아무것도 쓰지 않는다 */
+/**
+ * 허용에서 뺀다: 행 삭제 + 그 채널의 세션 전부 revoked(disallowed). 관리자는 행이 있어도 409(is_admin)이고 아무것도 쓰지 않는다.
+ * 허용목록에 없는 채널은 not_found이고 아무것도 쓰지 않는다(일어나지 않은 빼기를 감사에 남기지 않는다, worker.md 구현 중 변경 38 (카)).
+ * 세션은 허용(또는 관리자)일 때만 생기고 매 요청 허용을 다시 보므로, 행이 없는 채널의 세션은 이미 쓸 수 없다
+ */
 export function disallow(db: Db, channelId: string, by: string, admins: readonly string[], now: number): DisallowResult {
   if (!CHANNEL_ID.test(channelId)) return { ok: false, code: "bad_channel_id" };
   if (admins.includes(channelId)) return { ok: false, code: "is_admin" };
-  db.run("DELETE FROM allowlist WHERE channel_id = ?", channelId);
+  if (db.run("DELETE FROM allowlist WHERE channel_id = ?", channelId) === 0) return { ok: false, code: "not_found" };
   db.run("UPDATE session SET status = 'revoked', revoked_at = ?, revoked_why = 'disallowed' WHERE channel_id = ? AND status <> 'revoked'", now, channelId);
   audit(db, "disallow", by, channelId, now);
   return { ok: true };

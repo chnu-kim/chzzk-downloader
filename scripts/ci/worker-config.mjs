@@ -36,6 +36,9 @@
 //   store 순수성    src/**에서 sql.exec는 src/store/db.ts에만, transactionSync(async …)는 어디에도 없다. src/store/** 중
 //                   AuthStore.ts가 아닌 파일의 원문에 async·await·cloudflare:·시각 함수(core와 같은 네 모양)가 없다. worker.md 구현 중 변경 21.
 //   raw 허용 목록   src/**의 raw 식별자 토큰 수(주석·문자열·별칭 포함)가 RAW_ALLOWLIST(파일별 정확한 수)와 같다(목록 밖 파일은 0).
+//   html 호출형·인라인  src/**(src/core/html.ts 밖)의 원문(주석 포함)에서 낱말 html은 태그드 템플릿(html`)·core/html 이름 import
+//                   선언·<html·</html·doctype html·text/html에만 있고(낱말 수 0, html as 별칭 없음), src/** 전체에 import * as·
+//                   export *·<script·<style·style= 속성(따옴표 없는 값 포함)이 없다(CSP, 스크립트 0개). worker.md 구현 중 변경 39, cicd.md 99.
 //   바깥 요청       src/**의 원문(주석 포함)에서 낱말 fetch 수(deps.fetch·속성 키 fetch:는 빼고)가 OUTBOUND_ALLOWLIST와 같다
 //                   (src/http/auth.ts 1개, 목록 밖 파일은 0). globalThis·self·Reflect·Function·eval·동적 import(·WebSocket·
 //                   cloudflare:sockets는 src/** 어디에도 없다. worker.md 구현 중 변경 27 (자)·28, cicd.md 92·93.
@@ -596,6 +599,14 @@ export function checkStorePurity(files) {
   return errs;
 }
 
+// 낱말 검사 공통 전처리: 유니코드 이스케이프 \uXXXX·\u{…}를 디코드한 텍스트로 센다(fe\u0074ch 같은 우회, cicd.md 99 (가)).
+// 잘못된 코드 포인트(> 10FFFF)는 그대로 둔다
+export const decodeUnicodeEscapes = (text) =>
+  text.replace(/\\u(?:\{([0-9a-fA-F]{1,8})\}|([0-9a-fA-F]{4}))/g, (m, a, b) => {
+    const cp = Number.parseInt(a ?? b, 16);
+    return cp <= 0x10ffff ? String.fromCodePoint(cp) : m;
+  });
+
 const RAW_TOKEN = /(?<![\w$])raw(?![\w$])/g;
 
 // 바깥 요청(전역 fetch)은 이 파일·이 횟수만(worker.md 구현 중 변경 27 (자)·28). 치지직 호출이 한 곳이라는 것을 고정한다
@@ -624,8 +635,9 @@ export const outboundCount = (text) => (text.match(FETCH_WORD) ?? []).length - (
 export function checkRawAllowlist(files, { all = false } = {}) {
   const errs = [];
   const seen = new Set();
-  for (const { rel, text } of files) {
+  for (const { rel, text: rawText } of files) {
     if (!rel.startsWith('src/')) continue;
+    const text = decodeUnicodeEscapes(rawText);
     seen.add(rel);
     const got = (text.match(RAW_TOKEN) ?? []).length;
     const want = Object.hasOwn(RAW_ALLOWLIST, rel) ? RAW_ALLOWLIST[rel] : 0;
@@ -640,8 +652,9 @@ export function checkRawAllowlist(files, { all = false } = {}) {
 export function checkOutbound(files, { all = false } = {}) {
   const errs = [];
   const seen = new Set();
-  for (const { rel, text } of files) {
+  for (const { rel, text: rawText } of files) {
     if (!rel.startsWith('src/')) continue;
+    const text = decodeUnicodeEscapes(rawText);
     seen.add(rel);
     const got = outboundCount(text);
     const want = Object.hasOwn(OUTBOUND_ALLOWLIST, rel) ? OUTBOUND_ALLOWLIST[rel] : 0;
@@ -671,8 +684,9 @@ const count = (re, text) => (text.match(re) ?? []).length;
 export function checkReleaseSources(files, { all = false } = {}) {
   const errs = [];
   const seen = new Set();
-  for (const { rel, text } of files) {
+  for (const { rel, text: rawText } of files) {
     if (!rel.startsWith('src/')) continue;
+    const text = decodeUnicodeEscapes(rawText);
     seen.add(rel);
     if (!CI_TOKEN_IDENT_FILES.includes(rel) && count(word('ciVerifyToken'), text) > 0) errs.push(`${rel}: 낱말 ciVerifyToken은 ${CI_TOKEN_IDENT_FILES.join('·')}에서만 쓴다(CI 토큰 값은 releaseAuth 한 곳에서 읽는다, 주석에도 쓰지 않는다)`);
     if (!RELEASE_AUTH_FILES.includes(rel) && count(word('releaseAuth'), text) > 0) errs.push(`${rel}: 낱말 releaseAuth는 ${RELEASE_AUTH_FILES.join('·')}에서만 쓴다(releases.ts·update.ts만 부른다, 주석에도 쓰지 않는다)`);
@@ -686,6 +700,57 @@ export function checkReleaseSources(files, { all = false } = {}) {
     if (RELEASE_FILES.includes(rel) && count(new RegExp(word('(?:Location|redirect)').source, 'gi'), text) > 0) errs.push(`${rel}: 릴리스 경로는 리다이렉트를 만들지 않는다(Location·redirect를 주석에도 쓰지 않는다, 3xx 0건, worker.md §9.2)`);
   }
   if (all) for (const rel of new Set([...Object.keys(R2_ALLOWLIST), ...RELEASE_FILES, ...Object.keys(DELETE_ALLOWLIST)])) if (!seen.has(rel)) errs.push(`${rel}: 릴리스 읽기 검사 목록에 있는데 파일이 없다`);
+  return errs;
+}
+
+// html 호출형·인라인 금지(W6, worker.md 구현 중 변경 39·cicd.md 99). 이스케이프는 html 태그드 템플릿 하나로만 만든다: 호출형은
+// 정적 조각(strings) 자리에 임의 배열을 넘길 수 있어 이스케이프 보장이 깨진다. 모양 목록이 아니라 낱말 수로 본다(cicd.md 93·95와 같은
+// 방식): src/core/html.ts 밖의 원문(주석·문자열 포함)에서 낱말 html은 아래 넷을 지운 뒤 0개여야 한다. 그래서 값으로 넘김(삼항·
+// 화살표 반환·export default·구조 분해)·속성 접근(H.html)·대괄호(H["html"])·재수출 경로(from ".../html")도 모두 걸린다.
+//   (가) core/html의 이름 import 선언 import { … } from "…/html"(별칭 html as는 'orig' 규칙이 원문에서 따로 막는다)
+//   (나) 바로 뒤가 백틱인 html(태그드 템플릿)  (다) <html·</html·doctype html(문서 뼈대)  (라) text/html(Content-Type)
+// 모듈 전체를 객체로 받는 import * as·export *는 src/** 어디에도 없다(네임스페이스로 html을 꺼내는 길).
+// 한계: 문자열을 이어 붙여 만든 속성 이름(obj["ht" + "ml"])은 못 잡는다(93 (라)와 같이 리뷰 범위).
+const IMPORT_HTML = /import\s*(?:type\s+)?\{[^}]*\}\s*from\s*["'][^"']*\/html["']\s*;?/g;
+const HTML_WORD = /(?<![\w$])html(?![\w$])/g;
+const HTML_ALLOWED = [/(?<![\w$])html(?=\s*`)/g, /<\/?html(?![\w$])/gi, /doctype\s+html(?![\w$])/gi, /text\/html(?![\w$])/gi];
+export const HTML_ALIAS = /(?<![\w$.])html(?:\s|\/\*[\s\S]*?\*\/|\/\/[^\n]*\n)+as\b/;
+export const HTML_MODULE_FORBIDDEN = [
+  [/(?<![\w$.])import\s*\*\s*as\b/, 'import * as(네임스페이스로 html을 꺼내는 길)'],
+  [/(?<![\w$.])export\s*\*/, 'export *(네임스페이스 재수출)'],
+];
+export const HTML_INLINE_FORBIDDEN = [
+  [/<script\b/i, '<script(스크립트 0개, CSP)'],
+  [/<style\b/i, "<style(CSP style-src 'self')"],
+  [/\bstyle\s*=/i, "style 속성(따옴표 없는 값 포함, CSP style-src 'self')"],
+];
+
+/** 태그드 템플릿·이름 import·문서 뼈대·text/html을 지운 뒤 남은 낱말 html 수 */
+export function htmlWordCount(text) {
+  let t = text.replace(IMPORT_HTML, ' ');
+  for (const re of HTML_ALLOWED) t = t.replace(re, ' ');
+  return (t.match(HTML_WORD) ?? []).length;
+}
+
+// files: [{ rel(worker/ 기준), text }]
+export function checkHtmlSources(files) {
+  const errs = [];
+  const msg = (rel, why) => `${rel}: ${why}를 쓰지 않는다(html은 태그드 템플릿으로만, worker.md 구현 중 변경 39)`;
+  for (const { rel, text: rawText } of files) {
+    if (!rel.startsWith('src/')) continue;
+    const text = decodeUnicodeEscapes(rawText);
+    for (const [re, why] of HTML_INLINE_FORBIDDEN) if (re.test(text)) errs.push(msg(rel, why));
+    for (const [re, why] of HTML_MODULE_FORBIDDEN) if (re.test(text)) errs.push(msg(rel, why));
+    if (rel === 'src/core/html.ts') {
+      // SafeHtml을 만드는 곳은 html·raw 둘뿐이다(세 번째 mint는 이스케이프 보장을 깬다)
+      const mints = (text.match(/\bnew\s+SafeHtml\s*\(/g) ?? []).length;
+      if (mints !== 2) errs.push(`${rel}: new SafeHtml( ${mints}개 ≠ 2개(html·raw만 SafeHtml을 만든다, worker.md 구현 중 변경 39)`);
+      continue;
+    }
+    if (HTML_ALIAS.test(text)) errs.push(msg(rel, 'html 별칭 import(html as)'));
+    const n = htmlWordCount(text);
+    if (n > 0) errs.push(msg(rel, `태그드 템플릿 밖의 낱말 html ${n}개(호출형·값으로 넘김·속성 접근·재수출·주석, 주석에서는 "HTML"로 쓴다)`));
+  }
   return errs;
 }
 
@@ -780,6 +845,7 @@ export function checkWorker(root) {
   errs.push(...checkCorePurity(files).map((m) => `${WORKER_DIR}/${m}`));
   errs.push(...checkStorePurity(files).map((m) => `${WORKER_DIR}/${m}`));
   errs.push(...checkRawAllowlist(files, { all: true }).map((m) => `${WORKER_DIR}/${m}`));
+  errs.push(...checkHtmlSources(files).map((m) => `${WORKER_DIR}/${m}`));
   errs.push(...checkOutbound(files, { all: true }).map((m) => `${WORKER_DIR}/${m}`));
   errs.push(...checkReleaseSources(files, { all: true }).map((m) => `${WORKER_DIR}/${m}`));
   return errs;

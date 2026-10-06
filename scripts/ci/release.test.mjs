@@ -434,6 +434,7 @@ test('배포 뒤 검사 계약: WORKER_CHECKS = 표의 deploy 행, 가짜 Worker
       const name = `${row.id} ${row.cred} ${row.path}`;
       if (row.notOk) assert.ok(r.status < 200 || r.status > 299, name);
       else assert.equal(r.status, row.status, name);
+      if (row.location !== undefined) assert.equal(r.headers.get('location'), row.location, name);
       if (row.body === 'latest') assert.equal(body.toString('utf8'), latest, name);
       if (row.code !== undefined) assert.deepEqual(JSON.parse(body.toString('utf8')), { code: row.code }, name);
       if (row.status === 204) assert.equal(body.length, 0, name);

@@ -8,6 +8,7 @@ export interface ContractRow {
   readonly notOk?: true;
   readonly body?: "latest";
   readonly code?: string;
+  readonly location?: string;
   readonly deploy: boolean;
 }
 export declare const GARBAGE_BEARER: "not-a-token";

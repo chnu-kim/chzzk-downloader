@@ -39,7 +39,7 @@ describe("matchPattern: /** 패턴(나머지 전부, 디코드하지 않는다)"
 });
 
 describe("경로 표", () => {
-  it("W5까지의 14쌍이 정확히 이 순서다", () => {
+  it("W6까지의 24쌍이 정확히 이 순서다", () => {
     expect(ROUTES.map((r) => `${r.method} ${r.pattern}`)).toEqual([
       "GET /health",
       "POST /auth/start",
@@ -55,6 +55,16 @@ describe("경로 표", () => {
       "GET /update/:current",
       "GET /releases/**",
       "HEAD /releases/**",
+      "GET /",
+      "GET /assets/:file",
+      "POST /auth/web/logout",
+      "POST /me/sessions/:id/revoke",
+      "GET /admin",
+      "POST /admin/allow",
+      "POST /admin/disallow",
+      "POST /admin/sessions/:id/revoke",
+      "POST /admin/denied/:channelId/allow",
+      "POST /admin/denied/:channelId/dismiss",
     ]);
   });
 
@@ -68,6 +78,11 @@ describe("경로 표", () => {
     expect(auth("GET", "/update/:current")).toBe("update");
     expect(auth("GET", "/releases/**")).toBe("release");
     expect(auth("HEAD", "/releases/**")).toBe("release");
+    expect(auth("GET", "/")).toBe("web_optional");
+    expect(auth("GET", "/assets/:file")).toBe("none");
+    expect(auth("POST", "/auth/web/logout")).toBe("web");
+    expect(auth("POST", "/me/sessions/:id/revoke")).toBe("web");
+    for (const r of ROUTES.filter((x) => x.pattern.startsWith("/admin"))) expect([r.method, r.pattern, r.auth]).toEqual([r.method, r.pattern, "admin"]);
   });
 });
 
@@ -81,6 +96,19 @@ describe("404·405", () => {
 
   it("끝 조각이 비면 404 JSON", async () => {
     const res = await exports.default.fetch(ORIGIN + "/auth/login/", { redirect: "manual" });
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ code: "not_found" });
+  });
+
+  it("PUT /는 405이고 Allow는 GET", async () => {
+    const res = await exports.default.fetch(ORIGIN + "/", { method: "PUT", redirect: "manual" });
+    expect(res.status).toBe(405);
+    expect(res.headers.get("Allow")).toBe("GET");
+    expect(await res.json()).toEqual({ code: "method_not_allowed" });
+  });
+
+  it("/admin/ 는 404(끝 빗금은 다른 경로)", async () => {
+    const res = await exports.default.fetch(ORIGIN + "/admin/", { redirect: "manual" });
     expect(res.status).toBe(404);
     expect(await res.json()).toEqual({ code: "not_found" });
   });

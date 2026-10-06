@@ -135,7 +135,7 @@ export function parseUserResponse(status: number, body: string): ChzzkIdentity |
   return { ok: true, channelId, channelName: sanitizeName(content?.channelName) };
 }
 
-/** 공격자 제어 표시 이름: 제어·bidi 문자를 지우고 코드 포인트 128자로 자른다(이스케이프는 html이 한다) */
+/** 공격자 제어 표시 이름: 제어·bidi 문자를 지우고 코드 포인트 128자로 자른다(이스케이프는 HTML 템플릿이 한다) */
 export function sanitizeName(v: unknown): string {
   if (typeof v !== "string") return "";
   return Array.from(v.replace(UNSAFE_CHARS, "")).slice(0, NAME_MAX).join("");

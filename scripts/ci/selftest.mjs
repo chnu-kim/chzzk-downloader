@@ -169,7 +169,8 @@ const hook = (d, name, args, input) => exec('node', [join(d, 'scripts/ci/run.mjs
   const seeds = [
     ['nightly 작업 이름이 ci.yml e2e-native와 같음', nightlyWith('name: nightly e2e-native (linux)', 'name: e2e-native (linux)')],
     ['weekly cron을 바꾸고 조건식은 그대로', nightlyWith('- cron: "47 18 * * 0"', '- cron: "50 18 * * 0"')],
-    ['nightly PR 트리거가 paths: 나열', nightlyWith('    paths-ignore:\n', '    paths:\n')],
+    // nightly.yml에는 PR 트리거가 없다(구현 중 변경 78). 다시 더하면서 경로를 손으로 나열하면 pr-paths가 거부한다
+    ['nightly PR 트리거가 paths: 나열', nightlyWith('on:\n  schedule:\n', 'on:\n  pull_request:\n    paths:\n      - crates/**\n  schedule:\n')],
   ];
   seeds.forEach(([seed, files], i) => expect('parity', seed, 'nonzero', () => gate(mkRoot(`par-n-${i}`, files), 'parity')));
 }

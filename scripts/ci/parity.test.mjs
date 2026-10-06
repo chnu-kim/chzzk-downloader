@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
-import { HOOKS, ROOT } from './gates.mjs';
+import { HOOKS, NON_CODE_GLOBS, ROOT } from './gates.mjs';
 import { checkParity, ENTRY, parseJobs, runCommands, toolInputs } from './parity.mjs';
 
 test('저장소는 parity를 지킨다', () => {
@@ -220,9 +220,12 @@ test('schedule: github.event.schedule 비교 글자가 그 파일의 cron이 아
 
 // 리뷰(G4): 손으로 나열한 paths가 lib.rs·Cargo.lock·crates 등 네이티브 E2E의 입력을 빠뜨렸다
 test('pr-paths: pull_request paths:는 거부, paths-ignore는 NON_CODE_GLOBS와 같아야 한다', () => {
-  assert.ok(nightlyRules((t) => t.replace('    paths-ignore:\n', '    paths:\n')).includes('pr-paths'));
-  assert.ok(nightlyRules((t) => t.replace('      - LICENSE.*\n', '')).includes('pr-paths'));
-  assert.ok(nightlyRules((t) => t.replace('      - docs/**\n', '      - docs/**\n      - app/**\n')).includes('pr-paths'));
+  // nightly.yml에는 PR 트리거가 없다(구현 중 변경 78). 규칙은 PR 경로 필터가 있는 모든 워크플로에 적용되므로 트리거를 넣어 본다
+  const withPr = (t) => t.replace('on:\n  schedule:\n', `on:\n  pull_request:\n    paths-ignore:\n${NON_CODE_GLOBS.map((g) => `      - "${g}"\n`).join('')}  schedule:\n`);
+  assert.ok(!nightlyRules(withPr).includes('pr-paths'), 'NON_CODE_GLOBS 그대로면 통과');
+  assert.ok(nightlyRules((t) => withPr(t).replace('    paths-ignore:\n', '    paths:\n')).includes('pr-paths'));
+  assert.ok(nightlyRules((t) => withPr(t).replace('      - "LICENSE.*"\n', '')).includes('pr-paths'));
+  assert.ok(nightlyRules((t) => withPr(t).replace('      - "docs/**"\n', '      - "docs/**"\n      - app/**\n')).includes('pr-paths'));
 });
 
 // 리뷰(G5): ratchet mutants_missed는 살아남은 수만 본다. mutant를 범위에서 빼면(skip·설정 파일) 수가 줄어 조용히 통과한다

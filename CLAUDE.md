@@ -18,15 +18,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `app/` | Vite + Svelte 5 + TS 프런트(`pnpm`, `packageManager`로 버전 고정). `src/lib/api.ts`(command 래퍼), `src/lib/bindings/`(생성물, 손대지 않는다), `src/lib/copy/`(copy deck), `src/lib/components/`·`views/`, vitest는 `*.test.ts` |
 | `app/src-tauri/` | **`chzzk-app`**(lib `chzzk_app_lib`, bin `chzzk-app`). Tauri Builder·플러그인·command 배선·`ChannelSink`·로그·창 닫기 가드, `capabilities/default.json`, `tests/ipc.rs`(mock 런타임 IPC) |
 | `scripts/ci/run.mjs` | **훅과 CI의 단일 진입점** `node scripts/ci/run.mjs <gate>`. gate 표는 `gates.mjs`, 도구 버전은 `tools.json`, 설계는 `docs/design/cicd.md`(끝의 "구현 중 변경"이 본문보다 우선) |
-| `.github/workflows/ci.yml` | 경로 필터 없는 단일 CI: `changes`(문서만 바뀌면 무거운 작업 건너뜀) · `lint` · `scripts (windows)` · `supply` · `rust`(3 OS) · `frontend` · `tauri`(3 OS, debug 빌드 + `smoke-bin`) · `coverage`(커버리지·테스트 수 ratchet) · `e2e-web`(Playwright) · `e2e-native (linux)`(코드 PR·push·dispatch, 두 E2E는 D14 관찰 중이라 `ci-ok` 밖) · `bundle (linux)`(ubuntu 22.04 컨테이너)·`smoke-install (linux)`·`bundle (macOS·Windows)` · 집계 `ci-ok`(필수 체크는 이것 하나) · `report`(master 실패 이슈 열기·닫기, 예약 워크플로 keep-alive). 모든 `uses:`는 커밋 SHA 고정(`scripts/ci/pin-actions.mjs`) |
-| `.github/workflows/nightly.yml` | 예약 고리. 매일: 네이티브 E2E Linux, 실서버 `drift`(환경 `drift`의 본인 영상 secret, kind만 출력, 2회 연속 실패에 이슈, `no_target`은 3회), `advisories`, `pins`(핀 SHA·zizmor 온라인), `ruleset-drift`(환경 `audit`의 `RULESET_READ_TOKEN`), `fuzz`(4 target, 고정 nightly). 매주: Windows 네이티브 E2E(코드 PR에서도), `toolchain`, `mutants`(shard 4개 → `mutants_missed` ratchet). 작업마다 `ci-loop:<작업 id>` 이슈(`run.mjs report-loop`, 건너뛴 작업도 마지막 성공이 오래되면 연다), `drift-log` 작업이 drift 작업 로그를 `drift-log-check`로 다시 본다(`ci-loop:drift-log`), 앞 실행의 report 자신의 실패는 `ci-loop:nightly-report`. dispatch 입력 `only`·`weekly`·`simulate`(drift 합성 출력)·`loop_test`. master가 아닌 브랜치의 dispatch는 `ci-loop-test:`에만 쓴다. PR 경로 필터는 `paths-ignore` = `gates.mjs NON_CODE_GLOBS`뿐(parity `pr-paths`) |
+| `.github/workflows/ci.yml` | 경로 필터 없는 단일 CI: `changes`(문서만 바뀌면 무거운 작업 건너뜀) · `lint` · `scripts (windows)` · `supply` · `rust`(3 OS) · `frontend` · `tauri-clippy`(3 OS) · `tauri`(3 OS, test → `test-count-app` → debug 빌드 → `smoke-bin`) · `coverage`(커버리지·테스트 수 ratchet) · `e2e-web`(Playwright) · `e2e-native (linux)`(코드 PR·push·dispatch, 두 E2E는 D14 관찰 중이라 `ci-ok` 밖) · `bundle (linux)`(ubuntu 22.04 컨테이너)·`smoke-install (linux)`·`bundle (macOS·Windows)` · 집계 `ci-ok`(필수 체크는 이것 하나) · `report`(master 실패 이슈 열기·닫기, 예약 워크플로 keep-alive). 모든 `uses:`는 커밋 SHA 고정(`scripts/ci/pin-actions.mjs`) |
+| `.github/workflows/nightly.yml` | 예약 고리. 매일: 네이티브 E2E Linux, 실서버 `drift`(환경 `drift`의 본인 영상 secret, kind만 출력, 2회 연속 실패에 이슈, `no_target`은 3회), `advisories`, `pins`(핀 SHA·zizmor 온라인), `ruleset-drift`(환경 `audit`의 `RULESET_READ_TOKEN`), `private-scan`(환경 `audit`의 비공개 denylist `PRIVATE_DENYLIST`로 트리·공개 이력 전체, 위치만 출력), `fuzz`(4 target, 고정 nightly). 매주: Windows 네이티브 E2E(PR에서는 돌지 않는다: 이 워크플로는 `pull_request` 트리거가 없다, 필요하면 `only=e2e-native` dispatch), `toolchain`, `mutants`(shard 4개 → `mutants_missed` ratchet). 작업마다 `ci-loop:<작업 id>` 이슈(`run.mjs report-loop`, 건너뛴 작업도 마지막 성공이 오래되면 연다), `drift-log` 작업이 drift 작업 로그를 `drift-log-check`로 다시 본다(`ci-loop:drift-log`), 앞 실행의 report 자신의 실패는 `ci-loop:nightly-report`. dispatch 입력 `only`·`weekly`·`simulate`(drift 합성 출력)·`loop_test`. master가 아닌 브랜치의 dispatch는 `ci-loop-test:`에만 쓴다. PR 경로 필터는 `paths-ignore` = `gates.mjs NON_CODE_GLOBS`뿐(parity `pr-paths`) |
 | `xtask/` | **릴리스 도구**(`cargo xtask release <명령>`, `.cargo/config.toml` alias, `--locked`). `collect`(OS별 bundles.json → 표·해시 확인)·`sign`(minisign, Tauri 키 형식)·`verify-sig`(updater와 같은 `minisign-verify` + 1바이트·comment 변조 음성 검사)·`sums`·`manifest`(`release/latest.schema.json` 검증)·`put`(R2 S3 API, SigV4 직접 서명, `If-None-Match: *`)·`promote`(`releases/latest.json` CAS, 마지막)·`verify`·`rollback`. 골든 `xtask/testdata/tauri-cli/`(tauri-cli가 만든 공개 키·서명) |
 | `release/` | `expected-artifacts.json`(OS별 번들·updater 산출물 표, 플랫폼 키), `latest.schema.json`(updater 매니페스트), `tauri.release.json`(`createUpdaterArtifacts`, 릴리스 빌드만), `updater.pub`(공개 키 = `tauri.conf.json` `plugins.updater.pubkey`, `pubkey` gate). 개인 키는 저장소에 두지 않는다(누출 규칙 `signing-key`) |
 | `.github/workflows/release.yml`, `rollback.yml` | CD. 태그 `v*`: `gate`(버전 = 태그, 단조 증가, master 조상, 그 커밋의 master `ci-ok` 녹색) → `xtask`(한 번 빌드, sha256 출력) → `build`(3 OS, 임시 키, 시크릿 없음) → `smoke` → `stage`(받은 3 OS 산출물로 publish·verify를 가짜 S3에, 시크릿 없음) → `sign-publish`(태그만, 환경 `release`, 컴파일 없음, R2 업로드, `latest.json`은 마지막) → `verify`(늘 돈다, 결정표대로 확인, 판정 실패면 prev로 되돌림, 5xx 재시도 뒤에는 되돌리지 않고 exit 2) → `deploy-worker`(Phase 3 seam) → `report`(`ci-loop:release`). dispatch·매주 schedule은 리허설: `stage`에서 녹색으로 끝난다(업로드 경계, `ci-loop:release-rehearsal`). `rollback.yml`(dispatch, 입력 `version`)은 `latest.json`을 그 버전으로 바꾼다(되돌리기·잘못 되돌린 뒤 다시 올리기). 바이너리는 GitHub Release에 올리지 않는다 |
 | `fuzz/` | cargo-fuzz 대상(`url`·`info`·`mpd`·`hls`). 루트와 따로인 워크스페이스(자기 `Cargo.lock`, 루트 `exclude`), 고정 nightly(`tools.json` `rust-nightly`)로만 빌드. seed는 실행 때 `testdata/`에서 복사(`scripts/ci/fuzz.mjs`) |
 | `ci/ratchet.json`, `ci/RATCHET_LOG.md`, `release/expected-artifacts.json` | 커버리지·테스트 수·크기·살아남은 mutant ratchet 기준(나빠지면 CI 실패, 느슨하게 하면 로그에 키와 이유), OS별 번들 기대 집합 |
 | `scripts/ci/repo-settings.json`, `.github/rulesets/` | 저장소 설정·ruleset 선언(Actions 허용 목록·SHA 핀 강제·fork 승인, 환경 `release`·`audit`·`drift`의 배포 정책·protection_rules, ruleset `master`(필수 `ci-ok`·최신화·force push·삭제 금지)·`tags`(`v*`는 관리자만)). nightly `ruleset-drift`가 실제 값과 비교하고 `repo-settings.mjs --apply`가 적용한다 |
-| `rust-toolchain.toml`, `deny.toml`, `_typos.toml`, `zizmor.yml`, `.github/dependabot.yml` | 툴체인 고정(1.96.1, MSRV는 `rust-version` 1.90), cargo-deny, typos, zizmor, Dependabot 설정 |
+| `rust-toolchain.toml`, `deny.toml`, `_typos.toml`, `zizmor.yml`, `.github/dependabot.yml` | 툴체인 고정(1.99.0, MSRV는 `rust-version` 1.90), cargo-deny, typos, zizmor, Dependabot 설정 |
 
 `crates/core/src` 모듈: `url`(parse_content_url) · `info`(`classify`: **inKey 분기는 이 한 곳**, `encryptionType` → `inKey` → `liveRewindPlaybackJson` 순) · `mpd` · `hls` · `http`(요청 종류별 헤더, `Secret`, `redact_url`) · `client`(`Chzzk::resolve`) · `download/`(`part`·`retry`·`progressive`·`segmented`) · `progress`(`Meter`) · `naming` · `fsutil` · `settings` · `credentials` · `legacy` · `ownership` · `error`.
 
@@ -39,7 +39,9 @@ cargo fmt --all                                         # 포맷 적용
 node scripts/ci/run.mjs list                 # gate 목록
 node scripts/ci/run.mjs fmt                  # cargo fmt --all --check
 node scripts/ci/run.mjs rust                 # chzzk-core·chzzk-shell·xtask clippy -D warnings + test
-node scripts/ci/run.mjs tauri                # chzzk-app clippy + test + debug 빌드(app/ pnpm install 포함)
+node scripts/ci/run.mjs tauri-clippy         # chzzk-app clippy(보통·--features e2e) -D warnings(app/ pnpm install 포함)
+node scripts/ci/run.mjs tauri                # chzzk-app test(보통 + --features e2e의 e2e::)
+node scripts/ci/run.mjs tauri-build          # chzzk-app debug 빌드(번들 없음). 셋을 합치면 예전 tauri gate다
 node scripts/ci/run.mjs frontend             # app/: pnpm install --frozen-lockfile, check, test, build
 node scripts/ci/run.mjs scan                 # 공개 누출 검사(추적 파일)
 node scripts/ci/run.mjs scripts-test         # scripts/**/*.test.mjs
@@ -47,7 +49,7 @@ node scripts/ci/run.mjs workflows            # .github/를 바꿨을 때: pin-ch
 node scripts/ci/run.mjs versions             # 버전 원천 일치(Cargo 멤버·tauri.conf.json·app/package.json)
 node scripts/ci/run.mjs pubkey               # release/updater.pub == tauri.conf.json plugins.updater.pubkey
 node scripts/ci/run.mjs release-selftest     # release.mjs publish·verify·rollback 진입점을 가짜 S3(scripts/ci/s3-fake.mjs, 장애 주입)에 합성 산출물로: 업로드·CAS·변조→rollback·멱등·preflight·경계·5xx
-node scripts/ci/run.mjs smoke-bin            # tauri gate의 debug 빌드를 --smoke로 띄워 마커 확인(창이 잠깐 뜬다)
+node scripts/ci/run.mjs smoke-bin            # tauri-build gate의 debug 빌드를 --smoke로 띄워 마커 확인(창이 잠깐 뜬다)
 node scripts/ci/run.mjs coverage             # llvm-cov + vitest 커버리지 → ci/ratchet.json 비교(test-count는 테스트 수)
 node scripts/ci/run.mjs e2e-web              # app/: build → Playwright chromium 설치(처음 한 번) → 웹 E2E(mockIPC·axe) → 통과 수 ratchet
                                              #   하나만: (app/에서) pnpm exec playwright test flow --headed. 실패 trace는 target/e2e-web/results/
@@ -60,6 +62,7 @@ node scripts/ci/run.mjs advisories           # cargo deny check advisories + pnp
 node scripts/ci/run.mjs pins                 # 핀 SHA가 태그와 같은지(gh) + zizmor 온라인(GH_TOKEN)
 node scripts/ci/run.mjs toolchain            # rust-toolchain.toml이 최신 stable인지(낮으면 1)
 node scripts/ci/run.mjs ruleset-drift        # 저장소 설정·ruleset ↔ repo-settings.json·.github/rulesets/(소유자 gh 로그인 필요)
+PRIVATE_DENYLIST="$(cat <목록>)" CI=true node scripts/ci/run.mjs private-scan   # 비공개 denylist로 트리·--all-history(CI 전용: 로컬 클론은 비공개 ref 때문에 이력이 늘 걸린다)
 node scripts/ci/repo-settings.mjs --apply   # 선언을 저장소에 적용할 계획만 찍는다. --apply --yes면 쓰고 --check로 끝난다(소유자 gh 로그인, 사람이 실행)
 FUZZ_SECONDS=20 node scripts/ci/run.mjs fuzz # cargo-fuzz 4 target(먼저 run.mjs install-tool cargo-fuzz, nightly는 gate가 깐다)
 node scripts/ci/run.mjs fuzz-lock            # (PR lint) fuzz/Cargo.lock 최신·루트와 같은 버전 + fuzz target cargo check. lock 고치기: cp Cargo.lock fuzz/Cargo.lock && (cd fuzz && cargo metadata --format-version 1 >/dev/null)

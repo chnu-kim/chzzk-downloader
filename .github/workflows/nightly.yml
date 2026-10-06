@@ -3,13 +3,16 @@ name: nightly
 # 예약 고리(docs/design/cicd.md §2 위치 N·W, §4). 커밋과 무관하게 환경(러너 이미지·WebView 드라이버·실서버·권고 DB)이
 # 바뀌어 빨개질 수 있는 검사를 PR 밖에서 돌리고, 실패하면 작업마다 이슈를 열고 다음 녹색에 닫는다(issue.mjs, report 작업).
 #   매일(17 18 * * *): nightly e2e-native (linux), nightly drift, nightly advisories, nightly pins, nightly ruleset-drift,
+#                       nightly private-scan(환경 audit의 비공개 denylist),
 #                       nightly fuzz
 #   매주(47 18 * * 0): nightly e2e-native (windows), nightly toolchain, nightly mutants(shard 4개 → 합 → ratchet)
 #   - e2e-native (linux): ci.yml e2e-native(코드 PR·master)와 같은 gate다(러너 이미지가 바뀌어도 매일 확인한다).
 #     PR에서는 ci.yml이 돌리므로 여기서는 돌지 않는다.
-#   - e2e-native (windows): 매주, 그리고 코드가 바뀐 PR(paths-ignore = gates.mjs NON_CODE_GLOBS, parity pr-paths).
-#     러너 이미지의 msedgedriver를 쓰고, WebView2 런타임과 버전이 다르면 받지 않고 실패한다(e2e-native.mjs). 이미지가
-#     바뀌면 빨개질 수 있어 ci-ok에 넣지 않는다(PR에서는 참고 신호, 예약 실행은 고리).
+#   - e2e-native (windows): 매주와 dispatch(only=e2e-native). PR에서는 돌지 않는다(구현 중 변경 78: 이 워크플로는
+#     pull_request 트리거가 없다. PR이 바꾼 워크플로 문법은 ci.yml lint의 workflows·parity·selftest가 본다). 러너 이미지의
+#     msedgedriver를 쓰고, WebView2 런타임과 버전이 다르면 받지 않고 실패한다(e2e-native.mjs). 이미지가 바뀌면 빨개질 수
+#     있어 ci-ok에 넣지 않는다(예약 실행은 고리). Windows 전용 e2e 코드의 컴파일·clippy·단위 테스트는 ci.yml
+#     tauri-clippy·tauri(windows)가 코드 PR마다 한다.
 #   - drift: 실서버(본인 영상, 환경 drift의 secret). 2회 연속 실패에 이슈(no_target은 3회). 출력은 kind만(§4.3).
 #   - drift-log: drift가 돈 모든 실행(예약·dispatch, simulate 포함)에서 그 작업의 실제 로그를 다시 본다(canary·허용 밖 줄).
 # 이슈 고리는 예약 실행(master)만 진짜 이름공간에 쓴다(브랜치 loop_test dispatch는 ci-loop-test:, issue.mjs).
@@ -19,20 +22,13 @@ on:
   schedule:
     - cron: "17 18 * * *" # 매일 KST 03:17. 바꾸면 아래 매일 작업들의 if도 바꾼다(parity schedule)
     - cron: "47 18 * * 0" # 매주 월 KST 03:47. 바꾸면 아래 매주 작업들의 if도 바꾼다(parity schedule)
-  pull_request:
-    paths-ignore:
-      - docs/**
-      - "*.md"
-      - .claude/**
-      - LICENSE
-      - LICENSE.*
   workflow_dispatch:
     inputs:
       only:
         description: "이 작업만 돌린다(all이면 매일 작업 전부, 매주 작업은 weekly도 켜야 돈다)"
         type: choice
         default: all
-        options: [all, e2e-native, drift, advisories, pins, ruleset-drift, fuzz, toolchain, mutants]
+        options: [all, e2e-native, drift, advisories, pins, ruleset-drift, private-scan, fuzz, toolchain, mutants]
       weekly:
         description: "only=all일 때 매주 작업(Windows 네이티브 E2E, toolchain, mutants)도 돌린다"
         type: boolean
@@ -51,13 +47,15 @@ permissions: {}
 
 # 예약 실행은 cron마다 따로 묶는다: 같은 그룹은 대기 실행을 하나만 두어 매일 실행이 매주 실행을 밀어낼 수 있다
 concurrency:
-  group: nightly-${{ github.event.pull_request.number || github.ref }}-${{ github.event.schedule || 'manual' }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: nightly-${{ github.ref }}-${{ github.event.schedule || 'manual' }}
+  cancel-in-progress: false
 
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: "0"
   AWS_LC_SYS_PREBUILT_NASM: "1"
+  # ci.yml과 같은 값(구현 중 변경 78): rust-cache 키의 환경 해시가 같아야 e2e-native-linux 캐시를 ci.yml e2e-native와 나눈다
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
 
 jobs:
   e2e-native-linux:
@@ -81,6 +79,8 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: ". -> target"
+          # ci.yml e2e-native와 같은 gate·OS·env라 캐시 하나를 같이 쓴다(구현 중 변경 78)
+          shared-key: e2e-native-linux
           save-if: ${{ github.ref == 'refs/heads/master' }}
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
         with:
@@ -110,7 +110,7 @@ jobs:
   e2e-native-windows:
     name: nightly e2e-native (windows)
     if: >-
-      github.event_name == 'pull_request' || github.event.schedule == '47 18 * * 0'
+      github.event.schedule == '47 18 * * 0'
       || (github.event_name == 'workflow_dispatch' && ((inputs.only == 'all' && inputs.weekly) || inputs.only == 'e2e-native'))
     runs-on: windows-latest
     timeout-minutes: 75
@@ -295,6 +295,36 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.RULESET_READ_TOKEN || github.token }}
 
+  # 비공개 denylist(구현 중 변경 77): 공개 denylist에 둘 수 없는 항목(되돌릴 수 있는 짧은 값의 해시)은 환경 audit의 secret
+  # PRIVATE_DENYLIST에만 있다. 추적 트리와 공개 이력 전체(--all-history, 그래서 fetch-depth 0)를 본다. secret은 단계 env로만
+  # 넘기고 private-scan.mjs가 임시 파일(0600)에 썼다가 지운다. 로그는 위치·규칙 이름뿐이다. 환경 audit은 master만 배포할 수
+  # 있어 master가 아닌 ref(브랜치 dispatch)는 환경 밖에서 돌고 secret이 없어 no_secret으로 실패한다(고리 확인용). PR에서는
+  # 돌지 않는다(이 워크플로에는 pull_request 트리거가 없다, 78).
+  private-scan:
+    name: nightly private-scan
+    if: github.event.schedule == '17 18 * * *' || (github.event_name == 'workflow_dispatch' && (inputs.only == 'all' || inputs.only == 'private-scan'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: ${{ github.ref == 'refs/heads/master' && 'audit' || '' }}
+    permissions:
+      contents: read # checkout
+    outputs:
+      kinds: ${{ steps.scan.outputs.kinds }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # --all-history가 모든 커밋을 보려면 얕은 클론이면 안 된다
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - id: scan
+        name: private-scan
+        run: node scripts/ci/run.mjs private-scan
+        env:
+          PRIVATE_DENYLIST: ${{ secrets.PRIVATE_DENYLIST }}
+
   # cargo-fuzz 4 target(url·info·mpd·hls), 고정 nightly(tools.json rust-nightly), target당 300초. crash 입력은 artifact로.
   fuzz:
     name: nightly fuzz
@@ -426,7 +456,7 @@ jobs:
   # 시간 초과로 끝난 것은 실행 취소가 아니라 그대로 보고한다. 이 작업 자신의 실패는 다음 보고가 nightly-report로 본다.
   report:
     name: nightly report
-    needs: [e2e-native-linux, e2e-native-windows, drift, drift-log, advisories, pins, ruleset-drift, fuzz, toolchain, mutants]
+    needs: [e2e-native-linux, e2e-native-windows, drift, drift-log, advisories, pins, ruleset-drift, private-scan, fuzz, toolchain, mutants]
     if: >-
       !cancelled() && (github.event_name == 'schedule'
       || (github.event_name == 'workflow_dispatch' && (inputs.loop_test || needs.drift-log.result == 'failure')))

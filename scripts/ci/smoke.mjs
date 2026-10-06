@@ -368,7 +368,7 @@ function cmdInstall(dir) {
 function cmdBin(exe) {
   const path = exe ?? join(targetDir(), 'debug', `chzzk-app${IS_WIN ? '.exe' : ''}`);
   if (!existsSync(path)) {
-    console.error(`smoke bin: ${path}가 없다(먼저 tauri gate의 debug 빌드)`);
+    console.error(`smoke bin: ${path}가 없다(먼저 tauri-build gate의 debug 빌드)`);
     return 2;
   }
   const r = runSmoke(path, { label: 'debug 빌드' });

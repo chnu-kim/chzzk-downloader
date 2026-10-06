@@ -33,6 +33,7 @@ export const LOOPS = {
   'ruleset-drift': '저장소 ruleset·설정 검사가 실패했다',
   toolchain: '툴체인 검사가 실패했다',
   pins: '워크플로 핀 SHA·온라인 audit 검사가 실패했다',
+  'private-scan': '비공개 denylist 누출 검사가 실패했다',
   release: '릴리스 파이프라인이 실패했다',
   // 예약 리허설(release.yml schedule): 설계상 sign-publish의 preflight에서 멈춘다. 그 밖의 실패만 이 고리로 연다
   'release-rehearsal': '릴리스 리허설(빌드·수집·설치 스모크)이 실패했다',
@@ -55,6 +56,7 @@ export const NEEDS_LOOPS = {
   advisories: { name: 'nightly advisories', staleHours: 72 },
   pins: { name: 'nightly pins', staleHours: 72 },
   'ruleset-drift': { name: 'nightly ruleset-drift', staleHours: 72 },
+  'private-scan': { name: 'nightly private-scan', staleHours: 72 },
   fuzz: { name: 'nightly fuzz', staleHours: 72 },
   toolchain: { name: 'nightly toolchain', staleHours: 8 * 24, consecutiveKinds: { network: 2 } },
   mutants: { name: 'nightly mutants', staleHours: 8 * 24 },
@@ -82,6 +84,8 @@ export const KINDS = [
   'log_shape',
   'outdated',
   'crash',
+  'leak',
+  'no_secret',
   'unknown',
 ];
 // 고리·kind마다 이슈에 붙이는 고정 문구(자유 문자열이 아니다). 사람이 할 일을 알려 준다.
@@ -103,6 +107,10 @@ export const KIND_NOTES = {
   fuzz: {
     build: 'fuzz target이 컴파일되지 않는다: 코어 API 변경을 fuzz/fuzz_targets에 반영한다(PR의 fuzz-lock gate가 같은 검사를 stable로 한다)',
     crash: 'fuzz가 crash·timeout 입력을 찾았다: 실행의 artifact fuzz-artifacts를 받아 재현하고 코어를 고친다',
+  },
+  'private-scan': {
+    leak: '비공개 denylist 항목이 공개 저장소(트리 또는 이력)에 있다: 실행 로그의 위치(파일:줄·커밋)를 보고 정리한다(docs/public-release.md). 이슈·로그에는 위치만 있고 원문은 없다',
+    no_secret: '환경 audit의 secret PRIVATE_DENYLIST가 없거나 해시 목록 형식이 아니다: public-scan.mjs --hash 출력(줄마다 64 hex, blob:·commit: 접두)을 넣는다(docs/design/cicd.md §8)',
   },
   'ruleset-drift': {
     auth: '이 토큰으로는 저장소 설정을 읽을 수 없다: 저장소 Administration 읽기 권한의 fine-grained PAT를 환경 audit의 secret RULESET_READ_TOKEN으로 넣는다(docs/design/cicd.md §8)',

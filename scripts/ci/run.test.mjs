@@ -136,6 +136,12 @@ test('gate 표: 검사를 켜는 플래그', () => {
     for (const c of cmds(g).filter((c) => c.startsWith('cargo clippy'))) assert.ok(c.endsWith('--locked -- -D warnings'), c);
     assert.ok(cmds(g).some((c) => c.startsWith('cargo test') && c.endsWith('--locked')), g);
   }
+  // chzzk-app clippy는 tauri-clippy(보통·e2e 둘 다 -D warnings), debug 빌드는 tauri-build(구현 중 변경 78)
+  assert.deepEqual(cmds('tauri-clippy').filter((c) => c.startsWith('cargo clippy')), [
+    'cargo clippy -p chzzk-app --all-targets --locked -- -D warnings',
+    'cargo clippy -p chzzk-app --features e2e --all-targets --locked -- -D warnings',
+  ]);
+  assert.equal(cmds('tauri-build').at(-1), 'pnpm tauri build --ci --debug --no-bundle');
   assert.ok(cmds('frontend').includes('pnpm install --frozen-lockfile'));
   assert.deepEqual(cmds('deny'), ['cargo deny --locked check bans licenses sources']);
   assert.deepEqual(cmds('scan-msg'), ['node scripts/ci/public-scan.mjs --message-file', 'node scripts/ci/commit-msg.mjs']);
@@ -155,8 +161,9 @@ test('gate 표: 검사를 켜는 플래그', () => {
   assert.deepEqual(cmds('test-count').slice(1), ['node scripts/ci/measure.mjs tests', 'node scripts/ci/ratchet.mjs check tests']);
   assert.deepEqual(cmds('ratchet-log'), ['node scripts/ci/ratchet.mjs lint', 'node scripts/ci/ratchet.mjs log-check']);
   assert.deepEqual(cmds('test-count-app'), ['node scripts/ci/measure.mjs tests-app', 'node scripts/ci/ratchet.mjs check tests']);
-  // 로컬과 CI가 같은 표를 쓰므로 CI 전용은 scan-history 하나뿐이다
-  assert.deepEqual(Object.keys(GATES).filter((g) => GATES[g].ciOnly), ['scan-history']);
+  // 로컬과 CI가 같은 표를 쓰므로 CI 전용은 --all-history를 도는 둘뿐이다(로컬 클론에는 비공개 ref가 있어 늘 걸린다)
+  assert.deepEqual(cmds('private-scan'), ['node scripts/ci/private-scan.mjs']);
+  assert.deepEqual(Object.keys(GATES).filter((g) => GATES[g].ciOnly), ['scan-history', 'private-scan']);
 });
 
 test('훅 표: 끌 수 없는 gate와 조건부 gate', () => {

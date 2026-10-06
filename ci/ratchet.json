@@ -24,8 +24,8 @@
   "size": {
     "dist_gz": 57260,
     "binary": {
-      "linux": 29686784,
-      "darwin": 20303840,
+      "linux": 32559736,
+      "darwin": 22824784,
       "windows": 19681792
     },
     "bundle": {

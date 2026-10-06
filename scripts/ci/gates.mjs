@@ -421,7 +421,7 @@ export const GATES = {
     steps: [{ cmd: ['node', S('release.mjs'), 'rollback'] }],
   },
   'release-prune': {
-    desc: 'R2 보존 상한: latest가 이번 버전일 때만 releases/를 최신 5개 + latest의 previous로 줄인다(xtask list-keys·delete-version, 지울 목록은 release.mjs prunePlan). release.yml prune 작업(verify 뒤, 태그만)',
+    desc: 'R2 보존 상한: latest가 이번 버전일 때만 releases/를 latest 이하 최신 5개 + latest의 previous로 줄인다(높은 폴더는 남김)(xtask list-keys·delete-version, 지울 목록은 release.mjs prunePlan). release.yml prune 작업(verify 뒤, 태그만)',
     steps: [{ cmd: ['node', S('release.mjs'), 'prune'] }],
   },
   'release-worker-bundle': {

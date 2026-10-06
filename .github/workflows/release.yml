@@ -5,7 +5,7 @@ name: release
 #   gate → xtask(한 번 빌드, sha256 출력) → build(3 OS, 임시 키) → smoke → stage(받은 3 OS 산출물로 publish·verify를 가짜 S3에)
 #   (worker-bundle: 시크릿·환경 없음, gate 뒤에 따로. 리허설에도 돈다)
 #   → [태그만] sign-publish(환경 release, 컴파일·pnpm install 없음, latest.json은 마지막) → verify(sign-publish가 어떻게 끝났든
-#   돈다. 판정 실패면 prev로 되돌리고 빨강) → prune(verify 녹색 뒤 R2 보존 상한: 최신 5개 + previous)
+#   돈다. 판정 실패면 prev로 되돌리고 빨강) → prune(verify 녹색 뒤 R2 보존 상한: latest 이하 최신 5개 + previous)
 #   → deploy-worker(vars.WORKER_DEPLOY_ENABLED, worker-bundle의 묶음으로 배포 → 배포 뒤 검사) → report(고리)
 # 시크릿을 받는 작업(sign-publish·verify·prune·deploy-worker)은 컴파일러를 돌리지 않는다: xtask 작업이 만든 바이너리를 sha256(작업 출력)으로
 # 맞춘 뒤에만 부른다(D10, 의존성 build.rs가 GITHUB_ENV·GITHUB_PATH로 시크릿 단계에 닿지 못하게).
@@ -413,7 +413,7 @@ jobs:
           CI_VERIFY_TOKEN: ${{ secrets.CI_VERIFY_TOKEN }}
 
   # R2 보존 상한(worker.md 구현 중 변경 11 (마), cicd.md 구현 중 변경 W8-2): verify가 녹색일 때만(실패·건너뜀이면 돌지 않는다) releases/ 아래
-  # 버전을 최신 5개 + latest의 previous만 남기고 지운다. latest가 이번 버전이 아니면 지우지 않고 0으로 끝난다(latest를 가진 실행이
+  # 버전을 latest 이하 최신 5개 + latest의 previous만 남기고 지운다(latest보다 높은 폴더는 남긴다). latest가 이번 버전이 아니면 지우지 않고 0으로 끝난다(latest를 가진 실행이
   # 지운다). 실패해도 deploy-worker를 막지 않는다(needs에 없다: 배포는 보존과 무관). list는 여기(S3 토큰)에서만 쓴다.
   prune:
     name: release prune

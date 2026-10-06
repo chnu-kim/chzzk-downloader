@@ -11,7 +11,7 @@
 //   node scripts/ci/release.mjs publish       # collect → sign → verify-sig → sums → manifest → put → promote(latest.json은 마지막)
 //   node scripts/ci/release.mjs verify        # latest.json을 보고 결정표(verifyPlan)대로 확인. 판정 실패면 prev로 rollback하고 1
 //   node scripts/ci/release.mjs rollback      # rollback.yml: ROLLBACK_VERSION으로 latest.json을 바꾼다(되돌리기·다시 올리기)
-//   node scripts/ci/release.mjs prune         # R2 보존 상한: latest가 이번 버전일 때만 releases/를 최신 5개 + latest의 previous로(verify 뒤)
+//   node scripts/ci/release.mjs prune         # R2 보존 상한: latest가 이번 버전일 때만 releases/를 latest 이하 최신 5개 + latest의 previous로(높은 폴더는 남김, verify 뒤)
 //   node scripts/ci/release.mjs selftest      # 가짜 S3(s3-fake.mjs)에 합성 산출물로 publish·verify·rollback 진입점 시나리오(release-selftest gate)
 //   node scripts/ci/release.mjs worker-bundle # worker 번들 + dist/wrangler.json + 배포용 wrangler → tgz·sha256, 풀어서 자격 없이 deploy --dry-run(시크릿 없음)
 //   node scripts/ci/release.mjs worker        # 묶음 sha256·플랫폼·설정 동일성 → superseded 가드 → deploy --no-bundle → §9.4 배포 뒤 검사

@@ -183,8 +183,12 @@ export const GATES = {
       { cmd: ['pnpm', 'build'], cwd: 'app' },
     ],
   },
-  tauri: {
-    desc: 'chzzk-app clippy + test(보통·--features e2e) + debug 빌드(번들 없음, e2e 없음)',
+  // chzzk-app은 gate 셋이다(구현 중 변경 78): clippy(check)와 test·빌드(codegen)는 산출물을 나누지 않아 한 작업에서 차례로 돌면
+  // 두 번의 전체 컴파일이 직렬이 된다. CI는 tauri-clippy를 따로 작업으로 돌리고, tauri 작업은 tauri → test-count-app →
+  // tauri-build → smoke-bin 순서다(tauri build가 바꾸는 환경 변수 때문에 그 뒤의 test 목록이 다시 컴파일되지 않게).
+  // 세 gate를 합치면 예전 tauri gate와 같은 명령이다.
+  'tauri-clippy': {
+    desc: 'chzzk-app clippy(보통·--features e2e) -D warnings',
     needs: ['cargo', 'pnpm'],
     steps: [
       { cmd: ['pnpm', 'install', '--frozen-lockfile'], cwd: 'app' },
@@ -192,9 +196,22 @@ export const GATES = {
       // e2e feature 코드(Windows 전용 #[cfg] 블록 포함)도 3 OS의 모든 코드 PR에서 컴파일·lint·테스트한다(리뷰 G4: 보통
       // 빌드는 이 코드를 컴파일하지 않아 네이티브 E2E 작업에서만 깨짐이 드러났다). 테스트 수는 test-count-app이 센다.
       { cmd: ['cargo', 'clippy', '-p', 'chzzk-app', '--features', 'e2e', ...CLIPPY] },
+    ],
+  },
+  tauri: {
+    desc: 'chzzk-app test(보통·--features e2e의 e2e::). clippy는 tauri-clippy, debug 빌드는 tauri-build',
+    needs: ['cargo', 'pnpm'],
+    steps: [
+      { cmd: ['pnpm', 'install', '--frozen-lockfile'], cwd: 'app' },
       { cmd: ['cargo', 'test', '-p', 'chzzk-app', '--locked'] },
       { cmd: ['cargo', 'test', '-p', 'chzzk-app', '--locked', '--features', 'e2e', '--lib', '--', 'e2e::'] },
-      // 마지막: smoke-bin은 e2e가 없는 이 debug 빌드를 띄운다
+    ],
+  },
+  'tauri-build': {
+    desc: 'chzzk-app debug 빌드(번들 없음, e2e 없음). smoke-bin이 이 바이너리를 띄운다',
+    needs: ['cargo', 'pnpm'],
+    steps: [
+      { cmd: ['pnpm', 'install', '--frozen-lockfile'], cwd: 'app' },
       { cmd: ['pnpm', 'tauri', 'build', '--ci', '--debug', '--no-bundle'], cwd: 'app' },
     ],
   },
@@ -217,7 +234,7 @@ export const GATES = {
     platforms: ['linux', 'win32'],
     steps: [
       { cmd: ['pnpm', 'install', '--frozen-lockfile'], cwd: 'app' },
-      // e2e feature 코드의 lint·단위 테스트는 tauri gate(3 OS, 코드 PR)가 한다
+      // e2e feature 코드의 lint·단위 테스트는 tauri-clippy·tauri gate(3 OS, 코드 PR)가 한다
       { cmd: ['pnpm', 'tauri', 'build', '--ci', '--debug', '--no-bundle', '--features', 'e2e'], cwd: 'app' },
       { cmd: ['node', S('e2e-native.mjs')] },
     ],
@@ -228,7 +245,7 @@ export const GATES = {
     steps: [{ cmd: ['node', S('artifact-check.mjs'), 'hygiene-seed'] }],
   },
   'smoke-bin': {
-    desc: 'debug 빌드를 --smoke로 띄워 60초 안 exit 0 + 마커 JSON(Linux는 xvfb-run). tauri gate 뒤',
+    desc: 'debug 빌드를 --smoke로 띄워 60초 안 exit 0 + 마커 JSON(Linux는 xvfb-run). tauri-build gate 뒤',
     steps: [{ cmd: ['node', S('smoke.mjs'), 'bin'] }],
   },
   bundle: {
@@ -454,7 +471,7 @@ export const NON_CODE = [/^docs\//, /^[^/]+\.md$/, /^\.claude\//, /^LICENSE(\.[^
 export const NON_CODE_GLOBS = ['docs/**', '*.md', '.claude/**', 'LICENSE', 'LICENSE.*'];
 
 // changes.code == 'false'일 때 건너뛰는 작업(ci.yml 작업 id). ci-ok는 이 작업들의 skipped만 허용한다.
-export const CODE_GATED_JOBS = ['supply', 'rust', 'frontend', 'tauri', 'coverage', 'bundle-linux', 'smoke-install-linux'];
+export const CODE_GATED_JOBS = ['supply', 'rust', 'frontend', 'tauri-clippy', 'tauri', 'coverage', 'bundle-linux', 'smoke-install-linux'];
 
 // pull_request에서는 돌지 않는 작업(ci.yml 작업 id, `if: github.event_name != 'pull_request'`). push(master)·dispatch에서
 // 돈다. ci-ok는 pull_request에서만 이 작업들의 skipped를 허용한다. Linux 릴리스 번들·설치 스모크는 PR에서도 돈다(CODE_GATED_JOBS,

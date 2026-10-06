@@ -136,6 +136,12 @@ test('gate 표: 검사를 켜는 플래그', () => {
     for (const c of cmds(g).filter((c) => c.startsWith('cargo clippy'))) assert.ok(c.endsWith('--locked -- -D warnings'), c);
     assert.ok(cmds(g).some((c) => c.startsWith('cargo test') && c.endsWith('--locked')), g);
   }
+  // chzzk-app clippy는 tauri-clippy(보통·e2e 둘 다 -D warnings), debug 빌드는 tauri-build(구현 중 변경 78)
+  assert.deepEqual(cmds('tauri-clippy').filter((c) => c.startsWith('cargo clippy')), [
+    'cargo clippy -p chzzk-app --all-targets --locked -- -D warnings',
+    'cargo clippy -p chzzk-app --features e2e --all-targets --locked -- -D warnings',
+  ]);
+  assert.equal(cmds('tauri-build').at(-1), 'pnpm tauri build --ci --debug --no-bundle');
   assert.ok(cmds('frontend').includes('pnpm install --frozen-lockfile'));
   assert.deepEqual(cmds('deny'), ['cargo deny --locked check bans licenses sources']);
   assert.deepEqual(cmds('scan-msg'), ['node scripts/ci/public-scan.mjs --message-file', 'node scripts/ci/commit-msg.mjs']);

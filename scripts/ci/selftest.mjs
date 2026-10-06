@@ -144,6 +144,10 @@ const hook = (d, name, args, input) => exec('node', [join(d, 'scripts/ci/run.mjs
     ['tool: 버전 불일치', ciWith(tool[0], 'tool: typos@0.0.1')],
     ['fallback: none 없음', ciWith('          fallback: none\n', '')],
     ['ci-ok needs에서 작업 빠짐', ciWith(', bundle]', ']')],
+    // Worker(worker.md §13.3): ci-ok needs·guard 둘 다에 있어야 한다(parity가 CODE_GATED_JOBS로 guard 식을 만든다)
+    ['ci-ok needs에서 worker 빠짐', ciWith(', frontend, worker, tauri-clippy', ', frontend, tauri-clippy')],
+    ['ci-ok guard에서 worker 빠짐', ciWith(" || needs.worker.result == 'skipped'", '')],
+    ['worker 작업이 CODE_IF 없이 늘 돎', ciWith("  worker:\n    name: worker\n    needs: changes\n    if: needs.changes.outputs.code == 'true'\n", '  worker:\n    name: worker\n    needs: changes\n')],
     ['bundle 작업이 PR에서도 돎', ciWith("  bundle:\n    name: bundle (${{ matrix.os }})\n    needs: changes\n    if: github.event_name != 'pull_request' && needs.changes.outputs.code == 'true'\n", "  bundle:\n    name: bundle (${{ matrix.os }})\n    needs: changes\n    if: needs.changes.outputs.code == 'true'\n")],
     ['report가 ci-ok 뒤가 아님', ciWith('    needs: [ci-ok, e2e-web, e2e-native, e2e-native-windows]\n', '    needs: [changes, e2e-web, e2e-native, e2e-native-windows]\n')],
     ['관찰 작업(e2e-native)이 report needs에 없음', ciWith('    needs: [ci-ok, e2e-web, e2e-native, e2e-native-windows]\n', '    needs: [ci-ok, e2e-web, e2e-native-windows]\n')],

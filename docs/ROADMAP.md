@@ -7,7 +7,8 @@
 - **저장소**: 개발은 public `chnu-kim/chzzk-downloader`(remote `origin`)에서 한다. `chnu-kim/chzzk-downloader-private`(remote `private`)는 공개 전 원본 이력·연구 문서·실물 fixture·비공개 원문 목록(`public-release/`)의 보관소이며 **그쪽 ref를 origin에 push하지 않는다**(pre-push 가드가 막는다). 공개 절차는 `docs/public-release.md`.
 - **완료(2026-10-06 기준, 모두 master에 머지)**: Phase 0 하네스, Phase 1 Rust 코어, Go 삭제, Phase 2 Tauri 앱(macOS 실제 실행 확인), Phase 4 CI/CD(public PR #1: 단일 진입점·`ci.yml`/`ci-ok`·훅·비공개 이력 가드·스모크·ratchet·E2E·nightly/weekly 고리·CD `release.yml`/`xtask`·ruleset master/tags·저장소 설정 적용(2026-10-06 사용자 `repo-settings --apply --yes`, `--check` 드리프트 0)), CI 단축·Rust 1.99(#12), Windows 네이티브 E2E를 PR마다 관찰(#14).
 - **Phase 3 설계 완료(2026-10-06)**: `docs/design/worker.md`(Worker·DO `AuthStore`·R2 게이트·updater·앱 셸 계약, 열린 질문은 §17 "사용자 답변"으로 닫음). 코드 쪽 변경 기록은 cicd.md 80~84, app.md 59.
-- **다음**: Phase 3 **W1**(worker/ 골격 + CI gate `worker`). 이후 W2~W8은 오프라인(vitest·wrangler dev·가짜 치지직), W9는 아래 "사용자가 준비해야 할 외부 항목"이 갖춰진 뒤 사용자와 함께.
+- **Phase 3 W1 구현(2026-10-06, 브랜치 `phase3/w1-skeleton`, PR #19 위 stacked. 로컬 gate 녹색, PR `ci-ok` 확인 대기)**: `worker/` 골격(config 가드·`/health`·경로 표·로그·빈 `AuthStore`)과 gate `worker`·ci.yml `worker` 작업·`ci-ok` 편입. 실측 4건(dry-run은 `dist/wrangler.json`을 쓰지 않음, `--var`는 첫 `:`만, `--env-file`이면 `.dev.vars`를 열지 않음, vitest는 그대로 두면 `.dev.vars`를 열어 `environment: "example"`로 막음)은 worker.md 구현 중 변경 2~5, CI 쪽은 cicd.md 85. **`worker/.dev.vars`(FIFO)를 여는 명령은 `pnpm dev:real`뿐**이고, wrangler·플러그인을 올릴 때는 worker.md 구현 중 변경 5의 FIFO 확인을 다시 한다.
+- **다음**: Phase 3 **W2**(순수 core). 이후 W3~W8은 오프라인(vitest·wrangler dev·가짜 치지직), W9는 아래 "사용자가 준비해야 할 외부 항목"이 갖춰진 뒤 사용자와 함께. W1 머지 뒤 첫 master 실행으로 ratchet `tests.worker`를 채운다(`ratchet.mjs write --from-run <id>` 후 `PENDING_ALLOWED`에서 뺀다).
 - **Phase 3의 핵심 미확인 사실**: OAuth `users/me`의 `channelId`가 VOD `content.channel.channelId`·클립 `ownerChannel.channelId`와 같은 값인지. 아래 Phase 3 체크리스트의 **G-ID** 단계(사용자가 직접 실제 로그인)로 확인하고, 체크 전에는 앱의 `OwnershipGate`를 켜지 않는다.
 - **관찰 중**: `e2e-native (linux)`·`e2e-native (windows)`는 2026-10-06(master 첫 실행 37411321875 녹색)부터 14일 관찰 → 2026-10-20 이후 `ci-ok` 편입 판단(cicd.md 36·79). Actions 캐시가 10.99GB로 한도(10GB)를 조금 넘음 — 계속 넘으면 캐시 키 정리.
 - **사용자 할 일**: 환경 `drift`에 본인 영상 식별자 3개(`CHZZK_LIVE_HLS`·`CHZZK_LIVE_DASH`는 영상 번호 `videoNo` 숫자, `CHZZK_LIVE_CLIP`은 클립 ID. URL이 아니다), 환경 `audit`에 `RULESET_READ_TOKEN`(읽기 전용 fine-grained PAT). 서명 키는 `release` 환경 시크릿과 1Password Environment `chzzk-downloader-release`에 있다.
@@ -108,7 +109,8 @@
 - [x] 사전 확인: 치지직 OAuth 엔드포인트·토큰 형태·`users/me` 응답(`docs/research/chzzk-oauth.md`), 개발용 리디렉션 `http://localhost:8787/auth/callback` 등록(2026-10-06). loopback 임의 포트는 쓰지 않는다(Worker 콜백 + 폴링)
 - [ ] **G-ID**: OAuth `users/me` channelId == VOD `content.channel.channelId` == 클립 `content.ownerChannel.channelId`(실제 로그인, 사용자가 직접). `node worker/scripts/channel-id-check.mjs <본인 VOD> <본인 클립>`, 결과는 "같다/다르다"만 적는다(실제 값 금지). **체크 전에는 앱 `OwnershipGate`를 켜지 않는다**(worker.md §15, 다르면 대안 B `owner_channel_id`)
 - [x] W0 설계 문서: `worker.md`, cicd.md 80~84, app.md 59, ROADMAP·CLAUDE.md·chzzk-oauth.md, §17 사용자 답변 반영. 참고: vitest 풀 패키지는 `@cloudflare/vitest-pool-workers`(0.22.0에서 멈춤)가 아니라 이름이 바뀐 `@cloudflare/vitest-plugin`을 쓴다
-- [ ] W1 골격 + CI: `worker/` 패키지·`wrangler.jsonc`·config 가드·`/health`, gate `worker`·ci.yml 작업·`ci-ok`
+- [x] W1 골격 + CI: `worker/` 패키지·`wrangler.jsonc`·config 가드·`/health`, gate `worker`·ci.yml 작업·`ci-ok`. 실측 결과·고른 것은 worker.md 구현 중 변경 2~8, cicd.md 85. 로컬 `run.mjs worker`(vitest 57개)·`parity`·`scripts-test`·`scan`·`typos`·`workflows`·`versions`·`selftest`·`release-selftest`·`ratchet-log` 녹색, PR `ci-ok` 확인 대기
+- [ ] W1 뒤: 첫 master 실행의 `ratchet-measurements-worker`로 `tests.worker` 채우기(`ratchet.mjs write --from-run <id>`, `PENDING_ALLOWED`에서 뺀다)
 - [ ] W2 순수 core(token·cookies·range·keys·semver·chzzk·updater·html·usercode)
 - [ ] W3 DO `AuthStore`(스키마·flow·session·rotation·허용목록·alarm)
 - [ ] W4 OAuth 흐름(가짜 치지직, 앱·웹 로그인, refresh·logout, 카나리)
@@ -167,3 +169,4 @@
 - 2026-10-06: CI 속도·툴체인(브랜치 `ci/speedup`). Rust 1.99.0, CLAUDE.md 명령의 `tauri` gate가 셋(`tauri-clippy`·`tauri`·`tauri-build`)으로 나뉘었고, nightly에 비공개 denylist 고리 `private-scan`을 더했다.
 - 2026-10-06: Windows 네이티브 E2E를 코드 PR마다(브랜치 `ci/windows-e2e-pr`, cicd.md 79). ci.yml에 관찰 작업 `e2e-native (windows)`를 더하고 CLAUDE.md의 ci.yml·nightly.yml 설명을 고쳤다.
 - 2026-10-06: Phase 3 설계(`docs/design/worker.md`, 브랜치 `phase3/worker-design`). `worker/` 디렉터리(지금은 G-ID 도구 `scripts/channel-id-check.mjs`뿐)를 CLAUDE.md 레이아웃·명령에 적었다. `worker/.dev.vars`는 1Password Environment 마운트(FIFO)이고 `.gitignore`(`.dev.vars.example`만 커밋).
+- 2026-10-06: Phase 3 W1(브랜치 `phase3/w1-skeleton`). CLAUDE.md 레이아웃의 `worker/` 행과 명령(`run.mjs worker`, `pnpm dev`·`pnpm dev:real`의 `--env-file` 규칙)을 고쳤다. vitest가 `worker/.dev.vars`(FIFO)를 열지 않게 하는 `environment: "example"`과 그 검사(`worker-config.mjs`)를 더했다.

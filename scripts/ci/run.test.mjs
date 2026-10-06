@@ -207,6 +207,42 @@ test('hookGates: 바뀐 경로로 조건부 gate를 고른다', () => {
   assert.deepEqual(hookGates('pre-commit', ['scripts/ci/gates.mjs']), ['typos', 'parity']);
 });
 
+// worker gate는 pnpm install이 필요해 selftest가 씨앗으로 돌리지 못한다. 그래서 단계 순서·인자를 여기서 고정한다
+// (worker-config를 빼거나 --dist·--frozen-lockfile을 지우면 worker-config.test.mjs의 씨앗이 통과해도 gate가 그것을 부르지 않는다)
+test('gate 표: worker(worker.md §13.2, cicd.md 85)', () => {
+  const w = GATES.worker;
+  assert.deepEqual(w.needs, ['pnpm']);
+  assert.deepEqual(
+    w.steps.map((s) => [s.cmd.join(' '), s.cwd ?? '.']),
+    [
+      // 불변식이 설치보다 먼저(allowBuilds를 넓힌 변경이 설치 스크립트를 돌리기 전에 멈춘다, cicd.md 86)
+      ['node scripts/ci/worker-config.mjs', '.'],
+      ['pnpm install --frozen-lockfile', 'worker'],
+      // (CI) 누출 씨앗은 wrangler types·vitest를 감싼다
+      ['node scripts/ci/worker-config.mjs --sentinel plant', '.'],
+      ['pnpm check', 'worker'],
+      ['node scripts/ci/measure.mjs tests-worker', '.'],
+      ['node scripts/ci/worker-config.mjs --sentinel check', '.'],
+      ['pnpm build', 'worker'],
+      ['node scripts/ci/worker-config.mjs --dist', '.'],
+      ['node scripts/ci/ratchet.mjs check tests', '.'],
+    ],
+  );
+  // wrangler·vitest를 부르는 단계는 사용 통계를 끈다
+  for (const s of w.steps.filter((s) => s.cmd[0] === 'pnpm' || s.cmd.includes('tests-worker'))) assert.equal(s.env?.WRANGLER_SEND_METRICS, 'false', s.cmd.join(' '));
+  assert.ok(CODE_GATED_JOBS.includes('worker'));
+  assert.ok(GATES.advisories.steps.some((s) => s.cmd.join(' ') === 'pnpm audit --audit-level high' && s.cwd === 'worker'));
+  const hook = HOOKS['pre-push'].when.find((x) => x.gate === 'worker');
+  assert.ok(hook, 'pre-push에 worker');
+  assert.equal(HOOKS['pre-commit'].when.some((x) => x.gate === 'worker'), false, 'pre-commit에는 넣지 않는다(무겁다)');
+  assert.deepEqual(hookGates('pre-push', ['worker/src/config.ts']), ['worker']);
+  assert.deepEqual(hookGates('pre-push', ['worker/wrangler.jsonc']), ['worker']);
+  assert.deepEqual(hookGates('pre-push', ['scripts/ci/worker-config.mjs']), ['worker', 'scripts-test']);
+  assert.ok(hookGates('pre-push', ['release/expected-artifacts.json']).includes('worker'));
+  assert.ok(hookGates('pre-push', ['release/latest.schema.json']).includes('worker'));
+  assert.equal(hookGates('pre-push', ['release/updater.pub']).includes('worker'), false);
+});
+
 test('runGate: 인자를 받지 않는 gate에 인자를 주면 2', () => {
   assert.equal(runGate('parity', ['--x'], { ...process.env, CI: '' }), 2);
 });

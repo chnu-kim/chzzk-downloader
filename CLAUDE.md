@@ -18,13 +18,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `app/` | Vite + Svelte 5 + TS 프런트(`pnpm`, `packageManager`로 버전 고정). `src/lib/api.ts`(command 래퍼), `src/lib/bindings/`(생성물, 손대지 않는다), `src/lib/copy/`(copy deck), `src/lib/components/`·`views/`, vitest는 `*.test.ts` |
 | `app/src-tauri/` | **`chzzk-app`**(lib `chzzk_app_lib`, bin `chzzk-app`). Tauri Builder·플러그인·command 배선·`ChannelSink`·로그·창 닫기 가드, `capabilities/default.json`, `tests/ipc.rs`(mock 런타임 IPC) |
 | `scripts/ci/run.mjs` | **훅과 CI의 단일 진입점** `node scripts/ci/run.mjs <gate>`. gate 표는 `gates.mjs`, 도구 버전은 `tools.json`, 설계는 `docs/design/cicd.md`(끝의 "구현 중 변경"이 본문보다 우선) |
-| `.github/workflows/ci.yml` | 경로 필터 없는 단일 CI: `changes`(문서만 바뀌면 무거운 작업 건너뜀) · `lint` · `scripts (windows)` · `supply` · `rust`(3 OS) · `frontend` · `tauri-clippy`(3 OS) · `tauri`(3 OS, test → `test-count-app` → debug 빌드 → `smoke-bin`) · `coverage`(커버리지·테스트 수 ratchet) · `e2e-web`(Playwright) · `e2e-native (linux)`·`e2e-native (windows)`(코드 PR·push·dispatch, 세 E2E 작업은 D14 관찰 중이라 `ci-ok` 밖) · `bundle (linux)`(ubuntu 22.04 컨테이너)·`smoke-install (linux)`·`bundle (macOS·Windows)` · 집계 `ci-ok`(필수 체크는 이것 하나) · `report`(master 실패 이슈 열기·닫기, 예약 워크플로 keep-alive). 모든 `uses:`는 커밋 SHA 고정(`scripts/ci/pin-actions.mjs`) |
+| `.github/workflows/ci.yml` | 경로 필터 없는 단일 CI: `changes`(문서만 바뀌면 무거운 작업 건너뜀) · `lint` · `scripts (windows)` · `supply` · `rust`(3 OS) · `frontend` · `worker`(Worker, Linux) · `tauri-clippy`(3 OS) · `tauri`(3 OS, test → `test-count-app` → debug 빌드 → `smoke-bin`) · `coverage`(커버리지·테스트 수 ratchet) · `e2e-web`(Playwright) · `e2e-native (linux)`·`e2e-native (windows)`(코드 PR·push·dispatch, 세 E2E 작업은 D14 관찰 중이라 `ci-ok` 밖) · `bundle (linux)`(ubuntu 22.04 컨테이너)·`smoke-install (linux)`·`bundle (macOS·Windows)` · 집계 `ci-ok`(필수 체크는 이것 하나) · `report`(master 실패 이슈 열기·닫기, 예약 워크플로 keep-alive). 모든 `uses:`는 커밋 SHA 고정(`scripts/ci/pin-actions.mjs`) |
 | `.github/workflows/nightly.yml` | 예약 고리. 매일: 네이티브 E2E Linux, 실서버 `drift`(환경 `drift`의 본인 영상 secret, kind만 출력, 2회 연속 실패에 이슈, `no_target`은 3회), `advisories`, `pins`(핀 SHA·zizmor 온라인), `ruleset-drift`(환경 `audit`의 `RULESET_READ_TOKEN`), `private-scan`(환경 `audit`의 비공개 denylist `PRIVATE_DENYLIST`로 트리·공개 이력 전체, 위치만 출력), `fuzz`(4 target, 고정 nightly). 매주: Windows 네이티브 E2E(러너 이미지 drift용. PR에서는 ci.yml `e2e-native (windows)`가 돌고 이 워크플로는 `pull_request` 트리거가 없다, 캐시 키 공유), `toolchain`, `mutants`(shard 4개 → `mutants_missed` ratchet). 작업마다 `ci-loop:<작업 id>` 이슈(`run.mjs report-loop`, 건너뛴 작업도 마지막 성공이 오래되면 연다), `drift-log` 작업이 drift 작업 로그를 `drift-log-check`로 다시 본다(`ci-loop:drift-log`), 앞 실행의 report 자신의 실패는 `ci-loop:nightly-report`. dispatch 입력 `only`·`weekly`·`simulate`(drift 합성 출력)·`loop_test`. master가 아닌 브랜치의 dispatch는 `ci-loop-test:`에만 쓴다. PR 경로 필터는 `paths-ignore` = `gates.mjs NON_CODE_GLOBS`뿐(parity `pr-paths`) |
 | `xtask/` | **릴리스 도구**(`cargo xtask release <명령>`, `.cargo/config.toml` alias, `--locked`). `collect`(OS별 bundles.json → 표·해시 확인)·`sign`(minisign, Tauri 키 형식)·`verify-sig`(updater와 같은 `minisign-verify` + 1바이트·comment 변조 음성 검사)·`sums`·`manifest`(`release/latest.schema.json` 검증)·`put`(R2 S3 API, SigV4 직접 서명, `If-None-Match: *`)·`promote`(`releases/latest.json` CAS, 마지막)·`verify`·`rollback`. 골든 `xtask/testdata/tauri-cli/`(tauri-cli가 만든 공개 키·서명) |
 | `release/` | `expected-artifacts.json`(OS별 번들·updater 산출물 표, 플랫폼 키), `latest.schema.json`(updater 매니페스트), `tauri.release.json`(`createUpdaterArtifacts`, 릴리스 빌드만), `updater.pub`(공개 키 = `tauri.conf.json` `plugins.updater.pubkey`, `pubkey` gate). 개인 키는 저장소에 두지 않는다(누출 규칙 `signing-key`) |
 | `.github/workflows/release.yml`, `rollback.yml` | CD. 태그 `v*`: `gate`(버전 = 태그, 단조 증가, master 조상, 그 커밋의 master `ci-ok` 녹색) → `xtask`(한 번 빌드, sha256 출력) → `build`(3 OS, 임시 키, 시크릿 없음) → `smoke` → `stage`(받은 3 OS 산출물로 publish·verify를 가짜 S3에, 시크릿 없음) → `sign-publish`(태그만, 환경 `release`, 컴파일 없음, R2 업로드, `latest.json`은 마지막) → `verify`(늘 돈다, 결정표대로 확인, 판정 실패면 prev로 되돌림, 5xx 재시도 뒤에는 되돌리지 않고 exit 2) → `deploy-worker`(Phase 3 seam) → `report`(`ci-loop:release`). dispatch·매주 schedule은 리허설: `stage`에서 녹색으로 끝난다(업로드 경계, `ci-loop:release-rehearsal`). `rollback.yml`(dispatch, 입력 `version`)은 `latest.json`을 그 버전으로 바꾼다(되돌리기·잘못 되돌린 뒤 다시 올리기). 바이너리는 GitHub Release에 올리지 않는다 |
 | `fuzz/` | cargo-fuzz 대상(`url`·`info`·`mpd`·`hls`). 루트와 따로인 워크스페이스(자기 `Cargo.lock`, 루트 `exclude`), 고정 nightly(`tools.json` `rust-nightly`)로만 빌드. seed는 실행 때 `testdata/`에서 복사(`scripts/ci/fuzz.mjs`) |
-| `worker/` | Cloudflare Worker(Phase 3, 설계 `docs/design/worker.md`). W1 전이라 지금은 G-ID 도구 `scripts/channel-id-check.mjs`(OAuth `users/me`와 VOD·클립 채널 ID가 같은지 "같다/다르다"만 출력)뿐이다. `.dev.vars`는 아래 주의사항 |
+| `worker/` | Cloudflare Worker(Phase 3, 설계 `docs/design/worker.md`, 지금 W1 골격). TypeScript, `pnpm` 독립 루트(app과 따로인 lockfile·`pnpm-workspace.yaml` `allowBuilds`), 런타임 의존성 0. `wrangler.jsonc`(account_id 없음, DO `exports` `AuthStore`/`AUTH`, R2 `DIST`, vars는 운영 치지직 주소 둘), `src/`(`config.ts` 설정 가드·`routes.ts` 경로 표·`http/`·`core/log.ts`(console.은 여기만)·`store/`), `test/`(vitest, Workers 런타임), `vitest.config.ts`(`environment: "example"` + `.dev.vars.example` 바인딩: 실제 비밀값 파일을 열지 않는다, 구현 중 변경 5), `.dev.vars.example`(자리표시, 커밋하는 유일한 dev 설정). 불변식은 `scripts/ci/worker-config.mjs`. G-ID 도구 `scripts/channel-id-check.mjs`(OAuth `users/me`와 VOD·클립 채널 ID가 같은지 "같다/다르다"만 출력). `.dev.vars`는 아래 주의사항 |
 | `ci/ratchet.json`, `ci/RATCHET_LOG.md`, `release/expected-artifacts.json` | 커버리지·테스트 수·크기·살아남은 mutant ratchet 기준(나빠지면 CI 실패, 느슨하게 하면 로그에 키와 이유), OS별 번들 기대 집합 |
 | `scripts/ci/repo-settings.json`, `.github/rulesets/` | 저장소 설정·ruleset 선언(Actions 허용 목록·SHA 핀 강제·fork 승인, 환경 `release`·`audit`·`drift`의 배포 정책·protection_rules, ruleset `master`(필수 `ci-ok`·최신화·force push·삭제 금지)·`tags`(`v*`는 관리자만)). nightly `ruleset-drift`가 실제 값과 비교하고 `repo-settings.mjs --apply`가 적용한다 |
 | `rust-toolchain.toml`, `deny.toml`, `_typos.toml`, `zizmor.yml`, `.github/dependabot.yml` | 툴체인 고정(1.99.0, MSRV는 `rust-version` 1.90), cargo-deny, typos, zizmor, Dependabot 설정 |
@@ -44,6 +44,8 @@ node scripts/ci/run.mjs tauri-clippy         # chzzk-app clippy(보통·--featur
 node scripts/ci/run.mjs tauri                # chzzk-app test(보통 + --features e2e의 e2e::)
 node scripts/ci/run.mjs tauri-build          # chzzk-app debug 빌드(번들 없음). 셋을 합치면 예전 tauri gate다
 node scripts/ci/run.mjs frontend             # app/: pnpm install --frozen-lockfile, check, test, build
+node scripts/ci/run.mjs worker               # worker/: worker-config(불변식) → pnpm install, wrangler types+tsc, vitest → tests.worker, deploy --dry-run, --dist
+                                             #   (CI만: --sentinel로 .dev.vars 자리에 LEAK_SENTINEL 씨앗을 심어 새지 않았는지 본다)
 node scripts/ci/run.mjs scan                 # 공개 누출 검사(추적 파일)
 node scripts/ci/run.mjs scripts-test         # scripts/**/*.test.mjs
 node scripts/ci/run.mjs workflows            # .github/를 바꿨을 때: pin-check + actionlint + zizmor
@@ -59,7 +61,7 @@ node scripts/ci/run.mjs e2e-native           # Linux·Windows만(macOS는 건너
 node scripts/ci/ratchet.mjs write --from-run <run id>   # CI 측정값으로 ratchet 기준을 조인다(올리기만, ci.yml·nightly.yml 실행)
 
 # 예약(nightly.yml) gate. 로컬에서도 돈다(네트워크·도구 필요)
-node scripts/ci/run.mjs advisories           # cargo deny check advisories + pnpm audit --audit-level high
+node scripts/ci/run.mjs advisories           # cargo deny check advisories + pnpm audit --audit-level high(app/·worker/)
 node scripts/ci/run.mjs pins                 # 핀 SHA가 태그와 같은지(gh) + zizmor 온라인(GH_TOKEN)
 node scripts/ci/run.mjs toolchain            # rust-toolchain.toml이 최신 stable인지(낮으면 1)
 node scripts/ci/run.mjs ruleset-drift        # 저장소 설정·ruleset ↔ repo-settings.json·.github/rulesets/(소유자 gh 로그인 필요)
@@ -97,6 +99,13 @@ cargo run -p chzzk-core --example dl -- <주소> --lowest --limit-mb 5 --out <�
 CHZZK_LIVE_HLS=<빠른 다시보기 no> CHZZK_LIVE_DASH=<일반 VOD no> CHZZK_LIVE_CLIP=<clipId> \
   cargo test -p chzzk-core --test live -- --ignored --nocapture
 
+# Worker(worker/에서). 실제 배포·로그인·Cloudflare 리소스 생성은 하지 않는다(W9에서 사용자와). 포트 8787·콜백 /auth/callback은 등록된 리디렉션이라 고정
+pnpm dev                                         # wrangler dev --config wrangler.jsonc --port 8787 --env-file .dev.vars.example(자리표시, 실제 비밀값을 읽지 않는다)
+pnpm dev:real                                    # 실제 치지직 로그인: --env-file .dev.vars(1Password FIFO, 사용자가 직접) + --var PUBLIC_ORIGIN:http://localhost:8787 → 부트스트랩 모드
+                                                 #   둘 다 http://localhost:8787로만 연다(127.0.0.1:8787은 PUBLIC_ORIGIN과 출처가 달라 config_error)
+pnpm check                                       # wrangler types worker-env.d.ts(기본 이름 worker-configuration.d.ts는 쓰지 않는다: 있으면 wrangler dev가 .dev.vars를 연다) + tsc
+pnpm exec vitest run test/config.test.ts         # 테스트 파일 하나(environment "example"이라 .dev.vars를 열지 않는다)
+
 # Phase 3 G-ID(사용자가 직접, 본인 계정·본인 영상. 포트 8787을 쓰므로 wrangler dev를 먼저 끈다). 출력은 같다/다르다뿐이고 결과만 ROADMAP에 적는다
 node worker/scripts/channel-id-check.mjs <본인 VOD 주소> <본인 클립 주소>
 ```
@@ -126,6 +135,6 @@ node worker/scripts/channel-id-check.mjs <본인 VOD 주소> <본인 클립 주�
 - **OS별 분기**: 파일명 규칙은 `naming::Platform` 인자로 받아 한 호스트에서 세 OS를 테스트한다. Windows는 rename 일시 잠금 재시도, 디스크 부족 코드(112·39), 예약어가 다르다. macOS/Linux에서 개발해도 Windows 동작을 깨지 않게 양쪽을 고려한다.
 - 설정·자격증명 위치는 셸이 주입한다(`SettingsStore::open(config_dir)`, `CredentialStore::new(config_dir)`). 코어는 실행 파일 폴더를 쓰지 않는다.
 - 루트 `settings.json`과 `dependent/`는 **실제 사용자 데이터**(옛 Go 런타임 파일, 평문 쿠키 포함)다. 읽거나 고치지 않는다. 테스트용 Go 형식 JSON은 테스트 안에서 만든다.
-- `worker/.dev.vars`는 1Password Environment `chzzk-downloader-worker`의 **FIFO 마운트**(치지직 client id·secret)다. `cat`·Read로 열지 않는다(읽는 동안 막히고 값이 출력된다). 값을 대화·로그·저장소에 내지 않고, 고칠 수도 없다. 커밋하는 dev 설정은 `.dev.vars.example`뿐이다(W1).
+- `worker/.dev.vars`는 1Password Environment `chzzk-downloader-worker`의 **FIFO 마운트**(치지직 client id·secret)다. `cat`·Read·cp로 열지 않는다(읽는 동안 막히고 값이 출력된다). 값을 대화·로그·저장소에 내지 않고, 고칠 수도 없다. 커밋하는 dev 설정은 `.dev.vars.example`뿐이다. wrangler `dev`·`types`는 늘 `--config wrangler.jsonc`와 `--env-file`을 준다(없으면 이 파일을 연다, worker.md 구현 중 변경 4·9), 이 파일을 쓰는 스크립트는 `pnpm dev:real`뿐이고 vitest는 `environment: "example"`로 열지 않는다(구현 중 변경 5). `worker/worker-configuration.d.ts`를 만들지 않는다: 있으면 `wrangler dev`가 `--env-file`을 주어도 이 파일을 연다(구현 중 변경 9, 타입은 `worker-env.d.ts`). 맨 `wrangler types`·`wrangler dev`를 손으로 치지 않는다(모두 `worker-config.mjs`가 package.json에서 검사). wrangler·`@cloudflare/vitest-plugin`을 올리면 구현 중 변경 5의 FIFO 확인(임시 사본, `timeout -s KILL`)을 다시 한다.
 - `compose.yml`과 `win10/`은 `dockurr/windows`로 Windows 환경을 띄워 Windows 빌드·테스트를 하기 위한 것이다. 코드와 무관하며 건드리지 않는다.
 - 암호화(AES) VOD는 지원하지 않으며 명확한 오류로 거부한다(`Error::EncryptedVod`, 설계 §11).

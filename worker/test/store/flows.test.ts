@@ -2,7 +2,7 @@
 import { runInDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import { isSecret, isToken, newSecret, sha256B64url } from "../../src/core/token";
-import { FLOW_CAP, MEMORY_KEYS_MAX, pollGate, throttle, type StartWindow } from "../../src/store/flows";
+import { FLOW_CAP, liveFlowCount, MEMORY_KEYS_MAX, pollGate, throttle, type StartWindow } from "../../src/store/flows";
 import { sweep } from "../../src/store/sweep";
 import { A1, ADMINS, B2, C3, T0, appLogin, begin, freshStub, meter, query, sha, webLogin } from "./helpers";
 
@@ -197,7 +197,7 @@ describe("행 수 상한(무료 한도 계산의 전제, 구현 중 변경 19 (�
     const w5 = await delta(stub, async () => expect((await stub.claim(loginId, verifier, ADMINS, T0)).status).toBe("ok"));
     const w6 = await delta(stub, () => runInDurableObject(stub, (i) => sweep(i.db, T0 + 10 * 60_000)));
     expect(await query(stub, "SELECT count(*) AS n FROM flow")).toEqual([{ n: 0 }]);
-    // 실측 27행 = 5+2+2+8+9+1(start·[계속]·consume·finish·claim·청소, 구현 중 변경 27 (가))
+    // 실측 28행 = 5+2+2+8+10+1(start·[계속]·consume·finish·claim·청소, 구현 중 변경 27 (가)·28: claim이 만료를 앞당겨 인덱스 1행)
     expect(w1 + w2 + w3 + w4 + w5 + w6).toBeLessThanOrEqual(30);
   });
 
@@ -302,6 +302,20 @@ describe("finish·claim 표", () => {
     expect(await stub.doneView(await sha(b.binder), T0 + 1000)).toEqual({ kind: "app", status: "ok", userCode: b.userCode, channelName: null, channelId: null });
     expect(await query(stub, "SELECT status FROM session")).toEqual([{ status: "active" }]);
     expect(await stub.claim(b.loginId, b.verifier, ADMINS, T0 + 1500)).toEqual({ status: "not_found" });
+    // 수령한 흐름은 2분 뒤 만료라 상한 32 슬롯을 start+10분까지 잡지 않는다(구현 중 변경 28)
+    expect(await query(stub, "SELECT expires_at FROM flow")).toEqual([{ expires_at: T0 + 120_000 }]);
+    expect(await stub.doneView(await sha(b.binder), T0 + 119_999)).not.toBeNull();
+    expect(await stub.doneView(await sha(b.binder), T0 + 120_000)).toBeNull();
+    expect(await runInDurableObject(stub, (i) => liveFlowCount(i.db, T0 + 120_000))).toBe(0);
+  });
+
+  it("claim은 만료를 늦추지 않는다(늦게 수령해도 start+10분 이하)", async () => {
+    const stub = freshStub();
+    await stub.allow(B2, "", A1, T0);
+    const b = await begin(stub);
+    await stub.finish(b.flowId, { type: "user", channelId: B2, channelName: "채널" }, ADMINS, T0);
+    expect((await stub.claim(b.loginId, b.verifier, ADMINS, T0 + 590_000)).status).toBe("ok");
+    expect(await query(stub, "SELECT expires_at FROM flow")).toEqual([{ expires_at: T0 + 600_000 }]);
   });
 
   it("허용되지 않은 채널: denied + 거부 기록", async () => {

@@ -70,16 +70,19 @@ export function throttle(map: Map<string, StartWindow>, key: string, limit: numb
   return { ok: true };
 }
 
+/** 폴링 게이트 키: loginId + pollVerifier. 틀린 secret의 폴링은 다른 키라 올바른 폴링을 굶기지 못한다(구현 중 변경 28) */
+export const pollGateKey = (loginId: string, pollVerifier: string): string => `${loginId}:${pollVerifier}`;
+
 /** 폴링 간격 게이트. false면 너무 이르다(SQL 없이 429). 거절할 때는 기록을 갱신하지 않는다. 마지막 기록보다 이른 now(동시 요청)도 너무 이르다 */
-export function pollGate(map: Map<string, number>, loginId: string, now: number): boolean {
-  const last = map.get(loginId);
+export function pollGate(map: Map<string, number>, key: string, now: number): boolean {
+  const last = map.get(key);
   if (last !== undefined && now - last < POLL_MIN_INTERVAL_MS) return false;
   if (map.size >= MEMORY_KEYS_MAX) {
     for (const [k, t] of map) if (now - t >= POLL_MIN_INTERVAL_MS) map.delete(k);
     evictOldest(map, MEMORY_KEYS_MAX);
   }
-  map.delete(loginId);
-  map.set(loginId, now);
+  map.delete(key);
+  map.set(key, now);
   return true;
 }
 
@@ -242,7 +245,8 @@ export function claim(
     case "ok": {
       const a = row.session_id === null ? ({ ok: false, code: "gone" } as const) : activate(db, row.session_id, pair, admins, now);
       if (a.ok) {
-        db.run("UPDATE flow SET poll_verifier = NULL, session_id = NULL WHERE id = ?", loginId);
+        // 수령한 흐름은 완료 페이지 재표시(2분)만 남기고 상한 32 슬롯을 일찍 비운다(구현 중 변경 28). 앞당기기만 한다
+        db.run("UPDATE flow SET poll_verifier = NULL, session_id = NULL, expires_at = min(expires_at, ?) WHERE id = ?", now + FLOW_DONE_TTL_MS, loginId);
         return { status: "ok", bundle: a.bundle };
       }
       db.run("DELETE FROM flow WHERE id = ?", loginId);

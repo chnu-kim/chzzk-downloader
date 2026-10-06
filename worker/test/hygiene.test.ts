@@ -1,11 +1,11 @@
-// 비밀값 위생(docs/design/worker.md §14, W4 수락 기준): 전 흐름을 한 번에 돌리고, 로그 줄과 모든 응답에 카나리가 없는지 본다.
+// 비밀값 위생(docs/design/worker.md §14, W4 수락 기준, 구현 중 변경 28): 전 흐름과 실패 경로를 한 번에 돌리고, 로그 줄과 모든 응답에 카나리가 없는지 본다.
 // 카나리 = 비밀값(클라이언트 secret), 치지직이 준 code·토큰, state·handle·loginId·pollSecret·pollVerifier, 우리 토큰, 채널 ID·이름.
 // 응답에 있어도 되는 자리는 표(allowed)로 좁힌다. 그 밖에 하나라도 나오면 실패한다.
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createFakeChzzk, FAKE_ACCOUNTS, type FakeChzzk } from "./fake-chzzk.mjs";
 import { installFakeChzzk, type FakeNet } from "./network";
 import { A1, B2 } from "./store/helpers";
-import { advance, allowedChannel, AppClient, appFlow, Browser, useClock, viaEnv, type Send } from "./http/harness";
+import { advance, allowedChannel, AppClient, appFlow, Browser, store, useClock, viaEnv, type Send } from "./http/harness";
 
 let fake: FakeChzzk;
 let net: FakeNet;
@@ -25,6 +25,8 @@ afterEach(() => {
 
 const SECRET = "hyg-" + crypto.randomUUID();
 const SECRET2 = "hyg-" + crypto.randomUUID();
+// 콜백 code_format 실패에 싣는 code 카나리: 보이는 ASCII지만 1024자를 넘어 형식 밖이다(인코딩 없이 URL에 그대로 실린다)
+const BAD_CODE = "hygcode" + crypto.randomUUID() + "Z".repeat(1100);
 
 // 로그 허용 필드(src/core/log.ts ALLOWED + event)
 const LOG_KEYS = new Set(["event", "level", "route", "method", "status", "stage", "timedOut", "durationMs", "flowKind", "reason", "sessionIdPrefix", "chzzkCode", "key", "errorName"]);
@@ -61,12 +63,13 @@ function allowed(e: Entry, l: Label): boolean {
 
 it("전 흐름을 돌려도 로그와 응답에 카나리가 새지 않는다", async () => {
   const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-  const base = viaEnv({ CHZZK_CLIENT_SECRET: SECRET });
   const entries: Entry[] = [];
   const requestTexts: string[] = [];
   const requestBodies: string[] = [];
-  // Worker가 받은 요청과 돌려준 응답을 모두 기록한다
-  const send: Send = async (u, i) => {
+  // Worker가 받은 요청과 돌려준 응답을 모두 기록한다(patch는 설정을 바꾼 기록기, 예: start 한도)
+  const recorder = (patch: Record<string, unknown> = {}): Send => {
+    const base = viaEnv({ CHZZK_CLIENT_SECRET: SECRET, ...patch });
+    return async (u, i) => {
     const res = await base(u, i);
     const url = new URL(u);
     const headers = [...res.headers].map(([k, v]) => `${k}: ${v}`).join("\n") + "\n" + res.headers.getSetCookie().join("\n");
@@ -81,7 +84,9 @@ it("전 흐름을 돌려도 로그와 응답에 카나리가 새지 않는다", 
     requestTexts.push(`${u}\n${JSON.stringify(i.headers ?? {})}\n${body}`);
     requestBodies.push(body);
     return res;
+    };
   };
+  const send = recorder();
   const mk = () => ({ browser: new Browser(send), app: new AppClient(send) });
   const run = (over?: (f: FakeChzzk) => void) => {
     fake.state.account = "b2";
@@ -135,6 +140,70 @@ it("전 흐름을 돌려도 로그와 응답에 카나리가 새지 않는다", 
     expect(cb.status).toBe(303);
     if (account === "c3") await web.get("/auth/done?r=denied");
   }
+  // 12~. 실패 경로(§14 "모든 흐름·실패 경로"): 위의 흐름 행이 상한 32를 채우지 않게 먼저 10분을 넘긴다
+  advance(11 * 60_000);
+  {
+    const { browser: b, app: client } = mk();
+    // 콜백 code_format(카나리 code) → failed
+    const s1 = await client.start();
+    const cont1 = await b.post(new URL(s1.body.loginUrl).pathname);
+    const st1 = new URL(cont1.headers.get("Location") ?? "").searchParams.get("state") ?? "";
+    expect((await b.get(`/auth/callback?code=${BAD_CODE}&state=${st1}`)).headers.get("Location")).toBe("/auth/done?r=failed");
+    expect(await (await client.poll(s1.body.loginId, s1.pollSecret)).json()).toEqual({ status: "failed", code: "token" });
+    // [계속] 403(Origin 없음)·404(모르는 handle)·409(두 번째), 웹 start 403
+    const s2 = await client.start();
+    const path2 = new URL(s2.body.loginUrl).pathname;
+    expect((await b.post(path2, { Origin: null })).status).toBe(403);
+    expect((await b.post("/auth/login/" + "Q".repeat(22))).status).toBe(404);
+    expect((await b.get("/auth/login/" + "Q".repeat(22))).status).toBe(404);
+    expect((await b.post(path2)).status).toBe(303);
+    expect((await b.post(path2)).status).toBe(409);
+    expect((await b.get(path2)).status).toBe(409);
+    expect((await b.post("/auth/web/start", { Origin: "http://evil.example.test" })).status).toBe(403);
+    // start 400, start 429(한도 1)·웹 start 429
+    const raw = (path: string, body: string) => send(`http://localhost:8787${path}`, { method: "POST", headers: { "Content-Type": "application/json" }, body });
+    expect((await raw("/auth/start", "{")).status).toBe(400);
+    const limited = recorder({ START_RATE_10M: "1" });
+    const ip = "203.0.113.99";
+    expect((await new AppClient(limited).start(ip)).res.status).toBe(201);
+    expect((await new AppClient(limited).start(ip)).res.status).toBe(429);
+    expect((await new Browser(limited).post("/auth/web/start", { "CF-Connecting-IP": ip })).status).toBe(429);
+    // poll 400·404·429
+    expect((await raw("/auth/poll", "[]")).status).toBe(400);
+    expect((await client.poll(s2.body.loginId, "B".repeat(43))).status).toBe(404);
+    expect((await client.pollNow(s2.body.loginId, s2.pollSecret)).status).toBe(200);
+    expect((await client.pollNow(s2.body.loginId, s2.pollSecret)).status).toBe(429);
+    // 콜백 내부 예외(errorName만 로그에)
+    const { AuthStore } = await import("../src/store/AuthStore");
+    vi.spyOn(AuthStore.prototype, "finish").mockImplementationOnce(() => {
+      throw new RangeError("boom " + SECRET);
+    });
+    const s3 = await client.start();
+    const cb3 = await b.authorize(await b.post(new URL(s3.body.loginUrl).pathname), fake);
+    expect((await b.get(cb3)).headers.get("Location")).toBe("/auth/done?r=failed");
+    // 세션: me 401, refresh 400·401(invalid_token)·429(채널 회전 한도), 허용 제외 뒤 me·refresh 403, logout 401
+    const login = await run();
+    const a = new AppClient(send);
+    expect((await a.me()).status).toBe(401);
+    expect((await a.me("cda_" + "A".repeat(43))).status).toBe(401);
+    expect((await raw("/auth/refresh", "{")).status).toBe(400);
+    expect((await a.refresh("cdr_nope")).status).toBe(401);
+    let rt: string = login.pollBody.refreshToken;
+    let at: string = login.pollBody.accessToken;
+    let last = 0;
+    for (let i = 0; i < 12 && last !== 429; i++) {
+      advance(1000);
+      const r = await a.refresh(rt);
+      last = r.status;
+      if (r.status === 200) ({ refreshToken: rt, accessToken: at } = (await r.json()) as { refreshToken: string; accessToken: string });
+    }
+    expect(last).toBe(429);
+    expect(await store().disallow(FAKE_ACCOUNTS.b2.channelId, A1, [A1], Date.now())).toEqual({ ok: true });
+    expect((await a.me(at)).status).toBe(403);
+    advance(11 * 60_000);
+    expect((await a.refresh(rt)).status).toBe(403);
+    expect((await a.logout({})).status).toBe(401);
+  }
   // 11. 모르는 문자열 바인딩 → config_error: 이름만 로그에, 값은 없다
   const cfg = await viaEnv({ OTHER_SERVICE_SECRET: SECRET2 })("http://localhost:8787/health", { method: "GET" });
   expect(cfg.status).toBe(503);
@@ -148,6 +217,7 @@ it("전 흐름을 돌려도 로그와 응답에 카나리가 새지 않는다", 
   put(SECRET, { kind: "secret" });
   put(SECRET2, { kind: "secret" });
   for (const c of fake.state.issuedCodes) put(c, { kind: "code" });
+  put(BAD_CODE, { kind: "code" });
   for (const t of fake.state.issuedTokens) put(t, { kind: "chzzkToken" });
   const all = [...requestTexts, ...entries.map((e) => e.text)].join("\n");
   const kinds: [RegExp, Kind][] = [
@@ -195,7 +265,20 @@ it("전 흐름을 돌려도 로그와 응답에 카나리가 새지 않는다", 
     for (const k of Object.keys(parsed)) expect([line, LOG_KEYS.has(k)]).toEqual([line, true]);
     for (const [v, l] of labels) expect([l.kind, line.includes(v)]).toEqual([l.kind, false]);
   }
-  expect(lines.map((l) => JSON.parse(l) as { event: string; key?: string })).toContainEqual({ event: "config.error", level: "error", key: "OTHER_SERVICE_SECRET" });
+  const events = lines.map((l) => JSON.parse(l) as Record<string, unknown>);
+  expect(events).toContainEqual({ event: "config.error", level: "error", key: "OTHER_SERVICE_SECRET" });
+  // 실패 경로가 실제로 로그 줄을 남겼다(위 단언이 그 줄들도 본다)
+  for (const want of [
+    { event: "auth.login.failed", flowKind: "app", reason: "code_format" },
+    { event: "auth.login.failed", level: "error", reason: "internal", errorName: "RangeError" },
+    { event: "auth.continue.rejected", reason: "bad_origin" },
+    { event: "auth.start.rejected", flowKind: "web", reason: "bad_origin" },
+    { event: "auth.start.rejected", flowKind: "app", reason: "rate_limited" },
+    { event: "auth.refresh.rejected", reason: "rate_limited" },
+    { event: "auth.refresh.rejected", reason: "not_allowed" },
+  ]) {
+    expect(events).toContainEqual(expect.objectContaining(want));
+  }
 
   // (나)(다) 응답: 표의 자리가 아니면 카나리가 없다(비밀값·code·치지직 토큰·pollSecret·pollVerifier는 어디에도 없다)
   for (const e of entries) {

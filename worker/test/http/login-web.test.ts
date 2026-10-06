@@ -93,6 +93,7 @@ describe("웹 승인·거부", () => {
 
 describe("웹 start 입력", () => {
   it("Origin이 없거나 틀리면 403 HTML, 흐름은 만들어지지 않는다", async () => {
+    const spy = vi.spyOn(console, "log").mockImplementation(() => {});
     const browser = new Browser();
     const variants: Record<string, string | null>[] = [{ Origin: null }, { Origin: "http://evil.example.test" }, { "Sec-Fetch-Site": "cross-site" }];
     for (const headers of variants) {
@@ -101,6 +102,9 @@ describe("웹 start 입력", () => {
       expect(res.headers.get("Content-Type")).toBe("text/html; charset=utf-8");
       expect(res.headers.getSetCookie()).toEqual([]);
     }
+    // [계속]의 거절과 구별되는 이벤트(구현 중 변경 28)
+    const events = spy.mock.calls.map((c) => JSON.parse(String(c[0])) as Record<string, unknown>);
+    expect(events).toEqual(Array(3).fill({ event: "auth.start.rejected", level: "info", flowKind: "web", reason: "bad_origin" }));
   });
 
   it("IP당 한도: 둘째는 429 HTML + Retry-After", async () => {
@@ -137,5 +141,22 @@ describe("운영 모드", () => {
     expect(cookie.startsWith("__Host-cdl_f=cdf_")).toBe(true);
     expect(cookie.endsWith("; Secure")).toBe(true);
     expect(cookie).toContain("; Max-Age=600; Path=/; HttpOnly; SameSite=Lax");
+  });
+});
+
+describe("완료 페이지의 F 지우기", () => {
+  it.each([
+    ["형식 밖 값", "cdl_f=a.b"],
+    ["빈 값", "cdl_f="],
+    ["중복", `cdl_f=cdf_${"A".repeat(43)}; cdl_f=cdf_${"B".repeat(43)}`],
+  ])("%s도 지운다(구현 중 변경 28)", async (_name, cookie) => {
+    const res = await new Browser().get("/auth/done?r=ok", { Cookie: cookie });
+    expect(res.status).toBe(200);
+    expect(res.headers.getSetCookie()).toEqual(["cdl_f=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax"]);
+  });
+
+  it("F가 없으면 Set-Cookie도 없다", async () => {
+    const res = await new Browser().get("/auth/done?r=ok", { Cookie: "xcdl_f=1; other=2" });
+    expect(res.headers.getSetCookie()).toEqual([]);
   });
 });

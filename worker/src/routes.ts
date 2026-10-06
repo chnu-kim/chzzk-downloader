@@ -102,7 +102,7 @@ async function route(req: Request, env: Env, now: number): Promise<Response> {
   }
 }
 
-/** Worker fetch 진입점. 핸들러 밖(설정·경로 판정)에서 난 예외도 500 internal로 끝낸다. */
+/** Worker 요청 진입점. 핸들러 밖(설정·경로 판정)에서 난 예외도 500 internal로 끝낸다. */
 export async function handle(req: Request, env: Env): Promise<Response> {
   let res: Response;
   try {

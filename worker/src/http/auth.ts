@@ -5,10 +5,11 @@
 import type { ChzzkApp, ChzzkDeps } from "../core/chzzk";
 import { authorizeRedirect, identify } from "../core/chzzk";
 import type { Config } from "../config";
-import { clearCookie, readCookie, setCookie } from "../core/cookies";
+import { clearCookie, hasCookieName, readCookie, setCookie } from "../core/cookies";
 import { log } from "../core/log";
 import { isId, isSecret, isToken, sha256B64url, sha256Hex } from "../core/token";
 import type { Ctx } from "../routes";
+import type { ConsumeResult } from "../store/types";
 import { COPY } from "./copy";
 import { type DoneR, donePage, loginConfirmPage, noticePage } from "./pages";
 import { readJsonObject, sameOriginPost } from "./request";
@@ -94,7 +95,7 @@ export async function loginContinue(req: Request, ctx: Ctx): Promise<Response> {
 /** POST /auth/web/start */
 export async function webStart(req: Request, ctx: Ctx): Promise<Response> {
   if (!sameOriginPost(req, ctx.config.publicOrigin)) {
-    log("auth.continue.rejected", { reason: "bad_origin" });
+    log("auth.start.rejected", { flowKind: "web", reason: "bad_origin" });
     return noticePage(ctx.config, 403, COPY.badOrigin);
   }
   const r = await ctx.store.startWeb(req.headers.get("CF-Connecting-IP"), ctx.config.startRate10m, ctx.now);
@@ -132,6 +133,18 @@ async function callbackInner(req: Request, ctx: Ctx): Promise<Response> {
     log("auth.login.failed", { reason: k.code === "binder" ? "binder" : "state" });
     return toDone("failed");
   }
+  try {
+    return await settle(ctx, k, code, state);
+  } catch (e) {
+    // state는 이미 소비됐다: 흐름을 닫지 않으면 앱은 만료까지 pending만 본다. 한 번 더 failed(user)로 닫아 본다
+    // (이미 닫혔으면 gone이라 아무것도 바꾸지 않는다, 구현 중 변경 28). 이것도 실패하면 원래 예외만 바깥 catch가 남긴다
+    await ctx.store.finish(k.flowId, { type: "failed", code: "user" }, ctx.config.adminChannelIds, ctx.now).catch(() => {});
+    throw e;
+  }
+}
+
+// consume 뒤: code 검사 → 교환 → finish → 303
+async function settle(ctx: Ctx, k: Extract<ConsumeResult, { ok: true }>, code: string | null, state: string): Promise<Response> {
   const admins = ctx.config.adminChannelIds;
   if (code === null || code === "") {
     await ctx.store.finish(k.flowId, { type: "cancelled" }, admins, ctx.now);
@@ -192,10 +205,11 @@ async function callbackInner(req: Request, ctx: Ctx): Promise<Response> {
 export async function done(req: Request, ctx: Ctx): Promise<Response> {
   const q = new URL(req.url).searchParams.get("r") ?? "";
   const r = (DONE_R.includes(q) ? q : "failed") as DoneR;
-  const flowCookie = readCookie(req.headers.get("Cookie"), ctx.cookies.flow);
+  const header = req.headers.get("Cookie");
+  const flowCookie = readCookie(header, ctx.cookies.flow);
   const view = isToken("flow", flowCookie) ? await ctx.store.doneView(await sha256Hex(flowCookie), ctx.now) : null;
-  // 쿠키가 있었으면 형식과 상관없이 지운다(남은 F로는 아무것도 할 수 없다)
-  const clear = flowCookie !== null ? clearCookie(ctx.cookies, "flow") : null;
+  // 그 이름의 쿠키가 있었으면 값·중복과 상관없이 지운다(남은 F로는 아무것도 할 수 없다, 구현 중 변경 28)
+  const clear = hasCookieName(header, ctx.cookies.flow) ? clearCookie(ctx.cookies, "flow") : null;
   return donePage(ctx.config, r, view, clear);
 }
 

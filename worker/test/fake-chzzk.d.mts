@@ -17,6 +17,7 @@ export interface FakeState {
   userFail: FakeFail | null;
   userIdField: "channelId" | "id";
   codeReuse: "reject" | "allow";
+  codeBinding: "state" | "none";
   readonly calls: string[];
   readonly issuedCodes: string[];
   readonly issuedTokens: string[];

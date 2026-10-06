@@ -155,11 +155,34 @@ describe("치지직 실패", () => {
 });
 
 describe("재사용·결합", () => {
-  it("쓴 code를 다른 흐름에 다시 쓰면 failed", async () => {
+  // 흐름 1의 code를 흐름 2의 콜백(흐름 2의 state)에 싣는다. 가짜가 code를 state에 묶지 않게 해서(codeBinding none)
+  // 결과를 가르는 것이 가짜의 재사용 거부뿐이게 한다: allow면 ok, reject면 failed(token)인 대조 쌍(구현 중 변경 28)
+  it.each([
+    ["reject", { status: "failed", code: "token" }, "/auth/done?r=failed"],
+    ["allow", { status: "ok" }, "/auth/done?r=ok"],
+  ] as const)("쓴 code를 다른 흐름에 다시 쓴다: codeReuse %s", async (codeReuse, want, location) => {
+    fake.state.codeBinding = "none";
+    fake.state.codeReuse = codeReuse;
     const first = await appFlow({ fake });
     expect(first.pollBody.status).toBe("ok");
     const usedCode = fake.state.issuedCodes[0] ?? "";
-    // 흐름 2: [계속]까지만 하고 콜백을 흐름 1의 code + 흐름 2의 state로 만든다
+    const app = new AppClient();
+    const browser = new Browser();
+    const { body, pollSecret } = await app.start();
+    const cont = await browser.post(new URL(body.loginUrl).pathname);
+    const state = new URL(cont.headers.get("Location") ?? "").searchParams.get("state") ?? "";
+    const callback = await browser.get(`/auth/callback?code=${encodeURIComponent(usedCode)}&state=${state}`);
+    expect(callback.headers.get("Location")).toBe(location);
+    // 두 번째 교환이 실제로 일어났다(code 형식 거부 경로가 아니다)
+    expect(fake.state.calls.filter((c) => c === "POST /auth/v1/token")).toHaveLength(2);
+    expect(fake.state.issuedCodes).toHaveLength(1);
+    expect(await (await app.poll(body.loginId, pollSecret)).json()).toMatchObject(want);
+  });
+
+  it("쓴 code를 다른 흐름에 다시 쓴다: 기본 가짜(state에 묶임)도 failed(token)", async () => {
+    const first = await appFlow({ fake });
+    expect(first.pollBody.status).toBe("ok");
+    const usedCode = fake.state.issuedCodes[0] ?? "";
     const app = new AppClient();
     const browser = new Browser();
     const { body, pollSecret } = await app.start();
@@ -167,8 +190,8 @@ describe("재사용·결합", () => {
     const state = new URL(cont.headers.get("Location") ?? "").searchParams.get("state") ?? "";
     const callback = await browser.get(`/auth/callback?code=${encodeURIComponent(usedCode)}&state=${state}`);
     expect(callback.headers.get("Location")).toBe("/auth/done?r=failed");
-    const poll = await app.poll(body.loginId, pollSecret);
-    expect(await poll.json()).toEqual({ status: "failed", code: "token" });
+    expect(fake.state.calls.filter((c) => c === "POST /auth/v1/token")).toHaveLength(2);
+    expect(await (await app.poll(body.loginId, pollSecret)).json()).toEqual({ status: "failed", code: "token" });
   });
 
   it("다른 브라우저의 콜백은 failed(binder)", async () => {
@@ -185,6 +208,47 @@ describe("재사용·결합", () => {
     const again = await a.get(callbackUrl);
     expect(again.headers.get("Location")).toBe("/auth/done?r=failed");
     expect(fake.state.calls.some((c) => c.includes("/auth/v1/token"))).toBe(false);
+  });
+
+  it("자기 F 쿠키를 가진 다른 브라우저가 남의 콜백을 열면 failed(binder), 자기 흐름은 그대로 끝난다", async () => {
+    // A4(로그인 CSRF)의 실제 모양: 피해자 B는 자기 흐름의 유효한 F를 가진 채 공격자 A의 콜백 URL을 연다
+    const appA = new AppClient();
+    const a = new Browser();
+    const sa = await appA.start();
+    const callbackA = await a.authorize(await a.post(new URL(sa.body.loginUrl).pathname), fake);
+    const appB = new AppClient();
+    const b = new Browser();
+    const sb = await appB.start();
+    const contB = await b.post(new URL(sb.body.loginUrl).pathname);
+    expect(b.jar.has("cdl_f")).toBe(true);
+    const callbackB = await b.authorize(contB, fake);
+    const res = await b.get(callbackA);
+    expect(res.headers.get("Location")).toBe("/auth/done?r=failed");
+    expect(await (await appA.poll(sa.body.loginId, sa.pollSecret)).json()).toEqual({ status: "failed", code: "binder" });
+    expect(fake.state.calls.filter((c) => c === "POST /auth/v1/token")).toHaveLength(0);
+    // B의 F는 그대로라 자기 콜백을 마친다(done을 거치지 않는다: done은 F를 지운다)
+    expect(b.jar.has("cdl_f")).toBe(true);
+    const own = await b.get(callbackB);
+    expect(own.headers.get("Location")).toBe("/auth/done?r=ok");
+    expect(await (await appB.poll(sb.body.loginId, sb.pollSecret)).json()).toMatchObject({ status: "ok", channelId: FAKE_ACCOUNTS.b2.channelId });
+  });
+
+  it("콜백 처리 중 예외: 303 failed이고 흐름도 failed로 닫혀 앱이 pending에 머물지 않는다", async () => {
+    const spy = vi.spyOn(console, "log").mockImplementation(() => {});
+    // DO 메서드가 던지면 workerd가 "uncaught exception … RangeError: boom"을 stderr에 찍는다(이 테스트의 예상 출력)
+    const { AuthStore } = await import("../../src/store/AuthStore");
+    const finish = vi.spyOn(AuthStore.prototype, "finish").mockImplementationOnce(() => {
+      throw new RangeError("boom");
+    });
+    const app = new AppClient();
+    const browser = new Browser();
+    const { body, pollSecret } = await app.start();
+    const callbackUrl = await browser.authorize(await browser.post(new URL(body.loginUrl).pathname), fake);
+    const res = await browser.get(callbackUrl);
+    expect(res.headers.get("Location")).toBe("/auth/done?r=failed");
+    expect(finish).toHaveBeenCalledTimes(2);
+    expect(await (await app.poll(body.loginId, pollSecret)).json()).toEqual({ status: "failed", code: "user" });
+    expect(logs(spy)).toContainEqual({ event: "auth.login.failed", level: "error", reason: "internal", errorName: "RangeError" });
   });
 
   it("같은 콜백을 다시 열면 failed, 토큰 교환은 한 번뿐", async () => {
@@ -330,9 +394,16 @@ describe("start·poll 입력", () => {
     expect((await post("/auth/poll", JSON.stringify({ loginId: "x", pollSecret }))).status).toBe(400);
     // 틀린 pollSecret은 404(모름·불일치를 구분하지 않는다)
     expect((await app.poll(body.loginId, "B".repeat(43))).status).toBe(404);
-    // 간격 안의 두 번째 폴링은 429(쓰기 없음). 틀린 secret의 폴링도 간격 기록을 남긴다
-    advance(2000);
+    // 틀린 secret의 폴링은 다른 게이트 키라 바로 뒤의 올바른 폴링을 막지 못한다(구현 중 변경 28)
     expect(await (await app.pollNow(body.loginId, pollSecret)).json()).toEqual({ status: "pending" });
+    // loginId만 아는 쪽이 1.5초보다 촘촘히 폴링해도(매번 다른 틀린 secret) 앱의 2초 간격 폴링은 매번 통과한다
+    for (let i = 0; i < 4; i++) {
+      advance(1000);
+      expect((await app.pollNow(body.loginId, String.fromCharCode(65 + i).repeat(43))).status).toBe(404);
+      advance(1000);
+      expect(await (await app.pollNow(body.loginId, pollSecret)).json()).toEqual({ status: "pending" });
+    }
+    // 간격 안의 두 번째 폴링은 429(쓰기 없음)
     const early = await app.pollNow(body.loginId, pollSecret);
     expect(early.status).toBe(429);
     expect(await early.json()).toEqual({ code: "too_soon" });

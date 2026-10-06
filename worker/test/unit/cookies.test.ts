@@ -1,6 +1,6 @@
 // core/cookies(docs/design/worker.md §6.2): 프로토콜로 가르는 이름·Secure, 정확한 Set-Cookie, 읽기의 닫힌 판정.
 import { describe, expect, it } from "vitest";
-import { clearCookie, cookieSpec, FLOW_MAX_AGE, readCookie, SESSION_MAX_AGE, setCookie } from "../../src/core/cookies";
+import { clearCookie, cookieSpec, FLOW_MAX_AGE, hasCookieName, readCookie, SESSION_MAX_AGE, setCookie } from "../../src/core/cookies";
 
 const V = "cdw_" + "A".repeat(43);
 
@@ -65,5 +65,21 @@ describe("readCookie", () => {
     [null, "cdl_s", null],
   ] as const)("%j에서 %s → %j", (h, name, want) => {
     expect(readCookie(h, name)).toBe(want);
+  });
+});
+
+describe("hasCookieName(지울지만 정한다)", () => {
+  it.each([
+    ["cdl_f=abc", true],
+    ["cdl_f=a.b", true],
+    ["cdl_f=", true],
+    ["cdl_f=x; cdl_f=y", true],
+    ['a=1; cdl_f="q"', true],
+    ["xcdl_f=abc", false],
+    ["cdl_f", false],
+    ["", false],
+    [null, false],
+  ] as const)("%j → %s", (h, want) => {
+    expect(hasCookieName(h, "cdl_f")).toBe(want);
   });
 });

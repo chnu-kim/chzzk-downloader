@@ -519,7 +519,7 @@ test('씨앗: raw 허용 목록(파일별 정확한 토큰 수)', () => {
   assert.ok(checkWorker(copy({ 'worker/src/core/html.ts': null })).some((e) => e.includes('RAW_ALLOWLIST')));
 });
 
-test('씨앗: 바깥 요청(전역 fetch)은 src/http/auth.ts 한 곳', () => {
+test('씨앗: 바깥 요청(낱말 fetch)은 src/http/auth.ts 한 곳, 전역 객체·동적 실행·소켓은 0', () => {
   const AUTH = 'src/http/auth.ts';
   const auth = read(AUTH);
   assert.deepEqual(OUTBOUND_ALLOWLIST, { [AUTH]: 1 });
@@ -536,6 +536,25 @@ test('씨앗: 바깥 요청(전역 fetch)은 src/http/auth.ts 한 곳', () => {
     ['self 대괄호', 'src/routes.ts', 'self["fetch"](u);'],
     ['주석 속 호출', 'src/http/health.ts', '// 여기서 fetch(u)를 부르면 안 된다'],
     ['목록 파일의 호출이 0개', AUTH, 'export const x = 1;'],
+    // W4 리뷰(cicd.md 93): 별칭·우회 모양
+    ['bind 속성', 'src/store/x.ts', 'const deps = { fetch: fetch.bind(null) };'],
+    ['축약형 속성', 'src/store/x.ts', 'const deps = { fetch };'],
+    ['call', 'src/store/x.ts', 'fetch.call(null, u);'],
+    ['변수 별칭', 'src/store/x.ts', 'const f = fetch; f(u);'],
+    ['쉼표 식', 'src/http/session.ts', '(0, fetch)(u);'],
+    ['선택 호출', 'src/http/session.ts', 'fetch?.(u);'],
+    ['같은 줄 삼항', 'src/http/session.ts', 'const f = ok ? fetch : g;'],
+    ['여러 줄 삼항', 'src/http/session.ts', 'const f = ok\n  ? g\n  : fetch;'],
+    ['속성 값', 'src/http/session.ts', 'const d = { fetch: fetch };'],
+    ['globalThis 선택 접근', 'src/http/session.ts', 'globalThis?.fetch(u);'],
+    ['globalThis 구조 분해', 'src/http/session.ts', 'const { fetch: f } = globalThis;'],
+    ['Reflect.get', 'src/http/session.ts', 'Reflect.get(o, k)(u);'],
+    ['new Function', 'src/http/session.ts', 'new Function("return fe" + "tch")()(u);'],
+    ['eval', 'src/http/session.ts', '(0, eval)("fe" + "tch")(u);'],
+    ['동적 import', 'src/http/session.ts', 'await import("cloud" + "flare:sockets");'],
+    ['raw 소켓', 'src/http/session.ts', 'import { connect } from "cloudflare:sockets"; connect({ hostname: "x.example.test", port: 443 });'],
+    ['WebSocket', 'src/store/x.ts', 'new WebSocket("wss://x.example.test");'],
+    ['self 낱말', 'src/http/session.ts', 'const g = self; g.fetch(u);'],
   ];
   for (const [name, rel, text] of seeds) {
     const files = rel === AUTH ? [{ rel, text }] : [{ rel: AUTH, text: auth }, { rel, text }];
@@ -547,6 +566,10 @@ test('씨앗: 바깥 요청(전역 fetch)은 src/http/auth.ts 한 곳', () => {
     ['속성 선언', 'const d = { fetch: (u) => g(u) };'],
     ['낱말 일부', 'prefetch(u); fetchAll(u); refetch (u);'],
     ['$ 접두', '$fetch(u);'],
+    ['타입 속성', 'interface D {\n  readonly fetch: F;\n  fetch?: F;\n}'],
+    ['여러 속성', 'const d = { a: 1, fetch: (u) => g(u) };\nconst e = {\n  fetch: h,\n};'],
+    ['CSP 키워드', "const csp = \"default-src 'self'; img-src 'self'\";"],
+    ['cloudflare:workers', 'import { DurableObject } from "cloudflare:workers";'],
   ];
   for (const [name, text] of clean) assert.deepEqual(checkOutbound([{ rel: AUTH, text: auth }, { rel: 'src/core/x.ts', text }]), [], name);
   assert.deepEqual(checkOutbound([{ rel: AUTH, text: auth }, { rel: 'test/a.test.ts', text: 'await fetch(u); globalThis.fetch(u);' }]), []);

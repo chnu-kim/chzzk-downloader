@@ -33,6 +33,8 @@ export function createFakeChzzk(overrides = {}) {
     userFail: null,
     userIdField: "channelId",
     codeReuse: "reject",
+    // state: code는 발급 때의 state와 함께만 바꿀 수 있다. none: state를 보지 않는다(재사용 거부만 남겨 Worker 쪽 대조에 쓴다)
+    codeBinding: "state",
     calls: [],
     issuedCodes: [],
     issuedTokens: [],
@@ -87,7 +89,7 @@ export function createFakeChzzk(overrides = {}) {
       body.clientId === opts.clientId &&
       body.clientSecret === opts.clientSecret &&
       entry !== undefined &&
-      entry.state === body.state &&
+      (state.codeBinding === "none" || entry.state === body.state) &&
       (state.codeReuse === "allow" || !entry.used);
     if (!valid) return jsonErr(401);
     entry.used = true;

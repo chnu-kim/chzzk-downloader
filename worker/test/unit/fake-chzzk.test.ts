@@ -97,6 +97,15 @@ describe("token", () => {
     expect((await fake.handle(tokenReq(tokenBody(code)))).status).toBe(200);
   });
 
+  it("codeBinding none이면 다른 state로도 바꾸고, 재사용 거부는 그대로다", async () => {
+    const { fake, code } = await approve();
+    fake.state.codeBinding = "none";
+    expect((await fake.handle(tokenReq(tokenBody(code, { state: "st-2" })))).status).toBe(200);
+    expect((await fake.handle(tokenReq(tokenBody(code, { state: "st-3" })))).status).toBe(401);
+    fake.state.codeReuse = "allow";
+    expect((await fake.handle(tokenReq(tokenBody(code, { state: "st-3" })))).status).toBe(200);
+  });
+
   it("secret·state·grantType가 틀리거나 모르는 code면 401", async () => {
     const { fake, code } = await approve();
     expect((await fake.handle(tokenReq(tokenBody(code, { clientSecret: "x" })))).status).toBe(401);

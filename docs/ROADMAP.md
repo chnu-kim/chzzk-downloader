@@ -110,6 +110,7 @@
 - [ ] G6 뒤 사용자 할 일: 환경 `release`에 시크릿·변수(cicd.md §8). 서명 키는 이 작업에서 로컬 `~/.tauri/chzzk-downloader-updater.key`(+`.password`)로 만들었고 공개 키만 커밋했다(백업할 것. 바꾸려면 첫 릴리스 전에 `release/updater.pub`·`tauri.conf.json`을 함께). R2 버킷·S3 토큰·`DIST_BASE_URL`은 Phase 3. 그 뒤 첫 실제 태그(버린 pre-release 버전)에서 `verify` 녹색과 `latest.json` 버전 = 태그, 변조 → rollback을 실제 R2에서 확인한다
 - [ ] G7 보호: 선언·도구는 올렸다(5dcfb5c), ruleset `master`(id 24547748: 필수 `ci-ok`·최신화·force push·삭제 금지·admin bypass)는 적용·확인했다(cicd.md 75). 나머지 7건(Actions 허용 목록·SHA 핀 강제·fork 승인·환경 관리자 우회·ruleset `tags`)은 `--check`가 불일치로 찍는다: `.github/rulesets/{master,tags}.json`, `repo-settings.mjs --apply`(기본 계획, `--yes`로 쓰고 `--check`), 환경 셋의 배포 정책·protection_rules·관리자 우회, Actions 허용 목록·서버 측 SHA 핀, fork 승인 `all_external_contributors`, wait timer 0(cicd.md 74). **적용은 사용자가 한다**: `node scripts/ci/repo-settings.mjs --apply`로 계획 확인 → `--apply --yes`(끝의 `--check` exit 0). 그 뒤 수락: `rules/branches/master`, 빨간 `ci-ok`에 PR BLOCKED, 비관리자 `v*` 태그 생성 거부, 머지 뒤 `audit`에 `RULESET_READ_TOKEN`을 넣고 nightly `ruleset-drift` 녹색
 - [ ] 비공개 denylist 고리(nightly `private-scan`, 환경 `audit`의 secret `PRIVATE_DENYLIST`, cicd.md 77): 브랜치에서 `no_secret` 실패·시험 이슈를 확인했다. secret이 있는 녹색은 머지 뒤 `gh workflow run nightly.yml --ref master -f only=private-scan`으로 확인한다
+- [x] CI 벽시계 단축(cicd.md 78): `tauri` gate를 `tauri-clippy`·`tauri`·`tauri-build`로 나눠 clippy를 따로 작업으로, dev 디버그 정보 `line-tables-only`, e2e-native 캐시 공유, nightly의 PR 트리거 제거. cold PR 10.2~11.8분 → 8.1분
 - [ ] Worker 배포 작업은 G6의 `deploy-worker` seam을 Phase 3에서 채운다
 
 사용자가 더해야 할 시크릿·변수의 정확한 이름은 `docs/design/cicd.md` §8.
@@ -135,3 +136,4 @@
 - 2026-10-05: G2 리뷰 반영. 커밋 메시지는 원문 전체를 검사하고, 저장된 제목은 CI `subjects`가 본다. 비공개에만 있는 커밋 133개의 지문(`scripts/ci/private-commits.txt`)을 CI `scan-history`와 push-guard가 함께 쓴다. 훅의 조건부 gate는 작업 트리가 아니라 커밋·push될 내용(임시 worktree)에서 돈다.
 - 2026-10-06: G5. nightly·weekly 고리(drift·advisories·pins·ruleset-drift·fuzz·toolchain·mutants)를 더하고 CLAUDE.md "명령"에 예약 gate와 고리 확인 dispatch를 적었다. 고리는 작업마다 이슈를 열고, 연속 실패 문턱과 고정 할 일 문구를 둔다.
 - 2026-10-05: G4. E2E 두 층(웹 Playwright PR, 네이티브 tauri-driver master·nightly·weekly)을 더했다. 새 E2E 작업은 2주 관찰 규칙(D14)대로 `OBSERVED_JOBS`로 시작해 `ci-ok`를 막지 않고, master 실패는 이슈로 온다. CLAUDE.md에 `e2e-web`·`e2e-native` gate와 E2E 빌드 명령을 적었다.
+- 2026-10-06: CI 속도·툴체인(브랜치 `ci/speedup`). Rust 1.99.0, CLAUDE.md 명령의 `tauri` gate가 셋(`tauri-clippy`·`tauri`·`tauri-build`)으로 나뉘었고, nightly에 비공개 denylist 고리 `private-scan`을 더했다.

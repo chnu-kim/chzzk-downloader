@@ -9,6 +9,7 @@ extend-exclude = [
   "*.lock",
   "app/pnpm-lock.yaml",
   "worker/pnpm-lock.yaml",
+  "worker/deploy/pnpm-lock.yaml",
   # 생성물(ts-rs bindings)
   "app/src/lib/bindings/",
 ]

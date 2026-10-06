@@ -582,6 +582,11 @@ test('release report: 태그 실행은 release 고리, 리허설은 stage까지 
   // 예전 preflight 멈춤 표식(outputs.stopped)은 더 이상 실패를 가리지 않는다
   assert.deepEqual(releaseStatus('rehearsal', needs({ 'sign-publish': { result: 'failure', outputs: { stopped: 'preflight' } } })).jobs, ['sign-publish']);
   assert.equal(releaseStatus('rehearsal', needs({ 'smoke-linux': { result: 'cancelled' } })).status, 'fail');
+  // worker-bundle(리허설에도 돈다)·prune(태그, verify 뒤)·deploy-worker의 실패도 고리를 연다(W8): 어떤 작업도 예외가 아니다
+  assert.deepEqual(releaseStatus('rehearsal', needs({ 'worker-bundle': { result: 'failure' }, 'sign-publish': skip, verify: skip })).jobs, ['worker-bundle']);
+  assert.deepEqual(releaseStatus('tag', needs({ 'worker-bundle': ok, prune: { result: 'failure' } })), { loop: 'release', status: 'fail', jobs: ['prune'] });
+  assert.deepEqual(releaseStatus('tag', needs({ 'worker-bundle': ok, prune: ok, 'deploy-worker': { result: 'failure' } })).jobs, ['deploy-worker']);
+  assert.equal(releaseStatus('tag', needs({ 'worker-bundle': ok, prune: ok })).status, 'ok');
   assert.throws(() => releaseStatus('x', needs({})));
   assert.throws(() => releaseStatus('tag', '{}'));
   assert.deepEqual(releaseScope('refs/tags/v0.2.0'), { test: false });

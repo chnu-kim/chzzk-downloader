@@ -44,8 +44,12 @@
 //                   어디에도 낱말 put·list·멀티파트 업로드가 없고(Worker는 R2를 읽기만, list는 요청 경로에서 0회), 낱말 delete 수는
 //                   DELETE_ALLOWLIST(Map.delete 파일, 목록 밖 0)와 같다. 릴리스 네 파일(r2·release-auth·releases·update)에는
 //                   Location·redirect(대소문자 무시)가 없다(3xx 0건). worker.md 구현 중 변경 31 (차), cicd.md 94·95.
+//   deploy/         배포용 wrangler(worker/deploy, W8 worker-bundle이 --ignore-scripts로 깔아 묶음에 넣는다): package.json은 허용 목록
+//                   키(name·private·packageManager·dependencies)와 의존성 wrangler 하나(= tools.json), 두 lockfile(worker·deploy)의
+//                   wrangler 버전이 tools.json과 같다. deploy/는 소스 검사(listFiles) 대상이 아니다(코드가 없다).
 //   --dist          dist/bundle-meta.json(esbuild metafile)의 입력이 모두 src/*.ts(런타임 의존성 0), dist/index.js 있음,
-//                   dist/wrangler.json이 있으면(W8 worker-bundle이 만든다) 금지 키·vars 규칙.
+//                   dist/wrangler.json이 있으면(W8 worker-bundle이 만든다) 금지 키·vars 규칙, 그리고 원본 wrangler.jsonc에서 main
+//                   (index.js)·no_bundle만 바꾼 것과 같다(deployConfig).
 //   --sentinel      plant: worker/.dev.vars를 LEAK_SENTINEL 한 줄로 새로 만든다(pnpm check·vitest 전). check: 그 파일을
 //                   지우고 worker-env.d.ts에 LEAK_SENTINEL이 없는지 본다(vitest 쪽은 test/bindings.test.ts의 "문자열 바인딩
 //                   집합 = CONFIG_KEYS"가 잡는다). 로컬(CI 아님)에서는 아무것도 하지 않는다: 그 자리에 실제 FIFO가 있다.
@@ -118,6 +122,12 @@ export const SQL_FILE = 'src/store/db.ts';
 export const RAW_ALLOWLIST = { 'src/core/html.ts': 1 };
 // 실제 비밀값 파일을 직접 읽어도 되는 도구(사용자가 직접 돌리는 G-ID 확인, worker.md §15)
 export const DEV_VARS_READERS = ['scripts/channel-id-check.mjs'];
+
+// 배포용 wrangler 묶음(worker/deploy, release.yml worker-bundle·deploy-worker, cicd.md 구현 중 변경 W8)
+export const DEPLOY_DIR = 'deploy';
+export const DEPLOY_PKG_NAME = 'chzzk-downloader-worker-deploy';
+// dist/wrangler.json의 main. 설정 파일 위치(dist/) 기준이라 index.js다(worker.md 구현 중 변경 W8-1 (나): dist/index.js는 not found)
+export const DEPLOY_MAIN = 'index.js';
 
 const LOOPBACK = new Set(['localhost', '127.0.0.1']);
 const isLoopbackHttp = (v) => {
@@ -231,6 +241,11 @@ export function checkWrangler(cfg) {
   return errs;
 }
 
+// dist/wrangler.json = 원본 wrangler.jsonc에서 main·no_bundle만 바꾼 것(worker.md 구현 중 변경 2·W8-1, 순수). $schema는 둔다
+export function deployConfig(cfg) {
+  return { ...structuredClone(cfg), main: DEPLOY_MAIN, no_bundle: true };
+}
+
 // ---- package.json·pnpm-workspace.yaml ----
 
 const EXACT = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
@@ -327,6 +342,26 @@ export function checkPackage(pkg, { wrangler, packageManager } = {}) {
     }
   }
   return errs;
+}
+
+// worker/deploy/package.json: 허용 목록 키 넷, 이름·private 고정, packageManager = app, 의존성은 정확히 wrangler(= tools.json) 하나.
+// scripts·devDependencies 같은 키를 두면 설치·실행 경로가 늘어난다(--ignore-scripts여도 허용하지 않는다)
+export function checkDeployPackage(pkg, { wrangler, packageManager } = {}) {
+  const errs = [];
+  if (!pkg || typeof pkg !== 'object' || Array.isArray(pkg)) return ['객체가 아니다'];
+  for (const k of Object.keys(pkg)) if (!['name', 'private', 'packageManager', 'dependencies'].includes(k)) errs.push(`허용 목록에 없는 키 ${k}(name·private·packageManager·dependencies만)`);
+  if (pkg.name !== DEPLOY_PKG_NAME) errs.push(`name은 ${DEPLOY_PKG_NAME}`);
+  if (pkg.private !== true) errs.push('private: true');
+  if (packageManager && pkg.packageManager !== packageManager) errs.push(`packageManager ${pkg.packageManager} ≠ app/package.json ${packageManager}`);
+  if (!wrangler) errs.push('tools.json에 wrangler 버전이 없다');
+  else if (!isDeepStrictEqual(pkg.dependencies, { wrangler })) errs.push(`dependencies는 {"wrangler": "${wrangler}"} 하나(정확한 버전, tools.json과 같다): ${JSON.stringify(pkg.dependencies)}`);
+  return errs;
+}
+
+// pnpm-lock.yaml(v9)의 패키지 키 `  <name>@<version>[(peer…)]:`에서 name의 버전 집합(정렬한 배열). 이 파일의 모양만 읽는다
+export function lockedVersions(lockText, name) {
+  const re = new RegExp(`^ {2}${name.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')}@([0-9][0-9A-Za-z.+-]*)(?:\\([^\n]*\\))?:$`, 'gm');
+  return [...new Set([...lockText.replace(/\r/g, '').matchAll(re)].map((m) => m[1]))].sort();
 }
 
 // allowBuilds 블록의 키(값이 true인 것). 이 파일의 모양(2칸 들여쓴 `이름: true`)만 읽는다
@@ -711,7 +746,26 @@ export function checkWorker(root) {
   }
   const ws = need('pnpm-workspace.yaml');
   if (ws !== null) add('pnpm-workspace.yaml', checkWorkspace(ws));
-  if (need('pnpm-lock.yaml') === null) errs.push(`${WORKER_DIR}/pnpm-lock.yaml: 독립 lockfile이 있어야 한다(--frozen-lockfile)`);
+  const lock = need('pnpm-lock.yaml');
+  if (lock === null) errs.push(`${WORKER_DIR}/pnpm-lock.yaml: 독립 lockfile이 있어야 한다(--frozen-lockfile)`);
+  // 배포용 wrangler(worker/deploy): package.json 허용 목록과 두 lockfile의 wrangler = tools.json
+  const tools = JSON.parse(readText(join(root, 'scripts/ci/tools.json'))).tools;
+  const wranglerWant = tools.wrangler?.version;
+  const depPkg = need(`${DEPLOY_DIR}/package.json`);
+  if (depPkg !== null) {
+    const appPkgText = readRegular(join(root, 'app/package.json'));
+    try {
+      add(`${DEPLOY_DIR}/package.json`, checkDeployPackage(JSON.parse(depPkg), { wrangler: wranglerWant, packageManager: appPkgText ? JSON.parse(appPkgText).packageManager : undefined }));
+    } catch (e) {
+      add(`${DEPLOY_DIR}/package.json`, [`JSON 해석 실패: ${e.message}`]);
+    }
+  }
+  const depLock = need(`${DEPLOY_DIR}/pnpm-lock.yaml`);
+  for (const [file, text] of [['pnpm-lock.yaml', lock], [`${DEPLOY_DIR}/pnpm-lock.yaml`, depLock]]) {
+    if (text === null) continue;
+    const got = lockedVersions(text, 'wrangler');
+    if (!isDeepStrictEqual(got, [wranglerWant])) add(file, [`wrangler ${got.length ? got.join(', ') : '없음'} ≠ tools.json ${wranglerWant}`]);
+  }
   const configTs = need('src/config.ts');
   const keys = configTs === null ? null : configKeys(configTs);
   if (configTs !== null && !keys) add('src/config.ts', ['export const CONFIG_KEYS = [ … ] as const; 를 찾지 못했다']);
@@ -744,12 +798,23 @@ export function checkDist(root) {
     for (const i of inputs) if (!/^src\/[\w./-]+\.ts$/.test(i) || i.includes('..')) errs.push(`${WORKER_DIR}/dist: 번들 입력이 src/*.ts가 아니다: ${i}`);
   }
   if (!existsSync(join(w, 'dist/index.js'))) errs.push(`${WORKER_DIR}/dist/index.js가 없다`);
-  // deploy --dry-run은 dist/wrangler.json을 쓰지 않는다(worker.md 구현 중 변경 2). W8 worker-bundle이 만들면 여기서 본다
+  // deploy --dry-run은 dist/wrangler.json을 쓰지 않는다(worker.md 구현 중 변경 2). W8 worker-bundle(release.mjs)이 만든다
   const dw = readRegular(join(w, 'dist/wrangler.json'));
   if (dw !== null) {
     const cfg = JSON.parse(dw);
     for (const p of findKeys(cfg, FORBIDDEN_KEYS)) errs.push(`${WORKER_DIR}/dist/wrangler.json: 금지 키 ${p}`);
     for (const e of varsErrors(cfg.vars)) errs.push(`${WORKER_DIR}/dist/wrangler.json: ${e}`);
+    // 원본에서 main·no_bundle만 바꾼 것이어야 한다(다른 설정이 묶음에 섞이지 않게)
+    const src = readRegular(join(w, CONFIG_FILE));
+    if (src !== null) {
+      let want;
+      try {
+        want = deployConfig(parseJsonc(src));
+      } catch (e) {
+        errs.push(`${WORKER_DIR}/${CONFIG_FILE}: JSONC 해석 실패: ${e.message}`);
+      }
+      if (want && !isDeepStrictEqual(cfg, want)) errs.push(`${WORKER_DIR}/dist/wrangler.json은 원본에서 main(${DEPLOY_MAIN})·no_bundle만 바꾼 것이어야 한다`);
+    }
   }
   return errs;
 }

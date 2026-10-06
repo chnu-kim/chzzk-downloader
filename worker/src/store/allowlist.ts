@@ -66,10 +66,18 @@ export function allow(db: Db, channelId: string, note: string, by: string, now: 
   return { ok: true };
 }
 
-/** 거부 기록에서 [허용]. 기록이 없으면 false */
+/**
+ * 거부 기록에서 [허용]. 기록이 없으면 false. 이미 허용목록에 있는 채널(부트스트랩 때 거부된 경우)은 행을 그대로 두고
+ * 거부 기록만 지운다: allow의 upsert는 메모를 덮어써 관리자가 적은 메모가 사라진다
+ */
 export function allowDenied(db: Db, channelId: string, by: string, now: number): boolean {
   if (db.first("SELECT 1 AS x FROM denied WHERE channel_id = ?", channelId) === null) return false;
-  allow(db, channelId, "", by, now);
+  if (db.first("SELECT 1 AS x FROM allowlist WHERE channel_id = ?", channelId) === null) {
+    allow(db, channelId, "", by, now);
+    return true;
+  }
+  db.run("DELETE FROM denied WHERE channel_id = ?", channelId);
+  audit(db, "allow", by, channelId, now);
   return true;
 }
 

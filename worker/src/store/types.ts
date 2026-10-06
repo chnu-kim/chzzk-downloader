@@ -106,7 +106,9 @@ export type RotateResult =
       readonly code: "session_expired" | "session_revoked" | "not_allowed";
       readonly why: RevokeWhy | null;
       readonly reuseDetected: boolean;
-    };
+    }
+  /** 채널별 회전 상한(구현 중 변경 24). Worker는 429 + Retry-After. 아무것도 쓰지 않았다 */
+  | { readonly ok: false; readonly code: "rate_limited"; readonly retryAfterSec: number };
 
 export type AllowResult = { readonly ok: true } | { readonly ok: false; readonly code: "bad_channel_id" };
 export type DisallowResult = { readonly ok: true } | { readonly ok: false; readonly code: "bad_channel_id" | "is_admin" };

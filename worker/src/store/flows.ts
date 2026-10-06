@@ -41,32 +41,41 @@ function evictOldest<V>(map: Map<string, V>, max: number): void {
   }
 }
 
-/** IP 스로틀(고정 창). 순수 함수: 한도는 인자, 맵은 호출자(DO 메모리) 소유. 거절이면 남은 초를 돌려준다 */
-export function throttle(map: Map<string, StartWindow>, key: string, limit: number, now: number): { ok: true } | { ok: false; retryAfterSec: number } {
+export type ThrottleResult = { ok: true } | { ok: false; retryAfterSec: number };
+
+/**
+ * 고정 창 스로틀(IP별 start, 채널별 rotate). 순수 함수: 한도는 인자, 맵은 호출자(DO 메모리) 소유. 거절이면 남은 초를 돌려준다.
+ * now는 Worker 요청마다 정해져 RPC 도착 순서와 어긋날 수 있다(동시 요청). 창보다 이른 now는 새 창이 아니라 지금 창으로 센다:
+ * 창은 now - start가 창 길이 이상일 때만 바뀐다(worker.md 구현 중 변경 19 (가))
+ */
+export function throttle(map: Map<string, StartWindow>, key: string, limit: number, now: number): ThrottleResult {
   let w = map.get(key);
-  if (w !== undefined && (now < w.start || now - w.start >= START_WINDOW_MS)) {
+  if (w !== undefined && now - w.start >= START_WINDOW_MS) {
     map.delete(key);
     w = undefined;
   }
   if (w === undefined) {
     if (map.size >= MEMORY_KEYS_MAX) {
-      for (const [k, v] of map) if (now < v.start || now - v.start >= START_WINDOW_MS) map.delete(k);
+      for (const [k, v] of map) if (now - v.start >= START_WINDOW_MS) map.delete(k);
       evictOldest(map, MEMORY_KEYS_MAX);
     }
     w = { start: now, count: 0 };
     map.set(key, w);
   }
-  if (w.count >= limit) return { ok: false, retryAfterSec: Math.max(1, Math.ceil((w.start + START_WINDOW_MS - now) / 1000)) };
+  if (w.count >= limit) {
+    const left = Math.ceil((w.start + START_WINDOW_MS - now) / 1000);
+    return { ok: false, retryAfterSec: Math.min(START_WINDOW_MS / 1000, Math.max(1, left)) };
+  }
   w.count++;
   return { ok: true };
 }
 
-/** 폴링 간격 게이트. false면 너무 이르다(SQL 없이 429). 거절할 때는 기록을 갱신하지 않는다 */
+/** 폴링 간격 게이트. false면 너무 이르다(SQL 없이 429). 거절할 때는 기록을 갱신하지 않는다. 마지막 기록보다 이른 now(동시 요청)도 너무 이르다 */
 export function pollGate(map: Map<string, number>, loginId: string, now: number): boolean {
   const last = map.get(loginId);
-  if (last !== undefined && now >= last && now - last < POLL_MIN_INTERVAL_MS) return false;
+  if (last !== undefined && now - last < POLL_MIN_INTERVAL_MS) return false;
   if (map.size >= MEMORY_KEYS_MAX) {
-    for (const [k, t] of map) if (now - t >= POLL_MIN_INTERVAL_MS || t > now) map.delete(k);
+    for (const [k, t] of map) if (now - t >= POLL_MIN_INTERVAL_MS) map.delete(k);
     evictOldest(map, MEMORY_KEYS_MAX);
   }
   map.delete(loginId);

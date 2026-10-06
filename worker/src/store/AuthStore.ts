@@ -1,4 +1,4 @@
-// Durable Object AuthStore(docs/design/worker.md §5, 구현 중 변경 17~23). SQLite 하나에 흐름·세션·허용목록·거부 기록·감사 로그를 둔다.
+// Durable Object AuthStore(docs/design/worker.md §5, 구현 중 변경 17~24). SQLite 하나에 흐름·세션·허용목록·거부 기록·감사 로그를 둔다.
 //
 // 이 파일이 DO 경계다: 비동기·시각·cloudflare:는 여기에만 있고(worker-config.mjs checkStorePurity), 나머지 src/store/*는
 // 동기 함수에 now 인자만 받는다. RPC 하나 = 앞 단계(해시·발급, 트랜잭션 밖) + transactionSync 하나.
@@ -30,7 +30,7 @@ import {
   type StartWindow,
 } from "./flows";
 import { migrate } from "./schema";
-import { check, logout, mySessions, revokeMine, revokeSession, rotate, webCheck } from "./sessions";
+import { ROTATE_RATE_10M, check, logout, mySessions, revokeMine, revokeSession, rotate, webCheck } from "./sessions";
 import { SWEEP_DELAY_MS, SWEEP_INTERVAL_MS, sweep } from "./sweep";
 import type {
   AdminView,
@@ -67,6 +67,8 @@ export class AuthStore extends DurableObject<Env> {
   /** 앱·웹 start가 같이 쓰는 IP 스로틀(DO 메모리: 쫓겨나면 비워진다, 상한 32가 쓰기를 계속 묶는다) */
   readonly starts = new Map<string, StartWindow>();
   readonly polls = new Map<string, number>();
+  /** 채널별 회전·복구 스로틀(DO 메모리, 구현 중 변경 24) */
+  readonly rotates = new Map<string, StartWindow>();
   // IP 키 소금: 키가 DO 밖으로 나가지 않으므로 DO 메모리에 둔다
   private readonly salt = newSecret();
   private alarmAt: number | null = null;
@@ -205,7 +207,8 @@ export class AuthStore extends DurableObject<Env> {
   async rotate(refreshHash: string, admins: readonly string[], now: number): Promise<RotateResult> {
     if (!isHexHash(refreshHash)) return { ok: false, code: "session_expired", why: null, reuseDetected: false };
     const [access, refresh] = await Promise.all([mint("access"), mint("refresh")]);
-    return this.write(now, () => rotate(this.db, refreshHash, { access, refresh }, admins, now));
+    const gate = (channelId: string) => throttle(this.rotates, channelId, ROTATE_RATE_10M, now);
+    return this.write(now, () => rotate(this.db, refreshHash, { access, refresh }, admins, gate, now));
   }
 
   async logout(accessHash: string | null, refreshHash: string | null, now: number): Promise<void> {

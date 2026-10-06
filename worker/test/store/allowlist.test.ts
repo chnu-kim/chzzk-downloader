@@ -83,6 +83,19 @@ describe("denied", () => {
     expect(await query(stub, "SELECT count(*) AS n FROM denied")).toEqual([{ n: 0 }]);
     const l = await appLogin(stub, { channelId: D4, now: T0 + 2 });
     expect(l.bundle.channelId).toBe(D4);
+
+    // 이미 허용된 채널의 거부 기록(부트스트랩 때 거부): [허용]은 메모·추가자를 그대로 두고 거부 기록만 지운다
+    const boot = freshStub();
+    expect(await boot.allow(B2, "친구 메모", A1, T0)).toEqual({ ok: true });
+    const b = await begin(boot);
+    expect(await boot.finish(b.flowId, { type: "user", channelId: B2, channelName: "친구" }, [], T0)).toEqual({ type: "denied" });
+    expect(await boot.allowDenied(B2, D4, T0 + 1)).toBe(true);
+    expect(await query(boot, "SELECT channel_id, note, added_by, added_at FROM allowlist")).toEqual([{ channel_id: B2, note: "친구 메모", added_by: A1, added_at: T0 }]);
+    expect(await query(boot, "SELECT count(*) AS n FROM denied")).toEqual([{ n: 0 }]);
+    expect(await query(boot, "SELECT actor, action, target FROM audit ORDER BY id")).toEqual([
+      { actor: A1, action: "allow", target: B2 },
+      { actor: D4, action: "allow", target: B2 },
+    ]);
   });
 
   it("L7 dismissDenied", async () => {

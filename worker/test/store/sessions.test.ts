@@ -2,6 +2,7 @@
 import { runInDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import { isToken, newToken } from "../../src/core/token";
+import { ROTATE_RATE_10M } from "../../src/store/sessions";
 import { A1, ADMINS, B2, D4, DAY, T0, allowedLogin, appLogin, freshStub, meter, query, sha, webLogin, type Stub } from "./helpers";
 
 const rot = async (stub: Stub, token: string, now: number, admins: readonly string[] = ADMINS) => stub.rotate(await sha(token), admins, now);
@@ -100,8 +101,11 @@ describe("rotate: §5.2 표", () => {
     const t1 = T0 + 3_600_000;
     await rot(stub, l.bundle.refreshToken, t1);
     expect((await rot(stub, l.bundle.refreshToken, t1 + 10_000)).ok).toBe(true);
-    expect((await rot(stub, l.bundle.refreshToken, t1 + 20_000)).ok).toBe(true);
+    expect((await rot(stub, l.bundle.refreshToken, t1 + 50_000)).ok).toBe(true);
     expect(await query(stub, "SELECT recovered FROM session")).toEqual([{ recovered: 2 }]);
+    // t1+61s는 직전 복구(t1+50s)에서는 60초 안이지만 첫 사용(t1)에서는 넘었다: 창이 직전 복구 기준이면 여기서 복구로 끝난다
+    expect(await rot(stub, l.bundle.refreshToken, t1 + 61_000)).toEqual({ ok: false, code: "session_revoked", why: "reuse", reuseDetected: true });
+    expect(await query(stub, "SELECT used_at FROM refresh WHERE hash = ?", await sha(l.bundle.refreshToken))).toEqual([{ used_at: t1 }]);
   });
 
   it("R9 60초 초과: 재사용 감지, 세션 폐기, refresh 행은 그대로", async () => {
@@ -128,6 +132,52 @@ describe("rotate: §5.2 표", () => {
     if (!first.ok) throw new Error(first.code);
     expect((await rot(stub, first.bundle.refreshToken, t1 + 10_000)).ok).toBe(true);
     expect(await rot(stub, l.bundle.refreshToken, t1 + 30_000)).toMatchObject({ ok: false, code: "session_revoked", why: "reuse", reuseDetected: true });
+  });
+
+  it("R11 자기 만료가 지난 used 토큰: 복구·감지 없이 session_expired, 세션은 active, 쓰기 0(구현 중 변경 20 (다))", async () => {
+    const stub = freshStub();
+    const l = await allowedLogin(stub);
+    // 하루째 회전: 부모 만료는 T0+30일 그대로, 세션 만료는 T0+31일
+    const first = await rot(stub, l.bundle.refreshToken, T0 + DAY);
+    if (!first.ok) throw new Error(first.code);
+    const before = await meter(stub);
+    expect(await rot(stub, l.bundle.refreshToken, T0 + 30 * DAY + 1)).toEqual(REVOKED);
+    expect((await meter(stub)).written).toBe(before.written);
+    expect(await query(stub, "SELECT status, revoked_why FROM session")).toEqual([{ status: "active", revoked_why: null }]);
+    expect((await rot(stub, first.bundle.refreshToken, T0 + 30 * DAY + 2)).ok).toBe(true);
+  });
+});
+
+describe("rotate: 채널별 상한(구현 중 변경 24)", () => {
+  it("G1 10분에 ROTATE_RATE_10M번까지, 넘으면 rate_limited이고 쓰기 0, 다른 채널은 따로", async () => {
+    const stub = freshStub();
+    const a = await appLogin(stub, { channelId: A1 });
+    const b = await allowedLogin(stub, { ip: "203.0.113.11" });
+    let token = a.bundle.refreshToken;
+    for (let i = 0; i < ROTATE_RATE_10M; i++) {
+      const r = await rot(stub, token, T0 + 1000 + i);
+      if (!r.ok) throw new Error(`${i} ${r.code}`);
+      token = r.bundle.refreshToken;
+    }
+    const before = await meter(stub);
+    expect(await rot(stub, token, T0 + 2000)).toEqual({ ok: false, code: "rate_limited", retryAfterSec: 599 });
+    expect((await meter(stub)).written).toBe(before.written);
+    expect((await rot(stub, b.bundle.refreshToken, T0 + 2000)).ok).toBe(true);
+    // 창이 지나면 다시 열린다
+    expect((await rot(stub, token, T0 + 1000 + 600_000)).ok).toBe(true);
+  });
+
+  it("G2 복구도 상한에 들고, 상한이 차도 60초 뒤 옛 부모는 재사용 감지로 폐기된다", async () => {
+    const stub = freshStub();
+    const l = await appLogin(stub, { channelId: A1 });
+    const t1 = T0 + 3_600_000;
+    expect((await rot(stub, l.bundle.refreshToken, t1)).ok).toBe(true);
+    for (let i = 1; i < ROTATE_RATE_10M; i++) expect(await rot(stub, l.bundle.refreshToken, t1 + i)).toMatchObject({ ok: true, recovered: true });
+    const before = await meter(stub);
+    expect(await rot(stub, l.bundle.refreshToken, t1 + 30_000)).toMatchObject({ ok: false, code: "rate_limited" });
+    expect((await meter(stub)).written).toBe(before.written);
+    expect(await query(stub, "SELECT recovered FROM session")).toEqual([{ recovered: ROTATE_RATE_10M - 1 }]);
+    expect(await rot(stub, l.bundle.refreshToken, t1 + 60_001)).toEqual({ ok: false, code: "session_revoked", why: "reuse", reuseDetected: true });
   });
 });
 
@@ -183,6 +233,23 @@ describe("check·webCheck", () => {
     const l2 = await allowedLogin(s2);
     await s2.disallow(B2, A1, ADMINS, T0 + 1);
     expect(await chk(s2, l2.bundle.accessToken, T0 + 2)).toEqual({ ok: false, code: "not_allowed", why: "disallowed" });
+
+    // 웹 세션도 같다(구현 중 변경 20 (가)): 허용에서 빼면 webCheck는 403 not_allowed
+    const s3 = freshStub();
+    await s3.allow(B2, "", A1, T0);
+    const w = await webLogin(s3, { channelId: B2, name: "허용 채널" });
+    const h = await sha(w.cookieToken);
+    expect((await s3.webCheck(h, ADMINS, T0 + 1)).ok).toBe(true);
+    await s3.disallow(B2, A1, ADMINS, T0 + 2);
+    expect(await s3.webCheck(h, ADMINS, T0 + 3)).toEqual({ ok: false, code: "not_allowed", why: "disallowed" });
+
+    // 관리자 집합에서 빠진 관리자의 웹 세션: 그 webCheck가 세션을 폐기하고, 다음도 not_allowed
+    const s4 = freshStub();
+    const wa = await webLogin(s4, { channelId: A1 });
+    const ha = await sha(wa.cookieToken);
+    expect(await s4.webCheck(ha, [D4], T0 + 1)).toEqual({ ok: false, code: "not_allowed", why: "disallowed" });
+    expect(await query(s4, "SELECT kind, status, revoked_why FROM session")).toEqual([{ kind: "web", status: "revoked", revoked_why: "disallowed" }]);
+    expect(await s4.webCheck(ha, ADMINS, T0 + 2)).toEqual({ ok: false, code: "not_allowed", why: "disallowed" });
   });
 
   it("K4 관리자 집합에서 빠진 시점의 check는 not_allowed이고 세션이 revoked", async () => {

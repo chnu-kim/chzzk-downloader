@@ -3,7 +3,7 @@
 import { runInDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import { newSecret, sha256B64url } from "../../src/core/token";
-import { A1, ADMINS, T0, dumpAll, freshStub, sha, type Stub } from "./helpers";
+import { A1, ADMINS, T0, dumpAll, freshStub, query, sha, type Stub } from "./helpers";
 
 const dump = (stub: Stub) => runInDurableObject(stub, (i) => dumpAll(i.db));
 
@@ -57,7 +57,14 @@ describe("토큰 원문은 저장되지 않는다", () => {
     dumps.push(await dump(stub));
 
     await stub.logout(await sha(rec.bundle.accessToken), await sha(rec.bundle.refreshToken), T0 + 3000);
-    await stub.logout(await sha(wf.cookieToken), null, T0 + 3000);
+    // 웹 세션은 logout(앱 access 자리)으로 찾지 않는다: webCheck로 세션 id를 얻어 revoke로 끊는다
+    const wc = await stub.webCheck(await sha(wf.cookieToken), ADMINS, T0 + 3000);
+    if (!wc.ok) throw new Error(wc.code);
+    expect(await stub.revoke(wc.sessionId, "logout", A1, T0 + 3000)).toBe(true);
+    expect(await query(stub, "SELECT kind, status FROM session ORDER BY kind")).toEqual([
+      { kind: "app", status: "revoked" },
+      { kind: "web", status: "revoked" },
+    ]);
     dumps.push(await dump(stub));
 
     const all = dumps.join("\n");

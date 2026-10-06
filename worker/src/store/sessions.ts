@@ -1,4 +1,4 @@
-// 세션·refresh 회전(docs/design/worker.md §5.2·§6, 구현 중 변경 20). 모두 동기 함수이고 시각은 now 인자다.
+// 세션·refresh 회전(docs/design/worker.md §5.2·§6, 구현 중 변경 20·24). 모두 동기 함수이고 시각은 now 인자다.
 //
 // 만료 의미: now >= expires_at이면 만료이고 유효는 now < expires_at이다. 모든 조회가 만료를 스스로 거르므로 정확성은 청소 알람에 기대지 않는다.
 // 토큰 원문은 여기 들어오지 않는다: 호출자(AuthStore)가 만든 { token, hash } 쌍에서 hash만 저장한다.
@@ -11,8 +11,12 @@ export const REFRESH_TTL_MS = 30 * 86_400_000;
 export const SESSION_MAX_MS = 60 * 86_400_000;
 export const WEB_TTL_MS = 12 * 3_600_000;
 export const RECOVERY_WINDOW_MS = 60_000;
+/** 채널당 10분에 회전·복구 몇 번까지(DO 메모리 고정 창, 구현 중 변경 24). 앱은 시작 때와 24시간마다 한 번, 응답 유실에 1회 재시도한다 */
+export const ROTATE_RATE_10M = 10;
 
 export type TokenPair = { readonly access: Minted; readonly refresh: Minted };
+/** 쓰기 직전에 부르는 채널별 게이트(AuthStore가 DO 메모리 throttle로 만든다). 거절이면 아무것도 쓰지 않는다 */
+export type RotateGate = (channelId: string) => { ok: true } | { ok: false; retryAfterSec: number };
 
 /** 세션 절대 상한(생성 + 60일)으로 자른 시각 */
 export function capAt(createdAt: number, t: number): number {
@@ -200,8 +204,12 @@ type RotateRow = {
 
 const EXPIRED: RotateResult = { ok: false, code: "session_expired", why: null, reuseDetected: false };
 
-/** refresh 회전(§5.2 표). 호출자가 하나의 트랜잭션 안에서 부른다 */
-export function rotate(db: Db, refreshHash: string, pair: TokenPair, admins: readonly string[], now: number): RotateResult {
+/**
+ * refresh 회전(§5.2 표). 호출자가 하나의 트랜잭션 안에서 부른다.
+ * gate는 쓰기가 생기는 성공 두 경로(active 회전·응답 유실 복구)에서만 부른다. 재사용 감지(폐기)는 막지 않는다:
+ * 보안 사건이고, 한 번 폐기되면 다음부터는 revoked 행이라 쓰지 않는다(구현 중 변경 24)
+ */
+export function rotate(db: Db, refreshHash: string, pair: TokenPair, admins: readonly string[], gate: RotateGate, now: number): RotateResult {
   const r = db.first<RotateRow>(
     `SELECT r.hash, r.session_id, r.status AS r_status, r.child_hash, r.used_at, r.expires_at AS r_exp,
        s.kind, s.status AS s_status, s.revoked_why, s.channel_id, s.channel_name, s.created_at, s.expires_at AS s_exp
@@ -231,6 +239,8 @@ export function rotate(db: Db, refreshHash: string, pair: TokenPair, admins: rea
   const sid = r.session_id;
 
   if (r.r_status === "active") {
+    const g = gate(r.channel_id);
+    if (!g.ok) return { ok: false, code: "rate_limited", retryAfterSec: g.retryAfterSec };
     db.run("UPDATE refresh SET status = 'used', used_at = ?, child_hash = ? WHERE hash = ?", now, pair.refresh.hash, r.hash);
     insertRefresh(db, pair.refresh.hash, sid, now, refreshExp);
     db.run("UPDATE session SET access_hash = ?, access_exp = ?, last_seen_at = ?, expires_at = ? WHERE id = ?", pair.access.hash, accessExp, now, refreshExp, sid);
@@ -240,6 +250,8 @@ export function rotate(db: Db, refreshHash: string, pair: TokenPair, admins: rea
   // 이미 쓴 refresh: 60초 안(첫 사용부터)이고 자식이 아직 쓰이지 않았다면 응답 유실로 보고 새 자식을 다시 건다
   const child = r.child_hash === null ? null : db.first<{ status: string }>("SELECT status FROM refresh WHERE hash = ?", r.child_hash);
   if (r.used_at !== null && now - r.used_at <= RECOVERY_WINDOW_MS && child?.status === "active" && r.child_hash !== null) {
+    const g = gate(r.channel_id);
+    if (!g.ok) return { ok: false, code: "rate_limited", retryAfterSec: g.retryAfterSec };
     db.run("DELETE FROM refresh WHERE hash = ?", r.child_hash);
     insertRefresh(db, pair.refresh.hash, sid, now, refreshExp);
     db.run("UPDATE refresh SET child_hash = ? WHERE hash = ?", pair.refresh.hash, r.hash);

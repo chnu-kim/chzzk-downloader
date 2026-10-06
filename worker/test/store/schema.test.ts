@@ -20,7 +20,7 @@ describe("migrate", () => {
       const tables = inst.db.all<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\' AND name NOT LIKE '\\_cf\\_%' ESCAPE '\\' ORDER BY name");
       expect(tables.map((t) => t.name)).toEqual(["allowlist", "audit", "denied", "flow", "meta", "refresh", "session"]);
       const idx = inst.db.all<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'index' AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\' ORDER BY name");
-      expect(idx.map((t) => t.name)).toEqual(["denied_last", "flow_expires", "refresh_session", "session_channel", "session_expires"]);
+      expect(idx.map((t) => t.name)).toEqual(["denied_last", "flow_expires", "refresh_expires", "refresh_session", "session_channel", "session_expires"]);
       expect(inst.db.first("SELECT v FROM meta WHERE k = 'schema_version'")).toEqual({ v: "1" });
     });
   });

@@ -22,6 +22,7 @@ CREATE INDEX session_expires ON session(expires_at);
 CREATE TABLE refresh (hash TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES session(id), status TEXT NOT NULL CHECK (status IN ('active','used')),
   child_hash TEXT, issued_at INTEGER NOT NULL, used_at INTEGER, expires_at INTEGER NOT NULL);
 CREATE INDEX refresh_session ON refresh(session_id);
+CREATE INDEX refresh_expires ON refresh(expires_at);
 CREATE TABLE denied (channel_id TEXT PRIMARY KEY, channel_name TEXT, first_at INTEGER NOT NULL, last_at INTEGER NOT NULL, attempts INTEGER NOT NULL);
 CREATE INDEX denied_last ON denied(last_at);
 CREATE TABLE audit (id INTEGER PRIMARY KEY, at INTEGER NOT NULL, actor TEXT NOT NULL,
@@ -45,7 +46,7 @@ export function currentVersion(db: Db): number {
   return Number(row.v);
 }
 
-/** 빈 DB → 최신. tx는 동기 트랜잭션(ctx.storage.transactionSync)이다 */
+/** 빈 DB → 최신. tx는 AuthStore가 넘기는 동기 트랜잭션 함수다 */
 export function migrate(db: Db, tx: (fn: () => void) => void): MigrateResult {
   const from = currentVersion(db);
   if (from > MIGRATIONS.length) return { from, to: from, ahead: true };

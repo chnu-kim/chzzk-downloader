@@ -361,6 +361,9 @@ test('씨앗: store 순수성(worker.md 구현 중 변경 21, cicd.md 89)', () =
     ['src/store/db.ts', 'const c = this.sql.exec(q);'],
     ['src/core/token.ts', 'const m = BEARER.exec(h);'],
     ['src/store/sessions.ts', 'const d = new Date(now).toISOString(); const asyncLike = 1; const awaited = 2;'],
+    // 낱말 경계: sqlite_master·sql_x는 sql이 아니다
+    ['src/store/sweep.ts', 'db.all("SELECT name FROM sqlite_master WHERE name NOT LIKE \'sql_%\'");'],
+    ['src/store/AuthStore.ts', 'this.db = new Db(ctx.storage.sql); this.ctx.storage.transactionSync(/* 동기 */ () => 1);'],
   ];
   for (const [rel, text] of ok) assert.deepEqual(checkStorePurity(store(rel, text)), [], `${rel}: ${text}`);
   const seeds = [
@@ -387,6 +390,18 @@ test('씨앗: store 순수성(worker.md 구현 중 변경 21, cicd.md 89)', () =
     ['SqlStorage 타입', 'src/store/sweep.ts', 'export function f(s: SqlStorage) {}'],
     ['AuthStore 밖 transactionSync', 'src/store/flows.ts', 'export function f(tx) { tx.transactionSync(() => 1); }'],
     ['http의 storage.sql', 'src/http/a.ts', 'const s = ctx.storage.sql;'],
+    // 구조 분해 별칭·주석 끼운 async(cicd.md 구현 중 변경 91)
+    ['http의 구조 분해 별칭', 'src/http/a.ts', 'const { sql: s } = ctx.storage; s.exec("x");'],
+    ['http의 구조 분해(이름 그대로)', 'src/http/a.ts', 'const { sql } = ctx.storage;'],
+    ['AuthStore의 구조 분해 별칭', 'src/store/AuthStore.ts', 'this.db = new Db(ctx.storage.sql); const { sql: s } = this.ctx.storage;'],
+    ['중첩 구조 분해', 'src/http/a.ts', 'const { storage: { sql: s } } = ctx;'],
+    ['storage 별칭 뒤 .sql', 'src/http/a.ts', 'const st = ctx.storage; const s = st.sql;'],
+    ['storage 별칭 뒤 ["sql"]', 'src/http/a.ts', 'const st = ctx.storage; const s = st["sql"];'],
+    ['주석 속 sql 별칭 설명', 'src/http/a.ts', '// sql 핸들을 여기서 꺼내지 않는다'],
+    ['async 콜백 앞 블록 주석', 'src/store/AuthStore.ts', 'this.ctx.storage.transactionSync(/* c */ async () => 1);'],
+    ['async 콜백 앞 줄 주석', 'src/store/AuthStore.ts', 'this.ctx.storage.transactionSync(\n  // c\n  async () => 1);'],
+    ['async 콜백 겹괄호', 'src/store/AuthStore.ts', 'this.ctx.storage.transactionSync((async () => 1));'],
+    ['이름 뒤 주석', 'src/store/AuthStore.ts', 'this.ctx.storage.transactionSync /* c */ (async () => 1);'],
   ];
   for (const [name, rel, text] of seeds) assert.notDeepEqual(checkStorePurity(store(rel, text)), [], name);
   // src 밖(test)은 보지 않는다

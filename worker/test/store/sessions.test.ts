@@ -95,6 +95,28 @@ describe("rotate: §5.2 표", () => {
     expect((await chk(stub, again.bundle.accessToken, t1 + 60_000)).ok).toBe(true);
   });
 
+  it("R7b 지연된 원래 응답이 재시도 뒤 도착: 첫 쌍은 죽고(폐기 없음) 재시도 쌍만 산다", async () => {
+    // worker.md 구현 중 변경 25. 앱은 실패(시간 초과)한 요청의 응답을 받을 수 없어 첫 쌍을 저장할 길이 없지만,
+    // 만에 하나 저장했더라도 결과는 재로그인 1회이고 재시도 쌍의 세션은 영향이 없어야 한다
+    const stub = freshStub();
+    const l = await allowedLogin(stub);
+    const t1 = T0 + 3_600_000;
+    const first = await rot(stub, l.bundle.refreshToken, t1); // 서버는 커밋, 응답은 지연
+    if (!first.ok) throw new Error(first.code);
+    const retry = await rot(stub, l.bundle.refreshToken, t1 + 10_000); // 앱의 1회 재시도 → 복구
+    if (!retry.ok) throw new Error(retry.code);
+    expect(retry.recovered).toBe(true);
+    // 지연된 첫 응답의 access·refresh는 모두 죽어 있다: access는 invalid_token, refresh는 행이 없어 session_expired(쓰기 0)
+    expect(await chk(stub, first.bundle.accessToken, t1 + 11_000)).toMatchObject({ ok: false, code: "invalid_token" });
+    const before = await meter(stub);
+    expect(await rot(stub, first.bundle.refreshToken, t1 + 12_000)).toEqual(REVOKED);
+    expect((await meter(stub)).written).toBe(before.written);
+    // 세션은 폐기되지 않았고 재시도 쌍은 그대로 산다(첫 쌍을 든 쪽은 재로그인, 다른 쪽은 무영향)
+    expect(await query(stub, "SELECT status FROM session")).toEqual([{ status: "active" }]);
+    expect((await chk(stub, retry.bundle.accessToken, t1 + 13_000)).ok).toBe(true);
+    expect((await rot(stub, retry.bundle.refreshToken, t1 + 14_000)).ok).toBe(true);
+  });
+
   it("R8 두 번 복구: 창은 첫 사용부터이고 recovered는 2", async () => {
     const stub = freshStub();
     const l = await allowedLogin(stub);

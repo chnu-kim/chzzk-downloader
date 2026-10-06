@@ -247,7 +247,9 @@ export function rotate(db: Db, refreshHash: string, pair: TokenPair, admins: rea
     return { ok: true, bundle, recovered: false };
   }
 
-  // 이미 쓴 refresh: 60초 안(첫 사용부터)이고 자식이 아직 쓰이지 않았다면 응답 유실로 보고 새 자식을 다시 건다
+  // 이미 쓴 refresh: 60초 안(첫 사용부터)이고 자식이 아직 쓰이지 않았다면 응답 유실로 보고 새 자식을 다시 건다.
+  // 옛 자식은 지운다(둘 다 살리지 않는다): 앱은 실패한 요청의 응답을 받을 수 없어 첫 쌍을 저장할 수 없고,
+  // 둘 다 살리면 탈취자가 먼저 쓴 자식이 피해자의 복구 뒤에도 남는다(구현 중 변경 25)
   const child = r.child_hash === null ? null : db.first<{ status: string }>("SELECT status FROM refresh WHERE hash = ?", r.child_hash);
   if (r.used_at !== null && now - r.used_at <= RECOVERY_WINDOW_MS && child?.status === "active" && r.child_hash !== null) {
     const g = gate(r.channel_id);

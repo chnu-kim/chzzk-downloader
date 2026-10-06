@@ -13,6 +13,7 @@ export const randomBytes: RandomBytes = (n) => crypto.getRandomValues(new Uint8A
 
 const B64URL_43 = /^[A-Za-z0-9_-]{43}$/;
 const B64URL_22 = /^[A-Za-z0-9_-]{22}$/;
+const HEX_HASH = /^[0-9a-f]{64}$/;
 const BEARER = /^Bearer +([^\s]+)$/i;
 
 /** base64url, 패딩 없음(workerd Uint8Array.prototype.toBase64) */
@@ -55,6 +56,11 @@ export function isId(s: unknown): s is string {
 /** state·pollSecret·csrf·pollVerifier 모양(43자) */
 export function isSecret(s: unknown): s is string {
   return typeof s === "string" && B64URL_43.test(s);
+}
+
+/** 저장 해시 모양(SHA-256 소문자 hex 64자). DO가 RPC 입력을 SQL 전에 거른다 */
+export function isHexHash(s: unknown): s is string {
+  return typeof s === "string" && HEX_HASH.test(s);
 }
 
 async function digest(s: string): Promise<Uint8Array> {

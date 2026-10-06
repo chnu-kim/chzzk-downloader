@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   b64url,
   bearer,
+  isHexHash,
   isId,
   isSecret,
   isToken,
@@ -87,6 +88,18 @@ describe("형식 판정", () => {
     expect(isSecret("A".repeat(43))).toBe(true);
     expect(isSecret("A".repeat(42))).toBe(false);
     expect(isSecret("A".repeat(44))).toBe(false);
+  });
+});
+
+describe("isHexHash", () => {
+  it("SHA-256 소문자 hex 64자만 true", async () => {
+    const h = await sha256Hex("x");
+    expect(isHexHash(h)).toBe(true);
+    expect(isHexHash(h.toUpperCase())).toBe(false);
+    expect(isHexHash(h.slice(1))).toBe(false);
+    expect(isHexHash(h + "0")).toBe(false);
+    expect(isHexHash(`${h.slice(0, 63)}g`)).toBe(false);
+    for (const v of [null, undefined, 1, {}, [h]]) expect(isHexHash(v)).toBe(false);
   });
 });
 

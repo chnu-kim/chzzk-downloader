@@ -12,6 +12,7 @@ import { ROOT } from './gates.mjs';
 import {
   allowedBuilds,
   checkCorePurity,
+  checkStorePurity,
   checkDevVarsExample,
   checkDist,
   checkPackage,
@@ -349,6 +350,36 @@ test('--dist: metafile 입력은 src/*.ts만, dist/wrangler.json 규칙', () => 
   assert.deepEqual(checkDist(copy(dw({ ...WRANGLER, main: 'index.js', no_bundle: true }))), []);
   assert.notDeepEqual(checkDist(copy(dw({ ...WRANGLER, vars: { ...WRANGLER.vars, PUBLIC_ORIGIN: 'http://localhost:8787' } }))), []);
   assert.notDeepEqual(checkDist(copy(dw({ ...WRANGLER, account_id: 'x' }))), []);
+});
+
+test('씨앗: store 순수성(worker.md 구현 중 변경 21, cicd.md 89)', () => {
+  const store = (rel, text) => [{ rel, text }];
+  const ok = [
+    ['src/store/flows.ts', 'export function f(db, now) { return db.first("SELECT 1 AS x", now); }'],
+    ['src/store/AuthStore.ts', 'import { DurableObject } from "cloudflare:workers"; async x() { await this.ctx.storage.setAlarm(Date.now()); this.ctx.storage.transactionSync(() => 1); }'],
+    ['src/store/db.ts', 'const c = this.sql.exec(q);'],
+    ['src/core/token.ts', 'const m = BEARER.exec(h);'],
+    ['src/store/sessions.ts', 'const d = new Date(now).toISOString(); const asyncLike = 1; const awaited = 2;'],
+  ];
+  for (const [rel, text] of ok) assert.deepEqual(checkStorePurity(store(rel, text)), [], `${rel}: ${text}`);
+  const seeds = [
+    ['async 함수', 'src/store/flows.ts', 'export async function f() {}'],
+    ['await', 'src/store/flows.ts', 'const x = 1; await x;'],
+    ['주석 속 await', 'src/store/flows.ts', '// 여기서 await을 쓰지 않는다'],
+    ['Date.now', 'src/store/flows.ts', 'const t = Date.now();'],
+    ['new Date()', 'src/store/flows.ts', 'const t = new Date();'],
+    ['new 없는 Date()', 'src/store/flows.ts', 'const s = Date();'],
+    ['performance.now', 'src/store/sweep.ts', 'const t = performance.now();'],
+    ['cloudflare: 타입 import', 'src/store/flows.ts', 'import type { X } from "cloudflare:workers";'],
+    ['store의 sql.exec', 'src/store/sessions.ts', 'db.sql.exec("x");'],
+    ['http의 sql.exec', 'src/http/a.ts', 'ctx.storage.sql.exec("x");'],
+    ['AuthStore의 sql.exec', 'src/store/AuthStore.ts', 'this.ctx.storage.sql.exec("x");'],
+    ['async 트랜잭션 콜백', 'src/store/AuthStore.ts', 'this.ctx.storage.transactionSync(async () => 1);'],
+    ['async 트랜잭션 콜백(줄바꿈)', 'src/http/a.ts', 'ctx.storage.transactionSync(\n  async () => 1);'],
+  ];
+  for (const [name, rel, text] of seeds) assert.notDeepEqual(checkStorePurity(store(rel, text)), [], name);
+  // src 밖(test)은 보지 않는다
+  assert.deepEqual(checkStorePurity(store('test/store/x.test.ts', 'await x; Date.now(); sql.exec("x");')), []);
 });
 
 test('씨앗: core 순수성(원문 전체, worker.md 구현 중 변경 15)', () => {

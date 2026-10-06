@@ -53,3 +53,13 @@ export function readCookie(header: string | null, name: string): string | null {
   if (count !== 1 || found === null || !VALUE.test(found)) return null;
   return found;
 }
+
+/** Cookie 헤더에 그 이름이 하나라도 있다(값·중복과 무관). 지울지 정할 때만 쓴다(값은 readCookie로) */
+export function hasCookieName(header: string | null, name: string): boolean {
+  if (header === null) return false;
+  return header.split(";").some((part) => {
+    const t = part.trim();
+    const i = t.indexOf("=");
+    return i >= 0 && t.slice(0, i).trim() === name;
+  });
+}

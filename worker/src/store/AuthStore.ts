@@ -26,6 +26,7 @@ import {
   liveFlowCount,
   loginPage,
   pollGate,
+  pollGateKey,
   throttle,
   type StartWindow,
 } from "./flows";
@@ -186,8 +187,8 @@ export class AuthStore extends DurableObject<Env> {
 
   async claim(loginId: string, pollVerifier: string, admins: readonly string[], now: number): Promise<ClaimResult> {
     if (!isId(loginId) || !isSecret(pollVerifier)) return { status: "not_found" };
-    // 너무 이른 폴링은 SQL 없이 답한다(쓰기·읽기 0)
-    if (!pollGate(this.polls, loginId, now)) return { status: "too_soon" };
+    // 너무 이른 폴링은 SQL 없이 답한다(쓰기·읽기 0). 키에 verifier가 들어가 loginId만 아는 쪽이 수령을 막지 못한다
+    if (!pollGate(this.polls, pollGateKey(loginId, pollVerifier), now)) return { status: "too_soon" };
     const [access, refresh] = await Promise.all([mint("access"), mint("refresh")]);
     return this.write(now, () => claim(this.db, loginId, pollVerifier, { access, refresh }, admins, now));
   }

@@ -24,7 +24,8 @@
 //                   dev는 --port 8787, deploy는 --dry-run, --env 금지, types는 출력 경로 worker-env.d.ts가 바로 뒤.
 //                   vitest는 --config·--root를 쓰지 않는다(vitest.config.ts만 검사된다). --flag=값은 --flag 값으로 본다.
 //   pnpm-workspace.yaml  설치 스크립트 허용(allowBuilds)은 esbuild·workerd만.
-//   .dev.vars.example    키 집합 = src/config.ts CONFIG_KEYS, 값은 자리표시(루프백·dev- 접두·합성 채널 ID).
+//   .dev.vars.example    키 집합 = src/config.ts CONFIG_KEYS, 값은 자리표시(루프백·dev- 접두·합성 채널 ID, CHZZK_REDIRECT_URI는 정확히
+//                        http://localhost:8787/auth/callback).
 //   vitest.config.ts     주석을 지운 코드의 cloudflareTest({ wrangler: { … } }) 안에 environment "example" 하나와
 //                        configPath ./wrangler.jsonc(vitest가 실제 비밀값 파일 대신 .dev.vars.example을 읽는다,
 //                        worker.md 구현 중 변경 5), .dev.vars.example 바인딩.
@@ -35,6 +36,9 @@
 //   store 순수성    src/**에서 sql.exec는 src/store/db.ts에만, transactionSync(async …)는 어디에도 없다. src/store/** 중
 //                   AuthStore.ts가 아닌 파일의 원문에 async·await·cloudflare:·시각 함수(core와 같은 네 모양)가 없다. worker.md 구현 중 변경 21.
 //   raw 허용 목록   src/**의 raw 식별자 토큰 수(주석·문자열·별칭 포함)가 RAW_ALLOWLIST(파일별 정확한 수)와 같다(목록 밖 파일은 0).
+//   바깥 요청       src/**의 원문(주석 포함)에서 낱말 fetch 수(deps.fetch·속성 키 fetch:는 빼고)가 OUTBOUND_ALLOWLIST와 같다
+//                   (src/http/auth.ts 1개, 목록 밖 파일은 0). globalThis·self·Reflect·Function·eval·동적 import(·WebSocket·
+//                   cloudflare:sockets는 src/** 어디에도 없다. worker.md 구현 중 변경 27 (자)·28, cicd.md 92·93.
 //   --dist          dist/bundle-meta.json(esbuild metafile)의 입력이 모두 src/*.ts(런타임 의존성 0), dist/index.js 있음,
 //                   dist/wrangler.json이 있으면(W8 worker-bundle이 만든다) 금지 키·vars 규칙.
 //   --sentinel      plant: worker/.dev.vars를 LEAK_SENTINEL 한 줄로 새로 만든다(pnpm check·vitest 전). check: 그 파일을
@@ -122,6 +126,8 @@ const isLoopbackHttp = (v) => {
 // .dev.vars.example 값 규칙(키마다 하나. 규칙이 없는 키는 실패한다: 키를 더하면 자리표시 규칙도 정한다)
 export const PLACEHOLDER_RULES = {
   PUBLIC_ORIGIN: (v) => v === `http://localhost:${DEV_PORT}`,
+  // 치지직 앱에 등록된 개발용 리디렉션 URL(src/config.ts DEV_REDIRECT_URI와 같다, worker.md 구현 중 변경 27 (다))
+  CHZZK_REDIRECT_URI: (v) => v === `http://localhost:${DEV_PORT}/auth/callback`,
   CHZZK_AUTHORIZE_URL: isLoopbackHttp,
   CHZZK_API_BASE: isLoopbackHttp,
   CHZZK_CLIENT_ID: (v) => /^dev-[a-z0-9-]+$/.test(v),
@@ -195,7 +201,7 @@ function varsErrors(vars) {
   if (!vars || typeof vars !== 'object' || Array.isArray(vars)) return ['vars는 객체다'];
   for (const [k, v] of Object.entries(vars)) {
     if (!Object.hasOwn(PROD_VARS, k)) {
-      const why = k === 'PUBLIC_ORIGIN' ? '(배포 --var로만, dev 값이 운영 Worker를 dev 모드로 띄운다)' : k === 'START_RATE_10M' ? '(dev 모드 전용)' : k === 'BUILD_ID' ? '(배포 --var로만)' : /SECRET|TOKEN|KEY|PASSWORD|ADMIN|CLIENT/.test(k) ? '(비밀값은 wrangler secret put)' : '';
+      const why = k === 'PUBLIC_ORIGIN' ? '(배포 --var로만, dev 값이 운영 Worker를 dev 모드로 띄운다)' : k === 'CHZZK_REDIRECT_URI' ? '(dev 전용 등록 기록. 운영 redirectUri는 PUBLIC_ORIGIN이 원천)' : k === 'START_RATE_10M' ? '(dev 모드 전용)' : k === 'BUILD_ID' ? '(배포 --var로만)' : /SECRET|TOKEN|KEY|PASSWORD|ADMIN|CLIENT/.test(k) ? '(비밀값은 wrangler secret put)' : '';
       errs.push(`vars에 ${k}를 두지 않는다${why}`);
     } else if (v !== PROD_VARS[k]) errs.push(`vars.${k}는 운영 값 ${PROD_VARS[k]}여야 한다`);
   }
@@ -552,6 +558,28 @@ export function checkStorePurity(files) {
 
 const RAW_TOKEN = /(?<![\w$])raw(?![\w$])/g;
 
+// 바깥 요청(전역 fetch)은 이 파일·이 횟수만(worker.md 구현 중 변경 27 (자)·28). 치지직 호출이 한 곳이라는 것을 고정한다
+// (DO는 바깥 요청을 하지 않는다, §3). 낱말 fetch를 센다(별칭·bind·call·축약형 속성·(0, fetch)·fetch?.( 모두 1개다).
+// 빼는 것은 두 모양뿐: 메서드 호출 deps.fetch(앞이 .)와 객체·타입의 속성 키(줄 처음·{·,·; 바로 뒤이고 같은 줄에 : 또는 ?:가 오는 fetch)
+export const OUTBOUND_ALLOWLIST = { 'src/http/auth.ts': 1 };
+const FETCH_WORD = /(?<![\w$.])fetch(?![\w$])/g;
+const FETCH_KEY = /(?<=(?:^|[{,;])[ \t]*(?:readonly[ \t]+)?)fetch(?=[ \t]*\??[ \t]*:)/gm;
+// src/** 전체에서 0개(g 플래그 없음: test가 lastIndex를 남기지 않게): 전역 객체(전역 fetch를 다른 이름으로 꺼내는 길)·동적 실행·raw 소켓·WebSocket.
+// 따옴표로 감싼 'self'(CSP 키워드)는 낱말이 아니다
+export const OUTBOUND_BANNED = [
+  [/(?<![\w$.])globalThis(?![\w$])/, 'globalThis(전역 fetch를 꺼내는 길: globalThis.fetch·globalThis[…]·구조 분해·Reflect.get(globalThis, …))'],
+  [/(?<![\w$.'])self(?![\w$'])/, 'self(전역 객체 별칭)'],
+  [/(?<![\w$.])Reflect(?![\w$])/, 'Reflect(동적 속성 접근)'],
+  [/(?<![\w$.])Function(?![\w$])/, 'Function(문자열 코드 실행)'],
+  [/(?<![\w$.])eval(?![\w$])/, 'eval(문자열 코드 실행)'],
+  [/(?<![\w$.])import\s*\(/, '동적 import()(문자열로 모듈을 고르는 길)'],
+  [/(?<![\w$.])WebSocket(?![\w$])/, 'WebSocket(바깥 연결)'],
+  [/cloudflare:sockets/, 'cloudflare:sockets(raw TCP 바깥 연결)'],
+];
+
+/** 전역 fetch 사용 수 = 낱말 fetch 수 - 속성 키 수(주석·문자열 포함) */
+export const outboundCount = (text) => (text.match(FETCH_WORD) ?? []).length - (text.match(FETCH_KEY) ?? []).length;
+
 // src/**의 raw 토큰 수 = RAW_ALLOWLIST. all이면(checkWorker) 목록의 파일이 모두 있어야 한다(지운 파일의 낡은 항목)
 export function checkRawAllowlist(files, { all = false } = {}) {
   const errs = [];
@@ -564,6 +592,25 @@ export function checkRawAllowlist(files, { all = false } = {}) {
     if (got !== want) errs.push(`${rel}: raw 토큰 ${got}개 ≠ 허용 목록 ${want}개(이스케이프 없는 삽입은 scripts/ci/worker-config.mjs RAW_ALLOWLIST에 파일과 수를 함께 적는다. 주석·문자열·별칭도 센다)`);
   }
   if (all) for (const rel of Object.keys(RAW_ALLOWLIST)) if (!seen.has(rel)) errs.push(`${rel}: RAW_ALLOWLIST에 있는데 파일이 없다`);
+  return errs;
+}
+
+// src/** 원문(주석 포함)의 전역 fetch 사용 수 = OUTBOUND_ALLOWLIST, OUTBOUND_BANNED는 0. all이면 목록의 파일이 모두 있어야 한다
+// 한계(cicd.md 93): 원문 검사라 전역 객체를 위 이름 말고 다른 길로 얻는 것(느슨한 함수의 this 등)은 못 잡는다(리뷰가 본다)
+export function checkOutbound(files, { all = false } = {}) {
+  const errs = [];
+  const seen = new Set();
+  for (const { rel, text } of files) {
+    if (!rel.startsWith('src/')) continue;
+    seen.add(rel);
+    const got = outboundCount(text);
+    const want = Object.hasOwn(OUTBOUND_ALLOWLIST, rel) ? OUTBOUND_ALLOWLIST[rel] : 0;
+    if (got !== want) errs.push(`${rel}: 전역 fetch 사용 ${got}개 ≠ 허용 목록 ${want}개(바깥 요청은 scripts/ci/worker-config.mjs OUTBOUND_ALLOWLIST의 파일·횟수만. 낱말 fetch를 센다: 별칭·bind·축약형 속성·주석도 센다)`);
+    for (const [re, why] of OUTBOUND_BANNED) {
+      if (re.test(text)) errs.push(`${rel}: ${why}를 쓰지 않는다(바깥 요청은 src/http/auth.ts 한 곳, 주석에도 쓰지 않는다)`);
+    }
+  }
+  if (all) for (const rel of Object.keys(OUTBOUND_ALLOWLIST)) if (!seen.has(rel)) errs.push(`${rel}: OUTBOUND_ALLOWLIST에 있는데 파일이 없다`);
   return errs;
 }
 
@@ -639,6 +686,7 @@ export function checkWorker(root) {
   errs.push(...checkCorePurity(files).map((m) => `${WORKER_DIR}/${m}`));
   errs.push(...checkStorePurity(files).map((m) => `${WORKER_DIR}/${m}`));
   errs.push(...checkRawAllowlist(files, { all: true }).map((m) => `${WORKER_DIR}/${m}`));
+  errs.push(...checkOutbound(files, { all: true }).map((m) => `${WORKER_DIR}/${m}`));
   return errs;
 }
 

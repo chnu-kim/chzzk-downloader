@@ -2,6 +2,7 @@
 //
 // 앱 흐름: started(startApp) → redirected(확인 페이지 [계속]) → exchanging(콜백 consume) → ok | denied | cancelled | failed.
 // 웹 흐름은 start 때 바로 redirected이고 허용되면 그 자리에서 지운다. 흐름 하나가 만료를 앞당기지 못한다(종결해도 expires_at은 그대로 이상).
+// 예외 하나: 앱이 수령(claim ok)한 흐름은 now + 2분으로 앞당긴다(허용 채널의 로그인이 끝난 뒤라 슬롯 순환과 무관, 구현 중 변경 28 (마)).
 import { CHANNEL_ID, NAME_MAX, admission, clip, recordDenied, touchAllowedName } from "./allowlist";
 import type { Db } from "./db";
 import { activate, insertUnclaimed, insertWeb, type TokenPair } from "./sessions";
@@ -70,16 +71,19 @@ export function throttle(map: Map<string, StartWindow>, key: string, limit: numb
   return { ok: true };
 }
 
+/** 폴링 게이트 키: loginId + pollVerifier. 틀린 secret의 폴링은 다른 키라 올바른 폴링을 굶기지 못한다(구현 중 변경 28) */
+export const pollGateKey = (loginId: string, pollVerifier: string): string => `${loginId}:${pollVerifier}`;
+
 /** 폴링 간격 게이트. false면 너무 이르다(SQL 없이 429). 거절할 때는 기록을 갱신하지 않는다. 마지막 기록보다 이른 now(동시 요청)도 너무 이르다 */
-export function pollGate(map: Map<string, number>, loginId: string, now: number): boolean {
-  const last = map.get(loginId);
+export function pollGate(map: Map<string, number>, key: string, now: number): boolean {
+  const last = map.get(key);
   if (last !== undefined && now - last < POLL_MIN_INTERVAL_MS) return false;
   if (map.size >= MEMORY_KEYS_MAX) {
     for (const [k, t] of map) if (now - t >= POLL_MIN_INTERVAL_MS) map.delete(k);
     evictOldest(map, MEMORY_KEYS_MAX);
   }
-  map.delete(loginId);
-  map.set(loginId, now);
+  map.delete(key);
+  map.set(key, now);
   return true;
 }
 
@@ -210,7 +214,10 @@ export function doneView(db: Db, binderHash: string, now: number): DoneView | nu
   return r === null ? null : { kind: r.kind, status: r.status, userCode: r.user_code, channelName: r.channel_name, channelId: r.channel_id };
 }
 
-/** 앱 폴링. pollVerifier가 맞는 흐름만 본다. ok면 세션을 활성화하고 흐름을 지운다 */
+/**
+ * 앱 폴링. pollVerifier가 맞는 흐름만 본다. ok면 세션을 활성화하고, 흐름은 지우지 않고 verifier·세션 연결만 비운다:
+ * 다시 수령은 not_found이고, 행은 만료까지 남아 완료 페이지가 binder로 확인 코드를 다시 보인다(구현 중 변경 23·27 (가)).
+ */
 export function claim(
   db: Db,
   loginId: string,
@@ -238,8 +245,12 @@ export function claim(
       return { status: "denied", channelName: row.channel_name ?? "" };
     case "ok": {
       const a = row.session_id === null ? ({ ok: false, code: "gone" } as const) : activate(db, row.session_id, pair, admins, now);
+      if (a.ok) {
+        // 수령한 흐름은 완료 페이지 재표시(2분)만 남기고 상한 32 슬롯을 일찍 비운다(구현 중 변경 28). 앞당기기만 한다
+        db.run("UPDATE flow SET poll_verifier = NULL, session_id = NULL, expires_at = min(expires_at, ?) WHERE id = ?", now + FLOW_DONE_TTL_MS, loginId);
+        return { status: "ok", bundle: a.bundle };
+      }
       db.run("DELETE FROM flow WHERE id = ?", loginId);
-      if (a.ok) return { status: "ok", bundle: a.bundle };
       if (a.code === "not_allowed") return { status: "denied", channelName: a.channelName };
       return { status: "failed", code: "session" };
     }

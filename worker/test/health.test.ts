@@ -9,7 +9,7 @@ import { SCHEMA_VERSION } from "../src/store/schema";
 const ORIGIN = "http://localhost:8787";
 
 // 바꾼 env로 부른다(설정 가드가 요청마다 env를 읽는다)
-function call(path: string, patch: Partial<Record<keyof Env, unknown>> = {}, init?: RequestInit, origin = ORIGIN) {
+function call(path: string, patch: Record<string, unknown> = {}, init?: RequestInit, origin = ORIGIN) {
   const e = { ...env, ...patch } as Env;
   // 테스트가 만든 Request에는 들어오는 요청의 cf 속성이 없다(핸들러는 cf를 읽지 않는다)
   return worker.fetch(new Request(origin + path, init) as Parameters<typeof worker.fetch>[0], e);
@@ -69,8 +69,30 @@ describe("/health", () => {
   it("503 config_error: 운영 출처인데 치지직 주소가 가짜(덮어쓰기는 루프백에서만)", async () => {
     vi.spyOn(console, "log").mockImplementation(() => {});
     const origin = "https://dist.example.test";
-    const res = await call("/health", { PUBLIC_ORIGIN: origin, START_RATE_10M: "" }, undefined, origin);
+    const res = await call("/health", { PUBLIC_ORIGIN: origin, START_RATE_10M: "", CHZZK_REDIRECT_URI: "" }, undefined, origin);
     expect(res.status).toBe(503);
+  });
+});
+
+describe("dev 모드 설정 가드(HTTP)", () => {
+  it("503: 모르는 문자열 바인딩. 로그에는 키 이름만, 값은 응답·로그 어디에도 없다", async () => {
+    const spy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const canary = "other-service-canary-value";
+    const res = await call("/health", { OTHER_SERVICE_TOKEN: canary });
+    expect(res.status).toBe(503);
+    const text = await res.text();
+    expect(JSON.parse(text)).toEqual({ ok: false, code: "config_error" });
+    expect(text).not.toContain(canary);
+    const lines = logs(spy);
+    expect(lines.map((l) => JSON.parse(l))).toEqual([{ event: "config.error", level: "error", key: "OTHER_SERVICE_TOKEN" }]);
+    expect(lines.join("\n")).not.toContain(canary);
+  });
+
+  it("503: CHZZK_REDIRECT_URI가 등록 값과 다름", async () => {
+    const spy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const res = await call("/health", { CHZZK_REDIRECT_URI: "http://localhost:8787/auth/callback/" });
+    expect(res.status).toBe(503);
+    expect(logs(spy).map((l) => JSON.parse(l))).toEqual([{ event: "config.error", level: "error", key: "CHZZK_REDIRECT_URI" }]);
   });
 });
 

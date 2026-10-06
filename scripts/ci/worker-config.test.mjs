@@ -14,6 +14,7 @@ import {
   checkCorePurity,
   checkStorePurity,
   checkDevVarsExample,
+  checkOutbound,
   checkDist,
   checkPackage,
   checkRawAllowlist,
@@ -25,6 +26,7 @@ import {
   configKeys,
   EXPECTED_SCRIPTS,
   main,
+  OUTBOUND_ALLOWLIST,
   parseJsonc,
   plantSentinel,
   RAW_ALLOWLIST,
@@ -121,6 +123,7 @@ test('씨앗: wrangler.jsonc 불변식', () => {
     ['vars에 PUBLIC_ORIGIN', { vars: { ...WRANGLER.vars, PUBLIC_ORIGIN: 'http://localhost:8787' } }],
     ['vars에 START_RATE_10M', { vars: { ...WRANGLER.vars, START_RATE_10M: '1000' } }],
     ['vars에 BUILD_ID', { vars: { ...WRANGLER.vars, BUILD_ID: 'dev' } }],
+    ['vars에 CHZZK_REDIRECT_URI', { vars: { ...WRANGLER.vars, CHZZK_REDIRECT_URI: 'http://localhost:8787/auth/callback' } }],
     ['vars에 비밀처럼 보이는 키', { vars: { ...WRANGLER.vars, CHZZK_CLIENT_SECRET: 'x' } }],
     ['vars 치지직 주소가 가짜', { vars: { ...WRANGLER.vars, CHZZK_API_BASE: 'http://127.0.0.1:8788' } }],
     ['invocation 로그 켬', { observability: { enabled: true, logs: { invocation_logs: true } } }],
@@ -135,6 +138,9 @@ test('씨앗: wrangler.jsonc 불변식', () => {
   assert.deepEqual(checkWrangler(WRANGLER), []);
   // 사본 경로로도 같은 판정
   assert.notDeepEqual(checkWorker(copy({ 'worker/wrangler.jsonc': withWrangler({ routes: ['x'] }) })), []);
+  // CHZZK_REDIRECT_URI는 dev 전용이라 메시지에 그렇게 적는다
+  const redirect = checkWrangler({ ...WRANGLER, vars: { ...WRANGLER.vars, CHZZK_REDIRECT_URI: 'http://localhost:8787/auth/callback' } });
+  assert.ok(redirect.some((e) => e.includes('CHZZK_REDIRECT_URI') && e.includes('dev 전용')), JSON.stringify(redirect));
 });
 
 test('씨앗: package.json', () => {
@@ -216,6 +222,10 @@ test('씨앗: .dev.vars.example', () => {
     ['합성이 아닌 채널 ID', EXAMPLE.replace(/^ADMIN_CHANNEL_IDS=.*$/m, `ADMIN_CHANNEL_IDS=${'e5'.padStart(32, '0')}`)],
     ['따옴표 값', EXAMPLE.replace('BUILD_ID=dev', 'BUILD_ID="dev"')],
     ['키 중복', EXAMPLE + 'BUILD_ID=dev\n'],
+    ['CHZZK_REDIRECT_URI 키 빠짐', EXAMPLE.replace(/^CHZZK_REDIRECT_URI=.*\n/m, '')],
+    ['CHZZK_REDIRECT_URI 끝 슬래시', EXAMPLE.replace('/auth/callback', '/auth/callback/')],
+    ['CHZZK_REDIRECT_URI 127.0.0.1', EXAMPLE.replace('CHZZK_REDIRECT_URI=http://localhost:', 'CHZZK_REDIRECT_URI=http://127.0.0.1:')],
+    ['CHZZK_REDIRECT_URI 포트 8788', EXAMPLE.replace('CHZZK_REDIRECT_URI=http://localhost:8787', 'CHZZK_REDIRECT_URI=http://localhost:8788')],
   ];
   for (const [name, text] of seeds) assert.notDeepEqual(checkDevVarsExample(text, KEYS), [], name);
   assert.ok(checkWorker(copy({ 'worker/.dev.vars.example': null })).some((e) => e.includes('.dev.vars.example: 없다')));
@@ -334,7 +344,7 @@ test('씨앗: 소스 규칙', () => {
 });
 
 test('CONFIG_KEYS 추출', () => {
-  assert.ok(KEYS.includes('PUBLIC_ORIGIN') && KEYS.includes('START_RATE_10M'));
+  assert.ok(KEYS.includes('PUBLIC_ORIGIN') && KEYS.includes('START_RATE_10M') && KEYS.includes('CHZZK_REDIRECT_URI'));
   assert.equal(configKeys('export const X = 1;'), null);
 });
 
@@ -507,4 +517,67 @@ test('씨앗: raw 허용 목록(파일별 정확한 토큰 수)', () => {
   const routes = read('src/routes.ts');
   assert.ok(checkWorker(copy({ 'worker/src/routes.ts': `${routes}\nraw("x");\n` })).some((e) => e.includes('src/routes.ts') && e.includes('raw')));
   assert.ok(checkWorker(copy({ 'worker/src/core/html.ts': null })).some((e) => e.includes('RAW_ALLOWLIST')));
+});
+
+test('씨앗: 바깥 요청(낱말 fetch)은 src/http/auth.ts 한 곳, 전역 객체·동적 실행·소켓은 0', () => {
+  const AUTH = 'src/http/auth.ts';
+  const auth = read(AUTH);
+  assert.deepEqual(OUTBOUND_ALLOWLIST, { [AUTH]: 1 });
+  assert.deepEqual(checkOutbound([{ rel: AUTH, text: auth }]), []);
+  // 실패 씨앗: 다른 파일·같은 파일 2회·globalThis·self 대괄호·주석
+  const seeds = [
+    ['다른 파일의 호출', 'src/http/session.ts', 'const r = await fetch("https://x.example.test");'],
+    ['공백이 낀 호출', 'src/http/session.ts', 'await fetch   (u);'],
+    ['목록 파일 2회', AUTH, `${auth}\nawait fetch(u);\n`],
+    ['globalThis.fetch', 'src/routes.ts', 'const f = globalThis.fetch;'],
+    ['globalThis . fetch', 'src/routes.ts', 'globalThis\n  .fetch(u);'],
+    ['self.fetch', 'src/routes.ts', 'self.fetch(u);'],
+    ['globalThis 대괄호', 'src/routes.ts', 'globalThis["fe" + "tch"](u);'],
+    ['self 대괄호', 'src/routes.ts', 'self["fetch"](u);'],
+    ['주석 속 호출', 'src/http/health.ts', '// 여기서 fetch(u)를 부르면 안 된다'],
+    ['목록 파일의 호출이 0개', AUTH, 'export const x = 1;'],
+    // W4 리뷰(cicd.md 93): 별칭·우회 모양
+    ['bind 속성', 'src/store/x.ts', 'const deps = { fetch: fetch.bind(null) };'],
+    ['축약형 속성', 'src/store/x.ts', 'const deps = { fetch };'],
+    ['call', 'src/store/x.ts', 'fetch.call(null, u);'],
+    ['변수 별칭', 'src/store/x.ts', 'const f = fetch; f(u);'],
+    ['쉼표 식', 'src/http/session.ts', '(0, fetch)(u);'],
+    ['선택 호출', 'src/http/session.ts', 'fetch?.(u);'],
+    ['같은 줄 삼항', 'src/http/session.ts', 'const f = ok ? fetch : g;'],
+    ['여러 줄 삼항', 'src/http/session.ts', 'const f = ok\n  ? g\n  : fetch;'],
+    ['속성 값', 'src/http/session.ts', 'const d = { fetch: fetch };'],
+    ['globalThis 선택 접근', 'src/http/session.ts', 'globalThis?.fetch(u);'],
+    ['globalThis 구조 분해', 'src/http/session.ts', 'const { fetch: f } = globalThis;'],
+    ['Reflect.get', 'src/http/session.ts', 'Reflect.get(o, k)(u);'],
+    ['new Function', 'src/http/session.ts', 'new Function("return fe" + "tch")()(u);'],
+    ['eval', 'src/http/session.ts', '(0, eval)("fe" + "tch")(u);'],
+    ['동적 import', 'src/http/session.ts', 'await import("cloud" + "flare:sockets");'],
+    ['raw 소켓', 'src/http/session.ts', 'import { connect } from "cloudflare:sockets"; connect({ hostname: "x.example.test", port: 443 });'],
+    ['WebSocket', 'src/store/x.ts', 'new WebSocket("wss://x.example.test");'],
+    ['self 낱말', 'src/http/session.ts', 'const g = self; g.fetch(u);'],
+  ];
+  for (const [name, rel, text] of seeds) {
+    const files = rel === AUTH ? [{ rel, text }] : [{ rel: AUTH, text: auth }, { rel, text }];
+    assert.notDeepEqual(checkOutbound(files), [], name);
+  }
+  // 통과: 메서드 호출 deps.fetch(·속성 fetch:·다른 낱말·src 밖
+  const clean = [
+    ['메서드 호출', 'const r = await deps.fetch(url, init);'],
+    ['속성 선언', 'const d = { fetch: (u) => g(u) };'],
+    ['낱말 일부', 'prefetch(u); fetchAll(u); refetch (u);'],
+    ['$ 접두', '$fetch(u);'],
+    ['타입 속성', 'interface D {\n  readonly fetch: F;\n  fetch?: F;\n}'],
+    ['여러 속성', 'const d = { a: 1, fetch: (u) => g(u) };\nconst e = {\n  fetch: h,\n};'],
+    ['CSP 키워드', "const csp = \"default-src 'self'; img-src 'self'\";"],
+    ['cloudflare:workers', 'import { DurableObject } from "cloudflare:workers";'],
+  ];
+  for (const [name, text] of clean) assert.deepEqual(checkOutbound([{ rel: AUTH, text: auth }, { rel: 'src/core/x.ts', text }]), [], name);
+  assert.deepEqual(checkOutbound([{ rel: AUTH, text: auth }, { rel: 'test/a.test.ts', text: 'await fetch(u); globalThis.fetch(u);' }]), []);
+  // 낡은 항목: checkWorker 경로(all)에서는 목록의 파일이 있어야 한다
+  assert.notDeepEqual(checkOutbound([], { all: true }), []);
+  assert.deepEqual(checkOutbound([]), []);
+  // 사본: 다른 파일에 fetch(를 더하거나, auth.ts를 지우면 checkWorker가 실패
+  const session = read('src/http/session.ts');
+  assert.ok(checkWorker(copy({ 'worker/src/http/session.ts': `${session}\nawait fetch(u);\n` })).some((e) => e.includes('src/http/session.ts') && e.includes('전역 fetch')));
+  assert.ok(checkWorker(copy({ 'worker/src/http/auth.ts': null })).some((e) => e.includes('OUTBOUND_ALLOWLIST')));
 });

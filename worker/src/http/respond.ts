@@ -15,3 +15,8 @@ export function withCommonHeaders(res: Response): Response {
   out.headers.set("X-Content-Type-Options", "nosniff");
   return out;
 }
+
+/** RFC3339(UTC, 밀리초): epoch ms → "2030-01-01T00:00:00.000Z" */
+export function iso(ms: number): string {
+  return new Date(ms).toISOString();
+}

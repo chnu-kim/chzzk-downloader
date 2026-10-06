@@ -1,4 +1,5 @@
 PUBLIC_ORIGIN=http://localhost:8787
+CHZZK_REDIRECT_URI=http://localhost:8787/auth/callback
 CHZZK_AUTHORIZE_URL=http://127.0.0.1:8788/account-interlock
 CHZZK_API_BASE=http://127.0.0.1:8788
 CHZZK_CLIENT_ID=dev-client-id

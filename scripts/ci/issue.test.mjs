@@ -162,6 +162,7 @@ test('masterStatus: ci-ok가 녹색이어도 D14 관찰 작업이 실패·취소
   assert.equal(masterStatus('failure', needs('success')).status, 'fail');
   // Windows 네이티브 E2E(구현 중 변경 79)도 관찰 작업이다: 기본 목록(OBSERVED_JOBS)에서 읽는다
   assert.deepEqual(masterStatus('success', JSON.stringify({ 'ci-ok': { result: 'success' }, 'e2e-native': { result: 'success' }, 'e2e-native-windows': { result: 'failure' } })), { status: 'fail', observedFailed: ['e2e-native-windows'] });
+  assert.deepEqual(masterStatus('success', JSON.stringify({ 'ci-ok': { result: 'success' }, 'worker-e2e': { result: 'failure' } })), { status: 'fail', observedFailed: ['worker-e2e'] });
   // 관찰 목록 밖의 작업은 보지 않는다(ci-ok가 판정한다)
   assert.equal(masterStatus('success', JSON.stringify({ rust: { result: 'failure' } })).status, 'ok');
 });

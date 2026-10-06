@@ -209,6 +209,25 @@ export const GATES = {
       { cmd: ['node', S('ratchet.mjs'), 'check', 'tests'] },
     ],
   },
+  // wrangler dev E2E(docs/design/worker.md §12.3, 구현 중 변경 40·41, cicd.md 구현 중 변경 100). D14 관찰(OBSERVED_JOBS).
+  // 실제 HTTP: 가짜 치지직(node:http, 127.0.0.1:8788) + wrangler dev(--env-file .dev.vars.example, --persist-to 임시 폴더의 로컬 R2 씨앗).
+  // CI에서는 실제 비밀값 파일 자리에 LEAK_SENTINEL 씨앗을 심는다: wrangler dev가 그 파일을 읽으면 dev 설정 검사가 모르는 키로
+  // config_error를 내 /health가 503이 되고 E2E가 멈춘다. 포트 8787(등록된 개발용 콜백)·8788을 쓰므로 훅에는 넣지 않는다.
+  // 프로세스 그룹 정리(kill(-pid)) 때문에 Linux·macOS 전용이다.
+  'worker-e2e': {
+    desc: 'wrangler dev + 가짜 치지직으로 앱·웹 로그인·회전·updater·R2·관리 POST·Origin·스로틀 키·release.mjs worker --check-only를 실제 HTTP로, Worker 로그 카나리(D14 관찰)',
+    needs: ['pnpm'],
+    platforms: ['linux', 'darwin'],
+    steps: [
+      { cmd: ['node', S('worker-config.mjs')] },
+      { cmd: ['pnpm', 'install', '--frozen-lockfile'], cwd: 'worker', env: WRANGLER_ENV },
+      { cmd: ['node', S('worker-config.mjs'), '--sentinel', 'plant'] },
+      // --sentinel check가 보는 worker-env.d.ts를 만든다
+      { cmd: ['pnpm', 'check'], cwd: 'worker', env: WRANGLER_ENV },
+      { cmd: ['pnpm', 'e2e'], cwd: 'worker', env: WRANGLER_ENV },
+      { cmd: ['node', S('worker-config.mjs'), '--sentinel', 'check'] },
+    ],
+  },
   // chzzk-app은 gate 셋이다(구현 중 변경 78): clippy(check)와 test·빌드(codegen)는 산출물을 나누지 않아 한 작업에서 차례로 돌면
   // 두 번의 전체 컴파일이 직렬이 된다. CI는 tauri-clippy를 따로 작업으로 돌리고, tauri 작업은 tauri → test-count-app →
   // tauri-build → smoke-bin 순서다(tauri build가 바꾸는 환경 변수 때문에 그 뒤의 test 목록이 다시 컴파일되지 않게).
@@ -528,4 +547,5 @@ export const MASTER_ONLY_JOBS = ['bundle'];
 //     MASTER_ONLY_JOBS로 옮긴 뒤 ci.yml ci-ok needs·guard를 고치는 한 변경이다(parity가 둘을 맞춘다).
 //   - e2e-native도 'code'다(리뷰 G4): master에서만 돌면 편입한 뒤에도 PR이 네이티브 E2E를 깨고 녹색으로 머지된다.
 //   - e2e-native-windows(구현 중 변경 79, 사용자 결정 2026-10-06)는 Linux와 따로 관찰·편입한다(작업 id가 달라 하나씩 옮긴다).
-export const OBSERVED_JOBS = { 'e2e-web': 'code', 'e2e-native': 'code', 'e2e-native-windows': 'code' };
+//   - worker-e2e(cicd.md 구현 중 변경 100)는 W7 머지 뒤 첫 master 녹색 실행부터 14일 관찰한다.
+export const OBSERVED_JOBS = { 'e2e-web': 'code', 'e2e-native': 'code', 'e2e-native-windows': 'code', 'worker-e2e': 'code' };

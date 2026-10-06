@@ -498,9 +498,20 @@ export function checkCorePurity(files) {
 const ASYNC_TOKEN = /(?<![\w$])(?:async|await)(?![\w$])/;
 const SQL_EXEC = /\bsql\s*\.\s*exec\b/;
 const ASYNC_TX = /\btransactionSync\s*\(\s*async\b/;
+// 별칭 우회를 막는 토큰 금지(cicd.md 구현 중 변경 90). store 함수에는 정규식 exec도 Promise도 필요 없다
+const STORE_BANNED = [
+  [/\.\s*exec\s*\(/, '.exec( 호출(SQL은 Db의 all·first·run만, 별칭·대괄호 접근 포함)'],
+  [/\bSqlStorage\b/, 'SqlStorage 타입(SQL 핸들은 db.ts의 Db만 쥔다)'],
+  [/\.\s*then\s*\(/, '.then( 호출(async 없는 비동기, 트랜잭션 밖에서 쓴다)'],
+];
+const STORAGE_SQL = /\bstorage\s*(?:\.\s*sql\b|\[)/g;
+const TX_SYNC = /\btransactionSync\b/;
+const NEW_DB = /\bnew\s+Db\s*\(\s*ctx\s*\.\s*storage\s*\.\s*sql\s*\)/;
 
-// 원문(주석 포함)을 본다. src/** 전체: sql.exec는 db.ts의 Db만(행 수 계량·동기 경로), transactionSync 콜백은 동기.
-// src/store/** 중 AuthStore.ts가 아닌 파일: async·await·cloudflare:·시각 함수 없음(동기 함수 + now 인자)
+// 원문(주석 포함)을 본다. src/** 전체: sql.exec는 db.ts의 Db만(행 수 계량·동기 경로), transactionSync는 AuthStore.ts에만 있고 콜백은 동기,
+// storage.sql은 AuthStore.ts의 new Db( 인자 한 곳. src/store/** 중 db.ts가 아닌 파일: .exec(·SqlStorage·.then( 없음.
+// src/store/** 중 AuthStore.ts가 아닌 파일: async·await·cloudflare:·시각 함수 없음(동기 함수 + now 인자).
+// 한계: AuthStore.ts 안에서 이름 붙인 async 함수를 transactionSync에 넘기는 것은 원문 검사로 못 막는다(리뷰가 본다, cicd.md 90)
 export function checkStorePurity(files) {
   const errs = [];
   for (const { rel, text } of files) {
@@ -512,6 +523,19 @@ export function checkStorePurity(files) {
     let w;
     if (rel !== SQL_FILE && (w = at(SQL_EXEC))) errs.push(`${w}: sql.exec는 ${SQL_FILE}의 Db만 부른다(행 수 계량·동기 경로)`);
     if ((w = at(ASYNC_TX))) errs.push(`${w}: transactionSync 콜백은 동기다(async 콜백은 트랜잭션을 보장하지 않는다)`);
+    if (rel !== STORE_EDGE && (w = at(TX_SYNC))) errs.push(`${w}: transactionSync는 ${STORE_EDGE}에만 있다(RPC 하나 = 트랜잭션 하나)`);
+    // storage.sql은 AuthStore.ts의 new Db( 인자 한 곳뿐이다(별칭으로 SQL 핸들을 꺼내지 못하게 개수를 고정한다)
+    const sqlRefs = [...text.matchAll(STORAGE_SQL)];
+    const sqlWant = rel === STORE_EDGE ? 1 : 0;
+    if (sqlRefs.length !== sqlWant) {
+      const where = sqlRefs.length > sqlWant ? `${rel}:${lineOf(text, sqlRefs[sqlWant].index)}` : rel;
+      errs.push(`${where}: storage.sql 참조 ${sqlRefs.length}개 ≠ ${sqlWant}개(${STORE_EDGE}의 new Db(ctx.storage.sql) 한 곳뿐)`);
+    } else if (sqlWant === 1 && !NEW_DB.test(text)) {
+      errs.push(`${rel}:${lineOf(text, sqlRefs[0].index)}: storage.sql은 new Db(ctx.storage.sql) 인자로만 쓴다`);
+    }
+    if (rel.startsWith(STORE_DIR) && rel !== SQL_FILE) {
+      for (const [re, why] of STORE_BANNED) if ((w = at(re))) errs.push(`${w}: src/store/는 ${why}를 쓰지 않는다(${SQL_FILE}만)`);
+    }
     if (rel.startsWith(STORE_DIR) && rel !== STORE_EDGE) {
       if ((w = at(ASYNC_TOKEN))) errs.push(`${w}: store 함수는 동기이고 시각은 now 인자로(async·await은 ${STORE_EDGE}만, worker.md §3 규칙 (2))`);
       if ((w = at(/cloudflare:/))) errs.push(`${w}: store 함수는 cloudflare:를 쓰지 않는다(${STORE_EDGE}만, 주석에도 쓰지 않는다)`);

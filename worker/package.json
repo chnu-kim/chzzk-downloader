@@ -11,6 +11,7 @@
     "test": "vitest run",
     "build": "wrangler deploy --dry-run --config wrangler.jsonc --outdir dist --metafile",
     "dev": "wrangler dev --config wrangler.jsonc --port 8787 --env-file .dev.vars.example",
+    "e2e": "node scripts/e2e-dev.mjs",
     "dev:real": "wrangler dev --config wrangler.jsonc --port 8787 --env-file .dev.vars --var PUBLIC_ORIGIN:http://localhost:8787"
   },
   "devDependencies": {

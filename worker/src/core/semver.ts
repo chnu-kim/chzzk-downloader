@@ -1,6 +1,6 @@
 // 버전 해석·비교(docs/design/worker.md §9.3, 구현 중 변경 14 (다)). xtask/src/semver.rs를 글자 그대로 옮긴다:
 // 두 구현이 같은 벡터 파일 xtask/testdata/semver-vectors.json을 테스트로 읽는다(한쪽만 고치지 않는다).
-//   - core는 . 으로 정확히 셋, 각 조각은 비지 않은 ASCII 숫자이고 앞자리 0은 "0"만, 값은 u64(2^64−1) 이하(BigInt).
+//   - core는 . 으로 정확히 셋, 각 조각은 비지 않은 ASCII 숫자이고 앞자리 0은 "0"만, 값은 u64(2^64−1) 이하(길이·사전순으로 먼저 보고 BigInt).
 //   - prerelease는 . 으로 나눈 비지 않은 [0-9A-Za-z-]+ 조각. 숫자 조각의 앞자리 0은 허용한다(xtask와 같다).
 //   - + (빌드 메타데이터)는 거부한다.
 //   - 비교: 세 숫자 → prerelease 없는 쪽이 크다 → 조각별(둘 다 u64 숫자면 값, 숫자 < 영숫자, 아니면 바이트 순서) → 개수.
@@ -10,15 +10,21 @@ export interface Version {
   readonly pre: readonly string[];
 }
 
-const U64_MAX = (1n << 64n) - 1n;
+const U64_MAX_DIGITS = "18446744073709551615";
 const DIGITS = /^[0-9]+$/;
 const PRE_ID = /^[0-9A-Za-z-]+$/;
 
-// BigInt("")·BigInt(" 1")·BigInt("0x10")이 통과하므로 모양을 먼저 본다
+// BigInt("")·BigInt(" 1")·BigInt("0x10")이 통과하므로 모양을 먼저 본다.
+// 요청 경로에서 온 아주 긴 숫자로 BigInt를 만들지 않게, 앞자리 0을 뗀 길이(u64는 20자리)와 사전순으로 범위를 먼저 본다
+// (prerelease 숫자 조각은 앞자리 0을 허용한다: Rust parse::<u64>도 "0…01"을 1로 읽는다)
 function u64(s: string): bigint | null {
   if (!DIGITS.test(s)) return null;
-  const n = BigInt(s);
-  return n <= U64_MAX ? n : null;
+  let i = 0;
+  while (i < s.length - 1 && s[i] === "0") i++;
+  const t = s.slice(i);
+  if (t.length > U64_MAX_DIGITS.length) return null;
+  if (t.length === U64_MAX_DIGITS.length && t > U64_MAX_DIGITS) return null;
+  return BigInt(t);
 }
 
 function coreNum(s: string): bigint | null {

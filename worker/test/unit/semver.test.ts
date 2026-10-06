@@ -50,6 +50,15 @@ describe("worker 쪽 추가 사례", () => {
     expect(compareVersions(parse("1.0.0-18446744073709551616"), parse("1.0.0-18446744073709551615"))).toBe(1);
     expect(compareVersions(parse("1.0.0-18446744073709551615"), parse("1.0.0-18446744073709551614"))).toBe(1);
   });
+  it("아주 긴 숫자 성분(10만 자리)은 BigInt를 만들기 전에 거부한다", () => {
+    const long = "9".repeat(100_000);
+    expect(parseVersion(`${long}.0.0`)).toBeNull();
+    expect(parseVersion(`0.0.${long}`)).toBeNull();
+    expect(parseVersion(`1${"0".repeat(100_000)}.0.0`)).toBeNull();
+    // prerelease의 긴 숫자 조각은 u64가 아니라 영숫자로(숫자보다 크다), 앞자리 0만 긴 것은 값으로 읽는다
+    expect(compareVersions(parse(`1.0.0-${long}`), parse("1.0.0-1"))).toBe(1);
+    expect(compareVersions(parse(`1.0.0-${"0".repeat(100_000)}1`), parse("1.0.0-1"))).toBe(0);
+  });
   it("영숫자는 바이트 순서(대문자 < 소문자)", () => {
     expect(compareVersions(parse("1.0.0-B"), parse("1.0.0-a"))).toBe(-1);
     expect(compareVersions(parse("1.0.0-a-"), parse("1.0.0-a0"))).toBe(-1);

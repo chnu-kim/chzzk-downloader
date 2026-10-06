@@ -67,6 +67,10 @@ describe("parseCurrentVersion", () => {
   ])("%s → %s", (seg, want) => {
     expect(parseCurrentVersion(seg)).toEqual(parseVersion(want));
   });
+  it("아주 긴 숫자 성분(10만 자리)은 null(400)", () => {
+    expect(parseCurrentVersion(`${"9".repeat(100_000)}.0.0`)).toBeNull();
+    expect(parseCurrentVersion(`1%2E0%2E${"1".repeat(100_000)}`)).toBeNull();
+  });
   it.each(["1.0.0%2Bb", "1.0.0+b", "%ZZ", "%", "v1.0.0", "1.0", "", "1.0.0%00", "1.0.0%20"])("null(400): %j", (seg) => {
     expect(parseCurrentVersion(seg)).toBeNull();
   });

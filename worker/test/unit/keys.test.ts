@@ -55,6 +55,11 @@ describe("parseReleasePath", () => {
     expect(parseReleasePath(p)).toBeNull();
   });
 
+  it("아주 긴 숫자 성분(10만 자리) 버전은 null", () => {
+    expect(parseReleasePath(`/releases/${"9".repeat(100_000)}.0.0/SHA256SUMS`)).toBeNull();
+    expect(parseReleasePath(`/releases/0.0.${"1".repeat(100_000)}/SHA256SUMS`)).toBeNull();
+  });
+
   it("릴리스 산출물 이름(release/expected-artifacts.json)과 updater .sig가 모두 문법을 통과한다", () => {
     const table = JSON.parse(expectedArtifacts) as Record<string, { artifacts?: { name: string; updater?: string[] }[] }>;
     const names: string[] = [];

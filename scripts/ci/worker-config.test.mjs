@@ -363,6 +363,8 @@ test('씨앗: core 순수성(원문 전체, worker.md 구현 중 변경 15)', ()
     'if (pathname.includes("..")) return null;',
     'const d = new Date(ms).toISOString(); const e = new Date( t );',
     'const ok = a?.fetch ? 1 : 2; const { fetch: f } = deps;',
+    'const d = new Date(/* 주입 */ ms); const e = new Date(// 주입\n  t);',
+    'const newDate = shift(t); const isDate = (x) => x instanceof Date;',
   ];
   for (const text of ok) assert.deepEqual(checkCorePurity(core(text)), [], text);
   const seeds = [
@@ -400,6 +402,15 @@ test('씨앗: core 순수성(원문 전체, worker.md 구현 중 변경 15)', ()
     ['performance.now', 'const t = performance.now();'],
     ['new 없는 Date()', 'const s = Date();'],
     ['new 없는 Date ( )', 'const s = String(Date ( ));'],
+    // 구현 중 변경 16: 괄호 안이 주석뿐이면 인자 없는 호출이다
+    ['new Date(블록 주석)', 'const t = new Date(/* 주입된 시각 */).getTime();'],
+    ['new Date(줄 주석+줄바꿈)', 'const t = new Date(// 주입된 시각\n);'],
+    ['new Date(주석 둘)', 'const t = new Date( /* a */ // b\n /* c */ );'],
+    ['new Date 주석;', 'const t = +new Date /* x */;'],
+    ['new 주석 Date()', 'const t = new /* x */ Date();'],
+    ['new Date 주석 ()', 'const t = new Date /* x */ ();'],
+    ['new 없는 Date 주석 ()', 'const s = Date /* x */ ();'],
+    ['뒤에 다른 */가 있어도', 'const t = new Date(/* a */); const u = f(/* b */ x);'],
   ];
   for (const [name, text] of seeds) assert.notDeepEqual(checkCorePurity(core(text)), [], name);
   // core 밖은 cloudflare:·fetch·Date.now가 된다(핸들러·DO·라우터). Math.random은 src/** 어디서도 안 된다

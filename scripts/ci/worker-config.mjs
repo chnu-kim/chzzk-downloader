@@ -440,6 +440,9 @@ export function checkSources(files) {
   return errs;
 }
 
+// 공백과 주석(블록·줄)의 연속. 블록 주석은 첫 */에서 끝나고(되짚어도 더 길어지지 않는다) 줄 주석은 줄 끝까지다
+const JS_GAP = String.raw`(?:\s|/\*(?:[^*]|\*(?!/))*\*/|//[^\n]*(?:\n|$))*`;
+
 // 원문(주석 포함)을 본다: stripJsComments는 정규식 리터럴을 몰라 따옴표가 든 리터럴(html.ts의 이스케이프 정규식) 뒤의 코드를
 // 주석으로 지울 수 있다(미탐). 그래서 core는 아래 이름을 주석에도 쓰지 않는다. 여러 줄·side-effect·동적·export … from 모두 잡힌다
 export const CORE_FORBIDDEN = [
@@ -452,10 +455,12 @@ export const CORE_FORBIDDEN = [
   // 위 규칙의 속성 선언 예외(fetch:)를 빠져나가는 두 모양: 삼항의 참 쪽, 전역 객체 구조 분해 별칭
   [/\?\s*fetch\s*:|\{[^}]*\bfetch\s*:[^}]*\}\s*=\s*(?:globalThis|self)\b/, '전역 fetch를 쓰지 않는다(삼항·globalThis 구조 분해 별칭)'],
   [/\bDate\s*\.\s*now\b/, 'Date.now를 쓰지 않는다(시간은 인자로 주입, 주석에도 쓰지 않는다)'],
-  // 인자 없는 생성(new Date()·new Date;)은 현재 시각이다. 주입된 시각을 바꾸는 new Date(ms)는 된다
-  [/\bnew\s+Date\b(?!\s*\(\s*[^)\s])/, '인자 없는 new Date를 쓰지 않는다(시간은 인자로 주입)'],
+  // 인자 없는 생성(new Date()·new Date;)은 현재 시각이다. 주입된 시각을 바꾸는 new Date(ms)는 된다.
+  // 토큰 사이·괄호 안의 주석은 공백으로 본다(new Date(/* … */)·new /* … */ Date()도 인자 없음). 괄호 안 첫 글자가 /면 거부한다:
+  // 그래야 주석 일부만 공백으로 보는 되짚기로 빠져나가지 못한다(Date에 정규식 인자를 줄 일은 없다)
+  [new RegExp(String.raw`\bnew(?![\w$])${JS_GAP}Date\b(?!${JS_GAP}\(${JS_GAP}[^)\s/])`), '인자 없는 new Date를 쓰지 않는다(시간은 인자로 주입)'],
   // new 없이 부른 Date()도 현재 시각 문자열이다
-  [/(?<![\w$.])(?<!\bnew\s+)Date\s*\(/, 'new 없는 Date()를 쓰지 않는다(현재 시각, 시간은 인자로 주입)'],
+  [new RegExp(String.raw`(?<![\w$.])(?<!\bnew${JS_GAP})Date${JS_GAP}\(`), 'new 없는 Date()를 쓰지 않는다(현재 시각, 시간은 인자로 주입)'],
   [/\bperformance\s*\.\s*now\b/, 'performance.now를 쓰지 않는다(시간은 인자로 주입)'],
 ];
 const MATH_RANDOM = /\bMath\s*\.\s*random\b/;

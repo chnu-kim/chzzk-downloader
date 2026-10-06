@@ -45,3 +45,23 @@ export function contentRange(r: { readonly offset: number; readonly length: numb
 export function unsatisfiedRange(size: number): string {
   return `bytes */${size}`;
 }
+
+/** 인정된 spec → 정규화된 Range 헤더 값. R2에 요청 헤더를 그대로 넘기지 않는다(R2는 공백·대문자 단위도 받아 위 판정과 어긋난다, 구현 중 변경 30 (가)) */
+export function rangeHeader(spec: RangeSpec): string {
+  if ("suffix" in spec) return `bytes=-${spec.suffix}`;
+  return spec.end === null ? `bytes=${spec.start}-` : `bytes=${spec.start}-${spec.end}`;
+}
+
+/** R2가 돌려준 obj.range(모양이 셋: offset·length / offset만 / suffix)를 {offset,length}로. undefined는 전체 */
+export function normalizeR2Range(
+  r: { readonly offset?: number; readonly length?: number; readonly suffix?: number } | undefined,
+  size: number,
+): { readonly offset: number; readonly length: number } {
+  if (r === undefined) return { offset: 0, length: size };
+  if (r.suffix !== undefined) {
+    const n = Math.min(r.suffix, size);
+    return { offset: size - n, length: n };
+  }
+  const offset = r.offset ?? 0;
+  return { offset, length: r.length ?? size - offset };
+}

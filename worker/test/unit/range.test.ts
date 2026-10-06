@@ -1,6 +1,6 @@
 // core/range(docs/design/worker.md §9.2, 구현 중 변경 14 (마)): 단일 범위만 인정, 나머지는 무시(200 전체) 또는 416.
 import { describe, expect, it } from "vitest";
-import { contentRange, parseRange, type RangeSpec, resolveRange, unsatisfiedRange } from "../../src/core/range";
+import { contentRange, normalizeR2Range, parseRange, type RangeSpec, rangeHeader, resolveRange, unsatisfiedRange } from "../../src/core/range";
 
 const at = (h: string | null, size: number) => {
   const spec = parseRange(h);
@@ -69,4 +69,37 @@ it("Content-Range 문자열", () => {
   expect(contentRange({ offset: 5, length: 5 }, 10)).toBe("bytes 5-9/10");
   expect(unsatisfiedRange(10)).toBe("bytes */10");
   expect(unsatisfiedRange(0)).toBe("bytes */0");
+});
+
+describe("rangeHeader: R2에 넘기는 정규화된 헤더", () => {
+  it.each([
+    [{ start: 0, end: 9 }, "bytes=0-9"],
+    [{ start: 5, end: null }, "bytes=5-"],
+    [{ suffix: 10 }, "bytes=-10"],
+  ] satisfies [RangeSpec, string][])("%j → %s", (spec, want) => {
+    expect(rangeHeader(spec)).toBe(want);
+  });
+
+  it("왕복: parseRange(rangeHeader(s))는 s와 같다", () => {
+    for (const s of [{ start: 0, end: 9 }, { start: 5, end: null }, { suffix: 10 }] satisfies RangeSpec[]) {
+      expect(parseRange(rangeHeader(s))).toEqual(s);
+    }
+  });
+
+  it("요청의 대문자 단위·앞 0은 정규화된다", () => {
+    expect(rangeHeader(parseRange("BYTES=000-001") as RangeSpec)).toBe("bytes=0-1");
+  });
+});
+
+describe("normalizeR2Range: R2 obj.range(모양이 셋) → {offset,length}", () => {
+  it.each([
+    [undefined, { offset: 0, length: 1024 }],
+    [{ offset: 5, length: 10 }, { offset: 5, length: 10 }],
+    [{ offset: 5 }, { offset: 5, length: 1019 }],
+    [{ length: 10 }, { offset: 0, length: 10 }],
+    [{ suffix: 10 }, { offset: 1014, length: 10 }],
+    [{ suffix: 99999 }, { offset: 0, length: 1024 }],
+  ])("%j", (r, want) => {
+    expect(normalizeR2Range(r, 1024)).toEqual(want);
+  });
 });

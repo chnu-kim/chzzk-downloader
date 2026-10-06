@@ -4,9 +4,11 @@
 import { parseVersion } from "./semver";
 
 export type ReleasePath =
-  | { readonly kind: "latest"; readonly key: "releases/latest.json" }
+  | { readonly kind: "latest"; readonly key: typeof LATEST_KEY }
   | { readonly kind: "file"; readonly version: string; readonly file: string; readonly key: string };
 
+/** 승격된 최신 매니페스트의 R2 키(CI·updater만 읽는다) */
+export const LATEST_KEY = "releases/latest.json";
 const LATEST = /^\/releases\/latest\.json$/;
 const FILE = /^\/releases\/(?<v>\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)\/(?<f>[A-Za-z0-9._-]{1,128})$/;
 
@@ -19,7 +21,7 @@ const LATEST_FILE = "latest.json";
 /** null = 400 bad_key */
 export function parseReleasePath(pathname: string): ReleasePath | null {
   if (pathname.includes("..")) return null;
-  if (LATEST.test(pathname)) return { kind: "latest", key: "releases/latest.json" };
+  if (LATEST.test(pathname)) return { kind: "latest", key: LATEST_KEY };
   const m = FILE.exec(pathname);
   const version = m?.groups?.v;
   const file = m?.groups?.f;
@@ -63,9 +65,28 @@ export function parseSha256SumsBytes(bytes: Uint8Array): ReadonlyMap<string, str
   return parseSha256Sums(text);
 }
 
+/** 사용자(A·W) 가시성: always = META, never = previous·latest.json, sums = SHA256SUMS 항목이어야 한다 */
+export function userVisibility(file: string): "always" | "never" | "sums" {
+  if ((CI_ONLY_FILES as readonly string[]).includes(file) || file === LATEST_FILE) return "never";
+  if ((META_FILES as readonly string[]).includes(file)) return "always";
+  return "sums";
+}
+
 /** 사용자(A·W)에게 보이는 파일인가. previous·latest.json은 SHA256SUMS에 있어도 false, META는 true, 그 밖은 SUMS 항목만 */
 export function isUserVisible(file: string, sums: ReadonlyMap<string, string> | null): boolean {
-  if ((CI_ONLY_FILES as readonly string[]).includes(file) || file === LATEST_FILE) return false;
-  if ((META_FILES as readonly string[]).includes(file)) return true;
-  return sums?.has(file) === true;
+  const v = userVisibility(file);
+  return v === "always" || (v === "sums" && sums?.has(file) === true);
+}
+
+/** Content-Type(§9.2 확장자 표) */
+export function releaseContentType(file: string): string {
+  if (file.endsWith(".json")) return "application/json";
+  if (file === "SHA256SUMS" || file === "previous" || file.endsWith(".sig")) return "text/plain; charset=utf-8";
+  return "application/octet-stream";
+}
+
+/** Content-Disposition. 파일 이름은 문법상 [A-Za-z0-9._-]뿐이라 따옴표 이스케이프가 필요 없다 */
+export function releaseDisposition(file: string): string {
+  if (file.endsWith(".json") || file === "SHA256SUMS") return "inline";
+  return `attachment; filename="${file}"`;
 }

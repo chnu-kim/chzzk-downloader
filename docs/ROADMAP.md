@@ -43,6 +43,8 @@
 | Worker 주소 | workers.dev, 주소는 저장소에 두지 않고 **저장소 secret `DIST_BASE_URL`** 하나가 원천 | Actions 로그 마스킹(cicd.md 84) |
 | 웹 세션 | 랜딩 쿠키 **12시간 절대** | 관리 권한이 붙는 세션은 짧게 |
 | 앱 로그인 피싱 대비 | **확인 코드 페이지** + [계속] | 공격자가 시작한 로그인을 눈에 보이게 |
+| 비용 | **Cloudflare 무료 범위만, 금전 비용 0**(2026-10-06). Workers Free 유지, 커스텀 도메인 없음(workers.dev) | 결제 수단이 등록돼 있어 R2 초과분은 청구된다 → 보존 상한·비공개 버킷·요청당 R2 호출 상한(worker.md 구현 중 변경 11) |
+| PR 머지 | **에이전트에 전부 위임**(2026-10-06). `ci-ok` 녹색 + Codex 리뷰 2종 뒤 머지 | 릴리스 태그·실배포·Cloudflare 리소스 생성은 따로 승인 |
 
 ## 사전 조사로 확정된 사실 (2026-10-05)
 
@@ -110,15 +112,15 @@
 - [x] **G-ID**: **일치(2026-10-06)**, 실제 값은 적지 않는다. OAuth `users/me` channelId == VOD `content.channel.channelId` == 클립 `content.ownerChannel.channelId`(실제 로그인, 사용자가 직접). `node worker/scripts/channel-id-check.mjs <본인 VOD> <본인 클립>`, 결과는 "같다/다르다"만 적는다(실제 값 금지). **체크 전에는 앱 `OwnershipGate`를 켜지 않는다**(worker.md §15, 다르면 대안 B `owner_channel_id`)
 - [x] W0 설계 문서: `worker.md`, cicd.md 80~84, app.md 59, ROADMAP·CLAUDE.md·chzzk-oauth.md, §17 사용자 답변 반영. 참고: vitest 풀 패키지는 `@cloudflare/vitest-pool-workers`(0.22.0에서 멈춤)가 아니라 이름이 바뀐 `@cloudflare/vitest-plugin`을 쓴다
 - [x] W1 골격 + CI: `worker/` 패키지·`wrangler.jsonc`·config 가드·`/health`, gate `worker`·ci.yml 작업·`ci-ok`. 실측 결과·고른 것은 worker.md 구현 중 변경 2~8, cicd.md 85. 로컬 `run.mjs worker`(vitest 57개)·`parity`·`scripts-test`·`scan`·`typos`·`workflows`·`versions`·`selftest`·`release-selftest`·`ratchet-log` 녹색, PR `ci-ok` 확인 대기
-- [ ] W1 뒤: 첫 master 실행의 `ratchet-measurements-worker`로 `tests.worker` 채우기(`ratchet.mjs write --from-run <id>`, `PENDING_ALLOWED`에서 뺀다)
+- [x] W1 뒤: 첫 master 실행 37434910274로 `tests.worker` = 57을 채웠다(#21)
 - [ ] W2 순수 core(token·cookies·range·keys·semver·chzzk·updater·html·usercode)
 - [ ] W3 DO `AuthStore`(스키마·flow·session·rotation·허용목록·alarm)
 - [ ] W4 OAuth 흐름(가짜 치지직, 앱·웹 로그인, refresh·logout, 카나리)
 - [ ] W5 R2·updater·CI 토큰(보이는 키 표, Range, 자격 × 경로 행렬)
 - [ ] W6 랜딩·관리 화면(CSRF·XSS, 내 기기)
 - [ ] W7 wrangler dev E2E(gate `worker-e2e`, D14 관찰)
-- [ ] W8 릴리스 연결(`release.mjs worker`·`worker-bundle`·`deploy-worker`, `vars.DIST_BASE_URL` → `secrets.`)
-- [ ] W9 배포 뒤(사용자와): Worker secret 4개, 수동 첫 배포, production 리디렉션 URL, 저장소 secret·변수, WAF 요청 수 규칙(Q4는 이때 정한다), 전환 스위치
+- [ ] W8 릴리스 연결(`release.mjs worker`·`worker-bundle`·`deploy-worker`, `vars.DIST_BASE_URL` → `secrets.`, R2 릴리스 보존 상한 prune — worker.md 구현 중 변경 11)
+- [ ] W9 배포 뒤(사용자와): Worker secret 4개, 수동 첫 배포, production 리디렉션 URL, 저장소 secret·변수, 전환 스위치(Q4 WAF는 쓰지 않음, worker.md 구현 중 변경 11), 무료 한도 사용량 확인
 - [ ] Phase 3b A1~A5 앱: `SessionStore`·`AuthService` / command·DTO·`build.rs` 주소 규칙 / 로그인 화면·배너·copy deck / updater command / `OwnershipGate` 활성(G-ID 뒤)
 
 ### Phase 4 — CI/CD (설계: `docs/design/cicd.md`)

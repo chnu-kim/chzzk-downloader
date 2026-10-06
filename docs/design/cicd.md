@@ -612,3 +612,5 @@ fork PR과 일반 브랜치에는 어느 것도 주어지지 않는다.
 
 98. **`cmpSemver` = xtask 규칙(worker.md 구현 중 변경 16 (마)).**
 코어 숫자는 u64(BigInt) 상한이다. prerelease 숫자 조각은 앞자리 0을 값으로 읽고 u64를 넘으면 영숫자로 본다. `release.test.mjs`가 `xtask/testdata/semver-vectors.json`을 정·역방향으로 읽는다. 바뀐 것: `-01` == `-1`, 2^53 초과 정확, `18446744073709551616.0.0` 거부.
+
+96. **`worker-config.mjs` W6 `checkHtmlSources`(85 (나)·87 (나)에 더한다, worker.md 구현 중 변경 36).** (가) `src/**` 중 `src/core/html.ts`가 아닌 파일의 원문(주석 포함)에서 `core/html` import 선언을 지운 뒤 호출형·`call/apply/bind`·값으로 넘김·대입 별칭을 막고, 원문에서 `html as` 별칭을 막는다. (나) `src/**` 전체에 `<script`·`<style`·`style=` 속성이 없다(CSP `default-src 'none'; style-src 'self'`, 스크립트 0개). (다) 씨앗은 `worker-config.test.mjs`(실패 15·통과 7과 정의 파일·src 밖·사본 검사). `RAW_ALLOWLIST`·`OUTBOUND_ALLOWLIST`·`R2_ALLOWLIST`·`DELETE_ALLOWLIST`는 W6에서 바뀌지 않았다. gate 단계는 그대로다.

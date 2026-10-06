@@ -23,6 +23,8 @@ import {
   checkPackage,
   checkRawAllowlist,
   checkSources,
+  checkE2eSources,
+  E2E_FILES,
   checkVitestConfig,
   checkWorker,
   checkSentinel,
@@ -177,6 +179,8 @@ test('씨앗: package.json', () => {
     ['build에 --config 없음', s({ build: 'wrangler deploy --dry-run --outdir dist --metafile' })],
     ['test가 다른 설정', s({ test: 'vitest run --config other.config.ts' })],
     ['알려진 스크립트 빠짐', { ...PKG, scripts: { ...PKG.scripts, dev: undefined } }],
+    ['e2e 스크립트가 다름', s({ e2e: 'node scripts/other.mjs' })],
+    ['e2e 스크립트 빠짐', { ...PKG, scripts: { ...PKG.scripts, e2e: undefined } }],
   ];
   for (const [name, pkg] of seeds) assert.notDeepEqual(checkPackage(pkg, opts), [], name);
   // 알려진 스크립트 밖의 스크립트(W7 도구 등)에도 일반 규칙이 걸린다. 각 씨앗의 사유 글자까지 본다(글자 고정 규칙에 가려지지 않게)
@@ -206,11 +210,11 @@ test('씨앗: package.json', () => {
     ['vitest --root', 'node_modules/.bin/vitest run --root ../x', '--config·--root'],
   ];
   for (const [name, cmd, why] of extra) {
-    const errs = checkPackage(s({ e2e: cmd }), opts);
-    assert.ok(errs.some((e) => e.startsWith('scripts.e2e') && e.includes(why)), `${name}: ${JSON.stringify(errs)}`);
+    const errs = checkPackage(s({ extra: cmd }), opts);
+    assert.ok(errs.some((e) => e.startsWith('scripts.extra') && e.includes(why)), `${name}: ${JSON.stringify(errs)}`);
   }
   // 알려진 dev:real만 실제 비밀값 파일을 쓴다(그 자체는 통과)
-  assert.deepEqual(checkPackage(s({ e2e: 'wrangler dev --config wrangler.jsonc --port 8787 --env-file .dev.vars.example' }), opts), []);
+  assert.deepEqual(checkPackage(s({ extra: 'wrangler dev --config wrangler.jsonc --port 8787 --env-file .dev.vars.example' }), opts), []);
   // 토큰화: 구분자·따옴표·--flag=값
   assert.deepEqual(scriptCommands(`a&&"wrangler" dev --port=8787; b | c`), [['a'], ['wrangler', 'dev', '--port', '8787'], ['b'], ['c']]);
 });
@@ -354,6 +358,35 @@ test('씨앗: 소스 규칙', () => {
   // 사본: log.ts 밖에 console.을 넣으면 checkWorker가 실패
   const routes = read('src/routes.ts');
   assert.ok(checkWorker(copy({ 'worker/src/routes.ts': routes + '\nconsole.log("x");\n' })).some((e) => e.includes('console.')));
+});
+
+test('씨앗: E2E 소스(worker.md 구현 중 변경 40·41, cicd.md 100)', () => {
+  assert.deepEqual(E2E_FILES, ['scripts/e2e-dev.mjs', 'scripts/fake-chzzk-server.mjs', 'test/e2e-lib.mjs', 'test/e2e-lib.d.mts']);
+  // 금지 낱말은 이 검사의 씨앗이라 이어 붙여 쓴다(이 파일은 worker/ 밖이라 검사 대상은 아니다)
+  const remote = ['--re', 'mote'].join('');
+  const bulk = ['bu', 'lk'].join('');
+  const level = ['--log', '-level'].join('');
+  const clean = E2E_FILES.map((rel) => ({ rel, text: read(rel) }));
+  assert.deepEqual(checkE2eSources(clean, { all: true }), []);
+  const seeds = [
+    ['scripts에 원격 플래그', 'scripts/x.mjs', `["r2", "${remote}"]`],
+    ['test의 로그 등급 플래그', 'test/e2e-lib.mjs', `["${level}", "warn"]`],
+    ['주석의 낱말', 'scripts/e2e-dev.mjs', `// r2 ${bulk} put`],
+    ['대문자 낱말', 'scripts/x.mjs', `const Q = "${bulk.toUpperCase()}"`],
+    ['--log-level=값 형태', 'scripts/x.mjs', `${level}=warn`],
+  ];
+  for (const [name, rel, text] of seeds) assert.notDeepEqual(checkE2eSources([{ rel, text }]), [], name);
+  // src/는 보지 않는다(낱말 검사는 E2E 도구 폴더만)
+  assert.deepEqual(checkE2eSources([{ rel: 'src/x.ts', text: `${bulk}` }]), []);
+  // 다른 vitest 파일의 "bulk revoke" 주석은 통과(낱말은 E2E_FILES·scripts/만), 원격·로그 등급 플래그는 test/ 전체에서 계속 막는다
+  assert.deepEqual(checkE2eSources([{ rel: 'test/other.test.ts', text: `// ${bulk} revoke` }]), []);
+  assert.notDeepEqual(checkE2eSources([{ rel: 'test/other.test.ts', text: `["r2", "${remote}"]` }]), []);
+  // 파일 넷이 모두 있어야 한다(all)
+  for (const f of E2E_FILES) assert.ok(checkE2eSources(clean.filter(({ rel }) => rel !== f), { all: true }).some((e) => e.startsWith(f)), `${f} 없음`);
+  assert.deepEqual(checkE2eSources([]), []);
+  // 사본: 파일을 지우거나 낱말을 넣으면 checkWorker가 실패
+  assert.ok(checkWorker(copy({ 'worker/test/e2e-lib.d.mts': null })).some((e) => e.includes('e2e-lib.d.mts')));
+  assert.ok(checkWorker(copy({ 'worker/scripts/fake-chzzk-server.mjs': `${read('scripts/fake-chzzk-server.mjs')}\n// ${remote}\n` })).some((e) => e.includes(remote)));
 });
 
 test('CONFIG_KEYS 추출', () => {

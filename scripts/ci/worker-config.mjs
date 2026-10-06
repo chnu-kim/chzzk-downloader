@@ -18,11 +18,13 @@
 //                   (리디렉트)·worker-configuration.d.ts(wrangler dev가 이 파일이 있으면 env 파일 없이 타입을 다시 만들며
 //                   실제 비밀값 파일을 연다, worker.md 구현 중 변경 9)·vitest.config.ts 밖의 vite/vitest 설정이 없다.
 //   package.json    런타임 의존성 0, devDependencies 정확 고정, wrangler = tools.json, packageManager = app/package.json.
-//                   알려진 스크립트(check·test·build·dev·dev:real)는 글자 그대로(EXPECTED_SCRIPTS). 모든 스크립트에서:
+//                   알려진 스크립트(check·test·build·dev·e2e·dev:real)는 글자 그대로(EXPECTED_SCRIPTS). 모든 스크립트에서:
 //                   실제 비밀값 파일 이름과 dev:real 호출은 dev:real 밖에 없다, wrangler(경로·@버전·.js 포함)는 dev·types·deploy만이고 늘
 //                   --config wrangler.jsonc, dev·types는 --env-file(값은 .dev.vars.example, dev:real만 .dev.vars),
 //                   dev는 --port 8787, deploy는 --dry-run, --env 금지, types는 출력 경로 worker-env.d.ts가 바로 뒤.
 //                   vitest는 --config·--root를 쓰지 않는다(vitest.config.ts만 검사된다). --flag=값은 --flag 값으로 본다.
+//   E2E 소스        worker/scripts·worker/test 원문(주석 포함)에 원격 R2 플래그·낱말 bulk(숨은 묶음 put)·로그 등급 플래그가 없고,
+//                   E2E 파일 넷(E2E_FILES)이 있다. worker.md 구현 중 변경 40·41, cicd.md 100.
 //   pnpm-workspace.yaml  설치 스크립트 허용(allowBuilds)은 esbuild·workerd만.
 //   .dev.vars.example    키 집합 = src/config.ts CONFIG_KEYS, 값은 자리표시(루프백·dev- 접두·합성 채널 ID, CHZZK_REDIRECT_URI는 정확히
 //                        http://localhost:8787/auth/callback).
@@ -87,6 +89,8 @@ export const EXPECTED_SCRIPTS = {
   test: 'vitest run',
   build: `wrangler deploy --dry-run --config ${CONFIG_FILE} --outdir dist --metafile`,
   dev: `wrangler dev --config ${CONFIG_FILE} --port ${DEV_PORT} --env-file ${EXAMPLE_FILE}`,
+  // wrangler dev E2E(worker.md 구현 중 변경 40·41). wrangler 인자는 test/e2e-lib.mjs wranglerDevArgs가 고정한다
+  e2e: 'node scripts/e2e-dev.mjs',
   'dev:real': `wrangler dev --config ${CONFIG_FILE} --port ${DEV_PORT} --env-file ${REAL_FILE} --var PUBLIC_ORIGIN:http://localhost:${DEV_PORT}`,
 };
 // 실제 비밀값 파일을 쓰는 유일한 스크립트(사용자가 직접 돌리는 실제 치지직 로그인)
@@ -754,6 +758,33 @@ export function checkHtmlSources(files) {
   return errs;
 }
 
+// wrangler dev E2E(worker.md 구현 중 변경 40·41, cicd.md 100): 파일 넷이 있고(all), worker/scripts·worker/test의 원문(주석 포함)에
+//   - 원격 R2 플래그: 씨앗은 로컬 miniflare 버킷뿐이다(실제 R2 금지)
+//   - 낱말 bulk(E2E_FILES·scripts/만): 숨은 묶음 put은 응답 상태를 보지 않는다(씨앗은 하나씩 object put)
+//   - 로그 등급 플래그: warn 이상이면 Worker의 JSON 로그 줄까지 사라져 카나리 검사가 빈 출력으로 통과한다(40 (가))
+// 가 없다. 금지 낱말은 이 검사를 위해 쓰는 파일(단위 테스트)도 이어 붙여 쓴다.
+export const E2E_FILES = ['scripts/e2e-dev.mjs', 'scripts/fake-chzzk-server.mjs', 'test/e2e-lib.mjs', 'test/e2e-lib.d.mts'];
+const E2E_BULK = /\bbulk\b/i;
+const E2E_FORBIDDEN = [
+  [/--remote\b/, '--remote(E2E의 R2는 로컬 miniflare 버킷뿐이다)'],
+  [E2E_BULK, '낱말 bulk(숨은 r2 묶음 put은 put 응답 상태를 보지 않는다. 하나씩 object put)'],
+  [/--log-level\b/, '--log-level(Worker 로그 줄까지 지워 카나리 검사가 아무것도 보지 않고 통과한다, worker.md 구현 중 변경 40 (가))'],
+];
+export function checkE2eSources(files, { all = false } = {}) {
+  const errs = [];
+  for (const { rel, text } of files) {
+    if (!rel.startsWith('scripts/') && !rel.startsWith('test/')) continue;
+    // 낱말 bulk는 E2E 도구(E2E_FILES·scripts/)만 본다: 다른 vitest 파일의 "bulk revoke" 같은 주석은 R2 묶음 put이 아니다
+    const toolFile = rel.startsWith('scripts/') || E2E_FILES.includes(rel);
+    for (const [re, msg] of E2E_FORBIDDEN) {
+      if (re === E2E_BULK && !toolFile) continue;
+      if (re.test(text)) errs.push(`${rel}: ${msg}`);
+    }
+  }
+  if (all) for (const f of E2E_FILES) if (!files.some(({ rel }) => rel === f)) errs.push(`${f}: E2E 파일이 없다(worker.md 구현 중 변경 41 (가))`);
+  return errs;
+}
+
 // dir 아래 일반 파일(심볼릭 링크·FIFO 제외)을 worker/ 기준 경로로. node_modules·dist·.wrangler는 들어가지 않는다
 function listFiles(workerRoot, rel) {
   const out = [];
@@ -848,6 +879,7 @@ export function checkWorker(root) {
   errs.push(...checkHtmlSources(files).map((m) => `${WORKER_DIR}/${m}`));
   errs.push(...checkOutbound(files, { all: true }).map((m) => `${WORKER_DIR}/${m}`));
   errs.push(...checkReleaseSources(files, { all: true }).map((m) => `${WORKER_DIR}/${m}`));
+  errs.push(...checkE2eSources(files, { all: true }).map((m) => `${WORKER_DIR}/${m}`));
   return errs;
 }
 

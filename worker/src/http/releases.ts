@@ -61,7 +61,7 @@ async function headObject(req: Request, bucket: ReleaseBucket, key: string, file
   return new Response(null, { status: 200, headers });
 }
 
-/** GET: get 한 번. 조건부(304)를 Range보다 먼저 본다(RFC 9110 §13.2.2) */
+/** GET: get 한 번. 조건부(304)를 Range보다 먼저 본다(RFC 9110 §13.2.2). 예외: R2가 10039를 던지는 range 경로는 객체를 받지 못해 조건부를 볼 수 없고 416이 된다(테스트 r2-calls 44행) */
 async function getObject(req: Request, ctx: Ctx, bucket: ReleaseBucket, key: string, file: string): Promise<Response> {
   const spec = parseRange(req.headers.get("Range"));
   let obj: R2ObjectBody | null;

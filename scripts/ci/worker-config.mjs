@@ -648,7 +648,7 @@ export function checkReleaseSources(files, { all = false } = {}) {
     const del = count(word('delete'), text);
     const delWant = Object.hasOwn(DELETE_ALLOWLIST, rel) ? DELETE_ALLOWLIST[rel] : 0;
     if (del !== delWant) errs.push(`${rel}: 낱말 delete ${del}개 ≠ 허용 목록 ${delWant}개(R2 .delete(를 막는다. Map.delete 같은 것은 scripts/ci/worker-config.mjs DELETE_ALLOWLIST에 파일과 수를 함께 적는다. 릴리스 네 파일은 0, 주석·문자열도 센다)`);
-    if (RELEASE_FILES.includes(rel) && /Location|redirect/i.test(text)) errs.push(`${rel}: 릴리스 경로는 리다이렉트를 만들지 않는다(Location·redirect를 주석에도 쓰지 않는다, 3xx 0건, worker.md §9.2)`);
+    if (RELEASE_FILES.includes(rel) && count(new RegExp(word('(?:Location|redirect)').source, 'gi'), text) > 0) errs.push(`${rel}: 릴리스 경로는 리다이렉트를 만들지 않는다(Location·redirect를 주석에도 쓰지 않는다, 3xx 0건, worker.md §9.2)`);
   }
   if (all) for (const rel of new Set([...Object.keys(R2_ALLOWLIST), ...RELEASE_FILES, ...Object.keys(DELETE_ALLOWLIST)])) if (!seen.has(rel)) errs.push(`${rel}: 릴리스 읽기 검사 목록에 있는데 파일이 없다`);
   return errs;

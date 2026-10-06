@@ -46,7 +46,7 @@ export function unsatisfiedRange(size: number): string {
   return `bytes */${size}`;
 }
 
-/** 인정된 spec → 정규화된 Range 헤더 값. R2에 요청 헤더를 그대로 넘기지 않는다(R2는 공백·대문자 단위도 받아 위 판정과 어긋난다, 구현 중 변경 30 (가)) */
+/** 인정된 spec → 정규화된 Range 헤더 값. R2에 요청 헤더를 그대로 넘기지 않는다(R2는 공백 같은 비표준 모양도 받아 위 판정과 어긋난다, 구현 중 변경 30 (가), 34 (가)) */
 export function rangeHeader(spec: RangeSpec): string {
   if ("suffix" in spec) return `bytes=-${spec.suffix}`;
   return spec.end === null ? `bytes=${spec.start}-` : `bytes=${spec.start}-${spec.end}`;

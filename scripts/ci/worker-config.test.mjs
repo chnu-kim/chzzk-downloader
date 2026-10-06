@@ -606,6 +606,7 @@ test('씨앗: 릴리스 읽기 소스(worker.md 구현 중 변경 31 (차), cicd
     ['어디든 .put(', 'src/store/x.ts', 'env.X.put(k);'],
     ['Response.redirect', 'src/http/releases.ts', 'return Response.redirect(u, 302);'],
     ['Location 헤더', 'src/http/releases.ts', 'headers.set("Location", u);'],
+    ['대소문자 다른 location 낱말', 'src/http/update.ts', '// location 주석'],
     ['릴리스 파일의 .delete(', 'src/http/update.ts', 'cache.delete(k);'],
     ['멀티파트', R2, `${r2}\nb.createMultipartUpload(k);\n`],
     // 모양 검사가 놓치던 것(cicd.md 95): 옵셔널 호출·대괄호·구조 분해·DIST 없이 바인딩 얻기
@@ -637,6 +638,7 @@ test('씨앗: 릴리스 읽기 소스(worker.md 구현 중 변경 31 (차), cicd
     ['release-auth의 낱말', 'src/http/release-auth.ts', 'const ci = ctx.config.ciVerifyToken; export async function releaseAuth() {}'],
     ['releaseAuth 호출', 'src/http/releases.ts', 'const who = await releaseAuth(req, ctx, true);'],
     ['DIST_BASE_URL 같은 이름', 'src/http/health.ts', 'const u = DIST_BASE_URL;'],
+    ['낱말이 아닌 allocation', 'src/http/releases.ts', 'const allocation = 1; // allocation'],
     ['test는 보지 않는다', 'test/x.test.ts', 'env.DIST.put(k, v); await b.list(); // Location redirect ciVerifyToken'],
   ];
   for (const [name, rel, text] of clean) assert.deepEqual(checkReleaseSources([{ rel: R2, text: r2 }, { rel, text }]), [], name);

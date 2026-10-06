@@ -8,7 +8,7 @@ function strong(tag: string): string {
   return tag.startsWith("W/") ? tag.slice(2) : tag;
 }
 
-/** If-None-Match가 etag(R2 httpEtag, 따옴표 포함)와 맞는가. 약한 비교(W/ 무시). null·1024자 초과는 false(무시), 형식이 틀린 조각은 건너뛴다 */
+/** If-None-Match가 etag(R2 httpEtag, 따옴표 포함)와 맞는가. 약한 비교(W/ 무시). null·1024자 초과는 false(무시), 형식이 틀린 조각은 건너뛴다. ETag 원천은 R2 httpEtag(hex 또는 hex-N)라 따옴표 안 쉼표는 없다는 전제이고, 틀리면 200 쪽으로 닫힌다 */
 export function ifNoneMatchHit(header: string | null, etag: string): boolean {
   if (header === null || header.length > IF_NONE_MATCH_MAX) return false;
   if (header.trim() === "*") return true;

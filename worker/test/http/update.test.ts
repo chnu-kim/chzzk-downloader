@@ -162,6 +162,7 @@ describe("deploy-worker 검사 계약(§9.4, 구현 중 변경 36 (아), 표는 
       if (!(row.status !== undefined && row.status >= 300 && row.status < 400)) statuses.push(res.status);
       if (row.notOk) expect(res.status < 200 || res.status > 299).toBe(true);
       else expect(res.status).toBe(row.status);
+      if (row.location !== undefined) expect(res.headers.get("Location")).toBe(row.location);
       const body = await bytes(res);
       if (row.body === "latest") expect(body).toEqual(latest());
       if (row.code !== undefined) expect(JSON.parse(new TextDecoder().decode(body))).toEqual({ code: row.code });

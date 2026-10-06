@@ -29,8 +29,10 @@
 //                        configPath ./wrangler.jsonc(vitest가 실제 비밀값 파일 대신 .dev.vars.example을 읽는다,
 //                        worker.md 구현 중 변경 5), .dev.vars.example 바인딩.
 //   소스            console.은 src/core/log.ts에서만, CI_VERIFY_TOKEN은 src/config.ts·src/http/release-auth.ts에서만,
-//                   src/core/는 cloudflare:* 값 import 없음, src·test·scripts·설정에 실제 비밀값 파일 이름이 나오지 않는다
-//                   (사용자가 직접 돌리는 scripts/channel-id-check.mjs만 예외).
+//                   src·test·scripts·설정에 실제 비밀값 파일 이름이 나오지 않는다(사용자가 직접 돌리는 scripts/channel-id-check.mjs만 예외).
+//   core 순수성     src/core/**의 원문 전체(주석 포함)에 cloudflare:(타입 import 포함)·../가 든 문자열(바깥 import)·전역 fetch·
+//                   Date.now가 없다. src/** 전체에 Math.random이 없다(난수는 crypto). worker.md 구현 중 변경 15.
+//   raw 허용 목록   src/**의 raw 식별자 토큰 수(주석·문자열·별칭 포함)가 RAW_ALLOWLIST(파일별 정확한 수)와 같다(목록 밖 파일은 0).
 //   --dist          dist/bundle-meta.json(esbuild metafile)의 입력이 모두 src/*.ts(런타임 의존성 0), dist/index.js 있음,
 //                   dist/wrangler.json이 있으면(W8 worker-bundle이 만든다) 금지 키·vars 규칙.
 //   --sentinel      plant: worker/.dev.vars를 LEAK_SENTINEL 한 줄로 새로 만든다(pnpm check·vitest 전). check: 그 파일을
@@ -95,6 +97,10 @@ export const SYNTHETIC_CHANNEL_IDS = ['a1', 'b2', 'c3', 'd4'].map((s) => s.padSt
 // CI 토큰을 읽어도 되는 소스(worker.md §4.5)
 export const CI_TOKEN_FILES = ['src/config.ts', 'src/http/release-auth.ts'];
 export const LOG_FILE = 'src/core/log.ts';
+export const CORE_DIR = 'src/core/';
+// 이스케이프 없는 HTML 삽입(raw) 토큰 수를 파일별로 고정한다(worker.md §8.1, 구현 중 변경 15). 사용처를 더하면 파일과 수를 함께 올린다
+// (src/core/html.ts의 1 = 함수 선언). 주석·문자열의 낱말도 센다: 사용처 변화가 늘 이 표의 diff로 리뷰에 보인다
+export const RAW_ALLOWLIST = { 'src/core/html.ts': 1 };
 // 실제 비밀값 파일을 직접 읽어도 되는 도구(사용자가 직접 돌리는 G-ID 확인, worker.md §15)
 export const DEV_VARS_READERS = ['scripts/channel-id-check.mjs'];
 
@@ -425,10 +431,55 @@ export function checkSources(files) {
       if (rel.startsWith('src/')) {
         if (/\bconsole\s*\./.test(l) && rel !== LOG_FILE) errs.push(`${at}: console.은 ${LOG_FILE}에서만(log() 하나로 허용 필드만 남긴다)`);
         if (l.includes('CI_VERIFY_TOKEN') && !CI_TOKEN_FILES.includes(rel)) errs.push(`${at}: CI_VERIFY_TOKEN은 ${CI_TOKEN_FILES.join('·')}에서만 읽는다`);
-        if (rel.startsWith('src/core/') && /^\s*import\s+(?!type\b)[^;]*from\s+["']cloudflare:/.test(l)) errs.push(`${at}: src/core/는 cloudflare:* 를 import하지 않는다(순수 함수)`);
       }
     });
   }
+  return errs;
+}
+
+// 원문(주석 포함)을 본다: stripJsComments는 정규식 리터럴을 몰라 따옴표가 든 리터럴(html.ts의 이스케이프 정규식) 뒤의 코드를
+// 주석으로 지울 수 있다(미탐). 그래서 core는 아래 이름을 주석에도 쓰지 않는다. 여러 줄·side-effect·동적·export … from 모두 잡힌다
+export const CORE_FORBIDDEN = [
+  [/cloudflare:/, 'cloudflare:를 쓰지 않는다(타입 import 포함. core는 전역 타입만 쓴다)'],
+  [/["'`][^"'`\n]*\.\.\//, '../가 든 문자열(바깥 모듈 import)을 쓰지 않는다(core 안끼리 ./만)'],
+  [/(?<![\w$.])fetch(?![\w$])(?!\s*\??\s*:)|\b(?:globalThis|self)\s*\.\s*fetch\b/, '전역 fetch를 쓰지 않는다(네트워크는 deps로 주입, 주석에도 쓰지 않는다)'],
+  [/\bDate\s*\.\s*now\b/, 'Date.now를 쓰지 않는다(시간은 인자로 주입, 주석에도 쓰지 않는다)'],
+];
+const MATH_RANDOM = /\bMath\s*\.\s*random\b/;
+
+const lineOf = (text, index) => text.slice(0, index).split('\n').length;
+
+// files: [{ rel(worker/ 기준), text }]
+export function checkCorePurity(files) {
+  const errs = [];
+  for (const { rel, text } of files) {
+    if (!rel.startsWith('src/')) continue;
+    if (rel.startsWith(CORE_DIR)) {
+      for (const [re, why] of CORE_FORBIDDEN) {
+        const m = re.exec(text);
+        if (m) errs.push(`${rel}:${lineOf(text, m.index)}: src/core/는 순수 함수다: ${why}`);
+      }
+    }
+    const r = MATH_RANDOM.exec(text);
+    if (r) errs.push(`${rel}:${lineOf(text, r.index)}: Math.random을 쓰지 않는다(난수는 crypto.getRandomValues)`);
+  }
+  return errs;
+}
+
+const RAW_TOKEN = /(?<![\w$])raw(?![\w$])/g;
+
+// src/**의 raw 토큰 수 = RAW_ALLOWLIST. all이면(checkWorker) 목록의 파일이 모두 있어야 한다(지운 파일의 낡은 항목)
+export function checkRawAllowlist(files, { all = false } = {}) {
+  const errs = [];
+  const seen = new Set();
+  for (const { rel, text } of files) {
+    if (!rel.startsWith('src/')) continue;
+    seen.add(rel);
+    const got = (text.match(RAW_TOKEN) ?? []).length;
+    const want = Object.hasOwn(RAW_ALLOWLIST, rel) ? RAW_ALLOWLIST[rel] : 0;
+    if (got !== want) errs.push(`${rel}: raw 토큰 ${got}개 ≠ 허용 목록 ${want}개(이스케이프 없는 삽입은 scripts/ci/worker-config.mjs RAW_ALLOWLIST에 파일과 수를 함께 적는다. 주석·문자열·별칭도 센다)`);
+  }
+  if (all) for (const rel of Object.keys(RAW_ALLOWLIST)) if (!seen.has(rel)) errs.push(`${rel}: RAW_ALLOWLIST에 있는데 파일이 없다`);
   return errs;
 }
 
@@ -501,6 +552,8 @@ export function checkWorker(root) {
     .filter((rel) => existsSync(join(w, rel)))
     .map((rel) => ({ rel, text: readRegular(join(w, rel)) }));
   errs.push(...checkSources(files).map((m) => `${WORKER_DIR}/${m}`));
+  errs.push(...checkCorePurity(files).map((m) => `${WORKER_DIR}/${m}`));
+  errs.push(...checkRawAllowlist(files, { all: true }).map((m) => `${WORKER_DIR}/${m}`));
   return errs;
 }
 

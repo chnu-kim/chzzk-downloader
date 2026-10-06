@@ -1,13 +1,16 @@
 #!/usr/bin/env node
-// release-selftest용 가짜 Worker(docs/design/worker.md §9.4, cicd.md 구현 중 변경 81·W8-1). `release.mjs worker --check-only`의
-// 배포 뒤 검사가 보는 응답만 흉내 낸다: 진짜 Worker 코드는 부르지 않는다(그 계약은 worker/ 테스트가 고정한다).
+// release-selftest용 가짜 Worker(docs/design/worker.md §9.4, 구현 중 변경 36 (아), cicd.md 구현 중 변경 81·96). `release.mjs worker
+// --check-only`의 배포 뒤 검사가 보는 응답만 흉내 낸다: 진짜 Worker 코드는 부르지 않는다. 규칙은 W5 코드(worker/src/http/update.ts·
+// release-auth.ts·releases.ts·session.ts)와 같고, release.test.mjs가 worker/test/deploy-contract.mjs 표의 모든 행으로 대조한다
+// (같은 표를 worker/test/http/update.test.ts가 진짜 Worker로 본다).
 //
 //   GET /health              200 {ok:true, schema:1, build}   (healthBuilds를 앞에서부터 하나씩 쓴 뒤 build)
-//   GET /update/:v           Bearer 틀림 → 401 / v === version → 204 / 그 밖 → 200 + latest.json 본문
-//   GET /releases/latest.json  Bearer 맞음 → 200 latest.json / 아니면 401
-//   GET /admin               303 Location: /
-//   GET /api/me              401
-//   그 밖                     404
+//   GET /update/:v           v가 semver 아님(디코드 실패 포함) → 400 bad_version(자격보다 먼저) / Bearer 틀림·없음 → 401 invalid_token
+//                            / latest(version) > v → 200 + latest.json 본문 / 그 밖 → 204
+//   GET /releases/latest.json  Bearer 맞음 → 200 latest.json / 아니면 401 invalid_token
+//   GET /admin               303 Location: /(W6 동작. W5까지 진짜 Worker는 404, 둘 다 검사를 통과한다)
+//   GET /api/me              401 invalid_token(CI 토큰은 앱 토큰 형식이 아니다)
+//   그 밖                     404 not_found
 // POST /__set {routes?, healthBuilds?} → 204. 앞 설정을 지우고 이 설정으로 바꾼다. routes의 "GET /path"는 기본 응답보다 먼저 적용된다:
 //   {status, json?, body?, headers?}. 저장은 메모리뿐이고 127.0.0.1에만 연다.
 //
@@ -16,6 +19,16 @@
 import { createServer } from 'node:http';
 import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+
+import { cmpSemver, parseSemver } from './release.mjs';
+
+function safeDecode(seg) {
+  try {
+    return decodeURIComponent(seg);
+  } catch {
+    return null;
+  }
+}
 
 export function createWorkerStub({ token, version, build }) {
   const latest = JSON.stringify({ version, pub_date: '2026-10-07T00:00:00Z', platforms: {} });
@@ -51,12 +64,14 @@ export function createWorkerStub({ token, version, build }) {
       if (url.pathname === '/health') return json(200, { ok: true, schema: 1, build: healthBuilds.shift() ?? build });
       const up = /^\/update\/([^/]+)$/.exec(url.pathname);
       if (up) {
-        if (!authed) return json(401, { code: 'unauthorized' });
-        return decodeURIComponent(up[1]) === version ? send(204) : send(200, latest, { 'content-type': 'application/json' });
+        const current = safeDecode(up[1]);
+        if (current === null || !parseSemver(current)) return json(400, { code: 'bad_version' });
+        if (!authed) return json(401, { code: 'invalid_token' });
+        return cmpSemver(version, current) > 0 ? send(200, latest, { 'content-type': 'application/json' }) : send(204);
       }
-      if (url.pathname === '/releases/latest.json') return authed ? send(200, latest, { 'content-type': 'application/json' }) : json(401, { code: 'unauthorized' });
+      if (url.pathname === '/releases/latest.json') return authed ? send(200, latest, { 'content-type': 'application/json' }) : json(401, { code: 'invalid_token' });
       if (url.pathname === '/admin') return send(303, '', { location: '/' });
-      if (url.pathname === '/api/me') return json(401, { code: 'unauthorized' });
+      if (url.pathname === '/api/me') return json(401, { code: 'invalid_token' });
       return json(404, { code: 'not_found' });
     });
   });

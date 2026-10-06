@@ -6,6 +6,7 @@ import { SUMS_CACHE } from "../../src/http/releases";
 import { createFakeChzzk } from "../fake-chzzk.mjs";
 import { installFakeChzzk, type FakeNet } from "../network";
 import { ORIGIN, useClock, viaExports } from "./harness";
+import { contractPath, DEPLOY_CONTRACT, GARBAGE_BEARER } from "../deploy-contract.mjs";
 import { type Cred, type Creds, credHeaders, makeCreds, seedDist } from "./release-fixture";
 
 let seed: Map<string, Uint8Array>;
@@ -146,21 +147,22 @@ describe("latest.json 상태", () => {
   });
 });
 
-describe("deploy-worker 검사 계약(§9.4, cicd.md)", () => {
-  it("CI 토큰으로 /update·/releases/latest.json이 되고 토큰이 없거나 다른 경로면 거절된다", async () => {
-    const a = await get("/update/0.0.0", "ci");
-    expect(a.status).toBe(200);
-    const body = await bytes(a);
-    expect(body).toEqual(latest());
-    expect((JSON.parse(new TextDecoder().decode(body)) as { version: string }).version).toBe("0.2.0");
-    const b = await get("/update/0.2.0", "ci");
-    expect(b.status).toBe(204);
-    const c = await get("/releases/latest.json", "none");
-    expect(c.status).toBe(401);
-    await c.text();
-    const d = await get("/api/me", "ci");
-    expect(d.status).toBe(401);
-    await d.text();
-    // /admin 음성 검사(CI 토큰으로 303)는 경로가 생기는 W6에서 이 it에 더한다(지금은 경로가 없어 404다)
+describe("deploy-worker 검사 계약(§9.4, 구현 중 변경 36 (아), 표는 test/deploy-contract.mjs)", () => {
+  // 같은 표를 scripts/ci/release.test.mjs가 release.mjs WORKER_CHECKS·judgeCheck·가짜 Worker(worker-stub.mjs)와 대조한다
+  const version = "0.2.0";
+  it("시드 latest가 표의 {version}이다", () => {
+    expect((JSON.parse(new TextDecoder().decode(latest())) as { version: string }).version).toBe(version);
   });
+  for (const row of DEPLOY_CONTRACT) {
+    it(`${row.id}: ${row.cred} ${row.path}`, async () => {
+      const headers: Record<string, string> = row.cred === "garbage" ? { Authorization: `Bearer ${GARBAGE_BEARER}` } : {};
+      const res = await get(contractPath(row, version), row.cred === "garbage" ? "none" : row.cred, headers);
+      if (row.notOk) expect(res.status < 200 || res.status > 299).toBe(true);
+      else expect(res.status).toBe(row.status);
+      const body = await bytes(res);
+      if (row.body === "latest") expect(body).toEqual(latest());
+      if (row.code !== undefined) expect(JSON.parse(new TextDecoder().decode(body))).toEqual({ code: row.code });
+      if (row.status === 204) expect(body.byteLength).toBe(0);
+    });
+  }
 });

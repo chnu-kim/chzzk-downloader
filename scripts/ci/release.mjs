@@ -566,14 +566,14 @@ function cmdRollback(env) {
   return r.status === 0 ? 0 : r.status === 2 ? 2 : 1;
 }
 
-// ---- 보존 상한(prune, worker.md 구현 중 변경 11 (마), cicd.md 구현 중 변경 W8-2) ----
+// ---- 보존 상한(prune, worker.md 구현 중 변경 11 (마), cicd.md 구현 중 변경 97) ----
 
 // releases/ 아래에 남기는 버전 수(최신순). latest·그 previous는 이 수와 별개로 늘 남긴다
 export const RELEASE_KEEP = 5;
 
 // 목록 키(releases/<dir>/…) + latest + previous → { keep, delete, ignored, abort? }(순수, release.test.mjs가 표로 본다).
 // keep개는 latest 이하 버전에서 최신순으로 센다. latest보다 높은 폴더(판정 실패로 되돌린 버전, 올리는 중인 버전, rollback.yml로
-// 다시 올릴 수 있는 버전)는 늘 남기고 자리로 세지 않는다(cicd.md 구현 중 변경 W8-2 (나)). 지우는 것은 latest 이하 semver 디렉터리 중
+// 다시 올릴 수 있는 버전)는 늘 남기고 자리로 세지 않는다(cicd.md 구현 중 변경 97 (나)). 지우는 것은 latest 이하 semver 디렉터리 중
 // (최신 keep개 ∪ latest ∪ previous) 밖이다. semver가 아닌 디렉터리는 건드리지 않는다(ignored).
 // latest가 semver가 아니거나 목록에 없으면 목록을 믿을 수 없으므로 아무것도 지우지 않는다(abort).
 export function prunePlan({ keys, latest, previous, keep = RELEASE_KEEP }) {
@@ -994,6 +994,8 @@ async function cmdSelftest(env) {
     expect('(w) 음성 틀림: /admin이 200', 1, await check({ routes: { 'GET /admin': { status: 200, body: 'x' } } }));
     expect('(w) 음성 틀림: 토큰 없는 latest.json이 200', 1, await check({ routes: { 'GET /releases/latest.json': { status: 200, body: '{}' } } }));
     expect('(w) 음성 틀림: /api/me가 200', 1, await check({ routes: { 'GET /api/me': { status: 200, body: '{}' } } }));
+    expect('(w) CI 토큰의 latest.json이 401', 1, await check({ routes: { 'GET /releases/latest.json': { status: 401, json: { code: 'invalid_token' } } } }));
+    expect('(w) 음성 틀림: 틀린 Bearer로 /update가 200(자격을 보지 않는 Worker)', 1, await check({ routes: { 'GET /update/0.0.0': { status: 200, json: { version: '1.2.0' } } } }));
     expect('(w) 늦은 반영: 옛 build 둘 뒤 이번 build', 0, await check({ healthBuilds: ['old0000', 'old0000'] }));
     expect('(w) 반영 안 됨: 끝까지 옛 build(판정 실패)', 1, await check({ healthBuilds: Array(1000).fill('old0000') }));
     expect('(w) config_error는 기다리지 않고 실패', 1, await check({ routes: { 'GET /health': { status: 503, json: { ok: false, code: 'config_error' } } } }));
@@ -1059,7 +1061,7 @@ async function cmdSelftest(env) {
   return bad ? 1 : 0;
 }
 
-// ---- Worker 배포(worker-bundle·deploy-worker, docs/design/worker.md §9.4·§13.4, cicd.md 구현 중 변경 81·W8-1) ----
+// ---- Worker 배포(worker-bundle·deploy-worker, docs/design/worker.md §9.4·§13.4, cicd.md 구현 중 변경 81·96) ----
 
 // DIST_BASE_URL(= Worker 출처 = PUBLIC_ORIGIN) → 문제 목록. 경로·쿼리·조각·끝 슬래시·대문자 호스트·기본 포트·사용자 정보가 없는 https 출처
 // (매니페스트 url이 `${DIST_BASE_URL}/releases/<v>/<file>`이고 Worker의 PUBLIC_ORIGIN과 글자가 같아야 한다, cicd.md 82 (가)). 값은 싣지 않는다
@@ -1122,13 +1124,18 @@ export function parseWorkerArgs(argv) {
   return { mode: 'check', base: o.base, version: o.version, build: o.build ?? null };
 }
 
-// 배포 뒤 검사(§9.4). health는 따로 돈다(배포 반영을 기다린다). 나머지는 순서대로. path는 version을 받는다
+// 배포 뒤 검사(§9.4, worker.md 구현 중 변경 36 (아)). health는 따로 돈다(배포 반영을 기다린다). 나머지는 순서대로. path는 version을 받는다.
+// cred: ci = CI 토큰, none = Authorization 없음, garbage = CI 토큰도 앱 토큰도 아닌 Bearer. 이 표는 worker/test/deploy-contract.mjs의
+// deploy 행과 같아야 한다(release.test.mjs가 대조하고, 같은 표를 worker/test/http/update.test.ts가 진짜 Worker로 본다)
+export const GARBAGE_BEARER = 'not-a-token';
 export const WORKER_CHECKS = [
-  { id: 'update-latest', path: () => '/update/0.0.0', auth: true },
-  { id: 'update-current', path: (v) => `/update/${v}`, auth: true },
-  { id: 'neg-admin', path: () => '/admin', auth: true },
-  { id: 'neg-latest-anon', path: () => '/releases/latest.json', auth: false },
-  { id: 'neg-me-ci', path: () => '/api/me', auth: true },
+  { id: 'update-latest', path: () => '/update/0.0.0', cred: 'ci' },
+  { id: 'update-current', path: (v) => `/update/${v}`, cred: 'ci' },
+  { id: 'releases-latest-ci', path: () => '/releases/latest.json', cred: 'ci' },
+  { id: 'neg-admin', path: () => '/admin', cred: 'ci' },
+  { id: 'neg-latest-anon', path: () => '/releases/latest.json', cred: 'none' },
+  { id: 'neg-update-garbage', path: () => '/update/0.0.0', cred: 'garbage' },
+  { id: 'neg-me-ci', path: () => '/api/me', cred: 'ci' },
 ];
 
 // 응답 하나의 판정(순수, release.test.mjs가 표로 본다). res: {status, body: Buffer} | {error: string}.
@@ -1154,7 +1161,8 @@ export function judgeCheck(id, res, ctx) {
       // 옛 Worker도 200을 준다: 이번 BUILD_ID를 내놓을 때까지 기다린다
       return ctx.build && j.build !== ctx.build ? 'wait' : 'pass';
     }
-    case 'update-latest': {
+    case 'update-latest':
+    case 'releases-latest-ci': {
       if (status !== 200) return 'fail';
       if (json()?.version !== ctx.version) return 'fail';
       return ctx.latestBytes && Buffer.compare(res.body, ctx.latestBytes) !== 0 ? 'fail' : 'pass';
@@ -1165,6 +1173,7 @@ export function judgeCheck(id, res, ctx) {
       // 로그인으로 보내는 303이든 아직 없는 경로의 404든 200이 아니면 된다
       return status >= 300 && status <= 499 ? 'pass' : 'fail';
     case 'neg-latest-anon':
+    case 'neg-update-garbage':
     case 'neg-me-ci':
       return status === 401 ? 'pass' : 'fail';
     default:
@@ -1197,9 +1206,10 @@ export async function runWorkerChecks({
 }) {
   const ctx = { version, build, latestBytes };
   const results = [];
-  const get = async (path, auth) => {
+  const authHeaders = { ci: { authorization: `Bearer ${token}` }, garbage: { authorization: `Bearer ${GARBAGE_BEARER}` }, none: {} };
+  const get = async (path, cred) => {
     try {
-      const r = await fetchImpl(base + path, { method: 'GET', redirect: 'manual', headers: auth ? { authorization: `Bearer ${token}` } : {}, signal: AbortSignal.timeout(30_000) });
+      const r = await fetchImpl(base + path, { method: 'GET', redirect: 'manual', headers: authHeaders[cred], signal: AbortSignal.timeout(30_000) });
       return { status: r.status, body: Buffer.from(await r.arrayBuffer()) };
     } catch (e) {
       const c = String(e?.cause?.code ?? e?.name ?? 'error');
@@ -1212,7 +1222,7 @@ export async function runWorkerChecks({
   // 1) health: 이번 빌드가 보일 때까지 기다린다(전파 지연)
   const start = now();
   for (;;) {
-    const res = await get('/health', false);
+    const res = await get('/health', 'none');
     const o = judgeCheck('health', res, ctx);
     line('health', '/health', o, res);
     if (o === 'pass') {
@@ -1237,7 +1247,7 @@ export async function runWorkerChecks({
     let res;
     let o;
     for (let n = 1; n <= attempts; n++) {
-      res = await get(path, c.auth);
+      res = await get(path, c.cred);
       o = judgeCheck(c.id, res, ctx);
       if (o !== 'retry') break;
       if (n < attempts) {
@@ -1279,13 +1289,13 @@ export function wranglerEnv(env, { home, credentials }) {
 }
 
 // 묶음의 실행 환경 표시(worker-bundle이 dist/worker-bundle.json으로 넣고 deploy-worker가 맞춰 본다). node_modules에 workerd
-// 플랫폼 바이너리가 들어가므로 묶음은 OS·arch 전용이다(worker.md 구현 중 변경 W8-1 (다))
+// 플랫폼 바이너리가 들어가므로 묶음은 OS·arch 전용이다(worker.md 구현 중 변경 35 (다))
 export const bundleMeta = (wrangler) => ({ platform: process.platform, arch: process.arch, wrangler });
 const toolsWrangler = () => JSON.parse(readFileSync(join(ROOT, 'scripts/ci/tools.json'), 'utf8')).tools.wrangler.version;
 // .bin shim이 아니라 wrangler.js를 node로 직접 부른다(Windows .cmd·셸 해석을 피한다)
 const wranglerJs = (x) => join(x, DEPLOY_DIR, 'node_modules/wrangler/bin/wrangler.js');
 
-// 묶음 tgz를 새 임시 폴더에 푼다 → 폴더 | null. 작업 폴더의 .env·.env.local을 wrangler가 읽지 않게 늘 빈 새 폴더에서 돈다(worker.md 구현 중 변경 W8-1 (사)).
+// 묶음 tgz를 새 임시 폴더에 푼다 → 폴더 | null. 작업 폴더의 .env·.env.local을 wrangler가 읽지 않게 늘 빈 새 폴더에서 돈다(worker.md 구현 중 변경 35 (사)).
 // tar는 cwd + 상대 경로로 부른다(Windows GNU tar가 `C:`를 원격 호스트로 읽는다)
 function extractBundle(tgz, env) {
   const x = mkdtempSync(join(env.RUNNER_TEMP || tmpdir(), 'worker-bundle-x-'));
@@ -1322,7 +1332,7 @@ function runWrangler(x, args, env, credentials) {
 }
 
 // release.yml worker-bundle 작업(시크릿·환경 없음, 태그·리허설 모두): worker 번들(dist) + dist/wrangler.json(원본에서 main·no_bundle만)
-// + 배포용 wrangler(worker/deploy, --ignore-scripts) → tar·sha256. 끝에 묶음을 풀어 자격 없이 deploy --dry-run을 돌린다(리허설마다 worker.md 구현 중 변경 W8-1 (다) 확인)
+// + 배포용 wrangler(worker/deploy, --ignore-scripts) → tar·sha256. 끝에 묶음을 풀어 자격 없이 deploy --dry-run을 돌린다(리허설마다 worker.md 구현 중 변경 35 (다) 확인)
 function cmdWorkerBundle(env) {
   const wenv = { ...env, WRANGLER_SEND_METRICS: 'false' };
   const workerDir = join(ROOT, 'worker');
@@ -1408,7 +1418,7 @@ async function cmdWorker(env, argv) {
   }
   const version = releaseVersion(env);
   // superseded 가드: VERIFY_VIA와 상관없이 S3로 latest.json을 읽는다(S3가 latest.json의 원천이라 Worker 상태와 무관하게 판정한다,
-  // worker.md 구현 중 변경 W8-2 (마)). 고장 난 Worker의 복구는 이 작업이 아니다: verify가 실패하면 deploy-worker는 돌지 않는다
+  // worker.md 구현 중 변경 36 (마)). 고장 난 Worker의 복구는 이 작업이 아니다: verify가 실패하면 deploy-worker는 돌지 않는다
   const cur = getObject(env, LATEST_KEY);
   if (cur.code === 2) return 2;
   const latest = cur.data ? versionOf(cur.data) : null;

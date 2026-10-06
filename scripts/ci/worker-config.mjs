@@ -126,7 +126,7 @@ export const DEV_VARS_READERS = ['scripts/channel-id-check.mjs'];
 // 배포용 wrangler 묶음(worker/deploy, release.yml worker-bundle·deploy-worker, cicd.md 구현 중 변경 W8)
 export const DEPLOY_DIR = 'deploy';
 export const DEPLOY_PKG_NAME = 'chzzk-downloader-worker-deploy';
-// dist/wrangler.json의 main. 설정 파일 위치(dist/) 기준이라 index.js다(worker.md 구현 중 변경 W8-1 (나): dist/index.js는 not found)
+// dist/wrangler.json의 main. 설정 파일 위치(dist/) 기준이라 index.js다(worker.md 구현 중 변경 35 (나): dist/index.js는 not found)
 export const DEPLOY_MAIN = 'index.js';
 
 const LOOPBACK = new Set(['localhost', '127.0.0.1']);
@@ -241,7 +241,7 @@ export function checkWrangler(cfg) {
   return errs;
 }
 
-// dist/wrangler.json = 원본 wrangler.jsonc에서 main·no_bundle만 바꾼 것(worker.md 구현 중 변경 2·W8-1, 순수). $schema는 둔다
+// dist/wrangler.json = 원본 wrangler.jsonc에서 main·no_bundle만 바꾼 것(worker.md 구현 중 변경 2·35, 순수). $schema는 둔다
 export function deployConfig(cfg) {
   return { ...structuredClone(cfg), main: DEPLOY_MAIN, no_bundle: true };
 }

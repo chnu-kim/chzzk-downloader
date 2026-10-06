@@ -55,7 +55,7 @@ updates:
   # Cloudflare Worker(worker/, docs/design/worker.md §13.3). 독립 lockfile. wrangler와 @cloudflare/*는 함께 올린다
   # (vitest 플러그인이 wrangler를 정확히 고정한다). vitest는 플러그인 peer(^4.1.0)가 열릴 때까지 메이저를 올리지 않는다.
   # wrangler 버전은 scripts/ci/tools.json과 같아야 한다(worker-config.mjs): 이 PR이 빨개지면 tools.json을 함께 고친다.
-  # worker/deploy는 배포용 wrangler 하나만 담은 따로인 lockfile이다(release.yml worker-bundle, cicd.md 구현 중 변경 W8-1). 같은 항목에
+  # worker/deploy는 배포용 wrangler 하나만 담은 따로인 lockfile이다(release.yml worker-bundle, cicd.md 구현 중 변경 96). 같은 항목에
   # 두 폴더를 두어 그룹 cloudflare가 두 lockfile의 wrangler를 한 PR로 올린다(worker-config.mjs가 둘의 버전 불일치를 막는다).
   - package-ecosystem: npm
     commit-message:

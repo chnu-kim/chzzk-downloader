@@ -232,7 +232,7 @@ test('gate 표: worker(worker.md §13.2, cicd.md 85)', () => {
   for (const s of w.steps.filter((s) => s.cmd[0] === 'pnpm' || s.cmd.includes('tests-worker'))) assert.equal(s.env?.WRANGLER_SEND_METRICS, 'false', s.cmd.join(' '));
   assert.ok(CODE_GATED_JOBS.includes('worker'));
   assert.ok(GATES.advisories.steps.some((s) => s.cmd.join(' ') === 'pnpm audit --audit-level high' && s.cwd === 'worker'));
-  // 배포용 wrangler(worker/deploy)도 따로인 lockfile이라 같이 본다(cicd.md 구현 중 변경 W8-1)
+  // 배포용 wrangler(worker/deploy)도 따로인 lockfile이라 같이 본다(cicd.md 구현 중 변경 96)
   assert.ok(GATES.advisories.steps.some((s) => s.cmd.join(' ') === 'pnpm audit --audit-level high' && s.cwd === 'worker/deploy'));
   const hook = HOOKS['pre-push'].when.find((x) => x.gate === 'worker');
   assert.ok(hook, 'pre-push에 worker');

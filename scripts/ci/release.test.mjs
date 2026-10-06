@@ -5,7 +5,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
+import { contractPath, DEPLOY_CONTRACT, GARBAGE_BEARER as CONTRACT_GARBAGE } from '../../worker/test/deploy-contract.mjs';
 import { HOOKS, PUBKEY_FILES, RELEASE_SELFTEST_FILES, ROOT } from './gates.mjs';
+import { createWorkerStub } from './worker-stub.mjs';
 import {
   boundaryProblems,
   buildIdOf,
@@ -16,6 +18,7 @@ import {
   distBaseProblems,
   DRY_OVERRIDES,
   envMs,
+  GARBAGE_BEARER,
   judgeCheck,
   maskValues,
   parseSemver,
@@ -334,7 +337,7 @@ test('release.yml: prune는 verify 뒤 태그에서만 돌고, report가 보고�
   assert.ok(needsOf('report').includes('prune'));
 });
 
-// ---- 배포 뒤 검사(worker.md §9.4, cicd.md 구현 중 변경 81·W8-1) ----
+// ---- 배포 뒤 검사(worker.md §9.4, cicd.md 구현 중 변경 81·96) ----
 
 const B = (t) => Buffer.from(typeof t === 'string' ? t : JSON.stringify(t));
 const R = (status, body = '') => ({ status, body: B(body) });
@@ -374,6 +377,16 @@ test('검사 판정: 상태·본문 표', () => {
     ['neg-latest-anon', R(200), 'fail'],
     ['neg-latest-anon', R(404), 'fail'],
     ['neg-latest-anon', R(403), 'fail'],
+    ['releases-latest-ci', R(200, { version: '1.2.0' }), 'pass'],
+    ['releases-latest-ci', R(200, { version: '1.1.0' }), 'fail'],
+    ['releases-latest-ci', R(401), 'fail'],
+    ['releases-latest-ci', R(403), 'fail'],
+    ['releases-latest-ci', R(503), 'retry'],
+    ['neg-update-garbage', R(401), 'pass'],
+    ['neg-update-garbage', R(200, { version: '1.2.0' }), 'fail'],
+    ['neg-update-garbage', R(204), 'fail'],
+    ['neg-update-garbage', R(400), 'fail'],
+    ['neg-update-garbage', R(500), 'retry'],
     ['neg-me-ci', R(401), 'pass'],
     ['neg-me-ci', R(200, {}), 'fail'],
     ['neg-me-ci', R(303), 'fail'],
@@ -386,7 +399,38 @@ test('검사 판정: 상태·본문 표', () => {
   const bytes = B('{"version":"1.2.0","platforms":{}}');
   assert.equal(judgeCheck('update-latest', { status: 200, body: bytes }, { ...CTX, latestBytes: bytes }), 'pass');
   assert.equal(judgeCheck('update-latest', R(200, '{"version":"1.2.0","platforms":{"x":1}}'), { ...CTX, latestBytes: bytes }), 'fail');
+  assert.equal(judgeCheck('releases-latest-ci', { status: 200, body: bytes }, { ...CTX, latestBytes: bytes }), 'pass');
+  assert.equal(judgeCheck('releases-latest-ci', R(200, '{"version":"1.2.0"}'), { ...CTX, latestBytes: bytes }), 'fail');
   assert.throws(() => judgeCheck('nope', R(200), CTX));
+});
+
+// worker/test/deploy-contract.mjs 한 표: 진짜 Worker는 worker/test/http/update.test.ts가, 여기서는 release.mjs와 가짜 Worker를 본다
+test('배포 뒤 검사 계약: WORKER_CHECKS = 표의 deploy 행, 가짜 Worker는 표의 모든 행을 지키고 judgeCheck는 그 응답을 통과로 본다', async () => {
+  const V = '1.2.0';
+  assert.equal(GARBAGE_BEARER, CONTRACT_GARBAGE);
+  assert.deepEqual(
+    WORKER_CHECKS.map((c) => ({ id: c.id, path: c.path(V), cred: c.cred })),
+    DEPLOY_CONTRACT.filter((r) => r.deploy).map((r) => ({ id: r.id, path: contractPath(r, V), cred: r.cred })),
+  );
+  const { server, latest } = createWorkerStub({ token: 'tok-secret', version: V, build: 'abc1234' });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  try {
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const headers = { ci: { authorization: 'Bearer tok-secret' }, garbage: { authorization: `Bearer ${CONTRACT_GARBAGE}` }, none: {} };
+    for (const row of DEPLOY_CONTRACT) {
+      const r = await fetch(base + contractPath(row, V), { redirect: 'manual', headers: { ...headers[row.cred], connection: 'close' } });
+      const body = Buffer.from(await r.arrayBuffer());
+      const name = `${row.id} ${row.cred} ${row.path}`;
+      if (row.notOk) assert.ok(r.status < 200 || r.status > 299, name);
+      else assert.equal(r.status, row.status, name);
+      if (row.body === 'latest') assert.equal(body.toString('utf8'), latest, name);
+      if (row.code !== undefined) assert.deepEqual(JSON.parse(body.toString('utf8')), { code: row.code }, name);
+      if (row.status === 204) assert.equal(body.length, 0, name);
+      if (row.deploy) assert.equal(judgeCheck(row.id, { status: r.status, body }, { version: V, build: null, latestBytes: Buffer.from(latest) }), 'pass', name);
+    }
+  } finally {
+    server.close();
+  }
 });
 
 // 가짜 fetch: 경로 → 응답 목록(차례로, 마지막은 반복). 호출을 기록한다
@@ -396,9 +440,13 @@ function fakeFetch(table) {
   const impl = async (url, init) => {
     const path = new URL(url).pathname;
     calls.push({ url, init, path });
-    const list = table[path];
-    const r = list[Math.min(idx[path] ?? 0, list.length - 1)];
-    idx[path] = (idx[path] ?? 0) + 1;
+    // "<자격> <경로>" 행이 있으면 그것을, 없으면 경로 행을 쓴다(자격: ci = Bearer tok-secret, garbage = 다른 Bearer, none)
+    const a = init.headers.authorization;
+    const cred = a === undefined ? 'none' : a === 'Bearer tok-secret' ? 'ci' : 'garbage';
+    const key = table[`${cred} ${path}`] ? `${cred} ${path}` : path;
+    const list = table[key];
+    const r = list[Math.min(idx[key] ?? 0, list.length - 1)];
+    idx[key] = (idx[key] ?? 0) + 1;
     if (r.error) throw Object.assign(new Error(`connect to dist.example.test failed ${r.error}`), { cause: { code: r.error } });
     return { status: r.status, arrayBuffer: async () => Buffer.from(r.body ?? '') };
   };
@@ -407,9 +455,11 @@ function fakeFetch(table) {
 const OK_TABLE = () => ({
   '/health': [{ status: 200, body: JSON.stringify({ ok: true, build: 'abc1234' }) }],
   '/update/0.0.0': [{ status: 200, body: JSON.stringify({ version: '1.2.0' }) }],
+  'garbage /update/0.0.0': [{ status: 401 }],
   '/update/1.2.0': [{ status: 204 }],
   '/admin': [{ status: 303 }],
   '/releases/latest.json': [{ status: 401 }],
+  'ci /releases/latest.json': [{ status: 200, body: JSON.stringify({ version: '1.2.0' }) }],
   '/api/me': [{ status: 401 }],
 });
 const runChecks = async (table, extra = {}) => {
@@ -433,7 +483,10 @@ test('runWorkerChecks: 정상은 0, 요청은 늘 redirect manual이고 인증�
   for (const c of r.f.calls) assert.equal(c.init.redirect, 'manual', c.path);
   const anon = r.f.calls.filter((c) => !c.init.headers.authorization).map((c) => c.path).sort();
   assert.deepEqual(anon, ['/health', '/releases/latest.json']);
-  for (const c of r.f.calls.filter((x) => x.init.headers.authorization)) assert.equal(c.init.headers.authorization, 'Bearer tok-secret');
+  const garbage = r.f.calls.filter((c) => c.init.headers.authorization === `Bearer ${GARBAGE_BEARER}`).map((c) => c.path);
+  assert.deepEqual(garbage, ['/update/0.0.0']);
+  for (const c of r.f.calls.filter((x) => x.init.headers.authorization && !garbage.includes(x.path))) assert.equal(c.init.headers.authorization, 'Bearer tok-secret');
+  assert.equal(r.f.calls.filter((x) => x.init.headers.authorization === 'Bearer tok-secret').length, 5);
   const all = r.logs.join('\n');
   assert.ok(!/example\.test|tok-secret|https:/.test(all), all);
   assert.match(all, /worker check neg-admin \/admin: pass \(HTTP 303\)/);
@@ -445,7 +498,7 @@ test('runWorkerChecks: 판정 실패는 1(나머지 검사는 계속), 5xx·네�
   const r1 = await runChecks(bad);
   assert.equal(r1.code, 1);
   assert.deepEqual(r1.results.filter((x) => x.outcome === 'fail').map((x) => x.id), ['neg-admin']);
-  assert.equal(r1.results.length, 6);
+  assert.equal(r1.results.length, 8);
 
   const infra = OK_TABLE();
   infra['/update/1.2.0'] = [{ status: 503 }];

@@ -334,7 +334,7 @@ export const GATES = {
     steps: [
       { cmd: ['cargo', 'deny', '--locked', 'check', 'advisories'] },
       { cmd: ['pnpm', 'audit', '--audit-level', 'high'], cwd: 'app' },
-      // worker/는 독립 lockfile이다(worker.md §13.2). worker/deploy(배포용 wrangler 하나)도 따로인 lockfile이다(cicd.md 구현 중 변경 W8-1)
+      // worker/는 독립 lockfile이다(worker.md §13.2). worker/deploy(배포용 wrangler 하나)도 따로인 lockfile이다(cicd.md 구현 중 변경 96)
       { cmd: ['pnpm', 'audit', '--audit-level', 'high'], cwd: 'worker' },
       { cmd: ['pnpm', 'audit', '--audit-level', 'high'], cwd: 'worker/deploy' },
     ],

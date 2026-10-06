@@ -63,5 +63,6 @@ export function normalizeR2Range(
     return { offset: size - n, length: n };
   }
   const offset = r.offset ?? 0;
-  return { offset, length: r.length ?? size - offset };
+  // 끝이 크기를 넘는 요청 길이를 그대로 되돌려도 객체 끝에서 자른다(본문은 크기를 넘을 수 없다, 구현 중 변경 33 (가))
+  return { offset, length: Math.max(0, Math.min(r.length ?? size - offset, size - offset)) };
 }

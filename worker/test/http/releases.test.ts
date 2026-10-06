@@ -355,6 +355,14 @@ describe("Range 방어(R2가 기대와 다르게 답하는 경우)", () => {
     await res.arrayBuffer();
   });
 
+  it("obj.range가 요청 길이({offset:0,length:100000})를 그대로 주면 객체 끝에서 잘라 206", async () => {
+    const c = countingDist({ rangeReport: () => ({ offset: 0, length: 100000 }) });
+    const res = await ciGet(sendVia(c.dist), "bytes=0-99999");
+    expect([res.status, res.headers.get("Content-Range"), res.headers.get("Content-Length")]).toEqual([206, "bytes 0-1023/1024", "1024"]);
+    expect((await res.arrayBuffer()).byteLength).toBe(1024);
+    expect(c.calls.get).toBe(1);
+  });
+
   it("obj.range가 판정과 다르면 500 internal + release.range_mismatch", async () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const c = countingDist({ rangeReport: () => ({ offset: 0, length: 1 }) });

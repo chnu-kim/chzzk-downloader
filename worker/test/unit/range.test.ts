@@ -99,6 +99,10 @@ describe("normalizeR2Range: R2 obj.range(모양이 셋) → {offset,length}", ()
     [{ length: 10 }, { offset: 0, length: 10 }],
     [{ suffix: 10 }, { offset: 1014, length: 10 }],
     [{ suffix: 99999 }, { offset: 0, length: 1024 }],
+    // 요청 길이를 그대로 되돌리는 R2(운영 미실측, 구현 중 변경 33 (가))
+    [{ offset: 0, length: 100000 }, { offset: 0, length: 1024 }],
+    [{ offset: 1000, length: 9999 }, { offset: 1000, length: 24 }],
+    [{ offset: 2000, length: 10 }, { offset: 2000, length: 0 }],
   ])("%j", (r, want) => {
     expect(normalizeR2Range(r, 1024)).toEqual(want);
   });

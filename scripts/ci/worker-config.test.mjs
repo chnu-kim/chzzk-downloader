@@ -12,6 +12,7 @@ import { ROOT } from './gates.mjs';
 import {
   allowedBuilds,
   checkCorePurity,
+  checkStorePurity,
   checkDevVarsExample,
   checkDist,
   checkPackage,
@@ -349,6 +350,62 @@ test('--dist: metafile 입력은 src/*.ts만, dist/wrangler.json 규칙', () => 
   assert.deepEqual(checkDist(copy(dw({ ...WRANGLER, main: 'index.js', no_bundle: true }))), []);
   assert.notDeepEqual(checkDist(copy(dw({ ...WRANGLER, vars: { ...WRANGLER.vars, PUBLIC_ORIGIN: 'http://localhost:8787' } }))), []);
   assert.notDeepEqual(checkDist(copy(dw({ ...WRANGLER, account_id: 'x' }))), []);
+});
+
+test('씨앗: store 순수성(worker.md 구현 중 변경 21, cicd.md 89)', () => {
+  const store = (rel, text) => [{ rel, text }];
+  const ok = [
+    ['src/store/flows.ts', 'export function f(db, now) { return db.first("SELECT 1 AS x", now); }'],
+    ['src/store/AuthStore.ts', 'import { DurableObject } from "cloudflare:workers"; this.db = new Db(ctx.storage.sql); async x() { await this.ctx.storage.setAlarm(Date.now()); this.ctx.storage.transactionSync(() => 1); }'],
+    ['src/store/db.ts', 'constructor(private readonly sql: SqlStorage) {} const m = RE.exec(x);'],
+    ['src/store/db.ts', 'const c = this.sql.exec(q);'],
+    ['src/core/token.ts', 'const m = BEARER.exec(h);'],
+    ['src/store/sessions.ts', 'const d = new Date(now).toISOString(); const asyncLike = 1; const awaited = 2;'],
+    // 낱말 경계: sqlite_master·sql_x는 sql이 아니다
+    ['src/store/sweep.ts', 'db.all("SELECT name FROM sqlite_master WHERE name NOT LIKE \'sql_%\'");'],
+    ['src/store/AuthStore.ts', 'this.db = new Db(ctx.storage.sql); this.ctx.storage.transactionSync(/* 동기 */ () => 1);'],
+  ];
+  for (const [rel, text] of ok) assert.deepEqual(checkStorePurity(store(rel, text)), [], `${rel}: ${text}`);
+  const seeds = [
+    ['async 함수', 'src/store/flows.ts', 'export async function f() {}'],
+    ['await', 'src/store/flows.ts', 'const x = 1; await x;'],
+    ['주석 속 await', 'src/store/flows.ts', '// 여기서 await을 쓰지 않는다'],
+    ['Date.now', 'src/store/flows.ts', 'const t = Date.now();'],
+    ['new Date()', 'src/store/flows.ts', 'const t = new Date();'],
+    ['new 없는 Date()', 'src/store/flows.ts', 'const s = Date();'],
+    ['performance.now', 'src/store/sweep.ts', 'const t = performance.now();'],
+    ['cloudflare: 타입 import', 'src/store/flows.ts', 'import type { X } from "cloudflare:workers";'],
+    ['store의 sql.exec', 'src/store/sessions.ts', 'db.sql.exec("x");'],
+    ['http의 sql.exec', 'src/http/a.ts', 'ctx.storage.sql.exec("x");'],
+    ['AuthStore의 sql.exec', 'src/store/AuthStore.ts', 'this.ctx.storage.sql.exec("x");'],
+    ['async 트랜잭션 콜백', 'src/store/AuthStore.ts', 'this.ctx.storage.transactionSync(async () => 1);'],
+    ['async 트랜잭션 콜백(줄바꿈)', 'src/http/a.ts', 'ctx.storage.transactionSync(\n  async () => 1);'],
+    // 별칭 우회(cicd.md 구현 중 변경 90)
+    ['대괄호 sql 접근', 'src/store/flows.ts', '(db as any)["sql"].exec("DELETE FROM flow");'],
+    ['store의 sql 별칭', 'src/store/sessions.ts', 'const s = db.storage.sql; s.exec("x");'],
+    ['AuthStore의 sql 별칭', 'src/store/AuthStore.ts', 'this.db = new Db(ctx.storage.sql); const s = this.ctx.storage.sql; s.exec("x");'],
+    ['AuthStore의 storage 대괄호', 'src/store/AuthStore.ts', 'this.db = new Db(ctx.storage.sql); const s = this.ctx.storage["sql"];'],
+    ['AuthStore의 sql이 Db 인자가 아님', 'src/store/AuthStore.ts', 'const s = ctx.storage.sql;'],
+    ['async 없는 비동기', 'src/store/flows.ts', 'crypto.subtle.digest("SHA-256", b).then((h) => db.run("x"));'],
+    ['SqlStorage 타입', 'src/store/sweep.ts', 'export function f(s: SqlStorage) {}'],
+    ['AuthStore 밖 transactionSync', 'src/store/flows.ts', 'export function f(tx) { tx.transactionSync(() => 1); }'],
+    ['http의 storage.sql', 'src/http/a.ts', 'const s = ctx.storage.sql;'],
+    // 구조 분해 별칭·주석 끼운 async(cicd.md 구현 중 변경 91)
+    ['http의 구조 분해 별칭', 'src/http/a.ts', 'const { sql: s } = ctx.storage; s.exec("x");'],
+    ['http의 구조 분해(이름 그대로)', 'src/http/a.ts', 'const { sql } = ctx.storage;'],
+    ['AuthStore의 구조 분해 별칭', 'src/store/AuthStore.ts', 'this.db = new Db(ctx.storage.sql); const { sql: s } = this.ctx.storage;'],
+    ['중첩 구조 분해', 'src/http/a.ts', 'const { storage: { sql: s } } = ctx;'],
+    ['storage 별칭 뒤 .sql', 'src/http/a.ts', 'const st = ctx.storage; const s = st.sql;'],
+    ['storage 별칭 뒤 ["sql"]', 'src/http/a.ts', 'const st = ctx.storage; const s = st["sql"];'],
+    ['주석 속 sql 별칭 설명', 'src/http/a.ts', '// sql 핸들을 여기서 꺼내지 않는다'],
+    ['async 콜백 앞 블록 주석', 'src/store/AuthStore.ts', 'this.ctx.storage.transactionSync(/* c */ async () => 1);'],
+    ['async 콜백 앞 줄 주석', 'src/store/AuthStore.ts', 'this.ctx.storage.transactionSync(\n  // c\n  async () => 1);'],
+    ['async 콜백 겹괄호', 'src/store/AuthStore.ts', 'this.ctx.storage.transactionSync((async () => 1));'],
+    ['이름 뒤 주석', 'src/store/AuthStore.ts', 'this.ctx.storage.transactionSync /* c */ (async () => 1);'],
+  ];
+  for (const [name, rel, text] of seeds) assert.notDeepEqual(checkStorePurity(store(rel, text)), [], name);
+  // src 밖(test)은 보지 않는다
+  assert.deepEqual(checkStorePurity(store('test/store/x.test.ts', 'await x; Date.now(); sql.exec("x");')), []);
 });
 
 test('씨앗: core 순수성(원문 전체, worker.md 구현 중 변경 15)', () => {

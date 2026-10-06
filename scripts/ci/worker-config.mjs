@@ -32,6 +32,8 @@
 //                   src·test·scripts·설정에 실제 비밀값 파일 이름이 나오지 않는다(사용자가 직접 돌리는 scripts/channel-id-check.mjs만 예외).
 //   core 순수성     src/core/**의 원문 전체(주석 포함)에 cloudflare:(타입 import 포함)·../가 든 문자열(바깥 import)·전역 fetch·
 //                   Date.now가 없다. src/** 전체에 Math.random이 없다(난수는 crypto). worker.md 구현 중 변경 15.
+//   store 순수성    src/**에서 sql.exec는 src/store/db.ts에만, transactionSync(async …)는 어디에도 없다. src/store/** 중
+//                   AuthStore.ts가 아닌 파일의 원문에 async·await·cloudflare:·시각 함수(core와 같은 네 모양)가 없다. worker.md 구현 중 변경 21.
 //   raw 허용 목록   src/**의 raw 식별자 토큰 수(주석·문자열·별칭 포함)가 RAW_ALLOWLIST(파일별 정확한 수)와 같다(목록 밖 파일은 0).
 //   --dist          dist/bundle-meta.json(esbuild metafile)의 입력이 모두 src/*.ts(런타임 의존성 0), dist/index.js 있음,
 //                   dist/wrangler.json이 있으면(W8 worker-bundle이 만든다) 금지 키·vars 규칙.
@@ -98,6 +100,10 @@ export const SYNTHETIC_CHANNEL_IDS = ['a1', 'b2', 'c3', 'd4'].map((s) => s.padSt
 export const CI_TOKEN_FILES = ['src/config.ts', 'src/http/release-auth.ts'];
 export const LOG_FILE = 'src/core/log.ts';
 export const CORE_DIR = 'src/core/';
+// DO AuthStore 경계(worker.md 구현 중 변경 21, cicd.md 89): 이 파일만 비동기·시각·cloudflare:를 쓴다. SQL은 db.ts의 Db만 실행한다
+export const STORE_DIR = 'src/store/';
+export const STORE_EDGE = 'src/store/AuthStore.ts';
+export const SQL_FILE = 'src/store/db.ts';
 // 이스케이프 없는 HTML 삽입(raw) 토큰 수를 파일별로 고정한다(worker.md §8.1, 구현 중 변경 15). 사용처를 더하면 파일과 수를 함께 올린다
 // (src/core/html.ts의 1 = 함수 선언). 주석·문자열의 낱말도 센다: 사용처 변화가 늘 이 표의 diff로 리뷰에 보인다
 export const RAW_ALLOWLIST = { 'src/core/html.ts': 1 };
@@ -443,6 +449,18 @@ export function checkSources(files) {
 // 공백과 주석(블록·줄)의 연속. 블록 주석은 첫 */에서 끝나고(되짚어도 더 길어지지 않는다) 줄 주석은 줄 끝까지다
 const JS_GAP = String.raw`(?:\s|/\*(?:[^*]|\*(?!/))*\*/|//[^\n]*(?:\n|$))*`;
 
+// 현재 시각을 읽는 네 모양. core와 store 순수 함수가 같이 쓴다(시각은 인자로 주입한다)
+export const TIME_FORBIDDEN = [
+  [/\bDate\s*\.\s*now\b/, 'Date.now를 쓰지 않는다(시간은 인자로 주입, 주석에도 쓰지 않는다)'],
+  // 인자 없는 생성(new Date()·new Date;)은 현재 시각이다. 주입된 시각을 바꾸는 new Date(ms)는 된다.
+  // 토큰 사이·괄호 안의 주석은 공백으로 본다(new Date(/* … */)·new /* … */ Date()도 인자 없음). 괄호 안 첫 글자가 /면 거부한다:
+  // 그래야 주석 일부만 공백으로 보는 되짚기로 빠져나가지 못한다(Date에 정규식 인자를 줄 일은 없다)
+  [new RegExp(String.raw`\bnew(?![\w$])${JS_GAP}Date\b(?!${JS_GAP}\(${JS_GAP}[^)\s/])`), '인자 없는 new Date를 쓰지 않는다(시간은 인자로 주입)'],
+  // new 없이 부른 Date()도 현재 시각 문자열이다
+  [new RegExp(String.raw`(?<![\w$.])(?<!\bnew${JS_GAP})Date${JS_GAP}\(`), 'new 없는 Date()를 쓰지 않는다(현재 시각, 시간은 인자로 주입)'],
+  [/\bperformance\s*\.\s*now\b/, 'performance.now를 쓰지 않는다(시간은 인자로 주입)'],
+];
+
 // 원문(주석 포함)을 본다: stripJsComments는 정규식 리터럴을 몰라 따옴표가 든 리터럴(html.ts의 이스케이프 정규식) 뒤의 코드를
 // 주석으로 지울 수 있다(미탐). 그래서 core는 아래 이름을 주석에도 쓰지 않는다. 여러 줄·side-effect·동적·export … from 모두 잡힌다
 export const CORE_FORBIDDEN = [
@@ -454,14 +472,7 @@ export const CORE_FORBIDDEN = [
   [/(?<![\w$.])fetch(?![\w$])(?!\s*\??\s*:)|\b(?:globalThis|self)\s*\.\s*fetch\b/, '전역 fetch를 쓰지 않는다(네트워크는 deps로 주입, 주석에도 쓰지 않는다)'],
   // 위 규칙의 속성 선언 예외(fetch:)를 빠져나가는 두 모양: 삼항의 참 쪽, 전역 객체 구조 분해 별칭
   [/\?\s*fetch\s*:|\{[^}]*\bfetch\s*:[^}]*\}\s*=\s*(?:globalThis|self)\b/, '전역 fetch를 쓰지 않는다(삼항·globalThis 구조 분해 별칭)'],
-  [/\bDate\s*\.\s*now\b/, 'Date.now를 쓰지 않는다(시간은 인자로 주입, 주석에도 쓰지 않는다)'],
-  // 인자 없는 생성(new Date()·new Date;)은 현재 시각이다. 주입된 시각을 바꾸는 new Date(ms)는 된다.
-  // 토큰 사이·괄호 안의 주석은 공백으로 본다(new Date(/* … */)·new /* … */ Date()도 인자 없음). 괄호 안 첫 글자가 /면 거부한다:
-  // 그래야 주석 일부만 공백으로 보는 되짚기로 빠져나가지 못한다(Date에 정규식 인자를 줄 일은 없다)
-  [new RegExp(String.raw`\bnew(?![\w$])${JS_GAP}Date\b(?!${JS_GAP}\(${JS_GAP}[^)\s/])`), '인자 없는 new Date를 쓰지 않는다(시간은 인자로 주입)'],
-  // new 없이 부른 Date()도 현재 시각 문자열이다
-  [new RegExp(String.raw`(?<![\w$.])(?<!\bnew${JS_GAP})Date${JS_GAP}\(`), 'new 없는 Date()를 쓰지 않는다(현재 시각, 시간은 인자로 주입)'],
-  [/\bperformance\s*\.\s*now\b/, 'performance.now를 쓰지 않는다(시간은 인자로 주입)'],
+  ...TIME_FORBIDDEN,
 ];
 const MATH_RANDOM = /\bMath\s*\.\s*random\b/;
 
@@ -480,6 +491,61 @@ export function checkCorePurity(files) {
     }
     const r = MATH_RANDOM.exec(text);
     if (r) errs.push(`${rel}:${lineOf(text, r.index)}: Math.random을 쓰지 않는다(난수는 crypto.getRandomValues)`);
+  }
+  return errs;
+}
+
+const ASYNC_TOKEN = /(?<![\w$])(?:async|await)(?![\w$])/;
+// 괄호와 async 사이의 공백·주석·겹괄호를 모두 본다(transactionSync(/* c */ async …)·transactionSync((async …)), cicd.md 구현 중 변경 91)
+const ASYNC_TX = new RegExp(String.raw`\btransactionSync${JS_GAP}\(${JS_GAP}(?:\(${JS_GAP})*async(?![\w$])`);
+// 별칭 우회를 막는 토큰 금지(cicd.md 구현 중 변경 90). store 함수에는 정규식 exec도 Promise도 필요 없다
+const STORE_BANNED = [
+  [/\.\s*exec\s*\(/, '.exec( 호출(SQL은 Db의 all·first·run만, 별칭·대괄호 접근 포함)'],
+  [/\bSqlStorage\b/, 'SqlStorage 타입(SQL 핸들은 db.ts의 Db만 쥔다)'],
+  [/\.\s*then\s*\(/, '.then( 호출(async 없는 비동기, 트랜잭션 밖에서 쓴다)'],
+];
+// 낱말 sql(식별자·속성·문자열 키·구조 분해 패턴 모두). 모양을 가리지 않고 세므로 `{ sql: s } = ctx.storage`·`st.sql`·`["sql"]`이 다 걸린다(cicd.md 구현 중 변경 91)
+const SQL_TOKEN = /(?<![\w$])sql(?![\w$])/g;
+const STORAGE_BRACKET = /\bstorage\s*\[/;
+const TX_SYNC = /\btransactionSync\b/;
+const NEW_DB = /\bnew\s+Db\s*\(\s*ctx\s*\.\s*storage\s*\.\s*sql\s*\)/;
+
+// 원문(주석 포함)을 본다. src/** 전체: 낱말 sql은 db.ts 밖에서는 AuthStore.ts의 new Db(ctx.storage.sql) 한 곳뿐(행 수 계량·동기 경로.
+// 개수를 세므로 sql.exec·별칭·구조 분해 별칭이 모두 걸린다), storage[ 없음, transactionSync는 AuthStore.ts에만 있고 콜백은 동기.
+// src/store/** 중 db.ts가 아닌 파일: .exec(·SqlStorage·.then( 없음.
+// src/store/** 중 AuthStore.ts가 아닌 파일: async·await·cloudflare:·시각 함수 없음(동기 함수 + now 인자).
+// 한계: AuthStore.ts 안에서 이름 붙인 async 함수를 transactionSync에 넘기는 것은 원문 검사로 못 막는다(리뷰가 본다, cicd.md 90)
+export function checkStorePurity(files) {
+  const errs = [];
+  for (const { rel, text } of files) {
+    if (!rel.startsWith('src/')) continue;
+    const at = (re) => {
+      const m = re.exec(text);
+      return m ? `${rel}:${lineOf(text, m.index)}` : null;
+    };
+    let w;
+    if ((w = at(ASYNC_TX))) errs.push(`${w}: transactionSync 콜백은 동기다(async 콜백은 트랜잭션을 보장하지 않는다)`);
+    if (rel !== STORE_EDGE && (w = at(TX_SYNC))) errs.push(`${w}: transactionSync는 ${STORE_EDGE}에만 있다(RPC 하나 = 트랜잭션 하나)`);
+    if ((w = at(STORAGE_BRACKET))) errs.push(`${w}: storage[ 접근을 쓰지 않는다(SQL 핸들은 ${STORE_EDGE}의 new Db(ctx.storage.sql)만)`);
+    // 낱말 sql은 db.ts 밖에서는 AuthStore.ts의 new Db( 인자 한 곳뿐이다(별칭·구조 분해로 SQL 핸들을 꺼내지 못하게 개수를 고정한다)
+    if (rel !== SQL_FILE) {
+      const sqlRefs = [...text.matchAll(SQL_TOKEN)];
+      const sqlWant = rel === STORE_EDGE ? 1 : 0;
+      if (sqlRefs.length !== sqlWant) {
+        const where = sqlRefs.length > sqlWant ? `${rel}:${lineOf(text, sqlRefs[sqlWant].index)}` : rel;
+        errs.push(`${where}: 낱말 sql ${sqlRefs.length}개 ≠ ${sqlWant}개(${SQL_FILE} 밖에서는 ${STORE_EDGE}의 new Db(ctx.storage.sql) 한 곳뿐. 별칭·구조 분해·문자열 키 포함)`);
+      } else if (sqlWant === 1 && !NEW_DB.test(text)) {
+        errs.push(`${rel}:${lineOf(text, sqlRefs[0].index)}: sql은 new Db(ctx.storage.sql) 인자로만 쓴다`);
+      }
+    }
+    if (rel.startsWith(STORE_DIR) && rel !== SQL_FILE) {
+      for (const [re, why] of STORE_BANNED) if ((w = at(re))) errs.push(`${w}: src/store/는 ${why}를 쓰지 않는다(${SQL_FILE}만)`);
+    }
+    if (rel.startsWith(STORE_DIR) && rel !== STORE_EDGE) {
+      if ((w = at(ASYNC_TOKEN))) errs.push(`${w}: store 함수는 동기이고 시각은 now 인자로(async·await은 ${STORE_EDGE}만, worker.md §3 규칙 (2))`);
+      if ((w = at(/cloudflare:/))) errs.push(`${w}: store 함수는 cloudflare:를 쓰지 않는다(${STORE_EDGE}만, 주석에도 쓰지 않는다)`);
+      for (const [re, why] of TIME_FORBIDDEN) if ((w = at(re))) errs.push(`${w}: store 함수는 시각을 읽지 않는다: ${why}`);
+    }
   }
   return errs;
 }
@@ -571,6 +637,7 @@ export function checkWorker(root) {
     .map((rel) => ({ rel, text: readRegular(join(w, rel)) }));
   errs.push(...checkSources(files).map((m) => `${WORKER_DIR}/${m}`));
   errs.push(...checkCorePurity(files).map((m) => `${WORKER_DIR}/${m}`));
+  errs.push(...checkStorePurity(files).map((m) => `${WORKER_DIR}/${m}`));
   errs.push(...checkRawAllowlist(files, { all: true }).map((m) => `${WORKER_DIR}/${m}`));
   return errs;
 }

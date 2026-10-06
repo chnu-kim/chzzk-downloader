@@ -8,9 +8,11 @@ name: nightly
 #   매주(47 18 * * 0): nightly e2e-native (windows), nightly toolchain, nightly mutants(shard 4개 → 합 → ratchet)
 #   - e2e-native (linux): ci.yml e2e-native(코드 PR·master)와 같은 gate다(러너 이미지가 바뀌어도 매일 확인한다).
 #     PR에서는 ci.yml이 돌리므로 여기서는 돌지 않는다.
-#   - e2e-native (windows): 매주, 그리고 코드가 바뀐 PR(paths-ignore = gates.mjs NON_CODE_GLOBS, parity pr-paths).
-#     러너 이미지의 msedgedriver를 쓰고, WebView2 런타임과 버전이 다르면 받지 않고 실패한다(e2e-native.mjs). 이미지가
-#     바뀌면 빨개질 수 있어 ci-ok에 넣지 않는다(PR에서는 참고 신호, 예약 실행은 고리).
+#   - e2e-native (windows): 매주와 dispatch(only=e2e-native). PR에서는 돌지 않는다(구현 중 변경 78: 이 워크플로는
+#     pull_request 트리거가 없다. PR이 바꾼 워크플로 문법은 ci.yml lint의 workflows·parity·selftest가 본다). 러너 이미지의
+#     msedgedriver를 쓰고, WebView2 런타임과 버전이 다르면 받지 않고 실패한다(e2e-native.mjs). 이미지가 바뀌면 빨개질 수
+#     있어 ci-ok에 넣지 않는다(예약 실행은 고리). Windows 전용 e2e 코드의 컴파일·clippy·단위 테스트는 ci.yml
+#     tauri(windows)가 코드 PR마다 한다.
 #   - drift: 실서버(본인 영상, 환경 drift의 secret). 2회 연속 실패에 이슈(no_target은 3회). 출력은 kind만(§4.3).
 #   - drift-log: drift가 돈 모든 실행(예약·dispatch, simulate 포함)에서 그 작업의 실제 로그를 다시 본다(canary·허용 밖 줄).
 # 이슈 고리는 예약 실행(master)만 진짜 이름공간에 쓴다(브랜치 loop_test dispatch는 ci-loop-test:, issue.mjs).
@@ -20,13 +22,6 @@ on:
   schedule:
     - cron: "17 18 * * *" # 매일 KST 03:17. 바꾸면 아래 매일 작업들의 if도 바꾼다(parity schedule)
     - cron: "47 18 * * 0" # 매주 월 KST 03:47. 바꾸면 아래 매주 작업들의 if도 바꾼다(parity schedule)
-  pull_request:
-    paths-ignore:
-      - docs/**
-      - "*.md"
-      - .claude/**
-      - LICENSE
-      - LICENSE.*
   workflow_dispatch:
     inputs:
       only:
@@ -52,8 +47,8 @@ permissions: {}
 
 # 예약 실행은 cron마다 따로 묶는다: 같은 그룹은 대기 실행을 하나만 두어 매일 실행이 매주 실행을 밀어낼 수 있다
 concurrency:
-  group: nightly-${{ github.event.pull_request.number || github.ref }}-${{ github.event.schedule || 'manual' }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: nightly-${{ github.ref }}-${{ github.event.schedule || 'manual' }}
+  cancel-in-progress: false
 
 env:
   CARGO_TERM_COLOR: always
@@ -111,7 +106,7 @@ jobs:
   e2e-native-windows:
     name: nightly e2e-native (windows)
     if: >-
-      github.event_name == 'pull_request' || github.event.schedule == '47 18 * * 0'
+      github.event.schedule == '47 18 * * 0'
       || (github.event_name == 'workflow_dispatch' && ((inputs.only == 'all' && inputs.weekly) || inputs.only == 'e2e-native'))
     runs-on: windows-latest
     timeout-minutes: 75
@@ -300,7 +295,7 @@ jobs:
   # PRIVATE_DENYLIST에만 있다. 추적 트리와 공개 이력 전체(--all-history, 그래서 fetch-depth 0)를 본다. secret은 단계 env로만
   # 넘기고 private-scan.mjs가 임시 파일(0600)에 썼다가 지운다. 로그는 위치·규칙 이름뿐이다. 환경 audit은 master만 배포할 수
   # 있어 master가 아닌 ref(브랜치 dispatch)는 환경 밖에서 돌고 secret이 없어 no_secret으로 실패한다(고리 확인용). PR에서는
-  # 돌지 않는다(if에 pull_request가 없다).
+  # 돌지 않는다(이 워크플로에는 pull_request 트리거가 없다, 78).
   private-scan:
     name: nightly private-scan
     if: github.event.schedule == '17 18 * * *' || (github.event_name == 'workflow_dispatch' && (inputs.only == 'all' || inputs.only == 'private-scan'))

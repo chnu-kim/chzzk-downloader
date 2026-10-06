@@ -28,6 +28,7 @@
     "allow-quit",
     "allow-auth-status",
     "allow-clipboard-link",
-    "allow-open-app-folder"
+    "allow-open-app-folder",
+    "allow-frontend-ready"
   ]
 }

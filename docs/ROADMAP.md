@@ -5,6 +5,7 @@
 ## 현재 위치
 
 - **완료**: Phase 0(#11), Phase 1 Rust 코어(#12, 3 OS CI 녹색), Go 삭제(#13), Phase 2 Tauri 앱(#14, macOS 실제 실행 확인). PR은 #11→#12→#13→#14로 쌓여 있고 아직 머지 전이다. #13은 #14와 함께 머지한다.
+- **Phase 4 CI/CD 구현 중**(`docs/design/cicd.md`, 브랜치 `ci/pipeline`, 공개 저장소 PR #1). G1~G6(단일 진입점 `scripts/ci/run.mjs`·`ci.yml`·훅·비공개 이력 가드·스모크·ratchet·E2E·nightly/weekly 고리·CD `release.yml`/`xtask`)를 올렸다. G7(보호)은 선언·`--apply`까지 올렸고 적용(사용자)과 그 뒤 수락이 남았다. 훅 설치는 `node scripts/ci/run.mjs install-hooks`, 훅·CI 명령은 CLAUDE.md "명령".
 - **다음**: Phase 3+4 (Worker: 로그인·허용목록·랜딩·R2 배포 게이트·업데이트). 설계·오프라인 구현은 가능하지만 **끝까지 확인하려면 사용자의 외부 준비가 필요**하다(아래 "사용자가 준비해야 할 외부 항목").
 - **Phase 3의 핵심 미확인 사실**: OAuth `users/me`의 `channelId`가 VOD `content.channel.channelId`·클립 `ownerChannel.channelId`와 같은 값인지. 실제 로그인으로만 확인할 수 있으므로 별도 단계로 둔다.
 - **남은 확인(사용자)**: 성인 VOD PD 미디어 요청에 쿠키가 필요한지(`examples/dl.rs` + `CHZZK_NID_AUT`/`CHZZK_NID_SES`), Windows·Linux 실제 실행(app.md 수동 테스트 목록), macOS Dock 종료·로그아웃 때 D1 생략 수용 여부.
@@ -22,7 +23,7 @@
 | 인증 | **전용 Cloudflare Worker**가 치지직 OAuth 코드→토큰 교환을 대행 (client secret은 Worker에만) | 구현 참고: 같은 OAuth를 이미 쓰는 비공개 웹 앱의 구현(`docs/research/chzzk-oauth.md` §8) |
 | 본인 영상 제한 | **정책·명분 수준**. 클라이언트에서 로그인 채널 ID == VOD/클립 채널 ID 검사 | 우회 불가능할 필요는 없음 |
 | 네이버 쿠키 | `NID_AUT`/`NID_SES` 기반 접근은 **고급 설정으로 유지** | 연령 제한·구독자 전용 VOD용. Open API 토큰으로는 재생 URL을 못 받음 |
-| 배포 | **repo private 유지**, 본인·지인만. Worker가 **로그인 랜딩 페이지 + 허용목록(채널 ID) + R2 다운로드 게이트** | 앱 사용도 같은 허용목록으로 제한. 업데이트 매니페스트·산출물도 인증 필요 |
+| 배포 | ~~repo private 유지~~ → **2026-10-05 공개 저장소로 전환**(`chnu-kim/chzzk-downloader`, 절차는 `docs/public-release.md`). 배포 자체는 본인·지인만. Worker가 **로그인 랜딩 페이지 + 허용목록(채널 ID) + R2 다운로드 게이트** | 앱 사용도 같은 허용목록으로 제한. 업데이트 매니페스트·산출물도 인증 필요 |
 | 코드 서명 | **미서명 배포** (Apple Developer 계정 없음) | 랜딩 페이지에 Gatekeeper/SmartScreen 해제 안내. Tauri updater 서명 키는 별개로 필요 |
 | 진행 방식 | **자율 진행**, 단계별 stacked PR | 각 PR 후 Codex 리뷰를 원문 전달. 반영·머지는 사용자가 결정 |
 
@@ -92,9 +93,25 @@
 - [ ] R2 산출물 + Tauri updater 매니페스트를 인증 뒤에서 제공
 - [ ] 앱: 로그인 화면, 본인 채널 검사
 
-### Phase 4 — 릴리스 파이프라인
-- [ ] 태그 push → Win/macOS/Linux 빌드 → R2 업로드 → 매니페스트 갱신
-- [ ] Worker 배포 워크플로
+### Phase 4 — CI/CD (설계: `docs/design/cicd.md`)
+
+설계 판정은 2026-10-05에 끝났다(`docs/design/cicd.md`). 원칙: 결정적 판정만(종료 코드·골든·해시·스키마·실제 빌드/실행), 훅과 CI는 같은 진입점 `scripts/ci/run.mjs`, CI가 최종 권위. 아래 그룹 번호는 그 문서 §10이다. 수락 기준은 실제 Actions 실행으로 확인한다.
+
+- [x] 설계 판정 (`docs/design/cicd.md`): 단일 `ci.yml` + `ci-ok` 집계, `.githooks` shim 훅, 집합 차 push-guard, R2 S3 API 배포와 `latest.json` 마지막 쓰기, 검증 실패 시 자동 롤백, ruleset 둘
+- [x] G1 진입점·단일 CI·공급망 기본: `run.mjs`/`gates.mjs`/`tools.json`, 버전 원천 통합, `ci.yml`(기존 세 워크플로 삭제), SHA 핀·zizmor·actionlint·dependabot. PR #1에서 `ci-ok` success(실행 37283860770, zizmor·actionlint 0, selftest 29개), 씨앗(`@v4`+fmt 위반)에 `ci-ok` failure(37284980199). 차이는 cicd.md "구현 중 변경" 1~13. 리뷰 반영(13): ci-ok 식 guard, push·dispatch는 건너뛰기 없음, 문서 판정 허용 목록, parity 강화, 진입점 selftest(씨앗 38개)
+- [x] G2 훅과 비공개 이력 가드: `public-scan --rev-range/--message-file`, `push-guard`(집합 차, 임시 저장소 테스트), `.githooks/{pre-commit,commit-msg,pre-push}` → `run.mjs hook`, parity 훅 규칙·selftest 씨앗, 리뷰 반영(메시지 원문 검사·`subjects` gate·비공개 커밋 지문·훅 gate를 커밋 내용에서 실행). 실행 37297700019 녹색(ubuntu·windows). 차이는 cicd.md "구현 중 변경" 14~25
+- [x] G3 스모크·ratchet·master 고리: 앱 `--smoke`, PR 3 OS 스모크, master 번들 설치 스모크, `ci/ratchet.json`, master 실패 이슈·스케줄 keep-alive. 고리 확인 37313500324(이슈 #2 열림)·37313687915(녹색, #2 닫힘, ratchet 기준). 차이는 cicd.md "구현 중 변경" 26~35
+- [x] G4 E2E 구현: Playwright 웹 E2E(`app/e2e/`, 프로덕션 dist + mockIPC 가짜 백엔드 + axe, PR), cargo feature `e2e`와 fixture 서버, 네이티브 E2E(tauri-driver, 코드 PR·master·nightly Linux, 코드 PR·weekly Windows, `nightly.yml`의 작업별 고리 `ci-loop:e2e-native-linux`·`-windows`), `hygiene-seed`, ratchet `tests.playwright` 7. 차이는 cicd.md "구현 중 변경" 36~48(수락 실행은 47, 2차 리뷰 48)
+- [x] G4 Windows 네이티브 E2E: wry의 WebView2 인자가 msedgedriver의 디버깅 포트를 덮어쓰던 것을 E2E 빌드에서 합쳐 고쳤다(cicd.md 구현 중 변경 47). 고리 `ci-loop:e2e-native-windows` 열기(#3)·닫기를 실제 실행으로 확인
+- [ ] G4 편입: 두 작업은 D14 관찰 중(`gates.mjs` `OBSERVED_JOBS`, `ci-ok` 밖, master 실패는 `master-failure` 이슈). 관찰 시작은 master에 머지된 뒤 첫 master·예약 실행 날(브랜치의 첫 녹색은 2026-10-05), 편입은 **그 14일 뒤 이후**에 관찰 기간의 실패가 환경 요인이 아니었으면 `OBSERVED_JOBS`에서 빼고 `ci-ok` needs·guard에 넣는 PR(cicd.md 구현 중 변경 36 "편입")
+- [x] G5 Nightly·weekly 고리(`nightly.yml`): 실서버 drift(환경 `drift`, 출력은 kind만, 2회 연속 실패 시 이슈·`no_target` 3회, `simulate` 입력, `drift-log` 작업의 로그 위생 검사), advisories, pins(핀 SHA·zizmor 온라인), ruleset-drift(`repo-settings.json`, 환경 `audit`), toolchain(매주), fuzz 4 target(`fuzz/`, 고정 nightly), mutants shard 4개 + ratchet `mutants_missed`(매주, 765개 중 100개 살아남음, shard당 30~34분). 고리 확인: 37340094385(1회, 아무것도 안 함) → 37340384932(2회, `ci-loop-test:drift` #4 열림) → 37341022990(ok, #4 닫힘), 세 실행 로그의 canary 0건. 차이는 cicd.md "구현 중 변경" 49~63
+- [ ] G5 뒤 사용자 할 일: 환경 `drift`에 본인 영상 secret 셋(없으면 `no_target` 3회 연속에 이슈), 환경 `audit`에 `RULESET_READ_TOKEN`(Administration 읽기 fine-grained PAT, `GITHUB_TOKEN`은 403), `rust-toolchain.toml`을 최신 stable로 올릴지(지금 `toolchain` 고리가 빨갛다). `mutants_missed` 기준은 100으로 채웠다(37342266385). 줄이면 weekly 실행 번호로 `ratchet.mjs write --from-run <id>`(그 실행의 `nightly mutants` 작업이 녹색이면 된다)
+- [x] G6 CD: `xtask`(collect·sign·verify-sig·sums·manifest·put·promote·verify·rollback, 변조 음성 테스트, SigV4 직접 서명), `release/{updater.pub,expected-artifacts.json,latest.schema.json,tauri.release.json}`, updater plugin 등록·`pubkey` gate·누출 규칙 `signing-key`, `release.yml`(gate → build 3 OS → smoke → sign-publish → verify/rollback → deploy-worker seam → report), `rollback.yml`, 환경 `release`(태그 `v*`·master). MinIO 이미지를 받을 수 없어 Node 가짜 S3로 `release-selftest`(41개, `rust` 작업 3 OS). 차이는 cicd.md "구현 중 변경" 64~72(수락 실행 71: 리허설 37378960529, 버전 불일치 37379000360·고리 #7 열림→37380543379 닫힘). 리뷰 반영 72: 리허설은 stage(받은 3 OS 산출물로 가짜 S3 publish·verify)에서 녹색, 시크릿 작업은 컴파일하지 않음(xtask 작업 + sha256), verify는 늘 돌고 결정표·5xx 재시도, PR에서 Linux 릴리스 빌드, `release/tauri.release.json` 허용 목록
+- [ ] G6 뒤 사용자 할 일: 환경 `release`에 시크릿·변수(cicd.md §8). 서명 키는 이 작업에서 로컬 `~/.tauri/chzzk-downloader-updater.key`(+`.password`)로 만들었고 공개 키만 커밋했다(백업할 것. 바꾸려면 첫 릴리스 전에 `release/updater.pub`·`tauri.conf.json`을 함께). R2 버킷·S3 토큰·`DIST_BASE_URL`은 Phase 3. 그 뒤 첫 실제 태그(버린 pre-release 버전)에서 `verify` 녹색과 `latest.json` 버전 = 태그, 변조 → rollback을 실제 R2에서 확인한다
+- [ ] G7 보호: 선언·도구는 올렸다(5dcfb5c), ruleset `master`(id 24547748: 필수 `ci-ok`·최신화·force push·삭제 금지·admin bypass)는 적용·확인했다(cicd.md 75). 나머지 7건(Actions 허용 목록·SHA 핀 강제·fork 승인·환경 관리자 우회·ruleset `tags`)은 `--check`가 불일치로 찍는다: `.github/rulesets/{master,tags}.json`, `repo-settings.mjs --apply`(기본 계획, `--yes`로 쓰고 `--check`), 환경 셋의 배포 정책·protection_rules·관리자 우회, Actions 허용 목록·서버 측 SHA 핀, fork 승인 `all_external_contributors`, wait timer 0(cicd.md 74). **적용은 사용자가 한다**: `node scripts/ci/repo-settings.mjs --apply`로 계획 확인 → `--apply --yes`(끝의 `--check` exit 0). 그 뒤 수락: `rules/branches/master`, 빨간 `ci-ok`에 PR BLOCKED, 비관리자 `v*` 태그 생성 거부, 머지 뒤 `audit`에 `RULESET_READ_TOKEN`을 넣고 nightly `ruleset-drift` 녹색
+- [ ] Worker 배포 작업은 G6의 `deploy-worker` seam을 Phase 3에서 채운다
+
+사용자가 더해야 할 시크릿·변수의 정확한 이름은 `docs/design/cicd.md` §8.
 
 ## 사용자가 준비해야 할 외부 항목
 
@@ -102,7 +119,7 @@
 
 - [ ] 치지직 개발자 앱 등록 (client id / secret, Redirect URI = Worker 콜백 URL)
 - [ ] Cloudflare: Worker, R2 버킷, KV 또는 D1, (선택) 커스텀 도메인
-- [ ] GitHub Secrets: Cloudflare API 토큰, R2 자격, Tauri updater 서명 키쌍 (`pnpm tauri signer generate`)
+- [ ] GitHub Environment `release`·`drift`의 시크릿·변수 (정확한 이름은 `docs/design/cicd.md` §8): Tauri updater 서명 키(로컬 `~/.tauri/chzzk-downloader-updater.key`·`.password`, 공개 키는 `release/updater.pub`), R2 S3 토큰, 본인 영상 drift 대상, Phase 3에 Cloudflare API 토큰. 환경 `release`는 만들어 두었다(배포 정책 태그 `v*`·master)
 
 ## 하네스 변경 이력
 
@@ -111,3 +128,9 @@
 - 2026-10-05: 초기화. CLAUDE.md + settings.json만 둔다.
 - 2026-10-05: CLAUDE.md를 Rust 코어 기준으로 재작성(레이아웃, 검증 게이트 fmt·clippy·test, 실서버 스모크 실행법). Go는 레거시로 표시.
 - 2026-10-05: 공개 저장소 준비. fixture를 합성으로 바꾸고(`scripts/fixtures/gen-fixtures.mjs`), 누출 검사기 `scripts/ci/public-scan.mjs`와 CI `public-scan.yml`을 더했다. 이력 정리 절차는 `docs/public-release.md`.
+- 2026-10-05: CI/CD 설계(`docs/design/cicd.md`). 훅·CI 단일 진입점 `scripts/ci/run.mjs`, 집계 체크 `ci-ok` 하나, 결정적 판정만. 새 E2E 작업은 2주 관찰 뒤 필수로 올린다.
+- 2026-10-05: G1. CLAUDE.md의 검증 게이트를 `node scripts/ci/run.mjs <gate>`로 바꾸고 훅 설치 명령(`run.mjs install-hooks`)을 적었다. `core.yml`·`app.yml`·`public-scan.yml`은 `ci.yml`로 합쳤다.
+- 2026-10-05: G2. 훅 세 개를 `run.mjs hook <이름>`으로 바꾸고 pre-push에 비공개 이력 가드(`push-guard.mjs`)를 넣었다. "private에는 push하지 않는다"를 CLAUDE.md·public-release.md에 적었다.
+- 2026-10-05: G2 리뷰 반영. 커밋 메시지는 원문 전체를 검사하고, 저장된 제목은 CI `subjects`가 본다. 비공개에만 있는 커밋 133개의 지문(`scripts/ci/private-commits.txt`)을 CI `scan-history`와 push-guard가 함께 쓴다. 훅의 조건부 gate는 작업 트리가 아니라 커밋·push될 내용(임시 worktree)에서 돈다.
+- 2026-10-06: G5. nightly·weekly 고리(drift·advisories·pins·ruleset-drift·fuzz·toolchain·mutants)를 더하고 CLAUDE.md "명령"에 예약 gate와 고리 확인 dispatch를 적었다. 고리는 작업마다 이슈를 열고, 연속 실패 문턱과 고정 할 일 문구를 둔다.
+- 2026-10-05: G4. E2E 두 층(웹 Playwright PR, 네이티브 tauri-driver master·nightly·weekly)을 더했다. 새 E2E 작업은 2주 관찰 규칙(D14)대로 `OBSERVED_JOBS`로 시작해 `ci-ok`를 막지 않고, master 실패는 이슈로 온다. CLAUDE.md에 `e2e-web`·`e2e-native` gate와 E2E 빌드 명령을 적었다.

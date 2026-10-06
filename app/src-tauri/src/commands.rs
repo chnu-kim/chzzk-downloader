@@ -15,13 +15,14 @@ use chzzk_shell::dto::{
 use chzzk_shell::manager::QUIT_TIMEOUT;
 use chzzk_shell::{App, AppError, JobId};
 use tauri::ipc::Channel;
-use tauri::{AppHandle, Runtime, State};
+use tauri::{AppHandle, Manager, Runtime, State};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
 
 use crate::Quitting;
 use crate::sink::{ChannelSink, Notifier};
+use crate::smoke::{EXIT_MARKER, SmokeState, write_marker};
 
 type Res<T> = Result<T, AppError>;
 
@@ -239,4 +240,29 @@ pub async fn clipboard_link<R: Runtime>(app: AppHandle<R>) -> Res<Option<String>
         .read_text()
         .ok()
         .and_then(|t| chzzk_link(&t)))
+}
+
+/// 프런트가 처음 그려진 뒤 한 번 부른다(`app/src/lib/ready.ts`). 보통 실행에서는 아무것도 하지 않는다.
+/// `--smoke`면 마커(`{version, ready:true}`)를 쓰고 앱을 끝낸다(docs/design/cicd.md §6). dist가 실리고 CSP를
+/// 지나 IPC가 닿았다는 증거다.
+#[tauri::command]
+pub async fn frontend_ready<R: Runtime>(app: AppHandle<R>) -> Res<()> {
+    let Some(smoke) = app.try_state::<SmokeState>() else {
+        return Ok(());
+    };
+    if !smoke.fire() {
+        return Ok(());
+    }
+    let version = app.package_info().version.to_string();
+    match write_marker(smoke.config.out.as_deref(), &version, true) {
+        Ok(()) => {
+            tracing::info!(%version, "smoke: frontend_ready");
+            app.exit(0);
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "smoke: 마커를 쓰지 못함");
+            app.exit(EXIT_MARKER);
+        }
+    }
+    Ok(())
 }

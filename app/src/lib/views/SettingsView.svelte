@@ -188,7 +188,8 @@
     justify-content: space-between;
     gap: var(--space-3);
   }
-  .settings :global(.label) {
+  /* 버튼 안 글자(.btn > .label)는 빼야 한다: 그러지 않으면 강조 버튼의 흰 글자가 본문색이 된다(e2e-web axe, 대비 2.77) */
+  .settings :global(.label:not(.btn > .label)) {
     flex: none;
     font-size: var(--text-md);
     color: var(--fg);

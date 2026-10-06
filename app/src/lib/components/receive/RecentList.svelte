@@ -36,7 +36,7 @@
   .hint {
     margin: var(--space-1) 0 0;
     font-size: var(--text-sm);
-    color: var(--fg-faint);
+    color: var(--fg-muted);
   }
   .recent {
     margin-top: var(--space-2);

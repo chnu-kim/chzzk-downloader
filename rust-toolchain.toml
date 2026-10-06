@@ -1,0 +1,6 @@
+# 로컬·CI 툴체인을 같게 고정한다(docs/design/cicd.md §7). MSRV(1.90)는 Cargo.toml의 rust-version이 따로 정하고
+# CI supply 작업이 cargo hack --rust-version으로 검사한다.
+[toolchain]
+channel = "1.96.1"
+components = ["rustfmt", "clippy", "llvm-tools-preview"]
+profile = "minimal"

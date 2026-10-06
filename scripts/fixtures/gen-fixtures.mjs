@@ -9,7 +9,7 @@
 // 이중 인코딩 JSON, variant 5개, 세그먼트 30개, MPD의 PD/UUID/audio 구성, fMP4 상자 순서)는 그대로 둔다.
 
 import { createHash } from 'node:crypto';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -561,9 +561,15 @@ export function outputs() {
 }
 
 function main() {
-  const check = process.argv.includes('--check');
+  const argv = process.argv.slice(2);
+  if (argv.some((a) => a !== '--check')) {
+    console.error('사용법: gen-fixtures.mjs [--check]');
+    process.exit(2);
+  }
+  const check = argv.includes('--check');
   let bad = 0;
-  for (const [rel, body] of Object.entries(outputs())) {
+  const all = Object.entries(outputs());
+  for (const [rel, body] of all) {
     const path = join(ROOT, rel);
     const bytes = Buffer.from(body);
     if (check) {
@@ -588,6 +594,9 @@ function main() {
     console.error(`${bad}개 fixture가 생성기 출력과 다르다. node scripts/fixtures/gen-fixtures.mjs로 다시 만든다.`);
     process.exit(1);
   }
+  // 성공 줄이 있어야 main이 실제로 돌았는지 로그로 알 수 있다(entry.test.mjs가 본다)
+  if (check) console.log(`fixtures: ${all.length}개 바이트 동일`);
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) main();
+// 심볼릭 링크 경로(/tmp → /private/tmp 등)로 불러도 main이 돌도록 실제 경로로 비교한다. 안 돌면 조용히 0으로 끝난다.
+if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) main();

@@ -1,0 +1,432 @@
+name: release
+
+# CD(docs/design/cicd.md §5, 구현 중 변경 G6). 판정은 결정적이다: 버전 파일·태그 비교, master ci-ok, 기대 산출물 집합,
+# 설치 스모크, minisign 서명(updater와 같은 검증), sha256, 매니페스트 스키마, 다시 받아 확인.
+#   gate → xtask(한 번 빌드, sha256 출력) → build(3 OS, 임시 키) → smoke → stage(받은 3 OS 산출물로 publish·verify를 가짜 S3에)
+#   → [태그만] sign-publish(환경 release, 컴파일·pnpm install 없음, latest.json은 마지막) → verify(sign-publish가 어떻게 끝났든
+#   돈다. 판정 실패면 prev로 되돌리고 빨강) → deploy-worker(Phase 3 seam, vars.WORKER_DEPLOY_ENABLED) → report(고리)
+# 시크릿을 받는 작업(sign-publish·verify·deploy-worker)은 컴파일러를 돌리지 않는다: xtask 작업이 만든 바이너리를 sha256(작업 출력)으로
+# 맞춘 뒤에만 부른다(D10, 의존성 build.rs가 GITHUB_ENV·GITHUB_PATH로 시크릿 단계에 닿지 못하게).
+# 바이너리는 GitHub Release에 올리지 않는다(배포는 R2 + Worker 허용 목록). 빌드 산출물은 보관 1일 artifact뿐이다.
+# 리허설(dispatch·매주 schedule)은 stage에서 끝난다(업로드 경계, 녹색). 환경 release에 들어가지 않아 시크릿이 없다.
+# 태그 실행에 시크릿이 없으면 sign-publish의 preflight가 "릴리스 시크릿 없음: …"으로 실패한다(그 앞 단계는 모두 돈다).
+# 모든 run:은 setup을 빼면 `node scripts/ci/run.mjs <gate>`만 부른다(parity). 캐시는 쓰지 않는다(§7 릴리스 격리).
+
+on:
+  push:
+    tags: ["v*"]
+  schedule:
+    - cron: "23 19 * * 0" # 매주 월 KST 04:23 리허설(태그가 드물어 경로가 썩지 않게)
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "리허설에서 버전 파일과 비교할 태그(vX.Y.Z). 비우면 비교하지 않는다(버전 불일치 입력에 gate가 빨개지는지 확인용)"
+        type: string
+        default: ""
+      loop_test:
+        description: "고리 확인용: 이 dispatch 실행에서도 report(release-rehearsal 이슈 열기·닫기)를 돌린다"
+        type: boolean
+        default: false
+
+permissions: {}
+
+# 그룹에는 대기 실행이 하나뿐이라 새 실행이 대기 중인 실행을 조용히 취소한다(취소된 실행은 report도 돌지 않는다). 그래서 태그
+# 실행은 태그마다 그룹을 둔다: 두 태그가 함께 돌아도 latest.json은 CAS + 단조 증가로만 바뀌고, 늦게 끝난 낮은 버전의 verify는
+# superseded(객체만 확인)다. rollback.yml은 실행마다 그룹이다(CAS --from이 지킨다). 리허설끼리만 묶는다(R2에 닿지 않는다).
+concurrency:
+  group: ${{ github.event_name == 'push' && format('release-{0}', github.ref_name) || 'release-rehearsal' }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  AWS_LC_SYS_PREBUILT_NASM: "1"
+
+jobs:
+  gate:
+    name: release gate
+    runs-on: ubuntu-24.04
+    # release.mjs gate의 ci-ok 대기(CI_WAIT_TIMEOUT 1800초) + 이력 검사 + 여유
+    timeout-minutes: 45
+    permissions:
+      contents: read # checkout(태그 포함 전체 이력)
+      actions: read # 태그 커밋의 master ci.yml 실행과 작업(ci-ok) 읽기
+    outputs:
+      version: ${{ steps.gate.outputs.version }}
+      pub_date: ${{ steps.gate.outputs.pub_date }}
+      # 태그 push만 진짜 릴리스다. dispatch·schedule은 리허설(태그 확인·ci-ok 대기를 건너뛰고 stage에서 끝난다)
+      mode: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && 'tag' || 'rehearsal' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          # 릴리스는 캐시를 쓰지 않는다(§7 릴리스 격리, zizmor cache-poisoning)
+          package-manager-cache: false
+      - name: rust toolchain
+        run: rustup toolchain install
+      - name: scan-history
+        run: node scripts/ci/run.mjs scan-history
+      - id: gate
+        name: release-gate
+        run: node scripts/ci/run.mjs release-gate
+        env:
+          RELEASE_MODE: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && 'tag' || 'rehearsal' }}
+          # 태그 실행은 태그 이름, 리허설은 dispatch 입력(없으면 비교하지 않는다)
+          RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
+          GH_TOKEN: ${{ github.token }}
+
+  # xtask를 한 번 빌드한다(시크릿·환경 없음). 바이너리는 artifact로, sha256은 작업 출력으로 넘긴다: 받는 쪽은 artifact 안의
+  # 값이 아니라 이 출력과 맞춘다. artifact 이름은 산출물 pattern(release-<v>-*)과 겹치지 않는다(collect가 모르는 폴더로 실패하지 않게)
+  xtask:
+    name: release xtask
+    needs: gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read # checkout
+    outputs:
+      sha256: ${{ steps.xtask.outputs.sha256 }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          # 릴리스는 캐시를 쓰지 않는다(§7 릴리스 격리, zizmor cache-poisoning)
+          package-manager-cache: false
+      - name: rust toolchain
+        run: rustup toolchain install
+      - id: xtask
+        name: release-xtask
+        run: node scripts/ci/run.mjs release-xtask
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: xtask-bin-${{ github.run_id }}
+          path: target/ci/xtask-bin/
+          retention-days: 1
+          if-no-files-found: error
+
+  # Linux: glibc 하한을 위해 ubuntu 22.04 컨테이너에서 만든다(ci.yml bundle-linux와 같다). 설치 스모크는 24.04 호스트
+  build-linux:
+    name: release build (linux)
+    needs: gate
+    runs-on: ubuntu-24.04
+    container:
+      image: ubuntu:22.04@sha256:5ec03bb3441e8b0bf3b4f9cd4629a1ae763010dc3035bb8da3ae6cf026486401
+    timeout-minutes: 90
+    permissions:
+      contents: read # checkout
+    env:
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+      - name: container deps
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends git ca-certificates curl wget file xdg-utils \
+            build-essential pkg-config libwebkit2gtk-4.1-dev libxdo-dev libssl-dev \
+            libayatana-appindicator3-dev librsvg2-dev
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          package_json_file: app/package.json
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          # 릴리스는 캐시를 쓰지 않는다(§7 릴리스 격리, zizmor cache-poisoning)
+          package-manager-cache: false
+      - name: rustup
+        run: node scripts/ci/run.mjs install-rustup
+      - name: rust toolchain
+        run: rustup toolchain install
+      - name: release-build
+        run: node scripts/ci/run.mjs release-build
+      - name: glibc-floor
+        if: ${{ !cancelled() }}
+        run: node scripts/ci/run.mjs glibc-floor
+      - name: release-hygiene
+        if: ${{ !cancelled() }}
+        run: node scripts/ci/run.mjs release-hygiene
+      - name: size
+        if: ${{ !cancelled() }}
+        run: node scripts/ci/run.mjs size
+      # 서명 전 산출물. 공개 저장소의 artifact는 로그인한 누구나 받으므로 하루만 둔다(cicd.md §9)
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-${{ needs.gate.outputs.version }}-linux
+          path: target/ci/bundle/
+          retention-days: 1
+          if-no-files-found: error
+
+  smoke-linux:
+    name: release smoke (linux)
+    needs: [gate, build-linux]
+    runs-on: ubuntu-24.04
+    # smoke.mjs installBudgetMs('linux')(20분) + 준비
+    timeout-minutes: 30
+    permissions:
+      contents: read # checkout
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          # 릴리스는 캐시를 쓰지 않는다(§7 릴리스 격리, zizmor cache-poisoning)
+          package-manager-cache: false
+      - name: linux deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends xvfb xauth libegl1 libgles2 libegl-mesa0 libgl1-mesa-dri
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-${{ needs.gate.outputs.version }}-linux
+          path: target/ci/bundle
+      - name: smoke-install
+        run: node scripts/ci/run.mjs smoke-install
+
+  build:
+    name: release build (${{ matrix.os }})
+    needs: gate
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    permissions:
+      contents: read # checkout
+    steps:
+      - name: disable autocrlf
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: rust toolchain
+        run: rustup toolchain install
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          package_json_file: app/package.json
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          # 릴리스는 캐시를 쓰지 않는다(§7 릴리스 격리, zizmor cache-poisoning)
+          package-manager-cache: false
+      - name: release-build
+        run: node scripts/ci/run.mjs release-build
+      - name: release-hygiene
+        if: ${{ !cancelled() }}
+        run: node scripts/ci/run.mjs release-hygiene
+      - name: size
+        if: ${{ !cancelled() }}
+        run: node scripts/ci/run.mjs size
+      # smoke.mjs installBudgetMs(macOS 릴리스 36분·Windows 27분)보다 커야 안쪽 제한이 먼저 걸린다(smoke.test.mjs)
+      - name: smoke-install
+        if: ${{ !cancelled() }}
+        timeout-minutes: 40
+        run: node scripts/ci/run.mjs smoke-install
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-${{ needs.gate.outputs.version }}-${{ runner.os == 'macOS' && 'darwin' || 'windows' }}
+          path: target/ci/bundle/
+          retention-days: 1
+          if-no-files-found: error
+
+  # 받은 3 OS 산출물(download-artifact가 만드는 release-<v>-<os>/ 폴더 그대로)로 publish → verify를 가짜 S3에 돌린다: collect의
+  # OS 집합·bundles.json 하나씩, 진짜 크기 파일의 서명·SHA256SUMS·매니페스트·put·promote·다시 받아 확인. 임시 키, 시크릿·환경 없음.
+  # 리허설은 여기서 끝난다(업로드 경계). 태그 실행은 이 작업이 녹색이어야 sign-publish가 시크릿을 받는다.
+  stage:
+    name: release stage
+    needs: [gate, xtask, build-linux, smoke-linux, build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read # checkout
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          # 릴리스는 캐시를 쓰지 않는다(§7 릴리스 격리, zizmor cache-poisoning)
+          package-manager-cache: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: xtask-bin-${{ github.run_id }}
+          path: target/ci/xtask-bin
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: release-${{ needs.gate.outputs.version }}-*
+          path: target/ci/release-in
+      - name: release-stage
+        run: node scripts/ci/run.mjs release-stage
+        env:
+          RELEASE_MODE: ${{ needs.gate.outputs.mode }}
+          RELEASE_PUB_DATE: ${{ needs.gate.outputs.pub_date }}
+          XTASK_BIN: target/ci/xtask-bin/xtask
+          XTASK_SHA256: ${{ needs.xtask.outputs.sha256 }}
+
+  # 서명·업로드(D10, 태그 실행만, 환경 release): 개인 키·R2 자격 증명은 이 작업에만 있다. 컴파일도 pnpm install도 하지 않는다.
+  sign-publish:
+    name: release sign-publish
+    needs: [gate, xtask, stage]
+    if: needs.gate.outputs.mode == 'tag'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    environment: release
+    permissions:
+      contents: read # checkout
+    outputs:
+      prev: ${{ steps.publish.outputs.prev }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          # 릴리스는 캐시를 쓰지 않는다(§7 릴리스 격리, zizmor cache-poisoning)
+          package-manager-cache: false
+      # 시크릿이 하나라도 없으면 "릴리스 시크릿 없음: …"으로 여기서 멈춘다(이름만 보고 값은 찍지 않는다)
+      - name: release-preflight
+        run: node scripts/ci/run.mjs release-preflight
+        env:
+          RELEASE_MODE: tag
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          # 계정 id·버킷 이름도 환경 시크릿이다(공개 로그의 단계 env에 값이 찍히지 않게, cicd.md §8)
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          DIST_BASE_URL: ${{ vars.DIST_BASE_URL }}
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: xtask-bin-${{ github.run_id }}
+          path: target/ci/xtask-bin
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: release-${{ needs.gate.outputs.version }}-*
+          path: target/ci/release-in
+      - id: publish
+        name: release-publish
+        run: node scripts/ci/run.mjs release-publish
+        env:
+          RELEASE_MODE: tag
+          RELEASE_PUB_DATE: ${{ needs.gate.outputs.pub_date }}
+          XTASK_BIN: target/ci/xtask-bin/xtask
+          XTASK_SHA256: ${{ needs.xtask.outputs.sha256 }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          # 계정 id·버킷 이름도 환경 시크릿이다(공개 로그의 단계 env에 값이 찍히지 않게, cicd.md §8)
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          DIST_BASE_URL: ${{ vars.DIST_BASE_URL }}
+
+  # latest.json을 보고 결정표대로 확인한다(release.mjs verifyPlan): 이번 버전이면 다시 받아 sha256·서명(커밋된 release/updater.pub)·
+  # 스키마·버전·latest.json을 확인하고, 판정 실패면 prev(없으면 releases/<v>/previous)로 되돌린 뒤 빨강 → report가 release 이슈.
+  # sign-publish가 승격 뒤에 실패·시간 초과·취소돼도 돌도록 always()다(그 작업이 시작되지 않았으면 건너뛴다). 빌드 단계가 없다.
+  verify:
+    name: release verify
+    needs: [gate, xtask, sign-publish]
+    if: always() && needs.gate.outputs.mode == 'tag' && needs.xtask.result == 'success' && needs.sign-publish.result != 'skipped'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: release
+    permissions:
+      contents: read # checkout
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          # 릴리스는 캐시를 쓰지 않는다(§7 릴리스 격리, zizmor cache-poisoning)
+          package-manager-cache: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: xtask-bin-${{ github.run_id }}
+          path: target/ci/xtask-bin
+      - name: release-verify
+        run: node scripts/ci/run.mjs release-verify
+        env:
+          RELEASE_MODE: tag
+          RELEASE_PREV: ${{ needs.sign-publish.outputs.prev }}
+          XTASK_BIN: target/ci/xtask-bin/xtask
+          XTASK_SHA256: ${{ needs.xtask.outputs.sha256 }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          # 계정 id·버킷 이름도 환경 시크릿이다(공개 로그의 단계 env에 값이 찍히지 않게, cicd.md §8)
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          DIST_BASE_URL: ${{ vars.DIST_BASE_URL }}
+          # Phase 3: worker면 DIST_BASE_URL + CI_VERIFY_TOKEN으로 Worker를 거쳐 받는다(클라이언트가 받는 URL 그대로)
+          VERIFY_VIA: ${{ vars.VERIFY_VIA }}
+          CI_VERIFY_TOKEN: ${{ secrets.CI_VERIFY_TOKEN }}
+
+  # Phase 3 seam(docs/design/cicd.md §5.5): Worker 배포. vars.WORKER_DEPLOY_ENABLED가 'true'일 때만 돈다. worker/와 배포·
+  # 확인 단계(wrangler 고정 버전, /health 200, prev 요청에 200+새 버전, 새 버전 요청에 204)는 Phase 3에서 release.mjs worker로
+  # 채운다. 지금 켜면 release-worker gate가 "worker/가 없다"로 실패한다(조용히 녹색이 되지 않게).
+  deploy-worker:
+    name: release deploy-worker
+    needs: [gate, verify]
+    if: vars.WORKER_DEPLOY_ENABLED == 'true' && needs.gate.outputs.mode == 'tag'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment: release
+    permissions:
+      contents: read # checkout
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          # 릴리스는 캐시를 쓰지 않는다(§7 릴리스 격리, zizmor cache-poisoning)
+          package-manager-cache: false
+      - name: release-worker
+        run: node scripts/ci/run.mjs release-worker
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          DIST_BASE_URL: ${{ vars.DIST_BASE_URL }}
+
+  # 고리(docs/design/cicd.md §4.1): 태그 실행은 ci-loop:release, 리허설(예약)은 ci-loop:release-rehearsal을 열고 닫는다(리허설은
+  # stage까지 녹색이어야 ok다).
+  # 브랜치 dispatch는 loop_test일 때만, 시험 이름공간(ci-loop-test:)에 쓴다. 사람이 취소한 실행은 보고하지 않는다.
+  report:
+    name: release report
+    needs: [gate, xtask, build-linux, smoke-linux, build, stage, sign-publish, verify, deploy-worker]
+    if: ${{ !cancelled() && (github.event_name != 'workflow_dispatch' || inputs.loop_test) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read # checkout
+      issues: write # 고리 이슈 열기·댓글·닫기, label 만들기
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          # 릴리스는 캐시를 쓰지 않는다(§7 릴리스 격리, zizmor cache-poisoning)
+          package-manager-cache: false
+      - name: report-release
+        run: node scripts/ci/run.mjs report-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NEEDS: ${{ toJSON(needs) }}
+          # gate가 실패해도 정해지도록 gate 출력이 아니라 같은 식을 쓴다
+          RELEASE_MODE: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && 'tag' || 'rehearsal' }}

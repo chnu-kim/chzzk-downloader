@@ -1,0 +1,242 @@
+// node --test scripts/ci/run.test.mjs — 진입점의 순수 함수(changes 분류, ci-ok 판정)와 gate 표
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+
+import { CODE_GATED_JOBS, GATES, HOOK_ONLY, HOOKS, MASTER_ONLY_JOBS, msrv, testFiles } from './gates.mjs';
+import { classify, decideCiOk, firstSemver, forceFail, hookGates, runGate } from './run.mjs';
+
+test('classify: 문서만 바뀌면 code=false', () => {
+  assert.deepEqual(classify(['docs/design/cicd.md', 'README.md', 'CLAUDE.md', '.claude/x.json', 'LICENSE']), {
+    code: false,
+    docs_only: true,
+  });
+});
+
+test('classify: 루트 밖의 .md는 코드다(테스트가 읽는 fixture일 수 있다)', () => {
+  for (const f of ['testdata/README.md', 'crates/core/README.md', 'app/README.md', 'scripts/x.md', '.github/x.md']) {
+    assert.equal(classify([f]).code, true, f);
+  }
+});
+
+test('classify: 코드·설정·모르는 경로는 code=true', () => {
+  for (const f of [
+    'crates/core/src/lib.rs',
+    'app/src/App.svelte',
+    'Cargo.lock',
+    '.github/workflows/ci.yml',
+    'scripts/ci/run.mjs',
+    'testdata/hls/media.m3u8',
+    'rust-toolchain.toml',
+    'deny.toml',
+    '.gitattributes',
+    'something-new',
+  ]) {
+    assert.equal(classify(['docs/x.md', f]).code, true, f);
+  }
+});
+
+test('classify: 목록이 없거나 비면 전부 실행(fail-safe)', () => {
+  assert.deepEqual(classify(null), { code: true, docs_only: false });
+  assert.deepEqual(classify([]), { code: true, docs_only: false });
+});
+
+test('classify: 릴리스 경로를 따로 가르지 않는다', () => {
+  // 릴리스 경로만 따로 가르는 출력은 없다(쓰는 작업이 없으면 죽은 출력이다, 리뷰 G6)
+  assert.equal('release' in classify(['xtask/src/main.rs']), false);
+});
+
+const ok = { result: 'success', outputs: {} };
+const changes = (code, result = 'success') => ({ result, outputs: { code: String(code) } });
+const PR = 'pull_request';
+
+test('ci-ok: 모두 success면 통과', () => {
+  assert.equal(decideCiOk({ changes: changes(true), lint: ok, rust: ok }, PR).ok, true);
+});
+
+test('ci-ok: failure·cancelled는 실패', () => {
+  assert.equal(decideCiOk({ changes: changes(true), lint: ok, rust: { result: 'failure' } }, PR).ok, false);
+  assert.equal(decideCiOk({ changes: changes(true), lint: { result: 'cancelled' } }, PR).ok, false);
+});
+
+test('ci-ok: skipped는 code=false일 때 무거운 작업만 허용', () => {
+  for (const job of CODE_GATED_JOBS) {
+    assert.equal(decideCiOk({ changes: changes(false), lint: ok, [job]: { result: 'skipped' } }, PR).ok, true, job);
+    assert.equal(decideCiOk({ changes: changes(true), lint: ok, [job]: { result: 'skipped' } }, PR).ok, false, job);
+  }
+  assert.equal(decideCiOk({ changes: changes(false), lint: { result: 'skipped' } }, PR).ok, false);
+  assert.equal(decideCiOk({ changes: changes(false), 'scripts-windows': { result: 'skipped' } }, PR).ok, false);
+});
+
+test('ci-ok: push·dispatch는 skipped를 허용하지 않는다', () => {
+  for (const ev of ['push', 'workflow_dispatch', 'schedule']) {
+    assert.equal(decideCiOk({ changes: changes(false), lint: ok, rust: { result: 'skipped' } }, ev).ok, false, ev);
+    assert.equal(decideCiOk({ changes: changes(true), lint: ok, rust: ok }, ev).ok, true, ev);
+  }
+  assert.equal(decideCiOk({ changes: changes(true), lint: ok }, undefined).ok, false);
+});
+
+test('ci-ok: MASTER_ONLY_JOBS의 skipped는 pull_request에서만 허용', () => {
+  for (const job of MASTER_ONLY_JOBS) {
+    assert.equal(decideCiOk({ changes: changes(true), lint: ok, [job]: { result: 'skipped' } }, PR).ok, true, job);
+    assert.equal(decideCiOk({ changes: changes(false), lint: ok, [job]: { result: 'skipped' } }, PR).ok, true, job);
+    for (const ev of ['push', 'workflow_dispatch']) {
+      assert.equal(decideCiOk({ changes: changes(true), lint: ok, [job]: { result: 'skipped' } }, ev).ok, false, `${job} ${ev}`);
+    }
+  }
+  assert.equal(decideCiOk({ changes: changes(true), lint: ok, bundle: { result: 'failure' } }, PR).ok, false);
+  // 겹치지 않는다(같은 작업이 두 규칙에 걸리면 판정이 모호하다)
+  assert.deepEqual(CODE_GATED_JOBS.filter((j) => MASTER_ONLY_JOBS.includes(j)), []);
+});
+
+test('ci-ok: force_fail이면 모두 success여도 실패', () => {
+  assert.equal(decideCiOk({ changes: changes(true), lint: ok }, 'workflow_dispatch', CODE_GATED_JOBS, MASTER_ONLY_JOBS, { force: true }).ok, false);
+  assert.equal(forceFail({ CI_FORCE_FAIL: 'true' }), true);
+  assert.equal(forceFail({ CI_FORCE_FAIL: 'false' }), false);
+  assert.equal(forceFail({ CI_FORCE_FAIL: '' }), false);
+});
+
+test('ci-ok: changes가 실패·skipped·없으면 실패', () => {
+  assert.equal(decideCiOk({ changes: changes(false, 'failure'), rust: { result: 'skipped' } }, PR).ok, false);
+  assert.equal(decideCiOk({ changes: { result: 'skipped' } }, PR).ok, false);
+  assert.equal(decideCiOk({ lint: ok }, PR).ok, false);
+});
+
+test('firstSemver', () => {
+  assert.equal(firstSemver('typos-cli 1.50.3'), '1.50.3');
+  assert.equal(firstSemver('1.7.12\ninstalled by go'), '1.7.12');
+  assert.equal(firstSemver('none'), null);
+});
+
+test('gate 표: 모든 단계가 명령을 갖고 scripts-test가 테스트 파일을 찾는다', () => {
+  for (const [name, g] of Object.entries(GATES)) {
+    assert.ok(g.steps.length > 0, name);
+    for (const s of g.steps) assert.ok(Array.isArray(s.cmd) && s.cmd.length > 0, name);
+  }
+  assert.ok(testFiles().includes('scripts/ci/run.test.mjs'));
+  assert.ok(testFiles().includes('scripts/ci/public-scan.test.mjs'));
+  assert.match(msrv(), /^\d+\.\d+(\.\d+)?$/);
+});
+
+// 각 gate가 검사를 실제로 켜는 인자를 갖는지(빼면 gate가 조용히 통과한다). selftest가 씨앗으로 동작을 보고,
+// 여기서는 씨앗으로 드러나지 않는 플래그를 본다.
+test('gate 표: 검사를 켜는 플래그', () => {
+  const cmds = (g) => GATES[g].steps.map((s) => s.cmd.join(' '));
+  assert.deepEqual(cmds('fmt'), ['cargo fmt --all --check']);
+  assert.deepEqual(cmds('workflows'), [
+    'node scripts/ci/pin-check.mjs',
+    'actionlint',
+    'zizmor --offline --pedantic --config zizmor.yml .',
+  ]);
+  assert.deepEqual(cmds('scan'), ['node scripts/ci/public-scan.mjs']);
+  assert.deepEqual(cmds('scan-staged'), ['node scripts/ci/public-scan.mjs --staged']);
+  assert.deepEqual(cmds('scan-history'), ['node scripts/ci/public-scan.mjs --all-history']);
+  assert.equal(GATES['scan-history'].ciOnly, true);
+  assert.deepEqual(cmds('fixtures'), ['node scripts/fixtures/gen-fixtures.mjs --check']);
+  for (const g of ['rust', 'tauri']) {
+    for (const c of cmds(g).filter((c) => c.startsWith('cargo clippy'))) assert.ok(c.endsWith('--locked -- -D warnings'), c);
+    assert.ok(cmds(g).some((c) => c.startsWith('cargo test') && c.endsWith('--locked')), g);
+  }
+  assert.ok(cmds('frontend').includes('pnpm install --frozen-lockfile'));
+  assert.deepEqual(cmds('deny'), ['cargo deny --locked check bans licenses sources']);
+  assert.deepEqual(cmds('scan-msg'), ['node scripts/ci/public-scan.mjs --message-file', 'node scripts/ci/commit-msg.mjs']);
+  assert.deepEqual(cmds('scan-range'), ['node scripts/ci/public-scan.mjs --rev-range']);
+  assert.deepEqual(cmds('push-guard'), ['node scripts/ci/push-guard.mjs']);
+  assert.equal(GATES['push-guard'].stdin, true);
+  assert.deepEqual(cmds('subjects'), ['node scripts/ci/commit-msg.mjs --stored']);
+  for (const g of ['scan-msg', 'scan-range', 'push-guard', 'versions', 'subjects']) assert.equal(GATES[g].passArgs, true, g);
+  assert.deepEqual(cmds('smoke-bin'), ['node scripts/ci/smoke.mjs bin']);
+  assert.deepEqual(cmds('smoke-install'), ['node scripts/ci/smoke.mjs install']);
+  assert.ok(cmds('bundle')[1].startsWith('pnpm tauri build --ci --no-sign --bundles '), cmds('bundle')[1]);
+  assert.equal(cmds('bundle')[2], 'node scripts/ci/bundle.mjs collect');
+  assert.deepEqual(cmds('glibc-floor'), ['node scripts/ci/artifact-check.mjs glibc']);
+  assert.deepEqual(cmds('release-hygiene'), ['node scripts/ci/artifact-check.mjs hygiene']);
+  assert.deepEqual(cmds('size'), ['node scripts/ci/measure.mjs size', 'node scripts/ci/ratchet.mjs check size']);
+  assert.deepEqual(cmds('coverage').slice(1), ['node scripts/ci/measure.mjs coverage', 'node scripts/ci/ratchet.mjs check coverage']);
+  assert.deepEqual(cmds('test-count').slice(1), ['node scripts/ci/measure.mjs tests', 'node scripts/ci/ratchet.mjs check tests']);
+  assert.deepEqual(cmds('ratchet-log'), ['node scripts/ci/ratchet.mjs lint', 'node scripts/ci/ratchet.mjs log-check']);
+  assert.deepEqual(cmds('test-count-app'), ['node scripts/ci/measure.mjs tests-app', 'node scripts/ci/ratchet.mjs check tests']);
+  // 로컬과 CI가 같은 표를 쓰므로 CI 전용은 scan-history 하나뿐이다
+  assert.deepEqual(Object.keys(GATES).filter((g) => GATES[g].ciOnly), ['scan-history']);
+});
+
+test('훅 표: 끌 수 없는 gate와 조건부 gate', () => {
+  assert.deepEqual(HOOKS['pre-commit'].always, ['scan-staged']);
+  assert.deepEqual(HOOKS['commit-msg'].always, ['scan-msg']);
+  assert.deepEqual(HOOKS['pre-push'].always, ['push-guard', 'scan-range']);
+  assert.equal(HOOKS['pre-commit'].fastSkip, undefined, 'CHZZK_HOOK_FAST는 pre-push의 조건부 gate만 끈다');
+  for (const [g, pairs] of Object.entries(HOOK_ONLY)) {
+    assert.ok(Object.hasOwn(GATES, g) && Array.isArray(pairs) && pairs.length > 0, g);
+    for (const c of pairs) assert.ok(Object.hasOwn(GATES, c), `${g} → ${c}`);
+  }
+  assert.deepEqual(HOOK_ONLY['scan-msg'], ['scan-history', 'subjects'], '메시지 누출과 제목 형식 모두 CI 짝이 있다');
+});
+
+test('hookGates: 바뀐 경로로 조건부 gate를 고른다', () => {
+  assert.deepEqual(hookGates('pre-commit', ['docs/x.md']), ['typos']);
+  assert.deepEqual(hookGates('pre-commit', ['crates/core/src/lib.rs']), ['fmt', 'typos']);
+  assert.deepEqual(hookGates('pre-commit', ['.github/workflows/ci.yml']), ['typos', 'workflows', 'parity']);
+  assert.deepEqual(hookGates('pre-commit', ['app/package.json']), ['typos', 'versions']);
+  assert.deepEqual(hookGates('pre-commit', ['crates/core/Cargo.toml']), ['typos', 'versions']);
+  assert.deepEqual(hookGates('pre-commit', ['testdata/hls/a.m3u8']), ['typos', 'fixtures']);
+  assert.deepEqual(hookGates('pre-commit', []), []);
+  assert.deepEqual(hookGates('pre-push', ['docs/x.md']), []);
+  assert.deepEqual(hookGates('pre-push', ['crates/core/src/lib.rs']), ['rust', 'fuzz-lock']);
+  assert.deepEqual(hookGates('pre-push', ['app/src/App.svelte']), ['frontend']);
+  assert.deepEqual(hookGates('pre-push', ['app/src-tauri/src/lib.rs']), []);
+  // run.mjs는 release.mjs의 import 그래프에 있다(release-selftest도 돈다)
+  assert.deepEqual(hookGates('pre-push', ['scripts/ci/run.mjs']), ['release-selftest', 'scripts-test']);
+  assert.deepEqual(hookGates('pre-push', ['scripts/ci/issue.mjs']), ['scripts-test']);
+  assert.deepEqual(hookGates('pre-push', ['Cargo.lock']), ['rust', 'release-selftest', 'deny', 'fuzz-lock']);
+  assert.deepEqual(hookGates('pre-push', ['xtask/src/s3.rs']), ['rust', 'release-selftest']);
+  assert.deepEqual(hookGates('pre-push', ['scripts/ci/release.mjs']), ['release-selftest', 'scripts-test']);
+  assert.deepEqual(hookGates('pre-commit', ['release/updater.pub']), ['typos', 'pubkey']);
+  assert.deepEqual(hookGates('pre-commit', ['release/tauri.release.json']), ['typos', 'pubkey']);
+  assert.deepEqual(hookGates('pre-commit', ['app/src-tauri/tauri.conf.json']), ['typos', 'versions', 'pubkey']);
+  assert.deepEqual(hookGates('pre-push', ['fuzz/fuzz_targets/url.rs']), ['fuzz-lock']);
+  // 훅·.gitattributes만 바뀌어도 parity(인덱스 모드 100755 등)를 본다
+  assert.deepEqual(hookGates('pre-push', ['.githooks/pre-push']), ['scripts-test']);
+  assert.deepEqual(hookGates('pre-push', ['.gitattributes']), ['scripts-test']);
+  assert.deepEqual(hookGates('pre-commit', ['.githooks/pre-push']), ['typos', 'parity']);
+  assert.deepEqual(hookGates('pre-commit', ['scripts/ci/gates.mjs']), ['typos', 'parity']);
+});
+
+test('runGate: 인자를 받지 않는 gate에 인자를 주면 2', () => {
+  assert.equal(runGate('parity', ['--x'], { ...process.env, CI: '' }), 2);
+});
+
+test('OBSERVED_JOBS(D14 관찰 작업)는 ci-ok 규칙의 작업 목록과 겹치지 않고 종류는 code·master뿐이다', async () => {
+  const { OBSERVED_JOBS } = await import('./gates.mjs');
+  for (const [id, kind] of Object.entries(OBSERVED_JOBS)) {
+    assert.ok(['code', 'master'].includes(kind), id);
+    assert.ok(!CODE_GATED_JOBS.includes(id) && !MASTER_ONLY_JOBS.includes(id), id);
+  }
+});
+
+test('gate platforms: 다른 OS에서는 로컬은 건너뛰고(0) CI는 실패(2)', async () => {
+  const { GATES: G } = await import('./gates.mjs');
+  const other = process.platform === 'linux' ? 'win32' : 'linux';
+  G['__platform_probe'] = { desc: 'test', platforms: [other], steps: [{ cmd: ['node', '-e', 'process.exit(7)'] }] };
+  try {
+    assert.equal(runGate('__platform_probe', [], { ...process.env, CI: '' }), 0);
+    assert.equal(runGate('__platform_probe', [], { ...process.env, CI: 'true' }), 2);
+    G['__platform_probe'].platforms = [process.platform];
+    assert.equal(runGate('__platform_probe', [], { ...process.env, CI: '' }), 7);
+  } finally {
+    delete G['__platform_probe'];
+  }
+});
+
+// nightly.yml pull_request paths-ignore(NON_CODE_GLOBS)와 classify(NON_CODE)가 같은 경로를 코드가 아니라고 본다.
+// GitHub 필터 glob: `*`는 `/`를 넘지 않고 `**`는 넘는다(대소문자 구별).
+test('NON_CODE_GLOBS와 NON_CODE 정규식이 같은 경로를 고른다', async () => {
+  const { NON_CODE, NON_CODE_GLOBS } = await import('./gates.mjs');
+  const globRe = (g) => new RegExp(`^${g.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*\*/g, '\u0000').replace(/\*/g, '[^/]*').replace(/\u0000/g, '.*')}$`);
+  const byGlob = (f) => NON_CODE_GLOBS.some((g) => globRe(g).test(f));
+  const byRe = (f) => NON_CODE.some((re) => re.test(f));
+  const samples = [
+    'docs/design/cicd.md', 'docs/a/b/c.png', 'README.md', 'CLAUDE.md', 'README.MD', 'x.md', '.claude/settings.json', 'LICENSE', 'LICENSE.txt', 'LICENSEX',
+    'license', 'ci/RATCHET_LOG.md', 'testdata/README.md', 'app/src/App.svelte', 'app/src-tauri/src/lib.rs', 'Cargo.lock', 'scripts/ci/e2e-native.mjs',
+    'docsx/a', '.github/workflows/nightly.yml', 'testdata/hls/x.m4s',
+  ];
+  for (const f of samples) assert.equal(byGlob(f), byRe(f), f);
+});

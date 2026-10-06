@@ -1,6 +1,6 @@
 [package]
 name = "chzzk-core"
-version = "0.1.0"
+version.workspace = true
 description = "치지직 VOD·클립 다운로드 코어 (Tauri 비의존)"
 edition.workspace = true
 rust-version.workspace = true

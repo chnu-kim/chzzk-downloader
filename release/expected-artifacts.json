@@ -1,0 +1,30 @@
+{
+  "$comment": "OS별로 만들고 모으는 번들(docs/design/cicd.md §5 build·collect, §6 설치 스모크). bundle gate가 `tauri build --bundles <bundles>`로 만들고 scripts/ci/bundle.mjs collect가 target/release/bundle/<dir>/에서 ext로 끝나는 파일이 정확히 하나인지, bundle/ 아래에 dirs·extraDirs 밖의 폴더가 없는지 본 뒤 chzzk-downloader_<버전>_<name>으로 모은다. smoke는 scripts/ci/smoke.mjs의 설치 방법, size는 ci/ratchet.json size.bundle의 키(null이면 재지 않는다)다. arch는 이 번들을 만들 러너의 process.arch다(다르면 collect가 실패한다). release: true는 릴리스 빌드(release/tauri.release.json의 createUpdaterArtifacts)에서만 생기는 산출물이다(collect --release만 찾는다). updater는 그 산출물을 가리키는 Tauri updater 플랫폼 키다: collect --release는 updater 산출물마다 Tauri가 만든 <파일>.sig가 있고 그 밖에는 .sig가 없는지 보며, xtask가 서명·매니페스트(release/latest.schema.json의 필수 키와 같아야 한다)에 쓴다.",
+  "linux": {
+    "arch": "x64",
+    "bundles": ["appimage", "deb"],
+    "extraDirs": [],
+    "artifacts": [
+      { "kind": "appimage", "dir": "appimage", "ext": ".AppImage", "name": "linux-x86_64.AppImage", "smoke": "appimage", "size": "linux-AppImage", "updater": ["linux-x86_64"] },
+      { "kind": "deb", "dir": "deb", "ext": ".deb", "name": "linux-x86_64.deb", "smoke": "deb", "size": "linux-deb", "updater": ["linux-x86_64-deb"] }
+    ]
+  },
+  "darwin": {
+    "arch": "arm64",
+    "bundles": ["app", "dmg"],
+    "extraDirs": ["macos", "share"],
+    "artifacts": [
+      { "kind": "dmg", "dir": "dmg", "ext": ".dmg", "name": "darwin-aarch64.dmg", "smoke": "dmg", "size": "darwin-dmg" },
+      { "kind": "app-tar", "dir": "macos", "ext": ".app.tar.gz", "name": "darwin-aarch64.app.tar.gz", "smoke": "apptar", "size": null, "release": true, "updater": ["darwin-aarch64"] }
+    ]
+  },
+  "windows": {
+    "arch": "x64",
+    "bundles": ["nsis", "msi"],
+    "extraDirs": [],
+    "artifacts": [
+      { "kind": "nsis", "dir": "nsis", "ext": "-setup.exe", "name": "windows-x86_64-setup.exe", "smoke": "nsis", "size": "windows-setup", "updater": ["windows-x86_64", "windows-x86_64-nsis"] },
+      { "kind": "msi", "dir": "msi", "ext": ".msi", "name": "windows-x86_64.msi", "smoke": "msi", "size": "windows-msi", "updater": ["windows-x86_64-msi"] }
+    ]
+  }
+}

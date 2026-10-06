@@ -1,8 +1,12 @@
 [workspace]
 resolver = "3"
-members = ["crates/core", "crates/shell", "app/src-tauri"]
+members = ["crates/core", "crates/shell", "app/src-tauri", "xtask"]
+# fuzz/는 자기 [workspace]와 Cargo.lock을 가진 별도 워크스페이스다(고정 nightly로만 빌드, gate `fuzz`)
+exclude = ["fuzz"]
 
 [workspace.package]
+# 앱 버전의 단일 원천(Rust 쪽). app/src-tauri/tauri.conf.json·app/package.json과 같아야 한다(scripts/ci/version-check.mjs)
+version = "0.1.0"
 edition = "2024"
 rust-version = "1.90"
 publish = false

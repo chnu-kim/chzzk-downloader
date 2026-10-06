@@ -3,7 +3,7 @@
 
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { test } from 'node:test';
@@ -11,14 +11,19 @@ import { fileURLToPath } from 'node:url';
 
 import {
   decode,
+  DENYLIST_PATH,
   emailAllowed,
   entriesFor,
   hashBlob,
+  hashCommit,
   lineRules,
   loadDenylist,
+  parseRange,
+  PRIVATE_COMMITS_PATH,
   scanBuffer,
   scanText,
 } from './public-scan.mjs';
+import { gitEnv, gitRun } from './test-git.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '..', '..');
@@ -58,18 +63,29 @@ const EVASIONS = {
 };
 
 const git = (cwd, ...args) => {
-  const r = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.invalid', ...args], {
-    cwd,
-  });
-  assert.equal(r.status, 0, r.stderr.toString());
+  const r = gitRun(cwd, args);
+  assert.equal(r.status, 0, r.stderr);
 };
 
-const scan = (cwd, ...args) => spawnSync(process.execPath, [SCANNER, ...args], { cwd });
+const scan = (cwd, ...args) => spawnSync(process.execPath, [SCANNER, ...args], { cwd, env: gitEnv() });
 
 test('규칙마다 심은 표본을 잡는다', () => {
   for (const [rule, line] of Object.entries(PLANTED)) {
     assert.ok(lineRules(line).includes(rule), `${rule}: ${lineRules(line)}`);
   }
+});
+
+test('signing-key: Tauri updater 개인 키(base64 텍스트·풀어 쓴 텍스트)는 잡고 공개 키·서명은 통과한다', () => {
+  // 이 파일도 scan 대상이라 머리줄을 글자 그대로 두지 않는다
+  const head = ['untrusted comment:', 'rsign', 'encrypted', 'secret', 'key'].join(' ');
+  const raw = `${head}\n${'RWRT' + 'Y0I' + 'y'}${'A'.repeat(140)}\n`;
+  const rules = (t) => [...new Set(scanText(t, new Set()).map((f) => f.rule))];
+  assert.deepEqual(rules(raw), ['signing-key']);
+  assert.deepEqual(rules(Buffer.from(raw).toString('base64')), ['signing-key']);
+  assert.deepEqual(rules(`TAURI_SIGNING_PRIVATE_KEY=${Buffer.from(raw).toString('base64')}`), ['signing-key']);
+  const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+  assert.deepEqual(rules(readFileSync(join(root, 'release/updater.pub'), 'utf8')), []);
+  assert.deepEqual(rules(readFileSync(join(root, 'xtask/testdata/tauri-cli/sample.bin.sig'), 'utf8')), []);
 });
 
 test('자리표시자와 가짜 ID는 통과한다', () => {
@@ -165,10 +181,17 @@ test('작성자 이메일 허용 목록', () => {
   }
 });
 
-test('저장소 denylist는 blob 해시만 담는다(대입으로 되돌릴 수 있는 항목은 비공개 목록에)', () => {
-  const deny = loadDenylist();
+test('저장소 denylist는 blob·commit 해시만 담는다(대입으로 되돌릴 수 있는 항목은 비공개 목록에)', () => {
+  const deny = loadDenylist([DENYLIST_PATH]);
   assert.ok(deny.size > 0);
   for (const e of deny) assert.match(e, /^blob:[0-9a-f]{64}$/);
+  // 커밋 지문 파일: commit: 줄만, 정렬·중복 없음, 주석 없음(--hash-commit 출력과 바이트 동일해야 다시 만들 수 있다)
+  const raw = readFileSync(PRIVATE_COMMITS_PATH, 'utf8');
+  const lines = raw.split('\n').filter(Boolean);
+  assert.ok(lines.length > 0);
+  for (const l of lines) assert.match(l, /^commit:[0-9a-f]{64}$/);
+  assert.deepEqual(lines, [...new Set(lines)].sort());
+  assert.equal(raw, lines.join('\n') + '\n');
 });
 
 test('지금 저장소의 추적 파일은 깨끗하다', () => {
@@ -236,18 +259,18 @@ test('--all-history: 작성자 이메일과 ref 이름, --denylist로 넘긴 비
   assert.match(withDeny.stdout.toString(), /refs\/heads\/clip-Zq7Kp2Lm9X \(ref 이름\) {2}\[denylist\]/);
   const viaEnv = spawnSync(process.execPath, [SCANNER, '--all-history'], {
     cwd: dir,
-    env: { ...process.env, PUBLIC_SCAN_DENYLIST: deny },
+    env: gitEnv({ extra: { PUBLIC_SCAN_DENYLIST: deny } }),
   });
   assert.equal(viaEnv.status, 1);
   assert.equal(scan(dir, '--denylist', join(dir, 'nope.txt')).status, 2);
   git(dir, 'branch', '-D', 'clip-Zq7Kp2Lm9X');
 
   // 공개하기로 한 작성자 이메일은 통과한다
-  const kept = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=chanuuuu@naver.com', 'commit', '-q', '--allow-empty', '-m', 'k'], { cwd: dir });
+  const kept = gitRun(dir, ['commit', '-q', '--allow-empty', '-m', 'k'], { email: 'chanuuuu@naver.com' });
   assert.equal(kept.status, 0);
   assert.equal(scan(dir, '--all-history').status, 0);
 
-  const r = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=person@example.com', 'commit', '-q', '--allow-empty', '-m', 'x'], { cwd: dir });
+  const r = gitRun(dir, ['commit', '-q', '--allow-empty', '-m', 'x'], { email: 'person@example.com' });
   assert.equal(r.status, 0);
   const hist = scan(dir, '--all-history');
   assert.equal(hist.status, 1);
@@ -273,4 +296,142 @@ test('--staged는 인덱스 내용을 본다(작업 트리가 아니라)', (t) =
 
 test('알 수 없는 인자는 2', () => {
   assert.equal(scan(ROOT, '--nope').status, 2);
+});
+
+test('parseRange: A..B와 B만, 옵션처럼 보이는 값은 거부', () => {
+  assert.deepEqual(parseRange('origin/master..HEAD'), ['HEAD', '^origin/master']);
+  assert.deepEqual(parseRange('abc123'), ['abc123']);
+  for (const bad of ['--all', 'a..--all', '..b', 'a..', 'a...b', 'a..b..c', '', 'a b']) assert.equal(parseRange(bad), null, bad);
+});
+
+test('--rev-range: 범위 안의 blob·경로·메시지·작성자·태그만 본다', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'public-scan-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  git(dir, 'init', '-q');
+  writeFileSync(join(dir, 'leak.txt'), PLANTED.hmac + '\n');
+  git(dir, 'add', '.');
+  git(dir, 'commit', '-qm', 'old');
+  git(dir, 'rm', '-q', 'leak.txt');
+  git(dir, 'commit', '-qm', 'remove');
+  git(dir, 'tag', 'base');
+  writeFileSync(join(dir, 'a.txt'), 'clean\n');
+  git(dir, 'add', '.');
+  git(dir, 'commit', '-qm', 'new');
+  // 범위 밖(base 이전)의 누출은 보지 않고, 전체 조상은 본다
+  assert.equal(scan(dir, '--rev-range', 'base..HEAD').status, 0);
+  assert.equal(scan(dir, '--rev-range', 'HEAD').status, 1);
+
+  // 범위 안의 blob
+  writeFileSync(join(dir, 'b.txt'), PLANTED['signed-token'] + '\n');
+  git(dir, 'add', '.');
+  git(dir, 'commit', '-qm', 'b');
+  const blob = scan(dir, '--rev-range', 'base..HEAD');
+  assert.equal(blob.status, 1);
+  assert.match(blob.stdout.toString(), /b\.txt@[0-9a-f]{12}:1 {2}\[signed-token\]/);
+  git(dir, 'rm', '-q', 'b.txt');
+  git(dir, 'commit', '-qm', 'rm b');
+  assert.equal(scan(dir, '--rev-range', 'base..HEAD').status, 1, '지운 뒤에도 범위 안 이력에 남는다');
+  git(dir, 'tag', 'base2');
+
+  // 메시지와 작성자
+  git(dir, 'commit', '-q', '--allow-empty', '-m', 'fix ' + PLANTED['hex-id']);
+  assert.match(scan(dir, '--rev-range', 'base2..HEAD').stdout.toString(), /메시지:1 {2}\[hex-id\]/);
+  git(dir, 'tag', 'base3');
+  assert.equal(gitRun(dir, ['commit', '-q', '--allow-empty', '-m', 'x'], { email: 'person@example.com' }).status, 0);
+  const who = scan(dir, '--rev-range', 'base3..HEAD');
+  assert.equal(who.status, 1);
+  assert.ok(!who.stdout.toString().includes('person@'));
+  git(dir, 'tag', 'base4');
+
+  // annotated 태그 객체(태그 push: local_sha가 태그 객체)
+  git(dir, 'commit', '-q', '--allow-empty', '-m', 'y');
+  git(dir, 'tag', '-a', 'v9.9.9', '-m', 'release ' + PLANTED['keyed-hex']);
+  const tagSha = gitRun(dir, ['rev-parse', 'v9.9.9']).stdout.trim();
+  const tag = scan(dir, '--rev-range', `base4..${tagSha}`);
+  assert.equal(tag.status, 1, tag.stderr.toString());
+  assert.match(tag.stdout.toString(), /태그 객체 [0-9a-f]{12}:1 {2}\[keyed-hex\]/);
+  assert.equal(scan(dir, '--rev-range', 'base4..v9.9.9^{commit}').status, 0);
+});
+
+test('--rev-range: --not-remote는 원격 추적 ref에서 닿는 것을 빼고, --ref는 원격 ref 이름을 본다', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'public-scan-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  git(dir, 'init', '-q');
+  writeFileSync(join(dir, 'leak.txt'), PLANTED.hmac + '\n');
+  git(dir, 'add', '.');
+  git(dir, 'commit', '-qm', 'already public');
+  const pub = gitRun(dir, ['rev-parse', 'HEAD']).stdout.trim();
+  git(dir, 'update-ref', 'refs/remotes/pub/master', pub);
+  git(dir, 'commit', '-q', '--allow-empty', '-m', 'new');
+  assert.equal(scan(dir, '--rev-range', 'HEAD').status, 1);
+  assert.equal(scan(dir, '--rev-range', 'HEAD', '--not-remote', 'pub').status, 0);
+  // 아무것도 새로 보내지 않는 push(빈 범위)는 깨끗하다
+  assert.equal(scan(dir, '--rev-range', pub, '--not-remote', 'pub').status, 0);
+
+  const deny = join(dir, '..', `range-deny-${process.pid}.txt`);
+  t.after(() => rmSync(deny, { force: true }));
+  writeFileSync(deny, entriesFor('Zq7Kp2Lm9X').join('\n') + '\n');
+  const named = scan(dir, '--rev-range', 'HEAD', '--not-remote', 'pub', '--ref', 'refs/heads/clip-Zq7Kp2Lm9X', '--denylist', deny);
+  assert.equal(named.status, 1);
+  assert.match(named.stdout.toString(), /refs\/heads\/clip-Zq7Kp2Lm9X \(ref 이름\) {2}\[denylist\]/);
+});
+
+test('--rev-range·--message-file 사용법 오류는 2', () => {
+  assert.equal(scan(ROOT, '--rev-range').status, 2);
+  assert.equal(scan(ROOT, '--rev-range', '--all').status, 2);
+  assert.equal(scan(ROOT, '--rev-range', 'HEAD', '--staged').status, 2);
+  assert.equal(scan(ROOT, '--not-remote', 'origin').status, 2);
+  assert.equal(scan(ROOT, '--message-file', join(ROOT, 'no-such-file')).status, 2);
+});
+
+test('--message-file: 원문 전체를 본다(# 줄·scissors 아래도 -m·--cleanup=verbatim이면 이력에 남는다)', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'public-scan-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const f = join(dir, 'COMMIT_EDITMSG');
+  writeFileSync(f, 'fix: 고침\n\n본문\n');
+  assert.equal(scan(dir, '--message-file', f).status, 0);
+  writeFileSync(f, 'fix: 고침\n\n' + PLANTED.hmac + '\n');
+  const r = scan(dir, '--message-file', f);
+  assert.equal(r.status, 1);
+  assert.match(r.stdout.toString(), /메시지:3 {2}\[hmac\]/);
+  // # 로 시작하는 줄
+  writeFileSync(f, 'fix: 고침\n\n# ' + PLANTED.hmac + '\n');
+  assert.equal(scan(dir, '--message-file', f).status, 1);
+  // scissors 줄 아래
+  writeFileSync(f, 'fix: 고침\n# ------------------------ >8 ------------------------\n' + PLANTED['hex-id'] + '\n');
+  assert.equal(scan(dir, '--message-file', f).status, 1);
+  // denylist 항목이 # 줄에 있어도 잡는다
+  const deny = join(dir, 'deny.txt');
+  writeFileSync(deny, entriesFor('zebracanyon').join('\n') + '\n');
+  writeFileSync(f, 'fix: x\n# zebracanyon\n');
+  const d = scan(dir, '--message-file', f, '--denylist', deny);
+  assert.equal(d.status, 1);
+  assert.match(d.stdout.toString(), /\[denylist\]/);
+});
+
+test('commit: 지문 — 비공개 저장소에만 있는 커밋을 이력·범위에서 잡는다', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'public-scan-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  git(dir, 'init', '-q');
+  writeFileSync(join(dir, 'a.txt'), 'a\n');
+  git(dir, 'add', 'a.txt');
+  git(dir, 'commit', '-qm', 'pub');
+  const pub = gitRun(dir, ['rev-parse', 'HEAD']).stdout.trim();
+  git(dir, 'commit', '-q', '--allow-empty', '-m', 'priv');
+  const priv = gitRun(dir, ['rev-parse', 'HEAD']).stdout.trim();
+  const deny = join(dir, '..', `commit-deny-${process.pid}-${Date.now()}.txt`);
+  t.after(() => rmSync(deny, { force: true }));
+  // --hash-commit은 정렬·중복 제거한 commit: 줄을 낸다
+  const h = spawnSync(process.execPath, [SCANNER, '--hash-commit'], { input: `${priv}\n${priv}\n` });
+  assert.equal(h.status, 0);
+  assert.equal(h.stdout.toString(), hashCommit(priv) + '\n');
+  assert.equal(spawnSync(process.execPath, [SCANNER, '--hash-commit'], { input: 'not-a-sha\n' }).status, 2);
+  writeFileSync(deny, h.stdout);
+  const hist = scan(dir, '--all-history', '--denylist', deny);
+  assert.equal(hist.status, 1);
+  assert.match(hist.stdout.toString(), new RegExp(`커밋 ${priv.slice(0, 12)} {2}\\[private-commit\\]`));
+  assert.equal(scan(dir, '--rev-range', pub, '--denylist', deny).status, 0);
+  assert.equal(scan(dir, '--rev-range', priv, '--denylist', deny).status, 1);
+  // commit: 항목만 있으면 글자 n-gram을 켜지 않는다(깨끗한 트리는 그대로 깨끗하다)
+  assert.equal(scan(dir, '--denylist', deny).status, 0);
 });

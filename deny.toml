@@ -1,0 +1,45 @@
+# cargo deny 설정(docs/design/cicd.md §7). PR의 supply 작업은 bans·licenses·sources만 본다.
+# advisories는 시간에 따라 바뀌므로 nightly에서 본다(G5).
+
+[graph]
+all-features = false
+
+[advisories]
+# nightly 전용(gate `advisories`). 값은 기본을 따른다. 무시는 id마다 이유를 적고, 그 이유가 사라지면 지운다.
+ignore = [
+  # proc-macro-error(unmaintained): Linux GTK3 스택(tauri → wry·tao·muda → gtk 0.18 → glib-macros)의 빌드 시점 proc-macro다.
+  # 취약점이 아니라 관리 중단 알림이고 우리가 바꿀 수 없는 전이 의존성이다. tauri가 GTK4·glib 0.19+로 옮기면 지운다.
+  { id = "RUSTSEC-2024-0370", reason = "unmaintained proc-macro, tauri GTK3 스택의 전이 의존성(바꿀 수 없음)" },
+]
+
+[licenses]
+# 의존성 트리에서 실제로 쓰는 라이선스만 허용한다. 새 라이선스는 이 목록에 이유와 함께 더한다.
+allow = [
+  "MIT",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-3-Clause",
+  "BSL-1.0",
+  "CDLA-Permissive-2.0",
+  "ISC",
+  "MPL-2.0",
+  "Unicode-3.0",
+  "Zlib",
+]
+confidence-threshold = 0.93
+
+# 워크스페이스 crate(publish = false)는 라이선스 필드가 없다
+[licenses.private]
+ignore = true
+
+[bans]
+multiple-versions = "allow"
+wildcards = "deny"
+# 워크스페이스 안 path 의존성은 버전이 없지만 모두 publish = false다
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

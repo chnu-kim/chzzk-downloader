@@ -95,12 +95,20 @@ cargo test --workspace --locked
 
 2026-10-05에 `feat/tauri-app`(머지 전 master와 같은 내용)의 클론으로 위 절차를 돌려 `same-tree`, 허용 목록 밖 이메일 없음, 옛 denylist 해시 없음, `--all-history --denylist` 종료 코드 0을 확인했다. 비공개 파일을 고쳤거나 master에 커밋이 더 쌓였으면 다시 돌린다.
 
-통과하면 새 공개 저장소를 원격으로 더해 push한다(`git remote add origin <공개 저장소>`, `git push origin master`). 공개 저장소에서는 CI `public-scan.yml`이 매 push·PR마다 현재 트리와 이력 전체를 검사한다(비공개 저장소에서는 이력 검사를 건너뛴다).
+통과하면 새 공개 저장소를 원격으로 더해 push한다(`git remote add origin <공개 저장소>`, `git push origin master`). 공개 저장소에서는 CI `ci.yml`의 `lint` 작업이 매 push·PR마다 현재 트리(`run.mjs scan`)와 이력 전체(`run.mjs scan-history`, CI의 새 클론에서만)를 검사한다(2026-10-05 이전에는 `public-scan.yml`이었다).
 
 ## 이후 규칙
 
 - 검사기는 `node scripts/ci/public-scan.mjs`로 부른다. POSIX는 `scripts/ci/public-scan.sh`, Windows PowerShell은 `scripts/ci/public-scan.ps1` 래퍼도 쓸 수 있다.
-- 커밋 전 검사(선택): `git config core.hooksPath .githooks`로 `.githooks/pre-commit`을 켠다. 작업 트리가 아니라 **인덱스**(커밋될 내용)를 `--staged`로 본다. 비공개 denylist도 쓰려면 `PUBLIC_SCAN_DENYLIST=<파일>`을 환경에 둔다.
+- **비공개 저장소(`private` 원격, `chzzk-downloader-private`)에는 더 이상 push하지 않는다.** 보관용이다. 로컬 클론에 남은 `refs/remotes/private/*`는 지우지 않는다: pre-push 가드가 이것으로 비공개 커밋을 알아본다(아래).
+- 로컬 훅: `node scripts/ci/run.mjs install-hooks`(= `git config core.hooksPath .githooks`)로 켠다. 세 훅 모두 `node scripts/ci/run.mjs hook <이름> "$@"`만 부르고, 무엇을 돌리는지는 `scripts/ci/gates.mjs`의 `HOOKS` 표가 정한다(CI와 같은 gate). `--no-verify`로 건너뛸 수 있으므로 최종 판정은 CI다.
+  - `pre-commit`: **인덱스**(커밋될 내용)를 본다(`scan-staged` = `public-scan.mjs --staged`). staged 경로에 따라 `fmt`·`typos`·`workflows`·`versions`·`fixtures`·`parity`도 돈다. 작업 트리가 인덱스와 다르면(일부만 올림, 새 파일) 이 gate들은 인덱스를 꺼낸 임시 worktree에서 돈다.
+  - `commit-msg`: 공개 이력에 남는 메시지를 본다(`scan-msg` = `public-scan.mjs --message-file`(**원문 전체**: `-m`·`--cleanup=verbatim`이면 `#` 줄과 scissors 아래도 이력에 남는다) + 제목 형식 `type(scope)?: 요약`(첫 비주석 줄)). git이 만드는 제목(`Merge …`, `Revert "…"`, `fixup!`·`squash!`·`amend!`)은 통과한다. CI의 `subjects`가 저장된 제목(첫 줄 그대로)을 다시 본다. 누출을 지우는 커밋은 `commit -v` 없이 만든다(scissors 아래 diff의 지운 줄이 걸린다).
+  - `pre-push`: ① `push-guard`(아래, 끌 수 없다) ② `scan-range` = `public-scan.mjs --rev-range <보낼 sha> --not-remote <원격> --ref <원격 ref>`(공개 원격 추적 ref에서 닿지 않는 새 커밋의 blob·경로·메시지·작성자·태그, 그리고 원격 ref 이름. 끌 수 없다) ③ push 범위가 건드린 경로에 따라 `rust`·`frontend`·`scripts-test`·`deny`. `CHZZK_HOOK_FAST=1`이면 ③만 건너뛴다. ③은 push할 커밋에서 돈다(HEAD가 아니거나 작업 트리가 더러우면 그 커밋의 임시 worktree).
+  - 비공개 denylist도 쓰려면 `PUBLIC_SCAN_DENYLIST=<파일>`을 환경에 둔다(세 훅의 검사기 모두 읽는다).
+- **pre-push 가드(`scripts/ci/push-guard.mjs`)**: 공개 원격으로 보내는 범위 `N = rev-list <보낼 sha> --not --remotes=<원격>`과 비공개에만 있는 커밋 `P = (rev-list --remotes=private --not --remotes=origin) ∪ (커밋된 지문 scripts/ci/private-commits.txt)`가 겹치면 거부하고 겹친 SHA(최대 20개)와 해결 방법(`git rebase --onto origin/master …` 또는 cherry-pick)을 찍는다. 두 저장소는 루트 커밋이 같으므로 "루트가 다르다"로는 구별할 수 없어 집합 차를 쓴다. 그 밖에: `refs/remotes/private/*`를 원본으로 한 push 거부, `refs/heads/*`·`refs/tags/v*` 밖의 원격 ref 거부, 태그는 커밋으로 벗겨 같은 규칙, 삭제와 비공개 원격으로의 push는 통과. `private` 원격이 있는데 그 추적 ref가 없으면 경고하고 지문만으로 검사한다. 로컬 비공개 커밋 중 지문 목록에 없는 것이 있으면 거부한다(목록이 낡음). 네트워크를 쓰지 않는다(로컬 ref·객체와 지문 파일만 본다).
+- **비공개 커밋 지문(`scripts/ci/private-commits.txt`)**: 비공개에만 있는 커밋 SHA의 salt 해시(`commit:` 줄)다. SHA는 내용을 드러내지 않고 해시는 되돌릴 수 없다. 다시 만들기(바이트 동일): `git fetch origin && git fetch private && git rev-list --remotes=private --not --remotes=origin | node scripts/ci/public-scan.mjs --hash-commit > scripts/ci/private-commits.txt`.
+- 두 번째 그물은 CI다: 공개 저장소의 새 클론에는 비공개 ref가 없으므로 `scan-history`(이력 전체)가 메시지·작성자·blob과 **모든 커밋 SHA를 지문과** 맞춘다(`--no-verify`로 가드를 건너뛰어도 비공개 커밋이면 실패한다). 비공개 커밋을 rebase·cherry-pick해 새 SHA로 만든 것은 지문이 모르므로 내용 규칙·denylist만 본다. 가드 로직 자체는 `scripts-test`의 `push-guard.test.mjs`(임시 bare 저장소 둘, ubuntu·windows)가 검사한다.
 - 공개 denylist(`scripts/ci/public-denylist.txt`)에는 `blob:` 해시만 둔다. 채널 이름·영상 번호·클립 ID처럼 경우의 수가 적은 값은 salt가 공개된 해시로는 숨겨지지 않으므로, 막아야 하면 **비공개** denylist에 해시를 더하고 `--denylist <파일>`이나 `PUBLIC_SCAN_DENYLIST`로 넘긴다: `printf '%s\n' '<원문>' | node scripts/ci/public-scan.mjs --hash >> <비공개 denylist>`. 4토큰을 넘는 원문(제목)은 연속 4토큰 창마다 항목이 생긴다. 더 짧은 중간 구절을 막으려면 그 구절을 따로 넣는다.
 - `--all-history`는 작성자·커미터·태거 이메일이 허용 목록에 있는지도 본다: noreply 주소(`*@users.noreply.github.com`, `noreply@github.com`, `noreply@anthropic.com`, GitHub 봇의 `…[bot]@users.noreply.github.com` 포함)와, 공개하기로 한 작성자 이메일 `chanuuuu@naver.com`. 그 밖의 주소(회사 이메일 등)는 잡는다. 외부 기여자의 PR도 개인 이메일로 커밋했으면 공개 CI가 실패하므로, noreply 주소로 다시 커밋하게 한다.
 - fixture는 `scripts/fixtures/gen-fixtures.mjs`로만 바꾼다. 실제 응답을 저장소에 넣지 않는다. 시각·길이·비트레이트도 실제 값을 옮기지 않고 둥근 가짜 값을 쓴다.

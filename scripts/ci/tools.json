@@ -1,0 +1,75 @@
+{
+  "$comment": "CI 도구 버전의 단일 원천(docs/design/cicd.md §3.1). 워크플로의 taiki-e/install-action `tool:` 입력은 이 값과 같아야 한다(parity gate). download가 있는 도구는 `run.mjs install-tool <이름>`이 받아 sha256을 확인한다. 로컬 설치: cargo install --locked typos-cli@<v> cargo-deny@<v> cargo-machete@<v> cargo-hack@<v>, actionlint는 `node scripts/ci/run.mjs install-tool actionlint`(target/ci-tools/bin에 설치하고 PATH 줄을 출력), zizmor는 배포본.",
+  "tools": {
+    "typos": { "version": "1.50.3", "bin": "typos", "versionArgs": ["--version"] },
+    "actionlint": {
+      "version": "1.7.12",
+      "bin": "actionlint",
+      "versionArgs": ["--version"],
+      "$comment": "taiki-e/install-action이 이 버전을 모른다. run.mjs install-tool이 릴리스 파일을 받아 sha256을 확인한다(값은 릴리스의 checksums.txt)",
+      "download": {
+        "linux-x64": {
+          "url": "https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz",
+          "sha256": "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8"
+        },
+        "darwin-arm64": {
+          "url": "https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_darwin_arm64.tar.gz",
+          "sha256": "aba9ced2dee8d27fecca3dc7feb1a7f9a52caefa1eb46f3271ea66b6e0e6953f"
+        },
+        "darwin-x64": {
+          "url": "https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_darwin_amd64.tar.gz",
+          "sha256": "5b44c3bc2255115c9b69e30efc0fecdf498fdb63c5d58e17084fd5f16324c644"
+        },
+        "linux-arm64": {
+          "url": "https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_arm64.tar.gz",
+          "sha256": "325e971b6ba9bfa504672e29be93c24981eeb1c07576d730e9f7c8805afff0c6"
+        },
+        "windows-x64": {
+          "url": "https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_windows_amd64.zip",
+          "sha256": "6e7241b51e6817ea6a047693d8e6fed13b31819c9a0dd6c5a726e1592d22f6e9"
+        }
+      }
+    },
+    "zizmor": { "version": "1.30.1", "bin": "zizmor", "versionArgs": ["--version"] },
+    "cargo-deny": { "version": "0.20.2", "bin": "cargo-deny", "versionArgs": ["--version"] },
+    "cargo-machete": { "version": "0.9.2", "bin": "cargo-machete", "versionArgs": ["--version"] },
+    "cargo-hack": { "version": "0.6.45", "bin": "cargo-hack", "versionArgs": ["hack", "--version"] },
+    "cargo-llvm-cov": { "version": "0.9.1", "bin": "cargo-llvm-cov", "versionArgs": ["llvm-cov", "--version"] },
+    "tauri-driver": {
+      "version": "2.1.0",
+      "bin": "tauri-driver",
+      "cargoInstall": "tauri-driver",
+      "$comment": "e2e-native 작업(Linux·Windows)만 쓴다. taiki-e/install-action의 manifest에 없고 릴리스 바이너리도 없어 run.mjs install-tool이 cargo install --locked --version으로 깐다(crates.io, 그 crate의 Cargo.lock). --version 플래그가 없어 버전은 설치 명령이 고정한다(probe하지 않는다)"
+    },
+    "cargo-fuzz": {
+      "version": "0.13.2",
+      "bin": "cargo-fuzz",
+      "versionArgs": ["--version"],
+      "cargoInstall": "cargo-fuzz",
+      "$comment": "nightly fuzz 작업만 쓴다. taiki-e/install-action manifest에 없어 run.mjs install-tool이 cargo install --locked --version으로 깐다"
+    },
+    "cargo-mutants": {
+      "version": "27.1.0",
+      "bin": "cargo-mutants",
+      "versionArgs": ["mutants", "--version"],
+      "$comment": "weekly mutants 작업만 쓴다(taiki-e/install-action tool:)"
+    },
+    "rust-nightly": {
+      "version": "nightly-2026-10-01",
+      "toolchain": true,
+      "$comment": "fuzz gate가 rustup toolchain install로 까는 고정 nightly(실행 파일이 아니라 툴체인 이름). 바꾸면 fuzz gate가 fuzz/Cargo.lock 그대로 빌드되는지 본다"
+    },
+    "rustup-init": {
+      "version": "1.29.1",
+      "bin": "rustup-init",
+      "versionArgs": ["--version"],
+      "$comment": "bundle-linux(ubuntu:22.04 컨테이너)에만 쓴다. run.mjs install-rustup이 받아 sha256을 확인한다(값은 static.rust-lang.org의 rustup-init.sha256, 받은 파일로 다시 계산해 확인)",
+      "download": {
+        "linux-x64": {
+          "url": "https://static.rust-lang.org/rustup/archive/1.29.1/x86_64-unknown-linux-gnu/rustup-init",
+          "sha256": "dda7234360b7f578ca8b0ddcb80145646fa61a67c1720a5abc7051b35c9fcb71"
+        }
+      }
+    }
+  }
+}

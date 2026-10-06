@@ -27,5 +27,13 @@ export default defineConfig({
     include: ['src/**/*.test.ts'],
     environment: 'jsdom',
     setupFiles: ['src/test/setup.ts'],
+    // 커버리지 ratchet(docs/design/cicd.md §4.2, scripts/ci/measure.mjs). 분모가 테스트가 닿은 파일에 따라 바뀌지 않도록
+    // 대상 파일을 고정한다. 생성물(bindings)·테스트 도구·선언 파일은 뺀다.
+    coverage: {
+      provider: 'v8',
+      include: ['src/**/*.{ts,svelte}'],
+      exclude: ['src/**/*.test.ts', 'src/test/**', 'src/lib/bindings/**', 'src/**/*.d.ts'],
+      reporter: ['json-summary'],
+    },
   },
 });

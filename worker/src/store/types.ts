@@ -111,7 +111,7 @@ export type RotateResult =
   | { readonly ok: false; readonly code: "rate_limited"; readonly retryAfterSec: number };
 
 export type AllowResult = { readonly ok: true } | { readonly ok: false; readonly code: "bad_channel_id" };
-export type DisallowResult = { readonly ok: true } | { readonly ok: false; readonly code: "bad_channel_id" | "is_admin" };
+export type DisallowResult = { readonly ok: true } | { readonly ok: false; readonly code: "bad_channel_id" | "is_admin" | "not_found" };
 export type MySessionView = {
   readonly id: string;
   readonly kind: FlowKind;

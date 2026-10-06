@@ -1,4 +1,4 @@
-// 사이트 스타일시트(docs/design/worker.md §8.1 구현 중 변경 35 (마)). 소스의 문자열 하나이고 경로에 내용 해시가 들어가 불변 캐시다.
+// 사이트 스타일시트(docs/design/worker.md §8.1 구현 중 변경 38 (마)). 소스의 문자열 하나이고 경로에 내용 해시가 들어가 불변 캐시다.
 // 내용을 바꾸면 SITE_CSS_HASH도 바꾼다(test/unit/site-css.test.ts가 기대값을 알려 준다). 인라인 스타일은 CSP가 막는다.
 import type { Ctx } from "../routes";
 import { errorJson } from "./respond";

@@ -1,4 +1,4 @@
-// 표시 형식(docs/design/worker.md 구현 중 변경 35 (바)).
+// 표시 형식(docs/design/worker.md 구현 중 변경 38 (바)).
 import { describe, expect, it } from "vitest";
 import { COPY } from "../../src/http/copy";
 import { auditLabel, kindLabel, kst } from "../../src/http/format";

@@ -1,4 +1,4 @@
-// 웹 세션 읽기와 웹 POST 가드(docs/design/worker.md §4.4, 구현 중 변경 35 (나)(다)). 웹 경로는 쿠키만 본다:
+// 웹 세션 읽기와 웹 POST 가드(docs/design/worker.md §4.4, 구현 중 변경 38 (나)(다)). 웹 경로는 쿠키만 본다:
 // Authorization(앱 access·CI 토큰)은 "없음"과 같다. 신원은 로그인 채널(channelId)이다(구현 중 변경 23).
 import { clearCookie, hasCookieName, readCookie } from "../core/cookies";
 import { log } from "../core/log";
@@ -48,7 +48,7 @@ export const toHome = (clear: string | null): Response => seeOther("/", clear ==
 export type WebPost = { readonly ok: true; readonly s: WebSession; readonly form: URLSearchParams } | { readonly ok: false; readonly response: Response };
 
 /**
- * 웹 POST 검사(순서가 계약이다, 구현 중 변경 35 (나)): 부트스트랩(관리 경로만) → Origin·Sec-Fetch-Site → Content-Type → 본문 크기·UTF-8
+ * 웹 POST 검사(순서가 계약이다, 구현 중 변경 38 (나)): 부트스트랩(관리 경로만) → Origin·Sec-Fetch-Site → Content-Type → 본문 크기·UTF-8
  * → 웹 세션 → 관리자 → csrf 필드. 앞의 네 단계는 DO를 부르지 않는다.
  */
 export async function guardWebPost(req: Request, ctx: Ctx, opts: { readonly admin: boolean }): Promise<WebPost> {

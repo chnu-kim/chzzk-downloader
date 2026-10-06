@@ -1,4 +1,4 @@
-// 랜딩의 설치 파일 표(docs/design/worker.md §9.5, 구현 중 변경 35 (가)). 순수 함수: R2·시각을 만지지 않는다.
+// 랜딩의 설치 파일 표(docs/design/worker.md §9.5, 구현 중 변경 38 (가)). 순수 함수: R2·시각을 만지지 않는다.
 // 표의 행 = 소스 상수 LANDING_FILES ∩ SHA256SUMS 항목. 업데이트 전용 산출물(.app.tar.gz)과 서명(.sig)은 넣지 않는다.
 import { parseVersion } from "./semver";
 
@@ -44,8 +44,16 @@ export function parseLatestView(bytes: Uint8Array | null): LatestView {
   const o = v as Record<string, unknown>;
   const version = o.version;
   if (typeof version !== "string" || parseVersion(version) === null) return { kind: "invalid" };
-  const d = o.pub_date;
-  return { kind: "ok", version, pubDate: typeof d === "string" && PUB_DATE.test(d) ? d.slice(0, 10) : null };
+  return { kind: "ok", version, pubDate: kstDate(o.pub_date) };
+}
+
+const KST_OFFSET_MS = 9 * 3_600_000;
+
+/** pub_date(RFC 3339) → KST 날짜 YYYY-MM-DD(화면 시각은 KST, 구현 중 변경 38 (바)). 모양이 틀리거나 해석할 수 없으면 null */
+function kstDate(d: unknown): string | null {
+  if (typeof d !== "string" || !PUB_DATE.test(d)) return null;
+  const ms = Date.parse(d);
+  return Number.isFinite(ms) ? new Date(ms + KST_OFFSET_MS).toISOString().slice(0, 10) : null;
 }
 
 export interface LandingRow {

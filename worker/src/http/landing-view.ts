@@ -1,4 +1,4 @@
-// 랜딩 화면 렌더러(docs/design/worker.md §9.5, 구현 중 변경 35). 순수 함수: 모든 출력은 html 태그드 템플릿을 거친다.
+// 랜딩 화면 렌더러(docs/design/worker.md §9.5, 구현 중 변경 38). 순수 함수: 모든 출력은 HTML 태그드 템플릿을 거친다.
 // 스크립트·인라인 스타일 0개(CSP): 동작은 폼과 링크뿐이다.
 import { html, type SafeHtml } from "../core/html";
 import { artifactFile } from "../core/landing";

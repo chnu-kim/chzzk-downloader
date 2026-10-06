@@ -20,6 +20,26 @@ describe("allow·disallow", () => {
     expect(await query(stub, "SELECT note, added_at FROM allowlist")).toEqual([{ note: "다른 메모", added_at: T0 }]);
   });
 
+  it("L1b 빈 메모로 다시 allow하면 있던 메모가 남는다(worker.md 구현 중 변경 38 (카))", async () => {
+    const stub = freshStub();
+    expect(await stub.allow(B2, "메모", A1, T0)).toEqual({ ok: true });
+    expect(await stub.allow(B2, "", A1, T0 + 1)).toEqual({ ok: true });
+    expect(await query(stub, "SELECT note FROM allowlist")).toEqual([{ note: "메모" }]);
+    expect(await stub.allow(C3, "", A1, T0)).toEqual({ ok: true });
+    expect(await query(stub, "SELECT note FROM allowlist WHERE channel_id = ?", C3)).toEqual([{ note: null }]);
+  });
+
+  it("L2b 허용목록에 없는 채널의 disallow는 not_found이고 아무것도 쓰지 않는다(감사·세션 포함)", async () => {
+    const stub = freshStub();
+    await stub.allow(B2, "", A1, T0);
+    await appLogin(stub);
+    const before = await meter(stub);
+    expect(await stub.disallow(C3, A1, ADMINS, T0 + 1)).toEqual({ ok: false, code: "not_found" });
+    expect(await meter(stub)).toEqual(before);
+    expect(await query(stub, "SELECT count(*) AS n FROM audit WHERE action = 'disallow'")).toEqual([{ n: 0 }]);
+    expect(await query(stub, "SELECT status FROM session")).toEqual([{ status: "active" }]);
+  });
+
   it("L2 관리자는 disallow 409(is_admin): 행이 있어도 없어도 아무것도 쓰지 않는다", async () => {
     const stub = freshStub();
     await stub.allow(A1, "", A1, T0);

@@ -1,4 +1,4 @@
-// 스타일시트 문자열과 해시 경로(docs/design/worker.md 구현 중 변경 35 (마)).
+// 스타일시트 문자열과 해시 경로(docs/design/worker.md 구현 중 변경 38 (마)).
 import { describe, expect, it } from "vitest";
 import { SITE_CSS, SITE_CSS_HASH, SITE_CSS_PATH } from "../../src/http/site-css";
 import { sha256Hex } from "../../src/core/token";

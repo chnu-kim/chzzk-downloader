@@ -1,4 +1,4 @@
-// 관리 화면과 POST 동작(docs/design/worker.md §8.1·§4.4, 구현 중 변경 35). 모든 POST는 guardWebPost(관리자, csrf)를 지난 뒤에만 움직이고,
+// 관리 화면과 POST 동작(docs/design/worker.md §8.1·§4.4, 구현 중 변경 38). 모든 POST는 guardWebPost(관리자, csrf)를 지난 뒤에만 움직이고,
 // 경로 값 검사는 늘 그 뒤다(세션이 없으면 매개변수와 상관없이 303 /). 신원은 로그인 채널이다.
 import { log } from "../core/log";
 import { isId } from "../core/token";
@@ -18,6 +18,12 @@ const notFound = (ctx: Ctx): Response => {
 const badChannel = (ctx: Ctx): Response => {
   log("admin.rejected", { route: ctx.route, reason: "bad_channel_id" });
   return noticePage(ctx.config, 400, COPY.badChannelId);
+};
+
+// 관리자 채널은 secret(ADMIN_CHANNEL_IDS)에서만 정한다(§8.1): 허용목록 행을 만들면 secret에서 빼도 허용이 남고 화면에서 지울 길도 없다
+const adminChannel = (ctx: Ctx): Response => {
+  log("admin.rejected", { route: ctx.route, reason: "is_admin" });
+  return noticePage(ctx.config, 409, COPY.adminNoAllow);
 };
 
 /** GET /admin: 부트스트랩 403 → 세션 없음 303 / → 관리자 아님 403 → 200 */
@@ -42,7 +48,8 @@ export async function adminAllow(req: Request, ctx: Ctx): Promise<Response> {
   if (!g.ok) return g.response;
   const channelId = oneField(g.form, "channelId");
   if (channelId === null || !CHANNEL_ID.test(channelId)) return badChannel(ctx);
-  // 메모는 store가 64자로 자른다. 같은 이름이 둘 이상이면 어느 쪽이 맞는지 알 수 없어 거절한다
+  if (ctx.config.adminChannelIds.includes(channelId)) return adminChannel(ctx);
+  // 메모는 store가 64자로 자르고, 비어 있으면 있던 메모를 그대로 둔다(구현 중 변경 38 (카)). 같은 이름이 둘 이상이면 어느 쪽이 맞는지 알 수 없어 거절한다
   const notes = g.form.getAll("note");
   if (notes.length > 1) {
     log("admin.rejected", { route: ctx.route, reason: "bad_body" });
@@ -69,6 +76,8 @@ export async function adminDisallow(req: Request, ctx: Ctx): Promise<Response> {
     log("admin.rejected", { route: ctx.route, reason: "is_admin" });
     return noticePage(ctx.config, 409, COPY.isAdmin);
   }
+  // 허용목록에 없는 채널: 아무것도 쓰지 않았다(감사 없음)
+  if (r.code === "not_found") return notFound(ctx);
   return badChannel(ctx);
 }
 
@@ -87,7 +96,9 @@ export async function adminDeniedAllow(req: Request, ctx: Ctx): Promise<Response
   const g = await guardWebPost(req, ctx, { admin: true });
   if (!g.ok) return g.response;
   const id = ctx.params.channelId ?? "";
-  if (!CHANNEL_ID.test(id) || !(await ctx.store.allowDenied(id, g.s.channelId, ctx.now))) return notFound(ctx);
+  if (!CHANNEL_ID.test(id)) return notFound(ctx);
+  if (ctx.config.adminChannelIds.includes(id)) return adminChannel(ctx);
+  if (!(await ctx.store.allowDenied(id, g.s.channelId, ctx.now))) return notFound(ctx);
   log("admin.denied_allow", { route: ctx.route });
   return seeOther("/admin");
 }

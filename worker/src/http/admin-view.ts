@@ -1,4 +1,4 @@
-// 관리 화면 렌더러(docs/design/worker.md §8.1, 구현 중 변경 35). 순수 함수: 모든 출력은 html 태그드 템플릿을 거친다.
+// 관리 화면 렌더러(docs/design/worker.md §8.1, 구현 중 변경 38). 순수 함수: 모든 출력은 HTML 태그드 템플릿을 거친다.
 // 채널 이름·메모·기기 정보는 공격자가 정하는 문자열이다: 값으로만 넣어 이스케이프된다(저장 때 store가 제어·bidi 문자를 지운다).
 import { html, type SafeHtml } from "../core/html";
 import type { AdminView } from "../store/types";

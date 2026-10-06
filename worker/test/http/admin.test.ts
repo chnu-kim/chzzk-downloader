@@ -1,4 +1,4 @@
-// 관리 화면·웹 POST 가드(docs/design/worker.md §4.4·§8.1, 구현 중 변경 35 (나), W6 수락 기준): CSRF 9조합 × 3경로, 415, 검사 순서,
+// 관리 화면·웹 POST 가드(docs/design/worker.md §4.4·§8.1, 구현 중 변경 38 (나), W6 수락 기준): CSRF 9조합 × 3경로, 415, 검사 순서,
 // 관리자 판정, [허용] 즉시 로그인, [빼기]·[끊기] 지연 0.
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { newId, newSecret, sha256Hex } from "../../src/core/token";
@@ -91,14 +91,18 @@ describe("관리자 판정", () => {
     expect(await res.text()).toContain("관리자만 볼 수 있어요.");
   });
 
-  it("a1(관리자): 200, 섹션 제목 다섯 개", async () => {
+  it("a1(관리자): 200, 섹션 제목 다섯 개, 허용목록의 관리자 행에는 [빼기]가 없다", async () => {
+    // 관리자 채널의 허용목록 행(W6 전·store 직접)을 만들어 둔다: 화면은 "관리자" 표시만 보이고 [빼기] 폼은 B2 하나다
+    await allowedChannel(A1, A1);
     const s = await session("a1");
     const res = await s.b.get("/admin");
     expect(res.status).toBe(200);
     const t = await res.text();
     for (const h of ["관리자", "허용 채널", "거부된 시도", "활성 세션", "감사 기록"]) expect(t).toContain(`<h2>${h}</h2>`);
     expect(t).toContain(`<span class="mono">${A1}</span>`);
-    expect(t).not.toContain(`name="channelId" value="${A1}"`);
+    expect(t).toContain('<span class="muted">관리자</span>');
+    const disallowForms = [...t.matchAll(/action="\/admin\/disallow"[^]*?name="channelId" value="([0-9a-f]{32})"/g)].map((m) => m[1]);
+    expect(disallowForms).toEqual([B2]);
   });
 
   it("부트스트랩: GET /admin 403, POST는 Origin이 틀려도 403 bootstrap", async () => {
@@ -125,7 +129,8 @@ describe("CSRF: Origin × csrf 9조합 × 3경로", () => {
   const TOKENS = ["없음", "다른 값", "맞음"] as const;
   const ROUTES_UNDER_TEST = [
     { name: "관리 허용", user: "a1" as const, path: () => "/admin/allow", fields: { channelId: C3 } as Record<string, string>, pass: { status: 303, location: "/admin" } },
-    { name: "내 기기 끊기", user: "b2" as const, path: () => `/me/sessions/${newId()}/revoke`, fields: {} as Record<string, string>, pass: { status: 404, location: null } },
+    // b2의 실제 앱 세션을 끊는다: 거절된 경우 그 앱 access가 그대로 살아 있는지 본다
+    { name: "내 기기 끊기", user: "b2" as const, path: () => "", fields: {} as Record<string, string>, pass: { status: 303, location: "/" } },
     { name: "로그아웃", user: "b2" as const, path: () => "/auth/web/logout", fields: {} as Record<string, string>, pass: { status: 303, location: "/" } },
   ];
 
@@ -134,17 +139,20 @@ describe("CSRF: Origin × csrf 9조합 × 3경로", () => {
       for (const t of TOKENS) {
         it(`${r.name}: Origin ${o}, csrf ${t}`, async () => {
           const s = await session(r.user);
+          const access = r.name === "내 기기 끊기" ? ((await appFlow({ fake })).pollBody.accessToken as string) : null;
+          const path = access === null ? r.path() : `/me/sessions/${await idOfAccess(access)}/revoke`;
           const headers: Record<string, string | null> = o === "없음" ? { Origin: null } : o === "다른 출처" ? { Origin: "http://evil.example.test" } : {};
           const csrf = t === "맞음" ? s.csrf : t === "다른 값" ? newSecret() : null;
           const body = formBody({ ...r.fields, ...(csrf === null ? {} : { csrf }) });
-          const res = await s.b.post(r.path(), headers, body);
+          const res = await s.b.post(path, headers, body);
           if (o === "맞음" && t === "맞음") {
             expect([res.status, res.headers.get("Location")]).toEqual([r.pass.status, r.pass.location]);
+            if (access !== null) expect((await appGet("/api/me", access)).status).toBe(401);
           } else {
             expect(res.status).toBe(403);
             // 거절된 요청은 아무것도 바꾸지 않는다
             if (r.user === "a1") expect(await hasAllowed(C3)).toBe(false);
-            else expect((await s.b.get("/")).status).toBe(200);
+            if (access !== null) expect((await appGet("/api/me", access)).status).toBe(200);
             const home = await (await s.b.get("/")).text();
             if (r.name === "로그아웃") expect(home).toContain('action="/auth/web/logout"');
           }
@@ -372,6 +380,49 @@ describe("[허용] → 즉시 로그인 성공", () => {
     fake.state.account = "d4";
     const app = await appFlow({ fake });
     expect(app.pollBody.status).toBe("ok");
+  });
+});
+
+describe("관리 POST의 경계(구현 중 변경 38 (카))", () => {
+  const auditOf = async () => (await adminSnapshot()).audit.map((a) => [a.action, a.target]);
+
+  it("관리자 채널을 [추가]·거부 기록 [허용]하면 409이고 아무것도 쓰지 않는다", async () => {
+    const spy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const admin = await session("a1");
+    const before = await auditOf();
+    for (const [path, fields] of [
+      ["/admin/allow", { channelId: A1 }],
+      [`/admin/denied/${A1}/allow`, {}],
+    ] as const) {
+      const res = await post(admin, path, fields);
+      expect([path, res.status]).toEqual([path, 409]);
+      expect(await res.text()).toContain("관리자 채널은 허용목록에 넣지 않아요.");
+    }
+    expect(await hasAllowed(A1)).toBe(false);
+    expect(await auditOf()).toEqual(before);
+    const reasons = spy.mock.calls.map((c) => JSON.parse(String(c[0])) as Record<string, unknown>).filter((e) => e.event === "admin.rejected").map((e) => e.reason);
+    expect(reasons).toEqual(["is_admin", "is_admin"]);
+  });
+
+  it("허용목록에 없는 채널 [빼기]: 404, 감사 행이 생기지 않는다", async () => {
+    const admin = await session("a1");
+    const before = await auditOf();
+    const res = await post(admin, "/admin/disallow", { channelId: C3 });
+    expect(res.status).toBe(404);
+    expect(await auditOf()).toEqual(before);
+  });
+
+  it("이미 허용된 채널을 메모 없이 다시 [추가]해도 메모가 남는다(메모를 주면 바뀐다)", async () => {
+    const admin = await session("a1");
+    const noteOf = async () => (await adminSnapshot()).allowlist.find((r) => r.channelId === C3)?.note;
+    expect((await post(admin, "/admin/allow", { channelId: C3, note: "친구" })).status).toBe(303);
+    expect(await noteOf()).toBe("친구");
+    expect((await post(admin, "/admin/allow", { channelId: C3 })).status).toBe(303);
+    expect(await noteOf()).toBe("친구");
+    expect((await post(admin, "/admin/allow", { channelId: C3, note: "" })).status).toBe(303);
+    expect(await noteOf()).toBe("친구");
+    expect((await post(admin, "/admin/allow", { channelId: C3, note: "동료" })).status).toBe(303);
+    expect(await noteOf()).toBe("동료");
   });
 });
 

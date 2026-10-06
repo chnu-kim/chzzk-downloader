@@ -1,4 +1,4 @@
-// core/landing(docs/design/worker.md 구현 중 변경 35 (가)): latest.json 요약, 랜딩 표 행, 산출물 표와의 일치.
+// core/landing(docs/design/worker.md 구현 중 변경 38 (가)): latest.json 요약, 랜딩 표 행, 산출물 표와의 일치.
 import { describe, expect, it } from "vitest";
 import expectedText from "../../../release/expected-artifacts.json?raw";
 import { ARTIFACT_PREFIX, LANDING_FILES, artifactFile, landingRows, parseLatestView } from "../../src/core/landing";
@@ -35,10 +35,15 @@ describe("parseLatestView", () => {
     expect(parseLatestView(enc('{"version":"1.2.3-rc.1"}'))).toEqual({ kind: "ok", version: "1.2.3-rc.1", pubDate: null });
   });
 
-  it("pub_date 모양이 틀리면 null, 맞으면 날짜 10자", () => {
+  it("pub_date 모양이 틀리면 null, 맞으면 KST 날짜 10자", () => {
     expect(parseLatestView(enc('{"version":"1.2.3","pub_date":"bad"}'))).toEqual({ kind: "ok", version: "1.2.3", pubDate: null });
     expect(parseLatestView(enc('{"version":"1.2.3","pub_date":5}'))).toEqual({ kind: "ok", version: "1.2.3", pubDate: null });
     expect(parseLatestView(enc('{"version":"1.2.3","pub_date":"2030-02-03T04:05:06Z"}'))).toEqual({ kind: "ok", version: "1.2.3", pubDate: "2030-02-03" });
+    // UTC 15:00 이후는 KST로 다음 날이다(화면 시각은 KST, 구현 중 변경 38 (바))
+    expect(parseLatestView(enc('{"version":"1.2.3","pub_date":"2030-02-03T15:00:00Z"}'))).toEqual({ kind: "ok", version: "1.2.3", pubDate: "2030-02-04" });
+    expect(parseLatestView(enc('{"version":"1.2.3","pub_date":"2030-02-03T14:59:59Z"}'))).toEqual({ kind: "ok", version: "1.2.3", pubDate: "2030-02-03" });
+    expect(parseLatestView(enc('{"version":"1.2.3","pub_date":"2030-02-03T23:00:00+09:00"}'))).toEqual({ kind: "ok", version: "1.2.3", pubDate: "2030-02-03" });
+    expect(parseLatestView(enc('{"version":"1.2.3","pub_date":"2030-13-45T00:00:00Z"}'))).toEqual({ kind: "ok", version: "1.2.3", pubDate: null });
   });
 });
 

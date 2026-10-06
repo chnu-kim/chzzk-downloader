@@ -1,4 +1,4 @@
-// 화면 렌더러(docs/design/worker.md 구현 중 변경 35). 순수 함수라 문자열로 비교한다.
+// 화면 렌더러(docs/design/worker.md 구현 중 변경 38). 순수 함수라 문자열로 비교한다.
 import { describe, expect, it } from "vitest";
 import { renderHtml } from "../../src/core/html";
 import { adminBody } from "../../src/http/admin-view";

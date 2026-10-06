@@ -1,5 +1,5 @@
 // HTML 응답(docs/design/worker.md §4 "공통"·§8.1, 구현 중 변경 27 (아)). W6: 모든 페이지가 한 골격(htmlPage)·스타일시트를 쓴다.
-// 모든 값은 html 태그드 템플릿을 거쳐 이스케이프된다(이스케이프 없는 삽입 함수는 쓰지 않는다).
+// 모든 값은 HTML 태그드 템플릿을 거쳐 이스케이프된다(이스케이프 없는 삽입 함수는 쓰지 않는다).
 import type { Config } from "../config";
 import { html, renderHtml, type SafeHtml } from "../core/html";
 import type { DoneView } from "../store/types";

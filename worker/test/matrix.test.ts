@@ -7,9 +7,9 @@ import { LATEST_VIEW_CACHE } from "../src/http/landing";
 import { SUMS_CACHE } from "../src/http/releases";
 import { SITE_CSS_PATH } from "../src/http/site-css";
 import { createFakeChzzk } from "./fake-chzzk.mjs";
-import { formBody, ORIGIN, useClock, viaExports } from "./http/harness";
+import { allowedChannel, formBody, ORIGIN, useClock, viaExports } from "./http/harness";
 import { type Cred, type Creds, credHeaders, DMG, makeCreds, seedDist, V2 } from "./http/release-fixture";
-import { C3 } from "./store/helpers";
+import { A1, C3 } from "./store/helpers";
 import { installFakeChzzk, type FakeNet } from "./network";
 
 const CREDS: readonly Cred[] = ["none", "app", "appRevoked", "appDisallowed", "web", "webAdmin", "ci", "garbage"];
@@ -105,7 +105,17 @@ const MATRIX: Readonly<Record<string, readonly MatrixCase[]>> = {
   "POST /me/sessions/:id/revoke": [{ name: "모르는 세션", request: webForm(() => `/me/sessions/${newId()}/revoke`), expect: by(303, 303, 303, 303, 404, 404, 303, 303) }],
   "GET /admin": [{ name: "관리 화면", request: plain("/admin"), expect: by(303, 303, 303, 303, 403, 200, 303, 303) }],
   "POST /admin/allow": [{ name: "허용", request: webForm("/admin/allow", { channelId: C3 }), expect: by(303, 303, 303, 303, 403, 303, 303, 303) }],
-  "POST /admin/disallow": [{ name: "빼기", request: webForm("/admin/disallow", { channelId: C3 }), expect: by(303, 303, 303, 303, 403, 303, 303, 303) }],
+  // 자격마다 C3를 먼저 허용해 둔다(이 파일은 DO를 비우지 않는다: 순서와 상관없이 관리자는 실제로 빼서 303). 목록에 없는 채널의 404는 admin.test.ts
+  "POST /admin/disallow": [
+    {
+      name: "허용된 채널 빼기",
+      request: async (c, cred) => {
+        await allowedChannel(C3, A1);
+        return webForm("/admin/disallow", { channelId: C3 })(c, cred);
+      },
+      expect: by(303, 303, 303, 303, 403, 303, 303, 303),
+    },
+  ],
   "POST /admin/sessions/:id/revoke": [{ name: "모르는 세션", request: webForm(() => `/admin/sessions/${newId()}/revoke`), expect: by(303, 303, 303, 303, 403, 404, 303, 303) }],
   "POST /admin/denied/:channelId/allow": [{ name: "거부 기록 없음", request: webForm(`/admin/denied/${C3}/allow`), expect: by(303, 303, 303, 303, 403, 404, 303, 303) }],
   "POST /admin/denied/:channelId/dismiss": [{ name: "거부 기록 없음", request: webForm(`/admin/denied/${C3}/dismiss`), expect: by(303, 303, 303, 303, 403, 404, 303, 303) }],
@@ -204,6 +214,11 @@ describe("실행", () => {
           if ((res.headers.get("Content-Type") ?? "").startsWith("text/html")) {
             expect([key, c.name, cred, res.headers.has("Content-Security-Policy")]).toEqual([key, c.name, cred, true]);
             expect([key, c.name, cred, /<script|<style|\sstyle=/i.test(text)]).toEqual([key, c.name, cred, false]);
+          }
+          // 랜딩은 쿠키만 본다(구현 중 변경 38 (다)): 웹 세션이면 회원 화면(폼 토큰), 그 밖의 자격(앱 access·CI·쓰레기 Bearer)은 비로그인 화면
+          if (key === "GET /") {
+            const member = cred === "web" || cred === "webAdmin";
+            expect([cred, text.includes('name="csrf"'), text.includes('action="/auth/web/start"')]).toEqual([cred, member, !member]);
           }
           // 릴리스 읽기는 리디렉션이 없다(304는 조건부 적중이라 여기서는 나오지 않는다)
           if (key.includes("/releases/") || key.includes("/update/")) expect(res.status < 300 || res.status >= 400).toBe(true);

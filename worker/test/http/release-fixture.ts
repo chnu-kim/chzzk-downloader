@@ -105,6 +105,8 @@ export interface CountingOpts {
   readonly throwOnRange?: boolean;
   /** 실제 obj.range를 이 값으로 바꿔 보고한다(R2가 range 모양을 다르게 돌려주는 경우) */
   readonly rangeReport?: (real: R2Range | undefined) => R2Range | undefined;
+  /** 이 키의 get은 던진다(R2 바인딩 오류·일시 장애, 랜딩 사례) */
+  readonly throwOnGet?: readonly string[];
   /** 이 키는 실제 객체 대신 이 바이트를 돌려준다(latest.json 이상 사례) */
   readonly override?: Readonly<Record<string, Uint8Array>>;
 }
@@ -122,6 +124,7 @@ export function countingDist(o: CountingOpts = {}): { dist: R2Bucket; calls: R2C
   const wrapper = {
     async get(k: string, opts?: R2GetOptions) {
       calls.get++;
+      if (o.throwOnGet?.includes(k) === true) throw new Error("get: internal error (R2 장애 흉내)");
       if (hidden.has(k)) return null;
       const over = o.override?.[k];
       if (over !== undefined) {

@@ -1,4 +1,4 @@
-// 랜딩 `/`·내 기기·웹 로그아웃(docs/design/worker.md §8.2·§9.5, 구현 중 변경 35). 랜딩은 늘 200이다(내 기기를 함께 보인다).
+// 랜딩 `/`·내 기기·웹 로그아웃(docs/design/worker.md §8.2·§9.5, 구현 중 변경 38). 랜딩은 늘 200이다(내 기기를 함께 보인다).
 // R2 호출: 비로그인·형식 밖 쿠키 0회, 허용 사용자 2회 이하(latest.json은 isolate 캐시 60초, SHA256SUMS는 /releases와 같은 캐시).
 import { LATEST_KEY } from "../core/keys";
 import { type LandingRow, landingRows, type LatestView, parseLatestView } from "../core/landing";
@@ -24,8 +24,8 @@ export type Downloads =
   | { readonly kind: "unavailable" }
   | { readonly kind: "ok"; readonly version: string; readonly pubDate: string | null; readonly rows: readonly LandingRow[] };
 
-const unavailable = (reason: string): Downloads => {
-  log("landing.release_unavailable", { level: "warn", reason });
+const unavailable = (reason: string, errorName?: string): Downloads => {
+  log("landing.release_unavailable", { level: "warn", reason, ...(errorName === undefined ? {} : { errorName }) });
   return { kind: "unavailable" };
 };
 
@@ -43,8 +43,19 @@ async function latestView(ctx: Ctx): Promise<LatestView> {
   return view;
 }
 
-/** 설치 파일 표. 호출하는 쪽이 허용된 웹 세션을 확인한 뒤에만 부른다 */
+/**
+ * 설치 파일 표. 호출하는 쪽이 허용된 웹 세션을 확인한 뒤에만 부른다. R2가 던져도(바인딩 오류·일시 장애) 랜딩은 200이고
+ * 표만 "불러오지 못함"이다: 내 기기·로그아웃이 같은 화면에 있다(구현 중 변경 38 (가)). 던진 결과는 캐시하지 않는다
+ */
 export async function loadDownloads(ctx: Ctx): Promise<Downloads> {
+  try {
+    return await readDownloads(ctx);
+  } catch (e) {
+    return unavailable("r2", e instanceof Error ? e.name : "unknown");
+  }
+}
+
+async function readDownloads(ctx: Ctx): Promise<Downloads> {
   const view = await latestView(ctx);
   if (view.kind === "none") return { kind: "none" };
   if (view.kind === "invalid") return unavailable("latest_invalid");

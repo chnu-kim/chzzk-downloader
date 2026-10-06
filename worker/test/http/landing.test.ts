@@ -1,4 +1,4 @@
-// 랜딩 `/`·내 기기·웹 로그아웃·스타일시트(docs/design/worker.md §8.2·§9.5, 구현 중 변경 35, W6 수락 기준).
+// 랜딩 `/`·내 기기·웹 로그아웃·스타일시트(docs/design/worker.md §8.2·§9.5, 구현 중 변경 38, W6 수락 기준).
 import { runInDurableObject } from "cloudflare:test";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { sha256Hex } from "../../src/core/token";
@@ -161,6 +161,33 @@ describe("릴리스 상태", () => {
     const events = spy.mock.calls.map((c) => JSON.parse(String(c[0])) as Record<string, unknown>);
     expect(events).toContainEqual(expect.objectContaining({ event: "landing.release_unavailable", reason: "sums" }));
   });
+});
+
+describe("R2가 던진다(구현 중 변경 38 (가))", () => {
+  const cases = [
+    ["latest.json", "releases/latest.json"],
+    ["SHA256SUMS", `releases/${V2}/SHA256SUMS`],
+  ] as const;
+  for (const [name, key] of cases) {
+    it(`${name} get이 던져도 200: 불러오지 못했어요, 내 기기·로그아웃 폼이 보이고 다음 요청은 표를 보인다`, async () => {
+      const spy = vi.spyOn(console, "log").mockImplementation(() => {});
+      const c = countingDist({ throwOnGet: [key] });
+      const b = await webLogin("b2", new Browser(viaEnv({ DIST: c.dist })));
+      const res = await b.get("/");
+      expect(res.status).toBe(200);
+      const t = await res.text();
+      expect(t).toContain("설치 파일 목록을 불러오지 못했어요.");
+      expect(t).toContain("내 기기");
+      expect(t).toContain('action="/auth/web/logout"');
+      expect(t).toContain('name="csrf"');
+      const events = spy.mock.calls.map((x) => JSON.parse(String(x[0])) as Record<string, unknown>);
+      expect(events).toContainEqual({ event: "landing.release_unavailable", level: "warn", reason: "r2", errorName: "Error" });
+      expect(events.some((e) => e.event === "http.internal")).toBe(false);
+      // 던진 결과는 캐시하지 않는다: 같은 isolate의 다음 요청(정상 R2)은 표를 보인다
+      const ok = await (await new Browser().get("/", { Cookie: `cdl_s=${b.jar.get("cdl_s") ?? ""}` })).text();
+      expect(ok).toContain(DMG);
+    });
+  }
 });
 
 describe("내 기기", () => {

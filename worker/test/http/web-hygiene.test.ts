@@ -1,4 +1,4 @@
-// W6 경로의 비밀값 위생(docs/design/worker.md §14, 구현 중 변경 35): 모든 W6 화면·동작(성공과 실패)을 한 번에 돌리고
+// W6 경로의 비밀값 위생(docs/design/worker.md §14, 구현 중 변경 38): 모든 W6 화면·동작(성공과 실패)을 한 번에 돌리고
 // 로그 줄과 응답에 카나리가 없는지 본다. 카나리 = 폼 토큰(csrf)·세션 쿠키 토큰·세션 id 전체·채널 ID·가짜 계정 이름.
 // 응답에 있어도 되는 자리: csrf는 GET /·GET /admin의 200 본문(폼 숨은 입력)뿐, 쿠키 토큰은 어디에도 없다.
 import { runInDurableObject } from "cloudflare:test";

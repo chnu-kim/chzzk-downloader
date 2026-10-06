@@ -1,4 +1,4 @@
-// 화면 표시 형식(docs/design/worker.md 구현 중 변경 35 (바)). 시각은 KST(UTC+9) `YYYY-MM-DD HH:MM`이다.
+// 화면 표시 형식(docs/design/worker.md 구현 중 변경 38 (바)). 시각은 KST(UTC+9) `YYYY-MM-DD HH:MM`이다.
 import type { AuditAction } from "../store/types";
 import { COPY } from "./copy";
 

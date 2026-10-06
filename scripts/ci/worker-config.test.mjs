@@ -537,7 +537,7 @@ test('씨앗: raw 허용 목록(파일별 정확한 토큰 수)', () => {
   assert.ok(checkWorker(copy({ 'worker/src/core/html.ts': null })).some((e) => e.includes('RAW_ALLOWLIST')));
 });
 
-test('씨앗: html 호출형·인라인 스크립트·스타일(worker.md 구현 중 변경 36, cicd.md 96)', () => {
+test('씨앗: html 호출형·인라인 스크립트·스타일(worker.md 구현 중 변경 39, cicd.md 99)', () => {
   const check = (rel, text) => checkHtmlSources([{ rel, text }]);
   const fails = [
     'html(["<b>"] as any)',
@@ -555,14 +555,28 @@ test('씨앗: html 호출형·인라인 스크립트·스타일(worker.md 구현
     'html`<script>x</script>`',
     'html`<style>a{}</style>`',
     'html`<p style="x">`',
+    // 낱말 수 방식(cicd.md 99 (가)): 모양 목록이 놓치던 것
+    'const t = ok ? html : other;',
+    'const f = () => html\nf()',
+    'export default html\n',
+    'import * as H from "../core/html";\nexport const p = H.html(["<b>"], v);',
+    'H.html.call(null, [])',
+    'H["html"]([])',
+    'export * from "../core/html";',
+    'export { html } from "../core/html";',
+    'const { html: h } = H; h([]);',
+    'import * as X from "./other";',
+    'html`<p style=color:red>`',
+    '// 모든 값은 html 태그드 템플릿을 거친다(html`…`).',
   ];
   for (const text of fails) assert.notDeepEqual(check('src/http/x.ts', text), [], text);
   const passes = [
     'const d = html`<!doctype html><html lang="ko"><head></head></html>`;',
     'h.set("Content-Type", "text/html; charset=utf-8");',
     'import { html, renderHtml, type SafeHtml } from "../core/html";',
-    '// 모든 값은 html 태그드 템플릿을 거친다(html`…`).',
+    '// 모든 값은 HTML 태그드 템플릿을 거친다(html`…`).',
     'return html`<p>${x}</p>`;',
+    'const css = "ul { list-style: none; }";',
     'import type { SafeHtml } from "../core/html";',
     'import {\n  html,\n  renderHtml,\n} from "../core/html";',
   ];
@@ -572,9 +586,10 @@ test('씨앗: html 호출형·인라인 스크립트·스타일(worker.md 구현
   assert.notDeepEqual(check('src/core/html.ts', 'const s = "<script>";'), []);
   assert.deepEqual(check('test/x.ts', 'html([]); const s = "<script>";'), []);
   // 메시지는 파일과 이유를 담는다
-  assert.ok(check('src/http/x.ts', 'html([])').some((e) => e.startsWith('src/http/x.ts:') && e.includes('호출형 html(')));
+  assert.ok(check('src/http/x.ts', 'html([])').some((e) => e.startsWith('src/http/x.ts:') && e.includes('낱말 html 1개')));
+  assert.ok(check('src/http/x.ts', 'import { html as h } from "../core/html";').some((e) => e.includes('html as')));
   // 사본: 새 파일에 호출형이나 인라인 스크립트를 더하면 checkWorker가 실패
-  assert.ok(checkWorker(copy({ 'worker/src/http/x.ts': 'export const y = html(["<b>"]);\n' })).some((e) => e.includes('src/http/x.ts') && e.includes('html(')));
+  assert.ok(checkWorker(copy({ 'worker/src/http/x.ts': 'export const y = html(["<b>"]);\n' })).some((e) => e.includes('src/http/x.ts') && e.includes('낱말 html')));
   assert.ok(checkWorker(copy({ 'worker/src/http/x.ts': 'export const y = "<script>";\n' })).some((e) => e.includes('src/http/x.ts') && e.includes('<script')));
 });
 

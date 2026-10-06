@@ -109,5 +109,6 @@ export const COPY = {
   badBody: "요청을 읽지 못했어요.",
   badChannelId: "채널 ID는 소문자 16진수 32자리예요.",
   isAdmin: "관리자 채널은 뺄 수 없어요.",
+  adminNoAllow: "관리자 채널은 허용목록에 넣지 않아요. 관리자 설정에서만 정해요.",
   notFound: "대상을 찾지 못했어요. 이미 처리됐을 수 있어요.",
 } as const;

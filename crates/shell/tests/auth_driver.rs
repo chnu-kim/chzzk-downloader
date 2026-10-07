@@ -96,16 +96,40 @@ async fn driver_retries_on_resume_while_offline() {
     let api = FakeWorkerApi::default();
     let clock = FakeClock::at(t0());
     let auth = Arc::new(service(dir.path(), &api, &clock));
-    for _ in 0..8 {
+    for _ in 0..200 {
         api.push_refresh(Reply::Now(Err(transport())));
     }
     let h = tokio::spawn(run_driver(auth.clone()));
     tokio::time::sleep(Duration::from_secs(300)).await;
     assert!(auth.status().offline.is_some());
+    // 타이머 재시도가 쌓여(1·2·5·10분) 백오프가 30분이 될 때까지 둔다
+    tokio::time::sleep(Duration::from_secs(40 * 60)).await;
+    // 막 끝난 타이머 재시도 직후로 맞춘다(그 뒤 응답 유실 창 재시도까지 끝나게 60초 더)
+    let n = api.refresh_calls().len();
+    while api.refresh_calls().len() == n {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+    tokio::time::sleep(Duration::from_secs(60)).await;
+    let left = auth.next_wake().unwrap() - auth.now();
+    assert!(
+        left > time::Duration::minutes(20),
+        "다음 타이머 재시도까지 {left}"
+    );
+    // 벽시계만 5분 뛴다(절전 흉내): next_retry_at 전이라 Timer는 갱신하지 않고, FOCUS_MIN_GAP은 지나 Resume만 갱신한다
     let n0 = api.refresh_calls().len();
-    clock.advance(time::Duration::hours(2));
+    clock.advance(time::Duration::minutes(5));
+    auth.tick(Trigger::Timer).await;
+    assert_eq!(
+        api.refresh_calls().len(),
+        n0,
+        "Timer는 next_retry_at 전에 갱신하지 않는다"
+    );
+    // 잔 시간(≤ HEARTBEAT)보다 벽시계가 RESUME_SLACK 넘게 더 갔다 → 루프가 Resume으로 tick
     tokio::time::sleep(Duration::from_secs(31)).await;
-    assert!(api.refresh_calls().len() > n0);
+    assert!(
+        api.refresh_calls().len() > n0,
+        "절전 복귀가 Resume으로 배선돼 있다"
+    );
     h.abort();
 }
 

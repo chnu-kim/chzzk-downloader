@@ -901,6 +901,38 @@ fn gated_commands_reject_before_sign_in() {
     assert_eq!(n, 17);
 }
 
+/// 앱 상태가 없을 때(시작 실패, worker.md 구현 중 변경 A2-2): 허용 목록 밖은 처리기 전에 notLoggedIn(fail closed)
+#[test]
+fn gate_without_app_state_fails_closed() {
+    let (notifier, _rx) = Notifier::new();
+    let app = mock_builder()
+        .manage(Quitting::default())
+        .manage(notifier)
+        .manage(AuthIoState(Arc::new(RecordingIo::default())))
+        .invoke_handler(handler())
+        .build(tauri::generate_context!(test = true))
+        .unwrap();
+    let main = WebviewWindowBuilder::new(&app, "main", Default::default())
+        .build()
+        .unwrap();
+    let want = serde_json::to_value(AppError::not_logged_in()).unwrap();
+    let mut n = 0;
+    for name in COMMANDS {
+        if chzzk_shell::gate::is_open(name) {
+            continue;
+        }
+        n += 1;
+        assert_eq!(invoke(&main, name, json!({})).unwrap_err(), want, "{name}");
+    }
+    assert_eq!(n, 17);
+    // 허용 목록은 게이트를 지나 처리기로 간다(상태가 없어 처리기 쪽 오류일 수는 있어도 notLoggedIn은 아니다)
+    for name in ["app_info", "auth_status", "list_jobs"] {
+        if let Err(e) = invoke(&main, name, json!({})) {
+            assert_ne!(e, want, "{name}");
+        }
+    }
+}
+
 #[test]
 fn open_commands_work_while_signed_out() {
     let worker = worker_server(None);
@@ -988,33 +1020,48 @@ fn auth_login_opens_the_login_url_through_auth_io() {
 fn auth_changed_is_emitted_to_the_main_window() {
     let worker = worker_server(Some(503));
     let f = fixture_auth(&worker);
+    // main 창을 겨눈 이벤트만 받는 수신기와, 다른 창의 수신기(emit_to("main")이면 아무것도 받지 않는다)
     let got: Arc<Mutex<Vec<Value>>> = Arc::default();
     let seen = got.clone();
-    f.app.handle().listen_any(AUTH_CHANGED, move |e| {
+    f.main.listen(AUTH_CHANGED, move |e| {
         seen.lock()
             .unwrap()
             .push(serde_json::from_str(e.payload()).unwrap());
     });
+    let other = WebviewWindowBuilder::new(&f.app, "other", Default::default())
+        .build()
+        .unwrap();
+    let leaked = Arc::new(AtomicUsize::new(0));
+    let l = leaked.clone();
+    other.listen(AUTH_CHANGED, move |_| {
+        l.fetch_add(1, Ordering::SeqCst);
+    });
     let auth = f.app.state::<App>().auth.clone().unwrap();
     spawn_auth_tasks(f.app.handle().clone(), auth);
+    let wait = |pred: &dyn Fn(&[Value]) -> bool| {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            if pred(&got.lock().unwrap()) {
+                return;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "auth-changed가 오지 않음: {:?}",
+                got.lock().unwrap()
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    };
+    // 처음 상태가 먼저 간다(구현 중 변경 A2-1 (가) "시작 때 한 번")
+    wait(&|g| !g.is_empty());
+    assert_eq!(got.lock().unwrap()[0]["state"], json!("signedOut"));
     let st = invoke(&f.main, "auth_login", json!({})).unwrap();
     assert_eq!(st["state"], json!("error"));
     assert_eq!(st["reason"], json!("network"));
-    let deadline = Instant::now() + Duration::from_secs(2);
-    loop {
-        if got
-            .lock()
-            .unwrap()
-            .iter()
-            .any(|p| p["state"] == json!("error"))
-        {
-            break;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "auth-changed가 오지 않음: {:?}",
-            got.lock().unwrap()
-        );
-        std::thread::sleep(Duration::from_millis(20));
-    }
+    wait(&|g| g.iter().any(|p| p["state"] == json!("error")));
+    assert_eq!(
+        leaked.load(Ordering::SeqCst),
+        0,
+        "다른 창에는 보내지 않는다"
+    );
 }

@@ -151,7 +151,7 @@ jobs:
         run: rustup toolchain install
       - name: release-build
         run: node scripts/ci/run.mjs release-build
-        # 태그만 실제 Worker 주소(저장소 secret, 자격이 아니라 주소, 로그는 가린다 — cicd.md 84, 구현 중 변경 A2-1).
+        # 태그만 실제 Worker 주소(저장소 secret, 자격이 아니라 주소, 로그는 가린다 — cicd.md 84, 구현 중 변경 105).
         # 리허설은 빈 값 → release.mjs build가 자리표시 https://worker.example.invalid로 빌드한다
         env:
           RELEASE_MODE: ${{ needs.gate.outputs.mode }}
@@ -230,7 +230,7 @@ jobs:
           package-manager-cache: false
       - name: release-build
         run: node scripts/ci/run.mjs release-build
-        # 태그만 실제 Worker 주소(저장소 secret, 자격이 아니라 주소, 로그는 가린다 — cicd.md 84, 구현 중 변경 A2-1).
+        # 태그만 실제 Worker 주소(저장소 secret, 자격이 아니라 주소, 로그는 가린다 — cicd.md 84, 구현 중 변경 105).
         # 리허설은 빈 값 → release.mjs build가 자리표시 https://worker.example.invalid로 빌드한다
         env:
           RELEASE_MODE: ${{ needs.gate.outputs.mode }}

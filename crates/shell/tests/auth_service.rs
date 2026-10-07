@@ -691,7 +691,7 @@ async fn t2_due_calls() {
     assert_eq!(e.api.refresh_calls().len(), 2);
 }
 
-// ------------------------------------------- retry([다시 연결], 구현 중 변경 A2-8)
+// ------------------------------------------- retry([다시 연결], 구현 중 변경 61)
 
 #[tokio::test(start_paused = true)]
 async fn rt1_retry_online_not_due_makes_no_call() {

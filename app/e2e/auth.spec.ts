@@ -1,4 +1,4 @@
-// 가짜 백엔드의 AuthGate(worker.md 구현 중 변경 A2-2): 로그인 상태가 아니면 허용 목록 밖 command는 notLoggedIn이다.
+// 가짜 백엔드의 AuthGate(worker.md 구현 중 변경 55): 로그인 상태가 아니면 허용 목록 밖 command는 notLoggedIn이다.
 // 로그인 화면(A3) 전이라 화면 흐름 대신 IPC를 직접 불러 가짜 백엔드의 분기만 고정한다.
 import type { AuthStatusDto } from '../src/lib/bindings';
 import { expect, test } from './fixtures';

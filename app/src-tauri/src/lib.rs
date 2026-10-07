@@ -31,7 +31,7 @@ pub const COMMANDS: &[&str] = include!("command_names.rs");
 /// 프런트가 D1을 띄우라는 이벤트 이름(§4).
 pub const CLOSE_REQUESTED: &str = "close-requested";
 
-/// 로그인 상태가 바뀔 때마다(처음 상태 포함) 프런트로 가는 이벤트 이름(AuthStatusDto 전체, worker.md 구현 중 변경 A2-1).
+/// 로그인 상태가 바뀔 때마다(처음 상태 포함) 프런트로 가는 이벤트 이름(AuthStatusDto 전체, worker.md 구현 중 변경 54).
 pub const AUTH_CHANGED: &str = "auth-changed";
 
 /// `quit` 진행 중. 이때 온 창 닫기·앱 종료 요청은 D1 없이 조용히 막는다(`quit`이 저장을 마치고 직접 끝낸다).
@@ -165,7 +165,7 @@ pub fn tokio_handle() -> tokio::runtime::Handle {
 }
 
 /// 모든 앱 command. `run`과 테스트(mock 런타임)가 같이 쓴다. 처리기로 보내기 전에 AuthGate(셸 `App::gate_command`)를
-/// 거친다: 인자 역직렬화 전이라 어떤 인자로 불러도 로그인 전이면 `notLoggedIn`이다(구현 중 변경 A2-2).
+/// 거친다: 인자 역직렬화 전이라 어떤 인자로 불러도 로그인 전이면 `notLoggedIn`이다(구현 중 변경 55).
 pub fn handler<R: Runtime>() -> impl Fn(Invoke<R>) -> bool + Send + Sync + 'static {
     let inner: Box<dyn Fn(Invoke<R>) -> bool + Send + Sync + 'static> =
         Box::new(tauri::generate_handler![
@@ -219,7 +219,7 @@ pub fn handler<R: Runtime>() -> impl Fn(Invoke<R>) -> bool + Send + Sync + 'stat
     }
 }
 
-/// 로그인 상태 전달(프런트 `auth-changed`·자동 이어받기)과 타이머(시작 갱신·재확인·절전 복귀)를 띄운다(구현 중 변경 A2-3)
+/// 로그인 상태 전달(프런트 `auth-changed`·자동 이어받기)과 타이머(시작 갱신·재확인·절전 복귀)를 띄운다(구현 중 변경 56)
 pub fn spawn_auth_tasks<R: Runtime>(handle: AppHandle<R>, auth: Arc<AppAuth>) {
     let h = handle.clone();
     tauri::async_runtime::spawn(forward_status(auth.subscribe(), move |st| {

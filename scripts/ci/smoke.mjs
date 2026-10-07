@@ -5,7 +5,7 @@
 //   node scripts/ci/smoke.mjs install [--dir <폴더>]   # 번들 설치본(기본 target/ci/bundle) — smoke-install gate
 //
 // 마커는 정확히 {"version": <워크스페이스 버전>, "ready": true, "auth": <bool>}여야 한다. 설치 스모크(릴리스 번들)는 auth가 true여야 한다
-// (Worker 주소 규칙이 실제 산출물에서 지켜졌다는 증거, worker.md 구현 중 변경 A2-6). 앱은 60초 안에 프런트 신호가 없으면 스스로
+// (Worker 주소 규칙이 실제 산출물에서 지켜졌다는 증거, worker.md 구현 중 변경 59). 앱은 60초 안에 프런트 신호가 없으면 스스로
 // exit 2로 끝나고, 여기서는 그보다 긴 바깥 시간 제한(SMOKE_KILL_MS)으로 멈춘 프로세스를 죽인다.
 // Linux는 DISPLAY가 없으면 `xvfb-run -a`로 감싼다. 설치 스모크는 설치 → 실행 → 제거 → 제거 확인까지 한다:
 //   linux:   deb(apt-get install ./x.deb → /usr/bin의 실행 파일 → apt-get purge → dpkg -s 실패), AppImage(풀어서 실행)

@@ -302,7 +302,7 @@ function step(what, r) {
 // 시크릿 작업은 컴파일러를 돌리지 않는다(의존성 build.rs가 GITHUB_ENV·GITHUB_PATH나 target/에 무엇을 남겨도 시크릿 단계에
 // 닿지 않게, D10, 리뷰 G6). 시크릿 작업은 받은 바이너리의 sha256을 이 작업의 출력과 맞춘 뒤에만 부른다(prepareXtask).
 // cargo에는 받은 env를 그대로 준다: cmdBuild가 DIST_BASE_URL·RELEASE_MODE를 뺀 env를 넘기므로 xtask 의존성 build.rs에도 닿지 않는다
-// (cicd.md 구현 중 변경 A2-1 (가)).
+// (cicd.md 구현 중 변경 105 (가)).
 export function cmdXtask(env = process.env) {
   if (!step('xtask 빌드', spawnTool('cargo', ['build', '-p', 'xtask', '--locked'], { cwd: ROOT, env }))) return 1;
   const dir = join(ROOT, XTASK_PACK_DIR);
@@ -342,7 +342,7 @@ function xtask(args, env = process.env, opts = {}) {
 
 // ---- build(OS마다) ----
 
-// 릴리스 빌드의 Worker 주소(worker.md §11.1, cicd.md 82 (나), 구현 중 변경 A2-1). → { mode, base, problems }
+// 릴리스 빌드의 Worker 주소(worker.md §11.1, cicd.md 82 (나), 구현 중 변경 105). → { mode, base, problems }
 // 태그: DIST_BASE_URL(저장소 secret)을 그대로 쓴다. 경로 없는 https 출처이고 자리표시(.invalid)가 아니어야 한다.
 // 그 밖(리허설·ci.yml·로컬): CHZZK_WORKER_BASE가 있으면 그것, 없으면 자리표시. 메시지에는 값을 넣지 않는다
 const safeHost = (v) => {

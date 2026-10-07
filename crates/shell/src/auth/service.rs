@@ -401,7 +401,7 @@ impl<A: WorkerApi, C: Clock> AuthService<A, C> {
         self.refresh_inner().await
     }
 
-    /// 사용자의 [다시 연결](`auth_retry`, 구현 중 변경 A2-8). 온라인 `SignedIn`이고 갱신 예정 전이면 네트워크 없이 지금
+    /// 사용자의 [다시 연결](`auth_retry`, 구현 중 변경 61). 온라인 `SignedIn`이고 갱신 예정 전이면 네트워크 없이 지금
     /// 상태를 돌려준다(연타가 토큰 회전·DO 쓰기를 늘리지 않게). 오프라인·확인 실패·시계 되돌림이면 바로 갱신한다
     pub async fn retry(&self) -> AuthStatus {
         let now = self.clock.now();

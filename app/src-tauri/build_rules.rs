@@ -1,4 +1,4 @@
-// Worker 주소 규칙(worker.md §11.1, 구현 중 변경 A2-5). build.rs와 src/lib.rs의 테스트가 include!로 함께 쓴다.
+// Worker 주소 규칙(worker.md §11.1, 구현 중 변경 58). build.rs와 src/lib.rs의 테스트가 include!로 함께 쓴다.
 // 의존성을 두지 않는다(build-dependencies는 tauri-build뿐). 오류 문구에는 값을 넣지 않는다(cicd.md 84).
 
 /// 빌드 env 이름

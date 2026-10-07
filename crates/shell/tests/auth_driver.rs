@@ -1,4 +1,4 @@
-//! `auth::driver`: 잠 길이·복귀 판정 표와 루프(worker.md 구현 중 변경 A2-3).
+//! `auth::driver`: 잠 길이·복귀 판정 표와 루프(worker.md 구현 중 변경 56).
 
 mod common;
 

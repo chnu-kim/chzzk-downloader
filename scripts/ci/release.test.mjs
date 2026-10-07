@@ -784,7 +784,7 @@ test('binaryWorkerBaseProblems: 태그 빌드 원본 바이너리에 주소가 �
   for (const p of [...missing, ...placeholder]) assert.ok(!p.includes('example.test'), '문제 문구에 값이 없다');
 });
 
-test('cmdXtask: cargo에는 받은 env만 간다(cmdBuild가 뺀 DIST_BASE_URL·RELEASE_MODE가 xtask 의존성 build.rs에 닿지 않는다, cicd A2-1 (가))', { skip: process.platform === 'win32' }, () => {
+test('cmdXtask: cargo에는 받은 env만 간다(cmdBuild가 뺀 DIST_BASE_URL·RELEASE_MODE가 xtask 의존성 build.rs에 닿지 않는다, cicd 105 (가))', { skip: process.platform === 'win32' }, () => {
   const dir = mkdtempSync(join(tmpdir(), 'xtask-env-'));
   try {
     const out = join(dir, 'env.txt');

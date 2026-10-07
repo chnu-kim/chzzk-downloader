@@ -1,4 +1,4 @@
-//! 셸 command 층 AuthGate(worker.md §11, Phase 3b A2, 구현 중 변경 A2-2).
+//! 셸 command 층 AuthGate(worker.md §11, Phase 3b A2, 구현 중 변경 55).
 //!
 //! 앱 어댑터(`app/src-tauri` `handler()`)가 모든 app command를 처리기로 보내기 전에 `App::gate_command`를 부른다.
 //! **기본은 거부**다: 여기 목록에 없는 command(새로 더한 것 포함)는 로그인(`SignedIn`, 오프라인 유예·낙관 포함)이

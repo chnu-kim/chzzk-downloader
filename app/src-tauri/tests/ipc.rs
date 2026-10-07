@@ -901,7 +901,7 @@ fn gated_commands_reject_before_sign_in() {
     assert_eq!(n, 17);
 }
 
-/// 앱 상태가 없을 때(시작 실패, worker.md 구현 중 변경 A2-2): 허용 목록 밖은 처리기 전에 notLoggedIn(fail closed)
+/// 앱 상태가 없을 때(시작 실패, worker.md 구현 중 변경 55): 허용 목록 밖은 처리기 전에 notLoggedIn(fail closed)
 #[test]
 fn gate_without_app_state_fails_closed() {
     let (notifier, _rx) = Notifier::new();
@@ -1052,7 +1052,7 @@ fn auth_changed_is_emitted_to_the_main_window() {
             std::thread::sleep(Duration::from_millis(20));
         }
     };
-    // 처음 상태가 먼저 간다(구현 중 변경 A2-1 (가) "시작 때 한 번")
+    // 처음 상태가 먼저 간다(구현 중 변경 54 (가) "시작 때 한 번")
     wait(&|g| !g.is_empty());
     assert_eq!(got.lock().unwrap()[0]["state"], json!("signedOut"));
     let st = invoke(&f.main, "auth_login", json!({})).unwrap();

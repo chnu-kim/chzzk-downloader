@@ -300,7 +300,7 @@ impl App {
         }
     }
 
-    /// `auth_retry`([다시 연결]): 지금 갱신(온라인 `SignedIn`이고 예정 전이면 네트워크 없이 상태만, 구현 중 변경 A2-8)
+    /// `auth_retry`([다시 연결]): 지금 갱신(온라인 `SignedIn`이고 예정 전이면 네트워크 없이 상태만, 구현 중 변경 61)
     pub async fn auth_retry(&self) -> AuthStatusDto {
         match self.auth.clone() {
             None => AuthStatusDto::disabled(),

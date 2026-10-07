@@ -1,4 +1,4 @@
-//! AuthService를 깨우는 셸 쪽 고리(worker.md §11.3·구현 중 변경 51, A2-3).
+//! AuthService를 깨우는 셸 쪽 고리(worker.md §11.3·구현 중 변경 51, 56).
 //!
 //! - `run_driver`: 시작 갱신 한 번 → `next_wake()`까지(최대 `HEARTBEAT`) 자고 `tick`. 상태가 바뀌면 다시 계산한다.
 //! - 절전 복귀: Tauri 데스크톱에는 복귀 이벤트가 없다. 잔 시간보다 벽시계가 `RESUME_SLACK` 넘게 더 갔으면 `Trigger::Resume`.

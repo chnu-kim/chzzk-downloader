@@ -4,7 +4,7 @@ Phase 3 W9(`docs/design/worker.md` §16)를 사용자가 순서대로 따라 하
 
 - 이 문서는 공개 저장소에 있다. 실제 Worker 주소·계정 ID·서브도메인·채널 ID·토큰은 여기와 ROADMAP·이슈·PR 어디에도 적지 않는다. 아래 `<Worker 주소>`는 자리표시다(값은 저장소 secret `DIST_BASE_URL`과 같다).
 - 결과는 ROADMAP Phase 3의 W9 줄에 **"거부/수락·있음/없음·통과/실패"와 날짜만** 적는다(§7).
-- **결과(2026-10-07)**: §2~§5의 단계는 §4 macOS Gatekeeper 한 줄을 빼고 아래 "결과" 줄대로 끝났다(남은 것: §4 macOS Gatekeeper, §6 무료 한도, §5-7의 태그 모드 강제 코드, 재배포 뒤 관리 동작의 DO 줄 URL 없음 확인). 정리는 worker.md 구현 중 변경 44.
+- **결과(2026-10-07)**: §2~§5의 단계는 §4 macOS Gatekeeper 한 줄을 빼고 아래 "결과" 줄대로 끝났다(남은 것: §6 무료 한도, 재배포 뒤 관리 동작의 DO 줄 URL 없음 확인. §4 macOS Gatekeeper·§5-7 태그 모드 강제 코드는 M1에서 끝, worker.md 구현 중 변경 M1-1·M1-2). 정리는 worker.md 구현 중 변경 44.
 - Worker 이름은 `chzzk-downloader`, R2 바인딩은 `DIST`, DO 바인딩은 `AUTH`(클래스 `AuthStore`)다(`worker/wrangler.jsonc`).
 
 ## 0. 비밀값 다루는 법
@@ -228,9 +228,9 @@ Cloudflare 계정을 다른 Worker들과 함께 쓰므로 하루 요청 한도�
 | Content-Length | Range 없이 GET, 그리고 `curl -I`(HEAD) | GET 200·206·HEAD 모두 `Content-Length` 있음. 없으면 `FixedLengthStream` 수정 PR | 32 (가) ③ |
 | 압축 없음 | `-H 'Accept-Encoding: gzip, br'`로 `SHA256SUMS`와 `/releases/latest.json` | `Content-Encoding` 없음(`no-transform`) | 32 (가) ④ |
 | Actions 로그 마스킹 | `H=${BASE#https://}; gh run view <릴리스 실행 id> --log \| grep -cF "$H"` | `0` | cicd.md 84 (다) |
-| macOS Gatekeeper | 실기기에 `.dmg` 설치 → 처음 열 때 문구, `xattr -dr com.apple.quarantine "/Applications/치지직 다운로더.app"` | 랜딩 설치 안내(`worker/src/http/copy.ts`)와 같음. 다르면 문구만 알린다 | 38 (아), §9.5 |
+| macOS Gatekeeper | 실기기에 `.dmg` 설치 → 처음 열 때 문구, `xattr -dr com.apple.quarantine "/Applications/치지직 다운로더.app"` | 처음 열 때 손상 경고(공증 없음) → 응용 프로그램으로 옮긴 뒤 `xattr -dr com.apple.quarantine "/Applications/치지직 다운로더.app"` → 열림. 랜딩 설치 안내(`worker/src/http/copy.ts`)와 같음 | 38 (아), §9.5 |
 
-**결과(2026-10-07, `v0.1.0` 실행 37551340797)**: `--check-only` health+7 통과. 일반·접미 Range 206, 끝 넘는 Range 206(크기로 잘림, 32 (가) ②), 만족 불가 Range 416(운영 R2는 던진다, ①), `Content-Length` GET·206·HEAD 있음(③), 압축 없음(④), `/update` 200/204, Actions 로그 마스킹 호스트 0건(cicd.md 84 (다)). macOS Gatekeeper 실기기 문구: **남음(사용자)**.
+**결과(2026-10-07, `v0.1.0` 실행 37551340797)**: `--check-only` health+7 통과. 일반·접미 Range 206, 끝 넘는 Range 206(크기로 잘림, 32 (가) ②), 만족 불가 Range 416(운영 R2는 던진다, ①), `Content-Length` GET·206·HEAD 있음(③), 압축 없음(④), `/update` 200/204, Actions 로그 마스킹 호스트 0건(cicd.md 84 (다)). macOS Gatekeeper 실기기 문구: [그래도 열기]가 아닌 손상 경고였다(사용자 확인) → 랜딩 안내를 응용 프로그램 이동 + xattr로 바꿨다(worker.md 구현 중 변경 M1-1).
 
 실제 R2를 변조해 rollback을 시험하는 것은 W9에서 하지 않는다: 버전이 0.1.0 하나라 `previous`가 없다. 변조 → rollback 경로는 가짜 S3의 `release-selftest`가 덮는다(구현 중 변경 42 (자)). 두 번째 릴리스 뒤의 선택 확인은 §8.
 
@@ -248,7 +248,7 @@ Cloudflare 계정을 다른 Worker들과 함께 쓰므로 하루 요청 한도�
 | 5-6 | Worker로 다시 받아 확인: `VERIFY_VIA=worker CI_VERIFY_TOKEN="$CI_TOKEN" cargo xtask release verify --version 0.1.0 --pubkey release/updater.pub --base-url "$BASE"` → exit 0. GitHub의 verify 작업을 다시 돌리지 않는다(판정 실패면 `latest.json`을 되돌린다) | cicd.md §5 4(verify 실패 → rollback) |
 | 5-7 | `gh variable set VERIFY_VIA --env release --body worker`. 다음 릴리스부터 verify가 Worker로 읽는다. "태그 모드에서 `VERIFY_VIA=worker`를 요구"는 스위치가 아니라 **코드 변경**이라 에이전트가 따로 PR로 한다 | 42 (아) |
 
-**결과(2026-10-07)**: 5-1·5-2 완료(`WORKER_DEPLOY_ENABLED`는 저장소 변수 `true`, 환경 변수 삭제). 5-4 `v0.1.0` 승격: 실행 37551340797, gate~report 13개 모두 녹색(deploy-worker 포함). 5-5 `--check-only` 통과. 5-6 Worker 경유 `xtask release verify` 통과. 5-7 환경 `release` `VERIFY_VIA=worker` 전환 완료. 태그 모드 `VERIFY_VIA=worker` 강제 코드는 **남음(에이전트, 42 (아))**.
+**결과(2026-10-07)**: 5-1·5-2 완료(`WORKER_DEPLOY_ENABLED`는 저장소 변수 `true`, 환경 변수 삭제). 5-4 `v0.1.0` 승격: 실행 37551340797, gate~report 13개 모두 녹색(deploy-worker 포함). 5-5 `--check-only` 통과. 5-6 Worker 경유 `xtask release verify` 통과. 5-7 환경 `release` `VERIFY_VIA=worker` 전환 완료. 태그 모드 `VERIFY_VIA=worker` 강제 코드는 M1에서 더했다(preflight 업로드 전 + verify 방어, cicd.md 구현 중 변경 M1-3).
 
 `v0.1.0` 앱은 **Worker 로그인이 없는 앱**이다(Phase 3b A1~A5 전, cicd.md 구현 중 변경 82 (나)의 태그 모드 `CHZZK_WORKER_BASE` 비교도 A2 몫). 앱에 updater 주소(`plugins.updater.endpoints`)가 없어 **스스로 업데이트하지 않는다**: 0.1.0 → 0.1.x는 랜딩(로그인·허용된 사용자)에서 받아 직접 설치한다(구현 중 변경 42 (바)).
 

@@ -10,9 +10,20 @@ mod api;
 mod base;
 mod clock;
 mod session;
+mod status;
 pub mod token;
+mod verify;
 
-pub use api::{LoginUrl, TokenBundle};
+pub use api::{
+    ApiError, LoginUrl, MAX_BODY, PollResponse, StartRequest, StartResponse, TokenBundle,
+    WorkerApi, parse_bundle, parse_error_response, parse_poll, parse_start,
+};
 pub use base::{BaseError, WorkerBase, client_label};
 pub use clock::{Clock, SystemClock};
 pub use session::{LoadOutcome, SESSION_FILE, SessionStore, StoreError, StoredSession};
+pub use status::{AuthPhase, AuthReason};
+pub use verify::{
+    ACCESS_SKEW, Cause, FOCUS_MIN_GAP, GRACE, Grace, LOGIN_TTL, LoadDecision, Next, RECHECK,
+    RETRY_MINUTES, Rejection, VerifyOutcome, classify_verify, grace, is_lost_response,
+    load_decision, outcome_of_error, refresh_due_at, retry_delay,
+};

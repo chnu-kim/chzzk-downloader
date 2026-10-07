@@ -21,6 +21,7 @@ import {
   DEV_VARS_READERS,
   checkDist,
   checkHtmlSources,
+  checkLandingAppName,
   checkPackage,
   checkRawAllowlist,
   checkSources,
@@ -79,6 +80,8 @@ function copy(files = {}) {
   cpSync(join(ROOT, 'scripts/ci/tools.json'), join(d, 'scripts/ci/tools.json'));
   mkdirSync(join(d, 'app'), { recursive: true });
   cpSync(join(ROOT, 'app/package.json'), join(d, 'app/package.json'));
+  mkdirSync(join(d, 'app/src-tauri'), { recursive: true });
+  cpSync(join(ROOT, 'app/src-tauri/tauri.conf.json'), join(d, 'app/src-tauri/tauri.conf.json'));
   for (const [rel, text] of Object.entries(files)) {
     const p = join(d, rel);
     if (text === null) rmSync(p, { force: true });
@@ -226,6 +229,27 @@ test('씨앗: pnpm-workspace.yaml allowBuilds', () => {
   assert.deepEqual(checkWorker(copy({ 'worker/pnpm-workspace.yaml': ws + '  sharp: true\n' })).length > 0, true);
   assert.deepEqual(checkWorker(copy({ 'worker/pnpm-workspace.yaml': ws.replace('  workerd: true\n', '') })).length > 0, true);
   assert.deepEqual(checkWorker(copy({ 'worker/pnpm-workspace.yaml': ws + 'dangerouslyAllowAllBuilds: true\n' })).length > 0, true);
+});
+
+test('씨앗: 랜딩 xattr 경로는 tauri.conf.json productName과 같다(없으면 실패)', () => {
+  const confText = readFileSync(join(ROOT, 'app/src-tauri/tauri.conf.json'), 'utf8');
+  const conf = JSON.parse(confText);
+  const copyTs = readFileSync(join(W, 'src/http/copy.ts'), 'utf8');
+  assert.deepEqual(checkLandingAppName(copyTs, confText), []);
+  // 앱 이름이 바뀌면 걸린다(gate 진입점으로)
+  const renamed = checkWorker(copy({ 'app/src-tauri/tauri.conf.json': JSON.stringify({ ...conf, productName: '다른 이름' }) }));
+  assert.equal(renamed.length, 1, renamed.join('\n'));
+  assert.match(renamed[0], /macXattr/);
+  // copy.ts 경로가 틀리면 걸린다
+  const wrong = checkWorker(copy({ 'worker/src/http/copy.ts': copyTs.replace('/Applications/', '/Applications/X') }));
+  assert.equal(wrong.length, 1, wrong.join('\n'));
+  // tauri.conf.json이 없으면 조용히 통과하지 않는다
+  assert.match(checkWorker(copy({ 'app/src-tauri/tauri.conf.json': null })).join('\n'), /tauri\.conf\.json: 없다/);
+  // 모양: 줄이 없음, JSON 깨짐, productName 없음, 셸 특수 글자
+  assert.match(checkLandingAppName(copyTs.replace(/^\s*macXattr:.*$/m, ''), confText).join(''), /찾지 못했다/);
+  assert.match(checkLandingAppName(copyTs, '{').join(''), /JSON 해석 실패/);
+  assert.match(checkLandingAppName(copyTs, '{}').join(''), /productName이 없다/);
+  for (const bad of ['a"b', 'a$b', 'a`b', 'a\\b']) assert.equal(checkLandingAppName(copyTs, JSON.stringify({ productName: bad })).length, 1, bad);
 });
 
 test('씨앗: .dev.vars.example', () => {

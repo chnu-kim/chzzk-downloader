@@ -502,8 +502,8 @@ export const HOOKS = {
       { gate: 'release-selftest', paths: RELEASE_SELFTEST_FILES },
       { gate: 'frontend', paths: [/^app\/(?!src-tauri\/)/] },
       // pre-commit에는 넣지 않는다(무겁다). release/ 표는 W5 계약 테스트가 읽는다(worker.md §13.2). semver 벡터는 worker vitest가
-      // xtask와 함께 읽는다(worker.md 구현 중 변경 14 (다), cicd.md 구현 중 변경 87)
-      { gate: 'worker', paths: [/^worker\//, /^scripts\/ci\/worker-config/, /^release\/(latest\.schema|expected-artifacts)\.json$/, /^xtask\/testdata\/semver-vectors\.json$/] },
+      // xtask와 함께 읽는다(worker.md 구현 중 변경 14 (다), cicd.md 구현 중 변경 87). tauri.conf.json productName은 랜딩 xattr 경로의 원천이다(worker-config checkLandingAppName)
+      { gate: 'worker', paths: [/^worker\//, /^scripts\/ci\/worker-config/, /^release\/(latest\.schema|expected-artifacts)\.json$/, /^xtask\/testdata\/semver-vectors\.json$/, /^app\/src-tauri\/tauri\.conf\.json$/] },
       // release.test.mjs가 worker/test/deploy-contract.mjs(배포 뒤 검사 계약 표)를 import한다
       { gate: 'scripts-test', paths: [/^scripts\//, /^\.githooks\//, /^\.gitattributes$/, /^worker\/test\/deploy-contract\.mjs$/] },
       { gate: 'deny', paths: [/^Cargo\.lock$/, /^deny\.toml$/, /(^|\/)Cargo\.toml$/] },

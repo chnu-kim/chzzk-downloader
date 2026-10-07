@@ -43,10 +43,13 @@ export const COPY = {
   },
   appleSiliconOnly: "macOS는 Apple Silicon(M1 이후) Mac만 지원해요.",
   installHelp: "설치가 막힐 때",
-  // macOS 15 문구와 아래 경로는 실기기에서 확인한다(W9)
-  macGatekeeper: "처음 열 때 확인되지 않은 개발자라는 경고가 나오면 시스템 설정 → 개인정보 보호 및 보안 아래쪽의 [그래도 열기]를 눌러 주세요.",
-  macTerminal: "터미널을 쓸 수 있으면 아래 명령으로 격리 표시를 지울 수 있어요.",
+  // macOS: 공증하지 않은 앱이라 처음 열 때 손상됐다는 경고가 나온다(W9 실기기 확인). 설정의 열기 버튼·우클릭 열기로는 풀리지 않아
+  // 응용 프로그램으로 옮긴 뒤 격리 표시를 지우는 길만 안내한다. 앱 이름은 tauri.conf.json productName(worker-config.mjs checkLandingAppName)
+  macDamaged: "처음 열 때 앱이 손상되어 열 수 없다는 경고가 나와도 휴지통으로 옮기지 마세요. Apple 공증을 받지 않은 앱이라 macOS가 막는 거예요. 아래 순서대로 해 주세요.",
+  macMove: "1. 받은 .dmg를 열고 앱을 응용 프로그램(Applications) 폴더로 옮겨 주세요.",
+  macTerminal: "2. 터미널을 열고 아래 명령을 붙여 넣어 실행해 주세요.",
   macXattr: 'xattr -dr com.apple.quarantine "/Applications/치지직 다운로더.app"',
+  macReopen: "3. 응용 프로그램 폴더에서 앱을 다시 열어 주세요.",
   winSmartScreen: "Windows의 PC 보호 창이 뜨면 [추가 정보] → [실행]을 눌러 주세요.",
   sameAccount: "앱을 연 뒤 이 페이지와 같은 치지직 계정으로 로그인해 주세요.",
   devicesTitle: "내 기기",

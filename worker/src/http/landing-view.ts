@@ -43,7 +43,7 @@ function downloadsBody(d: Downloads): SafeHtml {
           html`<tr><td><a href="/releases/${d.version}/${r.file}">${COPY.artifact[r.id]}</a><br><span class="mono">${r.file}</span></td><td><code>${r.sha256}</code></td></tr>`,
       );
       const linux = `chmod +x ${artifactFile(d.version, "linux-x86_64.AppImage")}\nsudo apt install ./${artifactFile(d.version, "linux-x86_64.deb")}`;
-      return html`<p>${COPY.latestVersion(d.version, d.pubDate)}</p><div class="scroll"><table><thead><tr><th>${COPY.colFile}</th><th>SHA-256</th></tr></thead><tbody>${rows}</tbody></table></div><p class="muted">${COPY.appleSiliconOnly}</p><details><summary>${COPY.installHelp}</summary><h3>macOS</h3><p>${COPY.macGatekeeper}</p><p>${COPY.macTerminal}</p><pre><code>${COPY.macXattr}</code></pre><h3>Windows</h3><p>${COPY.winSmartScreen}</p><h3>Linux</h3><pre><code>${linux}</code></pre></details><p>${COPY.sameAccount}</p>`;
+      return html`<p>${COPY.latestVersion(d.version, d.pubDate)}</p><div class="scroll"><table><thead><tr><th>${COPY.colFile}</th><th>SHA-256</th></tr></thead><tbody>${rows}</tbody></table></div><p class="muted">${COPY.appleSiliconOnly}</p><details><summary>${COPY.installHelp}</summary><h3>macOS</h3><p>${COPY.macDamaged}</p><p>${COPY.macMove}</p><p>${COPY.macTerminal}</p><pre><code>${COPY.macXattr}</code></pre><p>${COPY.macReopen}</p><h3>Windows</h3><p>${COPY.winSmartScreen}</p><h3>Linux</h3><pre><code>${linux}</code></pre></details><p>${COPY.sameAccount}</p>`;
     }
   }
 }

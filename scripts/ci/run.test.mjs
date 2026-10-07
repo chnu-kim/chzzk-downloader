@@ -199,6 +199,8 @@ test('hookGates: 바뀐 경로로 조건부 gate를 고른다', () => {
   assert.deepEqual(hookGates('pre-commit', ['release/updater.pub']), ['typos', 'pubkey']);
   assert.deepEqual(hookGates('pre-commit', ['release/tauri.release.json']), ['typos', 'pubkey']);
   assert.deepEqual(hookGates('pre-commit', ['app/src-tauri/tauri.conf.json']), ['typos', 'versions', 'pubkey']);
+  // 앱 이름(productName)은 랜딩 xattr 경로의 원천이라 pre-push worker gate를 돈다
+  assert.ok(hookGates('pre-push', ['app/src-tauri/tauri.conf.json']).includes('worker'));
   assert.deepEqual(hookGates('pre-push', ['fuzz/fuzz_targets/url.rs']), ['fuzz-lock']);
   // 훅·.gitattributes만 바뀌어도 parity(인덱스 모드 100755 등)를 본다
   assert.deepEqual(hookGates('pre-push', ['.githooks/pre-push']), ['scripts-test']);

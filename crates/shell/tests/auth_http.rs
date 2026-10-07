@@ -661,3 +661,37 @@ fn debug_and_display_hide_values() {
     let api = HttpWorkerApi::new(base.clone()).unwrap();
     assert_eq!(api.base(), &base);
 }
+
+#[test]
+fn offset_time_bounds_in_bundle_and_start() {
+    // 오프셋을 UTC로 옮겨 10000년·−1년이 되는 시각은 panic 없이 계약 위반(None), 범위 안의 오프셋은 UTC로 받는다
+    let bad = ["9999-12-31T23:30:00-01:00", "0000-01-01T00:30:00+01:00"];
+    for key in ["accessExpiresAt", "refreshExpiresAt"] {
+        for t in bad {
+            let mut b = bundle_json();
+            b[key] = t.into();
+            assert!(
+                parse_bundle(b.to_string().as_bytes()).is_none(),
+                "{key} {t}"
+            );
+        }
+    }
+    let mut b = bundle_json();
+    b["accessExpiresAt"] = "2030-01-02T09:00:00+09:00".into();
+    let got = parse_bundle(b.to_string().as_bytes()).unwrap();
+    assert_eq!(got.access_expires_at, t0() + time::Duration::hours(24));
+    assert!(got.access_expires_at.offset().is_utc());
+
+    let base = WorkerBase::parse(ORIGIN).unwrap();
+    let url = format!("{ORIGIN}/auth/login/{HANDLE}");
+    for t in bad {
+        let body = json!({
+            "loginId": LID, "loginUrl": url, "userCode": "K7QX-4MRA",
+            "expiresAt": t, "pollIntervalMs": 2000,
+        });
+        assert!(
+            parse_start(body.to_string().as_bytes(), &base).is_none(),
+            "{t}"
+        );
+    }
+}

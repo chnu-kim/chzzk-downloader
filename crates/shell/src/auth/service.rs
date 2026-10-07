@@ -1,6 +1,7 @@
 //! `AuthService`: 앱 로그인 상태 머신(worker.md §11.3·§11.4, 구현 중 변경 47~52).
 //!
-//! `WorkerApi`·`Clock`을 주입받아 Tauri 없이 검사한다. 상태 잠금(`std::sync::Mutex`)은 `await`를 넘겨 잡지 않는다.
+//! `WorkerApi`·`Clock`을 주입받아 Tauri 없이 검사한다. 상태 잠금(`std::sync::Mutex`)은 `await`를 넘겨 잡지 않고,
+//! watch 송신도 상태 잠금을 푼 뒤에 한다(구독자가 `borrow()`를 쥔 채 서비스를 불러도 교착하지 않게, 구현 중 변경 53).
 //! 로그에는 낱말·숫자만 남긴다(토큰·pollSecret·loginId·로그인 주소·채널 정보·Worker 주소 금지).
 
 use std::fmt;
@@ -17,8 +18,9 @@ use super::session::{LoadOutcome, SessionStore, StoreError, StoredSession};
 use super::status::{AuthPhase, AuthReason};
 use super::token;
 use super::verify::{
-    Cause, FOCUS_MIN_GAP, LOGIN_TTL, LoadDecision, Next, VerifyOutcome, classify_verify,
-    is_lost_response, load_decision, outcome_of_error, refresh_due_at, retry_delay,
+    ACCESS_SKEW, Cause, FOCUS_MIN_GAP, LOGIN_TTL, LOST_RETRY_LAST_SEND, LoadDecision,
+    MIN_REFRESH_GAP, Next, VerifyOutcome, classify_verify, is_lost_response, load_decision,
+    lost_retry_wait, outcome_of_error, refresh_due_at, retry_delay,
 };
 use crate::error::AppError;
 
@@ -138,6 +140,10 @@ struct Inner {
     login_seq: u64,
     denied_name: Option<String>,
     first_online: FirstOnline,
+    /// 단일 비행 폴링: poll 요청이 끝날 때마다 +1
+    poll_gen: u64,
+    /// 내보낸 상태의 순번(잠금 밖 송신이 순서를 뒤집지 않게)
+    pub_seq: u64,
 }
 
 fn cause_reason(c: Cause) -> AuthReason {
@@ -214,7 +220,10 @@ pub struct AuthService<A: WorkerApi, C: Clock> {
     inner: Mutex<Inner>,
     refresh_lock: AsyncMutex<()>,
     login_lock: AsyncMutex<()>,
+    poll_lock: AsyncMutex<()>,
     tx: watch::Sender<AuthStatus>,
+    /// watch에 마지막으로 반영한 `pub_seq`. watch 송신 클로저 안에서만 잡는다
+    sent_seq: Mutex<u64>,
     client: String,
 }
 
@@ -245,6 +254,8 @@ impl<A: WorkerApi, C: Clock> AuthService<A, C> {
             login_seq: 0,
             denied_name: None,
             first_online: FirstOnline::NotYet,
+            poll_gen: 0,
+            pub_seq: 0,
         };
         match store.load() {
             LoadOutcome::Loaded(s) => {
@@ -282,7 +293,9 @@ impl<A: WorkerApi, C: Clock> AuthService<A, C> {
             inner: Mutex::new(inner),
             refresh_lock: AsyncMutex::new(()),
             login_lock: AsyncMutex::new(()),
+            poll_lock: AsyncMutex::new(()),
             tx,
+            sent_seq: Mutex::new(0),
             client,
         }
     }
@@ -291,16 +304,28 @@ impl<A: WorkerApi, C: Clock> AuthService<A, C> {
         self.inner.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    fn publish(&self, inner: &Inner) {
+    /// 상태를 내보내고 돌려준다. 상태 잠금 안에서 순번과 상태를 정하고, 잠금을 푼 뒤 watch에 보낸다.
+    /// 잠금 안에서 watch 쓰기 잠금을 기다리면, 구독자가 `borrow()`를 쥔 채 `status()`를 부를 때 교착한다.
+    /// 늦게 도착한 옛 순번은 버린다(새 상태를 덮지 않는다)
+    fn publish(&self, mut i: MutexGuard<'_, Inner>) -> AuthStatus {
+        i.pub_seq += 1;
+        let seq = i.pub_seq;
+        let st = status_of(&i);
+        drop(i);
         self.tx.send_if_modified(|cur| {
-            let new = status_of(inner);
-            if *cur != new {
-                *cur = new;
+            let mut sent = self.sent_seq.lock().unwrap_or_else(PoisonError::into_inner);
+            if seq <= *sent {
+                return false;
+            }
+            *sent = seq;
+            if *cur != st {
+                *cur = st.clone();
                 true
             } else {
                 false
             }
         });
+        st
     }
 
     /// 지금 상태
@@ -374,7 +399,7 @@ impl<A: WorkerApi, C: Clock> AuthService<A, C> {
     async fn refresh_inner(&self) -> AuthStatus {
         let gen0 = self.lock().refresh_gen;
         let _g = self.refresh_lock.lock().await;
-        let (sess, epoch) = {
+        let (sess, epoch, started) = {
             let mut i = self.lock();
             if i.refresh_gen != gen0 {
                 // 다른 호출이 방금 끝냈다(single-flight)
@@ -389,48 +414,84 @@ impl<A: WorkerApi, C: Clock> AuthService<A, C> {
                 i.phase = AuthPhase::Checking;
                 i.reason = None;
             }
-            i.last_attempt = Some(self.clock.now());
-            self.publish(&i);
-            (sess, epoch)
+            let started = self.clock.now();
+            i.last_attempt = Some(started);
+            self.publish(i);
+            (sess, epoch, started)
         };
 
+        let mono = tokio::time::Instant::now();
         let mut res = self.api.refresh(&sess.refresh_token).await;
-        let mut retried = false;
-        if let Err(e) = &res
+        // D9·구현 중 변경 53: 서버가 회전을 커밋했는지 모르는 실패면 같은 토큰으로 Worker 복구 창(첫 회전부터 60초) 안에서만
+        // 즉시·10초·30초에 다시 낸다. 창 밖에서 옛 토큰을 내면 재사용 감지로 세션이 끊긴다
+        let mut retries = 0usize;
+        while let Err(e) = &res
             && is_lost_response(e)
         {
-            // D9: 요청이 서버에 닿았는지 모르는 경우만 같은 토큰으로 즉시 1회
-            retried = true;
+            let Some(wait) = self.lost_retry_wait(retries, started, mono) else {
+                break;
+            };
+            if !wait.is_zero() {
+                tokio::time::sleep(wait).await;
+                // 자는 동안(절전 포함) 창 끝을 넘겼으면 보내지 않는다
+                if self.lost_retry_wait(retries, started, mono).is_none() {
+                    break;
+                }
+            }
+            if self.lock().session_epoch != epoch {
+                break;
+            }
+            retries += 1;
             res = self.api.refresh(&sess.refresh_token).await;
         }
-
         let now = self.clock.now();
         let mut i = self.lock();
         i.refresh_gen += 1;
         if i.session_epoch != epoch {
-            info!(result = "discarded", retried, "앱 세션 갱신");
+            info!(result = "discarded", retries, "앱 세션 갱신");
             return status_of(&i);
         }
         match res {
             Ok(b) => {
                 self.accept_session(&mut i, StoredSession::from_bundle(b, now));
-                info!(result = "ok", retried, "앱 세션 갱신");
+                info!(result = "ok", retries, "앱 세션 갱신");
             }
-            Err(e) => self.apply_refresh_error(&mut i, &sess, now, &e, retried),
+            Err(e) => self.apply_refresh_error(&mut i, &sess, started, now, &e, retries),
         }
-        self.publish(&i);
-        status_of(&i)
+        self.publish(i)
+    }
+
+    /// 다음 응답 유실 재시도까지 기다릴 시간. 경과는 벽시계와 단조 시계 중 큰 값이다(macOS 단조 시계는 절전 동안 멈추고,
+    /// 벽시계는 조정될 수 있다). 벽시계가 첫 시도보다 뒤로 갔으면 경과를 믿을 수 없어 재시도하지 않는다
+    fn lost_retry_wait(
+        &self,
+        done: usize,
+        started: OffsetDateTime,
+        mono: tokio::time::Instant,
+    ) -> Option<std::time::Duration> {
+        let wall = self.clock.now() - started;
+        if wall.is_negative() {
+            return None;
+        }
+        let mono = time::Duration::try_from(mono.elapsed()).ok()?;
+        let elapsed = wall.max(mono);
+        if elapsed > LOST_RETRY_LAST_SEND {
+            return None;
+        }
+        std::time::Duration::try_from(lost_retry_wait(done, elapsed)?).ok()
     }
 
     fn apply_refresh_error(
         &self,
         i: &mut Inner,
         sess: &StoredSession,
+        started: OffsetDateTime,
         now: OffsetDateTime,
         e: &ApiError,
-        retried: bool,
+        retries: usize,
     ) {
-        let outcome = outcome_of_error(e, retried);
+        // 재시도가 있었다 = 서버에 닿았을지 모르는 앞 시도가 있었다(그 뒤의 revoked는 재사용 감지로 본다)
+        let outcome = outcome_of_error(e, retries > 0);
         let pending = i.phase == AuthPhase::Pending;
         let cause = match outcome {
             VerifyOutcome::Transient(c) => Some(c),
@@ -440,8 +501,9 @@ impl<A: WorkerApi, C: Clock> AuthService<A, C> {
         let result = match next {
             Next::Online => "ok",
             Next::Offline { grace_until, cause } => {
+                // since는 이 갱신 시도의 시작, 다음 재시도는 재시도 묶음이 끝난 뒤부터 센다(1분 백오프가 창 밖이게)
                 let t = i.offline.get_or_insert(OfflineTrack {
-                    since: now,
+                    since: started,
                     grace_until,
                     cause,
                     failures: 0,
@@ -495,8 +557,8 @@ impl<A: WorkerApi, C: Clock> AuthService<A, C> {
             }
         };
         match cause {
-            Some(c) => info!(result, cause = cause_word(c), retried, "앱 세션 갱신"),
-            None => info!(result, retried, "앱 세션 갱신"),
+            Some(c) => info!(result, cause = cause_word(c), retries, "앱 세션 갱신"),
+            None => info!(result, retries, "앱 세션 갱신"),
         }
     }
 
@@ -619,7 +681,7 @@ impl<A: WorkerApi, C: Clock> AuthService<A, C> {
                 BeginLogin::Failed
             }
         };
-        self.publish(&i);
+        self.publish(i);
         out
     }
 
@@ -652,8 +714,16 @@ impl<A: WorkerApi, C: Clock> AuthService<A, C> {
     }
 
     async fn poll_step(&self, expect_seq: Option<u64>) -> (AuthStatus, bool) {
+        let more_of = |i: &Inner| i.phase == AuthPhase::Pending && i.login.is_some();
+        // 단일 비행(구현 중 변경 53): poll은 한 번에 하나다. 겹친 poll은 한 번뿐인 ok를 소비한 뒤 다른 요청의 404가
+        // 먼저 도착해 로그인을 LoginLost로 끝내고 ok를 버릴 수 있다. 기다린 호출은 그 사이 poll이 끝났으면 다시 내지 않는다
+        let gen0 = self.lock().poll_gen;
+        let poll_guard = self.poll_lock.lock().await;
         let (seq, id, secret) = {
             let mut i = self.lock();
+            if i.poll_gen != gen0 {
+                return (status_of(&i), more_of(&i));
+            }
             let Some(l) = &i.login else {
                 return (status_of(&i), false);
             };
@@ -662,22 +732,46 @@ impl<A: WorkerApi, C: Clock> AuthService<A, C> {
             }
             if self.clock.now() >= l.deadline {
                 Self::finish_timeout(&mut i);
-                self.publish(&i);
-                return (status_of(&i), false);
+                return (self.publish(i), false);
             }
             (l.seq, l.login_id.clone(), l.poll_secret.clone())
         };
         let res = self.api.poll(&id, &secret).await;
+        let (st, more, old) = self.apply_poll(seq, res);
+        drop(poll_guard);
+        if let Some(o) = old {
+            // 새 세션과 무관한 옛 세션이라 결과는 상태에 반영하지 않는다(Worker logout은 회전된 토큰도 해시로 찾는다)
+            let r = self
+                .api
+                .logout(Some(&o.access_token), Some(&o.refresh_token))
+                .await;
+            info!(
+                result = if r.is_ok() { "ok" } else { "failed" },
+                "옛 세션 서버 로그아웃"
+            );
+        }
+        (st, more)
+    }
+
+    /// poll 응답을 상태에 반영한다(동기: 상태 잠금이 `await`를 넘지 않게). 로그인 ok가 밀어낸 옛 저장 세션을 돌려준다
+    fn apply_poll(
+        &self,
+        seq: u64,
+        res: Result<PollResponse, ApiError>,
+    ) -> (AuthStatus, bool, Option<StoredSession>) {
+        let more_of = |i: &Inner| i.phase == AuthPhase::Pending && i.login.is_some();
         let now = self.clock.now();
         let mut i = self.lock();
+        i.poll_gen += 1;
         let Some(l) = i.login.as_mut() else {
-            return (status_of(&i), false);
+            return (status_of(&i), false, None);
         };
         if l.seq != seq {
             // 취소·새 로그인 뒤 도착한 응답은 버린다
-            return (status_of(&i), false);
+            return (status_of(&i), false, None);
         }
         let past_deadline = now >= l.deadline;
+        let mut old: Option<StoredSession> = None;
         match res {
             Ok(PollResponse::Pending) => {
                 l.last_transient = None;
@@ -687,6 +781,8 @@ impl<A: WorkerApi, C: Clock> AuthService<A, C> {
             }
             Ok(PollResponse::Ok(b)) => {
                 i.session_epoch += 1;
+                // 남아 있던 저장 세션(유예 지남·Checking 중 재로그인)은 서버에서도 끝낸다(아래, 실패 무시)
+                old = i.held.take();
                 self.accept_session(&mut i, StoredSession::from_bundle(b, now));
                 info!(result = "ok", "로그인 끝");
             }
@@ -720,9 +816,8 @@ impl<A: WorkerApi, C: Clock> AuthService<A, C> {
                 }
             }
         }
-        self.publish(&i);
-        let more = i.phase == AuthPhase::Pending && i.login.is_some();
-        (status_of(&i), more)
+        let more = more_of(&i);
+        (self.publish(i), more, old)
     }
 
     /// 로그인이 끝날 때까지 간격마다 폴링(A2가 spawn). 끝난 상태를 돌려준다
@@ -780,11 +875,11 @@ impl<A: WorkerApi, C: Clock> AuthService<A, C> {
         };
         i.phase = phase;
         i.reason = reason;
-        self.publish(&i);
-        status_of(&i)
+        self.publish(i)
     }
 
-    /// 로그아웃(D12): 로컬 먼저, 서버는 그 다음(실패 무시). 파일 삭제 실패면 Err(상태는 그래도 `SignedOut`)
+    /// 로그아웃(D12): 로컬 먼저, 서버는 그 다음(실패 무시). 파일을 지우지도 비우지도 못했으면 Err
+    /// (상태는 그래도 `SignedOut`). 지우지 못해 0바이트로 비웠으면 Ok다(`SessionStore::clear`)
     pub async fn logout(&self) -> Result<AuthStatus, StoreError> {
         let (held, cleared) = {
             let mut i = self.lock();
@@ -798,7 +893,7 @@ impl<A: WorkerApi, C: Clock> AuthService<A, C> {
             i.phase = AuthPhase::SignedOut;
             i.reason = None;
             i.denied_name = None;
-            self.publish(&i);
+            self.publish(i);
             (held, cleared)
         };
         if let Some(h) = held
@@ -812,15 +907,17 @@ impl<A: WorkerApi, C: Clock> AuthService<A, C> {
         cleared.map(|()| self.status())
     }
 
-    /// updater(A4)용 access. SignedIn 온라인이고 `now < accessExpiresAt − 60초`면 그대로, 아니면 refresh 뒤 온라인이면 Some
+    /// updater(A4)용 access. SignedIn 온라인이고 `now < accessExpiresAt − 60초`이거나 마지막 확인이 5분 안이면
+    /// (`MIN_REFRESH_GAP`, 시계가 서버보다 빨라도 호출마다 회전하지 않게) 그대로, 아니면 refresh 뒤 온라인이면 Some
     pub async fn ensure_fresh_access(&self) -> Option<Secret<String>> {
         let now = self.clock.now();
         {
             let i = self.lock();
             if let Some(h) = &i.held {
+                let just_verified = h.verified_at <= now && now < h.verified_at + MIN_REFRESH_GAP;
                 if i.phase == AuthPhase::SignedIn
                     && i.offline.is_none()
-                    && now < h.access_expires_at - super::verify::ACCESS_SKEW
+                    && (now < h.access_expires_at - ACCESS_SKEW || just_verified)
                 {
                     return Some(h.access_token.clone());
                 }

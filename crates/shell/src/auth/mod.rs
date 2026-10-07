@@ -29,7 +29,8 @@ pub use service::{
 pub use session::{LoadOutcome, SESSION_FILE, SessionStore, StoreError, StoredSession};
 pub use status::{AuthPhase, AuthReason};
 pub use verify::{
-    ACCESS_SKEW, Cause, FOCUS_MIN_GAP, GRACE, Grace, LOGIN_TTL, LoadDecision, Next, RECHECK,
+    ACCESS_SKEW, Cause, FOCUS_MIN_GAP, GRACE, Grace, LOGIN_TTL, LOST_RETRY_AT,
+    LOST_RETRY_LAST_SEND, LoadDecision, MIN_REFRESH_GAP, Next, RECHECK, RECOVERY_WINDOW,
     RETRY_MINUTES, Rejection, VerifyOutcome, classify_verify, grace, is_lost_response,
-    load_decision, outcome_of_error, refresh_due_at, retry_delay,
+    load_decision, lost_retry_wait, outcome_of_error, refresh_due_at, retry_delay,
 };

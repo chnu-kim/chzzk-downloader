@@ -143,6 +143,27 @@ fn corrupt_cases_table() {
             g["refreshExpiresAt"] = "9999-12-31T00:00:00Z".into();
             serde_json::to_vec(&g).unwrap()
         }),
+        // 오프셋을 UTC로 옮기면 10000년(time 범위 밖) 또는 −1년(RFC3339로 다시 쓸 수 없다): panic 없이 깨진 파일
+        (
+            "access_offset_10000",
+            set("accessExpiresAt", "9999-12-31T23:30:00-01:00".into()),
+        ),
+        (
+            "refresh_offset_10000",
+            set("refreshExpiresAt", "9999-12-31T23:30:00-01:00".into()),
+        ),
+        (
+            "verified_offset_10000",
+            set("verifiedAt", "9999-12-31T23:30:00-01:00".into()),
+        ),
+        (
+            "verified_offset_minus_1",
+            set("verifiedAt", "0000-01-01T00:30:00+01:00".into()),
+        ),
+        (
+            "access_offset_minus_1",
+            set("accessExpiresAt", "0000-01-01T00:30:00+01:00".into()),
+        ),
     ];
     for (name, bytes) in cases {
         std::fs::write(&path, &bytes).unwrap();
@@ -279,4 +300,73 @@ fn store_error_display_has_op_and_kind_only() {
     let t = e.to_string();
     assert!(t.starts_with("session.json create_dir 실패("), "{t}");
     assert!(!t.contains(dir.path().to_str().unwrap()));
+}
+
+#[test]
+fn offset_times_load_as_utc_and_save_back() {
+    // 범위 안의 오프셋 시각은 UTC로 읽고, 다시 쓰면 UTC(Z)로 남는다
+    let dir = tempfile::tempdir().unwrap();
+    let mut g = good_json(dir.path());
+    g["verifiedAt"] = "2030-01-01T09:00:00+09:00".into();
+    g["accessExpiresAt"] = "2029-12-31T23:30:00-01:00".into();
+    std::fs::write(
+        dir.path().join("session.json"),
+        serde_json::to_vec(&g).unwrap(),
+    )
+    .unwrap();
+    let s = loaded(store(dir.path()).load());
+    assert_eq!(s.verified_at, t0());
+    assert_eq!(s.access_expires_at, t0() + Duration::minutes(30));
+    assert!(s.verified_at.offset().is_utc());
+    store(dir.path()).save(&s).unwrap();
+    let v = read_session(dir.path()).unwrap();
+    assert_eq!(v["verifiedAt"], "2030-01-01T00:00:00Z");
+    assert_eq!(v["accessExpiresAt"], "2030-01-01T00:30:00Z");
+}
+
+#[test]
+fn save_unwritable_time_is_error_not_panic() {
+    // RFC3339로 쓸 수 없는 시각(−1년, UTC가 아닌 오프셋으로 UTC가 범위를 넘는 값)은 panic하지 않고 serialize 오류
+    let dir = tempfile::tempdir().unwrap();
+    let minus_one = t0().replace_year(-1).unwrap();
+    let near_max = time::OffsetDateTime::new_in_offset(
+        time::Date::from_calendar_date(9999, time::Month::December, 31).unwrap(),
+        time::Time::from_hms(23, 30, 0).unwrap(),
+        time::UtcOffset::from_hms(-1, 0, 0).unwrap(),
+    );
+    let mut s1 = stored(1, t0(), t0() + Duration::days(30));
+    s1.verified_at = minus_one;
+    let mut s2 = stored(1, t0(), t0() + Duration::days(30));
+    s2.refresh_expires_at = near_max;
+    for s in [s1, s2] {
+        let e = store(dir.path()).save(&s).unwrap_err();
+        assert_eq!(e.op, "serialize");
+    }
+    assert!(!dir.path().join("session.json").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn clear_truncates_when_remove_fails() {
+    // 폴더 쓰기 금지로 지우지 못하면 0바이트로 비운다: 다시 읽으면 Corrupt(로그인 안 함으로 시작), 토큰은 디스크에 없다
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let s = store(dir.path());
+    s.save(&stored(1, t0(), t0() + Duration::days(30))).unwrap();
+    std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o500)).unwrap();
+    let probe = dir.path().join("probe");
+    if std::fs::write(&probe, b"x").is_ok() {
+        eprintln!("읽기 전용 폴더에도 쓸 수 있어(root) 건너뜀");
+        let _ = std::fs::remove_file(&probe);
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+        return;
+    }
+    let r = s.clear();
+    let path = dir.path().join("session.json");
+    let len = std::fs::metadata(&path).map(|m| m.len());
+    let outcome = s.load();
+    std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+    r.unwrap();
+    assert_eq!(len.unwrap(), 0);
+    assert!(matches!(outcome, LoadOutcome::Corrupt), "{outcome:?}");
 }

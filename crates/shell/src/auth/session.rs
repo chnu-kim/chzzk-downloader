@@ -131,17 +131,22 @@ impl fmt::Debug for SessionStore {
     }
 }
 
-/// RFC3339 문자열
-pub(crate) fn fmt_time(t: OffsetDateTime) -> String {
-    t.format(&Rfc3339)
-        .expect("UTC 시각은 늘 RFC3339로 쓸 수 있다")
+/// UTC 시각 → RFC3339 문자열. RFC3339로 쓸 수 없는 값(UTC가 아니거나 0..=9999년 밖)은 None(panic하지 않는다)
+pub(crate) fn fmt_time(t: OffsetDateTime) -> Option<String> {
+    let t = t.checked_to_offset(UtcOffset::UTC)?;
+    if !(0..=9999).contains(&t.year()) {
+        return None;
+    }
+    t.format(&Rfc3339).ok()
 }
 
-/// RFC3339 문자열 → UTC 시각
+/// RFC3339 문자열 → UTC 시각. 오프셋을 UTC로 옮긴 값이 time 범위를 넘거나 0..=9999년 밖이면 None
+/// (`9999-12-31T23:30:00-01:00`은 UTC로 10000년, `0000-01-01T00:30:00+01:00`은 −1년이라 다시 쓸 수 없다)
 pub(crate) fn parse_time(s: &str) -> Option<OffsetDateTime> {
-    OffsetDateTime::parse(s, &Rfc3339)
-        .ok()
-        .map(|t| t.to_offset(UtcOffset::UTC))
+    let t = OffsetDateTime::parse(s, &Rfc3339)
+        .ok()?
+        .checked_to_offset(UtcOffset::UTC)?;
+    (0..=9999).contains(&t.year()).then_some(t)
 }
 
 impl SessionStore {
@@ -216,6 +221,12 @@ impl SessionStore {
             op: "create_dir",
             kind: e.kind(),
         })?;
+        let time = |t| {
+            fmt_time(t).ok_or(StoreError {
+                op: "serialize",
+                kind: std::io::ErrorKind::InvalidData,
+            })
+        };
         let file = SessionFile {
             v: SESSION_VERSION,
             origin: self.origin.clone(),
@@ -223,10 +234,10 @@ impl SessionStore {
             channel_name: s.channel_name.clone(),
             is_admin: s.is_admin,
             access_token: s.access_token.expose().clone(),
-            access_expires_at: fmt_time(s.access_expires_at),
+            access_expires_at: time(s.access_expires_at)?,
             refresh_token: s.refresh_token.expose().clone(),
-            refresh_expires_at: fmt_time(s.refresh_expires_at),
-            verified_at: fmt_time(s.verified_at),
+            refresh_expires_at: time(s.refresh_expires_at)?,
+            verified_at: time(s.verified_at)?,
         };
         let bytes = serde_json::to_vec_pretty(&file).map_err(|_| StoreError {
             op: "serialize",
@@ -246,15 +257,28 @@ impl SessionStore {
         })
     }
 
-    /// 지운다. 없으면 Ok.
+    /// 지운다. 없으면 Ok. 지우지 못하면(폴더 쓰기 금지·Windows 잠금 등) 그 자리에서 0바이트로 비운다:
+    /// 빈 파일은 `load`가 `Corrupt`로 보므로 재시작해도 낙관 `SignedIn`이 되지 않고 토큰도 디스크에 남지 않는다.
+    /// 비우기까지 실패해야 Err(`remove`)다
     pub fn clear(&self) -> Result<(), StoreError> {
-        match std::fs::remove_file(self.path()) {
+        let path = self.path();
+        match std::fs::remove_file(&path) {
             Ok(()) => Ok(()),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(e) => Err(StoreError {
-                op: "remove",
-                kind: e.kind(),
-            }),
+            Err(e) => {
+                let truncated = std::fs::OpenOptions::new()
+                    .write(true)
+                    .truncate(true)
+                    .open(&path)
+                    .and_then(|f| f.sync_all());
+                match truncated {
+                    Ok(()) => Ok(()),
+                    Err(_) => Err(StoreError {
+                        op: "remove",
+                        kind: e.kind(),
+                    }),
+                }
+            }
         }
     }
 }

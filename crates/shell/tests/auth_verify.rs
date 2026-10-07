@@ -324,6 +324,15 @@ fn lost_response_table() {
         ApiError::NotWorker { status: 403 },
         ApiError::NotWorker { status: 200 },
         ApiError::Contract { status: 200 },
+        // DO 커밋 뒤 Worker 예외는 500 internal이다(구현 중 변경 53)
+        ApiError::Worker {
+            status: 500,
+            code: "internal".into(),
+        },
+        ApiError::Worker {
+            status: 503,
+            code: "busy".into(),
+        },
     ];
     let no = [
         ApiError::Contract { status: 400 },
@@ -332,8 +341,8 @@ fn lost_response_table() {
             code: "session_revoked".into(),
         },
         ApiError::Worker {
-            status: 503,
-            code: "busy".into(),
+            status: 400,
+            code: "bad_request".into(),
         },
         ApiError::Worker {
             status: 429,
@@ -543,6 +552,13 @@ fn schedule_functions() {
     assert_eq!(refresh_due_at(v, v + h(24)), v + h(24) - s60);
     assert_eq!(refresh_due_at(v, v + h(2)), v + h(2) - s60);
     assert_eq!(refresh_due_at(v, v + h(48)), v + h(24));
+    // 하한: 확인 뒤 5분(시계가 서버보다 빨라 access 만료가 이미 지났거나, 60일 상한의 마지막 60초)
+    assert_eq!(refresh_due_at(v, v - h(1)), v + Duration::minutes(5));
+    assert_eq!(refresh_due_at(v, v + s60), v + Duration::minutes(5));
+    assert_eq!(
+        refresh_due_at(v, v + Duration::minutes(7)),
+        v + Duration::minutes(6)
+    );
     let mins = [
         (0, 1),
         (1, 1),
@@ -585,4 +601,31 @@ fn api_error_display_has_no_values() {
     for (e, want) in rows {
         assert_eq!(e.to_string(), want);
     }
+}
+
+#[test]
+fn lost_retry_schedule() {
+    let s = Duration::seconds;
+    // (이미 한 재시도 수, 첫 시도부터의 경과) → 기다릴 시간
+    let rows = [
+        (0, s(0), Some(s(0))),
+        (0, s(10), Some(s(0))),
+        (1, s(1), Some(s(9))),
+        (1, s(20), Some(s(0))),
+        (2, s(11), Some(s(19))),
+        (2, s(45), Some(s(0))),
+        (2, s(46), None),
+        (0, s(46), None),
+        (3, s(31), None),
+    ];
+    for (done, elapsed, want) in rows {
+        assert_eq!(
+            lost_retry_wait(done, elapsed),
+            want,
+            "done={done} elapsed={elapsed}"
+        );
+    }
+    // 마지막 송신 + 요청 상한(10초)이 Worker 복구 창 안이다
+    let timeout = Duration::try_from(REQUEST_TIMEOUT).unwrap();
+    assert!(LOST_RETRY_LAST_SEND + timeout < RECOVERY_WINDOW);
 }

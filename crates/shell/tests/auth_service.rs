@@ -14,6 +14,13 @@ use tokio::sync::Notify;
 
 type Svc = AuthService<FakeWorkerApi, FakeClock>;
 
+/// 응답 유실이 이어질 때 갱신 한 번의 요청 수(첫 시도 + 즉시·10초·30초)
+const ATTEMPTS: usize = 4;
+/// 그 묶음이 걸리는 시간(가짜 응답은 즉시라 마지막 재시도 시각)
+fn chain() -> Duration {
+    Duration::seconds(30)
+}
+
 fn h(n: i64) -> Duration {
     Duration::hours(n)
 }
@@ -79,8 +86,9 @@ impl Env {
         self.api.push_refresh(Reply::Now(Ok(bundle(n, self.now()))));
     }
 
-    fn refresh_fail_twice(&self) {
-        for _ in 0..2 {
+    /// 응답 유실 재시도 묶음 전체(첫 시도 + 재시도 3회)가 연결 실패한다. 묶음은 30초 걸린다(즉시·10초·30초)
+    fn refresh_fail_all(&self) {
+        for _ in 0..ATTEMPTS {
             self.api.push_refresh(Reply::Now(Err(transport())));
         }
     }
@@ -219,13 +227,13 @@ async fn s1_optimistic_ok() {
 async fn s2_optimistic_transport_offline() {
     let e = Env::optimistic();
     let since = e.now();
-    e.refresh_fail_twice();
+    e.refresh_fail_all();
     let s = e.svc.startup().await;
     assert_offline(&s, Cause::Network);
     let o = s.offline.unwrap();
     assert_eq!((o.since, o.grace_until), (since, t0() + h(72)));
     assert_eq!(e.file_access(), Some(acc(1)));
-    assert_eq!(e.api.refresh_calls().len(), 2);
+    assert_eq!(e.api.refresh_calls().len(), ATTEMPTS);
     assert!(!e.svc.take_first_online());
 }
 
@@ -239,7 +247,7 @@ async fn s3_checking_ok() {
 #[tokio::test(start_paused = true)]
 async fn s4_checking_transport_grace_expired_keeps_file() {
     let e = Env::checking();
-    e.refresh_fail_twice();
+    e.refresh_fail_all();
     let s = e.svc.startup().await;
     assert_eq!(
         (s.phase, s.reason),
@@ -307,12 +315,12 @@ async fn s8_not_allowed_denied() {
 #[tokio::test(start_paused = true)]
 async fn s9_cloudflare_403_html_in_grace() {
     let e = Env::optimistic();
-    for _ in 0..2 {
+    for _ in 0..ATTEMPTS {
         e.api
             .push_refresh(Reply::Now(Err(ApiError::NotWorker { status: 403 })));
     }
     assert_offline(&e.svc.startup().await, Cause::Network);
-    assert_eq!(e.api.refresh_calls().len(), 2);
+    assert_eq!(e.api.refresh_calls().len(), ATTEMPTS);
 }
 
 #[tokio::test(start_paused = true)]
@@ -338,7 +346,7 @@ async fn s12_cap_passed_during_offline() {
     let e = Env::new(h(79), Some(h(80)));
     assert_eq!(e.svc.status().phase, AuthPhase::Checking);
     e.clock.set(t0() + h(80));
-    e.refresh_fail_twice();
+    e.refresh_fail_all();
     let s = e.svc.startup().await;
     assert_eq!(
         (s.phase, s.reason),
@@ -381,19 +389,109 @@ async fn l2_lost_then_revoked_is_reuse() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn l3_lost_twice_offline() {
+async fn l3_lost_all_offline() {
     let e = Env::optimistic();
-    e.refresh_fail_twice();
+    let t = tokio::time::Instant::now();
+    e.refresh_fail_all();
     assert_offline(&e.svc.startup().await, Cause::Network);
+    assert_eq!(e.api.refresh_calls(), vec![rf(1); ATTEMPTS]);
+    // 즉시·10초·30초: 마지막 재시도도 첫 시도부터 30초(Worker 복구 창 60초 안)
+    assert_eq!(t.elapsed(), std::time::Duration::from_secs(30));
+}
+
+#[tokio::test(start_paused = true)]
+async fn l4_worker_5xx_retried() {
+    // DO가 회전을 커밋한 뒤 Worker가 500 internal을 낼 수 있다: 같은 토큰으로 다시 내 복구한다
+    let e = Env::optimistic();
+    e.api.push_refresh(Reply::Now(Err(worker(500, "internal"))));
+    e.refresh_ok(2);
+    assert_signed_in_online(&e.svc.startup().await);
+    assert_eq!(e.api.refresh_calls(), vec![rf(1), rf(1)]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn l8_lost_twice_then_ok_within_window() {
+    // 이중 유실도 창 안의 세 번째 시도(10초)에서 복구한다(예전: 즉시 1회 뒤 1분 백오프 → 창 밖 → 재사용 감지)
+    let e = Env::optimistic();
+    let t = tokio::time::Instant::now();
+    e.api.push_refresh(Reply::Now(Err(transport())));
+    e.api.push_refresh(Reply::Now(Err(worker(502, "internal"))));
+    e.refresh_ok(2);
+    assert_signed_in_online(&e.svc.startup().await);
+    assert_eq!(e.api.refresh_calls(), vec![rf(1), rf(1), rf(1)]);
+    assert_eq!(t.elapsed(), std::time::Duration::from_secs(10));
+}
+
+#[tokio::test(start_paused = true)]
+async fn l9_no_retry_past_window() {
+    // 첫 요청이 오래 걸려(절전 등으로 벽시계가 70초 흐름) 창 끝을 넘겼으면 다시 내지 않는다
+    let e = Env::optimistic();
+    let n = Arc::new(Notify::new());
+    e.api.push_refresh(Reply::Hold(n.clone(), Err(transport())));
+    let svc = e.svc.clone();
+    let t = tokio::spawn(async move { svc.startup().await });
+    while e.api.refresh_calls().is_empty() {
+        tokio::task::yield_now().await;
+    }
+    e.clock.advance(Duration::seconds(70));
+    n.notify_one();
+    assert_offline(&t.await.unwrap(), Cause::Network);
+    assert_eq!(e.api.refresh_calls().len(), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn l10_slow_attempts_back_to_back() {
+    // 매 시도가 10초 시간 초과로 끝나면 기다리지 않고 0·10·20·30초에 낸다(마지막 송신은 45초 안)
+    let e = Env::optimistic();
+    let svc = e.svc.clone();
+    let mut ns = Vec::new();
+    for _ in 0..ATTEMPTS {
+        let n = Arc::new(Notify::new());
+        e.api.push_refresh(Reply::Hold(
+            n.clone(),
+            Err(ApiError::Transport { timed_out: true }),
+        ));
+        ns.push(n);
+    }
+    let t = tokio::spawn(async move { svc.startup().await });
+    for (k, n) in ns.iter().enumerate() {
+        while e.api.refresh_calls().len() <= k {
+            tokio::task::yield_now().await;
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+        n.notify_one();
+    }
+    assert_offline(&t.await.unwrap(), Cause::Network);
+    assert_eq!(e.api.refresh_calls().len(), ATTEMPTS);
+}
+
+#[tokio::test(start_paused = true)]
+async fn l11_rate_limited_in_chain_stops() {
+    // 묶음 중의 429는 서버가 커밋 전에 판정한 것이라 거기서 멈춘다(받아들인 위험, 구현 중 변경 53)
+    let e = Env::optimistic();
+    e.api.push_refresh(Reply::Now(Err(transport())));
+    e.api
+        .push_refresh(Reply::Now(Err(worker(429, "rate_limited"))));
+    assert_offline(&e.svc.startup().await, Cause::Server);
     assert_eq!(e.api.refresh_calls().len(), 2);
 }
 
 #[tokio::test(start_paused = true)]
-async fn l4_worker_5xx_no_retry() {
+async fn l12_logout_during_retry_wait_stops() {
     let e = Env::optimistic();
-    e.api.push_refresh(Reply::Now(Err(worker(503, "busy"))));
-    assert_offline(&e.svc.startup().await, Cause::Server);
-    assert_eq!(e.api.refresh_calls().len(), 1);
+    e.api.push_refresh(Reply::Now(Err(transport())));
+    e.api.push_refresh(Reply::Now(Err(transport())));
+    let svc = e.svc.clone();
+    let t = tokio::spawn(async move { svc.refresh().await });
+    while e.api.refresh_calls().len() < 2 {
+        tokio::task::yield_now().await;
+    }
+    for _ in 0..10 {
+        tokio::task::yield_now().await;
+    }
+    e.svc.logout().await.unwrap();
+    assert_eq!(t.await.unwrap().phase, AuthPhase::SignedOut);
+    assert_eq!(e.api.refresh_calls().len(), 2);
 }
 
 #[tokio::test(start_paused = true)]
@@ -417,14 +515,14 @@ async fn l6_contract_200_retried() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn l7_contract_200_twice_offline() {
+async fn l7_contract_200_all_offline() {
     let e = Env::optimistic();
-    for _ in 0..2 {
+    for _ in 0..ATTEMPTS {
         e.api
             .push_refresh(Reply::Now(Err(ApiError::Contract { status: 200 })));
     }
     assert_offline(&e.svc.startup().await, Cause::Server);
-    assert_eq!(e.api.refresh_calls().len(), 2);
+    assert_eq!(e.api.refresh_calls().len(), ATTEMPTS);
 }
 
 // ------------------------------------------------------------ single-flight
@@ -607,32 +705,33 @@ async fn t3_access_skew_rules() {
 async fn t4_offline_backoff_schedule() {
     let e = Env::optimistic();
     let s0 = e.now();
-    e.refresh_fail_twice();
+    e.refresh_fail_all();
     e.svc.startup().await;
-    assert_eq!(e.svc.next_wake(), Some(s0 + mins(1)));
-    e.clock.set(s0 + Duration::seconds(59));
+    // 백오프는 재시도 묶음이 끝난 뒤부터 센다(1분 뒤 시도가 Worker 복구 창 밖이게)
+    assert_eq!(e.svc.next_wake(), Some(s0 + chain() + mins(1)));
+    e.clock.set(s0 + chain() + Duration::seconds(59));
     e.svc.tick(Trigger::Timer).await;
-    assert_eq!(e.api.refresh_calls().len(), 2);
+    assert_eq!(e.api.refresh_calls().len(), ATTEMPTS);
     for delay in [2, 5, 10, 30, 30] {
         let at = e.svc.next_wake().unwrap();
         e.clock.set(at);
         let before = e.api.refresh_calls().len();
-        e.refresh_fail_twice();
+        e.refresh_fail_all();
         e.svc.tick(Trigger::Timer).await;
-        assert_eq!(e.api.refresh_calls().len(), before + 2);
-        assert_eq!(e.svc.next_wake(), Some(at + mins(delay)));
+        assert_eq!(e.api.refresh_calls().len(), before + ATTEMPTS);
+        assert_eq!(e.svc.next_wake(), Some(at + chain() + mins(delay)));
     }
 }
 
 #[tokio::test(start_paused = true)]
 async fn t5_grace_passes_then_tries_once() {
     let e = Env::optimistic();
-    e.refresh_fail_twice();
+    e.refresh_fail_all();
     e.svc.startup().await;
     e.clock.set(t0() + h(72));
-    e.refresh_fail_twice();
+    e.refresh_fail_all();
     let s = e.svc.tick(Trigger::Timer).await;
-    assert_eq!(e.api.refresh_calls().len(), 4);
+    assert_eq!(e.api.refresh_calls().len(), 2 * ATTEMPTS);
     assert_eq!(
         (s.phase, s.reason),
         (AuthPhase::Expired, Some(AuthReason::GraceExpired))
@@ -643,10 +742,10 @@ async fn t5_grace_passes_then_tries_once() {
 #[tokio::test(start_paused = true)]
 async fn t6_reconnect_from_grace_expired() {
     let e = Env::optimistic();
-    e.refresh_fail_twice();
+    e.refresh_fail_all();
     e.svc.startup().await;
     e.clock.set(t0() + h(72));
-    e.refresh_fail_twice();
+    e.refresh_fail_all();
     e.svc.tick(Trigger::Timer).await;
     let n = Arc::new(Notify::new());
     e.api
@@ -656,7 +755,7 @@ async fn t6_reconnect_from_grace_expired() {
         let s = svc.clone();
         async move { s.refresh().await }
     });
-    while e.api.refresh_calls().len() < 5 {
+    while e.api.refresh_calls().len() < 2 * ATTEMPTS + 1 {
         tokio::task::yield_now().await;
     }
     assert_eq!(svc.status().phase, AuthPhase::Checking);
@@ -669,15 +768,15 @@ async fn t6_reconnect_from_grace_expired() {
 async fn t7_focus_min_gap() {
     let e = Env::optimistic();
     let s0 = e.now();
-    e.refresh_fail_twice();
+    e.refresh_fail_all();
     e.svc.startup().await;
-    e.clock.set(s0 + Duration::seconds(30));
+    e.clock.set(s0 + Duration::seconds(59));
     e.svc.tick(Trigger::Focus).await;
-    assert_eq!(e.api.refresh_calls().len(), 2);
+    assert_eq!(e.api.refresh_calls().len(), ATTEMPTS);
     e.clock.set(s0 + Duration::seconds(61));
-    e.refresh_fail_twice();
+    e.refresh_fail_all();
     e.svc.tick(Trigger::Focus).await;
-    assert_eq!(e.api.refresh_calls().len(), 4);
+    assert_eq!(e.api.refresh_calls().len(), 2 * ATTEMPTS);
 }
 
 #[tokio::test(start_paused = true)]
@@ -923,7 +1022,7 @@ async fn g15_cancel_discards_late_ok() {
 /// s4 상태: GraceExpired, 파일 있음
 async fn grace_expired_env() -> Env {
     let e = Env::checking();
-    e.refresh_fail_twice();
+    e.refresh_fail_all();
     let s = e.svc.startup().await;
     assert_eq!(s.reason, Some(AuthReason::GraceExpired));
     e
@@ -951,7 +1050,7 @@ async fn g17_cancel_while_offline_in_grace() {
     e.start_ok();
     e.svc.begin_login().await;
     e.clock.set(t0() + h(71));
-    e.refresh_fail_twice();
+    e.refresh_fail_all();
     let s = e.svc.refresh().await;
     assert_eq!(s.phase, AuthPhase::Pending);
     let s = e.svc.cancel_login();
@@ -1104,7 +1203,7 @@ async fn e2_expiring_access_refreshes() {
 #[tokio::test(start_paused = true)]
 async fn e3_offline_none() {
     let e = Env::optimistic();
-    e.refresh_fail_twice();
+    e.refresh_fail_all();
     e.svc.refresh().await;
     assert!(e.svc.ensure_fresh_access().await.is_none());
 }
@@ -1122,7 +1221,7 @@ async fn gate_table() {
     cases.push(("signed_in_optimistic", Env::optimistic(), true));
     cases.push(("signed_in_online", Env::online().await, true));
     let offline = Env::optimistic();
-    offline.refresh_fail_twice();
+    offline.refresh_fail_all();
     offline.svc.refresh().await;
     cases.push(("signed_in_offline", offline, true));
     cases.push(("checking", Env::checking(), false));
@@ -1385,17 +1484,17 @@ async fn n10_new_login_after_discarded_start() {
 #[tokio::test(start_paused = true)]
 async fn t10_capped_grace_wakes_at_cap_and_expires() {
     // 파일 refreshExpiresAt = V+10h: 유예 끝은 V+72h가 아니라 V+10h이고, next_retry_at보다 먼저 온다
-    let e = Env::new(h(10) - Duration::seconds(30), Some(h(10)));
+    let e = Env::new(h(10) - Duration::seconds(80), Some(h(10)));
     assert_eq!(e.svc.status().phase, AuthPhase::SignedIn);
-    e.refresh_fail_twice();
+    e.refresh_fail_all();
     let s = e.svc.startup().await;
     assert_offline(&s, Cause::Network);
     assert_eq!(s.offline.unwrap().grace_until, t0() + h(10));
     assert_eq!(e.svc.next_wake(), Some(t0() + h(10)));
     e.clock.set(t0() + h(10));
-    e.refresh_fail_twice();
+    e.refresh_fail_all();
     let s = e.svc.tick(Trigger::Timer).await;
-    assert_eq!(e.api.refresh_calls().len(), 4);
+    assert_eq!(e.api.refresh_calls().len(), 2 * ATTEMPTS);
     assert_eq!(
         (s.phase, s.reason),
         (AuthPhase::Expired, Some(AuthReason::SessionExpired))
@@ -1408,13 +1507,13 @@ async fn t10_capped_grace_wakes_at_cap_and_expires() {
 #[tokio::test(start_paused = true)]
 async fn r1_rollback_while_offline_rechecks_and_expires() {
     let e = Env::optimistic();
-    e.refresh_fail_twice();
+    e.refresh_fail_all();
     assert!(e.svc.startup().await.offline.is_some());
     e.clock.set(t0() - d(365));
     assert_eq!(e.svc.next_wake(), Some(e.now()));
-    e.refresh_fail_twice();
+    e.refresh_fail_all();
     let s = e.svc.tick(Trigger::Timer).await;
-    assert_eq!(e.api.refresh_calls().len(), 4);
+    assert_eq!(e.api.refresh_calls().len(), 2 * ATTEMPTS);
     assert_eq!(
         (s.phase, s.reason),
         (AuthPhase::Expired, Some(AuthReason::GraceExpired))
@@ -1471,4 +1570,199 @@ async fn o8_far_future_file_does_not_panic() {
 fn read_or_save(dir: &std::path::Path) -> serde_json::Value {
     store(dir).save(&stored(1, t0(), t0() + d(30))).unwrap();
     read_session(dir).unwrap()
+}
+
+// ------------------------------------------------ PR 리뷰 반영(구현 중 변경 53)
+
+#[tokio::test(start_paused = true)]
+async fn m1_fast_local_clock_does_not_loop() {
+    // 로컬 시계가 서버보다 25시간 빠르다: 받은 accessExpiresAt(서버 기준 +24h)이 로컬로는 이미 지났다.
+    // 다음 갱신은 확인 뒤 5분이고, updater용 access도 그 사이에는 회전하지 않는다
+    let e = Env::optimistic();
+    let now = e.now();
+    e.api
+        .push_refresh(Reply::Now(Ok(bundle_with(2, now - h(1), now + d(30)))));
+    assert_signed_in_online(&e.svc.refresh().await);
+    assert_eq!(e.svc.next_wake(), Some(now + mins(5)));
+    e.svc.tick(Trigger::Timer).await;
+    e.svc.tick(Trigger::Focus).await;
+    assert_eq!(e.svc.ensure_fresh_access().await.unwrap().expose(), &acc(2));
+    assert_eq!(e.api.refresh_calls().len(), 1);
+    e.clock.set(now + mins(5));
+    e.api
+        .push_refresh(Reply::Now(Ok(bundle_with(3, now - h(1), now + d(30)))));
+    e.svc.tick(Trigger::Timer).await;
+    assert_eq!(e.api.refresh_calls(), vec![rf(1), rf(2)]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn m2_cap_last_minute_does_not_loop() {
+    // 60일 상한의 마지막 60초: 서버는 accessExpiresAt을 상한으로 자른다(now + 30초) → 다음 갱신은 5분 뒤
+    let e = Env::optimistic();
+    let now = e.now();
+    let cap = now + Duration::seconds(30);
+    e.api.push_refresh(Reply::Now(Ok(bundle_with(2, cap, cap))));
+    e.svc.refresh().await;
+    assert_eq!(e.svc.next_wake(), Some(now + mins(5)));
+    e.svc.tick(Trigger::Timer).await;
+    assert_eq!(e.api.refresh_calls().len(), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn m3_poll_single_flight() {
+    // 겹친 poll은 한 번에 하나: 먼저 낸 poll이 ok를 받으면 기다리던 poll은 다시 내지 않는다(404가 ok를 덮지 않는다)
+    let e = pending_env().await;
+    let n = Arc::new(Notify::new());
+    e.api.push_poll(Reply::Hold(
+        n.clone(),
+        Ok(PollResponse::Ok(bundle(1, e.now()))),
+    ));
+    e.api.push_poll(Reply::Now(Err(worker(404, "not_found"))));
+    let a = tokio::spawn({
+        let s = e.svc.clone();
+        async move { s.poll_login_once().await }
+    });
+    while e.api.count(is_poll) == 0 {
+        tokio::task::yield_now().await;
+    }
+    let b = tokio::spawn({
+        let s = e.svc.clone();
+        async move { s.poll_login_once().await }
+    });
+    for _ in 0..10 {
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(e.api.count(is_poll), 1);
+    n.notify_one();
+    assert_signed_in_online(&a.await.unwrap());
+    assert_signed_in_online(&b.await.unwrap());
+    assert_eq!(e.api.count(is_poll), 1);
+    assert_eq!(e.file_access(), Some(acc(1)));
+}
+
+#[tokio::test(start_paused = true)]
+async fn m4_relogin_revokes_old_session() {
+    // 저장 세션(유예 지남)을 둔 채 다시 로그인하면 ok 뒤 옛 세션을 서버에서도 끝낸다(실패해도 로그인은 유지)
+    for ok in [true, false] {
+        let e = grace_expired_env().await;
+        e.start_ok();
+        e.svc.begin_login().await;
+        e.api
+            .push_poll(Reply::Now(Ok(PollResponse::Ok(bundle(5, e.now())))));
+        e.api
+            .push_logout(Reply::Now(if ok { Ok(()) } else { Err(transport()) }));
+        let s = e.svc.poll_login_once().await;
+        assert_signed_in_online(&s);
+        assert_eq!(e.file_access(), Some(acc(5)), "ok={ok}");
+        assert_eq!(
+            e.api.calls().last().unwrap(),
+            &Call::Logout {
+                access: Some(acc(1)),
+                refresh: Some(rf(1))
+            },
+            "ok={ok}"
+        );
+        assert!(e.svc.is_signed_in());
+    }
+    // 저장 세션이 없으면 로그아웃을 부르지 않는다
+    let e = pending_env().await;
+    e.api
+        .push_poll(Reply::Now(Ok(PollResponse::Ok(bundle(1, e.now())))));
+    e.svc.poll_login_once().await;
+    assert_eq!(e.api.count(|c| matches!(c, Call::Logout { .. })), 0);
+}
+
+/// 폴더를 읽기 전용으로 바꾼다. root라 막히지 않으면 false(테스트 건너뜀)
+#[cfg(unix)]
+fn make_dir_readonly(dir: &std::path::Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o500)).unwrap();
+    let probe = dir.join("probe");
+    if std::fs::write(&probe, b"x").is_ok() {
+        eprintln!("읽기 전용 폴더에도 쓸 수 있어(root) 건너뜀");
+        let _ = std::fs::remove_file(&probe);
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+        return false;
+    }
+    true
+}
+
+#[cfg(unix)]
+fn make_dir_writable(dir: &std::path::Path) {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+}
+
+#[cfg(unix)]
+#[tokio::test(start_paused = true)]
+async fn m5_logout_remove_failure_not_signed_in_after_restart() {
+    let e = Env::online().await;
+    if !make_dir_readonly(e.path()) {
+        return;
+    }
+    let r = e.svc.logout().await;
+    let again = service(e.path(), &e.api, &e.clock);
+    let st = again.status();
+    make_dir_writable(e.path());
+    assert_eq!(r.unwrap().phase, AuthPhase::SignedOut);
+    assert_eq!(st.phase, AuthPhase::SignedOut);
+    assert!(e.file_access().is_none());
+}
+
+#[cfg(unix)]
+#[tokio::test(start_paused = true)]
+async fn m6_drop_session_remove_failure_not_signed_in_after_restart() {
+    for err in [
+        worker(401, "session_revoked"),
+        worker(403, "not_allowed"),
+        worker(401, "session_expired"),
+    ] {
+        let e = Env::optimistic();
+        if !make_dir_readonly(e.path()) {
+            return;
+        }
+        e.api.push_refresh(Reply::Now(Err(err.clone())));
+        let s = e.svc.refresh().await;
+        let again = service(e.path(), &e.api, &e.clock);
+        let st = again.status();
+        make_dir_writable(e.path());
+        assert!(!s.phase.eq(&AuthPhase::SignedIn), "{err:?}");
+        assert_eq!(st.phase, AuthPhase::SignedOut, "{err:?}");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn m7_publish_outside_state_lock() {
+    // 구독자가 watch borrow를 쥔 채 status()를 불러도 교착하지 않는다(송신은 상태 잠금 밖)
+    let e = pending_env().await;
+    let rx = e.svc.subscribe();
+    let guard = rx.borrow();
+    let svc = e.svc.clone();
+    let publisher = std::thread::spawn(move || svc.cancel_login().phase);
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    let (tx, got) = std::sync::mpsc::channel();
+    let svc = e.svc.clone();
+    std::thread::spawn(move || {
+        let _ = tx.send(svc.status().phase);
+    });
+    let phase = got.recv_timeout(std::time::Duration::from_secs(5));
+    drop(guard);
+    assert_eq!(
+        phase.expect("status()가 막혔다(교착)"),
+        AuthPhase::SignedOut
+    );
+    assert_eq!(publisher.join().unwrap(), AuthPhase::SignedOut);
+    assert_eq!(rx.borrow().phase, AuthPhase::SignedOut);
+}
+
+#[tokio::test(start_paused = true)]
+async fn m8_publish_order_latest_wins() {
+    // 잠금 밖 송신이어도 마지막 상태가 watch에 남는다
+    let e = pending_env().await;
+    let rx = e.svc.subscribe();
+    e.svc.cancel_login();
+    e.start_ok();
+    e.svc.begin_login().await;
+    assert_eq!(rx.borrow().phase, AuthPhase::Pending);
+    assert_eq!(*rx.borrow(), e.svc.status());
 }

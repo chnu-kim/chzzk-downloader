@@ -163,13 +163,36 @@ pub fn outcome_of_error(e: &ApiError, retried: bool) -> VerifyOutcome {
     }
 }
 
-/// 응답 유실 재시도 대상인가(D9)
+/// 첫 시도의 결과가 응답 유실 후보인가(D9, 구현 중 변경 53): 서버가 회전을 커밋했는지 모르는 실패.
+/// 응답 없음·Worker 형식이 아닌 응답·2xx 계약 위반·Worker 형식 5xx(DO 커밋 뒤 `500 internal`이 날 수 있다).
+/// Worker 형식 4xx(400·429 등)는 서버가 커밋 전에 판정한 것이라 후보가 아니다
 pub fn is_lost_response(e: &ApiError) -> bool {
     match e {
         ApiError::Transport { .. } | ApiError::NotWorker { .. } => true,
         ApiError::Contract { status } => (200..300).contains(status),
-        ApiError::Worker { .. } => false,
+        ApiError::Worker { status, .. } => (500..600).contains(status),
     }
+}
+
+/// Worker 복구 창(`worker/src/store/sessions.ts` `RECOVERY_WINDOW_MS`): 첫 회전(`used_at`)부터 60초 안에 같은 토큰을 내면 복구된다
+pub const RECOVERY_WINDOW: time::Duration = time::Duration::seconds(60);
+/// 응답 유실 재시도를 보낼 수 있는 마지막 시각(첫 시도 시작부터). 창 60초 − 요청 상한 10초 − 여유 5초.
+/// 첫 회전은 첫 시도를 보낸 뒤에 일어나므로 서버의 `now − used_at`은 이 경과 + 그 요청의 시간보다 작다
+pub const LOST_RETRY_LAST_SEND: time::Duration = time::Duration::seconds(45);
+/// 응답 유실 재시도 시각(첫 시도 시작부터): 즉시·10초·30초. 앞 요청이 늦게 끝났으면 기다리지 않고 바로 보낸다
+pub const LOST_RETRY_AT: [time::Duration; 3] = [
+    time::Duration::ZERO,
+    time::Duration::seconds(10),
+    time::Duration::seconds(30),
+];
+
+/// `done`번째(0부터) 응답 유실 재시도까지 기다릴 시간. `elapsed`는 첫 시도 시작부터의 경과
+/// (벽시계·단조 시계 중 큰 값, 벽시계가 뒤로 갔으면 호출자가 None 처리). 재시도를 다 했거나
+/// 보낼 시각이 `LOST_RETRY_LAST_SEND`를 넘으면 None(창 밖 재시도는 재사용 감지로 세션을 끊는다)
+pub fn lost_retry_wait(done: usize, elapsed: time::Duration) -> Option<time::Duration> {
+    let at = *LOST_RETRY_AT.get(done)?;
+    let send_at = at.max(elapsed);
+    (send_at <= LOST_RETRY_LAST_SEND).then(|| send_at - elapsed)
 }
 
 /// §11.3 판정
@@ -204,7 +227,11 @@ pub fn classify_verify(
     }
 }
 
-/// 다음 갱신 시각(D20)
+/// 성공한 갱신 뒤 다음 갱신까지의 최소 간격(구현 중 변경 53). 로컬 시계가 서버보다 access 수명(24시간) 넘게 빠르거나
+/// 60일 상한의 마지막 60초라 `accessExpiresAt − 60초`가 이미 지났어도 연속 회전(→ Worker 429)하지 않게 한다
+pub const MIN_REFRESH_GAP: time::Duration = time::Duration::minutes(5);
+
+/// 다음 갱신 시각(D20): `max(min(verifiedAt + 24h, accessExpiresAt − 60초), verifiedAt + 5분)`
 pub fn refresh_due_at(
     verified_at: OffsetDateTime,
     access_expires_at: OffsetDateTime,
@@ -212,6 +239,7 @@ pub fn refresh_due_at(
     verified_at
         .saturating_add(RECHECK)
         .min(access_expires_at.saturating_sub(ACCESS_SKEW))
+        .max(verified_at.saturating_add(MIN_REFRESH_GAP))
 }
 
 /// k번째(1부터) 연속 실패 뒤 기다릴 시간

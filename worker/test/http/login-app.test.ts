@@ -261,7 +261,7 @@ describe("재사용·결합", () => {
 
   it("state 모양이 틀리면 DO를 부르지 않고 failed", async () => {
     const res = await new Browser().get("/auth/callback?code=x&state=short");
-    expect(res.headers.get("Location")).toBe("/auth/done?r=failed");
+    expect(res.headers.get("Location")).toBe("/auth/done?r=failed&why=state_format");
     expect(fake.state.calls).toEqual([]);
   });
 

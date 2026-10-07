@@ -153,8 +153,8 @@ describe("앱 로그인: 확인 페이지·콜백의 Worker 호출은 로그 0, 
   it("콜백 실패 분기: state 형식·모르는 state·binder·code 형식·내부 예외", async () => {
     const b = new Browser(send);
     const app = new AppClient(send);
-    // state 형식 밖: DO를 부르지 않고 이벤트도 없다
-    expect((await b.get("/auth/callback?code=x&state=bad")).headers.get("Location")).toBe("/auth/done?r=failed");
+    // state 형식 밖: DO를 부르지 않는다. 사유는 done의 why로 넘긴다
+    expect((await b.get("/auth/callback?code=x&state=bad")).headers.get("Location")).toBe("/auth/done?r=failed&why=state_format");
     // 형식은 맞지만 모르는 state
     expect((await b.get(`/auth/callback?code=x&state=${"S".repeat(43)}`)).headers.get("Location")).toBe("/auth/done?r=failed");
     // 다른 브라우저의 콜백(binder)
@@ -190,6 +190,45 @@ describe("앱 로그인: 확인 페이지·콜백의 Worker 호출은 로그 0, 
       { event: "auth.login.failed", level: "info", flowKind: "app", reason: "code_format" },
       { event: "auth.login.failed", level: "error", flowKind: "app", reason: "internal", errorName: "RangeError" },
     ]);
+  });
+
+  it("DO가 남기지 못한 콜백 실패는 why 낱말로 done에 넘기고 done이 남긴다", async () => {
+    const b = new Browser(send);
+    const app = new AppClient(send);
+    const { AuthStore } = await import("../../src/store/AuthStore");
+    // consume 자체가 던진다: 콜백은 로그 0, 303 대상에 why=internal
+    vi.spyOn(AuthStore.prototype, "consume").mockImplementationOnce(() => {
+      throw new RangeError("do down");
+    });
+    const failed = await b.get(`/auth/callback?code=x&state=${"S".repeat(43)}`);
+    expect(failed.headers.get("Location")).toBe("/auth/done?r=failed&why=internal");
+    // consume 뒤 예외 + 정리 finish도 실패: DO 이벤트가 없으니 why=internal
+    {
+      vi.spyOn(AuthStore.prototype, "finish").mockImplementation(() => {
+        throw new RangeError("do down");
+      });
+      fake.state.account = "b2";
+      fake.state.authorize = "approve";
+      const { body } = await app.start();
+      const cb = await b.authorize(await b.post(new URL(body.loginUrl).pathname), fake);
+      expect((await b.get(cb)).headers.get("Location")).toBe("/auth/done?r=failed&why=internal");
+      vi.mocked(AuthStore.prototype.finish).mockRestore();
+    }
+    expect(workerSideOnQuiet()).toEqual([]);
+    expect(doEvents().filter((e) => e.event === "auth.login.failed")).toEqual([]);
+
+    recs = [];
+    expect((await b.get("/auth/done?r=failed&why=internal")).status).toBe(200);
+    expect(workerEvents("/auth/done")).toEqual([{ event: "auth.login.failed", level: "error", reason: "internal" }]);
+    recs = [];
+    expect((await b.get("/auth/done?r=failed&why=state_format")).status).toBe(200);
+    expect(workerEvents("/auth/done")).toEqual([{ event: "auth.login.failed", level: "info", reason: "state_format" }]);
+    // 모르는 낱말·실패가 아닌 r·why 없음은 로그 0
+    recs = [];
+    for (const q of ["r=failed&why=bad_origin", "r=failed&why=constructor", "r=failed&why=", "r=ok&why=internal", "r=failed", "why=internal%0A"]) {
+      expect((await b.get(`/auth/done?${q}`)).status).toBe(200);
+    }
+    expect(recs).toEqual([]);
   });
 
   it("확인 페이지 GET·POST의 거절(404·409·403)도 로그 0", async () => {

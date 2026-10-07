@@ -489,14 +489,17 @@ export const BIDI_LITERAL = /[\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/;
 // 공백 없는 모양(import{log}from"…")도 잡고, 지정자의 유니코드 이스케이프는 decodeUnicodeEscapes로 푼 뒤에 본다
 const IMPORT_STMT = /(?<![\w$.])(import|export)(?=[\s{*"'])\s*(type(?![\w$])\s*)?(?:[^;'"`]*?(?<![\w$])from\s*)?["']([^"']+)["']/g;
 
+// 지정자의 소스 확장자. moduleResolution bundler라 "../core/log.js"·".mjs"도 log.ts로 풀린다(cicd.md 구현 중 변경 102)
+const SOURCE_EXT = /\.[cm]?[jt]sx?$/;
+
 /** src/ 파일이 log.ts를 값으로 import하는 문의 줄 번호 */
 export function valueLogImports(rel, text) {
   const out = [];
   for (const m of decodeUnicodeEscapes(text).matchAll(IMPORT_STMT)) {
     const spec = m[3];
     if (!spec.startsWith('.')) continue;
-    const target = posix.normalize(posix.join(posix.dirname(rel), spec)).replace(/\.ts$/, '');
-    if (target === LOG_FILE.replace(/\.ts$/, '') && m[2] === undefined) out.push(lineOf(text, m.index));
+    const target = posix.normalize(posix.join(posix.dirname(rel), spec)).replace(SOURCE_EXT, '');
+    if (target === LOG_FILE.replace(SOURCE_EXT, '') && m[2] === undefined) out.push(lineOf(text, m.index));
   }
   return out;
 }

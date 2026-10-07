@@ -351,6 +351,9 @@ test('씨앗: 소스 규칙', () => {
     ['핸들러가 log를 값으로 import', { rel: 'src/http/auth.ts', text: 'import { log } from "../core/log";' }],
     ['여러 줄 지정자 목록', { rel: 'src/http/admin.ts', text: 'import {\n  type LogFields,\n  log,\n} from "../core/log";' }],
     ['확장자 붙은 지정자', { rel: 'src/http/x.ts', text: "import { log } from '../core/log.ts';" }],
+    ['.js 지정자(bundler 해석)', { rel: 'src/http/x.ts', text: 'import { log } from "../core/log.js";' }],
+    ['.mjs 지정자', { rel: 'src/http/x.ts', text: 'import { log } from "../core/log.mjs";' }],
+    ['.tsx 지정자', { rel: 'src/http/x.ts', text: 'export { log } from "../core/log.tsx";' }],
     ['다시 내보내기', { rel: 'src/http/x.ts', text: 'export { log } from "../core/log";' }],
     ['부수 효과 import', { rel: 'src/http/x.ts', text: 'import "../core/log";' }],
     ['core 안의 다른 파일', { rel: 'src/core/chzzk.ts', text: 'import { log } from "./log";' }],
@@ -370,6 +373,8 @@ test('씨앗: 소스 규칙', () => {
   assert.deepEqual(checkSources([{ rel: 'src/store/types.ts', text: 'import type { LogFields } from "../core/log";' }]), []);
   assert.deepEqual(checkSources([{ rel: 'src/store/types.ts', text: 'import type{LogFields}from"../core/log";' }]), []);
   assert.deepEqual(checkSources([{ rel: 'src/http/auth.ts', text: 'import type {\n  LogFields,\n} from "../core/log";\nimport { x } from "./logger";' }]), []);
+  // 확장자만 뗀다: 다른 이름(logs.js)이나 확장자 아닌 꼬리(log.json)는 log.ts가 아니다
+  assert.deepEqual(checkSources([{ rel: 'src/http/x.ts', text: 'import { a } from "../core/logs.js";\nimport b from "../core/log.json";' }]), []);
   // G-ID 도구는 사용자가 직접 돌리며 실제 비밀값 파일을 읽는다(예외)
   assert.deepEqual(checkSources([{ rel: 'scripts/channel-id-check.mjs', text: "join(dir, '..', '.dev.vars')" }]), []);
   // code 묶임 실측 도구도 같은 대우(worker.md 구현 중 변경 42). 그 순수 판정 모듈(test/)은 예외가 아니다

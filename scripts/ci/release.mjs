@@ -301,8 +301,10 @@ function step(what, r) {
 // xtask를 빌드해 XTASK_PACK_DIR에 담고 sha256을 GITHUB_OUTPUT(sha256)에 쓴다. 시크릿·환경이 없는 작업에서만 부른다:
 // 시크릿 작업은 컴파일러를 돌리지 않는다(의존성 build.rs가 GITHUB_ENV·GITHUB_PATH나 target/에 무엇을 남겨도 시크릿 단계에
 // 닿지 않게, D10, 리뷰 G6). 시크릿 작업은 받은 바이너리의 sha256을 이 작업의 출력과 맞춘 뒤에만 부른다(prepareXtask).
-function cmdXtask(env = process.env) {
-  if (!step('xtask 빌드', spawnTool('cargo', ['build', '-p', 'xtask', '--locked'], { cwd: ROOT }))) return 1;
+// cargo에는 받은 env를 그대로 준다: cmdBuild가 DIST_BASE_URL·RELEASE_MODE를 뺀 env를 넘기므로 xtask 의존성 build.rs에도 닿지 않는다
+// (cicd.md 구현 중 변경 A2-1 (가)).
+export function cmdXtask(env = process.env) {
+  if (!step('xtask 빌드', spawnTool('cargo', ['build', '-p', 'xtask', '--locked'], { cwd: ROOT, env }))) return 1;
   const dir = join(ROOT, XTASK_PACK_DIR);
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });

@@ -784,6 +784,30 @@ test('binaryWorkerBaseProblems: 태그 빌드 원본 바이너리에 주소가 �
   for (const p of [...missing, ...placeholder]) assert.ok(!p.includes('example.test'), '문제 문구에 값이 없다');
 });
 
+test('cmdXtask: cargo에는 받은 env만 간다(cmdBuild가 뺀 DIST_BASE_URL·RELEASE_MODE가 xtask 의존성 build.rs에 닿지 않는다, cicd A2-1 (가))', { skip: process.platform === 'win32' }, () => {
+  const dir = mkdtempSync(join(tmpdir(), 'xtask-env-'));
+  try {
+    const out = join(dir, 'env.txt');
+    // 가짜 cargo: 받은 env를 적고 실패한다(cmdXtask는 거기서 1로 끝난다)
+    writeFileSync(join(dir, 'cargo'), '#!/bin/sh\nenv > "$XTASK_ENV_OUT"\nexit 1\n', { mode: 0o755 });
+    const path = `${dir}:${process.env.PATH}`;
+    const script = `import { cmdXtask } from ${JSON.stringify(join(ROOT, 'scripts/ci/release.mjs'))};
+const { DIST_BASE_URL: _d, RELEASE_MODE: _m, ...rest } = process.env;
+process.exit(cmdXtask({ ...rest, GITHUB_OUTPUT: '' }));`;
+    const r = spawnSync(process.execPath, ['--input-type=module', '-e', script], {
+      env: { ...process.env, PATH: path, XTASK_ENV_OUT: out, DIST_BASE_URL: 'https://leak.example.test', RELEASE_MODE: 'tag' },
+      encoding: 'utf8',
+    });
+    assert.equal(r.status, 1, r.stderr);
+    const got = readFileSync(out, 'utf8');
+    assert.ok(got.includes(`XTASK_ENV_OUT=${out}`), '받은 env가 cargo에 간다');
+    assert.ok(!got.includes('DIST_BASE_URL'), 'DIST_BASE_URL이 cargo에 새지 않는다');
+    assert.ok(!got.includes('RELEASE_MODE'), 'RELEASE_MODE가 cargo에 새지 않는다');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('WORKER_PLACEHOLDER는 build.rs 릴리스 규칙을 통과하는 정규 출처다', () => {
   assert.equal(WORKER_PLACEHOLDER, 'https://worker.example.invalid');
   assert.deepEqual(distBaseProblems(WORKER_PLACEHOLDER), []);

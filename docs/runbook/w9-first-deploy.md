@@ -4,7 +4,7 @@ Phase 3 W9(`docs/design/worker.md` §16)를 사용자가 순서대로 따라 하
 
 - 이 문서는 공개 저장소에 있다. 실제 Worker 주소·계정 ID·서브도메인·채널 ID·토큰은 여기와 ROADMAP·이슈·PR 어디에도 적지 않는다. 아래 `<Worker 주소>`는 자리표시다(값은 저장소 secret `DIST_BASE_URL`과 같다).
 - 결과는 ROADMAP Phase 3의 W9 줄에 **"거부/수락·있음/없음·통과/실패"와 날짜만** 적는다(§7).
-- **결과(2026-10-07)**: §2~§5의 단계는 아래 "결과" 줄대로 끝났다(남은 것: §4 macOS Gatekeeper, §6 무료 한도, §5-7의 태그 모드 강제 코드). 정리는 worker.md 구현 중 변경 44.
+- **결과(2026-10-07)**: §2~§5의 단계는 §4 macOS Gatekeeper 한 줄을 빼고 아래 "결과" 줄대로 끝났다(남은 것: §4 macOS Gatekeeper, §6 무료 한도, §5-7의 태그 모드 강제 코드, 재배포 뒤 관리 동작의 DO 줄 URL 없음 확인). 정리는 worker.md 구현 중 변경 44.
 - Worker 이름은 `chzzk-downloader`, R2 바인딩은 `DIST`, DO 바인딩은 `AUTH`(클래스 `AuthStore`)다(`worker/wrangler.jsonc`).
 
 ## 0. 비밀값 다루는 법
@@ -74,7 +74,7 @@ D=$(mktemp -d) && mkdir -p "$D/home" && tar -xzf target/ci/worker-bundle/worker-
 
 ### 2.2 자격과 wrangler 함수
 
-**첫 생성만 로컬 `wrangler login`, 그 뒤는 릴리스의 배포 토큰**으로 한다(§2.3, 구현 중 변경 44 (가)). 토큰으로 하는 부분이 있어야 deploy-worker가 태그에서 쓸 토큰의 권한(배포·secret 목록)을 태그 전에 확인한다. 값은 release.mjs와 같다(구현 중 변경 36 (바)): 빈 임시 `HOME`이라 로컬 로그인 상태를 쓰지 않는다. 토큰은 셸 접두 대입으로 넘겨 어떤 프로세스의 인자에도 싣지 않는다(`env -i … CLOUDFLARE_API_TOKEN=…`처럼 쓰면 `env`의 인자로 `ps`에 보인다).
+**첫 생성만 로컬 `wrangler login`, 그 뒤는 릴리스의 배포 토큰**으로 한다(§2.3, 구현 중 변경 44 (가)). 토큰으로 하는 부분이 있어야 deploy-worker가 태그에서 쓸 토큰의 권한(배포·secret 목록)을 태그 전에 확인한다. 값은 release.mjs와 같다(구현 중 변경 36 (바)): 아래 `w()`(토큰 경로)는 빈 임시 `HOME`이라 로컬 로그인 상태를 쓰지 않는다(첫 생성만 §2.3의 "첫 생성" 절차로 실제 HOME을 쓴다). 토큰은 셸 접두 대입으로 넘겨 어떤 프로세스의 인자에도 싣지 않는다(`env -i … CLOUDFLARE_API_TOKEN=…`처럼 쓰면 `env`의 인자로 `ps`에 보인다).
 
 ```sh
 printf 'CLOUDFLARE_API_TOKEN: '; read -rs CF_TOKEN; echo
@@ -101,6 +101,23 @@ w deploy --no-bundle --config dist/wrangler.json --var "PUBLIC_ORIGIN:$BASE" --v
 - `curl -sS -o /dev/null -w '%{http_code}\n' "$BASE/health"` → `503`(secret이 없어 `config_error`, 정상).
 
 **배포가 거부되거나** 바인딩 표에 DO가 없으면 멈춘다: 에이전트가 구현 중 변경 10 (가)의 레거시 선언(`migrations` `new_sqlite_classes`)으로 바꾸는 PR을 내고(`worker-config.mjs` `FORBIDDEN_KEYS`도), 머지 뒤 §2.1부터 다시 한다. 첫 배포가 성공하기 전이라 데이터 이전은 없다(10 (나)). 토큰 권한 오류(403·`Authentication error`)면 토큰 권한을 고친다. **없는 Worker의 첫 생성은 Cloudflare 2026-09 권한 체계에서 Workers 제품 Admin이 필요해, 배포 토큰(처음에 Workers 권한이 없었다: 목록 0개·secret 403)으로는 안 됐다. 그래서 첫 생성만 로컬 `wrangler login`으로 했다.** 그 뒤 토큰에 Workers 제품 범위 Editor(= 옛 Account·Workers Scripts·Edit)를 더하니 `secret list`와 재배포가 토큰으로 통과했다. 태그의 deploy-worker가 같은 토큰을 쓰므로 생성 뒤에는 토큰으로 되돌아와 확인한다. Worker 단위 범위는 토큰 편집 화면이 `com.cloudflare.edge.worker.script` 리소스를 지원하지 않아 쓸 수 없었다.
+
+#### 첫 생성(Worker가 없을 때)
+
+Worker가 아직 없을 때만 `w()`가 아닌 이 절차를 쓴다(Worker를 지웠다가 다시 만들 때도 같다).
+
+- **필요 권한**: Workers 제품 Admin 또는 사용자의 로컬 `wrangler login`(W9 사전 준비 때 해 둔 로그인). 배포 토큰(Workers Editor)은 생성·삭제가 안 돼 쓸 수 없다.
+- **실제 HOME을 쓴다**(로컬 로그인 상태를 읽어야 해서 빈 임시 HOME을 쓰지 않는다). 그래서 반드시 §2.1의 묶음을 푼 **`.env`·`.env.local`이 없는 빈 폴더**(`$D`)에서 한다. 토큰 env(`CLOUDFLARE_API_TOKEN`)는 주지 않는다.
+- 명령 모양(값은 터미널에서 눈으로 넣고 어디에도 옮기지 않는다):
+
+```sh
+cd "$D" && CI=true WRANGLER_SEND_METRICS=false CLOUDFLARE_ACCOUNT_ID=<계정> \
+  node deploy/node_modules/wrangler/bin/wrangler.js deploy --no-bundle --config dist/wrangler.json \
+  --var "PUBLIC_ORIGIN:<Worker 주소>" --var "BUILD_ID:<SHA7>"
+```
+
+- **secret도 그때는 같은 로컬 로그인으로 넣었다**: 이번 W9에서는 토큰 권한을 고치기 전이라 §2.4의 secret 넷(`CHZZK_CLIENT_ID`·`CHZZK_CLIENT_SECRET`·`CI_VERIFY_TOKEN`·`ADMIN_CHANNEL_IDS`)을 위 명령과 같은 모양(표준 입력, 토큰 env 없음)으로 넣었다. 그 뒤 토큰에 Workers Editor를 더하고 토큰(`w()`)으로 `secret list`·같은 묶음 재배포·#38 수정본 재배포가 통과했다. 로컬 로그인은 W9 전부터 있던 사용자 기기의 기존 상태이고 logout하지 않았다.
+- 생성 뒤에는 `w()`로 돌아와 확인한다.
 
 **결과(2026-10-07)**: 통과. 첫 생성은 로컬 로그인, 이후 토큰. exports DO 선언이 실배포에서 받아들여졌다(`AuthStore` 생성, R5·10 해소, `migrations` 대안 불필요). `/health` 503(secret 없음).
 
@@ -184,9 +201,9 @@ node worker/scripts/code-binding-check.mjs
 
 ### 3.2 Workers Logs에 URL이 없다
 
-로그인을 몇 번 한 뒤 Workers Logs(저장된 로그, 실시간 아님)에서 `code=`·`state=`·`/auth/callback?`·`/auth/login/`을 찾는다 → **없음**이어야 한다. 본문(우리 JSON 필드)만 보지 말고 **메타데이터까지** 본다: 대시보드 Workers & Pages → `chzzk-downloader` → Logs에서 줄을 펼친 상세 또는 observability API(Telemetry query)로 각 줄의 `$workers.event.request.url`과 그 밖의 URL·경로 메타데이터를 확인한다. Cloudflare는 Worker 호출의 로그 줄마다 요청 URL 전체를 붙이므로(invocation 로그를 꺼도, 구현 중 변경 43) quiet 경로(콜백·확인 페이지·id가 든 내 기기·관리 POST)는 Worker 쪽 줄이 0이어야 하고, `auth.login.*`·`admin.revoke_session`·`admin.denied_*`·`me.revoke_session` 줄은 DO 쪽 줄이어야 한다. DO 줄에 들어온 요청 URL이 붙어 있으면(43 (바)의 [확인 필요]) 멈추고 알린다(그 이벤트를 버리는 수정 PR). 결과는 "URL 메타데이터 없음/있음"만 적는다.
+로그인을 몇 번 한 뒤 Workers Logs(저장된 로그, 실시간 아님)에서 `code=`·`state=`·`/auth/callback?`·`/auth/login/`을 찾는다 → **없음**이어야 한다. 본문(우리 JSON 필드)만 보지 말고 **메타데이터까지** 본다: 대시보드 Workers & Pages → `chzzk-downloader` → Logs에서 줄을 펼친 상세 또는 observability API(Telemetry query)로 각 줄의 `$workers.event.request.url`과 그 밖의 URL·경로 메타데이터를 확인한다. Cloudflare는 Worker 호출의 로그 줄마다 요청 URL 전체를 붙이므로(invocation 로그를 꺼도, 구현 중 변경 43) quiet 경로(콜백·확인 페이지·id가 든 내 기기·관리 POST)는 Worker 쪽 줄이 0이어야 하고, `auth.login.*`·`admin.revoke_session`·`admin.denied_*`·`me.revoke_session` 줄은 DO 쪽 줄이어야 한다. DO 줄에 요청 URL이 붙어 있으면(43 (바)의 [확인 필요]) 멈추고 알린다(그 이벤트를 버리는 수정 PR). 결과는 "URL 메타데이터 없음/있음"만 적는다.
 
-**결과(2026-10-07)**: 첫 배포에서 `$workers.event.request.url`에 콜백 URL(code·state) 누출 발견 → PR #38(43)로 수정 → 재배포 뒤 DO 쪽 `auth.login.ok`에 URL 메타데이터 없음(트리거 `AuthStore.jsrpc`), code·state·토큰 0건(43 (바) 해소).
+**결과(2026-10-07)**: 첫 배포에서 `$workers.event.request.url`에 콜백 URL(code·state) 누출 발견 → PR #38(43)로 수정 → 재배포 뒤 Workers Logs에서 본 줄은 `auth.login.ok`(트리거 `AuthStore.jsrpc`, 요청 URL 메타데이터 없음)와 `auth.web.logout`(quiet 아닌 경로, URL에 비밀 없음) 둘뿐이고 code·state·토큰 0건이다. §3.3의 [지우기](`admin.denied_dismiss`)는 #38 재배포 **전**이었다. `admin.*`·`me.*` DO 줄은 같은 jsrpc 트리거라 같다고 **가정**했을 뿐이라 43 (바)는 이 범위로만 해소하고, 다음 관리 동작 때 한 번 더 확인한다(W9 남은 항목).
 
 ### 3.3 실제 브라우저의 관리 POST
 

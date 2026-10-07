@@ -21,6 +21,7 @@ use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
 
 use crate::Quitting;
+use crate::auth_io::AuthIoState;
 use crate::sink::{ChannelSink, Notifier};
 use crate::smoke::{EXIT_MARKER, SmokeState, write_marker};
 
@@ -227,8 +228,42 @@ pub async fn open_app_folder<R: Runtime>(
 }
 
 #[tauri::command]
-pub async fn auth_status() -> Res<AuthStatusDto> {
-    Ok(AuthStatusDto::disabled())
+pub async fn auth_status(state: State<'_, App>) -> Res<AuthStatusDto> {
+    Ok(state.auth_status())
+}
+
+/// 로그인 시작(worker.md §11.4): 확인 페이지를 브라우저로 열고 폴링한다. 결과는 auth-changed로도 온다
+#[tauri::command]
+pub async fn auth_login(state: State<'_, App>, io: State<'_, AuthIoState>) -> Res<AuthStatusDto> {
+    let io = io.0.clone();
+    Ok(state.auth_login(move |u| io.open_url(u)).await)
+}
+
+#[tauri::command]
+pub async fn auth_reopen(state: State<'_, App>, io: State<'_, AuthIoState>) -> Res<bool> {
+    Ok(state.auth_reopen(|u| io.0.open_url(u)))
+}
+
+#[tauri::command]
+pub async fn auth_copy_login_url(state: State<'_, App>, io: State<'_, AuthIoState>) -> Res<bool> {
+    Ok(state.auth_copy_login_url(|t| io.0.copy_text(t)))
+}
+
+#[tauri::command]
+pub async fn auth_cancel(state: State<'_, App>) -> Res<AuthStatusDto> {
+    Ok(state.auth_cancel())
+}
+
+/// [다시 연결]
+#[tauri::command]
+pub async fn auth_retry(state: State<'_, App>) -> Res<AuthStatusDto> {
+    Ok(state.auth_retry().await)
+}
+
+/// 로그아웃. 받던 다운로드는 계속된다
+#[tauri::command]
+pub async fn auth_logout(state: State<'_, App>) -> Res<AuthStatusDto> {
+    state.auth_logout().await
 }
 
 /// 클립보드에 치지직 주소가 있으면 그 주소만 돌려준다(§16 클립보드 감지, 창 포커스 때 프런트가 부른다).
@@ -243,7 +278,7 @@ pub async fn clipboard_link<R: Runtime>(app: AppHandle<R>) -> Res<Option<String>
 }
 
 /// 프런트가 처음 그려진 뒤 한 번 부른다(`app/src/lib/ready.ts`). 보통 실행에서는 아무것도 하지 않는다.
-/// `--smoke`면 마커(`{version, ready:true}`)를 쓰고 앱을 끝낸다(docs/design/cicd.md §6). dist가 실리고 CSP를
+/// `--smoke`면 마커(`{version, ready:true, auth}`)를 쓰고 앱을 끝낸다(docs/design/cicd.md §6). dist가 실리고 CSP를
 /// 지나 IPC가 닿았다는 증거다.
 #[tauri::command]
 pub async fn frontend_ready<R: Runtime>(app: AppHandle<R>) -> Res<()> {
@@ -254,7 +289,8 @@ pub async fn frontend_ready<R: Runtime>(app: AppHandle<R>) -> Res<()> {
         return Ok(());
     }
     let version = app.package_info().version.to_string();
-    match write_marker(smoke.config.out.as_deref(), &version, true) {
+    let auth = app.try_state::<App>().is_some_and(|s| s.auth_enabled());
+    match write_marker(smoke.config.out.as_deref(), &version, true, auth) {
         Ok(()) => {
             tracing::info!(%version, "smoke: frontend_ready");
             app.exit(0);

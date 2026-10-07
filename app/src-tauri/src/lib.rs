@@ -1,6 +1,7 @@
 //! 치지직 다운로더 Tauri 셸(docs/design/app.md §11, §15-11). 로직은 `chzzk_shell`에 두고 여기는 배선만 한다:
 //! 플러그인, setup(경로·로그·상태), command, 창 닫기·앱 종료 처리, 완료 알림.
 
+pub mod auth_io;
 pub mod commands;
 #[cfg(feature = "e2e")]
 pub mod e2e;
@@ -9,11 +10,15 @@ pub mod sink;
 pub mod smoke;
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+
+use chzzk_shell::auth::{Trigger, forward_status, run_driver};
+use chzzk_shell::dto::AuthStatusDto;
 
 use chzzk_shell::dto::CloseRequestedPayload;
 use chzzk_shell::services::AppPaths;
-use chzzk_shell::{App, AppError, AuthSetup, WorkerBase};
+use chzzk_shell::{App, AppAuth, AppError, AuthSetup, WorkerBase};
 use tauri::ipc::Invoke;
 use tauri::{AppHandle, Emitter, Manager, RunEvent, Runtime, WindowEvent};
 
@@ -25,6 +30,9 @@ pub const COMMANDS: &[&str] = include!("command_names.rs");
 
 /// 프런트가 D1을 띄우라는 이벤트 이름(§4).
 pub const CLOSE_REQUESTED: &str = "close-requested";
+
+/// 로그인 상태가 바뀔 때마다(처음 상태 포함) 프런트로 가는 이벤트 이름(AuthStatusDto 전체, worker.md 구현 중 변경 A2-1).
+pub const AUTH_CHANGED: &str = "auth-changed";
 
 /// `quit` 진행 중. 이때 온 창 닫기·앱 종료 요청은 D1 없이 조용히 막는다(`quit`이 저장을 마치고 직접 끝낸다).
 #[derive(Debug, Default)]
@@ -156,33 +164,73 @@ pub fn tokio_handle() -> tokio::runtime::Handle {
     tauri::async_runtime::handle().inner().clone()
 }
 
-/// 모든 앱 command. `run`과 테스트(mock 런타임)가 같이 쓴다.
+/// 모든 앱 command. `run`과 테스트(mock 런타임)가 같이 쓴다. 처리기로 보내기 전에 AuthGate(셸 `App::gate_command`)를
+/// 거친다: 인자 역직렬화 전이라 어떤 인자로 불러도 로그인 전이면 `notLoggedIn`이다(구현 중 변경 A2-2).
 pub fn handler<R: Runtime>() -> impl Fn(Invoke<R>) -> bool + Send + Sync + 'static {
-    tauri::generate_handler![
-        commands::app_info,
-        commands::get_settings,
-        commands::update_settings,
-        commands::set_naver_cookies,
-        commands::clear_naver_cookies,
-        commands::import_legacy,
-        commands::pick_folder,
-        commands::resolve,
-        commands::check_output,
-        commands::enqueue,
-        commands::list_jobs,
-        commands::subscribe_jobs,
-        commands::pause_job,
-        commands::resume_job,
-        commands::remove_job,
-        commands::clear_finished,
-        commands::open_output,
-        commands::reveal_output,
-        commands::quit,
-        commands::auth_status,
-        commands::clipboard_link,
-        commands::open_app_folder,
-        commands::frontend_ready,
-    ]
+    let inner: Box<dyn Fn(Invoke<R>) -> bool + Send + Sync + 'static> =
+        Box::new(tauri::generate_handler![
+            commands::app_info,
+            commands::get_settings,
+            commands::update_settings,
+            commands::set_naver_cookies,
+            commands::clear_naver_cookies,
+            commands::import_legacy,
+            commands::pick_folder,
+            commands::resolve,
+            commands::check_output,
+            commands::enqueue,
+            commands::list_jobs,
+            commands::subscribe_jobs,
+            commands::pause_job,
+            commands::resume_job,
+            commands::remove_job,
+            commands::clear_finished,
+            commands::open_output,
+            commands::reveal_output,
+            commands::quit,
+            commands::auth_status,
+            commands::clipboard_link,
+            commands::open_app_folder,
+            commands::frontend_ready,
+            commands::auth_login,
+            commands::auth_reopen,
+            commands::auth_copy_login_url,
+            commands::auth_cancel,
+            commands::auth_retry,
+            commands::auth_logout,
+        ]);
+    move |invoke: Invoke<R>| {
+        let verdict = {
+            let cmd = invoke.message.command();
+            match invoke.message.webview_ref().try_state::<App>() {
+                Some(app) => app.gate_command(cmd),
+                None => chzzk_shell::gate::gate_without_app(cmd),
+            }
+        };
+        if let Err(e) = verdict {
+            tracing::debug!(
+                command = invoke.message.command(),
+                "로그인 전 command를 거부함"
+            );
+            invoke.resolver.reject(e);
+            return true;
+        }
+        inner(invoke)
+    }
+}
+
+/// 로그인 상태 전달(프런트 `auth-changed`·자동 이어받기)과 타이머(시작 갱신·재확인·절전 복귀)를 띄운다(구현 중 변경 A2-3)
+pub fn spawn_auth_tasks<R: Runtime>(handle: AppHandle<R>, auth: Arc<AppAuth>) {
+    let h = handle.clone();
+    tauri::async_runtime::spawn(forward_status(auth.subscribe(), move |st| {
+        if let Some(app) = h.try_state::<App>() {
+            app.on_auth_status(&st);
+        }
+        if let Err(e) = h.emit_to("main", AUTH_CHANGED, AuthStatusDto::from_status(&st)) {
+            tracing::warn!(error = %e, "auth-changed를 보내지 못함");
+        }
+    }));
+    tauri::async_runtime::spawn(run_driver(auth));
 }
 
 /// 두 번째 실행: 기존 main 창을 앞으로 가져온다. 시작에 실패해 상태가 없으면(38(바)) 숨겨 둔 창을 꺼내지 않는다.
@@ -241,6 +289,18 @@ pub fn on_run_event<R: Runtime>(app: &AppHandle<R>, e: RunEvent) {
         } => {
             if label == "main" && guard_close(app) {
                 api.prevent_close();
+            }
+        }
+        // 창 포커스: 오프라인이면 바로 다시 연결해 본다(worker.md §11.3, 갱신 간격 규칙은 AuthService)
+        RunEvent::WindowEvent {
+            label,
+            event: WindowEvent::Focused(true),
+            ..
+        } if label == "main" => {
+            if let Some(auth) = app.try_state::<App>().and_then(|s| s.auth.clone()) {
+                tauri::async_runtime::spawn(async move {
+                    auth.tick(Trigger::Focus).await;
+                });
             }
         }
         // macOS Cmd+Q·Dock 종료는 창 닫기 없이 여기로 온다(code None). `quit`의 `app.exit(0)`은 Some(0).
@@ -336,13 +396,13 @@ pub fn acquire_instance_lock(data_dir: &Path) -> InstanceLockState {
     }
 }
 
-/// 격리 실행의 경로·클라이언트 설정(E2E 빌드에서 환경 변수가 있을 때, `e2e.rs`). 보통 빌드는 늘 `None`이고
+/// 격리 실행의 경로·클라이언트·Worker 설정(E2E 빌드에서 환경 변수가 있을 때, `e2e.rs`). 보통 빌드는 늘 `None`이고
 /// 이 함수 말고는 E2E 코드가 없다(`release-hygiene`가 릴리스 바이너리로 확인한다).
-type Override = Option<(AppPaths, chzzk_core::ClientConfig)>;
+type Override = Option<(AppPaths, chzzk_core::ClientConfig, Option<WorkerBase>)>;
 
 #[cfg(feature = "e2e")]
 fn e2e_override() -> Result<Override, String> {
-    Ok(e2e::E2eConfig::from_env()?.map(|c| (c.paths(), c.client())))
+    Ok(e2e::E2eConfig::from_env()?.map(|c| (c.paths(), c.client(), c.worker_base.clone())))
 }
 
 #[cfg(not(feature = "e2e"))]
@@ -400,17 +460,18 @@ fn setup<R: Runtime>(
         app.manage(state);
     }
     let log_dir = match (&e2e, &smoke) {
-        (Some((paths, _)), _) => paths.log.clone(),
+        (Some((paths, _, _)), _) => paths.log.clone(),
         (None, Some(cfg)) => cfg.log_dir(),
         (None, None) => p.app_log_dir()?,
     };
     if let Some(guard) = logging::init(&log_dir) {
         app.manage(guard);
     }
-    let (paths, client) = match (e2e, &smoke) {
-        (Some((paths, client)), _) => (paths, Some(client)),
+    let (paths, client, e2e_worker) = match (e2e, &smoke) {
+        (Some((paths, client, worker)), _) => (paths, Some(client), Some(worker)),
         (None, Some(cfg)) => (
             AppPaths::new(cfg.config_dir(), cfg.data_dir(), log_dir, None, None),
+            None,
             None,
         ),
         (None, None) => (
@@ -421,6 +482,7 @@ fn setup<R: Runtime>(
                 p.video_dir().ok(),
                 p.download_dir().ok(),
             ),
+            None,
             None,
         ),
     };
@@ -458,10 +520,26 @@ fn setup<R: Runtime>(
         }
     }
     let log_dir = paths.log.clone();
-    let opened = match client {
-        Some(client) => App::open_with(paths, client, legacy_dir.as_deref(), tokio_handle()),
-        None => App::open(paths, legacy_dir.as_deref(), tokio_handle()),
+    // 로그인 설정(D5): E2E가 켜졌으면 E2E Worker 주소만, 아니면 빌드 주소(스모크는 빌드 주소를 따른다)
+    let version = app.package_info().version.to_string();
+    let auth = match auth_setup(e2e_worker, build_worker_base(), &version) {
+        Ok(a) => a,
+        Err(m) => {
+            let e = AppError::internal(m);
+            tracing::error!(error = %e.message, "로그인 설정이 올바르지 않음");
+            startup_failed(app.handle(), &log_dir, &e);
+            return Ok(());
+        }
     };
+    tracing::info!(
+        auth = matches!(auth, AuthSetup::Enabled { .. }),
+        "로그인 설정"
+    );
+    let client = client.unwrap_or_else(|| chzzk_core::ClientConfig {
+        progress_interval: chzzk_shell::services::PROGRESS_INTERVAL,
+        ..chzzk_core::ClientConfig::default()
+    });
+    let opened = App::open_with_auth(paths, client, legacy_dir.as_deref(), tokio_handle(), auth);
     let state = match opened {
         Ok(s) => s,
         Err(e) => {
@@ -470,7 +548,14 @@ fn setup<R: Runtime>(
             return Ok(());
         }
     };
+    let auth_arc = state.auth.clone();
     app.manage(state);
+    app.manage(auth_io::AuthIoState(Arc::new(auth_io::PluginAuthIo(
+        app.handle().clone(),
+    ))));
+    if let Some(auth) = auth_arc {
+        spawn_auth_tasks(app.handle().clone(), auth);
+    }
     app.manage(Quitting::default());
     let (notifier, rx) = Notifier::new();
     app.manage(notifier);
@@ -522,7 +607,7 @@ pub fn run() {
     });
 
     // updater: 공개 키는 tauri.conf.json `plugins.updater.pubkey`(= release/updater.pub, pubkey gate). 업데이트 확인·설치와
-    // 엔드포인트(Worker)는 Phase 3에서 붙인다. 지금은 등록만 한다(capabilities에 권한 없음, docs/design/cicd.md G6).
+    // 엔드포인트(Worker)는 Phase 3에서 붙인다(A4). 지금은 등록만 한다(capabilities에 권한 없음, docs/design/cicd.md G6).
     #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
     let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
 

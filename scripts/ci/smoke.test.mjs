@@ -8,15 +8,22 @@ import { pick } from './bundle.mjs';
 import { ROOT } from './gates.mjs';
 import { bundleSpec, checkMarker, INSTALL_STEPS, INSTALLERS, installBudgetMs, msiInstallDir } from './smoke.mjs';
 
-test('마커: 정확히 {version, ready:true}', () => {
-  assert.equal(checkMarker('{"version":"0.1.0","ready":true}\n', '0.1.0').ok, true);
-  assert.match(checkMarker('{"version":"0.1.0","ready":false}', '0.1.0').why, /ready/);
-  assert.match(checkMarker('{"version":"0.2.0","ready":true}', '0.1.0').why, /version/);
-  assert.match(checkMarker('{"version":"0.1.0","ready":true,"x":1}', '0.1.0').why, /키/);
+test('마커: 정확히 {version, ready:true, auth}', () => {
+  const m = (o) => JSON.stringify({ version: '0.1.0', ready: true, auth: true, ...o });
+  assert.equal(checkMarker(`${m({})}\n`, '0.1.0').ok, true);
+  assert.match(checkMarker(m({ ready: false }), '0.1.0').why, /ready/);
+  assert.match(checkMarker(m({ version: '0.2.0' }), '0.1.0').why, /version/);
+  assert.match(checkMarker(m({ x: 1 }), '0.1.0').why, /키/);
   assert.match(checkMarker('{"ready":true}', '0.1.0').why, /키/);
+  assert.match(checkMarker('{"version":"0.1.0","ready":true}', '0.1.0').why, /키/);
   assert.match(checkMarker('ready', '0.1.0').why, /JSON/);
   assert.match(checkMarker('[1]', '0.1.0').why, /객체/);
-  assert.match(checkMarker('{"version":"0.1.0","ready":"true"}', '0.1.0').why, /ready/);
+  assert.match(checkMarker(m({ ready: 'true' }), '0.1.0').why, /ready/);
+  // auth: 불리언이어야 하고, 설치 스모크는 true를 요구한다
+  assert.equal(checkMarker(m({}), '0.1.0', { auth: true }).ok, true);
+  assert.match(checkMarker(m({ auth: false }), '0.1.0', { auth: true }).why, /auth/);
+  assert.equal(checkMarker(m({ auth: false }), '0.1.0', {}).ok, true);
+  assert.match(checkMarker(m({ auth: 'yes' }), '0.1.0').why, /auth/);
 });
 
 const LINUX = bundleSpec().linux;

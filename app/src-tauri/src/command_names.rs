@@ -25,4 +25,10 @@
     "clipboard_link",
     "open_app_folder",
     "frontend_ready",
+    "auth_login",
+    "auth_reopen",
+    "auth_copy_login_url",
+    "auth_cancel",
+    "auth_retry",
+    "auth_logout",
 ]

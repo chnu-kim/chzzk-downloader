@@ -81,7 +81,7 @@ impl SmokeConfig {
 }
 
 /// 마커 JSON(한 줄). 버전은 semver 글자라 따옴표·역슬래시가 없지만 그래도 JSON 문자열로 이스케이프한다.
-pub fn marker_json(version: &str, ready: bool) -> String {
+pub fn marker_json(version: &str, ready: bool, auth: bool) -> String {
     let escaped: String = version
         .chars()
         .flat_map(|c| match c {
@@ -91,13 +91,18 @@ pub fn marker_json(version: &str, ready: bool) -> String {
             c => vec![c],
         })
         .collect();
-    format!("{{\"version\":\"{escaped}\",\"ready\":{ready}}}\n")
+    format!("{{\"version\":\"{escaped}\",\"ready\":{ready},\"auth\":{auth}}}\n")
 }
 
 /// 마커를 쓴다. 경로가 없으면 아무것도 하지 않는다.
-pub fn write_marker(out: Option<&Path>, version: &str, ready: bool) -> std::io::Result<()> {
+pub fn write_marker(
+    out: Option<&Path>,
+    version: &str,
+    ready: bool,
+    auth: bool,
+) -> std::io::Result<()> {
     match out {
-        Some(p) => std::fs::write(p, marker_json(version, ready)),
+        Some(p) => std::fs::write(p, marker_json(version, ready, auth)),
         None => Ok(()),
     }
 }
@@ -160,7 +165,7 @@ impl SmokeState {
 pub fn spawn_watchdog(rx: Receiver<()>, out: Option<PathBuf>, version: String, timeout: Duration) {
     std::thread::spawn(move || {
         if wait_ready(&rx, timeout) == Watch::TimedOut {
-            let _ = write_marker(out.as_deref(), &version, false);
+            let _ = write_marker(out.as_deref(), &version, false, false);
             eprintln!(
                 "smoke: {}초 안에 frontend_ready가 오지 않음",
                 timeout.as_secs()
@@ -201,12 +206,12 @@ mod tests {
     #[test]
     fn marker_is_one_line_json() {
         assert_eq!(
-            marker_json("0.1.0", true),
-            "{\"version\":\"0.1.0\",\"ready\":true}\n"
+            marker_json("0.1.0", true, true),
+            "{\"version\":\"0.1.0\",\"ready\":true,\"auth\":true}\n"
         );
         assert_eq!(
-            marker_json("a\"b\\", false),
-            "{\"version\":\"a\\\"b\\\\\",\"ready\":false}\n"
+            marker_json("a\"b\\", false, false),
+            "{\"version\":\"a\\\"b\\\\\",\"ready\":false,\"auth\":false}\n"
         );
     }
 
@@ -214,12 +219,17 @@ mod tests {
     fn write_marker_writes_file_or_nothing() {
         let dir = tempfile::tempdir().unwrap();
         let p = dir.path().join("m.json");
-        write_marker(Some(&p), "1.2.3", true).unwrap();
+        write_marker(Some(&p), "1.2.3", true, true).unwrap();
         let v: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&p).unwrap()).unwrap();
         assert_eq!(v["version"], "1.2.3");
         assert_eq!(v["ready"], true);
-        write_marker(None, "1.2.3", true).unwrap();
+        assert_eq!(v["auth"], true);
+        write_marker(Some(&p), "1.2.3", true, false).unwrap();
+        let v: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&p).unwrap()).unwrap();
+        assert_eq!(v["auth"], false);
+        write_marker(None, "1.2.3", true, true).unwrap();
     }
 
     #[test]

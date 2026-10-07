@@ -67,6 +67,8 @@ function osBundles(root = ROOT) {
 // wrangler가 사용 통계를 보내지 않는다(wrangler.jsonc send_metrics: false와 이중). worker gate의 wrangler·vitest 단계
 const WRANGLER_ENV = { WRANGLER_SEND_METRICS: 'false' };
 // linuxdeploy(AppImage)는 FUSE 없이 풀어서 돈다(컨테이너·러너에 libfuse2가 없다)
+// PR·리허설·로컬 릴리스 프로필 빌드의 Worker 주소 자리표시(worker.md §11.1, cicd.md 82 (나)). 태그 빌드만 실제 주소(release.mjs build)
+export const WORKER_PLACEHOLDER = 'https://worker.example.invalid';
 const BUNDLE_ENV = process.platform === 'linux' ? { APPIMAGE_EXTRACT_AND_RUN: '1' } : undefined;
 
 export const GATES = {
@@ -298,7 +300,7 @@ export const GATES = {
     needs: ['cargo', 'pnpm'],
     steps: [
       { cmd: ['pnpm', 'install', '--frozen-lockfile'], cwd: 'app' },
-      { cmd: ['pnpm', 'tauri', 'build', '--ci', '--no-sign', '--bundles', osBundles()], cwd: 'app', env: BUNDLE_ENV },
+      { cmd: ['pnpm', 'tauri', 'build', '--ci', '--no-sign', '--bundles', osBundles()], cwd: 'app', env: { ...(BUNDLE_ENV ?? {}), CHZZK_WORKER_BASE: process.env.CHZZK_WORKER_BASE || WORKER_PLACEHOLDER } },
       { cmd: ['node', S('bundle.mjs'), 'collect'] },
     ],
   },

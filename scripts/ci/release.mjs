@@ -27,7 +27,7 @@ import { join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
 
-import { ROOT, workspaceVersion } from './gates.mjs';
+import { ROOT, WORKER_PLACEHOLDER, workspaceVersion } from './gates.mjs';
 import { spawnTool } from './run.mjs';
 import { osKey, targetDir } from './smoke.mjs';
 import { main as versionCheck } from './version-check.mjs';
@@ -340,6 +340,40 @@ function xtask(args, env = process.env, opts = {}) {
 
 // ---- build(OS마다) ----
 
+// 릴리스 빌드의 Worker 주소(worker.md §11.1, cicd.md 82 (나), 구현 중 변경 A2-1). → { mode, base, problems }
+// 태그: DIST_BASE_URL(저장소 secret)을 그대로 쓴다. 경로 없는 https 출처이고 자리표시(.invalid)가 아니어야 한다.
+// 그 밖(리허설·ci.yml·로컬): CHZZK_WORKER_BASE가 있으면 그것, 없으면 자리표시. 메시지에는 값을 넣지 않는다
+const safeHost = (v) => {
+  try {
+    return new URL(v).hostname;
+  } catch {
+    return '';
+  }
+};
+export function buildWorkerBase(env) {
+  if (env.RELEASE_MODE === 'tag') {
+    const v = env.DIST_BASE_URL || '';
+    const problems = [];
+    if (!v) problems.push('태그 빌드에 DIST_BASE_URL이 없다(release.yml release-build 단계의 secrets.DIST_BASE_URL)');
+    else {
+      if (distBaseProblems(v).length) problems.push('DIST_BASE_URL은 경로 없는 https 출처여야 한다(값은 찍지 않는다)');
+      if (v === WORKER_PLACEHOLDER || /\.invalid$/.test(safeHost(v))) problems.push('태그 빌드에 자리표시 주소(.invalid)를 넣을 수 없다');
+    }
+    return { mode: 'tag', base: v, problems };
+  }
+  return { mode: 'other', base: env.CHZZK_WORKER_BASE || WORKER_PLACEHOLDER, problems: [] };
+}
+
+// 태그 빌드 바이너리 검사(D8): 원본 실행 파일에 넣은 출처 바이트가 있고 자리표시 호스트가 없어야 한다.
+// 번들(dmg·msi·deb·AppImage·tar.gz)은 압축이라 stage에서는 볼 수 없다. → 문제 목록(값 없음)
+export function binaryWorkerBaseProblems(buf, { mode, base }) {
+  if (mode !== 'tag') return [];
+  const out = [];
+  if (!buf.includes(Buffer.from(base, 'utf8'))) out.push('릴리스 바이너리에 DIST_BASE_URL이 없다(build.rs가 다른 값을 넣었다)');
+  if (buf.includes(Buffer.from(new URL(WORKER_PLACEHOLDER).hostname, 'utf8'))) out.push('릴리스 바이너리에 자리표시 호스트가 있다');
+  return out;
+}
+
 function cmdBuild(env) {
   const os = osKey();
   const spec = JSON.parse(readFileSync(join(ROOT, 'release/expected-artifacts.json'), 'utf8'))[os];
@@ -347,32 +381,48 @@ function cmdBuild(env) {
     err(`build: ${os}의 항목이 release/expected-artifacts.json에 없다`);
     return 2;
   }
+  const wb = buildWorkerBase(env);
+  if (wb.mode === 'tag') for (const m of maskValues(wb.base)) console.log(`::add-mask::${m}`);
+  if (wb.problems.length) {
+    for (const p of wb.problems) err(`build: ${p}`);
+    return 1;
+  }
+  // 자식(pnpm·tauri·cargo·의존성 build.rs)에는 주소만 넘긴다. DIST_BASE_URL·RELEASE_MODE는 빼고 CHZZK_WORKER_BASE를 정한다
+  const { DIST_BASE_URL: _d, RELEASE_MODE: _m, ...rest } = env;
+  const childEnv = { ...rest, CHZZK_WORKER_BASE: wb.base };
   const version = workspaceVersion();
   const work = mkdtempSync(join(env.RUNNER_TEMP || tmpdir(), 'chzzk-eph-'));
   const key = join(work, 'eph.key');
   const pw = randomBytes(18).toString('hex');
   try {
     // 1. 임시 키(createUpdaterArtifacts는 키 없이 빌드가 실패한다). 진짜 키는 이 작업에 오지 않는다(D10)
-    if (!step('임시 키 만들기', spawnTool('pnpm', ['tauri', 'signer', 'generate', '--ci', '-p', pw, '-w', key, '-f'], { cwd: join(ROOT, 'app') }))) return 1;
-    const eph = { ...env, TAURI_SIGNING_PRIVATE_KEY: readFileSync(key, 'utf8'), TAURI_SIGNING_PRIVATE_KEY_PASSWORD: pw };
+    if (!step('임시 키 만들기', spawnTool('pnpm', ['tauri', 'signer', 'generate', '--ci', '-p', pw, '-w', key, '-f'], { cwd: join(ROOT, 'app'), env: childEnv }))) return 1;
+    const eph = { ...childEnv, TAURI_SIGNING_PRIVATE_KEY: readFileSync(key, 'utf8'), TAURI_SIGNING_PRIVATE_KEY_PASSWORD: pw };
     if (os === 'linux') eph.APPIMAGE_EXTRACT_AND_RUN = '1';
     // 2. 릴리스 번들 + updater 산출물
     const conf = resolve(ROOT, 'release/tauri.release.json');
     if (!step('tauri build', spawnTool('pnpm', ['tauri', 'build', '--ci', '--config', conf, '--bundles', spec.bundles.join(',')], { cwd: join(ROOT, 'app'), env: eph }))) return 1;
+    // 태그 빌드는 원본 바이너리에서 주소를 확인한다(번들은 압축이라 stage에서 바이트를 볼 수 없다, D8)
+    const bin = join(targetDir(childEnv), 'release', `chzzk-app${os === 'windows' ? '.exe' : ''}`);
+    const bp = binaryWorkerBaseProblems(readFileSync(bin), wb);
+    if (bp.length) {
+      for (const p of bp) err(`build: ${p}`);
+      return 1;
+    }
     // 3. 모으기(표와 정확히 같은 집합, Tauri가 만든 임시 .sig는 따로)
     const sigDir = join(work, 'tauri-sig');
-    if (!step('collect --release', spawnSync(process.execPath, [join(ROOT, 'scripts/ci/bundle.mjs'), 'collect', '--release'], { stdio: 'inherit', env: { ...env, RELEASE_TAURI_SIG_DIR: sigDir } }))) return 1;
+    if (!step('collect --release', spawnSync(process.execPath, [join(ROOT, 'scripts/ci/bundle.mjs'), 'collect', '--release'], { stdio: 'inherit', env: { ...childEnv, RELEASE_TAURI_SIG_DIR: sigDir } }))) return 1;
     // 4. 서명 형식 자체 확인: Tauri CLI의 서명을 xtask(updater와 같은 검증)가 받고, xtask가 같은 키로 한 서명도 받는다
-    if (cmdXtask({ ...env, GITHUB_OUTPUT: '' }) !== 0) return 1;
+    if (cmdXtask({ ...childEnv, GITHUB_OUTPUT: '' }) !== 0) return 1;
     const check = join(work, 'check');
     const bundle = join(ROOT, 'target/ci/bundle');
     const ok =
-      step('xtask collect --os', xtask(['collect', '--from', bundle, '--out', check, '--version', version, '--os', os])) &&
-      step('Tauri CLI 서명 검증', xtask(['verify-sig', '--dir', check, '--sig-dir', sigDir, '--pubkey', `${key}.pub`])) &&
-      step('xtask 서명', xtask(['sign', '--dir', check], { ...env, TAURI_SIGNING_PRIVATE_KEY: eph.TAURI_SIGNING_PRIVATE_KEY, TAURI_SIGNING_PRIVATE_KEY_PASSWORD: pw })) &&
-      step('xtask 서명 검증', xtask(['verify-sig', '--dir', check, '--pubkey', `${key}.pub`]));
+      step('xtask collect --os', xtask(['collect', '--from', bundle, '--out', check, '--version', version, '--os', os], childEnv)) &&
+      step('Tauri CLI 서명 검증', xtask(['verify-sig', '--dir', check, '--sig-dir', sigDir, '--pubkey', `${key}.pub`], childEnv)) &&
+      step('xtask 서명', xtask(['sign', '--dir', check], { ...childEnv, TAURI_SIGNING_PRIVATE_KEY: eph.TAURI_SIGNING_PRIVATE_KEY, TAURI_SIGNING_PRIVATE_KEY_PASSWORD: pw })) &&
+      step('xtask 서명 검증', xtask(['verify-sig', '--dir', check, '--pubkey', `${key}.pub`], childEnv));
     if (!ok) return 1;
-    log(`build: ${os} 번들·updater 산출물 모음, 임시 서명 형식 확인(임시 키·서명은 버린다)`);
+    log(`build: ${os} 번들·updater 산출물 모음, Worker 주소 ${wb.mode === 'tag' ? '태그(DIST_BASE_URL, 바이너리 확인)' : '자리표시 또는 CHZZK_WORKER_BASE'}, 임시 서명 형식 확인(임시 키·서명은 버린다)`);
     return 0;
   } finally {
     rmSync(work, { recursive: true, force: true });

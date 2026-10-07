@@ -8,11 +8,13 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 
 import { contractPath, DEPLOY_CONTRACT, GARBAGE_BEARER as CONTRACT_GARBAGE } from '../../worker/test/deploy-contract.mjs';
-import { HOOKS, PUBKEY_FILES, RELEASE_SELFTEST_FILES, ROOT } from './gates.mjs';
+import { HOOKS, PUBKEY_FILES, RELEASE_SELFTEST_FILES, ROOT, WORKER_PLACEHOLDER } from './gates.mjs';
 import { createWorkerStub } from './worker-stub.mjs';
 import {
+  binaryWorkerBaseProblems,
   boundaryProblems,
   buildIdOf,
+  buildWorkerBase,
   bundleMeta,
   checkPubkey,
   ciOkDecision,
@@ -199,17 +201,27 @@ test('preflight: DIST_BASE_URL은 경로 없는 https 출처(값은 메시지에
   assert.deepEqual(preflight({ ...all, DIST_BASE_URL: '', RELEASE_MODE: 'tag' }).missing, ['DIST_BASE_URL']);
 });
 
+const SECRET_REF = '${{ secrets.DIST_BASE_URL }}';
+const BUILD_STEP_REF = "${{ needs.gate.outputs.mode == 'tag' && secrets.DIST_BASE_URL || '' }}";
+
 test('워크플로: DIST_BASE_URL은 저장소 secret, R2_BUCKET은 저장소 변수(cicd.md 구현 중 변경 82 (다)·84)', () => {
   for (const f of ['release.yml', 'rollback.yml']) {
     const t = readFileSync(join(ROOT, '.github/workflows', f), 'utf8');
     assert.ok(!/vars\.DIST_BASE_URL/.test(t), `${f}: vars.DIST_BASE_URL`);
     assert.ok(!/secrets\.R2_BUCKET/.test(t), `${f}: secrets.R2_BUCKET`);
-    for (const m of t.matchAll(/^\s+DIST_BASE_URL: (.+)$/gm)) assert.equal(m[1], '${{ secrets.DIST_BASE_URL }}', f);
+    for (const m of t.matchAll(/^\s+DIST_BASE_URL: (.+)$/gm)) assert.ok([SECRET_REF, BUILD_STEP_REF].includes(m[1]), `${f}: ${m[1]}`);
     for (const m of t.matchAll(/^\s+R2_BUCKET: (.+)$/gm)) assert.equal(m[1], '${{ vars.R2_BUCKET }}', f);
   }
   // 값이 있는 곳: 업로드·확인·되돌리기·배포 뒤 검사·보존 상한이 읽는 작업 전부
   const rel = readFileSync(join(ROOT, '.github/workflows/release.yml'), 'utf8');
-  assert.equal([...rel.matchAll(/^\s+DIST_BASE_URL: /gm)].length, 4);
+  assert.equal([...rel.matchAll(/^\s+DIST_BASE_URL: \$\{\{ secrets\.DIST_BASE_URL \}\}$/gm)].length, 4);
+  // 빌드 단계(build-linux·build): 태그일 때만 secret을 받는다(A2). rollback.yml에는 없다
+  assert.equal([...rel.matchAll(/^\s+DIST_BASE_URL: \$\{\{ needs\.gate\.outputs\.mode == 'tag' && secrets\.DIST_BASE_URL \|\| '' \}\}$/gm)].length, 2);
+  // 주소는 release.mjs build가 정한다: 어떤 워크플로에도 CHZZK_WORKER_BASE가 없고 ci.yml은 secret을 쓰지 않는다
+  for (const f of ['release.yml', 'rollback.yml', 'ci.yml']) {
+    assert.ok(!readFileSync(join(ROOT, '.github/workflows', f), 'utf8').includes('CHZZK_WORKER_BASE'), `${f}: CHZZK_WORKER_BASE`);
+  }
+  assert.ok(!readFileSync(join(ROOT, '.github/workflows/ci.yml'), 'utf8').includes('secrets.DIST_BASE_URL'));
 });
 
 test('concurrency: 어떤 실행도 대기 중에 조용히 취소되지 않는다(태그마다 그룹, rollback은 실행마다, 리허설끼리만 묶음)', () => {
@@ -732,6 +744,49 @@ test('DIST_BASE_URL 출처 규칙: 경로 없는 https 출처만(값은 문제 �
     assert.ok(p.length > 0, String(bad));
     assert.ok(!p.join(' ').includes('example.test'), '문제 문구에 값이 없다');
   }
+});
+
+test('buildWorkerBase: 모드 × 값 표(cicd 82 (나), A2)', () => {
+  const D = 'https://dist.example.test';
+  const rows = [
+    [{ RELEASE_MODE: 'tag', DIST_BASE_URL: D }, D, null],
+    [{ RELEASE_MODE: 'tag', DIST_BASE_URL: WORKER_PLACEHOLDER }, WORKER_PLACEHOLDER, '자리표시'],
+    [{ RELEASE_MODE: 'tag', DIST_BASE_URL: 'https://w.foo.invalid' }, 'https://w.foo.invalid', '자리표시'],
+    [{ RELEASE_MODE: 'tag' }, '', 'DIST_BASE_URL이 없다'],
+    [{ RELEASE_MODE: 'tag', DIST_BASE_URL: '' }, '', 'DIST_BASE_URL이 없다'],
+    [{ RELEASE_MODE: 'tag', DIST_BASE_URL: `${D}/x` }, `${D}/x`, 'https 출처'],
+    [{ RELEASE_MODE: 'tag', DIST_BASE_URL: 'http://dist.example.test' }, 'http://dist.example.test', 'https 출처'],
+    [{ RELEASE_MODE: 'rehearsal' }, WORKER_PLACEHOLDER, null],
+    [{ RELEASE_MODE: 'rehearsal', DIST_BASE_URL: D }, WORKER_PLACEHOLDER, null],
+    [{ RELEASE_MODE: 'rehearsal', CHZZK_WORKER_BASE: D }, D, null],
+    [{}, WORKER_PLACEHOLDER, null],
+  ];
+  for (const [env, base, why] of rows) {
+    const r = buildWorkerBase(env);
+    assert.equal(r.base, base, JSON.stringify(env));
+    if (why) assert.ok(r.problems.join(' ').includes(why), `${JSON.stringify(env)}: ${r.problems}`);
+    else assert.deepEqual(r.problems, [], JSON.stringify(env));
+    assert.ok(!r.problems.join(' ').includes('example.test') && !r.problems.join(' ').includes('foo'), '문제 문구에 값이 없다');
+  }
+});
+
+test('binaryWorkerBaseProblems: 태그 빌드 원본 바이너리에 주소가 있고 자리표시가 없어야 한다', () => {
+  const D = 'https://dist.example.test';
+  const tag = { mode: 'tag', base: D };
+  assert.deepEqual(binaryWorkerBaseProblems(Buffer.from(`xx${D}yy`), tag), []);
+  const missing = binaryWorkerBaseProblems(Buffer.from(`xx${D}yy`), { mode: 'tag', base: 'https://other.example.test' });
+  assert.equal(missing.length, 1);
+  assert.ok(missing[0].includes('없다'));
+  const placeholder = binaryWorkerBaseProblems(Buffer.from(`${D} worker.example.invalid`), tag);
+  assert.equal(placeholder.length, 1);
+  assert.ok(placeholder[0].includes('자리표시'));
+  assert.deepEqual(binaryWorkerBaseProblems(Buffer.from('아무거나'), { mode: 'other', base: WORKER_PLACEHOLDER }), []);
+  for (const p of [...missing, ...placeholder]) assert.ok(!p.includes('example.test'), '문제 문구에 값이 없다');
+});
+
+test('WORKER_PLACEHOLDER는 build.rs 릴리스 규칙을 통과하는 정규 출처다', () => {
+  assert.equal(WORKER_PLACEHOLDER, 'https://worker.example.invalid');
+  assert.deepEqual(distBaseProblems(WORKER_PLACEHOLDER), []);
 });
 
 test('마스킹 값: 호스트와 workers.dev 계정 서브도메인 조각', () => {

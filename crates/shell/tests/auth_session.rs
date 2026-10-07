@@ -136,6 +136,13 @@ fn corrupt_cases_table() {
         ("no_verified", remove("verifiedAt")),
         ("is_admin_str", set("isAdmin", "no".into())),
         ("name_129", set("channelName", "a".repeat(129).into())),
+        // verifiedAt + 72h가 time 범위(9999년)를 넘는다: 시작 판정이 panic하지 않게 깨진 파일로 본다
+        ("far_future_verified", {
+            let mut g = good.clone();
+            g["verifiedAt"] = "9999-12-31T00:00:00Z".into();
+            g["refreshExpiresAt"] = "9999-12-31T00:00:00Z".into();
+            serde_json::to_vec(&g).unwrap()
+        }),
     ];
     for (name, bytes) in cases {
         std::fs::write(&path, &bytes).unwrap();

@@ -209,6 +209,10 @@ pub fn parse_error_response(
     body_truncated: bool,
 ) -> ApiError {
     let not_worker = ApiError::NotWorker { status };
+    // 리디렉션은 따라가지 않고 본문과 무관하게 Worker 형식이 아닌 응답으로 본다(A1-1 (다))
+    if (300..400).contains(&status) {
+        return not_worker;
+    }
     if body_truncated || !is_json_type(content_type) || body.len() > MAX_BODY {
         return not_worker;
     }

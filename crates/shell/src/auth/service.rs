@@ -1,4 +1,4 @@
-//! `AuthService`: 앱 로그인 상태 머신(worker.md §11.3·§11.4, 구현 중 변경 A1-1~A1-5).
+//! `AuthService`: 앱 로그인 상태 머신(worker.md §11.3·§11.4, 구현 중 변경 A1-1~A1-6).
 //!
 //! `WorkerApi`·`Clock`을 주입받아 Tauri 없이 검사한다. 상태 잠금(`std::sync::Mutex`)은 `await`를 넘겨 잡지 않는다.
 //! 로그에는 낱말·숫자만 남긴다(토큰·pollSecret·loginId·로그인 주소·채널 정보·Worker 주소 금지).
@@ -81,6 +81,8 @@ pub enum BeginLogin {
     AlreadySignedIn,
     /// 시작하지 못했다(상태는 `Error`)
     Failed,
+    /// start 요청 중에 취소·로그아웃되어 결과를 버렸다(상태는 그대로, 확인 페이지를 열지 않는다)
+    Discarded,
 }
 
 /// `tick`을 부른 까닭(D20)
@@ -158,6 +160,12 @@ fn cause_of(e: &ApiError) -> Cause {
         ApiError::Transport { .. } | ApiError::NotWorker { .. } => Cause::Network,
         ApiError::Worker { .. } | ApiError::Contract { .. } => Cause::Server,
     }
+}
+
+/// 실행 중에 시계가 되돌려졌는가: 마지막 서버 확인·마지막 시도보다 지금이 이르다(§11.3 "now < verifiedAt이면 유예하지 않는다").
+/// 그러면 예정 시각을 기다리지 않고 바로 갱신한다(성공하면 verifiedAt이 새 시계로, 실패하면 유예 밖으로 판정된다)
+fn clock_rolled_back(i: &Inner, now: OffsetDateTime) -> bool {
+    i.held.as_ref().is_some_and(|h| now < h.verified_at) || i.last_attempt.is_some_and(|a| now < a)
 }
 
 /// 상태 표시 규칙(worker.md §11.4)
@@ -499,6 +507,7 @@ impl<A: WorkerApi, C: Clock> AuthService<A, C> {
             let mut i = self.lock();
             self.try_flush(&mut i);
             match (i.phase, &i.held, &i.offline) {
+                (AuthPhase::SignedIn, Some(_), _) if clock_rolled_back(&i, now) => true,
                 (AuthPhase::SignedIn, Some(h), None) => {
                     now >= refresh_due_at(h.verified_at, h.access_expires_at)
                 }
@@ -521,13 +530,18 @@ impl<A: WorkerApi, C: Clock> AuthService<A, C> {
         }
     }
 
-    /// 다음에 `tick`을 부를 시각. SignedIn 온라인: `refresh_due_at`, 오프라인: `min(next_retry_at, grace_until)`, 그 밖 None
+    /// 다음에 `tick`을 부를 시각. SignedIn 온라인: `refresh_due_at`, 오프라인: `min(next_retry_at, grace_until)`,
+    /// 시계가 되돌려졌으면 지금, 그 밖 None
     pub fn next_wake(&self) -> Option<OffsetDateTime> {
+        let now = self.clock.now();
         let i = self.lock();
         if i.phase != AuthPhase::SignedIn {
             return None;
         }
         let h = i.held.as_ref()?;
+        if clock_rolled_back(&i, now) {
+            return Some(now);
+        }
         match &i.offline {
             None => Some(refresh_due_at(h.verified_at, h.access_expires_at)),
             Some(t) => Some(t.next_retry_at.min(t.grace_until)),
@@ -537,7 +551,7 @@ impl<A: WorkerApi, C: Clock> AuthService<A, C> {
     /// 로그인 시작(D13·D16). `SignedIn`이 아니면 언제나 시작한다(저장 세션은 그대로 둔다).
     pub async fn begin_login(&self) -> BeginLogin {
         let _g = self.login_lock.lock().await;
-        {
+        let seq0 = {
             let i = self.lock();
             if i.phase == AuthPhase::Pending
                 && let Some(l) = &i.login
@@ -549,7 +563,8 @@ impl<A: WorkerApi, C: Clock> AuthService<A, C> {
             if i.phase == AuthPhase::SignedIn {
                 return BeginLogin::AlreadySignedIn;
             }
-        }
+            i.login_seq
+        };
         let secret = token::new_poll_secret();
         let verifier = token::poll_verifier(secret.expose());
         let t0 = self.clock.now();
@@ -561,12 +576,17 @@ impl<A: WorkerApi, C: Clock> AuthService<A, C> {
             })
             .await;
         let mut i = self.lock();
+        if i.login_seq != seq0 {
+            // 요청 중에 취소·로그아웃됐다: 성공이든 실패든 결과를 버리고 상태를 건드리지 않는다
+            info!(result = "discarded", "로그인 시작");
+            return BeginLogin::Discarded;
+        }
+        if i.phase == AuthPhase::SignedIn {
+            // 요청 중에 refresh가 성공했다: 성공이든 실패든 로그인·오류 화면으로 뒤집지 않는다
+            return BeginLogin::AlreadySignedIn;
+        }
         let out = match res {
             Ok(r) => {
-                if i.phase == AuthPhase::SignedIn {
-                    // 요청 중에 refresh가 성공했다: 로그인 화면으로 뒤집지 않는다
-                    return BeginLogin::AlreadySignedIn;
-                }
                 i.login_seq += 1;
                 let ticket = LoginTicket {
                     login_url: r.login_url.clone(),
@@ -745,6 +765,8 @@ impl<A: WorkerApi, C: Clock> AuthService<A, C> {
     pub fn cancel_login(&self) -> AuthStatus {
         let now = self.clock.now();
         let mut i = self.lock();
+        // 진행 중인 start 요청의 결과도 버리게 세대를 올린다(로그인이 아직 없어도)
+        i.login_seq += 1;
         if i.login.is_none() {
             return status_of(&i);
         }
@@ -768,6 +790,7 @@ impl<A: WorkerApi, C: Clock> AuthService<A, C> {
             let mut i = self.lock();
             let held = i.held.take();
             i.login = None;
+            i.login_seq += 1;
             i.offline = None;
             i.dirty = false;
             i.session_epoch += 1;

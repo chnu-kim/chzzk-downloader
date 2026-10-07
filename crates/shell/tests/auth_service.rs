@@ -1,4 +1,4 @@
-//! `AuthService` 상태 전이 표(worker.md §11.3·§11.4, 구현 중 변경 A1-1~A1-5).
+//! `AuthService` 상태 전이 표(worker.md §11.3·§11.4, 구현 중 변경 A1-1~A1-6).
 //!
 //! 가짜 `WorkerApi`·`Clock`을 주입한다. 시각 기준 V = 2030-01-01T00:00:00Z.
 
@@ -1190,17 +1190,14 @@ async fn service_is_send_sync() {
 
 #[tokio::test(start_paused = true)]
 async fn service_debug_no_secrets() {
-    let e = pending_env().await;
-    let t = format!("{:?}", e.svc);
-    assert!(
-        !t.contains("acc") && !t.contains("ref") && !t.contains(&"L".repeat(22)),
-        "{t}"
-    );
-    let t = format!("{:?}{:?}", e.svc.status(), e.svc.login_ticket());
-    assert!(
-        !t.contains(&"H".repeat(22)) && !t.contains(&"L".repeat(22)),
-        "{t}"
-    );
+    // 저장 세션(held 토큰)과 대기 중 로그인(loginId·주소)이 둘 다 메모리에 있는 상태에서 찍는다
+    let e = grace_expired_env().await;
+    e.start_ok();
+    assert!(matches!(e.svc.begin_login().await, BeginLogin::Started(_)));
+    let t = format!("{:?}{:?}{:?}", e.svc, e.svc.status(), e.svc.login_ticket());
+    for s in [acc(1), rf(1), "L".repeat(22), "H".repeat(22)] {
+        assert!(!t.contains(&s), "{t}");
+    }
 }
 
 #[tokio::test(start_paused = true)]
@@ -1305,4 +1302,173 @@ async fn n6_refresh_during_login_start_keeps_signed_in() {
     assert_eq!(t.await.unwrap(), BeginLogin::AlreadySignedIn);
     assert!(e.svc.is_signed_in());
     assert!(e.svc.login_ticket().is_none());
+}
+
+// ------------------------------------- start 요청과 겹친 동작(리뷰 반영, A1-4 (라))
+
+/// Checking 환경에서 start를 붙잡은 채 begin_login을 띄운다
+async fn held_start(
+    e: &Env,
+    reply: Result<StartResponse, ApiError>,
+) -> (Arc<Notify>, tokio::task::JoinHandle<BeginLogin>) {
+    let n = Arc::new(Notify::new());
+    e.api.push_start(Reply::Hold(n.clone(), reply));
+    let svc = e.svc.clone();
+    let t = tokio::spawn(async move { svc.begin_login().await });
+    while e.api.count(|c| matches!(c, Call::Start { .. })) == 0 {
+        tokio::task::yield_now().await;
+    }
+    (n, t)
+}
+
+#[tokio::test(start_paused = true)]
+async fn n7_refresh_during_failed_start_keeps_signed_in() {
+    // start가 실패해도 그사이 refresh로 SignedIn이 됐으면 Error로 덮지 않는다
+    let e = Env::checking();
+    let (n, t) = held_start(&e, Err(transport())).await;
+    e.refresh_ok(2);
+    assert_signed_in_online(&e.svc.refresh().await);
+    n.notify_one();
+    assert_eq!(t.await.unwrap(), BeginLogin::AlreadySignedIn);
+    assert_signed_in_online(&e.svc.status());
+    assert!(e.svc.require_signed_in().is_ok());
+}
+
+#[tokio::test(start_paused = true)]
+async fn n8_cancel_during_start_discards_ticket() {
+    for ok in [true, false] {
+        let e = Env::new(h(1), None);
+        let reply = if ok {
+            Ok(start_ok(&base()))
+        } else {
+            Err(transport())
+        };
+        let (n, t) = held_start(&e, reply).await;
+        assert_eq!(e.svc.cancel_login().phase, AuthPhase::SignedOut);
+        n.notify_one();
+        assert_eq!(t.await.unwrap(), BeginLogin::Discarded, "ok={ok}");
+        let s = e.svc.status();
+        assert_eq!((s.phase, s.reason), (AuthPhase::SignedOut, None), "ok={ok}");
+        assert!(e.svc.login_ticket().is_none());
+        e.svc.poll_login_once().await;
+        assert_eq!(e.api.count(is_poll), 0);
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn n9_logout_during_start_discards_ticket() {
+    let e = Env::checking();
+    let (n, t) = held_start(&e, Ok(start_ok(&base()))).await;
+    assert_eq!(e.svc.logout().await.unwrap().phase, AuthPhase::SignedOut);
+    n.notify_one();
+    assert_eq!(t.await.unwrap(), BeginLogin::Discarded);
+    assert_eq!(e.svc.status().phase, AuthPhase::SignedOut);
+    assert!(e.svc.login_ticket().is_none());
+    assert!(!e.file_exists());
+}
+
+#[tokio::test(start_paused = true)]
+async fn n10_new_login_after_discarded_start() {
+    // 버린 start 뒤에도 새 로그인은 평소대로 시작한다
+    let e = Env::new(h(1), None);
+    let (n, t) = held_start(&e, Ok(start_ok(&base()))).await;
+    e.svc.cancel_login();
+    n.notify_one();
+    assert_eq!(t.await.unwrap(), BeginLogin::Discarded);
+    e.start_ok();
+    assert!(matches!(e.svc.begin_login().await, BeginLogin::Started(_)));
+    assert_eq!(e.svc.status().phase, AuthPhase::Pending);
+}
+
+// ---------------------------------------------- 상한으로 잘린 유예(서비스 수준)
+
+#[tokio::test(start_paused = true)]
+async fn t10_capped_grace_wakes_at_cap_and_expires() {
+    // 파일 refreshExpiresAt = V+10h: 유예 끝은 V+72h가 아니라 V+10h이고, next_retry_at보다 먼저 온다
+    let e = Env::new(h(10) - Duration::seconds(30), Some(h(10)));
+    assert_eq!(e.svc.status().phase, AuthPhase::SignedIn);
+    e.refresh_fail_twice();
+    let s = e.svc.startup().await;
+    assert_offline(&s, Cause::Network);
+    assert_eq!(s.offline.unwrap().grace_until, t0() + h(10));
+    assert_eq!(e.svc.next_wake(), Some(t0() + h(10)));
+    e.clock.set(t0() + h(10));
+    e.refresh_fail_twice();
+    let s = e.svc.tick(Trigger::Timer).await;
+    assert_eq!(e.api.refresh_calls().len(), 4);
+    assert_eq!(
+        (s.phase, s.reason),
+        (AuthPhase::Expired, Some(AuthReason::SessionExpired))
+    );
+    assert!(!e.file_exists());
+}
+
+// ------------------------------------------ 실행 중 시계 되돌리기(§11.3, 리뷰 반영)
+
+#[tokio::test(start_paused = true)]
+async fn r1_rollback_while_offline_rechecks_and_expires() {
+    let e = Env::optimistic();
+    e.refresh_fail_twice();
+    assert!(e.svc.startup().await.offline.is_some());
+    e.clock.set(t0() - d(365));
+    assert_eq!(e.svc.next_wake(), Some(e.now()));
+    e.refresh_fail_twice();
+    let s = e.svc.tick(Trigger::Timer).await;
+    assert_eq!(e.api.refresh_calls().len(), 4);
+    assert_eq!(
+        (s.phase, s.reason),
+        (AuthPhase::Expired, Some(AuthReason::GraceExpired))
+    );
+    assert!(e.file_exists());
+    assert!(e.svc.require_signed_in().is_err());
+    assert_eq!(e.svc.next_wake(), None);
+}
+
+#[tokio::test(start_paused = true)]
+async fn r2_rollback_while_online_rechecks() {
+    for trigger in [Trigger::Timer, Trigger::Focus, Trigger::Resume] {
+        let e = Env::online().await;
+        e.clock.set(t0() - d(365));
+        assert_eq!(e.svc.next_wake(), Some(e.now()));
+        e.api
+            .push_refresh(Reply::Now(Err(worker(401, "session_revoked"))));
+        let s = e.svc.tick(trigger).await;
+        assert_eq!(e.api.refresh_calls().len(), 2, "{trigger:?}");
+        assert_eq!(
+            (s.phase, s.reason),
+            (AuthPhase::Expired, Some(AuthReason::Revoked)),
+            "{trigger:?}"
+        );
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn r3_rollback_then_ok_settles() {
+    // 되돌린 시계에서 갱신이 성공하면 verifiedAt이 새 시계로 바뀌어 다시 즉시 깨우지 않는다
+    let e = Env::online().await;
+    e.clock.set(t0() - d(365));
+    e.refresh_ok(3);
+    assert_signed_in_online(&e.svc.tick(Trigger::Timer).await);
+    let now = e.now();
+    assert_eq!(e.svc.next_wake(), Some(now + h(24) - Duration::seconds(60)));
+    e.svc.tick(Trigger::Timer).await;
+    assert_eq!(e.api.refresh_calls().len(), 2);
+}
+
+#[tokio::test(start_paused = true)]
+async fn o8_far_future_file_does_not_panic() {
+    // 9999년 verifiedAt + 72h는 범위를 넘는다: 깨진 파일로 보고 SignedOut(파일 유지)
+    let dir = tempfile::tempdir().unwrap();
+    let mut v = serde_json::to_value(read_or_save(dir.path())).unwrap();
+    v["verifiedAt"] = "9999-12-31T00:00:00Z".into();
+    v["refreshExpiresAt"] = "9999-12-31T00:00:00Z".into();
+    std::fs::write(dir.path().join("session.json"), v.to_string()).unwrap();
+    let svc = service(dir.path(), &FakeWorkerApi::default(), &FakeClock::at(t0()));
+    assert_eq!(svc.status().phase, AuthPhase::SignedOut);
+    assert!(dir.path().join("session.json").exists());
+}
+
+fn read_or_save(dir: &std::path::Path) -> serde_json::Value {
+    store(dir).save(&stored(1, t0(), t0() + d(30))).unwrap();
+    read_session(dir).unwrap()
 }

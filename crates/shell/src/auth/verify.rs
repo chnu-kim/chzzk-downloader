@@ -99,7 +99,8 @@ pub fn grace(
     if now >= refresh_expires_at {
         return Grace::CapPassed;
     }
-    let end = verified_at + GRACE;
+    // 범위를 넘는 시각은 `SessionStore::load`가 거르지만 공개 함수라 넘침에도 panic하지 않게 한다
+    let end = verified_at.saturating_add(GRACE);
     if verified_at <= now && now < end {
         Grace::Within {
             until: end.min(refresh_expires_at),
@@ -208,7 +209,9 @@ pub fn refresh_due_at(
     verified_at: OffsetDateTime,
     access_expires_at: OffsetDateTime,
 ) -> OffsetDateTime {
-    (verified_at + RECHECK).min(access_expires_at - ACCESS_SKEW)
+    verified_at
+        .saturating_add(RECHECK)
+        .min(access_expires_at.saturating_sub(ACCESS_SKEW))
 }
 
 /// k번째(1부터) 연속 실패 뒤 기다릴 시간

@@ -183,6 +183,14 @@ impl SessionStore {
         let (Some(access_expires_at), Some(refresh_expires_at), Some(verified_at)) = times else {
             return LoadOutcome::Corrupt;
         };
+        // 유예·재확인 시각 계산이 time 범위(9999년)를 넘는 파일은 깨진 것으로 본다(시작이 panic하지 않게)
+        if verified_at.checked_add(super::verify::GRACE).is_none()
+            || access_expires_at
+                .checked_sub(super::verify::ACCESS_SKEW)
+                .is_none()
+        {
+            return LoadOutcome::Corrupt;
+        }
         if !token::is_channel_id(&f.channel_id)
             || !token::is_access_token(&f.access_token)
             || !token::is_refresh_token(&f.refresh_token)

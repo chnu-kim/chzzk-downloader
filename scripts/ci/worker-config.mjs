@@ -849,7 +849,8 @@ export function checkLandingAppName(copyTs, tauriConfText) {
     return [`${TAURI_CONF}: JSON 해석 실패: ${e.message}`];
   }
   if (typeof name !== 'string' || !name) return [`${TAURI_CONF}: productName이 없다`];
-  if (/["`$\\]/.test(name)) return [`${TAURI_CONF}: productName에 셸 큰따옴표 안에서 뜻이 바뀌는 글자(" \` $ \\)가 있다`];
+  // ! 는 대화형 zsh·bash의 큰따옴표 안에서도 history expansion이라 붙여 넣은 명령이 깨진다
+  if (/["`$\\!]/.test(name)) return [`${TAURI_CONF}: productName에 셸 큰따옴표 안에서 뜻이 바뀌는 글자(" \` $ \\ !)가 있다`];
   const m = /^\s*macXattr:\s*(['"])(.*?)\1,\s*$/m.exec(copyTs);
   if (!m) return [`${WORKER_DIR}/${LANDING_COPY_FILE}: macXattr: '…', 한 줄을 찾지 못했다`];
   const want = `xattr -dr com.apple.quarantine "/Applications/${name}.app"`;

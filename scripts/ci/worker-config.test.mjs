@@ -249,7 +249,7 @@ test('씨앗: 랜딩 xattr 경로는 tauri.conf.json productName과 같다(없�
   assert.match(checkLandingAppName(copyTs.replace(/^\s*macXattr:.*$/m, ''), confText).join(''), /찾지 못했다/);
   assert.match(checkLandingAppName(copyTs, '{').join(''), /JSON 해석 실패/);
   assert.match(checkLandingAppName(copyTs, '{}').join(''), /productName이 없다/);
-  for (const bad of ['a"b', 'a$b', 'a`b', 'a\\b']) assert.equal(checkLandingAppName(copyTs, JSON.stringify({ productName: bad })).length, 1, bad);
+  for (const bad of ['a"b', 'a$b', 'a`b', 'a\\b', 'a!b']) assert.equal(checkLandingAppName(copyTs, JSON.stringify({ productName: bad })).length, 1, bad);
 });
 
 test('씨앗: .dev.vars.example', () => {

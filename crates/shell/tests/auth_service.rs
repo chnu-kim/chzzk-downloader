@@ -1202,3 +1202,107 @@ async fn service_debug_no_secrets() {
         "{t}"
     );
 }
+
+#[tokio::test(start_paused = true)]
+async fn n1_noops_without_session_or_login() {
+    let e = Env::new(h(1), None);
+    assert_eq!(e.svc.startup().await.phase, AuthPhase::SignedOut);
+    assert_eq!(e.svc.refresh().await.phase, AuthPhase::SignedOut);
+    assert_eq!(e.svc.poll_login_once().await.phase, AuthPhase::SignedOut);
+    assert_eq!(e.svc.run_login_poll().await.phase, AuthPhase::SignedOut);
+    assert_eq!(e.svc.cancel_login().phase, AuthPhase::SignedOut);
+    assert!(e.svc.login_ticket().is_none());
+    assert!(e.api.calls().is_empty());
+}
+
+#[tokio::test(start_paused = true)]
+async fn n2_unreadable_file_signed_out() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join("session.json")).unwrap();
+    let svc = service(dir.path(), &FakeWorkerApi::default(), &FakeClock::at(t0()));
+    assert_eq!(svc.status().phase, AuthPhase::SignedOut);
+}
+
+#[tokio::test(start_paused = true)]
+async fn n3_stale_poll_loop_stops_after_new_login() {
+    // 취소 뒤 새 로그인이 시작되면 옛 폴링 루프는 새 로그인을 건드리지 않고 끝난다
+    let e = pending_env().await;
+    let svc = e.svc.clone();
+    let t = tokio::spawn(async move { svc.run_login_poll().await });
+    tokio::task::yield_now().await;
+    e.svc.cancel_login();
+    e.start_ok();
+    assert!(matches!(e.svc.begin_login().await, BeginLogin::Started(_)));
+    t.await.unwrap();
+    assert_eq!(e.svc.status().phase, AuthPhase::Pending);
+    assert_eq!(e.api.count(is_poll), 0);
+}
+
+#[tokio::test(start_paused = true)]
+async fn n4_poll_unexpected_error_during_deadline() {
+    // 기한이 지난 뒤 도착한 일시 오류와 Pending은 시간 초과/오류로 끝난다
+    let e = pending_env().await;
+    let deadline = e.svc.status().pending.unwrap().expires_at;
+    let n = Arc::new(Notify::new());
+    e.api.push_poll(Reply::Hold(n.clone(), Err(transport())));
+    let svc = e.svc.clone();
+    let t = tokio::spawn(async move { svc.poll_login_once().await });
+    while e.api.count(is_poll) == 0 {
+        tokio::task::yield_now().await;
+    }
+    e.clock.set(deadline + Duration::seconds(1));
+    n.notify_one();
+    let s = t.await.unwrap();
+    assert_eq!(
+        (s.phase, s.reason),
+        (AuthPhase::Error, Some(AuthReason::Network))
+    );
+
+    let e = pending_env().await;
+    let deadline = e.svc.status().pending.unwrap().expires_at;
+    let n = Arc::new(Notify::new());
+    e.api
+        .push_poll(Reply::Hold(n.clone(), Ok(PollResponse::Pending)));
+    let svc = e.svc.clone();
+    let t = tokio::spawn(async move { svc.poll_login_once().await });
+    while e.api.count(is_poll) == 0 {
+        tokio::task::yield_now().await;
+    }
+    e.clock.set(deadline + Duration::seconds(1));
+    n.notify_one();
+    let s = t.await.unwrap();
+    assert_eq!(
+        (s.phase, s.reason),
+        (AuthPhase::Expired, Some(AuthReason::LoginTimeout))
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn n5_start_unexpected_rejection_is_server() {
+    // start가 401을 돌려주는 일은 없지만 오면 서버 문제로 둔다
+    let e = Env::new(h(1), None);
+    e.api
+        .push_start(Reply::Now(Err(worker(401, "invalid_token"))));
+    assert_eq!(e.svc.begin_login().await, BeginLogin::Failed);
+    assert_eq!(e.svc.status().reason, Some(AuthReason::Server));
+}
+
+#[tokio::test(start_paused = true)]
+async fn n6_refresh_during_login_start_keeps_signed_in() {
+    // start 요청 중에 refresh가 성공하면 로그인 화면으로 뒤집지 않는다
+    let e = Env::checking();
+    let n = Arc::new(Notify::new());
+    e.api
+        .push_start(Reply::Hold(n.clone(), Ok(start_ok(&base()))));
+    let svc = e.svc.clone();
+    let t = tokio::spawn(async move { svc.begin_login().await });
+    while e.api.count(|c| matches!(c, Call::Start { .. })) == 0 {
+        tokio::task::yield_now().await;
+    }
+    e.refresh_ok(2);
+    assert_signed_in_online(&e.svc.refresh().await);
+    n.notify_one();
+    assert_eq!(t.await.unwrap(), BeginLogin::AlreadySignedIn);
+    assert!(e.svc.is_signed_in());
+    assert!(e.svc.login_ticket().is_none());
+}

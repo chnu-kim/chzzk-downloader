@@ -707,14 +707,20 @@ impl<A: WorkerApi, C: Clock> AuthService<A, C> {
 
     /// 로그인이 끝날 때까지 간격마다 폴링(A2가 spawn). 끝난 상태를 돌려준다
     pub async fn run_login_poll(&self) -> AuthStatus {
-        let seq = match &self.lock().login {
-            Some(l) => l.seq,
-            None => return self.status(),
+        // 잠금 guard가 `match` 끝까지 살아 있어 안에서 `self.status()`를 부르면 교착한다: 값만 꺼내 먼저 푼다.
+        let seq = self.lock().login.as_ref().map(|l| l.seq);
+        let Some(seq) = seq else {
+            return self.status();
         };
         loop {
-            let interval = match &self.lock().login {
-                Some(l) if l.seq == seq => l.interval,
-                _ => return self.status(),
+            let interval = self
+                .lock()
+                .login
+                .as_ref()
+                .filter(|l| l.seq == seq)
+                .map(|l| l.interval);
+            let Some(interval) = interval else {
+                return self.status();
             };
             tokio::time::sleep(interval).await;
             let (st, more) = self.poll_step(Some(seq)).await;

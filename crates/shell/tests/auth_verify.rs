@@ -547,3 +547,32 @@ fn schedule_functions() {
         assert_eq!(retry_delay(k), Duration::minutes(m), "k={k}");
     }
 }
+
+#[test]
+fn api_error_display_has_no_values() {
+    let rows = [
+        (
+            ApiError::Transport { timed_out: true },
+            "Worker 연결 실패(시간 초과)",
+        ),
+        (ApiError::Transport { timed_out: false }, "Worker 연결 실패"),
+        (
+            ApiError::NotWorker { status: 403 },
+            "Worker가 아닌 응답(HTTP 403)",
+        ),
+        (
+            ApiError::Worker {
+                status: 401,
+                code: "invalid_token".into(),
+            },
+            "Worker 오류(HTTP 401 invalid_token)",
+        ),
+        (
+            ApiError::Contract { status: 200 },
+            "Worker 응답 형식 오류(HTTP 200)",
+        ),
+    ];
+    for (e, want) in rows {
+        assert_eq!(e.to_string(), want);
+    }
+}

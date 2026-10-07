@@ -254,3 +254,22 @@ fn debug_hides_tokens() {
         assert!(!o.contains("acc1") && !o.contains("ref1"), "{o}");
     }
 }
+
+#[test]
+fn directory_in_place_of_file_is_unreadable() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join("session.json")).unwrap();
+    assert!(matches!(store(dir.path()).load(), LoadOutcome::Unreadable));
+}
+
+#[test]
+fn store_error_display_has_op_and_kind_only() {
+    let dir = tempfile::tempdir().unwrap();
+    break_dir(dir.path());
+    let e = store(dir.path())
+        .save(&stored(1, t0(), t0() + Duration::days(30)))
+        .unwrap_err();
+    let t = e.to_string();
+    assert!(t.starts_with("session.json create_dir 실패("), "{t}");
+    assert!(!t.contains(dir.path().to_str().unwrap()));
+}

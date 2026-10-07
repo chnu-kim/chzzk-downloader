@@ -636,3 +636,28 @@ async fn errors_carry_no_url() {
         assert!(!t.contains(&port) && !t.contains("127.0.0.1"), "{t}");
     }
 }
+
+#[test]
+fn debug_and_display_hide_values() {
+    let base = base();
+    let sr = start_ok(&base);
+    let t = format!("{sr:?}");
+    assert!(
+        t.contains("***") && !t.contains(&"L".repeat(22)) && !t.contains(&"H".repeat(22)),
+        "{t}"
+    );
+    assert_eq!(format!("{:?}", sr.login_url), "LoginUrl(***)");
+    let b = bundle(1, t0());
+    let t = format!("{b:?}");
+    assert!(
+        t.contains("***") && !t.contains("acc1") && !t.contains("ref1"),
+        "{t}"
+    );
+    let e = BaseError::HasPath;
+    assert_eq!(
+        e.to_string(),
+        "Worker 주소 형식이 올바르지 않습니다(HasPath)"
+    );
+    let api = HttpWorkerApi::new(base.clone()).unwrap();
+    assert_eq!(api.base(), &base);
+}

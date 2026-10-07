@@ -171,7 +171,7 @@ node worker/scripts/code-binding-check.mjs
 
 ### 3.2 Workers Logs에 URL이 없다
 
-로그인을 몇 번 한 뒤 대시보드 Workers & Pages → `chzzk-downloader` → Logs(저장된 로그, 실시간 아님)에서 `code=`·`state=`·`/auth/callback?`을 찾는다 → **없음**이어야 한다. invocation 로그는 꺼져 있고(`observability.logs.invocation_logs: false`, 구현 중 변경 7) Worker 로그는 `log()`의 허용 필드만이다(§14). 있으면 멈추고 알린다(설정 수정 PR).
+로그인을 몇 번 한 뒤 Workers Logs(저장된 로그, 실시간 아님)에서 `code=`·`state=`·`/auth/callback?`·`/auth/login/`을 찾는다 → **없음**이어야 한다. 본문(우리 JSON 필드)만 보지 말고 **메타데이터까지** 본다: 대시보드 Workers & Pages → `chzzk-downloader` → Logs에서 줄을 펼친 상세 또는 observability API(Telemetry query)로 각 줄의 `$workers.event.request.url`과 그 밖의 URL·경로 메타데이터를 확인한다. Cloudflare는 Worker 호출의 로그 줄마다 요청 URL 전체를 붙이므로(invocation 로그를 꺼도, 구현 중 변경 43) quiet 경로(콜백·확인 페이지·id가 든 내 기기·관리 POST)는 Worker 쪽 줄이 0이어야 하고, `auth.login.*`·`admin.revoke_session`·`admin.denied_*`·`me.revoke_session` 줄은 DO 쪽 줄이어야 한다. DO 줄에 들어온 요청 URL이 붙어 있으면(43 (바)의 [확인 필요]) 멈추고 알린다(그 이벤트를 버리는 수정 PR). 결과는 "URL 메타데이터 없음/있음"만 적는다.
 
 ### 3.3 실제 브라우저의 관리 POST
 

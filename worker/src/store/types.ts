@@ -1,10 +1,16 @@
 // AuthStore RPC 결과·공용 타입(docs/design/worker.md 구현 중 변경 18). 타입만 둔다. 시각은 모두 epoch ms다(RFC3339 변환은 Worker).
+import type { LogFields } from "../core/log";
 
 export type FlowKind = "app" | "web";
 export type FlowStatus = "started" | "redirected" | "exchanging" | "ok" | "denied" | "cancelled" | "failed";
 export type FailCode = "token" | "user" | "timeout" | "user_format" | "binder" | "session";
 /** Worker가 finish에 넘기는 실패 코드 */
 export type LoginFailCode = "token" | "user" | "timeout" | "user_format";
+/**
+ * 콜백(quiet 경로라 Worker는 로그를 남기지 않는다)이 finish에 넘기는 로그 힌트: DO만 아는 결과에 Worker만 아는 흐름 종류·실패 사유
+ * (code 형식·치지직 실패 단계·예외 이름)를 더한다(구현 중 변경 43). 값은 §14 허용 필드뿐이고 log.ts가 키를 다시 거른다
+ */
+export type LoginLogHint = Pick<LogFields, "level" | "flowKind" | "reason" | "stage" | "status" | "timedOut" | "chzzkCode" | "errorName">;
 export type RevokeWhy = "logout" | "admin" | "disallowed" | "reuse" | "user";
 export type AuditAction = "allow" | "disallow" | "revoke_session" | "reuse_detected" | "refresh_recovered" | "dismiss";
 /** 새로 만든 토큰: token은 호출자에게 돌려주고 hash만 저장한다 */

@@ -1,7 +1,6 @@
 // GET /update/{current}(docs/design/worker.md §9.3, 구현 중 변경 14 (사)·31). 판정: current(400 bad_version, R2 0회)
 // → 자격(releaseAuth, 웹 쿠키 불가) → latest.json 1회 읽기 → decideUpdate. 롤백 직후에도 맞게 캐시하지 않는다.
 import { LATEST_KEY } from "../core/keys";
-import { log } from "../core/log";
 import { decideUpdate, parseCurrentVersion } from "../core/updater";
 import type { Ctx } from "../routes";
 import { releaseBucket } from "./r2";
@@ -25,7 +24,7 @@ export async function update(req: Request, ctx: Ctx): Promise<Response> {
   } else d = decideUpdate(new Uint8Array(await obj.arrayBuffer()), current);
   switch (d.kind) {
     case "invalid_latest":
-      log("release.latest_invalid", { level: "error", route: ctx.route });
+      ctx.log("release.latest_invalid", { level: "error", route: ctx.route });
       return errorJson(500, "internal");
     case "none":
       return new Response(null, { status: 204 });

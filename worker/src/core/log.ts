@@ -2,6 +2,8 @@
 //
 // 한 줄 JSON, 허용 필드만. 금지: 쿼리스트링, 토큰·해시·쿠키, code·state·handle·loginId·pollSecret, 채널 id·이름,
 // 외부 응답 본문, IP 원문, 오류 메시지(URL이 들어 있을 수 있어 error.name만).
+// Workers Logs는 이 줄마다 그 호출의 요청 URL 전체를 메타데이터로 붙인다(W9 실측, 구현 중 변경 43): 그래서 URL에 금지 값이 실리는
+// 경로(routes.ts의 quiet 행)는 그 Worker 호출 안에서 이 함수를 한 번도 부르지 않고, 남길 이벤트는 DO RPC 쪽(AuthStore.ts)이 남긴다.
 
 export type LogLevel = "info" | "warn" | "error";
 
@@ -56,3 +58,8 @@ export function formatLog(event: string, fields: LogFields = {}): string {
 export function log(event: string, fields: LogFields = {}): void {
   console.log(formatLog(event, fields));
 }
+
+/** 요청 하나의 로거(Ctx.log). URL에 로그 금지 값이 실리는 경로에서는 아무것도 하지 않는다(routes.ts, 구현 중 변경 43) */
+export type Logger = (event: string, fields?: LogFields) => void;
+
+export const silent: Logger = () => {};

@@ -4,7 +4,6 @@ import { LATEST_KEY } from "../core/keys";
 import { type LandingRow, landingRows, type LatestView, parseLatestView } from "../core/landing";
 import { clearCookie } from "../core/cookies";
 import { Lru } from "../core/lru";
-import { log } from "../core/log";
 import { isId } from "../core/token";
 import type { Ctx } from "../routes";
 import { COPY } from "./copy";
@@ -24,8 +23,8 @@ export type Downloads =
   | { readonly kind: "unavailable" }
   | { readonly kind: "ok"; readonly version: string; readonly pubDate: string | null; readonly rows: readonly LandingRow[] };
 
-const unavailable = (reason: string, errorName?: string): Downloads => {
-  log("landing.release_unavailable", { level: "warn", reason, ...(errorName === undefined ? {} : { errorName }) });
+const unavailable = (ctx: Ctx, reason: string, errorName?: string): Downloads => {
+  ctx.log("landing.release_unavailable", { level: "warn", reason, ...(errorName === undefined ? {} : { errorName }) });
   return { kind: "unavailable" };
 };
 
@@ -51,18 +50,18 @@ export async function loadDownloads(ctx: Ctx): Promise<Downloads> {
   try {
     return await readDownloads(ctx);
   } catch (e) {
-    return unavailable("r2", e instanceof Error ? e.name : "unknown");
+    return unavailable(ctx, "r2", e instanceof Error ? e.name : "unknown");
   }
 }
 
 async function readDownloads(ctx: Ctx): Promise<Downloads> {
   const view = await latestView(ctx);
   if (view.kind === "none") return { kind: "none" };
-  if (view.kind === "invalid") return unavailable("latest_invalid");
+  if (view.kind === "invalid") return unavailable(ctx, "latest_invalid");
   const sums = await loadSums(releaseBucket(ctx.env), view.version);
-  if (sums === null) return unavailable("sums");
+  if (sums === null) return unavailable(ctx, "sums");
   const rows = landingRows(view.version, sums);
-  if (rows.length === 0) return unavailable("no_rows");
+  if (rows.length === 0) return unavailable(ctx, "no_rows");
   return { kind: "ok", version: view.version, pubDate: view.pubDate, rows };
 }
 
@@ -79,16 +78,15 @@ export async function landing(req: Request, ctx: Ctx): Promise<Response> {
   );
 }
 
-/** POST /me/sessions/:id/revoke: 자기(로그인 채널) 세션만 끊긴다. 지금 브라우저의 세션이면 쿠키도 지운다 */
+/**
+ * POST /me/sessions/:id/revoke: 자기(로그인 채널) 세션만 끊긴다. 지금 브라우저의 세션이면 쿠키도 지운다.
+ * URL에 세션 id가 실리는 quiet 경로다(routes.ts): 성공 이벤트(me.revoke_session)는 revokeMine RPC가 남기고 404는 남기지 않는다(구현 중 변경 43)
+ */
 export async function meRevoke(req: Request, ctx: Ctx): Promise<Response> {
   const g = await guardWebPost(req, ctx, { admin: false });
   if (!g.ok) return g.response;
   const id = ctx.params.id;
-  if (!isId(id) || !(await ctx.store.revokeMine(g.s.channelId, id, ctx.now))) {
-    log("me.rejected", { route: ctx.route, reason: "not_found" });
-    return noticePage(ctx.config, 404, COPY.notFound);
-  }
-  log("me.revoke_session", { route: ctx.route });
+  if (!isId(id) || !(await ctx.store.revokeMine(g.s.channelId, id, ctx.now))) return noticePage(ctx.config, 404, COPY.notFound);
   return seeOther("/", id === g.s.sessionId ? [clearCookie(ctx.cookies, "session")] : []);
 }
 
@@ -97,6 +95,6 @@ export async function webLogout(req: Request, ctx: Ctx): Promise<Response> {
   const g = await guardWebPost(req, ctx, { admin: false });
   if (!g.ok) return g.response;
   await ctx.store.revoke(g.s.sessionId, "logout", g.s.channelId, ctx.now);
-  log("auth.web.logout", { route: ctx.route });
+  ctx.log("auth.web.logout", { route: ctx.route });
   return seeOther("/", [clearCookie(ctx.cookies, "session")]);
 }

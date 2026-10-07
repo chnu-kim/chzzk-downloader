@@ -404,7 +404,8 @@ describe("관리 POST의 경계(구현 중 변경 38 (카))", () => {
     expect(await hasAllowed(A1)).toBe(false);
     expect(await auditOf()).toEqual(before);
     const reasons = spy.mock.calls.map((c) => JSON.parse(String(c[0])) as Record<string, unknown>).filter((e) => e.event === "admin.rejected").map((e) => e.reason);
-    expect(reasons).toEqual(["is_admin", "is_admin"]);
+    // /admin/denied/:channelId/allow는 URL에 채널 id가 실리는 quiet 경로라 거절도 로그를 남기지 않는다(구현 중 변경 43)
+    expect(reasons).toEqual(["is_admin"]);
   });
 
   it("허용목록에 없는 채널 [빼기]: 404, 감사 행이 생기지 않는다", async () => {

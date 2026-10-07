@@ -1,7 +1,6 @@
 // 웹 세션 읽기와 웹 POST 가드(docs/design/worker.md §4.4, 구현 중 변경 38 (나)(다)). 웹 경로는 쿠키만 본다:
 // Authorization(앱 access·CI 토큰)은 "없음"과 같다. 신원은 로그인 채널(channelId)이다(구현 중 변경 23).
 import { clearCookie, hasCookieName, readCookie } from "../core/cookies";
-import { log } from "../core/log";
 import { isSecret, isToken, safeEqual, sha256Hex } from "../core/token";
 import type { Ctx } from "../routes";
 import { COPY } from "./copy";
@@ -53,7 +52,7 @@ export type WebPost = { readonly ok: true; readonly s: WebSession; readonly form
  */
 export async function guardWebPost(req: Request, ctx: Ctx, opts: { readonly admin: boolean }): Promise<WebPost> {
   const reject = (status: number, message: string, reason: string): WebPost => {
-    log("web.post.rejected", { level: "warn", route: ctx.route, reason });
+    ctx.log("web.post.rejected", { level: "warn", route: ctx.route, reason });
     return { ok: false, response: noticePage(ctx.config, status, message) };
   };
   if (opts.admin && ctx.config.adminChannelIds.length === 0) return reject(403, COPY.bootstrapAdmin, "bootstrap");
@@ -64,7 +63,7 @@ export async function guardWebPost(req: Request, ctx: Ctx, opts: { readonly admi
   const form = new URLSearchParams(text);
   const r = await readWebSession(req, ctx);
   if (!r.ok) {
-    log("web.post.rejected", { level: "warn", route: ctx.route, reason: "no_session" });
+    ctx.log("web.post.rejected", { level: "warn", route: ctx.route, reason: "no_session" });
     return { ok: false, response: toHome(r.clear) };
   }
   if (opts.admin && !r.s.isAdmin) return reject(403, COPY.notAdmin, "not_admin");

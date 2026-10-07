@@ -456,7 +456,7 @@ export const GATES = {
     steps: [{ cmd: ['node', S('release.mjs'), 'worker'] }],
   },
   'release-selftest': {
-    desc: '가짜 S3(s3-fake.mjs, SigV4 검증·조건부 쓰기·장애 주입)에 합성 산출물로 release.mjs publish·verify·rollback 진입점을 하위 프로세스로: happy path, CAS·단조 증가, 변조 → previous로 rollback(latest.json 바이트 동일), 재실행 멱등, preflight·경계, 일시·계속 5xx와 응답 잃은 CAS, superseded·not-promoted, 되돌리기·다시 올리기, 보존 상한 prune(최신 5개 + previous), 배포 뒤 검사(--check-only, 가짜 Worker worker-stub.mjs: 정상·204 틀림·200 틀림·음성 틀림·늦은 반영·5xx)와 배포 모드 가드(dry)',
+    desc: '가짜 S3(s3-fake.mjs, SigV4 검증·조건부 쓰기·장애 주입)에 합성 산출물로 release.mjs publish·verify·rollback 진입점을 하위 프로세스로: happy path, CAS·단조 증가, 변조 → previous로 rollback(latest.json 바이트 동일), 재실행 멱등, preflight·경계(태그는 VERIFY_VIA=worker·CI_VERIFY_TOKEN), 일시·계속 5xx와 응답 잃은 CAS, superseded·not-promoted, 되돌리기·다시 올리기, 보존 상한 prune(최신 5개 + previous), 배포 뒤 검사(--check-only, 가짜 Worker worker-stub.mjs: 정상·204 틀림·200 틀림·음성 틀림·늦은 반영·5xx)와 배포 모드 가드(dry)',
     needs: ['cargo'],
     steps: [{ cmd: ['node', S('release.mjs'), 'selftest'] }],
   },

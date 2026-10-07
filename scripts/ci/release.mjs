@@ -50,6 +50,19 @@ export const RELEASE_SECRETS = [
 ];
 export const preflightMessage = (missing) => `릴리스 시크릿 없음: ${missing.join(', ')}. 빌드·설치 스모크·수집·서명·매니페스트(가짜 S3, stage)까지는 통과, 업로드하지 않음`;
 export const REHEARSAL_MESSAGE = '리허설은 업로드하지 않는다(시크릿이 모두 있어도 여기서 멈춘다)';
+// 태그 릴리스의 verify는 클라이언트가 받는 길(Worker)로만 다시 받는다(worker.md 구현 중 변경 42 (아), cicd.md 구현 중 변경 M1-3).
+// 환경 release의 변수라 gate 작업에서는 보이지 않는다: sign-publish preflight(업로드 전)가 주 검사, verify는 방어다. dry·리허설은 보지 않는다
+export const TAG_VERIFY_VIA = 'worker';
+export const tagVerifyViaMessage = (got) =>
+  `태그 릴리스는 VERIFY_VIA=worker여야 한다(지금 ${JSON.stringify(String(got ?? '').slice(0, 32))}). 환경 release 변수 VERIFY_VIA를 worker로 둔다(worker.md 구현 중 변경 42 (아))`;
+export const TAG_VERIFY_TOKEN_MESSAGE = '태그 릴리스는 CI_VERIFY_TOKEN이 필요하다(환경 release secret, verify가 Worker로 다시 받을 때 쓴다)';
+// → null(문제 없음) | 메시지 하나(VERIFY_VIA가 먼저)
+export function tagVerifyProblem(env) {
+  if (env.RELEASE_MODE !== 'tag') return null;
+  if (env.VERIFY_VIA !== TAG_VERIFY_VIA) return tagVerifyViaMessage(env.VERIFY_VIA);
+  if (!env.CI_VERIFY_TOKEN) return TAG_VERIFY_TOKEN_MESSAGE;
+  return null;
+}
 
 function ghOutput(env, pairs) {
   if (!env.GITHUB_OUTPUT) return;
@@ -406,6 +419,8 @@ export function preflight(env) {
   if (env.RELEASE_MODE !== 'tag' && env.RELEASE_MODE !== 'dry') return { code: 1, message: REHEARSAL_MESSAGE, missing };
   // 매니페스트 url이 `${DIST_BASE_URL}/releases/<v>/<file>`이라 값은 경로 없는 https 출처여야 한다(cicd.md 82 (가)). 값은 찍지 않는다
   if (distBaseProblems(env.DIST_BASE_URL).length) return { code: 1, message: 'DIST_BASE_URL은 경로 없는 https 출처여야 한다(값은 찍지 않는다)', missing: [] };
+  const via = tagVerifyProblem(env);
+  if (via) return { code: 1, message: `${via}. 업로드하지 않음`, missing: [] };
   return { code: 0, message: null, missing };
 }
 
@@ -495,6 +510,12 @@ function cmdVerify(env) {
   if (missing.length) {
     console.error(`::error::${preflightMessage(missing)}`);
     return 1;
+  }
+  // 방어: preflight 뒤 변수가 바뀌었으면 xtask를 부르기 전에 멈춘다. 판정이 아니므로 되돌리지 않는다(2)
+  const via = tagVerifyProblem(env);
+  if (via) {
+    err(`verify: ${via} — 판정이 아니므로 되돌리지 않는다`);
+    return 2;
   }
   if (begin('verify', env)) return 2;
   const version = releaseVersion(env);
@@ -888,11 +909,20 @@ async function cmdSelftest(env) {
     const r = spawnSync(process.execPath, [join(ROOT, 'scripts/ci/release.mjs'), 'preflight'], { env: bare, encoding: 'utf8' });
     expect('(e) preflight 프로세스: exit 1 + 정확한 줄', 0, r.status === 1 && r.stderr.split('\n').includes(`::error::${preflightMessage(RELEASE_SECRETS)}`) ? 0 : 1);
     const latestE = get(LATEST_KEY);
-    const pe = publish('1.5.0', '2026-10-08T00:00:00Z', { RELEASE_MODE: 'tag', RELEASE_VERSION: '', RELEASE_STAGE_DIR: '', RELEASE_PUBKEY: '' });
-    expect('(e) tag 모드 publish는 R2_ENDPOINT 덮어쓰기 거부(exit 2)', 2, pe.code);
+    const TAG_OK = { VERIFY_VIA: TAG_VERIFY_VIA, CI_VERIFY_TOKEN: 'selftest-token' };
+    const pe = publish('1.5.0', '2026-10-08T00:00:00Z', { RELEASE_MODE: 'tag', RELEASE_VERSION: '', RELEASE_STAGE_DIR: '', RELEASE_PUBKEY: '', ...TAG_OK });
+    expect('(e) tag 모드 publish는 R2_ENDPOINT 덮어쓰기 거부(exit 2)', 0, pe.code === 2 && last.includes('tag 모드는 R2_ENDPOINT를 받지 않는다') ? 0 : 1);
+    const pv = publish('1.5.0', '2026-10-08T00:00:00Z', { RELEASE_MODE: 'tag', RELEASE_VERSION: '', RELEASE_STAGE_DIR: '', RELEASE_PUBKEY: '', ...TAG_OK, VERIFY_VIA: 's3' });
+    expect('(e) tag 모드 publish는 VERIFY_VIA=s3면 preflight에서 1(업로드 전)', 0, pv.code === 1 && last.includes(`::error::${tagVerifyViaMessage('s3')}. 업로드하지 않음`) ? 0 : 1);
     const pe2 = publish('1.5.0', '2026-10-08T00:00:00Z', { R2_ENDPOINT: 'https://example.r2.cloudflarestorage.com' });
     expect('(e) dry 모드 publish는 루프백이 아닌 엔드포인트 거부(exit 2)', 2, pe2.code);
-    expect('(e) tag 모드 verify는 빌드한 xtask 거부(XTASK_BIN 없음, exit 2)', 2, runRelease('verify', { ...bare, ...Object.fromEntries(RELEASE_SECRETS.map((s) => [s, 'x'])) }, true).status);
+    const secretsX = Object.fromEntries(RELEASE_SECRETS.map((s) => [s, 'x']));
+    const vx2 = runRelease('verify', { ...bare, ...secretsX, ...TAG_OK }, true);
+    last = vx2.out;
+    expect('(e) tag 모드 verify는 빌드한 xtask 거부(XTASK_BIN 없음, exit 2)', 0, vx2.status === 2 && vx2.out.includes('tag 모드는 미리 빌드한 xtask') ? 0 : 1);
+    const vs3 = runRelease('verify', { ...bare, ...secretsX, ...TAG_OK, VERIFY_VIA: 's3' }, true);
+    last = vs3.out;
+    expect('(e) tag 모드 verify는 VERIFY_VIA=s3 거부(exit 2, xtask 전)', 0, vs3.status === 2 && vs3.out.includes(tagVerifyViaMessage('s3')) && !vs3.out.includes('xtask') ? 0 : 1);
     expect('(e) 시크릿 없는 verify는 preflight 메시지로 1', 1, runRelease('verify', bare, true).status);
     expect('(e) XTASK_SHA256이 다르면 거부(exit 2)', 2, verify('1.0.0', '', { XTASK_BIN: xtaskBin(base0), XTASK_SHA256: '0'.repeat(64) }).code);
     expect('(e) 거부들 뒤 latest.json 그대로', 0, same(get(LATEST_KEY), latestE));

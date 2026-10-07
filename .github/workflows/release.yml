@@ -12,6 +12,7 @@ name: release
 # 바이너리는 GitHub Release에 올리지 않는다(배포는 R2 + Worker 허용 목록). 빌드 산출물은 보관 1일 artifact뿐이다.
 # 리허설(dispatch·매주 schedule)은 stage에서 끝난다(업로드 경계, 녹색). 환경 release에 들어가지 않아 시크릿이 없다.
 # 태그 실행에 시크릿이 없으면 sign-publish의 preflight가 "릴리스 시크릿 없음: …"으로 실패한다(그 앞 단계는 모두 돈다).
+# 태그 실행은 VERIFY_VIA=worker(환경 release 변수)와 CI_VERIFY_TOKEN이 없으면 sign-publish의 preflight에서 멈춘다(업로드 전, 리허설은 보지 않는다).
 # 모든 run:은 setup을 빼면 `node scripts/ci/run.mjs <gate>`만 부른다(parity). 캐시는 쓰지 않는다(§7 릴리스 격리).
 
 on:
@@ -345,6 +346,9 @@ jobs:
           R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
           R2_BUCKET: ${{ vars.R2_BUCKET }}
           DIST_BASE_URL: ${{ secrets.DIST_BASE_URL }}
+          # 태그 릴리스의 verify는 Worker로만 다시 받는다: 업로드 전에 VERIFY_VIA=worker와 토큰을 본다(worker.md 구현 중 변경 42 (아), cicd.md 구현 중 변경 M1-3)
+          VERIFY_VIA: ${{ vars.VERIFY_VIA }}
+          CI_VERIFY_TOKEN: ${{ secrets.CI_VERIFY_TOKEN }}
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: xtask-bin-${{ github.run_id }}
@@ -369,6 +373,9 @@ jobs:
           R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
           R2_BUCKET: ${{ vars.R2_BUCKET }}
           DIST_BASE_URL: ${{ secrets.DIST_BASE_URL }}
+          # publish도 preflight를 다시 부른다
+          VERIFY_VIA: ${{ vars.VERIFY_VIA }}
+          CI_VERIFY_TOKEN: ${{ secrets.CI_VERIFY_TOKEN }}
 
   # latest.json을 보고 결정표대로 확인한다(release.mjs verifyPlan): 이번 버전이면 다시 받아 sha256·서명(커밋된 release/updater.pub)·
   # 스키마·버전·latest.json을 확인하고, 판정 실패면 prev(없으면 releases/<v>/previous)로 되돌린 뒤 빨강 → report가 release 이슈.

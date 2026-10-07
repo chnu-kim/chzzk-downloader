@@ -189,6 +189,26 @@ fn open_commands_are_fixed() {
     assert_eq!(sorted, gate::OPEN_COMMANDS);
 }
 
+/// 앱 상태가 없을 때(시작 실패): 허용 목록만 통과, 나머지(새 이름 포함)는 notLoggedIn(worker.md 구현 중 변경 A2-2)
+#[test]
+fn gate_without_app_allows_only_open_commands() {
+    for c in gate::OPEN_COMMANDS {
+        assert!(gate::gate_without_app(c).is_ok(), "{c}");
+    }
+    for c in [
+        "resolve",
+        "enqueue",
+        "resume_job",
+        "get_settings",
+        "update_settings",
+        "made_up_command",
+        "",
+    ] {
+        let e = gate::gate_without_app(c).unwrap_err();
+        assert_eq!(e.code, ErrorCode::NotLoggedIn, "{c}");
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn disabled_auth_passes_every_command() {
     let t = TempDir::new().unwrap();
@@ -251,6 +271,11 @@ async fn stored_session_signs_in_optimistically() {
     assert_eq!(st.state, AuthState::SignedIn);
     assert_eq!(st.channel_id.as_deref(), Some(CH));
     assert!(app.gate_command("resolve").is_ok());
+    assert!(worker.received_requests().await.unwrap().is_empty());
+    // [다시 연결] 연타: 온라인 SignedIn이고 갱신 예정 전이면 Worker를 부르지 않는다(구현 중 변경 A2-8)
+    for _ in 0..2 {
+        assert_eq!(app.auth_retry().await.state, AuthState::SignedIn);
+    }
     assert!(worker.received_requests().await.unwrap().is_empty());
 }
 

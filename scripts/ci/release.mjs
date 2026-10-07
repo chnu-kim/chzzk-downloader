@@ -50,7 +50,7 @@ export const RELEASE_SECRETS = [
 ];
 export const preflightMessage = (missing) => `릴리스 시크릿 없음: ${missing.join(', ')}. 빌드·설치 스모크·수집·서명·매니페스트(가짜 S3, stage)까지는 통과, 업로드하지 않음`;
 export const REHEARSAL_MESSAGE = '리허설은 업로드하지 않는다(시크릿이 모두 있어도 여기서 멈춘다)';
-// 태그 릴리스의 verify는 클라이언트가 받는 길(Worker)로만 다시 받는다(worker.md 구현 중 변경 42 (아), cicd.md 구현 중 변경 M1-3).
+// 태그 릴리스의 verify는 클라이언트가 받는 길(Worker)로만 다시 받는다(worker.md 구현 중 변경 42 (아), cicd.md 구현 중 변경 104).
 // 환경 release의 변수라 gate 작업에서는 보이지 않는다: sign-publish preflight(업로드 전)가 주 검사, verify는 방어다. dry·리허설은 보지 않는다
 export const TAG_VERIFY_VIA = 'worker';
 export const tagVerifyViaMessage = (got) =>

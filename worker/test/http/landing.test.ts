@@ -109,7 +109,7 @@ describe("허용된 사용자", () => {
     expect(t).not.toContain(".app.tar.gz");
     expect(t).not.toContain(".sig");
     expect(t).toContain("<details>");
-    // macOS 설치 안내: 손상 경고 → 응용 프로그램으로 옮김 → xattr → 다시 열기(worker.md 구현 중 변경 M1-1)
+    // macOS 설치 안내: 손상 경고 → 응용 프로그램으로 옮김 → xattr → 다시 열기(worker.md 구현 중 변경 45)
     const mac = t.slice(t.indexOf("<h3>macOS</h3>"), t.indexOf("<h3>Windows</h3>"));
     expect(mac.length).toBeGreaterThan(0);
     expect(mac).toContain(`<p>${COPY.macDamaged}</p>`);

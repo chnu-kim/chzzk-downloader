@@ -131,7 +131,7 @@ export const SQL_FILE = 'src/store/db.ts';
 // 이스케이프 없는 HTML 삽입(raw) 토큰 수를 파일별로 고정한다(worker.md §8.1, 구현 중 변경 15). 사용처를 더하면 파일과 수를 함께 올린다
 // (src/core/html.ts의 1 = 함수 선언). 주석·문자열의 낱말도 센다: 사용처 변화가 늘 이 표의 diff로 리뷰에 보인다
 export const RAW_ALLOWLIST = { 'src/core/html.ts': 1 };
-// 랜딩 macOS 안내의 xattr 경로는 앱 이름(tauri.conf.json productName)과 같아야 한다(worker.md 구현 중 변경 M1-1)
+// 랜딩 macOS 안내의 xattr 경로는 앱 이름(tauri.conf.json productName)과 같아야 한다(worker.md 구현 중 변경 45)
 export const LANDING_COPY_FILE = 'src/http/copy.ts';
 export const TAURI_CONF = 'app/src-tauri/tauri.conf.json';
 // 실제 비밀값 파일을 직접 읽어도 되는 도구(사용자가 직접 돌리는 G-ID 확인 worker.md §15, code 묶임 실측 구현 중 변경 42)

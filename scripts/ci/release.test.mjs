@@ -293,7 +293,7 @@ test('경계: tag는 덮어쓰기를 받지 않고, dry는 루프백 엔드포�
   assert.equal(boundaryProblems({}).length, 1);
 });
 
-test('tagVerifyProblem: tag만 VERIFY_VIA=worker(정확히)와 CI_VERIFY_TOKEN을 요구한다(cicd.md 구현 중 변경 M1-3)', () => {
+test('tagVerifyProblem: tag만 VERIFY_VIA=worker(정확히)와 CI_VERIFY_TOKEN을 요구한다(cicd.md 구현 중 변경 104)', () => {
   assert.equal(TAG_VERIFY_VIA, 'worker');
   for (const env of [{}, { RELEASE_MODE: 'dry' }, { RELEASE_MODE: 'dry', VERIFY_VIA: 's3' }, { RELEASE_MODE: 'rehearsal' }, { RELEASE_MODE: 'tag', VERIFY_VIA: 'worker', CI_VERIFY_TOKEN: 't' }]) {
     assert.equal(tagVerifyProblem(env), null, JSON.stringify(env));

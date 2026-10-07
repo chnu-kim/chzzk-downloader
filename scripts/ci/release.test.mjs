@@ -1,6 +1,8 @@
 // release.mjs의 순수 함수(docs/design/cicd.md §5, 구현 중 변경 G6)
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -25,6 +27,7 @@ import {
   parseWorkerArgs,
   preflight,
   preflightMessage,
+  probeVerifyWorker,
   pruneMissingMessage,
   prunePlan,
   pubkeyProblems,
@@ -34,7 +37,11 @@ import {
   RELEASE_KEEP,
   releaseConfProblems,
   runWorkerChecks,
+  TAG_VERIFY_TOKEN_MESSAGE,
+  TAG_VERIFY_VIA,
   tagProblems,
+  tagVerifyProblem,
+  tagVerifyViaMessage,
   verifyPlan,
   WORKER_CHECKS,
   WORKER_SECRETS,
@@ -162,7 +169,12 @@ test('preflight: 정확한 메시지, 리허설은 시크릿이 있어도 멈춘
   );
   assert.deepEqual(preflight({ RELEASE_MODE: 'tag' }).missing, RELEASE_SECRETS);
   const all = { ...Object.fromEntries(RELEASE_SECRETS.map((n) => [n, 'x'])), DIST_BASE_URL: 'https://dist.example.test' };
-  assert.equal(preflight({ ...all, RELEASE_MODE: 'tag' }).code, 0);
+  const tagOk = { VERIFY_VIA: 'worker', CI_VERIFY_TOKEN: 'x' };
+  assert.equal(preflight({ ...all, ...tagOk, RELEASE_MODE: 'tag' }).code, 0);
+  // 태그는 VERIFY_VIA=worker·CI_VERIFY_TOKEN까지(dry·리허설은 보지 않는다)
+  assert.deepEqual(preflight({ ...all, RELEASE_MODE: 'tag' }), { code: 1, message: `${tagVerifyViaMessage(undefined)}. 업로드하지 않음`, missing: [] });
+  assert.deepEqual(preflight({ ...all, VERIFY_VIA: 'worker', RELEASE_MODE: 'tag' }), { code: 1, message: `${TAG_VERIFY_TOKEN_MESSAGE}. 업로드하지 않음`, missing: [] });
+  assert.equal(preflight({ ...all, VERIFY_VIA: 's3', RELEASE_MODE: 'dry' }).code, 0);
   assert.equal(preflight({ ...all, RELEASE_MODE: 'dry' }).code, 0);
   assert.equal(preflight({ ...all, RELEASE_MODE: 'rehearsal' }).message, REHEARSAL_MESSAGE);
   assert.equal(preflight({ ...all, RELEASE_MODE: '' }).code, 1);
@@ -174,6 +186,7 @@ test('preflight: DIST_BASE_URL은 경로 없는 https 출처(값은 메시지에
   for (const bad of ['x', 'http://dist.example.test', 'https://dist.example.test/', 'https://dist.example.test/releases', 'https://u:p@dist.example.test', 'https://DIST.example.test']) {
     for (const RELEASE_MODE of ['tag', 'dry']) {
       const r = preflight({ ...all, DIST_BASE_URL: bad, RELEASE_MODE });
+      assert.equal(preflight({ ...all, VERIFY_VIA: 'worker', CI_VERIFY_TOKEN: 'x', DIST_BASE_URL: bad, RELEASE_MODE }).message, r.message);
       assert.equal(r.code, 1, `${RELEASE_MODE} ${bad}`);
       assert.equal(r.message, 'DIST_BASE_URL은 경로 없는 https 출처여야 한다(값은 찍지 않는다)');
       assert.deepEqual(r.missing, []);
@@ -280,6 +293,145 @@ test('경계: tag는 덮어쓰기를 받지 않고, dry는 루프백 엔드포�
   }
   assert.equal(boundaryProblems({ RELEASE_MODE: 'rehearsal' }).length, 1);
   assert.equal(boundaryProblems({}).length, 1);
+});
+
+test('tagVerifyProblem: tag만 VERIFY_VIA=worker(정확히)와 CI_VERIFY_TOKEN을 요구한다(cicd.md 구현 중 변경 104)', () => {
+  assert.equal(TAG_VERIFY_VIA, 'worker');
+  for (const env of [{}, { RELEASE_MODE: 'dry' }, { RELEASE_MODE: 'dry', VERIFY_VIA: 's3' }, { RELEASE_MODE: 'rehearsal' }, { RELEASE_MODE: 'tag', VERIFY_VIA: 'worker', CI_VERIFY_TOKEN: 't' }]) {
+    assert.equal(tagVerifyProblem(env), null, JSON.stringify(env));
+  }
+  for (const v of [undefined, '', 's3', 'Worker', 'WORKER', 'worker ', ' worker']) {
+    assert.equal(tagVerifyProblem({ RELEASE_MODE: 'tag', VERIFY_VIA: v, CI_VERIFY_TOKEN: 't' }), tagVerifyViaMessage(v), JSON.stringify(v));
+  }
+  for (const t of [undefined, '']) assert.equal(tagVerifyProblem({ RELEASE_MODE: 'tag', VERIFY_VIA: 'worker', CI_VERIFY_TOKEN: t }), TAG_VERIFY_TOKEN_MESSAGE);
+  // 둘 다 틀리면 VERIFY_VIA가 먼저
+  assert.equal(tagVerifyProblem({ RELEASE_MODE: 'tag', VERIFY_VIA: 's3' }), tagVerifyViaMessage('s3'));
+  // 값은 32자로 자르고, 토큰 값은 어떤 메시지에도 없다
+  const long = tagVerifyViaMessage('x'.repeat(100));
+  assert.ok(long.includes('x'.repeat(32)) && !long.includes('x'.repeat(33)));
+  assert.ok(!String(tagVerifyProblem({ RELEASE_MODE: 'tag', VERIFY_VIA: 's3', CI_VERIFY_TOKEN: 'tok-SECRET-1' })).includes('tok-SECRET'));
+  assert.ok(!TAG_VERIFY_TOKEN_MESSAGE.includes('tok-SECRET'));
+});
+
+test('release.mjs 진입점: tag 모드 preflight는 1(업로드 전), verify는 xtask 전에 2(되돌리지 않음)', async () => {
+  const secrets = { ...Object.fromEntries(RELEASE_SECRETS.map((n) => [n, 'x'])), DIST_BASE_URL: 'https://dist.example.test' };
+  const run = (cmd, extra) =>
+    spawnSync(process.execPath, [join(ROOT, 'scripts/ci/release.mjs'), cmd], {
+      env: { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, RELEASE_MODE: 'tag', ...secrets, ...extra },
+      encoding: 'utf8',
+    });
+  const lines = (r) => r.stderr.split('\n');
+  const s3 = run('preflight', { VERIFY_VIA: 's3', CI_VERIFY_TOKEN: 'tok' });
+  assert.equal(s3.status, 1);
+  assert.ok(lines(s3).includes(`::error::${tagVerifyViaMessage('s3')}. 업로드하지 않음`), s3.stderr);
+  assert.equal(run('preflight', { CI_VERIFY_TOKEN: 'tok' }).status, 1);
+  const noTok = run('preflight', { VERIFY_VIA: 'worker' });
+  assert.equal(noTok.status, 1);
+  assert.ok(lines(noTok).includes(`::error::${TAG_VERIFY_TOKEN_MESSAGE}. 업로드하지 않음`), noTok.stderr);
+  // 변수가 모두 맞으면 Worker 프로브까지 간다. 잡았다 닫은 루프백 포트(https, DNS 없음)라 연결 거부로 1(업로드 전), 출력에 주소·토큰이 없다
+  const gone = await probeServer(200);
+  await gone.close();
+  const ok = run('preflight', { VERIFY_VIA: 'worker', CI_VERIFY_TOKEN: 'tok-SECRET-probe', DIST_BASE_URL: gone.base.replace('http:', 'https:') });
+  assert.equal(ok.status, 1, ok.stderr);
+  assert.match(ok.stdout, /preflight: 시크릿·변수 모두 있음/);
+  assert.ok(lines(ok).includes('::error::태그 릴리스 Worker 프로브 실패(ECONNREFUSED): Worker에 닿지 못했다. 업로드하지 않음'), ok.stderr);
+  assert.ok(!/127\.0\.0\.1|example\.test|tok-SECRET/.test(ok.stdout + ok.stderr), ok.stderr);
+  // verify: 방어 검사는 경계·xtask보다 먼저(xtask를 찾지 않는다)
+  const v = run('verify', { VERIFY_VIA: 's3', CI_VERIFY_TOKEN: 'tok' });
+  assert.equal(v.status, 2);
+  assert.ok(lines(v).includes(`::error::release: verify: ${tagVerifyViaMessage('s3')} — 판정이 아니므로 되돌리지 않는다`), v.stderr);
+  assert.ok(!v.stderr.includes('xtask'), v.stderr);
+  // 통과하면 다음 경계(미리 빌드한 xtask 없음)까지 간다
+  const v2 = run('verify', { VERIFY_VIA: 'worker', CI_VERIFY_TOKEN: 'tok' });
+  assert.equal(v2.status, 2);
+  assert.match(v2.stderr, /tag 모드는 미리 빌드한 xtask/);
+  // 시크릿 없음이 VERIFY_VIA보다 먼저(1, preflight 문구)
+  const bare = spawnSync(process.execPath, [join(ROOT, 'scripts/ci/release.mjs'), 'verify'], { env: { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, RELEASE_MODE: 'tag', VERIFY_VIA: 's3' }, encoding: 'utf8' });
+  assert.equal(bare.status, 1);
+  assert.match(bare.stderr, /릴리스 시크릿 없음/);
+});
+
+// 루프백 http 서버 하나(상태 고정 또는 응답 없음) → { base, close }
+const probeServer = (status) =>
+  new Promise((res) => {
+    const seen = [];
+    const s = createServer((req, r) => {
+      seen.push({ method: req.method, url: req.url, auth: req.headers.authorization });
+      if (status === null) return; // 응답하지 않는다(시간 초과)
+      r.writeHead(status, status === 302 ? { location: 'http://127.0.0.1:1/' } : {});
+      r.end('{"secret-body":"tok-SECRET"}');
+    });
+    s.listen(0, '127.0.0.1', () => res({ base: `http://127.0.0.1:${s.address().port}`, seen, close: () => new Promise((d) => s.closeAllConnections() || s.close(d)) }));
+  });
+
+test('probeVerifyWorker: 200·404만 통과, 401·403·5xx·3xx·연결 거부·시간 초과는 실패(cicd.md 구현 중 변경 104 (가))', async () => {
+  const token = 'tok-SECRET-probe';
+  for (const [status, code] of [[200, 0], [404, 0], [401, 1], [403, 1], [500, 1], [503, 1], [302, 1], [204, 1]]) {
+    const s = await probeServer(status);
+    try {
+      const r = await probeVerifyWorker({ base: s.base, token });
+      assert.equal(r.code, code, String(status));
+      assert.equal(r.status, status);
+      assert.deepEqual(s.seen, [{ method: 'GET', url: '/releases/latest.json', auth: `Bearer ${token}` }]);
+      if (code) assert.match(r.message, new RegExp(`^태그 릴리스 Worker 프로브 실패\\(HTTP ${status}\\)`));
+      if (status === 401 || status === 403) assert.match(r.message, /토큰이 Worker secret과 다르다/);
+      assert.ok(!/127\.0\.0\.1|tok-SECRET|secret-body/.test(JSON.stringify(r)), JSON.stringify(r));
+    } finally {
+      await s.close();
+    }
+  }
+  // 연결 거부: 포트를 잡았다 닫는다
+  const gone = await probeServer(200);
+  await gone.close();
+  const refused = await probeVerifyWorker({ base: gone.base, token });
+  assert.equal(refused.code, 1);
+  assert.equal(refused.cause, 'ECONNREFUSED');
+  assert.ok(!/127\.0\.0\.1|tok-SECRET/.test(JSON.stringify(refused)));
+  // 시간 초과
+  const hang = await probeServer(null);
+  try {
+    const t = await probeVerifyWorker({ base: hang.base, token, timeoutMs: 200 });
+    assert.equal(t.code, 1);
+    assert.equal(t.cause, 'TimeoutError');
+    assert.match(t.message, /Worker에 닿지 못했다/);
+  } finally {
+    await hang.close();
+  }
+});
+
+test('probeVerifyWorker: 가짜 Worker(worker-stub)와 계약 — 맞는 토큰 200 통과, 틀린 토큰 401 실패', async () => {
+  const { server } = createWorkerStub({ token: 'tok-right', version: '1.2.0', build: 'abc1234' });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    assert.deepEqual(await probeVerifyWorker({ base, token: 'tok-right' }), { code: 0, status: 200 });
+    const bad = await probeVerifyWorker({ base, token: 'tok-wrong' });
+    assert.equal(bad.code, 1);
+    assert.equal(bad.status, 401);
+  } finally {
+    server.closeAllConnections();
+    await new Promise((r) => server.close(r));
+  }
+});
+
+test('release.yml: VERIFY_VIA는 변수 그대로 preflight·publish·verify에, stage·rollback에는 없다', () => {
+  const rel = readFileSync(join(ROOT, '.github/workflows/release.yml'), 'utf8');
+  const block = (id) => new RegExp(`^ {2}${id}:\\n(?:(?: {4}|\\n).*\\n)+`, 'm').exec(rel)?.[0] ?? '';
+  const vals = [...rel.matchAll(/^\s+VERIFY_VIA: (.+)$/gm)].map((m) => m[1]);
+  assert.deepEqual(vals, ['${{ vars.VERIFY_VIA }}', '${{ vars.VERIFY_VIA }}', '${{ vars.VERIFY_VIA }}']);
+  const sp = block('sign-publish');
+  const pre = sp.slice(sp.indexOf('name: release-preflight'), sp.indexOf('name: release-publish'));
+  const pub = sp.slice(sp.indexOf('name: release-publish'));
+  const ver = block('verify');
+  for (const [name, t] of [['preflight', pre], ['publish', pub], ['verify', ver]]) {
+    assert.ok(t.length > 0, name);
+    assert.match(t, /RELEASE_MODE: tag\n/, name);
+    assert.match(t, /VERIFY_VIA: \$\{\{ vars\.VERIFY_VIA \}\}/, name);
+    assert.match(t, /CI_VERIFY_TOKEN: \$\{\{ secrets\.CI_VERIFY_TOKEN \}\}/, name);
+  }
+  const stage = block('stage');
+  assert.ok(stage.length > 0 && !/VERIFY_VIA|CI_VERIFY_TOKEN/.test(stage), '리허설·stage는 바꾸지 않는다');
+  assert.ok(!/VERIFY_VIA/.test(readFileSync(join(ROOT, '.github/workflows/rollback.yml'), 'utf8')));
 });
 
 // 보존 상한 prune의 지울 목록(release.mjs prunePlan). 키는 releases/<v>/…(버전 폴더)와 releases/latest.json이다

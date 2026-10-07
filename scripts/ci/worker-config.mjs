@@ -131,6 +131,9 @@ export const SQL_FILE = 'src/store/db.ts';
 // 이스케이프 없는 HTML 삽입(raw) 토큰 수를 파일별로 고정한다(worker.md §8.1, 구현 중 변경 15). 사용처를 더하면 파일과 수를 함께 올린다
 // (src/core/html.ts의 1 = 함수 선언). 주석·문자열의 낱말도 센다: 사용처 변화가 늘 이 표의 diff로 리뷰에 보인다
 export const RAW_ALLOWLIST = { 'src/core/html.ts': 1 };
+// 랜딩 macOS 안내의 xattr 경로는 앱 이름(tauri.conf.json productName)과 같아야 한다(worker.md 구현 중 변경 45)
+export const LANDING_COPY_FILE = 'src/http/copy.ts';
+export const TAURI_CONF = 'app/src-tauri/tauri.conf.json';
 // 실제 비밀값 파일을 직접 읽어도 되는 도구(사용자가 직접 돌리는 G-ID 확인 worker.md §15, code 묶임 실측 구현 중 변경 42)
 export const DEV_VARS_READERS = ['scripts/channel-id-check.mjs', 'scripts/code-binding-check.mjs'];
 
@@ -837,6 +840,23 @@ function readRegular(p) {
 
 // ---- 진입 ----
 
+// copy.ts 원문과 tauri.conf.json 원문 → 오류 목록. macXattr는 한 줄 `macXattr: '…',`(작은·큰따옴표)이어야 찾는다
+export function checkLandingAppName(copyTs, tauriConfText) {
+  let name;
+  try {
+    name = JSON.parse(tauriConfText)?.productName;
+  } catch (e) {
+    return [`${TAURI_CONF}: JSON 해석 실패: ${e.message}`];
+  }
+  if (typeof name !== 'string' || !name) return [`${TAURI_CONF}: productName이 없다`];
+  // ! 는 대화형 zsh·bash의 큰따옴표 안에서도 history expansion이라 붙여 넣은 명령이 깨진다
+  if (/["`$\\!]/.test(name)) return [`${TAURI_CONF}: productName에 셸 큰따옴표 안에서 뜻이 바뀌는 글자(" \` $ \\ !)가 있다`];
+  const m = /^\s*macXattr:\s*(['"])(.*?)\1,\s*$/m.exec(copyTs);
+  if (!m) return [`${WORKER_DIR}/${LANDING_COPY_FILE}: macXattr: '…', 한 줄을 찾지 못했다`];
+  const want = `xattr -dr com.apple.quarantine "/Applications/${name}.app"`;
+  return m[2] === want ? [] : [`${WORKER_DIR}/${LANDING_COPY_FILE}: macXattr ${JSON.stringify(m[2])} ≠ ${JSON.stringify(want)}(${TAURI_CONF} productName)`];
+}
+
 export function checkWorker(root) {
   const w = join(root, WORKER_DIR);
   const errs = [];
@@ -897,6 +917,10 @@ export function checkWorker(root) {
   if (ex !== null && keys) add(EXAMPLE_FILE, checkDevVarsExample(ex, keys));
   const vc = need('vitest.config.ts');
   if (vc !== null) add('vitest.config.ts', checkVitestConfig(vc));
+  const copyTs = need(LANDING_COPY_FILE);
+  const tauriConf = readRegular(join(root, TAURI_CONF));
+  if (tauriConf === null) errs.push(`${TAURI_CONF}: 없다(랜딩 xattr 경로의 앱 이름 원천)`);
+  else if (copyTs !== null) errs.push(...checkLandingAppName(copyTs, tauriConf));
   const files = [...listFiles(w, 'src'), ...listFiles(w, 'test'), ...listFiles(w, 'scripts'), 'vitest.config.ts', 'wrangler.jsonc', 'tsconfig.json']
     .filter((rel) => existsSync(join(w, rel)))
     .map((rel) => ({ rel, text: readRegular(join(w, rel)) }));

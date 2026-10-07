@@ -2,6 +2,7 @@
 import { runInDurableObject } from "cloudflare:test";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { sha256Hex } from "../../src/core/token";
+import { COPY } from "../../src/http/copy";
 import { LATEST_VIEW_CACHE } from "../../src/http/landing";
 import { SUMS_CACHE } from "../../src/http/releases";
 import { SITE_CSS, SITE_CSS_PATH } from "../../src/http/site-css";
@@ -108,6 +109,21 @@ describe("허용된 사용자", () => {
     expect(t).not.toContain(".app.tar.gz");
     expect(t).not.toContain(".sig");
     expect(t).toContain("<details>");
+    // macOS 설치 안내: 손상 경고 → 응용 프로그램으로 옮김 → xattr → 다시 열기(worker.md 구현 중 변경 45)
+    const mac = t.slice(t.indexOf("<h3>macOS</h3>"), t.indexOf("<h3>Windows</h3>"));
+    expect(mac.length).toBeGreaterThan(0);
+    expect(mac).toContain(`<p>${COPY.macDamaged}</p>`);
+    expect(mac).toContain("손상되어 열 수 없다");
+    expect(mac).toContain("응용 프로그램(Applications)");
+    // 큰따옴표는 이스케이프돼 나간다(core/html.ts escapeHtml)
+    expect(mac).toContain("<pre><code>xattr -dr com.apple.quarantine &quot;/Applications/치지직 다운로더.app&quot;</code></pre>");
+    const iMove = mac.indexOf(COPY.macMove);
+    const iCmd = mac.indexOf("xattr -dr");
+    const iReopen = mac.indexOf(COPY.macReopen);
+    expect(iMove).toBeGreaterThan(-1);
+    expect(iMove < iCmd && iCmd < iReopen).toBe(true);
+    // 실기기에서 통하지 않는 옛 안내는 없다
+    for (const old of ["그래도 열기", "우클릭", "개인정보 보호 및 보안", "확인되지 않은 개발자"]) expect(t).not.toContain(old);
     expect(t).toContain('action="/auth/web/logout"');
     expect(t).not.toContain('href="/admin"');
     for (const bad of ["<script", "style="]) expect(t).not.toContain(bad);

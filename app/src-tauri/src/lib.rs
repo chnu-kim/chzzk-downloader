@@ -13,7 +13,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use chzzk_shell::dto::CloseRequestedPayload;
 use chzzk_shell::services::AppPaths;
-use chzzk_shell::{App, AppError};
+use chzzk_shell::{App, AppError, AuthSetup, WorkerBase};
 use tauri::ipc::Invoke;
 use tauri::{AppHandle, Emitter, Manager, RunEvent, Runtime, WindowEvent};
 
@@ -350,6 +350,36 @@ fn e2e_override() -> Result<Override, String> {
     Ok(None)
 }
 
+/// 빌드에 넣은 Worker 출처(build.rs가 검사한 값). 없으면 None
+pub fn build_worker_base() -> Option<&'static str> {
+    Some(env!("CHZZK_WORKER_BASE_BUILD")).filter(|s| !s.is_empty())
+}
+
+/// auth 설정 고르기(D5). `e2e`: E2E가 켜졌으면 Some(그 Worker 주소 또는 None). 빌드 주소는 E2E에서 쓰지 않는다
+pub fn auth_setup(
+    e2e: Option<Option<WorkerBase>>,
+    build: Option<&str>,
+    app_version: &str,
+) -> Result<AuthSetup, String> {
+    let base = match e2e {
+        Some(w) => w,
+        None => match build {
+            Some(v) => Some(
+                WorkerBase::parse(v)
+                    .map_err(|e| format!("빌드에 넣은 Worker 주소가 올바르지 않다({e})"))?,
+            ),
+            None => None,
+        },
+    };
+    Ok(match base {
+        Some(base) => AuthSetup::Enabled {
+            base,
+            app_version: app_version.to_string(),
+        },
+        None => AuthSetup::Disabled,
+    })
+}
+
 /// 앱 상태(설정·매니저)를 열어 `manage`한다. 로그는 그 전에 시작한다.
 fn setup<R: Runtime>(
     app: &tauri::App<R>,
@@ -513,11 +543,39 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::{
-        CloseDecision, INSTANCE_LOCK_FILE, InstanceLockState, acquire_instance_lock,
+        CloseDecision, INSTANCE_LOCK_FILE, InstanceLockState, acquire_instance_lock, auth_setup,
         close_decision, startup_failure_message,
     };
-    use chzzk_shell::AppError;
+    use chzzk_shell::{AppError, AuthSetup, WorkerBase};
     use std::path::Path;
+
+    fn base(s: &str) -> WorkerBase {
+        WorkerBase::parse(s).unwrap()
+    }
+
+    #[test]
+    fn auth_setup_table() {
+        let v = "0.1.0";
+        assert!(matches!(auth_setup(None, None, v), Ok(AuthSetup::Disabled)));
+        match auth_setup(None, Some("https://w.example.invalid"), v) {
+            Ok(AuthSetup::Enabled { base, app_version }) => {
+                assert_eq!(base.origin(), "https://w.example.invalid");
+                assert_eq!(app_version, v);
+            }
+            other => panic!("{other:?}"),
+        }
+        let e = auth_setup(None, Some("nope"), v).unwrap_err();
+        assert!(!e.contains("nope"), "{e}");
+        // E2E는 빌드 주소를 쓰지 않는다
+        assert!(matches!(
+            auth_setup(Some(None), Some("https://w.example.invalid"), v),
+            Ok(AuthSetup::Disabled)
+        ));
+        match auth_setup(Some(Some(base("http://127.0.0.1:9"))), None, v) {
+            Ok(AuthSetup::Enabled { base, .. }) => assert_eq!(base.origin(), "http://127.0.0.1:9"),
+            other => panic!("{other:?}"),
+        }
+    }
 
     // 거의 동시에 뜬 두 실행이 둘 다 single-instance를 지나도 매니저는 하나만 연다(구현 중 변경 51(다)).
     #[test]
@@ -569,5 +627,136 @@ mod tests {
             close_decision(true, 3, false),
             CloseDecision::PreventSilently
         );
+    }
+}
+
+/// Worker 주소 규칙 표(`build_rules.rs`는 build.rs와 이 테스트가 include!로 함께 쓴다)
+#[cfg(test)]
+mod build_rules_tests {
+    include!("../build_rules.rs");
+
+    const ACCEPTED_BOTH: [&str; 3] = [
+        "https://worker.example.invalid",
+        "https://a-b.c1.example.invalid:8443",
+        "https://127.0.0.1:8787",
+    ];
+    const ACCEPTED_DEBUG_ONLY: [&str; 4] = [
+        "http://127.0.0.1:8787",
+        "http://localhost:8787",
+        "http://[::1]:8787",
+        "http://localhost",
+    ];
+
+    fn rejected() -> Vec<&'static str> {
+        vec![
+            "https://x.example.invalid/",
+            "https://x.example.invalid/api",
+            "https://x.example.invalid?q",
+            "https://x.example.invalid#f",
+            "https://u@x.example.invalid",
+            "https://X.example.invalid",
+            "https://x.example.invalid:443",
+            "https://x.example.invalid:0",
+            "https://x.example.invalid:65536",
+            "https://x.example.invalid:",
+            "https://x.example.invalid:12a",
+            "https://x.example.invalid:0443",
+            "ftp://x.example.invalid",
+            " https://x.example.invalid",
+            "https://x.example.invalid ",
+            "https://-x.example.invalid",
+            "https://x..invalid",
+            "https://",
+            "https://[2001:db8::1]",
+            "https://[::1",
+            "https://ex\u{e4}mple.invalid",
+        ]
+    }
+
+    // build.rs만 쓰는 상수가 테스트 모듈에서 dead_code가 되지 않게 하고, env! 리터럴을 이 이름에 묶는다
+    #[test]
+    fn rustc_env_name_matches_env_macro() {
+        assert_eq!(WORKER_BASE_RUSTC_ENV, "CHZZK_WORKER_BASE_BUILD");
+        assert_eq!(WORKER_BASE_ENV, "CHZZK_WORKER_BASE");
+        assert_eq!(LOOPBACK_HOSTS, ["localhost", "127.0.0.1", "[::1]"]);
+    }
+
+    #[test]
+    fn release_requires_a_base() {
+        for v in [None, Some("")] {
+            let e = worker_base_rule("release", v).unwrap_err();
+            assert!(e.contains("CHZZK_WORKER_BASE"), "{e}");
+        }
+    }
+
+    #[test]
+    fn debug_without_base_is_off() {
+        for v in [None, Some("")] {
+            assert_eq!(worker_base_rule("debug", v), Ok(WorkerBaseRule::Off));
+        }
+    }
+
+    #[test]
+    fn accepted_origins() {
+        for v in ACCEPTED_BOTH {
+            for p in ["release", "debug"] {
+                assert_eq!(
+                    worker_base_rule(p, Some(v)),
+                    Ok(WorkerBaseRule::On(v.to_string())),
+                    "{p} {v}"
+                );
+            }
+        }
+        for v in ACCEPTED_DEBUG_ONLY {
+            assert_eq!(
+                worker_base_rule("debug", Some(v)),
+                Ok(WorkerBaseRule::On(v.to_string())),
+                "debug {v}"
+            );
+            assert!(worker_base_rule("release", Some(v)).is_err(), "release {v}");
+        }
+    }
+
+    #[test]
+    fn rejected_origins() {
+        for v in rejected() {
+            for p in ["release", "debug"] {
+                assert!(worker_base_rule(p, Some(v)).is_err(), "{p} {v:?}");
+            }
+        }
+        for v in [
+            "http://10.0.0.1",
+            "http://example.invalid",
+            "http://127.0.0.1:80",
+        ] {
+            assert!(worker_base_rule("debug", Some(v)).is_err(), "debug {v}");
+        }
+    }
+
+    #[test]
+    fn errors_never_echo_the_value() {
+        let mut all = rejected();
+        all.extend([
+            "http://10.0.0.1",
+            "http://example.invalid",
+            "http://127.0.0.1:80",
+        ]);
+        for v in all {
+            let e = worker_base_rule("debug", Some(v)).unwrap_err();
+            for needle in ["example", "invalid", "10.0.0.1"] {
+                assert!(!e.contains(needle), "{needle} in {e}");
+            }
+        }
+    }
+
+    #[test]
+    fn accepted_values_are_worker_base_origins() {
+        for v in ACCEPTED_BOTH.iter().chain(ACCEPTED_DEBUG_ONLY.iter()) {
+            assert_eq!(
+                chzzk_shell::WorkerBase::parse(v).unwrap().origin(),
+                *v,
+                "{v}"
+            );
+        }
     }
 }

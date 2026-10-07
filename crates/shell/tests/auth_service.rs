@@ -691,6 +691,51 @@ async fn t2_due_calls() {
     assert_eq!(e.api.refresh_calls().len(), 2);
 }
 
+// ------------------------------------------- retry([다시 연결], 구현 중 변경 61)
+
+#[tokio::test(start_paused = true)]
+async fn rt1_retry_online_not_due_makes_no_call() {
+    let e = Env::online().await;
+    e.clock.advance(mins(5));
+    for _ in 0..3 {
+        assert_signed_in_online(&e.svc.retry().await);
+    }
+    assert_eq!(
+        e.api.refresh_calls().len(),
+        1,
+        "연타가 회전을 보내지 않는다"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn rt2_retry_online_due_calls() {
+    let e = Env::online().await;
+    e.clock.set(e.svc.next_wake().unwrap());
+    e.refresh_ok(3);
+    assert_signed_in_online(&e.svc.retry().await);
+    assert_eq!(e.api.refresh_calls().len(), 2);
+}
+
+#[tokio::test(start_paused = true)]
+async fn rt3_retry_offline_calls_before_next_retry() {
+    let e = Env::optimistic();
+    e.refresh_fail_all();
+    e.svc.startup().await;
+    let n = e.api.refresh_calls().len();
+    assert!(e.svc.next_wake().unwrap() > e.now());
+    e.refresh_ok(2);
+    assert_signed_in_online(&e.svc.retry().await);
+    assert_eq!(e.api.refresh_calls().len(), n + 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn rt4_retry_checking_calls() {
+    let e = Env::checking();
+    e.refresh_ok(2);
+    assert_signed_in_online(&e.svc.retry().await);
+    assert_eq!(e.api.refresh_calls().len(), 1);
+}
+
 #[tokio::test(start_paused = true)]
 async fn t3_access_skew_rules() {
     let e = Env::optimistic();

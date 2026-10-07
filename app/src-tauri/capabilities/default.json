@@ -29,6 +29,12 @@
     "allow-auth-status",
     "allow-clipboard-link",
     "allow-open-app-folder",
-    "allow-frontend-ready"
+    "allow-frontend-ready",
+    "allow-auth-login",
+    "allow-auth-reopen",
+    "allow-auth-copy-login-url",
+    "allow-auth-cancel",
+    "allow-auth-retry",
+    "allow-auth-logout"
   ]
 }

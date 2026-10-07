@@ -14,6 +14,7 @@ use std::ffi::OsString;
 use std::path::PathBuf;
 
 use chzzk_core::{ClientConfig, Endpoints};
+use chzzk_shell::WorkerBase;
 use chzzk_shell::services::{AppPaths, PROGRESS_INTERVAL};
 use url::Url;
 
@@ -21,19 +22,31 @@ use url::Url;
 pub const API_BASE_ENV: &str = "CHZZK_E2E_API_BASE";
 /// 격리 폴더(환경 변수).
 pub const DIR_ENV: &str = "CHZZK_E2E_DIR";
+/// 로그인 Worker 주소(환경 변수, 루프백 http). 없으면 E2E에서 로그인이 꺼진다(빌드 주소는 쓰지 않는다).
+pub const WORKER_BASE_ENV: &str = "CHZZK_E2E_WORKER_BASE";
 
 /// E2E 실행 설정.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct E2eConfig {
     pub api_base: Url,
     pub dir: PathBuf,
+    /// 로그인 Worker(루프백 http). 없으면 로그인 꺼짐
+    pub worker_base: Option<WorkerBase>,
 }
 
 impl E2eConfig {
     /// 환경 변수 값으로 만든다. 둘 다 없으면(빈 값 포함) `Ok(None)`.
-    pub fn new(api_base: Option<OsString>, dir: Option<OsString>) -> Result<Option<Self>, String> {
+    pub fn new(
+        api_base: Option<OsString>,
+        dir: Option<OsString>,
+        worker_base: Option<OsString>,
+    ) -> Result<Option<Self>, String> {
         let non_empty = |v: Option<OsString>| v.filter(|s| !s.is_empty());
+        let worker_base = non_empty(worker_base);
         match (non_empty(api_base), non_empty(dir)) {
+            (None, None) if worker_base.is_some() => Err(format!(
+                "E2E: {WORKER_BASE_ENV}는 {API_BASE_ENV}·{DIR_ENV}와 함께 줘야 한다"
+            )),
             (None, None) => Ok(None),
             (Some(_), None) | (None, Some(_)) => {
                 Err(format!("E2E: {API_BASE_ENV}와 {DIR_ENV}는 함께 줘야 한다"))
@@ -64,14 +77,38 @@ impl E2eConfig {
                 if !dir.is_absolute() {
                     return Err(format!("E2E: {DIR_ENV}는 절대 경로여야 한다"));
                 }
-                Ok(Some(E2eConfig { api_base: url, dir }))
+                let worker_base = match worker_base {
+                    None => None,
+                    Some(w) => {
+                        let w = w
+                            .into_string()
+                            .map_err(|_| format!("E2E: {WORKER_BASE_ENV} 해석 실패"))?;
+                        let b = WorkerBase::parse(&w)
+                            .map_err(|_| format!("E2E: {WORKER_BASE_ENV} 해석 실패"))?;
+                        if !b.origin().starts_with("http://") {
+                            return Err(format!(
+                                "E2E: {WORKER_BASE_ENV}는 루프백 http 주소여야 한다"
+                            ));
+                        }
+                        Some(b)
+                    }
+                };
+                Ok(Some(E2eConfig {
+                    api_base: url,
+                    dir,
+                    worker_base,
+                }))
             }
         }
     }
 
     /// 지금 프로세스의 환경.
     pub fn from_env() -> Result<Option<Self>, String> {
-        Self::new(std::env::var_os(API_BASE_ENV), std::env::var_os(DIR_ENV))
+        Self::new(
+            std::env::var_os(API_BASE_ENV),
+            std::env::var_os(DIR_ENV),
+            std::env::var_os(WORKER_BASE_ENV),
+        )
     }
 
     /// 격리 경로. 기본 저장 폴더는 `{dir}/data/downloads`(OS 폴더를 주지 않는다).
@@ -142,14 +179,14 @@ mod tests {
 
     #[test]
     fn both_absent_or_empty_is_off() {
-        assert_eq!(E2eConfig::new(None, None), Ok(None));
-        assert_eq!(E2eConfig::new(os(""), os("")), Ok(None));
+        assert_eq!(E2eConfig::new(None, None, None), Ok(None));
+        assert_eq!(E2eConfig::new(os(""), os(""), os("")), Ok(None));
     }
 
     #[test]
     fn half_configured_is_an_error() {
-        assert!(E2eConfig::new(os("http://127.0.0.1:1/"), None).is_err());
-        assert!(E2eConfig::new(None, os(DIR)).is_err());
+        assert!(E2eConfig::new(os("http://127.0.0.1:1/"), None, None).is_err());
+        assert!(E2eConfig::new(None, os(DIR), None).is_err());
     }
 
     #[test]
@@ -160,7 +197,7 @@ mod tests {
             "http://10.0.0.1/",
             "nope",
         ] {
-            assert!(E2eConfig::new(os(bad), os(DIR)).is_err(), "{bad}");
+            assert!(E2eConfig::new(os(bad), os(DIR), None).is_err(), "{bad}");
         }
         for good in [
             "http://127.0.0.1:4321/",
@@ -168,20 +205,59 @@ mod tests {
             "http://[::1]:2/",
         ] {
             assert!(
-                E2eConfig::new(os(good), os(DIR)).unwrap().is_some(),
+                E2eConfig::new(os(good), os(DIR), None).unwrap().is_some(),
                 "{good}"
             );
         }
     }
 
     #[test]
+    fn worker_base_needs_the_rest() {
+        assert!(E2eConfig::new(None, None, os("http://127.0.0.1:1")).is_err());
+    }
+
+    #[test]
+    fn worker_base_is_loopback_http_only() {
+        let api = os("http://127.0.0.1:4321/");
+        for good in [
+            "http://127.0.0.1:8787",
+            "http://localhost:1",
+            "http://[::1]:2",
+        ] {
+            let c = E2eConfig::new(api.clone(), os(DIR), os(good))
+                .unwrap()
+                .unwrap();
+            assert_eq!(c.worker_base.unwrap().origin(), good);
+        }
+        for bad in [
+            "https://127.0.0.1:1",
+            "http://10.0.0.1",
+            "nope",
+            "http://127.0.0.1:1/x",
+        ] {
+            assert!(
+                E2eConfig::new(api.clone(), os(DIR), os(bad)).is_err(),
+                "{bad}"
+            );
+        }
+    }
+
+    #[test]
+    fn worker_base_absent_keeps_auth_off() {
+        let c = E2eConfig::new(os("http://127.0.0.1:4321/"), os(DIR), None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(c.worker_base, None);
+    }
+
+    #[test]
     fn relative_dir_is_an_error() {
-        assert!(E2eConfig::new(os("http://127.0.0.1:1/"), os("rel")).is_err());
+        assert!(E2eConfig::new(os("http://127.0.0.1:1/"), os("rel"), None).is_err());
     }
 
     #[test]
     fn base_gets_trailing_slash_and_paths_are_isolated() {
-        let c = E2eConfig::new(os("http://127.0.0.1:9/x"), os(DIR))
+        let c = E2eConfig::new(os("http://127.0.0.1:9/x"), os(DIR), None)
             .unwrap()
             .unwrap();
         assert_eq!(c.api_base.as_str(), "http://127.0.0.1:9/x/");

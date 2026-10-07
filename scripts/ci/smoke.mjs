@@ -4,7 +4,8 @@
 //   node scripts/ci/smoke.mjs bin [--exe <경로>]       # debug 빌드(기본 <target>/debug/chzzk-app[.exe]) — smoke-bin gate
 //   node scripts/ci/smoke.mjs install [--dir <폴더>]   # 번들 설치본(기본 target/ci/bundle) — smoke-install gate
 //
-// 마커는 정확히 {"version": <워크스페이스 버전>, "ready": true}여야 한다. 앱은 60초 안에 프런트 신호가 없으면 스스로
+// 마커는 정확히 {"version": <워크스페이스 버전>, "ready": true, "auth": <bool>}여야 한다. 설치 스모크(릴리스 번들)는 auth가 true여야 한다
+// (Worker 주소 규칙이 실제 산출물에서 지켜졌다는 증거, worker.md 구현 중 변경 59). 앱은 60초 안에 프런트 신호가 없으면 스스로
 // exit 2로 끝나고, 여기서는 그보다 긴 바깥 시간 제한(SMOKE_KILL_MS)으로 멈춘 프로세스를 죽인다.
 // Linux는 DISPLAY가 없으면 `xvfb-run -a`로 감싼다. 설치 스모크는 설치 → 실행 → 제거 → 제거 확인까지 한다:
 //   linux:   deb(apt-get install ./x.deb → /usr/bin의 실행 파일 → apt-get purge → dpkg -s 실패), AppImage(풀어서 실행)
@@ -34,10 +35,10 @@ import { ROOT, workspaceVersion } from './gates.mjs';
 
 const IS_WIN = process.platform === 'win32';
 export const SMOKE_KILL_MS = 120_000;
-const MARKER_KEYS = ['ready', 'version'];
+const MARKER_KEYS = ['auth', 'ready', 'version'];
 
 // 마커 텍스트 → { ok, why }
-export function checkMarker(text, version) {
+export function checkMarker(text, version, { auth } = {}) {
   let v;
   try {
     v = JSON.parse(text);
@@ -49,6 +50,8 @@ export function checkMarker(text, version) {
   if (keys.join(',') !== MARKER_KEYS.join(',')) return { ok: false, why: `마커 키 ${keys.join(',')} ≠ ${MARKER_KEYS.join(',')}` };
   if (v.ready !== true) return { ok: false, why: `ready = ${JSON.stringify(v.ready)}(프런트 신호가 오지 않았다)` };
   if (v.version !== version) return { ok: false, why: `version ${JSON.stringify(v.version)} ≠ 워크스페이스 ${version}` };
+  if (typeof v.auth !== 'boolean') return { ok: false, why: `auth = ${JSON.stringify(v.auth)}(불리언이 아니다)` };
+  if (auth !== undefined && v.auth !== auth) return { ok: false, why: `auth = ${v.auth}(릴리스 번들은 로그인이 켜져 있어야 한다)` };
   return { ok: true, why: null };
 }
 
@@ -123,7 +126,7 @@ const sudo = (bin, args, opts) =>
   !IS_WIN && process.getuid && process.getuid() !== 0 ? sh('sudo', [bin, ...args], opts) : sh(bin, args, opts);
 
 // 실행 파일 하나를 --smoke로 돌린다. 반환: { ok, why }
-export function runSmoke(exe, { env = {}, label = basename(exe) } = {}) {
+export function runSmoke(exe, { env = {}, label = basename(exe), auth } = {}) {
   const work = mkdtempSync(join(tmpdir(), 'chzzk-smoke-'));
   const out = join(work, 'marker.json');
   const version = workspaceVersion();
@@ -154,7 +157,7 @@ export function runSmoke(exe, { env = {}, label = basename(exe) } = {}) {
     if (text !== null) log(`${label}: 마커 ${text.trim()}`);
     if (r.status !== 0) return { ok: false, why: `exit ${r.status}(${secs}초)${r.status === 2 ? ' — 60초 안에 frontend_ready가 오지 않았다' : ''}` };
     if (text === null) return { ok: false, why: 'exit 0인데 마커 파일이 없다' };
-    const m = checkMarker(text, version);
+    const m = checkMarker(text, version, { auth });
     if (!m.ok) return m;
     log(`${label}: 통과(${secs}초)`);
     return { ok: true, why: null };
@@ -209,7 +212,7 @@ function smokeDeb(deb) {
       .map((l) => l.trim())
       .filter((l) => /^\/usr\/bin\/[^/]+$/.test(l));
     const exe = one(bins, `deb ${pkg}의 /usr/bin 실행 파일`);
-    const r = runSmoke(exe, { label: `deb ${basename(exe)}` });
+    const r = runSmoke(exe, { label: `deb ${basename(exe)}`, auth: true });
     if (!r.ok) throw new Error(r.why);
   } finally {
     sudo('apt-get', ['purge', '-y', pkg], { env: { ...process.env, DEBIAN_FRONTEND: 'noninteractive' } });
@@ -226,7 +229,7 @@ function smokeAppImage(file) {
     cpSync(file, copy);
     chmodSync(copy, 0o755);
     // FUSE 없이 풀어서 실행한다(러너·컨테이너에 libfuse2가 없을 수 있다)
-    const r = runSmoke(copy, { env: { APPIMAGE_EXTRACT_AND_RUN: '1' }, label: 'AppImage' });
+    const r = runSmoke(copy, { env: { APPIMAGE_EXTRACT_AND_RUN: '1' }, label: 'AppImage', auth: true });
     if (!r.ok) throw new Error(r.why);
   } finally {
     rmSync(work, { recursive: true, force: true });
@@ -249,7 +252,7 @@ function smokeDmg(dmg) {
     const exeName = sh('plutil', ['-extract', 'CFBundleExecutable', 'raw', '-o', '-', join(dest, app, 'Contents/Info.plist')], { quiet: true }).trim();
     const exe = join(dest, app, 'Contents/MacOS', exeName);
     if (!existsSync(exe)) throw new Error(`CFBundleExecutable ${exeName}이 ${app}에 없다`);
-    const r = runSmoke(exe, { label: `dmg ${app}` });
+    const r = runSmoke(exe, { label: `dmg ${app}`, auth: true });
     if (!r.ok) throw new Error(r.why);
   } finally {
     sh('hdiutil', ['detach', mnt]);
@@ -268,7 +271,7 @@ function smokeAppTar(tgz) {
     const exeName = sh('plutil', ['-extract', 'CFBundleExecutable', 'raw', '-o', '-', join(work, app, 'Contents/Info.plist')], { quiet: true }).trim();
     const exe = join(work, app, 'Contents/MacOS', exeName);
     if (!existsSync(exe)) throw new Error(`CFBundleExecutable ${exeName}이 ${app}에 없다`);
-    const r = runSmoke(exe, { label: `app.tar.gz ${app}` });
+    const r = runSmoke(exe, { label: `app.tar.gz ${app}`, auth: true });
     if (!r.ok) throw new Error(r.why);
   } finally {
     rmSync(work, { recursive: true, force: true });
@@ -290,7 +293,7 @@ function smokeNsis(setup) {
   const local = process.env.LOCALAPPDATA;
   const dir = installedDir([join(local, name), join(local, 'Programs', name)], 'NSIS');
   const exe = join(dir, exeIn(dir));
-  const r = runSmoke(exe, { label: `NSIS ${basename(exe)}` });
+  const r = runSmoke(exe, { label: `NSIS ${basename(exe)}`, auth: true });
   const uninstall = join(dir, 'uninstall.exe');
   if (!existsSync(uninstall)) throw new Error(`${uninstall}가 없다`);
   sh(uninstall, ['/S']);
@@ -318,7 +321,7 @@ function smokeMsi(msi) {
     if (!dir || !existsSync(dir)) throw new Error(`MSI 설치 로그의 INSTALLDIR(${dir ?? '없음'})이 없다`);
     log(`MSI 설치 폴더: ${dir}`);
     const exe = join(dir, exeIn(dir));
-    const r = runSmoke(exe, { label: `MSI ${basename(exe)}` });
+    const r = runSmoke(exe, { label: `MSI ${basename(exe)}`, auth: true });
     sh('msiexec', ['/x', abs, '/qn', '/norestart', '/l*v', join(work, 'uninstall.log')], { ok: [0, 3010] });
     if (existsSync(exe)) throw new Error(`제거 뒤에도 ${exe}가 남아 있다`);
     if (!r.ok) throw new Error(r.why);

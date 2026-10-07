@@ -8,11 +8,13 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 
 import { contractPath, DEPLOY_CONTRACT, GARBAGE_BEARER as CONTRACT_GARBAGE } from '../../worker/test/deploy-contract.mjs';
-import { HOOKS, PUBKEY_FILES, RELEASE_SELFTEST_FILES, ROOT } from './gates.mjs';
+import { GATES, HOOKS, PUBKEY_FILES, RELEASE_SELFTEST_FILES, ROOT, WORKER_PLACEHOLDER } from './gates.mjs';
 import { createWorkerStub } from './worker-stub.mjs';
 import {
+  binaryWorkerBaseProblems,
   boundaryProblems,
   buildIdOf,
+  buildWorkerBase,
   bundleMeta,
   checkPubkey,
   ciOkDecision,
@@ -39,6 +41,9 @@ import {
   runWorkerChecks,
   TAG_VERIFY_TOKEN_MESSAGE,
   TAG_VERIFY_VIA,
+  TAG_BLOCK,
+  TAG_BLOCK_REASON,
+  tagBlockProblem,
   tagProblems,
   tagVerifyProblem,
   tagVerifyViaMessage,
@@ -142,6 +147,29 @@ test('태그 단조 증가', () => {
   assert.equal(tagProblems('v0.2', []).length, 1);
 });
 
+test('태그 차단(A3 전): tag 모드만 막고, 리허설(tag 입력 포함)·dry·모드 없음은 통과, 상수를 지우면 풀린다', () => {
+  assert.equal(TAG_BLOCK, 'phase3b-a3');
+  const p = tagBlockProblem('tag');
+  assert.ok(p && p.includes('A3') && p.includes(TAG_BLOCK_REASON), p);
+  for (const m of ['rehearsal', 'dry', undefined, '']) assert.equal(tagBlockProblem(m), null, String(m));
+  // A3 PR은 상수만 지운다(null): tag 모드도 통과
+  assert.equal(tagBlockProblem('tag', null), null);
+});
+
+test('release.mjs gate 진입점: tag 모드는 다른 검사(cargo·git·gh) 전에 차단 사유로 1', () => {
+  // PATH를 비워 cargo·git·gh에 닿으면 다른 오류가 나게 한다: 차단이 맨 앞이면 사유 한 줄로 1이다
+  const { GITHUB_OUTPUT: _o, ...rest } = process.env;
+  const r = spawnSync(process.execPath, [join(ROOT, 'scripts/ci/release.mjs'), 'gate'], {
+    env: { ...rest, PATH: '', RELEASE_MODE: 'tag', RELEASE_TAG: 'v99.0.0', GITHUB_SHA: 'a'.repeat(40), CI_WAIT_TIMEOUT: '0' },
+    encoding: 'utf8',
+    timeout: 60_000,
+  });
+  const out = r.stdout + r.stderr;
+  assert.equal(r.status, 1, out);
+  assert.ok(out.includes(TAG_BLOCK_REASON), out);
+  assert.ok(!out.includes('버전 파일') && !out.includes('ci-ok'), out);
+});
+
 test('ci-ok 판정: 어느 master 실행이든 ci-ok 녹색이면 통과, 모두 끝났는데 없으면 실패, 그 밖은 기다림', () => {
   const run = (status, ciok) => ({ status, jobs: ciok ? [{ name: 'ci-ok', conclusion: ciok }, { name: 'report', conclusion: 'failure' }] : [] });
   assert.equal(ciOkDecision([]), 'pending');
@@ -199,17 +227,27 @@ test('preflight: DIST_BASE_URL은 경로 없는 https 출처(값은 메시지에
   assert.deepEqual(preflight({ ...all, DIST_BASE_URL: '', RELEASE_MODE: 'tag' }).missing, ['DIST_BASE_URL']);
 });
 
+const SECRET_REF = '${{ secrets.DIST_BASE_URL }}';
+const BUILD_STEP_REF = "${{ needs.gate.outputs.mode == 'tag' && secrets.DIST_BASE_URL || '' }}";
+
 test('워크플로: DIST_BASE_URL은 저장소 secret, R2_BUCKET은 저장소 변수(cicd.md 구현 중 변경 82 (다)·84)', () => {
   for (const f of ['release.yml', 'rollback.yml']) {
     const t = readFileSync(join(ROOT, '.github/workflows', f), 'utf8');
     assert.ok(!/vars\.DIST_BASE_URL/.test(t), `${f}: vars.DIST_BASE_URL`);
     assert.ok(!/secrets\.R2_BUCKET/.test(t), `${f}: secrets.R2_BUCKET`);
-    for (const m of t.matchAll(/^\s+DIST_BASE_URL: (.+)$/gm)) assert.equal(m[1], '${{ secrets.DIST_BASE_URL }}', f);
+    for (const m of t.matchAll(/^\s+DIST_BASE_URL: (.+)$/gm)) assert.ok([SECRET_REF, BUILD_STEP_REF].includes(m[1]), `${f}: ${m[1]}`);
     for (const m of t.matchAll(/^\s+R2_BUCKET: (.+)$/gm)) assert.equal(m[1], '${{ vars.R2_BUCKET }}', f);
   }
   // 값이 있는 곳: 업로드·확인·되돌리기·배포 뒤 검사·보존 상한이 읽는 작업 전부
   const rel = readFileSync(join(ROOT, '.github/workflows/release.yml'), 'utf8');
-  assert.equal([...rel.matchAll(/^\s+DIST_BASE_URL: /gm)].length, 4);
+  assert.equal([...rel.matchAll(/^\s+DIST_BASE_URL: \$\{\{ secrets\.DIST_BASE_URL \}\}$/gm)].length, 4);
+  // 빌드 단계(build-linux·build): 태그일 때만 secret을 받는다(A2). rollback.yml에는 없다
+  assert.equal([...rel.matchAll(/^\s+DIST_BASE_URL: \$\{\{ needs\.gate\.outputs\.mode == 'tag' && secrets\.DIST_BASE_URL \|\| '' \}\}$/gm)].length, 2);
+  // 주소는 release.mjs build가 정한다: 어떤 워크플로에도 CHZZK_WORKER_BASE가 없고 ci.yml은 secret을 쓰지 않는다
+  for (const f of ['release.yml', 'rollback.yml', 'ci.yml']) {
+    assert.ok(!readFileSync(join(ROOT, '.github/workflows', f), 'utf8').includes('CHZZK_WORKER_BASE'), `${f}: CHZZK_WORKER_BASE`);
+  }
+  assert.ok(!readFileSync(join(ROOT, '.github/workflows/ci.yml'), 'utf8').includes('secrets.DIST_BASE_URL'));
 });
 
 test('concurrency: 어떤 실행도 대기 중에 조용히 취소되지 않는다(태그마다 그룹, rollback은 실행마다, 리허설끼리만 묶음)', () => {
@@ -732,6 +770,89 @@ test('DIST_BASE_URL 출처 규칙: 경로 없는 https 출처만(값은 문제 �
     assert.ok(p.length > 0, String(bad));
     assert.ok(!p.join(' ').includes('example.test'), '문제 문구에 값이 없다');
   }
+});
+
+test('buildWorkerBase: 모드 × 값 표(cicd 82 (나), A2)', () => {
+  const D = 'https://dist.example.test';
+  const rows = [
+    [{ RELEASE_MODE: 'tag', DIST_BASE_URL: D }, D, null],
+    [{ RELEASE_MODE: 'tag', DIST_BASE_URL: WORKER_PLACEHOLDER }, WORKER_PLACEHOLDER, '자리표시'],
+    [{ RELEASE_MODE: 'tag', DIST_BASE_URL: 'https://w.foo.invalid' }, 'https://w.foo.invalid', '자리표시'],
+    [{ RELEASE_MODE: 'tag' }, '', 'DIST_BASE_URL이 없다'],
+    [{ RELEASE_MODE: 'tag', DIST_BASE_URL: '' }, '', 'DIST_BASE_URL이 없다'],
+    [{ RELEASE_MODE: 'tag', DIST_BASE_URL: `${D}/x` }, `${D}/x`, 'https 출처'],
+    [{ RELEASE_MODE: 'tag', DIST_BASE_URL: 'http://dist.example.test' }, 'http://dist.example.test', 'https 출처'],
+    [{ RELEASE_MODE: 'rehearsal' }, WORKER_PLACEHOLDER, null],
+    [{ RELEASE_MODE: 'rehearsal', DIST_BASE_URL: D }, WORKER_PLACEHOLDER, null],
+    [{ RELEASE_MODE: 'rehearsal', CHZZK_WORKER_BASE: D }, D, null],
+    [{}, WORKER_PLACEHOLDER, null],
+  ];
+  for (const [env, base, why] of rows) {
+    const r = buildWorkerBase(env);
+    assert.equal(r.base, base, JSON.stringify(env));
+    if (why) assert.ok(r.problems.join(' ').includes(why), `${JSON.stringify(env)}: ${r.problems}`);
+    else assert.deepEqual(r.problems, [], JSON.stringify(env));
+    assert.ok(!r.problems.join(' ').includes('example.test') && !r.problems.join(' ').includes('foo'), '문제 문구에 값이 없다');
+  }
+});
+
+test('binaryWorkerBaseProblems: 태그 빌드 원본 바이너리에 주소가 있고 자리표시가 없어야 한다', () => {
+  const D = 'https://dist.example.test';
+  const tag = { mode: 'tag', base: D };
+  assert.deepEqual(binaryWorkerBaseProblems(Buffer.from(`xx${D}yy`), tag), []);
+  const missing = binaryWorkerBaseProblems(Buffer.from(`xx${D}yy`), { mode: 'tag', base: 'https://other.example.test' });
+  assert.equal(missing.length, 1);
+  assert.ok(missing[0].includes('없다'));
+  const placeholder = binaryWorkerBaseProblems(Buffer.from(`${D} worker.example.invalid`), tag);
+  assert.equal(placeholder.length, 1);
+  assert.ok(placeholder[0].includes('자리표시'));
+  assert.deepEqual(binaryWorkerBaseProblems(Buffer.from('아무거나'), { mode: 'other', base: WORKER_PLACEHOLDER }), []);
+  for (const p of [...missing, ...placeholder]) assert.ok(!p.includes('example.test'), '문제 문구에 값이 없다');
+});
+
+test('cmdXtask: cargo에는 받은 env만 간다(cmdBuild가 뺀 DIST_BASE_URL·RELEASE_MODE가 xtask 의존성 build.rs에 닿지 않는다, cicd 105 (가))', { skip: process.platform === 'win32' }, () => {
+  const dir = mkdtempSync(join(tmpdir(), 'xtask-env-'));
+  try {
+    const out = join(dir, 'env.txt');
+    // 가짜 cargo: 받은 env를 적고 실패한다(cmdXtask는 거기서 1로 끝난다)
+    writeFileSync(join(dir, 'cargo'), '#!/bin/sh\nenv > "$XTASK_ENV_OUT"\nexit 1\n', { mode: 0o755 });
+    const path = `${dir}:${process.env.PATH}`;
+    const script = `import { cmdXtask } from ${JSON.stringify(join(ROOT, 'scripts/ci/release.mjs'))};
+const { DIST_BASE_URL: _d, RELEASE_MODE: _m, ...rest } = process.env;
+process.exit(cmdXtask({ ...rest, GITHUB_OUTPUT: '' }));`;
+    const r = spawnSync(process.execPath, ['--input-type=module', '-e', script], {
+      env: { ...process.env, PATH: path, XTASK_ENV_OUT: out, DIST_BASE_URL: 'https://leak.example.test', RELEASE_MODE: 'tag' },
+      encoding: 'utf8',
+    });
+    assert.equal(r.status, 1, r.stderr);
+    const got = readFileSync(out, 'utf8');
+    assert.ok(got.includes(`XTASK_ENV_OUT=${out}`), '받은 env가 cargo에 간다');
+    assert.ok(!got.includes('DIST_BASE_URL'), 'DIST_BASE_URL이 cargo에 새지 않는다');
+    assert.ok(!got.includes('RELEASE_MODE'), 'RELEASE_MODE가 cargo에 새지 않는다');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('release-build gate: pnpm install 단계 env에서 DIST_BASE_URL·RELEASE_MODE를 뺀다(cicd 105 (가))', () => {
+  const [install, build] = GATES['release-build'].steps;
+  assert.deepEqual(install.cmd.slice(0, 2), ['pnpm', 'install']);
+  for (const n of ['DIST_BASE_URL', 'RELEASE_MODE']) {
+    assert.ok(Object.hasOwn(install.env ?? {}, n), `${n} 자리가 있다`);
+    assert.equal(install.env[n], undefined, `${n}는 undefined(spawn이 뺀다)`);
+  }
+  // run.mjs와 같은 합치기({...process.env, ...stepEnv})로 자식에게 두 이름이 가지 않는다
+  const r = spawnSync(process.execPath, ['-e', 'console.log(JSON.stringify([process.env.DIST_BASE_URL ?? null, process.env.RELEASE_MODE ?? null]))'], {
+    env: { ...process.env, DIST_BASE_URL: 'https://leak.example.test', RELEASE_MODE: 'tag', ...install.env },
+    encoding: 'utf8',
+  });
+  assert.deepEqual(JSON.parse(r.stdout), [null, null]);
+  assert.equal(build.env, undefined, 'release.mjs build는 두 이름을 받는다');
+});
+
+test('WORKER_PLACEHOLDER는 build.rs 릴리스 규칙을 통과하는 정규 출처다', () => {
+  assert.equal(WORKER_PLACEHOLDER, 'https://worker.example.invalid');
+  assert.deepEqual(distBaseProblems(WORKER_PLACEHOLDER), []);
 });
 
 test('마스킹 값: 호스트와 workers.dev 계정 서브도메인 조각', () => {

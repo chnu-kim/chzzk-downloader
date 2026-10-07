@@ -1,7 +1,12 @@
 const COMMANDS: &[&str] = include!("src/command_names.rs");
 
+include!("build_rules.rs");
+
 fn main() {
     println!("cargo:rerun-if-changed=src/command_names.rs");
+    println!("cargo:rerun-if-changed=build_rules.rs");
+    println!("cargo:rerun-if-env-changed={WORKER_BASE_ENV}");
+    worker_base();
     embed_manifest_for_tests();
     // 앱 command를 명시적 허가제로 둔다. capabilities에 `allow-<command>`를 적어야 프런트가 부를 수 있다.
     tauri_build::try_build(
@@ -34,4 +39,15 @@ fn embed_manifest_for_tests() {
         "cargo:rustc-link-arg-tests=/MANIFESTINPUT:{}",
         manifest.display()
     );
+}
+
+/// Worker 주소 규칙(worker.md §11.1). 릴리스에서 없거나 틀리면 빌드를 멈춘다. 값은 찍지 않는다
+fn worker_base() {
+    let profile = std::env::var("PROFILE").unwrap_or_default();
+    let value = std::env::var(WORKER_BASE_ENV).ok();
+    match worker_base_rule(&profile, value.as_deref()) {
+        Ok(WorkerBaseRule::On(v)) => println!("cargo:rustc-env={WORKER_BASE_RUSTC_ENV}={v}"),
+        Ok(WorkerBaseRule::Off) => println!("cargo:rustc-env={WORKER_BASE_RUSTC_ENV}="),
+        Err(m) => panic!("{m}"),
+    }
 }

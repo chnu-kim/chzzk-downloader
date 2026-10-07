@@ -7,13 +7,16 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use chzzk_app_lib::auth_io::{AuthIo, AuthIoState};
 use chzzk_app_lib::commands::begin_quit;
 use chzzk_app_lib::sink::{ChannelSink, Notice, Notifier};
 use chzzk_app_lib::{
-    COMMANDS, Quitting, focus_main, guard_close, handler, on_run_event, request_quit,
+    AUTH_CHANGED, COMMANDS, Quitting, focus_main, guard_close, handler, on_run_event, request_quit,
+    spawn_auth_tasks,
 };
+use chzzk_shell::auth::{SessionStore, StoredSession};
 use chzzk_shell::services::AppPaths;
-use chzzk_shell::{App, EventSink};
+use chzzk_shell::{App, AppError, AuthSetup, EventSink, WorkerBase};
 use serde_json::{Value, json};
 use tauri::ipc::{CallbackFn, Channel, InvokeBody};
 use tauri::test::{INVOKE_KEY, MockRuntime, get_ipc_response, mock_builder};
@@ -24,11 +27,30 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use wiremock::matchers::{any, method, path};
 use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
 
+/// 브라우저·클립보드 호출을 적어 두는 `AuthIo`
+#[derive(Default)]
+struct RecordingIo {
+    opened: Mutex<Vec<String>>,
+    copied: Mutex<Vec<String>>,
+}
+
+impl AuthIo for RecordingIo {
+    fn open_url(&self, u: &str) -> bool {
+        self.opened.lock().unwrap().push(u.into());
+        true
+    }
+    fn copy_text(&self, t: &str) -> bool {
+        self.copied.lock().unwrap().push(t.into());
+        true
+    }
+}
+
 struct Fixture {
     app: tauri::App<MockRuntime>,
     main: WebviewWindow<MockRuntime>,
     notify_rx: UnboundedReceiver<Notice>,
     dir: TempDir,
+    io: Arc<RecordingIo>,
 }
 
 fn paths(root: &Path) -> AppPaths {
@@ -49,8 +71,16 @@ fn fixture() -> Fixture {
 
 /// 실제 처리기·capabilities를 붙인 mock 앱(창 없음). clipboard-manager 플러그인은 `clipboard_link`를 실제로
 /// 부르는 테스트만 등록한다(AppKit 대지를 여는 범위를 줄인다).
-fn mock_app(state: App, clipboard: bool) -> (tauri::App<MockRuntime>, UnboundedReceiver<Notice>) {
+fn mock_app(
+    state: App,
+    clipboard: bool,
+) -> (
+    tauri::App<MockRuntime>,
+    UnboundedReceiver<Notice>,
+    Arc<RecordingIo>,
+) {
     let (notifier, notify_rx) = Notifier::new();
+    let io = Arc::new(RecordingIo::default());
     let mut builder = mock_builder();
     if clipboard {
         builder = builder.plugin(tauri_plugin_clipboard_manager::init());
@@ -59,10 +89,11 @@ fn mock_app(state: App, clipboard: bool) -> (tauri::App<MockRuntime>, UnboundedR
         .manage(state)
         .manage(Quitting::default())
         .manage(notifier)
+        .manage(AuthIoState(io.clone()))
         .invoke_handler(handler())
         .build(tauri::generate_context!(test = true))
         .unwrap();
-    (app, notify_rx)
+    (app, notify_rx, io)
 }
 
 fn fixture_with(dir: TempDir, state: App) -> Fixture {
@@ -70,7 +101,7 @@ fn fixture_with(dir: TempDir, state: App) -> Fixture {
 }
 
 fn fixture_full(dir: TempDir, state: App, clipboard: bool) -> Fixture {
-    let (app, notify_rx) = mock_app(state, clipboard);
+    let (app, notify_rx, io) = mock_app(state, clipboard);
     let main = WebviewWindowBuilder::new(&app, "main", Default::default())
         .build()
         .unwrap();
@@ -79,6 +110,7 @@ fn fixture_full(dir: TempDir, state: App, clipboard: bool) -> Fixture {
         main,
         notify_rx,
         dir,
+        io,
     }
 }
 
@@ -609,7 +641,7 @@ fn run_loop<T: Send + 'static>(
 ) -> T {
     static ONE_LOOP: Mutex<()> = Mutex::new(());
     let _one = ONE_LOOP.lock().unwrap_or_else(|e| e.into_inner());
-    let (app, _rx) = mock_app(state, false);
+    let (app, _rx, _io) = mock_app(state, false);
     let h = app.handle().clone();
     let exits = Arc::new(AtomicUsize::new(0));
     let seen_exits = exits.clone();
@@ -755,4 +787,281 @@ fn second_instance_does_not_reveal_the_window_of_a_failed_startup() {
     // 상태가 있으면 꺼낸다.
     let f = fixture();
     assert!(focus_main(f.app.handle()));
+}
+
+// ---------------------------------------------------------------------------
+// 로그인(Phase 3b A2): AuthGate·auth command·auth-changed
+// ---------------------------------------------------------------------------
+
+const CH: &str = "000000000000000000000000000000a1";
+
+/// Worker 서버. `start`가 있으면 `/auth/start`가 그 상태로 답한다(201이면 로그인 시작 본문, 그 밖에는 HTML 오류).
+/// `/auth/poll`은 늘 pending이다.
+fn worker_server(start: Option<u16>) -> MockServer {
+    tauri::async_runtime::block_on(async {
+        let s = MockServer::start().await;
+        if let Some(status) = start {
+            let resp = if status == 201 {
+                ResponseTemplate::new(201).set_body_raw(start_body(&s.uri()), "application/json")
+            } else {
+                ResponseTemplate::new(status).set_body_raw("<html>", "text/html")
+            };
+            Mock::given(method("POST"))
+                .and(path("/auth/start"))
+                .respond_with(resp)
+                .mount(&s)
+                .await;
+            Mock::given(method("POST"))
+                .and(path("/auth/poll"))
+                .respond_with(
+                    ResponseTemplate::new(200)
+                        .set_body_raw(r#"{"status":"pending"}"#, "application/json"),
+                )
+                .mount(&s)
+                .await;
+        }
+        s
+    })
+}
+
+fn start_body(origin: &str) -> String {
+    json!({
+        "loginId": "L".repeat(22),
+        "loginUrl": format!("{origin}/auth/login/{}", "H".repeat(22)),
+        "userCode": "K7QX-4MRA",
+        "expiresAt": "2030-01-01T00:10:00.000Z",
+        "pollIntervalMs": 2000,
+    })
+    .to_string()
+}
+
+fn fixture_auth(worker: &MockServer) -> Fixture {
+    let dir = TempDir::new().unwrap();
+    let state = App::open_with_auth(
+        paths(dir.path()),
+        chzzk_core::ClientConfig::default(),
+        None,
+        chzzk_app_lib::tokio_handle(),
+        AuthSetup::Enabled {
+            base: WorkerBase::parse(&worker.uri()).unwrap(),
+            app_version: "0.1.0".into(),
+        },
+    )
+    .unwrap();
+    fixture_with(dir, state)
+}
+
+fn save_session(dir: &Path, worker: &MockServer) {
+    let verified = time::OffsetDateTime::now_utc() - time::Duration::hours(1);
+    std::fs::create_dir_all(dir.join("config")).unwrap();
+    SessionStore::new(
+        dir.join("config"),
+        &WorkerBase::parse(&worker.uri()).unwrap(),
+    )
+    .save(&StoredSession {
+        channel_id: CH.into(),
+        channel_name: "채널".into(),
+        is_admin: false,
+        access_token: chzzk_core::Secret::new(format!("cda_{}", "A".repeat(43))),
+        access_expires_at: verified + time::Duration::hours(24),
+        refresh_token: chzzk_core::Secret::new(format!("cdr_{}", "B".repeat(43))),
+        refresh_expires_at: verified + time::Duration::days(30),
+        verified_at: verified,
+    })
+    .unwrap();
+}
+
+fn disabled_json() -> Value {
+    json!({"state":"disabled","channelId":null,"channelName":null,"reason":null,
+           "pending":null,"offline":null,"verifiedAt":null})
+}
+
+#[test]
+fn open_commands_are_known_commands() {
+    for c in chzzk_shell::gate::OPEN_COMMANDS {
+        assert!(COMMANDS.contains(c), "{c}");
+    }
+}
+
+#[test]
+fn gated_commands_reject_before_sign_in() {
+    let worker = worker_server(None);
+    let f = fixture_auth(&worker);
+    let want = serde_json::to_value(AppError::not_logged_in()).unwrap();
+    let mut n = 0;
+    for name in COMMANDS {
+        if chzzk_shell::gate::is_open(name) {
+            continue;
+        }
+        n += 1;
+        // 인자가 없어도(역직렬화 전) 같은 거부여야 한다
+        let e = invoke(&f.main, name, json!({})).unwrap_err();
+        assert_eq!(e, want, "{name}");
+    }
+    assert_eq!(n, 17);
+}
+
+/// 앱 상태가 없을 때(시작 실패, worker.md 구현 중 변경 55): 허용 목록 밖은 처리기 전에 notLoggedIn(fail closed)
+#[test]
+fn gate_without_app_state_fails_closed() {
+    let (notifier, _rx) = Notifier::new();
+    let app = mock_builder()
+        .manage(Quitting::default())
+        .manage(notifier)
+        .manage(AuthIoState(Arc::new(RecordingIo::default())))
+        .invoke_handler(handler())
+        .build(tauri::generate_context!(test = true))
+        .unwrap();
+    let main = WebviewWindowBuilder::new(&app, "main", Default::default())
+        .build()
+        .unwrap();
+    let want = serde_json::to_value(AppError::not_logged_in()).unwrap();
+    let mut n = 0;
+    for name in COMMANDS {
+        if chzzk_shell::gate::is_open(name) {
+            continue;
+        }
+        n += 1;
+        assert_eq!(invoke(&main, name, json!({})).unwrap_err(), want, "{name}");
+    }
+    assert_eq!(n, 17);
+    // 허용 목록은 게이트를 지나 처리기로 간다(상태가 없어 처리기 쪽 오류일 수는 있어도 notLoggedIn은 아니다)
+    for name in ["app_info", "auth_status", "list_jobs"] {
+        if let Err(e) = invoke(&main, name, json!({})) {
+            assert_ne!(e, want, "{name}");
+        }
+    }
+}
+
+#[test]
+fn open_commands_work_while_signed_out() {
+    let worker = worker_server(None);
+    let f = fixture_auth(&worker);
+    assert_eq!(
+        invoke(&f.main, "app_info", json!({})).unwrap()["features"]["auth"],
+        json!(true)
+    );
+    assert_eq!(
+        invoke(&f.main, "auth_status", json!({})).unwrap(),
+        json!({"state":"signedOut","channelId":null,"channelName":null,"reason":null,
+               "pending":null,"offline":null,"verifiedAt":null})
+    );
+    assert_eq!(invoke(&f.main, "list_jobs", json!({})).unwrap(), json!([]));
+    invoke(&f.main, "frontend_ready", json!({})).unwrap();
+}
+
+#[test]
+fn signed_in_session_opens_the_gate() {
+    let worker = worker_server(None);
+    let dir = TempDir::new().unwrap();
+    save_session(dir.path(), &worker);
+    let state = App::open_with_auth(
+        paths(dir.path()),
+        chzzk_core::ClientConfig::default(),
+        None,
+        chzzk_app_lib::tokio_handle(),
+        AuthSetup::Enabled {
+            base: WorkerBase::parse(&worker.uri()).unwrap(),
+            app_version: "0.1.0".into(),
+        },
+    )
+    .unwrap();
+    let f = fixture_with(dir, state);
+    invoke(&f.main, "get_settings", json!({})).unwrap();
+    assert_eq!(
+        invoke(&f.main, "auth_status", json!({})).unwrap()["state"],
+        json!("signedIn")
+    );
+}
+
+#[test]
+fn disabled_build_reports_disabled() {
+    let f = fixture();
+    assert_eq!(
+        invoke(&f.main, "auth_status", json!({})).unwrap(),
+        disabled_json()
+    );
+    assert_eq!(
+        invoke(&f.main, "app_info", json!({})).unwrap()["features"]["auth"],
+        json!(false)
+    );
+    assert_eq!(
+        invoke(&f.main, "auth_reopen", json!({})).unwrap(),
+        json!(false)
+    );
+    assert_eq!(
+        invoke(&f.main, "auth_login", json!({})).unwrap()["state"],
+        json!("disabled")
+    );
+    assert!(f.io.opened.lock().unwrap().is_empty());
+}
+
+#[test]
+fn auth_login_opens_the_login_url_through_auth_io() {
+    let worker2 = worker_server(Some(201));
+    let f = fixture_auth(&worker2);
+    let url = format!("{}/auth/login/{}", worker2.uri(), "H".repeat(22));
+    let st = invoke(&f.main, "auth_login", json!({})).unwrap();
+    assert_eq!(st["state"], json!("pending"));
+    assert_eq!(st["pending"]["userCode"], json!("K7QX-4MRA"));
+    assert_eq!(*f.io.opened.lock().unwrap(), vec![url.clone()]);
+    assert_eq!(
+        invoke(&f.main, "auth_copy_login_url", json!({})).unwrap(),
+        json!(true)
+    );
+    assert_eq!(*f.io.copied.lock().unwrap(), vec![url]);
+    assert_eq!(
+        invoke(&f.main, "auth_cancel", json!({})).unwrap()["state"],
+        json!("signedOut")
+    );
+}
+
+#[test]
+fn auth_changed_is_emitted_to_the_main_window() {
+    let worker = worker_server(Some(503));
+    let f = fixture_auth(&worker);
+    // main 창을 겨눈 이벤트만 받는 수신기와, 다른 창의 수신기(emit_to("main")이면 아무것도 받지 않는다)
+    let got: Arc<Mutex<Vec<Value>>> = Arc::default();
+    let seen = got.clone();
+    f.main.listen(AUTH_CHANGED, move |e| {
+        seen.lock()
+            .unwrap()
+            .push(serde_json::from_str(e.payload()).unwrap());
+    });
+    let other = WebviewWindowBuilder::new(&f.app, "other", Default::default())
+        .build()
+        .unwrap();
+    let leaked = Arc::new(AtomicUsize::new(0));
+    let l = leaked.clone();
+    other.listen(AUTH_CHANGED, move |_| {
+        l.fetch_add(1, Ordering::SeqCst);
+    });
+    let auth = f.app.state::<App>().auth.clone().unwrap();
+    spawn_auth_tasks(f.app.handle().clone(), auth);
+    let wait = |pred: &dyn Fn(&[Value]) -> bool| {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            if pred(&got.lock().unwrap()) {
+                return;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "auth-changed가 오지 않음: {:?}",
+                got.lock().unwrap()
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    };
+    // 처음 상태가 먼저 간다(구현 중 변경 54 (가) "시작 때 한 번")
+    wait(&|g| !g.is_empty());
+    assert_eq!(got.lock().unwrap()[0]["state"], json!("signedOut"));
+    let st = invoke(&f.main, "auth_login", json!({})).unwrap();
+    assert_eq!(st["state"], json!("error"));
+    assert_eq!(st["reason"], json!("network"));
+    wait(&|g| g.iter().any(|p| p["state"] == json!("error")));
+    assert_eq!(
+        leaked.load(Ordering::SeqCst),
+        0,
+        "다른 창에는 보내지 않는다"
+    );
 }

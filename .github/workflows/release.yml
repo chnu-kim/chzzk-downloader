@@ -2,13 +2,14 @@ name: release
 
 # CD(docs/design/cicd.md §5, 구현 중 변경 G6). 판정은 결정적이다: 버전 파일·태그 비교, master ci-ok, 기대 산출물 집합,
 # 설치 스모크, minisign 서명(updater와 같은 검증), sha256, 매니페스트 스키마, 다시 받아 확인.
-#   gate → xtask(한 번 빌드, sha256 출력) → build(3 OS, 임시 키) → smoke → stage(받은 3 OS 산출물로 publish·verify를 가짜 S3에)
+#   gate → xtask(한 번 빌드, sha256 출력) → build(3 OS, 임시 키, 태그만 Worker 주소 secrets.DIST_BASE_URL) → smoke → stage(받은 3 OS 산출물로 publish·verify를 가짜 S3에)
 #   (worker-bundle: 시크릿·환경 없음, gate 뒤에 따로. 리허설에도 돈다)
 #   → [태그만] sign-publish(환경 release, 컴파일·pnpm install 없음, latest.json은 마지막) → verify(sign-publish가 어떻게 끝났든
 #   돈다. 판정 실패면 prev로 되돌리고 빨강) → prune(verify 녹색 뒤 R2 보존 상한: latest 이하 최신 5개 + previous)
 #   → deploy-worker(vars.WORKER_DEPLOY_ENABLED, worker-bundle의 묶음으로 배포 → 배포 뒤 검사) → report(고리)
 # 시크릿을 받는 작업(sign-publish·verify·prune·deploy-worker)은 컴파일러를 돌리지 않는다: xtask 작업이 만든 바이너리를 sha256(작업 출력)으로
 # 맞춘 뒤에만 부른다(D10, 의존성 build.rs가 GITHUB_ENV·GITHUB_PATH로 시크릿 단계에 닿지 못하게).
+# 예외: build·build-linux의 release-build 단계는 태그 실행에서 DIST_BASE_URL(주소, 자격 아님)을 받는다. 앱 바이너리에 들어가는 값이라 컴파일이 필요하다(worker.md §11.1).
 # 바이너리는 GitHub Release에 올리지 않는다(배포는 R2 + Worker 허용 목록). 빌드 산출물은 보관 1일 artifact뿐이다.
 # 리허설(dispatch·매주 schedule)은 stage에서 끝난다(업로드 경계, 녹색). 환경 release에 들어가지 않아 시크릿이 없다.
 # 태그 실행에 시크릿이 없으면 sign-publish의 preflight가 "릴리스 시크릿 없음: …"으로 실패한다(그 앞 단계는 모두 돈다).
@@ -150,6 +151,11 @@ jobs:
         run: rustup toolchain install
       - name: release-build
         run: node scripts/ci/run.mjs release-build
+        # 태그만 실제 Worker 주소(저장소 secret, 자격이 아니라 주소, 로그는 가린다 — cicd.md 84, 구현 중 변경 105).
+        # 리허설은 빈 값 → release.mjs build가 자리표시 https://worker.example.invalid로 빌드한다
+        env:
+          RELEASE_MODE: ${{ needs.gate.outputs.mode }}
+          DIST_BASE_URL: ${{ needs.gate.outputs.mode == 'tag' && secrets.DIST_BASE_URL || '' }}
       - name: glibc-floor
         if: ${{ !cancelled() }}
         run: node scripts/ci/run.mjs glibc-floor
@@ -224,6 +230,11 @@ jobs:
           package-manager-cache: false
       - name: release-build
         run: node scripts/ci/run.mjs release-build
+        # 태그만 실제 Worker 주소(저장소 secret, 자격이 아니라 주소, 로그는 가린다 — cicd.md 84, 구현 중 변경 105).
+        # 리허설은 빈 값 → release.mjs build가 자리표시 https://worker.example.invalid로 빌드한다
+        env:
+          RELEASE_MODE: ${{ needs.gate.outputs.mode }}
+          DIST_BASE_URL: ${{ needs.gate.outputs.mode == 'tag' && secrets.DIST_BASE_URL || '' }}
       - name: release-hygiene
         if: ${{ !cancelled() }}
         run: node scripts/ci/run.mjs release-hygiene

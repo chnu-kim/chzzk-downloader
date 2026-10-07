@@ -1,4 +1,4 @@
-//! `AuthService` 상태 전이 표(worker.md §11.3·§11.4, 구현 중 변경 A1-1~A1-6).
+//! `AuthService` 상태 전이 표(worker.md §11.3·§11.4, 구현 중 변경 47~52).
 //!
 //! 가짜 `WorkerApi`·`Clock`을 주입한다. 시각 기준 V = 2030-01-01T00:00:00Z.
 
@@ -1304,7 +1304,7 @@ async fn n6_refresh_during_login_start_keeps_signed_in() {
     assert!(e.svc.login_ticket().is_none());
 }
 
-// ------------------------------------- start 요청과 겹친 동작(리뷰 반영, A1-4 (라))
+// ------------------------------------- start 요청과 겹친 동작(리뷰 반영, 50 (라))
 
 /// Checking 환경에서 start를 붙잡은 채 begin_login을 띄운다
 async fn held_start(

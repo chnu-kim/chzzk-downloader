@@ -1,4 +1,4 @@
-//! `AuthService`: 앱 로그인 상태 머신(worker.md §11.3·§11.4, 구현 중 변경 A1-1~A1-6).
+//! `AuthService`: 앱 로그인 상태 머신(worker.md §11.3·§11.4, 구현 중 변경 47~52).
 //!
 //! `WorkerApi`·`Clock`을 주입받아 Tauri 없이 검사한다. 상태 잠금(`std::sync::Mutex`)은 `await`를 넘겨 잡지 않는다.
 //! 로그에는 낱말·숫자만 남긴다(토큰·pollSecret·loginId·로그인 주소·채널 정보·Worker 주소 금지).

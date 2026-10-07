@@ -262,7 +262,7 @@ fn response_outcome_table() {
             Transient(Network),
         ),
         (
-            // 리디렉션은 본문과 무관하게 Worker 형식이 아니다(A1-1 (다))
+            // 리디렉션은 본문과 무관하게 Worker 형식이 아니다(47 (다))
             "redirect_302_json_code",
             302,
             JSON,

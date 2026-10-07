@@ -4,6 +4,7 @@ Phase 3 W9(`docs/design/worker.md` §16)를 사용자가 순서대로 따라 하
 
 - 이 문서는 공개 저장소에 있다. 실제 Worker 주소·계정 ID·서브도메인·채널 ID·토큰은 여기와 ROADMAP·이슈·PR 어디에도 적지 않는다. 아래 `<Worker 주소>`는 자리표시다(값은 저장소 secret `DIST_BASE_URL`과 같다).
 - 결과는 ROADMAP Phase 3의 W9 줄에 **"거부/수락·있음/없음·통과/실패"와 날짜만** 적는다(§7).
+- **결과(2026-10-07)**: §2~§5의 단계는 §4 macOS Gatekeeper 한 줄을 빼고 아래 "결과" 줄대로 끝났다(남은 것: §4 macOS Gatekeeper, §6 무료 한도, §5-7의 태그 모드 강제 코드, 재배포 뒤 관리 동작의 DO 줄 URL 없음 확인). 정리는 worker.md 구현 중 변경 44.
 - Worker 이름은 `chzzk-downloader`, R2 바인딩은 `DIST`, DO 바인딩은 `AUTH`(클래스 `AuthStore`)다(`worker/wrangler.jsonc`).
 
 ## 0. 비밀값 다루는 법
@@ -73,7 +74,7 @@ D=$(mktemp -d) && mkdir -p "$D/home" && tar -xzf target/ci/worker-bundle/worker-
 
 ### 2.2 자격과 wrangler 함수
 
-로컬 `wrangler login`이 아니라 **릴리스의 배포 토큰**으로 한다. 그래야 deploy-worker가 태그에서 쓸 토큰의 권한(배포·secret 목록)을 태그 전에 확인한다. 값은 release.mjs와 같다(구현 중 변경 36 (바)): 빈 임시 `HOME`이라 로컬 로그인 상태를 쓰지 않는다. 토큰은 셸 접두 대입으로 넘겨 어떤 프로세스의 인자에도 싣지 않는다(`env -i … CLOUDFLARE_API_TOKEN=…`처럼 쓰면 `env`의 인자로 `ps`에 보인다).
+**첫 생성만 로컬 `wrangler login`, 그 뒤는 릴리스의 배포 토큰**으로 한다(§2.3, 구현 중 변경 44 (가)). 토큰으로 하는 부분이 있어야 deploy-worker가 태그에서 쓸 토큰의 권한(배포·secret 목록)을 태그 전에 확인한다. 값은 release.mjs와 같다(구현 중 변경 36 (바)): 아래 `w()`(토큰 경로)는 빈 임시 `HOME`이라 로컬 로그인 상태를 쓰지 않는다(첫 생성만 §2.3의 "첫 생성" 절차로 실제 HOME을 쓴다). 토큰은 셸 접두 대입으로 넘겨 어떤 프로세스의 인자에도 싣지 않는다(`env -i … CLOUDFLARE_API_TOKEN=…`처럼 쓰면 `env`의 인자로 `ps`에 보인다).
 
 ```sh
 printf 'CLOUDFLARE_API_TOKEN: '; read -rs CF_TOKEN; echo
@@ -99,7 +100,26 @@ w deploy --no-bundle --config dist/wrangler.json --var "PUBLIC_ORIGIN:$BASE" --v
 - wrangler가 찍은 workers.dev 주소가 `$BASE`와 같은지 **이 터미널에서 눈으로만** 본다(복사해 다른 곳에 붙이지 않는다).
 - `curl -sS -o /dev/null -w '%{http_code}\n' "$BASE/health"` → `503`(secret이 없어 `config_error`, 정상).
 
-**배포가 거부되거나** 바인딩 표에 DO가 없으면 멈춘다: 에이전트가 구현 중 변경 10 (가)의 레거시 선언(`migrations` `new_sqlite_classes`)으로 바꾸는 PR을 내고(`worker-config.mjs` `FORBIDDEN_KEYS`도), 머지 뒤 §2.1부터 다시 한다. 첫 배포가 성공하기 전이라 데이터 이전은 없다(10 (나)). 토큰 권한 오류(403·`Authentication error`)면 토큰 권한을 고친다(로컬 `wrangler login`으로 우회하지 않는다: 태그의 deploy-worker가 같은 토큰을 쓴다).
+**배포가 거부되거나** 바인딩 표에 DO가 없으면 멈춘다: 에이전트가 구현 중 변경 10 (가)의 레거시 선언(`migrations` `new_sqlite_classes`)으로 바꾸는 PR을 내고(`worker-config.mjs` `FORBIDDEN_KEYS`도), 머지 뒤 §2.1부터 다시 한다. 첫 배포가 성공하기 전이라 데이터 이전은 없다(10 (나)). 토큰 권한 오류(403·`Authentication error`)면 토큰 권한을 고친다. **없는 Worker의 첫 생성은 Cloudflare 2026-09 권한 체계에서 Workers 제품 Admin이 필요해, 배포 토큰(처음에 Workers 권한이 없었다: 목록 0개·secret 403)으로는 안 됐다. 그래서 첫 생성만 로컬 `wrangler login`으로 했다.** 그 뒤 토큰에 Workers 제품 범위 Editor(= 옛 Account·Workers Scripts·Edit)를 더하니 `secret list`와 재배포가 토큰으로 통과했다. 태그의 deploy-worker가 같은 토큰을 쓰므로 생성 뒤에는 토큰으로 되돌아와 확인한다. Worker 단위 범위는 토큰 편집 화면이 `com.cloudflare.edge.worker.script` 리소스를 지원하지 않아 쓸 수 없었다.
+
+#### 첫 생성(Worker가 없을 때)
+
+Worker가 아직 없을 때만 `w()`가 아닌 이 절차를 쓴다(Worker를 지웠다가 다시 만들 때도 같다).
+
+- **필요 권한**: Workers 제품 Admin 또는 사용자의 로컬 `wrangler login`(W9 사전 준비 때 해 둔 로그인). 배포 토큰(Workers Editor)은 생성·삭제가 안 돼 쓸 수 없다.
+- **실제 HOME을 쓴다**(로컬 로그인 상태를 읽어야 해서 빈 임시 HOME을 쓰지 않는다). 그래서 반드시 §2.1의 묶음을 푼 **`.env`·`.env.local`이 없는 빈 폴더**(`$D`)에서 한다. 토큰 env(`CLOUDFLARE_API_TOKEN`)는 주지 않는다.
+- 명령 모양(값은 터미널에서 눈으로 넣고 어디에도 옮기지 않는다):
+
+```sh
+cd "$D" && CI=true WRANGLER_SEND_METRICS=false CLOUDFLARE_ACCOUNT_ID=<계정> \
+  node deploy/node_modules/wrangler/bin/wrangler.js deploy --no-bundle --config dist/wrangler.json \
+  --var "PUBLIC_ORIGIN:<Worker 주소>" --var "BUILD_ID:<SHA7>"
+```
+
+- **secret도 그때는 같은 로컬 로그인으로 넣었다**: 이번 W9에서는 토큰 권한을 고치기 전이라 §2.4의 secret 넷(`CHZZK_CLIENT_ID`·`CHZZK_CLIENT_SECRET`·`CI_VERIFY_TOKEN`·`ADMIN_CHANNEL_IDS`)을 위 명령과 같은 모양(표준 입력, 토큰 env 없음)으로 넣었다. 그 뒤 토큰에 Workers Editor를 더하고 토큰(`w()`)으로 `secret list`·같은 묶음 재배포·#38 수정본 재배포가 통과했다. 로컬 로그인은 W9 전부터 있던 사용자 기기의 기존 상태이고 logout하지 않았다.
+- 생성 뒤에는 `w()`로 돌아와 확인한다.
+
+**결과(2026-10-07)**: 통과. 첫 생성은 로컬 로그인, 이후 토큰. exports DO 선언이 실배포에서 받아들여졌다(`AuthStore` 생성, R5·10 해소, `migrations` 대안 불필요). `/health` 503(secret 없음).
 
 ### 2.4 secret 셋
 
@@ -114,6 +134,8 @@ curl -sS "$BASE/health"; echo
 - 기대: `{"ok":true,"schema":<n>,"build":"<SHA7>","bootstrap":true}`. `build`가 이번 `$SHA7`이면 `secret put`이 만든 새 버전이 `--var`(`PUBLIC_ORIGIN`·`BUILD_ID`)를 이어받았다는 뜻이다.
 - `build`가 `unknown`이거나 503이면 §2.3의 `w deploy …`를 한 번 더 돈다(배포는 사용자가 넣은 secret을 유지한다, 구현 중 변경 35 (가) `keep_bindings`). 그래도 503이면 멈춘다.
 
+**결과(2026-10-07)**: secret 셋 등록 통과.
+
 ### 2.5 로그인과 `ADMIN_CHANNEL_IDS`
 
 1. 브라우저(일반 창)로 `<Worker 주소>/`를 열고 [치지직으로 로그인] → 운영 앱으로 로그인한다. 부트스트랩 모드라 **거부 화면**이 나오고 거기 본인 채널 ID(32자리 소문자 hex)가 보인다(§8.3·§9.5). 이 로그인 자체가 DO(흐름 시작·소비·거부 기록)를 지나므로 500이면 DO가 동작하지 않는 것이다 → §2.3의 "배포가 거부되거나"와 같이 멈춘다. (재배포 직후라면 DO 코드 갱신이 최대 5분 늦을 수 있다, 구현 중 변경 35 (바).)
@@ -127,6 +149,8 @@ curl -sS "$BASE/health"; echo
    형식이 틀리면 `/health`가 503 `config_error`다(§10.1) → 값을 고쳐 다시 넣는다.
 3. 다시 로그인하면 랜딩에 [관리]가 보이고 `/admin`이 열린다.
 
+**결과(2026-10-07)**: 부트스트랩 → 관리자 로그인 → 운영 모드 통과, `/admin` 열림.
+
 ### 2.6 배포 토큰의 secret 목록
 
 ```sh
@@ -134,6 +158,8 @@ w secret list --config dist/wrangler.json --format json
 ```
 
 이름 넷(`ADMIN_CHANNEL_IDS`·`CHZZK_CLIENT_ID`·`CHZZK_CLIENT_SECRET`·`CI_VERIFY_TOKEN`)이 보여야 한다(API는 이름·종류만 준다). **실패하면** deploy-worker가 매 태그마다 2로 멈추므로(구현 중 변경 36 (타)) §5의 `WORKER_DEPLOY_ENABLED=true` 전에 토큰 권한을 고치고 다시 본다.
+
+**결과(2026-10-07)**: 통과(토큰에 Workers 제품 범위 Editor를 더한 뒤, §2.3).
 
 ### 2.7 첫 릴리스 전 수동 검사
 
@@ -148,6 +174,8 @@ auth "$CI_TOKEN"     | st -H @- "$BASE/api/me"                    # 401(CI 토�
 auth not-a-token     | st -H @- "$BASE/update/0.0.0"              # 401(CI 토큰 비교가 돈다)
 auth "$CI_TOKEN"     | st -H @- "$BASE/update/0.0.0"              # 204(R2에 latest.json이 아직 없다)
 ```
+
+**결과(2026-10-07)**: 다섯 모두 통과.
 
 ## 3. 실서버 확인 ① — 배포 직후
 
@@ -169,13 +197,19 @@ node worker/scripts/code-binding-check.mjs
 - ① 거부 ② 실패 **대조도 실패**면 자격·만료 문제로 판정 불가다. **다시 돌리지 않고** ①·②·대조 줄의 HTTP 상태와 오류 code 이름을 에이전트에 알린다.
 - 그 밖의 "판정 불가"(연결 실패·본문 끊김·5xx·408·429, 두 번째 로그인 실패)는 거부로 세지 않은 것이다. 429면 잠시 뒤, 나머지는 바로 처음부터 다시 돌린다.
 
+**결과(2026-10-07)**: ① 거부(403) ② 성공 ③ 거부(403) → 묶임·재사용 차단(29 해소).
+
 ### 3.2 Workers Logs에 URL이 없다
 
-로그인을 몇 번 한 뒤 Workers Logs(저장된 로그, 실시간 아님)에서 `code=`·`state=`·`/auth/callback?`·`/auth/login/`을 찾는다 → **없음**이어야 한다. 본문(우리 JSON 필드)만 보지 말고 **메타데이터까지** 본다: 대시보드 Workers & Pages → `chzzk-downloader` → Logs에서 줄을 펼친 상세 또는 observability API(Telemetry query)로 각 줄의 `$workers.event.request.url`과 그 밖의 URL·경로 메타데이터를 확인한다. Cloudflare는 Worker 호출의 로그 줄마다 요청 URL 전체를 붙이므로(invocation 로그를 꺼도, 구현 중 변경 43) quiet 경로(콜백·확인 페이지·id가 든 내 기기·관리 POST)는 Worker 쪽 줄이 0이어야 하고, `auth.login.*`·`admin.revoke_session`·`admin.denied_*`·`me.revoke_session` 줄은 DO 쪽 줄이어야 한다. DO 줄에 들어온 요청 URL이 붙어 있으면(43 (바)의 [확인 필요]) 멈추고 알린다(그 이벤트를 버리는 수정 PR). 결과는 "URL 메타데이터 없음/있음"만 적는다.
+로그인을 몇 번 한 뒤 Workers Logs(저장된 로그, 실시간 아님)에서 `code=`·`state=`·`/auth/callback?`·`/auth/login/`을 찾는다 → **없음**이어야 한다. 본문(우리 JSON 필드)만 보지 말고 **메타데이터까지** 본다: 대시보드 Workers & Pages → `chzzk-downloader` → Logs에서 줄을 펼친 상세 또는 observability API(Telemetry query)로 각 줄의 `$workers.event.request.url`과 그 밖의 URL·경로 메타데이터를 확인한다. Cloudflare는 Worker 호출의 로그 줄마다 요청 URL 전체를 붙이므로(invocation 로그를 꺼도, 구현 중 변경 43) quiet 경로(콜백·확인 페이지·id가 든 내 기기·관리 POST)는 Worker 쪽 줄이 0이어야 하고, `auth.login.*`·`admin.revoke_session`·`admin.denied_*`·`me.revoke_session` 줄은 DO 쪽 줄이어야 한다. DO 줄에 요청 URL이 붙어 있으면(43 (바)의 [확인 필요]) 멈추고 알린다(그 이벤트를 버리는 수정 PR). 결과는 "URL 메타데이터 없음/있음"만 적는다.
+
+**결과(2026-10-07)**: 첫 배포에서 `$workers.event.request.url`에 콜백 URL(code·state) 누출 발견 → PR #38(43)로 수정 → 재배포 뒤 Workers Logs에서 본 줄은 `auth.login.ok`(트리거 `AuthStore.jsrpc`, 요청 URL 메타데이터 없음)와 `auth.web.logout`(quiet 아닌 경로, URL에 비밀 없음) 둘뿐이고 code·state·토큰 0건이다. §3.3의 [지우기](`admin.denied_dismiss`)는 #38 재배포 **전**이었다. `admin.*`·`me.*` DO 줄은 같은 jsrpc 트리거라 같다고 **가정**했을 뿐이라 43 (바)는 이 범위로만 해소하고, 다음 관리 동작 때 한 번 더 확인한다(W9 남은 항목).
 
 ### 3.3 실제 브라우저의 관리 POST
 
 `/admin`의 "거부된 시도"에서 §2.5 부트스트랩 때 남은 본인 행을 [지우기] → 관리 화면으로 돌아오고(303) 행이 사라지면 통과다. 안내 페이지(403)가 나오면 브라우저가 Origin·Sec-Fetch-Site를 기대와 다르게 실은 것이다(구현 중 변경 38 (나)) → 멈추고 알린다.
+
+**결과(2026-10-07)**: 통과(Origin).
 
 ### 3.4 Error 1027은 실측하지 않는다
 
@@ -196,6 +230,8 @@ Cloudflare 계정을 다른 Worker들과 함께 쓰므로 하루 요청 한도�
 | Actions 로그 마스킹 | `H=${BASE#https://}; gh run view <릴리스 실행 id> --log \| grep -cF "$H"` | `0` | cicd.md 84 (다) |
 | macOS Gatekeeper | 실기기에 `.dmg` 설치 → 처음 열 때 문구, `xattr -dr com.apple.quarantine "/Applications/치지직 다운로더.app"` | 랜딩 설치 안내(`worker/src/http/copy.ts`)와 같음. 다르면 문구만 알린다 | 38 (아), §9.5 |
 
+**결과(2026-10-07, `v0.1.0` 실행 37551340797)**: `--check-only` health+7 통과. 일반·접미 Range 206, 끝 넘는 Range 206(크기로 잘림, 32 (가) ②), 만족 불가 Range 416(운영 R2는 던진다, ①), `Content-Length` GET·206·HEAD 있음(③), 압축 없음(④), `/update` 200/204, Actions 로그 마스킹 호스트 0건(cicd.md 84 (다)). macOS Gatekeeper 실기기 문구: **남음(사용자)**.
+
 실제 R2를 변조해 rollback을 시험하는 것은 W9에서 하지 않는다: 버전이 0.1.0 하나라 `previous`가 없다. 변조 → rollback 경로는 가짜 S3의 `release-selftest`가 덮는다(구현 중 변경 42 (자)). 두 번째 릴리스 뒤의 선택 확인은 §8.
 
 ## 5. GitHub 전환과 첫 릴리스
@@ -211,6 +247,8 @@ Cloudflare 계정을 다른 Worker들과 함께 쓰므로 하루 요청 한도�
 | 5-5 | 흐름: gate → xtask → build×3 → smoke → stage → sign-publish(R2, `latest.json`은 마지막) → verify(`VERIFY_VIA=s3`) → prune → deploy-worker(secret 이름 → superseded 가드 → 재배포 → health의 build 일치 + 일곱). 녹색 뒤 로컬에서 `CI_VERIFY_TOKEN="$CI_TOKEN" node scripts/ci/release.mjs worker --check-only --base "$BASE" --version 0.1.0 --build <태그 커밋 앞 7자>` → exit 0, §4 표, §1의 list-keys 재실행(`releases/0.1.0/…` 키) | §9.4, 36 (자) |
 | 5-6 | Worker로 다시 받아 확인: `VERIFY_VIA=worker CI_VERIFY_TOKEN="$CI_TOKEN" cargo xtask release verify --version 0.1.0 --pubkey release/updater.pub --base-url "$BASE"` → exit 0. GitHub의 verify 작업을 다시 돌리지 않는다(판정 실패면 `latest.json`을 되돌린다) | cicd.md §5 4(verify 실패 → rollback) |
 | 5-7 | `gh variable set VERIFY_VIA --env release --body worker`. 다음 릴리스부터 verify가 Worker로 읽는다. "태그 모드에서 `VERIFY_VIA=worker`를 요구"는 스위치가 아니라 **코드 변경**이라 에이전트가 따로 PR로 한다 | 42 (아) |
+
+**결과(2026-10-07)**: 5-1·5-2 완료(`WORKER_DEPLOY_ENABLED`는 저장소 변수 `true`, 환경 변수 삭제). 5-4 `v0.1.0` 승격: 실행 37551340797, gate~report 13개 모두 녹색(deploy-worker 포함). 5-5 `--check-only` 통과. 5-6 Worker 경유 `xtask release verify` 통과. 5-7 환경 `release` `VERIFY_VIA=worker` 전환 완료. 태그 모드 `VERIFY_VIA=worker` 강제 코드는 **남음(에이전트, 42 (아))**.
 
 `v0.1.0` 앱은 **Worker 로그인이 없는 앱**이다(Phase 3b A1~A5 전, cicd.md 구현 중 변경 82 (나)의 태그 모드 `CHZZK_WORKER_BASE` 비교도 A2 몫). 앱에 updater 주소(`plugins.updater.endpoints`)가 없어 **스스로 업데이트하지 않는다**: 0.1.0 → 0.1.x는 랜딩(로그인·허용된 사용자)에서 받아 직접 설치한다(구현 중 변경 42 (바)).
 
@@ -228,6 +266,8 @@ Cloudflare 계정을 다른 Worker들과 함께 쓰므로 하루 요청 한도�
 | Workers Logs | 이벤트 20만/일, 보존 3일. 2026-12-01부터 계정 Observability 0.5GB/일 수집 | 2026-12-01부터는 수집을 멈추고 00:00 UTC에 재개(Free는 추가 수집을 살 수 없어 과금 없음). 그 전 Free 초과 동작은 문서에 없다 **[확인 필요]** | Workers Logs·Observability 사용량 |
 
 경로별 요청 수(`/update/:current`·`/auth/*`·`/`·`/admin*`·`/me/*`, 구현 중 변경 28 (차)·33 (라)·38 (라))는 **볼 방법이 없다**: invocation 로그를 꺼 요청마다 남는 줄이 없고 Worker 로그는 일부 이벤트뿐이다. 합계와 Worker 수로 짐작하고, 경로별로 볼 방법(무엇을 켤지)은 사용자가 정한다(구현 중 변경 42 (사)).
+
+**결과**: 무료 한도는 **남음(며칠 뒤)**.
 
 ## 7. 결과 기록
 

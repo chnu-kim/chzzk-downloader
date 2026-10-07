@@ -62,6 +62,17 @@ export const openOutput = (id: JobId) => call<void>('open_output', { id });
 export const revealOutput = (id: JobId) => call<void>('reveal_output', { id });
 export const quit = () => call<void>('quit');
 export const authStatus = () => call<AuthStatusDto>('auth_status');
+/** 로그인 시작: 확인 페이지를 브라우저로 열고 폴링한다(worker.md §11.4). 상태는 auth-changed로도 온다 */
+export const authLogin = () => call<AuthStatusDto>('auth_login');
+/** 같은 로그인 주소를 브라우저로 다시 연다. 대기 중이 아니면 false */
+export const authReopen = () => call<boolean>('auth_reopen');
+/** 로그인 주소를 클립보드에 쓴다(Rust). 대기 중이 아니면 false */
+export const authCopyLoginUrl = () => call<boolean>('auth_copy_login_url');
+export const authCancel = () => call<AuthStatusDto>('auth_cancel');
+/** [다시 연결]: 지금 서버로 다시 확인한다 */
+export const authRetry = () => call<AuthStatusDto>('auth_retry');
+/** 로그아웃. 받던 다운로드는 계속된다 */
+export const authLogout = () => call<AuthStatusDto>('auth_logout');
 /**
  * 클립보드에 치지직 VOD·클립 주소가 있으면 그 주소 하나, 없으면 `null`(app.md 구현 중 변경 37).
  * 클립보드의 다른 글은 Rust 밖으로 나오지 않는다.
@@ -78,5 +89,10 @@ export const CLOSE_REQUESTED = 'close-requested';
 /** `close-requested`를 듣는다. 돌려준 함수로 그만 듣는다 */
 export const onCloseRequested = (cb: (running: number) => void): Promise<UnlistenFn> =>
   listen<CloseRequestedPayload>(CLOSE_REQUESTED, (e) => cb(e.payload.running));
+
+/** 로그인 상태가 바뀔 때마다 오는 이벤트(처음 상태 포함). 먼저 듣고 그다음 authStatus()를 부른다(사이에 온 변화를 놓치지 않게) */
+export const AUTH_CHANGED = 'auth-changed';
+export const onAuthChanged = (cb: (s: AuthStatusDto) => void): Promise<UnlistenFn> =>
+  listen<AuthStatusDto>(AUTH_CHANGED, (e) => cb(e.payload));
 
 export { Channel };

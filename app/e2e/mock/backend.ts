@@ -11,6 +11,7 @@ import { mockIPC, mockWindows } from '@tauri-apps/api/mocks';
 import type {
   AppError,
   AppInfo,
+  AuthStatusDto,
   EnqueueRequest,
   ErrorCode,
   JobDto,
@@ -22,12 +23,40 @@ import type {
   SettingsPatch,
 } from '../../src/lib/bindings';
 
+/** 로그인 없이 부를 수 있는 command(crates/shell/src/gate.rs OPEN_COMMANDS와 같다, src/lib/gate-sync.test.ts) */
+export const OPEN_COMMANDS = [
+  'app_info',
+  'auth_cancel',
+  'auth_copy_login_url',
+  'auth_login',
+  'auth_logout',
+  'auth_reopen',
+  'auth_retry',
+  'auth_status',
+  'frontend_ready',
+  'list_jobs',
+  'quit',
+  'subscribe_jobs',
+];
+
+export const AUTH_DISABLED: AuthStatusDto = {
+  state: 'disabled',
+  channelId: null,
+  channelName: null,
+  reason: null,
+  pending: null,
+  offline: null,
+  verifiedAt: null,
+};
+
 export type Scenario = {
   /** resolve가 돌려줄 결과(주소 → DTO 또는 오류). 없는 주소는 invalidUrl */
   resolve?: Record<string, ResolvedDto | { error: AppError }>;
   /** 시작할 때 이미 있는 작업(스냅샷) */
   jobs?: JobDto[];
   settings?: Partial<SettingsDto>;
+  /** 로그인 상태(없으면 disabled). disabled·signedIn이 아니면 허용 목록 밖 command는 notLoggedIn */
+  auth?: AuthStatusDto;
 };
 
 export type Call = { cmd: string; args: unknown };
@@ -45,6 +74,8 @@ export interface E2EController {
   job(id: number): JobDto | undefined;
   /** 그 주소의 다음 resolve 결과를 바꾼다 */
   setResolve(url: string, r: ResolvedDto | { error: AppError }): void;
+  /** 로그인 상태를 바꾸고 auth-changed를 보낸다 */
+  setAuth(s: AuthStatusDto): Promise<void>;
 }
 
 declare global {
@@ -117,6 +148,7 @@ export function install(scenario: Scenario = {}): E2EController {
   let nextId = Math.max(0, ...jobs.keys()) + 1;
   // 가짜 시계: 작업 생성·완료 시각은 실제 시각이 아니라 고정 값이다(화면의 "완료 · … · 시각"이 실행마다 같게)
   let clock = 1_767_322_800; // 2026-01-02 12:00:00 KST
+  let auth: AuthStatusDto = scenario.auth ?? AUTH_DISABLED;
   let channel: { id: number } | null = null;
   let index = 0;
 
@@ -138,7 +170,7 @@ export function install(scenario: Scenario = {}): E2EController {
   };
 
   const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
-    app_info: () => INFO,
+    app_info: () => ({ ...INFO, features: { auth: auth.state !== 'disabled' } }),
     get_settings: () => settings,
     update_settings: (a) => {
       settings = { ...settings, ...(a.patch as SettingsPatch) } as SettingsDto;
@@ -151,7 +183,13 @@ export function install(scenario: Scenario = {}): E2EController {
     clear_naver_cookies: () => (settings = { ...settings, naverCookiesSaved: false, useNaverCookies: false }),
     import_legacy: () => null,
     pick_folder: () => null,
-    auth_status: () => ({ state: 'disabled', channelId: null, channelName: null }),
+    auth_status: () => auth,
+    auth_login: () => auth,
+    auth_reopen: () => false,
+    auth_copy_login_url: () => false,
+    auth_cancel: () => auth,
+    auth_retry: () => auth,
+    auth_logout: () => (auth = auth.state === 'disabled' ? auth : { ...AUTH_DISABLED, state: 'signedOut' }),
     clipboard_link: () => null,
     open_app_folder: () => null,
     frontend_ready: () => null,
@@ -234,6 +272,7 @@ export function install(scenario: Scenario = {}): E2EController {
       const args = (payload ?? {}) as Record<string, unknown>;
       // Channel 객체는 그대로 기록하면 순환할 수 있어 id만 남긴다
       calls.push({ cmd, args: cmd === 'subscribe_jobs' ? { onEvent: (args.onEvent as { id: number }).id } : JSON.parse(JSON.stringify(args)) });
+      if (auth.state !== 'disabled' && auth.state !== 'signedIn' && !OPEN_COMMANDS.includes(cmd)) throw err('notLoggedIn');
       const h = handlers[cmd];
       if (!h) throw err('internal', { message: `e2e mock: 모르는 command ${cmd}` });
       return h(args);
@@ -261,6 +300,10 @@ export function install(scenario: Scenario = {}): E2EController {
     job: (id) => jobs.get(id),
     setResolve(url, r) {
       resolveTable[url] = r;
+    },
+    setAuth(s) {
+      auth = s;
+      return emit('auth-changed', s);
     },
   };
   window.__e2e = ctl;

@@ -720,10 +720,12 @@ mod tests {
 mod build_rules_tests {
     include!("../build_rules.rs");
 
-    const ACCEPTED_BOTH: [&str; 3] = [
+    const ACCEPTED_BOTH: [&str; 5] = [
         "https://worker.example.invalid",
         "https://a-b.c1.example.invalid:8443",
         "https://127.0.0.1:8787",
+        "https://10.0.0.1",
+        "https://x.1a",
     ];
     const ACCEPTED_DEBUG_ONLY: [&str; 4] = [
         "http://127.0.0.1:8787",
@@ -755,6 +757,17 @@ mod build_rules_tests {
             "https://[2001:db8::1]",
             "https://[::1",
             "https://ex\u{e4}mple.invalid",
+            // 마지막 조각이 숫자면 URL이 IPv4로 읽는다: 정규형 점 넷 10진만(구현 중 변경 58 (나))
+            "https://a.1",
+            "https://127.1",
+            "https://0x7f.0.0.1",
+            "https://01.2.3.4",
+            "https://127.0.0.01",
+            "https://1.2.3.4.5",
+            "https://256.0.0.1",
+            "https://a.0x",
+            "https://a.0x1f",
+            "https://2130706433",
         ]
     }
 

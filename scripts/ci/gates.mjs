@@ -66,9 +66,9 @@ function osBundles(root = ROOT) {
 }
 // wrangler가 사용 통계를 보내지 않는다(wrangler.jsonc send_metrics: false와 이중). worker gate의 wrangler·vitest 단계
 const WRANGLER_ENV = { WRANGLER_SEND_METRICS: 'false' };
-// linuxdeploy(AppImage)는 FUSE 없이 풀어서 돈다(컨테이너·러너에 libfuse2가 없다)
 // PR·리허설·로컬 릴리스 프로필 빌드의 Worker 주소 자리표시(worker.md §11.1, cicd.md 82 (나)). 태그 빌드만 실제 주소(release.mjs build)
 export const WORKER_PLACEHOLDER = 'https://worker.example.invalid';
+// linuxdeploy(AppImage)는 FUSE 없이 풀어서 돈다(컨테이너·러너에 libfuse2가 없다)
 const BUNDLE_ENV = process.platform === 'linux' ? { APPIMAGE_EXTRACT_AND_RUN: '1' } : undefined;
 
 export const GATES = {
@@ -407,7 +407,7 @@ export const GATES = {
   },
   // ---- 릴리스(docs/design/cicd.md §5, release.yml·rollback.yml). 순서·판정은 release.mjs, 무거운 일은 xtask ----
   'release-gate': {
-    desc: '릴리스 gate: 태그 = 버전 파일, 단조 증가, master 조상, 그 커밋의 master ci-ok 녹색(30초 간격으로 기다림). env RELEASE_MODE·RELEASE_TAG·GITHUB_SHA·GH_TOKEN',
+    desc: '릴리스 gate: 태그 차단 상수(release.mjs TAG_BLOCK), 태그 = 버전 파일, 단조 증가, master 조상, 그 커밋의 master ci-ok 녹색(30초 간격으로 기다림). env RELEASE_MODE·RELEASE_TAG·GITHUB_SHA·GH_TOKEN',
     needs: ['cargo', 'git'],
     steps: [{ cmd: ['node', S('release.mjs'), 'gate'] }],
   },
@@ -415,7 +415,9 @@ export const GATES = {
     desc: '릴리스 번들(임시 키, release/tauri.release.json의 updater 산출물) → collect --release → Tauri CLI·xtask 서명 형식 자체 확인',
     needs: ['cargo', 'pnpm'],
     steps: [
-      { cmd: ['pnpm', 'install', '--frozen-lockfile'], cwd: 'app' },
+      // 태그 주소·모드는 release.mjs build만 읽는다: pnpm install(의존성 설치 스크립트)에는 넘기지 않는다(cicd.md 105 (가)).
+      // undefined 값은 spawn이 env에서 뺀다
+      { cmd: ['pnpm', 'install', '--frozen-lockfile'], cwd: 'app', env: { DIST_BASE_URL: undefined, RELEASE_MODE: undefined } },
       { cmd: ['node', S('release.mjs'), 'build'] },
     ],
   },

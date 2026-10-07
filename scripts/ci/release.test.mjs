@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 
 import { contractPath, DEPLOY_CONTRACT, GARBAGE_BEARER as CONTRACT_GARBAGE } from '../../worker/test/deploy-contract.mjs';
-import { HOOKS, PUBKEY_FILES, RELEASE_SELFTEST_FILES, ROOT, WORKER_PLACEHOLDER } from './gates.mjs';
+import { GATES, HOOKS, PUBKEY_FILES, RELEASE_SELFTEST_FILES, ROOT, WORKER_PLACEHOLDER } from './gates.mjs';
 import { createWorkerStub } from './worker-stub.mjs';
 import {
   binaryWorkerBaseProblems,
@@ -41,6 +41,9 @@ import {
   runWorkerChecks,
   TAG_VERIFY_TOKEN_MESSAGE,
   TAG_VERIFY_VIA,
+  TAG_BLOCK,
+  TAG_BLOCK_REASON,
+  tagBlockProblem,
   tagProblems,
   tagVerifyProblem,
   tagVerifyViaMessage,
@@ -142,6 +145,29 @@ test('태그 단조 증가', () => {
   assert.equal(tagProblems('v0.2.0', ['v0.2.0']).length, 1);
   assert.equal(tagProblems('0.2.0', []).length, 1);
   assert.equal(tagProblems('v0.2', []).length, 1);
+});
+
+test('태그 차단(A3 전): tag 모드만 막고, 리허설(tag 입력 포함)·dry·모드 없음은 통과, 상수를 지우면 풀린다', () => {
+  assert.equal(TAG_BLOCK, 'phase3b-a3');
+  const p = tagBlockProblem('tag');
+  assert.ok(p && p.includes('A3') && p.includes(TAG_BLOCK_REASON), p);
+  for (const m of ['rehearsal', 'dry', undefined, '']) assert.equal(tagBlockProblem(m), null, String(m));
+  // A3 PR은 상수만 지운다(null): tag 모드도 통과
+  assert.equal(tagBlockProblem('tag', null), null);
+});
+
+test('release.mjs gate 진입점: tag 모드는 다른 검사(cargo·git·gh) 전에 차단 사유로 1', () => {
+  // PATH를 비워 cargo·git·gh에 닿으면 다른 오류가 나게 한다: 차단이 맨 앞이면 사유 한 줄로 1이다
+  const { GITHUB_OUTPUT: _o, ...rest } = process.env;
+  const r = spawnSync(process.execPath, [join(ROOT, 'scripts/ci/release.mjs'), 'gate'], {
+    env: { ...rest, PATH: '', RELEASE_MODE: 'tag', RELEASE_TAG: 'v99.0.0', GITHUB_SHA: 'a'.repeat(40), CI_WAIT_TIMEOUT: '0' },
+    encoding: 'utf8',
+    timeout: 60_000,
+  });
+  const out = r.stdout + r.stderr;
+  assert.equal(r.status, 1, out);
+  assert.ok(out.includes(TAG_BLOCK_REASON), out);
+  assert.ok(!out.includes('버전 파일') && !out.includes('ci-ok'), out);
 });
 
 test('ci-ok 판정: 어느 master 실행이든 ci-ok 녹색이면 통과, 모두 끝났는데 없으면 실패, 그 밖은 기다림', () => {
@@ -806,6 +832,22 @@ process.exit(cmdXtask({ ...rest, GITHUB_OUTPUT: '' }));`;
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('release-build gate: pnpm install 단계 env에서 DIST_BASE_URL·RELEASE_MODE를 뺀다(cicd 105 (가))', () => {
+  const [install, build] = GATES['release-build'].steps;
+  assert.deepEqual(install.cmd.slice(0, 2), ['pnpm', 'install']);
+  for (const n of ['DIST_BASE_URL', 'RELEASE_MODE']) {
+    assert.ok(Object.hasOwn(install.env ?? {}, n), `${n} 자리가 있다`);
+    assert.equal(install.env[n], undefined, `${n}는 undefined(spawn이 뺀다)`);
+  }
+  // run.mjs와 같은 합치기({...process.env, ...stepEnv})로 자식에게 두 이름이 가지 않는다
+  const r = spawnSync(process.execPath, ['-e', 'console.log(JSON.stringify([process.env.DIST_BASE_URL ?? null, process.env.RELEASE_MODE ?? null]))'], {
+    env: { ...process.env, DIST_BASE_URL: 'https://leak.example.test', RELEASE_MODE: 'tag', ...install.env },
+    encoding: 'utf8',
+  });
+  assert.deepEqual(JSON.parse(r.stdout), [null, null]);
+  assert.equal(build.env, undefined, 'release.mjs build는 두 이름을 받는다');
 });
 
 test('WORKER_PLACEHOLDER는 build.rs 릴리스 규칙을 통과하는 정규 출처다', () => {

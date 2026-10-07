@@ -92,9 +92,11 @@ fn origin_problem(v: &str, allow_loopback_http: bool) -> Option<&'static str> {
     None
 }
 
-/// 소문자 DNS 이름(점으로 나눈 1~63자 조각, a-z0-9-, 양끝 '-' 없음, 전체 253자 이하)
+/// 소문자 DNS 이름(점으로 나눈 1~63자 조각, a-z0-9-, 양끝 '-' 없음, 전체 253자 이하).
+/// 마지막 조각이 숫자(10진 또는 `0x` 16진)이면 WHATWG URL이 IPv4로 읽으므로(`a.1`은 해석 실패, `127.1`·`0x7f.0.0.1`·
+/// `01.2.3.4`는 다른 출처로 정규화) 정규형 점 넷 10진 IPv4(각 0~255, 앞자리 0 없음)만 받는다(구현 중 변경 58 (나))
 fn host_ok(h: &str) -> bool {
-    !h.is_empty()
+    let dns = !h.is_empty()
         && h.len() <= 253
         && h.split('.').all(|l| {
             !l.is_empty()
@@ -102,5 +104,25 @@ fn host_ok(h: &str) -> bool {
                 && !l.starts_with('-')
                 && !l.ends_with('-')
                 && l.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+        });
+    if !dns {
+        return false;
+    }
+    let last = h.rsplit('.').next().unwrap_or("");
+    let numeric = last.bytes().all(|b| b.is_ascii_digit())
+        || last.strip_prefix("0x").is_some_and(|r| r.bytes().all(|b| b.is_ascii_hexdigit()));
+    !numeric || canonical_ipv4(h)
+}
+
+/// 정규형 점 넷 10진 IPv4(`URL` 직렬화와 같은 모양)
+fn canonical_ipv4(h: &str) -> bool {
+    let parts: Vec<&str> = h.split('.').collect();
+    parts.len() == 4
+        && parts.iter().all(|p| {
+            !p.is_empty()
+                && p.len() <= 3
+                && p.bytes().all(|b| b.is_ascii_digit())
+                && (p.len() == 1 || !p.starts_with('0'))
+                && p.parse::<u16>().is_ok_and(|n| n <= 255)
         })
 }

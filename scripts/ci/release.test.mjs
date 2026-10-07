@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -26,6 +27,7 @@ import {
   parseWorkerArgs,
   preflight,
   preflightMessage,
+  probeVerifyWorker,
   pruneMissingMessage,
   prunePlan,
   pubkeyProblems,
@@ -311,7 +313,7 @@ test('tagVerifyProblem: tag만 VERIFY_VIA=worker(정확히)와 CI_VERIFY_TOKEN�
   assert.ok(!TAG_VERIFY_TOKEN_MESSAGE.includes('tok-SECRET'));
 });
 
-test('release.mjs 진입점: tag 모드 preflight는 1(업로드 전), verify는 xtask 전에 2(되돌리지 않음)', () => {
+test('release.mjs 진입점: tag 모드 preflight는 1(업로드 전), verify는 xtask 전에 2(되돌리지 않음)', async () => {
   const secrets = { ...Object.fromEntries(RELEASE_SECRETS.map((n) => [n, 'x'])), DIST_BASE_URL: 'https://dist.example.test' };
   const run = (cmd, extra) =>
     spawnSync(process.execPath, [join(ROOT, 'scripts/ci/release.mjs'), cmd], {
@@ -326,9 +328,14 @@ test('release.mjs 진입점: tag 모드 preflight는 1(업로드 전), verify는
   const noTok = run('preflight', { VERIFY_VIA: 'worker' });
   assert.equal(noTok.status, 1);
   assert.ok(lines(noTok).includes(`::error::${TAG_VERIFY_TOKEN_MESSAGE}. 업로드하지 않음`), noTok.stderr);
-  const ok = run('preflight', { VERIFY_VIA: 'worker', CI_VERIFY_TOKEN: 'tok' });
-  assert.equal(ok.status, 0, ok.stderr);
+  // 변수가 모두 맞으면 Worker 프로브까지 간다. 잡았다 닫은 루프백 포트(https, DNS 없음)라 연결 거부로 1(업로드 전), 출력에 주소·토큰이 없다
+  const gone = await probeServer(200);
+  await gone.close();
+  const ok = run('preflight', { VERIFY_VIA: 'worker', CI_VERIFY_TOKEN: 'tok-SECRET-probe', DIST_BASE_URL: gone.base.replace('http:', 'https:') });
+  assert.equal(ok.status, 1, ok.stderr);
   assert.match(ok.stdout, /preflight: 시크릿·변수 모두 있음/);
+  assert.ok(lines(ok).includes('::error::태그 릴리스 Worker 프로브 실패(ECONNREFUSED): Worker에 닿지 못했다. 업로드하지 않음'), ok.stderr);
+  assert.ok(!/127\.0\.0\.1|example\.test|tok-SECRET/.test(ok.stdout + ok.stderr), ok.stderr);
   // verify: 방어 검사는 경계·xtask보다 먼저(xtask를 찾지 않는다)
   const v = run('verify', { VERIFY_VIA: 's3', CI_VERIFY_TOKEN: 'tok' });
   assert.equal(v.status, 2);
@@ -342,6 +349,69 @@ test('release.mjs 진입점: tag 모드 preflight는 1(업로드 전), verify는
   const bare = spawnSync(process.execPath, [join(ROOT, 'scripts/ci/release.mjs'), 'verify'], { env: { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, RELEASE_MODE: 'tag', VERIFY_VIA: 's3' }, encoding: 'utf8' });
   assert.equal(bare.status, 1);
   assert.match(bare.stderr, /릴리스 시크릿 없음/);
+});
+
+// 루프백 http 서버 하나(상태 고정 또는 응답 없음) → { base, close }
+const probeServer = (status) =>
+  new Promise((res) => {
+    const seen = [];
+    const s = createServer((req, r) => {
+      seen.push({ method: req.method, url: req.url, auth: req.headers.authorization });
+      if (status === null) return; // 응답하지 않는다(시간 초과)
+      r.writeHead(status, status === 302 ? { location: 'http://127.0.0.1:1/' } : {});
+      r.end('{"secret-body":"tok-SECRET"}');
+    });
+    s.listen(0, '127.0.0.1', () => res({ base: `http://127.0.0.1:${s.address().port}`, seen, close: () => new Promise((d) => s.closeAllConnections() || s.close(d)) }));
+  });
+
+test('probeVerifyWorker: 200·404만 통과, 401·403·5xx·3xx·연결 거부·시간 초과는 실패(cicd.md 구현 중 변경 104 (가))', async () => {
+  const token = 'tok-SECRET-probe';
+  for (const [status, code] of [[200, 0], [404, 0], [401, 1], [403, 1], [500, 1], [503, 1], [302, 1], [204, 1]]) {
+    const s = await probeServer(status);
+    try {
+      const r = await probeVerifyWorker({ base: s.base, token });
+      assert.equal(r.code, code, String(status));
+      assert.equal(r.status, status);
+      assert.deepEqual(s.seen, [{ method: 'GET', url: '/releases/latest.json', auth: `Bearer ${token}` }]);
+      if (code) assert.match(r.message, new RegExp(`^태그 릴리스 Worker 프로브 실패\\(HTTP ${status}\\)`));
+      if (status === 401 || status === 403) assert.match(r.message, /토큰이 Worker secret과 다르다/);
+      assert.ok(!/127\.0\.0\.1|tok-SECRET|secret-body/.test(JSON.stringify(r)), JSON.stringify(r));
+    } finally {
+      await s.close();
+    }
+  }
+  // 연결 거부: 포트를 잡았다 닫는다
+  const gone = await probeServer(200);
+  await gone.close();
+  const refused = await probeVerifyWorker({ base: gone.base, token });
+  assert.equal(refused.code, 1);
+  assert.equal(refused.cause, 'ECONNREFUSED');
+  assert.ok(!/127\.0\.0\.1|tok-SECRET/.test(JSON.stringify(refused)));
+  // 시간 초과
+  const hang = await probeServer(null);
+  try {
+    const t = await probeVerifyWorker({ base: hang.base, token, timeoutMs: 200 });
+    assert.equal(t.code, 1);
+    assert.equal(t.cause, 'TimeoutError');
+    assert.match(t.message, /Worker에 닿지 못했다/);
+  } finally {
+    await hang.close();
+  }
+});
+
+test('probeVerifyWorker: 가짜 Worker(worker-stub)와 계약 — 맞는 토큰 200 통과, 틀린 토큰 401 실패', async () => {
+  const { server } = createWorkerStub({ token: 'tok-right', version: '1.2.0', build: 'abc1234' });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    assert.deepEqual(await probeVerifyWorker({ base, token: 'tok-right' }), { code: 0, status: 200 });
+    const bad = await probeVerifyWorker({ base, token: 'tok-wrong' });
+    assert.equal(bad.code, 1);
+    assert.equal(bad.status, 401);
+  } finally {
+    server.closeAllConnections();
+    await new Promise((r) => server.close(r));
+  }
 });
 
 test('release.yml: VERIFY_VIA는 변수 그대로 preflight·publish·verify에, stage·rollback에는 없다', () => {

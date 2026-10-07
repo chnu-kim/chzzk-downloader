@@ -7,7 +7,7 @@
 //   node scripts/ci/release.mjs build         # 임시 키로 릴리스 번들 + updater 산출물 → collect --release → 서명 형식 자체 확인
 //   node scripts/ci/release.mjs xtask         # xtask를 빌드해 target/ci/xtask-bin에 담고 sha256을 출력(시크릿 없는 작업에서만)
 //   node scripts/ci/release.mjs stage         # 받은 3 OS 산출물로 publish → verify를 가짜 S3에(임시 키, 시크릿 없음. 리허설의 끝)
-//   node scripts/ci/release.mjs preflight     # 시크릿·변수가 모두 있는지(없으면 정확한 메시지로 실패)
+//   node scripts/ci/release.mjs preflight     # 시크릿·변수가 모두 있는지(없으면 정확한 메시지로 실패), tag는 Worker 프로브까지
 //   node scripts/ci/release.mjs publish       # collect → sign → verify-sig → sums → manifest → put → promote(latest.json은 마지막)
 //   node scripts/ci/release.mjs verify        # latest.json을 보고 결정표(verifyPlan)대로 확인. 판정 실패면 prev로 rollback하고 1
 //   node scripts/ci/release.mjs rollback      # rollback.yml: ROLLBACK_VERSION으로 latest.json을 바꾼다(되돌리기·다시 올리기)
@@ -424,24 +424,62 @@ export function preflight(env) {
   return { code: 0, message: null, missing };
 }
 
-function cmdPreflight(env) {
+// 태그 릴리스의 업로드 전 Worker 프로브(cicd.md 구현 중 변경 104 (가)): verify가 Worker로 다시 받을 수 있는지 한 번 본다.
+// 토큰 drift(환경 release의 CI_VERIFY_TOKEN ≠ Worker secret)·Worker 장애를 업로드·승격 뒤 verify의 exit 2(되돌리지 않음)가 아니라
+// 업로드 전 1로 잡는다. GET(Worker는 HEAD도 받지만 가짜 Worker는 GET만 받는다), 리디렉션은 따라가지 않는다(3xx는 실패).
+//   200: 토큰이 맞고 latest.json이 있다 / 404: 토큰이 맞고 latest.json이 없다(첫 릴리스. Worker는 자격을 R2보다 먼저 본다, releases.ts)
+//   401·403·그 밖의 상태·네트워크·시간 초과: 실패
+// 출력은 상태 코드나 오류 이름뿐이다(본문·토큰·주소를 싣지 않는다). base는 인자로 받는다(시험은 루프백 http를 준다)
+export const TAG_PROBE_TIMEOUT_MS = 10_000;
+export async function probeVerifyWorker({ base, token, fetchImpl = fetch, timeoutMs = TAG_PROBE_TIMEOUT_MS }) {
+  try {
+    const r = await fetchImpl(`${base}/${LATEST_KEY}`, { method: 'GET', redirect: 'manual', headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(timeoutMs) });
+    await r.body?.cancel().catch(() => {});
+    if (r.status === 200 || r.status === 404) return { code: 0, status: r.status };
+    const why = r.status === 401 || r.status === 403 ? '토큰이 Worker secret과 다르다(환경 release의 CI_VERIFY_TOKEN을 확인한다)' : 'Worker 응답이 예상 밖이다';
+    return { code: 1, status: r.status, message: `태그 릴리스 Worker 프로브 실패(HTTP ${r.status}): ${why}` };
+  } catch (e) {
+    const c = String(e?.cause?.code ?? e?.name ?? 'error');
+    const cause = /^[A-Za-z0-9_.-]{1,40}$/.test(c) ? c : 'error';
+    return { code: 1, cause, message: `태그 릴리스 Worker 프로브 실패(${cause}): Worker에 닿지 못했다` };
+  }
+}
+
+// preflight + (tag만) Worker 프로브. dry·리허설·stage·selftest는 RELEASE_MODE가 tag가 아니라 프로브하지 않는다
+async function tagProbe(env, what) {
+  if (env.RELEASE_MODE !== 'tag') return 0;
+  const p = await probeVerifyWorker({ base: env.DIST_BASE_URL, token: env.CI_VERIFY_TOKEN });
+  if (p.code === 0) {
+    log(`${what}: Worker 프로브 통과(HTTP ${p.status})`);
+    return 0;
+  }
+  console.error(`::error::${p.message}. 업로드하지 않음`);
+  return 1;
+}
+
+async function cmdPreflight(env) {
   const r = preflight(env);
   ghOutput(env, { missing: r.missing.join(',') });
-  if (r.code) console.error(`::error::${r.message}`);
-  else log('preflight: 시크릿·변수 모두 있음');
-  return r.code;
+  if (r.code) {
+    console.error(`::error::${r.message}`);
+    return r.code;
+  }
+  log('preflight: 시크릿·변수 모두 있음');
+  return tagProbe(env, 'preflight');
 }
 
 // 업로드 순서(이 목록 하나뿐이다: release.yml sign-publish, stage, selftest가 모두 이 함수를 지난다)
 export const PUBLISH_STEPS = ['collect', 'sign', 'verify-sig', 'sums', 'manifest', 'put', 'promote'];
 
-function cmdPublish(env) {
+async function cmdPublish(env) {
   const p = preflight(env);
   if (p.code) {
     console.error(`::error::${p.message}`);
     return 1;
   }
   if (begin('publish', env)) return 2;
+  // 업로드 직전 마지막 검사(경계·xtask 뒤): preflight 단계와 같은 프로브를 다시 본다
+  if (await tagProbe(env, 'publish')) return 1;
   const version = releaseVersion(env);
   const stage = stageDir(env);
   rmSync(stage, { recursive: true, force: true });

@@ -17,6 +17,7 @@ use chzzk_core::{
 use serde::{Deserialize, Deserializer, Serialize};
 use ts_rs::TS;
 
+use crate::auth::{AuthPhase, AuthReason, AuthStatus};
 use crate::error::AppError;
 
 // ---------------------------------------------------------------------------
@@ -138,7 +139,7 @@ pub struct AppInfo {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct Features {
-    /// Phase 3 로그인. Phase 2는 false
+    /// 로그인(Worker 주소가 있는 빌드). 릴리스는 늘 true(build.rs가 주소 없이는 막는다)
     pub auth: bool,
 }
 
@@ -633,34 +634,89 @@ pub struct CloseRequestedPayload {
 }
 
 // ---------------------------------------------------------------------------
-// 인증(Phase 3 자리)
+// 인증(worker.md §11.4, 구현 중 변경 A2-1)
 // ---------------------------------------------------------------------------
 
-/// `auth_status` 결과. Phase 2는 늘 `{state: "disabled"}`.
+/// `auth_status` 결과이자 `auth-changed` 이벤트 본문. 시각은 모두 유닉스 초(`JobDto.createdAt`과 같다).
+/// 비밀(토큰·pollSecret·로그인 주소)은 없다.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthStatusDto {
     pub state: AuthState,
     pub channel_id: Option<String>,
     pub channel_name: Option<String>,
+    pub reason: Option<AuthReasonDto>,
+    pub pending: Option<PendingDto>,
+    pub offline: Option<OfflineDto>,
+    pub verified_at: Option<i64>,
+}
+
+/// 로그인 대기(확인 코드와 로컬 기한)
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct PendingDto {
+    pub user_code: String,
+    pub expires_at: i64,
+}
+
+/// 오프라인 유예(SignedIn일 때만)
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct OfflineDto {
+    pub since: i64,
+    pub grace_until: i64,
 }
 
 impl AuthStatusDto {
-    /// Phase 2 고정값.
+    /// 로그인을 쓰지 않는 빌드(Worker 주소 없음).
     pub fn disabled() -> Self {
         AuthStatusDto {
             state: AuthState::Disabled,
             channel_id: None,
             channel_name: None,
+            reason: None,
+            pending: None,
+            offline: None,
+            verified_at: None,
+        }
+    }
+
+    /// 셸 상태 → DTO. 구조 분해는 `..` 없이(필드가 늘면 컴파일이 깨져 경계 너머로 보낼지 정하게).
+    pub fn from_status(s: &AuthStatus) -> Self {
+        let AuthStatus {
+            phase,
+            reason,
+            channel_id,
+            channel_name,
+            is_admin: _,
+            pending,
+            offline,
+            verified_at,
+        } = s;
+        AuthStatusDto {
+            state: AuthState::from(*phase),
+            channel_id: channel_id.clone(),
+            channel_name: channel_name.clone(),
+            reason: reason.map(AuthReasonDto::from),
+            pending: pending.as_ref().map(|p| PendingDto {
+                user_code: p.user_code.clone(),
+                expires_at: p.expires_at.unix_timestamp(),
+            }),
+            offline: offline.as_ref().map(|o| OfflineDto {
+                since: o.since.unix_timestamp(),
+                grace_until: o.grace_until.unix_timestamp(),
+            }),
+            verified_at: verified_at.map(|t| t.unix_timestamp()),
         }
     }
 }
 
-/// 로그인 상태.
+/// 로그인 상태. `Checking`은 A2에서 더했다(저장 세션을 서버로 확인하는 중).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub enum AuthState {
     Disabled,
+    Checking,
     SignedOut,
     Pending,
     SignedIn,
@@ -668,4 +724,51 @@ pub enum AuthState {
     Expired,
     Cancelled,
     Error,
+}
+
+impl From<AuthPhase> for AuthState {
+    fn from(p: AuthPhase) -> Self {
+        match p {
+            AuthPhase::Checking => AuthState::Checking,
+            AuthPhase::SignedOut => AuthState::SignedOut,
+            AuthPhase::Pending => AuthState::Pending,
+            AuthPhase::SignedIn => AuthState::SignedIn,
+            AuthPhase::Denied => AuthState::Denied,
+            AuthPhase::Expired => AuthState::Expired,
+            AuthPhase::Cancelled => AuthState::Cancelled,
+            AuthPhase::Error => AuthState::Error,
+        }
+    }
+}
+
+/// 사유(worker.md §11.4의 9개). TS 이름은 `AuthReason`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename = "AuthReason")]
+pub enum AuthReasonDto {
+    LoginTimeout,
+    SessionExpired,
+    Revoked,
+    RemovedFromAllowlist,
+    ReuseDetected,
+    GraceExpired,
+    Network,
+    Server,
+    LoginLost,
+}
+
+impl From<AuthReason> for AuthReasonDto {
+    fn from(r: AuthReason) -> Self {
+        match r {
+            AuthReason::LoginTimeout => AuthReasonDto::LoginTimeout,
+            AuthReason::SessionExpired => AuthReasonDto::SessionExpired,
+            AuthReason::Revoked => AuthReasonDto::Revoked,
+            AuthReason::RemovedFromAllowlist => AuthReasonDto::RemovedFromAllowlist,
+            AuthReason::ReuseDetected => AuthReasonDto::ReuseDetected,
+            AuthReason::GraceExpired => AuthReasonDto::GraceExpired,
+            AuthReason::Network => AuthReasonDto::Network,
+            AuthReason::Server => AuthReasonDto::Server,
+            AuthReason::LoginLost => AuthReasonDto::LoginLost,
+        }
+    }
 }

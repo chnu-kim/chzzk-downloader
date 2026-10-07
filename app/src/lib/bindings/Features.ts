@@ -5,6 +5,6 @@
  */
 export type Features = { 
 /**
- * Phase 3 로그인. Phase 2는 false
+ * 로그인(Worker 주소가 있는 빌드). 릴리스는 늘 true(build.rs가 주소 없이는 막는다)
  */
 auth: boolean, };

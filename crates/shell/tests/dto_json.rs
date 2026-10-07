@@ -4,13 +4,15 @@ use chzzk_core::{
     ContentKind, ContentMeta, ContentRef, DuplicatePolicy, LegacyImport, NaverCookies, PdRep,
     Phase, Platform, PlaybackKind, Progress, Quality, RecentVod, Resolved, Source, UserSettings,
 };
+use chzzk_shell::auth::{AuthPhase, AuthReason, AuthStatus, Cause, OfflineInfo, PendingInfo};
 use chzzk_shell::dto::{
-    AuthStatusDto, ContentKindDto, ContentMetaDto, ContentRefTs, EnqueueRequest, JobDto, JobEvent,
-    JobStatus, LegacyImportDto, Nullable, OnExisting, Ownership, PhaseTs, PlaybackKindTs,
-    ProgressDto, QualityDto, ResolvedDto, SettingsPatch,
+    AuthReasonDto, AuthStatusDto, ContentKindDto, ContentMetaDto, ContentRefTs, EnqueueRequest,
+    JobDto, JobEvent, JobStatus, LegacyImportDto, Nullable, OnExisting, Ownership, PhaseTs,
+    PlaybackKindTs, ProgressDto, QualityDto, ResolvedDto, SettingsPatch,
 };
 use chzzk_shell::{AppError, JobId, Stage};
 use serde_json::{Value, json};
+use time::OffsetDateTime;
 
 fn to_json<T: serde::Serialize>(v: &T) -> Value {
     serde_json::to_value(v).unwrap()
@@ -491,12 +493,101 @@ fn legacy_import_dto_has_no_cookie_values() {
     assert!(!v.to_string().contains("NIDSECRET"));
 }
 
+/// 기준 시각 2030-01-01T00:00:00Z
+const T0: i64 = 1_893_456_000;
+
+fn at(secs: i64) -> OffsetDateTime {
+    OffsetDateTime::from_unix_timestamp(secs).unwrap()
+}
+
+fn status(phase: AuthPhase) -> AuthStatus {
+    AuthStatus {
+        phase,
+        reason: None,
+        channel_id: None,
+        channel_name: None,
+        is_admin: false,
+        pending: None,
+        offline: None,
+        verified_at: None,
+    }
+}
+
 #[test]
-fn auth_status_disabled() {
+fn auth_status_dto_json_shapes() {
+    let nulls = |state: &str| {
+        json!({"state": state, "channelId": null, "channelName": null, "reason": null,
+               "pending": null, "offline": null, "verifiedAt": null})
+    };
+    assert_eq!(to_json(&AuthStatusDto::disabled()), nulls("disabled"));
     assert_eq!(
-        to_json(&AuthStatusDto::disabled()),
-        json!({"state": "disabled", "channelId": null, "channelName": null})
+        to_json(&AuthStatusDto::from_status(&status(AuthPhase::SignedOut))),
+        nulls("signedOut")
     );
+    assert_eq!(
+        to_json(&AuthStatusDto::from_status(&status(AuthPhase::Checking))),
+        nulls("checking")
+    );
+
+    let mut pending = status(AuthPhase::Pending);
+    pending.pending = Some(PendingInfo {
+        user_code: "K7QX-4MRA".into(),
+        expires_at: at(T0 + 600),
+    });
+    let mut want = nulls("pending");
+    want["pending"] = json!({"userCode": "K7QX-4MRA", "expiresAt": 1893456600});
+    assert_eq!(to_json(&AuthStatusDto::from_status(&pending)), want);
+
+    let ch = "000000000000000000000000000000a1";
+    let mut signed_in = status(AuthPhase::SignedIn);
+    signed_in.reason = Some(AuthReason::Network);
+    signed_in.channel_id = Some(ch.into());
+    signed_in.channel_name = Some("채널".into());
+    signed_in.is_admin = true;
+    signed_in.offline = Some(OfflineInfo {
+        since: at(T0),
+        grace_until: at(T0 + 259_200),
+        cause: Cause::Network,
+    });
+    signed_in.verified_at = Some(at(T0 - 3600));
+    let v = to_json(&AuthStatusDto::from_status(&signed_in));
+    assert_eq!(
+        v,
+        json!({"state": "signedIn", "channelId": ch, "channelName": "채널", "reason": "network",
+               "pending": null, "offline": {"since": 1893456000, "graceUntil": 1893715200},
+               "verifiedAt": 1893452400})
+    );
+    assert!(v.get("isAdmin").is_none());
+
+    let mut denied = status(AuthPhase::Denied);
+    denied.channel_name = Some("채널".into());
+    let mut want = nulls("denied");
+    want["channelName"] = json!("채널");
+    assert_eq!(to_json(&AuthStatusDto::from_status(&denied)), want);
+
+    let mut expired = status(AuthPhase::Expired);
+    expired.reason = Some(AuthReason::SessionExpired);
+    let mut want = nulls("expired");
+    want["reason"] = json!("sessionExpired");
+    assert_eq!(to_json(&AuthStatusDto::from_status(&expired)), want);
+}
+
+#[test]
+fn auth_reason_dto_names() {
+    let all = [
+        (AuthReason::LoginTimeout, "loginTimeout"),
+        (AuthReason::SessionExpired, "sessionExpired"),
+        (AuthReason::Revoked, "revoked"),
+        (AuthReason::RemovedFromAllowlist, "removedFromAllowlist"),
+        (AuthReason::ReuseDetected, "reuseDetected"),
+        (AuthReason::GraceExpired, "graceExpired"),
+        (AuthReason::Network, "network"),
+        (AuthReason::Server, "server"),
+        (AuthReason::LoginLost, "loginLost"),
+    ];
+    for (r, name) in all {
+        assert_eq!(to_json(&AuthReasonDto::from(r)), json!(name));
+    }
 }
 
 // ---------------------------------------------------------------------------

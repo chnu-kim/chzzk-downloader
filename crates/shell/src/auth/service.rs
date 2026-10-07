@@ -328,6 +328,11 @@ impl<A: WorkerApi, C: Clock> AuthService<A, C> {
         st
     }
 
+    /// 주입한 벽시계의 지금(driver가 절전 복귀를 가를 때 쓴다)
+    pub fn now(&self) -> OffsetDateTime {
+        self.clock.now()
+    }
+
     /// 지금 상태
     pub fn status(&self) -> AuthStatus {
         status_of(&self.lock())

@@ -5,15 +5,23 @@
 //! 돌려줄지는 여기서 정해 webkit 없이 검사한다.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use chzzk_core::{Chzzk, ClientConfig, ContentRef, PlaybackKind, parse_content_url};
 use tokio::runtime::Handle;
 
 use crate::JobId;
+use crate::auth::{
+    AuthPhase, AuthService, AuthStatus, BeginLogin, HttpWorkerApi, SessionStore, SystemClock,
+    WorkerBase, client_label,
+};
 use crate::dto::{
-    AppFolder, AppInfo, EnqueueRequest, Features, JobDto, OutputCheck, SettingsDto, SettingsPatch,
+    AppFolder, AppInfo, AuthStatusDto, EnqueueRequest, Features, JobDto, OutputCheck, SettingsDto,
+    SettingsPatch,
 };
 use crate::error::AppError;
+use crate::gate;
 use crate::jobs::JobStore;
 use crate::manager::{DownloadManager, ManagerConfig};
 use crate::ownership::OwnershipGate;
@@ -22,12 +30,33 @@ use crate::services::{self, AppPaths, PROGRESS_INTERVAL, SettingsService};
 /// 클립보드에서 치지직 주소를 찾을 때 보는 최대 길이(바이트). 이보다 길면 주소를 붙여 둔 것으로 보지 않는다.
 pub const MAX_CLIPBOARD_SCAN: usize = 4096;
 
+/// 앱이 쓰는 로그인 서비스
+pub type AppAuth = AuthService<HttpWorkerApi, SystemClock>;
+
+/// 로그인 설정. 릴리스는 늘 Enabled(build.rs), debug는 주소가 있을 때만
+#[derive(Clone, Debug)]
+pub enum AuthSetup {
+    /// 로그인을 쓰지 않는다(게이트 통과, `features.auth=false`)
+    Disabled,
+    /// 이 Worker로 로그인한다. `app_version`은 `/auth/start`의 client 문자열(`client_label`)에 쓴다
+    Enabled {
+        base: WorkerBase,
+        app_version: String,
+    },
+}
+
 /// 앱이 Tauri `manage`로 들고 있는 상태.
 pub struct App {
     pub settings: SettingsService,
     pub manager: DownloadManager<Chzzk>,
     pub paths: AppPaths,
     pub gate: OwnershipGate,
+    /// 로그인 서비스. `None`이면 로그인을 쓰지 않는 빌드
+    pub auth: Option<Arc<AppAuth>>,
+    /// 로그인 뒤로 미룬 재시작 후 자동 이어받기(D15)
+    auto_resume_pending: AtomicBool,
+    /// 로그인 폴링 태스크를 띄울 런타임
+    runtime: Handle,
 }
 
 impl std::fmt::Debug for App {
@@ -35,6 +64,7 @@ impl std::fmt::Debug for App {
         f.debug_struct("App")
             .field("settings", &self.settings)
             .field("paths", &self.paths)
+            .field("auth", &self.auth.is_some())
             .finish_non_exhaustive()
     }
 }
@@ -69,27 +99,58 @@ impl App {
         )
     }
 
-    /// `open`과 같고 클라이언트 설정(테스트의 mock 서버 주소 등)을 받는다.
+    /// 로그인 없이 연다(테스트·로그인을 쓰지 않는 debug 빌드). 앱 setup은 `open_with_auth`를 쓴다.
     pub fn open_with(
         paths: AppPaths,
         base: ClientConfig,
         legacy_dir: Option<&Path>,
         runtime: Handle,
     ) -> Result<Self, AppError> {
+        Self::open_with_auth(paths, base, legacy_dir, runtime, AuthSetup::Disabled)
+    }
+
+    /// `open_with`와 같고 로그인 설정을 받는다. Enabled면 세션 파일을 읽어 첫 상태를 정하고(네트워크 없음),
+    /// 재시작 후 자동 이어받기는 로그인 뒤로 미룬다(D15).
+    pub fn open_with_auth(
+        paths: AppPaths,
+        base: ClientConfig,
+        legacy_dir: Option<&Path>,
+        runtime: Handle,
+        auth: AuthSetup,
+    ) -> Result<Self, AppError> {
         let settings = SettingsService::open(&paths, base, legacy_dir)?;
         let s = settings.settings();
+        let auth = match auth {
+            AuthSetup::Disabled => None,
+            AuthSetup::Enabled { base, app_version } => {
+                let api = HttpWorkerApi::new(base.clone()).map_err(|_| {
+                    AppError::internal("로그인 서버 클라이언트를 만들지 못했습니다")
+                })?;
+                let store = SessionStore::new(paths.config.clone(), &base);
+                Some(Arc::new(AuthService::open(
+                    api,
+                    SystemClock,
+                    store,
+                    client_label(&app_version),
+                )))
+            }
+        };
+        let defer = auth.is_some() && s.auto_resume_interrupted;
         let manager = DownloadManager::open(ManagerConfig {
             client: settings.client_fn(),
             store: JobStore::new(paths.data.clone()),
-            runtime,
+            runtime: runtime.clone(),
             max_parallel: s.max_parallel_downloads,
-            auto_resume: s.auto_resume_interrupted,
+            auto_resume: s.auto_resume_interrupted && auth.is_none(),
         })?;
         Ok(App {
             settings,
             manager,
             paths,
             gate: OwnershipGate::disabled(),
+            auth,
+            auto_resume_pending: AtomicBool::new(defer),
+            runtime,
         })
     }
 
@@ -102,7 +163,9 @@ impl App {
             data_dir: path_string(&self.paths.data),
             log_dir: path_string(&self.paths.log),
             default_download_folder: path_string(&self.paths.default_download),
-            features: Features { auth: false },
+            features: Features {
+                auth: self.auth_enabled(),
+            },
             legacy_candidate: self.settings.legacy_candidate(),
         }
     }
@@ -158,6 +221,102 @@ impl App {
             Some(dir) => Err(AppError::file_missing(dir)),
             None => Err(AppError::file_missing(&path)),
         }
+    }
+}
+
+impl App {
+    /// 로그인을 쓰는 빌드인가(= `features.auth`)
+    pub fn auth_enabled(&self) -> bool {
+        self.auth.is_some()
+    }
+
+    /// `auth_status`
+    pub fn auth_status(&self) -> AuthStatusDto {
+        match &self.auth {
+            None => AuthStatusDto::disabled(),
+            Some(a) => AuthStatusDto::from_status(&a.status()),
+        }
+    }
+
+    /// command 층 게이트(D1·D3). 허용 목록이거나 로그인을 쓰지 않으면 Ok, 아니면 `require_signed_in`
+    pub fn gate_command(&self, cmd: &str) -> Result<(), AppError> {
+        match &self.auth {
+            None => Ok(()),
+            Some(_) if gate::is_open(cmd) => Ok(()),
+            Some(a) => a.require_signed_in(),
+        }
+    }
+
+    /// 상태가 바뀔 때마다(처음 포함) 앱이 부른다. 처음 SignedIn에서 미뤄 둔 자동 이어받기를 한 번 한다. 줄 세운 수
+    pub fn on_auth_status(&self, st: &AuthStatus) -> usize {
+        if st.phase != AuthPhase::SignedIn
+            || !self.auto_resume_pending.swap(false, Ordering::SeqCst)
+        {
+            return 0;
+        }
+        let n = self.manager.resume_interrupted();
+        tracing::info!(count = n, "로그인 뒤 멈춘 작업을 자동으로 이어받는다");
+        n
+    }
+
+    /// `auth_login`(D13): Started일 때만 `open(로그인 주소)`을 부르고 폴링 태스크를 띄운다
+    pub async fn auth_login(&self, open: impl FnOnce(&str) -> bool + Send) -> AuthStatusDto {
+        let Some(auth) = self.auth.clone() else {
+            return AuthStatusDto::disabled();
+        };
+        if let BeginLogin::Started(ticket) = auth.begin_login().await {
+            if !open(ticket.login_url.expose()) {
+                tracing::warn!(result = "open_failed", "로그인 주소를 브라우저로 열지 못함");
+            }
+            let a = auth.clone();
+            self.runtime.spawn(async move {
+                a.run_login_poll().await;
+            });
+        }
+        AuthStatusDto::from_status(&auth.status())
+    }
+
+    /// `auth_reopen`: 대기 중이면 같은 주소를 다시 연다. 연 시도가 성공했으면 true
+    pub fn auth_reopen(&self, open: impl FnOnce(&str) -> bool) -> bool {
+        match self.auth.as_ref().and_then(|a| a.login_ticket()) {
+            Some(t) => open(t.login_url.expose()),
+            None => false,
+        }
+    }
+
+    /// `auth_copy_login_url`: 대기 중이면 로그인 주소를 클립보드에. 썼으면 true
+    pub fn auth_copy_login_url(&self, copy: impl FnOnce(&str) -> bool) -> bool {
+        match self.auth.as_ref().and_then(|a| a.login_ticket()) {
+            Some(t) => copy(t.login_url.expose()),
+            None => false,
+        }
+    }
+
+    /// `auth_cancel`
+    pub fn auth_cancel(&self) -> AuthStatusDto {
+        match &self.auth {
+            None => AuthStatusDto::disabled(),
+            Some(a) => AuthStatusDto::from_status(&a.cancel_login()),
+        }
+    }
+
+    /// `auth_retry`([다시 연결]): 지금 갱신
+    pub async fn auth_retry(&self) -> AuthStatusDto {
+        match self.auth.clone() {
+            None => AuthStatusDto::disabled(),
+            Some(a) => AuthStatusDto::from_status(&a.refresh().await),
+        }
+    }
+
+    /// `auth_logout`: 로컬 먼저 → 서버(실패 무시). 세션 파일을 지우지도 비우지도 못했으면 오류(상태는 SignedOut)
+    pub async fn auth_logout(&self) -> Result<AuthStatusDto, AppError> {
+        let Some(a) = self.auth.clone() else {
+            return Ok(AuthStatusDto::disabled());
+        };
+        a.logout()
+            .await
+            .map(|s| AuthStatusDto::from_status(&s))
+            .map_err(|e| AppError::internal(format!("로그인 정보를 지우지 못했습니다({})", e.op)))
     }
 }
 

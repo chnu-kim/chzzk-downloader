@@ -1,0 +1,1204 @@
+//! `AuthService` 상태 전이 표(worker.md §11.3·§11.4, 구현 중 변경 A1-1~A1-5).
+//!
+//! 가짜 `WorkerApi`·`Clock`을 주입한다. 시각 기준 V = 2030-01-01T00:00:00Z.
+
+mod common;
+
+use std::sync::Arc;
+
+use chzzk_shell::ErrorCode;
+use chzzk_shell::auth::*;
+use common::auth::*;
+use time::{Duration, OffsetDateTime};
+use tokio::sync::Notify;
+
+type Svc = AuthService<FakeWorkerApi, FakeClock>;
+
+fn h(n: i64) -> Duration {
+    Duration::hours(n)
+}
+fn d(n: i64) -> Duration {
+    Duration::days(n)
+}
+fn mins(n: i64) -> Duration {
+    Duration::minutes(n)
+}
+
+struct Env {
+    dir: tempfile::TempDir,
+    api: FakeWorkerApi,
+    clock: FakeClock,
+    svc: Arc<Svc>,
+}
+
+impl Env {
+    /// `now`는 V에서의 거리, `file`은 저장 세션의 refresh 만료(V에서의 거리, verified = V)
+    fn new(now: Duration, file: Option<Duration>) -> Self {
+        let dir = tempfile::tempdir().unwrap();
+        if let Some(r) = file {
+            store(dir.path()).save(&stored(1, t0(), t0() + r)).unwrap();
+        }
+        let api = FakeWorkerApi::default();
+        let clock = FakeClock::at(t0() + now);
+        let svc = Arc::new(service(dir.path(), &api, &clock));
+        Self {
+            dir,
+            api,
+            clock,
+            svc,
+        }
+    }
+
+    /// o4: V+1h에 유예 안 낙관
+    fn optimistic() -> Self {
+        Self::new(h(1), Some(d(30)))
+    }
+
+    /// o5: V+72h에 유예 밖(Checking)
+    fn checking() -> Self {
+        Self::new(h(72), Some(d(30)))
+    }
+
+    fn path(&self) -> &std::path::Path {
+        self.dir.path()
+    }
+
+    fn now(&self) -> OffsetDateTime {
+        self.clock.now()
+    }
+
+    fn file_access(&self) -> Option<String> {
+        read_session(self.path()).map(|v| v["accessToken"].as_str().unwrap().to_string())
+    }
+
+    fn file_exists(&self) -> bool {
+        self.path().join("session.json").exists()
+    }
+
+    fn refresh_ok(&self, n: u32) {
+        self.api.push_refresh(Reply::Now(Ok(bundle(n, self.now()))));
+    }
+
+    fn refresh_fail_twice(&self) {
+        for _ in 0..2 {
+            self.api.push_refresh(Reply::Now(Err(transport())));
+        }
+    }
+
+    /// o4 뒤 refresh 성공(온라인, b2)
+    async fn online() -> Self {
+        let e = Self::optimistic();
+        e.refresh_ok(2);
+        e.svc.startup().await;
+        e
+    }
+
+    fn start_ok(&self) {
+        self.api.push_start(Reply::Now(Ok(start_ok(&base()))));
+    }
+}
+
+fn is_poll(c: &Call) -> bool {
+    matches!(c, Call::Poll { .. })
+}
+
+fn acc(n: u32) -> String {
+    tok("cda_", &format!("acc{n}"))
+}
+fn rf(n: u32) -> String {
+    tok("cdr_", &format!("ref{n}"))
+}
+
+fn assert_signed_in_online(s: &AuthStatus) {
+    assert_eq!(s.phase, AuthPhase::SignedIn, "{s:?}");
+    assert_eq!(s.reason, None);
+    assert!(s.offline.is_none());
+}
+
+fn assert_offline(s: &AuthStatus, cause: Cause) {
+    assert_eq!(s.phase, AuthPhase::SignedIn, "{s:?}");
+    let o = s.offline.as_ref().expect("오프라인 정보");
+    assert_eq!(o.cause, cause);
+    assert_eq!(
+        s.reason,
+        Some(match cause {
+            Cause::Network => AuthReason::Network,
+            Cause::Server => AuthReason::Server,
+        })
+    );
+}
+
+// ---------------------------------------------------------------- 시작(open)
+
+#[tokio::test(start_paused = true)]
+async fn o1_no_file_signed_out() {
+    let e = Env::new(h(1), None);
+    let s = e.svc.status();
+    assert_eq!((s.phase, s.reason), (AuthPhase::SignedOut, None));
+    assert!(e.api.calls().is_empty());
+}
+
+#[tokio::test(start_paused = true)]
+async fn o2_other_origin_signed_out_file_kept() {
+    let dir = tempfile::tempdir().unwrap();
+    SessionStore::new(
+        dir.path().to_path_buf(),
+        &WorkerBase::parse("https://other.example.invalid").unwrap(),
+    )
+    .save(&stored(1, t0(), t0() + d(30)))
+    .unwrap();
+    let api = FakeWorkerApi::default();
+    let svc = service(dir.path(), &api, &FakeClock::at(t0() + h(1)));
+    assert_eq!(svc.status().phase, AuthPhase::SignedOut);
+    assert!(dir.path().join("session.json").exists());
+}
+
+#[tokio::test(start_paused = true)]
+async fn o3_corrupt_signed_out_file_kept() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("session.json"), b"{").unwrap();
+    let svc = service(dir.path(), &FakeWorkerApi::default(), &FakeClock::at(t0()));
+    assert_eq!(svc.status().phase, AuthPhase::SignedOut);
+    assert!(dir.path().join("session.json").exists());
+}
+
+#[tokio::test(start_paused = true)]
+async fn o4_within_grace_optimistic() {
+    let e = Env::optimistic();
+    let s = e.svc.status();
+    assert_signed_in_online(&s);
+    assert_eq!(s.channel_id.as_deref(), Some(CH));
+    assert_eq!(s.verified_at, Some(t0()));
+    assert!(e.api.calls().is_empty());
+}
+
+#[tokio::test(start_paused = true)]
+async fn o5_grace_over_checking() {
+    let s = Env::checking().svc.status();
+    assert_eq!(s.phase, AuthPhase::Checking);
+    assert_eq!(s.channel_id.as_deref(), Some(CH));
+}
+
+#[tokio::test(start_paused = true)]
+async fn o6_clock_rollback_checking() {
+    let e = Env::new(-mins(1), Some(d(30)));
+    assert_eq!(e.svc.status().phase, AuthPhase::Checking);
+}
+
+#[tokio::test(start_paused = true)]
+async fn o7_cap_passed_expired_without_network() {
+    let e = Env::new(h(2), Some(h(1)));
+    let s = e.svc.status();
+    assert_eq!(
+        (s.phase, s.reason),
+        (AuthPhase::Expired, Some(AuthReason::SessionExpired))
+    );
+    assert!(!e.file_exists());
+    assert!(e.api.calls().is_empty());
+}
+
+// ------------------------------------------------- startup·refresh(첫 시도)
+
+#[tokio::test(start_paused = true)]
+async fn s1_optimistic_ok() {
+    let e = Env::optimistic();
+    e.refresh_ok(2);
+    let s = e.svc.startup().await;
+    assert_signed_in_online(&s);
+    assert_eq!(e.file_access(), Some(acc(2)));
+    assert_eq!(
+        read_session(e.path()).unwrap()["verifiedAt"],
+        "2030-01-01T01:00:00Z"
+    );
+    assert!(e.svc.take_first_online());
+    assert!(!e.svc.take_first_online());
+    assert_eq!(e.api.refresh_calls(), vec![rf(1)]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn s2_optimistic_transport_offline() {
+    let e = Env::optimistic();
+    let since = e.now();
+    e.refresh_fail_twice();
+    let s = e.svc.startup().await;
+    assert_offline(&s, Cause::Network);
+    let o = s.offline.unwrap();
+    assert_eq!((o.since, o.grace_until), (since, t0() + h(72)));
+    assert_eq!(e.file_access(), Some(acc(1)));
+    assert_eq!(e.api.refresh_calls().len(), 2);
+    assert!(!e.svc.take_first_online());
+}
+
+#[tokio::test(start_paused = true)]
+async fn s3_checking_ok() {
+    let e = Env::checking();
+    e.refresh_ok(2);
+    assert_signed_in_online(&e.svc.startup().await);
+}
+
+#[tokio::test(start_paused = true)]
+async fn s4_checking_transport_grace_expired_keeps_file() {
+    let e = Env::checking();
+    e.refresh_fail_twice();
+    let s = e.svc.startup().await;
+    assert_eq!(
+        (s.phase, s.reason),
+        (AuthPhase::Expired, Some(AuthReason::GraceExpired))
+    );
+    assert!(e.file_exists());
+    assert_eq!(s.channel_id.as_deref(), Some(CH));
+}
+
+#[tokio::test(start_paused = true)]
+async fn s5_session_expired_deletes() {
+    let e = Env::checking();
+    e.api
+        .push_refresh(Reply::Now(Err(worker(401, "session_expired"))));
+    let s = e.svc.startup().await;
+    assert_eq!(
+        (s.phase, s.reason),
+        (AuthPhase::Expired, Some(AuthReason::SessionExpired))
+    );
+    assert!(!e.file_exists());
+    assert_eq!(e.api.refresh_calls().len(), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn s6_invalid_token_deletes() {
+    let e = Env::optimistic();
+    e.api
+        .push_refresh(Reply::Now(Err(worker(401, "invalid_token"))));
+    let s = e.svc.startup().await;
+    assert_eq!(
+        (s.phase, s.reason),
+        (AuthPhase::Expired, Some(AuthReason::SessionExpired))
+    );
+    assert!(!e.file_exists());
+}
+
+#[tokio::test(start_paused = true)]
+async fn s7_revoked_deletes() {
+    let e = Env::optimistic();
+    e.api
+        .push_refresh(Reply::Now(Err(worker(401, "session_revoked"))));
+    let s = e.svc.startup().await;
+    assert_eq!(
+        (s.phase, s.reason),
+        (AuthPhase::Expired, Some(AuthReason::Revoked))
+    );
+    assert!(!e.file_exists());
+}
+
+#[tokio::test(start_paused = true)]
+async fn s8_not_allowed_denied() {
+    let e = Env::optimistic();
+    e.api
+        .push_refresh(Reply::Now(Err(worker(403, "not_allowed"))));
+    let s = e.svc.startup().await;
+    assert_eq!(
+        (s.phase, s.reason),
+        (AuthPhase::Denied, Some(AuthReason::RemovedFromAllowlist))
+    );
+    assert_eq!(s.channel_name.as_deref(), Some("채널"));
+    assert_eq!(s.channel_id, None);
+    assert!(!e.file_exists());
+}
+
+#[tokio::test(start_paused = true)]
+async fn s9_cloudflare_403_html_in_grace() {
+    let e = Env::optimistic();
+    for _ in 0..2 {
+        e.api
+            .push_refresh(Reply::Now(Err(ApiError::NotWorker { status: 403 })));
+    }
+    assert_offline(&e.svc.startup().await, Cause::Network);
+    assert_eq!(e.api.refresh_calls().len(), 2);
+}
+
+#[tokio::test(start_paused = true)]
+async fn s10_worker_400_in_grace_server() {
+    let e = Env::optimistic();
+    e.api
+        .push_refresh(Reply::Now(Err(worker(400, "bad_request"))));
+    assert_offline(&e.svc.startup().await, Cause::Server);
+    assert_eq!(e.api.refresh_calls().len(), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn s11_rate_limited_in_grace() {
+    let e = Env::optimistic();
+    e.api
+        .push_refresh(Reply::Now(Err(worker(429, "rate_limited"))));
+    assert_offline(&e.svc.startup().await, Cause::Server);
+    assert_eq!(e.api.refresh_calls().len(), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn s12_cap_passed_during_offline() {
+    let e = Env::new(h(79), Some(h(80)));
+    assert_eq!(e.svc.status().phase, AuthPhase::Checking);
+    e.clock.set(t0() + h(80));
+    e.refresh_fail_twice();
+    let s = e.svc.startup().await;
+    assert_eq!(
+        (s.phase, s.reason),
+        (AuthPhase::Expired, Some(AuthReason::SessionExpired))
+    );
+    assert!(!e.file_exists());
+}
+
+#[tokio::test(start_paused = true)]
+async fn s13_mismatched_pair_is_server() {
+    let e = Env::optimistic();
+    e.api
+        .push_refresh(Reply::Now(Err(worker(401, "not_allowed"))));
+    assert_offline(&e.svc.startup().await, Cause::Server);
+}
+
+// ------------------------------------------------------ 응답 유실(D9·D7)
+
+#[tokio::test(start_paused = true)]
+async fn l1_lost_then_ok_recovers() {
+    let e = Env::optimistic();
+    e.api.push_refresh(Reply::Now(Err(transport())));
+    e.refresh_ok(2);
+    assert_signed_in_online(&e.svc.startup().await);
+    assert_eq!(e.api.refresh_calls(), vec![rf(1), rf(1)]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn l2_lost_then_revoked_is_reuse() {
+    let e = Env::optimistic();
+    e.api.push_refresh(Reply::Now(Err(transport())));
+    e.api
+        .push_refresh(Reply::Now(Err(worker(401, "session_revoked"))));
+    let s = e.svc.startup().await;
+    assert_eq!(
+        (s.phase, s.reason),
+        (AuthPhase::Expired, Some(AuthReason::ReuseDetected))
+    );
+    assert!(!e.file_exists());
+}
+
+#[tokio::test(start_paused = true)]
+async fn l3_lost_twice_offline() {
+    let e = Env::optimistic();
+    e.refresh_fail_twice();
+    assert_offline(&e.svc.startup().await, Cause::Network);
+    assert_eq!(e.api.refresh_calls().len(), 2);
+}
+
+#[tokio::test(start_paused = true)]
+async fn l4_worker_5xx_no_retry() {
+    let e = Env::optimistic();
+    e.api.push_refresh(Reply::Now(Err(worker(503, "busy"))));
+    assert_offline(&e.svc.startup().await, Cause::Server);
+    assert_eq!(e.api.refresh_calls().len(), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn l5_not_worker_retried() {
+    let e = Env::optimistic();
+    e.api
+        .push_refresh(Reply::Now(Err(ApiError::NotWorker { status: 502 })));
+    e.refresh_ok(2);
+    assert_signed_in_online(&e.svc.startup().await);
+    assert_eq!(e.api.refresh_calls().len(), 2);
+}
+
+#[tokio::test(start_paused = true)]
+async fn l6_contract_200_retried() {
+    let e = Env::optimistic();
+    e.api
+        .push_refresh(Reply::Now(Err(ApiError::Contract { status: 200 })));
+    e.refresh_ok(2);
+    assert_signed_in_online(&e.svc.startup().await);
+    assert_eq!(e.api.refresh_calls(), vec![rf(1), rf(1)]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn l7_contract_200_twice_offline() {
+    let e = Env::optimistic();
+    for _ in 0..2 {
+        e.api
+            .push_refresh(Reply::Now(Err(ApiError::Contract { status: 200 })));
+    }
+    assert_offline(&e.svc.startup().await, Cause::Server);
+    assert_eq!(e.api.refresh_calls().len(), 2);
+}
+
+// ------------------------------------------------------------ single-flight
+
+#[tokio::test(start_paused = true)]
+async fn f1_concurrent_refresh_calls_once() {
+    let e = Env::optimistic();
+    let n = Arc::new(Notify::new());
+    e.api
+        .push_refresh(Reply::Hold(n.clone(), Ok(bundle(2, e.now()))));
+    let svc = e.svc.clone();
+    let a = tokio::spawn({
+        let s = svc.clone();
+        async move { s.refresh().await }
+    });
+    let b = tokio::spawn({
+        let s = svc.clone();
+        async move { s.refresh().await }
+    });
+    while e.api.refresh_calls().is_empty() {
+        tokio::task::yield_now().await;
+    }
+    for _ in 0..10 {
+        tokio::task::yield_now().await;
+    }
+    n.notify_one();
+    let (a, b) = (a.await.unwrap(), b.await.unwrap());
+    assert_eq!(e.api.refresh_calls().len(), 1);
+    assert_signed_in_online(&a);
+    assert_signed_in_online(&b);
+}
+
+#[tokio::test(start_paused = true)]
+async fn f2_sequential_refresh_calls_twice() {
+    let e = Env::optimistic();
+    e.refresh_ok(2);
+    e.svc.refresh().await;
+    e.refresh_ok(3);
+    e.svc.refresh().await;
+    assert_eq!(e.api.refresh_calls(), vec![rf(1), rf(2)]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn f3_ensure_fresh_during_refresh_waits() {
+    let dir = tempfile::tempdir().unwrap();
+    let now = t0() + h(1);
+    let b = bundle_with(1, now + Duration::seconds(30), t0() + d(30));
+    store(dir.path())
+        .save(&StoredSession::from_bundle(b, t0()))
+        .unwrap();
+    let api = FakeWorkerApi::default();
+    let clock = FakeClock::at(now);
+    let svc = Arc::new(service(dir.path(), &api, &clock));
+    let n = Arc::new(Notify::new());
+    api.push_refresh(Reply::Hold(n.clone(), Ok(bundle(2, now))));
+    let a = tokio::spawn({
+        let s = svc.clone();
+        async move { s.refresh().await }
+    });
+    while api.refresh_calls().is_empty() {
+        tokio::task::yield_now().await;
+    }
+    let b = tokio::spawn({
+        let s = svc.clone();
+        async move { s.ensure_fresh_access().await }
+    });
+    for _ in 0..10 {
+        tokio::task::yield_now().await;
+    }
+    n.notify_one();
+    a.await.unwrap();
+    let got = b.await.unwrap().expect("새 access");
+    assert_eq!(api.refresh_calls().len(), 1);
+    assert_eq!(got.expose(), &acc(2));
+}
+
+// ------------------------------------------------------------ 쓰기 실패(D10)
+
+#[tokio::test(start_paused = true)]
+async fn w1_refresh_ok_write_fails_keeps_new_in_memory() {
+    let e = Env::optimistic();
+    break_dir(e.path());
+    e.refresh_ok(2);
+    let s = e.svc.refresh().await;
+    assert_signed_in_online(&s);
+    // due까지 옮긴 뒤 다시 갱신: 옛 ref1이 아니라 ref2를 낸다
+    e.clock.set(e.svc.next_wake().unwrap());
+    e.refresh_ok(3);
+    e.svc.tick(Trigger::Timer).await;
+    assert_eq!(e.api.refresh_calls(), vec![rf(1), rf(2)]);
+    fix_dir(e.path());
+    e.svc.tick(Trigger::Timer).await;
+    assert_eq!(e.file_access(), Some(acc(3)));
+}
+
+#[tokio::test(start_paused = true)]
+async fn w2_dirty_flushed_on_tick() {
+    let e = Env::optimistic();
+    break_dir(e.path());
+    e.refresh_ok(2);
+    e.svc.refresh().await;
+    fix_dir(e.path());
+    e.svc.tick(Trigger::Timer).await;
+    assert_eq!(e.api.refresh_calls().len(), 1);
+    assert_eq!(e.file_access(), Some(acc(2)));
+}
+
+#[tokio::test(start_paused = true)]
+async fn w3_login_ok_write_fails_signed_in() {
+    let e = Env::new(h(1), None);
+    break_dir(e.path());
+    e.start_ok();
+    e.svc.begin_login().await;
+    e.api
+        .push_poll(Reply::Now(Ok(PollResponse::Ok(bundle(1, e.now())))));
+    e.svc.poll_login_once().await;
+    assert!(e.svc.is_signed_in());
+    fix_dir(e.path());
+    e.svc.tick(Trigger::Timer).await;
+    assert_eq!(e.file_access(), Some(acc(1)));
+}
+
+#[cfg(unix)]
+#[tokio::test(start_paused = true)]
+async fn w4_delete_failure_still_expired() {
+    use std::os::unix::fs::PermissionsExt;
+    let e = Env::optimistic();
+    std::fs::set_permissions(e.path(), std::fs::Permissions::from_mode(0o500)).unwrap();
+    let probe = e.path().join("probe");
+    if std::fs::write(&probe, b"x").is_ok() {
+        eprintln!("읽기 전용 폴더에도 쓸 수 있어(root) 건너뜀");
+        std::fs::remove_file(&probe).unwrap();
+        return;
+    }
+    e.api
+        .push_refresh(Reply::Now(Err(worker(401, "session_expired"))));
+    let s = e.svc.refresh().await;
+    std::fs::set_permissions(e.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+    assert_eq!(
+        (s.phase, s.reason),
+        (AuthPhase::Expired, Some(AuthReason::SessionExpired))
+    );
+    assert_eq!(s.channel_id, None);
+}
+
+// ----------------------------------------------------------- tick·스케줄(D20)
+
+#[tokio::test(start_paused = true)]
+async fn t1_not_due_no_call() {
+    let e = Env::online().await;
+    e.clock.advance(h(23) - mins(2));
+    e.svc.tick(Trigger::Timer).await;
+    assert_eq!(e.api.refresh_calls().len(), 1);
+    assert_eq!(
+        e.svc.next_wake(),
+        Some(t0() + h(1) + h(24) - Duration::seconds(60))
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn t2_due_calls() {
+    let e = Env::online().await;
+    e.clock.set(e.svc.next_wake().unwrap());
+    e.refresh_ok(3);
+    e.svc.tick(Trigger::Timer).await;
+    assert_eq!(e.api.refresh_calls().len(), 2);
+}
+
+#[tokio::test(start_paused = true)]
+async fn t3_access_skew_rules() {
+    let e = Env::optimistic();
+    let now = e.now();
+    e.api
+        .push_refresh(Reply::Now(Ok(bundle_with(2, now + h(2), now + d(30)))));
+    e.svc.refresh().await;
+    assert_eq!(e.svc.next_wake(), Some(now + h(2) - Duration::seconds(60)));
+}
+
+#[tokio::test(start_paused = true)]
+async fn t4_offline_backoff_schedule() {
+    let e = Env::optimistic();
+    let s0 = e.now();
+    e.refresh_fail_twice();
+    e.svc.startup().await;
+    assert_eq!(e.svc.next_wake(), Some(s0 + mins(1)));
+    e.clock.set(s0 + Duration::seconds(59));
+    e.svc.tick(Trigger::Timer).await;
+    assert_eq!(e.api.refresh_calls().len(), 2);
+    for delay in [2, 5, 10, 30, 30] {
+        let at = e.svc.next_wake().unwrap();
+        e.clock.set(at);
+        let before = e.api.refresh_calls().len();
+        e.refresh_fail_twice();
+        e.svc.tick(Trigger::Timer).await;
+        assert_eq!(e.api.refresh_calls().len(), before + 2);
+        assert_eq!(e.svc.next_wake(), Some(at + mins(delay)));
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn t5_grace_passes_then_tries_once() {
+    let e = Env::optimistic();
+    e.refresh_fail_twice();
+    e.svc.startup().await;
+    e.clock.set(t0() + h(72));
+    e.refresh_fail_twice();
+    let s = e.svc.tick(Trigger::Timer).await;
+    assert_eq!(e.api.refresh_calls().len(), 4);
+    assert_eq!(
+        (s.phase, s.reason),
+        (AuthPhase::Expired, Some(AuthReason::GraceExpired))
+    );
+    assert!(e.file_exists());
+}
+
+#[tokio::test(start_paused = true)]
+async fn t6_reconnect_from_grace_expired() {
+    let e = Env::optimistic();
+    e.refresh_fail_twice();
+    e.svc.startup().await;
+    e.clock.set(t0() + h(72));
+    e.refresh_fail_twice();
+    e.svc.tick(Trigger::Timer).await;
+    let n = Arc::new(Notify::new());
+    e.api
+        .push_refresh(Reply::Hold(n.clone(), Ok(bundle(2, e.now()))));
+    let svc = e.svc.clone();
+    let t = tokio::spawn({
+        let s = svc.clone();
+        async move { s.refresh().await }
+    });
+    while e.api.refresh_calls().len() < 5 {
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(svc.status().phase, AuthPhase::Checking);
+    n.notify_one();
+    assert_signed_in_online(&t.await.unwrap());
+    assert_eq!(e.api.count(|c| matches!(c, Call::Start { .. })), 0);
+}
+
+#[tokio::test(start_paused = true)]
+async fn t7_focus_min_gap() {
+    let e = Env::optimistic();
+    let s0 = e.now();
+    e.refresh_fail_twice();
+    e.svc.startup().await;
+    e.clock.set(s0 + Duration::seconds(30));
+    e.svc.tick(Trigger::Focus).await;
+    assert_eq!(e.api.refresh_calls().len(), 2);
+    e.clock.set(s0 + Duration::seconds(61));
+    e.refresh_fail_twice();
+    e.svc.tick(Trigger::Focus).await;
+    assert_eq!(e.api.refresh_calls().len(), 4);
+}
+
+#[tokio::test(start_paused = true)]
+async fn t8_resume_online_due_by_wall_clock() {
+    let e = Env::online().await;
+    e.clock.advance(h(25));
+    e.refresh_ok(3);
+    e.svc.tick(Trigger::Resume).await;
+    assert_eq!(e.api.refresh_calls().len(), 2);
+}
+
+#[tokio::test(start_paused = true)]
+async fn t9_tick_noop_when_signed_out() {
+    let e = Env::new(h(1), None);
+    e.svc.tick(Trigger::Timer).await;
+    e.svc.tick(Trigger::Focus).await;
+    assert!(e.api.calls().is_empty());
+    assert_eq!(e.svc.next_wake(), None);
+}
+
+// ------------------------------------------------------- 로그인(D13~D19)
+
+/// 파일 없는 환경에서 로그인을 시작해 Pending으로 둔다
+async fn pending_env() -> Env {
+    let e = Env::new(h(1), None);
+    e.start_ok();
+    assert!(matches!(e.svc.begin_login().await, BeginLogin::Started(_)));
+    e
+}
+
+#[tokio::test(start_paused = true)]
+async fn g1_begin_login_starts() {
+    let e = Env::new(h(1), None);
+    e.start_ok();
+    let now = e.now();
+    let BeginLogin::Started(t) = e.svc.begin_login().await else {
+        panic!("Started가 아님");
+    };
+    assert!(t.login_url.expose().ends_with(&"H".repeat(22)));
+    let s = e.svc.status();
+    assert_eq!(s.phase, AuthPhase::Pending);
+    let p = s.pending.unwrap();
+    assert_eq!(p.user_code, "K7QX-4MRA");
+    assert_eq!(p.expires_at, now + mins(10));
+    let Call::Start { verifier, client } = e.api.calls()[0].clone() else {
+        panic!()
+    };
+    assert!(token::is_secret(&verifier));
+    assert_eq!(client, "app/0.1.0 test");
+    e.api.push_poll(Reply::Now(Ok(PollResponse::Pending)));
+    e.svc.poll_login_once().await;
+    let Call::Poll { secret, .. } = e.api.calls()[1].clone() else {
+        panic!()
+    };
+    assert_eq!(token::poll_verifier(&secret), verifier);
+}
+
+#[tokio::test(start_paused = true)]
+async fn g2_begin_twice_already_pending() {
+    let e = pending_env().await;
+    assert!(matches!(
+        e.svc.begin_login().await,
+        BeginLogin::AlreadyPending(_)
+    ));
+    assert_eq!(e.api.count(|c| matches!(c, Call::Start { .. })), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn g3_begin_when_signed_in() {
+    let e = Env::optimistic();
+    assert_eq!(e.svc.begin_login().await, BeginLogin::AlreadySignedIn);
+    assert!(e.api.calls().is_empty());
+}
+
+#[tokio::test(start_paused = true)]
+async fn g4_start_failures() {
+    for (err, reason) in [
+        (transport(), AuthReason::Network),
+        (worker(429, "rate_limited"), AuthReason::Server),
+        (worker(503, "busy"), AuthReason::Server),
+    ] {
+        let e = Env::new(h(1), None);
+        e.api.push_start(Reply::Now(Err(err)));
+        assert_eq!(e.svc.begin_login().await, BeginLogin::Failed);
+        let s = e.svc.status();
+        assert_eq!((s.phase, s.reason), (AuthPhase::Error, Some(reason)));
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn g5_poll_ok_signs_in() {
+    let e = pending_env().await;
+    e.api
+        .push_poll(Reply::Now(Ok(PollResponse::Ok(bundle(1, e.now())))));
+    let s = e.svc.poll_login_once().await;
+    assert_signed_in_online(&s);
+    assert_eq!(e.file_access(), Some(acc(1)));
+    assert!(e.svc.take_first_online());
+    assert!(e.svc.login_ticket().is_none());
+}
+
+#[tokio::test(start_paused = true)]
+async fn g6_poll_denied() {
+    let e = pending_env().await;
+    e.api.push_poll(Reply::Now(Ok(PollResponse::Denied {
+        channel_name: "남의 채널".into(),
+    })));
+    let s = e.svc.poll_login_once().await;
+    assert_eq!((s.phase, s.reason), (AuthPhase::Denied, None));
+    assert_eq!(s.channel_name.as_deref(), Some("남의 채널"));
+    assert_eq!(s.channel_id, None);
+    assert!(!e.file_exists());
+}
+
+#[tokio::test(start_paused = true)]
+async fn g7_poll_cancelled() {
+    let e = pending_env().await;
+    e.api.push_poll(Reply::Now(Ok(PollResponse::Cancelled)));
+    assert_eq!(e.svc.poll_login_once().await.phase, AuthPhase::Cancelled);
+}
+
+#[tokio::test(start_paused = true)]
+async fn g8_poll_failed() {
+    let e = pending_env().await;
+    e.api.push_poll(Reply::Now(Ok(PollResponse::Failed {
+        code: "token".into(),
+    })));
+    let s = e.svc.poll_login_once().await;
+    assert_eq!(
+        (s.phase, s.reason),
+        (AuthPhase::Error, Some(AuthReason::Server))
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn g9_poll_404_before_deadline_lost() {
+    let e = pending_env().await;
+    e.api.push_poll(Reply::Now(Err(worker(404, "not_found"))));
+    let s = e.svc.poll_login_once().await;
+    assert_eq!(
+        (s.phase, s.reason),
+        (AuthPhase::Error, Some(AuthReason::LoginLost))
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn g10_poll_404_after_deadline_timeout() {
+    let e = pending_env().await;
+    let deadline = e.svc.status().pending.unwrap().expires_at;
+    let n = Arc::new(Notify::new());
+    e.api
+        .push_poll(Reply::Hold(n.clone(), Err(worker(404, "not_found"))));
+    let svc = e.svc.clone();
+    let t = tokio::spawn({
+        let s = svc.clone();
+        async move { s.poll_login_once().await }
+    });
+    while e.api.count(is_poll) == 0 {
+        tokio::task::yield_now().await;
+    }
+    e.clock.set(deadline + Duration::seconds(1));
+    n.notify_one();
+    let s = t.await.unwrap();
+    assert_eq!(
+        (s.phase, s.reason),
+        (AuthPhase::Expired, Some(AuthReason::LoginTimeout))
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn g11_too_soon_keeps_pending() {
+    let e = pending_env().await;
+    e.api.push_poll(Reply::Now(Err(worker(429, "too_soon"))));
+    assert_eq!(e.svc.poll_login_once().await.phase, AuthPhase::Pending);
+}
+
+#[tokio::test(start_paused = true)]
+async fn g12_transient_keeps_polling() {
+    let e = pending_env().await;
+    e.api.push_poll(Reply::Now(Err(transport())));
+    e.api.push_poll(Reply::Now(Err(worker(503, "busy"))));
+    e.api.push_poll(Reply::Now(Ok(PollResponse::Pending)));
+    e.api
+        .push_poll(Reply::Now(Ok(PollResponse::Ok(bundle(1, e.now())))));
+    for _ in 0..3 {
+        assert_eq!(e.svc.poll_login_once().await.phase, AuthPhase::Pending);
+    }
+    assert_eq!(e.svc.poll_login_once().await.phase, AuthPhase::SignedIn);
+}
+
+#[tokio::test(start_paused = true)]
+async fn g13_deadline_with_last_transient_is_error() {
+    let e = pending_env().await;
+    let deadline = e.svc.status().pending.unwrap().expires_at;
+    e.api.push_poll(Reply::Now(Err(transport())));
+    assert_eq!(e.svc.poll_login_once().await.phase, AuthPhase::Pending);
+    e.clock.set(deadline);
+    let s = e.svc.poll_login_once().await;
+    assert_eq!(
+        (s.phase, s.reason),
+        (AuthPhase::Error, Some(AuthReason::Network))
+    );
+    assert_eq!(e.api.count(is_poll), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn g14_deadline_without_transient_is_timeout() {
+    let e = pending_env().await;
+    let deadline = e.svc.status().pending.unwrap().expires_at;
+    e.api.push_poll(Reply::Now(Ok(PollResponse::Pending)));
+    e.svc.poll_login_once().await;
+    e.clock.set(deadline);
+    let s = e.svc.poll_login_once().await;
+    assert_eq!(
+        (s.phase, s.reason),
+        (AuthPhase::Expired, Some(AuthReason::LoginTimeout))
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn g15_cancel_discards_late_ok() {
+    let e = pending_env().await;
+    let n = Arc::new(Notify::new());
+    e.api.push_poll(Reply::Hold(
+        n.clone(),
+        Ok(PollResponse::Ok(bundle(1, e.now()))),
+    ));
+    let svc = e.svc.clone();
+    let t = tokio::spawn({
+        let s = svc.clone();
+        async move { s.poll_login_once().await }
+    });
+    while e.api.count(is_poll) == 0 {
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(svc.cancel_login().phase, AuthPhase::SignedOut);
+    n.notify_one();
+    let s = t.await.unwrap();
+    assert_eq!(s.phase, AuthPhase::SignedOut);
+    assert!(!e.file_exists());
+}
+
+/// s4 상태: GraceExpired, 파일 있음
+async fn grace_expired_env() -> Env {
+    let e = Env::checking();
+    e.refresh_fail_twice();
+    let s = e.svc.startup().await;
+    assert_eq!(s.reason, Some(AuthReason::GraceExpired));
+    e
+}
+
+#[tokio::test(start_paused = true)]
+async fn g16_cancel_from_grace_expired_keeps_held() {
+    let e = grace_expired_env().await;
+    e.start_ok();
+    assert!(matches!(e.svc.begin_login().await, BeginLogin::Started(_)));
+    let s = e.svc.cancel_login();
+    assert_eq!(
+        (s.phase, s.reason),
+        (AuthPhase::Expired, Some(AuthReason::GraceExpired))
+    );
+    assert!(e.file_exists());
+    e.refresh_ok(2);
+    assert_signed_in_online(&e.svc.refresh().await);
+}
+
+#[tokio::test(start_paused = true)]
+async fn g17_cancel_while_offline_in_grace() {
+    let e = Env::new(h(73), Some(d(30)));
+    assert_eq!(e.svc.status().phase, AuthPhase::Checking);
+    e.start_ok();
+    e.svc.begin_login().await;
+    e.clock.set(t0() + h(71));
+    e.refresh_fail_twice();
+    let s = e.svc.refresh().await;
+    assert_eq!(s.phase, AuthPhase::Pending);
+    let s = e.svc.cancel_login();
+    assert_eq!(s.phase, AuthPhase::SignedIn);
+    assert_eq!(s.offline.unwrap().grace_until, t0() + h(72));
+}
+
+#[tokio::test(start_paused = true)]
+async fn g18_refresh_ok_during_pending_ends_login() {
+    let e = Env::checking();
+    e.start_ok();
+    e.svc.begin_login().await;
+    e.refresh_ok(2);
+    assert_signed_in_online(&e.svc.refresh().await);
+    assert!(e.svc.login_ticket().is_none());
+    e.svc.poll_login_once().await;
+    assert_eq!(e.api.count(is_poll), 0);
+}
+
+#[tokio::test(start_paused = true)]
+async fn g19_login_failure_keeps_held() {
+    let e = grace_expired_env().await;
+    e.start_ok();
+    e.svc.begin_login().await;
+    e.api.push_poll(Reply::Now(Ok(PollResponse::Cancelled)));
+    assert_eq!(e.svc.poll_login_once().await.phase, AuthPhase::Cancelled);
+    assert!(e.file_exists());
+    let before = e.api.refresh_calls().len();
+    e.svc.refresh().await;
+    assert!(e.api.refresh_calls().len() > before);
+}
+
+#[tokio::test(start_paused = true)]
+async fn g20_run_login_poll_paced() {
+    let e = pending_env().await;
+    e.api.push_poll(Reply::Now(Ok(PollResponse::Pending)));
+    e.api.push_poll(Reply::Now(Ok(PollResponse::Pending)));
+    e.api
+        .push_poll(Reply::Now(Ok(PollResponse::Ok(bundle(1, e.now())))));
+    let t = tokio::time::Instant::now();
+    let s = e.svc.run_login_poll().await;
+    assert_eq!(s.phase, AuthPhase::SignedIn);
+    assert_eq!(e.api.count(is_poll), 3);
+    assert!(t.elapsed() >= std::time::Duration::from_secs(6));
+}
+
+#[tokio::test(start_paused = true)]
+async fn g21_run_login_poll_times_out() {
+    let e = pending_env().await;
+    for _ in 0..400 {
+        e.api.push_poll(Reply::Now(Ok(PollResponse::Pending)));
+    }
+    let t = tokio::time::Instant::now();
+    let s = e.svc.run_login_poll().await;
+    assert_eq!(
+        (s.phase, s.reason),
+        (AuthPhase::Expired, Some(AuthReason::LoginTimeout))
+    );
+    assert!(t.elapsed() <= std::time::Duration::from_secs(602));
+}
+
+#[tokio::test(start_paused = true)]
+async fn g22_interval_from_start() {
+    let e = Env::new(h(1), None);
+    e.api
+        .push_start(Reply::Now(Ok(start_ok_with(&base(), 5000))));
+    e.svc.begin_login().await;
+    e.api.push_poll(Reply::Now(Ok(PollResponse::Pending)));
+    e.api
+        .push_poll(Reply::Now(Ok(PollResponse::Ok(bundle(1, e.now())))));
+    let t = tokio::time::Instant::now();
+    e.svc.run_login_poll().await;
+    assert!(t.elapsed() >= std::time::Duration::from_secs(10));
+}
+
+// ------------------------------------------------------------ 로그아웃(D12)
+
+#[tokio::test(start_paused = true)]
+async fn x1_logout_clears_and_calls_server() {
+    let e = Env::online().await;
+    let s = e.svc.logout().await.unwrap();
+    assert_eq!(s.phase, AuthPhase::SignedOut);
+    assert!(!e.file_exists());
+    assert_eq!(
+        e.api.calls().last().unwrap(),
+        &Call::Logout {
+            access: Some(acc(2)),
+            refresh: Some(rf(2))
+        }
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn x2_logout_server_failure_ignored() {
+    let e = Env::online().await;
+    e.api.push_logout(Reply::Now(Err(transport())));
+    assert_eq!(e.svc.logout().await.unwrap().phase, AuthPhase::SignedOut);
+    assert!(!e.file_exists());
+}
+
+#[tokio::test(start_paused = true)]
+async fn x3_logout_during_refresh_discards_result() {
+    let e = Env::optimistic();
+    let n = Arc::new(Notify::new());
+    e.api
+        .push_refresh(Reply::Hold(n.clone(), Ok(bundle(2, e.now()))));
+    let svc = e.svc.clone();
+    let t = tokio::spawn({
+        let s = svc.clone();
+        async move { s.refresh().await }
+    });
+    while e.api.refresh_calls().is_empty() {
+        tokio::task::yield_now().await;
+    }
+    svc.logout().await.unwrap();
+    n.notify_one();
+    t.await.unwrap();
+    assert_eq!(svc.status().phase, AuthPhase::SignedOut);
+    assert!(!e.file_exists());
+    assert!(!svc.is_signed_in());
+}
+
+#[tokio::test(start_paused = true)]
+async fn x4_logout_cancels_pending_login() {
+    let e = pending_env().await;
+    assert_eq!(e.svc.logout().await.unwrap().phase, AuthPhase::SignedOut);
+    assert!(e.svc.login_ticket().is_none());
+    assert_eq!(e.api.count(|c| matches!(c, Call::Logout { .. })), 0);
+}
+
+// ------------------------------------------------- ensure_fresh_access·게이트
+
+#[tokio::test(start_paused = true)]
+async fn e1_fresh_access_no_call() {
+    let e = Env::online().await;
+    let got = e.svc.ensure_fresh_access().await.unwrap();
+    assert_eq!(got.expose(), &acc(2));
+    assert_eq!(e.api.refresh_calls().len(), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn e2_expiring_access_refreshes() {
+    let e = Env::online().await;
+    e.clock.set(t0() + h(1) + h(24) - Duration::seconds(30));
+    e.refresh_ok(3);
+    let got = e.svc.ensure_fresh_access().await.unwrap();
+    assert_eq!(got.expose(), &acc(3));
+}
+
+#[tokio::test(start_paused = true)]
+async fn e3_offline_none() {
+    let e = Env::optimistic();
+    e.refresh_fail_twice();
+    e.svc.refresh().await;
+    assert!(e.svc.ensure_fresh_access().await.is_none());
+}
+
+#[tokio::test(start_paused = true)]
+async fn e4_signed_out_none() {
+    let e = Env::new(h(1), None);
+    assert!(e.svc.ensure_fresh_access().await.is_none());
+    assert!(e.api.calls().is_empty());
+}
+
+#[tokio::test(start_paused = true)]
+async fn gate_table() {
+    let mut cases: Vec<(&str, Env, bool)> = Vec::new();
+    cases.push(("signed_in_optimistic", Env::optimistic(), true));
+    cases.push(("signed_in_online", Env::online().await, true));
+    let offline = Env::optimistic();
+    offline.refresh_fail_twice();
+    offline.svc.refresh().await;
+    cases.push(("signed_in_offline", offline, true));
+    cases.push(("checking", Env::checking(), false));
+    cases.push(("signed_out", Env::new(h(1), None), false));
+    cases.push(("pending", pending_env().await, false));
+    let denied = pending_env().await;
+    denied.api.push_poll(Reply::Now(Ok(PollResponse::Denied {
+        channel_name: "x".into(),
+    })));
+    denied.svc.poll_login_once().await;
+    cases.push(("denied", denied, false));
+    cases.push(("expired", Env::new(h(2), Some(h(1))), false));
+    let cancelled = pending_env().await;
+    cancelled
+        .api
+        .push_poll(Reply::Now(Ok(PollResponse::Cancelled)));
+    cancelled.svc.poll_login_once().await;
+    cases.push(("cancelled", cancelled, false));
+    let err = pending_env().await;
+    err.api.push_poll(Reply::Now(Ok(PollResponse::Failed {
+        code: "token".into(),
+    })));
+    err.svc.poll_login_once().await;
+    cases.push(("error", err, false));
+    for (name, e, signed_in) in cases {
+        assert_eq!(e.svc.is_signed_in(), signed_in, "{name}");
+        match e.svc.require_signed_in() {
+            Ok(()) => assert!(signed_in, "{name}"),
+            Err(err) => {
+                assert!(!signed_in, "{name}");
+                assert_eq!(err.code, ErrorCode::NotLoggedIn, "{name}");
+            }
+        }
+        assert_eq!(
+            e.svc.signed_in_channel(),
+            signed_in.then(|| CH.to_string()),
+            "{name}"
+        );
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn subscribe_sees_transitions() {
+    let e = Env::optimistic();
+    let mut rx = e.svc.subscribe();
+    e.refresh_ok(2);
+    e.svc.refresh().await;
+    rx.changed().await.unwrap();
+    let s = rx.borrow().clone();
+    assert_eq!(s.phase, AuthPhase::SignedIn);
+    assert!(s.offline.is_none());
+}
+
+fn assert_send_sync<T: Send + Sync>() {}
+fn assert_send<T: Send>(_: T) {}
+
+#[tokio::test(start_paused = true)]
+async fn service_is_send_sync() {
+    assert_send_sync::<Svc>();
+    let e = Env::optimistic();
+    assert_send(e.svc.refresh());
+    assert_send(e.svc.begin_login());
+    assert_send(e.svc.run_login_poll());
+}
+
+#[tokio::test(start_paused = true)]
+async fn service_debug_no_secrets() {
+    let e = pending_env().await;
+    let t = format!("{:?}", e.svc);
+    assert!(
+        !t.contains("acc") && !t.contains("ref") && !t.contains(&"L".repeat(22)),
+        "{t}"
+    );
+    let t = format!("{:?}{:?}", e.svc.status(), e.svc.login_ticket());
+    assert!(
+        !t.contains(&"H".repeat(22)) && !t.contains(&"L".repeat(22)),
+        "{t}"
+    );
+}

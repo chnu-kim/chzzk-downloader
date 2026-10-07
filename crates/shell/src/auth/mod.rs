@@ -10,6 +10,7 @@ mod api;
 mod base;
 mod clock;
 mod http;
+mod service;
 mod session;
 mod status;
 pub mod token;
@@ -22,6 +23,9 @@ pub use api::{
 pub use base::{BaseError, WorkerBase, client_label};
 pub use clock::{Clock, SystemClock};
 pub use http::{HttpWorkerApi, REQUEST_TIMEOUT};
+pub use service::{
+    AuthService, AuthStatus, BeginLogin, LoginTicket, OfflineInfo, PendingInfo, Trigger,
+};
 pub use session::{LoadOutcome, SESSION_FILE, SessionStore, StoreError, StoredSession};
 pub use status::{AuthPhase, AuthReason};
 pub use verify::{

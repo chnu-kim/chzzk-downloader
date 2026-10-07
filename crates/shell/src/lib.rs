@@ -19,7 +19,7 @@ pub mod services;
 mod writer;
 
 pub use app::App;
-pub use auth::{HttpWorkerApi, SessionStore, SystemClock, WorkerBase};
+pub use auth::{AuthService, HttpWorkerApi, SessionStore, SystemClock, WorkerBase};
 pub use backend::Backend;
 pub use dto::JobId;
 pub use error::{AppError, ErrorCode, ErrorPayload, RequestKindDto, Stage};

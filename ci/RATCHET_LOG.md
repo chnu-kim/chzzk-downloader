@@ -15,3 +15,4 @@
 | 2026-10-06 | `size.binary.darwin` | 20303840 → 22824784 | 툴체인 1.96.1 → 1.99.0(코드 변경 없음, ci.yml dispatch 37406016037의 CI 측정값, +12.4%). 같은 실행의 dmg는 −3.2%, Windows 바이너리는 −0.6%라 배포 크기는 줄었다(cicd.md 76) |
 | 2026-10-06 | `tests.worker` | 없음 → 0(`$pending`) | Phase 3 W1: worker/ vitest 통과 수를 새 키로 더했다(느슨하게 하기가 아니다). 첫 master 실행의 `ratchet-measurements-worker`로 `write --from-run`해 채우고 `PENDING_ALLOWED`에서 뺀다 |
 | 2026-10-08 | `size.dist_gz` | 57260 → 61297 | Phase 3b A3: 로그인 화면·AuthGate 분기·계정 슬롯·업데이트 배너·copy deck 추가(PR #44 실행 37767092248의 CI 측정값, +7.05%). 로그인 없이는 앱을 쓸 수 없게 하는 화면이다(worker.md 62) |
+| 2026-10-08 | `size.binary.linux` | 32559632 → 33581280 | Phase 3b A4: 업데이트 확인·설치 command와 설치 흐름(updater 플러그인 호출·quit 연동·진행 이벤트) 추가(PR #45 실행 37777649961의 CI 측정값, +3.14%). 서명된 업데이트로 옛 앱을 고치는 경로다(worker.md 67~) |

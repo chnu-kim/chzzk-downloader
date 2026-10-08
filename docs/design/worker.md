@@ -645,8 +645,8 @@ S3 로그인(§8.9)에 `checking`(최대 10초 뒤 [다시 연결]·[다시 로�
 | `auth.otherAccount.help` | 다른 계정으로 로그인하려면 브라우저에서 네이버 로그아웃을 먼저 해 주세요. |
 | `banner.resumeNeedsLogin` / `job.otherChannel` | 지난번에 받다가 멈춘 다운로드가 {n}개 있어요. 로그인하면 이어받을 수 있어요. / 다른 채널로 로그인해 이어받을 수 없어요 |
 | `update.banner` / `.install` / `.later` | 새 버전 {version}이 있어요. / 지금 업데이트 / 나중에 |
-| `update.downloading` / `.installing` / `.failed` / `.untrusted` | 업데이트 받는 중 {pct} / 설치하고 다시 시작해요… / 업데이트하지 못했어요. 잠시 뒤 다시 시도해 주세요. / 업데이트 주소를 확인할 수 없어 받지 않았어요. |
-| `dialog.update.*` | 업데이트하고 다시 시작할까요? / 받는 중인 영상 {n}개가 일시정지되고, 다시 시작하면 이어받아요. / 업데이트하고 다시 시작 / 나중에 |
+| `update.downloading` / `.installing` / `.failed` / `.untrusted` | 업데이트 받는 중(퍼센트는 따로 보이기만 한다, A4-12) / 설치하고 다시 시작해요… / 업데이트하지 못했어요. 잠시 뒤 다시 시도해 주세요. / 업데이트 주소를 확인할 수 없어 받지 않았어요. |
+| `dialog.update.*` | 업데이트하고 다시 시작할까요? / 받는 중인 영상 {n}개가 일시정지되고, 다시 시작한 뒤 이어받을 수 있어요. / 업데이트하고 다시 시작 / 나중에 |
 | `settings.about.checkUpdate` / `.upToDate` / `.checkFailed` / `.checkOffline` | 업데이트 확인 / 최신 버전이에요 / 업데이트를 확인하지 못했어요. 잠시 뒤 다시 시도해 주세요. / 로그인 서버에 연결할 수 없어 확인하지 못했어요. |
 | `settings.account.*` | 계정 / 치지직 채널 {channelName} / 마지막 확인 {time} / 로그아웃 |
 

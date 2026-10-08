@@ -81,7 +81,16 @@
       {#if auth.reconnectFailed}<p class="help" role="status">{t('auth.reconnectFailed')}</p>{/if}
     {/if}
 
-    {#if screen.otherAccountHelp}<p class="help">{t('auth.otherAccount.help')}</p>{/if}
+    {#if screen.otherAccount === 'help'}
+      <p class="help">{t('auth.otherAccount.help')}</p>
+    {:else if screen.otherAccount === 'link'}
+      <p class="help">
+        {t('auth.otherAccount.lead')}
+        <Button variant="link" size="sm" disabled={auth.isBusy('login')} onclick={() => run('login')}>
+          {t('auth.otherAccount')}
+        </Button>
+      </p>
+    {/if}
 
     {#if jobs.activeCount > 0}
       <p class="note">{t('auth.runningNote', { n: jobs.activeCount })}</p>

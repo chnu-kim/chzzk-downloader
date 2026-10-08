@@ -213,6 +213,7 @@ export const ko = {
   'auth.cancel': '취소',
   'auth.otherAccount': '다른 계정으로 로그인',
   'auth.otherAccount.help': '다른 계정으로 로그인하려면 브라우저에서 네이버 로그아웃을 먼저 해 주세요.',
+  'auth.otherAccount.lead': '다른 계정을 쓰려면 브라우저에서 네이버 로그아웃 후',
   'auth.denied.title': '사용 허가가 없는 채널이에요',
   'auth.denied.body': '채널: {channelName}. 허가를 받으려면 관리자에게 채널 이름을 알려 주세요.',
   'auth.denied.bodyNoName': '허가를 받으려면 관리자에게 문의해 주세요.',

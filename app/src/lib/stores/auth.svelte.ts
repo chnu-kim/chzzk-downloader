@@ -123,7 +123,8 @@ export class AuthStore {
       if (s.state === 'signedIn') {
         // 계정 메뉴의 [다시 연결]: 여전히 오프라인이면 화면에 변화가 없으니 토스트로 알린다
         if (s.offline) toasts.push(t('auth.reconnectFailed'), 'danger');
-      } else if (key(s) === before) {
+      } else if (key(s) === before && (key(this.status) === before || this.status?.state === 'checking')) {
+        // 그사이 사용자가 다른 동작(로그인 등)으로 상태를 옮겼으면 기억하지 않는다(나중에 같은 상태로 돌아와도 옛 안내가 살아나지 않게)
         this.#failedAt = before;
       }
     });

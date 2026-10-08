@@ -437,6 +437,23 @@ describe('AuthStore 동작', () => {
     expect(auth.status?.state).toBe('pending');
   });
 
+  it('다시 연결 중 로그인으로 옮겼다가 취소해 같은 상태로 돌아와도 옛 실패 안내는 살아나지 않는다', async () => {
+    const grace = authDto({ state: 'expired', reason: 'graceExpired' });
+    let resolveRetry: (s: AuthStatusDto) => void = () => {};
+    vi.mocked(api.authRetry).mockImplementation(() => new Promise((r) => (resolveRetry = r)));
+    vi.mocked(api.authLogin).mockResolvedValue(authDto({ state: 'pending', pending: { userCode: 'K7QX-4MRA', expiresAt: 1 } }));
+    auth.apply(grace);
+    const re = auth.reconnect();
+    auth.apply(authDto({ state: 'checking' }));
+    await auth.login();
+    expect(auth.status?.state).toBe('pending');
+    resolveRetry(grace);
+    await re;
+    expect(auth.status?.state).toBe('pending');
+    auth.apply(grace);
+    expect(auth.reconnectFailed).toBe(false);
+  });
+
   it('주소 복사·다시 열기·취소·로그아웃이 실패해도 던지지 않는다', async () => {
     vi.mocked(api.authCopyLoginUrl).mockRejectedValue(new Error('x'));
     vi.mocked(api.authReopen).mockRejectedValue(new Error('x'));

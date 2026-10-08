@@ -3,7 +3,8 @@
 // 판정은 모두 결정적이다(종료 코드, 해시, 서명, 스키마, 실제 빌드·실행). 무거운 일은 xtask(Rust)가 하고 여기서는 순서를 정한다.
 //
 //   node scripts/ci/release.mjs pubkey        # release/updater.pub == tauri.conf.json plugins.updater.pubkey, release/tauri.release.json 허용 목록
-//   node scripts/ci/release.mjs gate          # 태그 = 버전 파일, 단조 증가, master 조상, 그 커밋의 master ci-ok·네이티브 E2E 녹색(기다림)
+//   node scripts/ci/release.mjs gate          # 태그 = 버전 파일, 단조 증가, 올림 자리(docs/versioning.md), master 조상, 그 커밋의 master ci-ok·네이티브 E2E 녹색(기다림)
+//   node scripts/ci/release.mjs next-version  # HEAD 기준 다음 릴리스의 최소 버전(지난 조상 태그 뒤 커밋으로 계산)
 //   node scripts/ci/release.mjs build         # 임시 키로 릴리스 번들 + updater 산출물 → collect --release → 서명 형식 자체 확인
 //   node scripts/ci/release.mjs xtask         # xtask를 빌드해 target/ci/xtask-bin에 담고 sha256을 출력(시크릿 없는 작업에서만)
 //   node scripts/ci/release.mjs stage         # 받은 3 OS 산출물로 publish → verify를 가짜 S3에(임시 키, 시크릿 없음. 리허설의 끝)
@@ -208,6 +209,86 @@ export function tagProblems(tag, others) {
   return out;
 }
 
+// ---- 올림 자리(docs/versioning.md) ----
+
+const BUMPS = ['patch', 'minor', 'major'];
+const BREAKING_SUBJECT = /^[a-z]+(?:\(.+\))?!: /;
+const BREAKING_FOOTER = /^BREAKING[ -]CHANGE: /m;
+const FEAT_SUBJECT = /^feat(?:\(.+\))?!?: /;
+
+// 지난 릴리스 뒤 커밋 메시지(%B, 머지 커밋 제외) 목록과 지난 버전 → 필요한 최소 올림('patch'|'minor'|'major').
+// 깨지는 변경(`type!:`·BREAKING CHANGE 꼬리말)은 MAJOR, 0.x 동안은 MINOR. feat는 MINOR. 나머지는 PATCH
+export function requiredBump(messages, prev) {
+  const zero = parseSemver(prev).nums[0] === 0n;
+  let bump = 'patch';
+  for (const m of messages) {
+    const subject = m.replace(/\r\n/g, '\n').split('\n')[0];
+    if (BREAKING_SUBJECT.test(subject) || BREAKING_FOOTER.test(m)) return zero ? 'minor' : 'major';
+    if (FEAT_SUBJECT.test(subject)) bump = 'minor';
+  }
+  return bump;
+}
+
+// 지난 버전·올림 → 허용되는 가장 작은 다음 버전
+export function minNextVersion(prev, bump) {
+  const [a, b, c] = parseSemver(prev).nums;
+  if (bump === 'major') return `${a + 1n}.0.0`;
+  if (bump === 'minor') return `${a}.${b + 1n}.0`;
+  return `${a}.${b}.${c + 1n}`;
+}
+
+// 지난 버전 → 다음 버전이 규칙을 지키는지 → 문제 목록. 더 높게 올리는 건 허용하고(0.1.1 → 0.3.0), 올린 자리 아래는 0이어야 한다
+export function bumpProblems(prev, next, messages) {
+  const p = parseSemver(prev);
+  const n = parseSemver(next);
+  if (!p || !n) return [`semver가 아니다: ${!p ? prev : next}`];
+  if (n.pre.length) return [`${next}: prerelease는 쓰지 않는다`];
+  if (cmpSemver(next, prev) <= 0) return [`${next}가 지난 릴리스 ${prev}보다 크지 않다`];
+  const [na, nb, nc] = n.nums;
+  const [pa, pb] = p.nums;
+  const actual = na !== pa ? 'major' : nb !== pb ? 'minor' : 'patch';
+  const out = [];
+  if (actual === 'major' && (nb !== 0n || nc !== 0n)) out.push(`${next}: MAJOR를 올리면 MINOR·PATCH는 0이어야 한다`);
+  if (actual === 'minor' && nc !== 0n) out.push(`${next}: MINOR를 올리면 PATCH는 0이어야 한다`);
+  const need = requiredBump(messages, prev);
+  if (BUMPS.indexOf(actual) < BUMPS.indexOf(need)) out.push(`${prev} 뒤 커밋에 ${need} 올림이 필요한 변경이 있다(최소 ${minNextVersion(prev, need)})`);
+  return out;
+}
+
+// sha의 조상인 v<semver> 태그 중 version보다 작은 가장 큰 것(없으면 null). 비공개 이력의 태그(조상이 아님)는 고르지 않는다
+function previousRelease(sha, version) {
+  let best = null;
+  for (const t of git(['tag', '-l', 'v*']).out.split('\n')) {
+    const v = t.replace(/^v/, '');
+    if (!t || !parseSemver(v) || cmpSemver(v, version) >= 0) continue;
+    if (best && cmpSemver(v, best.version) <= 0) continue;
+    if (git(['merge-base', '--is-ancestor', t, sha]).code !== 0) continue;
+    best = { tag: t, version: v };
+  }
+  return best;
+}
+
+// prev 태그부터 sha까지 머지가 아닌 커밋 메시지
+function messagesSince(tag, sha) {
+  const r = git(['log', '--no-merges', '--no-show-signature', '--format=%B%x00', `${tag}..${sha}`]);
+  if (r.code !== 0) throw new Error(`git log ${tag}..${sha} 실패`);
+  return r.out.split('\0').map((s) => s.trim()).filter(Boolean);
+}
+
+// HEAD 기준으로 다음 릴리스의 최소 버전을 알려 준다(버전을 올리는 PR 전에 사람이 본다)
+function cmdNextVersion() {
+  const head = git(['rev-parse', 'HEAD']).out;
+  const prev = previousRelease(head, '18446744073709551615.0.0');
+  if (!prev) {
+    err('next-version: HEAD의 조상인 v<semver> 태그가 없다');
+    return 1;
+  }
+  const messages = messagesSince(prev.tag, head);
+  const need = requiredBump(messages, prev.version);
+  log(`next-version: 지난 릴리스 ${prev.tag}, 커밋 ${messages.length}개, 필요한 올림 ${need} → 최소 ${minNextVersion(prev.version, need)}`);
+  return 0;
+}
+
 // 태그 gate가 녹색을 요구하는 master ci.yml 작업(GitHub가 보이는 이름 = ci.yml의 `name:`). ci-ok는 필수 체크이고, 네이티브 E2E 둘은
 // D14 관찰 중이라 ci-ok 밖(gates.mjs OBSERVED_JOBS)이지만 배포 전에는 녹색이어야 한다(cicd.md 구현 중 변경 107). push는 changes가
 // 늘 code=true라 둘은 건너뛰지 않는다(skipped면 실패로 본다)
@@ -268,6 +349,17 @@ async function cmdGate(env) {
     const others = git(['tag', '-l', 'v*']).out.split('\n').filter((t) => t && t !== tag);
     for (const p of tagProblems(tag, others)) {
       err(`gate: ${p}`);
+      bad++;
+    }
+    // 2-1. 올림 자리: 지난 릴리스(조상 태그) 뒤 커밋이 요구하는 자리 이상을 올렸다(docs/versioning.md). 첫 릴리스면 건너뛴다
+    try {
+      const prev = parseSemver(version) ? previousRelease(sha, version) : null;
+      for (const p of prev ? bumpProblems(prev.version, version, messagesSince(prev.tag, sha)) : []) {
+        err(`gate: ${p}`);
+        bad++;
+      }
+    } catch (e) {
+      err(`gate: 올림 자리 검사 실패: ${e.message}`);
       bad++;
     }
     // 3. 태그 커밋이 master의 조상(master 밖 커밋은 배포하지 않는다)
@@ -1781,7 +1873,7 @@ async function cmdWorker(env, argv) {
 export function main(argv, env = process.env) {
   const [cmd, ...rest] = argv;
   if (rest.length && cmd !== 'worker') {
-    console.error('사용법: release.mjs <pubkey|gate|build|xtask|preflight|publish|verify|rollback|prune|stage|selftest|worker-bundle|worker>');
+    console.error('사용법: release.mjs <pubkey|gate|next-version|build|xtask|preflight|publish|verify|rollback|prune|stage|selftest|worker-bundle|worker>');
     return 2;
   }
   switch (cmd) {
@@ -1789,6 +1881,8 @@ export function main(argv, env = process.env) {
       return cmdPubkey();
     case 'gate':
       return cmdGate(env);
+    case 'next-version':
+      return cmdNextVersion();
     case 'build':
       return cmdBuild(env);
     case 'xtask':
@@ -1812,7 +1906,7 @@ export function main(argv, env = process.env) {
     case 'worker-bundle':
       return cmdWorkerBundle(env);
     default:
-      console.error('사용법: release.mjs <pubkey|gate|build|xtask|preflight|publish|verify|rollback|prune|stage|selftest|worker-bundle|worker>');
+      console.error('사용법: release.mjs <pubkey|gate|next-version|build|xtask|preflight|publish|verify|rollback|prune|stage|selftest|worker-bundle|worker>');
       return 2;
   }
 }

@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-네이버 치지직(Chzzk) VOD·클립 다운로더다. Go CLI를 **Rust 코어(`crates/core`) + Tauri GUI**로 재구축하는 중이다. 진행 기록과 결정은 `docs/ROADMAP.md`, 코어 설계의 기준은 `docs/design/core.md`, 앱(셸·GUI) 설계의 기준은 `docs/design/app.md`(화면의 시각 규칙은 `docs/design/ui-visual.md`), Phase 3 Worker(인증·랜딩·배포 게이트)와 앱 로그인 설계의 기준은 `docs/design/worker.md`다. 세 설계 문서 모두 끝의 "구현 중 변경"이 본문보다 우선한다(app.md는 그 절 머리의 "읽는 법" 표부터 본다). 옛 Go 동작 기록은 `docs/spec/core-behavior.md`다.
+네이버 치지직(Chzzk) VOD·클립 다운로더다. Go CLI를 **Rust 코어(`crates/core`) + Tauri GUI**로 재구축하는 중이다. 진행 기록과 결정은 `docs/ROADMAP.md`, 코어 설계의 기준은 `docs/design/core.md`, 앱(셸·GUI) 설계의 기준은 `docs/design/app.md`(화면의 시각 규칙은 `docs/design/ui-visual.md`), Phase 3 Worker(인증·랜딩·배포 게이트)와 앱 로그인 설계의 기준은 `docs/design/worker.md`다. 세 설계 문서 모두 끝의 "구현 중 변경"이 본문보다 우선한다(app.md는 그 절 머리의 "읽는 법" 표부터 본다). 옛 Go 동작 기록은 `docs/spec/core-behavior.md`다. 버전 규칙(SemVer, 올림 자리는 커밋 타입으로, 다음은 0.3.0)은 `docs/versioning.md`다.
 
 ## 레이아웃
 
@@ -82,6 +82,7 @@ gh workflow run rollback.yml -f version=<X.Y.Z|none>      # latest.json 되돌�
 cargo xtask release verify --version <v> --pubkey release/updater.pub --base-url <DIST_BASE_URL>   # R2_* env로 다시 받아 확인
 CI_VERIFY_TOKEN=<CI 토큰> node scripts/ci/release.mjs worker --check-only --base <출처> --version <semver> [--build <id>]   # 배포 뒤 검사만(배포 없음).
                                              #   --base는 경로 없는 https 출처 또는 루프백 http. 배포(인자 없음)·worker-bundle은 release.yml 작업이 부른다
+node scripts/ci/release.mjs next-version   # HEAD 기준 다음 릴리스의 최소 버전(docs/versioning.md)
 node scripts/ci/run.mjs doctor               # 로컬 도구 유무·버전(tools.json). 없는 도구의 gate는 로컬에서 건너뛰고 CI가 본다
 node scripts/ci/run.mjs install-hooks        # 훅 켜기(core.hooksPath=.githooks). 클론마다 한 번. pre-commit·commit-msg·pre-push가
                                              #   run.mjs hook <이름>으로 gates.mjs HOOKS를 돈다(pre-push의 push-guard·scan-range는 끌 수 없다.
@@ -129,7 +130,7 @@ node worker/scripts/code-binding-check.mjs
 
 ## 작업 규칙
 
-- 브랜치에서 설계 단계마다 커밋한다(코어는 core.md §10, 앱은 app.md §15). 메시지는 Conventional Commit `type: 한국어 요약`. 단계별 stacked PR이고, PR을 만든 뒤 글로벌 지침의 Codex 리뷰를 따른다.
+- 브랜치에서 설계 단계마다 커밋한다(코어는 core.md §10, 앱은 app.md §15). 메시지는 Conventional Commit `type: 한국어 요약`. 타입이 다음 버전의 올림 자리를 정하므로(`docs/versioning.md`) 사용자에게 보이는 기능은 `feat`, 사용자 데이터·앱 ↔ Worker 계약·업데이트 경로를 깨면 `type!:`로 적는다. 단계별 stacked PR이고, PR을 만든 뒤 글로벌 지침의 Codex 리뷰를 따른다.
 - **동시 세션**: Claude 세션 여러 개가 같은 작업 트리를 쓰면 다른 세션이 브랜치를 바꿔 커밋이 엉뚱한 브랜치에 들어간다. 커밋·push 전에 `git status -sb`로 브랜치를 확인하고, 다른 세션이 돌고 있으면 `git worktree add`로 따로 작업한다.
 - **단계(체크박스)를 끝낼 때마다 `docs/ROADMAP.md`의 "현재 위치"와 체크리스트를 갱신한다**(세션이 요약돼도 이 파일이 남는다).
 - 옛 Go 코드는 삭제됐다(§10-16). 행동 기록은 `docs/spec/core-behavior.md`다.

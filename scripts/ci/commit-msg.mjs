@@ -5,7 +5,7 @@
 //   node scripts/ci/commit-msg.mjs --stored [rev]    # CI: rev(기본 HEAD)에서 닿고 SUBJECT_BASELINE에서 안 닿는 커밋의
 //                                                    #     저장된 메시지 첫 줄을 그대로 본다
 //
-// 제목이 `type(scope)?: 요약`이어야 한다. git이 스스로 만드는 제목
+// 제목이 `type(scope)?!?: 요약`이어야 한다. git이 스스로 만드는 제목
 // (Merge …, Revert "…", fixup!/squash!/amend! …)은 통과시킨다(git 2.24부터 merge도 commit-msg 훅을 부른다).
 //
 // 두 모드의 차이: 훅은 cleanup 모드를 알 수 없다(-m·-F·--cleanup=verbatim이면 # 줄도 이력에 남는다).
@@ -17,7 +17,8 @@ import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 export const TYPES = ['feat', 'fix', 'docs', 'chore', 'refactor', 'test', 'ci', 'build', 'perf', 'style', 'revert'];
-export const SUBJECT = new RegExp(`^(?:${TYPES.join('|')})(?:\\(.+\\))?: \\S.*$`);
+// `!`는 깨지는 변경 표시(docs/versioning.md)
+export const SUBJECT = new RegExp(`^(?:${TYPES.join('|')})(?:\\(.+\\))?!?: \\S.*$`);
 const GIT_MADE = /^(?:Merge |Revert "|(?:fixup|squash|amend)! )/;
 
 // 이 커밋(공개 master, 2026-10-05)까지의 이력에는 규칙 이전의 제목("Update .gitignore" 등)이 있다. 그 뒤만 본다.
@@ -41,7 +42,7 @@ export const storedSubject = (text) => text.replace(/\r\n/g, '\n').split('\n')[0
 export function checkSubject(subject) {
   if (subject === '') return '빈 제목';
   if (GIT_MADE.test(subject)) return null;
-  if (!SUBJECT.test(subject)) return `제목이 '<type>(<scope>)?: <요약>' 형식이 아니다(type: ${TYPES.join('|')})`;
+  if (!SUBJECT.test(subject)) return `제목이 '<type>(<scope>)?(!)?: <요약>' 형식이 아니다(! = 깨지는 변경, type: ${TYPES.join('|')})`;
   return null;
 }
 

@@ -16,6 +16,7 @@ import {
   buildIdOf,
   buildWorkerBase,
   bundleMeta,
+  bumpProblems,
   checkPubkey,
   ciOkDecision,
   RELEASE_REQUIRED_JOBS,
@@ -27,6 +28,7 @@ import {
   GARBAGE_BEARER,
   judgeCheck,
   maskValues,
+  minNextVersion,
   parseSemver,
   parseWorkerArgs,
   preflight,
@@ -40,6 +42,7 @@ import {
   REHEARSAL_MESSAGE,
   RELEASE_KEEP,
   releaseConfProblems,
+  requiredBump,
   runWorkerChecks,
   TAG_VERIFY_TOKEN_MESSAGE,
   TAG_VERIFY_VIA,
@@ -151,6 +154,48 @@ test('태그 단조 증가', () => {
   assert.equal(tagProblems('v0.2.0', ['v0.2.0']).length, 1);
   assert.equal(tagProblems('0.2.0', []).length, 1);
   assert.equal(tagProblems('v0.2', []).length, 1);
+});
+
+test('올림 자리: 커밋 타입으로 필요한 최소 올림을 정한다(docs/versioning.md)', () => {
+  assert.equal(requiredBump([], '0.1.1'), 'patch');
+  assert.equal(requiredBump(['fix: 고침', 'docs: 문서', 'Revert "feat: x"'], '0.1.1'), 'patch');
+  assert.equal(requiredBump(['fix: 고침', 'feat(app): 기능\n\n본문'], '0.1.1'), 'minor');
+  // 깨지는 변경: 0.x는 MINOR, 1.0 이후는 MAJOR
+  for (const m of ['fix!: 형식 바꿈', 'refactor(shell)!: 형식', 'fix: x\n\nBREAKING CHANGE: jobs.json 형식', 'fix: x\r\n\r\nBREAKING-CHANGE: y']) {
+    assert.equal(requiredBump([m], '0.3.0'), 'minor', m);
+    assert.equal(requiredBump(['feat: a', m], '1.2.3'), 'major', m);
+  }
+  // 본문 중간의 BREAKING CHANGE는 줄 머리일 때만, 제목의 feat는 첫 줄만 본다
+  assert.equal(requiredBump(['fix: x\n\n이건 BREAKING CHANGE: 아님'], '1.0.0'), 'patch');
+  assert.equal(requiredBump(['fix: x\n\n* feat: 스쿼시 목록'], '1.0.0'), 'patch');
+  assert.equal(requiredBump(['feat : x', 'feature: x'], '1.0.0'), 'patch');
+  assert.equal(minNextVersion('0.1.1', 'patch'), '0.1.2');
+  assert.equal(minNextVersion('0.1.1', 'minor'), '0.2.0');
+  assert.equal(minNextVersion('1.4.2', 'major'), '2.0.0');
+});
+
+test('올림 자리: 다음 버전 판정', () => {
+  const feat = ['feat: 기능', 'fix: 고침'];
+  // 더 높게 올리는 건 허용(0.2.x 이름을 건너뛴다, docs/versioning.md)
+  assert.deepEqual(bumpProblems('0.1.1', '0.3.0', feat), []);
+  assert.deepEqual(bumpProblems('0.1.1', '0.2.0', feat), []);
+  assert.deepEqual(bumpProblems('0.1.1', '1.0.0', feat), []);
+  assert.deepEqual(bumpProblems('0.1.1', '0.1.2', ['fix: 고침']), []);
+  assert.match(bumpProblems('0.1.1', '0.1.2', feat).join(), /minor .*최소 0\.2\.0/);
+  // 깨지는 변경
+  assert.deepEqual(bumpProblems('0.3.0', '0.4.0', ['fix!: x']), []);
+  assert.equal(bumpProblems('0.3.0', '0.3.1', ['fix!: x']).length, 1);
+  assert.deepEqual(bumpProblems('1.0.0', '2.0.0', ['fix!: x']), []);
+  assert.match(bumpProblems('1.0.0', '1.1.0', ['fix!: x']).join(), /최소 2\.0\.0/);
+  // 올린 자리 아래는 0
+  assert.equal(bumpProblems('0.1.1', '0.2.1', feat).length, 1);
+  assert.equal(bumpProblems('0.3.0', '1.0.1', feat).length, 1);
+  assert.equal(bumpProblems('0.3.0', '1.1.0', feat).length, 1);
+  // prerelease·단조·형식
+  assert.equal(bumpProblems('0.1.1', '0.2.0-rc.1', feat).length, 1);
+  assert.equal(bumpProblems('0.1.1', '0.1.1', []).length, 1);
+  assert.equal(bumpProblems('0.1.1', '0.1.0', []).length, 1);
+  assert.equal(bumpProblems('0.1.1', 'v0.2.0', feat).length, 1);
 });
 
 test('ci-ok 판정: 어느 master 실행이든 ci-ok 녹색이면 통과, 모두 끝났는데 없으면 실패, 그 밖은 기다림', () => {

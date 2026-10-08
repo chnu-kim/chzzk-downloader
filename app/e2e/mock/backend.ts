@@ -12,6 +12,7 @@ import type {
   AppError,
   AppInfo,
   AuthStatusDto,
+  ContentRef,
   EnqueueRequest,
   ErrorCode,
   JobDto,
@@ -169,6 +170,15 @@ export function install(scenario: Scenario = {}): E2EController {
   mockWindows('main');
   const calls: Call[] = [];
   const resolveTable: NonNullable<Scenario['resolve']> = { ...scenario.resolve };
+  /** 그 컨텐츠를 푼 resolve 결과(오류 항목은 컨텐츠가 없어 건너뛴다) */
+  const resolvedByContent = (c: ContentRef): ResolvedDto | undefined =>
+    Object.values(resolveTable).find(
+      (r): r is ResolvedDto =>
+        !('error' in r) &&
+        (r.content.kind === 'video' && c.kind === 'video'
+          ? r.content.videoNo === c.videoNo
+          : r.content.kind === 'clip' && c.kind === 'clip' && r.content.clipId === c.clipId),
+    );
   let settings: SettingsDto = { ...SETTINGS, ...scenario.settings };
   const jobs = new Map<number, JobDto>((scenario.jobs ?? []).map((j) => [j.id, j]));
   let nextId = Math.max(0, ...jobs.keys()) + 1;
@@ -278,15 +288,13 @@ export function install(scenario: Scenario = {}): E2EController {
       // 셸 흉내(A5): 로그인한 채널이 있으면 resolve 결과로 판정하고, 웹뷰가 보낸 channelId 대신 검증한 채널을 기록한다
       let channelId = req.channelId;
       if (auth.state === 'signedIn' && auth.channelId) {
-        const r = resolveTable[req.url];
-        // 진짜 셸은 캐시 미스에서 다시 resolve한다. 표에 없는 주소는 resolve와 같이 실패시켜 판정을 건너뛰지 않는다
+        // 진짜 셸처럼 주소가 아니라 컨텐츠로 판정한다(캐시 미스면 다시 resolve). 표에 그 컨텐츠가 없으면 resolve와 같이
+        // 실패시켜 판정을 건너뛰지 않는다
+        const r = resolvedByContent(req.content);
         if (!r) throw err('invalidUrl');
-        if ('error' in r) throw r.error;
-        {
-          if (r.ownership === 'notOwn') throw err('notOwnContent');
-          if (r.ownership === 'unknown') throw err('ownershipUnknown');
-          channelId = r.meta.channelId;
-        }
+        if (r.ownership === 'notOwn') throw err('notOwnContent');
+        if (r.ownership === 'unknown') throw err('ownershipUnknown');
+        channelId = r.meta.channelId;
       }
       const job: JobDto = {
         id: nextId++,
@@ -325,10 +333,10 @@ export function install(scenario: Scenario = {}): E2EController {
     },
     resume_job: (a) => {
       const j = must(a.id as number);
-      // 셸 흉내(A5): 다시 줄 세울 상태에서는 작업의 채널이 로그인 채널과 같아야 한다
+      // 셸 흉내(A5): 다시 줄 세울 상태에서는 작업의 영상을 다시 판정한다. JobDto에는 컨텐츠가 없어 기록 채널로 흉내 낸다:
+      // 다른 채널이면 거부하고, 채널이 없는 옛 작업은 셸이 본인 영상으로 판정한 것으로 본다
       if (auth.state === 'signedIn' && auth.channelId && ['paused', 'failed', 'interrupted', 'skipped'].includes(j.status)) {
-        if (j.channelId == null) throw err('ownershipUnknown');
-        if (j.channelId.toLowerCase() !== auth.channelId.toLowerCase()) throw err('notOwnContent');
+        if (j.channelId != null && j.channelId.toLowerCase() !== auth.channelId.toLowerCase()) throw err('notOwnContent');
       }
       put({ ...j, status: 'queued', error: null, partialBytes: a.restart ? null : j.partialBytes });
       return null;

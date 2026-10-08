@@ -337,7 +337,8 @@ describe('막힌 작업(A5)', () => {
     for (const status of ['interrupted', 'paused', 'failed', 'skipped'] as const) {
       expect(jobBlock(job(1, { status, channelId: A1.toUpperCase() }), me)).toBeNull();
       expect(jobBlock(job(1, { status, channelId: C3 }), me)).toBe('otherChannel');
-      expect(jobBlock(job(1, { status, channelId: null }), me)).toBe('ownerUnknown');
+      // 채널 ID가 없는 옛 작업은 막지 않는다(셸이 영상을 다시 판정한다)
+      expect(jobBlock(job(1, { status, channelId: null }), me)).toBeNull();
     }
   });
 
@@ -347,9 +348,10 @@ describe('막힌 작업(A5)', () => {
       job(2, { status: 'interrupted', channelId: C3 }),
       job(1, { status: 'interrupted', channelId: A1 }),
       job(3, { status: 'paused', channelId: A1 }),
+      job(5, { status: 'interrupted', channelId: null }),
     ];
-    expect(resumableInterrupted(list, me)).toEqual([1, 4]);
-    expect(resumableInterrupted(list, null)).toEqual([1, 2, 4]);
+    expect(resumableInterrupted(list, me)).toEqual([1, 4, 5]);
+    expect(resumableInterrupted(list, null)).toEqual([1, 2, 4, 5]);
   });
 
   it('막힌 작업 버튼', () => {
@@ -362,7 +364,7 @@ describe('막힌 작업(A5)', () => {
     const skipped = job(2, { status: 'skipped', channelId: C3 });
     expect(jobButtons(skipped, null, false, 'otherChannel').primary).toEqual(['openFile']);
     const failed = job(3, { status: 'failed', partialBytes: 9, error: err('network') });
-    const b = jobButtons(failed, null, false, 'ownerUnknown');
+    const b = jobButtons(failed, null, false, 'otherChannel');
     expect(b.primary).not.toContain('resume');
     expect(b.primary).not.toContain('retry');
     expect(b.menu).not.toContain('restartFresh');
@@ -373,6 +375,5 @@ describe('막힌 작업(A5)', () => {
   it('copy deck 키', () => {
     expect(blockCopyKey('otherChannel')).toBe('job.otherChannel');
     expect(t('job.otherChannel')).toBe('다른 채널로 로그인해 이어받을 수 없어요');
-    expect(t('job.ownerUnknown')).toBe('영상의 채널을 확인하지 못해 이어받을 수 없어요');
   });
 });

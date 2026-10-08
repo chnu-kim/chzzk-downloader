@@ -26,7 +26,7 @@ use crate::error::AppError;
 use crate::gate;
 use crate::jobs::JobStore;
 use crate::manager::{DownloadManager, ManagerConfig};
-use crate::ownership::{self, OwnershipGate, SignedInChannel};
+use crate::ownership::{OwnershipGate, SignedInChannel};
 use crate::services::{self, AppPaths, PROGRESS_INTERVAL, SettingsService};
 use crate::update::{InstallHost, UpdateSource, Updates, auto_check_due};
 
@@ -230,15 +230,33 @@ impl App {
         self.settings.resolve(url, &self.gate).await
     }
 
-    /// `resume_job`(이어받기·다시 시도·처음부터·덮어쓰고 받기): 로그인한 채널의 작업만(A5).
-    /// 로그인 채널은 매니저 잠금 전에 읽는다(잠금 순서).
-    pub fn resume_job(&self, id: JobId, restart: bool) -> Result<(), AppError> {
-        match self.gate.resume_owner()? {
-            None => self.manager.resume(id, restart),
-            Some(me) => self
-                .manager
-                .resume_checked(id, restart, |c| ownership::check_job_owner(&me, c)),
+    /// `resume_job`(이어받기·다시 시도·처음부터·덮어쓰고 받기): 로그인한 채널의 영상만(A5).
+    ///
+    /// 기록의 `channel_id`는 믿지 않는다(`jobs.json` 변조, worker.md 86). 다시 줄 세울 작업이면 enqueue와 같은
+    /// `OwnershipGate::admit`으로 작업 컨텐츠를 판정하고(최근 resolve 캐시, 없으면 다시 resolve), 통과한 채널 ID를
+    /// 기록에 고쳐 쓴다. 판정(네트워크)은 매니저 잠금 밖에서 하고, 잠금 안에서는 같은 컨텐츠인지만 다시 본다.
+    pub async fn resume_job(&self, id: JobId, restart: bool) -> Result<(), AppError> {
+        if !self.gate.is_enabled() {
+            return self.manager.resume(id, restart);
         }
+        let Some(content) = self.manager.requeue_content(id)? else {
+            // 대기·받는 중·지우는 중은 아무것도 하지 않고, 완료는 invalidInput(매니저 규칙). 판정이 필요 없다
+            return self.manager.resume_checked(id, restart, |_| {
+                // 위에서 본 뒤 상태가 바뀌어 다시 줄 세울 상태가 됐다: 판정 없이 줄 세우지 않는다
+                Err(AppError::ownership_unknown())
+            });
+        };
+        let owner = self
+            .gate
+            .admit(&content, || self.settings.content_channel(&content))
+            .await?;
+        self.manager.resume_checked(id, restart, |c| {
+            if *c == content {
+                Ok(owner)
+            } else {
+                Err(AppError::ownership_unknown())
+            }
+        })
     }
 
     /// `open_output`이 열 파일. 최종 파일이 없으면 `fileMissing`.

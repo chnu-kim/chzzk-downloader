@@ -209,13 +209,13 @@ describe('막힌 작업(A5)', () => {
     expect(api.resumeJob).not.toHaveBeenCalled();
   });
 
-  it('채널 모르는 작업 안내', async () => {
+  it('채널 모르는 옛 작업은 막지 않고 셸 판정에 맡긴다', async () => {
     auth.status = signedInAs(A1);
     await load([job(1, { status: 'interrupted', channelId: null, title: '옛 작업' })]);
     render(JobList);
     const item = screen.getByRole('article', { name: '옛 작업' });
-    expect(within(item).getByText('영상의 채널을 확인하지 못해 이어받을 수 없어요')).toBeInTheDocument();
-    expect(within(item).queryByRole('button', { name: '이어받기' })).toBeNull();
+    expect(within(item).queryByText('다른 채널로 로그인해 이어받을 수 없어요')).toBeNull();
+    expect(within(item).getByRole('button', { name: '이어받기' })).toBeInTheDocument();
   });
 
   it('같은 채널 작업은 이어받기가 있다', async () => {

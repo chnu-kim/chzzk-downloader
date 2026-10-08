@@ -1,4 +1,4 @@
-//! OwnershipGate 활성(Phase 3b A5): resolve 판정, enqueue의 웹뷰 channelId 불신, `resume_job`·자동 이어받기의 같은 채널 규칙.
+//! OwnershipGate 활성(Phase 3b A5): resolve 판정, enqueue의 웹뷰 channelId 불신, `resume_job`의 컨텐츠 재판정·자동 이어받기의 같은 채널 규칙.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -336,36 +336,94 @@ async fn enqueue_signed_out_is_not_logged_in_without_network() {
     assert!(worker.received_requests().await.unwrap().is_empty());
 }
 
+/// 픽스처 VOD(채널 b2 = OWN)를 받는 멈춘 작업. 기록의 채널 ID는 아무 값이나 넣을 수 있다(`jobs.json` 변조 흉내)
+fn vod_record(id: u64, channel: Option<&str>, out: &Path) -> JobRecord {
+    JobRecord {
+        url: url(),
+        content: ContentRef::Video { video_no: VOD_NO },
+        ..record(id, channel, out)
+    }
+}
+
+fn channel_of(app: &App, id: u64) -> Option<String> {
+    app.manager
+        .list()
+        .into_iter()
+        .find(|j| j.id == JobId(id))
+        .unwrap()
+        .channel_id
+}
+
+/// `resume_job`은 기록의 채널 ID를 믿지 않고 작업 컨텐츠를 다시 판정한다(A5 리뷰, worker.md 86)
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn resume_job_requires_same_channel() {
-    let api = hanging_server().await;
+async fn resume_job_rejects_other_channel_content_whatever_the_record_says() {
+    let api = mock_api(None).await;
+    let worker = MockServer::start().await;
+    let t = TempDir::new().unwrap();
+    let out: PathBuf = t.path().join("out");
+    // 1: 남의 영상인데 기록을 로그인 채널로 고쳐 둠(변조), 2: 남의 영상이고 기록도 그 채널
+    write_jobs(
+        t.path(),
+        vec![
+            vod_record(1, Some(OTHER), &out),
+            vod_record(2, Some(OWN), &out),
+        ],
+    );
+    save_session(t.path(), &worker, OTHER);
+    let app = open_auth(t.path(), &api, &worker);
+    for id in [1, 2] {
+        assert_eq!(
+            app.resume_job(JobId(id), false).await.unwrap_err().code,
+            ErrorCode::NotOwnContent
+        );
+        assert_eq!(status_of(&app, id), JobStatus::Interrupted);
+    }
+    assert_eq!(channel_of(&app, 1).as_deref(), Some(OTHER));
+    app.manager.quit(Duration::from_secs(3)).await;
+}
+
+/// 채널 ID가 없거나 틀린 기록이라도 본인 영상이면 이어받고, 검증한 채널 ID로 기록을 고친다
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn resume_job_admits_own_content_and_rewrites_channel() {
+    let api = mock_api(None).await;
     let worker = MockServer::start().await;
     let t = TempDir::new().unwrap();
     let out: PathBuf = t.path().join("out");
     write_jobs(
         t.path(),
-        vec![
-            record(1, Some(OTHER), &out),
-            record(2, None, &out),
-            record(3, Some(&OWN.to_uppercase()), &out),
-        ],
+        vec![vod_record(1, None, &out), vod_record(2, Some(OTHER), &out)],
     );
     save_session(t.path(), &worker, OWN);
     let app = open_auth(t.path(), &api, &worker);
-
-    assert_eq!(
-        app.resume_job(JobId(1), false).unwrap_err().code,
-        ErrorCode::NotOwnContent
-    );
-    assert_eq!(status_of(&app, 1), JobStatus::Interrupted);
-    assert_eq!(
-        app.resume_job(JobId(2), false).unwrap_err().code,
-        ErrorCode::OwnershipUnknown
-    );
-    assert_eq!(status_of(&app, 2), JobStatus::Interrupted);
-    app.resume_job(JobId(3), false).unwrap();
-    assert_ne!(status_of(&app, 3), JobStatus::Interrupted);
+    for id in [1, 2] {
+        app.resume_job(JobId(id), false).await.unwrap();
+        assert_ne!(status_of(&app, id), JobStatus::Interrupted);
+        assert_eq!(channel_of(&app, id).as_deref(), Some(OWN));
+    }
     app.manager.quit(Duration::from_secs(3)).await;
+}
+
+/// 로그인하지 않았으면 판정 조회 없이 `notLoggedIn`, 다시 줄 세울 상태가 아니면 조회하지 않는다
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn resume_job_signed_out_or_not_requeueable_makes_no_request() {
+    let api = mock_api(None).await;
+    let worker = MockServer::start().await;
+    let t = TempDir::new().unwrap();
+    let out: PathBuf = t.path().join("out");
+    let mut done = vod_record(2, Some(OWN), &out);
+    done.status = JobStatus::Completed;
+    write_jobs(t.path(), vec![vod_record(1, Some(OWN), &out), done]);
+    let app = open_auth(t.path(), &api, &worker);
+    assert_eq!(
+        app.resume_job(JobId(1), false).await.unwrap_err().code,
+        ErrorCode::NotLoggedIn
+    );
+    assert_eq!(
+        app.resume_job(JobId(2), false).await.unwrap_err().code,
+        ErrorCode::InvalidInput
+    );
+    assert!(api.received_requests().await.unwrap().is_empty());
+    assert_eq!(status_of(&app, 1), JobStatus::Interrupted);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -377,9 +435,33 @@ async fn resume_job_passes_when_auth_disabled() {
         vec![record(1, Some(OTHER), &t.path().join("out"))],
     );
     let app = open_plain(t.path(), &api);
-    app.resume_job(JobId(1), false).unwrap();
+    app.resume_job(JobId(1), false).await.unwrap();
     assert_ne!(status_of(&app, 1), JobStatus::Interrupted);
     app.manager.quit(Duration::from_secs(3)).await;
+}
+
+/// 요청 주소와 컨텐츠가 다른 영상이면 판정·조회 전에 `invalidInput`(A5 리뷰)
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn enqueue_rejects_url_content_mismatch() {
+    let api = mock_api(None).await;
+    let worker = MockServer::start().await;
+    let t = TempDir::new().unwrap();
+    save_session(t.path(), &worker, OWN);
+    let app = open_auth(t.path(), &api, &worker);
+    let mut req = request(t.path(), "x", None);
+    req.url = "https://chzzk.naver.com/video/1".into();
+    assert_eq!(
+        app.enqueue(req).await.unwrap_err().code,
+        ErrorCode::InvalidInput
+    );
+    let mut req = request(t.path(), "x", None);
+    req.url = "not a url".into();
+    assert_eq!(
+        app.enqueue(req).await.unwrap_err().code,
+        ErrorCode::InvalidInput
+    );
+    assert!(app.manager.list().is_empty());
+    assert!(api.received_requests().await.unwrap().is_empty());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

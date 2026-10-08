@@ -31,7 +31,7 @@ impl<A: WorkerApi, C: Clock> SignedInChannel for AuthService<A, C> {
     }
 }
 
-/// `enqueue` 앞의 본인 영상 검사.
+/// `enqueue`·`resume_job` 앞의 본인 영상 검사.
 pub struct OwnershipGate {
     auth: Option<Arc<dyn SignedInChannel>>,
     recent: Mutex<VecDeque<(ContentRef, Option<String>)>>,
@@ -133,14 +133,6 @@ impl OwnershipGate {
         Ok(owner)
     }
 
-    /// `resume_job` 판정에 쓸 로그인 채널. 꺼진 게이트는 `Ok(None)`(검사 안 함), 로그인 아님은 `notLoggedIn`.
-    pub fn resume_owner(&self) -> Result<Option<String>, AppError> {
-        if self.auth.is_none() {
-            return Ok(None);
-        }
-        self.me().map(Some).ok_or_else(AppError::not_logged_in)
-    }
-
     fn cached(&self, content: &ContentRef) -> Option<Option<String>> {
         self.recent
             .lock()
@@ -159,11 +151,6 @@ impl OwnershipGate {
             q.pop_front();
         }
     }
-}
-
-/// 작업의 소유 채널을 로그인 채널과 비교한다(`resume_job`·자동 이어받기).
-pub fn check_job_owner(me: &str, job_channel: Option<&str>) -> Result<(), AppError> {
-    verdict(is_own_channel(job_channel, me))
 }
 
 /// 코어 `is_own_channel` 결과를 허용·거부로 바꾼다. `None`은 거부다.
@@ -250,7 +237,6 @@ mod tests {
             None
         );
         assert_eq!(calls.load(Ordering::SeqCst), 0);
-        assert_eq!(g.resume_owner().unwrap(), None);
         assert_eq!(g.recent_len(), 0);
     }
 
@@ -368,19 +354,6 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(calls.load(Ordering::SeqCst), 1);
-    }
-
-    #[test]
-    fn check_job_owner_rules() {
-        assert!(check_job_owner(A1, Some("000000000000000000000000000000A1")).is_ok());
-        assert_eq!(
-            check_job_owner(A1, Some(C3)).unwrap_err().code,
-            ErrorCode::NotOwnContent
-        );
-        assert_eq!(
-            check_job_owner(A1, None).unwrap_err().code,
-            ErrorCode::OwnershipUnknown
-        );
     }
 
     #[test]

@@ -941,7 +941,8 @@ fn enqueue_in(h: &Harness, name: &str, channel: Option<&str>) -> JobId {
     h.mgr.enqueue(req, &h.defaults()).unwrap().id
 }
 
-/// `resume_checked`는 다시 줄 세울 때만 check를 부르고, 거부하면 상태와 `.part`를 그대로 둔다.
+/// `resume_checked`는 다시 줄 세울 때만 check(작업 컨텐츠)를 부르고, 거부하면 상태와 `.part`를 그대로 둔다.
+/// 허용하며 채널 ID를 주면 기록의 채널 ID를 그 값으로 고친다(A5 리뷰).
 #[tokio::test(start_paused = true)]
 async fn resume_checked_runs_check_only_when_requeuing() {
     let h = Harness::new(1);
@@ -955,26 +956,33 @@ async fn resume_checked_runs_check_only_when_requeuing() {
             .fails(Error::Cancelled),
     );
     let a = enqueue_in(&h, "a", Some("ch"));
+    let content = request("a").content;
     until("진행", || h.job(a).progress.is_some()).await;
     checkpoint(&out, 150, 128);
     h.mgr.pause(a).unwrap();
     until("paused", || h.status(a) == JobStatus::Paused).await;
+    assert_eq!(h.mgr.requeue_content(a).unwrap(), Some(content.clone()));
 
     let seen = std::sync::Mutex::new(Vec::new());
     let e = h
         .mgr
         .resume_checked(a, false, |c| {
-            seen.lock().unwrap().push(c.map(str::to_string));
+            seen.lock().unwrap().push(c.clone());
             Err(chzzk_shell::AppError::not_own_content())
         })
         .unwrap_err();
     assert_eq!(e.code, ErrorCode::NotOwnContent);
-    assert_eq!(*seen.lock().unwrap(), vec![Some("ch".to_string())]);
+    assert_eq!(*seen.lock().unwrap(), vec![content.clone()]);
     assert_eq!(h.status(a), JobStatus::Paused);
+    assert_eq!(h.job(a).channel_id.as_deref(), Some("ch"));
     assert!(has_partial(&out), ".part는 그대로");
 
-    h.mgr.resume_checked(a, false, |_| Ok(())).unwrap();
+    h.mgr
+        .resume_checked(a, false, |_| Ok(Some("verified".into())))
+        .unwrap();
     assert_ne!(h.status(a), JobStatus::Paused);
+    assert_eq!(h.job(a).channel_id.as_deref(), Some("verified"));
+    assert_eq!(h.mgr.requeue_content(a).unwrap(), None);
 
     // queued·running 작업에는 check를 부르지 않는다
     let calls = std::sync::atomic::AtomicUsize::new(0);
@@ -985,6 +993,10 @@ async fn resume_checked_runs_check_only_when_requeuing() {
         })
         .unwrap();
     assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+    assert_eq!(
+        h.mgr.requeue_content(JobId(999)).unwrap_err().code,
+        ErrorCode::JobNotFound
+    );
 }
 
 #[tokio::test(start_paused = true)]

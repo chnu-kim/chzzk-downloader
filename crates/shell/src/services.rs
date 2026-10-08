@@ -516,7 +516,7 @@ impl SettingsService {
     }
 }
 
-/// 작업 추가(§6.2): 본인 영상 게이트(A5) → 매니저 → 설정의 마지막 화질·최근 VOD.
+/// 작업 추가(§6.2): 주소·컨텐츠 일치 → 본인 영상 게이트(A5) → 매니저 → 설정의 마지막 화질·최근 VOD.
 ///
 /// 설정 저장이 실패해도 작업은 이미 목록에 있으므로 로그만 남긴다.
 pub async fn enqueue<B: Backend>(
@@ -525,6 +525,10 @@ pub async fn enqueue<B: Backend>(
     manager: &DownloadManager<B>,
     mut req: EnqueueRequest,
 ) -> Result<JobDto, AppError> {
+    // 판정·다운로드는 content로, 최근 VOD는 url로 한다. 둘이 다른 영상이면 받지 않는다(네트워크 전, A5 리뷰)
+    if !parse_content_url(&req.url).is_ok_and(|c| c == req.content) {
+        return Err(AppError::invalid_input("요청 주소와 영상이 맞지 않습니다"));
+    }
     // 웹뷰가 보낸 channel_id는 믿지 않는다: 검증한 컨텐츠 채널 ID로 덮어쓴다(82)
     let content = req.content.clone();
     if let Some(owner) = gate

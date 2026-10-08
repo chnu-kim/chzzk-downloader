@@ -398,18 +398,18 @@ export function jobButtons(
 /** 이어받기 계열 동작: 막힌 작업에서는 셸이 거부하므로 버튼을 보이지 않는다 */
 const RESUMING: readonly JobAction[] = ['resume', 'retry', 'restartFresh', 'overwrite'];
 
-export type JobBlock = 'otherChannel' | 'ownerUnknown';
+export type JobBlock = 'otherChannel';
 
 const REQUEUEABLE: readonly JobStatus[] = ['paused', 'interrupted', 'failed', 'skipped'];
 
 /**
  * 이어받기를 셸이 거부할 멈춘 작업(worker.md §11.5 "채널이 바뀜"). 로그인을 쓰지 않거나(`disabled`) 로그인 전이거나
- * 내 채널을 모르면 `null`이다(비교 대상이 없으면 막지 않는다. 판정은 셸이 한다).
+ * 내 채널을 모르면 `null`이다(비교 대상이 없으면 막지 않는다). 기록의 채널 ID는 안내용이다: 셸은 이어받을 때 작업의
+ * 영상을 다시 판정하고 통과한 채널로 기록을 고친다(worker.md 86). 그래서 채널 ID가 없는 옛 작업도 막지 않고 셸에 맡긴다.
  */
 export function jobBlock(job: JobDto, me: AuthStatusDto | null): JobBlock | null {
   if (!me || me.state !== 'signedIn' || !me.channelId) return null;
-  if (!REQUEUEABLE.includes(job.status)) return null;
-  if (job.channelId == null) return 'ownerUnknown';
+  if (!REQUEUEABLE.includes(job.status) || job.channelId == null) return null;
   return job.channelId.toLowerCase() === me.channelId.trim().toLowerCase() ? null : 'otherChannel';
 }
 
@@ -421,8 +421,8 @@ export function resumableInterrupted(jobs: Iterable<JobDto>, me: AuthStatusDto |
     .sort((a, b) => a - b);
 }
 
-export function blockCopyKey(b: JobBlock): CopyKey {
-  return b === 'otherChannel' ? 'job.otherChannel' : 'job.ownerUnknown';
+export function blockCopyKey(_b: JobBlock): CopyKey {
+  return 'job.otherChannel';
 }
 
 const ACTION_LABEL: Record<JobAction, CopyKey> = {

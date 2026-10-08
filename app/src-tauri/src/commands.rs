@@ -151,7 +151,7 @@ pub async fn pause_job(state: State<'_, App>, id: JobId) -> Res<()> {
 
 #[tauri::command]
 pub async fn resume_job(state: State<'_, App>, id: JobId, restart: bool) -> Res<()> {
-    state.resume_job(id, restart)
+    state.resume_job(id, restart).await
 }
 
 #[tauri::command]

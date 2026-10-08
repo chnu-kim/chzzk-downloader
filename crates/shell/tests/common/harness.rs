@@ -180,7 +180,7 @@ pub fn open_store(
 /// 파일 이름 `name`, 기본 폴더로 받는 요청.
 pub fn request(name: &str) -> EnqueueRequest {
     EnqueueRequest {
-        url: format!("https://chzzk.naver.com/video/{}", name.len()),
+        url: "https://chzzk.naver.com/video/1".into(),
         content: ContentRef::Video { video_no: 1 },
         title: format!("제목 {name}"),
         channel_name: "채널".into(),

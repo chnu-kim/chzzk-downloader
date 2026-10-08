@@ -1136,7 +1136,7 @@ jobs:
 | 경로 열쇠·`..` 거부 (§6.1 중복 방지·§6.4) | 54 |
 | e2e (§13 표의 "v1에서는 하지 않는다") | **57** (웹 E2E Playwright + 네이티브 E2E tauri-driver, `docs/design/cicd.md` 구현 중 변경 36~) |
 | 웹뷰·OS 수동 확인 (§15 14·17행) | 아래 "수동 스모크 체크리스트 결과" 표. 미확인 항목은 사람이 3 OS에서 본다 |
-| Phase 3 자리·로그인 화면·업데이트 (§12·§8.9·§9 auth 문구) | **59** (`docs/design/worker.md` §11이 기준: 빌드 env로 켜는 auth, 토큰 둘, 3일 유예, 10분 pending, 런타임 updater endpoint, 시작 때 자동 확인). 화면(로그인 화면·AccountSlot·copy)은 **A3-1** (worker.md 구현 중 변경 A3-1~A3-4) |
+| Phase 3 자리·로그인 화면·업데이트 (§12·§8.9·§9 auth 문구) | **59** (`docs/design/worker.md` §11이 기준: 빌드 env로 켜는 auth, 토큰 둘, 3일 유예, 10분 pending, 런타임 updater endpoint, 시작 때 자동 확인). 화면(로그인 화면·AccountSlot·copy)은 **A3-1** (worker.md 구현 중 변경 A3-1~A3-5) |
 
 1. **§15-1 identifier.** §2의 `io.github.chnu-kim.vod-downloader` 대신 §16 답변대로 `io.github.chnu-kim.chzzk-downloader`를 쓴다. `app/src/tauri-conf.test.ts`가 identifier·창 크기·CSP·`withGlobalTauri`·`dragDropEnabled`를 고정한다.
 2. **§15-1 플러그인.** §0·§11의 세 개에 더해 §16 답변대로 `tauri-plugin-notification` 2.5.1·`tauri-plugin-clipboard-manager` 2.4.1을 골격에서부터 Builder에 등록한다. 다섯 개 모두 Rust에서만 부르므로 JS 패키지(`@tauri-apps/plugin-*`)와 capabilities 플러그인 권한은 넣지 않았다. 클립보드를 JS에서 읽기로 하면 그때 `clipboard-manager:allow-read-text` 하나만 더한다.
@@ -1328,7 +1328,7 @@ jobs:
 
 60. **Phase 3b A2(worker.md 구현 중 변경 54~61).** 59 (가)의 `features.auth`는 로그인 서비스가 있는지이고 릴리스는 늘 켜져 있다(59, 설치 스모크가 확인). 셸 command 층 게이트가 생겼다: 로그인 전에는 허용 목록(`app_info`·`auth_*`·`frontend_ready`·`quit`·`list_jobs`·`subscribe_jobs`) 밖 command가 `notLoggedIn`이다. A3 화면은 (1) `onAuthChanged`를 먼저 듣고 `authStatus()`를 부르고 (2) `features.auth`이고 `signedIn`이 아니면 로그인 화면만 그리며 (3) `get_settings` 등 게이트 뒤 command는 `signedIn`이 된 뒤에 부른다(`subscribe_jobs`는 그 전에도 된다). `notLoggedIn` 오류 문구(`errors.ts`의 "내 채널의 영상만…")는 로그인 전 거부와 맞지 않으므로 A3에서 나눈다. 시각 DTO는 유닉스 초다.
 
-A3-1. Phase 3b A3(worker.md 구현 중 변경 A3-1~A3-4). §8.9 S3 그림·§9 `auth.*` 문구·§12 AccountSlot·B3를 바꾼다. 화면은 `LoginView`(뷰가 아니라 App의 게이트 분기, `View`에서 `'login'`을 지웠다), 헤더 `AccountSlot`(채널 이름 + 오프라인 배지 `Badge tone=warning` + 계정 메뉴 [다시 연결]·[로그아웃], 로그아웃 확인 대화상자 기본 [취소]), 표시 전용 `UpdateBanner`(A4가 배선). copy deck의 `auth.retry`는 `auth.relogin`(다시 로그인)으로 이름을 바꿨다(command `auth_retry` = [다시 연결]과 헷갈리지 않게). `banner.sessionExpired`(B3)는 지웠다. `errors.ts`의 `notLoggedIn`은 '로그인이 필요해요 / 치지직 계정으로 로그인한 뒤 다시 시도해 주세요.'로 나눴다(60). 설정 화면 로드는 로그인 상태가 열릴 때마다 한다(`get_settings`가 게이트 뒤).
+A3-1. Phase 3b A3(worker.md 구현 중 변경 A3-1~A3-5). §8.9 S3 그림·§9 `auth.*` 문구·§12 AccountSlot·B3를 바꾼다. 화면은 `LoginView`(뷰가 아니라 App의 게이트 분기, `View`에서 `'login'`을 지웠다), 헤더 `AccountSlot`(채널 이름 + 오프라인 배지 `Badge tone=warning` + 계정 메뉴 [다시 연결]·[로그아웃], 로그아웃 확인 대화상자 기본 [취소]), 표시 전용 `UpdateBanner`(A4가 배선). copy deck의 `auth.retry`는 `auth.relogin`(다시 로그인)으로 이름을 바꿨다(command `auth_retry` = [다시 연결]과 헷갈리지 않게). `banner.sessionExpired`(B3)는 지웠다. `errors.ts`의 `notLoggedIn`은 '로그인이 필요해요 / 치지직 계정으로 로그인한 뒤 다시 시도해 주세요.'로 나눴다(60). 설정 화면 로드는 로그인 상태가 열릴 때마다 한다(`get_settings`가 게이트 뒤).
 
 ### 수동 스모크 체크리스트 결과 (§15 17행, 2026-10-05 macOS)
 

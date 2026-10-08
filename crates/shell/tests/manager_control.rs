@@ -824,6 +824,94 @@ async fn cancel_quit_skips_jobs_that_did_not_stop_in_time() {
     );
 }
 
+/// quit 기한을 넘긴 옛 태스크가 아직 도는 동안 [모두 이어받기]로 다시 줄 세우면(설치 실패 뒤 앱이 계속 산다) 옛 태스크가
+/// 끝난 뒤에야 새로 시작하고, 옛 태스크의 끝이 새 태스크의 취소 토큰·상태를 덮지 않으며, 그동안 `max_running`을 지킨다(80).
+#[tokio::test(start_paused = true)]
+async fn late_task_blocks_restart_until_it_ends() {
+    let h = Harness::new(1);
+    h.fake.script_for(
+        h.output("a"),
+        Script::new()
+            .bytes(1, None)
+            .until_cancelled()
+            .linger(QUIT_TIMEOUT * 3)
+            .fails(Error::Cancelled),
+    );
+    let a = h.enqueue("a").id;
+    until("진행", || h.job(a).progress.is_some()).await;
+    h.mgr.quit(QUIT_TIMEOUT).await;
+    assert_eq!(h.status(a), JobStatus::Interrupted);
+    assert_eq!(h.mgr.cancel_quit(), 0);
+
+    // 새로 시작할 때의 대본: 둘 다 취소될 때까지 받는다
+    h.fake
+        .script_for(h.output("a"), Script::new().wait_cancel());
+    h.fake
+        .script_for(h.output("n"), Script::new().wait_cancel());
+    let calls = h.fake.download_calls().len();
+    assert_eq!(h.mgr.resume_interrupted(), 1);
+    let n = h.enqueue("n").id;
+    settle().await;
+    assert_eq!(
+        h.status(a),
+        JobStatus::Queued,
+        "옛 태스크가 도는 동안은 시작하지 않는다"
+    );
+    assert_eq!(
+        h.status(n),
+        JobStatus::Queued,
+        "옛 태스크가 슬롯을 차지한다"
+    );
+    assert_eq!(h.fake.download_calls().len(), calls);
+    assert_eq!(h.fake.active(), 1);
+
+    // 옛 태스크가 끝난다 → a가 한 번만 새로 시작하고, 옛 끝이 a를 interrupted로 되돌리지 않는다
+    tokio::time::sleep(QUIT_TIMEOUT * 3).await;
+    settle().await;
+    assert_eq!(h.status(a), JobStatus::Running);
+    assert_eq!(h.status(n), JobStatus::Queued, "max_running 1");
+    assert_eq!(h.fake.download_calls().len(), calls + 1);
+    assert_eq!(
+        h.fake.max_active(),
+        1,
+        "옛 태스크와 새 태스크가 겹치지 않는다"
+    );
+
+    // 새 태스크의 취소 토큰이 살아 있다: 일시정지가 실제로 멈춘다
+    h.mgr.pause(a).unwrap();
+    until("a 멈춤", || h.status(a) == JobStatus::Paused).await;
+    until("n 시작", || h.status(n) == JobStatus::Running).await;
+    assert_eq!(h.fake.max_active(), 1);
+}
+
+/// quit 기한을 넘긴 옛 태스크가 도는 작업을 지우면 그 태스크의 끝을 기다린 뒤 `.part`를 지운다(80).
+#[tokio::test(start_paused = true)]
+async fn remove_late_task_waits_for_it() {
+    let h = Harness::new(1);
+    let out = h.output("a");
+    h.fake.script_for(
+        &out,
+        Script::new()
+            .bytes(1, None)
+            .until_cancelled()
+            .linger(QUIT_TIMEOUT * 3)
+            .write(part_path(&out), b"late checkpoint".to_vec())
+            .fails(Error::Cancelled),
+    );
+    let a = h.enqueue("a").id;
+    until("진행", || h.job(a).progress.is_some()).await;
+    h.mgr.quit(QUIT_TIMEOUT).await;
+    h.mgr.cancel_quit();
+    assert_eq!(h.fake.active(), 1);
+    h.mgr.remove(a).await.unwrap();
+    assert_eq!(h.fake.active(), 0, "옛 태스크가 끝난 뒤에 지웠다");
+    assert!(
+        !has_partial(&out),
+        "옛 태스크가 마지막에 쓴 .part까지 지웠다"
+    );
+    assert!(h.mgr.list().iter().all(|j| j.id != a));
+}
+
 /// 재시작 전부터 `interrupted`였던 작업은 `cancel_quit`이 건드리지 않는다.
 #[tokio::test(start_paused = true)]
 async fn cancel_quit_ignores_older_interrupted_jobs() {

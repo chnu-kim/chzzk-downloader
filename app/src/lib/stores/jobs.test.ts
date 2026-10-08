@@ -168,6 +168,30 @@ describe('JobsStore 동작', () => {
     expect(s.showInterruptedBanner).toBe(false);
   });
 
+  it('채널 모르는 옛 작업은 B1이 세고, 셸이 남의 영상으로 거부해 채널을 고치면 빠진다', async () => {
+    const A1 = '000000000000000000000000000000a1';
+    const C3 = '000000000000000000000000000000c3';
+    auth.status = signedInAs(A1);
+    const { s, send } = await loaded([
+      job(1, { status: 'interrupted', channelId: null }),
+      job(2, { status: 'interrupted', channelId: A1 }),
+    ]);
+    expect(s.resumableCount).toBe(2);
+    vi.mocked(api.resumeJob).mockImplementation(async (id) => {
+      if (id === 1) {
+        // 셸은 거부하면서 기록을 실제 채널로 고쳐 상태 이벤트를 보낸다(worker.md 86)
+        send({ type: 'status', job: job(1, { status: 'interrupted', channelId: C3 }) });
+        throw err('notOwnContent');
+      }
+    });
+    await s.resumeAllInterrupted();
+    expect(vi.mocked(api.resumeJob).mock.calls).toEqual([
+      [1, false],
+      [2, false],
+    ]);
+    expect(s.resumableIds).toEqual([2]);
+  });
+
   it('배너는 중단된 작업이 없거나 닫으면 숨는다', async () => {
     const { s, send } = await loaded([job(1, { status: 'interrupted' })]);
     expect(s.showInterruptedBanner).toBe(true);

@@ -22,7 +22,7 @@ use crate::dto::{
     AppFolder, AppInfo, AuthStatusDto, EnqueueRequest, Features, JobDto, OutputCheck, ResolvedDto,
     SettingsDto, SettingsPatch, UpdateCheckDto, UpdateInfoDto, UpdateInstallDto,
 };
-use crate::error::AppError;
+use crate::error::{AppError, ErrorCode};
 use crate::gate;
 use crate::jobs::JobStore;
 use crate::manager::{DownloadManager, ManagerConfig};
@@ -246,10 +246,22 @@ impl App {
                 Err(AppError::ownership_unknown())
             });
         };
-        let owner = self
+        let owner = match self
             .gate
             .admit(&content, || self.settings.content_channel(&content))
-            .await?;
+            .await
+        {
+            Ok(o) => o,
+            Err(e) => {
+                // 남의 영상이면 실제 채널로 기록을 고친다: 화면이 막힌 작업으로 보이고 B1이 다시 세지 않는다
+                if e.code == ErrorCode::NotOwnContent
+                    && let Some(real) = self.gate.known_channel(&content)
+                {
+                    self.manager.note_channel(id, &content, real);
+                }
+                return Err(e);
+            }
+        };
         self.manager.resume_checked(id, restart, |c| {
             if *c == content {
                 Ok(owner)

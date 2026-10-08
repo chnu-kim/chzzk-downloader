@@ -516,6 +516,22 @@ impl<B: Backend> DownloadManager<B> {
         Ok(())
     }
 
+    /// 판정으로 알게 된 작업의 실제 채널 ID를 기록한다(상태·`.part`는 그대로). 거부된 이어받기 뒤 기록이 틀렸으면
+    /// 고쳐 써서 화면이 막힌 작업(`otherChannel`)으로 보이고 B1이 세지 않게 한다(A5 리뷰). 컨텐츠가 다르면 하지 않는다.
+    pub fn note_channel(&self, id: JobId, content: &ContentRef, channel: String) {
+        let mut st = self.inner.lock();
+        let Ok(Some(job)) = st.target(id) else {
+            return;
+        };
+        if job.rec.content != *content || job.rec.channel_id.as_deref() == Some(channel.as_str()) {
+            return;
+        }
+        job.rec.channel_id = Some(channel);
+        let dto = job.dto();
+        self.inner.save(&st);
+        st.emit(JobEvent::Status { job: dto });
+    }
+
     /// `interrupted`를 모두 다시 줄 세운다(id 순). 같은 경로의 활성 작업이 있으면 그 작업은 건너뛴다.
     /// 재시작 후 자동 이어받기(설정)에 쓴다. 줄 세운 수를 돌려준다.
     pub fn resume_interrupted(&self) -> usize {

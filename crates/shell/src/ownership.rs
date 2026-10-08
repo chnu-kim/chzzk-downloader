@@ -133,6 +133,11 @@ impl OwnershipGate {
         Ok(owner)
     }
 
+    /// 캐시에 있는 그 컨텐츠의 채널 ID(없거나 채널 ID가 없으면 `None`). 거부한 판정 뒤 기록을 고칠 때 쓴다
+    pub fn known_channel(&self, content: &ContentRef) -> Option<String> {
+        self.cached(content).flatten()
+    }
+
     fn cached(&self, content: &ContentRef) -> Option<Option<String>> {
         self.recent
             .lock()

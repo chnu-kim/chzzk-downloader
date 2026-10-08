@@ -378,7 +378,9 @@ async fn resume_job_rejects_other_channel_content_whatever_the_record_says() {
         );
         assert_eq!(status_of(&app, id), JobStatus::Interrupted);
     }
-    assert_eq!(channel_of(&app, 1).as_deref(), Some(OTHER));
+    // 거부한 뒤 기록은 판정한 실제 채널(b2)로 고쳐진다: 화면이 막힌 작업으로 보이고 B1이 다시 세지 않는다
+    assert_eq!(channel_of(&app, 1).as_deref(), Some(OWN));
+    assert_eq!(channel_of(&app, 2).as_deref(), Some(OWN));
     app.manager.quit(Duration::from_secs(3)).await;
 }
 

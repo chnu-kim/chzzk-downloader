@@ -1332,7 +1332,7 @@ jobs:
 
 62. Phase 3b A4(worker.md 구현 중 변경 67~78). 59 (사)의 업데이트를 배선한다. 배너 B4: `UpdateBanner`를 `AppBanners`의 B1 뒤에 두고 하나만 보인다. 받는 중·설치 중에는 진행 문구가 나오고 닫을 수 없으며 B2·B1보다 앞선다(73). 확인 대화상자: `UpdateDialog`는 `dialog.update.*`이고 기본은 [나중에]다. 설정 > 정보: [업데이트 확인]은 로그인했을 때만 있고 결과는 `settings.about.*` 한 줄이다(`settings.about.checking` 새 키). 프런트 `update` store는 `update-available`·`update-progress`를 듣고, 잠금이 풀릴 때 `update_available`로 캐시를 읽는다. [나중에]는 이 실행 동안 그 버전만 숨긴다. 로그인 화면은 `canReconnect`이면 [다시 연결]을 붙인다. 배너 노드 유지·`aria-disabled`·퍼센트 `aria-hidden`·대화상자 문구는 worker.md 77다. `Button`은 `aria-disabled='true'`에도 비활성 색을 쓴다.
 
-A5-1. Phase 3b A5(worker.md 구현 중 변경 A5-1~A5-4). §12 "본인 영상 검사"를 켰다. 판정 채널은 로그인 묶음의 channelId다. 캐시는 채널 ID를 들고 판정은 enqueue 때 한다. 셸은 웹뷰의 `channelId`를 믿지 않는다. `JobDto.channelId`를 더했다. 목록 항목에는 막힌 작업 안내(`job.otherChannel`·`job.ownerUnknown`)가 붙고 이어받기 계열 버튼이 빠진다. B1은 이어받을 수 있는 작업만 센다. `OwnershipNotice`는 로그인한 채널 이름을 보인다. §12 "Phase 2의 게이트는 항상 허용"은 로그인을 쓰지 않는 빌드에만 남는다.
+A5-1. Phase 3b A5(worker.md 구현 중 변경 A5-1~A5-4). §12 "본인 영상 검사"를 켰다. 판정 채널은 로그인 묶음의 channelId다. 캐시는 채널 ID를 들고 판정은 enqueue 때 한다. 셸은 웹뷰의 `channelId`를 믿지 않는다. `JobDto.channelId`를 더했다. 목록 항목에는 막힌 작업 안내(`job.otherChannel`·`job.ownerUnknown`)가 붙고 이어받기 계열 버튼이 빠진다. B1은 이어받을 수 있는 작업만 센다. `OwnershipNotice`는 로그인한 채널 이름을 보인다. §12 "Phase 2의 게이트는 항상 허용"은 로그인을 쓰지 않는 빌드에만 남는다. 실패이면서 막힌 항목은 오류 제목만 남기고 본문·자세히("다시 시도해 주세요" 같은 안내)를 숨긴다: 누를 버튼이 없기 때문이다. 막힌 이유 문장은 항목의 `aria-describedby`로 묶어 항목에 포커스하면 함께 읽힌다.
 
 ### 수동 스모크 체크리스트 결과 (§15 17행, 2026-10-05 macOS)
 

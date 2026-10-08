@@ -19,6 +19,10 @@ import type {
   ResolvedDto,
   SettingsDto,
   SettingsPatch,
+  UpdateCheckDto,
+  UpdateInfoDto,
+  UpdateInstallDto,
+  UpdateProgressEvent,
 } from './bindings';
 import { toAppError } from './copy/errors';
 
@@ -94,5 +98,21 @@ export const onCloseRequested = (cb: (running: number) => void): Promise<Unliste
 export const AUTH_CHANGED = 'auth-changed';
 export const onAuthChanged = (cb: (s: AuthStatusDto) => void): Promise<UnlistenFn> =>
   listen<AuthStatusDto>(AUTH_CHANGED, (e) => cb(e.payload));
+
+/** 업데이트 확인(설정 > 정보 [업데이트 확인], worker.md §11.6). 네트워크를 쓴다 */
+export const updateCheck = () => call<UpdateCheckDto>('update_check');
+/** 자동 확인이 찾아 둔 업데이트(네트워크 없음). `update-available`을 들은 뒤에 부른다 */
+export const updateAvailable = () => call<UpdateInfoDto | null>('update_available');
+/** 업데이트 설치. 받는 중 작업이 있으면 `needsConfirm`이 오고, 확인한 뒤 `confirmPause=true`로 다시 부른다 */
+export const updateInstall = (confirmPause: boolean) => call<UpdateInstallDto>('update_install', { confirmPause });
+
+/** 자동 확인이 새 버전을 찾았다는 이벤트(UpdateInfoDto) */
+export const UPDATE_AVAILABLE = 'update-available';
+export const onUpdateAvailable = (cb: (i: UpdateInfoDto) => void): Promise<UnlistenFn> =>
+  listen<UpdateInfoDto>(UPDATE_AVAILABLE, (e) => cb(e.payload));
+/** 설치 진행 이벤트 */
+export const UPDATE_PROGRESS = 'update-progress';
+export const onUpdateProgress = (cb: (e: UpdateProgressEvent) => void): Promise<UnlistenFn> =>
+  listen<UpdateProgressEvent>(UPDATE_PROGRESS, (e) => cb(e.payload));
 
 export { Channel };

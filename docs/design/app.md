@@ -1136,7 +1136,7 @@ jobs:
 | 경로 열쇠·`..` 거부 (§6.1 중복 방지·§6.4) | 54 |
 | e2e (§13 표의 "v1에서는 하지 않는다") | **57** (웹 E2E Playwright + 네이티브 E2E tauri-driver, `docs/design/cicd.md` 구현 중 변경 36~) |
 | 웹뷰·OS 수동 확인 (§15 14·17행) | 아래 "수동 스모크 체크리스트 결과" 표. 미확인 항목은 사람이 3 OS에서 본다 |
-| Phase 3 자리·로그인 화면·업데이트 (§12·§8.9·§9 auth 문구) | **59** (`docs/design/worker.md` §11이 기준: 빌드 env로 켜는 auth, 토큰 둘, 3일 유예, 10분 pending, 런타임 updater endpoint, 시작 때 자동 확인). 화면(로그인 화면·AccountSlot·copy)은 **61** (worker.md 구현 중 변경 62~66). 업데이트 배선·[다시 연결] 보강은 **62**(worker.md 구현 중 변경 67~78) |
+| Phase 3 자리·로그인 화면·업데이트 (§12·§8.9·§9 auth 문구) | 본인 영상 검사·이어받기는 **A5-1**(worker.md 구현 중 변경 A5-1·A5-2). **59** (`docs/design/worker.md` §11이 기준: 빌드 env로 켜는 auth, 토큰 둘, 3일 유예, 10분 pending, 런타임 updater endpoint, 시작 때 자동 확인). 화면(로그인 화면·AccountSlot·copy)은 **61** (worker.md 구현 중 변경 62~66). 업데이트 배선·[다시 연결] 보강은 **62**(worker.md 구현 중 변경 67~78) |
 
 1. **§15-1 identifier.** §2의 `io.github.chnu-kim.vod-downloader` 대신 §16 답변대로 `io.github.chnu-kim.chzzk-downloader`를 쓴다. `app/src/tauri-conf.test.ts`가 identifier·창 크기·CSP·`withGlobalTauri`·`dragDropEnabled`를 고정한다.
 2. **§15-1 플러그인.** §0·§11의 세 개에 더해 §16 답변대로 `tauri-plugin-notification` 2.5.1·`tauri-plugin-clipboard-manager` 2.4.1을 골격에서부터 Builder에 등록한다. 다섯 개 모두 Rust에서만 부르므로 JS 패키지(`@tauri-apps/plugin-*`)와 capabilities 플러그인 권한은 넣지 않았다. 클립보드를 JS에서 읽기로 하면 그때 `clipboard-manager:allow-read-text` 하나만 더한다.
@@ -1331,6 +1331,8 @@ jobs:
 61. Phase 3b A3(worker.md 구현 중 변경 62~66). §8.9 S3 그림·§9 `auth.*` 문구·§12 AccountSlot·B3를 바꾼다. 화면은 `LoginView`(뷰가 아니라 App의 게이트 분기, `View`에서 `'login'`을 지웠다), 헤더 `AccountSlot`(채널 이름 + 오프라인 배지 `Badge tone=warning` + 계정 메뉴 [다시 연결]·[로그아웃], 로그아웃 확인 대화상자 기본 [취소]), 표시 전용 `UpdateBanner`(A4가 배선). copy deck의 `auth.retry`는 `auth.relogin`(다시 로그인)으로 이름을 바꿨다(command `auth_retry` = [다시 연결]과 헷갈리지 않게). `banner.sessionExpired`(B3)는 지웠다. `errors.ts`의 `notLoggedIn`은 '로그인이 필요해요 / 치지직 계정으로 로그인한 뒤 다시 시도해 주세요.'로 나눴다(60). 설정 화면 로드는 로그인 상태가 열릴 때마다 한다(`get_settings`가 게이트 뒤).
 
 62. Phase 3b A4(worker.md 구현 중 변경 67~78). 59 (사)의 업데이트를 배선한다. 배너 B4: `UpdateBanner`를 `AppBanners`의 B1 뒤에 두고 하나만 보인다. 받는 중·설치 중에는 진행 문구가 나오고 닫을 수 없으며 B2·B1보다 앞선다(73). 확인 대화상자: `UpdateDialog`는 `dialog.update.*`이고 기본은 [나중에]다. 설정 > 정보: [업데이트 확인]은 로그인했을 때만 있고 결과는 `settings.about.*` 한 줄이다(`settings.about.checking` 새 키). 프런트 `update` store는 `update-available`·`update-progress`를 듣고, 잠금이 풀릴 때 `update_available`로 캐시를 읽는다. [나중에]는 이 실행 동안 그 버전만 숨긴다. 로그인 화면은 `canReconnect`이면 [다시 연결]을 붙인다. 배너 노드 유지·`aria-disabled`·퍼센트 `aria-hidden`·대화상자 문구는 worker.md 77다. `Button`은 `aria-disabled='true'`에도 비활성 색을 쓴다.
+
+A5-1. Phase 3b A5(worker.md 구현 중 변경 A5-1~A5-4). §12 "본인 영상 검사"를 켰다. 판정 채널은 로그인 묶음의 channelId다. 캐시는 채널 ID를 들고 판정은 enqueue 때 한다. 셸은 웹뷰의 `channelId`를 믿지 않는다. `JobDto.channelId`를 더했다. 목록 항목에는 막힌 작업 안내(`job.otherChannel`·`job.ownerUnknown`)가 붙고 이어받기 계열 버튼이 빠진다. B1은 이어받을 수 있는 작업만 센다. `OwnershipNotice`는 로그인한 채널 이름을 보인다. §12 "Phase 2의 게이트는 항상 허용"은 로그인을 쓰지 않는 빌드에만 남는다.
 
 ### 수동 스모크 체크리스트 결과 (§15 17행, 2026-10-05 macOS)
 

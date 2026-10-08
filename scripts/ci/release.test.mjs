@@ -18,6 +18,8 @@ import {
   bundleMeta,
   checkPubkey,
   ciOkDecision,
+  RELEASE_REQUIRED_JOBS,
+  releaseJobsDecision,
   cmpSemver,
   distBaseProblems,
   DRY_OVERRIDES,
@@ -161,6 +163,32 @@ test('ci-ok 판정: 어느 master 실행이든 ci-ok 녹색이면 통과, 모두
   assert.equal(ciOkDecision([run('completed', 'failure'), run('queued')]), 'pending');
   // 작업 이름이 ci-ok가 아니면 세지 않는다
   assert.equal(ciOkDecision([{ status: 'completed', jobs: [{ name: 'ci-ok (x)', conclusion: 'success' }] }]), 'failure');
+});
+
+test('태그 gate 작업 판정: ci-ok와 네이티브 E2E 둘이 모두 녹색이어야 통과, 하나라도 끝난 실패면 실패, 그 밖은 기다림', () => {
+  const ok = (name) => ({ name, conclusion: 'success' });
+  const bad = (name, conclusion = 'failure') => ({ name, conclusion });
+  const [CIOK, LINUX, WIN] = RELEASE_REQUIRED_JOBS;
+  const run = (status, jobs) => ({ status, jobs });
+  assert.deepEqual(RELEASE_REQUIRED_JOBS, ['ci-ok', 'e2e-native (linux)', 'e2e-native (windows)']);
+  assert.equal(releaseJobsDecision([]).decision, 'pending');
+  assert.equal(releaseJobsDecision([run('completed', [ok(CIOK), ok(LINUX), ok(WIN)])]).decision, 'success');
+  // ci-ok가 먼저 녹색이어도 관찰 작업이 아직 돌면 기다린다(일찍 통과하지 않는다)
+  const early = releaseJobsDecision([run('in_progress', [ok(CIOK), ok(LINUX)])]);
+  assert.deepEqual([early.decision, early.pending], ['pending', [WIN]]);
+  // 관찰 작업이 끝내 실패·건너뜀이면 ci-ok가 녹색이어도 실패
+  const failed = releaseJobsDecision([run('completed', [ok(CIOK), ok(LINUX), bad(WIN)])]);
+  assert.deepEqual([failed.decision, failed.failed], ['failure', [WIN]]);
+  assert.equal(releaseJobsDecision([run('completed', [ok(CIOK), bad(LINUX, 'skipped'), ok(WIN)])]).decision, 'failure');
+  // 작업마다 다른 실행(재실행)의 성공을 쓴다
+  assert.equal(releaseJobsDecision([run('completed', [ok(CIOK), bad(LINUX), ok(WIN)]), run('completed', [bad(CIOK), ok(LINUX), bad(WIN)])]).decision, 'success');
+  // 실패한 실행 옆에 아직 도는 실행이 있으면 기다린다
+  assert.equal(releaseJobsDecision([run('completed', [ok(CIOK), bad(LINUX), ok(WIN)]), run('queued', [])]).decision, 'pending');
+});
+
+test('태그 gate가 보는 작업 이름이 ci.yml의 작업 이름과 같다', () => {
+  const ci = readFileSync(join(ROOT, '.github/workflows/ci.yml'), 'utf8');
+  for (const name of RELEASE_REQUIRED_JOBS) assert.match(ci, new RegExp(`^    name: ${name.replace(/[()]/g, '\\$&')}$`, 'm'), name);
 });
 
 test('prune·worker의 설정 없음 메시지는 업로드용 preflight 문구를 쓰지 않고 종류(시크릿·변수)를 적는다', () => {

@@ -3,7 +3,7 @@
 // 판정은 모두 결정적이다(종료 코드, 해시, 서명, 스키마, 실제 빌드·실행). 무거운 일은 xtask(Rust)가 하고 여기서는 순서를 정한다.
 //
 //   node scripts/ci/release.mjs pubkey        # release/updater.pub == tauri.conf.json plugins.updater.pubkey, release/tauri.release.json 허용 목록
-//   node scripts/ci/release.mjs gate          # 태그 = 버전 파일, 단조 증가, master 조상, 그 커밋의 master ci-ok 녹색(기다림)
+//   node scripts/ci/release.mjs gate          # 태그 = 버전 파일, 단조 증가, master 조상, 그 커밋의 master ci-ok·네이티브 E2E 녹색(기다림)
 //   node scripts/ci/release.mjs build         # 임시 키로 릴리스 번들 + updater 산출물 → collect --release → 서명 형식 자체 확인
 //   node scripts/ci/release.mjs xtask         # xtask를 빌드해 target/ci/xtask-bin에 담고 sha256을 출력(시크릿 없는 작업에서만)
 //   node scripts/ci/release.mjs stage         # 받은 3 OS 산출물로 publish → verify를 가짜 S3에(임시 키, 시크릿 없음. 리허설의 끝)
@@ -208,12 +208,28 @@ export function tagProblems(tag, others) {
   return out;
 }
 
-// master에서 그 커밋을 빌드한 ci.yml push 실행들([{id, status, jobs:[{name, conclusion, status}]}]) → 'success'|'failure'|'pending'
-// 성공: 어느 실행이든 작업 ci-ok가 success. 실패: 모든 실행이 끝났고 ci-ok success가 없다(재실행으로 녹색이 되면 그때 다시 태그).
-export function ciOkDecision(runs) {
-  if (runs.some((r) => r.jobs.some((j) => j.name === 'ci-ok' && j.conclusion === 'success'))) return 'success';
+// 태그 gate가 녹색을 요구하는 master ci.yml 작업(GitHub가 보이는 이름 = ci.yml의 `name:`). ci-ok는 필수 체크이고, 네이티브 E2E 둘은
+// D14 관찰 중이라 ci-ok 밖(gates.mjs OBSERVED_JOBS)이지만 배포 전에는 녹색이어야 한다(cicd.md 구현 중 변경 107). push는 changes가
+// 늘 code=true라 둘은 건너뛰지 않는다(skipped면 실패로 본다)
+export const RELEASE_REQUIRED_JOBS = ['ci-ok', 'e2e-native (linux)', 'e2e-native (windows)'];
+
+// master에서 그 커밋을 빌드한 ci.yml push 실행들([{id, status, jobs:[{name, conclusion, status}]}])과 작업 이름 → 'success'|'failure'|'pending'
+// 성공: 어느 실행이든 그 작업이 success. 실패: 모든 실행이 끝났고 success가 없다(재실행으로 녹색이 되면 그때 다시 태그).
+export function jobDecision(runs, name) {
+  if (runs.some((r) => r.jobs.some((j) => j.name === name && j.conclusion === 'success'))) return 'success';
   if (runs.length && runs.every((r) => r.status === 'completed')) return 'failure';
   return 'pending';
+}
+
+export const ciOkDecision = (runs) => jobDecision(runs, 'ci-ok');
+
+// RELEASE_REQUIRED_JOBS 모두: 하나라도 실패면 'failure', 아니면 하나라도 기다림이면 'pending', 모두 성공이면 'success'.
+// 작업마다 다른 실행(재실행)의 성공을 써도 된다. { decision, failed, pending }
+export function releaseJobsDecision(runs, names = RELEASE_REQUIRED_JOBS) {
+  const by = names.map((n) => [n, jobDecision(runs, n)]);
+  const failed = by.filter(([, d]) => d === 'failure').map(([n]) => n);
+  const pending = by.filter(([, d]) => d === 'pending').map(([n]) => n);
+  return { decision: failed.length ? 'failure' : pending.length ? 'pending' : 'success', failed, pending };
 }
 
 function ghJson(args, env) {
@@ -259,26 +275,27 @@ async function cmdGate(env) {
       err(`gate: ${sha}가 origin/master의 조상이 아니다`);
       bad++;
     }
-    // 4. 그 커밋의 master ci-ok가 녹색. 태그가 master CI보다 먼저 올 수 있어 기다린다
+    // 4. 그 커밋의 master ci-ok와 네이티브 E2E(linux·windows)가 녹색. 태그가 master CI보다 먼저 올 수 있어 기다린다
     if (!bad) {
       const timeout = Number(env.CI_WAIT_TIMEOUT ?? 1800) * 1000;
       const start = Date.now();
-      let d = 'pending';
+      let d = { decision: 'pending', failed: [], pending: RELEASE_REQUIRED_JOBS };
       for (;;) {
         try {
-          d = ciOkDecision(masterRuns(env, sha));
+          d = releaseJobsDecision(masterRuns(env, sha));
         } catch (e) {
           err(`gate: ${e.message}`);
-          d = 'pending';
+          d = { decision: 'pending', failed: [], pending: RELEASE_REQUIRED_JOBS };
         }
-        if (d !== 'pending' || Date.now() - start >= timeout) break;
-        log(`gate: master ci-ok를 기다린다(${Math.round((Date.now() - start) / 1000)}초)`);
+        if (d.decision !== 'pending' || Date.now() - start >= timeout) break;
+        log(`gate: master ${d.pending.join(', ')}를 기다린다(${Math.round((Date.now() - start) / 1000)}초)`);
         await new Promise((r) => setTimeout(r, 30_000));
       }
-      if (d !== 'success') {
-        err(`gate: ${sha}의 master ci-ok가 녹색이 아니다(${d === 'pending' ? '시간 초과' : '실패'})`);
+      if (d.decision !== 'success') {
+        const what = d.decision === 'pending' ? `시간 초과: ${d.pending.join(', ')}` : `실패: ${d.failed.join(', ')}`;
+        err(`gate: ${sha}의 master 작업이 녹색이 아니다(${what}). 작업을 다시 돌려 녹색이 되면 이 gate를 다시 돌린다`);
         bad++;
-      } else log(`gate: master ci-ok 녹색(${sha})`);
+      } else log(`gate: master ${RELEASE_REQUIRED_JOBS.join(', ')} 녹색(${sha})`);
     }
   }
   const pubDate = git(['show', '-s', '--format=%cI', sha]).out;

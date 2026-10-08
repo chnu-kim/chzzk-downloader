@@ -289,6 +289,7 @@ fn status(phase: AuthPhase, offline: bool) -> AuthStatus {
             cause: Cause::Network,
         }),
         verified_at: None,
+        has_session: false,
     }
 }
 

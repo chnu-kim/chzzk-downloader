@@ -31,6 +31,7 @@ const disabled = {
   pending: null,
   offline: null,
   verifiedAt: null,
+  canReconnect: false,
 };
 
 vi.mock('./lib/api', () => ({

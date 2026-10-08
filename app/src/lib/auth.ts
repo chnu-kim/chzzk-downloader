@@ -41,8 +41,25 @@ function message(
   return { kind: 'message', title: t(title), body, problem, buttons, otherAccountHelp };
 }
 
+/**
+ * 저장 세션이 있으면(`canReconnect`) 메시지 화면에 [다시 연결](secondary)을 붙인다(A4, 구현 중 변경 66 (바)).
+ * 로그인이 취소 아닌 종결로 끝나도 저장 세션이 남아 있으면 로그인 없이 복구된다. 이미 있으면 더하지 않는다.
+ */
+function withReconnect(screen: LoginScreen | null, s: AuthStatusDto): LoginScreen | null {
+  if (!screen || screen.kind !== 'message' || !s.canReconnect) return screen;
+  if (screen.buttons.some((b) => b.action === 'reconnect')) return screen;
+  return {
+    ...screen,
+    buttons: [...screen.buttons, { action: 'reconnect', label: t('auth.reconnect'), variant: 'secondary' }],
+  };
+}
+
 /** 잠긴 상태(disabled·signedIn이 아닌 상태)의 화면. disabled·signedIn이면 null */
 export function loginScreen(s: AuthStatusDto): LoginScreen | null {
+  return withReconnect(baseScreen(s), s);
+}
+
+function baseScreen(s: AuthStatusDto): LoginScreen | null {
   const name = s.channelName;
   switch (s.state) {
     case 'disabled':

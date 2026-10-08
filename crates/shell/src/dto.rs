@@ -649,6 +649,8 @@ pub struct AuthStatusDto {
     pub pending: Option<PendingDto>,
     pub offline: Option<OfflineDto>,
     pub verified_at: Option<i64>,
+    /// 저장 세션이 있어 [다시 연결]로 확인할 수 있다(A4, worker.md 구현 중 변경 66 (바)를 닫는다)
+    pub can_reconnect: bool,
 }
 
 /// 로그인 대기(확인 코드와 로컬 기한)
@@ -678,6 +680,7 @@ impl AuthStatusDto {
             pending: None,
             offline: None,
             verified_at: None,
+            can_reconnect: false,
         }
     }
 
@@ -692,6 +695,7 @@ impl AuthStatusDto {
             pending,
             offline,
             verified_at,
+            has_session,
         } = s;
         AuthStatusDto {
             state: AuthState::from(*phase),
@@ -707,6 +711,7 @@ impl AuthStatusDto {
                 grace_until: o.grace_until.unix_timestamp(),
             }),
             verified_at: verified_at.map(|t| t.unix_timestamp()),
+            can_reconnect: *has_session,
         }
     }
 }

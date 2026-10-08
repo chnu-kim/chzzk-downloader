@@ -47,6 +47,7 @@ export const AUTH_DISABLED: AuthStatusDto = {
   pending: null,
   offline: null,
   verifiedAt: null,
+  canReconnect: false,
 };
 
 /** 가짜 [로그인] 뒤 pending 화면에 보이는 확인 코드 */

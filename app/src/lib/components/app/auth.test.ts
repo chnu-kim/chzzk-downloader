@@ -8,7 +8,7 @@ class FakeChannel {
   onmessage: (e: unknown) => void = () => {};
 }
 
-const EMPTY = { channelId: null, channelName: null, reason: null, pending: null, offline: null, verifiedAt: null } as const;
+const EMPTY = { channelId: null, channelName: null, reason: null, pending: null, offline: null, verifiedAt: null, canReconnect: false } as const;
 const authDto = (over: Partial<AuthStatusDto> & Pick<AuthStatusDto, 'state'>): AuthStatusDto => ({ ...EMPTY, ...over });
 
 const settingsDto: SettingsDto = {

@@ -8,4 +8,8 @@ import type { PendingDto } from "./PendingDto";
  * `auth_status` 결과이자 `auth-changed` 이벤트 본문. 시각은 모두 유닉스 초(`JobDto.createdAt`과 같다).
  * 비밀(토큰·pollSecret·로그인 주소)은 없다.
  */
-export type AuthStatusDto = { state: AuthState, channelId: string | null, channelName: string | null, reason: AuthReason | null, pending: PendingDto | null, offline: OfflineDto | null, verifiedAt: number | null, };
+export type AuthStatusDto = { state: AuthState, channelId: string | null, channelName: string | null, reason: AuthReason | null, pending: PendingDto | null, offline: OfflineDto | null, verifiedAt: number | null, 
+/**
+ * 저장 세션이 있어 [다시 연결]로 확인할 수 있다(A4, worker.md 구현 중 변경 66 (바)를 닫는다)
+ */
+canReconnect: boolean, };

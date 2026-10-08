@@ -63,6 +63,8 @@ pub struct AuthStatus {
     pub offline: Option<OfflineInfo>,
     /// 마지막 서버 확인 시각
     pub verified_at: Option<OffsetDateTime>,
+    /// 저장 세션이 메모리에 있다(= [다시 연결]로 확인할 수 있다, A4)
+    pub has_session: bool,
 }
 
 /// 확인 페이지를 열 주소(A2가 opener로 연다)
@@ -209,6 +211,7 @@ fn status_of(i: &Inner) -> AuthStatus {
             .as_ref()
             .filter(|_| verified_visible)
             .map(|h| h.verified_at),
+        has_session: i.held.is_some(),
     }
 }
 

@@ -11,6 +11,7 @@ const st = (state: AuthState, reason: AuthReason | null = null, channelName: str
   pending: null,
   offline: null,
   verifiedAt: null,
+  canReconnect: false,
 });
 
 type Row = [
@@ -56,6 +57,27 @@ describe('loginScreen 표', () => {
       buttons: s!.buttons.map((b) => [b.action, b.label, b.variant]),
       help: s!.otherAccountHelp,
     }).toEqual(want);
+  });
+
+  it('저장 세션이 있으면(canReconnect) 메시지 화면에 [다시 연결]을 붙인다', () => {
+    const buttons = (status: AuthStatusDto) => loginScreen({ ...status, canReconnect: true })!.buttons.map((b) => [b.action, b.label, b.variant]);
+    const both = [[L, ko['auth.relogin'], 'primary'], ['reconnect', ko['auth.reconnect'], 'secondary']];
+    for (const status of [st('expired', 'loginTimeout'), st('error', 'network'), st('error'), st('denied'), st('cancelled')]) {
+      expect(buttons(status)).toEqual(status.state === 'denied' ? [[L, ko['auth.otherAccount'], 'primary'], both[1]] : both);
+      // 세션이 없으면 그대로 하나
+      expect(loginScreen({ ...status, canReconnect: false })!.buttons).toHaveLength(1);
+    }
+  });
+
+  it('유예 만료는 [다시 연결]이 이미 있어 중복하지 않는다', () => {
+    const s = loginScreen({ ...st('expired', 'graceExpired'), canReconnect: true })!;
+    expect(s.buttons.filter((b) => b.action === 'reconnect')).toHaveLength(1);
+  });
+
+  it('pending·checking은 그대로다', () => {
+    const p = { ...st('pending'), pending: { userCode: 'K7QX-4MRA', expiresAt: 1 }, canReconnect: true };
+    expect(loginScreen(p)!.buttons).toEqual([]);
+    expect(loginScreen({ ...st('checking'), canReconnect: true })!.buttons.map((b) => b.action)).toEqual([L]);
   });
 
   it('disabled·signedIn은 화면이 없다', () => {

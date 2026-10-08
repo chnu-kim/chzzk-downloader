@@ -2,7 +2,7 @@
 import type { AuthStatusDto } from '../src/lib/bindings';
 import { expect, test } from './fixtures';
 
-const EMPTY = { channelId: null, channelName: null, reason: null, pending: null, offline: null, verifiedAt: null } as const;
+const EMPTY = { channelId: null, channelName: null, reason: null, pending: null, offline: null, verifiedAt: null, canReconnect: false } as const;
 const auth = (over: Partial<AuthStatusDto> & Pick<AuthStatusDto, 'state'>): AuthStatusDto => ({ ...EMPTY, ...over });
 
 test('로그인 전에는 로그인 화면만 보이고 게이트 뒤 command를 부르지 않는다', async ({ app }) => {

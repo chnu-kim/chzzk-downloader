@@ -924,7 +924,7 @@ fn wait_until(what: &str, secs: u64, pred: impl Fn() -> bool) {
 
 fn disabled_json() -> Value {
     json!({"state":"disabled","channelId":null,"channelName":null,"reason":null,
-           "pending":null,"offline":null,"verifiedAt":null})
+           "pending":null,"offline":null,"verifiedAt":null,"canReconnect":false})
 }
 
 #[test]
@@ -995,7 +995,7 @@ fn open_commands_work_while_signed_out() {
     assert_eq!(
         invoke(&f.main, "auth_status", json!({})).unwrap(),
         json!({"state":"signedOut","channelId":null,"channelName":null,"reason":null,
-               "pending":null,"offline":null,"verifiedAt":null})
+               "pending":null,"offline":null,"verifiedAt":null,"canReconnect":false})
     );
     assert_eq!(invoke(&f.main, "list_jobs", json!({})).unwrap(), json!([]));
     invoke(&f.main, "frontend_ready", json!({})).unwrap();

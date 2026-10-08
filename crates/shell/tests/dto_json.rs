@@ -510,6 +510,7 @@ fn status(phase: AuthPhase) -> AuthStatus {
         pending: None,
         offline: None,
         verified_at: None,
+        has_session: false,
     }
 }
 
@@ -517,7 +518,7 @@ fn status(phase: AuthPhase) -> AuthStatus {
 fn auth_status_dto_json_shapes() {
     let nulls = |state: &str| {
         json!({"state": state, "channelId": null, "channelName": null, "reason": null,
-               "pending": null, "offline": null, "verifiedAt": null})
+               "pending": null, "offline": null, "verifiedAt": null, "canReconnect": false})
     };
     assert_eq!(to_json(&AuthStatusDto::disabled()), nulls("disabled"));
     assert_eq!(
@@ -550,12 +551,13 @@ fn auth_status_dto_json_shapes() {
         cause: Cause::Network,
     });
     signed_in.verified_at = Some(at(T0 - 3600));
+    signed_in.has_session = true;
     let v = to_json(&AuthStatusDto::from_status(&signed_in));
     assert_eq!(
         v,
         json!({"state": "signedIn", "channelId": ch, "channelName": "채널", "reason": "network",
                "pending": null, "offline": {"since": 1893456000, "graceUntil": 1893715200},
-               "verifiedAt": 1893452400})
+               "verifiedAt": 1893452400, "canReconnect": true})
     );
     assert!(v.get("isAdmin").is_none());
 

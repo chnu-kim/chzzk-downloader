@@ -141,6 +141,7 @@ fn plain_status(phase: AuthPhase) -> AuthStatus {
         pending: None,
         offline: None,
         verified_at: None,
+        has_session: false,
     }
 }
 

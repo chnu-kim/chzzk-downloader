@@ -796,6 +796,34 @@ async fn cancel_quit_requeues_jobs_stopped_by_quit() {
     assert_eq!(h.mgr.cancel_quit(), 0, "두 번째는 되살릴 것이 없다");
 }
 
+/// quit 기한 안에 멈추지 않은 작업은 태스크가 아직 돌므로 `cancel_quit`이 되살리지 않는다(옛 태스크와 겹치지 않게).
+#[tokio::test(start_paused = true)]
+async fn cancel_quit_skips_jobs_that_did_not_stop_in_time() {
+    let h = Harness::new(1);
+    h.fake.script_for(
+        h.output("a"),
+        Script::new()
+            .bytes(1, None)
+            .until_cancelled()
+            .linger(QUIT_TIMEOUT * 3)
+            .fails(Error::Cancelled),
+    );
+    let a = h.enqueue("a").id;
+    until("진행", || h.job(a).progress.is_some()).await;
+    h.mgr.quit(QUIT_TIMEOUT).await;
+    assert_eq!(h.status(a), JobStatus::Interrupted);
+    assert_eq!(h.fake.active(), 1, "옛 태스크가 아직 돈다");
+    let calls = h.fake.download_calls().len();
+    assert_eq!(h.mgr.cancel_quit(), 0);
+    settle().await;
+    assert_eq!(h.status(a), JobStatus::Interrupted);
+    assert_eq!(
+        h.fake.download_calls().len(),
+        calls,
+        "새 태스크를 띄우지 않는다"
+    );
+}
+
 /// 재시작 전부터 `interrupted`였던 작업은 `cancel_quit`이 건드리지 않는다.
 #[tokio::test(start_paused = true)]
 async fn cancel_quit_ignores_older_interrupted_jobs() {

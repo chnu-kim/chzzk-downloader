@@ -507,7 +507,7 @@ impl<B: Backend> DownloadManager<B> {
         n
     }
 
-    /// 업데이트 설치가 `quit` 뒤에 실패했을 때(A4, D7): quit이 멈춘 작업(`quit_stopped` 중 지금 `interrupted`이고
+    /// 업데이트 설치가 `quit` 뒤에 실패했을 때(A4, D7): quit이 시간 안에 멈춘 작업(`quit_stopped` 중 지금 `interrupted`이고
     /// 지우는 중이 아닌 것)을 다시 줄 세우고 스케줄러를 켠다. 사용자가 일시정지한 작업(`paused`)은 그대로다.
     /// 줄 세운 수를 돌려준다. `quit`이 끝나기 전에는 부르지 않는다.
     pub fn cancel_quit(&self) -> usize {
@@ -714,13 +714,18 @@ impl<B: Backend> DownloadManager<B> {
         {
             let mut st = self.inner.lock();
             let mut late = Vec::new();
+            let mut late_ids = Vec::new();
             for job in st.jobs.values_mut() {
                 if job.busy() && !job.removing {
                     job.rec.status = JobStatus::Interrupted;
                     job.rec.partial_bytes = partial_bytes(&job.rec);
                     late.push(job.dto());
+                    late_ids.push(job.rec.id);
                 }
             }
+            // 시간 안에 멈추지 않은 작업은 태스크가 아직 돈다. `cancel_quit`이 되살리면 옛 태스크와 겹치므로
+            // 되살릴 목록에서 뺀다(사용자가 B1 [모두 이어받기]로 다시 시작한다, A4-11)
+            st.quit_stopped.retain(|id| !late_ids.contains(id));
             self.inner.save(&st);
             for dto in late {
                 st.emit(JobEvent::Status { job: dto });

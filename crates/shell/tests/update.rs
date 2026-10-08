@@ -5,14 +5,15 @@
 mod common;
 
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use chzzk_core::Secret;
 use chzzk_shell::auth::{AuthPhase, AuthService, AuthStatus, WorkerBase};
 use chzzk_shell::dto::{UpdateCheckDto, UpdateInstallDto, UpdateProgressEvent};
 use chzzk_shell::update::{
-    FoundUpdate, InstallHost, PROGRESS_STEP_UNKNOWN, ProgressThrottle, SourceError, UpdateSource,
-    Updates, auto_check_due, bearer_value, update_endpoint,
+    DOWNLOAD_STALL, FoundUpdate, InstallHost, PROGRESS_STEP_UNKNOWN, ProgressThrottle, SourceError,
+    UpdateSource, Updates, auto_check_due, bearer_value, update_endpoint,
 };
 use common::auth::*;
 use time::Duration;
@@ -118,7 +119,7 @@ impl UpdateSource for FakeSource {
 
 struct FakeHost {
     log: Log,
-    running: usize,
+    running: AtomicUsize,
     pause_ok: bool,
     events: Mutex<Vec<UpdateProgressEvent>>,
 }
@@ -127,7 +128,7 @@ impl FakeHost {
     fn new(log: &Log, running: usize) -> Self {
         Self {
             log: log.clone(),
-            running,
+            running: AtomicUsize::new(running),
             pause_ok: true,
             events: Mutex::default(),
         }
@@ -140,7 +141,7 @@ impl FakeHost {
 impl InstallHost for FakeHost {
     fn running(&self) -> usize {
         self.log.lock().unwrap().push("running");
-        self.running
+        self.running.load(Ordering::SeqCst)
     }
     fn pause_for_install(&self) -> impl Future<Output = bool> + Send {
         self.log.lock().unwrap().push("pause");
@@ -589,6 +590,94 @@ async fn install_is_single_flight() {
     // 끝난 뒤에는 Busy가 아니다
     e.src.st.lock().unwrap().hold = None;
     assert_eq!(e.install(&host, true).await, UpdateInstallDto::Restarting);
+}
+
+/// 다운로드가 `DOWNLOAD_STALL` 동안 아무것도 주지 않으면 실패로 끝내고 가드를 푼다(받던 작업은 멈추지 않는다)
+#[tokio::test(start_paused = true)]
+async fn install_stalled_download_fails_and_releases_the_guard() {
+    let e = Env::signed_in();
+    // notify하지 않는 hold: 영원히 끝나지 않는 전송
+    e.src.st.lock().unwrap().hold = Some(Arc::new(Notify::new()));
+    let host = e.host(1);
+    let t0 = tokio::time::Instant::now();
+    assert_eq!(e.install(&host, true).await, UpdateInstallDto::Failed);
+    assert!(t0.elapsed() >= DOWNLOAD_STALL);
+    assert!(!e.log().contains(&"pause"));
+    assert!(!host.events().contains(&UpdateProgressEvent::Downloaded));
+    // 가드가 풀렸다
+    e.src.st.lock().unwrap().hold = None;
+    assert_eq!(e.install(&host, true).await, UpdateInstallDto::Restarting);
+}
+
+/// 청크가 계속 오면 전체가 `DOWNLOAD_STALL`보다 길어도 끊지 않는다
+#[tokio::test(start_paused = true)]
+async fn install_slow_but_moving_download_is_not_stalled() {
+    struct Slow;
+    impl UpdateSource for Slow {
+        async fn check(
+            &self,
+            _: &str,
+            _: &Secret<String>,
+        ) -> Result<Option<FoundUpdate>, SourceError> {
+            Ok(Some(found(ORIGIN)))
+        }
+        async fn download(
+            &self,
+            on_chunk: &mut (dyn FnMut(u64, Option<u64>) + Send),
+        ) -> Result<(), SourceError> {
+            for _ in 0..4 {
+                tokio::time::sleep(DOWNLOAD_STALL / 2).await;
+                on_chunk(1, Some(4));
+            }
+            Ok(())
+        }
+        fn install(&self) -> Result<(), SourceError> {
+            Ok(())
+        }
+    }
+    let e = Env::signed_in();
+    let host = e.host(0);
+    let t0 = tokio::time::Instant::now();
+    assert_eq!(
+        e.up.install(&e.svc, &base(), &Slow, &host, false).await,
+        UpdateInstallDto::Restarting
+    );
+    assert!(t0.elapsed() >= DOWNLOAD_STALL * 2);
+}
+
+/// 받는 중 작업 없이 시작했는데 받는 동안 새 받기가 시작되면, 멈추기 전에 묻는다
+#[tokio::test(start_paused = true)]
+async fn install_rechecks_running_jobs_after_download() {
+    let e = Env::signed_in();
+    let hold = Arc::new(Notify::new());
+    e.src.st.lock().unwrap().hold = Some(hold.clone());
+    let host = e.host(0);
+    let first = e.install(&host, false);
+    let start_job = async {
+        while e.src.count("download") == 0 {
+            tokio::task::yield_now().await;
+        }
+        host.running.store(1, Ordering::SeqCst);
+        hold.notify_one();
+    };
+    let (r, ()) = tokio::join!(first, start_job);
+    assert_eq!(r, UpdateInstallDto::NeedsConfirm { running: 1 });
+    assert!(!e.log().contains(&"pause"));
+    assert_eq!(e.src.count("install"), 0);
+}
+
+/// 설치 때 다시 확인한 버전이 배너와 다르면 캐시를 맞춘다
+#[tokio::test(start_paused = true)]
+async fn install_refreshes_the_cached_version() {
+    let e = Env::signed_in();
+    e.check().await;
+    assert_eq!(e.up.available().unwrap().version, "9.9.9");
+    let mut newer = found(ORIGIN);
+    newer.version = "9.9.10".into();
+    e.src.push_check(Ok(Some(newer)));
+    e.src.st.lock().unwrap().download = Some(SourceError::Download);
+    assert_eq!(e.install(&e.host(0), false).await, UpdateInstallDto::Failed);
+    assert_eq!(e.up.available().unwrap().version, "9.9.10");
 }
 
 // ---- 비밀·주소가 새지 않는다 ----

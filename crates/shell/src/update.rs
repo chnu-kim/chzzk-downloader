@@ -11,8 +11,11 @@ use chzzk_core::Secret;
 use crate::auth::{AuthPhase, AuthService, AuthStatus, Clock, WorkerApi, WorkerBase};
 use crate::dto::{UpdateCheckDto, UpdateInfoDto, UpdateInstallDto, UpdateProgressEvent};
 
-/// 확인 요청 시간 제한(D10). 다운로드에는 걸지 않는다
+/// 확인 요청 시간 제한(D10). 다운로드 전체에는 걸지 않는다(크기에 따라 길다)
 pub const CHECK_TIMEOUT: Duration = Duration::from_secs(10);
+/// 다운로드 정체 한도: 시작이나 마지막 청크부터 이만큼 아무것도 오지 않으면 실패로 끝낸다(A4-9).
+/// 플러그인 2.13.1은 check가 만든 `Update`에 시간 제한을 넣지 않아, 멈춘 전송이 끝나지 않는다
+pub const DOWNLOAD_STALL: Duration = Duration::from_secs(60);
 /// 크기를 모를 때 진행 이벤트 간격(바이트)
 pub const PROGRESS_STEP_UNKNOWN: u64 = 1024 * 1024;
 
@@ -258,8 +261,9 @@ impl Updates {
         dto
     }
 
-    /// 설치(D6·D7). 순서: 동시 실행 가드 → 받는 중 작업 확인 → 세션·check·출처 → download(진행 이벤트) →
-    /// quit 경로 → install → 다시 시작. 다운로드·서명 확인이 quit보다 먼저라 그 실패에서는 작업이 멈추지 않는다
+    /// 설치(D6·D7). 순서: 동시 실행 가드 → 받는 중 작업 확인 → 세션·check·출처 → download(진행 이벤트, 정체 감시) →
+    /// (확인 없이 왔으면) 받는 중 작업 다시 확인 → quit 경로 → install → 다시 시작.
+    /// 다운로드·서명 확인이 quit보다 먼저라 그 실패에서는 작업이 멈추지 않는다
     pub async fn install<A: WorkerApi, C: Clock, S: UpdateSource, H: InstallHost>(
         &self,
         auth: &AuthService<A, C>,
@@ -290,20 +294,33 @@ impl Updates {
                 *self.cache() = None;
                 return UpdateInstallDto::Untrusted;
             }
-            Found::Update(_) => {}
+            // 배너가 보인 것과 다른 버전일 수 있다: 캐시만 맞춘다(이벤트는 보내지 않는다)
+            Found::Update(f) => *self.cache() = Some(info_of(&f)),
         }
 
-        let mut throttle = ProgressThrottle::new();
-        let mut on_chunk = |len: u64, total: Option<u64>| {
-            for e in throttle.on_chunk(len, total) {
-                host.progress(e);
+        match download_watched(src, host).await {
+            Ok(()) => {}
+            Err(stalled) => {
+                let result = if stalled {
+                    "download_stalled"
+                } else {
+                    "download_failed"
+                };
+                tracing::info!(result, "업데이트 설치");
+                return UpdateInstallDto::Failed;
             }
-        };
-        if src.download(&mut on_chunk).await.is_err() {
-            tracing::info!(result = "download_failed", "업데이트 설치");
-            return UpdateInstallDto::Failed;
         }
         host.progress(UpdateProgressEvent::Downloaded);
+
+        // 확인 뒤 받는 동안 새로 시작한 받기가 있으면 묻지 않고 멈추지 않는다(받은 바이트는 버려진다, A4-10)
+        if !confirm_pause {
+            let running = host.running();
+            if running > 0 {
+                return UpdateInstallDto::NeedsConfirm {
+                    running: u32::try_from(running).unwrap_or(u32::MAX),
+                };
+            }
+        }
 
         if !host.pause_for_install().await {
             return UpdateInstallDto::Busy;
@@ -319,6 +336,28 @@ impl Updates {
                 host.restart();
                 UpdateInstallDto::Restarting
             }
+        }
+    }
+}
+
+/// 정체 감시를 붙인 다운로드. 실패면 `Err(정체였나)`. 정체로 끝내면 다운로드 future를 버려 전송도 끊긴다
+async fn download_watched<S: UpdateSource, H: InstallHost>(src: &S, host: &H) -> Result<(), bool> {
+    let last = Mutex::new(tokio::time::Instant::now());
+    let mut throttle = ProgressThrottle::new();
+    let mut on_chunk = |len: u64, total: Option<u64>| {
+        *last.lock().unwrap_or_else(|e| e.into_inner()) = tokio::time::Instant::now();
+        for e in throttle.on_chunk(len, total) {
+            host.progress(e);
+        }
+    };
+    let mut dl = std::pin::pin!(src.download(&mut on_chunk));
+    loop {
+        let since = last.lock().unwrap_or_else(|e| e.into_inner()).elapsed();
+        let Some(left) = DOWNLOAD_STALL.checked_sub(since).filter(|d| !d.is_zero()) else {
+            return Err(true);
+        };
+        if let Ok(r) = tokio::time::timeout(left, dl.as_mut()).await {
+            return r.map_err(|_| false);
         }
     }
 }

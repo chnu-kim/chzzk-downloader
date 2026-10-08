@@ -390,7 +390,7 @@ impl From<&Quality> for QualityDto {
     }
 }
 
-/// 본인 영상 판정(Phase 3). Phase 2는 늘 `unchecked`.
+/// 본인 영상 판정. 로그인을 쓰지 않는 빌드와 로그인 전은 `unchecked`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub enum Ownership {
@@ -514,6 +514,8 @@ pub struct JobDto {
     pub url: String,
     pub title: String,
     pub channel_name: String,
+    /// 작업을 줄 세울 때 셸이 검증해 기록한 컨텐츠 채널 ID(없으면 null). 막힌 작업 안내에 쓴다
+    pub channel_id: Option<String>,
     pub kind: ContentKindDto,
     #[ts(as = "PlaybackKindTs")]
     pub playback_kind: PlaybackKind,

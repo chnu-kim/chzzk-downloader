@@ -100,7 +100,7 @@ pub async fn pick_folder<R: Runtime>(
 
 #[tauri::command]
 pub async fn resolve(state: State<'_, App>, url: String) -> Res<ResolvedDto> {
-    state.settings.resolve(&url).await
+    state.resolve(&url).await
 }
 
 #[tauri::command]
@@ -123,7 +123,7 @@ pub async fn check_output(
 
 #[tauri::command]
 pub async fn enqueue(state: State<'_, App>, req: EnqueueRequest) -> Res<JobDto> {
-    state.enqueue(req)
+    state.enqueue(req).await
 }
 
 #[tauri::command]
@@ -151,7 +151,7 @@ pub async fn pause_job(state: State<'_, App>, id: JobId) -> Res<()> {
 
 #[tauri::command]
 pub async fn resume_job(state: State<'_, App>, id: JobId, restart: bool) -> Res<()> {
-    state.manager.resume(id, restart)
+    state.resume_job(id, restart)
 }
 
 #[tauri::command]

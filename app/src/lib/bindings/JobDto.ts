@@ -9,7 +9,11 @@ import type { ProgressDto } from "./ProgressDto";
 /**
  * 작업 하나.
  */
-export type JobDto = { id: JobId, url: string, title: string, channelName: string, kind: ContentKind, playbackKind: PlaybackKind, qualityLabel: string, output: string, status: JobStatus, 
+export type JobDto = { id: JobId, url: string, title: string, channelName: string, 
+/**
+ * 작업을 줄 세울 때 셸이 검증해 기록한 컨텐츠 채널 ID(없으면 null). 막힌 작업 안내에 쓴다
+ */
+channelId: string | null, kind: ContentKind, playbackKind: PlaybackKind, qualityLabel: string, output: string, status: JobStatus, 
 /**
  * 마지막 진행률(running·pausing·paused에서 표시)
  */

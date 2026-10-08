@@ -719,7 +719,9 @@ fn closing_the_main_window_is_blocked_while_downloading() {
     .unwrap();
     let (exits_while_running, asked) = run_loop(state, |h, main, exits| {
         let req = serde_json::from_value(enqueue_body(1, "720p", None)["req"].clone()).unwrap();
-        let job = h.state::<App>().enqueue(req).unwrap();
+        let job = chzzk_app_lib::tokio_handle()
+            .block_on(h.state::<App>().enqueue(req))
+            .unwrap();
         assert_eq!(job.status, chzzk_shell::dto::JobStatus::Running);
         let asked = close_requests(&h);
         main.close().unwrap();

@@ -138,6 +138,7 @@ mod tests {
             url: "https://chzzk.naver.com/video/1".into(),
             title: "제목".into(),
             channel_name: "채널".into(),
+            channel_id: None,
             kind: ContentKindDto::Video,
             playback_kind: PlaybackKind::Progressive,
             quality_label: "720p".into(),

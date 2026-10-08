@@ -8,7 +8,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use chzzk_core::{Chzzk, ClientConfig, ContentRef, PlaybackKind, parse_content_url};
+use chzzk_core::{
+    Chzzk, ClientConfig, ContentRef, PlaybackKind, is_own_channel, parse_content_url,
+};
 use tokio::runtime::Handle;
 
 use crate::JobId;
@@ -17,14 +19,14 @@ use crate::auth::{
     WorkerBase, client_label,
 };
 use crate::dto::{
-    AppFolder, AppInfo, AuthStatusDto, EnqueueRequest, Features, JobDto, OutputCheck, SettingsDto,
-    SettingsPatch, UpdateCheckDto, UpdateInfoDto, UpdateInstallDto,
+    AppFolder, AppInfo, AuthStatusDto, EnqueueRequest, Features, JobDto, OutputCheck, ResolvedDto,
+    SettingsDto, SettingsPatch, UpdateCheckDto, UpdateInfoDto, UpdateInstallDto,
 };
 use crate::error::AppError;
 use crate::gate;
 use crate::jobs::JobStore;
 use crate::manager::{DownloadManager, ManagerConfig};
-use crate::ownership::OwnershipGate;
+use crate::ownership::{self, OwnershipGate, SignedInChannel};
 use crate::services::{self, AppPaths, PROGRESS_INTERVAL, SettingsService};
 use crate::update::{InstallHost, UpdateSource, Updates, auto_check_due};
 
@@ -157,11 +159,18 @@ impl App {
             max_parallel: s.max_parallel_downloads,
             auto_resume: s.auto_resume_interrupted && auth.is_none(),
         })?;
+        let gate = match &auth {
+            Some(a) => {
+                let a: Arc<dyn SignedInChannel> = a.clone();
+                OwnershipGate::enabled(a)
+            }
+            None => OwnershipGate::disabled(),
+        };
         Ok(App {
             settings,
             manager,
             paths,
-            gate: OwnershipGate::disabled(),
+            gate,
             auth,
             worker_base,
             updates: Updates::default(),
@@ -212,8 +221,24 @@ impl App {
     }
 
     /// `enqueue`: 게이트 → 매니저 → 최근 VOD(§6.2).
-    pub fn enqueue(&self, req: EnqueueRequest) -> Result<JobDto, AppError> {
-        services::enqueue(&self.settings, &self.gate, &self.manager, req)
+    pub async fn enqueue(&self, req: EnqueueRequest) -> Result<JobDto, AppError> {
+        services::enqueue(&self.settings, &self.gate, &self.manager, req).await
+    }
+
+    /// `resolve`: 주소를 풀고 본인 영상 판정을 붙인다(A5).
+    pub async fn resolve(&self, url: &str) -> Result<ResolvedDto, AppError> {
+        self.settings.resolve(url, &self.gate).await
+    }
+
+    /// `resume_job`(이어받기·다시 시도·처음부터·덮어쓰고 받기): 로그인한 채널의 작업만(A5).
+    /// 로그인 채널은 매니저 잠금 전에 읽는다(잠금 순서).
+    pub fn resume_job(&self, id: JobId, restart: bool) -> Result<(), AppError> {
+        match self.gate.resume_owner()? {
+            None => self.manager.resume(id, restart),
+            Some(me) => self
+                .manager
+                .resume_checked(id, restart, |c| ownership::check_job_owner(&me, c)),
+        }
     }
 
     /// `open_output`이 열 파일. 최종 파일이 없으면 `fileMissing`.
@@ -263,15 +288,26 @@ impl App {
         }
     }
 
-    /// 상태가 바뀔 때마다(처음 포함) 앱이 부른다. 처음 SignedIn에서 미뤄 둔 자동 이어받기를 한 번 한다. 줄 세운 수
+    /// 상태가 바뀔 때마다(처음 포함) 앱이 부른다. 채널 ID가 있는 처음 SignedIn에서 미뤄 둔 자동 이어받기를 한 번 하고,
+    /// 그 채널의 interrupted만 줄 세운다(A5-2). 줄 세운 수
     pub fn on_auth_status(&self, st: &AuthStatus) -> usize {
-        if st.phase != AuthPhase::SignedIn
-            || !self.auto_resume_pending.swap(false, Ordering::SeqCst)
-        {
+        if st.phase != AuthPhase::SignedIn {
             return 0;
         }
-        let n = self.manager.resume_interrupted();
-        tracing::info!(count = n, "로그인 뒤 멈춘 작업을 자동으로 이어받는다");
+        // 채널을 모르면 깃발을 쓰지 않는다(다음 채널 있는 SignedIn에서 한다)
+        let Some(me) = st.channel_id.as_deref() else {
+            return 0;
+        };
+        if !self.auto_resume_pending.swap(false, Ordering::SeqCst) {
+            return 0;
+        }
+        let n = self
+            .manager
+            .resume_interrupted_where(|c| is_own_channel(c, me) == Some(true));
+        tracing::info!(
+            count = n,
+            "로그인 뒤 같은 채널의 멈춘 작업을 자동으로 이어받는다"
+        );
         n
     }
 

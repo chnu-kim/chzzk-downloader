@@ -459,12 +459,24 @@ impl<B: Backend> DownloadManager<B> {
     /// - 같은 최종 경로의 다른 활성 작업이 있으면 `duplicateOutput`(끝난 작업의 경로는 새 작업이 가져갈 수 있다).
     /// - `queued`·`running`·`pausing`에는 아무것도 하지 않는다. `completed`는 `invalidInput`.
     pub fn resume(&self, id: JobId, restart: bool) -> Result<(), AppError> {
+        self.resume_checked(id, restart, |_| Ok(()))
+    }
+
+    /// `resume`과 같고, 다시 줄 세울 상태(paused·failed·interrupted·skipped)일 때만 잠금 안에서 `check`(작업의
+    /// 소유 채널 ID)를 부른다. 거부하면 상태와 `.part`는 그대로다. queued·running 등은 `check`를 부르지 않는다(A5).
+    pub fn resume_checked(
+        &self,
+        id: JobId,
+        restart: bool,
+        check: impl FnOnce(Option<&str>) -> Result<(), AppError>,
+    ) -> Result<(), AppError> {
         let mut st = self.inner.lock();
         let Some(job) = st.target(id)? else {
             return Ok(());
         };
         match job.rec.status {
             JobStatus::Paused | JobStatus::Failed | JobStatus::Interrupted | JobStatus::Skipped => {
+                check(job.rec.channel_id.as_deref())?;
             }
             JobStatus::Queued | JobStatus::Running | JobStatus::Pausing => return Ok(()),
             JobStatus::Completed => {
@@ -490,11 +502,20 @@ impl<B: Backend> DownloadManager<B> {
     /// `interrupted`를 모두 다시 줄 세운다(id 순). 같은 경로의 활성 작업이 있으면 그 작업은 건너뛴다.
     /// 재시작 후 자동 이어받기(설정)에 쓴다. 줄 세운 수를 돌려준다.
     pub fn resume_interrupted(&self) -> usize {
+        self.resume_interrupted_where(|_| true)
+    }
+
+    /// `resume_interrupted`와 같고, 작업의 소유 채널 ID가 `keep`을 통과한 것만 줄 세운다(A5: 같은 채널만).
+    pub fn resume_interrupted_where(&self, keep: impl Fn(Option<&str>) -> bool) -> usize {
         let mut st = self.inner.lock();
         let ids: Vec<JobId> = st
             .jobs
             .values()
-            .filter(|j| !j.removing && j.rec.status == JobStatus::Interrupted)
+            .filter(|j| {
+                !j.removing
+                    && j.rec.status == JobStatus::Interrupted
+                    && keep(j.rec.channel_id.as_deref())
+            })
             .map(|j| j.rec.id)
             .collect();
         let mut n = 0;

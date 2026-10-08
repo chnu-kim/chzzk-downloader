@@ -275,11 +275,22 @@ export function install(scenario: Scenario = {}): E2EController {
     },
     enqueue: (a): JobDto => {
       const req = a.req as EnqueueRequest;
+      // 셸 흉내(A5): 로그인한 채널이 있으면 resolve 결과로 판정하고, 웹뷰가 보낸 channelId 대신 검증한 채널을 기록한다
+      let channelId = req.channelId;
+      if (auth.state === 'signedIn' && auth.channelId) {
+        const r = resolveTable[req.url];
+        if (r && !('error' in r)) {
+          if (r.ownership === 'notOwn') throw err('notOwnContent');
+          if (r.ownership === 'unknown') throw err('ownershipUnknown');
+          channelId = r.meta.channelId;
+        }
+      }
       const job: JobDto = {
         id: nextId++,
         url: req.url,
         title: req.title,
         channelName: req.channelName,
+        channelId,
         kind: req.content.kind,
         playbackKind: req.expectedKind,
         qualityLabel: req.qualityLabel,
@@ -311,6 +322,11 @@ export function install(scenario: Scenario = {}): E2EController {
     },
     resume_job: (a) => {
       const j = must(a.id as number);
+      // 셸 흉내(A5): 다시 줄 세울 상태에서는 작업의 채널이 로그인 채널과 같아야 한다
+      if (auth.state === 'signedIn' && auth.channelId && ['paused', 'failed', 'interrupted', 'skipped'].includes(j.status)) {
+        if (j.channelId == null) throw err('ownershipUnknown');
+        if (j.channelId.toLowerCase() !== auth.channelId.toLowerCase()) throw err('notOwnContent');
+      }
       put({ ...j, status: 'queued', error: null, partialBytes: a.restart ? null : j.partialBytes });
       return null;
     },

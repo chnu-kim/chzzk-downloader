@@ -135,7 +135,8 @@ fn plain_status(phase: AuthPhase) -> AuthStatus {
     AuthStatus {
         phase,
         reason: None,
-        channel_id: None,
+        // 자동 이어받기는 채널 ID가 있는 SignedIn에서만 돈다(A5). harness `request()`의 채널과 같다
+        channel_id: (phase == AuthPhase::SignedIn).then(|| "ch".to_string()),
         channel_name: None,
         is_admin: false,
         pending: None,
@@ -296,7 +297,7 @@ async fn auto_resume_waits_for_sign_in() {
             ..SettingsPatch::default()
         })
         .unwrap();
-        let job = app.enqueue(request("영상")).unwrap();
+        let job = app.enqueue(request("영상")).await.unwrap();
         wait_status(&app, job.id, JobStatus::Running).await;
         app.manager.quit(Duration::from_secs(3)).await;
     }
@@ -328,7 +329,7 @@ async fn auto_resume_runs_at_open_when_auth_disabled() {
             ..SettingsPatch::default()
         })
         .unwrap();
-        let job = app.enqueue(request("영상")).unwrap();
+        let job = app.enqueue(request("영상")).await.unwrap();
         wait_status(&app, job.id, JobStatus::Running).await;
         app.manager.quit(Duration::from_secs(3)).await;
     }

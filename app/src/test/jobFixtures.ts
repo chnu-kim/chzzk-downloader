@@ -1,5 +1,5 @@
 // 다운로드 목록 테스트용 DTO.
-import type { AppError, JobDto, ProgressDto } from '../lib/bindings';
+import type { AppError, AuthStatusDto, JobDto, ProgressDto } from '../lib/bindings';
 
 export function prog(over: Partial<ProgressDto> = {}): ProgressDto {
   return {
@@ -40,6 +40,7 @@ export function job(id: number, over: Partial<JobDto> = {}): JobDto {
     url: `https://chzzk.naver.com/video/${id}`,
     title: `영상 ${id}`,
     channelName: '채널',
+    channelId: null,
     kind: 'video',
     playbackKind: 'progressive',
     qualityLabel: '1080p',
@@ -58,4 +59,18 @@ export function job(id: number, over: Partial<JobDto> = {}): JobDto {
 
 export function err(code: AppError['code'], over: Partial<AppError> = {}): AppError {
   return { code, message: code, stage: 'download', resumable: false, payload: null, ...over };
+}
+
+/** 로그인한 사용자 상태(소유 판정·막힌 작업 테스트용) */
+export function signedInAs(channelId: string | null, channelName: string | null = '내 채널'): AuthStatusDto {
+  return {
+    state: 'signedIn',
+    channelId,
+    channelName,
+    reason: null,
+    pending: null,
+    offline: null,
+    verifiedAt: null,
+    canReconnect: false,
+  };
 }

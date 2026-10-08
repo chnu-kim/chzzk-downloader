@@ -39,6 +39,7 @@ struct SrcState {
     checks: VecDeque<Result<Option<FoundUpdate>, SourceError>>,
     download: Option<SourceError>,
     install: Option<SourceError>,
+    install_panics: bool,
     chunks: Vec<(u64, Option<u64>)>,
     hold: Option<Arc<Notify>>,
     seen: Vec<(String, String)>,
@@ -111,7 +112,12 @@ impl UpdateSource for FakeSource {
 
     fn install(&self) -> Result<(), SourceError> {
         self.log.lock().unwrap().push("install");
-        self.st.lock().unwrap().install.map_or(Ok(()), Err)
+        let (panics, r) = {
+            let st = self.st.lock().unwrap();
+            (st.install_panics, st.install)
+        };
+        assert!(!panics, "가짜 설치 패닉");
+        r.map_or(Ok(()), Err)
     }
 }
 
@@ -267,9 +273,20 @@ fn same_origin_table() {
         "data:text/plain,hi",
         "not a url",
         "",
+        // 사용자 정보: origin()은 버리지만 다른 주소로 본다
+        "https://u:p@w.example.invalid/x",
+        "https://w@w.example.invalid/x",
+        "https://w.example.invalid@evil.example.invalid/x",
+        "https://w.example.invalid:@evil.example.invalid/x",
+        // 끝 점은 다른 호스트 글자다
+        "https://w.example.invalid./x",
+        // IDN: 키릴 문자 а(U+0430)는 punycode로 바뀌어 다르다
+        "https://w.ex\u{0430}mple.invalid/x",
     ] {
         assert!(!b.same_origin(other), "{other}");
     }
+    // userinfo가 비어 있으면(`@`만) url이 버린다: 같은 주소다
+    assert!(b.same_origin("https://@w.example.invalid/x"));
     let lo = WorkerBase::parse("http://127.0.0.1:8787").unwrap();
     assert!(lo.same_origin("http://127.0.0.1:8787/a"));
     assert!(!lo.same_origin("http://127.0.0.1:8788/a"));
@@ -532,6 +549,44 @@ async fn install_failure_after_pause_resumes() {
     // 가드가 풀려 다시 부를 수 있다
     e.src.st.lock().unwrap().install = None;
     assert_eq!(e.install(&host, true).await, UpdateInstallDto::Restarting);
+}
+
+/// 설치가 패닉해도(quit 뒤 구간) 멈춘 작업과 종료 가드를 되살리고 단일 실행 가드도 풀린다(81)
+#[tokio::test(start_paused = true)]
+async fn install_panic_after_pause_resumes() {
+    let e = Env::signed_in();
+    e.src.st.lock().unwrap().install_panics = true;
+    let host = e.host(1);
+    let fut = std::pin::pin!(e.install(&host, true));
+    let caught = CatchUnwind(fut).await;
+    assert!(caught.is_err(), "패닉이 전해진다");
+    assert_eq!(
+        e.log(),
+        ["running", "check", "download", "pause", "install", "resume"]
+    );
+    e.src.st.lock().unwrap().install_panics = false;
+    assert_eq!(e.install(&host, true).await, UpdateInstallDto::Restarting);
+    assert_eq!(e.log().iter().filter(|w| **w == "resume").count(), 1);
+}
+
+/// poll 중 패닉을 잡는 future(테스트 전용, futures 의존성 없이)
+struct CatchUnwind<F>(F);
+
+impl<F: Future + Unpin> Future for CatchUnwind<F> {
+    type Output = std::thread::Result<F::Output>;
+    fn poll(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        let inner = &mut self.0;
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            std::pin::Pin::new(inner).poll(cx)
+        })) {
+            Ok(std::task::Poll::Pending) => std::task::Poll::Pending,
+            Ok(std::task::Poll::Ready(v)) => std::task::Poll::Ready(Ok(v)),
+            Err(p) => std::task::Poll::Ready(Err(p)),
+        }
+    }
 }
 
 #[tokio::test(start_paused = true)]

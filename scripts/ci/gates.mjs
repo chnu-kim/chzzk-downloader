@@ -152,7 +152,7 @@ export const GATES = {
     steps: [{ cmd: ['node', S('selftest.mjs')] }],
   },
   deny: {
-    desc: 'cargo deny check bans licenses sources',
+    desc: 'cargo deny check bans licenses sources(bans: log→tracing 다리 tracing-log·tauri-plugin-log 금지)',
     needs: ['cargo', 'cargo-deny'],
     steps: [{ cmd: ['cargo', 'deny', '--locked', 'check', 'bans', 'licenses', 'sources'] }],
   },

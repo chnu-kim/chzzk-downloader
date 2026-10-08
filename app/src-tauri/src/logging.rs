@@ -2,6 +2,7 @@
 //! 기본 필터 `info,chzzk_shell=debug,chzzk_core=debug`, `RUST_LOG`로 덮어쓴다. 패닉도 로그에 남긴다.
 
 use std::path::Path;
+use std::sync::Mutex;
 
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_appender::rolling::{Builder, Rotation};
@@ -16,7 +17,16 @@ pub const DEFAULT_FILTER: &str = "info,chzzk_shell=debug,chzzk_core=debug,chzzk_
 pub const MAX_LOG_FILES: usize = 7;
 
 /// 로그 파일 쓰기 스레드의 guard. 앱이 살아 있는 동안 들고 있어야 밀린 로그가 버려지지 않는다.
-pub struct LogGuard(#[allow(dead_code)] WorkerGuard);
+pub struct LogGuard(Mutex<Option<WorkerGuard>>);
+
+impl LogGuard {
+    /// 밀린 로그를 파일에 쓰고 쓰기 스레드를 닫는다(`WorkerGuard`는 drop할 때만 flush한다). 뒤 로그는 버려진다.
+    /// 소멸자가 돌지 않는 종료(Windows 업데이트 설치의 `std::process::exit(0)`) 직전에 부른다(worker.md 구현 중 변경 81).
+    pub fn close(&self) {
+        let g = self.0.lock().unwrap_or_else(|e| e.into_inner()).take();
+        drop(g);
+    }
+}
 
 /// 전역 subscriber를 건다. 파일을 열지 못하면 stdout만(개발 빌드) 쓰고 `None`이다.
 pub fn init(dir: &Path) -> Option<LogGuard> {
@@ -39,7 +49,7 @@ pub fn init(dir: &Path) -> Option<LogGuard> {
             let (w, guard) = tracing_appender::non_blocking(appender);
             (
                 Some(fmt::layer().with_ansi(false).with_writer(w)),
-                Some(LogGuard(guard)),
+                Some(LogGuard(Mutex::new(Some(guard)))),
             )
         }
         Err(e) => {

@@ -325,17 +325,31 @@ impl Updates {
         if !host.pause_for_install().await {
             return UpdateInstallDto::Busy;
         }
+        // quit 뒤 구간: 설치가 성공하지 않고 이 future를 떠나면(실패·패닉·버려짐) 멈춘 작업과 종료 가드를 되살린다(81)
+        let mut rollback = QuitRollback(Some(host));
         host.progress(UpdateProgressEvent::Installing);
         match src.install() {
             Err(_) => {
-                host.resume_after_failed_install();
+                drop(rollback);
                 tracing::info!(result = "install_failed", "업데이트 설치");
                 UpdateInstallDto::Failed
             }
             Ok(()) => {
+                rollback.0 = None;
                 host.restart();
                 UpdateInstallDto::Restarting
             }
+        }
+    }
+}
+
+/// `pause_for_install` 뒤 설치가 성공하지 않으면 drop 때 `resume_after_failed_install`을 부른다(패닉으로 풀릴 때도)
+struct QuitRollback<'a, H: InstallHost>(Option<&'a H>);
+
+impl<H: InstallHost> Drop for QuitRollback<'_, H> {
+    fn drop(&mut self) {
+        if let Some(h) = self.0.take() {
+            h.resume_after_failed_install();
         }
     }
 }

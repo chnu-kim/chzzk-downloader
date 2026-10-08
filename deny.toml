@@ -37,6 +37,13 @@ multiple-versions = "allow"
 wildcards = "deny"
 # 워크스페이스 안 path 의존성은 버전이 없지만 모두 publish = false다
 allow-wildcard-paths = true
+# `log` 크레이트 출력을 tracing으로 잇는 다리를 막는다(worker.md 구현 중 변경 79 (라)). tauri-plugin-updater는 `log::debug!`로
+# 요청 주소(Worker 주소)·설치 인자를 찍는다. 지금은 다리가 없어 버려진다(update_io.rs 머리 주석). tracing-subscriber의
+# `tracing-log` 기능(기본값)이나 tauri-plugin-log가 들어오면 그 줄이 로그 파일에 남는다
+deny = [
+  { crate = "tracing-log", reason = "log → tracing 다리: updater 플러그인의 log 출력(Worker 주소)이 로그 파일에 남는다" },
+  { crate = "tauri-plugin-log", reason = "log 출력을 파일로 보낸다: updater 플러그인의 log 출력(Worker 주소)이 로그 파일에 남는다" },
+]
 
 [sources]
 unknown-registry = "deny"

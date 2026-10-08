@@ -3,6 +3,14 @@
 //!
 //! 비밀값: `Authorization` 값은 민감 표시를 켜고, 플러그인 오류는 Display(reqwest 오류에는 Worker 주소가 든다)를
 //! 로그에 내지 않고 고정 낱말(`kind`)만 남긴다.
+//!
+//! 전제(worker.md 구현 중 변경 81 (라)): 플러그인은 `log` 크레이트로 요청 주소(Worker 주소)·설치 인자를 `log::debug!`로 찍는다.
+//! 이 앱은 `log` → tracing 다리를 두지 않아(tracing-subscriber `default-features = false`로 `tracing-log` 없음,
+//! `tauri-plugin-log` 없음) 그 줄은 아무 데도 가지 않고 버려진다. 다리를 들이면 Worker 주소가 로그 파일에 남으므로
+//! `deny.toml` `[bans] deny`가 두 크레이트를 막는다(gate `deny`).
+//!
+//! Windows 설치는 플러그인이 설치 프로그램을 띄우고 `std::process::exit(0)`로 끝나 `RunEvent::Exit`를 건너뛴다.
+//! `on_before_exit`에서 플러그인 기본 정리(`cleanup_before_exit`)와 작업 목록·로그 flush를 대신 한다(`before_exit`).
 
 use std::sync::atomic::Ordering;
 use std::sync::{Mutex, MutexGuard};
@@ -15,6 +23,7 @@ use tauri::{AppHandle, Emitter, Manager, Runtime, Url};
 use tauri_plugin_updater::{Update, UpdaterExt};
 
 use crate::commands::begin_quit;
+use crate::logging::LogGuard;
 use crate::{Quitting, UPDATE_PROGRESS};
 
 /// updater 플러그인을 등록했다는 표식. `run()`과 플러그인을 등록한 테스트만 manage한다.
@@ -31,6 +40,20 @@ fn kind(e: &tauri_plugin_updater::Error) -> &'static str {
         E::Minisign(_) => "signature",
         _ => "other",
     }
+}
+
+/// Windows 설치 직전(`std::process::exit(0)` 앞, 플러그인 `on_before_exit`). `RunEvent::Exit`가 하던 작업 목록 flush와
+/// 로그 flush를 하고, 이 훅이 대신하는 플러그인 기본 훅(`cleanup_before_exit`)을 마지막에 부른다(그 뒤에는 tauri API를
+/// 쓰지 말라는 것이 tauri 문서다). 다른 OS에서는 불리지 않는다(플러그인이 `#[cfg(windows)]`에서만 담는다)
+fn before_exit<R: Runtime>(app: &AppHandle<R>) {
+    if let Some(state) = app.try_state::<App>() {
+        state.manager.flush();
+    }
+    tracing::info!("업데이트 설치로 종료");
+    if let Some(g) = app.try_state::<LogGuard>() {
+        g.close();
+    }
+    app.cleanup_before_exit();
 }
 
 /// 잠금이 오염돼도 값은 한 전이 단위로만 바뀌므로 계속 쓴다
@@ -79,6 +102,10 @@ impl<R: Runtime> UpdateSource for PluginUpdateSource<R> {
                 .header(tauri::http::header::AUTHORIZATION, value)
                 .map_err(|_| SourceError::Check)?
                 .timeout(CHECK_TIMEOUT)
+                .on_before_exit({
+                    let app = self.app.clone();
+                    move || before_exit(&app)
+                })
                 .build()
                 .map_err(|e| {
                     tracing::warn!(kind = kind(&e), "업데이트 확인 준비 실패");

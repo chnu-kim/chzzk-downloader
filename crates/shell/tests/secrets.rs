@@ -227,12 +227,18 @@ async fn cookies_never_leak() {
 
     // 조회: 성공과 실패
     let resolved = svc
-        .resolve(&format!("https://chzzk.naver.com/video/{VOD_NO}"))
+        .resolve(
+            &format!("https://chzzk.naver.com/video/{VOD_NO}"),
+            &OwnershipGate::disabled(),
+        )
         .await
         .unwrap();
     dtos.push(serde_json::to_string(&resolved).unwrap());
     let err = svc
-        .resolve(&format!("https://chzzk.naver.com/video/{FAIL_NO}"))
+        .resolve(
+            &format!("https://chzzk.naver.com/video/{FAIL_NO}"),
+            &OwnershipGate::disabled(),
+        )
         .await
         .unwrap_err();
     assert_ne!(err.code, ErrorCode::Internal);
@@ -255,8 +261,12 @@ async fn cookies_never_leak() {
         true
     }));
     let gate = OwnershipGate::disabled();
-    let ok = enqueue(&svc, &gate, &mgr, request(VOD_NO, "ok", &out_dir)).unwrap();
-    let bad = enqueue(&svc, &gate, &mgr, request(FAIL_NO, "bad", &out_dir)).unwrap();
+    let ok = enqueue(&svc, &gate, &mgr, request(VOD_NO, "ok", &out_dir))
+        .await
+        .unwrap();
+    let bad = enqueue(&svc, &gate, &mgr, request(FAIL_NO, "bad", &out_dir))
+        .await
+        .unwrap();
     wait_status(&mgr, ok.id, JobStatus::Completed).await;
     wait_status(&mgr, bad.id, JobStatus::Failed).await;
     assert_eq!(std::fs::read(out_dir.join("ok.mp4")).unwrap().len(), 50_000);

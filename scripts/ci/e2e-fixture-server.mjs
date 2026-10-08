@@ -1,7 +1,11 @@
 #!/usr/bin/env node
 // 네이티브 E2E의 가짜 치지직 서버(docs/design/cicd.md §6 "네이티브 E2E"). `testdata/`의 합성 fixture만 서빙한다:
 // 빠른 다시보기(HLS) 영상 하나(`testdata/hls/`)의 info → master → media(앞 두 조각 + ENDLIST) → init·조각 둘.
+// 같은 info에서 영상 번호·채널만 바꾼 "남의 영상" 하나(OTHER_URL)도 준다(본인 영상 검사, A5).
 // `--features e2e` 앱이 `CHZZK_E2E_API_BASE`로 이 서버를 API·vodplay 기본 주소로 쓴다. 네트워크는 루프백뿐이다.
+//
+// 같은 모듈의 `startWorker()`는 로그인 Worker 스텁이다(별도 리스너, `CHZZK_E2E_WORKER_BASE`). worker/src 계약과 같은 모양의
+// /auth/start·poll·refresh·logout, /api/me, /update/:current만 답한다. 시각은 모두 실행 시각 기준이다.
 //
 //   node scripts/ci/e2e-fixture-server.mjs [--port N]   # 직접 띄워 보기(주소를 출력하고 Ctrl+C까지 돈다)
 //
@@ -21,6 +25,13 @@ export const HLS_VIDEO_NO = 9000001;
 export const HLS_URL = `https://chzzk.naver.com/video/${HLS_VIDEO_NO}`;
 // fixture의 미디어 호스트(testdata/README.md). 서버 주소로 바꾼다(이중 인코딩 JSON 안에서도 단순 치환으로 된다)
 export const MEDIA_HOSTS = ['hls.example.invalid', 'clip.example.invalid', 'vod.example.invalid'];
+// 남의 영상(A5): 같은 HLS info에서 영상 번호·채널 ID·채널 이름만 바꾼다. 본인 채널은 fixture의 채널(OWN_CHANNEL_ID)이다.
+export const OWN_CHANNEL_ID = '000000000000000000000000000000a1';
+export const OTHER_CHANNEL_ID = '000000000000000000000000000000c3';
+export const OTHER_VIDEO_NO = 9000101;
+export const OTHER_URL = `https://chzzk.naver.com/video/${OTHER_VIDEO_NO}`;
+export const OTHER_CHANNEL_NAME = '다른채널';
+const OWN_CHANNEL_NAME = '테스트채널';
 // media playlist에서 남길 조각 수(fixture 조각 파일은 seg0·seg1 둘뿐이다)
 const KEEP_SEGMENTS = 2;
 
@@ -44,6 +55,20 @@ export function truncateMedia(text, n = KEEP_SEGMENTS) {
   return `${kept.join('\n')}\n#EXT-X-ENDLIST\n`;
 }
 
+// HLS info → 남의 영상 info. 바꿀 문자열이 하나라도 없으면 throw(fixture가 바뀐 것을 조용히 넘기지 않는다)
+export function otherVideoInfo(text) {
+  let s = text;
+  for (const [from, to] of [
+    [String(HLS_VIDEO_NO), String(OTHER_VIDEO_NO)],
+    [OWN_CHANNEL_ID, OTHER_CHANNEL_ID],
+    [OWN_CHANNEL_NAME, OTHER_CHANNEL_NAME],
+  ]) {
+    if (!s.includes(from)) throw new Error(`남의 영상 info: fixture에 ${from}이(가) 없다`);
+    s = s.replaceAll(from, to);
+  }
+  return s;
+}
+
 export function expectedOutput(root = ROOT) {
   const bytes = Buffer.concat(['hls/init.mp4', 'hls/seg0.m4v', 'hls/seg1.m4v'].map((f) => fixture(root, f)));
   return { bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') };
@@ -53,6 +78,10 @@ export function expectedOutput(root = ROOT) {
 export function route(root, path, origin) {
   if (path === `/service/v2/videos/${HLS_VIDEO_NO}`) {
     return ['application/json', Buffer.from(rewriteHosts(fixture(root, 'hls/video_info.json').toString('utf8'), origin))];
+  }
+  if (path === `/service/v2/videos/${OTHER_VIDEO_NO}`) {
+    const info = rewriteHosts(fixture(root, 'hls/video_info.json').toString('utf8'), origin);
+    return ['application/json', Buffer.from(otherVideoInfo(info))];
   }
   if (path.endsWith('/vod_playlist.m3u8')) return ['application/vnd.apple.mpegurl', fixture(root, 'hls/master.m3u8')];
   if (path.endsWith('/vod_chunklist.m3u8')) {
@@ -83,6 +112,97 @@ export function start({ root = ROOT, port = 0 } = {}) {
     server.listen(port, '127.0.0.1', () => {
       const url = `http://127.0.0.1:${server.address().port}/`;
       resolve({ url, log, close: () => new Promise((r) => server.close(() => r())) });
+    });
+  });
+}
+
+// ───────────────────────── 로그인 Worker 스텁 ─────────────────────────
+// 앱 crates/shell/src/auth/api.rs 파서 규칙에 맞춘 응답(토큰·ID 모양). 실제 Worker(worker/src)와 같은 계약이다.
+
+export const STUB_LOGIN_ID = 'E2E' + 'A'.repeat(19); // 22자 b64url
+export const STUB_HANDLE = 'E2E' + 'H'.repeat(19); // 22자
+export const STUB_USER_CODE = 'K7QX-4MRA'; // 2-9A-HJ-NP-Z 4-4
+export const STUB_CHANNEL_NAME = 'E2E 채널';
+
+const JSON_TYPE = 'application/json; charset=utf-8';
+const iso = (ms) => new Date(ms).toISOString();
+
+function bundle(ctx, access, refresh) {
+  return {
+    status: 'ok',
+    accessToken: 'cda_' + access.repeat(43),
+    accessExpiresAt: iso(ctx.now + 24 * 3600_000),
+    refreshToken: 'cdr_' + refresh.repeat(43),
+    refreshExpiresAt: iso(ctx.now + 30 * 24 * 3600_000),
+    channelId: ctx.channelId ?? OWN_CHANNEL_ID,
+    channelName: STUB_CHANNEL_NAME,
+    isAdmin: false,
+    serverTime: iso(ctx.now),
+  };
+}
+
+// 순수: (method, path, ctx) → { status, body|null }. ctx = { origin, now(ms), polls(이 호출까지 센 poll 수), bearer, channelId }
+export function workerRoute(method, path, ctx) {
+  if (method === 'POST' && path === '/auth/start') {
+    return {
+      status: 201,
+      body: {
+        loginId: STUB_LOGIN_ID,
+        loginUrl: `${ctx.origin}/auth/login/${STUB_HANDLE}`,
+        userCode: STUB_USER_CODE,
+        expiresAt: iso(ctx.now + 600_000),
+        pollIntervalMs: 2000,
+      },
+    };
+  }
+  if (method === 'POST' && path === '/auth/poll') {
+    return { status: 200, body: ctx.polls <= 1 ? { status: 'pending' } : bundle(ctx, 'A', 'B') };
+  }
+  if (method === 'POST' && path === '/auth/refresh') return { status: 200, body: bundle(ctx, 'C', 'D') };
+  if (method === 'POST' && path === '/auth/logout') return { status: 204, body: null };
+  if (method === 'GET' && path === '/api/me') {
+    if (!ctx.bearer) return { status: 401, body: { code: 'invalid_token' } };
+    return {
+      status: 200,
+      body: {
+        channelId: ctx.channelId ?? OWN_CHANNEL_ID,
+        channelName: STUB_CHANNEL_NAME,
+        accessExpiresAt: iso(ctx.now + 24 * 3600_000),
+        serverTime: iso(ctx.now),
+      },
+    };
+  }
+  if (method === 'GET' && path.startsWith('/update/')) return { status: 204, body: null };
+  return { status: 404, body: { code: 'not_found' } };
+}
+
+// Worker 스텁 리스너(127.0.0.1:0) → { origin(끝 / 없음), log: [{method, path, status}], close() }. 요청 기록은 fixture 서버와 따로다
+// (fixture는 모든 응답이 200이어야 하고, 스텁은 201·204·404를 쓴다). poll 수는 여기서 센다.
+export function startWorker({ channelId = OWN_CHANNEL_ID } = {}) {
+  const log = [];
+  let polls = 0;
+  return new Promise((resolve, reject) => {
+    const server = createServer((req, res) => {
+      const u = new URL(req.url ?? '/', 'http://127.0.0.1');
+      req.resume();
+      req.on('end', () => {
+        const origin = `http://127.0.0.1:${server.address().port}`;
+        if (req.method === 'POST' && u.pathname === '/auth/poll') polls++;
+        const bearer = /^Bearer (\S+)$/.exec(req.headers.authorization ?? '')?.[1] ?? null;
+        const r = workerRoute(req.method ?? 'GET', u.pathname, { origin, now: Date.now(), polls, bearer, channelId });
+        log.push({ method: req.method, path: u.pathname, status: r.status });
+        if (r.body === null) {
+          res.writeHead(r.status).end();
+          return;
+        }
+        const buf = Buffer.from(JSON.stringify(r.body));
+        res.writeHead(r.status, { 'content-type': JSON_TYPE, 'content-length': buf.length }).end(buf);
+      });
+    });
+    server.on('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      const origin = `http://127.0.0.1:${server.address().port}`;
+      resolve({ origin, log, close: () => new Promise((r) => server.close(() => r())) });
     });
   });
 }

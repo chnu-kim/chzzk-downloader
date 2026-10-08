@@ -390,7 +390,7 @@ impl From<&Quality> for QualityDto {
     }
 }
 
-/// 본인 영상 판정(Phase 3). Phase 2는 늘 `unchecked`.
+/// 본인 영상 판정. 로그인을 쓰지 않는 빌드와 로그인 전은 `unchecked`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub enum Ownership {
@@ -443,7 +443,7 @@ pub struct EnqueueRequest {
     pub content: ContentRef,
     pub title: String,
     pub channel_name: String,
-    /// Phase 3 소유 재검사용
+    /// 웹뷰가 아는 컨텐츠 채널 ID. 로그인을 쓰는 빌드에서 셸은 이 값을 믿지 않고 검증한 값으로 덮어쓴다(worker.md 구현 중 변경 82)
     pub channel_id: Option<String>,
     pub quality_id: String,
     pub quality_label: String,
@@ -514,6 +514,8 @@ pub struct JobDto {
     pub url: String,
     pub title: String,
     pub channel_name: String,
+    /// 작업의 컨텐츠 채널 ID(없으면 null). 로그인을 쓰는 빌드는 셸이 검증한 값, 쓰지 않는 빌드는 요청 값이다. 막힌 작업 안내에 쓴다
+    pub channel_id: Option<String>,
     pub kind: ContentKindDto,
     #[ts(as = "PlaybackKindTs")]
     pub playback_kind: PlaybackKind,

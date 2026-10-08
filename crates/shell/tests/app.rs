@@ -148,7 +148,7 @@ async fn open_and_reveal_targets() {
     let folder = t.path().join("out");
     let mut req = request("영상");
     req.folder = Some(folder.to_string_lossy().into_owned());
-    let job = app.enqueue(req).unwrap();
+    let job = app.enqueue(req).await.unwrap();
     wait_status(&app, job.id, JobStatus::Failed).await;
     // 최근 VOD에 남았다(§6.2 6단계).
     assert_eq!(app.settings.get().recent_vods.len(), 1);

@@ -87,8 +87,8 @@ pub trait UpdateSource: Send + Sync {
         &self,
         on_chunk: &mut (dyn FnMut(u64, Option<u64>) + Send),
     ) -> impl Future<Output = Result<(), SourceError>> + Send;
-    /// 받은 것을 설치한다(Windows는 성공하면 돌아오지 않는다)
-    fn install(&self) -> Result<(), SourceError>;
+    /// 받은 것을 설치한다(Windows는 성공하면 돌아오지 않는다). 실제 설치는 동기라 구현이 blocking 스레드로 옮긴다(A5)
+    fn install(&self) -> impl Future<Output = Result<(), SourceError>> + Send;
 }
 
 /// 설치를 둘러싼 앱 쪽 일
@@ -328,7 +328,7 @@ impl Updates {
         // quit 뒤 구간: 설치가 성공하지 않고 이 future를 떠나면(실패·패닉·버려짐) 멈춘 작업과 종료 가드를 되살린다(81)
         let mut rollback = QuitRollback(Some(host));
         host.progress(UpdateProgressEvent::Installing);
-        match src.install() {
+        match src.install().await {
             Err(_) => {
                 drop(rollback);
                 tracing::info!(result = "install_failed", "업데이트 설치");

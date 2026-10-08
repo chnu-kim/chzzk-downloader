@@ -154,13 +154,22 @@ impl<R: Runtime> UpdateSource for PluginUpdateSource<R> {
         }
     }
 
-    fn install(&self) -> Result<(), SourceError> {
+    async fn install(&self) -> Result<(), SourceError> {
         let u = lock(&self.found).take().ok_or(SourceError::Install)?;
         let b = lock(&self.bytes).take().ok_or(SourceError::Install)?;
-        u.install(b).map_err(|e| {
-            tracing::warn!(kind = kind(&e), "업데이트 설치 실패");
-            SourceError::Install
-        })
+        // install은 동기(Linux pkexec 대기·Windows 설치기)라 비동기 작업자를 막지 않게 blocking 스레드에서 돈다(worker.md 68 (바))
+        match tauri::async_runtime::spawn_blocking(move || u.install(b)).await {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(e)) => {
+                tracing::warn!(kind = kind(&e), "업데이트 설치 실패");
+                Err(SourceError::Install)
+            }
+            // 설치 스레드가 패닉했다: 설치 실패로 보고 QuitRollback이 멈춘 작업을 되살린다
+            Err(_) => {
+                tracing::warn!(kind = "panic", "업데이트 설치 실패");
+                Err(SourceError::Install)
+            }
+        }
     }
 }
 

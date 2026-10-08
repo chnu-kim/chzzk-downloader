@@ -171,6 +171,7 @@ fn job(status: JobStatus) -> JobDto {
         url: "https://chzzk.naver.com/video/123".into(),
         title: "제목".into(),
         channel_name: "채널".into(),
+        channel_id: None,
         kind: ContentKindDto::Video,
         playback_kind: PlaybackKind::Progressive,
         quality_label: "720p".into(),
@@ -184,6 +185,17 @@ fn job(status: JobStatus) -> JobDto {
         created_at: 1_759_650_000,
         finished_at: None,
     }
+}
+
+#[test]
+fn job_dto_carries_channel_id() {
+    let mut j = job(JobStatus::Interrupted);
+    assert_eq!(to_json(&j)["channelId"], Value::Null);
+    j.channel_id = Some("000000000000000000000000000000a1".into());
+    assert_eq!(
+        to_json(&j)["channelId"],
+        json!("000000000000000000000000000000a1")
+    );
 }
 
 #[test]
@@ -202,6 +214,7 @@ fn job_event_status_snapshot() {
                 "url": "https://chzzk.naver.com/video/123",
                 "title": "제목",
                 "channelName": "채널",
+                "channelId": null,
                 "kind": "video",
                 "playbackKind": "progressive",
                 "qualityLabel": "720p",

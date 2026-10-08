@@ -459,12 +459,38 @@ impl<B: Backend> DownloadManager<B> {
     /// - 같은 최종 경로의 다른 활성 작업이 있으면 `duplicateOutput`(끝난 작업의 경로는 새 작업이 가져갈 수 있다).
     /// - `queued`·`running`·`pausing`에는 아무것도 하지 않는다. `completed`는 `invalidInput`.
     pub fn resume(&self, id: JobId, restart: bool) -> Result<(), AppError> {
+        self.resume_checked(id, restart, |_| Ok(None))
+    }
+
+    /// 다시 줄 세울 상태(paused·failed·interrupted·skipped)인 작업의 컨텐츠. 없으면 `jobNotFound`, 지우는 중이거나
+    /// 다른 상태면 `None`. `resume_job`이 잠금 밖에서 본인 영상 판정(네트워크)을 하기 위해 먼저 본다(A5 리뷰).
+    pub fn requeue_content(&self, id: JobId) -> Result<Option<ContentRef>, AppError> {
+        let mut st = self.inner.lock();
+        Ok(st.target(id)?.and_then(|j| {
+            matches!(
+                j.rec.status,
+                JobStatus::Paused | JobStatus::Failed | JobStatus::Interrupted | JobStatus::Skipped
+            )
+            .then(|| j.rec.content.clone())
+        }))
+    }
+
+    /// `resume`과 같고, 다시 줄 세울 상태(paused·failed·interrupted·skipped)일 때만 잠금 안에서 `check`(작업의
+    /// 컨텐츠)를 부른다. 거부하면 상태와 `.part`는 그대로다. 허용하며 채널 ID를 주면 기록의 `channel_id`를 그 값으로
+    /// 고쳐 쓴다(검증한 채널, A5 리뷰). queued·running 등은 `check`를 부르지 않는다.
+    pub fn resume_checked(
+        &self,
+        id: JobId,
+        restart: bool,
+        check: impl FnOnce(&ContentRef) -> Result<Option<String>, AppError>,
+    ) -> Result<(), AppError> {
         let mut st = self.inner.lock();
         let Some(job) = st.target(id)? else {
             return Ok(());
         };
-        match job.rec.status {
+        let verified = match job.rec.status {
             JobStatus::Paused | JobStatus::Failed | JobStatus::Interrupted | JobStatus::Skipped => {
+                check(&job.rec.content)?
             }
             JobStatus::Queued | JobStatus::Running | JobStatus::Pausing => return Ok(()),
             JobStatus::Completed => {
@@ -472,13 +498,16 @@ impl<B: Backend> DownloadManager<B> {
                     "완료된 작업은 다시 받을 수 없습니다",
                 ));
             }
-        }
+        };
         let output = job.rec.output.clone();
         if let Some(other) = st.active_with_output(&output, Some(id)) {
             return Err(AppError::duplicate_output(other));
         }
         let seq = st.seq();
         let job = st.visible(id)?;
+        if let Some(ch) = verified {
+            job.rec.channel_id = Some(ch);
+        }
         self.inner.requeue(job, seq, restart);
         let dto = job.dto();
         self.inner.save(&st);
@@ -487,14 +516,39 @@ impl<B: Backend> DownloadManager<B> {
         Ok(())
     }
 
+    /// 판정으로 알게 된 작업의 실제 채널 ID를 기록한다(상태·`.part`는 그대로). 거부된 이어받기 뒤 기록이 틀렸으면
+    /// 고쳐 써서 화면이 막힌 작업(`otherChannel`)으로 보이고 B1이 세지 않게 한다(A5 리뷰). 컨텐츠가 다르면 하지 않는다.
+    pub fn note_channel(&self, id: JobId, content: &ContentRef, channel: String) {
+        let mut st = self.inner.lock();
+        let Ok(Some(job)) = st.target(id) else {
+            return;
+        };
+        if job.rec.content != *content || job.rec.channel_id.as_deref() == Some(channel.as_str()) {
+            return;
+        }
+        job.rec.channel_id = Some(channel);
+        let dto = job.dto();
+        self.inner.save(&st);
+        st.emit(JobEvent::Status { job: dto });
+    }
+
     /// `interrupted`를 모두 다시 줄 세운다(id 순). 같은 경로의 활성 작업이 있으면 그 작업은 건너뛴다.
     /// 재시작 후 자동 이어받기(설정)에 쓴다. 줄 세운 수를 돌려준다.
     pub fn resume_interrupted(&self) -> usize {
+        self.resume_interrupted_where(|_| true)
+    }
+
+    /// `resume_interrupted`와 같고, 작업의 소유 채널 ID가 `keep`을 통과한 것만 줄 세운다(A5: 같은 채널만).
+    pub fn resume_interrupted_where(&self, keep: impl Fn(Option<&str>) -> bool) -> usize {
         let mut st = self.inner.lock();
         let ids: Vec<JobId> = st
             .jobs
             .values()
-            .filter(|j| !j.removing && j.rec.status == JobStatus::Interrupted)
+            .filter(|j| {
+                !j.removing
+                    && j.rec.status == JobStatus::Interrupted
+                    && keep(j.rec.channel_id.as_deref())
+            })
             .map(|j| j.rec.id)
             .collect();
         let mut n = 0;

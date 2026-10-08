@@ -11,12 +11,14 @@ import {
   needsCancelConfirm,
   nextQueueOrder,
   receivedBytes,
+  resumableInterrupted,
   transitionAnnouncement,
   visibleOrder,
   type JobAction,
 } from '../jobs';
 import { copyReport } from '../report';
 import { announcer } from './announce.svelte';
+import { auth } from './auth.svelte';
 import { applyEvent, emptyJobs, fromSnapshot, type JobsState } from './jobs.apply';
 import { resolver } from './resolve.svelte';
 import { settings } from './settings.svelte';
@@ -52,6 +54,9 @@ export class JobsStore {
   groups = $derived(groupJobs(this.state.jobs.values()));
   order = $derived(visibleOrder(this.groups));
   interruptedCount = $derived([...this.state.jobs.values()].filter((j) => j.status === 'interrupted').length);
+  /** B1이 이어받을 수 있는 중단 작업 id(다른 채널·채널 모르는 작업은 뺀다, A5) */
+  resumableIds = $derived(resumableInterrupted(this.state.jobs.values(), auth.status));
+  resumableCount = $derived(this.resumableIds.length);
   /** 받는 중(멈추는 중 포함)·대기 중 작업 수. 로그인 화면의 안내에 쓴다(잠긴 동안에도 대기 작업은 차례로 시작된다, worker.md §11.5) */
   activeCount = $derived(
     [...this.state.jobs.values()].filter((j) => j.status === 'running' || j.status === 'pausing' || j.status === 'queued')
@@ -63,8 +68,8 @@ export class JobsStore {
       (j) => j.status === 'completed' || (j.status === 'skipped' && j.partialBytes == null),
     ),
   );
-  /** B1을 보일까: 중단된 작업이 있고 닫지 않았다 */
-  showInterruptedBanner = $derived(this.interruptedCount > 0 && !this.bannerDismissed);
+  /** B1을 보일까: 이어받을 수 있는 중단 작업이 있고 닫지 않았다 */
+  showInterruptedBanner = $derived(this.resumableCount > 0 && !this.bannerDismissed);
 
   #gen = 0;
   #focusN = 0;
@@ -233,15 +238,11 @@ export class JobsStore {
   }
 
   /**
-   * B1 "모두 이어받기": 중단된 작업을 id 순으로 하나씩 다시 줄 세운다(§4, 프런트가 반복 호출).
+   * B1 "모두 이어받기": 이어받을 수 있는 중단 작업을 id 순으로 하나씩 다시 줄 세운다(§4, 프런트가 반복 호출).
    * 하나가 거부돼도(`duplicateOutput` 등) 나머지는 계속한다.
    */
   async resumeAllInterrupted() {
-    const ids = [...this.state.jobs.values()]
-      .filter((j) => j.status === 'interrupted')
-      .map((j) => j.id)
-      .sort((a, b) => a - b);
-    for (const id of ids) {
+    for (const id of this.resumableIds) {
       try {
         await api.resumeJob(id, false);
       } catch (e) {

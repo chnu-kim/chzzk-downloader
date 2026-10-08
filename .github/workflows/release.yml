@@ -50,7 +50,7 @@ jobs:
   gate:
     name: release gate
     runs-on: ubuntu-24.04
-    # release.mjs gate의 ci-ok 대기(CI_WAIT_TIMEOUT 1800초) + 이력 검사 + 여유
+    # release.mjs gate의 ci-ok·e2e-native(linux·windows) 대기(CI_WAIT_TIMEOUT 1800초) + 이력 검사 + 여유
     timeout-minutes: 45
     permissions:
       contents: read # checkout(태그 포함 전체 이력)

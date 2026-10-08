@@ -25,6 +25,7 @@ function job(id: number, over: Partial<JobDto> = {}): JobDto {
     url: `https://chzzk.naver.com/video/${id}`,
     title: `영상 ${id}`,
     channelName: '채널',
+    channelId: null,
     kind: 'video',
     playbackKind: 'progressive',
     qualityLabel: '1080p',

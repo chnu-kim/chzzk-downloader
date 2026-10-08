@@ -105,6 +105,25 @@ describe('UpdateBanner status', () => {
   });
 });
 
+describe('B1은 이어받을 수 있는 작업만 센다(A5)', () => {
+  it('다른 채널 작업은 세지 않는다', async () => {
+    auth.apply({ ...authDto('signedIn'), channelId: 'a1', channelName: '내 채널' });
+    await loadJobs([
+      job(1, { status: 'interrupted', channelId: 'a1' }),
+      job(2, { status: 'interrupted', channelId: 'c3' }),
+    ]);
+    render(AppBanners);
+    expect(screen.getByText('지난번에 받다가 멈춘 다운로드가 1개 있어요.')).toBeInTheDocument();
+  });
+
+  it('다른 채널 작업만 남으면 배너가 없다', async () => {
+    auth.apply({ ...authDto('signedIn'), channelId: 'a1', channelName: '내 채널' });
+    await loadJobs([job(2, { status: 'interrupted', channelId: 'c3' })]);
+    render(AppBanners);
+    expect(screen.queryByRole('button', { name: '모두 이어받기' })).toBeNull();
+  });
+});
+
 describe('AppBanners 순서', () => {
   it('B2(저장 실패)가 B1·B4보다 앞이다', async () => {
     await loadJobs([job(1, { status: 'interrupted' })]);

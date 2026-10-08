@@ -39,7 +39,7 @@ pub use model::{
     ContentKind, ContentMeta, ContentRef, PdRep, PlaybackKind, Quality, Resolved, Source,
 };
 pub use naming::Platform;
-pub use ownership::is_own_content;
+pub use ownership::{is_own_channel, is_own_content};
 pub use progress::{Meter, Phase, Progress};
 pub use settings::{RecentVod, SettingsStore, UserSettings, add_recent_vod};
 pub use tokio_util::sync::CancellationToken;

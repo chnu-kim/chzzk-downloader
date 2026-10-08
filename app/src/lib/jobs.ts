@@ -1,6 +1,6 @@
 // 다운로드 목록(§8.5·§8.11, ui-visual §6.5)의 판단을 순수 함수로 둔다. 상태 판단은 Rust가 하고,
 // 여기서는 받은 레코드로 무엇을 어떻게 보일지만 정한다. 컴포넌트는 표시와 입력만 한다.
-import type { JobDto, JobId, JobStatus, ProgressDto } from './bindings';
+import type { AuthStatusDto, JobDto, JobId, JobStatus, ProgressDto } from './bindings';
 import { errorCopy, type ActionId } from './copy/errors';
 import { t, type CopyKey } from './copy/ko';
 import { formatBytes, formatSpeed } from './format/bytes';
@@ -343,7 +343,12 @@ export function failedCopy(job: JobDto, cookiesEnabled: boolean) {
  * 메뉴: 주소 복사(늘), 처음부터 다시 받기(`.part`가 있을 때), 문제 보고용 정보 복사(실패), 목록에서 지우기(끝난 항목).
  * 기본 버튼에 이미 있는 동작은 메뉴에 다시 넣지 않는다.
  */
-export function jobButtons(job: JobDto, p: ProgressDto | null | undefined, cookiesEnabled = false): JobButtons {
+export function jobButtons(
+  job: JobDto,
+  p: ProgressDto | null | undefined,
+  cookiesEnabled = false,
+  block: JobBlock | null = null,
+): JobButtons {
   let primary: JobAction[] = [];
   let cancel = false;
   switch (job.status) {
@@ -383,7 +388,41 @@ export function jobButtons(job: JobDto, p: ProgressDto | null | undefined, cooki
   if (stopped && (job.partialBytes ?? 0) > 0) menu.push('restartFresh');
   if (job.status === 'failed') menu.push('copyReport');
   if (job.status === 'completed' || job.status === 'skipped' || job.status === 'failed') menu.push('remove');
-  return { primary, cancel, menu: menu.filter((a) => !primary.includes(a)) };
+  const open = (a: JobAction) => !block || !RESUMING.includes(a);
+  primary = primary.filter(open);
+  return { primary, cancel, menu: menu.filter((a) => open(a) && !primary.includes(a)) };
+}
+
+// ───────────────────────── 막힌 작업(A5) ─────────────────────────
+
+/** 이어받기 계열 동작: 막힌 작업에서는 셸이 거부하므로 버튼을 보이지 않는다 */
+const RESUMING: readonly JobAction[] = ['resume', 'retry', 'restartFresh', 'overwrite'];
+
+export type JobBlock = 'otherChannel';
+
+const REQUEUEABLE: readonly JobStatus[] = ['paused', 'interrupted', 'failed', 'skipped'];
+
+/**
+ * 이어받기를 셸이 거부할 멈춘 작업(worker.md §11.5 "채널이 바뀜"). 로그인을 쓰지 않거나(`disabled`) 로그인 전이거나
+ * 내 채널을 모르면 `null`이다(비교 대상이 없으면 막지 않는다). 기록의 채널 ID는 안내용이다: 셸은 이어받을 때 작업의
+ * 영상을 다시 판정하고 통과한 채널로 기록을 고친다(worker.md 86). 그래서 채널 ID가 없는 옛 작업도 막지 않고 셸에 맡긴다.
+ */
+export function jobBlock(job: JobDto, me: AuthStatusDto | null): JobBlock | null {
+  if (!me || me.state !== 'signedIn' || !me.channelId) return null;
+  if (!REQUEUEABLE.includes(job.status) || job.channelId == null) return null;
+  return job.channelId.toLowerCase() === me.channelId.trim().toLowerCase() ? null : 'otherChannel';
+}
+
+/** B1이 이어받을 interrupted 작업 id(오름차순). 막힌 작업은 뺀다 */
+export function resumableInterrupted(jobs: Iterable<JobDto>, me: AuthStatusDto | null): JobId[] {
+  return [...jobs]
+    .filter((j) => j.status === 'interrupted' && jobBlock(j, me) === null)
+    .map((j) => j.id)
+    .sort((a, b) => a - b);
+}
+
+export function blockCopyKey(_b: JobBlock): CopyKey {
+  return 'job.otherChannel';
 }
 
 const ACTION_LABEL: Record<JobAction, CopyKey> = {

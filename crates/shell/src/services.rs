@@ -19,14 +19,14 @@ use std::time::Duration;
 use chzzk_core::download::MAX_CONCURRENCY;
 use chzzk_core::settings::{MAX_RECENT_VODS, SETTINGS_FILE};
 use chzzk_core::{
-    Chzzk, ClientConfig, CredentialStore, NaverCookies, Platform, SettingsStore, UserSettings,
-    add_recent_vod, parse_content_url,
+    Chzzk, ClientConfig, ContentRef, CredentialStore, NaverCookies, Platform, SettingsStore,
+    UserSettings, add_recent_vod, parse_content_url,
 };
 
 use crate::backend::Backend;
 use crate::dto::{
-    EnqueueRequest, JobDto, LegacyCandidate, LegacyImportDto, Nullable, Ownership, RecentVodDto,
-    ResolvedDto, SettingsDto, SettingsPatch,
+    EnqueueRequest, JobDto, LegacyCandidate, LegacyImportDto, Nullable, RecentVodDto, ResolvedDto,
+    SettingsDto, SettingsPatch,
 };
 use crate::error::AppError;
 use crate::manager::{ClientFn, DownloadManager, JobDefaults, MAX_PARALLEL, MIN_PARALLEL};
@@ -449,7 +449,7 @@ impl SettingsService {
     }
 
     /// `resolve`: 주소를 풀고 지금 클라이언트로 조회한다. 서명 URL은 DTO에 없다.
-    pub async fn resolve(&self, url: &str) -> Result<ResolvedDto, AppError> {
+    pub async fn resolve(&self, url: &str, gate: &OwnershipGate) -> Result<ResolvedDto, AppError> {
         let url = url.trim();
         let content = parse_content_url(url)?;
         let client = self.client();
@@ -460,8 +460,13 @@ impl SettingsService {
             &r,
             last.as_deref(),
             Platform::current(),
-            Ownership::Unchecked,
+            gate.on_resolved(&r.content, &r.meta),
         ))
+    }
+
+    /// 컨텐츠의 채널 ID를 다시 resolve해 얻는다(`OwnershipGate::admit`의 캐시 미스).
+    pub async fn content_channel(&self, content: &ContentRef) -> Result<Option<String>, AppError> {
+        Ok(self.client().resolve(content).await?.meta.channel_id)
     }
 
     fn dto(&self, s: &UserSettings) -> SettingsDto {
@@ -511,16 +516,27 @@ impl SettingsService {
     }
 }
 
-/// 작업 추가(§6.2): 본인 영상 게이트 → 매니저 → 설정의 마지막 화질·최근 VOD.
+/// 작업 추가(§6.2): 주소·컨텐츠 일치 → 본인 영상 게이트(A5) → 매니저 → 설정의 마지막 화질·최근 VOD.
 ///
 /// 설정 저장이 실패해도 작업은 이미 목록에 있으므로 로그만 남긴다.
-pub fn enqueue<B: Backend>(
+pub async fn enqueue<B: Backend>(
     settings: &SettingsService,
     gate: &OwnershipGate,
     manager: &DownloadManager<B>,
-    req: EnqueueRequest,
+    mut req: EnqueueRequest,
 ) -> Result<JobDto, AppError> {
-    gate.check(&req)?;
+    // 판정·다운로드는 content로, 최근 VOD는 url로 한다. 둘이 다른 영상이면 받지 않는다(네트워크 전, A5 리뷰)
+    if !parse_content_url(&req.url).is_ok_and(|c| c == req.content) {
+        return Err(AppError::invalid_input("요청 주소와 영상이 맞지 않습니다"));
+    }
+    // 웹뷰가 보낸 channel_id는 믿지 않는다: 검증한 컨텐츠 채널 ID로 덮어쓴다(82)
+    let content = req.content.clone();
+    if let Some(owner) = gate
+        .admit(&content, || settings.content_channel(&content))
+        .await?
+    {
+        req.channel_id = Some(owner);
+    }
     let (url, title, label) = (
         req.url.clone(),
         req.title.clone(),

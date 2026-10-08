@@ -615,7 +615,9 @@ async fn enqueue_uses_settings_and_records_recent() {
 
     let mut req = request("a");
     req.quality_label = "1080p".into();
-    let job = enqueue(&svc, &OwnershipGate::disabled(), &h.mgr, req.clone()).unwrap();
+    let job = enqueue(&svc, &OwnershipGate::disabled(), &h.mgr, req.clone())
+        .await
+        .unwrap();
     assert_eq!(job.output, folder.join("a.mp4").to_string_lossy());
     until("완료", || h.fake.download_requests().len() == 1).await;
     assert_eq!(h.fake.download_requests()[0].concurrency.get(), 6);
@@ -632,6 +634,7 @@ async fn enqueue_uses_settings_and_records_recent() {
         r.url = "https://chzzk.naver.com/video/999".into();
         r
     })
+    .await
     .unwrap_err();
     assert_eq!(e.code, ErrorCode::InvalidInput);
     assert_eq!(svc.get().recent_vods.len(), 1);

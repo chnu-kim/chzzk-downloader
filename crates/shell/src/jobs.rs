@@ -38,7 +38,7 @@ pub struct JobRecord {
     pub content: ContentRef,
     pub title: String,
     pub channel_name: String,
-    /// Phase 3 소유 재검사용
+    /// 컨텐츠 채널 ID(A5: 이어받기 소유 판정). 로그인을 쓰는 빌드는 셸이 검증한 값, 쓰지 않는 빌드는 요청 값이다
     #[serde(default)]
     pub channel_id: Option<String>,
     pub kind: ContentKindDto,
@@ -91,6 +91,7 @@ impl JobRecord {
             url: self.url.clone(),
             title: self.title.clone(),
             channel_name: self.channel_name.clone(),
+            channel_id: self.channel_id.clone(),
             kind: self.kind,
             playback_kind: self.expected_kind,
             quality_label: self.quality_label.clone(),

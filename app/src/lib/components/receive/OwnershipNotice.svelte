@@ -1,7 +1,8 @@
 <script lang="ts">
-  // Phase 3 자리(§12): 본인 영상이 아니거나 확인하지 못하면 알린다. Phase 2는 늘 `unchecked`라 그리지 않는다.
+  // Phase 3b A5: 셸이 own·notOwn·unknown을 채운다. 본인 영상이 아니거나 확인하지 못하면 알린다(`unchecked`·`own`은 그리지 않는다).
   import type { Ownership } from '../../bindings';
   import { errorCopy } from '../../copy/errors';
+  import { auth } from '../../stores/auth.svelte';
   import InlineAlert from '../ui/InlineAlert.svelte';
 
   interface Props {
@@ -20,7 +21,7 @@
             resumable: false,
             payload: null,
           },
-          { place: 'resolve', channelName },
+          { place: 'resolve', channelName, myChannel: auth.status?.channelName ?? undefined },
         )
       : null,
   );

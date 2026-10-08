@@ -110,7 +110,7 @@ impl UpdateSource for FakeSource {
         }
     }
 
-    fn install(&self) -> Result<(), SourceError> {
+    async fn install(&self) -> Result<(), SourceError> {
         self.log.lock().unwrap().push("install");
         let (panics, r) = {
             let st = self.st.lock().unwrap();
@@ -698,7 +698,7 @@ async fn install_slow_but_moving_download_is_not_stalled() {
             }
             Ok(())
         }
-        fn install(&self) -> Result<(), SourceError> {
+        async fn install(&self) -> Result<(), SourceError> {
             Ok(())
         }
     }

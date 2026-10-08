@@ -38,7 +38,7 @@ pub struct JobRecord {
     pub content: ContentRef,
     pub title: String,
     pub channel_name: String,
-    /// 검증한 컨텐츠 채널 ID(A5: 이어받기 소유 판정)
+    /// 컨텐츠 채널 ID(A5: 이어받기 소유 판정). 로그인을 쓰는 빌드는 셸이 검증한 값, 쓰지 않는 빌드는 요청 값이다
     #[serde(default)]
     pub channel_id: Option<String>,
     pub kind: ContentKindDto,

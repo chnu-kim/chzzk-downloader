@@ -443,7 +443,7 @@ pub struct EnqueueRequest {
     pub content: ContentRef,
     pub title: String,
     pub channel_name: String,
-    /// Phase 3 소유 재검사용
+    /// 웹뷰가 아는 컨텐츠 채널 ID. 로그인을 쓰는 빌드에서 셸은 이 값을 믿지 않고 검증한 값으로 덮어쓴다(worker.md 구현 중 변경 A5-1)
     pub channel_id: Option<String>,
     pub quality_id: String,
     pub quality_label: String,
@@ -514,7 +514,7 @@ pub struct JobDto {
     pub url: String,
     pub title: String,
     pub channel_name: String,
-    /// 작업을 줄 세울 때 셸이 검증해 기록한 컨텐츠 채널 ID(없으면 null). 막힌 작업 안내에 쓴다
+    /// 작업의 컨텐츠 채널 ID(없으면 null). 로그인을 쓰는 빌드는 셸이 검증한 값, 쓰지 않는 빌드는 요청 값이다. 막힌 작업 안내에 쓴다
     pub channel_id: Option<String>,
     pub kind: ContentKindDto,
     #[ts(as = "PlaybackKindTs")]

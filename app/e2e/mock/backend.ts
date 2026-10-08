@@ -279,7 +279,10 @@ export function install(scenario: Scenario = {}): E2EController {
       let channelId = req.channelId;
       if (auth.state === 'signedIn' && auth.channelId) {
         const r = resolveTable[req.url];
-        if (r && !('error' in r)) {
+        // 진짜 셸은 캐시 미스에서 다시 resolve한다. 표에 없는 주소는 resolve와 같이 실패시켜 판정을 건너뛰지 않는다
+        if (!r) throw err('invalidUrl');
+        if ('error' in r) throw r.error;
+        {
           if (r.ownership === 'notOwn') throw err('notOwnContent');
           if (r.ownership === 'unknown') throw err('ownershipUnknown');
           channelId = r.meta.channelId;

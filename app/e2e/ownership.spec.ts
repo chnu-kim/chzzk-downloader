@@ -1,7 +1,7 @@
 // 본인 영상 게이트(worker.md 구현 중 변경 A5-1·A5-2): 남의 영상은 카드에서 막히고, 다른 채널의 멈춘 작업은 이어받을 수 없다.
 // 판정은 셸이 한다. 가짜 백엔드는 resolve 시나리오의 `ownership`과 로그인 채널로 셸을 흉내 낸다.
 import type { AuthStatusDto } from '../src/lib/bindings';
-import { job } from '../src/test/jobFixtures';
+import { err, job } from '../src/test/jobFixtures';
 import { resolved } from '../src/test/fixtures';
 import { expect, test } from './fixtures';
 
@@ -72,4 +72,18 @@ test('다른 채널의 멈춘 작업은 이어받을 수 없고 B1이 세지 않
   await page.getByRole('button', { name: '모두 이어받기' }).click();
   await expect.poll(async () => (await app.args('resume_job')).length).toBe(1);
   expect(await app.args('resume_job')).toEqual([{ id: 1, restart: false }]);
+});
+
+test('실패한 다른 채널 작업은 다시 시도 안내 없이 막힌 이유만 보이고, 항목 설명으로 읽힌다', async ({ app }) => {
+  const { page } = app;
+  await app.open({
+    auth: me,
+    jobs: [job(3, { status: 'failed', title: '남의 실패', channelId: C3, error: err('network', { resumable: true }), partialBytes: 1024 })],
+  });
+  const item = page.getByRole('article', { name: '남의 실패' });
+  await expect(item.getByText('인터넷 연결이 불안정해요')).toBeVisible();
+  await expect(item.getByText('연결을 확인한 뒤 다시 시도해 주세요', { exact: false })).toHaveCount(0);
+  await expect(item).toHaveAccessibleDescription('다른 채널로 로그인해 이어받을 수 없어요');
+  await expect(item.getByRole('button', { name: '다시 시도' })).toHaveCount(0);
+  await app.axe('실패한 다른 채널 작업');
 });

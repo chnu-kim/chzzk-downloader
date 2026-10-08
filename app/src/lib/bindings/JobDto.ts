@@ -11,7 +11,7 @@ import type { ProgressDto } from "./ProgressDto";
  */
 export type JobDto = { id: JobId, url: string, title: string, channelName: string, 
 /**
- * 작업을 줄 세울 때 셸이 검증해 기록한 컨텐츠 채널 ID(없으면 null). 막힌 작업 안내에 쓴다
+ * 작업의 컨텐츠 채널 ID(없으면 null). 로그인을 쓰는 빌드는 셸이 검증한 값, 쓰지 않는 빌드는 요청 값이다. 막힌 작업 안내에 쓴다
  */
 channelId: string | null, kind: ContentKind, playbackKind: PlaybackKind, qualityLabel: string, output: string, status: JobStatus, 
 /**

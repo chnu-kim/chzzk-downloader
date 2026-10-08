@@ -94,3 +94,9 @@ test('judgeWorker: start 1번·poll 2번 이상·오류 응답 없음. /update�
   assert.equal(judgeWorker([...good, w('GET', '/api/me', 401)]).length, 1);
   assert.deepEqual(judgeWorker([...good, w('GET', '/update/0.1.0', 404)]), []);
 });
+
+test('CARD_DOWNLOAD_XPATH: 버튼 전체 글자가 아니라 이름 span으로 찾는다(단축키 표시가 innerText에 붙는다)', async () => {
+  const { CARD_DOWNLOAD_XPATH } = await import('./e2e-native.mjs');
+  assert.match(CARD_DOWNLOAD_XPATH, /\/\/button\[\.\/\/span\[normalize-space\(\.\)='다운로드'\]\]$/);
+  assert.match(CARD_DOWNLOAD_XPATH, /section\[contains\(@class,'card'\)\]/);
+});

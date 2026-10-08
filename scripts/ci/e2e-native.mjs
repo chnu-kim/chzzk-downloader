@@ -54,6 +54,10 @@ const log = (m) => console.log(`e2e-native: ${m}`);
 // W3C WebDriver 요소 키
 const ELEMENT = 'element-6066-11e4-a52e-4f735466cecf';
 
+// 카드의 [다운로드]. 버튼 안에 단축키 표시(aria-hidden이어도 innerText에 남는다)가 있어 버튼 글자 전체가 아니라
+// 이름 span 하나로 찾는다
+export const CARD_DOWNLOAD_XPATH = "//section[contains(@class,'card')]//button[.//span[normalize-space(.)='다운로드']]";
+
 // 요소 찾기 응답 → 요소 id. W3C 키가 표준이지만 옛 JSON Wire 키(ELEMENT)로 오는 드라이버도 받는다.
 // 둘 다 없으면 응답을 보여 주며 실패한다(조용히 거짓이 되어 시간 초과로만 보이지 않게).
 export function elementId(v) {
@@ -322,8 +326,19 @@ export async function run(exe) {
     const LOGIN = "//button[normalize-space(.)='치지직으로 로그인']";
     await wd.click(sid, await until('로그인 버튼', () => wd.find(sid, 'xpath', LOGIN), STEP_MS));
     log('로그인을 눌렀다');
-    await until('확인 코드 화면', () => wd.exec(sid, 'return document.body.innerText.includes(arguments[0])', [STUB_USER_CODE]), STEP_MS);
-    log('확인 코드 화면');
+    // 확인 코드 화면은 poll 간격(2초 남짓)만 보일 수 있다. 드라이버 응답이 늦어 놓쳐도 입력줄이 이미 있으면 지나간다
+    // (확인 코드 화면을 거쳤다는 증명은 judgeWorker의 start 1번·poll 2번 이상이 한다)
+    const sawCode = await until(
+      '확인 코드 화면',
+      () =>
+        wd.exec(
+          sid,
+          "if (document.body.innerText.includes(arguments[0])) return 'code'; return document.querySelector('#url-input') ? 'home' : null",
+          [STUB_USER_CODE],
+        ),
+      STEP_MS,
+    );
+    log(sawCode === 'code' ? '확인 코드 화면' : '확인 코드 화면을 놓쳤다(이미 홈)');
 
     const input = await until('주소 입력줄(로그인 완료)', () => wd.find(sid, 'css selector', '#url-input'), STEP_MS);
     log('로그인 완료');
@@ -332,7 +347,7 @@ export async function run(exe) {
     log('불러오기를 눌렀다');
 
     // 카드의 [다운로드]: check_output(150ms 뒤)이 끝나야 눌린다
-    const DL = "//section[contains(@class,'card')]//button[.//span[normalize-space(.)='다운로드']]";
+    const DL = CARD_DOWNLOAD_XPATH;
     const btn = await until(
       '영상 카드의 다운로드 버튼',
       async () => {
@@ -377,10 +392,7 @@ export async function run(exe) {
         ),
       STEP_MS,
     );
-    const dlDisabled = await wd.exec(
-      sid,
-      "const b = [...document.querySelectorAll('section.card button')].find((x) => x.innerText.trim() === '다운로드'); return b ? b.disabled : null",
-    );
+    const dlDisabled = await wd.exec(sid, 'return arguments[0].disabled', [elementRef(await wd.find(sid, 'xpath', DL))]);
     if (dlDisabled !== true) throw new Error(`남의 영상 카드의 [다운로드]가 꺼져 있지 않다(${JSON.stringify(dlDisabled)})`);
     log('남의 영상 카드가 막혔다');
 

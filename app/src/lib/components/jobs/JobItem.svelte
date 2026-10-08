@@ -103,6 +103,7 @@
   class:new={highlighted}
   data-job-id={job.id}
   aria-label={job.title}
+  aria-describedby={block ? `job-${job.id}-blocked` : undefined}
   tabindex={tabbable ? 0 : -1}
   {onkeydown}
   onfocusin={onfocus}
@@ -127,8 +128,11 @@
       <span class="err-icon"><Icon name="alert" /></span>
       <div>
         <p class="err-title">{err.title}</p>
-        {#if err.body}<p class="err-body">{err.body}</p>{/if}
-        {#if err.detail}<p class="err-body detail">{err.detail}</p>{/if}
+        <!-- 막힌 작업은 다시 시도할 버튼이 없으므로 '다시 시도해 주세요' 같은 본문을 숨기고 막힌 이유만 둔다(app.md 구현 중 변경 A5-1) -->
+        {#if !block}
+          {#if err.body}<p class="err-body">{err.body}</p>{/if}
+          {#if err.detail}<p class="err-body detail">{err.detail}</p>{/if}
+        {/if}
       </div>
     </div>
   {/if}
@@ -164,7 +168,7 @@
   </div>
 
   {#if block}
-    <p class="blocked">
+    <p class="blocked" id="job-{job.id}-blocked">
       <span class="lead"><Icon name="alert" size={16} /></span>{t(blockCopyKey(block))}
     </p>
   {/if}

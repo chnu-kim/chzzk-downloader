@@ -315,16 +315,9 @@ async fn enqueue_cache_miss_resolves_again() {
     save_session(t.path(), &worker, OWN);
     let app = open_auth(t.path(), &api, &worker);
     let job = app.enqueue(request(t.path(), "x", None)).await.unwrap();
+    // 캐시도 요청 채널도 없는데 OWN이 기록됐으므로 채널은 다시 resolve에서 왔다.
+    // info 요청 수는 다운로드 자신의 resolve도 세므로 증거로 쓰지 않는다
     assert_eq!(job.channel_id.as_deref(), Some(OWN));
-    let info_gets = api
-        .received_requests()
-        .await
-        .unwrap()
-        .iter()
-        .filter(|r| r.url.path() == format!("/service/v2/videos/{VOD_NO}"))
-        .count();
-    // 다시 resolve(admit) 한 번 + 다운로드 자신의 resolve. 요청에 채널이 없었으므로 채널은 다시 resolve에서 왔다
-    assert!(info_gets >= 1);
     app.manager.quit(Duration::from_secs(3)).await;
 }
 

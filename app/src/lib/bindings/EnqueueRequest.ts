@@ -8,7 +8,7 @@ import type { PlaybackKind } from "./PlaybackKind";
  */
 export type EnqueueRequest = { url: string, content: ContentRef, title: string, channelName: string, 
 /**
- * Phase 3 소유 재검사용
+ * 웹뷰가 아는 컨텐츠 채널 ID. 로그인을 쓰는 빌드에서 셸은 이 값을 믿지 않고 검증한 값으로 덮어쓴다(worker.md 구현 중 변경 A5-1)
  */
 channelId: string | null, qualityId: string, qualityLabel: string, expectedKind: PlaybackKind, folder: string | null, fileName: string, 
 /**

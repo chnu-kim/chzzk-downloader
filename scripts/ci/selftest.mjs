@@ -67,7 +67,7 @@ function mkRoot(name, files = {}) {
     'a/src/lib.rs': 'pub fn one() -> u32 {\n    1\n}\n',
     'app/package.json': JSON.stringify({ name: 'x', version: '0.1.0' }) + '\n',
     // 사본도 pubkey gate를 통과해야 한다(훅 씨앗이 release/·tauri.conf.json을 함께 스테이징한다)
-    'app/src-tauri/tauri.conf.json': JSON.stringify({ version: '0.1.0', plugins: { updater: { pubkey: readFileSync(join(ROOT, 'release/updater.pub'), 'utf8') } } }) + '\n',
+    'app/src-tauri/tauri.conf.json': JSON.stringify({ version: '0.1.0', plugins: { updater: { pubkey: readFileSync(join(ROOT, 'release/updater.pub'), 'utf8'), requireSignedVersion: true } } }) + '\n',
   };
   for (const [rel, text] of Object.entries({ ...base, ...files })) {
     if (text === null) continue;
@@ -281,8 +281,9 @@ const hook = (d, name, args, input) => exec('node', [join(d, 'scripts/ci/run.mjs
 // ---- pubkey(updater 공개 키) · signing-key(누출 규칙) ----
 {
   const pub = readFileSync(join(ROOT, 'release/updater.pub'), 'utf8');
-  const conf = (pubkey) => ({ 'app/src-tauri/tauri.conf.json': JSON.stringify({ version: '0.1.0', plugins: { updater: { pubkey } } }) + '\n' });
+  const conf = (pubkey) => ({ 'app/src-tauri/tauri.conf.json': JSON.stringify({ version: '0.1.0', plugins: { updater: { pubkey, requireSignedVersion: true } } }) + '\n' });
   expect('pubkey', 'conf = release/updater.pub', 0, () => gate(mkRoot('pub-same', conf(pub)), 'pubkey'));
+  expect('pubkey', 'requireSignedVersion 없음', 'nonzero', () => gate(mkRoot('pub-unver', { 'app/src-tauri/tauri.conf.json': JSON.stringify({ version: '0.1.0', plugins: { updater: { pubkey: pub } } }) + '\n' }), 'pubkey'));
   expect('pubkey', 'conf의 키가 다름', 'nonzero', () => gate(mkRoot('pub-diff', conf(pub.slice(0, -4) + 'AAAA')), 'pubkey'));
   expect('pubkey', 'updater.pub 끝 줄바꿈', 'nonzero', () => gate(mkRoot('pub-nl', { ...conf(pub), 'release/updater.pub': `${pub}\n` }), 'pubkey'));
   // Tauri 형식 개인 키(머리줄 텍스트의 base64)를 커밋하면 scan이 막는다

@@ -8,7 +8,7 @@ class FakeChannel {
   onmessage: (e: unknown) => void = () => {};
 }
 
-const EMPTY = { channelId: null, channelName: null, reason: null, pending: null, offline: null, verifiedAt: null } as const;
+const EMPTY = { channelId: null, channelName: null, reason: null, pending: null, offline: null, verifiedAt: null, canReconnect: false } as const;
 const authDto = (over: Partial<AuthStatusDto> & Pick<AuthStatusDto, 'state'>): AuthStatusDto => ({ ...EMPTY, ...over });
 
 const settingsDto: SettingsDto = {
@@ -52,6 +52,11 @@ vi.mock('../../api', () => ({
   clipboardLink: vi.fn(),
   onCloseRequested: vi.fn(),
   importLegacy: vi.fn(),
+  updateCheck: vi.fn(),
+  updateAvailable: vi.fn(),
+  updateInstall: vi.fn(),
+  onUpdateAvailable: vi.fn(),
+  onUpdateProgress: vi.fn(),
 }));
 
 const api = await import('../../api');
@@ -62,6 +67,7 @@ const { auth, AUTH_UNKNOWN_ERROR } = await import('../../stores/auth.svelte');
 const { jobs } = await import('../../stores/jobs.svelte');
 const { ui } = await import('../../stores/ui.svelte');
 const { toasts } = await import('../../stores/toast.svelte');
+const { update } = await import('../../stores/update.svelte');
 
 let emit: (s: AuthStatusDto) => void = () => {};
 let jobList = [] as ReturnType<typeof job>[];
@@ -81,7 +87,8 @@ beforeEach(() => {
   for (const f of [
     api.authStatus, api.onAuthChanged, api.authLogin, api.authReopen, api.authCopyLoginUrl, api.authCancel,
     api.authRetry, api.authLogout, api.getSettings, api.appInfo, api.subscribeJobs, api.clipboardLink,
-    api.onCloseRequested, api.importLegacy,
+    api.onCloseRequested, api.importLegacy, api.updateCheck, api.updateAvailable, api.updateInstall,
+    api.onUpdateAvailable, api.onUpdateProgress,
   ]) {
     vi.mocked(f).mockReset();
   }
@@ -94,6 +101,10 @@ beforeEach(() => {
   vi.mocked(api.subscribeJobs).mockImplementation(async () => jobList);
   vi.mocked(api.clipboardLink).mockResolvedValue(null);
   vi.mocked(api.onCloseRequested).mockResolvedValue(() => {});
+  update.reset();
+  vi.mocked(api.onUpdateAvailable).mockResolvedValue(() => {});
+  vi.mocked(api.onUpdateProgress).mockResolvedValue(() => {});
+  vi.mocked(api.updateAvailable).mockResolvedValue(null);
   vi.mocked(api.authReopen).mockResolvedValue(true);
   vi.mocked(api.authCopyLoginUrl).mockResolvedValue(true);
 });
@@ -415,6 +426,23 @@ describe('AccountSlot', () => {
   });
 });
 
+describe('App 업데이트 배선', () => {
+  it('로그인한 사용자는 잠금이 풀릴 때 캐시된 업데이트를 읽어 배너를 본다', async () => {
+    start(authDto({ state: 'signedIn', channelName: '채널' }));
+    vi.mocked(api.updateAvailable).mockResolvedValue({ version: '0.2.0', current: '0.1.0', notes: null, pubDate: null });
+    render(App);
+    expect(await screen.findByText('새 버전 0.2.0이 있어요.')).toBeInTheDocument();
+    expect(api.onUpdateAvailable).toHaveBeenCalledTimes(1);
+  });
+
+  it('로그인을 쓰지 않는 빌드(disabled)나 로그인 전에는 업데이트를 묻지 않는다', async () => {
+    start(authDto({ state: 'disabled' }));
+    render(App);
+    await screen.findByLabelText('영상 주소');
+    expect(api.updateAvailable).not.toHaveBeenCalled();
+  });
+});
+
 describe('UpdateBanner', () => {
   it('버전 문구와 두 버튼, 닫기는 나중에와 같다', async () => {
     const oninstall = vi.fn();
@@ -427,7 +455,8 @@ describe('UpdateBanner', () => {
     await fireEvent.click(screen.getByRole('button', { name: '닫기' }));
     expect(onlater).toHaveBeenCalledTimes(2);
     await rerender({ version: '0.1.1', busy: true, oninstall, onlater });
-    expect(screen.getByRole('button', { name: '지금 업데이트' })).toBeDisabled();
+    // 포커스를 잃지 않게 disabled 대신 aria-disabled(77)
+    expect(screen.getByRole('button', { name: '지금 업데이트' })).toHaveAttribute('aria-disabled', 'true');
   });
 });
 

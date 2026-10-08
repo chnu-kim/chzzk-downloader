@@ -21,7 +21,7 @@ test('로그인 전에는 허용 목록 밖 command가 notLoggedIn, 허용 목�
       }
       return out;
     }, cmds);
-  const signedOut: AuthStatusDto = { state: 'signedOut', channelId: null, channelName: null, reason: null, pending: null, offline: null, verifiedAt: null };
+  const signedOut: AuthStatusDto = { state: 'signedOut', channelId: null, channelName: null, reason: null, pending: null, offline: null, verifiedAt: null, canReconnect: false };
   await app.ctl((c, s) => c.setAuth(s), signedOut);
   const gated = await call(['get_settings', 'clear_finished']);
   expect(gated).toEqual({ get_settings: { ok: false, code: 'notLoggedIn' }, clear_finished: { ok: false, code: 'notLoggedIn' } });

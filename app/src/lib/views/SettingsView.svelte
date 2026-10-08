@@ -13,7 +13,9 @@
   import { errorCopy } from '../copy/errors';
   import { t } from '../copy/ko';
   import { copyAppReport } from '../report';
+  import { auth } from '../stores/auth.svelte';
   import { settings } from '../stores/settings.svelte';
+  import { update } from '../stores/update.svelte';
 
   const PARALLEL = [1, 2, 3] as const;
   const SEGMENTS = [1, 2, 3, 4, 5, 6, 7, 8] as const;
@@ -24,6 +26,27 @@
 
   const dto = $derived(settings.dto);
   const info = $derived(settings.info);
+
+  /** [업데이트 확인] 결과 한 줄 */
+  const checkText = $derived.by(() => {
+    switch (update.check) {
+      case 'checking':
+        return t('settings.about.checking');
+      case 'upToDate':
+        return t('settings.about.upToDate');
+      case 'failed':
+        return t('settings.about.checkFailed');
+      case 'offline':
+        return t('settings.about.checkOffline');
+      case 'untrusted':
+        return t('update.untrusted');
+      case 'available':
+        // 설치 결과 등으로 available이 비었으면 줄을 숨긴다(빈 버전을 보이지 않게)
+        return update.available ? t('update.banner', { version: update.available.version }) : '';
+      default:
+        return '';
+    }
+  });
 
   async function save(p: SettingsPatch) {
     error = await settings.patch(p);
@@ -134,7 +157,16 @@
           <Button variant="link" onclick={() => openFolder('logs')}>{t('settings.about.openLogs')}</Button>
           <span class="sep" aria-hidden="true">·</span>
           <Button variant="link" onclick={() => void copyAppReport(info)}>{t('action.copyReport')}</Button>
+          {#if auth.signedIn}
+            <span class="sep" aria-hidden="true">·</span>
+            <Button variant="link" disabled={update.check === 'checking'} onclick={() => void update.checkNow()}>
+              {t('settings.about.checkUpdate')}
+            </Button>
+          {/if}
         </p>
+        {#if auth.signedIn && checkText}
+          <p class="help" role="status">{checkText}</p>
+        {/if}
       </div>
     </div>
   </section>

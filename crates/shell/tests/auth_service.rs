@@ -1811,3 +1811,42 @@ async fn m8_publish_order_latest_wins() {
     assert_eq!(rx.borrow().phase, AuthPhase::Pending);
     assert_eq!(*rx.borrow(), e.svc.status());
 }
+
+// ------------------------------------------------- has_session(A4, canReconnect)
+
+#[tokio::test(start_paused = true)]
+async fn has_session_survives_login_timeout_with_held() {
+    let e = grace_expired_env().await;
+    assert!(e.svc.status().has_session);
+    e.start_ok();
+    assert!(matches!(e.svc.begin_login().await, BeginLogin::Started(_)));
+    let deadline = e.svc.status().pending.unwrap().expires_at;
+    e.api.push_poll(Reply::Now(Ok(PollResponse::Pending)));
+    e.svc.poll_login_once().await;
+    e.clock.set(deadline);
+    let s = e.svc.poll_login_once().await;
+    assert_eq!(
+        (s.phase, s.reason),
+        (AuthPhase::Expired, Some(AuthReason::LoginTimeout))
+    );
+    assert!(s.has_session, "저장 세션이 남아 [다시 연결]이 보인다");
+}
+
+#[tokio::test(start_paused = true)]
+async fn has_session_false_after_revoked() {
+    let e = Env::optimistic();
+    assert!(e.svc.status().has_session);
+    e.api
+        .push_refresh(Reply::Now(Err(worker(401, "session_revoked"))));
+    let s = e.svc.startup().await;
+    assert_eq!(s.reason, Some(AuthReason::Revoked));
+    assert!(!s.has_session);
+}
+
+#[tokio::test(start_paused = true)]
+async fn has_session_false_when_signed_out() {
+    let e = Env::new(h(1), None);
+    let s = e.svc.status();
+    assert_eq!(s.phase, AuthPhase::SignedOut);
+    assert!(!s.has_session);
+}

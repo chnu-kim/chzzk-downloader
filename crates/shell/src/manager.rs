@@ -108,6 +108,11 @@ struct Job {
     removing: bool,
     /// 줄 선 순서(FIFO). `queued`가 될 때마다 새로 받는다
     queue_seq: u64,
+    /// 태스크 세대. `start`마다 새로 받고 태스크가 `finish`·진행률에 들고 온다. 자기 세대가 아닌 태스크의 보고는 버린다
+    run: u64,
+    /// `quit` 기한 안에 멈추지 않아 태스크가 아직 도는 세대(worker.md 구현 중 변경 76·80). 그 태스크가 `finish`할 때까지
+    /// 슬롯(`max_running`)과 출력 경로를 차지하고 같은 작업을 새로 시작하지 않는다(옛 태스크가 아직 `.part`를 쓴다)
+    detached: Option<u64>,
 }
 
 impl Job {
@@ -120,6 +125,8 @@ impl Job {
             stop: None,
             removing: false,
             queue_seq,
+            run: 0,
+            detached: None,
         }
     }
 
@@ -130,7 +137,7 @@ impl Job {
     /// 중복 검사에서 이 작업이 최종 경로를 차지하는가. 활성 상태이거나, 지우는 중이다(곧 `.part`를 지운다.
     /// `failed`를 지우는 동안 새 작업이 같은 경로를 가져가면 그 작업의 `.part`를 지우게 된다).
     fn holds_output(&self) -> bool {
-        self.removing || self.rec.status.is_active()
+        self.removing || self.rec.status.is_active() || self.detached.is_some()
     }
 
     /// "완료 지우기"·오래된 기록 정리가 레코드만 지워도 되는가. `completed`와 `.part`가 없는 `skipped`.
@@ -147,6 +154,11 @@ impl Job {
     fn busy(&self) -> bool {
         matches!(self.rec.status, JobStatus::Running | JobStatus::Pausing)
     }
+
+    /// 슬롯을 차지하는가: 받는 중이거나, quit 기한을 넘긴 옛 태스크가 아직 돈다
+    fn occupies_slot(&self) -> bool {
+        self.busy() || self.detached.is_some()
+    }
 }
 
 struct State {
@@ -156,6 +168,8 @@ struct State {
     sink: Option<Box<dyn EventSink>>,
     max_running: usize,
     scheduler_enabled: bool,
+    /// 마지막 `quit`이 멈춘(그때 `running`이던) 작업. `cancel_quit`이 이것만 되살린다(A4, D7)
+    quit_stopped: Vec<JobId>,
 }
 
 impl State {
@@ -270,6 +284,7 @@ impl<B: Backend> DownloadManager<B> {
             sink: None,
             max_running: clamp_parallel(cfg.max_parallel),
             scheduler_enabled: true,
+            quit_stopped: Vec::new(),
         };
         for rec in file.jobs {
             let seq = st.seq();
@@ -504,6 +519,41 @@ impl<B: Backend> DownloadManager<B> {
         n
     }
 
+    /// 업데이트 설치가 `quit` 뒤에 실패했을 때(A4, D7): quit이 시간 안에 멈춘 작업(`quit_stopped` 중 지금 `interrupted`이고
+    /// 지우는 중이 아닌 것)을 다시 줄 세우고 스케줄러를 켠다. 사용자가 일시정지한 작업(`paused`)은 그대로다.
+    /// 줄 세운 수를 돌려준다. `quit`이 끝나기 전에는 부르지 않는다.
+    pub fn cancel_quit(&self) -> usize {
+        let mut st = self.inner.lock();
+        st.scheduler_enabled = true;
+        let ids = std::mem::take(&mut st.quit_stopped);
+        let mut n = 0;
+        for id in ids {
+            let Some(job) = st.jobs.get(&id) else {
+                continue;
+            };
+            if job.removing || job.rec.status != JobStatus::Interrupted {
+                continue;
+            }
+            let output = job.rec.output.clone();
+            if st.active_with_output(&output, Some(id)).is_some() {
+                continue;
+            }
+            let seq = st.seq();
+            let Some(job) = st.jobs.get_mut(&id) else {
+                continue;
+            };
+            self.inner.requeue(job, seq, false);
+            let dto = job.dto();
+            st.emit(JobEvent::Status { job: dto });
+            n += 1;
+        }
+        if n > 0 {
+            self.inner.save(&st);
+        }
+        self.inner.pump(&mut st);
+        n
+    }
+
     /// 목록에서 지운다(UX의 "취소"도 이것이다).
     ///
     /// - `completed`·`skipped`: 레코드만 지운다(파일은 둔다). 단 받는 동안 같은 이름의 파일이 생겨 건너뛴
@@ -511,6 +561,7 @@ impl<B: Backend> DownloadManager<B> {
     /// - `running`·`pausing`: 취소 → 태스크 종료 대기(잠금 밖) → `discard_partial` → 지운다.
     ///   종료 중(`quit` 뒤)에는 아무것도 하지 않는다(`quit`이 핸들을 가져가 기다릴 수 없고, 곧 `interrupted`로 저장된다).
     /// - `queued`·`paused`·`interrupted`·`failed`: `discard_partial` → 지운다(다시 줄 선 작업도 `.part`가 있을 수 있다).
+    ///   quit 기한을 넘긴 옛 태스크가 아직 돌면(`detached`) 받는 중처럼 그 끝을 기다린 뒤 지운다.
     ///   단 `failed`의 경로를 다른 활성 작업이 가져갔으면 `.part`는 그 작업의 것이므로 레코드만 지운다.
     ///
     /// `.part`를 지우지 못하면(다른 프로그램이 잠금 등) 오류를 돌려주고 레코드를 멈춘 상태로 남긴다.
@@ -544,7 +595,8 @@ impl<B: Backend> DownloadManager<B> {
             }
             let job = st.visible(id)?;
             job.removing = true;
-            let handle = if job.busy() {
+            // quit 기한을 넘긴 옛 태스크(`detached`)도 아직 `.part`를 쓰므로 받는 중처럼 끝을 기다린다(80)
+            let handle = if job.busy() || job.detached.is_some() {
                 job.stop = Some(StopReason::Remove);
                 job.rec.status = JobStatus::Pausing;
                 if let Some(c) = &job.cancel {
@@ -632,13 +684,17 @@ impl<B: Backend> DownloadManager<B> {
     /// 대기 중(`queued`)인 작업은 그대로 저장되고 다음 시작 때 reconcile이 `interrupted`로 바꾼다.
     /// 프로세스 종료(`app.exit`)는 부르는 쪽이 한다.
     pub async fn quit(&self, timeout: Duration) {
-        let handles: Vec<JoinHandle<()>> = {
+        let mut handles: Vec<(JobId, JoinHandle<()>)> = {
             let mut st = self.inner.lock();
             st.scheduler_enabled = false;
+            // 되살린 뒤 다시 quit해도 옛 id가 남지 않게 비우고 이번에 멈추는 작업으로 채운다
+            st.quit_stopped.clear();
+            let mut stopped = Vec::new();
             let mut handles = Vec::new();
             let mut changed = Vec::new();
             for job in st.jobs.values_mut() {
                 if job.rec.status == JobStatus::Running {
+                    stopped.push(job.rec.id);
                     job.stop = Some(StopReason::Quit);
                     job.rec.status = JobStatus::Pausing;
                     if let Some(c) = &job.cancel {
@@ -649,9 +705,10 @@ impl<B: Backend> DownloadManager<B> {
                 if job.busy()
                     && let Some(h) = job.handle.take()
                 {
-                    handles.push(h);
+                    handles.push((job.rec.id, h));
                 }
             }
+            st.quit_stopped = stopped;
             if !changed.is_empty() {
                 self.inner.save(&st);
             }
@@ -661,7 +718,7 @@ impl<B: Backend> DownloadManager<B> {
             handles
         };
         let all = async {
-            for h in handles {
+            for (_, h) in handles.iter_mut() {
                 let _ = h.await;
             }
         };
@@ -671,13 +728,28 @@ impl<B: Backend> DownloadManager<B> {
         {
             let mut st = self.inner.lock();
             let mut late = Vec::new();
+            let mut late_ids = Vec::new();
             for job in st.jobs.values_mut() {
                 if job.busy() && !job.removing {
                     job.rec.status = JobStatus::Interrupted;
                     job.rec.partial_bytes = partial_bytes(&job.rec);
+                    // 태스크가 아직 돈다: 그 `finish`가 올 때까지 슬롯·경로를 차지하고 새로 시작하지 않는다(80).
+                    // 핸들을 돌려줘 `remove`가 옛 태스크의 끝을 기다린 뒤 `.part`를 지우게 한다
+                    job.detached = Some(job.run);
+                    let id = job.rec.id;
+                    if let Some(i) = handles
+                        .iter()
+                        .position(|(h_id, h)| *h_id == id && !h.is_finished())
+                    {
+                        job.handle = Some(handles.swap_remove(i).1);
+                    }
                     late.push(job.dto());
+                    late_ids.push(job.rec.id);
                 }
             }
+            // 시간 안에 멈추지 않은 작업은 태스크가 아직 돈다. `cancel_quit`이 되살리면 옛 태스크와 겹치므로
+            // 되살릴 목록에서 뺀다(사용자가 B1 [모두 이어받기]로 다시 줄 세운다. 옛 태스크가 끝난 뒤에 시작한다, 76·80)
+            st.quit_stopped.retain(|id| !late_ids.contains(id));
             self.inner.save(&st);
             for dto in late {
                 st.emit(JobEvent::Status { job: dto });
@@ -773,14 +845,14 @@ impl<B: Backend> Inner<B> {
     /// 슬롯이 있는 동안 가장 먼저 줄 선 `queued`를 시작한다.
     fn pump(self: &Arc<Self>, st: &mut State) {
         while st.scheduler_enabled {
-            let busy = st.jobs.values().filter(|j| j.busy()).count();
+            let busy = st.jobs.values().filter(|j| j.occupies_slot()).count();
             if busy >= st.max_running {
                 break;
             }
             let next = st
                 .jobs
                 .values()
-                .filter(|j| j.rec.status == JobStatus::Queued)
+                .filter(|j| j.rec.status == JobStatus::Queued && j.detached.is_none())
                 .min_by_key(|j| j.queue_seq)
                 .map(|j| j.rec.id);
             let Some(id) = next else { break };
@@ -791,9 +863,15 @@ impl<B: Backend> Inner<B> {
     /// `queued` → `running`, 태스크를 띄운다. 잠금을 쥔 채 부르므로 태스크의 첫 이벤트는 `Status(running)` 뒤다.
     fn start(self: &Arc<Self>, st: &mut State, id: JobId) {
         let client = (self.client)();
+        let run = st.seq();
         let Some(job) = st.jobs.get_mut(&id) else {
             return;
         };
+        if job.detached.is_some() {
+            // 옛 태스크가 아직 돈다(pump가 거르지만 한 번 더 지킨다)
+            return;
+        }
+        job.run = run;
         let r = &mut job.rec;
         r.status = JobStatus::Running;
         r.last_error = None;
@@ -814,6 +892,7 @@ impl<B: Backend> Inner<B> {
             let work = runtime.spawn(run_download(
                 Arc::clone(&me),
                 id,
+                run,
                 req,
                 discard,
                 cancel,
@@ -825,7 +904,7 @@ impl<B: Backend> Inner<B> {
                     "작업 태스크가 비정상 종료했습니다: {e}"
                 ))),
             };
-            me.finish(id, end);
+            me.finish(id, run, end);
         });
         job.handle = Some(handle);
         let dto = job.dto();
@@ -834,21 +913,23 @@ impl<B: Backend> Inner<B> {
     }
 
     /// `restart`로 지운 뒤 표시를 내린다.
-    fn discarded(&self, id: JobId) {
+    fn discarded(&self, id: JobId, run: u64) {
         let mut st = self.lock();
-        if let Some(j) = st.jobs.get_mut(&id) {
+        if let Some(j) = st.jobs.get_mut(&id)
+            && j.run == run
+        {
             j.rec.discard_on_start = false;
             self.save(&st);
         }
     }
 
-    fn on_progress(&self, id: JobId, p: &Progress) {
+    fn on_progress(&self, id: JobId, run: u64, p: &Progress) {
         let dto = ProgressDto::from(p);
         let mut st = self.lock();
         let Some(j) = st.jobs.get_mut(&id) else {
             return;
         };
-        if !j.busy() {
+        if !j.busy() || j.run != run {
             return;
         }
         j.last_progress = Some(dto.clone());
@@ -856,11 +937,26 @@ impl<B: Backend> Inner<B> {
     }
 
     /// 태스크가 끝났다. 상태를 정하고 저장·알린 뒤 다음 작업을 시작한다.
-    fn finish(self: &Arc<Self>, id: JobId, end: End) {
+    ///
+    /// `run`이 지금 세대가 아니면 옛 태스크다: 레코드·취소 토큰·핸들은 새 세대의 것이므로 건드리지 않는다.
+    /// quit 기한을 넘긴 세대(`detached`)가 끝나면 슬롯·경로를 풀고, 그동안 사용자가 다시 줄 세웠거나(`queued`)
+    /// 멈췄으면(`paused`) 그 상태를 그대로 둔다(80).
+    fn finish(self: &Arc<Self>, id: JobId, run: u64, end: End) {
         let mut st = self.lock();
         if let Some(job) = st.jobs.get_mut(&id) {
+            if job.run != run {
+                tracing::debug!(job = id.0, "옛 세대 태스크의 끝은 버린다");
+                self.pump(&mut st);
+                return;
+            }
+            let was_detached = job.detached.take().is_some();
             job.cancel = None;
             job.handle = None;
+            if was_detached && !job.removing && job.rec.status != JobStatus::Interrupted {
+                // quit 뒤 다시 줄 세웠거나 멈춘 작업: 옛 태스크가 끝났으니 슬롯만 푼다
+                self.pump(&mut st);
+                return;
+            }
             let stop = job.stop.take();
             if job.removing {
                 // `remove`가 이어서 `.part`를 지우고 레코드를 없앤다. 그때까지 중복 검사에는 남도록 멈춘 상태로 둔다.
@@ -952,6 +1048,7 @@ fn stage_of(last: Option<&ProgressDto>) -> Stage {
 async fn run_download<B: Backend>(
     inner: Arc<Inner<B>>,
     id: JobId,
+    run: u64,
     req: DownloadRequest,
     discard: bool,
     cancel: CancellationToken,
@@ -964,10 +1061,10 @@ async fn run_download<B: Backend>(
         if let Err(e) = discard_partial(&req.output) {
             return End::Error(e);
         }
-        inner.discarded(id);
+        inner.discarded(id, run);
     }
     let cb = Arc::clone(&inner);
-    let on_progress = move |p: Progress| cb.on_progress(id, &p);
+    let on_progress = move |p: Progress| cb.on_progress(id, run, &p);
     match client.download(req, cancel, &on_progress).await {
         Ok(o) => End::Done(o),
         Err(Error::Cancelled) => End::Cancelled,

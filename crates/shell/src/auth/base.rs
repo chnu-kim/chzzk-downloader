@@ -78,6 +78,18 @@ impl WorkerBase {
         &self.origin
     }
 
+    /// `url`의 출처(scheme+host+port)가 이 Worker와 같은가(A4 D5). 문자열 비교라 크레이트 간 `Url` 타입을 묶지 않는다.
+    /// 둘 다 기본 포트를 생략하고 호스트를 소문자로 둔다. 읽을 수 없는 주소·불투명 출처(`data:` 등)는 다르다.
+    /// 사용자 정보(`u:p@`)가 있는 주소도 다르다: `origin()`은 userinfo를 버리지만, Worker가 만드는 다운로드 주소에는 없고
+    /// `parse`도 그런 Worker 주소를 거부한다(같은 기준). 끝 점(`host.`)·IDN은 `url`이 정규화한 호스트 그대로 비교한다.
+    pub fn same_origin(&self, url: &str) -> bool {
+        Url::parse(url).is_ok_and(|u| {
+            u.username().is_empty()
+                && u.password().is_none()
+                && u.origin().ascii_serialization() == self.origin
+        })
+    }
+
     /// `{origin}{path}` (path는 `/`로 시작)
     pub fn url(&self, path: &str) -> String {
         format!("{}{path}", self.origin)

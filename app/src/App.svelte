@@ -6,11 +6,13 @@
   import GlobalShortcuts from './lib/components/app/GlobalShortcuts.svelte';
   import LiveAnnouncer from './lib/components/app/LiveAnnouncer.svelte';
   import Toaster from './lib/components/app/Toaster.svelte';
+  import UpdateDialog from './lib/components/app/UpdateDialog.svelte';
   import LegacyFound from './lib/components/settings/LegacyFound.svelte';
   import { auth } from './lib/stores/auth.svelte';
   import { jobs } from './lib/stores/jobs.svelte';
   import { settings } from './lib/stores/settings.svelte';
   import { ui } from './lib/stores/ui.svelte';
+  import { update } from './lib/stores/update.svelte';
   import HomeView from './lib/views/HomeView.svelte';
   import LoginView from './lib/views/LoginView.svelte';
   import SettingsView from './lib/views/SettingsView.svelte';
@@ -42,10 +44,17 @@
       if (gone) f();
       else off = f;
     });
+    // 업데이트 이벤트도 같다: 듣고 나서(update.sync) 자동 확인이 찾아 둔 캐시를 묻는다
+    let offUpdate: (() => void) | null = null;
+    void update.start().then((f) => {
+      if (gone) f();
+      else offUpdate = f;
+    });
     void jobs.start();
     return () => {
       gone = true;
       off?.();
+      offUpdate?.();
     };
   });
 
@@ -58,6 +67,8 @@
     const u = auth.unlocked;
     const l = auth.locked;
     if (u && !wasUnlocked) void untrack(() => settings.load());
+    // 로그인한 사용자만 업데이트를 본다(update_*는 게이트 허용 목록 밖이고 disabled 빌드에는 업데이트가 없다)
+    if (u && !wasUnlocked && auth.signedIn) void untrack(() => update.sync());
     if (l) untrack(() => ui.goHome());
     if (u && wasLocked) {
       void tick().then(() => {
@@ -89,6 +100,7 @@
 <!-- 대화상자: D1(창 닫기)·D3(이전 설정 찾음)는 여기, D2(취소 확인)는 JobList -->
 <CloseGuard />
 {#if auth.unlocked}<LegacyFound />{/if}
+{#if auth.unlocked}<UpdateDialog />{/if}
 <Toaster />
 <LiveAnnouncer />
 <GlobalShortcuts />

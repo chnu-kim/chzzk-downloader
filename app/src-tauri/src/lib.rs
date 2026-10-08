@@ -8,13 +8,14 @@ pub mod e2e;
 mod logging;
 pub mod sink;
 pub mod smoke;
+pub mod update_io;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use chzzk_shell::auth::{Trigger, forward_status, run_driver};
-use chzzk_shell::dto::AuthStatusDto;
+use chzzk_shell::dto::{AuthStatusDto, UpdateCheckDto, UpdateInfoDto};
 
 use chzzk_shell::dto::CloseRequestedPayload;
 use chzzk_shell::services::AppPaths;
@@ -33,6 +34,12 @@ pub const CLOSE_REQUESTED: &str = "close-requested";
 
 /// 로그인 상태가 바뀔 때마다(처음 상태 포함) 프런트로 가는 이벤트 이름(AuthStatusDto 전체, worker.md 구현 중 변경 54).
 pub const AUTH_CHANGED: &str = "auth-changed";
+
+/// 자동 확인이 새 버전을 찾았을 때 프런트로 가는 이벤트 이름(`UpdateInfoDto`, worker.md 구현 중 변경 69)
+pub const UPDATE_AVAILABLE: &str = "update-available";
+
+/// 설치 중 진행 이벤트 이름(`UpdateProgressEvent`)
+pub const UPDATE_PROGRESS: &str = "update-progress";
 
 /// `quit` 진행 중. 이때 온 창 닫기·앱 종료 요청은 D1 없이 조용히 막는다(`quit`이 저장을 마치고 직접 끝낸다).
 #[derive(Debug, Default)]
@@ -198,6 +205,9 @@ pub fn handler<R: Runtime>() -> impl Fn(Invoke<R>) -> bool + Send + Sync + 'stat
             commands::auth_cancel,
             commands::auth_retry,
             commands::auth_logout,
+            commands::update_check,
+            commands::update_available,
+            commands::update_install,
         ]);
     move |invoke: Invoke<R>| {
         let verdict = {
@@ -223,14 +233,40 @@ pub fn handler<R: Runtime>() -> impl Fn(Invoke<R>) -> bool + Send + Sync + 'stat
 pub fn spawn_auth_tasks<R: Runtime>(handle: AppHandle<R>, auth: Arc<AppAuth>) {
     let h = handle.clone();
     tauri::async_runtime::spawn(forward_status(auth.subscribe(), move |st| {
-        if let Some(app) = h.try_state::<App>() {
+        // 세션 확인이 처음 성공한 직후 한 번만 업데이트를 확인한다(D8). 상태 전달 뒤에 띄운다
+        let auto = h.try_state::<App>().is_some_and(|app| {
             app.on_auth_status(&st);
-        }
+            app.take_auto_update_check(&st)
+        });
         if let Err(e) = h.emit_to("main", AUTH_CHANGED, AuthStatusDto::from_status(&st)) {
             tracing::warn!(error = %e, "auth-changed를 보내지 못함");
         }
+        if auto {
+            let h2 = h.clone();
+            tauri::async_runtime::spawn(async move {
+                auto_update_check(h2).await;
+            });
+        }
     }));
     tauri::async_runtime::spawn(run_driver(auth));
+}
+
+/// 세션 확인 성공 직후 한 번(D8): 찾으면 캐시하고 `update-available`을 main 창에 보낸다. 찾았으면 그 정보.
+/// 실패는 셸이 로그만 남기고, 이 실행에서는 다시 확인하지 않는다(수동 확인은 된다)
+pub async fn auto_update_check<R: Runtime>(h: AppHandle<R>) -> Option<UpdateInfoDto> {
+    let app = h.try_state::<App>()?;
+    match app
+        .update_check(&update_io::PluginUpdateSource::new(h.clone()))
+        .await
+    {
+        UpdateCheckDto::Available { info } => {
+            if let Err(e) = h.emit_to("main", UPDATE_AVAILABLE, info.clone()) {
+                tracing::warn!(error = %e, "update-available를 보내지 못함");
+            }
+            Some(info)
+        }
+        _ => None,
+    }
 }
 
 /// 두 번째 실행: 기존 main 창을 앞으로 가져온다. 시작에 실패해 상태가 없으면(38(바)) 숨겨 둔 창을 꺼내지 않는다.
@@ -651,10 +687,13 @@ pub fn run() {
         }
     });
 
-    // updater: 공개 키는 tauri.conf.json `plugins.updater.pubkey`(= release/updater.pub, pubkey gate). 업데이트 확인·설치와
-    // 엔드포인트(Worker)는 Phase 3에서 붙인다(A4). 지금은 등록만 한다(capabilities에 권한 없음, docs/design/cicd.md G6).
+    // updater: 공개 키는 tauri.conf.json `plugins.updater.pubkey`(= release/updater.pub, pubkey gate). 엔드포인트·헤더는
+    // 확인할 때마다 런타임에 넣는다(update_io.rs). JS 권한 없음(capabilities에 없음, docs/design/cicd.md G6).
+    // `UpdaterPlugin` 표식이 있어야 확인한다(플러그인 상태가 없을 때 `updater_builder()`는 패닉한다).
     #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
-    let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+    let builder = builder
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .manage(update_io::UpdaterPlugin);
 
     let app = builder
         // 아래 플러그인은 Rust에서만 부른다. capabilities에 플러그인 권한을 주지 않는다.

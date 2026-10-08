@@ -136,7 +136,7 @@ export const GATES = {
     steps: [{ cmd: ['node', S('version-check.mjs')] }],
   },
   pubkey: {
-    desc: 'release/updater.pub == tauri.conf.json plugins.updater.pubkey(바이트 동일, minisign 공개 키 형식, 플랫폼 conf도 같거나 없음)',
+    desc: 'release/updater.pub == tauri.conf.json plugins.updater.pubkey(바이트 동일, minisign 공개 키 형식, 플랫폼 conf도 같거나 없음), requireSignedVersion = true',
     steps: [{ cmd: ['node', S('release.mjs'), 'pubkey'] }],
   },
   parity: {
@@ -152,7 +152,7 @@ export const GATES = {
     steps: [{ cmd: ['node', S('selftest.mjs')] }],
   },
   deny: {
-    desc: 'cargo deny check bans licenses sources',
+    desc: 'cargo deny check bans licenses sources(bans: log→tracing 다리 tracing-log·tauri-plugin-log 금지)',
     needs: ['cargo', 'cargo-deny'],
     steps: [{ cmd: ['cargo', 'deny', '--locked', 'check', 'bans', 'licenses', 'sources'] }],
   },
@@ -407,7 +407,7 @@ export const GATES = {
   },
   // ---- 릴리스(docs/design/cicd.md §5, release.yml·rollback.yml). 순서·판정은 release.mjs, 무거운 일은 xtask ----
   'release-gate': {
-    desc: '릴리스 gate: 태그 = 버전 파일, 단조 증가, master 조상, 그 커밋의 master ci-ok 녹색(30초 간격으로 기다림). env RELEASE_MODE·RELEASE_TAG·GITHUB_SHA·GH_TOKEN',
+    desc: '릴리스 gate: 태그 차단 상수(release.mjs TAG_BLOCK), 태그 = 버전 파일, 단조 증가, master 조상, 그 커밋의 master ci-ok 녹색(30초 간격으로 기다림). env RELEASE_MODE·RELEASE_TAG·GITHUB_SHA·GH_TOKEN',
     needs: ['cargo', 'git'],
     steps: [{ cmd: ['node', S('release.mjs'), 'gate'] }],
   },

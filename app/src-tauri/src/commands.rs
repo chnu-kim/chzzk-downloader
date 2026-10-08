@@ -10,7 +10,8 @@ use chzzk_core::{ContentRef, PlaybackKind};
 use chzzk_shell::app::{Reveal, chzzk_link};
 use chzzk_shell::dto::{
     AppFolder, AppInfo, AuthStatusDto, EnqueueRequest, JobDto, JobEvent, LegacyImportDto,
-    OutputCheck, ResolvedDto, SettingsDto, SettingsPatch,
+    OutputCheck, ResolvedDto, SettingsDto, SettingsPatch, UpdateCheckDto, UpdateInfoDto,
+    UpdateInstallDto,
 };
 use chzzk_shell::manager::QUIT_TIMEOUT;
 use chzzk_shell::{App, AppError, JobId};
@@ -24,6 +25,7 @@ use crate::Quitting;
 use crate::auth_io::AuthIoState;
 use crate::sink::{ChannelSink, Notifier};
 use crate::smoke::{EXIT_MARKER, SmokeState, write_marker};
+use crate::update_io::{AppInstallHost, PluginUpdateSource};
 
 type Res<T> = Result<T, AppError>;
 
@@ -301,4 +303,32 @@ pub async fn frontend_ready<R: Runtime>(app: AppHandle<R>) -> Res<()> {
         }
     }
     Ok(())
+}
+
+/// 업데이트 확인(설정 > 정보 [업데이트 확인], worker.md §11.6). 로그인 뒤에만(게이트)
+#[tauri::command]
+pub async fn update_check<R: Runtime>(
+    app: AppHandle<R>,
+    state: State<'_, App>,
+) -> Res<UpdateCheckDto> {
+    Ok(state.update_check(&PluginUpdateSource::new(app)).await)
+}
+
+/// 자동 확인이 찾아 둔 업데이트(네트워크 없음). 프런트는 `update-available`을 들은 뒤 부른다
+#[tauri::command]
+pub async fn update_available(state: State<'_, App>) -> Res<Option<UpdateInfoDto>> {
+    Ok(state.update_available())
+}
+
+/// 업데이트 설치. 받는 중 작업이 있으면 `confirmPause=true`로 다시 불러야 한다(D1식 확인)
+#[tauri::command]
+pub async fn update_install<R: Runtime>(
+    app: AppHandle<R>,
+    state: State<'_, App>,
+    confirm_pause: bool,
+) -> Res<UpdateInstallDto> {
+    let host = AppInstallHost(app.clone());
+    Ok(state
+        .update_install(&PluginUpdateSource::new(app), &host, confirm_pause)
+        .await)
 }

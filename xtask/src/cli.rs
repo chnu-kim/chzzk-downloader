@@ -58,7 +58,7 @@ pub struct Args {
     flags: Vec<String>,
 }
 
-const FLAGS: &[&str] = &["objects-only"];
+const FLAGS: &[&str] = &["objects-only", "allow-unversioned"];
 
 impl Args {
     pub fn parse(raw: &[String]) -> Res<Args> {

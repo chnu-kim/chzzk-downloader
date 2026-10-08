@@ -11,8 +11,8 @@ use chzzk_app_lib::auth_io::{AuthIo, AuthIoState};
 use chzzk_app_lib::commands::begin_quit;
 use chzzk_app_lib::sink::{ChannelSink, Notice, Notifier};
 use chzzk_app_lib::{
-    AUTH_CHANGED, COMMANDS, Quitting, focus_main, guard_close, handler, on_run_event,
-    on_window_focus, request_quit, spawn_auth_tasks,
+    AUTH_CHANGED, COMMANDS, Quitting, UPDATE_AVAILABLE, auto_update_check, focus_main, guard_close,
+    handler, on_run_event, on_window_focus, request_quit, spawn_auth_tasks,
 };
 use chzzk_shell::auth::{SessionStore, StoredSession};
 use chzzk_shell::services::AppPaths;
@@ -74,6 +74,7 @@ fn fixture() -> Fixture {
 fn mock_app(
     state: App,
     clipboard: bool,
+    updater: bool,
 ) -> (
     tauri::App<MockRuntime>,
     UnboundedReceiver<Notice>,
@@ -84,6 +85,12 @@ fn mock_app(
     let mut builder = mock_builder();
     if clipboard {
         builder = builder.plugin(tauri_plugin_clipboard_manager::init());
+    }
+    // updater 플러그인(과 등록 표식)은 실제 확인을 하는 테스트만 등록한다
+    if updater {
+        builder = builder
+            .plugin(tauri_plugin_updater::Builder::new().build())
+            .manage(chzzk_app_lib::update_io::UpdaterPlugin);
     }
     let app = builder
         .manage(state)
@@ -101,7 +108,16 @@ fn fixture_with(dir: TempDir, state: App) -> Fixture {
 }
 
 fn fixture_full(dir: TempDir, state: App, clipboard: bool) -> Fixture {
-    let (app, notify_rx, io) = mock_app(state, clipboard);
+    fixture_all(dir, state, clipboard, false)
+}
+
+/// updater 플러그인을 등록한 mock 앱
+fn fixture_updater(dir: TempDir, state: App) -> Fixture {
+    fixture_all(dir, state, false, true)
+}
+
+fn fixture_all(dir: TempDir, state: App, clipboard: bool, updater: bool) -> Fixture {
+    let (app, notify_rx, io) = mock_app(state, clipboard, updater);
     let main = WebviewWindowBuilder::new(&app, "main", Default::default())
         .build()
         .unwrap();
@@ -641,7 +657,7 @@ fn run_loop<T: Send + 'static>(
 ) -> T {
     static ONE_LOOP: Mutex<()> = Mutex::new(());
     let _one = ONE_LOOP.lock().unwrap_or_else(|e| e.into_inner());
-    let (app, _rx, _io) = mock_app(state, false);
+    let (app, _rx, _io) = mock_app(state, false, false);
     let h = app.handle().clone();
     let exits = Arc::new(AtomicUsize::new(0));
     let seen_exits = exits.clone();
@@ -924,7 +940,7 @@ fn wait_until(what: &str, secs: u64, pred: impl Fn() -> bool) {
 
 fn disabled_json() -> Value {
     json!({"state":"disabled","channelId":null,"channelName":null,"reason":null,
-           "pending":null,"offline":null,"verifiedAt":null})
+           "pending":null,"offline":null,"verifiedAt":null,"canReconnect":false})
 }
 
 #[test]
@@ -949,7 +965,7 @@ fn gated_commands_reject_before_sign_in() {
         let e = invoke(&f.main, name, json!({})).unwrap_err();
         assert_eq!(e, want, "{name}");
     }
-    assert_eq!(n, 17);
+    assert_eq!(n, 20);
 }
 
 /// 앱 상태가 없을 때(시작 실패, worker.md 구현 중 변경 55): 허용 목록 밖은 처리기 전에 notLoggedIn(fail closed)
@@ -975,7 +991,7 @@ fn gate_without_app_state_fails_closed() {
         n += 1;
         assert_eq!(invoke(&main, name, json!({})).unwrap_err(), want, "{name}");
     }
-    assert_eq!(n, 17);
+    assert_eq!(n, 20);
     // 허용 목록은 게이트를 지나 처리기로 간다(상태가 없어 처리기 쪽 오류일 수는 있어도 notLoggedIn은 아니다)
     for name in ["app_info", "auth_status", "list_jobs"] {
         if let Err(e) = invoke(&main, name, json!({})) {
@@ -995,7 +1011,7 @@ fn open_commands_work_while_signed_out() {
     assert_eq!(
         invoke(&f.main, "auth_status", json!({})).unwrap(),
         json!({"state":"signedOut","channelId":null,"channelName":null,"reason":null,
-               "pending":null,"offline":null,"verifiedAt":null})
+               "pending":null,"offline":null,"verifiedAt":null,"canReconnect":false})
     );
     assert_eq!(invoke(&f.main, "list_jobs", json!({})).unwrap(), json!([]));
     invoke(&f.main, "frontend_ready", json!({})).unwrap();
@@ -1199,4 +1215,197 @@ fn spawn_auth_tasks_refreshes_a_saved_session_at_startup() {
         .join("config")
         .join(chzzk_shell::auth::SESSION_FILE);
     assert!(!p.exists() || std::fs::metadata(&p).unwrap().len() == 0);
+}
+
+// ---------------------------------------------------------------------------
+// 업데이트(Phase 3b A4): update_* command·자동 확인
+// ---------------------------------------------------------------------------
+
+/// `GET /update/…`에 답하는 Worker. 200이면 매니페스트(플랫폼 키는 이 빌드의 `target()`)를 주고, `download_origin`이
+/// 없으면 자기 주소를 다운로드 출처로 쓴다. 401은 Worker 형식 JSON 오류다.
+fn update_server(status: u16, download_origin: Option<&str>) -> MockServer {
+    tauri::async_runtime::block_on(async {
+        let s = MockServer::start().await;
+        let origin = download_origin.map_or_else(|| s.uri(), str::to_string);
+        let resp = match status {
+            200 => {
+                let target = tauri_plugin_updater::target().unwrap();
+                let body = json!({
+                    "version": "99.0.0",
+                    "notes": "n",
+                    "pub_date": "2030-01-01T00:00:00Z",
+                    "platforms": { target: {
+                        "url": format!("{origin}/releases/99.0.0/app.bin"),
+                        "signature": "c2ln",
+                    } },
+                });
+                ResponseTemplate::new(200).set_body_raw(body.to_string(), "application/json")
+            }
+            401 => ResponseTemplate::new(401).set_body_raw(
+                json!({ "code": "invalid_token" }).to_string(),
+                "application/json",
+            ),
+            other => ResponseTemplate::new(other),
+        };
+        Mock::given(method("GET"))
+            .and(wiremock::matchers::path_regex("^/update/"))
+            .respond_with(resp)
+            .mount(&s)
+            .await;
+        s
+    })
+}
+
+fn update_requests(s: &MockServer) -> Vec<Request> {
+    tauri::async_runtime::block_on(s.received_requests())
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|r| r.url.path().starts_with("/update/"))
+        .collect()
+}
+
+/// 갓 확인한 세션으로 로그인한 상태의 updater 앱
+fn update_fixture(worker: &MockServer) -> Fixture {
+    let dir = TempDir::new().unwrap();
+    save_session_at(dir.path(), worker, time::Duration::ZERO);
+    let state = open_auth_app(dir.path(), worker);
+    fixture_updater(dir, state)
+}
+
+#[test]
+fn update_check_reports_available_with_bearer() {
+    let worker = update_server(200, None);
+    let f = update_fixture(&worker);
+    let r = invoke(&f.main, "update_check", json!({})).unwrap();
+    assert_eq!(r["result"], json!("available"));
+    assert_eq!(r["info"]["version"], json!("99.0.0"));
+    assert_eq!(r["info"]["notes"], json!("n"));
+    let reqs = update_requests(&worker);
+    assert_eq!(reqs.len(), 1);
+    assert_eq!(
+        reqs[0]
+            .headers
+            .get("authorization")
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        format!("Bearer cda_{}", "A".repeat(43))
+    );
+    assert_eq!(refresh_count(&worker), 0);
+    assert_eq!(
+        invoke(&f.main, "update_available", json!({})).unwrap(),
+        r["info"]
+    );
+}
+
+#[test]
+fn update_check_204_is_up_to_date() {
+    let worker = update_server(204, None);
+    let f = update_fixture(&worker);
+    assert_eq!(
+        invoke(&f.main, "update_check", json!({})).unwrap(),
+        json!({"result":"upToDate"})
+    );
+    assert_eq!(
+        invoke(&f.main, "update_available", json!({})).unwrap(),
+        Value::Null
+    );
+}
+
+#[test]
+fn update_check_401_is_failed_and_keeps_signed_in() {
+    let worker = update_server(401, None);
+    let f = update_fixture(&worker);
+    assert_eq!(
+        invoke(&f.main, "update_check", json!({})).unwrap(),
+        json!({"result":"failed"})
+    );
+    // 셸 판정이 권위다: check 실패로 세션을 건드리지 않는다
+    assert_eq!(
+        invoke(&f.main, "auth_status", json!({})).unwrap()["state"],
+        json!("signedIn")
+    );
+}
+
+#[test]
+fn update_check_rejects_a_foreign_download_origin() {
+    let other = update_server(204, None);
+    let worker = update_server(200, Some(&other.uri()));
+    let f = update_fixture(&worker);
+    assert_eq!(
+        invoke(&f.main, "update_check", json!({})).unwrap(),
+        json!({"result":"untrusted"})
+    );
+    assert!(update_requests(&other).is_empty());
+    assert!(
+        tauri::async_runtime::block_on(other.received_requests())
+            .unwrap_or_default()
+            .is_empty()
+    );
+    assert_eq!(
+        invoke(&f.main, "update_available", json!({})).unwrap(),
+        Value::Null
+    );
+}
+
+#[test]
+fn auto_update_check_emits_update_available() {
+    let worker = update_server(200, None);
+    let f = update_fixture(&worker);
+    let got: Arc<Mutex<Vec<Value>>> = Arc::default();
+    let seen = got.clone();
+    f.main.listen(UPDATE_AVAILABLE, move |e| {
+        seen.lock()
+            .unwrap()
+            .push(serde_json::from_str(e.payload()).unwrap());
+    });
+    let info = tauri::async_runtime::block_on(auto_update_check(f.app.handle().clone()));
+    assert_eq!(info.unwrap().version, "99.0.0");
+    wait_until("update-available", 10, || !got.lock().unwrap().is_empty());
+    assert_eq!(got.lock().unwrap()[0]["version"], json!("99.0.0"));
+}
+
+#[test]
+fn update_check_without_updater_plugin_is_failed() {
+    let worker = update_server(200, None);
+    let dir = TempDir::new().unwrap();
+    save_session_at(dir.path(), &worker, time::Duration::ZERO);
+    let state = open_auth_app(dir.path(), &worker);
+    // updater 미등록(표식 없음): 패닉 없이 Failed, Worker에는 닿지 않는다
+    let f = fixture_with(dir, state);
+    assert_eq!(
+        invoke(&f.main, "update_check", json!({})).unwrap(),
+        json!({"result":"failed"})
+    );
+    assert!(update_requests(&worker).is_empty());
+}
+
+#[test]
+fn update_install_asks_before_pausing() {
+    let worker = update_server(200, None);
+    let vod = hanging_server();
+    let dir = TempDir::new().unwrap();
+    save_session_at(dir.path(), &worker, time::Duration::ZERO);
+    let state = App::open_with_auth(
+        paths(dir.path()),
+        client_config(&vod),
+        None,
+        chzzk_app_lib::tokio_handle(),
+        AuthSetup::Enabled {
+            base: WorkerBase::parse(&worker.uri()).unwrap(),
+            app_version: "0.1.0".into(),
+        },
+    )
+    .unwrap();
+    let f = fixture_updater(dir, state);
+    let job = start_hanging_job(&f);
+    assert_eq!(
+        invoke(&f.main, "update_install", json!({ "confirmPause": false })).unwrap(),
+        json!({"result":"needsConfirm","running":1})
+    );
+    assert!(update_requests(&worker).is_empty());
+    let jobs = invoke(&f.main, "list_jobs", json!({})).unwrap();
+    assert_eq!(jobs[0]["id"], job["id"]);
+    assert_eq!(jobs[0]["status"], json!("running"));
+    stop_all(f.app.handle());
 }

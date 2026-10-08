@@ -21,6 +21,8 @@ import type {
   ResolvedDto,
   SettingsDto,
   SettingsPatch,
+  UpdateCheckDto,
+  UpdateInfoDto,
 } from '../../src/lib/bindings';
 
 /** 로그인 없이 부를 수 있는 command(crates/shell/src/gate.rs OPEN_COMMANDS와 같다, src/lib/gate-sync.test.ts) */
@@ -47,10 +49,22 @@ export const AUTH_DISABLED: AuthStatusDto = {
   pending: null,
   offline: null,
   verifiedAt: null,
+  canReconnect: false,
 };
 
 /** 가짜 [로그인] 뒤 pending 화면에 보이는 확인 코드 */
 export const E2E_USER_CODE = 'K7QX-4MRA';
+
+export type UpdateScenario = {
+  /** update_available가 돌려줄 캐시(자동 확인 결과) */
+  available?: UpdateInfoDto | null;
+  /** update_check 결과(없으면 upToDate) */
+  check?: UpdateCheckDto;
+  /** confirmPause 없이 install을 부르면 needsConfirm으로 답할 받는 중 작업 수(0이면 바로 설치) */
+  running?: number;
+  /** 설치 결과(없으면 restarting). restarting이면 진행 이벤트 started(100)→chunk(50)→chunk(100)→downloaded→installing을 먼저 보낸다 */
+  install?: 'restarting' | 'failed' | 'untrusted';
+};
 
 export type Scenario = {
   /** resolve가 돌려줄 결과(주소 → DTO 또는 오류). 없는 주소는 invalidUrl */
@@ -65,6 +79,8 @@ export type Scenario = {
    * 없으면 저장 세션이 없는 것으로 보고 취소는 `signedOut`이다(셸 `cancel_login`)
    */
   authHeld?: AuthStatusDto;
+  /** 업데이트(update_* command). 없으면 새 버전 없음 */
+  update?: UpdateScenario;
 };
 
 export type Call = { cmd: string; args: unknown };
@@ -220,6 +236,24 @@ export function install(scenario: Scenario = {}): E2EController {
       return setAuth(last);
     },
     auth_logout: () => (auth.state === 'disabled' ? auth : setAuth({ ...AUTH_DISABLED, state: 'signedOut' })),
+    update_available: () => scenario.update?.available ?? null,
+    update_check: () => scenario.update?.check ?? { result: 'upToDate' },
+    update_install: async (a) => {
+      const u = scenario.update ?? {};
+      if ((u.running ?? 0) > 0 && !a.confirmPause) return { result: 'needsConfirm', running: u.running };
+      const r = u.install ?? 'restarting';
+      if (r !== 'restarting') return { result: r };
+      for (const e of [
+        { type: 'started', total: 100 },
+        { type: 'chunk', received: 50, total: 100 },
+        { type: 'chunk', received: 100, total: 100 },
+        { type: 'downloaded' },
+        { type: 'installing' },
+      ]) {
+        await emit('update-progress', e);
+      }
+      return { result: 'restarting' };
+    },
     clipboard_link: () => null,
     open_app_folder: () => null,
     frontend_ready: () => null,

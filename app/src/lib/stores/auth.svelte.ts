@@ -6,7 +6,7 @@ import { errorCopy, toAppError } from '../copy/errors';
 import { t } from '../copy/ko';
 import { toasts } from './toast.svelte';
 
-const EMPTY = { channelId: null, channelName: null, reason: null, pending: null, offline: null, verifiedAt: null } as const;
+const EMPTY = { channelId: null, channelName: null, reason: null, pending: null, offline: null, verifiedAt: null, canReconnect: false } as const;
 
 /** 상태를 알 수 없을 때(시작 실패 등): 닫힌 채로 두고 로그인 화면의 [다시 로그인]으로 갈 길을 둔다. 원인은 단정하지 않는다(사유 없음) */
 export const AUTH_UNKNOWN_ERROR: AuthStatusDto = { ...EMPTY, state: 'error' };

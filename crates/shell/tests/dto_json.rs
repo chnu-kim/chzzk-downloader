@@ -510,6 +510,7 @@ fn status(phase: AuthPhase) -> AuthStatus {
         pending: None,
         offline: None,
         verified_at: None,
+        has_session: false,
     }
 }
 
@@ -517,7 +518,7 @@ fn status(phase: AuthPhase) -> AuthStatus {
 fn auth_status_dto_json_shapes() {
     let nulls = |state: &str| {
         json!({"state": state, "channelId": null, "channelName": null, "reason": null,
-               "pending": null, "offline": null, "verifiedAt": null})
+               "pending": null, "offline": null, "verifiedAt": null, "canReconnect": false})
     };
     assert_eq!(to_json(&AuthStatusDto::disabled()), nulls("disabled"));
     assert_eq!(
@@ -550,12 +551,13 @@ fn auth_status_dto_json_shapes() {
         cause: Cause::Network,
     });
     signed_in.verified_at = Some(at(T0 - 3600));
+    signed_in.has_session = true;
     let v = to_json(&AuthStatusDto::from_status(&signed_in));
     assert_eq!(
         v,
         json!({"state": "signedIn", "channelId": ch, "channelName": "채널", "reason": "network",
                "pending": null, "offline": {"since": 1893456000, "graceUntil": 1893715200},
-               "verifiedAt": 1893452400})
+               "verifiedAt": 1893452400, "canReconnect": true})
     );
     assert!(v.get("isAdmin").is_none());
 
@@ -642,4 +644,38 @@ fn progress_dto_keeps_every_core_field() {
         obj.insert(total.into(), v[1].clone());
     }
     assert_eq!(to_json(&ProgressDto::from(&p)), core);
+}
+
+#[test]
+fn update_dtos_json() {
+    use chzzk_shell::dto::{UpdateCheckDto, UpdateInfoDto, UpdateInstallDto, UpdateProgressEvent};
+    let info = UpdateInfoDto {
+        version: "9.9.9".into(),
+        current: "0.1.0".into(),
+        notes: None,
+        pub_date: None,
+    };
+    assert_eq!(
+        to_json(&UpdateCheckDto::Available { info }),
+        json!({"result":"available","info":{"version":"9.9.9","current":"0.1.0","notes":null,"pubDate":null}})
+    );
+    assert_eq!(
+        to_json(&UpdateCheckDto::UpToDate),
+        json!({"result":"upToDate"})
+    );
+    assert_eq!(
+        to_json(&UpdateInstallDto::NeedsConfirm { running: 1 }),
+        json!({"result":"needsConfirm","running":1})
+    );
+    assert_eq!(
+        to_json(&UpdateProgressEvent::Chunk {
+            received: 5,
+            total: None
+        }),
+        json!({"type":"chunk","received":5,"total":null})
+    );
+    assert_eq!(
+        to_json(&UpdateProgressEvent::Started { total: Some(9) }),
+        json!({"type":"started","total":9})
+    );
 }

@@ -31,4 +31,7 @@
     "auth_cancel",
     "auth_retry",
     "auth_logout",
+    "update_check",
+    "update_available",
+    "update_install",
 ]

@@ -1,9 +1,14 @@
 //! updater 서명(Tauri 형식). 키·서명 파일은 모두 minisign 텍스트 파일의 **base64**다(실측 2026-10-06, tauri-cli 2.12.1):
 //!   개인 키  = base64("untrusted comment: <rsign 암호화 개인 키 머리줄>\n<base64 box>\n")  — 누출 검사 규칙 signing-key
 //!   공개 키  = base64("untrusted comment: minisign public key: <keyid>\n<base64>\n")   — release/updater.pub, plugins.updater.pubkey
-//!   .sig    = base64("untrusted comment: …\n<sig>\ntrusted comment: timestamp:<unix>\tfile:<name>\n<global sig>\n")
+//!   .sig    = base64("untrusted comment: …\n<sig>\ntrusted comment: timestamp:<unix>\tfile:<name>\tversion:<semver>\n<global sig>\n")
 //! 검증은 updater 클라이언트(tauri-plugin-updater)와 같은 crate·같은 순서다: minisign-verify로 공개 키·서명을 decode하고
 //! verify. 단 legacy(prehash 아닌) 서명은 받지 않는다(Tauri CLI와 이 도구는 모두 prehash 서명만 만든다).
+//!
+//! 버전 묶기(worker.md 구현 중 변경 79): trusted comment의 `version:<semver>`(앞 `v` 없음)는 global signature가 덮는다.
+//! 앱은 `plugins.updater.requireSignedVersion = true`라 버전 필드가 없거나 매니페스트 `version`과 다른 서명을 거부한다
+//! (tauri-plugin-updater 2.13.1 `verify_signed_version`: 탭으로 나눈 `key:value` 중 `version:` 접두사, semver로 비교).
+//! 그래서 서명이 유효한 옛 산출물을 더 높은 버전의 매니페스트로 재생할 수 없다.
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
@@ -27,9 +32,18 @@ pub fn load_secret_key(key_b64: &str, password: &str) -> Res<minisign::SecretKey
         .map_err(|e| input(format!("개인 키를 열 수 없다(비밀번호?): {e}")))
 }
 
-/// 서명 → .sig 파일 내용(base64, 끝 줄바꿈 없음 — Tauri CLI와 같다)
-pub fn sign(sk: &minisign::SecretKey, data: &[u8], file_name: &str, timestamp: u64) -> Res<String> {
-    let trusted = format!("timestamp:{timestamp}\tfile:{file_name}");
+/// 서명 → .sig 파일 내용(base64, 끝 줄바꿈 없음 — Tauri CLI와 같다). `version`은 앞 `v` 없는 semver
+pub fn sign(
+    sk: &minisign::SecretKey,
+    data: &[u8],
+    file_name: &str,
+    version: &str,
+    timestamp: u64,
+) -> Res<String> {
+    if version.is_empty() || version.contains(['\t', '\n', '\r']) || version.starts_with('v') {
+        return Err(input(format!("서명할 버전 형식: {version:?}")));
+    }
+    let trusted = format!("timestamp:{timestamp}\tfile:{file_name}\tversion:{version}");
     let sig = minisign::sign(
         None,
         sk,
@@ -51,6 +65,52 @@ pub fn verify(pubkey_b64: &str, data: &[u8], sig_b64: &str) -> Res<()> {
         .map_err(|e| check(format!("서명 형식: {e}")))?;
     pk.verify(data, &sig, false)
         .map_err(|e| check(format!("서명 검증 실패: {e}")))
+}
+
+/// 서명의 trusted comment에서 `version:` 필드(updater `signed_version`과 같은 규칙: 탭으로 나눈 필드 중 접두사가
+/// 정확히 `version:`인 첫 것). 서명 검증(`verify`) 뒤에만 믿을 수 있다.
+fn signed_version(sig_b64: &str) -> Res<Option<String>> {
+    let sig_text = b64_text("서명", sig_b64).map_err(|f| check(f.msg))?;
+    let sig = minisign_verify::Signature::decode(&sig_text)
+        .map_err(|e| check(format!("서명 형식: {e}")))?;
+    Ok(sig
+        .trusted_comment()
+        .split('\t')
+        .find_map(|f| f.strip_prefix("version:"))
+        .map(str::to_string))
+}
+
+/// 서명이 `version`(매니페스트·inventory 버전)에 묶였는가. `verify`를 통과한 서명에만 부른다.
+/// 버전 필드가 없으면 `allow_unversioned`일 때만 통과(Tauri CLI 2.12.1의 임시 서명 형식 자체 확인용).
+/// 앱(requireSignedVersion)은 semver로 비교하지만 우리는 둘 다 앞 `v` 없는 같은 글자로 만들므로 글자 그대로 비교한다.
+pub fn check_version(sig_b64: &str, version: &str, allow_unversioned: bool) -> Res<()> {
+    match signed_version(sig_b64)? {
+        Some(v) if v == version => Ok(()),
+        Some(v) => Err(check(format!(
+            "서명의 버전 {v} ≠ {version}(다른 릴리스의 서명이다)"
+        ))),
+        None if allow_unversioned => Ok(()),
+        None => Err(check(
+            "서명에 version 필드가 없다(앱의 requireSignedVersion이 거부한다)",
+        )),
+    }
+}
+
+/// 버전 묶인 서명을 처음 낸 릴리스(worker.md 구현 중 변경 79). 그보다 낮은 버전(R2에 이미 있는 v0.1.0)은 버전 없는
+/// 서명으로 올라갔으므로, 업로드 뒤 다시 받기 확인(`verify`, rollback 대상 확인 포함)은 그 버전에만 버전 없음을 받는다.
+/// 앱은 `requireSignedVersion`으로 스스로 거부하고, 0.1.1 이상 앱은 더 낮은 0.1.0을 설치하지 않으므로 앱 쪽 보장은 줄지 않는다
+pub const FIRST_VERSIONED: &str = "0.1.1";
+
+/// `verify`(R2에서 다시 받기)의 버전 판정: 버전 필드가 있으면 늘 같아야 하고, 없으면 `FIRST_VERSIONED`보다 낮은 버전만 통과
+pub fn check_published_version(sig_b64: &str, version: &str) -> Res<()> {
+    let legacy = match (
+        crate::semver::parse(version),
+        crate::semver::parse(FIRST_VERSIONED),
+    ) {
+        (Some(v), Some(first)) => crate::semver::cmp(&v, &first) == std::cmp::Ordering::Less,
+        _ => false,
+    };
+    check_version(sig_b64, version, legacy)
 }
 
 /// 음성 자체 검사: 데이터 1바이트 변조, 서명의 trusted comment 1글자 변조가 **모두** 거부돼야 한다.
@@ -76,6 +136,15 @@ pub fn tamper_check(pubkey_b64: &str, data: &[u8], sig_b64: &str) -> Res<()> {
         return Err(check(
             "trusted comment를 바꾼 서명이 검증을 통과했다 — 검증기 고장",
         ));
+    }
+    // 버전 필드 바꿔치기(다운그레이드 재생의 모양)도 global signature가 거부해야 한다
+    if sig_text.contains("\tversion:") {
+        let forged = sig_text.replacen("\tversion:", "\tversion:9", 1);
+        if verify(pubkey_b64, data, &STANDARD.encode(forged)).is_ok() {
+            return Err(check(
+                "version 필드를 바꾼 서명이 검증을 통과했다 — 검증기 고장",
+            ));
+        }
     }
     Ok(())
 }
@@ -126,6 +195,26 @@ mod tests {
             &text("sample.bin.sig"),
         )
         .unwrap();
+        // tauri-cli 2.12.1의 서명에는 version 필드가 없다: 형식 확인(allow_unversioned)만 통과하고, 버전을 요구하면 거부
+        check_version(&text("sample.bin.sig"), "0.1.0", true).unwrap();
+        // R2의 다시 받기 확인: 버전 없는 서명은 FIRST_VERSIONED(0.1.1)보다 낮은 버전(이미 올라간 v0.1.0)에만 통과
+        check_published_version(&text("sample.bin.sig"), "0.1.0").unwrap();
+        check_published_version(&text("sample.bin.sig"), "0.1.0-rc.1").unwrap();
+        for v in ["0.1.1", "0.1.2", "1.0.0", "0.2.0-rc.1", "not-semver"] {
+            assert_eq!(
+                check_published_version(&text("sample.bin.sig"), v)
+                    .unwrap_err()
+                    .code,
+                1,
+                "{v}"
+            );
+        }
+        assert_eq!(
+            check_version(&text("sample.bin.sig"), "0.1.0", false)
+                .unwrap_err()
+                .code,
+            1
+        );
     }
 
     #[test]
@@ -164,15 +253,36 @@ mod tests {
         assert!(load_secret_key(&sk_b64, "wrong").is_err());
         let sk = load_secret_key(&sk_b64, "pw-1").unwrap();
         let data = b"chzzk updater artifact".to_vec();
-        let sig = sign(&sk, &data, "a.AppImage", 1_700_000_000).unwrap();
+        let sig = sign(&sk, &data, "a.AppImage", "1.2.3", 1_700_000_000).unwrap();
         assert!(!sig.ends_with('\n'));
         let sig_text = b64_text("s", &sig).unwrap();
+        // tauri-plugin-updater 2.13.1 `signed_version`이 읽는 모양(필드 순서도 그 예시와 같다)
         assert!(
-            sig_text.contains("trusted comment: timestamp:1700000000\tfile:a.AppImage\n"),
+            sig_text.contains(
+                "trusted comment: timestamp:1700000000\tfile:a.AppImage\tversion:1.2.3\n"
+            ),
             "{sig_text}"
         );
         verify(&pk_b64, &data, &sig).unwrap();
         tamper_check(&pk_b64, &data, &sig).unwrap();
+        check_version(&sig, "1.2.3", false).unwrap();
+        // 다운그레이드 재생: 1.2.3 서명을 더 높은 버전으로 내걸면 거부
+        assert_eq!(check_version(&sig, "1.2.4", false).unwrap_err().code, 1);
+        assert_eq!(check_version(&sig, "1.2.4", true).unwrap_err().code, 1);
+        // 버전 필드를 바꾼 서명은 global signature가 거부한다
+        let forged = sig_text.replace("\tversion:1.2.3", "\tversion:9.9.9");
+        assert_eq!(
+            verify(&pk_b64, &data, &STANDARD.encode(forged))
+                .unwrap_err()
+                .code,
+            1
+        );
+        check_published_version(&sig, "1.2.3").unwrap();
+        assert!(check_published_version(&sig, "1.2.4").is_err());
+        // 버전 형식: 앞 v·빈 값·탭은 서명하지 않는다
+        for bad in ["", "v1.2.3", "1.2.3\tx"] {
+            assert!(sign(&sk, &data, "a.AppImage", bad, 1).is_err(), "{bad:?}");
+        }
         // 다른 키의 공개 키로는 실패
         let (_, other_pk) = keygen("pw-2").unwrap();
         assert_eq!(verify(&other_pk, &data, &sig).unwrap_err().code, 1);

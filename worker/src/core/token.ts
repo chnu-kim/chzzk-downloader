@@ -2,9 +2,9 @@
 //
 // 형식은 정규식으로만 판정하고 디코드하지 않는다. 길이를 정확히 정해 두어 긴 입력은 해시하기 전에 버린다.
 // 저장 해시 = 접두를 포함한 토큰 문자열 전체의 UTF-8 바이트를 SHA-256한 소문자 hex.
-// pollVerifier = b64url(SHA-256(UTF-8(pollSecret 문자열))): 원시 32바이트가 아니라 전송되는 b64url 문자열을 해시한다.
+// loginVerifier = b64url(SHA-256(UTF-8(loginSecret 문자열))): 원시 32바이트가 아니라 전송되는 b64url 문자열을 해시한다.
 
-export const TOKEN_PREFIX = { access: "cda_", refresh: "cdr_", web: "cdw_", flow: "cdf_" } as const;
+export const TOKEN_PREFIX = { access: "cda_", refresh: "cdr_", web: "cdw_", flow: "cdf_", grant: "cdg_" } as const;
 export type TokenKind = keyof typeof TOKEN_PREFIX;
 
 /** n바이트 난수. 테스트는 고정 바이트를 주입한다 */
@@ -32,12 +32,12 @@ export function newToken(kind: TokenKind, rand: RandomBytes = randomBytes): stri
   return TOKEN_PREFIX[kind] + b64url(draw(32, rand));
 }
 
-/** b64url(16B) = 22자: loginId·handle·session id·웹 flow id */
+/** b64url(16B) = 22자: handle·session id·웹 flow id */
 export function newId(rand: RandomBytes = randomBytes): string {
   return b64url(draw(16, rand));
 }
 
-/** b64url(32B) = 43자: state·pollSecret·csrf */
+/** b64url(32B) = 43자: state·loginSecret·csrf */
 export function newSecret(rand: RandomBytes = randomBytes): string {
   return b64url(draw(32, rand));
 }
@@ -53,7 +53,7 @@ export function isId(s: unknown): s is string {
   return typeof s === "string" && B64URL_22.test(s);
 }
 
-/** state·pollSecret·csrf·pollVerifier 모양(43자) */
+/** state·loginSecret·csrf·loginVerifier 모양(43자) */
 export function isSecret(s: unknown): s is string {
   return typeof s === "string" && B64URL_43.test(s);
 }

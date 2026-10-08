@@ -97,7 +97,7 @@ describe("denied", () => {
   it("L6 allowDenied: 기록이 없으면 false, 있으면 허용목록으로 옮기고 다음 로그인이 통과", async () => {
     const stub = freshStub();
     expect(await stub.allowDenied(D4, A1, T0)).toBe(false);
-    expect(await deny(stub, D4, "거부 때 이름", T0)).toEqual({ type: "denied" });
+    expect(await deny(stub, D4, "거부 때 이름", T0)).toMatchObject({ type: "loopback", result: "denied" });
     expect(await stub.allowDenied(D4, A1, T0 + 1)).toBe(true);
     expect(await query(stub, "SELECT channel_id, channel_name FROM allowlist")).toEqual([{ channel_id: D4, channel_name: "거부 때 이름" }]);
     expect(await query(stub, "SELECT count(*) AS n FROM denied")).toEqual([{ n: 0 }]);
@@ -108,7 +108,7 @@ describe("denied", () => {
     const boot = freshStub();
     expect(await boot.allow(B2, "친구 메모", A1, T0)).toEqual({ ok: true });
     const b = await begin(boot);
-    expect(await boot.finish(b.flowId, { type: "user", channelId: B2, channelName: "친구" }, [], T0)).toEqual({ type: "denied" });
+    expect(await boot.finish(b.flowId, { type: "user", channelId: B2, channelName: "친구" }, [], T0)).toMatchObject({ type: "loopback", result: "denied" });
     expect(await boot.allowDenied(B2, D4, T0 + 1)).toBe(true);
     expect(await query(boot, "SELECT channel_id, note, added_by, added_at FROM allowlist")).toEqual([{ channel_id: B2, note: "친구 메모", added_by: A1, added_at: T0 }]);
     expect(await query(boot, "SELECT count(*) AS n FROM denied")).toEqual([{ n: 0 }]);

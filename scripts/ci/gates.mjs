@@ -407,7 +407,7 @@ export const GATES = {
   },
   // ---- 릴리스(docs/design/cicd.md §5, release.yml·rollback.yml). 순서·판정은 release.mjs, 무거운 일은 xtask ----
   'release-gate': {
-    desc: '릴리스 gate: 태그 = 버전 파일, 단조 증가, master 조상, 그 커밋의 master ci-ok 녹색(30초 간격으로 기다림). env RELEASE_MODE·RELEASE_TAG·GITHUB_SHA·GH_TOKEN',
+    desc: '릴리스 gate: 태그 차단 상수(release.mjs TAG_BLOCK), 태그 = 버전 파일, 단조 증가, master 조상, 그 커밋의 master ci-ok 녹색(30초 간격으로 기다림). env RELEASE_MODE·RELEASE_TAG·GITHUB_SHA·GH_TOKEN',
     needs: ['cargo', 'git'],
     steps: [{ cmd: ['node', S('release.mjs'), 'gate'] }],
   },

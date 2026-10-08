@@ -196,6 +196,15 @@ const git = (args) => {
   return { code: r.status, out: (r.stdout ?? '').trim() };
 };
 
+// 태그 릴리스 차단(worker.md 구현 중 변경 88 (아)·89, cicd.md 108 (나)). master의 Worker는 루프백(폴링 없음)인데 앱은 아직 폴링을 쓴다:
+// 이 사이 태그를 찍으면 deploy-worker가 둘을 함께 배포해 모든 새 로그인이 깨진다. **L2(앱 + 네이티브 E2E) PR이 이 상수를 지운다**(null).
+export const TAG_BLOCK = 'login-loopback';
+export const TAG_BLOCK_REASON = '앱 로그인 루프백 전환 중(Worker L1 머지, 앱 L2 전)이라 태그 릴리스를 막는다(새 Worker와 폴링 앱이 함께 배포되면 모든 새 로그인이 깨진다)';
+// → 차단 사유 | null. tag 모드이고 차단 상수가 있을 때만(RELEASE_TAG가 아니라 모드로 판정: 리허설의 tag 입력은 막지 않는다)
+export function tagBlockProblem(mode, block = TAG_BLOCK) {
+  return mode === 'tag' && block ? `${TAG_BLOCK_REASON} [${block}]` : null;
+}
+
 // 태그 이름과 저장소의 다른 v* 태그 → 문제 목록(단조 증가)
 export function tagProblems(tag, others) {
   const v = tag.replace(/^v/, '');
@@ -340,6 +349,12 @@ async function cmdGate(env) {
   if (!['tag', 'rehearsal'].includes(mode) || !/^[0-9a-f]{40}$/.test(sha ?? '')) {
     err('gate: RELEASE_MODE(tag|rehearsal)·GITHUB_SHA가 필요하다');
     return 2;
+  }
+  // 0. 태그 차단 상수: 있으면 다른 검사(cargo metadata·ci-ok 기다림) 없이 바로 1
+  const blocked = tagBlockProblem(mode);
+  if (blocked) {
+    err(`gate: ${blocked}`);
+    return 1;
   }
   const version = workspaceVersion();
   const tag = env.RELEASE_TAG ?? '';

@@ -1,4 +1,5 @@
 // wrangler dev E2E의 순수 함수(test/e2e-lib.mjs, docs/design/worker.md 구현 중 변경 40·41): 인자 조립·쿠키 항아리·Origin 계산·HTML 추출·로그 카나리 검사.
+import vectorsText from "../vectors/loopback-vectors.json?raw";
 import { describe, expect, it } from "vitest";
 import { formatLog, type LogFields } from "../../src/core/log";
 import {
@@ -12,7 +13,8 @@ import {
   extractCsrf,
   extractDownloadLinks,
   extractRowIds,
-  extractUserCode,
+  loopbackStateOf,
+  parseLoopbackLocation,
   LOG_KEYS,
   makeCanaries,
   parseDevVars,
@@ -167,9 +169,31 @@ describe("HTML 추출", () => {
     expect(extractCsrf("<p>없음</p>")).toBeNull();
   });
 
-  it("extractUserCode: 확인 코드 형식(0·1·I·O 없음)만", () => {
-    expect(extractUserCode('<p class="code">AB2D-EF9H</p>')).toBe("AB2D-EF9H");
-    expect(extractUserCode('<p class="code">AB1D-EF9H</p>')).toBeNull();
+  const G = `cdg_${ID64}`;
+  const loc = (port: number | string, rest = `/chzzk-downloader/login?grant=${G}&state=${ID64}`, host = "127.0.0.1") => `http://${host}:${port}${rest}`;
+
+  it("parseLoopbackLocation: 정상만 풀고 나머지는 null", () => {
+    expect(parseLoopbackLocation(loc(49152))).toEqual({ port: 49152, path: "/chzzk-downloader/login", grant: G, state: ID64 });
+    expect(parseLoopbackLocation(loc(1024))?.port).toBe(1024);
+    expect(parseLoopbackLocation(loc(65535))?.port).toBe(65535);
+    for (const bad of [
+      loc(1023),
+      loc(65536),
+      loc(49152, undefined, "localhost"),
+      loc(49152, `/other?grant=${G}&state=${ID64}`),
+      loc(49152, `/chzzk-downloader/login?state=${ID64}&grant=${G}`),
+      loc(49152, `/chzzk-downloader/login?grant=cda_${ID64}&state=${ID64}`),
+      loc(49152, `/chzzk-downloader/login?grant=${G}&state=${ID64}x`),
+      null,
+    ]) {
+      expect(parseLoopbackLocation(bad)).toBeNull();
+    }
+  });
+
+  it("loopbackStateOf: 공유 벡터와 같다", async () => {
+    const v = JSON.parse(vectorsText) as { state: { loginVerifier: string; state: string }[] };
+    expect(v.state.length).toBeGreaterThanOrEqual(3);
+    for (const r of v.state) expect(await loopbackStateOf(r.loginVerifier)).toBe(r.state);
   });
 
   const SESSIONS = `<table><tbody><tr><td>가<br><span class="mono">${"c3".padStart(32, "0")}</span></td><td><form class="inline" method="post" action="/admin/sessions/sid_1-A/revoke"></form></td></tr><tr><td>나<br><span class="mono">${"b2".padStart(32, "0")}</span></td><td><form action="/admin/sessions/sid2/revoke"></form></td></tr></tbody></table>`;

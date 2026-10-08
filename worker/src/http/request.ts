@@ -1,6 +1,6 @@
 // 요청 읽기 도우미(docs/design/worker.md §4, 구현 중 변경 27 (바)·28). 입력은 모두 믿지 않는다: 크기·형식을 먼저 거른다.
 
-/** JSON 본문 상한(바이트). /auth/start·poll·refresh·logout 본문은 모두 ASCII이고 이보다 훨씬 작다 */
+/** JSON 본문 상한(바이트). /auth/start·redeem·refresh·logout 본문은 모두 ASCII이고 이보다 훨씬 작다 */
 export const JSON_MAX = 4096;
 
 /** Content-Type의 미디어 형식이 application/json이다(대소문자 무시, ;charset 같은 매개변수는 허용) */

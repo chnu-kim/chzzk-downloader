@@ -708,8 +708,9 @@ export const CI_TOKEN_IDENT_FILES = ['src/config.ts', 'src/http/release-auth.ts'
 export const RELEASE_AUTH_FILES = ['src/http/release-auth.ts', 'src/http/releases.ts', 'src/http/update.ts'];
 export const R2_ALLOWLIST = { 'src/http/r2.ts': 1 };
 export const RELEASE_FILES = ['src/http/r2.ts', 'src/http/release-auth.ts', 'src/http/releases.ts', 'src/http/update.ts'];
-// 낱말 delete 수(주석·문자열 포함)는 이 표와 같다(목록 밖 0, RAW_ALLOWLIST와 같은 방식). Map.delete만 있는 파일이다(cicd.md 95)
-export const DELETE_ALLOWLIST = { 'src/core/lru.ts': 3, 'src/store/flows.ts': 5 };
+// 낱말 delete 수(주석·문자열 포함)는 이 표와 같다(목록 밖 0, RAW_ALLOWLIST와 같은 방식). Map.delete만 있는 파일이다(cicd.md 95).
+// flows.ts는 pollGate가 없어지며 5 → 3이다(worker.md 구현 중 변경 89 (카))
+export const DELETE_ALLOWLIST = { 'src/core/lru.ts': 3, 'src/store/flows.ts': 3 };
 const word = (w) => new RegExp(String.raw`(?<![\w$])${w}(?![\w$])`, 'g');
 // 낱말 수라 .list?.(·["list"](·{ list } =·typeof v?.list·주석도 센다(cicd.md 95, 93의 fetch와 같은 방식)
 const R2_WRITE_LIST_WORD = word('(?:put|list|createMultipartUpload|resumeMultipartUpload)');

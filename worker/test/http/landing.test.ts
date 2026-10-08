@@ -214,8 +214,8 @@ describe("내 기기", () => {
     const b2App = await appFlow({ fake });
     fake.state.account = "a1";
     const a1App = await appFlow({ fake });
-    const b2Access = b2App.pollBody.accessToken as string;
-    const a1Access = a1App.pollBody.accessToken as string;
+    const b2Access = b2App.redeemBody.accessToken as string;
+    const a1Access = a1App.redeemBody.accessToken as string;
     const checkId = async (access: string) => {
       const c = await store().check(await sha256Hex(access), ADMINS, Date.now());
       if (!c.ok) throw new Error(`check ${c.code}`);
@@ -263,7 +263,7 @@ describe("내 기기", () => {
     const app = await appFlow({ fake });
     const page = await (await web.get("/")).text();
     expect(page.match(/action="\/me\/sessions\//g)).toHaveLength(2);
-    const c = await store().check(await sha256Hex(app.pollBody.accessToken as string), ADMINS, Date.now());
+    const c = await store().check(await sha256Hex(app.redeemBody.accessToken as string), ADMINS, Date.now());
     if (!c.ok) throw new Error("check");
     expect(c.ownerChannelId).toBe(D4);
     const res = await web.post(`/me/sessions/${c.sessionId}/revoke`, undefined, formBody({ csrf: csrfIn(page) ?? "" }));

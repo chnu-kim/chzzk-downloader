@@ -3,7 +3,8 @@ import { exports } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { CALLBACK_PATH } from "../../src/config";
 import { matchPattern, ROUTES } from "../../src/routes";
-import { ORIGIN } from "./harness";
+import { OUTDATED_HANDLE } from "../../src/http/auth";
+import { countingSend, ORIGIN } from "./harness";
 
 describe("matchPattern", () => {
   it(":name 조각은 비지 않은 조각 하나와 맞는다", () => {
@@ -39,7 +40,7 @@ describe("matchPattern: /** 패턴(나머지 전부, 디코드하지 않는다)"
 });
 
 describe("경로 표", () => {
-  it("W6까지의 24쌍이 정확히 이 순서다", () => {
+  it("25쌍이 정확히 이 순서다", () => {
     expect(ROUTES.map((r) => `${r.method} ${r.pattern}`)).toEqual([
       "GET /health",
       "POST /auth/start",
@@ -48,6 +49,7 @@ describe("경로 표", () => {
       "POST /auth/web/start",
       `GET ${CALLBACK_PATH}`,
       "GET /auth/done",
+      "POST /auth/redeem",
       "POST /auth/poll",
       "POST /auth/refresh",
       "POST /auth/logout",
@@ -75,6 +77,8 @@ describe("경로 표", () => {
     expect(auth("POST", "/auth/logout")).toBe("app_or_refresh");
     expect(auth("GET", "/api/me")).toBe("app");
     expect(auth("POST", "/auth/start")).toBe("none");
+    expect(auth("POST", "/auth/redeem")).toBe("none");
+    expect(auth("POST", "/auth/poll")).toBe("none");
     expect(auth("GET", "/update/:current")).toBe("update");
     expect(auth("GET", "/releases/**")).toBe("release");
     expect(auth("HEAD", "/releases/**")).toBe("release");
@@ -92,6 +96,21 @@ describe("404·405", () => {
     expect(res.status).toBe(405);
     expect(res.headers.get("Allow")).toBe("GET, POST");
     expect(await res.json()).toEqual({ code: "method_not_allowed" });
+  });
+
+  it("PUT /auth/redeem은 405이고 Allow는 POST", async () => {
+    const res = await exports.default.fetch(ORIGIN + "/auth/redeem", { method: "PUT", redirect: "manual" });
+    expect(res.status).toBe(405);
+    expect(res.headers.get("Allow")).toBe("POST");
+  });
+
+  it("예약 handle은 DO 조회보다 먼저 답한다", async () => {
+    const { send, calls } = countingSend();
+    for (const method of ["GET", "POST"]) {
+      const res = await send(`${ORIGIN}/auth/login/${OUTDATED_HANDLE}`, { method, headers: method === "POST" ? { Origin: ORIGIN, "Sec-Fetch-Site": "same-origin", "Content-Type": "application/x-www-form-urlencoded" } : {} });
+      expect(res.status).toBe(200);
+    }
+    expect(calls).toEqual([]);
   });
 
   it("끝 조각이 비면 404 JSON", async () => {

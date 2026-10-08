@@ -1,6 +1,6 @@
 // 경로 표(데이터)와 진입 처리(docs/design/worker.md §4). 라우터 의존성 없이 표 + 정확한 경로 비교다.
 //
-// W6까지: /health, 로그인 흐름(/auth/*), 앱 세션(/auth/refresh·/auth/logout·/api/me), 릴리스 읽기(/update/:current·/releases/**),
+// /health, 로그인 흐름(/auth/*, 앱은 루프백 수령 /auth/redeem, /auth/poll은 비석), 앱 세션(/auth/refresh·/auth/logout·/api/me), 릴리스 읽기(/update/:current·/releases/**),
 // 랜딩(/)·스타일시트(/assets/:file)·웹 로그아웃·내 기기(/me/*)·관리(/admin*). auth 값(자격 종류 §4)으로 자격 × 경로 행렬 테스트를 만든다(§4.5).
 // 처리 순서: 설정 검사(실패하면 모든 경로 500, /health는 503) → 요청 출처 = PUBLIC_ORIGIN → 경로 표 → 핸들러.
 // 패턴의 ":이름" 조각은 비어 있지 않은 조각 하나와 맞는다(디코드하지 않는다. 값 검사는 핸들러가 한다, 구현 중 변경 27 (마)).
@@ -9,7 +9,7 @@ import { type Config, CALLBACK_PATH, loadConfig } from "./config";
 import { type CookieSpec, cookieSpec } from "./core/cookies";
 import { type Logger, log, silent } from "./core/log";
 import { adminAllow, adminDeniedAllow, adminDeniedDismiss, adminDisallow, adminPage, adminRevokeSession } from "./http/admin";
-import { authStart, callback, done, loginContinue, loginPageGet, poll, webStart } from "./http/auth";
+import { authRedeem, authStart, callback, done, loginContinue, loginPageGet, pollGone, webStart } from "./http/auth";
 import { health } from "./http/health";
 import { landing, meRevoke, webLogout } from "./http/landing";
 import { errorJson, json, withCommonHeaders } from "./http/respond";
@@ -61,7 +61,8 @@ export const ROUTES: readonly Route[] = [
   { method: "POST", pattern: "/auth/web/start", auth: "none", handler: webStart },
   { method: "GET", pattern: CALLBACK_PATH, auth: "flow", handler: callback, quiet: true },
   { method: "GET", pattern: "/auth/done", auth: "none", handler: done },
-  { method: "POST", pattern: "/auth/poll", auth: "none", handler: poll },
+  { method: "POST", pattern: "/auth/redeem", auth: "none", handler: authRedeem },
+  { method: "POST", pattern: "/auth/poll", auth: "none", handler: pollGone },
   { method: "POST", pattern: "/auth/refresh", auth: "refresh", handler: refresh },
   { method: "POST", pattern: "/auth/logout", auth: "app_or_refresh", handler: logout },
   { method: "GET", pattern: "/api/me", auth: "app", handler: me },

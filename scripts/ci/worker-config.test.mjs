@@ -801,7 +801,7 @@ test('씨앗: 릴리스 읽기 소스(worker.md 구현 중 변경 31 (차), cicd
   assert.notDeepEqual(checkReleaseSources([], { all: true }), [], '목록 파일 없음');
   assert.deepEqual(checkReleaseSources([]), []);
   // 통과: 다른 파일의 Map.delete, 허용된 파일의 낱말, src 밖(test)
-  assert.deepEqual(DELETE_ALLOWLIST, { 'src/core/lru.ts': 3, 'src/store/flows.ts': 5 });
+  assert.deepEqual(DELETE_ALLOWLIST, { 'src/core/lru.ts': 3, 'src/store/flows.ts': 3 });
   const clean = [
     ['Lru의 Map.delete(실제 파일)', 'src/core/lru.ts', read('src/core/lru.ts')],
     ['flows의 Map.delete(실제 파일)', 'src/store/flows.ts', read('src/store/flows.ts')],

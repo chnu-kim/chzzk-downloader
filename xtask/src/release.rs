@@ -715,7 +715,7 @@ pub fn verify(
                 }
             }
             sig::verify(pubkey, &data, &s).map_err(|f| check(format!("{file}: {}", f.msg)))?;
-            sig::check_version(&s, version, false)
+            sig::check_published_version(&s, version)
                 .map_err(|f| check(format!("{file}: {}", f.msg)))?;
         }
         println!(

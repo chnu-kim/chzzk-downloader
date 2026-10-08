@@ -96,6 +96,23 @@ pub fn check_version(sig_b64: &str, version: &str, allow_unversioned: bool) -> R
     }
 }
 
+/// 버전 묶인 서명을 처음 낸 릴리스(worker.md 구현 중 변경 79). 그보다 낮은 버전(R2에 이미 있는 v0.1.0)은 버전 없는
+/// 서명으로 올라갔으므로, 업로드 뒤 다시 받기 확인(`verify`, rollback 대상 확인 포함)은 그 버전에만 버전 없음을 받는다.
+/// 앱은 `requireSignedVersion`으로 스스로 거부하고, 0.1.1 이상 앱은 더 낮은 0.1.0을 설치하지 않으므로 앱 쪽 보장은 줄지 않는다
+pub const FIRST_VERSIONED: &str = "0.1.1";
+
+/// `verify`(R2에서 다시 받기)의 버전 판정: 버전 필드가 있으면 늘 같아야 하고, 없으면 `FIRST_VERSIONED`보다 낮은 버전만 통과
+pub fn check_published_version(sig_b64: &str, version: &str) -> Res<()> {
+    let legacy = match (
+        crate::semver::parse(version),
+        crate::semver::parse(FIRST_VERSIONED),
+    ) {
+        (Some(v), Some(first)) => crate::semver::cmp(&v, &first) == std::cmp::Ordering::Less,
+        _ => false,
+    };
+    check_version(sig_b64, version, legacy)
+}
+
 /// 음성 자체 검사: 데이터 1바이트 변조, 서명의 trusted comment 1글자 변조가 **모두** 거부돼야 한다.
 /// 하나라도 통과하면 검증기가 고장 난 것이다(→ 실패).
 pub fn tamper_check(pubkey_b64: &str, data: &[u8], sig_b64: &str) -> Res<()> {
@@ -180,6 +197,18 @@ mod tests {
         .unwrap();
         // tauri-cli 2.12.1의 서명에는 version 필드가 없다: 형식 확인(allow_unversioned)만 통과하고, 버전을 요구하면 거부
         check_version(&text("sample.bin.sig"), "0.1.0", true).unwrap();
+        // R2의 다시 받기 확인: 버전 없는 서명은 FIRST_VERSIONED(0.1.1)보다 낮은 버전(이미 올라간 v0.1.0)에만 통과
+        check_published_version(&text("sample.bin.sig"), "0.1.0").unwrap();
+        check_published_version(&text("sample.bin.sig"), "0.1.0-rc.1").unwrap();
+        for v in ["0.1.1", "0.1.2", "1.0.0", "0.2.0-rc.1", "not-semver"] {
+            assert_eq!(
+                check_published_version(&text("sample.bin.sig"), v)
+                    .unwrap_err()
+                    .code,
+                1,
+                "{v}"
+            );
+        }
         assert_eq!(
             check_version(&text("sample.bin.sig"), "0.1.0", false)
                 .unwrap_err()
@@ -248,6 +277,8 @@ mod tests {
                 .code,
             1
         );
+        check_published_version(&sig, "1.2.3").unwrap();
+        assert!(check_published_version(&sig, "1.2.4").is_err());
         // 버전 형식: 앞 v·빈 값·탭은 서명하지 않는다
         for bad in ["", "v1.2.3", "1.2.3\tx"] {
             assert!(sign(&sk, &data, "a.AppImage", bad, 1).is_err(), "{bad:?}");

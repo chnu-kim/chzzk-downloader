@@ -331,6 +331,15 @@ impl Respond for RangeBody {
 
 /// 영상 정보 → MPD → 미디어를 끝까지 주는 서버(코어 fixture `testdata/vod/video_info.json`).
 fn vod_server() -> MockServer {
+    vod_server_with(None)
+}
+
+/// `vod_server`인데 미디어 응답이 오래 걸린다: 정보 조회는 바로 되고(본인 영상 검사의 다시 resolve) 작업은 받는 중에 머문다.
+fn slow_media_vod_server() -> MockServer {
+    vod_server_with(Some(Duration::from_secs(60)))
+}
+
+fn vod_server_with(media_delay: Option<Duration>) -> MockServer {
     let info = std::fs::read(
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testdata/vod/video_info.json"),
     )
@@ -363,11 +372,15 @@ fn vod_server() -> MockServer {
             .respond_with(ResponseTemplate::new(200).set_body_raw(mpd, "application/dash+xml"))
             .mount(&s)
             .await;
-        Mock::given(method("GET"))
-            .and(path(MEDIA_PATH))
-            .respond_with(RangeBody((0..50_000u32).map(|i| i as u8).collect()))
-            .mount(&s)
-            .await;
+        let media = match media_delay {
+            None => Mock::given(method("GET"))
+                .and(path(MEDIA_PATH))
+                .respond_with(RangeBody((0..50_000u32).map(|i| i as u8).collect())),
+            Some(d) => Mock::given(method("GET"))
+                .and(path(MEDIA_PATH))
+                .respond_with(ResponseTemplate::new(200).set_delay(d)),
+        };
+        media.mount(&s).await;
         s
     })
 }
@@ -404,6 +417,13 @@ fn enqueue_body(no: u64, quality: &str, folder: Option<&Path>) -> Value {
 /// `running`에 머무는 작업 하나를 넣는다.
 fn start_hanging_job(f: &Fixture) -> Value {
     let job = invoke(&f.main, "enqueue", enqueue_body(1, "720p", None)).unwrap();
+    assert_eq!(job["status"], json!("running"));
+    job
+}
+
+/// `slow_media_vod_server`의 영상을 넣어 `running`에 머무는 작업 하나를 만든다(로그인한 채널이 영상의 채널과 같아야 한다).
+fn start_slow_vod_job(f: &Fixture) -> Value {
+    let job = invoke(&f.main, "enqueue", enqueue_body(VOD_NO, QUALITY, None)).unwrap();
     assert_eq!(job["status"], json!("running"));
     job
 }
@@ -811,7 +831,8 @@ fn second_instance_does_not_reveal_the_window_of_a_failed_startup() {
 // 로그인(Phase 3b A2): AuthGate·auth command·auth-changed
 // ---------------------------------------------------------------------------
 
-const CH: &str = "000000000000000000000000000000a1";
+/// 로그인한 채널: 영상 fixture(`testdata/vod`)의 채널과 같다(본인 영상 검사를 통과한다)
+const CH: &str = "000000000000000000000000000000b2";
 
 /// Worker 서버. `start`가 있으면 `/auth/start`가 그 상태로 답한다(201이면 로그인 시작 본문, 그 밖에는 HTML 오류).
 /// `/auth/poll`은 늘 pending이다.
@@ -1385,7 +1406,7 @@ fn update_check_without_updater_plugin_is_failed() {
 #[test]
 fn update_install_asks_before_pausing() {
     let worker = update_server(200, None);
-    let vod = hanging_server();
+    let vod = slow_media_vod_server();
     let dir = TempDir::new().unwrap();
     save_session_at(dir.path(), &worker, time::Duration::ZERO);
     let state = App::open_with_auth(
@@ -1400,7 +1421,7 @@ fn update_install_asks_before_pausing() {
     )
     .unwrap();
     let f = fixture_updater(dir, state);
-    let job = start_hanging_job(&f);
+    let job = start_slow_vod_job(&f);
     assert_eq!(
         invoke(&f.main, "update_install", json!({ "confirmPause": false })).unwrap(),
         json!({"result":"needsConfirm","running":1})

@@ -529,7 +529,7 @@ impl UpdateSource for FakeSource {
     ) -> Result<(), SourceError> {
         Ok(())
     }
-    fn install(&self) -> Result<(), SourceError> {
+    async fn install(&self) -> Result<(), SourceError> {
         Ok(())
     }
 }

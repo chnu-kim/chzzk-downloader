@@ -64,7 +64,7 @@
   </Banner>
 {:else if which === 'interrupted'}
   <Banner tone="info" onclose={() => jobs.dismissBanner()}>
-    {t('banner.interrupted', { n: jobs.interruptedCount })}
+    {t('banner.interrupted', { n: jobs.resumableCount })}
     {#snippet actions()}
       <Button size="sm" accentText disabled={resuming} onclick={resumeAll}>{t('banner.resumeAll')}</Button>
     {/snippet}

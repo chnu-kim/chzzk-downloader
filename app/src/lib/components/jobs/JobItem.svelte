@@ -6,12 +6,14 @@
   import {
     barView,
     failedCopy,
+    blockCopyKey,
     isAccentAction,
     jobActionIcon,
     jobActionLabel,
     jobButtons,
     statusParts,
     type JobAction,
+    type JobBlock,
   } from '../../jobs';
   import { kindLabel, kindTone } from '../../receive';
   import Badge from '../ui/Badge.svelte';
@@ -29,6 +31,8 @@
     ahead: number;
     runStartedAt: number | null;
     cookiesEnabled: boolean;
+    /** 이어받기를 셸이 거부할 작업이면 이유(A5). 안내를 보이고 이어받기 계열 버튼을 뺀다 */
+    block: JobBlock | null;
     highlighted: boolean;
     /** roving tabindex: 목록에서 하나만 0 */
     tabbable: boolean;
@@ -44,6 +48,7 @@
     ahead,
     runStartedAt,
     cookiesEnabled,
+    block,
     highlighted,
     tabbable,
     onaction,
@@ -55,7 +60,7 @@
   const tone = $derived(kindTone(job.kind, job.playbackKind));
   const bar = $derived(barView(job, progress));
   const parts = $derived(statusParts(job, progress, { ahead, runStartedAt }));
-  const buttons = $derived(jobButtons(job, progress, cookiesEnabled));
+  const buttons = $derived(jobButtons(job, progress, cookiesEnabled, block));
   const err = $derived(job.status === 'failed' ? failedCopy(job, cookiesEnabled) : null);
   const rail = $derived(railOf(job.status));
   const busy = $derived(
@@ -157,6 +162,12 @@
       <Menu label={t('job.more', { title: job.title })} items={menuItems} />
     </div>
   </div>
+
+  {#if block}
+    <p class="blocked">
+      <span class="lead"><Icon name="alert" size={16} /></span>{t(blockCopyKey(block))}
+    </p>
+  {/if}
 </article>
 
 <style>
@@ -250,6 +261,14 @@
     text-align: right;
     font-size: var(--text-md);
     font-weight: var(--weight-semibold);
+  }
+  .blocked {
+    display: flex;
+    gap: var(--space-1);
+    align-items: center;
+    margin: 0;
+    font-size: var(--text-sm);
+    color: var(--fg-muted);
   }
   .status-row {
     flex-wrap: wrap;

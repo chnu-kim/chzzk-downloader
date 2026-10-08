@@ -1,8 +1,9 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppError, OutputCheck, SettingsDto } from '../../bindings';
 import { check, resolved } from '../../../test/fixtures';
+import { signedInAs } from '../../../test/jobFixtures';
 
 vi.mock('../../api', () => ({
   resolve: vi.fn(),
@@ -19,6 +20,7 @@ const api = await import('../../api');
 const { resolver } = await import('../../stores/resolve.svelte');
 const { settings } = await import('../../stores/settings.svelte');
 const { ui } = await import('../../stores/ui.svelte');
+const { auth } = await import('../../stores/auth.svelte');
 const { default: InputPanel } = await import('./InputPanel.svelte');
 
 const settingsDto: SettingsDto = {
@@ -373,5 +375,24 @@ describe('클립보드 제안', () => {
     render(InputPanel);
     await fireEvent.focus(window);
     expect(api.clipboardLink).not.toHaveBeenCalled();
+  });
+});
+
+describe('남의 영상 안내(A5)', () => {
+  afterEach(() => {
+    auth.status = null;
+  });
+
+  it('로그인한 채널 이름을 보이고 [다운로드]는 비활성이다', async () => {
+    auth.status = signedInAs('a1', '내 채널');
+    await openCard({ ownership: 'notOwn', meta: { ...resolved().meta, channelName: '다른 채널', channelId: 'c3' } });
+    expect(screen.getByText('내 채널의 영상만 받을 수 있어요')).toBeInTheDocument();
+    expect(screen.getByText("이 영상은 '다른 채널' 채널의 영상이에요. 로그인한 채널: '내 채널'")).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /다운로드/ })).toBeDisabled();
+  });
+
+  it('로그인한 채널 이름을 모르면 이름 없는 문장이다', async () => {
+    await openCard({ ownership: 'notOwn' });
+    expect(screen.getByText('로그인한 채널의 영상이 아니에요.')).toBeInTheDocument();
   });
 });

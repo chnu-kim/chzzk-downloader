@@ -1,18 +1,22 @@
 import { describe, expect, it } from 'vitest';
 import type { JobDto, JobStatus } from './bindings';
-import { err, hlsProg, job, prog } from '../test/jobFixtures';
+import { t } from './copy/ko';
+import { err, hlsProg, job, prog, signedInAs } from '../test/jobFixtures';
 import {
   CANCEL_CONFIRM_BYTES,
   RESUMED_NOTE_MS,
   barView,
+  blockCopyKey,
   deleteAction,
   enterAction,
   groupJobs,
+  jobBlock,
   jobButtons,
   needsCancelConfirm,
   nextQueueOrder,
   queueAhead,
   receivedBytes,
+  resumableInterrupted,
   spaceAction,
   statusParts,
   transitionAnnouncement,
@@ -310,5 +314,65 @@ describe('상태 전이 읽어 주기', () => {
     expect(transitionAnnouncement(a, a)).toBeNull();
     expect(transitionAnnouncement(a, { ...a, status: 'completed' })).toBeNull();
     expect(transitionAnnouncement(undefined, job(2))).toBeNull();
+  });
+});
+
+describe('막힌 작업(A5)', () => {
+  const A1 = '000000000000000000000000000000a1';
+  const C3 = '000000000000000000000000000000c3';
+  const me = signedInAs(A1);
+
+  it('jobBlock 표', () => {
+    // 비교 대상이 없으면 막지 않는다
+    const stopped = job(1, { status: 'interrupted', channelId: C3 });
+    expect(jobBlock(stopped, null)).toBeNull();
+    expect(jobBlock(stopped, { ...me, state: 'disabled' })).toBeNull();
+    expect(jobBlock(stopped, { ...me, state: 'signedOut' })).toBeNull();
+    expect(jobBlock(stopped, signedInAs(null))).toBeNull();
+    // 진행 중·대기·완료는 막지 않는다
+    for (const status of ['running', 'queued', 'pausing', 'completed'] as const) {
+      expect(jobBlock(job(1, { status, channelId: C3 }), me)).toBeNull();
+    }
+    // 멈춘 작업: 같은 채널(대소문자 무시)은 열려 있다
+    for (const status of ['interrupted', 'paused', 'failed', 'skipped'] as const) {
+      expect(jobBlock(job(1, { status, channelId: A1.toUpperCase() }), me)).toBeNull();
+      expect(jobBlock(job(1, { status, channelId: C3 }), me)).toBe('otherChannel');
+      expect(jobBlock(job(1, { status, channelId: null }), me)).toBe('ownerUnknown');
+    }
+  });
+
+  it('resumableInterrupted는 막힌 작업을 빼고 id 오름차순', () => {
+    const list = [
+      job(4, { status: 'interrupted', channelId: A1 }),
+      job(2, { status: 'interrupted', channelId: C3 }),
+      job(1, { status: 'interrupted', channelId: A1 }),
+      job(3, { status: 'paused', channelId: A1 }),
+    ];
+    expect(resumableInterrupted(list, me)).toEqual([1, 4]);
+    expect(resumableInterrupted(list, null)).toEqual([1, 2, 4]);
+  });
+
+  it('막힌 작업 버튼', () => {
+    const interrupted = job(1, { status: 'interrupted', channelId: C3, partialBytes: 5 });
+    expect(jobButtons(interrupted, null, false, 'otherChannel')).toEqual({
+      primary: [],
+      cancel: true,
+      menu: ['copyUrl'],
+    });
+    const skipped = job(2, { status: 'skipped', channelId: C3 });
+    expect(jobButtons(skipped, null, false, 'otherChannel').primary).toEqual(['openFile']);
+    const failed = job(3, { status: 'failed', partialBytes: 9, error: err('network') });
+    const b = jobButtons(failed, null, false, 'ownerUnknown');
+    expect(b.primary).not.toContain('resume');
+    expect(b.primary).not.toContain('retry');
+    expect(b.menu).not.toContain('restartFresh');
+    // 막지 않으면 전과 같다
+    expect(jobButtons(interrupted, null).primary).toEqual(['resume']);
+  });
+
+  it('copy deck 키', () => {
+    expect(blockCopyKey('otherChannel')).toBe('job.otherChannel');
+    expect(t('job.otherChannel')).toBe('다른 채널로 로그인해 이어받을 수 없어요');
+    expect(t('job.ownerUnknown')).toBe('영상의 채널을 확인하지 못해 이어받을 수 없어요');
   });
 });

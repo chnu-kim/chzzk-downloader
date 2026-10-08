@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { JobDto, JobEvent } from '../bindings';
-import { err, job, prog } from '../../test/jobFixtures';
+import { err, job, prog, signedInAs } from '../../test/jobFixtures';
 
 class FakeChannel {
   onmessage: (e: JobEvent) => void = () => {};
@@ -20,6 +20,7 @@ vi.mock('../api', () => ({
 const api = await import('../api');
 const { JobsStore, HIGHLIGHT_MS } = await import('./jobs.svelte');
 const { toasts } = await import('./toast.svelte');
+const { auth } = await import('./auth.svelte');
 
 function deferred<T>() {
   let resolve!: (v: T) => void;
@@ -47,6 +48,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  auth.status = null;
   vi.useRealTimers();
 });
 
@@ -147,6 +149,23 @@ describe('JobsStore 동작', () => {
       [4, false],
     ]);
     expect(toasts.items.map((t) => t.message)).toEqual(['이 파일은 이미 다운로드 목록에 있어요.']);
+  });
+
+  it('다른 채널 작업은 B1이 세지 않고 모두 이어받기도 건너뛴다', async () => {
+    const A1 = '000000000000000000000000000000a1';
+    const C3 = '000000000000000000000000000000c3';
+    auth.status = signedInAs(A1);
+    const { s, send } = await loaded([
+      job(1, { status: 'interrupted', channelId: A1 }),
+      job(2, { status: 'interrupted', channelId: C3 }),
+    ]);
+    expect(s.interruptedCount).toBe(2);
+    expect(s.resumableCount).toBe(1);
+    await s.resumeAllInterrupted();
+    expect(vi.mocked(api.resumeJob).mock.calls).toEqual([[1, false]]);
+    // 이어받을 작업이 사라지고 다른 채널만 남으면 배너가 없다
+    send({ type: 'status', job: job(1, { status: 'running', channelId: A1 }) });
+    expect(s.showInterruptedBanner).toBe(false);
   });
 
   it('배너는 중단된 작업이 없거나 닫으면 숨는다', async () => {

@@ -91,6 +91,8 @@ export const ko = {
   'job.eta': '{t} 남음',
   'job.etaUnknown': '남은 시간 계산 중',
   'job.segments': '조각 {done}/{total}',
+  'job.otherChannel': '다른 채널로 로그인해 이어받을 수 없어요',
+  'job.ownerUnknown': '영상의 채널을 확인하지 못해 이어받을 수 없어요',
   'job.resumedFrom': '{size}부터 이어받음',
   'job.percent': '{n}퍼센트',
   'job.more': '{title} 더 보기',

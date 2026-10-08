@@ -1,8 +1,8 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { JobDto, JobEvent } from '../../bindings';
-import { err, job, prog } from '../../../test/jobFixtures';
+import { err, job, prog, signedInAs } from '../../../test/jobFixtures';
 
 class FakeChannel {
   onmessage: (e: JobEvent) => void = () => {};
@@ -22,6 +22,7 @@ vi.mock('../../api', () => ({
 
 const api = await import('../../api');
 const { jobs } = await import('../../stores/jobs.svelte');
+const { auth } = await import('../../stores/auth.svelte');
 const { default: JobList } = await import('./JobList.svelte');
 const { default: AppBanners } = await import('../app/AppBanners.svelte');
 
@@ -44,6 +45,10 @@ beforeEach(() => {
   for (const f of [api.pauseJob, api.resumeJob, api.removeJob, api.clearFinished, api.openOutput, api.revealOutput]) {
     vi.mocked(f).mockReset().mockResolvedValue(undefined as never);
   }
+});
+
+afterEach(() => {
+  auth.status = null;
 });
 
 describe('JobList', () => {
@@ -182,5 +187,43 @@ describe('B1 배너', () => {
     expect(await screen.findByText('지난번에 받다가 멈춘 다운로드가 1개 있어요.')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '닫기' }));
     expect(screen.queryByText(/지난번에 받다가/)).toBeNull();
+  });
+});
+
+describe('막힌 작업(A5)', () => {
+  const A1 = '000000000000000000000000000000a1';
+  const C3 = '000000000000000000000000000000c3';
+
+  it('다른 채널의 멈춘 작업은 안내만 있고 이어받기 버튼이 없다', async () => {
+    auth.status = signedInAs(A1);
+    await load([job(1, { status: 'interrupted', channelId: C3, partialBytes: 100, title: '남의 영상' })]);
+    const user = userEvent.setup();
+    render(JobList);
+    const item = screen.getByRole('article', { name: '남의 영상' });
+    expect(within(item).getByText('다른 채널로 로그인해 이어받을 수 없어요')).toBeInTheDocument();
+    expect(within(item).queryByRole('button', { name: '이어받기' })).toBeNull();
+    // 지우기는 남는다
+    expect(within(item).getByRole('button', { name: /취소/ })).toBeInTheDocument();
+    item.focus();
+    await user.keyboard(' ');
+    expect(api.resumeJob).not.toHaveBeenCalled();
+  });
+
+  it('채널 모르는 작업 안내', async () => {
+    auth.status = signedInAs(A1);
+    await load([job(1, { status: 'interrupted', channelId: null, title: '옛 작업' })]);
+    render(JobList);
+    const item = screen.getByRole('article', { name: '옛 작업' });
+    expect(within(item).getByText('영상의 채널을 확인하지 못해 이어받을 수 없어요')).toBeInTheDocument();
+    expect(within(item).queryByRole('button', { name: '이어받기' })).toBeNull();
+  });
+
+  it('같은 채널 작업은 이어받기가 있다', async () => {
+    auth.status = signedInAs(A1);
+    await load([job(1, { status: 'interrupted', channelId: A1, title: '내 영상' })]);
+    render(JobList);
+    const item = screen.getByRole('article', { name: '내 영상' });
+    expect(within(item).getByRole('button', { name: '이어받기' })).toBeInTheDocument();
+    expect(within(item).queryByText(/이어받을 수 없어요/)).toBeNull();
   });
 });

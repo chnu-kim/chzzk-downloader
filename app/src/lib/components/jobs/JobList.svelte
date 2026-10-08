@@ -4,7 +4,16 @@
   import { onDestroy, tick, untrack } from 'svelte';
   import type { JobDto, JobId } from '../../bindings';
   import { t } from '../../copy/ko';
-  import { deleteAction, enterAction, jobButtons, queueAhead, spaceAction, type JobAction } from '../../jobs';
+  import {
+    deleteAction,
+    enterAction,
+    jobBlock,
+    jobButtons,
+    queueAhead,
+    spaceAction,
+    type JobAction,
+  } from '../../jobs';
+  import { auth } from '../../stores/auth.svelte';
   import { jobs } from '../../stores/jobs.svelte';
   import { settings } from '../../stores/settings.svelte';
   import Button from '../ui/Button.svelte';
@@ -77,7 +86,7 @@
     if (e.target !== e.currentTarget || e.isComposing) return;
     const order = jobs.order;
     const i = order.indexOf(job.id);
-    const b = jobButtons(job, jobs.state.progress.get(job.id), settings.cookiesEnabled);
+    const b = jobButtons(job, jobs.state.progress.get(job.id), settings.cookiesEnabled, jobBlock(job, auth.status));
     let action: JobAction | null = null;
     switch (e.key) {
       case 'ArrowDown':
@@ -142,6 +151,7 @@
                   ahead={queueAhead(jobs.queueOrder, job.id)}
                   runStartedAt={jobs.runStartedAt.get(job.id) ?? null}
                   cookiesEnabled={settings.cookiesEnabled}
+                  block={jobBlock(job, auth.status)}
                   highlighted={jobs.highlight.has(job.id)}
                   tabbable={tabbableId === job.id}
                   onaction={(a) => void jobs.act(job.id, a)}

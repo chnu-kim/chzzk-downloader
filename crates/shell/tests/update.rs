@@ -592,6 +592,18 @@ async fn install_is_single_flight() {
     assert_eq!(e.install(&host, true).await, UpdateInstallDto::Restarting);
 }
 
+/// 앱 command(Tauri async)는 `install` future가 `Send`여야 한다(정체 감시가 잠금을 await 너머로 들지 않는다)
+#[tokio::test(start_paused = true)]
+async fn install_future_is_send() {
+    fn assert_send<T: Send>(_: &T) {}
+    let e = Env::signed_in();
+    let host = e.host(0);
+    let b = base();
+    let f = e.up.install(&e.svc, &b, &e.src, &host, true);
+    assert_send(&f);
+    assert_eq!(f.await, UpdateInstallDto::Restarting);
+}
+
 /// 다운로드가 `DOWNLOAD_STALL` 동안 아무것도 주지 않으면 실패로 끝내고 가드를 푼다(받던 작업은 멈추지 않는다)
 #[tokio::test(start_paused = true)]
 async fn install_stalled_download_fails_and_releases_the_guard() {

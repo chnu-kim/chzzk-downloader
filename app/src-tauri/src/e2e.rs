@@ -135,6 +135,33 @@ impl E2eConfig {
     }
 }
 
+/// 격리 실행의 로그인 주소 열기·복사(Phase 3b A5, cicd.md 구현 중 변경 A5-1): 브라우저를 띄우지 않는다.
+/// Worker 스텁이 poll에 바로 답하므로 브라우저가 필요 없고, Windows 러너에서 Edge가 떠 WebView2 세션을 흔들지 않게 한다.
+#[derive(Debug, Default)]
+pub struct E2eAuthIo {
+    opened: std::sync::atomic::AtomicUsize,
+}
+
+impl E2eAuthIo {
+    /// 열어 달라는 요청을 받은 횟수
+    pub fn opened(&self) -> usize {
+        self.opened.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+impl crate::auth_io::AuthIo for E2eAuthIo {
+    fn open_url(&self, _url: &str) -> bool {
+        self.opened
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        // 주소는 로그에 남기지 않는다(handle은 확인 페이지 자격이다)
+        tracing::info!("e2e: 로그인 주소를 브라우저로 열지 않음");
+        true
+    }
+    fn copy_text(&self, _text: &str) -> bool {
+        true
+    }
+}
+
 /// msedgedriver가 WebView2에 디버깅 포트 등을 넘기는 환경 변수(Windows).
 pub const WEBVIEW2_ARGS_ENV: &str = "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS";
 /// wry가 `additional_browser_args`가 없을 때 쓰는 기본값(wry 0.57 `webview2/mod.rs`). 직접 줄 때 잃지 않게 앞에 둔다.
@@ -164,6 +191,15 @@ mod tests {
     const DIR: &str = "/tmp/e2e";
     #[cfg(windows)]
     const DIR: &str = "C:\\e2e";
+
+    #[test]
+    fn e2e_auth_io_never_opens_a_browser() {
+        use crate::auth_io::AuthIo;
+        let io = E2eAuthIo::default();
+        assert!(io.open_url("http://127.0.0.1:1/auth/login/x"));
+        assert_eq!(io.opened(), 1);
+        assert!(io.copy_text("x"));
+    }
 
     #[test]
     fn webview2_args_keep_wry_defaults_and_append_driver_args() {

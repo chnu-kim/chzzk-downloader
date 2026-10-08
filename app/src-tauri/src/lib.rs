@@ -491,6 +491,17 @@ fn e2e_override() -> Result<Override, String> {
     Ok(None)
 }
 
+/// 격리 실행의 로그인 주소 열기·복사(`e2e.rs`): 브라우저를 띄우지 않는다. 보통 빌드는 늘 `None`
+#[cfg(feature = "e2e")]
+fn isolated_auth_io() -> Option<Arc<dyn auth_io::AuthIo>> {
+    Some(Arc::new(e2e::E2eAuthIo::default()))
+}
+
+#[cfg(not(feature = "e2e"))]
+fn isolated_auth_io() -> Option<Arc<dyn auth_io::AuthIo>> {
+    None
+}
+
 /// 빌드에 넣은 Worker 출처(build.rs가 검사한 값). 없으면 None
 pub fn build_worker_base() -> Option<&'static str> {
     Some(env!("CHZZK_WORKER_BASE_BUILD")).filter(|s| !s.is_empty())
@@ -567,6 +578,8 @@ fn setup<R: Runtime>(
             None,
         ),
     };
+    // 격리 실행이면 로그인 주소를 브라우저로 열지 않는다(A5)
+    let isolated = e2e_worker.is_some();
     tracing::info!(
         version = %app.package_info().version,
         config = %paths.config.display(),
@@ -631,9 +644,9 @@ fn setup<R: Runtime>(
     };
     let auth_arc = state.auth.clone();
     app.manage(state);
-    app.manage(auth_io::AuthIoState(Arc::new(auth_io::PluginAuthIo(
-        app.handle().clone(),
-    ))));
+    let io = if isolated { isolated_auth_io() } else { None }
+        .unwrap_or_else(|| Arc::new(auth_io::PluginAuthIo(app.handle().clone())));
+    app.manage(auth_io::AuthIoState(io));
     if let Some(auth) = auth_arc {
         spawn_auth_tasks(app.handle().clone(), auth);
     }

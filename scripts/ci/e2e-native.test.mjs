@@ -2,12 +2,13 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { HLS_VIDEO_NO } from './e2e-fixture-server.mjs';
-import { judge, pickWindowsDriver, until } from './e2e-native.mjs';
+import { HLS_VIDEO_NO, OTHER_VIDEO_NO } from './e2e-fixture-server.mjs';
+import { judge, judgeWorker, pickWindowsDriver, until } from './e2e-native.mjs';
 
 const EXP = { sha256: 'a'.repeat(64), bytes: 10 };
 const LOG = [
   `/service/v2/videos/${HLS_VIDEO_NO}`,
+  `/service/v2/videos/${OTHER_VIDEO_NO}`,
   '/live_rewind/kr/streamkey0/vod_playlist.m3u8',
   '/live_rewind/kr/streamkey0/144p/h/vod_chunklist.m3u8',
   '/live_rewind/kr/streamkey0/144p/h/144p_0_0_0.m4s',
@@ -27,6 +28,7 @@ test('judge: 파일 수·중간 파일·해시·크기·요청 누락·404는 �
     '.part 남음': [{ ...OK, files: [...OK.files, 'x.mp4.part', 'x.mp4.part.json'] }, LOG],
     '해시 다름': [{ ...OK, sha256: 'b'.repeat(64) }, LOG],
     '크기 다름': [{ ...OK, bytes: 11 }, LOG],
+    '남의 영상 info 요청 없음': [OK, LOG.filter((l) => !l.path.endsWith(`/${OTHER_VIDEO_NO}`))],
     '조각 요청 없음': [OK, LOG.filter((l) => !l.path.endsWith('seg1.m4v'))],
     '404 응답': [OK, [...LOG, { method: 'GET', path: '/x', status: 404 }]],
   };
@@ -75,4 +77,20 @@ test('pickWindowsDriver: 러너 드라이버가 WebView2와 같은 버전일 때
   assert.throws(() => pickWindowsDriver({ webview2: '153.0.4234.48', image, imageVersion: '154.0.1.2' }), /154\.0\.1\.2 ≠ WebView2 런타임 153\.0\.4234\.48/);
   assert.throws(() => pickWindowsDriver({ webview2: '153.0.4234.48', image: null, imageVersion: null }), /msedgedriver가 없다/);
   assert.throws(() => pickWindowsDriver({ webview2: null, image, imageVersion: '153.0.4234.48' }), /WebView2 런타임 버전/);
+});
+
+test('judge가 다른 채널 info 요청을 요구한다', () => {
+  assert.deepEqual(judge(OK, LOG, EXP), []);
+  const without = LOG.filter((l) => !l.path.endsWith(`/${OTHER_VIDEO_NO}`));
+  assert.equal(judge(OK, without, EXP).length, 1);
+});
+
+test('judgeWorker: start 1번·poll 2번 이상·오류 응답 없음. /update는 보지 않는다', () => {
+  const w = (method, path, status) => ({ method, path, status });
+  const good = [w('POST', '/auth/start', 201), w('POST', '/auth/poll', 200), w('POST', '/auth/poll', 200), w('GET', '/update/0.1.0', 204)];
+  assert.deepEqual(judgeWorker(good), []);
+  assert.equal(judgeWorker(good.filter((l) => l.path !== '/auth/start')).length, 1);
+  assert.equal(judgeWorker(good.filter((l, i) => i !== 2)).length, 1);
+  assert.equal(judgeWorker([...good, w('GET', '/api/me', 401)]).length, 1);
+  assert.deepEqual(judgeWorker([...good, w('GET', '/update/0.1.0', 404)]), []);
 });

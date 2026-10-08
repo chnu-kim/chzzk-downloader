@@ -57,6 +57,11 @@ vi.mock('./lib/api', () => ({
   ]),
   clipboardLink: vi.fn(async () => null),
   onCloseRequested: vi.fn(async () => () => {}),
+  updateCheck: vi.fn(),
+  updateAvailable: vi.fn(async () => null),
+  updateInstall: vi.fn(),
+  onUpdateAvailable: vi.fn(async () => () => {}),
+  onUpdateProgress: vi.fn(async () => () => {}),
 }));
 
 const { default: App } = await import('./App.svelte');

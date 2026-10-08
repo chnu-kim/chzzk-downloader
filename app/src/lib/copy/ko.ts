@@ -189,6 +189,7 @@ export const ko = {
   'settings.about.openConfig': '설정 폴더 열기',
   'settings.about.openLogs': '로그 폴더 열기',
   'settings.about.checkUpdate': '업데이트 확인',
+  'settings.about.checking': '업데이트를 확인하는 중이에요…',
   'settings.about.upToDate': '최신 버전이에요',
   'settings.about.checkFailed': '업데이트를 확인하지 못했어요. 잠시 뒤 다시 시도해 주세요.',
   'settings.about.checkOffline': '로그인 서버에 연결할 수 없어 확인하지 못했어요.',

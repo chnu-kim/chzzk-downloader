@@ -3,7 +3,10 @@
 //! 명령(모두 결정적: 종료 코드·해시·서명·스키마로만 판정한다):
 //!   collect    --from <폴더> --out <폴더> --version <v>   OS별 bundles.json(bundle.mjs collect --release)을 모아 기대 집합·해시 확인
 //!   sign       --dir <폴더>                               updater 산출물에 서명(env TAURI_SIGNING_PRIVATE_KEY[_PASSWORD]) → <file>.sig
-//!   verify-sig --dir <폴더> --pubkey <파일> [--sig-dir <폴더>]  모든 .sig 검증 + 1바이트 변조 사본은 반드시 실패
+//!                                                         trusted comment에 inventory 버전(`version:<v>`)을 묶는다
+//!   verify-sig --dir <폴더> --pubkey <파일> [--sig-dir <폴더>] [--allow-unversioned]
+//!                                                         모든 .sig 검증 + 버전 = inventory + 1바이트 변조 사본은 반드시 실패
+//!                                                         (--allow-unversioned: 버전 필드 없는 Tauri CLI 임시 서명 형식 확인 전용)
 //!   sums       --dir <폴더>                               SHA256SUMS
 //!   manifest   --dir <폴더> --version <v> --pub-date <RFC3339> --base-url <URL>   manifest.json(Tauri 정적 스키마) + 스키마 검증
 //!   put        --dir <폴더> --version <v>                 releases/<v>/…를 덮어쓰기 없이(If-None-Match: *) 올린다

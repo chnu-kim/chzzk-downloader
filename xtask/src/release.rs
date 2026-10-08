@@ -71,13 +71,18 @@ pub fn dispatch(cmd: &str, a: &Args) -> Res<()> {
             sign(Path::new(&a.req("dir")?))
         }
         "verify-sig" => {
-            a.only(&["dir", "pubkey", "sig-dir"])?;
+            a.only(&["dir", "pubkey", "sig-dir", "allow-unversioned"])?;
             let dir = PathBuf::from(a.req("dir")?);
             let sig_dir = a
                 .opt("sig-dir")
                 .map(PathBuf::from)
                 .unwrap_or_else(|| dir.clone());
-            verify_sig(&dir, &sig_dir, Path::new(&a.req("pubkey")?))
+            verify_sig(
+                &dir,
+                &sig_dir,
+                Path::new(&a.req("pubkey")?),
+                a.flag("allow-unversioned"),
+            )
         }
         "sums" => {
             a.only(&["dir"])?;
@@ -329,7 +334,8 @@ pub fn sign(dir: &Path) -> Res<()> {
         .ok_or_else(|| input("TAURI_SIGNING_PRIVATE_KEY가 없다"))?;
     let pw = std::env::var("TAURI_SIGNING_PRIVATE_KEY_PASSWORD").unwrap_or_default();
     let sk = sig::load_secret_key(&key, &pw)?;
-    let (_, items) = updater_items(dir)?;
+    // 서명에 묶는 버전은 inventory의 버전이다(collect가 --version과 같은지 이미 봤다, 구현 중 변경 79)
+    let (version, items) = updater_items(dir)?;
     if items.is_empty() {
         return fail("서명할 updater 산출물이 없다");
     }
@@ -342,16 +348,18 @@ pub fn sign(dir: &Path) -> Res<()> {
         if sha256_hex(&data) != i.sha256 {
             return fail(format!("{}: 내용이 inventory.json과 다르다", i.file));
         }
-        let s = sig::sign(&sk, &data, &i.file, ts)?;
+        let s = sig::sign(&sk, &data, &i.file, &version, ts)?;
         write(&dir.join(format!("{}.sig", i.file)), s.as_bytes())?;
         println!("sign: {}.sig", i.file);
     }
     Ok(())
 }
 
-pub fn verify_sig(dir: &Path, sig_dir: &Path, pubkey: &Path) -> Res<()> {
+/// `allow_unversioned`: 버전 필드 없는 서명도 받는다. release.mjs build의 "Tauri CLI 서명 검증"(tauri-cli 2.12.1 임시 서명의
+/// 형식 확인)에만 쓴다. 우리가 올리는 서명(xtask sign)은 늘 inventory 버전에 묶여야 한다
+pub fn verify_sig(dir: &Path, sig_dir: &Path, pubkey: &Path, allow_unversioned: bool) -> Res<()> {
     let pk = read_pubkey(pubkey)?;
-    let (_, all) = manifest::read_inventory(dir)?;
+    let (version, all) = manifest::read_inventory(dir)?;
     let mut checked = 0;
     for i in &all {
         let sp = sig_dir.join(format!("{}.sig", i.file));
@@ -365,8 +373,10 @@ pub fn verify_sig(dir: &Path, sig_dir: &Path, pubkey: &Path) -> Res<()> {
         let s = text("서명", read(&sp)?)?;
         sig::verify(&pk, &data, &s).map_err(|f| check(format!("{}: {}", i.file, f.msg)))?;
         sig::tamper_check(&pk, &data, &s).map_err(|f| check(format!("{}: {}", i.file, f.msg)))?;
+        sig::check_version(&s, &version, allow_unversioned)
+            .map_err(|f| check(format!("{}: {}", i.file, f.msg)))?;
         println!(
-            "verify-sig: {} 통과(1바이트 변조·comment 변조 사본은 거부)",
+            "verify-sig: {} 통과(버전 {version}, 1바이트 변조·comment 변조 사본은 거부)",
             i.file
         );
         checked += 1;
@@ -705,6 +715,8 @@ pub fn verify(
                 }
             }
             sig::verify(pubkey, &data, &s).map_err(|f| check(format!("{file}: {}", f.msg)))?;
+            sig::check_version(&s, version, false)
+                .map_err(|f| check(format!("{file}: {}", f.msg)))?;
         }
         println!(
             "verify: releases/{version}/{file} 해시{} 통과",

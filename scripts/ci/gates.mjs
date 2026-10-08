@@ -136,7 +136,7 @@ export const GATES = {
     steps: [{ cmd: ['node', S('version-check.mjs')] }],
   },
   pubkey: {
-    desc: 'release/updater.pub == tauri.conf.json plugins.updater.pubkey(바이트 동일, minisign 공개 키 형식, 플랫폼 conf도 같거나 없음)',
+    desc: 'release/updater.pub == tauri.conf.json plugins.updater.pubkey(바이트 동일, minisign 공개 키 형식, 플랫폼 conf도 같거나 없음), requireSignedVersion = true',
     steps: [{ cmd: ['node', S('release.mjs'), 'pubkey'] }],
   },
   parity: {

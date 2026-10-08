@@ -123,13 +123,16 @@ export function pubkeyProblems(text) {
   return out;
 }
 
-// app/src-tauri/tauri*.conf.json마다 plugins.updater.pubkey → [{file, pubkey}](없는 파일은 pubkey undefined)
+// app/src-tauri/tauri*.conf.json마다 plugins.updater.pubkey·requireSignedVersion → [{file, pubkey, requireSigned}](없으면 undefined)
 export function confPubkeys(root = ROOT) {
   const dir = join(root, 'app/src-tauri');
   return readdirSync(dir)
     .filter((f) => /^tauri(\.[a-z0-9-]+)?\.conf\.json$/.test(f))
     .sort()
-    .map((f) => ({ file: `app/src-tauri/${f}`, pubkey: JSON.parse(readFileSync(join(dir, f), 'utf8'))?.plugins?.updater?.pubkey }));
+    .map((f) => {
+      const u = JSON.parse(readFileSync(join(dir, f), 'utf8'))?.plugins?.updater;
+      return { file: `app/src-tauri/${f}`, pubkey: u?.pubkey, requireSigned: u?.requireSignedVersion };
+    });
 }
 
 // release/tauri.release.json(릴리스 빌드가 기본 설정 위에 덮어쓰는 파일) → 문제 목록. 허용 목록이다: bundle.createUpdaterArtifacts
@@ -167,9 +170,12 @@ export function checkPubkey(root = ROOT) {
   const confs = confPubkeys(root);
   const base = confs.find((c) => c.file === 'app/src-tauri/tauri.conf.json');
   if (!base || base.pubkey === undefined) problems.push('tauri.conf.json에 plugins.updater.pubkey가 없다');
+  // 버전 묶인 서명 강제(worker.md 구현 중 변경 79). 플러그인은 serde default라 키 오타·누락이 조용히 false가 된다
+  if (!base || base.requireSigned !== true) problems.push('tauri.conf.json plugins.updater.requireSignedVersion이 true가 아니다(다운그레이드 재생 방지)');
   for (const c of confs) {
     // 플랫폼별 덮어쓰기 파일은 pubkey를 두지 않거나 같은 값이어야 한다(다른 키로 바뀐 빌드가 나오지 않게)
     if (c.pubkey !== undefined && c.pubkey !== pub) problems.push(`${c.file} plugins.updater.pubkey ≠ release/updater.pub`);
+    if (c.requireSigned !== undefined && c.requireSigned !== true) problems.push(`${c.file} plugins.updater.requireSignedVersion을 끈다`);
   }
   return problems;
 }
@@ -429,13 +435,14 @@ function cmdBuild(env) {
     // 3. 모으기(표와 정확히 같은 집합, Tauri가 만든 임시 .sig는 따로)
     const sigDir = join(work, 'tauri-sig');
     if (!step('collect --release', spawnSync(process.execPath, [join(ROOT, 'scripts/ci/bundle.mjs'), 'collect', '--release'], { stdio: 'inherit', env: { ...childEnv, RELEASE_TAURI_SIG_DIR: sigDir } }))) return 1;
-    // 4. 서명 형식 자체 확인: Tauri CLI의 서명을 xtask(updater와 같은 검증)가 받고, xtask가 같은 키로 한 서명도 받는다
+    // 4. 서명 형식 자체 확인: Tauri CLI의 서명을 xtask(updater와 같은 검증)가 받고, xtask가 같은 키로 한 서명도 받는다.
+    //    tauri-cli 2.12.1의 서명에는 version 필드가 없어 그 단계만 --allow-unversioned다. 올리는 서명(xtask sign)은 버전에 묶인다(worker.md 구현 중 변경 79)
     if (cmdXtask({ ...childEnv, GITHUB_OUTPUT: '' }) !== 0) return 1;
     const check = join(work, 'check');
     const bundle = join(ROOT, 'target/ci/bundle');
     const ok =
       step('xtask collect --os', xtask(['collect', '--from', bundle, '--out', check, '--version', version, '--os', os], childEnv)) &&
-      step('Tauri CLI 서명 검증', xtask(['verify-sig', '--dir', check, '--sig-dir', sigDir, '--pubkey', `${key}.pub`], childEnv)) &&
+      step('Tauri CLI 서명 검증', xtask(['verify-sig', '--dir', check, '--sig-dir', sigDir, '--pubkey', `${key}.pub`, '--allow-unversioned'], childEnv)) &&
       step('xtask 서명', xtask(['sign', '--dir', check], { ...childEnv, TAURI_SIGNING_PRIVATE_KEY: eph.TAURI_SIGNING_PRIVATE_KEY, TAURI_SIGNING_PRIVATE_KEY_PASSWORD: pw })) &&
       step('xtask 서명 검증', xtask(['verify-sig', '--dir', check, '--pubkey', `${key}.pub`], childEnv));
     if (!ok) return 1;
@@ -978,6 +985,17 @@ async function cmdSelftest(env) {
     expect('(b) prev 출력 = 1.0.0', 0, p2.prev === '1.0.0' ? 0 : 1);
     expect('(b) verify 1.1.0', 0, verify('1.1.0', '1.0.0').code);
     expect('(b) previous = 1.0.0', 0, (get('releases/1.1.0/previous') ?? '').toString() === '1.0.0' ? 0 : 1);
+    // (b) 다운그레이드 재생(worker.md 구현 중 변경 79): 1.1.0 폴더에 1.0.0 산출물과 그 (유효한) 서명을 1.1.0 이름으로 넣으면
+    // 서명 자체는 통과해도 묶인 버전이 1.0.0이라 verify-sig가 거부한다(앱의 requireSignedVersion과 같은 판정)
+    const st2r = join(work, 'stage-1.1.0-replay');
+    cpSync(p2.st, st2r, { recursive: true });
+    const sig1 = readdirSync(p1.st).find((f) => f.endsWith('.sig'));
+    const art2 = sig1.slice(0, -'.sig'.length).replaceAll('1.0.0', '1.1.0');
+    cpSync(join(p1.st, sig1.slice(0, -'.sig'.length)), join(st2r, art2));
+    cpSync(join(p1.st, sig1), join(st2r, `${art2}.sig`));
+    const replay = x(['verify-sig', '--dir', st2r, '--pubkey', pub]);
+    expect('(b) 옛 버전 서명 재생 verify-sig 거부(버전 불일치)', 0, replay !== 0 && last.includes('서명의 버전 1.0.0 ≠ 1.1.0') ? 0 : 1);
+    expect('(b) --allow-unversioned로도 버전이 다르면 거부', 'nonzero', x(['verify-sig', '--dir', st2r, '--pubkey', pub, '--allow-unversioned']));
     expect('(b) 낮은 버전 승격 거부(1.0.0)', 'nonzero', x(['promote', '--dir', p1.st, '--version', '1.0.0']));
     expect('(b) 1.0.0 objects-only는 그대로 통과', 0, vx('1.0.0', pub, true));
     // (c) 객체 하나 변조 → release.mjs verify가 실패하고 되돌린다. prev 출력이 없어도(승격 뒤 sign-publish 실패) 버킷의 previous로

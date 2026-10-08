@@ -89,11 +89,18 @@ function repo(conf, extra = {}, releaseConf = RELEASE_CONF_REAL) {
   return d;
 }
 
-test('pubkey: conf가 다르거나 없거나 플랫폼 conf가 다른 키면 실패', () => {
+test('pubkey: conf가 다르거나 없거나 플랫폼 conf가 다른 키, requireSignedVersion이 꺼지면 실패', () => {
+  const U = { pubkey: PUB, requireSignedVersion: true };
   const cases = [
-    [{ plugins: { updater: { pubkey: PUB.slice(1) } } }, {}],
+    [{ plugins: { updater: { ...U, pubkey: PUB.slice(1) } } }, {}],
     [{}, {}],
-    [{ plugins: { updater: { pubkey: PUB } } }, { 'tauri.linux.conf.json': { plugins: { updater: { pubkey: 'x' } } } }],
+    [{ plugins: { updater: U } }, { 'tauri.linux.conf.json': { plugins: { updater: { pubkey: 'x' } } } }],
+    // 버전 묶인 서명 강제(worker.md 구현 중 변경 79): 없음·오타·false·문자열·플랫폼 conf가 끔
+    [{ plugins: { updater: { pubkey: PUB } } }, {}],
+    [{ plugins: { updater: { pubkey: PUB, requireSignedVersions: true } } }, {}],
+    [{ plugins: { updater: { ...U, requireSignedVersion: false } } }, {}],
+    [{ plugins: { updater: { ...U, requireSignedVersion: 'true' } } }, {}],
+    [{ plugins: { updater: U } }, { 'tauri.windows.conf.json': { plugins: { updater: { requireSignedVersion: false } } } }],
   ];
   for (const [conf, extra] of cases) {
     const d = repo(conf, extra);
@@ -103,7 +110,7 @@ test('pubkey: conf가 다르거나 없거나 플랫폼 conf가 다른 키면 실
       rmSync(d, { recursive: true, force: true });
     }
   }
-  const ok = repo({ plugins: { updater: { pubkey: PUB } } }, { 'tauri.windows.conf.json': { bundle: {} } });
+  const ok = repo({ plugins: { updater: U } }, { 'tauri.windows.conf.json': { bundle: {} } });
   try {
     assert.deepEqual(checkPubkey(ok), []);
   } finally {

@@ -21,8 +21,11 @@ export interface LoginScreen {
   problem: boolean;
   /** 왼쪽부터 */
   buttons: LoginButton[];
-  /** 다른 계정으로 로그인하는 길(네이버 로그아웃) 안내를 보일까 */
-  otherAccountHelp: boolean;
+  /**
+   * 다른 계정으로 로그인하는 길(네이버 로그아웃) 안내. help: 안내 문장만(pending),
+   * link: 문장 끝에 [다른 계정으로 로그인] 링크형 버튼(거부 화면. 드문 길이라 주 버튼과 같은 무게로 두지 않는다)
+   */
+  otherAccount: 'help' | 'link' | null;
 }
 
 const login = (key: Parameters<typeof t>[0], variant: LoginButton['variant']): LoginButton => ({
@@ -36,9 +39,9 @@ function message(
   body: string | null,
   problem: boolean,
   buttons: LoginButton[],
-  otherAccountHelp = false,
+  otherAccount: LoginScreen['otherAccount'] = null,
 ): LoginScreen {
-  return { kind: 'message', title: t(title), body, problem, buttons, otherAccountHelp };
+  return { kind: 'message', title: t(title), body, problem, buttons, otherAccount };
 }
 
 /**
@@ -74,7 +77,7 @@ function baseScreen(s: AuthStatusDto): LoginScreen | null {
         body: t('auth.checking.body'),
         problem: false,
         buttons: [login('auth.relogin', 'link')],
-        otherAccountHelp: false,
+        otherAccount: null,
       };
     case 'pending':
       // 코드·기한 없는 pending은 그릴 것이 없다: 버튼 없는 화면이 되지 않게 [다시 로그인]으로 갈 길을 둔다(원인은 단정하지 않는다)
@@ -87,24 +90,25 @@ function baseScreen(s: AuthStatusDto): LoginScreen | null {
         body: null,
         problem: false,
         buttons: [],
-        otherAccountHelp: true,
+        otherAccount: 'help',
       };
     case 'denied':
+      // 거부된 사람 대부분은 자기 채널로 허가를 받으려 한다: 허가를 받은 뒤 누를 [다시 시도]가 주 버튼이다
       if (s.reason === 'removedFromAllowlist') {
         return message(
           'auth.removed.title',
           name ? t('auth.removed.body', { channelName: name }) : t('auth.removed.bodyNoName'),
           true,
-          [login('auth.otherAccount', 'primary')],
-          true,
+          [login('action.retry', 'primary')],
+          'link',
         );
       }
       return message(
         'auth.denied.title',
         name ? t('auth.denied.body', { channelName: name }) : t('auth.denied.bodyNoName'),
         true,
-        [login('auth.otherAccount', 'primary')],
-        true,
+        [login('action.retry', 'primary')],
+        'link',
       );
     case 'expired':
       switch (s.reason) {

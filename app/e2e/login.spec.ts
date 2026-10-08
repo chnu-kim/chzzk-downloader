@@ -40,7 +40,9 @@ test('거부·유예 만료 화면과 다시 연결', async ({ app }) => {
   await app.open({ auth: auth({ state: 'denied', channelName: '테스트 채널' }) });
   await expect(page.getByRole('heading', { name: '사용 허가가 없는 채널이에요' })).toBeVisible();
   await expect(page.getByText(/채널: 테스트 채널\./)).toBeVisible();
-  await expect(page.getByText(/네이버 로그아웃을 먼저/)).toBeVisible();
+  await expect(page.getByRole('button', { name: '다시 시도' })).toBeVisible();
+  await expect(page.getByText(/네이버 로그아웃 후/)).toBeVisible();
+  await expect(page.getByRole('button', { name: '다른 계정으로 로그인' })).toBeVisible();
   await app.axe('로그인 거부');
 
   await app.ctl((c, s) => c.setAuth(s), auth({ state: 'expired', reason: 'graceExpired' }));

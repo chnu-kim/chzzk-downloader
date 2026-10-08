@@ -39,7 +39,7 @@ const rows: Row[] = [
   [st('error', 'network'), { kind: 'message', title: ko['auth.network.title'], body: ko['auth.network.body'], problem: true, buttons: [[L, ko['auth.relogin'], 'primary']], help: false }],
   [st('error', 'loginLost'), { kind: 'message', title: ko['auth.lost.title'], body: ko['auth.lost.body'], problem: true, buttons: [[L, ko['auth.relogin'], 'primary']], help: false }],
   [st('error', 'server'), { kind: 'message', title: ko['auth.server.title'], body: ko['auth.server.body'], problem: true, buttons: [[L, ko['auth.relogin'], 'primary']], help: false }],
-  [st('error'), { kind: 'message', title: ko['auth.server.title'], body: ko['auth.server.body'], problem: true, buttons: [[L, ko['auth.relogin'], 'primary']], help: false }],
+  [st('error'), { kind: 'message', title: ko['auth.unknown.title'], body: ko['auth.unknown.body'], problem: true, buttons: [[L, ko['auth.relogin'], 'primary']], help: false }],
 ];
 
 describe('loginScreen 표', () => {

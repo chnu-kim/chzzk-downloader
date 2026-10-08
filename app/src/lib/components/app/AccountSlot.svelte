@@ -47,7 +47,7 @@
     {
       label: t('dialog.logout.confirm'),
       variant: 'secondary',
-      disabled: auth.busy,
+      disabled: auth.isBusy('logout'),
       onclick: () => {
         confirmOpen = false;
         void auth.logout();

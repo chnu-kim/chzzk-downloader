@@ -44,7 +44,7 @@ test('거부·유예 만료 화면과 다시 연결', async ({ app }) => {
   await app.axe('로그인 거부');
 
   await app.ctl((c, s) => c.setAuth(s), auth({ state: 'expired', reason: 'graceExpired' }));
-  await expect(page.getByRole('heading', { name: '로그인 서버에 3일 넘게 연결하지 못했어요' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '로그인 서버에 한동안 연결하지 못했어요' })).toBeVisible();
   await page.getByRole('button', { name: '다시 연결' }).click();
   expect(await app.cmds()).toContain('auth_retry');
   await expect(page.getByText(/아직 연결되지 않았어요/)).toBeVisible();

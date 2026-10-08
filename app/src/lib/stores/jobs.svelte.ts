@@ -52,9 +52,10 @@ export class JobsStore {
   groups = $derived(groupJobs(this.state.jobs.values()));
   order = $derived(visibleOrder(this.groups));
   interruptedCount = $derived([...this.state.jobs.values()].filter((j) => j.status === 'interrupted').length);
-  /** 받는 중(멈추는 중 포함) 작업 수. 로그인 화면의 안내에 쓴다 */
-  runningCount = $derived(
-    [...this.state.jobs.values()].filter((j) => j.status === 'running' || j.status === 'pausing').length,
+  /** 받는 중(멈추는 중 포함)·대기 중 작업 수. 로그인 화면의 안내에 쓴다(잠긴 동안에도 대기 작업은 차례로 시작된다, worker.md §11.5) */
+  activeCount = $derived(
+    [...this.state.jobs.values()].filter((j) => j.status === 'running' || j.status === 'pausing' || j.status === 'queued')
+      .length,
   );
   /** "완료 지우기"가 지울 것이 있는가. 받은 `.part`가 남은 건너뜀은 셸이 남긴다(manager `Job::clearable`). */
   hasFinished = $derived(

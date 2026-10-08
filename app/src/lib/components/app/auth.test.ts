@@ -196,6 +196,16 @@ describe('AuthGate 화면', () => {
     await fireEvent.keyDown(window, { key: ',', metaKey: mac, ctrlKey: !mac });
     expect(ui.view).toBe('home');
     expect(screen.queryByRole('heading', { name: '설정' })).toBeNull();
+    // 입력칸 밖 붙여넣기와 Mod+L도 잠긴 동안은 아무것도 하지 않는다
+    const paste = new Event('paste', { bubbles: true, cancelable: true }) as Event & { clipboardData: unknown };
+    paste.clipboardData = { getData: () => 'https://chzzk.naver.com/video/1' };
+    document.body.dispatchEvent(paste);
+    expect(paste.defaultPrevented).toBe(false);
+    const modL = await fireEvent.keyDown(window, { key: 'l', metaKey: mac, ctrlKey: !mac });
+    expect(modL).toBe(true);
+    await Promise.resolve();
+    expect(screen.queryByLabelText('영상 주소')).toBeNull();
+    expect(api.clipboardLink).not.toHaveBeenCalled();
   });
 
   it('로그인을 시작하면 pending이 되고 제목으로 포커스가 간다', async () => {
@@ -222,6 +232,39 @@ describe('AuthGate 화면', () => {
     expect(api.authLogin).toHaveBeenCalledTimes(1);
   });
 
+  it('[다시 연결] 응답을 기다리는 동안 Checking이 와도 [다시 로그인]은 눌리고 로그인이 시작된다', async () => {
+    const user = userEvent.setup();
+    const grace = authDto({ state: 'expired', reason: 'graceExpired' });
+    start(grace);
+    vi.mocked(api.authRetry).mockImplementation(() => new Promise(() => {}));
+    vi.mocked(api.authLogin).mockResolvedValue(
+      authDto({ state: 'pending', pending: { userCode: 'K7QX-4MRA', expiresAt: Math.floor(Date.now() / 1000) + 600 } }),
+    );
+    render(App);
+    await user.click(await screen.findByRole('button', { name: '다시 연결' }));
+    emit(authDto({ state: 'checking' }));
+    await screen.findByRole('heading', { name: '로그인 정보를 확인하는 중이에요…' });
+    const relogin = screen.getByRole('button', { name: '다시 로그인' });
+    expect(relogin).toBeEnabled();
+    await user.click(relogin);
+    expect(api.authLogin).toHaveBeenCalledTimes(1);
+    await screen.findByRole('heading', { name: '브라우저에서 로그인해 주세요' });
+  });
+
+  it('[다시 연결] 응답이 이벤트보다 먼저 와도 늦게 온 Checking·만료 이벤트 뒤에 안내가 남는다', async () => {
+    const user = userEvent.setup();
+    const grace = authDto({ state: 'expired', reason: 'graceExpired' });
+    start(grace);
+    vi.mocked(api.authRetry).mockResolvedValue(grace);
+    render(App);
+    await user.click(await screen.findByRole('button', { name: '다시 연결' }));
+    expect(await screen.findByText(/아직 연결되지 않았어요/)).toBeInTheDocument();
+    emit(authDto({ state: 'checking' }));
+    await waitFor(() => expect(screen.queryByText(/아직 연결되지 않았어요/)).toBeNull());
+    emit(grace);
+    expect(await screen.findByText(/아직 연결되지 않았어요/)).toBeInTheDocument();
+  });
+
   it('유예 만료: [다시 연결]이 같은 상태면 안내를 보이고, 상태가 바뀌면 사라진다', async () => {
     const user = userEvent.setup();
     const grace = authDto({ state: 'expired', reason: 'graceExpired' });
@@ -243,11 +286,11 @@ describe('AuthGate 화면', () => {
     expect(screen.getByRole('button', { name: '다른 계정으로 로그인' })).toBeInTheDocument();
   });
 
-  it('받는 중 작업이 있으면 계속 받는다는 안내, 없고 중단된 작업이 있으면 로그인 안내', async () => {
-    jobList = [job(1, { status: 'running' })];
+  it('받는 중·대기 중 작업이 있으면 계속 받는다는 안내, 없고 중단된 작업이 있으면 로그인 안내', async () => {
+    jobList = [job(1, { status: 'running' }), job(4, { status: 'queued' })];
     start(authDto({ state: 'signedOut' }));
     const { unmount } = render(App);
-    await screen.findByText(/받는 중인 다운로드 1개는 계속 받아요/);
+    await screen.findByText(/받는 중·대기 중인 다운로드 2개는 계속 받아요/);
     unmount();
     jobList = [job(2, { status: 'interrupted' }), job(3, { status: 'interrupted' })];
     render(App);
@@ -261,8 +304,10 @@ describe('로그인 대기 화면', () => {
     vi.setSystemTime(new Date(1_800_000_000_000));
     start(authDto({ state: 'pending', pending: { userCode: 'K7QX-4MRA', expiresAt: 1_800_000_600 } }));
     render(App);
-    const code = await screen.findByLabelText('확인 코드 K7QX-4MRA');
-    expect(code).toHaveTextContent('K7QX-4MRA');
+    const code = await screen.findByText('K7QX-4MRA');
+    // 스크린리더용 머리말과 한 문단으로 읽힌다
+    expect(code.parentElement).toHaveTextContent(/^확인 코드\s*K7QX-4MRA$/);
+    expect(code.parentElement?.querySelector('.sr-only')).toHaveTextContent('확인 코드');
     expect(screen.getByText(/남은 시간 10:00/)).toBeInTheDocument();
     await vi.advanceTimersByTimeAsync(1100);
     await waitFor(() => expect(screen.getByText(/남은 시간 9:5\d/)).toBeInTheDocument());
@@ -302,6 +347,19 @@ describe('AccountSlot', () => {
     await user.click(screen.getByRole('button', { name: '계정 메뉴' }));
     await user.click(screen.getByRole('menuitem', { name: '다시 연결' }));
     expect(api.authRetry).toHaveBeenCalled();
+    expect(toasts.items.map((i) => i.message)).not.toContain('아직 연결되지 않았어요. 잠시 뒤 다시 시도해 주세요.');
+  });
+
+  it('계정 메뉴의 [다시 연결] 뒤에도 오프라인이면 토스트로 알린다', async () => {
+    const user = userEvent.setup();
+    const offline = { ...signed, offline: { since: 1_767_322_800, graceUntil: 1_767_582_000 } };
+    vi.mocked(api.authRetry).mockResolvedValue(offline);
+    render(AccountSlot, { status: offline });
+    await user.click(screen.getByRole('button', { name: '계정 메뉴' }));
+    await user.click(screen.getByRole('menuitem', { name: '다시 연결' }));
+    await waitFor(() =>
+      expect(toasts.items.map((i) => i.message)).toContain('아직 연결되지 않았어요. 잠시 뒤 다시 시도해 주세요.'),
+    );
   });
 
   it('[로그아웃]은 확인 대화상자(기본 [취소]) 뒤에 동작한다', async () => {
@@ -358,6 +416,25 @@ describe('AuthStore 동작', () => {
     vi.mocked(api.authLogin).mockRejectedValue({ code: 'internal', message: 'x' });
     await auth.login();
     expect(toasts.items.some((i) => i.kind === 'danger')).toBe(true);
+  });
+
+  it('로그아웃 응답이 늦게 와도 그사이 시작한 로그인 상태를 덮지 않는다', async () => {
+    let resolveLogout: (s: AuthStatusDto) => void = () => {};
+    vi.mocked(api.authLogout).mockImplementation(() => new Promise((r) => (resolveLogout = r)));
+    const pending = authDto({ state: 'pending', pending: { userCode: 'K7QX-4MRA', expiresAt: 1 } });
+    vi.mocked(api.authLogin).mockResolvedValue(pending);
+    auth.apply(authDto({ state: 'signedIn', channelName: '테스트 채널' }));
+    const out = auth.logout();
+    // 셸은 서버 로그아웃을 기다리기 전에 SignedOut을 먼저 알린다
+    auth.apply(authDto({ state: 'signedOut' }));
+    expect(auth.isBusy('logout')).toBe(true);
+    expect(auth.isBusy('login')).toBe(false);
+    await auth.login();
+    expect(api.authLogin).toHaveBeenCalledTimes(1);
+    expect(auth.status?.state).toBe('pending');
+    resolveLogout(authDto({ state: 'signedOut' }));
+    await out;
+    expect(auth.status?.state).toBe('pending');
   });
 
   it('주소 복사·다시 열기·취소·로그아웃이 실패해도 던지지 않는다', async () => {

@@ -110,8 +110,11 @@ export function loginScreen(s: AuthStatusDto): LoginScreen | null {
           return message('auth.network.title', t('auth.network.body'), true, [login('auth.relogin', 'primary')]);
         case 'loginLost':
           return message('auth.lost.title', t('auth.lost.body'), true, [login('auth.relogin', 'primary')]);
-        default:
+        case 'server':
           return message('auth.server.title', t('auth.server.body'), true, [login('auth.relogin', 'primary')]);
+        default:
+          // 사유 없음(상태를 묻지 못함 등): 원인을 단정하지 않는다
+          return message('auth.unknown.title', t('auth.unknown.body'), true, [login('auth.relogin', 'primary')]);
       }
   }
 }

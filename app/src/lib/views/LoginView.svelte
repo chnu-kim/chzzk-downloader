@@ -56,15 +56,16 @@
 
     {#if screen.kind === 'pending' && pending}
       <p class="sub">{t('auth.pending.code')}</p>
-      <p class="code" aria-label={t('auth.pending.codeLabel', { code: pending.userCode })}>{pending.userCode}</p>
+      <!-- 스크린리더가 "확인 코드 …"로 한 덩어리로 읽게 보이지 않는 머리말을 둔다. 복사(전체 선택)는 코드 글자만 -->
+      <p class="code"><span class="sr-only">{t('auth.pending.codeLabel')} </span><span class="value">{pending.userCode}</span></p>
       <p class="remain">{t('auth.pending.body', { mmss: formatMmss(remainingSecs(pending.expiresAt, now)) })}</p>
       <div class="buttons">
-        <Button variant="primary" disabled={auth.busy} onclick={() => void auth.reopen()}>{t('auth.reopen')}</Button>
-        <Button disabled={auth.busy} onclick={() => void auth.cancel()}>{t('auth.cancel')}</Button>
+        <Button variant="primary" disabled={auth.isBusy('reopen')} onclick={() => void auth.reopen()}>{t('auth.reopen')}</Button>
+        <Button disabled={auth.isBusy('cancel')} onclick={() => void auth.cancel()}>{t('auth.cancel')}</Button>
       </div>
       <p class="help">
         {t('auth.browserHelp')}
-        <Button variant="link" size="sm" disabled={auth.busy} onclick={() => void auth.copyLoginUrl()}>
+        <Button variant="link" size="sm" disabled={auth.isBusy('copy')} onclick={() => void auth.copyLoginUrl()}>
           {t('auth.copyLoginUrl')}
         </Button>
       </p>
@@ -73,7 +74,7 @@
       {#if screen.buttons.length > 0}
         <div class="buttons">
           {#each screen.buttons as b (b.action + b.label)}
-            <Button variant={b.variant} disabled={auth.busy} onclick={() => run(b.action)}>{b.label}</Button>
+            <Button variant={b.variant} disabled={auth.isBusy(b.action)} onclick={() => run(b.action)}>{b.label}</Button>
           {/each}
         </div>
       {/if}
@@ -82,8 +83,8 @@
 
     {#if screen.otherAccountHelp}<p class="help">{t('auth.otherAccount.help')}</p>{/if}
 
-    {#if jobs.runningCount > 0}
-      <p class="note">{t('auth.runningNote', { n: jobs.runningCount })}</p>
+    {#if jobs.activeCount > 0}
+      <p class="note">{t('auth.runningNote', { n: jobs.activeCount })}</p>
     {:else if jobs.interruptedCount > 0}
       <p class="note">{t('banner.resumeNeedsLogin', { n: jobs.interruptedCount })}</p>
     {/if}
@@ -147,6 +148,8 @@
     font-size: 1.5rem;
     font-weight: var(--weight-semibold);
     letter-spacing: 0.08em;
+  }
+  .value {
     user-select: all;
   }
   .remain {

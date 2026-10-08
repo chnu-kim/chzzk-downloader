@@ -229,21 +229,28 @@ export function requiredBump(messages, prev) {
   return bump;
 }
 
-// 지난 버전·올림 → 허용되는 가장 작은 다음 버전
+// 쓰지 않는 MAJOR.MINOR: 비공개 이력의 옛 Go 태그 v0.2.0·v0.2.1과 이름이 겹친다(docs/versioning.md §5). CI 클론에는 그 태그가 없어
+// 단조 증가 검사로는 못 막으므로 여기서 막는다
+export const RESERVED_MINORS = ['0.2'];
+const reserved = (a, b) => RESERVED_MINORS.includes(`${a}.${b}`);
+
+// 지난 버전·올림 → 허용되는 가장 작은 다음 버전(예약된 MAJOR.MINOR는 건너뛴다)
 export function minNextVersion(prev, bump) {
   const [a, b, c] = parseSemver(prev).nums;
-  if (bump === 'major') return `${a + 1n}.0.0`;
-  if (bump === 'minor') return `${a}.${b + 1n}.0`;
-  return `${a}.${b}.${c + 1n}`;
+  if (bump === 'patch' && !reserved(a, b)) return `${a}.${b}.${c + 1n}`;
+  let [na, nb] = bump === 'major' ? [a + 1n, 0n] : [a, b + 1n];
+  while (reserved(na, nb)) nb++;
+  return `${na}.${nb}.0`;
 }
 
-// 지난 버전 → 다음 버전이 규칙을 지키는지 → 문제 목록. 더 높게 올리는 건 허용하고(0.1.1 → 0.3.0), 올린 자리 아래는 0이어야 한다
+// 지난 버전 → 다음 버전이 규칙을 지키는지 → 문제 목록. 더 높게 올리는 건 허용하고(1.0.0 직행), 올린 자리 아래는 0이어야 하며, 예약된 MAJOR.MINOR는 거부한다
 export function bumpProblems(prev, next, messages) {
   const p = parseSemver(prev);
   const n = parseSemver(next);
   if (!p || !n) return [`semver가 아니다: ${!p ? prev : next}`];
   if (n.pre.length) return [`${next}: prerelease는 쓰지 않는다`];
   if (cmpSemver(next, prev) <= 0) return [`${next}가 지난 릴리스 ${prev}보다 크지 않다`];
+  if (reserved(n.nums[0], n.nums[1])) return [`${next}: ${n.nums[0]}.${n.nums[1]}.x는 옛 태그 이름과 겹쳐 쓰지 않는다(docs/versioning.md §5)`];
   const [na, nb, nc] = n.nums;
   const [pa, pb] = p.nums;
   const actual = na !== pa ? 'major' : nb !== pb ? 'minor' : 'patch';

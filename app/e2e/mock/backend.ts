@@ -49,6 +49,9 @@ export const AUTH_DISABLED: AuthStatusDto = {
   verifiedAt: null,
 };
 
+/** 가짜 [로그인] 뒤 pending 화면에 보이는 확인 코드 */
+export const E2E_USER_CODE = 'K7QX-4MRA';
+
 export type Scenario = {
   /** resolve가 돌려줄 결과(주소 → DTO 또는 오류). 없는 주소는 invalidUrl */
   resolve?: Record<string, ResolvedDto | { error: AppError }>;
@@ -169,6 +172,12 @@ export function install(scenario: Scenario = {}): E2EController {
     return j;
   };
 
+  const setAuth = (s: AuthStatusDto) => {
+    auth = s;
+    void emit('auth-changed', s);
+    return s;
+  };
+
   const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
     app_info: () => ({ ...INFO, features: { auth: auth.state !== 'disabled' } }),
     get_settings: () => settings,
@@ -184,12 +193,16 @@ export function install(scenario: Scenario = {}): E2EController {
     import_legacy: () => null,
     pick_folder: () => null,
     auth_status: () => auth,
-    auth_login: () => auth,
-    auth_reopen: () => false,
-    auth_copy_login_url: () => false,
-    auth_cancel: () => auth,
+    auth_login: () =>
+      auth.state === 'disabled' || auth.state === 'signedIn' || auth.state === 'pending'
+        ? auth
+        : setAuth({ ...AUTH_DISABLED, state: 'pending', pending: { userCode: E2E_USER_CODE, expiresAt: Math.floor(Date.now() / 1000) + 600 } }),
+    auth_reopen: () => auth.state === 'pending',
+    auth_copy_login_url: () => auth.state === 'pending',
+    auth_cancel: () => (auth.state === 'pending' ? setAuth({ ...AUTH_DISABLED, state: 'signedOut' }) : auth),
+    // 결과는 테스트가 setAuth로 정한다(같은 상태면 [다시 연결]이 아무것도 못 바꾼 것)
     auth_retry: () => auth,
-    auth_logout: () => (auth = auth.state === 'disabled' ? auth : { ...AUTH_DISABLED, state: 'signedOut' }),
+    auth_logout: () => (auth.state === 'disabled' ? auth : setAuth({ ...AUTH_DISABLED, state: 'signedOut' })),
     clipboard_link: () => null,
     open_app_folder: () => null,
     frontend_ready: () => null,

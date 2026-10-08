@@ -590,3 +590,26 @@ async fn install_is_single_flight() {
     e.src.st.lock().unwrap().hold = None;
     assert_eq!(e.install(&host, true).await, UpdateInstallDto::Restarting);
 }
+
+// ---- 비밀·주소가 새지 않는다 ----
+
+#[test]
+fn found_update_debug_hides_the_download_url() {
+    let f = found("https://dl.example.invalid");
+    let text = format!("{f:?}");
+    assert!(!text.contains("example.invalid"), "{text}");
+    assert!(!text.contains("releases"), "{text}");
+    assert!(text.contains("9.9.9"));
+}
+
+#[test]
+fn source_error_display_is_fixed_words() {
+    for (e, want) in [
+        (SourceError::Unavailable, "업데이트 기능을 쓸 수 없음"),
+        (SourceError::Check, "업데이트 확인 실패"),
+        (SourceError::Download, "업데이트 다운로드 실패"),
+        (SourceError::Install, "업데이트 설치 실패"),
+    ] {
+        assert_eq!(e.to_string(), want);
+    }
+}

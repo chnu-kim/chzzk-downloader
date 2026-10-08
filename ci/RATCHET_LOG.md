@@ -16,3 +16,5 @@
 | 2026-10-06 | `tests.worker` | 없음 → 0(`$pending`) | Phase 3 W1: worker/ vitest 통과 수를 새 키로 더했다(느슨하게 하기가 아니다). 첫 master 실행의 `ratchet-measurements-worker`로 `write --from-run`해 채우고 `PENDING_ALLOWED`에서 뺀다 |
 | 2026-10-08 | `size.dist_gz` | 57260 → 61297 | Phase 3b A3: 로그인 화면·AuthGate 분기·계정 슬롯·업데이트 배너·copy deck 추가(PR #44 실행 37767092248의 CI 측정값, +7.05%). 로그인 없이는 앱을 쓸 수 없게 하는 화면이다(worker.md 62) |
 | 2026-10-08 | `size.binary.linux` | 32559632 → 33581280 | Phase 3b A4: 업데이트 확인·설치 command와 설치 흐름(updater 플러그인 호출·quit 연동·진행 이벤트) 추가(PR #45 실행 37777649961의 CI 측정값, +3.14%). 서명된 업데이트로 옛 앱을 고치는 경로다(worker.md 67~) |
+| 2026-10-08 | `size.bundle.linux-deb` | 9728508 → 10046698 | Phase 3b A3~A5 누적: 로그인 화면·업데이트 흐름·OwnershipGate(PR #46 실행 37791581034의 CI 측정값, +3.27%). 본인 영상만 받게 하는 게이트와 그 화면이다(worker.md 82~86) |
+| 2026-10-08 | `size.dist_gz` | 61297 → 63384 | Phase 3b A4~A5 누적: 업데이트 배너·대화상자·막힌 작업 안내·OwnershipNotice(PR #46 실행 37791581034의 CI 측정값, +3.40%). 리뷰 반영 뒤 로컬 측정(같은 `gzipTotal`, level 9)은 63068로 이 값 아래다 |

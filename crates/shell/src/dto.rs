@@ -772,3 +772,69 @@ impl From<AuthReason> for AuthReasonDto {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// 업데이트(worker.md §11.6, Phase 3b A4)
+// ---------------------------------------------------------------------------
+
+/// 업데이트 정보(`update-available` 본문, `update_check`·`update_available` 결과). 시각은 유닉스 초.
+/// 다운로드 주소는 담지 않는다.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateInfoDto {
+    pub version: String,
+    pub current: String,
+    pub notes: Option<String>,
+    pub pub_date: Option<i64>,
+}
+
+/// `update_check` 결과. `offline`은 "세션 판정이 유효하지 않음(오프라인 유예·로그인 아님·refresh 실패)"이다.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, TS)]
+#[serde(
+    tag = "result",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum UpdateCheckDto {
+    Available { info: UpdateInfoDto },
+    UpToDate,
+    Offline,
+    Failed,
+    Untrusted,
+}
+
+/// `update_install` 결과
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, TS)]
+#[serde(
+    tag = "result",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum UpdateInstallDto {
+    /// 받는 중 작업이 있다. `confirmPause=true`로 다시 불러야 한다
+    NeedsConfirm {
+        running: u32,
+    },
+    UpToDate,
+    Offline,
+    Failed,
+    Untrusted,
+    /// 이미 설치 중이거나 종료 중이다
+    Busy,
+    /// 설치를 마쳤고 앱이 곧 다시 시작한다
+    Restarting,
+}
+
+/// `update-progress` 이벤트 본문. `Chunk`는 누적 `received`이고 정수 퍼센트가 오를 때만 보낸다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, TS)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum UpdateProgressEvent {
+    Started { total: Option<u64> },
+    Chunk { received: u64, total: Option<u64> },
+    Downloaded,
+    Installing,
+}

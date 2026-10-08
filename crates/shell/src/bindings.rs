@@ -12,7 +12,8 @@ use ts_rs::{Config, TS};
 
 use crate::dto::{
     AppFolder, AppInfo, AuthStatusDto, CloseRequestedPayload, EnqueueRequest, JobDto, JobEvent,
-    LegacyImportDto, OutputCheck, ResolvedDto, SettingsDto, SettingsPatch,
+    LegacyImportDto, OutputCheck, ResolvedDto, SettingsDto, SettingsPatch, UpdateCheckDto,
+    UpdateInfoDto, UpdateInstallDto, UpdateProgressEvent,
 };
 use crate::error::AppError;
 
@@ -50,6 +51,10 @@ pub fn export(dir: &Path) -> io::Result<()> {
     JobDto::export_all(&cfg).map_err(ts_err)?;
     JobEvent::export_all(&cfg).map_err(ts_err)?;
     AuthStatusDto::export_all(&cfg).map_err(ts_err)?;
+    UpdateInfoDto::export_all(&cfg).map_err(ts_err)?;
+    UpdateCheckDto::export_all(&cfg).map_err(ts_err)?;
+    UpdateInstallDto::export_all(&cfg).map_err(ts_err)?;
+    UpdateProgressEvent::export_all(&cfg).map_err(ts_err)?;
     CloseRequestedPayload::export_all(&cfg).map_err(ts_err)?;
     AppFolder::export_all(&cfg).map_err(ts_err)?;
 

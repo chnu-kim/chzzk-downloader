@@ -18,7 +18,7 @@ use crate::auth::{
 };
 use crate::dto::{
     AppFolder, AppInfo, AuthStatusDto, EnqueueRequest, Features, JobDto, OutputCheck, SettingsDto,
-    SettingsPatch,
+    SettingsPatch, UpdateCheckDto, UpdateInfoDto, UpdateInstallDto,
 };
 use crate::error::AppError;
 use crate::gate;
@@ -26,6 +26,7 @@ use crate::jobs::JobStore;
 use crate::manager::{DownloadManager, ManagerConfig};
 use crate::ownership::OwnershipGate;
 use crate::services::{self, AppPaths, PROGRESS_INTERVAL, SettingsService};
+use crate::update::{InstallHost, UpdateSource, Updates, auto_check_due};
 
 /// 클립보드에서 치지직 주소를 찾을 때 보는 최대 길이(바이트). 이보다 길면 주소를 붙여 둔 것으로 보지 않는다.
 pub const MAX_CLIPBOARD_SCAN: usize = 4096;
@@ -58,6 +59,10 @@ pub struct App {
     pub gate: OwnershipGate,
     /// 로그인 서비스. `None`이면 로그인을 쓰지 않는 빌드
     pub auth: Option<Arc<AppAuth>>,
+    /// 로그인에 쓰는 Worker 출처(`auth`와 함께 `Some`). 업데이트 주소·출처 대조에 쓴다(A4)
+    pub worker_base: Option<WorkerBase>,
+    /// 마지막으로 찾은 업데이트와 설치 가드(A4)
+    pub updates: Updates,
     /// 로그인 뒤로 미룬 재시작 후 자동 이어받기(D15)
     auto_resume_pending: AtomicBool,
     /// 로그인 폴링 태스크를 띄울 런타임
@@ -125,9 +130,11 @@ impl App {
     ) -> Result<Self, AppError> {
         let settings = SettingsService::open(&paths, base, legacy_dir)?;
         let s = settings.settings();
+        let mut worker_base = None;
         let auth = match auth {
             AuthSetup::Disabled => None,
             AuthSetup::Enabled { base, app_version } => {
+                worker_base = Some(base.clone());
                 let api = HttpWorkerApi::new(base.clone()).map_err(|e| {
                     // ApiError는 주소·본문·토큰을 담지 않는다(종류만)
                     tracing::error!(error = ?e, "로그인 클라이언트를 만들지 못함");
@@ -156,6 +163,8 @@ impl App {
             paths,
             gate: OwnershipGate::disabled(),
             auth,
+            worker_base,
+            updates: Updates::default(),
             auto_resume_pending: AtomicBool::new(defer),
             runtime,
         })
@@ -324,6 +333,41 @@ impl App {
             .await
             .map(|s| AuthStatusDto::from_status(&s))
             .map_err(|e| AppError::internal(format!("로그인 정보를 지우지 못했습니다({})", e.op)))
+    }
+}
+
+impl App {
+    /// `update_check`. 로그인을 쓰지 않는 빌드(auth·주소 없음)는 Failed(플러그인에 닿지 않는다)
+    pub async fn update_check<S: UpdateSource>(&self, src: &S) -> UpdateCheckDto {
+        let (Some(auth), Some(base)) = (&self.auth, &self.worker_base) else {
+            return UpdateCheckDto::Failed;
+        };
+        self.updates.check(&**auth, base, src).await
+    }
+
+    /// `update_install`. 로그인을 쓰지 않는 빌드는 Failed
+    pub async fn update_install<S: UpdateSource, H: InstallHost>(
+        &self,
+        src: &S,
+        host: &H,
+        confirm_pause: bool,
+    ) -> UpdateInstallDto {
+        let (Some(auth), Some(base)) = (&self.auth, &self.worker_base) else {
+            return UpdateInstallDto::Failed;
+        };
+        self.updates
+            .install(&**auth, base, src, host, confirm_pause)
+            .await
+    }
+
+    /// `update_available`: 자동 확인이 찾아 둔 값(네트워크 없음)
+    pub fn update_available(&self) -> Option<UpdateInfoDto> {
+        self.updates.available()
+    }
+
+    /// 자동 확인을 할 차례인가(D8): 온라인 SignedIn이고 `take_first_online()`. 앞이 아니면 take를 부르지 않는다
+    pub fn take_auto_update_check(&self, st: &AuthStatus) -> bool {
+        auto_check_due(st) && self.auth.as_ref().is_some_and(|a| a.take_first_online())
     }
 }
 

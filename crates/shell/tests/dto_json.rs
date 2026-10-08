@@ -643,3 +643,37 @@ fn progress_dto_keeps_every_core_field() {
     }
     assert_eq!(to_json(&ProgressDto::from(&p)), core);
 }
+
+#[test]
+fn update_dtos_json() {
+    use chzzk_shell::dto::{UpdateCheckDto, UpdateInfoDto, UpdateInstallDto, UpdateProgressEvent};
+    let info = UpdateInfoDto {
+        version: "9.9.9".into(),
+        current: "0.1.0".into(),
+        notes: None,
+        pub_date: None,
+    };
+    assert_eq!(
+        to_json(&UpdateCheckDto::Available { info }),
+        json!({"result":"available","info":{"version":"9.9.9","current":"0.1.0","notes":null,"pubDate":null}})
+    );
+    assert_eq!(
+        to_json(&UpdateCheckDto::UpToDate),
+        json!({"result":"upToDate"})
+    );
+    assert_eq!(
+        to_json(&UpdateInstallDto::NeedsConfirm { running: 1 }),
+        json!({"result":"needsConfirm","running":1})
+    );
+    assert_eq!(
+        to_json(&UpdateProgressEvent::Chunk {
+            received: 5,
+            total: None
+        }),
+        json!({"type":"chunk","received":5,"total":null})
+    );
+    assert_eq!(
+        to_json(&UpdateProgressEvent::Started { total: Some(9) }),
+        json!({"type":"started","total":9})
+    );
+}

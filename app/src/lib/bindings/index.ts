@@ -36,3 +36,7 @@ export type * from "./ResolvedDto";
 export type * from "./SettingsDto";
 export type * from "./SettingsPatch";
 export type * from "./Stage";
+export type * from "./UpdateCheckDto";
+export type * from "./UpdateInfoDto";
+export type * from "./UpdateInstallDto";
+export type * from "./UpdateProgressEvent";

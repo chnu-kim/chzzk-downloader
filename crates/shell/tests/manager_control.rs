@@ -752,3 +752,68 @@ async fn skipped_without_partial_clears() {
     assert!(h.mgr.list().is_empty());
     assert_eq!(std::fs::read(&out).unwrap(), b"theirs");
 }
+
+/// 업데이트 설치가 quit 뒤에 실패하면(A4, D7) quit이 멈춘 작업만 되살리고 스케줄러를 켠다.
+/// 사용자가 멈춘 작업은 그대로다.
+#[tokio::test(start_paused = true)]
+async fn cancel_quit_requeues_jobs_stopped_by_quit() {
+    let h = Harness::new(2);
+    for n in ["a", "b"] {
+        h.fake.script_for(
+            h.output(n),
+            Script::new()
+                .bytes(1, None)
+                .until_cancelled()
+                .linger(Duration::from_millis(100))
+                .fails(Error::Cancelled),
+        );
+    }
+    let a = h.enqueue("a").id;
+    let b = h.enqueue("b").id;
+    until("둘 진행", || {
+        [a, b].iter().all(|&i| h.job(i).progress.is_some())
+    })
+    .await;
+    h.mgr.pause(b).unwrap();
+    h.mgr.quit(QUIT_TIMEOUT).await;
+    assert_eq!(h.status(a), JobStatus::Interrupted);
+    assert_eq!(h.status(b), JobStatus::Paused);
+
+    // 되살린 a의 다음 대본과, 스케줄러가 켜졌는지 보려는 새 작업
+    h.fake
+        .script_for(h.output("a"), Script::new().wait_cancel());
+    h.fake
+        .script_for(h.output("n"), Script::new().wait_cancel());
+    let calls = h.fake.download_calls().len();
+    assert_eq!(h.mgr.cancel_quit(), 1);
+    settle().await;
+    assert_eq!(h.status(a), JobStatus::Running);
+    assert_eq!(h.status(b), JobStatus::Paused, "사용자가 멈춘 것은 그대로");
+    assert_eq!(h.fake.download_calls().len(), calls + 1);
+    let n = h.enqueue("n").id;
+    settle().await;
+    assert_eq!(h.status(n), JobStatus::Running, "스케줄러가 다시 켜졌다");
+    assert_eq!(h.mgr.cancel_quit(), 0, "두 번째는 되살릴 것이 없다");
+}
+
+/// 재시작 전부터 `interrupted`였던 작업은 `cancel_quit`이 건드리지 않는다.
+#[tokio::test(start_paused = true)]
+async fn cancel_quit_ignores_older_interrupted_jobs() {
+    let h = Harness::new(1);
+    h.fake
+        .script_for(h.output("c"), Script::new().wait_cancel());
+    let c = h.enqueue("c").id;
+    settle().await;
+    // 재시작: 받던 c가 reconcile로 interrupted가 된다(자동 이어받기 꺼짐)
+    let m2 = h.reopen(1);
+    assert_eq!(
+        m2.list().iter().find(|j| j.id == c).unwrap().status,
+        JobStatus::Interrupted
+    );
+    m2.quit(QUIT_TIMEOUT).await;
+    assert_eq!(m2.cancel_quit(), 0);
+    assert_eq!(
+        m2.list().iter().find(|j| j.id == c).unwrap().status,
+        JobStatus::Interrupted
+    );
+}

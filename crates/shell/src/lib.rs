@@ -17,6 +17,7 @@ pub mod manager;
 pub mod output;
 pub mod ownership;
 pub mod services;
+pub mod update;
 mod writer;
 
 pub use app::{AUTH_CLIENT_FAILED, App, AppAuth, AuthSetup};

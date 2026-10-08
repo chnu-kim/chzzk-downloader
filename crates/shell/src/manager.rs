@@ -156,6 +156,8 @@ struct State {
     sink: Option<Box<dyn EventSink>>,
     max_running: usize,
     scheduler_enabled: bool,
+    /// 마지막 `quit`이 멈춘(그때 `running`이던) 작업. `cancel_quit`이 이것만 되살린다(A4, D7)
+    quit_stopped: Vec<JobId>,
 }
 
 impl State {
@@ -270,6 +272,7 @@ impl<B: Backend> DownloadManager<B> {
             sink: None,
             max_running: clamp_parallel(cfg.max_parallel),
             scheduler_enabled: true,
+            quit_stopped: Vec::new(),
         };
         for rec in file.jobs {
             let seq = st.seq();
@@ -504,6 +507,41 @@ impl<B: Backend> DownloadManager<B> {
         n
     }
 
+    /// 업데이트 설치가 `quit` 뒤에 실패했을 때(A4, D7): quit이 멈춘 작업(`quit_stopped` 중 지금 `interrupted`이고
+    /// 지우는 중이 아닌 것)을 다시 줄 세우고 스케줄러를 켠다. 사용자가 일시정지한 작업(`paused`)은 그대로다.
+    /// 줄 세운 수를 돌려준다. `quit`이 끝나기 전에는 부르지 않는다.
+    pub fn cancel_quit(&self) -> usize {
+        let mut st = self.inner.lock();
+        st.scheduler_enabled = true;
+        let ids = std::mem::take(&mut st.quit_stopped);
+        let mut n = 0;
+        for id in ids {
+            let Some(job) = st.jobs.get(&id) else {
+                continue;
+            };
+            if job.removing || job.rec.status != JobStatus::Interrupted {
+                continue;
+            }
+            let output = job.rec.output.clone();
+            if st.active_with_output(&output, Some(id)).is_some() {
+                continue;
+            }
+            let seq = st.seq();
+            let Some(job) = st.jobs.get_mut(&id) else {
+                continue;
+            };
+            self.inner.requeue(job, seq, false);
+            let dto = job.dto();
+            st.emit(JobEvent::Status { job: dto });
+            n += 1;
+        }
+        if n > 0 {
+            self.inner.save(&st);
+        }
+        self.inner.pump(&mut st);
+        n
+    }
+
     /// 목록에서 지운다(UX의 "취소"도 이것이다).
     ///
     /// - `completed`·`skipped`: 레코드만 지운다(파일은 둔다). 단 받는 동안 같은 이름의 파일이 생겨 건너뛴
@@ -635,10 +673,14 @@ impl<B: Backend> DownloadManager<B> {
         let handles: Vec<JoinHandle<()>> = {
             let mut st = self.inner.lock();
             st.scheduler_enabled = false;
+            // 되살린 뒤 다시 quit해도 옛 id가 남지 않게 비우고 이번에 멈추는 작업으로 채운다
+            st.quit_stopped.clear();
+            let mut stopped = Vec::new();
             let mut handles = Vec::new();
             let mut changed = Vec::new();
             for job in st.jobs.values_mut() {
                 if job.rec.status == JobStatus::Running {
+                    stopped.push(job.rec.id);
                     job.stop = Some(StopReason::Quit);
                     job.rec.status = JobStatus::Pausing;
                     if let Some(c) = &job.cancel {
@@ -652,6 +694,7 @@ impl<B: Backend> DownloadManager<B> {
                     handles.push(h);
                 }
             }
+            st.quit_stopped = stopped;
             if !changed.is_empty() {
                 self.inner.save(&st);
             }

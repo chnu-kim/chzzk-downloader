@@ -8,9 +8,13 @@ use std::time::Duration;
 
 use chzzk_core::{ClientConfig, Endpoints, RetryPolicy, Secret};
 use chzzk_shell::auth::{AuthPhase, AuthStatus, SessionStore, StoredSession, WorkerBase};
-use chzzk_shell::dto::{AuthReasonDto, AuthState, AuthStatusDto, JobStatus, SettingsPatch};
+use chzzk_shell::dto::{
+    AuthReasonDto, AuthState, AuthStatusDto, JobStatus, SettingsPatch, UpdateCheckDto,
+    UpdateInstallDto, UpdateProgressEvent,
+};
 use chzzk_shell::gate;
 use chzzk_shell::services::AppPaths;
+use chzzk_shell::update::{FoundUpdate, InstallHost, SourceError, UpdateSource};
 use chzzk_shell::{App, AuthSetup, ErrorCode, JobId};
 use common::harness::request;
 use tempfile::TempDir;
@@ -479,4 +483,176 @@ async fn auth_commands_are_noops_when_disabled() {
     assert_eq!(app.auth_logout().await.unwrap(), AuthStatusDto::disabled());
     assert!(!app.auth_reopen(|_| panic!("열면 안 된다")));
     assert!(!app.auth_copy_login_url(|_| panic!("복사하면 안 된다")));
+}
+
+// ---- 업데이트(Phase 3b A4) ----
+
+/// 확인한 endpoint를 적고 같은 Worker 출처의 업데이트를 찾는 가짜 원천
+struct FakeSource {
+    origin: String,
+    endpoints: Mutex<Vec<String>>,
+}
+
+impl FakeSource {
+    fn new(origin: &str) -> Self {
+        Self {
+            origin: origin.to_string(),
+            endpoints: Mutex::default(),
+        }
+    }
+    fn calls(&self) -> Vec<String> {
+        self.endpoints.lock().unwrap().clone()
+    }
+}
+
+impl UpdateSource for FakeSource {
+    fn check(
+        &self,
+        endpoint: &str,
+        _bearer: &Secret<String>,
+    ) -> impl Future<Output = Result<Option<FoundUpdate>, SourceError>> + Send {
+        self.endpoints.lock().unwrap().push(endpoint.to_string());
+        let f = FoundUpdate {
+            version: "9.9.9".into(),
+            current: "0.1.0".into(),
+            notes: None,
+            pub_date: None,
+            download_url: format!("{}/releases/9.9.9/app.bin", self.origin),
+        };
+        async move { Ok(Some(f)) }
+    }
+    async fn download(
+        &self,
+        _on_chunk: &mut (dyn FnMut(u64, Option<u64>) + Send),
+    ) -> Result<(), SourceError> {
+        Ok(())
+    }
+    fn install(&self) -> Result<(), SourceError> {
+        Ok(())
+    }
+}
+
+struct FakeHost(usize);
+
+impl InstallHost for FakeHost {
+    fn running(&self) -> usize {
+        self.0
+    }
+    async fn pause_for_install(&self) -> bool {
+        true
+    }
+    fn resume_after_failed_install(&self) {}
+    fn restart(&self) {}
+    fn progress(&self, _e: UpdateProgressEvent) {}
+}
+
+fn refresh_ok_body() -> String {
+    use time::format_description::well_known::Rfc3339;
+    let now = OffsetDateTime::now_utc();
+    serde_json::json!({
+        "status": "ok",
+        "accessToken": format!("cda_{}", "C".repeat(43)),
+        "accessExpiresAt": (now + time::Duration::hours(24)).format(&Rfc3339).unwrap(),
+        "refreshToken": format!("cdr_{}", "D".repeat(43)),
+        "refreshExpiresAt": (now + time::Duration::days(30)).format(&Rfc3339).unwrap(),
+        "channelId": CH,
+        "channelName": "채널",
+        "isAdmin": false,
+        "serverTime": now.format(&Rfc3339).unwrap(),
+    })
+    .to_string()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn update_wrappers_fail_without_auth() {
+    let t = TempDir::new().unwrap();
+    let api = MockServer::start().await;
+    let app = open_plain(t.path(), &api);
+    let src = FakeSource::new("https://w.example.invalid");
+    assert_eq!(app.update_check(&src).await, UpdateCheckDto::Failed);
+    assert_eq!(
+        app.update_install(&src, &FakeHost(0), true).await,
+        UpdateInstallDto::Failed
+    );
+    assert!(src.calls().is_empty());
+    assert_eq!(app.update_available(), None);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn update_check_through_app_uses_the_build_base() {
+    let t = TempDir::new().unwrap();
+    let api = MockServer::start().await;
+    let worker = MockServer::start().await;
+    save_session(
+        t.path(),
+        &worker,
+        OffsetDateTime::now_utc() - time::Duration::hours(1),
+    );
+    let app = open_auth(t.path(), &api, &worker);
+    let src = FakeSource::new(&worker.uri());
+    let UpdateCheckDto::Available { info } = app.update_check(&src).await else {
+        panic!("available이어야 한다");
+    };
+    assert_eq!(
+        src.calls(),
+        [format!("{}/update/{{{{current_version}}}}", worker.uri())]
+    );
+    assert_eq!(app.update_available(), Some(info));
+    assert!(worker.received_requests().await.unwrap().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn update_install_through_app_asks_first() {
+    let t = TempDir::new().unwrap();
+    let api = MockServer::start().await;
+    let worker = MockServer::start().await;
+    save_session(
+        t.path(),
+        &worker,
+        OffsetDateTime::now_utc() - time::Duration::hours(1),
+    );
+    let app = open_auth(t.path(), &api, &worker);
+    let src = FakeSource::new(&worker.uri());
+    assert_eq!(
+        app.update_install(&src, &FakeHost(1), false).await,
+        UpdateInstallDto::NeedsConfirm { running: 1 }
+    );
+    assert!(src.calls().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn take_auto_update_check_once_after_first_ok() {
+    let t = TempDir::new().unwrap();
+    let api = MockServer::start().await;
+    let worker = MockServer::start().await;
+    save_session(
+        t.path(),
+        &worker,
+        OffsetDateTime::now_utc() - time::Duration::hours(1),
+    );
+    let app = open_auth(t.path(), &api, &worker);
+    // 낙관 SignedIn: 서버 확인 전이라 아직 아니다
+    assert!(!app.take_auto_update_check(&app.auth.as_ref().unwrap().status()));
+
+    // 오프라인 유예(Worker 형식 4xx라 응답 유실 재시도 없이 끝난다): take를 부르지 않으므로 소모되지 않는다
+    Mock::given(method("POST"))
+        .and(path("/auth/refresh"))
+        .respond_with(json_response(429, r#"{"code":"rate_limited"}"#.into()))
+        .mount(&worker)
+        .await;
+    let off = app.auth.as_ref().unwrap().refresh().await;
+    assert!(off.offline.is_some());
+    assert!(!app.take_auto_update_check(&off));
+
+    // 온라인 Ok 뒤 한 번
+    worker.reset().await;
+    Mock::given(method("POST"))
+        .and(path("/auth/refresh"))
+        .respond_with(json_response(200, refresh_ok_body()))
+        .mount(&worker)
+        .await;
+    let on = app.auth.as_ref().unwrap().refresh().await;
+    assert!(on.offline.is_none());
+    assert!(app.take_auto_update_check(&on));
+    assert!(!app.take_auto_update_check(&on));
 }

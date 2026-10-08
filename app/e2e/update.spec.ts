@@ -35,7 +35,7 @@ test('받는 중이면 확인 뒤 설치한다', async ({ app }) => {
   await page.getByRole('button', { name: '지금 업데이트' }).click();
   const dialog = page.getByRole('dialog', { name: '업데이트하고 다시 시작할까요?' });
   await expect(dialog).toBeVisible();
-  await expect(dialog.getByText('받는 중인 영상 1개가 일시정지되고, 다시 시작하면 이어받아요.')).toBeVisible();
+  await expect(dialog.getByText('받는 중인 영상 1개가 일시정지되고, 다시 시작한 뒤 이어받을 수 있어요.')).toBeVisible();
   await app.axe('업데이트 확인 대화상자');
 
   await dialog.getByRole('button', { name: '업데이트하고 다시 시작' }).click();

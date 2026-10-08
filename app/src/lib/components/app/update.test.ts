@@ -79,13 +79,29 @@ beforeEach(async () => {
 });
 
 describe('UpdateBanner status', () => {
-  it('status가 있으면 그 문구와 눌리지 않는 [지금 업데이트], [나중에]·닫기는 없다', () => {
-    render(UpdateBanner, { version: '0.2.0', status: '업데이트 받는 중 42%', oninstall: vi.fn(), onlater: vi.fn() });
-    expect(screen.getByText('업데이트 받는 중 42%')).toBeInTheDocument();
+  it('status가 있으면 그 문구와 눌리지 않는 [지금 업데이트], [나중에]·닫기는 없다. 퍼센트는 읽히지 않는다', async () => {
+    const user = userEvent.setup();
+    const oninstall = vi.fn();
+    render(UpdateBanner, { version: '0.2.0', status: '업데이트 받는 중', detail: '42%', oninstall, onlater: vi.fn() });
+    const status = screen.getByRole('status');
+    expect(status).toHaveTextContent('업데이트 받는 중 42%');
+    expect(screen.getByText('42%', { exact: false })).toHaveAttribute('aria-hidden', 'true');
     expect(screen.queryByText(/새 버전/)).toBeNull();
-    expect(screen.getByRole('button', { name: '지금 업데이트' })).toBeDisabled();
+    const btn = screen.getByRole('button', { name: '지금 업데이트' });
+    expect(btn).toHaveAttribute('aria-disabled', 'true');
+    await user.click(btn);
+    expect(oninstall).not.toHaveBeenCalled();
     expect(screen.queryByRole('button', { name: '나중에' })).toBeNull();
     expect(screen.queryByRole('button', { name: '닫기' })).toBeNull();
+  });
+
+  it('busy면 [지금 업데이트]가 눌리지 않는다', async () => {
+    const user = userEvent.setup();
+    const oninstall = vi.fn();
+    render(UpdateBanner, { version: '0.2.0', busy: true, oninstall, onlater: vi.fn() });
+    await user.click(screen.getByRole('button', { name: '지금 업데이트' }));
+    expect(oninstall).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: '나중에' })).toBeInTheDocument();
   });
 });
 
@@ -134,11 +150,37 @@ describe('AppBanners 순서', () => {
     update.total = 200;
     update.received = 50;
     render(AppBanners);
-    expect(screen.getByText('업데이트 받는 중 25%')).toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveTextContent('업데이트 받는 중 25%');
     expect(screen.queryByRole('button', { name: '모두 이어받기' })).toBeNull();
     update.total = null;
     update.received = 2048;
-    await waitFor(() => expect(screen.getByText(/업데이트 받는 중 2(\.0)? ?KB/i)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/업데이트 받는 중 2(\.0)? ?KB/i));
+  });
+
+  it('[지금 업데이트]를 누른 뒤 받는 중이 되어도 같은 버튼에 포커스가 남는다', async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.updateInstall).mockImplementation(() => new Promise(() => {}));
+    update.available = info('0.2.0');
+    render(AppBanners);
+    const btn = screen.getByRole('button', { name: '지금 업데이트' });
+    await user.click(btn);
+    expect(btn).toHaveFocus();
+    expect(btn).toHaveAttribute('aria-disabled', 'true');
+    await user.click(btn);
+    expect(api.updateInstall).toHaveBeenCalledTimes(1);
+    update.phase = 'downloading';
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('업데이트 받는 중'));
+    expect(screen.getByRole('button', { name: '지금 업데이트' })).toBe(btn);
+    expect(btn).toHaveFocus();
+  });
+
+  it('받는 중에 확인 결과가 available을 비워도 진행 배너가 남는다', async () => {
+    update.available = info('0.2.0');
+    update.installVersion = '0.2.0';
+    update.phase = 'downloading';
+    render(AppBanners);
+    update.available = null;
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('업데이트 받는 중'));
   });
 });
 
@@ -151,7 +193,7 @@ describe('UpdateDialog', () => {
     update.phase = 'confirm';
     render(UpdateDialog);
     const d = await screen.findByRole('dialog', { name: '업데이트하고 다시 시작할까요?' });
-    expect(within(d).getByText('받는 중인 영상 2개가 일시정지되고, 다시 시작하면 이어받아요.')).toBeInTheDocument();
+    expect(within(d).getByText('받는 중인 영상 2개가 일시정지되고, 다시 시작한 뒤 이어받을 수 있어요.')).toBeInTheDocument();
     await waitFor(() => expect(within(d).getByRole('button', { name: '나중에' })).toHaveFocus());
     await user.click(within(d).getByRole('button', { name: '업데이트하고 다시 시작' }));
     expect(api.updateInstall).toHaveBeenCalledWith(true);
@@ -200,6 +242,15 @@ describe('SettingsView 업데이트 확인', () => {
     vi.mocked(api.updateCheck).mockResolvedValueOnce({ result: 'untrusted' });
     await user.click(screen.getByRole('button', { name: '업데이트 확인' }));
     expect(await screen.findByText('업데이트 주소를 확인할 수 없어 받지 않았어요.')).toBeInTheDocument();
+  });
+
+  it('확인 결과가 available인데 값이 비었으면 줄을 숨긴다', () => {
+    auth.apply(authDto('signedIn'));
+    update.check = 'available';
+    update.available = null;
+    render(SettingsView);
+    expect(screen.queryByText(/새 버전/)).toBeNull();
+    expect(screen.queryByRole('status')).toBeNull();
   });
 
   it('확인하는 중에는 문구가 나오고 버튼이 눌리지 않는다', async () => {

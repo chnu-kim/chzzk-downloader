@@ -81,7 +81,7 @@
     background: var(--accent);
     color: var(--accent-fg);
   }
-  .primary:hover:not(:disabled) {
+  .primary:hover:not(:disabled):not([aria-disabled='true']) {
     background: var(--accent-hover);
   }
 
@@ -93,10 +93,10 @@
   .secondary.accent-text {
     color: var(--accent);
   }
-  .secondary:hover:not(:disabled) {
+  .secondary:hover:not(:disabled):not([aria-disabled='true']) {
     background: var(--surface-2);
   }
-  .secondary:active:not(:disabled) {
+  .secondary:active:not(:disabled):not([aria-disabled='true']) {
     background: var(--surface-2);
     border-color: var(--fg-muted);
   }
@@ -105,7 +105,7 @@
     background: var(--danger);
     color: var(--danger-fg);
   }
-  .danger:hover:not(:disabled) {
+  .danger:hover:not(:disabled):not([aria-disabled='true']) {
     background: var(--danger-hover);
   }
 
@@ -116,18 +116,20 @@
     height: auto;
     min-height: var(--control-h-sm);
   }
-  .link:hover:not(:disabled) .label {
+  .link:hover:not(:disabled):not([aria-disabled='true']) .label {
     text-decoration: underline;
   }
 
   /* 비활성은 반투명이 아니라 색을 바꾼다(ui-visual §7) */
-  .btn:disabled {
+  .btn:disabled,
+  .btn[aria-disabled='true'] {
     cursor: default;
     background: var(--surface-2);
     color: var(--fg-faint);
     border-color: var(--border);
   }
-  .link:disabled {
+  .link:disabled,
+  .link[aria-disabled='true'] {
     background: none;
     border-color: transparent;
   }

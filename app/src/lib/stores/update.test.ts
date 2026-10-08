@@ -258,10 +258,47 @@ describe('install', () => {
     let resolve: (r: UpdateInstallDto) => void = () => {};
     vi.mocked(api.updateInstall).mockImplementation(() => new Promise((r) => (resolve = r)));
     const p = update.install();
+    expect(update.pending).toBe(true);
     void update.install();
     expect(api.updateInstall).toHaveBeenCalledTimes(1);
     resolve({ result: 'busy' });
     await p;
+    expect(update.pending).toBe(false);
+  });
+
+  it('설치를 시작할 때 본 버전을 잡아 둔다', async () => {
+    await update.start();
+    emitAvailable(info('0.2.0'));
+    vi.mocked(api.updateInstall).mockResolvedValue({ result: 'restarting' });
+    await update.install();
+    expect(update.installVersion).toBe('0.2.0');
+  });
+
+  it.each(['upToDate', 'untrusted'] as const)('설치 결과 %s는 설정의 확인 결과도 맞춘다(available이 남지 않는다)', async (result) => {
+    await update.start();
+    vi.mocked(api.updateCheck).mockResolvedValue({ result: 'available', info: info('0.2.0') });
+    await update.checkNow();
+    expect(update.check).toBe('available');
+    vi.mocked(api.updateInstall).mockResolvedValue({ result });
+    await update.install();
+    expect(update.check).toBe(result);
+    expect(update.available).toBeNull();
+  });
+
+  it('최신이라고 본 뒤 자동 확인이 새 버전을 알리면 확인 결과도 available', async () => {
+    await update.start();
+    vi.mocked(api.updateCheck).mockResolvedValue({ result: 'upToDate' });
+    await update.checkNow();
+    emitAvailable(info('0.2.0'));
+    expect(update.check).toBe('available');
+  });
+
+  it('확인한 적이 없으면 설치 결과가 확인 결과를 만들지 않는다', async () => {
+    await update.start();
+    emitAvailable(info('0.2.0'));
+    vi.mocked(api.updateInstall).mockResolvedValue({ result: 'upToDate' });
+    await update.install();
+    expect(update.check).toBe('idle');
   });
 
   it('reset은 모든 상태를 처음으로 돌린다', async () => {

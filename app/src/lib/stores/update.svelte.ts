@@ -1,4 +1,4 @@
-// 앱 업데이트(worker.md §11.6, 구현 중 변경 A4-1~A4-3). 판단은 Rust(`chzzk_shell::update`)가 하고, 여기서는 받은 값을 따라간다.
+// 앱 업데이트(worker.md §11.6, 구현 중 변경 A4-1~A4-3·A4-12). 판단은 Rust(`chzzk_shell::update`)가 하고, 여기서는 받은 값을 따라간다.
 import * as api from '../api';
 import type { UpdateInfoDto, UpdateInstallDto, UpdateProgressEvent } from '../bindings';
 import { t } from '../copy/ko';
@@ -17,6 +17,10 @@ export class UpdateStore {
   confirmRunning = $state(0);
   received = $state(0);
   total: number | null = $state(null);
+  /** install 호출이 진행 중(첫 진행 이벤트 전 확인·세션 판정 동안에도 [지금 업데이트]를 끈다) */
+  pending = $state(false);
+  /** 설치를 시작할 때 본 버전. 받는 중에 확인 결과가 `available`을 비워도 진행 배너를 그대로 둔다 */
+  installVersion: string | null = $state(null);
 
   showBanner = $derived(this.available !== null && this.#dismissed !== this.available.version);
   busy = $derived(this.phase === 'downloading' || this.phase === 'installing');
@@ -25,8 +29,6 @@ export class UpdateStore {
 
   /** 이벤트·확인으로 `available`이 바뀐 횟수. `sync`는 호출 사이에 바뀌었으면 응답을 버린다(이벤트가 이긴다, auth store와 같은 규칙) */
   #seq = 0;
-  /** install 호출이 진행 중 */
-  #running = false;
   /** `start()`가 두 listen을 마치면(실패해도) resolve한다. App의 effect 순서와 무관하게 sync가 listen 뒤에 묻도록 생성 때 만든다 */
   #resolveListening: () => void = () => {};
   #listening: Promise<void> = this.#newListening();
@@ -106,8 +108,9 @@ export class UpdateStore {
 
   /** [지금 업데이트]·대화상자 [업데이트하고 다시 시작]. 이미 받는 중·설치 중이면 무시 */
   async install(confirmPause = false): Promise<void> {
-    if (this.#running || this.busy) return;
-    this.#running = true;
+    if (this.pending || this.busy) return;
+    this.pending = true;
+    this.installVersion = this.available?.version ?? this.installVersion;
     if (confirmPause) {
       this.phase = 'downloading';
       this.received = 0;
@@ -119,7 +122,7 @@ export class UpdateStore {
       this.phase = 'idle';
       toasts.push(t('update.failed'), 'danger');
     } finally {
-      this.#running = false;
+      this.pending = false;
     }
   }
 
@@ -137,14 +140,17 @@ export class UpdateStore {
     this.confirmRunning = 0;
     this.received = 0;
     this.total = null;
+    this.pending = false;
+    this.installVersion = null;
     this.#seq = 0;
-    this.#running = false;
     this.#listening = this.#newListening();
   }
 
   #onAvailable(i: UpdateInfoDto): void {
     this.#seq += 1;
     this.available = i;
+    // 설정에 남은 "최신 버전이에요"가 배너와 어긋나지 않게
+    if (this.check === 'upToDate' || this.check === 'untrusted') this.check = 'available';
   }
 
   #onProgress(e: UpdateProgressEvent): void {
@@ -180,12 +186,15 @@ export class UpdateStore {
         this.#seq += 1;
         this.available = null;
         this.phase = 'idle';
+        // 설정의 결과 한 줄도 같은 사실로 맞춘다(남은 'available'이 빈 버전을 보이지 않게)
+        if (this.check !== 'idle' && this.check !== 'checking') this.check = 'upToDate';
         toasts.push(t('settings.about.upToDate'));
         break;
       case 'untrusted':
         this.#seq += 1;
         this.available = null;
         this.phase = 'idle';
+        if (this.check !== 'idle' && this.check !== 'checking') this.check = 'untrusted';
         toasts.push(t('update.untrusted'), 'danger');
         break;
       case 'failed':

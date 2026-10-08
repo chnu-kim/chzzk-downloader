@@ -143,7 +143,7 @@ export const ko = {
   'dialog.logout.confirm': '로그아웃',
   'dialog.logout.cancel': '취소',
   'dialog.update.title': '업데이트하고 다시 시작할까요?',
-  'dialog.update.body': '받는 중인 영상 {n}개가 일시정지되고, 다시 시작하면 이어받아요.',
+  'dialog.update.body': '받는 중인 영상 {n}개가 일시정지되고, 다시 시작한 뒤 이어받을 수 있어요.',
   'dialog.update.confirm': '업데이트하고 다시 시작',
   'dialog.update.later': '나중에',
 
@@ -246,7 +246,7 @@ export const ko = {
   'update.banner': '새 버전 {version}이 있어요.',
   'update.install': '지금 업데이트',
   'update.later': '나중에',
-  'update.downloading': '업데이트 받는 중 {pct}',
+  'update.downloading': '업데이트 받는 중',
   'update.installing': '설치하고 다시 시작해요…',
   'update.failed': '업데이트하지 못했어요. 잠시 뒤 다시 시도해 주세요.',
   'update.untrusted': '업데이트 주소를 확인할 수 없어 받지 않았어요.',

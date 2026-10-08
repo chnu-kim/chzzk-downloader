@@ -455,7 +455,8 @@ describe('UpdateBanner', () => {
     await fireEvent.click(screen.getByRole('button', { name: '닫기' }));
     expect(onlater).toHaveBeenCalledTimes(2);
     await rerender({ version: '0.1.1', busy: true, oninstall, onlater });
-    expect(screen.getByRole('button', { name: '지금 업데이트' })).toBeDisabled();
+    // 포커스를 잃지 않게 disabled 대신 aria-disabled(A4-12)
+    expect(screen.getByRole('button', { name: '지금 업데이트' })).toHaveAttribute('aria-disabled', 'true');
   });
 });
 

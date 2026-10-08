@@ -41,7 +41,8 @@
       case 'untrusted':
         return t('update.untrusted');
       case 'available':
-        return t('update.banner', { version: update.available?.version ?? '' });
+        // 설치 결과 등으로 available이 비었으면 줄을 숨긴다(빈 버전을 보이지 않게)
+        return update.available ? t('update.banner', { version: update.available.version }) : '';
       default:
         return '';
     }
@@ -163,7 +164,7 @@
             </Button>
           {/if}
         </p>
-        {#if auth.signedIn && update.check !== 'idle'}
+        {#if auth.signedIn && checkText}
           <p class="help" role="status">{checkText}</p>
         {/if}
       </div>

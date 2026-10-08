@@ -316,13 +316,22 @@ describe('AuthGate 화면', () => {
     await waitFor(() => expect(screen.queryByText(/아직 연결되지 않았어요/)).toBeNull());
   });
 
-  it('거부 화면: 채널 이름과 다른 계정 안내', async () => {
+  it('거부 화면: 채널 이름, 주 버튼 [다시 시도], 안내 문장 속 링크형 [다른 계정으로 로그인]', async () => {
+    const user = userEvent.setup();
     start(authDto({ state: 'denied', channelName: '테스트 채널' }));
+    vi.mocked(api.authLogin).mockResolvedValue(authDto({ state: 'denied', channelName: '테스트 채널' }));
     render(App);
     await screen.findByRole('heading', { name: '사용 허가가 없는 채널이에요' });
     expect(screen.getByText(/채널: 테스트 채널\./)).toBeInTheDocument();
-    expect(screen.getByText(/네이버 로그아웃을 먼저/)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '다른 계정으로 로그인' })).toBeInTheDocument();
+    const retry = screen.getByRole('button', { name: '다시 시도' });
+    expect(retry).toHaveClass('primary');
+    const other = screen.getByRole('button', { name: '다른 계정으로 로그인' });
+    expect(other).toHaveClass('link');
+    expect(other.closest('p')).toHaveTextContent(/네이버 로그아웃 후\s*다른 계정으로 로그인$/);
+    // 둘 다 같은 로그인을 시작한다
+    await user.click(retry);
+    await user.click(other);
+    expect(api.authLogin).toHaveBeenCalledTimes(2);
   });
 
   it('받는 중·대기 중 작업이 있으면 계속 받는다는 안내, 없고 중단된 작업이 있으면 로그인 안내', async () => {

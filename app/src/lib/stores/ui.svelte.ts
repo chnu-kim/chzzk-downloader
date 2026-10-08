@@ -1,6 +1,6 @@
 // 창 전체의 뷰와 단축키 연결(§10 App·GlobalShortcuts).
 
-export type View = 'home' | 'settings' | 'login';
+export type View = 'home' | 'settings';
 
 /** URL 입력줄이 단축키에 내놓는 동작(Mod+L, 입력칸 밖 Mod+V). */
 export interface UrlTarget {
@@ -31,7 +31,7 @@ export class UiStore {
     };
   }
 
-  /** Esc 한 번. 안쪽부터 처리기를 부르고, 아무도 받지 않으면 설정·로그인에서 홈으로 돌아간다. */
+  /** Esc 한 번. 안쪽부터 처리기를 부르고, 아무도 받지 않으면 설정에서 홈으로 돌아간다. */
   escape(): boolean {
     for (let i = this.#escape.length - 1; i >= 0; i--) {
       if (this.#escape[i]()) return true;

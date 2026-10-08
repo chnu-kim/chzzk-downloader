@@ -32,3 +32,18 @@ export function formatTimeOfDay(unixSecs: number, timeZone?: string): string {
     timeZone,
   }).format(new Date(unixSecs * 1000));
 }
+
+/**
+ * 시각(unix 초)을 사용자 시간대의 `10월 9일 오후 3:20`으로(오프라인 배지·마지막 확인).
+ * `timeZone`은 테스트가 고정하려고 받는다.
+ */
+export function formatDateTimeShort(unixSecs: number, timeZone?: string): string {
+  return new Intl.DateTimeFormat('ko-KR', {
+    month: 'long',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+    timeZone,
+  }).format(new Date(unixSecs * 1000));
+}

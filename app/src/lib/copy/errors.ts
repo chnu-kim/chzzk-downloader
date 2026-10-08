@@ -317,6 +317,9 @@ export function errorCopy(raw: AppError, ctx: ErrorContext): ErrorCopy {
         : copy('입력한 값을 쓸 수 없어요', '', [], e.message || null);
 
     case 'notLoggedIn':
+      // 로그인 화면이 막는 게이트 뒤의 command가 로그인 전에 불렸을 때(드물다)
+      return copy('로그인이 필요해요', '치지직 계정으로 로그인한 뒤 다시 시도해 주세요.', job ? [] : ['close']);
+
     case 'notOwnContent':
     case 'ownershipUnknown': {
       const title = '내 채널의 영상만 받을 수 있어요';
@@ -328,10 +331,7 @@ export function errorCopy(raw: AppError, ctx: ErrorContext): ErrorCopy {
             : '로그인한 채널의 영상이 아니에요.';
         return copy(title, body, actions);
       }
-      if (e.code === 'ownershipUnknown') {
-        return copy(title, '영상의 채널을 확인하지 못해 받을 수 없어요.', actions);
-      }
-      return copy(title, '치지직 계정으로 로그인한 뒤 다시 불러와 주세요.', actions);
+      return copy(title, '영상의 채널을 확인하지 못해 받을 수 없어요.', actions);
     }
 
     case 'jobNotFound':

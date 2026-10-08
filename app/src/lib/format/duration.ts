@@ -26,3 +26,9 @@ export function formatClock(secs: number): string {
   const r = s % 60;
   return `${h}:${String(m).padStart(2, '0')}:${String(r).padStart(2, '0')}`;
 }
+
+/** 남은 시간 `m:ss`(분은 자리 맞춤 없음): 600 → `10:00`, 59 → `0:59`, 음수·NaN → `0:00` */
+export function formatMmss(secs: number): string {
+  const s = whole(secs);
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}

@@ -1,10 +1,16 @@
 import { fireEvent, render } from '@testing-library/svelte';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { AUTH_DISABLED, auth } from '../../stores/auth.svelte';
 import { ui } from '../../stores/ui.svelte';
 import GlobalShortcuts from './GlobalShortcuts.svelte';
 
 describe('GlobalShortcuts', () => {
-  afterEach(() => ui.goHome());
+  // 단축키는 로그인 상태가 열려 있을 때만 듣는다
+  beforeEach(() => auth.apply(AUTH_DISABLED));
+  afterEach(() => {
+    ui.goHome();
+    auth.reset();
+  });
 
   it('어느 뷰에서든 파일·링크를 떨어뜨려도 기본 동작(이동)을 막는다', async () => {
     render(GlobalShortcuts);

@@ -13,13 +13,13 @@ import { gitEnv, gitOk } from './test-git.mjs';
 const SCRIPT = join(dirname(fileURLToPath(import.meta.url)), 'commit-msg.mjs');
 
 test('type(scope)?: 요약은 통과한다', () => {
-  for (const m of ['feat: 기능', 'fix(core): 고침', 'ci: G2 훅\n\n본문\n\nCo-Authored-By: x <x@example.invalid>', 'revert: 되돌림']) {
+  for (const m of ['feat: 기능', 'fix(core): 고침', 'ci: G2 훅\n\n본문\n\nCo-Authored-By: x <x@example.invalid>', 'revert: 되돌림', 'feat!: 깨지는 변경', 'fix(core)!: 형식 바꿈']) {
     assert.equal(checkMessage(m), null, m);
   }
 });
 
 test('형식이 아니면 거부한다', () => {
-  for (const m of ['Add feature', 'feat:no space', 'feat : x', 'feature: x', 'feat(): x', 'feat: ', '', '# 주석만\n']) {
+  for (const m of ['Add feature', 'feat:no space', 'feat : x', 'feature: x', 'feat(): x', 'feat: ', '', '# 주석만\n', 'feat !: x', 'feat!x', 'feat!!: x', 'feat(core) !: x']) {
     assert.notEqual(checkMessage(m), null, JSON.stringify(m));
   }
 });

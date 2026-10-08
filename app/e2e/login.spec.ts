@@ -1,4 +1,4 @@
-// 로그인 화면과 AuthGate(worker.md 구현 중 변경 A3-1): 잠긴 동안 로그인 화면만 보이고, 풀리면 홈이 열린다.
+// 로그인 화면과 AuthGate(worker.md 구현 중 변경 62): 잠긴 동안 로그인 화면만 보이고, 풀리면 홈이 열린다.
 import type { AuthStatusDto } from '../src/lib/bindings';
 import { expect, test } from './fixtures';
 
@@ -48,6 +48,20 @@ test('거부·유예 만료 화면과 다시 연결', async ({ app }) => {
   await page.getByRole('button', { name: '다시 연결' }).click();
   expect(await app.cmds()).toContain('auth_retry');
   await expect(page.getByText(/아직 연결되지 않았어요/)).toBeVisible();
+});
+
+test('저장 세션이 있으면 로그인을 취소해도 유예 만료 화면으로 돌아가고, [다시 연결]은 확인 중을 거친다', async ({ app }) => {
+  const { page } = app;
+  const grace = auth({ state: 'expired', reason: 'graceExpired' });
+  await app.open({
+    auth: auth({ state: 'pending', pending: { userCode: 'K7QX-4MRA', expiresAt: Math.floor(Date.now() / 1000) + 600 } }),
+    authHeld: grace,
+  });
+  await page.getByRole('button', { name: '취소' }).click();
+  await expect(page.getByRole('heading', { name: '로그인 서버에 한동안 연결하지 못했어요' })).toBeVisible();
+  await page.getByRole('button', { name: '다시 연결' }).click();
+  await expect(page.getByText(/아직 연결되지 않았어요/)).toBeVisible();
+  expect(await page.evaluate(() => window.__e2e.authEvents)).toEqual(['expired', 'checking', 'expired']);
 });
 
 test('오프라인 배지와 로그아웃', async ({ app }) => {

@@ -15,7 +15,7 @@
   import LoginView from './lib/views/LoginView.svelte';
   import SettingsView from './lib/views/SettingsView.svelte';
 
-  // 뷰는 둘(home·settings)이다. 로그인 화면은 뷰가 아니라 게이트 분기다(worker.md 구현 중 변경 A3-1):
+  // 뷰는 둘(home·settings)이다. 로그인 화면은 뷰가 아니라 게이트 분기다(worker.md 구현 중 변경 62):
   // 로그인 상태가 잠겨 있으면 뷰와 무관하게 LoginView만 그린다(단축키·Esc로 둘러 갈 수 없다).
 
   // 뷰가 바뀌면 누르던 버튼(설정·뒤로)이 사라져 포커스가 body로 떨어진다. 설정은 제목, 홈은 입력줄로 옮긴다
@@ -50,13 +50,24 @@
   });
 
   // 잠금이 풀릴 때마다 설정을 다시 읽는다(get_settings는 게이트 뒤, app.md 구현 중 변경 60 (3)).
-  // 잠기면 다시 열릴 때 홈부터 보이게 한다.
+  // 잠기면 다시 열릴 때 홈부터 보이게 한다. 잠금이 풀리면(로그인 성공) 누르던 로그인 화면이 사라져
+  // 포커스가 body로 떨어지니 홈 입력줄로 옮긴다(뷰 전환과 같은 규칙: 이미 다른 곳에 있으면 그대로).
   let wasUnlocked = false;
+  let wasLocked = false;
   $effect(() => {
     const u = auth.unlocked;
+    const l = auth.locked;
     if (u && !wasUnlocked) void untrack(() => settings.load());
-    if (auth.locked) untrack(() => ui.goHome());
+    if (l) untrack(() => ui.goHome());
+    if (u && wasLocked) {
+      void tick().then(() => {
+        const a = document.activeElement;
+        if (a && a !== document.body) return;
+        ui.urlTarget?.focus();
+      });
+    }
     wasUnlocked = u;
+    wasLocked = l;
   });
 </script>
 

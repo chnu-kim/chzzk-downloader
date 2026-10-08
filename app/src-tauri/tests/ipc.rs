@@ -1117,7 +1117,7 @@ fn auth_changed_is_emitted_to_the_main_window() {
     );
 }
 
-/// main 창 포커스 → `tick(Focus)` → refresh(구현 중 변경 56 (다), A3-4). 갱신 예정이 지난 세션이어야 나간다.
+/// main 창 포커스 → `tick(Focus)` → refresh(구현 중 변경 56 (다), 65). 갱신 예정이 지난 세션이어야 나간다.
 #[test]
 fn focus_on_the_main_window_ticks_auth() {
     let worker = refresh_server(401, "session_revoked");

@@ -60,12 +60,19 @@ export type Scenario = {
   settings?: Partial<SettingsDto>;
   /** 로그인 상태(없으면 disabled). disabled·signedIn이 아니면 허용 목록 밖 command는 notLoggedIn */
   auth?: AuthStatusDto;
+  /**
+   * 저장 세션이 있는 시나리오(held). 로그인 취소가 돌아갈 상태(오프라인 `signedIn`이나 유예 만료 `expired`)다.
+   * 없으면 저장 세션이 없는 것으로 보고 취소는 `signedOut`이다(셸 `cancel_login`)
+   */
+  authHeld?: AuthStatusDto;
 };
 
 export type Call = { cmd: string; args: unknown };
 
 export interface E2EController {
   calls: Call[];
+  /** command 처리기가 auth-changed로 낸 상태(state)의 차례 */
+  authEvents: string[];
   /** 앱이 구독했는가(스냅샷을 보냈는가) */
   subscribed(): boolean;
   /** 작업을 running으로 바꾸고 진행률을 보낸다 */
@@ -172,8 +179,10 @@ export function install(scenario: Scenario = {}): E2EController {
     return j;
   };
 
+  const authEvents: string[] = [];
   const setAuth = (s: AuthStatusDto) => {
     auth = s;
+    authEvents.push(s.state);
     void emit('auth-changed', s);
     return s;
   };
@@ -199,9 +208,17 @@ export function install(scenario: Scenario = {}): E2EController {
         : setAuth({ ...AUTH_DISABLED, state: 'pending', pending: { userCode: E2E_USER_CODE, expiresAt: Math.floor(Date.now() / 1000) + 600 } }),
     auth_reopen: () => auth.state === 'pending',
     auth_copy_login_url: () => auth.state === 'pending',
-    auth_cancel: () => (auth.state === 'pending' ? setAuth({ ...AUTH_DISABLED, state: 'signedOut' }) : auth),
-    // 결과는 테스트가 setAuth로 정한다(같은 상태면 [다시 연결]이 아무것도 못 바꾼 것)
-    auth_retry: () => auth,
+    auth_cancel: () => (auth.state === 'pending' ? setAuth(scenario.authHeld ?? { ...AUTH_DISABLED, state: 'signedOut' }) : auth),
+    // 실물(AuthService::retry)처럼: 저장 세션이 없거나 온라인 signedIn이면 네트워크 없이 지금 상태, 그 밖에는 Checking을 먼저
+    // 내고(signedIn·pending은 그대로) 최종 상태를 내며 돌려준다. 최종 상태는 지금 상태다(같은 상태면 [다시 연결]이
+    // 아무것도 못 바꾼 것). 다른 결과는 테스트가 setAuth로 정한다
+    auth_retry: () => {
+      const held = scenario.authHeld != null || auth.state === 'signedIn' || (auth.state === 'expired' && auth.reason === 'graceExpired');
+      if (!held || (auth.state === 'signedIn' && !auth.offline)) return auth;
+      const last = auth;
+      if (last.state !== 'signedIn' && last.state !== 'pending') setAuth({ ...last, state: 'checking', reason: null });
+      return setAuth(last);
+    },
     auth_logout: () => (auth.state === 'disabled' ? auth : setAuth({ ...AUTH_DISABLED, state: 'signedOut' })),
     clipboard_link: () => null,
     open_app_folder: () => null,
@@ -295,6 +312,7 @@ export function install(scenario: Scenario = {}): E2EController {
 
   const ctl: E2EController = {
     calls,
+    authEvents,
     subscribed: () => channel !== null,
     progress(id, bytes, totalBytes) {
       const j = must(id);

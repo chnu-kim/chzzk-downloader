@@ -1,5 +1,5 @@
 <script lang="ts">
-  // 로그인 화면(S3, worker.md §11.7, 구현 중 변경 A3-1). 뷰가 아니라 App의 게이트 분기다: 잠긴 동안 본문은 이것뿐이다.
+  // 로그인 화면(S3, worker.md §11.7, 구현 중 변경 62). 뷰가 아니라 App의 게이트 분기다: 잠긴 동안 본문은 이것뿐이다.
   // 스스로 authLogin을 부르지 않는다(설치 스모크는 자리표시 주소로 auth:true다). 문구·버튼은 loginScreen 표가 정한다.
   import { tick } from 'svelte';
   import { loginScreen, remainingSecs } from '../auth';

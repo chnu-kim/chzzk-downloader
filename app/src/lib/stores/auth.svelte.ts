@@ -1,4 +1,4 @@
-// 로그인 상태(worker.md §11, 구현 중 변경 A3-1). 상태 판단은 Rust(`AuthService`)가 하고 여기서는 받은 값을 따라가며,
+// 로그인 상태(worker.md §11, 구현 중 변경 62). 상태 판단은 Rust(`AuthService`)가 하고 여기서는 받은 값을 따라가며,
 // 화면은 이 값 하나로 게이트를 그린다. 셸 command 게이트(55)가 권위이고 화면은 어긋나지 않게만 한다.
 import * as api from '../api';
 import type { AuthStatusDto } from '../bindings';
@@ -15,7 +15,7 @@ export const AUTH_DISABLED: AuthStatusDto = { ...EMPTY, state: 'disabled' };
 
 const key = (s: AuthStatusDto | null) => (s ? `${s.state}:${s.reason ?? ''}` : '');
 
-/** 사용자 동작. 같은 동작만 겹치지 않게 막는다(구현 중 변경 A3-5 (가)) */
+/** 사용자 동작. 같은 동작만 겹치지 않게 막는다(구현 중 변경 66 (가)) */
 export type AuthAction = 'login' | 'reconnect' | 'reopen' | 'copy' | 'cancel' | 'logout';
 
 export class AuthStore {

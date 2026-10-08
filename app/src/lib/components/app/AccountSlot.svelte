@@ -1,5 +1,5 @@
 <script lang="ts">
-  // 헤더의 계정 자리(signedIn일 때만 그려진다): 채널 이름, 오프라인 유예 배지, 계정 메뉴(worker.md 구현 중 변경 A3-1 (바)).
+  // 헤더의 계정 자리(signedIn일 때만 그려진다): 채널 이름, 오프라인 유예 배지, 계정 메뉴(worker.md 구현 중 변경 62 (바)).
   import type { AuthStatusDto } from '../../bindings';
   import { t } from '../../copy/ko';
   import { formatDateTimeShort } from '../../format/date';

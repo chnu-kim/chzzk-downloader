@@ -24,7 +24,9 @@ const R = 'reconnect';
 const rows: Row[] = [
   [st('signedOut'), { kind: 'message', title: ko['auth.signedOut.title'], body: ko['auth.intro'], problem: false, buttons: [[L, ko['auth.login'], 'primary']], help: false }],
   [st('checking'), { kind: 'checking', title: ko['auth.checking'], body: ko['auth.checking.body'], problem: false, buttons: [[L, ko['auth.relogin'], 'link']], help: false }],
-  [st('pending'), { kind: 'pending', title: ko['auth.pending.title'], body: null, problem: false, buttons: [], help: true }],
+  [{ ...st('pending'), pending: { userCode: 'TEST-CODE', expiresAt: 1 } }, { kind: 'pending', title: ko['auth.pending.title'], body: null, problem: false, buttons: [], help: true }],
+  // 코드 없는 pending: 버튼 없는 화면이 되지 않게 [다시 로그인]
+  [st('pending'), { kind: 'message', title: ko['auth.unknown.title'], body: ko['auth.unknown.body'], problem: true, buttons: [[L, ko['auth.relogin'], 'primary']], help: false }],
   [st('denied', 'removedFromAllowlist', '테스트 채널'), { kind: 'message', title: ko['auth.removed.title'], body: '채널: 테스트 채널. 계속 쓰려면 관리자에게 문의해 주세요.', problem: true, buttons: [[L, ko['auth.otherAccount'], 'primary']], help: true }],
   [st('denied', 'removedFromAllowlist'), { kind: 'message', title: ko['auth.removed.title'], body: ko['auth.removed.bodyNoName'], problem: true, buttons: [[L, ko['auth.otherAccount'], 'primary']], help: true }],
   [st('denied', null, '테스트 채널'), { kind: 'message', title: ko['auth.denied.title'], body: '채널: 테스트 채널. 허가를 받으려면 관리자에게 채널 이름을 알려 주세요.', problem: true, buttons: [[L, ko['auth.otherAccount'], 'primary']], help: true }],
@@ -59,6 +61,15 @@ describe('loginScreen 표', () => {
   it('disabled·signedIn은 화면이 없다', () => {
     expect(loginScreen(st('disabled'))).toBeNull();
     expect(loginScreen(st('signedIn'))).toBeNull();
+  });
+
+  it('세션 만료·서버 문구는 원인을 단정하지 않는다(401 invalid_token도 같은 화면, Worker 형식 4xx도 server)', () => {
+    for (const k of ['auth.sessionExpired.title', 'auth.sessionExpired.body'] as const) {
+      expect(ko[k]).not.toMatch(/오래|30일|60일/);
+    }
+    for (const k of ['auth.server.title', 'auth.server.body'] as const) {
+      expect(ko[k]).not.toMatch(/문제|고장|오류/);
+    }
   });
 
   it('revoked 문구는 원인을 단정하지 않는다(관리자 탓으로 읽히지 않게)', () => {

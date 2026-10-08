@@ -182,7 +182,7 @@ describe('AuthGate 화면', () => {
     await waitFor(() => expect(api.getSettings).toHaveBeenCalledTimes(1));
     ui.goSettings();
     emit(authDto({ state: 'expired', reason: 'sessionExpired' }));
-    await screen.findByRole('heading', { name: '다시 로그인해 주세요' });
+    await screen.findByRole('heading', { name: '로그인이 만료됐어요' });
     expect(ui.view).toBe('home');
     emit(authDto({ state: 'signedIn', channelName: '테스트 채널' }));
     await waitFor(() => expect(api.getSettings).toHaveBeenCalledTimes(2));
@@ -218,6 +218,34 @@ describe('AuthGate 화면', () => {
     await user.click(await screen.findByRole('button', { name: '치지직으로 로그인' }));
     const h = await screen.findByRole('heading', { name: '브라우저에서 로그인해 주세요' });
     await waitFor(() => expect(h).toHaveFocus());
+  });
+
+  it('로그인이 끝나 잠금이 풀리면 포커스가 body에 남지 않고 홈 입력줄로 간다', async () => {
+    start(authDto({ state: 'pending', pending: { userCode: 'K7QX-4MRA', expiresAt: Math.floor(Date.now() / 1000) + 600 } }));
+    render(App);
+    const cancel = await screen.findByRole('button', { name: '취소' });
+    cancel.focus();
+    expect(cancel).toHaveFocus();
+    emit(authDto({ state: 'signedIn', channelName: '테스트 채널' }));
+    const input = await screen.findByLabelText('영상 주소');
+    await waitFor(() => expect(input).toHaveFocus());
+  });
+
+  it('처음부터 열려 있으면(잠긴 적 없음) 입력줄로 포커스를 옮기지 않는다', async () => {
+    start(authDto({ state: 'disabled' }));
+    render(App);
+    const input = await screen.findByLabelText('영상 주소');
+    await Promise.resolve();
+    expect(input).not.toHaveFocus();
+  });
+
+  it('코드 없는 pending이면 버튼 없는 화면 대신 [다시 로그인]을 보인다', async () => {
+    const user = userEvent.setup();
+    start(authDto({ state: 'pending' }));
+    vi.mocked(api.authLogin).mockResolvedValue(authDto({ state: 'checking' }));
+    render(App);
+    await user.click(await screen.findByRole('button', { name: '다시 로그인' }));
+    expect(api.authLogin).toHaveBeenCalledTimes(1);
   });
 
   it('checking 화면은 스피너·안내·[다시 로그인]을 처음부터 보이고 로그인을 시작할 수 있다', async () => {

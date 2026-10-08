@@ -320,7 +320,7 @@ pub fn on_run_event<R: Runtime>(app: &AppHandle<R>, e: RunEvent) {
 
 /// main 창이 포커스를 얻으면 로그인 재확인 틱(`Trigger::Focus`)을 띄운다(worker.md §11.3, 구현 중 변경 56 (다)).
 /// 띄웠으면 `true`. 로그인을 쓰지 않는 빌드·상태 없음·다른 창·포커스 잃음은 `false`.
-/// `RunEvent::WindowEvent`는 `#[non_exhaustive]`라 테스트가 만들 수 없어 처리를 함수로 뺐다(구현 중 변경 A3-4).
+/// `RunEvent::WindowEvent`는 `#[non_exhaustive]`라 테스트가 만들 수 없어 처리를 함수로 뺐다(구현 중 변경 65).
 pub fn on_window_focus<R: Runtime>(app: &AppHandle<R>, label: &str, focused: bool) -> bool {
     if !focused || label != "main" {
         return false;
@@ -337,7 +337,7 @@ pub fn on_window_focus<R: Runtime>(app: &AppHandle<R>, label: &str, focused: boo
 /// 시작 실패 창의 제목.
 pub const STARTUP_FAILED_TITLE: &str = "치지직 다운로더를 시작하지 못했어요";
 
-/// 시작 실패의 종류(구현 중 변경 A3-3). 안내 문구가 다르다.
+/// 시작 실패의 종류(구현 중 변경 64). 안내 문구가 다르다.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StartupFailure {
     /// 작업 목록·설정 파일(디스크·폴더 권한)
@@ -347,6 +347,8 @@ pub enum StartupFailure {
 }
 
 /// `App::open_with_auth` 오류의 종류: 셸이 내보낸 로그인 클라이언트 오류만 AuthConfig다.
+/// 분기 키는 `AUTH_CLIENT_FAILED` 문구 그대로다(셸에서 바꾸면 여기도 본다). 원래 오류(종류)는 셸이 이미 로그에
+/// 남겼고, 호출한 쪽이 코드·문구를 다시 남긴다.
 pub fn open_failure_kind(e: &AppError) -> StartupFailure {
     if e.code == ErrorCode::Internal && e.message == AUTH_CLIENT_FAILED {
         StartupFailure::AuthConfig

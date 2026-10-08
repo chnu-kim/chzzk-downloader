@@ -1,4 +1,4 @@
-// 로그인 화면의 순수 판단(worker.md 구현 중 변경 A3-1 (나)). 상태·사유 → 제목·설명·버튼 표 하나.
+// 로그인 화면의 순수 판단(worker.md 구현 중 변경 62 (나)). 상태·사유 → 제목·설명·버튼 표 하나.
 import type { AuthStatusDto } from './bindings';
 import { t } from './copy/ko';
 
@@ -60,6 +60,10 @@ export function loginScreen(s: AuthStatusDto): LoginScreen | null {
         otherAccountHelp: false,
       };
     case 'pending':
+      // 코드·기한 없는 pending은 그릴 것이 없다: 버튼 없는 화면이 되지 않게 [다시 로그인]으로 갈 길을 둔다(원인은 단정하지 않는다)
+      if (!s.pending) {
+        return message('auth.unknown.title', t('auth.unknown.body'), true, [login('auth.relogin', 'primary')]);
+      }
       return {
         kind: 'pending',
         title: t('auth.pending.title'),

@@ -54,7 +54,11 @@ impl HttpWorkerApi {
             .no_zstd()
             .user_agent(format!("chzzk-downloader/{}", env!("CARGO_PKG_VERSION")))
             .build()
-            .map_err(|_| ApiError::Transport { timed_out: false })?;
+            .map_err(|e| {
+                // 원인을 로그에 남긴다. 요청 전이라 주소가 없지만 규칙대로 URL을 떼고 남긴다
+                tracing::error!(error = %e.without_url(), "로그인 서버 HTTP 클라이언트를 만들지 못함");
+                ApiError::Transport { timed_out: false }
+            })?;
         Ok(Self { client, base })
     }
 

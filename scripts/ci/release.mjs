@@ -195,15 +195,6 @@ const git = (args) => {
   return { code: r.status, out: (r.stdout ?? '').trim() };
 };
 
-// 태그 릴리스 차단(worker.md 구현 중 변경 60 (가), ROADMAP "A2→A3 태그 금지", 78에서 재도입). A5 전 앱은 본인 영상만 받는다는 보장(OwnershipGate)이 없다.
-// **A5(OwnershipGate) PR이 이 상수를 지운다**(null).
-export const TAG_BLOCK = 'phase3b-a5';
-export const TAG_BLOCK_REASON = 'Phase 3b OwnershipGate(A5) 전이라 태그 릴리스를 막는다(본인 영상만 받는다는 보장이 없다)';
-// → 차단 사유 | null. tag 모드이고 차단 상수가 있을 때만(RELEASE_TAG가 아니라 모드로 판정: 리허설의 tag 입력은 막지 않는다)
-export function tagBlockProblem(mode, block = TAG_BLOCK) {
-  return mode === 'tag' && block ? `${TAG_BLOCK_REASON} [${block}]` : null;
-}
-
 // 태그 이름과 저장소의 다른 v* 태그 → 문제 목록(단조 증가)
 export function tagProblems(tag, others) {
   const v = tag.replace(/^v/, '');
@@ -245,12 +236,6 @@ async function cmdGate(env) {
   if (!['tag', 'rehearsal'].includes(mode) || !/^[0-9a-f]{40}$/.test(sha ?? '')) {
     err('gate: RELEASE_MODE(tag|rehearsal)·GITHUB_SHA가 필요하다');
     return 2;
-  }
-  // 0. 태그 차단 상수: 있으면 다른 검사(cargo metadata·ci-ok 기다림) 없이 바로 1
-  const blocked = tagBlockProblem(mode);
-  if (blocked) {
-    err(`gate: ${blocked}`);
-    return 1;
   }
   const version = workspaceVersion();
   const tag = env.RELEASE_TAG ?? '';

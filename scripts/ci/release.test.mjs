@@ -41,9 +41,6 @@ import {
   runWorkerChecks,
   TAG_VERIFY_TOKEN_MESSAGE,
   TAG_VERIFY_VIA,
-  TAG_BLOCK,
-  TAG_BLOCK_REASON,
-  tagBlockProblem,
   tagProblems,
   tagVerifyProblem,
   tagVerifyViaMessage,
@@ -152,41 +149,6 @@ test('태그 단조 증가', () => {
   assert.equal(tagProblems('v0.2.0', ['v0.2.0']).length, 1);
   assert.equal(tagProblems('0.2.0', []).length, 1);
   assert.equal(tagProblems('v0.2', []).length, 1);
-});
-
-test('태그 차단(A5 전): tag 모드만 막고, 리허설(tag 입력 포함)·dry·모드 없음은 통과, 상수를 지우면 풀린다', () => {
-  assert.equal(TAG_BLOCK, 'phase3b-a5');
-  const p = tagBlockProblem('tag');
-  assert.ok(p && p.includes('A5') && p.includes(TAG_BLOCK_REASON), p);
-  for (const m of ['rehearsal', 'dry', undefined, '']) assert.equal(tagBlockProblem(m), null, String(m));
-  // A5 PR은 상수만 지운다(null): tag 모드도 통과
-  assert.equal(tagBlockProblem('tag', null), null);
-});
-
-test('release.mjs gate 진입점: tag 모드는 다른 검사(cargo·git·gh) 전에 차단 사유로 1', () => {
-  // PATH를 비워 cargo·git·gh에 닿으면 다른 오류가 나게 한다: 차단이 맨 앞이면 사유 한 줄로 1이다
-  const { GITHUB_OUTPUT: _o, ...rest } = process.env;
-  const r = spawnSync(process.execPath, [join(ROOT, 'scripts/ci/release.mjs'), 'gate'], {
-    env: { ...rest, PATH: '', RELEASE_MODE: 'tag', RELEASE_TAG: 'v99.0.0', GITHUB_SHA: 'a'.repeat(40), CI_WAIT_TIMEOUT: '0' },
-    encoding: 'utf8',
-    timeout: 60_000,
-  });
-  const out = r.stdout + r.stderr;
-  assert.equal(r.status, 1, out);
-  assert.ok(out.includes(TAG_BLOCK_REASON), out);
-  assert.ok(!out.includes('버전 파일') && !out.includes('ci-ok'), out);
-});
-
-test('release.mjs gate 진입점: 리허설 모드는 차단 사유 없이 버전 확인 단계까지 간다', () => {
-  const { GITHUB_OUTPUT: _o, ...rest } = process.env;
-  const r = spawnSync(process.execPath, [join(ROOT, 'scripts/ci/release.mjs'), 'gate'], {
-    env: { ...rest, PATH: '', RELEASE_MODE: 'rehearsal', RELEASE_TAG: 'v99.0.0', GITHUB_SHA: 'a'.repeat(40), CI_WAIT_TIMEOUT: '0' },
-    encoding: 'utf8',
-    timeout: 60_000,
-  });
-  const out = r.stdout + r.stderr;
-  assert.ok(!out.includes(TAG_BLOCK_REASON), out);
-  assert.ok(out.includes('버전 파일'), out);
 });
 
 test('ci-ok 판정: 어느 master 실행이든 ci-ok 녹색이면 통과, 모두 끝났는데 없으면 실패, 그 밖은 기다림', () => {

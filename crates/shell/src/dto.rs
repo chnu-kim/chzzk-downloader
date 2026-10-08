@@ -443,7 +443,7 @@ pub struct EnqueueRequest {
     pub content: ContentRef,
     pub title: String,
     pub channel_name: String,
-    /// 웹뷰가 아는 컨텐츠 채널 ID. 로그인을 쓰는 빌드에서 셸은 이 값을 믿지 않고 검증한 값으로 덮어쓴다(worker.md 구현 중 변경 A5-1)
+    /// 웹뷰가 아는 컨텐츠 채널 ID. 로그인을 쓰는 빌드에서 셸은 이 값을 믿지 않고 검증한 값으로 덮어쓴다(worker.md 구현 중 변경 82)
     pub channel_id: Option<String>,
     pub quality_id: String,
     pub quality_label: String,

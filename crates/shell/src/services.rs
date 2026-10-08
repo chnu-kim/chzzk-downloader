@@ -525,7 +525,7 @@ pub async fn enqueue<B: Backend>(
     manager: &DownloadManager<B>,
     mut req: EnqueueRequest,
 ) -> Result<JobDto, AppError> {
-    // 웹뷰가 보낸 channel_id는 믿지 않는다: 검증한 컨텐츠 채널 ID로 덮어쓴다(A5-1)
+    // 웹뷰가 보낸 channel_id는 믿지 않는다: 검증한 컨텐츠 채널 ID로 덮어쓴다(82)
     let content = req.content.clone();
     if let Some(owner) = gate
         .admit(&content, || settings.content_channel(&content))

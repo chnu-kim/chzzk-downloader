@@ -128,7 +128,7 @@
       <span class="err-icon"><Icon name="alert" /></span>
       <div>
         <p class="err-title">{err.title}</p>
-        <!-- 막힌 작업은 다시 시도할 버튼이 없으므로 '다시 시도해 주세요' 같은 본문을 숨기고 막힌 이유만 둔다(app.md 구현 중 변경 A5-1) -->
+        <!-- 막힌 작업은 다시 시도할 버튼이 없으므로 '다시 시도해 주세요' 같은 본문을 숨기고 막힌 이유만 둔다(app.md 구현 중 변경 63) -->
         {#if !block}
           {#if err.body}<p class="err-body">{err.body}</p>{/if}
           {#if err.detail}<p class="err-body detail">{err.detail}</p>{/if}

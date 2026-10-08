@@ -1,4 +1,4 @@
-// 본인 영상 게이트(worker.md 구현 중 변경 A5-1·A5-2): 남의 영상은 카드에서 막히고, 다른 채널의 멈춘 작업은 이어받을 수 없다.
+// 본인 영상 게이트(worker.md 구현 중 변경 82·83): 남의 영상은 카드에서 막히고, 다른 채널의 멈춘 작업은 이어받을 수 없다.
 // 판정은 셸이 한다. 가짜 백엔드는 resolve 시나리오의 `ownership`과 로그인 채널로 셸을 흉내 낸다.
 import type { AuthStatusDto } from '../src/lib/bindings';
 import { err, job } from '../src/test/jobFixtures';

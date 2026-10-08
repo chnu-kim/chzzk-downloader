@@ -1,4 +1,4 @@
-//! 본인 영상 게이트(worker.md §11.5, app.md §12, 구현 중 변경 A5-1).
+//! 본인 영상 게이트(worker.md §11.5, app.md §12, 구현 중 변경 82).
 //!
 //! 판정 채널은 로그인 묶음의 channelId 하나다(`AuthService::signed_in_channel`). 웹뷰가 보낸
 //! `EnqueueRequest.channel_id`는 믿지 않는다: 게이트가 최근 resolve 32개의 `컨텐츠 → 컨텐츠 채널 ID`를 들고 있고,

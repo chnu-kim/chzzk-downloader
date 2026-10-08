@@ -289,7 +289,7 @@ impl App {
     }
 
     /// 상태가 바뀔 때마다(처음 포함) 앱이 부른다. 채널 ID가 있는 처음 SignedIn에서 미뤄 둔 자동 이어받기를 한 번 하고,
-    /// 그 채널의 interrupted만 줄 세운다(A5-2). 줄 세운 수
+    /// 그 채널의 interrupted만 줄 세운다(83). 줄 세운 수
     pub fn on_auth_status(&self, st: &AuthStatus) -> usize {
         if st.phase != AuthPhase::SignedIn {
             return 0;

@@ -135,7 +135,7 @@ impl E2eConfig {
     }
 }
 
-/// 격리 실행의 로그인 주소 열기·복사(Phase 3b A5, cicd.md 구현 중 변경 A5-1): 브라우저를 띄우지 않는다.
+/// 격리 실행의 로그인 주소 열기·복사(Phase 3b A5, cicd.md 구현 중 변경 106): 브라우저를 띄우지 않는다.
 /// Worker 스텁이 poll에 바로 답하므로 브라우저가 필요 없고, Windows 러너에서 Edge가 떠 WebView2 세션을 흔들지 않게 한다.
 #[derive(Debug, Default)]
 pub struct E2eAuthIo {

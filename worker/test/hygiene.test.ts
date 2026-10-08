@@ -1,11 +1,13 @@
 // 비밀값 위생(docs/design/worker.md §14, W4 수락 기준, 구현 중 변경 28): 전 흐름과 실패 경로를 한 번에 돌리고, 로그 줄과 모든 응답에 카나리가 없는지 본다.
-// 카나리 = 비밀값(클라이언트 secret), 치지직이 준 code·토큰, state·handle·loginId·pollSecret·pollVerifier, 우리 토큰, 채널 ID·이름.
+// 카나리 = 비밀값(클라이언트 secret), 치지직이 준 code·토큰, state·handle·loginSecret·loginVerifier·grant·루프백 state, 우리 토큰, 채널 ID·이름.
 // 응답에 있어도 되는 자리는 표(allowed)로 좁힌다. 그 밖에 하나라도 나오면 실패한다.
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createFakeChzzk, FAKE_ACCOUNTS, type FakeChzzk } from "./fake-chzzk.mjs";
 import { installFakeChzzk, type FakeNet } from "./network";
 import { A1, B2 } from "./store/helpers";
-import { advance, allowedChannel, AppClient, appFlow, Browser, store, useClock, viaEnv, type Send } from "./http/harness";
+import { advance, allowedChannel, AppClient, appFlow, Browser, parseLoopback, store, useClock, viaEnv, type Send } from "./http/harness";
+import { OUTDATED_HANDLE } from "../src/http/auth";
+import { newSecret, newToken } from "../src/core/token";
 
 let fake: FakeChzzk;
 let net: FakeNet;
@@ -31,7 +33,7 @@ const BAD_CODE = "hygcode" + crypto.randomUUID() + "Z".repeat(1100);
 // 로그 허용 필드(src/core/log.ts ALLOWED + event)
 const LOG_KEYS = new Set(["event", "level", "route", "method", "status", "stage", "timedOut", "durationMs", "flowKind", "reason", "sessionIdPrefix", "chzzkCode", "key", "errorName"]);
 
-type Kind = "secret" | "code" | "chzzkToken" | "pollSecret" | "pollVerifier" | "loginId" | "handle" | "state" | "flow" | "web" | "access" | "refresh" | "id" | "name";
+type Kind = "secret" | "code" | "chzzkToken" | "loginSecret" | "loginVerifier" | "grant" | "loopState" | "handle" | "state" | "flow" | "web" | "access" | "refresh" | "id" | "name";
 type Label = { kind: Kind; account?: keyof typeof FAKE_ACCOUNTS };
 type Entry = { method: string; path: string; status: number; location: string; text: string };
 
@@ -39,23 +41,24 @@ function allowed(e: Entry, l: Label): boolean {
   const p = e.path;
   const post = e.method === "POST";
   switch (l.kind) {
-    case "loginId":
     case "handle":
       return post && p === "/auth/start" && e.status === 201;
     case "state":
     case "flow":
       return post && e.status === 303 && (p.startsWith("/auth/login/") || p === "/auth/web/start");
     case "web":
+    case "grant":
+    case "loopState":
       return e.method === "GET" && p === "/auth/callback" && e.status === 303;
     case "access":
     case "refresh":
-      return post && (p === "/auth/poll" || p === "/auth/refresh") && e.status === 200;
+      return post && (p === "/auth/redeem" || p === "/auth/refresh") && e.status === 200;
     case "id":
-      if (l.account === "b2") return e.status === 200 && (p === "/auth/poll" || p === "/auth/refresh" || p === "/api/me");
+      if (l.account === "b2") return e.status === 200 && (p === "/auth/redeem" || p === "/auth/refresh" || p === "/api/me");
       return l.account === "c3" && e.method === "GET" && p === "/auth/done";
     case "name":
-      if (l.account === "b2") return e.status === 200 && (p === "/auth/poll" || p === "/auth/refresh" || p === "/api/me");
-      return l.account === "c3" && (p === "/auth/poll" || p === "/auth/done");
+      if (l.account === "b2") return e.status === 200 && (p === "/auth/redeem" || p === "/auth/refresh" || p === "/api/me");
+      return l.account === "c3" && (p === "/auth/redeem" || p === "/auth/done");
     default:
       return false;
   }
@@ -101,13 +104,13 @@ it("전 흐름을 돌려도 로그와 응답에 카나리가 새지 않는다", 
   // 1. 승인 → me → refresh → 복구 → 재사용 → logout
   const ok = await run();
   const app = new AppClient(send);
-  expect((await app.me(ok.pollBody.accessToken)).status).toBe(200);
+  expect((await app.me(ok.redeemBody.accessToken)).status).toBe(200);
   advance(1000);
-  const child: any = await (await app.refresh(ok.pollBody.refreshToken)).json();
+  const child: any = await (await app.refresh(ok.redeemBody.refreshToken)).json();
   advance(30_000);
-  expect((await app.refresh(ok.pollBody.refreshToken)).status).toBe(200);
+  expect((await app.refresh(ok.redeemBody.refreshToken)).status).toBe(200);
   advance(61_000);
-  expect((await app.refresh(ok.pollBody.refreshToken)).status).toBe(401);
+  expect((await app.refresh(ok.redeemBody.refreshToken)).status).toBe(401);
   expect((await app.logout({ access: child.accessToken })).status).toBe(204);
   // 2. 거부(이스케이프할 이름), 3. 취소
   await run((f) => (f.state.account = "c3"));
@@ -144,12 +147,15 @@ it("전 흐름을 돌려도 로그와 응답에 카나리가 새지 않는다", 
   advance(11 * 60_000);
   {
     const { browser: b, app: client } = mk();
-    // 콜백 code_format(카나리 code) → failed
+    // 콜백 code_format(카나리 code) → 루프백으로 failed
     const s1 = await client.start();
     const cont1 = await b.post(new URL(s1.body.loginUrl).pathname);
     const st1 = new URL(cont1.headers.get("Location") ?? "").searchParams.get("state") ?? "";
-    expect((await b.get(`/auth/callback?code=${BAD_CODE}&state=${st1}`)).headers.get("Location")).toBe("/auth/done?r=failed");
-    expect(await (await client.poll(s1.body.loginId, s1.pollSecret)).json()).toEqual({ status: "failed", code: "token" });
+    const loop1 = parseLoopback((await b.get(`/auth/callback?code=${BAD_CODE}&state=${st1}`)).headers.get("Location") ?? "");
+    expect(loop1).not.toBeNull();
+    expect((await client.redeem(loop1!.grant, "B".repeat(43))).status).toBe(404);
+    expect(await (await client.redeem(loop1!.grant, s1.loginSecret)).json()).toEqual({ status: "failed", code: "token" });
+    expect((await client.redeem(loop1!.grant, s1.loginSecret)).status).toBe(404);
     // [계속] 403(Origin 없음)·404(모르는 handle)·409(두 번째), 웹 start 403
     const s2 = await client.start();
     const path2 = new URL(s2.body.loginUrl).pathname;
@@ -168,11 +174,12 @@ it("전 흐름을 돌려도 로그와 응답에 카나리가 새지 않는다", 
     expect((await new AppClient(limited).start(ip)).res.status).toBe(201);
     expect((await new AppClient(limited).start(ip)).res.status).toBe(429);
     expect((await new Browser(limited).post("/auth/web/start", { "CF-Connecting-IP": ip })).status).toBe(429);
-    // poll 400·404·429
-    expect((await raw("/auth/poll", "[]")).status).toBe(400);
-    expect((await client.poll(s2.body.loginId, "B".repeat(43))).status).toBe(404);
-    expect((await client.pollNow(s2.body.loginId, s2.pollSecret)).status).toBe(200);
-    expect((await client.pollNow(s2.body.loginId, s2.pollSecret)).status).toBe(429);
+    // redeem 400·404, 옛 앱 미끼(start 201·안내 페이지 200·poll 비석 404)
+    expect((await raw("/auth/redeem", "[]")).status).toBe(400);
+    expect((await client.redeem(newToken("grant"), newSecret())).status).toBe(404);
+    expect((await raw("/auth/start", JSON.stringify({ pollVerifier: newSecret(), client: "app/0.1.1 macos" }))).status).toBe(201);
+    expect((await b.get("/auth/login/" + OUTDATED_HANDLE)).status).toBe(200);
+    expect((await raw("/auth/poll", "{}")).status).toBe(404);
     // 콜백 내부 예외(errorName만 로그에)
     const { AuthStore } = await import("../src/store/AuthStore");
     vi.spyOn(AuthStore.prototype, "finish").mockImplementationOnce(() => {
@@ -180,7 +187,7 @@ it("전 흐름을 돌려도 로그와 응답에 카나리가 새지 않는다", 
     });
     const s3 = await client.start();
     const cb3 = await b.authorize(await b.post(new URL(s3.body.loginUrl).pathname), fake);
-    expect((await b.get(cb3)).headers.get("Location")).toBe("/auth/done?r=failed");
+    expect(parseLoopback((await b.get(cb3)).headers.get("Location") ?? "")).not.toBeNull();
     // 세션: me 401, refresh 400·401(invalid_token)·429(채널 회전 한도), 허용 제외 뒤 me·refresh 403, logout 401
     const login = await run();
     const a = new AppClient(send);
@@ -188,8 +195,8 @@ it("전 흐름을 돌려도 로그와 응답에 카나리가 새지 않는다", 
     expect((await a.me("cda_" + "A".repeat(43))).status).toBe(401);
     expect((await raw("/auth/refresh", "{")).status).toBe(400);
     expect((await a.refresh("cdr_nope")).status).toBe(401);
-    let rt: string = login.pollBody.refreshToken;
-    let at: string = login.pollBody.accessToken;
+    let rt: string = login.redeemBody.refreshToken;
+    let at: string = login.redeemBody.accessToken;
     let last = 0;
     for (let i = 0; i < 12 && last !== 429; i++) {
       advance(1000);
@@ -227,7 +234,11 @@ it("전 흐름을 돌려도 로그와 응답에 카나리가 새지 않는다", 
     [/cdf_[A-Za-z0-9_-]{43}/g, "flow"],
   ];
   for (const [re, kind] of kinds) for (const m of all.matchAll(re)) put(m[0], { kind });
-  for (const e of entries) for (const m of e.location.matchAll(/state=([A-Za-z0-9_-]{43})/g)) put(m[1], { kind: "state" });
+  // state는 치지직 인가 주소의 것만(루프백 Location의 state는 loopState)
+  for (const e of entries) {
+    if (!e.location.startsWith("http://127.0.0.1:8788/")) continue;
+    for (const m of e.location.matchAll(/state=([A-Za-z0-9_-]{43})/g)) put(m[1], { kind: "state" });
+  }
   for (const r of requestTexts) {
     for (const m of r.matchAll(/\/auth\/login\/([A-Za-z0-9_-]{22})/g)) put(m[1], { kind: "handle" });
   }
@@ -239,13 +250,15 @@ it("전 흐름을 돌려도 로그와 응답에 카나리가 새지 않는다", 
     } catch {
       continue;
     }
-    put(b.pollSecret as string, { kind: "pollSecret" });
-    put(b.pollVerifier as string, { kind: "pollVerifier" });
-    put(b.loginId as string, { kind: "loginId" });
+    put(b.loginSecret as string, { kind: "loginSecret" });
+    // 옛 앱 미끼 요청의 pollVerifier도 같은 종류다
+    put(b.loginVerifier as string, { kind: "loginVerifier" });
+    put(b.pollVerifier as string, { kind: "loginVerifier" });
   }
   for (const e of entries) {
-    const m = /"loginId":"([A-Za-z0-9_-]{22})"/.exec(e.text);
-    put(m?.[1], { kind: "loginId" });
+    const loop = parseLoopback(e.location);
+    put(loop?.grant, { kind: "grant" });
+    put(loop?.state, { kind: "loopState" });
   }
   for (const [account, a] of Object.entries(FAKE_ACCOUNTS)) {
     put(a.channelId, { kind: "id", account: account as keyof typeof FAKE_ACCOUNTS });
@@ -253,7 +266,7 @@ it("전 흐름을 돌려도 로그와 응답에 카나리가 새지 않는다", 
   }
   // 수집이 비어 있으면 아래 단언이 아무것도 보지 않는다
   const seen = new Set([...labels.values()].map((l) => l.kind));
-  for (const k of ["secret", "code", "chzzkToken", "pollSecret", "pollVerifier", "loginId", "handle", "state", "flow", "web", "access", "refresh", "id", "name"] as const) {
+  for (const k of ["secret", "code", "chzzkToken", "loginSecret", "loginVerifier", "grant", "loopState", "handle", "state", "flow", "web", "access", "refresh", "id", "name"] as const) {
     expect([k, seen.has(k)]).toEqual([k, true]);
   }
 
@@ -276,11 +289,16 @@ it("전 흐름을 돌려도 로그와 응답에 카나리가 새지 않는다", 
     { event: "auth.start.rejected", flowKind: "app", reason: "rate_limited" },
     { event: "auth.refresh.rejected", reason: "rate_limited" },
     { event: "auth.refresh.rejected", reason: "not_allowed" },
+    { event: "auth.redeem.rejected", reason: "not_found" },
+    { event: "auth.redeem.rejected", reason: "bad_request" },
+    { event: "auth.start.outdated", flowKind: "app" },
+    { event: "auth.poll.rejected", reason: "app_outdated" },
+    { event: "auth.redeem.ok" },
   ]) {
     expect(events).toContainEqual(expect.objectContaining(want));
   }
 
-  // (나)(다) 응답: 표의 자리가 아니면 카나리가 없다(비밀값·code·치지직 토큰·pollSecret·pollVerifier는 어디에도 없다)
+  // (나)(다) 응답: 표의 자리가 아니면 카나리가 없다(비밀값·code·치지직 토큰·loginSecret·loginVerifier는 어디에도 없다)
   for (const e of entries) {
     for (const [v, l] of labels) {
       if (!e.text.includes(v)) continue;

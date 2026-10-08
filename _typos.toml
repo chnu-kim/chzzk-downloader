@@ -4,6 +4,8 @@
 extend-exclude = [
   # 합성 fixture: 바이트 그대로 고정한 데이터
   "testdata/",
+  # 공유 KAT(base64url 값 고정, worker.md 구현 중 변경 89)
+  "worker/test/vectors/",
   # 해시 목록
   "scripts/ci/public-denylist.txt",
   "*.lock",

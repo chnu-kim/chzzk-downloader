@@ -12,7 +12,7 @@ import { isQuietPath, ROUTES } from "../../src/routes";
 import { createFakeChzzk, type FakeChzzk } from "../fake-chzzk.mjs";
 import { installFakeChzzk, type FakeNet } from "../network";
 import { A1, B2, C3, D4 } from "../store/helpers";
-import { AppClient, appFlow, Browser, csrfIn, formBody, ORIGIN, resetStore, store, useClock, type Send } from "./harness";
+import { AppClient, appFlow, Browser, csrfIn, formBody, ORIGIN, parseLoopback, resetStore, store, useClock, type Send } from "./harness";
 
 interface Rec {
   readonly path: string;
@@ -109,7 +109,7 @@ describe("경로 표", () => {
     for (const p of ["/auth/callback", "/auth/login/x", "/me/sessions/x/revoke", "/admin/sessions/x/revoke", "/admin/denied/x/allow", "/admin/denied/x/dismiss"]) {
       expect([p, isQuietPath(p)]).toEqual([p, true]);
     }
-    for (const p of ["/", "/health", "/auth/done", "/auth/start", "/auth/web/start", "/auth/poll", "/admin", "/admin/allow", "/auth/login", "/auth/callback/x"]) {
+    for (const p of ["/", "/health", "/auth/done", "/auth/start", "/auth/web/start", "/auth/poll", "/auth/redeem", "/admin", "/admin/allow", "/auth/login", "/auth/callback/x"]) {
       expect([p, isQuietPath(p)]).toEqual([p, false]);
     }
   });
@@ -126,17 +126,17 @@ describe("앱 로그인: 확인 페이지·콜백의 Worker 호출은 로그 0, 
   };
 
   it("승인·거부·취소·치지직 실패", async () => {
-    expect((await run()).pollBody.status).toBe("ok");
-    expect((await run((f) => (f.state.account = "c3"))).pollBody.status).toBe("denied");
-    expect((await run((f) => (f.state.authorize = "cancel"))).pollBody.status).toBe("cancelled");
-    expect((await run((f) => (f.state.tokenFail = 401))).pollBody).toEqual({ status: "failed", code: "token" });
-    expect((await run((f) => (f.state.userFail = "timeout"))).pollBody).toEqual({ status: "failed", code: "timeout" });
+    expect((await run()).redeemBody.status).toBe("ok");
+    expect((await run((f) => (f.state.account = "c3"))).redeemBody.status).toBe("denied");
+    expect((await run((f) => (f.state.authorize = "cancel"))).redeemBody.status).toBe("cancelled");
+    expect((await run((f) => (f.state.tokenFail = 401))).redeemBody).toEqual({ status: "failed", code: "token" });
+    expect((await run((f) => (f.state.userFail = "timeout"))).redeemBody).toEqual({ status: "failed", code: "timeout" });
     // 같은 콜백 다시 열기(consume 실패: state)
     const again = await run();
     await again.browser.get(again.callbackUrl);
 
     expect(workerSideOnQuiet()).toEqual([]);
-    // Worker 쪽 줄이 있었다면 그것은 quiet가 아닌 경로(/auth/start·/auth/poll·/auth/done)뿐이다
+    // Worker 쪽 줄이 있었다면 그것은 quiet가 아닌 경로(/auth/start·/auth/redeem·/auth/done)뿐이다
     expect(recs.filter((r) => !r.inDo).every((r) => !isQuietPath(r.path))).toBe(true);
     const ev = doEvents();
     expect(ev.filter((e) => e.event === "auth.login.ok")).toEqual([
@@ -168,7 +168,7 @@ describe("앱 로그인: 확인 페이지·콜백의 Worker 호출은 로그 0, 
       const { body } = await app.start();
       const cont = await b.post(new URL(body.loginUrl).pathname);
       const st = new URL(cont.headers.get("Location") ?? "").searchParams.get("state") ?? "";
-      expect((await b.get(`/auth/callback?code=${"Z".repeat(1100)}&state=${st}`)).headers.get("Location")).toBe("/auth/done?r=failed");
+      expect(parseLoopback((await b.get(`/auth/callback?code=${"Z".repeat(1100)}&state=${st}`)).headers.get("Location") ?? "")).not.toBeNull();
     }
     // 내부 예외: 정리 finish가 internal을 남긴다
     {
@@ -179,7 +179,7 @@ describe("앱 로그인: 확인 페이지·콜백의 Worker 호출은 로그 0, 
       fake.state.account = "b2";
       const { body } = await app.start();
       const cb = await b.authorize(await b.post(new URL(body.loginUrl).pathname), fake);
-      expect((await b.get(cb)).headers.get("Location")).toBe("/auth/done?r=failed");
+      expect(parseLoopback((await b.get(cb)).headers.get("Location") ?? "")).not.toBeNull();
     }
 
     expect(workerSideOnQuiet()).toEqual([]);
@@ -330,8 +330,8 @@ describe("라우터의 로그(config.error·http.internal)도 quiet 경로에서
     expect((await boom(ORIGIN + "/auth/login/" + "Q".repeat(22), { method: "GET" })).status).toBe(500);
     expect(recs).toEqual([]);
     // 대조: quiet가 아닌 경로는 http.internal을 남긴다
-    expect((await boom(ORIGIN + "/auth/poll", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ loginId: "Q".repeat(22), pollSecret: "B".repeat(43) }) })).status).toBe(500);
-    expect(workerEvents("/auth/poll")).toEqual([{ event: "http.internal", level: "error", route: "/auth/poll", method: "POST", errorName: "RangeError" }]);
+    expect((await boom(ORIGIN + "/auth/redeem", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ grant: "cdg_" + "A".repeat(43), loginSecret: "B".repeat(43) }) })).status).toBe(500);
+    expect(workerEvents("/auth/redeem")).toEqual([{ event: "http.internal", level: "error", route: "/auth/redeem", method: "POST", errorName: "RangeError" }]);
   });
 
   it("라우터 밖 예외(handle의 catch)", async () => {

@@ -1,0 +1,15 @@
+{
+  "$comment": "worker/src/core/loopback.ts(loopbackState·loopbackUrl·isLoopbackPort)와 crates/shell(token::loopback_state, L2)이 함께 읽는다(worker.md 구현 중 변경 88 (나)·89). 한쪽만 고치지 않는다. state = b64url(SHA-256(UTF-8(domain + loginVerifier)))",
+  "domain": "chzzk-downloader/loopback-state\n",
+  "state": [
+    { "loginSecret": "WlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlo", "loginVerifier": "vsC21rUDXpkBYxBRE9D-8wa2cqfiPLd0sDvQNlNjtT0", "state": "ThVGB9WIlSE4W8VjYpNUr5D85Q0bHDpIIdu2bNmGI3g" },
+    { "loginVerifier": "DwBzhbb51LfusnSGBa_hqYSgo7-j8BTQnip4TOnlzRo", "state": "JQAN_XSgcqjEJrGqzFX3BS_VB8M93ng0gfPvX-NkTr0" },
+    { "loginVerifier": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "state": "zAL1nw97ftiXtOpFiNEs_cZP8D3Eg0w-up0Oopb7rr4" }
+  ],
+  "url": [
+    { "port": 1024, "grant": "cdg_paWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaU", "state": "ThVGB9WIlSE4W8VjYpNUr5D85Q0bHDpIIdu2bNmGI3g", "url": "http://127.0.0.1:1024/chzzk-downloader/login?grant=cdg_paWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaU&state=ThVGB9WIlSE4W8VjYpNUr5D85Q0bHDpIIdu2bNmGI3g" },
+    { "port": 65535, "grant": "cdg_paWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaU", "state": "ThVGB9WIlSE4W8VjYpNUr5D85Q0bHDpIIdu2bNmGI3g", "url": "http://127.0.0.1:65535/chzzk-downloader/login?grant=cdg_paWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaU&state=ThVGB9WIlSE4W8VjYpNUr5D85Q0bHDpIIdu2bNmGI3g" }
+  ],
+  "portValid": [1024, 1025, 49152, 65535],
+  "portInvalid": [1023, 0, -1, 65536, 80.5, "8080", null]
+}

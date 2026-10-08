@@ -27,6 +27,8 @@ describe("생성", () => {
     expect(newToken("refresh", fill(0xff))).toBe(`cdr_${"_".repeat(42)}8`);
     expect(newToken("web", fill(0))).toBe(`cdw_${"A".repeat(43)}`);
     expect(newToken("flow", fill(0))).toBe(`cdf_${"A".repeat(43)}`);
+    expect(newToken("grant", fill(0))).toBe(`cdg_${"A".repeat(43)}`);
+    expect(newToken("grant", fill(0xa5))).toBe("cdg_paWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaU");
     expect(newId(fill(0))).toBe("A".repeat(22));
     expect(newSecret(fill(0xfb))).toBe(`${"-_v7".repeat(10)}-_s`);
   });
@@ -57,6 +59,9 @@ describe("형식 판정", () => {
     ["access", `cda_${body}`, true],
     ["refresh", `cdr_${body}`, true],
     ["web", `cdw_${"_-".repeat(21)}x`, true],
+    ["grant", `cdg_${body}`, true],
+    ["grant", `cda_${body}`, false],
+    ["access", `cdg_${body}`, false],
     ["access", `cdr_${body}`, false],
     ["refresh", `cda_${body}`, false],
     ["web", `cdf_${body}`, false],
@@ -124,16 +129,16 @@ describe("해시", () => {
     expect(await sha256Hex(t)).not.toBe(await sha256Hex(t.slice(4)));
   });
 
-  it("계약: pollVerifier는 b64url 문자열을 해시한다(디코드한 바이트가 아니다)", async () => {
-    const poll = newSecret(fill(0x5a));
-    const decoded = Uint8Array.fromBase64(poll, { alphabet: "base64url" });
+  it("계약: loginVerifier는 b64url 문자열을 해시한다(디코드한 바이트가 아니다)", async () => {
+    const login = newSecret(fill(0x5a));
+    const decoded = Uint8Array.fromBase64(login, { alphabet: "base64url" });
     expect(decoded).toHaveLength(32);
     const overBytes = b64url(new Uint8Array(await crypto.subtle.digest("SHA-256", decoded)));
-    const verifier = await sha256B64url(poll);
+    const verifier = await sha256B64url(login);
     expect(verifier).not.toBe(overBytes);
     expect(isSecret(verifier)).toBe(true);
-    // 앱(A1)과 함께 고정하는 known-answer: 0x5a 32바이트의 pollSecret → verifier
-    expect(poll).toBe(`${"Wlpa".repeat(10)}Wlo`);
+    // 앱(A1)과 함께 고정하는 known-answer: 0x5a 32바이트의 loginSecret → verifier
+    expect(login).toBe(`${"Wlpa".repeat(10)}Wlo`);
     const expectedHex = "bec0b6d6b5035e990163105113d0fef306b672a7e23cb774b03bd0365363b53d";
     expect(Uint8Array.fromBase64(verifier, { alphabet: "base64url" }).toHex()).toBe(expectedHex);
   });

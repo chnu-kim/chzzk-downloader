@@ -8,17 +8,15 @@
 import { DurableObject } from "cloudflare:workers";
 import { DEFAULT_START_RATE_10M } from "../config";
 import { ipBucket } from "../core/ip";
+import { isLoopbackPort, loopbackState } from "../core/loopback";
 import { log } from "../core/log";
 import { isHexHash, isId, isSecret, newId, newSecret, newToken, sha256Hex, type TokenKind } from "../core/token";
-import { newUserCode } from "../core/usercode";
 import { CHANNEL_ID, adminView, allow, allowDenied, audit, clip, disallow, dismissDenied } from "./allowlist";
 import { Db } from "./db";
 import {
   CLIENT_MAX,
   FLOW_CAP,
   FLOW_TTL_MS,
-  POLL_INTERVAL_MS,
-  claim,
   consume,
   continueApp,
   doneView,
@@ -27,8 +25,7 @@ import {
   insertWebFlow,
   liveFlowCount,
   loginPage,
-  pollGate,
-  pollGateKey,
+  redeem,
   throttle,
   type StartWindow,
 } from "./flows";
@@ -40,18 +37,20 @@ import type {
   AdminView,
   AllowResult,
   CheckResult,
-  ClaimResult,
   ConsumeResult,
   ContinueResult,
   DisallowResult,
   DoneView,
   FinishResult,
+  FinishSettled,
   LoginLogHint,
   LoginOutcome,
   LoginPageView,
   Minted,
   MySessionView,
+  RedeemResult,
   RotateResult,
+  StartAppInput,
   StartAppResult,
   StartWebResult,
   WebCheckResult,
@@ -71,7 +70,6 @@ export class AuthStore extends DurableObject<Env> {
   readonly db: Db;
   /** 앱·웹 start가 같이 쓰는 IP 스로틀(DO 메모리: 쫓겨나면 비워진다, 상한 32가 쓰기를 계속 묶는다) */
   readonly starts = new Map<string, StartWindow>();
-  readonly polls = new Map<string, number>();
   /** 채널별 회전·복구 스로틀(DO 메모리, 구현 중 변경 24) */
   readonly rotates = new Map<string, StartWindow>();
   // IP 키 소금: 키가 DO 밖으로 나가지 않으므로 DO 메모리에 둔다
@@ -123,21 +121,22 @@ export class AuthStore extends DurableObject<Env> {
 
   // ---- 로그인 흐름 ----
 
-  async startApp(pollVerifier: string, client: string, ip: string | null, limit: number, now: number): Promise<StartAppResult> {
-    if (!isSecret(pollVerifier)) return { ok: false, code: "bad_request" };
-    const lim = Number.isInteger(limit) && limit >= 1 ? limit : DEFAULT_START_RATE_10M;
-    const key = await this.ipKey(ip, now);
-    const loginId = newId();
+  async startApp(input: StartAppInput, now: number): Promise<StartAppResult> {
+    if (typeof input !== "object" || input === null || !isSecret(input.verifier) || typeof input.client !== "string") return { ok: false, code: "bad_request" };
+    // HTTP 경계만 믿지 않는다: 포트가 정수 1024–65535 밖이면 던진다(구현 중 변경 88 (다))
+    if (!isLoopbackPort(input.port)) throw new RangeError("startApp: 포트 범위 밖");
+    const lim = Number.isInteger(input.limit) && input.limit >= 1 ? input.limit : DEFAULT_START_RATE_10M;
+    const key = await this.ipKey(input.ip, now);
+    const flowId = newId();
     const handle = newId();
-    const userCode = newUserCode();
     const handleHash = await sha256Hex(handle);
     const t = throttle(this.starts, key, lim, now);
     if (!t.ok) return { ok: false, code: "rate_limited", retryAfterSec: t.retryAfterSec };
-    const cleanClient = clip(client, CLIENT_MAX);
+    const cleanClient = clip(input.client, CLIENT_MAX);
     return this.write<StartAppResult>(now, () => {
       if (liveFlowCount(this.db, now) >= FLOW_CAP) return { ok: false, code: "busy" };
-      insertAppFlow(this.db, { id: loginId, handleHash, pollVerifier, userCode, client: cleanClient }, now);
-      return { ok: true, loginId, handle, userCode, expiresAt: now + FLOW_TTL_MS, pollIntervalMs: POLL_INTERVAL_MS };
+      insertAppFlow(this.db, { id: flowId, handleHash, verifier: input.verifier, port: input.port, client: cleanClient }, now);
+      return { ok: true, flowId, handle, expiresAt: now + FLOW_TTL_MS };
     });
   }
 
@@ -186,7 +185,10 @@ export class AuthStore extends DurableObject<Env> {
       const sessionId = newId();
       const cookie = await mint("web");
       const csrf = newSecret();
-      r = await this.write(now, () => finish(this.db, flowId, outcome, { sessionId, cookie, csrf }, admins, now));
+      const grant = await mint("grant");
+      const s: FinishSettled = await this.write(now, () => finish(this.db, flowId, outcome, { sessionId, cookie, csrf, grant }, admins, now));
+      // verifier는 RPC 밖으로 나가지 않는다: 트랜잭션 뒤에 state로 바꾼다
+      r = s.type === "loopback" ? { type: "loopback", result: s.result, port: s.port, grant: s.grant, state: await loopbackState(s.verifier) } : s;
     }
     log(...finishEvent(outcome, r, hint));
     return r;
@@ -197,12 +199,11 @@ export class AuthStore extends DurableObject<Env> {
     return this.write(now, () => doneView(this.db, binderHash, now));
   }
 
-  async claim(loginId: string, pollVerifier: string, admins: readonly string[], now: number): Promise<ClaimResult> {
-    if (!isId(loginId) || !isSecret(pollVerifier)) return { status: "not_found" };
-    // 너무 이른 폴링은 SQL 없이 답한다(쓰기·읽기 0). 키에 verifier가 들어가 loginId만 아는 쪽이 수령을 막지 못한다
-    if (!pollGate(this.polls, pollGateKey(loginId, pollVerifier), now)) return { status: "too_soon" };
+  /** 앱 수령(구현 중 변경 88 (가)): grant 해시 + loginVerifier. 스로틀은 없다(grant는 추측할 수 없고 틀린 verifier는 쓰기 0, 88 (다)) */
+  async redeem(grantHash: string, verifier: string, admins: readonly string[], now: number): Promise<RedeemResult> {
+    if (!isHexHash(grantHash) || !isSecret(verifier)) return { status: "not_found" };
     const [access, refresh] = await Promise.all([mint("access"), mint("refresh")]);
-    return this.write(now, () => claim(this.db, loginId, pollVerifier, { access, refresh }, admins, now));
+    return this.write(now, () => redeem(this.db, grantHash, verifier, { access, refresh }, admins, now));
   }
 
   // ---- 세션 ----

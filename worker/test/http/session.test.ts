@@ -27,8 +27,8 @@ const logLines = (spy: { mock: { calls: unknown[][] } }): string[] => spy.mock.c
 
 async function login() {
   const f = await appFlow({ fake });
-  expect(f.pollBody.status).toBe("ok");
-  return f.pollBody as { accessToken: string; refreshToken: string; channelId: string };
+  expect(f.redeemBody.status).toBe("ok");
+  return f.redeemBody as { accessToken: string; refreshToken: string; channelId: string };
 }
 
 describe("refresh", () => {

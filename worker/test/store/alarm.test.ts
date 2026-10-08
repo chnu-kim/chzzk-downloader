@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { newSecret } from "../../src/core/token";
 import type { Db } from "../../src/store/db";
 import { sweep } from "../../src/store/sweep";
-import { DAY, T0, dumpAll, freshStub } from "./helpers";
+import { DAY, PORT, T0, dumpAll, freshStub } from "./helpers";
 
 afterEach(() => {
   vi.useRealTimers();
@@ -37,7 +37,7 @@ describe("setAlarm과 시계", () => {
 
   it("첫 쓰기가 알람 하나를 예약하고 이후 쓰기는 바꾸지 않는다", async () => {
     const stub = freshStub();
-    const start = (now: number) => stub.startApp(newSecret(), "c", "203.0.113.1", 6, now);
+    const start = (now: number) => stub.startApp({ port: PORT, verifier: newSecret(), client: "c", ip: "203.0.113.1", limit: 6 }, now);
     expect((await start(T0)).ok).toBe(true);
     const alarm = () => runInDurableObject(stub, (_i, state) => state.storage.getAlarm());
     expect(await alarm()).toBe(T0 + 15 * 60_000);

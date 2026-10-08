@@ -16,12 +16,12 @@ describe("migrate", () => {
   it("새 DO: 표·인덱스·schema_version이 최신이다", async () => {
     await runInDurableObject(freshStub(), (inst) => {
       expect(SCHEMA_VERSION).toBe(MIGRATIONS.length);
-      expect(SCHEMA_VERSION).toBe(1);
+      expect(SCHEMA_VERSION).toBe(2);
       const tables = inst.db.all<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\' AND name NOT LIKE '\\_cf\\_%' ESCAPE '\\' ORDER BY name");
       expect(tables.map((t) => t.name)).toEqual(["allowlist", "audit", "denied", "flow", "meta", "refresh", "session"]);
       const idx = inst.db.all<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'index' AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\' ORDER BY name");
-      expect(idx.map((t) => t.name)).toEqual(["denied_last", "flow_expires", "refresh_expires", "refresh_session", "session_channel", "session_expires"]);
-      expect(inst.db.first("SELECT v FROM meta WHERE k = 'schema_version'")).toEqual({ v: "1" });
+      expect(idx.map((t) => t.name)).toEqual(["denied_last", "flow_expires", "flow_grant", "refresh_expires", "refresh_session", "session_channel", "session_expires"]);
+      expect(inst.db.first("SELECT v FROM meta WHERE k = 'schema_version'")).toEqual({ v: "2" });
     });
   });
 
@@ -30,7 +30,7 @@ describe("migrate", () => {
       const first = inst.db.all(SCHEMA_SQL);
       dropAll(inst.db);
       expect(inst.db.all(SCHEMA_SQL)).toEqual([]);
-      expect(migrate(inst.db, (fn) => state.storage.transactionSync(fn))).toEqual({ from: 0, to: 1, ahead: false });
+      expect(migrate(inst.db, (fn) => state.storage.transactionSync(fn))).toEqual({ from: 0, to: 2, ahead: false });
       expect(inst.db.all(SCHEMA_SQL)).toEqual(first);
     });
   });
@@ -51,16 +51,16 @@ describe("migrate", () => {
   it("다시 불러도 아무것도 쓰지 않는다", async () => {
     await runInDurableObject(freshStub(), (inst, state) => {
       const before = inst.db.rowsWritten;
-      expect(migrate(inst.db, (fn) => state.storage.transactionSync(fn))).toEqual({ from: 1, to: 1, ahead: false });
+      expect(migrate(inst.db, (fn) => state.storage.transactionSync(fn))).toEqual({ from: 2, to: 2, ahead: false });
       expect(inst.db.rowsWritten).toBe(before);
     });
   });
 
   it("앞선 스키마(DB 버전 > 코드): 던지지 않고 그대로 둔다", async () => {
     await runInDurableObject(freshStub(), (inst, state) => {
-      inst.db.run("UPDATE meta SET v = '2' WHERE k = 'schema_version'");
+      inst.db.run("UPDATE meta SET v = '3' WHERE k = 'schema_version'");
       const before = inst.db.all(SCHEMA_SQL);
-      expect(migrate(inst.db, (fn) => state.storage.transactionSync(fn))).toEqual({ from: 2, to: 2, ahead: true });
+      expect(migrate(inst.db, (fn) => state.storage.transactionSync(fn))).toEqual({ from: 3, to: 3, ahead: true });
       expect(inst.db.all(SCHEMA_SQL)).toEqual(before);
     });
   });
@@ -69,6 +69,23 @@ describe("migrate", () => {
     await runInDurableObject(freshStub(), (inst, state) => {
       inst.db.run("UPDATE meta SET v = 'x' WHERE k = 'schema_version'");
       expect(() => migrate(inst.db, (fn) => state.storage.transactionSync(fn))).toThrow("schema_version");
+    });
+  });
+
+  it("v1 DB(옛 앱 흐름 행) → v2: 행 보존, 새 열 NULL", async () => {
+    await runInDurableObject(freshStub(), (inst, state) => {
+      const first = inst.db.all(SCHEMA_SQL);
+      dropAll(inst.db);
+      inst.db.run(MIGRATIONS[0]!);
+      inst.db.run("INSERT INTO meta (k, v) VALUES ('schema_version', '1')");
+      inst.db.run(
+        "INSERT INTO flow (id, kind, handle_hash, poll_verifier, user_code, client, status, created_at, expires_at) VALUES ('f1','app','h','v','UPDA-TE22','c','started',1,2)",
+      );
+      expect(migrate(inst.db, (fn) => state.storage.transactionSync(fn))).toEqual({ from: 1, to: 2, ahead: false });
+      expect(inst.db.all("SELECT id, poll_verifier, user_code, port, grant_hash, grant_exp FROM flow")).toEqual([
+        { id: "f1", poll_verifier: "v", user_code: "UPDA-TE22", port: null, grant_hash: null, grant_exp: null },
+      ]);
+      expect(inst.db.all(SCHEMA_SQL)).toEqual(first);
     });
   });
 });

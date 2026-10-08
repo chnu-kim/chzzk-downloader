@@ -1,4 +1,4 @@
-// 로그인 흐름 핸들러(docs/design/worker.md §4.1·§7, 구현 중 변경 23·27). 앱 start·확인 페이지·웹 start·콜백·완료 페이지·poll.
+// 로그인 흐름 핸들러(docs/design/worker.md §4.1·§7, 구현 중 변경 23·27). 앱 start·확인 페이지·웹 start·콜백·완료 페이지·redeem(앱 루프백 수령, 구현 중 변경 88).
 // 상태는 DO AuthStore가 갖고, 이 파일은 요청 해석·치지직 호출·응답 모양만 맡는다.
 //
 // 확인 페이지(/auth/login/:handle)와 콜백(/auth/callback?code&state)은 URL에 자격이 실리는 quiet 경로다(routes.ts, 구현 중 변경 43).
@@ -13,9 +13,11 @@ import { authorizeRedirect, identify } from "../core/chzzk";
 import type { Config } from "../config";
 import type { LogLevel } from "../core/log";
 import { clearCookie, hasCookieName, readCookie, setCookie } from "../core/cookies";
+import { isLoopbackPort, loopbackUrl } from "../core/loopback";
 import { isId, isSecret, isToken, sha256B64url, sha256Hex } from "../core/token";
 import type { Ctx } from "../routes";
-import type { ConsumeResult, LoginLogHint } from "../store/types";
+import { redeemEvent } from "../store/login-log";
+import type { ConsumeResult, FinishResult, LoginLogHint } from "../store/types";
 import { COPY } from "./copy";
 import { type DoneR, donePage, loginConfirmPage, noticePage } from "./pages";
 import { readJsonObject, sameOriginPost } from "./request";
@@ -48,30 +50,52 @@ const chzzkApp = (c: Config): ChzzkApp => ({
 const toChzzk = (location: string, cookie: string): Response =>
   new Response(null, { status: 303, headers: [["Location", location], ["Set-Cookie", cookie], ["Referrer-Policy", "no-referrer"]] });
 
+/** 앱 종결의 303: 루프백 수신기로 보낸다. Location은 Worker가 상수 호스트·경로로 만들고, 흐름 쿠키는 지운다. 형식이 틀리면 던진다 */
+const toLoopback = (ctx: Ctx, f: Extract<FinishResult, { type: "loopback" }>): Response =>
+  new Response(null, {
+    status: 303,
+    headers: [["Location", loopbackUrl(f.port, f.grant, f.state)], ["Referrer-Policy", "no-referrer"], ["Set-Cookie", clearCookie(ctx.cookies, "flow")]],
+  });
+
 const toDone = (r: DoneR, why?: DoneWhy): Response =>
   new Response(null, { status: 303, headers: [["Location", `/auth/done?r=${r}${why === undefined ? "" : `&why=${why}`}`], ["Referrer-Policy", "no-referrer"]] });
 
 // ---- 앱 흐름 시작 ----
 
+/** v0.1.1(포트 없는 /auth/start)에 주는 상태 없는 201 미끼(구현 중 변경 88 (가)). v0.1.1 parse_start 요건: loginId·handle b64url 22자, userCode 확인 코드 문자표 */
+export const OUTDATED_LOGIN_ID = "outdated-login-id-0000";
+export const OUTDATED_HANDLE = "app-outdated-update-v2";
+export const OUTDATED_USER_CODE = "UPDA-TE22";
+export const OUTDATED_POLL_INTERVAL_MS = 30_000;
+const OUTDATED_TTL_MS = 600_000;
+
 /** POST /auth/start */
 export async function authStart(req: Request, ctx: Ctx): Promise<Response> {
   const body = await readJsonObject(req);
-  const pollVerifier = body?.pollVerifier;
-  const client = body?.client;
-  if (body === null || !isSecret(pollVerifier) || typeof client !== "string" || !CLIENT.test(client)) {
+  if (body === null) {
     ctx.log("auth.start.rejected", { flowKind: "app", reason: "bad_request" });
     return errorJson(400, "bad_request");
   }
-  const r = await ctx.store.startApp(pollVerifier, client, req.headers.get("CF-Connecting-IP"), ctx.config.startRate10m, ctx.now);
-  if (r.ok) {
+  if (!Object.hasOwn(body, "port")) {
+    // 옛 앱(v0.1.1): DO를 부르지 않고 스로틀도 하지 않는다. 업데이트 안내 페이지로 가는 미끼 응답이다
+    ctx.log("auth.start.outdated", { flowKind: "app" });
     return json(201, {
-      loginId: r.loginId,
-      loginUrl: `${ctx.config.publicOrigin}/auth/login/${r.handle}`,
-      userCode: r.userCode,
-      expiresAt: iso(r.expiresAt),
-      pollIntervalMs: r.pollIntervalMs,
+      loginId: OUTDATED_LOGIN_ID,
+      loginUrl: `${ctx.config.publicOrigin}/auth/login/${OUTDATED_HANDLE}`,
+      userCode: OUTDATED_USER_CODE,
+      expiresAt: iso(ctx.now + OUTDATED_TTL_MS),
+      pollIntervalMs: OUTDATED_POLL_INTERVAL_MS,
     });
   }
+  const port = body.port;
+  const loginVerifier = body.loginVerifier;
+  const client = body.client;
+  if (!isLoopbackPort(port) || !isSecret(loginVerifier) || typeof client !== "string" || !CLIENT.test(client)) {
+    ctx.log("auth.start.rejected", { flowKind: "app", reason: "bad_request" });
+    return errorJson(400, "bad_request");
+  }
+  const r = await ctx.store.startApp({ port, verifier: loginVerifier, client, ip: req.headers.get("CF-Connecting-IP"), limit: ctx.config.startRate10m }, ctx.now);
+  if (r.ok) return json(201, { loginUrl: `${ctx.config.publicOrigin}/auth/login/${r.handle}`, expiresAt: iso(r.expiresAt) });
   ctx.log("auth.start.rejected", { flowKind: "app", reason: r.code });
   if (r.code === "rate_limited") return errorJson(429, "rate_limited", { "Retry-After": String(r.retryAfterSec) });
   return errorJson(r.code === "busy" ? 503 : 400, r.code);
@@ -82,15 +106,18 @@ export async function authStart(req: Request, ctx: Ctx): Promise<Response> {
 /** GET /auth/login/:handle */
 export async function loginPageGet(_req: Request, ctx: Ctx): Promise<Response> {
   const handle = ctx.params.handle;
+  // 옛 앱 미끼의 handle: DO 없이 업데이트 안내(quiet 경로라 로그도 없다)
+  if (handle === OUTDATED_HANDLE) return noticePage(ctx.config, 200, COPY.outdatedApp);
   if (!isId(handle)) return noticePage(ctx.config, 404, COPY.linkGone);
   const v = await ctx.store.loginPage(await sha256Hex(handle), ctx.now);
   if (v === null) return noticePage(ctx.config, 404, COPY.linkGone);
   if (v.status !== "started") return noticePage(ctx.config, 409, COPY.linkUsed);
-  return loginConfirmPage(ctx.config, v.userCode);
+  return loginConfirmPage(ctx.config);
 }
 
 /** POST /auth/login/:handle ([계속]) */
 export async function loginContinue(req: Request, ctx: Ctx): Promise<Response> {
+  if (ctx.params.handle === OUTDATED_HANDLE) return noticePage(ctx.config, 200, COPY.outdatedApp);
   // Origin 거절은 DO를 부르기 전이라 남길 곳이 없다(이벤트 auth.continue.rejected를 버렸다, 구현 중 변경 43)
   if (!sameOriginPost(req, ctx.config.publicOrigin)) return noticePage(ctx.config, 403, COPY.badOrigin);
   const handle = ctx.params.handle;
@@ -146,11 +173,19 @@ async function callbackInner(req: Request, ctx: Ctx): Promise<Response> {
     // (이미 닫혔으면 gone이라 아무것도 바꾸지 않는다, 구현 중 변경 28). 이 finish가 internal 이벤트를 남긴다
     // (메시지에는 URL이 들어 있을 수 있어 이름만, §14). 이것도 실패하면 DO 이벤트가 없으니 done이 internal로 남긴다
     const hint: LoginLogHint = { level: "error", flowKind: k.kind, reason: "internal", errorName: e instanceof Error ? e.name : "unknown" };
-    const logged = await ctx.store.finish(k.flowId, { type: "failed", code: "user" }, ctx.config.adminChannelIds, ctx.now, hint).then(
-      () => true,
-      () => false,
+    const f = await ctx.store.finish(k.flowId, { type: "failed", code: "user" }, ctx.config.adminChannelIds, ctx.now, hint).then(
+      (x) => x,
+      () => null,
     );
-    return logged ? toDone("failed") : toDone("failed", "internal");
+    if (f === null) return toDone("failed", "internal");
+    if (f.type === "loopback") {
+      try {
+        return toLoopback(ctx, f);
+      } catch {
+        return toDone("failed");
+      }
+    }
+    return toDone("failed");
   }
 }
 
@@ -159,12 +194,12 @@ async function settle(ctx: Ctx, k: Extract<ConsumeResult, { ok: true }>, code: s
   const admins = ctx.config.adminChannelIds;
   const flowKind = k.kind;
   if (code === null || code === "") {
-    await ctx.store.finish(k.flowId, { type: "cancelled" }, admins, ctx.now, { flowKind });
-    return toDone("cancelled");
+    const f = await ctx.store.finish(k.flowId, { type: "cancelled" }, admins, ctx.now, { flowKind });
+    return f.type === "loopback" ? toLoopback(ctx, f) : toDone("cancelled");
   }
   if (!CODE.test(code)) {
-    await ctx.store.finish(k.flowId, { type: "failed", code: "token" }, admins, ctx.now, { flowKind, reason: "code_format" });
-    return toDone("failed");
+    const f = await ctx.store.finish(k.flowId, { type: "failed", code: "token" }, admins, ctx.now, { flowKind, reason: "code_format" });
+    return f.type === "loopback" ? toLoopback(ctx, f) : toDone("failed");
   }
   const id = await identify(CHZZK_DEPS, chzzkApp(ctx.config), code, state);
   if (!id.ok) {
@@ -176,13 +211,13 @@ async function settle(ctx: Ctx, k: Extract<ConsumeResult, { ok: true }>, code: s
       timedOut: id.timedOut,
       ...(id.code === undefined ? {} : { chzzkCode: id.code }),
     };
-    await ctx.store.finish(k.flowId, { type: "failed", code: id.failCode }, admins, ctx.now, hint);
-    return toDone("failed");
+    const f = await ctx.store.finish(k.flowId, { type: "failed", code: id.failCode }, admins, ctx.now, hint);
+    return f.type === "loopback" ? toLoopback(ctx, f) : toDone("failed");
   }
   const f = await ctx.store.finish(k.flowId, { type: "user", channelId: id.channelId, channelName: id.channelName }, admins, ctx.now, { flowKind });
   switch (f.type) {
-    case "ok":
-      return toDone("ok");
+    case "loopback":
+      return toLoopback(ctx, f);
     case "web":
       // 웹 로그인은 세션 쿠키를 심고 F를 지운다(콜백이 state를 이미 소비했다)
       return new Response(null, {
@@ -223,29 +258,35 @@ export async function done(req: Request, ctx: Ctx): Promise<Response> {
   return donePage(ctx.config, r, view, clear);
 }
 
-// ---- 앱 폴링 ----
+// ---- 앱 수령 ----
 
-/** POST /auth/poll */
-export async function poll(req: Request, ctx: Ctx): Promise<Response> {
+/** POST /auth/redeem(88 (가)). grant + loginSecret → 결과 한 번. 모름·만료·이미 수령·secret 불일치는 구분하지 않고 404 */
+export async function authRedeem(req: Request, ctx: Ctx): Promise<Response> {
   const body = await readJsonObject(req);
-  const loginId = body?.loginId;
-  const pollSecret = body?.pollSecret;
-  if (!isId(loginId) || !isSecret(pollSecret)) return errorJson(400, "bad_request");
-  const c = await ctx.store.claim(loginId, await sha256B64url(pollSecret), ctx.config.adminChannelIds, ctx.now);
-  switch (c.status) {
-    case "too_soon":
-      return errorJson(429, "too_soon");
+  const grant = body?.grant;
+  const loginSecret = body?.loginSecret;
+  if (!isToken("grant", grant) || !isSecret(loginSecret)) {
+    ctx.log("auth.redeem.rejected", { reason: "bad_request" });
+    return errorJson(400, "bad_request");
+  }
+  const r = await ctx.store.redeem(await sha256Hex(grant), await sha256B64url(loginSecret), ctx.config.adminChannelIds, ctx.now);
+  ctx.log(...redeemEvent(r));
+  switch (r.status) {
     case "not_found":
       return errorJson(404, "not_found");
-    case "pending":
-      return json(200, { status: "pending" });
     case "ok":
-      return json(200, tokenBundleJson(c.bundle, ctx.now));
+      return json(200, tokenBundleJson(r.bundle, ctx.now));
     case "denied":
-      return json(200, { status: "denied", channelName: c.channelName });
+      return json(200, { status: "denied", channelName: r.channelName });
     case "cancelled":
       return json(200, { status: "cancelled" });
     case "failed":
-      return json(200, { status: "failed", code: c.code });
+      return json(200, { status: "failed", code: r.code });
   }
+}
+
+/** POST /auth/poll 비석(88 (가)·(사)): 본문을 읽지 않고 DO 0회. 404라야 v0.1.1이 바로 LoginLost로 끝낸다 */
+export function pollGone(_req: Request, ctx: Ctx): Response {
+  ctx.log("auth.poll.rejected", { reason: "app_outdated" });
+  return errorJson(404, "app_outdated");
 }

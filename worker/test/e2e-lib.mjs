@@ -26,6 +26,12 @@ export const REQUIRED_EVENTS = {
   "web.post.rejected": 3,
   "auth.start.rejected": 2,
   "release.forbidden_key": 1,
+  "auth.redeem.ok": 2,
+  "auth.redeem.denied": 1,
+  "auth.redeem.cancelled": 1,
+  "auth.redeem.rejected": 1,
+  "auth.start.outdated": 1,
+  "auth.poll.rejected": 1,
 };
 // 정확히 이 수여야 하는 이벤트(config.error는 Origin 가드 확인 한 번, 잡히지 않은 예외는 0)
 export const EXACT_EVENTS = { "config.error": 1, "http.internal": 0 };
@@ -170,8 +176,23 @@ export function extractCsrf(html) {
   return found.size === 1 ? [...found][0] : null;
 }
 
-export function extractUserCode(html) {
-  return /<p class="code">([2-9A-HJ-NP-Z]{4}-[2-9A-HJ-NP-Z]{4})<\/p>/.exec(html)?.[1] ?? null;
+// 콜백 303의 루프백 Location(src/core/loopback.ts와 같은 모양): 포트 1024–65535, 고정 경로, grant·state 순서
+export const LOOPBACK_LOCATION_RE = /^http:\/\/127\.0\.0\.1:(\d{4,5})(\/chzzk-downloader\/login)\?grant=(cdg_[A-Za-z0-9_-]{43})&state=([A-Za-z0-9_-]{43})$/;
+
+/** 루프백 Location을 풀어 낸다. 모양·포트 범위 밖이면 null */
+export function parseLoopbackLocation(loc) {
+  const m = typeof loc === "string" ? LOOPBACK_LOCATION_RE.exec(loc) : null;
+  if (m === null) return null;
+  const port = Number(m[1]);
+  return port >= 1024 && port <= 65535 ? { port, path: m[2], grant: m[3], state: m[4] } : null;
+}
+
+/** b64url(SHA-256(UTF-8("chzzk-downloader/loopback-state\n" + loginVerifier))): 앱 수신기가 확인하는 state(worker.md 구현 중 변경 88 (나)) */
+export async function loopbackStateOf(verifier) {
+  const bytes = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`chzzk-downloader/loopback-state\n${verifier}`)));
+  let bin = "";
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return btoa(bin).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
 }
 
 /** 표의 행 중 채널 id가 든 행의 action="<접두><id>/revoke"에서 id */

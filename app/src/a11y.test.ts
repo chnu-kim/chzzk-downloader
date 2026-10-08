@@ -23,8 +23,20 @@ const dto: SettingsDto = {
   importedFrom: null,
 };
 
+const disabled = {
+  state: 'disabled',
+  channelId: null,
+  channelName: null,
+  reason: null,
+  pending: null,
+  offline: null,
+  verifiedAt: null,
+};
+
 vi.mock('./lib/api', () => ({
   Channel: FakeChannel,
+  authStatus: vi.fn(async () => disabled),
+  onAuthChanged: vi.fn(async () => () => {}),
   getSettings: vi.fn(async () => dto),
   appInfo: vi.fn(async () => ({
     version: '0.1.0',
@@ -49,9 +61,12 @@ vi.mock('./lib/api', () => ({
 const { default: App } = await import('./App.svelte');
 const { ui } = await import('./lib/stores/ui.svelte');
 const { jobs } = await import('./lib/stores/jobs.svelte');
+const { auth } = await import('./lib/stores/auth.svelte');
+const api = await import('./lib/api');
 
 beforeEach(() => {
   ui.goHome();
+  auth.reset();
 });
 
 /** 접근 가능한 이름: aria-label, aria-labelledby, 아니면 글자 */
@@ -75,7 +90,7 @@ describe('접근성', () => {
       expect(nameOf(el), el.outerHTML).not.toBe('');
     }
     // 설정 화면도
-    await user.click(screen.getByRole('button', { name: '설정' }));
+    await user.click(await screen.findByRole('button', { name: '설정' }));
     await user.click(await screen.findByRole('button', { name: '고급: 네이버 로그인 정보' }));
     for (const el of [
       ...screen.getAllByRole('button'),
@@ -89,7 +104,7 @@ describe('접근성', () => {
   it('뷰가 바뀌면 포커스가 body로 떨어지지 않는다: 설정은 제목, 홈은 입력줄', async () => {
     const user = userEvent.setup();
     render(App);
-    await user.click(screen.getByRole('button', { name: '설정' }));
+    await user.click(await screen.findByRole('button', { name: '설정' }));
     await waitFor(() => expect(screen.getByRole('heading', { level: 1, name: '설정' })).toHaveFocus());
     await user.click(screen.getByRole('button', { name: '뒤로' }));
     await waitFor(() => expect(screen.getByLabelText('영상 주소')).toHaveFocus());
@@ -132,5 +147,13 @@ describe('접근성', () => {
     expect(doneStatus?.querySelector('.lead svg')).not.toBeNull();
     // 재시작 직후 배너(B1)
     expect(screen.getByText('지난번에 받다가 멈춘 다운로드가 1개 있어요.')).toBeInTheDocument();
+  });
+
+  it('로그인 화면에도 main 랜드마크가 있고 모든 버튼에 이름이 있다', async () => {
+    vi.mocked(api.authStatus).mockResolvedValueOnce({ ...disabled, state: 'signedOut' } as never);
+    render(App);
+    await screen.findByRole('heading', { name: '로그인이 필요해요' });
+    expect(screen.getByRole('main')).toBeInTheDocument();
+    for (const el of screen.getAllByRole('button')) expect(nameOf(el), el.outerHTML).not.toBe('');
   });
 });

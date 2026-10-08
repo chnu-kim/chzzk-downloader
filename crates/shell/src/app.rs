@@ -30,6 +30,11 @@ use crate::services::{self, AppPaths, PROGRESS_INTERVAL, SettingsService};
 /// 클립보드에서 치지직 주소를 찾을 때 보는 최대 길이(바이트). 이보다 길면 주소를 붙여 둔 것으로 보지 않는다.
 pub const MAX_CLIPBOARD_SCAN: usize = 4096;
 
+/// `HttpWorkerApi`를 만들지 못했을 때의 `AppError::internal` 문구. 앱이 시작 실패 안내를 고를 때 이 값으로 가린다
+/// (worker.md 구현 중 변경 64). **이 문구가 곧 분기 키다**: 바꾸면 `app/src-tauri/src/lib.rs`의 `open_failure_kind`
+/// 분류(문자열 비교)와 그 테스트도 함께 본다. 원래 오류는 여기서 버리지 않고 `tracing::error!`로 남긴다.
+pub const AUTH_CLIENT_FAILED: &str = "로그인 서버 클라이언트를 만들지 못했습니다";
+
 /// 앱이 쓰는 로그인 서비스
 pub type AppAuth = AuthService<HttpWorkerApi, SystemClock>;
 
@@ -123,8 +128,10 @@ impl App {
         let auth = match auth {
             AuthSetup::Disabled => None,
             AuthSetup::Enabled { base, app_version } => {
-                let api = HttpWorkerApi::new(base.clone()).map_err(|_| {
-                    AppError::internal("로그인 서버 클라이언트를 만들지 못했습니다")
+                let api = HttpWorkerApi::new(base.clone()).map_err(|e| {
+                    // ApiError는 주소·본문·토큰을 담지 않는다(종류만)
+                    tracing::error!(error = ?e, "로그인 클라이언트를 만들지 못함");
+                    AppError::internal(AUTH_CLIENT_FAILED)
                 })?;
                 let store = SessionStore::new(paths.config.clone(), &base);
                 Some(Arc::new(AuthService::open(

@@ -178,6 +178,14 @@ describe('errorCopy 분기', () => {
     });
   });
 
+  it('notLoggedIn은 소유 오류와 문구를 나눈다', () => {
+    const c = errorCopy(err('notLoggedIn'), R);
+    expect(c.title).toBe('로그인이 필요해요');
+    expect(c.body).toBe('치지직 계정으로 로그인한 뒤 다시 시도해 주세요.');
+    expect(c.actions).toEqual(['close']);
+    expect(errorCopy(err('notLoggedIn'), { place: 'job' }).actions).toEqual([]);
+  });
+
   it('Phase 3 소유 오류', () => {
     const c = errorCopy(err('notOwnContent'), { ...R, channelName: '남의 채널', myChannel: '내 채널' });
     expect(c.title).toBe('내 채널의 영상만 받을 수 있어요');

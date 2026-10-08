@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { estimateSize, formatBytes, formatSpeed } from './bytes';
-import { formatKstDate, formatKstDateTime, formatTimeOfDay } from './date';
-import { formatClock, formatSpan } from './duration';
+import { formatDateTimeShort, formatKstDate, formatKstDateTime, formatTimeOfDay } from './date';
+import { formatClock, formatMmss, formatSpan } from './duration';
 
 describe('formatBytes', () => {
   // crates/core/src/progress.rs `format_bytes_golden`과 같은 12건. 고치지 않는다.
@@ -84,5 +84,23 @@ describe('날짜', () => {
     expect(formatTimeOfDay(t, 'Asia/Seoul')).toBe('오후 9:41');
     expect(formatTimeOfDay(t, 'UTC')).toBe('오후 12:41');
     expect(formatTimeOfDay(Date.UTC(2026, 9, 3, 0, 5) / 1000, 'UTC')).toBe('오전 12:05');
+  });
+});
+
+describe('formatMmss', () => {
+  it('분:초(분은 자리 맞춤 없음), 음수·NaN은 0:00', () => {
+    expect(formatMmss(600)).toBe('10:00');
+    expect(formatMmss(599)).toBe('9:59');
+    expect(formatMmss(59)).toBe('0:59');
+    for (const v of [0, -5, Number.NaN]) expect(formatMmss(v)).toBe('0:00');
+  });
+});
+
+describe('formatDateTimeShort', () => {
+  it('월 일 오전/오후 시:분(고정 시간대)', () => {
+    // 2026-01-02 03:00:00 UTC = 12:00 KST. 공백 문자 종류는 ICU에 따라 달라 \s로 비교한다
+    const t = Date.UTC(2026, 0, 2, 3, 0) / 1000;
+    expect(formatDateTimeShort(t, 'Asia/Seoul')).toMatch(/^1월\s2일\s오후\s12:00$/);
+    expect(formatDateTimeShort(t, 'UTC')).toMatch(/^1월\s2일\s오전\s3:00$/);
   });
 });

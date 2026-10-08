@@ -3,7 +3,7 @@
 
   interface Props {
     /** 테두리·글자 색. 면은 늘 투명(ui-visual §1.3) */
-    tone: 'rewind' | 'vod' | 'clip' | 'adult';
+    tone: 'rewind' | 'vod' | 'clip' | 'adult' | 'warning';
     /** 글자만으로 뜻이 모자랄 때(성인 "19") */
     label?: string;
     title?: string;
@@ -41,5 +41,8 @@
   }
   .adult {
     color: var(--danger);
+  }
+  .warning {
+    color: var(--warning);
   }
 </style>

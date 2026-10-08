@@ -11,8 +11,8 @@ use chzzk_app_lib::auth_io::{AuthIo, AuthIoState};
 use chzzk_app_lib::commands::begin_quit;
 use chzzk_app_lib::sink::{ChannelSink, Notice, Notifier};
 use chzzk_app_lib::{
-    AUTH_CHANGED, COMMANDS, Quitting, focus_main, guard_close, handler, on_run_event, request_quit,
-    spawn_auth_tasks,
+    AUTH_CHANGED, COMMANDS, Quitting, focus_main, guard_close, handler, on_run_event,
+    on_window_focus, request_quit, spawn_auth_tasks,
 };
 use chzzk_shell::auth::{SessionStore, StoredSession};
 use chzzk_shell::services::AppPaths;
@@ -852,7 +852,12 @@ fn fixture_auth(worker: &MockServer) -> Fixture {
 }
 
 fn save_session(dir: &Path, worker: &MockServer) {
-    let verified = time::OffsetDateTime::now_utc() - time::Duration::hours(1);
+    save_session_at(dir, worker, time::Duration::hours(1));
+}
+
+/// `verified_ago` 전에 확인한 세션을 저장한다(access는 확인 24시간 뒤, refresh는 30일 뒤까지)
+fn save_session_at(dir: &Path, worker: &MockServer, verified_ago: time::Duration) {
+    let verified = time::OffsetDateTime::now_utc() - verified_ago;
     std::fs::create_dir_all(dir.join("config")).unwrap();
     SessionStore::new(
         dir.join("config"),
@@ -869,6 +874,52 @@ fn save_session(dir: &Path, worker: &MockServer) {
         verified_at: verified,
     })
     .unwrap();
+}
+
+/// `/auth/refresh`가 Worker 형식 JSON 오류로 답하는 서버(재시도 묶음을 타지 않는 즉시 판정, 구현 중 변경 53 (가))
+fn refresh_server(status: u16, code: &str) -> MockServer {
+    tauri::async_runtime::block_on(async {
+        let s = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/auth/refresh"))
+            .respond_with(
+                ResponseTemplate::new(status)
+                    .set_body_raw(json!({ "code": code }).to_string(), "application/json"),
+            )
+            .mount(&s)
+            .await;
+        s
+    })
+}
+
+fn refresh_count(s: &MockServer) -> usize {
+    tauri::async_runtime::block_on(s.received_requests())
+        .unwrap_or_default()
+        .iter()
+        .filter(|r| r.url.path() == "/auth/refresh")
+        .count()
+}
+
+fn open_auth_app(dir: &Path, worker: &MockServer) -> App {
+    App::open_with_auth(
+        paths(dir),
+        chzzk_core::ClientConfig::default(),
+        None,
+        chzzk_app_lib::tokio_handle(),
+        AuthSetup::Enabled {
+            base: WorkerBase::parse(&worker.uri()).unwrap(),
+            app_version: "0.1.0".into(),
+        },
+    )
+    .unwrap()
+}
+
+fn wait_until(what: &str, secs: u64, pred: impl Fn() -> bool) {
+    let deadline = Instant::now() + Duration::from_secs(secs);
+    while !pred() {
+        assert!(Instant::now() < deadline, "{what}");
+        std::thread::sleep(Duration::from_millis(20));
+    }
 }
 
 fn disabled_json() -> Value {
@@ -1064,4 +1115,88 @@ fn auth_changed_is_emitted_to_the_main_window() {
         0,
         "다른 창에는 보내지 않는다"
     );
+}
+
+/// main 창 포커스 → `tick(Focus)` → refresh(구현 중 변경 56 (다), 65). 갱신 예정이 지난 세션이어야 나간다.
+#[test]
+fn focus_on_the_main_window_ticks_auth() {
+    let worker = refresh_server(401, "session_revoked");
+    let dir = TempDir::new().unwrap();
+    save_session_at(dir.path(), &worker, time::Duration::hours(25));
+    let state = open_auth_app(dir.path(), &worker);
+    let f = fixture_with(dir, state);
+    // spawn_auth_tasks를 부르지 않는다(시작 refresh가 먼저 시도 시각을 채우지 않게)
+    assert!(!on_window_focus(f.app.handle(), "main", false));
+    assert!(!on_window_focus(f.app.handle(), "other", true));
+    std::thread::sleep(Duration::from_millis(200));
+    assert_eq!(refresh_count(&worker), 0);
+
+    assert!(on_window_focus(f.app.handle(), "main", true));
+    wait_until("포커스 refresh", 5, || refresh_count(&worker) == 1);
+    wait_until("expired", 5, || {
+        invoke(&f.main, "auth_status", json!({})).unwrap()["state"] == json!("expired")
+    });
+    assert_eq!(
+        invoke(&f.main, "auth_status", json!({})).unwrap()["reason"],
+        json!("revoked")
+    );
+    let want = serde_json::to_value(AppError::not_logged_in()).unwrap();
+    assert_eq!(
+        invoke(&f.main, "get_settings", json!({})).unwrap_err(),
+        want
+    );
+}
+
+#[test]
+fn focus_does_not_refresh_a_fresh_session_or_a_disabled_build() {
+    let worker = refresh_server(401, "session_revoked");
+    let dir = TempDir::new().unwrap();
+    save_session(dir.path(), &worker);
+    let state = open_auth_app(dir.path(), &worker);
+    let f = fixture_with(dir, state);
+    // 틱은 띄우지만 갱신 예정 전이라 refresh는 나가지 않는다
+    assert!(on_window_focus(f.app.handle(), "main", true));
+    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(refresh_count(&worker), 0);
+    assert_eq!(
+        invoke(&f.main, "auth_status", json!({})).unwrap()["state"],
+        json!("signedIn")
+    );
+
+    // 로그인을 쓰지 않는 빌드는 틱을 띄우지 않는다
+    let off = fixture();
+    assert!(!on_window_focus(off.app.handle(), "main", true));
+}
+
+/// `spawn_auth_tasks`의 시작 refresh → `auth-changed`(낙관 signedIn 뒤 expired/revoked).
+#[test]
+fn spawn_auth_tasks_refreshes_a_saved_session_at_startup() {
+    let worker = refresh_server(401, "session_revoked");
+    let dir = TempDir::new().unwrap();
+    save_session_at(dir.path(), &worker, time::Duration::hours(25));
+    let state = open_auth_app(dir.path(), &worker);
+    let f = fixture_with(dir, state);
+    let got: Arc<Mutex<Vec<Value>>> = Arc::default();
+    let seen = got.clone();
+    f.main.listen(AUTH_CHANGED, move |e| {
+        seen.lock()
+            .unwrap()
+            .push(serde_json::from_str(e.payload()).unwrap());
+    });
+    let auth = f.app.state::<App>().auth.clone().unwrap();
+    spawn_auth_tasks(f.app.handle().clone(), auth);
+    // 첫 값의 순서(낙관 signedIn이 먼저인지)는 단언하지 않는다: 시작 refresh와 전달 태스크가 경쟁한다
+    wait_until("시작 refresh -> expired", 5, || {
+        got.lock()
+            .unwrap()
+            .iter()
+            .any(|p| p["state"] == json!("expired") && p["reason"] == json!("revoked"))
+    });
+    assert_eq!(refresh_count(&worker), 1);
+    let p = f
+        .dir
+        .path()
+        .join("config")
+        .join(chzzk_shell::auth::SESSION_FILE);
+    assert!(!p.exists() || std::fs::metadata(&p).unwrap().len() == 0);
 }

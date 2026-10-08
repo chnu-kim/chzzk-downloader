@@ -22,6 +22,7 @@ describe('스타일 회귀', () => {
   it.each([
     ['./lib/components/app/AppHeader.svelte', '.title:focus'],
     ['./lib/components/jobs/JobList.svelte', '.list-title:focus'],
+    ['./lib/views/LoginView.svelte', '.title:focus'],
   ])('%s %s는 전역 포커스 링(box-shadow)도 끈다', (file, sel) => {
     expect(rule(file, sel)).toMatch(/box-shadow\s*:\s*none/);
   });

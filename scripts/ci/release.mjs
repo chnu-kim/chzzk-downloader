@@ -189,7 +189,7 @@ const git = (args) => {
   return { code: r.status, out: (r.stdout ?? '').trim() };
 };
 
-// 태그 릴리스 차단(worker.md 구현 중 변경 60 (가), ROADMAP "A2→A3 태그 금지", A4-13에서 재도입). A5 전 앱은 본인 영상만 받는다는 보장(OwnershipGate)이 없다.
+// 태그 릴리스 차단(worker.md 구현 중 변경 60 (가), ROADMAP "A2→A3 태그 금지", 78에서 재도입). A5 전 앱은 본인 영상만 받는다는 보장(OwnershipGate)이 없다.
 // **A5(OwnershipGate) PR이 이 상수를 지운다**(null).
 export const TAG_BLOCK = 'phase3b-a5';
 export const TAG_BLOCK_REASON = 'Phase 3b OwnershipGate(A5) 전이라 태그 릴리스를 막는다(본인 영상만 받는다는 보장이 없다)';

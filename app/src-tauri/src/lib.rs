@@ -35,7 +35,7 @@ pub const CLOSE_REQUESTED: &str = "close-requested";
 /// 로그인 상태가 바뀔 때마다(처음 상태 포함) 프런트로 가는 이벤트 이름(AuthStatusDto 전체, worker.md 구현 중 변경 54).
 pub const AUTH_CHANGED: &str = "auth-changed";
 
-/// 자동 확인이 새 버전을 찾았을 때 프런트로 가는 이벤트 이름(`UpdateInfoDto`, worker.md 구현 중 변경 A4-3)
+/// 자동 확인이 새 버전을 찾았을 때 프런트로 가는 이벤트 이름(`UpdateInfoDto`, worker.md 구현 중 변경 69)
 pub const UPDATE_AVAILABLE: &str = "update-available";
 
 /// 설치 중 진행 이벤트 이름(`UpdateProgressEvent`)

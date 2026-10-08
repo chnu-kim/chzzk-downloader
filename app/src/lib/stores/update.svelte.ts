@@ -1,4 +1,4 @@
-// 앱 업데이트(worker.md §11.6, 구현 중 변경 A4-1~A4-3·A4-12). 판단은 Rust(`chzzk_shell::update`)가 하고, 여기서는 받은 값을 따라간다.
+// 앱 업데이트(worker.md §11.6, 구현 중 변경 67~69·77). 판단은 Rust(`chzzk_shell::update`)가 하고, 여기서는 받은 값을 따라간다.
 import * as api from '../api';
 import type { UpdateInfoDto, UpdateInstallDto, UpdateProgressEvent } from '../bindings';
 import { t } from '../copy/ko';

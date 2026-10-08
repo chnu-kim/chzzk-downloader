@@ -724,7 +724,7 @@ impl<B: Backend> DownloadManager<B> {
                 }
             }
             // 시간 안에 멈추지 않은 작업은 태스크가 아직 돈다. `cancel_quit`이 되살리면 옛 태스크와 겹치므로
-            // 되살릴 목록에서 뺀다(사용자가 B1 [모두 이어받기]로 다시 시작한다, A4-11)
+            // 되살릴 목록에서 뺀다(사용자가 B1 [모두 이어받기]로 다시 시작한다, 76)
             st.quit_stopped.retain(|id| !late_ids.contains(id));
             self.inner.save(&st);
             for dto in late {

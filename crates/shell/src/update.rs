@@ -13,7 +13,7 @@ use crate::dto::{UpdateCheckDto, UpdateInfoDto, UpdateInstallDto, UpdateProgress
 
 /// 확인 요청 시간 제한(D10). 다운로드 전체에는 걸지 않는다(크기에 따라 길다)
 pub const CHECK_TIMEOUT: Duration = Duration::from_secs(10);
-/// 다운로드 정체 한도: 시작이나 마지막 청크부터 이만큼 아무것도 오지 않으면 실패로 끝낸다(A4-9).
+/// 다운로드 정체 한도: 시작이나 마지막 청크부터 이만큼 아무것도 오지 않으면 실패로 끝낸다(74).
 /// 플러그인 2.13.1은 check가 만든 `Update`에 시간 제한을 넣지 않아, 멈춘 전송이 끝나지 않는다
 pub const DOWNLOAD_STALL: Duration = Duration::from_secs(60);
 /// 크기를 모를 때 진행 이벤트 간격(바이트)
@@ -312,7 +312,7 @@ impl Updates {
         }
         host.progress(UpdateProgressEvent::Downloaded);
 
-        // 확인 뒤 받는 동안 새로 시작한 받기가 있으면 묻지 않고 멈추지 않는다(받은 바이트는 버려진다, A4-10)
+        // 확인 뒤 받는 동안 새로 시작한 받기가 있으면 묻지 않고 멈추지 않는다(받은 바이트는 버려진다, 75)
         if !confirm_pause {
             let running = host.running();
             if running > 0 {

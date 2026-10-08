@@ -3,7 +3,7 @@
   // B2: 설정 저장 실패(`settings`)가 B1보다 앞이다.
   // B1: 재시작 직후 중단된 다운로드(§8.6). "모두 이어받기"는 중단된 작업을 하나씩 다시 줄 세운다.
   // B4: 새 버전(worker.md §11.6)이 B1 뒤다. 단 받는 중·설치 중에는 진행 문구가 먼저다(설치가 받던 작업을 멈추면 B1이
-  // 켜져 진행 문구를 가리기 때문, worker.md A4-7).
+  // 켜져 진행 문구를 가리기 때문, worker.md 73).
   import * as api from '../../api';
   import { t } from '../../copy/ko';
   import { formatBytes } from '../../format/bytes';
@@ -25,7 +25,7 @@
     }
   }
 
-  /** 지금 보일 배너 하나. B4가 기본 배너에서 진행 배너로 바뀌어도 같은 분기라 같은 노드로 남는다(A4-12) */
+  /** 지금 보일 배너 하나. B4가 기본 배너에서 진행 배너로 바뀌어도 같은 분기라 같은 노드로 남는다(77) */
   const which = $derived.by((): 'update' | 'settings' | 'interrupted' | null => {
     if (update.busy) return 'update';
     if (settings.saveError) return 'settings';

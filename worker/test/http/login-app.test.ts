@@ -6,6 +6,7 @@ import { loopbackState } from "../../src/core/loopback";
 import { isToken, newId, newSecret, sha256Hex } from "../../src/core/token";
 import { OUTDATED_HANDLE, OUTDATED_LOGIN_ID, OUTDATED_USER_CODE } from "../../src/http/auth";
 import { COPY } from "../../src/http/copy";
+import { AuthStore } from "../../src/store/AuthStore";
 import { iso } from "../../src/http/respond";
 import { createFakeChzzk, FAKE_ACCOUNTS, type FakeChzzk, type FakeFail } from "../fake-chzzk.mjs";
 import { installFakeChzzk, type FakeNet } from "../network";
@@ -311,6 +312,29 @@ describe("재사용·결합", () => {
     expect(res.headers.get("Location")).toBe("/auth/done?r=failed");
     expect(await flowRows(handleOf(s2.body.loginUrl))).toEqual([{ status: "failed", fail_code: "user", port: null, grant_hash: null, grant_exp: null }]);
     expect((await store().adminView(Date.now())).sessions).toHaveLength(sessionsBefore);
+    // (ㄷ) 취소(code 없음)여도 r=failed: r은 outcome이 아니라 DO 결과를 따른다(구현 중 변경 89 (바))
+    fake.state.authorize = "cancel";
+    const s3 = await app.start();
+    const cont3 = await browser.post(new URL(s3.body.loginUrl).pathname);
+    const callback3 = await browser.authorize(cont3, fake);
+    await nullPort(handleOf(s3.body.loginUrl));
+    expect((await browser.get(callback3)).headers.get("Location")).toBe("/auth/done?r=failed");
+    expect(await flowRows(handleOf(s3.body.loginUrl))).toEqual([{ status: "failed", fail_code: "user", port: null, grant_hash: null, grant_exp: null }]);
+  });
+
+  it("배포 중 판 엇갈림: DO가 모르는 finish 모양을 주면 예외 없이 done failed", async () => {
+    // 옛 DO의 {type:"ok"} 같은 모양(구현 중 변경 89 (타)). 콜백은 이 RPC 결과만 보고 303을 고른다
+    vi.spyOn(AuthStore.prototype, "finish").mockResolvedValue({ type: "ok" } as never);
+    for (const mode of ["approve", "cancel"] as const) {
+      fake.state.authorize = mode;
+      const app = new AppClient();
+      const browser = new Browser();
+      const s = await app.start();
+      const cont = await browser.post(new URL(s.body.loginUrl).pathname);
+      const res = await browser.get(await browser.authorize(cont, fake));
+      expect(res.status).toBe(303);
+      expect(res.headers.get("Location")).toBe("/auth/done?r=failed");
+    }
   });
 });
 

@@ -178,14 +178,12 @@ async function callbackInner(req: Request, ctx: Ctx): Promise<Response> {
       () => null,
     );
     if (f === null) return toDone("failed", "internal");
-    if (f.type === "loopback") {
-      try {
-        return toLoopback(ctx, f);
-      } catch {
-        return toDone("failed");
-      }
+    try {
+      // 정리 finish는 failed로 닫았으니 웹·앱 어느 쪽이든 실패로 보낸다(앱은 루프백으로 failed를 전한다)
+      return f.type === "loopback" ? toLoopback(ctx, f) : toDone("failed");
+    } catch {
+      return toDone("failed");
     }
-    return toDone("failed");
   }
 }
 
@@ -194,12 +192,10 @@ async function settle(ctx: Ctx, k: Extract<ConsumeResult, { ok: true }>, code: s
   const admins = ctx.config.adminChannelIds;
   const flowKind = k.kind;
   if (code === null || code === "") {
-    const f = await ctx.store.finish(k.flowId, { type: "cancelled" }, admins, ctx.now, { flowKind });
-    return f.type === "loopback" ? toLoopback(ctx, f) : toDone("cancelled");
+    return afterFinish(ctx, await ctx.store.finish(k.flowId, { type: "cancelled" }, admins, ctx.now, { flowKind }));
   }
   if (!CODE.test(code)) {
-    const f = await ctx.store.finish(k.flowId, { type: "failed", code: "token" }, admins, ctx.now, { flowKind, reason: "code_format" });
-    return f.type === "loopback" ? toLoopback(ctx, f) : toDone("failed");
+    return afterFinish(ctx, await ctx.store.finish(k.flowId, { type: "failed", code: "token" }, admins, ctx.now, { flowKind, reason: "code_format" }));
   }
   const id = await identify(CHZZK_DEPS, chzzkApp(ctx.config), code, state);
   if (!id.ok) {
@@ -211,11 +207,17 @@ async function settle(ctx: Ctx, k: Extract<ConsumeResult, { ok: true }>, code: s
       timedOut: id.timedOut,
       ...(id.code === undefined ? {} : { chzzkCode: id.code }),
     };
-    const f = await ctx.store.finish(k.flowId, { type: "failed", code: id.failCode }, admins, ctx.now, hint);
-    return f.type === "loopback" ? toLoopback(ctx, f) : toDone("failed");
+    return afterFinish(ctx, await ctx.store.finish(k.flowId, { type: "failed", code: id.failCode }, admins, ctx.now, hint));
   }
-  const f = await ctx.store.finish(k.flowId, { type: "user", channelId: id.channelId, channelName: id.channelName }, admins, ctx.now, { flowKind });
-  switch (f.type) {
+  return afterFinish(ctx, await ctx.store.finish(k.flowId, { type: "user", channelId: id.channelId, channelName: id.channelName }, admins, ctx.now, { flowKind }));
+}
+
+/**
+ * finish 결과 → 303. r은 outcome이 아니라 DO가 정한 결과를 따른다(port NULL 옛 앱 흐름은 취소여도 failed, 구현 중 변경 89 (바)).
+ * 모르는 모양(배포 중 Worker·DO 판이 엇갈린 경우)은 예외 대신 failed로 끝낸다(구현 중 변경 89 (타))
+ */
+function afterFinish(ctx: Ctx, f: FinishResult): Response {
+  switch (f?.type) {
     case "loopback":
       return toLoopback(ctx, f);
     case "web":
@@ -233,8 +235,7 @@ async function settle(ctx: Ctx, k: Extract<ConsumeResult, { ok: true }>, code: s
       return toDone("denied");
     case "cancelled":
       return toDone("cancelled");
-    case "failed":
-    case "gone":
+    default:
       return toDone("failed");
   }
 }

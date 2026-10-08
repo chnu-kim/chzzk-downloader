@@ -18,7 +18,7 @@ use chzzk_shell::dto::AuthStatusDto;
 
 use chzzk_shell::dto::CloseRequestedPayload;
 use chzzk_shell::services::AppPaths;
-use chzzk_shell::{App, AppAuth, AppError, AuthSetup, WorkerBase};
+use chzzk_shell::{AUTH_CLIENT_FAILED, App, AppAuth, AppError, AuthSetup, ErrorCode, WorkerBase};
 use tauri::ipc::Invoke;
 use tauri::{AppHandle, Emitter, Manager, RunEvent, Runtime, WindowEvent};
 
@@ -294,14 +294,10 @@ pub fn on_run_event<R: Runtime>(app: &AppHandle<R>, e: RunEvent) {
         // 창 포커스: 오프라인이면 바로 다시 연결해 본다(worker.md §11.3, 갱신 간격 규칙은 AuthService)
         RunEvent::WindowEvent {
             label,
-            event: WindowEvent::Focused(true),
+            event: WindowEvent::Focused(focused),
             ..
-        } if label == "main" => {
-            if let Some(auth) = app.try_state::<App>().and_then(|s| s.auth.clone()) {
-                tauri::async_runtime::spawn(async move {
-                    auth.tick(Trigger::Focus).await;
-                });
-            }
+        } => {
+            on_window_focus(app, &label, focused);
         }
         // macOS Cmd+Q·Dock 종료는 창 닫기 없이 여기로 온다(code None). `quit`의 `app.exit(0)`은 Some(0).
         RunEvent::ExitRequested {
@@ -322,14 +318,56 @@ pub fn on_run_event<R: Runtime>(app: &AppHandle<R>, e: RunEvent) {
     }
 }
 
+/// main 창이 포커스를 얻으면 로그인 재확인 틱(`Trigger::Focus`)을 띄운다(worker.md §11.3, 구현 중 변경 56 (다)).
+/// 띄웠으면 `true`. 로그인을 쓰지 않는 빌드·상태 없음·다른 창·포커스 잃음은 `false`.
+/// `RunEvent::WindowEvent`는 `#[non_exhaustive]`라 테스트가 만들 수 없어 처리를 함수로 뺐다(구현 중 변경 A3-4).
+pub fn on_window_focus<R: Runtime>(app: &AppHandle<R>, label: &str, focused: bool) -> bool {
+    if !focused || label != "main" {
+        return false;
+    }
+    let Some(auth) = app.try_state::<App>().and_then(|s| s.auth.clone()) else {
+        return false;
+    };
+    tauri::async_runtime::spawn(async move {
+        auth.tick(Trigger::Focus).await;
+    });
+    true
+}
+
 /// 시작 실패 창의 제목.
 pub const STARTUP_FAILED_TITLE: &str = "치지직 다운로더를 시작하지 못했어요";
 
+/// 시작 실패의 종류(구현 중 변경 A3-3). 안내 문구가 다르다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StartupFailure {
+    /// 작업 목록·설정 파일(디스크·폴더 권한)
+    Storage,
+    /// 빌드에 넣은 로그인 서버 설정(다시 설치)
+    AuthConfig,
+}
+
+/// `App::open_with_auth` 오류의 종류: 셸이 내보낸 로그인 클라이언트 오류만 AuthConfig다.
+pub fn open_failure_kind(e: &AppError) -> StartupFailure {
+    if e.code == ErrorCode::Internal && e.message == AUTH_CLIENT_FAILED {
+        StartupFailure::AuthConfig
+    } else {
+        StartupFailure::Storage
+    }
+}
+
 /// 시작 실패 창의 본문(§15-17, 구현 중 변경 38(바)). 무엇을 하면 되는지와 로그 폴더, 원문 오류를 적는다.
 /// 오류 문구는 코어·셸 Display라 비밀이 없다.
-pub fn startup_failure_message(log_dir: &Path, e: &AppError) -> String {
+pub fn startup_failure_message(log_dir: &Path, e: &AppError, kind: StartupFailure) -> String {
+    let lead = match kind {
+        StartupFailure::Storage => {
+            "작업 목록이나 설정 파일을 열지 못했어요. 디스크 공간과 폴더 권한을 확인한 뒤 다시 실행해 주세요."
+        }
+        StartupFailure::AuthConfig => {
+            "로그인 서버 설정을 읽지 못했어요. 설치 파일이 손상됐을 수 있어요. 앱을 내려받은 페이지에서 다시 받아 설치해 주세요."
+        }
+    };
     format!(
-        "작업 목록이나 설정 파일을 열지 못했어요. 디스크 공간과 폴더 권한을 확인한 뒤 다시 실행해 주세요.\n\n로그 폴더: {}\n오류: {}",
+        "{lead}\n\n로그 폴더: {}\n오류: {}",
         log_dir.display(),
         e.message
     )
@@ -339,14 +377,19 @@ pub fn startup_failure_message(log_dir: &Path, e: &AppError) -> String {
 ///
 /// 릴리스 Windows 빌드는 콘솔이 없어 패닉(`expect`)이면 아무것도 보이지 않는다. 상태가 없으므로 command는
 /// "state not managed" 오류를 돌려주고(패닉하지 않는다), 닫기 가드는 상태가 없으면 막지 않는다.
-fn startup_failed<R: Runtime>(app: &AppHandle<R>, log_dir: &Path, e: &AppError) {
+fn startup_failed<R: Runtime>(
+    app: &AppHandle<R>,
+    log_dir: &Path,
+    e: &AppError,
+    kind: StartupFailure,
+) {
     use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.hide();
     }
     let handle = app.clone();
     app.dialog()
-        .message(startup_failure_message(log_dir, e))
+        .message(startup_failure_message(log_dir, e, kind))
         .title(STARTUP_FAILED_TITLE)
         .kind(MessageDialogKind::Error)
         .show(move |_| handle.exit(1));
@@ -527,7 +570,7 @@ fn setup<R: Runtime>(
         Err(m) => {
             let e = AppError::internal(m);
             tracing::error!(error = %e.message, "로그인 설정이 올바르지 않음");
-            startup_failed(app.handle(), &log_dir, &e);
+            startup_failed(app.handle(), &log_dir, &e, StartupFailure::AuthConfig);
             return Ok(());
         }
     };
@@ -544,7 +587,7 @@ fn setup<R: Runtime>(
         Ok(s) => s,
         Err(e) => {
             tracing::error!(code = ?e.code, error = %e.message, "앱 상태를 열지 못함");
-            startup_failed(app.handle(), &log_dir, &e);
+            startup_failed(app.handle(), &log_dir, &e, open_failure_kind(&e));
             return Ok(());
         }
     };
@@ -628,8 +671,9 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::{
-        CloseDecision, INSTANCE_LOCK_FILE, InstanceLockState, acquire_instance_lock, auth_setup,
-        close_decision, startup_failure_message,
+        CloseDecision, INSTANCE_LOCK_FILE, InstanceLockState, StartupFailure,
+        acquire_instance_lock, auth_setup, close_decision, open_failure_kind,
+        startup_failure_message,
     };
     use chzzk_shell::{AppError, AuthSetup, WorkerBase};
     use std::path::Path;
@@ -686,13 +730,44 @@ mod tests {
     #[test]
     fn startup_failure_message_names_log_folder_and_error() {
         let e = AppError::internal("jobs.json을 읽지 못함: 권한 없음");
-        let m = startup_failure_message(Path::new("/logs/app"), &e);
+        let m = startup_failure_message(Path::new("/logs/app"), &e, StartupFailure::Storage);
         assert!(
             m.starts_with("작업 목록이나 설정 파일을 열지 못했어요."),
             "{m}"
         );
         assert!(m.contains("로그 폴더: /logs/app"), "{m}");
         assert!(m.ends_with("오류: jobs.json을 읽지 못함: 권한 없음"), "{m}");
+    }
+
+    #[test]
+    fn auth_startup_failure_message_points_to_reinstall() {
+        let e = AppError::internal("빌드에 넣은 Worker 주소가 올바르지 않다(예시)");
+        let m = startup_failure_message(Path::new("/logs/app"), &e, StartupFailure::AuthConfig);
+        assert!(m.starts_with("로그인 서버 설정을 읽지 못했어요."), "{m}");
+        assert!(m.contains("다시 받아 설치"), "{m}");
+        assert!(!m.contains("디스크"), "{m}");
+        assert!(m.contains("로그 폴더: /logs/app"), "{m}");
+        assert!(
+            m.ends_with("오류: 빌드에 넣은 Worker 주소가 올바르지 않다(예시)"),
+            "{m}"
+        );
+    }
+
+    #[test]
+    fn open_failure_kind_table() {
+        assert_eq!(
+            open_failure_kind(&AppError::internal(chzzk_shell::AUTH_CLIENT_FAILED)),
+            StartupFailure::AuthConfig
+        );
+        assert_eq!(
+            open_failure_kind(&AppError::internal("jobs.json을 읽지 못함")),
+            StartupFailure::Storage
+        );
+        // 코드가 다르면 같은 문구여도 Storage
+        assert_eq!(
+            open_failure_kind(&AppError::invalid_input(chzzk_shell::AUTH_CLIENT_FAILED)),
+            StartupFailure::Storage
+        );
     }
 
     #[test]

@@ -19,7 +19,7 @@ pub mod ownership;
 pub mod services;
 mod writer;
 
-pub use app::{App, AppAuth, AuthSetup};
+pub use app::{AUTH_CLIENT_FAILED, App, AppAuth, AuthSetup};
 pub use auth::{AuthService, HttpWorkerApi, SessionStore, SystemClock, WorkerBase};
 pub use backend::Backend;
 pub use dto::JobId;

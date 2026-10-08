@@ -7,7 +7,7 @@
 ## 0. 판정 요약
 
 - **베이스는 운영 최소화 안**이다. DO 클래스 하나·인스턴스 하나, Worker secret 4개, 런타임 의존성 0개, 토큰은 서명 없는 불투명 난수 + SHA-256 해시 저장, 인증 요청마다 DO 조회 하나. 서명 키와 키 교체 절차가 없고, 허용목록 제외·세션 끊기가 다음 요청부터 바로 듣는다.
-- 위협 모델 안에서 가져온 것: 공격자 표(A1~A11)와 **자격 × 경로 행렬**(CI 토큰은 릴리스 읽기 경로에서만 해석), 설정 가드(치지직 주소 덮어쓰기는 `PUBLIC_ORIGIN`이 루프백일 때만, 아니면 모든 경로 500), 흐름 결합 쿠키(앱·웹 콜백 모두 브라우저에 묶는다, A4), 앱 흐름의 **확인 코드 페이지**(공격자가 시작한 로그인을 눈에 보이게, A3), 랜딩의 "내 기기"(자기 세션 끊기), 거부 기록 dedupe·상한·이스케이프, 메모리 스로틀(IPv6 /64), updater 다운로드 URL **출처 대조**(A8), 404는 "R2에 없음"에만.
+- 위협 모델 안에서 가져온 것: 공격자 표(A1~A11)와 **자격 × 경로 행렬**(CI 토큰은 릴리스 읽기 경로에서만 해석), 설정 가드(치지직 주소 덮어쓰기는 `PUBLIC_ORIGIN`이 루프백일 때만, 아니면 모든 경로 500), 흐름 결합 쿠키(앱·웹 콜백 모두 브라우저에 묶는다, A4), 앱 흐름의 **확인 코드 페이지**(공격자가 시작한 로그인을 눈에 보이게, A3 — 구현 중 변경 87로 바뀜: 루프백 리디렉션이 A3를 막고 코드는 없어졌다), 랜딩의 "내 기기"(자기 세션 끊기), 거부 기록 dedupe·상한·이스케이프, 메모리 스로틀(IPv6 /64), updater 다운로드 URL **출처 대조**(A8), 404는 "R2에 없음"에만.
 - 테스트·CI 우선 안에서 가져온 것: 모듈 경계(순수 `core/` / `store/` DO / `http/` 핸들러), 경로 표가 데이터이고 **행렬 테스트가 자동 생성**, 가짜 치지직은 순수 핸들러 하나를 msw와 node:http가 감싼다, `wrangler types` 생성물은 커밋하지 않는다(머리줄 32-hex 해시가 public-scan에 걸린다, 실측), vitest가 `.dev.vars`를 읽으므로 `miniflare.bindings`로 덮는다, refresh rotation 표, wrangler dev E2E는 **D14 관찰 작업**(`worker-e2e`), D10을 지키는 `worker-bundle` → `--no-bundle` 배포, `tests.worker` ratchet, `0.0.0` 요청으로 첫 릴리스에도 성립하는 deploy-worker 검사.
 - 앱 UX·오프라인 안에서 가져온 것: 앱 셸 계약 전체(§11 — `AuthState::Checking`, `AuthReason`, `OfflineDto`, 낙관적 시작, 재시도 간격, 다운로드 계속·재개 규칙, 업데이트 설치 흐름, copy deck), 응답 유실 복구는 "후계가 아직 안 쓰였으면 후계를 폐기하고 새 쌍"(rid 없이), 유예 밖에서도 세션 파일을 지우지 않아 [다시 연결]로 복구, `session.json`의 `origin` 필드, `DIST_BASE_URL` 하나가 Worker 주소의 원천(저장소 변수로 옮김).
 - 버린 것: DO 두 개 분리(위협 — 상한·스로틀로 충분, 사용자 수가 허용목록 크기), HMAC·JWS access 토큰과 `SESSION_KEYS`·kid 회전(위협·테스트·UX — 어차피 요청마다 DO 대조라 서명이 주는 것은 쓰레기 거르기뿐), CI 토큰 해시 저장(Worker env가 새면 client secret이 먼저 샌다), `/updates/{target}/{arch}/…` 경로(정적 `latest.json`을 그대로 주므로 OS·arch는 플러그인이 고른다), `v ≤ latest` 버전 범위 제한(실패 경로 하나 늘고 보안 경계가 아니다), semver 공유 벡터 생성기(xtask 벡터를 테스트 상수로 옮긴다), `/download/<kind>` 302, `previous`를 사용자에게 제공, 랜딩 JS(OS 자동 감지는 CSS·서버 렌더 표로 대신), 폴링 레코드에 IP 행 저장, Range 미지원(단일 범위는 순수 함수 하나라 넣는다).
@@ -70,7 +70,7 @@
 | DO 구성 | 클래스 `AuthStore` 하나, `idFromName("main")` 하나, `exports: {AuthStore: {type:"durable-object", storage:"sqlite"}}`(레거시 `migrations`와 섞지 않음) | 최소. dry-run·vitest 실측은 exports만. 무료 플랜은 SQLite DO만 |
 | 토큰 형식 | 불투명 32바이트 난수 base64url + 종류 접두(`cda_`·`cdr_`·`cdw_`·`cdf_`). 서명·클레임 없음. 검증 = SHA-256 해시로 DO 조회 | 최소(서명 키·회전 절차 없음). hex가 아니라 public-scan과 충돌 없음 |
 | 웹 세션 | 쿠키 `__Host-cdl_s`, 12시간 절대, 갱신 없음 | 관리 권한이 붙는 세션은 짧게(위협). 랜딩은 드물게 쓴다. **확정**(Q2 답변 2026-10-06) |
-| 앱 흐름 피싱(A3) | `/auth/login/:handle`이 확인 코드·경고 페이지를 보이고 [계속]을 눌러야 치지직으로 간다. 랜딩 "내 기기"에서 자기 세션을 끊을 수 있다 | 위협. 운영 비용 0, 클릭 하나. **확정**(Q3 답변 2026-10-06) |
+| 앱 흐름 피싱(A3) | `/auth/login/:handle`이 확인 코드·경고 페이지를 보이고 [계속]을 눌러야 치지직으로 간다. 랜딩 "내 기기"에서 자기 세션을 끊을 수 있다. **(구현 중 변경 87로 바뀜: 루프백 리디렉션)** 코드 없이 경고·[계속]만 남고, 결과는 브라우저 기기의 127.0.0.1로만 간다 | 위협. 운영 비용 0, 클릭 하나. **확정**(Q3 답변 2026-10-06) |
 | 응답 유실 창 | 60초 | 위협(60)·최소/테스트(30)·UX(120)의 중간. 앱의 재시도는 1회. **확정**(Q7 답변 2026-10-06) |
 | 치지직 토큰 | 저장하지 않는다. `users/me` 뒤 버린다. revoke도 부르지 않는다(같은 앱의 다른 기기 토큰까지 지운다) | 기존 웹 앱과 같다(chzzk-oauth.md §8) |
 | 사용자 필드 | `channelId`만(폴백 없음). 없거나 `^[0-9a-f]{32}$`가 아니면 `failed(user_format)` | 폴백이 다른 식별자를 채널 ID로 오인하는 쪽이 더 위험(위협). 실제 필드는 G-ID 도구가 보여 준다 |
@@ -94,6 +94,7 @@ CI verify ─CI token───▶ /releases/**  /update/:v  (읽기 전용, 그 
                  └──────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
+- 구현 중 변경 87로 바뀜: 그림의 앱 `/auth/start·poll`은 `/auth/start·redeem`이고, 콜백은 앱 흐름이면 `/auth/done` 대신 `http://127.0.0.1:<port>/chzzk-downloader/login?grant=…`로 303한다.
 - Worker는 상태가 없다. 상태 변경은 DO RPC 하나 = `transactionSync` 하나다. DO는 바깥 요청(치지직·R2)을 하지 않는다.
 - 치지직 Open API 호출은 로그인 때 두 번뿐(토큰 교환, `users/me`). 갱신·허용목록 대조는 DO만 본다.
 
@@ -159,13 +160,13 @@ worker/
 | `/health` | GET | 없음 | — | 200 `{"ok":true,"schema":<n>,"build":"<sha7>"}` | 503 `{"ok":false,"code":"config_error"}`(이름·값 없음. 배포 `--var`를 빠뜨리면 deploy-worker가 빨개진다) |
 | `/` | GET | W 선택 | — | 200 HTML. 비로그인: 소개 + [치지직으로 로그인] 폼. 허용: 최신 버전·OS별 다운로드 표(SHA256SUMS에서)·미서명 해제 안내·내 기기. 관리자: [관리] 링크 | — |
 | `/assets/site.css` | GET | 없음 | — | 200 CSS(소스에 문자열, 해시 이름, 불변 캐시) | 404 |
-| `/auth/start` | POST | 없음 | JSON `{"pollVerifier":"<b64url SHA-256(pollSecret)>","client":"app/<버전> <os>"}` | 201 `{"loginId","loginUrl":"<PUBLIC_ORIGIN>/auth/login/<handle>","userCode":"K7QX-4MRA","expiresAt","pollIntervalMs":2000}` | 400 `bad_request`, 429 `rate_limited`(+`Retry-After`), 503 `busy`(상한) |
-| `/auth/login/:handle` | GET | 없음 | handle(128bit b64url) | 200 HTML 확인 페이지: 큰 글씨 코드, "치지직 다운로더 앱에서 직접 시작한 로그인이 아니면 이 창을 닫으세요. 다른 사람이 보낸 링크라면 계속하지 마세요.", [계속] 폼 | 404 HTML(만료·모름 구분 없음) |
+| `/auth/start` **(구현 중 변경 87로 바뀜: 루프백 리디렉션)** | POST | 없음 | JSON `{"pollVerifier":"<b64url SHA-256(pollSecret)>","client":"app/<버전> <os>"}` | 201 `{"loginId","loginUrl":"<PUBLIC_ORIGIN>/auth/login/<handle>","userCode":"K7QX-4MRA","expiresAt","pollIntervalMs":2000}` | 400 `bad_request`, 429 `rate_limited`(+`Retry-After`), 503 `busy`(상한) |
+| `/auth/login/:handle` **(구현 중 변경 87로 바뀜: 루프백 리디렉션)** | GET | 없음 | handle(128bit b64url) | 200 HTML 확인 페이지: 큰 글씨 코드, "치지직 다운로더 앱에서 직접 시작한 로그인이 아니면 이 창을 닫으세요. 다른 사람이 보낸 링크라면 계속하지 마세요.", [계속] 폼 | 404 HTML(만료·모름 구분 없음) |
 | `/auth/login/:handle` | POST | 없음 + Origin = `PUBLIC_ORIGIN` | form 빈 본문 | 303 → `CHZZK_AUTHORIZE_URL?clientId&redirectUri&state`(state 새로 발급), `Set-Cookie: __Host-cdl_f`(10분) | 403 `bad_origin`, 404, 409 `already_used` |
 | `/auth/web/start` | POST | 없음 + Origin | form 빈 본문 | 303 → 치지직, `Set-Cookie: __Host-cdl_f` | 403, 429, 503 `busy` |
-| `/auth/callback` | GET | F | 쿼리 `code`, `state` | 303 → `/auth/done?r=<ok|denied|cancelled|failed>`. **F 쿠키는 남긴다**(done 페이지가 읽고 지운다). 웹 흐름 허용이면 `Set-Cookie: __Host-cdl_s` + 303 `/`(이때는 F 삭제) | 늘 303 `/auth/done?r=failed`(상세 사유는 로그 이벤트로만) |
-| `/auth/done` | GET | F 선택 | `r` | 200 HTML. F 쿠키가 있으면 `binder_hash`로 종결된 flow 행을 찾아(2분 안) 표시 내용을 채우고 **F 쿠키를 지운다**: ok "로그인했어요. 앱으로 돌아가세요"(앱 흐름은 확인 코드를 다시 보인다) / denied "허가 없는 채널이에요: {이름} · 채널 ID {id}" / cancelled / failed. 쿠키가 없거나 행이 없으면 `r`만으로 이름·ID 없는 일반 문구 | — |
-| `/auth/poll` | POST | 없음(loginId + pollSecret) | JSON `{"loginId","pollSecret"}` | 200 `{"status":"pending"}` · `{"status":"ok", …토큰 묶음(§6.3)}`(1회, 행 삭제) · `{"status":"denied","channelName"}` · `{"status":"cancelled"}` · `{"status":"failed","code"}` | 404 `not_found`(모름·만료·verifier 불일치·이미 수령을 구분하지 않는다), 429 `too_soon`(1.5초 안, 쓰기 0) |
+| `/auth/callback` **(구현 중 변경 87로 바뀜: 루프백 리디렉션)** | GET | F | 쿼리 `code`, `state` | 303 → `/auth/done?r=<ok|denied|cancelled|failed>`. **F 쿠키는 남긴다**(done 페이지가 읽고 지운다). 웹 흐름 허용이면 `Set-Cookie: __Host-cdl_s` + 303 `/`(이때는 F 삭제) | 늘 303 `/auth/done?r=failed`(상세 사유는 로그 이벤트로만) |
+| `/auth/done` **(구현 중 변경 87로 바뀜: 루프백 리디렉션)** | GET | F 선택 | `r` | 200 HTML. F 쿠키가 있으면 `binder_hash`로 종결된 flow 행을 찾아(2분 안) 표시 내용을 채우고 **F 쿠키를 지운다**: ok "로그인했어요. 앱으로 돌아가세요"(앱 흐름은 확인 코드를 다시 보인다) / denied "허가 없는 채널이에요: {이름} · 채널 ID {id}" / cancelled / failed. 쿠키가 없거나 행이 없으면 `r`만으로 이름·ID 없는 일반 문구 | — |
+| `/auth/poll` **(구현 중 변경 87로 바뀜: 루프백 리디렉션)** — 비석 404 `app_outdated`, 수령은 `/auth/redeem` | POST | 없음(loginId + pollSecret) | JSON `{"loginId","pollSecret"}` | 200 `{"status":"pending"}` · `{"status":"ok", …토큰 묶음(§6.3)}`(1회, 행 삭제) · `{"status":"denied","channelName"}` · `{"status":"cancelled"}` · `{"status":"failed","code"}` | 404 `not_found`(모름·만료·verifier 불일치·이미 수령을 구분하지 않는다), 429 `too_soon`(1.5초 안, 쓰기 0) |
 | `/auth/web/logout` | POST | W + Origin + 폼 토큰 | form | 303 `/`, 쿠키 삭제, 세션 revoked | 403 |
 
 ### 4.2 앱 세션
@@ -196,7 +197,7 @@ worker/
 | `/admin/denied/:channelId/dismiss` | POST | — | 303 | 404, 403 |
 | `/me/sessions/:id/revoke` | POST | W + Origin + 폼 토큰 | — | 303 `/`(자기 채널의 세션만, `revoked_why='user'`) | 404, 403 |
 
-그 밖 경로는 404 `not_found`, 메서드가 다르면 405. `/auth/cancel`은 두지 않는다(앱이 폴링을 멈추면 10분 뒤 만료).
+그 밖 경로는 404 `not_found`, 메서드가 다르면 405. `/auth/cancel`은 두지 않는다(앱이 폴링을 멈추면 10분 뒤 만료. 구현 중 변경 87로 바뀜: 폴링이 없고 앱이 수신기를 닫으면 흐름은 10분 뒤 만료).
 
 ### 4.5 자격 × 경로 행렬 (테스트로 고정)
 
@@ -209,7 +210,7 @@ worker/
 | `/releases/:v/:file`(보이는 키) | 401 | 200 | 200 | 200 | 200 |
 | `/api/me`, `/auth/refresh`, `/auth/logout` | 401 | 200 | 401 | 401 | **401** |
 | `/admin*`, `/me/*` | 303 `/` | 303 `/` | 403 | 200/303 | **303 `/`**(Bearer 무시, 쿠키만) |
-| `/auth/start`·`poll`·`login/:h` | 동작 | 동작 | 동작 | 동작 | 동작(자격과 무관) |
+| `/auth/start`·`poll`·`login/:h`(구현 중 변경 87로 바뀜: `poll`은 비석 404, `/auth/redeem`이 더해진다) | 동작 | 동작 | 동작 | 동작 | 동작(자격과 무관) |
 
 CI 토큰은 `http/release-auth.ts`의 `releaseAuth()` 함수 하나에서만 읽고, 그 함수는 `http/releases.ts`·`http/update.ts`만 부른다. 비교는 제시된 토큰과 `CI_VERIFY_TOKEN` **둘을 SHA-256한 뒤 `timingSafeEqual`**(길이가 늘 같아 throw가 없다). 다른 경로에서 CI 토큰은 쓰레기 Bearer와 같다(별도 분기가 없으니 실수로 넓어지지 않는다). 소스 검사 테스트가 `CI_VERIFY_TOKEN` 문자열이 **`src/config.ts`·`src/http/release-auth.ts`** 두 파일 밖에 없음을 단언한다(§0 3행·§13 모두 이 두 파일이다).
 
@@ -228,8 +229,8 @@ CREATE TABLE flow (                                                      -- 로�
   handle_hash   TEXT UNIQUE,                                             -- 앱: SHA-256(handle), /auth/login/:handle
   state_hash    TEXT UNIQUE,                                             -- 치지직 state 해시. 앱은 [계속] 때, 웹은 start 때. 콜백이 소비하면 NULL
   binder_hash   TEXT,                                                    -- SHA-256(흐름 결합 쿠키)
-  poll_verifier TEXT,                                                    -- 앱: b64url(SHA-256(pollSecret))
-  user_code     TEXT,                                                    -- 앱: 확인 코드
+  poll_verifier TEXT,                                                    -- 앱: b64url(SHA-256(pollSecret)) (87: loginVerifier를 담는다)
+  user_code     TEXT,                                                    -- 앱: 확인 코드 (87: 새 흐름은 NULL. v2에 port·grant_hash·grant_exp 추가)
   client        TEXT,                                                    -- "app/0.2.0 macos"(64자 자름, 표시용)
   status        TEXT NOT NULL CHECK (status IN ('started','redirected','exchanging','ok','denied','cancelled','failed')),
   session_id    TEXT,                                                    -- ok: 세션 id(토큰은 저장하지 않는다)
@@ -294,14 +295,14 @@ CREATE TABLE audit (                                                     -- 500�
 ```
 
 - **허용 판정** `isAllowed(channelId) = channelId ∈ ADMIN_CHANNEL_IDS ∪ allowlist`. 관리자는 늘 허용(잠김 방지). 관리자를 `disallow`할 수 없다(409). **관리자도 `allowlist` 행을 가질 수 있다**(이름·메모·`owner_channel_id` 자리를 위해. 행이 없어도 허용은 변하지 않고, 행이 있어도 [빼기]는 409). 본인 판정용 채널 ID는 `ownerId(channelId) = allowlist.owner_channel_id ?? channelId`이고 토큰 묶음(§6.3)·`/api/me`·`check()`의 `channelId`가 모두 이 값이다(관리자 본인이 본인 영상 검사의 주 사용자이므로 §15 대안 B가 관리자에게도 적용된다).
-- **상한·스로틀**(쓰기 전에): 메모리 `Map<ipKey, 횟수>`(`ipKey = SHA-256(CF-Connecting-IP(IPv6는 /64) + 일 단위 소금)` 앞 16바이트) 10분 창 **`START_RATE_10M`회**(기본 6) → 429. 한도는 config 값이고 **dev 모드(§10.1)에서만** `.dev.vars`로 덮을 수 있다(운영은 늘 6). 헤더가 없으면 키는 상수 `"none"`(운영에서는 Cloudflare가 이 헤더를 늘 채우므로 생기지 않는다). vitest·wrangler dev는 한 IP(또는 없음)에서 6회를 금방 넘기므로 `.dev.vars.example`은 `START_RATE_10M=1000`으로 두고, 스로틀 자체의 429는 `store/flows.ts`의 순수 함수(`throttle(map, ipKey, limit, now)`)를 `runInDurableObject` 안에서 limit 6으로 직접 불러 고정한다(W3). 미처리 헤더는 테스트가 `CF-Connecting-IP`를 요청마다 바꿔 키 분리를 확인한다. 비만료 `flow` 행이 32개면 503 `busy`(메모리 카운터, 생성자에서 `SELECT count(*)`로 채움). 폴링 최소 간격 1.5초는 `Map<loginId, lastPollMs>`(행 쓰기 0). DO가 쫓겨나면 메모리가 비지만 상한 32행이 쓰기를 여전히 묶는다.
+- **상한·스로틀**(쓰기 전에): 메모리 `Map<ipKey, 횟수>`(`ipKey = SHA-256(CF-Connecting-IP(IPv6는 /64) + 일 단위 소금)` 앞 16바이트) 10분 창 **`START_RATE_10M`회**(기본 6) → 429. 한도는 config 값이고 **dev 모드(§10.1)에서만** `.dev.vars`로 덮을 수 있다(운영은 늘 6). 헤더가 없으면 키는 상수 `"none"`(운영에서는 Cloudflare가 이 헤더를 늘 채우므로 생기지 않는다). vitest·wrangler dev는 한 IP(또는 없음)에서 6회를 금방 넘기므로 `.dev.vars.example`은 `START_RATE_10M=1000`으로 두고, 스로틀 자체의 429는 `store/flows.ts`의 순수 함수(`throttle(map, ipKey, limit, now)`)를 `runInDurableObject` 안에서 limit 6으로 직접 불러 고정한다(W3). 미처리 헤더는 테스트가 `CF-Connecting-IP`를 요청마다 바꿔 키 분리를 확인한다. 비만료 `flow` 행이 32개면 503 `busy`(메모리 카운터, 생성자에서 `SELECT count(*)`로 채움). 폴링 최소 간격 1.5초는 `Map<loginId, lastPollMs>`(행 쓰기 0, 구현 중 변경 87로 바뀜: 폴링과 그 게이트가 없어진다). DO가 쫓겨나면 메모리가 비지만 상한 32행이 쓰기를 여전히 묶는다.
 - **alarm**: 쓰기 뒤 `setAlarm(min(가장 이른 flow.expires_at, 가장 이른 unclaimed session, 다음 하루 청소))`. `setAlarm`이 기존 알람을 덮어쓰는지는 **[확인 필요]**(조사에서 미검증). W3의 첫 테스트를 "`setAlarm`을 두 번 부르면 `getAlarm()`이 둘째 값"으로 고정하고, 아니면 `getAlarm()`으로 읽어 더 이른 쪽만 설정한다. `alarm()`은 만료 flow 삭제, `expires_at` 지난 session·refresh 삭제, revoked 세션은 30일 뒤 삭제, `denied` 30일·200행, `audit` 500행 정리, 남은 행이 있으면 다음 알람. at-least-once라 멱등. `runDurableObjectAlarm`로 테스트.
 - **거부 기록**: 같은 채널은 `last_at`이 1시간 넘게 지났을 때만 갱신(쓰기 절약), 200행 상한(오래된 `last_at`부터).
-- **무료 한도 계산**(최악, 하루): 공격자 start 32행 × 144순환 × 쓰기 2 ≈ 9,200, [계속] ≤ 4,600, 거부 기록 ≤ 4,800, 정상 사용자 20명 refresh 3회 × 3행 + 로그인 < 300 → **≈ 19,000 < 100,000**. 요청 수(10만/일)는 쓰기 없이도 소진될 수 있다. WAF 요청 수 제한 규칙(Q4)은 zone이 없어 쓸 수 없고 그 위험은 받아들인다(구현 중 변경 11 (나)·(아)). 폴링은 2초 × 10분 = 최대 300요청/로그인, 쓰기 0.
+- **무료 한도 계산**(최악, 하루): 공격자 start 32행 × 144순환 × 쓰기 2 ≈ 9,200, [계속] ≤ 4,600, 거부 기록 ≤ 4,800, 정상 사용자 20명 refresh 3회 × 3행 + 로그인 < 300 → **≈ 19,000 < 100,000**. 요청 수(10만/일)는 쓰기 없이도 소진될 수 있다. WAF 요청 수 제한 규칙(Q4)은 zone이 없어 쓸 수 없고 그 위험은 받아들인다(구현 중 변경 11 (나)·(아)). 폴링은 2초 × 10분 = 최대 300요청/로그인, 쓰기 0(구현 중 변경 87로 바뀜: 폴링 없음, 수령 요청 1~3회. 행 수는 87 (다)).
 
 ### 5.1 RPC 목록
 
-`startApp(verifier, client, now)` · `startWeb(now)` · `continueApp(handleHash, now)` → `{state, binder}` · `consume(stateHash, binderHash, now)` → `{id, kind} | null`(state_hash를 NULL로, status exchanging) · `finish(id, outcome, now)` · `claim(loginId, verifierHash, now)` → 토큰 묶음 또는 상태 · `admit(channelId, name, kind, client, now)` → `{sessionId}` 또는 denied · `activate(sessionId, now)` → 첫 access·refresh 발급(`unclaimed → active` 한 번만) · `check(accessHash, now)` → `{sessionId, channelId, ownerChannelId, isAdmin}` | 사유 · `rotate(refreshHash, now)` · `revoke(sessionId, why)` · `logout(accessHash | refreshHash)` · `webLogin(channelId, name, now)` → `{cookieToken, csrf}` · `webCheck(cookieHash, now)` · `adminView()` · `allow(id, note, by)` · `disallow(id, by)` · `dismissDenied(id)` · `mySessions(channelId)` · `revokeMine(channelId, sessionId)`.
+`startApp(verifier, client, now)` · `startWeb(now)` · `continueApp(handleHash, now)` → `{state, binder}` · `consume(stateHash, binderHash, now)` → `{id, kind} | null`(state_hash를 NULL로, status exchanging) · `finish(id, outcome, now)` · `claim(loginId, verifierHash, now)` → 토큰 묶음 또는 상태(구현 중 변경 87로 바뀜: `redeem(grantHash, verifier, admins, now)`) · `admit(channelId, name, kind, client, now)` → `{sessionId}` 또는 denied · `activate(sessionId, now)` → 첫 access·refresh 발급(`unclaimed → active` 한 번만) · `check(accessHash, now)` → `{sessionId, channelId, ownerChannelId, isAdmin}` | 사유 · `rotate(refreshHash, now)` · `revoke(sessionId, why)` · `logout(accessHash | refreshHash)` · `webLogin(channelId, name, now)` → `{cookieToken, csrf}` · `webCheck(cookieHash, now)` · `adminView()` · `allow(id, note, by)` · `disallow(id, by)` · `dismissDenied(id)` · `mySessions(channelId)` · `revokeMine(channelId, sessionId)`.
 
 ### 5.2 refresh rotation (`rotate`, transactionSync 하나)
 
@@ -334,8 +335,8 @@ CREATE TABLE audit (                                                     -- 500�
 | refresh(앱) | `cdr_` + 32B | 30일 슬라이딩(쓸 때마다 새 토큰), 세션 절대 상한 60일(`created_at + 60d`) | `refresh.hash` | POST 본문, `session.json` |
 | 웹 세션 | `cdw_` + 32B | 12h 절대 | `session.access_hash` | 쿠키 `__Host-cdl_s` |
 | 흐름 결합 | `cdf_` + 32B | 10분 | `flow.binder_hash` | 쿠키 `__Host-cdl_f` |
-| loginId·handle | 16B b64url | 10분 | `flow.id`, `flow.handle_hash` | 앱 메모리 / 브라우저 URL(handle로는 폴링할 수 없다) |
-| pollSecret | 32B b64url | 10분 | `flow.poll_verifier`(해시) | 앱 메모리(`Secret`)만 |
+| loginId·handle(87: loginId는 없어지고 handle만) | 16B b64url | 10분 | `flow.id`, `flow.handle_hash` | 앱 메모리 / 브라우저 URL(handle로는 폴링할 수 없다) |
+| pollSecret(87: loginSecret, 같은 형식. grant `cdg_`가 더해진다) | 32B b64url | 10분 | `flow.poll_verifier`(해시) | 앱 메모리(`Secret`)만 |
 | state | 32B b64url | 10분 | `flow.state_hash` | 브라우저 URL(치지직 왕복) |
 | CI 토큰 | 사용자가 만든 난수(b64url 권장) | 수동 교체 | Worker secret `CI_VERIFY_TOKEN`(원문) | GitHub 환경 `release` secret 같은 이름·같은 값 |
 
@@ -346,7 +347,7 @@ CREATE TABLE audit (                                                     -- 500�
 
 `cookieSpec(PUBLIC_ORIGIN)` 하나가 만든다: https면 `__Host-` 접두 + `Secure`, 루프백 http(dev)면 접두 없는 `cdl_s`·`cdl_f`에 `Secure` 없음. 공통 `HttpOnly; SameSite=Lax; Path=/`(콜백이 `/auth/callback`이라 Path를 좁히면 `__Host-`가 허용하지 않는다). `__Host-cdl_s` Max-Age 43200, `__Host-cdl_f` Max-Age 600. 삭제는 `Max-Age=0`.
 
-### 6.3 토큰 묶음 (poll ok·refresh 성공 응답)
+### 6.3 토큰 묶음 (poll ok·refresh 성공 응답 — 구현 중 변경 87로 바뀜: poll ok 대신 redeem ok, 모양은 그대로)
 
 ```json
 {"status":"ok","accessToken":"cda_…","accessExpiresAt":"RFC3339","refreshToken":"cdr_…","refreshExpiresAt":"RFC3339",
@@ -360,6 +361,8 @@ CREATE TABLE audit (                                                     -- 500�
 ## 7. 로그인 시퀀스
 
 ### 7.1 앱 흐름
+
+> **구현 중 변경 87로 바뀜**: 아래 그림의 확인 코드·`/auth/poll`은 없어졌다. 콜백이 브라우저를 `http://127.0.0.1:<port>/chzzk-downloader/login?grant=…`로 보내고 앱이 `/auth/redeem`으로 수령한다(87 (가)(나)).
 
 ```
 앱(Rust)                              Worker / DO                              브라우저                 치지직(또는 가짜)
@@ -560,6 +563,8 @@ START_RATE_10M=1000
 
 ### 11.3 `AuthService` 상태 머신 (`crates/shell/src/auth.rs`, Tauri 비의존, `WorkerApi`·`Clock` trait 주입)
 
+> **구현 중 변경 87로 바뀜**: 로그인 줄의 `Pending{userCode}`·`poll`은 `Pending{expiresAt}`·수신기 grant → `redeem`이고 사유 `Receiver`가 더해진다(87 (바)). 세션 확인(refresh) 쪽은 그대로다.
+
 ```
 시작 ─load─┬─ session.json 없음(또는 origin 다름) ─────────────▶ SignedOut
            ├─ 있음, now < verifiedAt + 72h ──▶ SignedIn(낙관) ─bg refresh─┐
@@ -581,6 +586,8 @@ SignedIn ─auth_logout─▶ SignedOut (POST /auth/logout 실패 무시 → 삭
 - refresh는 `tokio::sync::Mutex` 하나로 직렬화(single-flight). 응답 유실은 같은 refresh로 **1회** 재시도(60초 창, §5.2).
 
 ### 11.4 DTO·command·이벤트
+
+> **구현 중 변경 87로 바뀜**: `PendingDto.user_code`를 빼고 `AuthReason::Receiver`를 더한다. `auth_login`은 폴링 대신 수신기 대기 태스크를 띄운다. command·이벤트 이름은 그대로(87 (바)).
 
 ```rust
 pub struct AuthStatusDto { pub state: AuthState, pub channel_id: Option<String>, pub channel_name: Option<String>,
@@ -628,11 +635,11 @@ pub enum UpdateProgressEvent { Started { total: Option<u64> }, Chunk { received:
 
 ### 11.7 화면·copy deck 추가 (app.md §8.9·§9에 반영할 것, `app/src/lib/copy/ko.ts`)
 
-S3 로그인(§8.9)에 `checking`(최대 10초 뒤 [다시 연결]·[다시 로그인]), `grace expired`, pending의 확인 코드·[로그인 주소 복사]·남은 시간 10분(§8.9의 "약 5분"을 바꾼다)을 더하고, 메인 헤더 AccountSlot 옆에 오프라인 배지, 목록 위 업데이트 배너 B4(B1이 있으면 B1이 위).
+S3 로그인(§8.9)에 `checking`(최대 10초 뒤 [다시 연결]·[다시 로그인]), `grace expired`, pending의 확인 코드(구현 중 변경 87로 바뀜: 확인 코드 없음, 수신기 실패 화면 추가, 87 (바))·[로그인 주소 복사]·남은 시간 10분(§8.9의 "약 5분"을 바꾼다)을 더하고, 메인 헤더 AccountSlot 옆에 오프라인 배지, 목록 위 업데이트 배너 B4(B1이 있으면 B1이 위).
 
 | 키 | 문구 |
 |---|---|
-| `auth.pending.code` | 브라우저에 이 코드가 보이는지 확인하세요: {code} |
+| `auth.pending.code` | 브라우저에 이 코드가 보이는지 확인하세요: {code}(구현 중 변경 87로 지움) |
 | `auth.pending.body`(변경) | 로그인을 마치면 자동으로 넘어가요. 남은 시간 {mmss} |
 | `auth.copyLoginUrl` / `auth.browserHelp` | 로그인 주소 복사 / 브라우저가 열리지 않나요? |
 | `auth.checking` / `auth.reconnect` | 로그인 정보를 확인하는 중이에요… / 다시 연결 |
@@ -792,7 +799,7 @@ ROADMAP Phase 3에 **미체크 단계**로 둔다: `- [ ] G-ID: OAuth users/me c
 
 ### 위험
 
-- **R1 A3 사회공학**: 확인 코드·경고·내 기기로 줄이지만 피해자가 코드까지 맞다고 믿고 [계속]을 누르면 공격자가 세션을 받는다. 피해는 앱·설치 파일 사용(정책 수준)이고, 관리자는 세션 목록의 `client`·시각으로 찾아 끊는다.
+- **R1 A3 사회공학**(구현 중 변경 87로 바뀜: 루프백이면 공격자가 시작한 흐름의 grant는 피해자 기기의 127.0.0.1로 가서 공격자가 받을 수 없다. 남는 위험은 87 (라)의 "공격자 포트 + 새는 로컬 서비스"): 확인 코드·경고·내 기기로 줄이지만 피해자가 코드까지 맞다고 믿고 [계속]을 누르면 공격자가 세션을 받는다. 피해는 앱·설치 파일 사용(정책 수준)이고, 관리자는 세션 목록의 `client`·시각으로 찾아 끊는다.
 - **R2 새 로그인 잠금이 싸다**: 비만료 흐름 32개 상한은 공격자가 10분마다 32번 start하면 정상 사용자의 새 로그인을 막는다(503). IP 스로틀(IPv6 /64)이 단일 호스트를 막고, 분산 공격은 막지 못한다(Q4 WAF는 쓸 수 없다, 구현 중 변경 11 (나)). 이미 로그인한 사용자는 영향이 없다(상한은 `flow`만 묶는다).
 - **R3 D10은 배포 토큰을 지킬 뿐 번들을 지키지 않는다**(§13.4).
 - **R4 단일 DO 처리량**: 사용자 수가 허용목록 크기라 수용. 커지면 세션을 채널별 DO로 나눈다(이름 체계 이전 필요).
@@ -810,7 +817,7 @@ W1 전에 한 묶음으로 물은 열린 질문(Q1~Q9)의 답이다. **확정**�
 |---|---|---|---|---|
 | Q1 | refresh 절대 상한 | **60일**(`session.created_at + 60d`). 지나면 refresh는 형식 있는 401 `session_expired`(재로그인) | 확정 | §0 5, §2 "앱 세션", §5 `session.expires_at`, §5.2(`cap`), §6.1, §11.2 `refreshExpiresAt`, §11.3 유예 상한, §11.7 `auth.sessionExpired`, §16 W3·A1, R7, app.md 구현 중 변경 59 |
 | Q2 | 웹 세션 12시간 절대 | 그대로(버린 대안: 7일 슬라이딩 + 관리 POST만 최근 12시간 로그인 요구) | 확정 | §2 "웹 세션" |
-| Q3 | 확인 코드 페이지 + [계속] | 그대로(버린 대안: 페이지는 두고 [계속] 없이 자동 진행 + 경고. A3 가시성이 줄어든다) | 확정 | §2 "앱 흐름 피싱" |
+| Q3 | 확인 코드 페이지 + [계속](구현 중 변경 87로 바뀜: 코드 없이 [계속]만, 사용자 결정 2026-10-09) | 그대로(버린 대안: 페이지는 두고 [계속] 없이 자동 진행 + 경고. A3 가시성이 줄어든다) | 확정 | §2 "앱 흐름 피싱" |
 | Q4 | Cloudflare WAF 요청 수 제한 규칙 | 쓰지 않는다(커스텀 도메인이 없어 zone이 없다, 비용 0 제약) | 확정(2026-10-06) | 구현 중 변경 11 (나) |
 | Q5 | R2 버킷 이름 커밋 | 문서 기본값(`wrangler.jsonc`에 커밋, `R2_BUCKET`은 변수) | 확정 | §2 "R2 버킷 이름", cicd.md 82 (다) |
 | Q6 | Worker 커버리지 ratchet | 문서 기본값(테스트 수만) | 확정 | §13.2 |
@@ -995,3 +1002,125 @@ W1 전에 한 묶음으로 물은 열린 질문(Q1~Q9)의 답이다. **확정**�
 85. **태그 차단 해제(78을 닫는다).** `TAG_BLOCK`·`tagBlockProblem`과 그 테스트를 지웠다. 79의 조건(업데이트를 싣는 첫 릴리스부터 버전 묶인 서명)은 코드가 아니라 태그 직전 리허설 dispatch 로그의 `verify-sig: … 통과(버전 X.Y.Z …)`로 확인한다(ROADMAP). 태그 자체는 사용자 승인이다.
 
 86. **이어받기도 컨텐츠로 판정한다(82 (바)·83 (가)를 고친다, A5 PR 리뷰).** (가) `resume_job`은 async다. 다시 줄 세울 상태(paused·failed·interrupted·skipped)인 작업이면 매니저 잠금 밖에서 enqueue와 같은 `OwnershipGate::admit(작업 컨텐츠)`(최근 resolve 캐시, 없으면 다시 resolve)로 판정하고, 잠금 안에서 같은 컨텐츠인지만 다시 본 뒤 통과한 채널 ID를 `JobRecord.channelId`에 고쳐 쓰고 줄 세운다. 기록의 `channelId`는 판정에 쓰지 않는다(표시·B1·안내용). 그래서 `jobs.json` 변조로 남의 영상을 이어받을 수 없고, 채널 ID가 없는 0.1.0 작업도 본인 영상이면 다시 조회로 이어받는다(기록이 채워진다). 대기·받는 중·완료 작업은 조회하지 않고 매니저 규칙대로(아무것도 안 함·`invalidInput`)다. 로그인 아님은 조회 없이 `notLoggedIn`이다. 판정 뒤 잠금 사이에 상태가 바뀌어 처음으로 줄 세울 상태가 되면 판정 없이 줄 세우지 않고 `ownershipUnknown`이다(다시 누르면 판정한다). 남의 영상이라 거부하면(`notOwnContent`) 게이트 캐시의 실제 채널 ID로 기록만 고친다(`DownloadManager::note_channel`, 상태·`.part`는 그대로): 채널 ID가 없거나 틀린 기록이 거부된 뒤 화면에 `job.otherChannel`로 보이고 B1이 다시 세지 않는다. `check_job_owner`·`resume_owner`는 지웠다. (나) 자동 이어받기(83 (나), 로그인 뒤 한 번)는 기록 `channelId`로 거르는 규칙을 그대로 둔다. 시작 때 작업마다 정보 조회를 하지 않기 위해서이고(다운로드가 곧 다시 resolve한다) `on_auth_status`는 동기 콜백이다. 남는 위험은 82 (바)다. (다) 프런트 `jobBlock`은 채널 ID가 없는 작업을 막지 않는다(셸 판정에 맡긴다). `job.ownerUnknown`과 `JobBlock`의 `ownerUnknown`은 지웠고, B1은 그런 작업도 센다. 기록 채널이 다른 작업의 `job.otherChannel` 안내는 남긴다(정직한 기록에서는 맞는 안내다). (라) `services::enqueue`는 판정 전에 `parse_content_url(req.url) == req.content`를 보고 다르거나 주소가 아니면 `invalidInput`이다(최근 VOD는 주소로, 판정·다운로드는 컨텐츠로 하므로 둘이 같은 영상이어야 한다). 로그인을 쓰지 않는 빌드도 같다. (마) 웹 E2E 가짜 백엔드는 enqueue를 주소가 아니라 컨텐츠로 판정한다. `JobDto`에 컨텐츠가 없어 가짜 `resume_job`은 기록 채널이 다르면 거부하고 없으면 통과시킨다.
+
+87. **앱 로그인을 루프백 리디렉션(RFC 8252 §7.3)으로 바꾼다(사용자 결정 2026-10-09).** 확인 코드 눈 비교와 `/auth/poll` 수령을 없애고, 앱이 `127.0.0.1`의 임의 포트에 1회용 수신기를 연 뒤 Worker가 콜백 끝에서 브라우저를 그 수신기로 보낸다. 앱은 받은 1회용 grant와 자기만 아는 앱 비밀로 결과를 수령한다. 이 항목이 §0·§2 "앱 흐름 피싱(A3)"·§3 그림·§4.1·§4.5·§5(flow 표·RPC·스로틀의 폴링 간격·무료 한도 계산의 폴링 줄)·§6.1 표·§6.3·§7.1·§11.3·§11.4·§11.7·§16 A1~A5·§17 R1·Q3과 구현 중 변경 13 (가)(다)·19 (가)(라)·23·27 (가)(차)·28 (다)(마)·47 (나)·50·54 (라)·62 (마)·66 (라)를 바꾼다(본문에는 "구현 중 변경 87로 바뀜" 표시만 단다). 같은 주제를 뒤 항목이 다시 다루면 뒤 항목이 이긴다.
+   - **왜**: 확인 코드는 공격자가 시작한 로그인 링크를 피해자가 승인하는 공격(A3, 토큰은 공격자 앱이 폴링으로 가져간다)을 사람 눈으로 막으려던 것인데, 피해자 앞에는 비교할 앱 화면이 없어 실효가 약했다(사용자가 v0.1.1 실기기에서 써 보고 "코드 확인 UX가 와닿지 않는다"). 루프백에서는 결과가 **브라우저가 있는 기기의 127.0.0.1**로만 가고 수령에 앱 비밀이 필요하므로, 공격자가 시작한 흐름을 피해자가 끝까지 승인해도 공격자는 grant를 볼 수 없다. **폴링 수령은 서버에서 없앤다**(남기면 A3가 그대로 남는다). 루프백 실패 대비책(선택지 B 등)은 만들지 않는다: 수신기 실패는 명확한 오류 + [다시 시도]뿐이다. 치지직 리디렉션 URI는 Worker 고정(`PUBLIC_ORIGIN/auth/callback`) 그대로이고 비용 0(Workers Free)도 그대로다(요청 수는 폴링이 빠져 로그인당 최대 약 300 → 1~3으로 준다).
+
+   **(가) 앱 흐름 엔드포인트(§4.1 앱 행을 바꾼다).** 웹 흐름(`/auth/web/start`·웹 콜백·`/auth/done`의 웹 결과)·`/auth/refresh`·`/auth/logout`·`/api/me`·`/update/*`·`/releases/**`는 바꾸지 않는다.
+
+   | 경로 | 메서드 | 인증 | 요청 | 성공 | 오류 |
+   |---|---|---|---|---|---|
+   | `/auth/start` | POST | 없음 | JSON `{"port":<정수>,"loginVerifier":"<b64url 43자>","client":"app/<버전> <os>"}`. `port`는 JSON number이고 `Number.isInteger`이며 1024 ≤ port ≤ 65535(문자열 `"8080"`·`80.5`·`1023`·`65536`·`-1`·`null`은 형식 오류). `loginVerifier = b64url(SHA-256(UTF-8(loginSecret 문자열)))`(13 (다)의 pollVerifier와 같은 계산, 이름만 바뀐다). `client`는 지금 규칙 그대로 | 201 `{"loginUrl":"<PUBLIC_ORIGIN>/auth/login/<handle>","expiresAt":"RFC3339"}`(`loginId`·`userCode`·`pollIntervalMs`는 없다) | **`port` 키가 없으면 400 `app_outdated`**(v0.1.1의 `{pollVerifier, client}`가 여기에 걸린다, 로그 `auth.start.rejected{reason: app_outdated}`, DO 0회). 그 밖 형식 오류 400 `bad_request`, 429 `rate_limited`(+`Retry-After`), 503 `busy`. 스로틀·상한(IP당 10분 6회, 비만료 흐름 32개)은 그대로 |
+   | `/auth/login/:handle` | GET | 없음 | handle | 200 HTML 안내 페이지: 확인 코드 없음. "치지직 다운로더 앱에서 직접 시작한 로그인이 아니면 이 창을 닫으세요." + [치지직으로 계속] 폼 | 404 HTML(모름·만료, 그리고 `port`가 NULL인 배포 전 옛 흐름), 409(이미 씀) |
+   | `/auth/login/:handle` | POST | 없음 + Origin = `PUBLIC_ORIGIN` | form 빈 본문 | 303 → 치지직(state 새로), `Set-Cookie: __Host-cdl_f`(지금과 같다) | 403 `bad_origin`, 404, 409 |
+   | `/auth/callback` | GET | F | `code`, `state` | 행선지는 (나)의 표 | 늘 303 |
+   | `/auth/redeem` | POST | 없음(grant + loginSecret) | JSON `{"grant":"cdg_<43>","loginSecret":"<43>"}`(본문 상한·JSON 규칙은 28 (사) 그대로) | 200 `{"status":"ok", …토큰 묶음(§6.3)}` · `{"status":"denied","channelName"}` · `{"status":"cancelled"}` · `{"status":"failed","code"}`(code는 지금 poll의 낱말 그대로: `token`·`user`·`timeout`·`user_format`·`session`). 한 grant에 한 번만 | 400 `bad_request`(형식), **404 `not_found`**(모름·만료·이미 수령·loginSecret 불일치를 구분하지 않는다). `pending`·429 `too_soon`은 없다(폴링이 없다) |
+   | `/auth/poll` | POST | 없음 | 무엇이든 | — | **404 `app_outdated`**(경로 표에 남기는 비석 행. 본문을 읽지 않고 DO 0회, 로그 `auth.poll.rejected{reason: app_outdated}`). 404인 이유는 (사) v0.1.1이 404를 바로 `LoginLost`로 끝내기 때문이다(410 등 다른 4xx면 v0.1.1은 일시 오류로 보고 기한 10분 동안 2초마다 다시 폴링한다) |
+
+   - **확인 페이지를 남기는 이유**: 흐름 결합 쿠키(F, A4 로그인 CSRF 방어)를 심는 자리가 [계속] POST이고(Origin 검사로 교차 사이트 시작을 막는다), 이것이 가장 작은 변경이다. 코드 비교만 뺀다. 버린 대안: GET 하나로 바로 303(`Sec-Fetch-Site: none`만 받기) — 클릭 하나가 줄지만 opener로 연 탐색의 `Sec-Fetch-Site` 값이 브라우저마다 실측되지 않았고(틀리면 로그인이 통째로 막힌다) 상태를 바꾸는 GET이 된다.
+   - **CSP**: 확인 페이지만 `form-action 'self' <치지직 출처> http://127.0.0.1:*`(§4 공통 주석: 폼 전송 뒤의 리디렉션 사슬에도 `form-action`을 적용하는 브라우저가 있다. 이미 동의한 사용자는 [계속] POST → 303 치지직 → 302 콜백 → 303 `http://127.0.0.1:…`이 한 사슬이라 마지막 이동이 막힐 수 있다). 다른 HTML 페이지의 CSP는 그대로다. **[실기기 확인 필요]**: 이 CSP로 Chrome·Edge·Firefox·Safari에서 사슬 끝의 루프백 이동이 통과하는가((아) 사용자 확인 목록).
+   - 새 토큰 종류 **grant**: `cdg_` + 32바이트 b64url(`^cdg_[A-Za-z0-9_-]{43}$`, 13 (가)의 규칙에 한 종류를 더한다). 저장은 13 (나)대로 접두 포함 문자열의 SHA-256 hex. `loginSecret`은 13 (가)의 43자 secret 형식이고 앱 메모리(`Secret`)에만 있다.
+
+   **(나) 콜백의 행선지와 루프백 URL(§7.1을 바꾼다).** 루프백 URL은 Worker가 직접 만든다: **`http://127.0.0.1:<port>/chzzk-downloader/login?grant=<grant>`**(`core/loopback.ts`의 순수 함수 `loopbackUrl(port, grant)`, 호스트·경로는 상수 `LOOPBACK_HOST = "127.0.0.1"`·`LOOPBACK_PATH = "/chzzk-downloader/login"`, 쿼리 키는 `grant` 하나). 입력은 DO에 저장된 정수 포트와 DO가 발급한 grant뿐이라 **임의 URL로 보내는 길(open redirect)이 없다**. `localhost`는 쓰지 않는다(이름 해석이 IPv6 `::1`이나 hosts 파일로 갈 수 있다).
+
+   | 콜백 상황 | 흐름 상태 | 응답 |
+   |---|---|---|
+   | state 형식 밖 | 변화 없음 | 303 `/auth/done?r=failed&why=state_format`(지금과 같다) |
+   | consume `not_found`(모름·만료·이미 씀) | 변화 없음 | 303 `/auth/done?r=failed` |
+   | consume `binder` 불일치(F 쿠키 없음·다름) | failed(binder), **grant 없음** | 303 `/auth/done?r=failed`. 흐름의 포트는 흐름을 시작한 쪽의 것이라 이 브라우저를 그리로 보내지 않는다. 앱은 기한(10분)까지 기다린 뒤 `Expired{LoginTimeout}`(앱 화면의 [취소]·[다시 로그인]이 길) |
+   | 앱 흐름이고 `port`가 NULL(배포 전에 시작된 v0.1.1 흐름) | failed(user), grant 없음 | 303 `/auth/done?r=failed` |
+   | 앱 흐름 종결: ok·denied·cancelled(code 없음)·failed(`token`·`user`·`timeout`·`user_format`·code 형식·콜백 내부 예외의 정리 finish) | 그 종결 + `grant_hash`·`grant_exp = now + 2분`(`FLOW_DONE_TTL_MS`) | **303 `loopbackUrl(port, grant)`**, `Referrer-Policy: no-referrer`, `Set-Cookie`로 F 삭제(완료 페이지를 거치지 않으므로 여기서 지운다) |
+   | 웹 흐름 | 지금과 같다 | 지금과 같다 |
+
+   - **모든 종결 결과에 grant를 준다**(ok만이 아니다). 폴링이 없으면 앱이 denied·cancelled·failed를 알 길은 루프백뿐이고, grant 없이 오는 `?r=denied` 같은 신호는 아무 웹 페이지나 위조할 수 있다. 결과는 grant를 수령한 응답이 싣는다.
+   - grant는 `finish` RPC가 `transactionSync` **전에** 발급·해시하고(18의 규칙) 원문은 반환만 한다. 원문 grant는 DO에 한순간도 저장되지 않는다(§7.1 "원문 토큰은 DO에 없다" 테스트에 grant를 더한다).
+   - Worker의 "앱으로 돌아가세요" 페이지는 없어진다: 앱 흐름의 결과 페이지는 **앱 수신기**가 보인다((마)). Worker `/auth/done`은 웹 흐름 결과와, 위 표의 grant 없는 실패(앱이 결과를 받을 수 없는 경우)만 보이며 앱 흐름에는 이름·ID·코드 없는 일반 문구("로그인을 마치지 못했어요. 앱에서 다시 시도해 주세요.")다. `doneView`의 앱 확인 코드 재표시(23·27 (가))는 없어진다.
+
+   **(다) DO 스키마 v2·RPC·TTL(§5를 바꾼다).** 마이그레이션은 더하기만 하고 롤백(옛 코드 + 새 DB, `ahead`)을 견딘다. 열 이름을 바꾸지 않고 CHECK에 새 값도 넣지 않는다(SQLite에서 CHECK를 바꾸려면 표를 다시 만들어야 한다).
+   ```sql
+   -- V2
+   ALTER TABLE flow ADD COLUMN port INTEGER;        -- 앱: 루프백 포트(1024–65535). 웹·옛 흐름은 NULL
+   ALTER TABLE flow ADD COLUMN grant_hash TEXT;     -- 앱: SHA-256(grant). 종결 때 쓰고 수령하면 NULL
+   ALTER TABLE flow ADD COLUMN grant_exp INTEGER;   -- 앱: grant 만료(종결 시각 + 2분)
+   CREATE UNIQUE INDEX flow_grant ON flow(grant_hash);   -- NULL은 여럿 허용
+   ```
+   - `poll_verifier` 열은 이름을 그대로 두고 **loginVerifier**를 담는다(같은 계산·같은 형식). `user_code` 열은 지우지 않고 새 흐름에서 NULL이다. `core/usercode.ts`와 그 테스트는 지운다.
+   - `grant_exp`를 따로 두는 이유: 흐름 `expires_at`은 종결 때 앞당기지 않으므로(19 (다)) 그대로 쓰면 grant가 최대 10분 산다. grant는 종결 뒤 2분이다(콜백 303 → 수신기 → 수령은 수 초).
+   - RPC: `startApp(port, verifier, client, ip, limit, now)`(`port` 추가), `loginPage(handleHash, now)`(`userCode` 빼고, `port IS NULL`이면 null), `continueApp`(`port IS NOT NULL`인 행만), `finish`(앱 행이면 grant를 발급해 `{type: "loopback", port, grant}`를 돌려준다. `port`가 NULL이면 failed(user) 후 `{type: "failed"}`), **`redeem(grantHash, verifier, admins, now)`** → `{status: ok, bundle} | {status: denied, channelName} | {status: cancelled} | {status: failed, code} | {status: not_found}`. `claim`과 `pollGate`·`pollGateKey`·`POLL_INTERVAL_MS`·`POLL_MIN_INTERVAL_MS`는 지운다(28 (다)의 폴링 게이트는 대상이 없어진다).
+   - **`redeem`은 `transactionSync` 하나**: `SELECT … FROM flow WHERE grant_hash = ? AND kind = 'app' AND grant_exp > ?` → 없음이면 `not_found`. **verifier가 다르면 `not_found`이고 아무것도 쓰지 않는다**(grant를 본 쪽이 그것을 태워 없앨 수 없게. 맞는 verifier는 256비트 secret이라 추측할 수 없다). 맞으면 상태별로: ok → `activate`(지금 `claim`의 그것) 성공이면 `grant_hash = NULL, poll_verifier = NULL, session_id = NULL, expires_at = min(expires_at, now + 2분)`(28 (마)와 같이 슬롯을 일찍 비운다) 후 묶음, 실패(gone·not_allowed)면 행 삭제 후 `failed{session}`·`denied`(지금 `claim`과 같다). denied·cancelled·failed → `grant_hash = NULL` 후 그 결과. 종결 전 상태(started·redirected·exchanging)는 grant가 없으므로 닿지 않는다.
+   - **TTL 표**: 흐름 10분(그대로), grant 종결 + 2분, unclaimed 세션 = 흐름 만료(그대로, 19 (다)), 수령 뒤 흐름 ≤ now + 2분. alarm 청소는 그대로(만료 흐름 삭제가 grant도 지운다).
+   - **스로틀·상한**: start 스로틀·32 상한은 그대로다. `/auth/redeem`에는 스로틀이 없다(28 (차)와 같은 근거: 형식 검사 뒤 DO RPC 하나, 읽기 1행. grant는 256비트라 추측 공격이 성립하지 않는다).
+   - **무료 한도(§5·19 (마)를 고친다)**: 폴링 줄("2초 × 10분 = 최대 300요청/로그인, 쓰기 0")은 "수령 요청 1회(일시 오류 재시도 포함 ≤ 3), 폴링 없음"으로 바뀐다. 공격자 순환(start·[계속]·binder 실패·청소 ≤ 12행)은 grant를 만들지 않으므로 그대로이고, 정상 로그인 한 번은 28행 → 대략 30행 안팎이다(finish의 grant 인덱스, redeem의 grant NULL). 정확한 행 수는 W 단계가 `test/store/flows.test.ts` "행 수 상한"으로 다시 재고 이 줄과 19 (마)의 합계를 함께 고친다. 합계는 여전히 100,000 행/일보다 훨씬 작다.
+
+   **(라) 위협 모델(루프백 부분).** A3·A4는 §0·§7.2의 공격자 번호다.
+
+   | 위협 | 공격 | 방어 | 테스트 |
+   |---|---|---|---|
+   | open redirect | `/auth/start`에 임의 URL·호스트·경로를 넣어 Worker가 피해자 브라우저를 다른 곳으로 보내게 한다 | 입력은 정수 포트뿐(1024–65535). URL은 Worker가 상수 호스트 `127.0.0.1`·상수 경로로 만든다. 문자열 포트·소수·범위 밖은 400 | `loopbackUrl` 표(포트 경계 1024·65535, 결과 문자열 정확 일치), start 형식 표 |
+   | A3 피싱(공격자가 시작한 흐름을 피해자가 승인) | 공격자가 자기 앱으로 start → 받은 `loginUrl`을 피해자에게 보낸다 → 피해자가 [계속]·치지직 승인 | grant는 **피해자 브라우저**가 있는 기기의 `127.0.0.1:<공격자 포트>`로 간다. 공격자 기기에는 오지 않는다. 피해자 기기에서 그 포트를 듣는 것이 없거나 우리 앱이면 수령은 피해자 앱의 secret과 맞지 않아 404 | http: 흐름 A의 grant를 다른 secret으로 수령 → 404, 그 뒤 맞는 secret으로 수령 → 200(태워지지 않음) |
+   | grant 주입 login-CSRF | 공격자가 **자기 계정**으로 로그인한 흐름의 grant를 피해자 수신기(`http://127.0.0.1:<피해자 포트>/…?grant=<공격자 grant>`)에 넣어 피해자 앱을 공격자 계정으로 로그인시킨다(웹 페이지가 포트를 훑어 no-cors GET 하나면 된다) | **grant는 그 흐름을 시작할 때 받은 loginVerifier에 묶인다**. 피해자 앱은 자기 loginSecret으로만 수령하므로 공격자 흐름의 grant는 404다. 앱은 404 grant를 무시하고 기한까지 계속 듣는다(로그인을 끝내지 않는다 — 끝내면 포트를 훑는 웹 페이지가 로그인을 중단시킬 수 있다). F 쿠키(binder)는 콜백 쪽 login-CSRF(공격자 code·state를 피해자 브라우저 콜백에)를 지금처럼 막는다 | 셸: 404 grant 뒤 정상 grant → `SignedIn`, 형식 밖 grant 400 뒤에도 수신기 유지. Worker: 다른 verifier 404 |
+   | 로컬 포트 가로채기 | 같은 기기의 다른 프로세스가 수신기 포트를 먼저 잡거나 같은 포트에 함께 바인딩해 grant를 가로챈다 | 수신기는 `/auth/start` **전에** `127.0.0.1:0`에 바인딩하고 OS가 고른 포트를 보낸다(그 포트는 이미 우리 것). 가로채도 grant만으로는 수령할 수 없다(loginSecret은 앱 메모리에만, Worker에는 해시뿐). 같은 사용자 권한의 악성 프로세스는 범위 밖이다(`session.json`을 바로 읽을 수 있다, 52 (가)). **[확인 필요]** Windows에서 다른 프로세스가 `SO_REUSEADDR`로 같은 `127.0.0.1:<port>`에 바인딩할 수 있는지(std·tokio는 Windows에서 `SO_EXCLUSIVEADDRUSE`를 켜지 않는다) — 방어는 이것에 기대지 않는다 | 셸: 바인딩 주소가 `127.0.0.1`(`local_addr().ip()`), 0.0.0.0·`::`·`localhost` 문자열 없음(정적 검사) |
+   | 공격자 포트 + 새는 로컬 서비스 | 공격자가 start 때 피해자 기기에서 요청 URL을 기록·반사하는 다른 로컬 서비스의 포트를 고르고, 피해자가 그 `loginUrl`로 [계속]·승인하면 grant(피해자 채널, **공격자 secret**에 묶임)가 그 서비스로 간다 | 피해자가 공격자 링크에서 [계속]과 치지직 승인을 해야 하고(A3와 같은 사회공학), 그 포트에 쿼리를 밖으로 내보내는 서비스가 있어야 하며, 2분 안에 수령해야 한다. 경로가 고정(`/chzzk-downloader/login`)이라 남의 서비스가 그 경로를 기록해야 한다. **받아들이는 잔여 위험**이다(R1을 바꾼다): 확인 페이지의 경고 문구와 내 기기·관리 화면의 [끊기]가 남은 출구다 | — |
+   | 재생 | 같은 grant를 두 번 수령 | `redeem`이 `transactionSync` 안에서 `grant_hash = NULL`. 두 번째는 404. grant 2분 TTL | store·http: 두 번째 404, 만료 경계 |
+   | 누출 | grant가 브라우저 이력·주소창·Referer·로그에 남는다 | 이력의 grant는 1회용·2분·secret 묶임이라 쓸모가 없다. Worker 303과 수신기 응답에 `Referrer-Policy: no-referrer`, 수신기 페이지는 외부 리소스 0개. 콜백은 이미 quiet 경로(43)이고 `Location` 헤더는 로그에 남지 않는다. `/auth/redeem`은 grant를 본문으로 받으므로 quiet가 아니어도 된다. 로그·응답 카나리: grant·loginSecret·loginVerifier(§14 hygiene에 더한다). 앱은 grant·loginSecret을 `Secret`으로 들고 `Debug`를 손으로(`***`) 구현하며 로그에 내지 않는다 | `hygiene.test.ts` 카나리 확장(성공·실패 경로), 셸 `auth_secrets.rs` |
+   | DNS rebinding | 공격자 도메인이 127.0.0.1로 풀리게 해 웹 페이지 JS가 수신기 응답을 읽는다 | 수신기는 `Host`가 정확히 `127.0.0.1:<port>`일 때만 처리한다(아니면 400, 로그인 유지). CORS 헤더를 내지 않는다 | 셸 파서 표 |
+   | 수신기 자원 고갈 | 아무 프로세스나 연결을 열어 두고 보내지 않는다(브라우저 사전 연결 포함) | 연결마다 따로 태스크, 읽기 기한 5초, 헤더 상한 8 KiB, 동시 연결 8개(넘으면 바로 닫음) | 셸: 빈 연결이 다른 연결을 막지 않음 |
+
+   **(마) 앱 수신기(Tauri 비의존, `crates/shell/src/auth/loopback.rs`).** 셸 crate에 둔다: 실제 소켓으로 셸 테스트가 돌고 앱 crate·`--features e2e`와 무관하다. **새 크레이트를 넣지 않는다**: tokio `net`·`io-util`은 이미 의존 그래프에 켜져 있다(`cargo tree -p chzzk-shell -e features -i tokio`로 확인, 2026-10-09). 셸 `Cargo.toml`의 tokio features에 둘을 더할 뿐이고 HTTP 서버 crate 없이 요청 줄과 헤더를 손으로 해석한다(순수 함수 `parse_request(bytes, port) -> Request | Reject`, 표 테스트).
+   - 바인딩 `tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))`. `localhost`·`0.0.0.0`·`::`는 쓰지 않는다. 포트는 `local_addr().port()`.
+   - 처리: `GET <LOOPBACK_PATH>?grant=<cdg_…>` + `Host: 127.0.0.1:<port>`만 받는다. 다른 메서드 405(`Allow: GET`), 다른 경로(`/favicon.ico` 포함) 404, Host 다름·grant 형식 밖·쿼리 키가 다르거나 둘 이상 400. **이것들은 로그인을 끝내지 않는다**(새로고침·favicon·포트 훑기). HTTP/1.0·1.1만, 요청 줄·헤더는 ASCII.
+   - 형식이 맞는 grant는 서비스에 넘기고(채널 + 답장 oneshot) **수령 결과를 기다려(최대 15초)** 결과 페이지를 쓴다. 15초가 지나면 일반 페이지. 결과 페이지: ok "로그인했어요. 치지직 다운로더로 돌아가세요. 이 창은 닫아도 돼요." / denied "허가되지 않은 채널이에요. 앱에서 안내를 확인해 주세요." / cancelled "로그인을 취소했어요. 앱에서 다시 시도할 수 있어요." / failed "로그인을 마치지 못했어요. 앱에서 다시 시도해 주세요." / 수령 404 "이 로그인 요청은 처리할 수 없어요. 앱에서 다시 시도해 주세요." / 기다림 초과 "앱으로 돌아가 결과를 확인해 주세요.". 문구는 고정 문자열이고 바깥 값(채널 이름 등)을 넣지 않는다(이스케이프할 것이 없다). 이 문구는 웹뷰 copy deck(`ko.ts`)이 아니라 셸 Rust 상수다(브라우저에 내는 페이지라서).
+   - 응답 헤더: `Content-Type: text/html; charset=utf-8`, `Cache-Control: no-store`, `Referrer-Policy: no-referrer`, `X-Content-Type-Options: nosniff`, `Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`, `Connection: close`. 본문에 스크립트·외부 리소스(`http`·`//`로 시작하는 참조)가 없다(테스트가 본문을 검사).
+   - 수명: `begin_login`에서 열고 로그인이 끝나면(수령 결과 ok·denied·cancelled·failed, 기한, 취소, 로그아웃, 새 로그인) 닫는다. 결과 페이지를 쓴 뒤 닫는다. 수령 404·일시 오류는 계속 듣는다.
+   - 비밀: `Grant`(새 타입)·`loginSecret`은 `Secret`이고 `Debug`는 손으로 `***`. 수신기 로그는 결과 낱말만(`loopback.reject{reason: method|path|host|grant_format|busy}`, `loopback.grant`), 요청 줄·쿼리·Host 값은 남기지 않는다.
+   - **[실기기 확인 필요]** Windows Defender 방화벽이 루프백 전용 리스너에 허용 창을 띄우지 않는가.
+
+   **(바) 앱 셸 계약(§11.3·§11.4·§11.7·47·50·54를 바꾼다).**
+   - `WorkerApi`: `poll`을 지우고 `start(&StartRequest { port: u16, login_verifier: String, client: String }) -> StartResponse { login_url: LoginUrl, expires_at }`(`parse_start`: 키는 `loginUrl`·`expiresAt`, `loginUrl`은 지금처럼 정확히 `{origin}/auth/login/<22자>`), `redeem(&Grant, &Secret<String>) -> Result<RedeemResponse, ApiError>`(`RedeemResponse = Ok(TokenBundle) | Denied{channel_name} | Cancelled | Failed{code}`, 파서는 지금 `parse_poll`에서 `pending`을 뺀 것). 404는 `ApiError::Worker{404, "not_found"}`.
+   - `token`: `new_poll_secret`·`poll_verifier`는 `new_login_secret`·`login_verifier`로 이름만 바꾸고 KAT(47 (나), 0x5a 32바이트 → `bec0b6d6…b53d`)는 그대로 둔다. grant 형식 검사 `is_grant`.
+   - **`AuthService` 상태 머신**: `Login { seq, login_secret, login_url, deadline, receiver(닫으면 수신기 종료), last_transient }`(`login_id`·`user_code`·`interval`은 없다). `begin_login`: 수신기 바인딩 → 실패면 `Error{Receiver}`·`BeginLogin::Failed`(start를 보내지 않는다) → start → 실패면 수신기를 닫고 지금처럼 `Error{Network|Server}`. 성공이면 `Pending`. 50 (가)(다)(라)의 기한(start 직전 + 10분)·`SignedIn`이 아니면 언제나 시작·취소 규칙·세대 검사는 그대로다.
+   - `run_login_poll`은 **`run_login_wait`**로 바뀐다: 수신기 채널에서 grant를 하나씩(single-flight) 받아 `redeem`한다. 결과 → 상태: ok → `SignedIn`(지금 poll ok와 같다: 옛 저장 세션 서버 로그아웃 포함), denied → `Denied`(이름은 응답 값), cancelled → `Cancelled`, failed → `Error{Server}`. **404**: 이 grant에 앞선 일시 오류가 있었으면 `Error{LoginLost}`(첫 응답을 잃었을 수 있다 — `LoginLost`의 새 뜻), 없었으면 그 grant를 무시하고 계속 듣는다(주입·옛 grant). 그 밖 Worker 4xx도 무시·계속. 일시 오류(연결·5xx·Worker 형식 아님)는 같은 grant로 1초·2초 뒤 두 번 더(기한 안) → 그래도 실패면 `last_transient`를 남기고 계속 듣는다(기한에 50 (나)의 규칙대로 `Error{Network|Server}`). 기한이 지나면 지금처럼 `Expired{LoginTimeout}` 또는 `Error{…}`.
+   - 서비스 테스트가 소켓 없이 돌게 수신기는 seam(`GrantSource` trait: `bind() -> (port, 받는 쪽)`)으로 주입한다. 실제 구현은 (마), 가짜는 채널로 grant를 넣는다.
+   - **DTO(bindings 재생성)**: `PendingDto { expires_at }`(`user_code`를 뺀다), `AuthReason`에 **`Receiver`**(TS `'receiver'`)를 더한다. `AuthState`·command(일곱 개 그대로: `auth_status`·`auth_login`·`auth_reopen`·`auth_copy_login_url`·`auth_cancel`·`auth_retry`·`auth_logout`)·이벤트(`auth-changed`)·AuthGate 허용 목록(55)은 바꾸지 않는다. `auth_login`은 Started일 때 확인 페이지를 열고 `run_login_wait`를 띄운다(54 (라)의 나머지 그대로). `auth_copy_login_url`은 남긴다(다른 브라우저로 열 때), 단 **같은 컴퓨터의 브라우저**에서만 끝까지 간다.
+   - **LoginView·copy deck(§11.7·62 (마)·66 (라)를 바꾼다)**: pending 화면에서 확인 코드와 머리말을 지운다. 키: `auth.pending.code`·`auth.pending.codeLabel` 지움, `auth.pending.title` "브라우저에서 로그인해 주세요"(그대로), `auth.pending.body` "브라우저에서 치지직 로그인을 마치면 자동으로 넘어가요. 남은 시간 {mmss}", 새 `auth.pending.sameDevice` "로그인 주소는 이 컴퓨터의 브라우저에서 열어 주세요."(로그인 주소 복사 옆), 새 `auth.receiver.title`·`.body` "로그인을 준비하지 못했어요 / 앱이 로그인 결과를 받을 수 없었어요. 다시 시도해 주세요." + [다시 로그인]. `auth.lost`는 문구 그대로(뜻만 "수령 응답을 잃음"). `loginScreen` 표에 `receiver` 행을 더하고 66 (자)의 "pending인데 pending이 없음" 규칙은 그대로.
+
+   **(사) v0.1.1 호환(이미 배포된 앱).** 새 Worker가 v0.1.1에 주는 응답과 v0.1.1이 그것을 읽는 방식(실측: `crates/shell/src/auth/service.rs` `begin_login`·`apply_poll`, `verify.rs` `outcome_of_error`).
+
+   | v0.1.1 사용자 | 경로 | 새 Worker 응답 | v0.1.1의 결과 |
+   |---|---|---|---|
+   | 로그인된 상태 | `/auth/refresh`·`/api/me`·`/auth/logout`·`/update/:current`·`/releases/**` | **바이트 수준 그대로**(세션·토큰 형식·rotation·DO 세션 표를 바꾸지 않는다) | 그대로 동작. 업데이트 배너 → 0.1.2 설치. 설치된 0.1.2는 같은 `session.json`으로 계속 로그인 상태다 |
+   | 로그아웃 상태 | `POST /auth/start {pollVerifier, client}` | 400 `app_outdated` | `Error{Server}` "로그인 요청을 처리하지 못했어요 / 잠시 뒤 다시 시도해 주세요."(Worker 형식 4xx는 모두 이 문구). 앱 안 업데이트는 세션이 있어야 하므로 **랜딩에서 웹 로그인 → 0.1.2 설치**가 길이다. 사용자가 본인·지인뿐이라 직접 알린다(ROADMAP) |
+   | 배포 순간 로그인 중 | `POST /auth/poll` | 404 `app_outdated` | 즉시 `Error{LoginLost}` "로그인을 마무리하지 못했어요". 다시 로그인하면 위 행 |
+   | 배포 순간 확인 페이지를 연 브라우저 | `GET`·`POST /auth/login/:handle`(옛 흐름, `port` NULL) | 404 HTML | 앱은 위 행 |
+   | 배포 순간 치지직에서 돌아오는 브라우저 | 콜백(옛 흐름) | 303 `/auth/done?r=failed` | 앱은 위 행 |
+
+   - 이미 발급된 세션은 로그인 방식과 무관하다(세션 표는 그대로). 그래서 **로그인된 v0.1.1 → 0.1.2 업데이트 경로**가 끊기지 않는 것이 이 묶음의 호환 핵심이고, 행렬 테스트(§4.5)와 hygiene가 그 경로들의 응답을 지금 그대로 고정한다(경로 표의 변경은 앱 흐름 행뿐).
+
+   **(아) 운영 배포·태그 순서.** **실측(2026-10-09, `gh variable list`)**: 저장소 변수 **`WORKER_DEPLOY_ENABLED=true`**다(ROADMAP W9 기록과 같다. 이 작업을 시작한 지시문의 "false·수동 배포"는 옛 상태였다). 그래서 태그 `v0.1.2`를 push하면 release.yml이 `sign-publish`(R2 업로드 → `latest.json` 승격) → `verify` → **`deploy-worker`**(`needs: [gate, xtask, verify, worker-bundle]`) 순서로 새 Worker를 **자동 배포**한다. 에이전트는 `wrangler deploy`·태그 push·Cloudflare 리소스 생성을 하지 않는다.
+   - **순서의 결론: 0.1.2가 승격된 뒤에 새 Worker**가 맞다. 반대(새 Worker 먼저)면 릴리스 파이프라인 전체(빌드 3 OS·스모크·서명, 수십 분) 동안 로그아웃된 v0.1.1이 로그인할 수 없고 랜딩에도 0.1.2가 없다.
+   - **깨지는 창 하나**: `latest.json` 승격 ~ `deploy-worker` 끝(verify + 배포, 수 분). 이 사이 랜딩에서 0.1.2를 새로 설치한 사람의 로그인은 옛 Worker가 400 `bad_request`(새 형식에 `pollVerifier`가 없다)로 거절해 `Error{Server}`다. 몇 분 뒤 다시 하면 된다. 로그인된 v0.1.1·업데이트된 0.1.2(세션 유지)는 영향이 없다.
+   - **선택지(사용자 결정, [확인 필요])**: (A) **자동 순서 유지**(권장, 할 일 없음). (B) 태그 전에 변수를 `false`로 바꾸고 승격 직후 사용자가 수동 `wrangler deploy`(런북 방식). 창은 같거나 길어지고 사람 단계가 하나 늘어 고르지 않는다.
+   - **실패 대응**: `verify` 판정 실패 → release.yml이 `latest.json`을 이전으로 되돌리고 `deploy-worker`는 돌지 않는다(옛 Worker + 0.1.1, 일관). `deploy-worker`만 실패 → 0.1.2가 승격된 채 옛 Worker라 0.1.2 로그인이 막힌다: 그 작업 재실행, 또는 사용자 수동 `wrangler deploy`(런북 W9 절차), 그래도 안 되면 `rollback.yml -f version=0.1.1`. **되돌리기는 앱과 Worker를 함께**: Worker만 되돌리면(`wrangler rollback`) 0.1.2가 로그인할 수 없고, `latest.json`만 0.1.1로 되돌리면 로그아웃된 0.1.1이 로그인할 수 없다. DB는 v2가 앞서도 옛 코드가 돈다(`ahead`).
+   - **태그 차단**: W PR이 master에 머지되면 master의 Worker는 폴링이 없고 앱은 아직 폴링을 쓴다. 그 사이 태그를 찍으면 둘이 함께 배포돼 **모든** 새 로그인이 깨진다. 그래서 W PR이 `release.mjs` `TAG_BLOCK = 'login-loopback'`을 다시 넣고(60·78의 방식, tag 모드 gate만 1, 리허설은 통과) E2E 묶음 PR이 지운다(85의 방식). 머지는 위임돼 있으므로 약속만으로 두지 않는다.
+   - **태그 전 사용자 확인(실기기)**: ① **PNA/LNA**: HTTPS 페이지에서 `http://127.0.0.1:<port>`로의 최상위 303 이동이 Chrome·Edge(Local Network Access)·Safari·Firefox에서 막히거나 권한 창을 띄우지 않는가, HTTPS 자동 업그레이드(Chrome HTTPS-Upgrades, Firefox HTTPS-Only)가 루프백 http를 https로 바꾸지 않는가. 새 Worker 배포 없이 확인하는 길: 앱 debug 빌드 대신 아무 공개 https 리디렉션 도구(예: 리디렉션 대상 URL을 받는 공개 테스트 서비스)로 `http://127.0.0.1:<임의 포트>/chzzk-downloader/login?grant=x`를 열고 `nc -l 127.0.0.1 <포트>` 등에 요청 줄이 오는지 본다(값은 가짜). ② (가) CSP `form-action`의 루프백 사슬(이미 치지직에 동의한 계정으로 실제 로그인 한 번, 태그 뒤 운영에서). ③ Windows 방화벽 창((마)). ④ macOS·Windows·Linux 각 기본 브라우저에서 로그인 끝 → 수신기 결과 페이지. ①이 막히면 설계를 다시 연다(대비책은 만들지 않기로 했다).
+
+   **(자) 테스트 계획.**
+   - **Worker vitest**: `core/loopback.ts`(포트 검증 표·`loopbackUrl` 정확 문자열), `core/token.ts`(`cdg_` 종류·다른 접두 거부, verifier KAT 그대로), `store/flows.test.ts`(v1 DB → v2 마이그레이션 `sqlite_master` 비교와 v1 행 보존, `startApp`이 포트 저장, `continueApp`·`loginPage`는 `port IS NULL` 거부, `finish` 앱 종결 4종이 grant 해시·`grant_exp` 저장과 원문 반환, `port` NULL 흐름은 failed, `redeem` 표: 모름·만료 경계(`grant_exp`)·**틀린 verifier는 쓰기 0 뒤 맞는 verifier 성공**·ok 1회 뒤 404·denied·cancelled·failed·activate gone·not_allowed, "행 수 상한" 재측정, 덤프에 grant 원문 없음), `http/login-app.test.ts`(가짜 치지직 전 흐름: start → 확인 페이지(코드 없음·CSP `form-action`에 `http://127.0.0.1:*`) → [계속] → 콜백 → **303 `Location`이 `http://127.0.0.1:<port>/chzzk-downloader/login?grant=cdg_…`와 정확히 같고 `no-referrer`·F 삭제** → redeem 묶음 → 두 번째 404, 승인·취소·거부·token 실패·user 실패·콜백 예외 각각의 grant 결과, binder 불일치·state 형식 밖은 done, start 형식 표(포트 경계·문자열 포트·`port` 없음 → 400 `app_outdated`), `POST /auth/poll` → 404 `app_outdated`·DO 0회), `matrix.test.ts`(`/auth/redeem`·`/auth/poll` 비석 행, CI 허용 집합 그대로, 세션 경로 기대값 그대로), `quiet.test.ts`(콜백 quiet 그대로), `hygiene.test.ts`(grant·loginSecret·loginVerifier 카나리, 성공·실패 경로), `usercode.test.ts`·폴링 테스트 삭제. `worker/scripts/e2e-dev.mjs`(`worker-e2e`)의 앱 로그인 시나리오: node `http`로 `127.0.0.1:0` 가짜 수신기를 열고 콜백 303을 따라가 grant를 받아 redeem.
+   - **셸**: `auth/loopback.rs` 파서 표(메서드·경로·쿼리·Host·헤더 상한·grant 형식·HTTP 버전)와 실제 소켓 테스트(바인딩 IP, GET 성공 → 서비스에 전달 → 결과 페이지 문구·헤더·외부 참조 없음, 405·404·400 뒤에도 수신기 유지, 빈 연결이 다른 연결을 막지 않음, 동시 8개 상한, 결과 뒤·취소 뒤 닫힘), `auth_service.rs`(가짜 `GrantSource`: 바인딩 실패 → `Error{Receiver}`(start 0회), start 실패 → 수신기 닫힘, 404 grant 무시 뒤 정상 ok, 일시 오류 뒤 404 → `LoginLost`, 일시 오류 3회 → 기한에 `Error{Network}`, 기한 → `LoginTimeout`, 취소·로그아웃·새 로그인 → 수신기 닫힘, denied·cancelled·failed 매핑, start 중 취소의 세대 검사 그대로), `auth_http.rs`(wiremock: start 본문 `port`·`loginVerifier`·`client`, 201 파서, redeem 200 네 모양·404·계약 위반), `auth_token.rs`(이름만), `auth_secrets.rs`(`Grant`·loginSecret `Debug` `***`), `dto_json.rs`·bindings(`PendingDto`·`AuthReason::Receiver`).
+   - **앱 crate ipc(`app/src-tauri/tests/ipc.rs`)**: `auth_login` → Pending DTO에 `userCode` 없음, `auth_cancel`, 게이트 허용 목록 그대로.
+   - **웹 E2E**: `app/e2e/mock/backend.ts`(pending에 코드 없음, `receiver` 사유), `login.spec.ts`(pending 화면 문구·코드 없음·남은 시간, 수신기 실패 화면 → [다시 로그인]), `auth.test.ts`·`components/app/auth.test.ts`(`loginScreen` `receiver` 행), `gate-sync.test.ts` 그대로.
+   - **네이티브 E2E 스텁**: `scripts/ci/e2e-fixture-server.mjs`의 Worker 스텁이 `/auth/start`에서 `port`를 기억하고 `loginUrl = <스텁>/auth/login/<h>`를 준다. 스텁의 `GET /auth/login/<h>`는 확인 페이지 없이 **303 `http://127.0.0.1:<port>/chzzk-downloader/login?grant=<스텁 grant>`**, `/auth/redeem`은 묶음(`/auth/poll` 처리는 지운다). `app/src-tauri/src/e2e.rs`의 `E2eAuthIo::open_url`이 브라우저 대신 그 주소를 GET하고 303 한 번을 따라가 수신기에 GET한다(std `TcpStream` 최소 HTTP/1.1, 새 의존성 없음, `--features e2e` 코드는 `e2e.rs`에만 — `release-hygiene`·`hygiene-seed` 그대로). 그래서 네이티브 E2E가 실제 수신기·Host 검사·redeem을 지난다. `e2e-fixture-server.test.mjs`·`e2e-native.test.mjs`의 poll 횟수 단언은 redeem 횟수로.
+   - **ratchet**: 테스트를 지워 `tests.worker`·셸 테스트 수·`tests.app_e2e.<os>`·Playwright 통과 수·커버리지가 내려가면 그 PR에서 `ci/ratchet.json` 기준을 낮추고 `ci/RATCHET_LOG.md`에 키와 이유("구현 중 변경 87, 폴링·확인 코드 테스트 삭제")를 적는다.
+
+   **(차) 단계 분할(단계 워크플로 틀: Opus 명세 → Sonnet 구현 → Opus 리뷰 2종 → 수정, stacked PR, PR마다 Codex 또는 서브에이전트 리뷰).**
+
+   | # | 묶음 | 산출물 | 수락 기준 |
+   |---|---|---|---|
+   | L0 | 설계 | 이 항목, app.md 65, ROADMAP 체크리스트 | `scan`·`typos` |
+   | L1 (W) | Worker | 스키마 v2·`core/loopback.ts`·`cdg_`·start·확인 페이지(코드 없음, CSP)·콜백 행선지·`/auth/redeem`·`/auth/poll` 비석·`claim`·폴링 게이트·`usercode` 삭제, `e2e-dev.mjs` 앱 시나리오, **`TAG_BLOCK = 'login-loopback'`**, ratchet 조정 | `run.mjs worker`·`worker-e2e`(관찰)·`scripts-test`·`release-selftest` 녹색, (자)의 Worker 항목 |
+   | L2 (A) | 앱 | 셸 `loopback.rs`·`WorkerApi`·`AuthService`(`run_login_wait`)·DTO·bindings, 앱 crate 배선, LoginView·copy deck·가짜 백엔드·Playwright | `rust`·`tauri-clippy`·`tauri`·`frontend`·`e2e-web` 녹색, (자)의 셸·ipc·웹 E2E 항목 |
+   | L3 (E2E) | 네이티브 E2E | fixture 서버 Worker 스텁·`E2eAuthIo` 루프백 GET, `TAG_BLOCK` 삭제 | `e2e-native` linux·windows 녹색(master), 태그 gate 조건(107) |
+   | L4 | 0.1.2 | 버전 PR(Cargo·`tauri.conf.json`·`app/package.json`·`fuzz/Cargo.lock`), master `ci-ok`·`e2e-native` 녹색, master 리허설 dispatch 녹색(`verify-sig … 버전 0.1.2`) | **태그 직전에 멈춘다** |
+   | 사용자 | 운영 | (아)의 실기기 확인 ①, 태그 `git push origin refs/tags/v0.1.2` → 자동 `deploy-worker` → `/health` build 일치 → 실기기 ②~④ → 로그아웃된 v0.1.1 사용자에게 랜딩 재설치 안내 | — |
+
+   - 0.1.2를 "업데이트 경로 확인용"으로 먼저 따로 내는 안(메모, 사용자 검토 중)이 먼저 나가면 이 묶음의 릴리스는 0.1.3이 된다. 버전 번호만 바뀌고 순서는 같다(**[확인 필요] 사용자 결정**).

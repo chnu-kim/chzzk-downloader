@@ -4,11 +4,12 @@
 //! `http://127.0.0.1:<port>/chzzk-downloader/login?grant=…&state=…`로 보낸다. 수신기는 요청을 엄격하게 해석하고
 //! state를 상수 시간으로 비교한 뒤 grant 하나만 서비스에 넘기고, 서비스가 정한 결과 페이지를 브라우저에 보여 준다.
 //!
-//! Tauri에 기대지 않는다. grant·state는 `Debug`·로그에 내지 않는다(로그는 낱말만: `loopback.reject`·`loopback.grant`).
+//! Tauri에 기대지 않는다. grant·state는 `Debug`·로그에 내지 않는다(로그는 낱말만: `loopback.reject`(수신기마다 상한 `REJECT_LOG_LIMIT`)·`loopback.reject.summary`·`loopback.grant`).
 
 use std::fmt;
 use std::io;
 use std::net::Ipv4Addr;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
@@ -33,6 +34,8 @@ pub const MAX_HEAD: usize = 8 * 1024;
 pub const MAX_CONNECTIONS: usize = 8;
 /// 쓸 수 있는 포트를 얻으려는 바인딩 시도 상한
 pub const BIND_ATTEMPTS: usize = 5;
+/// 수신기 하나가 남기는 `loopback.reject` 줄 상한. 넘친 것은 닫힐 때 `loopback.reject.summary` 한 줄로 센다(로그 홍수 방지)
+pub const REJECT_LOG_LIMIT: u32 = 10;
 /// 수신기가 스스로 끝나는 상한(로그인 기한 10분 + 1분. 서비스가 닫지 못한 경우의 안전판)
 pub const MAX_LIFETIME: Duration = Duration::from_secs(11 * 60);
 /// 결과 페이지의 CSP 헤더 값
@@ -444,6 +447,7 @@ impl GrantSource for LoopbackGrantSource {
             port,
             first: Mutex::new(None),
             tx: tx.clone(),
+            rejects: AtomicU32::new(0),
             read_timeout: self.read_timeout,
             reply_wait: self.reply_wait,
         });
@@ -458,8 +462,32 @@ struct Shared {
     /// 먼저 받은 grant 문자열. 다시 비우지 않는다(수령 결과가 나면 수신기도 닫힌다, 91 (나))
     first: Mutex<Option<String>>,
     tx: GrantTx,
+    /// 거부한 요청 수(로그 상한용)
+    rejects: AtomicU32,
     read_timeout: Duration,
     reply_wait: Duration,
+}
+
+impl Shared {
+    /// 거부 낱말을 남긴다. 수신기마다 처음 `REJECT_LOG_LIMIT`개만 줄로 내고 나머지는 세기만 한다
+    fn log_reject(&self, reason: &'static str) {
+        let n = self.rejects.fetch_add(1, Ordering::Relaxed);
+        if n < REJECT_LOG_LIMIT {
+            info!(reason, "loopback.reject");
+        }
+    }
+
+    /// 상한을 넘겨 줄을 남기지 않은 거부가 있으면 총수를 한 줄로 남긴다
+    fn log_reject_summary(&self) {
+        let count = self.rejects.load(Ordering::Relaxed);
+        if count > REJECT_LOG_LIMIT {
+            info!(
+                count,
+                suppressed = count - REJECT_LOG_LIMIT,
+                "loopback.reject.summary"
+            );
+        }
+    }
 }
 
 async fn accept_loop(
@@ -473,9 +501,9 @@ async fn accept_loop(
     tokio::pin!(life);
     loop {
         tokio::select! {
-            () = close.closed() => return,
-            () = tx.closed() => return,
-            () = &mut life => return,
+            () = close.closed() => break,
+            () = tx.closed() => break,
+            () = &mut life => break,
             res = listener.accept() => match res {
                 Ok((stream, _)) => match permits.clone().try_acquire_owned() {
                     Ok(permit) => {
@@ -486,7 +514,7 @@ async fn accept_loop(
                         });
                     }
                     Err(_) => {
-                        info!(reason = "full", "loopback.reject");
+                        shared.log_reject("full");
                         drop(stream);
                     }
                 },
@@ -494,6 +522,7 @@ async fn accept_loop(
             },
         }
     }
+    shared.log_reject_summary();
 }
 
 /// `\r\n\r\n`이 나올 때까지(상한 안에서) 읽는다. 기한·EOF·읽기 오류면 None
@@ -529,7 +558,7 @@ async fn handle_conn(mut stream: TcpStream, sh: &Shared) {
     let req = match parse_request(&head, sh.port) {
         Ok(r) => r,
         Err(r) => {
-            info!(reason = r.word(), "loopback.reject");
+            sh.log_reject(r.word());
             write_and_close(stream, r.status(), PAGE_REJECTED).await;
             return;
         }
@@ -538,7 +567,7 @@ async fn handle_conn(mut stream: TcpStream, sh: &Shared) {
         req.state.expose().as_bytes(),
         sh.expected.expose().as_bytes(),
     ) {
-        info!(reason = "state", "loopback.reject");
+        sh.log_reject("state");
         write_and_close(stream, 400, PAGE_REJECTED).await;
         return;
     }
@@ -555,13 +584,13 @@ async fn handle_conn(mut stream: TcpStream, sh: &Shared) {
         }
     };
     if let Some(reason) = seen {
-        info!(reason, "loopback.reject");
+        sh.log_reject(reason);
         write_and_close(stream, 200, ReceiverPage::Pending.message()).await;
         return;
     }
     let (delivery, reply_rx) = Delivery::new(req.grant);
     if sh.tx.try_deliver(delivery).is_err() {
-        info!(reason = "busy", "loopback.reject");
+        sh.log_reject("busy");
         write_and_close(stream, 200, ReceiverPage::Pending.message()).await;
         return;
     }

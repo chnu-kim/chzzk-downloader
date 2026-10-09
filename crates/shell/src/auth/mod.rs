@@ -33,8 +33,8 @@ pub use http::{HttpWorkerApi, REQUEST_TIMEOUT};
 pub use loopback::{
     BIND_ATTEMPTS, BindError, Bound, CSP, CloseHandle, CloseSignal, Delivery, FETCH_BAD_PORTS,
     GrantRx, GrantSource, GrantTx, LOOPBACK_PATH, LoopbackGrantSource, MAX_CONNECTIONS,
-    PAGE_REJECTED, ReceiverPage, Reject, Request, close_pair, grant_channel, is_usable_port,
-    parse_request,
+    PAGE_REJECTED, REJECT_LOG_LIMIT, ReceiverPage, Reject, Request, close_pair, grant_channel,
+    is_usable_port, parse_request,
 };
 pub use service::{
     AuthService, AuthStatus, BeginLogin, LoginTicket, OfflineInfo, PendingInfo, Trigger,

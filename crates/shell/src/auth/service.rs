@@ -885,11 +885,13 @@ impl<A: WorkerApi, C: Clock> AuthService<A, C> {
         st
     }
 
-    /// 수령 결과가 확정된 응답을 상태에 반영한다. 로그인이 바뀌었으면 None
+    /// 수령 결과가 확정된 응답을 상태에 반영한다. 로그인이 바뀌었으면 None.
+    /// `retried`는 앞서 일시 실패한 수령이 있었다는 뜻이다(그 뒤의 404는 앞 시도가 서버에서 이미 끝났을 수 있다, worker.md 92 (가))
     fn apply_final(
         &self,
         seq: u64,
         fin: Final,
+        retried: bool,
     ) -> Option<(AuthStatus, ReceiverPage, Option<StoredSession>)> {
         let now = self.clock.now();
         let mut i = self.lock();
@@ -923,7 +925,8 @@ impl<A: WorkerApi, C: Clock> AuthService<A, C> {
                 ReceiverPage::Failed
             }
             Final::Lost => {
-                info!(result = "lost", "로그인 끝");
+                let result = if retried { "lost_after_retry" } else { "lost" };
+                info!(result, "로그인 끝");
                 Self::end_login(&mut i, AuthPhase::Error, Some(AuthReason::LoginLost));
                 ReceiverPage::Lost
             }
@@ -998,7 +1001,7 @@ impl<A: WorkerApi, C: Clock> AuthService<A, C> {
             attempts += 1;
             let cause = match classify_redeem(res) {
                 Step::Final(fin) => {
-                    let Some((st, page, old)) = self.apply_final(seq, fin) else {
+                    let Some((st, page, old)) = self.apply_final(seq, fin, attempts > 1) else {
                         let st = self.status();
                         d.reply(ReceiverPage::Pending);
                         return st;

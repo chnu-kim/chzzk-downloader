@@ -53,8 +53,6 @@ export const AUTH_DISABLED: AuthStatusDto = {
   canReconnect: false,
 };
 
-/** 가짜 [로그인] 뒤 pending 화면에 보이는 확인 코드 */
-
 export type UpdateScenario = {
   /** update_available가 돌려줄 캐시(자동 확인 결과) */
   available?: UpdateInfoDto | null;

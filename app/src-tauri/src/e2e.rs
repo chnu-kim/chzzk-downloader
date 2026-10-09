@@ -135,8 +135,9 @@ impl E2eConfig {
     }
 }
 
-/// 격리 실행의 로그인 주소 열기·복사(Phase 3b A5, cicd.md 구현 중 변경 106): 브라우저를 띄우지 않는다.
-/// Worker 스텁이 poll에 바로 답하므로 브라우저가 필요 없고, Windows 러너에서 Edge가 떠 WebView2 세션을 흔들지 않게 한다.
+/// 격리 실행의 로그인 주소 열기·복사(Phase 3b A5, cicd.md 구현 중 변경 106·110): 브라우저를 띄우지 않는다.
+/// 브라우저 대신 스텁 확인 페이지의 303 하나를 따라 앱의 루프백 수신기에 GET한다(`follow_login`). Windows 러너에서 Edge가 떠
+/// WebView2 세션을 흔들지 않게 한다.
 #[derive(Debug, Default)]
 pub struct E2eAuthIo {
     opened: std::sync::atomic::AtomicUsize,
@@ -150,16 +151,110 @@ impl E2eAuthIo {
 }
 
 impl crate::auth_io::AuthIo for E2eAuthIo {
-    fn open_url(&self, _url: &str) -> bool {
+    fn open_url(&self, url: &str) -> bool {
         self.opened
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        // 사슬은 별도 스레드에서 돈다: 수신기는 결과를 기다리는 동안 응답을 쥐고 있고, 앱은 spawn한 수령 태스크가 끝나야 응답한다.
         // 주소는 로그에 남기지 않는다(handle은 확인 페이지 자격이다)
-        tracing::info!("e2e: 로그인 주소를 브라우저로 열지 않음");
+        let u = url.to_string();
+        let spawned = std::thread::Builder::new()
+            .name("e2e-login".into())
+            .spawn(move || match follow_login(&u) {
+                Ok(status) => tracing::info!(status, "e2e: 로그인 사슬"),
+                Err(e) => tracing::warn!(error = %e, "e2e: 로그인 사슬 실패"),
+            });
+        if spawned.is_err() {
+            tracing::warn!("e2e: 로그인 사슬 스레드를 만들지 못함");
+        }
         true
     }
     fn copy_text(&self, _text: &str) -> bool {
         true
     }
+}
+
+/// 사슬 응답 읽기 기한(수신기가 결과를 15초까지 기다린다)
+const CHAIN_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+
+/// 최소 HTTP/1.1 GET 한 번 → (상태, Location). 오류 문자열에는 주소를 넣지 않는다(낱말만).
+fn http_get(
+    connect_host: &str,
+    port: u16,
+    path_and_query: &str,
+    host_header: &str,
+) -> Result<(u16, Option<String>), String> {
+    use std::io::{Read, Write};
+    let mut conn = std::net::TcpStream::connect((connect_host, port)).map_err(|_| "연결 실패")?;
+    conn.set_read_timeout(Some(CHAIN_READ_TIMEOUT))
+        .map_err(|_| "기한 설정 실패")?;
+    let req = format!(
+        "GET {path_and_query} HTTP/1.1\r\nHost: {host_header}\r\nConnection: close\r\n\r\n"
+    );
+    conn.write_all(req.as_bytes())
+        .map_err(|_| "요청 쓰기 실패")?;
+    let mut buf = Vec::new();
+    conn.read_to_end(&mut buf).map_err(|_| "응답 읽기 실패")?;
+    let text = String::from_utf8_lossy(&buf);
+    let head = text.split("\r\n\r\n").next().unwrap_or("");
+    let mut lines = head.split("\r\n");
+    let status = lines
+        .next()
+        .and_then(|l| l.split(' ').nth(1))
+        .and_then(|c| c.parse::<u16>().ok())
+        .ok_or("상태줄 해석 실패")?;
+    let location = lines.find_map(|l| {
+        let (k, v) = l.split_once(':')?;
+        k.eq_ignore_ascii_case("location")
+            .then(|| v.trim().to_string())
+    });
+    Ok((status, location))
+}
+
+fn path_and_query(u: &Url) -> String {
+    match u.query() {
+        Some(q) => format!("{}?{q}", u.path()),
+        None => u.path().to_string(),
+    }
+}
+
+/// 루프백 로그인 사슬 한 번: 스텁 확인 페이지 주소 GET → 303 하나를 따라 수신기에 GET. 수신기 응답 상태를 돌려준다.
+/// 첫 주소는 루프백 http만, 303의 Location은 `http://127.0.0.1:<port>/chzzk-downloader/login`만 따른다.
+pub fn follow_login(login_url: &str) -> Result<u16, String> {
+    let first = Url::parse(login_url).map_err(|_| "주소 해석 실패")?;
+    if first.scheme() != "http" {
+        return Err("http가 아님".into());
+    }
+    let (connect_host, host_header_name) = match first.host() {
+        Some(url::Host::Ipv4(ip)) if ip.is_loopback() => (ip.to_string(), ip.to_string()),
+        Some(url::Host::Domain("localhost")) => ("localhost".to_string(), "localhost".to_string()),
+        Some(url::Host::Ipv6(ip)) if ip.is_loopback() => (ip.to_string(), format!("[{ip}]")),
+        _ => return Err("루프백 주소가 아님".into()),
+    };
+    let port = first.port_or_known_default().ok_or("포트 없음")?;
+    let (status, location) = http_get(
+        &connect_host,
+        port,
+        &path_and_query(&first),
+        &format!("{host_header_name}:{port}"),
+    )?;
+    if status != 303 {
+        return Err("303이 아님".into());
+    }
+    let target = Url::parse(&location.ok_or("Location 없음")?).map_err(|_| "Location 해석 실패")?;
+    let rport = target.port().ok_or("수신기 포트 없음")?;
+    if target.scheme() != "http"
+        || target.host_str() != Some("127.0.0.1")
+        || target.path() != chzzk_shell::auth::LOOPBACK_PATH
+    {
+        return Err("수신기 주소가 아님".into());
+    }
+    let (status, _) = http_get(
+        "127.0.0.1",
+        rport,
+        &path_and_query(&target),
+        &format!("127.0.0.1:{rport}"),
+    )?;
+    Ok(status)
 }
 
 /// msedgedriver가 WebView2에 디버깅 포트 등을 넘기는 환경 변수(Windows).
@@ -193,12 +288,92 @@ mod tests {
     const DIR: &str = "C:\\e2e";
 
     #[test]
-    fn e2e_auth_io_never_opens_a_browser() {
+    fn e2e_auth_io_open_url_returns_immediately() {
         use crate::auth_io::AuthIo;
         let io = E2eAuthIo::default();
+        // 닿지 않는 주소여도 바로 true를 돌려준다(사슬은 별도 스레드에서 돌고 실패는 로그뿐이다)
         assert!(io.open_url("http://127.0.0.1:1/auth/login/x"));
         assert_eq!(io.opened(), 1);
         assert!(io.copy_text("x"));
+    }
+
+    /// 요청 머리를 읽고 `response`를 쓴 뒤 요청 텍스트를 돌려주는 한 번짜리 서버
+    fn serve_once(response: String) -> (u16, std::thread::JoinHandle<String>) {
+        use std::io::{Read, Write};
+        let l = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = l.local_addr().unwrap().port();
+        let h = std::thread::spawn(move || {
+            let (mut c, _) = l.accept().unwrap();
+            let mut req = Vec::new();
+            let mut b = [0u8; 256];
+            while !req.windows(4).any(|w| w == b"\r\n\r\n") {
+                let n = c.read(&mut b).unwrap();
+                if n == 0 {
+                    break;
+                }
+                req.extend_from_slice(&b[..n]);
+            }
+            c.write_all(response.as_bytes()).unwrap();
+            String::from_utf8_lossy(&req).into_owned()
+        });
+        (port, h)
+    }
+
+    fn redirect(location: &str) -> String {
+        format!(
+            "HTTP/1.1 303 See Other\r\nLocation: {location}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+        )
+    }
+
+    #[test]
+    fn follow_login_follows_one_303_to_the_receiver() {
+        let (rport, receiver) = serve_once(
+            "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_string(),
+        );
+        let (sport, stub) = serve_once(redirect(&format!(
+            "http://127.0.0.1:{rport}/chzzk-downloader/login?grant=G&state=S"
+        )));
+        let got = follow_login(&format!("http://127.0.0.1:{sport}/auth/login/x"));
+        assert_eq!(got, Ok(200));
+        let stub_req = stub.join().unwrap();
+        assert!(
+            stub_req.starts_with("GET /auth/login/x HTTP/1.1\r\n"),
+            "{stub_req}"
+        );
+        let req = receiver.join().unwrap();
+        assert!(
+            req.starts_with("GET /chzzk-downloader/login?grant=G&state=S HTTP/1.1\r\n"),
+            "{req}"
+        );
+        // Host는 정확히 `127.0.0.1:<port>`다
+        assert!(
+            req.lines().any(|l| l == format!("Host: 127.0.0.1:{rport}")),
+            "{req}"
+        );
+    }
+
+    #[test]
+    fn follow_login_rejects_foreign_location() {
+        let ok_path = "/chzzk-downloader/login?grant=G&state=S";
+        let bad = [
+            redirect(&format!("http://example.invalid{ok_path}")),
+            redirect(&format!("https://127.0.0.1:9{ok_path}")),
+            redirect("http://127.0.0.1:9/other?grant=G&state=S"),
+            redirect(&format!("http://127.0.0.1{ok_path}")),
+            "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_string(),
+            "HTTP/1.1 303 See Other\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_string(),
+        ];
+        for (i, resp) in bad.into_iter().enumerate() {
+            let (port, h) = serve_once(resp);
+            assert!(
+                follow_login(&format!("http://127.0.0.1:{port}/auth/login/x")).is_err(),
+                "{i}"
+            );
+            h.join().unwrap();
+        }
+        // 첫 주소도 루프백 http만 받는다
+        assert!(follow_login("http://example.invalid/x").is_err());
+        assert!(follow_login("https://127.0.0.1:1/x").is_err());
     }
 
     #[test]

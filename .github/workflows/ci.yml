@@ -702,7 +702,7 @@ jobs:
     needs: [changes, bundle-linux]
     if: needs.changes.outputs.app == 'true'
     runs-on: ubuntu-24.04
-    # smoke.mjs installBudgetMs('linux')(20분) + 준비. smoke.test.mjs가 비교한다
+    # smoke.mjs installBudgetMs('linux')(약 27분) + 준비. smoke.test.mjs가 비교한다
     timeout-minutes: 30
     permissions:
       contents: read # checkout
@@ -715,6 +715,7 @@ jobs:
           node-version: 24
       # AppImage는 GL 스택(libEGL·libGLESv2·mesa)을 번들하지 않고 사용자 시스템 것을 쓴다(데스크톱에는 있다). deb는 apt가 의존성을 깐다
       - name: linux deps
+        timeout-minutes: 5
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends xvfb xauth libegl1 libgles2 libegl-mesa0 libgl1-mesa-dri

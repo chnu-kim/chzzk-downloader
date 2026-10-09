@@ -502,7 +502,8 @@ export const HOOKS = {
     always: ['push-guard', 'scan-range'],
     fastSkip: true,
     when: [
-      { gate: 'rust', paths: [/^crates\//, /^xtask\//, /^release\//, /^testdata\//, /^Cargo\.(toml|lock)$/, /^rust-toolchain\.toml$/, /^\.cargo\//] },
+      // worker/test/vectors/는 Rust 테스트와 worker vitest가 함께 읽는 KAT다(include_str!)
+      { gate: 'rust', paths: [/^crates\//, /^xtask\//, /^release\//, /^testdata\//, /^Cargo\.(toml|lock)$/, /^rust-toolchain\.toml$/, /^\.cargo\//, /^worker\/test\/vectors\//] },
       { gate: 'release-selftest', paths: RELEASE_SELFTEST_FILES },
       { gate: 'frontend', paths: [/^app\/(?!src-tauri\/)/] },
       // pre-commit에는 넣지 않는다(무겁다). release/ 표는 W5 계약 테스트가 읽는다(worker.md §13.2). semver 벡터는 worker vitest가
@@ -531,13 +532,35 @@ export const HOOK_ONLY = {
   'push-guard': ['scan-history'],
 };
 
-// 코드가 아닌 경로(changes가 code=false로 보는 것). 정규식은 run.mjs classify가, glob은 PR 경로 필터가 있는 워크플로
+// 어느 영역도 켜지 않는 문서 경로. 정규식은 run.mjs classify(AREA_SKIP)가, glob은 PR 경로 필터가 있는 워크플로
 // (nightly.yml pull_request paths-ignore, parity pr-paths)가 쓴다. 둘이 같은 경로를 고르는지는 run.test.mjs가 본다.
 export const NON_CODE = [/^docs\//, /^[^/]+\.md$/, /^\.claude\//, /^LICENSE(\.[^/]*)?$/];
 export const NON_CODE_GLOBS = ['docs/**', '*.md', '.claude/**', 'LICENSE', 'LICENSE.*'];
 
-// changes.code == 'false'일 때 건너뛰는 작업(ci.yml 작업 id). ci-ok는 이 작업들의 skipped만 허용한다.
-export const CODE_GATED_JOBS = ['supply', 'rust', 'frontend', 'worker', 'tauri-clippy', 'tauri', 'coverage', 'bundle-linux', 'smoke-install-linux'];
+// 영역과 무관하게 늘 도는 lint·scripts-windows만 읽는 경로: 문서, scripts-test만 실행하는 테스트 파일(무거운 작업은 import·실행하지
+// 않는다, scope.test.mjs). fuzz/는 여기 없다: 루트 워크스페이스 밖이어도 app 영역 supply의 `cargo machete`가 디렉터리를 훑어
+// fuzz/Cargo.toml과 target 소스를 본다(scope.test.mjs WALKERS)
+const LINT_ONLY = [...NON_CODE, /^scripts\/.+\.test\.mjs$/];
+
+// PR 영역(docs/design/cicd.md 구현 중 변경 110). 영역마다 "그 영역의 작업이 읽지 않는 경로"만 적는다. 바뀐 파일이 하나라도 그 목록
+// 밖이면 그 영역은 true다. 두 영역이 함께 읽는 파일(scripts/ci 공통·tools.json·ci/ratchet.json·release/·.github/ 등)과 모르는 경로는
+// 어느 목록에도 없어 둘 다 켠다: 항목이 빠지면 더 돌 뿐이다. 좁히는 근거는 scope.test.mjs가 import·읽기 그래프와 훅 표로 확인한다.
+export const AREA_SKIP = {
+  // 데스크톱 앱(crates·app·xtask·번들·release-selftest). worker/에서는 release-selftest가 wrangler.jsonc를, Rust 테스트가 공유 벡터
+  // (worker/test/vectors/, 예: loopback-vectors.json을 crates/shell이 include_str!로 읽는다)를 읽는다(scope.test.mjs (G))
+  app: [...LINT_ONLY, /^worker\/(?!wrangler\.jsonc$|test\/vectors\/)/, /^scripts\/ci\/worker-config\.mjs$/],
+  // Worker(worker·worker-e2e). semver 벡터는 worker vitest가, packageManager·productName은 worker-config가 함께 읽는다
+  worker: [...LINT_ONLY, /^fuzz\//, /^crates\//, /^testdata\//, /^\.cargo\//, /^(Cargo\.(toml|lock)|rust-toolchain\.toml|deny\.toml)$/,
+    /^xtask\/(?!testdata\/semver-vectors\.json$)/, /^app\/(?!package\.json$|src-tauri\/tauri\.conf\.json$)/],
+};
+export const AREAS = Object.keys(AREA_SKIP);
+
+// PR에서 그 영역이 바뀌지 않았으면 건너뛰는 작업(ci.yml 작업 id → 영역). ci-ok는 그 영역 출력이 'false'일 때만 이 작업의 skipped를
+// 허용한다. 영역 안의 키 순서가 그 영역 guard 절의 작업 순서다(절 순서는 AREAS, parity ciOkGuard).
+export const CODE_GATED_JOBS = {
+  supply: 'app', rust: 'app', frontend: 'app', worker: 'worker', 'tauri-clippy': 'app',
+  tauri: 'app', coverage: 'app', 'bundle-linux': 'app', 'smoke-install-linux': 'app',
+};
 
 // pull_request에서는 돌지 않는 작업(ci.yml 작업 id, `if: github.event_name != 'pull_request'`). push(master)·dispatch에서
 // 돈다. ci-ok는 pull_request에서만 이 작업들의 skipped를 허용한다. Linux 릴리스 번들·설치 스모크는 PR에서도 돈다(CODE_GATED_JOBS,
@@ -545,12 +568,12 @@ export const CODE_GATED_JOBS = ['supply', 'rust', 'frontend', 'worker', 'tauri-c
 export const MASTER_ONLY_JOBS = ['bundle'];
 
 // D14 관찰 중인 작업(docs/design/cicd.md §1 D14, 구현 중 변경 36). 결정적이라고 설계했어도 러너 환경 요인은 실측으로만
-// 드러나므로 2주 동안 ci-ok에 넣지 않고 지켜본다. 값은 작업 if 종류('code' = CODE_IF, 'master' = MASTER_IF)다.
+// 드러나므로 2주 동안 ci-ok에 넣지 않고 지켜본다. 값은 작업 if 종류: 영역 이름(`areaIf`) 또는 'master'(`MASTER_IF`)다.
 //   - ci-ok의 needs·guard·decideCiOk에 없다(빨개져도 머지를 막지 않는다).
 //   - report의 needs에 있다: master에서 실패하면 ci-ok가 녹색이어도 master-failure 이슈를 연다(issue.mjs masterStatus).
-//   - 관찰 시작은 첫 녹색 실행, 편입 예정일은 그 14일 뒤다(ROADMAP Phase 4). 편입은 여기서 빼고 CODE_GATED_JOBS·
-//     MASTER_ONLY_JOBS로 옮긴 뒤 ci.yml ci-ok needs·guard를 고치는 한 변경이다(parity가 둘을 맞춘다).
-//   - e2e-native도 'code'다(리뷰 G4): master에서만 돌면 편입한 뒤에도 PR이 네이티브 E2E를 깨고 녹색으로 머지된다.
+//   - 관찰 시작은 첫 녹색 실행, 편입 예정일은 그 14일 뒤다(ROADMAP Phase 4). 편입은 여기서 빼고 CODE_GATED_JOBS에 같은 영역으로 옮기고(또는
+//     MASTER_ONLY_JOBS로 옮긴 뒤) ci.yml ci-ok needs·guard를 고치는 한 변경이다(parity가 둘을 맞춘다).
+//   - e2e-native도 'app'이다(리뷰 G4): master에서만 돌면 편입한 뒤에도 PR이 네이티브 E2E를 깨고 녹색으로 머지된다.
 //   - e2e-native-windows(구현 중 변경 79, 사용자 결정 2026-10-06)는 Linux와 따로 관찰·편입한다(작업 id가 달라 하나씩 옮긴다).
 //   - worker-e2e(cicd.md 구현 중 변경 100)는 W7 머지 뒤 첫 master 녹색 실행부터 14일 관찰한다.
-export const OBSERVED_JOBS = { 'e2e-web': 'code', 'e2e-native': 'code', 'e2e-native-windows': 'code', 'worker-e2e': 'code' };
+export const OBSERVED_JOBS = { 'e2e-web': 'app', 'e2e-native': 'app', 'e2e-native-windows': 'app', 'worker-e2e': 'worker' };

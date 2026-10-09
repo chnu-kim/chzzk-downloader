@@ -306,8 +306,8 @@ function cmdNextVersion() {
 }
 
 // 태그 gate가 녹색을 요구하는 master ci.yml 작업(GitHub가 보이는 이름 = ci.yml의 `name:`). ci-ok는 필수 체크이고, 네이티브 E2E 둘은
-// D14 관찰 중이라 ci-ok 밖(gates.mjs OBSERVED_JOBS)이지만 배포 전에는 녹색이어야 한다(cicd.md 구현 중 변경 107). push는 changes가
-// 늘 code=true라 둘은 건너뛰지 않는다(skipped면 실패로 본다)
+// D14 관찰 중이라 ci-ok 밖(gates.mjs OBSERVED_JOBS)이지만 배포 전에는 녹색이어야 한다(cicd.md 구현 중 변경 107). push는
+// changes에 기준이 없어 모든 영역이 true라 둘은 건너뛰지 않는다(skipped면 실패로 본다)
 export const RELEASE_REQUIRED_JOBS = ['ci-ok', 'e2e-native (linux)', 'e2e-native (windows)'];
 
 // master에서 그 커밋을 빌드한 ci.yml push 실행들([{id, status, jobs:[{name, conclusion, status}]}])과 작업 이름 → 'success'|'failure'|'pending'

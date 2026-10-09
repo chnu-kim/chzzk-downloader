@@ -223,7 +223,7 @@ describe('AuthGate 화면', () => {
     const user = userEvent.setup();
     start(authDto({ state: 'signedOut' }));
     vi.mocked(api.authLogin).mockResolvedValue(
-      authDto({ state: 'pending', pending: { userCode: 'K7QX-4MRA', expiresAt: Math.floor(Date.now() / 1000) + 600 } }),
+      authDto({ state: 'pending', pending: { expiresAt: Math.floor(Date.now() / 1000) + 600 } }),
     );
     render(App);
     await user.click(await screen.findByRole('button', { name: '치지직으로 로그인' }));
@@ -232,7 +232,7 @@ describe('AuthGate 화면', () => {
   });
 
   it('로그인이 끝나 잠금이 풀리면 포커스가 body에 남지 않고 홈 입력줄로 간다', async () => {
-    start(authDto({ state: 'pending', pending: { userCode: 'K7QX-4MRA', expiresAt: Math.floor(Date.now() / 1000) + 600 } }));
+    start(authDto({ state: 'pending', pending: { expiresAt: Math.floor(Date.now() / 1000) + 600 } }));
     render(App);
     const cancel = await screen.findByRole('button', { name: '취소' });
     cancel.focus();
@@ -277,7 +277,7 @@ describe('AuthGate 화면', () => {
     start(grace);
     vi.mocked(api.authRetry).mockImplementation(() => new Promise(() => {}));
     vi.mocked(api.authLogin).mockResolvedValue(
-      authDto({ state: 'pending', pending: { userCode: 'K7QX-4MRA', expiresAt: Math.floor(Date.now() / 1000) + 600 } }),
+      authDto({ state: 'pending', pending: { expiresAt: Math.floor(Date.now() / 1000) + 600 } }),
     );
     render(App);
     await user.click(await screen.findByRole('button', { name: '다시 연결' }));
@@ -347,16 +347,12 @@ describe('AuthGate 화면', () => {
 });
 
 describe('로그인 대기 화면', () => {
-  it('확인 코드를 따로 보이고 남은 시간이 줄며, 버튼이 command로 이어진다', async () => {
+  it('남은 시간이 줄며, 버튼이 command로 이어진다', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     vi.setSystemTime(new Date(1_800_000_000_000));
-    start(authDto({ state: 'pending', pending: { userCode: 'K7QX-4MRA', expiresAt: 1_800_000_600 } }));
+    start(authDto({ state: 'pending', pending: { expiresAt: 1_800_000_600 } }));
     render(App);
-    const code = await screen.findByText('K7QX-4MRA');
-    // 스크린리더용 머리말과 한 문단으로 읽힌다
-    expect(code.parentElement).toHaveTextContent(/^확인 코드\s*K7QX-4MRA$/);
-    expect(code.parentElement?.querySelector('.sr-only')).toHaveTextContent('확인 코드');
-    expect(screen.getByText(/남은 시간 10:00/)).toBeInTheDocument();
+    expect(await screen.findByText(/남은 시간 10:00/)).toBeInTheDocument();
     await vi.advanceTimersByTimeAsync(1100);
     await waitFor(() => expect(screen.getByText(/남은 시간 9:5\d/)).toBeInTheDocument());
 
@@ -370,6 +366,33 @@ describe('로그인 대기 화면', () => {
     vi.mocked(api.authCancel).mockResolvedValue(authDto({ state: 'signedOut' }));
     await fireEvent.click(screen.getByRole('button', { name: '취소' }));
     await screen.findByRole('heading', { name: '로그인이 필요해요' });
+  });
+
+  it('pending 화면에는 확인 코드가 없고 같은 컴퓨터 안내가 있다', async () => {
+    start(authDto({ state: 'pending', pending: { expiresAt: Math.floor(Date.now() / 1000) + 600 } }));
+    render(App);
+    await screen.findByRole('heading', { name: '브라우저에서 로그인해 주세요' });
+    expect(screen.getByText('로그인 주소는 이 컴퓨터의 브라우저에서 열어 주세요.')).toBeInTheDocument();
+    expect(screen.queryByText(/확인 코드/)).toBeNull();
+    expect(screen.queryByText(/[2-9A-HJ-NP-Z]{4}-[2-9A-HJ-NP-Z]{4}/)).toBeNull();
+    expect(screen.queryByText('브라우저에 연결할 수 없다는 오류가 보이면 다시 로그인해 주세요.')).toBeNull();
+  });
+
+  it('남은 시간이 510초 이하면 stuck 안내가 보이고 [다시 로그인]은 authCancel 뒤 authLogin을 부른다', async () => {
+    const user = userEvent.setup();
+    start(authDto({ state: 'pending', pending: { expiresAt: Math.floor(Date.now() / 1000) + 500 } }));
+    vi.mocked(api.authCancel).mockResolvedValue(authDto({ state: 'signedOut' }));
+    vi.mocked(api.authLogin).mockResolvedValue(
+      authDto({ state: 'pending', pending: { expiresAt: Math.floor(Date.now() / 1000) + 600 } }),
+    );
+    render(App);
+    await screen.findByText('브라우저에 연결할 수 없다는 오류가 보이면 다시 로그인해 주세요.');
+    await user.click(screen.getByRole('button', { name: '다시 로그인' }));
+    await waitFor(() => expect(api.authLogin).toHaveBeenCalledTimes(1));
+    expect(api.authCancel).toHaveBeenCalledTimes(1);
+    const cancelOrder = vi.mocked(api.authCancel).mock.invocationCallOrder[0];
+    const loginOrder = vi.mocked(api.authLogin).mock.invocationCallOrder[0];
+    expect(cancelOrder).toBeLessThan(loginOrder);
   });
 });
 
@@ -487,7 +510,7 @@ describe('AuthStore 동작', () => {
   it('로그아웃 응답이 늦게 와도 그사이 시작한 로그인 상태를 덮지 않는다', async () => {
     let resolveLogout: (s: AuthStatusDto) => void = () => {};
     vi.mocked(api.authLogout).mockImplementation(() => new Promise((r) => (resolveLogout = r)));
-    const pending = authDto({ state: 'pending', pending: { userCode: 'K7QX-4MRA', expiresAt: 1 } });
+    const pending = authDto({ state: 'pending', pending: { expiresAt: 1 } });
     vi.mocked(api.authLogin).mockResolvedValue(pending);
     auth.apply(authDto({ state: 'signedIn', channelName: '테스트 채널' }));
     const out = auth.logout();
@@ -507,7 +530,7 @@ describe('AuthStore 동작', () => {
     const grace = authDto({ state: 'expired', reason: 'graceExpired' });
     let resolveRetry: (s: AuthStatusDto) => void = () => {};
     vi.mocked(api.authRetry).mockImplementation(() => new Promise((r) => (resolveRetry = r)));
-    vi.mocked(api.authLogin).mockResolvedValue(authDto({ state: 'pending', pending: { userCode: 'K7QX-4MRA', expiresAt: 1 } }));
+    vi.mocked(api.authLogin).mockResolvedValue(authDto({ state: 'pending', pending: { expiresAt: 1 } }));
     auth.apply(grace);
     const re = auth.reconnect();
     auth.apply(authDto({ state: 'checking' }));

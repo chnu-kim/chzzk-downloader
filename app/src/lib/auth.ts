@@ -12,7 +12,7 @@ export interface LoginButton {
 }
 
 export interface LoginScreen {
-  /** 'pending'·'checking'은 LoginView가 따로 그린다(코드·남은 시간·스피너) */
+  /** 'pending'·'checking'은 LoginView가 따로 그린다(남은 시간·스피너) */
   kind: 'message' | 'pending' | 'checking';
   title: string;
   /** 설명. 없으면 null(pending은 LoginView가 남은 시간을 채워 그린다) */
@@ -26,7 +26,12 @@ export interface LoginScreen {
    * link: 문장 끝에 [다른 계정으로 로그인] 링크형 버튼(거부 화면. 드문 길이라 주 버튼과 같은 무게로 두지 않는다)
    */
   otherAccount: 'help' | 'link' | null;
+  /** pending이고 기다린 지 90초가 지났다(브라우저가 수신기에 닿지 못했을 수 있다): [다시 로그인]을 더 보인다. pending이 아니면 늘 false */
+  stuck: boolean;
 }
+
+/** pending이 이 남은 시간(초) 이하이면 stuck이다(10분 기한에서 90초가 지난 때) */
+export const PENDING_STUCK_REMAINING_SECS = 510;
 
 const login = (key: Parameters<typeof t>[0], variant: LoginButton['variant']): LoginButton => ({
   action: 'login',
@@ -41,7 +46,7 @@ function message(
   buttons: LoginButton[],
   otherAccount: LoginScreen['otherAccount'] = null,
 ): LoginScreen {
-  return { kind: 'message', title: t(title), body, problem, buttons, otherAccount };
+  return { kind: 'message', title: t(title), body, problem, buttons, otherAccount, stuck: false };
 }
 
 /**
@@ -58,11 +63,11 @@ function withReconnect(screen: LoginScreen | null, s: AuthStatusDto): LoginScree
 }
 
 /** 잠긴 상태(disabled·signedIn이 아닌 상태)의 화면. disabled·signedIn이면 null */
-export function loginScreen(s: AuthStatusDto): LoginScreen | null {
-  return withReconnect(baseScreen(s), s);
+export function loginScreen(s: AuthStatusDto, nowMs: number = Date.now()): LoginScreen | null {
+  return withReconnect(baseScreen(s, nowMs), s);
 }
 
-function baseScreen(s: AuthStatusDto): LoginScreen | null {
+function baseScreen(s: AuthStatusDto, nowMs: number): LoginScreen | null {
   const name = s.channelName;
   switch (s.state) {
     case 'disabled':
@@ -78,9 +83,10 @@ function baseScreen(s: AuthStatusDto): LoginScreen | null {
         problem: false,
         buttons: [login('auth.relogin', 'link')],
         otherAccount: null,
+        stuck: false,
       };
     case 'pending':
-      // 코드·기한 없는 pending은 그릴 것이 없다: 버튼 없는 화면이 되지 않게 [다시 로그인]으로 갈 길을 둔다(원인은 단정하지 않는다)
+      // 기한 없는 pending은 그릴 것이 없다: 버튼 없는 화면이 되지 않게 [다시 로그인]으로 갈 길을 둔다(원인은 단정하지 않는다)
       if (!s.pending) {
         return message('auth.unknown.title', t('auth.unknown.body'), true, [login('auth.relogin', 'primary')]);
       }
@@ -91,6 +97,7 @@ function baseScreen(s: AuthStatusDto): LoginScreen | null {
         problem: false,
         buttons: [],
         otherAccount: 'help',
+        stuck: remainingSecs(s.pending.expiresAt, nowMs) <= PENDING_STUCK_REMAINING_SECS,
       };
     case 'denied':
       // 거부된 사람 대부분은 자기 채널로 허가를 받으려 한다: 허가를 받은 뒤 누를 [다시 시도]가 주 버튼이다
@@ -135,6 +142,8 @@ function baseScreen(s: AuthStatusDto): LoginScreen | null {
           return message('auth.network.title', t('auth.network.body'), true, [login('auth.relogin', 'primary')]);
         case 'loginLost':
           return message('auth.lost.title', t('auth.lost.body'), true, [login('auth.relogin', 'primary')]);
+        case 'receiver':
+          return message('auth.receiver.title', t('auth.receiver.body'), true, [login('auth.relogin', 'primary')]);
         case 'server':
           return message('auth.server.title', t('auth.server.body'), true, [login('auth.relogin', 'primary')]);
         default:

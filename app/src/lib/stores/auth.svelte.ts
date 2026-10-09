@@ -114,6 +114,14 @@ export class AuthStore {
     });
   }
 
+  /** 대기 중 [다시 로그인](auth.pending.stuck): 지금 로그인을 취소하고 새로 시작한다(Pending의 authLogin은 같은 주소를 돌려준다) */
+  restartLogin(): Promise<void> {
+    return this.#run('login', async () => {
+      await this.#call(() => api.authCancel());
+      await this.#call(() => api.authLogin());
+    });
+  }
+
   reconnect(): Promise<void> {
     return this.#run('reconnect', async () => {
       const before = key(this.status);

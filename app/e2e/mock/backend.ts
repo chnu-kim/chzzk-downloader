@@ -54,7 +54,6 @@ export const AUTH_DISABLED: AuthStatusDto = {
 };
 
 /** 가짜 [로그인] 뒤 pending 화면에 보이는 확인 코드 */
-export const E2E_USER_CODE = 'K7QX-4MRA';
 
 export type UpdateScenario = {
   /** update_available가 돌려줄 캐시(자동 확인 결과) */
@@ -231,7 +230,7 @@ export function install(scenario: Scenario = {}): E2EController {
     auth_login: () =>
       auth.state === 'disabled' || auth.state === 'signedIn' || auth.state === 'pending'
         ? auth
-        : setAuth({ ...AUTH_DISABLED, state: 'pending', pending: { userCode: E2E_USER_CODE, expiresAt: Math.floor(Date.now() / 1000) + 600 } }),
+        : setAuth({ ...AUTH_DISABLED, state: 'pending', pending: { expiresAt: Math.floor(Date.now() / 1000) + 600 } }),
     auth_reopen: () => auth.state === 'pending',
     auth_copy_login_url: () => auth.state === 'pending',
     auth_cancel: () => (auth.state === 'pending' ? setAuth(scenario.authHeld ?? { ...AUTH_DISABLED, state: 'signedOut' }) : auth),

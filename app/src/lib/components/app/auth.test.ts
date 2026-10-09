@@ -394,6 +394,23 @@ describe('로그인 대기 화면', () => {
     const loginOrder = vi.mocked(api.authLogin).mock.invocationCallOrder[0];
     expect(cancelOrder).toBeLessThan(loginOrder);
   });
+
+  it('[다시 로그인]: 취소가 실패하거나 아직 pending이면 authLogin을 부르지 않는다', async () => {
+    const user = userEvent.setup();
+    const stuck = authDto({ state: 'pending', pending: { expiresAt: Math.floor(Date.now() / 1000) + 500 } });
+    start(stuck);
+    vi.mocked(api.authCancel).mockResolvedValue(stuck);
+    render(App);
+    await screen.findByText('브라우저에 연결할 수 없다는 오류가 보이면 다시 로그인해 주세요.');
+    await user.click(screen.getByRole('button', { name: '다시 로그인' }));
+    await waitFor(() => expect(api.authCancel).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.getByRole('button', { name: '다시 로그인' })).toBeEnabled());
+    vi.mocked(api.authCancel).mockRejectedValue(new Error('x'));
+    await user.click(screen.getByRole('button', { name: '다시 로그인' }));
+    await waitFor(() => expect(api.authCancel).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.getByRole('button', { name: '다시 로그인' })).toBeEnabled());
+    expect(api.authLogin).not.toHaveBeenCalled();
+  });
 });
 
 describe('AccountSlot', () => {

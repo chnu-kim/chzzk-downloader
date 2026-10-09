@@ -763,7 +763,7 @@ impl<A: WorkerApi, C: Clock> AuthService<A, C> {
                     seq,
                     login_secret: secret,
                     login_url: r.login_url,
-                    deadline: t0 + LOGIN_TTL,
+                    deadline: (t0 + LOGIN_TTL).min(r.expires_at),
                     close: bound.close,
                     last_transient: None,
                 });

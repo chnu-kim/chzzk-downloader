@@ -486,6 +486,7 @@ async fn auth_login_runs_the_waiter_before_opening() {
     let (seen2, body2) = (seen.clone(), body.clone());
     let st = app
         .auth_login(move |_| {
+            // 2-thread 런타임 전제: 이 opener는 tokio 워커에서 blocking I/O를 하고 수신기 태스크는 다른 워커가 돌린다
             use std::io::{Read, Write};
             let start = seen2.lock().unwrap().clone().expect("start 본문");
             let port = start["port"].as_u64().unwrap();

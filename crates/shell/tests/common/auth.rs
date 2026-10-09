@@ -90,11 +90,11 @@ pub fn read_session(dir: &Path) -> Option<serde_json::Value> {
     serde_json::from_slice(&b).ok()
 }
 
-/// 시작 응답: 주소 `{ORIGIN}/auth/login/` + `H`×22, 만료 2030-01-01T00:10:00Z
+/// 시작 응답: 주소 `{ORIGIN}/auth/login/` + `H`×22, 만료 2031-01-01T00:00:00Z(서버 만료가 TTL보다 늦게 둔다)
 pub fn start_ok(base: &WorkerBase) -> StartResponse {
     let body = serde_json::json!({
         "loginUrl": format!("{}/auth/login/{}", base.origin(), "H".repeat(22)),
-        "expiresAt": "2030-01-01T00:10:00.000Z",
+        "expiresAt": "2031-01-01T00:00:00.000Z",
     });
     parse_start(body.to_string().as_bytes(), base).expect("start_ok 본문은 계약을 만족한다")
 }

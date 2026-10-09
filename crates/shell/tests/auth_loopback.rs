@@ -650,7 +650,7 @@ async fn idle_connection_does_not_block_others() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn ninth_connection_is_dropped() {
+async fn ninth_connection_gets_503() {
     let (port, _rx, _close) = bound(Duration::from_secs(5), Duration::from_secs(5));
     let mut idle = Vec::new();
     for _ in 0..MAX_CONNECTIONS {
@@ -659,10 +659,12 @@ async fn ninth_connection_is_dropped() {
     tokio::time::sleep(Duration::from_millis(200)).await;
     let mut ninth = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
     let mut buf = Vec::new();
-    let n = timeout(Duration::from_secs(1), ninth.read_to_end(&mut buf))
+    let _ = timeout(Duration::from_secs(2), ninth.read_to_end(&mut buf))
         .await
-        .expect("9번째 연결은 바로 닫혀야 한다");
-    assert!(n.is_err() || buf.is_empty());
+        .expect("9번째 연결은 503을 받고 바로 닫혀야 한다");
+    let text = String::from_utf8_lossy(&buf);
+    assert!(text.starts_with("HTTP/1.1 503 "), "{text}");
+    assert!(text.contains(ReceiverPage::Pending.message()));
     drop(idle);
 }
 

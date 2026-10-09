@@ -1211,6 +1211,32 @@ async fn g20_wall_deadline_while_waiting() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn g20b_server_expiry_earlier_than_ttl_wins() {
+    let e = Env::new(h(1), None);
+    let now = e.now();
+    let mut r = start_ok(&base());
+    r.expires_at = now + mins(3);
+    e.api.push_start(Reply::Now(Ok(r)));
+    assert!(matches!(e.svc.begin_login().await, BeginLogin::Started(_)));
+    let deadline = e.svc.status().pending.unwrap().expires_at;
+    assert_eq!(deadline, now + mins(3));
+    let t = tokio::spawn({
+        let s = e.svc.clone();
+        async move { s.run_login_wait().await }
+    });
+    for _ in 0..5 {
+        tokio::task::yield_now().await;
+    }
+    e.clock.set(deadline + Duration::seconds(1));
+    tokio::time::advance(std::time::Duration::from_secs(5)).await;
+    let s = t.await.unwrap();
+    assert_eq!(
+        (s.phase, s.reason),
+        (AuthPhase::Expired, Some(AuthReason::LoginTimeout))
+    );
+}
+
+#[tokio::test(start_paused = true)]
 async fn g21_wall_window_during_backoff() {
     let e = pending_env().await;
     for _ in 0..5 {

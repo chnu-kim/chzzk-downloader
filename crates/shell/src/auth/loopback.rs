@@ -32,6 +32,10 @@ pub const REPLY_WAIT: Duration = Duration::from_secs(15);
 pub const MAX_HEAD: usize = 8 * 1024;
 /// 동시 연결 상한
 pub const MAX_CONNECTIONS: usize = 8;
+/// 상한이 차서 거절하는 연결에 503을 쓰는 태스크의 동시 상한(넘치면 그냥 닫는다)
+pub const MAX_REJECT_WRITES: usize = 8;
+/// 503 답장을 쓰는 기한
+pub const REJECT_WRITE_TIMEOUT: Duration = Duration::from_secs(1);
 /// 쓸 수 있는 포트를 얻으려는 바인딩 시도 상한
 pub const BIND_ATTEMPTS: usize = 5;
 /// 수신기 하나가 남기는 `loopback.reject` 줄 상한. 넘친 것은 닫힐 때 `loopback.reject.summary` 한 줄로 센다(로그 홍수 방지)
@@ -103,6 +107,7 @@ fn reason_phrase(code: u16) -> &'static str {
         200 => "OK",
         404 => "Not Found",
         405 => "Method Not Allowed",
+        503 => "Service Unavailable",
         _ => "Bad Request",
     }
 }
@@ -460,7 +465,7 @@ struct Shared {
     expected: Secret<String>,
     port: u16,
     /// 먼저 받은 grant 문자열. 다시 비우지 않는다(수령 결과가 나면 수신기도 닫힌다, 91 (나))
-    first: Mutex<Option<String>>,
+    first: Mutex<Option<Grant>>,
     tx: GrantTx,
     /// 거부한 요청 수(로그 상한용)
     rejects: AtomicU32,
@@ -497,6 +502,7 @@ async fn accept_loop(
     mut close: CloseSignal,
 ) {
     let permits = Arc::new(Semaphore::new(MAX_CONNECTIONS));
+    let reject_permits = Arc::new(Semaphore::new(MAX_REJECT_WRITES));
     let life = tokio::time::sleep(MAX_LIFETIME);
     tokio::pin!(life);
     loop {
@@ -515,10 +521,28 @@ async fn accept_loop(
                     }
                     Err(_) => {
                         shared.log_reject("full");
-                        drop(stream);
+                        // accept 루프를 막지 않게 별도 태스크가 고정 503을 쓴다. 쓰기 태스크도 상한 안에서만(넘치면 그냥 닫는다)
+                        if let Ok(permit) = reject_permits.clone().try_acquire_owned() {
+                            tokio::spawn(async move {
+                                let _ = tokio::time::timeout(
+                                    REJECT_WRITE_TIMEOUT,
+                                    write_and_close(stream, 503, ReceiverPage::Pending.message()),
+                                )
+                                .await;
+                                drop(permit);
+                            });
+                        }
                     }
                 },
-                Err(_) => tokio::time::sleep(Duration::from_millis(50)).await,
+                // 오류 뒤 잠깐 쉬되 닫기 신호·수명을 막지 않게 같은 select 안에서 기다린다
+                Err(_) => {
+                    tokio::select! {
+                        () = close.closed() => break,
+                        () = tx.closed() => break,
+                        () = &mut life => break,
+                        () = tokio::time::sleep(Duration::from_millis(50)) => {}
+                    }
+                }
             },
         }
     }
@@ -574,11 +598,11 @@ async fn handle_conn(mut stream: TcpStream, sh: &Shared) {
     // 잠금은 await를 넘기지 않는다
     let seen = {
         let mut first = sh.first.lock().unwrap_or_else(PoisonError::into_inner);
-        match first.as_deref() {
-            Some(g) if g == req.grant.expose() => Some("duplicate"),
+        match first.as_ref() {
+            Some(g) if *g == req.grant => Some("duplicate"),
             Some(_) => Some("busy"),
             None => {
-                *first = Some(req.grant.expose().to_string());
+                *first = Some(req.grant.clone());
                 None
             }
         }

@@ -32,7 +32,7 @@
 | 원천 하나 | 사용자가 읽는 모든 문자열은 deck에만 있다: 앱은 `ko.ts`(문구)·`errors.ts`(오류 조합), Worker는 `copy.ts`. 컴포넌트·`lib/*.ts`·Svelte 템플릿에 한글 리터럴을 두지 않는다. 접근성 라벨 합성(§10)도 deck 키다 | brief §6.10-7, a-copy §8(report.ts`·`duration.ts`·템플릿 합성 4곳·`jobs.ts` join이 deck 밖) | `design-lint`(`.svelte` 안 한글 리터럴 금지), `design-copy` |
 | 코어 원문 비노출 | `AppError.message`와 코어·셸 Rust의 `Display` 문자열은 개발자용이다(합니다체·영어 무관). 화면에는 `code`와 payload로 만든 deck 문구만 보이고, 원문은 §9의 L1 "자세히" 안에서만 보인다. `invalidInput`·`internal`도 예외가 아니다 | a-copy §1.4(합니다체 원문이 detail·시작 실패 창에 섞여 한 창 안에서 어미가 바뀐다), brief §6.10-1 | `rust`(오류 DTO 원문 분리 테스트), `frontend`(`errorCopy` 골든: title·body에 `e.message` 미포함) |
 | Rust 복제 동기화 | 웹뷰 밖 문자열(OS 알림 `sink.rs`, 시작 실패 창 `lib.rs`)은 deck을 쓸 수 없다. 같은 문장을 Rust 상수로 두고 `tauri` gate가 deck 값과 비교한다. 손으로 "함께 고친다"는 주석(ko.ts:3)은 지운다 | a-copy §8(수동 동기화 요구) | `tauri`(알림 문자열 테스트) |
-| 두 deck 공통 상수 | 앱 이름, 비공식 고지(§11), 저작권 줄, 로그인 결과 문구(취소·실패·만료)는 두 deck에서 같은 문자열이어야 한다 | brief §6.10-7, a-copy §7 | `design-copy`(두 deck 동일) |
+| 두 deck 공통 상수 | 앱 이름, 비공식 고지(§11), 저작권 줄, 로그인 결과 문구(취소·실패·만료)는 두 deck에서 같은 문자열이어야 한다. 루프백 뒤 앱 흐름의 브라우저 결과 문구는 셸 Rust 상수(`loopback.rs` `ReceiverPage`, 웹뷰 밖이라 deck을 쓸 수 없다)에 있다(§15.4). 다음 행동 문장은 흐름마다 다르므로(웹 흐름 "처음 화면에서…", 앱 흐름 "앱에서…") 수신기 페이지와 Worker 결과 페이지가 같아야 하는 것은 **결과를 말하는 첫 문장**(= Worker 결과 제목)뿐이다 | brief §6.10-7, a-copy §7, `app.md` 구현 중 변경 66 (라) | `design-copy`(두 deck 동일), `rust`(셸 수신기 테스트가 `ReceiverPage` 문구를 고정한다), 수신기 첫 문장 = Worker 제목은 `R3` |
 | 키 이름 | `영역.대상[.역할]`. 역할 접미는 `title`·`body`·`help`·`label`·`a11y` 다섯 개만 쓴다. `tip`·`why`·`danger`·`word`·`NoBytes`처럼 장소·형태를 뜻하는 접미를 쓰지 않는다. 같은 문구는 키 하나다(`common.close`·`common.cancel`·`common.later`·`common.load`·`common.showInList`·`common.openConfigFolder`·`common.logout`) | a-copy §8(세 이름공간에 흩어진 상태 단어), a-copy §2.8(동일 문구 중복 키 8쌍) | `design-copy`(접미 허용 목록, 값이 같은 키 둘 이상 금지) |
 | 조각 금지 | 문장의 일부(`, 네이버 로그인 정보`)나 괄호·구분자만 담은 키를 두지 않는다. 선택 항목은 `ul`·`ol`의 항목 키로 나눈다. 값이 비면 꼬리를 정규식으로 잘라 내는 코드(`jobs.ts:281`)도 두지 않고 값 유무별 키를 둔다(`job.completed`/`job.completedNoTime`) | a-copy §1.3(3)·§8 | `design-copy`(쉼표·구분자로 시작하는 값 금지), `frontend` |
 | 숫자·단위 | 숫자와 단위가 붙은 문자열(`40초`·`1분`·`7.8GB`)을 deck에 쓰지 않는다. 변수 `{secs}`·`{size}`로 받고 §7의 format 함수가 채운다 | brief §6.10-8, a-copy §5.3(40초·10분·1분 하드코딩) | `design-copy`(숫자+단위 리터럴 금지) |
@@ -398,7 +398,7 @@
 
 ## 15. 고칠 문구 목록(현재 키 → 새 문구)
 
-적용 PR의 체크리스트다. 바뀌지 않는 키는 적지 않았다. "삭제"는 다른 키로 합친다는 뜻이다. 로그인 확인 코드 흐름(`auth.pending.*`, Worker `loginTitle`·`loginLead`·`codeLabel`·`loginContinue`)은 루프백 리디렉션 전환(brief §6.14-9, a-copy §9-26)으로 사라지므로 여기서 다시 쓰지 않고 전환 PR이 §3·§9에 맞춰 새로 쓴다.
+적용 PR의 체크리스트다. 바뀌지 않는 키는 적지 않았다. "삭제"는 다른 키로 합친다는 뜻이다. 로그인 확인 코드 흐름은 루프백 리디렉션 전환(brief §6.14-9, a-copy §9-26, `app.md` 구현 중 변경 65·66, `worker.md` 구현 중 변경 88·92, v0.3.0)으로 이미 바뀌었다: ko.ts `auth.pending.code`·`auth.pending.codeLabel`과 Worker `loginLead`·`codeLabel`·`doneOkApp`은 지워졌고, `auth.pending.body`는 바뀌었고, `auth.pending.sameDevice`·`auth.pending.stuck`·`auth.receiver.*`, Worker `outdatedApp`이 새로 생겼다. 같은 범위에 들어온 거부 화면 변경(`worker.md` 구현 중 변경 87, [다시 시도] 주 버튼)이 `auth.otherAccount.lead`를 더했다. 이 표의 "현재" 열은 그 전환 뒤(master 03c509c 병합 기준)의 값이고, 전환 PR이 쓴 새 키도 §3·§9 규칙으로 다시 본 결과를 아래에 넣었다. 앱 흐름의 브라우저 결과 페이지는 이제 셸 수신기(`loopback.rs` `ReceiverPage`)가 그리므로 §15.4에 있다.
 
 ### 15.1 `ko.ts`
 
@@ -491,16 +491,21 @@
 | `settings.about.checkFailed`·`checkOffline`·(신설) `upToDate` | 두 문장 / 로그인 서버에 연결할 수 없어… | `settings.about.checkFailed` **업데이트를 확인하지 못했어요** + `checkFailed.help` **지금 버전은 계속 쓸 수 있어요.** / `settings.about.upToDate` **최신 버전이에요** | §4(서버), D57 |
 | (신설) `settings.about.notice`·`settings.about.copyright`·`settings.about.privacy`·`settings.about.licenses` | — | §11 상수 / **개인정보 처리방침** / **오픈소스 라이선스** | brief §6.14-4 |
 | (신설) `account.scope`·`account.lastSeen`·`account.offline` | — | **허가받은 채널이에요** / **마지막 확인 {time}** / **오프라인 · {until}까지 사용 가능** | C8, §4 |
-| `auth.intro`·`auth.title` | 허가된 채널만 사용할 수 있어요. 치지직 계정으로 로그인하세요. | `auth.title` **로그인이 필요해요** / `auth.intro` **허가받은 채널만 쓸 수 있어요. 치지직 계정으로 로그인해 주세요.** + `auth.consent`(§11) + `auth.privacy` **개인정보 처리방침** | §3.1-1, §11 |
+| `auth.intro`(제목은 `auth.signedOut.title` "로그인이 필요해요", 유지) | 허가된 채널만 사용할 수 있어요. 치지직 계정으로 로그인하세요. | `auth.intro` **허가받은 채널만 쓸 수 있어요. 치지직 계정으로 로그인해 주세요.** + `auth.consent`(§11) + `auth.privacy` **개인정보 처리방침** | §3.1-1, §11 |
 | `auth.reconnectFailed` | 아직 연결되지 않았어요. 잠시 뒤 다시 시도해 주세요. | **아직 연결되지 않았어요. 잠시 뒤 다시 연결해 주세요.** | §9.2-2 |
 | `auth.checking` | 로그인 정보를 확인하는 중이에요… | **로그인 상태 확인 중** | `G-PRIVACY-R22`, §3.1-2 |
 | `auth.checking.body` | 최대 40초쯤 걸려요. | **최대 {secs}초쯤 걸려요.**(`AUTH_CHECK_TIMEOUT_MS`, foundations §14) | §2 숫자 |
 | `auth.browserHelp` | 브라우저가 열리지 않나요? | **브라우저가 열리지 않을 때** | §6.2 |
-| `auth.denied.title`·`auth.denied.body` | 채널: {channelName}. 허가를 받으려면… | **사용 허가가 없는 채널이에요** / **허가를 받으려면 관리자에게 채널 이름을 알려 주세요. 허가를 받은 뒤 [다시 시도]를 눌러 주세요.** + 행 `auth.channelLabel` **로그인한 채널**: ‘{channelName}’ + `auth.denied.other` **다른 계정으로 로그인하려면 브라우저에서 네이버 로그아웃을 먼저 해 주세요.** | §6.4, C8 |
-| (신설) `auth.cancelled.title` | — | **로그인을 취소했어요** | `patterns.md` §13 |
+| `auth.denied.title`·`auth.denied.body` | 채널: {channelName}. 허가를 받으려면… | **사용 허가가 없는 채널이에요** / **허가를 받으려면 관리자에게 채널 이름을 알려 주세요. 허가를 받은 뒤 [다시 시도]를 눌러 주세요.** + 행 `auth.channelLabel` **로그인한 채널**: ‘{channelName}’ + 다른 계정 안내(아래 `auth.otherAccount.lead` 행) | §6.4, C8 |
+| `auth.otherAccount.lead` + 링크형 버튼 `auth.otherAccount` | 다른 계정을 쓰려면 브라우저에서 네이버 로그아웃 후 [다른 계정으로 로그인] (거부·허가 취소 화면, 문장 끝에 버튼이 이어진다) | `auth.otherAccount.lead` 삭제 → 완결 문장 `auth.otherAccount.help` **다른 계정으로 로그인하려면 브라우저에서 네이버 로그아웃을 먼저 해 주세요.**(pending 화면과 같은 키 하나) 뒤에 따로 링크형 버튼 `auth.otherAccount` **다른 계정으로 로그인**. 버튼 글자가 문장의 일부가 되지 않는다 | §2 조각 금지·키 접미(`lead` 없음), §2 같은 문구는 키 하나, `worker.md` 구현 중 변경 87(링크형은 유지) |
+| `auth.cancelled.title` | 로그인을 취소했어요 | 유지(이미 있는 키다. 초안의 "신설" 표기를 고쳤다) | `patterns.md` §13 |
 | `auth.removed.title`·`.body` | 사용 허가가 취소됐어요 / 채널: {channelName}. 계속 쓰려면… | **사용 허가가 더 이상 없어요** / **계속 쓰려면 관리자에게 문의해 주세요.** + 같은 채널 행 | §4(취소) |
 | `auth.loginTimeout.body` | 로그인은 10분 안에 마쳐야 해요. 다시 시도해 주세요. | **로그인은 {mins}분 안에 마쳐야 해요. 다시 로그인해 주세요.** | §2 숫자 |
 | `auth.revoked.title` | 로그인이 끊겼어요 | **다시 로그인이 필요해요** | §4(끊기), `G-PRIVACY-R10` |
+| `auth.pending.body` | 브라우저에서 치지직 로그인을 마치면 자동으로 넘어가요. 남은 시간 {mmss} | `auth.pending.body` **브라우저에서 치지직 로그인을 마치면 자동으로 넘어가요.** + 상태 조각 `auth.pending.remaining` **남은 시간 {mmss}**(마침표 없음, 숫자는 `formatMmss`) | §3.1-2(문장과 상태 조각을 한 키에 섞지 않는다), §6.1 |
+| `auth.pending.sameDevice` | 로그인 주소는 이 컴퓨터의 브라우저에서 열어 주세요. | 유지([로그인 주소 복사] 아래 한 줄. 루프백은 다른 기기에서 끝낼 수 없다) | §3.1-1 |
+| `auth.pending.stuck` | 브라우저에 연결할 수 없다는 오류가 보이면 다시 로그인해 주세요. | 유지(기다린 지 90초 뒤에만, `PENDING_STUCK_REMAINING_SECS`, + [다시 로그인]) | §3.1-1, `patterns.md` §13 |
+| `auth.receiver.title`·`auth.receiver.body` | 로그인을 준비하지 못했어요 / 앱이 로그인 결과를 받을 수 없었어요. 다시 시도해 주세요. | 제목 유지 / **앱이 로그인 결과를 받을 준비를 하지 못했어요. 다시 로그인해 주세요.**(버튼이 [다시 로그인]이라 본문이 시키는 말과 버튼 이름을 맞춘다) | C6, §9.2, `auth.loginTimeout.body`와 같은 처리 |
 | `auth.graceExpired.body` | 연결 상태를 확인한 뒤 다시 연결해 주세요. 받던 다운로드는 계속돼요. | **인터넷 연결을 확인한 뒤 다시 연결해 주세요. 받는 중인 영상은 계속 받아요.** | §4 |
 | `auth.runningNote` | 받는 중·대기 중인 다운로드 {n}개는 계속 받아요. 멈추려면 앱을 닫으세요. … | **받는 중이거나 대기 중인 영상 {n}개는 계속 받아요. 일시정지하려면 앱을 닫아 주세요. 다음에 로그인하면 이어받을 수 있어요.** | §3.1-1, §4 |
 | `update.banner` | 새 버전 {version}이 있어요. | **새 버전이 있어요: {version}** | D46 |
@@ -553,12 +558,13 @@
 
 | 현재 키 | 현재 | 새 문구 | 규칙 |
 |---|---|---|---|
-| `loginWarning` | …이 창을 닫으세요. 다른 사람이 보낸 링크라면 계속하지 마세요. | **치지직 다운로더 앱에서 직접 시작한 로그인이 아니면 이 창을 닫아 주세요. 다른 사람이 보낸 주소라면 계속하지 마세요.** | §3.1-1, §4(링크) |
+| `loginWarning` | …이 창을 닫으세요. 다른 사람이 보낸 링크라면 계속하지 마세요. 로그인 뒤 주소창에 나오는 주소는 다른 사람에게 보내지 마세요. | **치지직 다운로더 앱에서 직접 시작한 로그인이 아니면 이 창을 닫아 주세요. 다른 사람이 보낸 주소라면 계속하지 마세요. 로그인 뒤 주소창에 나오는 주소는 다른 사람에게 보내지 마세요.**(셋째 문장은 루프백의 "주소창 grant + 사회공학" 잔여 위험 대응이라 빼지 않는다, `worker.md` 구현 중 변경 88 (가)·(라). 문구를 바꾸면 `login-app.test.ts`의 세 문장 단언도 같이 고친다) | §3.1-1, §4(링크) |
+| `loginTitle`·`loginContinue` | 치지직 다운로더 로그인 / 계속 | 유지(`web.md` §6.4) | — |
+| `outdatedApp`(옛 앱 안내, `worker.md` 88 (가) 미끼 페이지) | 앱이 오래됐어요. 랜딩에서 새 버전을 받아 설치해 주세요. | 제목 `outdatedApp.title` **앱을 업데이트해야 해요** / 본문 `outdatedApp.body` **이 사이트 첫 화면에서 새 버전을 받아 설치해 주세요.** + 링크 **처음으로**("랜딩"은 내부 말이다) | §4(쉬운 말), §9.2-9(상태별 제목), `web.md` §6.2 |
 | `noticeTitle` | 안내 | 삭제 → 상태별 제목: `linkGone.title` **로그인 주소가 만료됐어요** / `linkUsed.title` **이미 사용한 로그인 주소예요** / `badRequest.title` **요청을 확인할 수 없어요** / `rateLimited.title` **요청이 너무 많아요** / `busy.title` **지금은 로그인 요청이 많아요** | §9.2-9 |
 | `linkGone`·`linkUsed` | 이 로그인 링크는 만료됐거나 잘못됐어요. … | 본문 **앱에서 다시 로그인해 주세요.** | §4 |
 | `badOrigin`·`badCsrf` | (동일 문자열 2키) | `badRequest.body` **페이지를 새로 연 뒤 다시 시도해 주세요.** | §2 키 |
 | `rateLimited`·`busy` | 요청이 너무 잦아요. 잠시 뒤에 … | 본문 **잠시 뒤 다시 시도해 주세요.**(제목이 이유) | §3.1-7 |
-| `doneOkApp` | 로그인했어요. 앱으로 돌아가세요. | **로그인했어요. 앱으로 돌아가 주세요.** | §3.1-1 |
 | `signedInAs` | {name} 채널로 로그인했어요. | **‘{name}’ 채널로 로그인했어요.** | §6.4 |
 | `landingTitle`·`siteTitle` | 다운로드 / 치지직 다운로더 — 비공식 VOD·클립 다운로더 | 삭제(h1은 `siteName`) / **치지직 다운로더 — 비공식 다시보기·클립 다운로더** | §4 |
 | `downloadsTitle` | 설치 파일 | 유지. 버튼 **{os}용 받기** | D42 |
@@ -574,7 +580,7 @@
 | `badChannelId` | 채널 ID는 소문자 16진수 32자리예요. | **채널 ID는 영문 소문자와 숫자 32자리예요.** | §4(쉬운 말) |
 | (신설) `confirmDisallow.title`·`.body`·`.action`·`.back` | — | **이 채널의 허가를 뺄까요?** / **‘{name}’ 채널의 허가를 빼면 로그인한 앱과 브라우저 {n}개가 다음에 서버에 연결할 때 끊겨요. 다시 허가해도 끊긴 기기는 새로 로그인해야 해요.** / **허가 빼기** / 링크 **허가한 채널 목록으로** | D54 |
 | (신설) `sessionGone` | — | **로그인이 만료됐어요. 다시 로그인한 뒤 같은 동작을 해 주세요.** | brief §6.13-3(원문 "끝났어요"를 앱의 "만료됐어요"와 통일, §16-7) |
-| (신설) `doneDenied.title`·`.body`·`.next`·`doneCancelled.*`·`doneFailed.*`·`doneOk.*` | — | **이 채널은 사용 허가가 없어요** / **관리자에게 채널 이름을 알려 주세요. 다른 계정으로 로그인하려면 네이버에서 먼저 로그아웃해 주세요.** / **허가를 받은 뒤 앱에서 [다시 시도]를 눌러 주세요.** / **로그인을 취소했어요** · **앱에서 다시 로그인할 수 있어요.** / **로그인하지 못했어요** · **앱에서 다시 시도해 주세요.** / **로그인했어요** · **앱으로 돌아가 주세요.** | `web.md` §6.1, C8 |
+| (신설) `doneDenied.title`·`.body`·`.next`·`doneCancelled.*`·`doneFailed.*`(지금 `doneDenied`·`doneDeniedHint`·`doneDeniedSwitch`·`doneCancelled`·`doneFailed`·`doneOk`) | — | **이 채널은 사용 허가가 없어요** / **관리자에게 채널 이름을 알려 주세요. 다른 계정으로 로그인하려면 네이버에서 먼저 로그아웃해 주세요.** / **허가를 받은 뒤 다시 로그인해 주세요.** / **로그인을 취소했어요** · **처음 화면에서 다시 로그인할 수 있어요.** / **로그인하지 못했어요** · 앱 흐름(`doneView.kind === "app"` 또는 흐름을 모름) **앱에서 다시 시도해 주세요.**, 웹 흐름 `doneFailed.webBody` **처음 화면에서 다시 로그인해 주세요.** / `doneOk` → `doneOk.title` **로그인했어요**(h1이라 마침표를 뗀다, `web.md` §6.1 ok 행) | `web.md` §6.1, C8. 루프백 뒤 `/auth/done`의 denied·cancelled는 **웹 흐름에만** 나온다: 앱 흐름의 종결(ok·denied·cancelled·failed)은 grant와 함께 수신기로 303하면서 F 쿠키를 지우므로(`auth.ts` `toLoopback`) `doneView`가 앱 흐름의 denied·cancelled를 찾을 수 없다(`worker.md` 88 (마)). 그래서 "앱에서"를 말하지 않는다. F가 남는 앱 흐름은 grant 없는 failed뿐이다. 웹 ok는 303 `/`(F 삭제)이고 앱 ok는 수신기가 그린다. 그래서 `doneOk`는 콜백이 보내지 않는 `/auth/done?r=ok`를 손으로 연 경우에만 보이고 어느 흐름인지 말하지 않는다 |
 | (신설) `error.linkGone.*` 등 오류 페이지 본문 | — | 제목은 위 상태별 제목, 본문 **앱에서 다시 로그인해 주세요.** / **페이지를 새로 연 뒤 다시 시도해 주세요.** / **잠시 뒤 다시 시도해 주세요.**, 링크 **처음으로** · **관리 화면 새로 열기** | §9.2-9, `web.md` §6.2 |
 | (신설) `landing.consent.*`·`landing.contact`·`skipLink` | — | 받는 것 **로그인하면 채널 이름과 채널 ID만 알게 돼요.** / 쓰는 곳 **허가 확인과 ‘내 기기’ 표시에만 써요.** / 받지 않는 것 **네이버 비밀번호는 받지 않아요.** / 끊는 길 **로그인한 기기는 ‘내 기기’에서 끊을 수 있어요.** / 연락 수단(자리표시, 출시 전 사람이 채운다) / **본문으로 건너가기** | §11, §10 |
 | (신설) `alreadyDone` | — | **이미 처리됐어요.** | brief §6.13-3 |
@@ -592,6 +598,7 @@
 | `jobs.ts:253` | `toLocaleString('en-US')` | `formatCount` | §7 |
 | `sink.rs` | '{title}' 다운로드를 마쳤어요 / …에 실패했어요 | §14 제목·본문 분리, ‘ ’ | §14 |
 | `lib.rs` 시작 실패 창 | 해요체 lead + 합니다체 `오류: {message}` | lead만 보이고 원문은 "자세히"(펼침 불가면 [정보 복사]) | §2 |
+| `crates/shell/src/auth/loopback.rs` `ReceiverPage`·`PAGE_REJECTED`(앱 수신기가 브라우저에 그리는 결과 페이지, `app.md` 구현 중 변경 66 (라)) | ok "로그인했어요. 치지직 다운로더로 돌아가세요. 이 창은 닫아도 돼요." / denied "허가되지 않은 채널이에요. 앱에서 안내를 확인해 주세요." / cancelled "로그인을 취소했어요. 앱에서 다시 시도할 수 있어요." / failed "로그인을 마치지 못했어요. 앱에서 다시 시도해 주세요." / lost "이 로그인 요청은 처리할 수 없어요. 앱에서 다시 시도해 주세요." / pending "앱으로 돌아가 결과를 확인해 주세요." / 거절 "치지직 다운로더가 처리할 수 없는 요청이에요." | ok **로그인했어요. 치지직 다운로더 앱으로 돌아가 주세요. 이 창은 닫아도 돼요.** / denied **이 채널은 사용 허가가 없어요. 앱에서 안내를 확인해 주세요.**(첫 문장 = Worker `doneDenied.title`) / cancelled **로그인을 취소했어요. 앱에서 다시 로그인할 수 있어요.** / failed **로그인하지 못했어요. 앱에서 다시 시도해 주세요.**(Worker `doneFailed`와 같은 문자열) / lost **이 로그인 요청은 처리할 수 없어요. 앱에서 다시 로그인해 주세요.** / pending·거절 유지. 바깥 값(채널 이름)을 넣지 않는 규칙은 그대로다 | §3.1-1(`-세요`는 `마세요`만), §4(허가), §2 두 deck 공통 상수(결과 첫 문장), `rust`(`crates/shell/tests/auth_loopback.rs`의 문구 표가 고정한다. 문구를 바꾸면 같이 고친다), `R3` |
 | `services.rs`·`manager.rs`·`commands.rs` 합니다체 | 사용자 노출 | `invalidInput` payload에 사유 코드(`emptyField`·`badChars`…)를 담고 deck이 문구를 만든다 | §2, `rust` |
 
 ---
@@ -619,7 +626,7 @@
 - foundations에 추가 요청: 없다(변함없음). 시간 상수는 foundations §14, `UNIT_GAP`은 format 상수.
 - 초안 §17.2의 `design-copy` 추가 검사 11개는 governance §2.4 DC5~DC12로 들어갔다(역할 접미별 마침표·`?`/`!` 범위·`…` 위치·따옴표·구분 기호·복합어·중복 값 키·`a11y.*` 어순·`auth.*` 금지어·도움말 원천·용어집 허용 목록·문서 패리티).
 - 다른 문서는 이렇게 맞췄다: `patterns.md` §3.2(상태 줄 + 본문 줄 두 층, 그룹 머리 `list.group.*`, 대화상자는 §5.3 표 참조), `platform.md` §20(OS 분기 문자열 `{paste}`·`{devtools}`·완료 동작 라벨), `web.md` §6(상태별 제목·`doneDenied.*`·caption 시간대·h1 = 앱 이름), `components.md` §2.12·§2.13(slot 이름 `title`·`body`·`actions`, 바이트 원값 툴팁 `title=` 허용), README D40·D43·D54(문구를 이 문서 키로), foundations §9.1("주소를 새로 받는 중" 위험 등록).
-- `docs/design/app.md` §9 표는 §15.2가 대체한다(app.md 구현 중 변경 61).
+- `docs/design/app.md` §9 표는 §15.2가 대체한다(app.md 구현 중 변경 67 (라)).
 
 ---
 
@@ -652,4 +659,4 @@
 | 23 | P2 | `지워졌어요`/`지웠어요` | §3.1-4 능동 | `R3` |
 | 24 | P2 | `이어받기`/`이어서 받기`, `처음부터 (다시) 받기` | §4 두 행 | `design-copy` 용어집 |
 | 25 | P2 | 보안 경고만 `-세요`, `손상되어` | §3.1-1·5, §15.3 | `design-copy` |
-| 26 | P2 | 로그인 확인 코드 흐름 문구 | §15 머리: 루프백 전환 PR이 §3·§9로 새로 쓴다. 이 문서는 전환 전 문구를 고치지 않는다 | 전환 PR의 `R3` |
+| 26 | P2 | 로그인 확인 코드 흐름 문구 | 루프백 전환(v0.3.0)이 코드 문구를 지웠다. 전환 PR이 새로 쓴 키(`auth.pending.*`·`auth.receiver.*`·`loginWarning`·`outdatedApp`·`ReceiverPage`)와 같은 범위의 `auth.otherAccount.lead`(`worker.md` 87)는 §15.1·§15.3·§15.4가 §3·§9 규칙으로 다시 본다 | `design-copy`, `R3` |

@@ -4,7 +4,7 @@ Cloudflare Worker가 서버에서 그리는 페이지(랜딩·로그인·결과�
 
 읽는 법:
 - 토큰 이름과 수치는 `foundations.md`의 것만 쓴다. 여기 없는 값이 필요하면 지어내지 않고 §13 "foundations에 추가 요청"에 적었다.
-- 규칙마다 (a) 근거와 (b) 강제 수단을 붙였다. 강제 수단은 `node scripts/ci/run.mjs <gate>`의 gate 이름(`worker`·`design-tokens·`design-lint`·`design-copy`·`design-icons`·`design-gallery`·`design-shots`·`scan`) 또는 리뷰 체크리스트 번호(`R1`·`R3`·`R7`·`R8`, README §4.2)다. 도움말 원천 검사(초안의 "gate `help`")는 `worker` gate 안의 단계 `help-check`다(governance §2.9 DX22). `worker` gate는 `scripts/ci/worker-config.mjs`(정적 검사)와 `worker/test/**`(vitest, Workers 런타임)로 이뤄진다. 이 문서가 "`worker` 테스트"라고 적은 것은 vitest에 더할 단언이고, "`worker-config`"라고 적은 것은 `worker-config.mjs`에 더할 정적 검사다.
+- 규칙마다 (a) 근거와 (b) 강제 수단을 붙였다. 강제 수단은 `node scripts/ci/run.mjs <gate>`의 gate 이름(`worker`·`design-tokens·`design-lint`·`design-copy`·`design-icons`·`design-gallery`·`design-shots`·`scan`) 또는 리뷰 체크리스트 번호(`R1`·`R3`·`R7`·`R8`, README §4.2)다. 도움말 원천 검사(초안의 "gate `help`")는 `worker` gate 안의 단계 `help-check`다(governance §2.9 DX22). `worker` gate는 `scripts/ci/worker-config.mjs`(정적 검사. 배포 설정 모듈 `worker-deploy.mjs`를 import한다)·`worker/test/**`(vitest, Workers 런타임)·`pnpm build`(`wrangler deploy --dry-run`)와 그 번들의 `worker-config.mjs --dist` 검사로 이뤄지고 CI에서는 **worker 영역**(`changes` 작업의 `worker` 출력, `governance.md` §2.0) 작업이다. 이 문서가 "`worker` 테스트"라고 적은 것은 vitest에 더할 단언이고, "`worker-config`"라고 적은 것은 `worker-config.mjs`에 더할 정적 검사다.
 - **[잠정]**은 확인되지 않은 값(확인 방법을 같은 줄에), **[취향]**은 출처 없는 선택이다.
 - 예시 값(버전·날짜·크기·해시·채널 이름)은 전부 가짜다(`scan`).
 - 근거는 `docs/research/design-system.md`의 ID로 인용한다(README 머리). a-worker §…처럼 ID가 없는 절은 약칭으로 남겼다. `worker.md`는 `docs/design/worker.md`(끝의 "구현 중 변경"이 본문보다 우선)다. 문구는 `content.md` §15.3의 키로 가리킨다.
@@ -18,13 +18,16 @@ Worker가 그리는 페이지는 한 골격(`htmlPage`, worker.md §4 공통·�
 |---|---|---|---|---|
 | 랜딩(비로그인) | `GET /` | 읽기 | 없음 | 유일한 공개 진입점. OG 있음(§9) |
 | 랜딩(허용 사용자) | `GET /` | 읽기 | 웹 세션 | 설치 파일 + 내 기기 + 로그아웃 |
-| 로그인 확인 | `GET /auth/login/:handle` | 앱 | 없음 | **확인 코드 없음**(루프백 전환, `patterns.md` §13). `loginWarning` + [계속](§6.4). 전환 뒤 Worker가 이 단계를 없애면 이 행도 지운다 [잠정] |
-| 로그인 결과 | `GET /auth/done` | 앱 | 없음 | ok·denied·cancelled·failed 4상태(§6) |
+| 로그인 확인 | `GET /auth/login/:handle` | 앱 | 없음 | **확인 코드 없음**(루프백, v0.3.0). `loginWarning` + [계속](§6.4). 흐름 결합 쿠키를 심는 자리라 이 단계는 남는다(`worker.md` 구현 중 변경 88 (가) "확인 페이지를 남기는 이유"). 이 페이지만 CSP `form-action`에 루프백 출처가 더해진다(§4) |
+| 옛 앱 안내 | `GET`·`POST /auth/login/<예약 handle>` | 앱 | 없음 | 루프백 전 앱(v0.1.1 이하)이 여는 200 안내 페이지 `outdatedApp`(§6.2). DO를 부르지 않는다(`worker.md` 88 (가) "옛 앱 미끼"·89 (가)) |
+| 로그인 결과 | `GET /auth/done` | 앱 | 없음 | 웹 흐름의 denied·cancelled·failed와 앱 흐름의 grant 없는 failed(§6.1). 웹 ok는 303 `/`, 앱 흐름의 결과는 앱 수신기가 그린다(§6.5) |
 | 안내·오류 | 4xx·5xx | 앱 | — | 상태별 제목(§6). "안내" 하나로 뭉치지 않는다 |
 | 관리 | `GET /admin` | 앱 | 관리자 | 표 5개와 폼(§7·§8) |
 | 허가 빼기 확인 | `GET /admin/…/disallow`(신설) | 앱 | 관리자 | D54의 유일한 확인 페이지(§7.3) |
 | 도움말·처리방침·라이선스 | `GET /help`·`/privacy`·`/licenses`(신설) | 읽기 | 없음 | §10. `/terms`는 두지 않는다(D60) |
 | 공지 | `GET /notice` | — | 없음 | JSON이다. 페이지가 아니므로 이 문서의 대상이 아니다(D41, g-outage §4) |
+| (대상 밖) 앱 수신 | `POST /auth/redeem`·`POST /auth/poll` | — | 없음 | JSON이다. `/auth/poll`은 수령하지 않는 404 비석이다(`worker.md` 88 (가)). 페이지가 아니다 |
+| (대상 밖) 수신기 결과 | `http://127.0.0.1:<포트>/chzzk-downloader/login` | — | — | Worker가 아니라 **앱 셸**이 그리는 브라우저 페이지다. 규칙은 §6.5 |
 
 "척도"는 §2의 `data-scale`이다. 인증·경로는 worker.md §4가 소유한다.
 
@@ -99,7 +102,7 @@ Worker가 그리는 페이지는 한 골격(`htmlPage`, worker.md §4 공통·�
 | `color-scheme` meta | CSS가 로드되기 전 첫 페인트의 폼 컨트롤·스크롤바 색을 OS에 맞춘다 | `A-WORKER` §3.6(첫 페인트 흰 번쩍임), g-launch 3겹(brief §6.8-9) | `worker` 테스트 |
 | `<title>` | 랜딩 `siteTitle`("치지직 다운로더 — 비공식 다시보기·클립 다운로더", D34). 그 밖은 `{화면} · 치지직 다운로더`(현행 유지). 오류·검증 실패 페이지는 **`errorTitlePrefix` "오류: "** 접두. 같은 경로의 제목은 로그인 여부에 따라 바뀌지 않는다 | D34, `G-WEB-R19`·`G-WEB-R24`(GOV.UK "Error:" 접두, `E-KO-B4`), `A-COPY` §1(같은 URL의 h1·title이 상태마다 다름) | `worker` 테스트(상태 코드 ≥ 400이면 title이 `오류: `로 시작, `/`의 title은 세션 유무와 무관) |
 | skip link | `body`의 첫 요소, 글자 `skipLink`(`content.md` §10). 평소 화면 밖, `:focus`에서 `--edge` 위치에 `--surface` 면 + `1px solid var(--border-strong)` + `--radius-control` | brief §6.13-2, B 후보 `.skip`, WCAG 2.4.1 | `worker` 테스트(첫 `<a>`의 `href="#main"`과 `id="main"` 존재), `R8` |
-| 헤더 | 높이 `--toolbar-h`(44), 아래 `1px solid var(--separator)`, 안쪽은 `main`과 같은 `.col`(읽기 페이지 680·UI 페이지 800). 왼콽 **이름만**(13, `--weight-strong`, 색 `--fg`, 밑줄 없음, `href="/"`). 마크(D33)가 나오면 이름 앞 `--icon-md`(20) `<img>`. 이름 옆 배지 "비공식 도구"(§3.1). 오른쪽 `<nav aria-label="사이트">`: 비로그인은 [도움말] · [로그인], 로그인은 [도움말] · [관리](관리자만) · 채널 이름(링크 아님). `/auth/*` 결과·오류 페이지에는 [로그인]을 두지 않는다(본문이 "앱에서 다시 로그인"을 말하는데 웹 로그인 길을 열면 엉뚱한 곳으로 간다, 검토 U-31) | D26·D34(마크 전까지 이름만, Worker 헤더에만 배지), judgment §2.3-7, `A-WORKER-3.6`(내비게이션이 화면마다 다름)·`3.2`(헤더 링크 모양) | `worker` 테스트(모든 페이지에 같은 헤더 마크업, 관리 링크는 관리자만, `/auth/*`에 로그인 링크 없음) |
+| 헤더 | 높이 `--toolbar-h`(44), 아래 `1px solid var(--separator)`, 안쪽은 `main`과 같은 `.col`(읽기 페이지 680·UI 페이지 800). 왼콽 **이름만**(13, `--weight-strong`, 색 `--fg`, 밑줄 없음, `href="/"`). 마크(D33)가 나오면 이름 앞 `--icon-md`(20) `<img>`. 이름 옆 배지 "비공식 도구"(§3.1). 오른쪽 `<nav aria-label="사이트">`: 비로그인은 [도움말] · [로그인], 로그인은 [도움말] · [관리](관리자만) · 채널 이름(링크 아님). `/auth/*` 결과·오류 페이지에는 [로그인]을 두지 않는다(갈 곳은 본문 아래 링크 하나다: 앱 흐름이면 앱으로, 웹 흐름이면 "처음으로"의 랜딩 로그인으로 가므로 헤더에 웹 로그인 길을 하나 더 열지 않는다, `G-WEB-R24`, 검토 U-31) | D26·D34(마크 전까지 이름만, Worker 헤더에만 배지), judgment §2.3-7, `A-WORKER-3.6`(내비게이션이 화면마다 다름)·`3.2`(헤더 링크 모양) | `worker` 테스트(모든 페이지에 같은 헤더 마크업, 관리 링크는 관리자만, `/auth/*`에 로그인 링크 없음) |
 | `<main id="main">` | 하나. 첫 요소는 flash 또는 오류 요약(있을 때), 그다음 `<h1>` 하나 | `G-WEB-R25`, GOV.UK 알림 배너·오류 요약(`E-KO-B4`) | `worker` 테스트(h1 정확히 1개, `main` 첫 자식 규칙) |
 | 헤딩 위계 | h1 `--text-display`(17 → 읽기 22) 600, h2 `--text-title`(15 → 17) 600, h3 `--text-body` 600. h3를 UA 기본으로 두지 않는다. 읽기 척도의 랜딩 h1만 `--text-hero`(28, 600 미만 22) | foundations §3.2·§3.3, `A-WORKER-3.x`(h3가 h2보다 크다), D13(700 없음) | `design-lint` DL5(font-size·font-weight 리터럴 금지), `worker` 테스트(생성물에 `h1,h2,h3` 규칙 존재) |
 | 바닥글 | 링크 셋(도움말·처리방침·라이선스) → 비공식 고지 상수 → 저작권 줄. 글자 `--text-caption`, 색 `--fg-muted, 위 `1px solid var(--separator)`, 위아래 `--space-32` | D34(고지 4곳 중 "랜딩 바닥글"), g-legal §4(바닥글 관례), `G-ID-R1` | `worker` 테스트(모든 페이지 바닥글에 고지 상수 포함), `design-copy`(두 deck의 고지 문자열 동일) |
@@ -116,7 +119,7 @@ Worker가 그리는 페이지는 한 골격(`htmlPage`, worker.md §4 공통·�
 
 ## 4. CSP 안의 구현
 
-CSP는 그대로다(worker.md, `A-WORKER` §6.1): `default-src 'none'; style-src 'self'; img-src 'self'; form-action 'self' <치지직 인가 출처>; frame-ancestors 'none'; base-uri 'none'`. JS는 계속 없다(D52).
+CSP는 그대로다(worker.md, `A-WORKER` §6.1): `default-src 'none'; style-src 'self'; img-src 'self'; form-action 'self' <치지직 인가 출처>; frame-ancestors 'none'; base-uri 'none'`. 예외는 로그인 확인 페이지 하나로, `form-action`에 `http://127.0.0.1:*`이 더 붙는다([계속] POST → 치지직 → 콜백 → 루프백 303 사슬에도 `form-action`이 적용되는 브라우저가 있다, `worker.md` 구현 중 변경 88 (가), `pages.ts` `htmlHeaders({ loopbackFormAction })`). 이 시스템은 그 예외를 넓히지 않는다. JS는 계속 없다(D52).
 
 | 규칙 | 값 | 근거 | 강제 |
 |---|---|---|---|
@@ -174,15 +177,14 @@ CSP는 그대로다(worker.md, `A-WORKER` §6.1): `default-src 'none'; style-src
 
 ### 6.1 로그인 결과 `/auth/done`
 
-현재 네 상태가 같은 `<h1>로그인 결과</h1>` + 문단이다(`A-WORKER` §3.5). 상태마다 제목·아이콘·톤이 다르다.
+현재 모든 상태가 같은 `<h1>로그인 결과</h1>` + 문단이다(`A-WORKER` §3.5). 상태마다 제목·아이콘·톤이 다르다. 루프백(v0.3.0) 뒤 앱 흐름은 ok·denied·cancelled·failed 모두 브라우저를 앱 수신기로 보내므로(`worker.md` 구현 중 변경 88 (마)), 이 페이지에 오는 것은 **웹 흐름**(랜딩 로그인)의 denied·cancelled·failed와 앱 흐름의 **grant 없는 failed**(흐름 결합 쿠키 불일치·state 형식 밖·배포 전 옛 흐름 등, 88 (나) 콜백 표)뿐이다. 앱 흐름의 루프백 303은 F 쿠키를 지우므로(`auth.ts` `toLoopback`) F로 앱 흐름의 denied·cancelled·ok를 다시 찾는 길도 없다. 그래서 denied·cancelled 문구는 "앱에서"를 말하지 않는다. 흐름 종류는 F 쿠키로 찾은 `doneView.kind`이고, 없으면 앱 흐름 쪽 문구를 쓴다(앱 사용자가 다수다).
 
 | 상태 | `<title>` | `<h1>` | 아이콘(색) | 본문 | 다음 행동 |
 |---|---|---|---|---|---|
-| ok(앱) | 로그인했어요 · 치지직 다운로더 | `doneOk.title` | `circle-check` `--fg-muted | `doneOk.body`("앱으로 돌아가 주세요.") | 없음(창을 닫아도 된다) |
-| ok(웹) | 같음 | 같음 | 같음 | — | 303으로 `/`에 flash "로그인했어요"(§6.3)를 보이고 이 페이지는 그리지 않는다 |
-| denied | 이 채널은 사용 허가가 없어요 · … | `doneDenied.title` | `circle-x` `--danger-ink`(막힘 = danger, `components.md` §2.12 tone 기준. 앱의 거부 화면과 같은 은유) | Notice(중립): "채널: {이름} · 채널 ID: {id}"(본인에게 비밀이 아니다, worker.md §8.3) → `doneDenied.body` → `doneDenied.next`("허가를 받은 뒤 앱에서 [다시 시도]를 눌러 주세요.") | 링크 하나: "처음으로". 웹 로그인 폼은 두지 않는다(앱 로그인 흐름이다) |
-| cancelled | 로그인을 취소했어요 · … | `doneCancelled.title` | `info` `--fg-muted | `doneCancelled.body`("앱에서 다시 로그인할 수 있어요.") | 링크 하나 |
-| failed | 오류: 로그인하지 못했어요 · … | `doneFailed.title` | `circle-x` `--danger-ink` | `doneFailed.body`("앱에서 다시 시도해 주세요.") + `inApp === "kakao"`일 때만 `inAppHint` 한 단락(앱 안 화면에서는 끊길 수 있으니 기본 브라우저에서 열기) | 링크 하나 |
+| ok | 로그인했어요 · 치지직 다운로더 | `doneOk.title` | `circle-check` `--fg-muted` | 없음(어느 흐름인지 말하지 않는다) | 링크 하나: "처음으로". 콜백은 ok로 이 페이지에 보내지 않는다: 웹 ok는 303 `/`(F 삭제)에 flash "로그인했어요"(§6.3), 앱 ok는 앱 수신기 페이지(§6.5)다. 이 행은 `/auth/done?r=ok`를 손으로 연 경우뿐이다 |
+| denied(웹 흐름) | 이 채널은 사용 허가가 없어요 · … | `doneDenied.title` | `circle-x` `--danger-ink`(막힘 = danger, `components.md` §2.12 tone 기준. 앱의 거부 화면과 같은 은유) | Notice(중립): "채널: {이름} · 채널 ID: {id}"(본인에게 비밀이 아니다, worker.md §8.3) → `doneDenied.body` → `doneDenied.next`("허가를 받은 뒤 다시 로그인해 주세요.") | 링크 하나: "처음으로"(랜딩에 로그인 폼이 있다). 이 페이지에 폼을 두지 않는다 |
+| cancelled(웹 흐름) | 로그인을 취소했어요 · … | `doneCancelled.title` | `info` `--fg-muted | `doneCancelled.body`("처음 화면에서 다시 로그인할 수 있어요.") | 링크 하나 |
+| failed | 오류: 로그인하지 못했어요 · … | `doneFailed.title` | `circle-x` `--danger-ink` | 앱 흐름이거나 흐름을 모르면 `doneFailed.body`("앱에서 다시 시도해 주세요."), 웹 흐름이면 `doneFailed.webBody`("처음 화면에서 다시 로그인해 주세요.") + `inApp === "kakao"`일 때만 `inAppHint` 한 단락(앱 안 화면에서는 끊길 수 있으니 기본 브라우저에서 열기) | 링크 하나 |
 
 근거: D10(성공색 없음 → 완료는 `check` 계열 + 글자), foundations §9.1 은유 표(오류 `circle-x` ≠ 경고 `triangle-alert`), C8(거부 화면에 원인·본인 채널 정보·다음 행동, 검토 U-12), `G-WEB-R9`(인앱에서도 막지 않고 실패 뒤에만 보충)·`G-WEB-R24`(링크는 갈 곳 하나), `A-COPY` §1(`채널: 이름 · 채널 ID: id` 콜론 대칭). 고지는 붙이지 않는다(`G-ID-R3`). 강제: `worker` 테스트(상태별 h1·아이콘 이름·title 접두, 인앱 보충 단락은 `failed` × `kakao`에만, `/auth/*` 헤더에 로그인 링크 없음), `design-icons` DI4(은유 유일성), `design-copy` DC8.
 
@@ -198,6 +200,7 @@ CSP는 그대로다(worker.md, `A-WORKER` §6.1): `default-src 'none'; style-src
 | 관리자 아님(403) | `adminOnly.title`(관리자만 볼 수 있어요) | 링크 "처음으로" |
 | 요청 잦음(429)·바쁨(503) | `rateLimited.title`(요청이 너무 많아요) / `busy.title`(지금은 로그인 요청이 많아요) | `retryLater.body`("잠시 뒤 다시 시도해 주세요.") + 링크 |
 | 형식 오류(400·415) | `badFormat.title`(요청 형식이 맞지 않아요) | 링크 |
+| 옛 앱(200, 예약 handle) | `outdatedApp.title`(앱을 업데이트해야 해요) | `outdatedApp.body`("이 사이트 첫 화면에서 새 버전을 받아 설치해 주세요.") + 링크 "처음으로". 상태 코드가 200이라 `<title>` 접두 "오류: "는 붙지 않는다. 아이콘은 4xx와 같은 `triangle-alert` `--warning-ink`(사용자가 할 일이 있고 되돌릴 수 있다) |
 | 검증 오류 | §6.3 오류 요약(같은 페이지 400) | — |
 
 아이콘: 4xx는 `triangle-alert` `--warning-ink`(사용자 잘못이 아니거나 되돌릴 수 있다), 5xx는 `circle-x` `--danger-ink`. 빨간 글씨만으로 경고하지 않는다(GOV.UK problem pages, `G-WEB-R24`). 문구는 `content.md` §15.3("링크"가 아니라 "주소", "잠시 뒤").
@@ -220,9 +223,20 @@ flash와 `seeOther` "쿼리 없는 두 곳" 계약의 보완은 worker.md 구현
 
 ### 6.4 로그인 확인 페이지(확인 코드 없음)
 
-`<h1>치지직 다운로더 로그인</h1>` → 경고 Notice(`--warning-soft + `triangle-alert`, `loginWarning`: 앱에서 직접 시작한 로그인이 아니면 창을 닫아 달라는 것, 다른 사람이 보낸 주소라면 계속하지 않기) → [계속](이 페이지의 유일한 채움 버튼, `A-WORKER-3.1` "가장 중요한 동작이 primary가 아니다" 해소). 확인 코드 블록·`letter-spacing`·`.code` 글자 크기는 **없다**(루프백 전환으로 코드 대조가 사라졌다, `patterns.md` §13·§17-6; 초안 §13-1의 큰 숫자 토큰 요청도 함께 사라졌다). 휴대폰·인앱에서도 [계속]은 동작하고 새 차단을 더하지 않는다(`G-WEB-R12`). 루프백 전환 뒤 Worker가 이 단계를 없애면 §1 행과 함께 지운다 [잠정].
+`<h1>치지직 다운로더 로그인</h1>`(`loginTitle`) → 경고 Notice(`--warning-soft + `triangle-alert`, `loginWarning` 세 문장: 앱에서 직접 시작한 로그인이 아니면 창을 닫아 달라는 것, 다른 사람이 보낸 주소라면 계속하지 않기, **로그인 뒤 주소창에 나오는 주소를 다른 사람에게 보내지 않기**(루프백 주소창 grant + 사회공학 잔여 위험, `worker.md` 88 (라))) → [계속](이 페이지의 유일한 채움 버튼, `A-WORKER-3.1` "가장 중요한 동작이 primary가 아니다" 해소). 확인 코드 블록·`letter-spacing`·`.code` 글자 크기는 **없다**(루프백 전환으로 코드 대조가 사라졌다, `patterns.md` §13·§17-6; 초안 §13-1의 큰 숫자 토큰 요청도 함께 사라졌다). 휴대폰·인앱에서도 [계속]은 동작하고 새 차단을 더하지 않는다(`G-WEB-R12`). 단계 자체는 남는다(§1). CSP `form-action` 예외는 §4.
 
-강제: `worker` 테스트(채움 버튼 1개, 경고 Notice 존재, 코드 요소 없음), `design-copy`.
+강제: `worker` 테스트(채움 버튼 1개, 경고 Notice 존재, 코드 요소 없음, 경고 세 문장 — 지금 `login-app.test.ts`가 세 문장과 코드 문구 없음을 본다), `design-copy`.
+
+### 6.5 앱 수신기 결과 페이지(Worker 밖)
+
+앱 흐름 로그인의 마지막 화면은 Worker가 아니라 앱 셸의 1회용 수신기(`crates/shell/src/auth/loopback.rs`)가 `127.0.0.1`에서 그리는 페이지다(`app.md` 구현 중 변경 65 (가)·66 (라)). 출처가 달라 Worker 스타일시트·에셋을 쓸 수 없고(`'self'`가 루프백이다), 응답은 외부 리소스·스크립트 없이 인라인 `<style>` 한 블록과 `data:` 아이콘이다(CSP `style-src 'unsafe-inline'; img-src data:; form-action 'none'`). 이 시스템의 규칙 중 여기에 적용하는 것:
+
+| 규칙 | 값 | 근거 | 강제 |
+|---|---|---|---|
+| 문구 | `ReceiverPage` 상수 여섯과 `PAGE_REJECTED`. 값은 `content.md` §15.4. 바깥 값(채널 이름)을 넣지 않는다. 결과 첫 문장은 §6.1의 Worker 제목과 같다 | `content.md` §2 두 deck 공통 상수, `app.md` 66 (라) | `rust`(`crates/shell/tests/auth_loopback.rs`의 문구 표가 여섯 값을 고정한다. 문구를 바꾸면 같이 고친다), `R3` |
+| 색 | 지금 `#fff`/`#111`(다크 `#111`/`#eee`) 리터럴이다. 적용 단계 (f)에서 foundations `--bg`·`--fg`의 라이트·다크 hex로 바꾼다(생성기가 Rust 상수를 쓸지, 셸 테스트가 foundations 값과 대조할지는 그 PR이 정한다) **[잠정]** | foundations §2(한 원천), D7(OS 다크만 따름) | `rust`(값 대조, (f)에서) |
+| 글꼴·크기 | `system-ui, sans-serif`, 18px, 가운데 한 문단. 앱·Worker의 `--font-sans` 스택과 다르지만 브라우저 탭에서 잠깐 보는 한 줄이라 토큰 척도를 강제하지 않는다 [취향] | — | — |
+| 범위 | 이 페이지에는 헤더·바닥글·고지·버튼이 없다(앱으로 돌아가라는 한 문장뿐). Worker 골격(§3)과 `design-gallery`·`design-shots`의 Worker 정적 HTML 목록에 넣지 않는다 | `worker.md` 88 (마)(외부 참조 없음 테스트) | — |
 
 ---
 ## 7. 버튼·폼·위험도
@@ -372,21 +386,21 @@ a-worker의 결함을 이 문서의 규칙과 대조했다. "적용 뒤" 열은 
 | 3 | 컨트롤 경계 대비 1.35 / 1.50:1 | `site-css.ts:24·27` | §7.1(`--border-strong` ≥ 3:1) | |
 | 4 | 글꼴 스택 불일치, `-apple-system`, Noto 없음 | `site-css.ts:9` | §2 글꼴(`--font-sans`) | |
 | 5 | 본문 16px/1.6, h2 1.15rem, h3 UA 기본(h3 > h2) | `site-css.ts:9·12~13`, `landing-view.ts:46`, `admin-view.ts:33` | §2 척도, §3 헤딩 위계 | |
-| 6 | `.code` `letter-spacing:.1em`, 2rem | `site-css.ts:16` | §6.4(자간 0, `--text-display`) | |
+| 6 | `.code` `letter-spacing:.1em`, 2rem | `site-css.ts:16` | §6.4. 루프백(v0.3.0)이 확인 코드 표시를 지워 이 규칙은 쓰는 곳이 없다 → 적용 PR (e)가 생성물로 바꿀 때 지운다 | |
 | 7 | `word-break` 없음(한국어 글자 단위 끊김), `tabular-nums` 없음 | `site-css.ts` 전체 | §2 줄바꿈·숫자 | |
 | 8 | rem 패딩이 4px 격자에 어긋남(6.4·5.6·14.4px), 버튼·입력 높이 비고정 | `site-css.ts:19·24·27` | §7.1(`--control-h`), §8 셀 | |
 | 9 | 반경 6px 일률, 바탕과 같은 색의 버튼·입력 | `site-css.ts:22~28` | §7.1(`--surface` 면), §11 | |
 | 10 | hover·active·focus-visible·disabled 규칙 없음, UA 포커스 링 | `site-css.ts` | §2 포커스, §7.1 눌림 | |
-| 11 | 버튼 의미 규칙 없음(`danger` 과용, [계속]이 primary 아님) | `landing-view.ts:17·55`, `admin-view.ts:24·37·49`, `pages.ts:45` | §7.2 의미 표 | |
+| 11 | 버튼 의미 규칙 없음(`danger` 과용, [계속]이 primary 아님) | `landing-view.ts:17·55`, `admin-view.ts:24·37·49`, `pages.ts:49` | §7.2 의미 표 | |
 | 12 | 버튼 간격을 공백 문자에 맡김, `form.inline` | `admin-view.ts:37`, `site-css.ts:23` | §7.1 `.actions` | |
-| 13 | 헤더 사이트명이 본문 링크와 같은 모양, 내비게이션 없음, 로그아웃이 본문 맨 아래 | `pages.ts:31`, `landing-view.ts:61~62` | §3 헤더 | |
+| 13 | 헤더 사이트명이 본문 링크와 같은 모양, 내비게이션 없음, 로그아웃이 본문 맨 아래 | `pages.ts:35`, `landing-view.ts:61~62` | §3 헤더 | |
 | 14 | 표에 `scope`·`caption` 없음, 빈 `<th>`, 가로 스크롤에 포커스 불가 | `landing-view.ts:57`, `admin-view.ts:32·44·56`, `site-css.ts:17` | §8 | |
 | 15 | 시각 열 "(KST)" 반복, 형식 `YYYY-MM-DD HH:MM` | `copy.ts` col*, `format.ts` | §8 숫자·시각 열(D49) | |
 | 16 | 인라인 라벨 + 100% 입력, 오류 스타일 없음, 채널 ID가 mono 아님 | `admin-view.ts:33` | §7.1 입력, §6.3 오류 요약 | |
-| 17 | 로그인 결과 4상태가 같은 모양, 안내 6종이 모두 "안내" | `pages.ts:35~37·49~71` | §6.1·§6.2 | |
-| 18 | `color-scheme`·`theme-color` meta 없음 | `pages.ts:31` | §3 골격 | |
-| 19 | 파비콘·OG·description·robots 없음, `/favicon.ico` 404 | `pages.ts:31`, `routes.ts:136` | §9.2·§9.3 | |
-| 20 | skip link·`nav`·`footer` 없음 | `pages.ts:31` | §3 | |
+| 17 | 로그인 결과 4상태가 같은 모양, 안내 6종이 모두 "안내" | `pages.ts:39~41·55~75` | §6.1·§6.2 | |
+| 18 | `color-scheme`·`theme-color` meta 없음 | `pages.ts:35` | §3 골격 | |
+| 19 | 파비콘·OG·description·robots 없음, `/favicon.ico` 404 | `pages.ts:35`, `routes.ts:137` | §9.2·§9.3 | |
+| 20 | skip link·`nav`·`footer` 없음 | `pages.ts:35` | §3 | |
 | 21 | 요소 전역 셀렉터(`header{}`), 클래스 체계 없음 | `site-css.ts:11` | §3 셀렉터 | |
 | 22 | 다크 수동 전환 없음 | `site-css.ts:7` | §2 다크(의도: OS만, D7) — 결함 아님으로 닫음 | |
 | 23 | 다크 `pre` 바탕 대비 낮음(`#222` / `#141414`) | `site-css.ts:7·22` | §11 코드 블록(`--surface-2` L .35 / bg .24) | |
@@ -394,7 +408,7 @@ a-worker의 결함을 이 문서의 규칙과 대조했다. "적용 뒤" 열은 
 | 25 | 해시 수동 갱신 | `site-css.ts:33`, `site-css.test.ts:9` | §4 해시(생성기) | |
 | 26 | 낡은 주석 "골격은 W6에서" | `core/html.ts:8` | 적용 PR에서 지운다 | |
 | 27 | 복사 버튼 없는 xattr 명령 | `landing-view.ts:46` | §5.1-7(D52: 선택 가능한 코드 + 사기 경고) | |
-| 28 | `Worker secret ADMIN_CHANNEL_IDS` 기술 용어 노출 | `copy.ts:69` | `content.md`(관리자 전용 문구라 P2. "관리자는 서버 설정에서만 바꿀 수 있어요") | |
+| 28 | `Worker secret ADMIN_CHANNEL_IDS` 기술 용어 노출 | `copy.ts:67` | `content.md`(관리자 전용 문구라 P2. "관리자는 서버 설정에서만 바꿀 수 있어요") | |
 | 29 | 랜딩 h1이 로그인 여부에 따라 다름("다운로드") | `landing-view.ts:22·62` | §5.2 | |
 | 30 | SHA-256이 주 표의 열 | `landing-view.ts:43` | §5.1-8 | |
 
@@ -415,7 +429,7 @@ g-web §4.2 G1~G7(세션 없는 POST 무안내, 재삭제 404, 성공 피드백 
 | "pill" 낱말 | README D34·content §11을 "배지"로 |
 | `design-lint`의 `cursor: pointer 금지는 앱만 | governance §2.3 DL8 |
 | `design-gallery`·`design-shots` 범위에 Worker 정적 HTML | governance §2.6(렌더 문자열을 `setContent`) |
-| 로그인 확인 페이지 존속 | §1·§6.4를 확인 코드 없는 판으로 고쳤다. Worker가 단계를 없애면 지운다 [잠정] |
+| 로그인 확인 페이지 존속 | 루프백(v0.3.0)이 확인 코드만 빼고 단계를 남겼다(`worker.md` 88 (가)). §1·§6.4를 그 판으로 고쳤고 [잠정]을 닫았다 |
 | `A-WORKER` §7.1-5 JS 허용 여부 | D52로 닫혔다 |
 
 ## 14. `worker.md`에 반영할 것(적용 PR (e)에서 번호를 받는다)
@@ -429,7 +443,7 @@ g-web §4.2 G1~G7(세션 없는 POST 무안내, 재삭제 404, 성공 피드백 
 | 3 | **`seeOther` 계약**: worker.md "위치는 쿼리 없는 두 곳"에 flash 쿠키가 없다 | flash 쿠키로 보완(§6.3) | worker.md 구현 중 변경 번호 |
 | 4 | **허가 빼기 확인 페이지 경로**(`GET /admin/<id>/disallow`)와 삭제류 멱등 정책·`X-Robots-Tag`·`entryContext`·에셋 표 | 모두 신설(§7.3·§6.3·§9) | worker.md §4.4·§4.5 경로 표와 구현 중 변경 |
 | 5 | **설치 안내를 로그인 전에 보인다**(§5.2): worker.md §9.5는 허가 사용자에게만 | 안내 텍스트는 공개, 파일 링크만 인증 뒤 | worker.md 구현 중 변경 번호. E1 근거라 D62 UT5로 확인 |
-| 6 | **로그인 확인 페이지**의 확인 코드 제거(루프백) | §6.4 | 루프백 전환 PR |
+| 6 | **로그인 확인 페이지**의 확인 코드 제거(루프백) | §6.4 | **닫힘**: `worker.md` 구현 중 변경 88 (가)·89(L1, v0.3.0). (e) PR이 적을 것은 1~5번이다 |
 
 ---
 
@@ -446,3 +460,4 @@ g-web §4.2 G1~G7(세션 없는 POST 무안내, 재삭제 404, 성공 피드백 
 9. **헤더 nav에서 `/auth/*` 페이지의 [로그인]을 뺐다**(검토 U-31).
 10. **Windows SAC 경고를 단계 앞의 경고 Notice로**(검토 U-37). **로그인 전 고지에 끊는 길과 `loginForFiles`·`loginTwice`를 더했다**(검토 U-04·U-11).
 11. **코드 블록은 `white-space: pre` + 가로 스크롤**(검토 U-34).
+12. **루프백(v0.3.0) 뒤 결과 페이지를 웹 흐름 기준으로 다시 썼다.** 앱 흐름의 ok("앱으로 돌아가 주세요") 행을 지웠고, denied·cancelled 문구에서 "앱에서"를 뺐으며, failed는 `doneView.kind`로 두 문구를 고른다(§6.1). 옛 앱 안내(`outdatedApp`)·확인 페이지 CSP 예외·앱 수신기 페이지(§6.5)를 더했다(`worker.md` 구현 중 변경 88·89, `app.md` 65·66).

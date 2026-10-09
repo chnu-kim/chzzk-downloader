@@ -823,6 +823,7 @@ JS 타이머·Rust 셸이 쓰는 값이다. 이름과 값의 단일 원천은 �
 | `COPIED_LABEL_MS` | 2000 | [취향] | `timing.ts` | "복사했어요" 라벨 전환 | D37 |
 | `ETA_REFRESH_MS` | 1000 | [취향] | `timing.ts` | 속도·남은 시간 갱신 | D50 |
 | `AUTH_CHECK_TIMEOUT_MS` | 40000 | [잠정] | `timing.ts` + Rust | 로그인 상태 확인 상한(`auth.checking.body`의 `{secs}`) | 현재 코드 값. `patterns.md` §13 |
+| `PENDING_STUCK_REMAINING_SECS` | 510 | 기존 코드 | 지금 `app/src/lib/auth.ts`(DT15 대상 밖). 적용 단계 (a)에서 다른 §14 상수와 함께 `timing.ts`로 옮긴다 | 로그인 대기 화면의 stuck 안내·[다시 로그인]이 나오는 남은 시간(10분 기한에서 90초 지남, `patterns.md` §13) | `app.md` 구현 중 변경 65 (라)·66 (나), `worker.md` 88 (바) |
 | `SHOW_DEADLINE_MS` | 1500 | [제안] | Rust | 첫 창 안전장치(`platform.md` §2.2) | `G-LAUNCH-R2`, 실측 뒤 조정 |
 | `COLD_SHOW_BUDGET_MS` / `WARM_SHOW_BUDGET_MS` | 1000 / 400 | [제안] | ratchet(`ci/ratchet.json`) | 아이콘 클릭 → 창 보임(`platform.md` §14) | Nielsen 1초·Doherty. 관찰 뒤 승격 |
 | `DOCK_PROGRESS_MIN_INTERVAL_MS` | 1000 | [취향] | Rust | Dock·작업 표시줄 호출 빈도(`platform.md` §8) | g-shell G13 |

@@ -1003,8 +1003,8 @@ ID 규칙: `G-<약칭>-<번호>`. `<번호>`는 보고서 번호에서 하이픈
 | G-PRIVACY-R4 | 비밀값을 받는 화면은 같은 자리에 (1) 왜 (2) 어디에 저장·어디로 가나 (3) 값의 힘 (4) 요청자는 사기 (5) 지우는 방법 | C7, brief §6.14-6, patterns.md 설정(`SecretNotice`) |
 | G-PRIVACY-R5 | 네이버 쿠키는 치지직·네이버 요청에만. Worker 요청·로그·진단·`jobs.json`·오류에 실리지 않는다 | CLAUDE.md 비밀값 규칙, `rust` 카나리 테스트 |
 | G-PRIVACY-R6 | 로그인은 외부 브라우저에서만. 앱 안에 로그인 창을 만들지 않는다 | patterns.md 로그인 |
-| G-PRIVACY-R7 | 루프백 수신기는 `127.0.0.1`·`[::1]`만, `localhost` 금지. Worker는 루프백 IP 외로 리디렉션하지 않는다 | worker.md(루프백 결정) |
-| G-PRIVACY-R8 | 일회용 grant는 짧게, 앱 비밀을 가진 쪽만 교환, 폴링 경로는 남기지 않는다 | worker.md |
+| G-PRIVACY-R7 | 루프백 수신기는 `127.0.0.1`·`[::1]`만, `localhost` 금지. Worker는 루프백 IP 외로 리디렉션하지 않는다 | worker.md(루프백 결정). 구현(v0.3.0)은 `127.0.0.1`(IPv4)만 연다(`worker.md` 구현 중 변경 88 (나)·(마), Worker `LOOPBACK_HOST`) |
+| G-PRIVACY-R8 | 일회용 grant는 짧게, 앱 비밀을 가진 쪽만 교환, 폴링 경로는 남기지 않는다 | worker.md. 구현(v0.3.0): grant 2분·`/auth/redeem` 수령, `/auth/poll`은 아무것도 수령하지 않는 404 비석으로만 남았다(옛 앱 안내용, `worker.md` 구현 중 변경 88 (가)) |
 | G-PRIVACY-R9 | 로그인 화면은 브라우저가 열린다는 것·비밀번호는 브라우저에서만·앱이 받는 것은 채널 이름·ID를 말하고, 끝나면 어느 채널인지 보인다 | C7, README §6-12(로그인 첫 화면) |
 | G-PRIVACY-R10 | 끊긴 사유를 모를 때는 누가 끊었는지 말하지 않는다. "관리자가 끊었어요"는 `RemovedFromAllowlist`에만 | content.md, `design-copy` |
 | G-PRIVACY-R11 | 거부·취소·끊김 화면은 탓하지 않고, 다음 행동 하나, 받던 다운로드가 계속된다는 것을 말한다 | C8, patterns.md 거부 |

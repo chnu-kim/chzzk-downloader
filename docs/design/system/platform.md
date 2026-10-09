@@ -616,10 +616,10 @@ OS별로 **달라지는 모든 것**은 이 표에 있다. 여기 없는 것은 
 | 1 | `scrollbar-gutter: stable` | `G-SHELL-H8`은 `.main`에 권했지만 Safari 18.2라 하한 밖(foundations §11). D27대로 여백 예약을 하지 않는다 | 기각(이 문서) |
 | 2 | `overscroll-behavior: none` | `G-SHELL-NS7`은 `html, body` `none`으로 고무줄을 막는다고 했지만 `X-DESK-E27`(partial 구현)이라 사실로 쓰지 않는다. 구조(`overflow: hidden`)가 1차 방어, `none`은 보조 | 이 문서 §5 |
 | 3 | 줌 | `G-A11Y-OS12`(켬)와 `G-SHELL-H3`(끔)가 충돌한다. D28(끔 + 앱 안 글자 크기) | README D28 |
-| 4 | 작업 표시줄 진행 | app.md 52행 "작업 표시줄 진행률은 없다"를 D29가 뒤집는다 | app.md 구현 중 변경 61 |
-| 5 | 알림 제목·본문 | app.md 구현 중 변경 37·47(제목 = 앱 이름, 본문 "'{title}' 다운로드를 마쳤어요")을 D38 형식으로. `sink.rs` 15~25행 | app.md 61, `content.md` §14 |
+| 4 | 작업 표시줄 진행 | app.md 52행 "작업 표시줄 진행률은 없다"를 D29가 뒤집는다 | app.md 구현 중 변경 67 (마) |
+| 5 | 알림 제목·본문 | app.md 구현 중 변경 37·47(제목 = 앱 이름, 본문 "'{title}' 다운로드를 마쳤어요")을 D38 형식으로. `sink.rs` 15~25행 | app.md 67 (바), `content.md` §14 |
 | 6 | 알림 묶음 창·절단 길이 | `G-SHELL-NS21`·`G-SHELL-NS22`의 3초·24자는 근거 없음(`X-DESK-N45`). `NOTIFY_TITLE_MAX_GRAPHEMES` 40·`NOTIFY_BATCH_MS` 3000 [취향] | foundations §14, ADR-0009 |
-| 7 | 기본 저장 폴더 | `services.rs` 78~91행의 `{data}/downloads` 폴백을 홈 아래 `치지직`으로. app.md §16 답변 3("영상 → 다운로드")은 유지되고 마지막 폴백만 바뀐다 | app.md 61, core.md(`naming::Platform` 볼륨 기준)는 적용 PR (f)에서 |
+| 7 | 기본 저장 폴더 | `services.rs` 78~91행의 `{data}/downloads` 폴백을 홈 아래 `치지직`으로. app.md §16 답변 3("영상 → 다운로드")은 유지되고 마지막 폴백만 바뀐다 | app.md 67 (사), core.md(`naming::Platform` 볼륨 기준)는 적용 PR (f)에서 |
 | 8 | 완료 동작 라벨 | "[파일 열기][폴더 열기]"를 D39 "[열기] [Finder에서 보기]/[폴더에서 보기]"로. `G-HANDOFF-H1`은 반대 순서를 권했지만 README D39가 이긴다 | `patterns.md` §3.2, `content.md` §4 |
 | 9 | 창 상태 복원 범위 | 전체 화면은 복원하지 않는다[취향]. D30 본문에는 없는 세부 | ADR-0009 |
 | 10 | 도움말 메뉴 항목 | `G-SHELL-NS16`의 "로그 폴더 열기·문제 신고 복사" 후보는 설정 화면에 이미 있어 메뉴에 더하지 않는다. 도움말 항목은 랜딩 `/help` 하나 | 이 문서 §7 |
@@ -631,7 +631,7 @@ OS별로 **달라지는 모든 것**은 이 표에 있다. 여기 없는 것은 
 | 16 | `smoke-install` 확장 | `ubuntu:22.04` 컨테이너에서 `xvfb-run --smoke`(WebKitGTK 2.50.4 렌더) | governance §2.9 DX20 |
 | 17 | `bundle` gate 확장 | 아이콘 산출물 검사(ico 층 집합, icns 항목 수, `.deb` hicolor 경로·`Name[ko]`, macOS `CFBundleIconName`·`Assets.car`, `Info.plist` `NS*UsageDescription`) | governance §2.9 DX21 |
 | 18 | 설정·로그 경로 표 | §20의 경로를 `worker-config.mjs`가 아니라 `rust` 경로 함수 골든(3 OS)으로 대조한다(범주가 맞다) | 이 문서 §20 |
-| 19 | IME 키 판정 | app.md §10 단축키 표의 모든 `keydown`에 `isImeKey`를 전제로 한다(brief §6.7-4와 같음) | app.md 61 |
-| 20 | 클립보드 제안 | app.md 구현 중 변경 37·44(나)의 "창 포커스마다 읽기"에 macOS `accessBehavior` 조건이 붙는다(D56) | app.md 61 |
-| 21 | 로그인 핸드오프 | 127.0.0.1 루프백 리디렉션은 `worker.md`가 소유한다. 이 문서는 다루지 않는다 | 없음 |
+| 19 | IME 키 판정 | app.md §10 단축키 표의 모든 `keydown`에 `isImeKey`를 전제로 한다(brief §6.7-4와 같음) | app.md 67 (아) |
+| 20 | 클립보드 제안 | app.md 구현 중 변경 37·44(나)의 "창 포커스마다 읽기"에 macOS `accessBehavior` 조건이 붙는다(D56) | app.md 67 (자) |
+| 21 | 로그인 핸드오프 | 127.0.0.1 루프백 리디렉션(v0.3.0)은 `worker.md`(구현 중 변경 88·92)와 `app.md`(65·66)가 소유한다. OS별 수신기 바인딩·Windows 방화벽 창 여부·브라우저별 수신기 결과 페이지는 그쪽의 태그 뒤 실기 확인 항목(worker.md 88 (아) ③④)이다. 이 문서는 다루지 않고, 결과 페이지의 모양만 `web.md` §6.5가 적는다 | 없음 |
 | 22 | 셸 상수 | 초안 §23의 상수 16개는 foundations §14 표로 옮겼다(값·표기 그대로, `NOTIFY_BATCH_MS`는 3000 [취향]으로 정했다). `app/baseline.json`은 이 문서 §13이 소유하고 앱 아이콘 산출물 크기 집합은 §18.2가 소유한다 | foundations §14 |

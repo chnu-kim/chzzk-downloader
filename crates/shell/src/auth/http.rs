@@ -8,10 +8,11 @@ use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE};
 use serde_json::{Value, json};
 
 use super::api::{
-    ApiError, MAX_BODY, PollResponse, StartRequest, StartResponse, TokenBundle, WorkerApi,
-    is_json_type, parse_bundle, parse_error_response, parse_poll, parse_start,
+    ApiError, MAX_BODY, RedeemResponse, StartRequest, StartResponse, TokenBundle, WorkerApi,
+    is_json_type, parse_bundle, parse_error_response, parse_redeem, parse_start,
 };
 use super::base::WorkerBase;
+use super::token::Grant;
 
 /// 요청 하나의 전체 시간 상한(§11.3 "10초 시간 초과")
 pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
@@ -133,22 +134,23 @@ impl WorkerApi for HttpWorkerApi {
         &self,
         req: &StartRequest,
     ) -> impl Future<Output = Result<StartResponse, ApiError>> + Send {
-        let body = json!({"pollVerifier": req.poll_verifier, "client": req.client});
+        let body =
+            json!({"port": req.port, "loginVerifier": req.login_verifier, "client": req.client});
         async move {
             let raw = self.post("/auth/start", body, None).await?;
             expect(raw, 201, |b| parse_start(b, &self.base))
         }
     }
 
-    fn poll(
+    fn redeem(
         &self,
-        login_id: &Secret<String>,
-        poll_secret: &Secret<String>,
-    ) -> impl Future<Output = Result<PollResponse, ApiError>> + Send {
-        let body = json!({"loginId": login_id.expose(), "pollSecret": poll_secret.expose()});
+        grant: &Grant,
+        login_secret: &Secret<String>,
+    ) -> impl Future<Output = Result<RedeemResponse, ApiError>> + Send {
+        let body = json!({"grant": grant.expose(), "loginSecret": login_secret.expose()});
         async move {
-            let raw = self.post("/auth/poll", body, None).await?;
-            expect(raw, 200, parse_poll)
+            let raw = self.post("/auth/redeem", body, None).await?;
+            expect(raw, 200, parse_redeem)
         }
     }
 

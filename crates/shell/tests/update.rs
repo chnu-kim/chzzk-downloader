@@ -195,7 +195,7 @@ impl Env {
         }
         let api = FakeWorkerApi::default();
         let clock = FakeClock::at(t0() + Duration::hours(1));
-        let svc = service(dir.path(), &api, &clock);
+        let svc = service(dir.path(), &api, &clock, &FakeGrantSource::default());
         let log: Log = Arc::default();
         let src = FakeSource::new(&log);
         Self {

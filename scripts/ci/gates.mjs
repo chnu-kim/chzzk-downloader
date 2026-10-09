@@ -407,7 +407,7 @@ export const GATES = {
   },
   // ---- 릴리스(docs/design/cicd.md §5, release.yml·rollback.yml). 순서·판정은 release.mjs, 무거운 일은 xtask ----
   'release-gate': {
-    desc: '릴리스 gate: 태그 차단 상수(release.mjs TAG_BLOCK), 태그 = 버전 파일, 단조 증가, master 조상, 그 커밋의 master ci-ok 녹색(30초 간격으로 기다림). env RELEASE_MODE·RELEASE_TAG·GITHUB_SHA·GH_TOKEN',
+    desc: '릴리스 gate: 태그 = 버전 파일, 단조 증가, master 조상, 그 커밋의 master ci-ok 녹색(30초 간격으로 기다림). env RELEASE_MODE·RELEASE_TAG·GITHUB_SHA·GH_TOKEN',
     needs: ['cargo', 'git'],
     steps: [{ cmd: ['node', S('release.mjs'), 'gate'] }],
   },
@@ -511,7 +511,8 @@ export const HOOKS = {
       // tools.json(wrangler 버전)·app/package.json(packageManager)은 worker-config가 대조한다
       { gate: 'worker', paths: [/^worker\//, /^scripts\/ci\/worker-(config|deploy)\.mjs$/, /^release\/(latest\.schema|expected-artifacts)\.json$/, /^xtask\/testdata\/semver-vectors\.json$/, /^app\/src-tauri\/tauri\.conf\.json$/, /^app\/package\.json$/, /^scripts\/ci\/tools\.json$/] },
       // release.test.mjs가 worker/test/deploy-contract.mjs(배포 뒤 검사 계약 표)를 import한다
-      { gate: 'scripts-test', paths: [/^scripts\//, /^\.githooks\//, /^\.gitattributes$/, /^worker\/test\/deploy-contract\.mjs$/] },
+      // 스텁 테스트가 루프백 KAT(worker/test/vectors/)를 읽는다(cicd.md 111)
+      { gate: 'scripts-test', paths: [/^scripts\//, /^\.githooks\//, /^\.gitattributes$/, /^worker\/test\/deploy-contract\.mjs$/, /^worker\/test\/vectors\//] },
       { gate: 'deny', paths: [/^Cargo\.lock$/, /^deny\.toml$/, /(^|\/)Cargo\.toml$/] },
       // 코어 API 변경이 fuzz target을 깨뜨린다(crates/core)
       { gate: 'fuzz-lock', paths: [/^Cargo\.lock$/, /(^|\/)Cargo\.toml$/, /^fuzz\//, /^crates\/core\//] },

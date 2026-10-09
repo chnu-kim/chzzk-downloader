@@ -640,7 +640,7 @@ pub struct CloseRequestedPayload {
 // ---------------------------------------------------------------------------
 
 /// `auth_status` 결과이자 `auth-changed` 이벤트 본문. 시각은 모두 유닉스 초(`JobDto.createdAt`과 같다).
-/// 비밀(토큰·pollSecret·로그인 주소)은 없다.
+/// 비밀(토큰·loginSecret·grant·로그인 주소)은 없다.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthStatusDto {
@@ -655,11 +655,10 @@ pub struct AuthStatusDto {
     pub can_reconnect: bool,
 }
 
-/// 로그인 대기(확인 코드와 로컬 기한)
+/// 로그인 대기(로컬 기한)
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct PendingDto {
-    pub user_code: String,
     pub expires_at: i64,
 }
 
@@ -705,7 +704,6 @@ impl AuthStatusDto {
             channel_name: channel_name.clone(),
             reason: reason.map(AuthReasonDto::from),
             pending: pending.as_ref().map(|p| PendingDto {
-                user_code: p.user_code.clone(),
                 expires_at: p.expires_at.unix_timestamp(),
             }),
             offline: offline.as_ref().map(|o| OfflineDto {
@@ -748,7 +746,7 @@ impl From<AuthPhase> for AuthState {
     }
 }
 
-/// 사유(worker.md §11.4의 9개). TS 이름은 `AuthReason`.
+/// 사유(worker.md §11.4의 10개). TS 이름은 `AuthReason`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(rename = "AuthReason")]
@@ -762,6 +760,7 @@ pub enum AuthReasonDto {
     Network,
     Server,
     LoginLost,
+    Receiver,
 }
 
 impl From<AuthReason> for AuthReasonDto {
@@ -776,6 +775,7 @@ impl From<AuthReason> for AuthReasonDto {
             AuthReason::Network => AuthReasonDto::Network,
             AuthReason::Server => AuthReasonDto::Server,
             AuthReason::LoginLost => AuthReasonDto::LoginLost,
+            AuthReason::Receiver => AuthReasonDto::Receiver,
         }
     }
 }

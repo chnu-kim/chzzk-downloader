@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { HLS_VIDEO_NO, OTHER_VIDEO_NO } from './e2e-fixture-server.mjs';
+import { HLS_VIDEO_NO, OTHER_VIDEO_NO, STUB_HANDLE } from './e2e-fixture-server.mjs';
 import { judge, judgeWorker, pickWindowsDriver, until } from './e2e-native.mjs';
 
 const EXP = { sha256: 'a'.repeat(64), bytes: 10 };
@@ -85,12 +85,14 @@ test('judge가 다른 채널 info 요청을 요구한다', () => {
   assert.equal(judge(OK, without, EXP).length, 1);
 });
 
-test('judgeWorker: start 1번·poll 2번 이상·오류 응답 없음. /update는 보지 않는다', () => {
+test('judgeWorker: start 201·login 303·redeem 200 각 1번·오류 응답 없음. /update는 보지 않는다', () => {
   const w = (method, path, status) => ({ method, path, status });
-  const good = [w('POST', '/auth/start', 201), w('POST', '/auth/poll', 200), w('POST', '/auth/poll', 200), w('GET', '/update/0.1.0', 204)];
+  const good = [w('POST', '/auth/start', 201), w('GET', `/auth/login/${STUB_HANDLE}`, 303), w('POST', '/auth/redeem', 200), w('GET', '/update/0.1.0', 204)];
   assert.deepEqual(judgeWorker(good), []);
-  assert.equal(judgeWorker(good.filter((l) => l.path !== '/auth/start')).length, 1);
-  assert.equal(judgeWorker(good.filter((l, i) => i !== 2)).length, 1);
+  // 셋 중 하나가 빠지면 각각 문제 1개
+  for (let i = 0; i < 3; i++) assert.equal(judgeWorker(good.filter((_, k) => k !== i)).length, 1, `빠진 항목 ${i}`);
+  // redeem이 2번이면 문제 1개
+  assert.equal(judgeWorker([...good, w('POST', '/auth/redeem', 200)]).length, 1);
   assert.equal(judgeWorker([...good, w('GET', '/api/me', 401)]).length, 1);
   assert.deepEqual(judgeWorker([...good, w('GET', '/update/0.1.0', 404)]), []);
 });

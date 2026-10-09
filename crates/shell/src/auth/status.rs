@@ -21,7 +21,7 @@ pub enum AuthPhase {
     Error,
 }
 
-/// §11.4 AuthReason과 같은 9개
+/// §11.4 AuthReason과 같은 10개
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AuthReason {
     /// 로그인 제한 시간 초과
@@ -42,4 +42,6 @@ pub enum AuthReason {
     Server,
     /// 로그인 흐름을 서버가 잃음
     LoginLost,
+    /// 로그인 수신기를 열지 못했거나 잃음
+    Receiver,
 }

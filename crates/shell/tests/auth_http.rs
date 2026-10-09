@@ -11,7 +11,6 @@ use serde_json::{Value, json};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-const LID: &str = "LLLLLLLLLLLLLLLLLLLLLL";
 const HANDLE: &str = "HHHHHHHHHHHHHHHHHHHHHH";
 const CF_HTML: &str = "<!DOCTYPE html><title>Error 1027</title><body>blocked</body>";
 
@@ -35,25 +34,18 @@ async fn mount(server: &MockServer, p: &str, r: ResponseTemplate) {
         .await;
 }
 
-fn start_body(url: &str, code: &str, interval: Value) -> String {
-    json!({
-        "loginId": LID, "loginUrl": url, "userCode": code,
-        "expiresAt": "2030-01-01T00:10:00.000Z", "pollIntervalMs": interval,
-    })
-    .to_string()
+fn start_body(url: &str) -> String {
+    json!({"loginUrl": url, "expiresAt": "2030-01-01T00:10:00.000Z"}).to_string()
 }
 
 fn good_start(server: &MockServer) -> String {
-    start_body(
-        &format!("{}/auth/login/{HANDLE}", server.uri()),
-        "K7QX-4MRA",
-        json!(2000),
-    )
+    start_body(&format!("{}/auth/login/{HANDLE}", server.uri()))
 }
 
 fn start_req() -> StartRequest {
     StartRequest {
-        poll_verifier: tok("", "verifier"),
+        port: 50000,
+        login_verifier: tok("", "verifier"),
         client: "app/0.1.0 test".into(),
     }
 }
@@ -86,29 +78,23 @@ async fn start_sends_contract_and_parses() {
     let body: Value = serde_json::from_slice(&reqs[0].body).unwrap();
     assert_eq!(
         body,
-        json!({"pollVerifier": tok("", "verifier"), "client": "app/0.1.0 test"})
+        json!({"port": 50000, "loginVerifier": tok("", "verifier"), "client": "app/0.1.0 test"})
     );
     assert_eq!(
         reqs[0].headers.get("content-type").unwrap(),
         "application/json"
     );
-    assert_eq!(r.user_code, "K7QX-4MRA");
-    assert_eq!(r.poll_interval, Duration::from_secs(2));
+    assert_eq!(r.expires_at, t0() + time::Duration::minutes(10));
     assert_eq!(
         r.login_url.expose(),
         format!("{}/auth/login/{HANDLE}", server.uri())
     );
-    assert_eq!(r.login_id.expose(), LID);
 }
 
 #[tokio::test]
 async fn start_rejects_foreign_login_url() {
     let (server, _, api) = setup().await;
-    let b = start_body(
-        &format!("https://evil.example.invalid/auth/login/{HANDLE}"),
-        "K7QX-4MRA",
-        json!(2000),
-    );
+    let b = start_body(&format!("https://evil.example.invalid/auth/login/{HANDLE}"));
     mount(&server, "/auth/start", json_resp(201, &b)).await;
     assert_eq!(
         api.start(&start_req()).await.unwrap_err(),
@@ -119,11 +105,7 @@ async fn start_rejects_foreign_login_url() {
 #[tokio::test]
 async fn start_rejects_login_url_with_extra() {
     let (server, _, api) = setup().await;
-    let b = start_body(
-        &format!("{}/auth/login/{HANDLE}?x=1", server.uri()),
-        "K7QX-4MRA",
-        json!(2000),
-    );
+    let b = start_body(&format!("{}/auth/login/{HANDLE}?x=1", server.uri()));
     mount(&server, "/auth/start", json_resp(201, &b)).await;
     assert_eq!(
         api.start(&start_req()).await.unwrap_err(),
@@ -132,36 +114,21 @@ async fn start_rejects_login_url_with_extra() {
 }
 
 #[tokio::test]
-async fn start_bad_user_code() {
-    let (server, _, api) = setup().await;
-    let b = start_body(
-        &format!("{}/auth/login/{HANDLE}", server.uri()),
-        "k7qx-4mra",
-        json!(2000),
-    );
-    mount(&server, "/auth/start", json_resp(201, &b)).await;
-    assert_eq!(
-        api.start(&start_req()).await.unwrap_err(),
-        ApiError::Contract { status: 201 }
-    );
-}
-
-#[tokio::test]
-async fn start_interval_clamped() {
-    for (interval, want) in [
-        (json!(0), Ok(Duration::from_secs(2))),
-        (json!(999_999), Ok(Duration::from_secs(30))),
-        (json!("2000"), Err(ApiError::Contract { status: 201 })),
+async fn start_missing_keys_is_contract() {
+    for body in [
+        json!({"loginUrl": format!("{}/auth/login/{HANDLE}", "x")}),
+        json!({"expiresAt": "2030-01-01T00:10:00.000Z"}),
     ] {
         let (server, _, api) = setup().await;
-        let b = start_body(
-            &format!("{}/auth/login/{HANDLE}", server.uri()),
-            "K7QX-4MRA",
-            interval,
+        let mut body = body;
+        if let Some(u) = body.get_mut("loginUrl") {
+            *u = format!("{}/auth/login/{HANDLE}", server.uri()).into();
+        }
+        mount(&server, "/auth/start", json_resp(201, &body.to_string())).await;
+        assert_eq!(
+            api.start(&start_req()).await.unwrap_err(),
+            ApiError::Contract { status: 201 }
         );
-        mount(&server, "/auth/start", json_resp(201, &b)).await;
-        let got = api.start(&start_req()).await.map(|r| r.poll_interval);
-        assert_eq!(got, want);
     }
 }
 
@@ -194,108 +161,123 @@ async fn start_rate_limited() {
 }
 
 #[tokio::test]
-async fn poll_variants() {
+async fn redeem_variants() {
     let (server, _, api) = setup().await;
+    let long = "가".repeat(200);
     let bodies = [
-        r#"{"status":"pending"}"#.to_string(),
         bundle_json().to_string(),
-        r#"{"status":"denied","channelName":"이름"}"#.to_string(),
+        json!({"status": "denied", "channelName": long}).to_string(),
         r#"{"status":"cancelled"}"#.to_string(),
         r#"{"status":"failed","code":"token"}"#.to_string(),
         r#"{"status":"failed","code":"Bad Code"}"#.to_string(),
+        r#"{"status":"pending"}"#.to_string(),
         r#"{"status":"weird"}"#.to_string(),
     ];
     // 먼저 올린 mock부터 한 번씩 맞는다(up_to_n_times(1)).
     for b in &bodies {
         Mock::given(method("POST"))
-            .and(path("/auth/poll"))
+            .and(path("/auth/redeem"))
             .respond_with(json_resp(200, b))
             .up_to_n_times(1)
             .mount(&server)
             .await;
     }
-    let (lid, sec) = (Secret::new(LID.to_string()), Secret::new(tok("", "poll")));
+    let grant = Grant::parse(&grant_str()).unwrap();
+    let sec = Secret::new(tok("", "login"));
     let mut got = Vec::new();
     for _ in 0..bodies.len() {
-        got.push(api.poll(&lid, &sec).await);
+        got.push(api.redeem(&grant, &sec).await);
     }
-    assert_eq!(got[0], Ok(PollResponse::Pending));
-    let Ok(PollResponse::Ok(b)) = &got[1] else {
-        panic!("{:?}", got[1])
+    let Ok(RedeemResponse::Ok(b)) = &got[0] else {
+        panic!("{:?}", got[0])
     };
     assert_eq!(b.channel_id, CH);
     assert_eq!(b.access_token.expose(), &tok("cda_", "acc1"));
     assert_eq!(
-        got[2],
-        Ok(PollResponse::Denied {
-            channel_name: "이름".into()
+        got[1],
+        Ok(RedeemResponse::Denied {
+            channel_name: "가".repeat(128)
         })
     );
-    assert_eq!(got[3], Ok(PollResponse::Cancelled));
+    assert_eq!(got[2], Ok(RedeemResponse::Cancelled));
     assert_eq!(
-        got[4],
-        Ok(PollResponse::Failed {
+        got[3],
+        Ok(RedeemResponse::Failed {
             code: "token".into()
         })
     );
     assert_eq!(
-        got[5],
-        Ok(PollResponse::Failed {
+        got[4],
+        Ok(RedeemResponse::Failed {
             code: "unknown".into()
         })
     );
+    // pending은 수령 응답에 없다
+    assert_eq!(got[5], Err(ApiError::Contract { status: 200 }));
     assert_eq!(got[6], Err(ApiError::Contract { status: 200 }));
 }
 
 #[tokio::test]
-async fn poll_sends_login_and_secret() {
+async fn redeem_sends_grant_and_secret() {
     let (server, _, api) = setup().await;
     mount(
         &server,
-        "/auth/poll",
-        json_resp(200, r#"{"status":"pending"}"#),
+        "/auth/redeem",
+        json_resp(200, &bundle_json().to_string()),
     )
     .await;
-    let sec = tok("", "poll");
-    api.poll(&Secret::new(LID.to_string()), &Secret::new(sec.clone()))
-        .await
-        .unwrap();
+    let sec = tok("", "login");
+    api.redeem(
+        &Grant::parse(&grant_str()).unwrap(),
+        &Secret::new(sec.clone()),
+    )
+    .await
+    .unwrap();
+    let reqs = server.received_requests().await.unwrap();
+    assert_eq!(reqs[0].url.path(), "/auth/redeem");
     assert_eq!(
         last_body(&server).await,
-        json!({"loginId": LID, "pollSecret": sec})
+        json!({"grant": grant_str(), "loginSecret": sec})
     );
 }
 
 #[tokio::test]
-async fn poll_404_and_429() {
+async fn redeem_errors() {
     let (server, _, api) = setup().await;
-    let (lid, sec) = (Secret::new(LID.to_string()), Secret::new(tok("", "poll")));
-    mount(
-        &server,
-        "/auth/poll",
-        json_resp(404, r#"{"code":"not_found"}"#),
-    )
-    .await;
-    assert_eq!(
-        api.poll(&lid, &sec).await.unwrap_err(),
-        ApiError::Worker {
-            status: 404,
-            code: "not_found".into()
-        }
-    );
+    let grant = Grant::parse(&grant_str()).unwrap();
+    let sec = Secret::new(tok("", "login"));
+    for (status, body, want) in [
+        (
+            404,
+            r#"{"code":"not_found"}"#,
+            ApiError::Worker {
+                status: 404,
+                code: "not_found".into(),
+            },
+        ),
+        (
+            400,
+            r#"{"code":"bad_request"}"#,
+            ApiError::Worker {
+                status: 400,
+                code: "bad_request".into(),
+            },
+        ),
+    ] {
+        server.reset().await;
+        mount(&server, "/auth/redeem", json_resp(status, body)).await;
+        assert_eq!(api.redeem(&grant, &sec).await.unwrap_err(), want);
+    }
     server.reset().await;
     mount(
         &server,
-        "/auth/poll",
-        json_resp(429, r#"{"code":"too_soon"}"#),
+        "/auth/redeem",
+        ResponseTemplate::new(503).set_body_raw(CF_HTML.as_bytes().to_vec(), "text/html"),
     )
     .await;
     assert_eq!(
-        api.poll(&lid, &sec).await.unwrap_err(),
-        ApiError::Worker {
-            status: 429,
-            code: "too_soon".into()
-        }
+        api.redeem(&grant, &sec).await.unwrap_err(),
+        ApiError::NotWorker { status: 503 }
     );
 }
 
@@ -642,10 +624,7 @@ fn debug_and_display_hide_values() {
     let base = base();
     let sr = start_ok(&base);
     let t = format!("{sr:?}");
-    assert!(
-        t.contains("***") && !t.contains(&"L".repeat(22)) && !t.contains(&"H".repeat(22)),
-        "{t}"
-    );
+    assert!(t.contains("***") && !t.contains(&"H".repeat(22)), "{t}");
     assert_eq!(format!("{:?}", sr.login_url), "LoginUrl(***)");
     let b = bundle(1, t0());
     let t = format!("{b:?}");
@@ -685,10 +664,7 @@ fn offset_time_bounds_in_bundle_and_start() {
     let base = WorkerBase::parse(ORIGIN).unwrap();
     let url = format!("{ORIGIN}/auth/login/{HANDLE}");
     for t in bad {
-        let body = json!({
-            "loginId": LID, "loginUrl": url, "userCode": "K7QX-4MRA",
-            "expiresAt": t, "pollIntervalMs": 2000,
-        });
+        let body = json!({"loginUrl": url, "expiresAt": t});
         assert!(
             parse_start(body.to_string().as_bytes(), &base).is_none(),
             "{t}"

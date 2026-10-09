@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "치지직 다운로더",
-  "version": "0.1.1",
+  "version": "0.3.0",
   "identifier": "io.github.chnu-kim.chzzk-downloader",
   "build": {
     "frontendDist": "../dist",

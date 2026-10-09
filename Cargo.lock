@@ -571,7 +571,7 @@ dependencies = [
 
 [[package]]
 name = "chzzk-app"
-version = "0.1.1"
+version = "0.3.0"
 dependencies = [
  "chzzk-core",
  "chzzk-shell",
@@ -596,7 +596,7 @@ dependencies = [
 
 [[package]]
 name = "chzzk-core"
-version = "0.1.1"
+version = "0.3.0"
 dependencies = [
  "bytes",
  "crc32fast",
@@ -616,7 +616,7 @@ dependencies = [
 
 [[package]]
 name = "chzzk-shell"
-version = "0.1.1"
+version = "0.3.0"
 dependencies = [
  "base64 0.23.1",
  "chzzk-core",
@@ -6325,7 +6325,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "0.1.1"
+version = "0.3.0"
 dependencies = [
  "base64 0.23.1",
  "hex",

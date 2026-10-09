@@ -324,9 +324,10 @@ jobs:
           XTASK_SHA256: ${{ needs.xtask.outputs.sha256 }}
 
   # 서명·업로드(D10, 태그 실행만, 환경 release): 개인 키·R2 자격 증명은 이 작업에만 있다. 컴파일도 pnpm install도 하지 않는다.
+  # worker-bundle도 기다린다: 묶음이 실패했는데 승격하면 새 앱 + 옛 Worker로 남는다(루프백 로그인은 새 Worker가 필요하다, cicd.md 구현 중 변경 112)
   sign-publish:
     name: release sign-publish
-    needs: [gate, xtask, stage]
+    needs: [gate, xtask, stage, worker-bundle]
     if: needs.gate.outputs.mode == 'tag'
     runs-on: ubuntu-24.04
     timeout-minutes: 45

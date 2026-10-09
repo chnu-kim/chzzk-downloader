@@ -127,7 +127,7 @@ const hook = (d, name, args, input) => exec('node', [join(d, 'scripts/ci/run.mjs
     ['actionlint 모르는 키', ciWith('    timeout-minutes: 45\n', '    timeout-minutes: 45\n    bogus-key: 1\n')],
     ['zizmor 과한 권한', ciWith('    permissions:\n      contents: read # checkout\n    steps:\n      # Windows 러너가 fixture·bindings', '    permissions: write-all\n    steps:\n      # Windows 러너가 fixture·bindings')],
     // --pedantic이 빠지는 것은 씨앗으로 드러나지 않아 run.test.mjs가 인자를 직접 본다
-    ['zizmor run:에 needs 출력 전개', ciWith(RUST_RUN, '        run: echo "${{ needs.changes.outputs.code }}"\n')],
+    ['zizmor run:에 needs 출력 전개', ciWith(RUST_RUN, '        run: echo "${{ needs.changes.outputs.app }}"\n')],
   ];
   seeds.forEach(([seed, files], i) => expect('workflows', seed, 'nonzero', () => gate(mkRoot(`wf-${i}`, files), 'workflows'), W));
 }
@@ -144,11 +144,13 @@ const hook = (d, name, args, input) => exec('node', [join(d, 'scripts/ci/run.mjs
     ['tool: 버전 불일치', ciWith(tool[0], 'tool: typos@0.0.1')],
     ['fallback: none 없음', ciWith('          fallback: none\n', '')],
     ['ci-ok needs에서 작업 빠짐', ciWith(', bundle]', ']')],
-    // Worker(worker.md §13.3): ci-ok needs·guard 둘 다에 있어야 한다(parity가 CODE_GATED_JOBS로 guard 식을 만든다)
+    // Worker(worker.md §13.3): ci-ok needs·guard 둘 다에 있어야 한다(parity가 CODE_GATED_JOBS로 영역별 guard 절을 만든다)
     ['ci-ok needs에서 worker 빠짐', ciWith(', frontend, worker, tauri-clippy', ', frontend, tauri-clippy')],
-    ['ci-ok guard에서 worker 빠짐', ciWith(" || needs.worker.result == 'skipped'", '')],
-    ['worker 작업이 CODE_IF 없이 늘 돎', ciWith("  worker:\n    name: worker\n    needs: changes\n    if: needs.changes.outputs.code == 'true'\n", '  worker:\n    name: worker\n    needs: changes\n')],
-    ['bundle 작업이 PR에서도 돎', ciWith("  bundle:\n    name: bundle (${{ matrix.os }})\n    needs: changes\n    if: github.event_name != 'pull_request' && needs.changes.outputs.code == 'true'\n", "  bundle:\n    name: bundle (${{ matrix.os }})\n    needs: changes\n    if: needs.changes.outputs.code == 'true'\n")],
+    ['ci-ok guard에서 worker 빠짐', ciWith("\n          || (needs.changes.outputs.worker != 'false'\n          && (needs.worker.result == 'skipped'))", '')],
+    ['worker 작업이 영역 if 없이 늘 돎', ciWith("  worker:\n    name: worker\n    needs: changes\n    if: needs.changes.outputs.worker == 'true'\n", '  worker:\n    name: worker\n    needs: changes\n')],
+    ['worker 작업이 app 영역으로 건너뜀', ciWith("  worker:\n    name: worker\n    needs: changes\n    if: needs.changes.outputs.worker == 'true'\n", "  worker:\n    name: worker\n    needs: changes\n    if: needs.changes.outputs.app == 'true'\n")],
+    ['changes 출력에서 worker 빠짐', ciWith('      worker: ${{ steps.classify.outputs.worker }}\n', '')],
+    ['bundle 작업이 PR에서도 돎', ciWith("  bundle:\n    name: bundle (${{ matrix.os }})\n    needs: changes\n    if: github.event_name != 'pull_request' && needs.changes.outputs.app == 'true'\n", "  bundle:\n    name: bundle (${{ matrix.os }})\n    needs: changes\n    if: needs.changes.outputs.app == 'true'\n")],
     ['report가 ci-ok 뒤가 아님', ciWith('    needs: [ci-ok, e2e-web, e2e-native, e2e-native-windows, worker-e2e]\n', '    needs: [changes, e2e-web, e2e-native, e2e-native-windows, worker-e2e]\n')],
     ['관찰 작업(e2e-native)이 report needs에 없음', ciWith('    needs: [ci-ok, e2e-web, e2e-native, e2e-native-windows, worker-e2e]\n', '    needs: [ci-ok, e2e-web, e2e-native-windows, worker-e2e]\n')],
     ['관찰 작업(e2e-native-windows)이 report needs에 없음', ciWith('    needs: [ci-ok, e2e-web, e2e-native, e2e-native-windows, worker-e2e]\n', '    needs: [ci-ok, e2e-web, e2e-native, worker-e2e]\n')],
@@ -302,7 +304,7 @@ const hook = (d, name, args, input) => exec('node', [join(d, 'scripts/ci/run.mjs
       GITHUB_STEP_SUMMARY: '',
     });
   const ok = { result: 'success', outputs: {} };
-  const changes = (code) => ({ result: 'success', outputs: { code: String(code) } });
+  const changes = (app, worker = app) => ({ result: 'success', outputs: { app: String(app), worker: String(worker) } });
   const skipped = { result: 'skipped' };
   expect('ci-ok', '모두 success', 0, () => ciok({ changes: changes(true), lint: ok, rust: ok }));
   expect('ci-ok', '작업 하나 failure', 'nonzero', () => ciok({ changes: changes(true), lint: ok, rust: { result: 'failure' } }));
@@ -314,6 +316,10 @@ const hook = (d, name, args, input) => exec('node', [join(d, 'scripts/ci/run.mjs
   expect('ci-ok', 'lint skipped', 'nonzero', () => ciok({ changes: changes(false), lint: skipped }));
   expect('ci-ok', 'PR에서 bundle skipped', 0, () => ciok({ changes: changes(true), lint: ok, rust: ok, bundle: skipped }));
   expect('ci-ok', 'push에서 bundle skipped', 'nonzero', () => ciok({ changes: changes(true), lint: ok, rust: ok, bundle: skipped }, 'push'));
+  expect('ci-ok', 'PR worker만: app 작업 skipped', 0, () => ciok({ changes: changes(false, true), lint: ok, rust: skipped, worker: ok }));
+  expect('ci-ok', 'PR worker만인데 worker skipped', 'nonzero', () => ciok({ changes: changes(false, true), lint: ok, worker: skipped }));
+  expect('ci-ok', 'PR app만: worker skipped', 0, () => ciok({ changes: changes(true, false), lint: ok, rust: ok, worker: skipped }));
+  expect('ci-ok', '영역 출력 없음', 'nonzero', () => ciok({ changes: { result: 'success', outputs: {} }, lint: ok, rust: skipped }));
   expect('ci-ok', 'force_fail', 'nonzero', () =>
     exec('node', [join(ROOT, 'scripts/ci/run.mjs'), 'ci-ok'], ROOT, {
       ...process.env,

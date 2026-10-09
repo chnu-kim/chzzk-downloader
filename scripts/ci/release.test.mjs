@@ -402,7 +402,7 @@ test('release-selftest 훅: release.mjs·s3-fake·bundle·worker-stub의 정적 
   }
   assert.ok(seen.size >= 5, [...seen].join(','));
   for (const f of seen) assert.ok(RELEASE_SELFTEST_FILES.some((re) => re.test(`scripts/ci/${f}`)), `scripts/ci/${f}`);
-  for (const f of ['xtask/src/s3.rs', 'release/expected-artifacts.json', 'Cargo.lock', 'worker/wrangler.jsonc', 'scripts/ci/tools.json', 'scripts/ci/worker-config.mjs', 'scripts/ci/worker-stub.mjs']) assert.ok(RELEASE_SELFTEST_FILES.some((re) => re.test(f)), f);
+  for (const f of ['xtask/src/s3.rs', 'release/expected-artifacts.json', 'Cargo.lock', 'worker/wrangler.jsonc', 'scripts/ci/tools.json', 'scripts/ci/worker-deploy.mjs', 'scripts/ci/worker-stub.mjs']) assert.ok(RELEASE_SELFTEST_FILES.some((re) => re.test(f)), f);
 });
 
 test('verify 결정표: latest.json 상태 → full | superseded | not-promoted', () => {

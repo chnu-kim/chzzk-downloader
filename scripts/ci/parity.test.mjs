@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 
 import { HOOKS, NON_CODE_GLOBS, ROOT } from './gates.mjs';
-import { checkParity, ENTRY, parseJobs, runCommands, toolInputs } from './parity.mjs';
+import { checkParity, ciOkGuard, ENTRY, parseJobs, runCommands, toolInputs } from './parity.mjs';
 
 test('저장소는 parity를 지킨다', () => {
   assert.deepEqual(checkParity(ROOT), []);
@@ -108,19 +108,42 @@ test('ci-ok: needs가 모든 작업을 덮고 guard가 글자 그대로 있다',
   assert.ok(rulesFor(once('    if: always()\n', '    if: ${{ !cancelled() }}\n')).includes('ci-ok'));
 });
 
-test('job-if: code로 건너뛰는 작업은 CODE_GATED_JOBS와 같다', () => {
-  // lint를 code로 건너뛰게 하면 CODE_GATED_JOBS와 달라진다
-  assert.ok(rulesFor(once('  lint:\n    name: lint\n', "  lint:\n    name: lint\n    needs: changes\n    if: needs.changes.outputs.code == 'true'\n")).includes('job-if'));
+test('job-if: 영역으로 건너뛰는 작업은 CODE_GATED_JOBS 맵과 같다', () => {
+  // lint를 영역으로 건너뛰게 하면 CODE_GATED_JOBS와 달라진다
+  assert.ok(rulesFor(once('  lint:\n    name: lint\n', "  lint:\n    name: lint\n    needs: changes\n    if: needs.changes.outputs.app == 'true'\n")).includes('job-if'));
   // rust의 if를 다른 식으로
-  assert.ok(rulesFor(once("    if: needs.changes.outputs.code == 'true'\n    strategy:", "    if: false\n    strategy:")).includes('job-if'));
+  assert.ok(rulesFor(once("    if: needs.changes.outputs.app == 'true'\n    strategy:", "    if: false\n    strategy:")).includes('job-if'));
+  // worker 작업을 다른 영역(app)으로 건너뛰게 하면 작업 → 영역이 달라진다
+  const W = "  worker:\n    name: worker\n    needs: changes\n    if: needs.changes.outputs.worker == 'true'\n";
+  assert.ok(rulesFor(once(W, W.replace('outputs.worker', 'outputs.app'))).includes('job-if'));
+  // 모르는 출력(옛 code)이면 허용 목록에 없다
+  assert.ok(rulesFor(once(W, W.replace('outputs.worker', 'outputs.code'))).includes('job-if'));
+});
+
+test('changes-outputs: changes 출력은 AREAS 순서로 영역마다 하나', () => {
+  const WL = '      worker: ${{ steps.classify.outputs.worker }}\n';
+  assert.ok(rulesFor(once(WL, '')).includes('changes-outputs'));
+  assert.ok(rulesFor(once(WL, WL + '      code: ${{ steps.classify.outputs.code }}\n')).includes('changes-outputs'));
+  const AL = '      app: ${{ steps.classify.outputs.app }}\n';
+  assert.ok(rulesFor(once(AL + WL, WL + AL)).includes('changes-outputs'));
+});
+
+test('ciOkGuard: 영역마다 절 둘, 작업이 없는 영역은 절을 내지 않는다', () => {
+  const g = ciOkGuard({ a: 'app', b: 'worker' });
+  assert.ok(g.includes("|| (needs.changes.outputs.app != 'false'"));
+  assert.ok(g.includes("&& (needs.a.result == 'skipped'))"));
+  assert.ok(g.includes("|| (needs.changes.outputs.worker != 'false'"));
+  assert.ok(g.includes("&& (needs.b.result == 'skipped'))"));
+  const only = ciOkGuard({ a: 'app' });
+  assert.equal(only.some((l) => l.includes('outputs.worker')), false);
 });
 
 test('job-if: PR에서 건너뛰는 작업은 MASTER_ONLY_JOBS와 같고 report는 ci-ok 뒤다', () => {
-  const MIF = "    if: github.event_name != 'pull_request' && needs.changes.outputs.code == 'true'\n";
+  const MIF = "    if: github.event_name != 'pull_request' && needs.changes.outputs.app == 'true'\n";
   // macOS·Windows bundle을 PR에서도 돌게 하면 MASTER_ONLY_JOBS와 달라진다
   assert.ok(rulesFor(once(`    needs: changes\n${MIF}`, '    needs: changes\n')).includes('job-if'));
   // bundle-linux를 다시 master 전용으로 돌리면 CODE_GATED_JOBS·MASTER_ONLY_JOBS와 달라진다(리뷰 G6: PR에서 릴리스 빌드)
-  assert.ok(rulesFor(once("  bundle-linux:\n    name: bundle (linux)\n    needs: changes\n    if: needs.changes.outputs.code == 'true'\n", `  bundle-linux:\n    name: bundle (linux)\n    needs: changes\n${MIF}`)).includes('job-if'));
+  assert.ok(rulesFor(once("  bundle-linux:\n    name: bundle (linux)\n    needs: changes\n    if: needs.changes.outputs.app == 'true'\n", `  bundle-linux:\n    name: bundle (linux)\n    needs: changes\n${MIF}`)).includes('job-if'));
   // master 전용 작업이 changes를 needs에 두지 않음
   assert.ok(rulesFor(once(`    needs: changes\n${MIF}`, `    needs: [lint]\n${MIF}`)).includes('job-if'));
   // report의 if를 바꿈, report가 ci-ok 뒤가 아님
@@ -183,9 +206,9 @@ test('observed: 관찰 작업은 ci-ok needs에 없고, ci-ok 뒤가 아니며, 
   assert.ok(rulesFor(once('    needs: [ci-ok, e2e-web, e2e-native, e2e-native-windows, worker-e2e]\n', '    needs: [ci-ok, e2e-web, e2e-native, e2e-native-windows]\n')).includes('observed'));
   assert.ok(rulesFor(once(', smoke-install-linux, bundle]', ', smoke-install-linux, bundle, worker-e2e]')).includes('ci-ok'));
   // Windows 관찰 작업을 PR에서 건너뛰게(master 전용) 하면 code 집합이 달라진다
-  assert.ok(rulesFor(once("  e2e-native-windows:\n    name: e2e-native (windows)\n    needs: changes\n    if: needs.changes.outputs.code == 'true'\n", "  e2e-native-windows:\n    name: e2e-native (windows)\n    needs: changes\n    if: github.event_name != 'pull_request' && needs.changes.outputs.code == 'true'\n")).includes('job-if'));
+  assert.ok(rulesFor(once("  e2e-native-windows:\n    name: e2e-native (windows)\n    needs: changes\n    if: needs.changes.outputs.app == 'true'\n", "  e2e-native-windows:\n    name: e2e-native (windows)\n    needs: changes\n    if: github.event_name != 'pull_request' && needs.changes.outputs.app == 'true'\n")).includes('job-if'));
   // 관찰 작업의 if를 바꾸면 code·master 집합이 달라진다
-  assert.ok(rulesFor(once("  e2e-web:\n    name: e2e-web\n    needs: changes\n    if: needs.changes.outputs.code == 'true'\n", '  e2e-web:\n    name: e2e-web\n    needs: changes\n')).includes('job-if'));
+  assert.ok(rulesFor(once("  e2e-web:\n    name: e2e-web\n    needs: changes\n    if: needs.changes.outputs.app == 'true'\n", '  e2e-web:\n    name: e2e-web\n    needs: changes\n')).includes('job-if'));
   // 관찰 작업이 ci.yml에서 사라짐
   assert.ok(rulesFor((t) => t.replace(/\n {2}e2e-web:\n[\s\S]*?\n\n/, '\n').replace('needs: [ci-ok, e2e-web, e2e-native, e2e-native-windows, worker-e2e]', 'needs: [ci-ok, e2e-native, e2e-native-windows, worker-e2e]')).includes('observed'));
 });

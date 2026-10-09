@@ -246,8 +246,11 @@ test('gate 표: worker(worker.md §13.2, cicd.md 85)', () => {
   assert.deepEqual(hookGates('pre-push', ['worker/src/config.ts']), ['worker']);
   // selftest(w-dry)가 원본 wrangler.jsonc에서 배포 설정을 만들어 묶음과 맞춰 본다
   assert.deepEqual(hookGates('pre-push', ['worker/wrangler.jsonc']), ['release-selftest', 'worker']);
-  // release.mjs가 worker-config의 deployConfig·parseJsonc를 import하므로 release-selftest도 돈다(W8)
-  assert.deepEqual(hookGates('pre-push', ['scripts/ci/worker-config.mjs']), ['release-selftest', 'worker', 'scripts-test']);
+  // release.mjs는 worker-deploy만 import한다(cicd.md 구현 중 변경 110). worker-config는 worker gate와 scripts-test만
+  assert.deepEqual(hookGates('pre-push', ['scripts/ci/worker-config.mjs']), ['worker', 'scripts-test']);
+  assert.deepEqual(hookGates('pre-push', ['scripts/ci/worker-deploy.mjs']), ['release-selftest', 'worker', 'scripts-test']);
+  assert.deepEqual(hookGates('pre-push', ['scripts/ci/worker-config.test.mjs']), ['scripts-test']);
+  assert.deepEqual(hookGates('pre-push', ['app/package.json']), ['frontend', 'worker']);
   assert.ok(hookGates('pre-push', ['release/expected-artifacts.json']).includes('worker'));
   assert.ok(hookGates('pre-push', ['release/latest.schema.json']).includes('worker'));
   assert.equal(hookGates('pre-push', ['release/updater.pub']).includes('worker'), false);

@@ -32,7 +32,7 @@ import { ROOT, WORKER_PLACEHOLDER, workspaceVersion } from './gates.mjs';
 import { spawnTool } from './run.mjs';
 import { osKey, targetDir } from './smoke.mjs';
 import { main as versionCheck } from './version-check.mjs';
-import { DEPLOY_DIR, deployConfig, parseJsonc } from './worker-config.mjs';
+import { DEPLOY_DIR, deployConfig, parseJsonc } from './worker-deploy.mjs';
 
 const IS_WIN = process.platform === 'win32';
 const log = (m) => console.log(`release: ${m}`);

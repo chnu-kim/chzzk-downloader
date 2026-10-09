@@ -482,7 +482,7 @@ const HOOK_FILES = [/^\.githooks\//, /^\.gitattributes$/, /^\.github\//, /^scrip
 export const PUBKEY_FILES = [/^release\/updater\.pub$/, /^release\/tauri\.release\.json$/, /^app\/src-tauri\/tauri(\.[a-z0-9-]+)?\.conf\.json$/];
 // release-selftest가 기대는 파일: xtask, release/ 표, release.mjs와 그 상대 import 전부, 배포 설정 원본(worker/wrangler.jsonc, tools.json의 wrangler 버전)(release.test.mjs가 import 그래프로
 // 이 목록이 빠짐없는지 확인한다, 리뷰 G6), Cargo.lock(xtask 의존성)
-export const RELEASE_SELFTEST_FILES = [/^xtask\//, /^release\//, /^scripts\/ci\/(release|s3-fake|bundle|smoke|version-check|gates|run|push-guard|snapshot|public-scan|worker-config|worker-stub)\.mjs$/, /^scripts\/ci\/tools\.json$/, /^worker\/wrangler\.jsonc$/, /^Cargo\.lock$/];
+export const RELEASE_SELFTEST_FILES = [/^xtask\//, /^release\//, /^scripts\/ci\/(release|s3-fake|bundle|smoke|version-check|gates|run|push-guard|snapshot|public-scan|worker-deploy|worker-stub)\.mjs$/, /^scripts\/ci\/tools\.json$/, /^worker\/wrangler\.jsonc$/, /^Cargo\.lock$/];
 const VERSION_FILES = [/(^|\/)Cargo\.toml$/, /^app\/package\.json$/, /^app\/src-tauri\/tauri\.conf\.json$/];
 export const HOOKS = {
   'pre-commit': {
@@ -507,7 +507,8 @@ export const HOOKS = {
       { gate: 'frontend', paths: [/^app\/(?!src-tauri\/)/] },
       // pre-commit에는 넣지 않는다(무겁다). release/ 표는 W5 계약 테스트가 읽는다(worker.md §13.2). semver 벡터는 worker vitest가
       // xtask와 함께 읽는다(worker.md 구현 중 변경 14 (다), cicd.md 구현 중 변경 87). tauri.conf.json productName은 랜딩 xattr 경로의 원천이다(worker-config checkLandingAppName)
-      { gate: 'worker', paths: [/^worker\//, /^scripts\/ci\/worker-config/, /^release\/(latest\.schema|expected-artifacts)\.json$/, /^xtask\/testdata\/semver-vectors\.json$/, /^app\/src-tauri\/tauri\.conf\.json$/] },
+      // tools.json(wrangler 버전)·app/package.json(packageManager)은 worker-config가 대조한다
+      { gate: 'worker', paths: [/^worker\//, /^scripts\/ci\/worker-(config|deploy)\.mjs$/, /^release\/(latest\.schema|expected-artifacts)\.json$/, /^xtask\/testdata\/semver-vectors\.json$/, /^app\/src-tauri\/tauri\.conf\.json$/, /^app\/package\.json$/, /^scripts\/ci\/tools\.json$/] },
       // release.test.mjs가 worker/test/deploy-contract.mjs(배포 뒤 검사 계약 표)를 import한다
       { gate: 'scripts-test', paths: [/^scripts\//, /^\.githooks\//, /^\.gitattributes$/, /^worker\/test\/deploy-contract\.mjs$/] },
       { gate: 'deny', paths: [/^Cargo\.lock$/, /^deny\.toml$/, /(^|\/)Cargo\.toml$/] },

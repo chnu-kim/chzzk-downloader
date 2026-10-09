@@ -835,7 +835,6 @@ fn second_instance_does_not_reveal_the_window_of_a_failed_startup() {
 const CH: &str = "000000000000000000000000000000b2";
 
 /// Worker 서버. `start`가 있으면 `/auth/start`가 그 상태로 답한다(201이면 로그인 시작 본문, 그 밖에는 HTML 오류).
-/// `/auth/poll`은 늘 pending이다.
 fn worker_server(start: Option<u16>) -> MockServer {
     tauri::async_runtime::block_on(async {
         let s = MockServer::start().await;
@@ -850,14 +849,6 @@ fn worker_server(start: Option<u16>) -> MockServer {
                 .respond_with(resp)
                 .mount(&s)
                 .await;
-            Mock::given(method("POST"))
-                .and(path("/auth/poll"))
-                .respond_with(
-                    ResponseTemplate::new(200)
-                        .set_body_raw(r#"{"status":"pending"}"#, "application/json"),
-                )
-                .mount(&s)
-                .await;
         }
         s
     })
@@ -865,11 +856,8 @@ fn worker_server(start: Option<u16>) -> MockServer {
 
 fn start_body(origin: &str) -> String {
     json!({
-        "loginId": "L".repeat(22),
         "loginUrl": format!("{origin}/auth/login/{}", "H".repeat(22)),
-        "userCode": "K7QX-4MRA",
         "expiresAt": "2030-01-01T00:10:00.000Z",
-        "pollIntervalMs": 2000,
     })
     .to_string()
 }
@@ -1093,7 +1081,8 @@ fn auth_login_opens_the_login_url_through_auth_io() {
     let url = format!("{}/auth/login/{}", worker2.uri(), "H".repeat(22));
     let st = invoke(&f.main, "auth_login", json!({})).unwrap();
     assert_eq!(st["state"], json!("pending"));
-    assert_eq!(st["pending"]["userCode"], json!("K7QX-4MRA"));
+    assert!(st["pending"].get("userCode").is_none());
+    assert!(st["pending"]["expiresAt"].is_number());
     assert_eq!(*f.io.opened.lock().unwrap(), vec![url.clone()]);
     assert_eq!(
         invoke(&f.main, "auth_copy_login_url", json!({})).unwrap(),

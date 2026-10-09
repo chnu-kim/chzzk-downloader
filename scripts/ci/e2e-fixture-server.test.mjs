@@ -12,14 +12,19 @@ import {
   OTHER_CHANNEL_NAME,
   OTHER_VIDEO_NO,
   OWN_CHANNEL_ID,
+  LOOPBACK_PATH,
+  LOOPBACK_STATE_DOMAIN,
+  STUB_GRANT,
   STUB_HANDLE,
   expectedOutput,
+  loopbackState,
   otherVideoInfo,
   rewriteHosts,
   route,
   start,
   startWorker,
   truncateMedia,
+  verifierOf,
   workerRoute,
 } from './e2e-fixture-server.mjs';
 import { ROOT } from './gates.mjs';
@@ -87,18 +92,34 @@ test('다른 채널 영상 info: 번호·채널 ID·이름만 바뀌고, 바꿀 
 test('Worker 스텁 응답 모양: api.rs 파서 규칙', () => {
   const now = Date.now();
   const origin = 'http://127.0.0.1:9';
-  const ctx = (over = {}) => ({ origin, now, polls: 1, bearer: null, channelId: OWN_CHANNEL_ID, ...over });
-  const start = workerRoute('POST', '/auth/start', ctx());
+  const verifier = verifierOf('S'.repeat(43));
+  const ctx = (over = {}) => ({ origin, now, bearer: null, channelId: OWN_CHANNEL_ID, body: null, login: null, ...over });
+
+  // start: 포트(1024~65535 정수)와 43자 b64url verifier만 받는다
+  for (const body of [null, {}, { port: 80, loginVerifier: verifier }, { port: 1023, loginVerifier: verifier }, { port: 65536, loginVerifier: verifier }, { port: '50000', loginVerifier: verifier }, { port: 50000, loginVerifier: 'short' }, { port: 50000 }]) {
+    assert.deepEqual(workerRoute('POST', '/auth/start', ctx({ body })), { status: 400, body: { code: 'bad_request' } });
+  }
+  const c = ctx({ body: { port: 50000, loginVerifier: verifier, client: 'x' } });
+  const start = workerRoute('POST', '/auth/start', c);
   assert.equal(start.status, 201);
-  assert.match(start.body.loginId, /^[A-Za-z0-9_-]{22}$/);
+  assert.deepEqual(Object.keys(start.body).sort(), ['expiresAt', 'loginUrl']);
   assert.match(start.body.loginUrl.slice(`${origin}/auth/login/`.length), /^[A-Za-z0-9_-]{22}$/);
   assert.equal(start.body.loginUrl, `${origin}/auth/login/${STUB_HANDLE}`);
-  assert.match(start.body.userCode, /^[2-9A-HJ-NP-Z]{4}-[2-9A-HJ-NP-Z]{4}$/);
   assert.ok(Date.parse(start.body.expiresAt) > now);
-  assert.ok(start.body.pollIntervalMs >= 2000);
+  assert.deepEqual(c.login, { port: 50000, verifier });
 
-  assert.deepEqual(workerRoute('POST', '/auth/poll', ctx({ polls: 1 })), { status: 200, body: { status: 'pending' } });
-  const ok = workerRoute('POST', '/auth/poll', ctx({ polls: 2 }));
+  // 확인 페이지: 기록이 없으면 404, 있으면 루프백 수신기로 303
+  assert.equal(workerRoute('GET', `/auth/login/${STUB_HANDLE}`, ctx()).status, 404);
+  const login = workerRoute('GET', `/auth/login/${STUB_HANDLE}`, c);
+  assert.equal(login.status, 303);
+  assert.equal(login.body, null);
+  assert.equal(
+    login.headers.location,
+    `http://127.0.0.1:50000/chzzk-downloader/login?grant=${STUB_GRANT}&state=${loopbackState(verifier)}`,
+  );
+
+  // redeem: grant가 스텁 grant이고 loginSecret의 해시가 기록한 verifier와 같을 때만
+  const ok = workerRoute('POST', '/auth/redeem', ctx({ login: c.login, body: { grant: STUB_GRANT, loginSecret: 'S'.repeat(43) } }));
   assert.equal(ok.status, 200);
   assert.equal(ok.body.status, 'ok');
   assert.match(ok.body.accessToken, /^cda_[A-Za-z0-9_-]{43}$/);
@@ -107,8 +128,14 @@ test('Worker 스텁 응답 모양: api.rs 파서 규칙', () => {
   assert.equal(ok.body.isAdmin, false);
   assert.ok(Date.parse(ok.body.accessExpiresAt) > now);
   assert.ok(Date.parse(ok.body.refreshExpiresAt) > Date.parse(ok.body.accessExpiresAt));
-  assert.equal(workerRoute('POST', '/auth/refresh', ctx()).body.status, 'ok');
+  for (const body of [{ grant: STUB_GRANT, loginSecret: 'T'.repeat(43) }, { grant: 'cdg_' + 'X'.repeat(43), loginSecret: 'S'.repeat(43) }, { grant: STUB_GRANT }, null]) {
+    assert.deepEqual(workerRoute('POST', '/auth/redeem', ctx({ login: c.login, body })), { status: 404, body: { code: 'not_found' } });
+  }
+  assert.equal(workerRoute('POST', '/auth/redeem', ctx({ body: { grant: STUB_GRANT, loginSecret: 'S'.repeat(43) } })).status, 404);
+  // 옛 폴링 경로는 없다
+  assert.equal(workerRoute('POST', '/auth/poll', ctx()).status, 404);
 
+  assert.equal(workerRoute('POST', '/auth/refresh', ctx()).body.status, 'ok');
   assert.deepEqual(workerRoute('POST', '/auth/logout', ctx()), { status: 204, body: null });
   assert.deepEqual(workerRoute('GET', '/update/0.1.0', ctx()), { status: 204, body: null });
   assert.equal(workerRoute('GET', '/api/me', ctx()).status, 401);
@@ -118,19 +145,41 @@ test('Worker 스텁 응답 모양: api.rs 파서 규칙', () => {
   assert.equal(nf.body.code, 'not_found');
 });
 
-test('startWorker 리스너: 실제 HTTP로 start → poll ×2', async () => {
+test('loopbackState·verifierOf: 공유 KAT(worker/test/vectors/loopback-vectors.json)', () => {
+  const kat = JSON.parse(readFileSync(join(ROOT, 'worker/test/vectors/loopback-vectors.json'), 'utf8'));
+  assert.equal(kat.domain, LOOPBACK_STATE_DOMAIN);
+  assert.ok(kat.state.length > 0 && kat.url.length > 0);
+  for (const row of kat.state) {
+    assert.equal(loopbackState(row.loginVerifier), row.state);
+    // loginSecret은 일부 행에만 있다
+    if (row.loginSecret !== undefined) assert.equal(verifierOf(row.loginSecret), row.loginVerifier);
+  }
+  // 스텁식 조립이 url 행과 같다(스텁은 verifier로 state를 계산하므로 행의 state와 같은 verifier를 찾아 쓴다)
+  for (const row of kat.url) {
+    const v = kat.state.find((r) => r.state === row.state);
+    assert.ok(v, `url 행의 state에 맞는 state 행이 없다`);
+    const built = `http://127.0.0.1:${row.port}${LOOPBACK_PATH}?grant=${row.grant}&state=${loopbackState(v.loginVerifier)}`;
+    assert.equal(built, row.url);
+  }
+});
+
+test('startWorker 리스너: 실제 HTTP로 start → GET login 303 → redeem', async () => {
   const w = await startWorker();
   try {
-    const post = async (p) => {
-      const r = await fetch(new URL(p, w.origin), { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+    const verifier = verifierOf('R'.repeat(43));
+    const post = async (p, body) => {
+      const r = await fetch(new URL(p, w.origin), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
       return { status: r.status, type: r.headers.get('content-type'), body: await r.json() };
     };
-    const s = await post('/auth/start');
+    const s = await post('/auth/start', { port: 50123, loginVerifier: verifier, client: 'x' });
     assert.equal(s.type, 'application/json; charset=utf-8');
     assert.equal(s.body.loginUrl, `${w.origin}/auth/login/${STUB_HANDLE}`);
-    assert.equal((await post('/auth/poll')).body.status, 'pending');
-    assert.equal((await post('/auth/poll')).body.status, 'ok');
-    assert.deepEqual(w.log.map((l) => l.status), [201, 200, 200]);
+    const r = await fetch(new URL(`/auth/login/${STUB_HANDLE}`, w.origin), { redirect: 'manual' });
+    assert.equal(r.status, 303);
+    assert.equal(r.headers.get('location'), `http://127.0.0.1:50123${LOOPBACK_PATH}?grant=${STUB_GRANT}&state=${loopbackState(verifier)}`);
+    const ok = await post('/auth/redeem', { grant: STUB_GRANT, loginSecret: 'R'.repeat(43) });
+    assert.equal(ok.body.status, 'ok');
+    assert.deepEqual(w.log.map((l) => l.status), [201, 303, 200]);
     assert.ok(!w.origin.endsWith('/'));
   } finally {
     await w.close();

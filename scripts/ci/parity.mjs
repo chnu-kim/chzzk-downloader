@@ -13,9 +13,10 @@
 //   tool-pin    `tool:` 입력의 도구@버전이 scripts/ci/tools.json과 같고, taiki-e/install-action 단계는 `fallback: none`이다.
 //   ci-ok       작업 id `ci-ok`는 ci.yml에만, 정확히 한 번 있다. ci-ok의 needs는 ci.yml의 다른 모든 작업이고
 //               (CI_OK_EXEMPT 제외), `if: always()`이며, 식으로만 판정하는 guard 단계(CI_OK_GUARD)를 글자 그대로 갖는다.
-//   job-if      ci.yml 작업 수준 `if:`는 ci-ok의 `always()`, CODE_IF, MASTER_IF, report의 REPORT_IF뿐이고,
-//               CODE_IF를 단 작업 = gates.mjs CODE_GATED_JOBS(+ OBSERVED_JOBS의 'code'), MASTER_IF를 단 작업 =
+//   job-if      ci.yml 작업 수준 `if:`는 ci-ok의 `always()`, areaIf(영역), MASTER_IF, report의 REPORT_IF뿐이고,
+//               areaIf를 단 작업 = gates.mjs CODE_GATED_JOBS(+ OBSERVED_JOBS의 영역; 작업 → 영역이 맞아야 한다), MASTER_IF를 단 작업 =
 //               MASTER_ONLY_JOBS(+ OBSERVED_JOBS의 'master')다.
+//   changes-outputs  ci.yml changes 작업의 outputs는 gates.mjs AREAS 순서의 영역마다 하나뿐이다(죽은 출력·빠진 출력 금지).
 //   observed    gates.mjs OBSERVED_JOBS(D14 관찰 중)는 ci.yml에 있고, ci-ok needs에 없고, ci-ok를 needs에 두지 않으며,
 //               report의 needs에 있다(master 실패는 master-failure 이슈로 본다).
 //   hook-entry  .githooks/의 파일 집합은 gates.mjs HOOKS와 같고, 각 훅은 `run.mjs hook <자기 이름> "$@"`만 exec한다.
@@ -36,7 +37,7 @@ import { existsSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { CODE_GATED_JOBS, COMMANDS, GATES, HOOK_ONLY, HOOKS, MASTER_ONLY_JOBS, NON_CODE_GLOBS, OBSERVED_JOBS } from './gates.mjs';
+import { AREAS, CODE_GATED_JOBS, COMMANDS, GATES, HOOK_ONLY, HOOKS, MASTER_ONLY_JOBS, NON_CODE_GLOBS, OBSERVED_JOBS } from './gates.mjs';
 
 const ROOT_DEFAULT = join(fileURLToPath(import.meta.url), '..', '..', '..');
 
@@ -58,17 +59,21 @@ export const ENTRY = /^node scripts\/ci\/run\.mjs ([a-z0-9-]+)(?: [A-Za-z0-9._@\
 //   report: ci-ok의 결과를 읽어 이슈를 여닫는다(ci-ok 뒤에 돈다). 실패해도 커밋의 녹색 여부와 무관하다.
 export const CI_OK_EXEMPT = ['report'];
 
-// 작업 수준 if 허용 목록. code: CODE_GATED_JOBS, master: MASTER_ONLY_JOBS, report: 고리 작업.
-export const CODE_IF = "needs.changes.outputs.code == 'true'";
-export const MASTER_IF = "github.event_name != 'pull_request' && needs.changes.outputs.code == 'true'";
+// 작업 수준 if 허용 목록. 영역: CODE_GATED_JOBS(작업 → 영역), master: MASTER_ONLY_JOBS(app 영역), report: 고리 작업.
+export const areaIf = (a) => `needs.changes.outputs.${a} == 'true'`;
+export const MASTER_IF = `github.event_name != 'pull_request' && ${areaIf('app')}`;
 export const REPORT_IF =
   "always() && ((github.event_name == 'push' && github.ref == 'refs/heads/master') || (github.event_name == 'workflow_dispatch' && inputs.loop_test))";
 
 // ci-ok 첫 단계. 저장소 코드 없이 needs 결과만으로 판정한다(run.mjs ci-ok는 두 번째 판정).
 //   push·dispatch: skipped가 하나라도 있으면 실패. pull_request: MASTER_ONLY_JOBS의 skipped는 허용,
-//   CODE_GATED_JOBS의 skipped는 changes.code == 'false'일 때만 허용. 그 밖의 작업은 skipped가 될 수 없다
+//   CODE_GATED_JOBS의 skipped는 그 작업의 영역 출력이 'false'일 때만 허용(영역마다 절 하나). 그 밖의 작업은 skipped가 될 수 없다
 //   (작업 if가 위 둘뿐이고 needs가 성공해야 돈다: 앞 작업 실패는 failure 검사가 잡는다).
 export function ciOkGuard(gated = CODE_GATED_JOBS) {
+  const clauses = AREAS.flatMap((a) => {
+    const jobs = Object.keys(gated).filter((j) => gated[j] === a);
+    return jobs.length ? [`|| (needs.changes.outputs.${a} != 'false'`, `&& (${jobs.map((j) => `needs.${j}.result == 'skipped'`).join(' || ')}))`] : [];
+  });
   return [
     '- name: guard',
     'if: >-',
@@ -76,8 +81,7 @@ export function ciOkGuard(gated = CODE_GATED_JOBS) {
     "|| needs.scripts-windows.result != 'success'",
     "|| contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')",
     "|| (github.event_name != 'pull_request' && contains(needs.*.result, 'skipped'))",
-    "|| (needs.changes.outputs.code != 'false'",
-    `&& (${gated.map((j) => `needs.${j}.result == 'skipped'`).join(' || ')}))`,
+    ...clauses,
     'run: exit 1',
   ];
 }
@@ -208,22 +212,31 @@ function checkCiJobs(text, add) {
   if (g0 < 0 || g0 !== firstStep || CI_OK_GUARD.some((l, k) => body[g0 + k] !== l)) {
     add(rel, ciOk.line, 'ci-ok', 'ci-ok의 첫 단계가 parity.mjs CI_OK_GUARD와 글자 그대로 같지 않다');
   }
-  const gated = [];
+  const ifArea = Object.fromEntries(AREAS.map((a) => [areaIf(a), a]));
+  const gated = {};
   const masterOnly = [];
   for (const [id, j] of Object.entries(jobs)) {
     if (id === 'ci-ok' || j.if === null) continue;
-    if (j.if === CODE_IF) gated.push(id);
-    else if (j.if === MASTER_IF) {
-      masterOnly.push(id);
-      if (!j.needs.includes('changes')) add(rel, j.line, 'job-if', `작업 ${id}는 needs에 changes가 있어야 한다(if가 changes 출력을 읽는다)`);
-    } else if (id === 'report' && j.if === REPORT_IF) continue;
-    else add(rel, j.line, 'job-if', `작업 ${id}의 if는 CODE_IF·MASTER_IF(report는 REPORT_IF)만 허용한다(지금: ${j.if})`);
+    if (id === 'report' && j.if === REPORT_IF) continue;
+    const area = ifArea[j.if];
+    if (area) gated[id] = area;
+    else if (j.if === MASTER_IF) masterOnly.push(id);
+    else { add(rel, j.line, 'job-if', `작업 ${id}의 if는 ${AREAS.map((a) => `areaIf(${a})`).join('·')}·MASTER_IF(report는 REPORT_IF)만 허용한다(지금: ${j.if})`); continue; }
+    if (!j.needs.includes('changes')) add(rel, j.line, 'job-if', `작업 ${id}는 needs에 changes가 있어야 한다(if가 changes 출력을 읽는다)`);
   }
   const same = (a, b) => [...a].sort().join(',') === [...b].sort().join(',');
-  const wantGated = [...CODE_GATED_JOBS, ...observed.filter((id) => OBSERVED_JOBS[id] === 'code')];
+  const fmt = (m) => Object.keys(m).sort().map((k) => `${k}:${m[k]}`).join(', ');
+  const wantGated = { ...CODE_GATED_JOBS, ...Object.fromEntries(observed.filter((id) => OBSERVED_JOBS[id] !== 'master').map((id) => [id, OBSERVED_JOBS[id]])) };
   const wantMaster = [...MASTER_ONLY_JOBS, ...observed.filter((id) => OBSERVED_JOBS[id] === 'master')];
-  if (!same(gated, wantGated)) add(rel, 0, 'job-if', `code로 건너뛰는 작업 [${gated.sort()}] ≠ gates.mjs CODE_GATED_JOBS + OBSERVED_JOBS(code) [${wantGated.sort()}]`);
+  if (fmt(gated) !== fmt(wantGated)) add(rel, 0, 'job-if', `영역으로 건너뛰는 작업 [${fmt(gated)}] ≠ gates.mjs CODE_GATED_JOBS + OBSERVED_JOBS(영역) [${fmt(wantGated)}]`);
   if (!same(masterOnly, wantMaster)) add(rel, 0, 'job-if', `PR에서 건너뛰는 작업 [${masterOnly.sort()}] ≠ gates.mjs MASTER_ONLY_JOBS + OBSERVED_JOBS(master) [${wantMaster.sort()}]`);
+  // changes 출력은 영역마다 하나, 그 밖은 없다(죽은 출력·빠진 출력 금지)
+  const ch = jobs.changes?.body ?? [];
+  const at = ch.findIndex((l) => /^ {4}outputs:\s*$/.test(l));
+  const outs = [];
+  for (let k = at + 1; at >= 0 && k < ch.length && /^ {6}\S/.test(ch[k]); k++) outs.push(ch[k].trim());
+  const wantOuts = AREAS.map((a) => `${a}: \${{ steps.classify.outputs.${a} }}`);
+  if (outs.join('\n') !== wantOuts.join('\n')) add(rel, jobs.changes?.line ?? 0, 'changes-outputs', `changes outputs는 gates.mjs AREAS 순서로 [${wantOuts.join(' | ')}]여야 한다(지금: [${outs.join(' | ')}])`);
   for (const id of observed) {
     if (!jobs[id]) {
       add(rel, 0, 'observed', `OBSERVED_JOBS의 ${id}가 ci.yml에 없다(편입했으면 gates.mjs에서 뺀다)`);

@@ -11,12 +11,12 @@
   import { auth } from '../stores/auth.svelte';
   import { jobs } from '../stores/jobs.svelte';
 
+  // 남은 시간: pending일 때만 1초마다 다시 계산한다(stuck 판정도 이 값으로 한다)
+  let now = $state(Date.now());
   const status = $derived(auth.status);
-  const screen = $derived(status ? loginScreen(status) : null);
+  const screen = $derived(status ? loginScreen(status, now) : null);
   const pending = $derived(status?.state === 'pending' ? status.pending : null);
 
-  // 남은 시간: pending일 때만 1초마다 다시 계산한다
-  let now = $state(Date.now());
   $effect(() => {
     if (!pending) return;
     now = Date.now();
@@ -55,9 +55,6 @@
     </h2>
 
     {#if screen.kind === 'pending' && pending}
-      <p class="sub">{t('auth.pending.code')}</p>
-      <!-- 스크린리더가 "확인 코드 …"로 한 덩어리로 읽게 보이지 않는 머리말을 둔다. 복사(전체 선택)는 코드 글자만 -->
-      <p class="code"><span class="sr-only">{t('auth.pending.codeLabel')} </span><span class="value">{pending.userCode}</span></p>
       <p class="remain">{t('auth.pending.body', { mmss: formatMmss(remainingSecs(pending.expiresAt, now)) })}</p>
       <div class="buttons">
         <Button variant="primary" disabled={auth.isBusy('reopen')} onclick={() => void auth.reopen()}>{t('auth.reopen')}</Button>
@@ -69,6 +66,15 @@
           {t('auth.copyLoginUrl')}
         </Button>
       </p>
+      <p class="help">{t('auth.pending.sameDevice')}</p>
+      {#if screen.stuck}
+        <p class="help" role="status">{t('auth.pending.stuck')}</p>
+        <div class="buttons">
+          <Button variant="secondary" disabled={auth.isBusy('login')} onclick={() => void auth.restartLogin()}>
+            {t('auth.relogin')}
+          </Button>
+        </div>
+      {/if}
     {:else}
       {#if screen.body}<p class="body" role={screen.problem ? 'alert' : undefined}>{screen.body}</p>{/if}
       {#if screen.buttons.length > 0}
@@ -81,7 +87,16 @@
       {#if auth.reconnectFailed}<p class="help" role="status">{t('auth.reconnectFailed')}</p>{/if}
     {/if}
 
-    {#if screen.otherAccountHelp}<p class="help">{t('auth.otherAccount.help')}</p>{/if}
+    {#if screen.otherAccount === 'help'}
+      <p class="help">{t('auth.otherAccount.help')}</p>
+    {:else if screen.otherAccount === 'link'}
+      <p class="help">
+        {t('auth.otherAccount.lead')}
+        <Button variant="link" size="sm" disabled={auth.isBusy('login')} onclick={() => run('login')}>
+          {t('auth.otherAccount')}
+        </Button>
+      </p>
+    {/if}
 
     {#if jobs.activeCount > 0}
       <p class="note">{t('auth.runningNote', { n: jobs.activeCount })}</p>
@@ -123,7 +138,6 @@
     color: var(--danger);
   }
   .body,
-  .sub,
   .remain,
   .help,
   .note {
@@ -133,24 +147,10 @@
     font-size: var(--text-md);
     color: var(--fg-muted);
   }
-  .sub,
   .help,
   .note {
     font-size: var(--text-sm);
     color: var(--fg-muted);
-  }
-  .code {
-    margin: 0;
-    padding: var(--space-2) var(--space-5);
-    border-radius: var(--radius-md);
-    background: var(--surface-2);
-    font-family: var(--font-mono);
-    font-size: 1.5rem;
-    font-weight: var(--weight-semibold);
-    letter-spacing: 0.08em;
-  }
-  .value {
-    user-select: all;
   }
   .remain {
     font-size: var(--text-md);

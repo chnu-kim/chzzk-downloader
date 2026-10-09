@@ -5,7 +5,7 @@
 // `--features e2e` 앱이 `CHZZK_E2E_API_BASE`로 이 서버를 API·vodplay 기본 주소로 쓴다. 네트워크는 루프백뿐이다.
 //
 // 같은 모듈의 `startWorker()`는 로그인 Worker 스텁이다(별도 리스너, `CHZZK_E2E_WORKER_BASE`). worker/src 계약과 같은 모양의
-// /auth/start·poll·refresh·logout, /api/me, /update/:current만 답한다. 시각은 모두 실행 시각 기준이다.
+// /auth/start·login(303 루프백)·redeem·refresh·logout, /api/me, /update/:current만 답한다. 시각은 모두 실행 시각 기준이다.
 //
 //   node scripts/ci/e2e-fixture-server.mjs [--port N]   # 직접 띄워 보기(주소를 출력하고 Ctrl+C까지 돈다)
 //
@@ -117,15 +117,29 @@ export function start({ root = ROOT, port = 0 } = {}) {
 }
 
 // ───────────────────────── 로그인 Worker 스텁 ─────────────────────────
-// 앱 crates/shell/src/auth/api.rs 파서 규칙에 맞춘 응답(토큰·ID 모양). 실제 Worker(worker/src)와 같은 계약이다.
+// 앱 crates/shell/src/auth/api.rs 파서 규칙에 맞춘 응답(토큰·ID 모양). 실제 Worker(worker/src)와 같은 루프백 계약이다:
+// start가 포트·loginVerifier를 기록하고, 확인 페이지 GET이 루프백 수신기로 303을 보내며, redeem이 grant와 loginSecret을 확인한다.
 
-export const STUB_LOGIN_ID = 'E2E' + 'A'.repeat(19); // 22자 b64url
-export const STUB_HANDLE = 'E2E' + 'H'.repeat(19); // 22자
-export const STUB_USER_CODE = 'K7QX-4MRA'; // 2-9A-HJ-NP-Z 4-4
+export const STUB_HANDLE = 'E2E' + 'H'.repeat(19); // 22자 b64url
+export const STUB_GRANT = 'cdg_' + 'E2E' + 'G'.repeat(40); // cdg_ + 43자
 export const STUB_CHANNEL_NAME = 'E2E 채널';
+export const LOOPBACK_PATH = '/chzzk-downloader/login';
+// worker/src/core/loopback.ts·crates/shell auth/token.rs와 같은 도메인(공유 KAT: worker/test/vectors/loopback-vectors.json)
+export const LOOPBACK_STATE_DOMAIN = 'chzzk-downloader/loopback-state\n';
 
 const JSON_TYPE = 'application/json; charset=utf-8';
+const B64URL_43 = /^[A-Za-z0-9_-]{43}$/;
 const iso = (ms) => new Date(ms).toISOString();
+
+// b64url(SHA-256(UTF-8(domain + loginVerifier)))
+export function loopbackState(verifier) {
+  return createHash('sha256').update(LOOPBACK_STATE_DOMAIN + verifier, 'utf8').digest('base64url');
+}
+
+// loginVerifier = b64url(SHA-256(UTF-8(loginSecret 문자열)))
+export function verifierOf(secret) {
+  return createHash('sha256').update(secret, 'utf8').digest('base64url');
+}
 
 function bundle(ctx, access, refresh) {
   return {
@@ -141,22 +155,35 @@ function bundle(ctx, access, refresh) {
   };
 }
 
-// 순수: (method, path, ctx) → { status, body|null }. ctx = { origin, now(ms), polls(이 호출까지 센 poll 수), bearer, channelId }
+// 순수에 가까운 함수: (method, path, ctx) → { status, body|null, headers? }.
+// ctx = { origin, now(ms), bearer, channelId, body(파싱한 JSON|null), login(가변 {port, verifier}|null) }. /auth/start가 ctx.login을 채운다.
 export function workerRoute(method, path, ctx) {
   if (method === 'POST' && path === '/auth/start') {
+    const b = ctx.body ?? {};
+    if (!Number.isInteger(b.port) || b.port < 1024 || b.port > 65535 || typeof b.loginVerifier !== 'string' || !B64URL_43.test(b.loginVerifier)) {
+      return { status: 400, body: { code: 'bad_request' } };
+    }
+    ctx.login = { port: b.port, verifier: b.loginVerifier };
     return {
       status: 201,
-      body: {
-        loginId: STUB_LOGIN_ID,
-        loginUrl: `${ctx.origin}/auth/login/${STUB_HANDLE}`,
-        userCode: STUB_USER_CODE,
-        expiresAt: iso(ctx.now + 600_000),
-        pollIntervalMs: 2000,
-      },
+      body: { loginUrl: `${ctx.origin}/auth/login/${STUB_HANDLE}`, expiresAt: iso(ctx.now + 600_000) },
     };
   }
-  if (method === 'POST' && path === '/auth/poll') {
-    return { status: 200, body: ctx.polls <= 1 ? { status: 'pending' } : bundle(ctx, 'A', 'B') };
+  if (method === 'GET' && path === `/auth/login/${STUB_HANDLE}`) {
+    if (!ctx.login) return { status: 404, body: { code: 'not_found' } };
+    const { port, verifier } = ctx.login;
+    return {
+      status: 303,
+      body: null,
+      headers: { location: `http://127.0.0.1:${port}${LOOPBACK_PATH}?grant=${STUB_GRANT}&state=${loopbackState(verifier)}` },
+    };
+  }
+  if (method === 'POST' && path === '/auth/redeem') {
+    const b = ctx.body ?? {};
+    if (ctx.login && b.grant === STUB_GRANT && typeof b.loginSecret === 'string' && verifierOf(b.loginSecret) === ctx.login.verifier) {
+      return { status: 200, body: bundle(ctx, 'A', 'B') };
+    }
+    return { status: 404, body: { code: 'not_found' } };
   }
   if (method === 'POST' && path === '/auth/refresh') return { status: 200, body: bundle(ctx, 'C', 'D') };
   if (method === 'POST' && path === '/auth/logout') return { status: 204, body: null };
@@ -176,27 +203,42 @@ export function workerRoute(method, path, ctx) {
   return { status: 404, body: { code: 'not_found' } };
 }
 
+const MAX_BODY = 64 * 1024;
+
 // Worker 스텁 리스너(127.0.0.1:0) → { origin(끝 / 없음), log: [{method, path, status}], close() }. 요청 기록은 fixture 서버와 따로다
-// (fixture는 모든 응답이 200이어야 하고, 스텁은 201·204·404를 쓴다). poll 수는 여기서 센다.
+// (fixture는 모든 응답이 200이어야 하고, 스텁은 201·204·303·404를 쓴다). 로그인 기록(포트·verifier)은 이 리스너가 쥔다.
 export function startWorker({ channelId = OWN_CHANNEL_ID } = {}) {
   const log = [];
-  let polls = 0;
+  const ctx = { login: null };
   return new Promise((resolve, reject) => {
     const server = createServer((req, res) => {
       const u = new URL(req.url ?? '/', 'http://127.0.0.1');
-      req.resume();
+      const chunks = [];
+      let size = 0;
+      req.on('data', (c) => {
+        size += c.length;
+        if (size <= MAX_BODY) chunks.push(c);
+      });
       req.on('end', () => {
+        let body = null;
+        if (size > 0 && size <= MAX_BODY) {
+          try {
+            body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+          } catch {
+            body = null;
+          }
+        }
         const origin = `http://127.0.0.1:${server.address().port}`;
-        if (req.method === 'POST' && u.pathname === '/auth/poll') polls++;
         const bearer = /^Bearer (\S+)$/.exec(req.headers.authorization ?? '')?.[1] ?? null;
-        const r = workerRoute(req.method ?? 'GET', u.pathname, { origin, now: Date.now(), polls, bearer, channelId });
+        Object.assign(ctx, { origin, now: Date.now(), bearer, channelId, body });
+        const r = workerRoute(req.method ?? 'GET', u.pathname, ctx);
         log.push({ method: req.method, path: u.pathname, status: r.status });
         if (r.body === null) {
-          res.writeHead(r.status).end();
+          res.writeHead(r.status, r.headers ?? {}).end();
           return;
         }
         const buf = Buffer.from(JSON.stringify(r.body));
-        res.writeHead(r.status, { 'content-type': JSON_TYPE, 'content-length': buf.length }).end(buf);
+        res.writeHead(r.status, { 'content-type': JSON_TYPE, 'content-length': buf.length, ...(r.headers ?? {}) }).end(buf);
       });
     });
     server.on('error', reject);

@@ -2,7 +2,6 @@
 // 과거 시각의 알람은 테스트 중에 저절로 실행된다(worker.md 구현 중 변경 17 (나)).
 import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
-import { expect } from "vitest";
 import type { Db } from "../../src/store/db";
 import { newSecret, sha256B64url, sha256Hex } from "../../src/core/token";
 import type { TokenBundle } from "../../src/store/types";
@@ -20,32 +19,35 @@ export type Stub = ReturnType<typeof freshStub>;
 
 export const sha = sha256Hex;
 
-export type LoginOpts = { channelId?: string; name?: string; admins?: readonly string[]; now?: number; ip?: string };
+/** 앱 루프백 수신기 포트(테스트 기본값) */
+export const PORT = 49152;
+
+export type LoginOpts = { channelId?: string; name?: string; admins?: readonly string[]; now?: number; ip?: string; port?: number };
 
 /** 앱 흐름을 exchanging까지 진행한다 */
 export async function begin(stub: Stub, o: LoginOpts = {}) {
   const now = o.now ?? T0;
-  const pollSecret = newSecret();
-  const verifier = await sha256B64url(pollSecret);
-  const s = await stub.startApp(verifier, "app/0.2.0 macos", o.ip ?? "203.0.113.10", 1000, now);
+  const loginSecret = newSecret();
+  const verifier = await sha256B64url(loginSecret);
+  const s = await stub.startApp({ port: o.port ?? PORT, verifier, client: "app/0.2.0 macos", ip: o.ip ?? "203.0.113.10", limit: 1000 }, now);
   if (!s.ok) throw new Error(`startApp ${s.code}`);
   const c = await stub.continueApp(await sha(s.handle), now);
   if (!c.ok) throw new Error(`continueApp ${c.code}`);
   const k = await stub.consume(await sha(c.state), await sha(c.binder), now);
   if (!k.ok) throw new Error(`consume ${k.code}`);
-  return { loginId: s.loginId, handle: s.handle, userCode: s.userCode, state: c.state, binder: c.binder, pollSecret, verifier, flowId: k.flowId };
+  return { flowId: k.flowId, handle: s.handle, state: c.state, binder: c.binder, loginSecret, verifier };
 }
 
-/** 앱 로그인 끝까지(허용된 채널이어야 한다): start → continue → consume → finish → claim. 단계마다 ok를 단언한다 */
+/** 앱 로그인 끝까지(허용된 채널이어야 한다): start → continue → consume → finish → redeem. 단계마다 ok를 단언한다 */
 export async function appLogin(stub: Stub, o: LoginOpts = {}) {
   const now = o.now ?? T0;
   const admins = o.admins ?? ADMINS;
   const b = await begin(stub, o);
   const f = await stub.finish(b.flowId, { type: "user", channelId: o.channelId ?? B2, channelName: o.name ?? "허용 채널" }, admins, now);
-  expect(f).toEqual({ type: "ok" });
-  const c = await stub.claim(b.loginId, b.verifier, admins, now);
-  if (c.status !== "ok") throw new Error(`claim ${c.status}`);
-  return { ...b, bundle: c.bundle as TokenBundle };
+  if (f.type !== "loopback" || f.result !== "ok") throw new Error(`finish ${JSON.stringify(f)}`);
+  const c = await stub.redeem(await sha(f.grant), b.verifier, admins, now);
+  if (c.status !== "ok") throw new Error(`redeem ${c.status}`);
+  return { ...b, grant: f.grant, bundle: c.bundle as TokenBundle };
 }
 
 /** 허용목록에 넣은 뒤 앱 로그인 */

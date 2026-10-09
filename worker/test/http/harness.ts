@@ -3,13 +3,15 @@
 import { runInDurableObject } from "cloudflare:test";
 import { env, exports } from "cloudflare:workers";
 import { expect, vi } from "vitest";
-import { newSecret, sha256B64url } from "../../src/core/token";
+import { newSecret, sha256B64url, sha256Hex } from "../../src/core/token";
 import worker from "../../src/index";
 import { AUTH_STORE_NAME } from "../../src/store/AuthStore";
 import type { FakeAccountKey, FakeChzzk } from "../fake-chzzk.mjs";
 
 export const ORIGIN = "http://localhost:8787";
 export const HOUR = 3_600_000;
+/** 앱 루프백 수신기 포트(테스트 기본값) */
+export const APP_PORT = 49152;
 const T0 = Date.UTC(2030, 0, 1);
 
 let slot = 0;
@@ -113,20 +115,21 @@ export class AppClient {
     });
   }
 
-  async start(ip?: string): Promise<{ res: Response; body: any; pollSecret: string }> {
-    const pollSecret = newSecret();
-    const res = await this.json("/auth/start", { pollVerifier: await sha256B64url(pollSecret), client: "app/0.2.0 macos" }, ip ? { "CF-Connecting-IP": ip } : {});
-    return { res, body: await res.clone().json(), pollSecret };
+  async start(ip?: string, port = APP_PORT): Promise<{ res: Response; body: any; loginSecret: string; verifier: string; port: number }> {
+    const loginSecret = newSecret();
+    const verifier = await sha256B64url(loginSecret);
+    const res = await this.json("/auth/start", { port, loginVerifier: verifier, client: "app/0.2.0 macos" }, ip ? { "CF-Connecting-IP": ip } : {});
+    return { res, body: await res.clone().json(), loginSecret, verifier, port };
   }
 
-  /** 폴링 간격(1.5초)을 넘기려 먼저 2초 흐른다 */
-  async poll(loginId: string, pollSecret: string): Promise<Response> {
-    advance(2000);
-    return this.pollNow(loginId, pollSecret);
+  /** 루프백 grant + 앱 비밀로 결과를 한 번 받는다 */
+  redeem(grant: unknown, loginSecret: unknown): Promise<Response> {
+    return this.json("/auth/redeem", { grant, loginSecret });
   }
 
-  pollNow(loginId: string, pollSecret: string): Promise<Response> {
-    return this.json("/auth/poll", { loginId, pollSecret });
+  /** 본문을 그대로 보낸다(깨진 JSON·다른 Content-Type 시험) */
+  raw(path: string, body: string, type = "application/json", ip?: string): Promise<Response> {
+    return this.send(this.origin + path, { method: "POST", headers: { "Content-Type": type, ...(ip ? { "CF-Connecting-IP": ip } : {}) }, body });
   }
 
   refresh(token: unknown): Promise<Response> {
@@ -144,13 +147,53 @@ export class AppClient {
   }
 }
 
-export const codeIn = (htmlText: string): string | null => /<p class="code">([2-9A-HJ-NP-Z]{4}-[2-9A-HJ-NP-Z]{4})<\/p>/.exec(htmlText)?.[1] ?? null;
+const LOOPBACK_RE = /^http:\/\/127\.0\.0\.1:(\d{4,5})\/chzzk-downloader\/login\?grant=(cdg_[A-Za-z0-9_-]{43})&state=([A-Za-z0-9_-]{43})$/;
 
-/** 앱 로그인 전 과정. 단계마다 상태를 단언하고 결과를 돌려준다(승인이든 거부든 취소든 같은 길을 간다) */
-export async function appFlow(o: { fake: FakeChzzk; browser?: Browser; app?: AppClient; pollFirst?: boolean }) {
+/** 콜백 303의 루프백 Location을 풀어 낸다. 형식·포트 범위 밖이면 null */
+export function parseLoopback(loc: string): { port: number; grant: string; state: string } | null {
+  const m = LOOPBACK_RE.exec(loc);
+  if (m === null) return null;
+  const port = Number(m[1]);
+  return port >= 1024 && port <= 65535 ? { port, grant: m[2]!, state: m[3]! } : null;
+}
+
+/** env.AUTH를 감싸 DO 스텁의 메서드 호출 이름을 모은다(DO 0회 단언용) */
+export function countingSend(patch: Record<string, unknown> = {}): { send: Send; calls: string[] } {
+  const calls: string[] = [];
+  const AUTH = {
+    idFromName: (n: string) => env.AUTH.idFromName(n),
+    get: (id: DurableObjectId) =>
+      new Proxy(env.AUTH.get(id), {
+        get(t, p) {
+          const v: unknown = Reflect.get(t, p);
+          if (typeof v !== "function") return v;
+          // RPC 메서드는 스텁에서 바로 부른다(apply·call도 원격 메서드 이름으로 보인다)
+          const call = t as unknown as Record<PropertyKey, (...a: unknown[]) => Promise<unknown>>;
+          return (...args: unknown[]) => {
+            calls.push(String(p));
+            return call[p]!(...args);
+          };
+        },
+      }),
+  } as unknown as DurableObjectNamespace;
+  return { send: viaEnv({ ...patch, AUTH }), calls };
+}
+
+/** 흐름 행의 루프백 관련 열(handle로 찾는다) */
+export const flowRows = (handle: string) =>
+  runInDurableObject(store(), async (i) =>
+    i.db.all<{ status: string; fail_code: string | null; port: number | null; grant_hash: string | null; grant_exp: number | null }>(
+      "SELECT status, fail_code, port, grant_hash, grant_exp FROM flow WHERE handle_hash = ?",
+      await sha256Hex(handle),
+    ),
+  );
+
+/** 앱 로그인 전 과정(루프백). 단계마다 상태를 단언하고 결과를 돌려준다(승인이든 거부든 취소든 같은 길을 간다).
+ * 루프백 Location은 따라가지 않고 해석만 한다. redeem이 false면 수령하지 않는다 */
+export async function appFlow(o: { fake: FakeChzzk; browser?: Browser; app?: AppClient; port?: number; redeem?: boolean }) {
   const browser = o.browser ?? new Browser();
   const app = o.app ?? new AppClient();
-  const { res: startRes, body: start, pollSecret } = await app.start();
+  const { res: startRes, body: start, loginSecret, verifier } = await app.start(undefined, o.port ?? APP_PORT);
   expect(startRes.status).toBe(201);
   const loginPath = new URL(start.loginUrl).pathname;
   const loginPage = await browser.get(loginPath);
@@ -161,18 +204,11 @@ export async function appFlow(o: { fake: FakeChzzk; browser?: Browser; app?: App
   const callbackUrl = await browser.authorize(cont, o.fake);
   const callback = await browser.get(callbackUrl);
   expect(callback.status).toBe(303);
-  const openDone = async () => {
-    const r = await browser.get(callback.headers.get("Location") ?? "");
-    expect(r.status).toBe(200);
-    return r;
-  };
-  // pollFirst: 앱이 먼저 수령한 뒤에도 완료 페이지가 확인 코드를 보이는지(구현 중 변경 23·27 (가))
-  const poll = o.pollFirst ? await app.poll(start.loginId, pollSecret) : null;
-  const done = await openDone();
-  const doneHtml = await done.text();
-  const pollRes = poll ?? (await app.poll(start.loginId, pollSecret));
-  const pollBody: any = await pollRes.clone().json();
-  return { start, pollSecret, loginPage, loginHtml, cont, callbackUrl, callback, done, doneHtml, poll: pollRes, pollBody, browser };
+  const location = callback.headers.get("Location") ?? "";
+  const loop = parseLoopback(location);
+  const redeem = o.redeem !== false && loop !== null ? await app.redeem(loop.grant, loginSecret) : null;
+  const redeemBody: any = redeem === null ? null : await redeem.clone().json();
+  return { start, loginSecret, verifier, loginPage, loginHtml, cont, callbackUrl, callback, location, loop, redeem, redeemBody, browser, app };
 }
 
 /** 이 파일 공통 규약의 afterEach에서 쓴다 */

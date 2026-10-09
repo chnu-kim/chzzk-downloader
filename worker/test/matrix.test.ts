@@ -1,7 +1,7 @@
 // 자격 × 경로 행렬(docs/design/worker.md §4.5, 구현 중 변경 31 (타)). 표의 키는 경로 표(ROUTES)와 같아야 한다:
-// 경로를 더하고 기대를 정하지 않으면 실패한다. W6이 더한 /·/assets/:file·/auth/web/logout·/me/*·/admin*까지 24쌍이다.
+// 경로를 더하고 기대를 정하지 않으면 실패한다. W6이 더한 /·/assets/:file·/auth/web/logout·/me/*·/admin*까지 25쌍이다.
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { newId, newSecret, sha256B64url } from "../src/core/token";
+import { newId, newSecret, newToken, sha256B64url } from "../src/core/token";
 import { type Auth, ROUTES } from "../src/routes";
 import { LATEST_VIEW_CACHE } from "../src/http/landing";
 import { SUMS_CACHE } from "../src/http/releases";
@@ -63,7 +63,12 @@ const MATRIX: Readonly<Record<string, readonly MatrixCase[]>> = {
   "POST /auth/start": [
     {
       name: "start",
-      request: jsonPost("/auth/start", async () => ({ pollVerifier: await sha256B64url(newSecret()), client: "app/0.2.0 macos" })),
+      request: jsonPost("/auth/start", async () => ({ port: 49152, loginVerifier: await sha256B64url(newSecret()), client: "app/0.2.0 macos" })),
+      expect: all(201),
+    },
+    {
+      name: "옛 형식(미끼)",
+      request: jsonPost("/auth/start", async () => ({ pollVerifier: await sha256B64url(newSecret()), client: "app/0.1.1 macos" })),
       expect: all(201),
     },
   ],
@@ -72,7 +77,8 @@ const MATRIX: Readonly<Record<string, readonly MatrixCase[]>> = {
   "POST /auth/web/start": [{ name: "web start", request: form("/auth/web/start"), expect: all(303) }],
   "GET /auth/callback": [{ name: "쿼리 없음", request: plain("/auth/callback"), expect: all(303) }],
   "GET /auth/done": [{ name: "done", request: plain("/auth/done?r=ok"), expect: all(200) }],
-  "POST /auth/poll": [{ name: "모르는 loginId", request: jsonPost("/auth/poll", () => ({ loginId: newId(), pollSecret: newSecret() })), expect: all(404) }],
+  "POST /auth/redeem": [{ name: "모르는 grant", request: jsonPost("/auth/redeem", () => ({ grant: newToken("grant"), loginSecret: newSecret() })), expect: all(404) }],
+  "POST /auth/poll": [{ name: "비석", request: jsonPost("/auth/poll", () => ({ loginId: newId(), pollSecret: newSecret() })), expect: all(404) }],
   "POST /auth/refresh": [
     {
       name: "refresh",

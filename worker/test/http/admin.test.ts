@@ -139,7 +139,7 @@ describe("CSRF: Origin × csrf 9조합 × 3경로", () => {
       for (const t of TOKENS) {
         it(`${r.name}: Origin ${o}, csrf ${t}`, async () => {
           const s = await session(r.user);
-          const access = r.name === "내 기기 끊기" ? ((await appFlow({ fake })).pollBody.accessToken as string) : null;
+          const access = r.name === "내 기기 끊기" ? ((await appFlow({ fake })).redeemBody.accessToken as string) : null;
           const path = access === null ? r.path() : `/me/sessions/${await idOfAccess(access)}/revoke`;
           const headers: Record<string, string | null> = o === "없음" ? { Origin: null } : o === "다른 출처" ? { Origin: "http://evil.example.test" } : {};
           const csrf = t === "맞음" ? s.csrf : t === "다른 값" ? newSecret() : null;
@@ -382,7 +382,7 @@ describe("[허용] → 즉시 로그인 성공", () => {
 
     fake.state.account = "d4";
     const app = await appFlow({ fake });
-    expect(app.pollBody.status).toBe("ok");
+    expect(app.redeemBody.status).toBe("ok");
   });
 });
 
@@ -436,8 +436,8 @@ describe("[빼기] 지연 0", () => {
     const web = await session("b2");
     fake.state.account = "b2";
     const app = await appFlow({ fake });
-    const access = app.pollBody.accessToken as string;
-    const refresh = app.pollBody.refreshToken as string;
+    const access = app.redeemBody.accessToken as string;
+    const refresh = app.redeemBody.refreshToken as string;
     expect((await appGet("/api/me", access)).status).toBe(200);
 
     const res = await post(admin, "/admin/disallow", { channelId: B2 });
@@ -465,7 +465,7 @@ describe("[끊기] 지연 0", () => {
     const admin = await session("a1");
     fake.state.account = "b2";
     const app = await appFlow({ fake });
-    const access = app.pollBody.accessToken as string;
+    const access = app.redeemBody.accessToken as string;
     const id = await idOfAccess(access);
     const page = await (await admin.b.get("/admin")).text();
     expect(page).toContain(`action="/admin/sessions/${id}/revoke"`);

@@ -7,7 +7,7 @@
 //   node scripts/ci/run.mjs install-hooks     # git config core.hooksPath .githooks
 //   node scripts/ci/run.mjs hook <pre-commit|commit-msg|pre-push> [git 인자]  # .githooks/*가 부른다(gates.mjs HOOKS)
 //   node scripts/ci/run.mjs install-tool <t>  # tools.json download의 릴리스 파일을 받아 sha256 확인 후 설치(CI는 GITHUB_PATH에 더한다)
-//   node scripts/ci/run.mjs changes           # (CI) 바뀐 경로로 code/docs_only 출력
+//   node scripts/ci/run.mjs changes           # (CI) 바뀐 경로로 영역별 출력(app·worker)
 //   node scripts/ci/run.mjs ci-ok             # (CI) env NEEDS(toJSON(needs))로 집계 판정
 //
 // 종료 코드: gate가 낸 첫 0이 아닌 코드. 도구가 없으면 로컬은 0(경고), CI는 2. 사용법 오류 2.
@@ -18,7 +18,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, stat
 import { delimiter, dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { CODE_GATED_JOBS, COMMANDS, GATES, HOOKS, MASTER_ONLY_JOBS, NON_CODE, ROOT } from './gates.mjs';
+import { AREA_SKIP, AREAS, CODE_GATED_JOBS, COMMANDS, GATES, HOOKS, MASTER_ONLY_JOBS, ROOT } from './gates.mjs';
 import { isPrivateTarget, parseLines, pushedPaths, scanRanges } from './push-guard.mjs';
 import { runHookGates } from './snapshot.mjs';
 
@@ -162,41 +162,40 @@ export function runGate(name, extra = [], env = process.env, { input } = {}) {
 
 // ---- changes ----
 
-// 문서로 보는 경로의 허용 목록. 여기에 맞지 않는 파일이 하나라도 있으면 code다(모르는 경로도 code, 안전한 쪽).
-// *.md 전체가 아니라 루트의 *.md만 문서다: testdata/README.md처럼 테스트가 읽는 .md가 있다.
-// 바뀐 파일 목록 → { code, docs_only }. 목록이 없으면(판단 불가) 전부 실행한다. 릴리스 경로만 따로 가르지 않는다: 릴리스 빌드는
-// 코드가 바뀐 모든 PR에서 돈다(bundle-linux, 리뷰 G6. 따로 고른 경로 목록은 의존 파일이 빠진다).
+// 바뀐 파일 목록 → { app, worker }(gates.mjs AREA_SKIP). 파일 하나라도 영역의 제외 목록 밖이면 그 영역은 true다.
+// 목록이 없거나 비면(push·dispatch·기준 없음·git 오류) 모든 영역 true: master의 녹색 ci-ok는 그 커밋을 전부 빌드했다는 뜻이다.
+export const areaHit = (a, files) => files.find((f) => !AREA_SKIP[a].some((re) => re.test(f)));
 export function classify(files) {
-  if (!files || files.length === 0) return { code: true, docs_only: false };
-  const code = files.some((f) => !NON_CODE.some((re) => re.test(f)));
-  return { code, docs_only: !code };
+  return Object.fromEntries(AREAS.map((a) => [a, !files?.length || areaHit(a, files) !== undefined]));
 }
 
 const ZERO = /^0+$/;
 
 // env: CHANGES_BASE, CHANGES_HEAD. git 오류·기준 없음은 전부 실행(fail-safe).
 // ci.yml은 CHANGES_BASE를 pull_request에서만 준다. push·dispatch는 늘 전부 실행한다(master의 녹색 ci-ok는 빌드를 뜻한다).
-export function changedFiles(env = process.env) {
+export function changedFiles(env = process.env, cwd = ROOT) {
   const base = (env.CHANGES_BASE ?? '').trim();
   const head = (env.CHANGES_HEAD ?? '').trim() || 'HEAD';
   if (!base || ZERO.test(base)) return { files: null, why: '기준 커밋 없음' };
-  const r = spawnSync('git', ['diff', '--name-only', '-z', `${base}...${head}`], { cwd: ROOT, encoding: 'utf8' });
+  // --no-renames: 이름 바꾸기도 옛 경로(삭제)와 새 경로를 둘 다 낸다(crates/→worker/ 이동이 app을 꺼뜨리지 않게)
+  const r = spawnSync('git', ['diff', '--name-only', '--no-renames', '-z', `${base}...${head}`], { cwd, encoding: 'utf8' });
   if (r.status !== 0) return { files: null, why: `git diff 실패: ${(r.stderr ?? '').trim()}` };
   return { files: r.stdout.split('\0').filter(Boolean), why: null };
 }
 
-// workflow_dispatch 입력 force_fail(env CI_FORCE_FAIL=true): 무거운 작업을 건너뛰게 해(code=false) ci-ok가 실패하게 한다.
+// workflow_dispatch 입력 force_fail(env CI_FORCE_FAIL=true): 무거운 작업을 건너뛰게 해(모든 영역 false) ci-ok가 실패하게 한다.
 // master 실패 고리(report)를 빨리·싸게 확인하는 용도다. push·dispatch에서 skipped는 ci-ok가 거부한다.
 export const forceFail = (env = process.env) => env.CI_FORCE_FAIL === 'true';
 
 function cmdChanges(env = process.env) {
   const { files, why } = changedFiles(env);
-  const c = forceFail(env) ? { code: false, docs_only: false } : classify(files);
+  const c = forceFail(env) ? Object.fromEntries(AREAS.map((a) => [a, false])) : classify(files);
   if (forceFail(env)) console.log('::warning::force_fail: 무거운 작업을 건너뛰고 ci-ok를 실패시킨다(고리 확인용)');
   const out = Object.entries(c).map(([k, v]) => `${k}=${v}`);
   console.log(why ? `전부 실행: ${why}` : `바뀐 파일 ${files.length}개`);
   if (files) for (const f of files.slice(0, 200)) console.log(`  ${f}`);
   console.log(out.join('\n'));
+  if (files?.length) for (const a of AREAS) console.log(`${a}: ${c[a] ? `켬 ← ${areaHit(a, files)}` : '끔'}`);
   if (env.GITHUB_OUTPUT) appendFileSync(env.GITHUB_OUTPUT, out.join('\n') + '\n');
   return 0;
 }
@@ -204,8 +203,8 @@ function cmdChanges(env = process.env) {
 // ---- ci-ok ----
 
 // needs(toJSON(needs)), event(github.event_name) → { ok, lines }. 규칙(docs/design/cicd.md §2):
-//   changes는 success여야 한다. 그 밖의 작업은 success, 또는 pull_request에서 changes.code == 'false'일 때
-//   CODE_GATED_JOBS의 skipped만 허용한다. push·workflow_dispatch에서는 skipped를 하나도 허용하지 않는다.
+//   changes는 success여야 한다. 그 밖의 작업은 success, 또는 pull_request에서 그 작업의 영역 출력(CODE_GATED_JOBS[job])이
+//   'false'일 때만 skipped를 허용한다(출력이 없으면 허용하지 않는다). push·workflow_dispatch에서는 skipped를 하나도 허용하지 않는다.
 // ci.yml의 ci-ok guard 단계가 같은 규칙을 식(expression)으로 먼저 판정한다. 이 함수는 두 번째 판정이다.
 export function decideCiOk(needs, event, gated = CODE_GATED_JOBS, masterOnly = MASTER_ONLY_JOBS, { force = false } = {}) {
   const lines = [];
@@ -215,11 +214,11 @@ export function decideCiOk(needs, event, gated = CODE_GATED_JOBS, masterOnly = M
     return { ok: false, lines: ['changes: needs에 없음'] };
   }
   const isPr = event === 'pull_request';
-  const skipAllowed = isPr && changes.result === 'success' && changes.outputs?.code === 'false';
+  const scope = isPr && changes.result === 'success' ? (changes.outputs ?? {}) : {};
   for (const [job, v] of Object.entries(needs).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
     const r = v?.result;
     let good = r === 'success';
-    if (!good && r === 'skipped' && job !== 'changes' && skipAllowed && gated.includes(job)) good = true;
+    if (!good && r === 'skipped' && job !== 'changes' && Object.hasOwn(gated, job) && scope[gated[job]] === 'false') good = true;
     if (!good && r === 'skipped' && isPr && masterOnly.includes(job)) good = true;
     if (!good) ok = false;
     lines.push(`${good ? 'ok  ' : 'FAIL'} ${job}: ${r}`);

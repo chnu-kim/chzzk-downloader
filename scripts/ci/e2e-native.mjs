@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // 네이티브 E2E(docs/design/cicd.md §6 "네이티브 E2E", gate `e2e-native`). `--features e2e`로 만든 실제 앱을 tauri-driver
 // (Linux: WebKitWebDriver, Windows: msedgedriver)로 띄워 로그인과 받기 흐름을 끝까지 돌린다:
-//   [치지직으로 로그인] → 확인 코드 화면 → 홈(Worker 스텁이 두 번째 poll에 로그인을 끝낸다. 브라우저는 열지 않는다)
+//   [치지직으로 로그인] → 대기 화면 → 홈(브라우저는 열지 않는다: 스텁의 303 → `E2eAuthIo`가 앱 수신기에 GET → redeem 1번)
 //   → 입력줄에 본인 영상 주소 → [불러오기] → 카드의 [다운로드] → 목록 항목이 "완료"
 //   → 남의 영상 주소 → 카드가 "내 채널의 영상만 받을 수 있어요"로 막히고 [다운로드]가 꺼짐
 //   → WebDriver execute/async로 enqueue를 직접 불러(웹뷰의 channelId를 본인 채널로 속여) 셸이 notOwnContent로 거부함(A5).
@@ -11,8 +11,8 @@
 //   node scripts/ci/e2e-native.mjs [--exe <경로>]   # 기본 <target>/debug/chzzk-app[.exe] (gate가 먼저 빌드한다)
 //
 // 판정(결정적): 결과 폴더에 .mp4가 정확히 하나(남의 영상이 받히지 않았음도 증명한다), .part 없음, 그 sha256이 init‖seg0‖seg1과
-// 같음, fixture 서버가 받은 요청이 모두 200이고 info·남의 영상 info·master·media·init·조각 둘을 모두 받음, Worker 스텁이 start 1번·
-// poll 2번 이상을 받고 오류 응답이 없음. 화면 글자는 기다림의 신호로만 쓴다(판정은 파일이다).
+// 같음, fixture 서버가 받은 요청이 모두 200이고 info·남의 영상 info·master·media·init·조각 둘을 모두 받음, Worker 스텁이 start 201·
+// 확인 페이지 303·redeem 200을 각각 정확히 1번 받고 오류 응답이 없음. 화면 글자는 기다림의 신호로만 쓴다(판정은 파일이다).
 // 실패하면 target/ci/e2e-native/에 스크린샷·페이지 HTML·드라이버 로그·앱 로그를 남긴다(합성 fixture라 공개해도 된다).
 // macOS는 WebDriver가 없다(tauri-driver 미지원): 2로 끝난다. 종료 코드: 통과 0, 실패 1, 환경·사용법 2.
 
@@ -30,7 +30,7 @@ import {
   OTHER_URL,
   OTHER_VIDEO_NO,
   OWN_CHANNEL_ID,
-  STUB_USER_CODE,
+  STUB_HANDLE,
   expectedOutput,
   start,
   startWorker,
@@ -154,7 +154,9 @@ export function judgeWorker(workerLog) {
   const bad = [];
   const n = (m, p, s) => workerLog.filter((l) => l.method === m && l.path === p && l.status === s).length;
   if (n('POST', '/auth/start', 201) !== 1) bad.push(`Worker 스텁이 POST /auth/start 201을 ${n('POST', '/auth/start', 201)}번 받았다(정확히 1번이어야 한다)`);
-  if (n('POST', '/auth/poll', 200) < 2) bad.push(`Worker 스텁이 POST /auth/poll 200을 ${n('POST', '/auth/poll', 200)}번 받았다(2번 이상이어야 한다)`);
+  const login = `/auth/login/${STUB_HANDLE}`;
+  if (n('GET', login, 303) !== 1) bad.push(`Worker 스텁이 GET ${login} 303을 ${n('GET', login, 303)}번 받았다(정확히 1번이어야 한다)`);
+  if (n('POST', '/auth/redeem', 200) !== 1) bad.push(`Worker 스텁이 POST /auth/redeem 200을 ${n('POST', '/auth/redeem', 200)}번 받았다(정확히 1번이어야 한다)`);
   const errs = workerLog.filter((l) => l.status >= 400 && !l.path.startsWith('/update/'));
   if (errs.length) bad.push(`Worker 스텁이 오류 응답을 했다: ${errs.map((l) => `${l.method} ${l.path} ${l.status}`).join(', ')}`);
   return bad;
@@ -326,19 +328,19 @@ export async function run(exe) {
     const LOGIN = "//button[normalize-space(.)='치지직으로 로그인']";
     await wd.click(sid, await until('로그인 버튼', () => wd.find(sid, 'xpath', LOGIN), STEP_MS));
     log('로그인을 눌렀다');
-    // 확인 코드 화면은 poll 간격(2초 남짓)만 보일 수 있다. 드라이버 응답이 늦어 놓쳐도 입력줄이 이미 있으면 지나간다
-    // (확인 코드 화면을 거쳤다는 증명은 judgeWorker의 start 1번·poll 2번 이상이 한다)
+    // 대기 화면은 루프백 사슬이 끝나기까지(스텁 303 → 수신기 GET → redeem)만 보일 수 있다. 드라이버 응답이 늦어 놓쳐도 입력줄이 이미 있으면 지나간다
+    // (사슬을 거쳤다는 증명은 judgeWorker의 start 201·login 303·redeem 200 각 1번이 한다)
     const sawCode = await until(
-      '확인 코드 화면',
+      '대기 화면',
       () =>
         wd.exec(
           sid,
           "if (document.body.innerText.includes(arguments[0])) return 'code'; return document.querySelector('#url-input') ? 'home' : null",
-          [STUB_USER_CODE],
+          ['브라우저에서 로그인해 주세요'],
         ),
       STEP_MS,
     );
-    log(sawCode === 'code' ? '확인 코드 화면' : '확인 코드 화면을 놓쳤다(이미 홈)');
+    log(sawCode === 'code' ? '대기 화면' : '대기 화면을 놓쳤다(이미 홈)');
 
     const input = await until('주소 입력줄(로그인 완료)', () => wd.find(sid, 'css selector', '#url-input'), STEP_MS);
     log('로그인 완료');

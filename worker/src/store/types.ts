@@ -27,22 +27,17 @@ export type TokenBundle = {
   readonly isAdmin: boolean;
 };
 
+/** startApp RPC 입력(객체 하나: 배포 중 옛 isolate의 위치 인자 호출은 객체 검사에서 bad_request, 구현 중 변경 88 (다)·89) */
+export type StartAppInput = { readonly port: number; readonly verifier: string; readonly client: string; readonly ip: string | null; readonly limit: number };
 export type StartAppResult =
-  | {
-      readonly ok: true;
-      readonly loginId: string;
-      readonly handle: string;
-      readonly userCode: string;
-      readonly expiresAt: number;
-      readonly pollIntervalMs: number;
-    }
+  | { readonly ok: true; readonly flowId: string; readonly handle: string; readonly expiresAt: number }
   | { readonly ok: false; readonly code: "rate_limited"; readonly retryAfterSec: number }
   | { readonly ok: false; readonly code: "busy" | "bad_request" };
 export type StartWebResult =
   | { readonly ok: true; readonly state: string; readonly binder: string; readonly expiresAt: number }
   | { readonly ok: false; readonly code: "rate_limited"; readonly retryAfterSec: number }
   | { readonly ok: false; readonly code: "busy" };
-export type LoginPageView = { readonly userCode: string; readonly status: FlowStatus; readonly expiresAt: number };
+export type LoginPageView = { readonly status: FlowStatus; readonly expiresAt: number };
 export type ContinueResult =
   | { readonly ok: true; readonly state: string; readonly binder: string }
   | { readonly ok: false; readonly code: "not_found" | "already_used" };
@@ -53,25 +48,29 @@ export type LoginOutcome =
   | { readonly type: "cancelled" }
   | { readonly type: "failed"; readonly code: LoginFailCode }
   | { readonly type: "user"; readonly channelId: string; readonly channelName: string };
+/** 앱 흐름의 종결 결과(루프백 303으로 앱 수신기에 가고, 내용은 redeem이 싣는다) */
+export type LoopbackResult = "ok" | "denied" | "cancelled" | "failed";
+/** denied·cancelled·failed는 웹 흐름, 그리고 port가 NULL인 앱 흐름의 failed다 */
 export type FinishResult =
-  | { readonly type: "ok" }
+  | { readonly type: "loopback"; readonly result: LoopbackResult; readonly port: number; readonly grant: string; readonly state: string }
   | { readonly type: "web"; readonly cookieToken: string; readonly csrf: string; readonly expiresAt: number }
   | { readonly type: "denied" }
   | { readonly type: "cancelled" }
   | { readonly type: "failed" }
   /** 흐름이 없거나 exchanging이 아니거나 만료: Worker는 r=failed */
   | { readonly type: "gone" };
+/** store finish(동기)의 결과: 앱 종결은 verifier를 담고 AuthStore가 트랜잭션 뒤 state로 바꾼다(verifier는 RPC 밖으로 나가지 않는다) */
+export type FinishSettled =
+  | Exclude<FinishResult, { type: "loopback" }>
+  | { readonly type: "loopback"; readonly result: LoopbackResult; readonly port: number; readonly grant: string; readonly verifier: string };
 export type DoneView = {
   readonly kind: FlowKind;
   readonly status: "ok" | "denied" | "cancelled" | "failed";
-  readonly userCode: string | null;
   readonly channelName: string | null;
   readonly channelId: string | null;
 };
-export type ClaimResult =
-  | { readonly status: "too_soon" }
+export type RedeemResult =
   | { readonly status: "not_found" }
-  | { readonly status: "pending" }
   | { readonly status: "ok"; readonly bundle: TokenBundle }
   | { readonly status: "denied"; readonly channelName: string }
   | { readonly status: "cancelled" }

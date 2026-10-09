@@ -341,19 +341,19 @@ impl App {
         n
     }
 
-    /// `auth_login`(D13): Started일 때만 `open(로그인 주소)`을 부르고 폴링 태스크를 띄운다
+    /// `auth_login`(D13): Started일 때만 수령 대기 태스크를 먼저 띄운 뒤 `open(로그인 주소)`을 부른다
     pub async fn auth_login(&self, open: impl FnOnce(&str) -> bool + Send) -> AuthStatusDto {
         let Some(auth) = self.auth.clone() else {
             return AuthStatusDto::disabled();
         };
         if let BeginLogin::Started(ticket) = auth.begin_login().await {
+            let a = auth.clone();
+            self.runtime.spawn(async move {
+                a.run_login_wait().await;
+            });
             if !open(ticket.login_url.expose()) {
                 tracing::warn!(result = "open_failed", "로그인 주소를 브라우저로 열지 못함");
             }
-            let a = auth.clone();
-            self.runtime.spawn(async move {
-                a.run_login_poll().await;
-            });
         }
         AuthStatusDto::from_status(&auth.status())
     }

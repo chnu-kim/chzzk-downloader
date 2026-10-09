@@ -6,7 +6,7 @@ import type { TokenBundle } from "../store/types";
 import { readJsonObject } from "./request";
 import { errorJson, iso, json } from "./respond";
 
-/** 토큰 묶음(poll ok·refresh 성공 응답, §6.3) */
+/** 토큰 묶음(redeem ok·refresh 성공 응답, §6.3) */
 export function tokenBundleJson(b: TokenBundle, now: number): Record<string, unknown> {
   return {
     status: "ok",

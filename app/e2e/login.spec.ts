@@ -17,11 +17,13 @@ test('로그인 전에는 로그인 화면만 보이고 게이트 뒤 command를
   await app.axe('로그인 화면');
 });
 
-test('로그인하면 확인 코드를 보이고, 끝나면 홈으로 간다', async ({ app }) => {
+test('로그인하면 브라우저 안내와 남은 시간을 보이고, 끝나면 홈으로 간다', async ({ app }) => {
   const { page } = app;
   await app.open({ auth: auth({ state: 'signedOut' }) });
   await page.getByRole('button', { name: '치지직으로 로그인' }).click();
-  await expect(page.getByText('K7QX-4MRA')).toBeVisible();
+  await expect(page.getByText(/[2-9A-HJ-NP-Z]{4}-[2-9A-HJ-NP-Z]{4}/)).toHaveCount(0);
+  await expect(page.getByText('로그인 주소는 이 컴퓨터의 브라우저에서 열어 주세요.')).toBeVisible();
+  await expect(page.getByText('브라우저에 연결할 수 없다는 오류가 보이면 다시 로그인해 주세요.')).toHaveCount(0);
   await expect(page.getByText(/남은 시간 (10:00|9:\d\d)/)).toBeVisible();
   await page.getByRole('button', { name: '로그인 주소 복사' }).click();
   await expect(page.getByText('복사했어요')).toBeVisible();
@@ -40,7 +42,9 @@ test('거부·유예 만료 화면과 다시 연결', async ({ app }) => {
   await app.open({ auth: auth({ state: 'denied', channelName: '테스트 채널' }) });
   await expect(page.getByRole('heading', { name: '사용 허가가 없는 채널이에요' })).toBeVisible();
   await expect(page.getByText(/채널: 테스트 채널\./)).toBeVisible();
-  await expect(page.getByText(/네이버 로그아웃을 먼저/)).toBeVisible();
+  await expect(page.getByRole('button', { name: '다시 시도' })).toBeVisible();
+  await expect(page.getByText(/네이버 로그아웃 후/)).toBeVisible();
+  await expect(page.getByRole('button', { name: '다른 계정으로 로그인' })).toBeVisible();
   await app.axe('로그인 거부');
 
   await app.ctl((c, s) => c.setAuth(s), auth({ state: 'expired', reason: 'graceExpired' }));
@@ -54,7 +58,7 @@ test('저장 세션이 있으면 로그인을 취소해도 유예 만료 화면�
   const { page } = app;
   const grace = auth({ state: 'expired', reason: 'graceExpired' });
   await app.open({
-    auth: auth({ state: 'pending', pending: { userCode: 'K7QX-4MRA', expiresAt: Math.floor(Date.now() / 1000) + 600 } }),
+    auth: auth({ state: 'pending', pending: { expiresAt: Math.floor(Date.now() / 1000) + 600 } }),
     authHeld: grace,
   });
   await page.getByRole('button', { name: '취소' }).click();
@@ -62,6 +66,29 @@ test('저장 세션이 있으면 로그인을 취소해도 유예 만료 화면�
   await page.getByRole('button', { name: '다시 연결' }).click();
   await expect(page.getByText(/아직 연결되지 않았어요/)).toBeVisible();
   expect(await page.evaluate(() => window.__e2e.authEvents)).toEqual(['expired', 'checking', 'expired']);
+});
+
+test('대기 90초가 지나면 연결 오류 안내와 [다시 로그인]이 보이고, 누르면 취소 뒤 새로 시작한다', async ({ app }) => {
+  const { page } = app;
+  await app.open({ auth: auth({ state: 'pending', pending: { expiresAt: Math.floor(Date.now() / 1000) + 500 } }) });
+  await expect(page.getByText('브라우저에 연결할 수 없다는 오류가 보이면 다시 로그인해 주세요.')).toBeVisible();
+  await app.axe('로그인 대기 지연');
+  await page.getByRole('button', { name: '다시 로그인' }).click();
+  await expect(page.getByText('브라우저에 연결할 수 없다는 오류가 보이면 다시 로그인해 주세요.')).toHaveCount(0);
+  const cmds = await app.cmds();
+  expect(cmds.lastIndexOf('auth_cancel')).toBeGreaterThanOrEqual(0);
+  expect(cmds.lastIndexOf('auth_cancel')).toBeLessThan(cmds.lastIndexOf('auth_login'));
+  await expect(page.getByRole('heading', { name: '브라우저에서 로그인해 주세요' })).toBeVisible();
+});
+
+test('수신기를 열지 못하면 안내와 [다시 로그인]', async ({ app }) => {
+  const { page } = app;
+  await app.open({ auth: auth({ state: 'error', reason: 'receiver' }) });
+  await expect(page.getByRole('heading', { name: '로그인을 준비하지 못했어요' })).toBeVisible();
+  await expect(page.getByText('앱이 로그인 결과를 받을 수 없었어요. 다시 시도해 주세요.')).toBeVisible();
+  await app.axe('수신기 실패');
+  await page.getByRole('button', { name: '다시 로그인' }).click();
+  expect(await app.cmds()).toContain('auth_login');
 });
 
 test('오프라인 배지와 로그아웃', async ({ app }) => {

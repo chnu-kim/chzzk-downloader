@@ -9,6 +9,7 @@
 // 결과: target/ci/worker-e2e/{wrangler.log,result.json}. Linux·macOS 전용(프로세스 그룹째 끈다).
 import { spawn } from "node:child_process";
 import { createWriteStream, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import http from "node:http";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -31,9 +32,10 @@ import {
   extractCsrf,
   extractDownloadLinks,
   extractRowIds,
-  extractUserCode,
+  loopbackStateOf,
   makeCanaries,
   parseDevVars,
+  parseLoopbackLocation,
   parseReferrerPolicy,
   scanLogs,
   stripAnsi,
@@ -66,11 +68,11 @@ const IP_T6A = "2001:db8:7:7::1";
 const IP_T6B = "2001:db8:7:7::2";
 const IP_T6C = "2001:db8:7:8::1";
 
-// E17이 요구하는 카나리 종류와 최소 수(2026-10-07 실측 119개: 고정 19 + 동적 100)
-const REQUIRED_CANARY_LABELS = ["ip", "cookie.cdl_s", "cookie.cdl_f", "state", "sessionId", "csrf", "pollSecret", "pollVerifier", "loginId", "userCode", "handle", "access", "refresh", "chzzk.code", "chzzk.token"];
+// E17이 요구하는 카나리 종류와 최소 수(2026-10-09 실측 103개: 루프백 전환 뒤 loginId·userCode 카나리가 없어졌다, worker.md 구현 중 변경 89 (자))
+const REQUIRED_CANARY_LABELS = ["ip", "cookie.cdl_s", "cookie.cdl_f", "state", "sessionId", "csrf", "loginSecret", "loginVerifier", "grant", "loopState", "handle", "access", "refresh", "chzzk.code", "chzzk.token"];
 const MIN_CANARIES = 100;
 
-const POLL_GAP_MS = 1600; // 서버의 폴링 간격(1.5초)보다 조금 길게
+const LOOPBACK_PATH = "/chzzk-downloader/login"; // src/core/loopback.ts LOOPBACK_PATH
 const LATEST = E2E_VERSIONS[E2E_VERSIONS.length - 1];
 const ID = (k) => FAKE_ACCOUNTS[k].channelId;
 const enc = new TextEncoder();
@@ -199,53 +201,95 @@ async function authorizeToCallback(res) {
 
 // ---- 앱 로그인 ----
 
-async function appStart(ip) {
-  const pollSecret = b64url(crypto.getRandomValues(new Uint8Array(32)));
-  const pollVerifier = b64url(new Uint8Array(await crypto.subtle.digest("SHA-256", enc.encode(pollSecret))));
-  canaries.add("secret", "pollSecret", pollSecret);
-  canaries.add("secret", "pollVerifier", pollVerifier);
-  const res = await jsonPost("/auth/start", { pollVerifier, client: "app/0.1.0 e2e" }, { ip });
-  const flow = { res, status: res.status, pollSecret, body: null, lastPollAt: Date.now() };
+/** 앱 수신기 흉내: 127.0.0.1 임의 포트의 1회용 HTTP 서버. 받은 요청을 기록하고 200 text/plain으로 답한다(값은 출력하지 않는다) */
+async function startReceiver() {
+  const hits = [];
+  const server = http.createServer((rq, rs) => {
+    hits.push({ method: rq.method, url: rq.url, host: rq.headers.host });
+    rs.writeHead(200, { "Content-Type": "text/plain" });
+    rs.end("ok");
+  });
+  await new Promise((res, rej) => {
+    server.once("error", rej);
+    server.listen(0, "127.0.0.1", res);
+  });
+  const port = server.address().port;
+  let closed = false;
+  const close = () =>
+    closed
+      ? Promise.resolve()
+      : new Promise((res) => {
+          closed = true;
+          server.close(() => res());
+          server.closeAllConnections?.();
+        });
+  return { port, hits, close };
+}
+
+async function appStart(ip, port = 49152) {
+  const loginSecret = b64url(crypto.getRandomValues(new Uint8Array(32)));
+  const loginVerifier = b64url(new Uint8Array(await crypto.subtle.digest("SHA-256", enc.encode(loginSecret))));
+  canaries.add("secret", "loginSecret", loginSecret);
+  canaries.add("secret", "loginVerifier", loginVerifier);
+  const res = await jsonPost("/auth/start", { port, loginVerifier, client: "app/0.1.0 e2e" }, { ip });
+  const flow = { res, status: res.status, loginSecret, verifier: loginVerifier, port, body: null };
   if (res.status === 201) {
     flow.body = json(res);
-    canaries.add("secret", "loginId", flow.body.loginId);
-    canaries.add("secret", "userCode", flow.body.userCode);
     canaries.add("path", "handle", flow.body.loginUrl.split("/").pop());
   }
   return flow;
 }
 
-/** 같은 loginId의 poll은 직전 poll(또는 start)에서 1600ms 뒤에만 보낸다 */
-async function pollFlow(flow) {
-  const wait = flow.lastPollAt + POLL_GAP_MS - Date.now();
-  if (wait > 0) await sleep(wait);
-  const res = await jsonPost("/auth/poll", { loginId: flow.body.loginId, pollSecret: flow.pollSecret });
-  flow.lastPollAt = Date.now();
-  return res;
+/** 콜백 303이 앱 수신기로 가는지 확인하고, 그 주소를 수신기에 실제로 연다(앱이 받는 것과 같다). grant·state를 카나리에 넣는다 */
+async function followLoopback(flow, callback, receiver) {
+  isStatus(callback, 303, "콜백");
+  must(parseReferrerPolicy(callback.headers.get("referrer-policy")) === "no-referrer", "루프백 303의 Referrer-Policy가 no-referrer가 아니다");
+  const cleared = callback.headers.getSetCookie().some((c) => /^cdl_f=; Max-Age=0/.test(c));
+  must(cleared, "루프백 303이 흐름 쿠키를 지우지 않았다");
+  const location = callback.headers.get("location") ?? "";
+  const loop = parseLoopbackLocation(location);
+  must(loop !== null, "콜백의 Location이 루프백 주소 모양이 아니다");
+  must(loop.port === receiver.port, "루프백 포트가 start 때 보낸 포트와 다르다");
+  must(loop.state === (await loopbackStateOf(flow.verifier)), "루프백 state가 loginVerifier에서 나온 값과 다르다");
+  canaries.add("secret", "grant", loop.grant);
+  canaries.add("secret", "loopState", loop.state);
+  const r = await req("GET", location);
+  isStatus(r, 200, "앱 수신기");
+  must(receiver.hits.length === 1, `수신기 요청 ${receiver.hits.length}개(필요 1)`);
+  const hit = receiver.hits[0];
+  must(hit.url === `${LOOPBACK_PATH}?grant=${loop.grant}&state=${loop.state}`, "수신기가 받은 경로·쿼리가 기대와 다르다");
+  must(hit.host === `127.0.0.1:${loop.port}`, "수신기가 받은 Host가 127.0.0.1:<포트>가 아니다");
+  return loop;
 }
 
-/** 앱 로그인 전 과정: start → 확인 페이지 → [계속] → 인가 → 콜백 → 완료 페이지 → poll */
+/** 앱 로그인 전 과정: 수신기 → start → 확인 페이지 → [계속] → 인가 → 콜백 → 루프백 → redeem */
 async function appLogin(account, ip) {
   fakeServer.fake.state.account = account;
-  const flow = await appStart(ip);
-  isStatus(flow.res, 201, `앱 start(${account})`);
-  const jar = new CookieJar();
-  const loginPath = new URL(flow.body.loginUrl).pathname;
-  const page = await browserGet(jar, loginPath);
-  isStatus(page, 200, "확인 페이지");
-  must(extractUserCode(page.html) === flow.body.userCode, "확인 페이지의 확인 코드가 start와 다르다");
-  const cont = await browserPost(jar, page, loginPath);
-  const cb = await authorizeToCallback(cont);
-  const callback = await req("GET", cb, { jar });
-  isStatus(callback, 303, "콜백");
-  const doneLoc = callback.headers.get("location") ?? "";
-  const done = await browserGet(jar, doneLoc);
-  isStatus(done, 200, "완료 페이지");
-  const pollRes = await pollFlow(flow);
-  isStatus(pollRes, 200, "poll");
-  const poll = json(pollRes);
-  if (poll.status === "ok") registerBundle(poll);
-  return { flow, jar, callback, doneLoc, done, poll };
+  const receiver = await startReceiver();
+  let flow;
+  let jar;
+  let callback;
+  let loop;
+  try {
+    flow = await appStart(ip, receiver.port);
+    isStatus(flow.res, 201, `앱 start(${account})`);
+    jar = new CookieJar();
+    const loginPath = new URL(flow.body.loginUrl).pathname;
+    const page = await browserGet(jar, loginPath);
+    isStatus(page, 200, "확인 페이지");
+    must(!page.html.includes("확인 코드"), "확인 페이지에 확인 코드 문구가 남았다");
+    const cont = await browserPost(jar, page, loginPath);
+    const cb = await authorizeToCallback(cont);
+    callback = await req("GET", cb, { jar });
+    loop = await followLoopback(flow, callback, receiver);
+  } finally {
+    await receiver.close();
+  }
+  const redeemRes = await jsonPost("/auth/redeem", { grant: loop.grant, loginSecret: flow.loginSecret });
+  isStatus(redeemRes, 200, "redeem");
+  const redeem = json(redeemRes);
+  if (redeem.status === "ok") registerBundle(redeem);
+  return { flow, jar, callback, loop, redeem };
 }
 
 // ---- 환경 ----
@@ -571,44 +615,67 @@ const scenarios = [
     "E06-app-b2",
     async () => {
       fakeServer.fake.state.account = "b2";
-      const flow = await appStart(IP_B2);
-      isStatus(flow.res, 201, "앱 start");
-      must(flow.body.loginUrl.startsWith(`${E2E_ORIGIN}/auth/login/`), "loginUrl이 PUBLIC_ORIGIN 아래가 아니다");
-      must(/^[2-9A-HJ-NP-Z]{4}-[2-9A-HJ-NP-Z]{4}$/.test(flow.body.userCode), "userCode 형식이 틀렸다");
-      must(flow.body.pollIntervalMs === 2000, "pollIntervalMs가 2000이 아니다");
-      const p1 = await pollFlow(flow);
-      isStatus(p1, 200, "poll#1");
-      must(json(p1).status === "pending", "poll#1이 pending이 아니다");
+      const receiver = await startReceiver();
+      let flow;
+      let callback;
+      let loop;
       const jar = new CookieJar();
-      const loginPath = new URL(flow.body.loginUrl).pathname;
-      const page = await browserGet(jar, loginPath);
-      isStatus(page, 200, "확인 페이지");
-      must(extractUserCode(page.html) === flow.body.userCode, "확인 페이지의 확인 코드가 start와 다르다");
-      must(page.policy === "same-origin", "확인 페이지의 Referrer-Policy가 same-origin이 아니다");
-      isStatus(await browserPost(jar, page, loginPath, {}, { policy: "no-referrer" }), 403, "Origin: null [계속]");
-      const cont = await browserPost(jar, page, loginPath);
-      const cb = await authorizeToCallback(cont);
-      must(jar.has("cdl_f"), "[계속]이 흐름 쿠키를 주지 않았다");
-      isStatus(await browserPost(jar, page, loginPath), 409, "같은 흐름의 두 번째 [계속]");
-      const callback = await req("GET", cb, { jar });
-      isStatus(callback, 303, "콜백");
-      const done = await browserGet(jar, callback.headers.get("location") ?? "");
-      isStatus(done, 200, "완료 페이지");
-      must(done.html.includes(flow.body.userCode), "완료 페이지에 확인 코드가 없다");
-      must(!jar.has("cdl_f"), "완료 뒤에도 흐름 쿠키가 남았다");
-      const p2 = await pollFlow(flow);
-      isStatus(p2, 200, "poll#2");
-      const b = json(p2);
-      must(b.status === "ok" && b.channelId === ID("b2") && b.isAdmin === false, "poll#2가 b2(비관리자)의 ok가 아니다");
+      try {
+        flow = await appStart(IP_B2, receiver.port);
+        isStatus(flow.res, 201, "앱 start");
+        must(JSON.stringify(Object.keys(flow.body).sort()) === JSON.stringify(["expiresAt", "loginUrl"]), "start 응답의 키가 expiresAt·loginUrl뿐이 아니다");
+        must(flow.body.loginUrl.startsWith(`${E2E_ORIGIN}/auth/login/`), "loginUrl이 PUBLIC_ORIGIN 아래가 아니다");
+        const loginPath = new URL(flow.body.loginUrl).pathname;
+        const page = await browserGet(jar, loginPath);
+        isStatus(page, 200, "확인 페이지");
+        must(page.policy === "same-origin", "확인 페이지의 Referrer-Policy가 same-origin이 아니다");
+        const csp = page.res.headers.get("content-security-policy") ?? "";
+        must(csp.includes(`form-action 'self' ${FAKE_ORIGIN} http://127.0.0.1:*`), "확인 페이지 CSP의 form-action에 가짜 치지직과 루프백 출처가 없다");
+        must(!page.html.includes("확인 코드"), "확인 페이지에 확인 코드 문구가 남았다");
+        isStatus(await browserPost(jar, page, loginPath, {}, { policy: "no-referrer" }), 403, "Origin: null [계속]");
+        const cont = await browserPost(jar, page, loginPath);
+        const cb = await authorizeToCallback(cont);
+        must(jar.has("cdl_f"), "[계속]이 흐름 쿠키를 주지 않았다");
+        isStatus(await browserPost(jar, page, loginPath), 409, "같은 흐름의 두 번째 [계속]");
+        callback = await req("GET", cb, { jar });
+        loop = await followLoopback(flow, callback, receiver);
+        must(!jar.has("cdl_f"), "완료 뒤에도 흐름 쿠키가 남았다");
+      } finally {
+        await receiver.close();
+      }
+      const r1 = await jsonPost("/auth/redeem", { grant: loop.grant, loginSecret: flow.loginSecret });
+      isStatus(r1, 200, "redeem#1");
+      const b = json(r1);
+      must(b.status === "ok" && b.channelId === ID("b2") && b.isAdmin === false, "redeem#1이 b2(비관리자)의 ok가 아니다");
       must(b.accessToken.startsWith("cda_") && b.refreshToken.startsWith("cdr_"), "토큰 접두가 cda_/cdr_가 아니다");
       registerBundle(b);
       S.b2 = { A0: b.accessToken, R0: b.refreshToken };
-      const p3 = await pollFlow(flow);
-      isStatus(p3, 404, "poll#3");
-      must(json(p3).code === "not_found", "poll#3의 code가 not_found가 아니다");
+      const r2 = await jsonPost("/auth/redeem", { grant: loop.grant, loginSecret: flow.loginSecret });
+      isStatus(r2, 404, "redeem#2");
+      must(json(r2).code === "not_found", "redeem#2의 code가 not_found가 아니다");
       const me = await req("GET", "/api/me", { headers: bearer(S.b2.A0) });
       isStatus(me, 200, "/api/me");
       must(json(me).channelId === ID("b2"), "/api/me의 channelId가 b2가 아니다");
+    },
+  ],
+  [
+    "E06b-app-outdated",
+    async () => {
+      // 옛 앱(v0.1.1) 대응: 포트 없는 start는 201 미끼, 안내 페이지, poll 비석
+      const decoy = await jsonPost("/auth/start", { pollVerifier: b64url(crypto.getRandomValues(new Uint8Array(32))), client: "app/0.1.1 e2e" });
+      isStatus(decoy, 201, "옛 앱 start");
+      const d = json(decoy);
+      must(/^[A-Za-z0-9_-]{22}$/.test(d.loginId), "미끼 loginId가 22자 b64url이 아니다");
+      must(d.userCode === "UPDA-TE22", "미끼 userCode가 UPDA-TE22가 아니다");
+      must(d.pollIntervalMs === 30000, "미끼 pollIntervalMs가 30000이 아니다");
+      const handle = d.loginUrl.split("/").pop();
+      must(/^[A-Za-z0-9_-]{22}$/.test(handle), "미끼 loginUrl의 handle이 22자 b64url이 아니다");
+      const page = await browserGet(new CookieJar(), new URL(d.loginUrl).pathname);
+      isStatus(page, 200, "미끼 안내 페이지");
+      must(page.html.includes("앱이 오래됐어요"), "안내 페이지에 업데이트 문구가 없다");
+      const poll = await jsonPost("/auth/poll", {});
+      isStatus(poll, 404, "poll 비석");
+      must(json(poll).code === "app_outdated", "poll 비석의 code가 app_outdated가 아니다");
     },
   ],
   [
@@ -678,10 +745,7 @@ const scenarios = [
     "E09-denied-c3",
     async () => {
       const r = await appLogin("c3", IP_C3);
-      must(!r.done.html.includes("<script"), "거부 완료 페이지에 <script가 있다(이스케이프 실패)");
-      must(r.done.html.includes("&lt;script&gt;"), "거부 완료 페이지에 이스케이프된 채널 이름이 없다");
-      must(r.done.html.includes(ID("c3")), "거부 완료 페이지에 c3 채널 ID가 없다");
-      must(r.poll.status === "denied" && r.poll.channelName === FAKE_ACCOUNTS.c3.channelName, "poll이 c3 denied가 아니다");
+      must(r.redeem.status === "denied" && r.redeem.channelName === FAKE_ACCOUNTS.c3.channelName, "redeem이 c3 denied가 아니다");
     },
   ],
   [
@@ -696,8 +760,8 @@ const scenarios = [
       const allow = await browserPost(jar, page, `/admin/denied/${ID("c3")}/allow`, { csrf });
       isStatus(allow, 303, "거부 목록에서 허용");
       const r = await appLogin("c3", IP_C3);
-      must(r.poll.status === "ok" && r.poll.channelId === ID("c3"), "허용 뒤 c3 로그인이 ok가 아니다");
-      S.c3 = { A: r.poll.accessToken, R: r.poll.refreshToken };
+      must(r.redeem.status === "ok" && r.redeem.channelId === ID("c3"), "허용 뒤 c3 로그인이 ok가 아니다");
+      S.c3 = { A: r.redeem.accessToken, R: r.redeem.refreshToken };
     },
   ],
   [
@@ -725,8 +789,7 @@ const scenarios = [
       fakeServer.fake.state.authorize = "cancel";
       try {
         const r = await appLogin("b2", IP_CANCEL);
-        must(r.doneLoc.includes("r=cancelled"), "취소한 콜백이 r=cancelled로 보내지 않았다");
-        must(r.poll.status === "cancelled", "취소한 흐름의 poll이 cancelled가 아니다");
+        must(r.redeem.status === "cancelled", "취소한 흐름의 redeem이 cancelled가 아니다");
       } finally {
         fakeServer.fake.state.authorize = "approve";
       }

@@ -2,7 +2,7 @@
 
 use chzzk_shell::auth::token::*;
 
-const KAT_POLL: &str = "WlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlo";
+const KAT_LOGIN: &str = "WlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlo";
 // 철자 검사기 오탐을 피하려고 문자열을 둘로 나눈다.
 const KAT_VERIFIER_B64: &str = concat!("vsC21rUDXpkBYxB", "RE9D-8wa2cqfiPLd0sDvQNlNjtT0");
 const KAT_VERIFIER_HEX: &str = "bec0b6d6b5035e990163105113d0fef306b672a7e23cb774b03bd0365363b53d";
@@ -25,13 +25,13 @@ fn hex_of(b64: &str) -> String {
 }
 
 #[test]
-fn kat_poll_secret_from_0x5a() {
-    assert_eq!(poll_secret_from_bytes(&[0x5a; 32]).expose(), KAT_POLL);
+fn kat_login_secret_from_0x5a() {
+    assert_eq!(login_secret_from_bytes(&[0x5a; 32]).expose(), KAT_LOGIN);
 }
 
 #[test]
-fn kat_poll_verifier_hashes_b64url_string() {
-    let v = poll_verifier(KAT_POLL);
+fn kat_login_verifier_hashes_b64url_string() {
+    let v = login_verifier(KAT_LOGIN);
     assert_eq!(v, KAT_VERIFIER_B64);
     assert_eq!(hex_of(&v), KAT_VERIFIER_HEX);
     // 디코드한 32바이트를 해시한 값과는 다르다(문자열을 해시한다)
@@ -111,22 +111,6 @@ fn id_and_secret_lengths() {
 }
 
 #[test]
-fn user_code_table() {
-    for (s, want) in [
-        ("K7QX-4MRA", true),
-        ("k7qx-4mra", false),
-        ("K7QX4MRA", false),
-        ("K0QX-4MRA", false),
-        ("K1QX-4MRA", false),
-        ("KIQX-4MRA", false),
-        ("KOQX-4MRA", false),
-        ("K7QX-4MRAA", false),
-    ] {
-        assert_eq!(is_user_code(s), want, "{s}");
-    }
-}
-
-#[test]
 fn channel_id_table() {
     let ch = "000000000000000000000000000000a1";
     assert!(is_channel_id(ch));
@@ -137,8 +121,61 @@ fn channel_id_table() {
 }
 
 #[test]
-fn new_poll_secret_is_random_and_well_formed() {
-    let (x, y) = (new_poll_secret(), new_poll_secret());
+fn new_login_secret_is_random_and_well_formed() {
+    let (x, y) = (new_login_secret(), new_login_secret());
     assert_ne!(x.expose(), y.expose());
     assert!(is_secret(x.expose()) && is_secret(y.expose()));
+}
+
+const LOOPBACK_VECTORS: &str = include_str!("../../../worker/test/vectors/loopback-vectors.json");
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StateRow {
+    login_secret: Option<String>,
+    login_verifier: String,
+    state: String,
+}
+
+#[derive(serde::Deserialize)]
+#[allow(dead_code)]
+struct Vectors {
+    domain: String,
+    state: Vec<StateRow>,
+    #[serde(rename = "portInvalid")]
+    port_invalid: Vec<serde_json::Value>,
+}
+
+#[test]
+fn kat_loopback_state_shared_vectors() {
+    let v: Vectors = serde_json::from_str(LOOPBACK_VECTORS).unwrap();
+    assert_eq!(v.domain, LOOPBACK_STATE_DOMAIN);
+    assert!(!v.state.is_empty());
+    for r in &v.state {
+        assert_eq!(loopback_state(&r.login_verifier), r.state);
+        assert!(is_secret(&r.state));
+        if let Some(secret) = &r.login_secret {
+            assert_eq!(login_verifier(secret), r.login_verifier);
+        }
+    }
+}
+
+#[test]
+fn grant_format_table() {
+    let a43 = a(43);
+    for (s, want) in [
+        (format!("cdg_{a43}"), true),
+        (format!("cdg_{}", "_-".repeat(21) + "x"), true),
+        (format!("cda_{a43}"), false),
+        (format!("cdg_{}", a(42)), false),
+        (format!("cdg_{}", a(44)), false),
+        (format!("cdg_{}+", a(42)), false),
+        (format!("cdg_{}/", a(42)), false),
+        (format!("cdg_{} ", a(42)), false),
+        (format!("CDG_{a43}"), false),
+        (a43.clone(), false),
+    ] {
+        assert_eq!(is_grant(&s), want, "{s:?}");
+        assert_eq!(Grant::parse(&s).is_some(), want, "{s:?}");
+    }
 }

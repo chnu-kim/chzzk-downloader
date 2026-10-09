@@ -31,7 +31,9 @@ export declare class CookieJar {
 export declare function parseReferrerPolicy(value: string | null): string;
 export declare function browserPostHeaders(o: { documentUrl: string; referrerPolicy: string; targetUrl: string }): { Origin: string; "Sec-Fetch-Site": string };
 export declare function extractCsrf(html: string): string | null;
-export declare function extractUserCode(html: string): string | null;
+export declare const LOOPBACK_LOCATION_RE: RegExp;
+export declare function parseLoopbackLocation(loc: unknown): { port: number; path: string; grant: string; state: string } | null;
+export declare function loopbackStateOf(verifier: string): Promise<string>;
 export declare function extractRowIds(html: string, o: { channelId: string; actionPrefix: string }): string[];
 export declare function extractDownloadLinks(html: string): { href: string; file: string; sha256: string }[];
 export declare function stripAnsi(s: string): string;

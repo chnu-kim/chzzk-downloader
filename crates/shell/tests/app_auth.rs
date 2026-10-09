@@ -21,7 +21,7 @@ use tempfile::TempDir;
 use time::OffsetDateTime;
 use url::Url;
 use wiremock::matchers::{any, method, path};
-use wiremock::{Mock, MockServer, ResponseTemplate};
+use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
 
 const CH: &str = "000000000000000000000000000000a1";
 
@@ -101,11 +101,8 @@ fn save_session(root: &Path, worker: &MockServer, verified: OffsetDateTime) {
 
 fn start_body(origin: &str) -> String {
     serde_json::json!({
-        "loginId": "L".repeat(22),
         "loginUrl": format!("{origin}/auth/login/{}", "H".repeat(22)),
-        "userCode": "K7QX-4MRA",
         "expiresAt": "2030-01-01T00:10:00.000Z",
-        "pollIntervalMs": 2000,
     })
     .to_string()
 }
@@ -118,11 +115,6 @@ async fn mock_start_ok(worker: &MockServer) {
     Mock::given(method("POST"))
         .and(path("/auth/start"))
         .respond_with(json_response(201, start_body(&worker.uri())))
-        .mount(worker)
-        .await;
-    Mock::given(method("POST"))
-        .and(path("/auth/poll"))
-        .respond_with(json_response(200, r#"{"status":"pending"}"#.into()))
         .mount(worker)
         .await;
 }
@@ -357,7 +349,7 @@ async fn auth_login_opens_the_ticket_only_when_started() {
     };
     let st = app.auth_login(rec(&opened)).await;
     assert_eq!(st.state, AuthState::Pending);
-    assert_eq!(st.pending.unwrap().user_code, "K7QX-4MRA");
+    assert!(st.pending.is_some());
     assert_eq!(*opened.lock().unwrap(), vec![url.clone()]);
 
     assert!(app.auth_reopen(rec(&opened)));
@@ -411,11 +403,6 @@ async fn auth_login_discarded_by_cancel_opens_nothing() {
         )
         .mount(&worker)
         .await;
-    Mock::given(method("POST"))
-        .and(path("/auth/poll"))
-        .respond_with(json_response(200, r#"{"status":"pending"}"#.into()))
-        .mount(&worker)
-        .await;
     let app = Arc::new(open_auth(t.path(), &api, &worker));
     let opened: Arc<Mutex<Vec<String>>> = Arc::default();
     let o = opened.clone();
@@ -432,14 +419,154 @@ async fn auth_login_discarded_by_cancel_opens_nothing() {
     join.await.unwrap();
     assert!(opened.lock().unwrap().is_empty());
     assert_eq!(app.auth_status().state, AuthState::SignedOut);
-    let polls = worker
+    let redeems = worker
         .received_requests()
         .await
         .unwrap()
         .iter()
-        .filter(|r| r.url.path() == "/auth/poll")
+        .filter(|r| r.url.path() == "/auth/redeem")
         .count();
-    assert_eq!(polls, 0);
+    assert_eq!(redeems, 0);
+}
+
+/// start 본문을 기록하고 201을 주는 응답기
+struct CaptureStart {
+    seen: Arc<Mutex<Option<serde_json::Value>>>,
+    origin: String,
+}
+
+impl Respond for CaptureStart {
+    fn respond(&self, req: &Request) -> ResponseTemplate {
+        *self.seen.lock().unwrap() = serde_json::from_slice(&req.body).ok();
+        json_response(201, start_body(&self.origin))
+    }
+}
+
+fn redeem_ok_body() -> String {
+    let now = OffsetDateTime::now_utc();
+    let rfc = |t: OffsetDateTime| {
+        t.format(&time::format_description::well_known::Rfc3339)
+            .unwrap()
+    };
+    serde_json::json!({
+        "status": "ok",
+        "accessToken": format!("cda_{}", "A".repeat(43)),
+        "accessExpiresAt": rfc(now + time::Duration::hours(24)),
+        "refreshToken": format!("cdr_{}", "B".repeat(43)),
+        "refreshExpiresAt": rfc(now + time::Duration::days(30)),
+        "channelId": CH,
+        "channelName": "채널",
+        "isAdmin": false,
+    })
+    .to_string()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn auth_login_runs_the_waiter_before_opening() {
+    // opener가 불리는 시점에 수령 대기가 이미 수신기를 듣고 있어야 한다(브라우저가 곧바로 돌아와도 놓치지 않게)
+    let t = TempDir::new().unwrap();
+    let api = MockServer::start().await;
+    let worker = MockServer::start().await;
+    let seen: Arc<Mutex<Option<serde_json::Value>>> = Arc::default();
+    Mock::given(method("POST"))
+        .and(path("/auth/start"))
+        .respond_with(CaptureStart {
+            seen: seen.clone(),
+            origin: worker.uri(),
+        })
+        .mount(&worker)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/auth/redeem"))
+        .respond_with(json_response(200, redeem_ok_body()))
+        .mount(&worker)
+        .await;
+    let app = open_auth(t.path(), &api, &worker);
+    let body: Arc<Mutex<String>> = Arc::default();
+    let (seen2, body2) = (seen.clone(), body.clone());
+    let st = app
+        .auth_login(move |_| {
+            // 2-thread 런타임 전제: 이 opener는 tokio 워커에서 blocking I/O를 하고 수신기 태스크는 다른 워커가 돌린다
+            use std::io::{Read, Write};
+            let start = seen2.lock().unwrap().clone().expect("start 본문");
+            let port = start["port"].as_u64().unwrap();
+            let state = chzzk_shell::auth::token::loopback_state(start["loginVerifier"].as_str().unwrap());
+            let mut c = std::net::TcpStream::connect(("127.0.0.1", port as u16)).unwrap();
+            let grant = format!("cdg_{}", "G".repeat(43));
+            write!(
+                c,
+                "GET /chzzk-downloader/login?grant={grant}&state={state} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
+            )
+            .unwrap();
+            let mut out = String::new();
+            c.read_to_string(&mut out).unwrap();
+            *body2.lock().unwrap() = out;
+            true
+        })
+        .await;
+    // opener가 결과 페이지를 받을 때까지 기다렸으므로 돌아온 상태는 이미 SignedIn이다
+    assert_eq!(st.state, AuthState::SignedIn);
+    assert!(
+        body.lock()
+            .unwrap()
+            .contains(chzzk_shell::auth::ReceiverPage::SignedIn.message())
+    );
+    assert_eq!(app.auth_status().state, AuthState::SignedIn);
+    // 수령 요청의 loginSecret은 start의 verifier와 짝이다
+    let reqs = worker.received_requests().await.unwrap();
+    let redeem = reqs
+        .iter()
+        .find(|r| r.url.path() == "/auth/redeem")
+        .unwrap();
+    let rb: serde_json::Value = serde_json::from_slice(&redeem.body).unwrap();
+    let verifier = seen.lock().unwrap().clone().unwrap()["loginVerifier"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(
+        chzzk_shell::auth::token::login_verifier(rb["loginSecret"].as_str().unwrap()),
+        verifier
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn auth_cancel_closes_the_receiver() {
+    let t = TempDir::new().unwrap();
+    let api = MockServer::start().await;
+    let worker = MockServer::start().await;
+    let seen: Arc<Mutex<Option<serde_json::Value>>> = Arc::default();
+    Mock::given(method("POST"))
+        .and(path("/auth/start"))
+        .respond_with(CaptureStart {
+            seen: seen.clone(),
+            origin: worker.uri(),
+        })
+        .mount(&worker)
+        .await;
+    let app = open_auth(t.path(), &api, &worker);
+    let st = app.auth_login(|_| true).await;
+    assert_eq!(st.state, AuthState::Pending);
+    let port = seen.lock().unwrap().clone().unwrap()["port"]
+        .as_u64()
+        .unwrap() as u16;
+    assert!(
+        tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .is_ok()
+    );
+    assert_eq!(app.auth_cancel().state, AuthState::SignedOut);
+    let mut refused = false;
+    for _ in 0..20 {
+        if tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .is_err()
+        {
+            refused = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(refused, "취소 뒤에도 수신기가 열려 있다");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

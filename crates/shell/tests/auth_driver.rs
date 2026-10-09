@@ -70,7 +70,12 @@ async fn driver_refreshes_at_startup_then_when_due() {
         .unwrap();
     let api = FakeWorkerApi::default();
     let clock = FakeClock::at(t0());
-    let auth = Arc::new(service(dir.path(), &api, &clock));
+    let auth = Arc::new(service(
+        dir.path(),
+        &api,
+        &clock,
+        &FakeGrantSource::default(),
+    ));
     api.push_refresh(Reply::Now(Ok(bundle(2, t0()))));
     api.push_refresh(Reply::Now(Ok(bundle(3, t0()))));
     let h = tokio::spawn(run_driver(auth.clone()));
@@ -95,7 +100,12 @@ async fn driver_retries_on_resume_while_offline() {
         .unwrap();
     let api = FakeWorkerApi::default();
     let clock = FakeClock::at(t0());
-    let auth = Arc::new(service(dir.path(), &api, &clock));
+    let auth = Arc::new(service(
+        dir.path(),
+        &api,
+        &clock,
+        &FakeGrantSource::default(),
+    ));
     for _ in 0..200 {
         api.push_refresh(Reply::Now(Err(transport())));
     }
@@ -138,7 +148,12 @@ async fn forward_status_sends_initial_and_changes() {
     let dir = tempfile::TempDir::new().unwrap();
     let api = FakeWorkerApi::default();
     let clock = FakeClock::at(t0());
-    let auth = Arc::new(service(dir.path(), &api, &clock));
+    let auth = Arc::new(service(
+        dir.path(),
+        &api,
+        &clock,
+        &FakeGrantSource::default(),
+    ));
     api.push_start(Reply::Now(Ok(start_ok(&base()))));
     let seen: Arc<Mutex<Vec<AuthPhase>>> = Arc::default();
     let s = seen.clone();

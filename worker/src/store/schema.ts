@@ -29,7 +29,15 @@ CREATE TABLE audit (id INTEGER PRIMARY KEY, at INTEGER NOT NULL, actor TEXT NOT 
   action TEXT NOT NULL CHECK (action IN ('allow','disallow','revoke_session','reuse_detected','refresh_recovered','dismiss')), target TEXT)
 `;
 
-export const MIGRATIONS: readonly string[] = [V1];
+// 앱 루프백(구현 중 변경 88 (다)): 더하기만 한다. poll_verifier 열에는 loginVerifier를 담고, user_code는 새 흐름에서 NULL이다
+const V2 = `
+ALTER TABLE flow ADD COLUMN port INTEGER;
+ALTER TABLE flow ADD COLUMN grant_hash TEXT;
+ALTER TABLE flow ADD COLUMN grant_exp INTEGER;
+CREATE UNIQUE INDEX flow_grant ON flow(grant_hash)
+`;
+
+export const MIGRATIONS: readonly string[] = [V1, V2];
 export const SCHEMA_VERSION = MIGRATIONS.length;
 
 export type MigrateResult = { readonly from: number; readonly to: number; readonly ahead: boolean };

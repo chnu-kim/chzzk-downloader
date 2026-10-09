@@ -4,7 +4,7 @@ import { sha256Hex } from "../../src/core/token";
 import { createFakeChzzk, FAKE_ACCOUNTS, type FakeChzzk } from "../fake-chzzk.mjs";
 import { installFakeChzzk, type FakeNet } from "../network";
 import { A1 } from "../store/helpers";
-import { AppClient, appFlow, Browser, codeIn, store, useClock, viaEnv } from "./harness";
+import { AppClient, appFlow, Browser, parseLoopback, store, useClock, viaEnv } from "./harness";
 
 let fake: FakeChzzk;
 let net: FakeNet;
@@ -71,9 +71,9 @@ describe("웹 승인·거부", () => {
   it("kind는 흐름이 정한다: 같은 콜백이라도 앱은 done, 웹은 /", async () => {
     fake.state.account = "a1";
     const app = await appFlow({ fake });
-    expect(app.callback.headers.get("Location")).toBe("/auth/done?r=ok");
-    expect(app.callback.headers.getSetCookie()).toEqual([]);
-    expect(app.pollBody.isAdmin).toBe(true);
+    expect(parseLoopback(app.callback.headers.get("Location") ?? "")).not.toBeNull();
+    expect(app.callback.headers.getSetCookie()).toEqual(["cdl_f=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax"]);
+    expect(app.redeemBody.isAdmin).toBe(true);
     const web = new Browser();
     const { callbackUrl } = await webStart(web);
     const cb = await web.get(callbackUrl);
@@ -81,13 +81,13 @@ describe("웹 승인·거부", () => {
     expect(cb.headers.getSetCookie().some((c) => c.startsWith("cdl_s=cdw_"))).toBe(true);
   });
 
-  it("웹 흐름의 완료 페이지에는 앱 확인 코드가 없다", async () => {
+  it("웹 흐름의 완료 페이지에는 확인 코드가 없다", async () => {
     fake.state.account = "a1";
     const web = new Browser();
     const { callbackUrl } = await webStart(web);
     await web.get(callbackUrl);
     const done = await (await web.get("/auth/done?r=ok")).text();
-    expect(codeIn(done)).toBeNull();
+    expect(done).not.toContain('class="code"');
   });
 });
 
@@ -131,7 +131,7 @@ describe("운영 모드", () => {
     const page = await browser.get(path);
     expect(page.status).toBe(200);
     // 운영 인가 주소의 출처가 CSP form-action에 실린다
-    expect(page.headers.get("Content-Security-Policy")).toContain("form-action 'self' https://chzzk.naver.com;");
+    expect(page.headers.get("Content-Security-Policy")).toContain("form-action 'self' https://chzzk.naver.com http://127.0.0.1:*;");
     const cont = await browser.post(path);
     expect(cont.status).toBe(303);
     expect(cont.headers.get("Location")).toMatch(

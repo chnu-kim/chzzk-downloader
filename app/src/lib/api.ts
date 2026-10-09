@@ -66,7 +66,7 @@ export const openOutput = (id: JobId) => call<void>('open_output', { id });
 export const revealOutput = (id: JobId) => call<void>('reveal_output', { id });
 export const quit = () => call<void>('quit');
 export const authStatus = () => call<AuthStatusDto>('auth_status');
-/** 로그인 시작: 확인 페이지를 브라우저로 열고 폴링한다(worker.md §11.4). 상태는 auth-changed로도 온다 */
+/** 로그인 시작: 확인 페이지를 브라우저로 열고 루프백 수신기로 결과를 받는다(worker.md §11.4). 상태는 auth-changed로도 온다 */
 export const authLogin = () => call<AuthStatusDto>('auth_login');
 /** 같은 로그인 주소를 브라우저로 다시 연다. 대기 중이 아니면 false */
 export const authReopen = () => call<boolean>('auth_reopen');

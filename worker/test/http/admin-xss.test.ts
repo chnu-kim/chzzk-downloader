@@ -7,7 +7,7 @@ import { LATEST_VIEW_CACHE } from "../../src/http/landing";
 import { SUMS_CACHE } from "../../src/http/releases";
 import { createFakeChzzk, type FakeChzzk } from "../fake-chzzk.mjs";
 import { installFakeChzzk, type FakeNet } from "../network";
-import { A1, ADMINS, B2, C3, D4 } from "../store/helpers";
+import { A1, ADMINS, B2, C3, D4, PORT } from "../store/helpers";
 import { resetStore, store, useClock, webLoginHttp } from "./harness";
 import { seedDist } from "./release-fixture";
 
@@ -43,27 +43,29 @@ it("관리 화면과 내 기기 화면은 HTML·bidi 문자를 이스케이프�
   fake.state.account = "c3";
   const denied = await webLoginHttp(fake, "c3");
   expect(denied.callback.headers.get("Location")).toBe("/auth/done?r=denied");
-  const b = await s.startApp(await sha256B64url(newSecret()), "app/0.2.0 macos", "203.0.113.10", 1000, now);
+  const b = await s.startApp({ port: PORT, verifier: await sha256B64url(newSecret()), client: "app/0.2.0 macos", ip: "203.0.113.10", limit: 1000 }, now);
   if (!b.ok) throw new Error("startApp");
   const c = await s.continueApp(await sha256Hex(b.handle), now);
   if (!c.ok) throw new Error("continueApp");
   const k = await s.consume(await sha256Hex(c.state), await sha256Hex(c.binder), now);
   if (!k.ok) throw new Error("consume");
-  expect(await s.finish(k.flowId, { type: "user", channelId: D4, channelName: "\u202E관리자\u200B<b>" }, ADMINS, now)).toEqual({ type: "denied" });
+  expect(await s.finish(k.flowId, { type: "user", channelId: D4, channelName: "\u202E관리자\u200B<b>" }, ADMINS, now)).toMatchObject({ type: "loopback", result: "denied" });
 
   // 메모에 태그와 bidi 문자
   expect((await s.allow(B2, "<img src=x onerror=alert(1)>\u2066", A1, now)).ok).toBe(true);
 
   // 기기 정보가 HTML인 앱 세션
   const verifier = await sha256B64url(newSecret());
-  const app = await s.startApp(verifier, "<script>c</script>", "203.0.113.11", 1000, now);
+  const app = await s.startApp({ port: PORT, verifier, client: "<script>c</script>", ip: "203.0.113.11", limit: 1000 }, now);
   if (!app.ok) throw new Error("startApp");
   const ac = await s.continueApp(await sha256Hex(app.handle), now);
   if (!ac.ok) throw new Error("continueApp");
   const ak = await s.consume(await sha256Hex(ac.state), await sha256Hex(ac.binder), now);
   if (!ak.ok) throw new Error("consume");
-  expect(await s.finish(ak.flowId, { type: "user", channelId: B2, channelName: "허용 채널" }, ADMINS, now)).toEqual({ type: "ok" });
-  const claimed = await s.claim(app.loginId, verifier, ADMINS, now);
+  const af = await s.finish(ak.flowId, { type: "user", channelId: B2, channelName: "허용 채널" }, ADMINS, now);
+  expect(af).toMatchObject({ type: "loopback", result: "ok", port: PORT });
+  if (af.type !== "loopback") throw new Error("finish");
+  const claimed = await s.redeem(await sha256Hex(af.grant), verifier, ADMINS, now);
   expect(claimed.status).toBe("ok");
 
   const admin = (await webLoginHttp(fake, "a1")).browser;

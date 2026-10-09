@@ -65,6 +65,10 @@ import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, unlinkS
 import { isDeepStrictEqual } from 'node:util';
 import { join, posix, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { DEPLOY_DIR, DEPLOY_MAIN, deployConfig, parseJsonc, stripJsonc } from './worker-deploy.mjs';
+
+// 분리한 jsonc 해석·배포 설정을 다시 내보낸다(worker-config.test.mjs·worker/scripts/e2e-dev.mjs가 여기서 가져온다)
+export { DEPLOY_DIR, DEPLOY_MAIN, deployConfig, parseJsonc, stripJsonc };
 
 const ROOT_DEFAULT = join(fileURLToPath(import.meta.url), '..', '..', '..');
 export const WORKER_DIR = 'worker';
@@ -138,10 +142,7 @@ export const TAURI_CONF = 'app/src-tauri/tauri.conf.json';
 export const DEV_VARS_READERS = ['scripts/channel-id-check.mjs', 'scripts/code-binding-check.mjs'];
 
 // 배포용 wrangler 묶음(worker/deploy, release.yml worker-bundle·deploy-worker, cicd.md 구현 중 변경 W8)
-export const DEPLOY_DIR = 'deploy';
 export const DEPLOY_PKG_NAME = 'chzzk-downloader-worker-deploy';
-// dist/wrangler.json의 main. 설정 파일 위치(dist/) 기준이라 index.js다(worker.md 구현 중 변경 35 (나): dist/index.js는 not found)
-export const DEPLOY_MAIN = 'index.js';
 
 const LOOPBACK = new Set(['localhost', '127.0.0.1']);
 const isLoopbackHttp = (v) => {
@@ -166,48 +167,6 @@ export const PLACEHOLDER_RULES = {
   BUILD_ID: (v) => v === 'dev',
   START_RATE_10M: (v) => /^[1-9][0-9]{0,6}$/.test(v),
 };
-
-// ---- JSONC ----
-
-// 문자열 밖만 훑는다. comments: 주석(// …, /* … */)을 지운다, 아니면 끝 쉼표(다음 의미 있는 글자가 } 또는 ])를 지운다.
-// 문자열 안(예: "https://…")은 그대로 둔다. 주석을 먼저 지우고 쉼표를 지워야 `1, // 주석\n}`도 풀린다.
-function scanJsonc(text, comments) {
-  let out = '';
-  let i = 0;
-  const n = text.length;
-  while (i < n) {
-    const c = text[i];
-    if (c === '"') {
-      let j = i + 1;
-      while (j < n && text[j] !== '"') j += text[j] === '\\' ? 2 : 1;
-      out += text.slice(i, j + 1);
-      i = j + 1;
-    } else if (comments && c === '/' && text[i + 1] === '/') {
-      while (i < n && text[i] !== '\n') i++;
-    } else if (comments && c === '/' && text[i + 1] === '*') {
-      const end = text.indexOf('*/', i + 2);
-      if (end < 0) throw new Error('닫히지 않은 /* 주석');
-      i = end + 2;
-    } else if (!comments && c === ',') {
-      let j = i + 1;
-      while (j < n && /\s/.test(text[j])) j++;
-      if (text[j] !== '}' && text[j] !== ']') out += c;
-      i++;
-    } else {
-      out += c;
-      i++;
-    }
-  }
-  return out;
-}
-
-export function stripJsonc(text) {
-  return scanJsonc(scanJsonc(text, true), false);
-}
-
-export function parseJsonc(text) {
-  return JSON.parse(stripJsonc(text));
-}
 
 // 객체 안 어디든(배열 포함) 금지 키의 경로
 export function findKeys(value, keys, path = '') {
@@ -253,11 +212,6 @@ export function checkWrangler(cfg) {
   errs.push(...varsErrors(cfg.vars));
   if (cfg.observability?.logs?.invocation_logs !== false) errs.push('observability.logs.invocation_logs: false(요청 URL의 code·state가 로그에 남는다)');
   return errs;
-}
-
-// dist/wrangler.json = 원본 wrangler.jsonc에서 main·no_bundle만 바꾼 것(worker.md 구현 중 변경 2·35, 순수). $schema는 둔다
-export function deployConfig(cfg) {
-  return { ...structuredClone(cfg), main: DEPLOY_MAIN, no_bundle: true };
 }
 
 // ---- package.json·pnpm-workspace.yaml ----
@@ -708,8 +662,9 @@ export const CI_TOKEN_IDENT_FILES = ['src/config.ts', 'src/http/release-auth.ts'
 export const RELEASE_AUTH_FILES = ['src/http/release-auth.ts', 'src/http/releases.ts', 'src/http/update.ts'];
 export const R2_ALLOWLIST = { 'src/http/r2.ts': 1 };
 export const RELEASE_FILES = ['src/http/r2.ts', 'src/http/release-auth.ts', 'src/http/releases.ts', 'src/http/update.ts'];
-// 낱말 delete 수(주석·문자열 포함)는 이 표와 같다(목록 밖 0, RAW_ALLOWLIST와 같은 방식). Map.delete만 있는 파일이다(cicd.md 95)
-export const DELETE_ALLOWLIST = { 'src/core/lru.ts': 3, 'src/store/flows.ts': 5 };
+// 낱말 delete 수(주석·문자열 포함)는 이 표와 같다(목록 밖 0, RAW_ALLOWLIST와 같은 방식). Map.delete만 있는 파일이다(cicd.md 95).
+// flows.ts는 pollGate가 없어지며 5 → 3이다(worker.md 구현 중 변경 89 (카))
+export const DELETE_ALLOWLIST = { 'src/core/lru.ts': 3, 'src/store/flows.ts': 3 };
 const word = (w) => new RegExp(String.raw`(?<![\w$])${w}(?![\w$])`, 'g');
 // 낱말 수라 .list?.(·["list"](·{ list } =·typeof v?.list·주석도 센다(cicd.md 95, 93의 fetch와 같은 방식)
 const R2_WRITE_LIST_WORD = word('(?:put|list|createMultipartUpload|resumeMultipartUpload)');

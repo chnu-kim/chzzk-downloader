@@ -22,6 +22,7 @@ import {
   PKG_KILL_GRACE_S,
   PKG_TIMEOUT_MS,
   pkgArgv,
+  combineSmokeErrors,
   retryOnce,
 } from './smoke.mjs';
 
@@ -128,25 +129,26 @@ test('설치 스모크 최악 시간 < CI 시간 제한(안쪽 명령 제한이 
 
 test('pkgArgv: sudo 안쪽에 env·timeout을 두고, 안쪽 제한이 바깥 제한보다 먼저 걸린다', () => {
   const a = pkgArgv('apt-get', [...APT_OPTS, 'install', '-y', '/x.deb'], { root: false });
-  assert.deepEqual(a.slice(0, 7), ['sudo', 'env', 'DEBIAN_FRONTEND=noninteractive', 'timeout', '-k', `${PKG_KILL_GRACE_S}s`, `${PKG_ATTEMPT_S}s`]);
-  assert.deepEqual(a.slice(7, 8), ['apt-get']);
+  assert.deepEqual(a.slice(0, 10), ['sudo', 'env', 'DEBIAN_FRONTEND=noninteractive', 'stdbuf', '-oL', '-eL', 'timeout', '-k', `${PKG_KILL_GRACE_S}s`, `${PKG_ATTEMPT_S}s`]);
+  assert.deepEqual(a.slice(10, 11), ['apt-get']);
   assert.equal(a.at(-1), '/x.deb');
   // root면 sudo 없이 같은 모양
-  assert.deepEqual(pkgArgv('dpkg', ['--configure', '-a'], { root: true }), a.slice(1, 7).concat(['dpkg', '--configure', '-a']));
+  assert.deepEqual(pkgArgv('dpkg', ['--configure', '-a'], { root: true }), a.slice(1, 10).concat(['dpkg', '--configure', '-a']));
   assert.ok((PKG_ATTEMPT_S + PKG_KILL_GRACE_S) * 1000 < PKG_TIMEOUT_MS);
 });
 
 test('APT_OPTS: 잠금 대기·다시 받기·연결 대기가 명시되고 한 시도 안에 끝난다', () => {
   const o = Object.fromEntries(APT_OPTS.filter((_, i) => i % 2 === 1).map((kv) => kv.split('=')));
-  assert.ok(APT_OPTS.every((x, i) => (i % 2 === 0 ? x === '-o' : /^[\w:]+=\d+$/.test(x))));
+  assert.ok(APT_OPTS.every((x, i) => (i % 2 === 0 ? x === '-o' : /^[\w:-]+=\d+$/.test(x))));
   assert.ok(Number(o['DPkg::Lock::Timeout']) > 0 && Number(o['DPkg::Lock::Timeout']) < PKG_ATTEMPT_S);
   assert.ok(Number(o['Acquire::Retries']) >= 1);
+  assert.equal(o['Dpkg::Use-Pty'], '0');
   assert.ok(Number(o['Acquire::http::Timeout']) > 0 && Number(o['Acquire::http::Timeout']) < PKG_ATTEMPT_S);
 });
 
 test('PKG_DIAG: apt·dpkg·unattended 프로세스와 잠금 파일 보유자를 본다', () => {
   const text = PKG_DIAG.map(([b, a]) => [b, ...a].join(' ')).join('\n');
-  for (const w of ['apt', 'dpkg', 'unattended', '/usr/lib/apt/methods', 'etime', 'fuser', '/var/lib/dpkg/lock-frontend', '/var/cache/apt/archives/lock']) {
+  for (const w of ['apt', 'dpkg', 'unattended', '/usr/lib/apt/methods', 'ps -ww', 'etime', 'fuser', '/var/lib/dpkg/lock-frontend', '/var/cache/apt/archives/lock']) {
     assert.ok(text.includes(w), w);
   }
 });
@@ -177,12 +179,20 @@ test('retryOnce: 첫 시도 실패면 repair 뒤 한 번 더, 두 번 실패면 
   assert.deepEqual(retryOnce(s.run, s.repair), { ok: true, attempts: 1 });
   assert.deepEqual(s.calls, ['run']);
   s = seq({ ok: false, why: 'a' }, { ok: true, why: null });
-  assert.deepEqual(retryOnce(s.run, s.repair), { ok: true, why: null, attempts: 2 });
+  assert.deepEqual(retryOnce(s.run, s.repair), { ok: true, why: null, firstWhy: 'a', attempts: 2 });
   assert.deepEqual(s.calls, ['run', 'repair', 'run']);
   s = seq({ ok: false, why: 'a' }, { ok: false, why: 'b' });
   const r = retryOnce(s.run, s.repair);
   assert.equal(r.ok, false);
   assert.match(r.why, /a.*b/);
+});
+
+test('combineSmokeErrors: 실행 오류만이면 그것, purge만이면 purge, 둘 다면 합친다', () => {
+  const e = new Error('실행 실패');
+  assert.equal(combineSmokeErrors(e, null), e);
+  assert.equal(combineSmokeErrors(null, 'apt-get → exit 100').message, 'deb 제거: apt-get → exit 100');
+  assert.equal(combineSmokeErrors(e, 'x').message, '실행 실패 / deb 제거: x');
+  assert.equal(combineSmokeErrors(null, null), null);
 });
 
 test('linux 설치 예산: 패키지 명령마다 바깥 제한 + 진단, 그 밖은 그대로', () => {

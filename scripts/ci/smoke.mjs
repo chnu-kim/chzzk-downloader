@@ -142,22 +142,24 @@ const asRoot = () => IS_WIN || !process.getuid || process.getuid() === 0;
 //  - 출력을 그대로 흘린다(stdio inherit): 줄마다 시각이 찍혀 멈춘 단계(마지막 Get:·Unpacking·트리거)가 로그에 남는다.
 //  - 시간 제한을 sudo 안쪽 `timeout -k`에 둔다. 바깥 spawnSync의 SIGKILL은 sudo만 죽이고 apt-get·dpkg는 고아로 남아 잠금을
 //    쥘 수 있다. timeout은 자기 프로세스 그룹 전체(apt 다운로드 메서드·dpkg 포함)에 신호를 보낸다.
+//    다만 apt 기본 pty 모드는 dpkg를 setsid로 새 세션에 띄워 그룹 신호를 못 받을 수 있어 `Dpkg::Use-Pty=0`을 준다(그때만 그룹 전체에 닿는다).
+//  - `stdbuf -oL -eL`: apt 출력이 줄 단위로 흘러, 죽을 때 버퍼에 갇힌 출력이 남지 않는다(stdbuf는 LD_PRELOAD를 물려 자식에게 전한다).
 //  - `env DEBIAN_FRONTEND=noninteractive`: sudo의 env_reset을 지나 부모 환경 변수가 닿는다는 보장이 없다.
 //  - 잠금은 명시적으로 기다리고(DPkg::Lock::Timeout) 미러는 다시 받고 연결 대기를 줄인다(Acquire::Retries·http::Timeout).
 //  - 실패하면 PKG_DIAG(apt·dpkg 프로세스, 잠금 파일 보유자)를 남긴다. 설치는 dpkg --configure -a 뒤 한 번 더 한다.
 export const PKG_ATTEMPT_S = 150; // 안쪽 timeout. 녹색 실행의 설치는 11~15초
 export const PKG_KILL_GRACE_S = 10; // TERM 뒤 KILL까지
 export const PKG_TIMEOUT_MS = (PKG_ATTEMPT_S + PKG_KILL_GRACE_S + 10) * 1000; // 바깥 제한: 안쪽이 늘 먼저 걸린다
-export const APT_OPTS = ['-o', 'DPkg::Lock::Timeout=60', '-o', 'Acquire::Retries=3', '-o', 'Acquire::http::Timeout=30'];
+export const APT_OPTS = ['-o', 'DPkg::Lock::Timeout=60', '-o', 'Acquire::Retries=3', '-o', 'Acquire::http::Timeout=30', '-o', 'Dpkg::Use-Pty=0'];
 const DPKG_LOCKS = ['/var/lib/dpkg/lock-frontend', '/var/lib/dpkg/lock', '/var/cache/apt/archives/lock'];
 export const PKG_DIAG = [
-  ['sh', ['-c', "ps -eo pid,ppid,etime,stat,cmd | grep -E 'apt|dpkg|unattended|/usr/lib/apt/methods' | grep -v grep"]],
+  ['sh', ['-c', "ps -ww -eo pid,ppid,etime,stat,cmd | grep -E 'apt|dpkg|unattended|/usr/lib/apt/methods' | grep -v grep"]],
   ['fuser', ['-v', ...DPKG_LOCKS]],
 ];
 
 // 패키지 명령 하나의 실제 argv. root가 아니면 sudo로 감싼다.
 export function pkgArgv(bin, args, { root = asRoot() } = {}) {
-  const inner = ['env', 'DEBIAN_FRONTEND=noninteractive', 'timeout', '-k', `${PKG_KILL_GRACE_S}s`, `${PKG_ATTEMPT_S}s`, bin, ...args];
+  const inner = ['env', 'DEBIAN_FRONTEND=noninteractive', 'stdbuf', '-oL', '-eL', 'timeout', '-k', `${PKG_KILL_GRACE_S}s`, `${PKG_ATTEMPT_S}s`, bin, ...args];
   return root ? inner : ['sudo', ...inner];
 }
 
@@ -187,12 +189,20 @@ function pkg(bin, args) {
 }
 
 // 첫 시도가 실패하면 repair 뒤 한 번 더. run·repair는 { ok, why }를 돌려준다. 반환: 마지막 결과(시도 수 포함).
+// 실행 스모크 오류(Error|null)와 purge 실패 이유(string|null)를 하나로. 둘 다면 합친다.
+export function combineSmokeErrors(runErr, purgeWhy) {
+  const purgeMsg = purgeWhy ? `deb 제거: ${purgeWhy}` : null;
+  if (runErr && purgeMsg) return new Error(`${runErr.message} / ${purgeMsg}`);
+  if (runErr) return runErr;
+  return purgeMsg ? new Error(purgeMsg) : null;
+}
+
 export function retryOnce(run, repair) {
   const first = run();
   if (first.ok) return { ...first, attempts: 1 };
   repair();
   const second = run();
-  return second.ok ? { ...second, attempts: 2 } : { ok: false, why: `두 번 실패: ${first.why} / ${second.why}`, attempts: 2 };
+  return second.ok ? { ...second, firstWhy: first.why, attempts: 2 } : { ok: false, why: `두 번 실패: ${first.why} / ${second.why}`, attempts: 2 };
 }
 
 // 실행 파일 하나를 --smoke로 돌린다. 반환: { ok, why }
@@ -281,7 +291,11 @@ function smokeDeb(deb) {
     () => pkg('dpkg', ['--configure', '-a']),
   );
   if (!inst.ok) throw new Error(`deb 설치: ${inst.why}`);
-  if (inst.attempts > 1) log(`deb ${name}: 두 번째 시도에서 설치됐다`);
+  if (inst.attempts > 1) {
+    log(`deb ${name}: 두 번째 시도에서 설치됐다`);
+    console.log(`::warning::deb 설치 1차 실패(재시도로 통과): ${String(inst.firstWhy ?? '').split('\n')[0]}`);
+  }
+  let runErr = null;
   try {
     const bins = sh('dpkg', ['-L', name], { quiet: true })
       .split('\n')
@@ -290,10 +304,12 @@ function smokeDeb(deb) {
     const exe = one(bins, `deb ${name}의 /usr/bin 실행 파일`);
     const r = runSmoke(exe, { label: `deb ${basename(exe)}`, auth: true });
     if (!r.ok) throw new Error(r.why);
-  } finally {
-    const p = pkg('apt-get', [...APT_OPTS, 'purge', '-y', name]);
-    if (!p.ok) throw new Error(`deb 제거: ${p.why}`);
+  } catch (e) {
+    runErr = e;
   }
+  const p = pkg('apt-get', [...APT_OPTS, 'purge', '-y', name]);
+  const fail = combineSmokeErrors(runErr, p.ok ? null : p.why);
+  if (fail) throw fail;
   const s = spawnSync('dpkg', ['-s', name], { encoding: 'utf8' });
   if (s.status === 0) throw new Error(`제거 뒤에도 dpkg -s ${name}가 0이다`);
   log(`deb ${name}: 설치·실행·제거 통과`);

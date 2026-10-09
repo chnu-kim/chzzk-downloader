@@ -4,7 +4,7 @@
 //! watch 송신도 상태 잠금을 푼 뒤에 한다(구독자가 `borrow()`를 쥔 채 서비스를 불러도 교착하지 않게, 구현 중 변경 53).
 //! 로그에는 낱말·숫자만 남긴다(토큰·loginSecret·grant·state·로그인 주소·포트·채널 정보·Worker 주소 금지).
 //!
-//! 로그인은 루프백 수령이다(worker.md 구현 중 변경 88·91): `begin_login`이 수신기를 열고 start를 부르면,
+//! 로그인은 루프백 수령이다(worker.md 구현 중 변경 88·92): `begin_login`이 수신기를 열고 start를 부르면,
 //! 브라우저가 grant를 들고 수신기로 돌아오고 `run_login_wait`가 grant와 loginSecret으로 토큰을 수령(redeem)한다.
 
 use std::fmt;
@@ -179,7 +179,7 @@ enum Step {
     Transient(Cause),
 }
 
-/// 수령 응답 분류(worker.md 91 (마))
+/// 수령 응답 분류(worker.md 92 (마))
 fn classify_redeem(res: Result<RedeemResponse, ApiError>) -> Step {
     match res {
         Ok(RedeemResponse::Ok(b)) => Step::Final(Final::Ok(b)),
@@ -886,7 +886,7 @@ impl<A: WorkerApi, C: Clock> AuthService<A, C> {
     }
 
     /// 수령 결과가 확정된 응답을 상태에 반영한다. 로그인이 바뀌었으면 None.
-    /// `retried`는 앞서 일시 실패한 수령이 있었다는 뜻이다(그 뒤의 404는 앞 시도가 서버에서 이미 끝났을 수 있다, worker.md 92 (가))
+    /// `retried`는 앞서 일시 실패한 수령이 있었다는 뜻이다(그 뒤의 404는 앞 시도가 서버에서 이미 끝났을 수 있다, worker.md 93 (가))
     fn apply_final(
         &self,
         seq: u64,

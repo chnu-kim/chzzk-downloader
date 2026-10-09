@@ -135,7 +135,7 @@ impl E2eConfig {
     }
 }
 
-/// 격리 실행의 로그인 주소 열기·복사(Phase 3b A5, cicd.md 구현 중 변경 106·110): 브라우저를 띄우지 않는다.
+/// 격리 실행의 로그인 주소 열기·복사(Phase 3b A5, cicd.md 구현 중 변경 106·111): 브라우저를 띄우지 않는다.
 /// 브라우저 대신 스텁 확인 페이지의 303 하나를 따라 앱의 루프백 수신기에 GET한다(`follow_login`). Windows 러너에서 Edge가 떠
 /// WebView2 세션을 흔들지 않게 한다.
 #[derive(Debug, Default)]

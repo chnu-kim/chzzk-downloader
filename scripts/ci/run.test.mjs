@@ -2,51 +2,77 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { CODE_GATED_JOBS, GATES, HOOK_ONLY, HOOKS, MASTER_ONLY_JOBS, msrv, testFiles } from './gates.mjs';
-import { classify, decideCiOk, firstSemver, forceFail, hookGates, runGate } from './run.mjs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
-test('classify: 문서만 바뀌면 code=false', () => {
-  assert.deepEqual(classify(['docs/design/cicd.md', 'README.md', 'CLAUDE.md', '.claude/x.json', 'LICENSE']), {
-    code: false,
-    docs_only: true,
-  });
+import { AREAS, CODE_GATED_JOBS, GATES, HOOK_ONLY, HOOKS, MASTER_ONLY_JOBS, msrv, testFiles } from './gates.mjs';
+import { gitOk } from './test-git.mjs';
+import { changedFiles, classify, decideCiOk, firstSemver, forceFail, hookGates, runGate } from './run.mjs';
+
+const T = { app: true, worker: true };
+const F = { app: false, worker: false };
+const WORKER_ONLY = { app: false, worker: true };
+const APP_ONLY = { app: true, worker: false };
+
+test('classify: 영역 표(AREA_SKIP)', () => {
+  const table = [
+    [['docs/design/cicd.md', 'README.md', 'CLAUDE.md', '.claude/x.json', 'LICENSE'], F],
+    [['scripts/ci/worker-config.test.mjs'], F],
+    [['worker/src/index.ts'], WORKER_ONLY],
+    [['worker/test/deploy-contract.mjs'], WORKER_ONLY],
+    [['worker/pnpm-lock.yaml'], WORKER_ONLY],
+    [['scripts/ci/worker-config.mjs'], WORKER_ONLY],
+    // #29 유형: worker/ + worker-config + 그 테스트 + 문서
+    [['worker/src/a.ts', 'scripts/ci/worker-config.mjs', 'scripts/ci/worker-config.test.mjs', 'docs/design/worker.md'], WORKER_ONLY],
+    ...[
+      'worker/wrangler.jsonc', 'scripts/ci/worker-deploy.mjs', 'xtask/testdata/semver-vectors.json', 'app/package.json',
+      'app/src-tauri/tauri.conf.json', 'release/expected-artifacts.json', 'scripts/ci/tools.json', 'scripts/ci/run.mjs',
+      'scripts/ci/gates.mjs', 'ci/ratchet.json', '.github/workflows/ci.yml', '.gitattributes', 'something-new',
+      // 공유 KAT: worker vitest와 Rust 테스트(include_str!)가 함께 읽는다
+      'worker/test/vectors/loopback-vectors.json', 'worker/test/vectors/new.json',
+    ].map((f) => [[f], T]),
+    ...[
+      'crates/core/src/lib.rs', 'app/src/App.svelte', 'app/src-tauri/src/lib.rs', 'xtask/src/main.rs', 'testdata/hls/media.m3u8',
+      'Cargo.lock', 'deny.toml', 'rust-toolchain.toml', '.cargo/config.toml', 'testdata/README.md',
+      // fuzz/는 app: supply의 cargo machete가 루트 exclude와 상관없이 fuzz/Cargo.toml과 target 소스를 본다
+      'fuzz/Cargo.toml', 'fuzz/Cargo.lock', 'fuzz/fuzz_targets/url.rs',
+    ].map((f) => [[f], APP_ONLY]),
+    [['docs/x.md', 'worker/src/a.ts', 'crates/core/src/lib.rs'], T],
+    [null, T],
+    [[], T],
+  ];
+  for (const [files, want] of table) assert.deepEqual(classify(files), want, String(files));
 });
 
-test('classify: 루트 밖의 .md는 코드다(테스트가 읽는 fixture일 수 있다)', () => {
-  for (const f of ['testdata/README.md', 'crates/core/README.md', 'app/README.md', 'scripts/x.md', '.github/x.md']) {
-    assert.equal(classify([f]).code, true, f);
+test('classify: 출력 키는 AREAS이고 모든 영역에 건너뛰는 작업이 있다(죽은 출력 금지)', () => {
+  assert.deepEqual(Object.keys(classify(['x'])), AREAS);
+  for (const a of AREAS) assert.ok(Object.values(CODE_GATED_JOBS).includes(a), a);
+});
+
+test('changedFiles: --no-renames라 이름 바꾸기도 옛 경로와 새 경로를 둘 다 낸다', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'area-rename-'));
+  try {
+    gitOk(dir, ['init', '-q']);
+    mkdirSync(join(dir, 'crates'));
+    writeFileSync(join(dir, 'crates/a.rs'), 'fn main() {}\n'.repeat(20));
+    gitOk(dir, ['add', '-A']);
+    gitOk(dir, ['commit', '-q', '-m', 'base']);
+    const base = gitOk(dir, ['rev-parse', 'HEAD']);
+    mkdirSync(join(dir, 'worker'));
+    gitOk(dir, ['mv', 'crates/a.rs', 'worker/a.rs']);
+    gitOk(dir, ['commit', '-q', '-m', 'move']);
+    const head = gitOk(dir, ['rev-parse', 'HEAD']);
+    const { files } = changedFiles({ CHANGES_BASE: base, CHANGES_HEAD: head }, dir);
+    assert.deepEqual([...files].sort(), ['crates/a.rs', 'worker/a.rs']);
+    assert.deepEqual(classify(files), T);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
-});
-
-test('classify: 코드·설정·모르는 경로는 code=true', () => {
-  for (const f of [
-    'crates/core/src/lib.rs',
-    'app/src/App.svelte',
-    'Cargo.lock',
-    '.github/workflows/ci.yml',
-    'scripts/ci/run.mjs',
-    'testdata/hls/media.m3u8',
-    'rust-toolchain.toml',
-    'deny.toml',
-    '.gitattributes',
-    'something-new',
-  ]) {
-    assert.equal(classify(['docs/x.md', f]).code, true, f);
-  }
-});
-
-test('classify: 목록이 없거나 비면 전부 실행(fail-safe)', () => {
-  assert.deepEqual(classify(null), { code: true, docs_only: false });
-  assert.deepEqual(classify([]), { code: true, docs_only: false });
-});
-
-test('classify: 릴리스 경로를 따로 가르지 않는다', () => {
-  // 릴리스 경로만 따로 가르는 출력은 없다(쓰는 작업이 없으면 죽은 출력이다, 리뷰 G6)
-  assert.equal('release' in classify(['xtask/src/main.rs']), false);
 });
 
 const ok = { result: 'success', outputs: {} };
-const changes = (code, result = 'success') => ({ result, outputs: { code: String(code) } });
+const changes = (app, worker = app, result = 'success') => ({ result, outputs: { app: String(app), worker: String(worker) } });
 const PR = 'pull_request';
 
 test('ci-ok: 모두 success면 통과', () => {
@@ -58,10 +84,15 @@ test('ci-ok: failure·cancelled는 실패', () => {
   assert.equal(decideCiOk({ changes: changes(true), lint: { result: 'cancelled' } }, PR).ok, false);
 });
 
-test('ci-ok: skipped는 code=false일 때 무거운 작업만 허용', () => {
-  for (const job of CODE_GATED_JOBS) {
-    assert.equal(decideCiOk({ changes: changes(false), lint: ok, [job]: { result: 'skipped' } }, PR).ok, true, job);
-    assert.equal(decideCiOk({ changes: changes(true), lint: ok, [job]: { result: 'skipped' } }, PR).ok, false, job);
+test('ci-ok: skipped는 그 작업의 영역 출력이 false일 때만 허용', () => {
+  for (const [job, a] of Object.entries(CODE_GATED_JOBS)) {
+    const other = AREAS.find((x) => x !== a);
+    const skipped = { lint: ok, [job]: { result: 'skipped' } };
+    const only = (area, v) => ({ result: 'success', outputs: Object.fromEntries(AREAS.map((x) => [x, String(x === area ? v : !v)])) });
+    assert.equal(decideCiOk({ changes: only(a, false), ...skipped }, PR).ok, true, job);
+    assert.equal(decideCiOk({ changes: only(a, true), ...skipped }, PR).ok, false, job);
+    assert.equal(decideCiOk({ changes: only(other, false), ...skipped }, PR).ok, false, `${job}: 다른 영역만 false`);
+    assert.equal(decideCiOk({ changes: { result: 'success', outputs: {} }, ...skipped }, PR).ok, false, `${job}: 출력 없음`);
   }
   assert.equal(decideCiOk({ changes: changes(false), lint: { result: 'skipped' } }, PR).ok, false);
   assert.equal(decideCiOk({ changes: changes(false), 'scripts-windows': { result: 'skipped' } }, PR).ok, false);
@@ -85,7 +116,7 @@ test('ci-ok: MASTER_ONLY_JOBS의 skipped는 pull_request에서만 허용', () =>
   }
   assert.equal(decideCiOk({ changes: changes(true), lint: ok, bundle: { result: 'failure' } }, PR).ok, false);
   // 겹치지 않는다(같은 작업이 두 규칙에 걸리면 판정이 모호하다)
-  assert.deepEqual(CODE_GATED_JOBS.filter((j) => MASTER_ONLY_JOBS.includes(j)), []);
+  assert.deepEqual(Object.keys(CODE_GATED_JOBS).filter((j) => MASTER_ONLY_JOBS.includes(j)), []);
 });
 
 test('ci-ok: force_fail이면 모두 success여도 실패', () => {
@@ -96,7 +127,7 @@ test('ci-ok: force_fail이면 모두 success여도 실패', () => {
 });
 
 test('ci-ok: changes가 실패·skipped·없으면 실패', () => {
-  assert.equal(decideCiOk({ changes: changes(false, 'failure'), rust: { result: 'skipped' } }, PR).ok, false);
+  assert.equal(decideCiOk({ changes: changes(false, false, 'failure'), rust: { result: 'skipped' } }, PR).ok, false);
   assert.equal(decideCiOk({ changes: { result: 'skipped' } }, PR).ok, false);
   assert.equal(decideCiOk({ lint: ok }, PR).ok, false);
 });
@@ -236,7 +267,7 @@ test('gate 표: worker(worker.md §13.2, cicd.md 85)', () => {
   );
   // wrangler·vitest를 부르는 단계는 사용 통계를 끈다
   for (const s of w.steps.filter((s) => s.cmd[0] === 'pnpm' || s.cmd.includes('tests-worker'))) assert.equal(s.env?.WRANGLER_SEND_METRICS, 'false', s.cmd.join(' '));
-  assert.ok(CODE_GATED_JOBS.includes('worker'));
+  assert.equal(CODE_GATED_JOBS.worker, 'worker');
   assert.ok(GATES.advisories.steps.some((s) => s.cmd.join(' ') === 'pnpm audit --audit-level high' && s.cwd === 'worker'));
   // 배포용 wrangler(worker/deploy)도 따로인 lockfile이라 같이 본다(cicd.md 구현 중 변경 96)
   assert.ok(GATES.advisories.steps.some((s) => s.cmd.join(' ') === 'pnpm audit --audit-level high' && s.cwd === 'worker/deploy'));
@@ -246,8 +277,11 @@ test('gate 표: worker(worker.md §13.2, cicd.md 85)', () => {
   assert.deepEqual(hookGates('pre-push', ['worker/src/config.ts']), ['worker']);
   // selftest(w-dry)가 원본 wrangler.jsonc에서 배포 설정을 만들어 묶음과 맞춰 본다
   assert.deepEqual(hookGates('pre-push', ['worker/wrangler.jsonc']), ['release-selftest', 'worker']);
-  // release.mjs가 worker-config의 deployConfig·parseJsonc를 import하므로 release-selftest도 돈다(W8)
-  assert.deepEqual(hookGates('pre-push', ['scripts/ci/worker-config.mjs']), ['release-selftest', 'worker', 'scripts-test']);
+  // release.mjs는 worker-deploy만 import한다(cicd.md 구현 중 변경 110). worker-config는 worker gate와 scripts-test만
+  assert.deepEqual(hookGates('pre-push', ['scripts/ci/worker-config.mjs']), ['worker', 'scripts-test']);
+  assert.deepEqual(hookGates('pre-push', ['scripts/ci/worker-deploy.mjs']), ['release-selftest', 'worker', 'scripts-test']);
+  assert.deepEqual(hookGates('pre-push', ['scripts/ci/worker-config.test.mjs']), ['scripts-test']);
+  assert.deepEqual(hookGates('pre-push', ['app/package.json']), ['frontend', 'worker']);
   assert.ok(hookGates('pre-push', ['release/expected-artifacts.json']).includes('worker'));
   assert.ok(hookGates('pre-push', ['release/latest.schema.json']).includes('worker'));
   assert.equal(hookGates('pre-push', ['release/updater.pub']).includes('worker'), false);
@@ -266,12 +300,13 @@ test('runGate: 인자를 받지 않는 gate에 인자를 주면 2', () => {
   assert.equal(runGate('parity', ['--x'], { ...process.env, CI: '' }), 2);
 });
 
-test('OBSERVED_JOBS(D14 관찰 작업)는 ci-ok 규칙의 작업 목록과 겹치지 않고 종류는 code·master뿐이다', async () => {
+test('OBSERVED_JOBS(D14 관찰 작업)는 ci-ok 규칙의 작업 목록과 겹치지 않고 종류는 영역·master뿐이다', async () => {
   const { OBSERVED_JOBS } = await import('./gates.mjs');
   for (const [id, kind] of Object.entries(OBSERVED_JOBS)) {
-    assert.ok(['code', 'master'].includes(kind), id);
-    assert.ok(!CODE_GATED_JOBS.includes(id) && !MASTER_ONLY_JOBS.includes(id), id);
+    assert.ok([...AREAS, 'master'].includes(kind), id);
+    assert.ok(!Object.hasOwn(CODE_GATED_JOBS, id) && !MASTER_ONLY_JOBS.includes(id), id);
   }
+  for (const a of Object.values(CODE_GATED_JOBS)) assert.ok(AREAS.includes(a), a);
 });
 
 test('gate platforms: 다른 OS에서는 로컬은 건너뛰고(0) CI는 실패(2)', async () => {

@@ -175,7 +175,7 @@ async fn receiver_logs_words_only_and_caps_rejects() {
     }
 }
 
-/// 일시 오류 뒤의 404는 앞 시도가 서버에서 이미 끝났을 수 있어 낱말을 따로 둔다(worker.md 92 (가))
+/// 일시 오류 뒤의 404는 앞 시도가 서버에서 이미 끝났을 수 있어 낱말을 따로 둔다(worker.md 93 (가))
 #[tokio::test(start_paused = true)]
 async fn redeem_404_after_retry_has_its_own_word() {
     let logs = logs();

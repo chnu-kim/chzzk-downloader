@@ -4,7 +4,7 @@
 //! - `WorkerApi`: Worker `/auth/start`·`/auth/redeem`·`/auth/refresh`·`/auth/logout` seam. 실제 구현은 `HttpWorkerApi`(reqwest).
 //! - `classify_verify`: 갱신 결과 → 다음 상태(3일 유예·60일 상한, 표 주도 테스트 `tests/auth_verify.rs`).
 //! - `AuthService`: 상태 머신. `WorkerApi`·`Clock`을 주입받아 Tauri 없이 검사한다.
-//! - `loopback`: 루프백 수신기(RFC 8252). 브라우저가 grant를 들고 돌아오는 127.0.0.1 1회용 서버(worker.md 구현 중 변경 88·91).
+//! - `loopback`: 루프백 수신기(RFC 8252). 브라우저가 grant를 들고 돌아오는 127.0.0.1 1회용 서버(worker.md 구현 중 변경 88·92).
 //! - `driver`: 타이머·절전 복귀·상태 전달(A2).
 //! - 토큰·loginSecret·grant·로그인 주소는 `Secret`으로 들고 `Debug`·로그·오류 어디에도 내지 않는다(`tests/auth_secrets.rs`).
 

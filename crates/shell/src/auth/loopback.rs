@@ -1,4 +1,4 @@
-//! 루프백 로그인 수신기(worker.md 구현 중 변경 88·91, RFC 8252).
+//! 루프백 로그인 수신기(worker.md 구현 중 변경 88·92, RFC 8252).
 //!
 //! 앱이 IPv4 루프백의 임의 포트에 1회용 수신기를 열면, Worker가 치지직 로그인 뒤 브라우저를
 //! `http://127.0.0.1:<port>/chzzk-downloader/login?grant=…&state=…`로 보낸다. 수신기는 요청을 엄격하게 해석하고
@@ -399,7 +399,7 @@ pub struct Bound {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BindError;
 
-/// 수신기 seam(worker.md 91 (가)). state 검사는 수신기 안이다. 동기다(tokio 런타임 안에서 부른다)
+/// 수신기 seam(worker.md 92 (가)). state 검사는 수신기 안이다. 동기다(tokio 런타임 안에서 부른다)
 pub trait GrantSource: Send + Sync + 'static {
     /// 수신기를 열고 포트·줄·닫기 손잡이를 돌려준다
     fn bind(&self, expected_state: &Secret<String>) -> Result<Bound, BindError>;
@@ -464,7 +464,7 @@ impl GrantSource for LoopbackGrantSource {
 struct Shared {
     expected: Secret<String>,
     port: u16,
-    /// 먼저 받은 grant 문자열. 다시 비우지 않는다(수령 결과가 나면 수신기도 닫힌다, 91 (나))
+    /// 먼저 받은 grant 문자열. 다시 비우지 않는다(수령 결과가 나면 수신기도 닫힌다, 92 (나))
     first: Mutex<Option<Grant>>,
     tx: GrantTx,
     /// 거부한 요청 수(로그 상한용)

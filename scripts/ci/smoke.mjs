@@ -8,7 +8,8 @@
 // (Worker 주소 규칙이 실제 산출물에서 지켜졌다는 증거, worker.md 구현 중 변경 59). 앱은 60초 안에 프런트 신호가 없으면 스스로
 // exit 2로 끝나고, 여기서는 그보다 긴 바깥 시간 제한(SMOKE_KILL_MS)으로 멈춘 프로세스를 죽인다.
 // Linux는 DISPLAY가 없으면 `xvfb-run -a`로 감싼다. 설치 스모크는 설치 → 실행 → 제거 → 제거 확인까지 한다:
-//   linux:   deb(apt-get install ./x.deb → /usr/bin의 실행 파일 → apt-get purge → dpkg -s 실패), AppImage(풀어서 실행)
+//   linux:   deb(apt-get install ./x.deb(실패면 dpkg --configure -a 뒤 한 번 더) → /usr/bin의 실행 파일 → apt-get purge → dpkg -s 실패),
+//            AppImage(풀어서 실행)
 //   darwin:  dmg(hdiutil attach → .app 복사 → quarantine 제거 → Contents/MacOS/<CFBundleExecutable> → detach),
 //            릴리스면 updater의 .app.tar.gz도(풀기 → quarantine 제거 → 실행)
 //   windows: NSIS(setup.exe /S → 설치 폴더의 exe → uninstall.exe /S → 폴더 사라짐), 그다음 MSI(msiexec /i → exe → /x)
@@ -81,7 +82,8 @@ export const DIAG_TIMEOUT_MS = 30_000;
 export const WAIT_GONE_MS = 60_000;
 // OS별 설치 스모크의 바깥 명령(sh) 수와 앱 실행(runSmoke) 수. 함수를 고치면 같이 고친다.
 export const INSTALL_STEPS = {
-  linux: { sh: 4, smoke: 2, wait: 0 }, // dpkg-deb, apt-get install, dpkg -L, apt-get purge
+  // sh: dpkg-deb, dpkg -L / pkg(PKG_TIMEOUT_MS, 실패마다 진단 PKG_DIAG개): apt-get install 두 번, 그 사이 dpkg --configure -a, apt-get purge
+  linux: { sh: 2, pkg: 4, smoke: 2, wait: 0 },
   // hdiutil attach, ditto, xattr, plutil, hdiutil detach + 릴리스의 .app.tar.gz: tar, xattr, plutil
   darwin: { sh: 8, smoke: 2, wait: 0 },
   windows: { sh: 4, smoke: 2, wait: 1 }, // NSIS setup, uninstall, msiexec /i, /x + waitGone
@@ -90,7 +92,8 @@ export const INSTALL_STEPS = {
 export function installBudgetMs(os) {
   const n = INSTALL_STEPS[os];
   const diag = os === 'windows' ? 2 * DIAG_TIMEOUT_MS : 0;
-  return n.sh * (SH_TIMEOUT_MS + diag) + n.smoke * (SMOKE_KILL_MS + diag) + n.wait * WAIT_GONE_MS;
+  const pkg = (n.pkg ?? 0) * (PKG_TIMEOUT_MS + PKG_DIAG.length * DIAG_TIMEOUT_MS);
+  return n.sh * (SH_TIMEOUT_MS + diag) + pkg + n.smoke * (SMOKE_KILL_MS + diag) + n.wait * WAIT_GONE_MS;
 }
 
 // 시간 제한에 걸린 뒤(Windows): 남은 프로세스 목록을 남기고 그 pid의 트리를 끝까지 죽여 본다.
@@ -112,18 +115,85 @@ function sh(bin, args, { ok = [0], input, quiet = false, env, timeout = SH_TIMEO
   const r = spawnSync(bin, args, { encoding: 'utf8', input, env: env ?? process.env, maxBuffer: 1 << 26, timeout, killSignal: 'SIGKILL' });
   if (r.error?.code === 'ETIMEDOUT') {
     afterTimeout(r.pid);
-    throw new Error(`${bin} ${args.join(' ')}: ${timeout / 1000}초 안에 끝나지 않았다`);
+    throw new Error(failureText(bin, args, r, timeout));
   }
   if (r.error) throw new Error(`${bin}: ${r.error.message}`);
-  if (!ok.includes(r.status)) {
-    throw new Error(`${bin} ${args.join(' ')} → exit ${r.status ?? r.signal}\n${(r.stdout ?? '').slice(-4000)}${(r.stderr ?? '').slice(-4000)}`);
-  }
+  if (!ok.includes(r.status)) throw new Error(failureText(bin, args, r, timeout));
   if (!quiet && (r.stdout || r.stderr)) process.stdout.write(`${r.stdout ?? ''}${r.stderr ?? ''}`);
   return r.stdout ?? '';
 }
 
-const sudo = (bin, args, opts) =>
-  !IS_WIN && process.getuid && process.getuid() !== 0 ? sh('sudo', [bin, ...args], opts) : sh(bin, args, opts);
+// 실패·시간 초과 메시지. spawnSync는 시간 초과로 죽인 뒤에도 그때까지 받은 stdout·stderr를 돌려주므로 끝부분을 붙인다
+// (예전에는 시간 초과 때 이것을 버려 로그에 명령 줄 하나만 남았다, cicd.md 구현 중 변경 113).
+export function failureText(bin, args, r, timeoutMs) {
+  const head =
+    r.error?.code === 'ETIMEDOUT'
+      ? `${bin} ${args.join(' ')}: ${timeoutMs / 1000}초 안에 끝나지 않았다`
+      : `${bin} ${args.join(' ')} → exit ${r.status ?? r.signal}`;
+  const tail = (label, text) => (text ? `\n--- ${label} 끝부분\n${text.slice(-4000)}` : '');
+  return `${head}${tail('stdout', r.stdout)}${tail('stderr', r.stderr)}`;
+}
+
+const asRoot = () => IS_WIN || !process.getuid || process.getuid() === 0;
+
+// ---- 패키지 명령(linux deb) ----
+// 2026-10-09 deb 설치(apt-get install ./x.deb)가 두 번 240초 동안 출력 없이 멈췄다(재실행은 15초). 출력이 버려져 원인을 못 봤으므로
+// (cicd.md 구현 중 변경 113) 패키지 명령은 이렇게 돈다:
+//  - 출력을 그대로 흘린다(stdio inherit): 줄마다 시각이 찍혀 멈춘 단계(마지막 Get:·Unpacking·트리거)가 로그에 남는다.
+//  - 시간 제한을 sudo 안쪽 `timeout -k`에 둔다. 바깥 spawnSync의 SIGKILL은 sudo만 죽이고 apt-get·dpkg는 고아로 남아 잠금을
+//    쥘 수 있다. timeout은 자기 프로세스 그룹 전체(apt 다운로드 메서드·dpkg 포함)에 신호를 보낸다.
+//  - `env DEBIAN_FRONTEND=noninteractive`: sudo의 env_reset을 지나 부모 환경 변수가 닿는다는 보장이 없다.
+//  - 잠금은 명시적으로 기다리고(DPkg::Lock::Timeout) 미러는 다시 받고 연결 대기를 줄인다(Acquire::Retries·http::Timeout).
+//  - 실패하면 PKG_DIAG(apt·dpkg 프로세스, 잠금 파일 보유자)를 남긴다. 설치는 dpkg --configure -a 뒤 한 번 더 한다.
+export const PKG_ATTEMPT_S = 150; // 안쪽 timeout. 녹색 실행의 설치는 11~15초
+export const PKG_KILL_GRACE_S = 10; // TERM 뒤 KILL까지
+export const PKG_TIMEOUT_MS = (PKG_ATTEMPT_S + PKG_KILL_GRACE_S + 10) * 1000; // 바깥 제한: 안쪽이 늘 먼저 걸린다
+export const APT_OPTS = ['-o', 'DPkg::Lock::Timeout=60', '-o', 'Acquire::Retries=3', '-o', 'Acquire::http::Timeout=30'];
+const DPKG_LOCKS = ['/var/lib/dpkg/lock-frontend', '/var/lib/dpkg/lock', '/var/cache/apt/archives/lock'];
+export const PKG_DIAG = [
+  ['sh', ['-c', "ps -eo pid,ppid,etime,stat,cmd | grep -E 'apt|dpkg|unattended|/usr/lib/apt/methods' | grep -v grep"]],
+  ['fuser', ['-v', ...DPKG_LOCKS]],
+];
+
+// 패키지 명령 하나의 실제 argv. root가 아니면 sudo로 감싼다.
+export function pkgArgv(bin, args, { root = asRoot() } = {}) {
+  const inner = ['env', 'DEBIAN_FRONTEND=noninteractive', 'timeout', '-k', `${PKG_KILL_GRACE_S}s`, `${PKG_ATTEMPT_S}s`, bin, ...args];
+  return root ? inner : ['sudo', ...inner];
+}
+
+// 실패한 패키지 명령 뒤의 진단. 각자 DIAG_TIMEOUT_MS로 끊고, 진단의 실패는 무시한다.
+function pkgDiag() {
+  for (const [bin, args] of PKG_DIAG) {
+    const argv = bin === 'fuser' && !asRoot() ? ['sudo', bin, ...args] : [bin, ...args];
+    const r = spawnSync(argv[0], argv.slice(1), { encoding: 'utf8', timeout: DIAG_TIMEOUT_MS, killSignal: 'SIGKILL', maxBuffer: 1 << 24 });
+    console.error(`--- 진단 ${argv.join(' ')} → ${r.status ?? r.error?.code ?? r.signal}\n${(r.stdout ?? '').slice(-8000)}${(r.stderr ?? '').slice(-2000)}`);
+  }
+}
+
+// 패키지 명령 하나. 반환: { ok, why }. 실패면 진단을 남긴다.
+function pkg(bin, args) {
+  const argv = pkgArgv(bin, args);
+  log(`$ ${argv.join(' ')}`);
+  const started = Date.now();
+  const r = spawnSync(argv[0], argv.slice(1), { stdio: ['ignore', 'inherit', 'inherit'], timeout: PKG_TIMEOUT_MS, killSignal: 'SIGKILL' });
+  const secs = ((Date.now() - started) / 1000).toFixed(1);
+  if (!r.error && r.status === 0) return { ok: true, why: null };
+  const why = r.error
+    ? `${bin}: ${r.error.code === 'ETIMEDOUT' ? `바깥 제한 ${PKG_TIMEOUT_MS / 1000}초에 죽였다` : r.error.message}`
+    : `${bin} → exit ${r.status ?? r.signal}${r.status === 124 || r.status === 137 ? `(안쪽 제한 ${PKG_ATTEMPT_S}초)` : ''}`;
+  console.error(`smoke: ${why}, ${secs}초`);
+  pkgDiag();
+  return { ok: false, why };
+}
+
+// 첫 시도가 실패하면 repair 뒤 한 번 더. run·repair는 { ok, why }를 돌려준다. 반환: 마지막 결과(시도 수 포함).
+export function retryOnce(run, repair) {
+  const first = run();
+  if (first.ok) return { ...first, attempts: 1 };
+  repair();
+  const second = run();
+  return second.ok ? { ...second, attempts: 2 } : { ok: false, why: `두 번 실패: ${first.why} / ${second.why}`, attempts: 2 };
+}
 
 // 실행 파일 하나를 --smoke로 돌린다. 반환: { ok, why }
 export function runSmoke(exe, { env = {}, label = basename(exe), auth } = {}) {
@@ -204,22 +274,29 @@ function waitGone(path, ms) {
 // ---- linux ----
 
 function smokeDeb(deb) {
-  const pkg = sh('dpkg-deb', ['-f', deb, 'Package'], { quiet: true }).trim();
-  sudo('apt-get', ['install', '-y', '--no-install-recommends', resolve(deb)], { env: { ...process.env, DEBIAN_FRONTEND: 'noninteractive' } });
+  const name = sh('dpkg-deb', ['-f', deb, 'Package'], { quiet: true }).trim();
+  const inst = retryOnce(
+    () => pkg('apt-get', [...APT_OPTS, 'install', '-y', '--no-install-recommends', resolve(deb)]),
+    // 끊긴 dpkg를 마저 설정한다(안 하면 다음 apt-get이 "dpkg was interrupted"로 멈춘다). 받아 둔 .deb는 캐시에 남는다
+    () => pkg('dpkg', ['--configure', '-a']),
+  );
+  if (!inst.ok) throw new Error(`deb 설치: ${inst.why}`);
+  if (inst.attempts > 1) log(`deb ${name}: 두 번째 시도에서 설치됐다`);
   try {
-    const bins = sh('dpkg', ['-L', pkg], { quiet: true })
+    const bins = sh('dpkg', ['-L', name], { quiet: true })
       .split('\n')
       .map((l) => l.trim())
       .filter((l) => /^\/usr\/bin\/[^/]+$/.test(l));
-    const exe = one(bins, `deb ${pkg}의 /usr/bin 실행 파일`);
+    const exe = one(bins, `deb ${name}의 /usr/bin 실행 파일`);
     const r = runSmoke(exe, { label: `deb ${basename(exe)}`, auth: true });
     if (!r.ok) throw new Error(r.why);
   } finally {
-    sudo('apt-get', ['purge', '-y', pkg], { env: { ...process.env, DEBIAN_FRONTEND: 'noninteractive' } });
+    const p = pkg('apt-get', [...APT_OPTS, 'purge', '-y', name]);
+    if (!p.ok) throw new Error(`deb 제거: ${p.why}`);
   }
-  const s = spawnSync('dpkg', ['-s', pkg], { encoding: 'utf8' });
-  if (s.status === 0) throw new Error(`제거 뒤에도 dpkg -s ${pkg}가 0이다`);
-  log(`deb ${pkg}: 설치·실행·제거 통과`);
+  const s = spawnSync('dpkg', ['-s', name], { encoding: 'utf8' });
+  if (s.status === 0) throw new Error(`제거 뒤에도 dpkg -s ${name}가 0이다`);
+  log(`deb ${name}: 설치·실행·제거 통과`);
 }
 
 function smokeAppImage(file) {

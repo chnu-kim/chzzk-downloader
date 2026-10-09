@@ -502,7 +502,8 @@ export const HOOKS = {
     always: ['push-guard', 'scan-range'],
     fastSkip: true,
     when: [
-      { gate: 'rust', paths: [/^crates\//, /^xtask\//, /^release\//, /^testdata\//, /^Cargo\.(toml|lock)$/, /^rust-toolchain\.toml$/, /^\.cargo\//] },
+      // 셸 테스트가 루프백 KAT(worker/test/vectors/)를 include_str!로 읽는다(worker.md 89 (아))
+      { gate: 'rust', paths: [/^crates\//, /^xtask\//, /^release\//, /^testdata\//, /^worker\/test\/vectors\//, /^Cargo\.(toml|lock)$/, /^rust-toolchain\.toml$/, /^\.cargo\//] },
       { gate: 'release-selftest', paths: RELEASE_SELFTEST_FILES },
       { gate: 'frontend', paths: [/^app\/(?!src-tauri\/)/] },
       // pre-commit에는 넣지 않는다(무겁다). release/ 표는 W5 계약 테스트가 읽는다(worker.md §13.2). semver 벡터는 worker vitest가

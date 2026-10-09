@@ -545,11 +545,10 @@ fn auth_status_dto_json_shapes() {
 
     let mut pending = status(AuthPhase::Pending);
     pending.pending = Some(PendingInfo {
-        user_code: "K7QX-4MRA".into(),
         expires_at: at(T0 + 600),
     });
     let mut want = nulls("pending");
-    want["pending"] = json!({"userCode": "K7QX-4MRA", "expiresAt": 1893456600});
+    want["pending"] = json!({"expiresAt": 1893456600});
     assert_eq!(to_json(&AuthStatusDto::from_status(&pending)), want);
 
     let ch = "000000000000000000000000000000a1";
@@ -599,6 +598,7 @@ fn auth_reason_dto_names() {
         (AuthReason::Network, "network"),
         (AuthReason::Server, "server"),
         (AuthReason::LoginLost, "loginLost"),
+        (AuthReason::Receiver, "receiver"),
     ];
     for (r, name) in all {
         assert_eq!(to_json(&AuthReasonDto::from(r)), json!(name));

@@ -1,7 +1,6 @@
 //! Worker 호출 seam과 응답 타입(worker.md §6.3·§11.3).
 
 use std::fmt;
-use std::time::Duration;
 
 use chzzk_core::Secret;
 use serde_json::Value;
@@ -9,7 +8,7 @@ use time::OffsetDateTime;
 
 use super::base::WorkerBase;
 use super::session::parse_time;
-use super::token;
+use super::token::{self, Grant};
 
 /// 응답 본문 상한(64 KiB). 넘으면 Worker 형식이 아니다.
 pub const MAX_BODY: usize = 64 * 1024;
@@ -31,11 +30,13 @@ impl fmt::Debug for LoginUrl {
     }
 }
 
-/// `/auth/start` 요청 본문. 둘 다 비밀이 아니다(verifier는 pollSecret의 해시).
+/// `/auth/start` 요청 본문. 셋 다 비밀이 아니다(verifier는 loginSecret의 해시).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StartRequest {
-    /// `b64url(SHA-256(pollSecret))`
-    pub poll_verifier: String,
+    /// 루프백 수신기 포트(1024–65535)
+    pub port: u16,
+    /// `b64url(SHA-256(loginSecret))`
+    pub login_verifier: String,
     /// 클라이언트 표시 문자열(`client_label`)
     pub client: String,
 }
@@ -43,28 +44,22 @@ pub struct StartRequest {
 /// `/auth/start` 201 응답
 #[derive(Clone, PartialEq, Eq)]
 pub struct StartResponse {
-    /// 로그인 흐름 ID
-    pub login_id: Secret<String>,
     /// 확인 페이지 주소
     pub login_url: LoginUrl,
-    /// 화면에 보이는 확인 코드
-    pub user_code: String,
-    /// 폴링 간격([2초, 30초]로 자른 값)
-    pub poll_interval: Duration,
+    /// 서버가 본 로그인 만료 시각
+    pub expires_at: OffsetDateTime,
 }
 
 impl fmt::Debug for StartResponse {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("StartResponse")
-            .field("login_id", &"***")
             .field("login_url", &"***")
-            .field("user_code", &self.user_code)
-            .field("poll_interval", &self.poll_interval)
+            .field("expires_at", &self.expires_at)
             .finish()
     }
 }
 
-/// 성공한 토큰 묶음(poll ok·refresh 200)
+/// 성공한 토큰 묶음(redeem ok·refresh 200)
 #[derive(Clone, PartialEq, Eq)]
 pub struct TokenBundle {
     /// access 토큰
@@ -97,11 +92,9 @@ impl fmt::Debug for TokenBundle {
     }
 }
 
-/// `/auth/poll` 200 응답
+/// `/auth/redeem` 200 응답
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum PollResponse {
-    /// 아직 확인 전
-    Pending,
+pub enum RedeemResponse {
     /// 로그인 성공(한 번뿐인 응답)
     Ok(TokenBundle),
     /// 허용되지 않은 채널
@@ -168,12 +161,12 @@ pub trait WorkerApi: Send + Sync + 'static {
         &self,
         req: &StartRequest,
     ) -> impl Future<Output = Result<StartResponse, ApiError>> + Send;
-    /// `POST /auth/poll`
-    fn poll(
+    /// `POST /auth/redeem`
+    fn redeem(
         &self,
-        login_id: &Secret<String>,
-        poll_secret: &Secret<String>,
-    ) -> impl Future<Output = Result<PollResponse, ApiError>> + Send;
+        grant: &Grant,
+        login_secret: &Secret<String>,
+    ) -> impl Future<Output = Result<RedeemResponse, ApiError>> + Send;
     /// `POST /auth/refresh`
     fn refresh(
         &self,
@@ -233,47 +226,41 @@ fn truncate_chars(s: &str, max: usize) -> String {
 }
 
 /// start 201 본문(JSON) → 응답. 계약 위반이면 None.
-/// loginUrl은 정확히 `{origin}/auth/login/<handle>`이어야 하고, pollIntervalMs는 [2초, 30초]로 자른다.
+/// loginUrl은 정확히 `{origin}/auth/login/<handle>`이어야 하고 expiresAt은 시각이어야 한다. 다른 키는 무시한다.
 pub fn parse_start(body: &[u8], base: &WorkerBase) -> Option<StartResponse> {
     let v: Value = serde_json::from_slice(body).ok()?;
-    let login_id = v.get("loginId")?.as_str()?;
     let login_url = v.get("loginUrl")?.as_str()?;
-    let user_code = v.get("userCode")?.as_str()?;
-    parse_time(v.get("expiresAt")?.as_str()?)?;
-    let interval_ms = v.get("pollIntervalMs")?.as_u64()?;
+    let expires_at = parse_time(v.get("expiresAt")?.as_str()?)?;
     let handle = login_url.strip_prefix(&format!("{}/auth/login/", base.origin()))?;
-    if !token::is_id(login_id) || !token::is_id(handle) || !token::is_user_code(user_code) {
+    if !token::is_id(handle) {
         return None;
     }
     Some(StartResponse {
-        login_id: Secret::new(login_id.to_string()),
         login_url: LoginUrl(Secret::new(login_url.to_string())),
-        user_code: user_code.to_string(),
-        poll_interval: Duration::from_millis(interval_ms.clamp(2000, 30_000)),
+        expires_at,
     })
 }
 
-/// poll 200 본문. `ok`는 `parse_bundle`의 규칙, `denied`의 channelName·`failed`의 code는 값 검증 뒤 쓴다. 그 밖 → None
-pub fn parse_poll(body: &[u8]) -> Option<PollResponse> {
+/// redeem 200 본문. `ok`는 `parse_bundle`의 규칙, `denied`의 channelName·`failed`의 code는 값 검증 뒤 쓴다. 그 밖 → None
+pub fn parse_redeem(body: &[u8]) -> Option<RedeemResponse> {
     let v: Value = serde_json::from_slice(body).ok()?;
     match v.get("status")?.as_str()? {
-        "pending" => Some(PollResponse::Pending),
-        "ok" => parse_bundle(body).map(PollResponse::Ok),
-        "denied" => Some(PollResponse::Denied {
+        "ok" => parse_bundle(body).map(RedeemResponse::Ok),
+        "denied" => Some(RedeemResponse::Denied {
             channel_name: v
                 .get("channelName")
                 .and_then(Value::as_str)
                 .map(|n| truncate_chars(n, 128))
                 .unwrap_or_default(),
         }),
-        "cancelled" => Some(PollResponse::Cancelled),
+        "cancelled" => Some(RedeemResponse::Cancelled),
         "failed" => {
             let code = v
                 .get("code")
                 .and_then(Value::as_str)
                 .filter(|c| is_code_word(c, 32, false))
                 .unwrap_or("unknown");
-            Some(PollResponse::Failed {
+            Some(RedeemResponse::Failed {
                 code: code.to_string(),
             })
         }
@@ -282,7 +269,7 @@ pub fn parse_poll(body: &[u8]) -> Option<PollResponse> {
 }
 
 /// 토큰 묶음(§6.3). serverTime은 읽지 않는다(유예 판정에 쓰지 않는다). channelName은 128자를 넘으면 잘라서 받는다
-/// (한 번뿐인 poll ok를 표시 문자열 때문에 버리지 않는다). 하나라도 틀리면 None
+/// (한 번뿐인 redeem ok를 표시 문자열 때문에 버리지 않는다). 하나라도 틀리면 None
 pub fn parse_bundle(body: &[u8]) -> Option<TokenBundle> {
     let v: Value = serde_json::from_slice(body).ok()?;
     if v.get("status")?.as_str()? != "ok" {

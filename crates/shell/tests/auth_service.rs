@@ -35,6 +35,7 @@ struct Env {
     dir: tempfile::TempDir,
     api: FakeWorkerApi,
     clock: FakeClock,
+    grants: FakeGrantSource,
     svc: Arc<Svc>,
 }
 
@@ -47,11 +48,13 @@ impl Env {
         }
         let api = FakeWorkerApi::default();
         let clock = FakeClock::at(t0() + now);
-        let svc = Arc::new(service(dir.path(), &api, &clock));
+        let grants = FakeGrantSource::default();
+        let svc = Arc::new(service(dir.path(), &api, &clock, &grants));
         Self {
             dir,
             api,
             clock,
+            grants,
             svc,
         }
     }
@@ -104,10 +107,18 @@ impl Env {
     fn start_ok(&self) {
         self.api.push_start(Reply::Now(Ok(start_ok(&base()))));
     }
+
+    /// redeem 응답을 줄 끝에 세우고 grant를 보낸 뒤 `run_login_wait`를 돌려 (상태, 브라우저 결과 페이지)를 돌려준다
+    async fn redeem_with(&self, r: Result<RedeemResponse, ApiError>) -> (AuthStatus, ReceiverPage) {
+        self.api.push_redeem(Reply::Now(r));
+        let page = self.grants.deliver(&grant_str());
+        let st = self.svc.run_login_wait().await;
+        (st, page.await.expect("결과 페이지 답장"))
+    }
 }
 
-fn is_poll(c: &Call) -> bool {
-    matches!(c, Call::Poll { .. })
+fn is_redeem(c: &Call) -> bool {
+    matches!(c, Call::Redeem { .. })
 }
 
 fn acc(n: u32) -> String {
@@ -156,7 +167,12 @@ async fn o2_other_origin_signed_out_file_kept() {
     .save(&stored(1, t0(), t0() + d(30)))
     .unwrap();
     let api = FakeWorkerApi::default();
-    let svc = service(dir.path(), &api, &FakeClock::at(t0() + h(1)));
+    let svc = service(
+        dir.path(),
+        &api,
+        &FakeClock::at(t0() + h(1)),
+        &FakeGrantSource::default(),
+    );
     assert_eq!(svc.status().phase, AuthPhase::SignedOut);
     assert!(dir.path().join("session.json").exists());
 }
@@ -165,7 +181,12 @@ async fn o2_other_origin_signed_out_file_kept() {
 async fn o3_corrupt_signed_out_file_kept() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("session.json"), b"{").unwrap();
-    let svc = service(dir.path(), &FakeWorkerApi::default(), &FakeClock::at(t0()));
+    let svc = service(
+        dir.path(),
+        &FakeWorkerApi::default(),
+        &FakeClock::at(t0()),
+        &FakeGrantSource::default(),
+    );
     assert_eq!(svc.status().phase, AuthPhase::SignedOut);
     assert!(dir.path().join("session.json").exists());
 }
@@ -575,7 +596,12 @@ async fn f3_ensure_fresh_during_refresh_waits() {
         .unwrap();
     let api = FakeWorkerApi::default();
     let clock = FakeClock::at(now);
-    let svc = Arc::new(service(dir.path(), &api, &clock));
+    let svc = Arc::new(service(
+        dir.path(),
+        &api,
+        &clock,
+        &FakeGrantSource::default(),
+    ));
     let n = Arc::new(Notify::new());
     api.push_refresh(Reply::Hold(n.clone(), Ok(bundle(2, now))));
     let a = tokio::spawn({
@@ -636,9 +662,8 @@ async fn w3_login_ok_write_fails_signed_in() {
     break_dir(e.path());
     e.start_ok();
     e.svc.begin_login().await;
-    e.api
-        .push_poll(Reply::Now(Ok(PollResponse::Ok(bundle(1, e.now())))));
-    e.svc.poll_login_once().await;
+    e.redeem_with(Ok(RedeemResponse::Ok(bundle(1, e.now()))))
+        .await;
     assert!(e.svc.is_signed_in());
     fix_dir(e.path());
     e.svc.tick(Trigger::Timer).await;
@@ -842,7 +867,7 @@ async fn t9_tick_noop_when_signed_out() {
     assert_eq!(e.svc.next_wake(), None);
 }
 
-// ------------------------------------------------------- 로그인(D13~D19)
+// ------------------------------------------------------- 로그인(D13~D19, 루프백 수령)
 
 /// 파일 없는 환경에서 로그인을 시작해 Pending으로 둔다
 async fn pending_env() -> Env {
@@ -850,6 +875,10 @@ async fn pending_env() -> Env {
     e.start_ok();
     assert!(matches!(e.svc.begin_login().await, BeginLogin::Started(_)));
     e
+}
+
+fn tokio_elapsed(since: tokio::time::Instant) -> std::time::Duration {
+    since.elapsed()
 }
 
 #[tokio::test(start_paused = true)]
@@ -863,20 +892,26 @@ async fn g1_begin_login_starts() {
     assert!(t.login_url.expose().ends_with(&"H".repeat(22)));
     let s = e.svc.status();
     assert_eq!(s.phase, AuthPhase::Pending);
-    let p = s.pending.unwrap();
-    assert_eq!(p.user_code, "K7QX-4MRA");
-    assert_eq!(p.expires_at, now + mins(10));
-    let Call::Start { verifier, client } = e.api.calls()[0].clone() else {
+    assert_eq!(s.pending.unwrap().expires_at, now + mins(10));
+    let Call::Start {
+        port,
+        verifier,
+        client,
+    } = e.api.calls()[0].clone()
+    else {
         panic!()
     };
+    assert_eq!(port, 50000);
     assert!(token::is_secret(&verifier));
+    assert_eq!(e.grants.state(0), token::loopback_state(&verifier));
     assert_eq!(client, "app/0.1.0 test");
-    e.api.push_poll(Reply::Now(Ok(PollResponse::Pending)));
-    e.svc.poll_login_once().await;
-    let Call::Poll { secret, .. } = e.api.calls()[1].clone() else {
+    let (_, page) = e.redeem_with(Ok(RedeemResponse::Cancelled)).await;
+    assert_eq!(page, ReceiverPage::Cancelled);
+    let Call::Redeem { grant, secret } = e.api.calls()[1].clone() else {
         panic!()
     };
-    assert_eq!(token::poll_verifier(&secret), verifier);
+    assert_eq!(grant, grant_str());
+    assert_eq!(token::login_verifier(&secret), verifier);
 }
 
 #[tokio::test(start_paused = true)]
@@ -887,6 +922,7 @@ async fn g2_begin_twice_already_pending() {
         BeginLogin::AlreadyPending(_)
     ));
     assert_eq!(e.api.count(|c| matches!(c, Call::Start { .. })), 1);
+    assert_eq!(e.grants.binds(), 1);
 }
 
 #[tokio::test(start_paused = true)]
@@ -894,6 +930,7 @@ async fn g3_begin_when_signed_in() {
     let e = Env::optimistic();
     assert_eq!(e.svc.begin_login().await, BeginLogin::AlreadySignedIn);
     assert!(e.api.calls().is_empty());
+    assert_eq!(e.grants.binds(), 0);
 }
 
 #[tokio::test(start_paused = true)]
@@ -908,160 +945,182 @@ async fn g4_start_failures() {
         assert_eq!(e.svc.begin_login().await, BeginLogin::Failed);
         let s = e.svc.status();
         assert_eq!((s.phase, s.reason), (AuthPhase::Error, Some(reason)));
+        // start가 실패하면 수신기도 닫는다
+        assert!(e.grants.is_closed(0));
     }
 }
 
 #[tokio::test(start_paused = true)]
-async fn g5_poll_ok_signs_in() {
+async fn g5_redeem_ok_signs_in() {
     let e = pending_env().await;
-    e.api
-        .push_poll(Reply::Now(Ok(PollResponse::Ok(bundle(1, e.now())))));
-    let s = e.svc.poll_login_once().await;
+    let (s, page) = e
+        .redeem_with(Ok(RedeemResponse::Ok(bundle(1, e.now()))))
+        .await;
     assert_signed_in_online(&s);
+    assert_eq!(page, ReceiverPage::SignedIn);
     assert_eq!(e.file_access(), Some(acc(1)));
     assert!(e.svc.take_first_online());
     assert!(e.svc.login_ticket().is_none());
 }
 
 #[tokio::test(start_paused = true)]
-async fn g6_poll_denied() {
+async fn g6_redeem_denied() {
     let e = pending_env().await;
-    e.api.push_poll(Reply::Now(Ok(PollResponse::Denied {
-        channel_name: "남의 채널".into(),
-    })));
-    let s = e.svc.poll_login_once().await;
+    let (s, page) = e
+        .redeem_with(Ok(RedeemResponse::Denied {
+            channel_name: "남의 채널".into(),
+        }))
+        .await;
     assert_eq!((s.phase, s.reason), (AuthPhase::Denied, None));
     assert_eq!(s.channel_name.as_deref(), Some("남의 채널"));
     assert_eq!(s.channel_id, None);
+    assert_eq!(page, ReceiverPage::Denied);
     assert!(!e.file_exists());
 }
 
 #[tokio::test(start_paused = true)]
-async fn g7_poll_cancelled() {
+async fn g7_redeem_cancelled() {
     let e = pending_env().await;
-    e.api.push_poll(Reply::Now(Ok(PollResponse::Cancelled)));
-    assert_eq!(e.svc.poll_login_once().await.phase, AuthPhase::Cancelled);
+    let (s, page) = e.redeem_with(Ok(RedeemResponse::Cancelled)).await;
+    assert_eq!(s.phase, AuthPhase::Cancelled);
+    assert_eq!(page, ReceiverPage::Cancelled);
 }
 
 #[tokio::test(start_paused = true)]
-async fn g8_poll_failed() {
+async fn g8_redeem_failed() {
     let e = pending_env().await;
-    e.api.push_poll(Reply::Now(Ok(PollResponse::Failed {
-        code: "token".into(),
-    })));
-    let s = e.svc.poll_login_once().await;
+    let (s, page) = e
+        .redeem_with(Ok(RedeemResponse::Failed {
+            code: "token".into(),
+        }))
+        .await;
     assert_eq!(
         (s.phase, s.reason),
         (AuthPhase::Error, Some(AuthReason::Server))
     );
+    assert_eq!(page, ReceiverPage::Failed);
 }
 
 #[tokio::test(start_paused = true)]
-async fn g9_poll_404_before_deadline_lost() {
+async fn g9_redeem_404_is_lost() {
     let e = pending_env().await;
-    e.api.push_poll(Reply::Now(Err(worker(404, "not_found"))));
-    let s = e.svc.poll_login_once().await;
+    let (s, page) = e.redeem_with(Err(worker(404, "not_found"))).await;
     assert_eq!(
         (s.phase, s.reason),
         (AuthPhase::Error, Some(AuthReason::LoginLost))
     );
-}
-
-#[tokio::test(start_paused = true)]
-async fn g10_poll_404_after_deadline_timeout() {
+    assert_eq!(page, ReceiverPage::Lost);
+    assert_eq!(e.api.count(is_redeem), 1);
+    // 일시 오류 뒤의 404도 LoginLost다
     let e = pending_env().await;
-    let deadline = e.svc.status().pending.unwrap().expires_at;
-    let n = Arc::new(Notify::new());
-    e.api
-        .push_poll(Reply::Hold(n.clone(), Err(worker(404, "not_found"))));
-    let svc = e.svc.clone();
-    let t = tokio::spawn({
-        let s = svc.clone();
-        async move { s.poll_login_once().await }
-    });
-    while e.api.count(is_poll) == 0 {
-        tokio::task::yield_now().await;
-    }
-    e.clock.set(deadline + Duration::seconds(1));
-    n.notify_one();
-    let s = t.await.unwrap();
+    e.api.push_redeem(Reply::Now(Err(transport())));
+    let (s, page) = e.redeem_with(Err(worker(404, "not_found"))).await;
     assert_eq!(
         (s.phase, s.reason),
-        (AuthPhase::Expired, Some(AuthReason::LoginTimeout))
+        (AuthPhase::Error, Some(AuthReason::LoginLost))
     );
+    assert_eq!(page, ReceiverPage::Lost);
+    assert_eq!(e.api.count(is_redeem), 2);
 }
 
 #[tokio::test(start_paused = true)]
-async fn g11_too_soon_keeps_pending() {
-    let e = pending_env().await;
-    e.api.push_poll(Reply::Now(Err(worker(429, "too_soon"))));
-    assert_eq!(e.svc.poll_login_once().await.phase, AuthPhase::Pending);
-}
-
-#[tokio::test(start_paused = true)]
-async fn g12_transient_keeps_polling() {
-    let e = pending_env().await;
-    e.api.push_poll(Reply::Now(Err(transport())));
-    e.api.push_poll(Reply::Now(Err(worker(503, "busy"))));
-    e.api.push_poll(Reply::Now(Ok(PollResponse::Pending)));
-    e.api
-        .push_poll(Reply::Now(Ok(PollResponse::Ok(bundle(1, e.now())))));
-    for _ in 0..3 {
-        assert_eq!(e.svc.poll_login_once().await.phase, AuthPhase::Pending);
+async fn g10_other_4xx_is_server_without_retry() {
+    for err in [worker(400, "bad_request"), worker(429, "rate_limited")] {
+        let e = pending_env().await;
+        let (s, page) = e.redeem_with(Err(err)).await;
+        assert_eq!(
+            (s.phase, s.reason),
+            (AuthPhase::Error, Some(AuthReason::Server))
+        );
+        assert_eq!(page, ReceiverPage::Failed);
+        assert_eq!(e.api.count(is_redeem), 1);
     }
-    assert_eq!(e.svc.poll_login_once().await.phase, AuthPhase::SignedIn);
 }
 
 #[tokio::test(start_paused = true)]
-async fn g13_deadline_with_last_transient_is_error() {
+async fn g11_contract_is_server_without_retry() {
+    let e = pending_env().await;
+    let (s, page) = e.redeem_with(Err(ApiError::Contract { status: 200 })).await;
+    assert_eq!(
+        (s.phase, s.reason),
+        (AuthPhase::Error, Some(AuthReason::Server))
+    );
+    assert_eq!(page, ReceiverPage::Failed);
+    assert_eq!(e.api.count(is_redeem), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn g12_transient_then_ok() {
+    let e = pending_env().await;
+    e.api.push_redeem(Reply::Now(Err(transport())));
+    e.api.push_redeem(Reply::Now(Err(worker(503, "busy"))));
+    let t = tokio::time::Instant::now();
+    let (s, page) = e
+        .redeem_with(Ok(RedeemResponse::Ok(bundle(1, e.now()))))
+        .await;
+    assert_eq!(s.phase, AuthPhase::SignedIn);
+    assert_eq!(page, ReceiverPage::SignedIn);
+    assert_eq!(e.api.count(is_redeem), 3);
+    assert!(tokio_elapsed(t) >= std::time::Duration::from_secs(3));
+}
+
+#[tokio::test(start_paused = true)]
+async fn g13_transient_until_window() {
+    for (make, reason) in [
+        ((|| transport()) as fn() -> ApiError, AuthReason::Network),
+        (|| worker(503, "busy"), AuthReason::Server),
+    ] {
+        let e = pending_env().await;
+        let start = e.now();
+        for _ in 0..12 {
+            e.api.push_redeem(Reply::Now(Err(make())));
+        }
+        let page = e.grants.deliver(&grant_str());
+        let s = e.svc.run_login_wait().await;
+        assert_eq!(
+            (s.phase, s.reason),
+            (AuthPhase::Error, Some(reason)),
+            "{reason:?}"
+        );
+        assert_eq!(page.await.unwrap(), ReceiverPage::Failed);
+        assert_eq!(e.api.count(is_redeem), 10);
+        let elapsed = e.now() - start;
+        assert!(elapsed <= Duration::seconds(100), "{elapsed}");
+        assert!(elapsed < mins(10));
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn g14_retry_cut_by_login_deadline() {
     let e = pending_env().await;
     let deadline = e.svc.status().pending.unwrap().expires_at;
-    e.api.push_poll(Reply::Now(Err(transport())));
-    assert_eq!(e.svc.poll_login_once().await.phase, AuthPhase::Pending);
-    e.clock.set(deadline);
-    let s = e.svc.poll_login_once().await;
+    e.clock.set(deadline - Duration::seconds(10));
+    for _ in 0..12 {
+        e.api.push_redeem(Reply::Now(Err(transport())));
+    }
+    let page = e.grants.deliver(&grant_str());
+    let s = e.svc.run_login_wait().await;
+    // 0·1·3·7초에 보내고, 다음 기다림(8초)이 기한을 넘어 끝낸다
+    assert_eq!(e.api.count(is_redeem), 4);
     assert_eq!(
         (s.phase, s.reason),
         (AuthPhase::Error, Some(AuthReason::Network))
     );
-    assert_eq!(e.api.count(is_poll), 1);
+    assert_eq!(page.await.unwrap(), ReceiverPage::Failed);
 }
 
 #[tokio::test(start_paused = true)]
-async fn g14_deadline_without_transient_is_timeout() {
+async fn g15_timeout_without_grant() {
     let e = pending_env().await;
-    let deadline = e.svc.status().pending.unwrap().expires_at;
-    e.api.push_poll(Reply::Now(Ok(PollResponse::Pending)));
-    e.svc.poll_login_once().await;
-    e.clock.set(deadline);
-    let s = e.svc.poll_login_once().await;
+    let t = tokio::time::Instant::now();
+    let s = e.svc.run_login_wait().await;
     assert_eq!(
         (s.phase, s.reason),
         (AuthPhase::Expired, Some(AuthReason::LoginTimeout))
     );
-}
-
-#[tokio::test(start_paused = true)]
-async fn g15_cancel_discards_late_ok() {
-    let e = pending_env().await;
-    let n = Arc::new(Notify::new());
-    e.api.push_poll(Reply::Hold(
-        n.clone(),
-        Ok(PollResponse::Ok(bundle(1, e.now()))),
-    ));
-    let svc = e.svc.clone();
-    let t = tokio::spawn({
-        let s = svc.clone();
-        async move { s.poll_login_once().await }
-    });
-    while e.api.count(is_poll) == 0 {
-        tokio::task::yield_now().await;
-    }
-    assert_eq!(svc.cancel_login().phase, AuthPhase::SignedOut);
-    n.notify_one();
-    let s = t.await.unwrap();
-    assert_eq!(s.phase, AuthPhase::SignedOut);
-    assert!(!e.file_exists());
+    assert!(tokio_elapsed(t) <= std::time::Duration::from_secs(605));
+    assert_eq!(e.api.count(is_redeem), 0);
+    assert!(e.grants.is_closed(0));
 }
 
 /// s4 상태: GraceExpired, 파일 있음
@@ -1111,8 +1170,9 @@ async fn g18_refresh_ok_during_pending_ends_login() {
     e.refresh_ok(2);
     assert_signed_in_online(&e.svc.refresh().await);
     assert!(e.svc.login_ticket().is_none());
-    e.svc.poll_login_once().await;
-    assert_eq!(e.api.count(is_poll), 0);
+    assert!(e.grants.is_closed(0));
+    e.svc.run_login_wait().await;
+    assert_eq!(e.api.count(is_redeem), 0);
 }
 
 #[tokio::test(start_paused = true)]
@@ -1120,8 +1180,8 @@ async fn g19_login_failure_keeps_held() {
     let e = grace_expired_env().await;
     e.start_ok();
     e.svc.begin_login().await;
-    e.api.push_poll(Reply::Now(Ok(PollResponse::Cancelled)));
-    assert_eq!(e.svc.poll_login_once().await.phase, AuthPhase::Cancelled);
+    let (s, _) = e.redeem_with(Ok(RedeemResponse::Cancelled)).await;
+    assert_eq!(s.phase, AuthPhase::Cancelled);
     assert!(e.file_exists());
     let before = e.api.refresh_calls().len();
     e.svc.refresh().await;
@@ -1129,46 +1189,187 @@ async fn g19_login_failure_keeps_held() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn g20_run_login_poll_paced() {
+async fn g20_wall_deadline_while_waiting() {
     let e = pending_env().await;
-    e.api.push_poll(Reply::Now(Ok(PollResponse::Pending)));
-    e.api.push_poll(Reply::Now(Ok(PollResponse::Pending)));
-    e.api
-        .push_poll(Reply::Now(Ok(PollResponse::Ok(bundle(1, e.now())))));
-    let t = tokio::time::Instant::now();
-    let s = e.svc.run_login_poll().await;
-    assert_eq!(s.phase, AuthPhase::SignedIn);
-    assert_eq!(e.api.count(is_poll), 3);
-    assert!(t.elapsed() >= std::time::Duration::from_secs(6));
-}
-
-#[tokio::test(start_paused = true)]
-async fn g21_run_login_poll_times_out() {
-    let e = pending_env().await;
-    for _ in 0..400 {
-        e.api.push_poll(Reply::Now(Ok(PollResponse::Pending)));
+    let deadline = e.svc.status().pending.unwrap().expires_at;
+    let t = tokio::spawn({
+        let s = e.svc.clone();
+        async move { s.run_login_wait().await }
+    });
+    for _ in 0..5 {
+        tokio::task::yield_now().await;
     }
-    let t = tokio::time::Instant::now();
-    let s = e.svc.run_login_poll().await;
+    let start = tokio::time::Instant::now();
+    e.clock.set(deadline + Duration::seconds(1));
+    tokio::time::advance(std::time::Duration::from_secs(5)).await;
+    let s = t.await.unwrap();
     assert_eq!(
         (s.phase, s.reason),
         (AuthPhase::Expired, Some(AuthReason::LoginTimeout))
     );
-    assert!(t.elapsed() <= std::time::Duration::from_secs(602));
+    assert!(tokio_elapsed(start) <= std::time::Duration::from_secs(5));
 }
 
 #[tokio::test(start_paused = true)]
-async fn g22_interval_from_start() {
+async fn g21_wall_window_during_backoff() {
+    let e = pending_env().await;
+    for _ in 0..5 {
+        e.api.push_redeem(Reply::Now(Err(transport())));
+    }
+    let page = e.grants.deliver(&grant_str());
+    let t = tokio::spawn({
+        let s = e.svc.clone();
+        async move { s.run_login_wait().await }
+    });
+    while e.api.count(is_redeem) == 0 {
+        tokio::task::yield_now().await;
+    }
+    // 기다림 중에 벽시계만 창 밖으로 뛴다(절전 흉내)
+    e.clock.advance(Duration::seconds(101));
+    tokio::time::advance(std::time::Duration::from_secs(5)).await;
+    let s = t.await.unwrap();
+    assert_eq!(
+        (s.phase, s.reason),
+        (AuthPhase::Error, Some(AuthReason::Network))
+    );
+    assert!(e.api.count(is_redeem) <= 2);
+    assert_eq!(page.await.unwrap(), ReceiverPage::Failed);
+}
+
+#[tokio::test(start_paused = true)]
+async fn g22_rx_taken_once() {
+    let e = pending_env().await;
+    e.api
+        .push_redeem(Reply::Now(Ok(RedeemResponse::Ok(bundle(1, e.now())))));
+    e.grants.deliver(&grant_str());
+    let (a, b) = tokio::join!(e.svc.run_login_wait(), e.svc.run_login_wait());
+    assert_eq!(e.api.count(is_redeem), 1);
+    assert!(a.phase == AuthPhase::SignedIn || b.phase == AuthPhase::SignedIn);
+
+    // 취소 뒤 새 로그인을 시작해도 옛 태스크는 새 수신 줄을 받지 않는다
+    let e = pending_env().await;
+    let old = tokio::spawn({
+        let s = e.svc.clone();
+        async move { s.run_login_wait().await }
+    });
+    for _ in 0..5 {
+        tokio::task::yield_now().await;
+    }
+    e.svc.cancel_login();
+    e.start_ok();
+    assert!(matches!(e.svc.begin_login().await, BeginLogin::Started(_)));
+    let st = old.await.unwrap();
+    assert_eq!(st.phase, AuthPhase::Pending);
+    assert_eq!(e.api.count(is_redeem), 0);
+    // 새 로그인의 줄은 그대로 남아 있다
+    e.api
+        .push_redeem(Reply::Now(Ok(RedeemResponse::Ok(bundle(1, e.now())))));
+    e.grants.deliver(&grant_str());
+    assert_eq!(e.svc.run_login_wait().await.phase, AuthPhase::SignedIn);
+}
+
+#[tokio::test(start_paused = true)]
+async fn g23_receiver_lost_is_error() {
+    let e = pending_env().await;
+    e.grants.drop_tx(0);
+    let s = e.svc.run_login_wait().await;
+    assert_eq!(
+        (s.phase, s.reason),
+        (AuthPhase::Error, Some(AuthReason::Receiver))
+    );
+    assert_eq!(e.api.count(is_redeem), 0);
+}
+
+#[tokio::test(start_paused = true)]
+async fn g24_bind_failure() {
     let e = Env::new(h(1), None);
-    e.api
-        .push_start(Reply::Now(Ok(start_ok_with(&base(), 5000))));
-    e.svc.begin_login().await;
-    e.api.push_poll(Reply::Now(Ok(PollResponse::Pending)));
-    e.api
-        .push_poll(Reply::Now(Ok(PollResponse::Ok(bundle(1, e.now())))));
-    let t = tokio::time::Instant::now();
-    e.svc.run_login_poll().await;
-    assert!(t.elapsed() >= std::time::Duration::from_secs(10));
+    e.grants.push_fail();
+    assert_eq!(e.svc.begin_login().await, BeginLogin::Failed);
+    let s = e.svc.status();
+    assert_eq!(
+        (s.phase, s.reason),
+        (AuthPhase::Error, Some(AuthReason::Receiver))
+    );
+    assert_eq!(e.api.count(|c| matches!(c, Call::Start { .. })), 0);
+}
+
+#[tokio::test(start_paused = true)]
+async fn g25_bad_ports_rebind() {
+    let e = Env::new(h(1), None);
+    for p in [1023, 6667, 50001] {
+        e.grants.push_port(p);
+    }
+    e.start_ok();
+    assert!(matches!(e.svc.begin_login().await, BeginLogin::Started(_)));
+    let Call::Start { port, .. } = e.api.calls()[0].clone() else {
+        panic!()
+    };
+    assert_eq!(port, 50001);
+    assert_eq!(e.grants.binds(), 3);
+    // 앞 리스너는 새 바인딩이 성공한 뒤에야 닫힌다
+    assert_eq!(e.grants.closed_snapshot(), vec![false, false]);
+    assert!(e.grants.is_closed(0) && e.grants.is_closed(1));
+    assert!(!e.grants.is_closed(2));
+}
+
+#[tokio::test(start_paused = true)]
+async fn g26_bad_ports_exhausted() {
+    let e = Env::new(h(1), None);
+    for p in [1, 2, 6667, 6668, 10080] {
+        e.grants.push_port(p);
+    }
+    assert_eq!(e.svc.begin_login().await, BeginLogin::Failed);
+    let s = e.svc.status();
+    assert_eq!(
+        (s.phase, s.reason),
+        (AuthPhase::Error, Some(AuthReason::Receiver))
+    );
+    assert_eq!(e.grants.binds(), 5);
+    assert_eq!(e.api.count(|c| matches!(c, Call::Start { .. })), 0);
+    assert!((0..5).all(|i| e.grants.is_closed(i)));
+}
+
+#[tokio::test(start_paused = true)]
+async fn g27_cancel_logout_new_login_close_receiver() {
+    let e = pending_env().await;
+    assert!(!e.grants.is_closed(0));
+    e.svc.cancel_login();
+    assert!(e.grants.is_closed(0));
+
+    let e = pending_env().await;
+    e.svc.logout().await.unwrap();
+    assert!(e.grants.is_closed(0));
+
+    let e = pending_env().await;
+    e.svc.cancel_login();
+    e.start_ok();
+    assert!(matches!(e.svc.begin_login().await, BeginLogin::Started(_)));
+    assert!(e.grants.is_closed(0));
+    assert!(!e.grants.is_closed(1));
+}
+
+#[tokio::test(start_paused = true)]
+async fn g28_cancel_during_redeem() {
+    let e = pending_env().await;
+    let n = Arc::new(Notify::new());
+    e.api.push_redeem(Reply::Hold(
+        n.clone(),
+        Ok(RedeemResponse::Ok(bundle(1, e.now()))),
+    ));
+    let page = e.grants.deliver(&grant_str());
+    let t = tokio::spawn({
+        let s = e.svc.clone();
+        async move { s.run_login_wait().await }
+    });
+    while e.api.count(is_redeem) == 0 {
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(e.svc.cancel_login().phase, AuthPhase::SignedOut);
+    n.notify_one();
+    let s = t.await.unwrap();
+    assert_eq!(s.phase, AuthPhase::SignedOut);
+    assert_eq!(page.await.unwrap(), ReceiverPage::Pending);
+    assert!(!e.file_exists());
 }
 
 // ------------------------------------------------------------ 로그아웃(D12)
@@ -1273,23 +1474,21 @@ async fn gate_table() {
     cases.push(("signed_out", Env::new(h(1), None), false));
     cases.push(("pending", pending_env().await, false));
     let denied = pending_env().await;
-    denied.api.push_poll(Reply::Now(Ok(PollResponse::Denied {
-        channel_name: "x".into(),
-    })));
-    denied.svc.poll_login_once().await;
+    denied
+        .redeem_with(Ok(RedeemResponse::Denied {
+            channel_name: "x".into(),
+        }))
+        .await;
     cases.push(("denied", denied, false));
     cases.push(("expired", Env::new(h(2), Some(h(1))), false));
     let cancelled = pending_env().await;
-    cancelled
-        .api
-        .push_poll(Reply::Now(Ok(PollResponse::Cancelled)));
-    cancelled.svc.poll_login_once().await;
+    cancelled.redeem_with(Ok(RedeemResponse::Cancelled)).await;
     cases.push(("cancelled", cancelled, false));
     let err = pending_env().await;
-    err.api.push_poll(Reply::Now(Ok(PollResponse::Failed {
+    err.redeem_with(Ok(RedeemResponse::Failed {
         code: "token".into(),
-    })));
-    err.svc.poll_login_once().await;
+    }))
+    .await;
     cases.push(("error", err, false));
     for (name, e, signed_in) in cases {
         assert_eq!(e.svc.is_signed_in(), signed_in, "{name}");
@@ -1329,7 +1528,7 @@ async fn service_is_send_sync() {
     let e = Env::optimistic();
     assert_send(e.svc.refresh());
     assert_send(e.svc.begin_login());
-    assert_send(e.svc.run_login_poll());
+    assert_send(e.svc.run_login_wait());
 }
 
 #[tokio::test(start_paused = true)]
@@ -1349,8 +1548,7 @@ async fn n1_noops_without_session_or_login() {
     let e = Env::new(h(1), None);
     assert_eq!(e.svc.startup().await.phase, AuthPhase::SignedOut);
     assert_eq!(e.svc.refresh().await.phase, AuthPhase::SignedOut);
-    assert_eq!(e.svc.poll_login_once().await.phase, AuthPhase::SignedOut);
-    assert_eq!(e.svc.run_login_poll().await.phase, AuthPhase::SignedOut);
+    assert_eq!(e.svc.run_login_wait().await.phase, AuthPhase::SignedOut);
     assert_eq!(e.svc.cancel_login().phase, AuthPhase::SignedOut);
     assert!(e.svc.login_ticket().is_none());
     assert!(e.api.calls().is_empty());
@@ -1360,62 +1558,28 @@ async fn n1_noops_without_session_or_login() {
 async fn n2_unreadable_file_signed_out() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir(dir.path().join("session.json")).unwrap();
-    let svc = service(dir.path(), &FakeWorkerApi::default(), &FakeClock::at(t0()));
+    let svc = service(
+        dir.path(),
+        &FakeWorkerApi::default(),
+        &FakeClock::at(t0()),
+        &FakeGrantSource::default(),
+    );
     assert_eq!(svc.status().phase, AuthPhase::SignedOut);
 }
 
 #[tokio::test(start_paused = true)]
-async fn n3_stale_poll_loop_stops_after_new_login() {
-    // 취소 뒤 새 로그인이 시작되면 옛 폴링 루프는 새 로그인을 건드리지 않고 끝난다
+async fn n3_stale_wait_stops_after_new_login() {
+    // 취소 뒤 새 로그인이 시작되면 옛 대기 태스크는 새 로그인을 건드리지 않고 끝난다
     let e = pending_env().await;
     let svc = e.svc.clone();
-    let t = tokio::spawn(async move { svc.run_login_poll().await });
+    let t = tokio::spawn(async move { svc.run_login_wait().await });
     tokio::task::yield_now().await;
     e.svc.cancel_login();
     e.start_ok();
     assert!(matches!(e.svc.begin_login().await, BeginLogin::Started(_)));
     t.await.unwrap();
     assert_eq!(e.svc.status().phase, AuthPhase::Pending);
-    assert_eq!(e.api.count(is_poll), 0);
-}
-
-#[tokio::test(start_paused = true)]
-async fn n4_poll_unexpected_error_during_deadline() {
-    // 기한이 지난 뒤 도착한 일시 오류와 Pending은 시간 초과/오류로 끝난다
-    let e = pending_env().await;
-    let deadline = e.svc.status().pending.unwrap().expires_at;
-    let n = Arc::new(Notify::new());
-    e.api.push_poll(Reply::Hold(n.clone(), Err(transport())));
-    let svc = e.svc.clone();
-    let t = tokio::spawn(async move { svc.poll_login_once().await });
-    while e.api.count(is_poll) == 0 {
-        tokio::task::yield_now().await;
-    }
-    e.clock.set(deadline + Duration::seconds(1));
-    n.notify_one();
-    let s = t.await.unwrap();
-    assert_eq!(
-        (s.phase, s.reason),
-        (AuthPhase::Error, Some(AuthReason::Network))
-    );
-
-    let e = pending_env().await;
-    let deadline = e.svc.status().pending.unwrap().expires_at;
-    let n = Arc::new(Notify::new());
-    e.api
-        .push_poll(Reply::Hold(n.clone(), Ok(PollResponse::Pending)));
-    let svc = e.svc.clone();
-    let t = tokio::spawn(async move { svc.poll_login_once().await });
-    while e.api.count(is_poll) == 0 {
-        tokio::task::yield_now().await;
-    }
-    e.clock.set(deadline + Duration::seconds(1));
-    n.notify_one();
-    let s = t.await.unwrap();
-    assert_eq!(
-        (s.phase, s.reason),
-        (AuthPhase::Expired, Some(AuthReason::LoginTimeout))
-    );
+    assert_eq!(e.api.count(is_redeem), 0);
 }
 
 #[tokio::test(start_paused = true)]
@@ -1494,8 +1658,8 @@ async fn n8_cancel_during_start_discards_ticket() {
         let s = e.svc.status();
         assert_eq!((s.phase, s.reason), (AuthPhase::SignedOut, None), "ok={ok}");
         assert!(e.svc.login_ticket().is_none());
-        e.svc.poll_login_once().await;
-        assert_eq!(e.api.count(is_poll), 0);
+        e.svc.run_login_wait().await;
+        assert_eq!(e.api.count(is_redeem), 0);
     }
 }
 
@@ -1607,7 +1771,12 @@ async fn o8_far_future_file_does_not_panic() {
     v["verifiedAt"] = "9999-12-31T00:00:00Z".into();
     v["refreshExpiresAt"] = "9999-12-31T00:00:00Z".into();
     std::fs::write(dir.path().join("session.json"), v.to_string()).unwrap();
-    let svc = service(dir.path(), &FakeWorkerApi::default(), &FakeClock::at(t0()));
+    let svc = service(
+        dir.path(),
+        &FakeWorkerApi::default(),
+        &FakeClock::at(t0()),
+        &FakeGrantSource::default(),
+    );
     assert_eq!(svc.status().phase, AuthPhase::SignedOut);
     assert!(dir.path().join("session.json").exists());
 }
@@ -1654,38 +1823,6 @@ async fn m2_cap_last_minute_does_not_loop() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn m3_poll_single_flight() {
-    // 겹친 poll은 한 번에 하나: 먼저 낸 poll이 ok를 받으면 기다리던 poll은 다시 내지 않는다(404가 ok를 덮지 않는다)
-    let e = pending_env().await;
-    let n = Arc::new(Notify::new());
-    e.api.push_poll(Reply::Hold(
-        n.clone(),
-        Ok(PollResponse::Ok(bundle(1, e.now()))),
-    ));
-    e.api.push_poll(Reply::Now(Err(worker(404, "not_found"))));
-    let a = tokio::spawn({
-        let s = e.svc.clone();
-        async move { s.poll_login_once().await }
-    });
-    while e.api.count(is_poll) == 0 {
-        tokio::task::yield_now().await;
-    }
-    let b = tokio::spawn({
-        let s = e.svc.clone();
-        async move { s.poll_login_once().await }
-    });
-    for _ in 0..10 {
-        tokio::task::yield_now().await;
-    }
-    assert_eq!(e.api.count(is_poll), 1);
-    n.notify_one();
-    assert_signed_in_online(&a.await.unwrap());
-    assert_signed_in_online(&b.await.unwrap());
-    assert_eq!(e.api.count(is_poll), 1);
-    assert_eq!(e.file_access(), Some(acc(1)));
-}
-
-#[tokio::test(start_paused = true)]
 async fn m4_relogin_revokes_old_session() {
     // 저장 세션(유예 지남)을 둔 채 다시 로그인하면 ok 뒤 옛 세션을 서버에서도 끝낸다(실패해도 로그인은 유지)
     for ok in [true, false] {
@@ -1693,10 +1830,10 @@ async fn m4_relogin_revokes_old_session() {
         e.start_ok();
         e.svc.begin_login().await;
         e.api
-            .push_poll(Reply::Now(Ok(PollResponse::Ok(bundle(5, e.now())))));
-        e.api
             .push_logout(Reply::Now(if ok { Ok(()) } else { Err(transport()) }));
-        let s = e.svc.poll_login_once().await;
+        let (s, _) = e
+            .redeem_with(Ok(RedeemResponse::Ok(bundle(5, e.now()))))
+            .await;
         assert_signed_in_online(&s);
         assert_eq!(e.file_access(), Some(acc(5)), "ok={ok}");
         assert_eq!(
@@ -1711,9 +1848,8 @@ async fn m4_relogin_revokes_old_session() {
     }
     // 저장 세션이 없으면 로그아웃을 부르지 않는다
     let e = pending_env().await;
-    e.api
-        .push_poll(Reply::Now(Ok(PollResponse::Ok(bundle(1, e.now())))));
-    e.svc.poll_login_once().await;
+    e.redeem_with(Ok(RedeemResponse::Ok(bundle(1, e.now()))))
+        .await;
     assert_eq!(e.api.count(|c| matches!(c, Call::Logout { .. })), 0);
 }
 
@@ -1746,7 +1882,7 @@ async fn m5_logout_remove_failure_not_signed_in_after_restart() {
         return;
     }
     let r = e.svc.logout().await;
-    let again = service(e.path(), &e.api, &e.clock);
+    let again = service(e.path(), &e.api, &e.clock, &e.grants);
     let st = again.status();
     make_dir_writable(e.path());
     assert_eq!(r.unwrap().phase, AuthPhase::SignedOut);
@@ -1768,7 +1904,7 @@ async fn m6_drop_session_remove_failure_not_signed_in_after_restart() {
         }
         e.api.push_refresh(Reply::Now(Err(err.clone())));
         let s = e.svc.refresh().await;
-        let again = service(e.path(), &e.api, &e.clock);
+        let again = service(e.path(), &e.api, &e.clock, &e.grants);
         let st = again.status();
         make_dir_writable(e.path());
         assert!(!s.phase.eq(&AuthPhase::SignedIn), "{err:?}");
@@ -1821,10 +1957,8 @@ async fn has_session_survives_login_timeout_with_held() {
     e.start_ok();
     assert!(matches!(e.svc.begin_login().await, BeginLogin::Started(_)));
     let deadline = e.svc.status().pending.unwrap().expires_at;
-    e.api.push_poll(Reply::Now(Ok(PollResponse::Pending)));
-    e.svc.poll_login_once().await;
     e.clock.set(deadline);
-    let s = e.svc.poll_login_once().await;
+    let s = e.svc.run_login_wait().await;
     assert_eq!(
         (s.phase, s.reason),
         (AuthPhase::Expired, Some(AuthReason::LoginTimeout))

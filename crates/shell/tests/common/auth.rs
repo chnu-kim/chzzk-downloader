@@ -5,12 +5,14 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use chzzk_core::Secret;
+use chzzk_shell::auth::token::Grant;
 use chzzk_shell::auth::{
-    ApiError, AuthService, Clock, PollResponse, SessionStore, StartRequest, StartResponse,
-    StoredSession, TokenBundle, WorkerApi, WorkerBase, parse_start,
+    ApiError, AuthService, BindError, Bound, Clock, CloseSignal, Delivery, GrantSource, GrantTx,
+    ReceiverPage, RedeemResponse, SessionStore, StartRequest, StartResponse, StoredSession,
+    TokenBundle, WorkerApi, WorkerBase, close_pair, grant_channel, parse_start,
 };
 use time::OffsetDateTime;
-use tokio::sync::Notify;
+use tokio::sync::{Notify, oneshot};
 
 pub const ORIGIN: &str = "https://worker.example.invalid";
 pub const CH: &str = "000000000000000000000000000000a1";
@@ -88,21 +90,18 @@ pub fn read_session(dir: &Path) -> Option<serde_json::Value> {
     serde_json::from_slice(&b).ok()
 }
 
-/// 시작 응답: loginId `L`×22, 주소 `{ORIGIN}/auth/login/` + `H`×22, 확인 코드 `K7QX-4MRA`, 간격 2초
+/// 시작 응답: 주소 `{ORIGIN}/auth/login/` + `H`×22, 만료 2030-01-01T00:10:00Z
 pub fn start_ok(base: &WorkerBase) -> StartResponse {
-    start_ok_with(base, 2000)
-}
-
-/// 폴링 간격(밀리초)을 지정한 시작 응답
-pub fn start_ok_with(base: &WorkerBase, interval_ms: u64) -> StartResponse {
     let body = serde_json::json!({
-        "loginId": "L".repeat(22),
         "loginUrl": format!("{}/auth/login/{}", base.origin(), "H".repeat(22)),
-        "userCode": "K7QX-4MRA",
         "expiresAt": "2030-01-01T00:10:00.000Z",
-        "pollIntervalMs": interval_ms,
     });
     parse_start(body.to_string().as_bytes(), base).expect("start_ok 본문은 계약을 만족한다")
+}
+
+/// 테스트 grant(`cdg_` + 43자)
+pub fn grant_str() -> String {
+    tok("cdg_", "grant")
 }
 
 /// `ApiError::Worker`
@@ -170,11 +169,12 @@ pub enum Reply<T> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Call {
     Start {
+        port: u16,
         verifier: String,
         client: String,
     },
-    Poll {
-        login_id: String,
+    Redeem {
+        grant: String,
         secret: String,
     },
     Refresh {
@@ -189,7 +189,7 @@ pub enum Call {
 #[derive(Default)]
 struct FakeState {
     start: VecDeque<Reply<StartResponse>>,
-    poll: VecDeque<Reply<PollResponse>>,
+    redeem: VecDeque<Reply<RedeemResponse>>,
     refresh: VecDeque<Reply<TokenBundle>>,
     logout: VecDeque<Reply<()>>,
     calls: Vec<Call>,
@@ -203,8 +203,8 @@ impl FakeWorkerApi {
     pub fn push_start(&self, r: Reply<StartResponse>) {
         self.0.lock().unwrap().start.push_back(r);
     }
-    pub fn push_poll(&self, r: Reply<PollResponse>) {
-        self.0.lock().unwrap().poll.push_back(r);
+    pub fn push_redeem(&self, r: Reply<RedeemResponse>) {
+        self.0.lock().unwrap().redeem.push_back(r);
     }
     pub fn push_refresh(&self, r: Reply<TokenBundle>) {
         self.0.lock().unwrap().refresh.push_back(r);
@@ -258,7 +258,8 @@ impl WorkerApi for FakeWorkerApi {
     ) -> impl Future<Output = Result<StartResponse, ApiError>> + Send {
         let r = self.take(
             Call::Start {
-                verifier: req.poll_verifier.clone(),
+                port: req.port,
+                verifier: req.login_verifier.clone(),
                 client: req.client.clone(),
             },
             |s| s.start.pop_front(),
@@ -266,17 +267,17 @@ impl WorkerApi for FakeWorkerApi {
         resolve(r)
     }
 
-    fn poll(
+    fn redeem(
         &self,
-        login_id: &Secret<String>,
-        poll_secret: &Secret<String>,
-    ) -> impl Future<Output = Result<PollResponse, ApiError>> + Send {
+        grant: &Grant,
+        login_secret: &Secret<String>,
+    ) -> impl Future<Output = Result<RedeemResponse, ApiError>> + Send {
         let r = self.take(
-            Call::Poll {
-                login_id: login_id.expose().clone(),
-                secret: poll_secret.expose().clone(),
+            Call::Redeem {
+                grant: grant.expose().to_string(),
+                secret: login_secret.expose().clone(),
             },
-            |s| s.poll.pop_front(),
+            |s| s.redeem.pop_front(),
         );
         resolve(r)
     }
@@ -310,15 +311,104 @@ impl WorkerApi for FakeWorkerApi {
     }
 }
 
-/// 가짜 Worker·시계로 만든 서비스
+// ---- FakeGrantSource: 소켓 없는 수신기 ----
+
+struct BindRec {
+    port: u16,
+    state: String,
+    tx: Option<GrantTx>,
+    signal: CloseSignal,
+}
+
+#[derive(Default)]
+struct GrantState {
+    /// None은 바인딩 실패
+    ports: VecDeque<Option<u16>>,
+    recs: Vec<BindRec>,
+    snapshot: Vec<bool>,
+}
+
+/// 바인딩 호출을 기록하고 포트를 줄에서 꺼내 준다. 줄이 비면 `50000 + n`
+#[derive(Clone, Default)]
+pub struct FakeGrantSource(Arc<Mutex<GrantState>>);
+
+impl FakeGrantSource {
+    pub fn push_port(&self, p: u16) {
+        self.0.lock().unwrap().ports.push_back(Some(p));
+    }
+    pub fn push_fail(&self) {
+        self.0.lock().unwrap().ports.push_back(None);
+    }
+    pub fn binds(&self) -> usize {
+        self.0.lock().unwrap().recs.len()
+    }
+    pub fn state(&self, i: usize) -> String {
+        self.0.lock().unwrap().recs[i].state.clone()
+    }
+    pub fn port(&self, i: usize) -> u16 {
+        self.0.lock().unwrap().recs[i].port
+    }
+    /// 마지막 바인딩의 줄로 grant를 보낸다. 답장 수신 쪽을 돌려준다
+    pub fn deliver(&self, grant: &str) -> oneshot::Receiver<ReceiverPage> {
+        let (d, rx) = Delivery::new(Grant::parse(grant).expect("grant 형식"));
+        let s = self.0.lock().unwrap();
+        let tx = s
+            .recs
+            .last()
+            .and_then(|r| r.tx.clone())
+            .expect("바인딩이 없다");
+        drop(s);
+        // 받는 쪽이 없으면 버려진다(rx는 곧 Err)
+        let _ = tx.try_deliver(d);
+        rx
+    }
+    pub fn is_closed(&self, i: usize) -> bool {
+        self.0.lock().unwrap().recs[i].signal.is_closed()
+    }
+    /// 마지막 bind 호출 때 앞 바인딩들의 닫힘 상태
+    pub fn closed_snapshot(&self) -> Vec<bool> {
+        self.0.lock().unwrap().snapshot.clone()
+    }
+    /// 보내는 쪽을 모두 버려 서비스가 수신기를 잃게 한다
+    pub fn drop_tx(&self, i: usize) {
+        self.0.lock().unwrap().recs[i].tx = None;
+    }
+}
+
+impl GrantSource for FakeGrantSource {
+    fn bind(&self, expected_state: &Secret<String>) -> Result<Bound, BindError> {
+        let mut s = self.0.lock().unwrap();
+        let snap: Vec<bool> = s.recs.iter_mut().map(|r| r.signal.is_closed()).collect();
+        s.snapshot = snap;
+        let n = s.recs.len();
+        let port = match s.ports.pop_front() {
+            Some(None) => return Err(BindError),
+            Some(Some(p)) => p,
+            None => 50000 + n as u16,
+        };
+        let (tx, rx) = grant_channel();
+        let (close, signal) = close_pair();
+        s.recs.push(BindRec {
+            port,
+            state: expected_state.expose().clone(),
+            tx: Some(tx),
+            signal,
+        });
+        Ok(Bound { port, rx, close })
+    }
+}
+
+/// 가짜 Worker·시계·수신기로 만든 서비스
 pub fn service(
     dir: &Path,
     api: &FakeWorkerApi,
     clock: &FakeClock,
+    grants: &FakeGrantSource,
 ) -> AuthService<FakeWorkerApi, FakeClock> {
-    AuthService::open(
+    AuthService::open_with_grants(
         api.clone(),
         clock.clone(),
+        Arc::new(grants.clone()),
         SessionStore::new(dir.to_path_buf(), &base()),
         "app/0.1.0 test".into(),
     )

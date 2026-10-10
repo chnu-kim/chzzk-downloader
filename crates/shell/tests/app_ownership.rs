@@ -178,6 +178,36 @@ fn save_session_as(root: &Path, worker: &MockServer, channel: &str, is_admin: bo
     .unwrap();
 }
 
+/// Worker의 refresh 응답(묶음)을 이 실행에서 받은 것으로 만든다. 디스크의 isAdmin은 이게 있어야 권한이 된다
+async fn refresh_as(app: &App, worker: &MockServer, channel: &str, is_admin: bool) {
+    use time::format_description::well_known::Rfc3339;
+    let now = OffsetDateTime::now_utc();
+    worker.reset().await;
+    Mock::given(method("POST"))
+        .and(path("/auth/refresh"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_raw(
+                serde_json::json!({
+                    "status": "ok",
+                    "accessToken": format!("cda_{}", "C".repeat(43)),
+                    "accessExpiresAt": (now + time::Duration::hours(24)).format(&Rfc3339).unwrap(),
+                    "refreshToken": format!("cdr_{}", "D".repeat(43)),
+                    "refreshExpiresAt": (now + time::Duration::days(30)).format(&Rfc3339).unwrap(),
+                    "channelId": channel,
+                    "channelName": "채널",
+                    "isAdmin": is_admin,
+                    "serverTime": now.format(&Rfc3339).unwrap(),
+                })
+                .to_string(),
+                "application/json",
+            ),
+        )
+        .mount(worker)
+        .await;
+    let st = app.auth.as_ref().unwrap().refresh().await;
+    assert_eq!((st.phase, st.is_admin), (AuthPhase::SignedIn, is_admin));
+}
+
 fn status(phase: AuthPhase, channel: Option<&str>) -> AuthStatus {
     AuthStatus {
         phase,
@@ -530,6 +560,7 @@ async fn admin_receives_other_channel_content() {
     write_jobs(t.path(), vec![vod_record(1, Some(OWN), &out)]);
     save_session_as(t.path(), &worker, OTHER, true);
     let app = open_auth(t.path(), &api, &worker);
+    refresh_as(&app, &worker, OTHER, true).await;
     assert_eq!(
         app.resolve(&url()).await.unwrap().ownership,
         Ownership::AdminOverride
@@ -571,6 +602,7 @@ async fn admin_auto_resume_takes_every_channel() {
     }
     save_session_as(t.path(), &worker, OTHER, true);
     let app = open_auth(t.path(), &api, &worker);
+    refresh_as(&app, &worker, OTHER, true).await;
     let st = app.auth.as_ref().unwrap().status();
     assert!(st.is_admin);
     assert_eq!(app.on_auth_status(&st), 3);
@@ -706,6 +738,7 @@ async fn admin_channelless_content_never_keeps_webview_channel() {
     write_jobs(t.path(), vec![vod_record(1, Some(OTHER), &out)]);
     save_session_as(t.path(), &worker, OTHER, true);
     let app = open_auth(t.path(), &api, &worker);
+    refresh_as(&app, &worker, OTHER, true).await;
     let r = app.resolve(&url()).await.unwrap();
     assert_eq!(r.ownership, Ownership::AdminOverride);
     let job = app
@@ -720,5 +753,82 @@ async fn admin_channelless_content_never_keeps_webview_channel() {
     assert_eq!(channel_of(&app, job.id.0), None);
     app.resume_job(JobId(1), false).await.unwrap();
     assert_eq!(channel_of(&app, 1), None);
+    app.manager.quit(Duration::from_secs(3)).await;
+}
+
+/// 디스크의 관리자 세션은 이번 실행에서 서버가 확인하기 전에는 일반 사용자와 같다: 남의 영상은 거부한다
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn disk_admin_session_is_a_normal_user_until_refresh_confirms() {
+    let api = mock_api(None).await;
+    let worker = MockServer::start().await;
+    let t = TempDir::new().unwrap();
+    let out: PathBuf = t.path().join("out");
+    write_jobs(t.path(), vec![vod_record(1, Some(OTHER), &out)]);
+    // 로그인 채널은 a1, 영상은 b2: 남의 영상
+    save_session_as(t.path(), &worker, OTHER, true);
+    let app = open_auth(t.path(), &api, &worker);
+    assert!(!app.auth.as_ref().unwrap().status().is_admin);
+    assert_eq!(
+        app.resolve(&url()).await.unwrap().ownership,
+        Ownership::NotOwn
+    );
+    let e = app
+        .enqueue(request(t.path(), "x", Some(OWN)))
+        .await
+        .unwrap_err();
+    assert_eq!(e.code, ErrorCode::NotOwnContent);
+    let e = app.resume_job(JobId(1), false).await.unwrap_err();
+    assert_eq!(e.code, ErrorCode::NotOwnContent);
+
+    // 서버가 관리자로 확인하면 허용된다
+    refresh_as(&app, &worker, OTHER, true).await;
+    assert_eq!(
+        app.resolve(&url()).await.unwrap().ownership,
+        Ownership::AdminOverride
+    );
+    app.enqueue(request(t.path(), "x", Some(OWN)))
+        .await
+        .unwrap();
+
+    // 강등된 묶음이 오면 다음 판정부터 거부한다
+    refresh_as(&app, &worker, OTHER, false).await;
+    assert_eq!(
+        app.resolve(&url()).await.unwrap().ownership,
+        Ownership::NotOwn
+    );
+    let e = app
+        .enqueue(request(t.path(), "y", Some(OWN)))
+        .await
+        .unwrap_err();
+    assert_eq!(e.code, ErrorCode::NotOwnContent);
+    app.manager.quit(Duration::from_secs(3)).await;
+}
+
+/// 서버 확인 전의 관리자 세션이 첫 SignedIn에서 깃발을 쓰면 본인 채널의 멈춘 작업만 이어받는다(남은 것은 손으로)
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn unverified_admin_first_signed_in_auto_resumes_own_channel_only() {
+    let api = hanging_server().await;
+    let worker = MockServer::start().await;
+    let t = TempDir::new().unwrap();
+    let out = t.path().join("out");
+    write_jobs(
+        t.path(),
+        vec![record(1, Some(OWN), &out), record(2, Some(OTHER), &out)],
+    );
+    {
+        let app = open_plain(t.path(), &api);
+        app.update_settings(SettingsPatch {
+            auto_resume_interrupted: Some(true),
+            ..SettingsPatch::default()
+        })
+        .unwrap();
+        app.manager.flush();
+    }
+    save_session_as(t.path(), &worker, OWN, true);
+    let app = open_auth(t.path(), &api, &worker);
+    let st = app.auth.as_ref().unwrap().status();
+    assert!(!st.is_admin);
+    assert_eq!(app.on_auth_status(&st), 1);
+    assert_eq!(status_of(&app, 2), JobStatus::Interrupted);
     app.manager.quit(Duration::from_secs(3)).await;
 }

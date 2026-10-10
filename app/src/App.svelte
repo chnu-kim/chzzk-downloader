@@ -20,7 +20,8 @@
   // 뷰는 둘(home·settings)이다. 로그인 화면은 뷰가 아니라 게이트 분기다(worker.md 구현 중 변경 62):
   // 로그인 상태가 잠겨 있으면 뷰와 무관하게 LoginView만 그린다(단축키·Esc로 둘러 갈 수 없다).
 
-  // 뷰가 바뀌면 누르던 버튼(설정·뒤로)이 사라져 포커스가 body로 떨어진다. 설정은 제목, 홈은 입력줄로 옮긴다
+  // 뷰가 바뀌면 누르던 버튼(뒤로)이 사라져 포커스가 body로 떨어진다. 설정 [⚙]은 설정 화면에도 남아
+  // (aria-current="page") 포커스를 쥐고 있으니 그 경우도 같다. 설정은 제목, 홈은 입력줄로 옮긴다
   // (§10 접근성: 포커스 복귀). 다른 곳(쿠키 섹션 펼치기 등)이 이미 포커스를 옮겼으면 그대로 둔다.
   let lastView = ui.view;
   $effect(() => {
@@ -29,7 +30,7 @@
     lastView = v;
     void tick().then(() => {
       const a = document.activeElement;
-      if (a && a !== document.body) return;
+      if (a && a !== document.body && !a.hasAttribute('data-view-trigger')) return;
       if (v === 'home') ui.urlTarget?.focus();
       else document.querySelector<HTMLElement>('[data-view-heading]')?.focus();
     });

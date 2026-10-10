@@ -45,24 +45,24 @@
 
 {#if screen}
   <section class="panel" aria-labelledby="login-title">
-    <span class="mark"><Icon name="drop" size={32} /></span>
     {#if screen.kind === 'checking'}
-      <Spinner size={20} />
+      <!-- 옆의 제목 글자가 상태를 말한다(Spinner는 글자가 없다) -->
+      <Spinner />
     {/if}
-    <h2 id="login-title" class="title" tabindex="-1" data-view-heading>
-      {#if screen.problem}<span class="alert"><Icon name="alert" size={20} /></span>{/if}
+    <h2 id="login-title" class="title" tabindex="-1" data-focus-container data-view-heading>
+      {#if screen.problem}<span class="alert"><Icon name="circle-x" /></span>{/if}
       {screen.title}
     </h2>
 
     {#if screen.kind === 'pending' && pending}
       <p class="remain">{t('auth.pending.body', { mmss: formatMmss(remainingSecs(pending.expiresAt, now)) })}</p>
       <div class="buttons">
-        <Button variant="primary" disabled={auth.isBusy('reopen')} onclick={() => void auth.reopen()}>{t('auth.reopen')}</Button>
+        <Button variant="primary" loading={auth.isBusy('reopen')} onclick={() => void auth.reopen()}>{t('auth.reopen')}</Button>
         <Button disabled={auth.isBusy('cancel')} onclick={() => void auth.cancel()}>{t('auth.cancel')}</Button>
       </div>
       <p class="help">
         {t('auth.browserHelp')}
-        <Button variant="link" size="sm" disabled={auth.isBusy('copy')} onclick={() => void auth.copyLoginUrl()}>
+        <Button variant="ghost" size="sm" disabled={auth.isBusy('copy')} onclick={() => void auth.copyLoginUrl()}>
           {t('auth.copyLoginUrl')}
         </Button>
       </p>
@@ -80,7 +80,14 @@
       {#if screen.buttons.length > 0}
         <div class="buttons">
           {#each screen.buttons as b (b.action + b.label)}
-            <Button variant={b.variant} disabled={auth.isBusy(b.action)} onclick={() => run(b.action)}>{b.label}</Button>
+            <!-- loginScreen 표의 'link'는 새 어휘에 없어 작은 ghost로 그린다 -->
+            {#if b.variant === 'primary'}
+              <Button variant="primary" loading={auth.isBusy(b.action)} onclick={() => run(b.action)}>{b.label}</Button>
+            {:else if b.variant === 'link'}
+              <Button variant="ghost" size="sm" disabled={auth.isBusy(b.action)} onclick={() => run(b.action)}>{b.label}</Button>
+            {:else}
+              <Button variant="secondary" disabled={auth.isBusy(b.action)} onclick={() => run(b.action)}>{b.label}</Button>
+            {/if}
           {/each}
         </div>
       {/if}
@@ -92,7 +99,7 @@
     {:else if screen.otherAccount === 'link'}
       <p class="help">
         {t('auth.otherAccount.lead')}
-        <Button variant="link" size="sm" disabled={auth.isBusy('login')} onclick={() => run('login')}>
+        <Button variant="ghost" size="sm" disabled={auth.isBusy('login')} onclick={() => run('login')}>
           {t('auth.otherAccount')}
         </Button>
       </p>
@@ -120,9 +127,6 @@
     border-radius: var(--radius-lg);
     background: var(--surface);
     text-align: center;
-  }
-  .mark {
-    color: var(--accent);
   }
   .title {
     display: inline-flex;
@@ -166,10 +170,5 @@
     align-self: stretch;
     padding-top: var(--space-12);
     border-top: 1px solid var(--border);
-  }
-  /* 화면이 바뀔 때 프로그램으로 주는 포커스라 링을 보이지 않는다(전역 :focus-visible은 box-shadow다) */
-  .title:focus {
-    outline: none;
-    box-shadow: none;
   }
 </style>

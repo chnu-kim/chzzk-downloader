@@ -1,5 +1,5 @@
 <script lang="ts">
-  // 홈(S1): 위는 입력 영역, 아래는 다운로드 목록(ui-visual §6.1·6.2).
+  // 홈(S1): 위는 입력 영역, 아래는 다운로드 목록(patterns.md §14.2).
   import JobList from '../components/jobs/JobList.svelte';
   import InputPanel from '../components/receive/InputPanel.svelte';
   import { jobs } from '../stores/jobs.svelte';

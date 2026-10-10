@@ -324,9 +324,9 @@ describe('AuthGate 화면', () => {
     await screen.findByRole('heading', { name: '사용 허가가 없는 채널이에요' });
     expect(screen.getByText(/채널: 테스트 채널\./)).toBeInTheDocument();
     const retry = screen.getByRole('button', { name: '다시 시도' });
-    expect(retry).toHaveClass('primary');
+    expect(retry).toHaveClass('btn-primary');
     const other = screen.getByRole('button', { name: '다른 계정으로 로그인' });
-    expect(other).toHaveClass('link');
+    expect(other).toHaveClass('btn-ghost');
     expect(other.closest('p')).toHaveTextContent(/네이버 로그아웃 후\s*다른 계정으로 로그인$/);
     // 둘 다 같은 로그인을 시작한다
     await user.click(retry);
@@ -457,8 +457,16 @@ describe('AccountSlot', () => {
     await user.click(screen.getByRole('button', { name: '계정 메뉴' }));
     await user.click(screen.getByRole('menuitem', { name: '로그아웃' }));
     const d = await screen.findByRole('dialog', { name: '로그아웃할까요?' });
+    // 오른쪽(primary, 첫 포커스)이 안전한 [취소], 왼쪽(secondary)이 실행 쪽 [로그아웃]
     await waitFor(() => expect(within(d).getByRole('button', { name: '취소' })).toHaveFocus());
-    await user.click(within(d).getByRole('button', { name: '취소' }));
+    expect(within(d).getAllByRole('button').map((b) => b.textContent?.trim())).toEqual(['로그아웃', '취소']);
+    // Esc는 닫기만 한다
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(api.authLogout).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: '계정 메뉴' }));
+    await user.click(screen.getByRole('menuitem', { name: '로그아웃' }));
+    await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: '취소' }));
     expect(api.authLogout).not.toHaveBeenCalled();
     await user.click(screen.getByRole('button', { name: '계정 메뉴' }));
     await user.click(screen.getByRole('menuitem', { name: '로그아웃' }));
@@ -503,9 +511,11 @@ describe('UpdateBanner', () => {
     await fireEvent.click(screen.getByRole('button', { name: '나중에' }));
     await fireEvent.click(screen.getByRole('button', { name: '닫기' }));
     expect(onlater).toHaveBeenCalledTimes(2);
+    oninstall.mockClear();
     await rerender({ version: '0.1.1', busy: true, oninstall, onlater });
-    // 포커스를 잃지 않게 disabled 대신 aria-disabled(77)
-    expect(screen.getByRole('button', { name: '지금 업데이트' })).toHaveAttribute('aria-disabled', 'true');
+    // 포커스를 잃지 않게 disabled 없이 같은 버튼이 남고, 눌러도 설치하지 않는다(77)
+    await fireEvent.click(screen.getByRole('button', { name: '지금 업데이트' }));
+    expect(oninstall).not.toHaveBeenCalled();
   });
 });
 

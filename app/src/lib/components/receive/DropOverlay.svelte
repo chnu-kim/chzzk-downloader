@@ -1,5 +1,5 @@
 <script lang="ts">
-  // 창에 끌어다 놓은 주소 글(ui-visual §6.4 드래그 오버). 네이티브 드롭을 꺼 두었으므로(tauri.conf
+  // 창에 끌어다 놓은 주소 글(docs/design/system/patterns.md §7 드래그 오버). 네이티브 드롭을 꺼 두었으므로(tauri.conf
   // `dragDropEnabled: false`, app.md 구현 중 변경 5) 웹뷰의 HTML5 drag 이벤트로 받는다.
   // dragover 동안에는 브라우저가 글 내용을 보여 주지 않으므로(보호 모드) 종류만 보고 띄우고, 놓았을 때 고른다.
   // 파일 드롭은 받지 않는다: 막지 않으면 웹뷰가 그 파일로 이동해 버린다.
@@ -7,7 +7,7 @@
   import { textFromDrop } from '../../chzzkUrl';
   import { isInPageDrag, trackInPageDrags } from '../../inPageDrag';
   import { t } from '../../copy/ko';
-  import Icon from '../ui/Icon.svelte';
+  import Overlay from '../ui/DropOverlay.svelte';
 
   let { ondropurl }: { ondropurl: (text: string) => void } = $props();
 
@@ -55,35 +55,4 @@
 
 <svelte:window {ondragenter} {ondragover} {ondragleave} {ondrop} />
 
-{#if active}
-  <div class="overlay" aria-hidden="true">
-    <div class="inner">
-      <Icon name="drop" size={32} />
-      <span>{t('url.dropHere')}</span>
-    </div>
-  </div>
-{/if}
-
-<style>
-  .overlay {
-    position: fixed;
-    inset: var(--header-h) 0 0 0;
-    z-index: var(--z-banner);
-    padding: var(--space-12);
-    background: color-mix(in srgb, var(--accent-soft) 88%, transparent);
-    pointer-events: none;
-  }
-  .inner {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: var(--space-8);
-    height: 100%;
-    border: 2px dashed var(--accent);
-    border-radius: var(--radius-lg);
-    color: var(--accent);
-    font-size: var(--text-md);
-    font-weight: var(--weight-medium);
-  }
-</style>
+<Overlay open={active} />

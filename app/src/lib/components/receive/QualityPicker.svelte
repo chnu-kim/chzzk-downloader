@@ -7,25 +7,28 @@
   interface Props {
     qualities: readonly QualityDto[];
     durationSecs: number | null;
+    /** 고른 화질의 위치(RadioGroup의 값은 이 위치다) */
     selected: number;
   }
 
   let { qualities, durationSecs, selected = $bindable() }: Props = $props();
+
+  const options = $derived(qualities.map((q, i) => ({ id: q.id, value: i, label: q.label })));
 </script>
 
-<div class="field">
+<div class="quality-field">
   <span id="quality-title" class="label">{t('quality.title')}</span>
-  <RadioGroup items={qualities} bind:selected labelledby="quality-title">
-    {#snippet row(q: QualityDto)}
-      <span class="name tnum">{q.label}</span>
-      <span class="fps tnum">{qualityFps(q) ?? ''}</span>
-      <span class="size tnum">{qualitySize(q, durationSecs) ?? ''}</span>
+  <RadioGroup name="quality" labelledby="quality-title" {options} bind:value={selected}>
+    {#snippet trailing(option)}
+      {@const q = qualities[option.value]}
+      <span class="fps num">{qualityFps(q) ?? ''}</span>
+      <span class="size num">{qualitySize(q, durationSecs) ?? ''}</span>
     {/snippet}
   </RadioGroup>
 </div>
 
 <style>
-  .field {
+  .quality-field {
     display: flex;
     flex-direction: column;
     gap: var(--space-4);
@@ -35,15 +38,11 @@
     font-weight: var(--weight-medium);
     color: var(--fg-muted);
   }
-  .name {
-    min-width: 4.5rem;
-  }
   .fps {
     min-width: 3.5rem;
     color: var(--fg-muted);
   }
   .size {
-    margin-left: auto;
     color: var(--fg-muted);
   }
 </style>

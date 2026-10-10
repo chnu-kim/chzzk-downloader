@@ -125,15 +125,15 @@
 
 <section class="list" aria-labelledby="list-title">
   <div class="head">
-    <h2 id="list-title" class="list-title" tabindex="-1" bind:this={headingEl}>{t('list.title')}</h2>
-    <Button variant="link" disabled={!jobs.hasFinished} onclick={() => void jobs.clearFinished()}>
+    <h2 id="list-title" class="list-title" tabindex="-1" data-focus-container bind:this={headingEl}>{t('list.title')}</h2>
+    <Button variant="ghost" size="sm" disabled={!jobs.hasFinished} onclick={() => void jobs.clearFinished()}>
       {t('list.clearFinished')}
     </Button>
   </div>
 
   {#if jobs.ready && jobs.order.length === 0}
-    <div class="empty">
-      <span class="empty-icon"><Icon name="drop" size={32} /></span>
+    <div class="list-empty">
+      <span class="empty-icon"><Icon name="download" /></span>
       <p class="empty-title">{t('list.empty.title')}</p>
       <p class="empty-body">{t('list.empty.body')}</p>
     </div>
@@ -141,7 +141,7 @@
     <div class="groups" bind:this={listEl} onfocusout={onfocusout}>
       {#each jobs.groups as group (group.id)}
         <section class="group" aria-labelledby="group-{group.id}">
-          <h3 id="group-{group.id}" class="group-title tnum">{group.label}</h3>
+          <h3 id="group-{group.id}" class="group-title num">{group.label}</h3>
           <ul>
             {#each group.jobs as job (job.id)}
               <li>
@@ -172,10 +172,8 @@
   title={t('dialog.cancel.title')}
   body={t('dialog.cancel.body', { size: jobs.confirmSize })}
   onclose={() => jobs.cancelConfirm()}
-  buttons={[
-    { label: t('dialog.cancel.back'), variant: 'primary', autofocus: true, onclick: () => jobs.cancelConfirm() },
-    { label: t('dialog.cancel.confirm'), variant: 'danger', onclick: () => void jobs.confirmRemove() },
-  ]}
+  primary={{ id: 'back', label: t('dialog.cancel.back'), onclick: () => jobs.cancelConfirm() }}
+  secondary={{ id: 'confirm', label: t('dialog.cancel.confirm'), tone: 'danger', onclick: () => void jobs.confirmRemove() }}
 />
 
 <style>
@@ -192,11 +190,6 @@
     margin: 0;
     font-size: var(--text-md);
     font-weight: var(--weight-semibold);
-  }
-  /* 뷰 전환·지운 뒤 프로그램으로 주는 포커스라 링을 보이지 않는다(전역 :focus-visible은 box-shadow다) */
-  .list-title:focus {
-    outline: none;
-    box-shadow: none;
   }
   .group + .group {
     margin-top: var(--space-16);
@@ -215,7 +208,7 @@
     padding: 0;
     list-style: none;
   }
-  .empty {
+  .list-empty {
     display: flex;
     flex-direction: column;
     align-items: center;

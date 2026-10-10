@@ -15,6 +15,7 @@ import {
   escapeRegExp,
   formatAllow,
   loadAllow,
+  pruneUnused,
   report,
   runGate,
   toEntries,
@@ -258,6 +259,31 @@ test('--write-from: 입력이 배열이 아니거나 인자가 없으면 2', () 
     assert.equal(spawnSync(process.execPath, [SELF, '--write-from', '--root', d], { encoding: 'utf8' }).status, 2);
     assert.equal(spawnSync(process.execPath, [SELF], { encoding: 'utf8' }).status, 2);
     assert.throws(() => writeFrom(d, [bad]), /배열/);
+  } finally {
+    rmSync(d, { recursive: true, force: true });
+  }
+});
+
+test('pruneUnused: 맞는 위반이 없어진 항목만 지우고 항목을 더하지 않는다', async () => {
+  const d = tmpRoot();
+  try {
+    const keep = entry();
+    const gone = entry({ pattern: '^top: 3px$' });
+    const other = entry({ rule: 'DC1', file: 'k.ts', pattern: '^클릭$' });
+    writeFileSync(join(d, ALLOW_PATH), formatAllow('내 설명', [other, keep, gone]));
+    const gates = [
+      // DL: keep에 맞는 위반 하나 + 허용되지 않은 새 위반 하나, gone에 맞는 위반은 없다
+      { families: ['DL'], check: () => [viol(), viol({ text: 'left: 5px' })] },
+      { families: ['DC'], check: async () => [viol({ rule: 'DC1', file: 'k.ts', text: '클릭' })] },
+    ];
+    const r = await pruneUnused(d, gates);
+    assert.deepEqual(r.removed.map((e) => e.pattern), ['^top: 3px$']);
+    assert.equal(r.remaining, 1);
+    assert.equal(r.total, 2);
+    const json = JSON.parse(readFileSync(join(d, ALLOW_PATH), 'utf8'));
+    assert.equal(json.$comment, '내 설명');
+    assert.deepEqual(json.entries, [other, keep]);
+    assert.deepEqual(validateAllow(json), []);
   } finally {
     rmSync(d, { recursive: true, force: true });
   }

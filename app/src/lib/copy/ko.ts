@@ -1,4 +1,4 @@
-// copy deck(docs/design/app.md §9 "그 밖의 문구", ui-visual.md §9). 화면 문구는 여기에만 둔다.
+// copy deck(docs/design/app.md §9 "그 밖의 문구", system/foundations.md §12). 화면 문구는 여기에만 둔다.
 // 해요체. `{name}` 자리는 `t(key, { name })`가 채운다.
 // `toast.completed`·`job.failed`와 앱 이름은 Rust(`app/src-tauri/src/sink.rs`, OS 알림)에도 있다. 고치면 함께 고친다.
 // 시작 실패 창 문구는 웹뷰가 뜨기 전이라 Rust(`app/src-tauri/src/lib.rs`)에만 있다(디스크·폴더 권한용과 로그인 설정용 둘).
@@ -176,7 +176,6 @@ export const ko = {
   'settings.cookie.howto': '값을 찾는 방법',
   'settings.cookie.bothRequired': '두 값을 모두 넣어 주세요',
   'settings.cookie.show': '값 보기',
-  'settings.cookie.hide': '값 가리기',
   'settings.cookie.howto.steps':
     '1. 브라우저에서 chzzk.naver.com에 로그인해요. 2. F12를 눌러 개발자 도구를 열어요. 3. 애플리케이션(Application) > 쿠키 > https://chzzk.naver.com 을 열어요. 4. NID_AUT, NID_SES의 값을 각각 복사해 붙여넣어요.',
 
@@ -187,6 +186,7 @@ export const ko = {
 
   'settings.about.title': '정보',
   'settings.about.version': '버전 {app} (코어 {core})',
+  'settings.about.licenses': '오픈소스 라이선스',
   'settings.about.openConfig': '설정 폴더 열기',
   'settings.about.openLogs': '로그 폴더 열기',
   'settings.about.checkUpdate': '업데이트 확인',

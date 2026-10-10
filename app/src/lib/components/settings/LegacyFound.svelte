@@ -38,8 +38,6 @@
     ? t('dialog.legacy.body', { n: c.recentCount, cookies: c.hasCookies ? t('dialog.legacy.cookies') : '' })
     : ''}
   onclose={later}
-  buttons={[
-    { label: t('dialog.legacy.later'), variant: 'secondary', onclick: later },
-    { label: t('dialog.legacy.import'), variant: 'primary', autofocus: true, onclick: () => void doImport() },
-  ]}
+  primary={{ id: 'later', label: t('dialog.legacy.later'), onclick: later }}
+  secondary={{ id: 'import', label: t('dialog.legacy.import'), loading: busy, onclick: () => void doImport() }}
 />

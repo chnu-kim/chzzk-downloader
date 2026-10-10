@@ -287,17 +287,35 @@ export const GATES = {
       { cmd: ['pnpm', 'tauri', 'build', '--ci', '--debug', '--no-bundle'], cwd: 'app' },
     ],
   },
+  // design-gallery(docs/design/system/governance.md §2.6)는 이 gate 안의 Playwright 프로젝트 gallery다(app/playwright.config.ts).
+  // 그래서 dist를 CHZZK_GALLERY=1로 만든다(gallery.html 진입점이 들어간 e2e 전용 dist. 릴리스 dist·size ratchet과 무관하다).
+  // 한 번의 playwright test가 두 프로젝트를 돌아 report.json 하나를 tests.playwright가 센다.
   'e2e-web': {
-    desc: 'Playwright(chromium) + vite preview(프로덕션 dist) + mockIPC 가짜 백엔드 + axe 위반 0, 통과 수 ≥ ci/ratchet.json tests.playwright',
+    desc: 'Playwright(chromium) + vite preview(프로덕션 dist + 갤러리) + mockIPC 가짜 백엔드 + axe 위반 0, design-gallery(ui/ 매트릭스·환경 행렬·아이콘 번짐), 통과 수 ≥ ci/ratchet.json tests.playwright',
     needs: ['pnpm'],
     steps: [
       { cmd: ['pnpm', 'install', '--frozen-lockfile'], cwd: 'app' },
-      { cmd: ['pnpm', 'build'], cwd: 'app' },
+      { cmd: ['pnpm', 'build'], cwd: 'app', env: { CHZZK_GALLERY: '1' } },
       // 브라우저는 @playwright/test 버전이 고른 빌드를 받는다(lockfile이 버전을 고정한다). 이미 있으면 받지 않는다
       { cmd: ['pnpm', 'exec', 'playwright', 'install', 'chromium'], cwd: 'app' },
       { cmd: ['pnpm', 'exec', 'playwright', 'test'], cwd: 'app' },
       { cmd: ['node', S('measure.mjs'), 'tests-playwright'] },
       { cmd: ['node', S('ratchet.mjs'), 'check', 'tests'] },
+    ],
+  },
+  // 시각 회귀 스냅샷(docs/design/system/governance.md §2.7, ADR-0008). 갤러리 섹션을 라이트·다크·forced × 720·960 × DPR 1·2로
+  // 찍어 app/e2e/__shots__/의 기준선과 비교한다. 기준선은 Linux 러너에서만 만든다: 다른 OS에서는 건너뛰고, 로컬에서는
+  // --update-snapshots를 거부한다(scripts/design/shots.mjs·playwright.shots.config.ts). CI에서 기준선이 없거나 다르면 실패하고
+  // 실제 그림을 artifact design-shots-actual로 올린다 → `node scripts/design/shots.mjs --accept <run id>`. D14 관찰(OBSERVED_JOBS).
+  'design-shots': {
+    desc: '갤러리 섹션 스냅샷(라이트·다크·forced × 720·960 × DPR 1·2) = app/e2e/__shots__ 기준선(허용 오차 ci/ratchet.json shots.max_diff_pixels), Linux만(D14 관찰)',
+    needs: ['pnpm'],
+    platforms: ['linux'],
+    steps: [
+      { cmd: ['pnpm', 'install', '--frozen-lockfile'], cwd: 'app' },
+      { cmd: ['pnpm', 'build'], cwd: 'app', env: { CHZZK_GALLERY: '1' } },
+      { cmd: ['pnpm', 'exec', 'playwright', 'install', 'chromium'], cwd: 'app' },
+      { cmd: ['node', DS('shots.mjs'), 'run'] },
     ],
   },
   'e2e-native': {
@@ -338,7 +356,7 @@ export const GATES = {
     steps: [{ cmd: ['node', S('artifact-check.mjs'), 'glibc'] }],
   },
   'release-hygiene': {
-    desc: '릴리스 바이너리에 E2E 표식 없음 + chzzk-app feature 트리에 e2e 없음',
+    desc: '릴리스 바이너리에 E2E 표식 없음 + chzzk-app feature 트리에 e2e 없음 + app/dist에 디자인 갤러리(gallery.html·표식) 없음',
     needs: ['cargo'],
     steps: [{ cmd: ['node', S('artifact-check.mjs'), 'hygiene'] }],
   },
@@ -619,4 +637,6 @@ export const MASTER_ONLY_JOBS = ['bundle'];
 //   - e2e-native도 'app'이다(리뷰 G4): master에서만 돌면 편입한 뒤에도 PR이 네이티브 E2E를 깨고 녹색으로 머지된다.
 //   - e2e-native-windows(구현 중 변경 79, 사용자 결정 2026-10-06)는 Linux와 따로 관찰·편입한다(작업 id가 달라 하나씩 옮긴다).
 //   - worker-e2e(cicd.md 구현 중 변경 100)는 W7 머지 뒤 첫 master 녹색 실행부터 14일 관찰한다.
-export const OBSERVED_JOBS = { 'e2e-web': 'app', 'e2e-native': 'app', 'e2e-native-windows': 'app', 'worker-e2e': 'worker' };
+//   - design-shots(docs/design/system/governance.md §2.7·§12-12)는 디자인 단계 (b) 머지 뒤 첫 master 녹색 실행부터 14일 관찰한다.
+//     기준선이 생기기 전 첫 실행은 실패하는 것이 정상이다(artifact를 shots.mjs --accept로 받아 커밋한다).
+export const OBSERVED_JOBS = { 'e2e-web': 'app', 'e2e-native': 'app', 'e2e-native-windows': 'app', 'worker-e2e': 'worker', 'design-shots': 'app' };

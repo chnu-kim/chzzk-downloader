@@ -11,14 +11,14 @@
   let { path, onchange, disabled = false }: Props = $props();
 </script>
 
-<div class="row">
+<div class="path-row">
   <span class="label" id="folder-label">{t('folder.label')}</span>
   <span class="value" title={path} aria-labelledby="folder-label">{path}</span>
-  <Button variant="link" {disabled} onclick={onchange}>{t('folder.change')}</Button>
+  <Button variant="ghost" size="sm" {disabled} onclick={onchange}>{t('folder.change')}</Button>
 </div>
 
 <style>
-  .row {
+  .path-row {
     display: flex;
     align-items: center;
     gap: var(--space-8);

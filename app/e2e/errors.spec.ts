@@ -10,7 +10,7 @@ import { expect, test } from './fixtures';
 const err = (code: ErrorCode, stage: AppError['stage']): AppError => ({ code, message: `e2e ${code}`, stage, resumable: false, payload: null });
 const urlFor = (i: number) => `https://chzzk.naver.com/video/${9_100_000 + i}`;
 
-test('불러오기 오류: 모든 코드의 InlineAlert가 copy deck대로 그려진다', async ({ app }) => {
+test('불러오기 오류: 모든 코드의 Notice가 copy deck대로 그려진다', async ({ app }) => {
   const { page } = app;
   const resolve = Object.fromEntries(ERROR_CODES.map((c, i) => [urlFor(i), { error: err(c, 'resolve') }]));
   await app.open({ resolve });
@@ -22,7 +22,9 @@ test('불러오기 오류: 모든 코드의 InlineAlert가 copy deck대로 그�
     const alert = page.getByRole('alert').filter({ hasText: want.title });
     await expect(alert, code).toBeVisible();
     if (want.body) await expect(alert, code).toContainText(want.body);
-    for (const a of want.actions) await expect(alert.getByRole('button', { name: actionLabel(a), exact: true }), `${code} ${a}`).toBeVisible();
+    // role=alert는 .notice-text에만 있고 동작 버튼은 그 바깥(.notice-actions)이다: 알림 전체는 alert를 품은 .notice
+    const notice = page.locator('.notice').filter({ has: alert });
+    for (const a of want.actions) await expect(notice.getByRole('button', { name: actionLabel(a), exact: true }), `${code} ${a}`).toBeVisible();
     if (i === 0) await app.axe(`불러오기 오류 ${code}`);
   }
   expect((await app.args('resolve')).length).toBe(ERROR_CODES.length);

@@ -3,6 +3,9 @@
 //
 //   node scripts/design/allow.mjs --write-from <a.json> [<b.json> …]
 //     여러 gate의 `--print-allow` 출력(JSON 배열)을 합쳐 allow.json을 다시 쓴다. 단계 (a) 부트스트랩용.
+//   node scripts/design/allow.mjs --prune
+//     네 gate(DT·DL/DS/DP/DX·DC·DI)를 돌려 맞는 위반이 없어진 항목만 지운다. 항목을 더하지 않는다(새 위반은 고친다).
+//     적용 단계에서 위반을 고친 뒤 허용 목록을 줄이는 데 쓴다(항목 수 ratchet design.allow_entries는 줄기만 한다).
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -200,6 +203,32 @@ export function writeFrom(root, files) {
 }
 
 /**
+ * 맞는 위반이 없어진 허용 항목을 지운다. `gates`는 [{ families, check }]이고 check(root)는 위반 배열을 돌려준다.
+ * 돌려주는 값: { removed: 지운 항목, remaining: 허용되지 않은 위반 수, total: 남은 항목 수 }. 항목을 더하지 않는다.
+ */
+export async function pruneUnused(root, gates) {
+  const entries = loadAllow(root);
+  const unused = new Set();
+  let remaining = 0;
+  for (const g of gates) {
+    const r = applyAllow(await g.check(root), entries, g.families);
+    for (const e of r.unused) unused.add(e);
+    remaining += r.remaining.length;
+  }
+  const keep = entries.filter((e) => !unused.has(e));
+  const p = join(root, ALLOW_PATH);
+  const comment = JSON.parse(readFileSync(p, 'utf8')).$comment ?? DEFAULT_COMMENT;
+  writeFileSync(p, formatAllow(comment, keep));
+  return { removed: [...unused], remaining, total: keep.length };
+}
+
+/** 네 디자인 gate의 { families, check }(--prune이 쓴다). allow.mjs를 import하는 모듈이라 늦게 읽는다 */
+export async function designGates() {
+  const mods = await Promise.all(['./check-tokens.mjs', './lint.mjs', './copy.mjs', './icons.mjs'].map((m) => import(m)));
+  return mods.map((m) => ({ families: m.FAMILIES, check: m.check }));
+}
+
+/**
  * 네 gate 공통 CLI.
  * - `--print-allow`: check의 위반 전부를 허용 항목 JSON 배열로 stdout에 쓰고 0.
  * - 아니면 허용 목록을 읽어 걸러 낸 뒤 report. check가 던지거나 허용 목록이 깨졌으면 2.
@@ -232,23 +261,38 @@ export async function runGate({ gate, families, check, argv = process.argv.slice
 // 직접 실행: --write-from
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const argv = process.argv.slice(2);
-  const w = argv.indexOf('--write-from');
-  if (w === -1) {
-    console.error('사용법: node scripts/design/allow.mjs --write-from <a.json> [<b.json> …] [--root <dir>]');
-    process.exit(2);
-  }
   const ri = argv.indexOf('--root');
   const root = ri !== -1 ? resolve(argv[ri + 1]) : ROOT;
-  const files = argv.slice(w + 1).filter((a, k, arr) => !a.startsWith('--') && arr[k - 1] !== '--root');
-  if (files.length === 0) {
-    console.error('--write-from 뒤에 --print-allow 출력 파일이 하나 이상 필요하다');
-    process.exit(2);
-  }
-  try {
-    const n = writeFrom(root, files);
-    console.log(`${ALLOW_PATH}: 항목 ${n}개를 썼다`);
-  } catch (err) {
-    console.error(err.message);
-    process.exit(2);
+  if (argv.includes('--prune')) {
+    // top-level await를 쓰지 않는다: gate 모듈이 이 파일을 import하므로 이 모듈의 평가가 끝난 뒤에 읽어야 한다(순환)
+    designGates()
+      .then((gates) => pruneUnused(root, gates))
+      .then((r) => {
+        for (const e of r.removed) console.log(`지움: ${e.rule} ${e.file} /${e.pattern}/`);
+        console.log(`${ALLOW_PATH}: ${r.removed.length}개를 지우고 ${r.total}개가 남았다. 허용되지 않은 위반 ${r.remaining}개(고친다)`);
+        process.exit(0);
+      })
+      .catch((err) => {
+        console.error(err.message);
+        process.exit(2);
+      });
+  } else {
+    const w = argv.indexOf('--write-from');
+    if (w === -1) {
+      console.error('사용법: node scripts/design/allow.mjs --write-from <a.json> [<b.json> …] [--root <dir>] | --prune [--root <dir>]');
+      process.exit(2);
+    }
+    const files = argv.slice(w + 1).filter((a, k, arr) => !a.startsWith('--') && arr[k - 1] !== '--root');
+    if (files.length === 0) {
+      console.error('--write-from 뒤에 --print-allow 출력 파일이 하나 이상 필요하다');
+      process.exit(2);
+    }
+    try {
+      const n = writeFrom(root, files);
+      console.log(`${ALLOW_PATH}: 항목 ${n}개를 썼다`);
+    } catch (err) {
+      console.error(err.message);
+      process.exit(2);
+    }
   }
 }

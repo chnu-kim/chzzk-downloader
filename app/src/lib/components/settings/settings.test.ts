@@ -65,7 +65,8 @@ beforeEach(() => {
 });
 
 async function openCookies(user: ReturnType<typeof userEvent.setup>) {
-  await user.click(screen.getByRole('button', { name: '고급: 네이버 로그인 정보' }));
+  // Disclosure는 <details><summary><h2>이라 제목을 눌러 펼친다
+  await user.click(screen.getByRole('heading', { name: '고급: 네이버 로그인 정보' }));
 }
 
 describe('설정: 즉시 저장', () => {
@@ -183,7 +184,7 @@ describe('설정: 네이버 로그인 정보', () => {
     ui.openCookieSection = true;
     render(SettingsView);
     await waitFor(() =>
-      expect(screen.getByRole('button', { name: '고급: 네이버 로그인 정보' })).toHaveAttribute('aria-expanded', 'true'),
+      expect(screen.getByRole('heading', { name: '고급: 네이버 로그인 정보' }).closest('details')).toHaveAttribute('open'),
     );
     expect(ui.openCookieSection).toBe(false);
   });
@@ -205,7 +206,7 @@ describe('설정: 네이버 로그인 정보', () => {
 });
 
 describe('이전 버전 가져오기', () => {
-  it('폴더를 골라 가져오고 경고는 InlineAlert로 남긴다', async () => {
+  it('폴더를 골라 가져오고 경고는 Notice로 남긴다', async () => {
     vi.mocked(api.pickFolder).mockResolvedValue('D:\\tools\\chzzk');
     vi.mocked(api.importLegacy).mockResolvedValue({
       recentCount: 2,
@@ -243,7 +244,10 @@ describe('D3: 첫 실행에 이전 설정을 찾음', () => {
     expect(
       within(dialog).getByText('예전 치지직 다운로더의 저장 폴더와 최근 VOD 3개, 네이버 로그인 정보를 가져올까요?'),
     ).toBeInTheDocument();
-    await waitFor(() => expect(within(dialog).getByRole('button', { name: '가져오기' })).toHaveFocus());
+    // 오른쪽(primary, 첫 포커스)이 안전한 [나중에], 왼쪽(secondary)이 실행 쪽 [가져오기]
+    await waitFor(() => expect(within(dialog).getByRole('button', { name: '나중에' })).toHaveFocus());
+    expect(within(dialog).getAllByRole('button').map((b) => b.textContent?.trim())).toEqual(['가져오기', '나중에']);
+    expect(api.importLegacy).not.toHaveBeenCalled();
     await user.click(within(dialog).getByRole('button', { name: '가져오기' }));
     expect(api.importLegacy).toHaveBeenCalledWith(null);
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
@@ -259,5 +263,16 @@ describe('D3: 첫 실행에 이전 설정을 찾음', () => {
     await user.click(within(dialog).getByRole('button', { name: '나중에' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     expect(api.importLegacy).not.toHaveBeenCalled();
+  });
+
+  it('Esc는 onclose(나중에)만 하고 가져오지 않는다', async () => {
+    settings.info = { ...info, legacyCandidate: { dir: '/old', recentCount: 1, hasCookies: false } };
+    const user = userEvent.setup();
+    render(LegacyFound);
+    await screen.findByRole('dialog');
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(api.importLegacy).not.toHaveBeenCalled();
+    expect(settings.legacyPromptDone).toBe(true);
   });
 });

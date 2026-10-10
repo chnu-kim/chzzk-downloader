@@ -1,6 +1,6 @@
 <script lang="ts">
   // 이전 버전(§8.7): 폴더를 골라 예전 명령줄 버전의 설정·최근 VOD를 가져온다. 경고(평문 쿠키 등)는
-  // 사용자가 행동해야 하는 내용이라 토스트가 아니라 여기 InlineAlert로 남긴다(§7.2).
+  // 사용자가 행동해야 하는 내용이라 토스트가 아니라 여기 Notice로 남긴다(§7.2).
   import * as api from '../../api';
   import type { AppError } from '../../bindings';
   import { errorCopy } from '../../copy/errors';
@@ -8,7 +8,7 @@
   import { settings } from '../../stores/settings.svelte';
   import { toasts } from '../../stores/toast.svelte';
   import Button from '../ui/Button.svelte';
-  import InlineAlert from '../ui/InlineAlert.svelte';
+  import Notice from '../ui/Notice.svelte';
 
   let busy = $state(false);
   let error = $state<AppError | null>(null);
@@ -40,13 +40,13 @@
       {#if last}<span class="last" title={last}>{t('settings.legacy.last', { path: last })}</span>{/if}
     </div>
     {#each settings.legacyWarnings as w, i (i)}
-      <InlineAlert tone="warning" title={w} />
+      <Notice tone="warning">{w}</Notice>
     {/each}
     {#if errCopy}
-      <InlineAlert tone="danger" title={errCopy.title}>
+      <Notice tone="danger" title={errCopy.title}>
         {#if errCopy.body}<p class="msg">{errCopy.body}</p>{/if}
         {#if errCopy.detail}<p class="msg detail">{errCopy.detail}</p>{/if}
-      </InlineAlert>
+      </Notice>
     {/if}
   </div>
 </section>

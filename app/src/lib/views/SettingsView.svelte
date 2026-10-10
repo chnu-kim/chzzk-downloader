@@ -1,5 +1,5 @@
 <script lang="ts">
-  // 설정(S2, §8.7, ui-visual §6.8): 저장 · 다운로드 · 고급(네이버 로그인 정보) · 이전 버전 · 정보.
+  // 설정(S2, §8.7, patterns.md §14.4): 저장 · 다운로드 · 고급(네이버 로그인 정보) · 이전 버전 · 정보.
   // 즉시 저장 방식이다. 컨트롤은 저장된 값(`settings.dto`)을 읽기만 하고 바꾸면 패치를 보낸다. 저장이 실패하면
   // `settings.revision`이 올라 `{#key}`가 컨트롤을 저장된 값으로 되돌린다.
   import * as api from '../api';
@@ -7,7 +7,8 @@
   import CookieSection from '../components/settings/CookieSection.svelte';
   import LegacySection from '../components/settings/LegacySection.svelte';
   import Button from '../components/ui/Button.svelte';
-  import InlineAlert from '../components/ui/InlineAlert.svelte';
+  import { ICON_SET_VERSION } from '../components/ui/icons';
+  import Notice from '../components/ui/Notice.svelte';
   import Select from '../components/ui/Select.svelte';
   import Switch from '../components/ui/Switch.svelte';
   import { errorCopy } from '../copy/errors';
@@ -17,8 +18,8 @@
   import { settings } from '../stores/settings.svelte';
   import { update } from '../stores/update.svelte';
 
-  const PARALLEL = [1, 2, 3] as const;
-  const SEGMENTS = [1, 2, 3, 4, 5, 6, 7, 8] as const;
+  const PARALLEL = [1, 2, 3].map((n) => ({ value: n, label: String(n) }));
+  const SEGMENTS = [1, 2, 3, 4, 5, 6, 7, 8].map((n) => ({ value: n, label: String(n) }));
 
   /** 이 화면의 저장 오류(설정 파일 문제는 B2가 따로 띄운다) */
   let error = $state<AppError | null>(null);
@@ -72,21 +73,23 @@
 
 <div class="settings">
   {#if errCopy}
-    <InlineAlert tone="danger" title={errCopy.title}>
-      {#if errCopy.body}<p class="line">{errCopy.body}</p>{/if}
-      {#if errCopy.detail}<p class="line detail">{errCopy.detail}</p>{/if}
-    </InlineAlert>
+    <div class="settings-alert">
+      <Notice tone="danger" title={errCopy.title}>
+        {#if errCopy.body}<p class="line">{errCopy.body}</p>{/if}
+        {#if errCopy.detail}<p class="line detail">{errCopy.detail}</p>{/if}
+      </Notice>
+    </div>
   {/if}
 
   <section aria-labelledby="s-storage">
     <h2 id="s-storage" class="section-title">{t('settings.storage')}</h2>
     <div class="group">
-      <div class="row">
+      <div class="srow">
         <span class="label" id="l-folder">{t('settings.defaultFolder')}</span>
         <span class="value" title={dto?.effectiveDownloadFolder}>{dto?.effectiveDownloadFolder ?? ''}</span>
         <span class="buttons">
-          <Button variant="link" aria-describedby="l-folder" onclick={changeFolder}>{t('folder.change')}</Button>
-          <Button variant="link" aria-describedby="l-folder" onclick={() => openFolder('downloads')}>
+          <Button variant="ghost" size="sm" aria-describedby="l-folder" onclick={changeFolder}>{t('folder.change')}</Button>
+          <Button variant="ghost" size="sm" aria-describedby="l-folder" onclick={() => openFolder('downloads')}>
             {t('action.openFolder')}
           </Button>
         </span>
@@ -98,8 +101,8 @@
     <h2 id="s-download" class="section-title">{t('settings.download')}</h2>
     {#key settings.revision}
       <div class="group">
-        <div class="row stacked">
-          <div class="row-main">
+        <div class="srow stacked">
+          <div class="srow-main">
             <span class="label" id="l-parallel">{t('settings.parallel')}</span>
             <Select
               value={dto?.maxParallelDownloads ?? 2}
@@ -111,8 +114,8 @@
           </div>
           <p class="help">{t('settings.parallel.help')}</p>
         </div>
-        <div class="row stacked">
-          <div class="row-main">
+        <div class="srow stacked">
+          <div class="srow-main">
             <span class="label" id="l-segments">{t('settings.segments')}</span>
             <Select
               value={dto?.segmentConcurrency ?? 4}
@@ -124,11 +127,11 @@
           </div>
           <p class="help">{t('settings.segments.help')}</p>
         </div>
-        <div class="row stacked">
-          <div class="row-main">
+        <div class="srow stacked">
+          <div class="srow-main">
             <span class="label" id="l-autoresume">{t('settings.autoResume')}</span>
             <Switch
-              checked={dto?.autoResumeInterrupted ?? false}
+              value={dto?.autoResumeInterrupted ?? false}
               labelledby="l-autoresume"
               disabled={!dto}
               onchange={(on) => save({ autoResumeInterrupted: on })}
@@ -147,19 +150,19 @@
   <section aria-labelledby="s-about">
     <h2 id="s-about" class="section-title">{t('settings.about.title')}</h2>
     <div class="group">
-      <div class="row stacked">
-        <p class="version tnum">
+      <div class="srow stacked">
+        <p class="version num">
           {info ? t('settings.about.version', { app: info.version, core: info.coreVersion }) : ''}
         </p>
         <p class="links">
-          <Button variant="link" onclick={() => openFolder('config')}>{t('settings.about.openConfig')}</Button>
+          <Button variant="ghost" size="sm" onclick={() => openFolder('config')}>{t('settings.about.openConfig')}</Button>
           <span class="sep" aria-hidden="true">·</span>
-          <Button variant="link" onclick={() => openFolder('logs')}>{t('settings.about.openLogs')}</Button>
+          <Button variant="ghost" size="sm" onclick={() => openFolder('logs')}>{t('settings.about.openLogs')}</Button>
           <span class="sep" aria-hidden="true">·</span>
-          <Button variant="link" onclick={() => void copyAppReport(info)}>{t('action.copyReport')}</Button>
+          <Button variant="ghost" size="sm" onclick={() => void copyAppReport(info)}>{t('action.copyReport')}</Button>
           {#if auth.signedIn}
             <span class="sep" aria-hidden="true">·</span>
-            <Button variant="link" disabled={update.check === 'checking'} onclick={() => void update.checkNow()}>
+            <Button variant="ghost" size="sm" disabled={update.check === 'checking'} onclick={() => void update.checkNow()}>
               {t('settings.about.checkUpdate')}
             </Button>
           {/if}
@@ -167,6 +170,10 @@
         {#if auth.signedIn && checkText}
           <p class="help" role="status">{checkText}</p>
         {/if}
+      </div>
+      <div class="srow">
+        <span class="label" id="l-licenses">{t('settings.about.licenses')}</span>
+        <span class="value num">{`Lucide ${ICON_SET_VERSION} (ISC)`}</span>
       </div>
     </div>
   </section>
@@ -184,10 +191,10 @@
       padding-inline: var(--gutter-wide);
     }
   }
-  .settings > :global(.alert) {
+  .settings > .settings-alert {
     margin-top: var(--space-16);
   }
-  /* 섹션 제목은 선이 아니라 위 여백으로 구분한다(ui-visual §2.2) */
+  /* 섹션 제목은 선이 아니라 위 여백으로 구분한다(foundations.md §4) */
   .settings :global(.section-title) {
     margin: var(--space-24) 0 var(--space-8);
     font-size: var(--text-md);
@@ -198,23 +205,23 @@
     border-radius: var(--radius-md);
     background: var(--surface);
   }
-  .settings :global(.row) {
+  .settings :global(.srow) {
     display: flex;
     align-items: center;
     gap: var(--space-12);
     min-height: 48px;
     padding: var(--space-8) var(--space-16);
   }
-  .settings :global(.row + .row) {
+  .settings :global(.srow + .srow) {
     border-top: 1px solid var(--border);
   }
-  .settings :global(.row.stacked) {
+  .settings :global(.srow.stacked) {
     flex-direction: column;
     align-items: stretch;
     gap: var(--space-4);
     padding-block: var(--space-12);
   }
-  .settings :global(.row-main) {
+  .settings :global(.srow-main) {
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -265,9 +272,9 @@
     color: var(--fg-muted);
     overflow-wrap: anywhere;
   }
-  /* 720~839: 값이 라벨 아래로(ui-visual §8) */
+  /* 720~839: 값이 라벨 아래로(patterns.md §15) */
   @media (max-width: 839px) {
-    .row:has(.value) {
+    .srow:has(.value) {
       flex-wrap: wrap;
     }
     .value {

@@ -1,4 +1,4 @@
-// 다운로드 목록(§8.5·§8.11, ui-visual §6.5)의 판단을 순수 함수로 둔다. 상태 판단은 Rust가 하고,
+// 다운로드 목록(§8.5·§8.11, docs/design/system/patterns.md §2·§3·§14.3)의 판단을 순수 함수로 둔다. 상태 판단은 Rust가 하고,
 // 여기서는 받은 레코드로 무엇을 어떻게 보일지만 정한다. 컴포넌트는 표시와 입력만 한다.
 import type { AuthStatusDto, JobDto, JobId, JobStatus, ProgressDto } from './bindings';
 import { errorCopy, type ActionId } from './copy/errors';
@@ -132,7 +132,7 @@ export interface BarView {
 }
 
 /**
- * 진행 막대(ui-visual §6.5). 받는 중·멈추는 중은 늘, 멈춘 작업·실패는 마지막 진행률이 있을 때만,
+ * 진행 막대(patterns.md §3). 받는 중·멈추는 중은 늘, 멈춘 작업·실패는 마지막 진행률이 있을 때만,
  * 대기·완료·건너뜀과 마무리 전 진행률이 없는 실패에는 없다.
  */
 export function barView(job: JobDto, p: ProgressDto | null | undefined): BarView | null {
@@ -198,13 +198,13 @@ const PHASE_KEY = {
 
 // ───────────────────────── 상태 줄 ─────────────────────────
 
-/** 상태 줄 조각. `value`는 숫자(fg, tnum), 아니면 설명(fg-muted) */
+/** 상태 줄 조각. `value`는 숫자(fg, num), 아니면 설명(fg-muted) */
 export interface StatusPart {
   text: string;
   value?: boolean;
   /** 괄호 보조(fg-faint): 이어받음 */
   faint?: boolean;
-  /** 폭 720~839에서 숨김(HLS 조각, ui-visual §8) */
+  /** 폭 720~839에서 숨김(HLS 조각, patterns.md §15) */
   wideOnly?: boolean;
 }
 
@@ -336,7 +336,7 @@ export function failedCopy(job: JobDto, cookiesEnabled: boolean) {
 }
 
 /**
- * 상태별 버튼(ui-visual §6.5가 app.md §8.5보다 우선한다).
+ * 상태별 버튼(patterns.md §2·§14.3이 app.md §8.5보다 우선한다).
  * - 받는 중: [일시정지][×] / 준비 중: [×] / 마무리 중: 없음 / 멈추는 중: 없음
  * - 대기: [×] / 일시정지·중단: [이어받기][×]
  * - 실패: 오류 표(§9)의 동작 / 완료: [파일 열기][폴더 열기](파일이 없으면 [폴더 열기]) / 건너뜀: [파일 열기][덮어쓰고 받기]
@@ -446,11 +446,11 @@ const ACTION_ICON: Partial<Record<JobAction, IconName>> = {
   pause: 'pause',
   resume: 'play',
   retry: 'play',
-  restartFresh: 'restart',
+  restartFresh: 'rotate-cw',
   cancel: 'x',
-  openFile: 'file-play',
+  openFile: 'file-video',
   openFolder: 'folder',
-  remove: 'trash',
+  remove: 'trash-2',
   copyUrl: 'copy',
   copyReport: 'copy',
 };
@@ -463,7 +463,7 @@ export function jobActionIcon(a: JobAction): IconName | undefined {
   return ACTION_ICON[a];
 }
 
-/** 기본 동작을 안다는 표시(accent 글자): 이어받기·다시 시도(ui-visual §6.5) */
+/** 기본 동작을 안다는 표시(accent 글자): 이어받기·다시 시도(patterns.md §2) */
 export function isAccentAction(a: JobAction): boolean {
   return a === 'resume' || a === 'retry';
 }

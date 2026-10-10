@@ -417,9 +417,10 @@ export const SITE_CSS = `/* [root] 라이트 기본값. ref 팔레트와 sys 토
   color: var(--fg-disabled);
 }
 
-/* 불러오는 중: 폭을 유지한 채 글자만 숨기고 가운데에 스피너를 둔다 */
+/* 불러오는 중: 폭을 유지한 채 글자만 투명하게 하고 가운데에 스피너를 둔다.
+   visibility: hidden은 접근성 트리에서 이름을 지우므로 쓰지 않는다 */
 .btn[aria-busy="true"] .btn-label {
-  visibility: hidden;
+  opacity: 0;
 }
 .btn[aria-busy="true"] .spinner {
   position: absolute;
@@ -587,12 +588,15 @@ export const SITE_CSS = `/* [root] 라이트 기본값. ref 팔레트와 sys 토
 .select-wrap {
   position: relative;
   display: inline-flex;
-  flex: none;
+  min-width: 0;
+  max-width: 100%;
 }
 .select {
   appearance: none;
   -webkit-appearance: none;
   min-width: var(--hit-min);
+  max-width: 100%;
+  text-overflow: ellipsis;
   min-height: var(--control-h);
   padding: 0 var(--space-32) 0 var(--space-8);
   border: 1px solid var(--border-strong);
@@ -633,12 +637,16 @@ export const SITE_CSS = `/* [root] 라이트 기본값. ref 팔레트와 sys 토
 .switch {
   position: relative;
   flex: none;
+  box-sizing: content-box;
   width: var(--switch-w);
   height: var(--switch-h);
   padding: 0;
-  border: 0;
+  /* 거친 포인터에서 눌림 면을 hit-min까지 키운다(트랙 그림은 그대로). 보통 포인터에서는 0 */
+  border: 0 solid transparent;
+  border-block-width: calc((var(--hit-min) - var(--switch-h)) / 2);
   border-radius: var(--radius-pill);
   background: var(--border-strong);
+  background-clip: padding-box;
   transition: background-color var(--motion-fast) var(--ease-out);
 }
 .switch::after {
@@ -685,6 +693,7 @@ export const SITE_CSS = `/* [root] 라이트 기본값. ref 팔레트와 sys 토
 .choice {
   position: relative;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--space-8);
   min-height: var(--control-h);
@@ -728,6 +737,13 @@ export const SITE_CSS = `/* [root] 라이트 기본값. ref 팔레트와 sys 토
   color: var(--fg-muted);
   font-size: var(--text-caption);
   line-height: var(--leading-caption);
+}
+.choice-description {
+  /* 설명은 라벨 아래 줄로 내려 라벨 열이 눌리지 않게 한다(글자 시작은 라벨과 맞춘다) */
+  order: 1;
+  flex: 0 0 100%;
+  padding-inline-start: calc(var(--radio-size) + var(--space-8));
+  padding-bottom: var(--space-4);
 }
 .choice-trailing {
   flex: none;
@@ -958,7 +974,10 @@ export const SITE_CSS = `/* [root] 라이트 기본값. ref 팔레트와 sys 토
 }
 .notice-actions {
   display: flex;
-  flex: none;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  min-width: 0;
+  max-width: 100%;
   align-items: center;
   gap: var(--gap-sibling);
   margin-inline-start: auto;
@@ -1002,6 +1021,49 @@ export const SITE_CSS = `/* [root] 라이트 기본값. ref 팔레트와 sys 토
   bottom: var(--edge);
   z-index: var(--z-toast);
   pointer-events: none;
+}
+
+/* ---------- 등장·퇴장(메뉴·토스트·대화상자, components.md §2.9·§2.10·§2.13) ----------
+   @starting-style이 하한 밖이라(foundations §11) 속성 토글 + transition으로 한다: 컴포넌트가 붙일 때 data-motion="enter"를 두고
+   다음 프레임에 지운다(등장). 닫을 때 data-motion="leave"를 두고 transitionend 뒤에 떼어 낸다(퇴장). 메뉴는 퇴장이 없다(즉시).
+   reduce에서는 토큰이 1ms라 곧바로 끝난다(foundations §7.1). */
+.menu {
+  transition:
+    opacity var(--motion-base) var(--ease-out),
+    transform var(--motion-base) var(--ease-out);
+}
+.menu[data-motion="enter"] {
+  opacity: 0;
+  transform: translateY(var(--space-4));
+}
+.notice-toast {
+  transition:
+    opacity var(--motion-base) var(--ease-out),
+    transform var(--motion-base) var(--ease-out);
+}
+.notice-toast[data-motion="enter"] {
+  opacity: 0;
+  transform: translateY(var(--space-8));
+}
+.notice-toast[data-motion="leave"] {
+  opacity: 0;
+  transition: opacity var(--motion-base) var(--ease-in);
+}
+.scrim,
+.dialog {
+  transition:
+    opacity var(--motion-slow) var(--ease-out),
+    transform var(--motion-slow) var(--ease-out);
+}
+.scrim[data-motion="enter"] {
+  opacity: 0;
+}
+.scrim[data-motion="enter"] > .dialog {
+  transform: scale(0.98);
+}
+.scrim[data-motion="leave"] {
+  opacity: 0;
+  transition: opacity var(--motion-base) var(--ease-in);
 }
 
 /* ---------- 빈 상태 ---------- */
@@ -1134,14 +1196,16 @@ export const SITE_CSS = `/* [root] 라이트 기본값. ref 팔레트와 sys 토
   padding: var(--space-6) var(--space-12);
 }
 .row-main {
+  display: flex;
   flex: 1 1 50%;
+  flex-direction: column;
+  gap: var(--space-4);
   min-width: 0;
 }
 .row-label {
   color: var(--fg);
 }
 .row-help {
-  margin-top: var(--space-4);
   color: var(--fg-muted);
   font-size: var(--text-caption);
   line-height: var(--leading-caption);
@@ -1152,7 +1216,9 @@ export const SITE_CSS = `/* [root] 라이트 기본값. ref 팔레트와 sys 토
 }
 .row-control {
   display: flex;
-  flex: none;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
   align-items: center;
   gap: var(--gap-sibling);
   margin-inline-start: auto;
@@ -1268,7 +1334,7 @@ export const SITE_CSS = `/* [root] 라이트 기본값. ref 팔레트와 sys 토
 
 .progress {
   box-sizing: border-box;
-  flex: 1;
+  flex: 1 1 auto;
   min-width: 0;
   height: var(--progress-h);
   border-radius: var(--radius-pill);
@@ -1486,4 +1552,4 @@ html {
   font-size: 16px;
 }
 `;
-export const SITE_CSS_HASH = "be8218e048660ef0";
+export const SITE_CSS_HASH = "40ab34f28df53f7a";

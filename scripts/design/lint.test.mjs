@@ -311,6 +311,8 @@ test('DS4·DS5: {@html, <svg (Icon.svelte만 허용)', () => {
   assert.deepEqual(got(COMP, svelte('<div>{@html raw}</div>')), ['DS4 {@html']);
   assert.deepEqual(got(COMP, svelte('<svg viewBox="0 0 1 1"></svg>')), ['DS5 <svg']);
   assert.deepEqual(got('app/src/lib/components/ui/Icon.svelte', svelte('<svg viewBox="0 0 1 1"></svg>')), []);
+  // Spinner는 회전 호를 자기 svg로 그린다(components.md §2.21)
+  assert.deepEqual(got('app/src/lib/components/ui/Spinner.svelte', svelte('<svg viewBox="0 0 1 1"></svg>')), []);
 });
 
 test('DS6: .svelte 안 한글 리터럴(텍스트·속성·스크립트 문자열), 주석과 .ts는 제외', () => {
@@ -333,6 +335,8 @@ test('DS7: title= 속성은 허용 목록으로만', () => {
   assert.deepEqual(got(COMP, svelte('<span title={full}>x</span>')), ['DS7 title={full}']);
   assert.deepEqual(got(COMP, svelte('<span title="abc">x</span>')), ['DS7 title="abc"']);
   assert.deepEqual(got(COMP, svelte('<span>x</span>')), []);
+  // IconButton의 title={label}은 명세다(components.md §2.2)
+  assert.deepEqual(got('app/src/lib/components/ui/IconButton.svelte', svelte('<button title={label}>x</button>', 'let { label }: { label: string } = $props();')), []);
 });
 
 test('DS8: 앱 소스의 cursor: pointer(마크업·스크립트·ts)', () => {
@@ -367,6 +371,20 @@ test('DP1: 사용처의 variant·tone·size·kind·state 글자 값은 어휘 �
   assert.deepEqual(got(COMP, svelte('<input size="20" />')).filter((s) => s.startsWith('DP1')), [], '네이티브 요소는 보지 않는다');
 });
 
+test('DP1: variant는 그 컴포넌트의 *_VARIANT, 없으면 *_VARIANT 전부의 합집합', () => {
+  const v = parseVocab(`
+export const BUTTON_VARIANT = ['primary', 'secondary', 'ghost'] as const;
+export const SURFACE_VARIANT = ['group', 'card'] as const;
+export const EMPTY_STATE_VARIANT = ['inline', 'panel', 'page'] as const;
+`);
+  assert.deepEqual(got(COMP, svelte('<Surface variant="card">x</Surface><EmptyState variant="panel">x</EmptyState>'), { vocab: v }), []);
+  assert.deepEqual(got(COMP, svelte('<Surface variant="ghost">x</Surface>'), { vocab: v }), ['DP1 variant="ghost"']);
+  assert.deepEqual(got(COMP, svelte('<Button variant="card">x</Button>'), { vocab: v }), ['DP1 variant="card"']);
+  // 자기 배열이 없는 컴포넌트(Thing)는 합집합으로 본다
+  assert.deepEqual(got(COMP, svelte('<Thing variant="panel">x</Thing>'), { vocab: v }), []);
+  assert.deepEqual(got(COMP, svelte('<Thing variant="nope">x</Thing>'), { vocab: v }), ['DP1 variant="nope"']);
+});
+
 test('DP5: IconButton의 icon 값은 ICON_BUTTON_ICONS 안', () => {
   assert.deepEqual(got(COMP, svelte('<IconButton icon="x" label="a" />')), []);
   assert.deepEqual(got(COMP, svelte('<IconButton icon="trash" label="a" />')), ['DP5 icon="trash"']);
@@ -385,6 +403,12 @@ test('DP2: ui/ 컴포넌트의 불리언 prop은 BOOLEAN_PROPS만', () => {
   assert.deepEqual(got(UI, svelte('<span></span>', 'let { a }: { a: string } = $props();\nlet hover: boolean = $state(false);')), []);
   // ui/ 밖은 보지 않는다
   assert.deepEqual(got(COMP, inline), []);
+});
+
+test('DP2: Switch의 value: boolean은 값 prop이라 걸리지 않는다', () => {
+  const body = svelte('<span></span>', "import type { NameProps } from './vocab';\nlet { value = $bindable(), checked }: { value: boolean; checked: boolean; label: string } = $props();");
+  assert.deepEqual(got('app/src/lib/components/ui/Switch.svelte', body), ['DP2 checked']);
+  assert.deepEqual(got(UI, body), ['DP2 checked', 'DP2 value']);
 });
 
 test('DP3: 이벤트 prop은 on + 소문자 동사, 같은 뜻 둘 금지', () => {

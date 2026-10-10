@@ -18,12 +18,15 @@ test('주소를 불러와 받고, 멈췄다 이어받아 끝까지 받는다', a
   const card = page.getByRole('region', { name: r.meta.title });
   await expect(card).toBeVisible();
   await expect(card.getByText('빠른 다시보기')).toBeVisible();
-  await expect(card.getByRole('radio', { name: /1080p/ })).toHaveAttribute('aria-checked', 'true');
+  await expect(card.getByRole('radio', { name: /1080p/ })).toBeChecked();
   await expect(card.getByLabel('파일 이름')).toHaveValue(r.suggestedFileName);
+  // 소유 확인이 끝나 [다운로드]가 활성(aria-disabled 없음)으로 바뀐 뒤에 본다: 전환 중 색 대비를 피한다
+  await expect(card.getByRole('button', { name: '다운로드' })).not.toHaveAttribute('aria-disabled', 'true');
   await app.axe('영상 카드');
 
   // 720p를 골라 받는다
-  await card.getByRole('radio', { name: /720p/ }).click();
+  // 라디오 입력은 .sr-only라 보이는 대상(label.choice)을 누른다
+  await card.locator('label.choice').filter({ hasText: /720p/ }).click();
   await card.getByRole('button', { name: '다운로드' }).click();
   await expect(card).toBeHidden();
   const enq = await app.args('enqueue');

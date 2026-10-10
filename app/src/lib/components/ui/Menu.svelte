@@ -1,37 +1,58 @@
 <script lang="ts" module>
   import type { IconName } from './icons';
+  import type { NameProps, Size } from './vocab';
 
   export interface MenuItem {
+    id: string;
     label: string;
     icon?: IconName;
-    /** 파괴 동작("목록에서 지우기"): danger 글자, 맨 아래, 위에 선 */
-    danger?: boolean;
+    /** danger: 파괴 동작("목록에서 지우기"). 글자가 danger이고 맨 아래, 위에 선 */
+    tone?: 'neutral' | 'danger';
     disabled?: boolean;
-    onselect: () => void;
+    onclick: () => void;
   }
+
+  export type MenuProps = Extract<NameProps, { label: string }> & {
+    items: MenuItem[];
+    size?: Exclude<Size, 'lg'>;
+    el?: HTMLButtonElement | null;
+  } & (
+      | { trigger?: 'icon'; icon?: 'ellipsis' | 'settings'; text?: never }
+      | { trigger: 'text'; text: string; icon?: never }
+    );
 </script>
 
 <script lang="ts">
+  import Button from './Button.svelte';
   import Icon from './Icon.svelte';
   import IconButton from './IconButton.svelte';
+  import { enterMotion, isImeKey } from './focus';
 
-  interface Props {
-    /** 메뉴 버튼의 aria-label */
-    label: string;
-    items: MenuItem[];
-  }
+  let {
+    label,
+    items,
+    size = 'md',
+    el = $bindable(null),
+    trigger = 'icon',
+    icon = 'ellipsis',
+    text = '',
+  }: MenuProps = $props();
 
-  let { label, items }: Props = $props();
+  const uid = $props.id();
+  const panelId = `${uid}-menu`;
+
   let open = $state(false);
-  let trigger: HTMLButtonElement | null = $state(null);
   let list: HTMLElement | null = $state(null);
-  const uid = Math.random().toString(36).slice(2, 9);
+  let placement = $state<'bottom' | 'top'>('bottom');
 
-  // 파괴 항목은 맨 아래로(ui-visual §7)
-  const ordered = $derived([...items.filter((i) => !i.danger), ...items.filter((i) => i.danger)]);
+  // 위험 항목은 맨 아래로(components.md §2.9)
+  const ordered = $derived([
+    ...items.filter((i) => i.tone !== 'danger'),
+    ...items.filter((i) => i.tone === 'danger'),
+  ]);
 
   function entries(): HTMLElement[] {
-    return list ? [...list.querySelectorAll<HTMLElement>('[role="menuitem"]:not([disabled])')] : [];
+    return list ? [...list.querySelectorAll<HTMLElement>('[role="menuitem"]')] : [];
   }
 
   function show(focusIndex: number) {
@@ -45,15 +66,19 @@
 
   function hide(returnFocus = true) {
     open = false;
-    if (returnFocus) trigger?.focus();
+    placement = 'bottom';
+    if (returnFocus) el?.focus();
   }
 
   function select(item: MenuItem) {
+    // aria-disabled 항목은 포커스는 받지만 실행하지 않는다
+    if (item.disabled) return;
     hide();
-    item.onselect();
+    item.onclick();
   }
 
   function onTriggerKey(e: KeyboardEvent) {
+    if (isImeKey(e)) return;
     if (e.key === 'ArrowDown' || e.key === 'Enter' || e.key === ' ') {
       e.preventDefault();
       show(0);
@@ -64,27 +89,36 @@
   }
 
   function onListKey(e: KeyboardEvent) {
-    const e2 = entries();
-    const i = e2.indexOf(document.activeElement as HTMLElement);
+    if (isImeKey(e)) return;
+    const all = entries();
+    const i = all.indexOf(document.activeElement as HTMLElement);
     if (e.key === 'Escape') {
       e.preventDefault();
       e.stopPropagation();
       hide();
     } else if (e.key === 'ArrowDown') {
       e.preventDefault();
-      e2[(i + 1) % e2.length]?.focus();
+      all[(i + 1) % all.length]?.focus();
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
-      e2[(i - 1 + e2.length) % e2.length]?.focus();
+      all[(i - 1 + all.length) % all.length]?.focus();
     } else if (e.key === 'Home') {
       e.preventDefault();
-      e2[0]?.focus();
+      all[0]?.focus();
     } else if (e.key === 'End') {
       e.preventDefault();
-      e2[e2.length - 1]?.focus();
+      all[all.length - 1]?.focus();
     } else if (e.key === 'Tab') {
       hide(false);
     }
+  }
+
+  // 창 밖으로 나가면 위로 뒤집는다(JS 측정). 등장 전환은 enterMotion
+  function place(panel: HTMLElement) {
+    const rect = panel.getBoundingClientRect();
+    const triggerRect = el?.getBoundingClientRect();
+    if (triggerRect && rect.bottom > window.innerHeight && triggerRect.top - rect.height >= 0) placement = 'top';
+    return enterMotion(panel);
   }
 
   // 바깥을 누르면 닫는다
@@ -92,101 +126,70 @@
     if (!open) return;
     const onDown = (e: PointerEvent) => {
       const target = e.target as Node;
-      if (!list?.contains(target) && !trigger?.contains(target)) hide(false);
+      if (!list?.contains(target) && !el?.contains(target)) hide(false);
     };
     window.addEventListener('pointerdown', onDown, true);
     return () => window.removeEventListener('pointerdown', onDown, true);
   });
 </script>
 
-<span class="menu">
-  <IconButton
-    bind:el={trigger}
-    icon="more"
-    {label}
-    aria-haspopup="menu"
-    aria-expanded={open}
-    aria-controls="menu-{uid}"
-    onclick={() => (open ? hide() : show(0))}
-    onkeydown={onTriggerKey}
-  />
+<span class="menu-wrap">
+  {#if trigger === 'text'}
+    <!-- 보이는 글자가 이름이다. 패널 이름은 label -->
+    <Button
+      bind:el
+      variant="ghost"
+      {size}
+      aria-haspopup="menu"
+      aria-expanded={open}
+      aria-controls={panelId}
+      onclick={() => (open ? hide() : show(0))}
+      onkeydown={onTriggerKey}
+    >
+      {text}
+      <Icon name="chevron-down" size="sm" />
+    </Button>
+  {:else}
+    <IconButton
+      bind:el
+      {icon}
+      {label}
+      {size}
+      aria-haspopup="menu"
+      aria-expanded={open}
+      aria-controls={panelId}
+      onclick={() => (open ? hide() : show(0))}
+      onkeydown={onTriggerKey}
+    />
+  {/if}
   {#if open}
-    <div id="menu-{uid}" class="list" role="menu" aria-label={label} tabindex="-1" bind:this={list} onkeydown={onListKey}>
-      {#each ordered as item, i (item.label)}
-        {#if item.danger && (i === 0 || !ordered[i - 1].danger) && i > 0}
-          <div class="sep" role="separator"></div>
+    <div
+      id={panelId}
+      class="menu"
+      role="menu"
+      aria-label={label}
+      tabindex="-1"
+      data-placement={placement === 'top' ? 'top' : undefined}
+      bind:this={list}
+      onkeydown={onListKey}
+      {@attach place}
+    >
+      {#each ordered as item, i (item.id)}
+        {#if item.tone === 'danger' && i > 0 && ordered[i - 1].tone !== 'danger'}
+          <hr class="menu-separator" />
         {/if}
         <button
           type="button"
           role="menuitem"
           tabindex="-1"
-          class="item"
-          class:danger={item.danger}
-          disabled={item.disabled}
+          class="menu-item {item.tone === 'danger' ? 'tone-danger' : ''}"
+          aria-disabled={item.disabled ? 'true' : undefined}
           onclick={() => select(item)}
         >
-          {#if item.icon}<Icon name={item.icon} size={16} />{/if}
+          {#if item.icon}<Icon name={item.icon} size="sm" />{/if}
           <span>{item.label}</span>
         </button>
       {/each}
     </div>
   {/if}
 </span>
-
-<style>
-  .menu {
-    position: relative;
-    display: inline-flex;
-  }
-  .list {
-    position: absolute;
-    top: calc(100% + 4px);
-    right: 0;
-    z-index: var(--z-menu);
-    min-width: 200px;
-    padding: 4px;
-    border-radius: var(--radius-md);
-    background: var(--surface-raised);
-    box-shadow: var(--shadow-menu);
-    animation: rise var(--dur-base) var(--ease-out);
-  }
-  .item {
-    display: flex;
-    align-items: center;
-    gap: var(--space-8);
-    width: 100%;
-    height: 32px;
-    padding: 0 10px;
-    border: none;
-    border-radius: var(--radius-sm);
-    background: none;
-    color: var(--fg);
-    font: inherit;
-    font-size: var(--text-sm);
-    text-align: left;
-    white-space: nowrap;
-    cursor: pointer;
-  }
-  .item:hover:not(:disabled),
-  .item:focus-visible {
-    background: var(--surface-2);
-  }
-  .item:disabled {
-    color: var(--fg-faint);
-    cursor: default;
-  }
-  .item.danger {
-    color: var(--danger);
-  }
-  .sep {
-    height: 1px;
-    margin: 4px 0;
-    background: var(--border);
-  }
-  @keyframes rise {
-    from {
-      opacity: 0;
-      transform: translateY(4px);
-    }
-  }
-</style>

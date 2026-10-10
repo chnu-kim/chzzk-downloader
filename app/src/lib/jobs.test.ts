@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { JobDto, JobStatus } from './bindings';
 import { t } from './copy/ko';
+import { ICONS } from './components/ui/icons';
 import { err, hlsProg, job, prog, signedInAs } from '../test/jobFixtures';
 import {
   CANCEL_CONFIRM_BYTES,
@@ -8,6 +9,7 @@ import {
   barView,
   blockCopyKey,
   deleteAction,
+  jobActionIcon,
   enterAction,
   groupJobs,
   jobBlock,
@@ -29,7 +31,7 @@ function line(j: JobDto, p = j.progress, ctx = {}): string {
     .join('');
 }
 
-describe('jobButtons: 상태별 버튼 표(ui-visual §6.5)', () => {
+describe('jobButtons: 상태별 버튼 표(patterns.md §2·§14.3)', () => {
   const MiB = 1024 * 1024;
   const table: [string, JobDto, { primary: string[]; cancel: boolean; menu: string[] }][] = [
     ['대기', job(1), { primary: [], cancel: true, menu: ['copyUrl'] }],
@@ -375,5 +377,21 @@ describe('막힌 작업(A5)', () => {
   it('copy deck 키', () => {
     expect(blockCopyKey('otherChannel')).toBe('job.otherChannel');
     expect(t('job.otherChannel')).toBe('다른 채널로 로그인해 이어받을 수 없어요');
+  });
+});
+
+describe('동작 아이콘 이름(Lucide 28개 안에 있다)', () => {
+  it('옛 이름(restart·file-play·trash)이 새 이름으로 바뀌었다', () => {
+    expect(jobActionIcon('restartFresh')).toBe('rotate-cw');
+    expect(jobActionIcon('openFile')).toBe('file-video');
+    expect(jobActionIcon('remove')).toBe('trash-2');
+  });
+
+  it('모든 동작의 아이콘이 아이콘 집합에 있다', () => {
+    const all = ['pause', 'resume', 'retry', 'restartFresh', 'cancel', 'openFile', 'openFolder', 'remove', 'copyUrl', 'copyReport'] as const;
+    for (const a of all) {
+      const name = jobActionIcon(a);
+      expect(name && name in ICONS).toBe(true);
+    }
   });
 });

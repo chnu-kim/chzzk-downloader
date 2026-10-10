@@ -1,15 +1,6 @@
-/* 전역 기본값. 토큰(색·글꼴·간격·움직임)은 styles/tokens.css 한 곳에만 둔다(docs/design/ui-visual.md). */
-@import './styles/tokens.css';
-
-:root {
-  font-family: var(--font-sans);
-  font-size: 14px;
-  line-height: var(--leading-normal);
-  word-break: keep-all;
-  overflow-wrap: anywhere;
-  -webkit-font-smoothing: antialiased;
-  text-rendering: optimizeLegibility;
-}
+/* 앱 전역 규칙(docs/design/system/components.md §7-8, foundations §3.4·§3.5, platform.md 선택 가능). 값은 전부 토큰이다.
+   토큰(styles/tokens.css)과 컴포넌트 CSS(styles/ui.css)는 생성물이고 main.ts가 이 파일보다 먼저 import한다
+   (@import는 쓰지 않는다: design-tokens DT12). cursor·user-select 선언은 이 파일에만 둔다(design-lint DX2). */
 
 *,
 *::before,
@@ -17,53 +8,105 @@
   box-sizing: border-box;
 }
 
+/* 루트 16px 고정(ADR-0002). 글자 크기 설정은 data-text-scale 토큰 블록이 맡는다 */
+html {
+  font-size: 16px;
+}
+
 body {
   margin: 0;
   background: var(--bg);
   color: var(--fg);
-  /* 데스크톱 앱: 본문 글자·빈 영역은 드래그 선택되지 않게. 입력칸은 다시 켠다. */
-  user-select: none;
+  font-family: var(--font-sans);
+  font-size: var(--text-body);
+  line-height: var(--leading-body);
+  font-weight: var(--weight-regular);
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+  /* 데스크톱 앱: 글자·빈 영역은 드래그 선택되지 않고 커서는 화살표다(README D25) */
   -webkit-user-select: none;
+  user-select: none;
+  cursor: default;
 }
 
+/* 마진 리셋: 간격은 부모 gap이 소유한다(patterns.md) */
+h1,
+h2,
+h3,
+p,
+ul,
+ol,
+dl,
+dd,
+figure,
+fieldset {
+  margin: 0;
+}
+fieldset {
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+ul,
+ol {
+  padding: 0;
+}
+button,
 input,
-textarea,
-[contenteditable] {
-  user-select: text;
-  -webkit-user-select: text;
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+  margin: 0;
+}
+button {
+  cursor: default;
 }
 
-/* 포커스는 키보드로 왔을 때만 링을 보인다. 모든 컴포넌트가 같은 링을 쓴다. */
+/* 포커스 링은 전역 한 줄이다. 컴포넌트는 재정의하지 않는다(components.md §0.3, README D20) */
 :focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+/* 프로그램이 포커스를 옮기는 비대화형 컨테이너(화면 제목·카드 제목·대화상자)에만 단다. 유일한 outline 끄기 */
+[data-focus-container]:focus-visible {
   outline: none;
-  box-shadow: var(--focus-ring);
-  border-radius: var(--radius-md);
 }
 
-/* 숫자(크기·속도·남은 시간·퍼센트)는 고정폭 숫자로 흔들리지 않게 */
-.tnum {
+/* 입력칸만 글자 선택·텍스트 커서(platform.md: 선택 가능) */
+.field,
+.field-wrap > input,
+.selectable {
+  -webkit-user-select: text;
+  user-select: text;
+  cursor: text;
+}
+.field[readonly],
+.field-wrap > input[readonly] {
+  cursor: default;
+}
+
+/* 글자 유틸 */
+.num {
   font-variant-numeric: tabular-nums;
 }
+.ellipsis {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  overflow-wrap: normal;
+  min-width: 0;
+}
 
-/* 화면에는 없고 스크린 리더만 읽는 글(LiveAnnouncer, 숨긴 라벨) */
+/* 화면에는 없고 스크린 리더만 읽는 글. 1px 리터럴 대신 2px 토큰 상자를 잘라 숨긴다(design-lint DL2) */
 .sr-only {
   position: absolute;
-  width: 1px;
-  height: 1px;
+  width: var(--space-2);
+  height: var(--space-2);
+  margin: calc(0px - var(--space-2));
   padding: 0;
-  margin: -1px;
   overflow: hidden;
   clip-path: inset(50%);
   white-space: nowrap;
   border: 0;
-}
-
-/* reduced-motion이면 animation도 즉시 끝낸다(transition은 --dur-* 0ms로 꺼진다) */
-@media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    animation-duration: 0ms !important;
-    animation-iteration-count: 1 !important;
-  }
 }

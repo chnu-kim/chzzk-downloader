@@ -54,9 +54,14 @@ async function openCard(over = {}) {
   return user;
 }
 
+/** primary 버튼에는 disabled가 없다(Button 타입). 못 받는 동안은 aria-disabled="true"다 */
+function expectBlocked(btn: HTMLElement) {
+  expect(btn).toHaveAttribute('aria-disabled', 'true');
+}
+
 async function downloadButton() {
   const btn = screen.getByRole('button', { name: /다운로드/ });
-  await waitFor(() => expect(btn).toBeEnabled());
+  await waitFor(() => expect(btn).not.toHaveAttribute('aria-disabled', 'true'));
   return btn;
 }
 
@@ -84,13 +89,17 @@ describe('UrlBar', () => {
     expect(alert).toHaveTextContent('치지직 VOD나 클립 주소가 아니에요');
     expect(input).toHaveValue('https://chzzk.naver.com/live/abcd');
     expect(input).toHaveAttribute('aria-invalid', 'true');
+    // 오류 입력칸은 설명 요소(오류 알림)를 aria-describedby로 잇는다
+    expect(input).toHaveAttribute('aria-describedby', 'resolve-error');
+    expect(document.getElementById('resolve-error')).toContainElement(alert);
     expect(api.resolve).toHaveBeenCalledWith('https://chzzk.naver.com/live/abcd');
     // §9 "입력 선택": 입력 전체가 골라져 있다
     const el = input as HTMLInputElement;
     expect([el.selectionStart, el.selectionEnd]).toEqual([0, el.value.length]);
 
     // [다시 시도]는 같은 주소로 다시 부른다
-    await user.click(within(alert).getByRole('button', { name: '다시 시도' }));
+    // 동작 버튼은 라이브 영역(.notice-text) 밖에 있다
+    await user.click(screen.getByRole('button', { name: '다시 시도' }));
     expect(api.resolve).toHaveBeenCalledTimes(2);
     expect(api.resolve).toHaveBeenLastCalledWith('https://chzzk.naver.com/live/abcd');
   });
@@ -103,7 +112,8 @@ describe('UrlBar', () => {
     render(InputPanel);
     await user.type(screen.getByLabelText('영상 주소'), 'https://chzzk.naver.com/video/1{Enter}');
     const alert = await screen.findByRole('alert');
-    await user.click(within(alert).getByRole('button', { name: '닫기' }));
+    expect(alert).not.toContainElement(screen.getByRole('button', { name: '닫기' }));
+    await user.click(screen.getByRole('button', { name: '닫기' }));
     await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
     await waitFor(() => expect(screen.getByLabelText('영상 주소')).toHaveFocus());
   });
@@ -139,12 +149,12 @@ describe('ResolveCard', () => {
   it('기본 화질은 defaultQualityIndex, 메타·예상 크기를 보인다', async () => {
     await openCard({ defaultQualityIndex: 1 });
     const radios = screen.getAllByRole('radio');
-    expect(radios[1]).toHaveAttribute('aria-checked', 'true');
-    expect(radios[1]).toHaveTextContent('720p');
+    expect(radios[1]).toBeChecked();
+    expect(radios[1].closest('label')).toHaveTextContent('720p');
     expect(screen.getByText('2026.10.03 21:00 방송')).toBeInTheDocument();
     expect(screen.getByText('빠른 다시보기')).toBeInTheDocument();
     // 4 Mbps × 11565초 / 8
-    expect(radios[1]).toHaveTextContent('약 5.4 GB');
+    expect(radios[1].closest('label')).toHaveTextContent('약 5.4 GB');
     expect(screen.getByRole('heading', { name: /금요/ })).toHaveFocus();
   });
 
@@ -226,14 +236,26 @@ describe('ResolveCard', () => {
     setCheck({ duplicateJobId: 7 });
     await openCard();
     expect(await screen.findByText('이 파일은 이미 다운로드 목록에 있어요.')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /다운로드/ })).toBeDisabled();
+    expectBlocked(screen.getByRole('button', { name: /다운로드/ }));
+  });
+
+  it('화질은 네이티브 라디오다: 같은 이름 하나, 방향키로 바로 고른다', async () => {
+    const user = await openCard({ defaultQualityIndex: 0 });
+    const radios = screen.getAllByRole('radio') as HTMLInputElement[];
+    expect(new Set(radios.map((r) => r.name)).size).toBe(1);
+    expect(radios.filter((r) => r.checked)).toHaveLength(1);
+    radios[0].focus();
+    await user.keyboard('{ArrowDown}');
+    expect(radios[1]).toBeChecked();
+    expect(radios[0]).not.toBeChecked();
+    await waitFor(() => expect(vi.mocked(api.checkOutput).mock.lastCall?.[0]).toMatchObject({ qualityId: 'q720' }));
   });
 
   it('파일 이름·화질을 바꾸면 다시 검사하고, 결과가 올 때까지 막는다', async () => {
     const user = await openCard();
     await downloadButton();
     await user.click(screen.getAllByRole('radio')[2]);
-    expect(screen.getByRole('button', { name: /다운로드/ })).toBeDisabled();
+    expectBlocked(screen.getByRole('button', { name: /다운로드/ }));
     await downloadButton();
     expect(vi.mocked(api.checkOutput).mock.lastCall?.[0]).toMatchObject({ qualityId: 'q480' });
 
@@ -388,7 +410,7 @@ describe('남의 영상 안내(A5)', () => {
     await openCard({ ownership: 'notOwn', meta: { ...resolved().meta, channelName: '다른 채널', channelId: 'c3' } });
     expect(screen.getByText('내 채널의 영상만 받을 수 있어요')).toBeInTheDocument();
     expect(screen.getByText("이 영상은 '다른 채널' 채널의 영상이에요. 로그인한 채널: '내 채널'")).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /다운로드/ })).toBeDisabled();
+    expectBlocked(screen.getByRole('button', { name: /다운로드/ }));
   });
 
   it('로그인한 채널 이름을 모르면 이름 없는 문장이다', async () => {

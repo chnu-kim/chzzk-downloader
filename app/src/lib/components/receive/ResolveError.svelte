@@ -1,9 +1,8 @@
 <script lang="ts">
-  // 불러오기 실패(S1-c). 문구와 동작은 errorCopy(§9 R 열).
+  // 불러오기 실패(S1-c). 문구와 동작은 errorCopy(§9 R 열). 알림은 Notice 하나(components.md §2.12).
   import type { AppError } from '../../bindings';
   import { actionLabel, errorCopy, type ActionId } from '../../copy/errors';
-  import InlineAlert from '../ui/InlineAlert.svelte';
-  import Button from '../ui/Button.svelte';
+  import Notice from '../ui/Notice.svelte';
 
   interface Props {
     error: AppError;
@@ -13,18 +12,17 @@
 
   let { error, cookiesEnabled, onaction }: Props = $props();
   const copy = $derived(errorCopy(error, { place: 'resolve', cookiesEnabled }));
+  const actions = $derived(
+    copy.actions.map((a) => ({ id: a, label: actionLabel(a), onclick: () => onaction(a) })),
+  );
 </script>
 
-<div class="wrap">
-  <InlineAlert tone="danger" title={copy.title}>
+<!-- UrlBar의 입력칸이 aria-describedby로 이 id를 가리킨다(invalid 입력은 오류 설명 요소가 필수) -->
+<div id="resolve-error" class="wrap">
+  <Notice tone="danger" title={copy.title} {actions}>
     {#if copy.body}<p class="body">{copy.body}</p>{/if}
     {#if copy.detail}<p class="detail">{copy.detail}</p>{/if}
-    {#snippet actions()}
-      {#each copy.actions as a (a)}
-        <Button size="sm" onclick={() => onaction(a)}>{actionLabel(a)}</Button>
-      {/each}
-    {/snippet}
-  </InlineAlert>
+  </Notice>
 </div>
 
 <style>

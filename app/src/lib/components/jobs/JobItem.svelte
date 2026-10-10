@@ -179,8 +179,8 @@
     position: relative;
     display: flex;
     flex-direction: column;
-    gap: var(--space-2);
-    padding: var(--space-3) var(--space-4) var(--space-3) calc(var(--space-4) + var(--rail-w));
+    gap: var(--space-8);
+    padding: var(--space-12) var(--space-16) var(--space-12) calc(var(--space-16) + var(--rail-w));
     border: 1px solid var(--border);
     border-radius: var(--radius-md);
     background: var(--surface);
@@ -239,7 +239,7 @@
   .row {
     display: flex;
     align-items: center;
-    gap: var(--space-2);
+    gap: var(--space-8);
     min-width: 0;
   }
   .title {
@@ -268,7 +268,7 @@
   }
   .blocked {
     display: flex;
-    gap: var(--space-1);
+    gap: var(--space-4);
     align-items: center;
     margin: 0;
     font-size: var(--text-sm);
@@ -277,7 +277,7 @@
   .status-row {
     flex-wrap: wrap;
     justify-content: space-between;
-    row-gap: var(--space-2);
+    row-gap: var(--space-8);
   }
   .status {
     flex: 1 1 auto;
@@ -289,7 +289,7 @@
   .lead {
     display: inline-flex;
     vertical-align: -3px;
-    margin-right: var(--space-1);
+    margin-right: var(--space-4);
   }
   .lead.ok {
     color: var(--success);
@@ -303,13 +303,13 @@
   .actions {
     display: flex;
     align-items: center;
-    gap: var(--space-1);
+    gap: var(--space-4);
     margin-left: auto;
   }
   .error {
     display: flex;
-    gap: var(--space-2);
-    padding: var(--space-2) var(--space-3);
+    gap: var(--space-8);
+    padding: var(--space-8) var(--space-12);
     border-radius: var(--radius-sm);
     background: var(--danger-soft);
   }

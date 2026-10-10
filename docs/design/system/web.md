@@ -461,3 +461,5 @@ g-web §4.2 G1~G7(세션 없는 POST 무안내, 재삭제 404, 성공 피드백 
 10. **Windows SAC 경고를 단계 앞의 경고 Notice로**(검토 U-37). **로그인 전 고지에 끊는 길과 `loginForFiles`·`loginTwice`를 더했다**(검토 U-04·U-11).
 11. **코드 블록은 `white-space: pre` + 가로 스크롤**(검토 U-34).
 12. **루프백(v0.3.0) 뒤 결과 페이지를 웹 흐름 기준으로 다시 썼다.** 앱 흐름의 ok("앱으로 돌아가 주세요") 행을 지웠고, denied·cancelled 문구에서 "앱에서"를 뺐으며, failed는 `doneView.kind`로 두 문구를 고른다(§6.1). 옛 앱 안내(`outdatedApp`)·확인 페이지 CSP 예외·앱 수신기 페이지(§6.5)를 더했다(`worker.md` 구현 중 변경 88·89, `app.md` 65·66).
+13. **(e)로 넘기는 것: `site.css`의 링크 색 규칙은 `a:not(.btn)`으로 한정한다.** `ui.css`의 `.btn { color }`가 `body.web a`(특이도 0,1,2)보다 약해서, 한정하지 않으면 버튼 글자가 링크색으로 덮인다(적용 단계 (a)의 `design/ui.css` 구현에서 발견).
+14. **(d)로 넘기는 것: 이 문서가 적은 `adminOnly.title`·`badFormat.title`·`retryLater.body`·`landing.contact`는 `content.md` §15에 없다.** 지금은 DC10 허용 항목이 덮는다(content.md §19-9).

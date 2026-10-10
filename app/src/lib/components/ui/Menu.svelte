@@ -153,7 +153,7 @@
   .item {
     display: flex;
     align-items: center;
-    gap: var(--space-2);
+    gap: var(--space-8);
     width: 100%;
     height: 32px;
     padding: 0 10px;

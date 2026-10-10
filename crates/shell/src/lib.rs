@@ -8,6 +8,7 @@ pub mod app;
 pub mod auth;
 pub mod backend;
 pub mod bindings;
+pub mod consts;
 pub mod dto;
 pub mod error;
 pub mod events;

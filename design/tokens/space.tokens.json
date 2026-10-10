@@ -1,0 +1,99 @@
+{
+  "space": {
+    "space-2": {
+      "$type": "dimension",
+      "$value": {
+        "value": 2,
+        "unit": "px"
+      },
+      "$description": "상태 줄 안 아이콘-글자 사이, 스위치 손잡이 안쪽 여백"
+    },
+    "space-4": {
+      "$type": "dimension",
+      "$value": {
+        "value": 4,
+        "unit": "px"
+      },
+      "$description": "배지 사이, 라벨 아래 보조 글, 그룹 상자 안쪽 패딩, 끝자리 아이콘 버튼 보정"
+    },
+    "space-6": {
+      "$type": "dimension",
+      "$value": {
+        "value": 6,
+        "unit": "px"
+      },
+      "$description": "라벨-컨트롤, 행 상하 패딩, 배지 가로 패딩"
+    },
+    "space-8": {
+      "$type": "dimension",
+      "$value": {
+        "value": 8,
+        "unit": "px"
+      },
+      "$description": "형제 컨트롤, 행 가로 패딩(아이콘 버튼 쪽), 행 동작 버튼 사이, 카드 머리 상하"
+    },
+    "space-12": {
+      "$type": "dimension",
+      "$value": {
+        "value": 12,
+        "unit": "px"
+      },
+      "$description": "행 가로 패딩(글자 쪽), 버튼 가로 패딩, 폼 행 사이, 작업 행 상하, 대화상자 제목-본문"
+    },
+    "space-16": {
+      "$type": "dimension",
+      "$value": {
+        "value": 16,
+        "unit": "px"
+      },
+      "$description": "카드 안쪽 패딩, 열 상단 여백"
+    },
+    "space-20": {
+      "$type": "dimension",
+      "$value": {
+        "value": 20,
+        "unit": "px"
+      },
+      "$description": "창·열 가장자리, 대화상자 패딩"
+    },
+    "space-24": {
+      "$type": "dimension",
+      "$value": {
+        "value": 24,
+        "unit": "px"
+      },
+      "$description": "섹션 사이"
+    },
+    "space-32": {
+      "$type": "dimension",
+      "$value": {
+        "value": 32,
+        "unit": "px"
+      },
+      "$description": "열 하단 여백, 빈 상태 상하"
+    },
+    "space-40": {
+      "$type": "dimension",
+      "$value": {
+        "value": 40,
+        "unit": "px"
+      },
+      "$description": "Worker 절 사이, 히어로 위"
+    },
+    "edge": {
+      "$type": "dimension",
+      "$value": "{space.space-20}",
+      "$description": "창·열 가장자리(AppKit 20)"
+    },
+    "gap-sibling": {
+      "$type": "dimension",
+      "$value": "{space.space-8}",
+      "$description": "형제 컨트롤 사이(AppKit 8)"
+    },
+    "gap-label": {
+      "$type": "dimension",
+      "$value": "{space.space-6}",
+      "$description": "라벨-컨트롤 사이(AppKit 6)"
+    }
+  }
+}

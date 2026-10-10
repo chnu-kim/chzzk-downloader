@@ -1,0 +1,38 @@
+{
+  "layout": {
+    "content-max": {
+      "$type": "dimension",
+      "$value": {
+        "value": 800,
+        "unit": "px"
+      },
+      "$description": "앱 본문 열 최대 폭(가장자리 20 포함)"
+    },
+    "reading-max": {
+      "$type": "dimension",
+      "$value": {
+        "value": 680,
+        "unit": "px"
+      },
+      "$description": "Worker 읽기 열 폭"
+    },
+    "dialog-w": {
+      "$type": "dimension",
+      "$value": {
+        "value": 440,
+        "unit": "px"
+      },
+      "$description": "대화상자·로그인 패널 폭"
+    },
+    "breakpoint-narrow": {
+      "$type": "number",
+      "$value": 600,
+      "$description": "좁은 레이아웃 분기점(max-width 599px 글자만 만든다, CSS 변수 아님)",
+      "$extensions": {
+        "io.github.chnu-kim.chzzk": {
+          "noCss": true
+        }
+      }
+    }
+  }
+}

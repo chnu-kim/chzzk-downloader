@@ -28,7 +28,7 @@
   .field {
     display: flex;
     flex-direction: column;
-    gap: var(--space-1);
+    gap: var(--space-4);
   }
   .label {
     font-size: var(--text-sm);

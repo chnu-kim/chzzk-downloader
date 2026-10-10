@@ -62,13 +62,13 @@
     z-index: var(--z-dialog);
     display: grid;
     place-items: center;
-    padding: var(--space-8);
+    padding: var(--space-32);
     background: var(--scrim);
     animation: fade var(--dur-slow) var(--ease-out);
   }
   .dialog {
     width: min(400px, 100%);
-    padding: var(--space-5) var(--space-6);
+    padding: var(--space-20) var(--space-24);
     border-radius: var(--radius-lg);
     background: var(--surface-raised);
     box-shadow: var(--shadow-dialog);
@@ -85,7 +85,7 @@
     letter-spacing: var(--tracking-tight);
   }
   .body {
-    margin-top: var(--space-2);
+    margin-top: var(--space-8);
     color: var(--fg-muted);
     font-size: var(--text-md);
     line-height: var(--leading-relaxed);
@@ -93,8 +93,8 @@
   .actions {
     display: flex;
     justify-content: flex-end;
-    gap: var(--space-2);
-    margin-top: var(--space-5);
+    gap: var(--space-8);
+    margin-top: var(--space-20);
   }
   @keyframes fade {
     from {

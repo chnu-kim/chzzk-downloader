@@ -34,15 +34,15 @@
 
 <style>
   .hint {
-    margin: var(--space-1) 0 0;
+    margin: var(--space-4) 0 0;
     font-size: var(--text-sm);
     color: var(--fg-muted);
   }
   .recent {
-    margin-top: var(--space-2);
+    margin-top: var(--space-8);
   }
   .title {
-    margin: 0 0 var(--space-1);
+    margin: 0 0 var(--space-4);
     font-size: var(--text-sm);
     font-weight: var(--weight-medium);
     color: var(--fg-muted);
@@ -55,9 +55,9 @@
   .row {
     display: flex;
     align-items: center;
-    gap: var(--space-2);
+    gap: var(--space-8);
     min-height: 28px;
-    padding: 0 var(--space-1);
+    padding: 0 var(--space-4);
     border-radius: var(--radius-sm);
     font-size: var(--text-sm);
   }

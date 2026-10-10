@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { gzipSync } from 'node:zlib';
 import { test } from 'node:test';
 
-import { countActive, countListed, gzipTotal, llvmLinesPct, MUTANTS_OK_CODES, parseShard, playwrightCount, shardSummary, sumShards, vitestCount, vitestLinesPct } from './measure.mjs';
+import { allowEntryCount, countActive, countListed, gzipTotal, llvmLinesPct, MUTANTS_OK_CODES, parseShard, playwrightCount, shardSummary, sumShards, vitestCount, vitestLinesPct } from './measure.mjs';
 
 test('llvm-cov·vitest 커버리지 JSON', () => {
   assert.equal(llvmLinesPct({ data: [{ totals: { lines: { count: 3, covered: 2, percent: 66.666666 } } }] }), 66.67);
@@ -76,4 +76,11 @@ test('mutants: shard 표기, outcomes 요약, shard 합(빠지거나 겹치면 �
   assert.throws(() => sumShards([s0, { ...s1, cargo_mutants_version: '26.0.0' }]), /버전/);
   assert.throws(() => sumShards([]), /없다/);
   assert.deepEqual(MUTANTS_OK_CODES, [0, 2, 3]);
+});
+
+test('design: 허용 목록 entries 배열의 길이, 모양이 틀리면 오류', () => {
+  assert.equal(allowEntryCount({ entries: [] }), 0);
+  assert.equal(allowEntryCount({ entries: [{}, {}, {}] }), 3);
+  assert.throws(() => allowEntryCount({}), /entries/);
+  assert.throws(() => allowEntryCount([]), /entries/);
 });

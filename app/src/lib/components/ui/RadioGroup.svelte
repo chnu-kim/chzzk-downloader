@@ -69,7 +69,7 @@
   .row {
     display: flex;
     align-items: center;
-    gap: var(--space-3);
+    gap: var(--space-12);
     min-height: 32px;
     padding: 0 10px;
     border: 1px solid transparent;
@@ -111,6 +111,6 @@
     min-width: 0;
     display: flex;
     align-items: center;
-    gap: var(--space-3);
+    gap: var(--space-12);
   }
 </style>

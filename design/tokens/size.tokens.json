@@ -1,0 +1,190 @@
+{
+  "size": {
+    "control-h-sm": {
+      "$type": "dimension",
+      "$value": {
+        "value": 24,
+        "unit": "px"
+      },
+      "$description": "행 안 보조 버튼, 아이콘 버튼, 체크박스 상자",
+      "$extensions": {
+        "io.github.chnu-kim.chzzk": {
+          "overrides": {
+            "coarse": {
+              "value": 40,
+              "unit": "px"
+            }
+          }
+        }
+      }
+    },
+    "control-h": {
+      "$type": "dimension",
+      "$value": {
+        "value": 28,
+        "unit": "px"
+      },
+      "$description": "입력칸, 버튼, 팝업 기본, 툴바 아이콘 버튼",
+      "$extensions": {
+        "io.github.chnu-kim.chzzk": {
+          "overrides": {
+            "coarse": {
+              "value": 40,
+              "unit": "px"
+            }
+          }
+        }
+      }
+    },
+    "control-h-lg": {
+      "$type": "dimension",
+      "$value": {
+        "value": 36,
+        "unit": "px"
+      },
+      "$description": "랜딩 CTA만",
+      "$extensions": {
+        "io.github.chnu-kim.chzzk": {
+          "overrides": {
+            "coarse": {
+              "value": 44,
+              "unit": "px"
+            }
+          }
+        }
+      }
+    },
+    "row-h": {
+      "$type": "dimension",
+      "$value": {
+        "value": 36,
+        "unit": "px"
+      },
+      "$description": "설정 행·최근 목록 행 최소 높이",
+      "$extensions": {
+        "io.github.chnu-kim.chzzk": {
+          "overrides": {
+            "coarse": {
+              "value": 44,
+              "unit": "px"
+            }
+          }
+        }
+      }
+    },
+    "toolbar-h": {
+      "$type": "dimension",
+      "$value": {
+        "value": 44,
+        "unit": "px"
+      },
+      "$description": "앱 툴바"
+    },
+    "hit-min": {
+      "$type": "dimension",
+      "$value": {
+        "value": 24,
+        "unit": "px"
+      },
+      "$description": "모든 대화형 요소의 최소 폭·높이",
+      "$extensions": {
+        "io.github.chnu-kim.chzzk": {
+          "overrides": {
+            "coarse": {
+              "value": 40,
+              "unit": "px"
+            }
+          }
+        }
+      }
+    },
+    "icon-sm": {
+      "$type": "dimension",
+      "$value": {
+        "value": 16,
+        "unit": "px"
+      },
+      "$description": "행·배지 옆·행 버튼 아이콘"
+    },
+    "icon-md": {
+      "$type": "dimension",
+      "$value": {
+        "value": 20,
+        "unit": "px"
+      },
+      "$description": "툴바·안내 아이콘"
+    },
+    "icon-stroke": {
+      "$type": "dimension",
+      "$value": {
+        "value": 1.5,
+        "unit": "px"
+      },
+      "$description": "아이콘 선 굵기(CSS stroke-width)"
+    },
+    "switch-w": {
+      "$type": "dimension",
+      "$value": {
+        "value": 54,
+        "unit": "px"
+      },
+      "$description": "스위치 폭"
+    },
+    "switch-h": {
+      "$type": "dimension",
+      "$value": {
+        "value": 24,
+        "unit": "px"
+      },
+      "$description": "스위치 높이"
+    },
+    "switch-knob": {
+      "$type": "dimension",
+      "$value": {
+        "value": 20,
+        "unit": "px"
+      },
+      "$description": "스위치 손잡이"
+    },
+    "radio-size": {
+      "$type": "dimension",
+      "$value": {
+        "value": 16,
+        "unit": "px"
+      },
+      "$description": "라디오·체크박스 크기"
+    },
+    "progress-h": {
+      "$type": "dimension",
+      "$value": {
+        "value": 6,
+        "unit": "px"
+      },
+      "$description": "진행 막대 두께"
+    },
+    "badge-h": {
+      "$type": "dimension",
+      "$value": {
+        "value": 18,
+        "unit": "px"
+      },
+      "$description": "종류 배지·19·kbd 최소 높이"
+    },
+    "label-w": {
+      "$type": "dimension",
+      "$value": {
+        "value": 80,
+        "unit": "px"
+      },
+      "$description": "카드 폼(FieldRow) 라벨 열 폭"
+    },
+    "pct-w": {
+      "$type": "dimension",
+      "$value": {
+        "value": 40,
+        "unit": "px"
+      },
+      "$description": "작업 행 퍼센트 칸 폭"
+    }
+  }
+}

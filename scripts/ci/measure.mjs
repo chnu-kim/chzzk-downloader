@@ -11,6 +11,7 @@
 //   node scripts/ci/measure.mjs mutants-shard  # env MUTANTS_SHARD=k/n: cargo mutants -p chzzk-core의 한 shard →
 //                                              # target/ci/mutants/shard-<k>/summary.json(weekly mutants-shard 작업)
 //   node scripts/ci/measure.mjs mutants    # shard 요약을 모두 모아(정확히 0..n-1) 살아남은 mutant 수 → mutants_missed.chzzk-core
+//   node scripts/ci/measure.mjs design     # 디자인 gate 허용 목록(scripts/design/allow.json) 항목 수 → design.allow_entries(design-lint gate)
 //
 // 값은 CI 러너에서만 기준으로 삼는다(ratchet.mjs write --from-run). 종료 코드: 0, 측정 실패 1, 사용법 2.
 
@@ -236,7 +237,20 @@ function mutants() {
   save('mutants', { [`mutants_missed.${MUTANTS_PKG}`]: s.missed });
 }
 
-const MODES = { coverage, tests, 'tests-app': testsApp, 'tests-playwright': testsPlaywright, 'tests-worker': testsWorker, size, 'mutants-shard': mutantsShard, mutants };
+// ---- 디자인 허용 목록(docs/design/system/governance.md §2.3 "단계 (a)에서의 시작 상태") ----
+// 항목 수는 파일만 보면 정해진다(러너와 무관). 늘면 ratchet이 실패하고, 줄면 write --from-run이 기준을 내린다.
+export const DESIGN_ALLOW = 'scripts/design/allow.json';
+export function allowEntryCount(json) {
+  if (!Array.isArray(json?.entries)) throw new Error(`${DESIGN_ALLOW}에 entries 배열이 없다`);
+  return json.entries.length;
+}
+function design() {
+  const p = join(ROOT, DESIGN_ALLOW);
+  if (!existsSync(p)) throw new Error(`${p}가 없다`);
+  save('design', { 'design.allow_entries': allowEntryCount(JSON.parse(readFileSync(p, 'utf8'))) });
+}
+
+const MODES = { coverage, tests, 'tests-app': testsApp, 'tests-playwright': testsPlaywright, 'tests-worker': testsWorker, size, 'mutants-shard': mutantsShard, mutants, design };
 
 export function main(argv) {
   if (argv.length !== 1 || !Object.hasOwn(MODES, argv[0])) {

@@ -60,7 +60,7 @@
   .slot {
     display: inline-flex;
     align-items: center;
-    gap: var(--space-2);
+    gap: var(--space-8);
     min-width: 0;
   }
   .name {

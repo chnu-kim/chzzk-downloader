@@ -69,7 +69,7 @@
 <style>
   .urlbar {
     display: flex;
-    gap: var(--space-2);
+    gap: var(--space-8);
   }
   .urlbar :global(.submit) {
     flex: none;

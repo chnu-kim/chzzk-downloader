@@ -29,7 +29,7 @@
 
 <style>
   .wrap {
-    margin-top: var(--space-2);
+    margin-top: var(--space-8);
   }
   .body,
   .detail {

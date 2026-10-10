@@ -38,9 +38,9 @@
     flex: none;
     display: flex;
     align-items: center;
-    gap: var(--space-2);
+    gap: var(--space-8);
     height: var(--header-h);
-    padding: 0 var(--space-2) 0 var(--gutter);
+    padding: 0 var(--space-8) 0 var(--gutter);
     border-bottom: 1px solid var(--border);
     background: var(--surface);
   }
@@ -57,7 +57,7 @@
     font-size: var(--text-xl);
   }
   .header:has(.title.settings) {
-    padding-left: var(--space-2);
+    padding-left: var(--space-8);
   }
   .spacer {
     flex: 1;

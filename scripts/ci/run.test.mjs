@@ -192,6 +192,11 @@ test('gate 표: 검사를 켜는 플래그', () => {
   assert.deepEqual(cmds('test-count').slice(1), ['node scripts/ci/measure.mjs tests', 'node scripts/ci/ratchet.mjs check tests']);
   assert.deepEqual(cmds('ratchet-log'), ['node scripts/ci/ratchet.mjs lint', 'node scripts/ci/ratchet.mjs log-check']);
   assert.deepEqual(cmds('test-count-app'), ['node scripts/ci/measure.mjs tests-app', 'node scripts/ci/ratchet.mjs check tests']);
+  // 디자인 gate 넷(governance.md §2.1): --check가 빠지면 생성물을 다시 써 버려 손 수정이 조용히 통과한다
+  assert.deepEqual(cmds('design-tokens'), ['node scripts/design/tokens.mjs --check', 'node scripts/design/check-tokens.mjs']);
+  assert.deepEqual(cmds('design-lint'), ['node scripts/design/lint.mjs', 'node scripts/ci/measure.mjs design', 'node scripts/ci/ratchet.mjs check design']);
+  assert.deepEqual(cmds('design-copy'), ['node scripts/design/copy.mjs']);
+  assert.deepEqual(cmds('design-icons'), ['node scripts/design/icons.mjs']);
   // 로컬과 CI가 같은 표를 쓰므로 CI 전용은 --all-history를 도는 둘뿐이다(로컬 클론에는 비공개 ref가 있어 늘 걸린다)
   assert.deepEqual(cmds('private-scan'), ['node scripts/ci/private-scan.mjs']);
   assert.deepEqual(Object.keys(GATES).filter((g) => GATES[g].ciOnly), ['scan-history', 'private-scan']);
@@ -210,6 +215,12 @@ test('훅 표: 끌 수 없는 gate와 조건부 gate', () => {
 });
 
 test('hookGates: 바뀐 경로로 조건부 gate를 고른다', () => {
+  assert.deepEqual(hookGates('pre-commit', ['design/tokens/sys.tokens.json']), ['typos', 'design-tokens']);
+  assert.deepEqual(hookGates('pre-commit', ['docs/design/system/foundations.md']), ['typos', 'design-tokens']);
+  assert.deepEqual(hookGates('pre-commit', ['docs/design/system/content.md']), ['typos', 'design-copy']);
+  assert.deepEqual(hookGates('pre-commit', ['app/src/lib/components/ui/icons.ts']), ['typos', 'design-lint', 'design-icons']);
+  assert.deepEqual(hookGates('pre-commit', ['scripts/design/allow.json']), ['typos', 'design-tokens', 'design-lint', 'design-copy', 'design-icons']);
+  assert.deepEqual(hookGates('pre-commit', ['app/src-tauri/src/lib.rs']), ['fmt', 'typos']);
   assert.deepEqual(hookGates('pre-commit', ['docs/x.md']), ['typos']);
   assert.deepEqual(hookGates('pre-commit', ['crates/core/src/lib.rs']), ['fmt', 'typos']);
   assert.deepEqual(hookGates('pre-commit', ['.github/workflows/ci.yml']), ['typos', 'workflows', 'parity']);

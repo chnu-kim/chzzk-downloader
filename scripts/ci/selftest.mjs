@@ -10,7 +10,7 @@
 // 도구가 없으면 로컬은 그 줄을 건너뛰고(skip), CI(CI=true)는 실패로 센다. 모두 기대대로면 0, 아니면 1.
 
 import { spawnSync } from 'node:child_process';
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
@@ -51,12 +51,18 @@ const exec = (bin, args, cwd, env = process.env, input = undefined) => {
   return r.status;
 };
 
-// 사본 저장소: scripts/ci 전체, 설정, ci.yml, 최소 Cargo 워크스페이스와 app 버전 파일. files로 덮어쓴다.
+// 디자인 gate 넷(design-tokens·design-lint·design-copy·design-icons)이 읽는 입력(governance.md §2.0 "최소 사본"). 원천·생성물·
+// 검사 대상 소스·패리티 문서·상수 파일이다. 없는 경로(단계 (a)의 licenses/·help/ 등)는 건너뛴다.
+const DESIGN_INPUTS = ['design', 'scripts/design', 'app/src', 'worker/src/http', 'docs/design/system', 'crates/shell/src/consts.rs', 'licenses', 'help'];
+
+// 사본 저장소: scripts/ci 전체, 설정, ci.yml, 최소 Cargo 워크스페이스와 app 버전 파일. files로 덮어쓴다(null이면 지운다).
+// design: true면 DESIGN_INPUTS도 복사한다(디자인 gate 씨앗만. 다른 씨앗은 디자인 입력 없이 빠르게 만든다).
 // git 저장소로 만들고 모두 add한다(scan은 인덱스, actionlint는 저장소 루트를 본다).
-function mkRoot(name, files = {}) {
+function mkRoot(name, files = {}, { design = false } = {}) {
   const d = join(tmp, name);
   mkdirSync(d, { recursive: true });
   cpSync(join(ROOT, 'scripts/ci'), join(d, 'scripts/ci'), { recursive: true });
+  if (design) for (const rel of DESIGN_INPUTS) if (existsSync(join(ROOT, rel))) cpSync(join(ROOT, rel), join(d, rel), { recursive: true });
   cpSync(join(ROOT, '.githooks'), join(d, '.githooks'), { recursive: true }); // 모드(실행 비트)를 유지한다
   for (const f of ['rust-toolchain.toml', 'zizmor.yml', '_typos.toml']) cpSync(join(ROOT, f), join(d, f));
   for (const dir of ['ci', 'release']) cpSync(join(ROOT, dir), join(d, dir), { recursive: true });
@@ -70,7 +76,10 @@ function mkRoot(name, files = {}) {
     'app/src-tauri/tauri.conf.json': JSON.stringify({ version: '0.1.0', plugins: { updater: { pubkey: readFileSync(join(ROOT, 'release/updater.pub'), 'utf8'), requireSignedVersion: true } } }) + '\n',
   };
   for (const [rel, text] of Object.entries({ ...base, ...files })) {
-    if (text === null) continue;
+    if (text === null) {
+      rmSync(join(d, rel), { force: true });
+      continue;
+    }
     const p = join(d, rel);
     mkdirSync(dirname(p), { recursive: true });
     writeFileSync(p, text);
@@ -375,6 +384,37 @@ const hook = (d, name, args, input) => exec('node', [join(d, 'scripts/ci/run.mjs
   expect('ratchet-log', '기준 올림(조임)', 0, () => logCheck(logRoot('rlog-0', 81, null)));
   expect('ratchet-log', '기준 낮춤, 기록 없음', 'nonzero', () => logCheck(logRoot('rlog-1', 79, null)));
   expect('ratchet-log', '기준 낮춤, 기록 있음', 0, () => logCheck(logRoot('rlog-2', 79, '| 2026-10-05 | `coverage_lines.rust` | 80 → 79 | 씨앗 |')));
+}
+
+// ---- 디자인 gate 넷(governance.md §2.0·§10 (a)): 깨끗한 사본 → 0, 씨앗 위반 → 0 아님. 씨앗 파일은 허용 목록(scripts/design/allow.json)에
+// 없는 새 경로이거나 생성물 손 수정이라 허용 목록이 덮지 못한다 ----
+{
+  const dr = (name, files = {}) => mkRoot(name, files, { design: true });
+  const read = (rel) => readFileSync(join(ROOT, rel), 'utf8');
+  // 이 저장소 파일 한 군데를 바꾼 내용. 바꿀 곳이 없으면 예외(씨앗이 조용히 깨끗해지지 않게)
+  const edit = (rel, from, to) => {
+    const t = read(rel);
+    if (!t.includes(from)) throw new Error(`${rel}에 없음: ${from.slice(0, 40)}`);
+    return { [rel]: t.replace(from, to) };
+  };
+  const svelte = (css, markup = '<div class="a"></div>') => `${markup}\n\n<style>\n  .a {\n    ${css}\n  }\n</style>\n`;
+  const SEED_SVELTE = 'app/src/lib/components/app/SelftestSeed.svelte';
+
+  expect('design-tokens', '깨끗한 사본', 0, () => gate(dr('dt-clean'), 'design-tokens'));
+  // --check가 생성물 손 수정을 잡는다(governance §1.4 "생성물을 손으로 고친 커밋은 --check에서 바로 걸린다")
+  expect('design-tokens', '생성물 tokens.css 손 수정', 'nonzero', () => gate(dr('dt-hand', edit('app/src/styles/tokens.css', '--space-8: 8px;', '--space-8: 9px;')), 'design-tokens'));
+  expect('design-tokens', '미정의 토큰 var()(DT2)', 'nonzero', () => gate(dr('dt-undef', { [SEED_SVELTE]: svelte('color: var(--selftest-undefined);') }), 'design-tokens'));
+
+  expect('design-lint', '깨끗한 사본', 0, () => gate(dr('dl-clean'), 'design-lint'));
+  expect('design-lint', '색 리터럴(DL1)', 'nonzero', () => gate(dr('dl-color', { [SEED_SVELTE]: svelte('color: #' + '12' + '34' + '56;') }), 'design-lint'));
+
+  expect('design-copy', '깨끗한 사본', 0, () => gate(dr('dc-clean'), 'design-copy'));
+  // 금지어(DC1 '클릭')와 어미(DC2 '하세요'). 문자열 리터럴 하나를 deck 끝에 더한다
+  expect('design-copy', '금지어·어미(DC1·DC2)', 'nonzero', () => gate(dr('dc-bad', { 'app/src/lib/copy/ko.ts': read('app/src/lib/copy/ko.ts') + `\nexport const selftestSeed = '여기를 ${'클릭'}하세요';\n` }), 'design-copy'));
+
+  expect('design-icons', '깨끗한 사본', 0, () => gate(dr('di-clean'), 'design-icons'));
+  // 글꼴 아이콘 이름(DI6)
+  expect('design-icons', '글꼴 아이콘 문자열(DI6)', 'nonzero', () => gate(dr('di-font', { [SEED_SVELTE]: svelte('display: block;', `<div class="a" data-x="${'SF ' + 'Symbols'}"></div>`) }), 'design-icons'));
 }
 
 // ---- drift: 사본의 진입점으로 합성 출력(simulate). 실서버·secret 없이 gate 정의(진입점 → drift.mjs → 분류 → 종료 코드)를 본다 ----

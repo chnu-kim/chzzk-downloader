@@ -180,13 +180,13 @@
 
 <style>
   .list {
-    margin-top: var(--space-6);
+    margin-top: var(--space-24);
   }
   .head {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    margin-bottom: var(--space-2);
+    margin-bottom: var(--space-8);
   }
   .list-title {
     margin: 0;
@@ -199,10 +199,10 @@
     box-shadow: none;
   }
   .group + .group {
-    margin-top: var(--space-4);
+    margin-top: var(--space-16);
   }
   .group-title {
-    margin: 0 0 var(--space-2);
+    margin: 0 0 var(--space-8);
     font-size: var(--text-xs);
     font-weight: var(--weight-medium);
     color: var(--fg-muted);
@@ -210,7 +210,7 @@
   ul {
     display: flex;
     flex-direction: column;
-    gap: var(--space-2);
+    gap: var(--space-8);
     margin: 0;
     padding: 0;
     list-style: none;
@@ -220,9 +220,9 @@
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: var(--space-2);
+    gap: var(--space-8);
     min-height: 160px;
-    padding: var(--space-8) var(--space-4);
+    padding: var(--space-32) var(--space-16);
     border: 1px solid var(--border);
     border-radius: var(--radius-md);
     text-align: center;

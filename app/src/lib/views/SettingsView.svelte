@@ -185,11 +185,11 @@
     }
   }
   .settings > :global(.alert) {
-    margin-top: var(--space-4);
+    margin-top: var(--space-16);
   }
   /* 섹션 제목은 선이 아니라 위 여백으로 구분한다(ui-visual §2.2) */
   .settings :global(.section-title) {
-    margin: var(--space-6) 0 var(--space-2);
+    margin: var(--space-24) 0 var(--space-8);
     font-size: var(--text-md);
     font-weight: var(--weight-semibold);
   }
@@ -201,9 +201,9 @@
   .settings :global(.row) {
     display: flex;
     align-items: center;
-    gap: var(--space-3);
+    gap: var(--space-12);
     min-height: 48px;
-    padding: var(--space-2) var(--space-4);
+    padding: var(--space-8) var(--space-16);
   }
   .settings :global(.row + .row) {
     border-top: 1px solid var(--border);
@@ -211,14 +211,14 @@
   .settings :global(.row.stacked) {
     flex-direction: column;
     align-items: stretch;
-    gap: var(--space-1);
-    padding-block: var(--space-3);
+    gap: var(--space-4);
+    padding-block: var(--space-12);
   }
   .settings :global(.row-main) {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: var(--space-3);
+    gap: var(--space-12);
   }
   /* 버튼 안 글자(.btn > .label)는 빼야 한다: 그러지 않으면 강조 버튼의 흰 글자가 본문색이 된다(e2e-web axe, 대비 2.77) */
   .settings :global(.label:not(.btn > .label)) {

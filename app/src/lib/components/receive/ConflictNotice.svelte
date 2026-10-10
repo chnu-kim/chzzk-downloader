@@ -64,9 +64,9 @@
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: var(--space-2);
+    gap: var(--space-8);
     min-height: var(--control-h);
-    padding: var(--space-1) var(--space-3);
+    padding: var(--space-4) var(--space-12);
     border-radius: var(--radius-sm);
     font-size: var(--text-sm);
   }
@@ -91,13 +91,13 @@
   .choices {
     display: inline-flex;
     flex-wrap: wrap;
-    gap: var(--space-3);
+    gap: var(--space-12);
     color: var(--fg);
   }
   .choices label {
     display: inline-flex;
     align-items: center;
-    gap: var(--space-1);
+    gap: var(--space-4);
     cursor: pointer;
   }
   .choices input {

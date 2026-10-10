@@ -142,10 +142,10 @@ describe("/privacy", () => {
     }
   });
 
-  it("관리자·연락처는 자리표시다(실제 값을 두지 않는다)", async () => {
+  it("관리자는 GitHub 계정 이름, 연락처는 GitHub 이슈 링크다", async () => {
     const t = await (await new Browser().get("/privacy")).text();
-    expect(t).toContain(`<dt>${COPY.adminsTitle}</dt><dd>${COPY.privacy.placeholder.admin}</dd>`);
-    expect(t).toContain(`<dt>${COPY.privacy.contact.label}</dt><dd>${COPY.privacy.placeholder.contact}</dd>`);
+    expect(t).toContain(`<dt>${COPY.adminsTitle}</dt><dd>${COPY.privacy.operator}</dd>`);
+    expect(t).toContain(`<dt>${COPY.privacy.contact.label}</dt><dd>${COPY.landing.contact} <a href="${COPY.issuesUrl}" rel="noopener noreferrer">${COPY.landing.contactLink}</a></dd>`);
   });
 
   it("받는 것·받지 않는 것·해외 서버·끊는 길 절이 있다", async () => {

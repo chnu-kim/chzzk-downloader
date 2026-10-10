@@ -145,7 +145,7 @@
 | D26 타이틀바 | **네이티브 유지.** 본문 툴바 44에 왼쪽 [마크 + "치지직 다운로더"(마크 전까지 이름만, 13px 600)], 오른쪽 [계정 ▾]·[설정] | HIG "커스텀 창 UI 금지"(`E-APPLE-15`), Windows Snap Layout 보존(`G-SHELL-H10`). 이름을 그리는 이유: Linux 일부 창 관리자·전체 화면에서 타이틀바가 숨으면 앱 이름이 어디에도 없다(`J-Q2`, 사용자 결정) | `tauri`(decorations), `frontend`(툴바 이름) |
 | D27 스크롤바 | **OS 기본** + Windows `scrollBarStyle: fluentOverlay`. `scrollbar-gutter` 못 쓰므로 여백 예약 없음(열 좌우 여백이 흡수) | `E-DESK-R24`(WebView2 125+), N-12·N-13 | `tauri`, `design-lint`(`::-webkit-scrollbar` 금지) |
 | D28 줌·글자 크기 | **웹뷰 줌 끔**(`zoomHotkeysEnabled: false`) + 설정 › 보기 › 글자 크기(기본/크게/아주 크게 = ×1/×1.3/×2.0, `data-text-scale`)[잠정]. 컨트롤은 `min-height`라 따라 늘어난다 | WCAG 1.4.4·HIG 200%(`E-APPLE-08`), macOS에 Dynamic Type 없음, `G-SHELL-H3`(Ctrl+±는 실수로 화면이 깨진다), g-input | `tauri`, `design-tokens`(블록), `design-gallery`(x-large) |
-| D29 Dock·작업 표시줄 진행 | **켬.** 집계 규칙 g-shell §5.2, 초당 1회 이하, 고대비에서 숨김, 배지는 v1에서 끔. Windows 상태 PAUSED(노랑) ≠ ERROR | Transmission 선례(users §4), `E-DESK-N31`(상태 우선순위 confirmed). "OS의 일부"라면 OS의 진행 자리를 쓴다(P1) | `tauri`(집계 테스트) |
+| D29 Dock·작업 표시줄 진행 | **켬.** 집계 규칙 g-shell §5.2, 초당 1회 이하, 고대비에서 숨김, 배지는 v1에서 끔. Windows 상태 PAUSED(노랑) ≠ ERROR | Transmission 선례(users §4), `E-DESK-N31`(상태 우선순위 confirmed). "OS의 일부"라면 OS의 진행 자리를 쓴다(P1). ADR-0022 | `tauri`(집계 테스트) |
 | D30 창 상태 복원 | **window-state 플러그인 + `visible: false`** → 첫 그림 뒤 show(안전장치) | HIG launching(이전 상태 복원), `E-DESK-R40`(복원 뒤 보이기), g-launch 흰 번쩍임 3겹 | `tauri` |
 
 ### F. 아이콘·정체성
@@ -166,7 +166,7 @@
 | D37 알림 해부 | **토스트는 본문 열 기준 하단, 폭 = 열 안쪽 폭, 한 번에 하나 보이고 나머지는 대기열.** 정보·완료 토스트는 **6초[취향]** + hover·포커스 정지, 새 토스트가 오면 즉시 대체된다. 오류·동작 있는 토스트는 대체되지 않고 닫을 때까지 남으며 뒤에 온 것은 줄을 선다(오류가 몰려도 유실 없음). 예외: [되돌리기] 토스트는 6초 + 정지이고 지연 삭제는 그 토스트가 닫힐 때(타이머·[×]·대기열 교체 모두) 확정된다. 같은 동작은 다른 곳에서도. 토스트가 떠 있는 동안 스크롤 영역 바닥에 토스트 높이만큼 여백. 배너는 h1 앞 한 장, 오류 우선, 정보 = `--surface-2`, 경고·block = `--warning-soft`, 오류 = `--danger-soft`. 복사 확인은 버튼 라벨 전환("복사했어요") | Carbon·GOV.UK(`E-KO-31`·`E-KO-32`), `G-INTER-NT5`·`G-INTER-NT6`·`G-INTER-NT7`(`NT7` 10초·`NT8` 3개는 뒤집음: 대기열), `G-OUTAGE` 위계, WCAG 2.2.2(포커스 중만 정지는 수단이 아님), `A-VIS-32`(창 기준 토스트가 목록을 가림). 6초는 출처 없음(ADR-0009) | `frontend`(Toast 대기열·지연 삭제·Banner), `design-gallery`, `R7` |
 | D38 OS 알림 | 제목 **"다운로드를 마쳤어요"** / 본문 = 정리된 영상 제목(**40자소 절단[취향]**, 묶음 "{첫 제목} 외 {n}개"). 실패는 따로 묶음. 채널명·경로·URL·쿠키·오류 원문 금지. 앱이 앞에 있으면 OS 알림 대신 행 상태. Linux는 `<>&` 이스케이프. 문자열은 `content.md` §14 한 곳 | HIG 알림(앱 이름 금지·제목 끝 구두점 없음·본문 완전한 문장, `E-DESK-N34`), `G-SHELL-NS21`·`G-SHELL-NS22`(20자·3초는 뒤집음, `X-DESK-N45`), `G-UGT-R*`. 서명 없는 macOS에서 알림이 뜨는지 **[미확인]** | `tauri`(문자열 테스트 = deck 상수), `design-copy` **(d)에서 반영**(구현 상태 표시, 결정 본문은 그대로) |
 | D39 완료 후 동작 | **[열기] 다음 [Finder에서 보기]/[폴더에서 보기]**(아이콘 `file-video`·`folder`). 파일이 없으면 [열기] 숨김. 완료 11개 넘으면 그룹 접힘 + 최근 5개. 멈춘 지 30일 "{n}일 전에 멈췄어요 · 디스크 {size} 차지". "편집기로 보내기" 없음. 보관 기한은 추정하지 않고 "올린 지 {n}일"만 | g-handoff, g-repeat(Chrome Remove는 목록만), `X-ID-U31`(보관 기한 값은 확정 불가 → 쓰지 않음) | `frontend`, `design-copy` |
-| D40 잠자기·대기 | **잠자기 방지 기본 켬**(유휴 잠자기만) + 설정 토글(`settings.keepAwake`). **"연결 대기" 단계**: 막대 줄무늬(forced는 dashed), 퍼센트 유지, 속도·남은 시간 숨김, 빨강·실패 문구 없음. 상태 조각 `job.status.waitingNetwork`("연결 대기 중 · 2분째 · 1.6GB 받음") + 본문 줄 `job.waitingNetwork.body` | `G-POWER-R8`·`G-POWER-R11`·`G-POWER-R13`~`G-POWER-R15`(macOS·Windows·systemd inhibitor, Transmission), brief §6.9-7(대기는 오류가 아님) | `rust`·`tauri`(상태 머신), `frontend`, `design-copy`(상태 조각에 해요체 없음) |
+| D40 잠자기·대기 | **잠자기 방지 기본 켬**(유휴 잠자기만) + 설정 토글(`settings.keepAwake`). **"연결 대기" 단계**: 막대 줄무늬(forced는 dashed), 퍼센트 유지, 속도·남은 시간 숨김, 빨강·실패 문구 없음. 상태 조각 `job.status.waitingNetwork`("연결 대기 중 · 2분째 · 1.6GB 받음") + 본문 줄 `job.waitingNetwork.body` | `G-POWER-R8`·`G-POWER-R11`·`G-POWER-R13`~`G-POWER-R15`(macOS·Windows·systemd inhibitor, Transmission), brief §6.9-7(대기는 오류가 아님). ADR-0024 | `rust`·`tauri`(상태 머신), `frontend`, `design-copy`(상태 조각에 해요체 없음) |
 | D41 서비스 공지 | **Worker `GET /notice`**(인증 없음, 활성 1개, 만료 ≤ 72h, fail-open) + 배너 `--warning-soft` + 실패 지점 인라인. 종류별 새 받기만 막고 앱 전체는 막지 않음. 진단 3분류(local/service/unknown)로 "인터넷이 불안정해요"가 치지직 장애에 사용자를 탓하지 않게 | g-outage(어느 사례에도 없어 설계로 정당화, yt-dlp 분류, GOV.UK) | `worker`, `frontend`, `design-copy` |
 
 ### H. 문구
@@ -197,7 +197,7 @@
 | D | 최종 값 | 근거 | 강제 |
 |---|---|---|---|
 | D55 서명·SAC | macOS **현재 유지**(손상 경고 + "그래도 열기" 우선·xattr 폴백 안내), ad-hoc 서명은 실기 확인 뒤 결정[잠정]. Windows SAC는 **안내 문단**("켜져 있으면 설치할 수 없어요, 끄는 방법은…"). 비용 0 원칙(서명 구독 없음) | g-install(소영의 최대 마찰), judgment §2.2-6. ad-hoc·SAC 실기 **[미확인]** → §6-11 | `R8`(랜딩 문단), `governance.md` 과제 |
-| D56 클립보드 제안 | **macOS `NSPasteboard.accessBehavior == alwaysAllow`일 때만 포커스 시 읽기**, 아니면 제안 끔. 붙여넣기·최근 목록이 대안 경로 | g-ime(15.4+ 기본 ask, 확인 창은 신뢰를 깎음), Wayland 제약 | `tauri` |
+| D56 클립보드 제안 | **macOS `NSPasteboard.accessBehavior == alwaysAllow`일 때만 포커스 시 읽기**, 아니면 제안 끔. 붙여넣기·최근 목록이 대안 경로 | g-ime(15.4+ 기본 ask, 확인 창은 신뢰를 깎음), Wayland 제약. ADR-0023 | `tauri` |
 | D57 업데이트 확인 노출 | **늘 보이되** 로그인 필요 상태는 문구로. 버전 "0.1.2"(v 없음), 코어 버전은 [정보 복사]에만. 실패해도 "지금 버전은 계속 쓸 수 있어요" | g-legal D5, g-install(Sparkle 관례) | `frontend`, `design-copy` |
 | D58 앱 라이선스 | **사람 결정, 보류.** 정보 화면 "이용 조건" 행과 `/terms`가 이에 달림. 결정 전까지 저작권 줄 "모든 권리 보유" | `G-LEGAL-D1`, `docs/public-release.md:67` | ADR 필수(`R2`) |
 | D59 AppImage·LGPL | **사람 결정, 보류.** 먼저 실제 `.so` 목록 확인. 계속 배포하면 LGPL 고지·소스 제안 파일 + `.so` 목록 gate | g-legal D2, libfuse2 문제(brief §2.8) | ADR 필수 |
@@ -281,7 +281,7 @@
 - 예시 값은 가짜만 쓴다(`scan`).
 ### 7.3 처음에 쓴 ADR
 
-판정과 이 문서가 내린 결정의 기록으로 열 장을 썼다(`adr/`). 모두 E0~E1 근거라 `채택(잠정)`이다. 0011~0016은 적용 단계 (b)의 새 컴포넌트 여섯 장, 0017~0019는 (c)의 기능 화면 결정 셋, 0020·0021은 (e)의 Worker 결정 둘(서비스 공지 D41, 웹 폼 위험도 D54)이다.
+판정과 이 문서가 내린 결정의 기록으로 열 장을 썼다(`adr/`). 모두 E0~E1 근거라 `채택(잠정)`이다. 0011~0016은 적용 단계 (b)의 새 컴포넌트 여섯 장, 0017~0019는 (c)의 기능 화면 결정 셋, 0020·0021은 (e)의 Worker 결정 둘(서비스 공지 D41, 웹 폼 위험도 D54), 0022~0024는 (f)의 셸 결정 셋(Dock 집계 D29, 클립보드 제안 D56, 연결 대기 D40)이다.
 
 | 번호 | 제목 | 관련 |
 |---|---|---|
@@ -306,5 +306,8 @@
 | 0019 | 글자 크기 단계: 기본·크게·아주 크게(×1·×1.3·×2.0) | D28, foundations §3.2·§12-9 |
 | 0020 | 서비스 공지: 사람이 올리는 R2 객체 하나, 읽기만 하는 `GET /notice`, 고장 나면 공지 없음 | D41, web §1, worker.md 100 |
 | 0021 | 웹 폼 위험도 두 단계: 허가 빼기만 확인 페이지, 나머지는 즉시 실행과 멱등 303 | D54, D37, web §7.3, worker.md 99 |
+| 0022 | Dock·작업 표시줄 진행 집계: 배치 구성원 기준, 단조, 포커스 없을 때만 Error, 1Hz | D29, platform §8.2·§22 32 |
+| 0023 | 클립보드 제안: macOS는 alwaysAllow일 때만 읽고, 셀렉터가 없는 OS에서는 읽는다 | D56, platform §17.2·§22 37 |
+| 0024 | 연결 대기: 상태가 아니라 phase, 30분 인내, 잠든 시간은 세지 않는다 | D40, D39, platform §15.2·§22 33~35, core.md 56 |
 
-그 뒤 D33(앱 마크)·D58·D59·D60(사람 결정)·D55(실기 결과)·§6-1(Windows 실기)이 각각 ADR을 받는다.
+그 뒤 D33(앱 마크)·D58·D59·D60(사람 결정)·D55(실기 결과)·§6-1(Windows 실기)이 각각 ADR을 받는다(§6-1은 실기 결과가 나온 뒤).

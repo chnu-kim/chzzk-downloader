@@ -47,9 +47,12 @@ export const COPY = {
       exclude: "네이버 비밀번호는 받지 않아요.",
       revoke: "로그인한 기기는 ‘내 기기’에서 끊을 수 있어요.",
     },
-    // 자리표시: 출시 전 사람이 실제 연락 수단으로 바꾼다(저장소에 실제 값을 두지 않는다)
-    contact: "문의 연락처는 출시 전에 채워요.",
+    // 연락 수단: 저장소 GitHub Issues(2026-10-10 사용자 결정). 공개 이슈라 민감한 정보를 적지 말라고 함께 알린다
+    contact: "문의는 GitHub 이슈로 남겨 주세요. 이슈는 공개되니 쿠키·비밀번호·개인 정보는 적지 마세요.",
+    contactLink: "GitHub 이슈 열기",
   },
+  // 연락처 링크 주소(landing.contactLink·/privacy가 쓴다)
+  issuesUrl: "https://github.com/chnu-kim/chzzk-downloader/issues",
   loginForFiles: "로그인하면 내 컴퓨터용 설치 파일이 보여요.",
   loginTwice: "이 페이지에서 로그인했어도 앱을 처음 열 때 한 번 더 로그인해요.",
   mobileBlock: "컴퓨터에서 받는 앱이에요. 휴대폰에는 설치할 수 없어요. 컴퓨터에서 이 주소를 열어 주세요.",
@@ -75,7 +78,7 @@ export const COPY = {
   helpIntro: "화면이 앱과 다르면 앱을 업데이트해 주세요.",
   helpToc: "차례",
   // 개인정보 처리방침(web.md §10, 계약 §7-1). 코드에 있는 사실만 적는다. 기간 숫자는 코드 상수가 값을 넘기고(함수 값),
-  // 관리자(운영하는 사람)와 연락처는 출시 전에 사람이 채우는 자리표시다(저장소에 실제 값을 두지 않는다)
+  // 관리자(운영하는 사람)는 GitHub 계정 이름, 연락처는 저장소 GitHub Issues다(2026-10-10 사용자 결정)
   privacy: {
     intro: { body: "이 사이트와 앱의 로그인 서버가 받는 정보와 그 쓰임을 적었어요." },
     collect: {
@@ -101,7 +104,7 @@ export const COPY = {
     abroad: { title: "해외 서버", body: "이 사이트는 Cloudflare의 서비스에서 돌아요. 그래서 위 정보가 한국 밖의 서버에 저장될 수 있어요." },
     cut: { title: "끊는 길", body: "‘내 기기’에서 로그인한 기기를 언제든 끊을 수 있어요. 앱에서는 설정 › 계정에서 로그아웃할 수 있어요." },
     contact: { title: "관리자와 연락처", body: "정보를 지워 달라는 요청이나 문의는 아래 연락처로 보내 주세요.", label: "연락처" },
-    placeholder: { admin: "{관리자}", contact: "{연락처}" },
+    operator: "chnu-kim",
   },
   // flash 알림·오류 요약(web.md §6.3)
   sessionGone: "로그인이 만료됐어요. 다시 로그인한 뒤 같은 동작을 해 주세요.",

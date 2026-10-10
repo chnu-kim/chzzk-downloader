@@ -15,6 +15,9 @@ pub enum Phase {
     Resolving,
     Downloading,
     Reresolving,
+    /// 연결이 끊겨 다시 이어질 때까지 기다리는 중(인내 모드, core.md 구현 중 변경 56).
+    /// 빠른 재시도 5회를 다 쓴 연결 계열 실패만 이 단계로 알린다.
+    WaitingNetwork,
     Finalizing,
 }
 

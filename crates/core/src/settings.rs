@@ -76,6 +76,9 @@ pub struct UserSettings {
     /// 모양(디자인 시스템 D7, `data-theme`). 설정 화면은 Linux에서만 보이고 다른 OS에서는 쓰지 않는다.
     #[serde(deserialize_with = "lenient_or_default")]
     pub theme: Theme,
+    /// 받는 동안 컴퓨터가 잠들지 않게 한다(system/platform.md §10, 기본 켜짐). 없는 키·모르는 값은 켜짐으로 읽는다.
+    #[serde(deserialize_with = "bool_or_true")]
+    pub keep_awake: bool,
 }
 
 /// 앱 안 글자 크기(×1 / ×1.3 / ×2.0, system/foundations.md §3.2). 직렬화 값은 `data-text-scale` 값과 같다
@@ -126,6 +129,7 @@ impl Default for UserSettings {
             imported_from: None,
             text_scale: TextScale::Default,
             theme: Theme::System,
+            keep_awake: true,
         }
     }
 }
@@ -159,6 +163,17 @@ where
     let v = Option::<serde_json::Value>::deserialize(d)?;
     Ok(v.and_then(|v| serde_json::from_value(v).ok())
         .unwrap_or_default())
+}
+
+/// 불리언이 아닌 값(null·문자열·숫자)은 켜짐(`true`)으로 읽는다. 손으로 고친 값 하나로 파일 전체가 깨지지 않게 한다.
+fn bool_or_true<'de, D>(d: D) -> Result<bool, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let v = Option::<serde_json::Value>::deserialize(d)?;
+    Ok(v.as_ref()
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(true))
 }
 
 /// 어떤 JSON 값이든 받고, `T`로 읽지 못하면 `None`.
@@ -531,6 +546,30 @@ mod tests {
                 .unwrap()
                 .auto_resume_interrupted
         );
+    }
+
+    /// 잠자기 방지: 없는 키·모르는 값은 켜짐, `false`만 꺼짐. 나머지 키는 남는다.
+    #[test]
+    fn keep_awake_defaults_to_true() {
+        assert!(UserSettings::default().keep_awake);
+        for (raw, want) in [
+            ("", true),
+            (r#","keepAwake":true"#, true),
+            (r#","keepAwake":false"#, false),
+            (r#","keepAwake":null"#, true),
+            (r#","keepAwake":"no""#, true),
+            (r#","keepAwake":0"#, true),
+        ] {
+            let s = parse(format!(r#"{{"downloadFolder":"/x"{raw}}}"#).as_bytes())
+                .unwrap_or_else(|e| panic!("{raw}: {e}"));
+            assert_eq!(s.keep_awake, want, "{raw}");
+            assert_eq!(s.download_folder.as_deref(), Some(Path::new("/x")), "{raw}");
+        }
+        let off = UserSettings {
+            keep_awake: false,
+            ..Default::default()
+        };
+        assert_eq!(parse(&serde_json::to_vec(&off).unwrap()).unwrap(), off);
     }
 
     /// 접미사는 바이트 그대로 붙는다(UTF-8이 아닌 폴더 이름).

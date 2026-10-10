@@ -26,6 +26,7 @@ use std::num::NonZeroU8;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+use tokio::time::Instant as TokioInstant;
 use tokio_util::sync::CancellationToken;
 
 use crate::client::Chzzk;
@@ -35,7 +36,8 @@ use crate::model::{ContentRef, PlaybackKind, Resolved, Source};
 use crate::progress::{Meter, Phase, Progress};
 
 pub use part::{Finalized, PartFile, Sidecar, discard_partial};
-pub use retry::{Failure, RetryPolicy};
+pub use retry::{Failure, NETWORK_PATIENCE_MS, RETRY_BACKOFF_MAX_MS, RetryPolicy};
+use retry::{Patience, is_connection_failure};
 
 /// 작업당 재조회 상한.
 pub const MAX_REFRESHES: u32 = 8;
@@ -160,14 +162,67 @@ impl Job<'_> {
         self.cancellable(tokio::time::sleep(d)).await
     }
 
+    /// 연결 계열 실패(`e`)를 인내 모드로 기다려 준다(core.md 구현 중 변경 56).
+    ///
+    /// 연결 계열이 아니거나 예산을 다 썼으면 `e`를 그대로 돌려준다. 기다리는 동안 phase를 `WaitingNetwork`로
+    /// 알린다(이미 그 phase면 다시 알리지 않는다). 대기는 취소되면 곧바로 `Cancelled`로 끝난다.
+    pub(crate) async fn wait_for_network(
+        &mut self,
+        patience: &mut Patience,
+        e: Error,
+        took: Duration,
+    ) -> Result<(), Error> {
+        if !is_connection_failure(&e) {
+            return Err(e);
+        }
+        let policy = self.chzzk.config().retry;
+        let Some(wait) = patience.on_failure(&policy, took) else {
+            return Err(e);
+        };
+        if self.report.p.phase != Phase::WaitingNetwork {
+            self.report.phase(Phase::WaitingNetwork);
+        }
+        tracing::debug!(wait_ms = wait.as_millis() as u64, error = %e, "연결 대기");
+        self.sleep(wait).await
+    }
+
+    /// 연결 대기 중이었으면 `Downloading`으로 되돌린다(진전이 있었거나 다시 연결되었을 때).
+    pub(crate) fn resume_downloading(&mut self) {
+        if self.report.p.phase == Phase::WaitingNetwork {
+            self.report.phase(Phase::Downloading);
+        }
+    }
+
     /// `resolve` 후 방식이 요청과 같은지 확인한다.
+    ///
+    /// 연결 계열 실패는 빠른 재시도(조용히) 뒤 인내 모드로 기다린다. 홈 카드의 대화형 `Chzzk::resolve`는
+    /// 이 경로를 타지 않는다(사용자가 30분을 기다리면 안 된다).
     async fn resolve(&mut self) -> Result<Resolved, Error> {
-        let r = match self
-            .cancellable(self.chzzk.resolve(&self.req.content))
-            .await?
-        {
-            Ok(r) => r,
-            Err(e) => {
+        let policy = self.chzzk.config().retry;
+        let mut quick = 0u32;
+        let mut patience = Patience::default();
+        let r = loop {
+            let started = TokioInstant::now();
+            let res = self
+                .cancellable(self.chzzk.resolve(&self.req.content))
+                .await?;
+            let e = match res {
+                Ok(r) => break r,
+                Err(e) => e,
+            };
+            if !is_connection_failure(&e) {
+                self.keep_partial = true;
+                return Err(e);
+            }
+            quick += 1;
+            if policy.allows_retry(quick) {
+                self.sleep(policy.delay(quick - 1)).await?;
+                continue;
+            }
+            if let Err(e) = self
+                .wait_for_network(&mut patience, e, started.elapsed())
+                .await
+            {
                 self.keep_partial = true;
                 return Err(e);
             }

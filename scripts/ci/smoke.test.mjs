@@ -26,14 +26,21 @@ import {
   retryOnce,
 } from './smoke.mjs';
 
-test('마커: 정확히 {version, ready:true, auth}', () => {
-  const m = (o) => JSON.stringify({ version: '0.1.0', ready: true, auth: true, ...o });
-  assert.equal(checkMarker(`${m({})}\n`, '0.1.0').ok, true);
+const PROBE_OK = { colorMix: true, containerQuery: true, has: true, inert: true, oklch: true };
+const mk = (o) => JSON.stringify({ version: '0.1.0', ready: true, auth: true, probe: PROBE_OK, t_show_ms: 120, t_ready_ms: 340, ...o });
+
+test('마커: 여섯 키, ready·version·auth·probe·t_*', () => {
+  const m = mk;
+  const ok = checkMarker(`${m({})}\n`, '0.1.0');
+  assert.equal(ok.ok, true);
+  assert.equal(ok.tShowMs, 120);
+  assert.equal(ok.tReadyMs, 340);
   assert.match(checkMarker(m({ ready: false }), '0.1.0').why, /ready/);
   assert.match(checkMarker(m({ version: '0.2.0' }), '0.1.0').why, /version/);
   assert.match(checkMarker(m({ x: 1 }), '0.1.0').why, /키/);
   assert.match(checkMarker('{"ready":true}', '0.1.0').why, /키/);
-  assert.match(checkMarker('{"version":"0.1.0","ready":true}', '0.1.0').why, /키/);
+  // 옛 세 키 마커는 이제 거부된다
+  assert.match(checkMarker('{"version":"0.1.0","ready":true,"auth":true}', '0.1.0').why, /키/);
   assert.match(checkMarker('ready', '0.1.0').why, /JSON/);
   assert.match(checkMarker('[1]', '0.1.0').why, /객체/);
   assert.match(checkMarker(m({ ready: 'true' }), '0.1.0').why, /ready/);
@@ -42,6 +49,33 @@ test('마커: 정확히 {version, ready:true, auth}', () => {
   assert.match(checkMarker(m({ auth: false }), '0.1.0', { auth: true }).why, /auth/);
   assert.equal(checkMarker(m({ auth: false }), '0.1.0', {}).ok, true);
   assert.match(checkMarker(m({ auth: 'yes' }), '0.1.0').why, /auth/);
+});
+
+test('마커: probe는 다섯 키 모두 true', () => {
+  for (const k of Object.keys(PROBE_OK)) {
+    const r = checkMarker(mk({ probe: { ...PROBE_OK, [k]: false } }), '0.1.0');
+    assert.equal(r.ok, false);
+    assert.match(r.why, new RegExp(`${k}=false`));
+  }
+  const { inert, ...short } = PROBE_OK;
+  assert.match(checkMarker(mk({ probe: short }), '0.1.0').why, /probe 키/);
+  assert.match(checkMarker(mk({ probe: { ...PROBE_OK, extra: true } }), '0.1.0').why, /probe 키/);
+  assert.match(checkMarker(mk({ probe: null }), '0.1.0').why, /probe/);
+  assert.match(checkMarker(mk({ probe: { ...PROBE_OK, has: 1 } }), '0.1.0').why, /has=1/);
+});
+
+test('마커: t_*는 0 이상 정수', () => {
+  assert.equal(checkMarker(mk({ t_show_ms: 0 }), '0.1.0').ok, true);
+  for (const bad of [-1, 1.5, null, '3']) {
+    assert.match(checkMarker(mk({ t_show_ms: bad }), '0.1.0').why, /t_show_ms/);
+    assert.match(checkMarker(mk({ t_ready_ms: bad }), '0.1.0').why, /t_ready_ms/);
+  }
+});
+
+test('마커: 시간 초과 마커(ready:false, null 셋)는 ready에서 걸린다', () => {
+  const r = checkMarker(mk({ ready: false, probe: null, t_show_ms: null, t_ready_ms: null }), '0.1.0');
+  assert.equal(r.ok, false);
+  assert.match(r.why, /ready/);
 });
 
 const LINUX = bundleSpec().linux;

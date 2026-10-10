@@ -27,8 +27,8 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use chzzk_core::naming::output_path;
 use chzzk_core::{
-    CancellationToken, ContentRef, DownloadOutcome, DownloadRequest, Error, Phase, Platform,
-    PlaybackKind, Progress, discard_partial,
+    CancellationToken, ContentRef, DownloadOutcome, DownloadRequest, Error, Phase, PlaybackKind,
+    Progress, discard_partial,
 };
 use std::time::Duration;
 use tokio::runtime::Handle;
@@ -45,6 +45,7 @@ use crate::jobs::{
     JOBS_VERSION, JobRecord, JobStore, JobsFile, now_secs, partial_bytes, reconcile,
 };
 use crate::output::{OutputQuery, check_output};
+use crate::volume;
 use crate::writer::{Flusher, JobsWriter};
 
 /// 작업 시작 시점의 코어 클라이언트를 준다(쿠키 토글 때 셸이 클라이언트를 바꾼다).
@@ -343,7 +344,7 @@ impl<B: Backend> DownloadManager<B> {
     /// 소유 검사(`OwnershipGate`)와 설정의 최근 VOD·마지막 화질 갱신은 부르는 쪽(command)이 한다.
     pub fn enqueue(&self, req: EnqueueRequest, defaults: &JobDefaults) -> Result<JobDto, AppError> {
         let folder = resolve_folder(req.folder.as_deref(), &defaults.download_folder)?;
-        let output = output_path(&folder, &req.file_name, Platform::current());
+        let output = output_path(&folder, &req.file_name, volume::platform_for_dir(&folder));
 
         let mut st = self.inner.lock();
         if let Some(other) = st.active_with_output(&output, None) {
@@ -372,6 +373,7 @@ impl<B: Backend> DownloadManager<B> {
             status: JobStatus::Queued,
             created_at: now_secs(),
             finished_at: None,
+            stopped_at: None,
             final_bytes: None,
             last_error: None,
             discard_on_start: req.restart,
@@ -419,7 +421,7 @@ impl<B: Backend> DownloadManager<B> {
                 content,
                 quality_id,
                 kind,
-                platform: Platform::current(),
+                platform: volume::platform_for_dir(&folder),
             },
             &find,
         ))
@@ -441,7 +443,7 @@ impl<B: Backend> DownloadManager<B> {
                 }
             }
             JobStatus::Queued => {
-                job.rec.status = JobStatus::Paused;
+                job.rec.set_status(JobStatus::Paused, now_secs());
                 job.rec.partial_bytes = partial_bytes(&job.rec);
             }
             _ => return Ok(()),
@@ -664,7 +666,7 @@ impl<B: Backend> DownloadManager<B> {
             } else {
                 if job.rec.status == JobStatus::Queued {
                     // 지우는 동안 pump가 시작하지 않게(이벤트는 보내지 않는다. 곧 Removed다)
-                    job.rec.status = JobStatus::Paused;
+                    job.rec.set_status(JobStatus::Paused, now_secs());
                 }
                 None
             };
@@ -693,7 +695,7 @@ impl<B: Backend> DownloadManager<B> {
                     job.stop = None;
                     if job.busy() {
                         // 태스크 종료를 기다리지 못한 경우(런타임 종료). 멈춘 것으로 둔다
-                        job.rec.status = JobStatus::Paused;
+                        job.rec.set_status(JobStatus::Paused, now_secs());
                     }
                     job.rec.partial_bytes = partial_bytes(&job.rec);
                     let dto = job.dto();
@@ -785,7 +787,7 @@ impl<B: Backend> DownloadManager<B> {
             let mut late_ids = Vec::new();
             for job in st.jobs.values_mut() {
                 if job.busy() && !job.removing {
-                    job.rec.status = JobStatus::Interrupted;
+                    job.rec.set_status(JobStatus::Interrupted, now_secs());
                     job.rec.partial_bytes = partial_bytes(&job.rec);
                     // 태스크가 아직 돈다: 그 `finish`가 올 때까지 슬롯·경로를 차지하고 새로 시작하지 않는다(80).
                     // 핸들을 돌려줘 `remove`가 옛 태스크의 끝을 기다린 뒤 `.part`를 지우게 한다
@@ -876,7 +878,7 @@ impl<B: Backend> Inner<B> {
             r.partial_bytes = None;
             job.last_progress = None;
         }
-        r.status = JobStatus::Queued;
+        r.set_status(JobStatus::Queued, 0);
         r.last_error = None;
         r.finished_at = None;
         job.stop = None;
@@ -927,7 +929,7 @@ impl<B: Backend> Inner<B> {
         }
         job.run = run;
         let r = &mut job.rec;
-        r.status = JobStatus::Running;
+        r.set_status(JobStatus::Running, 0);
         r.last_error = None;
         r.finished_at = None;
         r.final_bytes = None;
@@ -1014,21 +1016,22 @@ impl<B: Backend> Inner<B> {
             let stop = job.stop.take();
             if job.removing {
                 // `remove`가 이어서 `.part`를 지우고 레코드를 없앤다. 그때까지 중복 검사에는 남도록 멈춘 상태로 둔다.
-                job.rec.status = JobStatus::Paused;
+                job.rec.set_status(JobStatus::Paused, now_secs());
                 self.pump(&mut st);
                 return;
             }
             let r = &mut job.rec;
+            let now = now_secs();
             match end {
                 End::Done(DownloadOutcome::Completed { bytes, .. }) => {
-                    r.status = JobStatus::Completed;
+                    r.set_status(JobStatus::Completed, now);
                     r.final_bytes = Some(bytes);
                     r.finished_at = Some(now_secs());
                     r.partial_bytes = None;
                     job.last_progress = None;
                 }
                 End::Done(DownloadOutcome::Skipped { .. }) => {
-                    r.status = JobStatus::Skipped;
+                    r.set_status(JobStatus::Skipped, now);
                     r.finished_at = Some(now_secs());
                     // 받는 동안 같은 이름의 파일이 생겼으면 코어가 `.part`를 남긴다("덮어쓰고 받기"로 이어받는다).
                     r.partial_bytes = partial_bytes(r);
@@ -1036,27 +1039,27 @@ impl<B: Backend> Inner<B> {
                 }
                 End::Cancelled => match stop {
                     Some(StopReason::Pause) => {
-                        r.status = JobStatus::Paused;
+                        r.set_status(JobStatus::Paused, now);
                         r.partial_bytes = partial_bytes(r);
                     }
                     Some(StopReason::Quit) => {
-                        r.status = JobStatus::Interrupted;
+                        r.set_status(JobStatus::Interrupted, now);
                         r.partial_bytes = partial_bytes(r);
                     }
                     Some(StopReason::Remove) | None => {
-                        r.status = JobStatus::Failed;
+                        r.set_status(JobStatus::Failed, now);
                         r.last_error = Some(AppError::internal("멈춘 이유 없이 취소되었습니다"));
                         r.partial_bytes = partial_bytes(r);
                     }
                 },
                 End::Error(e) => {
                     let stage = stage_of(job.last_progress.as_ref());
-                    r.status = JobStatus::Failed;
+                    r.set_status(JobStatus::Failed, now);
                     r.last_error = Some(AppError::from(&e).at(stage));
                     r.partial_bytes = partial_bytes(r);
                 }
                 End::Failed(e) => {
-                    r.status = JobStatus::Failed;
+                    r.set_status(JobStatus::Failed, now);
                     r.last_error = Some(e);
                     r.partial_bytes = partial_bytes(r);
                 }
@@ -1094,7 +1097,10 @@ impl<B: Backend> Inner<B> {
 fn stage_of(last: Option<&ProgressDto>) -> Stage {
     match last.map(|p| p.phase) {
         None | Some(Phase::Resolving) | Some(Phase::Reresolving) => Stage::Resolve,
-        Some(Phase::Downloading) | Some(Phase::Finalizing) => Stage::Download,
+        // 연결 대기는 받는 중(또는 작업 안 재조회) 도중의 인내라 download 단계로 센다(core.md 56).
+        Some(Phase::Downloading) | Some(Phase::WaitingNetwork) | Some(Phase::Finalizing) => {
+            Stage::Download
+        }
     }
 }
 

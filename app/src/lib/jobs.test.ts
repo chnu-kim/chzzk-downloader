@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { JobDto, JobStatus } from './bindings';
 import { t } from './copy/ko';
-import { COMPLETED_FOLD_AT } from './timing';
+import { COMPLETED_FOLD_AT, RECOVERY_SILENT_MS, STALE_DAYS } from './timing';
 import { ICONS } from './components/ui/icons';
 import { err, hlsProg, job, prog, signedInAs } from '../test/jobFixtures';
 import {
@@ -10,6 +10,7 @@ import {
   barView,
   blockCopyKey,
   bodyKey,
+  bodyLine,
   cancelLabel,
   deleteAction,
   displayPercent,
@@ -17,6 +18,7 @@ import {
   jobActionLabel,
   enterAction,
   groupJobs,
+  isWaitingNetwork,
   isClearable,
   jobBlock,
   jobButtons,
@@ -27,8 +29,10 @@ import {
   receivedBytes,
   removeRoute,
   resumableInterrupted,
+  shouldNoticeRecovery,
   shownJobs,
   spaceAction,
+  staleDays,
   statusLine,
   statusParts,
   statusWord,
@@ -291,6 +295,10 @@ describe('작업 행 진행 영역 표(patterns.md §3.2): 상태마다 막대·
     body: string | null;
     primary: string[];
     cancel: ReturnType<typeof cancelLabel>['label'] | null;
+    /** 상태 줄·본문 줄에 더 주는 문맥(연결 대기 시작 시각·회복 중) */
+    ctx?: { waitingSince?: number; recovered?: boolean };
+    /** 막대가 줄무늬(waiting)인가. 기본 false */
+    striped?: boolean;
   };
   const rows: Row[] = [
     {
@@ -324,9 +332,40 @@ describe('작업 행 진행 영역 표(patterns.md §3.2): 상태마다 막대·
       name: '주소 재취득: 줄무늬(waiting), 퍼센트 유지',
       job: job(1, { status: 'running', progress: prog({ phase: 'reresolving' }) }),
       bar: { state: 'accent', value: 57, percent: '57%' },
+      striped: true,
       line: t('job.phase.reresolving'),
       body: null,
       primary: ['pause'],
+      cancel: t('action.cancel'),
+    },
+    {
+      name: '연결 대기: 줄무늬, 퍼센트 유지, 속도·남은 시간 숨김, 빨강·오류 문구 없음, 본문 한 줄',
+      job: job(1, { status: 'running', progress: prog({ phase: 'waitingNetwork', speedBps: null, etaSecs: null }) }),
+      bar: { state: 'accent', value: 57, percent: '57%' },
+      striped: true,
+      ctx: { waitingSince: CTX.now - 125_000 },
+      line: '연결 대기 중 · 2분째 · 2.30GB 받음',
+      body: t('job.waitingNetwork.body'),
+      primary: ['pause'],
+      cancel: t('action.cancel'),
+    },
+    {
+      name: '회복 직후(1분 넘긴 단절): 상태 줄 그대로, 본문 job.recovered.body',
+      job: job(1, { status: 'running', progress: prog() }),
+      bar: { state: 'accent', value: 57, percent: '57%' },
+      ctx: { recovered: true },
+      line: '받는 중 · 2.3GB / 4.0GB · 12.4MB/s · 약 2분 남음',
+      body: t('job.recovered.body'),
+      primary: ['pause'],
+      cancel: t('action.cancel'),
+    },
+    {
+      name: '멈춘 지 30일 넘음(일시정지): 상태 줄 그대로, 본문 job.stale.body',
+      job: job(1, { status: 'paused', partialBytes: 5 * MiB, progress: prog({ bytes: 5 * MiB }), stoppedAt: CTX.now / 1000 - 31 * 86400 - 5 }),
+      bar: { state: 'muted', value: 0, percent: '0%' },
+      line: t('job.paused', { bytes: '5.00MB' }),
+      body: t('job.stale.body', { days: 31, size: '5.00MB' }),
+      primary: ['resume'],
       cancel: t('action.cancel'),
     },
     {
@@ -443,9 +482,10 @@ describe('작업 행 진행 영역 표(patterns.md §3.2): 상태마다 막대·
     else {
       expect(bar).toMatchObject({ value: row.bar.value, percent: row.bar.percent, tone: row.bar.state });
     }
-    expect(statusLine(statusParts(j, p, CTX))).toBe(row.line);
-    const key = bodyKey(j);
-    expect(key ? t(key) : null).toBe(row.body);
+    expect(bar?.striped ?? false).toBe(row.striped ?? false);
+    const ctx = { ...CTX, waitingSince: row.ctx?.waitingSince };
+    expect(statusLine(statusParts(j, p, ctx))).toBe(row.line);
+    expect(bodyLine(j, p, { now: CTX.now, base: CTX.base, recovered: row.ctx?.recovered })).toBe(row.body);
     const b = jobButtons(j, p);
     expect(b.primary).toEqual(row.primary);
     expect(b.cancel ? cancelLabel(j, p).label : null).toBe(row.cancel);
@@ -713,5 +753,76 @@ describe('동작 아이콘 이름(Lucide 28개 안에 있다)', () => {
       const name = jobActionIcon(a);
       expect(name && name in ICONS).toBe(true);
     }
+  });
+});
+
+describe('연결 대기·회복·멈춘 지 30일 판단(patterns.md §3.2)', () => {
+  const NOW = CTX.now;
+  const waitingJob = job(1, { status: 'running', progress: prog({ phase: 'waitingNetwork' }) });
+
+  it('연결 대기는 running이고 phase가 waitingNetwork일 때만이다', () => {
+    expect(isWaitingNetwork(waitingJob, waitingJob.progress)).toBe(true);
+    expect(isWaitingNetwork(job(1, { status: 'running', progress: prog() }), prog())).toBe(false);
+    expect(isWaitingNetwork(job(1, { status: 'paused' }), prog({ phase: 'waitingNetwork' }))).toBe(false);
+    expect(isWaitingNetwork(waitingJob, null)).toBe(false);
+  });
+
+  it('경과 시간은 처음 본 시각부터다: 1분 미만 1분째 · 5분째 · 1시간 5분째', () => {
+    const at = (secs: number) => line(waitingJob, waitingJob.progress, { waitingSince: NOW - secs * 1000 });
+    expect(at(10)).toContain('연결 대기 중 · 1분째 ·');
+    expect(at(300)).toContain('· 5분째 ·');
+    expect(at(3900)).toContain('· 1시간 5분째 ·');
+    // 시각을 모르면(방금 본 것) 0초
+    expect(line(waitingJob, waitingJob.progress)).toContain('· 1분째 ·');
+  });
+
+  it('연결 대기 문구에는 빨강·오류 어조가 없고 퍼센트는 유지된다', () => {
+    const b = barView(waitingJob, waitingJob.progress)!;
+    expect(b.tone).toBe('accent');
+    expect(b.striped).toBe(true);
+    expect(b.percent).toBe('57%');
+    expect(b.valueText).toContain(t('job.phase.waitingNetwork'));
+    const all = line(waitingJob, waitingJob.progress) + t('job.waitingNetwork.body');
+    expect(all).not.toMatch(/실패|오류|못했/);
+  });
+
+  it('회복 줄은 RECOVERY_SILENT_MS 이상 기다렸을 때만 낸다', () => {
+    expect(shouldNoticeRecovery(RECOVERY_SILENT_MS - 1)).toBe(false);
+    expect(shouldNoticeRecovery(RECOVERY_SILENT_MS)).toBe(true);
+  });
+
+  it('멈춘 지 STALE_DAYS: 경계(29일 23시간 / 30일)와 조건', () => {
+    const base = { partialBytes: 1024, status: 'paused' as const };
+    const ago = (secs: number) => job(1, { ...base, stoppedAt: NOW / 1000 - secs });
+    expect(staleDays(ago(STALE_DAYS * 86400 - 1), NOW)).toBeNull();
+    expect(staleDays(ago(STALE_DAYS * 86400), NOW)).toBe(30);
+    expect(staleDays(ago(90 * 86400 + 5), NOW)).toBe(90);
+    // 중단·실패도 같다. 실행 중·대기·완료는 해당 없음
+    expect(staleDays(job(1, { status: 'interrupted', partialBytes: 1, stoppedAt: NOW / 1000 - 40 * 86400 }), NOW)).toBe(40);
+    expect(staleDays(job(1, { status: 'failed', partialBytes: 1, stoppedAt: NOW / 1000 - 40 * 86400 }), NOW)).toBe(40);
+    for (const status of ['queued', 'running', 'completed', 'skipped'] as const) {
+      expect(staleDays(job(1, { status, partialBytes: 1, stoppedAt: NOW / 1000 - 40 * 86400 }), NOW)).toBeNull();
+    }
+    // 멈춘 시각이 없는 옛 레코드·받은 부분이 없는 작업은 줄이 없다
+    expect(staleDays(job(1, { ...base, stoppedAt: null }), NOW)).toBeNull();
+    expect(staleDays(job(1, { status: 'paused', partialBytes: 0, stoppedAt: NOW / 1000 - 40 * 86400 }), NOW)).toBeNull();
+    expect(staleDays(job(1, { status: 'paused', partialBytes: null, stoppedAt: NOW / 1000 - 40 * 86400 }), NOW)).toBeNull();
+  });
+
+  it('실패 작업은 오류 본문을 건드리지 않고 멈춘 지 30일 줄만 더한다', () => {
+    const fresh = job(1, { status: 'failed', partialBytes: 1024, error: err('network'), stoppedAt: NOW / 1000 - 86400 });
+    expect(bodyLine(fresh, null, { now: NOW })).toBeNull();
+    const old = job(1, { status: 'failed', partialBytes: 1024, error: err('network'), stoppedAt: NOW / 1000 - 40 * 86400 });
+    expect(bodyLine(old, null, { now: NOW, base: 1024 })).toBe(t('job.stale.body', { days: 40, size: '1.00KB' }));
+  });
+
+  it('연결 대기 동작: 일시정지와 취소(취소는 .part가 있어 [취소…])', () => {
+    const b = jobButtons(waitingJob, waitingJob.progress);
+    expect(b.primary).toEqual(['pause']);
+    expect(b.cancel).toBe(true);
+  });
+
+  it('낭독 낱말: 연결 대기 중', () => {
+    expect(statusWord(waitingJob, waitingJob.progress)).toBe(t('job.phase.waitingNetwork'));
   });
 });

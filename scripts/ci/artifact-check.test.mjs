@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
-import { E2E_MARK, GALLERY_MARK, GLIBC_MAX, e2eFeatureLines, galleryTraces, glibcOk, maxGlibc } from './artifact-check.mjs';
+import { E2E_MARK, GALLERY_MARK, GLIBC_MAX, e2eFeatureLines, galleryTraces, glibcOk, maxGlibc, scanSources, sourceFiles } from './artifact-check.mjs';
 import { ROOT } from './gates.mjs';
 
 const OBJDUMP = `
@@ -61,4 +61,57 @@ test('GALLERY_MARK는 갤러리 진입점의 표식과 같은 글자다(조각�
   const m = /GALLERY_MARK\s*=\s*'([^']*)'\s*\+\s*'([^']*)'/.exec(src);
   assert.ok(m, 'app/src/gallery/main.ts에 GALLERY_MARK가 없다');
   assert.equal(m[1] + m[2], GALLERY_MARK);
+});
+
+// ---- 소스 훑기(DX14~16) ----
+const f = (path, text) => [{ path, text }];
+const BUILDER = 'let h = keepawake::Builder::default().idle(true).display(false).sleep(false).create();';
+
+test('scanSources: 깨끗한 소스는 위반 0', () => {
+  assert.deepEqual(scanSources(f('crates/shell/src/app.rs', 'fn main() { println!("hi"); }')), []);
+  assert.deepEqual(scanSources(f('crates/shell/src/power.rs', BUILDER)), []);
+  assert.deepEqual(scanSources(f('app/src-tauri/src/power/mod.rs', BUILDER)), []);
+  // set_var가 다른 변수면 통과
+  assert.deepEqual(scanSources(f('app/src-tauri/src/lib.rs', 'unsafe { std::env::set_var("RUST_LOG", "info") };')), []);
+});
+
+test('scanSources DX14: 금지 글자 여섯 개는 각각 위반', () => {
+  for (const w of ['PreventSystem' + 'Sleep', 'ES_AWAYMODE_' + 'REQUIRED', 'ES_DISPLAY_' + 'REQUIRED', 'PreventUserIdleDisplay' + 'Sleep', 'handle-lid-' + 'switch', 'disable' + 'sleep']) {
+    const r = scanSources(f('crates/shell/src/power.rs', `// ${w}\n`));
+    assert.equal(r.length, 1, w);
+    assert.match(r[0], /^DX14 .*:1 /);
+  }
+});
+
+test('scanSources DX14: keepawake 빌더는 display(false)·sleep(false)가 둘 다 있어야 한다', () => {
+  assert.match(scanSources(f('crates/shell/src/power.rs', 'keepawake::Builder::default().idle(true).sleep(false)'))[0], /display\(false\)/);
+  assert.match(scanSources(f('crates/shell/src/power.rs', 'keepawake::Builder::default().idle(true).display(false)'))[0], /sleep\(false\)/);
+  assert.equal(scanSources(f('crates/shell/src/power.rs', 'keepawake::Builder::default()')).length, 2);
+});
+
+test('scanSources DX15: 전원 심볼은 power 모듈 밖이면 위반', () => {
+  for (const sym of ['keep' + 'awake', 'IOPM' + 'Assertion', 'SetThreadExecution' + 'State', 'PowerCreate' + 'Request', 'beginActivityWith' + 'Options', 'org.freedesktop.' + 'login1']) {
+    assert.equal(scanSources(f('crates/shell/src/manager.rs', `use ${sym};`)).filter((v) => v.startsWith('DX15')).length, 1, sym);
+    assert.deepEqual(scanSources(f('crates/shell/src/power.rs', `use ${sym};`)).filter((v) => v.startsWith('DX15')), []);
+    assert.deepEqual(scanSources(f('app/src-tauri/src/power.rs', `use ${sym};`)).filter((v) => v.startsWith('DX15')), []);
+  }
+  assert.equal(scanSources(f('app/src-tauri/src/lib.rs', 'x::SetThreadExecution' + 'State(1)')).length, 1);
+});
+
+test('scanSources DX16: WebKit·NVIDIA 환경 변수를 set_var로 켜면 위반', () => {
+  const same = 'unsafe { std::env::set_var("WEBKIT_DISABLE_' + 'DMABUF_RENDERER", "1") };';
+  const multi = 'unsafe {\n  std::env::set_var(\n    "__NV_DISABLE_' + 'EXPLICIT_SYNC",\n    "1",\n  )\n}';
+  const bare = 'std::env::set_var(WEBKIT_DISABLE_' + 'COMPOSITING_MODE, "1");';
+  for (const t of [same, multi, bare]) {
+    const r = scanSources(f('app/src-tauri/src/lib.rs', t));
+    assert.equal(r.length >= 1 && r.every((v) => v.startsWith('DX16')), true, t);
+  }
+  // 읽기만 하는 코드·문서 주석은 통과
+  assert.deepEqual(scanSources(f('app/src-tauri/src/lib.rs', 'let v = std::env::var("WEBKIT_DISABLE_' + 'DMABUF_RENDERER");')), []);
+});
+
+test('sourceFiles: 실제 저장소 소스는 위반 0(가드가 현재 트리에서 통과한다)', () => {
+  const files = sourceFiles(ROOT);
+  assert.ok(files.length > 10);
+  assert.deepEqual(scanSources(files), []);
 });

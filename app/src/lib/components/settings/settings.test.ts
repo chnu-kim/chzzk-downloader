@@ -42,6 +42,7 @@ const base: SettingsDto = {
   importedFrom: null,
   textScale: 'default',
   theme: 'system',
+  keepAwake: true,
 };
 
 const info: AppInfo = {
@@ -110,6 +111,16 @@ describe('설정: 즉시 저장', () => {
     expect(api.updateSettings).toHaveBeenLastCalledWith({ autoResumeInterrupted: true });
     expect(screen.getByRole('combobox', { name: t('settings.parallel') })).toHaveDisplayValue('3');
     expect(screen.getAllByRole('option', { name: /^\d$/ }).length).toBe(3 + 8);
+  });
+
+  it('잠자기 방지 토글: 기본 켬, 끄면 keepAwake 패치를 바로 보낸다(도움말이 설명으로 이어진다)', async () => {
+    const user = userEvent.setup();
+    render(SettingsView);
+    const sw = screen.getByRole('switch', { name: t('settings.keepAwake') });
+    expect(sw).toHaveAttribute('aria-checked', 'true');
+    expect(sw).toHaveAccessibleDescription(t('settings.keepAwake.help'));
+    await user.click(sw);
+    expect(api.updateSettings).toHaveBeenLastCalledWith({ keepAwake: false });
   });
 
   it('설정 파일 저장 실패: B2 배너, 컨트롤은 저장된 값으로 돌아가고 [다시 시도]가 같은 패치를 보낸다', async () => {

@@ -9,9 +9,9 @@ use std::sync::atomic::Ordering;
 use chzzk_core::{ContentRef, PlaybackKind};
 use chzzk_shell::app::{Reveal, chzzk_link};
 use chzzk_shell::dto::{
-    AppFolder, AppInfo, AuthStatusDto, EnqueueRequest, JobDto, JobEvent, LegacyImportDto,
-    OutputCheck, ResolvedDto, SettingsDto, SettingsPatch, UpdateCheckDto, UpdateInfoDto,
-    UpdateInstallDto, WebPage,
+    AppFolder, AppInfo, AuthStatusDto, EngineProbe, EnqueueRequest, JobDto, JobEvent,
+    LegacyImportDto, OutputCheck, ResolvedDto, SettingsDto, SettingsPatch, UpdateCheckDto,
+    UpdateInfoDto, UpdateInstallDto, WebPage,
 };
 use chzzk_shell::manager::QUIT_TIMEOUT;
 use chzzk_shell::{App, AppError, JobId};
@@ -23,8 +23,10 @@ use tauri_plugin_opener::OpenerExt;
 
 use crate::Quitting;
 use crate::auth_io::AuthIoState;
+use crate::show::{ShowGate, elapsed_ms, show_main};
 use crate::sink::{ChannelSink, Notifier};
 use crate::smoke::{EXIT_MARKER, SmokeState, write_marker};
+use crate::status::{StatusState, emit_keep_awake};
 use crate::update_io::{AppInstallHost, PluginUpdateSource};
 
 type Res<T> = Result<T, AppError>;
@@ -283,10 +285,24 @@ pub async fn auth_logout(state: State<'_, App>) -> Res<AuthStatusDto> {
     state.auth_logout().await
 }
 
+/// 클립보드 제안을 해도 되는지 묻는 쪽. 보통 실행은 OS의 실제 질의(`system_suggest_allowed`)이고, 테스트는 관리 상태로
+/// 바꿔 끼운다(macOS 15.4+의 개발 기기는 기본 정책이 "묻기"라 실제 질의로는 읽기 테스트가 서지 않는다).
+#[derive(Clone, Copy)]
+pub struct ClipboardPolicy(pub fn() -> bool);
+
 /// 클립보드에 치지직 주소가 있으면 그 주소만 돌려준다(§16 클립보드 감지, 창 포커스 때 프런트가 부른다).
 /// 클립보드의 다른 글은 웹뷰로 보내지 않는다. 글이 없거나 읽지 못하면 `null`이다.
+///
+/// macOS 15.4+는 앱이 클립보드를 읽을 때마다 붙여넣기 허용 알림을 띄울 수 있다. 사용자가 "항상 허용"으로 두지 않았으면
+/// (D56) 읽지 않고 `null`을 돌려준다. 질의는 15.4 미만에서 `respondsToSelector:`로 가드한다(셸 `pasteboard`).
 #[tauri::command]
 pub async fn clipboard_link<R: Runtime>(app: AppHandle<R>) -> Res<Option<String>> {
+    let allowed = app
+        .try_state::<ClipboardPolicy>()
+        .map_or_else(chzzk_shell::pasteboard::system_suggest_allowed, |p| (p.0)());
+    if !allowed {
+        return Ok(None);
+    }
     Ok(app
         .clipboard()
         .read_text()
@@ -294,28 +310,46 @@ pub async fn clipboard_link<R: Runtime>(app: AppHandle<R>) -> Res<Option<String>
         .and_then(|t| chzzk_link(&t)))
 }
 
-/// 프런트가 처음 그려진 뒤 한 번 부른다(`app/src/lib/ready.ts`). 보통 실행에서는 아무것도 하지 않는다.
-/// `--smoke`면 마커(`{version, ready:true, auth}`)를 쓰고 앱을 끝낸다(docs/design/cicd.md §6). dist가 실리고 CSP를
-/// 지나 IPC가 닿았다는 증거다.
+/// 프런트가 처음 그려진 뒤 부른다(`app/src/lib/ready.ts`). 인자는 프런트가 잰 엔진 기능 프로브다.
+///
+/// 순서: ① main 창을 보인다(`App` 상태가 있을 때만, 한 번) ② 프로브가 모자라면 로그 ③ `--smoke`면 마커를 쓰고 앱을
+/// 끝낸다(docs/design/cicd.md §6: dist가 실리고 CSP를 지나 IPC가 닿았다는 증거) ④ `keep-awake` 현재 값을 한 번 보낸다
+/// (웹뷰가 새로 뜬 경우에도 표시가 맞게).
 #[tauri::command]
-pub async fn frontend_ready<R: Runtime>(app: AppHandle<R>) -> Res<()> {
-    let Some(smoke) = app.try_state::<SmokeState>() else {
-        return Ok(());
-    };
-    if !smoke.fire() {
-        return Ok(());
+pub async fn frontend_ready<R: Runtime>(app: AppHandle<R>, probe: EngineProbe) -> Res<()> {
+    show_main(&app);
+    if !probe.all_ok() {
+        tracing::warn!(?probe, "웹뷰 엔진 기능이 모자람");
     }
-    let version = app.package_info().version.to_string();
-    let auth = app.try_state::<App>().is_some_and(|s| s.auth_enabled());
-    match write_marker(smoke.config.out.as_deref(), &version, true, auth) {
-        Ok(()) => {
-            tracing::info!(%version, "smoke: frontend_ready");
-            app.exit(0);
+    if let Some(smoke) = app.try_state::<SmokeState>()
+        && smoke.fire()
+    {
+        // 창이 보인 시각과 이 신호의 시각(프로세스 시작부터 ms). 마커에는 출력만 하고 판정하지 않는다(관찰)
+        let t_ready = elapsed_ms();
+        let t_show = app.try_state::<ShowGate>().and_then(|g| g.t_show_ms());
+        let version = app.package_info().version.to_string();
+        let auth = app.try_state::<App>().is_some_and(|s| s.auth_enabled());
+        match write_marker(
+            smoke.config.out.as_deref(),
+            &version,
+            true,
+            auth,
+            Some(&probe),
+            t_show,
+            Some(t_ready),
+        ) {
+            Ok(()) => {
+                tracing::info!(%version, ?t_show, t_ready, "smoke: frontend_ready");
+                app.exit(0);
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "smoke: 마커를 쓰지 못함");
+                app.exit(EXIT_MARKER);
+            }
         }
-        Err(e) => {
-            tracing::error!(error = %e, "smoke: 마커를 쓰지 못함");
-            app.exit(EXIT_MARKER);
-        }
+    }
+    if let Some(status) = app.try_state::<StatusState>() {
+        emit_keep_awake(&app, status.keep_awake_active());
     }
     Ok(())
 }

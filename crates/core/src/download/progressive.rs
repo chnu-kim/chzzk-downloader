@@ -14,12 +14,14 @@
 
 use std::time::{Duration, Instant};
 
+use tokio::time::Instant as TokioInstant;
+
 use ::url::Url;
 use reqwest::StatusCode;
 use reqwest::header::{CONTENT_RANGE, RANGE};
 
 use super::part::{PartFile, ProgressiveState, Sidecar};
-use super::retry::{Failure, classify_failure};
+use super::retry::{Failure, Patience, classify_failure};
 use super::{DownloadOutcome, Job, finish};
 use crate::error::Error;
 use crate::model::{PdRep, PlaybackKind, Source};
@@ -43,8 +45,11 @@ pub(crate) async fn run(
     let mut attempts = 0u32;
     // 재조회한 뒤 아직 2xx를 받지 못했는가
     let mut just_refreshed = false;
+    // 빠른 재시도를 다 쓴 연결 계열 실패의 인내 장부(core.md 구현 중 변경 56)
+    let mut patience = Patience::default();
     loop {
         let before = part.as_ref().map_or(0, PartFile::written);
+        let started = TokioInstant::now();
         match attempt(job, &url, part, &mut resumed_from, &mut just_refreshed).await {
             Ok(()) => break,
             Err(Failure::Fatal(e)) => return Err(e),
@@ -62,17 +67,23 @@ pub(crate) async fn run(
                 url = select_pd(&reps, &job.req.quality_id)?.url.clone();
                 just_refreshed = true;
                 attempts = 0;
+                patience.reset();
             }
             Err(Failure::Retry(e)) => {
                 if part.as_ref().map_or(0, PartFile::written) > before {
+                    // 진전이 있었다: 빠른 재시도와 인내 시계를 모두 처음부터 센다.
                     attempts = 0;
+                    patience.reset();
                 }
                 attempts += 1;
-                if !policy.allows_retry(attempts) {
-                    return Err(e);
+                if policy.allows_retry(attempts) {
+                    tracing::debug!(attempts, error = %e, "재시도");
+                    job.sleep(policy.delay(attempts - 1)).await?;
+                } else {
+                    // 빠른 재시도를 다 썼다. 연결 계열만 인내 모드로 기다리고, 그 밖(5xx·429·Parse)은 여기서 끝낸다.
+                    job.wait_for_network(&mut patience, e, started.elapsed())
+                        .await?;
                 }
-                tracing::debug!(attempts, error = %e, "재시도");
-                job.sleep(policy.delay(attempts - 1)).await?;
             }
         }
     }
@@ -199,6 +210,8 @@ async fn attempt(
                 actual: written,
             }));
         }
+        // 바이트가 들어오기 시작하면 연결 대기가 끝난 것이다.
+        job.resume_downloading();
         job.report.update(|r| r.bytes = written);
         if since_cp >= CHECKPOINT_BYTES || last_cp.elapsed() >= CHECKPOINT_EVERY {
             p.checkpoint(|_| {}).await.map_err(Failure::Fatal)?;

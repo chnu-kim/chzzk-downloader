@@ -61,6 +61,8 @@ pub enum PhaseTs {
     Downloading,
     Reresolving,
     Finalizing,
+    /// 연결이 끊겨 기다리는 중(phase이지 작업 상태가 아니다, platform §15.2)
+    WaitingNetwork,
 }
 
 impl From<PlaybackKind> for PlaybackKindTs {
@@ -178,6 +180,8 @@ pub enum WebPage {
     Privacy,
     /// `/licenses` 오픈소스 라이선스
     Licenses,
+    /// `/help` 도움말(macOS 도움말 메뉴, platform §7.1)
+    Help,
 }
 
 impl From<Phase> for PhaseTs {
@@ -187,6 +191,7 @@ impl From<Phase> for PhaseTs {
             Phase::Resolving => PhaseTs::Resolving,
             Phase::Downloading => PhaseTs::Downloading,
             Phase::Reresolving => PhaseTs::Reresolving,
+            Phase::WaitingNetwork => PhaseTs::WaitingNetwork,
             Phase::Finalizing => PhaseTs::Finalizing,
         }
     }
@@ -301,6 +306,8 @@ pub struct SettingsDto {
     /// 모양(기본 `system`). Linux에서만 설정 화면에 보인다
     #[ts(as = "ThemeTs")]
     pub theme: Theme,
+    /// 받는 동안 잠들지 않게 한다(기본 켜짐, platform §10)
+    pub keep_awake: bool,
 }
 
 /// 최근 VOD 한 항목.
@@ -356,6 +363,9 @@ pub struct SettingsPatch {
     #[serde(default)]
     #[ts(as = "Option<ThemeTs>", optional)]
     pub theme: Option<Theme>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub keep_awake: Option<bool>,
 }
 
 /// 키 없음·`null`·값을 구분하는 패치 필드. `#[serde(default)]`와 함께 써야 키 없음이 `Keep`이 된다.
@@ -661,6 +671,35 @@ pub struct JobDto {
     /// unix 초
     pub created_at: u64,
     pub finished_at: Option<u64>,
+    /// paused·interrupted·failed로 바뀐 시각(unix 초). 그 밖 상태와 옛 레코드는 null.
+    /// "멈춘 지 30일" 판단에 쓴다(`finishedAt`은 완료·건너뜀 전용이라 따로 둔다)
+    pub stopped_at: Option<u64>,
+}
+
+/// 웹뷰 엔진 기능 검사(platform §5, `frontend_ready`의 인자). 하나라도 false면 프런트가 경고 배너를 띄운다.
+/// 키 이름은 CSS 기능 이름을 따른다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct EngineProbe {
+    pub color_mix: bool,
+    pub has: bool,
+    pub oklch: bool,
+    pub container_query: bool,
+    pub inert: bool,
+}
+
+impl EngineProbe {
+    /// 다섯 기능이 모두 있다
+    pub fn all_ok(&self) -> bool {
+        let EngineProbe {
+            color_mix,
+            has,
+            oklch,
+            container_query,
+            inert,
+        } = *self;
+        color_mix && has && oklch && container_query && inert
+    }
 }
 
 /// 코어 `Progress`를 평평하게 편 것(튜플은 JSON 배열이 되므로).
@@ -767,6 +806,13 @@ pub struct CloseRequestedPayload {
 #[serde(rename_all = "camelCase")]
 pub struct WindowFocusPayload {
     pub focused: bool,
+}
+
+/// `keep-awake` 이벤트: 잠자기 방지를 **실제로 얻었을 때만** `active: true`(platform §10).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct KeepAwakePayload {
+    pub active: bool,
 }
 
 // ---------------------------------------------------------------------------

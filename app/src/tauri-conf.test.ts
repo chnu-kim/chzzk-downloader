@@ -1,7 +1,11 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import conf from '../src-tauri/tauri.conf.json';
 import capability from '../src-tauri/capabilities/default.json';
 import linuxConf from '../src-tauri/tauri.linux.conf.json';
+import baseline from '../baseline.json';
+
+const read = (rel: string): string => readFileSync(new URL(rel, import.meta.url), 'utf8');
 
 // identifier는 app_config_dir·app_data_dir·app_log_dir의 이름이 되므로 한 번 정하면 바꾸지 않는다(app.md §16).
 describe('tauri.conf.json 불변식', () => {
@@ -67,6 +71,58 @@ describe('tauri.conf.json 불변식', () => {
       'frame-ancestors': "'none'",
       'form-action': "'none'",
     });
+  });
+});
+
+// 첫 프레임·창 설정(system/platform.md §2.1, DX18). 값의 원천은 baseline.json과 tokens.css 한 곳씩이다.
+describe('main 창 첫 프레임·웹 흔적 설정', () => {
+  const [main] = conf.app.windows as Array<Record<string, unknown>>;
+
+  it('숨겨 시작하고 줌·링크 미리보기·스크롤바를 정한다', () => {
+    expect(main.visible).toBe(false);
+    expect(main.zoomHotkeysEnabled).toBe(false);
+    expect(main.scrollBarStyle).toBe('fluentOverlay');
+    expect(main.allowLinkPreview).toBe(false);
+  });
+
+  it('창 배경은 tokens.css 라이트 --bg와 같다', () => {
+    const css = read('./styles/tokens.css');
+    // 라이트 --bg는 :root 첫 선언이 참조하는 ref 토큰이다
+    const ref = /^\s*--bg:\s*var\((--ref-[\w-]+)\)/m.exec(css)?.[1];
+    expect(ref).toBeTruthy();
+    const hex = new RegExp(`^\\s*${ref}:\\s*(#[0-9A-Fa-f]{6})`, 'm').exec(css)?.[1];
+    expect(hex).toBeTruthy();
+    expect(String(main.backgroundColor).toUpperCase()).toBe(hex!.toUpperCase());
+  });
+
+  it('macOS 최소 버전은 baseline.json의 macos다', () => {
+    const mac = (conf.bundle as { macOS?: { minimumSystemVersion?: string } }).macOS;
+    expect(mac?.minimumSystemVersion).toBe(baseline.macos);
+  });
+
+  it('창 테마·타이틀바·투명도를 강제하지 않는다', () => {
+    for (const key of ['theme', 'titleBarStyle', 'transparent', 'decorations', 'hiddenTitle']) {
+      expect(main, key).not.toHaveProperty(key);
+    }
+    expect(conf.app).not.toHaveProperty('theme');
+    expect(conf.app).not.toHaveProperty('macOSPrivateApi');
+  });
+
+  it('줌·window-state 권한을 JS에 주지 않는다', () => {
+    for (const p of capability.permissions) {
+      expect(p).not.toMatch(/set-webview-zoom|window-state/);
+    }
+    expect(capability.permissions.some((p) => p.startsWith('window-state:'))).toBe(false);
+  });
+
+  it('릴리스에 devtools feature가 없다', () => {
+    const toml = read('../src-tauri/Cargo.toml');
+    expect(toml).not.toMatch(/devtools/);
+  });
+
+  it('window-state는 Rust 전용이고 2.4.1에 고정이다', () => {
+    const toml = read('../src-tauri/Cargo.toml');
+    expect(toml).toMatch(/tauri-plugin-window-state = "=2\.4\.1"/);
   });
 });
 

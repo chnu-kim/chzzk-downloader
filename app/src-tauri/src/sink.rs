@@ -4,11 +4,13 @@
 //! 메인 스레드를 오가므로 여기서 부르면, 메인 스레드에서 같은 잠금을 기다리는 창 닫기 처리(`running_count`)와
 //! 교착할 수 있다. 그래서 sink는 알릴 일을 큐에 넣기만 하고, 알림은 별도 태스크(`spawn_notifier`)가 한다.
 
+use chzzk_shell::ErrorCode;
 use chzzk_shell::EventSink;
 use chzzk_shell::consts::NOTIFY_BATCH_MS;
 use chzzk_shell::dto::{JobEvent, JobStatus};
 use chzzk_shell::notify::{
-    NOTIFY_COMPLETED_TITLE, NOTIFY_FAILED_TITLE, escape_linux_markup, many_body, notify_title_text,
+    NOTIFY_COMPLETED_TITLE, NOTIFY_FAILED_TITLE, NOTIFY_STALLED_TITLE, escape_linux_markup,
+    many_body, notify_title_text,
 };
 use std::time::Duration;
 use tauri::ipc::Channel;
@@ -21,28 +23,48 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 pub enum Notice {
     Completed(String),
     Failed(String),
+    /// 연결 대기가 상한(30분)을 넘겨 네트워크 오류로 멈춘 작업. 인내를 다 써야만 네트워크 실패가 `failed`가 되므로
+    /// `failed` + `ErrorCode::Network`가 곧 "상한 초과"다. 일반 실패 묶음과 따로 한 건이다.
+    Stalled(String),
+}
+
+/// 알릴 일의 종류(묶음 기준)
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Kind {
+    Completed,
+    Failed,
+    Stalled,
+}
+
+impl Notice {
+    /// 종류와 영상 제목
+    fn parts(&self) -> (Kind, &str) {
+        match self {
+            Notice::Completed(t) => (Kind::Completed, t),
+            Notice::Failed(t) => (Kind::Failed, t),
+            Notice::Stalled(t) => (Kind::Stalled, t),
+        }
+    }
 }
 
 /// OS로 내보낼 알림 한 건(제목, 본문).
 pub type Toast = (&'static str, String);
 
-/// 한 묶음 창에 모인 알릴 일을 알림으로 만든다. 완료와 실패는 따로 묶어 각각 한 건이다(섞이면 두 건,
-/// 완료가 먼저). 본문은 정리·절단한 영상 제목뿐이고, 둘 이상이면 "{첫 제목} 외 {n}개"다(D38).
+/// 한 묶음 창에 모인 알릴 일을 알림으로 만든다. 완료·실패·멈춤은 따로 묶어 각각 한 건이다(섞이면 이 순서로 최대
+/// 세 건). 본문은 정리·절단한 영상 제목뿐이고, 둘 이상이면 "{첫 제목} 외 {n}개"다(D38).
 pub fn plan(notices: &[Notice]) -> Vec<Toast> {
-    let titles = |want_done: bool| -> Vec<String> {
-        notices
-            .iter()
-            .filter_map(|n| match (n, want_done) {
-                (Notice::Completed(t), true) | (Notice::Failed(t), false) => {
-                    Some(notify_title_text(t))
-                }
-                _ => None,
-            })
-            .collect()
-    };
     let mut out = Vec::new();
-    for (done, title) in [(true, NOTIFY_COMPLETED_TITLE), (false, NOTIFY_FAILED_TITLE)] {
-        let t = titles(done);
+    for (kind, title) in [
+        (Kind::Completed, NOTIFY_COMPLETED_TITLE),
+        (Kind::Failed, NOTIFY_FAILED_TITLE),
+        (Kind::Stalled, NOTIFY_STALLED_TITLE),
+    ] {
+        let t: Vec<String> = notices
+            .iter()
+            .map(Notice::parts)
+            .filter(|(k, _)| *k == kind)
+            .map(|(_, text)| notify_title_text(text))
+            .collect();
         match t.as_slice() {
             [] => {}
             [one] => out.push((title, one.clone())),
@@ -99,7 +121,16 @@ pub fn notice_of(e: &JobEvent) -> Option<Notice> {
             Some(Notice::Completed(job.title.clone()))
         }
         JobEvent::Status { job } if job.status == JobStatus::Failed => {
-            Some(Notice::Failed(job.title.clone()))
+            // 네트워크 오류로 실패 = 연결 대기 상한을 넘겨 멈춘 것(오류 원문·경로는 알림에 넣지 않는다)
+            if job
+                .error
+                .as_ref()
+                .is_some_and(|e| e.code == ErrorCode::Network)
+            {
+                Some(Notice::Stalled(job.title.clone()))
+            } else {
+                Some(Notice::Failed(job.title.clone()))
+            }
         }
         _ => None,
     }
@@ -187,7 +218,71 @@ mod tests {
             missing: false,
             created_at: 0,
             finished_at: None,
+            stopped_at: None,
         }
+    }
+
+    fn failed_with(code: ErrorCode) -> JobDto {
+        let mut j = job(JobStatus::Failed);
+        j.error = Some(chzzk_shell::AppError {
+            code,
+            ..chzzk_shell::AppError::internal("오류")
+        });
+        j
+    }
+
+    // 인내를 다 써야만 네트워크 실패가 failed가 된다: failed + Network = 연결 대기 상한 초과(멈춤)
+    #[test]
+    fn network_failure_is_stalled_other_failures_stay_failed() {
+        let st = |j| JobEvent::Status { job: j };
+        assert_eq!(
+            notice_of(&st(failed_with(ErrorCode::Network))),
+            Some(Notice::Stalled("제목".into()))
+        );
+        for code in [ErrorCode::Internal, ErrorCode::DiskFull, ErrorCode::Parse] {
+            assert_eq!(
+                notice_of(&st(failed_with(code))),
+                Some(Notice::Failed("제목".into())),
+                "{code:?}"
+            );
+        }
+        // 오류 정보가 없는 failed도 일반 실패
+        assert_eq!(
+            notice_of(&st(job(JobStatus::Failed))),
+            Some(Notice::Failed("제목".into()))
+        );
+        // 복원된 항목(Added)은 멈춤이어도 알리지 않는다
+        assert_eq!(
+            notice_of(&JobEvent::Added {
+                job: failed_with(ErrorCode::Network)
+            }),
+            None
+        );
+    }
+
+    #[test]
+    fn stalled_is_its_own_notice_with_its_own_title() {
+        assert_eq!(
+            plan(&[Notice::Stalled("제목".into())]),
+            vec![("받기가 멈췄어요", "제목".to_string())]
+        );
+        assert_eq!(
+            plan(&[Notice::Stalled("가".into()), Notice::Stalled("나".into())]),
+            vec![("받기가 멈췄어요", "가 외 1개".to_string())]
+        );
+        // 완료·실패·멈춤이 섞이면 이 순서로 따로 한 건씩
+        assert_eq!(
+            plan(&[
+                Notice::Stalled("멈1".into()),
+                Notice::Failed("실1".into()),
+                Notice::Completed("완1".into()),
+            ]),
+            vec![
+                ("다운로드를 마쳤어요", "완1".to_string()),
+                ("다운로드를 마치지 못했어요", "실1".to_string()),
+                ("받기가 멈췄어요", "멈1".to_string()),
+            ]
+        );
     }
 
     #[test]

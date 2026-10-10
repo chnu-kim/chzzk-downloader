@@ -60,6 +60,7 @@ const dto: SettingsDto = {
   importedFrom: null,
   textScale: 'default',
   theme: 'system',
+  keepAwake: true,
 };
 
 const appError = (code: AppError['code']): AppError => ({ code, message: code, stage: null, resumable: false, payload: null });
@@ -141,14 +142,22 @@ describe('B1은 이어받을 수 있는 작업만 센다(A5)', () => {
 });
 
 describe('배너 우선순위 표(patterns.md §1.4)', () => {
-  const none = { settingsError: false, updateFailure: false, updateBusy: false, interrupted: false, updateAvailable: false };
+  const none = {
+    settingsError: false,
+    updateFailure: false,
+    updateBusy: false,
+    engineOld: false,
+    interrupted: false,
+    updateAvailable: false,
+  };
 
-  // B2 → B4 실패 → B4 진행 → (B5 자리) → B1 → B4 새 버전. 켜진 조합 전부에서 하나만 고른다
+  // B2 → B4 실패 → B4 진행 → (B5 자리) → 엔진 미달 경고 → B1 → B4 새 버전. 켜진 조합 전부에서 하나만 고른다
   it('아무것도 없으면 null, 하나만 켜지면 그 배너', () => {
     expect(pickBanner(none)).toBeNull();
     expect(pickBanner({ ...none, settingsError: true })).toBe('settings');
     expect(pickBanner({ ...none, updateFailure: true })).toBe('updateFailed');
     expect(pickBanner({ ...none, updateBusy: true })).toBe('update');
+    expect(pickBanner({ ...none, engineOld: true })).toBe('engine');
     expect(pickBanner({ ...none, interrupted: true })).toBe('interrupted');
     expect(pickBanner({ ...none, updateAvailable: true })).toBe('update');
   });
@@ -158,6 +167,7 @@ describe('배너 우선순위 표(patterns.md §1.4)', () => {
       ['settingsError', 'settings'],
       ['updateFailure', 'updateFailed'],
       ['updateBusy', 'update'],
+      ['engineOld', 'engine'],
       ['interrupted', 'interrupted'],
       ['updateAvailable', 'update'],
     ];

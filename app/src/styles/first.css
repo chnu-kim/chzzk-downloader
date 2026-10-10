@@ -1,0 +1,8 @@
+/* 첫 프레임: 스크립트(main.ts)보다 먼저 받는 첫 stylesheet. 토큰과 배경만 둔다.
+   창은 숨긴 채 시작하고 프런트 신호 뒤에 보이므로(platform §2) 배경 한 줄이 흰 번쩍임을 막는다.
+   tokens.css는 여기서만 싣는다(main.ts에서는 import하지 않는다: 두 번 실리지 않게) */
+@import './tokens.css';
+
+html {
+  background: var(--bg);
+}

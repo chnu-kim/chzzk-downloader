@@ -7,6 +7,8 @@ import type {
   AppFolder,
   AppInfo,
   CloseRequestedPayload,
+  EngineProbe,
+  KeepAwakePayload,
   AuthStatusDto,
   ContentRef,
   EnqueueRequest,
@@ -87,7 +89,7 @@ export const clipboardLink = () => call<string | null>('clipboard_link');
 /** 설정·로그·저장 폴더를 파일 탐색기로 연다(S2). 저장 폴더가 아직 없으면 Rust가 만든다. */
 export const openAppFolder = (kind: AppFolder) => call<void>('open_app_folder', { kind });
 /** 첫 화면을 그렸다는 신호(`ready.ts`가 한 번만 부른다). 보통 실행은 아무 일도 없고 `--smoke`면 앱이 끝난다 */
-export const frontendReady = () => call<void>('frontend_ready');
+export const frontendReady = (probe: EngineProbe) => call<void>('frontend_ready', { probe });
 /** 로그인 서버(Worker)의 고정 페이지를 기본 브라우저로 연다(로그인 전에도 부를 수 있다, gate 허용 목록) */
 export const openWebPage = (page: WebPage) => call<void>('open_web_page', { page });
 
@@ -115,6 +117,17 @@ export const updateInstall = (confirmPause: boolean) => call<UpdateInstallDto>('
 export const WINDOW_FOCUS = 'window-focus';
 export const onWindowFocus = (cb: (focused: boolean) => void): Promise<UnlistenFn> =>
   listen<WindowFocusPayload>(WINDOW_FOCUS, (e) => cb(e.payload.focused));
+
+/** macOS 메뉴 "설정…"(⌘,)·"치지직 다운로더에 관하여"(platform.md §7). 페이로드는 없다 */
+export const MENU_SETTINGS = 'menu-settings';
+export const MENU_ABOUT = 'menu-about';
+export const onMenuSettings = (cb: () => void): Promise<UnlistenFn> => listen(MENU_SETTINGS, () => cb());
+export const onMenuAbout = (cb: () => void): Promise<UnlistenFn> => listen(MENU_ABOUT, () => cb());
+
+/** 받는 동안 잠들지 않게 하는 보호를 실제로 얻었는지(platform.md §15). 바뀔 때와 `frontend_ready` 직후 한 번 온다 */
+export const KEEP_AWAKE = 'keep-awake';
+export const onKeepAwake = (cb: (active: boolean) => void): Promise<UnlistenFn> =>
+  listen<KeepAwakePayload>(KEEP_AWAKE, (e) => cb(e.payload.active));
 
 export const UPDATE_AVAILABLE = 'update-available';
 export const onUpdateAvailable = (cb: (i: UpdateInfoDto) => void): Promise<UnlistenFn> =>

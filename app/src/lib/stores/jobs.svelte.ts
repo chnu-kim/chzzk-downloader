@@ -1,6 +1,6 @@
 // 다운로드 목록 상태(§10 JobsStore). `subscribe_jobs` Channel 하나로 Rust 매니저를 따라간다.
 // 상태 판단은 Rust가 하고 여기서는 받은 레코드를 갈아 끼운 뒤(`applyEvent`), 버튼을 command로 잇는다.
-import { SvelteSet } from 'svelte/reactivity';
+import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import * as api from '../api';
 import type { AppError, JobDto, JobEvent, JobId } from '../bindings';
 import { actionLabel, errorCopy } from '../copy/errors';
@@ -10,17 +10,20 @@ import { formatCount } from '../format/duration';
 import {
   groupJobs,
   isClearable,
+  isWaitingNetwork,
   nextQueueOrder,
   outputFileName,
   receivedBytes,
   removeRoute,
   resumableInterrupted,
+  shouldNoticeRecovery,
+  statusWord,
   transitionAnnouncement,
   visibleOrder,
   type JobAction,
 } from '../jobs';
 import { copyReport } from '../report';
-import { HIGHLIGHT_MS } from '../timing';
+import { HIGHLIGHT_MS, RECOVERY_NOTICE_MS } from '../timing';
 import { announcer } from './announce.svelte';
 import { auth } from './auth.svelte';
 import { applyEvent, emptyJobs, fromSnapshot, type JobsState } from './jobs.apply';
@@ -70,6 +73,11 @@ export class JobsStore {
   finishedOpen = $state(false);
   /** B1을 이번 실행 동안 닫았는가 */
   bannerDismissed = $state(false);
+  /** 연결 대기(`waitingNetwork`)에 들어온 것을 처음 본 시각(ms). 상태 줄의 `{elapsed}`와 회복 판단의 기준(patterns.md §3.2) */
+  waitingSince = new SvelteMap<JobId, number>();
+  /** 연결 대기에서 막 풀려 회복 줄(`job.recovered.body`)을 `RECOVERY_NOTICE_MS` 동안 보이는 작업 */
+  recovered = new SvelteSet<JobId>();
+  #recoveredTimers = new Map<JobId, ReturnType<typeof setTimeout>>();
   /** [목록에서 보기]·추가 뒤 그 항목으로 포커스를 옮겨 달라는 요청. `n`은 같은 id를 다시 부를 때 바뀐다 */
   focusRequest: { id: JobId; n: number } | null = $state(null);
 
@@ -118,6 +126,9 @@ export class JobsStore {
     if (gen !== this.#gen) return;
     this.state = fromSnapshot(snapshot);
     this.queueOrder = nextQueueOrder([], this.state.jobs);
+    this.#resetPhase();
+    // 다시 맞춘 스냅샷: 이미 연결 대기인 작업은 지금부터 센다(알림은 없다)
+    for (const j of this.state.jobs.values()) this.#trackPhase(j, false);
     this.ready = true;
     const pending = early;
     early = null;
@@ -130,13 +141,20 @@ export class JobsStore {
     this.state = applyEvent(this.state, e);
     this.queueOrder = nextQueueOrder(this.queueOrder, this.state.jobs);
     if (e.type === 'removed') {
+      this.#forgetPhase(e.id);
       this.runStartedAt.delete(e.id);
       this.highlight.delete(e.id);
       this.hidden.delete(e.id);
       return;
     }
+    if (e.type === 'progress') {
+      const j = this.state.jobs.get(e.id);
+      if (j) this.#trackPhase(j, true);
+      return;
+    }
     if (e.type !== 'added' && e.type !== 'status') return;
     const job = e.job;
+    this.#trackPhase(this.state.jobs.get(job.id) ?? job, e.type === 'status');
     if (job.status === 'running' && prev?.status !== 'running') this.runStartedAt.set(job.id, Date.now());
     if (e.type === 'added') {
       this.highlight.add(job.id);
@@ -153,6 +171,58 @@ export class JobsStore {
     }
     const say = transitionAnnouncement(prev, job);
     if (say) announcer.say(say);
+  }
+
+  /**
+   * 연결 대기 진입·이탈 추적(patterns.md §3.2·§1.2). 진입은 처음 본 시각을 적고 `polite`로 한 번 알린다.
+   * 이탈은 `RECOVERY_SILENT_MS` 넘게 기다렸고 계속 받는 중이면 회복 줄을 `RECOVERY_NOTICE_MS` 동안 보인다.
+   * 일시정지·실패·취소로 벗어난 것은 회복이 아니다.
+   */
+  #trackPhase(job: JobDto, announce: boolean) {
+    const waiting = isWaitingNetwork(job, this.state.progress.get(job.id));
+    const since = this.waitingSince.get(job.id);
+    const now = Date.now();
+    if (waiting && since === undefined) {
+      this.waitingSince.set(job.id, now);
+      if (announce) {
+        announcer.say(
+          t('a11y.jobStatus', { title: job.title, status: statusWord(job, this.state.progress.get(job.id)) }),
+        );
+      }
+    } else if (!waiting && since !== undefined) {
+      this.waitingSince.delete(job.id);
+      if (job.status === 'running' && shouldNoticeRecovery(now - since)) this.#showRecovered(job.id);
+    }
+    if (job.status !== 'running') this.#clearRecovered(job.id);
+  }
+
+  #showRecovered(id: JobId) {
+    this.#clearRecovered(id);
+    this.recovered.add(id);
+    this.#recoveredTimers.set(
+      id,
+      setTimeout(() => {
+        this.recovered.delete(id);
+        this.#recoveredTimers.delete(id);
+      }, RECOVERY_NOTICE_MS),
+    );
+  }
+
+  #clearRecovered(id: JobId) {
+    const timer = this.#recoveredTimers.get(id);
+    if (timer !== undefined) clearTimeout(timer);
+    this.#recoveredTimers.delete(id);
+    this.recovered.delete(id);
+  }
+
+  #forgetPhase(id: JobId) {
+    this.waitingSince.delete(id);
+    this.#clearRecovered(id);
+  }
+
+  #resetPhase() {
+    for (const id of [...this.waitingSince.keys()]) this.#forgetPhase(id);
+    for (const id of [...this.recovered]) this.#clearRecovered(id);
   }
 
   /** 항목으로 포커스를 옮겨 달라고 목록에 알린다 */

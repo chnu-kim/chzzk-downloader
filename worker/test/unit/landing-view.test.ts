@@ -440,7 +440,7 @@ describe("로그인·막히면(9·10번)", () => {
   it("h2#login 문단과 loginTwice, h2#help에 /help 링크·reportHelp·landing.contact", async () => {
     const t = await render(anon("mac"));
     expect(t).toContain(`<h2 id="login">${COPY.loginSectionTitle}</h2><p>${COPY.loginSectionBody} ${COPY.loginTwice}</p>`);
-    expect(t).toContain(`<h2 id="help">${COPY.helpSectionTitle}</h2><p><a href="/help">${COPY.helpTitle}</a></p><p>${COPY.reportHelp} ${COPY.landing.contact}</p>`);
+    expect(t).toContain(`<h2 id="help">${COPY.helpSectionTitle}</h2><p><a href="/help">${COPY.helpTitle}</a></p><p>${COPY.reportHelp} ${COPY.landing.contact}</p><p><a href="${COPY.issuesUrl}" rel="noopener noreferrer">${COPY.landing.contactLink}</a></p>`);
   });
 
   it("순서: 고지 → CTA → 설치하기 → 파일 확인 → 로그인 → 막히면 → 내 기기 → 로그아웃", async () => {

@@ -102,8 +102,8 @@ export interface E2EController {
   authEvents: string[];
   /** 앱이 구독했는가(스냅샷을 보냈는가) */
   subscribed(): boolean;
-  /** 작업을 running으로 바꾸고 진행률을 보낸다 */
-  progress(id: number, bytes: number, totalBytes: number): void;
+  /** 작업을 running으로 바꾸고 진행률을 보낸다. `phase`를 `waitingNetwork`로 주면 연결 대기(속도·남은 시간 없음)다 */
+  progress(id: number, bytes: number, totalBytes: number, phase?: ProgressDto['phase']): void;
   complete(id: number, finalBytes: number): void;
   fail(id: number, error: AppError, partialBytes?: number | null): void;
   /** Rust가 보내는 앱 이벤트(close-requested 등) */
@@ -163,14 +163,15 @@ export const SETTINGS: SettingsDto = {
   importedFrom: null,
   textScale: 'default',
   theme: 'system',
+  keepAwake: true,
 };
 
 // 코어 Progress와 같은 모양: progressive는 바이트 총량, 빠른 다시보기(HLS)는 조각·미디어 초로 진행을 센다(app jobs.ts progressFraction)
-function progressDto(job: JobDto, bytes: number, totalBytes: number): ProgressDto {
+function progressDto(job: JobDto, bytes: number, totalBytes: number, phase: ProgressDto['phase'] = 'downloading'): ProgressDto {
   const hls = job.playbackKind === 'liveRewindHls';
   const frac = totalBytes > 0 ? bytes / totalBytes : 0;
   return {
-    phase: 'downloading',
+    phase,
     bytes,
     totalBytes: hls ? null : totalBytes,
     totalBytesEstimate: hls ? totalBytes : null,
@@ -352,6 +353,7 @@ export function install(scenario: Scenario = {}): E2EController {
         missing: false,
         createdAt: clock++,
         finishedAt: null,
+        stoppedAt: null,
       };
       put(job, 'added');
       return job;
@@ -413,9 +415,9 @@ export function install(scenario: Scenario = {}): E2EController {
     calls,
     authEvents,
     subscribed: () => channel !== null,
-    progress(id, bytes, totalBytes) {
+    progress(id, bytes, totalBytes, phase = 'downloading') {
       const j = must(id);
-      const p = progressDto(j, bytes, totalBytes);
+      const p = progressDto(j, bytes, totalBytes, phase);
       if (j.status !== 'running') put({ ...j, status: 'running', progress: p });
       else jobs.set(id, { ...j, progress: p });
       send({ type: 'progress', id, progress: p });

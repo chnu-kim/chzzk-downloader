@@ -119,6 +119,9 @@ fn base_config(server: &MockServer) -> ClientConfig {
             max_attempts: 2,
             base: Duration::from_millis(1),
             cap: Duration::from_millis(2),
+            // 테스트는 연결 대기(인내)를 기다리지 않는다.
+            patience: Duration::ZERO,
+            patience_cap: Duration::ZERO,
         },
         progress_interval: Duration::ZERO,
         connect_timeout: Duration::from_secs(5),
@@ -208,6 +211,7 @@ async fn cookies_never_leak() {
         t.path().join("config"),
         t.path().join("data"),
         t.path().join("log"),
+        None,
         None,
         None,
     );

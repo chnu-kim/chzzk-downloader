@@ -4,6 +4,7 @@ import { err, job, prog, signedInAs } from '../../test/jobFixtures';
 import { errorCopy } from '../copy/errors';
 import { t } from '../copy/ko';
 import { formatFileSize } from '../format/bytes';
+import { RECOVERY_NOTICE_MS, RECOVERY_SILENT_MS } from '../timing';
 
 class FakeChannel {
   onmessage: (e: JobEvent) => void = () => {};
@@ -481,5 +482,97 @@ describe('접힘과 보이는 순서', () => {
     expect(s.order).toEqual([11, 10, 9, 8, 7]);
     s.finishedOpen = true;
     expect(s.order).toHaveLength(11);
+  });
+});
+
+describe('연결 대기·회복 추적(patterns.md §3.2·§1.2)', () => {
+  const WAIT = prog({ phase: 'waitingNetwork', speedBps: null, etaSecs: null });
+  let say: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+    say = vi.spyOn(announcer, 'say').mockImplementation(() => {});
+  });
+  afterEach(() => say.mockRestore());
+
+  async function running() {
+    const s = new JobsStore();
+    const b = begin(s);
+    b.snapshot([job(1, { status: 'running', progress: prog() })]);
+    await b.started;
+    return { s, b };
+  }
+  const enter = (b: ReturnType<typeof begin>) => b.send({ type: 'progress', id: 1, progress: WAIT });
+  const leave = (b: ReturnType<typeof begin>) => b.send({ type: 'progress', id: 1, progress: prog() });
+
+  it('진입은 처음 본 시각을 적고 polite 알림을 한 번만 낸다(진행 틱은 되풀이하지 않는다)', async () => {
+    const { s, b } = await running();
+    expect(s.waitingSince.has(1)).toBe(false);
+    enter(b);
+    const t0 = Date.now();
+    expect(s.waitingSince.get(1)).toBe(t0);
+    expect(say).toHaveBeenCalledTimes(1);
+    expect(say).toHaveBeenCalledWith(t('a11y.jobStatus', { title: '영상 1', status: t('job.phase.waitingNetwork') }));
+    vi.advanceTimersByTime(5000);
+    enter(b);
+    b.send({ type: 'status', job: job(1, { status: 'running', progress: WAIT }) });
+    expect(say).toHaveBeenCalledTimes(1);
+    expect(s.waitingSince.get(1)).toBe(t0);
+  });
+
+  it('스냅샷에서 이미 연결 대기인 작업은 지금부터 세고 알리지 않는다', async () => {
+    const s = new JobsStore();
+    const b = begin(s);
+    b.snapshot([job(1, { status: 'running', progress: WAIT })]);
+    await b.started;
+    expect(s.waitingSince.get(1)).toBe(Date.now());
+    expect(say).not.toHaveBeenCalled();
+  });
+
+  it('RECOVERY_SILENT_MS 안에 풀리면 조용하다', async () => {
+    const { s, b } = await running();
+    enter(b);
+    vi.advanceTimersByTime(RECOVERY_SILENT_MS - 1);
+    leave(b);
+    expect(s.waitingSince.has(1)).toBe(false);
+    expect(s.recovered.has(1)).toBe(false);
+  });
+
+  it('RECOVERY_SILENT_MS를 넘기고 풀리면 회복 줄이 RECOVERY_NOTICE_MS 동안 보인다', async () => {
+    const { s, b } = await running();
+    enter(b);
+    vi.advanceTimersByTime(RECOVERY_SILENT_MS);
+    leave(b);
+    expect(s.recovered.has(1)).toBe(true);
+    vi.advanceTimersByTime(RECOVERY_NOTICE_MS - 1);
+    expect(s.recovered.has(1)).toBe(true);
+    vi.advanceTimersByTime(1);
+    expect(s.recovered.has(1)).toBe(false);
+  });
+
+  it('오래 기다리다 일시정지·실패·삭제로 벗어난 것은 회복이 아니다', async () => {
+    for (const next of [
+      { type: 'status', job: job(1, { status: 'paused', partialBytes: 5 }) },
+      { type: 'status', job: job(1, { status: 'failed', error: err('network'), partialBytes: 5 }) },
+      { type: 'removed', id: 1 },
+    ] as JobEvent[]) {
+      const { s, b } = await running();
+      enter(b);
+      vi.advanceTimersByTime(RECOVERY_SILENT_MS * 2);
+      b.send(next);
+      expect(s.waitingSince.has(1)).toBe(false);
+      expect(s.recovered.has(1)).toBe(false);
+    }
+  });
+
+  it('회복 줄이 떠 있는 동안 다시 연결 대기에 들어가면 회복 줄은 사라진다', async () => {
+    const { s, b } = await running();
+    enter(b);
+    vi.advanceTimersByTime(RECOVERY_SILENT_MS);
+    leave(b);
+    expect(s.recovered.has(1)).toBe(true);
+    b.send({ type: 'status', job: job(1, { status: 'paused', partialBytes: 5 }) });
+    expect(s.recovered.has(1)).toBe(false);
   });
 });

@@ -29,6 +29,7 @@ const settingsDto: SettingsDto = {
   importedFrom: null,
   textScale: 'default',
   theme: 'system',
+  keepAwake: true,
 };
 
 const info = (legacy: boolean) => ({
@@ -60,6 +61,9 @@ vi.mock('../../api', () => ({
   subscribeJobs: vi.fn(),
   clipboardLink: vi.fn(),
   onWindowFocus: vi.fn(async () => () => {}),
+  onMenuSettings: vi.fn(async () => () => {}),
+  onMenuAbout: vi.fn(async () => () => {}),
+  onKeepAwake: vi.fn(async () => () => {}),
   openWebPage: vi.fn(),
   onCloseRequested: vi.fn(),
   importLegacy: vi.fn(),

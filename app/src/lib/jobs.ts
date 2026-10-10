@@ -11,9 +11,9 @@ import {
   formatSpeed,
   type SizeBase,
 } from './format/bytes';
-import { formatCount, formatRemaining, formatSpokenRemaining } from './format/duration';
+import { formatCount, formatElapsed, formatRemaining, formatSpokenRemaining } from './format/duration';
 import type { IconName } from './components/ui/icons';
-import { COMPLETED_FOLD_AT } from './timing';
+import { COMPLETED_FOLD_AT, RECOVERY_SILENT_MS, STALE_DAYS } from './timing';
 import { localOffsetMin, whenText } from './when';
 
 // ───────────────────────── 그룹·정렬 ─────────────────────────
@@ -183,7 +183,7 @@ export function barView(job: JobDto, p: ProgressDto | null | undefined, floor = 
   return {
     value,
     tone,
-    striped: s === 'running' && p?.phase === 'reresolving',
+    striped: s === 'running' && (p?.phase === 'reresolving' || p?.phase === 'waitingNetwork'),
     percent: value == null ? null : formatPercent(value, 100),
     valueText: value == null ? remaining : t('a11y.progress', { percent: value, remaining }),
   };
@@ -214,6 +214,7 @@ export function statusWord(job: JobDto, p: ProgressDto | null | undefined): stri
 const PHASE_KEY = {
   resolving: 'job.status.resolving',
   downloading: 'job.phase.downloading',
+  waitingNetwork: 'job.phase.waitingNetwork',
   reresolving: 'job.phase.reresolving',
   finalizing: 'job.status.finalizing',
 } as const satisfies Record<NonNullable<ProgressDto['phase']>, CopyKey>;
@@ -233,6 +234,8 @@ export interface StatusContext {
   base?: SizeBase;
   /** 사용자 시간대의 UTC 오프셋(분). 기본은 실행 환경(테스트가 고정한다) */
   offsetMin?: number;
+  /** 이 작업이 연결 대기(`waitingNetwork`)로 들어온 것을 처음 본 시각(ms). 경과 시간 `{elapsed}`의 기준 */
+  waitingSince?: number | null;
 }
 
 /** 진행 "받은 양 / 전체"의 두 값. 빠른 다시보기의 전체는 예상치라 `약 …`이다. 전체를 모르면 `total`이 null */
@@ -276,6 +279,17 @@ export function statusParts(job: JobDto, p: ProgressDto | null | undefined, ctx:
     case 'running': {
       if (!p || p.phase === 'resolving') return [t('job.status.resolving')];
       if (p.phase === 'finalizing') return [t('job.status.finalizing')];
+      // 연결 대기: 속도·남은 시간은 의미가 없어 숨기고 경과와 받은 양만 보인다(오류가 아니다, D40)
+      if (p.phase === 'waitingNetwork') {
+        const now = ctx.now ?? Date.now();
+        const since = ctx.waitingSince ?? now;
+        return [
+          t('job.status.waitingNetwork', {
+            elapsed: formatElapsed(Math.max(0, (now - since) / 1000)),
+            received: formatFileSize(p.bytes, base),
+          }),
+        ];
+      }
       // 주소를 새로 받는 동안은 속도·남은 시간이 의미가 없다: 상태 조각 하나만 보인다
       const parts = [p.phase === 'reresolving' ? t('job.phase.reresolving') : runningLine(job, p, base)];
       const now = ctx.now ?? Date.now();
@@ -324,6 +338,54 @@ export function bodyKey(job: JobDto): CopyKey | null {
   if (job.status === 'completed' && job.missing) return 'job.completedMissing.body';
   if (job.status === 'skipped') return job.partialBytes != null ? 'job.skippedMeanwhile.body' : 'job.skipped.body';
   return null;
+}
+
+/** 연결 대기 중인가(막대 줄무늬·본문·진입 알림의 기준) */
+export function isWaitingNetwork(job: JobDto, p: ProgressDto | null | undefined): boolean {
+  return job.status === 'running' && p?.phase === 'waitingNetwork';
+}
+
+/**
+ * 멈춘 지 `STALE_DAYS`가 넘은 작업의 일수. 아니면 `null`. 멈춘 시각(`stoppedAt`)이 있고 받은 부분(`.part`)이 남은
+ * paused·interrupted·failed만이다: 디스크를 차지하는 채 잊힌 작업을 알려 주는 줄이다(patterns.md §3.2).
+ * 옛 레코드(`stoppedAt` 없음)는 줄이 없다.
+ */
+export function staleDays(job: JobDto, now: number = Date.now()): number | null {
+  if (job.status !== 'paused' && job.status !== 'interrupted' && job.status !== 'failed') return null;
+  if (job.stoppedAt == null || !(job.partialBytes && job.partialBytes > 0)) return null;
+  const days = Math.floor((now / 1000 - job.stoppedAt) / 86400);
+  return days >= STALE_DAYS ? days : null;
+}
+
+/** 단절에서 풀렸을 때 회복 줄을 보일 만큼 오래 기다렸는가(`RECOVERY_SILENT_MS` 안에 풀리면 조용히 넘어간다) */
+export function shouldNoticeRecovery(waitedMs: number): boolean {
+  return waitedMs >= RECOVERY_SILENT_MS;
+}
+
+export interface BodyContext {
+  now?: number;
+  base?: SizeBase;
+  /** 회복 줄을 보이는 동안인가(스토어가 `RECOVERY_NOTICE_MS` 동안 true로 준다) */
+  recovered?: boolean;
+}
+
+/**
+ * 본문 줄(해요체 한 문장) 글자. 연결 대기 → 회복 직후 → 멈춘 지 30일 → 그 밖의 정해진 줄 순서다.
+ * 실패 작업의 본문은 오류 표가 맡으므로 여기서는 멈춘 지 30일 줄만 더한다(호출부가 오류 본문 아래에 둔다).
+ */
+export function bodyLine(job: JobDto, p: ProgressDto | null | undefined, ctx: BodyContext = {}): string | null {
+  if (isWaitingNetwork(job, p)) return t('job.waitingNetwork.body');
+  if (job.status === 'running' && ctx.recovered) return t('job.recovered.body');
+  const days = staleDays(job, ctx.now);
+  if (days != null) {
+    return t('job.stale.body', {
+      days: formatCount(days),
+      size: formatFileSize(job.partialBytes ?? 0, ctx.base ?? 1000),
+    });
+  }
+  if (job.status === 'failed') return null;
+  const key = bodyKey(job);
+  return key ? t(key) : null;
 }
 
 // ───────────────────────── 버튼 ─────────────────────────
@@ -398,7 +460,7 @@ export function jobButtons(
       const phase = p?.phase ?? 'resolving';
       if (phase === 'finalizing') break;
       cancel = true;
-      if (phase === 'downloading' || phase === 'reresolving') primary = ['pause'];
+      if (phase === 'downloading' || phase === 'reresolving' || phase === 'waitingNetwork') primary = ['pause'];
       break;
     }
     case 'pausing':

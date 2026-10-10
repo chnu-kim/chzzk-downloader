@@ -8,12 +8,13 @@
   import {
     barView,
     blockCopyKey,
-    bodyKey,
+    bodyLine,
     cancelLabel,
     failedCopy,
     jobActionIcon,
     jobActionLabel,
     jobButtons,
+    isWaitingNetwork,
     statusLine,
     statusParts,
     type JobAction,
@@ -21,6 +22,7 @@
   } from '../../jobs';
   import { kindTone } from '../../receive';
   import { platform } from '../../stores/platform.svelte';
+  import { ETA_REFRESH_MS } from '../../timing';
   import Badge from '../ui/Badge.svelte';
   import Button from '../ui/Button.svelte';
   import { isImeKey } from '../ui/focus';
@@ -37,6 +39,10 @@
     /** 대기 줄에서 앞에 선 수 */
     ahead: number;
     runStartedAt: number | null;
+    /** 연결 대기에 들어온 것을 처음 본 시각(ms). 없으면 대기 중이 아니다 */
+    waitingSince?: number | null;
+    /** 연결 대기에서 막 풀려 회복 줄을 보이는 동안 */
+    recovered?: boolean;
     cookiesEnabled: boolean;
     /** 이어받기를 셸이 거부할 작업이면 이유(A5). 안내를 보이고 이어받기 계열 버튼을 뺀다 */
     block: JobBlock | null;
@@ -55,6 +61,8 @@
     floor,
     ahead,
     runStartedAt,
+    waitingSince = null,
+    recovered = false,
     cookiesEnabled,
     block,
     highlighted,
@@ -68,11 +76,23 @@
   const uid = $props.id();
   const tone = $derived(kindTone(job.kind, job.playbackKind));
   const bar = $derived(barView(job, progress, floor));
-  const parts = $derived(statusParts(job, progress, { ahead, runStartedAt, base: sizeBaseOf(platform.os) }));
+  const waiting = $derived(isWaitingNetwork(job, progress));
+  // 연결 대기 중에는 진행률 이벤트가 없어도 경과 시간(`{elapsed}째`)이 흐른다: 대기 중일 때만 1초 시계를 켠다
+  let now = $state(Date.now());
+  $effect(() => {
+    if (!waiting) return;
+    now = Date.now();
+    const timer = setInterval(() => (now = Date.now()), ETA_REFRESH_MS);
+    return () => clearInterval(timer);
+  });
+  const base = $derived(sizeBaseOf(platform.os));
+  const parts = $derived(
+    statusParts(job, progress, { ahead, runStartedAt, base, waitingSince, now: waiting ? now : undefined }),
+  );
   const buttons = $derived(jobButtons(job, progress, cookiesEnabled, block));
   const cancel = $derived(cancelLabel(job, progress));
   const err = $derived(job.status === 'failed' ? failedCopy(job, cookiesEnabled) : null);
-  const body = $derived(bodyKey(job));
+  const body = $derived(bodyLine(job, progress, { base, recovered }));
   const missing = $derived(job.status === 'completed' && job.missing);
   /** 제목 전체 보기(행 아래 인라인 펼침). 잘린 제목에 키보드·터치로 닿는 길이다 */
   let titleOpen = $state(false);
@@ -145,8 +165,10 @@
     <!-- 막힌 작업은 다시 시도할 버튼이 없으므로 '다시 시도해 주세요' 같은 본문을 숨기고 막힌 이유만 둔다(app.md 구현 중 변경 63) -->
     {#if err.body}<p class="job-body indent">{err.body}</p>{/if}
     {#if err.detail}<p class="job-body indent detail selectable">{err.detail}</p>{/if}
-  {:else if body}
-    <p class="job-body" class:indent={missing}>{t(body)}</p>
+  {/if}
+  <!-- 본문 줄: 연결 대기 · 회복 직후 · 멈춘 지 30일 · 완료(파일 없음)·건너뜀. 실패 작업은 위 오류 본문 아래에 멈춘 지 30일 줄만 더한다 -->
+  {#if body}
+    <p class="job-body" class:indent={missing || !!err}>{body}</p>
   {/if}
 
   {#if block}

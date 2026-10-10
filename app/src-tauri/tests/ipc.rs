@@ -8,14 +8,18 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use chzzk_app_lib::auth_io::{AuthIo, AuthIoState};
-use chzzk_app_lib::commands::begin_quit;
+use chzzk_app_lib::commands::{ClipboardPolicy, begin_quit};
+use chzzk_app_lib::menu::{MENU_ABOUT, MENU_SETTINGS, on_menu_item};
+use chzzk_app_lib::show::{ShowGate, show_main};
 use chzzk_app_lib::sink::{ChannelSink, Notice, Notifier};
+use chzzk_app_lib::status::{BoxedGuard, KEEP_AWAKE, StatusState, tick_once};
 use chzzk_app_lib::{
     AUTH_CHANGED, COMMANDS, Quitting, UPDATE_AVAILABLE, WINDOW_FOCUS, auto_update_check,
     focus_main, guard_close, handler, on_run_event, on_window_focus, request_quit,
     spawn_auth_tasks,
 };
 use chzzk_shell::auth::{SessionStore, StoredSession};
+use chzzk_shell::power::NoopGuard;
 use chzzk_shell::services::AppPaths;
 use chzzk_shell::{App, AppError, AuthSetup, EventSink, WorkerBase};
 use serde_json::{Value, json};
@@ -61,6 +65,7 @@ fn paths(root: &Path) -> AppPaths {
         root.join("log"),
         None,
         None,
+        None,
     )
 }
 
@@ -96,6 +101,8 @@ fn mock_app(
     let app = builder
         .manage(state)
         .manage(Quitting::default())
+        .manage(ShowGate::default())
+        .manage(StatusState::new(BoxedGuard::new(NoopGuard)))
         .manage(notifier)
         .manage(AuthIoState(io.clone()))
         .invoke_handler(handler())
@@ -119,7 +126,9 @@ fn fixture_updater(dir: TempDir, state: App) -> Fixture {
 
 fn fixture_all(dir: TempDir, state: App, clipboard: bool, updater: bool) -> Fixture {
     let (app, notify_rx, io) = mock_app(state, clipboard, updater);
+    // 설정(`tauri.conf.json`)대로 숨겨 시작한다
     let main = WebviewWindowBuilder::new(&app, "main", Default::default())
+        .visible(false)
         .build()
         .unwrap();
     Fixture {
@@ -286,6 +295,12 @@ fn client_config(server: &MockServer) -> chzzk_core::ClientConfig {
             vodplay_api: base,
         },
         progress_interval: Duration::ZERO,
+        // 연결 실패를 30분 기다리지 않는다(기본 인내가 테스트를 멈추게 한다)
+        retry: chzzk_core::RetryPolicy {
+            patience: Duration::ZERO,
+            patience_cap: Duration::ZERO,
+            ..chzzk_core::RetryPolicy::default()
+        },
         ..chzzk_core::ClientConfig::default()
     }
 }
@@ -1026,7 +1041,7 @@ fn open_commands_work_while_signed_out() {
                "pending":null,"offline":null,"verifiedAt":null,"canReconnect":false})
     );
     assert_eq!(invoke(&f.main, "list_jobs", json!({})).unwrap(), json!([]));
-    invoke(&f.main, "frontend_ready", json!({})).unwrap();
+    invoke(&f.main, "frontend_ready", probe(true)).unwrap();
 }
 
 #[test]
@@ -1518,4 +1533,194 @@ fn update_install_asks_before_pausing() {
     assert_eq!(jobs[0]["id"], job["id"]);
     assert_eq!(jobs[0]["status"], json!("running"));
     stop_all(f.app.handle());
+}
+
+// ---------------------------------------------------------------------------
+// (f) 셸 배선: 첫 프레임·메뉴·keep-awake·클립보드 제안
+// ---------------------------------------------------------------------------
+
+fn probe(ok: bool) -> Value {
+    json!({ "probe": { "colorMix": ok, "has": ok, "oklch": ok, "containerQuery": ok, "inert": ok } })
+}
+
+/// 이벤트 페이로드를 모으는 main 창 수신자
+fn collect(f: &Fixture, event: &str) -> Arc<Mutex<Vec<Value>>> {
+    let got: Arc<Mutex<Vec<Value>>> = Arc::default();
+    let seen = got.clone();
+    f.main.listen(event, move |e| {
+        seen.lock()
+            .unwrap()
+            .push(serde_json::from_str(e.payload()).unwrap());
+    });
+    got
+}
+
+/// 숨겨 시작한 창은 `frontend_ready`가 와야 보이고, 그 뒤 되풀이해도 한 번만 보인다.
+/// (mock 런타임의 `is_visible`은 늘 true라 보임 여부는 `ShowGate`의 기록으로 본다.)
+#[test]
+fn frontend_ready_shows_the_hidden_window_once() {
+    let f = fixture();
+    let gate = f.app.state::<ShowGate>();
+    assert!(!gate.is_shown());
+    assert!(gate.t_show_ms().is_none());
+    assert_eq!(
+        invoke(&f.main, "frontend_ready", probe(true)).unwrap(),
+        Value::Null
+    );
+    assert!(gate.is_shown());
+    let t = gate.t_show_ms();
+    assert!(t.is_some());
+    // 두 번째 신호는 다시 보이지 않는다(첫 프레임은 한 번, 시각도 그대로)
+    assert!(!show_main(f.app.handle()));
+    invoke(&f.main, "frontend_ready", probe(true)).unwrap();
+    assert_eq!(gate.t_show_ms(), t);
+}
+
+/// 프로브가 false여도 창은 보이고 앱은 막히지 않는다(경고 배너는 프런트 몫).
+#[test]
+fn frontend_ready_with_a_failed_probe_still_shows() {
+    let f = fixture();
+    invoke(&f.main, "frontend_ready", probe(false)).unwrap();
+    assert!(f.app.state::<ShowGate>().is_shown());
+}
+
+/// 프로브 인자가 없으면 거부한다(마커·경고가 프로브에 기대므로 빠뜨릴 수 없다).
+#[test]
+fn frontend_ready_requires_the_probe_argument() {
+    let f = fixture();
+    assert!(invoke(&f.main, "frontend_ready", json!({})).is_err());
+    assert!(!f.app.state::<ShowGate>().is_shown());
+}
+
+/// `App` 상태가 없으면(시작 실패) 숨긴 창을 꺼내지 않는다.
+#[test]
+fn show_main_does_nothing_without_app_state() {
+    let app = mock_builder()
+        .manage(ShowGate::default())
+        .build(tauri::generate_context!(test = true))
+        .unwrap();
+    WebviewWindowBuilder::new(&app, "main", Default::default())
+        .visible(false)
+        .build()
+        .unwrap();
+    assert!(!show_main(app.handle()));
+    assert!(!app.state::<ShowGate>().is_shown());
+    assert!(app.state::<ShowGate>().t_show_ms().is_none());
+}
+
+/// `frontend_ready` 직후 keep-awake 현재 값이 main 창에 한 번 간다(웹뷰가 새로 떠도 표시가 맞는다).
+#[test]
+fn frontend_ready_sends_the_current_keep_awake_value() {
+    let f = fixture();
+    let got = collect(&f, KEEP_AWAKE);
+    invoke(&f.main, "frontend_ready", probe(true)).unwrap();
+    wait_until("keep-awake", 2, || got.lock().unwrap().len() == 1);
+    assert_eq!(got.lock().unwrap()[0], json!({ "active": false }));
+}
+
+/// 받는 중인 작업이 있으면 틱이 보호를 잡고 `active:true`를, 설정을 끄면 놓고 `false`를 보낸다.
+#[test]
+fn status_tick_holds_and_releases_keep_awake_with_the_setting() {
+    let server = hanging_server();
+    let f = fixture_on(&server);
+    let got = collect(&f, KEEP_AWAKE);
+    // 작업이 없으면 아무것도 보내지 않는다
+    let step = tick_once(f.app.handle()).unwrap();
+    assert_eq!(step.keep_awake, None);
+    start_hanging_job(&f);
+    let step = tick_once(f.app.handle()).unwrap();
+    assert_eq!(step.keep_awake, Some(true));
+    // 같은 상태를 되풀이해도 다시 보내지 않는다
+    assert_eq!(tick_once(f.app.handle()).unwrap().keep_awake, None);
+    invoke(
+        &f.main,
+        "update_settings",
+        json!({ "patch": { "keepAwake": false } }),
+    )
+    .unwrap();
+    assert_eq!(tick_once(f.app.handle()).unwrap().keep_awake, Some(false));
+    wait_until("keep-awake 두 번", 2, || got.lock().unwrap().len() == 2);
+    assert_eq!(
+        *got.lock().unwrap(),
+        vec![json!({ "active": true }), json!({ "active": false })]
+    );
+    stop_all(f.app.handle());
+}
+
+/// Dock 진행 표시: 받는 중이면 Normal로 바뀌고, 전부 끝나면 지운다(처음 틱은 늘 한 번 지움을 보낸다).
+#[test]
+fn status_tick_drives_the_dock_state() {
+    use chzzk_shell::dock::DockStatus;
+    let server = hanging_server();
+    let f = fixture_on(&server);
+    let first = tick_once(f.app.handle()).unwrap();
+    assert_eq!(first.dock.map(|d| d.status), Some(DockStatus::None));
+    assert_eq!(tick_once(f.app.handle()).unwrap().dock, None);
+    start_hanging_job(&f);
+    let step = tick_once(f.app.handle()).unwrap();
+    assert_eq!(step.dock.map(|d| d.status), Some(DockStatus::Normal));
+    stop_all(f.app.handle());
+}
+
+fn deny() -> bool {
+    false
+}
+
+fn allow() -> bool {
+    true
+}
+
+/// macOS에서 사용자가 "항상 허용"을 고르지 않았으면 클립보드를 읽지 않는다(D56): `null`.
+#[test]
+fn clipboard_link_does_not_read_when_the_policy_denies() {
+    let dir = TempDir::new().unwrap();
+    let state = App::open(paths(dir.path()), None, chzzk_app_lib::tokio_handle()).unwrap();
+    let f = fixture_full(dir, state, true);
+    f.app.manage(ClipboardPolicy(deny));
+    assert_eq!(
+        invoke(&f.main, "clipboard_link", json!({})).unwrap(),
+        Value::Null
+    );
+}
+
+/// 허용이면 읽는다(클립보드 내용과 무관하게 호출이 성공한다).
+#[test]
+fn clipboard_link_reads_when_the_policy_allows() {
+    let dir = TempDir::new().unwrap();
+    let state = App::open(paths(dir.path()), None, chzzk_app_lib::tokio_handle()).unwrap();
+    let f = fixture_full(dir, state, true);
+    f.app.manage(ClipboardPolicy(allow));
+    assert!(invoke(&f.main, "clipboard_link", json!({})).is_ok());
+}
+
+/// 메뉴 "설정…"·"정보"는 main 창에 `null` 페이로드 이벤트를 보낸다.
+#[test]
+fn menu_settings_and_about_emit_to_main() {
+    let f = fixture();
+    let settings = collect(&f, MENU_SETTINGS);
+    let about = collect(&f, MENU_ABOUT);
+    on_menu_item(f.app.handle(), "settings");
+    on_menu_item(f.app.handle(), "about");
+    // 시스템 항목(모르는 id)은 아무것도 하지 않는다
+    on_menu_item(f.app.handle(), "copy");
+    wait_until("menu 이벤트", 2, || {
+        settings.lock().unwrap().len() == 1 && about.lock().unwrap().len() == 1
+    });
+    assert_eq!(*settings.lock().unwrap(), vec![Value::Null]);
+    assert_eq!(*about.lock().unwrap(), vec![Value::Null]);
+}
+
+/// 메뉴 "도움말"은 Worker `/help`를 기본 브라우저로 연다. Worker 주소가 없는 빌드면 열지 않는다.
+#[test]
+fn menu_help_opens_the_worker_help_page() {
+    let worker = worker_server(None);
+    let f = fixture_auth(&worker);
+    on_menu_item(f.app.handle(), "help");
+    let opened = f.io.opened.lock().unwrap().clone();
+    assert_eq!(opened.len(), 1, "{opened:?}");
+    assert!(opened[0].ends_with("/help"), "{}", opened[0]);
+
+    let g = fixture();
+    on_menu_item(g.app.handle(), "help");
+    assert!(g.io.opened.lock().unwrap().is_empty());
 }

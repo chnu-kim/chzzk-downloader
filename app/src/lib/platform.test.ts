@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { applyAppearance, applyWindowActive } from './appearance';
 import { t } from './copy/ko';
-import { modPressed, osFamily, revealLabel, shortcutText } from './platform';
+import { engineFixText, modPressed, osFamily, revealLabel, shortcutText } from './platform';
 
 describe('OS 분기(platform.md §20)', () => {
   it('macOS와 그 밖 두 갈래: 단축키 표기·폴더 보기 라벨', () => {
@@ -16,6 +16,13 @@ describe('OS 분기(platform.md §20)', () => {
     expect(shortcutText('windows', 'devtools')).toBe(t('platform.other.devtools'));
     expect(revealLabel('macos')).toBe(t('platform.mac.reveal'));
     expect(revealLabel('windows')).toBe(t('platform.other.reveal'));
+  });
+
+  it('웹 구성요소를 고치는 법만 OS마다 세 갈래다', () => {
+    expect(engineFixText('macos')).toBe(t('platform.mac.engineFix'));
+    expect(engineFixText('windows')).toBe(t('platform.windows.engineFix'));
+    expect(engineFixText('linux')).toBe(t('platform.linux.engineFix'));
+    expect(new Set([engineFixText('macos'), engineFixText('windows'), engineFixText('linux')]).size).toBe(3);
   });
 
   it('Mod 키: macOS는 ⌘만, 그 밖은 Ctrl만', () => {

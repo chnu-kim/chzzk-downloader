@@ -16,6 +16,7 @@
   } from '../../jobs';
   import { auth } from '../../stores/auth.svelte';
   import { jobs } from '../../stores/jobs.svelte';
+  import { power } from '../../stores/power.svelte';
   import { settings } from '../../stores/settings.svelte';
   import OverwriteDialog from '../app/OverwriteDialog.svelte';
   import Button from '../ui/Button.svelte';
@@ -154,6 +155,8 @@
           floor={jobs.state.percent.get(job.id) ?? 0}
           ahead={queueAhead(jobs.queueOrder, job.id)}
           runStartedAt={jobs.runStartedAt.get(job.id) ?? null}
+          waitingSince={jobs.waitingSince.get(job.id) ?? null}
+          recovered={jobs.recovered.has(job.id)}
           cookiesEnabled={settings.cookiesEnabled}
           block={jobBlock(job, auth.status)}
           highlighted={jobs.highlight.has(job.id)}
@@ -206,7 +209,13 @@
               <Surface variant="group">{@render rows(shownJobs(group, jobs.finishedOpen))}</Surface>
             </Disclosure>
           {:else}
-            <h3 id="{uid}-{group.id}" class="group-title num">{group.label}</h3>
+            <div class="group-head">
+              <h3 id="{uid}-{group.id}" class="group-title num">{group.label}</h3>
+              <!-- 받는 동안 컴퓨터가 잠들지 않게 붙들고 있을 때만(셸이 보호를 실제로 얻었을 때 `keep-awake`가 true, platform.md §15) -->
+              {#if group.id === 'running' && power.keepingAwake}
+                <span class="group-note">{t('power.keepingAwake')}</span>
+              {/if}
+            </div>
             <Surface variant="group">{@render rows(group.jobs)}</Surface>
           {/if}
         </section>
@@ -255,8 +264,24 @@
   .job-group + .job-group {
     margin-top: var(--space-16);
   }
-  .group-title {
+  .group-head {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-8);
     margin: 0 0 var(--gap-label);
+    min-width: 0;
+  }
+  .group-note {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--text-caption);
+    line-height: var(--leading-caption);
+    color: var(--fg-muted);
+  }
+  .group-title {
+    margin: 0;
     font-size: var(--text-caption);
     line-height: var(--leading-caption);
     font-weight: var(--weight-strong);

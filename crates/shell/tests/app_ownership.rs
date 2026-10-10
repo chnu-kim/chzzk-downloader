@@ -94,6 +94,7 @@ fn paths(root: &Path) -> AppPaths {
         root.join("log"),
         None,
         None,
+        None,
     )
 }
 
@@ -108,6 +109,9 @@ fn config(server: &MockServer) -> ClientConfig {
             max_attempts: 1,
             base: Duration::from_millis(1),
             cap: Duration::from_millis(1),
+            // 테스트는 연결 대기(인내)를 기다리지 않는다.
+            patience: Duration::ZERO,
+            patience_cap: Duration::ZERO,
         },
         ..ClientConfig::default()
     }
@@ -211,6 +215,7 @@ fn record(id: u64, channel: Option<&str>, out: &Path) -> JobRecord {
         status: JobStatus::Interrupted,
         created_at: 1_759_650_000,
         finished_at: None,
+        stopped_at: None,
         final_bytes: None,
         last_error: None,
         discard_on_start: false,

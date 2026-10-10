@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AuthStatusDto, Os, SettingsDto } from '../../bindings';
 import { t } from '../../copy/ko';
+import { job, prog } from '../../../test/jobFixtures';
 
 class FakeChannel {
   onmessage: (e: unknown) => void = () => {};
@@ -26,6 +27,7 @@ const settingsDto: SettingsDto = {
   importedFrom: null,
   textScale: 'default',
   theme: 'system',
+  keepAwake: true,
 };
 
 let os: Os = 'windows';
@@ -58,6 +60,9 @@ vi.mock('../../api', () => ({
   subscribeJobs: vi.fn(),
   clipboardLink: vi.fn(),
   onWindowFocus: vi.fn(),
+  onMenuSettings: vi.fn(),
+  onMenuAbout: vi.fn(),
+  onKeepAwake: vi.fn(),
   onCloseRequested: vi.fn(),
   openWebPage: vi.fn(),
   importLegacy: vi.fn(),
@@ -75,10 +80,14 @@ const { jobs } = await import('../../stores/jobs.svelte');
 const { platform } = await import('../../stores/platform.svelte');
 const { toasts } = await import('../../stores/toast.svelte');
 const { ui } = await import('../../stores/ui.svelte');
+const { power } = await import('../../stores/power.svelte');
 const { update } = await import('../../stores/update.svelte');
 
 let emit: (s: AuthStatusDto) => void = () => {};
 let focusCb: (focused: boolean) => void = () => {};
+let menuSettingsCb: () => void = () => {};
+let menuAboutCb: () => void = () => {};
+let keepAwakeCb: (active: boolean) => void = () => {};
 
 function start(status: AuthStatusDto) {
   vi.mocked(api.authStatus).mockImplementation(() => Promise.resolve(status));
@@ -92,16 +101,32 @@ beforeEach(() => {
   ui.windowFocused = true;
   toasts.clear();
   update.reset();
+  power.keepingAwake = false;
   platform.set('linux');
   document.documentElement.removeAttribute('data-window-active');
   emit = () => {};
   focusCb = () => {};
+  menuSettingsCb = () => {};
+  menuAboutCb = () => {};
+  keepAwakeCb = () => {};
   vi.mocked(api.onAuthChanged).mockImplementation(async (cb) => {
     emit = cb;
     return () => {};
   });
   vi.mocked(api.onWindowFocus).mockImplementation(async (cb) => {
     focusCb = cb;
+    return () => {};
+  });
+  vi.mocked(api.onMenuSettings).mockImplementation(async (cb) => {
+    menuSettingsCb = cb;
+    return () => {};
+  });
+  vi.mocked(api.onMenuAbout).mockImplementation(async (cb) => {
+    menuAboutCb = cb;
+    return () => {};
+  });
+  vi.mocked(api.onKeepAwake).mockImplementation(async (cb) => {
+    keepAwakeCb = cb;
     return () => {};
   });
   vi.mocked(api.getSettings).mockResolvedValue(settingsDto);
@@ -266,5 +291,52 @@ describe('비활성 창(platform.md §3)', () => {
     focusCb(false);
     await waitFor(() => expect(ui.windowFocused).toBe(false));
     expect(document.documentElement).not.toHaveAttribute('data-window-active');
+  });
+});
+
+describe('macOS 메뉴 이벤트(platform.md §7)', () => {
+  it('menu-settings는 설정 화면을 연다', async () => {
+    start(dto({ state: 'disabled' }));
+    render(App);
+    await screen.findByLabelText(t('url.label'));
+    expect(ui.view).toBe('home');
+    menuSettingsCb();
+    await waitFor(() => expect(ui.view).toBe('settings'));
+    expect(await screen.findByRole('heading', { name: t('settings.about.title') })).toBeInTheDocument();
+  });
+
+  it('menu-about은 설정 화면을 열고 정보 절 제목으로 포커스를 옮긴다(요청은 한 번 쓰고 비운다)', async () => {
+    start(dto({ state: 'disabled' }));
+    render(App);
+    await screen.findByLabelText(t('url.label'));
+    menuAboutCb();
+    const heading = await screen.findByRole('heading', { name: t('settings.about.title') });
+    await waitFor(() => expect(heading).toHaveFocus());
+    expect(ui.view).toBe('settings');
+    expect(ui.focusAbout).toBe(false);
+  });
+});
+
+describe('잠자기 방지 표시(platform.md §15)', () => {
+  it('keep-awake { active }에 따라 받는 중 그룹 머리 옆 한 줄이 생기고 사라진다', async () => {
+    start(dto({ state: 'disabled' }));
+    vi.mocked(api.subscribeJobs).mockResolvedValue([job(1, { status: 'running', progress: prog() })]);
+    render(App);
+    await screen.findByRole('article', { name: '영상 1' });
+    expect(screen.queryByText(t('power.keepingAwake'))).toBeNull();
+    keepAwakeCb(true);
+    expect(await screen.findByText(t('power.keepingAwake'))).toBeInTheDocument();
+    keepAwakeCb(false);
+    await waitFor(() => expect(screen.queryByText(t('power.keepingAwake'))).toBeNull());
+  });
+
+  it('받는 중 그룹이 없으면 active여도 줄이 없다', async () => {
+    start(dto({ state: 'disabled' }));
+    vi.mocked(api.subscribeJobs).mockResolvedValue([job(1, { status: 'paused', partialBytes: 5 })]);
+    render(App);
+    await screen.findByRole('article', { name: '영상 1' });
+    keepAwakeCb(true);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(screen.queryByText(t('power.keepingAwake'))).toBeNull();
   });
 });

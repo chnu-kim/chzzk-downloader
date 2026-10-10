@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, tick, untrack } from 'svelte';
-  import { onWindowFocus } from './lib/api';
+  import { onMenuAbout, onMenuSettings, onWindowFocus } from './lib/api';
   import { applyWindowActive } from './lib/appearance';
   import AppBanners from './lib/components/app/AppBanners.svelte';
   import AppHeader from './lib/components/app/AppHeader.svelte';
@@ -16,6 +16,7 @@
   import { auth } from './lib/stores/auth.svelte';
   import { jobs } from './lib/stores/jobs.svelte';
   import { platform } from './lib/stores/platform.svelte';
+  import { power } from './lib/stores/power.svelte';
   import { settings } from './lib/stores/settings.svelte';
   import { toasts } from './lib/stores/toast.svelte';
   import { ui } from './lib/stores/ui.svelte';
@@ -60,6 +61,18 @@
       if (gone) f();
       else offFocus = f;
     });
+    // macOS 메뉴(platform.md §7): "설정…"은 설정 화면으로, "…에 관하여"는 설정의 정보 절로. 로그인 화면이 잠겨 있으면
+    // 화면을 바꾸지 않는다(`ui.view`는 잠금과 무관하지만 App이 LoginView만 그리고, 풀리면 그 화면으로 열린다)
+    const offs: (() => void)[] = [];
+    const listen = (p: Promise<() => void>) =>
+      void p.then((f) => {
+        if (gone) f();
+        else offs.push(f);
+      });
+    listen(onMenuSettings(() => ui.goSettings()));
+    listen(onMenuAbout(() => ui.goSettings({ about: true })));
+    // 잠자기 방지 표시(platform.md §15): 보호를 실제로 얻었을 때만 true
+    listen(power.start());
     void auth.start().then((f) => {
       if (gone) f();
       else off = f;
@@ -76,6 +89,7 @@
       off?.();
       offUpdate?.();
       offFocus?.();
+      for (const f of offs) f();
     };
   });
 

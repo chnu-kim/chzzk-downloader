@@ -42,7 +42,7 @@
     "chzzk-core": 100
   },
   "design": {
-    "allow_entries": 5
+    "allow_entries": 0
   },
   "shots": {
     "max_diff_pixels": 0

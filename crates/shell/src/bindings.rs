@@ -11,9 +11,10 @@ use std::path::{Path, PathBuf};
 use ts_rs::{Config, TS};
 
 use crate::dto::{
-    AppFolder, AppInfo, AuthStatusDto, CloseRequestedPayload, EnqueueRequest, JobDto, JobEvent,
-    LegacyImportDto, OutputCheck, ResolvedDto, SettingsDto, SettingsPatch, UpdateCheckDto,
-    UpdateInfoDto, UpdateInstallDto, UpdateProgressEvent, WebPage, WindowFocusPayload,
+    AppFolder, AppInfo, AuthStatusDto, CloseRequestedPayload, EngineProbe, EnqueueRequest, JobDto,
+    JobEvent, KeepAwakePayload, LegacyImportDto, OutputCheck, ResolvedDto, SettingsDto,
+    SettingsPatch, UpdateCheckDto, UpdateInfoDto, UpdateInstallDto, UpdateProgressEvent, WebPage,
+    WindowFocusPayload,
 };
 use crate::error::AppError;
 
@@ -59,6 +60,8 @@ pub fn export(dir: &Path) -> io::Result<()> {
     AppFolder::export_all(&cfg).map_err(ts_err)?;
     WebPage::export_all(&cfg).map_err(ts_err)?;
     WindowFocusPayload::export_all(&cfg).map_err(ts_err)?;
+    EngineProbe::export_all(&cfg).map_err(ts_err)?;
+    KeepAwakePayload::export_all(&cfg).map_err(ts_err)?;
 
     let mut names: Vec<String> = std::fs::read_dir(dir)?
         .filter_map(|e| e.ok())

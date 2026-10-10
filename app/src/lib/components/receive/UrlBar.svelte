@@ -56,6 +56,7 @@
 <form class="urlbar" {onsubmit} aria-busy={loading ? 'true' : undefined}>
   <div class="urlbar-field">
     <TextField
+      id="url-input"
       label={t('url.label')}
       bind:el={input}
       bind:value={resolver.input}

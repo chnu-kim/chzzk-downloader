@@ -108,6 +108,7 @@
   bind:this={el}
   class="item"
   class:new={highlighted}
+  class:failed={job.status === 'failed'}
   data-job-id={job.id}
   aria-label={job.title}
   aria-describedby={block ? `${uid}-blocked` : undefined}

@@ -822,3 +822,25 @@ fn web_page_and_window_focus_json() {
         json!({"focused": true})
     );
 }
+
+// ---------------------------------------------------------------------------
+// 화면 설정·최근 종류·OS의 TS 미러 변환(모든 변형)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn appearance_enum_conversions_cover_every_variant() {
+    use chzzk_shell::dto::{RecentKindTs, TextScaleTs, ThemeTs};
+
+    assert_eq!(TextScaleTs::from(TextScale::Default), TextScaleTs::Default);
+    assert_eq!(TextScaleTs::from(TextScale::Large), TextScaleTs::Large);
+    assert_eq!(TextScaleTs::from(TextScale::XLarge), TextScaleTs::XLarge);
+    assert_eq!(ThemeTs::from(Theme::System), ThemeTs::System);
+    assert_eq!(ThemeTs::from(Theme::Light), ThemeTs::Light);
+    assert_eq!(ThemeTs::from(Theme::Dark), ThemeTs::Dark);
+    assert_eq!(RecentKindTs::from(RecentKind::Vod), RecentKindTs::Vod);
+    assert_eq!(RecentKindTs::from(RecentKind::Rewind), RecentKindTs::Rewind);
+    assert_eq!(RecentKindTs::from(RecentKind::Clip), RecentKindTs::Clip);
+    assert_eq!(OsDto::from(Platform::MacOs), OsDto::Macos);
+    assert_eq!(OsDto::from(Platform::Windows), OsDto::Windows);
+    assert_eq!(OsDto::from(Platform::Linux), OsDto::Linux);
+}

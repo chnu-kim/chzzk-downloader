@@ -98,6 +98,11 @@ afterEach(() => {
 });
 
 describe('UrlBar', () => {
+  it('네이티브 E2E 훅: 입력칸 id는 url-input이다', () => {
+    render(InputPanel);
+    expect(urlInput().id).toBe('url-input');
+  });
+
   it('invalidUrl: 입력을 지우지 않고 오류 문구와 aria-invalid', async () => {
     vi.mocked(api.resolve).mockRejectedValue(appError('invalidUrl'));
     const user = userEvent.setup();

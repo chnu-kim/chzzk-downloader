@@ -325,6 +325,12 @@ describe('취소(D2): .part가 있으면 크기와 무관하게 묻는다', () =
     expect(api.removeJob).toHaveBeenLastCalledWith(2);
   });
 
+  it('네이티브 E2E 훅: 실패한 항목 article에 failed 클래스', async () => {
+    await load([job(3, { status: 'failed', partialBytes: 5, progress: prog(), title: '실패' })]);
+    render(JobList);
+    expect(document.querySelector('article[data-job-id]')).toHaveClass('failed');
+  });
+
   it('진행 막대 state: 링크 갱신 waiting, 멈춤 paused, 실패 failed', async () => {
     await load([
       job(1, { status: 'running', progress: prog({ phase: 'reresolving' }), title: '갱신' }),

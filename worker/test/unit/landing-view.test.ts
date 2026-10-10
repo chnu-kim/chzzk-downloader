@@ -464,7 +464,7 @@ describe("내 기기와 로그아웃(11·12번)", () => {
     const table = t.slice(t.indexOf('aria-labelledby="devices-caption"'));
     expect(table).toContain(`<caption id="devices-caption">${COPY.devicesTitle}. ${COPY.tableTimeNote}</caption>`);
     expect(table).toContain(`<th scope="col"><span class="sr-only">${COPY.colAction}</span></th>`);
-    expect(table).toContain('<td class="num">2030. 1. 1. 오전 9:00</td>');
+    expect(table).toContain('<td><span class="when num">2030. 1. 1.</span> <span class="when num">오전 9:00</span></td>');
     expect(table).toContain('<button type="submit" class="btn">끊기</button>');
     expect(table).toContain('action="/me/sessions/s1/revoke"');
     expect(table).toContain('action="/me/sessions/s2/revoke"');

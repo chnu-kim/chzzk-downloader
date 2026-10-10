@@ -9,10 +9,10 @@ import { artifactFile, detectedOs, LANDING_FILES, type LandingFile, type Landing
 import type { MySessionView } from "../store/types";
 import { COPY } from "./copy";
 import type { FlashKind } from "./flash";
-import { formatDate, kindLabel, kst } from "./format";
+import { formatDate, kindLabel } from "./format";
 import type { Downloads } from "./landing";
 import { htmlPage, type Nav } from "./layout";
-import { dataTable, disclosure, field, linkButton, notice, postButton, rowHead } from "./ui";
+import { dataTable, disclosure, field, linkButton, notice, postButton, rowHead, when } from "./ui";
 
 type Os = LandingFile["os"];
 type Ok = Extract<Downloads, { kind: "ok" }>;
@@ -152,7 +152,7 @@ function devicesSection(m: MemberModel): SafeHtml {
   if (m.devices.length === 0) return html`${lead}<p>${COPY.devicesEmpty}</p>`;
   const rows = m.devices.map(
     (s) =>
-      html`<tr>${rowHead(`${kindLabel(s.kind)}${s.id === m.currentSessionId ? ` · ${COPY.thisBrowser}` : ""}`)}<td>${s.client ?? "—"}</td><td class="num">${kst(s.createdAt)}</td><td class="num">${kst(s.lastSeenAt)}</td><td>${postButton(`/me/sessions/${s.id}/revoke`, m.csrf, COPY.revoke)}</td></tr>`,
+      html`<tr>${rowHead(`${kindLabel(s.kind)}${s.id === m.currentSessionId ? ` · ${COPY.thisBrowser}` : ""}`)}<td>${s.client ?? "—"}</td><td>${when(s.createdAt)}</td><td>${when(s.lastSeenAt)}</td><td>${postButton(`/me/sessions/${s.id}/revoke`, m.csrf, COPY.revoke)}</td></tr>`,
   );
   const table = dataTable({
     id: "devices-caption",

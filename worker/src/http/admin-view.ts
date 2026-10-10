@@ -6,9 +6,9 @@ import { html, type SafeHtml } from "../core/html";
 import type { AdminView } from "../store/types";
 import { COPY } from "./copy";
 import type { FlashKind } from "./flash";
-import { auditLabel, kindLabel, kst } from "./format";
+import { auditLabel, kindLabel } from "./format";
 import { htmlPage, type Nav } from "./layout";
-import { csrfInput, dataTable, errorSummary, field, linkButton, postButton, rowHead } from "./ui";
+import { csrfInput, dataTable, errorSummary, field, linkButton, postButton, rowHead, when } from "./ui";
 
 type Allow = AdminView["allowlist"][number];
 type Denied = AdminView["denied"][number];
@@ -54,7 +54,7 @@ function allowRow(a: Allow, admins: readonly string[]): SafeHtml {
     ? html`<span class="muted">${COPY.adminsTitle}</span>`
     : html`<div class="actions">${linkButton(`/admin/${a.channelId}/disallow`, COPY.disallow)}</div>`;
   const note = a.note === null || a.note === "" ? "" : html`${a.note}<br>`;
-  return html`<tr>${rowHead(html`${dash(a.channelName)}${idLine(a.channelId)}`)}<td>${note}<span class="meta">${COPY.colAddedBy} <span class="mono num">${a.addedBy}</span></span></td><td>${kst(a.addedAt)}</td><td><span class="num">${a.activeSessions}</span></td><td>${last}</td></tr>`;
+  return html`<tr>${rowHead(html`${dash(a.channelName)}${idLine(a.channelId)}`)}<td>${note}<span class="meta">${COPY.colAddedBy} <span class="mono num">${a.addedBy}</span></span></td><td>${when(a.addedAt)}</td><td><span class="num">${a.activeSessions}</span></td><td>${last}</td></tr>`;
 }
 
 /** 추가 폼. 페이지의 유일한 채움 버튼이다 */
@@ -99,7 +99,7 @@ function allowSection(rows: readonly Allow[], admins: readonly string[], csrf: s
 }
 
 function deniedRow(d: Denied, csrf: string): SafeHtml {
-  return html`<tr>${rowHead(html`${dash(d.channelName)}${idLine(d.channelId)}`)}<td><span class="num">${d.attempts}</span></td><td>${kst(d.firstAt)}</td><td>${kst(d.lastAt)}</td><td><div class="actions">${postButton(`/admin/denied/${d.channelId}/allow`, csrf, COPY.allow)}${postButton(`/admin/denied/${d.channelId}/dismiss`, csrf, COPY.dismiss)}</div></td></tr>`;
+  return html`<tr>${rowHead(html`${dash(d.channelName)}${idLine(d.channelId)}`)}<td><span class="num">${d.attempts}</span></td><td>${when(d.firstAt)}</td><td>${when(d.lastAt)}</td><td><div class="actions">${postButton(`/admin/denied/${d.channelId}/allow`, csrf, COPY.allow)}${postButton(`/admin/denied/${d.channelId}/dismiss`, csrf, COPY.dismiss)}</div></td></tr>`;
 }
 
 function deniedSection(rows: readonly Denied[], csrf: string): SafeHtml {
@@ -117,7 +117,7 @@ function deniedSection(rows: readonly Denied[], csrf: string): SafeHtml {
 }
 
 function sessionRow(s: Session, csrf: string): SafeHtml {
-  return html`<tr>${rowHead(html`${dash(s.channelName)}${idLine(s.channelId)}`)}<td>${kindLabel(s.kind)}</td><td>${dash(s.client)}</td><td>${kst(s.createdAt)}</td><td>${kst(s.lastSeenAt)}</td><td>${s.recovered > 0 ? html`<span class="num">${s.recovered}</span>` : ""}</td><td><div class="actions">${postButton(`/admin/sessions/${s.id}/revoke`, csrf, COPY.revoke)}</div></td></tr>`;
+  return html`<tr>${rowHead(html`${dash(s.channelName)}${idLine(s.channelId)}`)}<td>${kindLabel(s.kind)}</td><td>${dash(s.client)}</td><td>${when(s.createdAt)}</td><td>${when(s.lastSeenAt)}</td><td>${s.recovered > 0 ? html`<span class="num">${s.recovered}</span>` : ""}</td><td><div class="actions">${postButton(`/admin/sessions/${s.id}/revoke`, csrf, COPY.revoke)}</div></td></tr>`;
 }
 
 function sessionsSection(rows: readonly Session[], csrf: string): SafeHtml {
@@ -135,7 +135,7 @@ function sessionsSection(rows: readonly Session[], csrf: string): SafeHtml {
 }
 
 function auditRow(a: Audit): SafeHtml {
-  return html`<tr>${rowHead(kst(a.at))}<td><span class="mono">${a.actor}</span></td><td>${auditLabel(a.action)}</td><td><span class="mono">${a.target ?? ""}</span></td></tr>`;
+  return html`<tr>${rowHead(when(a.at))}<td><span class="mono">${a.actor}</span></td><td>${auditLabel(a.action)}</td><td><span class="mono">${a.target ?? ""}</span></td></tr>`;
 }
 
 function auditSection(rows: readonly Audit[]): SafeHtml {

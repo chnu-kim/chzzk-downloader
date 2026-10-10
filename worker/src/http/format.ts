@@ -32,6 +32,12 @@ export function formatDateTime(w: Wall): string {
   return `${formatDate(w)} ${ampm} ${w.h % 12 || 12}:${String(w.mi).padStart(2, "0")}`;
 }
 
+/** 날짜와 시각을 두 덩어리로(표 칸에서 날짜·시각 사이에서만 줄이 바뀌게 한다). `kst`와 같은 글자다 */
+export function kstParts(ms: number): { readonly date: string; readonly time: string } {
+  const w = kstWall(ms);
+  return { date: formatDate(w), time: formatDateTime(w).slice(formatDate(w).length + 1) };
+}
+
 /** 날짜와 시각 */
 export function kst(ms: number): string {
   return formatDateTime(kstWall(ms));

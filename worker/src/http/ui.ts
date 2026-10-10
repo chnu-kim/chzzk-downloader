@@ -2,6 +2,7 @@
 // 클래스는 design/ui.css의 것을 그대로 쓴다(웹 전용 클래스는 site.css). 스크립트·인라인 스타일 0개(CSP): 동작은 폼과 링크뿐이다.
 import { html, type HtmlValue, type SafeHtml } from "../core/html";
 import { COPY } from "./copy";
+import { kstParts } from "./format";
 import { icon, type WorkerIconName } from "./icon";
 
 /** `<input type="hidden" name="csrf" value="…">`. 글자 그대로의 모양이 e2e 정규식 계약이다(name="csrf" value= 순서) */
@@ -116,4 +117,10 @@ export function rowHead(v: HtmlValue): SafeHtml {
 /** 접힘(details). 앵커 id는 이 안에 두지 않는다(닫힌 details 안의 앵커 이동은 확인되지 않았다) */
 export function disclosure(summary: string, body: HtmlValue, o: { open?: boolean } = {}): SafeHtml {
   return html`<details class="disclosure"${o.open === true ? html` open` : ""}><summary>${icon("chevron-right")}${summary}</summary><div class="disclosure-panel">${body}</div></details>`;
+}
+
+/** 표 칸의 시각: 날짜와 시각이 각각 줄바꿈 없는 한 덩어리고, 칸이 좁을 때만 둘 사이에서 줄이 바뀐다(web.md §15-35) */
+export function when(ms: number): SafeHtml {
+  const p = kstParts(ms);
+  return html`<span class="when num">${p.date}</span> <span class="when num">${p.time}</span>`;
 }

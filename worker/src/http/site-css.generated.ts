@@ -1981,6 +1981,15 @@ td {
   /* 한글을 글자 단위로 끊지 않는다. 좁으면 .scroll이 가로로 스크롤한다 */
   overflow-wrap: normal;
 }
+/* 표의 양 끝 칸은 본문 가장자리에 맞춘다(안쪽 여백이 열 밖으로 새지 않게) */
+th:first-child,
+td:first-child {
+  padding-inline-start: 0;
+}
+th:last-child,
+td:last-child {
+  padding-inline-end: 0;
+}
 th {
   white-space: nowrap;
   color: var(--fg-muted);
@@ -1996,6 +2005,21 @@ th.num {
 }
 td.num {
   white-space: nowrap;
+}
+/* 표 칸의 시각: 날짜·시각 두 덩어리, 덩어리 안에서는 끊지 않는다(web.md §15-35) */
+.when {
+  white-space: nowrap;
+}
+/* 표 안의 ID(mono)는 끊지 않는다. 좁으면 .scroll이 스크롤한다 */
+td .mono,
+th .mono {
+  white-space: nowrap;
+  word-break: normal;
+}
+/* 표 칸의 버튼 줄: 한 줄에 나란히 */
+td .actions {
+  flex-wrap: nowrap;
+  gap: var(--space-8);
 }
 
 dl.summary {
@@ -2088,4 +2112,4 @@ pre.license {
   }
 }
 `;
-export const SITE_CSS_HASH = "71d99ed4238a9ba4";
+export const SITE_CSS_HASH = "17c29035937615c3";

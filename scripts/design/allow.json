@@ -1,10 +1,4 @@
 {
   "$comment": "디자인 gate 넷의 허용 목록(governance.md §2.0·§2.3). 항목 수는 ci/ratchet.json design.allow_entries(늘면 실패). 항목은 위반 하나(규칙·파일·글자)에만 맞고, 맞는 위반이 없어진 항목은 gate가 실패시킨다(지운다).",
-  "entries": [
-    { "rule": "DC10", "file": "docs/design/system/content.md", "pattern": "^job\\.waitingNetwork\\.body$", "reason": "단계 (f)에서 제거(연결 대기·멈춘 작업 데이터)" },
-    { "rule": "DC10", "file": "docs/design/system/patterns.md", "pattern": "^job\\.recovered\\.body$", "reason": "단계 (f)에서 제거(연결 대기·멈춘 작업 데이터)" },
-    { "rule": "DC10", "file": "docs/design/system/patterns.md", "pattern": "^job\\.stale\\.body$", "reason": "단계 (f)에서 제거(연결 대기·멈춘 작업 데이터)" },
-    { "rule": "DC10", "file": "docs/design/system/patterns.md", "pattern": "^job\\.status\\.waitingNetwork$", "reason": "단계 (f)에서 제거(연결 대기·멈춘 작업 데이터)" },
-    { "rule": "DC10", "file": "docs/design/system/patterns.md", "pattern": "^job\\.waitingNetwork\\.body$", "reason": "단계 (f)에서 제거(연결 대기·멈춘 작업 데이터)" }
-  ]
+  "entries": []
 }

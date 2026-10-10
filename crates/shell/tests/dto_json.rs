@@ -78,6 +78,7 @@ fn phase_json(p: Phase) -> &'static str {
         Phase::Resolving => "resolving",
         Phase::Downloading => "downloading",
         Phase::Reresolving => "reresolving",
+        Phase::WaitingNetwork => "waitingNetwork",
         Phase::Finalizing => "finalizing",
     }
 }
@@ -88,6 +89,7 @@ fn phase_mirror_matches_core() {
         Phase::Resolving,
         Phase::Downloading,
         Phase::Reresolving,
+        Phase::WaitingNetwork,
         Phase::Finalizing,
     ] {
         assert_eq!(to_json(&core), to_json(&PhaseTs::from(core)));
@@ -187,6 +189,7 @@ fn job(status: JobStatus) -> JobDto {
         missing: false,
         created_at: 1_759_650_000,
         finished_at: None,
+        stopped_at: None,
     }
 }
 
@@ -235,7 +238,8 @@ fn job_event_status_snapshot() {
                 "finalBytes": null,
                 "missing": false,
                 "createdAt": 1_759_650_000u64,
-                "finishedAt": 1_759_650_100u64
+                "finishedAt": 1_759_650_100u64,
+                "stoppedAt": null
             }
         })
     );

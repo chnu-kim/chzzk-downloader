@@ -24,6 +24,7 @@ fn paths(root: &Path) -> AppPaths {
         root.join("log"),
         None,
         None,
+        None,
     )
 }
 
@@ -57,20 +58,55 @@ fn default_folder_fallbacks() {
     std::fs::create_dir_all(&down).unwrap();
     let missing = t.path().join("없음");
 
-    let cases: Vec<(Option<&Path>, Option<&Path>, PathBuf)> = vec![
-        (Some(&video), Some(&down), video.join(DEFAULT_FOLDER_NAME)),
-        (None, Some(&down), down.join(DEFAULT_FOLDER_NAME)),
-        (Some(&missing), Some(&down), down.join(DEFAULT_FOLDER_NAME)),
+    let home = t.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+
+    type Case<'a> = (
+        Option<&'a Path>,
+        Option<&'a Path>,
+        Option<&'a Path>,
+        PathBuf,
+    );
+    let cases: Vec<Case> = vec![
+        (
+            Some(&video),
+            Some(&down),
+            Some(&home),
+            video.join(DEFAULT_FOLDER_NAME),
+        ),
+        (
+            None,
+            Some(&down),
+            Some(&home),
+            down.join(DEFAULT_FOLDER_NAME),
+        ),
+        (
+            Some(&missing),
+            Some(&down),
+            None,
+            down.join(DEFAULT_FOLDER_NAME),
+        ),
         (
             Some(Path::new("Movies")),
             Some(&down),
+            None,
             down.join(DEFAULT_FOLDER_NAME),
         ),
-        (Some(&missing), None, data.join("downloads")),
-        (None, None, data.join("downloads")),
+        // 비디오·다운로드 폴더가 없으면 홈/치지직(platform §16.1, X8)
+        (None, None, Some(&home), home.join(DEFAULT_FOLDER_NAME)),
+        (
+            Some(&missing),
+            Some(&missing),
+            Some(&home),
+            home.join(DEFAULT_FOLDER_NAME),
+        ),
+        // 없거나 쓸 수 없는 홈은 건너뛴다. 홈도 없을 때만 옛 `{data}/downloads`
+        (Some(&missing), None, Some(&missing), data.join("downloads")),
+        (Some(&missing), None, None, data.join("downloads")),
+        (None, None, None, data.join("downloads")),
     ];
-    for (i, (v, d, want)) in cases.into_iter().enumerate() {
-        assert_eq!(default_download_folder(v, d, &data), want, "행 {i}");
+    for (i, (v, d, h, want)) in cases.into_iter().enumerate() {
+        assert_eq!(default_download_folder(v, d, h, &data), want, "행 {i}");
     }
 
     let p = AppPaths::new(
@@ -78,6 +114,7 @@ fn default_folder_fallbacks() {
         data.clone(),
         t.path().join("l"),
         Some(video.clone()),
+        None,
         None,
     );
     assert_eq!(p.default_download, video.join(DEFAULT_FOLDER_NAME));
@@ -97,7 +134,7 @@ fn default_folder_skips_non_utf8() {
     let down = t.path().join("Downloads");
     std::fs::create_dir_all(&down).unwrap();
     assert_eq!(
-        default_download_folder(Some(&bad), Some(&down), t.path()),
+        default_download_folder(Some(&bad), Some(&down), None, t.path()),
         down.join(DEFAULT_FOLDER_NAME)
     );
 }

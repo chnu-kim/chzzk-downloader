@@ -158,7 +158,7 @@ export const SCREENS: Screen[] = [
   {
     id: '작업 목록(상태 전부)',
     slug: 'jobs-all',
-    scenario: (_env, now) => ({ auth: SIGNED_IN, jobs: jobStateSet(true) }),
+    scenario: (_env, now) => ({ auth: SIGNED_IN, jobs: jobStateSet(true, now) }),
     ready: (p) => p.getByRole('article', { name: SAME_PREFIX_TITLES[0] }),
     aligned: ['배너 왼쪽', '배너 오른쪽', '툴바 끝 요소'],
   },
@@ -180,7 +180,7 @@ export const SCREENS: Screen[] = [
   {
     id: '작업 목록(토스트)',
     slug: 'jobs-toast',
-    scenario: (_env, now) => ({ jobs: jobStateSet(false) }),
+    scenario: (_env, now) => ({ jobs: jobStateSet(false, now) }),
     ready: (p) => p.getByRole('article', { name: SAME_PREFIX_TITLES[0] }),
     // 첫 행의 [⋯] › 주소 복사 → 토스트 하나(목록을 지우지 않는다)
     toastAction: async (app) => {

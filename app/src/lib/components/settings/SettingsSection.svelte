@@ -4,14 +4,21 @@
   import type { Snippet } from 'svelte';
   import Surface from '../ui/Surface.svelte';
 
-  let { title, children }: { title: string; children: Snippet } = $props();
+  let {
+    title,
+    children,
+    /** 제목에 코드로 포커스를 줄 수 있게 한다(메뉴 "…에 관하여"가 정보 절 제목으로 옮긴다) */
+    focusable = false,
+    headingEl = $bindable(null),
+  }: { title: string; children: Snippet; focusable?: boolean; headingEl?: HTMLHeadingElement | null } = $props();
 
   const uid = $props.id();
   const titleId = `${uid}-title`;
 </script>
 
 <div class="settings-section">
-  <h2 id={titleId}>{title}</h2>
+  <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+  <h2 id={titleId} tabindex={focusable ? -1 : undefined} bind:this={headingEl}>{title}</h2>
   <Surface variant="group" aria-labelledby={titleId}>
     {@render children()}
   </Surface>

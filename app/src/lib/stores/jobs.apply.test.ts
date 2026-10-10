@@ -38,6 +38,7 @@ function job(id: number, over: Partial<JobDto> = {}): JobDto {
     missing: false,
     createdAt: 1,
     finishedAt: null,
+    stoppedAt: null,
     ...over,
   };
 }

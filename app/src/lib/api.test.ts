@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { mockIPC } from '@tauri-apps/api/mocks';
 import { describe, expect, it } from 'vitest';
 import * as api from './api';
-import type { ContentRef, EnqueueRequest, JobEvent } from './bindings';
+import type { ContentRef, EngineProbe, EnqueueRequest, JobEvent } from './bindings';
 
 // Rust command 목록(app/src-tauri/src/command_names.rs)과 api.ts가 1:1인지, 인자가 camelCase인지 본다.
 const namesFile = readFileSync(
@@ -13,6 +13,7 @@ const namesFile = readFileSync(
 );
 const COMMANDS = [...namesFile.matchAll(/^\s*"([a-z_]+)",/gm)].map((m) => m[1]);
 
+const PROBE: EngineProbe = { colorMix: true, has: true, oklch: true, containerQuery: true, inert: false };
 const content: ContentRef = { kind: 'video', videoNo: 7 };
 const req: EnqueueRequest = {
   url: 'https://chzzk.naver.com/video/7',
@@ -85,7 +86,7 @@ describe('api.ts', () => {
     [() => api.updateInstall(true), 'update_install', { confirmPause: true }],
     [() => api.clipboardLink(), 'clipboard_link', {}],
     [() => api.openAppFolder('logs'), 'open_app_folder', { kind: 'logs' }],
-    [() => api.frontendReady(), 'frontend_ready', {}],
+    [() => api.frontendReady(PROBE), 'frontend_ready', { probe: PROBE }],
   ];
 
   it('모든 Rust command에 함수가 하나씩 있다', () => {

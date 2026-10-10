@@ -1,5 +1,6 @@
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 import { svelteTesting } from '@testing-library/svelte/vite';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitest/config';
 
@@ -10,10 +11,20 @@ const host = process.env.TAURI_DEV_HOST;
 // e2e-web·design-shots gate만 켠다. 릴리스 dist에는 없다(release-hygiene가 dist에 gallery가 없는지 본다).
 const gallery = process.env.CHZZK_GALLERY === '1';
 
+// 지원 기준선(baseline.json): 이 아래 엔진은 지원하지 않는다. CSS 변환 대상을 여기서 계산한다(새 패키지 없이, vite 8 안의 lightningcss).
+// lightningcss 버전은 major<<16 | minor<<8 정수다.
+const baseline = JSON.parse(readFileSync(fileURLToPath(new URL('./baseline.json', import.meta.url)), 'utf8')) as Record<string, string>;
+const [chromeMajor] = baseline.chrome.split('.').map(Number);
+const [safariMajor, safariMinor = 0] = baseline.safari.split('.').map(Number);
+
 export default defineConfig({
   // svelteTesting: 테스트에서 Svelte 브라우저 빌드를 쓰고 매 테스트 뒤 DOM을 치운다(VITEST일 때만 동작).
   plugins: [svelte(), svelteTesting()],
   clearScreen: false,
+  css: {
+    transformer: 'lightningcss',
+    lightningcss: { targets: { chrome: chromeMajor << 16, safari: (safariMajor << 16) | (safariMinor << 8) } },
+  },
   // TAURI_ 전체가 아니라 TAURI_ENV_만 노출한다(TAURI_SIGNING_PRIVATE_KEY 등이 번들에 들어가지 않게).
   envPrefix: ['VITE_', 'TAURI_ENV_'],
   server: {
@@ -25,6 +36,7 @@ export default defineConfig({
   },
   build: {
     target: 'es2022',
+    cssTarget: [`chrome${baseline.chrome}`, `safari${baseline.safari}`],
     sourcemap: !!process.env.TAURI_ENV_DEBUG,
     ...(gallery
       ? { rollupOptions: { input: { index: fileURLToPath(new URL('./index.html', import.meta.url)), gallery: fileURLToPath(new URL('./gallery.html', import.meta.url)) } } }

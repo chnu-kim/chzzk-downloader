@@ -3,4 +3,4 @@
 /**
  * `open_web_page`가 여는 Worker 페이지(로그인 서버 주소 아래 고정 경로, system/patterns.md §13·§14.4).
  */
-export type WebPage = "privacy" | "licenses";
+export type WebPage = "privacy" | "licenses" | "help";

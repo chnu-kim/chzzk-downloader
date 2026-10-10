@@ -13,7 +13,7 @@
 use std::ffi::OsString;
 use std::path::PathBuf;
 
-use chzzk_core::{ClientConfig, Endpoints};
+use chzzk_core::{ClientConfig, Endpoints, RetryPolicy};
 use chzzk_shell::WorkerBase;
 use chzzk_shell::services::{AppPaths, PROGRESS_INTERVAL};
 use url::Url;
@@ -119,6 +119,7 @@ impl E2eConfig {
             self.dir.join("logs"),
             None,
             None,
+            None,
         )
     }
 
@@ -130,6 +131,12 @@ impl E2eConfig {
                 vodplay_api: self.api_base.clone(),
             },
             progress_interval: PROGRESS_INTERVAL,
+            // 가짜 서버가 끊기면 30분 기다리지 않고 바로 실패시킨다(E2E가 CI 제한 시간까지 멈추지 않게)
+            retry: RetryPolicy {
+                patience: std::time::Duration::ZERO,
+                patience_cap: std::time::Duration::ZERO,
+                ..RetryPolicy::default()
+            },
             ..ClientConfig::default()
         }
     }

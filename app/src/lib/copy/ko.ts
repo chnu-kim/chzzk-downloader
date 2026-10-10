@@ -26,6 +26,10 @@ export const ko = {
   'platform.other.reveal': '폴더에서 보기',
   'platform.mac.devtools': '⌥⌘I',
   'platform.other.devtools': 'F12',
+  // 웹 구성요소(엔진)가 오래됐을 때 고치는 법(platform.md §5): OS마다 방법이 달라 이 문구만 세 갈래다(`lib/platform.ts` `engineFixText`)
+  'platform.mac.engineFix': 'macOS를 최신 버전으로 업데이트해 주세요.',
+  'platform.windows.engineFix': 'Windows 업데이트에서 Microsoft Edge WebView2를 업데이트해 주세요.',
+  'platform.linux.engineFix': '터미널에서 sudo apt upgrade를 실행해 주세요.',
 
   // 비공식 고지(content.md §11, design-copy DC6: Worker copy.ts와 바이트까지 같다)
   'notice.short': '비공식 도구예요 · 네이버·치지직과 제휴하거나 보증받지 않았어요',
@@ -88,6 +92,7 @@ export const ko = {
   'list.group.queued': '대기 중 {n}',
   'list.group.stopped': '받다 만 {n}',
   'list.group.finished': '완료 {n}',
+  'power.keepingAwake': '받는 동안 잠들지 않아요',
 
   // 상태 어휘 두 층(content.md §3.1-2): 상태 줄은 명사형 조각(job.status.*), 사건 설명은 본문 줄(*.body)
   'job.queued': '대기 중 · 앞에 {n}개',
@@ -111,6 +116,12 @@ export const ko = {
   'job.skippedMeanwhile.body': '받는 동안 같은 이름의 파일이 생겼어요.',
   'job.phase.downloading': '받는 중',
   'job.phase.reresolving': '주소를 새로 받는 중',
+  // 연결 대기(D40): 상태 머신이 아니라 running의 phase다. 오류가 아니므로 빨강·실패 문구가 없다. `{elapsed}`는 `formatElapsed`(`2분째`)
+  'job.phase.waitingNetwork': '연결 대기 중',
+  'job.status.waitingNetwork': '연결 대기 중 · {elapsed} · {received} 받음',
+  'job.waitingNetwork.body': '인터넷이 돌아오면 이어서 받아요.',
+  'job.recovered.body': '연결이 돌아와서 이어서 받고 있어요.',
+  'job.stale.body': '{days}일 전에 멈췄어요. 디스크에 {size} 남아 있어요.',
   'job.pausing': '일시정지하는 중',
   'job.paused': '일시정지됨 · {bytes} 받음',
   'job.otherChannel.body': '다른 채널로 로그인한 상태라 이어받을 수 없어요. 이 영상의 채널로 로그인해 주세요.',
@@ -151,6 +162,8 @@ export const ko = {
   'banner.interrupted': '지난번에 받다 만 영상이 {n}개 있어요.',
   'banner.resumeAll': '모두 이어받기',
   'banner.settingsError': '설정을 저장하지 못했어요. 디스크 공간과 권한을 확인해 주세요.',
+  'engine.old.title': '이 컴퓨터의 웹 구성요소가 오래됐어요',
+  'engine.old.body': '{fix} 앱은 그대로 쓸 수 있지만 화면 일부가 다르게 보일 수 있어요.',
   'banner.resumeNeedsLogin': '지난번에 받다 만 영상이 {n}개 있어요. 로그인하면 이어받을 수 있어요.',
 
   // 대화상자 7종(content.md §5.3 표가 유일한 원천). 안전 쪽 라벨은 현재 상태를 이어 가는 말이다
@@ -192,6 +205,8 @@ export const ko = {
     '빠른 다시보기는 영상을 작은 조각으로 나눠 받아요. 숫자가 클수록 빠르지만 인터넷을 더 많이 써요.',
   'settings.autoResume': '앱을 열면 받다 만 영상을 자동으로 이어받기',
   'settings.autoResume.help': '꺼져 있으면 위쪽 안내 줄에서 직접 이어받아요.',
+  'settings.keepAwake': '받는 동안 컴퓨터가 잠들지 않게 하기',
+  'settings.keepAwake.help': '끄면 한동안 자리를 비울 때 받기가 멈출 수 있어요. 화면은 꺼져도 돼요.',
   'settings.view': '보기',
   'settings.textScale': '글자 크기',
   'settings.textScale.default': '기본',

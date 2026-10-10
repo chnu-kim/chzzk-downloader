@@ -3,4 +3,4 @@
 /**
  * `chzzk_core::Phase`의 TS 모양.
  */
-export type Phase = "resolving" | "downloading" | "reresolving" | "finalizing";
+export type Phase = "resolving" | "downloading" | "reresolving" | "finalizing" | "waitingNetwork";

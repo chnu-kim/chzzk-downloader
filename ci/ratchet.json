@@ -23,15 +23,15 @@
     }
   },
   "size": {
-    "dist_gz": 73316,
+    "dist_gz": 76248,
     "binary": {
-      "linux": 33581280,
+      "linux": 34816368,
       "darwin": 23809376,
       "windows": 20665344
     },
     "bundle": {
       "linux-AppImage": 86813176,
-      "linux-deb": 10046698,
+      "linux-deb": 10383998,
       "darwin-dmg": 7748531,
       "windows-setup": 4945876,
       "windows-msi": 7319552
@@ -42,7 +42,7 @@
     "chzzk-core": 100
   },
   "design": {
-    "allow_entries": 5
+    "allow_entries": 0
   },
   "shots": {
     "max_diff_pixels": 0

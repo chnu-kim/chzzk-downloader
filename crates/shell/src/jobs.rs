@@ -55,6 +55,10 @@ pub struct JobRecord {
     pub created_at: u64,
     #[serde(default)]
     pub finished_at: Option<u64>,
+    /// paused·interrupted·failed로 바뀐 시각(unix 초). 그 밖 상태는 `None`, 옛 레코드에는 없다.
+    /// `finished_at`은 완료·건너뜀 전용(정렬에 쓰인다)이라 재사용하지 않는다
+    #[serde(default)]
+    pub stopped_at: Option<u64>,
     #[serde(default)]
     pub final_bytes: Option<u64>,
     #[serde(default)]
@@ -104,6 +108,22 @@ impl JobRecord {
             missing: self.missing,
             created_at: self.created_at,
             finished_at: self.finished_at,
+            stopped_at: self.stopped_at,
+        }
+    }
+
+    /// 상태를 바꾸고 `stopped_at`을 맞춘다: paused·interrupted·failed로 바꾸면 `now`, queued·running·completed·
+    /// skipped로 바꾸면 `None`. pausing은 멈추는 중이라 건드리지 않는다.
+    pub fn set_status(&mut self, status: JobStatus, now: u64) {
+        self.status = status;
+        match status {
+            JobStatus::Paused | JobStatus::Interrupted | JobStatus::Failed => {
+                self.stopped_at = Some(now);
+            }
+            JobStatus::Queued | JobStatus::Running | JobStatus::Completed | JobStatus::Skipped => {
+                self.stopped_at = None
+            }
+            JobStatus::Pausing => {}
         }
     }
 }
@@ -265,7 +285,7 @@ fn parse(bytes: &[u8]) -> Result<JobsFile, String> {
 ///
 /// | 저장된 상태 | 파일 | 결과 |
 /// |---|---|---|
-/// | `running`·`pausing`·`queued` | - | `interrupted`(자동 재개는 매니저가 설정을 보고 따로 한다) |
+/// | `running`·`pausing`·`queued` | - | `interrupted`(자동 재개는 매니저가 설정을 보고 따로 한다), `stopped_at`이 없으면 지금 |
 /// | `paused`·`interrupted`·`failed`·`skipped` | `.part`·sidecar가 있고 같은 작업 | `partial_bytes = committed_len` |
 /// | 〃 | 그 밖 | `partial_bytes = None` |
 /// | `completed` | 최종 파일 없음 | `missing = true` |
@@ -278,6 +298,8 @@ pub fn reconcile(file: &mut JobsFile) {
             JobStatus::Running | JobStatus::Pausing | JobStatus::Queued
         ) {
             j.status = JobStatus::Interrupted;
+            // 이미 있으면(일시정지 중 앱이 꺼진 pausing 등) 처음 멈춘 시각을 지킨다
+            j.stopped_at.get_or_insert_with(now_secs);
         }
         j.partial_bytes = None;
         j.missing = false;

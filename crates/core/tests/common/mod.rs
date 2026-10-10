@@ -45,6 +45,9 @@ pub fn config(server: &MockServer) -> ClientConfig {
             max_attempts: 5,
             base: Duration::from_millis(1),
             cap: Duration::from_millis(4),
+            // 테스트는 연결 대기(인내)를 기다리지 않는다.
+            patience: Duration::ZERO,
+            patience_cap: Duration::ZERO,
         },
         progress_interval: Duration::ZERO,
         connect_timeout: Duration::from_secs(5),
@@ -273,6 +276,179 @@ pub fn synth_expected(n: usize) -> Vec<u8> {
     let mut v = synth_init();
     for i in 0..n {
         v.extend(synth_segment(i));
+    }
+    v
+}
+
+// ---- 연결 단절 도구(core.md 구현 중 변경 56) ----
+
+use std::io::{Read, Write};
+use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Instant;
+
+/// 업스트림(wiremock) 앞에 서서 연결을 끊었다 이었다 하는 TCP 프록시.
+///
+/// - `down_for(d)`: 지금부터 `d` 동안 새 연결을 받자마자 끊는다(클라이언트에는 연결 계열 `Network` 오류).
+///   이미 열린 연결은 건드리지 않는다. 단절 직전의 응답은 `Connection: close`로 보내면 연결이 재사용되지 않는다.
+/// - `cut_after`: 연결마다 업스트림 → 클라이언트로 이만큼의 바이트(헤더 포함)만 흘리고 끊는다.
+///   끊은 뒤 `cut_gap` 동안 단절한다(받다가 끊기는 회선을 흉내 낸다).
+pub struct GateProxy {
+    addr: SocketAddr,
+    state: Arc<GateState>,
+    stop: Arc<AtomicBool>,
+}
+
+struct GateState {
+    down_until: Mutex<Instant>,
+    cut_after: Option<usize>,
+    cut_gap: Duration,
+    /// 단절 중 끊어 낸 연결 수
+    refused: std::sync::atomic::AtomicUsize,
+}
+
+impl GateState {
+    fn is_down(&self) -> bool {
+        Instant::now() < *self.down_until.lock().unwrap()
+    }
+    fn down_for(&self, d: Duration) {
+        *self.down_until.lock().unwrap() = Instant::now() + d;
+    }
+}
+
+/// 단절을 켜고 끌 수 있는 손잡이(응답기 안에서 쓴다).
+#[derive(Clone)]
+pub struct Gate(Arc<GateState>);
+
+impl Gate {
+    pub fn down_for(&self, d: Duration) {
+        self.0.down_for(d);
+    }
+}
+
+impl GateProxy {
+    pub fn start(upstream: SocketAddr) -> Self {
+        Self::start_with(upstream, None, Duration::ZERO)
+    }
+
+    pub fn start_with(upstream: SocketAddr, cut_after: Option<usize>, cut_gap: Duration) -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let addr = listener.local_addr().unwrap();
+        let state = Arc::new(GateState {
+            down_until: Mutex::new(Instant::now()),
+            cut_after,
+            cut_gap,
+            refused: Default::default(),
+        });
+        let stop = Arc::new(AtomicBool::new(false));
+        let (st, sp) = (state.clone(), stop.clone());
+        std::thread::spawn(move || {
+            while !sp.load(Ordering::Relaxed) {
+                match listener.accept() {
+                    Ok((client, _)) => {
+                        client.set_nonblocking(false).unwrap();
+                        if st.is_down() {
+                            st.refused.fetch_add(1, Ordering::Relaxed);
+                            drop(client);
+                            continue;
+                        }
+                        let st = st.clone();
+                        std::thread::spawn(move || relay(client, upstream, st));
+                    }
+                    Err(_) => std::thread::sleep(Duration::from_millis(2)),
+                }
+            }
+        });
+        GateProxy { addr, state, stop }
+    }
+
+    pub fn url(&self) -> String {
+        format!("http://{}", self.addr)
+    }
+
+    pub fn gate(&self) -> Gate {
+        Gate(self.state.clone())
+    }
+
+    pub fn down_for(&self, d: Duration) {
+        self.state.down_for(d);
+    }
+
+    /// 단절 중 끊어 낸 연결 수
+    pub fn refused(&self) -> usize {
+        self.state.refused.load(Ordering::Relaxed)
+    }
+}
+
+impl Drop for GateProxy {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+    }
+}
+
+/// 연결 하나를 업스트림에 이어 주고, `cut_after`를 넘으면 끊는다.
+fn relay(client: TcpStream, upstream: SocketAddr, st: Arc<GateState>) {
+    let Ok(up) = TcpStream::connect(upstream) else {
+        return;
+    };
+    let (Ok(mut c_read), Ok(mut u_write)) = (client.try_clone(), up.try_clone()) else {
+        return;
+    };
+    std::thread::spawn(move || {
+        let mut buf = [0u8; 8192];
+        while let Ok(n) = c_read.read(&mut buf) {
+            if n == 0 || u_write.write_all(&buf[..n]).is_err() {
+                break;
+            }
+        }
+        let _ = u_write.shutdown(Shutdown::Write);
+    });
+    let (mut u_read, mut c_write) = (up, client);
+    let mut sent = 0usize;
+    let mut buf = [0u8; 8192];
+    while let Ok(n) = u_read.read(&mut buf) {
+        if n == 0 {
+            break;
+        }
+        let n = match st.cut_after {
+            Some(limit) => n.min(limit.saturating_sub(sent)),
+            None => n,
+        };
+        if n > 0 && c_write.write_all(&buf[..n]).is_err() {
+            break;
+        }
+        sent += n;
+        if st.cut_after.is_some_and(|limit| sent >= limit) {
+            st.down_for(st.cut_gap);
+            break;
+        }
+    }
+    let _ = c_write.shutdown(Shutdown::Both);
+}
+
+/// `template` 응답을 보내면서 동시에 `gate`를 `outage` 동안 끊고, 연결을 닫게 하는 응답기.
+/// (이 응답 직후의 요청이 단절 중에 일어나게 한다. `Connection: close`라 연결이 재사용되지 않는다.)
+pub struct ThenOutage {
+    pub gate: Gate,
+    pub outage: Duration,
+    pub template: ResponseTemplate,
+}
+
+impl Respond for ThenOutage {
+    fn respond(&self, _: &Request) -> ResponseTemplate {
+        self.gate.down_for(self.outage);
+        self.template.clone().insert_header("connection", "close")
+    }
+}
+
+/// 연속한 같은 phase를 하나로 접은 순서.
+pub fn phase_order(events: &Events) -> Vec<chzzk_core::Phase> {
+    let mut v: Vec<chzzk_core::Phase> = Vec::new();
+    for p in events.all() {
+        if v.last() != Some(&p.phase) {
+            v.push(p.phase);
+        }
     }
     v
 }

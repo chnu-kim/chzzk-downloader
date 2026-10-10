@@ -49,3 +49,10 @@ tokio = { version = "1.53.2", default-features = false, features = ["macros", "r
 [target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
 tauri-plugin-single-instance = "2.5.2"
 tauri-plugin-updater = "2.13.1"
+# 창 위치·크기·최대화 복원(Rust 전용, JS 권한 없음). 2.5.0은 배포 14일째라 한 단계 아래 2.4.1에 고정한다(=)
+tauri-plugin-window-state = "=2.4.1"
+
+# Windows 릴리스 WebView2 보강(webview_win.rs). 버전은 wry와 같다
+[target.'cfg(windows)'.dependencies]
+webview2-com = "0.39.1"
+windows = "0.62.2"

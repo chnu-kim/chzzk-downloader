@@ -1,7 +1,7 @@
 //! 앱 경로와 설정 서비스(docs/design/app.md §3 "쿠키 토글은 클라이언트 교체", §7.2).
 //!
 //! - **`AppPaths`**: Tauri가 준 폴더로 만든다. 기본 저장 폴더는 `비디오/치지직` → `다운로드/치지직` →
-//!   `{data}/downloads` 순서다(§16). Tauri에 의존하지 않도록 OS 폴더는 인자로 받는다.
+//!   `홈/치지직` → `{data}/downloads` 순서다(§16, platform §16.1). Tauri에 의존하지 않도록 OS 폴더는 인자로 받는다.
 //! - **`SettingsService`**: `SettingsStore`(settings.json)·`CredentialStore`(credentials.json)·코어 클라이언트를
 //!   한곳에서 관리한다. 코어 `Chzzk`는 만들 때 쿠키를 굳히므로, 쿠키 사용 여부·쿠키 값이 바뀌면 **새 클라이언트를
 //!   먼저 만들고 → 저장하고 → 바꿔 끼운다**. 만들기에 실패하면(헤더로 보낼 수 없는 쿠키) 아무것도 저장하지 않고,
@@ -19,9 +19,8 @@ use std::time::Duration;
 use chzzk_core::download::MAX_CONCURRENCY;
 use chzzk_core::settings::{MAX_RECENT_VODS, SETTINGS_FILE};
 use chzzk_core::{
-    Chzzk, ClientConfig, ContentRef, CredentialStore, NaverCookies, Platform, PlaybackKind,
-    RecentKind, SettingsStore, TextScale, Theme, UserSettings, add_recent_vod_with,
-    parse_content_url,
+    Chzzk, ClientConfig, ContentRef, CredentialStore, NaverCookies, PlaybackKind, RecentKind,
+    SettingsStore, TextScale, Theme, UserSettings, add_recent_vod_with, parse_content_url,
 };
 
 use crate::backend::Backend;
@@ -32,6 +31,7 @@ use crate::dto::{
 use crate::error::AppError;
 use crate::manager::{ClientFn, DownloadManager, JobDefaults, MAX_PARALLEL, MIN_PARALLEL};
 use crate::ownership::OwnershipGate;
+use crate::volume;
 
 /// 기본 저장 폴더 이름(비디오·다운로드 폴더 아래).
 pub const DEFAULT_FOLDER_NAME: &str = "치지직";
@@ -53,16 +53,22 @@ pub struct AppPaths {
 }
 
 impl AppPaths {
-    /// `video`·`downloads`는 OS 비디오·다운로드 폴더(Tauri `video_dir()`·`download_dir()`, 없으면 `None`).
+    /// `video`·`downloads`·`home`은 OS 비디오·다운로드·홈 폴더(Tauri `video_dir()`·`download_dir()`·`home_dir()`,
+    /// 없으면 `None`).
     pub fn new(
         config: PathBuf,
         data: PathBuf,
         log: PathBuf,
         video: Option<PathBuf>,
         downloads: Option<PathBuf>,
+        home: Option<PathBuf>,
     ) -> Self {
-        let default_download =
-            default_download_folder(video.as_deref(), downloads.as_deref(), &data);
+        let default_download = default_download_folder(
+            video.as_deref(),
+            downloads.as_deref(),
+            home.as_deref(),
+            &data,
+        );
         AppPaths {
             config,
             data,
@@ -72,16 +78,20 @@ impl AppPaths {
     }
 }
 
-/// 기본 저장 폴더: `video/치지직` → `downloads/치지직` → `{data}/downloads`.
+/// 기본 저장 폴더: `video/치지직` → `downloads/치지직` → `home/치지직` → `{data}/downloads`.
+///
+/// 마지막 `{data}/downloads`는 홈 폴더조차 없을 때만 닿는 자리다(실제로는 거의 닿지 않는다). 사용자가 자기 파일을
+/// 찾을 수 없는 앱 데이터 폴더 안이라 홈을 앞에 둔다(platform §16.1, X8).
 ///
 /// OS 폴더는 절대 경로이고, UTF-8이며, 실제로 있는 폴더일 때만 쓴다. UTF-8이 아닌 폴더는 작업 목록에 저장할
 /// 수 없어 매니저가 거부하므로(구현 중 변경 33) 처음부터 고르지 않는다. `치지직` 폴더는 첫 다운로드 때 코어가 만든다.
 pub fn default_download_folder(
     video: Option<&Path>,
     downloads: Option<&Path>,
+    home: Option<&Path>,
     data: &Path,
 ) -> PathBuf {
-    [video, downloads]
+    [video, downloads, home]
         .into_iter()
         .flatten()
         .find(|d| d.is_absolute() && d.to_str().is_some() && d.is_dir())
@@ -291,6 +301,9 @@ impl SettingsService {
             if let Some(t) = patch.theme {
                 s.theme = t;
             }
+            if let Some(on) = patch.keep_awake {
+                s.keep_awake = on;
+            }
         })?;
         if let Some(c) = new_client {
             self.swap(c);
@@ -474,7 +487,8 @@ impl SettingsService {
             url.to_string(),
             &r,
             last.as_deref(),
-            Platform::current(),
+            // 이름 규칙은 저장 폴더가 놓인 볼륨 기준이다(FAT·exFAT·NTFS·원격은 Windows 규칙, core.md 57).
+            volume::platform_for_dir(&self.effective_download_folder()),
             gate.on_resolved(&r.content, &r.meta),
         ))
     }
@@ -500,6 +514,7 @@ impl SettingsService {
             imported_from: s.imported_from.as_deref().map(path_string),
             text_scale: s.text_scale,
             theme: s.theme,
+            keep_awake: s.keep_awake,
         }
     }
 

@@ -21,4 +21,4 @@ maxParallelDownloads?: number, autoResumeInterrupted?: boolean, textScale?: Text
 /**
  * 다른 OS에서도 받아 저장한다(화면이 Linux에서만 보낸다)
  */
-theme?: Theme, };
+theme?: Theme, keepAwake?: boolean, };

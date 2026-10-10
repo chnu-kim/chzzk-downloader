@@ -17,9 +17,10 @@ use ::url::Url;
 use bytes::Bytes;
 use futures_util::StreamExt;
 use futures_util::stream;
+use tokio::time::Instant as TokioInstant;
 
 use super::part::{HlsState, PartFile, Sidecar};
-use super::retry::{Failure, RetryPolicy, classify_failure};
+use super::retry::{Failure, Patience, RetryPolicy, classify_failure, is_connection_failure};
 use super::{DownloadOutcome, Job, MAX_CONCURRENCY, finish};
 use crate::client::{Chzzk, MAX_API_BODY, read_capped};
 use crate::error::{Error, Unsupported};
@@ -192,6 +193,10 @@ pub(crate) async fn run(
     let mut since_cp = 0u32;
     // 재조회한 뒤 아직 받지 못한 세그먼트 index. 그 세그먼트가 또 403이면 인증 문제다.
     let mut refreshed_at: Option<u32> = None;
+    // 빠른 재시도(`fetch`)를 다 쓴 연결 계열 실패의 인내 장부(core.md 구현 중 변경 56)
+    let mut patience = Patience::default();
+    // 마지막 진전(또는 스트림 시작) 이후 시각. 실패한 시도가 예산에서 차지하는 시간을 잰다.
+    let mut since_progress = TokioInstant::now();
     'refresh: loop {
         let uris: Vec<Url> = loaded.playlist.segments[next as usize..]
             .iter()
@@ -222,8 +227,20 @@ pub(crate) async fn run(
                     refreshed_at = Some(next);
                     continue 'refresh;
                 }
+                Err(Failure::Retry(e)) if is_connection_failure(&e) => {
+                    // 스트림을 버리고(진행 중 fetch 취소) 기다린 뒤 `next`부터 다시 시작한다.
+                    drop(segs);
+                    job.wait_for_network(&mut patience, e, since_progress.elapsed())
+                        .await?;
+                    since_progress = TokioInstant::now();
+                    continue 'refresh;
+                }
                 Err(Failure::Retry(e) | Failure::Fatal(e)) => return Err(e),
             };
+            // 진전: 인내 시계를 처음부터 센다.
+            patience.reset();
+            since_progress = TokioInstant::now();
+            job.resume_downloading();
             p.write(&bytes)?;
             done_ms += u64::from(durations[next as usize]);
             next += 1;
@@ -252,6 +269,7 @@ pub(crate) async fn run(
 /// 재조회 결과가 DASH(`inKey`)로 바뀌었으면 `Job::reresolve`가 `PlaybackChanged`를 낸다.
 async fn acquire(job: &mut Job<'_>, mut src: Option<(Url, Vec<Quality>)>) -> Result<Loaded, Error> {
     let mut just_refreshed = false;
+    let mut patience = Patience::default();
     loop {
         let (master_url, tracks) = match src.take() {
             Some(x) => x,
@@ -269,8 +287,18 @@ async fn acquire(job: &mut Job<'_>, mut src: Option<(Url, Vec<Quality>)>) -> Res
                 }
             }
         };
+        let started = TokioInstant::now();
         match load(job, &master_url, &tracks).await {
-            Ok(l) => return Ok(l),
+            Ok(l) => {
+                job.resume_downloading();
+                return Ok(l);
+            }
+            // playlist·init 연결 실패도 같은 인내: 같은 주소로 다시 받는다.
+            Err(Failure::Retry(e)) if is_connection_failure(&e) => {
+                job.wait_for_network(&mut patience, e, started.elapsed())
+                    .await?;
+                src = Some((master_url, tracks));
+            }
             Err(Failure::Expired) if just_refreshed => {
                 return Err(Error::AuthRequired { status: 403 });
             }

@@ -4,6 +4,7 @@
 //   node scripts/ci/artifact-check.mjs glibc [--max 2.35] [--file <경로>]   # objdump -T의 GLIBC_x.y 최댓값 ≤ max(Linux)
 //   node scripts/ci/artifact-check.mjs hygiene [--file <경로>]               # 바이너리에 E2E 표식 없음 + cargo tree에 e2e feature 없음
 //                                                                           # + app/dist에 디자인 갤러리 없음(gallery.html·갤러리 표식)
+//                                                                           # + (바이너리 검사 앞) 소스 훑기 DX14 금지 글자·DX15 전원 심볼 위치·DX16 WebKit 환경 변수
 //   node scripts/ci/artifact-check.mjs hygiene-seed [--file <경로>]          # 거꾸로: --features e2e 빌드(기본 <target>/debug)에는
 //                                                                           # 표식이 있고 cargo tree --features e2e에 e2e가 보여야 한다.
 //                                                                           # hygiene 검사가 e2e 빌드를 실제로 알아보는지(씨앗) 증명한다
@@ -131,7 +132,80 @@ function cmdHygieneSeed(file) {
   return bad ? 1 : 0;
 }
 
-function cmdHygiene(file, dist = join(ROOT, APP_DIST)) {
+// ---- 소스 훑기(DX14~16, docs/design/cicd.md 구현 중 변경 114) ----
+// 바이너리·dist 없이 소스만 본다. 금지 글자는 이 파일에서 조각을 이어 써서 검사기 자신이 걸리지 않게 한다(.rs만 훑으므로 어차피 대상 밖).
+// DX14: 시스템 잠자기·화면 켜짐·덮개 닫힘·절전 전체 끄기를 건드리는 심볼은 어디에도 없어야 한다.
+export const DX14_FORBIDDEN = ['PreventSystem' + 'Sleep', 'ES_AWAYMODE_' + 'REQUIRED', 'ES_DISPLAY_' + 'REQUIRED', 'PreventUserIdleDisplay' + 'Sleep', 'handle-lid-' + 'switch', 'disable' + 'sleep'];
+// DX15: 전원 심볼은 power 모듈에만(Cargo.toml은 .rs가 아니라 훑지 않는다)
+export const DX15_POWER_SYMBOLS = ['keep' + 'awake', 'IOPM' + 'Assertion', 'SetThreadExecution' + 'State', 'PowerCreate' + 'Request', 'beginActivityWith' + 'Options', 'org.freedesktop.' + 'login1'];
+export const DX15_ALLOWED_PREFIXES = ['crates/shell/src/power', 'app/src-tauri/src/power'];
+// DX16: WebKit·NVIDIA 우회 환경 변수는 앱이 set_var로 켜지 않는다(사용자가 환경으로 준다)
+const DX16_VARS = '(?:WEBKIT_DISABLE_|__NV_DISABLE_)';
+
+/** files: [{ path(저장소 상대, / 구분), text }] → 위반 문자열 목록 */
+export function scanSources(files) {
+  const out = [];
+  const lineOf = (text, idx) => text.slice(0, idx).split('\n').length;
+  for (const { path, text } of files) {
+    for (const w of DX14_FORBIDDEN) {
+      const i = text.indexOf(w);
+      if (i >= 0) out.push(`DX14 ${path}:${lineOf(text, i)} 금지 글자 ${w}`);
+    }
+    if (text.includes('keep' + 'awake::')) {
+      for (const need of ['.display(false)', '.sleep(false)']) {
+        if (!text.includes(need)) out.push(`DX14 ${path} keep${'awake'} 빌더에 ${need}가 없다(.display(false)·.sleep(false)를 명시한다)`);
+      }
+    }
+    if (!DX15_ALLOWED_PREFIXES.some((pre) => path.startsWith(pre))) {
+      for (const sym of DX15_POWER_SYMBOLS) {
+        const i = text.indexOf(sym);
+        if (i >= 0) out.push(`DX15 ${path}:${lineOf(text, i)} 전원 심볼 ${sym}는 power 모듈에만 둔다`);
+      }
+    }
+    // 같은 줄에 set_var와 변수 이름, 또는 set_var( 인자(줄 바꿈 포함)가 그 변수
+    const lines = text.split('\n');
+    lines.forEach((l, n) => {
+      if (new RegExp(DX16_VARS).test(l) && l.includes('set_var')) out.push(`DX16 ${path}:${n + 1} ${l.trim().slice(0, 80)}`);
+    });
+    const re = new RegExp(`set_var\\s*\\(\\s*"?${DX16_VARS}`, 'g');
+    for (let m; (m = re.exec(text)); ) {
+      const n = lineOf(text, m.index);
+      if (!out.some((o) => o.startsWith(`DX16 ${path}:${n} `))) out.push(`DX16 ${path}:${n} set_var 인자`);
+    }
+  }
+  return out;
+}
+
+/** 훑을 .rs 파일: crates/**·app/src-tauri/src/** (target·node_modules 제외) */
+export function sourceFiles(root = ROOT) {
+  const out = [];
+  const walk = (rel) => {
+    let ents;
+    try {
+      ents = readdirSync(join(root, rel), { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of ents) {
+      const r = `${rel}/${e.name}`;
+      if (e.isDirectory()) {
+        if (e.name !== 'target' && e.name !== 'node_modules') walk(r);
+      } else if (e.name.endsWith('.rs')) out.push({ path: r, text: readFileSync(join(root, r), 'utf8') });
+    }
+  };
+  walk('crates');
+  walk('app/src-tauri/src');
+  return out;
+}
+
+function cmdHygiene(file, dist = join(ROOT, APP_DIST), root = ROOT) {
+  // 소스 훑기는 바이너리·dist 없이도 돈다. 위반이면 이 단계만으로도 1
+  const src = scanSources(sourceFiles(root));
+  if (src.length) {
+    console.error(`::error::release-hygiene: 소스 훑기 위반 ${src.length}건:\n${src.join('\n')}`);
+    return 1;
+  }
+  console.log('hygiene: 소스 훑기(DX14 금지 글자·DX15 전원 심볼 위치·DX16 WebKit 환경 변수) 위반 없음');
   if (!existsSync(file)) {
     console.error(`hygiene: ${file}가 없다`);
     return 2;

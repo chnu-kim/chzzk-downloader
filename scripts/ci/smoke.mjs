@@ -4,7 +4,8 @@
 //   node scripts/ci/smoke.mjs bin [--exe <경로>]       # debug 빌드(기본 <target>/debug/chzzk-app[.exe]) — smoke-bin gate
 //   node scripts/ci/smoke.mjs install [--dir <폴더>]   # 번들 설치본(기본 target/ci/bundle) — smoke-install gate
 //
-// 마커는 정확히 {"version": <워크스페이스 버전>, "ready": true, "auth": <bool>}여야 한다. 설치 스모크(릴리스 번들)는 auth가 true여야 한다
+// 마커는 정확히 여섯 키(auth·probe·ready·t_ready_ms·t_show_ms·version)여야 한다: ready true, version 일치, auth 불리언,
+// probe 다섯 키 모두 true(웹 엔진 기능 검사), t_*는 0 이상 정수(출력만, ratchet 아님). 설치 스모크(릴리스 번들)는 auth가 true여야 한다
 // (Worker 주소 규칙이 실제 산출물에서 지켜졌다는 증거, worker.md 구현 중 변경 59). 앱은 60초 안에 프런트 신호가 없으면 스스로
 // exit 2로 끝나고, 여기서는 그보다 긴 바깥 시간 제한(SMOKE_KILL_MS)으로 멈춘 프로세스를 죽인다.
 // Linux는 DISPLAY가 없으면 `xvfb-run -a`로 감싼다. 설치 스모크는 설치 → 실행 → 제거 → 제거 확인까지 한다:
@@ -36,7 +37,9 @@ import { ROOT, workspaceVersion } from './gates.mjs';
 
 const IS_WIN = process.platform === 'win32';
 export const SMOKE_KILL_MS = 120_000;
-const MARKER_KEYS = ['auth', 'ready', 'version'];
+const MARKER_KEYS = ['auth', 'probe', 'ready', 't_ready_ms', 't_show_ms', 'version'];
+// 엔진 프로브 키(EngineProbe, camelCase). 하나라도 false면 baseline보다 오래된 웹 엔진이다
+export const PROBE_KEYS = ['colorMix', 'containerQuery', 'has', 'inert', 'oklch'];
 
 // 마커 텍스트 → { ok, why }
 export function checkMarker(text, version, { auth } = {}) {
@@ -53,7 +56,17 @@ export function checkMarker(text, version, { auth } = {}) {
   if (v.version !== version) return { ok: false, why: `version ${JSON.stringify(v.version)} ≠ 워크스페이스 ${version}` };
   if (typeof v.auth !== 'boolean') return { ok: false, why: `auth = ${JSON.stringify(v.auth)}(불리언이 아니다)` };
   if (auth !== undefined && v.auth !== auth) return { ok: false, why: `auth = ${v.auth}(릴리스 번들은 로그인이 켜져 있어야 한다)` };
-  return { ok: true, why: null };
+  // probe: 정확히 다섯 키, 모두 true(설치 스모크도 최신 러너 이미지에서 돈다)
+  const p = v.probe;
+  if (p === null || typeof p !== 'object' || Array.isArray(p)) return { ok: false, why: `probe = ${JSON.stringify(p)}(객체가 아니다)` };
+  const pk = Object.keys(p).sort();
+  if (pk.join(',') !== PROBE_KEYS.join(',')) return { ok: false, why: `probe 키 ${pk.join(',')} ≠ ${PROBE_KEYS.join(',')}` };
+  const bad = PROBE_KEYS.filter((k) => p[k] !== true);
+  if (bad.length) return { ok: false, why: `probe가 true가 아니다: ${bad.map((k) => `${k}=${JSON.stringify(p[k])}`).join(', ')}(웹 엔진이 baseline보다 오래됐다)` };
+  for (const k of ['t_show_ms', 't_ready_ms']) {
+    if (!Number.isInteger(v[k]) || v[k] < 0) return { ok: false, why: `${k} = ${JSON.stringify(v[k])}(0 이상 정수가 아니다)` };
+  }
+  return { ok: true, why: null, tShowMs: v.t_show_ms, tReadyMs: v.t_ready_ms };
 }
 
 // 플랫폼 이름(번들 표의 키)
@@ -239,6 +252,7 @@ export function runSmoke(exe, { env = {}, label = basename(exe), auth } = {}) {
     if (text === null) return { ok: false, why: 'exit 0인데 마커 파일이 없다' };
     const m = checkMarker(text, version, { auth });
     if (!m.ok) return m;
+    log(`${label}: t_show_ms=${m.tShowMs} t_ready_ms=${m.tReadyMs}(관찰만)`);
     log(`${label}: 통과(${secs}초)`);
     return { ok: true, why: null };
   } finally {

@@ -106,7 +106,7 @@
 | 자리 | 흐름 안, 본문 열의 **첫 요소**(입력줄 위). 층 없음 | GOV.UK "h1 바로 앞"(inter §4.1), foundations §7.2(배너는 층이 없다) |
 | 모양 | `Notice variant=banner`: 열 안쪽 폭 전체, 패딩·반경·아이콘은 `components.md` §2.12 표, 글자 body 13, 동작은 오른쪽 끝(`secondary sm`), 그 오른쪽 [×] | `A-FEAT-C6`(동작 위치 4종 → 하나) |
 | 면 | 정보 `--surface-2` + `info` `--fg-muted`, 경고·공지 block `--warning-soft` + `--warning-ink`, 오류 `--danger-soft` + `--danger-ink` | README D10(정보 = 중립, `A-VIS-41` 해소), D37, D41(block은 danger가 아니다) |
-| 개수 | **한 번에 하나.** 오류 먼저(README D37): ① B2 설정 저장 실패(danger) ② B4 업데이트 실패(warning: "지금 버전은 계속 쓸 수 있어요") ③ B4 진행(받는 중·설치 중, 닫기 없음) ④ B5 `block`·`warn` ⑤ B1 받다 만 영상 ⑥ B4 새 버전 ⑦ B5 `info`. B4와 B5의 `fixedIn`이 같은 버전이면 한 장으로 합친다 | `G-OUTAGE-B1`·`G-OUTAGE-B5`(info 면은 D10이 뒤집음), README D37·D41, `app.md` 구현 중 변경 62·73 |
+| 개수 | **한 번에 하나.** 오류 먼저(README D37): ① B2 설정 저장 실패(danger) ② B4 업데이트 실패(warning: "지금 버전은 계속 쓸 수 있어요") ③ B4 진행(받는 중·설치 중, 닫기 없음) ④ 엔진 경고(`engine.old.*`, warning, 이번 실행만 닫음, 단계 (f)) ⑤ B5 `block`·`warn` ⑥ B1 받다 만 영상 ⑦ B4 새 버전 ⑧ B5 `info`. B4와 B5의 `fixedIn`이 같은 버전이면 한 장으로 합친다 | `G-OUTAGE-B1`·`G-OUTAGE-B5`(info 면은 D10이 뒤집음), README D37·D41, `app.md` 구현 중 변경 62·73 |
 | 닫기 | B1·B4·B5 `info`·`warn`은 [×]로 이번 실행 동안 숨김(B5는 같은 `id`). B2는 해결될 때까지. B4 진행은 닫기 없음 | 같은 문서 §4.4-7 |
 | 로그인 화면 | 로그인 화면이 열린 동안 배너는 꺼진다. 대신 로그인 패널 안에 B5 한 줄을 둔다(§13) | `worker.md` 구현 중 변경 62 (가), g-outage §8.2 |
 
@@ -228,7 +228,7 @@
 | 받는 중(빠른 다시보기) | `active` | 있음 | `job.runningSegmented`(… · 조각 {done}/{total} · …) | — | 같음 |
 | 준비 중(`resolving`) | `value: null` | 숨김 | `job.status.resolving`(준비 중) | — | [취소] [⋯] |
 | 주소 재취득(`reresolving`) | `waiting` | 유지 | `job.phase.reresolving`(주소를 새로 받는 중 · {received} / {total}) | — | [일시정지] [취소…] [⋯] |
-| 연결 대기(`waitingNetwork`) | `waiting` | 유지 | `job.status.waitingNetwork`(연결 대기 중 · {elapsed}째 · {received} 받음) | `job.waitingNetwork.body` | [일시정지] [취소…] [⋯] |
+| 연결 대기(`waitingNetwork`) | `waiting` | 유지 | `job.status.waitingNetwork`(연결 대기 중 · {elapsed} · {received} 받음, `{elapsed}`는 `formatElapsed`가 `2분째`처럼 `째`까지 만든다) | `job.waitingNetwork.body` | [일시정지] [취소…] [⋯] |
 | 이어받은 직후 `RECOVERY_NOTICE_MS` | `active` | 있음 | 끝에 `job.resumedFrom`(· {size}부터 이어받음) | — | 같음 |
 | 회복 직후(1분 넘긴 단절) | `active` | 있음 | 그대로 | `job.recovered.body` | 같음 |
 | 마무리 중(`finalizing`) | 마지막 값 유지 | 마지막 값 | `job.status.finalizing`(마무리 중) | — | [⋯] |
@@ -240,7 +240,7 @@
 | 완료 | 없음 | 없음 | ✓ + `job.completed`(완료 · {size} · {time}) | — | [열기] [Finder에서 보기 / 폴더에서 보기] [⋯] |
 | 완료 · 파일 없음 | 없음 | 없음 | ⚠ + `job.completedMissing`(완료 · 파일 없음) | `job.completedMissing.body` | [폴더에서 보기] [처음부터 다시 받기] [⋯] |
 | 건너뜀 | 없음 | 없음 | `job.status.skipped`(받지 않음) | `job.skipped.body` | [열기] [덮어쓰고 받기…] [⋯] |
-| 멈춘 지 `STALE_DAYS` 넘음 | 그대로 | 유지 | 그대로 | `job.stale.body`({n}일 전에 멈췄어요 · 디스크 {size} 차지) | 그대로 |
+| 멈춘 지 `STALE_DAYS` 넘음 | 그대로 | 유지 | 그대로 | `job.stale.body`({days}일 전에 멈췄어요. 디스크에 {size} 남아 있어요.) | 그대로 |
 
 - 막대의 색·줄무늬·forced-colors 매핑은 `components.md` §2.20이 원천이다(연결 대기·주소 재취득은 `--accent` 줄무늬 정지, 일시정지 `--border-strong`, 실패 `--danger`).
 - 색 세 겹: 막대 색 + 상태 아이콘 + 글자. 상태 레일은 없다(ADR-0003, judgment §2.2 "레일 폐기", `A-VIS-20`).
@@ -898,5 +898,7 @@ Worker는 JS가 없다(README D52). 이 문서의 패턴은 다음으로 대응�
 30. **(c) 완료 · 파일 없음 행의 [처음부터 다시 받기]는 아직 없다.** §3.2 표에는 있지만 매니저 `resume`이 `completed`에 `invalidInput`을 돌려줘 버튼을 달 수 없다. 달려면 Rust 변경이 필요해 이월한다(§3.2의 나머지 구성은 구현됐다).
 31. **(c) 파일 이름 행의 [원래 이름으로]는 이름이 원래와 다를 때만 그린다**(ghost sm `.edge-end`, `filename.reset`). §6.4가 사유 없는 비활성을 숨기라고 하므로 원래 이름이면 버튼이 없고, §6.5 목업은 이름을 바꾼 뒤의 모양이다. 누르면 입력이 제안 이름으로 돌아가고 버튼은 사라진다(`receive.test.ts`가 고정한다). 완료 그룹 머리는 components §7-36 (가)의 `Disclosure variant="group"`이다(§14.3).
 32. **(d) 표 안 키 이름을 deck 기준으로 바로잡았다.** 대기 항목 [취소]는 `common.cancel`(옛 action.cancelQueued), 클립보드 제안은 `url.clipboard.title`, 드롭 오버레이는 `url.dropHere`다. 종류 차단·서킷 문구는 기능이 (f) 이후라 키 없이 문장으로 둔다(`content.md` §19-15). 다른 표와 와이어프레임의 동작은 바뀌지 않았다.
+
+33. **(f) 연결 대기·회복·멈춘 지 30일 행이 생겼다**(§3.2 표의 세 행). 연결 대기는 `phase = waitingNetwork`(`running` 안, 상태가 아니다)이고 퍼센트는 P-4 바닥을 따라 처음 보인 값을 유지한다. 진입은 polite 알림 한 번(스냅샷으로 이미 대기 중인 작업은 알리지 않는다). 회복 줄은 `waiting → running`으로 벗어나고 머문 시간이 `RECOVERY_SILENT_MS` 이상일 때만 `RECOVERY_NOTICE_MS` 동안 뜬다(일시정지·실패·삭제로 벗어나면 회복이 아니라서 줄이 없다). 멈춘 지 30일 줄은 paused·interrupted·failed + `stoppedAt` + `partialBytes > 0` + 지난 일수 ≥ `STALE_DAYS`일 때이고, 실패 작업에서는 오류 본문 아래에 따로 한 줄을 더하며 일시정지·중단에서는 본문이 된다. 같은 단계에서 §1.4 배너 순위에 엔진 경고(④)가 들어왔고(B4 진행 뒤, B5 앞), 설정 › 받기에 `settings.keepAwake` 토글, 받는 중 그룹 머리 옆 `power.keepingAwake` 한 줄이 생겼다. 근거 platform.md §15·§22 26~45, ADR-0024.
 
 초안 §18(충돌)·§19(foundations 요청)은 편집에서 모두 닫혔다: foundations §5.2(`--label-w`·`--pct-w`)·§7.1(토스트 퇴장·`--motion-spin`)·§14(상수)·§4(줄무늬 간격 쓰는 곳)·§5.2(`--dialog-w` 로그인 패널), `content.md` §5.3(라벨 표)·§15(문구 키), `web.md` §6·§7.3, `platform.md` §6·§20, `components.md` §2.10·§2.20·§2.26.

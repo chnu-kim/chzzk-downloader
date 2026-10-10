@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import { HLS_VIDEO_NO, OTHER_VIDEO_NO, STUB_HANDLE } from './e2e-fixture-server.mjs';
-import { judge, judgeWorker, pickWindowsDriver, until } from './e2e-native.mjs';
+import { isWindowVisible, judge, judgeWorker, pickWindowsDriver, until } from './e2e-native.mjs';
 
 const EXP = { sha256: 'a'.repeat(64), bytes: 10 };
 const LOG = [
@@ -113,4 +113,17 @@ test('셀렉터의 한글이 ko.ts 값과 같다(card.download·auth.login·auth
   const pending = val('auth.pending.body');
   const marker = '브라우저에서 치지직 로그인을 마치면';
   assert.ok(pending?.startsWith(marker) && src.includes(`'${marker}'`), 'auth.pending.body 앞부분');
+});
+
+test('isWindowVisible: visible만 참(숨김 창은 기다린다)', () => {
+  assert.equal(isWindowVisible('visible'), true);
+  for (const v of ['hidden', 'prerender', '', null, undefined, true]) assert.equal(isWindowVisible(v), false);
+});
+
+test('창 보임 대기: hidden이 몇 번 지나간 뒤 visible이면 통과', async () => {
+  const seq = ['hidden', 'hidden', 'visible'];
+  let i = 0;
+  const r = await until('창 보임', async () => isWindowVisible(seq[i++]), 5_000);
+  assert.equal(r, true);
+  assert.equal(i, 3);
 });

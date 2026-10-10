@@ -127,6 +127,11 @@ export async function until(what, cond, ms) {
   }
 }
 
+// 창 보임 판정(순수). 창은 처음에 숨겨져 있다가(visible:false) 프런트 신호 뒤에 보이므로,
+// 세션이 열린 직후엔 document.visibilityState가 'hidden'일 수 있다. [잠정] 로컬 확인 불가:
+// 안전장치(SHOW_DEADLINE_MS) 뒤엔 어쨌든 보이므로 STEP_MS 안엔 'visible'이 된다.
+export const isWindowVisible = (state) => state === 'visible';
+
 // 판정: 결과 폴더와 서버 요청 기록 → 문제 목록(빈 배열이면 통과)
 export function judge({ files, sha256, bytes }, serverLog, expected) {
   const bad = [];
@@ -326,6 +331,7 @@ export async function run(exe) {
       if (probe) clearTimeout(probe);
     }
     log(`세션 ${sid}`);
+    await until('창 보임', async () => isWindowVisible(await wd.exec(sid, 'return document.visibilityState')), STEP_MS);
 
     // 로그인: 확인 코드 화면을 거쳐 홈(입력줄)으로 간다. 브라우저는 열지 않는다(E2E 입출력)
     const LOGIN = "//button[normalize-space(.)='치지직으로 로그인']";

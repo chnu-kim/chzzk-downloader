@@ -1,11 +1,13 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
+import { tick } from 'svelte';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { JobDto, JobEvent, SettingsDto } from '../../bindings';
 import { err, job, prog, signedInAs } from '../../../test/jobFixtures';
 import { t } from '../../copy/ko';
 import { errorCopy } from '../../copy/errors';
-import { COMPLETED_FOLD_AT } from '../../timing';
+import { formatFileSize } from '../../format/bytes';
+import { COMPLETED_FOLD_AT, RECOVERY_NOTICE_MS, RECOVERY_SILENT_MS } from '../../timing';
 
 class FakeChannel {
   onmessage: (e: JobEvent) => void = () => {};
@@ -46,6 +48,7 @@ const baseSettings: SettingsDto = {
   importedFrom: null,
   textScale: 'default',
   theme: 'system',
+  keepAwake: true,
 };
 
 let send: (e: JobEvent) => void = () => {};
@@ -640,3 +643,62 @@ describe('막힌 작업(A5)', () => {
     expect(within(item).queryByText(t('job.otherChannel.body'))).toBeNull();
   });
 });
+
+describe('연결 대기·회복·멈춘 지 30일 행(patterns.md §3.2)', () => {
+  const WAIT = prog({ phase: 'waitingNetwork', speedBps: null, etaSecs: null });
+
+  it('연결 대기: 줄무늬 막대·퍼센트 유지, 속도·남은 시간 없음, 본문 한 줄, [일시정지][취소…], 오류 모양 없음', async () => {
+    await load([job(1, { title: '끊긴 영상', status: 'running', progress: WAIT })]);
+    render(JobList);
+    const item = screen.getByRole('article', { name: '끊긴 영상' });
+    expect(within(item).getByText(/^연결 대기 중 · 1분째 · /)).toBeInTheDocument();
+    expect(within(item).queryByText(/\/s|남음/)).toBeNull();
+    expect(within(item).getByText(t('job.waitingNetwork.body'))).toBeInTheDocument();
+    expect(within(item).getByRole('progressbar')).toHaveAttribute('data-state', 'waiting');
+    expect(item.querySelector('.job-pct')).toHaveTextContent('57%');
+    expect(within(item).getByRole('button', { name: t('action.pause') })).toBeInTheDocument();
+    expect(within(item).getByRole('button', { name: t('a11y.cancelJob', { title: '끊긴 영상' }) })).toBeInTheDocument();
+    // 오류가 아니다: 빨강 톤(role=alert / danger)이 없다
+    expect(item.querySelector('.notice.tone-danger, .notice.tone-warning')).toBeNull();
+  });
+
+  it('연결 대기에서 풀려 1분 넘겼으면 회복 줄이 뜨고 RECOVERY_NOTICE_MS 뒤 사라진다', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] });
+    try {
+      await load([job(1, { title: '끊긴 영상', status: 'running', progress: prog() })]);
+      render(JobList);
+      const item = screen.getByRole('article', { name: '끊긴 영상' });
+      send({ type: 'progress', id: 1, progress: WAIT });
+      await tick();
+      expect(within(item).getByText(t('job.waitingNetwork.body'))).toBeInTheDocument();
+      vi.advanceTimersByTime(RECOVERY_SILENT_MS);
+      send({ type: 'progress', id: 1, progress: prog() });
+      await tick();
+      expect(within(item).queryByText(t('job.waitingNetwork.body'))).toBeNull();
+      expect(within(item).getByText(t('job.recovered.body'))).toBeInTheDocument();
+      vi.advanceTimersByTime(RECOVERY_NOTICE_MS);
+      await tick();
+      expect(within(item).queryByText(t('job.recovered.body'))).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('멈춘 지 30일 넘은 일시정지·실패 행에 본문 줄, 29일은 없다', async () => {
+    const nowSecs = Math.floor(Date.now() / 1000);
+    await load([
+      job(1, { title: '오래 멈춘 영상', status: 'paused', partialBytes: 5_000_000, stoppedAt: nowSecs - 31 * 86400 }),
+      job(2, { title: '얼마 안 된 영상', status: 'paused', partialBytes: 5_000_000, stoppedAt: nowSecs - 29 * 86400 }),
+      job(3, { title: '오래 전에 실패한 영상', status: 'failed', error: err('network', { resumable: true }), partialBytes: 5_000_000, stoppedAt: nowSecs - 40 * 86400 }),
+      job(4, { title: '옛 기록', status: 'paused', partialBytes: 5_000_000, stoppedAt: null }),
+    ]);
+    render(JobList);
+    const sized = formatFileSize(5_000_000, 1000);
+    expect(within(screen.getByRole('article', { name: '오래 멈춘 영상' })).getByText(t('job.stale.body', { days: 31, size: sized }))).toBeInTheDocument();
+    expect(within(screen.getByRole('article', { name: '얼마 안 된 영상' })).queryByText(/전에 멈췄어요/)).toBeNull();
+    const failed = within(screen.getByRole('article', { name: '오래 전에 실패한 영상' }));
+    expect(failed.getByText(t('job.stale.body', { days: 40, size: sized }))).toBeInTheDocument();
+    expect(within(screen.getByRole('article', { name: '옛 기록' })).queryByText(/전에 멈췄어요/)).toBeNull();
+  });
+});
+

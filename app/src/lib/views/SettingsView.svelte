@@ -133,6 +133,20 @@
           {/if}
         {/snippet}
       </SettingsRow>
+      <SettingsRow label={t('settings.keepAwake')} help={t('settings.keepAwake.help')}>
+        {#snippet control({ labelId, helpId })}
+          {#if dto}
+            <Switch
+              value={dto.keepAwake}
+              labelledby={labelId}
+              aria-describedby={helpId}
+              onchange={(on) => save({ keepAwake: on })}
+            />
+          {:else}
+            {@render pending()}
+          {/if}
+        {/snippet}
+      </SettingsRow>
     {/key}
   </SettingsSection>
 

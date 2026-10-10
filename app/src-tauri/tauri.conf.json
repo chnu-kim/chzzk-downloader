@@ -19,7 +19,12 @@
         "height": 700,
         "minWidth": 720,
         "minHeight": 520,
-        "dragDropEnabled": false
+        "dragDropEnabled": false,
+        "visible": false,
+        "backgroundColor": "#F3F3F3",
+        "zoomHotkeysEnabled": false,
+        "scrollBarStyle": "fluentOverlay",
+        "allowLinkPreview": false
       }
     ],
     "security": {
@@ -51,6 +56,9 @@
       "wix": {
         "language": "ko-KR"
       }
+    },
+    "macOS": {
+      "minimumSystemVersion": "13.3"
     }
   },
   "plugins": {

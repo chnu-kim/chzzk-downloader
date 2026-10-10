@@ -53,6 +53,7 @@ export function job(id: number, over: Partial<JobDto> = {}): JobDto {
     missing: false,
     createdAt: id,
     finishedAt: null,
+    stoppedAt: null,
     ...over,
   };
 }
@@ -89,11 +90,11 @@ export const OTHER_CHANNEL_ID = '000000000000000000000000000000c3';
 export const MY_CHANNEL_ID = '000000000000000000000000000000a1';
 
 /**
- * patterns.md §3.2 표의 상태 전부. 연결 대기·회복·멈춘 지 30일 행은 (f)로 넘겼으므로 없다(계약 J2).
- * 순서가 곧 id다. `me`가 있으면 다른 채널의 멈춘 작업(막힌 작업) 한 행을 더한다.
+ * patterns.md §3.2 표의 상태 전부(연결 대기와 멈춘 지 30일 행 포함). 회복 직후 행은 스토어가 시계로 만드는 상태라 고정 데이터에 없다
+ * (단위 테스트와 e2e가 본다). 순서가 곧 id다. `me`가 있으면 다른 채널의 멈춘 작업(막힌 작업) 한 행을 더한다.
+ * `base`는 현재 시각(초): 멈춘 지 30일 행의 `stoppedAt`이 이것에서 45일 전이라 화면 글자가 실행마다 같다.
  */
-export function jobStateSet(me = false): JobDto[] {
-  const base = 1_767_322_800;
+export function jobStateSet(me = false, base = 1_767_322_800): JobDto[] {
   const jobs: JobDto[] = [
     job(1, { title: SAME_PREFIX_TITLES[0], status: 'running', playbackKind: 'liveRewindHls', progress: hlsProg() }),
     job(2, { title: '준비 중인 영상', status: 'running', progress: prog({ phase: 'resolving', bytes: 0, totalBytes: null, speedBps: null, etaSecs: null }) }),
@@ -112,7 +113,11 @@ export function jobStateSet(me = false): JobDto[] {
     job(15, { title: '받는 동안 같은 이름이 생긴 영상', status: 'skipped', partialBytes: 1024, finishedAt: base + 15 }),
     job(16, { title: '클립', kind: 'clip', status: 'completed', finalBytes: 52_428_800, finishedAt: base + 16, qualityLabel: '720p' }),
   ];
-  if (me) jobs.push(job(17, { title: '다른 채널로 받던 영상', status: 'interrupted', channelId: OTHER_CHANNEL_ID, partialBytes: 1024, progress: prog() }));
+  jobs.push(
+    job(17, { title: '연결을 기다리는 영상', status: 'running', progress: prog({ phase: 'waitingNetwork', speedBps: null, etaSecs: null }) }),
+    job(18, { title: '오래전에 멈춘 영상', status: 'paused', partialBytes: 1_288_490_189, progress: prog(), stoppedAt: base - 45 * 86400 }),
+  );
+  if (me) jobs.push(job(19, { title: '다른 채널로 받던 영상', status: 'interrupted', channelId: OTHER_CHANNEL_ID, partialBytes: 1024, progress: prog() }));
   return jobs;
 }
 

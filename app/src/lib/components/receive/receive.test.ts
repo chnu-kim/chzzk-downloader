@@ -43,6 +43,7 @@ const settingsDto: SettingsDto = {
   importedFrom: null,
   textScale: 'default',
   theme: 'system',
+  keepAwake: true,
 };
 
 function appError(code: AppError['code'], over: Partial<AppError> = {}): AppError {

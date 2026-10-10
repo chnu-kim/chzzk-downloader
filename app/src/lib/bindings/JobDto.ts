@@ -37,4 +37,9 @@ missing: boolean,
 /**
  * unix 초
  */
-createdAt: number, finishedAt: number | null, };
+createdAt: number, finishedAt: number | null, 
+/**
+ * paused·interrupted·failed로 바뀐 시각(unix 초). 그 밖 상태와 옛 레코드는 null.
+ * "멈춘 지 30일" 판단에 쓴다(`finishedAt`은 완료·건너뜀 전용이라 따로 둔다)
+ */
+stoppedAt: number | null, };

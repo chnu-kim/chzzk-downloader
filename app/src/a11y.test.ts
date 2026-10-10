@@ -24,6 +24,7 @@ const dto: SettingsDto = {
   importedFrom: null,
   textScale: 'default',
   theme: 'system',
+  keepAwake: true,
 };
 
 const disabled = {
@@ -61,6 +62,9 @@ vi.mock('./lib/api', () => ({
   clipboardLink: vi.fn(async () => null),
   onCloseRequested: vi.fn(async () => () => {}),
   onWindowFocus: vi.fn(async () => () => {}),
+  onMenuSettings: vi.fn(async () => () => {}),
+  onMenuAbout: vi.fn(async () => () => {}),
+  onKeepAwake: vi.fn(async () => () => {}),
   updateCheck: vi.fn(),
   updateAvailable: vi.fn(async () => null),
   updateInstall: vi.fn(),

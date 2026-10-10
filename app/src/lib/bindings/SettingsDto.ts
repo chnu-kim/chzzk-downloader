@@ -26,4 +26,8 @@ textScale: TextScale,
 /**
  * 모양(기본 `system`). Linux에서만 설정 화면에 보인다
  */
-theme: Theme, };
+theme: Theme, 
+/**
+ * 받는 동안 잠들지 않게 한다(기본 켜짐, platform §10)
+ */
+keepAwake: boolean, };

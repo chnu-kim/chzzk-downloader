@@ -1,6 +1,6 @@
 // OS별로 달라지는 화면 글자의 유일한 자리(system/platform.md §20). OS는 Rust가 준다(`AppInfo.platform`):
 // 컴포넌트는 `navigator`를 읽지 않는다(design-lint DX5). 문자열은 copy deck의 `platform.*` 키에만 있다(design-copy DC9).
-// macOS와 그 밖(Windows·Linux) 두 갈래뿐이다: 표의 모든 행이 Windows와 Linux에서 같다.
+// 대부분의 표는 macOS와 그 밖(Windows·Linux) 두 갈래다. 웹 구성요소를 고치는 법(`engineFixText`)만 OS마다 달라 세 갈래다.
 import type { Os } from './bindings';
 import { t, type CopyKey } from './copy/ko';
 
@@ -34,4 +34,15 @@ export function revealLabel(os: Os): string {
 /** `Mod` 키(macOS ⌘, 그 밖 Ctrl)가 눌렸는가. 다른 쪽 수식 키가 함께 눌리면 아니다 */
 export function modPressed(e: Pick<KeyboardEvent, 'metaKey' | 'ctrlKey'>, os: Os): boolean {
   return os === 'macos' ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey;
+}
+
+/** 웹 구성요소(엔진)가 오래됐을 때 고치는 법(platform.md §5): OS마다 방법이 다른 유일한 문구라 세 갈래다 */
+const ENGINE_FIX = {
+  macos: 'platform.mac.engineFix',
+  windows: 'platform.windows.engineFix',
+  linux: 'platform.linux.engineFix',
+} as const satisfies Record<Os, CopyKey>;
+
+export function engineFixText(os: Os): string {
+  return t(ENGINE_FIX[os]);
 }

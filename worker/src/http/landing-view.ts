@@ -175,7 +175,7 @@ function landingBody(config: Config, m: LandingModel): SafeHtml {
   const check = member !== null && member.downloads.kind === "ok" ? fileCheck(member.downloads) : "";
   // 12. 로그아웃은 테두리 버튼 하나(채움 버튼은 페이지에 하나뿐이다)
   const tail = member === null ? "" : html`${devicesSection(member)}<div class="actions">${postButton("/auth/web/logout", member.csrf, COPY.logout)}</div>`;
-  return html`${phone}<h1 class="hero">${COPY.siteName}</h1><p class="lead">${lead}</p>${notice({ tone: "info", id: "unofficial", body: COPY.notice.short })}${cta}${installSection(member?.downloads ?? null, os)}${check}<h2 id="login">${COPY.loginSectionTitle}</h2><p>${COPY.loginSectionBody} ${COPY.loginTwice}</p><h2 id="help">${COPY.helpSectionTitle}</h2><p><a href="/help">${COPY.helpTitle}</a></p><p>${COPY.reportHelp} ${COPY.landing.contact}</p>${tail}`;
+  return html`${phone}<h1 class="hero">${COPY.siteName}</h1><p class="lead">${lead}</p>${notice({ tone: "info", id: "unofficial", body: COPY.notice.short })}${cta}${installSection(member?.downloads ?? null, os)}${check}<h2 id="login">${COPY.loginSectionTitle}</h2><p>${COPY.loginSectionBody} ${COPY.loginTwice}</p><h2 id="help">${COPY.helpSectionTitle}</h2><p><a href="/help">${COPY.helpTitle}</a></p><p>${COPY.reportHelp} ${COPY.landing.contact}</p><p><a href="${COPY.issuesUrl}" rel="noopener noreferrer">${COPY.landing.contactLink}</a></p>${tail}`;
 }
 
 /** GET /의 응답. 늘 200, 읽기 척도, 색인·OG를 켠다. 요청 헤더가 바꾸는 것은 감지 결과(순서·강조)뿐이다 */

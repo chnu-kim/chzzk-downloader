@@ -1,15 +1,20 @@
 //! 치지직 다운로더 Tauri 셸(docs/design/app.md §11, §15-11). 로직은 `chzzk_shell`에 두고 여기는 배선만 한다:
-//! 플러그인, setup(경로·로그·상태), command, 창 닫기·앱 종료 처리, 완료 알림.
+//! 플러그인, setup(경로·로그·상태), command, 창 닫기·앱 종료 처리, 완료 알림, 첫 프레임(`show`), macOS 메뉴(`menu`),
+//! Dock·작업 표시줄 진행과 잠자기 방지(`status`), Windows WebView2 보강(`webview_win`).
 
 pub mod auth_io;
 pub mod commands;
 #[cfg(feature = "e2e")]
 pub mod e2e;
 mod logging;
+pub mod menu;
 mod notify_copy;
+pub mod show;
 pub mod sink;
 pub mod smoke;
+pub mod status;
 pub mod update_io;
+pub mod webview_win;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -25,8 +30,10 @@ use chzzk_shell::{AUTH_CLIENT_FAILED, App, AppAuth, AppError, AuthSetup, ErrorCo
 use tauri::ipc::Invoke;
 use tauri::{AppHandle, Emitter, Manager, RunEvent, Runtime, WindowEvent};
 
+use crate::show::{ShowGate, apply_background, spawn_deadline};
 use crate::sink::{Notifier, spawn_notifier};
 use crate::smoke::{SMOKE_TIMEOUT, SmokeConfig, SmokeState, spawn_watchdog};
+use crate::status::{BoxedGuard, StatusState, spawn_status};
 
 /// 앱 command 이름(AppManifest·capabilities와 같은 목록).
 pub const COMMANDS: &[&str] = include!("command_names.rs");
@@ -91,84 +98,13 @@ pub fn request_quit<R: Runtime>(app: &AppHandle<R>) -> bool {
     true
 }
 
-/// Tauri 기본 메뉴(`Menu::default`)와 같은 구성에서 Quit만 `QUIT_MENU_ID` 보통 항목으로 바꾼 macOS 메뉴.
-/// Edit 메뉴의 predefined 항목은 WKWebView의 붙여넣기·전체 선택이 responder chain으로 받으므로 그대로 둔다.
-#[cfg(target_os = "macos")]
-fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<tauri::menu::Menu<R>> {
-    use tauri::menu::{AboutMetadata, Menu, MenuItem, PredefinedMenuItem, Submenu};
-    let pkg = app.package_info();
-    let name = pkg.name.clone();
-    let about = AboutMetadata {
-        name: Some(name.clone()),
-        version: Some(pkg.version.to_string()),
-        copyright: app.config().bundle.copyright.clone(),
-        authors: app.config().bundle.publisher.clone().map(|p| vec![p]),
-        ..Default::default()
-    };
-    Menu::with_items(
-        app,
-        &[
-            &Submenu::with_items(
-                app,
-                &name,
-                true,
-                &[
-                    &PredefinedMenuItem::about(app, None, Some(about))?,
-                    &PredefinedMenuItem::separator(app)?,
-                    &PredefinedMenuItem::services(app, None)?,
-                    &PredefinedMenuItem::separator(app)?,
-                    &PredefinedMenuItem::hide(app, None)?,
-                    &PredefinedMenuItem::hide_others(app, None)?,
-                    &PredefinedMenuItem::show_all(app, None)?,
-                    &PredefinedMenuItem::separator(app)?,
-                    &MenuItem::with_id(
-                        app,
-                        QUIT_MENU_ID,
-                        format!("Quit {name}"),
-                        true,
-                        Some("CmdOrCtrl+Q"),
-                    )?,
-                ],
-            )?,
-            &Submenu::with_items(
-                app,
-                "File",
-                true,
-                &[&PredefinedMenuItem::close_window(app, None)?],
-            )?,
-            &Submenu::with_items(
-                app,
-                "Edit",
-                true,
-                &[
-                    &PredefinedMenuItem::undo(app, None)?,
-                    &PredefinedMenuItem::redo(app, None)?,
-                    &PredefinedMenuItem::separator(app)?,
-                    &PredefinedMenuItem::cut(app, None)?,
-                    &PredefinedMenuItem::copy(app, None)?,
-                    &PredefinedMenuItem::paste(app, None)?,
-                    &PredefinedMenuItem::select_all(app, None)?,
-                ],
-            )?,
-            &Submenu::with_items(
-                app,
-                "View",
-                true,
-                &[&PredefinedMenuItem::fullscreen(app, None)?],
-            )?,
-            &Submenu::with_items(
-                app,
-                "Window",
-                true,
-                &[
-                    &PredefinedMenuItem::minimize(app, None)?,
-                    &PredefinedMenuItem::maximize(app, None)?,
-                    &PredefinedMenuItem::separator(app)?,
-                    &PredefinedMenuItem::close_window(app, None)?,
-                ],
-            )?,
-        ],
-    )
+/// window-state가 저장·복원할 것: 위치·크기·최대화. 보임·전체 화면·꾸밈은 뺀다. 보임을 빼야 숨겨 시작한 창을 플러그인이
+/// 먼저 꺼내지 않고(첫 프레임은 `show`가 정한다), 전체 화면을 복원하지 않아 방송 중 실수로 화면이 노출되지 않는다
+/// (platform §2.3).
+#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
+pub fn window_state_flags() -> tauri_plugin_window_state::StateFlags {
+    use tauri_plugin_window_state::StateFlags;
+    StateFlags::POSITION | StateFlags::SIZE | StateFlags::MAXIMIZED
 }
 
 /// 셸이 코어 태스크를 띄울 tokio 런타임 핸들. Tauri가 만든 런타임을 그대로 쓴다.
@@ -353,6 +289,10 @@ pub fn on_run_event<R: Runtime>(app: &AppHandle<R>, e: RunEvent) {
             // 쓰기 스레드에 밀린 jobs.json을 디스크에 닿게 한다(완료 직후 창을 닫은 경우 등).
             if let Some(state) = app.try_state::<App>() {
                 state.manager.flush();
+            }
+            // 잠자기 방지를 명시적으로 놓는다(프로세스가 끝나도 OS가 놓지만 사유 표시를 남기지 않는다)
+            if let Some(status) = app.try_state::<StatusState>() {
+                status.shutdown();
             }
             tracing::info!("앱 종료");
         }
@@ -576,7 +516,7 @@ fn setup<R: Runtime>(
     let (paths, client, e2e_worker) = match (e2e, &smoke) {
         (Some((paths, client, worker)), _) => (paths, Some(client), Some(worker)),
         (None, Some(cfg)) => (
-            AppPaths::new(cfg.config_dir(), cfg.data_dir(), log_dir, None, None),
+            AppPaths::new(cfg.config_dir(), cfg.data_dir(), log_dir, None, None, None),
             None,
             None,
         ),
@@ -587,6 +527,7 @@ fn setup<R: Runtime>(
                 log_dir,
                 p.video_dir().ok(),
                 p.download_dir().ok(),
+                p.home_dir().ok(),
             ),
             None,
             None,
@@ -668,6 +609,22 @@ fn setup<R: Runtime>(
     let (notifier, rx) = Notifier::new();
     app.manage(notifier);
     spawn_notifier(app.handle().clone(), rx);
+    // 첫 프레임: 보이기 전에 배경을 테마에 맞추고, 프런트 신호가 늦어도 창이 뜨게 안전장치를 건다(platform §2.2)
+    apply_background(app.handle());
+    spawn_deadline(app.handle().clone());
+    // Dock·작업 표시줄 진행과 잠자기 방지(1Hz). 격리 실행(스모크·E2E)은 실제 전원 가드를 쓰지 않는다
+    let guard = if isolated || smoke.is_some() {
+        BoxedGuard::new(chzzk_shell::power::NoopGuard)
+    } else {
+        BoxedGuard::new(chzzk_shell::power::SystemGuard::spawn())
+    };
+    app.manage(StatusState::new(guard));
+    spawn_status(app.handle().clone());
+    // Windows 릴리스: WebView2 브라우저 단축키·자동완성을 끈다(debug는 건너뛴다)
+    #[cfg(windows)]
+    if let Some(w) = app.get_webview_window("main") {
+        webview_win::harden(&w);
+    }
     Ok(())
 }
 
@@ -688,6 +645,8 @@ fn context() -> tauri::Context<tauri::Wry> {
 }
 
 pub fn run() {
+    // 첫 줄: 프로세스 시작 시각(`t_show_ms`·`t_ready_ms`의 기준)
+    show::mark_start();
     let smoke = SmokeConfig::from_env();
     let e2e = e2e_override();
     // 격리 실행(스모크·E2E)은 single-instance를 쓰지 않는다
@@ -707,12 +666,11 @@ pub fn run() {
 
     // macOS: 기본 메뉴의 Quit은 `terminate:`라 닫기 가드를 지나치지 않는다(구현 중 변경 52). 같은 메뉴에 보통
     // 항목으로 두고 `request_quit`으로 보낸다. Dock의 "종료"·AppleScript `quit`은 여전히 `terminate:`다.
+    // 메뉴는 한국어 표(`menu::MENU`)로 만들고 설정·정보·도움말은 `menu::on_menu_item`이 처리한다.
     #[cfg(target_os = "macos")]
-    let builder = builder.menu(build_menu).on_menu_event(|app, e| {
-        if e.id().0 == QUIT_MENU_ID {
-            request_quit(app);
-        }
-    });
+    let builder = builder
+        .menu(menu::build_menu)
+        .on_menu_event(|app, e| menu::on_menu_item(app, &e.id().0));
 
     // updater: 공개 키는 tauri.conf.json `plugins.updater.pubkey`(= release/updater.pub, pubkey gate). 엔드포인트·헤더는
     // 확인할 때마다 런타임에 넣는다(update_io.rs). JS 권한 없음(capabilities에 없음, docs/design/cicd.md G6).
@@ -722,7 +680,21 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(update_io::UpdaterPlugin);
 
+    // 창 위치·크기·최대화 복원. 격리 실행(스모크·E2E)은 사용자의 실제 창 상태 파일을 덮지 않게 등록하지 않는다.
+    // Rust 전용이라 capabilities에 `window-state:` 권한을 주지 않는다(JS가 저장·복원을 부를 수 없다).
+    #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
+    let builder = if !isolated {
+        builder.plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_state_flags(window_state_flags())
+                .build(),
+        )
+    } else {
+        builder
+    };
+
     let app = builder
+        .manage(ShowGate::default())
         // 아래 플러그인은 Rust에서만 부른다. capabilities에 플러그인 권한을 주지 않는다.
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
@@ -741,7 +713,7 @@ mod tests {
     use super::{
         CloseDecision, INSTANCE_LOCK_FILE, InstanceLockState, StartupFailure,
         acquire_instance_lock, auth_setup, close_decision, open_failure_kind,
-        startup_failure_message,
+        startup_failure_message, window_state_flags,
     };
     use chzzk_shell::{AppError, AuthSetup, WorkerBase};
     use std::path::Path;
@@ -835,6 +807,32 @@ mod tests {
             open_failure_kind(&AppError::invalid_input(chzzk_shell::AUTH_CLIENT_FAILED)),
             StartupFailure::Storage
         );
+    }
+
+    // 위치·크기·최대화만 저장한다. 보임·전체 화면·꾸밈은 빼야 숨겨 시작이 지켜지고 전체 화면이 복원되지 않는다
+    #[test]
+    fn window_state_saves_position_size_and_maximized_only() {
+        use tauri_plugin_window_state::StateFlags;
+        let f = window_state_flags();
+        assert!(f.contains(StateFlags::POSITION | StateFlags::SIZE | StateFlags::MAXIMIZED));
+        for off in [
+            StateFlags::VISIBLE,
+            StateFlags::FULLSCREEN,
+            StateFlags::DECORATIONS,
+        ] {
+            assert!(!f.intersects(off), "{off:?}");
+        }
+    }
+
+    // 격리 실행(스모크·E2E)에는 등록하지 않는다: 소스에서 isolated 분기 안에 있는지 글자로 확인한다
+    #[test]
+    fn window_state_plugin_is_skipped_for_isolated_runs() {
+        let src = include_str!("lib.rs");
+        let at = src.find("tauri_plugin_window_state::Builder").unwrap();
+        let before = &src[..at];
+        let guard = before.rfind("if !isolated").unwrap();
+        // 등록 바로 앞 분기가 isolated 검사다(그 사이에 다른 블록이 끼지 않는다)
+        assert!(at - guard < 200, "{}", at - guard);
     }
 
     #[test]

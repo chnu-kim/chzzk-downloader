@@ -3,8 +3,10 @@
 //!
 //! - 데이터·설정·로그는 임시 폴더(`CHZZK_SMOKE_DIR`, 없으면 `<temp>/chzzk-smoke-<pid>`)에 둔다. 사용자 데이터를
 //!   건드리지 않고, 이미 떠 있는 앱과 부딪히지 않도록 single-instance를 쓰지 않으며, 이전 버전 가져오기를 끈다.
-//! - 프런트가 `frontend_ready`를 부르면 `CHZZK_SMOKE_OUT`에 `{"version":…,"ready":true}`를 쓰고 exit 0.
-//! - `SMOKE_TIMEOUT` 안에 오지 않으면 `{"version":…,"ready":false}`를 쓰고 exit `EXIT_TIMEOUT`(2).
+//! - 프런트가 `frontend_ready`를 부르면 `CHZZK_SMOKE_OUT`에 마커를 쓰고 exit 0. 마커는 한 줄 JSON이고 키 집합이
+//!   고정이다(사전순): `auth`, `probe`(엔진 기능 프로브 다섯 키), `ready`, `t_ready_ms`, `t_show_ms`, `version`.
+//!   `t_*`는 프로세스 시작부터의 ms(출력만 하고 판정하지 않는다, 관찰).
+//! - `SMOKE_TIMEOUT` 안에 오지 않으면 `ready:false` 마커(`probe`·`t_*`는 `null`)를 쓰고 exit `EXIT_TIMEOUT`(2).
 //!
 //! 네트워크를 쓰지 않는다. 판정은 종료 코드와 마커 JSON뿐이다(`scripts/ci/smoke.mjs`).
 
@@ -14,6 +16,8 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
 use std::time::Duration;
+
+use chzzk_shell::dto::EngineProbe;
 
 /// 스모크를 켜는 명령행 인자.
 pub const SMOKE_FLAG: &str = "--smoke";
@@ -80,8 +84,17 @@ impl SmokeConfig {
     }
 }
 
-/// 마커 JSON(한 줄). 버전은 semver 글자라 따옴표·역슬래시가 없지만 그래도 JSON 문자열로 이스케이프한다.
-pub fn marker_json(version: &str, ready: bool, auth: bool) -> String {
+/// 마커 JSON(한 줄). 키는 사전순 여섯 개 고정(`auth`, `probe`, `ready`, `t_ready_ms`, `t_show_ms`, `version`).
+/// 성공 마커는 `probe`(다섯 키)와 `t_*`를 싣고, 시간 초과 마커(`ready:false`)는 셋 다 `null`이다.
+/// 버전은 semver 글자라 따옴표·역슬래시가 없지만 그래도 JSON 문자열로 이스케이프한다.
+pub fn marker_json(
+    version: &str,
+    ready: bool,
+    auth: bool,
+    probe: Option<&EngineProbe>,
+    t_show_ms: Option<u64>,
+    t_ready_ms: Option<u64>,
+) -> String {
     let escaped: String = version
         .chars()
         .flat_map(|c| match c {
@@ -91,7 +104,15 @@ pub fn marker_json(version: &str, ready: bool, auth: bool) -> String {
             c => vec![c],
         })
         .collect();
-    format!("{{\"version\":\"{escaped}\",\"ready\":{ready},\"auth\":{auth}}}\n")
+    let probe = probe
+        .and_then(|p| serde_json::to_string(p).ok())
+        .unwrap_or_else(|| "null".to_string());
+    let ms = |v: Option<u64>| v.map_or_else(|| "null".to_string(), |n| n.to_string());
+    format!(
+        "{{\"auth\":{auth},\"probe\":{probe},\"ready\":{ready},\"t_ready_ms\":{},\"t_show_ms\":{},\"version\":\"{escaped}\"}}\n",
+        ms(t_ready_ms),
+        ms(t_show_ms),
+    )
 }
 
 /// 마커를 쓴다. 경로가 없으면 아무것도 하지 않는다.
@@ -100,9 +121,15 @@ pub fn write_marker(
     version: &str,
     ready: bool,
     auth: bool,
+    probe: Option<&EngineProbe>,
+    t_show_ms: Option<u64>,
+    t_ready_ms: Option<u64>,
 ) -> std::io::Result<()> {
     match out {
-        Some(p) => std::fs::write(p, marker_json(version, ready, auth)),
+        Some(p) => std::fs::write(
+            p,
+            marker_json(version, ready, auth, probe, t_show_ms, t_ready_ms),
+        ),
         None => Ok(()),
     }
 }
@@ -165,7 +192,7 @@ impl SmokeState {
 pub fn spawn_watchdog(rx: Receiver<()>, out: Option<PathBuf>, version: String, timeout: Duration) {
     std::thread::spawn(move || {
         if wait_ready(&rx, timeout) == Watch::TimedOut {
-            let _ = write_marker(out.as_deref(), &version, false, false);
+            let _ = write_marker(out.as_deref(), &version, false, false, None, None, None);
             eprintln!(
                 "smoke: {}초 안에 frontend_ready가 오지 않음",
                 timeout.as_secs()
@@ -203,33 +230,123 @@ mod tests {
         assert_eq!(c.dir, temp.join("chzzk-smoke-7"));
     }
 
+    const PROBE: EngineProbe = EngineProbe {
+        color_mix: true,
+        has: true,
+        oklch: true,
+        container_query: true,
+        inert: true,
+    };
+
     #[test]
-    fn marker_is_one_line_json() {
+    fn marker_is_one_line_json_with_six_sorted_keys() {
+        let m = marker_json("0.1.0", true, true, Some(&PROBE), Some(180), Some(250));
+        assert!(m.ends_with("}\n") && m.matches('\n').count() == 1);
+        let v: serde_json::Value = serde_json::from_str(&m).unwrap();
+        let keys: Vec<&str> = v.as_object().unwrap().keys().map(String::as_str).collect();
+        let mut sorted = keys.clone();
+        sorted.sort_unstable();
         assert_eq!(
-            marker_json("0.1.0", true, true),
-            "{\"version\":\"0.1.0\",\"ready\":true,\"auth\":true}\n"
+            sorted,
+            [
+                "auth",
+                "probe",
+                "ready",
+                "t_ready_ms",
+                "t_show_ms",
+                "version"
+            ]
         );
-        assert_eq!(
-            marker_json("a\"b\\", false, false),
-            "{\"version\":\"a\\\"b\\\\\",\"ready\":false,\"auth\":false}\n"
-        );
+        assert_eq!(v["version"], "0.1.0");
+        assert_eq!(v["ready"], true);
+        assert_eq!(v["auth"], true);
+        assert_eq!(v["t_show_ms"], 180);
+        assert_eq!(v["t_ready_ms"], 250);
+        let probe = v["probe"].as_object().unwrap();
+        let mut pk: Vec<&str> = probe.keys().map(String::as_str).collect();
+        pk.sort_unstable();
+        assert_eq!(pk, ["colorMix", "containerQuery", "has", "inert", "oklch"]);
+        assert!(probe.values().all(|b| b == true));
+        // 앞에서부터 사전순으로 쓴다
+        let order: Vec<usize> = [
+            "auth",
+            "probe",
+            "ready",
+            "t_ready_ms",
+            "t_show_ms",
+            "version",
+        ]
+        .iter()
+        .map(|k| m.find(&format!("\"{k}\":")).unwrap())
+        .collect();
+        assert!(order.windows(2).all(|w| w[0] < w[1]), "{m}");
+    }
+
+    #[test]
+    fn marker_escapes_the_version() {
+        let m = marker_json("a\"b\\", false, false, None, None, None);
+        let v: serde_json::Value = serde_json::from_str(&m).unwrap();
+        assert_eq!(v["version"], "a\"b\\");
+    }
+
+    // 시간 초과 마커: ready=false, probe·t_*는 null
+    #[test]
+    fn timeout_marker_has_null_probe_and_times() {
+        let m = marker_json("0.1.0", false, false, None, None, None);
+        let v: serde_json::Value = serde_json::from_str(&m).unwrap();
+        assert_eq!(v["ready"], false);
+        assert!(v["probe"].is_null());
+        assert!(v["t_show_ms"].is_null());
+        assert!(v["t_ready_ms"].is_null());
+        assert_eq!(v.as_object().unwrap().len(), 6);
+    }
+
+    #[test]
+    fn a_false_probe_key_is_kept_in_the_marker() {
+        let p = EngineProbe {
+            oklch: false,
+            ..PROBE
+        };
+        let m = marker_json("0.1.0", true, true, Some(&p), Some(1), Some(2));
+        let v: serde_json::Value = serde_json::from_str(&m).unwrap();
+        assert_eq!(v["probe"]["oklch"], false);
+        assert_eq!(v["probe"]["has"], true);
     }
 
     #[test]
     fn write_marker_writes_file_or_nothing() {
         let dir = tempfile::tempdir().unwrap();
         let p = dir.path().join("m.json");
-        write_marker(Some(&p), "1.2.3", true, true).unwrap();
+        write_marker(
+            Some(&p),
+            "1.2.3",
+            true,
+            true,
+            Some(&PROBE),
+            Some(5),
+            Some(9),
+        )
+        .unwrap();
         let v: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&p).unwrap()).unwrap();
         assert_eq!(v["version"], "1.2.3");
         assert_eq!(v["ready"], true);
         assert_eq!(v["auth"], true);
-        write_marker(Some(&p), "1.2.3", true, false).unwrap();
+        assert_eq!(v["t_ready_ms"], 9);
+        write_marker(
+            Some(&p),
+            "1.2.3",
+            true,
+            false,
+            Some(&PROBE),
+            Some(5),
+            Some(9),
+        )
+        .unwrap();
         let v: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&p).unwrap()).unwrap();
         assert_eq!(v["auth"], false);
-        write_marker(None, "1.2.3", true, true).unwrap();
+        write_marker(None, "1.2.3", true, true, None, None, None).unwrap();
     }
 
     #[test]

@@ -209,6 +209,7 @@ impl App {
         let path = match page {
             WebPage::Privacy => "/privacy",
             WebPage::Licenses => "/licenses",
+            WebPage::Help => "/help",
         };
         Ok(base.url(path))
     }

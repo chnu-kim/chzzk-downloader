@@ -1,10 +1,10 @@
 <script lang="ts" module>
   // 배너 우선순위(system/patterns.md §1.4): 한 번에 하나만 보이고 오류가 먼저다.
   //   ① B2 설정 저장 실패 → ② B4 업데이트 실패 → ③ B4 진행(받는 중·설치 중) → (④ B5 서비스 공지 block·warn: 자리만) →
-  //   ⑤ B1 받다 만 영상 → ⑥ B4 새 버전 → (⑦ B5 info: 자리만)
+  //   ⑤ 웹 구성요소 미달 경고(platform.md §5, 이번 실행만 닫을 수 있다) → ⑥ B1 받다 만 영상 → ⑦ B4 새 버전 → (⑧ B5 info: 자리만)
   // B5(서비스 공지)는 Worker `/notice`가 생기는 단계(e)에서 이 표에 들어온다(앱에 공지 데이터가 아직 없다).
   // B4 진행과 B4 새 버전은 같은 배너 노드('update')로 그려진다: 버튼을 눌러도 포커스·라이브 영역이 끊기지 않게(worker.md 77).
-  export type BannerKind = 'settings' | 'updateFailed' | 'update' | 'interrupted';
+  export type BannerKind = 'settings' | 'updateFailed' | 'update' | 'engine' | 'interrupted';
 
   export interface BannerState {
     /** 설정 저장 실패(B2) */
@@ -13,6 +13,8 @@
     updateFailure: boolean;
     /** 받는 중·설치 중(B4 진행) */
     updateBusy: boolean;
+    /** 웹뷰 엔진 프로브가 하나라도 false이고 닫지 않았다 */
+    engineOld: boolean;
     /** 재시작 직후 중단된 작업이 있고 닫지 않았다(B1) */
     interrupted: boolean;
     /** 새 버전이 있고 닫지 않았다(B4 새 버전) */
@@ -24,6 +26,7 @@
     if (s.settingsError) return 'settings';
     if (s.updateFailure) return 'updateFailed';
     if (s.updateBusy) return 'update';
+    if (s.engineOld) return 'engine';
     if (s.interrupted) return 'interrupted';
     if (s.updateAvailable) return 'update';
     return null;
@@ -34,6 +37,8 @@
   import * as api from '../../api';
   import { t } from '../../copy/ko';
   import { formatFileSize, formatPercent, sizeBaseOf } from '../../format/bytes';
+  import { engineFixText } from '../../platform';
+  import { engine } from '../../stores/engine.svelte';
   import { jobs } from '../../stores/jobs.svelte';
   import { platform } from '../../stores/platform.svelte';
   import { settings } from '../../stores/settings.svelte';
@@ -57,6 +62,7 @@
       settingsError: settings.saveError !== null,
       updateFailure: update.failure !== null,
       updateBusy: update.busy,
+      engineOld: engine.showBanner,
       interrupted: jobs.showInterruptedBanner,
       updateAvailable: update.showBanner,
     }),
@@ -126,6 +132,11 @@
     onclose={() => settings.dismissSaveError()}
   >
     {t('banner.settingsError')}
+  </Notice>
+{:else if which === 'engine'}
+  <!-- 앱을 막지 않는다: 화면 일부가 다르게 보일 수 있다는 경고와 OS별로 고치는 법. 이번 실행만 닫을 수 있다 -->
+  <Notice variant="banner" tone="warning" title={t('engine.old.title')} onclose={() => engine.dismiss()}>
+    {t('engine.old.body', { fix: engineFixText(platform.os) })}
   </Notice>
 {:else if which === 'interrupted'}
   <Notice

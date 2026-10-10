@@ -1,12 +1,14 @@
 <script lang="ts">
   // 정보 7요소(patterns.md §14.4): 앱 이름 · 버전 · [정보 복사] · 비공식 고지 · 처리방침 · 오픈소스 라이선스, [업데이트 확인] + 결과 한 줄.
   // 저작권 줄은 그리지 않는다(소유자 문구가 정해지지 않았다).
+  import { tick, untrack } from 'svelte';
   import * as api from '../../api';
   import type { AppError, AppFolder } from '../../bindings';
   import { t } from '../../copy/ko';
   import { copyAppReport } from '../../report';
   import { auth } from '../../stores/auth.svelte';
   import { settings } from '../../stores/settings.svelte';
+  import { ui } from '../../stores/ui.svelte';
   import { update } from '../../stores/update.svelte';
   import { useDelayedLoading } from '../../useDelayedLoading.svelte';
   import Button from '../ui/Button.svelte';
@@ -16,6 +18,20 @@
   import SettingsSection from './SettingsSection.svelte';
 
   let { onerror }: { onerror: (e: AppError) => void } = $props();
+
+  let headingEl: HTMLHeadingElement | null = $state(null);
+
+  // macOS 메뉴 "…에 관하여"(`menu-about`): 설정 화면이 열리면 이 절 제목으로 포커스를 옮기고 보이는 곳으로 스크롤한다.
+  // 요청은 한 번 쓰고 비운다(남겨 두면 설정을 다시 열 때마다 이 절로 끌려온다)
+  $effect(() => {
+    if (!ui.focusAbout || !headingEl) return;
+    const el = headingEl;
+    untrack(() => (ui.focusAbout = false));
+    void tick().then(() => {
+      el.focus();
+      el.scrollIntoView?.({ block: 'start' });
+    });
+  });
 
   const info = $derived(settings.info);
   const loading = useDelayedLoading(() => !settings.info);
@@ -61,7 +77,7 @@
   }
 </script>
 
-<SettingsSection title={t('settings.about.title')}>
+<SettingsSection title={t('settings.about.title')} focusable bind:headingEl>
   <!-- 이름·버전·동작과 업데이트 결과 줄. 결과 줄이 role=status라 SettingsRow 대신 같은 클래스로 직접 짠다 -->
   <div class="row">
     <div class="row-main">

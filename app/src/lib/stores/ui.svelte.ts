@@ -19,6 +19,8 @@ export class UiStore {
   urlTarget: UrlTarget | null = null;
   /** 설정의 쿠키 섹션을 펼쳐 열어 달라는 요청(오류 동작 `openCookieSettings`) */
   openCookieSection = $state(false);
+  /** 설정의 정보 절 제목으로 포커스를 옮겨 달라는 요청(macOS 메뉴 "…에 관하여", `menu-about`). 정보 절이 한 번 받고 비운다 */
+  focusAbout = $state(false);
   /** D4 로그아웃 확인을 띄워 달라는 요청(계정 메뉴·설정 계정 행이 올리고, App의 대화상자 하나가 받는다) */
   logoutConfirm = $state(false);
   /** main 창에 포커스가 있는가(Rust `window-focus`). 완료 토스트는 창이 활성이고 홈이 아닐 때만(patterns §1.1-1) */
@@ -49,12 +51,14 @@ export class UiStore {
     return false;
   }
 
-  goSettings(opts: { cookies?: boolean } = {}) {
+  goSettings(opts: { cookies?: boolean; about?: boolean } = {}) {
     if (opts.cookies) this.openCookieSection = true;
+    if (opts.about) this.focusAbout = true;
     this.view = 'settings';
   }
 
   goHome() {
+    this.focusAbout = false;
     this.view = 'home';
   }
 }

@@ -26,6 +26,7 @@ fn paths(root: &Path) -> AppPaths {
         root.join("log"),
         None,
         None,
+        None,
     )
 }
 
@@ -41,6 +42,9 @@ fn config(server: &MockServer) -> ClientConfig {
             max_attempts: 1,
             base: Duration::from_millis(1),
             cap: Duration::from_millis(1),
+            // 테스트는 연결 대기(인내)를 기다리지 않는다.
+            patience: Duration::ZERO,
+            patience_cap: Duration::ZERO,
         },
         ..ClientConfig::default()
     }
@@ -298,5 +302,48 @@ async fn folder_targets_follow_paths_and_settings() {
         Some(ErrorPayload::Path {
             path: blocked.to_string_lossy().into_owned()
         })
+    );
+}
+
+/// 볼륨 기준 이름 규칙(core.md 57): FAT·exFAT·원격 볼륨은 어느 host에서든 Windows 규칙의 이름을 낸다.
+/// 유닉스 파일 시스템은 host 규칙 그대로다. 순수 함수라 한 host에서 세 OS를 본다.
+#[test]
+fn volume_platform_picks_windows_names_on_fat() {
+    use chzzk_core::Platform;
+    use chzzk_core::naming::output_path;
+    use chzzk_shell::volume::{VolumeFs, naming_platform};
+
+    let folder = Path::new("/vol/치지직");
+    let name = "[261004] 채널 - 질문: 뭐? 1.mp4";
+    let windows = output_path(folder, name, Platform::Windows);
+    for host in [Platform::MacOs, Platform::Linux, Platform::Windows] {
+        for fs in [
+            VolumeFs::Fat,
+            VolumeFs::ExFat,
+            VolumeFs::Smb,
+            VolumeFs::Unknown,
+        ] {
+            let p = naming_platform(host, fs);
+            assert_eq!(p, Platform::Windows, "{host:?} {fs:?}");
+            assert_eq!(output_path(folder, name, p), windows);
+        }
+    }
+    // 유닉스 파일 시스템은 host 규칙이다(Windows host는 늘 Windows).
+    assert_eq!(
+        naming_platform(Platform::MacOs, VolumeFs::Unix),
+        Platform::MacOs
+    );
+    assert_eq!(
+        naming_platform(Platform::Linux, VolumeFs::Unix),
+        Platform::Linux
+    );
+    assert_eq!(
+        naming_platform(Platform::Windows, VolumeFs::Unix),
+        Platform::Windows
+    );
+    // Windows 규칙은 `:`·`?`를 바꾸지만 macOS 규칙은 `:`만 바꾼다: 같은 이름이 달라야 의미가 있다.
+    assert_ne!(
+        output_path(folder, name, Platform::Windows),
+        output_path(folder, name, Platform::Linux)
     );
 }

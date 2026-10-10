@@ -130,6 +130,15 @@ test('DI2: 고지 파일이 없으면 위반 하나, 있어도 버전·ISC·Feat
 
 // DI3 -----------------------------------------------------------------------
 
+test('DI2: Worker 라이선스 생성 모듈이 있으면 고지 파일과 같은 글이어야 한다', () => {
+  const mod = (text) => `// 생성물\nexport const LICENSES = [{ name: "Lucide", text: ${JSON.stringify(text)} }] as const;\n`;
+  assert.deepEqual(run({ [PATHS.workerLicenses]: mod(LICENSE_OK) }), []);
+  assert.ok(has(run({ [PATHS.workerLicenses]: mod(`${LICENSE_OK}손 수정`) }), 'DI2', 'licenses.generated.ts'));
+  assert.ok(has(run({ [PATHS.workerLicenses]: 'export const LICENSES = [];\n' }), 'DI2', 'licenses.generated.ts'));
+  // 줄끝만 다른 체크아웃(CRLF)은 같은 글이다
+  assert.deepEqual(run({ [PATHS.license]: LICENSE_OK.replace(/\n/g, '\r\n'), [PATHS.workerLicenses]: mod(LICENSE_OK) }), []);
+});
+
 test('DI3: path 문자열에 fill·stroke-width·색이 있으면 위반', () => {
   const v = run({ [PATHS.icons]: `export const ICONS = {\n  x: { set: 'lucide', name: 'x', version: '${VERSION}', paths: ['<path fill="red" d="M1"/>'] },\n} as const;\n` });
   assert.ok(has(v, 'DI3', 'x'));

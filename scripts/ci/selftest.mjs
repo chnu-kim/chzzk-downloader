@@ -52,8 +52,9 @@ const exec = (bin, args, cwd, env = process.env, input = undefined) => {
 };
 
 // 디자인 gate 넷(design-tokens·design-lint·design-copy·design-icons)이 읽는 입력(governance.md §2.0 "최소 사본"). 원천·생성물·
-// 검사 대상 소스·패리티 문서·상수 파일이다. 없는 경로(단계 (a)의 licenses/·help/ 등)는 건너뛴다.
-const DESIGN_INPUTS = ['design', 'scripts/design', 'app/src', 'worker/src', 'app/src-tauri/src', 'docs/design/system', 'crates/shell/src/consts.rs', 'licenses', 'help'];
+// 검사 대상 소스·패리티 문서·상수 파일이다. Worker 생성기(worker-gen --check)의 입력 worker/assets·licenses·help도 들어 있다(app/src의 icons.ts와 worker/src의 생성물은
+// 위에서 함께 복사된다). 없는 경로(단계 (a)의 licenses/·help/ 등)는 건너뛴다.
+const DESIGN_INPUTS = ['design', 'scripts/design', 'app/src', 'worker/src', 'app/src-tauri/src', 'docs/design/system', 'crates/shell/src/consts.rs', 'licenses', 'help', 'worker/assets'];
 
 // 사본 저장소: scripts/ci 전체, 설정, ci.yml, 최소 Cargo 워크스페이스와 app 버전 파일. files로 덮어쓴다(null이면 지운다).
 // design: true면 DESIGN_INPUTS도 복사한다(디자인 gate 씨앗만. 다른 씨앗은 디자인 입력 없이 빠르게 만든다).
@@ -160,11 +161,12 @@ const hook = (d, name, args, input) => exec('node', [join(d, 'scripts/ci/run.mjs
     ['worker 작업이 app 영역으로 건너뜀', ciWith("  worker:\n    name: worker\n    needs: changes\n    if: needs.changes.outputs.worker == 'true'\n", "  worker:\n    name: worker\n    needs: changes\n    if: needs.changes.outputs.app == 'true'\n")],
     ['changes 출력에서 worker 빠짐', ciWith('      worker: ${{ steps.classify.outputs.worker }}\n', '')],
     ['bundle 작업이 PR에서도 돎', ciWith("  bundle:\n    name: bundle (${{ matrix.os }})\n    needs: changes\n    if: github.event_name != 'pull_request' && needs.changes.outputs.app == 'true'\n", "  bundle:\n    name: bundle (${{ matrix.os }})\n    needs: changes\n    if: needs.changes.outputs.app == 'true'\n")],
-    ['report가 ci-ok 뒤가 아님', ciWith('    needs: [ci-ok, e2e-web, design-shots, e2e-native, e2e-native-windows, worker-e2e]\n', '    needs: [changes, e2e-web, design-shots, e2e-native, e2e-native-windows, worker-e2e]\n')],
-    ['관찰 작업(e2e-native)이 report needs에 없음', ciWith('    needs: [ci-ok, e2e-web, design-shots, e2e-native, e2e-native-windows, worker-e2e]\n', '    needs: [ci-ok, e2e-web, design-shots, e2e-native-windows, worker-e2e]\n')],
-    ['관찰 작업(e2e-native-windows)이 report needs에 없음', ciWith('    needs: [ci-ok, e2e-web, design-shots, e2e-native, e2e-native-windows, worker-e2e]\n', '    needs: [ci-ok, e2e-web, design-shots, e2e-native, worker-e2e]\n')],
-    ['관찰 작업(worker-e2e)이 report needs에 없음', ciWith('    needs: [ci-ok, e2e-web, design-shots, e2e-native, e2e-native-windows, worker-e2e]\n', '    needs: [ci-ok, e2e-web, design-shots, e2e-native, e2e-native-windows]\n')],
-    ['관찰 작업(design-shots)이 report needs에 없음', ciWith('    needs: [ci-ok, e2e-web, design-shots, e2e-native, e2e-native-windows, worker-e2e]\n', '    needs: [ci-ok, e2e-web, e2e-native, e2e-native-windows, worker-e2e]\n')],
+    ['report가 ci-ok 뒤가 아님', ciWith('    needs: [ci-ok, e2e-web, design-shots, design-worker, e2e-native, e2e-native-windows, worker-e2e]\n', '    needs: [changes, e2e-web, design-shots, design-worker, e2e-native, e2e-native-windows, worker-e2e]\n')],
+    ['관찰 작업(e2e-native)이 report needs에 없음', ciWith('    needs: [ci-ok, e2e-web, design-shots, design-worker, e2e-native, e2e-native-windows, worker-e2e]\n', '    needs: [ci-ok, e2e-web, design-shots, design-worker, e2e-native-windows, worker-e2e]\n')],
+    ['관찰 작업(e2e-native-windows)이 report needs에 없음', ciWith('    needs: [ci-ok, e2e-web, design-shots, design-worker, e2e-native, e2e-native-windows, worker-e2e]\n', '    needs: [ci-ok, e2e-web, design-shots, design-worker, e2e-native, worker-e2e]\n')],
+    ['관찰 작업(worker-e2e)이 report needs에 없음', ciWith('    needs: [ci-ok, e2e-web, design-shots, design-worker, e2e-native, e2e-native-windows, worker-e2e]\n', '    needs: [ci-ok, e2e-web, design-shots, design-worker, e2e-native, e2e-native-windows]\n')],
+    ['관찰 작업(design-shots)이 report needs에 없음', ciWith('    needs: [ci-ok, e2e-web, design-shots, design-worker, e2e-native, e2e-native-windows, worker-e2e]\n', '    needs: [ci-ok, e2e-web, design-worker, e2e-native, e2e-native-windows, worker-e2e]\n')],
+    ['관찰 작업(design-worker)이 report needs에 없음', ciWith('    needs: [ci-ok, e2e-web, design-shots, design-worker, e2e-native, e2e-native-windows, worker-e2e]\n', '    needs: [ci-ok, e2e-web, design-shots, e2e-native, e2e-native-windows, worker-e2e]\n')],
     ['관찰 중인 e2e-native-windows를 ci-ok needs에 넣음(OBSERVED_JOBS와 다름)', ciWith(', smoke-install-linux, bundle]', ', smoke-install-linux, bundle, e2e-native-windows]')],
     ['관찰 중인 e2e-web을 ci-ok needs에 넣음(OBSERVED_JOBS와 다름)', ciWith(', smoke-install-linux, bundle]', ', smoke-install-linux, bundle, e2e-web]')],
     ['관찰 중인 worker-e2e를 ci-ok needs에 넣음(OBSERVED_JOBS와 다름)', ciWith(', smoke-install-linux, bundle]', ', smoke-install-linux, bundle, worker-e2e]')],
@@ -415,6 +417,8 @@ const hook = (d, name, args, input) => exec('node', [join(d, 'scripts/ci/run.mjs
 
   expect('design-icons', '깨끗한 사본', 0, () => gate(dr('di-clean'), 'design-icons'));
   // 글꼴 아이콘 이름(DI6)
+  // Worker 생성 모듈(assets)을 손으로 고치면 worker-gen --check가 잡는다(DI 규칙은 에셋을 보지 않는다)
+  expect('design-icons', 'Worker 생성 모듈 손 수정(worker-gen)', 'nonzero', () => gate(dr('di-gen', edit('worker/src/http/assets.generated.ts', 'type: "image/png"', 'type: "image/jpeg"')), 'design-icons'));
   expect('design-icons', '글꼴 아이콘 문자열(DI6)', 'nonzero', () => gate(dr('di-font', { [SEED_SVELTE]: svelte('display: block;', `<div class="a" data-x="${'SF ' + 'Symbols'}"></div>`) }), 'design-icons'));
 }
 

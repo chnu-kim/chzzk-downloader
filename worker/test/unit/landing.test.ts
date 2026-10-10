@@ -1,7 +1,7 @@
 // core/landing(docs/design/worker.md 구현 중 변경 38 (가)): latest.json 요약, 랜딩 표 행, 산출물 표와의 일치.
 import { describe, expect, it } from "vitest";
 import expectedText from "../../../release/expected-artifacts.json?raw";
-import { ARTIFACT_PREFIX, LANDING_FILES, artifactFile, landingRows, parseLatestView } from "../../src/core/landing";
+import { ARTIFACT_PREFIX, LANDING_FILES, MIN_OS, OS_NAME, PRIMARY_ARTIFACT, artifactFile, detectedOs, landingRows, parseLatestView } from "../../src/core/landing";
 import { type ExpectedTable, buildSeed } from "../seed-release.mjs";
 
 const enc = (s: string) => new TextEncoder().encode(s);
@@ -86,5 +86,27 @@ describe("표 일치", () => {
     }
     expect(names.sort()).toEqual(LANDING_FILES.map((f) => f.name).sort());
     expect(names).toHaveLength(5);
+  });
+});
+
+describe("최소 OS·주 산출물·감지(계약 §2.7)", () => {
+  it("MIN_OS는 macOS 13.3 · Windows 10 · Ubuntu 22.04 [잠정]", () => {
+    expect(MIN_OS).toEqual({ macos: "macOS 13.3", windows: "Windows 10", linux: "Ubuntu 22.04" });
+    expect(OS_NAME).toEqual({ macos: "macOS", windows: "Windows", linux: "Linux" });
+  });
+
+  it("OS별 주 산출물: dmg · setup(권장) · AppImage. 각 산출물은 그 OS의 것이다", () => {
+    expect(PRIMARY_ARTIFACT).toEqual({ macos: "dmg", windows: "setup", linux: "appimage" });
+    for (const [os, id] of Object.entries(PRIMARY_ARTIFACT)) expect(LANDING_FILES.find((f) => f.id === id)?.os).toBe(os);
+  });
+
+  it("detectedOs: 데스크톱 세 종류만 잡고 그 밖은 null", () => {
+    const e = (kind: "bot" | "phone" | "desktop" | "unknown", os: "mac" | "windows" | "linux" | "other" | null) => ({ kind, os, inApp: null });
+    expect(detectedOs(e("desktop", "mac"))).toBe("macos");
+    expect(detectedOs(e("desktop", "windows"))).toBe("windows");
+    expect(detectedOs(e("desktop", "linux"))).toBe("linux");
+    expect(detectedOs(e("desktop", "other"))).toBeNull();
+    expect(detectedOs(e("desktop", null))).toBeNull();
+    for (const kind of ["bot", "phone", "unknown"] as const) expect(detectedOs(e(kind, null))).toBeNull();
   });
 });

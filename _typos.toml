@@ -22,3 +22,7 @@ trak = "trak"
 trun = "trun"
 # MP4 메타데이터 '©nam'(제목) 상자 흉내
 nam = "nam"
+
+[default]
+# 생성된 CSS 해시(SITE_CSS_HASH): 16진수 열이 우연히 낱말처럼 읽힌다. CSS가 바뀔 때마다 값이 달라진다
+extend-ignore-re = ['SITE_CSS_HASH = "[0-9a-f]{16}"']

@@ -214,6 +214,12 @@ export async function appFlow(o: { fake: FakeChzzk; browser?: Browser; app?: App
 /** 이 파일 공통 규약의 afterEach에서 쓴다 */
 export const allowedChannel = (channelId: string, by: string) => store().allow(channelId, "", by, Date.now());
 
+/** 페이지의 첫 h1 글자(안의 태그는 걷어 낸다). 상태 아이콘이 h1 안에 있어 마크업 그대로 비교하지 않는다 */
+export const h1Of = (t: string): string | null => {
+  const m = /<h1[^>]*>([\s\S]*?)<\/h1>/.exec(t);
+  return m === null ? null : (m[1] ?? "").replace(/<[^>]*>/g, "");
+};
+
 /** application/x-www-form-urlencoded 본문 */
 export const formBody = (f: Record<string, string>): string => new URLSearchParams(f).toString();
 

@@ -96,3 +96,34 @@ it("메모의 따옴표는 이스케이프된다(속성을 닫고 이벤트를 �
   expect(page).not.toContain('" onfocus="');
   expect(page).toContain("&quot; onfocus=&quot;alert(1)");
 });
+
+it("확인 페이지의 채널 이름과 400 오류 화면의 되돌려 채운 입력값도 이스케이프된다", async () => {
+  const now = Date.now();
+  const s = store();
+  // 이름에 태그·bidi를 단 채널을 허가에 올린다(앱 흐름으로 로그인해 이름을 저장한다)
+  const verifier = await sha256B64url(newSecret());
+  const app = await s.startApp({ port: PORT, verifier, client: "app/0.2.0 macos", ip: "203.0.113.12", limit: 1000 }, now);
+  if (!app.ok) throw new Error("startApp");
+  const ac = await s.continueApp(await sha256Hex(app.handle), now);
+  if (!ac.ok) throw new Error("continueApp");
+  const ak = await s.consume(await sha256Hex(ac.state), await sha256Hex(ac.binder), now);
+  if (!ak.ok) throw new Error("consume");
+  expect((await s.allow(B2, "메모", A1, now)).ok).toBe(true);
+  await s.finish(ak.flowId, { type: "user", channelId: B2, channelName: "\u202E<script>x</script>\u200B" }, ADMINS, now);
+
+  const admin = (await webLoginHttp(fake, "a1")).browser;
+  const confirm = await (await admin.get(`/admin/${B2}/disallow`)).text();
+  expect(confirm).not.toContain("<script");
+  for (const ch of BIDI) expect(confirm).not.toContain(ch);
+  expect(confirm).toContain("&lt;script&gt;x&lt;/script&gt;");
+
+  // 400 화면: 입력값이 따옴표로 속성을 닫지 못한다
+  const csrf = /name="csrf" value="([^"]+)"/.exec(await (await admin.get("/admin")).text())?.[1] ?? "";
+  const bad = await admin.post("/admin/allow", undefined, new URLSearchParams({ csrf, channelId: '"><script>1</script>', note: '" onfocus="1' }).toString());
+  expect(bad.status).toBe(400);
+  const t = await bad.text();
+  expect(t).not.toContain("<script");
+  expect(t).not.toContain('" onfocus="');
+  expect(t).toContain("&quot;&gt;&lt;script&gt;1&lt;/script&gt;");
+  expect(t).toContain("&quot; onfocus=&quot;1");
+});

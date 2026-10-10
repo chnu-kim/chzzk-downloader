@@ -59,6 +59,11 @@
       "npm": "worker",
       "$comment": "Cloudflare Worker(worker/)의 wrangler. PATH 도구가 아니라 worker/package.json devDependencies가 정확히 이 버전으로 깔고(lockfile), worker-config.mjs가 같은지 본다(W8부터 worker/deploy/package.json도). doctor는 npm 항목을 건너뛴다"
     },
+    "playwright": {
+      "version": "1.63.0",
+      "npm": "app,worker",
+      "$comment": "@playwright/test. PATH 도구가 아니라 app/package.json과 worker/package.json devDependencies가 정확히 이 버전으로 깐다(두 lockfile). worker-config.mjs가 셋이 같은지 본다(docs/design/system/governance.md §2.6b). 브라우저는 gate가 `pnpm exec playwright install chromium`으로 받는다. Dependabot 항목이 app·worker로 나뉘어 PR이 둘로 오면 둘을 함께 올린다. doctor는 npm 항목을 건너뛴다"
+    },
     "rust-nightly": {
       "version": "nightly-2026-10-01",
       "toolchain": true,

@@ -9,6 +9,8 @@ export type ReleasePath =
 
 /** 승격된 최신 매니페스트의 R2 키(CI·updater만 읽는다) */
 export const LATEST_KEY = "releases/latest.json";
+/** 서비스 공지 R2 객체(releases/ 밖이라 릴리스 보존 정리가 지우지 않는다. 사람이 올린다, 계약 §2.8) */
+export const NOTICE_KEY = "service/notice.json";
 const LATEST = /^\/releases\/latest\.json$/;
 const FILE = /^\/releases\/(?<v>\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)\/(?<f>[A-Za-z0-9._-]{1,128})$/;
 

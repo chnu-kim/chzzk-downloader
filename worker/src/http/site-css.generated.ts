@@ -1605,9 +1605,523 @@ export const SITE_CSS = `/* [root] 라이트 기본값. ref 팔레트와 sys 토
 }
 
 /* [site] worker/src/http/site.css */
-/* Worker 웹 전용 CSS(docs/design/system/web.md). 단계 (e)에서 채운다 */
+/* Worker 웹 전용 CSS(docs/design/system/web.md §2·§3·§7·§8·§11). 토큰(생성물)과 design/ui.css 뒤에 이어 붙는다.
+   값은 전부 var() 토큰이고, 앱 app.css가 가진 전역 규칙(리셋·글자 유틸·sr-only)을 웹에 다시 정의한다.
+   요소 이름 규칙은 html·body·h1~h3·p·a·code·pre·table·th·td·ol·ul·details·summary·input·button·label·caption에만 두고
+   나머지는 클래스다(헤더 .site-header, 본문 .page, 바닥글 .site-footer). 분기점은 600(599px)뿐이다.
+   전환은 없다: ui.css의 transition은 아래 "전환 없음" 규칙이 웹에서 끈다. */
+
+/* ---------- 리셋 · 전역 ---------- */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
 html {
   font-size: 16px;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  font-size: var(--text-body);
+  line-height: var(--leading-body);
+  font-weight: var(--weight-regular);
+}
+/* 웹은 앱의 default 커서 규칙을 쓰지 않는다. 글자는 선택할 수 있다 */
+body.web {
+  cursor: auto;
+  user-select: text;
+}
+
+h1,
+h2,
+h3,
+p,
+ul,
+ol,
+dl,
+dd,
+pre,
+figure,
+fieldset {
+  margin: 0;
+}
+fieldset {
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+ul,
+ol {
+  padding-inline-start: var(--space-20);
+}
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+  margin: 0;
+}
+
+/* 헤딩 위계: h3를 UA 기본으로 두지 않는다 */
+h1 {
+  font-size: var(--text-display);
+  line-height: var(--leading-display);
+  font-weight: var(--weight-strong);
+}
+h2 {
+  font-size: var(--text-title);
+  line-height: var(--leading-title);
+  font-weight: var(--weight-strong);
+}
+h3 {
+  font-size: var(--text-body);
+  line-height: var(--leading-body);
+  font-weight: var(--weight-strong);
+}
+/* 랜딩 h1만. 읽기 척도 블록이 600 미만에서 22/28로 바꾼다 */
+.hero {
+  font-size: var(--text-hero);
+  line-height: var(--leading-hero);
+}
+
+/* 포커스 링은 전역 한 줄이다 */
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* 링크: 색만으로 구별하지 않게 밑줄을 둔다. 버튼 모양 링크(.btn)는 ui.css가 그린다 */
+a:not(.btn) {
+  color: var(--accent-ink);
+  text-decoration: underline;
+  text-underline-offset: var(--space-2);
+}
+a,
+button,
+summary,
+.btn {
+  cursor: pointer;
+}
+/* 대상 크기: 요약은 --hit-min 이상(WCAG 2.5.8). 문단 안 링크만 예외다 */
+summary {
+  min-height: var(--hit-min);
+}
+
+/* 전환 없음: ui.css의 transition을 웹에서 끈다(정지가 기본) */
+body.web .btn,
+body.web .disclosure > summary .icon {
+  transition: none;
+}
+
+/* ---------- 글자 유틸 ---------- */
+
+.num {
+  font-variant-numeric: tabular-nums;
+}
+.selectable {
+  -webkit-user-select: text;
+  user-select: text;
+  cursor: text;
+}
+.muted,
+.meta {
+  color: var(--fg-muted);
+}
+.meta {
+  font-size: var(--text-caption);
+  line-height: var(--leading-caption);
+}
+.lead {
+  line-height: var(--leading-read);
+}
+.mono,
+code {
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+  word-break: break-all;
+}
+/* 화면에는 없고 스크린 리더만 읽는 글. 2px 토큰 상자를 잘라 숨긴다(DL2) */
+.sr-only {
+  position: absolute;
+  width: var(--space-2);
+  height: var(--space-2);
+  margin: calc(0px - var(--space-2));
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ---------- 문서 골격: skip · 헤더 · 본문 · 바닥글 ---------- */
+
+/* 평소에는 화면 왼쪽 밖, 포커스를 받으면 열 가장자리에 나타난다 */
+.skip {
+  position: absolute;
+  top: var(--space-8);
+  left: calc(0px - 100vw);
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--hit-min);
+  padding: 0 var(--space-12);
+  background: var(--surface);
+  color: var(--fg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-control);
+}
+.skip:focus {
+  left: var(--edge);
+}
+
+.site-header {
+  background: var(--bg);
+  border-bottom: 1px solid var(--separator);
+}
+.site-header > .col {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--gap-sibling);
+  min-height: var(--toolbar-h);
+}
+a.site-name {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--hit-min);
+  color: var(--fg);
+  font-weight: var(--weight-strong);
+  text-decoration: none;
+}
+.site-nav {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--gap-sibling);
+  margin-inline-start: auto;
+}
+.site-nav a,
+.site-user {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--hit-min);
+  min-width: var(--hit-min);
+}
+.site-user {
+  color: var(--fg-muted);
+}
+
+/* 본문 열: 위아래 간격과 문단 사이 간격 */
+.page {
+  padding-top: var(--space-24);
+  padding-bottom: var(--space-32);
+}
+/* 읽기 척도: body가 먼저 13으로 계산해 상속하므로 main에서 글자 크기와 행간을 다시 선언한다(헤더·바닥글은 그대로 13) */
+.page[data-scale="reading"] {
+  font-size: var(--text-body);
+  line-height: var(--leading-body);
+}
+.page > * + * {
+  margin-top: var(--space-12);
+}
+.page > h2 {
+  margin-top: var(--space-24);
+}
+.page[data-scale="reading"] > h2 {
+  margin-top: var(--space-40);
+}
+.page > section {
+  margin-top: var(--space-24);
+}
+.page[data-scale="reading"] > section {
+  margin-top: var(--space-40);
+}
+.page section > * + * {
+  margin-top: var(--space-12);
+}
+.page p,
+.page li {
+  line-height: var(--leading-read);
+}
+
+/* 랜딩 CTA 블록(로그인 전 고지 + 폼, 큰 버튼 + meta 줄): 안쪽 간격 */
+.cta > * + * {
+  margin-top: var(--space-12);
+}
+
+.site-footer {
+  border-top: 1px solid var(--separator);
+  color: var(--fg-muted);
+  font-size: var(--text-caption);
+  line-height: var(--leading-caption);
+}
+.site-footer > .col {
+  padding-top: var(--space-32);
+  padding-bottom: var(--space-32);
+}
+.site-footer ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--gap-sibling) var(--space-16);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.site-footer a {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--hit-min);
+}
+.site-footer p {
+  margin-top: var(--space-12);
+}
+
+/* ---------- 상태 제목 · 알림 · 폼 ---------- */
+
+/* 안내·결과 페이지의 h1: 상태 아이콘이 제목 앞에 온다 */
+.status {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-8);
+}
+.status > .icon {
+  width: var(--icon-md);
+  height: var(--icon-md);
+  margin-top: calc((var(--leading-display) - var(--icon-md)) / 2);
+}
+.status-muted > .icon {
+  color: var(--fg-muted);
+}
+.status-warning > .icon {
+  color: var(--warning-ink);
+}
+.status-danger > .icon {
+  color: var(--danger-ink);
+}
+
+.notice-text > * + * {
+  margin-top: var(--space-4);
+}
+.notice-text ul {
+  margin: 0;
+}
+
+form {
+  margin: 0;
+}
+.actions {
+  align-items: center;
+}
+
+.form-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-label);
+}
+/* 표 아래 폼 제목과 폼 안 칸·버튼 사이 간격 */
+.page section > h3 {
+  margin-top: var(--space-24);
+}
+form > * + * {
+  margin-top: var(--space-12);
+}
+.form-field > label {
+  display: block;
+  color: var(--fg);
+}
+.form-help {
+  color: var(--fg-muted);
+  font-size: var(--text-caption);
+  line-height: var(--leading-caption);
+}
+.field {
+  cursor: text;
+  user-select: text;
+}
+.field[readonly] {
+  cursor: default;
+}
+.field-mono {
+  font-family: var(--font-mono);
+}
+
+/* ---------- 표 · 요약 · 코드 ---------- */
+
+.scroll {
+  overflow-x: auto;
+  /* 안쪽의 .sr-only(absolute)가 스크롤 영역 밖으로 새어 문서를 가로로 넓히지 않게 한다 */
+  position: relative;
+}
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+caption {
+  padding-bottom: var(--space-6);
+  color: var(--fg-muted);
+  font-size: var(--text-caption);
+  line-height: var(--leading-caption);
+  text-align: start;
+}
+th,
+td {
+  padding: var(--space-6) var(--space-8);
+  border-bottom: 1px solid var(--separator);
+  text-align: start;
+  vertical-align: top;
+  /* 한글을 글자 단위로 끊지 않는다. 좁으면 .scroll이 가로로 스크롤한다 */
+  overflow-wrap: normal;
+}
+/* 표의 양 끝 칸은 본문 가장자리에 맞춘다(안쪽 여백이 열 밖으로 새지 않게) */
+th:first-child,
+td:first-child {
+  padding-inline-start: 0;
+}
+th:last-child,
+td:last-child {
+  padding-inline-end: 0;
+}
+th {
+  white-space: nowrap;
+  color: var(--fg-muted);
+  font-weight: var(--weight-strong);
+}
+th[scope="row"] {
+  color: var(--fg);
+  font-weight: var(--weight-regular);
+}
+td.num,
+th.num {
+  text-align: end;
+}
+td.num {
+  white-space: nowrap;
+}
+/* 표 칸의 시각: 날짜·시각 두 덩어리, 덩어리 안에서는 끊지 않는다(web.md §15-35) */
+.when {
+  white-space: nowrap;
+}
+/* 표 안의 ID(mono)는 보통 한 줄이다. 칸이 모자라면(글꼴 폭이 다른 환경) 이 칸이 줄어들어 ID가 줄바꿈된다:
+   .scroll이 가로로 넘치는 것보다 낫다(1280에서 표는 넘치지 않는다, web.md §15-35). 좁은 폭(599px 이하)은 아래에서 nowrap + 스크롤 */
+td .mono,
+th .mono {
+  word-break: normal;
+  overflow-wrap: anywhere;
+}
+/* 동작 칸(버튼·링크 버튼·행동 열 머리)은 내용 폭으로 고정한다: width 1%가 최소 폭이고, 남는 폭은 이름·메모 칸이 준다 */
+th:has(> .sr-only),
+td:has(> .actions),
+td:has(> form) {
+  width: 1%;
+  white-space: nowrap;
+}
+/* 표 칸의 버튼 줄: 한 줄에 나란히 */
+td .actions {
+  flex-wrap: nowrap;
+  gap: var(--space-8);
+}
+/* 칸 안 폼의 "폼 안 요소 사이 간격"을 쓰지 않는다: 숨은 입력 뒤 버튼이 아래로 밀려 다른 칸보다 낮아진다 */
+td form > * + * {
+  margin-top: 0;
+}
+
+dl.summary {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--space-6) var(--space-16);
+}
+.summary dt {
+  color: var(--fg-muted);
+}
+.summary dd {
+  min-width: 0;
+}
+
+/* 대상 크기(WCAG 2.5.8): 목록·표·버튼 줄에서 혼자 놓인 링크는 --hit-min 이상이다. 문단 안 링크만 예외다 */
+.page li > a:only-child,
+.page td a,
+.page th a,
+.actions > a {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--hit-min);
+}
+
+/* 코드 블록: 글자 단위로 끊지 않고 가로로 스크롤한다 */
+pre {
+  padding: var(--space-12);
+  background: var(--surface-2);
+  border-radius: var(--radius-control);
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+  line-height: var(--leading-caption);
+  white-space: pre;
+  overflow-x: auto;
+  user-select: text;
+}
+pre code {
+  font-size: inherit;
+  word-break: normal;
+}
+pre.license {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* 단계 목록 */
+.steps {
+  padding-inline-start: var(--space-20);
+}
+.steps > li + li {
+  margin-top: var(--space-6);
+}
+.steps > li > pre {
+  margin-top: var(--space-8);
+}
+
+@media (max-width: 599px) {
+  /* 표는 쌓지 않고 가로로 스크롤한다 */
+  th,
+  td {
+    white-space: nowrap;
+  }
+  /* 코드 블록은 좁은 폭에서 줄바꿈한다(복사하는 글자는 같다) */
+  pre {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  /* 큰 버튼은 전폭 */
+  .btn-lg {
+    width: 100%;
+  }
+}
+
+/* ---------- 강제 색상 ---------- */
+
+@media (forced-colors: active) {
+  .skip,
+  pre {
+    border: 1px solid CanvasText;
+  }
+  .site-header {
+    border-bottom: 1px solid CanvasText;
+  }
+  .site-footer {
+    border-top: 1px solid CanvasText;
+  }
+  th,
+  td {
+    border-bottom: 1px solid CanvasText;
+  }
 }
 `;
-export const SITE_CSS_HASH = "62b2f55bc6a8c52d";
+export const SITE_CSS_HASH = "d31876ab73819da4";

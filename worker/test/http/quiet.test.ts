@@ -93,7 +93,7 @@ afterEach(() => {
 });
 
 describe("경로 표", () => {
-  it("quiet 행은 URL에 금지 값이 실리는 일곱 행이다", () => {
+  it("quiet 행은 URL에 금지 값이 실리는 여덟 행이다", () => {
     expect(ROUTES.filter((r) => r.quiet).map((r) => `${r.method} ${r.pattern}`)).toEqual([
       "GET /auth/login/:handle",
       "POST /auth/login/:handle",
@@ -102,14 +102,15 @@ describe("경로 표", () => {
       "POST /admin/sessions/:id/revoke",
       "POST /admin/denied/:channelId/allow",
       "POST /admin/denied/:channelId/dismiss",
+      "GET /admin/:channelId/disallow",
     ]);
   });
 
   it("isQuietPath는 메서드와 상관없이 패턴으로 본다", () => {
-    for (const p of ["/auth/callback", "/auth/login/x", "/me/sessions/x/revoke", "/admin/sessions/x/revoke", "/admin/denied/x/allow", "/admin/denied/x/dismiss"]) {
+    for (const p of ["/auth/callback", "/auth/login/x", "/me/sessions/x/revoke", "/admin/sessions/x/revoke", "/admin/denied/x/allow", "/admin/denied/x/dismiss", "/admin/x/disallow"]) {
       expect([p, isQuietPath(p)]).toEqual([p, true]);
     }
-    for (const p of ["/", "/health", "/auth/done", "/auth/start", "/auth/web/start", "/auth/poll", "/auth/redeem", "/admin", "/admin/allow", "/auth/login", "/auth/callback/x"]) {
+    for (const p of ["/", "/health", "/auth/done", "/auth/start", "/auth/web/start", "/auth/poll", "/auth/redeem", "/admin", "/admin/allow", "/notice", "/auth/login", "/auth/callback/x"]) {
       expect([p, isQuietPath(p)]).toEqual([p, false]);
     }
   });
@@ -272,23 +273,29 @@ describe("웹: 콜백·내 기기·관리의 id 경로", () => {
     await web("d4");
     const post = (s: { b: Browser; csrf: string }, path: string, csrf = s.csrf) => s.b.post(path, undefined, formBody({ csrf }));
 
-    // 내 기기 끊기: 404·csrf 거절·성공
-    expect((await post(member, "/me/sessions/" + "Q".repeat(22) + "/revoke")).status).toBe(404);
+    // 내 기기 끊기: 없는 대상(멱등 303)·csrf 거절·성공
+    expect((await post(member, "/me/sessions/" + "Q".repeat(22) + "/revoke")).status).toBe(303);
     // 같은 채널의 다른 브라우저 세션을 끊는다
     const other = await web("b2");
     const target = await sessionOf(other.b);
     expect((await post(member, `/me/sessions/${target}/revoke`, "B".repeat(43))).status).toBe(403);
     expect((await post(member, `/me/sessions/${target}/revoke`)).status).toBe(303);
 
-    // 관리: 세션 끊기 404·성공, 거부 기록 허용(관리자 채널 409·csrf 거절·성공·404), 지우기(성공·404)
-    expect((await post(admin, "/admin/sessions/" + "Q".repeat(22) + "/revoke")).status).toBe(404);
+    // 관리: 세션 끊기(없는 대상 멱등 303)·성공, 거부 기록 허용(관리자 채널 409·csrf 거절·성공·멱등 303), 지우기(성공·멱등 303)
+    expect((await post(admin, "/admin/sessions/" + "Q".repeat(22) + "/revoke")).status).toBe(303);
     expect((await post(admin, `/admin/sessions/${await sessionOf(member.b)}/revoke`)).status).toBe(303);
     expect((await post(admin, `/admin/denied/${A1}/allow`)).status).toBe(409);
     expect((await post(admin, `/admin/denied/${C3}/allow`, "B".repeat(43))).status).toBe(403);
     expect((await post(admin, `/admin/denied/${C3}/allow`)).status).toBe(303);
-    expect((await post(admin, `/admin/denied/${C3}/allow`)).status).toBe(404);
+    expect((await post(admin, `/admin/denied/${C3}/allow`)).status).toBe(303);
     expect((await post(admin, `/admin/denied/${D4}/dismiss`)).status).toBe(303);
-    expect((await post(admin, `/admin/denied/${D4}/dismiss`)).status).toBe(404);
+    // 허가 빼기 확인 페이지(GET): 허가된 채널 200·허가에 없음 멱등 303·관리자 채널 409·형식 밖 404. 모두 Worker 로그 0
+    expect((await admin.b.get(`/admin/${C3}/disallow`)).status).toBe(200);
+    expect((await admin.b.get(`/admin/${D4}/disallow`)).status).toBe(303);
+    expect((await admin.b.get(`/admin/${A1}/disallow`)).status).toBe(409);
+    expect((await admin.b.get("/admin/zz/disallow")).status).toBe(404);
+    expect((await (await web("b2")).b.get(`/admin/${C3}/disallow`)).status).toBe(403);
+    expect((await post(admin, `/admin/denied/${D4}/dismiss`)).status).toBe(303);
 
     expect(workerSideOnQuiet()).toEqual([]);
     const ev = doEvents();

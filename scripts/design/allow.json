@@ -5,12 +5,6 @@
     { "rule": "DC10", "file": "docs/design/system/patterns.md", "pattern": "^job\\.recovered\\.body$", "reason": "단계 (f)에서 제거(연결 대기·멈춘 작업 데이터)" },
     { "rule": "DC10", "file": "docs/design/system/patterns.md", "pattern": "^job\\.stale\\.body$", "reason": "단계 (f)에서 제거(연결 대기·멈춘 작업 데이터)" },
     { "rule": "DC10", "file": "docs/design/system/patterns.md", "pattern": "^job\\.status\\.waitingNetwork$", "reason": "단계 (f)에서 제거(연결 대기·멈춘 작업 데이터)" },
-    { "rule": "DC10", "file": "docs/design/system/patterns.md", "pattern": "^job\\.waitingNetwork\\.body$", "reason": "단계 (f)에서 제거(연결 대기·멈춘 작업 데이터)" },
-    { "rule": "DT2", "file": "worker/src/http/site-css.ts", "pattern": "^--box$", "reason": "단계 (e)에서 제거(Worker 페이지)" },
-    { "rule": "DT2", "file": "worker/src/http/site-css.ts", "pattern": "^--line$", "reason": "단계 (e)에서 제거(Worker 페이지)" },
-    { "rule": "DT2", "file": "worker/src/http/site-css.ts", "pattern": "^--muted$", "reason": "단계 (e)에서 제거(Worker 페이지)" },
-    { "rule": "DT2", "file": "worker/src/http/site-css.ts", "pattern": "^--warn$", "reason": "단계 (e)에서 제거(Worker 페이지)" },
-    { "rule": "DT3", "file": "worker/src/http/site-css.generated.ts", "pattern": "^--leading-hero$", "reason": "단계 (e)에서 제거(Worker 페이지)" },
-    { "rule": "DT3", "file": "worker/src/http/site-css.generated.ts", "pattern": "^--text-hero$", "reason": "단계 (e)에서 제거(Worker 페이지)" }
+    { "rule": "DC10", "file": "docs/design/system/patterns.md", "pattern": "^job\\.waitingNetwork\\.body$", "reason": "단계 (f)에서 제거(연결 대기·멈춘 작업 데이터)" }
   ]
 }

@@ -1,0 +1,11 @@
+{
+  "ids": [
+    "cookie",
+    "disk-full",
+    "install-mac",
+    "install-windows",
+    "login-browser",
+    "report"
+  ],
+  "retired": []
+}

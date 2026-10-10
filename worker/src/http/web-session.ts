@@ -4,6 +4,8 @@ import { clearCookie, hasCookieName, readCookie } from "../core/cookies";
 import { isSecret, isToken, safeEqual, sha256Hex } from "../core/token";
 import type { Ctx } from "../routes";
 import { COPY } from "./copy";
+import { flashCookie } from "./flash";
+import type { Nav } from "./layout";
 import { noticePage } from "./pages";
 import { FORM_MAX, isFormContentType, readCapped, sameOriginPost } from "./request";
 
@@ -44,6 +46,15 @@ export function seeOther(location: "/" | "/admin", cookies: readonly string[] = 
 
 export const toHome = (clear: string | null): Response => seeOther("/", clear === null ? [] : [clear]);
 
+/** Set-Cookie 줄들(없는 칸은 건너뛴다) → 응답 헤더 초기값. 하나도 없으면 undefined. 같은 이름이 여럿이라 쌍 배열이다 */
+export function setCookieHeaders(lines: readonly (string | null)[]): HeadersInit | undefined {
+  const pairs = lines.flatMap((l): [string, string][] => (l === null ? [] : [["Set-Cookie", l]]));
+  return pairs.length === 0 ? undefined : pairs;
+}
+
+/** 로그인한 사람의 헤더 nav(도움말·관리·채널 이름) */
+export const memberNav = (s: WebSession): Nav => ({ kind: "member", channelName: s.channelName, isAdmin: s.isAdmin });
+
 export type WebPost = { readonly ok: true; readonly s: WebSession; readonly form: URLSearchParams } | { readonly ok: false; readonly response: Response };
 
 /**
@@ -51,9 +62,11 @@ export type WebPost = { readonly ok: true; readonly s: WebSession; readonly form
  * → 웹 세션 → 관리자 → csrf 필드. 앞의 네 단계는 DO를 부르지 않는다.
  */
 export async function guardWebPost(req: Request, ctx: Ctx, opts: { readonly admin: boolean }): Promise<WebPost> {
-  const reject = (status: number, title: string, body: string | null, reason: string): WebPost => {
+  const reject = (status: number, title: string, body: string | null, reason: string, nav?: Nav): WebPost => {
     ctx.log("web.post.rejected", { level: "warn", route: ctx.route, reason });
-    return { ok: false, response: noticePage(ctx.config, status, title, body) };
+    // csrf·Origin 불일치는 원래 화면을 새로 여는 길을 준다(관리 POST는 /admin, 그 밖은 처음으로)
+    const back = opts.admin ? ({ href: "/admin", label: COPY.reloadAdmin } as const) : undefined;
+    return { ok: false, response: noticePage(ctx.config, status, title, body, { ...(nav === undefined ? {} : { nav }), ...(back === undefined ? {} : { back }) }) };
   };
   if (opts.admin && ctx.config.adminChannelIds.length === 0) return reject(403, COPY.bootstrapAdmin.title, null, "bootstrap");
   if (!sameOriginPost(req, ctx.config.publicOrigin)) return reject(403, COPY.badRequest.title, COPY.badRequest.body, "bad_origin");
@@ -64,11 +77,12 @@ export async function guardWebPost(req: Request, ctx: Ctx, opts: { readonly admi
   const r = await readWebSession(req, ctx);
   if (!r.ok) {
     ctx.log("web.post.rejected", { level: "warn", route: ctx.route, reason: "no_session" });
-    return { ok: false, response: toHome(r.clear) };
+    // 세션이 없으면 처음 화면으로 보내고 만료를 알린다(폼 값은 보존하지 않는다)
+    return { ok: false, response: seeOther("/", [...(r.clear === null ? [] : [r.clear]), flashCookie(ctx.cookies, "sessionGone")]) };
   }
-  if (opts.admin && !r.s.isAdmin) return reject(403, COPY.adminOnly.title, null, "not_admin");
+  if (opts.admin && !r.s.isAdmin) return reject(403, COPY.adminOnly.title, null, "not_admin", memberNav(r.s));
   const sent = form.getAll("csrf");
   const v = sent.length === 1 ? sent[0] : undefined;
-  if (!isSecret(v) || r.s.csrf === "" || !(await safeEqual(v, r.s.csrf))) return reject(403, COPY.badRequest.title, COPY.badRequest.body, "bad_csrf");
+  if (!isSecret(v) || r.s.csrf === "" || !(await safeEqual(v, r.s.csrf))) return reject(403, COPY.badRequest.title, COPY.badRequest.body, "bad_csrf", memberNav(r.s));
   return { ok: true, s: r.s, form };
 }

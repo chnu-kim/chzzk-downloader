@@ -196,7 +196,7 @@ test('gate 표: 검사를 켜는 플래그', () => {
   assert.deepEqual(cmds('design-tokens'), ['node scripts/design/tokens.mjs --check', 'node scripts/design/check-tokens.mjs']);
   assert.deepEqual(cmds('design-lint'), ['node scripts/design/lint.mjs', 'node scripts/ci/measure.mjs design', 'node scripts/ci/ratchet.mjs check design']);
   assert.deepEqual(cmds('design-copy'), ['node scripts/design/copy.mjs']);
-  assert.deepEqual(cmds('design-icons'), ['node scripts/design/icons.mjs']);
+  assert.deepEqual(cmds('design-icons'), ['node scripts/design/icons.mjs', 'node scripts/design/worker-gen.mjs --check icons assets licenses']);
   // 로컬과 CI가 같은 표를 쓰므로 CI 전용은 --all-history를 도는 둘뿐이다(로컬 클론에는 비공개 ref가 있어 늘 걸린다)
   assert.deepEqual(cmds('private-scan'), ['node scripts/ci/private-scan.mjs']);
   assert.deepEqual(Object.keys(GATES).filter((g) => GATES[g].ciOnly), ['scan-history', 'private-scan']);
@@ -219,6 +219,11 @@ test('hookGates: 바뀐 경로로 조건부 gate를 고른다', () => {
   assert.deepEqual(hookGates('pre-commit', ['docs/design/system/foundations.md']), ['typos', 'design-tokens']);
   assert.deepEqual(hookGates('pre-commit', ['docs/design/system/content.md']), ['typos', 'design-copy']);
   assert.deepEqual(hookGates('pre-commit', ['app/src/lib/components/ui/icons.ts']), ['typos', 'design-lint', 'design-icons']);
+  // Worker 생성 모듈 셋과 그 원천(체크인 에셋)은 design-icons의 worker-gen --check가 본다(help는 worker gate의 help-check)
+  for (const f of ['worker/assets/og.png', 'worker/src/http/assets.generated.ts', 'worker/src/http/licenses.generated.ts', 'worker/src/http/icons.generated.ts']) {
+    assert.ok(hookGates('pre-commit', [f]).includes('design-icons'), f);
+  }
+  assert.equal(hookGates('pre-commit', ['help/report.md']).includes('design-icons'), false);
   assert.deepEqual(hookGates('pre-commit', ['scripts/design/allow.json']), ['typos', 'design-tokens', 'design-lint', 'design-copy', 'design-icons']);
   assert.deepEqual(hookGates('pre-commit', ['app/src-tauri/src/lib.rs']), ['fmt', 'typos']);
   assert.deepEqual(hookGates('pre-commit', ['docs/x.md']), ['typos']);
@@ -263,6 +268,8 @@ test('gate 표: worker(worker.md §13.2, cicd.md 85)', () => {
     [
       // 불변식이 설치보다 먼저(allowBuilds를 넓힌 변경이 설치 스크립트를 돌리기 전에 멈춘다, cicd.md 86)
       ['node scripts/ci/worker-config.mjs', '.'],
+      // help-check: 생성물 = 원천 + help/ids.json 규칙(노드뿐이라 설치보다 먼저, governance DX22)
+      ['node scripts/design/worker-gen.mjs --check help', '.'],
       ['pnpm install --frozen-lockfile', 'worker'],
       // 배포용 wrangler의 따로인 lockfile(worker-bundle과 같은 인자)
       ['pnpm install --frozen-lockfile --ignore-scripts', 'worker/deploy'],
@@ -286,6 +293,9 @@ test('gate 표: worker(worker.md §13.2, cicd.md 85)', () => {
   assert.ok(hook, 'pre-push에 worker');
   assert.equal(HOOKS['pre-commit'].when.some((x) => x.gate === 'worker'), false, 'pre-commit에는 넣지 않는다(무겁다)');
   assert.deepEqual(hookGates('pre-push', ['worker/src/config.ts']), ['worker']);
+  // help/(도움말 원천)과 생성기도 worker gate(help-check)를 부른다
+  assert.deepEqual(hookGates('pre-push', ['help/report.md']), ['worker']);
+  assert.deepEqual(hookGates('pre-push', ['scripts/design/worker-gen.mjs']).includes('worker'), true);
   // selftest(w-dry)가 원본 wrangler.jsonc에서 배포 설정을 만들어 묶음과 맞춰 본다
   assert.deepEqual(hookGates('pre-push', ['worker/wrangler.jsonc']), ['release-selftest', 'worker']);
   // release.mjs는 worker-deploy만 import한다(cicd.md 구현 중 변경 110). worker-config는 worker gate와 scripts-test만

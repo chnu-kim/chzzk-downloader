@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { acceptPairs, refuseUpdate } from './shots.mjs';
+import { acceptPairs, refuseUpdate, takeTarget, TARGETS } from './shots.mjs';
 
 const W = '/home/runner/work/r/r';
 const res = (status, attachments) => ({ status, attachments });
@@ -60,4 +60,31 @@ test('refuseUpdate: CI가 아니면 -u·--update-snapshots를 거부한다', () 
   assert.match(refuseUpdate(['--update-snapshots=all'], { CI: 'false' }), /CI에서만/);
   assert.equal(refuseUpdate(['--update-snapshots'], { CI: 'true' }), null);
   assert.equal(refuseUpdate(['--grep', 'button'], {}), null);
+});
+
+test('acceptPairs: worker 대상(design-worker-actual)은 worker/e2e/__shots__로, app 대상은 worker 경로를 버린다', () => {
+  const r = report([
+    {
+      projectName: 'dpr1-390',
+      results: [
+        res('failed', [
+          { name: 'landing-anon-light-expected.png', path: `${W}/worker/e2e/__shots__/dpr1-390/landing-anon-light.png` },
+          { name: 'landing-anon-light-actual.png', path: `${W}/target/design-worker/results/shots-x-dpr1-390/landing-anon-light-actual.png` },
+        ]),
+      ],
+    },
+  ]);
+  assert.deepEqual(acceptPairs(r, '/dl', 'worker'), [
+    { from: join('/dl', 'results/shots-x-dpr1-390/landing-anon-light-actual.png'), to: 'worker/e2e/__shots__/dpr1-390/landing-anon-light.png' },
+  ]);
+  assert.deepEqual(acceptPairs(r, '/dl', 'app'), []);
+});
+
+test('takeTarget: 기본 app, --target worker, 모르는 대상은 null', () => {
+  assert.deepEqual(takeTarget(['run', '-g', 'x']), { target: 'app', rest: ['run', '-g', 'x'] });
+  assert.deepEqual(takeTarget(['--accept', '1', '--target', 'worker']), { target: 'worker', rest: ['--accept', '1'] });
+  assert.deepEqual(takeTarget(['run', '--target', 'worker', '-u']), { target: 'worker', rest: ['run', '-u'] });
+  assert.equal(takeTarget(['run', '--target', 'nope']).target, null);
+  assert.equal(takeTarget(['run', '--target']).target, null);
+  assert.equal(TARGETS.worker.artifact, 'design-worker-actual');
 });

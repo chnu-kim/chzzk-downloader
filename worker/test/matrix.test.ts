@@ -1,11 +1,11 @@
 // 자격 × 경로 행렬(docs/design/worker.md §4.5, 구현 중 변경 31 (타)). 표의 키는 경로 표(ROUTES)와 같아야 한다:
-// 경로를 더하고 기대를 정하지 않으면 실패한다. W6이 더한 /·/assets/:file·/auth/web/logout·/me/*·/admin*까지 25쌍이다.
+// 경로를 더하고 기대를 정하지 않으면 실패한다. W6이 더한 /·/assets/:file·/auth/web/logout·/me/*·/admin*과 /notice·/favicon.ico·/admin/:channelId/disallow와 읽기 페이지 셋(/help·/privacy·/licenses)까지 31쌍이다.
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { newId, newSecret, newToken, sha256B64url } from "../src/core/token";
 import { type Auth, ROUTES } from "../src/routes";
 import { LATEST_VIEW_CACHE } from "../src/http/landing";
 import { SUMS_CACHE } from "../src/http/releases";
-import { SITE_CSS_PATH } from "../src/http/site-css";
+import { assetPath } from "../src/http/assets";
 import { createFakeChzzk } from "./fake-chzzk.mjs";
 import { allowedChannel, formBody, ORIGIN, useClock, viaExports } from "./http/harness";
 import { type Cred, type Creds, credHeaders, DMG, makeCreds, seedDist, V2 } from "./http/release-fixture";
@@ -106,9 +106,10 @@ const MATRIX: Readonly<Record<string, readonly MatrixCase[]>> = {
   ],
   // W6: 웹 화면. 세션이 없으면(앱·CI·쓰레기 Bearer 포함) 303 /, 관리 경로는 웹 세션이어도 관리자가 아니면 403
   "GET /": [{ name: "랜딩", request: plain("/"), expect: all(200) }],
-  "GET /assets/:file": [{ name: "스타일시트", request: plain(SITE_CSS_PATH), expect: all(200) }],
+  "GET /assets/:file": [{ name: "스타일시트", request: plain(assetPath("site.css")), expect: all(200) }],
+  "GET /favicon.ico": [{ name: "별칭", request: plain("/favicon.ico"), expect: all(200) }],
   "POST /auth/web/logout": [{ name: "로그아웃", request: webForm("/auth/web/logout"), expect: all(303) }],
-  "POST /me/sessions/:id/revoke": [{ name: "모르는 세션", request: webForm(() => `/me/sessions/${newId()}/revoke`), expect: by(303, 303, 303, 303, 404, 404, 303, 303) }],
+  "POST /me/sessions/:id/revoke": [{ name: "모르는 세션", request: webForm(() => `/me/sessions/${newId()}/revoke`), expect: by(303, 303, 303, 303, 303, 303, 303, 303) }],
   "GET /admin": [{ name: "관리 화면", request: plain("/admin"), expect: by(303, 303, 303, 303, 403, 200, 303, 303) }],
   "POST /admin/allow": [{ name: "허용", request: webForm("/admin/allow", { channelId: C3 }), expect: by(303, 303, 303, 303, 403, 303, 303, 303) }],
   // 자격마다 C3를 먼저 허용해 둔다(이 파일은 DO를 비우지 않는다: 순서와 상관없이 관리자는 실제로 빼서 303). 목록에 없는 채널의 404는 admin.test.ts
@@ -122,9 +123,27 @@ const MATRIX: Readonly<Record<string, readonly MatrixCase[]>> = {
       expect: by(303, 303, 303, 303, 403, 303, 303, 303),
     },
   ],
-  "POST /admin/sessions/:id/revoke": [{ name: "모르는 세션", request: webForm(() => `/admin/sessions/${newId()}/revoke`), expect: by(303, 303, 303, 303, 403, 404, 303, 303) }],
-  "POST /admin/denied/:channelId/allow": [{ name: "거부 기록 없음", request: webForm(`/admin/denied/${C3}/allow`), expect: by(303, 303, 303, 303, 403, 404, 303, 303) }],
-  "POST /admin/denied/:channelId/dismiss": [{ name: "거부 기록 없음", request: webForm(`/admin/denied/${C3}/dismiss`), expect: by(303, 303, 303, 303, 403, 404, 303, 303) }],
+  "POST /admin/sessions/:id/revoke": [{ name: "모르는 세션", request: webForm(() => `/admin/sessions/${newId()}/revoke`), expect: by(303, 303, 303, 303, 403, 303, 303, 303) }],
+  "POST /admin/denied/:channelId/allow": [{ name: "거부 기록 없음", request: webForm(`/admin/denied/${C3}/allow`), expect: by(303, 303, 303, 303, 403, 303, 303, 303) }],
+  "POST /admin/denied/:channelId/dismiss": [{ name: "거부 기록 없음", request: webForm(`/admin/denied/${C3}/dismiss`), expect: by(303, 303, 303, 303, 403, 303, 303, 303) }],
+  // 허가 빼기 확인 페이지(GET, 상태를 바꾸지 않는다): GET /admin과 같은 모양이고, 관리자에게는 허가된 채널이면 200·허가에 없으면 멱등 303
+  "GET /admin/:channelId/disallow": [
+    {
+      name: "허가된 채널의 확인 페이지",
+      request: async (c, cred) => {
+        await allowedChannel(C3, A1);
+        return plain(`/admin/${C3}/disallow`)(c, cred);
+      },
+      expect: by(303, 303, 303, 303, 403, 200, 303, 303),
+    },
+    { name: "허가에 없는 채널", request: plain(`/admin/${"0".repeat(30)}e5/disallow`), expect: by(303, 303, 303, 303, 403, 303, 303, 303) },
+  ],
+  // 서비스 공지: 자격과 상관없이 200(R2에 공지 객체가 없으면 notice null)
+  "GET /notice": [{ name: "서비스 공지", request: plain("/notice"), expect: all(200) }],
+  // 읽기 페이지: 자격과 상관없이 200(세션이 있으면 헤더 nav만 달라진다)
+  "GET /help": [{ name: "도움말", request: plain("/help"), expect: all(200) }],
+  "GET /privacy": [{ name: "개인정보 처리방침", request: plain("/privacy"), expect: all(200) }],
+  "GET /licenses": [{ name: "오픈소스 라이선스", request: plain("/licenses"), expect: all(200) }],
 };
 
 const keyOf = (r: { method: string; pattern: string }) => `${r.method} ${r.pattern}`;

@@ -8,6 +8,7 @@ import { parseCss, stripComments } from './css.mjs';
 import {
   ROOT,
   annotateSections,
+  buildContext,
   check,
   dt2,
   dt3,
@@ -82,6 +83,7 @@ function ctxOf(over = {}) {
     foundations: '',
     timing: null,
     consts: null,
+    notice: null,
     docRules: [],
     ...over,
   };
@@ -431,7 +433,8 @@ const CONST_MD = [
 ].join('\n');
 
 test('parseConstTable·expectedConsts: A / B 짝, 천 단위 구분, 실수, 파일 칸 규칙', () => {
-  const { ts, rs, breakpoint } = expectedConsts(parseConstTable(CONST_MD));
+  const { ts, rs, worker, breakpoint } = expectedConsts(parseConstTable(CONST_MD));
+  assert.deepEqual([...worker.keys()], ['NOTICE_TTL_H']);
   assert.deepEqual([...ts.keys()], ['LOADER_DELAY_MS', 'LOADER_MIN_MS', 'PENDING_STUCK_REMAINING_SECS', 'AUTH_CHECK_TIMEOUT_MS']);
   assert.equal(ts.get('LOADER_MIN_MS').value, 400);
   assert.deepEqual([...rs.keys()], ['AUTH_CHECK_TIMEOUT_MS', 'FAT32_FILE_LIMIT', 'LOW_SPACE_FACTOR', 'NOTICE_TTL_H', 'CIRCUIT_FAILURES']);
@@ -454,6 +457,7 @@ const GOOD_TS = [
   'export const PENDING_STUCK_REMAINING_SECS = 510;',
   'export const AUTH_CHECK_TIMEOUT_MS = 40000;',
 ].join('\n');
+const GOOD_NOTICE = 'export const NOTICE_TTL_H = 72;\n';
 const GOOD_RS = [
   '//! 상수',
   'pub const AUTH_CHECK_TIMEOUT_MS: u64 = 40_000;',
@@ -464,17 +468,30 @@ const GOOD_RS = [
 ].join('\n');
 
 test('DT15: 값 일치는 통과, 값 불일치·누락·표에 없는 상수·분기점 어긋남은 위반', () => {
-  const ok = ctxOf({ foundations: CONST_MD, timing: GOOD_TS, consts: GOOD_RS });
+  const ok = ctxOf({ foundations: CONST_MD, timing: GOOD_TS, consts: GOOD_RS, notice: GOOD_NOTICE });
   assert.deepEqual(dt15(ok), []);
   const bad = ctxOf({
     foundations: CONST_MD,
     timing: GOOD_TS.replace('= 400', '= 401') + '\nexport const EXTRA_MS = 1;',
     consts: GOOD_RS.replace('pub const NOTICE_TTL_H: u64 = 72;\n', '').replace('1.05', '1.06'),
+    notice: GOOD_NOTICE,
     model: model([], { breakpointNarrow: 640 }),
   });
   assert.deepEqual(texts(dt15(bad)), ['BREAKPOINT_NARROW', 'EXTRA_MS', 'LOADER_MIN_MS', 'LOW_SPACE_FACTOR', 'NOTICE_TTL_H']);
-  const absent = dt15(ctxOf({ foundations: CONST_MD, timing: null, consts: GOOD_RS }));
+  const absent = dt15(ctxOf({ foundations: CONST_MD, timing: null, consts: GOOD_RS, notice: GOOD_NOTICE }));
   assert.ok(absent.some((x) => x.file === 'app/src/lib/timing.ts'));
+});
+
+test('DT15: Worker 사본(core/notice.ts)도 표와 대조한다: 값 불일치·없음·표에 없는 상수', () => {
+  const base = { foundations: CONST_MD, timing: GOOD_TS, consts: GOOD_RS };
+  assert.deepEqual(dt15(ctxOf({ ...base, notice: GOOD_NOTICE })), []);
+  const diff = dt15(ctxOf({ ...base, notice: 'export const NOTICE_TTL_H = 48;\n' }));
+  assert.deepEqual(texts(diff), ['NOTICE_TTL_H']);
+  assert.ok(diff.every((x) => x.file === 'worker/src/core/notice.ts'));
+  assert.deepEqual(texts(dt15(ctxOf({ ...base, notice: `${GOOD_NOTICE}export const EXTRA_H = 1;\n` }))), ['EXTRA_H']);
+  assert.ok(dt15(ctxOf({ ...base, notice: null })).some((x) => x.file === 'worker/src/core/notice.ts' && /없다/.test(x.msg)));
+  // 한 줄에 함수 호출 등 숫자가 아닌 export는 상수로 읽지 않는다
+  assert.deepEqual(dt15(ctxOf({ ...base, notice: `${GOOD_NOTICE}export const f = g(1);\n` })), []);
 });
 
 // ───────────── DT16 ─────────────
@@ -530,4 +547,11 @@ test('저장소: 원천·생성물 검사(DT5~DT11·DT14~DT17)는 위반이 0이
   const sourceSide = new Set(['DT2', 'DT3', 'DT12', 'DT13']);
   const bad = check(ROOT).filter((x) => !sourceSide.has(x.rule) && !(x.rule === 'DT4' && x.file === 'app/src/app.css'));
   assert.deepEqual(bad.map((x) => `${x.file}:${x.line}: ${x.rule}: ${x.msg}`), []);
+});
+
+test('저장소: Worker 소스 훑기(DT2·DT3)는 생성 모듈(*.generated.ts)을 읽지 않는다', { skip: !generatedPresent && '생성물이 아직 없다' }, () => {
+  const ctx = buildContext(ROOT);
+  const files = ctx.workerSources.map((e) => e.file);
+  assert.ok(files.includes('worker/src/http/site.css'));
+  assert.deepEqual(files.filter((f) => /\.generated\.ts$/.test(f)), []);
 });

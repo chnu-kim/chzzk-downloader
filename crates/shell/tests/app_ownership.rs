@@ -47,13 +47,26 @@ fn pd_mpd(url: &str) -> String {
 
 /// info + MPD + 미디어 mock. `media_delay`가 있으면 미디어 응답을 그만큼 늦춘다.
 async fn mock_api(media_delay: Option<Duration>) -> MockServer {
+    mock_api_with(media_delay, false).await
+}
+
+/// 컨텐츠 채널 ID가 없는 info 응답(`channelless`)까지 고르는 mock
+async fn mock_api_with(media_delay: Option<Duration>, channelless: bool) -> MockServer {
     let server = MockServer::start().await;
+    let info = if channelless {
+        let mut v: serde_json::Value =
+            serde_json::from_slice(&fixture("testdata/vod/video_info.json")).unwrap();
+        v["content"]["channel"]
+            .as_object_mut()
+            .unwrap()
+            .remove("channelId");
+        serde_json::to_vec(&v).unwrap()
+    } else {
+        fixture("testdata/vod/video_info.json")
+    };
     Mock::given(method("GET"))
         .and(path(format!("/service/v2/videos/{VOD_NO}")))
-        .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_raw(fixture("testdata/vod/video_info.json"), "application/json"),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_raw(info, "application/json"))
         .mount(&server)
         .await;
     Mock::given(method("GET"))
@@ -679,5 +692,33 @@ async fn logout_keeps_running_job() {
         app.gate_command("resume_job").unwrap_err().code,
         ErrorCode::NotLoggedIn
     );
+    app.manager.quit(Duration::from_secs(3)).await;
+}
+
+/// 관리자 + 채널 ID가 없는 컨텐츠: 웹뷰가 보낸 channel_id가 기록에 남으면 안 된다(Codex 리뷰). enqueue·resume_job 모두
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn admin_channelless_content_never_keeps_webview_channel() {
+    let api = mock_api_with(None, true).await;
+    let worker = MockServer::start().await;
+    let t = TempDir::new().unwrap();
+    let out: PathBuf = t.path().join("out");
+    // 기록에는 남의 채널이 적혀 있다(변조 흉내)
+    write_jobs(t.path(), vec![vod_record(1, Some(OTHER), &out)]);
+    save_session_as(t.path(), &worker, OTHER, true);
+    let app = open_auth(t.path(), &api, &worker);
+    let r = app.resolve(&url()).await.unwrap();
+    assert_eq!(r.ownership, Ownership::AdminOverride);
+    let job = app
+        .enqueue(request(
+            t.path(),
+            "x",
+            Some("000000000000000000000000000000c3"),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(job.channel_id, None);
+    assert_eq!(channel_of(&app, job.id.0), None);
+    app.resume_job(JobId(1), false).await.unwrap();
+    assert_eq!(channel_of(&app, 1), None);
     app.manager.quit(Duration::from_secs(3)).await;
 }

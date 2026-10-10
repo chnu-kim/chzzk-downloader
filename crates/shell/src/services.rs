@@ -563,11 +563,12 @@ pub async fn enqueue<B: Backend>(
     }
     // 웹뷰가 보낸 channel_id는 믿지 않는다: 검증한 컨텐츠 채널 ID로 덮어쓴다(82)
     let content = req.content.clone();
-    if let Some(owner) = gate
+    // 게이트가 켜져 있으면 판정 결과로 늘 덮는다: 채널을 모르는 컨텐츠(관리자 허용)도 웹뷰 값을 버리고 None이 된다
+    let owner = gate
         .admit(&content, || settings.content_channel(&content))
-        .await?
-    {
-        req.channel_id = Some(owner);
+        .await?;
+    if gate.is_enabled() {
+        req.channel_id = owner;
     }
     let (url, title, label) = (
         req.url.clone(),

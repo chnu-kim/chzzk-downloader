@@ -283,7 +283,7 @@ impl App {
         };
         self.manager.resume_checked(id, restart, |c| {
             if *c == content {
-                Ok(owner)
+                Ok(Some(owner))
             } else {
                 Err(AppError::ownership_unknown())
             }

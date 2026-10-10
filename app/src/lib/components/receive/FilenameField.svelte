@@ -14,12 +14,12 @@
   let { value = $bindable(), suggested, willSaveAs, disabled = false }: Props = $props();
 </script>
 
-<div class="row">
-  <label class="label" for="filename-input">{t('filename.label')}</label>
+<div class="name-row">
+  <label class="label" id="filename-label" for="filename-input">{t('filename.label')}</label>
   <div class="input">
-    <TextField id="filename-input" bind:value {disabled} aria-describedby={willSaveAs ? 'filename-will' : undefined} />
+    <TextField id="filename-input" labelledby="filename-label" bind:value {disabled} aria-describedby={willSaveAs ? 'filename-will' : undefined} />
     <span class="ext">{t('filename.ext')}</span>
-    <Button variant="link" disabled={disabled || value === suggested} onclick={() => (value = suggested)}>
+    <Button variant="ghost" size="sm" disabled={disabled || value === suggested} onclick={() => (value = suggested)}>
       {t('filename.reset')}
     </Button>
   </div>
@@ -29,7 +29,7 @@
 {/if}
 
 <style>
-  .row {
+  .name-row {
     display: flex;
     align-items: center;
     gap: var(--space-8);

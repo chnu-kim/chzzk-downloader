@@ -18,16 +18,16 @@
 </script>
 
 {#if n.duplicate}
-  <div class="notice warn" role="alert">
-    <Icon name="alert" size={16} />
+  <div class="conflict warn" role="alert">
+    <Icon name="triangle-alert" size="sm" />
     <span class="text">{t('conflict.inQueue')}</span>
-    <Button variant="link" onclick={onshowinlist}>{t('conflict.showInList')}</Button>
+    <Button variant="ghost" size="sm" onclick={onshowinlist}>{t('conflict.showInList')}</Button>
   </div>
 {/if}
 
 {#if n.exists}
-  <div class="notice warn">
-    <Icon name="alert" size={16} />
+  <div class="conflict warn">
+    <Icon name="triangle-alert" size="sm" />
     <span class="text" id="exists-title">{t('conflict.exists')}</span>
     <span class="choices" role="radiogroup" aria-labelledby="exists-title">
       <label><input type="radio" name="existing" value="number" bind:group={choices.existing} />{t('conflict.number')}</label>
@@ -37,8 +37,8 @@
 {/if}
 
 {#if n.partialSame != null}
-  <div class="notice info">
-    <Icon name="info" size={16} />
+  <div class="conflict info">
+    <Icon name="info" size="sm" />
     <span class="text">
       {#if choices.partialFresh}
         {t('conflict.partial.freshChosen')}
@@ -46,21 +46,21 @@
         {t('conflict.partial', { size: formatBytes(n.partialSame) })}
       {/if}
     </span>
-    <Button variant="link" aria-pressed={choices.partialFresh} onclick={() => (choices.partialFresh = !choices.partialFresh)}>
+    <Button variant="ghost" size="sm" aria-pressed={choices.partialFresh} onclick={() => (choices.partialFresh = !choices.partialFresh)}>
       {choices.partialFresh ? t('conflict.partial.continue') : t('conflict.partial.fresh')}
     </Button>
   </div>
 {/if}
 
 {#if n.partialOther}
-  <div class="notice info">
-    <Icon name="info" size={16} />
+  <div class="conflict info">
+    <Icon name="info" size="sm" />
     <span class="text">{t('conflict.partialOther')}</span>
   </div>
 {/if}
 
 <style>
-  .notice {
+  .conflict {
     display: flex;
     flex-wrap: wrap;
     align-items: center;

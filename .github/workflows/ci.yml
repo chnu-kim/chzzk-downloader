@@ -475,12 +475,13 @@ jobs:
 
   # 웹 E2E(docs/design/cicd.md §6): Playwright + 프로덕션 dist + mockIPC 가짜 백엔드 + axe. D14 관찰 중이라 ci-ok에 없고
   # (gates.mjs OBSERVED_JOBS) master에서 실패하면 report가 master-failure 이슈를 연다. 실패하면 trace를 남긴다.
+  # 디자인 갤러리 검사(design-gallery, docs/design/system/governance.md §2.6)도 이 작업의 Playwright 프로젝트 gallery로 돈다.
   e2e-web:
     name: e2e-web
     needs: changes
     if: needs.changes.outputs.app == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 30
     permissions:
       contents: read # checkout
     steps:
@@ -511,6 +512,45 @@ jobs:
           name: ratchet-measurements-tests-playwright
           path: target/ci/measure/tests.json
           retention-days: 7
+          if-no-files-found: ignore
+
+  # 시각 회귀 스냅샷(design-shots, docs/design/system/governance.md §2.7, ADR-0008): 갤러리 섹션을 기준선(app/e2e/__shots__)과
+  # 비교한다. 기준선은 이 Linux 러너에서만 만든다. 없거나 다르면 실패하고 실제 그림·report.json을 artifact design-shots-actual로
+  # 남긴다 → `node scripts/design/shots.mjs --accept <run id>`. 글꼴 차이를 줄이려고 Noto CJK를 깐다. D14 관찰 중이라 ci-ok에 없다
+  # (gates.mjs OBSERVED_JOBS). 측정값이 없어 ratchet-measurements artifact는 없다(허용 오차는 ci/ratchet.json shots).
+  design-shots:
+    name: design-shots
+    needs: changes
+    if: needs.changes.outputs.app == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read # checkout
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: apt
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends fonts-noto-cjk
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          package_json_file: app/package.json
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: app/pnpm-lock.yaml
+      - name: design-shots
+        run: node scripts/ci/run.mjs design-shots
+      # 실패한 스냅샷의 실제 그림(*-actual.png)·diff와 report.json(shots.mjs --accept가 기준선 경로로 맞춘다)
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: ${{ !cancelled() }}
+        with:
+          name: design-shots-actual
+          path: target/design-shots/
+          retention-days: 14
           if-no-files-found: ignore
 
   # Worker wrangler dev E2E(docs/design/worker.md §12.3, 구현 중 변경 40·41, cicd.md 구현 중 변경 100): 가짜 치지직(node:http) +
@@ -852,8 +892,8 @@ jobs:
   # 꺼졌으면 다시 켜고(keep-alive), 72시간 넘게 성공이 없으면 nightly-stale 이슈를 연다. ci-ok에서 뺀 작업이다(parity CI_OK_EXEMPT).
   report:
     name: report
-    # e2e-web·e2e-native(linux·windows)·worker-e2e는 D14 관찰 중이라 ci-ok에 없지만 master에서 실패하면 이 작업이 master-failure 이슈를 연다
-    needs: [ci-ok, e2e-web, e2e-native, e2e-native-windows, worker-e2e]
+    # e2e-web·design-shots·e2e-native(linux·windows)·worker-e2e는 D14 관찰 중이라 ci-ok에 없지만 master에서 실패하면 이 작업이 master-failure 이슈를 연다
+    needs: [ci-ok, e2e-web, design-shots, e2e-native, e2e-native-windows, worker-e2e]
     if: always() && ((github.event_name == 'push' && github.ref == 'refs/heads/master') || (github.event_name == 'workflow_dispatch' && inputs.loop_test))
     runs-on: ubuntu-24.04
     timeout-minutes: 10

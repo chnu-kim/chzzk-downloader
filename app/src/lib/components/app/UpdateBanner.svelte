@@ -4,8 +4,7 @@
   // 같은 노드로 남는다(누른 버튼의 포커스와 라이브 영역이 끊기지 않게, 77). 라이브로 읽히는 본문은 단계 문구뿐이고
   // 퍼센트(`detail`)는 보이기만 한다(1%마다 다시 읽지 않게).
   import { t } from '../../copy/ko';
-  import Banner from '../ui/Banner.svelte';
-  import Button from '../ui/Button.svelte';
+  import Notice from '../ui/Notice.svelte';
 
   interface Props {
     version: string;
@@ -24,23 +23,19 @@
   const off = $derived(busy || status !== null);
 </script>
 
-<Banner tone="info" onclose={status === null ? onlater : undefined}>
+<!-- 동작 버튼은 aria-disabled를 줄 수 없어(Action에는 disabled가 없다) 눌러도 아무 일이 없게 onclick에서 막는다 -->
+<Notice
+  variant="banner"
+  tone="info"
+  actions={[
+    { id: 'install', label: t('update.install'), onclick: () => { if (!off) oninstall(); } },
+    ...(status === null ? [{ id: 'later', label: t('update.later'), onclick: onlater }] : []),
+  ]}
+  onclose={status === null ? onlater : undefined}
+>
   {#if status !== null}
     {status}{#if detail}{' '}<span aria-hidden="true">{detail}</span>{/if}
   {:else}
     {t('update.banner', { version })}
   {/if}
-  {#snippet actions()}
-    <Button
-      size="sm"
-      accentText
-      aria-disabled={off}
-      onclick={() => {
-        if (!off) oninstall();
-      }}>{t('update.install')}</Button
-    >
-    {#if status === null}
-      <Button size="sm" onclick={onlater}>{t('update.later')}</Button>
-    {/if}
-  {/snippet}
-</Banner>
+</Notice>

@@ -1,5 +1,5 @@
 <script lang="ts">
-  // 고급: 네이버 로그인 정보(§8.7, ui-visual §6.8). 저장된 쿠키 값은 Rust가 다시 보내지 않으므로 입력칸은 늘
+  // 고급: 네이버 로그인 정보(§8.7, patterns.md §14.4). 저장된 쿠키 값은 Rust가 다시 보내지 않으므로 입력칸은 늘
   // 비어서 시작하고, 저장·지우기 뒤에도 비운다. "저장됨 / 저장된 값 없음"만 보인다.
   import { tick } from 'svelte';
   import type { AppError } from '../../bindings';
@@ -9,7 +9,7 @@
   import { ui } from '../../stores/ui.svelte';
   import Button from '../ui/Button.svelte';
   import Disclosure from '../ui/Disclosure.svelte';
-  import InlineAlert from '../ui/InlineAlert.svelte';
+  import Notice from '../ui/Notice.svelte';
   import SecretField from '../ui/SecretField.svelte';
   import Switch from '../ui/Switch.svelte';
 
@@ -20,6 +20,11 @@
   let error = $state<AppError | null>(null);
   let missing = $state(false);
   let root: HTMLElement | null = $state(null);
+
+  /** 입력칸 오류 표시는 설명 요소(`cookie-missing`)가 반드시 있어야 한다(InvalidProps) */
+  function invalidProps(bad: boolean): { invalid: true; 'aria-describedby': string } | { invalid?: false } {
+    return bad ? { invalid: true, 'aria-describedby': 'cookie-missing' } : {};
+  }
 
   const saved = $derived(settings.dto?.naverCookiesSaved ?? false);
   const enabled = $derived(settings.dto?.useNaverCookies ?? false);
@@ -73,42 +78,42 @@
   <Disclosure title={t('settings.cookie.title')} bind:open>
     <div class="group cookie">
       <p class="help why">{t('settings.cookie.why')}</p>
-      <InlineAlert tone="warning" title={t('settings.cookie.danger')} />
+      <Notice tone="warning">{t('settings.cookie.danger')}</Notice>
 
       {#key settings.revision}
-        <div class="row-main">
+        <div class="srow-main">
           <span class="label" id="l-cookie-use">{t('settings.cookie.use')}</span>
           <span class="state" class:ok={saved}>
             {saved ? t('settings.cookie.saved') : t('settings.cookie.notSaved')}
           </span>
-          <Switch checked={enabled && saved} labelledby="l-cookie-use" disabled={!saved || busy} onchange={toggle} />
+          <Switch value={enabled && saved} labelledby="l-cookie-use" disabled={!saved || busy} onchange={toggle} />
         </div>
       {/key}
 
-      <div class="field">
-        <label class="label mono-label" for="nid-aut">NID_AUT</label>
-        <SecretField id="nid-aut" label="NID_AUT" bind:value={nidAut} invalid={missing && !nidAut.trim()} disabled={busy} />
+      <div class="cfield">
+        <span class="label mono-label" id="l-nid-aut">NID_AUT</span>
+        <SecretField labelledby="l-nid-aut" bind:value={nidAut} {...invalidProps(missing && !nidAut.trim())} disabled={busy} />
       </div>
-      <div class="field">
-        <label class="label mono-label" for="nid-ses">NID_SES</label>
-        <SecretField id="nid-ses" label="NID_SES" bind:value={nidSes} invalid={missing && !nidSes.trim()} disabled={busy} />
+      <div class="cfield">
+        <span class="label mono-label" id="l-nid-ses">NID_SES</span>
+        <SecretField labelledby="l-nid-ses" bind:value={nidSes} {...invalidProps(missing && !nidSes.trim())} disabled={busy} />
       </div>
 
       {#if missing}
-        <InlineAlert tone="danger" title={t('settings.cookie.bothRequired')} />
+        <Notice id="cookie-missing" tone="danger">{t('settings.cookie.bothRequired')}</Notice>
       {:else if errCopy}
-        <InlineAlert tone="danger" title={errCopy.title}>
+        <Notice tone="danger" title={errCopy.title}>
           {#if errCopy.body}<p class="line">{errCopy.body}</p>{/if}
           {#if errCopy.detail}<p class="line detail">{errCopy.detail}</p>{/if}
-        </InlineAlert>
+        </Notice>
       {/if}
 
-      <div class="actions">
-        <Button variant="primary" disabled={busy} onclick={save}>{t('settings.cookie.save')}</Button>
-        <Button icon="trash" disabled={busy || !saved} onclick={clear}>{t('settings.cookie.clear')}</Button>
+      <div class="cacts">
+        <Button variant="primary" loading={busy} onclick={save}>{t('settings.cookie.save')}</Button>
+        <Button icon="trash-2" disabled={busy || !saved} onclick={clear}>{t('settings.cookie.clear')}</Button>
         <span class="howto">
           <Disclosure title={t('settings.cookie.howto')} variant="inline">
-            <ol class="steps">
+            <ol class="hsteps">
               {#each steps as step, i (i)}<li>{step}</li>{/each}
             </ol>
           </Disclosure>
@@ -132,12 +137,7 @@
   .why {
     line-height: 1.65;
   }
-  .row-main {
-    display: flex;
-    align-items: center;
-    gap: var(--space-12);
-  }
-  .row-main .label {
+  .srow-main .label {
     flex: 1;
   }
   .state {
@@ -147,7 +147,7 @@
   .state.ok {
     color: var(--success);
   }
-  .field {
+  .cfield {
     display: flex;
     align-items: center;
     gap: var(--space-12);
@@ -158,10 +158,10 @@
     font-family: var(--font-mono);
     font-size: var(--text-sm);
   }
-  .field :global(.secret) {
+  .cfield :global(.field-wrap) {
     flex: 1;
   }
-  .actions {
+  .cacts {
     display: flex;
     flex-wrap: wrap;
     align-items: flex-start;
@@ -170,7 +170,7 @@
   .howto {
     margin-left: auto;
   }
-  .steps {
+  .hsteps {
     margin: var(--space-8) 0 0;
     padding-left: 1.25rem;
     font-size: var(--text-sm);

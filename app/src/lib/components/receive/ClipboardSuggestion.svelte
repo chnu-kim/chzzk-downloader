@@ -1,5 +1,5 @@
 <script lang="ts">
-  // 창 포커스 때 클립보드의 치지직 주소 제안(ui-visual §6.4). 자동으로 불러오거나 받지 않는다.
+  // 창 포커스 때 클립보드의 치지직 주소 제안(docs/design/system/patterns.md §7). 자동으로 불러오거나 받지 않는다.
   import { t } from '../../copy/ko';
   import Button from '../ui/Button.svelte';
   import Icon from '../ui/Icon.svelte';
@@ -16,10 +16,10 @@
 </script>
 
 <div class="suggest" role="group" aria-label={t('url.clipboard.title')}>
-  <span class="icon"><Icon name="clipboard" size={16} /></span>
+  <span class="suggest-icon"><Icon name="clipboard-paste" size="sm" /></span>
   <span class="title">{t('url.clipboard.title')}</span>
   <span class="link" title={link}>{shown}</span>
-  <Button variant="link" onclick={onload}>{t('url.clipboard.load')}</Button>
+  <Button variant="ghost" size="sm" onclick={onload}>{t('url.clipboard.load')}</Button>
   <IconButton icon="x" label={t('common.close')} onclick={ondismiss} />
 </div>
 
@@ -37,7 +37,7 @@
     font-size: var(--text-sm);
     animation: rise var(--dur-base) var(--ease-out);
   }
-  .icon {
+  .suggest-icon {
     color: var(--fg-muted);
   }
   .title {

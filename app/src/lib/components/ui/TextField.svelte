@@ -1,75 +1,59 @@
 <script lang="ts">
+  // 한 줄 입력(docs/design/system/components.md §2.3). 형식은 고정이고 mono는 SecretField 전용이다.
   import type { HTMLInputAttributes } from 'svelte/elements';
+  import type { InvalidProps, NameProps } from './vocab';
 
-  interface Props extends Omit<HTMLInputAttributes, 'value'> {
-    value: string;
-    invalid?: boolean;
-    /** SecretField·쿠키 칸 */
-    mono?: boolean;
-    el?: HTMLInputElement | null;
-  }
+  type Props = Omit<HTMLInputAttributes, 'type' | 'value' | 'size' | 'onchange'> &
+    NameProps &
+    InvalidProps & {
+      value: string;
+      onchange?: (value: string) => void;
+      readonly?: boolean;
+      disabled?: boolean;
+      required?: boolean;
+      placeholder?: string;
+      el?: HTMLInputElement | null;
+    };
 
   let {
     value = $bindable(),
+    onchange,
+    label,
+    labelledby,
     invalid = false,
-    mono = false,
-    type = 'text',
     el = $bindable(null),
     class: klass = '',
+    oninput,
+    oncompositionend,
     ...rest
   }: Props = $props();
+
+  // 한글 조합 중에는 값을 밖으로 내보내지 않는다(조합이 끝날 때 한 번 내보낸다)
+  function handleInput(e: Event) {
+    (oninput as ((e: Event) => void) | null | undefined)?.(e);
+    const ie = e as unknown as InputEvent & { keyCode?: number };
+    if (ie.isComposing || ie.keyCode === 229) return;
+    onchange?.((e.currentTarget as HTMLInputElement).value);
+  }
+  function handleCompositionEnd(e: CompositionEvent) {
+    (oncompositionend as ((e: CompositionEvent) => void) | null | undefined)?.(e);
+    onchange?.((e.currentTarget as HTMLInputElement).value);
+  }
 </script>
 
 <input
   bind:this={el}
   bind:value
-  {type}
-  class="field {klass}"
-  class:mono
-  aria-invalid={invalid ? 'true' : undefined}
+  {...rest}
+  type="text"
   autocomplete="off"
   spellcheck="false"
-  {...rest}
+  autocorrect="off"
+  autocapitalize="off"
+  class={['field', klass]}
+  aria-label={label}
+  aria-labelledby={labelledby}
+  aria-invalid={invalid ? 'true' : undefined}
+  oninput={handleInput}
+  oncompositionend={handleCompositionEnd}
 />
-
-<style>
-  .field {
-    width: 100%;
-    min-width: 0;
-    height: var(--control-h);
-    padding: 0 12px;
-    border: 1px solid var(--border-strong);
-    border-radius: var(--radius-md);
-    background: var(--surface);
-    color: var(--fg);
-    font: inherit;
-    font-size: var(--text-md);
-    transition: border-color var(--dur-fast) var(--ease-out);
-  }
-  .field::placeholder {
-    color: var(--fg-muted);
-  }
-  .field:hover:not(:disabled):not(:focus) {
-    border-color: var(--fg-muted);
-  }
-  .field:focus {
-    outline: none;
-    border-color: var(--accent);
-  }
-  .field:focus-visible {
-    box-shadow: var(--focus-ring);
-    border-radius: var(--radius-md);
-  }
-  .field[aria-invalid='true'] {
-    border-color: var(--danger);
-  }
-  .field:disabled,
-  .field:read-only {
-    background: var(--surface-2);
-    color: var(--fg-muted);
-  }
-  .mono {
-    font-family: var(--font-mono);
-    font-size: var(--text-sm);
-  }
-</style>

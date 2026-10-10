@@ -218,3 +218,11 @@ test('design: 늘면 실패, 0도 실제 기준, 조이기는 최소, 느슨하�
   const r = JSON.parse(readFileSync(join(ROOT, 'ci/ratchet.json'), 'utf8'));
   assert.equal(typeof r.design?.allow_entries, 'number');
 });
+
+test('shots.max_diff_pixels: 0이 실제 기준이고 늘리면 느슨하게 하기다(로그 줄 필요)', () => {
+  const base = { $pending: [], shots: { max_diff_pixels: 0 } };
+  assert.deepEqual(lintRatchet(base, []), []);
+  assert.deepEqual(loosened(base, { $pending: [], shots: { max_diff_pixels: 4 } }), ['shots.max_diff_pixels']);
+  assert.deepEqual(loosened({ $pending: [], shots: { max_diff_pixels: 4 } }, base), [], '줄이기는 조이기다');
+  assert.deepEqual(loosened(base, { $pending: [] }), ['shots.max_diff_pixels'], '키 삭제도 느슨하게 하기다');
+});

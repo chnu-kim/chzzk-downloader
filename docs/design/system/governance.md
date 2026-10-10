@@ -371,8 +371,14 @@ README §7이 "언제 쓰나"(§7.1)와 틀(§7.2)을 정했다. 여기서는 �
 | 0008 | 시각 회귀 기준 OS는 Linux 하나 | D61, §2.7 |
 | 0009 | 출처 없는 수치 묶음(제안값) | README §6-7, foundations §14 |
 | 0010 | 다크 `--danger-ink` 보정 | foundations §2.1·§12-2 |
+| 0011 | Notice: 알림 아홉 갈래를 프리미티브 하나로 | D35·D37, components §2.12 |
+| 0012 | Surface: 테두리 있는 면 박스를 하나로 | D19, components §2.16 |
+| 0013 | SettingsRow: 설정 행의 라벨·값 색 역할 고정 | D19, components §2.17 |
+| 0014 | FieldRow: 카드 폼 행은 SettingsRow와 색 규칙을 같이 한다 | D19, components §2.26 |
+| 0015 | DropOverlay: 투명 면 + 점선 테두리 + 가운데 라벨 | components §2.27 |
+| 0016 | Toolbar: 열 안쪽 정렬의 start·end 두 칸 | D24·D33, components §2.28 |
 
-README §7.3 표와 같다(편집에서 맞췄다).
+README §7.3 표와 같다(편집에서 맞췄다). 0011~0016은 적용 단계 (b)가 새 컴포넌트마다 한 장씩 더했다(§10 (b) ADR 행).
 
 ---
 
@@ -636,9 +642,20 @@ README가 이 문서에 등록을 맡긴 과제다. 각 과제는 끝나면 ADR 
 11. **ADR 검사(`adr.test.mjs`, DA*)의 해석.** DA3 날짜는 `YYYY-MM-DD`로 시작하면 통과한다(ADR-0005의 `2026-10-09(편집 2026-10-10)`). DA5·DA8은 근거 표 머리에서 `주장 | 등급 | 출처 | 표본·날짜`를 부분 일치로 찾고 맨 앞 `#` 열은 있어도 된다. DA10은 표 머리의 `확인…` 열이 비지 않은 행을 `확인:`을 쓴 것으로 본다. DA11의 "인용 맥락"은 `ADR-NNNN` 바로 앞 절(`|`·`;`·괄호·마침표로 끊음)의 D 번호다. 결정자 줄이 있는 사람 결정 ADR은 DA5에서 최고 등급과 결정 영향 줄을 요구하지 않는다. ADR-0002·0009의 `[잠정]` 표시 네 곳에 `확인:` 글귀를 붙이거나 말로 바꿨다(뜻은 그대로).
 12. **`design-shots` gate·CI 작업은 (a)가 아니라 (b)에서 `design-gallery`와 함께 만든다.** 「단계 공통」(§10)은 `design-shots`의 D14 시작을 (a) 머지 뒤로 적었지만 (a) 범위 표에 `design-shots`가 없고, 이 작업은 (b)에서 생기는 갤러리 섹션을 찍는다. D14 시작일은 (b) 머지 뒤 첫 master 녹색 실행이다(`e2e-web`+`design-gallery`와 같은 날). 편입 예정일은 ROADMAP에 적는다.
 
+### (b) `ui/` 기본 컴포넌트
+
+1. **`design-gallery`는 독립 gate가 아니라 `e2e-web` gate 안의 Playwright 프로젝트 `gallery`다.** 빌드를 `CHZZK_GALLERY=1`로 하고 한 번의 `playwright test`가 두 프로젝트를 돌아 report.json 하나를 `tests.playwright`가 센다. ci.yml `e2e-web` 시간 한도를 20분에서 30분으로 올렸다.
+2. **`design-shots`는 배율 강제(`--force-device-scale-factor`)가 `page.setViewportSize`에서 1로 돌아가는 것을 실험으로 확인해 폭마다 프로젝트를 둔다**(`dpr1-720`·`dpr1-960`·`dpr2-720`·`dpr2-960`, viewport null + `--window-size`). 기준선 경로는 `app/e2e/__shots__/<프로젝트>/<이름>`이다.
+3. **CI에서는 `updateSnapshots: 'missing'`이다.** 기준선이 없으면 그 자리에 쓰고 실패하며 `*-actual.png`와 expected 첨부 경로를 report.json에 남긴다(실험으로 확인). `shots.mjs --accept`는 report.json의 actual ↔ expected 짝으로 기준선 경로를 정한다. 로컬은 `'none'`이고 `-u`는 설정과 `shots.mjs` 둘 다 거부한다. artifact는 `design-shots-actual`(= `target/design-shots/`) 하나이고 측정값이 없어 `ratchet-measurements-shots`는 두지 않는다.
+4. **`design-shots`에는 selftest 씨앗이 없다**(Playwright·chromium이 lint 작업에 없다). `ci/ratchet.json shots.max_diff_pixels`는 측정하지 않는 설정값이라 ratchet 영역 `shots`를 lint·log-check(늘리면 느슨하게 하기)에만 넣었다.
+5. **design-lint를 조정했다.** DP1 `variant`는 컴포넌트별 `<이름>_VARIANT` 배열(없으면 모든 `*_VARIANT`의 합집합), DS5 예외 `ui/Spinner.svelte`, DS7 예외 `ui/IconButton.svelte`(components §2.2의 `title={label}`). 허용 목록으로 두지 않은 이유는 (b) 완료 조건이 `ui/` 항목 0이기 때문이다.
+6. **`release-hygiene`는 바이너리가 아니라 `app/dist`를 본다**(자산이 압축돼 바이너리 grep이 늘 통과한다). 이름에 `gallery`가 든 파일 또는 갤러리 표식 상수가 든 파일이 있으면 실패하고, dist가 없으면 2로 끝난다.
+7. **`scripts/design/allow.mjs --prune`을 더했다.** 맞는 위반이 없어진 허용 항목만 지우고 더하지는 않는다.
+8. **아이콘 번짐 측정 `icons-blur.mjs`는 칸마다 세로 단면에서 가장 선명한 획 구간의 peak·sum을 잰다**(`stem.mjs` 해독 재사용). 기준 peak ≥ .5·sum ≥ 1.0은 [잠정]이다. 확인: Windows 100% 실기 아이콘 시트(§6 과제 4).
+
 ### 다음 단계로 넘기는 문제
 
-- **(b)**: ① 메뉴·토스트·대화상자의 등장·퇴장 전환(`@starting-style`이 금지라 `ui.css`에 없다): 컴포넌트가 처리하거나 ADR을 쓴다(components §7-2). ② `app.css`가 전역 규칙·`cursor`·`user-select`를 가져간다(components §7-8). ③ `vocab.ts`·`licenses/lucide.txt`·`icons.generated.ts`가 생기면 DP1·DI2 허용 항목(항목 6)을 지운다. ④ `design-shots` gate·작업을 `design-gallery`와 함께 만들고 `OBSERVED_JOBS`에 등록한다(항목 12). ⑤ DT3 미사용 허용 항목 후보 `--motion-base`·`--motion-slow`·`--ease-in`·`--pct-w`와 DT13 `--z-sticky`(입력줄이 쓰기 전까지)는 쓰임이 생기면 지운다. ⑥ `e2e-web` 통과 수 기준(7)을 현재 20으로 올릴 수 있다(CI 측정으로 `ratchet.mjs write --from-run`).
+- **(b)**: ① 메뉴·토스트·대화상자의 등장·퇴장 전환(`@starting-style`이 금지라 `ui.css`에 없다): 컴포넌트가 처리하거나 ADR을 쓴다(components §7-2). **처리됨**: ADR 없이 `data-motion` 훅으로 해소했다(components §7-10). ② `app.css`가 전역 규칙·`cursor`·`user-select`를 가져간다(components §7-8). **처리됨**: `app.css`가 가져갔다(components §7-18). ③ `vocab.ts`·`licenses/lucide.txt`·`icons.generated.ts`가 생기면 DP1·DI2 허용 항목(항목 6)을 지운다. **처리됨**: `vocab.ts`·`licenses/lucide.txt`가 생겨 DP1·DI2 항목을 지웠다. ④ `design-shots` gate·작업을 `design-gallery`와 함께 만들고 `OBSERVED_JOBS`에 등록한다(항목 12). **처리됨**: 만들었고 `OBSERVED_JOBS`에 등록했다((b) 2~4). 기준선은 첫 CI 실행의 artifact를 `shots.mjs --accept`로 받는다. ⑤ DT3 미사용 허용 항목 후보 `--motion-base`·`--motion-slow`·`--ease-in`·`--pct-w`와 DT13 `--z-sticky`(입력줄이 쓰기 전까지)는 쓰임이 생기면 지운다. **일부 처리됨**: `--motion-base`·`--motion-slow`·`--ease-in`은 `ui.css`의 등장·퇴장 훅이 써서 지웠다. `--pct-w`·`--z-sticky`는 (c)에서 쓰인다. ⑥ `e2e-web` 통과 수 기준(7)을 현재 20으로 올릴 수 있다(CI 측정으로 `ratchet.mjs write --from-run`). **통합 단계로 넘김**: 갤러리가 통과 수를 바꾸므로 CI 측정 뒤 `ratchet.mjs write --from-run`으로 조인다.
 - **(c)**: legacy 절과 `legacy.mjs`를 지운다. `DropOverlay.svelte`의 DX13 위반은 오탐이 아니라 진짜 위반이다. 허용 항목을 0으로 줄이는 단계다.
 - **(d)**: content §19-9의 문서 불일치(웹 키 넷, DC11 중복)를 닫고 DC10·DC11 허용 항목 약 145개를 지운다. `terms.json` allow의 추정 키 `step3`·`step4`를 실제 키에 맞춘다.
 - **(e)**: `site.css` 링크 색 규칙을 `a:not(.btn)`으로 한정한다(web §15-13). `worker.md` 구현 중 변경 95를 따른다. Worker가 생성물을 처음 쓰는 단계이므로 옛 `site-css.ts`와 DT2 허용 항목 4건이 사라진다.

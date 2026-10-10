@@ -1,71 +1,46 @@
 <script lang="ts">
+  // 펼침(docs/design/system/components.md §2.8). 네이티브 <details>라 키보드·접근성은 브라우저가 맡는다.
   import type { Snippet } from 'svelte';
   import Icon from './Icon.svelte';
+  import type { DisclosureVariant } from './vocab';
 
-  interface Props {
+  type Props = {
+    variant?: DisclosureVariant;
     title: string;
+    heading?: 'h2' | 'h3';
     open?: boolean;
-    /** 설정의 "고급"은 섹션 제목, "값을 찾는 방법"은 작은 링크형 */
-    variant?: 'section' | 'inline';
+    onchange?: (open: boolean) => void;
     children: Snippet;
-  }
+  };
 
-  let { title, open = $bindable(false), variant = 'section', children }: Props = $props();
-  const id = `disclosure-${Math.random().toString(36).slice(2, 9)}`;
+  let {
+    variant = 'section',
+    title,
+    heading = 'h2',
+    open = $bindable(false),
+    onchange,
+    children,
+  }: Props = $props();
+
+  // prop이 바뀌어 생긴 toggle은 이미 같은 값이라 건너뛴다(사용자가 바꿀 때만 onchange)
+  function handleToggle(e: Event & { currentTarget: EventTarget & HTMLDetailsElement }) {
+    const next = e.currentTarget.open;
+    if (next === open) return;
+    open = next;
+    onchange?.(next);
+  }
 </script>
 
-<div class="disclosure {variant}">
-  <button
-    type="button"
-    class="head"
-    aria-expanded={open}
-    aria-controls={id}
-    onclick={() => (open = !open)}
-  >
-    <span>{title}</span>
-    <Icon name={open ? 'chevron-down' : 'chevron-right'} size={16} />
-  </button>
-  <div {id} class="panel" hidden={!open}>
+<details class={['disclosure', variant === 'inline' && 'disclosure-inline']} {open} ontoggle={handleToggle}>
+  <summary>
+    <Icon name="chevron-right" size="sm" />
+    {#if variant === 'inline'}
+      {title}
+    {:else}
+      <svelte:element this={heading}>{title}</svelte:element>
+    {/if}
+  </summary>
+  <div class="disclosure-panel">
     {@render children()}
   </div>
-</div>
-
-<style>
-  .head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-8);
-    width: 100%;
-    min-height: var(--control-h);
-    padding: 0 var(--space-8);
-    border: none;
-    border-radius: var(--radius-md);
-    background: none;
-    color: var(--fg);
-    font: inherit;
-    font-size: var(--text-md);
-    font-weight: var(--weight-semibold);
-    text-align: left;
-    cursor: pointer;
-  }
-  .head:hover {
-    background: var(--surface-2);
-  }
-  .inline .head {
-    display: inline-flex;
-    width: auto;
-    min-height: var(--control-h-sm);
-    padding: 0 6px;
-    color: var(--accent);
-    font-weight: var(--weight-normal);
-    font-size: var(--text-sm);
-  }
-  .inline .head:hover {
-    background: none;
-    text-decoration: underline;
-  }
-  .panel {
-    padding-top: var(--space-8);
-  }
-</style>
+</details>

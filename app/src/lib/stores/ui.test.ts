@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { TOAST_MS } from '../timing';
 import { ToastStore } from './toast.svelte';
 import { UiStore, modKey } from './ui.svelte';
 
@@ -47,31 +48,86 @@ describe('ToastStore', () => {
     vi.useRealTimers();
   });
 
-  it('5초 뒤 사라지고, 올려 둔 동안은 멈춘다', () => {
+  it('정보 토스트는 TOAST_MS 뒤 사라지고, 올려 둔 동안은 멈췄다가 떠나면 처음부터 센다', () => {
     vi.useFakeTimers();
     const s = new ToastStore();
-    const a = s.push('복사했어요', 'copied');
-    const b = s.push("'영상' 다운로드를 마쳤어요", 'success');
-    expect(s.items.map((i) => i.id)).toEqual([a, b]);
+    const a = s.push('완료했어요', 'success');
+    expect(s.items.map((i) => i.id)).toEqual([a]);
 
-    vi.advanceTimersByTime(3000);
-    s.pause(b);
-    vi.advanceTimersByTime(2000);
-    expect(s.items.map((i) => i.id)).toEqual([b]);
-
-    vi.advanceTimersByTime(10_000);
-    expect(s.items).toHaveLength(1);
-    s.resume(b);
-    vi.advanceTimersByTime(1999);
+    vi.advanceTimersByTime(TOAST_MS - 1000);
+    s.pause(a);
+    vi.advanceTimersByTime(TOAST_MS * 3);
+    expect(s.items.map((i) => i.id)).toEqual([a]);
+    s.resume(a);
+    vi.advanceTimersByTime(TOAST_MS - 1);
     expect(s.items).toHaveLength(1);
     vi.advanceTimersByTime(1);
     expect(s.items).toHaveLength(0);
+    expect(s.current).toBeNull();
   });
 
-  it('dismiss는 바로 지운다', () => {
+  it('한 번에 하나만 보이고, 정보·완료 토스트는 새 토스트가 오면 대체되어 items에서 빠진다', () => {
+    const s = new ToastStore();
+    s.push('복사했어요', 'copied');
+    const b = s.push('저장했어요', 'info');
+    expect(s.items.map((i) => i.id)).toEqual([b]);
+    expect(s.current?.id).toBe(b);
+    const c = s.push('오류', 'danger');
+    expect(s.items.map((i) => i.id)).toEqual([c]); // b도 대체됐다
+  });
+
+  it('danger·action 토스트는 대체되지 않고 FIFO로 기다린다', () => {
+    const s = new ToastStore();
+    const d1 = s.push('첫째 오류', 'danger');
+    const d2 = s.push('둘째 오류', 'danger');
+    const act = s.push('지웠어요', 'info', { action: { label: '되돌리기', run: () => {} } });
+    expect(s.items.map((i) => i.id)).toEqual([d1, d2, act]);
+    expect(s.current?.id).toBe(d1);
+    s.push('복사했어요', 'copied');
+    expect(s.items.slice(0, 3).map((i) => i.id)).toEqual([d1, d2, act]); // 오류는 하나도 잃지 않는다
+    s.dismiss(d1);
+    expect(s.current?.id).toBe(d2);
+    s.dismiss(d2);
+    expect(s.current?.id).toBe(act);
+  });
+
+  it('danger는 타이머가 없고, action 토스트는 타이머가 있다', () => {
+    vi.useFakeTimers();
+    const s = new ToastStore();
+    const d = s.push('오류', 'danger');
+    vi.advanceTimersByTime(TOAST_MS * 10);
+    expect(s.items.map((i) => i.id)).toEqual([d]);
+    s.dismiss(d);
+    const a = s.push('지웠어요', 'info', { action: { label: '되돌리기', run: () => {} } });
+    vi.advanceTimersByTime(TOAST_MS - 1);
+    expect(s.items.map((i) => i.id)).toEqual([a]);
+    vi.advanceTimersByTime(1);
+    expect(s.items).toEqual([]);
+  });
+
+  it('대기 중이던 토스트는 보이게 된 때부터 수명을 센다', () => {
+    vi.useFakeTimers();
+    const s = new ToastStore();
+    const d = s.push('오류', 'danger');
+    const act = s.push('지웠어요', 'info', { action: { label: '되돌리기', run: () => {} } });
+    vi.advanceTimersByTime(TOAST_MS * 2);
+    expect(s.items.map((i) => i.id)).toEqual([d, act]);
+    s.dismiss(d);
+    vi.advanceTimersByTime(TOAST_MS - 1);
+    expect(s.items.map((i) => i.id)).toEqual([act]);
+    vi.advanceTimersByTime(1);
+    expect(s.items).toEqual([]);
+  });
+
+  it('dismiss는 바로 지우고, clear는 모두 지운다', () => {
     const s = new ToastStore();
     const id = s.push('x');
     s.dismiss(id);
     expect(s.items).toEqual([]);
+    s.push('a', 'danger');
+    s.push('b', 'danger');
+    s.clear();
+    expect(s.items).toEqual([]);
+    expect(s.current).toBeNull();
   });
 });

@@ -70,8 +70,11 @@ describe('JobList', () => {
     expect(screen.getByRole('heading', { name: '받는 중 1' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: '완료 1' })).toBeInTheDocument();
     const running = screen.getByRole('article', { name: '금요 방송' });
-    const bar = within(running).getByRole('progressbar');
+    // 접근 이름 필수(제목), 값은 0~100 정수(내림)
+    const bar = within(running).getByRole('progressbar', { name: '금요 방송' });
+    expect(bar).toHaveAttribute('aria-valuemax', '100');
     expect(bar).toHaveAttribute('aria-valuenow', '57');
+    expect(bar).toHaveAttribute('data-state', 'active');
     expect(bar).toHaveAttribute('aria-valuetext', '57퍼센트, 2분 18초 남음');
     // 상태 줄 구분점은 양쪽에 빈칸(` · `, copy deck과 같은 모양). Svelte가 요소 안 빈칸을 깎아 `받는 중· …`이 됐다
     const status = running.querySelector('.status-row .status')?.textContent ?? '';
@@ -106,7 +109,7 @@ describe('JobList', () => {
     expect(api.resumeJob).toHaveBeenCalledWith(3, false);
   });
 
-  it('D2: 512 MiB를 넘게 받은 작업만 취소 전에 묻고, 기본 포커스는 돌아가기', async () => {
+  it('D2: 512 MiB를 넘게 받은 작업만 취소 전에 묻는다. 오른쪽 primary = 돌아가기(첫 포커스), 왼쪽 danger = 취소 실행', async () => {
     await load([
       job(1, { status: 'paused', partialBytes: 10 }),
       job(2, { status: 'paused', partialBytes: BIG }),
@@ -120,13 +123,45 @@ describe('JobList', () => {
     await user.click(screen.getByRole('button', { name: '취소: 영상 2' }));
     const dialog = await screen.findByRole('dialog', { name: '다운로드를 취소할까요?' });
     expect(within(dialog).getByText('지금까지 받은 512.0 MB도 함께 지워져요.')).toBeInTheDocument();
+    // 버튼 순서는 [실행(danger)][안전(primary)]
+    expect(within(dialog).getAllByRole('button').map((b) => b.textContent?.trim())).toEqual(['취소하고 지우기', '돌아가기']);
+    expect(within(dialog).getByRole('button', { name: '돌아가기' })).toHaveClass('btn-primary');
+    expect(within(dialog).getByRole('button', { name: '취소하고 지우기' })).toHaveClass('tone-danger');
     await waitFor(() => expect(within(dialog).getByRole('button', { name: '돌아가기' })).toHaveFocus());
     await user.click(within(dialog).getByRole('button', { name: '돌아가기' }));
+    expect(api.removeJob).toHaveBeenCalledTimes(1);
+
+    // Esc는 닫기만 한다(아무것도 지우지 않는다)
+    await user.click(screen.getByRole('button', { name: '취소: 영상 2' }));
+    await screen.findByRole('dialog', { name: '다운로드를 취소할까요?' });
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     expect(api.removeJob).toHaveBeenCalledTimes(1);
 
     await user.click(screen.getByRole('button', { name: '취소: 영상 2' }));
     await user.click(await screen.findByRole('button', { name: '취소하고 지우기' }));
     expect(api.removeJob).toHaveBeenLastCalledWith(2);
+  });
+
+  it('진행 막대 state: 링크 갱신 waiting, 멈춤 paused, 실패 failed', async () => {
+    await load([
+      job(1, { status: 'running', progress: prog({ phase: 'reresolving' }), title: '갱신' }),
+      job(2, { status: 'paused', progress: prog(), title: '멈춤' }),
+      job(3, { status: 'failed', partialBytes: 5, progress: prog(), title: '실패' }),
+    ]);
+    render(JobList);
+    const state = (name: string) => within(screen.getByRole('article', { name })).getByRole('progressbar').getAttribute('data-state');
+    expect(state('갱신')).toBe('waiting');
+    expect(state('멈춤')).toBe('paused');
+    expect(state('실패')).toBe('failed');
+  });
+
+  it('목록 제목은 프로그램 포커스를 받는 컨테이너다', async () => {
+    await load([]);
+    render(JobList);
+    const h = screen.getByRole('heading', { name: '다운로드' });
+    expect(h).toHaveAttribute('tabindex', '-1');
+    expect(h).toHaveAttribute('data-focus-container');
   });
 
   it('키보드: 위·아래 이동, Space 일시정지, Delete 지우기, 안쪽 버튼의 키는 항목이 받지 않는다', async () => {

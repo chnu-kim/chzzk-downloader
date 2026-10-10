@@ -1,75 +1,40 @@
 <script lang="ts">
-  interface Props {
-    checked: boolean;
-    /** 라벨 요소의 id(라벨은 행 왼쪽에 따로 둔다) 또는 직접 읽을 이름 */
-    labelledby?: string;
-    label?: string;
-    disabled?: boolean;
-    onchange?: (checked: boolean) => void;
-  }
+  // 켜고 끄는 스위치(docs/design/system/components.md §2.6). 네이티브 버튼이라 Space·Enter가 클릭이다.
+  import type { NameProps } from './vocab';
 
-  let { checked = $bindable(), labelledby, label, disabled = false, onchange }: Props = $props();
+  type Props = NameProps & {
+    value: boolean;
+    onchange?: (value: boolean) => void;
+    disabled?: boolean;
+    'aria-describedby'?: string;
+    el?: HTMLButtonElement | null;
+  };
+
+  let {
+    value = $bindable(),
+    onchange,
+    label,
+    labelledby,
+    disabled = false,
+    'aria-describedby': describedby,
+    el = $bindable(null),
+  }: Props = $props();
 
   function toggle() {
-    if (disabled) return;
-    checked = !checked;
-    onchange?.(checked);
+    value = !value;
+    onchange?.(value);
   }
 </script>
 
 <button
+  bind:this={el}
   type="button"
   role="switch"
   class="switch"
-  aria-checked={checked}
+  aria-checked={value}
+  aria-label={label}
   aria-labelledby={labelledby}
-  aria-label={labelledby ? undefined : label}
+  aria-describedby={describedby}
   {disabled}
   onclick={toggle}
->
-  <span class="knob"></span>
-</button>
-
-<style>
-  .switch {
-    position: relative;
-    flex: none;
-    width: 40px;
-    height: 22px;
-    padding: 0;
-    border: 1px solid var(--border-strong);
-    border-radius: var(--radius-full);
-    background: var(--surface-2);
-    cursor: pointer;
-    transition:
-      background-color var(--dur-fast) var(--ease-out),
-      border-color var(--dur-fast) var(--ease-out);
-  }
-  .knob {
-    position: absolute;
-    top: 1px;
-    left: 1px;
-    width: 18px;
-    height: 18px;
-    border-radius: var(--radius-full);
-    background: var(--surface);
-    box-shadow: 0 0 0 1px var(--border-strong);
-    transition: transform var(--dur-fast) var(--ease-out);
-  }
-  .switch[aria-checked='true'] {
-    background: var(--accent);
-    border-color: var(--accent);
-  }
-  .switch[aria-checked='true'] .knob {
-    transform: translateX(18px);
-    box-shadow: none;
-  }
-  .switch:disabled {
-    cursor: default;
-    border-color: var(--border);
-  }
-  .switch:disabled .knob {
-    background: var(--surface-2);
-    box-shadow: 0 0 0 1px var(--border);
-  }
-</style>
+></button>

@@ -18,19 +18,14 @@ describe('copyReport', () => {
   it('복사하면 경로 경고와 복사했어요', async () => {
     stubClipboard(() => Promise.resolve());
     await copyReport(err, null);
-    expect(toasts.items.map((i) => [i.kind, i.message])).toEqual([
-      ['info', '복사한 정보에 파일 경로가 들어 있어요'],
-      ['copied', '복사했어요'],
-    ]);
+    // 정보 토스트는 새 토스트가 오면 대체된다: 경로 경고는 보이지 못하고 "복사했어요"만 남는다
+    expect(toasts.items.map((i) => [i.kind, i.message])).toEqual([['copied', '복사했어요']]);
   });
 
   it('클립보드 쓰기가 막히면 실패를 알린다', async () => {
     stubClipboard(() => Promise.reject(new Error('denied')));
     await copyReport(err, null);
-    expect(toasts.items.map((i) => [i.kind, i.message])).toEqual([
-      ['info', '복사한 정보에 파일 경로가 들어 있어요'],
-      ['danger', '복사하지 못했어요. 다시 시도해 주세요.'],
-    ]);
+    expect(toasts.items.map((i) => [i.kind, i.message])).toEqual([['danger', '복사하지 못했어요. 다시 시도해 주세요.']]);
   });
 });
 

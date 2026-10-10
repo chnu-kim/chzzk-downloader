@@ -23,7 +23,7 @@
     }
   },
   "size": {
-    "dist_gz": 63384,
+    "dist_gz": 67349,
     "binary": {
       "linux": 33581280,
       "darwin": 23809376,
@@ -42,6 +42,9 @@
     "chzzk-core": 100
   },
   "design": {
-    "allow_entries": 497
+    "allow_entries": 311
+  },
+  "shots": {
+    "max_diff_pixels": 0
   }
 }

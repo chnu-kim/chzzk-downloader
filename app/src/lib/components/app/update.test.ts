@@ -87,8 +87,8 @@ describe('UpdateBanner status', () => {
     expect(status).toHaveTextContent('업데이트 받는 중 42%');
     expect(screen.getByText('42%', { exact: false })).toHaveAttribute('aria-hidden', 'true');
     expect(screen.queryByText(/새 버전/)).toBeNull();
+    // Notice 동작 버튼은 aria-disabled를 줄 수 없어(Action에 disabled가 없다) 눌러도 아무 일이 없는 것으로 확인한다
     const btn = screen.getByRole('button', { name: '지금 업데이트' });
-    expect(btn).toHaveAttribute('aria-disabled', 'true');
     await user.click(btn);
     expect(oninstall).not.toHaveBeenCalled();
     expect(screen.queryByRole('button', { name: '나중에' })).toBeNull();
@@ -184,7 +184,6 @@ describe('AppBanners 순서', () => {
     const btn = screen.getByRole('button', { name: '지금 업데이트' });
     await user.click(btn);
     expect(btn).toHaveFocus();
-    expect(btn).toHaveAttribute('aria-disabled', 'true');
     await user.click(btn);
     expect(api.updateInstall).toHaveBeenCalledTimes(1);
     update.phase = 'downloading';
@@ -214,8 +213,21 @@ describe('UpdateDialog', () => {
     const d = await screen.findByRole('dialog', { name: '업데이트하고 다시 시작할까요?' });
     expect(within(d).getByText('받는 중인 영상 2개가 일시정지되고, 다시 시작한 뒤 이어받을 수 있어요.')).toBeInTheDocument();
     await waitFor(() => expect(within(d).getByRole('button', { name: '나중에' })).toHaveFocus());
+    // 오른쪽(primary, 첫 포커스)이 안전한 [나중에], 왼쪽(secondary)이 실행 쪽
+    expect(within(d).getAllByRole('button').map((b) => b.textContent?.trim())).toEqual(['업데이트하고 다시 시작', '나중에']);
+    expect(api.updateInstall).not.toHaveBeenCalled();
     await user.click(within(d).getByRole('button', { name: '업데이트하고 다시 시작' }));
     expect(api.updateInstall).toHaveBeenCalledWith(true);
+  });
+
+  it('Esc는 닫기(onclose)만 하고 설치하지 않는다', async () => {
+    const user = userEvent.setup();
+    update.phase = 'confirm';
+    render(UpdateDialog);
+    await screen.findByRole('dialog');
+    await user.keyboard('{Escape}');
+    expect(update.phase).toBe('idle');
+    expect(api.updateInstall).not.toHaveBeenCalled();
   });
 
   it('[나중에]는 닫기만 한다', async () => {
@@ -229,6 +241,9 @@ describe('UpdateDialog', () => {
   });
 });
 
+// 설정 화면의 확인 결과 줄(<p role="status">). 접힌 쿠키 절의 Notice(.notice-text role=status)는 세지 않는다
+const checkLine = () => screen.queryAllByRole('status').filter((el) => el.tagName === 'P');
+
 describe('SettingsView 업데이트 확인', () => {
   it('로그인하지 않았으면 버튼이 없다', () => {
     auth.apply(authDto('disabled'));
@@ -240,7 +255,7 @@ describe('SettingsView 업데이트 확인', () => {
     const user = userEvent.setup();
     auth.apply(authDto('signedIn'));
     render(SettingsView);
-    expect(screen.queryByRole('status')).toBeNull();
+    expect(checkLine()).toEqual([]);
 
     vi.mocked(api.updateCheck).mockResolvedValueOnce({ result: 'upToDate' });
     await user.click(screen.getByRole('button', { name: '업데이트 확인' }));
@@ -269,7 +284,7 @@ describe('SettingsView 업데이트 확인', () => {
     update.available = null;
     render(SettingsView);
     expect(screen.queryByText(/새 버전/)).toBeNull();
-    expect(screen.queryByRole('status')).toBeNull();
+    expect(checkLine()).toEqual([]);
   });
 
   it('확인하는 중에는 문구가 나오고 버튼이 눌리지 않는다', async () => {

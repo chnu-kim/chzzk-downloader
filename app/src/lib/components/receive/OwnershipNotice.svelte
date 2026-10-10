@@ -3,7 +3,7 @@
   import type { Ownership } from '../../bindings';
   import { errorCopy } from '../../copy/errors';
   import { auth } from '../../stores/auth.svelte';
-  import InlineAlert from '../ui/InlineAlert.svelte';
+  import Notice from '../ui/Notice.svelte';
 
   interface Props {
     ownership: Ownership;
@@ -28,5 +28,5 @@
 </script>
 
 {#if copy}
-  <InlineAlert tone="danger" title={copy.title}>{copy.body}</InlineAlert>
+  <Notice tone="danger" title={copy.title}>{copy.body}</Notice>
 {/if}

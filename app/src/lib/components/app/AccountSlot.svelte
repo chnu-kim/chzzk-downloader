@@ -4,7 +4,6 @@
   import { t } from '../../copy/ko';
   import { formatDateTimeShort } from '../../format/date';
   import { auth } from '../../stores/auth.svelte';
-  import Badge from '../ui/Badge.svelte';
   import ConfirmDialog from '../ui/ConfirmDialog.svelte';
   import Menu, { type MenuItem } from '../ui/Menu.svelte';
 
@@ -17,8 +16,8 @@
 
   const items = $derived<MenuItem[]>([
     // 온라인 [다시 연결]은 셸이 무시하므로(61) 오프라인일 때만 보인다
-    ...(status.offline ? [{ label: t('auth.reconnect'), onselect: () => void auth.reconnect() }] : []),
-    { label: t('auth.logout'), danger: true, onselect: () => (confirmOpen = true) },
+    ...(status.offline ? [{ id: 'reconnect', label: t('auth.reconnect'), onclick: () => void auth.reconnect() }] : []),
+    { id: 'logout', label: t('auth.logout'), tone: 'danger' as const, onclick: () => (confirmOpen = true) },
   ]);
 </script>
 
@@ -30,9 +29,10 @@
     {status.channelName ?? ''}
   </span>
   {#if status.offline}
-    <Badge tone="warning" title={t('auth.offline.tip')}>
+    <!-- 상태 글자는 Badge가 아니다(Badge는 종류 표시만): 지역 스타일 글자 -->
+    <span class="offline" title={t('auth.offline.tip')}>
       {t('auth.offline.badge', { until: formatDateTimeShort(status.offline.graceUntil) })}
-    </Badge>
+    </span>
   {/if}
   <Menu label={t('account.menu')} {items} />
 </span>
@@ -42,18 +42,16 @@
   title={t('dialog.logout.title')}
   body={t('dialog.logout.body')}
   onclose={() => (confirmOpen = false)}
-  buttons={[
-    { label: t('dialog.logout.cancel'), variant: 'primary', autofocus: true, onclick: () => (confirmOpen = false) },
-    {
-      label: t('dialog.logout.confirm'),
-      variant: 'secondary',
-      disabled: auth.isBusy('logout'),
-      onclick: () => {
-        confirmOpen = false;
-        void auth.logout();
-      },
+  primary={{ id: 'keep', label: t('dialog.logout.cancel'), onclick: () => (confirmOpen = false) }}
+  secondary={{
+    id: 'logout',
+    label: t('dialog.logout.confirm'),
+    loading: auth.isBusy('logout'),
+    onclick: () => {
+      confirmOpen = false;
+      void auth.logout();
     },
-  ]}
+  }}
 />
 
 <style>
@@ -70,6 +68,11 @@
     white-space: nowrap;
     font-size: var(--text-sm);
     font-weight: var(--weight-medium);
+    color: var(--fg-muted);
+  }
+  .offline {
+    flex: none;
+    font-size: var(--text-sm);
     color: var(--fg-muted);
   }
 </style>

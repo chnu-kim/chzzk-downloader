@@ -1,68 +1,56 @@
-<script lang="ts">
+<script lang="ts" generics="T extends string | number">
+  // 고르는 칸(docs/design/system/components.md §2.5). 네이티브 <select>라 값이 문자열로 오가므로
+  // 옵션 배열에서 찾아 원래 T(숫자 포함)로 돌려준다.
+  import type { HTMLSelectAttributes } from 'svelte/elements';
   import Icon from './Icon.svelte';
+  import type { InvalidProps, NameProps } from './vocab';
 
-  interface Props {
-    value: number;
-    options: readonly number[];
-    id?: string;
-    labelledby?: string;
-    disabled?: boolean;
-    onchange?: (value: number) => void;
+  type Props = Omit<HTMLSelectAttributes, 'value' | 'onchange'> &
+    NameProps &
+    InvalidProps & {
+      value: T;
+      options: ReadonlyArray<{ value: T; label: string; disabled?: boolean }>;
+      onchange?: (value: T) => void;
+      disabled?: boolean;
+      required?: boolean;
+      el?: HTMLSelectElement | null;
+    };
+
+  let {
+    value = $bindable(),
+    options,
+    onchange,
+    label,
+    labelledby,
+    invalid = false,
+    el = $bindable(null),
+    class: klass = '',
+    ...rest
+  }: Props = $props();
+
+  function handleChange(e: Event & { currentTarget: EventTarget & HTMLSelectElement }) {
+    const picked = options.find((o) => String(o.value) === e.currentTarget.value);
+    if (!picked) return;
+    value = picked.value;
+    onchange?.(picked.value);
   }
-
-  // 숫자 1~3·1~8 두 곳뿐이라 네이티브 <select>를 쓴다(ui-visual §7).
-  let { value = $bindable(), options, id, labelledby, disabled = false, onchange }: Props = $props();
 </script>
 
-<span class="select">
+<span class={['select-wrap', klass]}>
   <select
-    {id}
+    bind:this={el}
+    {...rest}
+    class="select"
+    aria-label={label}
     aria-labelledby={labelledby}
-    {disabled}
-    class="tnum"
-    bind:value
-    onchange={() => onchange?.(value)}
+    aria-invalid={invalid ? 'true' : undefined}
+    onchange={handleChange}
   >
-    {#each options as n (n)}
-      <option value={n}>{n}</option>
+    {#each options as option (option.value)}
+      <option value={String(option.value)} disabled={option.disabled} selected={option.value === value}>
+        {option.label}
+      </option>
     {/each}
   </select>
-  <span class="chevron"><Icon name="chevron-down" size={16} /></span>
+  <Icon name="chevron-down" size="sm" />
 </span>
-
-<style>
-  .select {
-    position: relative;
-    display: inline-flex;
-    width: 72px;
-  }
-  select {
-    appearance: none;
-    width: 100%;
-    height: var(--control-h);
-    padding: 0 28px 0 12px;
-    border: 1px solid var(--border-strong);
-    border-radius: var(--radius-md);
-    background: var(--surface);
-    color: var(--fg);
-    font: inherit;
-    font-size: var(--text-md);
-    cursor: pointer;
-  }
-  select:focus {
-    outline: none;
-    border-color: var(--accent);
-  }
-  select:disabled {
-    background: var(--surface-2);
-    color: var(--fg-muted);
-  }
-  .chevron {
-    position: absolute;
-    right: 8px;
-    top: 50%;
-    transform: translateY(-50%);
-    color: var(--fg-muted);
-    pointer-events: none;
-  }
-</style>

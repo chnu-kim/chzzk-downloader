@@ -34,7 +34,7 @@
 | `platform.md` | 앱 셸: 커서, 타이틀바, 스크롤바, 줌·글자 크기 설정, Dock·작업 표시줄, 창 복원, 테마 선택(Linux), 메뉴 용어, 단축키 표기, 브라우저 키 차단, 클립보드, 잠자기 방지, 저장 위치·경로, OS별 분기 표(진법·라벨·경로) | D2 D7 D25~D30 D47(OS 분기) D55 D56 |
 | `web.md` | Worker 페이지: CSP 안에서의 골격(`theme-color`·skip link·heading·`caption`·`th scope`), 읽기 척도 적용 범위, 랜딩 구조·휴대폰 진입·OG, 무스크립트 폼(PRG·flash·오류 요약·멱등), 위험도 2단, 봇·인앱, `/help`·`/privacy`·`/licenses` | D52 D53 D54 |
 | `governance.md` | 강제 장치 구현(§4의 gate 일곱 개 명세 `DT*`·`DL*`·`DS*`·`DP*`·`DC*`·`DI*`, 확장 검사 표, 리뷰 체크리스트 R1~R10 본문), 토큰·UI CSS 파이프라인(`design/tokens/*.tokens.json`·`design/ui.css` → 생성기 → `--check`), 근거 등급 E0~E4와 운영(시험 기록 규칙, 텔레메트리 없음), 변경 흐름, 적용 계획 (a)~(f) | D33(과제 등록) D58~D62 |
-| `adr/NNNN-slug.md` | 결정 기록(0001~0010). 템플릿과 쓰는 때는 §7 | 개별 결정 |
+| `adr/NNNN-slug.md` | 결정 기록(0001~0016). 템플릿과 쓰는 때는 §7 | 개별 결정 |
 | `docs/research/design-system.md` | 근거 문서: 약칭 표, 브리프 요약, 검증 결과(confirmed/refuted 목록), 후보 세 개와 판정 요약, 감사 결함 색인(파일:줄). 설계 문서가 인용하는 ID의 원천 | — |
 
 소유권 규칙: 한 결정은 한 문서에만 적는다. 다른 문서는 "`foundations.md` §5.1"처럼 가리키기만 한다. 수치는 `foundations.md`에만 있고(§13 생성물 블록과 §14 상수 표), 다른 문서는 토큰·상수 **이름**을 쓴다. 이름 옆에 값을 함께 적을 때는 `` `--dialog-w` 440``처럼 쓰고, `design-tokens`(DT14)가 §13과 생성물의 패리티를, `scripts-test`의 `spec-check.mjs`(governance §2.9)가 다른 문서의 "이름 + 값" 쌍이 §13·§14와 같은지를 본다. 문구는 `content.md`에만 있고 다른 문서는 copy deck 키를 가리킨다(`design-copy` DC10 문서 패리티).
@@ -281,7 +281,7 @@
 - 예시 값은 가짜만 쓴다(`scan`).
 ### 7.3 처음에 쓴 ADR
 
-판정과 이 문서가 내린 결정의 기록으로 열 장을 썼다(`adr/`). 모두 E0~E1 근거라 `채택(잠정)`이다.
+판정과 이 문서가 내린 결정의 기록으로 열 장을 썼다(`adr/`). 모두 E0~E1 근거라 `채택(잠정)`이다. 0011~0016은 적용 단계 (b)의 새 컴포넌트 여섯 장이다.
 
 | 번호 | 제목 | 관련 |
 |---|---|---|
@@ -295,5 +295,11 @@
 | 0008 | 시각 회귀 기준 OS는 Linux 하나 | D61 |
 | 0009 | 출처 없는 수치 묶음(제안값) | §6-7 |
 | 0010 | 다크 `--danger-ink` 보정 | foundations §2.1·§12-2 |
+| 0011 | Notice: 알림 아홉 갈래를 프리미티브 하나로 | D35·D37, components §2.12 |
+| 0012 | Surface: 테두리 있는 면 박스를 하나로 | D19, components §2.16 |
+| 0013 | SettingsRow: 설정 행의 라벨·값 색 역할 고정 | D19, components §2.17 |
+| 0014 | FieldRow: 카드 폼 행은 SettingsRow와 색 규칙을 같이 한다 | D19, components §2.26 |
+| 0015 | DropOverlay: 투명 면 + 점선 테두리 + 가운데 라벨 | components §2.27 |
+| 0016 | Toolbar: 열 안쪽 정렬의 start·end 두 칸 | D24·D33, components §2.28 |
 
 그 뒤 D33(앱 마크)·D58·D59·D60(사람 결정)·D55(실기 결과)·§6-1(Windows 실기)이 각각 ADR을 받는다.

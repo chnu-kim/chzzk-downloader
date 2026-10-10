@@ -97,7 +97,7 @@ describe('접근성', () => {
     }
     // 설정 화면도
     await user.click(await screen.findByRole('button', { name: '설정' }));
-    await user.click(await screen.findByRole('button', { name: '고급: 네이버 로그인 정보' }));
+    await user.click(await screen.findByRole('heading', { name: '고급: 네이버 로그인 정보' }));
     for (const el of [
       ...screen.getAllByRole('button'),
       ...screen.getAllByRole('switch'),
@@ -112,6 +112,8 @@ describe('접근성', () => {
     render(App);
     await user.click(await screen.findByRole('button', { name: '설정' }));
     await waitFor(() => expect(screen.getByRole('heading', { level: 1, name: '설정' })).toHaveFocus());
+    // [⚙]은 설정 화면에도 남아 현재 쪽임을 알린다
+    expect(screen.getByRole('button', { name: '설정' })).toHaveAttribute('aria-current', 'page');
     await user.click(screen.getByRole('button', { name: '뒤로' }));
     await waitFor(() => expect(screen.getByLabelText('영상 주소')).toHaveFocus());
     // Esc로 돌아와도

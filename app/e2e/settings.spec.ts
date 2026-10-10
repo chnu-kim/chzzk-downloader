@@ -18,7 +18,8 @@ test('설정: 값을 바꾸면 바로 저장하고, 쿠키는 저장 뒤 다시 
   ]);
 
   // 고급: 네이버 로그인 정보. 가짜 값이다(실제 쿠키 모양이 아니다)
-  await page.getByRole('button', { name: '고급: 네이버 로그인 정보' }).click();
+  // Disclosure는 네이티브 <details>라 제목줄이 <summary>다(role=button이 아니다)
+  await page.locator('summary', { hasText: '고급: 네이버 로그인 정보' }).click();
   await app.axe('쿠키 섹션');
   await page.getByRole('button', { name: '저장', exact: true }).click();
   await expect(page.getByText('두 값을 모두 넣어 주세요')).toBeVisible();

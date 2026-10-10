@@ -1,47 +1,9 @@
 <script lang="ts">
-  interface Props {
-    size?: 16 | 20;
-    /** 있으면 상태를 읽어 준다. 없으면 장식 */
-    label?: string;
-  }
-
-  let { size = 16, label }: Props = $props();
+  // 진행 표시 호(docs/design/system/components.md §2.23). 장식이다: 상태는 옆 글자나 aria-busy가 전한다.
+  // 3/4 호 하나라 reduce 모션에서 멈춰도 "진행 중" 모양이 남는다(ui.css).
+  let { size = 'md' }: { size?: 'sm' | 'md' } = $props();
 </script>
 
-<span
-  class="spinner"
-  class:lg={size === 20}
-  role={label ? 'status' : undefined}
-  aria-label={label}
-  aria-hidden={label ? undefined : 'true'}
-></span>
-
-<style>
-  .spinner {
-    display: inline-block;
-    flex: none;
-    width: 16px;
-    height: 16px;
-    border-radius: var(--radius-full);
-    border: 2px solid var(--border);
-    border-top-color: var(--accent);
-    animation: spin 0.8s linear infinite;
-  }
-  .lg {
-    width: 20px;
-    height: 20px;
-  }
-  @keyframes spin {
-    to {
-      transform: rotate(360deg);
-    }
-  }
-  /* 회전 대신 호를 3/4로 둔 정지 링 */
-  @media (prefers-reduced-motion: reduce) {
-    .spinner {
-      animation: none;
-      border-right-color: var(--accent);
-      border-bottom-color: var(--accent);
-    }
-  }
-</style>
+<svg class={['spinner', size === 'sm' && 'spinner-sm']} viewBox="0 0 24 24" aria-hidden="true">
+  <path d="M12 3a9 9 0 1 0 9 9" />
+</svg>

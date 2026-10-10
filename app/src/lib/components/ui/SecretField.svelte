@@ -1,44 +1,70 @@
 <script lang="ts">
+  // 쿠키 같은 비밀값 입력(docs/design/system/components.md §2.4). 값은 가린 채로 시작한다.
+  // 보기를 켜도 저장하지 않는 한 Rust로 보내지 않는다. 토글 라벨은 상태가 바뀌어도 그대로고 aria-pressed가 상태를 말한다.
   import { t } from '../../copy/ko';
   import IconButton from './IconButton.svelte';
-  import TextField from './TextField.svelte';
+  import type { InvalidProps, NameProps } from './vocab';
 
-  interface Props {
-    value: string;
-    id?: string;
-    label?: string;
-    invalid?: boolean;
-    disabled?: boolean;
-  }
+  type Props = NameProps &
+    InvalidProps & {
+      value: string;
+      onchange?: (value: string) => void;
+      disabled?: boolean;
+      readonly?: boolean;
+      placeholder?: string;
+      name?: string;
+      'aria-describedby'?: string;
+      el?: HTMLInputElement | null;
+    };
 
-  // 값은 가린 채로 시작한다. 보기를 켜도 저장하지 않는 한 Rust로 보내지 않는다(ui-visual §7).
-  let { value = $bindable(), id, label, invalid = false, disabled = false }: Props = $props();
+  let {
+    value = $bindable(),
+    onchange,
+    label,
+    labelledby,
+    invalid = false,
+    disabled = false,
+    readonly = false,
+    placeholder,
+    name,
+    'aria-describedby': describedby,
+    el = $bindable(null),
+  }: Props = $props();
+
   let shown = $state(false);
+
+  function handleInput(e: Event) {
+    const ie = e as unknown as InputEvent & { keyCode?: number };
+    if (ie.isComposing || ie.keyCode === 229) return;
+    onchange?.((e.currentTarget as HTMLInputElement).value);
+  }
 </script>
 
-<div class="secret">
-  <TextField
+<div class="field-wrap">
+  <input
+    bind:this={el}
     bind:value
-    {id}
-    aria-label={label}
     type={shown ? 'text' : 'password'}
-    mono
-    {invalid}
+    autocomplete="off"
+    spellcheck="false"
+    autocorrect="off"
+    autocapitalize="off"
+    {name}
+    {placeholder}
     {disabled}
+    {readonly}
+    aria-label={label}
+    aria-labelledby={labelledby}
+    aria-describedby={describedby}
+    aria-invalid={invalid ? 'true' : undefined}
+    oninput={handleInput}
+    oncompositionend={(e) => onchange?.(e.currentTarget.value)}
   />
   <IconButton
+    size="sm"
     icon={shown ? 'eye-off' : 'eye'}
-    label={shown ? t('settings.cookie.hide') : t('settings.cookie.show')}
+    label={t('settings.cookie.show')}
     aria-pressed={shown}
-    {disabled}
     onclick={() => (shown = !shown)}
   />
 </div>
-
-<style>
-  .secret {
-    display: flex;
-    align-items: center;
-    gap: var(--space-8);
-  }
-</style>

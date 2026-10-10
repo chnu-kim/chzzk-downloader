@@ -1,5 +1,5 @@
 <script lang="ts">
-  // 다운로드 목록 항목(§8.5, ui-visual §6.5). `job`과 `progress`만 보고 그리고, 동작은 전부 `onaction`으로 올린다.
+  // 다운로드 목록 항목(§8.5, docs/design/system/patterns.md §2·§3·§14.3). `job`과 `progress`만 보고 그리고, 동작은 전부 `onaction`으로 올린다.
   // 왼쪽 3px 레일 + 아이콘 + 문구로 상태를 세 겹으로 말한다(색만으로 말하지 않는다).
   import type { JobDto, ProgressDto } from '../../bindings';
   import { t } from '../../copy/ko';
@@ -7,7 +7,6 @@
     barView,
     failedCopy,
     blockCopyKey,
-    isAccentAction,
     jobActionIcon,
     jobActionLabel,
     jobButtons,
@@ -15,13 +14,14 @@
     type JobAction,
     type JobBlock,
   } from '../../jobs';
-  import { kindLabel, kindTone } from '../../receive';
+  import { kindTone } from '../../receive';
   import Badge from '../ui/Badge.svelte';
   import Button from '../ui/Button.svelte';
   import Icon from '../ui/Icon.svelte';
   import IconButton from '../ui/IconButton.svelte';
-  import Menu, { type MenuItem } from '../ui/Menu.svelte';
+  import Menu from '../ui/Menu.svelte';
   import ProgressBar from '../ui/ProgressBar.svelte';
+  import type { ProgressState } from '../ui/vocab';
   import Spinner from '../ui/Spinner.svelte';
 
   interface Props {
@@ -66,14 +66,20 @@
   const busy = $derived(
     (job.status === 'running' && (!progress || progress.phase === 'resolving')) || job.status === 'pausing',
   );
-  const menuItems: MenuItem[] = $derived(
+  const menuItems = $derived(
     buttons.menu.map((a) => ({
+      id: a,
       label: jobActionLabel(a),
       icon: jobActionIcon(a),
-      danger: a === 'remove',
-      onselect: () => onaction(a),
+      tone: a === 'remove' ? ('danger' as const) : ('neutral' as const),
+      onclick: () => onaction(a),
     })),
   );
+  // barView는 0~1·tone·striped로 말한다. ProgressBar는 0~100 정수(내림)와 state 넷이다.
+  const barState = $derived<ProgressState>(
+    !bar ? 'active' : bar.striped ? 'waiting' : bar.tone === 'danger' ? 'failed' : bar.tone === 'muted' ? 'paused' : 'active',
+  );
+  const barValue = $derived(bar?.value == null ? null : Math.floor(bar.value * 100));
 
   function railOf(s: JobDto['status']): 'accent' | 'muted' | 'danger' | 'success' | 'idle' {
     switch (s) {
@@ -108,24 +114,24 @@
   {onkeydown}
   onfocusin={onfocus}
 >
-  <div class="row title-row">
-    <Badge {tone} title={tone === 'rewind' ? t('kind.liveRewind.tip') : undefined}>{kindLabel(tone)}</Badge>
+  <div class="jrow title-row">
+    <Badge kind={tone} />
     <span class="title" title={job.title}>{job.title}</span>
     <span class="quality">{job.qualityLabel}</span>
   </div>
 
   {#if bar}
-    <div class="row bar-row">
+    <div class="jrow bar-row">
       <div class="bar">
-        <ProgressBar value={bar.value} tone={bar.tone} striped={bar.striped} valueText={bar.valueText} label={job.title} />
+        <ProgressBar value={barValue} state={barState} valuetext={bar.valueText} label={job.title} />
       </div>
-      {#if bar.percent}<span class="percent tnum">{bar.percent}</span>{/if}
+      {#if bar.percent}<span class="percent num">{bar.percent}</span>{/if}
     </div>
   {/if}
 
   {#if err}
     <div class="error">
-      <span class="err-icon"><Icon name="alert" /></span>
+      <span class="err-icon"><Icon name="circle-x" /></span>
       <div>
         <p class="err-title">{err.title}</p>
         <!-- 막힌 작업은 다시 시도할 버튼이 없으므로 '다시 시도해 주세요' 같은 본문을 숨기고 막힌 이유만 둔다(app.md 구현 중 변경 63) -->
@@ -137,12 +143,12 @@
     </div>
   {/if}
 
-  <div class="row status-row">
+  <div class="jrow status-row">
     {#if parts.length}
-      <p class="status tnum">
-        {#if busy}<span class="lead"><Spinner size={16} /></span>
-        {:else if job.status === 'completed' && !job.missing}<span class="lead ok"><Icon name="check" size={16} /></span>
-        {:else if job.status === 'paused' || job.status === 'interrupted'}<span class="lead"><Icon name="pause" size={16} /></span>
+      <p class="status num">
+        {#if busy}<span class="lead"><Spinner size="sm" /></span>
+        {:else if job.status === 'completed' && !job.missing}<span class="lead ok"><Icon name="check" size="sm" /></span>
+        {:else if job.status === 'paused' || job.status === 'interrupted'}<span class="lead"><Icon name="pause" size="sm" /></span>
         {/if}
         <!-- 조각 사이 빈칸은 문자열로만 넣는다(태그 사이 줄바꿈 빈칸이 끼면 `·  2.3 GB`처럼 두 칸이 된다) -->
         {#each parts as part, i (i)}{#if i > 0 && !part.faint}<span class="dot" class:wide-only={part.wideOnly} aria-hidden="true"
@@ -154,9 +160,9 @@
     {:else}
       <span class="status"></span>
     {/if}
-    <div class="actions">
+    <div class="job-acts">
       {#each buttons.primary as a (a)}
-        <Button size="sm" icon={jobActionIcon(a)} accentText={isAccentAction(a)} onclick={() => onaction(a)}>
+        <Button size="sm" icon={jobActionIcon(a)} onclick={() => onaction(a)}>
           {jobActionLabel(a)}
         </Button>
       {/each}
@@ -169,7 +175,7 @@
 
   {#if block}
     <p class="blocked" id="job-{job.id}-blocked">
-      <span class="lead"><Icon name="alert" size={16} /></span>{t(blockCopyKey(block))}
+      <span class="lead"><Icon name="triangle-alert" size="sm" /></span>{t(blockCopyKey(block))}
     </p>
   {/if}
 </article>
@@ -236,7 +242,7 @@
     }
   }
 
-  .row {
+  .jrow {
     display: flex;
     align-items: center;
     gap: var(--space-8);
@@ -300,7 +306,7 @@
   .faint {
     color: var(--fg-faint);
   }
-  .actions {
+  .job-acts {
     display: flex;
     align-items: center;
     gap: var(--space-4);
@@ -331,7 +337,7 @@
     color: var(--fg-muted);
     overflow-wrap: anywhere;
   }
-  /* 폭 720~839: HLS "조각 …" 숨김(ui-visual §8) */
+  /* 폭 720~839: HLS "조각 …" 숨김(patterns.md §15) */
   @media (max-width: 839px) {
     .wide-only {
       display: none;

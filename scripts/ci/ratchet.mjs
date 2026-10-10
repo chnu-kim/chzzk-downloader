@@ -35,11 +35,12 @@ export const RATCHET_PATH = 'ci/ratchet.json';
 export const LOG_PATH = 'ci/RATCHET_LOG.md';
 export const MEASURE_DIR = 'target/ci/measure';
 export const KINDS = { coverage: 'coverage_lines', tests: 'tests', size: 'size', mutants: 'mutants_missed', design: 'design' };
-// 0이 실제 기준일 수 있는 영역(살아남은 mutant 0개, 디자인 허용 목록 0항목은 목표다. design은 단계 (c)부터 0으로 남는다).
+// 0이 실제 기준일 수 있는 영역(살아남은 mutant 0개, 디자인 허용 목록 0항목은 목표다. design은 단계 (c)부터 0으로 남는다.
+// shots.max_diff_pixels는 스냅샷 허용 오차이고 0이 처음 값이다, docs/design/system/governance.md §2.7).
 // '안 잼'은 $pending으로만 정한다.
-const ZERO_IS_REAL = new Set(['mutants_missed', 'design']);
-// 작을수록 좋은 영역(design.allow_entries: 허용 목록 항목 수, governance.md §2.3)
-const LOWER_IS_BETTER = new Set(['size', 'mutants_missed', 'design']);
+const ZERO_IS_REAL = new Set(['mutants_missed', 'design', 'shots']);
+// 작을수록 좋은 영역(design.allow_entries: 허용 목록 항목 수, governance.md §2.3. shots: 늘리면 느슨하게 하기라 로그 줄이 필요하다)
+const LOWER_IS_BETTER = new Set(['size', 'mutants_missed', 'design', 'shots']);
 const SETTINGS = new Set(['tolerance_pp', 'tolerance_pct']);
 // 기준 0(아직 안 잼)으로 둘 수 있는 키. 다른 키가 0이면 lint가 실패한다. tests.playwright는 G4에서 채웠다(실행 37324424781).
 // tests.app_e2e.*는 G4 2차 리뷰에서 더해 실행 37334258200으로 채웠다. mutants_missed.chzzk-core는 G5에서 더해 nightly 실행
@@ -135,7 +136,8 @@ export function judge(ratchet, measured, expected = []) {
   return { ok: rows.every((r) => r.state === 'ok' || r.state === 'unmeasured'), rows };
 }
 
-const KIND_BY_AREA = { coverage_lines: 'coverage', tests: 'tests', size: 'size', mutants_missed: 'mutants', design: 'design' };
+// shots는 측정하지 않는 설정값(app/playwright.shots.config.ts가 읽는다)이라 KINDS(check 종류)에는 없고 lint·log-check만 본다
+const KIND_BY_AREA = { coverage_lines: 'coverage', tests: 'tests', size: 'size', mutants_missed: 'mutants', design: 'design', shots: 'shots' };
 
 // 측정값 하나가 그 종류로 말이 되는지. 아니면 예외(기준에 넣지 않는다).
 export function assertMeasureValue(key, value) {

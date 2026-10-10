@@ -1,7 +1,8 @@
 <script lang="ts">
   // D1 창 닫기 확인(§8.8). Rust가 받는 중인 작업이 있을 때 창 닫기·Cmd+Q를 막고 `close-requested`를 보내면 띄운다.
-  // 기본은 안전한 쪽 [계속 받기]. [닫기]는 `quit`(받는 중인 작업을 멈춰 저장하고 종료)이고 한 번만 누를 수 있다.
-  // 종료 중에는 [계속 받기]도 막는다(눌러도 되돌릴 수 없는데 살아 있는 버튼으로 보이지 않게).
+  // 오른쪽(primary, 첫 포커스)은 안전한 쪽 [계속 받기], 왼쪽(secondary)이 실행 쪽 [닫기]다(components.md §2.8).
+  // [닫기]는 `quit`(받는 중인 작업을 멈춰 저장하고 종료)이고 한 번만 누를 수 있다(진행 중 loading).
+  // 종료 중에는 keep()이 막는다(눌러도 되돌릴 수 없는데 살아 있는 버튼으로 보이지 않게).
   import { onMount } from 'svelte';
   import * as api from '../../api';
   import type { AppError } from '../../bindings';
@@ -58,8 +59,6 @@
   title={t('dialog.close.title')}
   body={t('dialog.close.body', { n: running })}
   onclose={keep}
-  buttons={[
-    { label: t('dialog.close.keep'), variant: 'primary', autofocus: true, disabled: quitting, onclick: keep },
-    { label: t('dialog.close.confirm'), variant: 'secondary', disabled: quitting, onclick: () => void quit() },
-  ]}
+  primary={{ id: 'keep', label: t('dialog.close.keep'), onclick: keep }}
+  secondary={{ id: 'confirm', label: t('dialog.close.confirm'), loading: quitting, onclick: () => void quit() }}
 />

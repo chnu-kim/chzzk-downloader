@@ -28,6 +28,10 @@ const SITE_CSS = 'worker/src/http/site.css';
 const LAYOUT_CSS = 'app/src/styles/layout.css';
 const TOKENS_CSS = 'app/src/styles/tokens.css';
 const ICON_SVELTE = 'app/src/lib/components/ui/Icon.svelte';
+/** DS5: `<svg`를 직접 쓸 수 있는 파일. Spinner는 회전 호를 자기 svg로 그린다(components.md §2.21) */
+const SVG_FILES = new Set([ICON_SVELTE, 'app/src/lib/components/ui/Spinner.svelte']);
+/** DS7: `title=`을 쓸 수 있는 파일. IconButton은 aria-label과 같은 값의 title이 명세다(components.md §2.2) */
+const TITLE_FILES = new Set(['app/src/lib/components/ui/IconButton.svelte']);
 
 /** 생성물 셋은 검사 대상이 아니다. */
 const GENERATED = new Set([TOKENS_CSS, 'app/src/styles/ui.css', 'worker/src/http/site-css.generated.ts']);
@@ -704,16 +708,23 @@ function checkSource(rel, src, add, { vocab }) {
       for (const m of t.attrs.matchAll(/(?:^|\s)(style\s*=\s*(?:"[^"]*"|'[^']*'|\{[^}]*\}))/g)) add('DS2', t.line, squash(m[1]));
       for (const m of t.attrs.matchAll(/(?:^|\s)style:([\w-]+)/g)) if (m[1] !== '--p') add('DS2', t.line, `style:${m[1]}`);
       // DS5: <svg
-      if (lname === 'svg' && rel !== ICON_SVELTE) add('DS5', t.line, '<svg');
-      // DS7: title=
-      for (const m of t.attrs.matchAll(/(?:^|\s)(title\s*=\s*(?:"[^"]*"|'[^']*'|\{[^}]*\}))/g)) add('DS7', t.line, squash(m[1]));
+      if (lname === 'svg' && !SVG_FILES.has(rel)) add('DS5', t.line, '<svg');
+      // DS7: title=(IconButton의 title={label}은 명세가 요구한다: components.md §2.2, G-INPUT-IN2)
+      if (!TITLE_FILES.has(rel)) {
+        for (const m of t.attrs.matchAll(/(?:^|\s)(title\s*=\s*(?:"[^"]*"|'[^']*'|\{[^}]*\}))/g)) add('DS7', t.line, squash(m[1]));
+      }
       // DX3: draggable
       if ((lname === 'img' || lname === 'a') && !/(?:^|\s)draggable\s*=\s*(?:"false"|'false'|\{\s*false\s*\})/.test(t.attrs)) add('DX3', t.line, `<${lname}`);
       // DP1·DP5: 컴포넌트 사용처의 어휘
       if (vocab && /^[A-Z]/.test(lname)) {
         const pick = (arr) => arr ?? [];
+        // variant는 컴포넌트마다 따로다: `<EmptyState>` → EMPTY_STATE_VARIANT. 그 배열이 없는 컴포넌트는 *_VARIANT 전부의 합집합
+        const own = vocab[`${lname.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toUpperCase()}_VARIANT`];
+        const anyVariant = Object.entries(vocab)
+          .filter(([k]) => k.endsWith('_VARIANT'))
+          .flatMap(([, v]) => v);
         const table = {
-          variant: [...pick(vocab.BUTTON_VARIANT), ...pick(vocab.NOTICE_VARIANT)],
+          variant: own ?? anyVariant,
           tone: pick(vocab.TONE),
           size: pick(vocab.SIZE),
           kind: pick(vocab.KIND),
@@ -770,6 +781,8 @@ function checkSource(rel, src, add, { vocab }) {
     const names = new Set();
     for (const body of bodies) {
       for (const m of body.matchAll(/(?:^|[;,{\n])\s*(\w+)\??\s*:\s*boolean\b/g)) {
+        // Switch의 `value: boolean`은 값 prop이지 상태 플래그가 아니다(components.md §1 값 행)
+        if (m[1] === 'value' && base === 'Switch.svelte') continue;
         if (!bool.includes(m[1])) add('DP2', 1, m[1]);
       }
       for (const m of body.matchAll(/(?:^|[;,{\n])\s*(on\w*)\??\s*:/g)) {

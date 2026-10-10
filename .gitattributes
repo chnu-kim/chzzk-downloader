@@ -12,3 +12,6 @@ app/src/styles/tokens.css text eol=lf
 app/src/styles/ui.css text eol=lf
 worker/src/http/site.css text eol=lf
 worker/src/http/site-css.generated.ts text eol=lf
+
+# 시각 회귀 기준선(docs/design/system/governance.md §2.7). Linux CI가 만든 PNG를 바이트 그대로 둔다
+app/e2e/__shots__/** -text

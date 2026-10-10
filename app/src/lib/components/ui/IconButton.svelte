@@ -1,51 +1,36 @@
 <script lang="ts">
+  // 글자 없는 아이콘 버튼(docs/design/system/components.md §2.2). 이름은 label 하나가 aria-label·title 둘 다 맡는다.
   import type { HTMLButtonAttributes } from 'svelte/elements';
   import Icon from './Icon.svelte';
-  import type { IconName } from './icons';
+  import type { IconButtonIcon } from './vocab';
 
-  interface Props extends HTMLButtonAttributes {
-    icon: IconName;
-    /** 단독 아이콘 버튼이라 반드시 있어야 한다 */
+  type Props = HTMLButtonAttributes & {
+    icon: IconButtonIcon;
     label: string;
-    /** sm 28(기본), md 36(헤더) */
     size?: 'sm' | 'md';
+    disabled?: boolean;
     el?: HTMLButtonElement | null;
-  }
+  };
 
-  let { icon, label, size = 'sm', type = 'button', el = $bindable(null), class: klass = '', ...rest }: Props =
-    $props();
+  let {
+    icon,
+    label,
+    size = 'md',
+    disabled = false,
+    el = $bindable(null),
+    class: klass = '',
+    ...rest
+  }: Props = $props();
 </script>
 
-<button bind:this={el} {type} class="icon-btn {size} {klass}" aria-label={label} title={label} {...rest}>
-  <Icon name={icon} size={size === 'md' ? 20 : 16} />
+<button
+  bind:this={el}
+  type="button"
+  {...rest}
+  class={['icon-btn', size === 'sm' && 'icon-btn-sm', klass]}
+  aria-label={label}
+  title={label}
+  {disabled}
+>
+  <Icon name={icon} {size} />
 </button>
-
-<style>
-  .icon-btn {
-    display: inline-grid;
-    place-items: center;
-    width: var(--control-h-sm);
-    height: var(--control-h-sm);
-    padding: 0;
-    border: none;
-    border-radius: var(--radius-md);
-    background: none;
-    color: var(--fg-muted);
-    cursor: pointer;
-    transition:
-      background-color var(--dur-fast) var(--ease-out),
-      color var(--dur-fast) var(--ease-out);
-  }
-  .icon-btn.md {
-    width: var(--control-h);
-    height: var(--control-h);
-  }
-  .icon-btn:hover:not(:disabled) {
-    background: var(--surface-2);
-    color: var(--fg);
-  }
-  .icon-btn:disabled {
-    cursor: default;
-    color: var(--fg-faint);
-  }
-</style>

@@ -1,5 +1,5 @@
 <script lang="ts">
-  // 영상 카드(S1-b, §8.3, ui-visual §6.3). 화질·폴더·파일 이름을 고르고 `enqueue`한다.
+  // 영상 카드(S1-b, §8.3, docs/design/system/patterns.md §6.5). 화질·폴더·파일 이름을 고르고 `enqueue`한다.
   // 파일 이름·화질·폴더가 바뀔 때마다 150ms 뒤 `check_output`을 부르고, 지금 입력의 결과가 올 때까지
   // 다운로드를 막는다(낡은 결과로 충돌 안내를 건너뛰지 않게).
   import { onMount, untrack } from 'svelte';
@@ -12,7 +12,6 @@
     buildEnqueueRequest,
     canDownload,
     checkKey,
-    kindLabel,
     kindTone,
     metaParts,
     type CardChoices,
@@ -23,7 +22,7 @@
   import Badge from '../ui/Badge.svelte';
   import Button from '../ui/Button.svelte';
   import IconButton from '../ui/IconButton.svelte';
-  import InlineAlert from '../ui/InlineAlert.svelte';
+  import Notice from '../ui/Notice.svelte';
   import ConflictNotice from './ConflictNotice.svelte';
   import FilenameField from './FilenameField.svelte';
   import FolderField from './FolderField.svelte';
@@ -76,6 +75,9 @@
   const shownError: AppError | null = $derived<AppError | null>(enqueueError ?? checkError);
   const errCopy = $derived(
     shownError ? errorCopy(shownError, { place: 'resolve', cookiesEnabled: settings.cookiesEnabled }) : null,
+  );
+  const errActions = $derived(
+    (errCopy?.actions ?? []).map((a) => ({ id: a, label: actionLabel(a), onclick: () => onErrorAction(a) })),
   );
 
   // 가장 최근에 요청한 열쇠. 늦게 온 결과는 이것과 다르면 버린다.
@@ -181,24 +183,24 @@
 
 <svelte:window onkeydown={onwindowkeydown} />
 
-<section class="card" aria-labelledby="card-heading">
+<section class="video-card" aria-labelledby="card-heading">
   <div class="head">
     <span class="eyebrow">{t('card.title')}</span>
     <IconButton icon="x" label={t('card.close')} onclick={onclose} />
   </div>
 
   <div class="badges">
-    <Badge tone={tone} title={tone === 'rewind' ? t('kind.liveRewind.tip') : undefined}>{kindLabel(tone)}</Badge>
+    <Badge kind={tone} />
     {#if view.meta.adult}
-      <Badge tone="adult" label={t('badge.adult.label')}>{t('badge.adult')}</Badge>
+      <Badge kind="adult" />
     {/if}
   </div>
-  <h2 id="card-heading" class="title" tabindex="-1" title={view.meta.title} bind:this={titleEl}>
+  <h2 id="card-heading" class="title" tabindex="-1" data-focus-container title={view.meta.title} bind:this={titleEl}>
     {view.meta.title}
   </h2>
   <p class="meta">
     {#each metaParts(view) as part, i (i)}
-      {#if i > 0}<span class="dot" aria-hidden="true">·</span>{/if}<span class="tnum">{part}</span>
+      {#if i > 0}<span class="dot" aria-hidden="true">·</span>{/if}<span class="num">{part}</span>
     {/each}
   </p>
 
@@ -218,28 +220,24 @@
     {/if}
     <OwnershipNotice ownership={view.ownership} channelName={view.meta.channelName} />
     {#if errCopy}
-      <InlineAlert tone="danger" title={errCopy.title}>
+      <Notice tone="danger" title={errCopy.title} actions={errActions}>
         {#if errCopy.body}<p class="err-line">{errCopy.body}</p>{/if}
         {#if errCopy.detail}<p class="err-line detail">{errCopy.detail}</p>{/if}
-        {#snippet actions()}
-          {#each errCopy.actions as a (a)}
-            <Button size="sm" onclick={() => onErrorAction(a)}>{actionLabel(a)}</Button>
-          {/each}
-        {/snippet}
-      </InlineAlert>
+      </Notice>
     {/if}
   </div>
 
-  <div class="actions">
+  <div class="card-acts">
     <Button onclick={onclose}>{t('card.cancel')}</Button>
-    <Button variant="primary" icon="drop" kbd={modLabel('Enter')} disabled={!ready} onclick={download}>
+    <!-- primary에는 disabled가 없다(타입). 못 받는 동안은 aria-disabled이고 download()가 ready를 다시 본다 -->
+    <Button variant="primary" icon="download" kbd={modLabel('Enter')} aria-disabled={ready ? undefined : 'true'} onclick={download}>
       {t('card.download')}
     </Button>
   </div>
 </section>
 
 <style>
-  .card {
+  .video-card {
     margin-top: var(--space-12);
     padding: var(--space-16);
     border: 1px solid var(--border);
@@ -274,12 +272,6 @@
     line-clamp: 2;
     overflow: hidden;
   }
-  .title:focus {
-    outline: none;
-  }
-  .title:focus-visible {
-    box-shadow: var(--focus-ring);
-  }
   .meta {
     display: flex;
     flex-wrap: wrap;
@@ -308,7 +300,7 @@
   .err-line.detail {
     color: var(--fg-muted);
   }
-  .actions {
+  .card-acts {
     display: flex;
     justify-content: flex-end;
     gap: var(--space-8);

@@ -20,10 +20,10 @@
     <h2 id="recent-title" class="title">{t('recent.title')}</h2>
     <ul>
       {#each items as item (item.url)}
-        <li class="row">
-          <span class="clock"><Icon name="clock" size={16} /></span>
+        <li class="recent-row">
+          <span class="clock"><Icon name="clock" size="sm" /></span>
           <span class="name" title={item.title || item.url}>{item.title || item.url}</span>
-          <Button variant="link" aria-label="{t('recent.reopen')}: {item.title || item.url}" onclick={() => onreopen(item.url)}>
+          <Button variant="ghost" size="sm" aria-label="{t('recent.reopen')}: {item.title || item.url}" onclick={() => onreopen(item.url)}>
             {t('recent.reopen')}
           </Button>
         </li>
@@ -52,7 +52,7 @@
     padding: 0;
     list-style: none;
   }
-  .row {
+  .recent-row {
     display: flex;
     align-items: center;
     gap: var(--space-8);
@@ -61,7 +61,7 @@
     border-radius: var(--radius-sm);
     font-size: var(--text-sm);
   }
-  .row:hover {
+  .recent-row:hover {
     background: var(--surface-2);
   }
   .clock {

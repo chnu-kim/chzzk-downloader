@@ -136,6 +136,9 @@ for (const theme of THEMES) {
         await screen.toastAction(app);
         await page.clock.runFor(500);
         await page.locator('.notice-toast').waitFor();
+        // 메뉴가 닫히고 포인터가 행 위에 남지 않게(hover 면이 찍히지 않게) 한 뒤 찍는다
+        await expect(page.getByRole('menu')).toBeHidden();
+        await page.mouse.move(0, 0);
       }
       await screen.settle?.(page, env);
       await page.clock.runFor(500);

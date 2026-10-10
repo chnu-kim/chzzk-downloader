@@ -184,7 +184,10 @@ export const SCREENS: Screen[] = [
     ready: (p) => p.getByRole('article', { name: SAME_PREFIX_TITLES[0] }),
     // 첫 행의 [⋯] › 주소 복사 → 토스트 하나(목록을 지우지 않는다)
     toastAction: async (app) => {
-      await app.page.context().grantPermissions(['clipboard-write']).catch(() => {});
+      // 클립보드 권한은 러너마다 달라 성공·실패 토스트가 갈린다: 쓰기를 늘 성공으로 고정해 촬영을 결정적으로 만든다
+      await app.page.evaluate(() => {
+        Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: () => Promise.resolve() } });
+      });
       await app.page.getByRole('button', { name: t('job.more', { title: SAME_PREFIX_TITLES[0] }) }).click();
       await app.page.getByRole('menuitem', { name: t('action.copyUrl') }).click();
     },

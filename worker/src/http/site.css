@@ -403,16 +403,28 @@ td.num {
 .when {
   white-space: nowrap;
 }
-/* 표 안의 ID(mono)는 끊지 않는다. 좁으면 .scroll이 스크롤한다 */
+/* 표 안의 ID(mono)는 보통 한 줄이다. 칸이 모자라면(글꼴 폭이 다른 환경) 이 칸이 줄어들어 ID가 줄바꿈된다:
+   .scroll이 가로로 넘치는 것보다 낫다(1280에서 표는 넘치지 않는다, web.md §15-35). 좁은 폭(599px 이하)은 아래에서 nowrap + 스크롤 */
 td .mono,
 th .mono {
-  white-space: nowrap;
   word-break: normal;
+  overflow-wrap: anywhere;
+}
+/* 동작 칸(버튼·링크 버튼·행동 열 머리)은 내용 폭으로 고정한다: width 1%가 최소 폭이고, 남는 폭은 이름·메모 칸이 준다 */
+th:has(> .sr-only),
+td:has(> .actions),
+td:has(> form) {
+  width: 1%;
+  white-space: nowrap;
 }
 /* 표 칸의 버튼 줄: 한 줄에 나란히 */
 td .actions {
   flex-wrap: nowrap;
   gap: var(--space-8);
+}
+/* 칸 안 폼의 "폼 안 요소 사이 간격"을 쓰지 않는다: 숨은 입력 뒤 버튼이 아래로 밀려 다른 칸보다 낮아진다 */
+td form > * + * {
+  margin-top: 0;
 }
 
 dl.summary {

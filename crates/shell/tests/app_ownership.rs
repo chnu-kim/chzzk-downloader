@@ -564,6 +564,73 @@ async fn admin_auto_resume_takes_every_channel() {
     app.manager.quit(Duration::from_secs(3)).await;
 }
 
+/// 관리자 깃발만으로는 이어받지 않는다: SignedIn이 아니거나 채널을 모르면 0이고, 이어받은 뒤 두 번째 호출도 0이다
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn admin_auto_resume_needs_signed_in_channel_and_runs_once() {
+    let api = hanging_server().await;
+    let worker = MockServer::start().await;
+    let t = TempDir::new().unwrap();
+    write_jobs(
+        t.path(),
+        vec![record(1, Some(OTHER), &t.path().join("out"))],
+    );
+    {
+        let app = open_plain(t.path(), &api);
+        app.update_settings(SettingsPatch {
+            auto_resume_interrupted: Some(true),
+            ..SettingsPatch::default()
+        })
+        .unwrap();
+        app.manager.flush();
+    }
+    let app = open_auth(t.path(), &api, &worker);
+    let admin = |phase, channel| {
+        let mut st = status(phase, channel);
+        st.is_admin = true;
+        st
+    };
+    for phase in [
+        AuthPhase::Checking,
+        AuthPhase::Expired,
+        AuthPhase::Denied,
+        AuthPhase::SignedOut,
+    ] {
+        assert_eq!(app.on_auth_status(&admin(phase, Some(OWN))), 0);
+    }
+    assert_eq!(app.on_auth_status(&admin(AuthPhase::SignedIn, None)), 0);
+    assert_eq!(status_of(&app, 1), JobStatus::Interrupted);
+    assert_eq!(
+        app.on_auth_status(&admin(AuthPhase::SignedIn, Some(OWN))),
+        1
+    );
+    assert_eq!(
+        app.on_auth_status(&admin(AuthPhase::SignedIn, Some(OWN))),
+        0
+    );
+    app.manager.quit(Duration::from_secs(3)).await;
+}
+
+/// 관리자라도 다시 줄 세울 수 없는 상태(완료)의 resume_job은 기존 규칙대로 InvalidInput이고 조회하지 않는다
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn admin_resume_job_keeps_requeueable_rule() {
+    let api = mock_api(None).await;
+    let worker = MockServer::start().await;
+    let t = TempDir::new().unwrap();
+    let out: PathBuf = t.path().join("out");
+    let mut done = vod_record(1, Some(OTHER), &out);
+    done.status = JobStatus::Completed;
+    write_jobs(t.path(), vec![done]);
+    save_session_as(t.path(), &worker, OWN, true);
+    let app = open_auth(t.path(), &api, &worker);
+    assert_eq!(
+        app.resume_job(JobId(1), false).await.unwrap_err().code,
+        ErrorCode::InvalidInput
+    );
+    assert!(api.received_requests().await.unwrap().is_empty());
+    assert_eq!(status_of(&app, 1), JobStatus::Completed);
+    app.manager.quit(Duration::from_secs(3)).await;
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn auto_resume_waits_for_channel() {
     let api = hanging_server().await;

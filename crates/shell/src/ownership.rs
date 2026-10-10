@@ -437,6 +437,84 @@ mod tests {
         assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 
+    #[tokio::test]
+    async fn admin_signed_out_is_unchecked_and_not_logged_in_without_fetch() {
+        let me = Me::admin(A1);
+        let g = OwnershipGate::enabled(me.clone());
+        me.set_admin(None);
+        assert_eq!(
+            g.on_resolved(&video(1), &meta(Some(C3))),
+            Ownership::Unchecked
+        );
+        let calls = AtomicUsize::new(0);
+        let e = admit_with(&g, &video(2), &calls, Ok(Some(C3)))
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, ErrorCode::NotLoggedIn);
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn demoted_admin_is_rejected_from_next_judgement_even_with_cached_channel() {
+        let me = Me::admin(A1);
+        let g = OwnershipGate::enabled(me.clone());
+        assert_eq!(
+            g.on_resolved(&video(1), &meta(Some(C3))),
+            Ownership::AdminOverride
+        );
+        assert_eq!(
+            g.on_resolved(&video(2), &meta(None)),
+            Ownership::AdminOverride
+        );
+        // 캐시에는 채널만 있고 판정은 그 순간의 주체로 한다
+        me.set(Some(A1));
+        let calls = AtomicUsize::new(0);
+        let e = admit_with(&g, &video(1), &calls, Ok(Some(C3)))
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, ErrorCode::NotOwnContent);
+        let e = admit_with(&g, &video(2), &calls, Ok(None))
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, ErrorCode::OwnershipUnknown);
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert_eq!(g.on_resolved(&video(1), &meta(Some(C3))), Ownership::NotOwn);
+        assert_eq!(g.on_resolved(&video(2), &meta(None)), Ownership::Unknown);
+    }
+
+    #[tokio::test]
+    async fn admin_fetch_error_stays_error_and_is_not_cached() {
+        let g = OwnershipGate::enabled(Me::admin(A1));
+        let calls = AtomicUsize::new(0);
+        let e = admit_with(&g, &video(1), &calls, Err(()))
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, AppError::internal("down").code);
+        assert_eq!(g.known_channel(&video(1)), None);
+        admit_with(&g, &video(1), &calls, Ok(Some(C3)))
+            .await
+            .unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        assert_eq!(g.known_channel(&video(1)).as_deref(), Some(C3));
+    }
+
+    #[tokio::test]
+    async fn disabled_gate_ignores_admin_concept() {
+        let g = OwnershipGate::disabled();
+        assert_eq!(
+            g.on_resolved(&video(1), &meta(Some(C3))),
+            Ownership::Unchecked
+        );
+        let calls = AtomicUsize::new(0);
+        assert_eq!(
+            admit_with(&g, &video(1), &calls, Ok(Some(C3)))
+                .await
+                .unwrap(),
+            None
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
+
     #[test]
     fn verdict_fails_closed() {
         assert!(verdict(Some(true)).is_ok());

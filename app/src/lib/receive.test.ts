@@ -154,6 +154,11 @@ describe('canDownload', () => {
     expect(canDownload({ ...base, ownership: 'notOwn' })).toBe(false);
     expect(canDownload({ ...base, ownership: 'unknown' })).toBe(false);
   });
+
+  it('adminOverride는 받을 수 있고 중복은 여전히 막는다', () => {
+    expect(canDownload({ ...base, ownership: 'adminOverride' })).toBe(true);
+    expect(canDownload({ ...base, ownership: 'adminOverride', check: check({ duplicateJobId: 4 }) })).toBe(false);
+  });
 });
 
 describe('shouldSuggestClipboard', () => {
@@ -206,6 +211,12 @@ describe('downloadBlock', () => {
     expect(downloadBlock('own', check({ duplicateJobId: 3 }))).toBe('duplicate');
     expect(downloadBlock('notOwn', check({ duplicateJobId: 3 }))).toBe('ownership');
     expect(BLOCK_REASON_ID.duplicate).not.toBe(BLOCK_REASON_ID.ownership);
+  });
+
+  it('adminOverride는 소유권으로 막지 않지만 중복은 관리자도 막는다', () => {
+    expect(downloadBlock('adminOverride', null)).toBeNull();
+    expect(downloadBlock('adminOverride', check())).toBeNull();
+    expect(downloadBlock('adminOverride', check({ duplicateJobId: 3 }))).toBe('duplicate');
   });
 });
 

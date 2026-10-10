@@ -589,6 +589,35 @@ describe('남의 영상 안내(A5)', () => {
     expect(screen.getByText(copy.title).closest('.notice')).toHaveClass('tone-warning');
     expectBlocked(screen.getByRole('button', { name: downloadName() }));
   });
+
+  it('관리자는 info 안내만 받고 [받기]는 막히지 않는다(채널을 알 때)', async () => {
+    auth.status = { ...signedInAs('a1', '내 채널'), isAdmin: true };
+    await openCard({ ownership: 'adminOverride', meta: { ...resolved().meta, channelName: '다른 채널', channelId: 'c3' } });
+    const title = screen.getByText(t('receive.admin.otherChannel.title'));
+    expect(title.closest('.notice')).toHaveClass('tone-info');
+    expect(screen.getByText(t('receive.admin.otherChannel.body'))).toBeInTheDocument();
+    expect(screen.queryByText(t('receive.admin.unknown.title'))).toBeNull();
+    const btn = await downloadButton();
+    // 막힘 사유가 아니라서 설명으로 잇지 않는다
+    expect(btn.getAttribute('aria-describedby') ?? '').not.toContain('ownership-notice');
+    expect(document.getElementById('ownership-notice')).toBeNull();
+  });
+
+  it('관리자가 채널을 모르는 영상은 문구가 갈린다', async () => {
+    auth.status = { ...signedInAs('a1', '내 채널'), isAdmin: true };
+    await openCard({ ownership: 'adminOverride', meta: { ...resolved().meta, channelId: null } });
+    expect(screen.getByText(t('receive.admin.unknown.title'))).toBeInTheDocument();
+    expect(screen.getByText(t('receive.admin.unknown.body'))).toBeInTheDocument();
+    expect(screen.queryByText(t('receive.admin.otherChannel.title'))).toBeNull();
+    await downloadButton();
+  });
+
+  it.each(['own', 'unchecked'] as const)('%s에서는 소유권 안내를 그리지 않는다', async (ownership) => {
+    await openCard({ ownership });
+    expect(document.getElementById('ownership-notice')).toBeNull();
+    expect(screen.queryByText(t('receive.admin.otherChannel.title'))).toBeNull();
+    expect(screen.queryByText(t('receive.admin.unknown.title'))).toBeNull();
+  });
 });
 
 describe('붙여넣기 힌트', () => {

@@ -2010,3 +2010,56 @@ async fn has_session_false_when_signed_out() {
     assert_eq!(s.phase, AuthPhase::SignedOut);
     assert!(!s.has_session);
 }
+
+fn admin_bundle(e: &Env, n: u32, is_admin: bool) {
+    let mut b = bundle(n, e.now());
+    b.is_admin = is_admin;
+    e.api.push_refresh(Reply::Now(Ok(b)));
+}
+
+#[tokio::test(start_paused = true)]
+async fn signer_carries_admin_and_demotion_replaces_it_on_next_refresh() {
+    let e = Env::optimistic();
+    // 저장 세션은 관리자가 아니다
+    assert_eq!(e.svc.signer().map(|s| s.is_admin), Some(false));
+    admin_bundle(&e, 2, true);
+    let s = e.svc.refresh().await;
+    assert!(s.is_admin);
+    let me = e.svc.signer().unwrap();
+    assert_eq!((me.channel_id.as_str(), me.is_admin), (CH, true));
+    // 다음 refresh의 서버 값이 held를 통째로 바꾼다(강등)
+    admin_bundle(&e, 3, false);
+    let s = e.svc.refresh().await;
+    assert!(!s.is_admin);
+    assert_eq!(e.svc.signer().map(|s| s.is_admin), Some(false));
+}
+
+#[tokio::test(start_paused = true)]
+async fn signer_is_none_outside_signed_in_even_for_admin() {
+    let e = Env::optimistic();
+    admin_bundle(&e, 2, true);
+    e.svc.refresh().await;
+    assert!(e.svc.signer().is_some());
+    // 오프라인 유예를 넘기면 GraceExpired: 보이는 held는 관리자여도 판정 주체는 없다
+    e.clock.advance(h(72));
+    e.refresh_fail_all();
+    let s = e.svc.refresh().await;
+    assert_eq!(
+        (s.phase, s.reason),
+        (AuthPhase::Expired, Some(AuthReason::GraceExpired))
+    );
+    assert!(e.svc.signer().is_none());
+    assert!(e.svc.signed_in_channel().is_none());
+
+    // Checking·SignedOut·Denied에서도 None
+    assert!(Env::checking().svc.signer().is_none());
+    assert!(Env::new(h(1), None).svc.signer().is_none());
+    let denied = pending_env().await;
+    denied
+        .redeem_with(Ok(RedeemResponse::Denied {
+            channel_name: "x".into(),
+        }))
+        .await;
+    assert!(denied.svc.signer().is_none());
+    assert!(!denied.svc.status().is_admin);
+}

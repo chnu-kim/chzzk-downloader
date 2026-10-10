@@ -26,21 +26,21 @@
   .card {
     display: flex;
     flex-direction: column;
-    gap: var(--space-3);
-    margin-top: var(--space-3);
-    padding: var(--space-4);
+    gap: var(--space-12);
+    margin-top: var(--space-12);
+    padding: var(--space-16);
     border: 1px solid var(--border);
     border-radius: var(--radius-md);
     background: var(--surface);
   }
   .row {
     display: flex;
-    gap: var(--space-3);
+    gap: var(--space-12);
   }
   .foot {
     display: flex;
     align-items: center;
-    gap: var(--space-1);
+    gap: var(--space-4);
   }
   .msg {
     flex: 1;

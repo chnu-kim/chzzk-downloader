@@ -40,9 +40,9 @@
   .inner {
     display: flex;
     align-items: center;
-    gap: var(--space-3);
+    gap: var(--space-12);
     min-height: 40px;
-    padding: var(--space-1) var(--gutter);
+    padding: var(--space-4) var(--gutter);
   }
   .info .icon {
     color: var(--accent);
@@ -57,7 +57,7 @@
   }
   .actions {
     display: flex;
-    gap: var(--space-2);
+    gap: var(--space-8);
   }
   @media (min-width: 840px) {
     .inner {

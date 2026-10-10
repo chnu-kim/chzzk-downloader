@@ -49,6 +49,8 @@ import {
   SENTINEL_TEXT,
   stripJsComments,
   stripJsonc,
+  checkGeneratedCss,
+  GENERATED_CSS_FILE,
 } from './worker-config.mjs';
 
 const W = join(ROOT, 'worker');
@@ -870,4 +872,22 @@ test('lockedVersions: 두 lockfile의 wrangler = tools.json, 다른 버전·peer
     const bad = read(f).replaceAll(`wrangler@${TOOLS_WRANGLER}`, 'wrangler@4.0.0');
     assert.ok(checkWorker(copy({ [`worker/${f}`]: bad })).some((e) => e.includes(f) && e.includes('tools.json')), f);
   }
+});
+
+// 디자인 토큰 생성물(scripts/design/tokens.mjs)은 소스 낱말 검사에서 빠지고 모양만 본다(governance.md §1.3)
+test('checkGeneratedCss: 머리 주석 + SITE_CSS 문자열 + 해시만 통과', () => {
+  const ok = '/* 생성물. 손으로 고치지 않는다 */\nexport const SITE_CSS = `html { font-size: 16px; }\n.list { align-self: center; }\n`;\nexport const SITE_CSS_HASH = "0123456789abcdef";\n';
+  assert.deepEqual(checkGeneratedCss(ok), []);
+  const bad = [
+    ['코드가 더 있음', ok + 'export const x = fetch;\n'],
+    ['템플릿 치환', ok.replace('html', '${x}')],
+    ['백틱 탈출', ok.replace('html', '\\`')],
+    ['태그', ok.replace('html', '</style>')],
+    ['해시 모양', ok.replace('0123456789abcdef', 'xyz')],
+    ['머리 주석 없음', ok.slice(ok.indexOf('\n') + 1)],
+    ['@import', ok.replace('html', '@import "a.css"; html')],
+    ['url(', ok.replace('html', 'html { background: url(a) }')],
+  ];
+  for (const [why, text] of bad) assert.ok(checkGeneratedCss(text).length > 0, why);
+  assert.equal(GENERATED_CSS_FILE, 'src/http/site-css.generated.ts');
 });

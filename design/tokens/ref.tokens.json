@@ -1,0 +1,527 @@
+{
+  "ref": {
+    "gray": {
+      "220": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "oklch",
+          "components": [
+            0.22,
+            0,
+            0
+          ],
+          "hex": "#1B1B1B"
+        },
+        "$description": "라이트 fg"
+      },
+      "240": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "oklch",
+          "components": [
+            0.24,
+            0,
+            0
+          ],
+          "hex": "#1F1F1F"
+        },
+        "$description": "다크 bg·track"
+      },
+      "290": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "oklch",
+          "components": [
+            0.29,
+            0,
+            0
+          ],
+          "hex": "#2B2B2B"
+        },
+        "$description": "다크 surface"
+      },
+      "320": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "oklch",
+          "components": [
+            0.32,
+            0,
+            0
+          ],
+          "hex": "#333333"
+        },
+        "$description": "다크 raised"
+      },
+      "350": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "oklch",
+          "components": [
+            0.35,
+            0,
+            0
+          ],
+          "hex": "#3A3A3A"
+        },
+        "$description": "다크 surface-2"
+      },
+      "400": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "oklch",
+          "components": [
+            0.4,
+            0,
+            0
+          ],
+          "hex": "#484848"
+        },
+        "$description": "다크 surface-pressed"
+      },
+      "480": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "oklch",
+          "components": [
+            0.48,
+            0,
+            0
+          ],
+          "hex": "#5D5D5D"
+        },
+        "$description": "라이트 fg-muted"
+      },
+      "540": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "oklch",
+          "components": [
+            0.54,
+            0,
+            0
+          ],
+          "hex": "#6F6F6F"
+        },
+        "$description": "다크 fg-disabled"
+      },
+      "600": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "oklch",
+          "components": [
+            0.6,
+            0,
+            0
+          ],
+          "hex": "#808080"
+        },
+        "$description": "라이트 border-strong"
+      },
+      "620": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "oklch",
+          "components": [
+            0.62,
+            0,
+            0
+          ],
+          "hex": "#868686"
+        },
+        "$description": "다크 border-strong"
+      },
+      "700": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "oklch",
+          "components": [
+            0.7,
+            0,
+            0
+          ],
+          "hex": "#9E9E9E"
+        },
+        "$description": "라이트 fg-disabled"
+      },
+      "720": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "oklch",
+          "components": [
+            0.72,
+            0,
+            0
+          ],
+          "hex": "#A4A4A4"
+        },
+        "$description": "다크 fg-muted"
+      },
+      "890": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "oklch",
+          "components": [
+            0.89,
+            0,
+            0
+          ],
+          "hex": "#DBDBDB"
+        },
+        "$description": "라이트 surface-pressed"
+      },
+      "930": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "oklch",
+          "components": [
+            0.93,
+            0,
+            0
+          ],
+          "hex": "#E8E8E8"
+        },
+        "$description": "라이트 surface-2·track, 다크 fg"
+      },
+      "965": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "oklch",
+          "components": [
+            0.965,
+            0,
+            0
+          ],
+          "hex": "#F3F3F3"
+        },
+        "$description": "라이트 bg"
+      }
+    },
+    "white": {
+      "$type": "color",
+      "$value": {
+        "colorSpace": "srgb",
+        "components": [
+          1,
+          1,
+          1
+        ],
+        "hex": "#FFFFFF"
+      },
+      "$description": "라이트 surface·raised, on-accent"
+    },
+    "blue": {
+      "33": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "oklch",
+          "components": [
+            0.33,
+            0.055,
+            258
+          ],
+          "hex": "#233651"
+        },
+        "$description": "다크 accent-soft"
+      },
+      "48": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "oklch",
+          "components": [
+            0.48,
+            0.19,
+            258
+          ],
+          "hex": "#0056C5"
+        },
+        "$description": "라이트 accent-pressed"
+      },
+      "50": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "oklch",
+          "components": [
+            0.5,
+            0.18,
+            258
+          ],
+          "hex": "#085DC7"
+        },
+        "$description": "라이트 accent-ink·focus, 다크 accent-pressed"
+      },
+      "54": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "oklch",
+          "components": [
+            0.54,
+            0.2,
+            258
+          ],
+          "hex": "#0067DF"
+        },
+        "$description": "라이트 accent"
+      },
+      "57": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "oklch",
+          "components": [
+            0.57,
+            0.19,
+            258
+          ],
+          "hex": "#1E72E4"
+        },
+        "$description": "다크 accent"
+      },
+      "74": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "oklch",
+          "components": [
+            0.74,
+            0.13,
+            255
+          ],
+          "hex": "#70ADFB"
+        },
+        "$description": "다크 accent-ink·focus"
+      },
+      "95": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "oklch",
+          "components": [
+            0.95,
+            0.03,
+            258
+          ],
+          "hex": "#E2F0FF"
+        },
+        "$description": "라이트 accent-soft"
+      }
+    },
+    "red": {
+      "33": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "oklch",
+          "components": [
+            0.33,
+            0.06,
+            27
+          ],
+          "hex": "#502824"
+        },
+        "$description": "다크 danger-soft"
+      },
+      "52": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "oklch",
+          "components": [
+            0.52,
+            0.19,
+            27
+          ],
+          "hex": "#BE2323"
+        },
+        "$description": "라이트 danger-ink"
+      },
+      "53": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "oklch",
+          "components": [
+            0.53,
+            0.2,
+            27
+          ],
+          "hex": "#C51E21"
+        },
+        "$description": "라이트 danger"
+      },
+      "56": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "oklch",
+          "components": [
+            0.56,
+            0.19,
+            27
+          ],
+          "hex": "#CC3430"
+        },
+        "$description": "다크 danger"
+      },
+      "75": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "oklch",
+          "components": [
+            0.75,
+            0.14,
+            25
+          ],
+          "hex": "#FA8880"
+        },
+        "$description": "다크 danger-ink(대비 보정)"
+      },
+      "95": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "oklch",
+          "components": [
+            0.95,
+            0.03,
+            27
+          ],
+          "hex": "#FFE7E4"
+        },
+        "$description": "라이트 danger-soft"
+      }
+    },
+    "amber": {
+      "33": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "oklch",
+          "components": [
+            0.33,
+            0.05,
+            80
+          ],
+          "hex": "#433215"
+        },
+        "$description": "다크 warning-soft"
+      },
+      "51": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "oklch",
+          "components": [
+            0.51,
+            0.12,
+            65
+          ],
+          "hex": "#945500"
+        },
+        "$description": "라이트 warning-ink"
+      },
+      "78": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "oklch",
+          "components": [
+            0.78,
+            0.13,
+            75
+          ],
+          "hex": "#E8AA4E"
+        },
+        "$description": "다크 warning-ink"
+      },
+      "96": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "oklch",
+          "components": [
+            0.96,
+            0.04,
+            80
+          ],
+          "hex": "#FFF0D4"
+        },
+        "$description": "라이트 warning-soft"
+      }
+    },
+    "black": {
+      "a8": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0,
+            0,
+            0
+          ],
+          "alpha": 0.08,
+          "hex": "#000000"
+        },
+        "$description": "라이트 메뉴·토스트 바깥 선(그림자 전용)"
+      },
+      "a10": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0,
+            0,
+            0
+          ],
+          "alpha": 0.1,
+          "hex": "#000000"
+        },
+        "$description": "라이트 separator·대화상자 바깥 선"
+      },
+      "a30": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0,
+            0,
+            0
+          ],
+          "alpha": 0.3,
+          "hex": "#000000"
+        },
+        "$description": "라이트 scrim"
+      },
+      "a50": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0,
+            0,
+            0
+          ],
+          "alpha": 0.5,
+          "hex": "#000000"
+        },
+        "$description": "다크 scrim"
+      }
+    },
+    "white-a8": {
+      "$type": "color",
+      "$value": {
+        "colorSpace": "srgb",
+        "components": [
+          1,
+          1,
+          1
+        ],
+        "alpha": 0.08,
+        "hex": "#FFFFFF"
+      },
+      "$description": "다크 메뉴·토스트 안쪽 선"
+    },
+    "white-a10": {
+      "$type": "color",
+      "$value": {
+        "colorSpace": "srgb",
+        "components": [
+          1,
+          1,
+          1
+        ],
+        "alpha": 0.1,
+        "hex": "#FFFFFF"
+      },
+      "$description": "다크 separator·대화상자 안쪽 선"
+    }
+  }
+}

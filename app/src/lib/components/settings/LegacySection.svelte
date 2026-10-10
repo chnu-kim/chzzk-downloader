@@ -55,14 +55,14 @@
   .legacy {
     display: flex;
     flex-direction: column;
-    gap: var(--space-3);
-    padding: var(--space-4);
+    gap: var(--space-12);
+    padding: var(--space-16);
   }
   .line {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: var(--space-3);
+    gap: var(--space-12);
   }
   .last {
     min-width: 0;

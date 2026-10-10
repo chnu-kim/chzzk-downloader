@@ -120,14 +120,14 @@
 
 <style>
   section {
-    margin-top: var(--space-6);
+    margin-top: var(--space-24);
   }
   .cookie {
     display: flex;
     flex-direction: column;
-    gap: var(--space-3);
-    margin-top: var(--space-2);
-    padding: var(--space-4);
+    gap: var(--space-12);
+    margin-top: var(--space-8);
+    padding: var(--space-16);
   }
   .why {
     line-height: 1.65;
@@ -135,7 +135,7 @@
   .row-main {
     display: flex;
     align-items: center;
-    gap: var(--space-3);
+    gap: var(--space-12);
   }
   .row-main .label {
     flex: 1;
@@ -150,7 +150,7 @@
   .field {
     display: flex;
     align-items: center;
-    gap: var(--space-3);
+    gap: var(--space-12);
   }
   .mono-label {
     flex: none;
@@ -165,13 +165,13 @@
     display: flex;
     flex-wrap: wrap;
     align-items: flex-start;
-    gap: var(--space-2);
+    gap: var(--space-8);
   }
   .howto {
     margin-left: auto;
   }
   .steps {
-    margin: var(--space-2) 0 0;
+    margin: var(--space-8) 0 0;
     padding-left: 1.25rem;
     font-size: var(--text-sm);
     line-height: 1.65;

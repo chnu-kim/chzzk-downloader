@@ -200,3 +200,21 @@ test('runProvenance: nightly.yml(schedule·dispatch)은 실행 전체가 아니�
   assert.equal(runProvenance({ ...run, path: '.github/workflows/ci.yml' }, 'o/r', ok).length, 1);
   assert.deepEqual(runProvenance({ ...run, path: '.github/workflows/ci.yml', conclusion: 'success' }, 'o/r'), []);
 });
+
+// 디자인 시스템(governance.md §2.3): 허용 목록 항목 수 design.allow_entries는 작을수록 좋고 0도 실제 기준이다(단계 (c)부터 0)
+test('design: 늘면 실패, 0도 실제 기준, 조이기는 최소, 느슨하게 하기 감지, 저장소 키 존재', () => {
+  const base = { $pending: [], design: { allow_entries: 10 } };
+  assert.equal(judge(base, { 'design.allow_entries': 10 }).ok, true);
+  assert.equal(judge(base, { 'design.allow_entries': 9 }).ok, true);
+  assert.equal(judge(base, { 'design.allow_entries': 11 }).ok, false);
+  const zero = { $pending: [], design: { allow_entries: 0 } };
+  assert.deepEqual(lintRatchet(zero), []);
+  assert.equal(judge(zero, { 'design.allow_entries': 0 }).ok, true);
+  assert.equal(judge(zero, { 'design.allow_entries': 1 }).ok, false);
+  assert.equal(tighten(base, { 'design.allow_entries': 7 }).next.design.allow_entries, 7);
+  assert.equal(tighten(base, { 'design.allow_entries': 12 }).next.design.allow_entries, 10);
+  assert.deepEqual(loosened(base, { $pending: [], design: { allow_entries: 11 } }), ['design.allow_entries']);
+  assert.deepEqual(loosened(base, { $pending: [], design: { allow_entries: 3 } }), []);
+  const r = JSON.parse(readFileSync(join(ROOT, 'ci/ratchet.json'), 'utf8'));
+  assert.equal(typeof r.design?.allow_entries, 'number');
+});

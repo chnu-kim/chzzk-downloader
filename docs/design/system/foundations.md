@@ -663,6 +663,14 @@ AppKit Tahoe 실측 regular 24 · large 28 · extraLarge 36(`E-APPLE-19`, `E-DES
 17. **`calc()` 정책**(§4)을 두었다. "calc() 없이"는 지웠다.
 18. **단계 (a)의 옛 토큰 별칭 블록**(`/* legacy */` … `--fg-faint: var(--fg-disabled)` 등, governance §10 (a))은 단계 (c)까지 생성물 끝에 두고 DT3(미사용)·DT7(이름)에서 뺀다. 생성기가 블록을 통째로 건너뛴다.
 19. **카드 머리 높이는 40**(패딩 8 + 닫기 24 + 8)이고 예외가 없다. 카드 바닥 버튼 줄은 sticky(§8).
+20. **sys 색 토큰은 다른 sys 토큰을 가리킬 수 있다(사슬 깊이 ≤ 2, ref는 별칭 불가).** governance §1.2의 "sys → ref 한 단계만"은 §13 `--focus: var(--accent-ink)`와 충돌한다. §13을 따랐고, 별칭 한 번을 1로 센다(sys → sys → ref까지). 대상은 같은 타입이어야 하고 `noCss` 토큰은 대상이 될 수 없다(`tokens.mjs`). 적용 단계 (a).
+21. **§13 알파 줄에 `--ref-black-a8: rgba(0, 0, 0, 0.08);`를 더했다.** 아래 산문은 "위 알파 줄에 함께 생성된다"고 했지만 코드 블록에 정의가 없어 DT14(이름 → 값 사전 비교)가 어긋났다. §2.2의 "전부 38개·알파 5"는 그림자 전용 ref를 뺀 수로 남겼다(생성물의 ref는 39개, 알파 6개). 적용 단계 (a).
+22. **원천 JSON의 CSS 이름 규칙: 잎 키가 곧 CSS 이름이다(ref만 `--ref-` + 경로).** 잎 키 유일성은 CSS 이름 기준으로 본다(ref에 `a8`·`a10` 같은 잎이 있다). `white`가 이미 잎 토큰이라 그룹이 될 수 없어 흰색 알파는 `ref.white-a8`·`ref.white-a10`으로 평평하게 두고 검정 알파는 `ref.black.a8` 등 그룹이다. CSS 이름은 `--ref-white-a8`·`--ref-black-a8`로 §13과 같다. 이름 조각과 글꼴 이름은 `^[a-z0-9]+(-[a-z0-9]+)*$`로 검증한다(Worker 생성물에 `<`·`$`·백틱·백슬래시가 들어갈 길을 입력에서 막는다). 적용 단계 (a).
+23. **`--text-hero`·`--leading-hero`는 확장 키 `rootless`**(원천에 reading용 override 값이 필수이고 없으면 생성기 오류)로 `reading` 블록에만 나온다. `BREAKPOINT_NARROW`(§14)는 `layout.tokens.json`의 `noCss` number 토큰이다(override가 있으면 오류). 비어 있는 override 블록(`window-inactive`·`contrast`·`coarse`·`reduce`·`reading-narrow`)은 생성기가 실패시킨다. 적용 단계 (a).
+24. **옛 `--space-N`(번호) 치환.** 같은 이름이 새 값 토큰과 겹쳐 별칭으로 풀 수 없다. 그래서 (a)에서 `app/src/`의 `var(--space-N)` 120곳을 값을 보존하며 한 번에 바꿨다: 1→4, 2→8, 3→12, 4→16, 5→20, 6→24, 8→32, 12→40. 새 집합에 48이 없어 `--space-12`(48px) 한 곳(`LoginView`)은 40이 됐다. 이름이 겹치는 그 밖의 옛 토큰(`--control-h` 36→28, `--content-max` 896→800, `--z-*`, 색 등)은 새 목표 값을 그대로 받는다. 적용 단계 (a).
+25. **legacy `--fg-faint`는 `--fg-disabled`가 아니라 `var(--fg-muted)`로 푼다.** 옛 `--fg-faint`는 비활성이 아닌 힌트 글자(최근 목록·작업 항목·설정 등)에도 쓰였고 `--fg-disabled`는 2.68:1이라 e2e-web axe가 걸린다((a)의 "e2e 변화 없음"). legacy 절은 DT3·DT7뿐 아니라 DT1·DT8~DT11·DT14·DT16·DT17에서도 통째로 빼고(앱 전용 절이고 별칭 `--success`가 DT17에 걸린다) DT2의 "정의된 이름"에는 넣는다. (c)에서 쓰임이 없어지면 절과 `scripts/design/legacy.mjs`를 지운다. 적용 단계 (a).
+26. **생성물에는 절 표지 주석 `/* [이름] … */`을 둔다**(root·dark-media·dark-theme·theme-scheme·window-inactive·reading·text-scale·contrast·coarse·reduce·legacy·ui·site). DT1의 앱/Worker 공통 절 비교와 legacy 제외가 이 표지로 한다. 블록은 전부 여러 줄로 쓰고(§13의 한 줄 표기가 아니다) 첫 절 표지는 머리줄 바로 다음 줄에서 시작한다. Worker 생성물은 머리 주석 한 줄과 export 두 줄뿐이다. 적용 단계 (a).
+27. **§14 상수의 코드 자리.** "파일" 칸에 `timing.ts`가 있는 행은 `app/src/lib/timing.ts`로, `Rust`(뒤에 `(`가 붙지 않은 것)가 있는 행은 `crates/shell/src/consts.rs`(`pub mod consts`의 `pub const`라 dead_code 경고가 없다)로 간다. `Rust(core)`·`Rust(core naming)`·`Rust(v1.1)`·ratchet·Worker 단독 행은 DT15 대상 밖이다. `PENDING_STUCK_REMAINING_SECS`는 `timing.ts`로 옮기고 `auth.ts`가 import해 같은 이름으로 다시 export한다(`auth.test.ts`가 `./auth`에서 import한다). 상수는 아직 어디서도 읽지 않는다. 적용 단계 (a).
 
 ---
 
@@ -688,6 +696,7 @@ AppKit Tahoe 실측 regular 24 · large 28 · extraLarge 36(`E-APPLE-19`, `E-DES
   /* ref: 호박 h 65~80 */
   --ref-amber-51: #945500; --ref-amber-78: #E8AA4E; --ref-amber-96: #FFF0D4; --ref-amber-33: #433215;
   /* ref: 알파 */
+  --ref-black-a8: rgba(0, 0, 0, 0.08);
   --ref-black-a10: rgba(0, 0, 0, 0.10); --ref-black-a30: rgba(0, 0, 0, 0.30); --ref-black-a50: rgba(0, 0, 0, 0.50);
   --ref-white-a8: rgba(255, 255, 255, 0.08); --ref-white-a10: rgba(255, 255, 255, 0.10);
 

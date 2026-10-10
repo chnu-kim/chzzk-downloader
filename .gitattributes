@@ -4,3 +4,11 @@ testdata/** -text
 
 # 훅 shim은 sh가 읽는다. CRLF면 Git for Windows의 sh가 shebang·명령을 잘못 읽는다.
 .githooks/* text eol=lf
+
+# 디자인 토큰 원천과 생성물 셋(docs/design/system/governance.md §1.3). 생성기가 LF로 쓰고 design-tokens --check가 바이트로
+# 비교하므로 core.autocrlf=true 클론(Windows)에서도 LF로 둔다. site.css는 Worker 생성물에 그대로 이어 붙는 입력이다
+design/** text eol=lf
+app/src/styles/tokens.css text eol=lf
+app/src/styles/ui.css text eol=lf
+worker/src/http/site.css text eol=lf
+worker/src/http/site-css.generated.ts text eol=lf

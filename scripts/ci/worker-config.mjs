@@ -53,6 +53,7 @@
 //   deploy/         배포용 wrangler(worker/deploy, W8 worker-bundle이 --ignore-scripts로 깔아 묶음에 넣는다): package.json은 허용 목록
 //                   키(name·private·packageManager·dependencies)와 의존성 wrangler 하나(= tools.json), 두 lockfile(worker·deploy)의
 //                   wrangler 버전이 tools.json과 같다. deploy/는 소스 검사(listFiles) 대상이 아니다(코드가 없다).
+//   생성 CSS        src/http/site-css.generated.ts(디자인 토큰 생성물)는 위 소스 검사에서 빼고 모양만 본다(checkGeneratedCss).
 //   --dist          dist/bundle-meta.json(esbuild metafile)의 입력이 모두 src/*.ts(런타임 의존성 0), dist/index.js 있음,
 //                   dist/wrangler.json이 있으면(W8 worker-bundle이 만든다) 금지 키·vars 규칙, 그리고 원본 wrangler.jsonc에서 main
 //                   (index.js)·no_bundle만 바꾼 것과 같다(deployConfig).
@@ -137,6 +138,20 @@ export const SQL_FILE = 'src/store/db.ts';
 export const RAW_ALLOWLIST = { 'src/core/html.ts': 1 };
 // 랜딩 macOS 안내의 xattr 경로는 앱 이름(tauri.conf.json productName)과 같아야 한다(worker.md 구현 중 변경 45)
 export const LANDING_COPY_FILE = 'src/http/copy.ts';
+// 디자인 토큰 생성기(scripts/design/tokens.mjs)가 쓰는 Worker 스타일시트 모듈(docs/design/system/governance.md §1.3). 내용은 CSS
+// 문자열 상수 둘뿐이라 소스 낱말 검사(html·list·self·delete 등은 CSS 속성·선택자에 정당하게 나온다)에서 빼고, 대신 모양을
+// checkGeneratedCss가 글자 그대로 본다: 머리 주석 한 줄 + SITE_CSS 백틱 문자열(백틱·백슬래시·$·<·@import·url( 없음) + 16 hex 해시.
+export const GENERATED_CSS_FILE = 'src/http/site-css.generated.ts';
+const GENERATED_CSS_SHAPE = /^\/\* [^\n]*\*\/\nexport const SITE_CSS = `([^`\\$<]*)`;\nexport const SITE_CSS_HASH = "[0-9a-f]{16}";\n$/;
+
+// 생성된 스타일시트 모듈 원문 → 오류 목록(빈 배열이면 통과). 코드가 끼어들 자리가 없는 모양인지만 본다(해시 일치는 design-tokens --check)
+export function checkGeneratedCss(text) {
+  const m = GENERATED_CSS_SHAPE.exec(text);
+  if (!m) return [`${GENERATED_CSS_FILE}: 생성물 모양이 아니다(머리 주석 + export const SITE_CSS = \`…\`; + SITE_CSS_HASH 16 hex만, 백틱·백슬래시·$·< 없음). node scripts/design/tokens.mjs로 다시 만든다`];
+  const errs = [];
+  for (const bad of ['@import', 'url(']) if (m[1].includes(bad)) errs.push(`${GENERATED_CSS_FILE}: SITE_CSS에 ${bad}가 있다`);
+  return errs;
+}
 export const TAURI_CONF = 'app/src-tauri/tauri.conf.json';
 // 실제 비밀값 파일을 직접 읽어도 되는 도구(사용자가 직접 돌리는 G-ID 확인 worker.md §15, code 묶임 실측 구현 중 변경 42)
 export const DEV_VARS_READERS = ['scripts/channel-id-check.mjs', 'scripts/code-binding-check.mjs'];
@@ -876,8 +891,10 @@ export function checkWorker(root) {
   const tauriConf = readRegular(join(root, TAURI_CONF));
   if (tauriConf === null) errs.push(`${TAURI_CONF}: 없다(랜딩 xattr 경로의 앱 이름 원천)`);
   else if (copyTs !== null) errs.push(...checkLandingAppName(copyTs, tauriConf));
+  const gen = readRegular(join(w, GENERATED_CSS_FILE));
+  if (gen !== null) errs.push(...checkGeneratedCss(gen).map((m) => `${WORKER_DIR}/${m}`));
   const files = [...listFiles(w, 'src'), ...listFiles(w, 'test'), ...listFiles(w, 'scripts'), 'vitest.config.ts', 'wrangler.jsonc', 'tsconfig.json']
-    .filter((rel) => existsSync(join(w, rel)))
+    .filter((rel) => rel !== GENERATED_CSS_FILE && existsSync(join(w, rel)))
     .map((rel) => ({ rel, text: readRegular(join(w, rel)) }));
   errs.push(...checkSources(files).map((m) => `${WORKER_DIR}/${m}`));
   errs.push(...checkCorePurity(files).map((m) => `${WORKER_DIR}/${m}`));

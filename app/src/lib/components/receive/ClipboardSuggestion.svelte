@@ -27,10 +27,10 @@
   .suggest {
     display: flex;
     align-items: center;
-    gap: var(--space-2);
+    gap: var(--space-8);
     height: var(--control-h);
-    margin-top: var(--space-2);
-    padding: 0 var(--space-1) 0 var(--space-3);
+    margin-top: var(--space-8);
+    padding: 0 var(--space-4) 0 var(--space-12);
     border: 1px solid var(--border);
     border-radius: var(--radius-md);
     background: var(--surface);

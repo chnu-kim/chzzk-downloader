@@ -1,0 +1,4 @@
+/* Worker 웹 전용 CSS(docs/design/system/web.md). 단계 (e)에서 채운다 */
+html {
+  font-size: 16px;
+}

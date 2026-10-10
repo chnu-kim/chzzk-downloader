@@ -15,6 +15,8 @@ import { fileURLToPath } from 'node:url';
 export const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 const S = (f) => `scripts/ci/${f}`;
+// 디자인 시스템 gate 스크립트(docs/design/system/governance.md §2). scripts/ci는 CI 기반 시설, scripts/design은 디자인 검사기다
+const DS = (f) => `scripts/design/${f}`;
 
 // scripts/ 아래 *.test.mjs(node_modules 제외). 순서를 고정해 로그가 결정적이다.
 export function testFiles(root = ROOT, { exclude = [] } = {}) {
@@ -109,6 +111,29 @@ export const GATES = {
   fixtures: {
     desc: 'testdata/가 생성기 출력과 바이트 동일',
     steps: [{ cmd: ['node', 'scripts/fixtures/gen-fixtures.mjs', '--check'] }],
+  },
+  // ---- 디자인 시스템 「무색」(docs/design/system/governance.md §2.1~§2.5). 넷 다 lint 작업(늘 돈다)이고 node_modules 없이 파일만 읽는다.
+  // 허용 목록은 scripts/design/allow.json 하나를 넷이 함께 쓰고(규칙 접두 DT·DL/DS/DP/DX·DC·DI로 나뉜다), 항목 수는
+  // ci/ratchet.json design.allow_entries(늘면 실패)다. 그 측정·판정은 design-lint가 맡는다(허용 목록 파일 하나를 한 번 센다).
+  'design-tokens': {
+    desc: '토큰 원천(design/tokens·design/ui.css) → 생성물 셋 바이트 동일(--check, DT1) + 토큰 검사 DT2~DT17(foundations §13·§14 패리티 포함)',
+    steps: [{ cmd: ['node', DS('tokens.mjs'), '--check'] }, { cmd: ['node', DS('check-tokens.mjs')] }],
+  },
+  'design-lint': {
+    desc: 'CSS 선언·소스·prop 어휘·확장 검사(DL·DS·DP·DX, 허용 목록 scripts/design/allow.json) + 허용 목록 항목 수 ≤ ci/ratchet.json design.allow_entries',
+    steps: [
+      { cmd: ['node', DS('lint.mjs')] },
+      { cmd: ['node', S('measure.mjs'), 'design'] },
+      { cmd: ['node', S('ratchet.mjs'), 'check', 'design'] },
+    ],
+  },
+  'design-copy': {
+    desc: 'copy deck 문구 규칙 DC1~DC12(design/copy/terms.json ↔ content.md 용어집 패리티, content.md §15 키 패리티)',
+    steps: [{ cmd: ['node', DS('copy.mjs')] }],
+  },
+  'design-icons': {
+    desc: '아이콘 정적 검사 DI1~DI7(Lucide 메타·고지 파일·path 속성·은유 유일성·크기·글꼴 아이콘 문자열·IconButton 허용 목록)',
+    steps: [{ cmd: ['node', DS('icons.mjs')] }],
   },
   fmt: {
     desc: 'cargo fmt --check',
@@ -484,6 +509,16 @@ export const PUBKEY_FILES = [/^release\/updater\.pub$/, /^release\/tauri\.releas
 // 이 목록이 빠짐없는지 확인한다, 리뷰 G6), Cargo.lock(xtask 의존성)
 export const RELEASE_SELFTEST_FILES = [/^xtask\//, /^release\//, /^scripts\/ci\/(release|s3-fake|bundle|smoke|version-check|gates|run|push-guard|snapshot|public-scan|worker-deploy|worker-stub)\.mjs$/, /^scripts\/ci\/tools\.json$/, /^worker\/wrangler\.jsonc$/, /^Cargo\.lock$/];
 const VERSION_FILES = [/(^|\/)Cargo\.toml$/, /^app\/package\.json$/, /^app\/src-tauri\/tauri\.conf\.json$/];
+// design-tokens가 읽는 원천·생성물·패리티 문서·상수 파일(governance.md §2.1)
+const DESIGN_TOKENS_FILES = [
+  /^design\//,
+  /^scripts\/design\//,
+  /^app\/src\/styles\/(tokens|ui)\.css$/,
+  /^worker\/src\/http\/(site-css\.generated\.ts|site\.css)$/,
+  /^docs\/design\/system\/foundations\.md$/,
+  /^app\/src\/lib\/timing\.ts$/,
+  /^crates\/shell\/src\/consts\.rs$/,
+];
 export const HOOKS = {
   'pre-commit': {
     always: ['scan-staged'],
@@ -495,6 +530,12 @@ export const HOOKS = {
       { gate: 'pubkey', paths: PUBKEY_FILES },
       { gate: 'fixtures', paths: [/^testdata\//, /^scripts\/fixtures\//] },
       { gate: 'parity', paths: HOOK_FILES },
+      // 디자인 gate 넷(governance.md §2.1 훅 열). 노드 스크립트뿐이라 pre-commit에 둔다. scripts/ci/**는 넣지 않는다(selftest의
+      // 깨끗한 사본은 디자인 입력을 복사하지 않고 scripts/ci·ci/·release/를 스테이징한다). site.css는 Worker 생성물의 입력이다
+      { gate: 'design-tokens', paths: DESIGN_TOKENS_FILES },
+      { gate: 'design-lint', paths: [/^app\/src\//, /^worker\/src\/http\//, /^design\/ui\.css$/, /^scripts\/design\//] },
+      { gate: 'design-copy', paths: [/^app\/src\/lib\/copy\//, /^worker\/src\/http\/copy\.ts$/, /^design\/copy\//, /^docs\/design\/system\/(content|patterns|web)\.md$/, /^help\//, /^scripts\/design\//] },
+      { gate: 'design-icons', paths: [/^app\/src\/lib\/components\/ui\/icons\.ts$/, /^worker\/src\/http\/(icons\.generated|pages)\.ts$/, /^licenses\//, /^scripts\/design\//] },
     ],
   },
   'commit-msg': { always: ['scan-msg'], when: [] },
@@ -512,7 +553,8 @@ export const HOOKS = {
       { gate: 'worker', paths: [/^worker\//, /^scripts\/ci\/worker-(config|deploy)\.mjs$/, /^release\/(latest\.schema|expected-artifacts)\.json$/, /^xtask\/testdata\/semver-vectors\.json$/, /^app\/src-tauri\/tauri\.conf\.json$/, /^app\/package\.json$/, /^scripts\/ci\/tools\.json$/] },
       // release.test.mjs가 worker/test/deploy-contract.mjs(배포 뒤 검사 계약 표)를 import한다
       // 스텁 테스트가 루프백 KAT(worker/test/vectors/)를 읽는다(cicd.md 111)
-      { gate: 'scripts-test', paths: [/^scripts\//, /^\.githooks\//, /^\.gitattributes$/, /^worker\/test\/deploy-contract\.mjs$/, /^worker\/test\/vectors\//] },
+      // scripts/design/*.test.mjs는 토큰 원천(design/)·시스템 문서(spec-check·adr.test·pr-template.test)·근거 문서·PR 템플릿을 읽는다
+      { gate: 'scripts-test', paths: [/^scripts\//, /^\.githooks\//, /^\.gitattributes$/, /^worker\/test\/deploy-contract\.mjs$/, /^worker\/test\/vectors\//, /^design\//, /^docs\/design\/system\//, /^docs\/research\/design-system\.md$/, /^\.github\/PULL_REQUEST_TEMPLATE\.md$/] },
       { gate: 'deny', paths: [/^Cargo\.lock$/, /^deny\.toml$/, /(^|\/)Cargo\.toml$/] },
       // 코어 API 변경이 fuzz target을 깨뜨린다(crates/core)
       { gate: 'fuzz-lock', paths: [/^Cargo\.lock$/, /(^|\/)Cargo\.toml$/, /^fuzz\//, /^crates\/core\//] },

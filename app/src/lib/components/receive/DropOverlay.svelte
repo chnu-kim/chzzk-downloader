@@ -69,7 +69,7 @@
     position: fixed;
     inset: var(--header-h) 0 0 0;
     z-index: var(--z-banner);
-    padding: var(--space-3);
+    padding: var(--space-12);
     background: color-mix(in srgb, var(--accent-soft) 88%, transparent);
     pointer-events: none;
   }
@@ -78,7 +78,7 @@
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: var(--space-2);
+    gap: var(--space-8);
     height: 100%;
     border: 2px dashed var(--accent);
     border-radius: var(--radius-lg);

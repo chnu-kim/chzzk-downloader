@@ -32,7 +32,7 @@
   .row {
     display: flex;
     align-items: center;
-    gap: var(--space-2);
+    gap: var(--space-8);
   }
   .label {
     flex: none;
@@ -44,14 +44,14 @@
     min-width: 0;
     display: flex;
     align-items: center;
-    gap: var(--space-2);
+    gap: var(--space-8);
   }
   .ext {
     flex: none;
     color: var(--fg-muted);
   }
   .will {
-    margin: var(--space-1) 0 0 calc(96px + var(--space-2));
+    margin: var(--space-4) 0 0 calc(96px + var(--space-8));
     font-size: var(--text-xs);
     color: var(--fg-faint);
     overflow: hidden;

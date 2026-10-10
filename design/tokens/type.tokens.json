@@ -1,0 +1,264 @@
+{
+  "type": {
+    "$extensions": {
+      "io.github.chnu-kim.chzzk": {
+        "textScale": {
+          "large": 1.3,
+          "x-large": 2
+        }
+      }
+    },
+    "font": {
+      "font-sans": {
+        "$type": "fontFamily",
+        "$value": [
+          "system-ui",
+          "Apple SD Gothic Neo",
+          "Malgun Gothic",
+          "Noto Sans CJK KR",
+          "Noto Sans KR",
+          "Apple Color Emoji",
+          "Segoe UI Emoji",
+          "Noto Color Emoji",
+          "sans-serif"
+        ],
+        "$description": "앱·Worker 본문 글꼴(시스템 글꼴만)"
+      },
+      "font-mono": {
+        "$type": "fontFamily",
+        "$value": [
+          "ui-monospace",
+          "SF Mono",
+          "Menlo",
+          "Consolas",
+          "Cascadia Mono",
+          "D2Coding",
+          "monospace"
+        ],
+        "$description": "코드·해시·경로 글꼴"
+      }
+    },
+    "text": {
+      "text-caption": {
+        "$type": "dimension",
+        "$value": {
+          "value": 12,
+          "unit": "px"
+        },
+        "$description": "보조 설명, 상태 조각 보조, 그룹 머리, 배지, kbd, 코드 블록, 바닥글",
+        "$extensions": {
+          "io.github.chnu-kim.chzzk": {
+            "overrides": {
+              "reading": {
+                "value": 13,
+                "unit": "px"
+              }
+            }
+          }
+        }
+      },
+      "leading-caption": {
+        "$type": "dimension",
+        "$value": {
+          "value": 16,
+          "unit": "px"
+        },
+        "$description": "caption 행간",
+        "$extensions": {
+          "io.github.chnu-kim.chzzk": {
+            "overrides": {
+              "reading": {
+                "value": 18,
+                "unit": "px"
+              }
+            }
+          }
+        }
+      },
+      "text-body": {
+        "$type": "dimension",
+        "$value": {
+          "value": 13,
+          "unit": "px"
+        },
+        "$description": "본문, 컨트롤, 행, 상태 줄, 섹션 제목",
+        "$extensions": {
+          "io.github.chnu-kim.chzzk": {
+            "overrides": {
+              "reading": {
+                "value": 15,
+                "unit": "px"
+              }
+            }
+          }
+        }
+      },
+      "leading-body": {
+        "$type": "dimension",
+        "$value": {
+          "value": 16,
+          "unit": "px"
+        },
+        "$description": "body 행간",
+        "$extensions": {
+          "io.github.chnu-kim.chzzk": {
+            "overrides": {
+              "reading": {
+                "value": 22,
+                "unit": "px"
+              }
+            }
+          }
+        }
+      },
+      "text-title": {
+        "$type": "dimension",
+        "$value": {
+          "value": 15,
+          "unit": "px"
+        },
+        "$description": "카드 제목, 대화상자 제목, 랜딩 CTA 글자",
+        "$extensions": {
+          "io.github.chnu-kim.chzzk": {
+            "overrides": {
+              "reading": {
+                "value": 17,
+                "unit": "px"
+              }
+            }
+          }
+        }
+      },
+      "leading-title": {
+        "$type": "dimension",
+        "$value": {
+          "value": 20,
+          "unit": "px"
+        },
+        "$description": "title 행간",
+        "$extensions": {
+          "io.github.chnu-kim.chzzk": {
+            "overrides": {
+              "reading": {
+                "value": 24,
+                "unit": "px"
+              }
+            }
+          }
+        }
+      },
+      "text-display": {
+        "$type": "dimension",
+        "$value": {
+          "value": 17,
+          "unit": "px"
+        },
+        "$description": "화면 제목(설정), 빈 상태 머리",
+        "$extensions": {
+          "io.github.chnu-kim.chzzk": {
+            "overrides": {
+              "reading": {
+                "value": 22,
+                "unit": "px"
+              }
+            }
+          }
+        }
+      },
+      "leading-display": {
+        "$type": "dimension",
+        "$value": {
+          "value": 22,
+          "unit": "px"
+        },
+        "$description": "display 행간",
+        "$extensions": {
+          "io.github.chnu-kim.chzzk": {
+            "overrides": {
+              "reading": {
+                "value": 28,
+                "unit": "px"
+              }
+            }
+          }
+        }
+      },
+      "text-hero": {
+        "$type": "dimension",
+        "$value": {
+          "value": 28,
+          "unit": "px"
+        },
+        "$description": "Worker 읽기 페이지 h1(앱에는 없다)",
+        "$extensions": {
+          "io.github.chnu-kim.chzzk": {
+            "rootless": true,
+            "overrides": {
+              "reading": {
+                "value": 28,
+                "unit": "px"
+              },
+              "reading-narrow": {
+                "value": 22,
+                "unit": "px"
+              }
+            }
+          }
+        }
+      },
+      "leading-hero": {
+        "$type": "dimension",
+        "$value": {
+          "value": 36,
+          "unit": "px"
+        },
+        "$description": "hero 행간(앱에는 없다)",
+        "$extensions": {
+          "io.github.chnu-kim.chzzk": {
+            "rootless": true,
+            "overrides": {
+              "reading": {
+                "value": 36,
+                "unit": "px"
+              },
+              "reading-narrow": {
+                "value": 28,
+                "unit": "px"
+              }
+            }
+          }
+        }
+      },
+      "leading-read": {
+        "$type": "dimension",
+        "$value": {
+          "value": 20,
+          "unit": "px"
+        },
+        "$description": "두 줄 넘는 문단(안내·오류 본문·대화상자 본문) 행간",
+        "$extensions": {
+          "io.github.chnu-kim.chzzk": {
+            "overrides": {
+              "reading": {
+                "value": 22,
+                "unit": "px"
+              }
+            }
+          }
+        }
+      }
+    },
+    "weight": {
+      "weight-regular": {
+        "$type": "fontWeight",
+        "$value": 400,
+        "$description": "본문 굵기"
+      },
+      "weight-strong": {
+        "$type": "fontWeight",
+        "$value": 600,
+        "$description": "강조·제목·그룹 머리·배지 굵기"
+      }
+    }
+  }
+}

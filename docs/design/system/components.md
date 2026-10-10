@@ -794,3 +794,19 @@ Worker: 없다(폼 라벨은 위, `web.md` §7.1).
 | `--motion-spin`·`calc()` 정책·forced 행·`<select>` 행간 | foundations §7.1·§4·§2.7·§3.2 |
 | 로그아웃 확인 없음(초안 §2.11) | README D36·content §5.3대로 대화상자 있음으로 통일 |
 | 유령 버튼 글자 `--accent-ink` | `--fg`로(README D21) |
+
+---
+
+## 7. 구현 중 변경(이 문서와 `design/ui.css`가 다르게 정한 것)
+
+적용 단계 (a)가 `design/ui.css`를 쓰며 고른 것이다. 번호는 적은 순서이고 `ui.css`가 코드 기준이다.
+
+1. **`.col`은 PageContainer처럼 세로 패딩(16/32)을 갖는다.** 툴바·토스트 띠·Worker 헤더 안의 `.col`은 `.toolbar > .col, .toaster > .col, .site-header > .col { padding-top: 0; padding-bottom: 0 }`로 덮는다. 명세가 `.col`을 PageContainer와 Toaster에 같은 클래스로 쓰라면서 세로 패딩이 서로 달라서 이렇게 풀었다.
+2. **메뉴·토스트·대화상자의 등장·퇴장 전환은 `ui.css`에 없다.** `@starting-style`이 금지이고 `@keyframes`는 Spinner 하나뿐이라 CSS만으로는 못 한다. 그래서 `--motion-base`·`--motion-slow`·`--ease-in` 사용처가 `ui.css`에 없고 DT3 허용 항목이다. (b)에서 컴포넌트가 처리하거나 ADR이 필요하다(governance §12 단계 메모).
+3. **속성 훅 두 개.** `.progress[data-instant]`는 값이 줄 때 전환을 끈다(D23). `.menu[data-placement="top"]`는 메뉴를 위로 뒤집는다(M3). 진행 막대 상태는 `.fill.paused` 클래스 대신 `.progress[data-state=…]`로, 총량 모름(null)은 `:not([aria-valuenow])`로 읽는다. `--p`는 `var(--p, 0)` 폴백을 둔다.
+4. **SecretField의 안쪽 입력칸은 `outline: none`을 못 쓰므로** `outline-color: transparent`로 이중 링을 막고 링은 `.field-wrap:has(input:focus-visible)`에 그린다.
+5. **스위치 비활성 테두리는 box-shadow가 아니라 `::before`의 1px `--separator`**로 그린다(DL9가 box-shadow를 막는다). forced-colors도 같은 `::before`를 쓴다. 라디오 선택 행의 forced-colors 윤곽은 `Highlight` 1px이고 포커스 윤곽 2px 규칙을 뒤에 다시 선언한다. Spinner는 `--motion-spin` + `linear infinite`, reduce에서 `animation: none`이다.
+6. **`.empty .steps`의 좁은 폭 세로 배치는 `flex-wrap`으로** 대신했다(폭 `@media`는 DL13이 막는다). 대화상자는 flex 열이고 본문만 스크롤되며(`max-height: calc(100% - 2 * var(--edge))`) 위험 secondary는 `margin-inline-end: auto`로 왼쪽 끝에 간다. `.card-footer`는 `position: sticky; bottom: 0`에 면(`--surface`)과 아래 모서리 반경을 준다(foundations §8, 520 높이).
+7. **클래스 표에 없는 `.row-main`(라벨과 도움말을 묶는 칸)과 `.choice-description`을 더했다.** 마크업상 필요하다. Notice 톤 색은 `:where(.notice).tone-*`로 특이도를 낮추고 `.notice-row`·`.notice-toast`를 뒤에 둬서 이기게 했다.
+8. **`ui.css`에 넣지 않은 것**(feature 몫): `.btn-block`·`.login-*`·`.job*`·`.urlbar`·`.section-head`·`.group-head`·`.segment`·`.code`·`.percent`와 Worker 전용 규칙(`.site-*`·`.cta` 등)은 (c)·(e)의 몫이다. 전역 규칙(`box-sizing`·`html { font-size: 16px }`·`body`·`body.web`·마진 리셋·`font: inherit`·`:focus-visible` 전역 한 줄·글자 유틸·`.sr-only`)과 `cursor`·`user-select` 선언 전부(DX2)도 넣지 않았다. (b)의 `app.css`가 가져가야 하고 `.field`·`.select`의 텍스트 커서와 선택 가능 여부도 거기서 정한다.
+9. **hover는 유령 버튼·아이콘 버튼·메뉴 항목에만 있다.** 옛 참조의 `.row-recent:hover`·`.disclosure-inline > summary:hover`·`.site-nav a:hover`는 뺐다. 아이콘 버튼 열림 상태는 `aria-pressed`·`aria-expanded`·`aria-current="page"` 셋 모두 `--surface-2`다.

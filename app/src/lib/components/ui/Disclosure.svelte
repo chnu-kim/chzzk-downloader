@@ -35,10 +35,10 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: var(--space-2);
+    gap: var(--space-8);
     width: 100%;
     min-height: var(--control-h);
-    padding: 0 var(--space-2);
+    padding: 0 var(--space-8);
     border: none;
     border-radius: var(--radius-md);
     background: none;
@@ -66,6 +66,6 @@
     text-decoration: underline;
   }
   .panel {
-    padding-top: var(--space-2);
+    padding-top: var(--space-8);
   }
 </style>

@@ -8,7 +8,7 @@
   },
   "tests": {
     "rust": 348,
-    "vitest": 491,
+    "vitest": 425,
     "playwright": 7,
     "worker": 1148,
     "app": {
@@ -40,5 +40,8 @@
   },
   "mutants_missed": {
     "chzzk-core": 100
+  },
+  "design": {
+    "allow_entries": 497
   }
 }

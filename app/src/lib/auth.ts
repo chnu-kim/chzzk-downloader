@@ -1,6 +1,7 @@
 // 로그인 화면의 순수 판단(worker.md 구현 중 변경 62 (나)). 상태·사유 → 제목·설명·버튼 표 하나.
 import type { AuthStatusDto } from './bindings';
 import { t } from './copy/ko';
+import { PENDING_STUCK_REMAINING_SECS } from './timing';
 
 /** 로그인 화면의 동작: login → authLogin, reconnect → authRetry */
 export type LoginAction = 'login' | 'reconnect';
@@ -30,8 +31,8 @@ export interface LoginScreen {
   stuck: boolean;
 }
 
-/** pending이 이 남은 시간(초) 이하이면 stuck이다(10분 기한에서 90초가 지난 때) */
-export const PENDING_STUCK_REMAINING_SECS = 510;
+// pending이 이 남은 시간(초) 이하이면 stuck이다. 값은 timing.ts(foundations §14)가 갖고, 옛 import 경로를 위해 다시 내보낸다.
+export { PENDING_STUCK_REMAINING_SECS };
 
 const login = (key: Parameters<typeof t>[0], variant: LoginButton['variant']): LoginButton => ({
   action: 'login',

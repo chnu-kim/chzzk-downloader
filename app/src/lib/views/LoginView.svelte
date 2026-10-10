@@ -111,11 +111,11 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: var(--space-3);
+    gap: var(--space-12);
     box-sizing: border-box;
     width: min(420px, calc(100% - 2 * var(--gutter)));
-    margin: var(--space-12) auto;
-    padding: var(--space-6);
+    margin: var(--space-40) auto;
+    padding: var(--space-24);
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
     background: var(--surface);
@@ -127,7 +127,7 @@
   .title {
     display: inline-flex;
     align-items: center;
-    gap: var(--space-2);
+    gap: var(--space-8);
     margin: 0;
     font-size: var(--text-xl);
     font-weight: var(--weight-semibold);
@@ -160,11 +160,11 @@
     display: flex;
     flex-wrap: wrap;
     justify-content: center;
-    gap: var(--space-2);
+    gap: var(--space-8);
   }
   .note {
     align-self: stretch;
-    padding-top: var(--space-3);
+    padding-top: var(--space-12);
     border-top: 1px solid var(--border);
   }
   /* 화면이 바뀔 때 프로그램으로 주는 포커스라 링을 보이지 않는다(전역 :focus-visible은 box-shadow다) */

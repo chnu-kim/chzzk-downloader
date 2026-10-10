@@ -597,7 +597,7 @@ README가 이 문서에 등록을 맡긴 과제다. 각 과제는 끝나면 ADR 
 - 각 PR 뒤 글로벌 지침의 Codex 리뷰(없으면 서브에이전트 2종)를 돈다.
 - `docs/ROADMAP.md`의 "현재 위치"와 체크리스트를 단계마다 갱신한다(CLAUDE.md 작업 규칙).
 - `docs/design/ui-visual.md`는 대체 표만 담은 호환 스텁으로 남겼고 (b)·(c)에서 지운다(README §3-1, app.md 구현 중 변경 67). `app.md` §8·§9·§10 본문은 고치지 않고(app.md 50 "본문은 설계 당시 기록") 67이 가리킨다. 코드 주석의 `ui-visual §n`은 (b)·(c)에서 바꾼다.
-- 관찰 작업 편입: `e2e-web`(+`design-gallery`)와 `design-shots`의 D14 시작일은 각각 (b) 머지 뒤 첫 master 녹색 실행, (a) 머지 뒤 첫 master 녹색 실행이고, `design-worker`는 Worker 단계 PR(첫 기준선 커밋) 머지 뒤 첫 master 녹색 실행이다. 편입 예정일은 ROADMAP에 적는다(cicd.md 구현 중 변경 47 (다)).
+- 관찰 작업 편입: `e2e-web`(+`design-gallery`)와 `design-shots`의 D14 시작일은 각각 (b) 머지 뒤 첫 master 녹색 실행, ~~(a) 머지 뒤 첫 master 녹색 실행~~ (b) 머지 뒤 첫 master 녹색 실행(§12-12: `design-shots`는 (b)에서 `design-gallery`와 함께 만든다)이고, `design-worker`는 Worker 단계 PR(첫 기준선 커밋) 머지 뒤 첫 master 녹색 실행이다. 편입 예정일은 ROADMAP에 적는다(cicd.md 구현 중 변경 47 (다)).
 
 ---
 
@@ -614,3 +614,31 @@ README가 이 문서에 등록을 맡긴 과제다. 각 과제는 끝나면 ADR 
 | `tests.vitest` ratchet 감소 | (a) PR의 `RATCHET_LOG.md` 줄(변함없음) |
 | 초안 §12 foundations 요청 F1~F6 | F1 갤러리 comp 층 없음(foundations 머리), F2 `$type` 열(foundations §1), F3 `--progress-tween` duration만(foundations §7.1), F4 유틸 파일 이름(foundations §3.4·§3.5), F5 legacy 블록 예외(foundations §12-18), F6 Worker 폭 쿼리 파일(foundations §8, DL13) |
 | 검사 번호 충돌(검토 U-18) | `DT*`·`DL*`·`DS*`·`DP*`·`DX*`·`DC*`·`DI*`·`DA*`·`UT*`로 접두를 나눴다 |
+
+---
+
+## 12. 구현 중 변경(적용 단계에서 고른 것)
+
+번호는 적은 순서이고 고치지 않는다. 같은 주제를 뒤 항목이 다시 다루면 뒤 항목이 이긴다. 본문(§0~§11)보다 이 절이 우선한다(README §3). 값·이름의 변경은 foundations §12 20~27, 컴포넌트 CSS는 components §7, 문구 검사는 content §19에 있다. 아래는 gate·검사·운영에 관한 것이다.
+
+### (a) 토큰 원천·생성기·gate 넷
+
+1. **`design.allow_entries`의 첫 기준은 로컬에서 센 실제 항목 수(497)다.** §2.3은 "CI 측정값, `ratchet.mjs write`"라 했지만 이 수는 파일만으로 정해져 러너와 무관하다. 0 자리표시는 ratchet의 "0도 실제 기준" 규칙(`ratchet.mjs`)에 걸려 실패하므로 같은 PR에서 실제 수를 적는다. ratchet 종류 `design`은 작을수록 좋고 0도 실제 기준이다((c)의 0 유지).
+2. **허용 목록 `scripts/design/allow.json` 하나를 네 gate가 규칙 접두(DT / DL·DS·DP·DX / DC / DI)로 나눠 쓴다.** §2는 lint·copy에만 허용 목록을 명시했지만 DT2·DT3·DT4·DT12·DT13·DI1·DI2·DC10 같은 소스 쪽 위반도 (a)에서 0일 수 없다(옛 컴포넌트·Worker가 그대로다). 원천·생성물 자체 검사(DT1·DT5~DT11·DT14~DT17, terms.json ↔ content.md 패리티)는 허용 목록을 받지 않는다. 항목은 위반 하나(규칙·파일·글자를 `^…$`로 이스케이프한 pattern)에만 맞고, 맞는 위반이 없어진 항목은 gate를 실패시킨다(ratchet이 실제로 조여지고 와일드카드가 새 위반을 덮지 못한다). 이유가 없는 항목은 `allow.test`가 거부한다. 항목 정렬은 문자열 사전순이다(`DL10`이 `DL2`보다 앞).
+3. **`tokens.mjs --check`는 DT1(생성물 셋 바이트 동일·결정성·앱/Worker 공통 절과 ui 절 동일)만, 문서 패리티 DT14·DT15는 `check-tokens.mjs`가 본다.** §1.3과 §2.2 표가 자리를 다르게 적었고, 어느 쪽이든 같은 `design-tokens` gate 안이다. `lint.mjs`는 `ratchet check design`까지 `design-lint` gate 안에서 돈다.
+4. **Worker 생성 CSS 모듈(`site-css.generated.ts`)을 `worker-config.mjs`의 소스 낱말 검사에서 뺐다.** CSS의 `html {`·`align-self`·`list-style`이 낱말 `html`·`self`·`list` 금지에 걸린다. 대신 `checkGeneratedCss`가 모양을 글자로 본다(머리 주석 한 줄 + `SITE_CSS` 백틱 문자열에 백틱·백슬래시·`$`·`<`·`@import`·`url(` 없음 + 16 hex 해시). 생성기는 이 글자가 있으면 이스케이프하지 않고 실패한다(`worker.md` 구현 중 변경 95).
+5. **`app/src/styles/ui.css` 생성물은 (a)에서 앱이 import하지 않는다.** 전역 클래스가 옛 마크업에 닿지 않게 하려는 것이다. `design/ui.css`는 (b)가 쓸 완성된 원천이다. 생성물 셋(`tokens.css`·`ui.css`·`site-css.generated.ts`)과 `design/`·`site.css`는 `.gitattributes`에서 `text eol=lf`로 고정해 Windows autocrlf에서도 `--check`가 같은 바이트를 본다.
+6. **DP1·DP5는 `vocab.ts`가 생기는 (b)부터 판정한다.** (a)에는 "vocab.ts 없음" 위반 하나를 허용 목록에 둔다. 없는 `licenses/lucide.txt`(DI2)도 같고, Worker `icons.generated.ts`가 없으면 그 비교를 건너뛴다. 이 항목들은 (b)에서 unused가 되니 지운다. `spec-check`의 DX23(`ICON_BUTTON_ICONS`)도 `vocab.ts`가 있을 때만 비교한다.
+7. **훅 경로를 §2.1에 더했다.** design-tokens에 `worker/src/http/site.css`(생성 입력), design-lint에 `design/ui.css`·`scripts/design/`, design-copy에 `patterns.md`·`web.md`(DC10)·`help/`·`scripts/design/`, design-icons에 `scripts/design/`. pre-push `scripts-test`에 `design/`·`docs/design/system/`·`docs/research/design-system.md`·`.github/PULL_REQUEST_TEMPLATE.md`를 넣었다(새 테스트가 읽는다). `scripts/ci/**`·`ci/`·`release/`는 넣지 않는다: selftest의 깨끗한 pre-commit 사본이 그 경로를 스테이징하는데 디자인 입력이 없다. `ci/ratchet.json`(`design.allow_entries`)의 변경은 CI `lint`의 design-lint가 본다.
+8. **selftest 씨앗은 아홉 줄이다**(완료 조건의 "여덟 씨앗 + `--check` 손 수정 씨앗"보다 하나 많다): 네 gate × (깨끗한 사본 0, 위반 1: DL1 색 리터럴 / DC1·DC2 `ko.ts` 끝 최상위 리터럴 / DI6 `SF Symbols`) + design-tokens "생성물 손 수정"(`--space-8: 8px;` → `9px`) + design-tokens "미정의 토큰"(DT2). 디자인 입력은 `mkRoot(…, { design: true })`일 때만 복사한다.
+9. **`tools.json`은 바꾸지 않았다.** 네 gate는 노드 스크립트뿐이라 새 도구 버전이 없다. `design-worker`의 Playwright는 (e)에서 등록한다. `allow.mjs`·`legacy.mjs`·`stem.mjs`는 명세 목록 밖에 더한 보조 파일이다(`stem.mjs`는 README §6-1이 옮기라 한 편집용 도구가 인계 폴더에 없어 새로 쓴 최소 구현: PNG 한 행의 줄기 폭을 재는 수동 도구).
+10. **`design-lint` 판정 세부는 `lint.mjs`·`lint.test.mjs`가 기준이다.** 명세 숫자를 바꾸는 선택만 적는다: DL5의 `var()`는 폴백 없는 `var(--x)`만 통과한다(`var(--leading-title, 1.3)`도 위반). `box-shadow: none`도 DL9 위반이다. border·outline의 0/1/2px 밖 길이는 DL14로만 내고 DL2를 겹쳐 내지 않는다. DS1·DS5·DX3·DS7·DS2·DS6은 `app/` 소스에만 적용하고 Worker `.ts`에는 DS2·DS9만 본다(Worker 페이지의 `<button class="btn">`은 정당하다). 색 이름 비교는 색을 받는 속성에서만 한다. DL11의 정지 상태 `transform`은 `scaleX(`·`@keyframes`·`spinner`·상태 selector에서만 면제한다. 반복 위반은 (규칙, 파일, 글자) 하나로 합친다.
+11. **ADR 검사(`adr.test.mjs`, DA*)의 해석.** DA3 날짜는 `YYYY-MM-DD`로 시작하면 통과한다(ADR-0005의 `2026-10-09(편집 2026-10-10)`). DA5·DA8은 근거 표 머리에서 `주장 | 등급 | 출처 | 표본·날짜`를 부분 일치로 찾고 맨 앞 `#` 열은 있어도 된다. DA10은 표 머리의 `확인…` 열이 비지 않은 행을 `확인:`을 쓴 것으로 본다. DA11의 "인용 맥락"은 `ADR-NNNN` 바로 앞 절(`|`·`;`·괄호·마침표로 끊음)의 D 번호다. 결정자 줄이 있는 사람 결정 ADR은 DA5에서 최고 등급과 결정 영향 줄을 요구하지 않는다. ADR-0002·0009의 `[잠정]` 표시 네 곳에 `확인:` 글귀를 붙이거나 말로 바꿨다(뜻은 그대로).
+12. **`design-shots` gate·CI 작업은 (a)가 아니라 (b)에서 `design-gallery`와 함께 만든다.** 「단계 공통」(§10)은 `design-shots`의 D14 시작을 (a) 머지 뒤로 적었지만 (a) 범위 표에 `design-shots`가 없고, 이 작업은 (b)에서 생기는 갤러리 섹션을 찍는다. D14 시작일은 (b) 머지 뒤 첫 master 녹색 실행이다(`e2e-web`+`design-gallery`와 같은 날). 편입 예정일은 ROADMAP에 적는다.
+
+### 다음 단계로 넘기는 문제
+
+- **(b)**: ① 메뉴·토스트·대화상자의 등장·퇴장 전환(`@starting-style`이 금지라 `ui.css`에 없다): 컴포넌트가 처리하거나 ADR을 쓴다(components §7-2). ② `app.css`가 전역 규칙·`cursor`·`user-select`를 가져간다(components §7-8). ③ `vocab.ts`·`licenses/lucide.txt`·`icons.generated.ts`가 생기면 DP1·DI2 허용 항목(항목 6)을 지운다. ④ `design-shots` gate·작업을 `design-gallery`와 함께 만들고 `OBSERVED_JOBS`에 등록한다(항목 12). ⑤ DT3 미사용 허용 항목 후보 `--motion-base`·`--motion-slow`·`--ease-in`·`--pct-w`와 DT13 `--z-sticky`(입력줄이 쓰기 전까지)는 쓰임이 생기면 지운다. ⑥ `e2e-web` 통과 수 기준(7)을 현재 20으로 올릴 수 있다(CI 측정으로 `ratchet.mjs write --from-run`).
+- **(c)**: legacy 절과 `legacy.mjs`를 지운다. `DropOverlay.svelte`의 DX13 위반은 오탐이 아니라 진짜 위반이다. 허용 항목을 0으로 줄이는 단계다.
+- **(d)**: content §19-9의 문서 불일치(웹 키 넷, DC11 중복)를 닫고 DC10·DC11 허용 항목 약 145개를 지운다. `terms.json` allow의 추정 키 `step3`·`step4`를 실제 키에 맞춘다.
+- **(e)**: `site.css` 링크 색 규칙을 `a:not(.btn)`으로 한정한다(web §15-13). `worker.md` 구현 중 변경 95를 따른다. Worker가 생성물을 처음 쓰는 단계이므로 옛 `site-css.ts`와 DT2 허용 항목 4건이 사라진다.

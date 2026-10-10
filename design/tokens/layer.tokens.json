@@ -1,0 +1,29 @@
+{
+  "layer": {
+    "z-sticky": {
+      "$type": "number",
+      "$value": 10,
+      "$description": "sticky 주소 입력줄"
+    },
+    "z-menu": {
+      "$type": "number",
+      "$value": 20,
+      "$description": "메뉴·팝업 목록"
+    },
+    "z-drop": {
+      "$type": "number",
+      "$value": 30,
+      "$description": "드롭 오버레이"
+    },
+    "z-toast": {
+      "$type": "number",
+      "$value": 40,
+      "$description": "토스트"
+    },
+    "z-dialog": {
+      "$type": "number",
+      "$value": 50,
+      "$description": "대화상자 + scrim"
+    }
+  }
+}

@@ -240,8 +240,8 @@
 
 <style>
   .card {
-    margin-top: var(--space-3);
-    padding: var(--space-4);
+    margin-top: var(--space-12);
+    padding: var(--space-16);
     border: 1px solid var(--border);
     border-radius: var(--radius-md);
     background: var(--surface);
@@ -250,7 +250,7 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    margin: calc(-1 * var(--space-1)) calc(-1 * var(--space-1)) 0 0;
+    margin: calc(-1 * var(--space-4)) calc(-1 * var(--space-4)) 0 0;
   }
   .eyebrow {
     font-size: var(--text-sm);
@@ -259,11 +259,11 @@
   }
   .badges {
     display: flex;
-    gap: var(--space-1);
-    margin-top: var(--space-2);
+    gap: var(--space-4);
+    margin-top: var(--space-8);
   }
   .title {
-    margin: var(--space-2) 0 0;
+    margin: var(--space-8) 0 0;
     font-size: var(--text-lg);
     font-weight: var(--weight-semibold);
     line-height: var(--leading-tight);
@@ -283,8 +283,8 @@
   .meta {
     display: flex;
     flex-wrap: wrap;
-    column-gap: var(--space-2);
-    margin: var(--space-1) 0 0;
+    column-gap: var(--space-8);
+    margin: var(--space-4) 0 0;
     font-size: var(--text-sm);
     color: var(--fg-muted);
   }
@@ -294,13 +294,13 @@
   .fields {
     display: flex;
     flex-direction: column;
-    gap: var(--space-3);
-    margin-top: var(--space-3);
+    gap: var(--space-12);
+    margin-top: var(--space-12);
   }
   .paths {
     display: flex;
     flex-direction: column;
-    gap: var(--space-1);
+    gap: var(--space-4);
   }
   .err-line {
     margin: 0;
@@ -311,7 +311,7 @@
   .actions {
     display: flex;
     justify-content: flex-end;
-    gap: var(--space-2);
-    margin-top: var(--space-4);
+    gap: var(--space-8);
+    margin-top: var(--space-16);
   }
 </style>

@@ -23,7 +23,7 @@
     z-index: var(--z-toast);
     display: flex;
     flex-direction: column-reverse;
-    gap: var(--space-2);
+    gap: var(--space-8);
     pointer-events: none;
   }
   .toaster > :global(*) {

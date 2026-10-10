@@ -25,7 +25,7 @@
 <style>
   .alert {
     display: flex;
-    gap: var(--space-2);
+    gap: var(--space-8);
     padding: 10px 12px;
     border-left: var(--rail-w) solid;
     border-radius: var(--radius-sm);
@@ -72,7 +72,7 @@
     color: var(--fg);
   }
   .body {
-    margin-top: var(--space-1);
+    margin-top: var(--space-4);
     font-size: var(--text-sm);
     line-height: var(--leading-relaxed);
     color: var(--fg);
@@ -81,7 +81,7 @@
     display: flex;
     flex-wrap: wrap;
     justify-content: flex-end;
-    gap: var(--space-2);
-    margin-top: var(--space-2);
+    gap: var(--space-8);
+    margin-top: var(--space-8);
   }
 </style>

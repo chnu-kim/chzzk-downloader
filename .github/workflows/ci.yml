@@ -106,6 +106,19 @@ jobs:
       - name: fixtures
         if: ${{ !cancelled() }}
         run: node scripts/ci/run.mjs fixtures
+      # 디자인 시스템 gate 넷(docs/design/system/governance.md §2). 영역과 무관하게 돌아 문서만 바뀐 PR에서도 패리티를 본다
+      - name: design-tokens
+        if: ${{ !cancelled() }}
+        run: node scripts/ci/run.mjs design-tokens
+      - name: design-lint
+        if: ${{ !cancelled() }}
+        run: node scripts/ci/run.mjs design-lint
+      - name: design-copy
+        if: ${{ !cancelled() }}
+        run: node scripts/ci/run.mjs design-copy
+      - name: design-icons
+        if: ${{ !cancelled() }}
+        run: node scripts/ci/run.mjs design-icons
       - name: fmt
         if: ${{ !cancelled() }}
         run: node scripts/ci/run.mjs fmt
@@ -139,6 +152,14 @@ jobs:
       - name: selftest
         if: ${{ !cancelled() }}
         run: node scripts/ci/run.mjs selftest
+      # design-lint가 잰 허용 목록 항목 수(ratchet.mjs write --from-run이 받아 design.allow_entries를 조인다)
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: ${{ !cancelled() }}
+        with:
+          name: ratchet-measurements-design
+          path: target/ci/measure/design.json
+          retention-days: 7
+          if-no-files-found: ignore
 
   scripts-windows:
     name: scripts (windows)

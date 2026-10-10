@@ -660,3 +660,20 @@
 | 24 | P2 | `이어받기`/`이어서 받기`, `처음부터 (다시) 받기` | §4 두 행 | `design-copy` 용어집 |
 | 25 | P2 | 보안 경고만 `-세요`, `손상되어` | §3.1-1·5, §15.3 | `design-copy` |
 | 26 | P2 | 로그인 확인 코드 흐름 문구 | 루프백 전환(v0.3.0)이 코드 문구를 지웠다. 전환 PR이 새로 쓴 키(`auth.pending.*`·`auth.receiver.*`·`loginWarning`·`outdatedApp`·`ReceiverPage`)와 같은 범위의 `auth.otherAccount.lead`(`worker.md` 87)는 §15.1·§15.3·§15.4가 §3·§9 규칙으로 다시 본다 | `design-copy`, `R3` |
+
+---
+
+## 19. 구현 중 변경(적용 단계 (a)의 `design-copy` 구현이 고른 것)
+
+번호는 적은 순서이고 `design/copy/terms.json`·`scripts/design/copy.mjs`가 코드 기준이다.
+
+1. **글자 규칙의 적용 범위.** 한글이 든 리터럴에 건다. DC9만 `ko.ts`·`copy.ts`의 모든 리터럴(한글 없는 것 포함, `platform` 키 경로 안은 예외)에 건다. 키에 기대는 규칙은 deck 항목에만 건다. 객체 키·import 경로·`case` 라벨은 리터럴로 세지 않는다.
+2. **`errors.ts` 합성 키.** `case '<코드>'` 안의 `copy(첫 인자, 둘째 인자)`를 `errors.<코드>.title`·`errors.<코드>.body`로 본다. `apiMessage`가 `const title`/`const body` 초기화나 `copy()` 인자에 들어가면 DC8이다. DC8은 키가 `.title`·`.body`인 항목과 키 없는 한글 리터럴에 건다.
+3. **`opensWindow`(DC5)에 8번째 항목 "네이버 로그인 정보 다시 넣기"를 더했다.** §15.1·§15.2가 `action.reenterCookies` 라벨을 `…`로 끝내는데 §5.2의 7개 목록에는 없다.
+4. **용어 정규식 보정.** 라이브 `라이브(?! 주소)`(§15.2 `invalidUrl` 본문), 인증 `(?<!성인 )인증`, 폴더 열기 `(?<!설정 )(?<!로그 )폴더 열기`, 정지 `(?<!일시)정지`, 다시 받기 `(?<!처음부터 )다시 받기`. 기록·삭제·이전·확인·쿠키 등 맥락 의존 용어는 `null`이라 기계 검사에서 뺀다.
+5. **감탄사(DC4)는 와·아·헉·앗·이런·어라가 문장 맨 앞이고 뒤에 쉼표·느낌표·마침표가 올 때만 잡는다**(조사와 겹치는 오탐 방지). **DC2 상태 키 해요체**는 `.status.` 포함 키와 `list.group.*`에서 `[어아여해예에네돼워려나]요` 어미를 잡는다(`곧 끝나요` 예외). "`어요` 0개"로는 `곧 시작해요`가 안 잡혀 넓혔다.
+6. **DC12 a11y 어순은 값이 `‘{`로 시작하는지 본다.** §10의 `a11y.progress`("{percent}퍼센트 …")는 `terms.json` allow 항목으로 예외다. allow는 명세 문구가 자기 규칙에 걸리는 곳 다섯이다: `url.pasteHint`의 `{paste}로`, `settings.cookie.howto.step3`의 `애플리케이션`, `step4`의 `{cookieA}와`·`{cookieB}의`, 위 `a11y.progress`. step3·step4 키 이름은 §15.1이 `step3`·`step4`로만 적어 붙인 추정치다. (d)에서 실제 키에 맞춘다.
+7. **DC10(문서 키 ↔ deck)은 §15의 "새 키·문구" 열에서 `` `키` **값** `` 쌍만 비교한다.** `patterns.md`·`web.md`의 백틱 키는 코드 블록 밖에서, 마지막 마디가 title·body·help·label·a11y이거나 §15 표에 나온 키일 때만 deck에 있는지 본다. §15 문단에 적힌 지운 키(`auth.pending.code` 등)는 문서가 아는 키로 세지 않는다. 그래서 (d) 전의 (a)에서는 DC10 허용 항목이 112개다(content 43·patterns 40·web 25).
+8. **DC11은 식별자만인 값(확장자 `.mp4`, 대문자 상수 `NID_AUT`, 점 경로)을 정의로 쓰고, 제품 이름(macOS)은 아니다.** 접미 금지 목록은 `tip`·`why`·`danger`·`word`·`NoBytes`·`lead`다. **DC6 공통 상수**(NOTICE_UNOFFICIAL·NOTICE_SHORT·skipLink·copyright·`app.title`↔`siteName`)는 한쪽에만 있으면 건너뛴다. DC3·DC7은 코드에 박지 않고 `terms.json`의 `id`·`pattern` 항목이다.
+9. **(d)로 넘기는 문서 불일치.** (가) `web.md`가 적은 `adminOnly.title`·`badFormat.title`·`retryLater.body`·`landing.contact`가 §15에 없다(§15에 더하거나 web.md를 고친다. 지금은 DC10 허용 항목). (나) `settings.about.checkFailed.help`와 `update.failed.help`가 같은 값("지금 버전은 계속 쓸 수 있어요.")이라 둘 다 deck에 들어오면 DC11 중복이 된다. §2 "같은 문구는 키 하나"에 따라 한 키로 합친다(지금은 DC10 허용 항목이 덮는다). 허용 항목은 (d)에서 사라지고 `design.allow_entries`가 줄어든다.
+10. **DI(design-icons) 구현 세부.** DI1 메타 모양은 `set`·`name`·`version`이 항목에 직접 있거나 `meta: {…}` 안에 있으면 인정한다(`icons.ts`가 (b)에서 이 모양이 아니면 파서를 고친다). DI4 동작 판정은 아이콘이 놓인 가장 가까운 Button·IconButton·`<a>`·MenuItem 요소와 객체 리터럴에서 `t('키')`·`COPY.경로`·`aria-label` 순으로 동작을 찾고, 키가 달라도 deck 값이 같으면 같은 동작으로 본다. DI2는 Worker `/licenses` 페이지 소스를 (e) 전까지 검사하지 않고 `licenses/lucide.txt`만 본다.

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Ratchet(docs/design/cicd.md §4.2). 기준값은 저장소의 ci/ratchet.json, 측정값은 measure.mjs가 쓴 target/ci/measure/<kind>.json.
 //
-//   node scripts/ci/ratchet.mjs check <coverage|tests|size|mutants>  # 측정값을 기준과 비교(나빠지면 실패)
+//   node scripts/ci/ratchet.mjs check <coverage|tests|size|mutants|design>  # 측정값을 기준과 비교(나빠지면 실패)
 //   node scripts/ci/ratchet.mjs write --from <폴더>              # 폴더 아래 측정 JSON으로 기준을 조인다(올리기만)
 //   node scripts/ci/ratchet.mjs write --from-run <run id>        # gh run download로 CI 측정값을 받아 write
 //                                                                 # (이 저장소의 성공한 push·dispatch 실행만 받는다)
@@ -17,6 +17,7 @@
 //   size.*            현재 > 기준 × (1 + tolerance_pct/100) 이면 실패
 //   mutants_missed.*  현재 > 기준 이면 실패(살아남은 mutant가 늘었다). 0은 실제 기준일 수 있다: 이 영역만 '안 잼'을
 //                     값이 아니라 $pending에 있는지로만 정한다.
+//   design.*          현재 > 기준 이면 실패(디자인 gate 허용 목록 항목이 늘었다). mutants_missed처럼 0도 실제 기준이다.
 //   기준 0은 $pending(아직 안 잼)에 있을 때만 통과(알림만)하고, 없으면 실패한다(mutants_missed 제외). ratchet.json에 없는 키는 실패.
 //   size는 이 OS의 기준 키(dist_gz, binary.<os>, bundle.<os>-*)가 측정에 빠져도 실패한다(번들 표에서 지운 것을 잡는다).
 // 종료 코드: 통과 0, 위반 1, 사용법·입력 오류 2.
@@ -33,11 +34,12 @@ import { osKey } from './smoke.mjs';
 export const RATCHET_PATH = 'ci/ratchet.json';
 export const LOG_PATH = 'ci/RATCHET_LOG.md';
 export const MEASURE_DIR = 'target/ci/measure';
-export const KINDS = { coverage: 'coverage_lines', tests: 'tests', size: 'size', mutants: 'mutants_missed' };
-// 0이 실제 기준일 수 있는 영역(살아남은 mutant 0개는 목표다). '안 잼'은 $pending으로만 정한다.
-const ZERO_IS_REAL = new Set(['mutants_missed']);
-// 작을수록 좋은 영역
-const LOWER_IS_BETTER = new Set(['size', 'mutants_missed']);
+export const KINDS = { coverage: 'coverage_lines', tests: 'tests', size: 'size', mutants: 'mutants_missed', design: 'design' };
+// 0이 실제 기준일 수 있는 영역(살아남은 mutant 0개, 디자인 허용 목록 0항목은 목표다. design은 단계 (c)부터 0으로 남는다).
+// '안 잼'은 $pending으로만 정한다.
+const ZERO_IS_REAL = new Set(['mutants_missed', 'design']);
+// 작을수록 좋은 영역(design.allow_entries: 허용 목록 항목 수, governance.md §2.3)
+const LOWER_IS_BETTER = new Set(['size', 'mutants_missed', 'design']);
 const SETTINGS = new Set(['tolerance_pp', 'tolerance_pct']);
 // 기준 0(아직 안 잼)으로 둘 수 있는 키. 다른 키가 0이면 lint가 실패한다. tests.playwright는 G4에서 채웠다(실행 37324424781).
 // tests.app_e2e.*는 G4 2차 리뷰에서 더해 실행 37334258200으로 채웠다. mutants_missed.chzzk-core는 G5에서 더해 nightly 실행
@@ -119,6 +121,9 @@ export function judge(ratchet, measured, expected = []) {
     } else if (area(key) === 'mutants_missed') {
       fail = value > floor;
       note = fail ? `살아남은 mutant가 ${value - floor}개 늘었다(기준 ${floor})` : value < floor ? `기준을 ${value}(으)로 낮출(조일) 수 있다` : '';
+    } else if (area(key) === 'design') {
+      fail = value > floor;
+      note = fail ? `허용 목록 항목이 ${value - floor}개 늘었다(기준 ${floor}). 새 위반은 허용 목록이 아니라 코드에서 고친다` : value < floor ? `기준을 ${value}(으)로 낮출(조일) 수 있다` : '';
     } else {
       const max = floor * (1 + tolPct / 100);
       fail = value > max;
@@ -130,7 +135,7 @@ export function judge(ratchet, measured, expected = []) {
   return { ok: rows.every((r) => r.state === 'ok' || r.state === 'unmeasured'), rows };
 }
 
-const KIND_BY_AREA = { coverage_lines: 'coverage', tests: 'tests', size: 'size', mutants_missed: 'mutants' };
+const KIND_BY_AREA = { coverage_lines: 'coverage', tests: 'tests', size: 'size', mutants_missed: 'mutants', design: 'design' };
 
 // 측정값 하나가 그 종류로 말이 되는지. 아니면 예외(기준에 넣지 않는다).
 export function assertMeasureValue(key, value) {
@@ -424,7 +429,7 @@ export function main(argv, env = process.env, root = ROOT) {
     console.error(`ratchet: ${e.message}`);
     return 2;
   }
-  console.error('사용법: ratchet.mjs check <coverage|tests|size|mutants> | write --from <폴더> | write --from-run <id> | log-check | lint');
+  console.error('사용법: ratchet.mjs check <coverage|tests|size|mutants|design> | write --from <폴더> | write --from-run <id> | log-check | lint');
   return 2;
 }
 

@@ -1,0 +1,94 @@
+{
+  "motion": {
+    "motion-fast": {
+      "$type": "duration",
+      "$value": {
+        "value": 100,
+        "unit": "ms"
+      },
+      "$description": "눌림·호버 채움, 스위치 손잡이"
+    },
+    "motion-base": {
+      "$type": "duration",
+      "$value": {
+        "value": 200,
+        "unit": "ms"
+      },
+      "$description": "메뉴·토스트 등장, 토스트·대화상자 퇴장",
+      "$extensions": {
+        "io.github.chnu-kim.chzzk": {
+          "overrides": {
+            "reduce": {
+              "value": 1,
+              "unit": "ms"
+            }
+          }
+        }
+      }
+    },
+    "motion-slow": {
+      "$type": "duration",
+      "$value": {
+        "value": 300,
+        "unit": "ms"
+      },
+      "$description": "대화상자 등장",
+      "$extensions": {
+        "io.github.chnu-kim.chzzk": {
+          "overrides": {
+            "reduce": {
+              "value": 1,
+              "unit": "ms"
+            }
+          }
+        }
+      }
+    },
+    "motion-spin": {
+      "$type": "duration",
+      "$value": {
+        "value": 800,
+        "unit": "ms"
+      },
+      "$description": "Spinner 한 바퀴"
+    },
+    "ease-out": {
+      "$type": "cubicBezier",
+      "$value": [
+        0.2,
+        0,
+        0,
+        1
+      ],
+      "$description": "등장 이징"
+    },
+    "ease-in": {
+      "$type": "cubicBezier",
+      "$value": [
+        0.4,
+        0,
+        1,
+        1
+      ],
+      "$description": "퇴장 이징"
+    },
+    "progress-tween": {
+      "$type": "duration",
+      "$value": {
+        "value": 250,
+        "unit": "ms"
+      },
+      "$description": "진행 막대 scaleX 전환",
+      "$extensions": {
+        "io.github.chnu-kim.chzzk": {
+          "overrides": {
+            "reduce": {
+              "value": 1,
+              "unit": "ms"
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,44 @@
+{
+  "radius": {
+    "radius-badge": {
+      "$type": "dimension",
+      "$value": {
+        "value": 4,
+        "unit": "px"
+      },
+      "$description": "글자 배지, kbd"
+    },
+    "radius-control": {
+      "$type": "dimension",
+      "$value": {
+        "value": 6,
+        "unit": "px"
+      },
+      "$description": "버튼·입력칸·팝업·행 하이라이트·안내 상자·코드 블록"
+    },
+    "radius-group": {
+      "$type": "dimension",
+      "$value": {
+        "value": 10,
+        "unit": "px"
+      },
+      "$description": "그룹 상자·카드·details"
+    },
+    "radius-overlay": {
+      "$type": "dimension",
+      "$value": {
+        "value": 12,
+        "unit": "px"
+      },
+      "$description": "대화상자·메뉴·토스트"
+    },
+    "radius-pill": {
+      "$type": "dimension",
+      "$value": {
+        "value": 999,
+        "unit": "px"
+      },
+      "$description": "스위치·진행 막대만"
+    }
+  }
+}

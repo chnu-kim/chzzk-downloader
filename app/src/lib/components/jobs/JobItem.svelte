@@ -1,32 +1,38 @@
 <script lang="ts">
-  // 다운로드 목록 항목(§8.5, docs/design/system/patterns.md §2·§3·§14.3). `job`과 `progress`만 보고 그리고, 동작은 전부 `onaction`으로 올린다.
-  // 왼쪽 3px 레일 + 아이콘 + 문구로 상태를 세 겹으로 말한다(색만으로 말하지 않는다).
+  // 다운로드 목록 행(docs/design/system/patterns.md §3.2·§10.3·§14.3). `job`과 `progress`만 보고 그리고, 동작은 전부 `onaction`으로 올린다.
+  // 세로로 제목 줄 · 막대 줄 · 상태 줄(명사형 조각) · 본문 줄(해요체 한 문장) · 동작 줄이 쌓인다. 상태 레일은 없다(ADR-0003):
+  // 상태는 막대 색 + 아이콘 + 글자 세 겹으로 말한다(색만으로 말하지 않는다).
   import type { JobDto, ProgressDto } from '../../bindings';
   import { t } from '../../copy/ko';
   import {
     barView,
-    failedCopy,
     blockCopyKey,
+    bodyKey,
+    cancelLabel,
+    failedCopy,
     jobActionIcon,
     jobActionLabel,
     jobButtons,
+    statusLine,
     statusParts,
     type JobAction,
     type JobBlock,
   } from '../../jobs';
   import { kindTone } from '../../receive';
+  import { platform } from '../../stores/platform.svelte';
   import Badge from '../ui/Badge.svelte';
   import Button from '../ui/Button.svelte';
-  import Icon from '../ui/Icon.svelte';
-  import IconButton from '../ui/IconButton.svelte';
+  import { isImeKey } from '../ui/focus';
   import Menu from '../ui/Menu.svelte';
+  import Notice from '../ui/Notice.svelte';
   import ProgressBar from '../ui/ProgressBar.svelte';
   import type { ProgressState } from '../ui/vocab';
-  import Spinner from '../ui/Spinner.svelte';
 
   interface Props {
     job: JobDto;
     progress: ProgressDto | null;
+    /** 이 작업이 지금까지 보인 가장 큰 퍼센트(P-4). 스토어가 작업별로 기억한다 */
+    floor: number;
     /** 대기 줄에서 앞에 선 수 */
     ahead: number;
     runStartedAt: number | null;
@@ -45,6 +51,7 @@
   let {
     job,
     progress,
+    floor,
     ahead,
     runStartedAt,
     cookiesEnabled,
@@ -57,290 +64,207 @@
     el = $bindable(null),
   }: Props = $props();
 
+  const uid = $props.id();
   const tone = $derived(kindTone(job.kind, job.playbackKind));
-  const bar = $derived(barView(job, progress));
+  const bar = $derived(barView(job, progress, floor));
   const parts = $derived(statusParts(job, progress, { ahead, runStartedAt }));
   const buttons = $derived(jobButtons(job, progress, cookiesEnabled, block));
+  const cancel = $derived(cancelLabel(job, progress));
   const err = $derived(job.status === 'failed' ? failedCopy(job, cookiesEnabled) : null);
-  const rail = $derived(railOf(job.status));
-  const busy = $derived(
-    (job.status === 'running' && (!progress || progress.phase === 'resolving')) || job.status === 'pausing',
-  );
+  const body = $derived(bodyKey(job));
+  const missing = $derived(job.status === 'completed' && job.missing);
+  /** 제목 전체 보기(행 아래 인라인 펼침). 잘린 제목에 키보드·터치로 닿는 길이다 */
+  let titleOpen = $state(false);
+
   const menuItems = $derived(
     buttons.menu.map((a) => ({
       id: a,
-      label: jobActionLabel(a),
+      label: jobActionLabel(a, platform.os),
       icon: jobActionIcon(a),
       tone: a === 'remove' ? ('danger' as const) : ('neutral' as const),
-      onclick: () => onaction(a),
+      onclick: () => (a === 'showTitle' ? (titleOpen = !titleOpen) : onaction(a)),
     })),
   );
-  // barView는 0~1·tone·striped로 말한다. ProgressBar는 0~100 정수(내림)와 state 넷이다.
+  // barView는 tone·striped로 말한다. ProgressBar는 state 넷이다.
   const barState = $derived<ProgressState>(
     !bar ? 'active' : bar.striped ? 'waiting' : bar.tone === 'danger' ? 'failed' : bar.tone === 'muted' ? 'paused' : 'active',
   );
-  const barValue = $derived(bar?.value == null ? null : Math.floor(bar.value * 100));
 
-  function railOf(s: JobDto['status']): 'accent' | 'muted' | 'danger' | 'success' | 'idle' {
-    switch (s) {
-      case 'running':
-        return 'accent';
-      case 'pausing':
-      case 'paused':
-      case 'interrupted':
-        return 'muted';
-      case 'failed':
-        return 'danger';
-      case 'completed':
-        return 'success';
-      default:
-        return 'idle';
-    }
+  // IME 조합 중의 키는 항목이 받지 않는다(DX6). 안쪽 버튼·메뉴의 키는 목록이 걸러 낸다
+  function handleKeydown(e: KeyboardEvent) {
+    if (isImeKey(e)) return;
+    onkeydown(e);
   }
 </script>
 
-<!-- 항목은 버튼이 아니라 키보드 이동 대상이다(§10 roving tabindex: 위·아래·Space·Enter·Delete).
+{#snippet statusText(text: string)}
+  <span class="job-status num">{text}</span>
+{/snippet}
+
+<!-- 항목은 버튼이 아니라 키보드 이동 대상이다(patterns.md §8 roving tabindex: 위·아래·Space·Enter·Delete).
      role="group"은 비대화형이라 tabindex·keydown에 a11y 경고가 나지만, 안쪽 버튼과 따로 항목 자체가 포커스를 받아야 한다. -->
 <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
 <article
   bind:this={el}
-  class="item rail-{rail}"
-  class:failed={job.status === 'failed'}
+  class="item"
   class:new={highlighted}
   data-job-id={job.id}
   aria-label={job.title}
-  aria-describedby={block ? `job-${job.id}-blocked` : undefined}
+  aria-describedby={block ? `${uid}-blocked` : undefined}
   tabindex={tabbable ? 0 : -1}
-  {onkeydown}
+  onkeydown={handleKeydown}
   onfocusin={onfocus}
 >
-  <div class="jrow title-row">
+  <div class="job-head">
+    <span class="job-title">{job.title}</span>
     <Badge kind={tone} />
-    <span class="title" title={job.title}>{job.title}</span>
-    <span class="quality">{job.qualityLabel}</span>
+    <span class="job-quality num">{job.qualityLabel}</span>
   </div>
 
   {#if bar}
-    <div class="jrow bar-row">
-      <div class="bar">
-        <ProgressBar value={barValue} state={barState} valuetext={bar.valueText} label={job.title} />
-      </div>
-      {#if bar.percent}<span class="percent num">{bar.percent}</span>{/if}
+    <div class="job-bar">
+      <!-- 준비 중은 value = null 막대다(행 안에는 스피너를 두지 않는다, P-8) -->
+      <ProgressBar value={bar.value} state={barState} valuetext={bar.valueText} label={job.title} />
+      <span class="job-pct num">{bar.percent ?? ''}</span>
     </div>
   {/if}
 
   {#if err}
-    <div class="error">
-      <span class="err-icon"><Icon name="circle-x" /></span>
-      <div>
-        <p class="err-title">{err.title}</p>
-        <!-- 막힌 작업은 다시 시도할 버튼이 없으므로 '다시 시도해 주세요' 같은 본문을 숨기고 막힌 이유만 둔다(app.md 구현 중 변경 63) -->
-        {#if !block}
-          {#if err.body}<p class="err-body">{err.body}</p>{/if}
-          {#if err.detail}<p class="err-body detail">{err.detail}</p>{/if}
-        {/if}
-      </div>
-    </div>
+    <Notice variant="row" tone="danger">{@render statusText(err.title)}</Notice>
+  {:else if missing}
+    <Notice variant="row" tone="warning">{@render statusText(statusLine(parts))}</Notice>
+  {:else if job.status === 'completed'}
+    <Notice variant="row" tone="neutral" icon="check">{@render statusText(statusLine(parts))}</Notice>
+  {:else if parts.length}
+    <Notice variant="row" tone="neutral">{@render statusText(statusLine(parts))}</Notice>
   {/if}
 
-  <div class="jrow status-row">
-    {#if parts.length}
-      <p class="status num">
-        {#if busy}<span class="lead"><Spinner size="sm" /></span>
-        {:else if job.status === 'completed' && !job.missing}<span class="lead ok"><Icon name="check" size="sm" /></span>
-        {:else if job.status === 'paused' || job.status === 'interrupted'}<span class="lead"><Icon name="pause" size="sm" /></span>
-        {/if}
-        <!-- 조각 사이 빈칸은 문자열로만 넣는다(태그 사이 줄바꿈 빈칸이 끼면 `·  2.3 GB`처럼 두 칸이 된다) -->
-        {#each parts as part, i (i)}{#if i > 0 && !part.faint}<span class="dot" class:wide-only={part.wideOnly} aria-hidden="true"
-              >{' · '}</span
-            >{:else if i > 0}{' '}{/if}<span class:value={part.value} class:faint={part.faint} class:wide-only={part.wideOnly}
-            >{part.text}</span
-          >{/each}
-      </p>
-    {:else}
-      <span class="status"></span>
-    {/if}
-    <div class="job-acts">
-      {#each buttons.primary as a (a)}
-        <Button size="sm" icon={jobActionIcon(a)} onclick={() => onaction(a)}>
-          {jobActionLabel(a)}
-        </Button>
-      {/each}
-      {#if buttons.cancel}
-        <IconButton icon="x" label="{t('action.cancel')}: {job.title}" onclick={() => onaction('cancel')} />
-      {/if}
-      <Menu label={t('job.more', { title: job.title })} items={menuItems} />
-    </div>
-  </div>
+  {#if err && !block}
+    <!-- 막힌 작업은 다시 시도할 버튼이 없으므로 '다시 시도해 주세요' 같은 본문을 숨기고 막힌 이유만 둔다(app.md 구현 중 변경 63) -->
+    {#if err.body}<p class="job-body indent">{err.body}</p>{/if}
+    {#if err.detail}<p class="job-body indent detail selectable">{err.detail}</p>{/if}
+  {:else if body}
+    <p class="job-body" class:indent={missing}>{t(body)}</p>
+  {/if}
 
   {#if block}
-    <p class="blocked" id="job-{job.id}-blocked">
-      <span class="lead"><Icon name="triangle-alert" size="sm" /></span>{t(blockCopyKey(block))}
-    </p>
+    <Notice variant="row" tone="warning" id="{uid}-blocked">{@render statusText(t(blockCopyKey(block)))}</Notice>
+  {/if}
+
+  <div class="job-actions">
+    {#each buttons.primary as a (a)}
+      <Button variant="ghost" size="sm" icon={jobActionIcon(a)} onclick={() => onaction(a)}>
+        {jobActionLabel(a, platform.os)}
+      </Button>
+    {/each}
+    {#if buttons.cancel}
+      <Button variant="ghost" size="sm" tone={cancel.tone} onclick={() => onaction('cancel')}>
+        {cancel.label}
+      </Button>
+    {/if}
+    <span class="job-more">
+      <Menu size="sm" label={t('job.more', { title: job.title })} items={menuItems} />
+    </span>
+  </div>
+
+  {#if titleOpen}
+    <p class="job-fulltitle selectable">{job.title}</p>
   {/if}
 </article>
 
 <style>
   .item {
-    position: relative;
     display: flex;
     flex-direction: column;
-    gap: var(--space-8);
-    padding: var(--space-12) var(--space-16) var(--space-12) calc(var(--space-16) + var(--rail-w));
-    border: 1px solid var(--border);
-    border-radius: var(--radius-md);
-    background: var(--surface);
+    gap: var(--space-4);
+    padding: var(--space-12) var(--space-16);
+    border-radius: inherit;
+    background: transparent;
+    transition: background-color var(--motion-base) var(--ease-out);
   }
-  /* 왼쪽 레일: 항목 전체를 덮는 층에 레일 폭만 칠하고, 그 층을 테두리 안쪽 radius로 깎는다.
-     항목 자체를 overflow로 깎으면 [⋯] 메뉴가 잘리고, 메뉴 항목에 포커스를 줄 때 항목 안이 스크롤된다. */
-  .item::before {
-    content: '';
-    position: absolute;
-    inset: 0;
-    border-radius: calc(var(--radius-md) - 1px);
-    background: linear-gradient(to right, var(--rail-color) var(--rail-w), transparent var(--rail-w));
-    pointer-events: none;
-  }
-  .item {
-    --rail-color: var(--border-strong);
-  }
-  .rail-accent {
-    --rail-color: var(--accent);
-  }
-  .rail-muted {
-    --rail-color: var(--fg-muted);
-  }
-  .rail-danger {
-    --rail-color: var(--danger);
-  }
-  .rail-success {
-    --rail-color: var(--success);
-  }
-  .item.failed {
-    border-color: var(--danger);
-  }
-  /* 키보드 포커스: 항목 테두리가 포커스 링이 된다. hover는 아무것도 바꾸지 않는다(항목은 버튼이 아니다) */
-  .item:focus-visible {
-    outline: none;
-    border-color: var(--focus);
-    box-shadow: var(--focus-ring);
-  }
+  /* 새 항목 강조: 클래스가 붙어 있는 동안(HIGHLIGHT_MS) 면을 칠하고, 떨어지면 --motion-base로 사라진다(reduce면 즉시) */
   .item.new {
-    animation: highlight var(--dur-highlight) var(--ease-out);
-  }
-  @keyframes highlight {
-    from {
-      background: var(--accent-soft);
-    }
-    to {
-      background: var(--surface);
-    }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .item.new {
-      animation: none;
-    }
+    background: var(--accent-soft);
   }
 
-  .jrow {
+  .job-head {
     display: flex;
-    align-items: center;
-    gap: var(--space-8);
+    align-items: flex-start;
+    gap: var(--space-4);
     min-width: 0;
   }
-  .title {
-    flex: 1;
+  /* 제목은 2줄까지 보여 끝에서 갈리는 "1부/2부"를 구별한다. 종류 배지는 제목 뒤 */
+  .job-title {
+    display: -webkit-box;
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    overflow-wrap: anywhere;
+    line-height: var(--leading-body);
+  }
+  .job-quality {
+    flex: none;
+    margin-inline-start: auto;
+    padding-inline-start: var(--space-8);
+    color: var(--fg-muted);
+  }
+
+  .job-bar {
+    display: flex;
+    align-items: center;
+    gap: var(--space-12);
+    min-width: 0;
+    line-height: var(--leading-body);
+  }
+  .job-pct {
+    flex: none;
+    width: var(--pct-w);
+    text-align: end;
+    font-weight: var(--weight-regular);
+  }
+
+  /* 상태 줄: 명사형 조각, 말줄임 */
+  .job-status {
+    display: block;
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: var(--text-md);
-    font-weight: var(--weight-medium);
-  }
-  .quality {
-    flex: none;
-    font-size: var(--text-sm);
     color: var(--fg-muted);
   }
-  .bar {
-    flex: 1;
-  }
-  .percent {
-    flex: none;
-    min-width: 3ch;
-    text-align: right;
-    font-size: var(--text-md);
-    font-weight: var(--weight-semibold);
-  }
-  .blocked {
-    display: flex;
-    gap: var(--space-4);
-    align-items: center;
+
+  /* 본문 줄: 해요체 한 문장. 아이콘이 있는 상태 줄 밑에서는 아이콘 폭만큼 들여쓴다(§10.3) */
+  .job-body {
     margin: 0;
-    font-size: var(--text-sm);
     color: var(--fg-muted);
+    line-height: var(--leading-read);
   }
-  .status-row {
-    flex-wrap: wrap;
-    justify-content: space-between;
-    row-gap: var(--space-8);
+  .job-body.indent {
+    padding-inline-start: calc(var(--icon-sm) + var(--space-8));
   }
-  .status {
-    flex: 1 1 auto;
-    margin: 0;
-    min-width: 0;
-    font-size: var(--text-sm);
-    color: var(--fg-muted);
-  }
-  .lead {
-    display: inline-flex;
-    vertical-align: -3px;
-    margin-right: var(--space-4);
-  }
-  .lead.ok {
-    color: var(--success);
-  }
-  .value {
-    color: var(--fg);
-  }
-  .faint {
-    color: var(--fg-faint);
-  }
-  .job-acts {
-    display: flex;
-    align-items: center;
-    gap: var(--space-4);
-    margin-left: auto;
-  }
-  .error {
-    display: flex;
-    gap: var(--space-8);
-    padding: var(--space-8) var(--space-12);
-    border-radius: var(--radius-sm);
-    background: var(--danger-soft);
-  }
-  .err-icon {
-    color: var(--danger);
-  }
-  .err-title {
-    margin: 0;
-    font-size: var(--text-md);
-    font-weight: var(--weight-semibold);
-    color: var(--danger);
-  }
-  .err-body {
-    margin: 2px 0 0;
-    font-size: var(--text-sm);
-    color: var(--fg);
-  }
-  .detail {
-    color: var(--fg-muted);
+  .job-body.detail {
     overflow-wrap: anywhere;
   }
-  /* 폭 720~839: HLS "조각 …" 숨김(patterns.md §15) */
-  @media (max-width: 839px) {
-    .wide-only {
-      display: none;
-    }
+
+  /* 동작 줄: 자기 줄이라 폭이 좁아도 접히지 않는다. [⋯]는 오른쪽 끝(edge-end 보정) */
+  .job-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    gap: var(--gap-sibling);
+    min-height: var(--control-h-sm);
+  }
+  .job-more {
+    margin-inline-end: calc(0px - var(--space-4));
+  }
+
+  .job-fulltitle {
+    margin: 0;
+    overflow-wrap: anywhere;
+    line-height: var(--leading-read);
   }
 </style>

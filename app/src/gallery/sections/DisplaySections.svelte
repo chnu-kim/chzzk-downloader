@@ -6,6 +6,7 @@
   import ProgressBar from '../../lib/components/ui/ProgressBar.svelte';
   import Skeleton from '../../lib/components/ui/Skeleton.svelte';
   import { KIND, PROGRESS_STATE, SKELETON_VARIANT } from '../../lib/components/ui/vocab';
+  import { useDelayedLoading } from '../../lib/useDelayedLoading.svelte';
   import { PROGRESS, TITLE } from '../fixtures';
   import Row from '../Row.svelte';
   import Section from '../Section.svelte';
@@ -13,9 +14,8 @@
   const WIDTHS = ['full', 'half'] as const;
   const VALUES: (number | null)[] = [...PROGRESS.values, null];
 
-  // 갤러리는 로딩 표시를 지연 없이 바로 보인다(실제 화면은 useDelayedLoading을 거친다: patterns §2.2). design-lint DX10 표식
-  const useDelayedLoading = (immediate: boolean) => immediate;
-  void useDelayedLoading;
+  // 자리 표시는 실제 화면과 같은 훅을 거친다(patterns.md §2.2, DX10): LOADER_DELAY_MS 뒤에 나타난다. 갤러리 spec은 그 뒤에 본다
+  const pending = useDelayedLoading(() => true);
 </script>
 
 <Section name="badge" heading={TITLE.badge}>
@@ -40,7 +40,7 @@
   {#each SKELETON_VARIANT as variant (variant)}
     <Row label={variant} vocab="SKELETON_VARIANT:{variant}" stack>
       {#each WIDTHS as width (width)}
-        <Skeleton {variant} {width} />
+        {#if pending.visible}<Skeleton {variant} {width} />{/if}
       {/each}
     </Row>
   {/each}

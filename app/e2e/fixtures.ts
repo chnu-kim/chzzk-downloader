@@ -17,8 +17,8 @@ export type App = {
   cmds(): Promise<string[]>;
   /** 그 command의 인자들(순서대로) */
   args(cmd: string): Promise<unknown[]>;
-  /** axe-core(WCAG 2.x A·AA)로 위반 0 */
-  axe(label: string): Promise<void>;
+  /** axe-core(WCAG 2.x A·AA)로 위반 0. `selector`가 있으면 그 요소만(스크롤 위치에 따라 가려지는 대상 크기 판정을 피하려고 토스트 등에 쓴다) */
+  axe(label: string, selector?: string): Promise<void>;
 };
 
 export const test = base.extend<{ app: App }>({
@@ -41,18 +41,22 @@ export const test = base.extend<{ app: App }>({
       ctl: (fn, arg) => page.evaluate(([src, a]) => (0, eval)(`(${src})`)(window.__e2e, a), [fn.toString(), arg] as const),
       cmds: () => page.evaluate(() => window.__e2e.calls.map((c) => c.cmd)),
       args: (cmd) => page.evaluate((c) => window.__e2e.calls.filter((x) => x.cmd === c).map((x) => x.args), cmd),
-      async axe(label) {
-        // 열리는 중인 전환(Disclosure·대화상자)의 중간 색·크기를 재지 않도록 모든 애니메이션이 끝난 뒤 잰다
-        await page.waitForFunction(() => document.getAnimations().every((a) => a.playState !== 'running'));
+      async axe(label, selector) {
+        // 열리는 중인 전환(Disclosure·대화상자)의 중간 색·크기를 재지 않도록 모든 애니메이션이 끝난 뒤 잰다.
+        // 등장 전환은 다음 프레임에 시작하므로 두 프레임을 먼저 기다린다. 끝없이 도는 것(스피너)은 기다리지 않는다
+        await page.evaluate(() => new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r()))));
+        await page.waitForFunction(() =>
+          document.getAnimations().every((a) => a.playState !== 'running' || a.effect?.getComputedTiming().iterations === Infinity),
+        );
         await page.addScriptTag({ path: AXE });
-        const violations = await page.evaluate(async () => {
-          const r = await (window as unknown as { axe: { run: (c: unknown, o: unknown) => Promise<{ violations: { id: string; nodes: { target: string[]; any?: { message: string }[] }[] }[] }> } }).axe.run(document, {
+        const violations = await page.evaluate(async (scope) => {
+          const r = await (window as unknown as { axe: { run: (c: unknown, o: unknown) => Promise<{ violations: { id: string; nodes: { target: string[]; any?: { message: string }[] }[] }[] }> } }).axe.run(scope ? (document.querySelector(scope) ?? document) : document, {
             runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'] },
             resultTypes: ['violations'],
           });
           // 대비 위반은 색·비율도 남긴다(원인을 trace 없이 읽을 수 있게)
           return r.violations.map((v) => `${v.id}: ${v.nodes.map((n) => `${n.target.join(' ')} ${n.any?.[0]?.message ?? ''}`.trim()).join(' | ')}`);
-        });
+        }, selector ?? null);
         expect(violations, `axe 위반(${label})`).toEqual([]);
       },
     };

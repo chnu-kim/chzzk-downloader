@@ -2,9 +2,10 @@
 // 버튼이 copy deck(errorCopy)과 같은지 본다. 기대값은 앱과 같은 errorCopy가 만든다: 이 테스트는 문구 표 자체가 아니라
 // 표가 화면에 실제로 그려지는지(그리고 접근성 위반이 없는지)를 본다. 표의 내용은 vitest(errors.test.ts)가 본다.
 import type { AppError, ErrorCode, JobDto } from '../src/lib/bindings';
-import { ERROR_CODES, actionLabel, errorCopy } from '../src/lib/copy/errors';
+import { ERROR_CODES } from '../src/lib/copy/errors';
 import { job } from '../src/test/jobFixtures';
 import { resolved } from '../src/test/fixtures';
+import { actionLabel, errorCopy, t } from './copy';
 import { expect, test } from './fixtures';
 
 const err = (code: ErrorCode, stage: AppError['stage']): AppError => ({ code, message: `e2e ${code}`, stage, resumable: false, payload: null });
@@ -14,7 +15,7 @@ test('불러오기 오류: 모든 코드의 Notice가 copy deck대로 그려진�
   const { page } = app;
   const resolve = Object.fromEntries(ERROR_CODES.map((c, i) => [urlFor(i), { error: err(c, 'resolve') }]));
   await app.open({ resolve });
-  const input = page.getByLabel('영상 주소');
+  const input = page.getByLabel(t('url.label'));
   for (const [i, code] of ERROR_CODES.entries()) {
     await input.fill(urlFor(i));
     await input.press('Enter');
@@ -49,8 +50,8 @@ test('불러오기 오류의 [다시 시도]는 같은 주소로 다시 부르�
   const r = resolved();
   const { page } = app;
   await app.open({ resolve: { [r.url]: { error: err('network', 'resolve') } } });
-  await page.getByLabel('영상 주소').fill(r.url);
-  await page.getByRole('button', { name: '불러오기' }).click();
+  await page.getByLabel(t('url.label')).fill(r.url);
+  await page.getByRole('button', { name: t('url.submit') }).click();
   const want = errorCopy(err('network', 'resolve'), { place: 'resolve', cookiesEnabled: false });
   await expect(page.getByRole('alert').filter({ hasText: want.title })).toBeVisible();
   // 시나리오를 바꾼다: 다음 resolve는 성공

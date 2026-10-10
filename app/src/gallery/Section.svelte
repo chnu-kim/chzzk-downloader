@@ -28,7 +28,7 @@
   }
   .g-title {
     font-size: var(--text-title);
-    font-weight: var(--weight-semibold);
+    font-weight: var(--weight-strong);
     line-height: var(--leading-title);
     color: var(--fg);
   }

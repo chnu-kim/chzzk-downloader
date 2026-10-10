@@ -1,5 +1,5 @@
 <script lang="ts">
-  // 고급: 네이버 로그인 정보(§8.7, patterns.md §14.4). 저장된 쿠키 값은 Rust가 다시 보내지 않으므로 입력칸은 늘
+  // 고급: 네이버 로그인 정보(patterns.md §14.4). 쿠키 입력은 사용자가 펼쳤을 때만 DOM에 있다. 저장된 쿠키 값은 Rust가 다시 보내지 않으므로 입력칸은 늘
   // 비어서 시작하고, 저장·지우기 뒤에도 비운다. "저장됨 / 저장된 값 없음"만 보인다.
   import { tick } from 'svelte';
   import type { AppError } from '../../bindings';
@@ -9,6 +9,7 @@
   import { ui } from '../../stores/ui.svelte';
   import Button from '../ui/Button.svelte';
   import Disclosure from '../ui/Disclosure.svelte';
+  import FieldRow from '../ui/FieldRow.svelte';
   import Notice from '../ui/Notice.svelte';
   import SecretField from '../ui/SecretField.svelte';
   import Switch from '../ui/Switch.svelte';
@@ -37,6 +38,14 @@
   );
 
   // 오류 동작 [네이버 로그인 정보 설정]·[로그인 정보 다시 넣기]로 들어오면 펼치고 그 자리로 간다
+  $effect(() => {
+    if (open) return;
+    // 접으면 입력 중이던 값도 버린다(비밀값을 화면 밖에 남기지 않는다)
+    nidAut = '';
+    nidSes = '';
+    missing = false;
+  });
+
   $effect(() => {
     if (!ui.openCookieSection) return;
     ui.openCookieSection = false;
@@ -74,112 +83,109 @@
   }
 </script>
 
-<section bind:this={root}>
-  <Disclosure title={t('settings.cookie.title')} bind:open>
-    <div class="group cookie">
-      <p class="help why">{t('settings.cookie.why')}</p>
-      <Notice tone="warning">{t('settings.cookie.danger')}</Notice>
+<div bind:this={root}>
+  <Disclosure title={t('settings.advanced')} bind:open>
+    {#if open}
+      <div class="cookie">
+        <h3>{t('settings.cookie.title')}</h3>
+        <p class="why">{t('settings.cookie.why')}</p>
+        <Notice tone="warning">{t('settings.cookie.danger')}</Notice>
 
-      {#key settings.revision}
-        <div class="srow-main">
-          <span class="label" id="l-cookie-use">{t('settings.cookie.use')}</span>
-          <span class="state" class:ok={saved}>
-            {saved ? t('settings.cookie.saved') : t('settings.cookie.notSaved')}
-          </span>
-          <Switch value={enabled && saved} labelledby="l-cookie-use" disabled={!saved || busy} onchange={toggle} />
+        {#key settings.revision}
+          <div class="use">
+            <span class="use-label" id="l-cookie-use">{t('settings.cookie.use')}</span>
+            <span class="use-state">{saved ? t('settings.cookie.saved') : t('settings.cookie.notSaved')}</span>
+            <Switch value={enabled && saved} labelledby="l-cookie-use" disabled={!saved || busy} onchange={toggle} />
+          </div>
+        {/key}
+
+        <div class="fields">
+          <FieldRow label="NID_AUT">
+            {#snippet control({ labelId })}
+              <SecretField labelledby={labelId} bind:value={nidAut} {...invalidProps(missing && !nidAut.trim())} disabled={busy} />
+            {/snippet}
+          </FieldRow>
+          <FieldRow label="NID_SES">
+            {#snippet control({ labelId })}
+              <SecretField labelledby={labelId} bind:value={nidSes} {...invalidProps(missing && !nidSes.trim())} disabled={busy} />
+            {/snippet}
+          </FieldRow>
         </div>
-      {/key}
 
-      <div class="cfield">
-        <span class="label mono-label" id="l-nid-aut">NID_AUT</span>
-        <SecretField labelledby="l-nid-aut" bind:value={nidAut} {...invalidProps(missing && !nidAut.trim())} disabled={busy} />
-      </div>
-      <div class="cfield">
-        <span class="label mono-label" id="l-nid-ses">NID_SES</span>
-        <SecretField labelledby="l-nid-ses" bind:value={nidSes} {...invalidProps(missing && !nidSes.trim())} disabled={busy} />
-      </div>
+        {#if missing}
+          <Notice id="cookie-missing" tone="danger">{t('settings.cookie.bothRequired')}</Notice>
+        {:else if errCopy}
+          <Notice tone="danger" title={errCopy.title}>
+            {#if errCopy.body}<p class="line">{errCopy.body}</p>{/if}
+            {#if errCopy.detail}<p class="line detail">{errCopy.detail}</p>{/if}
+          </Notice>
+        {/if}
 
-      {#if missing}
-        <Notice id="cookie-missing" tone="danger">{t('settings.cookie.bothRequired')}</Notice>
-      {:else if errCopy}
-        <Notice tone="danger" title={errCopy.title}>
-          {#if errCopy.body}<p class="line">{errCopy.body}</p>{/if}
-          {#if errCopy.detail}<p class="line detail">{errCopy.detail}</p>{/if}
-        </Notice>
-      {/if}
-
-      <div class="cacts">
-        <Button variant="primary" loading={busy} onclick={save}>{t('settings.cookie.save')}</Button>
-        <Button icon="trash-2" disabled={busy || !saved} onclick={clear}>{t('settings.cookie.clear')}</Button>
-        <span class="howto">
-          <Disclosure title={t('settings.cookie.howto')} variant="inline">
-            <ol class="hsteps">
-              {#each steps as step, i (i)}<li>{step}</li>{/each}
-            </ol>
-          </Disclosure>
-        </span>
+        <div class="acts">
+          <Button loading={busy} onclick={save}>{t('settings.cookie.save')}</Button>
+          <Button variant="ghost" icon="trash-2" disabled={busy || !saved} onclick={clear}>{t('settings.cookie.clear')}</Button>
+          <span class="howto">
+            <Disclosure title={t('settings.cookie.howto')} variant="inline">
+              <ol class="steps">
+                {#each steps as step, i (i)}<li>{step}</li>{/each}
+              </ol>
+            </Disclosure>
+          </span>
+        </div>
       </div>
-    </div>
+    {/if}
   </Disclosure>
-</section>
+</div>
 
 <style>
-  section {
-    margin-top: var(--space-24);
-  }
   .cookie {
     display: flex;
     flex-direction: column;
     gap: var(--space-12);
-    margin-top: var(--space-8);
-    padding: var(--space-16);
+  }
+  h3 {
+    margin: 0;
+    font-size: var(--text-body);
+    line-height: var(--leading-body);
+    font-weight: var(--weight-strong);
   }
   .why {
-    line-height: 1.65;
+    margin: 0;
+    color: var(--fg-muted);
+    line-height: var(--leading-read);
   }
-  .srow-main .label {
+  .use {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--gap-sibling);
+  }
+  .use-label {
     flex: 1;
+    color: var(--fg);
   }
-  .state {
-    font-size: var(--text-sm);
+  .use-state {
     color: var(--fg-muted);
   }
-  .state.ok {
-    color: var(--success);
-  }
-  .cfield {
-    display: flex;
-    align-items: center;
-    gap: var(--space-12);
-  }
-  .mono-label {
-    flex: none;
-    width: 72px;
-    font-family: var(--font-mono);
-    font-size: var(--text-sm);
-  }
-  .cfield :global(.field-wrap) {
-    flex: 1;
-  }
-  .cacts {
+  .acts {
     display: flex;
     flex-wrap: wrap;
     align-items: flex-start;
-    gap: var(--space-8);
+    gap: var(--gap-sibling);
   }
   .howto {
-    margin-left: auto;
+    margin-inline-start: auto;
   }
-  .hsteps {
-    margin: var(--space-8) 0 0;
-    padding-left: 1.25rem;
-    font-size: var(--text-sm);
-    line-height: 1.65;
+  .steps {
+    margin: 0;
+    padding-inline-start: var(--space-20);
     color: var(--fg-muted);
+    line-height: var(--leading-read);
   }
   .line {
     margin: 0;
-    font-size: var(--text-sm);
+    font-size: var(--text-caption);
+    line-height: var(--leading-caption);
   }
   .detail {
     color: var(--fg-muted);

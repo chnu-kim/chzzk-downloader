@@ -1,9 +1,13 @@
 <script lang="ts">
-  // 최근 VOD(§8.1). {url, title}만 있어 날짜·종류는 보이지 않는다. 없으면 예시 한 줄.
+  // 최근 영상(system/patterns.md §14.1). 섹션 제목 + 그룹 상자. 행: 제목(말줄임) + 둘째 줄 `{kind} · {date}` + [다시 열기].
+  // 둘째 줄은 같은 이름의 회차를 구별한다. 옛 항목(종류 없음)은 둘째 줄이 없다. 비어 있으면 아무것도 그리지 않는다
+  // (붙여넣기 힌트는 InputPanel이 늘 한 줄 둔다).
   import type { RecentVodDto } from '../../bindings';
   import { t } from '../../copy/ko';
+  import { recentSecondLine } from '../../receive';
+  import { RECENT_MAX } from '../../timing';
   import Button from '../ui/Button.svelte';
-  import Icon from '../ui/Icon.svelte';
+  import Surface from '../ui/Surface.svelte';
 
   interface Props {
     items: readonly RecentVodDto[];
@@ -11,68 +15,61 @@
   }
 
   let { items, onreopen }: Props = $props();
+  const shown = $derived(items.slice(0, RECENT_MAX));
 </script>
 
-{#if items.length === 0}
-  <p class="hint">{t('url.hintExample')}</p>
-{:else}
+{#if shown.length > 0}
   <section class="recent" aria-labelledby="recent-title">
-    <h2 id="recent-title" class="title">{t('recent.title')}</h2>
-    <ul>
-      {#each items as item (item.url)}
-        <li class="recent-row">
-          <span class="clock"><Icon name="clock" size="sm" /></span>
-          <span class="name" title={item.title || item.url}>{item.title || item.url}</span>
-          <Button variant="ghost" size="sm" aria-label="{t('recent.reopen')}: {item.title || item.url}" onclick={() => onreopen(item.url)}>
+    <h2 id="recent-title" class="section-title">{t('recent.title')}</h2>
+    <Surface variant="group" role="list">
+      {#each shown as item (item.url)}
+        {@const name = item.title || item.url}
+        {@const second = recentSecondLine(item)}
+        <div class="row recent-row" role="listitem">
+          <div class="row-main">
+            <span class="row-label ellipsis">{name}</span>
+            {#if second}<span class="row-help">{second}</span>{/if}
+          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            class="edge-end"
+            aria-label="{t('recent.reopen')}: {name}"
+            onclick={() => onreopen(item.url)}
+          >
             {t('recent.reopen')}
           </Button>
-        </li>
+        </div>
       {/each}
-    </ul>
+    </Surface>
   </section>
 {/if}
 
 <style>
-  .hint {
-    margin: var(--space-4) 0 0;
-    font-size: var(--text-sm);
-    color: var(--fg-muted);
-  }
+  /* 힌트와 최근 영상 사이는 섹션 간격 24(= 형제 gap 8 + 16) */
   .recent {
-    margin-top: var(--space-8);
+    margin-top: var(--space-16);
   }
-  .title {
-    margin: 0 0 var(--space-4);
-    font-size: var(--text-sm);
-    font-weight: var(--weight-medium);
-    color: var(--fg-muted);
+  .section-title {
+    margin: 0 0 var(--gap-label);
+    color: var(--fg);
+    font-size: var(--text-body);
+    line-height: var(--leading-body);
+    font-weight: var(--weight-strong);
   }
-  ul {
-    margin: 0;
-    padding: 0;
-    list-style: none;
+  /* 첫·끝 행의 바깥 모서리는 그룹 상자와 같이 둥글어야 hover 면이 상자 밖으로 나오지 않는다 */
+  .recent-row:first-child {
+    border-top-left-radius: var(--radius-group);
+    border-top-right-radius: var(--radius-group);
   }
-  .recent-row {
-    display: flex;
-    align-items: center;
-    gap: var(--space-8);
-    min-height: 28px;
-    padding: 0 var(--space-4);
-    border-radius: var(--radius-sm);
-    font-size: var(--text-sm);
+  .recent-row:last-child {
+    border-bottom-left-radius: var(--radius-group);
+    border-bottom-right-radius: var(--radius-group);
   }
   .recent-row:hover {
     background: var(--surface-2);
   }
-  .clock {
-    color: var(--fg-faint);
-  }
-  .name {
-    flex: 1;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    overflow-wrap: normal;
+  .recent-row:active {
+    background: var(--surface-pressed);
   }
 </style>

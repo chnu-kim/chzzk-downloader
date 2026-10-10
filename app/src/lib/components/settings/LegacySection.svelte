@@ -1,6 +1,6 @@
 <script lang="ts">
-  // 이전 버전(§8.7): 폴더를 골라 예전 명령줄 버전의 설정·최근 VOD를 가져온다. 경고(평문 쿠키 등)는
-  // 사용자가 행동해야 하는 내용이라 토스트가 아니라 여기 Notice로 남긴다(§7.2).
+  // 이전 버전(patterns.md §14.4): 폴더를 골라 예전 명령줄 버전의 설정·최근 VOD를 가져온다. 경고(평문 쿠키 등)는
+  // 사용자가 행동해야 하는 내용이라 토스트가 아니라 여기 Notice로 남긴다(patterns.md §1.2).
   import * as api from '../../api';
   import type { AppError } from '../../bindings';
   import { errorCopy } from '../../copy/errors';
@@ -9,6 +9,8 @@
   import { toasts } from '../../stores/toast.svelte';
   import Button from '../ui/Button.svelte';
   import Notice from '../ui/Notice.svelte';
+  import SettingsRow from '../ui/SettingsRow.svelte';
+  import SettingsSection from './SettingsSection.svelte';
 
   let busy = $state(false);
   let error = $state<AppError | null>(null);
@@ -31,50 +33,39 @@
   }
 </script>
 
-<section aria-labelledby="s-legacy">
-  <h2 id="s-legacy" class="section-title">{t('settings.legacy.title')}</h2>
-  <div class="group legacy">
-    <p class="help">{t('settings.legacy.body')}</p>
-    <div class="line">
-      <Button disabled={busy} onclick={pick}>{t('settings.legacy.pick')}</Button>
-      {#if last}<span class="last" title={last}>{t('settings.legacy.last', { path: last })}</span>{/if}
+<SettingsSection title={t('settings.legacy.title')}>
+  <SettingsRow
+    label={t('settings.legacy.body')}
+    help={last ? t('settings.legacy.last', { path: last }) : undefined}
+  >
+    {#snippet control({ labelId })}
+      <Button aria-describedby={labelId} disabled={busy} onclick={pick}>{t('settings.legacy.pick')}</Button>
+    {/snippet}
+  </SettingsRow>
+  {#each settings.legacyWarnings as w, i (i)}
+    <div class="row"><div class="slot"><Notice tone="warning">{w}</Notice></div></div>
+  {/each}
+  {#if errCopy}
+    <div class="row">
+      <div class="slot">
+        <Notice tone="danger" title={errCopy.title}>
+          {#if errCopy.body}<p class="msg">{errCopy.body}</p>{/if}
+          {#if errCopy.detail}<p class="msg detail">{errCopy.detail}</p>{/if}
+        </Notice>
+      </div>
     </div>
-    {#each settings.legacyWarnings as w, i (i)}
-      <Notice tone="warning">{w}</Notice>
-    {/each}
-    {#if errCopy}
-      <Notice tone="danger" title={errCopy.title}>
-        {#if errCopy.body}<p class="msg">{errCopy.body}</p>{/if}
-        {#if errCopy.detail}<p class="msg detail">{errCopy.detail}</p>{/if}
-      </Notice>
-    {/if}
-  </div>
-</section>
+  {/if}
+</SettingsSection>
 
 <style>
-  .legacy {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-12);
-    padding: var(--space-16);
-  }
-  .line {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: var(--space-12);
-  }
-  .last {
+  .slot {
+    flex: 1 1 100%;
     min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-size: var(--text-sm);
-    color: var(--fg-muted);
   }
   .msg {
     margin: 0;
-    font-size: var(--text-sm);
+    font-size: var(--text-caption);
+    line-height: var(--leading-caption);
   }
   .detail {
     color: var(--fg-muted);

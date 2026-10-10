@@ -11,8 +11,9 @@ use chzzk_app_lib::auth_io::{AuthIo, AuthIoState};
 use chzzk_app_lib::commands::begin_quit;
 use chzzk_app_lib::sink::{ChannelSink, Notice, Notifier};
 use chzzk_app_lib::{
-    AUTH_CHANGED, COMMANDS, Quitting, UPDATE_AVAILABLE, auto_update_check, focus_main, guard_close,
-    handler, on_run_event, on_window_focus, request_quit, spawn_auth_tasks,
+    AUTH_CHANGED, COMMANDS, Quitting, UPDATE_AVAILABLE, WINDOW_FOCUS, auto_update_check,
+    focus_main, guard_close, handler, on_run_event, on_window_focus, request_quit,
+    spawn_auth_tasks,
 };
 use chzzk_shell::auth::{SessionStore, StoredSession};
 use chzzk_shell::services::AppPaths;
@@ -1173,6 +1174,103 @@ fn focus_on_the_main_window_ticks_auth() {
         invoke(&f.main, "get_settings", json!({})).unwrap_err(),
         want
     );
+}
+
+/// main 창의 포커스 변화는 얻음·잃음 모두 `window-focus`로 main 창에만 간다(macOS 비활성 창 표시).
+#[test]
+fn window_focus_event_is_sent_to_main_for_both_states() {
+    let f = fixture();
+    let got: Arc<Mutex<Vec<Value>>> = Arc::default();
+    let seen = got.clone();
+    f.main.listen(WINDOW_FOCUS, move |e| {
+        seen.lock()
+            .unwrap()
+            .push(serde_json::from_str(e.payload()).unwrap());
+    });
+    let other = WebviewWindowBuilder::new(&f.app, "other", Default::default())
+        .build()
+        .unwrap();
+    let leaked = Arc::new(AtomicUsize::new(0));
+    let l = leaked.clone();
+    other.listen(WINDOW_FOCUS, move |_| {
+        l.fetch_add(1, Ordering::SeqCst);
+    });
+
+    // 로그인을 쓰지 않는 빌드라 틱은 없고(false), 이벤트만 간다
+    assert!(!on_window_focus(f.app.handle(), "main", true));
+    assert!(!on_window_focus(f.app.handle(), "main", false));
+    // main이 아닌 창의 포커스는 보내지 않는다
+    assert!(!on_window_focus(f.app.handle(), "other", true));
+    assert!(!on_window_focus(f.app.handle(), "other", false));
+
+    wait_until("window-focus 두 번", 2, || got.lock().unwrap().len() == 2);
+    assert_eq!(
+        *got.lock().unwrap(),
+        vec![json!({"focused": true}), json!({"focused": false})]
+    );
+    std::thread::sleep(Duration::from_millis(100));
+    assert_eq!(
+        got.lock().unwrap().len(),
+        2,
+        "다른 창의 포커스는 보내지 않는다"
+    );
+    assert_eq!(
+        leaked.load(Ordering::SeqCst),
+        0,
+        "다른 창에는 보내지 않는다"
+    );
+}
+
+/// 포커스를 잃어도 이벤트는 가지만 로그인 재확인 틱은 얻을 때만 뜬다.
+#[test]
+fn window_focus_loss_emits_without_ticking_auth() {
+    let worker = refresh_server(401, "session_revoked");
+    let dir = TempDir::new().unwrap();
+    save_session_at(dir.path(), &worker, time::Duration::hours(25));
+    let state = open_auth_app(dir.path(), &worker);
+    let f = fixture_with(dir, state);
+    let got: Arc<Mutex<Vec<Value>>> = Arc::default();
+    let seen = got.clone();
+    f.main.listen(WINDOW_FOCUS, move |e| {
+        seen.lock()
+            .unwrap()
+            .push(serde_json::from_str(e.payload()).unwrap());
+    });
+    assert!(!on_window_focus(f.app.handle(), "main", false));
+    wait_until("window-focus", 2, || got.lock().unwrap().len() == 1);
+    assert_eq!(got.lock().unwrap()[0], json!({"focused": false}));
+    std::thread::sleep(Duration::from_millis(200));
+    assert_eq!(refresh_count(&worker), 0);
+}
+
+/// 로그인 화면의 개인정보 처리방침 링크: 로그인 전에도 열리고, 주소는 Worker 출처 아래 고정 경로다.
+#[test]
+fn open_web_page_opens_fixed_worker_pages_while_signed_out() {
+    let worker = worker_server(None);
+    let f = fixture_auth(&worker);
+    assert_eq!(
+        invoke(&f.main, "auth_status", json!({})).unwrap()["state"],
+        json!("signedOut")
+    );
+    invoke(&f.main, "open_web_page", json!({"page": "privacy"})).unwrap();
+    invoke(&f.main, "open_web_page", json!({"page": "licenses"})).unwrap();
+    let base = worker.uri();
+    assert_eq!(
+        *f.io.opened.lock().unwrap(),
+        vec![format!("{base}/privacy"), format!("{base}/licenses")]
+    );
+    // 모르는 페이지는 거부하고 아무것도 열지 않는다
+    assert!(invoke(&f.main, "open_web_page", json!({"page": "terms"})).is_err());
+    assert_eq!(f.io.opened.lock().unwrap().len(), 2);
+}
+
+/// 로그인 서버가 없는 빌드는 열 곳이 없어 `invalidInput`이고 브라우저를 열지 않는다.
+#[test]
+fn open_web_page_without_worker_is_invalid_input() {
+    let f = fixture();
+    let e = invoke(&f.main, "open_web_page", json!({"page": "privacy"})).unwrap_err();
+    assert_eq!(e["code"], json!("invalidInput"));
+    assert!(f.io.opened.lock().unwrap().is_empty());
 }
 
 #[test]

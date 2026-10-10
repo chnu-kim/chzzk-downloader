@@ -4,7 +4,8 @@
 
 use chzzk_core::settings::{MAX_RECENT_VODS, SETTINGS_FILE};
 use chzzk_core::{
-    CredentialStore, NaverCookies, RecentVod, SettingsStore, UserSettings, add_recent_vod,
+    CredentialStore, NaverCookies, RecentKind, RecentVod, SettingsStore, TextScale, Theme,
+    UserSettings, add_recent_vod, add_recent_vod_with,
 };
 use std::path::Path;
 
@@ -52,6 +53,120 @@ fn recent_vods() {
     let fifty: String = "나".repeat(50);
     add_recent_vod(&mut s, "k50", &fifty);
     assert_eq!(s.recent_vods[0].title, fifty);
+}
+
+/// 설정 JSON을 파일로 쓰고 연다.
+fn open_with(json: &str) -> UserSettings {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join(SETTINGS_FILE), json).unwrap();
+    SettingsStore::open(dir.path().to_path_buf()).unwrap().get()
+}
+
+#[test]
+fn appearance_round_trips_and_reads_leniently() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = SettingsStore::open(dir.path().to_path_buf()).unwrap();
+    store
+        .update(|s| {
+            s.text_scale = TextScale::XLarge;
+            s.theme = Theme::Dark;
+        })
+        .unwrap();
+    let raw: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(dir.path().join(SETTINGS_FILE)).unwrap()).unwrap();
+    assert_eq!(raw["textScale"], "x-large");
+    assert_eq!(raw["theme"], "dark");
+    let reopened = SettingsStore::open(dir.path().to_path_buf()).unwrap().get();
+    assert_eq!(reopened.text_scale, TextScale::XLarge);
+    assert_eq!(reopened.theme, Theme::Dark);
+    assert_eq!(reopened.schema_version, 2);
+
+    // large도 왕복한다
+    for (v, want) in [("large", TextScale::Large), ("default", TextScale::Default)] {
+        let s = open_with(&format!(r#"{{"textScale":"{v}"}}"#));
+        assert_eq!(s.text_scale, want, "{v}");
+    }
+    for (v, want) in [("light", Theme::Light), ("system", Theme::System)] {
+        let s = open_with(&format!(r#"{{"theme":"{v}"}}"#));
+        assert_eq!(s.theme, want, "{v}");
+    }
+
+    // 모르는 값·다른 형·null은 기본으로 읽고 파일 전체는 멀쩡하다(백업 없음)
+    for bad in [r#""huge""#, "3", "null", "true", r#"["x"]"#] {
+        let json = format!(r#"{{"textScale":{bad},"theme":{bad},"lastUrl":"keep"}}"#);
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(SETTINGS_FILE), &json).unwrap();
+        let s = SettingsStore::open(dir.path().to_path_buf()).unwrap().get();
+        assert_eq!(s.text_scale, TextScale::Default, "{bad}");
+        assert_eq!(s.theme, Theme::System, "{bad}");
+        assert_eq!(s.last_url.as_deref(), Some("keep"), "{bad}");
+        assert!(bad_backups(dir.path()).is_empty(), "{bad}");
+    }
+
+    // 필드가 없으면 기본
+    let s = open_with(r#"{"schemaVersion":2}"#);
+    assert_eq!(s.text_scale, TextScale::Default);
+    assert_eq!(s.theme, Theme::System);
+}
+
+#[test]
+fn recent_vod_kind_and_date_round_trip() {
+    let mut s = UserSettings::default();
+    add_recent_vod_with(
+        &mut s,
+        "u1",
+        "클립",
+        Some(RecentKind::Clip),
+        Some("2026-01-02"),
+    );
+    add_recent_vod_with(
+        &mut s,
+        "u2",
+        "다시보기",
+        Some(RecentKind::Rewind),
+        Some(" "),
+    );
+    add_recent_vod_with(&mut s, "u3", "일반", Some(RecentKind::Vod), None);
+    add_recent_vod(&mut s, "u4", "옛 방식");
+
+    let json = serde_json::to_value(&s).unwrap();
+    let vods = json["recentVods"].as_array().unwrap();
+    // 최신이 앞: u4, u3, u2, u1
+    assert!(vods[0].get("kind").is_none() && vods[0].get("date").is_none());
+    assert_eq!(vods[1]["kind"], "vod");
+    assert!(vods[1].get("date").is_none());
+    assert_eq!(vods[2]["kind"], "rewind");
+    assert!(vods[2].get("date").is_none(), "공백뿐인 날짜는 None");
+    assert_eq!(vods[3]["kind"], "clip");
+    assert_eq!(vods[3]["date"], "2026-01-02");
+
+    let back: UserSettings = serde_json::from_value(json).unwrap();
+    assert_eq!(back, s);
+    assert_eq!(back.recent_vods[3].kind, Some(RecentKind::Clip));
+    assert_eq!(back.recent_vods[3].date.as_deref(), Some("2026-01-02"));
+
+    // 같은 URL을 다시 넣으면 종류·날짜도 새 값으로 바뀐다
+    add_recent_vod_with(&mut s, "u1", "클립", Some(RecentKind::Vod), None);
+    assert_eq!(s.recent_vods[0].kind, Some(RecentKind::Vod));
+    assert_eq!(s.recent_vods[0].date, None);
+}
+
+#[test]
+fn recent_vod_unknown_kind_is_none_and_old_entries_load() {
+    let s = open_with(
+        r#"{"recentVods":[
+            {"url":"a","title":"t","kind":"live","date":"2026-02-03"},
+            {"url":"b","title":"t","kind":7,"date":""},
+            {"url":"c","title":"t"},
+            {"url":"d","title":"t","kind":"clip","date":null}
+        ]}"#,
+    );
+    let kinds: Vec<_> = s.recent_vods.iter().map(|v| v.kind).collect();
+    assert_eq!(kinds, [None, None, None, Some(RecentKind::Clip)]);
+    // 모르는 kind여도 date는 그대로, 빈 date는 None
+    assert_eq!(s.recent_vods[0].date.as_deref(), Some("2026-02-03"));
+    assert_eq!(s.recent_vods[1].date, None);
+    assert_eq!(s.recent_vods[3].date, None);
 }
 
 #[test]
@@ -290,11 +405,13 @@ mod legacy {
             vec![
                 RecentVod {
                     url: "https://chzzk.naver.com/video/1".into(),
-                    title: "제목 없음".into()
+                    title: "제목 없음".into(),
+                    ..RecentVod::default()
                 },
                 RecentVod {
                     url: "https://chzzk.naver.com/video/2".into(),
-                    title: "제목 없음".into()
+                    title: "제목 없음".into(),
+                    ..RecentVod::default()
                 },
             ]
         );
@@ -318,6 +435,15 @@ mod legacy {
         let imp = import_legacy(dir.path()).unwrap().unwrap();
         assert_eq!(imp.settings.recent_vods.len(), 5);
         assert_eq!(imp.settings.recent_vods[0].title, "t0");
+        // 옛 Go 항목에는 종류·날짜가 없다
+        assert!(
+            imp.settings
+                .recent_vods
+                .iter()
+                .all(|v| v.kind.is_none() && v.date.is_none())
+        );
+        assert_eq!(imp.settings.text_scale, TextScale::Default);
+        assert_eq!(imp.settings.theme, Theme::System);
     }
 
     #[test]

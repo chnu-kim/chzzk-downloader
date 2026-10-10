@@ -167,7 +167,7 @@ test('cssValue: 그림자·글꼴·알파·이징·길이 0', () => {
 });
 
 // ---- (다) 출력 서식 ----
-test('생성물: 머리줄·절 표지 순서·서식, 앱에는 reading 없음, Worker에는 text-scale·legacy 없음', () => {
+test('생성물: 머리줄·절 표지 순서·서식, 앱에는 reading 없음, Worker에는 text-scale 없음', () => {
   const dir = mkRoot();
   try {
     const { files, siteCss, hash } = generate(dir);
@@ -177,7 +177,7 @@ test('생성물: 머리줄·절 표지 순서·서식, 앱에는 reading 없음,
     assert.ok(tokens.includes('\n  --space-8: 8px;\n'));
     assert.ok(tokens.includes('  color-scheme: light dark;\n'));
     const appNames = splitSections(tokens).map((s) => s.name);
-    assert.deepEqual(appNames, ['root', 'dark-media', 'dark-theme', 'theme-scheme', 'window-inactive', 'text-scale', 'contrast', 'coarse', 'reduce', 'legacy']);
+    assert.deepEqual(appNames, ['root', 'dark-media', 'dark-theme', 'theme-scheme', 'window-inactive', 'text-scale', 'contrast', 'coarse', 'reduce']);
     assert.ok(appNames.every((n) => SECTIONS.includes(n)));
     assert.ok(!tokens.includes('data-scale="reading"') && !tokens.includes('--text-hero'));
 
@@ -186,7 +186,7 @@ test('생성물: 머리줄·절 표지 순서·서식, 앱에는 reading 없음,
     assert.equal(css, siteCss);
     const wkNames = splitSections(css).map((s) => s.name);
     assert.deepEqual(wkNames, ['root', 'dark-media', 'dark-theme', 'theme-scheme', 'window-inactive', 'reading', 'contrast', 'coarse', 'reduce', 'ui', 'site']);
-    assert.ok(!css.includes('data-text-scale') && !css.includes('[legacy]') && !css.includes('--fg-faint'));
+    assert.ok(!css.includes('data-text-scale') && !css.includes('--fg-faint'));
     assert.match(worker, /^\/\* 생성물[^\n]*\*\/\nexport const SITE_CSS = `[^`]*`;\nexport const SITE_CSS_HASH = "[0-9a-f]{16}";\n$/);
     assert.equal(hash, createHash('sha256').update(css, 'utf8').digest('hex').slice(0, 16));
     assert.ok(worker.endsWith(`SITE_CSS_HASH = "${hash}";\n`));

@@ -189,6 +189,7 @@ fn request(folder: &Path, name: &str, channel_id: Option<&str>) -> EnqueueReques
         file_name: name.into(),
         on_existing: OnExisting::Overwrite,
         restart: false,
+        content_date: None,
     }
 }
 

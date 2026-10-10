@@ -6,6 +6,7 @@ import { createRequire } from 'node:module';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test as base, chromium, expect, type Page } from '@playwright/test';
+import { LOADER_DELAY_MS } from '../src/lib/timing';
 
 const require = createRequire(import.meta.url);
 const AXE = require.resolve('axe-core/axe.min.js');
@@ -40,6 +41,8 @@ async function openGallery(page: Page) {
   await page.goto('/gallery.html');
   await page.locator('[data-gallery="icons"]').waitFor();
   await page.evaluate(() => document.fonts.ready);
+  // 불러오는 중 칸(스피너·자리 표시)은 useDelayedLoading을 거쳐 LOADER_DELAY_MS 뒤에 나타난다: 그 뒤의 상태를 본다
+  await page.locator('[data-gallery="skeleton"] .skeleton').first().waitFor({ timeout: LOADER_DELAY_MS + 2_000 });
 }
 
 /** 기존 e2e/fixtures.ts의 axe 실행 방식과 같다(앱 fixture 없이) */

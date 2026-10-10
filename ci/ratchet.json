@@ -3,27 +3,27 @@
   "$pending": [],
   "coverage_lines": {
     "rust": 95.8,
-    "frontend": 91,
+    "frontend": 93.2,
     "tolerance_pp": 0.1
   },
   "tests": {
-    "rust": 348,
-    "vitest": 425,
-    "playwright": 7,
-    "worker": 1148,
+    "rust": 637,
+    "vitest": 692,
+    "playwright": 63,
+    "worker": 1217,
     "app": {
-      "linux": 32,
-      "darwin": 32,
-      "windows": 32
+      "linux": 60,
+      "darwin": 60,
+      "windows": 60
     },
     "app_e2e": {
-      "linux": 6,
-      "darwin": 6,
-      "windows": 6
+      "linux": 12,
+      "darwin": 12,
+      "windows": 12
     }
   },
   "size": {
-    "dist_gz": 67349,
+    "dist_gz": 70690,
     "binary": {
       "linux": 33581280,
       "darwin": 23809376,
@@ -42,7 +42,7 @@
     "chzzk-core": 100
   },
   "design": {
-    "allow_entries": 311
+    "allow_entries": 185
   },
   "shots": {
     "max_diff_pixels": 0

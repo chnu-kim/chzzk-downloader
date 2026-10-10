@@ -709,8 +709,10 @@ function checkSource(rel, src, add, { vocab }) {
       for (const m of t.attrs.matchAll(/(?:^|\s)style:([\w-]+)/g)) if (m[1] !== '--p') add('DS2', t.line, `style:${m[1]}`);
       // DS5: <svg
       if (lname === 'svg' && !SVG_FILES.has(rel)) add('DS5', t.line, '<svg');
-      // DS7: title=(IconButton의 title={label}은 명세가 요구한다: components.md §2.2, G-INPUT-IN2)
-      if (!TITLE_FILES.has(rel)) {
+      // DS7: title=(IconButton의 title={label}은 명세가 요구한다: components.md §2.2, G-INPUT-IN2).
+      // 대문자로 시작하는 Svelte 컴포넌트의 `title`은 prop(Dialog·Notice 제목)이지 툴팁 속성이 아니라 보지 않는다
+      // (design system 단계 (c), governance §12 (c)).
+      if (!TITLE_FILES.has(rel) && !/^[A-Z]/.test(t.name)) {
         for (const m of t.attrs.matchAll(/(?:^|\s)(title\s*=\s*(?:"[^"]*"|'[^']*'|\{[^}]*\}))/g)) add('DS7', t.line, squash(m[1]));
       }
       // DX3: draggable

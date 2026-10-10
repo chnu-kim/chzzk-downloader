@@ -3,35 +3,45 @@
 import { SvelteSet } from 'svelte/reactivity';
 import * as api from '../api';
 import type { AppError, JobDto, JobEvent, JobId } from '../bindings';
-import { errorCopy } from '../copy/errors';
+import { actionLabel, errorCopy } from '../copy/errors';
 import { t } from '../copy/ko';
 import { formatBytes } from '../format/bytes';
 import {
   groupJobs,
-  needsCancelConfirm,
+  isClearable,
   nextQueueOrder,
+  outputFileName,
   receivedBytes,
+  removeRoute,
   resumableInterrupted,
   transitionAnnouncement,
   visibleOrder,
   type JobAction,
 } from '../jobs';
 import { copyReport } from '../report';
+import { HIGHLIGHT_MS } from '../timing';
 import { announcer } from './announce.svelte';
 import { auth } from './auth.svelte';
 import { applyEvent, emptyJobs, fromSnapshot, type JobsState } from './jobs.apply';
+import { platform } from './platform.svelte';
 import { resolver } from './resolve.svelte';
 import { settings } from './settings.svelte';
 import { toasts } from './toast.svelte';
 import { ui } from './ui.svelte';
 
-/** 새로 추가된 항목 강조 시간(ui-visual §4 `--dur-highlight`) */
-export const HIGHLIGHT_MS = 1000;
+// 새로 추가된 항목 강조 시간의 원천은 timing.ts다(patterns.md §1.2)
+export { HIGHLIGHT_MS };
 
 export interface CancelConfirm {
   id: JobId;
   title: string;
   bytes: number;
+}
+
+/** D7: 건너뜀 행의 [덮어쓰고 받기…]가 묻고 있는 작업과 덮어쓸 파일 이름 */
+export interface OverwriteConfirm {
+  id: JobId;
+  name: string;
 }
 
 export class JobsStore {
@@ -46,13 +56,23 @@ export class JobsStore {
   runStartedAt = new Map<JobId, number>();
   /** D2: 받은 부분을 지우기 전 확인 */
   confirm: CancelConfirm | null = $state(null);
+  /** D7: 덮어쓰고 받기 확인 */
+  overwrite: OverwriteConfirm | null = $state(null);
+  /**
+   * 지연 삭제 중인 작업(patterns.md §4): 되돌리기 토스트가 사는 동안 목록에서만 숨긴다. 토스트가 닫히면
+   * (동작 버튼이 아니라) `remove_job`을 부르고, [되돌리기]면 다시 보인다.
+   */
+  hidden = new SvelteSet<JobId>();
+  /** 완료 그룹을 펼쳤는가(`COMPLETED_FOLD_AT`개부터 기본 접힘, README D39) */
+  finishedOpen = $state(false);
   /** B1을 이번 실행 동안 닫았는가 */
   bannerDismissed = $state(false);
   /** [목록에서 보기]·추가 뒤 그 항목으로 포커스를 옮겨 달라는 요청. `n`은 같은 id를 다시 부를 때 바뀐다 */
   focusRequest: { id: JobId; n: number } | null = $state(null);
 
-  groups = $derived(groupJobs(this.state.jobs.values()));
-  order = $derived(visibleOrder(this.groups));
+  groups = $derived(groupJobs([...this.state.jobs.values()].filter((j) => !this.hidden.has(j.id))));
+  /** 화면에 그려진 순서(숨긴 항목과 접힌 완료 항목은 없다). 키보드 이동·포커스 복귀의 기준 */
+  order = $derived(visibleOrder(this.groups, this.finishedOpen));
   interruptedCount = $derived([...this.state.jobs.values()].filter((j) => j.status === 'interrupted').length);
   /** B1이 이어받을 수 있는 중단 작업 id(다른 채널·채널 모르는 작업은 뺀다, A5) */
   resumableIds = $derived(resumableInterrupted(this.state.jobs.values(), auth.status));
@@ -62,12 +82,8 @@ export class JobsStore {
     [...this.state.jobs.values()].filter((j) => j.status === 'running' || j.status === 'pausing' || j.status === 'queued')
       .length,
   );
-  /** "완료 지우기"가 지울 것이 있는가. 받은 `.part`가 남은 건너뜀은 셸이 남긴다(manager `Job::clearable`). */
-  hasFinished = $derived(
-    [...this.state.jobs.values()].some(
-      (j) => j.status === 'completed' || (j.status === 'skipped' && j.partialBytes == null),
-    ),
-  );
+  /** "완료 항목 지우기"가 지울 것이 있는가. 받은 `.part`가 남은 건너뜀은 셸이 남긴다(manager `Job::clearable`). */
+  hasFinished = $derived([...this.state.jobs.values()].some((j) => !this.hidden.has(j.id) && isClearable(j)));
   /** B1을 보일까: 이어받을 수 있는 중단 작업이 있고 닫지 않았다 */
   showInterruptedBanner = $derived(this.resumableCount > 0 && !this.bannerDismissed);
 
@@ -113,6 +129,7 @@ export class JobsStore {
     if (e.type === 'removed') {
       this.runStartedAt.delete(e.id);
       this.highlight.delete(e.id);
+      this.hidden.delete(e.id);
       return;
     }
     if (e.type !== 'added' && e.type !== 'status') return;
@@ -123,9 +140,12 @@ export class JobsStore {
       setTimeout(() => this.highlight.delete(job.id), HIGHLIGHT_MS);
       return;
     }
-    // 완료 토스트는 상태가 완료로 바뀌는 순간만(복원된 완료 항목·스냅샷은 알리지 않는다, Rust `completed_title`과 같다)
+    // 완료는 상태가 완료로 바뀌는 순간만(복원된 완료 항목·스냅샷은 알리지 않는다, Rust `completed_title`과 같다).
+    // 1차 표시는 행 상태이고, 토스트는 홈이 아닌 화면에서 창이 활성일 때만이다. 창이 비활성이면 OS 알림이 알린다
+    // (Rust `should_notify`). 홈에서는 토스트가 없는 대신 라이브 영역이 한 줄 읽는다(patterns.md §1.1-1).
     if (job.status === 'completed' && prev?.status !== 'completed') {
-      toasts.push(t('toast.completed', { title: job.title }), 'success');
+      if (ui.view !== 'home' && ui.windowFocused) toasts.push(t('toast.completed', { title: job.title }), 'success');
+      else announcer.say(t('job.status', { title: job.title, status: t('job.status.completed') }));
       return;
     }
     const say = transitionAnnouncement(prev, job);
@@ -139,6 +159,26 @@ export class JobsStore {
 
   get(id: JobId): JobDto | undefined {
     return this.state.jobs.get(id);
+  }
+
+  /** 행의 버튼·단축키 하나. [덮어쓰고 받기…]만 D7을 거치고 나머지는 `act`다 */
+  request(id: JobId, action: JobAction): Promise<void> {
+    const job = this.state.jobs.get(id);
+    if (job && action === 'overwrite') {
+      this.overwrite = { id, name: outputFileName(job.output) };
+      return Promise.resolve();
+    }
+    return this.act(id, action);
+  }
+
+  async confirmOverwrite() {
+    const o = this.overwrite;
+    this.overwrite = null;
+    if (o) await this.act(o.id, 'overwrite');
+  }
+
+  cancelOverwrite() {
+    this.overwrite = null;
   }
 
   /** 버튼·단축키 하나. 실패는 토스트로 알린다(동작이 실패해도 목록은 Rust 이벤트로 맞는다). */
@@ -190,20 +230,31 @@ export class JobsStore {
         case 'reenterCookies':
           ui.goSettings({ cookies: true });
           break;
+        case 'showTitle':
+          // 행이 스스로 펼친다(셸에 보낼 일이 없다)
+          break;
       }
     } catch (e) {
       this.#toastError(e as AppError);
     }
   }
 
-  /** 취소·지우기: 받은 부분이 512 MiB를 넘으면 D2로 묻는다 */
+  /**
+   * 취소·지우기(`removeRoute`): 받은 부분(`.part`)이 있으면 크기와 무관하게 D2로 묻고, 끝난 항목은 숨기고
+   * 되돌리기 토스트를 준 뒤 닫힐 때 지우고, 대기·준비 중은 바로 지운다.
+   */
   requestRemove(job: JobDto) {
     const p = this.state.progress.get(job.id);
-    if (needsCancelConfirm(job, p)) {
-      this.confirm = { id: job.id, title: job.title, bytes: receivedBytes(job, p) };
-      return;
+    switch (removeRoute(job, p)) {
+      case 'confirm':
+        this.confirm = { id: job.id, title: job.title, bytes: receivedBytes(job, p) };
+        return;
+      case 'defer':
+        this.#deferRemove([job.id], t('toast.removed'));
+        return;
+      case 'now':
+        void this.#remove(job.id);
     }
-    void this.#remove(job.id);
   }
 
   async confirmRemove() {
@@ -225,16 +276,41 @@ export class JobsStore {
     try {
       await api.removeJob(id);
     } catch (e) {
+      // 지우지 못했으면 숨겨 둔 채 두지 않는다
+      this.hidden.delete(id);
       this.#toastError(e as AppError);
     }
   }
 
-  async clearFinished() {
-    try {
-      await api.clearFinished();
-    } catch (e) {
-      this.#toastError(e as AppError);
-    }
+  /**
+   * 지연 삭제(patterns.md §4): `ids`를 숨기고 [되돌리기] 토스트를 올린다. 토스트가 동작 버튼 말고 어떤 까닭으로든
+   * (타이머·[×]·비움) 닫히면 숨긴 id마다 `remove_job`을 부른다. 동작 있는 토스트는 대체되지 않고 줄을 서므로
+   * 둘째 지우기가 와도 첫 삭제는 먼저 확정되지 않는다.
+   */
+  #deferRemove(ids: readonly JobId[], message: string) {
+    for (const id of ids) this.hidden.add(id);
+    toasts.push(message, 'info', {
+      action: {
+        label: t('action.undo'),
+        run: () => {
+          for (const id of ids) this.hidden.delete(id);
+        },
+      },
+      onclose: (reason) => {
+        if (reason === 'action') return;
+        for (const id of ids) void this.#remove(id);
+      },
+    });
+  }
+
+  /**
+   * [완료 항목 지우기]: 그때의 완료·건너뜀 id 전부를 숨기고 되돌리기 토스트를 준다. 닫힐 때 숨긴 id마다
+   * `remove_job`을 부른다(`clear_finished`는 그 사이에 끝난 작업까지 지우므로 부르지 않는다).
+   */
+  clearFinished() {
+    const ids = [...this.state.jobs.values()].filter((j) => !this.hidden.has(j.id) && isClearable(j)).map((j) => j.id);
+    if (ids.length === 0) return;
+    this.#deferRemove(ids, t('toast.removedMany', { n: ids.length }));
   }
 
   /**
@@ -274,7 +350,7 @@ export class JobsStore {
     const action =
       jobId != null && c.actions.includes('openFolder')
         ? {
-            label: t('action.openFolder'),
+            label: actionLabel('openFolder', platform.os),
             run: () => void api.revealOutput(jobId).catch((e: AppError) => this.#toastError(e)),
           }
         : undefined;

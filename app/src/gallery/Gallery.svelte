@@ -48,13 +48,13 @@
     gap: var(--space-8);
     max-inline-size: var(--content-max);
     margin-inline: auto;
-    padding: var(--space-24) var(--gutter);
+    padding: var(--space-24) var(--space-16);
     background: var(--bg);
     color: var(--fg);
   }
   .g-h1 {
     font-size: var(--text-display);
-    font-weight: var(--weight-semibold);
+    font-weight: var(--weight-strong);
     line-height: var(--leading-title);
   }
 </style>

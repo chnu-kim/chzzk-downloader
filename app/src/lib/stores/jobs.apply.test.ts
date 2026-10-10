@@ -93,4 +93,55 @@ describe('applyEvent', () => {
     expect(s.progress.get(1)?.bytes).toBe(3);
     expect(s.progress.has(2)).toBe(false);
   });
+
+  it('퍼센트 바닥은 작업별로 올라가기만 한다(P-4)', () => {
+    let s = fromSnapshot([job(1, { status: 'running' }), job(2, { status: 'running' })]);
+    s = applyEvent(s, { type: 'progress', id: 1, progress: progress(500) });
+    s = applyEvent(s, { type: 'progress', id: 2, progress: progress(100) });
+    expect(s.percent.get(1)).toBe(50);
+    expect(s.percent.get(2)).toBe(10);
+    // 코어가 총량을 다시 추정해 값이 줄어도 바닥은 그대로, 다른 작업은 영향이 없다
+    s = applyEvent(s, { type: 'progress', id: 1, progress: progress(300) });
+    expect(s.percent.get(1)).toBe(50);
+    expect(s.percent.get(2)).toBe(10);
+    s = applyEvent(s, { type: 'progress', id: 1, progress: progress(700) });
+    expect(s.percent.get(1)).toBe(70);
+  });
+
+  it('100%는 완료에서만(P-6): 받은 양이 총량과 같아도 99에서 멈춘다', () => {
+    let s = fromSnapshot([job(1, { status: 'running' })]);
+    s = applyEvent(s, { type: 'progress', id: 1, progress: { ...progress(1000), phase: 'finalizing' } });
+    expect(s.percent.get(1)).toBe(99);
+  });
+
+  it('준비 중 진행률은 퍼센트를 만들지 않는다', () => {
+    let s = fromSnapshot([job(1, { status: 'running' })]);
+    s = applyEvent(s, { type: 'progress', id: 1, progress: { ...progress(0), phase: 'resolving' } });
+    expect(s.percent.has(1)).toBe(false);
+  });
+
+  it('대기(처음부터 다시 받기·덮어쓰고 받기 포함)·완료·삭제가 바닥을 비운다', () => {
+    let s = fromSnapshot([job(1, { status: 'running' }), job(2, { status: 'running' }), job(3, { status: 'running' })]);
+    for (const id of [1, 2, 3]) s = applyEvent(s, { type: 'progress', id, progress: progress(800) });
+    s = applyEvent(s, { type: 'status', job: job(1, { status: 'queued' }) });
+    s = applyEvent(s, { type: 'status', job: job(2, { status: 'completed', finalBytes: 1000 }) });
+    s = applyEvent(s, { type: 'removed', id: 3 });
+    expect([...s.percent.keys()]).toEqual([]);
+    // 다시 받기 시작하면 0부터 올라간다
+    s = applyEvent(s, { type: 'status', job: job(1, { status: 'running' }) });
+    s = applyEvent(s, { type: 'progress', id: 1, progress: progress(20) });
+    expect(s.percent.get(1)).toBe(2);
+  });
+
+  it('상태 이벤트에 진행률이 없어도 바닥은 남는다(멈추는 중에 값이 되돌아가지 않는다)', () => {
+    let s = fromSnapshot([job(1, { status: 'running' })]);
+    s = applyEvent(s, { type: 'progress', id: 1, progress: progress(600) });
+    s = applyEvent(s, { type: 'status', job: job(1, { status: 'pausing' }) });
+    expect(s.percent.get(1)).toBe(60);
+  });
+
+  it('스냅샷의 진행률로 바닥을 채운다', () => {
+    const s = fromSnapshot([job(1, { status: 'paused', progress: progress(250), partialBytes: 250 })]);
+    expect(s.percent.get(1)).toBe(25);
+  });
 });

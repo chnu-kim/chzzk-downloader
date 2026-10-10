@@ -1,9 +1,36 @@
+<script lang="ts" module>
+  // 배너 우선순위(system/patterns.md §1.4): 한 번에 하나만 보이고 오류가 먼저다.
+  //   ① B2 설정 저장 실패 → ② B4 업데이트 실패 → ③ B4 진행(받는 중·설치 중) → (④ B5 서비스 공지 block·warn: 자리만) →
+  //   ⑤ B1 받다 만 영상 → ⑥ B4 새 버전 → (⑦ B5 info: 자리만)
+  // B5(서비스 공지)는 Worker `/notice`가 생기는 단계(e)에서 이 표에 들어온다(앱에 공지 데이터가 아직 없다).
+  // B4 진행과 B4 새 버전은 같은 배너 노드('update')로 그려진다: 버튼을 눌러도 포커스·라이브 영역이 끊기지 않게(worker.md 77).
+  export type BannerKind = 'settings' | 'updateFailed' | 'update' | 'interrupted';
+
+  export interface BannerState {
+    /** 설정 저장 실패(B2) */
+    settingsError: boolean;
+    /** 설치 실패(B4 실패) */
+    updateFailure: boolean;
+    /** 받는 중·설치 중(B4 진행) */
+    updateBusy: boolean;
+    /** 재시작 직후 중단된 작업이 있고 닫지 않았다(B1) */
+    interrupted: boolean;
+    /** 새 버전이 있고 닫지 않았다(B4 새 버전) */
+    updateAvailable: boolean;
+  }
+
+  /** 지금 보일 배너 하나. 없으면 null */
+  export function pickBanner(s: BannerState): BannerKind | null {
+    if (s.settingsError) return 'settings';
+    if (s.updateFailure) return 'updateFailed';
+    if (s.updateBusy) return 'update';
+    if (s.interrupted) return 'interrupted';
+    if (s.updateAvailable) return 'update';
+    return null;
+  }
+</script>
+
 <script lang="ts">
-  // 헤더 바로 아래 배너 자리(patterns.md §1.4). 하나씩만 보인다.
-  // B2: 설정 저장 실패(`settings`)가 B1보다 앞이다.
-  // B1: 재시작 직후 중단된 다운로드(§8.6). "모두 이어받기"는 중단된 작업을 하나씩 다시 줄 세운다.
-  // B4: 새 버전(worker.md §11.6)이 B1 뒤다. 단 받는 중·설치 중에는 진행 문구가 먼저다(설치가 받던 작업을 멈추면 B1이
-  // 켜져 진행 문구를 가리기 때문, worker.md 73).
   import * as api from '../../api';
   import { t } from '../../copy/ko';
   import { formatBytes } from '../../format/bytes';
@@ -24,14 +51,15 @@
     }
   }
 
-  /** 지금 보일 배너 하나. B4가 기본 배너에서 진행 배너로 바뀌어도 같은 분기라 같은 노드로 남는다(77) */
-  const which = $derived.by((): 'update' | 'settings' | 'interrupted' | null => {
-    if (update.busy) return 'update';
-    if (settings.saveError) return 'settings';
-    if (jobs.showInterruptedBanner) return 'interrupted';
-    if (update.showBanner) return 'update';
-    return null;
-  });
+  const which = $derived(
+    pickBanner({
+      settingsError: settings.saveError !== null,
+      updateFailure: update.failure !== null,
+      updateBusy: update.busy,
+      interrupted: jobs.showInterruptedBanner,
+      updateAvailable: update.showBanner,
+    }),
+  );
   /** 받는 중에는 시작 때 본 버전(그사이 확인 결과가 available을 비워도 진행 배너가 남는다) */
   const updateVersion = $derived(update.busy ? (update.installVersion ?? update.available?.version ?? '') : (update.available?.version ?? ''));
   const updateStatus = $derived(
@@ -42,6 +70,8 @@
   );
 </script>
 
+{#if which !== null}
+<div class="banner-slot">
 {#if which === 'update'}
   <UpdateBanner
     version={updateVersion}
@@ -51,6 +81,18 @@
     oninstall={() => void update.install()}
     onlater={() => update.later()}
   />
+{:else if which === 'updateFailed'}
+  <!-- 실패해도 지금 버전은 계속 쓸 수 있어 warning(서명 확인 실패만 danger). 다시 받을 새 버전이 있을 때만 [다시 시도] -->
+  <Notice
+    variant="banner"
+    tone={update.failure === 'untrusted' ? 'danger' : 'warning'}
+    actions={update.failure === 'failed' && update.available
+      ? [{ id: 'retry', label: t('action.retry'), loading: update.pending, onclick: () => void update.install() }]
+      : []}
+    onclose={() => update.dismissFailure()}
+  >
+    {update.failure === 'untrusted' ? t('update.untrusted') : t('update.failed')}
+  </Notice>
 {:else if which === 'settings'}
   <Notice
     variant="banner"
@@ -64,13 +106,21 @@
     {t('banner.settingsError')}
   </Notice>
 {:else if which === 'interrupted'}
-  <!-- Action에는 disabled가 없어 진행 중 재클릭은 resumeAll 안에서 막는다 -->
   <Notice
     variant="banner"
     tone="info"
-    actions={[{ id: 'resumeAll', label: t('banner.resumeAll'), onclick: () => { if (!resuming) void resumeAll(); } }]}
+    actions={[{ id: 'resumeAll', label: t('banner.resumeAll'), loading: resuming, onclick: () => void resumeAll() }]}
     onclose={() => jobs.dismissBanner()}
   >
     {t('banner.interrupted', { n: jobs.resumableCount })}
   </Notice>
 {/if}
+</div>
+{/if}
+
+<style>
+  /* 배너 아래 여백 8: 세로 예산 "배너 B1 +48" = 높이 40 + 8(patterns.md §14.1·§15) */
+  .banner-slot {
+    margin-bottom: var(--space-8);
+  }
+</style>

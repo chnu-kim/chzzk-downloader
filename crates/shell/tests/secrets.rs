@@ -161,6 +161,7 @@ fn request(no: u64, name: &str, folder: &Path) -> EnqueueRequest {
         file_name: name.into(),
         on_existing: OnExisting::Overwrite,
         restart: false,
+        content_date: None,
     }
 }
 

@@ -1,0 +1,63 @@
+/* 좁은 레이아웃(docs/design/system/foundations.md §8, patterns.md §15). 분기는 폭 600 하나다.
+   600 미만(Worker 휴대폰 폭, Windows 텍스트 225% ≈ 320×231)과 글자 크기 "아주 크게"(data-text-scale="x-large")는
+   뷰포트 폭이 같지 않아 미디어 쿼리만으로는 둘째가 켜지지 않는다. 그래서 **같은 선언을 두 블록에 쓴다**
+   (design-lint DL13이 두 블록의 선택자·선언이 같은지 본다). 한쪽만 고치지 않는다.
+   대상은 ui.css의 클래스뿐이다(기능 컴포넌트는 폭 쿼리를 쓰지 않고 flex-wrap·min-width: 0으로 접는다).
+   main.ts가 ui.css 다음에 import하므로 같은 특이도에서는 여기가 이긴다. */
+
+@media (max-width: 599px) {
+  /* FieldRow: 라벨이 컨트롤 위로(1열). 도움말·동작 칸도 같은 열 */
+  .fieldrow {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: var(--gap-label);
+  }
+  .fieldrow:has(> .fieldrow-actions) {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: var(--gap-label);
+  }
+  .fieldrow-label {
+    min-height: 0;
+  }
+  .fieldrow-actions {
+    margin-inline-start: 0;
+  }
+  .fieldrow-help {
+    grid-column: 1 / -1;
+    margin-top: 0;
+  }
+  /* 빈 상태 3단계는 세로로 */
+  .empty > .steps {
+    flex-direction: column;
+    align-items: center;
+  }
+  /* 카드 바닥 버튼 줄은 다음 줄로 접는다 */
+  .card-footer {
+    flex-wrap: wrap;
+  }
+}
+
+:root[data-text-scale="x-large"] .fieldrow {
+  grid-template-columns: minmax(0, 1fr);
+  row-gap: var(--gap-label);
+}
+:root[data-text-scale="x-large"] .fieldrow:has(> .fieldrow-actions) {
+  grid-template-columns: minmax(0, 1fr);
+  row-gap: var(--gap-label);
+}
+:root[data-text-scale="x-large"] .fieldrow-label {
+  min-height: 0;
+}
+:root[data-text-scale="x-large"] .fieldrow-actions {
+  margin-inline-start: 0;
+}
+:root[data-text-scale="x-large"] .fieldrow-help {
+  grid-column: 1 / -1;
+  margin-top: 0;
+}
+:root[data-text-scale="x-large"] .empty > .steps {
+  flex-direction: column;
+  align-items: center;
+}
+:root[data-text-scale="x-large"] .card-footer {
+  flex-wrap: wrap;
+}

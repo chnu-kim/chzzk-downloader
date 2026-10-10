@@ -70,6 +70,45 @@ pub struct UserSettings {
     pub auto_resume_interrupted: bool,
     /// 옛 버전 설정을 가져온 폴더. 있으면 다시 묻지 않는다.
     pub imported_from: Option<PathBuf>,
+    /// 앱 안 글자 크기(디자인 시스템 D28, `data-text-scale`). 모르는 값은 기본으로 읽는다.
+    #[serde(deserialize_with = "lenient_or_default")]
+    pub text_scale: TextScale,
+    /// 모양(디자인 시스템 D7, `data-theme`). 설정 화면은 Linux에서만 보이고 다른 OS에서는 쓰지 않는다.
+    #[serde(deserialize_with = "lenient_or_default")]
+    pub theme: Theme,
+}
+
+/// 앱 안 글자 크기(×1 / ×1.3 / ×2.0, system/foundations.md §3.2). 직렬화 값은 `data-text-scale` 값과 같다
+/// (`default`는 속성 없음).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum TextScale {
+    #[default]
+    Default,
+    Large,
+    XLarge,
+}
+
+/// 모양(system/foundations.md §10). `system`은 OS를 따른다.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Theme {
+    #[default]
+    System,
+    Light,
+    Dark,
+}
+
+/// 최근 영상의 종류(배지와 같은 세 갈래, system/patterns.md §14.1 둘째 줄).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum RecentKind {
+    /// 일반 VOD
+    Vod,
+    /// 빠른 다시보기
+    Rewind,
+    /// 클립
+    Clip,
 }
 
 impl Default for UserSettings {
@@ -85,6 +124,8 @@ impl Default for UserSettings {
             max_parallel_downloads: DEFAULT_PARALLEL_DOWNLOADS,
             auto_resume_interrupted: false,
             imported_from: None,
+            text_scale: TextScale::Default,
+            theme: Theme::System,
         }
     }
 }
@@ -95,6 +136,39 @@ impl Default for UserSettings {
 pub struct RecentVod {
     pub url: String,
     pub title: String,
+    /// 종류. 옛 항목(이 필드 전)·옛 Go 설정에는 없다. 모르는 값은 `None`으로 읽는다.
+    #[serde(
+        deserialize_with = "lenient_option",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub kind: Option<RecentKind>,
+    /// 방송·공개 날짜(치지직 API가 준 문자열 그대로). 없거나 비면 `None`.
+    #[serde(
+        deserialize_with = "empty_str_as_none",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub date: Option<String>,
+}
+
+/// 어떤 JSON 값이든 받고, `T`로 읽지 못하면 기본값(손으로 고친 값 하나로 파일 전체가 깨지지 않게).
+fn lenient_or_default<'de, D, T>(d: D) -> Result<T, D::Error>
+where
+    D: Deserializer<'de>,
+    T: serde::de::DeserializeOwned + Default,
+{
+    let v = Option::<serde_json::Value>::deserialize(d)?;
+    Ok(v.and_then(|v| serde_json::from_value(v).ok())
+        .unwrap_or_default())
+}
+
+/// 어떤 JSON 값이든 받고, `T`로 읽지 못하면 `None`.
+fn lenient_option<'de, D, T>(d: D) -> Result<Option<T>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: serde::de::DeserializeOwned,
+{
+    let v = Option::<serde_json::Value>::deserialize(d)?;
+    Ok(v.and_then(|v| serde_json::from_value(v).ok()))
 }
 
 /// `null`이면 기본값.
@@ -152,6 +226,17 @@ where
 ///
 /// 제목이 50자(char)를 넘으면 47자 + `...`(spec §7.2, 바이트로 잘라 한글이 깨지던 버그 수정).
 pub fn add_recent_vod(s: &mut UserSettings, url: &str, title: &str) {
+    add_recent_vod_with(s, url, title, None, None);
+}
+
+/// `add_recent_vod`에 종류·날짜를 함께 적는다(최근 영상 둘째 줄 "{kind} · {date}").
+pub fn add_recent_vod_with(
+    s: &mut UserSettings,
+    url: &str,
+    title: &str,
+    kind: Option<RecentKind>,
+    date: Option<&str>,
+) {
     let title = if title.chars().count() > RECENT_TITLE_MAX_CHARS {
         let mut t: String = title.chars().take(RECENT_TITLE_KEEP_CHARS).collect();
         t.push_str("...");
@@ -165,6 +250,11 @@ pub fn add_recent_vod(s: &mut UserSettings, url: &str, title: &str) {
         RecentVod {
             url: url.to_string(),
             title,
+            kind,
+            date: date
+                .map(str::trim)
+                .filter(|d| !d.is_empty())
+                .map(str::to_string),
         },
     );
     s.recent_vods.truncate(MAX_RECENT_VODS);

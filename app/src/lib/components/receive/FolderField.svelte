@@ -1,6 +1,9 @@
 <script lang="ts">
+  // 저장 폴더 행(system/patterns.md §6.5): 라벨 fg · 값(경로) muted, 선택·복사 가능 · [변경…].
+  // 긴 경로는 끝을 말줄임한다(title 툴팁 없이: 전체 값은 선택해서 복사한다).
   import { t } from '../../copy/ko';
   import Button from '../ui/Button.svelte';
+  import FieldRow from '../ui/FieldRow.svelte';
 
   interface Props {
     path: string;
@@ -11,30 +14,11 @@
   let { path, onchange, disabled = false }: Props = $props();
 </script>
 
-<div class="path-row">
-  <span class="label" id="folder-label">{t('folder.label')}</span>
-  <span class="value" title={path} aria-labelledby="folder-label">{path}</span>
-  <Button variant="ghost" size="sm" {disabled} onclick={onchange}>{t('folder.change')}</Button>
-</div>
-
-<style>
-  .path-row {
-    display: flex;
-    align-items: center;
-    gap: var(--space-8);
-    min-height: var(--control-h);
-  }
-  .label {
-    flex: none;
-    width: 96px;
-    color: var(--fg-muted);
-  }
-  .value {
-    flex: 1;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    overflow-wrap: normal;
-  }
-</style>
+<FieldRow label={t('folder.label')}>
+  {#snippet control()}
+    <span class="selectable ellipsis">{path}</span>
+  {/snippet}
+  {#snippet actions()}
+    <Button variant="ghost" size="sm" class="edge-end" {disabled} onclick={onchange}>{t('folder.change')}</Button>
+  {/snippet}
+</FieldRow>

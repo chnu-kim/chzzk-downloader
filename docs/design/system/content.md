@@ -512,6 +512,14 @@
 | `update.installing`·(신설) `update.downloading` | 설치하고 다시 시작해요… | **설치하고 다시 시작하는 중** / **업데이트 받는 중 · {percent}** | §3.1-2 |
 | `update.failed` | 업데이트하지 못했어요. 잠시 뒤 다시 시도해 주세요. | **업데이트하지 못했어요** + `update.failed.help` **지금 버전은 계속 쓸 수 있어요.** | §3.2, D57 |
 | `update.untrusted` | 업데이트 주소를 확인할 수 없어 받지 않았어요. | **업데이트 파일을 확인할 수 없어 받지 않았어요** | §6.1 |
+| (신설, 단계 (c)) `platform.mac.paste`·`platform.other.paste` | — | **⌘V** / **Ctrl+V**(`url.pasteHint`의 `{paste}`) | §2 `platform.*`, DC9 |
+| (신설, 단계 (c)) `platform.mac.submit`·`platform.other.submit` | — | **⌘↩** / **Ctrl+Enter**([받기] `kbd`) | DC9 |
+| (신설, 단계 (c)) `platform.mac.reveal`·`platform.other.reveal` | — | **Finder에서 보기** / **폴더에서 보기**(`action.openFolder` 대체, `revealLabel(os)`) | `platform.md` §20 |
+| (신설, 단계 (c)) `action.undo`·`action.showTitle` | — | **되돌리기**(지연 삭제 토스트) / **제목 전체 보기**(작업 행 [⋯] 메뉴) | `patterns.md` §4·§3.2 |
+| (신설, 단계 (c)) `settings.view`·`settings.textScale`·`settings.theme`·`settings.account`·`settings.advanced` | — | **보기** / **글자 크기** / **모양** / **계정** / **고급** | `patterns.md` §14.4 |
+| (신설, 단계 (c)) `settings.textScale.default`·`settings.textScale.large`·`settings.textScale.xLarge` | — | **기본** / **크게** / **아주 크게** | ADR-0019 |
+| (신설, 단계 (c)) `settings.theme.system`·`settings.theme.light`·`settings.theme.dark` | — | **시스템** / **밝게** / **어둡게**(Linux만) | `platform.md` §11 |
+| 지운 키(단계 (c)) | `url.hintExample` `conflict.partial` `list.empty.body` `job.word.*` `job.phase.resolving`·`finalizing` `job.pausedNoBytes` `job.interruptedNoBytes` `job.interrupted` `job.skipped` `job.skippedMeanwhile` `action.openFolder` `auth.offline.badge` `account.lastVerified` `auth.logout` `update.later` `card.close` `card.cancel` `filename.ext` | 새 키로 옮기고 참조가 사라져 지웠다(`design-copy` DC11) | 위 행들 |
 
 ### 15.2 `errors.ts`(코드별 L0, L1)
 

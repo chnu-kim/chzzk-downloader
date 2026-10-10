@@ -192,6 +192,7 @@ pub fn request(name: &str) -> EnqueueRequest {
         file_name: name.into(),
         on_existing: OnExisting::Overwrite,
         restart: false,
+        content_date: None,
     }
 }
 

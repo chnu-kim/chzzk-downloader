@@ -79,7 +79,7 @@
     {#if shownActions.length > 0 || onclose}
       <div class="notice-actions">
         {#each shownActions as a (a.id)}
-          <Button variant="secondary" size="sm" onclick={a.onclick}>{a.label}</Button>
+          <Button variant="secondary" size="sm" loading={a.loading} onclick={a.onclick}>{a.label}</Button>
         {/each}
         {#if onclose}<IconButton icon="x" size="sm" label={t('common.close')} onclick={onclose} />{/if}
       </div>

@@ -25,6 +25,7 @@
     "clipboard_link",
     "open_app_folder",
     "frontend_ready",
+    "open_web_page",
     "auth_login",
     "auth_reopen",
     "auth_copy_login_url",

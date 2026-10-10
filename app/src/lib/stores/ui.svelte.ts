@@ -1,4 +1,6 @@
 // 창 전체의 뷰와 단축키 연결(§10 App·GlobalShortcuts).
+import { modPressed, shortcutText } from '../platform';
+import { platform } from './platform.svelte';
 
 export type View = 'home' | 'settings';
 
@@ -17,6 +19,10 @@ export class UiStore {
   urlTarget: UrlTarget | null = null;
   /** 설정의 쿠키 섹션을 펼쳐 열어 달라는 요청(오류 동작 `openCookieSettings`) */
   openCookieSection = $state(false);
+  /** D4 로그아웃 확인을 띄워 달라는 요청(계정 메뉴·설정 계정 행이 올리고, App의 대화상자 하나가 받는다) */
+  logoutConfirm = $state(false);
+  /** main 창에 포커스가 있는가(Rust `window-focus`). 완료 토스트는 창이 활성이고 홈이 아닐 때만(patterns §1.1-1) */
+  windowFocused = $state(true);
   #escape: EscapeHandler[] = [];
 
   /**
@@ -55,16 +61,17 @@ export class UiStore {
 
 export const ui = new UiStore();
 
-/** macOS는 Cmd, 그 밖은 Ctrl(§10 단축키). */
+/** macOS인가. OS는 Rust가 준다(`AppInfo.platform` → platform store, design-lint DX5) */
 export function isMac(): boolean {
-  return typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+  return platform.isMac;
 }
 
+/** macOS는 Cmd, 그 밖은 Ctrl(§10 단축키). */
 export function modKey(e: KeyboardEvent, mac = isMac()): boolean {
-  return mac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey;
+  return modPressed(e, mac ? 'macos' : 'linux');
 }
 
-/** 버튼 안 단축키 표시: `⌘↩` / `Ctrl+Enter` */
-export function modLabel(key: 'Enter', mac = isMac()): string {
-  return mac ? '⌘↩' : `Ctrl+${key}`;
+/** 버튼 안 단축키 표시: `⌘↩` / `Ctrl+Enter`(copy deck `platform.*.submit`) */
+export function modLabel(_key: 'Enter', mac = isMac()): string {
+  return shortcutText(mac ? 'macos' : 'linux', 'submit');
 }

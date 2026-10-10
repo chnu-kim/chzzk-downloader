@@ -11,7 +11,6 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { oklchToSrgb, toHex } from './contrast.mjs';
-import { LEGACY } from './legacy.mjs';
 
 export const ROOT = join(fileURLToPath(import.meta.url), '..', '..', '..');
 export const HEADER = '/* 생성물. 원천 design/tokens/·design/ui.css, 생성기 scripts/design/tokens.mjs. 손으로 고치지 않는다 */';
@@ -20,7 +19,7 @@ export const OUTPUTS = {
   ui: 'app/src/styles/ui.css',
   worker: 'worker/src/http/site-css.generated.ts',
 };
-export const SECTIONS = ['root', 'dark-media', 'dark-theme', 'theme-scheme', 'window-inactive', 'reading', 'text-scale', 'contrast', 'coarse', 'reduce', 'legacy'];
+export const SECTIONS = ['root', 'dark-media', 'dark-theme', 'theme-scheme', 'window-inactive', 'reading', 'text-scale', 'contrast', 'coarse', 'reduce'];
 
 const UI_SRC = 'design/ui.css';
 const SITE_SRC = 'worker/src/http/site.css';
@@ -377,7 +376,6 @@ function sectionBlocks(model) {
     contrast: block('contrast', '대비 증가. 다크 블록 뒤라 다크에서도 이긴다', media('(prefers-contrast: more)', rule(':root:where(*)', need('contrast', withOverride('contrast'))))),
     coarse: block('coarse', '터치(2-in-1). any-pointer만 본다', media('(any-pointer: coarse)', rule(':root:where(*)', need('coarse', withOverride('coarse'))))),
     reduce: block('reduce', '움직임 줄이기: 이동·크기는 1ms, 눌림 피드백·불투명도는 남긴다', media('(prefers-reduced-motion: reduce)', rule(':root:where(*)', need('reduce', withOverride('reduce'))))),
-    legacy: block('legacy', '단계 (c)에서 제거', rule(':root', LEGACY)),
   };
 }
 
@@ -387,7 +385,7 @@ function readText(root, rel) {
   return `${lf(readFileSync(full, 'utf8')).replace(/\n+$/, '')}\n`;
 }
 
-const APP_SECTIONS = ['root', 'dark-media', 'dark-theme', 'theme-scheme', 'window-inactive', 'text-scale', 'contrast', 'coarse', 'reduce', 'legacy'];
+const APP_SECTIONS = ['root', 'dark-media', 'dark-theme', 'theme-scheme', 'window-inactive', 'text-scale', 'contrast', 'coarse', 'reduce'];
 const WORKER_SECTIONS = ['root', 'dark-media', 'dark-theme', 'theme-scheme', 'window-inactive', 'reading', 'contrast', 'coarse', 'reduce'];
 
 export function generate(root) {

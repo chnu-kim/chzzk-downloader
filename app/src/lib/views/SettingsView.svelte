@@ -1,22 +1,28 @@
 <script lang="ts">
-  // 설정(S2, §8.7, patterns.md §14.4): 저장 · 다운로드 · 고급(네이버 로그인 정보) · 이전 버전 · 정보.
+  // 설정(patterns.md §14.4): 저장 위치 · 받기 · 보기 · 계정 · 고급 · 이전 버전 · 정보.
+  // 열(폭·좌우 여백)은 App의 PageContainer가 소유한다. 이 뷰는 구역을 세로로 쌓기만 한다.
   // 즉시 저장 방식이다. 컨트롤은 저장된 값(`settings.dto`)을 읽기만 하고 바꾸면 패치를 보낸다. 저장이 실패하면
   // `settings.revision`이 올라 `{#key}`가 컨트롤을 저장된 값으로 되돌린다.
   import * as api from '../api';
-  import type { AppError, AppFolder, SettingsPatch } from '../bindings';
+  import type { AppError, SettingsPatch } from '../bindings';
+  import AboutSection from '../components/settings/AboutSection.svelte';
+  import AccountSection from '../components/settings/AccountSection.svelte';
   import CookieSection from '../components/settings/CookieSection.svelte';
   import LegacySection from '../components/settings/LegacySection.svelte';
+  import SettingsSection from '../components/settings/SettingsSection.svelte';
+  import ViewSection from '../components/settings/ViewSection.svelte';
   import Button from '../components/ui/Button.svelte';
-  import { ICON_SET_VERSION } from '../components/ui/icons';
   import Notice from '../components/ui/Notice.svelte';
   import Select from '../components/ui/Select.svelte';
+  import SettingsRow from '../components/ui/SettingsRow.svelte';
+  import Skeleton from '../components/ui/Skeleton.svelte';
   import Switch from '../components/ui/Switch.svelte';
   import { errorCopy } from '../copy/errors';
   import { t } from '../copy/ko';
-  import { copyAppReport } from '../report';
-  import { auth } from '../stores/auth.svelte';
+  import { revealLabel } from '../platform';
+  import { platform } from '../stores/platform.svelte';
   import { settings } from '../stores/settings.svelte';
-  import { update } from '../stores/update.svelte';
+  import { useDelayedLoading } from '../useDelayedLoading.svelte';
 
   const PARALLEL = [1, 2, 3].map((n) => ({ value: n, label: String(n) }));
   const SEGMENTS = [1, 2, 3, 4, 5, 6, 7, 8].map((n) => ({ value: n, label: String(n) }));
@@ -26,28 +32,8 @@
   const errCopy = $derived(error && error.code !== 'settings' ? errorCopy(error, { place: 'other' }) : null);
 
   const dto = $derived(settings.dto);
-  const info = $derived(settings.info);
-
-  /** [업데이트 확인] 결과 한 줄 */
-  const checkText = $derived.by(() => {
-    switch (update.check) {
-      case 'checking':
-        return t('settings.about.checking');
-      case 'upToDate':
-        return t('settings.about.upToDate');
-      case 'failed':
-        return t('settings.about.checkFailed');
-      case 'offline':
-        return t('settings.about.checkOffline');
-      case 'untrusted':
-        return t('update.untrusted');
-      case 'available':
-        // 설치 결과 등으로 available이 비었으면 줄을 숨긴다(빈 버전을 보이지 않게)
-        return update.available ? t('update.banner', { version: update.available.version }) : '';
-      default:
-        return '';
-    }
-  });
+  // 설정을 아직 못 읽었으면 값 자리는 가짜 기본값이 아니라 Skeleton이다(지연 표시)
+  const loading = useDelayedLoading(() => !settings.dto);
 
   async function save(p: SettingsPatch) {
     error = await settings.patch(p);
@@ -62,227 +48,124 @@
     }
   }
 
-  async function openFolder(kind: AppFolder) {
+  async function revealDownloads() {
     try {
-      await api.openAppFolder(kind);
+      await api.openAppFolder('downloads');
     } catch (e) {
       error = e as AppError;
     }
   }
 </script>
 
+{#snippet pending()}
+  {#if loading.visible}<span class="pending"><Skeleton variant="control" /></span>{/if}
+{/snippet}
+
 <div class="settings">
   {#if errCopy}
-    <div class="settings-alert">
-      <Notice tone="danger" title={errCopy.title}>
-        {#if errCopy.body}<p class="line">{errCopy.body}</p>{/if}
-        {#if errCopy.detail}<p class="line detail">{errCopy.detail}</p>{/if}
-      </Notice>
-    </div>
+    <Notice tone="danger" title={errCopy.title}>
+      {#if errCopy.body}<p class="line">{errCopy.body}</p>{/if}
+      {#if errCopy.detail}<p class="line detail">{errCopy.detail}</p>{/if}
+    </Notice>
   {/if}
 
-  <section aria-labelledby="s-storage">
-    <h2 id="s-storage" class="section-title">{t('settings.storage')}</h2>
-    <div class="group">
-      <div class="srow">
-        <span class="label" id="l-folder">{t('settings.defaultFolder')}</span>
-        <span class="value" title={dto?.effectiveDownloadFolder}>{dto?.effectiveDownloadFolder ?? ''}</span>
-        <span class="buttons">
-          <Button variant="ghost" size="sm" aria-describedby="l-folder" onclick={changeFolder}>{t('folder.change')}</Button>
-          <Button variant="ghost" size="sm" aria-describedby="l-folder" onclick={() => openFolder('downloads')}>
-            {t('action.openFolder')}
-          </Button>
-        </span>
-      </div>
-    </div>
-  </section>
+  <SettingsSection title={t('settings.storage')}>
+    <SettingsRow label={t('settings.defaultFolder')}>
+      {#snippet control({ labelId })}
+        {#if dto}
+          <span class="path selectable ellipsis">{dto.effectiveDownloadFolder}</span>
+        {:else}
+          {@render pending()}
+        {/if}
+        <Button variant="ghost" size="sm" disabled={!dto} aria-describedby={labelId} onclick={changeFolder}>
+          {t('folder.change')}
+        </Button>
+        <Button variant="ghost" size="sm" class="edge-end" disabled={!dto} aria-describedby={labelId} onclick={revealDownloads}>
+          {revealLabel(platform.os)}
+        </Button>
+      {/snippet}
+    </SettingsRow>
+  </SettingsSection>
 
-  <section aria-labelledby="s-download">
-    <h2 id="s-download" class="section-title">{t('settings.download')}</h2>
+  <SettingsSection title={t('settings.download')}>
     {#key settings.revision}
-      <div class="group">
-        <div class="srow stacked">
-          <div class="srow-main">
-            <span class="label" id="l-parallel">{t('settings.parallel')}</span>
+      <SettingsRow label={t('settings.parallel')} help={t('settings.parallel.help')}>
+        {#snippet control({ labelId, helpId })}
+          {#if dto}
             <Select
-              value={dto?.maxParallelDownloads ?? 2}
+              value={dto.maxParallelDownloads}
               options={PARALLEL}
-              labelledby="l-parallel"
-              disabled={!dto}
+              labelledby={labelId}
+              aria-describedby={helpId}
               onchange={(n) => save({ maxParallelDownloads: n })}
             />
-          </div>
-          <p class="help">{t('settings.parallel.help')}</p>
-        </div>
-        <div class="srow stacked">
-          <div class="srow-main">
-            <span class="label" id="l-segments">{t('settings.segments')}</span>
+          {:else}
+            {@render pending()}
+          {/if}
+        {/snippet}
+      </SettingsRow>
+      <SettingsRow label={t('settings.segments')} help={t('settings.segments.help')}>
+        {#snippet control({ labelId, helpId })}
+          {#if dto}
             <Select
-              value={dto?.segmentConcurrency ?? 4}
+              value={dto.segmentConcurrency}
               options={SEGMENTS}
-              labelledby="l-segments"
-              disabled={!dto}
+              labelledby={labelId}
+              aria-describedby={helpId}
               onchange={(n) => save({ segmentConcurrency: n })}
             />
-          </div>
-          <p class="help">{t('settings.segments.help')}</p>
-        </div>
-        <div class="srow stacked">
-          <div class="srow-main">
-            <span class="label" id="l-autoresume">{t('settings.autoResume')}</span>
+          {:else}
+            {@render pending()}
+          {/if}
+        {/snippet}
+      </SettingsRow>
+      <SettingsRow label={t('settings.autoResume')} help={t('settings.autoResume.help')}>
+        {#snippet control({ labelId, helpId })}
+          {#if dto}
             <Switch
-              value={dto?.autoResumeInterrupted ?? false}
-              labelledby="l-autoresume"
-              disabled={!dto}
+              value={dto.autoResumeInterrupted}
+              labelledby={labelId}
+              aria-describedby={helpId}
               onchange={(on) => save({ autoResumeInterrupted: on })}
             />
-          </div>
-          <p class="help">{t('settings.autoResume.help')}</p>
-        </div>
-      </div>
+          {:else}
+            {@render pending()}
+          {/if}
+        {/snippet}
+      </SettingsRow>
     {/key}
-  </section>
+  </SettingsSection>
+
+  <ViewSection {save} />
+
+  <AccountSection />
 
   <CookieSection />
 
   <LegacySection />
 
-  <section aria-labelledby="s-about">
-    <h2 id="s-about" class="section-title">{t('settings.about.title')}</h2>
-    <div class="group">
-      <div class="srow stacked">
-        <p class="version num">
-          {info ? t('settings.about.version', { app: info.version, core: info.coreVersion }) : ''}
-        </p>
-        <p class="links">
-          <Button variant="ghost" size="sm" onclick={() => openFolder('config')}>{t('settings.about.openConfig')}</Button>
-          <span class="sep" aria-hidden="true">·</span>
-          <Button variant="ghost" size="sm" onclick={() => openFolder('logs')}>{t('settings.about.openLogs')}</Button>
-          <span class="sep" aria-hidden="true">·</span>
-          <Button variant="ghost" size="sm" onclick={() => void copyAppReport(info)}>{t('action.copyReport')}</Button>
-          {#if auth.signedIn}
-            <span class="sep" aria-hidden="true">·</span>
-            <Button variant="ghost" size="sm" disabled={update.check === 'checking'} onclick={() => void update.checkNow()}>
-              {t('settings.about.checkUpdate')}
-            </Button>
-          {/if}
-        </p>
-        {#if auth.signedIn && checkText}
-          <p class="help" role="status">{checkText}</p>
-        {/if}
-      </div>
-      <div class="srow">
-        <span class="label" id="l-licenses">{t('settings.about.licenses')}</span>
-        <span class="value num">{`Lucide ${ICON_SET_VERSION} (ISC)`}</span>
-      </div>
-    </div>
-  </section>
+  <AboutSection onerror={(e) => (error = e)} />
 </div>
 
 <style>
   .settings {
-    width: 100%;
-    max-width: 640px;
-    margin: 0 auto;
-    padding: 0 var(--gutter) var(--gutter);
-  }
-  @media (min-width: 840px) {
-    .settings {
-      padding-inline: var(--gutter-wide);
-    }
-  }
-  .settings > .settings-alert {
-    margin-top: var(--space-16);
-  }
-  /* 섹션 제목은 선이 아니라 위 여백으로 구분한다(foundations.md §4) */
-  .settings :global(.section-title) {
-    margin: var(--space-24) 0 var(--space-8);
-    font-size: var(--text-md);
-    font-weight: var(--weight-semibold);
-  }
-  .settings :global(.group) {
-    border: 1px solid var(--border);
-    border-radius: var(--radius-md);
-    background: var(--surface);
-  }
-  .settings :global(.srow) {
     display: flex;
-    align-items: center;
-    gap: var(--space-12);
-    min-height: 48px;
-    padding: var(--space-8) var(--space-16);
-  }
-  .settings :global(.srow + .srow) {
-    border-top: 1px solid var(--border);
-  }
-  .settings :global(.srow.stacked) {
     flex-direction: column;
-    align-items: stretch;
-    gap: var(--space-4);
-    padding-block: var(--space-12);
+    gap: var(--space-24);
   }
-  .settings :global(.srow-main) {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-12);
+  .pending {
+    width: var(--label-w);
   }
-  /* 버튼 안 글자(.btn > .label)는 빼야 한다: 그러지 않으면 강조 버튼의 흰 글자가 본문색이 된다(e2e-web axe, 대비 2.77) */
-  .settings :global(.label:not(.btn > .label)) {
-    flex: none;
-    font-size: var(--text-md);
-    color: var(--fg);
-  }
-  .settings :global(.help) {
-    margin: 0;
-    font-size: var(--text-sm);
-    line-height: var(--leading-body, 1.65);
+  .path {
     color: var(--fg-muted);
-  }
-  .value {
-    flex: 1;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    color: var(--fg-muted);
-  }
-  .buttons {
-    display: flex;
-    flex: none;
-  }
-  .version {
-    margin: 0;
-    font-size: var(--text-md);
-  }
-  .links {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    margin: 0 0 0 -6px;
-  }
-  .sep {
-    color: var(--fg-faint);
   }
   .line {
     margin: 0;
-    font-size: var(--text-sm);
+    font-size: var(--text-caption);
+    line-height: var(--leading-caption);
   }
   .detail {
     color: var(--fg-muted);
     overflow-wrap: anywhere;
-  }
-  /* 720~839: 값이 라벨 아래로(patterns.md §15) */
-  @media (max-width: 839px) {
-    .srow:has(.value) {
-      flex-wrap: wrap;
-    }
-    .value {
-      order: 3;
-      flex-basis: 100%;
-    }
-    .buttons {
-      margin-left: auto;
-    }
   }
 </style>

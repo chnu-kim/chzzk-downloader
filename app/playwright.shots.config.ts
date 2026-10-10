@@ -39,6 +39,8 @@ const projects = ([1, 2] as const).flatMap((n) =>
 export default defineConfig({
   testDir: 'e2e',
   testMatch: 'shots.spec.ts',
+  // 화면 스냅샷(실제 앱 + 가짜 백엔드)이 쓰는 가짜 백엔드 묶음을 만든다(e2e/global-setup.ts, playwright.config.ts와 같다)
+  globalSetup: './e2e/global-setup.ts',
   outputDir: `${OUT}/results`,
   snapshotPathTemplate: '{testDir}/__shots__/{projectName}/{arg}{ext}',
   updateSnapshots: process.env.CI === 'true' ? 'missing' : 'none',

@@ -30,6 +30,7 @@
     "allow-clipboard-link",
     "allow-open-app-folder",
     "allow-frontend-ready",
+    "allow-open-web-page",
     "allow-auth-login",
     "allow-auth-reopen",
     "allow-auth-copy-login-url",

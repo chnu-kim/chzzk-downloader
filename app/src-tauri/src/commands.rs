@@ -11,7 +11,7 @@ use chzzk_shell::app::{Reveal, chzzk_link};
 use chzzk_shell::dto::{
     AppFolder, AppInfo, AuthStatusDto, EnqueueRequest, JobDto, JobEvent, LegacyImportDto,
     OutputCheck, ResolvedDto, SettingsDto, SettingsPatch, UpdateCheckDto, UpdateInfoDto,
-    UpdateInstallDto,
+    UpdateInstallDto, WebPage,
 };
 use chzzk_shell::manager::QUIT_TIMEOUT;
 use chzzk_shell::{App, AppError, JobId};
@@ -227,6 +227,21 @@ pub async fn open_app_folder<R: Runtime>(
     app.opener()
         .open_path(dir.to_string_lossy(), None::<&str>)
         .map_err(|e| internal("폴더 열기", e))
+}
+
+/// 로그인 서버의 고정 페이지(개인정보 처리방침·라이선스)를 기본 브라우저로 연다. 로그인 전에도 부를 수 있다(gate 허용 목록)
+#[tauri::command]
+pub async fn open_web_page(
+    state: State<'_, App>,
+    io: State<'_, AuthIoState>,
+    page: WebPage,
+) -> Res<()> {
+    let url = state.web_page_url(page)?;
+    if io.0.open_url(&url) {
+        Ok(())
+    } else {
+        Err(AppError::internal("브라우저를 열지 못했습니다"))
+    }
 }
 
 #[tauri::command]

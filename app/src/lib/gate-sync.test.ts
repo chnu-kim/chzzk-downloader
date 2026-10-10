@@ -16,7 +16,7 @@ describe('AuthGate 허용 목록', () => {
   it('Rust OPEN_COMMANDS와 가짜 백엔드 OPEN_COMMANDS가 같다', () => {
     const rust = listIn(read('../../../crates/shell/src/gate.rs'), /pub const OPEN_COMMANDS: &\[&str\] = &\[/);
     const mock = listIn(read('../../e2e/mock/backend.ts'), /export const OPEN_COMMANDS = \[/);
-    expect(rust).toHaveLength(12);
+    expect(rust).toHaveLength(13);
     expect(mock).toEqual(rust);
   });
 });

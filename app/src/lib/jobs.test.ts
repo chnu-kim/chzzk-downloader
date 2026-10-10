@@ -1,116 +1,125 @@
 import { describe, expect, it } from 'vitest';
 import type { JobDto, JobStatus } from './bindings';
 import { t } from './copy/ko';
+import { COMPLETED_FOLD_AT } from './timing';
 import { ICONS } from './components/ui/icons';
 import { err, hlsProg, job, prog, signedInAs } from '../test/jobFixtures';
 import {
-  CANCEL_CONFIRM_BYTES,
+  FOLD_PREVIEW_COUNT,
   RESUMED_NOTE_MS,
   barView,
   blockCopyKey,
+  bodyKey,
+  cancelLabel,
   deleteAction,
+  displayPercent,
   jobActionIcon,
+  jobActionLabel,
   enterAction,
   groupJobs,
+  isClearable,
   jobBlock,
   jobButtons,
   needsCancelConfirm,
   nextQueueOrder,
+  outputFileName,
   queueAhead,
   receivedBytes,
+  removeRoute,
   resumableInterrupted,
+  shownJobs,
   spaceAction,
+  statusLine,
   statusParts,
+  statusWord,
   transitionAnnouncement,
   visibleOrder,
 } from './jobs';
 
 function line(j: JobDto, p = j.progress, ctx = {}): string {
-  return statusParts(j, p, ctx)
-    .map((x, i) => (i > 0 && !x.faint ? ' · ' : x.faint ? ' ' : '') + x.text)
-    .join('');
+  return statusLine(statusParts(j, p, ctx));
 }
 
 describe('jobButtons: 상태별 버튼 표(patterns.md §2·§14.3)', () => {
   const MiB = 1024 * 1024;
   const table: [string, JobDto, { primary: string[]; cancel: boolean; menu: string[] }][] = [
-    ['대기', job(1), { primary: [], cancel: true, menu: ['copyUrl'] }],
+    ['대기', job(1), { primary: [], cancel: true, menu: ['showTitle', 'copyUrl'] }],
     [
       '준비 중(진행률 없음)',
       job(1, { status: 'running' }),
-      { primary: [], cancel: true, menu: ['copyUrl'] },
+      { primary: [], cancel: true, menu: ['showTitle', 'copyUrl'] },
     ],
     [
       '준비 중(resolving)',
       job(1, { status: 'running', progress: prog({ phase: 'resolving' }) }),
-      { primary: [], cancel: true, menu: ['copyUrl'] },
+      { primary: [], cancel: true, menu: ['showTitle', 'copyUrl'] },
     ],
     [
       '받는 중',
       job(1, { status: 'running', progress: prog() }),
-      { primary: ['pause'], cancel: true, menu: ['copyUrl'] },
+      { primary: ['pause'], cancel: true, menu: ['showTitle', 'copyUrl'] },
     ],
     [
       '링크 갱신',
       job(1, { status: 'running', progress: prog({ phase: 'reresolving' }) }),
-      { primary: ['pause'], cancel: true, menu: ['copyUrl'] },
+      { primary: ['pause'], cancel: true, menu: ['showTitle', 'copyUrl'] },
     ],
     [
       '마무리 중',
       job(1, { status: 'running', progress: prog({ phase: 'finalizing' }) }),
-      { primary: [], cancel: false, menu: ['copyUrl'] },
+      { primary: [], cancel: false, menu: ['showTitle', 'copyUrl'] },
     ],
-    ['멈추는 중', job(1, { status: 'pausing', progress: prog() }), { primary: [], cancel: false, menu: ['copyUrl'] }],
+    ['멈추는 중', job(1, { status: 'pausing', progress: prog() }), { primary: [], cancel: false, menu: ['showTitle', 'copyUrl'] }],
     [
       '일시정지(.part 있음)',
       job(1, { status: 'paused', partialBytes: 5 * MiB }),
-      { primary: ['resume'], cancel: true, menu: ['copyUrl', 'restartFresh'] },
+      { primary: ['resume'], cancel: true, menu: ['showTitle', 'copyUrl', 'restartFresh'] },
     ],
-    ['일시정지(.part 없음)', job(1, { status: 'paused' }), { primary: ['resume'], cancel: true, menu: ['copyUrl'] }],
+    ['일시정지(.part 없음)', job(1, { status: 'paused' }), { primary: ['resume'], cancel: true, menu: ['showTitle', 'copyUrl'] }],
     [
       '중단',
       job(1, { status: 'interrupted', partialBytes: 5 * MiB }),
-      { primary: ['resume'], cancel: true, menu: ['copyUrl', 'restartFresh'] },
+      { primary: ['resume'], cancel: true, menu: ['showTitle', 'copyUrl', 'restartFresh'] },
     ],
     [
       '실패: 디스크 부족(.part 있음)',
       job(1, { status: 'failed', partialBytes: 5 * MiB, error: err('diskFull', { payload: { type: 'path', path: '/v' } }) }),
-      { primary: ['resume', 'openFolder'], cancel: false, menu: ['copyUrl', 'restartFresh', 'copyReport', 'remove'] },
+      { primary: ['resume', 'openFolder'], cancel: false, menu: ['showTitle', 'copyUrl', 'restartFresh', 'copyReport', 'remove'] },
     ],
     [
       '실패: 원본 바뀜(.part 없음)',
       job(1, { status: 'failed', error: err('sourceChanged') }),
-      { primary: ['restartFresh'], cancel: false, menu: ['copyUrl', 'copyReport', 'remove'] },
+      { primary: ['restartFresh'], cancel: false, menu: ['showTitle', 'copyUrl', 'copyReport', 'remove'] },
     ],
     [
       '실패: 네트워크(.part 없음) → 다시 시도',
       job(1, { status: 'failed', error: err('network', { resumable: true }) }),
-      { primary: ['retry'], cancel: false, menu: ['copyUrl', 'copyReport', 'remove'] },
+      { primary: ['retry'], cancel: false, menu: ['showTitle', 'copyUrl', 'copyReport', 'remove'] },
     ],
     [
       '실패: 화질 없음 → 다시 불러오기',
       job(1, { status: 'failed', error: err('qualityNotFound') }),
-      { primary: ['reresolve', 'remove'], cancel: false, menu: ['copyUrl', 'copyReport'] },
+      { primary: ['reresolve', 'remove'], cancel: false, menu: ['showTitle', 'copyUrl', 'copyReport'] },
     ],
     [
       '실패: 지원하지 않음 → 보고 복사가 기본',
       job(1, { status: 'failed', error: err('unsupported') }),
-      { primary: ['copyReport', 'remove'], cancel: false, menu: ['copyUrl'] },
+      { primary: ['copyReport', 'remove'], cancel: false, menu: ['showTitle', 'copyUrl'] },
     ],
     [
       '완료',
       job(1, { status: 'completed', finalBytes: 10 }),
-      { primary: ['openFile', 'openFolder'], cancel: false, menu: ['copyUrl', 'remove'] },
+      { primary: ['openFile', 'openFolder'], cancel: false, menu: ['showTitle', 'copyUrl', 'remove'] },
     ],
     [
       '완료(파일 없음)',
       job(1, { status: 'completed', missing: true }),
-      { primary: ['openFolder'], cancel: false, menu: ['copyUrl', 'remove'] },
+      { primary: ['openFolder'], cancel: false, menu: ['showTitle', 'copyUrl', 'remove'] },
     ],
     [
       '건너뜀',
       job(1, { status: 'skipped' }),
-      { primary: ['openFile', 'overwrite'], cancel: false, menu: ['copyUrl', 'remove'] },
+      { primary: ['openFile', 'overwrite'], cancel: false, menu: ['showTitle', 'copyUrl', 'remove'] },
     ],
   ];
   it.each(table)('%s', (_, j, want) => {
@@ -170,16 +179,15 @@ describe('대기 순서', () => {
   });
 });
 
-describe('상태 줄(§8.11)', () => {
+describe('상태 줄(§3.2): 명사형 조각', () => {
   it('progressive 받는 중', () => {
     const j = job(1, { status: 'running', progress: prog() });
     expect(line(j)).toBe('받는 중 · 2.3 GB / 4.0 GB · 12.4 MB/s · 2분 18초 남음');
   });
 
-  it('HLS 받는 중: 예상 총량과 조각(좁은 폭에서 숨김 표시)', () => {
+  it('HLS 받는 중: 예상 총량과 조각이 같은 줄의 조각이다(폭 쿼리로 숨기지 않는다)', () => {
     const j = job(1, { status: 'running', playbackKind: 'liveRewindHls', progress: hlsProg() });
     expect(line(j)).toBe('받는 중 · 1.2 GB / 약 5.1 GB · 조각 1,210/5,580 · 8.1 MB/s · 14분 남음');
-    expect(statusParts(j, j.progress).find((p) => p.text.startsWith('조각'))?.wideOnly).toBe(true);
   });
 
   it('남은 시간을 모르면 계산 중, 속도가 없으면 뺀다', () => {
@@ -187,48 +195,258 @@ describe('상태 줄(§8.11)', () => {
     expect(line(j)).toBe('받는 중 · 2.3 GB / 4.0 GB · 남은 시간 계산 중');
   });
 
-  it('이어받음은 처음 10초만', () => {
+  it('이어받음은 맨 끝 조각으로 처음 10초만', () => {
     const p = prog({ resumedFrom: 1_181_116_006 });
     const j = job(1, { status: 'running', progress: p });
     expect(line(j, p, { runStartedAt: 1000, now: 1000 + RESUMED_NOTE_MS - 1 })).toBe(
-      '받는 중 · 2.3 GB / 4.0 GB (1.1 GB부터 이어받음) · 12.4 MB/s · 2분 18초 남음',
+      '받는 중 · 2.3 GB / 4.0 GB · 12.4 MB/s · 2분 18초 남음 · 1.1 GB부터 이어받음',
     );
     expect(line(j, p, { runStartedAt: 1000, now: 1000 + RESUMED_NOTE_MS })).not.toContain('이어받음');
   });
 
-  it('단계별 문구', () => {
-    expect(line(job(1, { status: 'running' }))).toBe('준비 중');
+  it('단계별 조각은 job.status.* 키에서 온다', () => {
+    expect(line(job(1, { status: 'running' }))).toBe(t('job.status.resolving'));
     expect(line(job(1, { status: 'running', progress: prog({ phase: 'reresolving' }) }))).toBe(
-      '영상 링크를 새로 받는 중이에요 · 2.3 GB / 4.0 GB',
+      `${t('job.phase.reresolving')} · 2.3 GB / 4.0 GB`,
     );
-    expect(line(job(1, { status: 'running', progress: prog({ phase: 'finalizing' }) }))).toBe('마무리 중');
-    expect(line(job(1, { status: 'pausing' }))).toBe('멈추는 중…');
+    expect(line(job(1, { status: 'running', progress: prog({ phase: 'finalizing' }) }))).toBe(t('job.status.finalizing'));
+    expect(line(job(1, { status: 'pausing' }))).toBe(t('job.pausing'));
   });
 
-  it('대기·멈춤·완료·건너뜀', () => {
-    expect(line(job(1), null, { ahead: 2 })).toBe('대기 중 · 앞에 2개');
-    expect(line(job(1), null, { ahead: 0 })).toBe('대기 중 · 곧 시작해요');
-    expect(line(job(1, { status: 'paused', partialBytes: 1_717_986_918 }))).toBe('일시정지됨 · 1.6 GB 받음');
-    expect(line(job(1, { status: 'interrupted', partialBytes: 1_717_986_918 }))).toBe('중단됨 · 1.6 GB 받음');
-    expect(line(job(1, { status: 'paused' }))).toBe('일시정지됨');
-    expect(line(job(1, { status: 'interrupted' }))).toBe('중단됨');
+  it('대기·멈춤·완료·건너뜀: 상태 줄에는 조각만, 사건 설명은 본문 키', () => {
+    expect(line(job(1), null, { ahead: 2 })).toBe(t('job.queued', { n: 2 }));
+    expect(line(job(1), null, { ahead: 0 })).toBe(t('job.queuedNext'));
+    // 중단(interrupted)도 일시정지와 같은 어휘다
+    for (const status of ['paused', 'interrupted'] as const) {
+      expect(line(job(1, { status, partialBytes: 1_717_986_918 }))).toBe(t('job.paused', { bytes: '1.6 GB' }));
+      expect(line(job(1, { status }))).toBe(t('job.status.paused'));
+    }
     expect(
       line(job(1, { status: 'completed', finalBytes: 4_294_967_296, finishedAt: 1_759_668_060 }), null, {
         timeZone: 'Asia/Seoul',
       }),
-    ).toBe('완료 · 4.0 GB · 오후 9:41');
-    expect(line(job(1, { status: 'completed', missing: true }))).toBe('완료 · 파일을 찾을 수 없어요');
-    expect(line(job(1, { status: 'skipped' }))).toBe('이미 같은 이름의 파일이 있어 받지 않았어요');
-    // 받는 동안 같은 이름의 파일이 생겨 덮어쓰지 않았다(받은 .part가 남음)
-    expect(line(job(1, { status: 'skipped', partialBytes: 1024 }))).toBe('받는 동안 같은 이름의 파일이 생겨 저장하지 않았어요');
+    ).toBe(t('job.completed', { size: '4.0 GB', time: '오후 9:41' }));
+    // 완료 시각이 없으면 끝에 ` · `가 남지 않는다(.replace 없이 전용 키)
+    const noTime = line(job(1, { status: 'completed', finalBytes: 4_294_967_296 }));
+    expect(noTime).toBe(t('job.completedNoTime', { size: '4.0 GB' }));
+    expect(noTime).not.toMatch(/ · $/);
+    expect(line(job(1, { status: 'completed', missing: true }))).toBe(t('job.completedMissing'));
+    expect(line(job(1, { status: 'skipped' }))).toBe(t('job.status.skipped'));
+    expect(line(job(1, { status: 'skipped', partialBytes: 1024 }))).toBe(t('job.status.skipped'));
     expect(statusParts(job(1, { status: 'failed', error: err('network') }), null)).toEqual([]);
+  });
+
+  it('본문 줄 키: 파일 없음·건너뜀(시작 전/받는 동안)에만 있다', () => {
+    expect(bodyKey(job(1, { status: 'completed', missing: true }))).toBe('job.completedMissing.body');
+    expect(bodyKey(job(1, { status: 'completed' }))).toBeNull();
+    expect(bodyKey(job(1, { status: 'skipped' }))).toBe('job.skipped.body');
+    expect(bodyKey(job(1, { status: 'skipped', partialBytes: 1 }))).toBe('job.skippedMeanwhile.body');
+    for (const status of ['queued', 'running', 'paused', 'interrupted', 'failed'] as const) {
+      expect(bodyKey(job(1, { status }))).toBeNull();
+    }
+  });
+
+  it('statusWord(읽어 주기): 새 job.status.* 어휘', () => {
+    expect(statusWord(job(1, { status: 'queued' }), null)).toBe(t('job.status.queued'));
+    expect(statusWord(job(1, { status: 'interrupted' }), null)).toBe(t('job.status.paused'));
+    expect(statusWord(job(1, { status: 'skipped' }), null)).toBe(t('job.status.skipped'));
+    expect(statusWord(job(1, { status: 'completed' }), null)).toBe(t('job.status.completed'));
+    expect(statusWord(job(1, { status: 'running' }), null)).toBe(t('job.status.resolving'));
+    expect(statusWord(job(1, { status: 'running' }), prog({ phase: 'finalizing' }))).toBe(t('job.status.finalizing'));
+  });
+});
+
+describe('작업 행 진행 영역 표(patterns.md §3.2): 상태마다 막대·퍼센트·조각·본문·버튼', () => {
+  const MiB = 1024 * 1024;
+  type Row = {
+    name: string;
+    job: JobDto;
+    bar: null | { state: 'accent' | 'muted' | 'danger'; value: number | null; percent: string | null };
+    line: string;
+    body: string | null;
+    primary: string[];
+    cancel: ReturnType<typeof cancelLabel>['label'] | null;
+  };
+  const rows: Row[] = [
+    {
+      name: '받는 중(일반 VOD·클립)',
+      job: job(1, { status: 'running', progress: prog() }),
+      bar: { state: 'accent', value: 57, percent: '57%' },
+      line: '받는 중 · 2.3 GB / 4.0 GB · 12.4 MB/s · 2분 18초 남음',
+      body: null,
+      primary: ['pause'],
+      cancel: t('action.cancel'),
+    },
+    {
+      name: '받는 중(빠른 다시보기)',
+      job: job(1, { status: 'running', playbackKind: 'liveRewindHls', progress: hlsProg() }),
+      bar: { state: 'accent', value: 21, percent: '21%' },
+      line: '받는 중 · 1.2 GB / 약 5.1 GB · 조각 1,210/5,580 · 8.1 MB/s · 14분 남음',
+      body: null,
+      primary: ['pause'],
+      cancel: t('action.cancel'),
+    },
+    {
+      name: '준비 중: value null, 퍼센트 칸 비움, 취소는 즉시',
+      job: job(1, { status: 'running', progress: prog({ phase: 'resolving', bytes: 0 }) }),
+      bar: { state: 'accent', value: null, percent: null },
+      line: t('job.status.resolving'),
+      body: null,
+      primary: [],
+      cancel: t('action.cancelQueued'),
+    },
+    {
+      name: '주소 재취득: 줄무늬(waiting), 퍼센트 유지',
+      job: job(1, { status: 'running', progress: prog({ phase: 'reresolving' }) }),
+      bar: { state: 'accent', value: 57, percent: '57%' },
+      line: `${t('job.phase.reresolving')} · 2.3 GB / 4.0 GB`,
+      body: null,
+      primary: ['pause'],
+      cancel: t('action.cancel'),
+    },
+    {
+      name: '마무리 중: 마지막 값, 100%를 보이지 않는다, 동작 없음',
+      job: job(1, { status: 'running', progress: prog({ phase: 'finalizing', bytes: 4_294_967_296 }) }),
+      bar: { state: 'accent', value: 99, percent: '99%' },
+      line: t('job.status.finalizing'),
+      body: null,
+      primary: [],
+      cancel: null,
+    },
+    {
+      name: '대기: 막대 없음, 취소는 즉시',
+      job: job(1),
+      bar: null,
+      line: t('job.queuedNext'),
+      body: null,
+      primary: [],
+      cancel: t('action.cancelQueued'),
+    },
+    {
+      name: '일시정지하는 중: 마지막 값 유지, 동작 없음',
+      job: job(1, { status: 'pausing', progress: prog() }),
+      bar: { state: 'muted', value: 57, percent: '57%' },
+      line: t('job.pausing'),
+      body: null,
+      primary: [],
+      cancel: null,
+    },
+    {
+      name: '일시정지(.part 있음)',
+      job: job(1, { status: 'paused', partialBytes: 5 * MiB, progress: prog({ bytes: 5 * MiB }) }),
+      bar: { state: 'muted', value: 0, percent: '0%' },
+      line: t('job.paused', { bytes: '5.0 MB' }),
+      body: null,
+      primary: ['resume'],
+      cancel: t('action.cancel'),
+    },
+    {
+      name: '중단(앱 종료)도 일시정지 어휘',
+      job: job(1, { status: 'interrupted', partialBytes: 5 * MiB, progress: prog() }),
+      bar: { state: 'muted', value: 57, percent: '57%' },
+      line: t('job.paused', { bytes: '5.0 MB' }),
+      body: null,
+      primary: ['resume'],
+      cancel: t('action.cancel'),
+    },
+    {
+      name: '실패(이어받기 가능): 빨간 막대 + 퍼센트 유지',
+      job: job(1, {
+        status: 'failed',
+        partialBytes: 5 * MiB,
+        progress: prog(),
+        error: err('diskFull', { payload: { type: 'path', path: '/v' } }),
+      }),
+      bar: { state: 'danger', value: 57, percent: '57%' },
+      line: '',
+      body: null,
+      primary: ['resume', 'openFolder'],
+      cancel: null,
+    },
+    {
+      name: '실패(.part 없음): 막대 없음',
+      job: job(1, { status: 'failed', error: err('sourceChanged') }),
+      bar: null,
+      line: '',
+      body: null,
+      primary: ['restartFresh'],
+      cancel: null,
+    },
+    {
+      name: '완료: 막대·퍼센트 없음',
+      job: job(1, { status: 'completed', finalBytes: 4_294_967_296, finishedAt: 1_759_668_060 }),
+      bar: null,
+      line: t('job.completed', { size: '4.0 GB', time: '오후 9:41' }),
+      body: null,
+      primary: ['openFile', 'openFolder'],
+      cancel: null,
+    },
+    {
+      name: '완료 · 파일 없음',
+      job: job(1, { status: 'completed', missing: true }),
+      bar: null,
+      line: t('job.completedMissing'),
+      body: t('job.completedMissing.body'),
+      primary: ['openFolder'],
+      cancel: null,
+    },
+    {
+      name: '건너뜀(시작 전)',
+      job: job(1, { status: 'skipped' }),
+      bar: null,
+      line: t('job.status.skipped'),
+      body: t('job.skipped.body'),
+      primary: ['openFile', 'overwrite'],
+      cancel: null,
+    },
+    {
+      name: '건너뜀(받는 동안 생김)',
+      job: job(1, { status: 'skipped', partialBytes: 1024 }),
+      bar: null,
+      line: t('job.status.skipped'),
+      body: t('job.skippedMeanwhile.body'),
+      primary: ['openFile', 'overwrite'],
+      cancel: null,
+    },
+  ];
+
+  it.each(rows)('$name', (row) => {
+    const j = row.job;
+    const p = j.progress;
+    const bar = barView(j, p);
+    if (row.bar === null) expect(bar).toBeNull();
+    else {
+      expect(bar).toMatchObject({ value: row.bar.value, percent: row.bar.percent, tone: row.bar.state });
+    }
+    expect(statusLine(statusParts(j, p, { timeZone: 'Asia/Seoul' }))).toBe(row.line);
+    const key = bodyKey(j);
+    expect(key ? t(key) : null).toBe(row.body);
+    const b = jobButtons(j, p);
+    expect(b.primary).toEqual(row.primary);
+    expect(b.cancel ? cancelLabel(j, p).label : null).toBe(row.cancel);
+  });
+
+  it('퍼센트는 늘 100 미만이다(P-6): 완료 행에서만 100%', () => {
+    const done = job(1, { status: 'running', progress: prog({ bytes: 4_294_967_296 }) });
+    expect(displayPercent(done, done.progress)).toBe(99);
+    expect(barView(done, done.progress)?.percent).toBe('99%');
+    expect(barView(done, done.progress)?.valueText).toContain('99퍼센트');
+  });
+
+  it('퍼센트는 뒤로 가지 않는다(P-4): 바닥보다 작은 값은 바닥을 보인다', () => {
+    const j = job(1, { status: 'running', progress: prog({ bytes: 1_073_741_824 }) });
+    expect(barView(j, j.progress)?.percent).toBe('25%');
+    expect(barView(j, j.progress, 60)).toMatchObject({ value: 60, percent: '60%' });
+    expect(barView(j, j.progress, 10)?.percent).toBe('25%');
+    // 준비 중이면 바닥이 있어도 값이 없다(가짜 퍼센트를 만들지 않는다)
+    expect(barView(job(1, { status: 'running' }), null, 60)).toMatchObject({ value: null, percent: null });
   });
 });
 
 describe('진행 막대', () => {
   it('progressive는 바이트, HLS는 재생 시간 비율', () => {
     const a = job(1, { status: 'running', progress: prog() });
-    expect(barView(a, a.progress)).toMatchObject({ percent: '57%', tone: 'accent', striped: false });
+    expect(barView(a, a.progress)).toMatchObject({ percent: '57%', value: 57, tone: 'accent', striped: false });
     expect(barView(a, a.progress)?.valueText).toBe('57퍼센트, 2분 18초 남음');
     const h = job(2, { status: 'running', playbackKind: 'liveRewindHls', progress: hlsProg() });
     expect(barView(h, h.progress)?.percent).toBe('21%');
@@ -237,7 +455,7 @@ describe('진행 막대', () => {
   it('총량을 모르면 indeterminate(값·퍼센트 없음), 준비 중도', () => {
     const p = prog({ totalBytes: null });
     expect(barView(job(1, { status: 'running' }), p)).toMatchObject({ value: null, percent: null });
-    expect(barView(job(1, { status: 'running' }), null)).toMatchObject({ value: null, valueText: '준비 중' });
+    expect(barView(job(1, { status: 'running' }), null)).toMatchObject({ value: null, valueText: t('job.status.resolving') });
   });
 
   it('링크 갱신은 줄무늬, 멈춤은 회색, 실패(.part 있음)는 빨강', () => {
@@ -260,25 +478,85 @@ describe('진행 막대', () => {
   });
 });
 
-describe('취소 확인(D2): 512 MiB 초과일 때만', () => {
-  it('경계', () => {
-    const at = job(1, { status: 'paused', partialBytes: CANCEL_CONFIRM_BYTES });
-    const over = job(1, { status: 'paused', partialBytes: CANCEL_CONFIRM_BYTES + 1 });
-    expect(needsCancelConfirm(at, null)).toBe(false);
-    expect(needsCancelConfirm(over, null)).toBe(true);
+describe('취소 확인(D2): .part가 있으면 크기와 무관하게', () => {
+  it('받은 바이트 0은 즉시, 1바이트부터 D2', () => {
+    expect(needsCancelConfirm(job(1, { status: 'paused', partialBytes: 0 }), null)).toBe(false);
+    expect(needsCancelConfirm(job(1, { status: 'paused', partialBytes: 1 }), null)).toBe(true);
+    expect(needsCancelConfirm(job(1, { status: 'paused' }), null)).toBe(false);
   });
 
   it('받는 중은 진행률 바이트, 멈춘 작업·실패는 .part 크기, 대기·완료는 묻지 않는다', () => {
-    const big = prog({ bytes: CANCEL_CONFIRM_BYTES + 1 });
-    expect(receivedBytes(job(1, { status: 'running' }), big)).toBe(CANCEL_CONFIRM_BYTES + 1);
-    expect(needsCancelConfirm(job(1, { status: 'running' }), big)).toBe(true);
+    expect(receivedBytes(job(1, { status: 'running' }), prog({ bytes: 1 }))).toBe(1);
+    expect(needsCancelConfirm(job(1, { status: 'running' }), prog({ bytes: 1 }))).toBe(true);
     expect(needsCancelConfirm(job(1, { status: 'running' }), prog({ bytes: 0 }))).toBe(false);
-    expect(needsCancelConfirm(job(1, { status: 'failed', partialBytes: CANCEL_CONFIRM_BYTES * 2 }), null)).toBe(true);
-    expect(needsCancelConfirm(job(1, { status: 'queued', partialBytes: CANCEL_CONFIRM_BYTES * 2 }), null)).toBe(false);
-    expect(needsCancelConfirm(job(1, { status: 'completed', finalBytes: CANCEL_CONFIRM_BYTES * 2 }), null)).toBe(false);
+    expect(needsCancelConfirm(job(1, { status: 'running' }), null)).toBe(false);
+    expect(needsCancelConfirm(job(1, { status: 'failed', partialBytes: 1 }), null)).toBe(true);
+    expect(needsCancelConfirm(job(1, { status: 'queued', partialBytes: 99 }), null)).toBe(false);
+    expect(needsCancelConfirm(job(1, { status: 'completed', finalBytes: 99 }), null)).toBe(false);
     // 받는 동안 같은 이름의 파일이 생겨 건너뛴 작업: 지우면 다 받은 .part도 지워지므로 묻는다
-    expect(needsCancelConfirm(job(1, { status: 'skipped', partialBytes: CANCEL_CONFIRM_BYTES * 2 }), null)).toBe(true);
+    expect(needsCancelConfirm(job(1, { status: 'skipped', partialBytes: 1 }), null)).toBe(true);
     expect(needsCancelConfirm(job(1, { status: 'skipped' }), null)).toBe(false);
+  });
+
+  it('취소 라벨은 같은 조건으로 갈린다: [취소…] danger / [취소] neutral', () => {
+    expect(cancelLabel(job(1, { status: 'paused', partialBytes: 1 }), null)).toEqual({ label: t('action.cancel'), tone: 'danger' });
+    expect(cancelLabel(job(1), null)).toEqual({ label: t('action.cancelQueued'), tone: 'neutral' });
+    expect(cancelLabel(job(1, { status: 'running' }), prog({ phase: 'resolving', bytes: 0 }))).toEqual({
+      label: t('action.cancelQueued'),
+      tone: 'neutral',
+    });
+  });
+
+  it('지우기 길: .part → D2, 끝난 항목 → 지연 삭제, 대기·준비 중 → 즉시', () => {
+    expect(removeRoute(job(1, { status: 'paused', partialBytes: 1 }), null)).toBe('confirm');
+    expect(removeRoute(job(1, { status: 'failed', partialBytes: 1 }), null)).toBe('confirm');
+    expect(removeRoute(job(1, { status: 'skipped', partialBytes: 1 }), null)).toBe('confirm');
+    expect(removeRoute(job(1, { status: 'completed' }), null)).toBe('defer');
+    expect(removeRoute(job(1, { status: 'skipped' }), null)).toBe('defer');
+    expect(removeRoute(job(1, { status: 'failed' }), null)).toBe('defer');
+    expect(removeRoute(job(1), null)).toBe('now');
+    expect(removeRoute(job(1, { status: 'paused' }), null)).toBe('now');
+    expect(removeRoute(job(1, { status: 'running' }), null)).toBe('now');
+  });
+
+  it('[완료 항목 지우기] 대상: 완료와 .part 없는 건너뜀', () => {
+    expect(isClearable(job(1, { status: 'completed' }))).toBe(true);
+    expect(isClearable(job(1, { status: 'skipped' }))).toBe(true);
+    expect(isClearable(job(1, { status: 'skipped', partialBytes: 7 }))).toBe(false);
+    expect(isClearable(job(1, { status: 'failed' }))).toBe(false);
+  });
+
+  it('저장된 파일 이름은 경로의 마지막 조각(POSIX·Windows)', () => {
+    expect(outputFileName('/v/영상.mp4')).toBe('영상.mp4');
+    expect(outputFileName('C:\\영상\\a b.mp4')).toBe('a b.mp4');
+    expect(outputFileName('a.mp4')).toBe('a.mp4');
+  });
+});
+
+describe('완료 그룹 접힘(README D39)', () => {
+  const finished = (n: number) => Array.from({ length: n }, (_, i) => job(i + 1, { status: 'completed', createdAt: i + 1 }));
+
+  it(`${COMPLETED_FOLD_AT - 1}개까지는 접지 않고, ${COMPLETED_FOLD_AT}개부터 접을 수 있다`, () => {
+    expect(groupJobs(finished(COMPLETED_FOLD_AT - 1))[0].foldable).toBe(false);
+    expect(groupJobs(finished(COMPLETED_FOLD_AT))[0].foldable).toBe(true);
+    // 다른 그룹은 개수가 많아도 접지 않는다
+    expect(groupJobs(Array.from({ length: 15 }, (_, i) => job(i + 1, { status: 'running' })))[0].foldable).toBe(false);
+  });
+
+  it('접힌 동안은 최신 5개만, 펼치면 전부(보이는 순서도 같다)', () => {
+    const groups = groupJobs(finished(12));
+    const [g] = groups;
+    expect(shownJobs(g, false).map((j) => j.id)).toEqual([12, 11, 10, 9, 8]);
+    expect(shownJobs(g, false)).toHaveLength(FOLD_PREVIEW_COUNT);
+    expect(shownJobs(g, true)).toHaveLength(12);
+    expect(visibleOrder(groups, false)).toEqual([12, 11, 10, 9, 8]);
+    expect(visibleOrder(groups, true)).toHaveLength(12);
+    expect(visibleOrder(groups)).toHaveLength(12);
+  });
+
+  it('접을 수 없는 그룹은 펼침 여부와 무관하게 전부', () => {
+    const [g] = groupJobs(finished(3));
+    expect(shownJobs(g, false)).toHaveLength(3);
   });
 });
 
@@ -361,7 +639,7 @@ describe('막힌 작업(A5)', () => {
     expect(jobButtons(interrupted, null, false, 'otherChannel')).toEqual({
       primary: [],
       cancel: true,
-      menu: ['copyUrl'],
+      menu: ['showTitle', 'copyUrl'],
     });
     const skipped = job(2, { status: 'skipped', channelId: C3 });
     expect(jobButtons(skipped, null, false, 'otherChannel').primary).toEqual(['openFile']);
@@ -380,7 +658,21 @@ describe('막힌 작업(A5)', () => {
   });
 });
 
+describe('동작 라벨', () => {
+  it('폴더 보기만 OS마다 다르다(D39)', () => {
+    expect(jobActionLabel('openFolder', 'macos')).toBe(t('platform.mac.reveal'));
+    expect(jobActionLabel('openFolder', 'windows')).toBe(t('platform.other.reveal'));
+    expect(jobActionLabel('openFolder', 'linux')).toBe(t('platform.other.reveal'));
+    expect(jobActionLabel('showTitle', 'linux')).toBe(t('action.showTitle'));
+    expect(jobActionLabel('overwrite', 'linux')).toBe(t('action.overwriteAndDownload'));
+  });
+});
+
 describe('동작 아이콘 이름(Lucide 28개 안에 있다)', () => {
+  it('취소는 아이콘이 없다(글자뿐, foundations §9.1)', () => {
+    expect(jobActionIcon('cancel')).toBeUndefined();
+  });
+
   it('옛 이름(restart·file-play·trash)이 새 이름으로 바뀌었다', () => {
     expect(jobActionIcon('restartFresh')).toBe('rotate-cw');
     expect(jobActionIcon('openFile')).toBe('file-video');
@@ -388,7 +680,7 @@ describe('동작 아이콘 이름(Lucide 28개 안에 있다)', () => {
   });
 
   it('모든 동작의 아이콘이 아이콘 집합에 있다', () => {
-    const all = ['pause', 'resume', 'retry', 'restartFresh', 'cancel', 'openFile', 'openFolder', 'remove', 'copyUrl', 'copyReport'] as const;
+    const all = ['pause', 'resume', 'retry', 'restartFresh', 'openFile', 'openFolder', 'remove', 'copyUrl', 'copyReport'] as const;
     for (const a of all) {
       const name = jobActionIcon(a);
       expect(name && name in ICONS).toBe(true);

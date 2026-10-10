@@ -2,13 +2,16 @@
 
 use chzzk_core::{
     ContentKind, ContentMeta, ContentRef, DuplicatePolicy, LegacyImport, NaverCookies, PdRep,
-    Phase, Platform, PlaybackKind, Progress, Quality, RecentVod, Resolved, Source, UserSettings,
+    Phase, Platform, PlaybackKind, Progress, Quality, RecentKind, RecentVod, Resolved, Source,
+    TextScale, Theme, UserSettings,
 };
 use chzzk_shell::auth::{AuthPhase, AuthReason, AuthStatus, Cause, OfflineInfo, PendingInfo};
+use chzzk_shell::dto::{AppInfo, Features, OsDto};
 use chzzk_shell::dto::{
     AuthReasonDto, AuthStatusDto, ContentKindDto, ContentMetaDto, ContentRefTs, EnqueueRequest,
     JobDto, JobEvent, JobStatus, LegacyImportDto, Nullable, OnExisting, Ownership, PhaseTs,
-    PlaybackKindTs, ProgressDto, QualityDto, ResolvedDto, SettingsPatch,
+    PlaybackKindTs, ProgressDto, QualityDto, RecentVodDto, ResolvedDto, SettingsPatch, WebPage,
+    WindowFocusPayload,
 };
 use chzzk_shell::{AppError, JobId, Stage};
 use serde_json::{Value, json};
@@ -487,10 +490,12 @@ fn legacy_import_dto_has_no_cookie_values() {
                 RecentVod {
                     url: "https://chzzk.naver.com/video/1".into(),
                     title: "a".into(),
+                    ..RecentVod::default()
                 },
                 RecentVod {
                     url: "https://chzzk.naver.com/video/2".into(),
                     title: "b".into(),
+                    ..RecentVod::default()
                 },
             ],
             ..UserSettings::default()
@@ -690,5 +695,130 @@ fn update_dtos_json() {
     assert_eq!(
         to_json(&UpdateProgressEvent::Started { total: Some(9) }),
         json!({"type":"started","total":9})
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 디자인 시스템 (c): 글자 크기·모양·OS·최근 영상 종류
+// ---------------------------------------------------------------------------
+
+#[test]
+fn app_info_json_carries_platform_and_appearance() {
+    let info = |platform, text_scale, theme| AppInfo {
+        version: "1.0.0".into(),
+        core_version: "1".into(),
+        config_dir: "c".into(),
+        data_dir: "d".into(),
+        log_dir: "l".into(),
+        default_download_folder: "f".into(),
+        features: Features { auth: true },
+        platform,
+        text_scale,
+        theme,
+        legacy_candidate: None,
+    };
+    let v = to_json(&info(OsDto::Macos, TextScale::XLarge, Theme::Dark));
+    assert_eq!(v["platform"], "macos");
+    assert_eq!(v["textScale"], "x-large");
+    assert_eq!(v["theme"], "dark");
+    let v = to_json(&info(OsDto::Windows, TextScale::Large, Theme::Light));
+    assert_eq!(
+        (
+            v["platform"].clone(),
+            v["textScale"].clone(),
+            v["theme"].clone()
+        ),
+        (json!("windows"), json!("large"), json!("light"))
+    );
+    let v = to_json(&info(OsDto::Linux, TextScale::Default, Theme::System));
+    assert_eq!(
+        (
+            v["platform"].clone(),
+            v["textScale"].clone(),
+            v["theme"].clone()
+        ),
+        (json!("linux"), json!("default"), json!("system"))
+    );
+}
+
+#[test]
+fn recent_vod_dto_json_has_kind_and_date_or_null() {
+    let with = RecentVodDto::from(&RecentVod {
+        url: "u".into(),
+        title: "t".into(),
+        kind: Some(RecentKind::Rewind),
+        date: Some("2026-01-02".into()),
+    });
+    assert_eq!(
+        to_json(&with),
+        json!({"url":"u","title":"t","kind":"rewind","date":"2026-01-02"})
+    );
+    for (k, name) in [(RecentKind::Vod, "vod"), (RecentKind::Clip, "clip")] {
+        let v = to_json(&RecentVodDto::from(&RecentVod {
+            kind: Some(k),
+            ..RecentVod::default()
+        }));
+        assert_eq!(v["kind"], name);
+    }
+    // 옛 항목은 null(키는 남는다)
+    let old = RecentVodDto::from(&RecentVod {
+        url: "u".into(),
+        title: "t".into(),
+        ..RecentVod::default()
+    });
+    assert_eq!(
+        to_json(&old),
+        json!({"url":"u","title":"t","kind":null,"date":null})
+    );
+}
+
+#[test]
+fn settings_patch_and_enqueue_accept_new_fields() {
+    let p: SettingsPatch =
+        serde_json::from_value(json!({"textScale":"x-large","theme":"dark"})).unwrap();
+    assert_eq!(p.text_scale, Some(TextScale::XLarge));
+    assert_eq!(p.theme, Some(Theme::Dark));
+
+    let base = json!({
+        "url": "https://chzzk.naver.com/video/1", "content": {"kind":"video","videoNo":1},
+        "title": "t", "channelName": "c", "channelId": null, "qualityId": "q", "qualityLabel": "q",
+        "expectedKind": "progressive", "folder": null, "fileName": "f", "onExisting": "skip",
+        "restart": false
+    });
+    // contentDate는 없어도(옛 프런트), null이어도, 문자열이어도 된다
+    let req: EnqueueRequest = serde_json::from_value(base.clone()).unwrap();
+    assert_eq!(req.content_date, None);
+    let mut with = base.clone();
+    with["contentDate"] = json!("2026-01-02");
+    let req: EnqueueRequest = serde_json::from_value(with).unwrap();
+    assert_eq!(req.content_date.as_deref(), Some("2026-01-02"));
+    let mut null = base;
+    null["contentDate"] = Value::Null;
+    assert_eq!(
+        serde_json::from_value::<EnqueueRequest>(null)
+            .unwrap()
+            .content_date,
+        None
+    );
+}
+
+#[test]
+fn web_page_and_window_focus_json() {
+    assert_eq!(
+        serde_json::from_value::<WebPage>(json!("privacy")).unwrap(),
+        WebPage::Privacy
+    );
+    assert_eq!(
+        serde_json::from_value::<WebPage>(json!("licenses")).unwrap(),
+        WebPage::Licenses
+    );
+    assert!(serde_json::from_value::<WebPage>(json!("terms")).is_err());
+    assert_eq!(
+        to_json(&WindowFocusPayload { focused: false }),
+        json!({"focused": false})
+    );
+    assert_eq!(
+        to_json(&WindowFocusPayload { focused: true }),
+        json!({"focused": true})
     );
 }

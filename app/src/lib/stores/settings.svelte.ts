@@ -3,7 +3,9 @@
 // 오류는 두 갈래다. 설정 파일을 쓰지 못한 것(`settings`)은 B2 배너(`saveError`)로 띄우고 [다시 시도]가
 // 마지막 패치를 다시 보낸다. 그 밖(잘못된 입력 등)은 부른 쪽이 그 자리에 보이도록 돌려준다.
 import * as api from '../api';
+import { applyAppearance } from '../appearance';
 import type { AppError, AppInfo, LegacyImportDto, SettingsDto, SettingsPatch } from '../bindings';
+import { platform } from './platform.svelte';
 
 export class SettingsStore {
   dto: SettingsDto | null = $state(null);
@@ -28,18 +30,49 @@ export class SettingsStore {
     return this.legacyPromptDone ? null : (this.info?.legacyCandidate ?? null);
   }
 
+  /**
+   * 앱 정보만(로그인 전에도 부를 수 있다, gate 허용 목록). OS와 저장된 글자 크기·모양을 뿌리 요소에 옮긴다.
+   * App이 시작할 때 한 번 부른다.
+   */
+  async loadInfo(): Promise<void> {
+    try {
+      this.#setInfo(await api.appInfo());
+    } catch {
+      // 다음 load에서 다시 받는다
+    }
+  }
+
   async load(): Promise<void> {
     const [dto, info] = await Promise.allSettled([api.getSettings(), api.appInfo()]);
-    if (dto.status === 'fulfilled') this.dto = dto.value;
-    if (info.status === 'fulfilled') this.info = info.value;
+    if (info.status === 'fulfilled') this.#setInfo(info.value);
+    if (dto.status === 'fulfilled') this.#setDto(dto.value);
   }
 
   async refresh(): Promise<void> {
     try {
-      this.dto = await api.getSettings();
+      this.#setDto(await api.getSettings());
     } catch {
       // 다음 load에서 다시 받는다
     }
+  }
+
+  #setInfo(info: AppInfo | undefined) {
+    if (!info) return;
+    this.info = info;
+    platform.set(info.platform);
+    // 설정을 아직 못 읽었으면(로그인 전) app_info의 값으로 그린다
+    if (!this.dto) this.#apply(info);
+  }
+
+  #setDto(dto: SettingsDto) {
+    this.dto = dto;
+    this.#apply(dto);
+  }
+
+  /** 글자 크기·모양을 `<html>` 속성으로(appearance.ts). 저장이 실패하면 저장된 값(dto)으로 돌아간다 */
+  #apply(a: Pick<SettingsDto, 'textScale' | 'theme'>) {
+    if (typeof document === 'undefined') return;
+    applyAppearance(document.documentElement, a, platform.os);
   }
 
   /**
@@ -48,7 +81,7 @@ export class SettingsStore {
    */
   async patch(p: SettingsPatch): Promise<AppError | null> {
     try {
-      this.dto = await api.updateSettings(p);
+      this.#setDto(await api.updateSettings(p));
       this.saveError = null;
       this.#failedPatch = null;
       return null;
@@ -99,7 +132,7 @@ export class SettingsStore {
 
   async #run(f: () => Promise<SettingsDto>): Promise<AppError | null> {
     try {
-      this.dto = await f();
+      this.#setDto(await f());
       return null;
     } catch (e) {
       this.revision++;

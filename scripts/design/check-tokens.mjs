@@ -23,7 +23,7 @@ const UI_CSS = 'design/ui.css';
 const WORKER_GENERATED = OUTPUTS.worker;
 const APP_GENERATED = [OUTPUTS.tokens, OUTPUTS.ui];
 
-/** 토큰 값을 담는 절. legacy·ui·site는 뺀다(legacy는 단계 (c)에서 사라지는 앱 전용 별칭이다) */
+/** 토큰 값을 담는 절. ui·site는 뺀다 */
 export const TOKEN_SECTIONS = ['root', 'dark-media', 'dark-theme', 'theme-scheme', 'window-inactive', 'reading', 'text-scale', 'contrast', 'coarse', 'reduce'];
 
 /** Worker 소스에서만 세는 토큰(앱에는 정의가 없다) */
@@ -208,7 +208,7 @@ export function dt2(ctx) {
   const out = [];
   const workerDefined = namesOf(declsOf(ctx.worker));
   const common = new Set([...namesOf(declsOf(ctx.app)).values()].filter((n) => workerDefined.has(n)));
-  // 앱: legacy 포함 앱 tokens.css 전체. ui 절·site 절은 정의로 세지 않는다(토큰 절만).
+  // 앱: 앱 tokens.css 전체. ui 절·site 절은 정의로 세지 않는다(토큰 절만).
   const appAll = namesOf(ctx.app.rules.filter((r) => r.section !== 'ui' && r.section !== 'site').flatMap((r) => r.decls));
   const groups = sourceGroups(ctx);
   const check = (entries, defined) => {

@@ -58,6 +58,19 @@
   let scrimEl: HTMLElement | null = null;
   let held = false;
   let attached = false;
+
+  // 본문이 넘쳐 스크롤될 때만 키보드로 닿게 한다(axe scrollable-region-focusable)
+  function scrollable(el: HTMLElement) {
+    const update = () => {
+      if (el.scrollHeight > el.clientHeight) el.tabIndex = 0;
+      else el.removeAttribute('tabindex');
+    };
+    update();
+    if (typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }
   let cancelLeave: (() => void) | null = null;
   let leaving = false;
 
@@ -170,7 +183,7 @@
       {onkeydown}
     >
       <h2 id={titleId}>{title}</h2>
-      {#if children}<div class="dialog-body" id={bodyId}>{@render children()}</div>{/if}
+      {#if children}<div class="dialog-body" id={bodyId} {@attach scrollable}>{@render children()}</div>{/if}
       <div class="actions">
         {#if secondary}
           <Button

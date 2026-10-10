@@ -43,7 +43,7 @@ async function record(run: () => Promise<unknown>): Promise<Call[]> {
 
 describe('api.ts', () => {
   it('command 목록을 읽었다', () => {
-    expect(COMMANDS).toHaveLength(32);
+    expect(COMMANDS).toHaveLength(33);
   });
 
   // Channel은 생성 때 IPC 내부를 쓰므로 mockIPC 뒤(호출 안)에서 만든다.
@@ -72,6 +72,7 @@ describe('api.ts', () => {
     [() => api.openOutput(3), 'open_output', { id: 3 }],
     [() => api.revealOutput(3), 'reveal_output', { id: 3 }],
     [() => api.quit(), 'quit', {}],
+    [() => api.openWebPage('privacy'), 'open_web_page', { page: 'privacy' }],
     [() => api.authStatus(), 'auth_status', {}],
     [() => api.authLogin(), 'auth_login', {}],
     [() => api.authReopen(), 'auth_reopen', {}],

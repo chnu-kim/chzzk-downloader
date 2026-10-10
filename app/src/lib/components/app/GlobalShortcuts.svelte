@@ -4,6 +4,7 @@
   import { isInPageDrag, trackInPageDrags } from '../../inPageDrag';
   import { auth } from '../../stores/auth.svelte';
   import { modKey, ui } from '../../stores/ui.svelte';
+  import { isImeKey } from '../ui/focus';
 
   function editable(t: EventTarget | null): boolean {
     if (!(t instanceof HTMLElement)) return false;
@@ -11,7 +12,7 @@
   }
 
   async function onkeydown(e: KeyboardEvent) {
-    if (e.isComposing) return;
+    if (isImeKey(e)) return;
     if (e.key === 'Escape') {
       // 대화상자·메뉴는 스스로 받아 멈춘다(defaultPrevented)
       if (!e.defaultPrevented && ui.escape()) e.preventDefault();

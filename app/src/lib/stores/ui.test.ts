@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { TOAST_MS } from '../timing';
 import { ToastStore } from './toast.svelte';
-import { UiStore, modKey } from './ui.svelte';
+import { platform } from './platform.svelte';
+import { UiStore, isMac, modKey, modLabel } from './ui.svelte';
 
 describe('UiStore Esc', () => {
   it('안쪽(나중에 쌓은) 처리기부터, 받지 않으면 다음으로', () => {
@@ -40,6 +41,32 @@ describe('UiStore Esc', () => {
     expect(modKey(ctrl, true)).toBe(false);
     expect(modKey(ctrl, false)).toBe(true);
     expect(modKey(cmd, false)).toBe(false);
+  });
+});
+
+describe('UiStore 요청 플래그', () => {
+  it('D4 로그아웃 요청과 창 포커스의 처음 값', () => {
+    const ui = new UiStore();
+    expect(ui.logoutConfirm).toBe(false);
+    expect(ui.windowFocused).toBe(true);
+  });
+});
+
+describe('플랫폼 store를 따르는 Mod 표기', () => {
+  afterEach(() => platform.set('linux'));
+
+  it('isMac·modKey 기본값·modLabel은 platform.os를 본다(navigator를 보지 않는다)', () => {
+    const cmd = new KeyboardEvent('keydown', { key: 'l', metaKey: true });
+    const ctrl = new KeyboardEvent('keydown', { key: 'l', ctrlKey: true });
+    platform.set('macos');
+    expect(isMac()).toBe(true);
+    expect(modKey(cmd)).toBe(true);
+    expect(modKey(ctrl)).toBe(false);
+    expect(modLabel('Enter')).toBe('⌘↩');
+    platform.set('windows');
+    expect(isMac()).toBe(false);
+    expect(modKey(ctrl)).toBe(true);
+    expect(modLabel('Enter')).toBe('Ctrl+Enter');
   });
 });
 

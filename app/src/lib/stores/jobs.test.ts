@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { JobDto, JobEvent } from '../bindings';
 import { err, job, prog, signedInAs } from '../../test/jobFixtures';
+import { t } from '../copy/ko';
 
 class FakeChannel {
   onmessage: (e: JobEvent) => void = () => {};
@@ -14,6 +15,7 @@ vi.mock('../api', () => ({
   pauseJob: vi.fn(),
   openOutput: vi.fn(),
   revealOutput: vi.fn(),
+  clearFinished: vi.fn(),
   resolve: vi.fn(),
 }));
 
@@ -21,6 +23,8 @@ const api = await import('../api');
 const { JobsStore, HIGHLIGHT_MS } = await import('./jobs.svelte');
 const { toasts } = await import('./toast.svelte');
 const { auth } = await import('./auth.svelte');
+const { announcer } = await import('./announce.svelte');
+const { ui } = await import('./ui.svelte');
 
 function deferred<T>() {
   let resolve!: (v: T) => void;
@@ -41,14 +45,20 @@ function begin(store: InstanceType<typeof JobsStore>) {
 }
 
 beforeEach(() => {
+  // 앞 테스트가 남긴 되돌리기 토스트가 닫히며 remove_job을 부르므로 목을 비우기 전에 먼저 치운다
+  toasts.clear();
   vi.mocked(api.subscribeJobs).mockReset();
   vi.mocked(api.resumeJob).mockReset().mockResolvedValue();
   vi.mocked(api.removeJob).mockReset().mockResolvedValue();
-  toasts.clear();
+  vi.mocked(api.openOutput).mockReset().mockResolvedValue();
+  vi.mocked(api.revealOutput).mockReset().mockResolvedValue();
+  ui.view = 'settings';
+  ui.windowFocused = true;
 });
 
 afterEach(() => {
   auth.status = null;
+  ui.view = 'home';
   vi.useRealTimers();
 });
 
@@ -91,9 +101,43 @@ describe('JobsStore 구독', () => {
     b.send({ type: 'added', job: job(3, { status: 'completed' }) });
     expect(toasts.items).toHaveLength(0);
     b.send({ type: 'status', job: job(2, { status: 'completed', title: '금요 방송' }) });
-    expect(toasts.items.map((t) => t.message)).toEqual(["'금요 방송' 다운로드를 마쳤어요"]);
+    expect(toasts.items.map((i) => i.message)).toEqual([t('toast.completed', { title: '금요 방송' })]);
     b.send({ type: 'status', job: job(2, { status: 'completed', title: '금요 방송' }) });
     expect(toasts.items).toHaveLength(1);
+  });
+
+  describe('완료 토스트 조건(J12): 홈 밖이고 창이 활성일 때만', () => {
+    async function finishOne() {
+      const s = new JobsStore();
+      const b = begin(s);
+      b.snapshot([job(2, { status: 'running' })]);
+      await b.started;
+      b.send({ type: 'status', job: job(2, { status: 'completed', title: '금요 방송' }) });
+    }
+
+    it('설정 화면 + 창 활성 → 토스트', async () => {
+      ui.view = 'settings';
+      ui.windowFocused = true;
+      await finishOne();
+      expect(toasts.items.map((i) => i.message)).toEqual([t('toast.completed', { title: '금요 방송' })]);
+    });
+
+    it('홈 → 토스트 없이 행 상태만(라이브 영역이 한 줄 읽는다)', async () => {
+      ui.view = 'home';
+      ui.windowFocused = true;
+      const say = vi.spyOn(announcer, 'say');
+      await finishOne();
+      expect(toasts.items).toHaveLength(0);
+      expect(say).toHaveBeenCalledWith(t('job.status', { title: '금요 방송', status: t('job.status.completed') }));
+      say.mockRestore();
+    });
+
+    it('창 비활성 → 토스트 없음(OS 알림은 Rust가 보낸다)', async () => {
+      ui.view = 'settings';
+      ui.windowFocused = false;
+      await finishOne();
+      expect(toasts.items).toHaveLength(0);
+    });
   });
 
   it('added만 1초 강조한다', async () => {
@@ -202,18 +246,24 @@ describe('JobsStore 동작', () => {
     expect(s.showInterruptedBanner).toBe(false);
   });
 
-  it('취소: 512 MiB 이하는 바로 지우고, 넘으면 D2를 거친다', async () => {
-    const big = 512 * 1024 * 1024 + 1;
-    const { s } = await loaded([job(1, { status: 'paused', partialBytes: 10 }), job(2, { status: 'paused', partialBytes: big })]);
+  it('취소: .part가 없으면 바로 지우고, 1바이트라도 있으면 D2를 거친다', async () => {
+    const { s } = await loaded([
+      job(1, { status: 'paused' }),
+      job(2, { status: 'paused', partialBytes: 1 }),
+      job(3, { status: 'queued' }),
+    ]);
     await s.act(1, 'cancel');
     expect(api.removeJob).toHaveBeenCalledWith(1);
+    await s.act(3, 'cancel');
+    expect(api.removeJob).toHaveBeenLastCalledWith(3);
+    expect(toasts.items).toHaveLength(0);
     await s.act(2, 'cancel');
-    expect(api.removeJob).toHaveBeenCalledTimes(1);
-    expect(s.confirm).toMatchObject({ id: 2, bytes: big });
-    expect(s.confirmSize).toBe('512.0 MB');
+    expect(api.removeJob).toHaveBeenCalledTimes(2);
+    expect(s.confirm).toMatchObject({ id: 2, bytes: 1 });
+    expect(s.confirmSize).toBe('1 B');
     s.cancelConfirm();
     expect(s.confirm).toBeNull();
-    expect(api.removeJob).toHaveBeenCalledTimes(1);
+    expect(api.removeJob).toHaveBeenCalledTimes(2);
     await s.act(2, 'remove');
     await s.confirmRemove();
     expect(api.removeJob).toHaveBeenLastCalledWith(2);
@@ -224,6 +274,20 @@ describe('JobsStore 동작', () => {
     expect(s.hasFinished).toBe(false);
     const { s: s2 } = await loaded([job(1, { status: 'skipped' })]);
     expect(s2.hasFinished).toBe(true);
+  });
+
+  it('덮어쓰고 받기는 D7을 거쳐야 resume이 간다(저장된 파일 이름으로 묻는다)', async () => {
+    const { s } = await loaded([job(2, { status: 'skipped', output: 'C:\\영상\\a b.mp4' })]);
+    await s.request(2, 'overwrite');
+    expect(s.overwrite).toEqual({ id: 2, name: 'a b.mp4' });
+    expect(api.resumeJob).not.toHaveBeenCalled();
+    s.cancelOverwrite();
+    expect(s.overwrite).toBeNull();
+    expect(api.resumeJob).not.toHaveBeenCalled();
+    await s.request(2, 'overwrite');
+    await s.confirmOverwrite();
+    expect(api.resumeJob).toHaveBeenCalledWith(2, false);
+    expect(s.overwrite).toBeNull();
   });
 
   it('처음부터 다시 받기는 restart, 덮어쓰고 받기는 resume', async () => {
@@ -254,7 +318,7 @@ describe('JobsStore 동작', () => {
     const [toast] = toasts.items;
     expect(toast.message).toBe('파일을 찾을 수 없어요. 옮기거나 지웠을 수 있어요');
     expect(toast.kind).toBe('danger');
-    expect(toast.action?.label).toBe('폴더 열기');
+    expect(toast.action?.label).toBe(t('platform.other.reveal'));
     toast.action!.run();
     expect(api.revealOutput).toHaveBeenCalledWith(4);
   });
@@ -264,5 +328,146 @@ describe('JobsStore 동작', () => {
     vi.mocked(api.resumeJob).mockRejectedValueOnce(err('fileMissing'));
     await s.act(1, 'resume');
     expect(toasts.items[0].action).toBeUndefined();
+  });
+});
+
+describe('지연 삭제(patterns.md §4): 되돌리기 토스트가 사는 동안은 숨기기만 한다', () => {
+  async function loaded(list: JobDto[]) {
+    const s = new JobsStore();
+    const b = begin(s);
+    b.snapshot(list);
+    await b.started;
+    return { s, send: b.send };
+  }
+  const ids = (s: InstanceType<typeof JobsStore>) => s.order;
+
+  it('지우기: 즉시 숨고 토스트가 뜨며, 아직 remove_job은 가지 않는다', async () => {
+    const { s } = await loaded([job(1, { status: 'completed' }), job(2, { status: 'completed' })]);
+    await s.act(1, 'remove');
+    expect(ids(s)).toEqual([2]);
+    expect(api.removeJob).not.toHaveBeenCalled();
+    expect(toasts.items.map((i) => [i.message, i.action?.label])).toEqual([[t('toast.removed'), t('action.undo')]]);
+  });
+
+  it('[되돌리기]: 항목이 돌아오고 remove_job은 부르지 않는다', async () => {
+    const { s } = await loaded([job(1, { status: 'completed' })]);
+    await s.act(1, 'remove');
+    toasts.runAction(toasts.items[0].id);
+    expect(ids(s)).toEqual([1]);
+    expect(toasts.items).toHaveLength(0);
+    expect(api.removeJob).not.toHaveBeenCalled();
+  });
+
+  it.each(['dismiss', 'timeout'] as const)('토스트가 %s로 닫히면 remove_job', async (reason) => {
+    const { s } = await loaded([job(1, { status: 'skipped' })]);
+    await s.act(1, 'remove');
+    toasts.dismiss(toasts.items[0].id, reason);
+    expect(api.removeJob).toHaveBeenCalledExactlyOnceWith(1);
+  });
+
+  it('타이머(TOAST_MS)가 지나면 확정한다', async () => {
+    vi.useFakeTimers();
+    const { s } = await loaded([job(1, { status: 'completed' })]);
+    await s.act(1, 'remove');
+    expect(api.removeJob).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(5999);
+    expect(api.removeJob).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(api.removeJob).toHaveBeenCalledExactlyOnceWith(1);
+  });
+
+  it('둘째 지우기 토스트가 와도 첫 삭제가 먼저 확정되지 않는다(동작 토스트는 대체되지 않는다)', async () => {
+    const { s } = await loaded([job(1, { status: 'completed' }), job(2, { status: 'completed' })]);
+    await s.act(1, 'remove');
+    await s.act(2, 'remove');
+    expect(toasts.items).toHaveLength(2);
+    expect(api.removeJob).not.toHaveBeenCalled();
+    expect(ids(s)).toEqual([]);
+    // 첫 토스트를 되돌리면 첫 항목만 돌아오고, 둘째는 줄에서 차례가 오면 확정된다
+    toasts.runAction(toasts.items[0].id);
+    expect(ids(s)).toEqual([1]);
+    expect(api.removeJob).not.toHaveBeenCalled();
+    toasts.dismiss(toasts.items[0].id);
+    expect(api.removeJob).toHaveBeenCalledExactlyOnceWith(2);
+  });
+
+  it('실패 항목도 .part가 없으면 지연 삭제, 있으면 D2', async () => {
+    const { s } = await loaded([
+      job(1, { status: 'failed', error: err('network') }),
+      job(2, { status: 'failed', partialBytes: 1, error: err('network') }),
+    ]);
+    await s.act(2, 'remove');
+    expect(s.confirm).toMatchObject({ id: 2 });
+    expect(toasts.items).toHaveLength(0);
+    await s.act(1, 'remove');
+    expect(toasts.items).toHaveLength(1);
+    expect(ids(s)).toEqual([2]);
+  });
+
+  it('remove_job이 실패하면 숨겨 두지 않고 오류를 알린다', async () => {
+    const { s } = await loaded([job(1, { status: 'completed' })]);
+    vi.mocked(api.removeJob).mockRejectedValueOnce(err('jobNotFound', { message: 'job 1' }));
+    await s.act(1, 'remove');
+    toasts.dismiss(toasts.items[0].id);
+    await vi.waitFor(() => expect(toasts.items.map((i) => i.kind)).toEqual(['danger']));
+    expect(ids(s)).toEqual([1]);
+  });
+
+  it('removed 이벤트가 오면 숨김 표시도 정리된다', async () => {
+    const { s, send } = await loaded([job(1, { status: 'completed' })]);
+    await s.act(1, 'remove');
+    toasts.dismiss(toasts.items[0].id);
+    send({ type: 'removed', id: 1 });
+    expect(s.hidden.has(1)).toBe(false);
+    expect(s.state.jobs.size).toBe(0);
+  });
+
+  describe('[완료 항목 지우기]', () => {
+    it('그때의 완료·건너뜀 id를 숨기고, 닫힐 때 숨긴 id마다 remove_job(clear_finished는 부르지 않는다)', async () => {
+      const { s, send } = await loaded([
+        job(1, { status: 'completed' }),
+        job(2, { status: 'skipped' }),
+        job(3, { status: 'skipped', partialBytes: 5 }),
+        job(4, { status: 'running' }),
+      ]);
+      expect(s.hasFinished).toBe(true);
+      s.clearFinished();
+      expect(s.order.sort()).toEqual([3, 4]);
+      expect(s.hasFinished).toBe(false);
+      expect(toasts.items.map((i) => i.message)).toEqual([t('toast.removedMany', { n: 2 })]);
+      // 토스트가 살아 있는 동안 끝난 작업은 지워지지 않는다
+      send({ type: 'status', job: job(4, { status: 'completed' }) });
+      toasts.dismiss(toasts.items[0].id);
+      expect(vi.mocked(api.removeJob).mock.calls).toEqual([[1], [2]]);
+      expect(api.clearFinished).not.toHaveBeenCalled();
+    });
+
+    it('[되돌리기]면 전부 돌아온다', async () => {
+      const { s } = await loaded([job(1, { status: 'completed' }), job(2, { status: 'completed' })]);
+      s.clearFinished();
+      expect(s.order).toEqual([]);
+      toasts.runAction(toasts.items[0].id);
+      expect(s.order).toEqual([2, 1]);
+      expect(api.removeJob).not.toHaveBeenCalled();
+    });
+
+    it('지울 것이 없으면 토스트도 없다', async () => {
+      const { s } = await loaded([job(1, { status: 'running' })]);
+      s.clearFinished();
+      expect(toasts.items).toHaveLength(0);
+    });
+  });
+});
+
+describe('접힘과 보이는 순서', () => {
+  it('완료 11개: 접힌 동안 order는 최신 5개, 펼치면 전부', async () => {
+    const s = new JobsStore();
+    const b = begin(s);
+    b.snapshot(Array.from({ length: 11 }, (_, i) => job(i + 1, { status: 'completed', createdAt: i + 1 })));
+    await b.started;
+    expect(s.finishedOpen).toBe(false);
+    expect(s.order).toEqual([11, 10, 9, 8, 7]);
+    s.finishedOpen = true;
+    expect(s.order).toHaveLength(11);
   });
 });

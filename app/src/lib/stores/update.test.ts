@@ -216,13 +216,17 @@ describe('install', () => {
     expect(update.received).toBe(1024);
   });
 
-  const rows: [UpdateInstallDto, { phase: string; available: boolean; toast: string | null; kind?: string }][] = [
-    [{ result: 'restarting' }, { phase: 'installing', available: true, toast: null }],
-    [{ result: 'upToDate' }, { phase: 'idle', available: false, toast: '최신 버전이에요', kind: 'info' }],
-    [{ result: 'untrusted' }, { phase: 'idle', available: false, toast: '업데이트 주소를 확인할 수 없어 받지 않았어요.', kind: 'danger' }],
-    [{ result: 'failed' }, { phase: 'idle', available: true, toast: '업데이트하지 못했어요. 잠시 뒤 다시 시도해 주세요.', kind: 'danger' }],
-    [{ result: 'offline' }, { phase: 'idle', available: true, toast: '업데이트하지 못했어요. 잠시 뒤 다시 시도해 주세요.', kind: 'danger' }],
-    [{ result: 'busy' }, { phase: 'idle', available: true, toast: null }],
+  const rows: [
+    UpdateInstallDto,
+    { phase: string; available: boolean; toast: string | null; kind?: string; failure: 'failed' | 'untrusted' | null },
+  ][] = [
+    [{ result: 'restarting' }, { phase: 'installing', available: true, toast: null, failure: null }],
+    [{ result: 'upToDate' }, { phase: 'idle', available: false, toast: '최신 버전이에요', kind: 'info', failure: null }],
+    // 실패는 토스트가 아니라 배너 B4 실패 자리에 남는다(한 사건 한 수단, patterns.md §12)
+    [{ result: 'untrusted' }, { phase: 'idle', available: false, toast: null, failure: 'untrusted' }],
+    [{ result: 'failed' }, { phase: 'idle', available: true, toast: null, failure: 'failed' }],
+    [{ result: 'offline' }, { phase: 'idle', available: true, toast: null, failure: 'failed' }],
+    [{ result: 'busy' }, { phase: 'idle', available: true, toast: null, failure: null }],
   ];
   it.each(rows)('install 결과 %j', async (r, want) => {
     await update.start();
@@ -231,6 +235,7 @@ describe('install', () => {
     await update.install();
     expect(update.phase).toBe(want.phase);
     expect(update.available !== null).toBe(want.available);
+    expect(update.failure).toBe(want.failure);
     const items = toasts.items;
     if (want.toast === null) expect(items).toHaveLength(0);
     else {
@@ -240,11 +245,28 @@ describe('install', () => {
     }
   });
 
-  it('던지면 idle과 실패 토스트', async () => {
+  it('던지면 idle과 실패 배너 상태(토스트 없음)', async () => {
     vi.mocked(api.updateInstall).mockRejectedValue({ code: 'internal' });
     await update.install(true);
     expect(update.phase).toBe('idle');
-    expect(toasts.items[0].kind).toBe('danger');
+    expect(update.failure).toBe('failed');
+    expect(toasts.items).toHaveLength(0);
+  });
+
+  it('다시 설치를 시작하면 실패 표시가 걷히고, dismissFailure로도 닫는다', async () => {
+    await update.start();
+    emitAvailable(info('0.2.0'));
+    vi.mocked(api.updateInstall).mockResolvedValueOnce({ result: 'failed' });
+    await update.install();
+    expect(update.failure).toBe('failed');
+    update.dismissFailure();
+    expect(update.failure).toBeNull();
+    vi.mocked(api.updateInstall).mockResolvedValueOnce({ result: 'failed' });
+    await update.install();
+    expect(update.failure).toBe('failed');
+    vi.mocked(api.updateInstall).mockResolvedValueOnce({ result: 'restarting' });
+    await update.install();
+    expect(update.failure).toBeNull();
   });
 
   it('받는 중·설치 중에는 install을 무시한다', async () => {

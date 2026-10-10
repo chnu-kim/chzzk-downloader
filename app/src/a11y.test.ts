@@ -1,8 +1,9 @@
 // 접근성 점검(§10 "접근성·시각 기본", §15-17): 랜드마크, 이름 없는 버튼, 뷰 전환 뒤 포커스.
-import { render, screen, waitFor } from '@testing-library/svelte';
+import { render, screen, waitFor, within } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SettingsDto } from './lib/bindings';
+import { t } from './lib/copy/ko';
 import { job, prog } from './test/jobFixtures';
 
 class FakeChannel {
@@ -16,11 +17,13 @@ const dto: SettingsDto = {
   naverCookiesSaved: true,
   lastQualityLabel: null,
   lastUrl: null,
-  recentVods: [{ url: 'https://chzzk.naver.com/video/1', title: '최근 영상' }],
+  recentVods: [{ url: 'https://chzzk.naver.com/video/1', title: '최근 영상', kind: 'rewind', date: null }],
   segmentConcurrency: 4,
   maxParallelDownloads: 2,
   autoResumeInterrupted: false,
   importedFrom: null,
+  textScale: 'default',
+  theme: 'system',
 };
 
 const disabled = {
@@ -57,6 +60,7 @@ vi.mock('./lib/api', () => ({
   ]),
   clipboardLink: vi.fn(async () => null),
   onCloseRequested: vi.fn(async () => () => {}),
+  onWindowFocus: vi.fn(async () => () => {}),
   updateCheck: vi.fn(),
   updateAvailable: vi.fn(async () => null),
   updateInstall: vi.fn(),
@@ -91,13 +95,14 @@ describe('접근성', () => {
     await screen.findByRole('article', { name: '영상 1' });
     expect(screen.getByRole('banner')).toBeInTheDocument();
     expect(screen.getByRole('main')).toBeInTheDocument();
-    expect(screen.getByRole('region', { name: '다운로드' })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: t('list.title') })).toBeInTheDocument();
     for (const el of [...screen.getAllByRole('button'), ...screen.getAllByRole('progressbar')]) {
       expect(nameOf(el), el.outerHTML).not.toBe('');
     }
     // 설정 화면도
-    await user.click(await screen.findByRole('button', { name: '설정' }));
-    await user.click(await screen.findByRole('heading', { name: '고급: 네이버 로그인 정보' }));
+    await user.click(await screen.findByRole('button', { name: t('header.settings') }));
+    // 고급(Disclosure, 제목이 h2)을 펼쳐 쿠키 입력까지 이름을 본다
+    await user.click(await screen.findByRole('heading', { name: t('settings.advanced') }));
     for (const el of [
       ...screen.getAllByRole('button'),
       ...screen.getAllByRole('switch'),
@@ -142,25 +147,21 @@ describe('접근성', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 
-  it('상태는 색만으로 말하지 않는다: 멈춤·완료 항목에 아이콘과 문구', async () => {
+  it('상태는 색만으로 말하지 않는다: 멈춤·완료 항목에 상태 문구가 글자로 있다', async () => {
     render(App);
+    // 아이콘·막대 구성은 작업 행 테스트(jobs.test.ts, patterns.md §3.2 표)가 소유한다. 여기서는 글자가 있음을 본다
     const paused = await screen.findByRole('article', { name: '영상 2' });
-    // 아이콘은 상태 줄 안의 것만 센다(버튼 아이콘은 늘 있어 검사가 실패할 수 없었다)
-    const pausedStatus = paused.querySelector('.status-row .status');
-    expect(pausedStatus?.textContent).toContain('일시정지됨');
-    expect(pausedStatus?.querySelector('.lead svg')).not.toBeNull();
+    expect(within(paused).getByText(t('job.status.paused'), { exact: false })).toBeInTheDocument();
     const done = screen.getByRole('article', { name: '영상 3' });
-    const doneStatus = done.querySelector('.status-row .status');
-    expect(doneStatus?.textContent).toContain('완료');
-    expect(doneStatus?.querySelector('.lead svg')).not.toBeNull();
-    // 재시작 직후 배너(B1)
-    expect(screen.getByText('지난번에 받다가 멈춘 다운로드가 1개 있어요.')).toBeInTheDocument();
+    expect(within(done).getByText(t('job.status.completed'), { exact: false })).toBeInTheDocument();
+    // 재시작 직후 배너(B1)는 열의 첫 요소
+    expect(screen.getByText(t('banner.interrupted', { n: 1 }))).toBeInTheDocument();
   });
 
   it('로그인 화면에도 main 랜드마크가 있고 모든 버튼에 이름이 있다', async () => {
     vi.mocked(api.authStatus).mockResolvedValueOnce({ ...disabled, state: 'signedOut' } as never);
     render(App);
-    await screen.findByRole('heading', { name: '로그인이 필요해요' });
+    await screen.findByRole('heading', { name: t('auth.signedOut.title') });
     expect(screen.getByRole('main')).toBeInTheDocument();
     for (const el of screen.getAllByRole('button')) expect(nameOf(el), el.outerHTML).not.toBe('');
   });

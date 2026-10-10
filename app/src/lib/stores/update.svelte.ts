@@ -22,6 +22,12 @@ export class UpdateStore {
   /** 설치를 시작할 때 본 버전. 받는 중에 확인 결과가 `available`을 비워도 진행 배너를 그대로 둔다 */
   installVersion: string | null = $state(null);
 
+  /**
+   * 설치가 끝내 실패했다(배너 B4 실패, patterns.md §12). 'failed'는 지금 버전을 계속 쓸 수 있어 warning,
+   * 'untrusted'(서명 확인 실패)는 danger. 토스트가 아니라 배너 자리에 남는다(한 사건 한 수단) — [다시 시도]·[×]로 닫는다
+   */
+  failure: 'failed' | 'untrusted' | null = $state(null);
+
   showBanner = $derived(this.available !== null && this.#dismissed !== this.available.version);
   busy = $derived(this.phase === 'downloading' || this.phase === 'installing');
   /** 0~100 정수, 크기를 모르면 null */
@@ -110,6 +116,7 @@ export class UpdateStore {
   async install(confirmPause = false): Promise<void> {
     if (this.pending || this.busy) return;
     this.pending = true;
+    this.failure = null;
     this.installVersion = this.available?.version ?? this.installVersion;
     if (confirmPause) {
       this.phase = 'downloading';
@@ -120,10 +127,15 @@ export class UpdateStore {
       this.#installed(await api.updateInstall(confirmPause));
     } catch {
       this.phase = 'idle';
-      toasts.push(t('update.failed'), 'danger');
+      this.failure = 'failed';
     } finally {
       this.pending = false;
     }
+  }
+
+  /** 실패 배너 [×] */
+  dismissFailure(): void {
+    this.failure = null;
   }
 
   /** 대화상자 [나중에]·Esc */
@@ -142,6 +154,7 @@ export class UpdateStore {
     this.total = null;
     this.pending = false;
     this.installVersion = null;
+    this.failure = null;
     this.#seq = 0;
     this.#listening = this.#newListening();
   }
@@ -195,12 +208,12 @@ export class UpdateStore {
         this.available = null;
         this.phase = 'idle';
         if (this.check !== 'idle' && this.check !== 'checking') this.check = 'untrusted';
-        toasts.push(t('update.untrusted'), 'danger');
+        this.failure = 'untrusted';
         break;
       case 'failed':
       case 'offline':
         this.phase = 'idle';
-        toasts.push(t('update.failed'), 'danger');
+        this.failure = 'failed';
         break;
       case 'busy':
         this.phase = 'idle';

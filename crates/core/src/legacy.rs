@@ -157,6 +157,7 @@ pub fn import_legacy(dir: &Path) -> Result<Option<LegacyImport>, Error> {
         .map(|v| RecentVod {
             url: v.url,
             title: v.title,
+            ..RecentVod::default()
         })
         .collect();
     if recent_vods.is_empty() {
@@ -168,6 +169,7 @@ pub fn import_legacy(dir: &Path) -> Result<Option<LegacyImport>, Error> {
             .map(|url| RecentVod {
                 url,
                 title: UNTITLED.to_string(),
+                ..RecentVod::default()
             })
             .collect();
     }

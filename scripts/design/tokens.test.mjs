@@ -9,6 +9,9 @@ import { test } from 'node:test';
 import { oklchToSrgb, parseHex, toHex } from './contrast.mjs';
 import { HEADER, OUTPUTS, ROOT, SECTIONS, cssName, cssValue, generate, loadModel, main, resolveColor, siteCssOf, splitSections, textScaleValues } from './tokens.mjs';
 
+// CI(GITHUB_ACTIONS=true)에서도 기본 출력 형식(file:line: DT1:)을 보도록 끈다. ::error 형식은 그 테스트가 직접 켠다.
+delete process.env.GITHUB_ACTIONS;
+
 const UI = '.x {\n  color: var(--fg);\n}\n';
 const SITE = '/* Worker 웹 전용 CSS(docs/design/system/web.md). 단계 (e)에서 채운다 */\nhtml {\n  font-size: 16px;\n}\n';
 

@@ -53,6 +53,7 @@ export const AUTH_DISABLED: AuthStatusDto = {
   offline: null,
   verifiedAt: null,
   canReconnect: false,
+  isAdmin: false,
 };
 
 export type UpdateScenario = {
@@ -375,7 +376,7 @@ export function install(scenario: Scenario = {}): E2EController {
       const j = must(a.id as number);
       // 셸 흉내(A5): 다시 줄 세울 상태에서는 작업의 영상을 다시 판정한다. JobDto에는 컨텐츠가 없어 기록 채널로 흉내 낸다:
       // 다른 채널이면 거부하고, 채널이 없는 옛 작업은 셸이 본인 영상으로 판정한 것으로 본다
-      if (auth.state === 'signedIn' && auth.channelId && ['paused', 'failed', 'interrupted', 'skipped'].includes(j.status)) {
+      if (auth.state === 'signedIn' && auth.channelId && !auth.isAdmin && ['paused', 'failed', 'interrupted', 'skipped'].includes(j.status)) {
         if (j.channelId != null && j.channelId.toLowerCase() !== auth.channelId.toLowerCase()) throw err('notOwnContent');
       }
       put({ ...j, status: 'queued', error: null, partialBytes: a.restart ? null : j.partialBytes });

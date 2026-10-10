@@ -108,7 +108,7 @@
   const hasWarnings = $derived.by(() => {
     const n = fresh && check ? notices(check, choices) : null;
     const conflict = !!n && (n.duplicate || n.exists || n.partialSame != null || n.partialOther);
-    return conflict || view.ownership === 'notOwn' || view.ownership === 'unknown' || !!shownError;
+    return conflict || view.ownership === 'notOwn' || view.ownership === 'unknown' || view.ownership === 'adminOverride' || !!shownError;
   });
   // 가장 최근에 요청한 열쇠. 늦게 온 결과는 이것과 다르면 버린다.
   let latestKey = '';
@@ -258,7 +258,7 @@
       {#if check && fresh}
         <ConflictNotice {check} bind:choices onshowinlist={() => check?.duplicateJobId != null && onshowjob(check.duplicateJobId)} />
       {/if}
-      <OwnershipNotice ownership={view.ownership} channelName={view.meta.channelName} />
+      <OwnershipNotice ownership={view.ownership} channelName={view.meta.channelName} channelKnown={!!view.meta.channelId} />
       {#if errCopy}
         <Notice variant="inline" tone="danger" title={errCopy.title} actions={errActions}>
           {#if errCopy.body}<p class="line">{errCopy.body}</p>{/if}

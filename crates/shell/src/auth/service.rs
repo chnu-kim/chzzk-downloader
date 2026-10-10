@@ -30,6 +30,7 @@ use super::verify::{
     lost_retry_wait, outcome_of_error, refresh_due_at, retry_delay,
 };
 use crate::error::AppError;
+use crate::ownership::Signer;
 
 /// 시작 판정 이후 화면·command가 보는 대기 중 로그인 정보
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -135,6 +136,9 @@ struct Inner {
     phase: AuthPhase,
     reason: Option<AuthReason>,
     held: Option<StoredSession>,
+    /// held의 `is_admin`을 이번 실행에서 Worker가 준 묶음으로 확인했다(`accept_session`에서만 true).
+    /// 디스크에서 읽은 값은 서버가 아직 확인하지 않은 것이라 권한이 아니다(worker.md 102)
+    admin_verified: bool,
     /// D10: 메모리 held가 파일보다 새롭다
     dirty: bool,
     /// D11: logout·로그인 ok 때 +1
@@ -215,6 +219,15 @@ fn clock_rolled_back(i: &Inner, now: OffsetDateTime) -> bool {
     i.held.as_ref().is_some_and(|h| now < h.verified_at) || i.last_attempt.is_some_and(|a| now < a)
 }
 
+/// 관리자 권한: SignedIn ∧ held.is_admin ∧ 이번 실행의 서버 확인 ∧ 오프라인 아님.
+/// 상태 표시(`AuthStatus.is_admin`)와 판정 주체(`signer`)가 같은 계산을 쓴다
+fn admin_confirmed(i: &Inner) -> bool {
+    i.phase == AuthPhase::SignedIn
+        && i.admin_verified
+        && i.offline.is_none()
+        && i.held.as_ref().is_some_and(|h| h.is_admin)
+}
+
 /// 상태 표시 규칙(worker.md §11.4)
 fn status_of(i: &Inner) -> AuthStatus {
     let held_visible = matches!(i.phase, AuthPhase::SignedIn | AuthPhase::Checking)
@@ -229,7 +242,7 @@ fn status_of(i: &Inner) -> AuthStatus {
             AuthPhase::Denied => i.denied_name.clone(),
             _ => held.map(|h| h.channel_name.clone()),
         },
-        is_admin: held.is_some_and(|h| h.is_admin),
+        is_admin: admin_confirmed(i),
         pending: match (&i.phase, &i.login) {
             (AuthPhase::Pending, Some(l)) => Some(PendingInfo {
                 expires_at: l.deadline,
@@ -303,6 +316,7 @@ impl<A: WorkerApi, C: Clock> AuthService<A, C> {
             phase: AuthPhase::SignedOut,
             reason: None,
             held: None,
+            admin_verified: false,
             dirty: false,
             session_epoch: 0,
             refresh_gen: 0,
@@ -411,6 +425,7 @@ impl<A: WorkerApi, C: Clock> AuthService<A, C> {
             }
         }
         i.held = Some(new);
+        i.admin_verified = true;
         i.offline = None;
         i.login = None;
         i.pending_rx = None;
@@ -428,6 +443,7 @@ impl<A: WorkerApi, C: Clock> AuthService<A, C> {
             warn!(op = e.op, "session.json을 지우지 못함");
         }
         i.held = None;
+        i.admin_verified = false;
         i.offline = None;
         i.dirty = false;
     }
@@ -1091,6 +1107,7 @@ impl<A: WorkerApi, C: Clock> AuthService<A, C> {
         let (held, cleared) = {
             let mut i = self.lock();
             let held = i.held.take();
+            i.admin_verified = false;
             i.login = None;
             i.pending_rx = None;
             i.login_seq += 1;
@@ -1158,9 +1175,17 @@ impl<A: WorkerApi, C: Clock> AuthService<A, C> {
 
     /// SignedIn일 때 본인 판정 채널 ID(A5 OwnershipGate)
     pub fn signed_in_channel(&self) -> Option<String> {
+        self.signer().map(|s| s.channel_id)
+    }
+
+    /// SignedIn일 때 본인 판정 채널 ID와 관리자 여부(한 잠금에서 함께 읽는다, worker.md 구현 중 변경 102)
+    pub fn signer(&self) -> Option<Signer> {
         let i = self.lock();
         match (&i.phase, &i.held) {
-            (AuthPhase::SignedIn, Some(h)) => Some(h.channel_id.clone()),
+            (AuthPhase::SignedIn, Some(h)) => Some(Signer {
+                channel_id: h.channel_id.clone(),
+                is_admin: admin_confirmed(&i),
+            }),
             _ => None,
         }
     }

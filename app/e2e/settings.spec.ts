@@ -12,6 +12,7 @@ const signedIn: AuthStatusDto = {
   offline: null,
   verifiedAt: 1_767_322_800,
   canReconnect: false,
+  isAdmin: false,
 };
 
 test('설정: 값을 바꾸면 바로 저장하고, 쿠키는 저장 뒤 다시 채우지 않는다', async ({ app }) => {
@@ -74,7 +75,7 @@ test('저장된 글자 크기는 시작하자마자 적용한다(로그인 전 �
   const { page } = app;
   await app.open({
     settings: { textScale: 'x-large' },
-    auth: { state: 'signedOut', channelId: null, channelName: null, reason: null, pending: null, offline: null, verifiedAt: null, canReconnect: false },
+    auth: { state: 'signedOut', channelId: null, channelName: null, reason: null, pending: null, offline: null, verifiedAt: null, canReconnect: false, isAdmin: false },
   });
   await expect(page.getByRole('heading', { name: t('auth.signedOut.title') })).toBeVisible();
   await expect(page.locator('html')).toHaveAttribute('data-text-scale', 'x-large');

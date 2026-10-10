@@ -73,6 +73,7 @@ export function signedInAs(channelId: string | null, channelName: string | null 
     offline: null,
     verifiedAt: null,
     canReconnect: false,
+    isAdmin: false,
   };
 }
 

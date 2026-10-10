@@ -90,6 +90,7 @@ const signedIn: AuthStatusDto = {
   offline: null,
   verifiedAt: 1_760_000_000,
   canReconnect: false,
+  isAdmin: false,
 };
 
 async function openCookies(user: ReturnType<typeof userEvent.setup>) {

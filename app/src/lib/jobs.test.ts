@@ -690,6 +690,27 @@ describe('막힌 작업(A5)', () => {
     }
   });
 
+  it('관리자는 다른 채널의 멈춘 작업도 막지 않는다', () => {
+    for (const status of ['interrupted', 'paused', 'failed', 'skipped'] as const) {
+      expect(jobBlock(job(1, { status, channelId: C3 }), { ...me, isAdmin: true })).toBeNull();
+    }
+  });
+
+  it('isAdmin은 signedIn일 때만 효력이 있고, 비관리자·대소문자·공백은 기존 규칙', () => {
+    const other = job(1, { status: 'interrupted', channelId: C3 });
+    expect(jobBlock(other, { ...me, state: 'checking', isAdmin: true })).toBeNull();
+    expect(jobBlock(other, { ...me, isAdmin: false })).toBe('otherChannel');
+    const spaced = { ...me, channelId: `  ${A1.toUpperCase()} `, isAdmin: false };
+    expect(jobBlock(job(1, { status: 'paused', channelId: A1 }), spaced)).toBeNull();
+    expect(jobBlock(job(1, { status: 'paused', channelId: C3 }), { ...spaced, isAdmin: true })).toBeNull();
+  });
+
+  it('관리자의 resumableInterrupted는 다른 채널도 포함한다', () => {
+    const list = [job(2, { status: 'interrupted', channelId: C3 }), job(1, { status: 'interrupted', channelId: A1 })];
+    expect(resumableInterrupted(list, { ...me, isAdmin: true })).toEqual([1, 2]);
+    expect(resumableInterrupted(list, me)).toEqual([1]);
+  });
+
   it('resumableInterrupted는 막힌 작업을 빼고 id 오름차순', () => {
     const list = [
       job(4, { status: 'interrupted', channelId: A1 }),

@@ -4,6 +4,7 @@
 
 ## 현재 위치
 
+- **관리자 게이트 예외(2026-10-11, 브랜치 `feat/admin-any-channel`)**: `isAdmin` 로그인은 본인 영상이 아니어도 받는다(`Ownership::AdminOverride`, 받기 카드에 info 안내, 작업 기록에는 실제 채널, 관리자 자동 이어받기 전부). 일반 사용자는 fail closed 그대로. worker.md 102·app.md 74.
 - **v0.4.0 릴리스(2026-10-11)**: 디자인 시스템 「무색」 적용 (a)~(f)(#65·#66·#67·#69·#70·#72)를 담았다. 버전 PR #74(Windows `size.binary.windows`·`size.bundle.windows-msi`를 master 실행 38087544439 측정값으로, RATCHET_LOG). 태그 `v0.4.0` = `06816df`, release 실행 38089531053 13개 작업 전부 녹색(gate·3 OS build·smoke·stage·sign-publish·verify·prune·deploy-worker·report). 남은 사람 몫은 아래 "디자인 시스템 (f) 뒤 남은 일" 중 `/privacy` 검토를 뺀 실기 확인들이다
 - **저장소**: 개발은 public `chnu-kim/chzzk-downloader`(remote `origin`)에서 한다. `chnu-kim/chzzk-downloader-private`(remote `private`)는 공개 전 원본 이력·연구 문서·실물 fixture·비공개 원문 목록(`public-release/`)의 보관소이며 **그쪽 ref를 origin에 push하지 않는다**(pre-push 가드가 막는다). 공개 절차는 `docs/public-release.md`.
 - **완료(2026-10-06 기준, 모두 master에 머지)**: Phase 0 하네스, Phase 1 Rust 코어, Go 삭제, Phase 2 Tauri 앱(macOS 실제 실행 확인), Phase 4 CI/CD(public PR #1: 단일 진입점·`ci.yml`/`ci-ok`·훅·비공개 이력 가드·스모크·ratchet·E2E·nightly/weekly 고리·CD `release.yml`/`xtask`·ruleset master/tags·저장소 설정 적용(2026-10-06 사용자 `repo-settings --apply --yes`, `--check` 드리프트 0)), CI 단축·Rust 1.99(#12), Windows 네이티브 E2E를 PR마다 관찰(#14).

@@ -978,7 +978,7 @@ async fn resume_checked_runs_check_only_when_requeuing() {
     assert!(has_partial(&out), ".part는 그대로");
 
     h.mgr
-        .resume_checked(a, false, |_| Ok(Some("verified".into())))
+        .resume_checked(a, false, |_| Ok(Some(Some("verified".into()))))
         .unwrap();
     assert_ne!(h.status(a), JobStatus::Paused);
     assert_eq!(h.job(a).channel_id.as_deref(), Some("verified"));
@@ -997,6 +997,41 @@ async fn resume_checked_runs_check_only_when_requeuing() {
         h.mgr.requeue_content(JobId(999)).unwrap_err().code,
         ErrorCode::JobNotFound
     );
+}
+
+/// `resume_checked`의 반환: `None`은 기록을 건드리지 않고, `Some(None)`은 채널 모름으로 고쳐 쓴다(Codex 리뷰)
+#[tokio::test(start_paused = true)]
+async fn resume_checked_none_keeps_channel_and_some_none_clears_it() {
+    let h = Harness::new(1);
+    let out = h.output("a");
+    h.fake.script_for(
+        &out,
+        Script::new()
+            .bytes(100, Some(1000))
+            .until_cancelled()
+            .linger(Duration::from_millis(20))
+            .fails(Error::Cancelled),
+    );
+    let a = enqueue_in(&h, "a", Some("ch"));
+    until("진행", || h.job(a).progress.is_some()).await;
+    h.mgr.pause(a).unwrap();
+    until("paused", || h.status(a) == JobStatus::Paused).await;
+    h.mgr.resume_checked(a, false, |_| Ok(None)).unwrap();
+    assert_eq!(h.job(a).channel_id.as_deref(), Some("ch"));
+
+    h.fake.script_for(
+        &out,
+        Script::new()
+            .bytes(100, Some(1000))
+            .until_cancelled()
+            .linger(Duration::from_millis(20))
+            .fails(Error::Cancelled),
+    );
+    until("진행2", || h.job(a).progress.is_some()).await;
+    h.mgr.pause(a).unwrap();
+    until("paused2", || h.status(a) == JobStatus::Paused).await;
+    h.mgr.resume_checked(a, false, |_| Ok(Some(None))).unwrap();
+    assert_eq!(h.job(a).channel_id, None);
 }
 
 #[tokio::test(start_paused = true)]

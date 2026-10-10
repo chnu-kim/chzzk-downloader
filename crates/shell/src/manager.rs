@@ -478,13 +478,13 @@ impl<B: Backend> DownloadManager<B> {
     }
 
     /// `resume`과 같고, 다시 줄 세울 상태(paused·failed·interrupted·skipped)일 때만 잠금 안에서 `check`(작업의
-    /// 컨텐츠)를 부른다. 거부하면 상태와 `.part`는 그대로다. 허용하며 채널 ID를 주면 기록의 `channel_id`를 그 값으로
+    /// 컨텐츠)를 부른다. 거부하면 상태와 `.part`는 그대로다. 허용하며 `Some(채널)`을 주면 기록의 `channel_id`를 그 값(`Some(None)`은 채널 모름)으로
     /// 고쳐 쓴다(검증한 채널, A5 리뷰). queued·running 등은 `check`를 부르지 않는다.
     pub fn resume_checked(
         &self,
         id: JobId,
         restart: bool,
-        check: impl FnOnce(&ContentRef) -> Result<Option<String>, AppError>,
+        check: impl FnOnce(&ContentRef) -> Result<Option<Option<String>>, AppError>,
     ) -> Result<(), AppError> {
         let mut st = self.inner.lock();
         let Some(job) = st.target(id)? else {
@@ -507,8 +507,9 @@ impl<B: Backend> DownloadManager<B> {
         }
         let seq = st.seq();
         let job = st.visible(id)?;
+        // `Some(x)`면 검증한 채널로 고쳐 쓴다(채널을 모르는 컨텐츠는 `Some(None)`: 기록도 None). `None`이면 건드리지 않는다
         if let Some(ch) = verified {
-            job.rec.channel_id = Some(ch);
+            job.rec.channel_id = ch;
         }
         self.inner.requeue(job, seq, restart);
         let dto = job.dto();

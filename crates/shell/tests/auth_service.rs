@@ -42,9 +42,16 @@ struct Env {
 impl Env {
     /// `now`는 V에서의 거리, `file`은 저장 세션의 refresh 만료(V에서의 거리, verified = V)
     fn new(now: Duration, file: Option<Duration>) -> Self {
+        Self::new_as(now, file, false)
+    }
+
+    /// 디스크 세션의 isAdmin을 고른다(서버가 이번 실행에서 확인하기 전의 값)
+    fn new_as(now: Duration, file: Option<Duration>, disk_admin: bool) -> Self {
         let dir = tempfile::tempdir().unwrap();
         if let Some(r) = file {
-            store(dir.path()).save(&stored(1, t0(), t0() + r)).unwrap();
+            let mut s = stored(1, t0(), t0() + r);
+            s.is_admin = disk_admin;
+            store(dir.path()).save(&s).unwrap();
         }
         let api = FakeWorkerApi::default();
         let clock = FakeClock::at(t0() + now);
@@ -2009,4 +2016,101 @@ async fn has_session_false_when_signed_out() {
     let s = e.svc.status();
     assert_eq!(s.phase, AuthPhase::SignedOut);
     assert!(!s.has_session);
+}
+
+fn admin_bundle(e: &Env, n: u32, is_admin: bool) {
+    let mut b = bundle(n, e.now());
+    b.is_admin = is_admin;
+    e.api.push_refresh(Reply::Now(Ok(b)));
+}
+
+#[tokio::test(start_paused = true)]
+async fn signer_carries_admin_and_demotion_replaces_it_on_next_refresh() {
+    let e = Env::optimistic();
+    // 저장 세션은 관리자가 아니다
+    assert_eq!(e.svc.signer().map(|s| s.is_admin), Some(false));
+    admin_bundle(&e, 2, true);
+    let s = e.svc.refresh().await;
+    assert!(s.is_admin);
+    let me = e.svc.signer().unwrap();
+    assert_eq!((me.channel_id.as_str(), me.is_admin), (CH, true));
+    // 다음 refresh의 서버 값이 held를 통째로 바꾼다(강등)
+    admin_bundle(&e, 3, false);
+    let s = e.svc.refresh().await;
+    assert!(!s.is_admin);
+    assert_eq!(e.svc.signer().map(|s| s.is_admin), Some(false));
+}
+
+#[tokio::test(start_paused = true)]
+async fn signer_is_none_outside_signed_in_even_for_admin() {
+    let e = Env::optimistic();
+    admin_bundle(&e, 2, true);
+    e.svc.refresh().await;
+    assert!(e.svc.signer().is_some());
+    // 오프라인 유예를 넘기면 GraceExpired: 보이는 held는 관리자여도 판정 주체는 없다
+    e.clock.advance(h(72));
+    e.refresh_fail_all();
+    let s = e.svc.refresh().await;
+    assert_eq!(
+        (s.phase, s.reason),
+        (AuthPhase::Expired, Some(AuthReason::GraceExpired))
+    );
+    assert!(e.svc.signer().is_none());
+    assert!(e.svc.signed_in_channel().is_none());
+
+    // Checking·SignedOut·Denied에서도 None
+    assert!(Env::checking().svc.signer().is_none());
+    assert!(Env::new(h(1), None).svc.signer().is_none());
+    let denied = pending_env().await;
+    denied
+        .redeem_with(Ok(RedeemResponse::Denied {
+            channel_name: "x".into(),
+        }))
+        .await;
+    assert!(denied.svc.signer().is_none());
+    assert!(!denied.svc.status().is_admin);
+}
+
+/// 디스크의 isAdmin은 이번 실행에서 Worker가 준 묶음으로 확인되기 전에는 권한이 아니다(Codex 리뷰, worker.md 102)
+#[tokio::test(start_paused = true)]
+async fn disk_admin_is_not_authority_until_server_confirms_this_run() {
+    let e = Env::new_as(h(1), Some(d(30)), true);
+    let me = e.svc.signer().unwrap();
+    assert_eq!((me.channel_id.as_str(), me.is_admin), (CH, false));
+    assert!(!e.svc.status().is_admin);
+    admin_bundle(&e, 2, true);
+    let s = e.svc.refresh().await;
+    assert!(s.is_admin);
+    assert_eq!(e.svc.signer().map(|s| s.is_admin), Some(true));
+}
+
+#[tokio::test(start_paused = true)]
+async fn confirmed_admin_is_dropped_by_demotion_offline_and_logout() {
+    let e = Env::new_as(h(1), Some(d(30)), true);
+    admin_bundle(&e, 2, true);
+    assert!(e.svc.refresh().await.is_admin);
+    // 강등: 다음 refresh의 서버 값으로 곧바로 사라진다
+    admin_bundle(&e, 3, false);
+    assert!(!e.svc.refresh().await.is_admin);
+    assert_eq!(e.svc.signer().map(|s| s.is_admin), Some(false));
+    admin_bundle(&e, 4, true);
+    assert!(e.svc.refresh().await.is_admin);
+
+    // 오프라인 유예에 들어가면 권한이 없다. 상태는 SignedIn 그대로다
+    e.refresh_fail_all();
+    let s = e.svc.refresh().await;
+    assert_eq!(s.phase, AuthPhase::SignedIn);
+    assert!(s.offline.is_some());
+    assert!(!s.is_admin);
+    assert_eq!(e.svc.signer().map(|s| s.is_admin), Some(false));
+    // 다시 온라인으로 확인되면 돌아온다
+    admin_bundle(&e, 5, true);
+    let s = e.svc.refresh().await;
+    assert!(s.offline.is_none() && s.is_admin);
+    assert_eq!(e.svc.signer().map(|s| s.is_admin), Some(true));
+
+    // 로그아웃: 판정 주체가 없다
+    e.svc.logout().await.unwrap();
+    assert!(e.svc.signer().is_none());
+    assert!(!e.svc.status().is_admin);
 }

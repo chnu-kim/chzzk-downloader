@@ -283,7 +283,7 @@ impl App {
         };
         self.manager.resume_checked(id, restart, |c| {
             if *c == content {
-                Ok(owner)
+                Ok(Some(owner))
             } else {
                 Err(AppError::ownership_unknown())
             }
@@ -338,7 +338,7 @@ impl App {
     }
 
     /// 상태가 바뀔 때마다(처음 포함) 앱이 부른다. 채널 ID가 있는 처음 SignedIn에서 미뤄 둔 자동 이어받기를 한 번 하고,
-    /// 그 채널의 interrupted만 줄 세운다(83). 줄 세운 수
+    /// 그 채널의 interrupted만 줄 세운다(83). 관리자는 모두 줄 세운다(102). 줄 세운 수
     pub fn on_auth_status(&self, st: &AuthStatus) -> usize {
         if st.phase != AuthPhase::SignedIn {
             return 0;
@@ -350,11 +350,14 @@ impl App {
         if !self.auto_resume_pending.swap(false, Ordering::SeqCst) {
             return 0;
         }
+        // 관리자는 채널과 상관없이 받으므로 멈춘 작업을 모두 이어받는다(worker.md 구현 중 변경 102)
+        let admin = st.is_admin;
         let n = self
             .manager
-            .resume_interrupted_where(|c| is_own_channel(c, me) == Some(true));
+            .resume_interrupted_where(|c| admin || is_own_channel(c, me) == Some(true));
         tracing::info!(
             count = n,
+            admin,
             "로그인 뒤 같은 채널의 멈춘 작업을 자동으로 이어받는다"
         );
         n

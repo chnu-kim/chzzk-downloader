@@ -46,7 +46,7 @@ export const ENVS: Env[] = [
 
 // ───────────────────────── 고정 데이터 ─────────────────────────
 
-const EMPTY_AUTH = { channelId: null, channelName: null, reason: null, pending: null, offline: null, verifiedAt: null, canReconnect: false } as const;
+const EMPTY_AUTH = { channelId: null, channelName: null, reason: null, pending: null, offline: null, verifiedAt: null, canReconnect: false, isAdmin: false } as const;
 const auth = (over: Partial<AuthStatusDto> & Pick<AuthStatusDto, 'state'>): AuthStatusDto => ({ ...EMPTY_AUTH, ...over });
 const SIGNED_IN = auth({ state: 'signedIn', channelId: MY_CHANNEL_ID, channelName: '테스트 채널', verifiedAt: 1_767_322_800 });
 const AVAILABLE: UpdateInfoDto = { version: '9.9.9', current: '0.0.0-e2e', notes: null, pubDate: null };

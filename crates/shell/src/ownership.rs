@@ -5,6 +5,9 @@
 //! 없으면 다시 resolve한다. 캐시에는 판정이 아니라 채널 ID를 두고, 판정은 enqueue 순간의 로그인 채널로 한다.
 //! 컨텐츠에 채널 ID가 없으면(`None`) **거부**한다(fail closed). 클립은 코어가 `ownerChannel`을 채널 ID로 쓰므로
 //! 제작자는 보지 않는다.
+//!
+//! 관리자(로그인 묶음의 `isAdmin`)는 채널과 상관없이 허용한다(worker.md 구현 중 변경 102). 판정 값은 남의 영상·채널 모름
+//! 모두 `AdminOverride`이고, 허용할 때도 컨텐츠 채널 ID를 그대로 돌려줘 작업 기록에 실제 채널이 남는다.
 
 use std::collections::VecDeque;
 use std::fmt;
@@ -20,14 +23,23 @@ use crate::error::AppError;
 /// 최근 resolve 캐시 크기
 pub const RECENT_RESOLVES: usize = 32;
 
-/// SignedIn일 때 본인 판정 채널 ID를 주는 것(앱은 `AuthService`, 테스트는 가짜)
+/// SignedIn일 때의 판정 주체. 채널 ID와 관리자 여부를 한 번에 읽는다(계정이 바뀌는 사이에 섞이지 않게)
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Signer {
+    /// 본인 판정 채널 ID
+    pub channel_id: String,
+    /// 관리자면 채널과 상관없이 허용
+    pub is_admin: bool,
+}
+
+/// SignedIn일 때 판정 주체를 주는 것(앱은 `AuthService`, 테스트는 가짜)
 pub trait SignedInChannel: Send + Sync {
-    fn signed_in_channel(&self) -> Option<String>;
+    fn signed_in(&self) -> Option<Signer>;
 }
 
 impl<A: WorkerApi, C: Clock> SignedInChannel for AuthService<A, C> {
-    fn signed_in_channel(&self) -> Option<String> {
-        AuthService::signed_in_channel(self)
+    fn signed_in(&self) -> Option<Signer> {
+        AuthService::signer(self)
     }
 }
 
@@ -73,8 +85,8 @@ impl OwnershipGate {
         self.auth.is_some()
     }
 
-    fn me(&self) -> Option<String> {
-        self.auth.as_ref().and_then(|a| a.signed_in_channel())
+    fn me(&self) -> Option<Signer> {
+        self.auth.as_ref().and_then(|a| a.signed_in())
     }
 
     fn recent_len(&self) -> usize {
@@ -93,8 +105,9 @@ impl OwnershipGate {
         let Some(me) = self.me() else {
             return Ownership::Unchecked;
         };
-        match is_own_channel(meta.channel_id.as_deref(), &me) {
+        match is_own_channel(meta.channel_id.as_deref(), &me.channel_id) {
             Some(true) => Ownership::Own,
+            _ if me.is_admin => Ownership::AdminOverride,
             Some(false) => Ownership::NotOwn,
             None => Ownership::Unknown,
         }
@@ -129,7 +142,9 @@ impl OwnershipGate {
         let Some(me) = self.me() else {
             return Err(AppError::not_logged_in());
         };
-        verdict(is_own_channel(owner.as_deref(), &me))?;
+        if !me.is_admin {
+            verdict(is_own_channel(owner.as_deref(), &me.channel_id))?;
+        }
         Ok(owner)
     }
 
@@ -179,17 +194,33 @@ mod tests {
     const A1: &str = "000000000000000000000000000000a1";
     const C3: &str = "000000000000000000000000000000c3";
 
-    struct Me(Mutex<Option<String>>);
+    struct Me(Mutex<Option<Signer>>);
     impl Me {
         fn new(v: Option<&str>) -> Arc<Me> {
-            Arc::new(Me(Mutex::new(v.map(str::to_string))))
+            let me = Arc::new(Me(Mutex::new(None)));
+            me.set(v);
+            me
+        }
+        fn admin(v: &str) -> Arc<Me> {
+            let me = Me::new(None);
+            me.set_admin(Some(v));
+            me
         }
         fn set(&self, v: Option<&str>) {
-            *self.0.lock().unwrap() = v.map(str::to_string);
+            self.put(v, false);
+        }
+        fn set_admin(&self, v: Option<&str>) {
+            self.put(v, true);
+        }
+        fn put(&self, v: Option<&str>, is_admin: bool) {
+            *self.0.lock().unwrap() = v.map(|c| Signer {
+                channel_id: c.to_string(),
+                is_admin,
+            });
         }
     }
     impl SignedInChannel for Me {
-        fn signed_in_channel(&self) -> Option<String> {
+        fn signed_in(&self) -> Option<Signer> {
             self.0.lock().unwrap().clone()
         }
     }
@@ -359,6 +390,129 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn on_resolved_marks_admin_override_for_other_and_unknown() {
+        let g = OwnershipGate::enabled(Me::admin(A1));
+        assert_eq!(g.on_resolved(&video(1), &meta(Some(A1))), Ownership::Own);
+        assert_eq!(
+            g.on_resolved(&video(2), &meta(Some(C3))),
+            Ownership::AdminOverride
+        );
+        assert_eq!(
+            g.on_resolved(&video(3), &meta(None)),
+            Ownership::AdminOverride
+        );
+    }
+
+    #[tokio::test]
+    async fn admin_admits_other_and_unknown_with_real_channel() {
+        let g = OwnershipGate::enabled(Me::admin(A1));
+        let calls = AtomicUsize::new(0);
+        let r = admit_with(&g, &video(1), &calls, Ok(Some(C3)))
+            .await
+            .unwrap();
+        // 허용해도 기록에는 실제 컨텐츠 채널이 남는다
+        assert_eq!(r.as_deref(), Some(C3));
+        let r = admit_with(&g, &video(2), &calls, Ok(None)).await.unwrap();
+        assert_eq!(r, None);
+    }
+
+    #[tokio::test]
+    async fn admin_loses_override_when_signer_changes_before_judging() {
+        let me = Me::admin(A1);
+        let g = OwnershipGate::enabled(me.clone());
+        let calls = AtomicUsize::new(0);
+        // 다시 resolve하는 사이에 관리자가 아닌 다른 채널로 바뀌면 판정 순간의 주체로 거부한다
+        let e = g
+            .admit(&video(1), || async {
+                calls.fetch_add(1, Ordering::SeqCst);
+                me.set(Some(C3));
+                Ok(Some(A1.to_string()))
+            })
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, ErrorCode::NotOwnContent);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn admin_signed_out_is_unchecked_and_not_logged_in_without_fetch() {
+        let me = Me::admin(A1);
+        let g = OwnershipGate::enabled(me.clone());
+        me.set_admin(None);
+        assert_eq!(
+            g.on_resolved(&video(1), &meta(Some(C3))),
+            Ownership::Unchecked
+        );
+        let calls = AtomicUsize::new(0);
+        let e = admit_with(&g, &video(2), &calls, Ok(Some(C3)))
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, ErrorCode::NotLoggedIn);
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn demoted_admin_is_rejected_from_next_judgement_even_with_cached_channel() {
+        let me = Me::admin(A1);
+        let g = OwnershipGate::enabled(me.clone());
+        assert_eq!(
+            g.on_resolved(&video(1), &meta(Some(C3))),
+            Ownership::AdminOverride
+        );
+        assert_eq!(
+            g.on_resolved(&video(2), &meta(None)),
+            Ownership::AdminOverride
+        );
+        // 캐시에는 채널만 있고 판정은 그 순간의 주체로 한다
+        me.set(Some(A1));
+        let calls = AtomicUsize::new(0);
+        let e = admit_with(&g, &video(1), &calls, Ok(Some(C3)))
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, ErrorCode::NotOwnContent);
+        let e = admit_with(&g, &video(2), &calls, Ok(None))
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, ErrorCode::OwnershipUnknown);
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert_eq!(g.on_resolved(&video(1), &meta(Some(C3))), Ownership::NotOwn);
+        assert_eq!(g.on_resolved(&video(2), &meta(None)), Ownership::Unknown);
+    }
+
+    #[tokio::test]
+    async fn admin_fetch_error_stays_error_and_is_not_cached() {
+        let g = OwnershipGate::enabled(Me::admin(A1));
+        let calls = AtomicUsize::new(0);
+        let e = admit_with(&g, &video(1), &calls, Err(()))
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, AppError::internal("down").code);
+        assert_eq!(g.known_channel(&video(1)), None);
+        admit_with(&g, &video(1), &calls, Ok(Some(C3)))
+            .await
+            .unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        assert_eq!(g.known_channel(&video(1)).as_deref(), Some(C3));
+    }
+
+    #[tokio::test]
+    async fn disabled_gate_ignores_admin_concept() {
+        let g = OwnershipGate::disabled();
+        assert_eq!(
+            g.on_resolved(&video(1), &meta(Some(C3))),
+            Ownership::Unchecked
+        );
+        let calls = AtomicUsize::new(0);
+        assert_eq!(
+            admit_with(&g, &video(1), &calls, Ok(Some(C3)))
+                .await
+                .unwrap(),
+            None
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
     }
 
     #[test]

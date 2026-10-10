@@ -53,7 +53,7 @@ const exec = (bin, args, cwd, env = process.env, input = undefined) => {
 
 // 디자인 gate 넷(design-tokens·design-lint·design-copy·design-icons)이 읽는 입력(governance.md §2.0 "최소 사본"). 원천·생성물·
 // 검사 대상 소스·패리티 문서·상수 파일이다. 없는 경로(단계 (a)의 licenses/·help/ 등)는 건너뛴다.
-const DESIGN_INPUTS = ['design', 'scripts/design', 'app/src', 'worker/src/http', 'docs/design/system', 'crates/shell/src/consts.rs', 'licenses', 'help'];
+const DESIGN_INPUTS = ['design', 'scripts/design', 'app/src', 'worker/src', 'app/src-tauri/src', 'docs/design/system', 'crates/shell/src/consts.rs', 'licenses', 'help'];
 
 // 사본 저장소: scripts/ci 전체, 설정, ci.yml, 최소 Cargo 워크스페이스와 app 버전 파일. files로 덮어쓴다(null이면 지운다).
 // design: true면 DESIGN_INPUTS도 복사한다(디자인 gate 씨앗만. 다른 씨앗은 디자인 입력 없이 빠르게 만든다).

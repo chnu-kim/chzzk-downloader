@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-네이버 치지직(Chzzk) VOD·클립 다운로더다. Go CLI를 **Rust 코어(`crates/core`) + Tauri GUI**로 재구축하는 중이다. 진행 기록과 결정은 `docs/ROADMAP.md`, 코어 설계의 기준은 `docs/design/core.md`, 앱(셸·GUI) 설계의 기준은 `docs/design/app.md`(화면의 시각 규칙은 `docs/design/ui-visual.md`), Phase 3 Worker(인증·랜딩·배포 게이트)와 앱 로그인 설계의 기준은 `docs/design/worker.md`다. 세 설계 문서 모두 끝의 "구현 중 변경"이 본문보다 우선한다(app.md는 그 절 머리의 "읽는 법" 표부터 본다). 옛 Go 동작 기록은 `docs/spec/core-behavior.md`다. 버전 규칙(SemVer, 올림 자리는 커밋 타입으로, 다음은 0.3.0)은 `docs/versioning.md`다.
+네이버 치지직(Chzzk) VOD·클립 다운로더다. Go CLI를 **Rust 코어(`crates/core`) + Tauri GUI**로 재구축하는 중이다. 진행 기록과 결정은 `docs/ROADMAP.md`, 코어 설계의 기준은 `docs/design/core.md`, 앱(셸·GUI) 설계의 기준은 `docs/design/app.md`, Phase 3 Worker(인증·랜딩·배포 게이트)와 앱 로그인 설계의 기준은 `docs/design/worker.md`다. 세 설계 문서 모두 끝의 "구현 중 변경"이 본문보다 우선한다(app.md는 그 절 머리의 "읽는 법" 표부터 본다). **앱과 Worker의 시각·문구·컴포넌트·패턴 규칙은 디자인 시스템 `docs/design/system/`이 단일 원천이다**(`README.md` 결정 표 D1~D62 > `foundations.md` 토큰 > 나머지. app.md §8·§9·§10의 시각·문구 규칙과 옛 `ui-visual.md`를 대체한다, app.md 구현 중 변경 67). 근거는 `docs/research/design-system.md`의 ID로 인용한다. 옛 Go 동작 기록은 `docs/spec/core-behavior.md`다. 버전 규칙(SemVer, 올림 자리는 커밋 타입으로, 다음은 0.3.0)은 `docs/versioning.md`다.
 
 ## 레이아웃
 
@@ -29,6 +29,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `ci/ratchet.json`, `ci/RATCHET_LOG.md`, `release/expected-artifacts.json` | 커버리지·테스트 수·크기·살아남은 mutant ratchet 기준(나빠지면 CI 실패, 느슨하게 하면 로그에 키와 이유), OS별 번들 기대 집합 |
 | `scripts/ci/repo-settings.json`, `.github/rulesets/` | 저장소 설정·ruleset 선언(Actions 허용 목록·SHA 핀 강제·fork 승인, 환경 `release`·`audit`·`drift`의 배포 정책·protection_rules, ruleset `master`(필수 `ci-ok`·최신화·force push·삭제 금지)·`tags`(`v*`는 관리자만)). nightly `ruleset-drift`가 실제 값과 비교하고 `repo-settings.mjs --apply`가 적용한다 |
 | `rust-toolchain.toml`, `deny.toml`, `_typos.toml`, `zizmor.yml`, `.github/dependabot.yml` | 툴체인 고정(1.99.0, MSRV는 `rust-version` 1.90), cargo-deny, typos, zizmor, Dependabot 설정 |
+| `docs/design/system/` | **디자인 시스템 「무색」**(앱·Worker 공통 시각·문구 규칙의 단일 원천). `README.md`(원칙·결정 표 D1~D62·열린 항목·ADR 규칙) · `foundations.md`(토큰·대비·forced-colors·척도·상수 표, §13 생성물 기대 모양) · `components.md` · `patterns.md` · `content.md`(copy deck 규칙·용어집·문구 전표) · `platform.md`(셸·OS 분기) · `web.md`(Worker 페이지) · `governance.md`(gate `design-*` 명세·리뷰 체크리스트·ADR 운영·적용 계획 (a)~(f)) · `adr/`. 근거 문서는 `docs/research/design-system.md`(ID `E-*`·`X-*`·`A-*`·`G-*`·`J-*`·`Q*`). 적용은 governance §10의 stacked PR (a)~(f)로 한다 |
 
 `crates/core/src` 모듈: `url`(parse_content_url) · `info`(`classify`: **inKey 분기는 이 한 곳**, `encryptionType` → `inKey` → `liveRewindPlaybackJson` 순) · `mpd` · `hls` · `http`(요청 종류별 헤더, `Secret`, `redact_url`) · `client`(`Chzzk::resolve`) · `download/`(`part`·`retry`·`progressive`·`segmented`) · `progress`(`Meter`) · `naming` · `fsutil` · `settings` · `credentials` · `legacy` · `ownership` · `error`.
 

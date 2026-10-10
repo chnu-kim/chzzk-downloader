@@ -1,5 +1,6 @@
 // 오류 문구와 복구 동작(docs/design/app.md §9 표). `errorCopy`가 표를 조합한다.
-import type { AppError, ErrorCode, ErrorPayload } from '../bindings';
+import type { AppError, ErrorCode, ErrorPayload, Os } from '../bindings';
+import { revealLabel } from '../platform';
 import { t, type CopyKey } from './ko';
 
 /** 오류 문구 옆에 놓는 동작. 버튼 하나가 하나다. */
@@ -349,7 +350,7 @@ export function errorCopy(raw: AppError, ctx: ErrorContext): ErrorCopy {
   }
 }
 
-const ACTION_LABEL: Record<ActionId, CopyKey> = {
+const ACTION_LABEL: Record<Exclude<ActionId, 'openFolder'>, CopyKey> = {
   retry: 'action.retry',
   resume: 'action.resume',
   restartFresh: 'action.restartFresh',
@@ -359,11 +360,14 @@ const ACTION_LABEL: Record<ActionId, CopyKey> = {
   reenterCookies: 'action.reenterCookies',
   reresolve: 'action.reresolve',
   copyReport: 'action.copyReport',
-  openFolder: 'action.openFolder',
   openConfigFolder: 'action.openConfigFolder',
   showInList: 'action.showInList',
 };
 
-export function actionLabel(a: ActionId): string {
-  return t(ACTION_LABEL[a]);
+/**
+ * 동작 버튼 글자. 폴더 보기(`openFolder`)만 OS마다 다르다(D39: Finder에서 보기 / 폴더에서 보기).
+ * 이 파일은 e2e(Node)도 읽는 순수 TS라 스토어를 읽지 않고, 호출부가 `platform.os`를 넘긴다(기본은 macOS가 아닌 쪽).
+ */
+export function actionLabel(a: ActionId, os: Os = 'linux'): string {
+  return a === 'openFolder' ? revealLabel(os) : t(ACTION_LABEL[a]);
 }

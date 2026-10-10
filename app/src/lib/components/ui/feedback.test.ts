@@ -298,6 +298,19 @@ describe('Notice', () => {
     expect(onclose).toHaveBeenCalledOnce();
   });
 
+  it('동작 loading은 aria-busy·aria-disabled로 보이고 눌러도 실행하지 않는다(포커스는 남는다)', async () => {
+    const user = userEvent.setup();
+    const run = vi.fn();
+    const { container } = render(NoticeHarness, {
+      actions: [{ id: 'install', label: '지금 업데이트', loading: true, onclick: run }],
+    });
+    const btn = within(container.querySelector('.notice-actions') as HTMLElement).getByRole('button', { name: '지금 업데이트' });
+    expect(btn).toHaveAttribute('aria-busy', 'true');
+    expect(btn).toHaveAttribute('aria-disabled', 'true');
+    await user.click(btn);
+    expect(run).not.toHaveBeenCalled();
+  });
+
   it('동작이 3개를 넘으면 앞 3개만 보인다', () => {
     const actions = ['a', 'b', 'c', 'd'].map((id) => ({ id, label: id, onclick: () => {} }));
     const { container } = render(NoticeHarness, { actions });

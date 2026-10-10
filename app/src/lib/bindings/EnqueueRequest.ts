@@ -18,4 +18,8 @@ onExisting: OnExisting,
 /**
  * true면 첫 시작 전에 `discard_partial(output)`
  */
-restart: boolean, };
+restart: boolean, 
+/**
+ * 방송·공개 날짜(`meta.liveOpenDate ?? meta.publishDate`). 최근 영상 둘째 줄에만 쓴다. 없어도 된다
+ */
+contentDate?: string, };

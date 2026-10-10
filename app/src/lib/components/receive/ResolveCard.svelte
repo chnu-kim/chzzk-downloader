@@ -1,28 +1,40 @@
 <script lang="ts">
-  // 영상 카드(S1-b, §8.3, docs/design/system/patterns.md §6.5). 화질·폴더·파일 이름을 고르고 `enqueue`한다.
-  // 파일 이름·화질·폴더가 바뀔 때마다 150ms 뒤 `check_output`을 부르고, 지금 입력의 결과가 올 때까지
-  // 다운로드를 막는다(낡은 결과로 충돌 안내를 건너뛰지 않게).
+  // 영상 카드(system/patterns.md §6.5·§14.2 (c)). 화질·폴더·파일 이름을 고르고 `enqueue`한다.
+  // 파일 이름·화질·폴더가 바뀔 때마다 CHECK_DEBOUNCE_MS 뒤 `check_output`을 부르고, 지금 입력의 결과가 올 때까지
+  // [받기]를 막는다(낡은 결과로 충돌 안내를 건너뛰지 않게). 같은 이름 파일을 "덮어쓰기"로 골랐으면 [받기]가 D7을 연다.
+  // 영역(region)의 이름은 영상 제목이다(h3). 머리 h2는 섹션 제목 급의 `card.title`.
+  // 카드와 `.main` 사이 어떤 조상에도 overflow를 두지 않는다: 바닥 줄(.card-footer)이 sticky라서다.
   import { onMount, untrack } from 'svelte';
   import * as api from '../../api';
   import type { AppError, OutputCheck, ResolvedDto } from '../../bindings';
   import { actionLabel, errorCopy, type ActionId } from '../../copy/errors';
   import { t } from '../../copy/ko';
+  import { shortcutText } from '../../platform';
   import {
+    BLOCK_REASON_ID,
+    CHECK_DEBOUNCE_MS,
     DEFAULT_CHOICES,
+    FILE_EXT,
     buildEnqueueRequest,
     canDownload,
     checkKey,
+    downloadBlock,
     kindTone,
     metaParts,
+    notices,
     type CardChoices,
   } from '../../receive';
   import { announcer } from '../../stores/announce.svelte';
+  import { platform } from '../../stores/platform.svelte';
   import { settings } from '../../stores/settings.svelte';
-  import { modKey, modLabel } from '../../stores/ui.svelte';
+  import { modKey } from '../../stores/ui.svelte';
+  import OverwriteDialog from '../app/OverwriteDialog.svelte';
   import Badge from '../ui/Badge.svelte';
   import Button from '../ui/Button.svelte';
+  import { isImeKey } from '../ui/focus';
   import IconButton from '../ui/IconButton.svelte';
   import Notice from '../ui/Notice.svelte';
+  import Surface from '../ui/Surface.svelte';
   import ConflictNotice from './ConflictNotice.svelte';
   import FilenameField from './FilenameField.svelte';
   import FolderField from './FolderField.svelte';
@@ -59,8 +71,14 @@
   let enqueueError: AppError | null = $state(null);
   let busy = $state(false);
   let titleEl: HTMLHeadingElement | null = $state(null);
+  /** D7: 덮어쓰기를 고르고 [받기]를 눌렀을 때의 확인 대화상자 */
+  let confirmOverwrite = $state(false);
   /** 같은 입력으로 다시 검사하고 싶을 때 올린다 */
   let recheck = $state(0);
+
+  function wantsOverwrite(c: OutputCheck | null, ch: CardChoices): boolean {
+    return !!c && c.exists && ch.existing === 'overwrite';
+  }
 
   const quality = $derived(view.qualities[qualityIndex]);
   const key = $derived(checkKey(folder, fileName, quality?.id ?? ''));
@@ -72,6 +90,12 @@
     !!quality &&
       canDownload({ fileName, check, checkedKey, currentKey: key, busy, ownership: view.ownership, choices }),
   );
+  /** 이 검사 결과가 지금 입력의 것인가(낡은 결과의 충돌 안내·사유를 보이지 않는다) */
+  const fresh = $derived(check != null && checkedKey === key);
+  /** [받기]를 막는 사유(없으면 null). 사유가 있으면 그 문장 요소를 aria-describedby로 잇는다 */
+  const blocked = $derived(downloadBlock(view.ownership, fresh ? check : null));
+  /** 같은 이름의 파일을 지우고 받는다: 확인(D7)을 거친다. 저장될 이름은 검사가 정리한 이름이다 */
+  const overwriting = $derived(fresh && wantsOverwrite(check, choices));
   const shownError: AppError | null = $derived<AppError | null>(enqueueError ?? checkError);
   const errCopy = $derived(
     shownError ? errorCopy(shownError, { place: 'resolve', cookiesEnabled: settings.cookiesEnabled }) : null,
@@ -80,6 +104,12 @@
     (errCopy?.actions ?? []).map((a) => ({ id: a, label: actionLabel(a), onclick: () => onErrorAction(a) })),
   );
 
+  /** 카드 안 경고가 하나라도 있는가(없으면 간격도 두지 않는다) */
+  const hasWarnings = $derived.by(() => {
+    const n = fresh && check ? notices(check, choices) : null;
+    const conflict = !!n && (n.duplicate || n.exists || n.partialSame != null || n.partialOther);
+    return conflict || view.ownership === 'notOwn' || view.ownership === 'unknown' || !!shownError;
+  });
   // 가장 최근에 요청한 열쇠. 늦게 온 결과는 이것과 다르면 버린다.
   let latestKey = '';
 
@@ -114,12 +144,12 @@
         checkedKey = null;
         checkError = e as AppError;
       }
-    }, 150);
+    }, CHECK_DEBOUNCE_MS);
     return () => clearTimeout(handle);
   });
 
   onMount(() => {
-    // 불러오기가 끝나면 카드 제목으로 포커스(§8.10)
+    // 불러오기가 끝나면 카드 제목으로 포커스(patterns.md §9 F-6)
     titleEl?.focus();
     announcer.say(`${t('resolve.done')}: ${view.meta.title}`);
   });
@@ -134,11 +164,18 @@
     }
     if (!picked) return;
     folder = picked;
-    // 카드에서 바꾼 폴더는 다음에도 기본값이 된다(§8.3, "마지막 화질"과 같은 기억 방식)
+    // 카드에서 바꾼 폴더는 다음에도 기본값이 된다(patterns.md §6.5, "마지막 화질"과 같은 기억 방식)
     void settings.patch({ downloadFolder: picked });
   }
 
-  async function download() {
+  /** [받기]·Mod+Enter: 덮어쓰기면 확인을 먼저 묻고, 아니면 곧바로 등록한다 */
+  function download() {
+    if (!ready || !check || !quality) return;
+    if (overwriting) confirmOverwrite = true;
+    else void enqueueNow();
+  }
+
+  async function enqueueNow() {
     if (!ready || !check || !quality) return;
     busy = true;
     enqueueError = null;
@@ -154,6 +191,7 @@
       recheck += 1;
     } finally {
       busy = false;
+      confirmOverwrite = false;
     }
   }
 
@@ -165,7 +203,7 @@
     else if (a === 'retry') {
       if (enqueueError) {
         enqueueError = null;
-        void download();
+        download();
       } else {
         checkError = null;
         recheck += 1;
@@ -174,20 +212,22 @@
   }
 
   function onwindowkeydown(e: KeyboardEvent) {
-    if (e.key === 'Enter' && modKey(e) && !e.defaultPrevented) {
+    if (isImeKey(e)) return;
+    // 확인 대화상자가 열려 있으면 그 대화상자의 Enter가 맡는다
+    if (e.key === 'Enter' && modKey(e) && !e.defaultPrevented && !confirmOverwrite) {
       e.preventDefault();
-      void download();
+      download();
     }
   }
 </script>
 
 <svelte:window onkeydown={onwindowkeydown} />
 
-<section class="video-card" aria-labelledby="card-heading">
-  <div class="head">
-    <span class="eyebrow">{t('card.title')}</span>
-    <IconButton icon="x" label={t('card.close')} onclick={onclose} />
-  </div>
+<Surface variant="card" class="card video-card" aria-labelledby="card-title">
+  {#snippet header()}
+    <h2>{t('card.title')}</h2>
+    <IconButton icon="x" size="sm" label={t('common.close')} onclick={onclose} />
+  {/snippet}
 
   <div class="badges">
     <Badge kind={tone} />
@@ -195,115 +235,100 @@
       <Badge kind="adult" />
     {/if}
   </div>
-  <h2 id="card-heading" class="title" tabindex="-1" data-focus-container title={view.meta.title} bind:this={titleEl}>
-    {view.meta.title}
-  </h2>
+  <h3 id="card-title" class="video-title" tabindex="-1" data-focus-container bind:this={titleEl}>{view.meta.title}</h3>
   <p class="meta">
     {#each metaParts(view) as part, i (i)}
-      {#if i > 0}<span class="dot" aria-hidden="true">·</span>{/if}<span class="num">{part}</span>
+      {#if i > 0}<span aria-hidden="true">·</span>{/if}<span class="num">{part}</span>
     {/each}
   </p>
 
   <div class="fields">
     <QualityPicker qualities={view.qualities} durationSecs={view.meta.durationSecs} bind:selected={qualityIndex} />
-    <div class="paths">
-      <FolderField path={folderPath} onchange={changeFolder} disabled={busy} />
-      <FilenameField
-        bind:value={fileName}
-        suggested={view.suggestedFileName}
-        willSaveAs={check && checkedKey === key && check.truncated ? check.fileName : null}
-        disabled={busy}
-      />
-    </div>
-    {#if check && checkedKey === key}
-      <ConflictNotice {check} bind:choices onshowinlist={() => check?.duplicateJobId != null && onshowjob(check.duplicateJobId)} />
-    {/if}
-    <OwnershipNotice ownership={view.ownership} channelName={view.meta.channelName} />
-    {#if errCopy}
-      <Notice tone="danger" title={errCopy.title} actions={errActions}>
-        {#if errCopy.body}<p class="err-line">{errCopy.body}</p>{/if}
-        {#if errCopy.detail}<p class="err-line detail">{errCopy.detail}</p>{/if}
-      </Notice>
-    {/if}
+    <FolderField path={folderPath} onchange={changeFolder} disabled={busy} />
+    <FilenameField
+      bind:value={fileName}
+      suggested={view.suggestedFileName}
+      willSaveAs={fresh && check?.truncated ? check.fileName : null}
+      disabled={busy}
+    />
   </div>
 
-  <div class="card-acts">
-    <Button onclick={onclose}>{t('card.cancel')}</Button>
-    <!-- primary에는 disabled가 없다(타입). 못 받는 동안은 aria-disabled이고 download()가 ready를 다시 본다 -->
-    <Button variant="primary" icon="download" kbd={modLabel('Enter')} aria-disabled={ready ? undefined : 'true'} onclick={download}>
+  {#if hasWarnings}
+    <div class="warnings">
+      {#if check && fresh}
+        <ConflictNotice {check} bind:choices onshowinlist={() => check?.duplicateJobId != null && onshowjob(check.duplicateJobId)} />
+      {/if}
+      <OwnershipNotice ownership={view.ownership} channelName={view.meta.channelName} />
+      {#if errCopy}
+        <Notice variant="inline" tone="danger" title={errCopy.title} actions={errActions}>
+          {#if errCopy.body}<p class="line">{errCopy.body}</p>{/if}
+          {#if errCopy.detail}<p class="line detail">{errCopy.detail}</p>{/if}
+        </Notice>
+      {/if}
+    </div>
+  {/if}
+
+  {#snippet footer()}
+    <Button onclick={onclose}>{t('common.close')}</Button>
+    <!-- primary에는 disabled가 없다(타입). 못 받는 동안은 aria-disabled이고 download()가 ready를 다시 본다.
+         사유가 있으면(목록에 있음·본인 영상 아님) 그 문장을 aria-describedby로 잇는다(patterns.md §6.4) -->
+    <Button
+      variant="primary"
+      kbd={shortcutText(platform.os, 'submit')}
+      aria-disabled={ready ? undefined : 'true'}
+      aria-describedby={blocked ? BLOCK_REASON_ID[blocked] : undefined}
+      onclick={download}
+    >
       {t('card.download')}
     </Button>
-  </div>
-</section>
+  {/snippet}
+</Surface>
+
+<OverwriteDialog
+  open={confirmOverwrite}
+  name={`${check?.fileName ?? fileName}${FILE_EXT}`}
+  {busy}
+  onconfirm={() => void enqueueNow()}
+  onclose={() => (confirmOverwrite = false)}
+/>
 
 <style>
-  .video-card {
-    margin-top: var(--space-12);
-    padding: var(--space-16);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-md);
-    background: var(--surface);
-  }
-  .head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin: calc(-1 * var(--space-4)) calc(-1 * var(--space-4)) 0 0;
-  }
-  .eyebrow {
-    font-size: var(--text-sm);
-    font-weight: var(--weight-medium);
-    color: var(--fg-muted);
-  }
   .badges {
     display: flex;
     gap: var(--space-4);
-    margin-top: var(--space-8);
   }
-  .title {
+  .video-title {
     margin: var(--space-8) 0 0;
-    font-size: var(--text-lg);
-    font-weight: var(--weight-semibold);
-    line-height: var(--leading-tight);
-    letter-spacing: var(--tracking-tight);
+    font-size: var(--text-title);
+    line-height: var(--leading-title);
+    font-weight: var(--weight-strong);
     display: -webkit-box;
     -webkit-box-orient: vertical;
     -webkit-line-clamp: 2;
     line-clamp: 2;
     overflow: hidden;
+    overflow-wrap: anywhere;
   }
   .meta {
     display: flex;
     flex-wrap: wrap;
     column-gap: var(--space-8);
     margin: var(--space-4) 0 0;
-    font-size: var(--text-sm);
     color: var(--fg-muted);
-  }
-  .dot {
-    color: var(--fg-faint);
   }
   .fields {
+    margin-top: var(--space-16);
+  }
+  .warnings {
     display: flex;
     flex-direction: column;
-    gap: var(--space-12);
+    gap: var(--space-8);
     margin-top: var(--space-12);
   }
-  .paths {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-4);
-  }
-  .err-line {
+  .line {
     margin: 0;
   }
-  .err-line.detail {
+  .detail {
     color: var(--fg-muted);
-  }
-  .card-acts {
-    display: flex;
-    justify-content: flex-end;
-    gap: var(--space-8);
-    margin-top: var(--space-16);
   }
 </style>

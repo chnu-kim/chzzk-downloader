@@ -375,6 +375,10 @@ export const SITE_CSS = `/* [root] 라이트 기본값. ref 팔레트와 sys 토
 .btn-ghost.edge-start {
   margin-inline-start: calc(0px - var(--space-6));
 }
+/* 문장 속 링크: 색만으로 구별하지 않게 밑줄을 더한다(WCAG 1.4.1) */
+.btn.btn-inline {
+  text-decoration: underline;
+}
 
 /* hover는 유령 버튼만, 눌림은 모든 버튼에 있다. 비활성은 둘 다 받지 않는다 */
 .btn-ghost:not([disabled], [aria-disabled="true"]):hover {
@@ -690,6 +694,11 @@ export const SITE_CSS = `/* [root] 라이트 기본값. ref 팔레트와 sys 토
   flex-direction: column;
   min-width: 0;
 }
+.radiogroup-inline {
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: var(--gap-sibling);
+}
 .choice {
   position: relative;
   display: flex;
@@ -729,7 +738,7 @@ export const SITE_CSS = `/* [root] 라이트 기본값. ref 팔레트와 sys 토
   display: flex;
   align-items: baseline;
   gap: var(--space-8);
-  flex: 1;
+  flex: 1 1 auto;
   min-width: 0;
 }
 .choice-tail,
@@ -746,7 +755,8 @@ export const SITE_CSS = `/* [root] 라이트 기본값. ref 팔레트와 sys 토
   padding-bottom: var(--space-4);
 }
 .choice-trailing {
-  flex: none;
+  flex: 0 1 auto;
+  min-width: 0;
   margin-inline-start: auto;
   color: var(--fg-muted);
 }
@@ -823,6 +833,39 @@ export const SITE_CSS = `/* [root] 라이트 기본값. ref 팔레트와 sys 토
 .disclosure-inline > .disclosure-panel {
   margin-top: var(--gap-label);
   padding: 0;
+}
+/* group: 목록 그룹 머리(caption 600 muted, 상자 없음). 머리 줄이 토글이고 삼각형은 왼쪽. 패널은 호출부의 그룹 상자다 */
+.disclosure-group > .disclosure-head {
+  margin: 0;
+  font-size: var(--text-caption);
+  line-height: var(--leading-caption);
+  font-weight: var(--weight-strong);
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-muted);
+}
+.disclosure-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4);
+  min-height: var(--control-h-sm);
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+.disclosure-toggle .icon {
+  transition: transform var(--motion-fast) var(--ease-out);
+}
+.disclosure-toggle[aria-expanded="true"] .icon {
+  transform: rotate(90deg);
+}
+.disclosure-toggle:active {
+  color: var(--fg);
+}
+.disclosure-group-panel {
+  margin-top: var(--gap-label);
 }
 
 /* ---------- 메뉴 ---------- */
@@ -1217,6 +1260,7 @@ export const SITE_CSS = `/* [root] 라이트 기본값. ref 팔레트와 sys 토
 .row-control {
   display: flex;
   flex: 0 1 auto;
+  flex-wrap: wrap;
   min-width: 0;
   max-width: 100%;
   align-items: center;
@@ -1442,6 +1486,15 @@ export const SITE_CSS = `/* [root] 라이트 기본값. ref 팔레트와 sys 토
   .field-wrap > input {
     color: CanvasText;
   }
+  /* 테두리가 생기면 상자가 보이므로 끝자리 보정을 접는다(상자 가장자리가 열 안쪽 x에 닿는다) */
+  .btn-ghost.edge-end,
+  .icon-btn.edge-end {
+    margin-inline-end: 0;
+  }
+  .btn-ghost.edge-start,
+  .icon-btn.edge-start {
+    margin-inline-start: 0;
+  }
   .btn-primary {
     background: Highlight;
     color: HighlightText;
@@ -1469,6 +1522,11 @@ export const SITE_CSS = `/* [root] 라이트 기본값. ref 팔레트와 sys 토
   }
   .notice-row {
     border: 0;
+  }
+  /* summary는 forced-colors에서 LinkText로 나올 수 있다: 버튼 글자색으로 고정한다 */
+  .disclosure > summary,
+  .disclosure-toggle {
+    color: ButtonText;
   }
   .menu,
   .dialog,
@@ -1552,4 +1610,4 @@ html {
   font-size: 16px;
 }
 `;
-export const SITE_CSS_HASH = "40ab34f28df53f7a";
+export const SITE_CSS_HASH = "62b2f55bc6a8c52d";

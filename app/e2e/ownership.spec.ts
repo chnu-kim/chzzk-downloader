@@ -3,10 +3,14 @@
 import type { AuthStatusDto } from '../src/lib/bindings';
 import { err, job } from '../src/test/jobFixtures';
 import { resolved } from '../src/test/fixtures';
+import { errorCopy, t } from './copy';
 import { expect, test } from './fixtures';
 
 const A1 = '000000000000000000000000000000a1';
 const C3 = '000000000000000000000000000000c3';
+
+const notOwn = (channelName: string) =>
+  errorCopy({ code: 'notOwnContent', message: '', stage: null, resumable: false, payload: null }, { place: 'resolve', channelName, myChannel: '내 채널' });
 
 const me: AuthStatusDto = {
   state: 'signedIn',
@@ -34,21 +38,26 @@ test('남의 영상은 카드에서 막히고, 본인 영상은 받는다', asyn
   const { page } = app;
   await app.open({ auth: me, resolve: { [own.url]: own, [other.url]: other } });
 
-  await page.getByLabel('영상 주소').fill(other.url);
-  await page.getByRole('button', { name: '불러오기' }).click();
+  await page.getByLabel(t('url.label')).fill(other.url);
+  await page.getByRole('button', { name: t('url.submit') }).click();
   const card = page.getByRole('region', { name: '남의 방송' });
   await expect(card).toBeVisible();
-  await expect(card.getByText('내 채널의 영상만 받을 수 있어요')).toBeVisible();
-  await expect(card.getByText("이 영상은 '다른 채널' 채널의 영상이에요. 로그인한 채널: '내 채널'")).toBeVisible();
-  await expect(card.getByRole('button', { name: '다운로드' })).toBeDisabled();
+  const why = notOwn('다른 채널');
+  await expect(card.getByText(why.title)).toBeVisible();
+  await expect(card.getByText(why.body as string)).toBeVisible();
+  // 못 받는 이유가 있으면 [받기]는 aria-disabled이고 그 문장이 설명이다
+  const download = card.getByRole('button', { name: t('card.download') });
+  await expect(download).toHaveAttribute('aria-disabled', 'true');
+  await expect(download).toHaveAccessibleDescription(`${why.title} ${why.body}`);
+  await download.click({ force: true });
   expect(await app.cmds()).not.toContain('enqueue');
   await app.axe('남의 영상 카드');
 
-  await page.getByLabel('영상 주소').fill(own.url);
-  await page.getByRole('button', { name: '불러오기' }).click();
+  await page.getByLabel(t('url.label')).fill(own.url);
+  await page.getByRole('button', { name: t('url.submit') }).click();
   const mine = page.getByRole('region', { name: '내 방송' });
   await expect(mine).toBeVisible();
-  await mine.getByRole('button', { name: '다운로드' }).click();
+  await mine.getByRole('button', { name: t('card.download') }).click();
   await expect(mine).toBeHidden();
   await expect(page.getByRole('article')).toHaveCount(1);
   await expect(page.getByRole('article', { name: '내 방송' })).toBeVisible();
@@ -63,13 +72,13 @@ test('다른 채널의 멈춘 작업은 이어받을 수 없고 B1이 세지 않
       job(2, { status: 'interrupted', title: '남의 작업', channelId: C3 }),
     ],
   });
-  await expect(page.getByText('지난번에 받다가 멈춘 다운로드가 1개 있어요.')).toBeVisible();
+  await expect(page.getByText(t('banner.interrupted', { n: 1 }))).toBeVisible();
   const other = page.getByRole('article', { name: '남의 작업' });
-  await expect(other.getByText('다른 채널로 로그인해 이어받을 수 없어요')).toBeVisible();
-  await expect(other.getByRole('button', { name: '이어받기' })).toHaveCount(0);
+  await expect(other.getByText(t('job.otherChannel'))).toBeVisible();
+  await expect(other.getByRole('button', { name: t('action.resume') })).toHaveCount(0);
   await app.axe('다른 채널 작업');
 
-  await page.getByRole('button', { name: '모두 이어받기' }).click();
+  await page.getByRole('button', { name: t('banner.resumeAll') }).click();
   await expect.poll(async () => (await app.args('resume_job')).length).toBe(1);
   expect(await app.args('resume_job')).toEqual([{ id: 1, restart: false }]);
 });
@@ -81,9 +90,10 @@ test('실패한 다른 채널 작업은 다시 시도 안내 없이 막힌 이�
     jobs: [job(3, { status: 'failed', title: '남의 실패', channelId: C3, error: err('network', { resumable: true }), partialBytes: 1024 })],
   });
   const item = page.getByRole('article', { name: '남의 실패' });
-  await expect(item.getByText('인터넷 연결이 불안정해요')).toBeVisible();
-  await expect(item.getByText('연결을 확인한 뒤 다시 시도해 주세요', { exact: false })).toHaveCount(0);
-  await expect(item).toHaveAccessibleDescription('다른 채널로 로그인해 이어받을 수 없어요');
-  await expect(item.getByRole('button', { name: '다시 시도' })).toHaveCount(0);
+  const netCopy = errorCopy(err('network', { resumable: true }), { place: 'job', partialBytes: 1024, cookiesEnabled: false });
+  await expect(item.getByText(netCopy.title)).toBeVisible();
+  await expect(item.getByText(netCopy.body as string, { exact: false })).toHaveCount(0);
+  await expect(item).toHaveAccessibleDescription(t('job.otherChannel'));
+  await expect(item.getByRole('button', { name: t('action.retry') })).toHaveCount(0);
   await app.axe('실패한 다른 채널 작업');
 });

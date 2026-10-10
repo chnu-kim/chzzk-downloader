@@ -19,8 +19,9 @@ use std::time::Duration;
 use chzzk_core::download::MAX_CONCURRENCY;
 use chzzk_core::settings::{MAX_RECENT_VODS, SETTINGS_FILE};
 use chzzk_core::{
-    Chzzk, ClientConfig, ContentRef, CredentialStore, NaverCookies, Platform, SettingsStore,
-    UserSettings, add_recent_vod, parse_content_url,
+    Chzzk, ClientConfig, ContentRef, CredentialStore, NaverCookies, Platform, PlaybackKind,
+    RecentKind, SettingsStore, TextScale, Theme, UserSettings, add_recent_vod_with,
+    parse_content_url,
 };
 
 use crate::backend::Backend;
@@ -284,6 +285,12 @@ impl SettingsService {
             if let Some(on) = patch.auto_resume_interrupted {
                 s.auto_resume_interrupted = on;
             }
+            if let Some(t) = patch.text_scale {
+                s.text_scale = t;
+            }
+            if let Some(t) = patch.theme {
+                s.theme = t;
+            }
         })?;
         if let Some(c) = new_client {
             self.swap(c);
@@ -438,14 +445,22 @@ impl SettingsService {
         url: &str,
         title: &str,
         quality_label: &str,
+        kind: RecentKind,
+        date: Option<&str>,
     ) -> Result<(), AppError> {
         self.store.update(|s| {
             if !quality_label.trim().is_empty() {
                 s.last_quality_label = Some(quality_label.to_string());
             }
-            add_recent_vod(s, url, title);
+            add_recent_vod_with(s, url, title, Some(kind), date);
         })?;
         Ok(())
+    }
+
+    /// 저장된 글자 크기·모양(`app_info`가 로그인 전에도 싣는다)
+    pub fn appearance(&self) -> (TextScale, Theme) {
+        let s = self.store.get();
+        (s.text_scale, s.theme)
     }
 
     /// `resolve`: 주소를 풀고 지금 클라이언트로 조회한다. 서명 URL은 DTO에 없다.
@@ -483,6 +498,8 @@ impl SettingsService {
             max_parallel_downloads: s.max_parallel_downloads,
             auto_resume_interrupted: s.auto_resume_interrupted,
             imported_from: s.imported_from.as_deref().map(path_string),
+            text_scale: s.text_scale,
+            theme: s.theme,
         }
     }
 
@@ -542,11 +559,22 @@ pub async fn enqueue<B: Backend>(
         req.title.clone(),
         req.quality_label.clone(),
     );
+    let kind = recent_kind(&req.content, req.expected_kind);
+    let date = req.content_date.clone();
     let job = manager.enqueue(req, &settings.job_defaults())?;
-    if let Err(e) = settings.record_enqueued(&url, &title, &label) {
+    if let Err(e) = settings.record_enqueued(&url, &title, &label, kind, date.as_deref()) {
         tracing::warn!(code = ?e.code, error = %e.message, "최근 VOD를 저장하지 못함");
     }
     Ok(job)
+}
+
+/// 최근 영상 배지 종류: 클립 / 빠른 다시보기(HLS) / 일반 VOD(프런트 `kindTone`과 같은 규칙)
+pub fn recent_kind(content: &ContentRef, playback: PlaybackKind) -> RecentKind {
+    match (content, playback) {
+        (ContentRef::Clip { .. }, _) => RecentKind::Clip,
+        (_, PlaybackKind::LiveRewindHls) => RecentKind::Rewind,
+        (_, PlaybackKind::Progressive) => RecentKind::Vod,
+    }
 }
 
 fn effective_folder(s: &UserSettings, default: &Path) -> PathBuf {

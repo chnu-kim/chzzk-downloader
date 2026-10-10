@@ -86,9 +86,17 @@ export const RADIO_OPTIONS = [
   { id: 'r4', value: 'four', label: '고를 수 없음', disabled: true },
 ] as const;
 
+/** inline 변형: 짧은 라벨 셋(글자 크기 같은 한 줄 선택) */
+export const INLINE_OPTIONS = [
+  { id: 'i1', value: 'a', label: '기본' },
+  { id: 'i2', value: 'b', label: '크게' },
+  { id: 'i3', value: 'c', label: '아주 크게' },
+] as const;
+
 export const DISCLOSURE = {
   sectionTitle: '펼침 제목',
   inlineTitle: '펼침 글자',
+  groupTitle: '그룹 머리 12',
   body: '펼치면 보이는 본문이에요. 자세한 설명이 여기에 들어가요.',
 } as const;
 

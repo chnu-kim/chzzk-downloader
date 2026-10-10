@@ -20,7 +20,7 @@ use crate::auth::{
 };
 use crate::dto::{
     AppFolder, AppInfo, AuthStatusDto, EnqueueRequest, Features, JobDto, OutputCheck, ResolvedDto,
-    SettingsDto, SettingsPatch, UpdateCheckDto, UpdateInfoDto, UpdateInstallDto,
+    SettingsDto, SettingsPatch, UpdateCheckDto, UpdateInfoDto, UpdateInstallDto, WebPage,
 };
 use crate::error::{AppError, ErrorCode};
 use crate::gate;
@@ -181,6 +181,7 @@ impl App {
 
     /// `app_info`. `version`은 앱 패키지 버전(`tauri.conf.json`).
     pub fn info(&self, version: &str) -> AppInfo {
+        let (text_scale, theme) = self.settings.appearance();
         AppInfo {
             version: version.to_string(),
             core_version: chzzk_core::VERSION.to_string(),
@@ -192,7 +193,24 @@ impl App {
                 auth: self.auth_enabled(),
             },
             legacy_candidate: self.settings.legacy_candidate(),
+            platform: chzzk_core::Platform::current().into(),
+            text_scale,
+            theme,
         }
+    }
+
+    /// `open_web_page`가 열 주소: 로그인 서버(Worker) 출처 아래 고정 경로(system/patterns.md §13·§14.4).
+    /// 로그인을 쓰지 않는 빌드는 열 곳이 없다(화면이 링크를 그리지 않는다).
+    pub fn web_page_url(&self, page: WebPage) -> Result<String, AppError> {
+        let base = self
+            .worker_base
+            .as_ref()
+            .ok_or_else(|| AppError::invalid_input("로그인 서버가 없는 빌드입니다"))?;
+        let path = match page {
+            WebPage::Privacy => "/privacy",
+            WebPage::Licenses => "/licenses",
+        };
+        Ok(base.url(path))
     }
 
     /// `update_settings`. 동시 작업 수를 매니저에도 반영한다.

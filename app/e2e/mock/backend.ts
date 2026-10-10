@@ -17,6 +17,7 @@ import type {
   ErrorCode,
   JobDto,
   JobEvent,
+  Os,
   OutputCheck,
   ProgressDto,
   ResolvedDto,
@@ -38,6 +39,7 @@ export const OPEN_COMMANDS = [
   'auth_status',
   'frontend_ready',
   'list_jobs',
+  'open_web_page',
   'quit',
   'subscribe_jobs',
 ];
@@ -67,6 +69,8 @@ export type UpdateScenario = {
 export type Scenario = {
   /** resolve가 돌려줄 결과(주소 → DTO 또는 오류). 없는 주소는 invalidUrl */
   resolve?: Record<string, ResolvedDto | { error: AppError }>;
+  /** 이 주소들의 resolve는 끝내 답하지 않는다("불러오는 중" 화면을 붙잡아 두는 용도) */
+  resolveHold?: string[];
   /** 시작할 때 이미 있는 작업(스냅샷) */
   jobs?: JobDto[];
   settings?: Partial<SettingsDto>;
@@ -79,6 +83,15 @@ export type Scenario = {
   authHeld?: AuthStatusDto;
   /** 업데이트(update_* command). 없으면 새 버전 없음 */
   update?: UpdateScenario;
+  /** app_info의 OS(Windows 고정 데이터·단축키 표기·[Finder에서 보기] 분기). 없으면 linux */
+  platform?: Os;
+  /** app_info의 나머지 필드 덮어쓰기(D3 이전 설정 찾음 `legacyCandidate` 등). `platform`·`textScale`·`theme`은 위 필드와 설정이 이긴다 */
+  info?: Partial<AppInfo>;
+  /**
+   * check_output 결과 덮어쓰기(파일 이름 → 바꿀 필드). 같은 이름 파일(`exists`+`freeFileName`)·받다 만 파일(`partial`)
+   * 카드 안내와 D7 덮어쓰기를 그린다. 없는 이름은 충돌 없음이다
+   */
+  outputs?: Record<string, Partial<OutputCheck>>;
 };
 
 export type Call = { cmd: string; args: unknown };
@@ -100,6 +113,10 @@ export interface E2EController {
   setResolve(url: string, r: ResolvedDto | { error: AppError }): void;
   /** 로그인 상태를 바꾸고 auth-changed를 보낸다 */
   setAuth(s: AuthStatusDto): Promise<void>;
+  /** main 창 포커스를 바꾼다(Rust `window-focus` 이벤트 흉내, `WindowFocusPayload`) */
+  windowFocus(focused: boolean): Promise<void>;
+  /** 그 파일 이름의 다음 check_output 결과를 바꾼다(scenario.outputs와 같은 모양) */
+  setOutput(fileName: string, over: Partial<OutputCheck>): void;
 }
 
 declare global {
@@ -127,6 +144,9 @@ export const INFO: AppInfo = {
   defaultDownloadFolder: '/e2e/videos',
   features: { auth: false },
   legacyCandidate: null,
+  platform: 'linux',
+  textScale: 'default',
+  theme: 'system',
 };
 
 export const SETTINGS: SettingsDto = {
@@ -141,6 +161,8 @@ export const SETTINGS: SettingsDto = {
   maxParallelDownloads: 2,
   autoResumeInterrupted: false,
   importedFrom: null,
+  textScale: 'default',
+  theme: 'system',
 };
 
 // 코어 Progress와 같은 모양: progressive는 바이트 총량, 빠른 다시보기(HLS)는 조각·미디어 초로 진행을 센다(app jobs.ts progressFraction)
@@ -167,6 +189,7 @@ export function install(scenario: Scenario = {}): E2EController {
   mockWindows('main');
   const calls: Call[] = [];
   const resolveTable: NonNullable<Scenario['resolve']> = { ...scenario.resolve };
+  const outputs: NonNullable<Scenario['outputs']> = { ...scenario.outputs };
   /** 그 컨텐츠를 푼 resolve 결과(오류 항목은 컨텐츠가 없어 건너뛴다) */
   const resolvedByContent = (c: ContentRef): ResolvedDto | undefined =>
     Object.values(resolveTable).find(
@@ -211,7 +234,15 @@ export function install(scenario: Scenario = {}): E2EController {
   };
 
   const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
-    app_info: () => ({ ...INFO, features: { auth: auth.state !== 'disabled' } }),
+    app_info: (): AppInfo => ({
+      ...INFO,
+      ...scenario.info,
+      features: { auth: auth.state !== 'disabled' },
+      platform: scenario.platform ?? INFO.platform,
+      textScale: settings.textScale,
+      theme: settings.theme,
+    }),
+    open_web_page: () => null,
     get_settings: () => settings,
     update_settings: (a) => {
       settings = { ...settings, ...(a.patch as SettingsPatch) } as SettingsDto;
@@ -268,6 +299,7 @@ export function install(scenario: Scenario = {}): E2EController {
     reveal_output: () => null,
     quit: () => null,
     resolve: (a) => {
+      if (scenario.resolveHold?.includes(a.url as string)) return new Promise<never>(() => {});
       const r = resolveTable[a.url as string];
       if (!r) throw err('invalidUrl');
       if ('error' in r) throw r.error;
@@ -278,7 +310,16 @@ export function install(scenario: Scenario = {}): E2EController {
       const fileName = a.fileName as string;
       const path = `${folder}/${fileName}.mp4`;
       const dup = [...jobs.values()].find((j) => j.output === path && ['queued', 'running', 'pausing', 'paused'].includes(j.status));
-      return { fileName, path, truncated: false, exists: false, freeFileName: null, partial: null, duplicateJobId: dup?.id ?? null };
+      return {
+        fileName,
+        path,
+        truncated: false,
+        exists: false,
+        freeFileName: null,
+        partial: null,
+        duplicateJobId: dup?.id ?? null,
+        ...outputs[fileName],
+      };
     },
     enqueue: (a): JobDto => {
       const req = a.req as EnqueueRequest;
@@ -393,6 +434,10 @@ export function install(scenario: Scenario = {}): E2EController {
     setAuth(s) {
       auth = s;
       return emit('auth-changed', s);
+    },
+    windowFocus: (focused) => emit('window-focus', { focused }),
+    setOutput(fileName, over) {
+      outputs[fileName] = over;
     },
   };
   window.__e2e = ctl;

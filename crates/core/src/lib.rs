@@ -41,6 +41,9 @@ pub use model::{
 pub use naming::Platform;
 pub use ownership::{is_own_channel, is_own_content};
 pub use progress::{Meter, Phase, Progress};
-pub use settings::{RecentVod, SettingsStore, UserSettings, add_recent_vod};
+pub use settings::{
+    RecentKind, RecentVod, SettingsStore, TextScale, Theme, UserSettings, add_recent_vod,
+    add_recent_vod_with,
+};
 pub use tokio_util::sync::CancellationToken;
 pub use url::parse_content_url;

@@ -7,6 +7,7 @@
   import Kbd from '../../lib/components/ui/Kbd.svelte';
   import Spinner from '../../lib/components/ui/Spinner.svelte';
   import { BUTTON_VARIANT, SIZE, type ButtonVariant, type Size } from '../../lib/components/ui/vocab';
+  import { useDelayedLoading } from '../../lib/useDelayedLoading.svelte';
   import { KBD, STATE_LABEL, TEXT, TEXT_SAMPLES, TITLE, WHY, pair } from '../fixtures';
   import Note from '../Note.svelte';
   import Row from '../Row.svelte';
@@ -28,13 +29,13 @@
     const base: ButtonProps = { variant, tone, size };
     if (state === 'disabled') return { ...base, disabled: true };
     if (state === 'ariaDisabled') return { ...base, 'aria-disabled': 'true', 'aria-describedby': whyId };
-    if (state === 'loading') return { ...base, loading: true };
+    if (state === 'loading') return { ...base, loading: busy.visible };
     return base;
   }
 
-  // 갤러리는 로딩 표시를 지연 없이 바로 보인다(실제 화면은 useDelayedLoading을 거친다: patterns §2.2). design-lint DX10 표식
-  const useDelayedLoading = (immediate: boolean) => immediate;
-  void useDelayedLoading;
+  // 불러오는 중 칸의 스피너는 실제 화면과 같은 훅을 거친다(patterns.md §2.2, DX10): LOADER_DELAY_MS 뒤에 나타난다.
+  // 갤러리 spec은 그 뒤에 상태를 본다
+  const busy = useDelayedLoading(() => true);
 </script>
 
 <Section name="buttons" heading={TITLE.buttons}>
@@ -60,7 +61,7 @@
       <Button variant="primary" icon="download" kbd={KBD}>{TEXT.short}</Button>
       <Button variant="ghost" size="sm" icon="folder">{TEXT.short}</Button>
       <Button variant="secondary" tone="danger" icon="trash-2" kbd={KBD}>{TEXT.short}</Button>
-      <Button loading>{TEXT.short}</Button>
+      <Button loading={busy.visible}>{TEXT.short}</Button>
     </Row>
   </Row>
 
@@ -78,8 +79,10 @@
   <Row label="Kbd · Spinner" stack>
     <Row>
       <Kbd>{KBD}</Kbd>
-      <Spinner size="sm" />
-      <Spinner size="md" />
+      {#if busy.visible}
+        <Spinner size="sm" />
+        <Spinner size="md" />
+      {/if}
     </Row>
   </Row>
 </Section>

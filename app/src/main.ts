@@ -1,8 +1,9 @@
 import { mount } from 'svelte';
 import App from './App.svelte';
-// 토큰 → 컴포넌트(ui.css) → 전역 규칙 순서. 생성물 둘은 scripts/design/tokens.mjs가 만든다
+// 토큰 → 컴포넌트(ui.css) → 좁은 레이아웃(layout.css) → 전역 규칙 순서. 생성물 둘은 scripts/design/tokens.mjs가 만든다
 import './styles/tokens.css';
 import './styles/ui.css';
+import './styles/layout.css';
 import './app.css';
 import { signalReady } from './lib/ready';
 

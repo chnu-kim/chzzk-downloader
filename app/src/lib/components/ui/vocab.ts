@@ -8,7 +8,8 @@ import type { IconName } from './icons';
 export const BUTTON_VARIANT = ['primary', 'secondary', 'ghost'] as const;
 export const NOTICE_VARIANT = ['inline', 'banner', 'row', 'toast'] as const;
 export const SURFACE_VARIANT = ['group', 'card'] as const;
-export const DISCLOSURE_VARIANT = ['section', 'inline'] as const;
+export const DISCLOSURE_VARIANT = ['section', 'inline', 'group'] as const;
+export const RADIO_GROUP_VARIANT = ['list', 'inline'] as const;
 export const EMPTY_STATE_VARIANT = ['inline', 'panel', 'page'] as const;
 export const SKELETON_VARIANT = ['line', 'title', 'control', 'row'] as const;
 export const PAGE_CONTAINER_VARIANT = ['content', 'reading'] as const;
@@ -31,6 +32,7 @@ export type ButtonVariant = (typeof BUTTON_VARIANT)[number];
 export type NoticeVariant = (typeof NOTICE_VARIANT)[number];
 export type SurfaceVariant = (typeof SURFACE_VARIANT)[number];
 export type DisclosureVariant = (typeof DISCLOSURE_VARIANT)[number];
+export type RadioGroupVariant = (typeof RADIO_GROUP_VARIANT)[number];
 export type EmptyStateVariant = (typeof EMPTY_STATE_VARIANT)[number];
 export type SkeletonVariant = (typeof SKELETON_VARIANT)[number];
 export type PageContainerVariant = (typeof PAGE_CONTAINER_VARIANT)[number];
@@ -64,4 +66,5 @@ export interface Action {
   onclick: () => void;
 }
 export type DialogAction = Action;
-export type NoticeAction = Action;
+/** Notice 동작은 진행 중(`loading`)을 보일 수 있다: 누른 버튼이 눌린 채 `aria-disabled`로 남아 포커스가 끊기지 않는다(components.md §7-29) */
+export type NoticeAction = Action & { loading?: boolean };

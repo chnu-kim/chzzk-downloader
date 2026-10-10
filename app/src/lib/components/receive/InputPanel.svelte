@@ -1,26 +1,32 @@
 <script lang="ts">
-  // 입력 영역(§10 InputPanel): UrlBar · 클립보드 제안 · 불러오기 상태별 카드 · 최근 VOD · 드롭.
+  // 입력 영역(system/patterns.md §14.1·§14.2): 입력줄(sticky) · 붙여넣기 힌트 · 클립보드 제안 · 불러오는 중 한 줄 ·
+  // 영상 카드 · 최근 영상 · 드롭. 래퍼 요소를 두지 않는다: 입력줄의 sticky가 이 아래의 목록까지 붙어 있으려면
+  // 입력줄의 부모가 목록과 같은 열이어야 해서다(HomeView가 이 컴포넌트와 목록을 같은 열에 둔다).
   import { onMount, tick, untrack } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import * as api from '../../api';
   import type { AppError } from '../../bindings';
   import { pickChzzkLink } from '../../chzzkUrl';
+  import { t } from '../../copy/ko';
   import type { ActionId } from '../../copy/errors';
-  import { shouldSuggestClipboard } from '../../receive';
   import { copyReport } from '../../report';
+  import { shortcutText } from '../../platform';
+  import { shouldSuggestClipboard } from '../../receive';
+  import { platform } from '../../stores/platform.svelte';
   import { resolver } from '../../stores/resolve.svelte';
   import { settings } from '../../stores/settings.svelte';
   import { ui } from '../../stores/ui.svelte';
+  import { useDelayedLoading } from '../../useDelayedLoading.svelte';
+  import Notice from '../ui/Notice.svelte';
   import ClipboardSuggestion from './ClipboardSuggestion.svelte';
   import DropOverlay from './DropOverlay.svelte';
   import RecentList from './RecentList.svelte';
   import ResolveCard from './ResolveCard.svelte';
   import ResolveError from './ResolveError.svelte';
-  import ResolveSkeleton from './ResolveSkeleton.svelte';
   import UrlBar from './UrlBar.svelte';
 
   interface Props {
-    /** 충돌 안내·중복 오류의 [목록에서 보기] (§15-15 목록이 받는다) */
+    /** 충돌 안내·중복 오류의 [목록에서 보기] (목록이 받는다) */
     onshowjob?: (jobId: number) => void;
   }
 
@@ -30,7 +36,7 @@
   /** 닫았거나 이미 불러온 주소는 다시 제안하지 않는다 */
   const dismissed = new SvelteSet<string>();
 
-  // 어느 길(붙여넣기·Enter·드롭·최근 VOD·제안)로든 불러온 주소는 다시 제안하지 않는다(ui-visual §6.4 "한 번만")
+  // 어느 길(붙여넣기·Enter·드롭·최근 VOD·제안)로든 불러온 주소는 다시 제안하지 않는다(patterns.md §7 "같은 값은 한 번만")
   $effect(() => {
     const s = resolver.state;
     if (s.kind === 'loading') untrack(() => dismissed.add(s.url));
@@ -40,6 +46,12 @@
   $effect(() => {
     if (resolver.input.trim() !== '') untrack(() => (suggestion = null));
   });
+
+  const loading = $derived(resolver.state.kind === 'loading');
+  // 불러오는 중 한 줄은 LOADER_DELAY_MS 뒤에야 뜬다(빨리 끝나면 한 번도 보이지 않는다, patterns.md §2.2)
+  const loadingLine = useDelayedLoading(() => loading);
+  // 힌트·최근 영상은 카드가 열렸거나 불러오는 중이면 숨긴다(높이 520 예산, patterns.md §17-10)
+  const idleLike = $derived(resolver.state.kind !== 'ready' && !loading);
 
   const showSuggestion = $derived(
     shouldSuggestClipboard(suggestion, {
@@ -79,7 +91,7 @@
     suggestion = null;
   }
 
-  // 카드·오류·불러오기를 접으면 누르던 버튼이 사라지므로 포커스를 입력줄로 돌려 둔다(§8.10)
+  // 카드·오류·불러오기를 접으면 누르던 버튼이 사라지므로 포커스를 입력줄로 돌려 둔다(patterns.md §9 F-6)
   async function focusInput() {
     await tick();
     ui.urlTarget?.focus();
@@ -137,7 +149,7 @@
     void checkClipboard();
     const onfocus = () => void checkClipboard();
     window.addEventListener('focus', onfocus);
-    // Esc: 불러오기 취소 → 카드·오류 닫기(§10 단축키)
+    // Esc: 불러오기 취소 → 카드·오류 닫기(patterns.md §8)
     const off = ui.onEscape(() => {
       const kind = resolver.state.kind;
       if (kind === 'loading') cancel();
@@ -154,12 +166,9 @@
 
 <DropOverlay {ondropurl} />
 
-<div class="input">
-  <UrlBar />
-  {#if showSuggestion && suggestion}
-    <ClipboardSuggestion link={suggestion} onload={loadSuggestion} ondismiss={dismissSuggestion} />
-  {/if}
+<UrlBar />
 
+<div class="below">
   {#if resolver.state.kind === 'error'}
     <ResolveError
       error={resolver.state.error}
@@ -168,19 +177,55 @@
     />
   {/if}
 
+  {#if idleLike}
+    <p class="hint">{t('url.pasteHint', { paste: shortcutText(platform.os, 'paste') })}</p>
+  {/if}
+
+  {#if showSuggestion && suggestion}
+    <ClipboardSuggestion link={suggestion} onload={loadSuggestion} ondismiss={dismissSuggestion} />
+  {/if}
+
+  {#if loading && loadingLine.visible}
+    <Notice
+      variant="inline"
+      tone="neutral"
+      actions={[{ id: 'cancel', label: t('resolve.cancel'), onclick: cancel }]}
+    >
+      {t('resolve.loading')}
+    </Notice>
+  {/if}
+
   {#if resolver.state.kind === 'ready'}
-    {#key resolver.state.gen}
-      <ResolveCard
-        view={resolver.state.view}
-        onclose={close}
-        onadded={added}
-        {onaction}
-        {onshowjob}
-      />
-    {/key}
-  {:else if resolver.state.kind === 'loading'}
-    <ResolveSkeleton oncancel={cancel} />
-  {:else}
+    <!-- 입력줄 아래 8(입력줄 패딩) + 섹션 간격 24: 세로 예산 "입력줄 28 + 8 + 24"(patterns.md §15) -->
+    <div class="card-slot">
+      {#key resolver.state.gen}
+        <ResolveCard
+          view={resolver.state.view}
+          onclose={close}
+          onadded={added}
+          {onaction}
+          {onshowjob}
+        />
+      {/key}
+    </div>
+  {:else if idleLike}
     <RecentList items={settings.dto?.recentVods ?? []} onreopen={(url) => void resolver.load(url)} />
   {/if}
 </div>
+
+<style>
+  .below {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-8);
+  }
+  .card-slot {
+    margin-top: var(--space-24);
+  }
+  .hint {
+    margin: 0;
+    color: var(--fg-muted);
+    font-size: var(--text-caption);
+    line-height: var(--leading-caption);
+  }
+</style>

@@ -12,7 +12,8 @@
 
 use chzzk_core::{
     ContentKind, ContentMeta, ContentRef, DuplicatePolicy, LegacyImport, Phase, Platform,
-    PlaybackKind, Progress, Quality, RecentVod, Resolved, naming::default_filename,
+    PlaybackKind, Progress, Quality, RecentKind, RecentVod, Resolved, TextScale, Theme,
+    naming::default_filename,
 };
 use serde::{Deserialize, Deserializer, Serialize};
 use ts_rs::TS;
@@ -86,6 +87,99 @@ impl From<&ContentRef> for ContentRefTs {
     }
 }
 
+/// `chzzk_core::TextScale`의 TS 모양(값 = `data-text-scale`, `default`는 속성 없음).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "kebab-case")]
+#[ts(rename = "TextScale")]
+pub enum TextScaleTs {
+    Default,
+    Large,
+    XLarge,
+}
+
+impl From<TextScale> for TextScaleTs {
+    /// 빠짐없는 match. 코어에 단계가 늘면 여기서 컴파일이 깨진다.
+    fn from(t: TextScale) -> Self {
+        match t {
+            TextScale::Default => TextScaleTs::Default,
+            TextScale::Large => TextScaleTs::Large,
+            TextScale::XLarge => TextScaleTs::XLarge,
+        }
+    }
+}
+
+/// `chzzk_core::Theme`의 TS 모양.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename = "Theme")]
+pub enum ThemeTs {
+    System,
+    Light,
+    Dark,
+}
+
+impl From<Theme> for ThemeTs {
+    /// 빠짐없는 match.
+    fn from(t: Theme) -> Self {
+        match t {
+            Theme::System => ThemeTs::System,
+            Theme::Light => ThemeTs::Light,
+            Theme::Dark => ThemeTs::Dark,
+        }
+    }
+}
+
+/// `chzzk_core::RecentKind`의 TS 모양(프런트 배지 `vod`·`rewind`·`clip`과 같은 이름).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename = "RecentKind")]
+pub enum RecentKindTs {
+    Vod,
+    Rewind,
+    Clip,
+}
+
+impl From<RecentKind> for RecentKindTs {
+    /// 빠짐없는 match.
+    fn from(k: RecentKind) -> Self {
+        match k {
+            RecentKind::Vod => RecentKindTs::Vod,
+            RecentKind::Rewind => RecentKindTs::Rewind,
+            RecentKind::Clip => RecentKindTs::Clip,
+        }
+    }
+}
+
+/// 앱이 도는 OS(system/platform.md §20). 프런트는 `navigator`를 읽지 않고 이 값으로 분기한다(design-lint DX5).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "lowercase")]
+#[ts(rename = "Os")]
+pub enum OsDto {
+    Macos,
+    Windows,
+    Linux,
+}
+
+impl From<Platform> for OsDto {
+    fn from(p: Platform) -> Self {
+        match p {
+            Platform::MacOs => OsDto::Macos,
+            Platform::Windows => OsDto::Windows,
+            Platform::Linux => OsDto::Linux,
+        }
+    }
+}
+
+/// `open_web_page`가 여는 Worker 페이지(로그인 서버 주소 아래 고정 경로, system/patterns.md §13·§14.4).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub enum WebPage {
+    /// `/privacy` 개인정보 처리방침
+    Privacy,
+    /// `/licenses` 오픈소스 라이선스
+    Licenses,
+}
+
 impl From<Phase> for PhaseTs {
     /// 빠짐없는 match. 코어에 단계가 늘면 여기서 컴파일이 깨진다.
     fn from(p: Phase) -> Self {
@@ -131,6 +225,14 @@ pub struct AppInfo {
     pub log_dir: String,
     pub default_download_folder: String,
     pub features: Features,
+    /// 앱이 도는 OS(Windows 고정 데이터·단축키 표기·[Finder에서 보기] 분기)
+    pub platform: OsDto,
+    /// 저장된 글자 크기. `get_settings`는 로그인 뒤에만 부를 수 있어 로그인 화면도 따르도록 여기에도 싣는다
+    #[ts(as = "TextScaleTs")]
+    pub text_scale: TextScale,
+    /// 저장된 모양(위와 같은 이유)
+    #[ts(as = "ThemeTs")]
+    pub theme: Theme,
     /// 첫 실행에 옛 설정을 찾았을 때 한 번(D3)
     pub legacy_candidate: Option<LegacyCandidate>,
 }
@@ -193,6 +295,12 @@ pub struct SettingsDto {
     /// 재시작 후 멈춘 작업을 자동으로 이어받는다(기본 꺼짐). §16
     pub auto_resume_interrupted: bool,
     pub imported_from: Option<String>,
+    /// 앱 안 글자 크기(기본 `default`)
+    #[ts(as = "TextScaleTs")]
+    pub text_scale: TextScale,
+    /// 모양(기본 `system`). Linux에서만 설정 화면에 보인다
+    #[ts(as = "ThemeTs")]
+    pub theme: Theme,
 }
 
 /// 최근 VOD 한 항목.
@@ -201,6 +309,11 @@ pub struct SettingsDto {
 pub struct RecentVodDto {
     pub url: String,
     pub title: String,
+    /// 종류(옛 항목은 없다)
+    #[ts(as = "Option<RecentKindTs>")]
+    pub kind: Option<RecentKind>,
+    /// 방송·공개 날짜(API 문자열 그대로, 프런트 format이 읽는다). 옛 항목은 없다
+    pub date: Option<String>,
 }
 
 impl From<&RecentVod> for RecentVodDto {
@@ -208,6 +321,8 @@ impl From<&RecentVod> for RecentVodDto {
         RecentVodDto {
             url: r.url.clone(),
             title: r.title.clone(),
+            kind: r.kind,
+            date: r.date.clone(),
         }
     }
 }
@@ -234,6 +349,13 @@ pub struct SettingsPatch {
     #[serde(default)]
     #[ts(optional)]
     pub auto_resume_interrupted: Option<bool>,
+    #[serde(default)]
+    #[ts(as = "Option<TextScaleTs>", optional)]
+    pub text_scale: Option<TextScale>,
+    /// 다른 OS에서도 받아 저장한다(화면이 Linux에서만 보낸다)
+    #[serde(default)]
+    #[ts(as = "Option<ThemeTs>", optional)]
+    pub theme: Option<Theme>,
 }
 
 /// 키 없음·`null`·값을 구분하는 패치 필드. `#[serde(default)]`와 함께 써야 키 없음이 `Keep`이 된다.
@@ -455,6 +577,10 @@ pub struct EnqueueRequest {
     pub on_existing: OnExisting,
     /// true면 첫 시작 전에 `discard_partial(output)`
     pub restart: bool,
+    /// 방송·공개 날짜(`meta.liveOpenDate ?? meta.publishDate`). 최근 영상 둘째 줄에만 쓴다. 없어도 된다
+    #[serde(default)]
+    #[ts(optional)]
+    pub content_date: Option<String>,
 }
 
 /// 완성 파일이 이미 있을 때.
@@ -633,6 +759,14 @@ pub enum AppFolder {
 #[serde(rename_all = "camelCase")]
 pub struct CloseRequestedPayload {
     pub running: u32,
+}
+
+/// `window-focus` 이벤트: main 창이 포커스를 얻거나 잃을 때(system/platform.md §3 비활성 창, foundations §10).
+/// 프런트는 macOS에서만 `html[data-window-active]`에 옮긴다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct WindowFocusPayload {
+    pub focused: bool,
 }
 
 // ---------------------------------------------------------------------------

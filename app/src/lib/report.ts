@@ -8,7 +8,7 @@ export function buildReport(err: AppError, info: AppInfo | null, now = new Date(
   const status = err.payload?.type === 'http' ? String(err.payload.status) : null;
   const lines = [
     `앱: ${info ? `${info.version} (코어 ${info.coreVersion})` : '알 수 없음'}`,
-    `OS: ${typeof navigator === 'undefined' ? '' : navigator.userAgent}`,
+    `OS: ${info?.platform ?? '알 수 없음'}`,
     `code: ${err.code}`,
     status ? `status: ${status}` : null,
     `stage: ${err.stage ?? '-'}`,
@@ -22,16 +22,19 @@ export function reportHasPath(err: AppError): boolean {
   return err.payload?.type === 'path' || /[\\/]/.test(err.message);
 }
 
-/** 사용자 제스처(버튼 클릭) 안에서 부른다. */
+/**
+ * 사용자 제스처(버튼 클릭) 안에서 부른다. 복사가 끝나면 토스트는 한 장이다: 경로가 들어 있으면 `toast.reportHasPath`가
+ * `toast.copied`를 대신한다(한 사건 한 토스트: 둘을 잇달아 올리면 경고가 바로 대체된다, patterns.md §1.1-1).
+ */
 export async function copyReport(err: AppError, info: AppInfo | null): Promise<void> {
-  if (reportHasPath(err)) toasts.push(t('toast.reportHasPath'), 'info');
   try {
     await navigator.clipboard.writeText(buildReport(err, info));
-    toasts.push(t('toast.copied'), 'copied');
   } catch {
-    // 막혔으면 알린다: 경로 경고 토스트만 남으면 복사된 줄 안다
     toasts.push(t('toast.copyFailed'), 'danger');
+    return;
   }
+  if (reportHasPath(err)) toasts.push(t('toast.reportHasPath'), 'info');
+  else toasts.push(t('toast.copied'), 'copied');
 }
 
 /**
@@ -40,7 +43,7 @@ export async function copyReport(err: AppError, info: AppInfo | null): Promise<v
 export function buildAppReport(info: AppInfo | null, now = new Date()): string {
   return [
     `앱: ${info ? `${info.version} (코어 ${info.coreVersion})` : '알 수 없음'}`,
-    `OS: ${typeof navigator === 'undefined' ? '' : navigator.userAgent}`,
+    `OS: ${info?.platform ?? '알 수 없음'}`,
     `시각: ${now.toISOString()}`,
   ].join('\n');
 }

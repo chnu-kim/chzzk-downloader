@@ -23,6 +23,8 @@ import type {
   UpdateInfoDto,
   UpdateInstallDto,
   UpdateProgressEvent,
+  WebPage,
+  WindowFocusPayload,
 } from './bindings';
 import { toAppError } from './copy/errors';
 
@@ -86,6 +88,8 @@ export const clipboardLink = () => call<string | null>('clipboard_link');
 export const openAppFolder = (kind: AppFolder) => call<void>('open_app_folder', { kind });
 /** 첫 화면을 그렸다는 신호(`ready.ts`가 한 번만 부른다). 보통 실행은 아무 일도 없고 `--smoke`면 앱이 끝난다 */
 export const frontendReady = () => call<void>('frontend_ready');
+/** 로그인 서버(Worker)의 고정 페이지를 기본 브라우저로 연다(로그인 전에도 부를 수 있다, gate 허용 목록) */
+export const openWebPage = (page: WebPage) => call<void>('open_web_page', { page });
 
 /** Rust가 창 닫기·앱 종료를 막았다는 이벤트 이름(§4). 받는 중인 작업 수와 함께 온다(D1) */
 export const CLOSE_REQUESTED = 'close-requested';
@@ -107,6 +111,11 @@ export const updateAvailable = () => call<UpdateInfoDto | null>('update_availabl
 export const updateInstall = (confirmPause: boolean) => call<UpdateInstallDto>('update_install', { confirmPause });
 
 /** 자동 확인이 새 버전을 찾았다는 이벤트(UpdateInfoDto) */
+/** main 창 포커스가 바뀔 때(비활성 창, platform.md §3) */
+export const WINDOW_FOCUS = 'window-focus';
+export const onWindowFocus = (cb: (focused: boolean) => void): Promise<UnlistenFn> =>
+  listen<WindowFocusPayload>(WINDOW_FOCUS, (e) => cb(e.payload.focused));
+
 export const UPDATE_AVAILABLE = 'update-available';
 export const onUpdateAvailable = (cb: (i: UpdateInfoDto) => void): Promise<UnlistenFn> =>
   listen<UpdateInfoDto>(UPDATE_AVAILABLE, (e) => cb(e.payload));

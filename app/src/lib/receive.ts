@@ -1,10 +1,11 @@
-// 받기 화면(§8.3)의 판단을 순수 함수로 둔다. 컴포넌트는 표시와 입력만 한다.
+// 받기 화면(system/patterns.md §6.5·§14)의 판단을 순수 함수로 둔다. 컴포넌트는 표시와 입력만 한다.
 import type {
   ContentKind,
   EnqueueRequest,
   OutputCheck,
   PlaybackKind,
   QualityDto,
+  RecentVodDto,
   ResolvedDto,
 } from './bindings';
 import { estimateSize, formatBytes } from './format/bytes';
@@ -13,6 +14,9 @@ import { formatClock } from './format/duration';
 import { t, type CopyKey } from './copy/ko';
 
 export type KindTone = 'rewind' | 'vod' | 'clip';
+
+/** 파일 이름·화질·폴더가 바뀐 뒤 `check_output`을 부르기까지 기다리는 시간(patterns.md §6.5) */
+export const CHECK_DEBOUNCE_MS = 150;
 
 /** 종류 라벨(§8.3): 클립 / 빠른 다시보기(Video + HLS) / 일반 VOD(Video + progressive) */
 export function kindTone(kind: ContentKind, playback: PlaybackKind): KindTone {
@@ -28,6 +32,34 @@ const KIND_LABEL: Record<KindTone, CopyKey> = {
 
 export function kindLabel(tone: KindTone): string {
   return t(KIND_LABEL[tone]);
+}
+
+/**
+ * 최근 영상의 둘째 줄(patterns.md §14.1). 종류와 날짜가 있으면 `{kind} · {date}`, 날짜만 없으면 종류 글자만,
+ * 종류가 없으면(옛 항목) null이라 둘째 줄을 그리지 않는다.
+ */
+export function recentSecondLine(item: Pick<RecentVodDto, 'kind' | 'date'>): string | null {
+  if (!item.kind) return null;
+  const kind = kindLabel(item.kind);
+  const date = formatKstDate(item.date);
+  return date ? t('recent.meta', { kind, date }) : kind;
+}
+
+/**
+ * 꼬리표 `quality.best`가 붙을 가장 높은 화질 행의 위치(patterns.md §6.5). 기본 선택과 무관하다.
+ * 해상도, 같으면 대역폭이 큰 쪽이고 그래도 같으면 앞쪽. 고를 것이 하나뿐이면 꼬리표가 뜻이 없어 null.
+ */
+export function bestQualityIndex(qualities: readonly QualityDto[]): number | null {
+  if (qualities.length < 2) return null;
+  let best = 0;
+  for (let i = 1; i < qualities.length; i++) {
+    const a = qualities[i];
+    const b = qualities[best];
+    const ra = a.resolution ?? 0;
+    const rb = b.resolution ?? 0;
+    if (ra > rb || (ra === rb && (a.bandwidth ?? 0) > (b.bandwidth ?? 0))) best = i;
+  }
+  return best;
 }
 
 /** 메타 줄 조각: 채널 · 날짜 · 길이. 없는 것은 뺀다. */
@@ -97,7 +129,7 @@ export function notices(check: OutputCheck, choices: CardChoices): Notices {
 }
 
 /**
- * `EnqueueRequest`(§6.4 표).
+ * `EnqueueRequest`(patterns.md §6.5 표).
  * - 완성 파일이 있음: 번호 → `freeFileName`, 덮어쓰기 → 그 이름 그대로.
  * - `onExisting`: 덮어쓰기를 직접 고른 때만 `overwrite`, 그 밖(충돌 없음·번호 붙인 새 이름)은 `skip`.
  *   검사 뒤 받는 동안 같은 이름의 파일이 생겨도 덮어쓰지 않는다(코어가 덮어쓰지 않고 마무리해 `skipped`로
@@ -129,7 +161,29 @@ export function buildEnqueueRequest(
     fileName,
     onExisting: check.exists && choices.existing === 'overwrite' ? 'overwrite' : 'skip',
     restart,
+    // 최근 영상 둘째 줄의 날짜(바인딩 타입이 string이라 없으면 보내지 않는다)
+    contentDate: r.meta.liveOpenDate ?? r.meta.publishDate ?? undefined,
   };
+}
+
+/** 산출 파일 이름의 확장자(문구가 아니라 코드 상수, content.md §15 `filename.ext` 삭제) */
+export const FILE_EXT = '.mp4';
+
+/** [받기]를 막는 사유(patterns.md §6.4: 사유가 있는 비활성은 `aria-describedby`로 문장을 잇는다) */
+export type BlockReason = 'ownership' | 'duplicate';
+
+/** 사유 문장 요소의 id. ConflictNotice·OwnershipNotice가 달고 [받기]의 aria-describedby가 가리킨다 */
+export const BLOCK_REASON_ID = {
+  ownership: 'ownership-notice',
+  duplicate: 'conflict-in-queue',
+} as const satisfies Record<BlockReason, string>;
+
+/** 본인 영상이 아니거나 모르면 ownership, 같은 경로의 활성 작업이 있으면 duplicate. 먼저 맞는 쪽 */
+export function downloadBlock(ownership: ResolvedDto['ownership'], check: OutputCheck | null): BlockReason | null {
+  // Phase 3: 본인 영상이 아니거나 모르면 막는다(§12). Phase 2는 늘 unchecked.
+  if (ownership === 'notOwn' || ownership === 'unknown') return 'ownership';
+  if (check && check.duplicateJobId != null) return 'duplicate';
+  return null;
 }
 
 /** 다운로드 버튼을 누를 수 있는가: 지금 입력의 검사 결과가 있고, 같은 경로의 활성 작업이 없다. */
@@ -144,16 +198,14 @@ export function canDownload(args: {
 }): boolean {
   const { fileName, check, checkedKey, currentKey, busy, ownership, choices } = args;
   if (busy || !fileName.trim() || !check || checkedKey !== currentKey) return false;
-  if (check.duplicateJobId != null) return false;
+  if (downloadBlock(ownership, check) != null) return false;
   // 번호를 골랐는데 빈 이름이 없으면 덮어쓰게 되므로 막는다(셸은 exists면 늘 채운다).
   if (check.exists && choices.existing === 'number' && check.freeFileName == null) return false;
-  // Phase 3: 본인 영상이 아니거나 모르면 막는다(§12). Phase 2는 늘 unchecked.
-  if (ownership === 'notOwn' || ownership === 'unknown') return false;
   return true;
 }
 
 /**
- * 창 포커스 때 클립보드 주소를 제안할까(ui-visual §6.4).
+ * 창 포커스 때 클립보드 주소를 제안할까(system/patterns.md §7).
  * 입력줄이 비었고 카드·불러오기·오류가 없을 때, 닫은 적 없는 주소만.
  */
 export function shouldSuggestClipboard(

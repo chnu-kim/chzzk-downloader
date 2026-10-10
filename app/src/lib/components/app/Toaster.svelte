@@ -41,7 +41,7 @@
       {@const item = shown}
       <div bind:this={wrap}>
         {#key item.id}
-          <Toast {item} onclose={() => toasts.dismiss(item.id)} />
+          <Toast {item} onclose={(reason) => toasts.dismiss(item.id, reason)} />
         {/key}
       </div>
     {/if}

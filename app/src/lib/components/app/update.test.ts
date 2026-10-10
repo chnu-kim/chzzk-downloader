@@ -2,6 +2,7 @@ import { render, screen, waitFor, within } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppError, AuthStatusDto, JobDto, SettingsDto, UpdateInfoDto } from '../../bindings';
+import { t } from '../../copy/ko';
 import { job } from '../../../test/jobFixtures';
 
 class FakeChannel {
@@ -30,7 +31,7 @@ const { update } = await import('../../stores/update.svelte');
 const { toasts } = await import('../../stores/toast.svelte');
 const { default: UpdateBanner } = await import('./UpdateBanner.svelte');
 const { default: UpdateDialog } = await import('./UpdateDialog.svelte');
-const { default: AppBanners } = await import('./AppBanners.svelte');
+const { default: AppBanners, pickBanner } = await import('./AppBanners.svelte');
 const { default: SettingsView } = await import('../../views/SettingsView.svelte');
 
 const info = (version: string): UpdateInfoDto => ({ version, current: '0.1.0', notes: null, pubDate: null });
@@ -57,6 +58,8 @@ const dto: SettingsDto = {
   maxParallelDownloads: 2,
   autoResumeInterrupted: false,
   importedFrom: null,
+  textScale: 'default',
+  theme: 'system',
 };
 
 const appError = (code: AppError['code']): AppError => ({ code, message: code, stage: null, resumable: false, payload: null });
@@ -87,8 +90,10 @@ describe('UpdateBanner status', () => {
     expect(status).toHaveTextContent('업데이트 받는 중 42%');
     expect(screen.getByText('42%', { exact: false })).toHaveAttribute('aria-hidden', 'true');
     expect(screen.queryByText(/새 버전/)).toBeNull();
-    // Notice 동작 버튼은 aria-disabled를 줄 수 없어(Action에 disabled가 없다) 눌러도 아무 일이 없는 것으로 확인한다
+    // 진행 중 버튼은 loading: aria-disabled·aria-busy라 포커스는 남고 눌러도 아무 일이 없다
     const btn = screen.getByRole('button', { name: '지금 업데이트' });
+    expect(btn).toHaveAttribute('aria-disabled', 'true');
+    expect(btn).toHaveAttribute('aria-busy', 'true');
     await user.click(btn);
     expect(oninstall).not.toHaveBeenCalled();
     expect(screen.queryByRole('button', { name: '나중에' })).toBeNull();
@@ -101,7 +106,10 @@ describe('UpdateBanner status', () => {
     render(UpdateBanner, { version: '0.2.0', busy: true, oninstall, onlater: vi.fn() });
     await user.click(screen.getByRole('button', { name: '지금 업데이트' }));
     expect(oninstall).not.toHaveBeenCalled();
-    expect(screen.getByRole('button', { name: '나중에' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '지금 업데이트' })).toHaveAttribute('aria-disabled', 'true');
+    // [나중에]는 [×]와 같은 일이라 없고 닫기는 남는다
+    expect(screen.queryByRole('button', { name: '나중에' })).toBeNull();
+    expect(screen.getByRole('button', { name: '닫기' })).toBeInTheDocument();
   });
 });
 
@@ -120,6 +128,87 @@ describe('B1은 이어받을 수 있는 작업만 센다(A5)', () => {
     auth.apply({ ...authDto('signedIn'), channelId: 'a1', channelName: '내 채널' });
     await loadJobs([job(2, { status: 'interrupted', channelId: 'c3' })]);
     render(AppBanners);
+    expect(screen.queryByRole('button', { name: '모두 이어받기' })).toBeNull();
+  });
+});
+
+describe('배너 우선순위 표(patterns.md §1.4)', () => {
+  const none = { settingsError: false, updateFailure: false, updateBusy: false, interrupted: false, updateAvailable: false };
+
+  // B2 → B4 실패 → B4 진행 → (B5 자리) → B1 → B4 새 버전. 켜진 조합 전부에서 하나만 고른다
+  it('아무것도 없으면 null, 하나만 켜지면 그 배너', () => {
+    expect(pickBanner(none)).toBeNull();
+    expect(pickBanner({ ...none, settingsError: true })).toBe('settings');
+    expect(pickBanner({ ...none, updateFailure: true })).toBe('updateFailed');
+    expect(pickBanner({ ...none, updateBusy: true })).toBe('update');
+    expect(pickBanner({ ...none, interrupted: true })).toBe('interrupted');
+    expect(pickBanner({ ...none, updateAvailable: true })).toBe('update');
+  });
+
+  it('모든 켜짐 조합에서 순서가 표대로다', () => {
+    const order: [keyof typeof none, string][] = [
+      ['settingsError', 'settings'],
+      ['updateFailure', 'updateFailed'],
+      ['updateBusy', 'update'],
+      ['interrupted', 'interrupted'],
+      ['updateAvailable', 'update'],
+    ];
+    const keys = order.map(([k]) => k);
+    for (let mask = 1; mask < 1 << keys.length; mask++) {
+      const on = keys.filter((_, i) => mask & (1 << i));
+      const state = { ...none, ...Object.fromEntries(on.map((k) => [k, true])) };
+      const first = order.find(([k]) => on.includes(k))!;
+      expect(pickBanner(state), on.join('+')).toBe(first[1]);
+    }
+  });
+});
+
+describe('B4 실패 배너', () => {
+  it('failed: warning 배너(지금 버전은 계속 쓸 수 있다)에 [다시 시도]·[×]. 다시 시도는 install을 부른다', async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.updateInstall).mockResolvedValue({ result: 'restarting' });
+    update.available = info('0.2.0');
+    update.failure = 'failed';
+    const { container } = render(AppBanners);
+    expect(screen.getByText(t('update.failed'))).toBeInTheDocument();
+    expect(container.querySelector('.notice-banner')).toHaveClass('tone-warning');
+    // 실패 배너가 새 버전 배너보다 앞이다(둘이 함께 보이지 않는다)
+    expect(screen.queryByText(t('update.banner', { version: '0.2.0' }))).toBeNull();
+    await user.click(screen.getByRole('button', { name: t('action.retry') }));
+    expect(api.updateInstall).toHaveBeenCalledWith(false);
+    expect(update.failure).toBeNull();
+  });
+
+  it('[×]는 실패 배너를 닫고 새 버전 배너가 뒤를 잇는다', async () => {
+    const user = userEvent.setup();
+    update.available = info('0.2.0');
+    update.failure = 'failed';
+    render(AppBanners);
+    await user.click(screen.getByRole('button', { name: t('common.close') }));
+    expect(update.failure).toBeNull();
+    expect(screen.getByText(t('update.banner', { version: '0.2.0' }))).toBeInTheDocument();
+  });
+
+  it('untrusted: danger, 다시 시도 없음', () => {
+    update.failure = 'untrusted';
+    const { container } = render(AppBanners);
+    expect(screen.getByText(t('update.untrusted'))).toBeInTheDocument();
+    expect(container.querySelector('.notice-banner')).toHaveClass('tone-danger');
+    expect(screen.queryByRole('button', { name: t('action.retry') })).toBeNull();
+  });
+
+  it('B2가 실패 배너보다 앞이고, 실패 배너가 진행·B1·새 버전보다 앞이다', async () => {
+    await loadJobs([job(1, { status: 'interrupted' })]);
+    update.available = info('0.2.0');
+    update.failure = 'failed';
+    settings.saveError = appError('settings');
+    const { unmount } = render(AppBanners);
+    expect(screen.getByText(/설정을 저장하지 못했어요/)).toBeInTheDocument();
+    expect(screen.queryByText(t('update.failed'))).toBeNull();
+    unmount();
+    settings.saveError = null;
+    render(AppBanners);
+    expect(screen.getByText(t('update.failed'))).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '모두 이어받기' })).toBeNull();
   });
 });
@@ -143,7 +232,7 @@ describe('AppBanners 순서', () => {
     expect(screen.queryByText('새 버전 0.2.0이 있어요.')).toBeNull();
   });
 
-  it('둘 다 없고 업데이트가 있으면 B4: [지금 업데이트]는 updateInstall(false), [나중에]는 숨김', async () => {
+  it('둘 다 없고 업데이트가 있으면 B4: [지금 업데이트]는 updateInstall(false), [×]는 숨김', async () => {
     const user = userEvent.setup();
     vi.mocked(api.updateInstall).mockResolvedValue({ result: 'restarting' });
     update.available = info('0.2.0');
@@ -154,11 +243,11 @@ describe('AppBanners 순서', () => {
     await waitFor(() => expect(screen.getByText('설치하고 다시 시작해요…')).toBeInTheDocument());
   });
 
-  it('[나중에]를 누르면 배너가 사라진다', async () => {
+  it('[×]를 누르면 배너가 사라진다', async () => {
     const user = userEvent.setup();
     update.available = info('0.2.0');
     render(AppBanners);
-    await user.click(screen.getByRole('button', { name: '나중에' }));
+    await user.click(screen.getByRole('button', { name: '닫기' }));
     expect(screen.queryByText(/새 버전/)).toBeNull();
   });
 

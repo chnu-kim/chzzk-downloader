@@ -104,6 +104,18 @@ describe('Select', () => {
     expect(onchange).toHaveBeenCalledWith(3);
   });
 
+  it('variant="inline"은 한 줄 가로 묶음(radiogroup-inline), 기본은 세로', () => {
+    const opts = [
+      { id: 'a', value: 1, label: '기본' },
+      { id: 'b', value: 2, label: '크게' },
+    ];
+    const { container, unmount } = render(RadioGroup<number>, { name: 'x', label: '크기', value: 1, options: opts });
+    expect(container.querySelector('.radiogroup')).not.toHaveClass('radiogroup-inline');
+    unmount();
+    const r = render(RadioGroup<number>, { name: 'x', label: '크기', value: 1, options: opts, variant: 'inline' });
+    expect(r.container.querySelector('.radiogroup')).toHaveClass('radiogroup-inline');
+  });
+
   it('이름이 필수다', () => {
     // @ts-expect-error 이름이 없다
     void (() => render(Select<string>, { value: 'a', options: [{ value: 'a', label: 'A' }] }));
@@ -189,6 +201,21 @@ describe('Disclosure', () => {
     expect(container.querySelector('details')).toHaveClass('disclosure', 'disclosure-inline');
     expect(container.querySelector('summary h2, summary h3')).toBeNull();
     expect(container.querySelector('.disclosure-panel')).toHaveTextContent('안쪽 내용');
+  });
+
+  it('group은 상자 없는 머리 줄 토글(aria-expanded)이고 접힌 동안에도 children이 그려진다', async () => {
+    const user = userEvent.setup();
+    const onchange = vi.fn();
+    const { container } = render(Disclosure, { variant: 'group', title: '완료 12', heading: 'h3', onchange, children: body });
+    expect(container.querySelector('details')).toBeNull();
+    const toggle = screen.getByRole('button', { name: '완료 12' });
+    expect(toggle.closest('h3')).not.toBeNull();
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(container.querySelector('.disclosure-group-panel')).toHaveTextContent('안쪽 내용');
+    expect(toggle).toHaveAttribute('aria-controls', container.querySelector('.disclosure-group-panel')!.id);
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    expect(onchange).toHaveBeenLastCalledWith(true);
   });
 
   it('열면 onchange(true), open prop으로 시작할 수 있다', async () => {

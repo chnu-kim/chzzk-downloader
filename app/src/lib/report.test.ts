@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AppError } from './bindings';
+import { t } from './copy/ko';
 import { copyReport } from './report';
 import { toasts } from './stores/toast.svelte';
 
 const err: AppError = { code: 'internal', message: '/Users/me/x', stage: null, resumable: false, payload: null };
+const plain: AppError = { code: 'internal', message: 'boom', stage: null, resumable: false, payload: null };
 
 describe('copyReport', () => {
   afterEach(() => {
@@ -15,17 +17,22 @@ describe('copyReport', () => {
     vi.stubGlobal('navigator', { ...navigator, userAgent: 'test', clipboard: { writeText } });
   }
 
-  it('복사하면 경로 경고와 복사했어요', async () => {
+  it('경로가 들어 있으면 복사했어요 대신 경로 경고 한 장만 올린다(J23)', async () => {
     stubClipboard(() => Promise.resolve());
     await copyReport(err, null);
-    // 정보 토스트는 새 토스트가 오면 대체된다: 경로 경고는 보이지 못하고 "복사했어요"만 남는다
-    expect(toasts.items.map((i) => [i.kind, i.message])).toEqual([['copied', '복사했어요']]);
+    expect(toasts.items.map((i) => [i.kind, i.message])).toEqual([['info', t('toast.reportHasPath')]]);
+  });
+
+  it('경로가 없으면 복사했어요 한 장', async () => {
+    stubClipboard(() => Promise.resolve());
+    await copyReport(plain, null);
+    expect(toasts.items.map((i) => [i.kind, i.message])).toEqual([['copied', t('toast.copied')]]);
   });
 
   it('클립보드 쓰기가 막히면 실패를 알린다', async () => {
     stubClipboard(() => Promise.reject(new Error('denied')));
     await copyReport(err, null);
-    expect(toasts.items.map((i) => [i.kind, i.message])).toEqual([['danger', '복사하지 못했어요. 다시 시도해 주세요.']]);
+    expect(toasts.items.map((i) => [i.kind, i.message])).toEqual([['danger', t('toast.copyFailed')]]);
   });
 });
 
@@ -42,6 +49,9 @@ describe('buildAppReport(설정 > 정보)', () => {
         defaultDownloadFolder: '/Users/me/Movies',
         features: { auth: false },
         legacyCandidate: null,
+        platform: 'macos',
+        textScale: 'default',
+        theme: 'system',
       },
       new Date('2026-10-05T00:00:00Z'),
     );

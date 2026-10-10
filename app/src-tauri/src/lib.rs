@@ -18,6 +18,7 @@ use chzzk_shell::auth::{Trigger, forward_status, run_driver};
 use chzzk_shell::dto::{AuthStatusDto, UpdateCheckDto, UpdateInfoDto};
 
 use chzzk_shell::dto::CloseRequestedPayload;
+use chzzk_shell::dto::WindowFocusPayload;
 use chzzk_shell::services::AppPaths;
 use chzzk_shell::{AUTH_CLIENT_FAILED, App, AppAuth, AppError, AuthSetup, ErrorCode, WorkerBase};
 use tauri::ipc::Invoke;
@@ -40,6 +41,9 @@ pub const UPDATE_AVAILABLE: &str = "update-available";
 
 /// 설치 중 진행 이벤트 이름(`UpdateProgressEvent`)
 pub const UPDATE_PROGRESS: &str = "update-progress";
+
+/// main 창이 포커스를 얻거나 잃을 때마다 프런트로 가는 이벤트 이름(`WindowFocusPayload`, system/platform.md 비활성 창)
+pub const WINDOW_FOCUS: &str = "window-focus";
 
 /// `quit` 진행 중. 이때 온 창 닫기·앱 종료 요청은 D1 없이 조용히 막는다(`quit`이 저장을 마치고 직접 끝낸다).
 #[derive(Debug, Default)]
@@ -199,6 +203,7 @@ pub fn handler<R: Runtime>() -> impl Fn(Invoke<R>) -> bool + Send + Sync + 'stat
             commands::clipboard_link,
             commands::open_app_folder,
             commands::frontend_ready,
+            commands::open_web_page,
             commands::auth_login,
             commands::auth_reopen,
             commands::auth_copy_login_url,
@@ -354,11 +359,22 @@ pub fn on_run_event<R: Runtime>(app: &AppHandle<R>, e: RunEvent) {
     }
 }
 
+/// main 창의 포커스 변화를 프런트로 알린다(얻음·잃음 모두). macOS 비활성 창 표시가 쓴다.
+pub fn emit_window_focus<R: Runtime>(app: &AppHandle<R>, focused: bool) {
+    if let Err(e) = app.emit_to("main", WINDOW_FOCUS, WindowFocusPayload { focused }) {
+        tracing::warn!("window-focus 이벤트를 보내지 못했습니다: {e}");
+    }
+}
+
 /// main 창이 포커스를 얻으면 로그인 재확인 틱(`Trigger::Focus`)을 띄운다(worker.md §11.3, 구현 중 변경 56 (다)).
 /// 띄웠으면 `true`. 로그인을 쓰지 않는 빌드·상태 없음·다른 창·포커스 잃음은 `false`.
 /// `RunEvent::WindowEvent`는 `#[non_exhaustive]`라 테스트가 만들 수 없어 처리를 함수로 뺐다(구현 중 변경 65).
 pub fn on_window_focus<R: Runtime>(app: &AppHandle<R>, label: &str, focused: bool) -> bool {
-    if !focused || label != "main" {
+    if label != "main" {
+        return false;
+    }
+    emit_window_focus(app, focused);
+    if !focused {
         return false;
     }
     let Some(auth) = app.try_state::<App>().and_then(|s| s.auth.clone()) else {

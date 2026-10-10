@@ -1,6 +1,7 @@
 import { fireEvent, render } from '@testing-library/svelte';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { AUTH_DISABLED, auth } from '../../stores/auth.svelte';
+import { platform } from '../../stores/platform.svelte';
 import { ui } from '../../stores/ui.svelte';
 import GlobalShortcuts from './GlobalShortcuts.svelte';
 
@@ -10,6 +11,7 @@ describe('GlobalShortcuts', () => {
   afterEach(() => {
     ui.goHome();
     auth.reset();
+    platform.set('linux');
   });
 
   it('어느 뷰에서든 파일·링크를 떨어뜨려도 기본 동작(이동)을 막는다', async () => {
@@ -37,10 +39,27 @@ describe('GlobalShortcuts', () => {
 
   it('Esc는 ui.escape로, Mod+,는 설정으로', async () => {
     render(GlobalShortcuts);
-    const mac = /Mac/.test(navigator.platform);
-    await fireEvent.keyDown(window, { key: ',', metaKey: mac, ctrlKey: !mac });
+    platform.set('macos');
+    await fireEvent.keyDown(window, { key: ',', metaKey: true });
     expect(ui.view).toBe('settings');
     await fireEvent.keyDown(window, { key: 'Escape' });
+    expect(ui.view).toBe('home');
+    platform.set('windows');
+    await fireEvent.keyDown(window, { key: ',', ctrlKey: true });
+    expect(ui.view).toBe('settings');
+  });
+
+  it('IME 조합 중의 키는 첫 줄에서 거른다(Esc·Mod+,가 설정을 건드리지 않는다)', async () => {
+    render(GlobalShortcuts);
+    platform.set('windows');
+    ui.goSettings();
+    await fireEvent.keyDown(window, { key: 'Escape', isComposing: true });
+    expect(ui.view).toBe('settings');
+    // 일부 웹뷰는 isComposing 없이 keyCode 229만 보낸다
+    await fireEvent.keyDown(window, { key: 'Escape', keyCode: 229 });
+    expect(ui.view).toBe('settings');
+    ui.goHome();
+    await fireEvent.keyDown(window, { key: ',', ctrlKey: true, isComposing: true });
     expect(ui.view).toBe('home');
   });
 });

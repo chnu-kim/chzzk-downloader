@@ -334,6 +334,8 @@ test('DS6: 템플릿 aria-label, 조각 결합(·, join)', () => {
 test('DS7: title= 속성은 허용 목록으로만', () => {
   assert.deepEqual(got(COMP, svelte('<span title={full}>x</span>')), ['DS7 title={full}']);
   assert.deepEqual(got(COMP, svelte('<span title="abc">x</span>')), ['DS7 title="abc"']);
+  // 컴포넌트의 title prop(Dialog·Notice 제목)은 툴팁 속성이 아니다
+  assert.deepEqual(got(COMP, svelte('<ConfirmDialog title={t("dialog.x.title")} />')), []);
   assert.deepEqual(got(COMP, svelte('<span>x</span>')), []);
   // IconButton의 title={label}은 명세다(components.md §2.2)
   assert.deepEqual(got('app/src/lib/components/ui/IconButton.svelte', svelte('<button title={label}>x</button>', 'let { label }: { label: string } = $props();')), []);

@@ -1,9 +1,8 @@
 <script lang="ts">
-  // 창 포커스 때 클립보드의 치지직 주소 제안(docs/design/system/patterns.md §7). 자동으로 불러오거나 받지 않는다.
+  // 창 포커스 때 클립보드의 치지직 주소 제안(system/patterns.md §7). 자동으로 불러오거나 받지 않는다.
+  // Notice 하나: 클립보드 아이콘 · 안내 · 주소(말줄임, 선택 가능) · [불러오기] · [×].
   import { t } from '../../copy/ko';
-  import Button from '../ui/Button.svelte';
-  import Icon from '../ui/Icon.svelte';
-  import IconButton from '../ui/IconButton.svelte';
+  import Notice from '../ui/Notice.svelte';
 
   interface Props {
     link: string;
@@ -15,48 +14,32 @@
   const shown = $derived(link.replace(/^https?:\/\//, ''));
 </script>
 
-<div class="suggest" role="group" aria-label={t('url.clipboard.title')}>
-  <span class="suggest-icon"><Icon name="clipboard-paste" size="sm" /></span>
-  <span class="title">{t('url.clipboard.title')}</span>
-  <span class="link" title={link}>{shown}</span>
-  <Button variant="ghost" size="sm" onclick={onload}>{t('url.clipboard.load')}</Button>
-  <IconButton icon="x" label={t('common.close')} onclick={ondismiss} />
+<div role="group" aria-label={t('url.clipboard.title')}>
+  <Notice
+    variant="inline"
+    tone="neutral"
+    icon="clipboard-paste"
+    actions={[{ id: 'load', label: t('url.clipboard.load'), onclick: onload }]}
+    onclose={ondismiss}
+  >
+    <div class="suggest">
+      <span class="suggest-title">{t('url.clipboard.title')}</span>
+      <span class="suggest-link selectable ellipsis">{shown}</span>
+    </div>
+  </Notice>
 </div>
 
 <style>
   .suggest {
     display: flex;
-    align-items: center;
+    align-items: baseline;
     gap: var(--space-8);
-    height: var(--control-h);
-    margin-top: var(--space-8);
-    padding: 0 var(--space-4) 0 var(--space-12);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-md);
-    background: var(--surface);
-    font-size: var(--text-sm);
-    animation: rise var(--dur-base) var(--ease-out);
   }
-  .suggest-icon {
-    color: var(--fg-muted);
-  }
-  .title {
+  .suggest-title {
     flex: none;
-    color: var(--fg);
   }
-  .link {
+  .suggest-link {
     flex: 1;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    overflow-wrap: normal;
     color: var(--fg-muted);
-  }
-  @keyframes rise {
-    from {
-      opacity: 0;
-      transform: translateY(-4px);
-    }
   }
 </style>

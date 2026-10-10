@@ -12,6 +12,7 @@ use crate::error::AppError;
 /// - `app_info`: features.auth·버전(화면이 로그인 화면을 고를 근거)
 /// - `auth_*`: 로그인 화면 자체
 /// - `frontend_ready`: 기동 스모크 신호
+/// - `open_web_page`: 로그인 화면의 개인정보 처리방침 링크(Worker 고정 페이지를 브라우저로 열 뿐이다, design system (c))
 /// - `quit`: 로그인 화면 뒤에서도 받기는 계속되므로 D1 [닫기]가 동작해야 한다
 /// - `list_jobs`·`subscribe_jobs`: 로컬 작업 목록 읽기(받기를 일으키지 않는다). 구독이 로그인 전에도 이어져 재구독이 필요 없다
 /// - `pause_job`은 넣지 않는다(A3 결정): 로그인 화면은 작업 목록을 그리지 않고, 멈추는 길은 `quit`(D1)이다(worker.md 구현 중 변경 63)
@@ -26,6 +27,7 @@ pub const OPEN_COMMANDS: &[&str] = &[
     "auth_status",
     "frontend_ready",
     "list_jobs",
+    "open_web_page",
     "quit",
     "subscribe_jobs",
 ];

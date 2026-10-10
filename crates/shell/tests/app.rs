@@ -6,11 +6,14 @@ mod common;
 use std::path::Path;
 use std::time::Duration;
 
-use chzzk_core::{ClientConfig, ContentRef, Endpoints, PlaybackKind, RetryPolicy};
+use chzzk_core::{
+    ClientConfig, ContentRef, Endpoints, PlaybackKind, RetryPolicy, TextScale, Theme,
+};
 use chzzk_shell::app::Reveal;
+use chzzk_shell::dto::WebPage;
 use chzzk_shell::dto::{AppFolder, JobStatus, Nullable, SettingsPatch};
 use chzzk_shell::services::AppPaths;
-use chzzk_shell::{App, ErrorCode, ErrorPayload, JobId};
+use chzzk_shell::{App, AuthSetup, ErrorCode, ErrorPayload, JobId, WorkerBase};
 use common::harness::request;
 use tempfile::TempDir;
 use url::Url;
@@ -85,6 +88,74 @@ async fn info_reports_paths_and_phase2_features() {
         t.path().join("data/downloads")
     );
     assert_eq!(info.legacy_candidate, None);
+}
+
+/// `app_info`는 로그인 전에도 OS와 저장된 글자 크기·모양을 싣는다.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn info_carries_platform_and_appearance() {
+    let t = TempDir::new().unwrap();
+    let server = MockServer::start().await;
+    let app = open(t.path(), &server);
+    let info = app.info("1.0.0");
+    assert_eq!(info.platform, chzzk_core::Platform::current().into());
+    assert_eq!(info.text_scale, TextScale::Default);
+    assert_eq!(info.theme, Theme::System);
+
+    app.update_settings(SettingsPatch {
+        text_scale: Some(TextScale::XLarge),
+        theme: Some(Theme::Dark),
+        ..SettingsPatch::default()
+    })
+    .unwrap();
+    let info = app.info("1.0.0");
+    assert_eq!(
+        (info.text_scale, info.theme),
+        (TextScale::XLarge, Theme::Dark)
+    );
+    drop(app);
+
+    // 다시 열어도 로그인 전 화면이 쓸 값이 남아 있다
+    let info = open(t.path(), &server).info("1.0.0");
+    assert_eq!(
+        (info.text_scale, info.theme),
+        (TextScale::XLarge, Theme::Dark)
+    );
+}
+
+/// `open_web_page`가 열 주소: 로그인 서버가 없으면 `invalidInput`, 있으면 출처 아래 고정 경로.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn web_page_url_needs_a_worker_base() {
+    let t = TempDir::new().unwrap();
+    let server = MockServer::start().await;
+    let off = open(t.path(), &server);
+    for page in [WebPage::Privacy, WebPage::Licenses] {
+        assert_eq!(
+            off.web_page_url(page).unwrap_err().code,
+            ErrorCode::InvalidInput
+        );
+    }
+
+    let t2 = TempDir::new().unwrap();
+    let base = WorkerBase::parse("https://worker.example.invalid").unwrap();
+    let on = App::open_with_auth(
+        paths(t2.path()),
+        config(&server),
+        None,
+        tokio::runtime::Handle::current(),
+        AuthSetup::Enabled {
+            base,
+            app_version: "0.1.0".into(),
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        on.web_page_url(WebPage::Privacy).unwrap(),
+        "https://worker.example.invalid/privacy"
+    );
+    assert_eq!(
+        on.web_page_url(WebPage::Licenses).unwrap(),
+        "https://worker.example.invalid/licenses"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

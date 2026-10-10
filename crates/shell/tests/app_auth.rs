@@ -177,6 +177,7 @@ fn open_commands_are_fixed() {
             "auth_status",
             "frontend_ready",
             "list_jobs",
+            "open_web_page",
             "quit",
             "subscribe_jobs",
         ]

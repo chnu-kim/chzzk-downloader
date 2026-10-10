@@ -19,9 +19,17 @@ export interface ToastItem {
   action?: ToastAction;
 }
 
+/** 토스트가 사라진 까닭. `action`은 동작 버튼을 눌러서다(되돌리기 등) */
+export type ToastCloseReason = 'action' | 'dismiss' | 'timeout' | 'replaced' | 'clear';
+
 export interface ToastOptions {
   timeout?: number;
   action?: ToastAction;
+  /**
+   * 목록에서 빠질 때 한 번 부른다(어떤 까닭이든). 지연 삭제(patterns.md §4)는 `reason !== 'action'`일 때
+   * 실제로 지운다: 토스트가 사는 동안은 숨기기만 하고 닫힐 때 확정한다
+   */
+  onclose?: (reason: ToastCloseReason) => void;
 }
 
 /** 대체되지 않는 토스트 */
@@ -34,6 +42,7 @@ export class ToastStore {
   items: ToastItem[] = $state([]);
   #next = 1;
   #timeouts = new Map<number, number>();
+  #onclose = new Map<number, (reason: ToastCloseReason) => void>();
   /** 타이머가 걸린 토스트 id */
   #armed: number | null = null;
   #handle: ReturnType<typeof setTimeout> | null = null;
@@ -43,22 +52,33 @@ export class ToastStore {
     return this.items[0] ?? null;
   }
 
-  push(message: string, kind: ToastKind = 'info', { timeout = TOAST_MS, action }: ToastOptions = {}): number {
+  push(message: string, kind: ToastKind = 'info', { timeout = TOAST_MS, action, onclose }: ToastOptions = {}): number {
     const id = this.#next++;
     const item: ToastItem = action ? { id, kind, message, action } : { id, kind, message };
     // 새 토스트가 오면 정보·완료 토스트는 대체된다
     const kept = this.items.filter(isSticky);
-    for (const i of this.items) if (!isSticky(i)) this.#timeouts.delete(i.id);
+    const replaced = this.items.filter((i) => !isSticky(i));
     this.#timeouts.set(id, timeout);
+    if (onclose) this.#onclose.set(id, onclose);
     this.items = [...kept, item];
+    for (const i of replaced) this.#closed(i.id, 'replaced');
     this.#arm();
     return id;
   }
 
-  dismiss(id: number) {
-    this.#timeouts.delete(id);
+  dismiss(id: number, reason: ToastCloseReason = 'dismiss') {
+    if (!this.items.some((i) => i.id === id)) return;
     this.items = this.items.filter((i) => i.id !== id);
+    this.#closed(id, reason);
     this.#arm();
+  }
+
+  /** 동작 버튼: 실행하고 닫는다(`onclose('action')`) */
+  runAction(id: number) {
+    const item = this.items.find((i) => i.id === id);
+    if (!item) return;
+    item.action?.run();
+    this.dismiss(id, 'action');
   }
 
   /** 올려 둔 동안 수명 타이머를 멈춘다(보이는 토스트만 타이머가 있다) */
@@ -76,8 +96,17 @@ export class ToastStore {
 
   clear() {
     this.#disarm();
-    this.#timeouts.clear();
+    const ids = this.items.map((i) => i.id);
     this.items = [];
+    for (const id of ids) this.#closed(id, 'clear');
+    this.#timeouts.clear();
+  }
+
+  #closed(id: number, reason: ToastCloseReason) {
+    this.#timeouts.delete(id);
+    const cb = this.#onclose.get(id);
+    this.#onclose.delete(id);
+    cb?.(reason);
   }
 
   #disarm() {
@@ -95,7 +124,7 @@ export class ToastStore {
     if (cur.kind === 'danger') return;
     const id = cur.id;
     this.#armed = id;
-    this.#handle = setTimeout(() => this.dismiss(id), this.#timeouts.get(id) ?? TOAST_MS);
+    this.#handle = setTimeout(() => this.dismiss(id, 'timeout'), this.#timeouts.get(id) ?? TOAST_MS);
   }
 }
 

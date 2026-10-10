@@ -6,7 +6,7 @@ mod common;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use chzzk_core::ClientConfig;
+use chzzk_core::{ClientConfig, ContentRef, PlaybackKind, RecentKind, TextScale, Theme};
 use chzzk_shell::dto::{Nullable, SettingsPatch};
 use chzzk_shell::services::{
     AppPaths, DEFAULT_FOLDER_NAME, SettingsService, default_download_folder, enqueue,
@@ -191,6 +191,90 @@ fn defaults_and_patch_rules() {
     let d = open(t.path()).get();
     assert_eq!((d.segment_concurrency, d.max_parallel_downloads), (8, 1));
     assert!(d.auto_resume_interrupted);
+}
+
+/// 글자 크기·모양: 저장하고 DTO에 싣고 다시 열어도 남는다. 키 없음은 그대로, 거부된 패치는 바꾸지 않는다.
+#[test]
+fn appearance_patch_persists_and_reaches_dto() {
+    let t = TempDir::new().unwrap();
+    let svc = open(t.path());
+    let d = svc.get();
+    assert_eq!((d.text_scale, d.theme), (TextScale::Default, Theme::System));
+    assert_eq!(svc.appearance(), (TextScale::Default, Theme::System));
+
+    let d = svc
+        .update(SettingsPatch {
+            text_scale: Some(TextScale::XLarge),
+            ..patch()
+        })
+        .unwrap();
+    assert_eq!((d.text_scale, d.theme), (TextScale::XLarge, Theme::System));
+
+    // theme만 바꿔도 글자 크기는 그대로(OS와 무관하게 저장한다)
+    let d = svc
+        .update(SettingsPatch {
+            theme: Some(Theme::Dark),
+            ..patch()
+        })
+        .unwrap();
+    assert_eq!((d.text_scale, d.theme), (TextScale::XLarge, Theme::Dark));
+    assert_eq!(svc.appearance(), (TextScale::XLarge, Theme::Dark));
+
+    // 키 없는 패치는 바꾸지 않는다
+    let d = svc.update(patch()).unwrap();
+    assert_eq!((d.text_scale, d.theme), (TextScale::XLarge, Theme::Dark));
+
+    // 다른 항목이 거부되면 같은 패치의 글자 크기도 적용되지 않는다
+    let e = svc
+        .update(SettingsPatch {
+            text_scale: Some(TextScale::Large),
+            download_folder: Nullable::Set("relative".into()),
+            ..patch()
+        })
+        .unwrap_err();
+    assert_eq!(e.code, ErrorCode::InvalidInput);
+    assert_eq!(svc.get().text_scale, TextScale::XLarge);
+
+    // 다시 열어도 남는다
+    drop(svc);
+    let d = open(t.path()).get();
+    assert_eq!((d.text_scale, d.theme), (TextScale::XLarge, Theme::Dark));
+}
+
+#[test]
+fn appearance_patch_json_from_frontend() {
+    let p: SettingsPatch =
+        serde_json::from_str(r#"{"textScale":"x-large","theme":"light"}"#).unwrap();
+    assert_eq!(p.text_scale, Some(TextScale::XLarge));
+    assert_eq!(p.theme, Some(Theme::Light));
+    let p: SettingsPatch = serde_json::from_str(r#"{"textScale":"large"}"#).unwrap();
+    assert_eq!((p.text_scale, p.theme), (Some(TextScale::Large), None));
+}
+
+#[test]
+fn recent_kind_follows_content_then_playback() {
+    use chzzk_shell::services::recent_kind;
+    let video = ContentRef::Video { video_no: 1 };
+    let clip = ContentRef::Clip {
+        clip_id: "c".into(),
+    };
+    assert_eq!(
+        recent_kind(&video, PlaybackKind::Progressive),
+        RecentKind::Vod
+    );
+    assert_eq!(
+        recent_kind(&video, PlaybackKind::LiveRewindHls),
+        RecentKind::Rewind
+    );
+    // 클립이 먼저다: 재생 방식과 무관하게 clip
+    assert_eq!(
+        recent_kind(&clip, PlaybackKind::Progressive),
+        RecentKind::Clip
+    );
+    assert_eq!(
+        recent_kind(&clip, PlaybackKind::LiveRewindHls),
+        RecentKind::Clip
+    );
 }
 
 #[test]
@@ -449,8 +533,14 @@ fn applying_candidate_merges_and_swaps_client() {
         ..patch()
     })
     .unwrap();
-    svc.record_enqueued("https://chzzk.naver.com/video/1", "새 영상", "720p")
-        .unwrap();
+    svc.record_enqueued(
+        "https://chzzk.naver.com/video/1",
+        "새 영상",
+        "720p",
+        chzzk_core::RecentKind::Vod,
+        None,
+    )
+    .unwrap();
 
     let r = svc.import_legacy(None).unwrap().expect("적용 결과");
     assert_eq!(r.recent_count, 2);
@@ -638,4 +728,52 @@ async fn enqueue_uses_settings_and_records_recent() {
     .unwrap_err();
     assert_eq!(e.code, ErrorCode::InvalidInput);
     assert_eq!(svc.get().recent_vods.len(), 1);
+}
+
+/// 작업 추가는 최근 영상에 종류(클립 > 빠른 다시보기 > VOD)와 `contentDate`를 남긴다.
+#[tokio::test(start_paused = true)]
+async fn enqueue_records_recent_kind_and_date() {
+    let h = Harness::new(2);
+    let t = TempDir::new().unwrap();
+    let svc = open(t.path());
+    let gate = OwnershipGate::disabled();
+
+    // 일반 VOD(Progressive) + 날짜
+    let mut vod = request("v");
+    vod.url = "https://chzzk.naver.com/video/11".into();
+    vod.content = ContentRef::Video { video_no: 11 };
+    vod.expected_kind = PlaybackKind::Progressive;
+    vod.content_date = Some("2026-03-04 05:06:07".into());
+    enqueue(&svc, &gate, &h.mgr, vod).await.unwrap();
+    let r = svc.get().recent_vods[0].clone();
+    assert_eq!(
+        (r.kind, r.date.as_deref()),
+        (Some(RecentKind::Vod), Some("2026-03-04 05:06:07"))
+    );
+
+    // 빠른 다시보기(HLS), 날짜 없음
+    let mut rewind = request("r");
+    rewind.url = "https://chzzk.naver.com/video/12".into();
+    rewind.content = ContentRef::Video { video_no: 12 };
+    rewind.expected_kind = PlaybackKind::LiveRewindHls;
+    enqueue(&svc, &gate, &h.mgr, rewind).await.unwrap();
+    let r = svc.get().recent_vods[0].clone();
+    assert_eq!((r.kind, r.date), (Some(RecentKind::Rewind), None));
+
+    // 클립: 재생 방식이 HLS여도 clip, 공백뿐인 날짜는 남기지 않는다
+    let mut clip = request("c");
+    clip.url = "https://chzzk.naver.com/clips/abcDEF123".into();
+    clip.content = ContentRef::Clip {
+        clip_id: "abcDEF123".into(),
+    };
+    clip.expected_kind = PlaybackKind::LiveRewindHls;
+    clip.content_date = Some("  ".into());
+    enqueue(&svc, &gate, &h.mgr, clip).await.unwrap();
+    let d = svc.get();
+    assert_eq!(d.recent_vods.len(), 3);
+    assert_eq!(
+        (d.recent_vods[0].kind, d.recent_vods[0].date.clone()),
+        (Some(RecentKind::Clip), None)
+    );
+    assert_eq!(d.recent_vods[2].kind, Some(RecentKind::Vod));
 }

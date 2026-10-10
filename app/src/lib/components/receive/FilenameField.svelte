@@ -1,6 +1,10 @@
 <script lang="ts">
+  // 파일 이름 행(system/patterns.md §6.5): 입력칸(fg) + 확장자 + [원래 이름으로]. 잘리면 아래 caption으로 저장될 이름.
+  // 한글을 치는 칸이라 Enter에 동작을 달지 않는다(제출은 카드의 Mod+Enter).
   import { t } from '../../copy/ko';
+  import { FILE_EXT } from '../../receive';
   import Button from '../ui/Button.svelte';
+  import FieldRow from '../ui/FieldRow.svelte';
   import TextField from '../ui/TextField.svelte';
 
   interface Props {
@@ -14,49 +18,23 @@
   let { value = $bindable(), suggested, willSaveAs, disabled = false }: Props = $props();
 </script>
 
-<div class="name-row">
-  <label class="label" id="filename-label" for="filename-input">{t('filename.label')}</label>
-  <div class="input">
-    <TextField id="filename-input" labelledby="filename-label" bind:value {disabled} aria-describedby={willSaveAs ? 'filename-will' : undefined} />
-    <span class="ext">{t('filename.ext')}</span>
-    <Button variant="ghost" size="sm" disabled={disabled || value === suggested} onclick={() => (value = suggested)}>
-      {t('filename.reset')}
-    </Button>
-  </div>
-</div>
-{#if willSaveAs}
-  <p id="filename-will" class="will" title={willSaveAs}>{t('filename.willSaveAs', { name: willSaveAs })}</p>
-{/if}
+<FieldRow label={t('filename.label')} help={willSaveAs ? t('filename.willSaveAs', { name: willSaveAs }) : undefined}>
+  {#snippet control({ labelId, helpId })}
+    <TextField labelledby={labelId} bind:value {disabled} aria-describedby={helpId} />
+    <span class="ext">{FILE_EXT}</span>
+  {/snippet}
+  {#snippet actions()}
+    <!-- 이미 원래 이름이면 할 일이 없어 그리지 않는다(사유 없는 비활성은 두지 않는다, patterns.md §6.4) -->
+    {#if value !== suggested}
+      <Button variant="ghost" size="sm" class="edge-end" {disabled} onclick={() => (value = suggested)}>
+        {t('filename.reset')}
+      </Button>
+    {/if}
+  {/snippet}
+</FieldRow>
 
 <style>
-  .name-row {
-    display: flex;
-    align-items: center;
-    gap: var(--space-8);
-  }
-  .label {
-    flex: none;
-    width: 96px;
-    color: var(--fg-muted);
-  }
-  .input {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    align-items: center;
-    gap: var(--space-8);
-  }
   .ext {
     flex: none;
-    color: var(--fg-muted);
-  }
-  .will {
-    margin: var(--space-4) 0 0 calc(96px + var(--space-8));
-    font-size: var(--text-xs);
-    color: var(--fg-faint);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    overflow-wrap: normal;
   }
 </style>

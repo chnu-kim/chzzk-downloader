@@ -1,5 +1,5 @@
-// 불러오기 상태(§10 ResolveStore): idle | loading | ready | error.
-// 취소는 세대 번호를 올려 늦게 온 결과를 버리는 것이다(§8.2). Rust 요청은 코어 타임아웃까지 혼자 끝난다.
+// 불러오기 상태(ResolveStore): idle | loading | ready | error.
+// 취소는 세대 번호를 올려 늦게 온 결과를 버리는 것이다(patterns.md §14.2 (b)). Rust 요청은 코어 타임아웃까지 혼자 끝난다.
 import * as api from '../api';
 import type { AppError, ResolvedDto } from '../bindings';
 
@@ -46,7 +46,7 @@ export class ResolveStore {
     this.state = { kind: 'idle' };
   }
 
-  /** 다운로드 목록에 넣은 뒤: 카드를 접고 입력줄을 비운다(§8.10). */
+  /** 다운로드 목록에 넣은 뒤: 카드를 접고 입력줄을 비운다(patterns.md §9 F-6). */
   finish() {
     this.close();
     this.input = '';

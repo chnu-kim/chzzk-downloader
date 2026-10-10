@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { check, quality, resolved } from '../test/fixtures';
+import { t } from './copy/ko';
 import {
+  BLOCK_REASON_ID,
+  CHECK_DEBOUNCE_MS,
+  bestQualityIndex,
+  downloadBlock,
+  recentSecondLine,
   DEFAULT_CHOICES,
   buildEnqueueRequest,
   canDownload,
@@ -59,7 +65,17 @@ describe('buildEnqueueRequest (§6.4 표)', () => {
       fileName: '정리된 이름',
       onExisting: 'skip',
       restart: false,
+      contentDate: '2026-10-03 21:00:00',
     });
+  });
+
+  it('contentDate: 방송 날짜 → 공개 날짜 → 없으면 보내지 않는다', () => {
+    const a = resolved();
+    expect(buildEnqueueRequest(a, q, null, check(), DEFAULT_CHOICES).contentDate).toBe('2026-10-03 21:00:00');
+    a.meta.liveOpenDate = null;
+    expect(buildEnqueueRequest(a, q, null, check(), DEFAULT_CHOICES).contentDate).toBe('2026-10-04 01:00:00');
+    a.meta.publishDate = null;
+    expect(buildEnqueueRequest(a, q, null, check(), DEFAULT_CHOICES).contentDate).toBeUndefined();
   });
 
   it('완성 파일: 번호(기본)는 freeFileName + skip, 덮어쓰기는 그 이름 + overwrite', () => {
@@ -148,5 +164,52 @@ describe('shouldSuggestClipboard', () => {
     expect(shouldSuggestClipboard(link, { ...ok, inputEmpty: false })).toBe(false);
     expect(shouldSuggestClipboard(link, { ...ok, idle: false })).toBe(false);
     expect(shouldSuggestClipboard(link, { ...ok, dismissed: new Set([link]) })).toBe(false);
+  });
+});
+
+describe('recentSecondLine', () => {
+  it('종류와 날짜 / 종류만 / 종류 없음', () => {
+    expect(recentSecondLine({ kind: 'rewind', date: '2026-10-03 21:00:00' })).toBe(
+      t('recent.meta', { kind: t('kind.liveRewind'), date: '2026.10.03' }),
+    );
+    expect(recentSecondLine({ kind: 'clip', date: null })).toBe(t('kind.clip'));
+    // 모양이 다른 날짜는 날짜 없음과 같다
+    expect(recentSecondLine({ kind: 'vod', date: '어제' })).toBe(t('kind.vod'));
+    expect(recentSecondLine({ kind: null, date: '2026-10-03 21:00:00' })).toBeNull();
+  });
+});
+
+describe('bestQualityIndex', () => {
+  it('목록 순서가 아니라 해상도가 가장 높은 행, 같으면 대역폭', () => {
+    const q = [
+      quality({ id: 'a', resolution: 480 }),
+      quality({ id: 'b', resolution: 1080, bandwidth: 5 }),
+      quality({ id: 'c', resolution: 1080, bandwidth: 9 }),
+      quality({ id: 'd', resolution: null, bandwidth: 99 }),
+    ];
+    expect(bestQualityIndex(q)).toBe(2);
+  });
+
+  it('고를 것이 하나뿐이면 꼬리표를 붙일 곳이 없다', () => {
+    expect(bestQualityIndex([quality()])).toBeNull();
+    expect(bestQualityIndex([])).toBeNull();
+  });
+});
+
+describe('downloadBlock', () => {
+  it('본인 영상이 아니거나 모르면 ownership, 목록에 있으면 duplicate, 먼저 맞는 쪽', () => {
+    expect(downloadBlock('own', check())).toBeNull();
+    expect(downloadBlock('unchecked', null)).toBeNull();
+    expect(downloadBlock('notOwn', null)).toBe('ownership');
+    expect(downloadBlock('unknown', check())).toBe('ownership');
+    expect(downloadBlock('own', check({ duplicateJobId: 3 }))).toBe('duplicate');
+    expect(downloadBlock('notOwn', check({ duplicateJobId: 3 }))).toBe('ownership');
+    expect(BLOCK_REASON_ID.duplicate).not.toBe(BLOCK_REASON_ID.ownership);
+  });
+});
+
+describe('상수', () => {
+  it('check_output 디바운스는 150ms', () => {
+    expect(CHECK_DEBOUNCE_MS).toBe(150);
   });
 });

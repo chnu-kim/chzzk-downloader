@@ -149,7 +149,7 @@ test('DT2: ui.css는 앱·Worker 공통 이름만, Worker 소스는 Worker 정�
   });
   const out = dt2(c);
   assert.deepEqual(texts(out), ['--only-app', '--only-app', '--text-hero']);
-  assert.ok(!out.some((x) => x.file === 'app/src/b.css'), 'legacy 이름은 앱에서 정의된 것이다');
+  assert.ok(!out.some((x) => x.file === 'app/src/b.css'), '토큰 절이 아닌 절의 이름도 앱에서 정의된 것이다');
 });
 
 // ───────────── DT3 ─────────────
@@ -166,7 +166,7 @@ test('DT3: 생성물 토큰이 var()로 쓰이거나 별칭의 대상이면 통�
     worker,
     appSources: [entry('app/src/a.css', 'a { color: var(--bg); padding: var(--used); }'), entry('app/src/h.css', 'h { font-size: var(--text-hero); }')],
   });
-  // --text-hero는 앱 소스 사용으로는 세지 않는다. legacy 안의 var()도 사용이 아니다
+  // --text-hero는 앱 소스 사용으로는 세지 않는다. 토큰 절이 아닌 절 안의 var()도 사용이 아니다
   assert.deepEqual(texts(dt3(c)), ['--text-hero', '--unused']);
   const w = ctxOf({ app, worker, appSources: [entry('app/src/a.css', 'a { color: var(--bg); padding: var(--used); margin: var(--unused); }')], workerSources: [entry('worker/src/http/p.ts', 'h { font-size: var(--text-hero); }')] });
   assert.deepEqual(dt3(w), []);
@@ -392,7 +392,7 @@ test('parseFoundationsDoc: 주석을 지우고 여러 줄 값·같은 selector �
   assert.equal(font.value.replace(/\s+/g, ' '), 'system-ui, serif, sans-serif');
 });
 
-test('DT14: 문서 사전 = 생성물 사전(양방향, dark-media와 legacy는 뺀다)', () => {
+test('DT14: 문서 사전 = 생성물 사전(양방향, dark-media는 뺀다)', () => {
   const sections = {
     root: ':root { color-scheme: light dark; --font-sans: system-ui, serif, sans-serif; --bg: var(--ref-a); }',
     'dark-media': '@media (prefers-color-scheme: dark) {\n  :root:where(:not([data-theme="light"])) { --bg: var(--ref-b); }\n}',

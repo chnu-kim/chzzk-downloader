@@ -338,7 +338,7 @@
 | 고지(긴 판) `NOTICE_UNOFFICIAL` | **VOD 클립 다운로더는 네이버나 치지직과 관련 없는 비공식 도구예요. 치지직과 NAVER는 NAVER Corp.의 상표일 수 있어요. 이 앱은 로그인한 채널의 영상과 클립만 받아요.** | 랜딩 바닥글, 설정 › 정보 | `G-ID-R1`·`G-ID-R2`(원문 "내려받아요"는 D42에 맞춰 "받아요"로. 셋째 문장은 C8 "본인 채널만"과 같은 뜻으로 좁혔다, 검토 U-05). 상표 등록 확인 전까지 "상표일 수 있어요"(README §6-9) |
 | 고지(한 줄) `NOTICE_SHORT` | **비공식 도구예요 · 네이버·치지직과 제휴하거나 보증받지 않았어요** | 랜딩 히어로 바로 아래(스크롤 없이), 앱 로그인 첫 화면(패널 안 Notice) | `G-ID-R1`, C2 |
 | Worker 헤더 배지 `pill` | **비공식 도구** | Worker만(모양은 배지, `web.md` §3.1) | judgment §2.3-7 |
-| 랜딩 `<title>`·OG | **VOD 클립 다운로더 — 비공식 다시보기·클립 다운로더** / og:description **내 치지직 다시보기와 클립을 내 컴퓨터에 받아요. 네이버·치지직과 무관한 비공식 도구예요.** | Worker | D34, `G-ID-R10`. "VOD"는 배지에만, "저장"은 영상에 쓰지 않는다(§4) |
+| 랜딩 `<title>`·OG | **VOD 클립 다운로더 — 치지직 영상을 받는 비공식 도구** / og:description **내 치지직 다시보기와 클립을 내 컴퓨터에 받아요. 네이버·치지직과 무관한 비공식 도구예요.** | Worker | D34, `G-ID-R10`. "VOD"는 배지에만, "저장"은 영상에 쓰지 않는다(§4) |
 | 저작권 줄 | **© {year} {owner}. 모든 권리 보유.** D58(라이선스) 결정 전까지 | 정보 화면, 바닥글 | D58 |
 | 로그인 전 고지 `auth.consent` | **로그인하면 채널 이름과 채널 ID만 알게 되고, 네이버 비밀번호는 받지 않아요. 언제든 설정 › 계정에서 로그아웃할 수 있어요.** + 링크 "개인정보 처리방침"(`auth.privacy`). 랜딩은 세 줄 `landing.consent.*`(받는 것 / 쓰는 곳 / 받지 않는 것) + "로그인한 기기는 ‘내 기기’에서 끊을 수 있어요." | 로그인 첫 화면, 랜딩 CTA 위 | brief §6.14-7, C7(왜·무엇·어디까지·**어떻게 끊나**), `G-PRIVACY-R17` |
 | 범위 고지 | **허가받은 채널만 쓸 수 있어요.**(`auth.intro` 앞 문장) / 설정 계정 행 `account.scope` **허가받은 채널이에요** / 홈 빈 상태 `list.empty.scope` **내 채널의 영상과 클립을 받을 수 있어요** | 로그인 화면, 설정, 홈 | C8, judgment §2.2-7·§2.3-3 |
@@ -580,7 +580,7 @@
 | (신설) `adminOnly.title`·`badFormat.title` | — | 관리자 아님(403) `adminOnly.title` **관리자만 볼 수 있어요** / 형식 오류(400·415) `badFormat.title` **요청 형식이 맞지 않아요**(본문은 상황별: `badBody` 요청을 읽지 못했어요. / `badChannelId`) | `web.md` §6.2(현재 `notAdmin`·`unsupportedType`·`badBody`에서 제목과 본문을 가른다) |
 | (신설) `notFound.title`·`notFound.body`·`isAdmin.title`·`bootstrapAdmin.title` | `notFound` 대상을 찾지 못했어요. 이미 처리됐을 수 있어요. / `isAdmin` 관리자 채널은 뺄 수 없어요. / `bootstrapAdmin` 아직 관리자가 정해지지 않았어요. | `notFound.title` **대상을 찾지 못했어요** + `notFound.body` **이미 처리됐을 수 있어요.** / `isAdmin.title` **관리자 채널은 뺄 수 없어요** / `bootstrapAdmin.title` **아직 관리자가 정해지지 않았어요**(셋 다 본문 없음 또는 둘째 문장) | §9.2-9(상태별 제목). 명세가 값을 따로 정하지 않아 현재 문장을 제목과 본문으로 가르기만 했다 |
 | `signedInAs` | {name} 채널로 로그인했어요. | **‘{name}’ 채널로 로그인했어요.** | §6.4 |
-| `landingTitle`·`siteTitle` | 다운로드 / VOD 클립 다운로더 — 비공식 VOD·클립 다운로더 | 삭제(h1은 `siteName`) / **VOD 클립 다운로더 — 비공식 다시보기·클립 다운로더** | §4 |
+| `landingTitle`·`siteTitle` | 다운로드 / VOD 클립 다운로더 — 비공식 VOD·클립 다운로더 | 삭제(h1은 `siteName`) / **VOD 클립 다운로더 — 치지직 영상을 받는 비공식 도구** | §4 |
 | `downloadsTitle` | 설치 파일 | 유지. 버튼 **{os}용 받기** | D42 |
 | `anonLead`·(신설) `loginForFiles`·`loginTwice` | 허가된 채널만 받을 수 있어요. | `anonLead` **허가받은 채널만 쓸 수 있어요.** / `loginForFiles` **로그인하면 내 컴퓨터용 설치 파일이 보여요.** / `loginTwice` **이 페이지에서 로그인했어도 앱을 처음 열 때 한 번 더 로그인해요.** | §4, 검토 U-11 |
 | `artifact.dmg` | macOS (Apple Silicon) | **macOS(Apple Silicon)** | §6.5 |

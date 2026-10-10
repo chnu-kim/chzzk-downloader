@@ -56,7 +56,10 @@ const ELEMENT = 'element-6066-11e4-a52e-4f735466cecf';
 
 // 카드의 [다운로드]. 버튼 안에 단축키 표시(aria-hidden이어도 innerText에 남는다)가 있어 버튼 글자 전체가 아니라
 // 이름 span 하나로 찾는다
-export const CARD_DOWNLOAD_XPATH = "//section[contains(@class,'card')]//button[.//span[normalize-space(.)='다운로드']]";
+// 이름 글자 노드로 찾는다: 라벨 span 안에 단축키 표시도 들어 있어 span 전체 글자는 '다운로드'가 아니다
+export const CARD_DOWNLOAD_XPATH = "//section[contains(@class,'card')]//button[.//text()[normalize-space(.)='다운로드']]";
+// 못 누르는 버튼: primary는 disabled 대신 aria-disabled를 쓴다(components.md §2.1)
+const IS_OFF = "const b = arguments[0]; return b.disabled || b.getAttribute('aria-disabled') === 'true'";
 
 // 요소 찾기 응답 → 요소 id. W3C 키가 표준이지만 옛 JSON Wire 키(ELEMENT)로 오는 드라이버도 받는다.
 // 둘 다 없으면 응답을 보여 주며 실패한다(조용히 거짓이 되어 시간 초과로만 보이지 않게).
@@ -354,7 +357,7 @@ export async function run(exe) {
       '영상 카드의 다운로드 버튼',
       async () => {
         const el = await wd.find(sid, 'xpath', DL);
-        const enabled = await wd.exec(sid, 'return !arguments[0].disabled', [elementRef(el)]);
+        const enabled = !(await wd.exec(sid, IS_OFF, [elementRef(el)]));
         return enabled ? el : null;
       },
       STEP_MS,
@@ -389,12 +392,12 @@ export async function run(exe) {
       () =>
         wd.exec(
           sid,
-          "const c = document.querySelector('section.card'); return !!c && c.innerText.includes(arguments[0]) && c.innerText.includes('내 채널의 영상만 받을 수 있어요')",
+          "const c = document.querySelector('section.video-card'); return !!c && c.innerText.includes(arguments[0]) && c.innerText.includes('내 채널의 영상만 받을 수 있어요')",
           [OTHER_CHANNEL_NAME],
         ),
       STEP_MS,
     );
-    const dlDisabled = await wd.exec(sid, 'return arguments[0].disabled', [elementRef(await wd.find(sid, 'xpath', DL))]);
+    const dlDisabled = await wd.exec(sid, IS_OFF, [elementRef(await wd.find(sid, 'xpath', DL))]);
     if (dlDisabled !== true) throw new Error(`남의 영상 카드의 [다운로드]가 꺼져 있지 않다(${JSON.stringify(dlDisabled)})`);
     log('남의 영상 카드가 막혔다');
 

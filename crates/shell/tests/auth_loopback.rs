@@ -372,7 +372,7 @@ fn pages_are_fixed_strings() {
     for (p, m) in [
         (
             ReceiverPage::SignedIn,
-            "로그인했어요. 치지직 다운로더 앱으로 돌아가 주세요. 이 창은 닫아도 돼요.",
+            "로그인했어요. VOD 클립 다운로더 앱으로 돌아가 주세요. 이 창은 닫아도 돼요.",
         ),
         (
             ReceiverPage::Denied,

@@ -1,6 +1,6 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "치지직 다운로더",
+  "productName": "VOD 클립 다운로더",
   "version": "0.5.0",
   "identifier": "io.github.chnu-kim.chzzk-downloader",
   "build": {
@@ -14,7 +14,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "치지직 다운로더",
+        "title": "VOD 클립 다운로더",
         "width": 960,
         "height": 700,
         "minWidth": 720,

@@ -162,7 +162,7 @@ describe("허용된 사용자", () => {
     expect(t).not.toContain(".app.tar.gz");
     expect(t).not.toContain(".sig");
     // 랜딩 제목은 앱 이름 꼬리 없이 한 번만, 본문 h1은 앱 이름(hero)
-    expect(t).toContain("<title>치지직 다운로더 — 비공식 다시보기·클립 다운로더</title>");
+    expect(t).toContain("<title>VOD 클립 다운로더 — 치지직 영상을 받는 비공식 도구</title>");
     expect(t).toContain(`<h1 class="hero">${COPY.siteName}</h1>`);
     // 시각 표의 caption에 한 번 적고 열 제목에는 시간대가 없다
     expect(t).toContain(`<caption id="devices-caption">${COPY.devicesTitle}. ${COPY.tableTimeNote}</caption>`);
@@ -186,7 +186,7 @@ describe("허용된 사용자", () => {
     // [잠정] 그래도 열기는 조건문이고, 단계는 ol 항목에 번호 문자열이 없다
     expect(mac).toContain(`<li>${COPY.macMove}</li><li>${COPY.macOpenAnyway}</li><li>${COPY.macTerminal}</li>`);
     // 큰따옴표는 이스케이프돼 나간다(core/html.ts escapeHtml)
-    expect(mac).toContain('<pre tabindex="0"><code class="selectable">xattr -dr com.apple.quarantine &quot;/Applications/치지직 다운로더.app&quot;</code></pre>');
+    expect(mac).toContain('<pre tabindex="0"><code class="selectable">xattr -dr com.apple.quarantine &quot;/Applications/VOD 클립 다운로더.app&quot;</code></pre>');
     expect(mac).not.toMatch(/\bv\d+\.\d+/);
     const win = await (await b.get("/", { "User-Agent": UA_WIN })).text();
     expect(win).toContain(`<a class="btn btn-primary btn-lg" href="/releases/${V2}/chzzk-downloader_${V2}_windows-x86_64-setup.exe">${COPY.getFor("Windows")}</a>`);

@@ -5,12 +5,12 @@
 const ALLOW_LABEL = "허가";
 
 export const COPY = {
-  siteName: "치지직 다운로더",
+  siteName: "VOD 클립 다운로더",
   // 랜딩 <title>·OG 제목. htmlPage가 이 값이면 " · 앱 이름" 꼬리를 붙이지 않는다
-  siteTitle: "치지직 다운로더 — 비공식 다시보기·클립 다운로더",
+  siteTitle: "VOD 클립 다운로더 — 치지직 영상을 받는 비공식 도구",
   errorTitlePrefix: "오류: ",
-  loginTitle: "치지직 다운로더 로그인",
-  loginWarning: "치지직 다운로더 앱에서 직접 시작한 로그인이 아니면 이 창을 닫아 주세요. 다른 사람이 보낸 주소라면 계속하지 마세요. 로그인 뒤 주소창에 나오는 주소는 다른 사람에게 보내지 마세요.",
+  loginTitle: "VOD 클립 다운로더 로그인",
+  loginWarning: "VOD 클립 다운로더 앱에서 직접 시작한 로그인이 아니면 이 창을 닫아 주세요. 다른 사람이 보낸 주소라면 계속하지 마세요. 로그인 뒤 주소창에 나오는 주소는 다른 사람에게 보내지 마세요.",
   loginContinue: "계속",
   // 안내·오류 페이지: 제목이 무슨 일인지, 본문이 다음에 할 일을 말한다(web.md §6.2). 같은 본문은 키 하나를 같이 쓴다
   linkGone: { title: "로그인 주소가 만료됐어요", body: "앱에서 다시 로그인해 주세요." },
@@ -64,7 +64,7 @@ export const COPY = {
   // 헤더 nav의 이름(보조 기술이 읽는다)
   siteNav: "사이트",
   notice: {
-    unofficial: "치지직 다운로더는 네이버나 치지직과 관련 없는 비공식 도구예요. 치지직과 NAVER는 NAVER Corp.의 상표일 수 있어요. 이 앱은 로그인한 채널의 영상과 클립만 받아요.",
+    unofficial: "VOD 클립 다운로더는 네이버나 치지직과 관련 없는 비공식 도구예요. 치지직과 NAVER는 NAVER Corp.의 상표일 수 있어요. 이 앱은 로그인한 채널의 영상과 클립만 받아요.",
     short: "비공식 도구예요 · 네이버·치지직과 제휴하거나 보증받지 않았어요",
   },
   // 랜딩 OG·description(content.md §11). 로그인 여부·채널·버전과 무관한 고정 문구
@@ -156,7 +156,7 @@ export const COPY = {
   // 단계 세 개는 ol 항목이다(번호는 마크업이 붙인다)
   macMove: "받은 .dmg를 열고 앱을 ‘응용 프로그램’ 폴더로 옮겨 주세요.",
   macTerminal: "터미널을 열고 아래 명령을 붙여넣어 실행해 주세요.",
-  macXattr: 'xattr -dr com.apple.quarantine "/Applications/치지직 다운로더.app"',
+  macXattr: 'xattr -dr com.apple.quarantine "/Applications/VOD 클립 다운로더.app"',
   // [잠정] 실기 전까지 조건문이다: 단추가 없으면 다음 단계로(web.md §5.2, §14-1)
   macOpenAnyway: "처음 열 때 경고가 나오면 시스템 설정 › 개인정보 보호 및 보안에서 ‘그래도 열기’를 눌러 주세요. 그 단추가 없으면 다음 단계로 넘어가 주세요.",
   winSmartScreen: "Windows의 ‘PC 보호’ 창이 뜨면 ‘추가 정보’를 누른 뒤 ‘실행’을 눌러 주세요.",

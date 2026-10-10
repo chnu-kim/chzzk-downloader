@@ -172,7 +172,7 @@
 |---|---|---|---|---|
 | D1 창 닫기 | 받는 중인 영상을 일시정지하고 닫을까요? | 받는 중인 영상이 {n}개 있어요. 닫으면 일시정지되고, 다음에 앱을 열면 이어받을 수 있어요. | 일시정지하고 닫기 | 계속 받기 |
 | D2 작업 취소 | ‘{title}’ 받기를 취소할까요? | {size}까지 받았어요. 취소하면 받다 만 파일이 지워지고 되돌릴 수 없어요. | 취소하고 지우기(danger) | 계속 받기(받는 중) / 그대로 두기(일시정지 중) |
-| D3 이전 설정 | 예전 설정을 가져올까요? | 예전 치지직 다운로더에서 찾은 것이에요. + `ul`(저장 폴더 / 최근 영상 {n}개 / 네이버 로그인 정보) | 가져오기 | 나중에 |
+| D3 이전 설정 | 예전 설정을 가져올까요? | 예전 명령줄 버전에서 찾은 것이에요. + `ul`(저장 폴더 / 최근 영상 {n}개 / 네이버 로그인 정보) | 가져오기 | 나중에 |
 | D4 로그아웃 | 로그아웃할까요? | 받는 중인 영상은 계속 받아요. 다시 쓰려면 치지직으로 다시 로그인해야 해요. | 로그아웃 | 로그인 유지 |
 | D5 업데이트 | 업데이트하고 다시 시작할까요? | 받는 중인 영상 {n}개는 일시정지돼요. 다시 시작한 뒤 [이어받기]로 이어받을 수 있어요. | 업데이트하고 다시 시작 | 나중에 |
 | D6 데이터 요금(v1.1) | 데이터 요금이 나올 수 있는 연결인데 받을까요? | 약 {size}를 받아요. | 그래도 받기 | 받지 않기 |
@@ -335,10 +335,10 @@
 
 | 문구 | 값 | 쓰는 곳 | 근거 |
 |---|---|---|---|
-| 고지(긴 판) `NOTICE_UNOFFICIAL` | **치지직 다운로더는 네이버나 치지직과 관련 없는 비공식 도구예요. 치지직과 NAVER는 NAVER Corp.의 상표일 수 있어요. 이 앱은 로그인한 채널의 영상과 클립만 받아요.** | 랜딩 바닥글, 설정 › 정보 | `G-ID-R1`·`G-ID-R2`(원문 "내려받아요"는 D42에 맞춰 "받아요"로. 셋째 문장은 C8 "본인 채널만"과 같은 뜻으로 좁혔다, 검토 U-05). 상표 등록 확인 전까지 "상표일 수 있어요"(README §6-9) |
+| 고지(긴 판) `NOTICE_UNOFFICIAL` | **VOD 클립 다운로더는 네이버나 치지직과 관련 없는 비공식 도구예요. 치지직과 NAVER는 NAVER Corp.의 상표일 수 있어요. 이 앱은 로그인한 채널의 영상과 클립만 받아요.** | 랜딩 바닥글, 설정 › 정보 | `G-ID-R1`·`G-ID-R2`(원문 "내려받아요"는 D42에 맞춰 "받아요"로. 셋째 문장은 C8 "본인 채널만"과 같은 뜻으로 좁혔다, 검토 U-05). 상표 등록 확인 전까지 "상표일 수 있어요"(README §6-9) |
 | 고지(한 줄) `NOTICE_SHORT` | **비공식 도구예요 · 네이버·치지직과 제휴하거나 보증받지 않았어요** | 랜딩 히어로 바로 아래(스크롤 없이), 앱 로그인 첫 화면(패널 안 Notice) | `G-ID-R1`, C2 |
 | Worker 헤더 배지 `pill` | **비공식 도구** | Worker만(모양은 배지, `web.md` §3.1) | judgment §2.3-7 |
-| 랜딩 `<title>`·OG | **치지직 다운로더 — 비공식 다시보기·클립 다운로더** / og:description **내 치지직 다시보기와 클립을 내 컴퓨터에 받아요. 네이버·치지직과 무관한 비공식 도구예요.** | Worker | D34, `G-ID-R10`. "VOD"는 배지에만, "저장"은 영상에 쓰지 않는다(§4) |
+| 랜딩 `<title>`·OG | **VOD 클립 다운로더 — 비공식 다시보기·클립 다운로더** / og:description **내 치지직 다시보기와 클립을 내 컴퓨터에 받아요. 네이버·치지직과 무관한 비공식 도구예요.** | Worker | D34, `G-ID-R10`. "VOD"는 배지에만, "저장"은 영상에 쓰지 않는다(§4) |
 | 저작권 줄 | **© {year} {owner}. 모든 권리 보유.** D58(라이선스) 결정 전까지 | 정보 화면, 바닥글 | D58 |
 | 로그인 전 고지 `auth.consent` | **로그인하면 채널 이름과 채널 ID만 알게 되고, 네이버 비밀번호는 받지 않아요. 언제든 설정 › 계정에서 로그아웃할 수 있어요.** + 링크 "개인정보 처리방침"(`auth.privacy`). 랜딩은 세 줄 `landing.consent.*`(받는 것 / 쓰는 곳 / 받지 않는 것) + "로그인한 기기는 ‘내 기기’에서 끊을 수 있어요." | 로그인 첫 화면, 랜딩 CTA 위 | brief §6.14-7, C7(왜·무엇·어디까지·**어떻게 끊나**), `G-PRIVACY-R17` |
 | 범위 고지 | **허가받은 채널만 쓸 수 있어요.**(`auth.intro` 앞 문장) / 설정 계정 행 `account.scope` **허가받은 채널이에요** / 홈 빈 상태 `list.empty.scope` **내 채널의 영상과 클립을 받을 수 있어요** | 로그인 화면, 설정, 홈 | C8, judgment §2.2-7·§2.3-3 |
@@ -469,7 +469,7 @@
 | `dialog.cancel.title` | 다운로드를 취소할까요? | **‘{title}’ 받기를 취소할까요?** | D46, §5.3 |
 | `dialog.cancel.body` | 지금까지 받은 {size}도 함께 지워져요. | **{size}까지 받았어요. 취소하면 받다 만 파일이 지워지고 되돌릴 수 없어요.** | judgment §2.3-2 |
 | `dialog.cancel.back` | 돌아가기 | `dialog.cancel.keepRunning` **계속 받기** / `dialog.cancel.keepPaused` **그대로 두기** | §5.3 |
-| `dialog.legacy.body`·`dialog.legacy.cookies` | …최근 VOD {n}개{cookies}를 가져올까요? / , 네이버 로그인 정보 | `dialog.legacy.title` **예전 설정을 가져올까요?** / `dialog.legacy.body` **예전 치지직 다운로더에서 찾은 것이에요.** + `ul`: `dialog.legacy.item.folder` **저장 폴더** / `dialog.legacy.item.recent` **최근 영상 {n}개** / `dialog.legacy.item.cookies` **네이버 로그인 정보** | §2 조각, §8 |
+| `dialog.legacy.body`·`dialog.legacy.cookies` | …최근 VOD {n}개{cookies}를 가져올까요? / , 네이버 로그인 정보 | `dialog.legacy.title` **예전 설정을 가져올까요?** / `dialog.legacy.body` **예전 명령줄 버전에서 찾은 것이에요.** + `ul`: `dialog.legacy.item.folder` **저장 폴더** / `dialog.legacy.item.recent` **최근 영상 {n}개** / `dialog.legacy.item.cookies` **네이버 로그인 정보** | §2 조각, §8 |
 | `dialog.logout.body` | 받는 중인 다운로드는 계속돼요. 다시 쓰려면 치지직으로 로그인해야 해요. | **받는 중인 영상은 계속 받아요. 다시 쓰려면 치지직으로 다시 로그인해야 해요.** | §4 |
 | `dialog.logout.cancel` | 취소 | `dialog.logout.keep` **로그인 유지** | §5.3 |
 | `settings.storage` | 저장 | **저장 위치** | §4 |
@@ -486,7 +486,7 @@
 | `settings.cookie.use` | 로그인 정보 사용 | **네이버 로그인 정보 사용** | `G-PRIVACY-R22` |
 | `settings.cookie.clear` | 지우기 | **값 지우기** | §5.1 |
 | `settings.cookie.howto.steps` | 1. … 2. … 3. … 4. … | `ol`: `settings.cookie.howto.step1` **브라우저에서 chzzk.naver.com에 로그인해 주세요** / `settings.cookie.howto.step2` **개발자 도구를 열어 주세요: {devtools}**(`{devtools}`는 `platform.md` §20: macOS ⌥⌘I / 그 외 F12) / `settings.cookie.howto.step3` **‘애플리케이션(Application)’ › ‘쿠키’에서 https://chzzk.naver.com 항목을 열어 주세요** / `settings.cookie.howto.step4` **{cookieA}와 {cookieB}의 값을 각각 복사해 붙여넣어 주세요** | §2 ol, §3.1-1, §6.5 ›, 검토 U-29 |
-| `settings.legacy.body` | …설정과 최근 VOD를 가져와요. | **예전 치지직 다운로더(명령줄 버전)의 설정과 최근 영상을 가져와요.** | §4 |
+| `settings.legacy.body` | …설정과 최근 VOD를 가져와요. | **예전 명령줄 버전의 설정과 최근 영상을 가져와요.** | §4 |
 | `settings.legacy.pick` | 폴더 선택해서 가져오기 | **폴더 고르기…** | §5.1·§5.2 |
 | `settings.about.version` | 버전 {app} (코어 {core}) | **버전 {app}** | D57 |
 | `settings.about.checking` | 업데이트를 확인하는 중이에요… | **업데이트 확인 중** | §3.1-2 |
@@ -570,8 +570,8 @@
 
 | 현재 키 | 현재 | 새 문구 | 규칙 |
 |---|---|---|---|
-| `loginWarning` | …이 창을 닫으세요. 다른 사람이 보낸 링크라면 계속하지 마세요. 로그인 뒤 주소창에 나오는 주소는 다른 사람에게 보내지 마세요. | **치지직 다운로더 앱에서 직접 시작한 로그인이 아니면 이 창을 닫아 주세요. 다른 사람이 보낸 주소라면 계속하지 마세요. 로그인 뒤 주소창에 나오는 주소는 다른 사람에게 보내지 마세요.**(셋째 문장은 루프백의 "주소창 grant + 사회공학" 잔여 위험 대응이라 빼지 않는다, `worker.md` 구현 중 변경 88 (가)·(라). 문구를 바꾸면 `login-app.test.ts`의 세 문장 단언도 같이 고친다) | §3.1-1, §4(링크) |
-| `loginTitle`·`loginContinue` | 치지직 다운로더 로그인 / 계속 | 유지(`web.md` §6.4) | — |
+| `loginWarning` | …이 창을 닫으세요. 다른 사람이 보낸 링크라면 계속하지 마세요. 로그인 뒤 주소창에 나오는 주소는 다른 사람에게 보내지 마세요. | **VOD 클립 다운로더 앱에서 직접 시작한 로그인이 아니면 이 창을 닫아 주세요. 다른 사람이 보낸 주소라면 계속하지 마세요. 로그인 뒤 주소창에 나오는 주소는 다른 사람에게 보내지 마세요.**(셋째 문장은 루프백의 "주소창 grant + 사회공학" 잔여 위험 대응이라 빼지 않는다, `worker.md` 구현 중 변경 88 (가)·(라). 문구를 바꾸면 `login-app.test.ts`의 세 문장 단언도 같이 고친다) | §3.1-1, §4(링크) |
+| `loginTitle`·`loginContinue` | VOD 클립 다운로더 로그인 / 계속 | 유지(`web.md` §6.4) | — |
 | `outdatedApp`(옛 앱 안내, `worker.md` 88 (가) 미끼 페이지) | 앱이 오래됐어요. 랜딩에서 새 버전을 받아 설치해 주세요. | 제목 `outdatedApp.title` **앱을 업데이트해야 해요** / 본문 `outdatedApp.body` **이 사이트 첫 화면에서 새 버전을 받아 설치해 주세요.** + 링크 **처음으로**("랜딩"은 내부 말이다) | §4(쉬운 말), §9.2-9(상태별 제목), `web.md` §6.2 · **확정(2026-10-10 사용자)**: 반영은 적용 단계 (d) |
 | `noticeTitle` | 안내 | 삭제 → 상태별 제목: `linkGone.title` **로그인 주소가 만료됐어요** / `linkUsed.title` **이미 사용한 로그인 주소예요** / `badRequest.title` **요청을 확인할 수 없어요** / `rateLimited.title` **요청이 너무 많아요** / `busy.title` **지금은 로그인 요청이 많아요** | §9.2-9 |
 | `linkGone`·`linkUsed` | 이 로그인 링크는 만료됐거나 잘못됐어요. … | 본문 `linkGone.body` **앱에서 다시 로그인해 주세요.**(`linkUsed`도 이 본문을 쓴다: `linkUsed.body` 키를 만들지 않는다, §2 같은 문구는 키 하나) | §4 |
@@ -580,7 +580,7 @@
 | (신설) `adminOnly.title`·`badFormat.title` | — | 관리자 아님(403) `adminOnly.title` **관리자만 볼 수 있어요** / 형식 오류(400·415) `badFormat.title` **요청 형식이 맞지 않아요**(본문은 상황별: `badBody` 요청을 읽지 못했어요. / `badChannelId`) | `web.md` §6.2(현재 `notAdmin`·`unsupportedType`·`badBody`에서 제목과 본문을 가른다) |
 | (신설) `notFound.title`·`notFound.body`·`isAdmin.title`·`bootstrapAdmin.title` | `notFound` 대상을 찾지 못했어요. 이미 처리됐을 수 있어요. / `isAdmin` 관리자 채널은 뺄 수 없어요. / `bootstrapAdmin` 아직 관리자가 정해지지 않았어요. | `notFound.title` **대상을 찾지 못했어요** + `notFound.body` **이미 처리됐을 수 있어요.** / `isAdmin.title` **관리자 채널은 뺄 수 없어요** / `bootstrapAdmin.title` **아직 관리자가 정해지지 않았어요**(셋 다 본문 없음 또는 둘째 문장) | §9.2-9(상태별 제목). 명세가 값을 따로 정하지 않아 현재 문장을 제목과 본문으로 가르기만 했다 |
 | `signedInAs` | {name} 채널로 로그인했어요. | **‘{name}’ 채널로 로그인했어요.** | §6.4 |
-| `landingTitle`·`siteTitle` | 다운로드 / 치지직 다운로더 — 비공식 VOD·클립 다운로더 | 삭제(h1은 `siteName`) / **치지직 다운로더 — 비공식 다시보기·클립 다운로더** | §4 |
+| `landingTitle`·`siteTitle` | 다운로드 / VOD 클립 다운로더 — 비공식 VOD·클립 다운로더 | 삭제(h1은 `siteName`) / **VOD 클립 다운로더 — 비공식 다시보기·클립 다운로더** | §4 |
 | `downloadsTitle` | 설치 파일 | 유지. 버튼 **{os}용 받기** | D42 |
 | `anonLead`·(신설) `loginForFiles`·`loginTwice` | 허가된 채널만 받을 수 있어요. | `anonLead` **허가받은 채널만 쓸 수 있어요.** / `loginForFiles` **로그인하면 내 컴퓨터용 설치 파일이 보여요.** / `loginTwice` **이 페이지에서 로그인했어도 앱을 처음 열 때 한 번 더 로그인해요.** | §4, 검토 U-11 |
 | `artifact.dmg` | macOS (Apple Silicon) | **macOS(Apple Silicon)** | §6.5 |
@@ -601,7 +601,7 @@
 | (신설) `alreadyDone` | — | `alreadyDone` **이미 처리됐어요.** | brief §6.13-3 |
 | (신설) `errorSummary`·`errorTitlePrefix` | — | `errorSummary` **확인해 주세요** / `errorTitlePrefix` **오류: **(뒤에 공백 하나) | §9.2-9 |
 | (신설) `mobileBlock` | — | `mobileBlock` **컴퓨터에서 받는 앱이에요. 휴대폰에는 설치할 수 없어요. 컴퓨터에서 이 주소를 열어 주세요.** | brief §6.13-5 |
-| (신설) `notice.*`·`copyright`·`pill` | — | §11 상수: `notice.unofficial` **치지직 다운로더는 네이버나 치지직과 관련 없는 비공식 도구예요. 치지직과 NAVER는 NAVER Corp.의 상표일 수 있어요. 이 앱은 로그인한 채널의 영상과 클립만 받아요.** / `notice.short` **비공식 도구예요 · 네이버·치지직과 제휴하거나 보증받지 않았어요** / `pill` **비공식 도구**. 저작권 줄 `copyright` **© {year} {owner}. 모든 권리 보유.**은 D58 전까지 deck에 두지 않는다(사용자 결정, 줄을 그리지 않는다) | D34 |
+| (신설) `notice.*`·`copyright`·`pill` | — | §11 상수: `notice.unofficial` **VOD 클립 다운로더는 네이버나 치지직과 관련 없는 비공식 도구예요. 치지직과 NAVER는 NAVER Corp.의 상표일 수 있어요. 이 앱은 로그인한 채널의 영상과 클립만 받아요.** / `notice.short` **비공식 도구예요 · 네이버·치지직과 제휴하거나 보증받지 않았어요** / `pill` **비공식 도구**. 저작권 줄 `copyright` **© {year} {owner}. 모든 권리 보유.**은 D58 전까지 deck에 두지 않는다(사용자 결정, 줄을 그리지 않는다) | D34 |
 | (신설, 적용 단계 (e)) 골격·안내: `siteNav`·`reloadAdmin`·`inAppHint`·`helpTitle`·`privacyTitle`·`licensesTitle`·`loginLink`·`ogDescription` | — | `siteNav` **사이트**(헤더 `nav`의 `aria-label`) / `reloadAdmin` **관리 화면 새로 열기**(csrf·Origin 거절 페이지의 링크. 위 "오류 페이지 본문" 행의 같은 말에 키를 붙였다) / `inAppHint` **카카오톡 안에서 연 화면에서는 로그인이 끊길 수 있어요. 기본 브라우저에서 이 주소를 다시 열어 주세요.**(웹 흐름의 실패 × 카카오톡 인앱에서만 덧붙이는 한 단락, 막지 않고 실패 뒤에만 보충한다) / `helpTitle` **도움말** / `privacyTitle` **개인정보 처리방침** / `licensesTitle` **오픈소스 라이선스** / `loginLink` **로그인**(헤더 nav·바닥글·읽기 페이지 제목이 같은 키를 쓴다, §19-14) / `ogDescription` **내 치지직 다시보기와 클립을 내 컴퓨터에 받아요. 네이버·치지직과 무관한 비공식 도구예요.**(§11 og:description과 같은 값) | `web.md` §3·§6.1·§9.2. `siteNav`·`inAppHint`는 (e) 묶음 B가 지었다(§19-21) |
 | (신설, (e)) 랜딩 설치: `getFor`·`metaLine`·`warnPreview`·`otherOs`·`colOs`·`colMinVersion`·`filesCaption`·`fileCheck`·`fileCheckLead`·`installTitle`·`savedFile` | — | `getFor` **{os}용 받기**(함수 값, 큰 버튼 라벨) / `metaLine` **버전 {v} · {d} · {minOs} 이상**(함수 값. 날짜를 모르면 가운데 항목을 뺀다. `{d}`는 D49 형식 "2026. 10. 3.") / `warnPreview` **처음 열 때 경고가 나올 수 있어요. 앱이 문제라는 뜻이 아니에요.** / `otherOs` **다른 운영체제** / `colOs` **운영체제** / `colMinVersion` **최소 버전** / `filesCaption` **설치 파일(버전 {v})**(함수 값, 표 `caption`) / `fileCheck` **파일 확인(선택)** / `fileCheckLead` **받은 파일이 올바른지 확인하려면 아래 SHA-256 값과 비교할 수 있어요.** / `installTitle` **설치하기** / `savedFile` **파일이름**(버전을 모를 때 Linux 명령에 넣는 자리표시. 공백이 없어야 한다) | `web.md` §5.1. `warnPreview`·`fileCheckLead`는 (e) 묶음 C가 지었다(§19-21). 의무 어미는 "…비교할 수 있어요."(DC2가 "보세요"를 막는다) |
 | (신설, (e)) 설치 단계: `macOpenAnyway`·`linuxAppImage`·`linuxDeb` | — | `macOpenAnyway` **처음 열 때 경고가 나오면 시스템 설정 › 개인정보 보호 및 보안에서 ‘그래도 열기’를 눌러 주세요. 그 단추가 없으면 다음 단계로 넘어가 주세요.**[잠정] / `linuxAppImage` **AppImage는 libfuse2(Ubuntu 24.04는 libfuse2t64)를 설치한 뒤 아래 명령으로 실행 권한을 주고 열어 주세요.** / `linuxDeb` **deb는 아래 명령으로 설치해요. 관리자 권한이 필요할 수 있어요.** | `web.md` §5.1-7, §14-1. `macOpenAnyway`의 [잠정]은 실기 전까지 조건문으로 두는 것이다 — 확인: README §6-11 macOS 실기(ad-hoc 서명). 세 문구는 (e) 묶음 C가 지었다 |
@@ -619,7 +619,7 @@
 | `jobs.ts:253` | `toLocaleString('en-US')` | `formatCount` | §7 |
 | `sink.rs` | '{title}' 다운로드를 마쳤어요 / …에 실패했어요 | §14 제목·본문 분리, ‘ ’ | §14 |
 | `lib.rs` 시작 실패 창 | 해요체 lead + 합니다체 `오류: {message}` | lead만 보이고 원문은 "자세히"(펼침 불가면 [정보 복사]) | §2 |
-| `crates/shell/src/auth/loopback.rs` `ReceiverPage`·`PAGE_REJECTED`(앱 수신기가 브라우저에 그리는 결과 페이지, `app.md` 구현 중 변경 66 (라)) | ok "로그인했어요. 치지직 다운로더로 돌아가세요. 이 창은 닫아도 돼요." / denied "허가되지 않은 채널이에요. 앱에서 안내를 확인해 주세요." / cancelled "로그인을 취소했어요. 앱에서 다시 시도할 수 있어요." / failed "로그인을 마치지 못했어요. 앱에서 다시 시도해 주세요." / lost "이 로그인 요청은 처리할 수 없어요. 앱에서 다시 시도해 주세요." / pending "앱으로 돌아가 결과를 확인해 주세요." / 거절 "치지직 다운로더가 처리할 수 없는 요청이에요." | ok **로그인했어요. 치지직 다운로더 앱으로 돌아가 주세요. 이 창은 닫아도 돼요.** / denied **이 채널은 사용 허가가 없어요. 앱에서 안내를 확인해 주세요.**(첫 문장 = Worker `doneDenied.title`) / cancelled **로그인을 취소했어요. 앱에서 다시 로그인할 수 있어요.** / failed **로그인하지 못했어요. 앱에서 다시 시도해 주세요.**(Worker `doneFailed`와 같은 문자열) / lost **이 로그인 요청은 처리할 수 없어요. 앱에서 다시 로그인해 주세요.** / pending·거절 유지. 바깥 값(채널 이름)을 넣지 않는 규칙은 그대로다 | §3.1-1(`-세요`는 `마세요`만), §4(허가), §2 두 deck 공통 상수(결과 첫 문장), `rust`(`crates/shell/tests/auth_loopback.rs`의 문구 표가 고정한다. 문구를 바꾸면 같이 고친다), `R3` · **확정(2026-10-10 사용자)**: 반영은 적용 단계 (d) |
+| `crates/shell/src/auth/loopback.rs` `ReceiverPage`·`PAGE_REJECTED`(앱 수신기가 브라우저에 그리는 결과 페이지, `app.md` 구현 중 변경 66 (라)) | ok "로그인했어요. VOD 클립 다운로더로 돌아가세요. 이 창은 닫아도 돼요." / denied "허가되지 않은 채널이에요. 앱에서 안내를 확인해 주세요." / cancelled "로그인을 취소했어요. 앱에서 다시 시도할 수 있어요." / failed "로그인을 마치지 못했어요. 앱에서 다시 시도해 주세요." / lost "이 로그인 요청은 처리할 수 없어요. 앱에서 다시 시도해 주세요." / pending "앱으로 돌아가 결과를 확인해 주세요." / 거절 "VOD 클립 다운로더가 처리할 수 없는 요청이에요." | ok **로그인했어요. VOD 클립 다운로더 앱으로 돌아가 주세요. 이 창은 닫아도 돼요.** / denied **이 채널은 사용 허가가 없어요. 앱에서 안내를 확인해 주세요.**(첫 문장 = Worker `doneDenied.title`) / cancelled **로그인을 취소했어요. 앱에서 다시 로그인할 수 있어요.** / failed **로그인하지 못했어요. 앱에서 다시 시도해 주세요.**(Worker `doneFailed`와 같은 문자열) / lost **이 로그인 요청은 처리할 수 없어요. 앱에서 다시 로그인해 주세요.** / pending·거절 유지. 바깥 값(채널 이름)을 넣지 않는 규칙은 그대로다 | §3.1-1(`-세요`는 `마세요`만), §4(허가), §2 두 deck 공통 상수(결과 첫 문장), `rust`(`crates/shell/tests/auth_loopback.rs`의 문구 표가 고정한다. 문구를 바꾸면 같이 고친다), `R3` · **확정(2026-10-10 사용자)**: 반영은 적용 단계 (d) |
 | `services.rs`·`manager.rs`·`commands.rs` 합니다체 | 사용자 노출 | `invalidInput` payload에 사유 코드(`emptyField`·`badChars`…)를 담고 deck이 문구를 만든다 | §2, `rust` |
 
 ---

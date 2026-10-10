@@ -1,4 +1,4 @@
-//! 치지직 다운로더 Tauri 셸(docs/design/app.md §11, §15-11). 로직은 `chzzk_shell`에 두고 여기는 배선만 한다:
+//! VOD 클립 다운로더 Tauri 셸(docs/design/app.md §11, §15-11). 로직은 `chzzk_shell`에 두고 여기는 배선만 한다:
 //! 플러그인, setup(경로·로그·상태), command, 창 닫기·앱 종료 처리, 완료 알림, 첫 프레임(`show`), macOS 메뉴(`menu`),
 //! Dock·작업 표시줄 진행과 잠자기 방지(`status`), Windows WebView2 보강(`webview_win`).
 
@@ -328,7 +328,7 @@ pub fn on_window_focus<R: Runtime>(app: &AppHandle<R>, label: &str, focused: boo
 }
 
 /// 시작 실패 창의 제목.
-pub const STARTUP_FAILED_TITLE: &str = "치지직 다운로더를 시작하지 못했어요";
+pub const STARTUP_FAILED_TITLE: &str = "VOD 클립 다운로더를 시작하지 못했어요";
 
 /// 시작 실패의 종류(구현 중 변경 64). 안내 문구가 다르다.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

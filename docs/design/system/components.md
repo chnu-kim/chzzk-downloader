@@ -588,7 +588,7 @@ Icon은 늘 장식이다. `label` prop이 없고 뜻은 인접 글자가 전한�
 
 ### 2.25 AppMark(앱 마크 자리)
 
-툴바 왼쪽 `[마크 20×20][이름 "치지직 다운로더" 13/600]`의 마크 자리다. D33 결과물이 나오기 전까지 `AppMark`는 **빈 요소를 그리지 않고 없다**(이름만, README D26·사용자 결정 2). 나오면 `<svg aria-hidden="true" class="mark">` 20×20, 색은 자기 색(플레이트 `--accent` 하나), 이름과 gap `--space-8`. 마크의 모티프(아래 화살표)는 UI 아이콘으로 쓰지 않는다(`foundations.md §9.1`, `A-VIS-23`). Worker 헤더도 같은 자리에 같은 마크 + 이름 + 배지 "비공식 도구"(Badge 모양, 반경 4, `web.md` §3.1). 강제: `design-icons`(`mark.ts` 하나, 앱·Worker 동일 해시), `R2`.
+툴바 왼쪽 `[마크 20×20][이름 "VOD 클립 다운로더" 13/600]`의 마크 자리다. D33 결과물이 나오기 전까지 `AppMark`는 **빈 요소를 그리지 않고 없다**(이름만, README D26·사용자 결정 2). 나오면 `<svg aria-hidden="true" class="mark">` 20×20, 색은 자기 색(플레이트 `--accent` 하나), 이름과 gap `--space-8`. 마크의 모티프(아래 화살표)는 UI 아이콘으로 쓰지 않는다(`foundations.md §9.1`, `A-VIS-23`). Worker 헤더도 같은 자리에 같은 마크 + 이름 + 배지 "비공식 도구"(Badge 모양, 반경 4, `web.md` §3.1). 강제: `design-icons`(`mark.ts` 하나, 앱·Worker 동일 해시), `R2`.
 
 ### 2.26 FieldRow
 

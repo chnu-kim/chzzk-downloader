@@ -33,7 +33,7 @@
 | `content.md` | 문구: copy deck 규칙, 용어집, 어미·구두점·조사, 숫자·단위·날짜·남은 시간 format, 오류 3요소·L0~L3, 고지 문구, 도움말 문체, 외부 문자열 위생 | D34(문구) D42~D51 |
 | `platform.md` | 앱 셸: 커서, 타이틀바, 스크롤바, 줌·글자 크기 설정, Dock·작업 표시줄, 창 복원, 테마 선택(Linux), 메뉴 용어, 단축키 표기, 브라우저 키 차단, 클립보드, 잠자기 방지, 저장 위치·경로, OS별 분기 표(진법·라벨·경로) | D2 D7 D25~D30 D47(OS 분기) D55 D56 |
 | `web.md` | Worker 페이지: CSP 안에서의 골격(`theme-color`·skip link·heading·`caption`·`th scope`), 읽기 척도 적용 범위, 랜딩 구조·휴대폰 진입·OG, 무스크립트 폼(PRG·flash·오류 요약·멱등), 위험도 2단, 봇·인앱, `/help`·`/privacy`·`/licenses` | D52 D53 D54 |
-| `governance.md` | 강제 장치 구현(§4의 gate 여섯 개 명세 `DT*`·`DL*`·`DS*`·`DP*`·`DC*`·`DI*`, 확장 검사 표, 리뷰 체크리스트 R1~R10 본문), 토큰·UI CSS 파이프라인(`design/tokens/*.tokens.json`·`design/ui.css` → 생성기 → `--check`), 근거 등급 E0~E4와 운영(시험 기록 규칙, 텔레메트리 없음), 변경 흐름, 적용 계획 (a)~(f) | D33(과제 등록) D58~D62 |
+| `governance.md` | 강제 장치 구현(§4의 gate 일곱 개 명세 `DT*`·`DL*`·`DS*`·`DP*`·`DC*`·`DI*`, 확장 검사 표, 리뷰 체크리스트 R1~R10 본문), 토큰·UI CSS 파이프라인(`design/tokens/*.tokens.json`·`design/ui.css` → 생성기 → `--check`), 근거 등급 E0~E4와 운영(시험 기록 규칙, 텔레메트리 없음), 변경 흐름, 적용 계획 (a)~(f) | D33(과제 등록) D58~D62 |
 | `adr/NNNN-slug.md` | 결정 기록(0001~0010). 템플릿과 쓰는 때는 §7 | 개별 결정 |
 | `docs/research/design-system.md` | 근거 문서: 약칭 표, 브리프 요약, 검증 결과(confirmed/refuted 목록), 후보 세 개와 판정 요약, 감사 결함 색인(파일:줄). 설계 문서가 인용하는 ID의 원천 | — |
 
@@ -53,7 +53,7 @@
 
 ## 4. 강제 수단
 
-규칙마다 아래 이름 중 하나를 단다. gate는 `node scripts/ci/run.mjs <gate>`로 돌고 `scripts/ci/gates.mjs`에 등록된다(cicd.md `parity`). **강제는 적용 PR (a)부터 켜진다. 그 전까지는 R 체크리스트로 지킨다.** 여섯 `design-*` gate는 새로 만들며 명세는 `governance.md`가 적는다. `R*`는 PR 템플릿의 리뷰 체크리스트 번호다.
+규칙마다 아래 이름 중 하나를 단다. gate는 `node scripts/ci/run.mjs <gate>`로 돌고 `scripts/ci/gates.mjs`에 등록된다(cicd.md `parity`). **강제는 적용 PR (a)부터 켜진다. 그 전까지는 R 체크리스트로 지킨다.** 일곱 `design-*` gate는 새로 만들며 명세는 `governance.md`가 적는다. `R*`는 PR 템플릿의 리뷰 체크리스트 번호다.
 
 ### 4.1 자동 gate
 
@@ -63,8 +63,9 @@
 | `design-lint` | 선언 단위 파서(`scripts/design/css.mjs`) + 소스 스캔 + prop 어휘: 컴포넌트의 색·px·ms·z-index·font-size·font-weight·border-radius 리터럴 금지, `calc()`는 피연산자가 토큰·`0px`·`100%`·정수 계수뿐인 것만, `--ref-` 직접 사용 금지, 컴포넌트 안 `--` 선언 금지, `!important`, `transition: all`, `outline: none`·`outline: 0`, `:focus-visible`의 `box-shadow`, `forced-color-adjust`, `letter-spacing`, `-webkit-font-smoothing`, `line-height: normal`·리터럴, `break-word`·`justify`, `backdrop-filter`, `cursor: pointer`(앱만), `::-webkit-scrollbar`, 0.5px·1.5px 선(예외: `--icon-stroke` 정의), `calc(… - 1px)`, `translate(-50%`, 정지 글자 요소 `transform`, `:hover`가 `display`·`visibility`·`opacity`·크기를 바꾸는 규칙(`G-INPUT-IN1`), `title=` 허용 목록(`G-INPUT-IN2`), 컴포넌트 안 `@media (pointer …)`·`(hover …)`·`(width …)`, 폭 미디어 쿼리 허용 파일, 좁은 레이아웃 두 블록 동일, 하한 밖 기능(foundations §11 표), `{@html}`, `<svg` 직접 사용, `AccentColor`, `.svelte` 안 한글 리터럴, 셸 규칙(`data-tauri-drag-region`·`not-allowed`·`readText(`·`isImeKey` import·`compositionend`+`setTimeout`·`navigator.platform` 등, governance §2.9) | 신설. `ci-ok` 필수. 검사 번호 `DL1`~`DL14`·`DS1`~`DS9`·`DP1`~`DP5` + 확장 `DX*` |
 | `design-copy` | copy deck(`ko.ts`·`errors.ts`·`copy.ts`·`help/*.md`) 검사: 금지어(`(?<!비)공식`·인증·파트너·제공·클릭·"우리"·감탄사·`~시겠어요`·`되어요`·`~기 바랍니다`), 합니다체 어미, 요청 어미 "해 주세요" 단일, "다시 시도해 주세요" 단독 금지, 변수 뒤 조사 패턴(`{…}이`·`‘{…}’은` 꼴 포함) 금지, 숫자+단위 직접 문자열 금지(format 함수만), `...` 세 점(U+2026만), 역할 접미별 마침표, `?`·`!` 범위, 따옴표 ‘ ’만, 구분 기호, 복합어 표기, 중복 값 키 금지, `a11y.*` 어순, 두 deck의 비공식 고지·저작권 줄 동일, 용어집 비표준 어휘(다운로드 동사·링크·조회·폴더 열기·멈춤·중단·허용) 금지, `ol` 대신 번호 박힌 문자열 금지, 오류 코드·HTTP 번호가 제목·본문에 없음, OS 문자열은 `platform` 분기 객체에만, 문서 패리티(`content.md` §15 표 ↔ deck) | 신설. `ci-ok` 필수. 검사 번호 `DC1`~`DC12`(governance §2.4) |
 | `design-icons` | `icons.ts` 항목 메타 `{set,name,version}` 필수, 고지 파일과 세트·버전 일치, Feather 유래면 MIT 단락, 은유 유일성(같은 아이콘 ≠ 다른 동작, 예외 `copy`), IconButton 허용 목록(foundations §9 표), stroke가 화면 px 고정(CSS `var(--icon-stroke)`, SVG 속성 리터럴 금지), `currentColor`만, 16·20 두 크기, 앱·Worker 아이콘 원천 동일 | 신설. `ci-ok` 필수. 검사 번호 `DI1`~`DI7`(governance §2.5). DPR1 번짐 측정은 래스터라 `design-gallery`에 있다 |
-| `design-gallery` | `/__gallery`(모든 컴포넌트·상태) + 네 화면 + 로그인 화면 + Worker 정적 HTML을 Playwright로 라이트·다크·720×520·960×700·320×231(Windows 텍스트 225% 흉내)·`prefers-reduced-motion`·`prefers-contrast: more`·`forced-colors: active`·`any-pointer: coarse` 흉내·`data-text-scale="x-large"`·`platform=windows` 고정 데이터에서 axe(대비·이름·대상 크기 24/40·리플로우 320), 계산값 검사(다크 + 대비 증가), 정렬선 x, 채움 1개, 아이콘 DPR1 번짐 측정(`icons-blur.mjs`) | 신설. `e2e-web` 작업 안. **D14 관찰 중에는 비차단**이고 편입 예정일은 ROADMAP에 적는다 |
-| `design-shots` | Playwright 스냅샷(Linux 한 곳, 720·960, DPR 1·2, 라이트·다크·forced) 회귀 | 신설. 관찰 작업(`OBSERVED_JOBS`) |
+| `design-gallery` | `/__gallery`(모든 컴포넌트·상태) + 네 화면 + 로그인 화면을 Playwright로 라이트·다크·720×520·960×700·320×231(Windows 텍스트 225% 흉내)·`prefers-reduced-motion`·`prefers-contrast: more`·`forced-colors: active`·`any-pointer: coarse` 흉내·`data-text-scale="x-large"`·`platform=windows` 고정 데이터에서 axe(대비·이름·대상 크기 24/40·리플로우 320), 계산값 검사(다크 + 대비 증가), 정렬선 x, 채움 1개, 아이콘 DPR1 번짐 측정(`icons-blur.mjs`) | 신설. `e2e-web` 작업 안(app 영역). **D14 관찰 중에는 비차단**이고 편입 예정일은 ROADMAP에 적는다. Worker 정적 HTML은 `design-worker` |
+| `design-shots` | Playwright 스냅샷(Linux 한 곳, 720·960, DPR 1·2, 라이트·다크·forced) 회귀 | 신설. 관찰 작업(`OBSERVED_JOBS`, app 영역) |
+| `design-worker` | Worker 정적 HTML(랜딩·허가·관리·`/auth/done` 결과·확인 페이지·옛 앱 안내)의 갤러리 검사(axe·대상 크기·리플로우 320·forced·contrast more·계산값)와 스냅샷(Linux 한 곳, 1280·390, DPR 1·2, 라이트·다크·forced). `design-gallery`·`design-shots`의 Worker 몫 | 신설. **worker 영역** 관찰 작업(`OBSERVED_JOBS 'design-worker': 'worker'`, `worker/`에 Playwright 설치·`tools.json` 버전 고정). `worker/src/http/`만 바뀐 PR에서도 돈다. 명세는 governance §2.6b |
 | `frontend` | vitest·svelte-check: 컴포넌트 단위 테스트(Dialog 버튼 순서·Enter·Esc·포커스, ProgressBar scaleX·reduce, Switch disabled+켜짐, 접근 이름 필수 타입, format 골든, 플랫폼별 설정 행, 로그인 화면 네 요소 렌더, 지연 삭제·토스트 대기열, 취소 라벨·확인 조건), vite `cssTarget` | 기존 |
 | `worker` | `worker-config.mjs`: CSP 인라인 `style`·`<style>`·`url(`·`@import` 금지, 골격 meta(`theme-color`·`color-scheme`), 무스크립트 폼 테스트(PRG·flash·오류 요약·멱등), 경로 표 행렬 | 기존 + 골격 검사 추가 |
 | `tauri` | `tauri.conf.json` 테스트(decorations·min 720×520·`zoomHotkeysEnabled: false`·`scrollBarStyle`·`visible: false`·window-state), 알림 문자열, Dock 진행 집계, 메뉴 한국어 | 기존 |
@@ -206,7 +207,7 @@
 
 | D | 최종 값 | 근거 | 강제 |
 |---|---|---|---|
-| D61 강제 장치 | §4.1 여섯 gate: `design-tokens`·`design-lint`·`design-copy`·`design-icons`는 `ci-ok` 필수, `design-gallery`는 `e2e-web` 안(D14 관찰 뒤 필수), `design-shots`는 관찰. 스냅샷은 Linux 한 곳(시스템 글꼴이 OS마다 다름), `--force-device-scale-factor`로 DPR | gov, a-drift §강제 장치 지도(없는 것 9개), g-scale(`deviceScaleFactor`는 스냅 재현 안 함) | `parity`(gates.mjs 등록) |
+| D61 강제 장치 | §4.1 일곱 gate: `design-tokens`·`design-lint`·`design-copy`·`design-icons`는 `ci-ok` 필수, `design-gallery`는 `e2e-web` 안(D14 관찰 뒤 필수), `design-shots`는 관찰(app 영역), `design-worker`는 관찰(worker 영역: Worker 페이지만 바뀐 PR에서 app 전체를 켜지 않으려고 Worker 촬영을 따로 둔다, 2026-10-10 사용자 결정). 스냅샷은 Linux 한 곳(시스템 글꼴이 OS마다 다름), `--force-device-scale-factor`로 DPR | gov, a-drift §강제 장치 지도(없는 것 9개), g-scale(`deviceScaleFactor`는 스냅 재현 안 함) | `parity`(gates.mjs 등록) |
 | D62 첫 사용자 시험 | **둘 다**(적용 전 현재 앱 기준선 + 적용 뒤). 회당 3명(스트리머·지인 각 1명 이상), 두 회 이상, 과업 UT1~UT7(`governance.md` §6.2), 판정은 관찰 횟수+심각도, "N명 중 M명"으로만. 시험 기록에 채널명·제목 금지. 확인 과업 V1~V8(`governance.md` §6.4): 완료를 색 없이 알아보는가 / 오른쪽 파랑을 안전으로 읽는가 / 왼쪽 빨간 글자를 파괴로 읽는가 / 13px이 작게 느껴지는가 / 헤더 이름만으로 무엇인지 아는가 / 툴바 톱니를 찾는가 / 연결 대기를 오류로 읽는가 / 토스트 6초를 다 읽는가 | `G-EVID-R1`~`G-EVID-R10`, `J-Q1`~`J-Q5` | `R10`, `governance.md` 시험 항목 목록 |
 
 ---
@@ -228,7 +229,7 @@
 | 9 | **치지직 약관 상표 조항**, KIPRIS 조회, 국내 접근성 법령(KWCAG) 적용 여부 | [미확인], 사람 | 사용자가 직접 확인(brief §2.7 1순위). 결과를 `governance.md` 개명 트리거 표에 | 개명 트리거 ①이면 D34를 B("고유 이름 + 치지직용")로 → ADR |
 | 10 | **Windows 탐색기 바이트 진법 실측** (D47) | [미확인] | Windows 실기에서 같은 파일의 탐색기 표기와 앱 표기 비교(MS 문서끼리 모순) | 진법 표 수정, 골든 갱신 |
 | 11 | **macOS ad-hoc 서명 실기, Smart App Control 두 대 실험, 서명 없는 빌드의 알림 표시** (D55·D38) | [미확인] | 실기 세 가지. 결과를 랜딩 문단과 `platform.md`에 | SAC는 "지원 제외 명시"(C)로 전환, 알림이 안 뜨면 행 상태만 |
-| 12 | **로그인 첫 화면**: 세 후보 모두 목업하지 않아 C2·C7의 "로그인 전 고지" 조건이 미증명 | 적용 과제 | `patterns.md` §13에 명세했고 참조 목업 app-11로 확인했다. 네 요소(비공식 고지 `NOTICE_SHORT`·받는 것·받지 않는 것·끊는 길·처리방침)의 렌더는 `frontend`(필수), 720×520 뷰포트 안은 `design-gallery`(관찰) | — |
+| 12 | **로그인 첫 화면**: 세 후보 모두 목업하지 않아 C2·C7의 "로그인 전 고지" 조건이 미증명 | 적용 과제 | `patterns.md` §13에 명세했고 참조 목업 app-11로 확인했다. 네 요소(비공식 고지 `NOTICE_SHORT`·받는 것·받지 않는 것·끊는 길·처리방침)의 렌더는 `frontend`(필수), 720×520 뷰포트 안은 `design-gallery`(관찰). 상태별 버튼 표(§13)는 `loginScreen`(`app/src/lib/auth.ts`)과 같게 맞췄고 차이는 남기지 않았다(2026-10-10 사용자 결정). 로그인·Worker 문구 제안 여덟 가지(`content.md` §15)는 같은 날 수용되어 적용 단계 (d)에서 반영한다 | — |
 | 13 | **Worker 읽기 척도의 title·display·hero 값**(15 외) | [잠정] | 7과 함께 | 값 조정 |
 | 14 | **참조 목업 재촬영**(`scratchpad/ds/ref/` 14장은 편집 전 명세로 찍혔다): 문구를 `content.md` §15로, 대화상자 배치·툴바 ⚙ 유지·토스트 폭·배지 위치·유령 버튼 끝자리 보정·forced 막대·Windows 판 한 벌 | 적용 과제 | 단계 (c)에서 갤러리 고정 데이터로 다시 찍는다(`design-shots` 기준선) | — |
 | 15 | **보고서가 남긴 빈칸 Q15~Q27**(IME 이벤트 순서 3엔진, 셸 실측 11항목, 치지직 파일 VFR, 탐색기 "폴더에서 보기" 문구, 배율·터치 비율, 사람 결정 D58~D60, 개인정보 운영 빈칸, `Assets.car` 시험, Linux 알림 이름, 사용자 어휘, 엔진 하한 실기, ETA 체감, 선 스냅 실기) | [미확인] | `docs/research/design-system.md` §7.2 표의 확인 방법(실기는 `platform.md` §21 M1~M25) | 같은 표의 "결과가 바꾸는 것" |

@@ -12,7 +12,7 @@ CI 작업의 OS 구성(`ci.yml`): `e2e-web`은 ubuntu-24.04 하나, `tauri`·`ru
 
 1. 스냅샷 기준선은 **Linux(ubuntu-24.04 러너) 한 곳**에서만 만들고 비교한다. 다른 OS에서는 `design-shots` gate가 돌지 않는다(`platforms: ['linux']`). 로컬(macOS·Windows)에서 `--update-snapshots`를 거부한다.
 2. 배율은 Chromium 실행 인자 **`--force-device-scale-factor=1`과 `=2`** 두 프로젝트로 낸다. `use.deviceScaleFactor`는 쓰지 않는다. 테스트 시작에서 `devicePixelRatio`를 단언한다.
-3. 대상은 갤러리 섹션(컴포넌트 매트릭스·네 화면·아이콘 시트) × 라이트·다크·forced-colors × 720·960. 앱 흐름 spec은 스냅샷을 찍지 않는다(흐름은 `e2e-web`·`e2e-native`가 본다).
+3. 대상은 갤러리 섹션(컴포넌트 매트릭스·네 화면·아이콘 시트) × 라이트·다크·forced-colors × 720·960. **Worker 정적 HTML은 같은 규칙(Linux 한 곳, DPR 1·2, 같은 허용 오차)으로 worker 영역 작업 `design-worker`에서 1280·390 폭으로 찍는다**: `AREA_SKIP.app`이 `worker/**`를 건너뛰어 Worker 페이지만 바뀐 PR에서 `design-shots`가 꺼지기 때문이다(2026-10-10 사용자 결정, governance §2.0 영역 공백의 (나), §2.6b). 기준선은 `worker/e2e/__shots__/`다. 앱 흐름 spec은 스냅샷을 찍지 않는다(흐름은 `e2e-web`·`e2e-native`가 본다).
 4. 러너에 `fonts-noto-cjk`를 설치해 한글 글꼴을 고정한다. 러너 이미지 drift로 글꼴이 바뀌면 기준선이 깨지는 것을 **받아들이고** 관찰 작업으로 지켜본다(D14).
 5. 허용 오차 `maxDiffPixels`는 0에서 시작하고 `ci/ratchet.json` `shots.max_diff_pixels`로 둔다. 늘리면 `RATCHET_LOG.md` 줄이 필수다.
 6. 기준선 PNG는 저장소에 커밋한다(`app/e2e/__shots__/`, `-text`). 갱신은 CI 실행의 artifact에서만 받는다(`scripts/design/shots.mjs --accept <run id>`).
@@ -34,13 +34,14 @@ CI 작업의 OS 구성(`ci.yml`): `e2e-web`은 ubuntu-24.04 하나, `tauri`·`ru
 ## 결과
 
 - governance §2.7(`design-shots` 명세), ci.yml 새 작업 `design-shots`, `OBSERVED_JOBS 'design-shots': 'app'`(작업 `if`는 `areaIf('app')`, cicd.md 구현 중 변경 110의 영역 스코프), `report` needs, parity `observed` 규칙.
+- Worker 몫은 governance §2.6b, ci.yml 새 작업 `design-worker`, `OBSERVED_JOBS 'design-worker': 'worker'`(작업 `if`는 `areaIf('worker')`), `worker/`의 Playwright 설치와 `tools.json` 버전 고정. 기준선 갱신 절차는 `design-shots`와 같다.
 - `ci/ratchet.json`에 `shots.max_diff_pixels`(방향: 작을수록 좋다). `ratchet.mjs`에 키 처리 추가.
 - macOS·Windows의 시각은 스냅샷이 아니라 **리뷰 `R1`(네 장)·`R4`(Windows 실기)**가 본다. 이 분담을 `R1` 통과 기준에 적었다(governance §3).
 - Windows 125%·150% 배율의 선 번짐은 스냅샷 대상이 아니다. `design-lint` L2·L14(1·2px만)와 g-scale 실측 규칙이 정적으로 막는다.
 
 ### 재검증 조건
 
-- 관찰 14일 동안 러너 글꼴 drift로 실패가 한 번이라도 나면: (가) 글꼴을 apt 버전 고정으로 올리거나, (나) 글자 영역을 `mask`로 가린 스냅샷으로 바꾸는 ADR. 편입(`CODE_GATED_JOBS`에 `'design-shots': 'app'`)은 그 뒤.
+- 관찰 14일 동안 러너 글꼴 drift로 실패가 한 번이라도 나면: (가) 글꼴을 apt 버전 고정으로 올리거나, (나) 글자 영역을 `mask`로 가린 스냅샷으로 바꾸는 ADR. 편입(`CODE_GATED_JOBS`에 `'design-shots': 'app'`, `'design-worker': 'worker'`)은 그 뒤.
 - `R1` 스크린샷에서 macOS·Windows 전용 회귀가 두 번 이상 Linux 스냅샷을 통과한 채 리뷰에서 잡히면 그 OS의 스냅샷 추가를 다시 본다(비용: 러너 분당 과금 macOS 10배).
 
 ## 대안과 버린 이유

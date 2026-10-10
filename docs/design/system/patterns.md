@@ -597,24 +597,26 @@ idle (720 창. 열 안쪽 680, 패널 440 가운데, 위 여백 `--space-40`)
 
 | 상태 | 패널 내용 | 동작 |
 |---|---|---|
-| `checking` | 스피너 20 + `auth.checking`("로그인 상태 확인 중") + `auth.checking.body`(최대 {secs}초, `AUTH_CHECK_TIMEOUT_MS`) | 넘으면 [다시 연결] [다시 로그인] |
+| `checking` | 스피너 20 + `auth.checking`("로그인 상태 확인 중") + `auth.checking.body`(최대 {secs}초, `AUTH_CHECK_TIMEOUT_MS`) | [다시 로그인](링크형 `link`) 하나. 기다리지 않고 처음부터 보인다(`AUTH_CHECK_TIMEOUT_MS`는 본문의 {secs}만 정하고 버튼을 늦추지 않는다). [다시 연결]은 붙지 않는다(메시지 화면이 아니다) |
 | `idle` | 위 그림 | [치지직으로 로그인] |
 | `pending` | `auth.pending.title` + `auth.pending.body`(브라우저에서 마치면 자동으로 넘어간다) + 상태 조각 `auth.pending.remaining`(남은 시간 {mmss}, `tabular-nums`, 1초마다 갱신) → [브라우저 다시 열기](primary) [취소] → `auth.browserHelp`(명사구 라벨 "브라우저가 열리지 않을 때", 한 줄) 아래 줄에 링크형 [로그인 주소 복사](라벨에 이어 붙여 문장의 일부로 만들지 않는다: `content.md` §2 조각 금지·§6.2, 지금 `LoginView`는 한 `<p>` 안에 이어 붙인다) → `auth.pending.sameDevice`(이 컴퓨터의 브라우저에서 열기, 다른 기기 불가) → `auth.otherAccount.help` | [브라우저 다시 열기] [취소] [로그인 주소 복사] |
 | `pending` · stuck | 기다린 지 90초가 지나면(남은 시간 ≤ `PENDING_STUCK_REMAINING_SECS`, 10분 기한 기준, foundations §14) `auth.pending.sameDevice` 아래(`auth.otherAccount.help` 위)에 `auth.pending.stuck`(`role="status"`: 브라우저에 "연결할 수 없다"는 오류가 보이면 다시 로그인) + [다시 로그인](secondary). 이 버튼은 지금 로그인을 취소하고 새로 시작한다(`auth.restartLogin()`, `worker.md` 92 (사)·94 (가): 취소가 실패하거나 여전히 pending이면 새 로그인을 부르지 않는다) | 위 + [다시 로그인] |
 | `denied` | ⊗(`circle-x` `--danger-ink`, 막힘 = danger) `auth.denied.title` / `auth.denied.body` + 행 `auth.channelLabel`: ‘{channelName}’ + 안내 속 링크(다른 계정으로 로그인하려면 브라우저에서 네이버 로그아웃 먼저) | [다시 시도](primary) |
 | `removed` | `auth.removed.*` + 같은 채널 행 + 안내 속 링크(`denied`와 같음, `worker.md` 87) + `auth.runningNote` | [다시 시도](primary) |
-| `expired`·`revoked`·`reuse`·`lost`·`loginTimeout` | 제목·본문은 `content.md`. 누가 끊었는지 말하지 않는다 | [다시 로그인] |
-| `network`·`server`·`unknown`·`graceExpired` | 탓하지 않는 문구 + "받던 다운로드는 계속돼요" | [다시 연결] |
+| `expired`(`loginTimeout`·`revoked`·`reuse`·사유 없음·`sessionExpired`) · `lost` | 제목·본문은 `content.md`. 누가 끊었는지 말하지 않는다. 사유 없는 만료(`auth.sessionExpired.*`, 60일마다 누구나 보는 화면)는 문제로 그리지 않아 경고 아이콘이 없다 | [다시 로그인](primary) |
+| `network`·`server`·`unknown`(error, 사유 없음 포함) | 탓하지 않는 문구 + "받던 다운로드는 계속돼요". `pending`인데 기한이 없을 때도 `unknown` 화면이다 | [다시 로그인](primary) |
+| `graceExpired`(expired) | `auth.graceExpired.*`. 세션 유예가 끝났다 | [다시 연결](primary) [다시 로그인](secondary). 저장 세션 유무와 무관하게 둘 다 늘 붙는다 |
 | `receiver`(error) | 수신기를 열지 못함(`AuthReason` `receiver`, `app.md` 66 (다)): ⚠ `auth.receiver.title` / `auth.receiver.body`. 다른 계정 안내 없음 | [다시 로그인] |
-| `cancelled` | `auth.cancelled.title`("로그인을 취소했어요") | [치지직으로 로그인] |
+| `cancelled` | `auth.cancelled.title`("로그인을 취소했어요"), 본문 없음 | [다시 로그인](primary) |
 
 규칙:
 1. 패널 폭은 `--dialog-w` 440(foundations §5.2 "대화상자와 로그인 패널"), 그룹 상자(`--surface`, `--radius-group`), 패딩 `--space-20`. 가운데 정렬은 로그인 패널·빈 상태·대화상자에만 허용한다. 근거: `A-FEAT` §10-6(가운데 정렬 범위 모순 해소).
 2. 비공식 고지(`NOTICE_SHORT`)·받는 것·받지 않는 것·끊는 길(로그아웃 경로)·처리방침 링크는 **스크롤 없이 720×520 안에** 있다(C2·C7). 강제: `frontend`(로그인 뷰가 네 키 `auth.intro`·`notice.short`·`auth.consent`·`auth.privacy`를 렌더, 필수), `design-gallery`(720×520 기본 글자·마우스 조합에서 요소가 뷰포트 안, 관찰), `design-copy` DC6(두 deck의 고지 문자열 동일).
 3. 로그인 화면이 열린 동안 배너·[설정]·D3·단축키는 꺼진다(`worker.md` 구현 중 변경 62 (가)). 받는 중인 작업이 있으면 패널 아래 `runningNote` 한 줄.
 4. 모든 상태는 (1) 탓하지 않고 (2) 다음 행동 하나를 주고 (3) 다운로드가 계속된다는 것을 말한다(`G-PRIVACY-R11`). 강제: `frontend`(모든 `AuthReason`에 버튼 하나와 계속 문구 존재).
-5. 주 버튼은 이 화면에서 [치지직으로 로그인]·[브라우저 다시 열기](pending)·[다시 시도]·[다시 로그인]·[다시 연결] 중 하나만 채움이다(창에 하나). pending의 stuck [다시 로그인]은 secondary다(채움은 [브라우저 다시 열기]에 남는다).
-6. 로그인 직후 홈에 토스트 `toast.signedIn`("‘{channelName}’ 채널로 로그인했어요", `TOAST_MS`). 계정 불일치를 바로 알게 한다(`G-PRIVACY-R11`).
+5. 주 버튼은 이 화면에서 [치지직으로 로그인](`signedOut`)·[브라우저 다시 열기](pending)·[다시 시도](`denied`·`removed`)·[다시 로그인](`expired`·`cancelled`·`error`)·[다시 연결](`graceExpired`만) 중 하나만 채움이다(창에 하나). pending의 stuck [다시 로그인]은 secondary다(채움은 [브라우저 다시 열기]에 남는다). `checking`의 [다시 로그인]은 링크형이라 채움이 없다.
+6. **[다시 연결]은 저장 세션이 남아 있을 때(`canReconnect`) 메시지 화면에 secondary로 붙는다.** 위 표의 모든 메시지 화면(`signedOut`·`denied`·`removed`·`expired`·`cancelled`·`error`)에 해당하고, 로그인이 취소 아닌 종결로 끝나도 저장 세션이 있으면 로그인 없이 복구되기 때문이다(`worker.md` 구현 중 변경 66 (바)·70). 이미 [다시 연결]이 있는 `graceExpired`는 더하지 않는다. `checking`·`pending` 화면에는 붙지 않는다. 맨 오른쪽에 놓이고 채움은 아니다(규칙 5). 표의 버튼 칸은 `loginScreen`(`app/src/lib/auth.ts`)이 만드는 값과 같고, [다시 시도]는 `denied`·`removed`에서 `authLogin`을 부르는 주 버튼이다.
+7. 로그인 직후 홈에 토스트 `toast.signedIn`("‘{channelName}’ 채널로 로그인했어요", `TOAST_MS`). 계정 불일치를 바로 알게 한다(`G-PRIVACY-R11`).
 
 Worker 쪽 확인 페이지(`loginWarning` + [계속], 확인 코드 없음)와 웹 흐름·grant 없는 실패의 결과 페이지(`/auth/done`)는 `web.md` §6이 소유한다. 앱 흐름의 브라우저 결과 페이지(로그인했어요 · 허가 없음 · 취소 · 실패)는 Worker가 아니라 **앱 수신기**가 `127.0.0.1`에서 그린다(`app.md` 66 (라), 문구는 `content.md` §15.4 `ReceiverPage`, 모양은 `web.md` §6.5).
 
@@ -869,7 +871,7 @@ Worker는 JS가 없다(README D52). 이 문서의 패턴은 다음으로 대응�
 3. **시간 임계값은 토큰이 아니라 상수**(foundations §14, `app/src/lib/timing.ts`)다. CSS가 아니라 JS 타이머가 쓰는 값이고 `design-tokens`의 ms 토큰 집합을 흐리지 않기 위해서다. 가짜 타이머 테스트가 지킨다.
 4. **빈 상태는 남는 높이를 채우지 않는다**(옛 ui-visual §8 "최소 160" 폐기). 고정 패딩 `--space-32`. 160은 토큰에 없고 채우기 규칙은 `A-FEAT-F4`처럼 지켜지지 않았다. "처음"과 "비운 뒤"를 나눈다.
 5. **FieldRow 색 역할을 라벨 `--fg` · 값 `--fg-muted`로 고정**했다(`A-FEAT-E2`). A 후보의 카드(라벨 muted)는 뒤집었다. 근거는 macOS 시스템 설정·폼의 label/secondary 구조(`E-APPLE-11`). `components.md` §2.26이 같은 값이다.
-6. **로그인 화면의 확인 코드·폴링 표현을 없앴다**(`app.md` §8.9, `worker.md` 11.7의 옛 `auth.pending.code`). 루프백(RFC 8252 §7.3, v0.3.0에 구현, `app.md` 구현 중 변경 65·66)을 따른다. `pending`의 남은 시간은 유지하고, 90초 뒤 stuck 안내·[다시 로그인]과 수신기 실패(`receiver`) 화면은 구현을 그대로 받았다.
+6. **로그인 화면의 확인 코드·폴링 표현을 없앴다**(`app.md` §8.9, `worker.md` 11.7의 옛 `auth.pending.code`). 루프백(RFC 8252 §7.3, v0.3.0에 구현, `app.md` 구현 중 변경 65·66)을 따른다. `pending`의 남은 시간은 유지하고, 90초 뒤 stuck 안내·[다시 로그인]과 수신기 실패(`receiver`) 화면은 구현을 그대로 받았다. 상태별 버튼(§13 표·규칙 5·6)도 `loginScreen`이 하는 그대로 적었고 명세와 코드의 차이는 남기지 않는다(2026-10-10 사용자 결정).
 7. **완료 행 버튼은 [열기] 다음 [폴더에서 보기]**다(README D39). `G-HANDOFF-H1`의 반대 순서는 쓰지 않는다. "파일 열기" 라벨은 "열기"로 줄인다.
 8. **대화상자의 안전한 쪽 = 아무것도 하지 않은 것과 같은 결과**로 하나다. 초안의 보조 규칙("둘 다 안전하면 연 목적")과 `components.md` 초안의 "목적이 파괴적이 아니면 그것이 채움"은 D3·D5에서 반대 답을 내서 지웠다. D5 [나중에]·D3 [나중에]가 채움이다. `A-FEAT` P0(4)가 지적한 것은 기준 부재이고 기준은 D36이 정했다.
 9. **대화상자 포커스는 늘 오른쪽 버튼**이고 링은 `:focus-visible` 휴리스틱이다. 초안의 "포인터로 열면 컨테이너에 포커스 + `<form method=dialog>`"는 Enter가 어느 버튼을 누르는지 DOM 순서에 끌려가 지웠다(`A-VIS-26`은 휴리스틱으로 해소). Esc는 `onclose`만 부른다.

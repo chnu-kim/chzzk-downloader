@@ -10,7 +10,7 @@
     "rust": 637,
     "vitest": 692,
     "playwright": 63,
-    "worker": 1217,
+    "worker": 1518,
     "app": {
       "linux": 60,
       "darwin": 60,
@@ -42,7 +42,7 @@
     "chzzk-core": 100
   },
   "design": {
-    "allow_entries": 11
+    "allow_entries": 5
   },
   "shots": {
     "max_diff_pixels": 0

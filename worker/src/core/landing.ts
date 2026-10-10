@@ -1,5 +1,6 @@
 // 랜딩의 설치 파일 표(docs/design/worker.md §9.5, 구현 중 변경 38 (가)). 순수 함수: R2·시각을 만지지 않는다.
 // 표의 행 = 소스 상수 LANDING_FILES ∩ SHA256SUMS 항목. 업데이트 전용 산출물(.app.tar.gz)과 서명(.sig)은 넣지 않는다.
+import type { EntryContext } from "./entry";
 import { parseVersion } from "./semver";
 
 export type LandingId = "dmg" | "setup" | "msi" | "appimage" | "deb";
@@ -17,6 +18,24 @@ export const LANDING_FILES: readonly LandingFile[] = [
   { id: "appimage", os: "linux", name: "linux-x86_64.AppImage" },
   { id: "deb", os: "linux", name: "linux-x86_64.deb" },
 ];
+
+/** 운영체제 이름(고유 명사라 문구 사본이 아니라 상수다) */
+export const OS_NAME: Readonly<Record<LandingFile["os"], string>> = { macos: "macOS", windows: "Windows", linux: "Linux" };
+
+/** 최소 운영체제 표시값(platform.md D1·baseline, [잠정]). 랜딩 meta 줄과 "다른 운영체제" 표가 쓴다 */
+export const MIN_OS: Readonly<Record<LandingFile["os"], string>> = { macos: "macOS 13.3", windows: "Windows 10", linux: "Ubuntu 22.04" };
+
+/** 운영체제별 큰 버튼의 주 산출물: macOS는 dmg, Windows는 setup.exe(권장), Linux는 AppImage(deb는 표에만) */
+export const PRIMARY_ARTIFACT: Readonly<Record<LandingFile["os"], LandingId>> = { macos: "dmg", windows: "setup", linux: "appimage" };
+
+/** 진입 맥락의 OS 값 → 산출물 OS. 데스크톱 세 종류만 잡히고 그 밖(other·null)은 감지 실패다 */
+export function detectedOs(entry: EntryContext): LandingFile["os"] | null {
+  if (entry.kind !== "desktop") return null;
+  if (entry.os === "mac") return "macos";
+  if (entry.os === "windows") return "windows";
+  if (entry.os === "linux") return "linux";
+  return null;
+}
 
 export const ARTIFACT_PREFIX = "chzzk-downloader";
 

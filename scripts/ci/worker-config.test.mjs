@@ -2,6 +2,7 @@
 // 저장소 worker/ 그대로는 통과하고, 씨앗(불변식 하나를 깬 사본)은 실패해야 한다. 사본은 이름을 정한 파일과 src/·test/·scripts/만
 // 복사한다(worker/의 실제 비밀값 파일은 건드리지 않는다).
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
@@ -50,7 +51,13 @@ import {
   stripJsComments,
   stripJsonc,
   checkGeneratedCss,
+  checkGeneratedAssets,
+  checkGeneratedHelp,
+  checkGeneratedLicenses,
+  GENERATED_ASSETS_FILE,
   GENERATED_CSS_FILE,
+  GENERATED_HELP_FILE,
+  GENERATED_LICENSES_FILE,
 } from './worker-config.mjs';
 
 const W = join(ROOT, 'worker');
@@ -189,6 +196,14 @@ test('씨앗: package.json', () => {
     ['e2e 스크립트 빠짐', { ...PKG, scripts: { ...PKG.scripts, e2e: undefined } }],
   ];
   for (const [name, pkg] of seeds) assert.notDeepEqual(checkPackage(pkg, opts), [], name);
+  // design-worker의 Playwright: worker = tools.json = app(governance §2.6b). 옵션이 없으면(옛 호출) 보지 않는다
+  const pw = PKG.devDependencies['@playwright/test'];
+  assert.ok(pw, 'worker/package.json에 @playwright/test가 있다');
+  const pwOpts = { ...opts, playwright: pw, appPlaywright: pw };
+  assert.deepEqual(checkPackage(PKG, pwOpts), []);
+  assert.notDeepEqual(checkPackage(PKG, { ...pwOpts, playwright: '0.0.1' }), [], 'worker ≠ tools.json');
+  assert.notDeepEqual(checkPackage(PKG, { ...pwOpts, appPlaywright: '0.0.1' }), [], 'app ≠ tools.json');
+  assert.notDeepEqual(checkPackage({ ...PKG, devDependencies: { ...PKG.devDependencies, '@playwright/test': undefined } }, pwOpts), [], 'worker에 없음');
   // 알려진 스크립트 밖의 스크립트(W7 도구 등)에도 일반 규칙이 걸린다. 각 씨앗의 사유 글자까지 본다(글자 고정 규칙에 가려지지 않게)
   const extra = [
     ['wrangler dev에 --env-file 없음', 'node x.mjs && wrangler dev --config wrangler.jsonc --port 8787', '--env-file이 없다'],
@@ -890,4 +905,74 @@ test('checkGeneratedCss: 머리 주석 + SITE_CSS 문자열 + 해시만 통과',
   ];
   for (const [why, text] of bad) assert.ok(checkGeneratedCss(text).length > 0, why);
   assert.equal(GENERATED_CSS_FILE, 'src/http/site-css.generated.ts');
+});
+
+// 생성 모듈 셋(scripts/design/worker-gen.mjs, 계약 §2.2)은 소스 낱말 검사에서 빠지고 파일별 모양만 본다
+test('checkGeneratedAssets: 항목 줄 문법과 hash(바이트의 SHA-256 앞 16 hex)', () => {
+  const b64 = Buffer.from('abc').toString('base64');
+  const hash = createHash('sha256').update('abc').digest('hex').slice(0, 16);
+  const ok = `// 생성물. 손으로 고치지 않는다\nexport const ASSETS = {\n  "icon.svg": { type: "image/svg+xml", hash: "${hash}", b64: "${b64}" },\n} as const;\n`;
+  assert.deepEqual(checkGeneratedAssets(ok), []);
+  const bad = [
+    ['hash가 바이트와 다름', ok.replace(hash, '0123456789abcdef')],
+    ['코드가 더 있음', ok + 'export const x = 1;\n'],
+    ['항목 모양', ok.replace('type: "image/svg+xml", ', '')],
+    ['머리 주석 없음', ok.slice(ok.indexOf('\n') + 1)],
+    ['항목 없음', '// x\nexport const ASSETS = {\n} as const;\n'],
+    ['백틱', ok.replace('icon.svg', 'a`b')],
+    ['이름 중복', ok.replace('} as const;', `  "icon.svg": { type: "image/png", hash: "${hash}", b64: "${b64}" },\n} as const;`)],
+  ];
+  for (const [why, text] of bad) assert.ok(checkGeneratedAssets(text).length > 0, why);
+  assert.equal(GENERATED_ASSETS_FILE, 'src/http/assets.generated.ts');
+});
+
+test('checkGeneratedLicenses: 한 줄 LICENSES 상수와 JSON 문자열만', () => {
+  const ok = '// 생성물\nexport const LICENSES = [{ name: "Lucide", text: "ISC License\\nCopyright" }] as const;\n';
+  assert.deepEqual(checkGeneratedLicenses(ok), []);
+  const bad = [
+    ['본문에 <', ok.replace('ISC', '<b>')],
+    ['따옴표 탈출', ok.replace('ISC License', 'a" }]; fetch(1); [{ x: "')],
+    ['템플릿', ok.replace('ISC', '${x}')],
+    ['data:', ok.replace('ISC', 'data:text')],
+    ['머리 주석 없음', ok.slice(ok.indexOf('\n') + 1)],
+    ['줄이 더 있음', ok + 'x();\n'],
+  ];
+  for (const [why, text] of bad) assert.ok(checkGeneratedLicenses(text).length > 0, why);
+  assert.equal(GENERATED_LICENSES_FILE, 'src/http/licenses.generated.ts');
+});
+
+test('checkGeneratedHelp: 절·블록 줄 문법', () => {
+  const ok = [
+    '// 생성물',
+    'export const HELP = [',
+    '  { id: "a-1", title: "제목", blocks: [',
+    '    { t: "p", text: "문단" },',
+    '    { t: "ol", items: ["하나", "둘"] },',
+    '    { t: "pre", text: "xattr -dr \\"x\\"" },',
+    '  ] },',
+    '] as const;',
+    '',
+  ].join('\n');
+  assert.deepEqual(checkGeneratedHelp(ok), []);
+  const bad = [
+    ['id 모양', ok.replace('a-1', 'A_1')],
+    ['빈 절', ok.replace(/    \{ t: .*\n/g, '')],
+    ['모르는 블록', ok.replace('t: "p"', 't: "h2"')],
+    ['본문에 <', ok.replace('문단', '<b>문단')],
+    ['코드 줄이 끼어듦', ok.replace('] as const;', 'x();\n] as const;')],
+    ['id 중복', ok.replace('] as const;', '  { id: "a-1", title: "x", blocks: [\n    { t: "p", text: "y" },\n  ] },\n] as const;')],
+    ['절 없음', '// x\nexport const HELP = [\n] as const;\n'],
+  ];
+  for (const [why, text] of bad) assert.ok(checkGeneratedHelp(text).length > 0, why);
+  assert.equal(GENERATED_HELP_FILE, 'src/http/help.generated.ts');
+});
+
+test('checkWorker: 생성 모듈은 낱말 검사에서 빠지고(base64의 우연한 낱말) 모양이 깨지면 실패한다', () => {
+  const assets = read('src/http/assets.generated.ts');
+  // 낱말 검사에 걸리는 글자를 문자열 안에 넣어도 항목 문법이 맞으면 통과가 아니다: b64 문자 집합이 아니므로 모양에서 실패한다
+  assert.ok(checkWorker(copy({ 'worker/src/http/assets.generated.ts': assets.replace('} as const;', 'export const x = fetch;\n} as const;') })).some((e) => e.includes('assets.generated.ts')));
+  assert.ok(checkWorker(copy({ 'worker/src/http/help.generated.ts': null })).some((e) => e.includes('help.generated.ts: 없다')));
+  assert.ok(checkWorker(copy({ 'worker/src/http/licenses.generated.ts': read('src/http/licenses.generated.ts').replace('ISC', '<b>') })).some((e) => e.includes('licenses.generated.ts')));
+  // 생성 모듈이 아닌 파일은 여전히 낱말 검사를 받는다
+  assert.ok(checkWorker(copy({ 'worker/src/http/x.ts': 'export const y = "fetch";\n' })).length > 0);
 });

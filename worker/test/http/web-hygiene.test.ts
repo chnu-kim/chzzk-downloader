@@ -2,14 +2,16 @@
 // 로그 줄과 응답에 카나리가 없는지 본다. 카나리 = 폼 토큰(csrf)·세션 쿠키 토큰·세션 id 전체·채널 ID·가짜 계정 이름.
 // 응답에 있어도 되는 자리: csrf는 GET /·GET /admin의 200 본문(폼 숨은 입력)뿐, 쿠키 토큰은 어디에도 없다.
 import { runInDurableObject } from "cloudflare:test";
-import { afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { sha256Hex } from "../../src/core/token";
+import { COPY } from "../../src/http/copy";
+import { assetPath } from "../../src/http/assets";
 import { LATEST_VIEW_CACHE } from "../../src/http/landing";
 import { SUMS_CACHE } from "../../src/http/releases";
 import { createFakeChzzk, FAKE_ACCOUNTS, type FakeChzzk } from "../fake-chzzk.mjs";
 import { installFakeChzzk, type FakeNet } from "../network";
 import { A1, ADMINS, B2, C3, D4, appLogin } from "../store/helpers";
-import { Browser, csrfIn, formBody, resetStore, store, useClock, viaEnv, webLoginHttp } from "./harness";
+import { appFlow, Browser, csrfIn, formBody, resetStore, store, useClock, viaEnv, webLoginHttp } from "./harness";
 import { seedDist } from "./release-fixture";
 
 let fake: FakeChzzk;
@@ -106,7 +108,9 @@ it("W6 화면·동작을 모두 돌려도 로그와 응답에 카나리가 새�
   await post(admin, "/admin/allow", formBody({ csrf: adminCsrf, channelId: E5 }), { "Content-Type": "text/plain" });
   await post(admin, "/admin/allow", "a".repeat(4097));
   await post(admin, "/admin/allow", formBody({ csrf: adminCsrf, channelId: "zz" }));
+  // 이미 끊긴 세션은 멱등 303, 형식 밖 id는 404
   await post(admin, `/admin/sessions/${idA}/revoke`, formBody({ csrf: adminCsrf }));
+  await post(admin, "/admin/sessions/abc/revoke", formBody({ csrf: adminCsrf }));
   await post(admin, "/admin/disallow", formBody({ csrf: adminCsrf, channelId: A1 }));
   await post(member, "/admin/allow", formBody({ csrf: memberCsrf, channelId: E5 }));
   await post(new Browser(viaEnv({ ADMIN_CHANNEL_IDS: "" })), "/admin/allow", formBody({ channelId: E5 }));
@@ -140,7 +144,10 @@ it("W6 화면·동작을 모두 돌려도 로그와 응답에 카나리가 새�
   const csrfs = [adminCsrf, memberCsrf, leavingCsrf];
   for (const r of seen) {
     const where = `${r.method} ${r.path} ${r.status}`;
-    const page = r.method === "GET" && (r.path === "/" || r.path === "/admin") && r.status === 200;
+    // csrf가 본문에 실리는 화면: GET /·GET /admin·허가 빼기 확인 페이지(200)와, 폼을 다시 그리는 POST /admin/allow의 400 오류 화면
+    const page =
+      (r.method === "GET" && (r.path === "/" || r.path === "/admin" || /^\/admin\/[0-9a-f]{32}\/disallow$/.test(r.path)) && r.status === 200) ||
+      (r.method === "POST" && r.path === "/admin/allow" && r.status === 400);
     for (const c of csrfs) {
       expect([where, r.headers.includes(c)]).toEqual([where, false]);
       if (!page) expect([where, r.text.includes(c)]).toEqual([where, false]);
@@ -152,7 +159,140 @@ it("W6 화면·동작을 모두 돌려도 로그와 응답에 카나리가 새�
     if (r.location !== "") expect(["/", "/admin"]).toContain(r.location);
     expect(r.path.includes("?")).toBe(false);
   }
-  // 둘러본 범위: 화면 5 + 성공 6 + 실패 9 + 로그아웃 1 + 준비 중 GET / 3
+  // 둘러본 범위: 화면 5 + 성공 6 + 실패 10 + 로그아웃 1 + 준비 중 GET / 3
   expect(seen.filter((r) => r.status === 303).length).toBeGreaterThanOrEqual(8);
   for (const status of [200, 303, 400, 403, 404, 409, 415]) expect([status, seen.some((r) => r.status === status)]).toEqual([status, true]);
+});
+
+describe("flash 알림(web.md §6.3): 303 뒤 GET 한 번만", () => {
+  const FLASH_CLEAR = "cdl_flash=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax";
+  const FLASH_SET = (kind: string) => `cdl_flash=${kind}; Max-Age=60; Path=/; HttpOnly; SameSite=Lax`;
+  const banner = (t: string) => t.includes("notice-banner");
+
+  it("이미 처리됨: 303 + 쿠키(종류 코드뿐) → 첫 GET /에 배너와 쿠키 지우기, 두 번째 GET /엔 없다", async () => {
+    const member = (await webLoginHttp(fake, "b2")).browser;
+    // 로그인 직후 알림을 비우고 시작한다
+    await member.get("/");
+    const csrf = csrfIn(await (await member.get("/")).text()) ?? "";
+    const gone = "Q".repeat(22);
+    const res = await member.post(`/me/sessions/${gone}/revoke`, undefined, formBody({ csrf }));
+    expect([res.status, res.headers.get("Location")]).toEqual([303, "/"]);
+    expect(res.headers.getSetCookie()).toEqual([FLASH_SET("alreadyDone")]);
+    // 쿠키 값에 토큰·id가 없다: 종류 코드뿐
+    expect(member.jar.get("cdl_flash")).toBe("alreadyDone");
+    const first = await member.get("/");
+    const t = await first.text();
+    expect(banner(t)).toBe(true);
+    expect(t).toContain(`<p>${COPY.alreadyDone}</p>`);
+    expect(first.headers.getSetCookie()).toEqual([FLASH_CLEAR]);
+    expect(member.jar.has("cdl_flash")).toBe(false);
+    const second = await member.get("/");
+    expect(banner(await second.text())).toBe(false);
+    expect(second.headers.getSetCookie()).toEqual([]);
+  });
+
+  it("로그인 직후 첫 GET /에만 '로그인했어요' 배너", async () => {
+    const { browser, callback } = await webLoginHttp(fake, "b2");
+    expect(callback.headers.getSetCookie().filter((c) => c.startsWith("cdl_flash="))).toEqual([FLASH_SET("loggedIn")]);
+    const t = await (await browser.get("/")).text();
+    expect(banner(t)).toBe(true);
+    expect(t).toContain(`<p>${COPY.doneOk.title}</p>`);
+    expect(banner(await (await browser.get("/")).text())).toBe(false);
+  });
+
+  it("세션 없는 웹 POST: 303 / + 만료 알림(경고), 형식 밖 세션 쿠키는 함께 지운다. GET /admin의 세션 없음은 알림 없이 303 /", async () => {
+    const b = new Browser();
+    b.jar.set("cdl_s", "garbage");
+    const res = await b.post("/auth/web/logout", undefined, formBody({ csrf: "C".repeat(43) }));
+    expect([res.status, res.headers.get("Location")]).toEqual([303, "/"]);
+    expect(res.headers.getSetCookie()).toEqual(["cdl_s=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax", FLASH_SET("sessionGone")]);
+    const t = await (await b.get("/")).text();
+    expect(t).toContain(`<p>${COPY.sessionGone}</p>`);
+    expect(t).toContain("tone-warning");
+    expect(banner(await (await b.get("/")).text())).toBe(false);
+    // GET은 알림 없이 홈으로(쿠키도 없다)
+    const get = await new Browser().get("/admin");
+    expect([get.status, get.headers.get("Location"), get.headers.getSetCookie()]).toEqual([303, "/", []]);
+  });
+
+  it("GET /admin도 알림을 한 번 그리고 지운다. 모르는 값은 그리지 않고 지운다", async () => {
+    const admin = (await webLoginHttp(fake, "a1")).browser;
+    admin.jar.set("cdl_flash", "alreadyDone");
+    const first = await admin.get("/admin");
+    expect(banner(await first.text())).toBe(true);
+    expect(first.headers.getSetCookie()).toEqual([FLASH_CLEAR]);
+    expect(banner(await (await admin.get("/admin")).text())).toBe(false);
+    admin.jar.set("cdl_flash", "bogus");
+    const bogus = await admin.get("/");
+    expect(banner(await bogus.text())).toBe(false);
+    expect(bogus.headers.getSetCookie()).toEqual([FLASH_CLEAR]);
+  });
+});
+
+describe("골격: 색인·OG·/auth/*의 헤더", () => {
+  it("랜딩만 색인되고 OG가 있다. 관리·결과·확인·오류는 noindex이고 og: 0개", async () => {
+    const landing = await new Browser().get("/");
+    expect(landing.headers.get("X-Robots-Tag")).toBeNull();
+    const lt = await landing.text();
+    expect(lt).toContain('<meta property="og:type" content="website">');
+    expect(lt).toContain(`href="${assetPath("site.css")}"`);
+    expect(lt).toContain('data-scale="reading"');
+    const admin = (await webLoginHttp(fake, "a1")).browser;
+    for (const [b, path] of [
+      [admin, "/admin"],
+      [new Browser(), "/auth/done?r=failed"],
+      [new Browser(), "/auth/login/app-outdated-update-v2"],
+      [new Browser(), "/auth/login/zz"],
+    ] as const) {
+      const res = await b.get(path);
+      expect([path, res.headers.get("X-Robots-Tag")]).toEqual([path, "noindex"]);
+      const t = await res.text();
+      expect([path, t.includes("og:")]).toEqual([path, false]);
+      // 읽기 척도는 랜딩(과 읽기 페이지)뿐이다
+      expect([path, t.includes("data-scale")]).toEqual([path, false]);
+    }
+  });
+
+  it("/auth/* 화면(결과 넷·옛 앱·만료·확인)에는 헤더에 로그인 링크가 없다", async () => {
+    const app = await appFlow({ fake, redeem: false });
+    const pages = [
+      ...["ok", "denied", "cancelled", "failed"].map((r) => `/auth/done?r=${r}`),
+      "/auth/login/app-outdated-update-v2",
+      "/auth/login/zz",
+    ];
+    for (const path of pages) {
+      const t = await (await new Browser().get(path)).text();
+      expect([path, t.includes("/#start")]).toEqual([path, false]);
+      expect([path, t.includes('href="/help"')]).toEqual([path, true]);
+    }
+    expect(app.loginHtml.includes("/#start")).toBe(false);
+    // 비로그인 랜딩의 헤더에는 있다
+    expect((await (await new Browser().get("/")).text()).includes('href="/#start"')).toBe(true);
+  });
+});
+
+describe("웹 POST 거절 페이지(web.md §6.2)", () => {
+  const mainLinks = (t: string) => (/<main [^>]*>([\s\S]*)<\/main>/.exec(t)?.[1] ?? "").match(/<a /g)?.length ?? 0;
+
+  it("관리 POST의 Origin 불일치: 오류 접두 제목, 원래 화면(/admin) 새로 열기 링크 하나, noindex", async () => {
+    const admin = (await webLoginHttp(fake, "a1")).browser;
+    const csrf = csrfIn(await (await admin.get("/admin")).text()) ?? "";
+    const res = await admin.post("/admin/allow", { Origin: "http://evil.example.test" }, formBody({ csrf, channelId: E5 }));
+    expect(res.status).toBe(403);
+    expect(res.headers.get("X-Robots-Tag")).toBe("noindex");
+    const t = await res.text();
+    expect(t).toContain(`<title>${COPY.errorTitlePrefix}${COPY.badRequest.title} · ${COPY.siteName}</title>`);
+    expect(t).toContain(`<a href="/admin">${COPY.reloadAdmin}</a>`);
+    expect(mainLinks(t)).toBe(1);
+  });
+
+  it("세션이 있는 사람의 csrf 거절: 헤더에 채널 이름, 로그인 링크 없음", async () => {
+    const member = (await webLoginHttp(fake, "b2")).browser;
+    const res = await member.post("/auth/web/logout", undefined, formBody({ csrf: "X".repeat(43) }));
+    expect(res.status).toBe(403);
+    const t = await res.text();
+    expect(t).toContain(`<span class="site-user">${FAKE_ACCOUNTS.b2.channelName}</span>`);
+    expect(t).not.toContain("/#start");
+    expect(mainLinks(t)).toBe(1);
+  });
 });

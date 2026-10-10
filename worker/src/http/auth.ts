@@ -13,12 +13,14 @@ import { authorizeRedirect, identify } from "../core/chzzk";
 import type { Config } from "../config";
 import type { LogLevel } from "../core/log";
 import { clearCookie, hasCookieName, readCookie, setCookie } from "../core/cookies";
+import { entryContext } from "../core/entry";
 import { isLoopbackPort, loopbackUrl } from "../core/loopback";
 import { isId, isSecret, isToken, sha256B64url, sha256Hex } from "../core/token";
 import type { Ctx } from "../routes";
 import { redeemEvent } from "../store/login-log";
 import type { ConsumeResult, FinishResult, LoginLogHint } from "../store/types";
 import { COPY } from "./copy";
+import { flashCookie } from "./flash";
 import { type DoneR, donePage, loginConfirmPage, noticePage } from "./pages";
 import { readJsonObject, sameOriginPost } from "./request";
 import { errorJson, iso, json } from "./respond";
@@ -138,7 +140,7 @@ export async function webStart(req: Request, ctx: Ctx): Promise<Response> {
   const r = await ctx.store.startWeb(req.headers.get("CF-Connecting-IP"), ctx.config.startRate10m, ctx.now);
   if (r.ok) return toChzzk(authorizeRedirect(chzzkApp(ctx.config), r.state), setCookie(ctx.cookies, "flow", r.binder));
   ctx.log("auth.start.rejected", { flowKind: "web", reason: r.code });
-  if (r.code === "rate_limited") return noticePage(ctx.config, 429, COPY.rateLimited.title, COPY.retryLater.body, { "Retry-After": String(r.retryAfterSec) });
+  if (r.code === "rate_limited") return noticePage(ctx.config, 429, COPY.rateLimited.title, COPY.retryLater.body, { headers: { "Retry-After": String(r.retryAfterSec) } });
   return noticePage(ctx.config, 503, COPY.busy.title, COPY.retryLater.body);
 }
 
@@ -221,7 +223,7 @@ function afterFinish(ctx: Ctx, f: FinishResult): Response {
     case "loopback":
       return toLoopback(ctx, f);
     case "web":
-      // 웹 로그인은 세션 쿠키를 심고 F를 지운다(콜백이 state를 이미 소비했다)
+      // 웹 로그인은 세션 쿠키를 심고 F를 지운다(콜백이 state를 이미 소비했다). 다음 GET /가 한 번 "로그인했어요"를 보인다(flash)
       return new Response(null, {
         status: 303,
         headers: [
@@ -229,6 +231,7 @@ function afterFinish(ctx: Ctx, f: FinishResult): Response {
           ["Referrer-Policy", "no-referrer"],
           ["Set-Cookie", setCookie(ctx.cookies, "session", f.cookieToken)],
           ["Set-Cookie", clearCookie(ctx.cookies, "flow")],
+          ["Set-Cookie", flashCookie(ctx.cookies, "loggedIn")],
         ],
       });
     case "denied":
@@ -256,7 +259,7 @@ export async function done(req: Request, ctx: Ctx): Promise<Response> {
   const view = isToken("flow", flowCookie) ? await ctx.store.doneView(await sha256Hex(flowCookie), ctx.now) : null;
   // 그 이름의 쿠키가 있었으면 값·중복과 상관없이 지운다(남은 F로는 아무것도 할 수 없다, 구현 중 변경 28)
   const clear = hasCookieName(header, ctx.cookies.flow) ? clearCookie(ctx.cookies, "flow") : null;
-  return donePage(ctx.config, r, view, clear);
+  return donePage(ctx.config, r, view, clear, entryContext(req.headers));
 }
 
 // ---- 앱 수령 ----

@@ -15,3 +15,6 @@ worker/src/http/site-css.generated.ts text eol=lf
 
 # 시각 회귀 기준선(docs/design/system/governance.md §2.7). Linux CI가 만든 PNG를 바이트 그대로 둔다
 app/e2e/__shots__/** -text
+
+# Worker 정적 HTML 시각 회귀 기준선(docs/design/system/governance.md §2.6b). Linux CI가 만든 PNG를 바이트 그대로 둔다
+worker/e2e/__shots__/** -text

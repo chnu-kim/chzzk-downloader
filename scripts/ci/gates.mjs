@@ -132,8 +132,8 @@ export const GATES = {
     steps: [{ cmd: ['node', DS('copy.mjs')] }],
   },
   'design-icons': {
-    desc: '아이콘 정적 검사 DI1~DI7(Lucide 메타·고지 파일·path 속성·은유 유일성·크기·글꼴 아이콘 문자열·IconButton 허용 목록)',
-    steps: [{ cmd: ['node', DS('icons.mjs')] }],
+    desc: '아이콘 정적 검사 DI1~DI7(Lucide 메타·고지 파일·path 속성·은유 유일성·크기·글꼴 아이콘 문자열·IconButton 허용 목록) + Worker 생성 모듈(icons·assets·licenses)이 원천과 바이트로 같고 에셋 크기가 맞는지(worker-gen --check)',
+    steps: [{ cmd: ['node', DS('icons.mjs')] }, { cmd: ['node', DS('worker-gen.mjs'), '--check', 'icons', 'assets', 'licenses'] }],
   },
   fmt: {
     desc: 'cargo fmt --check',
@@ -223,6 +223,9 @@ export const GATES = {
     needs: ['pnpm'],
     steps: [
       { cmd: ['node', S('worker-config.mjs')] },
+      // help-check(governance DX22): help/*.md → help.generated.ts가 원천과 같고 help/ids.json 규칙(모든 md가 ids에, ids는 md 또는 retired)을 지킨다.
+      // 노드 스크립트뿐이라 설치보다 먼저 돈다
+      { cmd: ['node', DS('worker-gen.mjs'), '--check', 'help'] },
       { cmd: ['pnpm', 'install', '--frozen-lockfile'], cwd: 'worker', env: WRANGLER_ENV },
       // 배포용 wrangler(worker/deploy)의 따로인 lockfile도 PR에서 설치해 본다(릴리스 worker-bundle 작업과 같은 인자, cicd.md 구현 중 변경 96).
       // --ignore-scripts라 설치 스크립트는 돌지 않는다
@@ -316,6 +319,22 @@ export const GATES = {
       { cmd: ['pnpm', 'build'], cwd: 'app', env: { CHZZK_GALLERY: '1' } },
       { cmd: ['pnpm', 'exec', 'playwright', 'install', 'chromium'], cwd: 'app' },
       { cmd: ['node', DS('shots.mjs'), 'run'] },
+    ],
+  },
+  // Worker 정적 HTML의 갤러리 검사와 스냅샷(docs/design/system/governance.md §2.6b, §2.0 "영역 공백"의 결정 (나)). worker 영역 작업이다.
+  // wrangler dev·DO·비밀값 파일 없이 spec이 뷰 함수(Node, Playwright TS 로더)로 HTML을 만들어 가짜 출처(page.route)로 내보낸다:
+  // 실제 CSP 헤더와 생성 CSS(site-css.generated.ts)가 그대로 적용된다(worker.md 구현 중 변경). 기준선(worker/e2e/__shots__)은 Linux
+  // CI에서만 만들고, 로컬 --update-snapshots는 shots.mjs·playwright.config.ts가 거부한다. 실패하면 artifact design-worker-actual →
+  // `node scripts/design/shots.mjs --accept <run id> --target worker`. worker-config가 설치보다 먼저 돈다(allowBuilds 가드). D14 관찰(OBSERVED_JOBS).
+  'design-worker': {
+    desc: 'Worker 정적 HTML: axe(WCAG A·AA)·대상 크기·리플로우·forced 포커스 링·계산값(gallery) + 스냅샷(라이트·다크·forced × 1280·390 × DPR 1·2) = worker/e2e/__shots__ 기준선, Linux만(D14 관찰)',
+    needs: ['pnpm'],
+    platforms: ['linux'],
+    steps: [
+      { cmd: ['node', S('worker-config.mjs')] },
+      { cmd: ['pnpm', 'install', '--frozen-lockfile'], cwd: 'worker', env: WRANGLER_ENV },
+      { cmd: ['pnpm', 'exec', 'playwright', 'install', 'chromium'], cwd: 'worker' },
+      { cmd: ['node', DS('shots.mjs'), 'run', '--target', 'worker'] },
     ],
   },
   'e2e-native': {
@@ -553,7 +572,7 @@ export const HOOKS = {
       { gate: 'design-tokens', paths: DESIGN_TOKENS_FILES },
       { gate: 'design-lint', paths: [/^app\/src\//, /^worker\/src\/http\//, /^design\/ui\.css$/, /^scripts\/design\//] },
       { gate: 'design-copy', paths: [/^app\/src\/lib\/copy\//, /^worker\/src\/http\/copy\.ts$/, /^design\/copy\//, /^docs\/design\/system\/(content|patterns|web)\.md$/, /^help\//, /^scripts\/design\//] },
-      { gate: 'design-icons', paths: [/^app\/src\/lib\/components\/ui\/icons\.ts$/, /^worker\/src\/http\/(icons\.generated|pages)\.ts$/, /^licenses\//, /^scripts\/design\//] },
+      { gate: 'design-icons', paths: [/^app\/src\/lib\/components\/ui\/icons\.ts$/, /^worker\/src\/http\/(icons\.generated|assets\.generated|licenses\.generated|pages)\.ts$/, /^worker\/assets\//, /^licenses\//, /^scripts\/design\//] },
     ],
   },
   'commit-msg': { always: ['scan-msg'], when: [] },
@@ -568,7 +587,7 @@ export const HOOKS = {
       // pre-commit에는 넣지 않는다(무겁다). release/ 표는 W5 계약 테스트가 읽는다(worker.md §13.2). semver 벡터는 worker vitest가
       // xtask와 함께 읽는다(worker.md 구현 중 변경 14 (다), cicd.md 구현 중 변경 87). tauri.conf.json productName은 랜딩 xattr 경로의 원천이다(worker-config checkLandingAppName)
       // tools.json(wrangler 버전)·app/package.json(packageManager)은 worker-config가 대조한다
-      { gate: 'worker', paths: [/^worker\//, /^scripts\/ci\/worker-(config|deploy)\.mjs$/, /^release\/(latest\.schema|expected-artifacts)\.json$/, /^xtask\/testdata\/semver-vectors\.json$/, /^app\/src-tauri\/tauri\.conf\.json$/, /^app\/package\.json$/, /^scripts\/ci\/tools\.json$/] },
+      { gate: 'worker', paths: [/^worker\//, /^help\//, /^scripts\/design\/worker-gen\.mjs$/, /^scripts\/ci\/worker-(config|deploy)\.mjs$/, /^release\/(latest\.schema|expected-artifacts)\.json$/, /^xtask\/testdata\/semver-vectors\.json$/, /^app\/src-tauri\/tauri\.conf\.json$/, /^app\/package\.json$/, /^scripts\/ci\/tools\.json$/] },
       // release.test.mjs가 worker/test/deploy-contract.mjs(배포 뒤 검사 계약 표)를 import한다
       // 스텁 테스트가 루프백 KAT(worker/test/vectors/)를 읽는다(cicd.md 111)
       // scripts/design/*.test.mjs는 토큰 원천(design/)·시스템 문서(spec-check·adr.test·pr-template.test)·근거 문서·PR 템플릿을 읽는다
@@ -639,4 +658,6 @@ export const MASTER_ONLY_JOBS = ['bundle'];
 //   - worker-e2e(cicd.md 구현 중 변경 100)는 W7 머지 뒤 첫 master 녹색 실행부터 14일 관찰한다.
 //   - design-shots(docs/design/system/governance.md §2.7·§12-12)는 디자인 단계 (b) 머지 뒤 첫 master 녹색 실행부터 14일 관찰한다.
 //     기준선이 생기기 전 첫 실행은 실패하는 것이 정상이다(artifact를 shots.mjs --accept로 받아 커밋한다).
-export const OBSERVED_JOBS = { 'e2e-web': 'app', 'e2e-native': 'app', 'e2e-native-windows': 'app', 'worker-e2e': 'worker', 'design-shots': 'app' };
+//   - design-worker(governance.md §2.6b)는 디자인 단계 (e)(첫 기준선 커밋) 머지 뒤 첫 master 녹색 실행부터 14일 관찰한다.
+//     기준선은 design-worker-actual을 `shots.mjs --accept <run id> --target worker`로 받는다.
+export const OBSERVED_JOBS = { 'e2e-web': 'app', 'e2e-native': 'app', 'e2e-native-windows': 'app', 'worker-e2e': 'worker', 'design-shots': 'app', 'design-worker': 'worker' };

@@ -612,6 +612,29 @@ const scenarios = [
     },
   ],
   [
+    // 허가 빼기 확인 페이지(D54): 상태를 바꾸지 않는 GET. URL에 채널 ID가 실리는 quiet 경로라 Worker 로그는 0줄이다(E17이 확인한다)
+    "E05b-disallow-confirm",
+    async () => {
+      const jar = S.jarA;
+      const page = await browserGet(jar, `/admin/${ID("b2")}/disallow`);
+      isStatus(page, 200, "허가 빼기 확인 페이지");
+      must(page.html.includes('action="/admin/disallow"'), "확인 페이지에 최종 POST 폼이 없다");
+      must(page.html.includes(`name="channelId" value="${ID("b2")}"`), "확인 페이지의 채널 ID 숨은 입력이 없다");
+      must(!page.html.includes("<script"), "확인 페이지에 <script가 있다");
+      pageCsrf(page, "확인 페이지");
+      // 허가에 없는 채널은 오류가 아니라 /admin으로 가는 멱등 303이다
+      const none = await req("GET", `/admin/${ID("d4")}/disallow`, { jar });
+      isStatus(none, 303, "허가에 없는 채널의 확인 페이지");
+      must(new URL(none.headers.get("location") ?? "", E2E_ORIGIN).pathname === "/admin", "허가에 없는 채널이 /admin으로 보내지 않았다");
+      // 로그인하지 않으면 처음 화면으로
+      const anon = await req("GET", `/admin/${ID("b2")}/disallow`);
+      isStatus(anon, 303, "비로그인의 확인 페이지");
+      must(new URL(anon.headers.get("location") ?? "", E2E_ORIGIN).pathname === "/", "비로그인이 /로 보내지 않았다");
+      // GET은 아무것도 바꾸지 않았다: 허가 목록에 b2가 그대로 있다
+      must((await browserGet(jar, "/admin")).html.includes(ID("b2")), "확인 페이지를 연 뒤 /admin에서 b2가 사라졌다");
+    },
+  ],
+  [
     "E06-app-b2",
     async () => {
       fakeServer.fake.state.account = "b2";

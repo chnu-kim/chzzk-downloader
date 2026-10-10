@@ -4,7 +4,7 @@ import { sha256Hex } from "../../src/core/token";
 import { createFakeChzzk, FAKE_ACCOUNTS, type FakeChzzk } from "../fake-chzzk.mjs";
 import { installFakeChzzk, type FakeNet } from "../network";
 import { A1 } from "../store/helpers";
-import { AppClient, appFlow, Browser, parseLoopback, store, useClock, viaEnv } from "./harness";
+import { AppClient, appFlow, Browser, h1Of, parseLoopback, store, useClock, viaEnv } from "./harness";
 
 let fake: FakeChzzk;
 let net: FakeNet;
@@ -39,11 +39,18 @@ describe("웹 승인·거부", () => {
     expect(cb.headers.get("Location")).toBe("/");
     expect(cb.headers.get("Referrer-Policy")).toBe("no-referrer");
     const cookies = cb.headers.getSetCookie();
-    expect(cookies).toHaveLength(2);
+    expect(cookies).toHaveLength(3);
     expect(cookies[0]).toMatch(/^cdl_s=cdw_[A-Za-z0-9_-]{43}; Max-Age=43200; Path=\/; HttpOnly; SameSite=Lax$/);
     expect(cookies[1]).toBe("cdl_f=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax");
-    // 항아리: 세션만 남는다
+    // 다음 GET /가 한 번 "로그인했어요"를 보이게 하는 flash(값은 종류 코드뿐)
+    expect(cookies[2]).toBe("cdl_flash=loggedIn; Max-Age=60; Path=/; HttpOnly; SameSite=Lax");
+    // 항아리: 세션과 flash가 남는다
+    expect([...browser.jar.keys()]).toEqual(["cdl_s", "cdl_flash"]);
+    // 첫 GET /에만 알림 배너가 있고 flash는 같은 응답에서 지워진다
+    const first = await (await browser.get("/")).text();
+    expect(first).toContain("notice-banner");
     expect([...browser.jar.keys()]).toEqual(["cdl_s"]);
+    expect(await (await browser.get("/")).text()).not.toContain("notice-banner");
     const w = await store().webCheck(await sha256Hex(browser.jar.get("cdl_s") ?? ""), [A1], Date.now());
     expect(w).toMatchObject({ ok: true, channelId: FAKE_ACCOUNTS.a1.channelId, isAdmin: true });
   });
@@ -64,7 +71,7 @@ describe("웹 승인·거부", () => {
     expect(browser.jar.size).toBe(0);
     // 다시 열면 F가 없어 이름·ID 없는 일반 문구
     const again = await (await browser.get("/auth/done?r=denied")).text();
-    expect(again).toContain("<h1>이 채널은 사용 허가가 없어요</h1>");
+    expect(h1Of(again)).toBe("이 채널은 사용 허가가 없어요");
     expect(again).not.toContain("채널 ID");
   });
 

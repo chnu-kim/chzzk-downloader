@@ -147,11 +147,11 @@ CSP는 그대로다(worker.md, `A-WORKER` §6.1): `default-src 'none'; style-src
 | 3 | 비공식 고지 | Notice(중립, 아이콘 `info`): `NOTICE_SHORT`. **스크롤 없이** 보인다(히어로 바로 아래, 1280×800과 390×844에서) | 항상 | D34(히어로 바로 아래), C2, `G-ID-R1` |
 | 4 | CTA | **유일한 채움 버튼** `.btn.btn-primary.btn-lg`(높이 `--control-h-lg` 36, 글자 `--text-title` 600). 비로그인: [치지직으로 로그인](`form action="/auth/web/start"`), 바로 위에 로그인 전 고지 네 줄(§5.3)과 `loginForFiles`("로그인하면 내 컴퓨터용 설치 파일이 보여요."). 허가 사용자: [{내 OS}용 받기] 링크 버튼 + meta 줄(`.num`, `--fg-muted`): "버전 {0.1.2} · {2026. 10. 3.} · {최소 OS} 이상". macOS면 다음 줄에 **늘** `appleSiliconOnly`. 좁은 레이아웃에서 버튼은 전폭 | 항상 | D53(36, 유일한 채움), P3, `G-WEB-R5`·`G-WEB-R6`·`G-WEB-R26`(최소 OS 한 줄, `Accept-CH` 안 씀), `G-INSTALL-R12`(`v` 없음), D42("macOS용 받기"), 검토 U-11 |
 | 5 | 경고 예고 | 한 줄 "처음 열 때 경고가 나올 수 있어요. 앱이 문제라는 뜻이 아니에요." | 허용 사용자 | `G-INSTALL-R1`, brief D53 근거 |
-| 6 | 다른 운영체제 | `<details>` "다른 운영체제": `<table>`에 `<caption>설치 파일 (버전 {0.1.2})</caption>`, `th scope="col"`(운영체제·파일·최소 버전), 행머리 `th scope="row"`. 파일명은 `.num`이 아닌 `code`. 감지 실패(`unknown`·`bot`)면 4번의 큰 버튼을 만들지 않고 이 표를 `<details open>`으로 펼친다 | 허용 사용자 | D53, brief §6.13-2(caption·scope), `G-WEB-R2`·`G-WEB-R5`(틀려도 모든 행이 한 번의 탭 안에), `A-WORKER` §3.3(scope·caption 없음) |
+| 6 | 다른 운영체제 | `<details>` "다른 운영체제": `<table>`에 `<caption>설치 파일(버전 {0.1.2})</caption>`, `th scope="col"`(운영체제·파일·최소 버전), 행머리 `th scope="row"`. 파일명은 `.num`이 아닌 `code`. 감지 실패(`unknown`·`bot`)면 4번의 큰 버튼을 만들지 않고 이 표를 `<details open>`으로 펼친다 | 허용 사용자 | D53, brief §6.13-2(caption·scope), `G-WEB-R2`·`G-WEB-R5`(틀려도 모든 행이 한 번의 탭 안에), `A-WORKER` §3.3(scope·caption 없음) |
 | 7 | 설치하기 `<h2 id="install">` | 감지한 OS 절은 `<details open>`, 다른 OS 절은 `<details>`(닫힘). 감지 실패면 셋 모두 `open`. 각 절은 `<ol>` 단계(한 단계 한 동작, macOS 3단계 이하). **macOS**: `macDamaged` 문단 → ① `macMove` ② `macOpenAnyway`(처음 열 때 경고가 나오면 **시스템 설정 › 개인정보 보호 및 보안 › 그래도 열기**) [잠정, §14-1] ③ `macTerminal`(그 단추가 없으면 터미널에 아래 한 줄) — `<pre><code class="selectable">xattr -dr com.apple.quarantine "/Applications/치지직 다운로더.app"</code></pre>` + `macXattrNote`(두 문장: 표시만 지운다 / 다른 명령은 사기). **Windows**: `winSac`(경고 Notice `--warning-soft`, 단계 **앞**: 스마트 앱 컨트롤을 끄면 되돌릴 수 없으니 관리자에게 먼저 묻기) → ① `winSmartScreen`(‘PC 보호’ 창 → ‘추가 정보’ › ‘실행’). **Linux**: AppImage는 `libfuse2`(24.04는 `libfuse2t64`) + 실행 권한 한 줄, `.deb`는 `apt install ./…`("관리자 권한이 필요할 수 있어요") | 항상(비로그인에서도 읽을 수 있다) | D53·D55("그래도 열기" 경로 먼저 + xattr 폴백), D52(복사 버튼 대신 선택 가능한 코드 + 사기 경고), `G-INSTALL-R2`~`G-INSTALL-R8`, `G-PRIVACY-R2`, `G-HELP-H5`(앵커 id는 `<details>` 밖 = h2에만), 검토 U-37(비가역 경고는 행동 앞), 앱 이름은 `productName`(worker-config `checkLandingAppName`) |
 | 8 | 파일 확인(선택) | `<details>` "파일 확인(선택)": 한 문장 + `<table>`(`caption`, `th scope`, 열: 파일·SHA-256 `code.selectable`). 해시는 주 표에서 **여기로 이동**한다 | 허용 사용자 | `G-WEB-R27`, g-install §4-7, D53. worker.md §9.5 "SHA-256 텍스트" 변경 → §14 |
 | 9 | 처음 열면 로그인해요 `<h2 id="login">` | 한 문단: 앱에서 [치지직으로 로그인]을 누르면 브라우저가 열린다 / 받는 것은 채널 이름과 채널 ID / 네이버 비밀번호는 받지 않는다 / 허가되지 않으면 이유와 다음 할 일을 앱이 알려 준다 / `loginTwice`("이 페이지에서 로그인했어도 앱을 처음 열 때 한 번 더 로그인해요.") | 항상 | C7, B 후보 절, `G-PRIVACY-R9`·`G-PRIVACY-R17`, 검토 U-11 |
-| 10 | 막히면 `<h2 id="help">` | 한 문단: `/help` 링크 + `content.md` §11 "문제가 있을 때" 상수 + 연락 수단 landing.contact(자리표시, 출시 전 사람이 채운다) | 항상 | B 후보 절, `G-INSTALL-R14`(문의 경로), `G-PRIVACY-R16`, D51, 검토 U-07 |
+| 10 | 막히면 `<h2 id="help">` | 한 문단: `/help` 링크 + `content.md` §11 "문제가 있을 때" 상수 + 연락 수단 `landing.contact`(자리표시, 출시 전 사람이 채운다) | 항상 | B 후보 절, `G-INSTALL-R14`(문의 경로), `G-PRIVACY-R16`, D51, 검토 U-07 |
 | 11 | 내 기기 `<h2>` | 표(§7) + 설명 "모르는 기기가 있으면 끊어 주세요." + [끊기] | 허용 사용자 | worker.md §8.2 |
 | 12 | 로그아웃 | 테두리 버튼 하나 | 허용 사용자 | §7.2 의미 표 |
 
@@ -276,7 +276,7 @@ flash와 `seeOther` "쿼리 없는 두 곳" 계약의 보완은 worker.md 구현
 
 ### 7.3 확인 페이지(허가 빼기)
 
-`GET /admin/<channelId>/disallow`(상태 변경·감사 기록 없음) → `<h1>` confirmDisallow.title("이 채널의 허가를 뺄까요?") → 요약 목록(`<dl>`: 이름 · 채널 ID(`.num` mono) · 활성 세션 수) → confirmDisallow.body → `.actions`: **왼쪽 [허가 빼기]**(`audit.disallow`, `btn-secondary tone-danger`, 폼 하나) · **오른쪽 링크** `confirmDisallow.back`("허가한 채널 목록으로", `/admin`). 폼 요소는 최종 버튼의 폼 하나뿐이다. 채움 버튼은 없다.
+`GET /admin/<channelId>/disallow`(상태 변경·감사 기록 없음) → `<h1>` `confirmDisallow.title`("이 채널의 허가를 뺄까요?") → 요약 목록(`<dl>`: 이름 · 채널 ID(`.num` mono) · 활성 세션 수) → `confirmDisallow.body` → `.actions`: **왼쪽 [허가 빼기]**(`audit.disallow`, `btn-secondary tone-danger`, 폼 하나) · **오른쪽 링크** `confirmDisallow.back`("허가한 채널 목록으로", `/admin`). 폼 요소는 최종 버튼의 폼 하나뿐이다. 채움 버튼은 없다.
 
 배치는 D36(파괴 동작은 왼쪽 빨간 글자, 안전한 쪽은 오른쪽)을 따르되 웹 페이지라 Enter 기본 버튼 개념이 없으므로 오른쬭은 링크다(`patterns.md` §14.5도 이렇게 적는다). 근거: D54, `G-WEB-R21`(나)·`G-WEB-R22`(MoJ confirm-an-action, WCAG 3.3.4 G168), D36. 강제: `worker` 테스트(GET은 DO 상태를 바꾸지 않는다, 폼 1개, `.tone-danger` 1개, 돌아가기는 `<a>`), `R6`(대화상자·확인 흐름 체크리스트: 웹 확인 페이지도 D36 표로 대조한다).
 
@@ -377,40 +377,40 @@ flash와 `seeOther` "쿼리 없는 두 곳" 계약의 보완은 worker.md 구현
 
 ## 12. 결함 대조표(a-worker)
 
-a-worker의 결함을 이 문서의 규칙과 대조했다. "적용 뒤" 열은 적용 PR이 채운다(테스트 이름 또는 커밋).
+a-worker의 결함을 이 문서의 규칙과 대조했다. "적용 뒤" 열은 적용 단계 (e)가 채웠다(테스트 이름과 gate).
 
 | # | 결함(a-worker 위치) | 파일:줄 | 이 문서 | 적용 뒤 |
 |---|---|---|---|---|
-| 1 | 강조색 초록 `#007a45`(C1 위반), 앱과 다른 브랜드색 | `site-css.ts:6~7` | §2 토큰 원천(D5 파랑, 생성물 공유) | |
-| 2 | 토큰 이름·값 전부 앱과 다름(`--muted`·`--line`·`--warn`·`--box`) | `site-css.ts:6` | §2(같은 생성물) | |
-| 3 | 컨트롤 경계 대비 1.35 / 1.50:1 | `site-css.ts:24·27` | §7.1(`--border-strong` ≥ 3:1) | |
-| 4 | 글꼴 스택 불일치, `-apple-system`, Noto 없음 | `site-css.ts:9` | §2 글꼴(`--font-sans`) | |
-| 5 | 본문 16px/1.6, h2 1.15rem, h3 UA 기본(h3 > h2) | `site-css.ts:9·12~13`, `landing-view.ts:46`, `admin-view.ts:33` | §2 척도, §3 헤딩 위계 | |
-| 6 | `.code` `letter-spacing:.1em`, 2rem | `site-css.ts:16` | §6.4. 루프백(v0.3.0)이 확인 코드 표시를 지워 이 규칙은 쓰는 곳이 없다 → 적용 PR (e)가 생성물로 바꿀 때 지운다 | |
-| 7 | `word-break` 없음(한국어 글자 단위 끊김), `tabular-nums` 없음 | `site-css.ts` 전체 | §2 줄바꿈·숫자 | |
-| 8 | rem 패딩이 4px 격자에 어긋남(6.4·5.6·14.4px), 버튼·입력 높이 비고정 | `site-css.ts:19·24·27` | §7.1(`--control-h`), §8 셀 | |
-| 9 | 반경 6px 일률, 바탕과 같은 색의 버튼·입력 | `site-css.ts:22~28` | §7.1(`--surface` 면), §11 | |
-| 10 | hover·active·focus-visible·disabled 규칙 없음, UA 포커스 링 | `site-css.ts` | §2 포커스, §7.1 눌림 | |
-| 11 | 버튼 의미 규칙 없음(`danger` 과용, [계속]이 primary 아님) | `landing-view.ts:17·55`, `admin-view.ts:24·37·49`, `pages.ts:49` | §7.2 의미 표 | |
-| 12 | 버튼 간격을 공백 문자에 맡김, `form.inline` | `admin-view.ts:37`, `site-css.ts:23` | §7.1 `.actions` | |
-| 13 | 헤더 사이트명이 본문 링크와 같은 모양, 내비게이션 없음, 로그아웃이 본문 맨 아래 | `pages.ts:35`, `landing-view.ts:61~62` | §3 헤더 | |
-| 14 | 표에 `scope`·`caption` 없음, 빈 `<th>`, 가로 스크롤에 포커스 불가 | `landing-view.ts:57`, `admin-view.ts:32·44·56`, `site-css.ts:17` | §8 | |
-| 15 | 시각 열 "(KST)" 반복, 형식 `YYYY-MM-DD HH:MM` | `copy.ts` col*, `format.ts` | §8 숫자·시각 열(D49) | |
-| 16 | 인라인 라벨 + 100% 입력, 오류 스타일 없음, 채널 ID가 mono 아님 | `admin-view.ts:33` | §7.1 입력, §6.3 오류 요약 | |
-| 17 | 로그인 결과 4상태가 같은 모양, 안내 6종이 모두 "안내" | `pages.ts:39~41·55~75` | §6.1·§6.2 | |
-| 18 | `color-scheme`·`theme-color` meta 없음 | `pages.ts:35` | §3 골격 | |
-| 19 | 파비콘·OG·description·robots 없음, `/favicon.ico` 404 | `pages.ts:35`, `routes.ts:137` | §9.2·§9.3 | |
-| 20 | skip link·`nav`·`footer` 없음 | `pages.ts:35` | §3 | |
-| 21 | 요소 전역 셀렉터(`header{}`), 클래스 체계 없음 | `site-css.ts:11` | §3 셀렉터 | |
-| 22 | 다크 수동 전환 없음 | `site-css.ts:7` | §2 다크(의도: OS만, D7) — 결함 아님으로 닫음 | |
-| 23 | 다크 `pre` 바탕 대비 낮음(`#222` / `#141414`) | `site-css.ts:7·22` | §11 코드 블록(`--surface-2` L .35 / bg .24) | |
-| 24 | `/assets` 핸들러가 파일 하나만 | `site-css.ts:37~43` | §4 에셋 표 | |
-| 25 | 해시 수동 갱신 | `site-css.ts:33`, `site-css.test.ts:9` | §4 해시(생성기) | |
-| 26 | 낡은 주석 "골격은 W6에서" | `core/html.ts:8` | 적용 PR에서 지운다 | |
-| 27 | 복사 버튼 없는 xattr 명령 | `landing-view.ts:46` | §5.1-7(D52: 선택 가능한 코드 + 사기 경고) | |
-| 28 | `Worker secret ADMIN_CHANNEL_IDS` 기술 용어 노출 | `copy.ts:67` | `content.md`(관리자 전용 문구라 P2. "관리자는 서버 설정에서만 바꿀 수 있어요") | |
-| 29 | 랜딩 h1이 로그인 여부에 따라 다름("다운로드") | `landing-view.ts:22·62` | §5.2 | |
-| 30 | SHA-256이 주 표의 열 | `landing-view.ts:43` | §5.1-8 | |
+| 1 | 강조색 초록 `#007a45`(C1 위반), 앱과 다른 브랜드색 | `site-css.ts:6~7` | §2 토큰 원천(D5 파랑, 생성물 공유) | `site-css.ts` 삭제, 생성물 `site-css.generated.ts`(토큰 + ui + `site.css`): `assets.test.ts` "웹 절이 토큰·ui 뒤에 붙는다", `design-tokens` DT1 |
+| 2 | 토큰 이름·값 전부 앱과 다름(`--muted`·`--line`·`--warn`·`--box`) | `site-css.ts:6` | §2(같은 생성물) | 같은 생성물. `allow.json` DT2 넷 삭제(11 → 5), `design-lint`·`design-tokens`가 허용 항목 없이 통과 |
+| 3 | 컨트롤 경계 대비 1.35 / 1.50:1 | `site-css.ts:24·27` | §7.1(`--border-strong` ≥ 3:1) | `design-worker` gallery 대비 검사(axe `color-contrast`·비텍스트 대비 위반 0, 라이트·다크·contrast more·forced) |
+| 4 | 글꼴 스택 불일치, `-apple-system`, Noto 없음 | `site-css.ts:9` | §2 글꼴(`--font-sans`) | `worker-config`(`url(`·`@import` 금지), `design-tokens`(`@font-face` 0), `assets.test.ts` 웹 절 검사 |
+| 5 | 본문 16px/1.6, h2 1.15rem, h3 UA 기본(h3 > h2) | `site-css.ts:9·12~13`, `landing-view.ts:46`, `admin-view.ts:33` | §2 척도, §3 헤딩 위계 | `landing-view.test.ts` "모양 공통: h1은 하나, siteName에 hero 클래스", `pages.test.ts` "htmlPage 골격"(헤딩 위계), gallery 320 리플로우 |
+| 6 | `.code` `letter-spacing:.1em`, 2rem | `site-css.ts:16` | §6.4. 루프백(v0.3.0)이 확인 코드 표시를 지워 이 규칙은 쓰는 곳이 없다 → 적용 PR (e)가 생성물로 바꿀 때 지운다 | `site.css`에 `.code` 규칙 없음. `pages.test.ts` "loginConfirmPage: … 코드 요소 없음" |
+| 7 | `word-break` 없음(한국어 글자 단위 끊김), `tabular-nums` 없음 | `site-css.ts` 전체 | §2 줄바꿈·숫자 | `design-lint`(`break-word`·`justify` 금지), gallery 가로 스크롤 없음, `.num` 표 셀(`landing-view.test.ts` "표: … 시각은 D49 형식(.num)") |
+| 8 | rem 패딩이 4px 격자에 어긋남(6.4·5.6·14.4px), 버튼·입력 높이 비고정 | `site-css.ts:19·24·27` | §7.1(`--control-h`), §8 셀 | `design-lint` DL2(px 리터럴 0), gallery 대상 크기 ≥ `--hit-min` |
+| 9 | 반경 6px 일률, 바탕과 같은 색의 버튼·입력 | `site-css.ts:22~28` | §7.1(`--surface` 면), §11 | `design-lint`, `design-worker` gallery(면 색 대비) |
+| 10 | hover·active·focus-visible·disabled 규칙 없음, UA 포커스 링 | `site-css.ts` | §2 포커스, §7.1 눌림 | gallery forced-colors 포커스 링(`outline-style` ≠ none), `design-lint`(`outline: none` 금지) |
+| 11 | 버튼 의미 규칙 없음(`danger` 과용, [계속]이 primary 아님) | `landing-view.ts:17·55`, `admin-view.ts:24·37·49`, `pages.ts:49` | §7.2 의미 표 | `landing-view.test.ts` "§5.1 (d) 채움 버튼"·"tone-danger 버튼은 없다", `admin-view.test.ts` "버튼 의미"·"renderDisallowConfirm … .tone-danger 1개", `pages.test.ts` "ui 부품: postButton", gallery `.btn-primary` ≤ 1 |
+| 12 | 버튼 간격을 공백 문자에 맡김, `form.inline` | `admin-view.ts:37`, `site-css.ts:23` | §7.1 `.actions` | `pages.test.ts` "postButton: 폼 하나, 기본은 .btn"(`form.inline` 삭제, `.actions`) |
+| 13 | 헤더 사이트명이 본문 링크와 같은 모양, 내비게이션 없음, 로그아웃이 본문 맨 아래 | `pages.ts:35`, `landing-view.ts:61~62` | §3 헤더 | `pages.test.ts` "nav: anon은 [도움말][로그인 /#start] …", `landing-view.test.ts` "관리 링크는 본문이 아니라 헤더 nav가 맡는다"·"내 기기와 로그아웃(11·12번)" |
+| 14 | 표에 `scope`·`caption` 없음, 빈 `<th>`, 가로 스크롤에 포커스 불가 | `landing-view.ts:57`, `admin-view.ts:32·44·56`, `site-css.ts:17` | §8 | `pages.test.ts` "dataTable: caption(id)·th scope=col·동작 열 머리는 숨김 글자·스크롤 영역", `admin-view.test.ts` "표 다섯", `landing-view.test.ts` "다른 운영체제 표와 파일 확인", gallery axe |
+| 15 | 시각 열 "(KST)" 반복, 형식 `YYYY-MM-DD HH:MM` | `copy.ts` col*, `format.ts` | §8 숫자·시각 열(D49) | `format.test.ts` "D49 골든(앱과 공유)", 표 caption `tableTimeNote`(`landing-view.test.ts` "표: caption에 tableTimeNote …") |
+| 16 | 인라인 라벨 + 100% 입력, 오류 스타일 없음, 채널 ID가 mono 아님 | `admin-view.ts:33` | §7.1 입력, §6.3 오류 요약 | `admin-view.test.ts` "추가 폼: 라벨이 입력 위 … 채널 ID는 mono"·"400 검증 오류"(`aria-invalid`·`aria-describedby`·오류 요약) |
+| 17 | 로그인 결과 4상태가 같은 모양, 안내 6종이 모두 "안내" | `pages.ts:39~41·55~75` | §6.1·§6.2 | `pages.test.ts` "donePage"(상태별 제목·아이콘 `circle-x`)·"noticePage"(4xx `triangle-alert`, 5xx `circle-x`) |
+| 18 | `color-scheme`·`theme-color` meta 없음 | `pages.ts:35` | §3 골격 | `pages.test.ts` "THEME_COLOR"(= `--bg` 라이트·다크)·"htmlPage 골격 공통 단언" |
+| 19 | 파비콘·OG·description·robots 없음, `/favicon.ico` 404 | `pages.ts:35`, `routes.ts:137` | §9.2·§9.3 | `pages.test.ts` "OG: og 옵션이 있을 때만 …", `assets.test.ts` "faviconAlias"·"바이너리 에셋 모양", `web-hygiene.test.ts` "랜딩만 색인되고 OG가 있다" |
+| 20 | skip link·`nav`·`footer` 없음 | `pages.ts:35` | §3 | `pages.test.ts` "htmlPage 골격 공통 단언"(skip link·nav·footer), gallery(skip link 대상 크기) |
+| 21 | 요소 전역 셀렉터(`header{}`), 클래스 체계 없음 | `site-css.ts:11` | §3 셀렉터 | `site.css`가 클래스 체계(`.site-header`·`.site-nav`·`.scroll` …)로 쓰고 요소 전역 셀렉터는 `body.web` 한정. `design-lint` |
+| 22 | 다크 수동 전환 없음 | `site-css.ts:7` | §2 다크(의도: OS만, D7) — 결함 아님으로 닫음 | 닫힘(의도, D7): 변경 없음. `design-tokens`가 두 블록 동일을 본다 |
+| 23 | 다크 `pre` 바탕 대비 낮음(`#222` / `#141414`) | `site-css.ts:7·22` | §11 코드 블록(`--surface-2` L .35 / bg .24) | `design-tokens`(`--surface-2`·`--bg` 대비), gallery 다크 axe, 스냅샷 `main-dark`(기준선은 머지 뒤 CI artifact) |
+| 24 | `/assets` 핸들러가 파일 하나만 | `site-css.ts:37~43` | §4 에셋 표 | `assets.test.ts` "assetPath"·"asset (GET /assets/:file)"·"바이너리 에셋 모양"·"faviconAlias"(표 조회, 표 밖 404) |
+| 25 | 해시 수동 갱신 | `site-css.ts:33`, `site-css.test.ts:9` | §4 해시(생성기) | `assets.test.ts` "SITE_CSS 해시 상수 = SHA-256 앞 16 hex", `tokens.mjs --check`(생성기), `worker-gen --check assets` |
+| 26 | 낡은 주석 "골격은 W6에서" | `core/html.ts:8` | 적용 PR에서 지운다 | **미적용**: `worker/src/core/html.ts:8`의 주석은 (e) 묶음 F의 소유 밖이라 그대로다. 한 줄 삭제가 남았다(오케스트레이터 보고) |
+| 27 | 복사 버튼 없는 xattr 명령 | `landing-view.ts:46` | §5.1-7(D52: 선택 가능한 코드 + 사기 경고) | `landing-view.test.ts` "설치하기(§5.1 7번) macOS: macDamaged → ol(…) → xattr 코드 → macXattrNote" |
+| 28 | `Worker secret ADMIN_CHANNEL_IDS` 기술 용어 노출 | `copy.ts:67` | `content.md`(관리자 전용 문구라 P2. "관리자는 서버 설정에서만 바꿀 수 있어요") | `copy.ts` `adminsNote`("서버 설정"), `design-copy` DC1(용어집) |
+| 29 | 랜딩 h1이 로그인 여부에 따라 다름("다운로드") | `landing-view.ts:22·62` | §5.2 | `landing-view.test.ts` "모양 공통: h1은 하나 … 로그인 여부와 무관" |
+| 30 | SHA-256이 주 표의 열 | `landing-view.ts:43` | §5.1-8 | `landing-view.test.ts` "SHA-256은 주 표가 아니라 파일 확인 접힘(닫힘)에 있고 …" |
 
 g-web §4.2 G1~G7(세션 없는 POST 무안내, 재삭제 404, 성공 피드백 없음, 검증 오류 별도 페이지, 파괴 동작 무확인, csrf 안내에 링크 없음, 오류 title 미구분)은 모두 §6.2·§6.3·§7.3이 덮는다.
 
@@ -432,18 +432,18 @@ g-web §4.2 G1~G7(세션 없는 POST 무안내, 재삭제 404, 성공 피드백 
 | 로그인 확인 페이지 존속 | 루프백(v0.3.0)이 확인 코드만 빼고 단계를 남겼다(`worker.md` 88 (가)). §1·§6.4를 그 판으로 고쳤고 [잠정]을 닫았다 |
 | `A-WORKER` §7.1-5 JS 허용 여부 | D52로 닫혔다 |
 
-## 14. `worker.md`에 반영할 것(적용 PR (e)에서 번호를 받는다)
+## 14. `worker.md`에 반영할 것(적용 단계 (e)가 번호를 받아 닫았다)
 
-이 시스템 문서는 `worker.md`를 고치지 않는다. (e) PR이 아래를 `worker.md` "구현 중 변경"에 적는다.
+이 시스템 문서는 `worker.md` 본문을 고치지 않는다. (e)가 아래를 `worker.md` "구현 중 변경" 99에 적었다(번호는 "닫는 방법" 열).
 
 | # | 어긋남 | 이 문서의 선택 | 닫는 방법 |
 |---|---|---|---|
-| 1 | **macOS "그래도 열기" 단계**: README D53·D55·`J-R*`은 "그래도 열기 경로 먼저 + xattr 폴백", worker.md 구현 중 변경 45(실기기 2026-10-07)는 "손상 경고에 [그래도 열기] 길이 없다" | 결정 표를 따라 ②에 두되 [잠정]. "그 단추가 없으면"으로 ③에 이어지게 써서 어느 쪽이 맞아도 사용자가 막히지 않는다 | README §6-11 실기(ad-hoc 서명). 결과를 `platform.md`와 이 문서 §5.1-7에 반영하고 ADR |
-| 2 | **SHA-256 위치**: worker.md §9.5는 "OS별 표에 SHA-256 텍스트", 이 문서는 "파일 확인(선택)" 접힘 | 접힘(D53·`G-WEB-R27`·`G-INSTALL-R7`) | worker.md 구현 중 변경 번호 |
-| 3 | **`seeOther` 계약**: worker.md "위치는 쿼리 없는 두 곳"에 flash 쿠키가 없다 | flash 쿠키로 보완(§6.3) | worker.md 구현 중 변경 번호 |
-| 4 | **허가 빼기 확인 페이지 경로**(`GET /admin/<id>/disallow`)와 삭제류 멱등 정책·`X-Robots-Tag`·`entryContext`·에셋 표 | 모두 신설(§7.3·§6.3·§9) | worker.md §4.4·§4.5 경로 표와 구현 중 변경 |
-| 5 | **설치 안내를 로그인 전에 보인다**(§5.2): worker.md §9.5는 허가 사용자에게만 | 안내 텍스트는 공개, 파일 링크만 인증 뒤 | worker.md 구현 중 변경 번호. E1 근거라 D62 UT5로 확인 |
-| 6 | **로그인 확인 페이지**의 확인 코드 제거(루프백) | §6.4 | **닫힘**: `worker.md` 구현 중 변경 88 (가)·89(L1, v0.3.0). (e) PR이 적을 것은 1~5번이다 |
+| 1 | **macOS "그래도 열기" 단계**: README D53·D55·`J-R*`은 "그래도 열기 경로 먼저 + xattr 폴백", worker.md 구현 중 변경 45(실기기 2026-10-07)는 "손상 경고에 [그래도 열기] 길이 없다" | 결정 표를 따라 ②에 두되 [잠정]. "그 단추가 없으면"으로 ③에 이어지게 써서 어느 쪽이 맞아도 사용자가 막히지 않는다 | **닫힘(구현은 [잠정] 그대로)**: `worker.md` 구현 중 변경 99 ①. 실기 확인은 README §6-11(ad-hoc 서명)이고 결과를 `platform.md`와 이 문서 §5.1-7에 반영하고 ADR |
+| 2 | **SHA-256 위치**: worker.md §9.5는 "OS별 표에 SHA-256 텍스트", 이 문서는 "파일 확인(선택)" 접힘 | 접힘(D53·`G-WEB-R27`·`G-INSTALL-R7`) | **닫힘**: `worker.md` 구현 중 변경 99 ② |
+| 3 | **`seeOther` 계약**: worker.md "위치는 쿼리 없는 두 곳"에 flash 쿠키가 없다 | flash 쿠키로 보완(§6.3) | **닫힘**: `worker.md` 구현 중 변경 99 ③ |
+| 4 | **허가 빼기 확인 페이지 경로**(`GET /admin/<id>/disallow`)와 삭제류 멱등 정책·`X-Robots-Tag`·`entryContext`·에셋 표 | 모두 신설(§7.3·§6.3·§9) | **닫힘**: `worker.md` 구현 중 변경 99 ④(`/notice`는 100, 읽기 페이지는 101) |
+| 5 | **설치 안내를 로그인 전에 보인다**(§5.2): worker.md §9.5는 허가 사용자에게만 | 안내 텍스트는 공개, 파일 링크만 인증 뒤 | **닫힘**: `worker.md` 구현 중 변경 99 ⑤. E1 근거라 D62 UT5로 확인 |
+| 6 | **로그인 확인 페이지**의 확인 코드 제거(루프백) | §6.4 | **닫힘**: `worker.md` 구현 중 변경 88 (가)·89(L1, v0.3.0). 1~5번은 위 99가 적었다 |
 
 ---
 
@@ -462,5 +462,24 @@ g-web §4.2 G1~G7(세션 없는 POST 무안내, 재삭제 404, 성공 피드백 
 11. **코드 블록은 `white-space: pre` + 가로 스크롤**(검토 U-34).
 12. **루프백(v0.3.0) 뒤 결과 페이지를 웹 흐름 기준으로 다시 썼다.** 앱 흐름의 ok("앱으로 돌아가 주세요") 행을 지웠고, denied·cancelled 문구에서 "앱에서"를 뺐으며, failed는 `doneView.kind`로 두 문구를 고른다(§6.1). 옛 앱 안내(`outdatedApp`)·확인 페이지 CSP 예외·앱 수신기 페이지(§6.5)를 더했다(`worker.md` 구현 중 변경 88·89, `app.md` 65·66).
 13. **(e)로 넘기는 것: `site.css`의 링크 색 규칙은 `a:not(.btn)`으로 한정한다.** `ui.css`의 `.btn { color }`가 `body.web a`(특이도 0,1,2)보다 약해서, 한정하지 않으면 버튼 글자가 링크색으로 덮인다(적용 단계 (a)의 `design/ui.css` 구현에서 발견).
-14. **해소(적용 단계 (d)): 이 문서가 적은 `adminOnly.title`·`badFormat.title`·`retryLater.body`·landing.contact를 `content.md` §15.3 표에 더했다.** 값은 §6.2 표 그대로이고 landing.contact는 자리표시("문의 연락처는 출시 전에 채워요.")다. DC10 허용 항목은 사라졌다.
+14. **해소(적용 단계 (d)): 이 문서가 적은 `adminOnly.title`·`badFormat.title`·`retryLater.body`·`landing.contact`를 `content.md` §15.3 표에 더했다.** 값은 §6.2 표 그대로이고 `landing.contact`는 자리표시("문의 연락처는 출시 전에 채워요.")다. DC10 허용 항목은 사라졌다.
 15. **Worker 문구 개정(적용 단계 (d))이 (e) 전에 마크업에 닿은 곳은 셋뿐이다.** ① `noticePage(config, status, title, body | null)`: h1이 상태별 제목이 되고 본문은 없을 수 있다(4xx·5xx `<title>`에 `errorTitlePrefix`). 명세가 제목을 정하지 않은 `notFound`·`isAdmin`·`bootstrapAdmin`·`adminNoAllow`·`badBody`는 현재 문장을 제목과 본문으로 가르기만 했다(`content.md` §15.3). ② macOS 설치 단계 셋은 `<ol><li>`(번호가 문자열에서 빠졌다). ③ 시각 열이 있는 표에 `<caption>`(`tableTimeNote`)을 한 줄 더했다(열 제목에서 "(KST)"를 뺀 대신. §8의 caption 모양 CSS는 (e)). 랜딩 `<title>`이 `siteTitle`이면 `htmlPage`는 " · 앱 이름" 꼬리를 붙이지 않는다. 나머지 새 키(`landing.consent.*`·`skipLink`·`confirmDisallow.*` 등)는 (e)가 화면을 만들 때 참조한다.
+16. **`design-worker`는 페이지를 `setContent`가 아니라 순수 렌더 함수 + `page.route`로 연다**(governance §2.6b를 바꾼다). spec이 각 `render*` 함수를 합성 데이터로 불러 `Response`를 만들고, 본문과 헤더(CSP 포함)를 가짜 출처 `https://worker.test`로 내보낸다. 실제 CSP가 걸리므로 인라인 `style`·`<script` 회귀가 콘솔의 CSP 위반으로 잡힌다. 렌더 함수가 있는 모듈은 라우터·저장소 클래스·`cloudflare:`를 값으로 import하지 않는다. `worker.md` 구현 중 변경 98, governance §12 (e).
+17. **`.btn-secondary`는 `.btn`으로 읽는다.** `design/ui.css`에 `.btn-secondary`가 없다. 보조(테두리) 버튼은 `.btn` 하나, 채움은 `.btn.btn-primary`(페이지당 ≤ 1), 위험은 `.btn.tone-danger`(확인 페이지 최종 버튼에만), 랜딩 큰 버튼은 `.btn.btn-primary.btn-lg`다. 이 문서 본문의 `.btn-secondary`는 모두 이 뜻이다. 표 안 버튼([끊기]·[지우기]·[허가])은 위험 표시 없이 `.btn`이고 `postButton`의 위험 옵션은 `tone: "danger"`다(§7.2).
+18. **`og:title`은 `siteTitle`(content §11)이다.** §9.2 표의 "VOD" 낱말은 content §11이 나중에 "다시보기·클립"으로 정했다(`siteTitle` = "치지직 다운로더 — 비공식 다시보기·클립 다운로더"). `og:description`은 `ogDescription`, `og:image:alt`는 `siteTitle`이다. `og:`는 랜딩에만 있고 다른 경로에는 0개다(`pages.test.ts` "OG"). 랜딩 `<title>`이 `siteTitle`이면 꼬리(" · 앱 이름")가 없다.
+19. **헤더 [로그인]은 폼이 아니라 `/#start` 링크다.** 비로그인 랜딩의 CTA 블록을 `<div id="start">`로 감쌌고 헤더 링크가 거기로 간다. `/auth/*` 페이지에는 로그인 링크가 없다(§15-9). 로그인한 사람의 본문에는 [관리] 링크가 없고 헤더 nav가 맡는다(허가 사용자의 랜딩에는 e2e 계약대로 `href="/admin"`이 헤더에 있다).
+20. **관리 동작의 성공 flash는 두지 않는다.** content.md에 문구가 없고 표의 변화가 결과를 보인다(§6.3). flash 종류는 `loggedIn`(웹 로그인 성공, `303 /`)·`alreadyDone`(이미 처리된 대상의 멱등 303)·`sessionGone`(세션 없는 웹 POST, `303 /`) 셋이고 그 밖에는 만들지 않는다. 오류 요약이 있는 화면에는 flash가 오지 않는다(`renderAdmin`이 오류가 있으면 flash를 무시한다).
+21. **앱 아이콘(청록 `#0f766e`)과 웹 파비콘·`apple-touch-icon`·OG 글리프(D5 파랑 `#0067DF`)가 어긋난다.** §9.3의 임시 글리프([잠정], 파랑 둥근 사각 + 흰 Lucide `download`)를 그대로 만들었고 앱 아이콘(`app/src-tauri/icons/icon-source.svg`)은 이 단계에서 바꾸지 않았다. 앱 마크(D33)는 (f) 몫이고 정해지면 둘을 함께 맞춘다. 확인: D33 결정. 래스터 에셋은 `worker/scripts/render-assets.mjs`로 한 번 찍어 체크인했고 CI에서 다시 만들지 않는다(글꼴로 바이트가 흔들린다).
+22. **help id는 "추가만"을 `retired` 배열과 리뷰로 지킨다.** `help/ids.json`의 `ids`에서 id를 지우거나 순서를 바꾸지 않는다(앵커 링크가 깨진다). 안 쓰는 id는 `retired`로 옮기되 `ids`에도 남긴다. 기계 검사는 "모든 md가 `ids`에 있다"와 "`ids`의 id는 md가 있거나 `retired`에 있다"까지다. `worker-gen --write help`는 새 md의 id를 `ids` 끝에 덧붙일 뿐 지우지 않는다.
+23. **`/favicon.ico`의 Cache-Control은 `public, max-age=86400`이다.** 해시 없는 주소라 immutable이 아니다. 해시 주소 `/assets/<이름>.<해시>.<확장자>`는 `public, max-age=31536000, immutable`이다. 표 밖 이름은 404(`not_found`)다.
+24. **최소 OS 표시값은 `core/landing.ts`의 최소 OS 표(코드 상수)다**: macOS 13.3, Windows 10, Ubuntu 22.04. 원천은 platform.md D1·baseline이고 [잠정]이다. 확인: (f)의 `app/baseline.json`·`minimumSystemVersion` 실측. 랜딩 meta 줄과 "다른 운영체제" 표의 최소 버전 열이 같은 값을 쓴다.
+25. **허가 채널 표는 다섯 열이고 둘째 줄을 쓴다**[잠정]: 이름 · 메모 · 시각 · 활성 · 동작. 채널 ID는 이름 아래 `.meta` > `.mono.num`(채널 ID 셀 글자는 `>{id}<`로 감싸 e2e 정규식을 지킨다), "추가한 관리자"는 `colAddedBy` 글자와 함께 메모 칸 둘째 줄이다(열 머리가 사라지는 자리에서 글자로 이름을 붙인다). 세션 표는 여섯 열 + 동작 그대로다(줄이는 [잠정]은 허가 채널 표만이다). 확인: 1280·390 캡처(`R1`)와 D62 관리자 과업.
+26. **`/privacy` 본문은 초안이고 사람이 확인해야 한다.** 코드로 확인한 사실만 적었다(받는 항목, 쓰는 곳, 웹·앱 로그인 유지 시간, 끊은 뒤 보존, 거부 시도·감사 기록 상한, 로그인 진행 정보 시간, IP를 그대로 저장하지 않음, 쿠키는 쓰지만 광고용이 아님, Cloudflare 해외 저장 가능성). 숫자는 저장소 상수(`WEB_TTL_MS`·`REFRESH_TTL_MS`·`SESSION_MAX_MS`·`REVOKED_KEEP_MS`·`DENIED_KEEP_MS`·`DENIED_CAP`·`AUDIT_CAP`·`FLOW_TTL_MS`)를 함수 값에 넘기고 vitest가 "화면 숫자 = 상수"를 본다. 법적 문안 검토, 실제 관리자·연락처(`landing.contact`와 `privacy.placeholder.*`는 자리표시)는 출시 전에 사람이 정한다(content §19-24).
+27. **관리 화면(묶음 D)에서 고른 것.** ① 관리자 목록은 한 열 표(caption = `adminsNote`, 머리 = `channelIdLabel`)다("표 다섯"). ② 숫자 열은 셀 안 `span.num`만 쓰고 오른쪽 정렬(`td.num`)은 쓰지 않는다(`dataTable` 머리에 클래스를 줄 수 없어 머리와 어긋나는 정렬을 피했다). ③ `renderAdmin`의 `errors`는 `errorSummary`와 같은 `{fieldId, message}[]`이고 필드 옆 문구는 `fieldId === "allow-channel-id"`에서 꺼낸다. 오류가 있으면 flash를 무시한다. ④ 400 재그리기는 채널 ID·메모를 각각 64자로 잘라 채우고 메모가 둘 이상이면 비운다(본문이 4096자까지 올 수 있다). ⑤ 409 화면(관리자 채널 허가 빼기)에 `nav`와 `back`(`reloadAdmin` → `/admin`)을 붙였다. ⑥ 관리 화면의 "처음으로" 링크는 지웠다(헤더 사이트 이름이 `/`로 간다). ⑦ 확인 페이지 GET의 로그는 모두 `ctx.log`(quiet라 무음)뿐이고 새 이벤트는 없다(상태 불변, 새 DO RPC 없음).
+28. **골격·부품(묶음 B)에서 고른 것.** ① skip link는 `calc(0px - 100vw)`로 화면 밖에 두고 포커스를 받으면 `--edge` 위치에 나온다(`--z-sticky`는 입력줄 한 파일만 쓰도록 DT13이 못박았다. 화면 밖이라도 상자 크기가 있어 대상 크기 검사에 걸리지 않는다). ② D49 골든은 vitest가 `import.meta.glob("../../../design/format/*.json")`로 앱과 같은 파일을 읽는다(workerd에서 `readFileSync`가 안 된다). 함수는 `formatDate`·`formatDateTime`·`kstWall`·`kst`·`kstDate`다. ③ 새 문구 키 `siteNav`·`reloadAdmin`·`inAppHint`는 content §15.3·§19-21에 있다(`inAppHint` 문구는 지었다). ④ 랜딩 호출부는 `scale: "reading"`·`index`·`og`를 켠다. ⑤ 설치 파일 목록을 못 불러온 경고는 warning 알림이다. ⑥ `htmlPage`의 `<title>`은 오류 접두를 `htmlPage`만 붙인다(`noticePage`·`donePage`는 직접 붙이지 않는다: "오류: 오류: " 방지). ⑦ 알림 id는 기본값이 겹치면 axe의 중복 id 위반이므로 쓰는 곳마다 따로 준다(§15-29 ②).
+29. **랜딩(묶음 C)에서 고른 것.** ① 해시 표의 파일 셀은 `<a href="/releases/…"><code>`이고 해시는 `code.selectable`이 아니라 `<code>{64hex}</code>`다(e2e 정규식이 한 행에 둘을 요구한다. 웹은 `body.web`이 이미 선택 가능이다). ② 알림 id는 `mobile`·`unofficial`·`win-sac`·`release-unavailable`로 나눴고 단위 테스트가 id 유일성을 본다. ③ 내 기기 표 caption은 "내 기기. 시각은 한국 시간이에요."(`devicesTitle` + `tableTimeNote`)로 영역의 접근 가능한 이름이 되게 했다. ④ 뷰가 `YYYY-MM-DD`를 `formatDate`(D49)로 바꾼다(`core/landing`의 `pubDate` 형식은 그대로). ⑤ 버전을 모르면(비로그인·목록 없음) Linux 명령에 `savedFile`("파일이름") 자리표시를 쓴다. 이 값은 `chmod +x`·`sudo apt install ./`에 들어가므로 공백이 없다. ⑥ "막히면" 절은 두 문단이다: 도움말 링크 한 줄, 그 뒤 `reportHelp` + `landing.contact`(링크 앞뒤에 조각 문구를 만들지 않는다, DC11). ⑦ `filesCaption`은 "설치 파일(버전 {v})"로 붙여 쓴다(이 문서의 옛 표기 "설치 파일 (버전 …)"의 공백을 뺐다. content §15.3). ⑧ 의무 어미: `fileCheckLead`는 "…SHA-256 값과 비교할 수 있어요."다(DC2가 "보세요"를 막는다).
+30. **읽기 페이지·갤러리(묶음 G)에서 고른 것.** ① `/help`는 절을 `<section>` 없이 `h2 id` + 블록을 평평하게 두고(기존 `.page > h2` 간격 규칙을 그대로 쓴다) 차례는 `nav[aria-label] > ul`, 단계 목록은 `ol.steps`다. ② 읽기 페이지의 헤더 nav는 세션을 읽어 정한다(`readWebSession`: 형식 밖 쿠키는 DO를 부르지 않고, 쿠키를 지우지 않는다). ③ 갤러리 환경 행렬은 다섯으로 줄였다(forced는 라이트만, contrast + reduced motion은 라이트·다크 둘). 160개 안팎으로 시간을 줄이면서 계약의 모든 환경을 한 번씩 덮는다. ④ 갤러리 서버는 에셋을 실제 `asset()` 표 그대로 부르고(디코드를 따로 하지 않는다) 문서 요청은 `ORIGIN/`에서만 응답하고 나머지는 404다. ⑤ 대상 크기 예외는 `a`가 `p` 안에 있을 때(WCAG 2.5.8 "문단 안 링크")다.
+31. **`site.css` 변경 세 건과 `<pre tabindex="0">`(묶음 G가 갤러리로 찾아 묶음 B의 규칙을 고쳤다).** ① `.scroll { position: relative }`(가로 스크롤 영역 안의 포커스 링 기준). ② `.site-nav a`에 최소 너비(대상 크기). ③ 문단 밖에 혼자 놓인 링크의 대상 크기. 코드 블록 `pre`는 가로로 스크롤될 수 있으므로 `tabindex="0"`을 둔다(키보드로 스크롤).
+32. **진입 판정·flash 쿠키·에셋의 세부(묶음 A).** 판정 순서는 길이 상한(UA 512) → 봇 → 휴대폰 → 데스크톱 → unknown이고, OS 토큰은 Android·CrOS·iPhone이 먼저 `other`로 걸러진 뒤에 Windows·Mac·Linux를 본다(Android가 "Linux"를, iPhone이 "like Mac OS X"를 품는다). 인앱 토큰은 `KAKAOTALK` 하나다. flash 쿠키 `readFlash`는 이름의 쿠키가 요청에 있기만 하면(모르는 값·중복 포함) 지우는 줄을 주고 `kind`는 종류 코드일 때만 준다. 생성 모듈 문법·svg 줄끝 정규화·help md 부분집합은 `worker.md` 구현 중 변경 101이다. 아이콘 16px 층은 64 단위 SVG를 그대로 줄였고, `apple-touch-icon`은 모서리 둥글림 없이 파랑 전면 위에 글리프를 올렸으며, OG는 가운데 1000×500 안에 이름·부제·"비공식 도구"(테두리 상자)를 둔다(2:1 크롭에서도 남는다). `.gitattributes`에 `worker/assets/**`는 두지 않았다(svg는 LF로 맞춰 해시하므로 `--check`가 같다).
+33. **§12 결함 26(낡은 주석 "골격은 W6에서")은 이 단계에서 지우지 못했다.** `worker/src/core/html.ts`가 문서 단계의 소유 밖이라 그대로다. 한 줄 삭제가 남았다.
+34. **시각 대조(검증 담당)가 고친 것.** ① 읽기 척도 본문: body가 `--text-body`를 13으로 먼저 계산해 상속하므로 `.page[data-scale="reading"]`가 글자 크기·행간을 다시 선언한다(15/22, 헤더·바닥글은 13). ② 표: `th`는 `nowrap`, `td`·`th`는 `overflow-wrap: normal`이라 한글을 글자 단위로 끊지 않고 좁으면 `.scroll`이 스크롤한다. 숫자 열 `td.num`도 `nowrap`. ③ 폼: `section > h3` 위 24, `form` 안 자식 사이 12. ④ 599px 이하의 `pre`는 `pre-wrap` + `overflow-wrap: anywhere`(복사 글자는 같다). ⑤ `/admin*`의 404(`notFound`)는 비로그인 nav([로그인] 포함)로 낸다(§15-9는 `/auth/*`만 뺀다). 고치지 않은 것: forced-colors의 `.btn-primary` 글자(`Highlight`/`HighlightText`는 foundations §2.7대로이고 macOS headless의 반투명 `Highlight` 인공물일 수 있어 Linux CI 기준선에서 확인한다), 경고 Notice 굵기(CSS에 굵기 규칙이 없다, 재현되지 않으면 닫는다), `dataTable`의 `role=region`은 `aria-labelledby`(caption)로 이미 이름이 있다. §8의 `YYYY-MM-DD HH:MM`은 `format.ts`(D49)의 `2025. 12. 31. 오후 11:00`이 맞다.

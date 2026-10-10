@@ -5,7 +5,8 @@ import { sha256Hex } from "../../src/core/token";
 import { COPY } from "../../src/http/copy";
 import { LATEST_VIEW_CACHE } from "../../src/http/landing";
 import { SUMS_CACHE } from "../../src/http/releases";
-import { SITE_CSS, SITE_CSS_PATH } from "../../src/http/site-css";
+import { assetPath } from "../../src/http/assets";
+import { SITE_CSS } from "../../src/http/site-css.generated";
 import { createFakeChzzk, FAKE_ACCOUNTS, type FakeChzzk } from "../fake-chzzk.mjs";
 import { installFakeChzzk, type FakeNet } from "../network";
 import { A1, ADMINS, B2, D4 } from "../store/helpers";
@@ -17,6 +18,10 @@ let net: FakeNet;
 let seed: Map<string, Uint8Array>;
 const enc = (s: string) => new TextEncoder().encode(s);
 const COOKIE_CLEAR = "cdl_s=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax";
+const UA_MAC = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Safari/605.1.15";
+const UA_WIN = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0 Safari/537.36";
+const UA_PHONE = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148 Safari/604.1";
+const UA_BOT = "kakaotalk-scrap/1.0";
 const CSP = "default-src 'none'; style-src 'self'; img-src 'self'; form-action 'self' http://127.0.0.1:8788; frame-ancestors 'none'; base-uri 'none'";
 
 beforeAll(async () => {
@@ -67,8 +72,55 @@ describe("비로그인", () => {
     expect(res.headers.getSetCookie()).toEqual([]);
     const t = await res.text();
     expect(t).toContain('action="/auth/web/start"');
-    expect(t).toContain(`href="${SITE_CSS_PATH}"`);
+    expect(t).toContain(`href="${assetPath("site.css")}"`);
     for (const bad of ["<script", "style=", "/releases/"]) expect(t).not.toContain(bad);
+  });
+
+  it("로그인 폼이 있는 응답: /privacy 링크와 consent 네 문장, 읽기 척도, 색인, OG 태그 전부", async () => {
+    const res = await new Browser().get("/");
+    expect(res.headers.get("X-Robots-Tag")).toBeNull();
+    const t = await res.text();
+    expect(t).toContain('<a href="/privacy">');
+    for (const line of Object.values(COPY.landing.consent)) expect(t).toContain(line);
+    expect(t).toContain(COPY.loginForFiles);
+    expect(t).toMatch(/<main [^>]*data-scale="reading"/);
+    expect(t).toContain(`<meta property="og:image" content="${ORIGIN}${assetPath("og.png")}">`);
+    for (const p of ["og:title", "og:type", "og:url", "og:description", "og:image:width", "og:image:height", "og:image:alt"]) expect(t).toContain(`<meta property="${p}"`);
+    expect(t).toContain('<meta name="description"');
+    // og:image는 실제로 열린다(200 image/png)
+    const img = await new Browser().get(assetPath("og.png"));
+    expect([img.status, img.headers.get("Content-Type")]).toEqual([200, "image/png"]);
+    await img.arrayBuffer();
+  });
+
+  it("(g) Accept-CH(와 Critical-CH)는 어떤 랜딩 응답에도 없다", async () => {
+    const b = await webLogin("b2");
+    for (const res of [await new Browser().get("/"), await new Browser().get("/", { "User-Agent": UA_PHONE }), await b.get("/", { "User-Agent": UA_MAC })]) {
+      expect(res.headers.get("Accept-CH")).toBeNull();
+      expect(res.headers.get("Critical-CH")).toBeNull();
+      await res.arrayBuffer();
+    }
+  });
+
+  it("(f) /?openExternalBrowser=1과 /의 본문이 같다(비로그인·허가 사용자 모두)", async () => {
+    const plain = await (await new Browser().get("/", { "User-Agent": UA_MAC })).text();
+    const kakao = await (await new Browser().get("/?openExternalBrowser=1", { "User-Agent": UA_MAC })).text();
+    expect(kakao).toBe(plain);
+    const b = await webLogin("b2");
+    // 로그인 직후의 알림(loggedIn)은 한 번만 나오므로 먼저 소비한다
+    await (await b.get("/")).arrayBuffer();
+    expect(await (await b.get("/?openExternalBrowser=1", { "User-Agent": UA_WIN })).text()).toBe(await (await b.get("/", { "User-Agent": UA_WIN })).text());
+  });
+
+  it("(a) 휴대폰: 안내가 로그인 폼보다 앞이고, 폼과 설치 절은 그대로 있다. 봇은 안내 없이 같은 본문", async () => {
+    const phone = await (await new Browser().get("/", { "User-Agent": UA_PHONE })).text();
+    expect(phone.indexOf(COPY.mobileBlock)).toBeGreaterThan(-1);
+    expect(phone.indexOf(COPY.mobileBlock)).toBeLessThan(phone.indexOf('action="/auth/web/start"'));
+    expect(phone).toContain(`value="${ORIGIN}/"`);
+    expect(phone).toContain('<h2 id="install">');
+    const bot = await (await new Browser().get("/", { "User-Agent": UA_BOT })).text();
+    expect(bot).not.toContain(COPY.mobileBlock);
+    expect(bot).toContain('action="/auth/web/start"');
   });
 
   it("형식 밖 쿠키: 비로그인 화면 + 쿠키 지우기", async () => {
@@ -97,7 +149,8 @@ describe("허용된 사용자", () => {
     expect(res.status).toBe(200);
     const t = await res.text();
     expect(t).toContain(`‘${FAKE_ACCOUNTS.b2.channelName}’ 채널로 로그인했어요.`);
-    expect(t).toContain("최신 버전 0.2.0 · 2030-01-01");
+    // 감지 전(UA 없음)이라 큰 버튼은 없고 표가 열려 있다
+    expect(t).not.toContain("btn-lg");
     const sums = new TextDecoder().decode(seed.get(`releases/${V2}/SHA256SUMS`));
     const hexOf = (name: string) => new RegExp(`^([0-9a-f]{64})  ${name}$`, "m").exec(sums)?.[1] ?? "";
     for (const name of ["darwin-aarch64.dmg", "windows-x86_64-setup.exe", "windows-x86_64.msi", "linux-x86_64.AppImage", "linux-x86_64.deb"]) {
@@ -108,32 +161,12 @@ describe("허용된 사용자", () => {
     }
     expect(t).not.toContain(".app.tar.gz");
     expect(t).not.toContain(".sig");
-    expect(t).toContain("<details>");
-    // macOS 설치 안내: 손상 경고 → 응용 프로그램으로 옮김 → xattr → 다시 열기(worker.md 구현 중 변경 45)
-    const mac = t.slice(t.indexOf("<h3>macOS</h3>"), t.indexOf("<h3>Windows</h3>"));
-    expect(mac.length).toBeGreaterThan(0);
-    expect(mac).toContain(`<p>${COPY.macDamaged}</p>`);
-    expect(mac).toContain("손상돼 열 수 없다");
-    expect(mac).toContain("‘응용 프로그램’ 폴더");
-    // 큰따옴표는 이스케이프돼 나간다(core/html.ts escapeHtml)
-    expect(mac).toContain("<pre><code>xattr -dr com.apple.quarantine &quot;/Applications/치지직 다운로더.app&quot;</code></pre>");
-    const iMove = mac.indexOf(COPY.macMove);
-    const iCmd = mac.indexOf("xattr -dr");
-    const iReopen = mac.indexOf(COPY.macReopen);
-    expect(iMove).toBeGreaterThan(-1);
-    expect(iMove < iCmd && iCmd < iReopen).toBe(true);
-    // 단계는 ol 항목이고 문자열에 번호가 박혀 있지 않다
-    expect(mac).toContain(`<ol><li>${COPY.macMove}</li><li>${COPY.macTerminal}<pre>`);
-    expect(mac).toContain(`</pre></li><li>${COPY.macReopen}</li></ol>`);
-    expect(COPY.macMove).not.toMatch(/^\d+\./);
-    // 랜딩 제목은 앱 이름 꼬리 없이 한 번만, 본문 h1은 앱 이름
+    // 랜딩 제목은 앱 이름 꼬리 없이 한 번만, 본문 h1은 앱 이름(hero)
     expect(t).toContain("<title>치지직 다운로더 — 비공식 다시보기·클립 다운로더</title>");
-    expect(t).toContain("<h1>치지직 다운로더</h1>");
-    // 시각 열 제목에는 시간대가 없고 caption에 한 번 적는다
-    expect(t).toContain("<caption>시각은 한국 시간이에요.</caption>");
+    expect(t).toContain(`<h1 class="hero">${COPY.siteName}</h1>`);
+    // 시각 표의 caption에 한 번 적고 열 제목에는 시간대가 없다
+    expect(t).toContain(`<caption id="devices-caption">${COPY.devicesTitle}. ${COPY.tableTimeNote}</caption>`);
     expect(t).not.toContain("KST");
-    // 실기기에서 통하지 않는 옛 안내는 없다
-    for (const old of ["그래도 열기", "우클릭", "개인정보 보호 및 보안", "확인되지 않은 개발자"]) expect(t).not.toContain(old);
     expect(t).toContain('action="/auth/web/logout"');
     expect(t).not.toContain('href="/admin"');
     for (const bad of ["<script", "style="]) expect(t).not.toContain(bad);
@@ -141,6 +174,29 @@ describe("허용된 사용자", () => {
     const dl = await b.get(`/releases/${V2}/${DMG}`);
     expect(dl.status).toBe(200);
     await dl.arrayBuffer();
+  });
+
+  it("OS별 큰 버튼: mac은 dmg · Windows는 setup.exe, meta 줄은 D49 날짜와 최소 OS, 채움 버튼은 하나", async () => {
+    const b = await webLogin("b2");
+    const mac = await (await b.get("/", { "User-Agent": UA_MAC })).text();
+    expect(mac).toContain(`<a class="btn btn-primary btn-lg" href="/releases/${V2}/${DMG}">${COPY.getFor("macOS")}</a>`);
+    expect(mac).toContain(`<p class="meta num">버전 ${V2} · 2030. 1. 1. · macOS 13.3 이상</p>`);
+    expect(mac).toContain(COPY.appleSiliconOnly);
+    expect(mac.match(/btn-primary/g)).toHaveLength(1);
+    // [잠정] 그래도 열기는 조건문이고, 단계는 ol 항목에 번호 문자열이 없다
+    expect(mac).toContain(`<li>${COPY.macMove}</li><li>${COPY.macOpenAnyway}</li><li>${COPY.macTerminal}</li>`);
+    // 큰따옴표는 이스케이프돼 나간다(core/html.ts escapeHtml)
+    expect(mac).toContain('<pre tabindex="0"><code class="selectable">xattr -dr com.apple.quarantine &quot;/Applications/치지직 다운로더.app&quot;</code></pre>');
+    expect(mac).not.toMatch(/\bv\d+\.\d+/);
+    const win = await (await b.get("/", { "User-Agent": UA_WIN })).text();
+    expect(win).toContain(`<a class="btn btn-primary btn-lg" href="/releases/${V2}/chzzk-downloader_${V2}_windows-x86_64-setup.exe">${COPY.getFor("Windows")}</a>`);
+    expect(win).toContain("Windows 10 이상");
+    expect(win).not.toContain(COPY.appleSiliconOnly);
+    // 휴대폰: 큰 버튼 없이 표가 열리고 모든 행이 있다
+    const phone = await (await b.get("/", { "User-Agent": UA_PHONE })).text();
+    expect(phone).not.toContain("btn-lg");
+    expect(phone.indexOf(COPY.mobileBlock)).toBeLessThan(phone.indexOf("<h1"));
+    expect(phone.match(/<a href="\/releases\/[^"]+">/g)?.length).toBeGreaterThanOrEqual(5);
   });
 
   it("a1(관리자): 관리 링크", async () => {
@@ -244,9 +300,11 @@ describe("내 기기", () => {
     const csrf = csrfIn(page) ?? "";
     expect(csrf).toHaveLength(43);
 
-    // 남의 세션 id: 404이고 그 세션은 그대로 산다
+    // 남의 세션 id: 대상이 없는 것과 같다(멱등): 303 / + 이미 처리됐어요 알림이고, 그 세션은 그대로 산다
     const other = await web.post(`/me/sessions/${a1AppId}/revoke`, undefined, formBody({ csrf }));
-    expect(other.status).toBe(404);
+    expect(other.status).toBe(303);
+    expect(other.headers.get("Location")).toBe("/");
+    expect(other.headers.getSetCookie()).toEqual(["cdl_flash=alreadyDone; Max-Age=60; Path=/; HttpOnly; SameSite=Lax"]);
     expect((await viaExports(`${ORIGIN}/api/me`, { method: "GET", headers: { Authorization: `Bearer ${a1Access}` } })).status).toBe(200);
 
     // 내 앱 세션 끊기: 303 /, 쿠키는 그대로, 앱은 바로 401
@@ -257,8 +315,15 @@ describe("내 기기", () => {
     const me = await viaExports(`${ORIGIN}/api/me`, { method: "GET", headers: { Authorization: `Bearer ${b2Access}` } });
     expect([me.status, await me.json()]).toEqual([401, { code: "session_revoked" }]);
 
-    // 이미 끊긴 세션은 404
-    expect((await web.post(`/me/sessions/${b2AppId}/revoke`, undefined, formBody({ csrf }))).status).toBe(404);
+    // 이미 끊긴 세션도 오류가 아니다: 303 / + 이미 처리됐어요. 알림은 다음 GET에 한 번만 나온다
+    const again = await web.post(`/me/sessions/${b2AppId}/revoke`, undefined, formBody({ csrf }));
+    expect([again.status, again.headers.get("Location")]).toEqual([303, "/"]);
+    expect(again.headers.getSetCookie()).toEqual(["cdl_flash=alreadyDone; Max-Age=60; Path=/; HttpOnly; SameSite=Lax"]);
+    expect(await (await web.get("/")).text()).toContain(COPY.alreadyDone);
+    expect(await (await web.get("/")).text()).not.toContain(COPY.alreadyDone);
+
+    // 형식이 틀린 경로 값만 404다
+    expect((await web.post("/me/sessions/x/revoke", undefined, formBody({ csrf }))).status).toBe(404);
 
     // 지금 브라우저의 세션 끊기: 쿠키도 지운다
     const self = await web.post(`/me/sessions/${b2Web}/revoke`, undefined, formBody({ csrf }));
@@ -297,7 +362,7 @@ describe("웹 로그아웃", () => {
 
 describe("스타일시트", () => {
   it("해시 이름: 200, text/css, 불변 캐시, 본문 = SITE_CSS", async () => {
-    const res = await new Browser().get(SITE_CSS_PATH);
+    const res = await new Browser().get(assetPath("site.css"));
     expect(res.status).toBe(200);
     expect(res.headers.get("Content-Type")).toBe("text/css; charset=utf-8");
     expect(res.headers.get("Cache-Control")).toBe("public, max-age=31536000, immutable");

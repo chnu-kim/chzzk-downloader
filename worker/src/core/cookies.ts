@@ -1,26 +1,29 @@
 // 쿠키(docs/design/worker.md §6.2). 이름·Secure는 PUBLIC_ORIGIN의 프로토콜로 가른다(devMode가 아니다):
 // https(https 루프백 포함)면 __Host- 접두 + Secure, http(루프백 dev)면 접두 없음. 공통 HttpOnly; SameSite=Lax; Path=/
 // (콜백이 /auth/callback이라 Path를 좁히면 __Host-가 허용하지 않는다).
+// flash 역할: 303 다음 화면에 한 번 보일 안내 종류 코드(http/flash.ts). 60초 안에 읽혀 지워진다. 값은 종류 코드뿐이고 토큰이 아니다.
 
-export type CookieRole = "session" | "flow";
+export type CookieRole = "session" | "flow" | "flash";
 
 export interface CookieSpec {
   readonly session: string;
   readonly flow: string;
+  readonly flash: string;
   readonly secure: boolean;
 }
 
 export const SESSION_MAX_AGE = 43_200;
 export const FLOW_MAX_AGE = 600;
+export const FLASH_MAX_AGE = 60;
 
-const MAX_AGE: Readonly<Record<CookieRole, number>> = { session: SESSION_MAX_AGE, flow: FLOW_MAX_AGE };
+const MAX_AGE: Readonly<Record<CookieRole, number>> = { session: SESSION_MAX_AGE, flow: FLOW_MAX_AGE, flash: FLASH_MAX_AGE };
 // 값은 토큰 문자 집합만(헤더 주입·따옴표 값 방지)
 const VALUE = /^[A-Za-z0-9_-]{1,128}$/;
 
 export function cookieSpec(publicOrigin: string): CookieSpec {
   const protocol = new URL(publicOrigin).protocol;
-  if (protocol === "https:") return { session: "__Host-cdl_s", flow: "__Host-cdl_f", secure: true };
-  if (protocol === "http:") return { session: "cdl_s", flow: "cdl_f", secure: false };
+  if (protocol === "https:") return { session: "__Host-cdl_s", flow: "__Host-cdl_f", flash: "__Host-cdl_flash", secure: true };
+  if (protocol === "http:") return { session: "cdl_s", flow: "cdl_f", flash: "cdl_flash", secure: false };
   throw new TypeError("쿠키 출처는 http 또는 https다");
 }
 

@@ -40,7 +40,7 @@ describe("matchPattern: /** 패턴(나머지 전부, 디코드하지 않는다)"
 });
 
 describe("경로 표", () => {
-  it("25쌍이 정확히 이 순서다", () => {
+  it("31쌍이 정확히 이 순서다", () => {
     expect(ROUTES.map((r) => `${r.method} ${r.pattern}`)).toEqual([
       "GET /health",
       "POST /auth/start",
@@ -67,6 +67,12 @@ describe("경로 표", () => {
       "POST /admin/sessions/:id/revoke",
       "POST /admin/denied/:channelId/allow",
       "POST /admin/denied/:channelId/dismiss",
+      "GET /notice",
+      "GET /favicon.ico",
+      "GET /admin/:channelId/disallow",
+      "GET /help",
+      "GET /privacy",
+      "GET /licenses",
     ]);
   });
 
@@ -84,6 +90,9 @@ describe("경로 표", () => {
     expect(auth("HEAD", "/releases/**")).toBe("release");
     expect(auth("GET", "/")).toBe("web_optional");
     expect(auth("GET", "/assets/:file")).toBe("none");
+    expect(auth("GET", "/notice")).toBe("none");
+    expect(auth("GET", "/favicon.ico")).toBe("none");
+    for (const p of ["/help", "/privacy", "/licenses"]) expect(auth("GET", p)).toBe("none");
     expect(auth("POST", "/auth/web/logout")).toBe("web");
     expect(auth("POST", "/me/sessions/:id/revoke")).toBe("web");
     for (const r of ROUTES.filter((x) => x.pattern.startsWith("/admin"))) expect([r.method, r.pattern, r.auth]).toEqual([r.method, r.pattern, "admin"]);

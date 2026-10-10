@@ -17,6 +17,7 @@ export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '
 const FOUNDATIONS = 'docs/design/system/foundations.md';
 const TIMING_TS = 'app/src/lib/timing.ts';
 const CONSTS_RS = 'crates/shell/src/consts.rs';
+const NOTICE_TS = 'worker/src/core/notice.ts';
 const APP_CSS = 'app/src/app.css';
 const SITE_CSS = 'worker/src/http/site.css';
 const UI_CSS = 'design/ui.css';
@@ -28,6 +29,9 @@ export const TOKEN_SECTIONS = ['root', 'dark-media', 'dark-theme', 'theme-scheme
 
 /** Worker 소스에서만 세는 토큰(앱에는 정의가 없다) */
 const WORKER_ONLY = new Set(['--text-hero', '--leading-hero']);
+
+/** §14 표에서 Worker가 코드로 갖는 상수(그 행의 "Worker + Rust" 중 Worker 쪽). 나머지 이름은 앱·Rust만의 값이다(DT15) */
+const WORKER_CONSTS = new Set(['NOTICE_TTL_H', 'NOTICE_MAX_CHARS']);
 
 /** 컴포넌트 상태 변수(components.md §2.20): 정의 없이 쓸 수 있는 유일한 이름 */
 const LOCAL_VARS = new Set(['--p']);
@@ -158,7 +162,7 @@ export function buildContext(root) {
   const workerTs = needText(root, OUTPUTS.worker);
   const site = extractSiteCss(workerTs);
   const appSourceFiles = walk(root, 'app/src', (r) => /\.(svelte|css)$/.test(r) && !APP_GENERATED.includes(r));
-  const workerSourceFiles = walk(root, 'worker/src/http', (r) => /\.(ts|css)$/.test(r) && r !== WORKER_GENERATED, { recursive: false });
+  const workerSourceFiles = walk(root, 'worker/src/http', (r) => /\.(ts|css)$/.test(r) && !/\.generated\.ts$/.test(r), { recursive: false });
   const uiRaw = readText(root, UI_CSS);
   return {
     model,
@@ -174,6 +178,7 @@ export function buildContext(root) {
     foundations: needText(root, FOUNDATIONS),
     timing: readText(root, TIMING_TS),
     consts: readText(root, CONSTS_RS),
+    notice: readText(root, NOTICE_TS),
   };
 }
 
@@ -772,6 +777,7 @@ const toNumber = (s) => {
 export function expectedConsts(rows) {
   const ts = new Map();
   const rs = new Map();
+  const worker = new Map();
   let breakpoint = null;
   for (const row of rows) {
     if (row.names.length !== row.values.length) continue;
@@ -784,9 +790,10 @@ export function expectedConsts(rows) {
       }
       if (row.fileCell.includes('timing.ts')) ts.set(name, { value, line: row.line });
       if (/\bRust\b(?!\()/.test(row.fileCell)) rs.set(name, { value, line: row.line });
+      if (/\bWorker\b/.test(row.fileCell) && WORKER_CONSTS.has(name)) worker.set(name, { value, line: row.line });
     });
   }
-  return { ts, rs, breakpoint };
+  return { ts, rs, worker, breakpoint };
 }
 
 export function parseTimingConsts(src) {
@@ -809,9 +816,9 @@ export function parseRustConsts(src) {
 
 export function dt15(ctx) {
   const out = [];
-  const { ts, rs, breakpoint } = expectedConsts(parseConstTable(ctx.foundations));
+  const { ts, rs, worker, breakpoint } = expectedConsts(parseConstTable(ctx.foundations));
   const compare = (file, src, want) => {
-    const got = src === null || src === undefined ? new Map() : file === TIMING_TS ? parseTimingConsts(src) : parseRustConsts(src);
+    const got = src === null || src === undefined ? new Map() : file === CONSTS_RS ? parseRustConsts(src) : parseTimingConsts(src);
     if (src === null || src === undefined) out.push(v('DT15', file, 0, file, `${file}이 없다`));
     for (const [name, exp] of want) {
       const g = got.get(name);
@@ -823,6 +830,8 @@ export function dt15(ctx) {
   };
   compare(TIMING_TS, ctx.timing, ts);
   compare(CONSTS_RS, ctx.consts, rs);
+  // Worker 사본(core/notice.ts의 export const NAME = 숫자;): consts.rs와 같은 방식으로 표와 대조한다(서비스 공지 D41)
+  compare(NOTICE_TS, ctx.notice, worker);
   if (!breakpoint) out.push(v('DT15', FOUNDATIONS, 0, 'BREAKPOINT_NARROW', '표에서 BREAKPOINT_NARROW 행을 찾지 못했다'));
   else if (breakpoint.value !== ctx.model.breakpointNarrow) {
     out.push(v('DT15', FOUNDATIONS, breakpoint.line, 'BREAKPOINT_NARROW', `BREAKPOINT_NARROW 표 ${breakpoint.value} ≠ 원천 ${ctx.model.breakpointNarrow}`));

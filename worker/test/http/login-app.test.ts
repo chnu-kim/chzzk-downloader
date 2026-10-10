@@ -11,7 +11,7 @@ import { iso } from "../../src/http/respond";
 import { createFakeChzzk, FAKE_ACCOUNTS, type FakeChzzk, type FakeFail } from "../fake-chzzk.mjs";
 import { installFakeChzzk, type FakeNet } from "../network";
 import { A1, B2 } from "../store/helpers";
-import { advance, allowedChannel, APP_PORT, AppClient, appFlow, Browser, countingSend, flowRows, HOUR, ORIGIN, parseLoopback, store, useClock, viaEnv } from "./harness";
+import { advance, allowedChannel, APP_PORT, AppClient, appFlow, Browser, countingSend, flowRows, h1Of, HOUR, ORIGIN, parseLoopback, store, useClock, viaEnv } from "./harness";
 
 let fake: FakeChzzk;
 let net: FakeNet;
@@ -570,7 +570,7 @@ describe("옛 앱(v0.1.1) 대응", () => {
     expect(get.status).toBe(200);
     expect(get.headers.get("Content-Type")).toBe("text/html; charset=utf-8");
     const text = await get.text();
-    expect(text).toContain(`<h1>${COPY.outdatedApp.title}</h1>`);
+    expect(h1Of(text)).toBe(COPY.outdatedApp.title);
     expect(text).toContain(COPY.outdatedApp.body);
     // 200이라 <title>에 오류 접두가 붙지 않는다
     expect(text).toContain(`<title>${COPY.outdatedApp.title} · ${COPY.siteName}</title>`);

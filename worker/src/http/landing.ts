@@ -1,5 +1,6 @@
 // 랜딩 `/`·내 기기·웹 로그아웃(docs/design/worker.md §8.2·§9.5, 구현 중 변경 38). 랜딩은 늘 200이다(내 기기를 함께 보인다).
 // R2 호출: 비로그인·형식 밖 쿠키 0회, 허용 사용자 2회 이하(latest.json은 isolate 캐시 60초, SHA256SUMS는 /releases와 같은 캐시).
+import { entryContext } from "../core/entry";
 import { LATEST_KEY } from "../core/keys";
 import { type LandingRow, landingRows, type LatestView, parseLatestView } from "../core/landing";
 import { clearCookie } from "../core/cookies";
@@ -7,11 +8,12 @@ import { Lru } from "../core/lru";
 import { isId } from "../core/token";
 import type { Ctx } from "../routes";
 import { COPY } from "./copy";
-import { anonymousBody, memberBody } from "./landing-view";
-import { htmlPage, noticePage } from "./pages";
+import { flashCookie, readFlash } from "./flash";
+import { renderLanding } from "./landing-view";
+import { noticePage } from "./pages";
 import { releaseBucket } from "./r2";
 import { loadSums } from "./releases";
-import { guardWebPost, readWebSession, seeOther } from "./web-session";
+import { guardWebPost, memberNav, readWebSession, seeOther, setCookieHeaders } from "./web-session";
 import { LATEST_MAX } from "./update";
 
 export const LATEST_VIEW_TTL_MS = 60_000;
@@ -65,17 +67,22 @@ async function readDownloads(ctx: Ctx): Promise<Downloads> {
   return { kind: "ok", version: view.version, pubDate: view.pubDate, rows };
 }
 
-/** GET / */
+/**
+ * GET /: 읽기 척도, 늘 200. 요청에서 읽을 것(진입 맥락·웹 세션·flash)과 R2·DO에서 읽을 것(설치 파일·내 기기)을 모아 renderLanding을 부를 뿐이다.
+ * flash(303 뒤 알림)는 한 번 그리고 같은 응답에서 지운다. 쿼리(?openExternalBrowser=1 등)는 읽지 않는다: 본문이 같다
+ */
 export async function landing(req: Request, ctx: Ctx): Promise<Response> {
   const r = await readWebSession(req, ctx);
-  if (!r.ok) return htmlPage(ctx.config, 200, COPY.siteTitle, anonymousBody(), r.clear === null ? undefined : { "Set-Cookie": r.clear });
+  const f = readFlash(req, ctx.cookies);
+  const headers = setCookieHeaders([r.ok ? null : r.clear, f.clear]);
+  const base = { entry: entryContext(req.headers), flash: f.kind, ...(headers === undefined ? {} : { headers }) } as const;
+  if (!r.ok) return renderLanding(ctx.config, { ...base, nav: { kind: "anon" }, member: null });
   const [downloads, devices] = await Promise.all([loadDownloads(ctx), ctx.store.mySessions(r.s.channelId, ctx.now)]);
-  return htmlPage(
-    ctx.config,
-    200,
-    COPY.siteTitle,
-    memberBody({ channelName: r.s.channelName, isAdmin: r.s.isAdmin, csrf: r.s.csrf, currentSessionId: r.s.sessionId, downloads, devices }),
-  );
+  return renderLanding(ctx.config, {
+    ...base,
+    nav: memberNav(r.s),
+    member: { csrf: r.s.csrf, currentSessionId: r.s.sessionId, downloads, devices },
+  });
 }
 
 /**
@@ -86,7 +93,10 @@ export async function meRevoke(req: Request, ctx: Ctx): Promise<Response> {
   const g = await guardWebPost(req, ctx, { admin: false });
   if (!g.ok) return g.response;
   const id = ctx.params.id;
-  if (!isId(id) || !(await ctx.store.revokeMine(g.s.channelId, id, ctx.now))) return noticePage(ctx.config, 404, COPY.notFound.title, COPY.notFound.body);
+  // 404는 형식이 틀린 경로 값에만 쓴다
+  if (!isId(id)) return noticePage(ctx.config, 404, COPY.notFound.title, COPY.notFound.body, { nav: memberNav(g.s) });
+  // 이미 끊겼거나 없는 대상은 오류가 아니다(멱등): 처음 화면으로 보내고 "이미 처리됐어요"를 한 번 알린다
+  if (!(await ctx.store.revokeMine(g.s.channelId, id, ctx.now))) return seeOther("/", [flashCookie(ctx.cookies, "alreadyDone")]);
   return seeOther("/", id === g.s.sessionId ? [clearCookie(ctx.cookies, "session")] : []);
 }
 

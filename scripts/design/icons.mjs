@@ -3,7 +3,7 @@
 // 래스터(번짐) 측정은 design-gallery 안에서 돌고 여기에는 없다.
 // 의존성 0. 위반 레코드는 계약 §1.3 모양 { rule, file, line, text, msg }.
 //
-// 단계 (a)에는 licenses/·worker/src/http/icons.generated.ts·ui/vocab.ts가 없다:
+// 단계 (a)에는 licenses/·worker/src/http/icons.generated.ts·licenses.generated.ts·ui/vocab.ts가 없다:
 //   - licenses/lucide.txt 없음 → DI2 위반 하나(line 0)
 //   - Worker 생성물 없음 → DI1의 Worker 비교를 건너뜀
 //   - vocab.ts 없음 → DI7을 건너뜀(단계 (b)에서 켜진다)
@@ -22,6 +22,7 @@ export const PATHS = {
   vocab: 'app/src/lib/components/ui/vocab.ts',
   workerIcons: 'worker/src/http/icons.generated.ts',
   workerIcon: 'worker/src/http/icon.ts',
+  workerLicenses: 'worker/src/http/licenses.generated.ts',
   license: 'licenses/lucide.txt',
   ko: 'app/src/lib/copy/ko.ts',
   workerCopy: 'worker/src/http/copy.ts',
@@ -206,6 +207,20 @@ function di2(root, v, version) {
   if (version !== null && !text.includes(version)) miss(`아이콘 버전(${version})`);
   if (!/ISC License|Permission to use, copy, modify, and\/or distribute/i.test(text)) miss('ISC 본문');
   if (!/Feather/.test(text) || !/MIT License|Permission is hereby granted, free of charge/i.test(text)) miss('Feather MIT 단락');
+  // Worker /licenses의 생성 모듈은 고지 파일과 같은 글이어야 한다(worker-gen --check licenses의 같은 비교, 없으면 단계 (e) 전이라 건너뜀)
+  const gen = readText(root, PATHS.workerLicenses);
+  if (gen !== null) {
+    const m = /^\/\/ [^\n]*\nexport const LICENSES = \[\{ name: "[^"\n]*", text: ("(?:[^"\\\n]|\\.)*") \}\] as const;\n$/.exec(gen);
+    let body = null;
+    try {
+      body = m ? JSON.parse(m[1]) : null;
+    } catch {
+      body = null;
+    }
+    if (body !== text) {
+      v.push({ rule: 'DI2', file: PATHS.workerLicenses, line: 0, text: 'licenses.generated.ts', msg: 'DI2 Worker 라이선스 생성 모듈이 licenses/lucide.txt와 다르다(node scripts/design/worker-gen.mjs --write licenses)' });
+    }
+  }
 }
 
 /** 한 `<path …>` 태그 안의 속성 검사. 정규화한 태그 글자를 text로 쓴다 */

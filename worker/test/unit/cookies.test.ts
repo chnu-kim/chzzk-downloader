@@ -1,15 +1,15 @@
 // core/cookies(docs/design/worker.md §6.2): 프로토콜로 가르는 이름·Secure, 정확한 Set-Cookie, 읽기의 닫힌 판정.
 import { describe, expect, it } from "vitest";
-import { clearCookie, cookieSpec, FLOW_MAX_AGE, hasCookieName, readCookie, SESSION_MAX_AGE, setCookie } from "../../src/core/cookies";
+import { clearCookie, cookieSpec, FLASH_MAX_AGE, FLOW_MAX_AGE, hasCookieName, readCookie, SESSION_MAX_AGE, setCookie } from "../../src/core/cookies";
 
 const V = "cdw_" + "A".repeat(43);
 
 describe("cookieSpec", () => {
   it.each([
-    ["https://dist.example.test", { session: "__Host-cdl_s", flow: "__Host-cdl_f", secure: true }],
-    ["https://localhost:8787", { session: "__Host-cdl_s", flow: "__Host-cdl_f", secure: true }],
-    ["http://localhost:8787", { session: "cdl_s", flow: "cdl_f", secure: false }],
-    ["http://127.0.0.1:8787", { session: "cdl_s", flow: "cdl_f", secure: false }],
+    ["https://dist.example.test", { session: "__Host-cdl_s", flow: "__Host-cdl_f", flash: "__Host-cdl_flash", secure: true }],
+    ["https://localhost:8787", { session: "__Host-cdl_s", flow: "__Host-cdl_f", flash: "__Host-cdl_flash", secure: true }],
+    ["http://localhost:8787", { session: "cdl_s", flow: "cdl_f", flash: "cdl_flash", secure: false }],
+    ["http://127.0.0.1:8787", { session: "cdl_s", flow: "cdl_f", flash: "cdl_flash", secure: false }],
   ])("%s", (origin, want) => {
     expect(cookieSpec(origin)).toEqual(want);
   });
@@ -33,6 +33,21 @@ describe("setCookie·clearCookie", () => {
     expect(setCookie(https, "flow", "cdf_x")).toBe("__Host-cdl_f=cdf_x; Max-Age=600; Path=/; HttpOnly; SameSite=Lax; Secure");
     expect(setCookie(dev, "session", V)).toBe(`cdl_s=${V}; Max-Age=43200; Path=/; HttpOnly; SameSite=Lax`);
     expect(setCookie(dev, "flow", "cdf_x")).toBe("cdl_f=cdf_x; Max-Age=600; Path=/; HttpOnly; SameSite=Lax");
+  });
+
+  it("flash 역할: Max-Age=60, https는 __Host-cdl_flash + Secure, http는 cdl_flash", () => {
+    expect(FLASH_MAX_AGE).toBe(60);
+    expect(setCookie(https, "flash", "loggedIn")).toBe("__Host-cdl_flash=loggedIn; Max-Age=60; Path=/; HttpOnly; SameSite=Lax; Secure");
+    expect(setCookie(dev, "flash", "loggedIn")).toBe("cdl_flash=loggedIn; Max-Age=60; Path=/; HttpOnly; SameSite=Lax");
+    expect(clearCookie(https, "flash")).toBe("__Host-cdl_flash=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax; Secure");
+    expect(clearCookie(dev, "flash")).toBe("cdl_flash=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax");
+  });
+
+  it("세 역할의 이름은 서로 다르다(session·flow·flash)", () => {
+    for (const o of ["https://dist.example.test", "http://localhost:8787"]) {
+      const s = cookieSpec(o);
+      expect(new Set([s.session, s.flow, s.flash]).size).toBe(3);
+    }
   });
 
   it("지우기는 빈 값·Max-Age=0에 같은 속성(__Host-는 Secure가 있어야 지워진다)", () => {

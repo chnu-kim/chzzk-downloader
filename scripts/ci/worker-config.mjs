@@ -17,7 +17,8 @@
 //   그림자 파일     worker/에 wrangler.json·wrangler.toml(wrangler가 jsonc보다 먼저 고른다)·.wrangler/deploy/config.json
 //                   (리디렉트)·worker-configuration.d.ts(wrangler dev가 이 파일이 있으면 env 파일 없이 타입을 다시 만들며
 //                   실제 비밀값 파일을 연다, worker.md 구현 중 변경 9)·vitest.config.ts 밖의 vite/vitest 설정이 없다.
-//   package.json    런타임 의존성 0, devDependencies 정확 고정, wrangler = tools.json, packageManager = app/package.json.
+//   package.json    런타임 의존성 0, devDependencies 정확 고정, wrangler = tools.json, packageManager = app/package.json,
+//                   @playwright/test = tools.json playwright = app/package.json의 @playwright/test(design-worker, governance §2.6b).
 //                   알려진 스크립트(check·test·build·dev·e2e·dev:real)는 글자 그대로(EXPECTED_SCRIPTS). 모든 스크립트에서:
 //                   실제 비밀값 파일 이름과 dev:real 호출은 dev:real 밖에 없다, wrangler(경로·@버전·.js 포함)는 dev·types·deploy만이고 늘
 //                   --config wrangler.jsonc, dev·types는 --env-file(값은 .dev.vars.example, dev:real만 .dev.vars),
@@ -33,7 +34,7 @@
 //                        worker.md 구현 중 변경 5), .dev.vars.example 바인딩.
 //   소스            console.은 src/core/log.ts에서만, src/core/log를 값으로 import하는 곳은 LOG_IMPORTERS(routes.ts·store/AuthStore.ts)뿐
 //                   (나머지는 import type, worker.md 구현 중 변경 43), CI_VERIFY_TOKEN은 src/config.ts·src/http/release-auth.ts에서만,
-//                   src·test·scripts·설정에 실제 비밀값 파일 이름이 나오지 않는다(사용자가 직접 돌리는 scripts/channel-id-check.mjs·scripts/code-binding-check.mjs만 예외).
+//                   src·test·scripts·e2e(design-worker)·설정에 실제 비밀값 파일 이름이 나오지 않는다(사용자가 직접 돌리는 scripts/channel-id-check.mjs·scripts/code-binding-check.mjs만 예외).
 //   core 순수성     src/core/**의 원문 전체(주석 포함)에 cloudflare:(타입 import 포함)·../가 든 문자열(바깥 import)·전역 fetch·
 //                   Date.now가 없다. src/** 전체에 Math.random이 없다(난수는 crypto). worker.md 구현 중 변경 15.
 //   store 순수성    src/**에서 sql.exec는 src/store/db.ts에만, transactionSync(async …)는 어디에도 없다. src/store/** 중
@@ -54,6 +55,7 @@
 //                   키(name·private·packageManager·dependencies)와 의존성 wrangler 하나(= tools.json), 두 lockfile(worker·deploy)의
 //                   wrangler 버전이 tools.json과 같다. deploy/는 소스 검사(listFiles) 대상이 아니다(코드가 없다).
 //   생성 CSS        src/http/site-css.generated.ts(디자인 토큰 생성물)는 위 소스 검사에서 빼고 모양만 본다(checkGeneratedCss).
+//   생성 모듈 셋    src/http/{assets,licenses,help}.generated.ts(worker-gen.mjs 생성물)도 소스 검사에서 빼고 파일별 모양만 본다(checkGeneratedAssets·Licenses·Help). icons.generated.ts는 소스 검사 안에 둔다.
 //   --dist          dist/bundle-meta.json(esbuild metafile)의 입력이 모두 src/*.ts(런타임 의존성 0), dist/index.js 있음,
 //                   dist/wrangler.json이 있으면(W8 worker-bundle이 만든다) 금지 키·vars 규칙, 그리고 원본 wrangler.jsonc에서 main
 //                   (index.js)·no_bundle만 바꾼 것과 같다(deployConfig).
@@ -62,6 +64,7 @@
 //                   집합 = CONFIG_KEYS"가 잡는다). 로컬(CI 아님)에서는 아무것도 하지 않는다: 그 자리에 실제 FIFO가 있다.
 // 위반이 있으면 1, 사용법 오류 2.
 
+import { createHash } from 'node:crypto';
 import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, unlinkSync, writeFileSync } from 'node:fs';
 import { isDeepStrictEqual } from 'node:util';
 import { join, posix, resolve } from 'node:path';
@@ -152,12 +155,118 @@ export function checkGeneratedCss(text) {
   for (const bad of ['@import', 'url(']) if (m[1].includes(bad)) errs.push(`${GENERATED_CSS_FILE}: SITE_CSS에 ${bad}가 있다`);
   return errs;
 }
+
+// 디자인 생성기(scripts/design/worker-gen.mjs)가 쓰는 Worker 생성 모듈 셋(docs/design/system/governance.md §12 (e), 계약 §2.2). base64·라이선스 본문·
+// 도움말 글이 낱말 검사(list·put 등)에 우연히 걸리므로 소스 낱말 검사에서 빼고, 대신 모양을 줄 단위 문법으로 본다(checkGeneratedCss 선례).
+// icons.generated.ts는 소스 검사 안에 둔다(path 문자열뿐이다). 원천과 같은지는 worker-gen --check가 본다(여기서는 코드가 끼어들 자리가 없는지만).
+export const GENERATED_ASSETS_FILE = 'src/http/assets.generated.ts';
+export const GENERATED_LICENSES_FILE = 'src/http/licenses.generated.ts';
+export const GENERATED_HELP_FILE = 'src/http/help.generated.ts';
+export const GENERATED_MODULES = [GENERATED_CSS_FILE, GENERATED_ASSETS_FILE, GENERATED_LICENSES_FILE, GENERATED_HELP_FILE];
+
+// 생성 모듈 문자열에 들어가면 안 되는 것(CSP·템플릿 우회 길): 백틱·${·<script·<style·data:·<
+const GENERATED_BANNED = [
+  [/`/, '백틱'],
+  [/\$\{/, '${'],
+  [/<script/i, '<script'],
+  [/<style/i, '<style'],
+  [/data:/i, 'data:'],
+  [/</, '<'],
+];
+// JSON 문자열 리터럴(제어 문자 없음)
+const JSON_STR = String.raw`"(?:[^"\\\u0000-\u001f]|\\["\\/bfnrt]|\\u[0-9a-fA-F]{4})*"`;
+const HEADER_LINE = /^\/\/ [^\n]*$/;
+
+function generatedCommon(file, text) {
+  const errs = [];
+  for (const [re, name] of GENERATED_BANNED) if (re.test(text)) errs.push(`${file}: ${name}이(가) 있다(생성 모듈에는 코드·마크업이 낄 자리가 없다)`);
+  if (!text.endsWith('\n') || text.includes('\r')) errs.push(`${file}: 줄끝은 LF이고 파일은 줄바꿈으로 끝난다`);
+  return errs;
+}
+
+// assets.generated.ts: 머리 주석 한 줄 + `export const ASSETS = {` + 항목 줄(`  "이름": { type: "image/…", hash: "<16 hex>", b64: "<base64>" },`) + `} as const;`.
+// hash = SHA-256(디코드한 바이트) 앞 16 hex(다시 계산해 본다)
+export function checkGeneratedAssets(text) {
+  const file = GENERATED_ASSETS_FILE;
+  const errs = generatedCommon(file, text);
+  const lines = text.split('\n');
+  if (lines.at(-1) === '') lines.pop();
+  if (lines.length < 4 || !HEADER_LINE.test(lines[0]) || lines[1] !== 'export const ASSETS = {' || lines.at(-1) !== '} as const;') {
+    return [...errs, `${file}: 생성물 모양이 아니다(머리 주석 한 줄 + export const ASSETS = { … } as const; 만). node scripts/design/worker-gen.mjs --write assets로 다시 만든다`];
+  }
+  const entry = /^ {2}"([a-z0-9.-]+)": \{ type: "(image\/[a-z.+-]+)", hash: "([0-9a-f]{16})", b64: "([A-Za-z0-9+/]+={0,2})" \},$/;
+  const seen = new Set();
+  for (const [i, l] of lines.slice(2, -1).entries()) {
+    const m = entry.exec(l);
+    if (!m) {
+      errs.push(`${file}:${i + 3}: 에셋 항목 줄 모양이 아니다`);
+      continue;
+    }
+    if (seen.has(m[1])) errs.push(`${file}:${i + 3}: 에셋 이름 ${m[1]}이(가) 두 번 있다`);
+    seen.add(m[1]);
+    if (m[4].length % 4 !== 0) errs.push(`${file}:${i + 3}: base64 길이가 4의 배수가 아니다`);
+    const got = createHash('sha256').update(Buffer.from(m[4], 'base64')).digest('hex').slice(0, 16);
+    if (got !== m[3]) errs.push(`${file}:${i + 3}: ${m[1]}의 hash가 바이트의 SHA-256 앞 16 hex와 다르다`);
+  }
+  if (seen.size === 0) errs.push(`${file}: 에셋 항목이 없다`);
+  return errs;
+}
+
+// licenses.generated.ts: 머리 주석 한 줄 + 한 줄 `export const LICENSES = [{ name: "Lucide", text: "<JSON 문자열>" }] as const;`
+export function checkGeneratedLicenses(text) {
+  const file = GENERATED_LICENSES_FILE;
+  const errs = generatedCommon(file, text);
+  const shape = new RegExp(String.raw`^// [^\n]*\nexport const LICENSES = \[\{ name: "[A-Za-z ]+", text: ${JSON_STR} \}\] as const;\n$`);
+  if (!shape.test(text)) errs.push(`${file}: 생성물 모양이 아니다(머리 주석 한 줄 + export const LICENSES = [{ name, text: JSON 문자열 }] as const; 만). node scripts/design/worker-gen.mjs --write licenses로 다시 만든다`);
+  return errs;
+}
+
+// help.generated.ts: 머리 주석 한 줄 + `export const HELP = [` + 절(`  { id: "<id>", title: S, blocks: [` … `  ] },`) + `] as const;`.
+// 블록 줄은 `    { t: "p"|"pre", text: S },` 또는 `    { t: "ol", items: [S, …] },`(S = JSON 문자열). 절·블록이 하나 이상
+export function checkGeneratedHelp(text) {
+  const file = GENERATED_HELP_FILE;
+  const errs = generatedCommon(file, text);
+  const lines = text.split('\n');
+  if (lines.at(-1) === '') lines.pop();
+  const bad = () => [...errs, `${file}: 생성물 모양이 아니다(머리 주석 한 줄 + export const HELP = [ { id, title, blocks } … ] as const; 만). node scripts/design/worker-gen.mjs --write help로 다시 만든다`];
+  if (lines.length < 3 || !HEADER_LINE.test(lines[0]) || lines[1] !== 'export const HELP = [' || lines.at(-1) !== '] as const;') return bad();
+  const open = new RegExp(String.raw`^ {2}\{ id: "([a-z0-9-]+)", title: ${JSON_STR}, blocks: \[$`);
+  const textBlock = new RegExp(String.raw`^ {4}\{ t: "(?:p|pre)", text: ${JSON_STR} \},$`);
+  const olBlock = new RegExp(String.raw`^ {4}\{ t: "ol", items: \[${JSON_STR}(?:, ${JSON_STR})*\] \},$`);
+  const ids = new Set();
+  let inSection = false;
+  let blocks = 0;
+  let sections = 0;
+  for (const [i, l] of lines.slice(2, -1).entries()) {
+    const at = `${file}:${i + 3}`;
+    if (!inSection) {
+      const m = open.exec(l);
+      if (!m) return [...errs, `${at}: 절 시작 줄 모양이 아니다`];
+      if (ids.has(m[1])) errs.push(`${at}: id ${m[1]}이(가) 두 번 있다`);
+      ids.add(m[1]);
+      inSection = true;
+      blocks = 0;
+    } else if (l === '  ] },') {
+      if (blocks === 0) errs.push(`${at}: 블록이 없는 절이다`);
+      inSection = false;
+      sections++;
+    } else if (textBlock.test(l) || olBlock.test(l)) blocks++;
+    else return [...errs, `${at}: 블록 줄 모양이 아니다`];
+  }
+  if (inSection || sections === 0) return bad();
+  return errs;
+}
 export const TAURI_CONF = 'app/src-tauri/tauri.conf.json';
 // 실제 비밀값 파일을 직접 읽어도 되는 도구(사용자가 직접 돌리는 G-ID 확인 worker.md §15, code 묶임 실측 구현 중 변경 42)
 export const DEV_VARS_READERS = ['scripts/channel-id-check.mjs', 'scripts/code-binding-check.mjs'];
 
 // 배포용 wrangler 묶음(worker/deploy, release.yml worker-bundle·deploy-worker, cicd.md 구현 중 변경 W8)
 export const DEPLOY_PKG_NAME = 'chzzk-downloader-worker-deploy';
+// design-worker의 Playwright 패키지 이름(버전은 tools.json playwright = app/package.json = worker/package.json)
+export const PLAYWRIGHT_PKG = '@playwright/test';
+// design-worker(Playwright, Node)의 파일: 소스 낱말 검사(.dev.vars 이름·bidi)에 넣는다. 배포 번들에는 들어가지 않는다
+export const E2E_DIR = 'e2e';
+export const PLAYWRIGHT_CONFIG = 'playwright.config.ts';
 
 const LOOPBACK = new Set(['localhost', '127.0.0.1']);
 const isLoopbackHttp = (v) => {
@@ -302,11 +411,14 @@ function wranglerErrors(name, rest) {
   return errs;
 }
 
-export function checkPackage(pkg, { wrangler, packageManager } = {}) {
+export function checkPackage(pkg, { wrangler, packageManager, playwright, appPlaywright } = {}) {
   const errs = [];
   if (pkg.dependencies && Object.keys(pkg.dependencies).length) errs.push(`런타임 의존성은 0개다: ${Object.keys(pkg.dependencies).join(', ')}`);
   for (const [name, v] of Object.entries(pkg.devDependencies ?? {})) if (!EXACT.test(v)) errs.push(`devDependencies.${name}은 정확한 버전이어야 한다(지금 ${v})`);
   if (wrangler && pkg.devDependencies?.wrangler !== wrangler) errs.push(`wrangler ${pkg.devDependencies?.wrangler} ≠ tools.json ${wrangler}`);
+  // design-worker(docs/design/system/governance.md §2.6b): Worker 쪽 Playwright는 app과 같은 버전이고 tools.json playwright가 원천이다
+  if (playwright && pkg.devDependencies?.[PLAYWRIGHT_PKG] !== playwright) errs.push(`${PLAYWRIGHT_PKG} ${pkg.devDependencies?.[PLAYWRIGHT_PKG]} ≠ tools.json playwright ${playwright}`);
+  if (playwright && appPlaywright !== undefined && appPlaywright !== playwright) errs.push(`app/package.json ${PLAYWRIGHT_PKG} ${appPlaywright} ≠ tools.json playwright ${playwright}(app과 worker를 함께 올린다)`);
   if (packageManager && pkg.packageManager !== packageManager) errs.push(`packageManager ${pkg.packageManager} ≠ app/package.json ${packageManager}`);
   const scripts = pkg.scripts ?? {};
   for (const [name, want] of Object.entries(EXPECTED_SCRIPTS)) {
@@ -856,7 +968,13 @@ export function checkWorker(root) {
   if (pkgText !== null) {
     const tools = JSON.parse(readText(join(root, 'scripts/ci/tools.json'))).tools;
     const appPkg = readRegular(join(root, 'app/package.json'));
-    add('package.json', checkPackage(JSON.parse(pkgText), { wrangler: tools.wrangler?.version ?? '(tools.json에 wrangler 없음)', packageManager: appPkg ? JSON.parse(appPkg).packageManager : undefined }));
+    const app = appPkg ? JSON.parse(appPkg) : null;
+    add('package.json', checkPackage(JSON.parse(pkgText), {
+      wrangler: tools.wrangler?.version ?? '(tools.json에 wrangler 없음)',
+      packageManager: app?.packageManager,
+      playwright: tools.playwright?.version ?? '(tools.json에 playwright 없음)',
+      appPlaywright: app ? (app.devDependencies?.[PLAYWRIGHT_PKG] ?? '(없음)') : undefined,
+    }));
   }
   const ws = need('pnpm-workspace.yaml');
   if (ws !== null) add('pnpm-workspace.yaml', checkWorkspace(ws));
@@ -893,8 +1011,13 @@ export function checkWorker(root) {
   else if (copyTs !== null) errs.push(...checkLandingAppName(copyTs, tauriConf));
   const gen = readRegular(join(w, GENERATED_CSS_FILE));
   if (gen !== null) errs.push(...checkGeneratedCss(gen).map((m) => `${WORKER_DIR}/${m}`));
-  const files = [...listFiles(w, 'src'), ...listFiles(w, 'test'), ...listFiles(w, 'scripts'), 'vitest.config.ts', 'wrangler.jsonc', 'tsconfig.json']
-    .filter((rel) => rel !== GENERATED_CSS_FILE && existsSync(join(w, rel)))
+  // 생성 모듈 셋(assets·licenses·help): 있어야 하고 모양이 맞아야 한다(소스 낱말 검사에서는 뺀다)
+  for (const [rel, fn] of [[GENERATED_ASSETS_FILE, checkGeneratedAssets], [GENERATED_LICENSES_FILE, checkGeneratedLicenses], [GENERATED_HELP_FILE, checkGeneratedHelp]]) {
+    const g = need(rel);
+    if (g !== null) errs.push(...fn(g).map((m) => `${WORKER_DIR}/${m}`));
+  }
+  const files = [...listFiles(w, 'src'), ...listFiles(w, 'test'), ...listFiles(w, 'scripts'), ...listFiles(w, E2E_DIR), 'vitest.config.ts', PLAYWRIGHT_CONFIG, 'wrangler.jsonc', 'tsconfig.json']
+    .filter((rel) => !GENERATED_MODULES.includes(rel) && existsSync(join(w, rel)))
     .map((rel) => ({ rel, text: readRegular(join(w, rel)) }));
   errs.push(...checkSources(files).map((m) => `${WORKER_DIR}/${m}`));
   errs.push(...checkCorePurity(files).map((m) => `${WORKER_DIR}/${m}`));

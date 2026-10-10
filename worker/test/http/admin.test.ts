@@ -2,12 +2,13 @@
 // 관리자 판정, [허용] 즉시 로그인, [빼기]·[끊기] 지연 0.
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { newId, newSecret, sha256Hex } from "../../src/core/token";
+import { COPY } from "../../src/http/copy";
 import { LATEST_VIEW_CACHE } from "../../src/http/landing";
 import { SUMS_CACHE } from "../../src/http/releases";
 import { createFakeChzzk, type FakeChzzk } from "../fake-chzzk.mjs";
 import { installFakeChzzk, type FakeNet } from "../network";
 import { A1, ADMINS, B2, C3, D4 } from "../store/helpers";
-import { allowedChannel, appFlow, Browser, csrfIn, formBody, ORIGIN, resetStore, store, useClock, viaEnv, viaExports, webLoginHttp } from "./harness";
+import { allowedChannel, appFlow, Browser, csrfIn, formBody, h1Of, ORIGIN, resetStore, store, useClock, viaEnv, viaExports, webLoginHttp } from "./harness";
 import { DMG, seedDist, V2 } from "./release-fixture";
 
 let fake: FakeChzzk;
@@ -34,6 +35,7 @@ afterEach(() => {
 });
 
 const COOKIE_CLEAR = "cdl_s=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax";
+const ALREADY_DONE = "cdl_flash=alreadyDone; Max-Age=60; Path=/; HttpOnly; SameSite=Lax";
 
 interface Sess {
   readonly b: Browser;
@@ -88,7 +90,7 @@ describe("관리자 판정", () => {
     const res = await s.b.get("/admin");
     expect(res.status).toBe(403);
     expect(res.headers.get("Content-Type")).toBe("text/html; charset=utf-8");
-    expect(await res.text()).toContain("<h1>관리자만 볼 수 있어요</h1>");
+    expect(h1Of(await res.text())).toBe("관리자만 볼 수 있어요");
   });
 
   it("a1(관리자): 200, 섹션 제목 다섯 개, 허용목록의 관리자 행에는 [빼기]가 없다", async () => {
@@ -101,8 +103,10 @@ describe("관리자 판정", () => {
     for (const h of ["관리자", "허가한 채널", "거부된 시도", "활성 로그인", "감사 기록"]) expect(t).toContain(`<h2>${h}</h2>`);
     expect(t).toContain(`<span class="mono">${A1}</span>`);
     expect(t).toContain('<span class="muted">관리자</span>');
-    const disallowForms = [...t.matchAll(/action="\/admin\/disallow"[^]*?name="channelId" value="([0-9a-f]{32})"/g)].map((m) => m[1]);
-    expect(disallowForms).toEqual([B2]);
+    // [허가 빼기…]는 확인 페이지로 가는 링크이고(D54) 관리자 채널 행에는 없다. 최종 폼은 목록 화면에 없다
+    const links = [...t.matchAll(/href="\/admin\/([0-9a-f]{32})\/disallow"/g)].map((m) => m[1]);
+    expect(links).toEqual([B2]);
+    expect(t).not.toContain('action="/admin/disallow"');
   });
 
   it("부트스트랩: GET /admin 403, POST는 Origin이 틀려도 403 bootstrap", async () => {
@@ -110,7 +114,7 @@ describe("관리자 판정", () => {
     const b = new Browser(viaEnv({ ADMIN_CHANNEL_IDS: "" }));
     const get = await b.get("/admin");
     expect(get.status).toBe(403);
-    expect(await get.text()).toContain("<h1>아직 관리자가 정해지지 않았어요</h1>");
+    expect(h1Of(await get.text())).toBe("아직 관리자가 정해지지 않았어요");
     const res = await b.post("/admin/allow", { Origin: "http://evil.example.test" }, formBody({ channelId: C3 }));
     expect(res.status).toBe(403);
     expect(rejectedReasons(spy)).toEqual(["bootstrap"]);
@@ -306,6 +310,33 @@ describe("동작", () => {
     expect(await (await s.b.post("/admin/allow", undefined, formBody({ csrf: s.csrf }))).text()).not.toContain("요청을 읽지 못했어요.");
   });
 
+  it("allow: 채널 ID 형식 오류는 400 + 관리 화면 다시 그리기(오류 요약·입력값 채움), 아무것도 쓰지 않는다", async () => {
+    const s = await session("a1");
+    const before = (await adminSnapshot()).audit.length;
+    const res = await post(s, "/admin/allow", { channelId: "ABC<b>", note: "친구<i>" });
+    expect(res.status).toBe(400);
+    expect(res.headers.get("Content-Type")).toBe("text/html; charset=utf-8");
+    const t = await res.text();
+    expect(t).toMatch(/<title>오류: /);
+    const main = /<main [^>]*>([\s\S]*)<\/main>/.exec(t)?.[1] ?? "";
+    expect(main.startsWith('<section aria-labelledby="error-summary-title">')).toBe(true);
+    expect(main).toContain(`<a href="#allow-channel-id">${COPY.badChannelId}</a>`);
+    expect(t).toContain('id="allow-channel-id" name="channelId" value="ABC&lt;b&gt;"');
+    expect(t).toContain('aria-invalid="true"');
+    expect(t).toContain('aria-describedby="allow-channel-id-error"');
+    expect(t).toContain('value="친구&lt;i&gt;"');
+    expect(t).not.toContain("ABC<b>");
+    expect(h1Of(t)).toBe(COPY.adminLink);
+    expect((await adminSnapshot()).audit.length).toBe(before);
+  });
+
+  it("allow: 오류 화면은 쌓여 있던 flash를 그리지 않는다", async () => {
+    const s = await session("a1");
+    s.b.jar.set("cdl_flash", "alreadyDone");
+    const t = await (await post(s, "/admin/allow", { channelId: "zz" })).text();
+    expect(t).not.toContain(COPY.alreadyDone);
+  });
+
   it("allow: 메모 100자는 store가 64자로 자른다, 감사 기록이 남는다", async () => {
     const s = await session("a1");
     expect((await post(s, "/admin/allow", { channelId: C3, note: "가".repeat(100) })).status).toBe(303);
@@ -325,7 +356,7 @@ describe("동작", () => {
     const s = await session("a1");
     const res = await post(s, "/admin/disallow", { channelId: A1 });
     expect(res.status).toBe(409);
-    expect(await res.text()).toContain("<h1>관리자 채널은 뺄 수 없어요</h1>");
+    expect(h1Of(await res.text())).toBe("관리자 채널은 뺄 수 없어요");
     expect((await s.b.get("/admin")).status).toBe(200);
   });
 
@@ -334,13 +365,15 @@ describe("동작", () => {
     expect((await post(s, "/admin/disallow", { channelId: "zz" })).status).toBe(400);
   });
 
-  it("세션 끊기: 모르는 id·모양 밖은 404", async () => {
+  it("세션 끊기: 모르는 id는 멱등 303 + alreadyDone, 모양 밖은 404", async () => {
     const s = await session("a1");
-    expect((await post(s, `/admin/sessions/${newId()}/revoke`)).status).toBe(404);
+    const res = await post(s, `/admin/sessions/${newId()}/revoke`);
+    expect([res.status, res.headers.get("Location")]).toEqual([303, "/admin"]);
+    expect(res.headers.getSetCookie()).toEqual([ALREADY_DONE]);
     expect((await post(s, "/admin/sessions/abc/revoke")).status).toBe(404);
   });
 
-  it("거부 기록: [지우기] 303, 다시 하면 404", async () => {
+  it("거부 기록: [지우기] 303, 다시 하면 멱등 303 + alreadyDone(오류가 아니다)", async () => {
     const admin = await session("a1");
     fake.state.account = "c3";
     const web = await webLoginHttp(fake, "c3");
@@ -349,14 +382,119 @@ describe("동작", () => {
     const res = await post(admin, `/admin/denied/${C3}/dismiss`);
     expect([res.status, res.headers.get("Location")]).toEqual([303, "/admin"]);
     expect((await adminSnapshot()).denied).toEqual([]);
-    expect((await post(admin, `/admin/denied/${C3}/dismiss`)).status).toBe(404);
+    const again = await post(admin, `/admin/denied/${C3}/dismiss`);
+    expect([again.status, again.headers.get("Location")]).toEqual([303, "/admin"]);
+    expect(again.headers.getSetCookie()).toEqual([ALREADY_DONE]);
+    // 다음 GET /admin이 한 번 알린다
+    const page = await (await admin.b.get("/admin")).text();
+    expect(page).toContain(COPY.alreadyDone);
+    expect(await (await admin.b.get("/admin")).text()).not.toContain(COPY.alreadyDone);
   });
 
-  it("거부 기록이 없는 채널의 [허용]은 404, ID 모양 밖도 404", async () => {
+  it("거부 기록이 없는 채널의 [허용]은 멱등 303, ID 모양 밖은 404", async () => {
     const admin = await session("a1");
-    expect((await post(admin, `/admin/denied/${D4}/allow`)).status).toBe(404);
+    const res = await post(admin, `/admin/denied/${D4}/allow`);
+    expect([res.status, res.headers.get("Location"), res.headers.getSetCookie()]).toEqual([303, "/admin", [ALREADY_DONE]]);
     expect((await post(admin, "/admin/denied/zz/allow")).status).toBe(404);
     expect((await post(admin, "/admin/denied/zz/dismiss")).status).toBe(404);
+  });
+});
+
+describe("허가 빼기 확인 페이지(D54)", () => {
+  const confirmPath = (id: string) => `/admin/${id}/disallow`;
+
+  it("GET은 상태·감사 기록을 바꾸지 않고 200: 폼 1개·.tone-danger 1개·채움 버튼 0개·돌아가기는 a", async () => {
+    const s = await session("a1");
+    const before = JSON.stringify(await adminSnapshot());
+    const res = await s.b.get(confirmPath(B2));
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Content-Type")).toBe("text/html; charset=utf-8");
+    expect(res.headers.get("X-Robots-Tag")).toBe("noindex");
+    const t = await res.text();
+    const main = /<main [^>]*>([\s\S]*)<\/main>/.exec(t)?.[1] ?? "";
+    expect(h1Of(t)).toBe(COPY.confirmDisallow.title);
+    expect((main.match(/<form /g) ?? []).length).toBe(1);
+    expect((main.match(/tone-danger/g) ?? []).length).toBe(1);
+    expect(t).not.toContain("btn-primary");
+    expect(main).toContain(`<a href="/admin">${COPY.confirmDisallow.back}</a>`);
+    expect(main).toContain(`name="channelId" value="${B2}"`);
+    expect(csrfIn(t)).toBe(s.csrf);
+    // 본문: 허가한 채널의 이름과 활성 로그인 수
+    const row = (await adminSnapshot()).allowlist.find((r) => r.channelId === B2);
+    expect(t).toContain(COPY.confirmDisallow.body(row?.channelName ?? "—", row?.activeSessions ?? 0));
+    // 두 번 열어도, 그 사이에도 DO의 상태·감사 기록은 같다
+    await s.b.get(confirmPath(B2));
+    expect(JSON.stringify(await adminSnapshot())).toBe(before);
+    expect(await hasAllowed(B2)).toBe(true);
+  });
+
+  it("활성 로그인이 있는 채널이면 그 수가 본문에 든다", async () => {
+    const admin = await session("a1");
+    await session("b2");
+    const row = (await adminSnapshot()).allowlist.find((r) => r.channelId === B2);
+    expect(row?.activeSessions).toBeGreaterThan(0);
+    const t = await (await admin.b.get(confirmPath(B2))).text();
+    expect(t).toContain(COPY.confirmDisallow.body(row?.channelName ?? "—", row?.activeSessions ?? 0));
+  });
+
+  it("허가에 없는 채널: 멱등 303 /admin + alreadyDone", async () => {
+    const s = await session("a1");
+    const res = await s.b.get(confirmPath(C3));
+    expect([res.status, res.headers.get("Location"), res.headers.getSetCookie()]).toEqual([303, "/admin", [ALREADY_DONE]]);
+    expect(await (await s.b.get("/admin")).text()).toContain(COPY.alreadyDone);
+  });
+
+  it("관리자 채널은 409, 형식 밖은 404", async () => {
+    const s = await session("a1");
+    const res = await s.b.get(confirmPath(A1));
+    expect(res.status).toBe(409);
+    expect(h1Of(await res.text())).toBe(COPY.isAdmin.title);
+    expect((await s.b.get(confirmPath("zz"))).status).toBe(404);
+    expect((await s.b.get(confirmPath("A".repeat(32)))).status).toBe(404);
+  });
+
+  it("adminPage와 같은 순서: 세션 없음 303 /, 형식 밖 쿠키는 지움, 관리자 아님 403, 부트스트랩 403", async () => {
+    const none = await new Browser().get(confirmPath(B2));
+    expect([none.status, none.headers.get("Location")]).toEqual([303, "/"]);
+    const bad = await new Browser().get(confirmPath(B2), { Cookie: "cdl_s=garbage" });
+    expect([bad.status, bad.headers.getSetCookie()]).toEqual([303, [COOKIE_CLEAR]]);
+    const member = await session("b2");
+    const res = await member.b.get(confirmPath(B2));
+    expect(res.status).toBe(403);
+    expect(h1Of(await res.text())).toBe("관리자만 볼 수 있어요");
+    const boot = await new Browser(viaEnv({ ADMIN_CHANNEL_IDS: "" })).get(confirmPath(B2));
+    expect(boot.status).toBe(403);
+    expect(h1Of(await boot.text())).toBe("아직 관리자가 정해지지 않았어요");
+  });
+
+  it("세션 없음·형식 밖 채널 ID여도 세션 검사가 먼저다(형식 밖 값은 로그인한 관리자에게만 404)", async () => {
+    const res = await new Browser().get(confirmPath("zz"));
+    expect([res.status, res.headers.get("Location")]).toEqual([303, "/"]);
+  });
+
+  it("최종 POST /admin/disallow는 Origin·csrf를 그대로 검사하고 성공하면 303", async () => {
+    const s = await session("a1");
+    // 확인 페이지에서 읽은 csrf로 최종 단계를 보낸다
+    const csrf = csrfIn(await (await s.b.get(confirmPath(B2))).text()) ?? "";
+    const evil = await s.b.post("/admin/disallow", { Origin: "http://evil.example.test" }, formBody({ csrf, channelId: B2 }));
+    expect(evil.status).toBe(403);
+    const noCsrf = await s.b.post("/admin/disallow", undefined, formBody({ channelId: B2 }));
+    expect(noCsrf.status).toBe(403);
+    expect(await hasAllowed(B2)).toBe(true);
+    const ok = await s.b.post("/admin/disallow", undefined, formBody({ csrf, channelId: B2 }));
+    expect([ok.status, ok.headers.get("Location")]).toEqual([303, "/admin"]);
+    expect(await hasAllowed(B2)).toBe(false);
+    // 이미 뺐다: 같은 최종 POST를 다시 보내면 멱등 303 + alreadyDone
+    const again = await s.b.post("/admin/disallow", undefined, formBody({ csrf, channelId: B2 }));
+    expect([again.status, again.headers.get("Location"), again.headers.getSetCookie()]).toEqual([303, "/admin", [ALREADY_DONE]]);
+  });
+
+  it(".tone-danger는 확인 페이지 응답에만 있다(관리 화면·안내 페이지에는 없다)", async () => {
+    const s = await session("a1");
+    for (const path of ["/admin", "/", confirmPath(A1), confirmPath("zz")]) {
+      expect([path, (await (await s.b.get(path)).text()).includes("tone-danger")]).toEqual([path, false]);
+    }
+    expect((await (await s.b.get(confirmPath(B2))).text()).includes("tone-danger")).toBe(true);
   });
 });
 
@@ -408,11 +546,11 @@ describe("관리 POST의 경계(구현 중 변경 38 (카))", () => {
     expect(reasons).toEqual(["is_admin"]);
   });
 
-  it("허용목록에 없는 채널 [빼기]: 404, 감사 행이 생기지 않는다", async () => {
+  it("허용목록에 없는 채널 [빼기]: 멱등 303 + alreadyDone, 감사 행이 생기지 않는다", async () => {
     const admin = await session("a1");
     const before = await auditOf();
     const res = await post(admin, "/admin/disallow", { channelId: C3 });
-    expect(res.status).toBe(404);
+    expect([res.status, res.headers.get("Location"), res.headers.getSetCookie()]).toEqual([303, "/admin", [ALREADY_DONE]]);
     expect(await auditOf()).toEqual(before);
   });
 

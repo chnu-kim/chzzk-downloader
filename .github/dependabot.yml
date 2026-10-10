@@ -79,5 +79,9 @@ updates:
         patterns: [wrangler, "@cloudflare/*"]
       msw:
         patterns: [msw, "@msw/*"]
+      # design-worker(Worker 정적 HTML 스냅샷)의 Playwright·axe는 app과 같은 버전이어야 한다(worker-config.mjs가 app = worker =
+      # tools.json playwright를 본다). 그룹은 /app 항목과 넘나들지 못해 PR이 둘로 온다: 하나만 빨개지면 둘과 tools.json을 함께 올린다
+      playwright:
+        patterns: ["@playwright/test", axe-core]
       npm:
         update-types: [minor, patch]

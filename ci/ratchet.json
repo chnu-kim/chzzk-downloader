@@ -27,14 +27,14 @@
     "binary": {
       "linux": 34816368,
       "darwin": 23809376,
-      "windows": 20665344
+      "windows": 21329920
     },
     "bundle": {
       "linux-AppImage": 86813176,
       "linux-deb": 10383998,
       "darwin-dmg": 7748531,
       "windows-setup": 4945876,
-      "windows-msi": 7319552
+      "windows-msi": 7540736
     },
     "tolerance_pct": 3
   },

@@ -30,3 +30,5 @@
 | 2026-10-10 | `size.binary.linux` | 33581280 → 34816368 | 디자인 시스템 단계 (f)(governance §10 (f) ratchet 칸): window-state 2.4.1·keepawake·windows/webview2-com 크레이트와 프런트 연결 대기·잠자기 방지·미달 엔진·메뉴·가드 코드(PR #72 실행 38061272721의 CI 측정값, +3.68%) |
 | 2026-10-10 | `size.bundle.linux-deb` | 10046698 → 10383998 | 디자인 시스템 단계 (f)(governance §10 (f) ratchet 칸): 같은 증가분(window-state·keepawake 등)이 deb에 반영됨(실행 38061272721의 CI 측정값, +3.36%) |
 | 2026-10-10 | `size.dist_gz` | 73316 → 76248 | 디자인 시스템 단계 (f)(governance §10 (f) ratchet 칸): 프런트 연결 대기·잠자기 방지·미달 엔진 안내·메뉴·가드 화면과 copy deck 문구(단일 JS 청크, 테스트 데이터·중복 혼입 없음 확인, 실행 38061272721의 CI 측정값, +4.00%) |
+| 2026-10-11 | `size.binary.windows` | 20665344 → 21329920 | 디자인 시스템 단계 (f)(governance §10 (f) ratchet 칸): window-state·keepawake·windows/webview2-com 크레이트와 WebView2 보강. Windows 번들은 PR에서 돌지 않아 master 실행 38087544439의 CI 측정값(+3.22%)으로 올린다 |
+| 2026-10-11 | `size.bundle.windows-msi` | 7319552 → 7540736 | 같은 증가분이 msi에 반영됨(master 실행 38087544439의 CI 측정값, +3.02%) |

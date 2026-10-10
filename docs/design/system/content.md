@@ -152,7 +152,7 @@
 
 ### 5.2 다른 창을 여는 버튼
 
-확인 대화상자·파일 선택창·다른 화면을 여는 버튼은 라벨 끝에 말줄임표(U+2026) 하나를 붙인다: **[취소…] [덮어쓰고 받기…] [변경…] [폴더 고르기…] [로그아웃…] [허가 빼기…] [네이버 로그인 정보 넣기…]**. 즉시 실행되는 버튼에는 붙이지 않는다([받기] [이어받기] [일시정지], 대기 항목의 [취소]). 같은 동작이 상태에 따라 창을 열기도 하고 안 열기도 하면 키를 둘로 나눈다(`action.cancel` / `action.cancelQueued`). 근거 HIG(brief §6.10-6), `J-F-C8`([변경]·[로그아웃] 말줄임 누락 교정). 강제 `frontend`(Dialog를 여는 버튼의 라벨 끝 `…` 테스트), `design-copy`(`…` 허용 위치, §6.3).
+확인 대화상자·파일 선택창·다른 화면을 여는 버튼은 라벨 끝에 말줄임표(U+2026) 하나를 붙인다: **[취소…] [덮어쓰고 받기…] [변경…] [폴더 고르기…] [로그아웃…] [허가 빼기…] [네이버 로그인 정보 넣기…]**. 즉시 실행되는 버튼에는 붙이지 않는다([받기] [이어받기] [일시정지], 대기 항목의 [취소]). 같은 동작이 상태에 따라 창을 열기도 하고 안 열기도 하면 키를 둘로 나눈다(`action.cancel` / `common.cancel`). 근거 HIG(brief §6.10-6), `J-F-C8`([변경]·[로그아웃] 말줄임 누락 교정). 강제 `frontend`(Dialog를 여는 버튼의 라벨 끝 `…` 테스트), `design-copy`(`…` 허용 위치, §6.3).
 
 ### 5.3 대화상자 버튼 라벨
 
@@ -385,9 +385,9 @@
 | 알림 | 키 | 제목(구두점 없음) | 본문 |
 |---|---|---|---|
 | 완료 | `notify.completed` | **다운로드를 마쳤어요** | 정리된 영상 제목(40자소) |
-| 완료 묶음 | `notify.completedMany` | 다운로드를 마쳤어요 | {첫 제목} 외 {n}개 |
+| 완료 묶음 | `notify.many` | 다운로드를 마쳤어요 | {첫 제목} 외 {n}개 |
 | 실패 | `notify.failed` | **다운로드를 마치지 못했어요** | 정리된 영상 제목 |
-| 실패 묶음 | `notify.failedMany` | 다운로드를 마치지 못했어요 | {첫 제목} 외 {n}개 |
+| 실패 묶음 | `notify.many` | 다운로드를 마치지 못했어요 | {첫 제목} 외 {n}개 |
 | 받기가 멈춤(연결 대기 상한 초과) | `notify.stalled` | **받기가 멈췄어요** | 정리된 영상 제목 |
 | 전원 사유(OS 전원 관리 화면에만) | `power.reason` | — | 치지직 영상 {n}개 받는 중 |
 
@@ -457,7 +457,8 @@
 | `action.reenterCookies` | 로그인 정보 다시 넣기 | **네이버 로그인 정보 다시 넣기…** | `G-PRIVACY-R22`, §5.2 |
 | `toast.completed` | '{title}' 다운로드를 마쳤어요 | **‘{title}’ 다운로드를 마쳤어요** | §6.4 |
 | (신설) `toast.removed`·`toast.removedMany`·`toast.signedIn` | 목록에서 지웠어요. 파일은 그대로예요 | **목록에서 지웠어요** [되돌리기] / **완료 항목 {n}개를 목록에서 지웠어요** [되돌리기] / **‘{channelName}’ 채널로 로그인했어요** | §3.2(토스트 한 문장. "파일은 그대로"는 `list.clearFinished.help`에) |
-| (신설) `action.cancelQueued`·`action.copyReport`·`filename.reset`·`drop.hint`·`clipboard.suggest`·`blocked.kind`·`circuit.open` | — | **취소**(대기 항목) / **문제 보고용 정보 복사** / **원래 이름으로** / **여기에 놓으면 불러와요** / **복사한 주소가 있어요** / **지금 받을 수 없는 종류예요: {kind}** / **치지직이 바뀐 것 같아요 · 영상 {n}개를 연달아 읽지 못했어요** | §5.2, §8(콜론 후치), `patterns.md` |
+| (신설) `common.cancel`·`action.copyReport`·`filename.reset`·`url.dropHere`·`url.clipboard.title` | — | **취소**(대기 항목, 말줄임 없음) / **문제 보고용 정보 복사** / **원래 이름으로** / **여기에 놓으면 불러와요** / **복사한 주소가 있어요** | §5.2, §8(콜론 후치), `patterns.md` |
+| (신설, deck에 두지 않음) 종류 차단 B5 문구·연속 실패 차단 문구 | — | **지금 받을 수 없는 종류예요: {kind}** / **치지직이 바뀐 것 같아요 · 영상 {n}개를 연달아 읽지 못했어요** | 기능(종류 차단·`CIRCUIT_FAILURES`)이 (f) 이후라 키 이름을 정하지 않는다. 그때 §2 이름 규칙으로 정해 deck에 둔다 |
 | (신설) `dialog.overwrite.*`·`dialog.metered.*` | — | §5.3 표 D7·D6 | §5.3 |
 | `toast.copied` | 복사했어요 | `action.copied` **복사했어요**(버튼 라벨 전환) | D37 |
 | `toast.copyFailed` | 복사하지 못했어요. 다시 시도해 주세요. | **복사하지 못했어요** | §3.2, §9.2-2 |
@@ -468,7 +469,7 @@
 | `dialog.cancel.title` | 다운로드를 취소할까요? | **‘{title}’ 받기를 취소할까요?** | D46, §5.3 |
 | `dialog.cancel.body` | 지금까지 받은 {size}도 함께 지워져요. | **{size}까지 받았어요. 취소하면 받다 만 파일이 지워지고 되돌릴 수 없어요.** | judgment §2.3-2 |
 | `dialog.cancel.back` | 돌아가기 | `dialog.cancel.keepRunning` **계속 받기** / `dialog.cancel.keepPaused` **그대로 두기** | §5.3 |
-| `dialog.legacy.body`·`dialog.legacy.cookies` | …최근 VOD {n}개{cookies}를 가져올까요? / , 네이버 로그인 정보 | `dialog.legacy.title` **예전 설정을 가져올까요?** / `dialog.legacy.body` **예전 치지직 다운로더에서 찾은 것이에요.** + `ul`: `dialog.legacy.item.folder` **저장 폴더** / `item.recent` **최근 영상 {n}개** / `item.cookies` **네이버 로그인 정보** | §2 조각, §8 |
+| `dialog.legacy.body`·`dialog.legacy.cookies` | …최근 VOD {n}개{cookies}를 가져올까요? / , 네이버 로그인 정보 | `dialog.legacy.title` **예전 설정을 가져올까요?** / `dialog.legacy.body` **예전 치지직 다운로더에서 찾은 것이에요.** + `ul`: `dialog.legacy.item.folder` **저장 폴더** / `dialog.legacy.item.recent` **최근 영상 {n}개** / `dialog.legacy.item.cookies` **네이버 로그인 정보** | §2 조각, §8 |
 | `dialog.logout.body` | 받는 중인 다운로드는 계속돼요. 다시 쓰려면 치지직으로 로그인해야 해요. | **받는 중인 영상은 계속 받아요. 다시 쓰려면 치지직으로 다시 로그인해야 해요.** | §4 |
 | `dialog.logout.cancel` | 취소 | `dialog.logout.keep` **로그인 유지** | §5.3 |
 | `settings.storage` | 저장 | **저장 위치** | §4 |
@@ -477,18 +478,18 @@
 | `settings.segments` | 빠른 다시보기 연결 수 | **한 번에 받는 조각 수** | §4 |
 | `settings.segments.help` | … 네트워크를 더 많이 써요. | **빠른 다시보기는 영상을 작은 조각으로 나눠 받아요. 숫자가 클수록 빠르지만 인터넷을 더 많이 써요.** | §4 |
 | `settings.autoResume` | 앱을 열면 멈춘 다운로드를 자동으로 이어받기 | **앱을 열면 받다 만 영상을 자동으로 이어받기** | §4 |
-| (신설) `settings.keepAwake`·`settings.keepAwake.help` | — | **받는 동안 컴퓨터가 잠들지 않게 하기** / **끄면 한동안 자리를 비울 때 받기가 멈출 수 있어요. 화면은 꺼져도 돼요.** | D40 |
+| (신설, (f) 전까지 deck에 두지 않음) 잠자기 방지 토글 라벨·도움말 | — | **받는 동안 컴퓨터가 잠들지 않게 하기** / **끄면 한동안 자리를 비울 때 받기가 멈출 수 있어요. 화면은 꺼져도 돼요.** | D40. 설정 토글의 백엔드가 (f)라 화면에 쓰이지 않는 키를 두지 않는다(DC11). (f)에서 `settings.keepAwake`·`settings.keepAwake.help`로 deck에 둔다 |
 | `settings.cookie.title` | 고급: 네이버 로그인 정보 | **네이버 로그인 정보**("고급"은 펼침 그룹 머리 `settings.advanced` **고급**) | §6.5 콜론 |
 | `settings.cookie.why` | …쿠키 두 개를 넣으면 이 컴퓨터에만 저장되고, 치지직 영상 정보를 조회할 때만 쓰여요. | **연령 제한이나 구독자 전용 영상은 네이버에 로그인한 상태여야 받을 수 있어요. 브라우저에서 복사한 네이버 로그인 쿠키 두 개를 넣으면 이 컴퓨터의 설정 폴더에만 저장하고, 치지직 영상 정보를 불러올 때만 써요.** | §3.1-4, §4(조회), `G-PRIVACY-R23` |
 | `settings.cookie.danger` | 이 값은 비밀번호와 같아요. 다른 사람에게 보여 주지 마세요. 네이버에서 로그아웃하면… | **이 값은 비밀번호 없이 로그인된 상태 그 자체예요. 개발자나 관리자는 이 값을 묻지 않아요. 보내 달라는 메시지를 받으면 사기예요. 네이버에서 로그아웃하면 값이 만료돼 다시 넣어야 해요.** | §11, `G-PRIVACY-R4` |
 | `settings.cookie.use` | 로그인 정보 사용 | **네이버 로그인 정보 사용** | `G-PRIVACY-R22` |
 | `settings.cookie.clear` | 지우기 | **값 지우기** | §5.1 |
-| `settings.cookie.howto.steps` | 1. … 2. … 3. … 4. … | `ol`: `howto.step1` **브라우저에서 chzzk.naver.com에 로그인해 주세요** / `step2` **개발자 도구를 열어 주세요: {devtools}**(`{devtools}`는 `platform.md` §20: macOS ⌥⌘I / 그 외 F12) / `step3` **‘애플리케이션(Application)’ › ‘쿠키’에서 https://chzzk.naver.com 항목을 열어 주세요** / `step4` **{cookieA}와 {cookieB}의 값을 각각 복사해 붙여넣어 주세요** | §2 ol, §3.1-1, §6.5 ›, 검토 U-29 |
+| `settings.cookie.howto.steps` | 1. … 2. … 3. … 4. … | `ol`: `settings.cookie.howto.step1` **브라우저에서 chzzk.naver.com에 로그인해 주세요** / `settings.cookie.howto.step2` **개발자 도구를 열어 주세요: {devtools}**(`{devtools}`는 `platform.md` §20: macOS ⌥⌘I / 그 외 F12) / `settings.cookie.howto.step3` **‘애플리케이션(Application)’ › ‘쿠키’에서 https://chzzk.naver.com 항목을 열어 주세요** / `settings.cookie.howto.step4` **{cookieA}와 {cookieB}의 값을 각각 복사해 붙여넣어 주세요** | §2 ol, §3.1-1, §6.5 ›, 검토 U-29 |
 | `settings.legacy.body` | …설정과 최근 VOD를 가져와요. | **예전 치지직 다운로더(명령줄 버전)의 설정과 최근 영상을 가져와요.** | §4 |
 | `settings.legacy.pick` | 폴더 선택해서 가져오기 | **폴더 고르기…** | §5.1·§5.2 |
 | `settings.about.version` | 버전 {app} (코어 {core}) | **버전 {app}** | D57 |
 | `settings.about.checking` | 업데이트를 확인하는 중이에요… | **업데이트 확인 중** | §3.1-2 |
-| `settings.about.checkFailed`·`checkOffline`·(신설) `upToDate` | 두 문장 / 로그인 서버에 연결할 수 없어… | `settings.about.checkFailed` **업데이트를 확인하지 못했어요** + `checkFailed.help` **지금 버전은 계속 쓸 수 있어요.** / `settings.about.upToDate` **최신 버전이에요** | §4(서버), D57 |
+| `settings.about.checkFailed`·`checkOffline`·(신설) `upToDate` | 두 문장 / 로그인 서버에 연결할 수 없어… | `settings.about.checkFailed` **업데이트를 확인하지 못했어요** + `common.keepUsing` **지금 버전은 계속 쓸 수 있어요.**(`update.failed`의 도움말과 같은 키, §2) / `settings.about.upToDate` **최신 버전이에요** | §4(서버), D57 |
 | (신설) `settings.about.notice`·`settings.about.copyright`·`settings.about.privacy`·`settings.about.licenses` | — | §11 상수 / **개인정보 처리방침** / **오픈소스 라이선스** | brief §6.14-4 |
 | (신설) `account.scope`·`account.lastSeen`·`account.offline` | — | **허가받은 채널이에요** / **마지막 확인 {time}** / **오프라인 · {until}까지 사용 가능** | C8, §4 |
 | `auth.intro`(제목은 `auth.signedOut.title` "로그인이 필요해요", 유지) | 허가된 채널만 사용할 수 있어요. 치지직 계정으로 로그인하세요. | `auth.intro` **허가받은 채널만 쓸 수 있어요. 치지직 계정으로 로그인해 주세요.** + `auth.consent`(§11) + `auth.privacy` **개인정보 처리방침** | §3.1-1, §11 |
@@ -510,7 +511,7 @@
 | `auth.runningNote` | 받는 중·대기 중인 다운로드 {n}개는 계속 받아요. 멈추려면 앱을 닫으세요. … | **받는 중이거나 대기 중인 영상 {n}개는 계속 받아요. 일시정지하려면 앱을 닫아 주세요. 다음에 로그인하면 이어받을 수 있어요.** | §3.1-1, §4 |
 | `update.banner` | 새 버전 {version}이 있어요. | **새 버전이 있어요: {version}** | D46 |
 | `update.installing`·(신설) `update.downloading` | 설치하고 다시 시작해요… | **설치하고 다시 시작하는 중** / **업데이트 받는 중 · {percent}** | §3.1-2 |
-| `update.failed` | 업데이트하지 못했어요. 잠시 뒤 다시 시도해 주세요. | **업데이트하지 못했어요** + `update.failed.help` **지금 버전은 계속 쓸 수 있어요.** | §3.2, D57 |
+| `update.failed` | 업데이트하지 못했어요. 잠시 뒤 다시 시도해 주세요. | **업데이트하지 못했어요** + `common.keepUsing` **지금 버전은 계속 쓸 수 있어요.**(`settings.about.checkFailed`의 도움말과 같은 키, §2) | §3.2, D57 |
 | `update.untrusted` | 업데이트 주소를 확인할 수 없어 받지 않았어요. | **업데이트 파일을 확인할 수 없어 받지 않았어요** | §6.1 |
 | (신설, 단계 (c)) `platform.mac.paste`·`platform.other.paste` | — | **⌘V** / **Ctrl+V**(`url.pasteHint`의 `{paste}`) | §2 `platform.*`, DC9 |
 | (신설, 단계 (c)) `platform.mac.submit`·`platform.other.submit` | — | **⌘↩** / **Ctrl+Enter**([받기] `kbd`) | DC9 |
@@ -570,9 +571,11 @@
 | `loginTitle`·`loginContinue` | 치지직 다운로더 로그인 / 계속 | 유지(`web.md` §6.4) | — |
 | `outdatedApp`(옛 앱 안내, `worker.md` 88 (가) 미끼 페이지) | 앱이 오래됐어요. 랜딩에서 새 버전을 받아 설치해 주세요. | 제목 `outdatedApp.title` **앱을 업데이트해야 해요** / 본문 `outdatedApp.body` **이 사이트 첫 화면에서 새 버전을 받아 설치해 주세요.** + 링크 **처음으로**("랜딩"은 내부 말이다) | §4(쉬운 말), §9.2-9(상태별 제목), `web.md` §6.2 · **확정(2026-10-10 사용자)**: 반영은 적용 단계 (d) |
 | `noticeTitle` | 안내 | 삭제 → 상태별 제목: `linkGone.title` **로그인 주소가 만료됐어요** / `linkUsed.title` **이미 사용한 로그인 주소예요** / `badRequest.title` **요청을 확인할 수 없어요** / `rateLimited.title` **요청이 너무 많아요** / `busy.title` **지금은 로그인 요청이 많아요** | §9.2-9 |
-| `linkGone`·`linkUsed` | 이 로그인 링크는 만료됐거나 잘못됐어요. … | 본문 **앱에서 다시 로그인해 주세요.** | §4 |
+| `linkGone`·`linkUsed` | 이 로그인 링크는 만료됐거나 잘못됐어요. … | 본문 `linkGone.body` **앱에서 다시 로그인해 주세요.**(`linkUsed`도 이 본문을 쓴다: `linkUsed.body` 키를 만들지 않는다, §2 같은 문구는 키 하나) | §4 |
 | `badOrigin`·`badCsrf` | (동일 문자열 2키) | `badRequest.body` **페이지를 새로 연 뒤 다시 시도해 주세요.** | §2 키 |
-| `rateLimited`·`busy` | 요청이 너무 잦아요. 잠시 뒤에 … | 본문 **잠시 뒤 다시 시도해 주세요.**(제목이 이유) | §3.1-7 |
+| `rateLimited`·`busy` | 요청이 너무 잦아요. 잠시 뒤에 … | 본문 `retryLater.body` **잠시 뒤 다시 시도해 주세요.**(제목이 이유, 두 상태가 한 키를 쓴다) | §3.1-7 |
+| (신설) `adminOnly.title`·`badFormat.title` | — | 관리자 아님(403) `adminOnly.title` **관리자만 볼 수 있어요** / 형식 오류(400·415) `badFormat.title` **요청 형식이 맞지 않아요**(본문은 상황별: `badBody` 요청을 읽지 못했어요. / `badChannelId`) | `web.md` §6.2(현재 `notAdmin`·`unsupportedType`·`badBody`에서 제목과 본문을 가른다) |
+| (신설) `notFound.title`·`notFound.body`·`isAdmin.title`·`bootstrapAdmin.title` | `notFound` 대상을 찾지 못했어요. 이미 처리됐을 수 있어요. / `isAdmin` 관리자 채널은 뺄 수 없어요. / `bootstrapAdmin` 아직 관리자가 정해지지 않았어요. | `notFound.title` **대상을 찾지 못했어요** + `notFound.body` **이미 처리됐을 수 있어요.** / `isAdmin.title` **관리자 채널은 뺄 수 없어요** / `bootstrapAdmin.title` **아직 관리자가 정해지지 않았어요**(셋 다 본문 없음 또는 둘째 문장) | §9.2-9(상태별 제목). 명세가 값을 따로 정하지 않아 현재 문장을 제목과 본문으로 가르기만 했다 |
 | `signedInAs` | {name} 채널로 로그인했어요. | **‘{name}’ 채널로 로그인했어요.** | §6.4 |
 | `landingTitle`·`siteTitle` | 다운로드 / 치지직 다운로더 — 비공식 VOD·클립 다운로더 | 삭제(h1은 `siteName`) / **치지직 다운로더 — 비공식 다시보기·클립 다운로더** | §4 |
 | `downloadsTitle` | 설치 파일 | 유지. 버튼 **{os}용 받기** | D42 |
@@ -581,20 +584,21 @@
 | `macDamaged` | …손상되어 열 수 없다는 경고가 나와도 휴지통으로 옮기지 마세요. … 아래 순서대로 해 주세요. | **처음 열 때 앱이 손상돼 열 수 없다는 경고가 나와도 휴지통으로 옮기지 마세요. Apple 공증을 받지 않은 앱이라 macOS가 막는 거예요. 앱이 문제라는 뜻이 아니에요. 아래 순서대로 해 주세요.** | §3.1-5, judgment C D55 |
 | `macMove`·`macTerminal`·`macReopen` | 1. … 2. … 3. … | `ol` 항목(번호 없음): **받은 .dmg를 열고 앱을 ‘응용 프로그램’ 폴더로 옮겨 주세요.** / **터미널을 열고 아래 명령을 붙여넣어 실행해 주세요.** / **응용 프로그램 폴더에서 앱을 다시 열어 주세요.** + `macXattrNote` §11 | §2 ol |
 | `winSmartScreen`·`winSac` | Windows의 PC 보호 창이 뜨면 [추가 정보] → [실행]을 눌러 주세요. | **Windows의 ‘PC 보호’ 창이 뜨면 ‘추가 정보’를 누른 뒤 ‘실행’을 눌러 주세요.** / `winSac`(경고 Notice, 단계 앞) **스마트 앱 컨트롤이 켜져 있으면 설치할 수 없어요. 끄면 다시 켤 수 없으니 관리자에게 먼저 물어 주세요.** | §12-5, §6.5, 검토 U-37 |
-| `colCreated`·`colLastSeen`·`colAddedAt`·`colFirstAt`·`colLastAt`·`colAt` | …(KST) | **로그인한 시각** / **마지막 확인** / **추가한 시각** / **처음** / **마지막** / **시각** + `caption` 끝 **시각은 한국 시간이에요.** | §7 |
-| `adminsNote` | 관리자는 Worker secret ADMIN_CHANNEL_IDS에서만 바꿀 수 있어요. | **관리자는 서버 설정에서만 바꿀 수 있어요.** | §6.6 |
-| `allowTitle`·`allowEmpty`·`allow`·`disallow`·`audit.allow`·`audit.disallow`·`adminNoAllow` | 허용 채널 / 허용된 채널이 없어요. / 허용 / 빼기 / 허용 / 허용 빼기 / …허용목록… | **허가한 채널** / **허가한 채널이 없어요.** / **허가** / **허가 빼기…** / **허가** / **허가 빼기** / **관리자 채널은 허가 목록에 넣지 않아요. 관리자 설정에서만 정해요.** | §4 |
-| `audit.revoke_session` | 세션 끊기 | **로그인 끊기** | §4(세션) |
+| `colCreated`·`colLastSeen`·`colAddedAt`·`colFirstAt`·`colLastAt`·`colAt` | …(KST) | **로그인한 시각** / **마지막 확인** / **추가한 시각** / **처음** / **마지막** / **시각** + `caption`의 `tableTimeNote` **시각은 한국 시간이에요.**(시각 열이 있는 표마다 한 번) | §7 |
+| `adminsNote` | 관리자는 Worker secret ADMIN_CHANNEL_IDS에서만 바꿀 수 있어요. | `adminsNote` **관리자는 서버 설정에서만 바꿀 수 있어요.** | §6.6 |
+| `allowTitle`·`allowEmpty`·`allow`·`disallow`·`audit.allow`·`audit.disallow`·`adminNoAllow` | 허용 채널 / 허용된 채널이 없어요. / 허용 / 빼기 / 허용 / 허용 빼기 / …허용목록… | **허가한 채널** / **허가한 채널이 없어요.** / **허가** / **허가 빼기…** / **허가** / **허가 빼기** / `adminNoAllow.title` **관리자 채널은 허가 목록에 넣지 않아요** + `adminNoAllow.body` **관리자 설정에서만 정해요.**(오류 페이지라 제목과 본문으로 가른다) | §4 |
+| `audit.revoke_session` | 세션 끊기 | `audit.revoke_session` **로그인 끊기** | §4(세션) |
+| `colActive`(섹션 제목도 이 키를 쓴다, §19-14)·`sessionsEmpty`·`audit.refresh_recovered` | 활성 세션 / 활성 세션이 없어요. / 갱신 복구 | `colActive` **활성 로그인** / `sessionsEmpty` **활성 로그인이 없어요.** / `audit.refresh_recovered` **로그인 복구** | §4(세션 → 로그인). `갱신`도 용어집이 막는 말이라 `복구` 앞 대상을 `로그인`으로 바꿨다. 명세가 값을 따로 정하지 않아 용어집만 맞췄다 |
 | `badChannelId` | 채널 ID는 소문자 16진수 32자리예요. | **채널 ID는 영문 소문자와 숫자 32자리예요.** | §4(쉬운 말) |
-| (신설) `confirmDisallow.title`·`.body`·`.action`·`.back` | — | **이 채널의 허가를 뺄까요?** / **‘{name}’ 채널의 허가를 빼면 로그인한 앱과 브라우저 {n}개가 다음에 서버에 연결할 때 끊겨요. 다시 허가해도 끊긴 기기는 새로 로그인해야 해요.** / **허가 빼기** / 링크 **허가한 채널 목록으로** | D54 |
+| (신설) `confirmDisallow.title`·`.body`·`.back` | — | **이 채널의 허가를 뺄까요?** / **‘{name}’ 채널의 허가를 빼면 로그인한 앱과 브라우저 {n}개가 다음에 서버에 연결할 때 끊겨요. 다시 허가해도 끊긴 기기는 새로 로그인해야 해요.** / 링크 **허가한 채널 목록으로** (최종 버튼 라벨은 `audit.disallow` **허가 빼기**를 같이 쓴다. 같은 값의 키를 둘 두지 않는다, §19-14) | D54 |
 | (신설) `sessionGone` | — | **로그인이 만료됐어요. 다시 로그인한 뒤 같은 동작을 해 주세요.** | brief §6.13-3(원문 "끝났어요"를 앱의 "만료됐어요"와 통일, §16-7) |
 | (신설) `doneDenied.title`·`.body`·`.next`·`doneCancelled.*`·`doneFailed.*`(지금 `doneDenied`·`doneDeniedHint`·`doneDeniedSwitch`·`doneCancelled`·`doneFailed`·`doneOk`) | — | **이 채널은 사용 허가가 없어요** / **관리자에게 채널 이름을 알려 주세요. 다른 계정으로 로그인하려면 네이버에서 먼저 로그아웃해 주세요.** / **허가를 받은 뒤 다시 로그인해 주세요.** / **로그인을 취소했어요** · **처음 화면에서 다시 로그인할 수 있어요.** / **로그인하지 못했어요** · 앱 흐름(`doneView.kind === "app"` 또는 흐름을 모름) **앱에서 다시 시도해 주세요.**, 웹 흐름 `doneFailed.webBody` **처음 화면에서 다시 로그인해 주세요.** / `doneOk` → `doneOk.title` **로그인했어요**(h1이라 마침표를 뗀다, `web.md` §6.1 ok 행) | `web.md` §6.1, C8. 루프백 뒤 `/auth/done`의 denied·cancelled는 **웹 흐름에만** 나온다: 앱 흐름의 종결(ok·denied·cancelled·failed)은 grant와 함께 수신기로 303하면서 F 쿠키를 지우므로(`auth.ts` `toLoopback`) `doneView`가 앱 흐름의 denied·cancelled를 찾을 수 없다(`worker.md` 88 (마)). 그래서 "앱에서"를 말하지 않는다. F가 남는 앱 흐름은 grant 없는 failed뿐이다. 웹 ok는 303 `/`(F 삭제)이고 앱 ok는 수신기가 그린다. 그래서 `doneOk`는 콜백이 보내지 않는 `/auth/done?r=ok`를 손으로 연 경우에만 보이고 어느 흐름인지 말하지 않는다 · **확정(2026-10-10 사용자)**: 반영은 적용 단계 (d) |
-| (신설) `error.linkGone.*` 등 오류 페이지 본문 | — | 제목은 위 상태별 제목, 본문 **앱에서 다시 로그인해 주세요.** / **페이지를 새로 연 뒤 다시 시도해 주세요.** / **잠시 뒤 다시 시도해 주세요.**, 링크 **처음으로** · **관리 화면 새로 열기** | §9.2-9, `web.md` §6.2 |
-| (신설) `landing.consent.*`·`landing.contact`·`skipLink` | — | 받는 것 **로그인하면 채널 이름과 채널 ID만 알게 돼요.** / 쓰는 곳 **허가 확인과 ‘내 기기’ 표시에만 써요.** / 받지 않는 것 **네이버 비밀번호는 받지 않아요.** / 끊는 길 **로그인한 기기는 ‘내 기기’에서 끊을 수 있어요.** / 연락 수단(자리표시, 출시 전 사람이 채운다) / **본문으로 건너가기** | §11, §10 |
+| (신설) 오류 페이지 본문(키 `error.*`는 없다: 위 `linkGone.body`·`badRequest.body`·`retryLater.body`) | — | 제목은 위 상태별 제목, 본문 **앱에서 다시 로그인해 주세요.** / **페이지를 새로 연 뒤 다시 시도해 주세요.** / **잠시 뒤 다시 시도해 주세요.**, 링크 **처음으로** · **관리 화면 새로 열기** | §9.2-9, `web.md` §6.2 |
+| (신설) landing.consent.*·landing.contact·`skipLink` | — | 받는 것 landing.consent.collect **로그인하면 채널 이름과 채널 ID만 알게 돼요.** / 쓰는 곳 landing.consent.use **허가 확인과 ‘내 기기’ 표시에만 써요.** / 받지 않는 것 landing.consent.exclude **네이버 비밀번호는 받지 않아요.** / 끊는 길 landing.consent.revoke **로그인한 기기는 ‘내 기기’에서 끊을 수 있어요.** / 연락 수단 landing.contact **문의 연락처는 출시 전에 채워요.**(자리표시, 출시 전 사람이 실제 연락 수단으로 바꾼다) / `skipLink` **본문으로 건너가기** | §11, §10 |
 | (신설) `alreadyDone` | — | **이미 처리됐어요.** | brief §6.13-3 |
 | (신설) `errorSummary`·`errorTitlePrefix` | — | **확인해 주세요** / **오류: ** | §9.2-9 |
 | (신설) `mobileBlock` | — | **컴퓨터에서 받는 앱이에요. 휴대폰에는 설치할 수 없어요. 컴퓨터에서 이 주소를 열어 주세요.** | brief §6.13-5 |
-| (신설) `notice.*`·`copyright`·`pill` | — | §11 상수. 저작권 줄 **© {year} {owner}. 모든 권리 보유.** | D34 |
+| (신설) `notice.*`·`copyright`·`pill` | — | §11 상수: `notice.unofficial` **치지직 다운로더는 네이버나 치지직과 관련 없는 비공식 도구예요. 치지직과 NAVER는 NAVER Corp.의 상표일 수 있어요. 이 앱은 로그인한 채널의 영상과 클립만 받아요.** / `notice.short` **비공식 도구예요 · 네이버·치지직과 제휴하거나 보증받지 않았어요** / `pill` **비공식 도구**. 저작권 줄 `copyright` **© {year} {owner}. 모든 권리 보유.**은 D58 전까지 deck에 두지 않는다(사용자 결정, 줄을 그리지 않는다) | D34 |
 
 ### 15.4 deck 밖
 
@@ -685,3 +689,13 @@
 8. **DC11은 식별자만인 값(확장자 `.mp4`, 대문자 상수 `NID_AUT`, 점 경로)을 정의로 쓰고, 제품 이름(macOS)은 아니다.** 접미 금지 목록은 `tip`·`why`·`danger`·`word`·`NoBytes`·`lead`다. **DC6 공통 상수**(NOTICE_UNOFFICIAL·NOTICE_SHORT·skipLink·copyright·`app.title`↔`siteName`)는 한쪽에만 있으면 건너뛴다. DC3·DC7은 코드에 박지 않고 `terms.json`의 `id`·`pattern` 항목이다.
 9. **(d)로 넘기는 문서 불일치.** (가) `web.md`가 적은 `adminOnly.title`·`badFormat.title`·`retryLater.body`·`landing.contact`가 §15에 없다(§15에 더하거나 web.md를 고친다. 지금은 DC10 허용 항목). (나) `settings.about.checkFailed.help`와 `update.failed.help`가 같은 값("지금 버전은 계속 쓸 수 있어요.")이라 둘 다 deck에 들어오면 DC11 중복이 된다. §2 "같은 문구는 키 하나"에 따라 한 키로 합친다(지금은 DC10 허용 항목이 덮는다). 허용 항목은 (d)에서 사라지고 `design.allow_entries`가 줄어든다.
 10. **DI(design-icons) 구현 세부.** DI1 메타 모양은 `set`·`name`·`version`이 항목에 직접 있거나 `meta: {…}` 안에 있으면 인정한다(`icons.ts`가 (b)에서 이 모양이 아니면 파서를 고친다). DI4 동작 판정은 아이콘이 놓인 가장 가까운 Button·IconButton·`<a>`·MenuItem 요소와 객체 리터럴에서 `t('키')`·`COPY.경로`·`aria-label` 순으로 동작을 찾고, 키가 달라도 deck 값이 같으면 같은 동작으로 본다. DI2는 Worker `/licenses` 페이지 소스를 (e) 전까지 검사하지 않고 `licenses/lucide.txt`만 본다.
+11. **코어 원문은 L1 "자세히"에만 있고 `invalidInput` 사유 코드는 만들지 않았다**(가장 작은 선택). `AppError.message`(합니다체)는 화면 제목·본문에 닿지 않는다. `services.rs`·`manager.rs`·`commands.rs`의 문자열은 바꾸지 않았다. 사유 코드(`emptyField`·`badChars`…)를 payload에 담아 deck이 문구를 만드는 일(§15.2 아래 표)은 (f) 이후로 미룬다. (d)의 `errors.ts`는 `invalidInput`의 제목·본문을 고정 문구로 쓰고 원문은 L1에만 넣는다.
+12. **format 함수(§7)의 모호했던 곳.** WINDOWS_ROUNDING은 `'round'`로 두었다(§16-2 실기 확인 전, 값을 뒤집으면 1024 진법 골든이 깨진다). `formatSpokenRemaining`의 10~59초는 "1분도 안 남았어요"로 정했다. `formatWhen`은 어제 23:30을 00:10에 볼 때 "N분 전"이 아니라 날짜 기준 "어제 오후 11:30"이다. 연도가 다르면 해가 바뀐 직후의 어제도 `formatDateTime` 형식이다. 크기 경계는 반올림 결과가 base에 닿으면 다음 단위로 올린다(999.5KB → 1.00MB).
+13. **날짜는 `Wall`({y,mo,d,h,mi}) 값으로만 다룬다.** `Intl`·`toLocaleString`·`Date` 지역 메서드를 쓰지 않는다. TS는 BigInt, Rust(`crates/shell/src/format.rs`)는 u128 정수 산술이고 부동소수는 쓰지 않는다. 사용자 시간대는 호출부가 `-new Date().getTimezoneOffset()`로 `wallOf`에 준다. 골든은 `design/format/*.json` 하나를 TS(`format.test.ts`)와 Rust(`format_golden.rs`)가 함께 읽는다. 알 수 없는 `fn`은 Rust 테스트가 실패시킨다.
+14. **같은 값의 키는 하나로 합쳤다(DC11).** 앱: `common.keepUsing`("지금 버전은 계속 쓸 수 있어요.")이 `settings.about.checkFailed.help`와 `update.failed.help`를 대신하고, `notify.many`("{title} 외 {n}개") 하나가 완료 묶음과 실패 묶음 알림 본문을 대신한다(§14 표의 두 행이 같은 키를 가리킨다). Worker: `adminTitle`→`adminLink`, `colChannelId`→`channelIdLabel`, `adminBadge`→`adminsTitle`, `sessionsTitle`→`colActive`, `colChannel`→`channelLabel`을 대신 쓰고, `confirmDisallow.action`은 `audit.disallow`("허가 빼기")를 같이 쓴다. `audit.allow`는 동작 이름으로 찾는 표라 키는 남기되 값은 상수 ALLOW_LABEL 하나를 `allow`와 같이 쓴다.
+15. **화면이 없는 키는 deck에 두지 않고 표에는 백틱 없는 이름으로 남겼다.** DC11("참조가 없는 키")을 허용 목록 없이 0으로 두려는 선택이다. 앱: `settings.keepAwake`·`settings.keepAwake.help`는 (f)가 토글의 백엔드를 만들 때 deck에 둔다(§15.1 행은 "(f) 전까지 deck에 두지 않음"). 종류 차단 B5 문구·연속 실패 문구는 기능이 (f) 이후라 키 이름도 정하지 않는다. Worker: `pill`·`notice.unofficial`·`notice.short`·`skipLink`·`errorSummary`·`sessionGone`·`alreadyDone`·`loginForFiles`·`loginTwice`·`landing.consent.collect|use|exclude|revoke`·`landing.contact`·`mobileBlock`·`macXattrNote`·`winSac`·`confirmDisallow.title|body|back`은 (e)가 화면을 만들 때 §15.3 값 그대로 `copy.ts`에 되돌린다(값은 이 문서 §15.3 표에 있다). `landing.consent.*`·`landing.contact`·`confirmDisallow.title|body`는 DC10이 잡지 않도록 표와 `web.md`에서 백틱을 뺐다. (e)가 키를 되돌릴 때 백틱도 되돌린다.
+16. **저작권 줄은 그리지 않는다**(사용자 결정, D58 전까지 계속 뺀다). `settings.about.copyright` 키는 만들지 않았고 §15.1의 그 행은 "D58 전까지 deck에 두지 않음"이다.
+17. **Worker 문구는 (d)에서 반영했고 허용 항목 이유 "(e)"가 "(d)"로 옮겨 사라졌다.** 사용자 결정으로 문구 문자열은 (d)가 `worker/src/http/copy.ts`에 넣었다. 페이지 구조(`<caption>`·`<ol>`·skipLink·확인 페이지·고지 배치)는 (e) 몫이다. 이 단계에서 `confirmDisallow.title`의 "?"는 `terms.json` allow(키 지정)로 예외를 두었다(`dialog.*.title`과 같은 위치의 질문 제목).
+18. **L1 라벨은 DC8의 예외다.** `errors.ts`의 "치지직 응답 코드"·"오류 코드"는 L1 "자세히" 안의 고정 라벨이라 `terms.json` allow에 `key: "L1"`(키 없는 리터럴 전용) 항목으로 두었다. 글자가 그 라벨을 품고 매칭 단어가 라벨의 일부일 때만 건너뛴다(`copy.test.mjs`에 양·음 한 쌍). `allow.json`(항목 수 ratchet)이 아니라 `terms.json`에 두는 이유는 명세가 요구한 문구가 규칙에 걸리는 경우이기 때문이다(§19-6과 같은 부류).
+19. **알림 문구의 ko.ts 대조 시점.** 알림·전원 사유는 웹뷰 밖(Rust)이라 `chzzk_shell::notify` 상수가 원천이고 ko.ts `notify.*`·`power.reason`은 같은 글자의 사본이다. (d) 마무리가 `app/src-tauri/src/notify_copy.rs` 테스트(ko.ts 한 줄을 읽어 상수와 `assert_eq`)를 켰다. ko.ts가 없거나 키가 없으면 실패한다. DC11은 이 `.rs` 파일의 `"키"` 인용을 참조로 센다(`copy.mjs` `referencedChecker`가 `app/src-tauri/src/**/*.rs`를 더 본다). NOTIFY_STALLED_TITLE은 (f)가 쓴다.
+20. **묶음별 가장 작은 선택(구현 기록).** (라) 자소 분리는 `unicode-segmentation`을 직접 의존으로 더하지 않고 `notify.rs`의 근사 구현(결합 문자·ZWJ 이모지·국기 쌍·조합형 한글·CRLF)을 쓴다. 알림 묶음은 첫 알림 뒤 `NOTIFY_BATCH_MS`(3초) 동안 모아 완료 묶음과 실패 묶음을 각각 한 건으로 내고, 포커스는 묶음을 낼 때 한 번 본다. 시작 실패 창은 접을 수 없는 OS 대화상자라 해요체 lead와 `로그 폴더: …`만 보이고 원문은 `tracing`으로만 남는다. (가·나) 작업 행 접근 이름은 `aria-label={job.title}`을 유지했다(§10의 `‘{title}’: {status}`는 테스트·e2e의 이름 조회가 많아 미룬다). 오류 토스트는 제목만 보인다(detail은 L1). LOGIN_TIMEOUT_SECS는 `auth.ts`에 둔다. 업데이트 배너 진행 낭독은 25% 단위다. `dialog.legacy.item.*`를 `folder.label`·`settings.cookie.title`과 같은 값의 병합 대신 그대로 쓴다. (마) 시각 열이 있는 표 다섯 곳에 `<caption>`(`tableTimeNote`)을 두고 열 제목에서 `(KST)`를 뺐다. 랜딩 `<title>`이 `siteTitle`이면 `htmlPage`가 " · 앱 이름" 꼬리를 붙이지 않는다. 거부 페이지는 "채널: X · 채널 ID: Y", `doneDenied.body`, `doneDenied.next` 순이다. 실패 페이지는 웹 흐름이면 `doneFailed.webBody`, 앱 흐름이거나 흐름을 모르면 `body`다. 도움말(`help/*.md`)은 앱 버튼을 `[ ]`, 다른 프로그램의 버튼을 ‘ ’로 감싼다.

@@ -3,8 +3,9 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AuthStatusDto, SettingsDto } from '../../bindings';
 import { t } from '../../copy/ko';
-import { formatDateTimeShort } from '../../format/date';
-import { LOADER_DELAY_MS } from '../../timing';
+import { channelRow } from '../../auth';
+import { whenText } from '../../when';
+import { AUTH_CHECK_TIMEOUT_MS, LOADER_DELAY_MS } from '../../timing';
 import { job } from '../../../test/jobFixtures';
 
 class FakeChannel {
@@ -314,7 +315,7 @@ describe('AuthGate 화면', () => {
     start(authDto({ state: 'checking' }));
     render(App);
     await screen.findByRole('heading', { name: t('auth.checking') });
-    expect(screen.getByText(t('auth.checking.body'))).toBeInTheDocument();
+    expect(screen.getByText(t('auth.checking.body', { secs: AUTH_CHECK_TIMEOUT_MS / 1000 }))).toBeInTheDocument();
     // 300ms 안에 끝나면 한 번도 보이지 않는다(깜박임 방지, useDelayedLoading)
     expect(document.querySelector('.spinner')).toBeNull();
     await waitFor(() => expect(document.querySelector('.spinner')).not.toBeNull(), { timeout: LOADER_DELAY_MS + 2000 });
@@ -334,7 +335,7 @@ describe('AuthGate 화면', () => {
     render(App);
     await user.click(await screen.findByRole('button', { name: '다시 연결' }));
     emit(authDto({ state: 'checking' }));
-    await screen.findByRole('heading', { name: '로그인 정보를 확인하는 중이에요…' });
+    await screen.findByRole('heading', { name: t('auth.checking') });
     const relogin = screen.getByRole('button', { name: '다시 로그인' });
     expect(relogin).toBeEnabled();
     await user.click(relogin);
@@ -374,12 +375,14 @@ describe('AuthGate 화면', () => {
     vi.mocked(api.authLogin).mockResolvedValue(authDto({ state: 'denied', channelName: '테스트 채널' }));
     render(App);
     await screen.findByRole('heading', { name: '사용 허가가 없는 채널이에요' });
-    expect(screen.getByText(/채널: 테스트 채널\./)).toBeInTheDocument();
+    expect(screen.getByText(channelRow('테스트 채널') ?? '')).toBeInTheDocument();
     const retry = screen.getByRole('button', { name: '다시 시도' });
     expect(retry).toHaveClass('btn-primary');
     const other = screen.getByRole('button', { name: '다른 계정으로 로그인' });
     expect(other).toHaveClass('btn-ghost');
-    expect(other.closest('p')).toHaveTextContent(/네이버 로그아웃 후\s*다른 계정으로 로그인$/);
+    // 안내는 완결 문장이고 링크형 버튼은 문장 밖에 따로 있다(버튼 글자가 문장의 일부가 되지 않는다)
+    expect(screen.getByText(t('auth.otherAccount.help'))).toBeInTheDocument();
+    expect(other.closest('p')).toBeNull();
     // 둘 다 같은 로그인을 시작한다
     await user.click(retry);
     await user.click(other);
@@ -390,11 +393,11 @@ describe('AuthGate 화면', () => {
     jobList = [job(1, { status: 'running' }), job(4, { status: 'queued' })];
     start(authDto({ state: 'signedOut' }));
     const { unmount } = render(App);
-    await screen.findByText(/받는 중·대기 중인 다운로드 2개는 계속 받아요/);
+    await screen.findByText(t('auth.runningNote', { n: 2 }));
     unmount();
     jobList = [job(2, { status: 'interrupted' }), job(3, { status: 'interrupted' })];
     render(App);
-    await screen.findByText('지난번에 받다가 멈춘 다운로드가 2개 있어요. 로그인하면 이어받을 수 있어요.');
+    await screen.findByText(t('banner.resumeNeedsLogin', { n: 2 }));
   });
 });
 
@@ -404,9 +407,9 @@ describe('로그인 대기 화면', () => {
     vi.setSystemTime(new Date(1_800_000_000_000));
     start(authDto({ state: 'pending', pending: { expiresAt: 1_800_000_600 } }));
     render(App);
-    expect(await screen.findByText(/남은 시간 10:00/)).toBeInTheDocument();
+    expect(await screen.findByText(t('auth.pending.remaining', { mmss: '10:00' }))).toBeInTheDocument();
     await vi.advanceTimersByTimeAsync(1100);
-    await waitFor(() => expect(screen.getByText(/남은 시간 9:5\d/)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(new RegExp(t('auth.pending.remaining', { mmss: '9:5\\d' })))).toBeInTheDocument());
 
     await fireEvent.click(screen.getByRole('button', { name: '브라우저 다시 열기' }));
     expect(api.authReopen).toHaveBeenCalled();
@@ -414,7 +417,7 @@ describe('로그인 대기 화면', () => {
     await waitFor(() => expect(toasts.items.map((i) => i.message)).toContain('복사했어요'));
     vi.mocked(api.authCopyLoginUrl).mockResolvedValue(false);
     await fireEvent.click(screen.getByRole('button', { name: '로그인 주소 복사' }));
-    await waitFor(() => expect(toasts.items.map((i) => i.message)).toContain('복사하지 못했어요. 다시 시도해 주세요.'));
+    await waitFor(() => expect(toasts.items.map((i) => i.message)).toContain(t('toast.copyFailed')));
     vi.mocked(api.authCancel).mockResolvedValue(authDto({ state: 'signedOut' }));
     await fireEvent.click(screen.getByRole('button', { name: '취소' }));
     await screen.findByRole('heading', { name: '로그인이 필요해요' });
@@ -491,7 +494,7 @@ describe('AccountSlot', () => {
     const user = userEvent.setup();
     vi.mocked(api.authRetry).mockResolvedValue(signed);
     render(AccountSlot, { status: offlineDto });
-    expect(screen.getByText(t('account.offline', { until: formatDateTimeShort(1_767_582_000) }), { exact: false })).toBeInTheDocument();
+    expect(screen.getByText(t('account.offline', { until: whenText(1_767_582_000, Date.now()) }), { exact: false })).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '테스트 채널' }));
     await user.click(screen.getByRole('menuitem', { name: t('auth.reconnect') }));
     expect(api.authRetry).toHaveBeenCalled();
@@ -538,12 +541,12 @@ describe('D4 로그아웃 확인(App의 LogoutDialog)', () => {
     render(App);
     let d = await openFromMenu(user);
     // 오른쪽(primary, 첫 포커스)이 안전한 쪽, 왼쪽(secondary)이 실행 쪽
-    const keep = within(d).getByRole('button', { name: t('dialog.logout.cancel') });
+    const keep = within(d).getByRole('button', { name: t('dialog.logout.keep') });
     await waitFor(() => expect(keep).toHaveFocus());
     expect(keep).toHaveClass('btn-primary');
     expect(within(d).getAllByRole('button').map((b) => b.textContent?.trim())).toEqual([
       t('dialog.logout.confirm'),
-      t('dialog.logout.cancel'),
+      t('dialog.logout.keep'),
     ]);
     expect(within(d).getByRole('button', { name: t('dialog.logout.confirm') })).not.toHaveClass('tone-danger');
     // Esc는 닫기만 한다
@@ -553,7 +556,7 @@ describe('D4 로그아웃 확인(App의 LogoutDialog)', () => {
     expect(api.authLogout).not.toHaveBeenCalled();
     // 안전한 버튼도 닫기만 한다
     d = await openFromMenu(user);
-    await user.click(within(d).getByRole('button', { name: t('dialog.logout.cancel') }));
+    await user.click(within(d).getByRole('button', { name: t('dialog.logout.keep') }));
     expect(api.authLogout).not.toHaveBeenCalled();
     // 실행
     d = await openFromMenu(user);
@@ -583,7 +586,7 @@ describe('App 업데이트 배선', () => {
     start(authDto({ state: 'signedIn', channelName: '채널' }));
     vi.mocked(api.updateAvailable).mockResolvedValue({ version: '0.2.0', current: '0.1.0', notes: null, pubDate: null });
     render(App);
-    expect(await screen.findByText('새 버전 0.2.0이 있어요.')).toBeInTheDocument();
+    expect(await screen.findByText(t('update.banner', { version: '0.2.0' }))).toBeInTheDocument();
     expect(api.onUpdateAvailable).toHaveBeenCalledTimes(1);
   });
 
@@ -601,7 +604,7 @@ describe('UpdateBanner', () => {
     const onlater = vi.fn();
     render(UpdateBanner, { version: '0.1.1', oninstall, onlater });
     expect(screen.getByText(t('update.banner', { version: '0.1.1' }))).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: t('dialog.update.later') })).toBeNull();
+    expect(screen.queryByRole('button', { name: t('common.later') })).toBeNull();
     await fireEvent.click(screen.getByRole('button', { name: t('update.install') }));
     expect(oninstall).toHaveBeenCalledOnce();
     await fireEvent.click(screen.getByRole('button', { name: t('common.close') }));
@@ -621,8 +624,8 @@ describe('UpdateBanner', () => {
     expect(same).toHaveAttribute('aria-busy', 'true');
     await fireEvent.click(same);
     expect(oninstall).not.toHaveBeenCalled();
-    await rerender({ version: '0.1.1', status: t('update.downloading'), detail: '42%', oninstall, onlater: () => {} });
-    expect(screen.getByText(t('update.downloading'), { exact: false })).toBeInTheDocument();
+    await rerender({ version: '0.1.1', status: t('update.downloading', { percent: '42%' }), oninstall, onlater: () => {} });
+    expect(screen.getByText(t('update.downloading', { percent: '42%' }))).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: t('common.close') })).toBeNull();
   });
 });

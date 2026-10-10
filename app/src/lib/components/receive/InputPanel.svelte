@@ -189,7 +189,7 @@
     <Notice
       variant="inline"
       tone="neutral"
-      actions={[{ id: 'cancel', label: t('resolve.cancel'), onclick: cancel }]}
+      actions={[{ id: 'cancel', label: t('common.cancel'), onclick: cancel }]}
     >
       {t('resolve.loading')}
     </Notice>

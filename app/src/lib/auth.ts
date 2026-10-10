@@ -1,7 +1,10 @@
 // 로그인 화면의 순수 판단(worker.md 구현 중 변경 62 (나)). 상태·사유 → 제목·설명·버튼 표 하나.
 import type { AuthStatusDto } from './bindings';
 import { t } from './copy/ko';
-import { PENDING_STUCK_REMAINING_SECS } from './timing';
+import { AUTH_CHECK_TIMEOUT_MS, PENDING_STUCK_REMAINING_SECS } from './timing';
+
+/** 로그인 기한(셸이 로그인을 시작해 마쳐야 하는 시간, Rust와 같은 값). `auth.loginTimeout.body`의 `{mins}`가 이 값에서 나온다 */
+export const LOGIN_TIMEOUT_SECS = 600;
 
 /** 로그인 화면의 동작: login → authLogin, reconnect → authRetry */
 export type LoginAction = 'login' | 'reconnect';
@@ -18,6 +21,8 @@ export interface LoginScreen {
   title: string;
   /** 설명. 없으면 null(pending은 LoginView가 남은 시간을 채워 그린다) */
   body: string | null;
+  /** 거부·허가 취소 화면의 `로그인한 채널: ‘이름’` 행(채널 이름을 모르면 null) */
+  channelRow: string | null;
   /** 오류·거부 화면이면 true(경고 아이콘) */
   problem: boolean;
   /** 왼쪽부터 */
@@ -46,8 +51,9 @@ function message(
   problem: boolean,
   buttons: LoginButton[],
   otherAccount: LoginScreen['otherAccount'] = null,
+  channelRow: string | null = null,
 ): LoginScreen {
-  return { kind: 'message', title: t(title), body, problem, buttons, otherAccount, stuck: false };
+  return { kind: 'message', title: t(title), body, channelRow, problem, buttons, otherAccount, stuck: false };
 }
 
 /**
@@ -80,7 +86,8 @@ function baseScreen(s: AuthStatusDto, nowMs: number): LoginScreen | null {
       return {
         kind: 'checking',
         title: t('auth.checking'),
-        body: t('auth.checking.body'),
+        body: t('auth.checking.body', { secs: AUTH_CHECK_TIMEOUT_MS / 1000 }),
+        channelRow: null,
         problem: false,
         buttons: [login('auth.relogin', 'link')],
         otherAccount: null,
@@ -95,6 +102,7 @@ function baseScreen(s: AuthStatusDto, nowMs: number): LoginScreen | null {
         kind: 'pending',
         title: t('auth.pending.title'),
         body: null,
+        channelRow: null,
         problem: false,
         buttons: [],
         otherAccount: 'help',
@@ -102,26 +110,15 @@ function baseScreen(s: AuthStatusDto, nowMs: number): LoginScreen | null {
       };
     case 'denied':
       // 거부된 사람 대부분은 자기 채널로 허가를 받으려 한다: 허가를 받은 뒤 누를 [다시 시도]가 주 버튼이다
+      // 채널 이름은 문장 안이 아니라 `라벨: 값` 행으로 따로 보인다(content.md §6.4)
       if (s.reason === 'removedFromAllowlist') {
-        return message(
-          'auth.removed.title',
-          name ? t('auth.removed.body', { channelName: name }) : t('auth.removed.bodyNoName'),
-          true,
-          [login('action.retry', 'primary')],
-          'link',
-        );
+        return message('auth.removed.title', t('auth.removed.body'), true, [login('action.retry', 'primary')], 'link', channelRow(name));
       }
-      return message(
-        'auth.denied.title',
-        name ? t('auth.denied.body', { channelName: name }) : t('auth.denied.bodyNoName'),
-        true,
-        [login('action.retry', 'primary')],
-        'link',
-      );
+      return message('auth.denied.title', t('auth.denied.body'), true, [login('action.retry', 'primary')], 'link', channelRow(name));
     case 'expired':
       switch (s.reason) {
         case 'loginTimeout':
-          return message('auth.loginTimeout.title', t('auth.loginTimeout.body'), true, [login('auth.relogin', 'primary')]);
+          return message('auth.loginTimeout.title', t('auth.loginTimeout.body', { mins: LOGIN_TIMEOUT_SECS / 60 }), true, [login('auth.relogin', 'primary')]);
         case 'revoked':
           return message('auth.revoked.title', t('auth.revoked.body'), true, [login('auth.relogin', 'primary')]);
         case 'reuseDetected':
@@ -133,7 +130,7 @@ function baseScreen(s: AuthStatusDto, nowMs: number): LoginScreen | null {
           ]);
         default:
           // 60일마다 누구나 보는 화면이라 문제로 그리지 않는다(§11.7)
-          return message('auth.sessionExpired.title', t('auth.sessionExpired.body'), false, [login('auth.relogin', 'primary')]);
+          return message('auth.sessionExpired.title', t('auth.relogin.help'), false, [login('auth.relogin', 'primary')]);
       }
     case 'cancelled':
       return message('auth.cancelled.title', null, false, [login('auth.relogin', 'primary')]);
@@ -142,7 +139,7 @@ function baseScreen(s: AuthStatusDto, nowMs: number): LoginScreen | null {
         case 'network':
           return message('auth.network.title', t('auth.network.body'), true, [login('auth.relogin', 'primary')]);
         case 'loginLost':
-          return message('auth.lost.title', t('auth.lost.body'), true, [login('auth.relogin', 'primary')]);
+          return message('auth.lost.title', t('auth.relogin.help'), true, [login('auth.relogin', 'primary')]);
         case 'receiver':
           return message('auth.receiver.title', t('auth.receiver.body'), true, [login('auth.relogin', 'primary')]);
         case 'server':
@@ -152,6 +149,11 @@ function baseScreen(s: AuthStatusDto, nowMs: number): LoginScreen | null {
           return message('auth.unknown.title', t('auth.unknown.body'), true, [login('auth.relogin', 'primary')]);
       }
   }
+}
+
+/** `로그인한 채널: ‘이름’` 행. 이름을 모르면 null */
+export function channelRow(name: string | null): string | null {
+  return name ? `${t('auth.channelLabel')}: ‘${name}’` : null;
 }
 
 /** 남은 초(0 이상). expiresAt은 유닉스 초, nowMs는 Date.now() 값 */

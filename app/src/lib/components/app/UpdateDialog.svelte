@@ -11,6 +11,6 @@
   title={t('dialog.update.title')}
   body={t('dialog.update.body', { n: update.confirmRunning })}
   onclose={() => update.cancelConfirm()}
-  primary={{ id: 'later', label: t('dialog.update.later'), onclick: () => update.cancelConfirm() }}
+  primary={{ id: 'later', label: t('common.later'), onclick: () => update.cancelConfirm() }}
   secondary={{ id: 'install', label: t('dialog.update.confirm'), onclick: () => void update.install(true) }}
 />

@@ -32,12 +32,20 @@ export function htmlPage(config: Config, status: number, title: string, body: Sa
     // 같은 이름(Set-Cookie)이 여럿일 수 있어 덮지 않고 더한다
     new Headers(extra).forEach((v, k) => headers.append(k, v));
   }
-  const doc = html`<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${title} · ${COPY.siteName}</title><link rel="stylesheet" href="${SITE_CSS_PATH}"></head><body><main><header><a href="/">${COPY.siteName}</a></header>${body}</main></body></html>`;
+  // 랜딩 제목(siteTitle)은 이미 앱 이름을 품고 있어 꼬리를 붙이지 않는다
+  const fullTitle = title === COPY.siteTitle ? title : `${title} · ${COPY.siteName}`;
+  const doc = html`<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${fullTitle}</title><link rel="stylesheet" href="${SITE_CSS_PATH}"></head><body><main><header><a href="/">${COPY.siteName}</a></header>${body}</main></body></html>`;
   return new Response(renderHtml(doc), { status, headers });
 }
 
-export function noticePage(config: Config, status: number, message: string, extra?: HeadersInit): Response {
-  return htmlPage(config, status, COPY.noticeTitle, html`<h1>${COPY.noticeTitle}</h1><p>${message}</p><p><a href="/">${COPY.home}</a></p>`, extra);
+/**
+ * 안내·오류 페이지: h1은 무슨 일인지(상태별 제목), 본문은 다음에 할 일(없을 수 있다), 링크는 처음으로 하나(web.md §6.2).
+ * 오류 응답(4xx·5xx)의 <title>에는 "오류: " 접두를 붙인다. 200인 옛 앱 안내에는 붙이지 않는다
+ */
+export function noticePage(config: Config, status: number, title: string, body: string | null, extra?: HeadersInit): Response {
+  const docTitle = status >= 400 ? `${COPY.errorTitlePrefix}${title}` : title;
+  const bodyP = body === null ? html`` : html`<p>${body}</p>`;
+  return htmlPage(config, status, docTitle, html`<h1>${title}</h1>${bodyP}<p><a href="/">${COPY.home}</a></p>`, extra);
 }
 
 /** 확인 페이지: 폼에 action 속성이 없어(현재 주소로 POST) handle이 본문에 나오지 않는다 */
@@ -52,24 +60,31 @@ export function loginConfirmPage(config: Config): Response {
   );
 }
 
-function doneBody(r: DoneR, view: DoneView | null): SafeHtml {
+/** 상태별 제목(h1·<title>)과 본문. 웹 흐름의 failed는 webBody, 앱 흐름이거나 흐름을 모르면 body를 쓴다 */
+function doneParts(r: DoneR, view: DoneView | null): { readonly title: string; readonly body: SafeHtml } {
   const status = view?.status ?? r;
   switch (status) {
     case "ok":
-      return html`<p>${COPY.doneOk}</p>`;
-    case "denied":
-      return view?.channelId
-        ? html`<p>${COPY.doneDenied}</p><p>${COPY.channelLabel}: ${view.channelName ?? ""} · ${COPY.channelIdLabel} ${view.channelId}</p><p>${COPY.doneDeniedHint}</p><p>${COPY.doneDeniedSwitch}</p>`
-        : html`<p>${COPY.doneDenied}</p><p>${COPY.doneDeniedHint}</p><p>${COPY.doneDeniedSwitch}</p>`;
+      return { title: COPY.doneOk.title, body: html`` };
+    case "denied": {
+      const who =
+        view?.channelId
+          ? html`<p>${COPY.channelLabel}: ${view.channelName ?? ""} · ${COPY.channelIdLabel}: ${view.channelId}</p>`
+          : html``;
+      return { title: COPY.doneDenied.title, body: html`${who}<p>${COPY.doneDenied.body}</p><p>${COPY.doneDenied.next}</p>` };
+    }
     case "cancelled":
-      return html`<p>${COPY.doneCancelled}</p>`;
+      return { title: COPY.doneCancelled.title, body: html`<p>${COPY.doneCancelled.body}</p>` };
     case "failed":
-      return html`<p>${COPY.doneFailed}</p>`;
+      return { title: COPY.doneFailed.title, body: html`<p>${view?.kind === "web" ? COPY.doneFailed.webBody : COPY.doneFailed.body}</p>` };
   }
 }
 
 /** 완료 페이지. view(F 쿠키로 찾은 흐름)가 있으면 그 상태를, 없으면 쿼리의 r을 따른다. clearFlowCookie가 있으면 F를 지운다 */
 export function donePage(config: Config, r: DoneR, view: DoneView | null, clearFlowCookie: string | null): Response {
   const extra = clearFlowCookie === null ? undefined : { "Set-Cookie": clearFlowCookie };
-  return htmlPage(config, 200, COPY.doneTitle, html`<h1>${COPY.doneTitle}</h1>${doneBody(r, view)}`, extra);
+  const { title, body } = doneParts(r, view);
+  // 실패는 <title>에 오류 접두를 붙인다(web.md §6.1)
+  const docTitle = (view?.status ?? r) === "failed" ? `${COPY.errorTitlePrefix}${title}` : title;
+  return htmlPage(config, 200, docTitle, html`<h1>${title}</h1>${body}`, extra);
 }

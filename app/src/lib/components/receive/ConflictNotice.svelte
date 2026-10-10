@@ -3,8 +3,9 @@
   // 모두 Notice 하나씩이고 선택은 RadioGroup이다. 목록 중복은 [받기]를 막으므로 id(BLOCK_REASON_ID)로 사유를 잇는다.
   import type { OutputCheck } from '../../bindings';
   import { t } from '../../copy/ko';
-  import { formatBytes } from '../../format/bytes';
+  import { formatFileSize, sizeBaseOf } from '../../format/bytes';
   import { BLOCK_REASON_ID, notices, type CardChoices, type ExistingChoice } from '../../receive';
+  import { platform } from '../../stores/platform.svelte';
   import Notice from '../ui/Notice.svelte';
   import RadioGroup from '../ui/RadioGroup.svelte';
 
@@ -28,7 +29,7 @@
     id={BLOCK_REASON_ID.duplicate}
     variant="inline"
     tone="neutral"
-    actions={[{ id: 'show', label: t('conflict.showInList'), onclick: onshowinlist }]}
+    actions={[{ id: 'show', label: t('common.showInList'), onclick: onshowinlist }]}
   >
     {t('conflict.inQueue')}
   </Notice>
@@ -49,12 +50,12 @@
     actions={[
       {
         id: 'fresh',
-        label: choices.partialFresh ? t('conflict.partial.continue') : t('conflict.partial.fresh'),
+        label: choices.partialFresh ? t('action.resume') : t('action.restartFresh'),
         onclick: () => (choices.partialFresh = !choices.partialFresh),
       },
     ]}
   >
-    {choices.partialFresh ? t('conflict.partial.freshChosen') : t('conflict.partial.body', { size: formatBytes(n.partialSame) })}
+    {choices.partialFresh ? t('conflict.partial.freshChosen') : t('conflict.partial.body', { size: formatFileSize(n.partialSame, sizeBaseOf(platform.os)) })}
   </Notice>
 {/if}
 

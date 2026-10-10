@@ -6,6 +6,7 @@ pub mod commands;
 #[cfg(feature = "e2e")]
 pub mod e2e;
 mod logging;
+mod notify_copy;
 pub mod sink;
 pub mod smoke;
 pub mod update_io;
@@ -409,9 +410,10 @@ pub fn open_failure_kind(e: &AppError) -> StartupFailure {
     }
 }
 
-/// 시작 실패 창의 본문(§15-17, 구현 중 변경 38(바)). 무엇을 하면 되는지와 로그 폴더, 원문 오류를 적는다.
-/// 오류 문구는 코어·셸 Display라 비밀이 없다.
-pub fn startup_failure_message(log_dir: &Path, e: &AppError, kind: StartupFailure) -> String {
+/// 시작 실패 창의 본문(§15-17, 구현 중 변경 38(바), content §15.4). 무엇을 하면 되는지(해요체)와 로그 폴더만 적는다.
+/// 합니다체 원문 오류는 화면에 두지 않는다. 이 창은 접을 수 없는 OS 대화상자라 "자세히"를 둘 수 없으므로,
+/// 원문은 `startup_failed`가 로그에 남기고(호출부 `tracing::error!`) 창에는 로그 폴더로 안내한다.
+pub fn startup_failure_message(log_dir: &Path, _e: &AppError, kind: StartupFailure) -> String {
     let lead = match kind {
         StartupFailure::Storage => {
             "작업 목록이나 설정 파일을 열지 못했어요. 디스크 공간과 폴더 권한을 확인한 뒤 다시 실행해 주세요."
@@ -420,11 +422,7 @@ pub fn startup_failure_message(log_dir: &Path, e: &AppError, kind: StartupFailur
             "로그인 서버 설정을 읽지 못했어요. 설치 파일이 손상됐을 수 있어요. 앱을 내려받은 페이지에서 다시 받아 설치해 주세요."
         }
     };
-    format!(
-        "{lead}\n\n로그 폴더: {}\n오류: {}",
-        log_dir.display(),
-        e.message
-    )
+    format!("{lead}\n\n로그 폴더: {}", log_dir.display())
 }
 
 /// 앱 상태를 열지 못했을 때: main 창을 숨기고 오류 창을 띄운 뒤, 닫으면 `exit(1)`.
@@ -798,7 +796,7 @@ mod tests {
     }
 
     #[test]
-    fn startup_failure_message_names_log_folder_and_error() {
+    fn startup_failure_message_names_log_folder_and_hides_raw_error() {
         let e = AppError::internal("jobs.json을 읽지 못함: 권한 없음");
         let m = startup_failure_message(Path::new("/logs/app"), &e, StartupFailure::Storage);
         assert!(
@@ -806,7 +804,9 @@ mod tests {
             "{m}"
         );
         assert!(m.contains("로그 폴더: /logs/app"), "{m}");
-        assert!(m.ends_with("오류: jobs.json을 읽지 못함: 권한 없음"), "{m}");
+        assert!(m.ends_with("로그 폴더: /logs/app"), "{m}");
+        // 합니다체 원문은 화면에 두지 않는다(로그에만)
+        assert!(!m.contains("오류:") && !m.contains("jobs.json"), "{m}");
     }
 
     #[test]
@@ -817,10 +817,7 @@ mod tests {
         assert!(m.contains("다시 받아 설치"), "{m}");
         assert!(!m.contains("디스크"), "{m}");
         assert!(m.contains("로그 폴더: /logs/app"), "{m}");
-        assert!(
-            m.ends_with("오류: 빌드에 넣은 Worker 주소가 올바르지 않다(예시)"),
-            "{m}"
-        );
+        assert!(!m.contains("Worker 주소"), "{m}");
     }
 
     #[test]

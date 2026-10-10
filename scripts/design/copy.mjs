@@ -701,8 +701,9 @@ function ruleApplies(id, deck, lit, hangul) {
 const isShellCommand = (v) => /^[a-z][a-z0-9_.-]*\s+-/.test(v);
 const inPlatform = (key) => key !== undefined && key.split('.').includes('platform');
 
-function allowed(terms, key, word) {
-  if (key === undefined) return false;
+function allowed(terms, key, word, val = '') {
+  // 키 없는 리터럴은 key가 'L1'인 항목만 받는다: L1 "자세히"의 고정 라벨(errors.ts)이고, 글자가 라벨을 품어야 한다
+  if (key === undefined) return terms.allow.some((a) => a.key === 'L1' && val.includes(a.word) && a.word.includes(word));
   return terms.allow.some((a) => a.key === key && (a.word === '' || word.includes(a.word) || a.word.includes(word)));
 }
 
@@ -720,7 +721,7 @@ function literalViolations(deck, lit, ctx) {
     r.re.lastIndex = 0;
     const m = r.re.exec(val);
     if (!m) continue;
-    if (allowed(ctx.terms, key, m[0])) continue;
+    if (allowed(ctx.terms, key, m[0], val)) continue;
     out.push({ rule: r.id, file: deck.rel, line: lit.line, text: val, msg: `${r.id} 금지: "${m[0]}"${r.note ? ` (${r.note})` : ''}` });
   }
   if (!hangul) return out;
@@ -783,6 +784,8 @@ function referencedChecker(root, deck) {
   const isWorker = deck.kind === 'worker';
   const base = join(root, isWorker ? 'worker/src' : 'app/src');
   const files = walk(base, (n) => /\.(?:ts|svelte)$/.test(n) && !/\.test\.ts$/.test(n)).filter((p) => resolve(p) !== resolve(join(root, deck.rel)));
+  // 앱 deck의 OS 알림·전원 사유 키(notify.*·power.reason)는 Rust 대조 테스트(app/src-tauri/src)가 참조한다
+  if (!isWorker) files.push(...walk(join(root, 'app/src-tauri/src'), (n) => /\.rs$/.test(n)));
   const texts = files.map((p) => readFileSync(p, 'utf8'));
   const prefixes = [];
   for (const t of texts) {

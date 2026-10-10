@@ -3,7 +3,9 @@
   // 기본 선택과 무관하다. 행의 면은 FieldRow 값 열 x에서 시작한다.
   import type { QualityDto } from '../../bindings';
   import { t } from '../../copy/ko';
+  import { sizeBaseOf } from '../../format/bytes';
   import { bestQualityIndex, qualityFps, qualitySize } from '../../receive';
+  import { platform } from '../../stores/platform.svelte';
   import FieldRow from '../ui/FieldRow.svelte';
   import RadioGroup from '../ui/RadioGroup.svelte';
 
@@ -33,7 +35,7 @@
           </span>
         {/snippet}
         {#snippet trailing(option)}
-          <span class="num">{qualitySize(qualities[option.value], durationSecs) ?? ''}</span>
+          <span class="num">{qualitySize(qualities[option.value], durationSecs, sizeBaseOf(platform.os)) ?? ''}</span>
         {/snippet}
       </RadioGroup>
     </div>

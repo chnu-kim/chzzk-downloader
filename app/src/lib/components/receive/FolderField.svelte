@@ -14,7 +14,7 @@
   let { path, onchange, disabled = false }: Props = $props();
 </script>
 
-<FieldRow label={t('folder.label')}>
+<FieldRow label={t('dialog.legacy.item.folder')}>
   {#snippet control()}
     <span class="selectable ellipsis">{path}</span>
   {/snippet}

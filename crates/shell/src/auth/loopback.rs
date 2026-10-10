@@ -81,12 +81,12 @@ impl ReceiverPage {
     pub fn message(self) -> &'static str {
         match self {
             ReceiverPage::SignedIn => {
-                "로그인했어요. 치지직 다운로더로 돌아가세요. 이 창은 닫아도 돼요."
+                "로그인했어요. 치지직 다운로더 앱으로 돌아가 주세요. 이 창은 닫아도 돼요."
             }
-            ReceiverPage::Denied => "허가되지 않은 채널이에요. 앱에서 안내를 확인해 주세요.",
-            ReceiverPage::Cancelled => "로그인을 취소했어요. 앱에서 다시 시도할 수 있어요.",
-            ReceiverPage::Failed => "로그인을 마치지 못했어요. 앱에서 다시 시도해 주세요.",
-            ReceiverPage::Lost => "이 로그인 요청은 처리할 수 없어요. 앱에서 다시 시도해 주세요.",
+            ReceiverPage::Denied => "이 채널은 사용 허가가 없어요. 앱에서 안내를 확인해 주세요.",
+            ReceiverPage::Cancelled => "로그인을 취소했어요. 앱에서 다시 로그인할 수 있어요.",
+            ReceiverPage::Failed => "로그인하지 못했어요. 앱에서 다시 시도해 주세요.",
+            ReceiverPage::Lost => "이 로그인 요청은 처리할 수 없어요. 앱에서 다시 로그인해 주세요.",
             ReceiverPage::Pending => "앱으로 돌아가 결과를 확인해 주세요.",
         }
     }

@@ -51,24 +51,24 @@ export type WebPost = { readonly ok: true; readonly s: WebSession; readonly form
  * → 웹 세션 → 관리자 → csrf 필드. 앞의 네 단계는 DO를 부르지 않는다.
  */
 export async function guardWebPost(req: Request, ctx: Ctx, opts: { readonly admin: boolean }): Promise<WebPost> {
-  const reject = (status: number, message: string, reason: string): WebPost => {
+  const reject = (status: number, title: string, body: string | null, reason: string): WebPost => {
     ctx.log("web.post.rejected", { level: "warn", route: ctx.route, reason });
-    return { ok: false, response: noticePage(ctx.config, status, message) };
+    return { ok: false, response: noticePage(ctx.config, status, title, body) };
   };
-  if (opts.admin && ctx.config.adminChannelIds.length === 0) return reject(403, COPY.bootstrapAdmin, "bootstrap");
-  if (!sameOriginPost(req, ctx.config.publicOrigin)) return reject(403, COPY.badOrigin, "bad_origin");
-  if (!isFormContentType(req)) return reject(415, COPY.unsupportedType, "unsupported_type");
+  if (opts.admin && ctx.config.adminChannelIds.length === 0) return reject(403, COPY.bootstrapAdmin.title, null, "bootstrap");
+  if (!sameOriginPost(req, ctx.config.publicOrigin)) return reject(403, COPY.badRequest.title, COPY.badRequest.body, "bad_origin");
+  if (!isFormContentType(req)) return reject(415, COPY.badFormat.title, null, "unsupported_type");
   const text = await readCapped(req, FORM_MAX);
-  if (text === null) return reject(400, COPY.badBody, "bad_body");
+  if (text === null) return reject(400, COPY.badFormat.title, COPY.badBody, "bad_body");
   const form = new URLSearchParams(text);
   const r = await readWebSession(req, ctx);
   if (!r.ok) {
     ctx.log("web.post.rejected", { level: "warn", route: ctx.route, reason: "no_session" });
     return { ok: false, response: toHome(r.clear) };
   }
-  if (opts.admin && !r.s.isAdmin) return reject(403, COPY.notAdmin, "not_admin");
+  if (opts.admin && !r.s.isAdmin) return reject(403, COPY.adminOnly.title, null, "not_admin");
   const sent = form.getAll("csrf");
   const v = sent.length === 1 ? sent[0] : undefined;
-  if (!isSecret(v) || r.s.csrf === "" || !(await safeEqual(v, r.s.csrf))) return reject(403, COPY.badCsrf, "bad_csrf");
+  if (!isSecret(v) || r.s.csrf === "" || !(await safeEqual(v, r.s.csrf))) return reject(403, COPY.badRequest.title, COPY.badRequest.body, "bad_csrf");
   return { ok: true, s: r.s, form };
 }

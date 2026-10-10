@@ -149,7 +149,7 @@ export class AuthStore {
   copyLoginUrl(): Promise<void> {
     return this.#run('copy', async () => {
       const ok = await api.authCopyLoginUrl().catch(() => false);
-      if (ok) toasts.push(t('toast.copied'), 'copied');
+      if (ok) toasts.push(t('action.copied'), 'copied');
       else toasts.push(t('toast.copyFailed'), 'danger');
     });
   }

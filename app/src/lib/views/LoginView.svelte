@@ -71,10 +71,11 @@
       </div>
 
       {#if screen.kind === 'pending' && pending}
-        <p class="body num">{t('auth.pending.body', { mmss: formatMmss(remainingSecs(pending.expiresAt, now)) })}</p>
+        <p class="body">{t('auth.pending.body')}</p>
+        <p class="help num">{t('auth.pending.remaining', { mmss: formatMmss(remainingSecs(pending.expiresAt, now)) })}</p>
         <div class="buttons">
           <Button variant="primary" loading={auth.isBusy('reopen')} onclick={() => void auth.reopen()}>{t('auth.reopen')}</Button>
-          <Button disabled={auth.isBusy('cancel')} onclick={() => void auth.cancel()}>{t('auth.cancel')}</Button>
+          <Button disabled={auth.isBusy('cancel')} onclick={() => void auth.cancel()}>{t('common.cancel')}</Button>
         </div>
         <div class="help-block">
           <p class="help">{t('auth.browserHelp')}</p>
@@ -95,6 +96,7 @@
         {/if}
       {:else}
         {#if screen.body}<p class="body" role={screen.problem ? 'alert' : undefined}>{screen.body}</p>{/if}
+        {#if screen.channelRow}<p class="help">{screen.channelRow}</p>{/if}
         {#if idle}
           <!-- 비공식 고지: 받는 것·받지 않는 것: 끊는 길이 스크롤 없이 720×520 안에 든다 -->
           <Notice tone="neutral" icon="info">{t('notice.short')}</Notice>
@@ -125,12 +127,13 @@
       {#if screen.otherAccount === 'help'}
         <p class="help">{t('auth.otherAccount.help')}</p>
       {:else if screen.otherAccount === 'link'}
-        <p class="help">
-          {t('auth.otherAccount.lead')}
-          <Button class="btn-inline" variant="ghost" size="sm" disabled={auth.isBusy('login')} onclick={() => run('login')}>
+        <!-- 완결 문장 하나 + 따로 선 링크형 버튼(버튼 글자가 문장의 일부가 되지 않는다, content.md §2) -->
+        <p class="help">{t('auth.otherAccount.help')}</p>
+        <div class="link">
+          <Button class="edge-start btn-inline" variant="ghost" size="sm" disabled={auth.isBusy('login')} onclick={() => run('login')}>
             {t('auth.otherAccount')}
           </Button>
-        </p>
+        </div>
       {/if}
     </section>
 

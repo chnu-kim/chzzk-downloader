@@ -121,11 +121,21 @@ describe('UrlBar', () => {
     const el = input as HTMLInputElement;
     expect([el.selectionStart, el.selectionEnd]).toEqual([0, el.value.length]);
 
-    // [다시 시도]는 같은 주소로 다시 부른다
+    // 입력칸이 행동이라 버튼이 없다(content.md §15.2 `invalidUrl`: 유일한 예외)
+    expect(screen.queryByRole('button', { name: t('action.retry') })).toBeNull();
+  });
+
+  it('요청이 몰린 오류의 [다시 시도]는 같은 주소로 다시 부른다', async () => {
+    vi.mocked(api.resolve).mockRejectedValue(
+      appError('http', { payload: { type: 'http', status: 429, requestKind: 'api' } }),
+    );
+    const user = userEvent.setup();
+    render(InputPanel);
+    await user.type(urlInput(), 'https://chzzk.naver.com/video/7{Enter}');
     // 동작 버튼은 라이브 영역(.notice-text) 밖에 있다
-    await user.click(screen.getByRole('button', { name: t('action.retry') }));
+    await user.click(await screen.findByRole('button', { name: t('action.retry') }));
     expect(api.resolve).toHaveBeenCalledTimes(2);
-    expect(api.resolve).toHaveBeenLastCalledWith('https://chzzk.naver.com/live/abcd');
+    expect(api.resolve).toHaveBeenLastCalledWith('https://chzzk.naver.com/video/7');
   });
 
   it('오류를 [닫기]로 닫으면 포커스가 입력줄로 돌아온다', async () => {
@@ -136,8 +146,8 @@ describe('UrlBar', () => {
     render(InputPanel);
     await user.type(urlInput(), 'https://chzzk.naver.com/video/1{Enter}');
     const alert = await screen.findByRole('alert');
-    expect(alert).not.toContainElement(screen.getByRole('button', { name: t('action.close') }));
-    await user.click(screen.getByRole('button', { name: t('action.close') }));
+    expect(alert).not.toContainElement(screen.getByRole('button', { name: t('common.close') }));
+    await user.click(screen.getByRole('button', { name: t('common.close') }));
     await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
     await waitFor(() => expect(urlInput()).toHaveFocus());
   });
@@ -176,10 +186,10 @@ describe('ResolveCard', () => {
     const radios = screen.getAllByRole('radio');
     expect(radios[1]).toBeChecked();
     expect(radios[1].closest('label')).toHaveTextContent('720p');
-    expect(screen.getByText(t('meta.liveDate', { date: '2026.10.03 21:00' }))).toBeInTheDocument();
+    expect(screen.getByText(t('meta.liveDate', { date: '2026. 10. 3. 오후 9:00' }))).toBeInTheDocument();
     expect(screen.getByText(t('kind.liveRewind'))).toBeInTheDocument();
     // 4 Mbps × 11565초 / 8
-    expect(radios[1].closest('label')).toHaveTextContent(t('quality.sizeEstimate', { size: '5.4 GB' }));
+    expect(radios[1].closest('label')).toHaveTextContent('약 5.8GB');
     expect(screen.getByRole('heading', { name: /금요/ })).toHaveFocus();
   });
 
@@ -197,7 +207,7 @@ describe('ResolveCard', () => {
     await user.click(cardFooter().getByRole('button', { name: t('common.close') }));
     await waitFor(() => expect(urlInput()).toHaveFocus());
 
-    await user.click(screen.getByRole('button', { name: t('url.submit') }));
+    await user.click(screen.getByRole('button', { name: t('common.load') }));
     await screen.findByRole('heading', { name: /금요/ });
     await user.click(cardHeader().getByRole('button', { name: t('common.close') }));
     await waitFor(() => expect(screen.queryByRole('heading', { name: /금요/ })).toBeNull());
@@ -303,7 +313,7 @@ describe('ResolveCard', () => {
     await user.click(await screen.findByLabelText(t('conflict.overwrite')));
     await user.click(await downloadButton());
     const dialog = await screen.findByRole('dialog');
-    await user.click(within(dialog).getByRole('button', { name: t('dialog.overwrite.keep') }));
+    await user.click(within(dialog).getByRole('button', { name: t('dialog.cancel.keepPaused') }));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     expect(api.enqueue).not.toHaveBeenCalled();
     expect(screen.getByRole('heading', { name: /금요/ })).toBeInTheDocument();
@@ -321,8 +331,8 @@ describe('ResolveCard', () => {
     setCheck({ partial: { bytes: 1288490188, sameJob: true } });
     const user = await openCard();
     expect(await screen.findByText(t('conflict.partial.title'))).toBeInTheDocument();
-    expect(screen.getByText(t('conflict.partial.body', { size: '1.2 GB' }))).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: t('conflict.partial.fresh') }));
+    expect(screen.getByText(t('conflict.partial.body', { size: '1.29GB' }))).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: t('action.restartFresh') }));
     expect(screen.getByText(t('conflict.partial.freshChosen'))).toBeInTheDocument();
     await user.click(await downloadButton());
     expect(vi.mocked(api.enqueue).mock.lastCall?.[0]).toMatchObject({ restart: true });
@@ -492,7 +502,7 @@ describe('클립보드 제안', () => {
     render(InputPanel);
     const group = await screen.findByRole('group', { name: t('url.clipboard.title') });
     expect(group).toHaveTextContent('chzzk.naver.com/video/42');
-    await user.click(within(group).getByRole('button', { name: t('url.clipboard.load') }));
+    await user.click(within(group).getByRole('button', { name: t('common.load') }));
     expect(api.resolve).toHaveBeenCalledWith(link);
     expect(api.enqueue).not.toHaveBeenCalled();
     expect(screen.queryByRole('group', { name: t('url.clipboard.title') })).toBeNull();
@@ -632,7 +642,7 @@ describe('최근 영상', () => {
     render(InputPanel);
     const rows = screen.getAllByRole('listitem');
     expect(rows).toHaveLength(3);
-    expect(rows[0]).toHaveTextContent(t('recent.meta', { kind: t('kind.liveRewind'), date: '2026.10.03' }));
+    expect(rows[0]).toHaveTextContent(t('recent.meta', { kind: t('kind.liveRewind'), date: '2026. 10. 3.' }));
     expect(rows[1]).toHaveTextContent(t('kind.clip'));
     expect(rows[1]).not.toHaveTextContent('·');
     // 옛 항목은 제목과 [다시 열기]뿐이다
@@ -650,7 +660,7 @@ describe('최근 영상', () => {
     const { container } = render(InputPanel);
     expect(screen.getAllByRole('listitem')).toHaveLength(5);
     expect(container.querySelector('[title]')).toBeNull();
-    await user.click(screen.getByRole('button', { name: `${t('recent.reopen')}: 방송 2` }));
+    await user.click(screen.getByRole('button', { name: t('a11y.reopen', { title: '방송 2' }) }));
     expect(api.resolve).toHaveBeenCalledWith('https://chzzk.naver.com/video/2');
   });
 });
@@ -675,9 +685,9 @@ describe('불러오는 중 한 줄', () => {
     // 스피너는 [불러오기] 안 하나뿐이다(한 줄에는 없다)
     const line = screen.getByText(t('resolve.loading')).closest('.notice') as HTMLElement;
     expect(line.querySelector('.spinner')).toBeNull();
-    expect(screen.getByRole('button', { name: t('url.submit') })).toHaveAttribute('aria-busy', 'true');
+    expect(screen.getByRole('button', { name: t('common.load') })).toHaveAttribute('aria-busy', 'true');
 
-    fireEvent.click(within(line).getByRole('button', { name: t('resolve.cancel') }));
+    fireEvent.click(within(line).getByRole('button', { name: t('common.cancel') }));
     expect(resolver.state.kind).toBe('idle');
     expect(screen.queryByText(t('resolve.loading'))).toBeNull();
   });

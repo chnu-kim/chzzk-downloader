@@ -41,6 +41,9 @@
     }
   });
 
+  /** 확인 실패 줄 아래 한 줄: 지금 버전은 계속 쓸 수 있다는 안내(`update.failed`의 도움말과 같은 키) */
+  const checkHelp = $derived(update.check === 'failed' ? t('common.keepUsing') : '');
+
   async function openFolder(kind: AppFolder) {
     try {
       await api.openAppFolder(kind);
@@ -65,7 +68,7 @@
       <span class="row-label">{t('app.title')}</span>
       <span class="row-help num">
         {#if info}
-          {t('settings.about.version', { app: info.version, core: info.coreVersion })}
+          {t('settings.about.version', { app: info.version })}
         {:else if loading.visible}
           <Skeleton variant="line" width="half" />
         {/if}
@@ -82,7 +85,7 @@
       </Button>
     </div>
     {#if auth.signedIn}
-      <span class="row-help status" role="status">{checkText}</span>
+      <span class="row-help status" role="status">{checkText}{#if checkHelp}<span class="status-help">{checkHelp}</span>{/if}</span>
     {/if}
   </div>
 
@@ -90,7 +93,7 @@
     {#if info?.features.auth}
       <Button variant="ghost" size="sm" class="edge-start" onclick={() => void openPrivacy()}>{t('auth.privacy')}</Button>
     {/if}
-    <Button variant="ghost" size="sm" onclick={() => void openFolder('config')}>{t('settings.about.openConfig')}</Button>
+    <Button variant="ghost" size="sm" onclick={() => void openFolder('config')}>{t('common.openConfigFolder')}</Button>
     <Button variant="ghost" size="sm" onclick={() => void openFolder('logs')}>{t('settings.about.openLogs')}</Button>
   </div>
 
@@ -106,6 +109,9 @@
     flex: 1 1 100%;
   }
   /* 결과가 없으면 줄이 없는 것처럼 접는다(role=status 자리는 늘 있어야 알림이 읽힌다) */
+  .status-help {
+    display: block;
+  }
   .status:empty {
     margin-block-start: calc(0px - var(--gap-sibling));
   }

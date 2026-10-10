@@ -99,6 +99,18 @@ test('judgeWorker: start 201·login 303·redeem 200 각 1번·오류 응답 없�
 
 test('CARD_DOWNLOAD_XPATH: 버튼 전체 글자가 아니라 이름 글자 노드로 찾는다(단축키 표시가 라벨 span 안에 붙는다)', async () => {
   const { CARD_DOWNLOAD_XPATH } = await import('./e2e-native.mjs');
-  assert.match(CARD_DOWNLOAD_XPATH, /\/\/button\[\.\/\/text\(\)\[normalize-space\(\.\)='다운로드'\]\]$/);
+  assert.match(CARD_DOWNLOAD_XPATH, /\/\/button\[\.\/\/text\(\)\[normalize-space\(\.\)='받기'\]\]$/);
   assert.match(CARD_DOWNLOAD_XPATH, /section\[contains\(@class,'card'\)\]/);
+});
+
+test('셀렉터의 한글이 ko.ts 값과 같다(card.download·auth.login·auth.pending.body)', async () => {
+  const { readFileSync } = await import('node:fs');
+  const ko = readFileSync(new URL('../../app/src/lib/copy/ko.ts', import.meta.url), 'utf8');
+  const val = (k) => ko.match(new RegExp(`'${k.replace(/\./g, '\\.')}':\\s*'([^']*)'`))?.[1];
+  const src = readFileSync(new URL('./e2e-native.mjs', import.meta.url), 'utf8');
+  assert.ok(src.includes(`normalize-space(.)='${val('card.download')}'`), 'card.download');
+  assert.ok(src.includes(`normalize-space(.)='${val('auth.login')}'`), 'auth.login');
+  const pending = val('auth.pending.body');
+  const marker = '브라우저에서 치지직 로그인을 마치면';
+  assert.ok(pending?.startsWith(marker) && src.includes(`'${marker}'`), 'auth.pending.body 앞부분');
 });

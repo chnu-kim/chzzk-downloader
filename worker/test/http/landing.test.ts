@@ -96,7 +96,7 @@ describe("허용된 사용자", () => {
     const res = await b.get("/");
     expect(res.status).toBe(200);
     const t = await res.text();
-    expect(t).toContain(`${FAKE_ACCOUNTS.b2.channelName} 채널로 로그인했어요.`);
+    expect(t).toContain(`‘${FAKE_ACCOUNTS.b2.channelName}’ 채널로 로그인했어요.`);
     expect(t).toContain("최신 버전 0.2.0 · 2030-01-01");
     const sums = new TextDecoder().decode(seed.get(`releases/${V2}/SHA256SUMS`));
     const hexOf = (name: string) => new RegExp(`^([0-9a-f]{64})  ${name}$`, "m").exec(sums)?.[1] ?? "";
@@ -113,8 +113,8 @@ describe("허용된 사용자", () => {
     const mac = t.slice(t.indexOf("<h3>macOS</h3>"), t.indexOf("<h3>Windows</h3>"));
     expect(mac.length).toBeGreaterThan(0);
     expect(mac).toContain(`<p>${COPY.macDamaged}</p>`);
-    expect(mac).toContain("손상되어 열 수 없다");
-    expect(mac).toContain("응용 프로그램(Applications)");
+    expect(mac).toContain("손상돼 열 수 없다");
+    expect(mac).toContain("‘응용 프로그램’ 폴더");
     // 큰따옴표는 이스케이프돼 나간다(core/html.ts escapeHtml)
     expect(mac).toContain("<pre><code>xattr -dr com.apple.quarantine &quot;/Applications/치지직 다운로더.app&quot;</code></pre>");
     const iMove = mac.indexOf(COPY.macMove);
@@ -122,6 +122,16 @@ describe("허용된 사용자", () => {
     const iReopen = mac.indexOf(COPY.macReopen);
     expect(iMove).toBeGreaterThan(-1);
     expect(iMove < iCmd && iCmd < iReopen).toBe(true);
+    // 단계는 ol 항목이고 문자열에 번호가 박혀 있지 않다
+    expect(mac).toContain(`<ol><li>${COPY.macMove}</li><li>${COPY.macTerminal}<pre>`);
+    expect(mac).toContain(`</pre></li><li>${COPY.macReopen}</li></ol>`);
+    expect(COPY.macMove).not.toMatch(/^\d+\./);
+    // 랜딩 제목은 앱 이름 꼬리 없이 한 번만, 본문 h1은 앱 이름
+    expect(t).toContain("<title>치지직 다운로더 — 비공식 다시보기·클립 다운로더</title>");
+    expect(t).toContain("<h1>치지직 다운로더</h1>");
+    // 시각 열 제목에는 시간대가 없고 caption에 한 번 적는다
+    expect(t).toContain("<caption>시각은 한국 시간이에요.</caption>");
+    expect(t).not.toContain("KST");
     // 실기기에서 통하지 않는 옛 안내는 없다
     for (const old of ["그래도 열기", "우클릭", "개인정보 보호 및 보안", "확인되지 않은 개발자"]) expect(t).not.toContain(old);
     expect(t).toContain('action="/auth/web/logout"');

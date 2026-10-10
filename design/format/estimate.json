@@ -1,0 +1,17 @@
+{
+  "$comment": "손으로 계산한 기대값. TS(app/src/lib/format/format.test.ts)와 Rust(crates/shell/tests/format_golden.rs)가 같은 파일을 읽는다. 약 + 소수 1자리.",
+  "fn": "formatEstimate",
+  "cases": [
+    {"name": "GB", "args": [7820000000, 1000], "out": "약 7.8GB"},
+    {"name": "0", "args": [0, 1000], "out": "약 0B"},
+    {"name": "4바이트", "args": [4, 1000], "out": "약 4B"},
+    {"name": "999B", "args": [999, 1000], "out": "약 999B"},
+    {"name": "1000은 KB", "args": [1000, 1000], "out": "약 1.0KB"},
+    {"name": "999949는 999.9KB", "args": [999949, 1000], "out": "약 999.9KB"},
+    {"name": "999950은 MB로 승급", "args": [999950, 1000], "out": "약 1.0MB"},
+    {"name": "1024 진법 1KB", "args": [1024, 1024], "out": "약 1.0KB"},
+    {"name": "1024 진법 1023KB", "args": [1047552, 1024], "out": "약 1023.0KB"},
+    {"name": "1024 진법 MB 직전은 승급", "args": [1048575, 1024], "out": "약 1.0MB"},
+    {"name": "TB", "args": [3500000000000, 1000], "out": "약 3.5TB"}
+  ]
+}

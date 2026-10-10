@@ -16,7 +16,7 @@ test('주소를 불러와 받고, 멈췄다 이어받아 끝까지 받는다', a
 
   // 불러오기 → 카드
   await page.getByLabel(t('url.label')).fill(r.url);
-  await page.getByRole('button', { name: t('url.submit') }).click();
+  await page.getByRole('button', { name: t('common.load') }).click();
   const card = page.getByRole('region', { name: r.meta.title });
   await expect(card).toBeVisible();
   await expect(card.getByText(t('kind.liveRewind'))).toBeVisible();
@@ -100,7 +100,7 @@ test('지운 항목은 [되돌리기]로 돌아오고 그때는 remove_job을 �
   const { page } = app;
   await app.open({ resolve: { [r.url]: r } });
   await page.getByLabel(t('url.label')).fill(r.url);
-  await page.getByRole('button', { name: t('url.submit') }).click();
+  await page.getByRole('button', { name: t('common.load') }).click();
   await page.getByRole('button', { name: t('card.download') }).click();
   await app.ctl((c, gb) => c.complete(1, 4 * gb), GB);
   const item = page.getByRole('article', { name: r.meta.title });
@@ -119,16 +119,16 @@ test('받는 중인 작업을 취소하면 확인(D2)을 거쳐 목록에서 지
   const { page } = app;
   await app.open({ resolve: { [r.url]: r } });
   await page.getByLabel(t('url.label')).fill(r.url);
-  await page.getByRole('button', { name: t('url.submit') }).click();
+  await page.getByRole('button', { name: t('common.load') }).click();
   await page.getByRole('button', { name: t('card.download') }).click();
   await app.ctl((c, gb) => c.progress(1, 1 * gb, 4 * gb), GB);
   const item = page.getByRole('article', { name: r.meta.title });
   // 받은 부분(.part)이 있으면 크기와 무관하게 [취소…]가 확인을 연다
-  await item.getByRole('button', { name: t('action.cancel'), exact: true }).click();
-  const dialog = page.getByRole('dialog', { name: t('dialog.cancel.title') });
+  await item.getByRole('button', { name: t('a11y.cancelJob', { title: r.meta.title }), exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: t('dialog.cancel.title', { title: r.meta.title }) });
   await expect(dialog).toBeVisible();
-  // 안전한 쪽([돌아가기])이 오른쪽 끝·첫 포커스다
-  await expect(dialog.getByRole('button', { name: t('dialog.cancel.back') })).toBeFocused();
+  // 받는 중이라 안전한 쪽([계속 받기])이 오른쪽 끝·첫 포커스다
+  await expect(dialog.getByRole('button', { name: t('dialog.cancel.keepRunning') })).toBeFocused();
   await app.axe('취소 확인');
   await dialog.getByRole('button', { name: t('dialog.cancel.confirm') }).click();
   await expect(item).toBeHidden();
@@ -140,10 +140,10 @@ test('받은 바이트가 없는 작업은 확인 없이 바로 취소한다', a
   const { page } = app;
   await app.open({ resolve: { [r.url]: r } });
   await page.getByLabel(t('url.label')).fill(r.url);
-  await page.getByRole('button', { name: t('url.submit') }).click();
+  await page.getByRole('button', { name: t('common.load') }).click();
   await page.getByRole('button', { name: t('card.download') }).click();
   const item = page.getByRole('article', { name: r.meta.title });
-  await item.getByRole('button', { name: t('action.cancelQueued'), exact: true }).click();
+  await item.getByRole('button', { name: t('a11y.cancelJob', { title: r.meta.title }), exact: true }).click();
   await expect(item).toBeHidden();
   await expect(page.getByRole('dialog')).toHaveCount(0);
   expect(await app.args('remove_job')).toEqual([{ id: 1 }]);
@@ -157,7 +157,7 @@ test('같은 이름의 파일이 있으면 번호를 붙이거나, 덮어쓰기�
     outputs: { [r.suggestedFileName]: { exists: true, freeFileName: `${r.suggestedFileName} (1)` } },
   });
   await page.getByLabel(t('url.label')).fill(r.url);
-  await page.getByRole('button', { name: t('url.submit') }).click();
+  await page.getByRole('button', { name: t('common.load') }).click();
   const card = page.getByRole('region', { name: r.meta.title });
   await expect(card.getByText(t('conflict.exists'))).toBeVisible();
   // 경고는 알림(role=alert)이 아니다
@@ -170,9 +170,9 @@ test('같은 이름의 파일이 있으면 번호를 붙이거나, 덮어쓰기�
   await card.getByRole('button', { name: t('card.download') }).click();
   const dialog = page.getByRole('dialog', { name: t('dialog.overwrite.title', { name: `${r.suggestedFileName}.mp4` }) });
   await expect(dialog).toBeVisible();
-  await expect(dialog.getByRole('button', { name: t('dialog.overwrite.keep') })).toBeFocused();
+  await expect(dialog.getByRole('button', { name: t('dialog.cancel.keepPaused') })).toBeFocused();
   await app.axe('덮어쓰기 확인');
-  await dialog.getByRole('button', { name: t('dialog.overwrite.keep') }).click();
+  await dialog.getByRole('button', { name: t('dialog.cancel.keepPaused') }).click();
   await expect(dialog).toBeHidden();
   expect(await app.args('enqueue')).toEqual([]);
 
@@ -188,7 +188,7 @@ test('설정에 있는 동안 끝난 작업은 완료 토스트로 알린다', a
   const { page } = app;
   await app.open({ resolve: { [r.url]: r } });
   await page.getByLabel(t('url.label')).fill(r.url);
-  await page.getByRole('button', { name: t('url.submit') }).click();
+  await page.getByRole('button', { name: t('common.load') }).click();
   await page.getByRole('button', { name: t('card.download') }).click();
   await page.getByRole('button', { name: t('header.settings') }).click();
   await app.ctl((c, gb) => c.complete(1, 4 * gb), GB);

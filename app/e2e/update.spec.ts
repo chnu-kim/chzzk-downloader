@@ -40,7 +40,7 @@ test('받는 중이면 확인(D5) 뒤 설치한다', async ({ app }) => {
   await expect(dialog).toBeVisible();
   await expect(dialog.getByText(t('dialog.update.body', { n: 1 }))).toBeVisible();
   // 안전한 쪽([나중에])이 오른쪽 끝·첫 포커스다
-  await expect(dialog.getByRole('button', { name: t('dialog.update.later') })).toBeFocused();
+  await expect(dialog.getByRole('button', { name: t('common.later') })).toBeFocused();
   await app.axe('업데이트 확인 대화상자');
 
   await dialog.getByRole('button', { name: t('dialog.update.confirm') }).click();

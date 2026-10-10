@@ -100,7 +100,7 @@ export const open = (page: Page, name: string) => page.getByRole('button', { nam
 
 const loadCard = async (app: App, url: string) => {
   await app.page.getByLabel(t('url.label')).fill(url);
-  await open(app.page, t('url.submit')).click();
+  await open(app.page, t('common.load')).click();
 };
 
 export const SCREENS: Screen[] = [
@@ -188,7 +188,7 @@ export const SCREENS: Screen[] = [
       await app.page.evaluate(() => {
         Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: () => Promise.resolve() } });
       });
-      await app.page.getByRole('button', { name: t('job.more', { title: SAME_PREFIX_TITLES[0] }) }).click();
+      await app.page.getByRole('button', { name: t('a11y.more', { title: SAME_PREFIX_TITLES[0] }) }).click();
       await app.page.getByRole('menuitem', { name: t('action.copyUrl') }).click();
     },
     alignedToast: ['토스트 왼쪽', '토스트 오른쪽'],
@@ -200,7 +200,7 @@ export const SCREENS: Screen[] = [
     drive: async (app) => {
       await open(app.page, t('header.settings')).click();
     },
-    ready: (p) => p.getByRole('heading', { name: t('settings.title'), level: 1 }),
+    ready: (p) => p.getByRole('heading', { name: t('header.settings'), level: 1 }),
     // 모양 행은 Linux에만 있다
     extra: async (p, os) => {
       await expect(p.getByText(t('settings.theme'), { exact: true })).toHaveCount(os === 'linux' ? 1 : 0);
@@ -215,7 +215,7 @@ export const SCREENS: Screen[] = [
       drive: async (app) => {
         await open(app.page, t('header.settings')).click();
       },
-      ready: (p) => p.getByRole('heading', { name: t('settings.title'), level: 1 }),
+      ready: (p) => p.getByRole('heading', { name: t('header.settings'), level: 1 }),
       extra: async (p) => {
         await expect(p.getByText(t('settings.theme'), { exact: true })).toHaveCount(os === 'linux' ? 1 : 0);
         await expect(p.getByRole('button', { name: revealLabel(os), exact: true })).toBeVisible();
@@ -277,9 +277,9 @@ export const SCREENS: Screen[] = [
     slug: 'dialog-d2',
     scenario: (_env, now) => ({ jobs: [job(1, { title: '받는 중인 영상', status: 'running', progress: prog(), partialBytes: 2_469_606_195 })] }),
     drive: async (app) => {
-      await open(app.page, t('action.cancel')).click();
+      await open(app.page, t('a11y.cancelJob', { title: '받는 중인 영상' })).click();
     },
-    ready: (p) => p.getByRole('dialog', { name: t('dialog.cancel.title') }),
+    ready: (p) => p.getByRole('dialog', { name: t('dialog.cancel.title', { title: '받는 중인 영상' }) }),
     dialog: true,
   },
   {

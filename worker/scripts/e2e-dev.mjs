@@ -672,7 +672,7 @@ const scenarios = [
       must(/^[A-Za-z0-9_-]{22}$/.test(handle), "미끼 loginUrl의 handle이 22자 b64url이 아니다");
       const page = await browserGet(new CookieJar(), new URL(d.loginUrl).pathname);
       isStatus(page, 200, "미끼 안내 페이지");
-      must(page.html.includes("앱이 오래됐어요"), "안내 페이지에 업데이트 문구가 없다");
+      must(page.html.includes("앱을 업데이트해야 해요"), "안내 페이지에 업데이트 문구가 없다");
       const poll = await jsonPost("/auth/poll", {});
       isStatus(poll, 404, "poll 비석");
       must(json(poll).code === "app_outdated", "poll 비석의 code가 app_outdated가 아니다");

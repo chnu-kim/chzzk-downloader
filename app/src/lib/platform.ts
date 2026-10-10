@@ -10,10 +10,12 @@ export function osFamily(os: Os): OsFamily {
   return os === 'macos' ? 'mac' : 'other';
 }
 
-/** 단축키 표기(§6): `{paste}` 힌트·[받기] 버튼의 Kbd */
+/** 단축키 표기(§6): `{paste}` 힌트·[받기] 버튼의 Kbd, 쿠키 안내의 `{devtools}` */
 const SHORTCUT = {
   paste: { mac: 'platform.mac.paste', other: 'platform.other.paste' },
   submit: { mac: 'platform.mac.submit', other: 'platform.other.submit' },
+  /** 쿠키 안내 둘째 단계의 `{devtools}`(개발자 도구를 여는 키) */
+  devtools: { mac: 'platform.mac.devtools', other: 'platform.other.devtools' },
 } as const satisfies Record<string, Record<OsFamily, CopyKey>>;
 
 export type Shortcut = keyof typeof SHORTCUT;

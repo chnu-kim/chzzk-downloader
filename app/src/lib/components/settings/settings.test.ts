@@ -2,6 +2,7 @@ import { render, screen, waitFor, within } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppError, AppInfo, AuthStatusDto, Os, SettingsDto } from '../../bindings';
+import { errorCopy } from '../../copy/errors';
 import { t } from '../../copy/ko';
 import { revealLabel } from '../../platform';
 
@@ -121,7 +122,7 @@ describe('설정: 즉시 저장', () => {
     await waitFor(() =>
       expect(screen.getByRole('combobox', { name: t('settings.parallel') })).toHaveDisplayValue('2'),
     );
-    await user.click(banner.getByRole('button', { name: t('settings.about.openConfig') }));
+    await user.click(banner.getByRole('button', { name: t('common.openConfigFolder') }));
     expect(api.openAppFolder).toHaveBeenLastCalledWith('config');
     await user.click(banner.getByRole('button', { name: t('action.retry') }));
     expect(api.updateSettings).toHaveBeenLastCalledWith({ maxParallelDownloads: 1 });
@@ -135,7 +136,7 @@ describe('설정: 즉시 저장', () => {
     render(SettingsView);
     await user.click(screen.getByRole('button', { name: t('folder.change') }));
     expect(api.updateSettings).toHaveBeenLastCalledWith({ downloadFolder: '/x' });
-    expect(await screen.findByText('입력한 값을 쓸 수 없어요')).toBeInTheDocument();
+    expect(await screen.findByText(errorCopy(appError('invalidInput'), { place: 'other' }).title)).toBeInTheDocument();
     expect(settings.saveError).toBeNull();
   });
 
@@ -143,9 +144,9 @@ describe('설정: 즉시 저장', () => {
     const user = userEvent.setup();
     render(SettingsView);
     expect(screen.getByText('/Users/me/Movies/치지직')).toBeInTheDocument();
-    expect(screen.getByText(t('settings.about.version', { app: '0.1.0', core: '0.1.0' }))).toBeInTheDocument();
+    expect(screen.getByText(t('settings.about.version', { app: '0.1.0' }))).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: revealLabel('macos') }));
-    await user.click(screen.getByRole('button', { name: t('settings.about.openConfig') }));
+    await user.click(screen.getByRole('button', { name: t('common.openConfigFolder') }));
     await user.click(screen.getByRole('button', { name: t('settings.about.openLogs') }));
     expect(vi.mocked(api.openAppFolder).mock.calls).toEqual([['downloads'], ['config'], ['logs']]);
   });
@@ -284,6 +285,23 @@ describe('설정: 네이버 로그인 정보', () => {
     expect(screen.getByLabelText('NID_SES', { selector: 'input' })).toHaveAttribute('aria-invalid', 'true');
   });
 
+  it('값을 찾는 방법은 단계 목록(ol)이고 개발자 도구 키는 OS 표기, 쿠키 이름은 코드 상수다', async () => {
+    const user = userEvent.setup();
+    platform.set('macos');
+    render(SettingsView);
+    await openCookies(user);
+    await user.click(screen.getByText(t('settings.cookie.howto')));
+    const steps = within(screen.getByRole('list')).getAllByRole('listitem').map((li) => li.textContent?.trim());
+    expect(steps).toEqual([
+      t('settings.cookie.howto.step1'),
+      t('settings.cookie.howto.step2', { devtools: t('platform.mac.devtools') }),
+      t('settings.cookie.howto.step3'),
+      t('settings.cookie.howto.step4', { cookieA: 'NID_AUT', cookieB: 'NID_SES' }),
+    ]);
+    // 번호는 문자열이 아니라 ol이 낸다
+    for (const step of steps) expect(step).not.toMatch(/^\d\./);
+  });
+
   it('저장된 값이 없으면 사용 스위치와 지우기가 비활성, 지우기는 입력칸도 비운다', async () => {
     const user = userEvent.setup();
     render(SettingsView);
@@ -375,15 +393,19 @@ describe('D3: 첫 실행에 이전 설정을 찾음', () => {
     vi.mocked(api.getSettings).mockResolvedValue({ ...base });
     const user = userEvent.setup();
     render(LegacyFound);
-    const dialog = await screen.findByRole('dialog', { name: '이전 버전 설정을 찾았어요' });
-    expect(
-      within(dialog).getByText('예전 치지직 다운로더의 저장 폴더와 최근 VOD 3개, 네이버 로그인 정보를 가져올까요?'),
-    ).toBeInTheDocument();
+    const dialog = await screen.findByRole('dialog', { name: t('dialog.legacy.title') });
+    expect(within(dialog).getByText(t('dialog.legacy.body'))).toBeInTheDocument();
+    // 가져올 것은 `ul`의 항목 키로 나뉜다(문장 조각을 이어 붙이지 않는다)
+    expect(within(dialog).getAllByRole('listitem').map((li) => li.textContent?.trim())).toEqual([
+      t('dialog.legacy.item.folder'),
+      t('dialog.legacy.item.recent', { n: 3 }),
+      t('dialog.legacy.item.cookies'),
+    ]);
     // 오른쪽(primary, 첫 포커스)이 안전한 [나중에], 왼쪽(secondary)이 실행 쪽 [가져오기]
-    await waitFor(() => expect(within(dialog).getByRole('button', { name: '나중에' })).toHaveFocus());
-    expect(within(dialog).getAllByRole('button').map((b) => b.textContent?.trim())).toEqual(['가져오기', '나중에']);
+    await waitFor(() => expect(within(dialog).getByRole('button', { name: t('common.later') })).toHaveFocus());
+    expect(within(dialog).getAllByRole('button').map((b) => b.textContent?.trim())).toEqual([t('dialog.legacy.import'), t('common.later')]);
     expect(api.importLegacy).not.toHaveBeenCalled();
-    await user.click(within(dialog).getByRole('button', { name: '가져오기' }));
+    await user.click(within(dialog).getByRole('button', { name: t('dialog.legacy.import') }));
     expect(api.importLegacy).toHaveBeenCalledWith(null);
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     expect(settings.legacyWarnings).toEqual(['경고']);
@@ -394,8 +416,11 @@ describe('D3: 첫 실행에 이전 설정을 찾음', () => {
     const user = userEvent.setup();
     render(LegacyFound);
     const dialog = await screen.findByRole('dialog');
-    expect(within(dialog).getByText('예전 치지직 다운로더의 저장 폴더와 최근 VOD 1개를 가져올까요?')).toBeInTheDocument();
-    await user.click(within(dialog).getByRole('button', { name: '나중에' }));
+    expect(within(dialog).getAllByRole('listitem').map((li) => li.textContent?.trim())).toEqual([
+      t('dialog.legacy.item.folder'),
+      t('dialog.legacy.item.recent', { n: 1 }),
+    ]);
+    await user.click(within(dialog).getByRole('button', { name: t('common.later') }));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     expect(api.importLegacy).not.toHaveBeenCalled();
   });

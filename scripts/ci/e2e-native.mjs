@@ -54,10 +54,10 @@ const log = (m) => console.log(`e2e-native: ${m}`);
 // W3C WebDriver 요소 키
 const ELEMENT = 'element-6066-11e4-a52e-4f735466cecf';
 
-// 카드의 [다운로드]. 버튼 안에 단축키 표시(aria-hidden이어도 innerText에 남는다)가 있어 버튼 글자 전체가 아니라
+// 카드의 [받기]. 버튼 안에 단축키 표시(aria-hidden이어도 innerText에 남는다)가 있어 버튼 글자 전체가 아니라
 // 이름 span 하나로 찾는다
-// 이름 글자 노드로 찾는다: 라벨 span 안에 단축키 표시도 들어 있어 span 전체 글자는 '다운로드'가 아니다
-export const CARD_DOWNLOAD_XPATH = "//section[contains(@class,'card')]//button[.//text()[normalize-space(.)='다운로드']]";
+// 이름 글자 노드로 찾는다: 라벨 span 안에 단축키 표시도 들어 있어 span 전체 글자는 '받기'가 아니다
+export const CARD_DOWNLOAD_XPATH = "//section[contains(@class,'card')]//button[.//text()[normalize-space(.)='받기']]";
 // 못 누르는 버튼: primary는 disabled 대신 aria-disabled를 쓴다(components.md §2.1)
 const IS_OFF = "const b = arguments[0]; return b.disabled || b.getAttribute('aria-disabled') === 'true'";
 
@@ -339,7 +339,7 @@ export async function run(exe) {
         wd.exec(
           sid,
           "if (document.body.innerText.includes(arguments[0])) return 'code'; return document.querySelector('#url-input') ? 'home' : null",
-          ['브라우저에서 로그인해 주세요'],
+          ['브라우저에서 치지직 로그인을 마치면'],
         ),
       STEP_MS,
     );

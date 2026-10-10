@@ -68,12 +68,12 @@ async function readDownloads(ctx: Ctx): Promise<Downloads> {
 /** GET / */
 export async function landing(req: Request, ctx: Ctx): Promise<Response> {
   const r = await readWebSession(req, ctx);
-  if (!r.ok) return htmlPage(ctx.config, 200, COPY.landingTitle, anonymousBody(), r.clear === null ? undefined : { "Set-Cookie": r.clear });
+  if (!r.ok) return htmlPage(ctx.config, 200, COPY.siteTitle, anonymousBody(), r.clear === null ? undefined : { "Set-Cookie": r.clear });
   const [downloads, devices] = await Promise.all([loadDownloads(ctx), ctx.store.mySessions(r.s.channelId, ctx.now)]);
   return htmlPage(
     ctx.config,
     200,
-    COPY.landingTitle,
+    COPY.siteTitle,
     memberBody({ channelName: r.s.channelName, isAdmin: r.s.isAdmin, csrf: r.s.csrf, currentSessionId: r.s.sessionId, downloads, devices }),
   );
 }
@@ -86,7 +86,7 @@ export async function meRevoke(req: Request, ctx: Ctx): Promise<Response> {
   const g = await guardWebPost(req, ctx, { admin: false });
   if (!g.ok) return g.response;
   const id = ctx.params.id;
-  if (!isId(id) || !(await ctx.store.revokeMine(g.s.channelId, id, ctx.now))) return noticePage(ctx.config, 404, COPY.notFound);
+  if (!isId(id) || !(await ctx.store.revokeMine(g.s.channelId, id, ctx.now))) return noticePage(ctx.config, 404, COPY.notFound.title, COPY.notFound.body);
   return seeOther("/", id === g.s.sessionId ? [clearCookie(ctx.cookies, "session")] : []);
 }
 

@@ -26,13 +26,30 @@ describe('copyReport', () => {
   it('경로가 없으면 복사했어요 한 장', async () => {
     stubClipboard(() => Promise.resolve());
     await copyReport(plain, null);
-    expect(toasts.items.map((i) => [i.kind, i.message])).toEqual([['copied', t('toast.copied')]]);
+    expect(toasts.items.map((i) => [i.kind, i.message])).toEqual([['copied', t('action.copied')]]);
   });
 
   it('클립보드 쓰기가 막히면 실패를 알린다', async () => {
     stubClipboard(() => Promise.reject(new Error('denied')));
     await copyReport(err, null);
     expect(toasts.items.map((i) => [i.kind, i.message])).toEqual([['danger', t('toast.copyFailed')]]);
+  });
+});
+
+describe('buildReport(필드 이름은 영문, 모르는 값은 unknown)', () => {
+  it('앱 정보가 없으면 unknown이고 status는 http일 때만', async () => {
+    const { buildReport } = await import('./report');
+    const now = new Date('2026-10-05T00:00:00Z');
+    expect(buildReport(plain, null, now).split('\n')).toEqual([
+      'app: unknown',
+      'os: unknown',
+      'code: internal',
+      'stage: -',
+      'message: boom',
+      'time: 2026-10-05T00:00:00.000Z',
+    ]);
+    const http: AppError = { code: 'http', message: 'x', stage: 'resolve', resumable: false, payload: { type: 'http', status: 404, requestKind: 'api' } };
+    expect(buildReport(http, null, now)).toContain('status: 404');
   });
 });
 
@@ -55,8 +72,7 @@ describe('buildAppReport(설정 > 정보)', () => {
       },
       new Date('2026-10-05T00:00:00Z'),
     );
-    expect(text.split('\n')[0]).toBe('앱: 0.1.0 (코어 0.2.0)');
-    expect(text).toContain('시각: 2026-10-05T00:00:00.000Z');
+    expect(text.split('\n')).toEqual(['app: 0.1.0 (core 0.2.0)', 'os: macos', 'time: 2026-10-05T00:00:00.000Z']);
     expect(text).not.toContain('/Users/me');
   });
 });

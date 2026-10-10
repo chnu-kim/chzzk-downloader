@@ -33,8 +33,9 @@
 <script lang="ts">
   import * as api from '../../api';
   import { t } from '../../copy/ko';
-  import { formatBytes } from '../../format/bytes';
+  import { formatFileSize, formatPercent, sizeBaseOf } from '../../format/bytes';
   import { jobs } from '../../stores/jobs.svelte';
+  import { platform } from '../../stores/platform.svelte';
   import { settings } from '../../stores/settings.svelte';
   import { update } from '../../stores/update.svelte';
   import Notice from '../ui/Notice.svelte';
@@ -62,11 +63,32 @@
   );
   /** 받는 중에는 시작 때 본 버전(그사이 확인 결과가 available을 비워도 진행 배너가 남는다) */
   const updateVersion = $derived(update.busy ? (update.installVersion ?? update.available?.version ?? '') : (update.available?.version ?? ''));
-  const updateStatus = $derived(
-    update.phase === 'downloading' ? t('update.downloading') : update.phase === 'installing' ? t('update.installing') : null,
+  // 받는 중 문구는 진행 정도(퍼센트, 크기를 모르면 받은 바이트)까지 deck 한 줄이다(`update.downloading`).
+  // 화면(`updateShown`)에는 정확한 값이, 라이브로 읽히는 글(`updateStatus`)에는 25% 단위(크기를 모르면 100MB 단위)가 들어간다
+  const LIVE_PERCENT_STEP = 25;
+  const LIVE_BYTES_STEP = 100_000_000;
+  const base = $derived(sizeBaseOf(platform.os));
+  const updateShown = $derived(
+    update.phase === 'downloading'
+      ? t('update.downloading', {
+          percent:
+            update.pct !== null && update.total
+              ? formatPercent(update.received, update.total)
+              : formatFileSize(update.received, base),
+        })
+      : null,
   );
-  const updateDetail = $derived(
-    update.phase !== 'downloading' ? null : update.pct !== null ? `${update.pct}%` : formatBytes(update.received),
+  const updateStatus = $derived(
+    update.phase === 'downloading'
+      ? t('update.downloading', {
+          percent:
+            update.pct !== null
+              ? formatPercent(Math.floor(update.pct / LIVE_PERCENT_STEP) * LIVE_PERCENT_STEP, 100)
+              : formatFileSize(Math.floor(update.received / LIVE_BYTES_STEP) * LIVE_BYTES_STEP, base),
+        })
+      : update.phase === 'installing'
+        ? t('update.installing')
+        : null,
   );
 </script>
 
@@ -77,7 +99,7 @@
     version={updateVersion}
     busy={update.busy || update.pending}
     status={updateStatus}
-    detail={updateDetail}
+    shown={updateShown}
     oninstall={() => void update.install()}
     onlater={() => update.later()}
   />
@@ -98,7 +120,7 @@
     variant="banner"
     tone="danger"
     actions={[
-      { id: 'openConfig', label: t('action.openConfigFolder'), onclick: () => void api.openAppFolder('config').catch(() => {}) },
+      { id: 'openConfig', label: t('common.openConfigFolder'), onclick: () => void api.openAppFolder('config').catch(() => {}) },
       { id: 'retry', label: t('action.retry'), onclick: () => void settings.retrySave() },
     ]}
     onclose={() => settings.dismissSaveError()}

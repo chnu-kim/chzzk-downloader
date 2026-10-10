@@ -27,11 +27,11 @@ describe('표시', () => {
   });
 
   it('메타 줄: 방송 날짜가 있으면 방송, 없으면 업로드, 길이 H:MM:SS', () => {
-    expect(metaParts(resolved())).toEqual(['채널이름', '2026.10.03 21:00 방송', '3:12:45']);
+    expect(metaParts(resolved())).toEqual(['채널이름', '2026. 10. 3. 오후 9:00 방송', '3:12:45']);
     const r = resolved();
     r.meta.liveOpenDate = null;
     r.meta.durationSecs = null;
-    expect(metaParts(r)).toEqual(['채널이름', '2026.10.04 업로드']);
+    expect(metaParts(r)).toEqual(['채널이름', '2026. 10. 4. 업로드']);
     r.meta.publishDate = null;
     expect(metaParts(r)).toEqual(['채널이름']);
   });
@@ -40,7 +40,8 @@ describe('표시', () => {
     expect(qualityFps(quality())).toBe('60fps');
     expect(qualityFps(quality({ frameRate: null }))).toBeNull();
     // 8 Mbps × 3600초 / 8 = 3.6e9 B
-    expect(qualitySize(quality(), 3600)).toBe('약 3.4 GB');
+    expect(qualitySize(quality(), 3600)).toBe('약 3.6GB');
+    expect(qualitySize(quality(), 3600, 1024)).toBe('약 3.4GB');
     expect(qualitySize(quality({ bandwidth: null }), 3600)).toBeNull();
     expect(qualitySize(quality(), null)).toBeNull();
   });
@@ -170,7 +171,7 @@ describe('shouldSuggestClipboard', () => {
 describe('recentSecondLine', () => {
   it('종류와 날짜 / 종류만 / 종류 없음', () => {
     expect(recentSecondLine({ kind: 'rewind', date: '2026-10-03 21:00:00' })).toBe(
-      t('recent.meta', { kind: t('kind.liveRewind'), date: '2026.10.03' }),
+      t('recent.meta', { kind: t('kind.liveRewind'), date: '2026. 10. 3.' }),
     );
     expect(recentSecondLine({ kind: 'clip', date: null })).toBe(t('kind.clip'));
     // 모양이 다른 날짜는 날짜 없음과 같다

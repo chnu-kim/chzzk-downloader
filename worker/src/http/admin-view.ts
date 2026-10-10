@@ -20,7 +20,7 @@ function adminsSection(admins: readonly string[]): SafeHtml {
 
 function allowRow(a: Allow, admins: readonly string[], csrf: string): SafeHtml {
   const last = admins.includes(a.channelId)
-    ? html`<span class="muted">${COPY.adminBadge}</span>`
+    ? html`<span class="muted">${COPY.adminsTitle}</span>`
     : postButton("/admin/disallow", csrf, COPY.disallow, { danger: true, fields: { channelId: a.channelId } });
   return html`<tr><td>${dash(a.channelName)}</td><td><span class="mono">${a.channelId}</span></td><td>${a.note ?? ""}</td><td><span class="mono">${a.addedBy}</span></td><td>${kst(a.addedAt)}</td><td>${a.activeSessions}</td><td>${last}</td></tr>`;
 }
@@ -29,7 +29,7 @@ function allowSection(rows: readonly Allow[], admins: readonly string[], csrf: s
   const table =
     rows.length === 0
       ? html`<p>${COPY.allowEmpty}</p>`
-      : html`<div class="scroll"><table><thead><tr><th>${COPY.colName}</th><th>${COPY.colChannelId}</th><th>${COPY.colNote}</th><th>${COPY.colAddedBy}</th><th>${COPY.colAddedAt}</th><th>${COPY.colActive}</th><th></th></tr></thead><tbody>${rows.map((a) => allowRow(a, admins, csrf))}</tbody></table></div>`;
+      : html`<div class="scroll"><table><caption>${COPY.tableTimeNote}</caption><thead><tr><th>${COPY.colName}</th><th>${COPY.channelIdLabel}</th><th>${COPY.colNote}</th><th>${COPY.colAddedBy}</th><th>${COPY.colAddedAt}</th><th>${COPY.colActive}</th><th></th></tr></thead><tbody>${rows.map((a) => allowRow(a, admins, csrf))}</tbody></table></div>`;
   return html`<section><h2>${COPY.allowTitle}</h2>${table}<h3>${COPY.addTitle}</h3><form method="post" action="/admin/allow">${csrfInput(csrf)}<p><label>${COPY.channelIdLabel} <input type="text" name="channelId" required maxlength="32" pattern="[0-9a-f]{32}" autocomplete="off"></label></p><p><label>${COPY.noteLabel} <input type="text" name="note" maxlength="64" autocomplete="off"></label></p><button type="submit" class="primary">${COPY.add}</button></form></section>`;
 }
 
@@ -41,7 +41,7 @@ function deniedSection(rows: readonly Denied[], csrf: string): SafeHtml {
   const table =
     rows.length === 0
       ? html`<p>${COPY.deniedEmpty}</p>`
-      : html`<div class="scroll"><table><thead><tr><th>${COPY.colName}</th><th>${COPY.colChannelId}</th><th>${COPY.colAttempts}</th><th>${COPY.colFirstAt}</th><th>${COPY.colLastAt}</th><th></th></tr></thead><tbody>${rows.map((d) => deniedRow(d, csrf))}</tbody></table></div>`;
+      : html`<div class="scroll"><table><caption>${COPY.tableTimeNote}</caption><thead><tr><th>${COPY.colName}</th><th>${COPY.channelIdLabel}</th><th>${COPY.colAttempts}</th><th>${COPY.colFirstAt}</th><th>${COPY.colLastAt}</th><th></th></tr></thead><tbody>${rows.map((d) => deniedRow(d, csrf))}</tbody></table></div>`;
   return html`<section><h2>${COPY.deniedTitle}</h2>${table}</section>`;
 }
 
@@ -53,8 +53,8 @@ function sessionsSection(rows: readonly Session[], csrf: string): SafeHtml {
   const table =
     rows.length === 0
       ? html`<p>${COPY.sessionsEmpty}</p>`
-      : html`<div class="scroll"><table><thead><tr><th>${COPY.colChannel}</th><th>${COPY.colKind}</th><th>${COPY.colClient}</th><th>${COPY.colCreated}</th><th>${COPY.colLastSeen}</th><th>${COPY.colRecovered}</th><th></th></tr></thead><tbody>${rows.map((s) => sessionRow(s, csrf))}</tbody></table></div>`;
-  return html`<section><h2>${COPY.sessionsTitle}</h2>${table}</section>`;
+      : html`<div class="scroll"><table><caption>${COPY.tableTimeNote}</caption><thead><tr><th>${COPY.channelLabel}</th><th>${COPY.colKind}</th><th>${COPY.colClient}</th><th>${COPY.colCreated}</th><th>${COPY.colLastSeen}</th><th>${COPY.colRecovered}</th><th></th></tr></thead><tbody>${rows.map((s) => sessionRow(s, csrf))}</tbody></table></div>`;
+  return html`<section><h2>${COPY.colActive}</h2>${table}</section>`;
 }
 
 function auditRow(a: Audit): SafeHtml {
@@ -65,10 +65,10 @@ function auditSection(rows: readonly Audit[]): SafeHtml {
   const table =
     rows.length === 0
       ? html`<p>${COPY.auditEmpty}</p>`
-      : html`<div class="scroll"><table><thead><tr><th>${COPY.colAt}</th><th>${COPY.colActor}</th><th>${COPY.colAction}</th><th>${COPY.colTarget}</th></tr></thead><tbody>${rows.map(auditRow)}</tbody></table></div>`;
+      : html`<div class="scroll"><table><caption>${COPY.tableTimeNote}</caption><thead><tr><th>${COPY.colAt}</th><th>${COPY.colActor}</th><th>${COPY.colAction}</th><th>${COPY.colTarget}</th></tr></thead><tbody>${rows.map(auditRow)}</tbody></table></div>`;
   return html`<section><h2>${COPY.auditTitle}</h2>${table}</section>`;
 }
 
 export function adminBody(v: AdminView, admins: readonly string[], csrf: string): SafeHtml {
-  return html`<h1>${COPY.adminTitle}</h1><p><a href="/">${COPY.home}</a></p>${adminsSection(admins)}${allowSection(v.allowlist, admins, csrf)}${deniedSection(v.denied, csrf)}${sessionsSection(v.sessions, csrf)}${auditSection(v.audit)}`;
+  return html`<h1>${COPY.adminLink}</h1><p><a href="/">${COPY.home}</a></p>${adminsSection(admins)}${allowSection(v.allowlist, admins, csrf)}${deniedSection(v.denied, csrf)}${sessionsSection(v.sessions, csrf)}${auditSection(v.audit)}`;
 }

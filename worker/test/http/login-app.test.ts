@@ -404,8 +404,8 @@ describe("확인 페이지", () => {
     expect(text).not.toContain(handleOf(body.loginUrl));
     expect(text).toContain('<form method="post">');
     expect(text).toContain("<h1>치지직 다운로더 로그인</h1>");
-    expect(text).toContain("치지직 다운로더 앱에서 직접 시작한 로그인이 아니면 이 창을 닫으세요.");
-    expect(text).toContain("다른 사람이 보낸 링크라면 계속하지 마세요.");
+    expect(text).toContain("치지직 다운로더 앱에서 직접 시작한 로그인이 아니면 이 창을 닫아 주세요.");
+    expect(text).toContain("다른 사람이 보낸 주소라면 계속하지 마세요.");
     expect(text).toContain("로그인 뒤 주소창에 나오는 주소는 다른 사람에게 보내지 마세요.");
     expect(text).not.toContain("확인 코드");
     expect(text).not.toContain('class="code"');
@@ -570,14 +570,17 @@ describe("옛 앱(v0.1.1) 대응", () => {
     expect(get.status).toBe(200);
     expect(get.headers.get("Content-Type")).toBe("text/html; charset=utf-8");
     const text = await get.text();
-    expect(text).toContain(COPY.outdatedApp);
+    expect(text).toContain(`<h1>${COPY.outdatedApp.title}</h1>`);
+    expect(text).toContain(COPY.outdatedApp.body);
+    // 200이라 <title>에 오류 접두가 붙지 않는다
+    expect(text).toContain(`<title>${COPY.outdatedApp.title} · ${COPY.siteName}</title>`);
     expect(text).toContain('href="/"');
     expect(text).not.toContain("<script");
     expect(get.headers.get("Content-Security-Policy")).not.toContain("127.0.0.1:*");
     for (const headers of [undefined, { Origin: "null" }] as const) {
       const post = await browser.post(path, headers);
       expect(post.status).toBe(200);
-      expect(await post.text()).toContain(COPY.outdatedApp);
+      expect(await post.text()).toContain(COPY.outdatedApp.body);
     }
     expect(calls).toEqual([]);
   });

@@ -8,8 +8,8 @@ import type {
   RecentVodDto,
   ResolvedDto,
 } from './bindings';
-import { estimateSize, formatBytes } from './format/bytes';
-import { formatKstDate, formatKstDateTime } from './format/date';
+import { estimateSize, formatEstimate, type SizeBase } from './format/bytes';
+import { formatDate, formatDateTime, parseKstWall } from './format/date';
 import { formatClock } from './format/duration';
 import { t, type CopyKey } from './copy/ko';
 
@@ -41,8 +41,8 @@ export function kindLabel(tone: KindTone): string {
 export function recentSecondLine(item: Pick<RecentVodDto, 'kind' | 'date'>): string | null {
   if (!item.kind) return null;
   const kind = kindLabel(item.kind);
-  const date = formatKstDate(item.date);
-  return date ? t('recent.meta', { kind, date }) : kind;
+  const wall = parseKstWall(item.date);
+  return wall ? t('recent.meta', { kind, date: formatDate(wall) }) : kind;
 }
 
 /**
@@ -65,24 +65,25 @@ export function bestQualityIndex(qualities: readonly QualityDto[]): number | nul
 /** 메타 줄 조각: 채널 · 날짜 · 길이. 없는 것은 뺀다. */
 export function metaParts(r: ResolvedDto): string[] {
   const parts = [r.meta.channelName];
-  const live = formatKstDateTime(r.meta.liveOpenDate);
-  const pub = formatKstDate(r.meta.publishDate);
-  if (live) parts.push(t('meta.liveDate', { date: live }));
-  else if (pub) parts.push(t('meta.publishDate', { date: pub }));
+  // API 날짜는 KST 벽시계 그대로다(시간대 변환 없음, content.md §7)
+  const live = parseKstWall(r.meta.liveOpenDate);
+  const pub = parseKstWall(r.meta.publishDate);
+  if (live) parts.push(t('meta.liveDate', { date: formatDateTime(live) }));
+  else if (pub) parts.push(t('meta.publishDate', { date: formatDate(pub) }));
   if (r.meta.durationSecs != null && r.meta.durationSecs > 0) parts.push(formatClock(r.meta.durationSecs));
   return parts.filter(Boolean);
 }
 
-/** 화질 행: `60fps`(숫자가 아니면 그대로), 예상 크기 `약 7.8 GB`(모르면 null) */
+/** 화질 행: `60fps`(숫자가 아니면 그대로), 예상 크기 `약 7.8GB`(모르면 null) */
 export function qualityFps(q: QualityDto): string | null {
   if (!q.frameRate) return null;
   const n = Number.parseFloat(q.frameRate);
   return Number.isFinite(n) && n > 0 ? `${Math.round(n)}fps` : q.frameRate;
 }
 
-export function qualitySize(q: QualityDto, durationSecs: number | null): string | null {
+export function qualitySize(q: QualityDto, durationSecs: number | null, base: SizeBase = 1000): string | null {
   const size = estimateSize(q.bandwidth, durationSecs);
-  return size == null ? null : t('quality.sizeEstimate', { size: formatBytes(size) });
+  return size == null ? null : formatEstimate(size, base);
 }
 
 /** 완성 파일이 있을 때 고르는 것(§6.4). 기본은 번호 붙이기 */

@@ -1,37 +1,153 @@
+import { readdirSync, readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { estimateSize, formatBytes, formatSpeed } from './bytes';
-import { formatDateTimeShort, formatKstDate, formatKstDateTime, formatTimeOfDay } from './date';
-import { formatClock, formatMmss, formatSpan } from './duration';
+import {
+  UNIT_GAP,
+  WINDOWS_ROUNDING,
+  estimateSize,
+  formatEstimate,
+  formatFileSize,
+  formatPercent,
+  formatProgressSize,
+  formatSpeed,
+  formatSpokenPercent,
+  formatSpokenSize,
+  formatSpokenSpeed,
+  sizeBaseOf,
+} from './bytes';
+import {
+  formatAgo,
+  formatDate,
+  formatDateTime,
+  formatWhen,
+  parseKstWall,
+  wallOf,
+} from './date';
+import {
+  formatClock,
+  formatCount,
+  formatDaysAgo,
+  formatElapsed,
+  formatMmss,
+  formatRemaining,
+  formatSpan,
+  formatSpokenRemaining,
+} from './duration';
 
-describe('formatBytes', () => {
-  // crates/core/src/progress.rs `format_bytes_golden`과 같은 12건. 고치지 않는다.
-  const golden: [number, string][] = [
-    [1280, '1.2 KB'],
-    [3328, '3.2 KB'],
-    [1792, '1.8 KB'],
-    [2662, '2.6 KB'],
-    [0, '0 B'],
-    [1023, '1023 B'],
-    [1024, '1.0 KB'],
-    [1536, '1.5 KB'],
-    [1048575, '1024.0 KB'],
-    [1048576, '1.0 MB'],
-    [1073741824, '1.0 GB'],
-    [5497558138880, '5.0 TB'],
-  ];
-  it.each(golden)('코어 golden %d → %s', (n, want) => {
-    expect(formatBytes(n)).toBe(want);
+// design/format/*.json 골든: Rust(crates/shell/tests/format_golden.rs)도 같은 파일을 읽는다.
+// `fn` 이름 → 함수 표. 표에 없는 fn은 실패한다(JSON에 케이스만 늘고 함수가 빠지는 일을 막는다).
+// 인자는 위치 인자 배열이고 `null`은 그대로 넘긴다.
+/* eslint-disable @typescript-eslint/no-explicit-any */
+const FUNCTIONS: Record<string, (...args: any[]) => unknown> = {
+  formatFileSize,
+  formatProgressSize,
+  formatEstimate,
+  formatSpeed,
+  formatPercent,
+  formatRemaining,
+  formatElapsed,
+  formatDaysAgo,
+  formatSpan,
+  formatClock,
+  formatMmss,
+  formatCount,
+  formatDate,
+  formatDateTime,
+  formatWhen,
+  formatAgo,
+  parseKstWall,
+  wallOf,
+  formatSpokenPercent,
+  formatSpokenSize,
+  formatSpokenSpeed,
+  formatSpokenRemaining,
+};
+
+interface Case {
+  name: string;
+  args: unknown[];
+  out: unknown;
+}
+
+const GOLDEN_DIR = fileURLToPath(new globalThis.URL('../../../../design/format/', import.meta.url));
+const goldenFiles = readdirSync(GOLDEN_DIR).filter((f) => f.endsWith('.json')).sort();
+
+describe('골든 JSON (design/format)', () => {
+  it('파일이 모두 있다', () => {
+    expect(goldenFiles.length).toBeGreaterThanOrEqual(16);
   });
 
-  it('2^53 근처와 잘못된 값', () => {
-    expect(formatBytes(Number.MAX_SAFE_INTEGER)).toBe('8.0 PB');
-    expect(formatBytes(-1)).toBe('0 B');
-    expect(formatBytes(Number.NaN)).toBe('0 B');
-    expect(formatBytes(1023.9)).toBe('1023 B');
+  for (const file of goldenFiles) {
+    const doc = JSON.parse(readFileSync(GOLDEN_DIR + file, 'utf8')) as {
+      fn?: string;
+      cases?: Case[];
+      fns?: Record<string, { args: unknown[]; out: unknown }[]>;
+    };
+    const groups: [string, { name?: string; args: unknown[]; out: unknown }[]][] = doc.fns
+      ? Object.entries(doc.fns)
+      : [[doc.fn ?? '', doc.cases ?? []]];
+    describe(file, () => {
+      if (!doc.fns) {
+        it('케이스가 8개 이상이다', () => {
+          expect(doc.cases?.length ?? 0).toBeGreaterThanOrEqual(8);
+        });
+      }
+      for (const [fnName, cases] of groups) {
+        it(`${fnName}은 함수 표에 있다`, () => {
+          expect(FUNCTIONS[fnName], `알 수 없는 fn: ${fnName}`).toBeTypeOf('function');
+        });
+        it.each(cases.map((c, i) => [c.name ?? `#${i}`, c] as const))(`${fnName}: %s`, (_n, c) => {
+          const fn = FUNCTIONS[fnName];
+          expect(fn(...c.args)).toEqual(c.out);
+        });
+      }
+    });
+  }
+});
+
+describe('새 크기 표기의 약속', () => {
+  it('OS 진법: Windows만 1024', () => {
+    expect(sizeBaseOf('windows')).toBe(1024);
+    expect(sizeBaseOf('macos')).toBe(1000);
+    expect(sizeBaseOf('linux')).toBe(1000);
   });
 
-  it('속도와 예상 크기', () => {
-    expect(formatSpeed(13002342)).toBe('12.4 MB/s');
+  it('상수: 단위 붙임, Windows는 반올림(실기 확인 전)', () => {
+    expect(UNIT_GAP).toBe('');
+    expect(WINDOWS_ROUNDING).toBe('round');
+  });
+
+  it('잘못된 값은 0으로 본다', () => {
+    expect(formatFileSize(-1, 1000)).toBe('0B');
+    expect(formatFileSize(Number.NaN, 1024)).toBe('0B');
+    expect(formatPercent(Number.NaN, 100)).toBe('0%');
+    expect(formatRemaining(-3)).toBe('곧 끝나요');
+    expect(formatCount(-5)).toBe('0');
+    expect(formatSpokenPercent(150)).toBe('100퍼센트');
+  });
+
+  it('2^53 근처도 정확하다', () => {
+    expect(formatFileSize(Number.MAX_SAFE_INTEGER, 1000)).toBe('9007TB');
+    expect(formatSpokenSize(Number.MAX_SAFE_INTEGER, 1000)).toBe('9007.2테라바이트');
+    expect(formatSpokenSpeed(0, 1024)).toBe('초당 0바이트');
+    expect(formatProgressSize(0, null, 1000)).toEqual({ received: '0B', total: null });
+    expect(formatEstimate(Number.MAX_SAFE_INTEGER, 1024)).toBe('약 8192.0TB');
+  });
+
+  it('날짜 함수는 시간대·Intl을 거치지 않는다', () => {
+    expect(wallOf(0, 540)).toEqual({ y: 1970, mo: 1, d: 1, h: 9, mi: 0 });
+    expect(parseKstWall('2026-10-03 21:00:00')).toEqual({ y: 2026, mo: 10, d: 3, h: 21, mi: 0 });
+    expect(formatAgo(0, 59)).toBe('방금');
+    expect(formatDaysAgo(86400 * 3 + 5)).toBe('3일 전에');
+    expect(formatElapsed(7200)).toBe('2시간째');
+    expect(formatDate(wallOf(1767225600, 0))).toBe('2026. 1. 1.');
+    expect(formatDateTime(wallOf(1767225600, 0))).toBe('2026. 1. 1. 오전 12:00');
+    expect(formatWhen(wallOf(1767225600, 0), wallOf(1767225600 + 120, 0))).toBe('2분 전');
+  });
+});
+
+describe('estimateSize', () => {
+  it('대역폭 × 재생 시간 / 8, 모르면 null', () => {
     expect(estimateSize(8_000_000, 3600)).toBe(3_600_000_000);
     expect(estimateSize(null, 3600)).toBeNull();
     expect(estimateSize(8_000_000, null)).toBeNull();
@@ -68,39 +184,11 @@ describe('formatClock', () => {
   });
 });
 
-describe('날짜', () => {
-  it('KST 문자열을 시간대 변환 없이 바꾼다', () => {
-    expect(formatKstDateTime('2026-10-03 21:00:00')).toBe('2026.10.03 21:00');
-    expect(formatKstDateTime('2026-01-02T03:04:05')).toBe('2026.01.02 03:04');
-    expect(formatKstDate('2026-10-03 21:00:00')).toBe('2026.10.03');
-    expect(formatKstDateTime('어제')).toBeNull();
-    expect(formatKstDateTime(null)).toBeNull();
-    expect(formatKstDate('')).toBeNull();
-  });
-
-  it('완료 시각은 사용자 시간대의 오전/오후', () => {
-    // 2026-10-03 12:41:00 UTC = 21:41 KST
-    const t = Date.UTC(2026, 9, 3, 12, 41) / 1000;
-    expect(formatTimeOfDay(t, 'Asia/Seoul')).toBe('오후 9:41');
-    expect(formatTimeOfDay(t, 'UTC')).toBe('오후 12:41');
-    expect(formatTimeOfDay(Date.UTC(2026, 9, 3, 0, 5) / 1000, 'UTC')).toBe('오전 12:05');
-  });
-});
-
 describe('formatMmss', () => {
   it('분:초(분은 자리 맞춤 없음), 음수·NaN은 0:00', () => {
     expect(formatMmss(600)).toBe('10:00');
     expect(formatMmss(599)).toBe('9:59');
     expect(formatMmss(59)).toBe('0:59');
     for (const v of [0, -5, Number.NaN]) expect(formatMmss(v)).toBe('0:00');
-  });
-});
-
-describe('formatDateTimeShort', () => {
-  it('월 일 오전/오후 시:분(고정 시간대)', () => {
-    // 2026-01-02 03:00:00 UTC = 12:00 KST. 공백 문자 종류는 ICU에 따라 달라 \s로 비교한다
-    const t = Date.UTC(2026, 0, 2, 3, 0) / 1000;
-    expect(formatDateTimeShort(t, 'Asia/Seoul')).toMatch(/^1월\s2일\s오후\s12:00$/);
-    expect(formatDateTimeShort(t, 'UTC')).toMatch(/^1월\s2일\s오전\s3:00$/);
   });
 });

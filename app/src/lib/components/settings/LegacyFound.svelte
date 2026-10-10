@@ -7,7 +7,8 @@
   import { t } from '../../copy/ko';
   import { settings } from '../../stores/settings.svelte';
   import { toasts } from '../../stores/toast.svelte';
-  import ConfirmDialog from '../ui/ConfirmDialog.svelte';
+  import { formatCount } from '../../format/duration';
+  import Dialog from '../ui/Dialog.svelte';
 
   const c = $derived(settings.legacyCandidate);
   let busy = $state(false);
@@ -31,13 +32,28 @@
   }
 </script>
 
-<ConfirmDialog
+<!-- 본문 한 문장 + 가져올 것의 목록(`ul`). 선택 항목은 문장 조각이 아니라 항목 키로 나눈다(content.md §2) -->
+<Dialog
   open={c != null}
   title={t('dialog.legacy.title')}
-  body={c
-    ? t('dialog.legacy.body', { n: c.recentCount, cookies: c.hasCookies ? t('dialog.legacy.cookies') : '' })
-    : ''}
   onclose={later}
-  primary={{ id: 'later', label: t('dialog.legacy.later'), onclick: later }}
+  primary={{ id: 'later', label: t('common.later'), onclick: later }}
   secondary={{ id: 'import', label: t('dialog.legacy.import'), loading: busy, onclick: () => void doImport() }}
-/>
+>
+  <p class="lead">{t('dialog.legacy.body')}</p>
+  <ul class="items">
+    <li>{t('dialog.legacy.item.folder')}</li>
+    {#if c && c.recentCount > 0}<li>{t('dialog.legacy.item.recent', { n: formatCount(c.recentCount) })}</li>{/if}
+    {#if c?.hasCookies}<li>{t('dialog.legacy.item.cookies')}</li>{/if}
+  </ul>
+</Dialog>
+
+<style>
+  .lead {
+    margin: 0;
+  }
+  .items {
+    margin: var(--space-8) 0 0;
+    padding-inline-start: var(--space-20);
+  }
+</style>

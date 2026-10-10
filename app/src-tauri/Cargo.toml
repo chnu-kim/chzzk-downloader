@@ -31,7 +31,7 @@ chzzk-core = { path = "../../crates/core" }
 chzzk-shell = { path = "../../crates/shell" }
 # tauri::generate_context!()가 tauri.conf.json의 plugins(updater pubkey)를 serde_json 값으로 펼친다
 serde_json = "1.0.151"
-tokio = { version = "1.53.2", default-features = false, features = ["rt", "sync"] }
+tokio = { version = "1.53.2", default-features = false, features = ["rt", "sync", "time"] }
 tracing = "0.1.44"
 tracing-appender = "0.2.5"
 tracing-subscriber = { version = "0.3.23", default-features = false, features = ["ansi", "env-filter", "fmt", "registry", "std"] }

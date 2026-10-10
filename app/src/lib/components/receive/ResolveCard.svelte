@@ -151,7 +151,7 @@
   onMount(() => {
     // 불러오기가 끝나면 카드 제목으로 포커스(patterns.md §9 F-6)
     titleEl?.focus();
-    announcer.say(`${t('resolve.done')}: ${view.meta.title}`);
+    announcer.say(t('a11y.resolved', { title: view.meta.title }));
   });
 
   async function changeFolder() {

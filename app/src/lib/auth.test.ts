@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { PENDING_STUCK_REMAINING_SECS, loginScreen, remainingSecs } from './auth';
 import type { AuthReason, AuthState, AuthStatusDto } from './bindings';
-import { ko } from './copy/ko';
+import { ko, t } from './copy/ko';
 
 const st = (state: AuthState, reason: AuthReason | null = null, channelName: string | null = null): AuthStatusDto => ({
   state,
@@ -16,7 +16,7 @@ const st = (state: AuthState, reason: AuthReason | null = null, channelName: str
 
 type Row = [
   AuthStatusDto,
-  { kind: string; title: string; body: string | null; problem: boolean; buttons: [string, string, string][]; help: 'help' | 'link' | null; stuck: boolean },
+  { kind: string; title: string; body: string | null; channelRow?: string; problem: boolean; buttons: [string, string, string][]; help: 'help' | 'link' | null; stuck: boolean },
 ];
 
 const L = 'login';
@@ -24,23 +24,23 @@ const R = 'reconnect';
 
 const rows: Row[] = [
   [st('signedOut'), { kind: 'message', title: ko['auth.signedOut.title'], body: ko['auth.intro'], problem: false, buttons: [[L, ko['auth.login'], 'primary']], help: null, stuck: false }],
-  [st('checking'), { kind: 'checking', title: ko['auth.checking'], body: ko['auth.checking.body'], problem: false, buttons: [[L, ko['auth.relogin'], 'link']], help: null, stuck: false }],
+  [st('checking'), { kind: 'checking', title: ko['auth.checking'], body: t('auth.checking.body', { secs: 40 }), problem: false, buttons: [[L, ko['auth.relogin'], 'link']], help: null, stuck: false }],
   [{ ...st('pending'), pending: { expiresAt: 1 } }, { kind: 'pending', title: ko['auth.pending.title'], body: null, problem: false, buttons: [], help: 'help', stuck: true }],
   // 기한 없는 pending: 버튼 없는 화면이 되지 않게 [다시 로그인]
   [st('pending'), { kind: 'message', title: ko['auth.unknown.title'], body: ko['auth.unknown.body'], problem: true, buttons: [[L, ko['auth.relogin'], 'primary']], help: null, stuck: false }],
-  [st('denied', 'removedFromAllowlist', '테스트 채널'), { kind: 'message', title: ko['auth.removed.title'], body: '채널: 테스트 채널. 계속 쓰려면 관리자에게 문의해 주세요.', problem: true, buttons: [[L, ko['action.retry'], 'primary']], help: 'link', stuck: false }],
-  [st('denied', 'removedFromAllowlist'), { kind: 'message', title: ko['auth.removed.title'], body: ko['auth.removed.bodyNoName'], problem: true, buttons: [[L, ko['action.retry'], 'primary']], help: 'link', stuck: false }],
-  [st('denied', null, '테스트 채널'), { kind: 'message', title: ko['auth.denied.title'], body: '채널: 테스트 채널. 허가를 받으려면 관리자에게 채널 이름을 알려 주세요.', problem: true, buttons: [[L, ko['action.retry'], 'primary']], help: 'link', stuck: false }],
-  [st('denied'), { kind: 'message', title: ko['auth.denied.title'], body: ko['auth.denied.bodyNoName'], problem: true, buttons: [[L, ko['action.retry'], 'primary']], help: 'link', stuck: false }],
-  [st('expired', 'loginTimeout'), { kind: 'message', title: ko['auth.loginTimeout.title'], body: ko['auth.loginTimeout.body'], problem: true, buttons: [[L, ko['auth.relogin'], 'primary']], help: null, stuck: false }],
+  [st('denied', 'removedFromAllowlist', '테스트 채널'), { kind: 'message', title: ko['auth.removed.title'], body: ko['auth.removed.body'], channelRow: `${ko['auth.channelLabel']}: ‘테스트 채널’`, problem: true, buttons: [[L, ko['action.retry'], 'primary']], help: 'link', stuck: false }],
+  [st('denied', 'removedFromAllowlist'), { kind: 'message', title: ko['auth.removed.title'], body: ko['auth.removed.body'], problem: true, buttons: [[L, ko['action.retry'], 'primary']], help: 'link', stuck: false }],
+  [st('denied', null, '테스트 채널'), { kind: 'message', title: ko['auth.denied.title'], body: ko['auth.denied.body'], channelRow: `${ko['auth.channelLabel']}: ‘테스트 채널’`, problem: true, buttons: [[L, ko['action.retry'], 'primary']], help: 'link', stuck: false }],
+  [st('denied'), { kind: 'message', title: ko['auth.denied.title'], body: ko['auth.denied.body'], problem: true, buttons: [[L, ko['action.retry'], 'primary']], help: 'link', stuck: false }],
+  [st('expired', 'loginTimeout'), { kind: 'message', title: ko['auth.loginTimeout.title'], body: t('auth.loginTimeout.body', { mins: 10 }), problem: true, buttons: [[L, ko['auth.relogin'], 'primary']], help: null, stuck: false }],
   [st('expired', 'revoked'), { kind: 'message', title: ko['auth.revoked.title'], body: ko['auth.revoked.body'], problem: true, buttons: [[L, ko['auth.relogin'], 'primary']], help: null, stuck: false }],
   [st('expired', 'reuseDetected'), { kind: 'message', title: ko['auth.revoked.title'], body: ko['auth.reuse.body'], problem: true, buttons: [[L, ko['auth.relogin'], 'primary']], help: null, stuck: false }],
   [st('expired', 'graceExpired'), { kind: 'message', title: ko['auth.graceExpired.title'], body: ko['auth.graceExpired.body'], problem: true, buttons: [[R, ko['auth.reconnect'], 'primary'], [L, ko['auth.relogin'], 'secondary']], help: null, stuck: false }],
-  [st('expired', 'sessionExpired'), { kind: 'message', title: ko['auth.sessionExpired.title'], body: ko['auth.sessionExpired.body'], problem: false, buttons: [[L, ko['auth.relogin'], 'primary']], help: null, stuck: false }],
-  [st('expired'), { kind: 'message', title: ko['auth.sessionExpired.title'], body: ko['auth.sessionExpired.body'], problem: false, buttons: [[L, ko['auth.relogin'], 'primary']], help: null, stuck: false }],
+  [st('expired', 'sessionExpired'), { kind: 'message', title: ko['auth.sessionExpired.title'], body: ko['auth.relogin.help'], problem: false, buttons: [[L, ko['auth.relogin'], 'primary']], help: null, stuck: false }],
+  [st('expired'), { kind: 'message', title: ko['auth.sessionExpired.title'], body: ko['auth.relogin.help'], problem: false, buttons: [[L, ko['auth.relogin'], 'primary']], help: null, stuck: false }],
   [st('cancelled'), { kind: 'message', title: ko['auth.cancelled.title'], body: null, problem: false, buttons: [[L, ko['auth.relogin'], 'primary']], help: null, stuck: false }],
   [st('error', 'network'), { kind: 'message', title: ko['auth.network.title'], body: ko['auth.network.body'], problem: true, buttons: [[L, ko['auth.relogin'], 'primary']], help: null, stuck: false }],
-  [st('error', 'loginLost'), { kind: 'message', title: ko['auth.lost.title'], body: ko['auth.lost.body'], problem: true, buttons: [[L, ko['auth.relogin'], 'primary']], help: null, stuck: false }],
+  [st('error', 'loginLost'), { kind: 'message', title: ko['auth.lost.title'], body: ko['auth.relogin.help'], problem: true, buttons: [[L, ko['auth.relogin'], 'primary']], help: null, stuck: false }],
   [st('error', 'receiver'), { kind: 'message', title: ko['auth.receiver.title'], body: ko['auth.receiver.body'], problem: true, buttons: [[L, ko['auth.relogin'], 'primary']], help: null, stuck: false }],
   [st('error', 'server'), { kind: 'message', title: ko['auth.server.title'], body: ko['auth.server.body'], problem: true, buttons: [[L, ko['auth.relogin'], 'primary']], help: null, stuck: false }],
   [st('error'), { kind: 'message', title: ko['auth.unknown.title'], body: ko['auth.unknown.body'], problem: true, buttons: [[L, ko['auth.relogin'], 'primary']], help: null, stuck: false }],
@@ -54,6 +54,7 @@ describe('loginScreen 표', () => {
       kind: s!.kind,
       title: s!.title,
       body: s!.body,
+      channelRow: s!.channelRow ?? undefined,
       problem: s!.problem,
       buttons: s!.buttons.map((b) => [b.action, b.label, b.variant]),
       help: s!.otherAccount,
@@ -88,7 +89,7 @@ describe('loginScreen 표', () => {
   });
 
   it('세션 만료·서버 문구는 원인을 단정하지 않는다(401 invalid_token도 같은 화면, Worker 형식 4xx도 server)', () => {
-    for (const k of ['auth.sessionExpired.title', 'auth.sessionExpired.body'] as const) {
+    for (const k of ['auth.sessionExpired.title', 'auth.relogin.help'] as const) {
       expect(ko[k]).not.toMatch(/오래|30일|60일/);
     }
     for (const k of ['auth.server.title', 'auth.server.body'] as const) {

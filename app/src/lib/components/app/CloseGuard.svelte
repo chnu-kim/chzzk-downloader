@@ -59,6 +59,6 @@
   title={t('dialog.close.title')}
   body={t('dialog.close.body', { n: running })}
   onclose={keep}
-  primary={{ id: 'keep', label: t('dialog.close.keep'), onclick: keep }}
+  primary={{ id: 'keep', label: t('dialog.cancel.keepRunning'), onclick: keep }}
   secondary={{ id: 'confirm', label: t('dialog.close.confirm'), loading: quitting, onclick: () => void quit() }}
 />

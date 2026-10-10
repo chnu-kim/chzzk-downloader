@@ -1,7 +1,7 @@
 <script lang="ts">
   // 계정: 채널 이름 / 허가 범위·마지막 확인(또는 오프라인) / [로그아웃…](patterns.md §14.4).
   // 로그아웃 확인(D4)은 App의 LogoutDialog가 맡고, 여기서는 요청 플래그만 올린다.
-  import { formatDateTimeShort } from '../../format/date';
+  import { whenText } from '../../when';
   import { t } from '../../copy/ko';
   import { auth } from '../../stores/auth.svelte';
   import { ui } from '../../stores/ui.svelte';
@@ -11,9 +11,9 @@
   const status = $derived(auth.status);
   const state = $derived(
     status?.offline
-      ? t('account.offline', { until: formatDateTimeShort(status.offline.graceUntil) })
+      ? t('account.offline', { until: whenText(status.offline.graceUntil, Date.now()) })
       : status?.verifiedAt != null
-        ? t('account.lastSeen', { time: formatDateTimeShort(status.verifiedAt) })
+        ? t('account.lastSeen', { time: whenText(status.verifiedAt, Date.now()) })
         : '',
   );
 </script>
@@ -26,7 +26,7 @@
         <span class="row-label" id="l-account">{status?.channelName ?? t('settings.account')}</span>
         <span class="row-help">
           {t('account.scope')}
-          {#if state}<span aria-hidden="true"> · </span>{state}{/if}
+          {#if state}<span aria-hidden="true">{' · '}</span>{state}{/if}
         </span>
       </div>
       <div class="row-control">

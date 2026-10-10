@@ -39,7 +39,7 @@ test('남의 영상은 카드에서 막히고, 본인 영상은 받는다', asyn
   await app.open({ auth: me, resolve: { [own.url]: own, [other.url]: other } });
 
   await page.getByLabel(t('url.label')).fill(other.url);
-  await page.getByRole('button', { name: t('url.submit') }).click();
+  await page.getByRole('button', { name: t('common.load') }).click();
   const card = page.getByRole('region', { name: '남의 방송' });
   await expect(card).toBeVisible();
   const why = notOwn('다른 채널');
@@ -54,7 +54,7 @@ test('남의 영상은 카드에서 막히고, 본인 영상은 받는다', asyn
   await app.axe('남의 영상 카드');
 
   await page.getByLabel(t('url.label')).fill(own.url);
-  await page.getByRole('button', { name: t('url.submit') }).click();
+  await page.getByRole('button', { name: t('common.load') }).click();
   const mine = page.getByRole('region', { name: '내 방송' });
   await expect(mine).toBeVisible();
   await mine.getByRole('button', { name: t('card.download') }).click();
@@ -74,7 +74,7 @@ test('다른 채널의 멈춘 작업은 이어받을 수 없고 B1이 세지 않
   });
   await expect(page.getByText(t('banner.interrupted', { n: 1 }))).toBeVisible();
   const other = page.getByRole('article', { name: '남의 작업' });
-  await expect(other.getByText(t('job.otherChannel'))).toBeVisible();
+  await expect(other.getByText(t('job.otherChannel.body'))).toBeVisible();
   await expect(other.getByRole('button', { name: t('action.resume') })).toHaveCount(0);
   await app.axe('다른 채널 작업');
 
@@ -93,7 +93,7 @@ test('실패한 다른 채널 작업은 다시 시도 안내 없이 막힌 이�
   const netCopy = errorCopy(err('network', { resumable: true }), { place: 'job', partialBytes: 1024, cookiesEnabled: false });
   await expect(item.getByText(netCopy.title)).toBeVisible();
   await expect(item.getByText(netCopy.body as string, { exact: false })).toHaveCount(0);
-  await expect(item).toHaveAccessibleDescription(t('job.otherChannel'));
+  await expect(item).toHaveAccessibleDescription(t('job.otherChannel.body'));
   await expect(item.getByRole('button', { name: t('action.retry') })).toHaveCount(0);
   await app.axe('실패한 다른 채널 작업');
 });

@@ -11,6 +11,9 @@ describe('OS 분기(platform.md §20)', () => {
     expect(shortcutText('macos', 'paste')).toBe(t('platform.mac.paste'));
     expect(shortcutText('windows', 'paste')).toBe(t('platform.other.paste'));
     expect(shortcutText('linux', 'submit')).toBe(t('platform.other.submit'));
+    // 쿠키 안내의 `{devtools}`: macOS ⌥⌘I, 그 밖 F12
+    expect(shortcutText('macos', 'devtools')).toBe(t('platform.mac.devtools'));
+    expect(shortcutText('windows', 'devtools')).toBe(t('platform.other.devtools'));
     expect(revealLabel('macos')).toBe(t('platform.mac.reveal'));
     expect(revealLabel('windows')).toBe(t('platform.other.reveal'));
   });

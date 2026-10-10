@@ -5,7 +5,8 @@ import * as api from '../api';
 import type { AppError, JobDto, JobEvent, JobId } from '../bindings';
 import { actionLabel, errorCopy } from '../copy/errors';
 import { t } from '../copy/ko';
-import { formatBytes } from '../format/bytes';
+import { formatFileSize, sizeBaseOf } from '../format/bytes';
+import { formatCount } from '../format/duration';
 import {
   groupJobs,
   isClearable,
@@ -36,6 +37,8 @@ export interface CancelConfirm {
   id: JobId;
   title: string;
   bytes: number;
+  /** 받는 중이면 안전 쪽 라벨이 [계속 받기], 멈춘 작업이면 [그대로 두기](content.md §5.3 D2) */
+  running: boolean;
 }
 
 /** D7: 건너뜀 행의 [덮어쓰고 받기…]가 묻고 있는 작업과 덮어쓸 파일 이름 */
@@ -145,7 +148,7 @@ export class JobsStore {
     // (Rust `should_notify`). 홈에서는 토스트가 없는 대신 라이브 영역이 한 줄 읽는다(patterns.md §1.1-1).
     if (job.status === 'completed' && prev?.status !== 'completed') {
       if (ui.view !== 'home' && ui.windowFocused) toasts.push(t('toast.completed', { title: job.title }), 'success');
-      else announcer.say(t('job.status', { title: job.title, status: t('job.status.completed') }));
+      else announcer.say(t('a11y.jobStatus', { title: job.title, status: t('job.status.completed') }));
       return;
     }
     const say = transitionAnnouncement(prev, job);
@@ -247,7 +250,12 @@ export class JobsStore {
     const p = this.state.progress.get(job.id);
     switch (removeRoute(job, p)) {
       case 'confirm':
-        this.confirm = { id: job.id, title: job.title, bytes: receivedBytes(job, p) };
+        this.confirm = {
+          id: job.id,
+          title: job.title,
+          bytes: receivedBytes(job, p),
+          running: job.status === 'running' || job.status === 'pausing',
+        };
         return;
       case 'defer':
         this.#deferRemove([job.id], t('toast.removed'));
@@ -269,7 +277,7 @@ export class JobsStore {
 
   /** D2 본문의 크기 */
   get confirmSize(): string {
-    return this.confirm ? formatBytes(this.confirm.bytes) : '';
+    return this.confirm ? formatFileSize(this.confirm.bytes, sizeBaseOf(platform.os)) : '';
   }
 
   async #remove(id: JobId) {
@@ -310,7 +318,7 @@ export class JobsStore {
   clearFinished() {
     const ids = [...this.state.jobs.values()].filter((j) => !this.hidden.has(j.id) && isClearable(j)).map((j) => j.id);
     if (ids.length === 0) return;
-    this.#deferRemove(ids, t('toast.removedMany', { n: ids.length }));
+    this.#deferRemove(ids, t('toast.removedMany', { n: formatCount(ids.length) }));
   }
 
   /**
@@ -334,7 +342,7 @@ export class JobsStore {
   async #copy(text: string) {
     try {
       await navigator.clipboard.writeText(text);
-      toasts.push(t('toast.copied'), 'copied');
+      toasts.push(t('action.copied'), 'copied');
     } catch {
       toasts.push(t('toast.copyFailed'), 'danger');
     }
@@ -342,11 +350,11 @@ export class JobsStore {
 
   /**
    * 오류 토스트. `jobId`를 주면 문구의 `openFolder` 동작을 그 작업의 폴더 열기 버튼으로 단다.
-   * `fileMissing`은 §9 문구 그대로(경로는 폴더 열기가 보여 준다), 그 밖은 원문·경로를 괄호로 붙인다.
+   * 토스트에는 오류 제목만 보인다: 코어 원문·경로(`detail`)는 L1 "자세히"에서만 보이고 토스트에는 없다(content.md §2·§9).
    */
   #toastError(err: AppError, jobId?: JobId) {
     const c = errorCopy(err, { place: 'other', cookiesEnabled: settings.cookiesEnabled });
-    const text = c.detail && err.code !== 'fileMissing' ? `${c.title} (${c.detail})` : c.title;
+    const text = c.title;
     const action =
       jobId != null && c.actions.includes('openFolder')
         ? {

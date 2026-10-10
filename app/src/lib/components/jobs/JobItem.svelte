@@ -4,6 +4,7 @@
   // 상태는 막대 색 + 아이콘 + 글자 세 겹으로 말한다(색만으로 말하지 않는다).
   import type { JobDto, ProgressDto } from '../../bindings';
   import { t } from '../../copy/ko';
+  import { sizeBaseOf } from '../../format/bytes';
   import {
     barView,
     blockCopyKey,
@@ -67,7 +68,7 @@
   const uid = $props.id();
   const tone = $derived(kindTone(job.kind, job.playbackKind));
   const bar = $derived(barView(job, progress, floor));
-  const parts = $derived(statusParts(job, progress, { ahead, runStartedAt }));
+  const parts = $derived(statusParts(job, progress, { ahead, runStartedAt, base: sizeBaseOf(platform.os) }));
   const buttons = $derived(jobButtons(job, progress, cookiesEnabled, block));
   const cancel = $derived(cancelLabel(job, progress));
   const err = $derived(job.status === 'failed' ? failedCopy(job, cookiesEnabled) : null);
@@ -159,12 +160,18 @@
       </Button>
     {/each}
     {#if buttons.cancel}
-      <Button variant="ghost" size="sm" tone={cancel.tone} onclick={() => onaction('cancel')}>
+      <Button
+        variant="ghost"
+        size="sm"
+        tone={cancel.tone}
+        aria-label={t('a11y.cancelJob', { title: job.title })}
+        onclick={() => onaction('cancel')}
+      >
         {cancel.label}
       </Button>
     {/if}
     <span class="job-more">
-      <Menu size="sm" label={t('job.more', { title: job.title })} items={menuItems} />
+      <Menu size="sm" label={t('a11y.more', { title: job.title })} items={menuItems} />
     </span>
   </div>
 

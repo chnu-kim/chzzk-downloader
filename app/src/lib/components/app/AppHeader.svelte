@@ -28,7 +28,7 @@
     {#if view === 'settings' && !locked}
       <IconButton class="edge-start" icon="arrow-left" label={t('header.back')} onclick={onback} />
       <!-- 뷰가 바뀌어 누르던 버튼이 사라지면 App이 이 제목으로 포커스를 옮긴다 -->
-      <h1 class="toolbar-title" tabindex="-1" data-focus-container data-view-heading>{t('settings.title')}</h1>
+      <h1 class="toolbar-title" tabindex="-1" data-focus-container data-view-heading>{t('header.settings')}</h1>
     {:else}
       <span class="app-name">{t('app.title')}</span>
     {/if}

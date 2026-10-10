@@ -19,7 +19,7 @@
     variant="inline"
     tone="neutral"
     icon="clipboard-paste"
-    actions={[{ id: 'load', label: t('url.clipboard.load'), onclick: onload }]}
+    actions={[{ id: 'load', label: t('common.load'), onclick: onload }]}
     onclose={ondismiss}
   >
     <div class="suggest">

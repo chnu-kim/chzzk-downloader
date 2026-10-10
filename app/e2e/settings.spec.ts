@@ -18,7 +18,7 @@ test('설정: 값을 바꾸면 바로 저장하고, 쿠키는 저장 뒤 다시 
   const { page } = app;
   await app.open();
   await page.getByRole('button', { name: t('header.settings') }).click();
-  await expect(page.getByRole('heading', { name: t('settings.title'), level: 1 })).toBeVisible();
+  await expect(page.getByRole('heading', { name: t('header.settings'), level: 1 })).toBeVisible();
   await app.axe('설정');
 
   await page.getByRole('combobox', { name: t('settings.parallel') }).selectOption('3');
@@ -114,8 +114,8 @@ test('로그인한 빌드의 설정: 계정 행의 [로그아웃…]은 확인(D
   const dialog = page.getByRole('dialog', { name: t('dialog.logout.title') });
   await expect(dialog).toBeVisible();
   // 안전한 쪽([로그인 유지])이 오른쪽 끝·첫 포커스다
-  await expect(dialog.getByRole('button', { name: t('dialog.logout.cancel') })).toBeFocused();
-  await dialog.getByRole('button', { name: t('dialog.logout.cancel') }).click();
+  await expect(dialog.getByRole('button', { name: t('dialog.logout.keep') })).toBeFocused();
+  await dialog.getByRole('button', { name: t('dialog.logout.keep') }).click();
   await expect(dialog).toBeHidden();
   expect(await app.cmds()).not.toContain('auth_logout');
 });
@@ -146,9 +146,9 @@ test('닫기 가드: [계속 받기]는 닫지 않고, [닫기]는 quit을 한 �
   const dialog = page.getByRole('dialog', { name: t('dialog.close.title') });
   await expect(dialog).toBeVisible();
   await expect(dialog).toContainText(t('dialog.close.body', { n: 2 }));
-  await expect(dialog.getByRole('button', { name: t('dialog.close.keep') })).toBeFocused();
+  await expect(dialog.getByRole('button', { name: t('dialog.cancel.keepRunning') })).toBeFocused();
   await app.axe('닫기 확인');
-  await dialog.getByRole('button', { name: t('dialog.close.keep') }).click();
+  await dialog.getByRole('button', { name: t('dialog.cancel.keepRunning') }).click();
   await expect(dialog).toBeHidden();
   expect(await app.cmds()).not.toContain('quit');
 
@@ -164,8 +164,8 @@ test('이전 설정을 찾았다는 확인(D3)에서 [나중에]는 가져오지
   const dialog = page.getByRole('dialog', { name: t('dialog.legacy.title') });
   await expect(dialog).toBeVisible();
   // 안전한 쪽([나중에])이 오른쪽 끝·첫 포커스다
-  await expect(dialog.getByRole('button', { name: t('dialog.legacy.later') })).toBeFocused();
-  await dialog.getByRole('button', { name: t('dialog.legacy.later') }).click();
+  await expect(dialog.getByRole('button', { name: t('common.later') })).toBeFocused();
+  await dialog.getByRole('button', { name: t('common.later') }).click();
   await expect(dialog).toBeHidden();
   expect(await app.cmds()).not.toContain('import_legacy');
 });

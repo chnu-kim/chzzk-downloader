@@ -88,7 +88,7 @@ describe("관리자 판정", () => {
     const res = await s.b.get("/admin");
     expect(res.status).toBe(403);
     expect(res.headers.get("Content-Type")).toBe("text/html; charset=utf-8");
-    expect(await res.text()).toContain("관리자만 볼 수 있어요.");
+    expect(await res.text()).toContain("<h1>관리자만 볼 수 있어요</h1>");
   });
 
   it("a1(관리자): 200, 섹션 제목 다섯 개, 허용목록의 관리자 행에는 [빼기]가 없다", async () => {
@@ -98,7 +98,7 @@ describe("관리자 판정", () => {
     const res = await s.b.get("/admin");
     expect(res.status).toBe(200);
     const t = await res.text();
-    for (const h of ["관리자", "허용 채널", "거부된 시도", "활성 세션", "감사 기록"]) expect(t).toContain(`<h2>${h}</h2>`);
+    for (const h of ["관리자", "허가한 채널", "거부된 시도", "활성 로그인", "감사 기록"]) expect(t).toContain(`<h2>${h}</h2>`);
     expect(t).toContain(`<span class="mono">${A1}</span>`);
     expect(t).toContain('<span class="muted">관리자</span>');
     const disallowForms = [...t.matchAll(/action="\/admin\/disallow"[^]*?name="channelId" value="([0-9a-f]{32})"/g)].map((m) => m[1]);
@@ -110,7 +110,7 @@ describe("관리자 판정", () => {
     const b = new Browser(viaEnv({ ADMIN_CHANNEL_IDS: "" }));
     const get = await b.get("/admin");
     expect(get.status).toBe(403);
-    expect(await get.text()).toContain("아직 관리자가 정해지지 않았어요.");
+    expect(await get.text()).toContain("<h1>아직 관리자가 정해지지 않았어요</h1>");
     const res = await b.post("/admin/allow", { Origin: "http://evil.example.test" }, formBody({ channelId: C3 }));
     expect(res.status).toBe(403);
     expect(rejectedReasons(spy)).toEqual(["bootstrap"]);
@@ -325,7 +325,7 @@ describe("동작", () => {
     const s = await session("a1");
     const res = await post(s, "/admin/disallow", { channelId: A1 });
     expect(res.status).toBe(409);
-    expect(await res.text()).toContain("관리자 채널은 뺄 수 없어요.");
+    expect(await res.text()).toContain("<h1>관리자 채널은 뺄 수 없어요</h1>");
     expect((await s.b.get("/admin")).status).toBe(200);
   });
 
@@ -378,7 +378,7 @@ describe("[허용] → 즉시 로그인 성공", () => {
     expect(again.callback.status).toBe(303);
     expect(again.callback.headers.get("Location")).toBe("/");
     expect(again.callback.headers.getSetCookie().some((c) => c.startsWith("cdl_s=cdw_"))).toBe(true);
-    expect(await (await again.browser.get("/")).text()).toContain("합성기타D4 채널로 로그인했어요.");
+    expect(await (await again.browser.get("/")).text()).toContain("‘합성기타D4’ 채널로 로그인했어요.");
 
     fake.state.account = "d4";
     const app = await appFlow({ fake });
@@ -399,7 +399,7 @@ describe("관리 POST의 경계(구현 중 변경 38 (카))", () => {
     ] as const) {
       const res = await post(admin, path, fields);
       expect([path, res.status]).toEqual([path, 409]);
-      expect(await res.text()).toContain("관리자 채널은 허용목록에 넣지 않아요.");
+      expect(await res.text()).toContain("관리자 채널은 허가 목록에 넣지 않아요");
     }
     expect(await hasAllowed(A1)).toBe(false);
     expect(await auditOf()).toEqual(before);

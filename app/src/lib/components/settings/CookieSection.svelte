@@ -5,6 +5,8 @@
   import type { AppError } from '../../bindings';
   import { errorCopy } from '../../copy/errors';
   import { t } from '../../copy/ko';
+  import { shortcutText } from '../../platform';
+  import { platform } from '../../stores/platform.svelte';
   import { settings } from '../../stores/settings.svelte';
   import { ui } from '../../stores/ui.svelte';
   import Button from '../ui/Button.svelte';
@@ -13,6 +15,10 @@
   import Notice from '../ui/Notice.svelte';
   import SecretField from '../ui/SecretField.svelte';
   import Switch from '../ui/Switch.svelte';
+
+  /** 네이버 로그인 쿠키 이름(문구가 아니라 코드 상수, content.md §2 기술 상수) */
+  const COOKIE_A = 'NID_AUT';
+  const COOKIE_B = 'NID_SES';
 
   let open = $state(false);
   let nidAut = $state('');
@@ -31,11 +37,12 @@
   const enabled = $derived(settings.dto?.useNaverCookies ?? false);
   // `settings`(설정 파일을 못 씀)는 B2 배너가 알리고 다시 보낸다(46). 여기서 또 보이면 B2로 고친 뒤에도 남는다.
   const errCopy = $derived(error && error.code !== 'settings' ? errorCopy(error, { place: 'cookie' }) : null);
-  const steps = $derived(
-    t('settings.cookie.howto.steps')
-      .split(/\s*\d\.\s+/)
-      .filter(Boolean),
-  );
+  const steps = $derived([
+    t('settings.cookie.howto.step1'),
+    t('settings.cookie.howto.step2', { devtools: shortcutText(platform.os, 'devtools') }),
+    t('settings.cookie.howto.step3'),
+    t('settings.cookie.howto.step4', { cookieA: COOKIE_A, cookieB: COOKIE_B }),
+  ]);
 
   // 오류 동작 [네이버 로그인 정보 설정]·[로그인 정보 다시 넣기]로 들어오면 펼치고 그 자리로 간다
   $effect(() => {
@@ -87,9 +94,9 @@
   <Disclosure title={t('settings.advanced')} bind:open>
     {#if open}
       <div class="cookie">
-        <h3>{t('settings.cookie.title')}</h3>
-        <p class="why">{t('settings.cookie.why')}</p>
-        <Notice tone="warning">{t('settings.cookie.danger')}</Notice>
+        <h3>{t('dialog.legacy.item.cookies')}</h3>
+        <p class="why">{t('settings.cookie.body')}</p>
+        <Notice tone="warning">{t('settings.cookie.help')}</Notice>
 
         {#key settings.revision}
           <div class="use">
@@ -100,12 +107,12 @@
         {/key}
 
         <div class="fields">
-          <FieldRow label="NID_AUT">
+          <FieldRow label={COOKIE_A}>
             {#snippet control({ labelId })}
               <SecretField labelledby={labelId} bind:value={nidAut} {...invalidProps(missing && !nidAut.trim())} disabled={busy} />
             {/snippet}
           </FieldRow>
-          <FieldRow label="NID_SES">
+          <FieldRow label={COOKIE_B}>
             {#snippet control({ labelId })}
               <SecretField labelledby={labelId} bind:value={nidSes} {...invalidProps(missing && !nidSes.trim())} disabled={busy} />
             {/snippet}

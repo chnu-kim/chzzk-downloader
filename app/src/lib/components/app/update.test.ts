@@ -82,13 +82,21 @@ beforeEach(async () => {
 });
 
 describe('UpdateBanner status', () => {
-  it('status가 있으면 그 문구와 눌리지 않는 [지금 업데이트], [나중에]·닫기는 없다. 퍼센트는 읽히지 않는다', async () => {
+  it('status가 있으면 그 문구와 눌리지 않는 [지금 업데이트], [나중에]·닫기는 없다. 정확한 퍼센트는 읽히지 않는다', async () => {
     const user = userEvent.setup();
     const oninstall = vi.fn();
-    render(UpdateBanner, { version: '0.2.0', status: '업데이트 받는 중', detail: '42%', oninstall, onlater: vi.fn() });
+    render(UpdateBanner, {
+      version: '0.2.0',
+      status: t('update.downloading', { percent: '25%' }),
+      shown: t('update.downloading', { percent: '42%' }),
+      oninstall,
+      onlater: vi.fn(),
+    });
     const status = screen.getByRole('status');
-    expect(status).toHaveTextContent('업데이트 받는 중 42%');
-    expect(screen.getByText('42%', { exact: false })).toHaveAttribute('aria-hidden', 'true');
+    // 화면에는 정확한 값이 보이고(aria-hidden), 라이브로 읽히는 글은 25% 단위다
+    expect(screen.getByText(t('update.downloading', { percent: '42%' }))).toHaveAttribute('aria-hidden', 'true');
+    expect(status).toHaveTextContent(t('update.downloading', { percent: '25%' }));
+    expect(status.querySelector('.sr-only')).not.toHaveTextContent('42%');
     expect(screen.queryByText(/새 버전/)).toBeNull();
     // 진행 중 버튼은 loading: aria-disabled·aria-busy라 포커스는 남고 눌러도 아무 일이 없다
     const btn = screen.getByRole('button', { name: '지금 업데이트' });
@@ -121,7 +129,7 @@ describe('B1은 이어받을 수 있는 작업만 센다(A5)', () => {
       job(2, { status: 'interrupted', channelId: 'c3' }),
     ]);
     render(AppBanners);
-    expect(screen.getByText('지난번에 받다가 멈춘 다운로드가 1개 있어요.')).toBeInTheDocument();
+    expect(screen.getByText(t('banner.interrupted', { n: 1 }))).toBeInTheDocument();
   });
 
   it('다른 채널 작업만 남으면 배너가 없다', async () => {
@@ -229,7 +237,7 @@ describe('AppBanners 순서', () => {
     update.available = info('0.2.0');
     render(AppBanners);
     expect(screen.getByRole('button', { name: '모두 이어받기' })).toBeInTheDocument();
-    expect(screen.queryByText('새 버전 0.2.0이 있어요.')).toBeNull();
+    expect(screen.queryByText(t('update.banner', { version: '0.2.0' }))).toBeNull();
   });
 
   it('둘 다 없고 업데이트가 있으면 B4: [지금 업데이트]는 updateInstall(false), [×]는 숨김', async () => {
@@ -237,10 +245,10 @@ describe('AppBanners 순서', () => {
     vi.mocked(api.updateInstall).mockResolvedValue({ result: 'restarting' });
     update.available = info('0.2.0');
     render(AppBanners);
-    expect(screen.getByText('새 버전 0.2.0이 있어요.')).toBeInTheDocument();
+    expect(screen.getByText(t('update.banner', { version: '0.2.0' }))).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '지금 업데이트' }));
     expect(api.updateInstall).toHaveBeenCalledWith(false);
-    await waitFor(() => expect(screen.getByText('설치하고 다시 시작해요…')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(t('update.installing'))).toBeInTheDocument());
   });
 
   it('[×]를 누르면 배너가 사라진다', async () => {
@@ -256,13 +264,15 @@ describe('AppBanners 순서', () => {
     update.available = info('0.2.0');
     update.phase = 'downloading';
     update.total = 200;
-    update.received = 50;
+    update.received = 90;
     render(AppBanners);
-    expect(screen.getByRole('status')).toHaveTextContent('업데이트 받는 중 25%');
+    // 화면은 정확한 45%, 읽히는 글은 25% 단위
+    expect(screen.getByRole('status')).toHaveTextContent(t('update.downloading', { percent: '45%' }));
+    expect(screen.getByRole('status').querySelector('.sr-only')).toHaveTextContent(t('update.downloading', { percent: '25%' }));
     expect(screen.queryByRole('button', { name: '모두 이어받기' })).toBeNull();
     update.total = null;
     update.received = 2048;
-    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/업데이트 받는 중 2(\.0)? ?KB/i));
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(t('update.downloading', { percent: '2.05KB' })));
   });
 
   it('[지금 업데이트]를 누른 뒤 받는 중이 되어도 같은 버튼에 포커스가 남는다', async () => {
@@ -276,7 +286,7 @@ describe('AppBanners 순서', () => {
     await user.click(btn);
     expect(api.updateInstall).toHaveBeenCalledTimes(1);
     update.phase = 'downloading';
-    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('업데이트 받는 중'));
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(t('update.downloading', { percent: '0B' })));
     expect(screen.getByRole('button', { name: '지금 업데이트' })).toBe(btn);
     expect(btn).toHaveFocus();
   });
@@ -287,7 +297,7 @@ describe('AppBanners 순서', () => {
     update.phase = 'downloading';
     render(AppBanners);
     update.available = null;
-    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('업데이트 받는 중'));
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(t('update.downloading', { percent: '0B' })));
   });
 });
 
@@ -300,7 +310,7 @@ describe('UpdateDialog', () => {
     update.phase = 'confirm';
     render(UpdateDialog);
     const d = await screen.findByRole('dialog', { name: '업데이트하고 다시 시작할까요?' });
-    expect(within(d).getByText('받는 중인 영상 2개가 일시정지되고, 다시 시작한 뒤 이어받을 수 있어요.')).toBeInTheDocument();
+    expect(within(d).getByText(t('dialog.update.body', { n: 2 }))).toBeInTheDocument();
     await waitFor(() => expect(within(d).getByRole('button', { name: '나중에' })).toHaveFocus());
     // 오른쪽(primary, 첫 포커스)이 안전한 [나중에], 왼쪽(secondary)이 실행 쪽
     expect(within(d).getAllByRole('button').map((b) => b.textContent?.trim())).toEqual(['업데이트하고 다시 시작', '나중에']);
@@ -356,15 +366,15 @@ describe('SettingsView 업데이트 확인', () => {
 
     vi.mocked(api.updateCheck).mockResolvedValueOnce({ result: 'available', info: info('0.2.0') });
     await user.click(screen.getByRole('button', { name: '업데이트 확인' }));
-    expect(await screen.findByText('새 버전 0.2.0이 있어요.')).toBeInTheDocument();
+    expect(await screen.findByText(t('update.banner', { version: '0.2.0' }))).toBeInTheDocument();
 
     vi.mocked(api.updateCheck).mockResolvedValueOnce({ result: 'failed' });
     await user.click(screen.getByRole('button', { name: '업데이트 확인' }));
-    expect(await screen.findByText(/업데이트를 확인하지 못했어요/)).toBeInTheDocument();
+    expect(await screen.findByText(t('settings.about.checkFailed'), { exact: false })).toBeInTheDocument();
 
     vi.mocked(api.updateCheck).mockResolvedValueOnce({ result: 'untrusted' });
     await user.click(screen.getByRole('button', { name: '업데이트 확인' }));
-    expect(await screen.findByText('업데이트 주소를 확인할 수 없어 받지 않았어요.')).toBeInTheDocument();
+    expect(await screen.findByText(t('update.untrusted'))).toBeInTheDocument();
   });
 
   it('확인 결과가 available인데 값이 비었으면 줄을 숨긴다', () => {
@@ -383,7 +393,7 @@ describe('SettingsView 업데이트 확인', () => {
     vi.mocked(api.updateCheck).mockImplementation(() => new Promise((r) => (resolve = r)));
     render(SettingsView);
     await user.click(screen.getByRole('button', { name: '업데이트 확인' }));
-    expect(await screen.findByText('업데이트를 확인하는 중이에요…')).toBeInTheDocument();
+    expect(await screen.findByText(t('settings.about.checking'))).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '업데이트 확인' })).toBeDisabled();
     resolve({ result: 'upToDate' });
     expect(await screen.findByText('최신 버전이에요')).toBeInTheDocument();

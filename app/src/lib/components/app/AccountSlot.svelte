@@ -3,7 +3,7 @@
   // [로그아웃…]은 확인 대화상자(D4)를 `ui.logoutConfirm`으로 요청할 뿐이다 — 대화상자는 App의 LogoutDialog 하나다.
   import type { AuthStatusDto } from '../../bindings';
   import { t } from '../../copy/ko';
-  import { formatDateTimeShort } from '../../format/date';
+  import { whenText } from '../../when';
   import { auth } from '../../stores/auth.svelte';
   import { ui } from '../../stores/ui.svelte';
   import Menu, { type MenuItem } from '../ui/Menu.svelte';
@@ -26,8 +26,8 @@
   {#if status.offline}
     <!-- 상태 글자는 Badge가 아니다(Badge는 종류 표시만). title 툴팁 대신 풀이는 스크린 리더에게만 읽힌다 -->
     <span class="offline">
-      {t('account.offline', { until: formatDateTimeShort(status.offline.graceUntil) })}
-      <span class="sr-only">{t('auth.offline.tip')}</span>
+      {t('account.offline', { until: whenText(status.offline.graceUntil, Date.now()) })}
+      <span class="sr-only">{t('account.offline.help')}</span>
     </span>
   {/if}
   <Menu label={t('account.menu')} trigger="text" text={status.channelName ?? t('account.menu')} {items} />

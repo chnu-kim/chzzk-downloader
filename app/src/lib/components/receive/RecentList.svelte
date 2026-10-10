@@ -34,7 +34,7 @@
             variant="ghost"
             size="sm"
             class="edge-end"
-            aria-label="{t('recent.reopen')}: {name}"
+            aria-label={t('a11y.reopen', { title: name })}
             onclick={() => onreopen(item.url)}
           >
             {t('recent.reopen')}

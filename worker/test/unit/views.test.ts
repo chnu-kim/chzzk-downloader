@@ -106,7 +106,7 @@ describe("adminBody", () => {
     expect(t).toContain(`name="channelId" value="${B2}"`);
     expect(t).not.toContain(`name="channelId" value="${A1}"`);
     expect(t.split('action="/admin/disallow"')).toHaveLength(2);
-    expect(t).toContain(`<span class="muted">${COPY.adminBadge}</span>`);
+    expect(t).toContain(`<span class="muted">${COPY.adminsTitle}</span>`);
   });
 
   it("메모·이름·기기 정보는 이스케이프된다", () => {

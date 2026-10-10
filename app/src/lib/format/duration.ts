@@ -32,3 +32,51 @@ export function formatMmss(secs: number): string {
   const s = whole(secs);
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
+
+// ---------------------------------------------------------------------------
+// 새 시간 표기(content §7 D50). Rust `chzzk_shell::format`과 같은 골든을 읽는다.
+
+/** 남은 시간: 10초 미만 곧 끝나요 / 1분 미만 / 약 N분 / 약 N시간 M분 / 계산 전. 분은 내림이다. */
+export function formatRemaining(secs: number | null): string {
+  if (secs == null) return '남은 시간 계산 중';
+  const s = whole(secs);
+  if (s < 10) return '곧 끝나요';
+  if (s < 60) return '1분 미만 남음';
+  if (s < 3600) return `약 ${Math.floor(s / 60)}분 남음`;
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  return m > 0 ? `약 ${h}시간 ${m}분 남음` : `약 ${h}시간 남음`;
+}
+
+/** 일 단위: `3일 전에`(하루 미만이어도 1일). */
+export function formatDaysAgo(secs: number): string {
+  return `${Math.max(1, Math.floor(whole(secs) / 86400))}일 전에`;
+}
+
+/** 경과(연결 대기·멈춘 지): `2분째`, `1시간 5분째`, `2시간째`. 하루 이상은 `formatDaysAgo`. 1분 미만은 `1분째`. */
+export function formatElapsed(secs: number): string {
+  const s = whole(secs);
+  if (s >= 86400) return formatDaysAgo(s);
+  if (s < 3600) return `${Math.max(1, Math.floor(s / 60))}분째`;
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  return m > 0 ? `${h}시간 ${m}분째` : `${h}시간째`;
+}
+
+/** 개수: 세 자리 쉼표(`1,210`). `만`·`억` 축약 없음. */
+export function formatCount(n: number): string {
+  const v = Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+  return String(v).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
+
+/** 낭독용 남은 시간: `약 14분 남아요`, 계산 전 `남은 시간을 계산하고 있어요`, 10초 미만 `곧 끝나요`. */
+export function formatSpokenRemaining(secs: number | null): string {
+  if (secs == null) return '남은 시간을 계산하고 있어요';
+  const s = whole(secs);
+  if (s < 10) return '곧 끝나요';
+  if (s < 60) return '1분도 안 남았어요';
+  if (s < 3600) return `약 ${Math.floor(s / 60)}분 남아요`;
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  return m > 0 ? `약 ${h}시간 ${m}분 남아요` : `약 ${h}시간 남아요`;
+}

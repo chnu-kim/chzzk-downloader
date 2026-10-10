@@ -76,7 +76,7 @@
     loading={spinner.visible}
     aria-disabled={!loading && !resolver.input.trim() ? 'true' : undefined}
   >
-    {t('url.submit')}
+    {t('common.load')}
   </Button>
 </form>
 

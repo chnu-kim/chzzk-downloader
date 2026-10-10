@@ -24,6 +24,6 @@
   title={t('dialog.logout.title')}
   body={t('dialog.logout.body')}
   onclose={close}
-  primary={{ id: 'keep', label: t('dialog.logout.cancel'), onclick: close }}
+  primary={{ id: 'keep', label: t('dialog.logout.keep'), onclick: close }}
   secondary={{ id: 'logout', label: t('dialog.logout.confirm'), loading: auth.isBusy('logout'), onclick: confirm }}
 />

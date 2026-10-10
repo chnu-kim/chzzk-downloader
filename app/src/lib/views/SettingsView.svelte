@@ -87,7 +87,7 @@
     </SettingsRow>
   </SettingsSection>
 
-  <SettingsSection title={t('settings.download')}>
+  <SettingsSection title={t('card.download')}>
     {#key settings.revision}
       <SettingsRow label={t('settings.parallel')} help={t('settings.parallel.help')}>
         {#snippet control({ labelId, helpId })}

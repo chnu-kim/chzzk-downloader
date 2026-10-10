@@ -1,7 +1,10 @@
 // 로그인 화면과 AuthGate(worker.md 구현 중 변경 62): 잠긴 동안 로그인 화면만 보이고, 풀리면 홈이 열린다.
 import type { AuthStatusDto } from '../src/lib/bindings';
-import { formatDateTimeShort, t, tRegex } from './copy';
+import { channelRow, t, tRegex, whenText } from './copy';
 import { expect, test } from './fixtures';
+
+/** playwright.config의 timezoneId(Asia/Seoul)와 같은 UTC 오프셋(분) */
+const KST_OFFSET_MIN = 540;
 
 const EMPTY = { channelId: null, channelName: null, reason: null, pending: null, offline: null, verifiedAt: null, canReconnect: false } as const;
 const auth = (over: Partial<AuthStatusDto> & Pick<AuthStatusDto, 'state'>): AuthStatusDto => ({ ...EMPTY, ...over });
@@ -25,9 +28,9 @@ test('로그인하면 브라우저 안내와 남은 시간을 보이고, 끝나�
   await expect(page.getByText(/[2-9A-HJ-NP-Z]{4}-[2-9A-HJ-NP-Z]{4}/)).toHaveCount(0);
   await expect(page.getByText(t('auth.pending.sameDevice'))).toBeVisible();
   await expect(page.getByText(t('auth.pending.stuck'))).toHaveCount(0);
-  await expect(page.getByText(tRegex('auth.pending.body'))).toContainText(/(10:00|9:\d\d)/);
+  await expect(page.getByText(tRegex('auth.pending.remaining'))).toContainText(/(10:00|9:\d\d)/);
   await page.getByRole('button', { name: t('auth.copyLoginUrl') }).click();
-  await expect(page.getByText(t('toast.copied'))).toBeVisible();
+  await expect(page.getByText(t('action.copied'))).toBeVisible();
   expect(await app.cmds()).toContain('auth_copy_login_url');
   await app.axe('로그인 대기');
 
@@ -44,9 +47,10 @@ test('거부·유예 만료 화면과 다시 연결', async ({ app }) => {
   const { page } = app;
   await app.open({ auth: auth({ state: 'denied', channelName: '테스트 채널' }) });
   await expect(page.getByRole('heading', { name: t('auth.denied.title') })).toBeVisible();
-  await expect(page.getByText(t('auth.denied.body', { channelName: '테스트 채널' }))).toBeVisible();
+  await expect(page.getByText(t('auth.denied.body'))).toBeVisible();
+  await expect(page.getByText(channelRow('테스트 채널') ?? '')).toBeVisible();
   await expect(page.getByRole('button', { name: t('action.retry') })).toBeVisible();
-  await expect(page.getByText(t('auth.otherAccount.lead'), { exact: false })).toBeVisible();
+  await expect(page.getByText(t('auth.otherAccount.help'))).toBeVisible();
   await expect(page.getByRole('button', { name: t('auth.otherAccount') })).toBeVisible();
   await app.axe('로그인 거부');
 
@@ -64,7 +68,7 @@ test('저장 세션이 있으면 로그인을 취소해도 유예 만료 화면�
     auth: auth({ state: 'pending', pending: { expiresAt: Math.floor(Date.now() / 1000) + 600 } }),
     authHeld: grace,
   });
-  await page.getByRole('button', { name: t('auth.cancel') }).click();
+  await page.getByRole('button', { name: t('common.cancel') }).click();
   await expect(page.getByRole('heading', { name: t('auth.graceExpired.title') })).toBeVisible();
   await page.getByRole('button', { name: t('auth.reconnect') }).click();
   await expect(page.getByText(t('auth.reconnectFailed'))).toBeVisible();
@@ -105,14 +109,14 @@ test('오프라인 배지와 로그아웃', async ({ app }) => {
       offline: { since: 1_767_322_800, graceUntil },
     }),
   });
-  await expect(page.getByText(t('account.offline', { until: formatDateTimeShort(graceUntil, 'Asia/Seoul') }))).toBeVisible();
+  await expect(page.getByText(t('account.offline', { until: whenText(graceUntil, Date.now(), KST_OFFSET_MIN) }))).toBeVisible();
   await page.getByRole('button', { name: '테스트 채널' }).click();
   await expect(page.getByRole('menuitem', { name: t('auth.reconnect') })).toBeVisible();
   await page.getByRole('menuitem', { name: t('account.logout') }).click();
   const dialog = page.getByRole('dialog', { name: t('dialog.logout.title') });
   await expect(dialog).toBeVisible();
   // 안전한 쪽([로그인 유지])이 오른쪽 끝·첫 포커스다
-  await expect(dialog.getByRole('button', { name: t('dialog.logout.cancel') })).toBeFocused();
+  await expect(dialog.getByRole('button', { name: t('dialog.logout.keep') })).toBeFocused();
   await app.axe('로그아웃 확인');
   await dialog.getByRole('button', { name: t('dialog.logout.confirm') }).click();
   await expect(page.getByRole('heading', { name: t('auth.signedOut.title') })).toBeVisible();

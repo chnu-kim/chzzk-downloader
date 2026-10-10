@@ -151,7 +151,7 @@ CSP는 그대로다(worker.md, `A-WORKER` §6.1): `default-src 'none'; style-src
 | 7 | 설치하기 `<h2 id="install">` | 감지한 OS 절은 `<details open>`, 다른 OS 절은 `<details>`(닫힘). 감지 실패면 셋 모두 `open`. 각 절은 `<ol>` 단계(한 단계 한 동작, macOS 3단계 이하). **macOS**: `macDamaged` 문단 → ① `macMove` ② `macOpenAnyway`(처음 열 때 경고가 나오면 **시스템 설정 › 개인정보 보호 및 보안 › 그래도 열기**) [잠정, §14-1] ③ `macTerminal`(그 단추가 없으면 터미널에 아래 한 줄) — `<pre><code class="selectable">xattr -dr com.apple.quarantine "/Applications/치지직 다운로더.app"</code></pre>` + `macXattrNote`(두 문장: 표시만 지운다 / 다른 명령은 사기). **Windows**: `winSac`(경고 Notice `--warning-soft`, 단계 **앞**: 스마트 앱 컨트롤을 끄면 되돌릴 수 없으니 관리자에게 먼저 묻기) → ① `winSmartScreen`(‘PC 보호’ 창 → ‘추가 정보’ › ‘실행’). **Linux**: AppImage는 `libfuse2`(24.04는 `libfuse2t64`) + 실행 권한 한 줄, `.deb`는 `apt install ./…`("관리자 권한이 필요할 수 있어요") | 항상(비로그인에서도 읽을 수 있다) | D53·D55("그래도 열기" 경로 먼저 + xattr 폴백), D52(복사 버튼 대신 선택 가능한 코드 + 사기 경고), `G-INSTALL-R2`~`G-INSTALL-R8`, `G-PRIVACY-R2`, `G-HELP-H5`(앵커 id는 `<details>` 밖 = h2에만), 검토 U-37(비가역 경고는 행동 앞), 앱 이름은 `productName`(worker-config `checkLandingAppName`) |
 | 8 | 파일 확인(선택) | `<details>` "파일 확인(선택)": 한 문장 + `<table>`(`caption`, `th scope`, 열: 파일·SHA-256 `code.selectable`). 해시는 주 표에서 **여기로 이동**한다 | 허용 사용자 | `G-WEB-R27`, g-install §4-7, D53. worker.md §9.5 "SHA-256 텍스트" 변경 → §14 |
 | 9 | 처음 열면 로그인해요 `<h2 id="login">` | 한 문단: 앱에서 [치지직으로 로그인]을 누르면 브라우저가 열린다 / 받는 것은 채널 이름과 채널 ID / 네이버 비밀번호는 받지 않는다 / 허가되지 않으면 이유와 다음 할 일을 앱이 알려 준다 / `loginTwice`("이 페이지에서 로그인했어도 앱을 처음 열 때 한 번 더 로그인해요.") | 항상 | C7, B 후보 절, `G-PRIVACY-R9`·`G-PRIVACY-R17`, 검토 U-11 |
-| 10 | 막히면 `<h2 id="help">` | 한 문단: `/help` 링크 + `content.md` §11 "문제가 있을 때" 상수 + 연락 수단 `landing.contact`(자리표시, 출시 전 사람이 채운다) | 항상 | B 후보 절, `G-INSTALL-R14`(문의 경로), `G-PRIVACY-R16`, D51, 검토 U-07 |
+| 10 | 막히면 `<h2 id="help">` | 한 문단: `/help` 링크 + `content.md` §11 "문제가 있을 때" 상수 + 연락 수단 landing.contact(자리표시, 출시 전 사람이 채운다) | 항상 | B 후보 절, `G-INSTALL-R14`(문의 경로), `G-PRIVACY-R16`, D51, 검토 U-07 |
 | 11 | 내 기기 `<h2>` | 표(§7) + 설명 "모르는 기기가 있으면 끊어 주세요." + [끊기] | 허용 사용자 | worker.md §8.2 |
 | 12 | 로그아웃 | 테두리 버튼 하나 | 허용 사용자 | §7.2 의미 표 |
 
@@ -276,7 +276,7 @@ flash와 `seeOther` "쿼리 없는 두 곳" 계약의 보완은 worker.md 구현
 
 ### 7.3 확인 페이지(허가 빼기)
 
-`GET /admin/<channelId>/disallow`(상태 변경·감사 기록 없음) → `<h1>` `confirmDisallow.title`("이 채널의 허가를 뺄까요?") → 요약 목록(`<dl>`: 이름 · 채널 ID(`.num` mono) · 활성 세션 수) → `confirmDisallow.body` → `.actions`: **왼쪽 [허가 빼기]**(`confirmDisallow.action`, `btn-secondary tone-danger`, 폼 하나) · **오른쪽 링크** `confirmDisallow.back`("허가한 채널 목록으로", `/admin`). 폼 요소는 최종 버튼의 폼 하나뿐이다. 채움 버튼은 없다.
+`GET /admin/<channelId>/disallow`(상태 변경·감사 기록 없음) → `<h1>` confirmDisallow.title("이 채널의 허가를 뺄까요?") → 요약 목록(`<dl>`: 이름 · 채널 ID(`.num` mono) · 활성 세션 수) → confirmDisallow.body → `.actions`: **왼쪽 [허가 빼기]**(`audit.disallow`, `btn-secondary tone-danger`, 폼 하나) · **오른쪽 링크** `confirmDisallow.back`("허가한 채널 목록으로", `/admin`). 폼 요소는 최종 버튼의 폼 하나뿐이다. 채움 버튼은 없다.
 
 배치는 D36(파괴 동작은 왼쪽 빨간 글자, 안전한 쪽은 오른쪽)을 따르되 웹 페이지라 Enter 기본 버튼 개념이 없으므로 오른쬭은 링크다(`patterns.md` §14.5도 이렇게 적는다). 근거: D54, `G-WEB-R21`(나)·`G-WEB-R22`(MoJ confirm-an-action, WCAG 3.3.4 G168), D36. 강제: `worker` 테스트(GET은 DO 상태를 바꾸지 않는다, 폼 1개, `.tone-danger` 1개, 돌아가기는 `<a>`), `R6`(대화상자·확인 흐름 체크리스트: 웹 확인 페이지도 D36 표로 대조한다).
 
@@ -462,4 +462,5 @@ g-web §4.2 G1~G7(세션 없는 POST 무안내, 재삭제 404, 성공 피드백 
 11. **코드 블록은 `white-space: pre` + 가로 스크롤**(검토 U-34).
 12. **루프백(v0.3.0) 뒤 결과 페이지를 웹 흐름 기준으로 다시 썼다.** 앱 흐름의 ok("앱으로 돌아가 주세요") 행을 지웠고, denied·cancelled 문구에서 "앱에서"를 뺐으며, failed는 `doneView.kind`로 두 문구를 고른다(§6.1). 옛 앱 안내(`outdatedApp`)·확인 페이지 CSP 예외·앱 수신기 페이지(§6.5)를 더했다(`worker.md` 구현 중 변경 88·89, `app.md` 65·66).
 13. **(e)로 넘기는 것: `site.css`의 링크 색 규칙은 `a:not(.btn)`으로 한정한다.** `ui.css`의 `.btn { color }`가 `body.web a`(특이도 0,1,2)보다 약해서, 한정하지 않으면 버튼 글자가 링크색으로 덮인다(적용 단계 (a)의 `design/ui.css` 구현에서 발견).
-14. **(d)로 넘기는 것: 이 문서가 적은 `adminOnly.title`·`badFormat.title`·`retryLater.body`·`landing.contact`는 `content.md` §15에 없다.** 지금은 DC10 허용 항목이 덮는다(content.md §19-9).
+14. **해소(적용 단계 (d)): 이 문서가 적은 `adminOnly.title`·`badFormat.title`·`retryLater.body`·landing.contact를 `content.md` §15.3 표에 더했다.** 값은 §6.2 표 그대로이고 landing.contact는 자리표시("문의 연락처는 출시 전에 채워요.")다. DC10 허용 항목은 사라졌다.
+15. **Worker 문구 개정(적용 단계 (d))이 (e) 전에 마크업에 닿은 곳은 셋뿐이다.** ① `noticePage(config, status, title, body | null)`: h1이 상태별 제목이 되고 본문은 없을 수 있다(4xx·5xx `<title>`에 `errorTitlePrefix`). 명세가 제목을 정하지 않은 `notFound`·`isAdmin`·`bootstrapAdmin`·`adminNoAllow`·`badBody`는 현재 문장을 제목과 본문으로 가르기만 했다(`content.md` §15.3). ② macOS 설치 단계 셋은 `<ol><li>`(번호가 문자열에서 빠졌다). ③ 시각 열이 있는 표에 `<caption>`(`tableTimeNote`)을 한 줄 더했다(열 제목에서 "(KST)"를 뺀 대신. §8의 caption 모양 CSS는 (e)). 랜딩 `<title>`이 `siteTitle`이면 `htmlPage`는 " · 앱 이름" 꼬리를 붙이지 않는다. 나머지 새 키(`landing.consent.*`·`skipLink`·`confirmDisallow.*` 등)는 (e)가 화면을 만들 때 참조한다.

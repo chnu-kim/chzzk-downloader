@@ -217,10 +217,14 @@
 
 <ConfirmDialog
   open={jobs.confirm != null}
-  title={t('dialog.cancel.title')}
+  title={t('dialog.cancel.title', { title: jobs.confirm?.title ?? '' })}
   body={t('dialog.cancel.body', { size: jobs.confirmSize })}
   onclose={() => jobs.cancelConfirm()}
-  primary={{ id: 'back', label: t('dialog.cancel.back'), onclick: () => jobs.cancelConfirm() }}
+  primary={{
+    id: 'back',
+    label: t(jobs.confirm?.running === false ? 'dialog.cancel.keepPaused' : 'dialog.cancel.keepRunning'),
+    onclick: () => jobs.cancelConfirm(),
+  }}
   secondary={{ id: 'confirm', label: t('dialog.cancel.confirm'), tone: 'danger', onclick: () => void jobs.confirmRemove() }}
 />
 

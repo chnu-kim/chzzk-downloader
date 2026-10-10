@@ -36,8 +36,12 @@ import {
   visibleOrder,
 } from './jobs';
 
+// 크기는 1024 진법(Windows)으로 고정하고 시각은 KST·고정 현재 시각으로 비교한다(수가 사용자 환경에 기대지 않게)
+const FINISHED = 1_759_668_060; // 2025-10-05 12:41 UTC = 21:41 KST
+const CTX = { base: 1024 as const, offsetMin: 540, now: (FINISHED + 3 * 86400) * 1000 };
+
 function line(j: JobDto, p = j.progress, ctx = {}): string {
-  return statusLine(statusParts(j, p, ctx));
+  return statusLine(statusParts(j, p, { ...CTX, ...ctx }));
 }
 
 describe('jobButtons: 상태별 버튼 표(patterns.md §2·§14.3)', () => {
@@ -99,12 +103,12 @@ describe('jobButtons: 상태별 버튼 표(patterns.md §2·§14.3)', () => {
     [
       '실패: 화질 없음 → 다시 불러오기',
       job(1, { status: 'failed', error: err('qualityNotFound') }),
-      { primary: ['reresolve', 'remove'], cancel: false, menu: ['showTitle', 'copyUrl', 'copyReport'] },
+      { primary: ['reresolve'], cancel: false, menu: ['showTitle', 'copyUrl', 'copyReport', 'remove'] },
     ],
     [
       '실패: 지원하지 않음 → 보고 복사가 기본',
       job(1, { status: 'failed', error: err('unsupported') }),
-      { primary: ['copyReport', 'remove'], cancel: false, menu: ['showTitle', 'copyUrl'] },
+      { primary: ['copyReport'], cancel: false, menu: ['showTitle', 'copyUrl', 'remove'] },
     ],
     [
       '완료',
@@ -128,8 +132,8 @@ describe('jobButtons: 상태별 버튼 표(patterns.md §2·§14.3)', () => {
 
   it('authRequired(쿠키 켜짐)은 로그인 정보 다시 넣기가 먼저', () => {
     const j = job(1, { status: 'failed', partialBytes: 9, error: err('authRequired', { stage: 'resolve' }) });
-    expect(jobButtons(j, null, true).primary).toEqual(['reenterCookies', 'resume']);
-    expect(jobButtons(j, null, false).primary).toEqual(['openCookieSettings', 'resume']);
+    expect(jobButtons(j, null, true).primary).toEqual(['reenterCookies']);
+    expect(jobButtons(j, null, false).primary).toEqual(['openCookieSettings']);
   });
 
   it('모든 상태에 주소 복사가 있다', () => {
@@ -156,7 +160,7 @@ describe('groupJobs: 정렬·그룹(§8.5)', () => {
     const groups = groupJobs(list);
     expect(groups.map((g) => [g.id, g.label])).toEqual([
       ['running', '받는 중 2'],
-      ['stopped', '멈춤 3'],
+      ['stopped', '받다 만 3'],
       ['finished', '완료 2'],
     ]);
     expect(visibleOrder(groups)).toEqual([4, 2, 7, 3, 6, 5, 1]);
@@ -182,24 +186,47 @@ describe('대기 순서', () => {
 describe('상태 줄(§3.2): 명사형 조각', () => {
   it('progressive 받는 중', () => {
     const j = job(1, { status: 'running', progress: prog() });
-    expect(line(j)).toBe('받는 중 · 2.3 GB / 4.0 GB · 12.4 MB/s · 2분 18초 남음');
+    expect(line(j)).toBe('받는 중 · 2.3GB / 4.0GB · 12.4MB/s · 약 2분 남음');
   });
 
   it('HLS 받는 중: 예상 총량과 조각이 같은 줄의 조각이다(폭 쿼리로 숨기지 않는다)', () => {
     const j = job(1, { status: 'running', playbackKind: 'liveRewindHls', progress: hlsProg() });
-    expect(line(j)).toBe('받는 중 · 1.2 GB / 약 5.1 GB · 조각 1,210/5,580 · 8.1 MB/s · 14분 남음');
+    expect(line(j)).toBe('받는 중 · 1.2GB / 약 5.1GB · 조각 1,210/5,580 · 8.1MB/s · 약 14분 남음');
   });
 
-  it('남은 시간을 모르면 계산 중, 속도가 없으면 뺀다', () => {
+  it('남은 시간을 모르면 계산 중, 속도가 없으면 0B/s(조각을 빼지 않고 deck 한 줄이다)', () => {
     const j = job(1, { status: 'running', progress: prog({ etaSecs: null, speedBps: null }) });
-    expect(line(j)).toBe('받는 중 · 2.3 GB / 4.0 GB · 남은 시간 계산 중');
+    expect(line(j)).toBe('받는 중 · 2.3GB / 4.0GB · 0B/s · 남은 시간 계산 중');
+  });
+
+  it('총량을 모르면 받은 양만(NoTotal 키), 조각이 없는 HLS는 일반 키', () => {
+    const noTotal = job(1, { status: 'running', progress: prog({ totalBytes: null }) });
+    expect(line(noTotal)).toBe('받는 중 · 2.3GB · 12.4MB/s · 약 2분 남음');
+    const hlsNoTotal = job(1, {
+      status: 'running',
+      playbackKind: 'liveRewindHls',
+      progress: hlsProg({ totalBytesEstimate: null }),
+    });
+    expect(line(hlsNoTotal)).toBe('받는 중 · 1.2GB · 조각 1,210/5,580 · 8.1MB/s · 약 14분 남음');
+    const hlsNoSegments = job(1, {
+      status: 'running',
+      playbackKind: 'liveRewindHls',
+      progress: hlsProg({ segmentsDone: null, segmentsTotal: null }),
+    });
+    expect(line(hlsNoSegments)).toBe('받는 중 · 1.2GB / 약 5.1GB · 8.1MB/s · 약 14분 남음');
+  });
+
+  it('기본 진법은 1000, 큰 개수는 쉼표로 낸다', () => {
+    const j = job(1, { status: 'running', progress: prog() });
+    expect(statusLine(statusParts(j, j.progress))).toBe('받는 중 · 2.5GB / 4.3GB · 13.0MB/s · 약 2분 남음');
+    expect(line(job(1), null, { ahead: 1200 })).toBe(t('job.queued', { n: '1,200' }));
   });
 
   it('이어받음은 맨 끝 조각으로 처음 10초만', () => {
     const p = prog({ resumedFrom: 1_181_116_006 });
     const j = job(1, { status: 'running', progress: p });
     expect(line(j, p, { runStartedAt: 1000, now: 1000 + RESUMED_NOTE_MS - 1 })).toBe(
-      '받는 중 · 2.3 GB / 4.0 GB · 12.4 MB/s · 2분 18초 남음 · 1.1 GB부터 이어받음',
+      '받는 중 · 2.3GB / 4.0GB · 12.4MB/s · 약 2분 남음 · 1.10GB부터 이어받음',
     );
     expect(line(j, p, { runStartedAt: 1000, now: 1000 + RESUMED_NOTE_MS })).not.toContain('이어받음');
   });
@@ -207,7 +234,7 @@ describe('상태 줄(§3.2): 명사형 조각', () => {
   it('단계별 조각은 job.status.* 키에서 온다', () => {
     expect(line(job(1, { status: 'running' }))).toBe(t('job.status.resolving'));
     expect(line(job(1, { status: 'running', progress: prog({ phase: 'reresolving' }) }))).toBe(
-      `${t('job.phase.reresolving')} · 2.3 GB / 4.0 GB`,
+      t('job.phase.reresolving'),
     );
     expect(line(job(1, { status: 'running', progress: prog({ phase: 'finalizing' }) }))).toBe(t('job.status.finalizing'));
     expect(line(job(1, { status: 'pausing' }))).toBe(t('job.pausing'));
@@ -218,17 +245,15 @@ describe('상태 줄(§3.2): 명사형 조각', () => {
     expect(line(job(1), null, { ahead: 0 })).toBe(t('job.queuedNext'));
     // 중단(interrupted)도 일시정지와 같은 어휘다
     for (const status of ['paused', 'interrupted'] as const) {
-      expect(line(job(1, { status, partialBytes: 1_717_986_918 }))).toBe(t('job.paused', { bytes: '1.6 GB' }));
+      expect(line(job(1, { status, partialBytes: 1_717_986_918 }))).toBe(t('job.paused', { bytes: '1.60GB' }));
       expect(line(job(1, { status }))).toBe(t('job.status.paused'));
     }
     expect(
-      line(job(1, { status: 'completed', finalBytes: 4_294_967_296, finishedAt: 1_759_668_060 }), null, {
-        timeZone: 'Asia/Seoul',
-      }),
-    ).toBe(t('job.completed', { size: '4.0 GB', time: '오후 9:41' }));
+      line(job(1, { status: 'completed', finalBytes: 4_294_967_296, finishedAt: FINISHED }), null),
+    ).toBe(t('job.completed', { size: '4.00GB', time: '10월 5일 오후 9:41' }));
     // 완료 시각이 없으면 끝에 ` · `가 남지 않는다(.replace 없이 전용 키)
     const noTime = line(job(1, { status: 'completed', finalBytes: 4_294_967_296 }));
-    expect(noTime).toBe(t('job.completedNoTime', { size: '4.0 GB' }));
+    expect(noTime).toBe(t('job.completedNoTime', { size: '4.00GB' }));
     expect(noTime).not.toMatch(/ · $/);
     expect(line(job(1, { status: 'completed', missing: true }))).toBe(t('job.completedMissing'));
     expect(line(job(1, { status: 'skipped' }))).toBe(t('job.status.skipped'));
@@ -272,7 +297,7 @@ describe('작업 행 진행 영역 표(patterns.md §3.2): 상태마다 막대·
       name: '받는 중(일반 VOD·클립)',
       job: job(1, { status: 'running', progress: prog() }),
       bar: { state: 'accent', value: 57, percent: '57%' },
-      line: '받는 중 · 2.3 GB / 4.0 GB · 12.4 MB/s · 2분 18초 남음',
+      line: '받는 중 · 2.3GB / 4.0GB · 12.4MB/s · 약 2분 남음',
       body: null,
       primary: ['pause'],
       cancel: t('action.cancel'),
@@ -281,7 +306,7 @@ describe('작업 행 진행 영역 표(patterns.md §3.2): 상태마다 막대·
       name: '받는 중(빠른 다시보기)',
       job: job(1, { status: 'running', playbackKind: 'liveRewindHls', progress: hlsProg() }),
       bar: { state: 'accent', value: 21, percent: '21%' },
-      line: '받는 중 · 1.2 GB / 약 5.1 GB · 조각 1,210/5,580 · 8.1 MB/s · 14분 남음',
+      line: '받는 중 · 1.2GB / 약 5.1GB · 조각 1,210/5,580 · 8.1MB/s · 약 14분 남음',
       body: null,
       primary: ['pause'],
       cancel: t('action.cancel'),
@@ -293,13 +318,13 @@ describe('작업 행 진행 영역 표(patterns.md §3.2): 상태마다 막대·
       line: t('job.status.resolving'),
       body: null,
       primary: [],
-      cancel: t('action.cancelQueued'),
+      cancel: t('common.cancel'),
     },
     {
       name: '주소 재취득: 줄무늬(waiting), 퍼센트 유지',
       job: job(1, { status: 'running', progress: prog({ phase: 'reresolving' }) }),
       bar: { state: 'accent', value: 57, percent: '57%' },
-      line: `${t('job.phase.reresolving')} · 2.3 GB / 4.0 GB`,
+      line: t('job.phase.reresolving'),
       body: null,
       primary: ['pause'],
       cancel: t('action.cancel'),
@@ -320,7 +345,7 @@ describe('작업 행 진행 영역 표(patterns.md §3.2): 상태마다 막대·
       line: t('job.queuedNext'),
       body: null,
       primary: [],
-      cancel: t('action.cancelQueued'),
+      cancel: t('common.cancel'),
     },
     {
       name: '일시정지하는 중: 마지막 값 유지, 동작 없음',
@@ -335,7 +360,7 @@ describe('작업 행 진행 영역 표(patterns.md §3.2): 상태마다 막대·
       name: '일시정지(.part 있음)',
       job: job(1, { status: 'paused', partialBytes: 5 * MiB, progress: prog({ bytes: 5 * MiB }) }),
       bar: { state: 'muted', value: 0, percent: '0%' },
-      line: t('job.paused', { bytes: '5.0 MB' }),
+      line: t('job.paused', { bytes: '5.00MB' }),
       body: null,
       primary: ['resume'],
       cancel: t('action.cancel'),
@@ -344,7 +369,7 @@ describe('작업 행 진행 영역 표(patterns.md §3.2): 상태마다 막대·
       name: '중단(앱 종료)도 일시정지 어휘',
       job: job(1, { status: 'interrupted', partialBytes: 5 * MiB, progress: prog() }),
       bar: { state: 'muted', value: 57, percent: '57%' },
-      line: t('job.paused', { bytes: '5.0 MB' }),
+      line: t('job.paused', { bytes: '5.00MB' }),
       body: null,
       primary: ['resume'],
       cancel: t('action.cancel'),
@@ -376,7 +401,7 @@ describe('작업 행 진행 영역 표(patterns.md §3.2): 상태마다 막대·
       name: '완료: 막대·퍼센트 없음',
       job: job(1, { status: 'completed', finalBytes: 4_294_967_296, finishedAt: 1_759_668_060 }),
       bar: null,
-      line: t('job.completed', { size: '4.0 GB', time: '오후 9:41' }),
+      line: t('job.completed', { size: '4.00GB', time: '10월 5일 오후 9:41' }),
       body: null,
       primary: ['openFile', 'openFolder'],
       cancel: null,
@@ -418,7 +443,7 @@ describe('작업 행 진행 영역 표(patterns.md §3.2): 상태마다 막대·
     else {
       expect(bar).toMatchObject({ value: row.bar.value, percent: row.bar.percent, tone: row.bar.state });
     }
-    expect(statusLine(statusParts(j, p, { timeZone: 'Asia/Seoul' }))).toBe(row.line);
+    expect(statusLine(statusParts(j, p, CTX))).toBe(row.line);
     const key = bodyKey(j);
     expect(key ? t(key) : null).toBe(row.body);
     const b = jobButtons(j, p);
@@ -447,7 +472,7 @@ describe('진행 막대', () => {
   it('progressive는 바이트, HLS는 재생 시간 비율', () => {
     const a = job(1, { status: 'running', progress: prog() });
     expect(barView(a, a.progress)).toMatchObject({ percent: '57%', value: 57, tone: 'accent', striped: false });
-    expect(barView(a, a.progress)?.valueText).toBe('57퍼센트, 2분 18초 남음');
+    expect(barView(a, a.progress)?.valueText).toBe('57퍼센트 받았어요. 약 2분 남아요');
     const h = job(2, { status: 'running', playbackKind: 'liveRewindHls', progress: hlsProg() });
     expect(barView(h, h.progress)?.percent).toBe('21%');
   });
@@ -500,9 +525,9 @@ describe('취소 확인(D2): .part가 있으면 크기와 무관하게', () => {
 
   it('취소 라벨은 같은 조건으로 갈린다: [취소…] danger / [취소] neutral', () => {
     expect(cancelLabel(job(1, { status: 'paused', partialBytes: 1 }), null)).toEqual({ label: t('action.cancel'), tone: 'danger' });
-    expect(cancelLabel(job(1), null)).toEqual({ label: t('action.cancelQueued'), tone: 'neutral' });
+    expect(cancelLabel(job(1), null)).toEqual({ label: t('common.cancel'), tone: 'neutral' });
     expect(cancelLabel(job(1, { status: 'running' }), prog({ phase: 'resolving', bytes: 0 }))).toEqual({
-      label: t('action.cancelQueued'),
+      label: t('common.cancel'),
       tone: 'neutral',
     });
   });
@@ -587,10 +612,13 @@ describe('키보드 동작(§10)', () => {
 describe('상태 전이 읽어 주기', () => {
   it('실패·멈춤은 읽고, 같은 상태·완료·대기는 읽지 않는다', () => {
     const a = job(1, { status: 'running', progress: prog() });
-    expect(transitionAnnouncement(a, { ...a, status: 'failed', error: err('network') })).toBe(
-      "'영상 1' 다운로드에 실패했어요",
+    // 실패는 오류 제목이 상태 낱말이다(deck `a11y.jobStatus`), 오류 정보가 없으면 OS 알림과 같은 문장
+    const failed = { ...a, status: 'failed' as const, error: err('network') };
+    expect(transitionAnnouncement(a, failed)).toBe(t('a11y.jobStatus', { title: '영상 1', status: statusWord(failed, null) }));
+    expect(transitionAnnouncement(a, { ...failed, error: null })).toBe(
+      t('a11y.jobStatus', { title: '영상 1', status: t('notify.failed') }),
     );
-    expect(transitionAnnouncement(a, { ...a, status: 'paused' })).toBe('영상 1: 일시정지됨');
+    expect(transitionAnnouncement(a, { ...a, status: 'paused' })).toBe(t('a11y.jobStatus', { title: '영상 1', status: t('job.status.paused') }));
     expect(transitionAnnouncement(a, a)).toBeNull();
     expect(transitionAnnouncement(a, { ...a, status: 'completed' })).toBeNull();
     expect(transitionAnnouncement(undefined, job(2))).toBeNull();
@@ -653,8 +681,8 @@ describe('막힌 작업(A5)', () => {
   });
 
   it('copy deck 키', () => {
-    expect(blockCopyKey('otherChannel')).toBe('job.otherChannel');
-    expect(t('job.otherChannel')).toBe('다른 채널로 로그인해 이어받을 수 없어요');
+    expect(blockCopyKey('otherChannel')).toBe('job.otherChannel.body');
+    expect(t('job.otherChannel.body')).toContain('이어받을 수 없어요');
   });
 });
 

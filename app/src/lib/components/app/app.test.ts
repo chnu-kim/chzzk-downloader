@@ -148,7 +148,7 @@ describe('열과 스크롤 영역', () => {
     await screen.findByLabelText(t('url.label'));
     const main = screen.getByRole('main');
     expect(main).not.toHaveClass('has-toast');
-    toasts.push(t('toast.copied'), 'copied');
+    toasts.push(t('action.copied'), 'copied');
     await waitFor(() => expect(main).toHaveClass('has-toast'));
     toasts.clear();
     await waitFor(() => expect(main).not.toHaveClass('has-toast'));
@@ -176,7 +176,7 @@ describe('툴바 구성 표', () => {
     await screen.findByLabelText(t('url.label'));
     await user.click(screen.getByRole('button', { name: t('header.settings') }));
     const bar = screen.getByRole('banner');
-    await within(bar).findByRole('heading', { level: 1, name: t('settings.title') });
+    await within(bar).findByRole('heading', { level: 1, name: t('header.settings') });
     expect(within(bar).getByRole('button', { name: t('header.back') })).toBeInTheDocument();
     expect(within(bar).queryByText(t('app.title'))).toBeNull();
     // 오른쪽 구성은 홈과 같다(자리가 흔들리지 않는다)

@@ -58,13 +58,13 @@ describe("웹 승인·거부", () => {
     expect([...browser.jar.keys()]).toEqual(["cdl_f"]);
     const done = await browser.get("/auth/done?r=denied");
     const text = await done.text();
-    expect(text).toContain(`채널 ID ${FAKE_ACCOUNTS.c3.channelId}`);
+    expect(text).toContain(`채널 ID: ${FAKE_ACCOUNTS.c3.channelId}`);
     expect(text).toContain("&lt;script&gt;");
     expect(done.headers.getSetCookie().some((c) => c.startsWith("cdl_f=; Max-Age=0"))).toBe(true);
     expect(browser.jar.size).toBe(0);
     // 다시 열면 F가 없어 이름·ID 없는 일반 문구
     const again = await (await browser.get("/auth/done?r=denied")).text();
-    expect(again).toContain("이 채널은 사용 허가가 없어요.");
+    expect(again).toContain("<h1>이 채널은 사용 허가가 없어요</h1>");
     expect(again).not.toContain("채널 ID");
   });
 

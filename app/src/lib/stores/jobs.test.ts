@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { JobDto, JobEvent } from '../bindings';
 import { err, job, prog, signedInAs } from '../../test/jobFixtures';
+import { errorCopy } from '../copy/errors';
 import { t } from '../copy/ko';
+import { formatFileSize } from '../format/bytes';
 
 class FakeChannel {
   onmessage: (e: JobEvent) => void = () => {};
@@ -128,7 +130,7 @@ describe('JobsStore 구독', () => {
       const say = vi.spyOn(announcer, 'say');
       await finishOne();
       expect(toasts.items).toHaveLength(0);
-      expect(say).toHaveBeenCalledWith(t('job.status', { title: '금요 방송', status: t('job.status.completed') }));
+      expect(say).toHaveBeenCalledWith(t('a11y.jobStatus', { title: '금요 방송', status: t('job.status.completed') }));
       say.mockRestore();
     });
 
@@ -192,7 +194,9 @@ describe('JobsStore 동작', () => {
       [2, false],
       [4, false],
     ]);
-    expect(toasts.items.map((t) => t.message)).toEqual(['이 파일은 이미 다운로드 목록에 있어요.']);
+    expect(toasts.items.map((t) => t.message)).toEqual([
+      errorCopy(err('duplicateOutput', { payload: { type: 'duplicateOutput', jobId: 9 } }), { place: 'other' }).title,
+    ]);
   });
 
   it('다른 채널 작업은 B1이 세지 않고 모두 이어받기도 건너뛴다', async () => {
@@ -259,14 +263,21 @@ describe('JobsStore 동작', () => {
     expect(toasts.items).toHaveLength(0);
     await s.act(2, 'cancel');
     expect(api.removeJob).toHaveBeenCalledTimes(2);
-    expect(s.confirm).toMatchObject({ id: 2, bytes: 1 });
-    expect(s.confirmSize).toBe('1 B');
+    // 멈춘 작업의 D2 안전 쪽 라벨은 [그대로 두기](running=false)
+    expect(s.confirm).toMatchObject({ id: 2, bytes: 1, running: false });
+    expect(s.confirmSize).toBe(formatFileSize(1, 1000));
     s.cancelConfirm();
     expect(s.confirm).toBeNull();
     expect(api.removeJob).toHaveBeenCalledTimes(2);
     await s.act(2, 'remove');
     await s.confirmRemove();
     expect(api.removeJob).toHaveBeenLastCalledWith(2);
+  });
+
+  it('받는 중인 작업의 D2는 running=true라 안전 쪽이 [계속 받기]다', async () => {
+    const { s } = await loaded([job(1, { status: 'running', partialBytes: 5, progress: prog({ bytes: 5 }) })]);
+    await s.act(1, 'cancel');
+    expect(s.confirm).toMatchObject({ id: 1, running: true });
   });
 
   it('완료 지우기 대상: 받은 .part가 남은 건너뜀은 셸이 남기므로 세지 않는다', async () => {
@@ -304,8 +315,9 @@ describe('JobsStore 동작', () => {
     const { s } = await loaded([job(1, { status: 'paused' })]);
     vi.mocked(api.resumeJob).mockRejectedValueOnce(err('jobNotFound', { message: 'job 1' }));
     await s.act(1, 'resume');
+    // 토스트에는 제목만 보이고 원문('job 1')은 없다
     expect(toasts.items.map((t) => [t.message, t.kind])).toEqual([
-      ['문제가 생겼어요. 앱을 다시 시작해 주세요. (job 1)', 'danger'],
+      [errorCopy(err('jobNotFound', { message: 'job 1' }), { place: 'other' }).title, 'danger'],
     ]);
   });
 
@@ -316,7 +328,7 @@ describe('JobsStore 동작', () => {
     await s.act(4, 'openFile');
     expect(toasts.items).toHaveLength(1);
     const [toast] = toasts.items;
-    expect(toast.message).toBe('파일을 찾을 수 없어요. 옮기거나 지웠을 수 있어요');
+    expect(toast.message).toBe(errorCopy(err('fileMissing'), { place: 'other' }).title);
     expect(toast.kind).toBe('danger');
     expect(toast.action?.label).toBe(t('platform.other.reveal'));
     toast.action!.run();

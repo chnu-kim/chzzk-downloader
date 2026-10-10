@@ -3,11 +3,18 @@
 import type { AuthStatusDto, JobDto, JobId, JobStatus, Os, ProgressDto } from './bindings';
 import { actionLabel, errorCopy, type ActionId } from './copy/errors';
 import { t, type CopyKey } from './copy/ko';
-import { formatBytes, formatSpeed } from './format/bytes';
-import { formatTimeOfDay } from './format/date';
-import { formatSpan } from './format/duration';
+import {
+  formatEstimate,
+  formatFileSize,
+  formatPercent,
+  formatProgressSize,
+  formatSpeed,
+  type SizeBase,
+} from './format/bytes';
+import { formatCount, formatRemaining, formatSpokenRemaining } from './format/duration';
 import type { IconName } from './components/ui/icons';
 import { COMPLETED_FOLD_AT } from './timing';
+import { localOffsetMin, whenText } from './when';
 
 // ───────────────────────── 그룹·정렬 ─────────────────────────
 
@@ -70,7 +77,7 @@ export function groupJobs(jobs: Iterable<JobDto>): JobGroup[] {
     list.sort((a, b) => b.createdAt - a.createdAt || b.id - a.id);
     out.push({
       id,
-      label: t(GROUP_LABEL[id], { n: list.length }),
+      label: t(GROUP_LABEL[id], { n: formatCount(list.length) }),
       jobs: list,
       foldable: id === 'finished' && list.length >= COMPLETED_FOLD_AT,
     });
@@ -154,7 +161,7 @@ export interface BarView {
   striped: boolean;
   /** 막대 오른쪽 칸 `58%`. 총량을 모르면 `null`(칸은 비워 두고 폭은 유지한다) */
   percent: string | null;
-  /** 스크린 리더 문장: "58퍼센트, 2분 18초 남음" */
+  /** 스크린 리더 문장: "58퍼센트 받았어요. 약 14분 남아요" */
   valueText: string;
 }
 
@@ -171,18 +178,14 @@ export function barView(job: JobDto, p: ProgressDto | null | undefined, floor = 
   const raw = displayPercent(job, p);
   const value = raw == null ? null : Math.min(99, Math.max(raw, floor));
   const tone: BarView['tone'] = s === 'failed' ? 'danger' : s === 'running' ? 'accent' : 'muted';
-  const parts: string[] = [];
-  if (value != null) parts.push(t('job.percent', { n: value }));
-  if (s === 'running' && p?.phase === 'downloading') {
-    parts.push(p.etaSecs != null ? t('job.eta', { t: formatSpan(p.etaSecs) }) : t('job.etaUnknown'));
-  }
-  if (!parts.length) parts.push(statusWord(job, p));
+  // 낭독 문장은 deck의 `a11y.progress` 하나다(조각을 쉼표로 잇지 않는다). 받는 중에는 남은 시간을, 그 밖에는 상태 낱말을 잇는다
+  const remaining = s === 'running' && p?.phase === 'downloading' ? formatSpokenRemaining(p.etaSecs) : statusWord(job, p);
   return {
     value,
     tone,
     striped: s === 'running' && p?.phase === 'reresolving',
-    percent: value == null ? null : `${value}%`,
-    valueText: parts.join(', '),
+    percent: value == null ? null : formatPercent(value, 100),
+    valueText: value == null ? remaining : t('a11y.progress', { percent: value, remaining }),
   };
 }
 
@@ -226,16 +229,37 @@ export interface StatusContext {
   /** 이번에 받기 시작한 시각(ms). 이어받음 표시에 쓴다 */
   runStartedAt?: number | null;
   now?: number;
-  /** 완료 시각 표시의 시간대(테스트) */
-  timeZone?: string;
+  /** 크기 진법(Windows 1024, 그 밖 1000, `sizeBaseOf(os)`). 기본 1000 */
+  base?: SizeBase;
+  /** 사용자 시간대의 UTC 오프셋(분). 기본은 실행 환경(테스트가 고정한다) */
+  offsetMin?: number;
 }
 
-function sizePart(job: JobDto, p: ProgressDto): string {
+/** 진행 "받은 양 / 전체"의 두 값. 빠른 다시보기의 전체는 예상치라 `약 …`이다. 전체를 모르면 `total`이 null */
+function sizeParts(job: JobDto, p: ProgressDto, base: SizeBase): { received: string; total: string | null } {
   const hls = job.playbackKind === 'liveRewindHls';
   const total = hls ? p.totalBytesEstimate : p.totalBytes;
-  return total
-    ? `${formatBytes(p.bytes)} / ${hls ? t('quality.sizeEstimate', { size: formatBytes(total) }) : formatBytes(total)}`
-    : formatBytes(p.bytes);
+  if (!total) return formatProgressSize(p.bytes, null, base);
+  const shown = formatProgressSize(p.bytes, total, base);
+  return hls ? { received: shown.received, total: formatEstimate(total, base) } : shown;
+}
+
+/** 받는 중 상태 줄 하나(조각 결합도 deck이 한다, content.md §15.1 `job.running`) */
+function runningLine(job: JobDto, p: ProgressDto, base: SizeBase): string {
+  const size = sizeParts(job, p, base);
+  const vars: Record<string, string | number> = {
+    received: size.received,
+    total: size.total ?? '',
+    speed: formatSpeed(p.speedBps != null && p.speedBps > 0 ? p.speedBps : 0, base),
+    remaining: formatRemaining(p.etaSecs),
+  };
+  const known = size.total != null;
+  if (job.playbackKind === 'liveRewindHls' && p.segmentsDone != null && p.segmentsTotal != null) {
+    vars.segDone = formatCount(p.segmentsDone);
+    vars.segTotal = formatCount(p.segmentsTotal);
+    return t(known ? 'job.runningSegmented' : 'job.runningSegmentedNoTotal', vars);
+  }
+  return t(known ? 'job.running' : 'job.runningNoTotal', vars);
 }
 
 /**
@@ -243,30 +267,20 @@ function sizePart(job: JobDto, p: ProgressDto): string {
  * 실패는 오류 제목이 상태 줄이라 호출부가 `failedCopy`로 그리므로 빈 배열이다.
  */
 export function statusParts(job: JobDto, p: ProgressDto | null | undefined, ctx: StatusContext = {}): string[] {
+  const base = ctx.base ?? 1000;
   switch (job.status) {
     case 'queued': {
       const n = ctx.ahead ?? 0;
-      return [n > 0 ? t('job.queued', { n }) : t('job.queuedNext')];
+      return [n > 0 ? t('job.queued', { n: formatCount(n) }) : t('job.queuedNext')];
     }
     case 'running': {
       if (!p || p.phase === 'resolving') return [t('job.status.resolving')];
       if (p.phase === 'finalizing') return [t('job.status.finalizing')];
-      const parts = [t(p.phase === 'reresolving' ? 'job.phase.reresolving' : 'job.phase.downloading'), sizePart(job, p)];
-      if (p.phase === 'downloading') {
-        if (job.playbackKind === 'liveRewindHls' && p.segmentsDone != null && p.segmentsTotal != null) {
-          parts.push(
-            t('job.segments', {
-              done: p.segmentsDone.toLocaleString('en-US'),
-              total: p.segmentsTotal.toLocaleString('en-US'),
-            }),
-          );
-        }
-        if (p.speedBps != null && p.speedBps > 0) parts.push(formatSpeed(p.speedBps));
-        parts.push(p.etaSecs != null ? t('job.eta', { t: formatSpan(p.etaSecs) }) : t('job.etaUnknown'));
-      }
+      // 주소를 새로 받는 동안은 속도·남은 시간이 의미가 없다: 상태 조각 하나만 보인다
+      const parts = [p.phase === 'reresolving' ? t('job.phase.reresolving') : runningLine(job, p, base)];
       const now = ctx.now ?? Date.now();
       if (p.resumedFrom > 0 && ctx.runStartedAt != null && now - ctx.runStartedAt < RESUMED_NOTE_MS) {
-        parts.push(t('job.resumedFrom', { size: formatBytes(p.resumedFrom) }));
+        parts.push(t('job.resumedFrom', { size: formatFileSize(p.resumedFrom, base) }));
       }
       return parts;
     }
@@ -275,14 +289,17 @@ export function statusParts(job: JobDto, p: ProgressDto | null | undefined, ctx:
     case 'paused':
     case 'interrupted': {
       const bytes = receivedBytes(job, p);
-      return [bytes <= 0 ? t('job.status.paused') : t('job.paused', { bytes: formatBytes(bytes) })];
+      return [bytes <= 0 ? t('job.status.paused') : t('job.paused', { bytes: formatFileSize(bytes, base) })];
     }
     case 'completed': {
       if (job.missing) return [t('job.completedMissing')];
-      const size = formatBytes(job.finalBytes ?? 0);
+      const size = formatFileSize(job.finalBytes ?? 0, base);
       return [
         job.finishedAt != null
-          ? t('job.completed', { size, time: formatTimeOfDay(job.finishedAt, ctx.timeZone) })
+          ? t('job.completed', {
+              size,
+              time: whenText(job.finishedAt, ctx.now ?? Date.now(), ctx.offsetMin ?? localOffsetMin()),
+            })
           : t('job.completedNoTime', { size }),
       ];
     }
@@ -444,7 +461,7 @@ export function resumableInterrupted(jobs: Iterable<JobDto>, me: AuthStatusDto |
 }
 
 export function blockCopyKey(_b: JobBlock): CopyKey {
-  return 'job.otherChannel';
+  return 'job.otherChannel.body';
 }
 
 /** 폴더 보기(`openFolder`)는 OS마다 글자가 다르다(D39). 그 한 가지만 `actionLabel`이 OS로 고른다 */
@@ -501,7 +518,7 @@ export function needsCancelConfirm(job: JobDto, p: ProgressDto | null | undefine
 export function cancelLabel(job: JobDto, p: ProgressDto | null | undefined): { label: string; tone: 'danger' | 'neutral' } {
   return needsCancelConfirm(job, p)
     ? { label: t('action.cancel'), tone: 'danger' }
-    : { label: t('action.cancelQueued'), tone: 'neutral' };
+    : { label: t('common.cancel'), tone: 'neutral' };
 }
 
 export type RemoveRoute = 'confirm' | 'defer' | 'now';
@@ -555,13 +572,16 @@ export function deleteAction(job: JobDto, b: JobButtons): JobAction | null {
 export function transitionAnnouncement(prev: JobDto | undefined, next: JobDto): string | null {
   if (prev && prev.status === next.status) return null;
   switch (next.status) {
+    // 실패는 오류 제목이 상태 낱말이다. 오류 정보가 없으면 OS 알림과 같은 문장을 쓴다
     case 'failed':
-      return t('job.failed', { title: next.title });
     case 'paused':
     case 'interrupted':
     case 'skipped':
     case 'running':
-      return t('job.status', { title: next.title, status: statusWord(next, next.progress) });
+      return t('a11y.jobStatus', {
+        title: next.title,
+        status: statusWord(next, next.progress) || t('notify.failed'),
+      });
     default:
       return null;
   }

@@ -66,7 +66,7 @@ async function load(list: JobDto[]) {
 
 /** 행의 [⋯]를 열고 항목을 누른다 */
 async function pickMenu(user: ReturnType<typeof userEvent.setup>, item: HTMLElement, title: string, label: string) {
-  await user.click(within(item).getByRole('button', { name: t('job.more', { title }) }));
+  await user.click(within(item).getByRole('button', { name: t('a11y.more', { title }) }));
   await user.click(await screen.findByRole('menuitem', { name: label }));
 }
 
@@ -151,12 +151,13 @@ describe('JobList', () => {
     expect(bar).toHaveAttribute('aria-valuemax', '100');
     expect(bar).toHaveAttribute('aria-valuenow', '57');
     expect(bar).toHaveAttribute('data-state', 'active');
-    expect(bar).toHaveAttribute('aria-valuetext', '57퍼센트, 2분 18초 남음');
+    expect(bar).toHaveAttribute('aria-valuetext', '57퍼센트 받았어요. 약 2분 남아요');
     // 퍼센트 칸은 막대 오른쪽에 늘 있다(P-2)
     expect(running.querySelector('.job-pct')).toHaveTextContent('57%');
     // 상태 줄은 조각을 ` · `로 잇는다
     const status = running.querySelector('.job-status')?.textContent ?? '';
-    expect(status).toBe('받는 중 · 2.3 GB / 4.0 GB · 12.4 MB/s · 2분 18초 남음');
+    // 기본 OS(linux)는 1000 진법이다
+    expect(status).toBe('받는 중 · 2.5GB / 4.3GB · 13.0MB/s · 약 2분 남음');
     await user.click(within(running).getByRole('button', { name: t('action.pause') }));
     expect(api.pauseJob).toHaveBeenCalledWith(1);
 
@@ -190,7 +191,7 @@ describe('JobList', () => {
     // 일시정지는 글자 + 아이콘, 취소는 글자뿐(foundations §9.1)
     expect(buttons[0].querySelector('svg')).not.toBeNull();
     expect(buttons[1].querySelector('svg')).toBeNull();
-    expect(buttons[2]).toHaveAttribute('aria-label', t('job.more', { title: '금요 방송' }));
+    expect(buttons[2]).toHaveAttribute('aria-label', t('a11y.more', { title: '금요 방송' }));
     // 레일·행 안 스피너 없음
     expect(row.className).not.toMatch(/rail/);
     expect(row.querySelector('.spinner')).toBeNull();
@@ -251,7 +252,7 @@ describe('JobList', () => {
     await load([job(1, { status: 'completed', finalBytes: 1024, title: '시각 없음' })]);
     render(JobList);
     const status = screen.getByRole('article', { name: '시각 없음' }).querySelector('.job-status')?.textContent;
-    expect(status).toBe(t('job.completedNoTime', { size: '1.0 KB' }));
+    expect(status).toBe(t('job.completedNoTime', { size: '1.02KB' }));
   });
 
   it('완료 행에는 막대와 퍼센트가 없다', async () => {
@@ -282,40 +283,42 @@ describe('취소(D2): .part가 있으면 크기와 무관하게 묻는다', () =
     render(JobList);
 
     const waiting = screen.getByRole('article', { name: '대기' });
-    const plain = within(waiting).getByRole('button', { name: t('action.cancelQueued') });
+    const plain = within(waiting).getByRole('button', { name: t('a11y.cancelJob', { title: '대기' }) });
+    expect(plain).toHaveTextContent(t('common.cancel'));
     expect(plain).not.toHaveClass('tone-danger');
-    expect(within(waiting).queryByRole('button', { name: t('action.cancel') })).toBeNull();
+    expect(within(waiting).queryByText(t('action.cancel'))).toBeNull();
     await user.click(plain);
     expect(api.removeJob).toHaveBeenCalledWith(3);
     expect(toasts.items).toHaveLength(0);
 
     const empty = screen.getByRole('article', { name: '빈 것' });
-    await user.click(within(empty).getByRole('button', { name: t('action.cancelQueued') }));
+    await user.click(within(empty).getByRole('button', { name: t('a11y.cancelJob', { title: '빈 것' }) }));
     expect(api.removeJob).toHaveBeenLastCalledWith(1);
     expect(screen.queryByRole('dialog')).toBeNull();
 
     const some = screen.getByRole('article', { name: '한 바이트' });
-    const danger = within(some).getByRole('button', { name: t('action.cancel') });
+    const danger = within(some).getByRole('button', { name: t('a11y.cancelJob', { title: '한 바이트' }) });
+    expect(danger).toHaveTextContent(t('action.cancel'));
     expect(danger).toHaveClass('tone-danger');
     // 취소는 글자뿐이다(x 아이콘 없음, foundations §9.1)
     expect(danger.querySelector('svg, .icon')).toBeNull();
     await user.click(danger);
-    const dialog = await screen.findByRole('dialog', { name: t('dialog.cancel.title') });
-    expect(within(dialog).getByText(t('dialog.cancel.body', { size: '1 B' }))).toBeInTheDocument();
-    // 버튼 순서는 [실행(danger)][안전(primary)]
+    const dialog = await screen.findByRole('dialog', { name: t('dialog.cancel.title', { title: '한 바이트' }) });
+    expect(within(dialog).getByText(t('dialog.cancel.body', { size: '1B' }))).toBeInTheDocument();
+    // 버튼 순서는 [실행(danger)][안전(primary)]. 멈춘 작업이라 안전 쪽은 [그대로 두기](받는 중이면 [계속 받기])
     expect(within(dialog).getAllByRole('button').map((b) => b.textContent?.trim())).toEqual([
       t('dialog.cancel.confirm'),
-      t('dialog.cancel.back'),
+      t('dialog.cancel.keepPaused'),
     ]);
-    expect(within(dialog).getByRole('button', { name: t('dialog.cancel.back') })).toHaveClass('btn-primary');
+    expect(within(dialog).getByRole('button', { name: t('dialog.cancel.keepPaused') })).toHaveClass('btn-primary');
     expect(within(dialog).getByRole('button', { name: t('dialog.cancel.confirm') })).toHaveClass('tone-danger');
-    await waitFor(() => expect(within(dialog).getByRole('button', { name: t('dialog.cancel.back') })).toHaveFocus());
-    await user.click(within(dialog).getByRole('button', { name: t('dialog.cancel.back') }));
+    await waitFor(() => expect(within(dialog).getByRole('button', { name: t('dialog.cancel.keepPaused') })).toHaveFocus());
+    await user.click(within(dialog).getByRole('button', { name: t('dialog.cancel.keepPaused') }));
     expect(api.removeJob).toHaveBeenCalledTimes(2);
 
     // Esc는 닫기만 한다(아무것도 지우지 않는다)
     await user.click(danger);
-    await screen.findByRole('dialog', { name: t('dialog.cancel.title') });
+    await screen.findByRole('dialog', { name: t('dialog.cancel.title', { title: '한 바이트' }) });
     await user.keyboard('{Escape}');
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     expect(api.removeJob).toHaveBeenCalledTimes(2);
@@ -432,7 +435,7 @@ describe('건너뜀 행의 [덮어쓰고 받기…](D7)', () => {
     await user.click(within(item).getByRole('button', { name: t('action.overwriteAndDownload') }));
     const dialog = await screen.findByRole('dialog', { name: t('dialog.overwrite.title', { name: '내 영상.mp4' }) });
     expect(api.resumeJob).not.toHaveBeenCalled();
-    await user.click(within(dialog).getByRole('button', { name: t('dialog.overwrite.keep') }));
+    await user.click(within(dialog).getByRole('button', { name: t('dialog.cancel.keepPaused') }));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     expect(api.resumeJob).not.toHaveBeenCalled();
 
@@ -467,7 +470,7 @@ describe('[⋯] › 제목 전체 보기', () => {
     await load([job(1, { title: '대기' })]);
     const user = userEvent.setup();
     render(JobList);
-    await user.click(screen.getByRole('button', { name: t('job.more', { title: '대기' }) }));
+    await user.click(screen.getByRole('button', { name: t('a11y.more', { title: '대기' }) }));
     expect((await screen.findAllByRole('menuitem')).map((m) => m.textContent?.trim())).toEqual([
       t('action.showTitle'),
       t('action.copyUrl'),
@@ -575,16 +578,16 @@ describe('B1 배너', () => {
     await load([job(1, { status: 'interrupted' }), job(2, { status: 'interrupted' }), job(3)]);
     const user = userEvent.setup();
     render(AppBanners);
-    expect(screen.getByText('지난번에 받다가 멈춘 다운로드가 2개 있어요.')).toBeInTheDocument();
+    expect(screen.getByText(t('banner.interrupted', { n: 2 }))).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '모두 이어받기' }));
     expect(vi.mocked(api.resumeJob).mock.calls).toEqual([
       [1, false],
       [2, false],
     ]);
     send({ type: 'status', job: job(1) });
-    expect(await screen.findByText('지난번에 받다가 멈춘 다운로드가 1개 있어요.')).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: '닫기' }));
-    expect(screen.queryByText(/지난번에 받다가/)).toBeNull();
+    expect(await screen.findByText(t('banner.interrupted', { n: 1 }))).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: t('common.close') }));
+    expect(screen.queryByText(t('banner.interrupted', { n: 1 }))).toBeNull();
   });
 });
 
@@ -592,17 +595,28 @@ describe('막힌 작업(A5)', () => {
   const A1 = '000000000000000000000000000000a1';
   const C3 = '000000000000000000000000000000c3';
 
+  it('받는 중인 작업의 D2는 안전 쪽이 [계속 받기]다', async () => {
+    await load([job(1, { status: 'running', progress: prog({ bytes: 5 }), title: '받는 중' })]);
+    const user = userEvent.setup();
+    render(JobList);
+    const item = screen.getByRole('article', { name: '받는 중' });
+    await user.click(within(item).getByRole('button', { name: t('a11y.cancelJob', { title: '받는 중' }) }));
+    const dialog = await screen.findByRole('dialog', { name: t('dialog.cancel.title', { title: '받는 중' }) });
+    expect(within(dialog).getByRole('button', { name: t('dialog.cancel.keepRunning') })).toHaveClass('btn-primary');
+    expect(within(dialog).queryByRole('button', { name: t('dialog.cancel.keepPaused') })).toBeNull();
+  });
+
   it('다른 채널의 멈춘 작업은 안내만 있고 이어받기 버튼이 없다', async () => {
     auth.status = signedInAs(A1);
     await load([job(1, { status: 'interrupted', channelId: C3, partialBytes: 100, title: '남의 영상' })]);
     const user = userEvent.setup();
     render(JobList);
     const item = screen.getByRole('article', { name: '남의 영상' });
-    expect(within(item).getByText(t('job.otherChannel'))).toBeInTheDocument();
-    expect(item).toHaveAccessibleDescription(t('job.otherChannel'));
+    expect(within(item).getByText(t('job.otherChannel.body'))).toBeInTheDocument();
+    expect(item).toHaveAccessibleDescription(t('job.otherChannel.body'));
     expect(within(item).queryByRole('button', { name: t('action.resume') })).toBeNull();
     // 지우기는 남는다(.part가 있으니 [취소…])
-    expect(within(item).getByRole('button', { name: t('action.cancel') })).toBeInTheDocument();
+    expect(within(item).getByRole('button', { name: t('a11y.cancelJob', { title: '남의 영상' }) })).toHaveTextContent(t('action.cancel'));
     item.focus();
     await user.keyboard(' ');
     expect(api.resumeJob).not.toHaveBeenCalled();
@@ -613,7 +627,7 @@ describe('막힌 작업(A5)', () => {
     await load([job(1, { status: 'interrupted', channelId: null, title: '옛 작업' })]);
     render(JobList);
     const item = screen.getByRole('article', { name: '옛 작업' });
-    expect(within(item).queryByText(t('job.otherChannel'))).toBeNull();
+    expect(within(item).queryByText(t('job.otherChannel.body'))).toBeNull();
     expect(within(item).getByRole('button', { name: t('action.resume') })).toBeInTheDocument();
   });
 
@@ -623,6 +637,6 @@ describe('막힌 작업(A5)', () => {
     render(JobList);
     const item = screen.getByRole('article', { name: '내 영상' });
     expect(within(item).getByRole('button', { name: t('action.resume') })).toBeInTheDocument();
-    expect(within(item).queryByText(t('job.otherChannel'))).toBeNull();
+    expect(within(item).queryByText(t('job.otherChannel.body'))).toBeNull();
   });
 });

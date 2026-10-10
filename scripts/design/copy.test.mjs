@@ -425,3 +425,23 @@ test('content.md §15가 적은 새 문구는 design-copy 글자 규칙을 스�
   // 값이 같은 키(DC11)는 문서의 약식 키(checkFailed.help 등)에서 생기므로 제외한다
   assert.deepEqual(v.filter((x) => !['DC10', 'DC11'].includes(x.rule)), []);
 });
+
+// ---------------------------------------------------------------------------
+// L1 라벨 예외(terms.json key "L1")·Rust 대조 테스트 참조
+// ---------------------------------------------------------------------------
+
+test('DC8: errors.ts의 L1 고정 라벨("오류 코드")은 건너뛰고 다른 키 없는 "코드"는 잡는다', () => {
+  const errors = (body) => ({ 'app/src/lib/copy/errors.ts': `export function f() {\n${body}\n}\n` });
+  const ok = run(errors("  return `오류 코드: ${x}`;"));
+  assert.ok(!ok.some((x) => x.rule === 'DC8'));
+  const bad = run(errors("  return `확인 코드를 입력하세요 ${x}`;"));
+  assert.ok(bad.some((x) => x.rule === 'DC8'));
+});
+
+test('DC11: 앱 deck 키는 app/src-tauri/src의 .rs 파일이 참조해도 쓰인 것으로 본다', () => {
+  const files = { ...ko("  'notify.stalled': '받기가 멈췄어요',"), 'app/src/lib/other.ts': 'export const a = 1;\n' };
+  const none = check(mkRoot(files), { checkRefs: true });
+  assert.ok(none.some((x) => x.rule === 'DC11' && /notify\.stalled/.test(x.msg)));
+  const withRs = check(mkRoot({ ...files, 'app/src-tauri/src/notify_copy.rs': 'let k = "notify.stalled";\n' }), { checkRefs: true });
+  assert.ok(!withRs.some((x) => x.rule === 'DC11' && /notify\.stalled/.test(x.msg)));
+});

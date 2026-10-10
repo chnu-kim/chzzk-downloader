@@ -731,6 +731,21 @@
       "key": "url.pasteHint",
       "word": "{paste}로",
       "reason": "{paste}는 단축키 표기 상수(⌘V·Ctrl+V)라 받침 판별이 필요 없다(content.md §15.1)"
+    },
+    {
+      "key": "L1",
+      "word": "치지직 응답 코드",
+      "reason": "L1 \"자세히\" 안의 고정 라벨이다. 제목·본문이 아니다(content.md §9.1, §15.2)"
+    },
+    {
+      "key": "L1",
+      "word": "오류 코드",
+      "reason": "L1 \"자세히\" 안의 고정 라벨이다. 제목·본문이 아니다(content.md §9.1, §15.2)"
+    },
+    {
+      "key": "confirmDisallow.title",
+      "word": "?",
+      "reason": "확인 페이지(D54)의 제목이 앱 dialog.*.title과 같은 위치다(content.md §15.3)"
     }
   ]
 }

@@ -43,7 +43,7 @@ function downloadsBody(d: Downloads): SafeHtml {
           html`<tr><td><a href="/releases/${d.version}/${r.file}">${COPY.artifact[r.id]}</a><br><span class="mono">${r.file}</span></td><td><code>${r.sha256}</code></td></tr>`,
       );
       const linux = `chmod +x ${artifactFile(d.version, "linux-x86_64.AppImage")}\nsudo apt install ./${artifactFile(d.version, "linux-x86_64.deb")}`;
-      return html`<p>${COPY.latestVersion(d.version, d.pubDate)}</p><div class="scroll"><table><thead><tr><th>${COPY.colFile}</th><th>SHA-256</th></tr></thead><tbody>${rows}</tbody></table></div><p class="muted">${COPY.appleSiliconOnly}</p><details><summary>${COPY.installHelp}</summary><h3>macOS</h3><p>${COPY.macDamaged}</p><p>${COPY.macMove}</p><p>${COPY.macTerminal}</p><pre><code>${COPY.macXattr}</code></pre><p>${COPY.macReopen}</p><h3>Windows</h3><p>${COPY.winSmartScreen}</p><h3>Linux</h3><pre><code>${linux}</code></pre></details><p>${COPY.sameAccount}</p>`;
+      return html`<p>${COPY.latestVersion(d.version, d.pubDate)}</p><div class="scroll"><table><thead><tr><th>${COPY.colFile}</th><th>SHA-256</th></tr></thead><tbody>${rows}</tbody></table></div><p class="muted">${COPY.appleSiliconOnly}</p><details><summary>${COPY.installHelp}</summary><h3>macOS</h3><p>${COPY.macDamaged}</p><ol><li>${COPY.macMove}</li><li>${COPY.macTerminal}<pre><code>${COPY.macXattr}</code></pre></li><li>${COPY.macReopen}</li></ol><h3>Windows</h3><p>${COPY.winSmartScreen}</p><h3>Linux</h3><pre><code>${linux}</code></pre></details><p>${COPY.sameAccount}</p>`;
     }
   }
 }
@@ -54,10 +54,10 @@ function devicesBody(m: MemberModel): SafeHtml {
     (s) =>
       html`<tr><td>${kindLabel(s.kind)}${s.id === m.currentSessionId ? ` · ${COPY.thisBrowser}` : ""}</td><td>${s.client ?? "—"}</td><td>${kst(s.createdAt)}</td><td>${kst(s.lastSeenAt)}</td><td>${postButton(`/me/sessions/${s.id}/revoke`, m.csrf, COPY.revoke, { danger: true })}</td></tr>`,
   );
-  return html`<div class="scroll"><table><thead><tr><th>${COPY.colKind}</th><th>${COPY.colClient}</th><th>${COPY.colCreated}</th><th>${COPY.colLastSeen}</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
+  return html`<div class="scroll"><table><caption>${COPY.tableTimeNote}</caption><thead><tr><th>${COPY.colKind}</th><th>${COPY.colClient}</th><th>${COPY.colCreated}</th><th>${COPY.colLastSeen}</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
 export function memberBody(m: MemberModel): SafeHtml {
   const admin = m.isAdmin ? html`<p><a href="/admin">${COPY.adminLink}</a></p>` : "";
-  return html`<h1>${COPY.landingTitle}</h1><p>${COPY.signedInAs(m.channelName)}</p>${admin}<section><h2>${COPY.downloadsTitle}</h2>${downloadsBody(m.downloads)}</section><section><h2>${COPY.devicesTitle}</h2><p class="muted">${COPY.devicesLead}</p>${devicesBody(m)}</section><form method="post" action="/auth/web/logout">${csrfInput(m.csrf)}<button type="submit">${COPY.logout}</button></form>`;
+  return html`<h1>${COPY.siteName}</h1><p>${COPY.signedInAs(m.channelName)}</p>${admin}<section><h2>${COPY.downloadsTitle}</h2>${downloadsBody(m.downloads)}</section><section><h2>${COPY.devicesTitle}</h2><p class="muted">${COPY.devicesLead}</p>${devicesBody(m)}</section><form method="post" action="/auth/web/logout">${csrfInput(m.csrf)}<button type="submit">${COPY.logout}</button></form>`;
 }

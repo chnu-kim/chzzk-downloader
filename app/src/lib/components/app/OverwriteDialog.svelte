@@ -23,6 +23,6 @@
   title={t('dialog.overwrite.title', { name })}
   body={t('dialog.overwrite.body')}
   {onclose}
-  primary={{ id: 'keep', label: t('dialog.overwrite.keep'), onclick: onclose }}
+  primary={{ id: 'keep', label: t('dialog.cancel.keepPaused'), onclick: onclose }}
   secondary={{ id: 'overwrite', label: t('dialog.overwrite.confirm'), tone: 'danger', loading: busy, onclick: onconfirm }}
 />

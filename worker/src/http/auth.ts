@@ -107,23 +107,23 @@ export async function authStart(req: Request, ctx: Ctx): Promise<Response> {
 export async function loginPageGet(_req: Request, ctx: Ctx): Promise<Response> {
   const handle = ctx.params.handle;
   // 옛 앱 미끼의 handle: DO 없이 업데이트 안내(quiet 경로라 로그도 없다)
-  if (handle === OUTDATED_HANDLE) return noticePage(ctx.config, 200, COPY.outdatedApp);
-  if (!isId(handle)) return noticePage(ctx.config, 404, COPY.linkGone);
+  if (handle === OUTDATED_HANDLE) return noticePage(ctx.config, 200, COPY.outdatedApp.title, COPY.outdatedApp.body);
+  if (!isId(handle)) return noticePage(ctx.config, 404, COPY.linkGone.title, COPY.linkGone.body);
   const v = await ctx.store.loginPage(await sha256Hex(handle), ctx.now);
-  if (v === null) return noticePage(ctx.config, 404, COPY.linkGone);
-  if (v.status !== "started") return noticePage(ctx.config, 409, COPY.linkUsed);
+  if (v === null) return noticePage(ctx.config, 404, COPY.linkGone.title, COPY.linkGone.body);
+  if (v.status !== "started") return noticePage(ctx.config, 409, COPY.linkUsed.title, COPY.linkGone.body);
   return loginConfirmPage(ctx.config);
 }
 
 /** POST /auth/login/:handle ([계속]) */
 export async function loginContinue(req: Request, ctx: Ctx): Promise<Response> {
-  if (ctx.params.handle === OUTDATED_HANDLE) return noticePage(ctx.config, 200, COPY.outdatedApp);
+  if (ctx.params.handle === OUTDATED_HANDLE) return noticePage(ctx.config, 200, COPY.outdatedApp.title, COPY.outdatedApp.body);
   // Origin 거절은 DO를 부르기 전이라 남길 곳이 없다(이벤트 auth.continue.rejected를 버렸다, 구현 중 변경 43)
-  if (!sameOriginPost(req, ctx.config.publicOrigin)) return noticePage(ctx.config, 403, COPY.badOrigin);
+  if (!sameOriginPost(req, ctx.config.publicOrigin)) return noticePage(ctx.config, 403, COPY.badRequest.title, COPY.badRequest.body);
   const handle = ctx.params.handle;
-  if (!isId(handle)) return noticePage(ctx.config, 404, COPY.linkGone);
+  if (!isId(handle)) return noticePage(ctx.config, 404, COPY.linkGone.title, COPY.linkGone.body);
   const r = await ctx.store.continueApp(await sha256Hex(handle), ctx.now);
-  if (!r.ok) return noticePage(ctx.config, r.code === "not_found" ? 404 : 409, r.code === "not_found" ? COPY.linkGone : COPY.linkUsed);
+  if (!r.ok) return noticePage(ctx.config, r.code === "not_found" ? 404 : 409, r.code === "not_found" ? COPY.linkGone.title : COPY.linkUsed.title, COPY.linkGone.body);
   return toChzzk(authorizeRedirect(chzzkApp(ctx.config), r.state), setCookie(ctx.cookies, "flow", r.binder));
 }
 
@@ -133,13 +133,13 @@ export async function loginContinue(req: Request, ctx: Ctx): Promise<Response> {
 export async function webStart(req: Request, ctx: Ctx): Promise<Response> {
   if (!sameOriginPost(req, ctx.config.publicOrigin)) {
     ctx.log("auth.start.rejected", { flowKind: "web", reason: "bad_origin" });
-    return noticePage(ctx.config, 403, COPY.badOrigin);
+    return noticePage(ctx.config, 403, COPY.badRequest.title, COPY.badRequest.body);
   }
   const r = await ctx.store.startWeb(req.headers.get("CF-Connecting-IP"), ctx.config.startRate10m, ctx.now);
   if (r.ok) return toChzzk(authorizeRedirect(chzzkApp(ctx.config), r.state), setCookie(ctx.cookies, "flow", r.binder));
   ctx.log("auth.start.rejected", { flowKind: "web", reason: r.code });
-  if (r.code === "rate_limited") return noticePage(ctx.config, 429, COPY.rateLimited, { "Retry-After": String(r.retryAfterSec) });
-  return noticePage(ctx.config, 503, COPY.busy);
+  if (r.code === "rate_limited") return noticePage(ctx.config, 429, COPY.rateLimited.title, COPY.retryLater.body, { "Retry-After": String(r.retryAfterSec) });
+  return noticePage(ctx.config, 503, COPY.busy.title, COPY.retryLater.body);
 }
 
 // ---- 콜백 ----

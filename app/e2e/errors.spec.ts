@@ -1,6 +1,7 @@
-// copy deck의 오류 카드 전부(docs/design/app.md §9 표): 모든 ErrorCode를 불러오기(R)와 목록 항목(D)에 띄워 제목·본문·동작
-// 버튼이 copy deck(errorCopy)과 같은지 본다. 기대값은 앱과 같은 errorCopy가 만든다: 이 테스트는 문구 표 자체가 아니라
-// 표가 화면에 실제로 그려지는지(그리고 접근성 위반이 없는지)를 본다. 표의 내용은 vitest(errors.test.ts)가 본다.
+// copy deck의 오류 카드 전부(docs/design/system/content.md §15.2 표): 모든 ErrorCode를 불러오기(R)와 목록 항목(D)에 띄워 제목·본문·행·동작
+// 버튼이 copy deck(errorCopy)과 같은지 본다. 기대값은 앱과 같은 errorCopy가 만든다(문구가 바뀌어도 이 파일은 고치지 않는다):
+// 이 테스트는 문구 표 자체가 아니라 표가 화면에 실제로 그려지는지(그리고 접근성 위반이 없는지)를 본다.
+// 표의 내용(코드 28개 골든)은 vitest(errors.test.ts)가 본다. 연결 진단은 앱이 넘기지 않으므로 기본값(unknown)이다.
 import type { AppError, ErrorCode, JobDto } from '../src/lib/bindings';
 import { ERROR_CODES } from '../src/lib/copy/errors';
 import { job } from '../src/test/jobFixtures';
@@ -42,6 +43,7 @@ test('작업 오류: 모든 코드의 실패 항목이 copy deck대로 그려진
     const want = errorCopy(j.error as AppError, { place: 'job', partialBytes: j.partialBytes, cookiesEnabled: false });
     await expect(item, j.title).toContainText(want.title);
     if (want.body) await expect(item, j.title).toContainText(want.body);
+    for (const row of want.rows) await expect(item, `${j.title} ${row}`).toContainText(row);
   }
   await app.axe('실패 항목 전부');
 });
@@ -51,7 +53,7 @@ test('불러오기 오류의 [다시 시도]는 같은 주소로 다시 부르�
   const { page } = app;
   await app.open({ resolve: { [r.url]: { error: err('network', 'resolve') } } });
   await page.getByLabel(t('url.label')).fill(r.url);
-  await page.getByRole('button', { name: t('url.submit') }).click();
+  await page.getByRole('button', { name: t('common.load') }).click();
   const want = errorCopy(err('network', 'resolve'), { place: 'resolve', cookiesEnabled: false });
   await expect(page.getByRole('alert').filter({ hasText: want.title })).toBeVisible();
   // 시나리오를 바꾼다: 다음 resolve는 성공

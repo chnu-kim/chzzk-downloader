@@ -165,7 +165,7 @@
 | 홈 · 영상 정보(불러오기) | 카드 없음 | [불러오기] 버튼이 `loading`(안에 스피너, 폭 유지) + 입력 잠금 + 입력줄 아래 한 줄 `resolve.loading`("영상 정보를 불러오는 중", 스피너 없음 — 한 사건에 스피너 하나) [취소](§14.2). **스켈레톤 카드는 쓰지 않는다**(§17-2) | 카드 안 경고(같은 이름·받다 만 파일·본인 영상 아님) | 입력줄 아래 인라인(§10.2) | 카드 열림, 포커스는 카드 제목 | — |
 | 설정 | — | 값 자리 스켈레톤(`--surface-2` 막대, 컨트롤 폭) + 컨트롤 비활성. **가짜 기본값을 보이지 않는다** | 쿠키 "저장된 값 없음"은 partial이 아니라 정상 값 | 저장 실패 → B2 배너(저장이 즉시 저장이라 행 아래 둘 수 없다). 쿠키 저장 실패 → [저장] 아래 인라인 | 쿠키 "저장됨" + 토스트 한 번 | 정보 "마지막 확인 {time}" |
 | 로그인(§13) | idle | `checking`(최대 `AUTH_CHECK_TIMEOUT_MS`, foundations §14) → 스피너 + `auth.checking`("로그인 상태 확인 중") | — | denied·expired·revoked·network·server | 홈으로 전환 + `toast.signedIn`("‘{channelName}’ 채널로 로그인했어요") 한 번 | 유예 중 `account.offline`("오프라인 · {until}까지 사용 가능") 배지(계정 슬롯) |
-| 업데이트(§12) | 배너 없음 | 배너 B4 진행 `update.downloading`("업데이트 받는 중 · 42%") | — | 배너 warning `update.failed` + `update.failed.help` | 재시작 | 설정 › 정보 "마지막 확인 {time}" |
+| 업데이트(§12) | 배너 없음 | 배너 B4 진행 `update.downloading`("업데이트 받는 중 · 42%") | — | 배너 warning `update.failed` + `common.keepUsing` | 재시작 | 설정 › 정보 "마지막 확인 {time}" |
 | Worker 관리·내 기기 | `allowEmpty`("허가한 채널이 없어요.") + 폼 | 없음(서버 렌더) | — | 오류 요약 + 필드 옆(`web.md`) | flash 한 줄(h1 앞) | — |
 
 근거: a-feat §5(F1 로딩 5종, F2 가짜 기본값, F3 빈 상태 3종, F4 명세 차이), `G-LAUNCH-R3`(첫 화면은 저장된 상태로 즉시), g-repeat §5.1. 강제: `frontend`(표의 각 칸을 테스트 케이스로), `design-gallery`.
@@ -244,7 +244,7 @@
 
 - 막대의 색·줄무늬·forced-colors 매핑은 `components.md` §2.20이 원천이다(연결 대기·주소 재취득은 `--accent` 줄무늬 정지, 일시정지 `--border-strong`, 실패 `--danger`).
 - 색 세 겹: 막대 색 + 상태 아이콘 + 글자. 상태 레일은 없다(ADR-0003, judgment §2.2 "레일 폐기", `A-VIS-20`).
-- [취소…]는 `.part`가 있어 확인 창(D2)을 열 때의 라벨(`action.cancel`)이고 `tone=danger`다. 대기 항목의 [취소](`action.cancelQueued`)는 `.part`가 없어 즉시·`neutral`이다(README D54, `content.md` §5.2).
+- [취소…]는 `.part`가 있어 확인 창(D2)을 열 때의 라벨(`action.cancel`)이고 `tone=danger`다. 대기 항목의 [취소](`common.cancel`)는 `.part`가 없어 즉시·`neutral`이다(README D54, `content.md` §5.2).
 - `[⋯]` 메뉴: 제목 전체 보기(인라인 펼침, 제목이 잘렸을 때) · 주소 복사(항상) · 처음부터 다시 받기(`.part` 있을 때) · 자세히(실패) · 문제 보고용 정보 복사(실패) · 목록에서 지우기(종료 상태). 아이콘 은유는 foundations §9.1.
 - 완료 동작 순서는 README D39([열기] 다음 [폴더에서 보기]). `G-HANDOFF-H1`의 반대 순서는 README가 대체했다(§17-7).
 
@@ -396,7 +396,7 @@ scrim(`--scrim`, `--z-dialog` 50) 위, 창 가운데
 | 화질 | 라디오 행 3~5개: `1080p` `60fps` … `약 7.8GB`. 꼬리표는 늘 가장 높은 화질 행. 기본 선택 = 마지막에 고른 화질이 이 영상에 있으면 그 행, 없으면 가장 높은 화질(기억된 낮은 화질이 조용히 기본이 되지만 꼬리표가 더 좋은 행을 가리킨다 [잠정] — D62 UT4에서 "가장 높은 화질"을 찾는지 본다) | `G-REPEAT-R6`, `components.md` §2.7 |
 | 저장 폴더 | 값(경로, muted, selectable) + [변경…] | 바꾸면 설정의 기본 폴더도 바뀐다(`app.md` §8.3) |
 | 파일 이름 | 입력칸(`--fg`) + ".mp4" 라벨 + [원래 이름으로](ghost sm, `filename.reset` — "되돌리기"는 목록 지우기 토스트의 말이라 쓰지 않는다, W1). 150ms 디바운스로 `check_output`. 잘리면 아래 `filename.willSave`(caption muted) | `app.md` §8.3. 한글을 치는 칸이라 Enter에 동작을 달지 않고 Mod+Enter도 IME 가드(§8) |
-| 카드 안 경고 | 해당 행 **아래** `Notice variant=inline`: 같은 이름 파일(warning + 라디오 `conflict.number`/`conflict.overwrite`, 덮어쓰기를 고르면 [받기]가 D7을 연다), 받다 만 파일(neutral `conflict.partial.*` + [처음부터 다시 받기]), 다른 화질 `.part`(neutral `conflict.partialOther`), 이미 목록에 있음(neutral `conflict.inQueue` + [목록에서 보기], [받기] 비활성 + 사유), 본인 영상 아님(danger `notOwnContent`, [받기] 비활성 + 사유), 종류 차단 B5(warning `blocked.kind`: "지금 받을 수 없는 종류예요: {kind}", [받기] 비활성) | `app.md` §6.4, README D41, `G-OUTAGE-R12` |
+| 카드 안 경고 | 해당 행 **아래** `Notice variant=inline`: 같은 이름 파일(warning + 라디오 `conflict.number`/`conflict.overwrite`, 덮어쓰기를 고르면 [받기]가 D7을 연다), 받다 만 파일(neutral `conflict.partial.*` + [처음부터 다시 받기]), 다른 화질 `.part`(neutral `conflict.partialOther`), 이미 목록에 있음(neutral `conflict.inQueue` + [목록에서 보기], [받기] 비활성 + 사유), 본인 영상 아님(danger `notOwnContent`, [받기] 비활성 + 사유), 종류 차단 B5(warning "지금 받을 수 없는 종류예요: {kind}", [받기] 비활성) | `app.md` §6.4, README D41, `G-OUTAGE-R12` |
 | 바닥 | [닫기](secondary) [받기 ⌘↩](primary, 층의 유일한 채움). `position: sticky; bottom: 0`(카드가 길어도 보인다, foundations §8) | README D42(불러오기는 테두리), `A-FEAT-D11` |
 
 ---
@@ -409,7 +409,7 @@ scrim(`--scrim`, `--z-dialog` 50) 위, 창 가운데
 | 입력줄에 붙여넣기 | 입력칸이 비었거나 전체 선택이면 **곧바로 불러온다** | 같음 |
 | 입력줄 밖 Mod+V | 입력줄에 넣고 곧바로 불러온다. 힌트 `url.pasteHint`("{paste}로 붙여넣으면 바로 불러와요", `{paste}`는 `platform.md` §6) | judgment §2.2-2(B의 힌트) |
 | 드롭 | 창 어디든. 드래그 중에는 종류(`text/uri-list`·`text/plain`, `Files` 없음)만 보고 `DropOverlay`(`components.md` §2.27)를 띄우고 `drop`에서 추출 | `G-IME-R8`, `app.md` 구현 중 변경 42 |
-| 클립보드 제안 | 창이 **블러 뒤 첫 포커스**를 받을 때 Rust가 클립보드를 읽어 치지직 주소면 입력줄 아래 `Notice variant=inline tone=neutral icon=clipboard-paste`(`clipboard.suggest` + 주소 + [불러오기] secondary sm + [×]). macOS는 `accessBehavior == alwaysAllow`일 때만, 아니면 끔. 같은 값은 한 번만 | README D56, `G-IME-R6` |
+| 클립보드 제안 | 창이 **블러 뒤 첫 포커스**를 받을 때 Rust가 클립보드를 읽어 치지직 주소면 입력줄 아래 `Notice variant=inline tone=neutral icon=clipboard-paste`(`url.clipboard.title` + 주소 + [불러오기] secondary sm + [×]). macOS는 `accessBehavior == alwaysAllow`일 때만, 아니면 끔. 같은 값은 한 번만 | README D56, `G-IME-R6` |
 | 최근 영상 [다시 열기] | 곧바로 불러온다 | `app.md` §8.10 |
 
 규칙:
@@ -422,9 +422,9 @@ scrim(`--scrim`, `--z-dialog` 50) 위, 창 가운데
 ┌────────────────────────────────────────────────────────────────────────┐
 │ 📋 복사한 주소가 있어요 · https://chzzk.naver.com/video/1234567…  [불러오기] [×] │
 └────────────────────────────────────────────────────────────────────────┘
-  아이콘 `clipboard-paste` 20 muted · 주소 `.selectable` 말줄임 · [불러오기] secondary 24 · [×] 24 (`clipboard.suggest`)
+  아이콘 `clipboard-paste` 20 muted · 주소 `.selectable` 말줄임 · [불러오기] secondary 24 · [×] 24 (`url.clipboard.title`)
 
-드롭 오버레이: `components.md` §2.27(라벨 `drop.hint` "여기에 놓으면 불러와요")
+드롭 오버레이: `components.md` §2.27(라벨 `url.dropHere` "여기에 놓으면 불러와요")
 ```
 
 - 오버레이는 반투명 면으로 본문을 덮지 않는다(`A-FEAT-S4`: 명세 "바깥 내용은 그대로"와 88% 덮개의 차이 해소). 강제: `design-lint`·`design-gallery`(`components.md` §2.27).
@@ -523,7 +523,7 @@ scrim(`--scrim`, `--z-dialog` 50) 위, 창 가운데
 
 ### 10.4 서비스 변경 의심(서킷 열림)
 
-같은 종류에서 서로 다른 영상 `CIRCUIT_FAILURES`(3, foundations §14 [잠정])건이 연속으로 읽기 오류면 자동 재시도·자동 이어받기를 멈추고, 해당 종류 카드에 인라인 `circuit.open`("치지직이 바뀐 것 같아요 · 영상 {n}개를 연달아 읽지 못했어요")을 둔다. 공지(B5)가 있으면 공지 문구가 우선한다. 근거: `G-OUTAGE-R11`(임계값은 그 문서의 판단, 측정 근거 없음 → ADR-0009). 강제: `rust`(서킷 상태 머신), `frontend`(카드 인라인).
+같은 종류에서 서로 다른 영상 `CIRCUIT_FAILURES`(3, foundations §14 [잠정])건이 연속으로 읽기 오류면 자동 재시도·자동 이어받기를 멈추고, 해당 종류 카드에 인라인 문구(키는 (f)에서 정한다, "치지직이 바뀐 것 같아요 · 영상 {n}개를 연달아 읽지 못했어요")을 둔다. 공지(B5)가 있으면 공지 문구가 우선한다. 근거: `G-OUTAGE-R11`(임계값은 그 문서의 판단, 측정 근거 없음 → ADR-0009). 강제: `rust`(서킷 상태 머신), `frontend`(카드 인라인).
 
 ---
 
@@ -549,9 +549,9 @@ scrim(`--scrim`, `--z-dialog` 50) 위, 창 가운데
 | 받는 중 | 같은 배너, 닫기 없음 | `update.downloading`("업데이트 받는 중 · {percent}", 막대 없음) | `worker.md` 구현 중 변경 77 |
 | 설치 직전, 받는 작업 있음 | 대화상자 D5 | §5.2 | README D36 |
 | 설치 | 배너 `update.installing`("설치하고 다시 시작하는 중") | Windows는 앱이 종료된다(`passive`) | Tauri updater 문서(`G-INSTALL-R10`) |
-| 실패 | 같은 배너 자리, **warning**(지금 버전은 계속 쓸 수 있어 막힌 것이 아니다) | `update.failed` + `update.failed.help` [다시 시도] [×] | README D57, `G-INSTALL-R11`, `components.md` §2.12 tone 기준 |
+| 실패 | 같은 배너 자리, **warning**(지금 버전은 계속 쓸 수 있어 막힌 것이 아니다) | `update.failed` + `common.keepUsing` [다시 시도] [×] | README D57, `G-INSTALL-R11`, `components.md` §2.12 tone 기준 |
 | 서명 확인 실패 | 같은 자리, danger | `update.untrusted` [×] | `worker.md` §11.6 |
-| 수동 확인 | 설정 › 정보 행 [업데이트 확인] + 결과 인라인 status 한 줄(`settings.about.upToDate` / `checkFailed` + `checkFailed.help`) | 늘 보이되 상태를 문구로 | README D57 |
+| 수동 확인 | 설정 › 정보 행 [업데이트 확인] + 결과 인라인 status 한 줄(`settings.about.upToDate` / `checkFailed` + `common.keepUsing`) | 늘 보이되 상태를 문구로 | README D57 |
 | 버전 표기 | 설정 › 정보 행 | "0.1.2"(v 없음). 코어 버전은 [정보 복사]에만 | README D57 |
 
 규칙: 업데이트는 사용자가 일하는 중에 창을 띄우거나 포커스를 가져가지 않는다(Sparkle 관례). "자동으로 업데이트돼요"를 약속하지 않는다. 강제: `frontend`(`update.test.ts` 상태 표), `design-copy`(`v\d` 금지, "자동으로 업데이트" 금지), `e2e-web`.
@@ -897,5 +897,6 @@ Worker는 JS가 없다(README D52). 이 문서의 패턴은 다음으로 대응�
 29. **(c) D6 데이터 요금(J19)은 v1.1이라 키·화면·갤러리가 없다.** 서비스 공지 B5·종류 차단·서킷(J21)은 앱에 공지 데이터가 없어((e) Worker `/notice` 뒤) 배너 우선순위 표(§1.4)에 자리만 있고 그리지 않는다. 연결 대기·회복·멈춘 지 30일 행(J2)은 (f)로 넘겼다(governance §12 (c) 2).
 30. **(c) 완료 · 파일 없음 행의 [처음부터 다시 받기]는 아직 없다.** §3.2 표에는 있지만 매니저 `resume`이 `completed`에 `invalidInput`을 돌려줘 버튼을 달 수 없다. 달려면 Rust 변경이 필요해 이월한다(§3.2의 나머지 구성은 구현됐다).
 31. **(c) 파일 이름 행의 [원래 이름으로]는 이름이 원래와 다를 때만 그린다**(ghost sm `.edge-end`, `filename.reset`). §6.4가 사유 없는 비활성을 숨기라고 하므로 원래 이름이면 버튼이 없고, §6.5 목업은 이름을 바꾼 뒤의 모양이다. 누르면 입력이 제안 이름으로 돌아가고 버튼은 사라진다(`receive.test.ts`가 고정한다). 완료 그룹 머리는 components §7-36 (가)의 `Disclosure variant="group"`이다(§14.3).
+32. **(d) 표 안 키 이름을 deck 기준으로 바로잡았다.** 대기 항목 [취소]는 `common.cancel`(옛 action.cancelQueued), 클립보드 제안은 `url.clipboard.title`, 드롭 오버레이는 `url.dropHere`다. 종류 차단·서킷 문구는 기능이 (f) 이후라 키 없이 문장으로 둔다(`content.md` §19-15). 다른 표와 와이어프레임의 동작은 바뀌지 않았다.
 
 초안 §18(충돌)·§19(foundations 요청)은 편집에서 모두 닫혔다: foundations §5.2(`--label-w`·`--pct-w`)·§7.1(토스트 퇴장·`--motion-spin`)·§14(상수)·§4(줄무늬 간격 쓰는 곳)·§5.2(`--dialog-w` 로그인 패널), `content.md` §5.3(라벨 표)·§15(문구 키), `web.md` §6·§7.3, `platform.md` §6·§20, `components.md` §2.10·§2.20·§2.26.

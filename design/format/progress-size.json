@@ -1,0 +1,17 @@
+{
+  "$comment": "손으로 계산한 기대값. TS(app/src/lib/format/format.test.ts)와 Rust(crates/shell/tests/format_golden.rs)가 같은 파일을 읽는다. 같은 단위 소수 1자리. 전체를 모르면 받은 양의 단위.",
+  "fn": "formatProgressSize",
+  "cases": [
+    {"name": "1000 진법 GB", "args": [2300000000, 4000000000, 1000], "out": {"received": "2.3GB", "total": "4.0GB"}},
+    {"name": "시작 0", "args": [0, 4000000000, 1000], "out": {"received": "0.0GB", "total": "4.0GB"}},
+    {"name": "전체가 1000MB에 닿으면 GB로", "args": [500000000, 999960000, 1000], "out": {"received": "0.5GB", "total": "1.0GB"}},
+    {"name": "전체 모름 바이트", "args": [512, null, 1000], "out": {"received": "512B", "total": null}},
+    {"name": "전체 모름 MB", "args": [1500000, null, 1000], "out": {"received": "1.5MB", "total": null}},
+    {"name": "KB", "args": [1000, 2000, 1000], "out": {"received": "1.0KB", "total": "2.0KB"}},
+    {"name": "받은 양이 반올림으로 1.0KB", "args": [999, 1000, 1000], "out": {"received": "1.0KB", "total": "1.0KB"}},
+    {"name": "1024 진법 7.8GB", "args": [8396800000, 8396800000, 1024], "out": {"received": "7.8GB", "total": "7.8GB"}},
+    {"name": "1024 진법 10.0GB", "args": [5368709120, 10737418240, 1024], "out": {"received": "5.0GB", "total": "10.0GB"}},
+    {"name": "소수 둘째 자리 올림", "args": [123456, 123456, 1000], "out": {"received": "123.5KB", "total": "123.5KB"}},
+    {"name": "둘 다 0", "args": [0, 0, 1000], "out": {"received": "0B", "total": "0B"}}
+  ]
+}

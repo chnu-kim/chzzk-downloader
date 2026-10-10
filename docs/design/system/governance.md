@@ -655,7 +655,7 @@ README가 이 문서에 등록을 맡긴 과제다. 각 과제는 끝나면 ADR 
 
 ### (c) 기능 화면
 
-1. **§10 (c)의 "`allow.json` 0"은 이 절이 고친다.** 문구 항목(DC1~DC12)은 (d)가, Worker 항목(DT2·DT3·DC*의 Worker 파일)은 (e)가 지운다는 "다음 단계로 넘기는 문제"와 충돌하기 때문이다. (c)가 0으로 만드는 것은 이유가 "(c)"인 DL·DS·DT(앱)·DX·DI 항목과 legacy 절이다. 남은 185개는 전부 DC*(d, 문구) 또는 Worker(e)이고 `design.allow_entries`를 그 실제 수로 조였다(311 → 185, 키는 유지). (c)가 더한 DC11 중복 하나(`action.cancelQueued` = `resolve.cancel` '취소')만 이유 "단계 (d)에서 제거(문구)"로 더했다. DL·DS·DT·DX·DI의 새 항목은 0이다.
+1. **§10 (c)의 "`allow.json` 0"은 이 절이 고친다.** 문구 항목(DC1~DC12)은 (d)가, Worker 항목(DT2·DT3·DC*의 Worker 파일)은 (e)가 지운다는 "다음 단계로 넘기는 문제"와 충돌하기 때문이다. (c)가 0으로 만드는 것은 이유가 "(c)"인 DL·DS·DT(앱)·DX·DI 항목과 legacy 절이다. 남은 185개는 전부 DC*(d, 문구) 또는 Worker(e)이고 `design.allow_entries`를 그 실제 수로 조였다(311 → 185, 키는 유지). (c)가 더한 DC11 중복 하나(action.cancelQueued = `resolve.cancel` '취소')만 이유 "단계 (d)에서 제거(문구)"로 더했다. DL·DS·DT·DX·DI의 새 항목은 0이다.
 2. **연결 대기·회복·멈춘 지 30일 행(J2)은 (c)에서 만들지 않는다.** 코어에는 `NETWORK_PATIENCE_MS`도 대기 상태도 없고(재시도 5회·8초 상한), `job.recovered.body`는 같은 데이터를 쓰며, `job.stale.body`는 멈춘 시각 필드가 없다. 셋과 ADR "연결 대기"는 (f)(platform §15)로 넘겼고 DC10 허용 항목(`job.status.waitingNetwork`·`job.waitingNetwork.body`·`job.recovered.body`·`job.stale.body`)의 이유를 "단계 (f)에서 제거(연결 대기·멈춘 작업 데이터)"로 바꿨다. 갤러리·e2e에도 이 세 행은 없다.
 3. **글자 크기·모양은 코어 `settings.json`의 `textScale`·`theme`에 영속한다**(모르는 값은 기본으로 읽는다, 스키마 버전 2 그대로). `get_settings`는 AuthGate 뒤라 같은 값을 `AppInfo`에도 실어 로그인 화면도 x-large로 그린다(`settings.loadInfo()`). `theme`는 OS와 무관하게 저장하고 화면이 Linux에서만 바꾼다.
 4. **새 command `open_web_page`(`'privacy' | 'licenses'`)를 AuthGate 허용 목록(`gate.rs`의 열린 command 목록)에 넣었다**(gate 변경). 로그인 화면의 [개인정보 처리방침]이 로그인 전에 열려야 하기 때문이다. Worker 고정 경로 `{origin}/privacy`·`/licenses`를 기본 브라우저로 열 뿐이라 정보가 새지 않는다. Worker 페이지는 (e)가 만들므로 (e) 전까지 링크는 404를 연다(`worker.md` 구현 중 변경에 한 줄).
@@ -667,9 +667,17 @@ README가 이 문서에 등록을 맡긴 과제다. 각 과제는 끝나면 ADR 
 10. **로그인 화면 버튼은 `auth.ts`의 `loginScreen` 동작 그대로다**(확정된 사용자 결정). 저작권 줄 `© {year} {owner}`는 owner가 정해지지 않아 그리지 않는다(J20). 서비스 공지 B5·종류 차단·서킷은 앱에 공지 데이터가 없어((e) Worker `/notice` 뒤) 배너 우선순위 표에 자리만 두었다. D6 데이터 요금 대화상자는 v1.1이라 키·화면·갤러리가 없다(대화상자 "7종" 검사는 D6을 뺀 6종).
 11. **ko.ts 키는 조립하지 않는다.** `` t(`settings.textScale.${v}`) ``처럼 키를 조립하면 DC11 "미참조"에 걸리고 `CopyKey` 타입을 잃는다. 값 → 키는 `Record<TextScale, CopyKey>` 같은 리터럴 표(`satisfies`)로 고른다. DC11은 소스 글자에서 `\b키\b`를 찾으므로 `auth.logout()` 같은 메서드 호출도 참조로 세는 오탐이 있어, 참조 검사 뒤 남은 죽은 키(`auth.logout`·`update.later`)는 손으로 지웠다.
 
+### (d) 문구
+
+1. **`allow.json`이 185 → 11이 됐다.** 이유 "(d)" 144개와 Worker `copy.ts`의 "(e)" 30개(사용자 결정으로 문구는 (d)가 반영했다)가 사라졌다. 남은 11개는 `site-css.ts`·`site-css.generated.ts`의 DT2·DT3 6개(이유 (e), Worker 생성 CSS)와 DC10 5개(이유 (f), `job.status.waitingNetwork` 등 연결 대기 문구)다. `design.allow_entries` 기준을 11로 조였다(로컬에서 센 값, §12 (a)-1 선례). 새 허용 항목은 0이다. `terms.json` allow(키 지정, 명세 문구가 자기 규칙에 걸리는 곳)에는 항목 셋을 더했다: L1 라벨 둘과 `confirmDisallow.title`의 "?"(content §19-17·18).
+2. **허용 목록 0은 (e)·(f) 뒤에도 남는 둘이 있다.** DT2·DT3는 (e)가 `site.css`를 새로 만들 때 지운다. DC10 5개는 (f)가 연결 대기 상태를 만들 때 지운다.
+3. **DC11을 허용 항목 없이 0으로 둔 방법은 키를 deck에 두지 않는 것이다.** 화면이 없는 키(앱 `settings.keepAwake*`, Worker 21개)는 (e)·(f)가 화면과 함께 되돌린다(content §19-15). 같은 값의 키는 하나로 합쳤다(§19-14). `copy.mjs`의 DC11은 `app/src-tauri/src/**/*.rs`의 인용도 참조로 센다(알림 키, §19-19).
+4. **옛 DC10 문서 불일치를 닫았다.** `adminOnly.title`·`badFormat.title`·`retryLater.body`·`landing.contact`는 §15.3에 있다. patterns.md의 action.cancelQueued는 `common.cancel`, clipboard.suggest는 `url.clipboard.title`, drop.hint는 `url.dropHere`로 고쳤다. 종류 차단·서킷 문구는 키 없는 문장으로 두었다.
+5. **gate 결과.** `design-copy`·`design-lint`·`design-tokens`·`design-icons`·`scripts-test`·`scan`·`fmt`가 통과한다. `terms.json` allow의 `step3`·`step4`는 이미 실제 키(`settings.cookie.howto.step3|step4`)와 같아 바꿀 것이 없었다.
+
 ### 다음 단계로 넘기는 문제
 
 - **(b)**: ① 메뉴·토스트·대화상자의 등장·퇴장 전환(`@starting-style`이 금지라 `ui.css`에 없다): 컴포넌트가 처리하거나 ADR을 쓴다(components §7-2). **처리됨**: ADR 없이 `data-motion` 훅으로 해소했다(components §7-10). ② `app.css`가 전역 규칙·`cursor`·`user-select`를 가져간다(components §7-8). **처리됨**: `app.css`가 가져갔다(components §7-18). ③ `vocab.ts`·`licenses/lucide.txt`·`icons.generated.ts`가 생기면 DP1·DI2 허용 항목(항목 6)을 지운다. **처리됨**: `vocab.ts`·`licenses/lucide.txt`가 생겨 DP1·DI2 항목을 지웠다. ④ `design-shots` gate·작업을 `design-gallery`와 함께 만들고 `OBSERVED_JOBS`에 등록한다(항목 12). **처리됨**: 만들었고 `OBSERVED_JOBS`에 등록했다((b) 2~4). 기준선은 첫 CI 실행의 artifact를 `shots.mjs --accept`로 받는다. ⑤ DT3 미사용 허용 항목 후보 `--motion-base`·`--motion-slow`·`--ease-in`·`--pct-w`와 DT13 `--z-sticky`(입력줄이 쓰기 전까지)는 쓰임이 생기면 지운다. **일부 처리됨**: `--motion-base`·`--motion-slow`·`--ease-in`은 `ui.css`의 등장·퇴장 훅이 써서 지웠다. `--pct-w`·`--z-sticky`는 (c)에서 쓰인다. ⑥ `e2e-web` 통과 수 기준(7)을 현재 20으로 올릴 수 있다(CI 측정으로 `ratchet.mjs write --from-run`). **통합 단계로 넘김**: 갤러리가 통과 수를 바꾸므로 CI 측정 뒤 `ratchet.mjs write --from-run`으로 조인다.
 - **(c)**: legacy 절과 `legacy.mjs`를 지운다. `DropOverlay.svelte`의 DX13 위반은 오탐이 아니라 진짜 위반이다. 허용 항목을 0으로 줄이는 단계다. **처리됨**: legacy를 지웠고 (c) 이유의 항목은 0이다. 전체 0은 §12 (c) 1이 (d)·(e)로 넘겼다.
-- **(d)**: content §19-9의 문서 불일치(웹 키 넷, DC11 중복)를 닫고 DC10·DC11 허용 항목 약 145개를 지운다. `terms.json` allow의 추정 키 `step3`·`step4`를 실제 키에 맞춘다.
+- **(d)**: content §19-9의 문서 불일치(웹 키 넷, DC11 중복)를 닫고 DC10·DC11 허용 항목 약 145개를 지운다. `terms.json` allow의 추정 키 `step3`·`step4`를 실제 키에 맞춘다. **처리됨**: 허용 항목이 185 → 11이 됐고(§12 (d) 1), `step3`·`step4`는 이미 실제 키였다. (e)로 넘기는 것: Worker 페이지 구조(`<caption>`·`<ol>`·skipLink·확인 페이지·고지 배치, content §19-15가 적은 키 21개를 되돌린다)와 `site-css` DT2·DT3 6개. (f)로 넘기는 것: DC10 5개(연결 대기 문구)와 `settings.keepAwake*`.
 - **(e)**: `site.css` 링크 색 규칙을 `a:not(.btn)`으로 한정한다(web §15-13). `worker.md` 구현 중 변경 95를 따른다. Worker가 생성물을 처음 쓰는 단계이므로 옛 `site-css.ts`와 DT2 허용 항목 4건이 사라진다.

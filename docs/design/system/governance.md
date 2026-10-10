@@ -1,6 +1,6 @@
 # 강제와 운영 (governance.md)
 
-디자인 시스템 「무색」의 규칙을 **코드가 어떻게 막고, 사람이 어떻게 바꾸는가**를 적는다. `README.md` §4가 강제 수단의 이름(gate 여섯 개와 리뷰 항목 `R1`~`R10`)을 정했고, 이 문서는 그 본문이다: 토큰 파이프라인, gate 하나하나의 명세, 리뷰 체크리스트의 통과 기준, ADR 운영, 컴포넌트 추가 절차, 사용자 시험(D62) 절차, 적용 계획. 소유하는 결정은 D33(과제 등록)·D58~D62다(README §2).
+디자인 시스템 「무색」의 규칙을 **코드가 어떻게 막고, 사람이 어떻게 바꾸는가**를 적는다. `README.md` §4가 강제 수단의 이름(gate 일곱 개와 리뷰 항목 `R1`~`R10`)을 정했고, 이 문서는 그 본문이다: 토큰 파이프라인, gate 하나하나의 명세, 리뷰 체크리스트의 통과 기준, ADR 운영, 컴포넌트 추가 절차, 사용자 시험(D62) 절차, 적용 계획. 소유하는 결정은 D33(과제 등록)·D58~D62다(README §2).
 
 읽는 법:
 - 수치와 토큰 이름은 전부 `foundations.md`의 것이다. 이 문서는 새 값을 만들지 않는다. 필요한데 없는 값은 §12 "foundations에 추가 요청"에 적었다.
@@ -10,7 +10,7 @@
 - **[잠정]**은 확인되지 않은 값이고 확인 방법을 같은 줄에 적었다. **[취향]**은 출처 없는 선택이다.
 - 예시 값(제목·크기·날짜·채널)은 전부 가짜다(`scan` gate).
 
-이 저장소의 CI 원칙(`docs/design/cicd.md` §1)을 그대로 따른다: 훅과 CI는 `node scripts/ci/run.mjs <gate>` 하나로 들어가고, gate는 `scripts/ci/gates.mjs`에 선언하며(`parity`가 워크플로의 `run:`과 대조한다), 새 도구는 `scripts/ci/tools.json`에 버전을 고정하고, 날짜로 실패하는 검사는 두지 않는다. **새 gate 여섯 개는 모두 Node 스크립트만으로 돈다.** stylelint·Style Dictionary 같은 새 도구는 쓰지 않는다(§2.0).
+이 저장소의 CI 원칙(`docs/design/cicd.md` §1)을 그대로 따른다: 훅과 CI는 `node scripts/ci/run.mjs <gate>` 하나로 들어가고, gate는 `scripts/ci/gates.mjs`에 선언하며(`parity`가 워크플로의 `run:`과 대조한다), 새 도구는 `scripts/ci/tools.json`에 버전을 고정하고, 날짜로 실패하는 검사는 두지 않는다. **새 gate 일곱 개는 모두 Node 스크립트만으로 돈다.**(`design-worker`가 Playwright를 쓰지만 그것은 `design-gallery`·`design-shots`가 이미 쓰는 도구이고 worker 쪽에 한 벌 더 설치할 뿐이다, §2.0) stylelint·Style Dictionary 같은 새 도구는 쓰지 않는다(§2.0).
 
 ---
 
@@ -72,7 +72,7 @@ W3C Design Tokens Community Group Format Module **2025.10**(https://www.designto
 
 ### 2.0 공통
 
-- 여섯 gate의 이름·검사 항목·자리는 README §4.1 표가 정했다. 여기서는 **구현 단위(스크립트·단계)와 판정, CI 작업, 훅, selftest 씨앗, ratchet 영향**을 적는다.
+- 일곱 gate의 이름·검사 항목·자리는 README §4.1 표가 정했다. 여기서는 **구현 단위(스크립트·단계)와 판정, CI 작업, 훅, selftest 씨앗, ratchet 영향**을 적는다.
 - **도구를 더하지 않는다.** stylelint를 쓰지 않는다. 이유: (1) `.svelte` `<style>`을 stylelint가 읽는 구성(`postcss-html`)이 **[미확인]**이다(gov §8.1·§11), (2) 검사 대상이 `design/ui.css`·`app/src/**/*.svelte`·`worker/src/http/site.css`로 작다, (3) 정규식 금지 목록은 stylelint의 `declaration-property-value-disallowed-list`도 결국 정규식이다. 선언 단위 파서(약 80줄: `<style>` 블록 추출 → 주석 제거 → 규칙 → 선언 분해)를 `scripts/design/css.mjs`에 한 번 쓰고 `design-lint`·`design-tokens`가 같이 쓴다(README §4.1도 그렇게 적는다).
 - 스크립트는 `scripts/design/`에 둔다(`scripts/ci/`는 CI 기반 시설, `scripts/fixtures/`는 fixture 생성기라는 기존 구분을 따른다). 각 스크립트의 테스트 `scripts/design/*.test.mjs`는 기존 `scripts-test` gate(`testFiles()`가 `scripts/` 아래를 전부 훑는다)에 자동으로 들어간다.
 - 판정은 종료 코드다. 위반은 `file:line: 규칙 이름: 내용` 한 줄 형식으로 찍고 GitHub Actions에서는 `::error file=…,line=…::`로 주석을 단다(기존 `public-scan.mjs` 출력 형식).
@@ -81,11 +81,12 @@ W3C Design Tokens Community Group Format Module **2025.10**(https://www.designto
 - `parity`가 요구하는 등록: `gates.mjs GATES`에 gate, ci.yml의 `run:` 줄, 새 CI 작업이면 `CODE_GATED_JOBS`(작업 id → 영역) 또는 `OBSERVED_JOBS`(작업 id → 영역 또는 `'master'`)와 그에 맞는 작업 `if:`(`areaIf('<영역>')` = `needs.changes.outputs.<영역> == 'true'`, parity `job-if`), `HOOKS`의 `when`, 그리고 `ci-ok`의 `needs`·guard(`parity ciOkGuard()`가 영역마다 절 하나로 만든 순서). 옛 `CODE_IF`(`changes` 작업의 `code` 출력)는 없어졌다(`cicd.md` 구현 중 변경 110, `worker.md` 91).
 - **PR 영역(app·worker)**: `ci.yml` `changes` 작업은 `gates.mjs AREAS` 순서로 `app`·`worker` 두 출력을 낸다(`run.mjs classify`, parity `changes-outputs`). 영역마다 `AREA_SKIP`이 "그 영역의 작업이 읽지 않는 경로"를 적고, 바뀐 파일이 하나라도 그 목록 밖이면 그 영역이 켜진다. 문서(`NON_CODE`: `docs/**`·루트 `*.md` 등)와 `scripts/**/*.test.mjs`는 두 영역 모두 끈다(`LINT_ONLY`). 이 시스템은 **새 영역을 만들지 않는다**(만들면 `changes` 출력·`ciOkGuard`·`scope.test.mjs`가 함께 바뀐다). 새 gate의 영역:
   - `design-tokens`·`design-lint`·`design-copy`·`design-icons`: 기존 `lint` 작업 안이다. `lint`는 **영역과 무관하게 늘 돈다**(`CODE_GATED_JOBS`에 없다). 그래서 `docs/design/system/content.md`·`foundations.md`만 바뀐 PR(두 영역 모두 꺼짐)에서도 문서 패리티(DT14·DT15·DC10)가 돈다.
-  - `design-gallery`: `e2e-web` 작업 안이므로 **app** 영역(`OBSERVED_JOBS['e2e-web'] = 'app'`).
-  - `design-shots`: 새 작업이고 **app** 영역(`if: areaIf('app')`, `OBSERVED_JOBS['design-shots'] = 'app'`, 편입하면 `CODE_GATED_JOBS['design-shots'] = 'app'`).
+  - `design-gallery`: `e2e-web` 작업 안이므로 **app** 영역(`OBSERVED_JOBS['e2e-web'] = 'app'`). 앱 화면만 찍는다.
+  - `design-shots`: 새 작업이고 **app** 영역(`if: areaIf('app')`, `OBSERVED_JOBS['design-shots'] = 'app'`, 편입하면 `CODE_GATED_JOBS['design-shots'] = 'app'`). 앱 화면만 찍는다.
+  - `design-worker`: 새 작업이고 **worker** 영역(`if: areaIf('worker')`, `OBSERVED_JOBS['design-worker'] = 'worker'`, 편입하면 `CODE_GATED_JOBS['design-worker'] = 'worker'`). Worker 정적 HTML의 갤러리 검사와 스냅샷을 맡는다(아래 영역 공백).
   - 기존 gate에 더하는 검사(§2.8): `frontend`·`rust`·`tauri`·`release-hygiene`은 app, `worker`(골격 검사·`help-check`)는 worker 영역이다.
   - 새 경로 `design/`·`scripts/design/`(테스트 파일 제외)은 어느 `AREA_SKIP`에도 없으므로 바뀌면 **두 영역을 모두 켠다**. 생성물이 `app/`과 `worker/` 양쪽에 있고 format 골든(`design/format/*.json`)을 `frontend`·`rust`·`worker`가 함께 읽으므로 이것이 맞는 기본값이다. 좁히려면 `scope.test.mjs`의 읽기 그래프 근거가 필요하다.
-  - **영역 공백(판단 필요)**: `design-gallery`·`design-shots`는 **Worker 정적 HTML**도 찍는다(§2.6). 그런데 `AREA_SKIP.app`은 `worker/**`(`wrangler.jsonc`·`test/vectors/` 밖)를 건너뛰므로 `worker/src/http/`만 바뀐 PR에서는 app 영역이 꺼져 Worker 페이지의 갤러리·기준선 비교가 돌지 않는다. 적용 PR (a)가 둘 중 하나를 고른다: (가) 갤러리가 읽는 Worker 렌더 결과를 커밋 생성물로 두고(`--check`) `AREA_SKIP.app`의 worker 정규식에 `worker/src/http/` 예외를 더한 뒤 `scope.test.mjs`에 그 읽기를 근거로 적는다(Worker 페이지 PR이 app 작업 전체를 켠다), (나) Worker 페이지 촬영을 worker 영역 작업으로 옮긴다(`worker-e2e`처럼 따로, Playwright 설치가 worker 쪽에 생긴다). 이 문서의 기본 제안은 (가)다(도구·작업을 늘리지 않는다) **[잠정]**.
+  - **영역 공백 — 결정(2026-10-10 사용자): (나) Worker 정적 HTML 촬영을 worker 영역 작업으로 옮긴다.** `design-gallery`·`design-shots`가 Worker 정적 HTML도 찍으면(§2.6) `AREA_SKIP.app`이 `worker/**`(`wrangler.jsonc`·`test/vectors/` 밖)를 건너뛰므로 `worker/src/http/`만 바뀐 PR에서는 app 영역이 꺼져 Worker 페이지의 갤러리·기준선 비교가 돌지 않는다. 그래서 Worker 몫을 새 gate `design-worker`로 떼어 worker 영역 작업 `design-worker`에서 돌린다(`worker-e2e`처럼 따로). 구성: worker 쪽에 Playwright 설치(`worker/`는 독립 pnpm 루트라 자기 lockfile에 devDependency), `scripts/ci/tools.json`에 `playwright` 버전 고정(app과 같은 버전을 쓰고 Dependabot이 둘을 함께 올린다), `OBSERVED_JOBS`에 `'design-worker': 'worker'`로 등록(D14 관찰, 편입은 `design-shots`와 같은 14일 뒤 판단). 자세한 명세는 §2.6b. 기각한 (가) `AREA_SKIP.app`에 `worker/src/http/` 예외를 두는 안은 Worker 페이지만 바뀐 PR에서도 app 전체(`frontend`·`rust`·`tauri`·`e2e-web` 등)가 돌아 영역 스코프의 이득을 잃기 때문에 쓰지 않는다.
 
 ### 2.1 요약표
 
@@ -97,6 +98,7 @@ W3C Design Tokens Community Group Format Module **2025.10**(https://www.designto
 | `design-icons` | `scripts/design/icons.mjs`(정적) | `lint` | pre-commit, 경로 `app/src/lib/components/ui/icons.ts`·`worker/src/http/icons.generated.ts`·`licenses/`·`worker/src/http/pages.ts` | 필수 | 필수. 번짐 측정(래스터)은 `design-gallery` 안(§2.5) |
 | `design-gallery` | `app/e2e/gallery.spec.ts`(Playwright 프로젝트 `gallery`) + `scripts/design/icons-blur.mjs` | `e2e-web`(기존 작업 안, `playwright test` 뒤) | 없음(무겁다) | `e2e-web` 작업이 편입될 때 함께 | 관찰(D14, `OBSERVED_JOBS 'e2e-web'`과 같은 운명) |
 | `design-shots` | `app/e2e/shots.spec.ts`(Playwright 설정 `playwright.shots.config.ts`) | **새 작업 `design-shots`**(ubuntu-24.04, `platforms: ['linux']`) | 없음 | 없음 | 관찰(`OBSERVED_JOBS 'design-shots': 'app'`), 편입은 D14 14일 뒤 판단 |
+| `design-worker` | `worker/e2e/gallery.spec.ts`·`worker/e2e/shots.spec.ts`(Playwright 설정 `worker/playwright.config.ts`, §2.6b) | **새 작업 `design-worker`**(ubuntu-24.04, worker 영역, `platforms: ['linux']`) | 없음 | 없음 | 관찰(`OBSERVED_JOBS 'design-worker': 'worker'`), 편입은 D14 14일 뒤 판단 |
 
 `lint` 작업은 pnpm을 설치하지 않는다. 그래서 네 gate는 `node_modules` 없이 **파일만 읽어** 판정한다(`needs: []`). 생성물 `tokens.css`가 커밋되어 있어 `design-lint`의 "정의되지 않은 var" 검사도 설치 없이 된다.
 
@@ -224,11 +226,25 @@ export const ICON_BUTTON_ICONS = ['x', 'ellipsis', 'chevron-down', 'chevron-up',
 ### 2.6 `design-gallery`
 
 - 갤러리 페이지는 `app/gallery.html` + `app/src/gallery/main.ts`로 **별도 Vite 진입점**이다. `vite build`는 환경 변수 `CHZZK_GALLERY=1`일 때만 이 진입점을 포함한다. 릴리스 dist에는 없다. 강제: `release-hygiene` gate(`artifact-check.mjs hygiene`)에 "dist에 `gallery`가 없다" 검사 한 줄 추가(기존 E2E 표식 검사와 같은 자리). `e2e-web` gate의 `pnpm build` 단계는 `CHZZK_GALLERY=1`로 돈다(e2e 전용 dist. `size.dist_gz` ratchet은 `size` gate가 `bundle` 뒤 릴리스 dist를 재므로 영향 없다).
-- 내용: `ui/` 모든 컴포넌트 × 상태 매트릭스(gov §4: rest·hover·pressed·focus-visible·disabled·loading·error·empty, 짧은/긴 한글/무공백 영문/큰 숫자) + 네 화면(홈 빈 상태 2종, 카드, 작업 목록 상태 전부·대화상자 7종, 설정) + 로그인 첫 화면 + 아이콘 시트 + **Worker 정적 HTML**(랜딩 비로그인·허가·관리·`/auth/done` 결과(웹 denied·cancelled, failed)·확인 페이지·옛 앱 안내. 앱 수신기 결과 페이지는 셸이 그려 넣지 않는다, `web.md` §6.5: vitest가 렌더한 문자열을 Playwright `setContent`로 넣는다, 의존성 0). 고정 데이터는 두 벌(`platform=macos`·`platform=windows`: 단축키 표기·[폴더에서 보기]·백슬래시 경로·1024 진법, 검토 U-38)이고 카드는 **최악 조합**(배너 B1 + 두 줄 제목 + 화질 5 + 경고 1), 작업 목록에는 앞 40자가 같고 끝만 다른 제목 둘이 있다. 매트릭스에 없는 variant×tone 조합이 `vocab.ts`에 있으면 `gallery.spec.ts`가 실패한다(갤러리가 어휘를 전부 보여야 한다). 갤러리는 sys 토큰만 쓴다(foundations 머리).
-- Playwright 프로젝트 `gallery`(`app/playwright.config.ts`에 추가, 같은 webServer): 환경 행렬을 `test.describe`로 돈다. `colorScheme` light·dark × viewport 720×520·960×700·320×231(Windows 텍스트 225% 흉내) × `emulateMedia({ reducedMotion, forcedColors, contrast })` × `data-text-scale="x-large"` × `any-pointer: coarse` 흉내(`context.addInitScript`로 `matchMedia` 대체. Playwright는 `any-pointer`를 직접 에뮬레이션하지 못한다 **[잠정]**: 확인은 Playwright 1.63 `emulateMedia` 문서. 안 되면 coarse는 토큰 블록 값 검사(DT11)와 `--force-device-scale-factor` 스냅으로 대신한다). Worker 페이지는 1280×800·390×844.
+- 내용: `ui/` 모든 컴포넌트 × 상태 매트릭스(gov §4: rest·hover·pressed·focus-visible·disabled·loading·error·empty, 짧은/긴 한글/무공백 영문/큰 숫자) + 네 화면(홈 빈 상태 2종, 카드, 작업 목록 상태 전부·대화상자 7종, 설정) + 로그인 첫 화면 + 아이콘 시트다. **Worker 정적 HTML은 이 갤러리에 없다**(`worker/src/http/`만 바뀐 PR에서 app 영역이 꺼지므로 worker 영역 작업 `design-worker`가 맡는다, §2.0 영역 공백·§2.6b). 고정 데이터는 두 벌(`platform=macos`·`platform=windows`: 단축키 표기·[폴더에서 보기]·백슬래시 경로·1024 진법, 검토 U-38)이고 카드는 **최악 조합**(배너 B1 + 두 줄 제목 + 화질 5 + 경고 1), 작업 목록에는 앞 40자가 같고 끝만 다른 제목 둘이 있다. 매트릭스에 없는 variant×tone 조합이 `vocab.ts`에 있으면 `gallery.spec.ts`가 실패한다(갤러리가 어휘를 전부 보여야 한다). 갤러리는 sys 토큰만 쓴다(foundations 머리).
+- Playwright 프로젝트 `gallery`(`app/playwright.config.ts`에 추가, 같은 webServer): 환경 행렬을 `test.describe`로 돈다. `colorScheme` light·dark × viewport 720×520·960×700·320×231(Windows 텍스트 225% 흉내) × `emulateMedia({ reducedMotion, forcedColors, contrast })` × `data-text-scale="x-large"` × `any-pointer: coarse` 흉내(`context.addInitScript`로 `matchMedia` 대체. Playwright는 `any-pointer`를 직접 에뮬레이션하지 못한다 **[잠정]**: 확인은 Playwright 1.63 `emulateMedia` 문서. 안 되면 coarse는 토큰 블록 값 검사(DT11)와 `--force-device-scale-factor` 스냅으로 대신한다).
 - 각 조합에서: axe(WCAG 2.x A·AA, 기존 `fixtures.ts`의 `app.axe()`) 위반 0, 모든 대화형 요소의 바운딩 박스 ≥ `--hit-min`(마우스 24, coarse 40), `x-large`·320 폭에서 가로 스크롤 없음(WCAG 1.4.10 리플로우), forced-colors에서 포커스 링이 그려짐(`outline-style` ≠ none)과 실패·일시정지 막대 채움이 보임, `inert` 아닌 층에 `.btn-primary` 정확히 1개이고 대화상자가 열리면 `document.activeElement`가 오른쪽 끝 버튼(D36), 정렬선(툴바 첫·끝 요소·배너·카드·토스트의 상자 x = 열 안쪽 x ± 2px), 계산값(`getComputedStyle`: 다크 + contrast more에서 `--fg-muted` = `--fg`, hover 면 ≠ pressed 면), 720×520 기본 글자·마우스 조합에서 로그인 화면 네 요소와 카드 [받기]가 뷰포트 안(다른 조합은 스크롤로 닿음만), 토스트가 떠 있을 때 마지막 행 버튼이 가려지지 않음.
 - **ratchet 영향**: `tests.playwright`가 늘어난다(조이기만이라 로그 불필요). `measure.mjs tests-playwright`가 `report.json`에서 프로젝트 구분 없이 세므로 그대로 쓴다.
 - 상태: `e2e-web` 작업 안에서 돌므로 그 작업과 함께 관찰 → 편입된다. 따로 `OBSERVED_JOBS` 항목을 두지 않는다. **관찰 중에는 비차단**이므로 C2·C7의 필수 보장은 `frontend`(로그인 뷰 네 키 렌더)가 든다(검토 U-19).
+
+### 2.6b `design-worker`
+
+§2.0 "영역 공백"의 결정 (나)를 구현하는 gate다. `design-gallery`(§2.6)와 `design-shots`(§2.7)의 **Worker 정적 HTML 몫**을 worker 영역 작업 하나로 옮긴 것이고, 검사 내용은 두 gate와 같은 규칙을 Worker 뷰포트에 적용한다.
+
+- 대상: 랜딩 비로그인·허가·관리·`/auth/done` 결과(웹 denied·cancelled, failed)·로그인 확인 페이지·옛 앱 안내. 앱 수신기 결과 페이지는 셸이 그리므로 넣지 않는다(`web.md` §6.5). Worker 서버가 렌더한 문자열을 Playwright `setContent`로 넣는다(스타일시트는 같은 생성물 `site-css.generated.ts`). 렌더 문자열을 Playwright(Node)로 넘기는 방법(vitest 단계가 만든 HTML 사본을 읽는다 등)은 적용 PR (e)가 `worker.md` 구현 중 변경에 적는다.
+- 위치: `worker/e2e/gallery.spec.ts`(axe·계산값·리플로우·포커스 링), `worker/e2e/shots.spec.ts`(스냅샷), 설정 `worker/playwright.config.ts`. worker 쪽은 독립 pnpm 루트(자기 lockfile)이므로 Playwright는 `worker/package.json` devDependency로 설치하고 버전은 `scripts/ci/tools.json`의 `playwright`와 같게 고정한다(`worker` gate의 런타임 의존성 0은 그대로다: 배포 번들에 들어가지 않는다). chromium 설치는 `e2e-web`과 같은 방식(처음 한 번)이다.
+- 환경 행렬: 뷰포트 1280×800·390×844, 라이트·다크, `forcedColors`·`contrast: more`·`reducedMotion`, 읽기 척도(`data-scale="reading"`) 페이지는 320 폭 리플로우. 각 조합에서 axe(WCAG 2.x A·AA) 위반 0, 대화형 요소 바운딩 박스 ≥ `--hit-min`, 가로 스크롤 없음, forced-colors에서 포커스 링이 그려짐, 계산값(다크 + contrast more에서 `--fg-muted` = `--fg`). `worker` gate의 골격 검사(`caption`·`th scope`·skip link)는 그대로 `worker`가 맡는다.
+- 스냅샷: 섹션별 `toHaveScreenshot()`, 라이트·다크·forced-colors × 1280·390 × DPR 1·2. 기준선은 `worker/e2e/__shots__/*.png`를 커밋하고(`.gitattributes` `-text`) Linux 러너에서만 만든다(ADR-0008을 그대로 따른다: `--force-device-scale-factor`, `platforms: ['linux']`, 로컬 `--update-snapshots` 거부). 갱신은 `node scripts/design/shots.mjs --accept <run id>`가 artifact `design-worker-actual`에서 받는다. 허용 오차는 `ci/ratchet.json`의 `shots.max_diff_pixels`를 `design-shots`와 같이 읽는다.
+- CI: 새 작업 `design-worker`(ubuntu-24.04, `if: needs.changes.outputs.worker == 'true'` = parity `areaIf('worker')`, pnpm·node 설정은 `worker` 작업 복제, `fonts-noto-cjk` apt, artifact 둘: `design-worker-actual`(실패 시 actual·diff), `ratchet-measurements-worker`). `OBSERVED_JOBS`에 `'design-worker': 'worker'`, `report`의 `needs`에 추가(parity 규칙 `observed`·`job-if`).
+- 훅: 없음(무겁다). 경로가 `worker/src/http/`면 pre-push에서 안내만 한다.
+- 편입 판단(D14 14일 뒤): `design-shots`와 같다. 실패가 모두 의도된 변경이었으면 `CODE_GATED_JOBS`에 `'design-worker': 'worker'`로 옮기고 `ci-ok` needs·guard를 고친다.
+- ratchet: Worker 쪽 Playwright 테스트 수는 `tests.playwright`(app 몫)에 합치지 않는다. 늘려야 할 키가 있으면 (e)가 `ratchet.json`에 새 키와 `RATCHET_LOG.md` 줄을 더한다.
+- selftest 씨앗: 깨끗(Worker 페이지 렌더 한 장 → 0)과 위반(미정의 토큰을 쓴 페이지 → 0 아님) 두 줄.
 
 ### 2.7 `design-shots`
 
@@ -237,7 +253,7 @@ export const ICON_BUTTON_ICONS = ['x', 'ellipsis', 'chevron-down', 'chevron-up',
 - 기준선: `app/e2e/__shots__/*.png`를 커밋한다(`.gitattributes` `-text`). **Linux 러너에서만 만든다.** `snapshotPathTemplate`에서 플랫폼 접미를 빼고 `platforms: ['linux']`로 다른 OS에서는 돌지 않는다(macOS·Windows 로컬에서 `run.mjs design-shots`는 "건너뜀"). 갱신 절차: 실패한 실행의 artifact `design-shots-actual`을 받아 `node scripts/design/shots.mjs --accept <run id>`가 PNG를 교체한다(`ratchet.mjs write --from-run`과 같은 모양: 성공·실패한 CI 실행의 산출물만 받는다). 로컬 생성 금지는 `shots.mjs`가 `CI`가 아닐 때 `--update-snapshots`를 거부하는 것으로 강제한다.
 - 글꼴: 러너에 `fonts-noto-cjk`를 apt로 설치한다(ci.yml setup 단계, `parity SETUP_ALLOW`의 apt 허용). 러너 이미지가 바뀌면 기준선이 흔들릴 수 있다 **[잠정]**: 관찰 기간의 실패 원인을 `master-failure` 이슈에서 본다.
 - 허용 오차: `maxDiffPixels`는 `ci/ratchet.json`의 `shots.max_diff_pixels`(처음 0)에서 읽는다. **늘리는 변경은 `RATCHET_LOG.md` 줄 필수**(`ratchet-log` gate가 본다. `ratchet.mjs`에 이 키의 방향("작을수록 좋다")을 더한다).
-- CI: 새 작업 `design-shots`(ubuntu-24.04, `if: needs.changes.outputs.app == 'true'` = parity `areaIf('app')`, pnpm·node 설정은 `e2e-web` 작업 복제, artifact 둘: `design-shots-actual`(실패 시 actual·diff), `ratchet-measurements-shots`). `OBSERVED_JOBS`에 `'design-shots': 'app'`, `report`의 `needs`에 추가(parity 규칙 `observed`·`job-if`). Worker 페이지만 바뀐 PR에서 이 작업이 꺼지는 문제는 §2.0 "영역 공백".
+- CI: 새 작업 `design-shots`(ubuntu-24.04, `if: needs.changes.outputs.app == 'true'` = parity `areaIf('app')`, pnpm·node 설정은 `e2e-web` 작업 복제, artifact 둘: `design-shots-actual`(실패 시 actual·diff), `ratchet-measurements-shots`). `OBSERVED_JOBS`에 `'design-shots': 'app'`, `report`의 `needs`에 추가(parity 규칙 `observed`·`job-if`). Worker 페이지는 이 작업이 찍지 않는다. Worker 몫은 worker 영역 작업 `design-worker`(§2.6b, §2.0 "영역 공백"의 결정 (나)).
 - 편입 판단(D14 14일 뒤): 실패가 모두 의도된 변경이었으면 `OBSERVED_JOBS`에서 빼고 `CODE_GATED_JOBS`에 `'design-shots': 'app'`으로 옮긴 뒤 `ci-ok` needs·guard를 고친다(`gates.mjs` `OBSERVED_JOBS` 주석의 편입 절차). 러너 drift 실패가 한 번이라도 있었으면 관찰을 연장하고 그 사유를 ROADMAP에 적는다.
 
 ### 2.8 기존 gate에 더하는 검사
@@ -250,7 +266,7 @@ export const ICON_BUTTON_ICONS = ['x', 'ellipsis', 'chevron-down', 'chevron-up',
 | `tauri` | `tauri.conf.json` 테스트: `decorations: true`, `minWidth 720`·`minHeight 520`, `zoomHotkeysEnabled: false`, Windows `scrollBarStyle: fluentOverlay`, `visible: false`, window-state 플러그인 등록, `minimumSystemVersion 13.3`, `backgroundColor` = foundations `--bg` 라이트 hex, `allowLinkPreview: false`, `theme`·`titleBarStyle`·`transparent` 키 없음, devtools feature 없음, 메뉴 전수 한국어, Windows `with_webview` 호출, `set_badge_*` 0개, 권한 `allow-set-webview-zoom` 없음, 안전장치 타임아웃, 알림 문자열 = `content.md` §14 상수 | D26~D30·D1·D38, `platform.md` §22-14 |
 | `release-hygiene` | dist에 `gallery` 없음 | §2.6 |
 | `scripts-test` | `scripts/design/*.test.mjs`(자동 포함) + `adr.test.mjs`(§4.3) + `allow.test.mjs`(허용 목록 이유 필수) + `pr-template.test.mjs`(§3.0) | §2.0 |
-| `selftest` | 여섯 gate의 씨앗 | §2.0 |
+| `selftest` | 일곱 gate의 씨앗 | §2.0 |
 
 ### 2.9 확장 검사 표(`DX*`)
 
@@ -294,7 +310,7 @@ export const ICON_BUTTON_ICONS = ['x', 'ellipsis', 'chevron-down', 'chevron-up',
 
 | 번호 | 언제 | 무엇을 붙이나 | 통과 기준 | 자동으로 보는 부분 |
 |---|---|---|---|---|
-| **R1** | 화면(`.svelte` 마크업·CSS, Worker 템플릿)이 바뀜 | 스크린샷 **네 장**: 라이트 960×700, 다크 960×700, 라이트 720×520, forced-colors(Windows 실기 또는 `emulateMedia`). 갤러리 섹션이면 `design-shots`의 diff 이미지로 대신한다 | (1) 열 정렬: 툴바 안쪽·배너·카드·토스트의 왼쪽 선이 한 x좌표(foundations §8 "기준선 하나"), (2) 12px 글자가 단독으로 의미를 전하는 곳 없음(§3.2), (3) `--fg-disabled`가 비활성 외에 쓰인 곳 없음(§1 규칙 5), (4) `--separator` 선 하나로만 구분되는 의미 경계 없음(§6.2), (5) 720에서 가로 스크롤·잘림 없음, (6) 숫자 열(퍼센트·크기)이 `.num` 유틸로 정렬 | `design-gallery`(axe·리플로우), `design-shots`(회귀) |
+| **R1** | 화면(`.svelte` 마크업·CSS, Worker 템플릿)이 바뀜 | 스크린샷 **네 장**: 라이트 960×700, 다크 960×700, 라이트 720×520, forced-colors(Windows 실기 또는 `emulateMedia`). 갤러리 섹션이면 `design-shots`(Worker 페이지는 `design-worker`)의 diff 이미지로 대신한다 | (1) 열 정렬: 툴바 안쪽·배너·카드·토스트의 왼쪽 선이 한 x좌표(foundations §8 "기준선 하나"), (2) 12px 글자가 단독으로 의미를 전하는 곳 없음(§3.2), (3) `--fg-disabled`가 비활성 외에 쓰인 곳 없음(§1 규칙 5), (4) `--separator` 선 하나로만 구분되는 의미 경계 없음(§6.2), (5) 720에서 가로 스크롤·잘림 없음, (6) 숫자 열(퍼센트·크기)이 `.num` 유틸로 정렬 | `design-gallery`(axe·리플로우), `design-shots`·`design-worker`(회귀) |
 | **R2** | `design/tokens/` diff가 있음 | ADR 번호, 바뀐 토큰의 이름·전후 값, 근거 등급(E0~E4) | ADR 파일이 PR에 있고 상태가 `제안` 또는 `채택(잠정)`/`채택`, 근거 표의 최고 등급이 적혀 있다(E3 미만이면 `채택`이 아니다), [취향] 값은 [취향]으로 표시. foundations 표·§13·생성물이 같은 PR에서 바뀜 | `design-tokens`(T14 패리티), `scripts-test`(`adr.test.mjs`) |
 | **R3** | `copy/` 또는 Worker `copy.ts` diff | copy deck diff 요약(추가·변경 키)과 `content.md` 용어집 대조 결과("비표준 어휘 없음" 또는 예외 이유) | 새 문자열이 content.md 어미·구두점·조사 규칙에 맞고, OS별 문자열은 `platform` 분기 객체에만, 오류 문구는 3요소(무슨 일·왜·다음 행동, C6) | `design-copy`(C1~C9) |
 | **R4** | 글자 토큰(`--text-*`·`--leading-*`·`--weight-*`·`--font-*`) diff | Windows 실기 스크린샷 2장(맑은 고딕, 배율 100%·125%) + `getComputedStyle(document.body).fontFamily` 값 | 13px 400 한글이 판독되고 600이 400과 구별되며 숫자 열이 정렬된다(README §6-1). 안 되면 README §6-1의 조치(`--text-body`·`--leading-body` → 14/18)를 같은 PR에서 한다 | — (실기만) |
@@ -514,7 +530,7 @@ README가 이 문서에 등록을 맡긴 과제다. 각 과제는 끝나면 ADR 
 
 ## 10. 적용 계획(stacked PR)
 
-여섯 단계다. 각 단계는 PR 하나(크면 둘)이고 앞 단계 위에 쌓는다(CLAUDE.md "단계별 stacked PR"). 단계마다 **범위 / 완료 조건 / e2e mock·spec / ratchet / ADR**을 적었다. 모든 단계에서 `ci-ok`가 녹색이어야 하고, 관찰 작업(`e2e-web`·`design-shots`)의 빨간색은 원인을 PR에 적는다.
+여섯 단계다. 각 단계는 PR 하나(크면 둘)이고 앞 단계 위에 쌓는다(CLAUDE.md "단계별 stacked PR"). 단계마다 **범위 / 완료 조건 / e2e mock·spec / ratchet / ADR**을 적었다. 모든 단계에서 `ci-ok`가 녹색이어야 하고, 관찰 작업(`e2e-web`·`design-shots`·`design-worker`)의 빨간색은 원인을 PR에 적는다.
 
 ### (a) 토큰 원천·생성기·gate
 
@@ -561,7 +577,7 @@ README가 이 문서에 등록을 맡긴 과제다. 각 과제는 끝나면 ADR 
 | 항목 | 내용 |
 |---|---|
 | 범위 | `web.md`대로: `site-css.ts` → `site-css.generated.ts`(토큰 + ui + `site.css`), 골격(`theme-color` 2종·`color-scheme`·skip link·`caption`·`th scope`·헤더 `.col`), 읽기 척도 `main[data-scale="reading"]`(랜딩·help·privacy·licenses만), 랜딩 구조(D53: 내 OS 버튼 36 하나, 다른 OS 접힘, 설치 안내(SAC 경고 Notice·그래도 열기 조건문), SHA-256 접힘, 휴대폰 블록, 고지 히어로 아래·바닥글, 로그인 전 고지 네 줄·`loginForFiles`·`loginTwice`, "막히면" + 연락 자리표시), 헤더 배지 "비공식 도구", 폼 위험도 2단(D54, 허가 어휘), 결과 페이지(웹 흐름 denied `circle-x`·`doneDenied.next`·cancelled, grant 없는 failed, 옛 앱 안내 `outdatedApp`. 앱 흐름 결과는 셸 수신기라 (e) 밖, `web.md` §6.5), 오류 페이지 nav, `/notice`(D41), `/licenses`(Lucide 고지), OG 이미지 |
-| 완료 조건 | `worker` gate의 골격 검사·`help-check` 통과, `design-tokens` DT1(공통 구간 동일)·DT3(Worker 소스에서 `--text-hero` 사용), `design-lint`가 `worker/src/http`를 허용 목록 없이 통과, `R8` 기록 첨부, Worker vitest(1148+)에 골격·폼 테스트 추가, `worker.md` 구현 중 변경 번호(`web.md` §14의 열린 다섯 항목. 6번 확인 코드 제거는 루프백이 닫았다) |
+| 완료 조건 | `worker` gate의 골격 검사·`help-check` 통과, **`design-worker` gate(§2.6b) 신설과 첫 기준선 커밋**(worker 쪽 Playwright·`tools.json` 버전 고정·`OBSERVED_JOBS` 등록), `design-tokens` DT1(공통 구간 동일)·DT3(Worker 소스에서 `--text-hero` 사용), `design-lint`가 `worker/src/http`를 허용 목록 없이 통과, `R8` 기록 첨부, Worker vitest(1148+)에 골격·폼 테스트 추가, `worker.md` 구현 중 변경 번호(`web.md` §14의 열린 다섯 항목. 6번 확인 코드 제거는 루프백이 닫았다) |
 | e2e | `worker-e2e`(관찰 작업)의 로그인·관리 흐름은 경로·폼 이름이 같으면 그대로. 폼 위험도 2단으로 "허용 빼기"에 확인 페이지가 끼므로 그 흐름 한 단계 추가. `site-css.test.ts`의 해시 기대값 → 생성기 해시로 |
 | ratchet | `tests.worker` 증가 |
 | ADR | D41 서비스 공지(fail-open 72h) 1장, D54 위험도 2단 1장 |
@@ -581,7 +597,7 @@ README가 이 문서에 등록을 맡긴 과제다. 각 과제는 끝나면 ADR 
 - 각 PR 뒤 글로벌 지침의 Codex 리뷰(없으면 서브에이전트 2종)를 돈다.
 - `docs/ROADMAP.md`의 "현재 위치"와 체크리스트를 단계마다 갱신한다(CLAUDE.md 작업 규칙).
 - `docs/design/ui-visual.md`는 대체 표만 담은 호환 스텁으로 남겼고 (b)·(c)에서 지운다(README §3-1, app.md 구현 중 변경 67). `app.md` §8·§9·§10 본문은 고치지 않고(app.md 50 "본문은 설계 당시 기록") 67이 가리킨다. 코드 주석의 `ui-visual §n`은 (b)·(c)에서 바꾼다.
-- 관찰 작업 편입: `e2e-web`(+`design-gallery`)와 `design-shots`의 D14 시작일은 각각 (b) 머지 뒤 첫 master 녹색 실행, (a) 머지 뒤 첫 master 녹색 실행이다. 편입 예정일은 ROADMAP에 적는다(cicd.md 구현 중 변경 47 (다)).
+- 관찰 작업 편입: `e2e-web`(+`design-gallery`)와 `design-shots`의 D14 시작일은 각각 (b) 머지 뒤 첫 master 녹색 실행, (a) 머지 뒤 첫 master 녹색 실행이고, `design-worker`는 Worker 단계 PR(첫 기준선 커밋) 머지 뒤 첫 master 녹색 실행이다. 편입 예정일은 ROADMAP에 적는다(cicd.md 구현 중 변경 47 (다)).
 
 ---
 

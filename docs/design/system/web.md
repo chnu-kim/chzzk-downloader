@@ -4,7 +4,7 @@ Cloudflare Worker가 서버에서 그리는 페이지(랜딩·로그인·결과�
 
 읽는 법:
 - 토큰 이름과 수치는 `foundations.md`의 것만 쓴다. 여기 없는 값이 필요하면 지어내지 않고 §13 "foundations에 추가 요청"에 적었다.
-- 규칙마다 (a) 근거와 (b) 강제 수단을 붙였다. 강제 수단은 `node scripts/ci/run.mjs <gate>`의 gate 이름(`worker`·`design-tokens`·`design-lint`·`design-copy`·`design-icons`·`design-gallery`·`design-shots`·`scan`) 또는 리뷰 체크리스트 번호(`R1`·`R3`·`R7`·`R8`, README §4.2)다. 도움말 원천 검사(초안의 "gate `help`")는 `worker` gate 안의 단계 `help-check`다(governance §2.9 DX22). `worker` gate는 `scripts/ci/worker-config.mjs`(정적 검사. 배포 설정 모듈 `worker-deploy.mjs`를 import한다)·`worker/test/**`(vitest, Workers 런타임)·`pnpm build`(`wrangler deploy --dry-run`)와 그 번들의 `worker-config.mjs --dist` 검사로 이뤄지고 CI에서는 **worker 영역**(`changes` 작업의 `worker` 출력, `governance.md` §2.0) 작업이다. 이 문서가 "`worker` 테스트"라고 적은 것은 vitest에 더할 단언이고, "`worker-config`"라고 적은 것은 `worker-config.mjs`에 더할 정적 검사다.
+- 규칙마다 (a) 근거와 (b) 강제 수단을 붙였다. 강제 수단은 `node scripts/ci/run.mjs <gate>`의 gate 이름(`worker`·`design-tokens`·`design-lint`·`design-copy`·`design-icons`·`design-gallery`·`design-shots`·`design-worker`·`scan`) 또는 리뷰 체크리스트 번호(`R1`·`R3`·`R7`·`R8`, README §4.2)다. 도움말 원천 검사(초안의 "gate `help`")는 `worker` gate 안의 단계 `help-check`다(governance §2.9 DX22). `worker` gate는 `scripts/ci/worker-config.mjs`(정적 검사. 배포 설정 모듈 `worker-deploy.mjs`를 import한다)·`worker/test/**`(vitest, Workers 런타임)·`pnpm build`(`wrangler deploy --dry-run`)와 그 번들의 `worker-config.mjs --dist` 검사로 이뤄지고 CI에서는 **worker 영역**(`changes` 작업의 `worker` 출력, `governance.md` §2.0) 작업이다. 이 문서가 "`worker` 테스트"라고 적은 것은 vitest에 더할 단언이고, "`worker-config`"라고 적은 것은 `worker-config.mjs`에 더할 정적 검사다.
 - **[잠정]**은 확인되지 않은 값(확인 방법을 같은 줄에), **[취향]**은 출처 없는 선택이다.
 - 예시 값(버전·날짜·크기·해시·채널 이름)은 전부 가짜다(`scan`).
 - 근거는 `docs/research/design-system.md`의 ID로 인용한다(README 머리). a-worker §…처럼 ID가 없는 절은 약칭으로 남겼다. `worker.md`는 `docs/design/worker.md`(끝의 "구현 중 변경"이 본문보다 우선)다. 문구는 `content.md` §15.3의 키로 가리킨다.
@@ -49,7 +49,7 @@ Worker가 그리는 페이지는 한 골격(`htmlPage`, worker.md §4 공통·�
 | 포커스 | `:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px }` 전역 하나. UA 기본 링에 맡기지 않는다 | D20, `A-WORKER` §2.5(브라우저마다 다른 기본 링) | `design-lint`(`outline: none` 금지) |
 | 모션 | 전환 없음. `summary` 펼침·flash 등장 모두 즉시 | D22(정지가 기본), P5. 웹에 자주 쓰는 상호작용이 없어 모션을 둘 이유가 없다 | `design-lint`(`ms` 리터럴 금지) + 생성물에 `transition` 선언 0개를 `worker` 테스트로 단언 |
 | 다크 | OS만 따른다. `data-theme` 블록은 생성물에 포함되지만 JS가 없어 쓰이지 않는다 | D7(Worker는 OS만), D52 | `design-tokens`(두 블록 동일) |
-| forced-colors·대비 증가 | 앱과 같은 블록이 생성물에 있다(foundations §2.5·§2.7). 웹 고유 요소(표 테두리·skip link·배지)는 `1px solid CanvasText`로 선을 되찾는다 | foundations §2.7, brief §2.5 | `design-gallery`(forced·`prefers-contrast` 에뮬레이션에 Worker 정적 HTML 포함, §14 요청 1) |
+| forced-colors·대비 증가 | 앱과 같은 블록이 생성물에 있다(foundations §2.5·§2.7). 웹 고유 요소(표 테두리·skip link·배지)는 `1px solid CanvasText`로 선을 되찾는다 | foundations §2.7, brief §2.5 | `design-worker`(forced·`prefers-contrast` 에뮬레이션, §14 요청 1) |
 
 읽기 척도는 `main`에만 적용되므로 헤더·바닥글은 모든 페이지에서 13이다(초안의 "헤더도 15" [잠정]은 foundations §12-14로 닫혔다). 확인: README §6-13(읽기 척도 값)과 함께 1280·휴대폰 캡처를 `R1`로 남긴다.
 
@@ -236,7 +236,7 @@ flash와 `seeOther` "쿼리 없는 두 곳" 계약의 보완은 worker.md 구현
 | 문구 | `ReceiverPage` 상수 여섯과 `PAGE_REJECTED`. 값은 `content.md` §15.4. 바깥 값(채널 이름)을 넣지 않는다. 결과 첫 문장은 §6.1의 Worker 제목과 같다 | `content.md` §2 두 deck 공통 상수, `app.md` 66 (라) | `rust`(`crates/shell/tests/auth_loopback.rs`의 문구 표가 여섯 값을 고정한다. 문구를 바꾸면 같이 고친다), `R3` |
 | 색 | 지금 `#fff`/`#111`(다크 `#111`/`#eee`) 리터럴이다. 적용 단계 (f)에서 foundations `--bg`·`--fg`의 라이트·다크 hex로 바꾼다(생성기가 Rust 상수를 쓸지, 셸 테스트가 foundations 값과 대조할지는 그 PR이 정한다) **[잠정]** | foundations §2(한 원천), D7(OS 다크만 따름) | `rust`(값 대조, (f)에서) |
 | 글꼴·크기 | `system-ui, sans-serif`, 18px, 가운데 한 문단. 앱·Worker의 `--font-sans` 스택과 다르지만 브라우저 탭에서 잠깐 보는 한 줄이라 토큰 척도를 강제하지 않는다 [취향] | — | — |
-| 범위 | 이 페이지에는 헤더·바닥글·고지·버튼이 없다(앱으로 돌아가라는 한 문장뿐). Worker 골격(§3)과 `design-gallery`·`design-shots`의 Worker 정적 HTML 목록에 넣지 않는다 | `worker.md` 88 (마)(외부 참조 없음 테스트) | — |
+| 범위 | 이 페이지에는 헤더·바닥글·고지·버튼이 없다(앱으로 돌아가라는 한 문장뿐). Worker 골격(§3)과 `design-worker`의 정적 HTML 목록에 넣지 않는다 | `worker.md` 88 (마)(외부 참조 없음 테스트) | — |
 
 ---
 ## 7. 버튼·폼·위험도
@@ -371,7 +371,7 @@ flash와 `seeOther` "쿼리 없는 두 곳" 계약의 보완은 worker.md 구현
 | 바닥글 | 위 `1px solid var(--separator)`, 위아래 `--space-32`, `--text-caption` `--fg-muted` |
 | 좁은 레이아웃(600 미만) | `main` 좌우 `--edge` 유지, CTA 전폭, `h1` hero → 22/28(생성물 블록), 표는 가로 스크롤(§8) |
 
-근거: foundations §4·§8, A 후보 `.site` 구조. 강제: `design-lint`(px 리터럴 금지 → 위 표의 값은 모두 토큰), `design-gallery`(1280·390 폭 axe + 리플로우 320).
+근거: foundations §4·§8, A 후보 `.site` 구조. 강제: `design-lint`(px 리터럴 금지 → 위 표의 값은 모두 토큰), `design-worker`(1280·390 폭 axe + 리플로우 320).
 
 ---
 
@@ -428,7 +428,7 @@ g-web §4.2 G1~G7(세션 없는 POST 무안내, 재삭제 404, 성공 피드백 
 | `[data-window-active]` 블록이 Worker 생성물에 남는 것 | 토큰이 아니라 selector라 DT3(이름 기준)에 걸리지 않는다. 생성기가 Worker 생성물에서 이 블록을 빼지 않는다(공통 구간 유지) |
 | "pill" 낱말 | README D34·content §11을 "배지"로 |
 | `design-lint`의 `cursor: pointer` 금지는 앱만 | governance §2.3 DL8 |
-| `design-gallery`·`design-shots` 범위에 Worker 정적 HTML | governance §2.6(렌더 문자열을 `setContent`) |
+| Worker 정적 HTML의 갤러리·스냅샷 | `design-worker`(worker 영역 작업, governance §2.6b·§2.0 영역 공백의 결정 (나), 렌더 문자열을 `setContent`) |
 | 로그인 확인 페이지 존속 | 루프백(v0.3.0)이 확인 코드만 빼고 단계를 남겼다(`worker.md` 88 (가)). §1·§6.4를 그 판으로 고쳤고 [잠정]을 닫았다 |
 | `A-WORKER` §7.1-5 JS 허용 여부 | D52로 닫혔다 |
 

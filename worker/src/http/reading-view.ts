@@ -42,7 +42,7 @@ export function renderHelp(config: Config, nav: Nav): Response {
 export function renderPrivacy(config: Config, nav: Nav): Response {
   const p = COPY.privacy;
   const keep = html`<ul><li>${p.keep.web(WEB_TTL_MS / HOUR_MS)}</li><li>${p.keep.app(REFRESH_TTL_MS / DAY_MS, SESSION_MAX_MS / DAY_MS)}</li><li>${p.keep.revoked(REVOKED_KEEP_MS / DAY_MS)}</li><li>${p.keep.denied(DENIED_KEEP_MS / DAY_MS, DENIED_CAP)}</li><li>${p.keep.audit(AUDIT_CAP)}</li><li>${p.keep.flow(FLOW_TTL_MS / MINUTE_MS)}</li></ul>`;
-  const contact = html`<dl class="summary"><dt>${COPY.adminsTitle}</dt><dd>${p.operator}</dd><dt>${p.contact.label}</dt><dd>${COPY.landing.contact} <a href="${COPY.issuesUrl}" rel="noopener noreferrer">${COPY.landing.contactLink}</a></dd></dl>`;
+  const contact = html`<dl class="summary"><dt>${COPY.adminsTitle}</dt><dd>${p.operator}</dd><dt>${p.contact.label}</dt><dd><p>${COPY.landing.contact}</p><p><a href="${COPY.issuesUrl}" rel="noopener noreferrer">${COPY.landing.contactLink}</a></p></dd></dl>`;
   const body = html`<h1>${COPY.privacyTitle}</h1><p>${p.intro.body}</p><h2>${p.collect.title}</h2><p>${p.collect.body}</p><h2>${p.use.title}</h2><p>${p.use.body}</p><h2>${p.exclude.title}</h2><p>${p.exclude.body}</p><h2>${p.cookie.title}</h2><p>${p.cookie.body}</p><h2>${p.keep.title}</h2><p>${p.keep.body}</p>${keep}<h2>${p.abroad.title}</h2><p>${p.abroad.body}</p><h2>${p.cut.title}</h2><p>${p.cut.body}</p><h2>${p.contact.title}</h2><p>${p.contact.body}</p>${contact}`;
   return htmlPage(config, 200, COPY.privacyTitle, body, { scale: "reading", nav, index: true });
 }

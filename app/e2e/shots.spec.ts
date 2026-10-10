@@ -139,6 +139,20 @@ for (const theme of THEMES) {
         // 메뉴가 닫히고 포인터가 행 위에 남지 않게(hover 면이 찍히지 않게) 한 뒤 찍는다
         await expect(page.getByRole('menu')).toBeHidden();
         await page.mouse.move(0, 0);
+        // 메뉴가 닫히며 포커스가 [⋯]로 돌아가고, 브라우저가 그 버튼을 보이게 .main을 스크롤하는 양은 레이아웃 시점(토스트 padding)에 따라
+        // 실행마다 달라진다. 레이아웃이 가라앉길 기다린 뒤 스크롤을 맨 위로 명시 고정해 찍는다(앱 코드는 그대로).
+        // 가짜 시계에서는 rAF도 가짜라 runFor로 흘리고, 강제 레이아웃(offsetHeight)으로 확정한다
+        const raf2 = async () => {
+          await page.clock.runFor(100);
+          await page.evaluate(() => document.querySelector('.main')?.getBoundingClientRect().height);
+        };
+        await page.clock.runFor(500);
+        await raf2();
+        await page.evaluate(() => {
+          const main = document.querySelector('.main');
+          if (main) main.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+        });
+        await raf2();
       }
       await screen.settle?.(page, env);
       await page.clock.runFor(500);

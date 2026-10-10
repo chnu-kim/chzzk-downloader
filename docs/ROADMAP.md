@@ -4,6 +4,7 @@
 
 ## 현재 위치
 
+- **v0.4.0 릴리스(2026-10-11)**: 디자인 시스템 「무색」 적용 (a)~(f)(#65·#66·#67·#69·#70·#72)를 담았다. 버전 PR #74(Windows `size.binary.windows`·`size.bundle.windows-msi`를 master 실행 38087544439 측정값으로, RATCHET_LOG). 태그 `v0.4.0` = `06816df`, release 실행 38089531053 13개 작업 전부 녹색(gate·3 OS build·smoke·stage·sign-publish·verify·prune·deploy-worker·report). 남은 사람 몫은 아래 "디자인 시스템 (f) 뒤 남은 일" 중 `/privacy` 검토를 뺀 실기 확인들이다
 - **저장소**: 개발은 public `chnu-kim/chzzk-downloader`(remote `origin`)에서 한다. `chnu-kim/chzzk-downloader-private`(remote `private`)는 공개 전 원본 이력·연구 문서·실물 fixture·비공개 원문 목록(`public-release/`)의 보관소이며 **그쪽 ref를 origin에 push하지 않는다**(pre-push 가드가 막는다). 공개 절차는 `docs/public-release.md`.
 - **완료(2026-10-06 기준, 모두 master에 머지)**: Phase 0 하네스, Phase 1 Rust 코어, Go 삭제, Phase 2 Tauri 앱(macOS 실제 실행 확인), Phase 4 CI/CD(public PR #1: 단일 진입점·`ci.yml`/`ci-ok`·훅·비공개 이력 가드·스모크·ratchet·E2E·nightly/weekly 고리·CD `release.yml`/`xtask`·ruleset master/tags·저장소 설정 적용(2026-10-06 사용자 `repo-settings --apply --yes`, `--check` 드리프트 0)), CI 단축·Rust 1.99(#12), Windows 네이티브 E2E를 PR마다 관찰(#14).
 - **Phase 3 설계 완료(2026-10-06)**: `docs/design/worker.md`(Worker·DO `AuthStore`·R2 게이트·updater·앱 셸 계약, 열린 질문은 §17 "사용자 답변"으로 닫음). 코드 쪽 변경 기록은 cicd.md 80~84, app.md 59.
@@ -189,7 +190,7 @@
 - [x] (d) 문구(2026-10-10, PR #69, 브랜치 `feat/ds-d-copy`): `ko.ts` 재작성, 허용 항목 185 → 11. 위 "현재 위치" 참조. 다음은 (e).
 - [x] (e) Worker 페이지(2026-10-10, PR #70, 브랜치 `feat/ds-e-worker`): `site-css.generated.ts` 전환(`a:not(.btn)` 포함)·`design-worker` 신설·허용 항목 11 → 5·`/notice`·확인 페이지·읽기 페이지 셋. 위 "현재 위치" 참조. **`design-worker` D14 시작은 머지 뒤 첫 master 녹색 실행**, 기준선은 첫 CI artifact를 `shots.mjs --accept --target worker`로 받는다. 다음은 (f).
 - [x] (f) 셸·OS 통합(2026-10-10, PR #72): 위 "현재 위치"의 (f) 세 줄 참조. ADR 0022~0024, 허용 목록 0. 남은 것은 사람 실기(R4·M1~M25·M15)와 CI 몫(size·shots·tests ratchet), PR·Codex 리뷰.
-- [ ] 사용자: `/privacy` 문안 검토만 남음(본문은 코드 사실 기반 초안). 운영자·연락처는 `chnu-kim`·저장소 GitHub Issues로 채움(2026-10-10 사용자 결정, web.md 구현 중 변경 36). `design-worker` D14 관찰은 (e) 머지 뒤 첫 master 녹색 실행부터
+- [x] 사용자: `/privacy` 문안 검토 끝(2026-10-11 사용자 "괜찮다", 본문은 코드 사실 기반 그대로). 운영자·연락처는 `chnu-kim`·저장소 GitHub Issues로 채움(2026-10-10 사용자 결정, web.md 구현 중 변경 36). `design-worker` D14 관찰은 (e) 머지 뒤 첫 master 녹색 실행부터
 - [ ] 사용자: D62 1회차(기준선) 시험, 열린 항목(`system/README.md` §6)
 
 ### Phase 4 — CI/CD (설계: `docs/design/cicd.md`)

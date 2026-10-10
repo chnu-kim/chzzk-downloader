@@ -12,6 +12,7 @@ const st = (state: AuthState, reason: AuthReason | null = null, channelName: str
   offline: null,
   verifiedAt: null,
   canReconnect: false,
+  isAdmin: false,
 });
 
 type Row = [
@@ -68,7 +69,7 @@ describe('loginScreen 표', () => {
     for (const status of [st('expired', 'loginTimeout'), st('error', 'network'), st('error'), st('denied'), st('cancelled')]) {
       expect(buttons(status)).toEqual(status.state === 'denied' ? [[L, ko['action.retry'], 'primary'], both[1]] : both);
       // 세션이 없으면 그대로 하나
-      expect(loginScreen({ ...status, canReconnect: false })!.buttons).toHaveLength(1);
+      expect(loginScreen({ ...status, canReconnect: false, isAdmin: false })!.buttons).toHaveLength(1);
     }
   });
 

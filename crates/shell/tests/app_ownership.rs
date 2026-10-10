@@ -142,6 +142,10 @@ fn open_plain(root: &Path, api: &MockServer) -> App {
 }
 
 fn save_session(root: &Path, worker: &MockServer, channel: &str) {
+    save_session_as(root, worker, channel, false);
+}
+
+fn save_session_as(root: &Path, worker: &MockServer, channel: &str, is_admin: bool) {
     std::fs::create_dir_all(root.join("config")).unwrap();
     let verified = OffsetDateTime::now_utc() - time::Duration::hours(1);
     SessionStore::new(
@@ -151,7 +155,7 @@ fn save_session(root: &Path, worker: &MockServer, channel: &str) {
     .save(&StoredSession {
         channel_id: channel.into(),
         channel_name: "채널".into(),
-        is_admin: false,
+        is_admin,
         access_token: Secret::new(format!("cda_{}", "A".repeat(43))),
         access_expires_at: verified + time::Duration::hours(24),
         refresh_token: Secret::new(format!("cdr_{}", "B".repeat(43))),
@@ -499,6 +503,64 @@ async fn auto_resume_only_same_channel() {
     assert_ne!(status_of(&app, 2), JobStatus::Interrupted);
     assert_eq!(status_of(&app, 1), JobStatus::Interrupted);
     assert_eq!(app.on_auth_status(&st), 0);
+    app.manager.quit(Duration::from_secs(3)).await;
+}
+
+/// 관리자는 남의 영상도 받는다(worker.md 구현 중 변경 102): resolve는 adminOverride, enqueue·resume_job은 허용하고
+/// 기록에는 실제 컨텐츠 채널(b2)이 남는다
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn admin_receives_other_channel_content() {
+    let api = mock_api(None).await;
+    let worker = MockServer::start().await;
+    let t = TempDir::new().unwrap();
+    let out: PathBuf = t.path().join("out");
+    write_jobs(t.path(), vec![vod_record(1, Some(OWN), &out)]);
+    save_session_as(t.path(), &worker, OTHER, true);
+    let app = open_auth(t.path(), &api, &worker);
+    assert_eq!(
+        app.resolve(&url()).await.unwrap().ownership,
+        Ownership::AdminOverride
+    );
+    let job = app
+        .enqueue(request(t.path(), "x", Some(OTHER)))
+        .await
+        .unwrap();
+    assert_eq!(job.channel_id.as_deref(), Some(OWN));
+    app.resume_job(JobId(1), false).await.unwrap();
+    assert_ne!(status_of(&app, 1), JobStatus::Interrupted);
+    assert_eq!(channel_of(&app, 1).as_deref(), Some(OWN));
+    app.manager.quit(Duration::from_secs(3)).await;
+}
+
+/// 관리자의 자동 이어받기는 채널과 상관없이 멈춘 작업을 모두 줄 세운다
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn admin_auto_resume_takes_every_channel() {
+    let api = hanging_server().await;
+    let worker = MockServer::start().await;
+    let t = TempDir::new().unwrap();
+    let out = t.path().join("out");
+    write_jobs(
+        t.path(),
+        vec![
+            record(1, Some(OTHER), &out),
+            record(2, Some(OWN), &out),
+            record(3, None, &out),
+        ],
+    );
+    {
+        let app = open_plain(t.path(), &api);
+        app.update_settings(SettingsPatch {
+            auto_resume_interrupted: Some(true),
+            ..SettingsPatch::default()
+        })
+        .unwrap();
+        app.manager.flush();
+    }
+    save_session_as(t.path(), &worker, OTHER, true);
+    let app = open_auth(t.path(), &api, &worker);
+    let st = app.auth.as_ref().unwrap().status();
+    assert!(st.is_admin);
+    assert_eq!(app.on_auth_status(&st), 3);
     app.manager.quit(Duration::from_secs(3)).await;
 }
 

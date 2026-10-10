@@ -510,6 +510,8 @@ const REQUEUEABLE: readonly JobStatus[] = ['paused', 'interrupted', 'failed', 's
  */
 export function jobBlock(job: JobDto, me: AuthStatusDto | null): JobBlock | null {
   if (!me || me.state !== 'signedIn' || !me.channelId) return null;
+  // 관리자는 다른 채널의 작업도 이어받는다(worker.md 102)
+  if (me.isAdmin) return null;
   if (!REQUEUEABLE.includes(job.status) || job.channelId == null) return null;
   return job.channelId.toLowerCase() === me.channelId.trim().toLowerCase() ? null : 'otherChannel';
 }

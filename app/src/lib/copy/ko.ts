@@ -124,6 +124,10 @@ export const ko = {
   'job.stale.body': '{days}일 전에 멈췄어요. 디스크에 {size} 남아 있어요.',
   'job.pausing': '일시정지하는 중',
   'job.paused': '일시정지됨 · {bytes} 받음',
+  'receive.admin.otherChannel.title': '다른 채널의 영상이에요',
+  'receive.admin.otherChannel.body': '관리자라서 받을 수 있어요.',
+  'receive.admin.unknown.title': '영상의 채널을 확인하지 못했어요',
+  'receive.admin.unknown.body': '관리자라서 그대로 받을 수 있어요.',
   'job.otherChannel.body': '다른 채널로 로그인한 상태라 이어받을 수 없어요. 이 영상의 채널로 로그인해 주세요.',
   'job.resumedFrom': '{size}부터 이어받음',
 

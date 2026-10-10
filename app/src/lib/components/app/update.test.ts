@@ -44,6 +44,7 @@ const authDto = (state: AuthStatusDto['state']): AuthStatusDto => ({
   offline: null,
   verifiedAt: null,
   canReconnect: false,
+  isAdmin: false,
 });
 
 const dto: SettingsDto = {

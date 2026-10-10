@@ -34,6 +34,6 @@ pub use error::{AppError, ErrorCode, ErrorPayload, RequestKindDto, Stage};
 pub use events::EventSink;
 pub use jobs::{JobRecord, JobStore, JobsFile, reconcile};
 pub use manager::{DownloadManager, JobDefaults, ManagerConfig};
-pub use ownership::{OwnershipGate, SignedInChannel};
+pub use ownership::{OwnershipGate, SignedInChannel, Signer};
 pub use services::{AppPaths, SettingsService};
 pub mod notify;

@@ -523,6 +523,7 @@ impl From<&Quality> for QualityDto {
 }
 
 /// 본인 영상 판정. 로그인을 쓰지 않는 빌드와 로그인 전은 `unchecked`.
+/// `adminOverride`는 관리자가 남의 영상이나 채널을 모르는 영상을 불러온 것이다(받을 수 있다, worker.md 구현 중 변경 102).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub enum Ownership {
@@ -530,6 +531,7 @@ pub enum Ownership {
     Own,
     NotOwn,
     Unknown,
+    AdminOverride,
 }
 
 // ---------------------------------------------------------------------------
@@ -833,6 +835,8 @@ pub struct AuthStatusDto {
     pub verified_at: Option<i64>,
     /// 저장 세션이 있어 [다시 연결]로 확인할 수 있다(A4, worker.md 구현 중 변경 66 (바)를 닫는다)
     pub can_reconnect: bool,
+    /// 관리자(채널과 상관없이 받는다, worker.md 구현 중 변경 102). 안내·막힌 작업 표시용이고 판정은 셸이 한다
+    pub is_admin: bool,
 }
 
 /// 로그인 대기(로컬 기한)
@@ -862,6 +866,7 @@ impl AuthStatusDto {
             offline: None,
             verified_at: None,
             can_reconnect: false,
+            is_admin: false,
         }
     }
 
@@ -872,7 +877,7 @@ impl AuthStatusDto {
             reason,
             channel_id,
             channel_name,
-            is_admin: _,
+            is_admin,
             pending,
             offline,
             verified_at,
@@ -892,6 +897,7 @@ impl AuthStatusDto {
             }),
             verified_at: verified_at.map(|t| t.unix_timestamp()),
             can_reconnect: *has_session,
+            is_admin: *is_admin,
         }
     }
 }

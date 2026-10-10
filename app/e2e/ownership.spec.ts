@@ -21,6 +21,7 @@ const me: AuthStatusDto = {
   offline: null,
   verifiedAt: 1_767_322_800,
   canReconnect: false,
+  isAdmin: false,
 };
 
 test('남의 영상은 카드에서 막히고, 본인 영상은 받는다', async ({ app }) => {
@@ -96,4 +97,36 @@ test('실패한 다른 채널 작업은 다시 시도 안내 없이 막힌 이�
   await expect(item).toHaveAccessibleDescription(t('job.otherChannel.body'));
   await expect(item.getByRole('button', { name: t('action.retry') })).toHaveCount(0);
   await app.axe('실패한 다른 채널 작업');
+});
+
+test('관리자는 남의 영상을 안내와 함께 받고, 다른 채널의 멈춘 작업도 이어받는다', async ({ app }) => {
+  const other = resolved({
+    url: 'https://chzzk.naver.com/video/7654321',
+    content: { kind: 'video', videoNo: 7654321 },
+    ownership: 'adminOverride',
+    meta: { ...resolved().meta, title: '남의 방송', channelName: '다른 채널', channelId: C3 },
+  });
+  const { page } = app;
+  await app.open({
+    auth: { ...me, isAdmin: true },
+    resolve: { [other.url]: other },
+    jobs: [job(2, { status: 'interrupted', title: '남의 작업', channelId: C3 })],
+  });
+
+  // 막힌 작업이 아니라서 이어받기 버튼이 보이고 B1도 센다
+  const stopped = page.getByRole('article', { name: '남의 작업' });
+  await expect(stopped.getByRole('button', { name: t('action.resume') })).toBeVisible();
+  await expect(stopped.getByText(t('job.otherChannel.body'))).toHaveCount(0);
+
+  await page.getByLabel(t('url.label')).fill(other.url);
+  await page.getByRole('button', { name: t('common.load') }).click();
+  const card = page.getByRole('region', { name: '남의 방송' });
+  await expect(card).toBeVisible();
+  await expect(card.getByText(t('receive.admin.otherChannel.title'))).toBeVisible();
+  await expect(card.getByText(t('receive.admin.otherChannel.body'))).toBeVisible();
+  const download = card.getByRole('button', { name: t('card.download') });
+  await expect(download).not.toHaveAttribute('aria-disabled', 'true');
+  await app.axe('관리자 남의 영상 카드');
+  await download.click();
+  await expect.poll(async () => (await app.cmds()).includes('enqueue')).toBe(true);
 });

@@ -6,7 +6,7 @@ import { expect, test } from './fixtures';
 /** playwright.config의 timezoneId(Asia/Seoul)와 같은 UTC 오프셋(분) */
 const KST_OFFSET_MIN = 540;
 
-const EMPTY = { channelId: null, channelName: null, reason: null, pending: null, offline: null, verifiedAt: null, canReconnect: false } as const;
+const EMPTY = { channelId: null, channelName: null, reason: null, pending: null, offline: null, verifiedAt: null, canReconnect: false, isAdmin: false } as const;
 const auth = (over: Partial<AuthStatusDto> & Pick<AuthStatusDto, 'state'>): AuthStatusDto => ({ ...EMPTY, ...over });
 
 test('로그인 전에는 로그인 화면만 보이고 게이트 뒤 command를 부르지 않는다', async ({ app }) => {

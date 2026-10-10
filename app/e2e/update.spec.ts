@@ -12,6 +12,7 @@ const signedIn: AuthStatusDto = {
   offline: null,
   verifiedAt: 1_767_322_800,
   canReconnect: false,
+  isAdmin: false,
 };
 const available: UpdateInfoDto = { version: '9.9.9', current: '0.0.0-e2e', notes: null, pubDate: null };
 

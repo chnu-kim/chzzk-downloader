@@ -2,5 +2,6 @@
 
 /**
  * 본인 영상 판정. 로그인을 쓰지 않는 빌드와 로그인 전은 `unchecked`.
+ * `adminOverride`는 관리자가 남의 영상이나 채널을 모르는 영상을 불러온 것이다(받을 수 있다, worker.md 구현 중 변경 102).
  */
-export type Ownership = "unchecked" | "own" | "notOwn" | "unknown";
+export type Ownership = "unchecked" | "own" | "notOwn" | "unknown" | "adminOverride";

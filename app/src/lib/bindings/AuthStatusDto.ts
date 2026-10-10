@@ -12,4 +12,8 @@ export type AuthStatusDto = { state: AuthState, channelId: string | null, channe
 /**
  * 저장 세션이 있어 [다시 연결]로 확인할 수 있다(A4, worker.md 구현 중 변경 66 (바)를 닫는다)
  */
-canReconnect: boolean, };
+canReconnect: boolean, 
+/**
+ * 관리자(채널과 상관없이 받는다, worker.md 구현 중 변경 102). 안내·막힌 작업 표시용이고 판정은 셸이 한다
+ */
+isAdmin: boolean, };

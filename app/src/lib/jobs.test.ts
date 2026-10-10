@@ -690,6 +690,12 @@ describe('막힌 작업(A5)', () => {
     }
   });
 
+  it('관리자는 다른 채널의 멈춘 작업도 막지 않는다', () => {
+    for (const status of ['interrupted', 'paused', 'failed', 'skipped'] as const) {
+      expect(jobBlock(job(1, { status, channelId: C3 }), { ...me, isAdmin: true })).toBeNull();
+    }
+  });
+
   it('resumableInterrupted는 막힌 작업을 빼고 id 오름차순', () => {
     const list = [
       job(4, { status: 'interrupted', channelId: A1 }),

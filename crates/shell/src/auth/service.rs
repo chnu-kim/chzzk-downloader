@@ -30,6 +30,7 @@ use super::verify::{
     lost_retry_wait, outcome_of_error, refresh_due_at, retry_delay,
 };
 use crate::error::AppError;
+use crate::ownership::Signer;
 
 /// 시작 판정 이후 화면·command가 보는 대기 중 로그인 정보
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1158,9 +1159,17 @@ impl<A: WorkerApi, C: Clock> AuthService<A, C> {
 
     /// SignedIn일 때 본인 판정 채널 ID(A5 OwnershipGate)
     pub fn signed_in_channel(&self) -> Option<String> {
+        self.signer().map(|s| s.channel_id)
+    }
+
+    /// SignedIn일 때 본인 판정 채널 ID와 관리자 여부(한 잠금에서 함께 읽는다, worker.md 구현 중 변경 102)
+    pub fn signer(&self) -> Option<Signer> {
         let i = self.lock();
         match (&i.phase, &i.held) {
-            (AuthPhase::SignedIn, Some(h)) => Some(h.channel_id.clone()),
+            (AuthPhase::SignedIn, Some(h)) => Some(Signer {
+                channel_id: h.channel_id.clone(),
+                is_admin: h.is_admin,
+            }),
             _ => None,
         }
     }

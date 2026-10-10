@@ -31,7 +31,7 @@
 
 ## 결과
 
-- foundations §2.2 ref 표(`--ref-red-75`), §2.3 sys 표, §2.4 다크 대비 표, §13 생성물. `design-tokens DT8이 쌍을 다시 계산한다.
+- foundations §2.2 ref 표(`--ref-red-75`), §2.3 sys 표, §2.4 다크 대비 표, §13 생성물. `design-tokens` DT8이 쌍을 다시 계산한다.
 - `--danger-ink`를 쓰는 곳(위험 유령 버튼 글자, ⊗ 아이콘, `aria-invalid` 테두리)은 토큰 이름만 쓰므로 바뀌지 않는다.
 
 ### 재검증 조건

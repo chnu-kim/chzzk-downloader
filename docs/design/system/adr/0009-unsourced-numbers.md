@@ -17,8 +17,8 @@
 | `NOTIFY_BATCH_MS` | 3초 | [취향] | platform §9 | 보고서의 3초는 근거 없음(`X-DESK-N45`)이라 같은 값을 취향으로 채택. platform §21 M10 |
 | `--progress-h` | 6px | [취향] | foundations §5.2 | D62 "진행을 읽는가"(`Q26`) |
 | `--toolbar-h` | 44px | [취향] | foundations §5.1 | D62 V6(톱니를 찾는가)·`R1` 스크린샷 |
-| `--dialog-w | 440px | [취향] | foundations §5.2 | 720·x-large 스냅(`design-gallery`) |
-| `--reading-max | 680px | [취향] | foundations §3.3 | 1280·휴대폰 캡처(`R1`) |
+| `--dialog-w` | 440px | [취향] | foundations §5.2 | 720·x-large 스냅(`design-gallery`) |
+| `--reading-max` | 680px | [취향] | foundations §3.3 | 1280·휴대폰 캡처(`R1`) |
 | `--label-w` / `--pct-w` | 80px / 40px | [취향] | foundations §5.2 | 갤러리 고정 데이터(긴 라벨·"100%")에서 흔들림 없음 |
 | `--motion-spin` | 800ms | [취향] | foundations §7.1 | reduce 스냅에서 정지 호 |
 | `--surface-pressed` | #DBDBDB / #484848 | [취향] | foundations §2.3 | DT16 hover ≠ pressed, `R1` |
@@ -55,7 +55,7 @@
 
 ## 결과
 
-- foundations §13(토큰)·§14(상수)가 값을 든다. `design-tokens DT14·DT15가 문서와 코드의 일치를 본다.
+- foundations §13(토큰)·§14(상수)가 값을 든다. `design-tokens` DT14·DT15가 문서와 코드의 일치를 본다.
 - 각 값 옆 [취향]·[잠정]·[제안] 표기는 유지한다. 확인되면 표기를 지우고 이 ADR을 `폐기(→ 새 번호)`로 바꾼다.
 - README §6-7은 이 표를 가리킨다.
 

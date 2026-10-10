@@ -10,7 +10,7 @@
 
 ## 결정
 
-**성공(초록) 토큰을 두지 않는다.** `tone`의 값 집합은 `neutral`·`warning`·`danger` 셋이다(`success` 없음, D35). 완료는 세 겹으로 전한다: `check` 아이콘(`--fg-muted) + "완료" 글자 + 완료 그룹 위치(목록의 완료 그룹으로 이동, 11개 넘으면 접힘). OS 알림·토스트의 완료는 `circle-check` 아이콘 + 문장이다.
+**성공(초록) 토큰을 두지 않는다.** `tone`의 값 집합은 `neutral`·`warning`·`danger` 셋이다(`success` 없음, D35). 완료는 세 겹으로 전한다: `check` 아이콘(`--fg-muted`) + "완료" 글자 + 완료 그룹 위치(목록의 완료 그룹으로 이동, 11개 넘으면 접힘). OS 알림·토스트의 완료는 `circle-check` 아이콘 + 문장이다.
 
 이 결정은 **잠정**이다. 재검증 조건에 걸리면 B 후보의 초록(H 124°·S 39%, `#2F7D4B`급)을 **`--success-ink` 토큰 하나**(✓ 아이콘·글자용)로만 더한다. 채움·면 토큰은 만들지 않는다.
 
@@ -28,7 +28,7 @@
 
 ## 결과
 
-- `design-tokens T15: 이름에 `success`가 든 토큰 0개. T9: C1 스캔은 유채색 19개(파랑·빨강·호박)만 본다.
+- `design-tokens` T15: 이름에 `success`가 든 토큰 0개. T9: C1 스캔은 유채색 19개(파랑·빨강·호박)만 본다.
 - `vocab.ts` `TONE = ['neutral','warning','danger']`. `design-lint` P1.
 - `components.md` Badge·Notice에 성공 톤 없음. Notice의 성공 메시지(예: "복사했어요")는 `tone=neutral` + `circle-check`.
 - 기존 `--success`·`--success-soft`·`--kind-*` 색 토큰과 `tokens.test.ts`의 해당 대비 쌍이 사라진다(단계 (a)).

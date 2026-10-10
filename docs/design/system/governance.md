@@ -18,15 +18,15 @@
 
 ### 1.1 흐름
 
-``
+```
 design/tokens/*.tokens.json  ─┐                        ┌─► app/src/styles/tokens.css              (커밋)
    (DTCG 2025.10 부분집합)    ├─► scripts/design/tokens.mjs ─┼─► app/src/styles/ui.css                  (커밋)
 design/ui.css                 ┘   (생성기, 의존성 0)        └─► worker/src/http/site-css.generated.ts (커밋)
    (ui 컴포넌트 CSS)                   │                          = 토큰 + ui + worker/src/http/site.css(웹 전용 CSS)
                                        └── --check: 저장소의 생성물 셋과 바이트 비교(다르면 1)
-``
+```
 
-원천은 `design/tokens/` 폴더의 JSON과 `design/ui.css`(components.md §0.2)이고, 생성기가 생성물 셋을 만들어 **커밋**한다. 훅과 CI는 `--check`로 "저장소의 생성물 = 원천에서 다시 만든 것"을 바이트 단위로 확인한다. 이 모양은 저장소의 기존 생성기 둘과 같다: `scripts/fixtures/gen-fixtures.mjs --check`(fixture, `fixtures` gate)와 `UPDATE_BINDINGS=1 cargo test -p chzzk-shell --test bindings`(ts-rs bindings). 근거: brief D3 권고(선택지 A "DTCG JSON → 자체 변환기 50~100줄"), tokens §1(2025.10이 첫 안정판, Style Dictionary v4는 2025.10 전체를 지원하지 않음), `A-WORKER-0`(앱 `tokens.css` 216줄과 Worker `site-css.ts`가 이름부터 다르다), ADR-0007. 강제: `design-tokens.
+원천은 `design/tokens/` 폴더의 JSON과 `design/ui.css`(components.md §0.2)이고, 생성기가 생성물 셋을 만들어 **커밋**한다. 훅과 CI는 `--check`로 "저장소의 생성물 = 원천에서 다시 만든 것"을 바이트 단위로 확인한다. 이 모양은 저장소의 기존 생성기 둘과 같다: `scripts/fixtures/gen-fixtures.mjs --check`(fixture, `fixtures` gate)와 `UPDATE_BINDINGS=1 cargo test -p chzzk-shell --test bindings`(ts-rs bindings). 근거: brief D3 권고(선택지 A "DTCG JSON → 자체 변환기 50~100줄"), tokens §1(2025.10이 첫 안정판, Style Dictionary v4는 2025.10 전체를 지원하지 않음), `A-WORKER-0`(앱 `tokens.css` 216줄과 Worker `site-css.ts`가 이름부터 다르다), ADR-0007. 강제: `design-tokens`.
 ### 1.2 원천 형식: DTCG 2025.10 부분집합
 
 W3C Design Tokens Community Group Format Module **2025.10**(https://www.designtokens.org/tr/2025.10/format/, tokens §1.1)의 부분집합만 쓴다. 전체를 구현하지 않는 이유는 소비자가 생성기 하나뿐이고(Figma·Style Dictionary 연동 계획 없음), 모르는 기능을 받아들이면 생성기가 조용히 틀린 값을 낼 수 있기 때문이다. 생성기는 **부분집합 밖의 키·타입을 만나면 실패한다**(허용 목록 방식).
@@ -43,7 +43,7 @@ W3C Design Tokens Community Group Format Module **2025.10**(https://www.designto
 | 상수 | `BREAKPOINT_NARROW`(600, foundations §14)는 `layout.tokens.json`의 `$type: "number"` 토큰이되 CSS 변수로 **내보내지 않고** 생성기가 `@media (max-width: 599px)` 글자를 만드는 데만 쓴다. 그 밖의 §14 상수는 `design/tokens/`가 아니라 `app/src/lib/timing.ts`·Rust `consts.rs`에 있고 DT15가 표와 대조한다 | — |
 | 대비 쌍 | `contrast.tokens.json`: `[전경, 바탕, 최소]` 목록(foundations §2.4의 라이트 46쌍·다크 46쌍). 토큰은 아니지만 같은 폴더에 두어 `design-tokens`가 한 곳에서 읽는다 | 테스트 코드에 쌍 목록 하드코딩(기존 `tokens.test.ts` 방식) |
 
-이름은 foundations §1의 정규식을 따른다. JSON 경로 `sys.color.fg-muted → CSS `--fg-muted, `ref.gray.965` → `--ref-gray-965`. 생성기가 경로 → CSS 이름 변환 규칙 하나를 갖고, 바꾸면 ADR이다(§4.1 조건 1).
+이름은 foundations §1의 정규식을 따른다. JSON 경로 `sys.color.fg-muted` → CSS `--fg-muted`, `ref.gray.965` → `--ref-gray-965`. 생성기가 경로 → CSS 이름 변환 규칙 하나를 갖고, 바꾸면 ADR이다(§4.1 조건 1).
 
 ### 1.3 생성기 `scripts/design/tokens.mjs`
 
@@ -51,10 +51,10 @@ W3C Design Tokens Community Group Format Module **2025.10**(https://www.designto
 |---|---|---|
 | 의존성 | Node 표준 모듈만(`node:fs`·`node:path`). oklch → sRGB 변환은 CSS Color 4 행렬을 직접 구현(약 40줄) | `scripts/ci/*`와 같은 원칙(의존성 0). 강제 `scripts-test`(`tokens.test.mjs`가 변환 골든 33색을 본다. 골든은 foundations §2.2 표의 알파 아닌 ref) |
 | 결정성 | 출력 순서는 foundations §13의 절 순서로 고정(ref → sys 색 → 글꼴 → 간격 → 반경 → 크기 → 레이아웃 → 모션 → 층 → 다크 두 블록 → 비활성 창 → reading → text-scale → contrast → coarse → reduce → (앱만) legacy 별칭). LF, 끝 줄바꿈 하나, 들여쓰기 두 칸, 소수는 입력 그대로 | `--check`가 바이트 비교라 포맷이 흔들리면 안 된다. 강제 `design-tokens`(두 번 생성해 같은지) |
-| 생성물 셋 | `app/src/styles/tokens.css`(+ `data-text-scale` 블록, 단계 (a)~(c)의 `/* legacy */` 별칭 블록), `app/src/styles/ui.css`(= `design/ui.css`), `worker/src/http/site-css.generated.ts`(토큰 구간은 `data-scale="reading"` 블록 포함, 그 뒤 ui 구간, 그 뒤 `worker/src/http/site.css`). 토큰 구간의 공통 부분은 앱·Worker에서 **바이트까지 같다**(foundations §13 끝) | brief §6.2-1(한 원천), `A-WORKER-0`. 강제 `design-tokens DT1(공통 구간을 잘라 비교) |
+| 생성물 셋 | `app/src/styles/tokens.css`(+ `data-text-scale` 블록, 단계 (a)~(c)의 `/* legacy */` 별칭 블록), `app/src/styles/ui.css`(= `design/ui.css`), `worker/src/http/site-css.generated.ts`(토큰 구간은 `data-scale="reading"` 블록 포함, 그 뒤 ui 구간, 그 뒤 `worker/src/http/site.css`). 토큰 구간의 공통 부분은 앱·Worker에서 **바이트까지 같다**(foundations §13 끝) | brief §6.2-1(한 원천), `A-WORKER-0`. 강제 `design-tokens` DT1(공통 구간을 잘라 비교) |
 | Worker 생성물 모양 | `export const SITE_CSS = \`…\`; export const SITE_CSS_HASH = "<sha256 앞 16자리>";` 기존 `site-css.ts`의 `SITE_CSS_HASH`·불변 캐시 경로 관례(worker.md 구현 중 변경 38 (마))를 따른다. 해시는 생성기가 계산한다 | 손으로 해시를 고치는 일이 사라진다. 강제 `worker`(기존 `site-css.test.ts`가 해시 기대값을 확인하는 방식 그대로) |
-| 쓰기 | 인자 없이 돌리면 생성물 셋을 쓴다. `--check`는 쓰지 않고 비교만. 생성물 머리줄에 `/* 생성물. 원천 design/tokens/·design/ui.css, 생성기 scripts/design/tokens.mjs. 손으로 고치지 않는다 */` | `gen-fixtures.mjs`와 같은 두 모드. 강제 `design-tokens |
-| 문서 패리티 | `--check`가 `foundations.md` §13 코드 블록을 읽어 **토큰 이름 → 값 사전**을 만들고 생성물의 사전과 비교한다(바이트 비교가 아니다: §13은 다크를 한 번만 적었다). §14 상수 표는 `timing.ts`·`consts.rs`의 `pub const`/`export const`와 비교한다. 다르면 어긋난 이름을 찍는다 | README §2 소유권 규칙. 강제 `design-tokens DT14·DT15 |
+| 쓰기 | 인자 없이 돌리면 생성물 셋을 쓴다. `--check`는 쓰지 않고 비교만. 생성물 머리줄에 `/* 생성물. 원천 design/tokens/·design/ui.css, 생성기 scripts/design/tokens.mjs. 손으로 고치지 않는다 */` | `gen-fixtures.mjs`와 같은 두 모드. 강제 `design-tokens` |
+| 문서 패리티 | `--check`가 `foundations.md` §13 코드 블록을 읽어 **토큰 이름 → 값 사전**을 만들고 생성물의 사전과 비교한다(바이트 비교가 아니다: §13은 다크를 한 번만 적었다). §14 상수 표는 `timing.ts`·`consts.rs`의 `pub const`/`export const`와 비교한다. 다르면 어긋난 이름을 찍는다 | README §2 소유권 규칙. 강제 `design-tokens` DT14·DT15 |
 
 ### 1.4 바꾸는 절차
 
@@ -91,7 +91,7 @@ W3C Design Tokens Community Group Format Module **2025.10**(https://www.designto
 
 | gate | 스크립트 | CI 작업 | 훅 | `ci-ok` | 처음 상태 |
 |---|---|---|---|---|---|
-| `design-tokens | `scripts/design/tokens.mjs --check` + `scripts/design/check-tokens.mjs` | `lint`(ubuntu, 늘 돈다) | pre-commit, 경로 `design/`·`scripts/design/`·`app/src/styles/tokens.css`·`app/src/styles/ui.css`·`worker/src/http/site-css.generated.ts`·`docs/design/system/foundations.md`·`app/src/lib/timing.ts`·`crates/shell/src/consts.rs` | 필수 | 필수(단계 (a)부터) |
+| `design-tokens` | `scripts/design/tokens.mjs --check` + `scripts/design/check-tokens.mjs` | `lint`(ubuntu, 늘 돈다) | pre-commit, 경로 `design/`·`scripts/design/`·`app/src/styles/tokens.css`·`app/src/styles/ui.css`·`worker/src/http/site-css.generated.ts`·`docs/design/system/foundations.md`·`app/src/lib/timing.ts`·`crates/shell/src/consts.rs` | 필수 | 필수(단계 (a)부터) |
 | `design-lint` | `scripts/design/lint.mjs` | `lint` | pre-commit, 경로 `app/src/`(src-tauri 제외)·`worker/src/http/` | 필수 | 필수. 단, 단계 (a)에서는 **허용 목록에 현재 위반 전부**를 적고 시작한다(§10 (a)) |
 | `design-copy` | `scripts/design/copy.mjs` | `lint` | pre-commit, 경로 `app/src/lib/copy/`·`worker/src/http/copy.ts`·`design/copy/`·`docs/design/system/content.md` | 필수 | 필수(같은 방식) |
 | `design-icons` | `scripts/design/icons.mjs`(정적) | `lint` | pre-commit, 경로 `app/src/lib/components/ui/icons.ts`·`worker/src/http/icons.generated.ts`·`licenses/`·`worker/src/http/pages.ts` | 필수 | 필수. 번짐 측정(래스터)은 `design-gallery` 안(§2.5) |
@@ -100,7 +100,7 @@ W3C Design Tokens Community Group Format Module **2025.10**(https://www.designto
 
 `lint` 작업은 pnpm을 설치하지 않는다. 그래서 네 gate는 `node_modules` 없이 **파일만 읽어** 판정한다(`needs: []`). 생성물 `tokens.css`가 커밋되어 있어 `design-lint`의 "정의되지 않은 var" 검사도 설치 없이 된다.
 
-### 2.2 `design-tokens
+### 2.2 `design-tokens`
 
 단계 둘: `tokens.mjs --check`(§1.3) → `check-tokens.mjs`(아래 표). 둘 다 `design/tokens/`·`design/ui.css`와 생성물을 읽는다.
 
@@ -116,12 +116,12 @@ W3C Design Tokens Community Group Format Module **2025.10**(https://www.designto
 | DT8 | 대비: `contrast.tokens.json`의 쌍 전부를 WCAG 2.x 상대 휘도로 다시 계산(라이트·다크), 알파 색은 바탕과 합성한 뒤 계산. 쌍 수가 줄면 ADR 번호가 PR 본문에 있어야 한다(→ 사람, `R2`) | 하나라도 미달 1 | foundations §2.4(92쌍 PASS). 계산 함수는 기존 `tokens.test.ts`의 `luminance`·`contrast`를 옮긴다 |
 | DT9 | C1: 모든 색 토큰을 HSL로 바꿔 H 140~170°이면서 S ≥ 70%인 색 0개(경계 포함), `gray-*`는 S = 0 | 1 | foundations §2.1·§2.6(C1) |
 | DT10 | 다크: `@media (prefers-color-scheme: dark) :root:where(:not([data-theme="light"]))` 블록과 `:root:where([data-theme="dark"])` 블록의 선언이 같음, 라이트 색 토큰 중 다크에 없는 것은 `--on-accent`·`--focus`(값이 같다)뿐, 다크 `--bg`·`--surface`·`--raised`·`--surface-2`·`--surface-pressed`의 OKLCH L ≥ 0.24(순흑 없음) | 1 | foundations §10, D9. 기존 `tokens.test.ts` "다크 두 블록은 같은 값이다" 승계 |
-| DT11 | 블록 값: reduce 블록이 `--motion-base`·`--motion-slow`·`--progress-tween`을 1ms로, `--motion-fast`·`--motion-spin`은 건드리지 않음. coarse 블록 값 = §5.1 터치 열. contrast 블록이 `--fg-muted·`--separator`·`--border-strong`을 `var(--fg)`로. text-scale 블록이 foundations §3.2 유도 규칙과 같음 | 1 | foundations §7.1·§5.1·§2.5·§3.2 |
+| DT11 | 블록 값: reduce 블록이 `--motion-base`·`--motion-slow`·`--progress-tween`을 1ms로, `--motion-fast`·`--motion-spin`은 건드리지 않음. coarse 블록 값 = §5.1 터치 열. contrast 블록이 `--fg-muted`·`--separator`·`--border-strong`을 `var(--fg)`로. text-scale 블록이 foundations §3.2 유도 규칙과 같음 | 1 | foundations §7.1·§5.1·§2.5·§3.2 |
 | DT12 | 글꼴: `--font-sans`가 `system-ui`로 시작, 생성물·`app.css`·Worker CSS에 `@font-face`·`url(`·`@import` 0개 | 1 | 사용자 결정 2, foundations §3.1. 기존 "번들 글꼴 없음" 승계 |
 | DT13 | 층: `--z-*` 각각이 소스에서 **정확히 한 컴포넌트 파일**에서만 쓰임(`--z-sticky`는 입력줄) | 1 | foundations §7.2 "층마다 주인 하나" |
 | DT14 | 문서 패리티: foundations §13 사전 = 생성물 사전 | 어긋난 이름 출력, 1 | §1.3 |
 | DT15 | 상수 패리티: foundations §14 표의 이름·값 = `app/src/lib/timing.ts`·`crates/shell/src/consts.rs`의 상수. 표에 없는 상수가 두 파일에 있으면 실패 | 1 | foundations §14 |
-| DT16 | 계산값: 생성물을 jsdom 없이 캐스케이드 시뮬레이션(selector 특이도 전부 (0,1,0)이라 소스 순서만 본다)해 다크 + `prefers-contrast: more`에서 `--fg-muted = `--fg`, 비활성 창에서 `--accent-soft` = `--surface-2`, hover 면 ≠ pressed 면(`--surface-2` ≠ `--surface-pressed`, 두 테마) | 1 | foundations §2.5·§10·§12-11, 검토 P1-2·P1-15 |
+| DT16 | 계산값: 생성물을 jsdom 없이 캐스케이드 시뮬레이션(selector 특이도 전부 (0,1,0)이라 소스 순서만 본다)해 다크 + `prefers-contrast: more`에서 `--fg-muted` = `--fg`, 비활성 창에서 `--accent-soft` = `--surface-2`, hover 면 ≠ pressed 면(`--surface-2` ≠ `--surface-pressed`, 두 테마) | 1 | foundations §2.5·§10·§12-11, 검토 P1-2·P1-15 |
 | DT17 | 성공색 없음: 이름에 `success`가 든 토큰 0개(ADR-0004가 뒤집히면 이 검사를 ADR 번호와 함께 지운다), 이름에 `info`가 든 색 토큰 0개 | 1 | D10, ADR-0004 |
 
 기존 `app/src/styles/tokens.test.ts`(vitest)는 단계 (a)에서 지운다. 같은 검사가 DT8·DT10·DT11·DT12로 옮겨 가고 Worker까지 덮는다. **ratchet 영향**: `tests.vitest`가 그 파일의 테스트 수만큼 내려간다 → 같은 PR에서 `ci/RATCHET_LOG.md`에 `tests.vitest` 줄을 더한다(cicd.md §4.2 규칙. "node --test로 옮겼고 `scripts-test`가 센다"가 이유).
@@ -143,10 +143,10 @@ W3C Design Tokens Community Group Format Module **2025.10**(https://www.designto
 | DL7 | 컴포넌트 안 `--` 선언 금지 | `--p` 하나(components.md §2.20) | foundations 머리(comp 층 비움) |
 | DL8 | `!important`, `transition: all`, `outline: none`·`outline: 0`(예외 `[data-focus-container]:focus-visible` 한 규칙), `forced-color-adjust`, `backdrop-filter`, `text-wrap`, `break-word`, `text-align: justify`, `cursor: pointer`(앱 소스만. Worker `site.css`는 허용) | — | foundations §11 표, D25, components §0.3 |
 | DL9 | `:focus-visible`·`:focus` 규칙 안의 `box-shadow` 금지, `box-shadow` 값은 `var(--shadow-*)` 또는 `inset 0 0 0 4px var(--surface)`(라디오 고리)만 | — | foundations §6.2·§6.4, D20 |
-| DL10 | 하한 밖 기능: `light-dark(`, `linear(`, `@starting-style, `view-transition`, `scrollbar-gutter`, `scrollbar-width`, `accent-color`, `field-sizing`, `popover`(속성), `from ` 상대 색 문법, `@scope`, `anchor-name`, `interpolate-size`, `corner-shape`, `::-webkit-scrollbar`, `AccentColor` 키워드 | — | foundations §11, D1·D8 |
+| DL10 | 하한 밖 기능: `light-dark(`, `linear(`, `@starting-style`, `view-transition`, `scrollbar-gutter`, `scrollbar-width`, `accent-color`, `field-sizing`, `popover`(속성), `from ` 상대 색 문법, `@scope`, `anchor-name`, `interpolate-size`, `corner-shape`, `::-webkit-scrollbar`, `AccentColor` 키워드 | — | foundations §11, D1·D8 |
 | DL11 | `calc(… - 1px)`·`calc(… + 1px)`, `translate(-50%`, 정지 상태 글자 요소의 `transform`(selector에 `:active`·`:hover`·`[open]`·`[aria-expanded="true"]` 같은 의사 클래스·속성 상태가 없고 선언에 `transform`이 있으면). `ui.css` selector에 상태 클래스(`.is-`·`.active`·`.open`) 금지 | 진행 막대 `scaleX`, Disclosure `[open]` 화살표 회전, Spinner | foundations §6.2 금지 행(`G-SCALE-*`), components §0.2 |
 | DL12 | `:hover` 규칙이 `display`·`visibility`·`opacity`·`width`·`height`·`min-*`·`max-*`를 바꾸지 않음(`G-INPUT-IN1`) | — | D21 |
-| DL13 | 컴포넌트 CSS 안 `@media (pointer·`(hover`·`(any-pointer·`(width`·`(min-width`·`(max-width` 금지. 폭 쿼리는 허용 파일(앱 `app/src/styles/tokens.css`·`app/src/styles/layout.css`, Worker `worker/src/http/site.css`·생성물)만. `layout.css`의 `@media (max-width: 599px)` 블록과 `:root[data-text-scale="x-large"]` 접두 블록은 선언이 같아야 한다(foundations §8) | 허용 파일 | foundations §5.1(`G-INPUT-IN5`·`G-INPUT-IN6`)·§8 |
+| DL13 | 컴포넌트 CSS 안 `@media (pointer`·`(hover`·`(any-pointer`·`(width`·`(min-width`·`(max-width` 금지. 폭 쿼리는 허용 파일(앱 `app/src/styles/tokens.css`·`app/src/styles/layout.css`, Worker `worker/src/http/site.css`·생성물)만. `layout.css`의 `@media (max-width: 599px)` 블록과 `:root[data-text-scale="x-large"]` 접두 블록은 선언이 같아야 한다(foundations §8) | 허용 파일 | foundations §5.1(`G-INPUT-IN5`·`G-INPUT-IN6`)·§8 |
 | DL14 | 선 굵기: `border*`·`outline*`의 길이는 `1px`·`2px`·`0`만(`0.5px`·`1.5px`·`3px` 금지). 예외: `--icon-stroke: 1.5px` 정의(생성물) | — | foundations §6.2·§9 |
 
 **(나) 소스 스캔** — 마크업·스크립트:
@@ -165,7 +165,7 @@ W3C Design Tokens Community Group Format Module **2025.10**(https://www.designto
 
 **(다) prop 어휘** — `app/src/lib/components/ui/vocab.ts`가 유일한 원천이다:
 
-``ts
+```ts
 export const BUTTON_VARIANT = ['primary', 'secondary', 'ghost'] as const;
 export const NOTICE_VARIANT = ['inline', 'banner', 'row', 'toast'] as const;
 export const TONE = ['neutral', 'info', 'warning', 'danger'] as const;   // 컴포넌트는 부분집합을 타입으로
@@ -174,7 +174,7 @@ export const KIND = ['vod', 'clip', 'rewind', 'adult'] as const;          // Bad
 export const PROGRESS_STATE = ['active', 'paused', 'failed', 'waiting'] as const;   // ProgressBar만
 export const BOOLEAN_PROPS = ['disabled', 'open', 'loading', 'required', 'readonly', 'invalid'] as const;
 export const ICON_BUTTON_ICONS = ['x', 'ellipsis', 'chevron-down', 'chevron-up', 'chevron-left', 'chevron-right', 'eye', 'eye-off', 'arrow-left', 'settings'] as const;   // foundations §9 표와 같다
-``
+```
 
 | # | 규칙 | 근거 |
 |---|---|---|
@@ -226,7 +226,7 @@ export const ICON_BUTTON_ICONS = ['x', 'ellipsis', 'chevron-down', 'chevron-up',
 - 갤러리 페이지는 `app/gallery.html` + `app/src/gallery/main.ts`로 **별도 Vite 진입점**이다. `vite build`는 환경 변수 `CHZZK_GALLERY=1`일 때만 이 진입점을 포함한다. 릴리스 dist에는 없다. 강제: `release-hygiene` gate(`artifact-check.mjs hygiene`)에 "dist에 `gallery`가 없다" 검사 한 줄 추가(기존 E2E 표식 검사와 같은 자리). `e2e-web` gate의 `pnpm build` 단계는 `CHZZK_GALLERY=1`로 돈다(e2e 전용 dist. `size.dist_gz` ratchet은 `size` gate가 `bundle` 뒤 릴리스 dist를 재므로 영향 없다).
 - 내용: `ui/` 모든 컴포넌트 × 상태 매트릭스(gov §4: rest·hover·pressed·focus-visible·disabled·loading·error·empty, 짧은/긴 한글/무공백 영문/큰 숫자) + 네 화면(홈 빈 상태 2종, 카드, 작업 목록 상태 전부·대화상자 7종, 설정) + 로그인 첫 화면 + 아이콘 시트 + **Worker 정적 HTML**(랜딩 비로그인·허가·관리·`/auth/done` 결과(웹 denied·cancelled, failed)·확인 페이지·옛 앱 안내. 앱 수신기 결과 페이지는 셸이 그려 넣지 않는다, `web.md` §6.5: vitest가 렌더한 문자열을 Playwright `setContent`로 넣는다, 의존성 0). 고정 데이터는 두 벌(`platform=macos`·`platform=windows`: 단축키 표기·[폴더에서 보기]·백슬래시 경로·1024 진법, 검토 U-38)이고 카드는 **최악 조합**(배너 B1 + 두 줄 제목 + 화질 5 + 경고 1), 작업 목록에는 앞 40자가 같고 끝만 다른 제목 둘이 있다. 매트릭스에 없는 variant×tone 조합이 `vocab.ts`에 있으면 `gallery.spec.ts`가 실패한다(갤러리가 어휘를 전부 보여야 한다). 갤러리는 sys 토큰만 쓴다(foundations 머리).
 - Playwright 프로젝트 `gallery`(`app/playwright.config.ts`에 추가, 같은 webServer): 환경 행렬을 `test.describe`로 돈다. `colorScheme` light·dark × viewport 720×520·960×700·320×231(Windows 텍스트 225% 흉내) × `emulateMedia({ reducedMotion, forcedColors, contrast })` × `data-text-scale="x-large"` × `any-pointer: coarse` 흉내(`context.addInitScript`로 `matchMedia` 대체. Playwright는 `any-pointer`를 직접 에뮬레이션하지 못한다 **[잠정]**: 확인은 Playwright 1.63 `emulateMedia` 문서. 안 되면 coarse는 토큰 블록 값 검사(DT11)와 `--force-device-scale-factor` 스냅으로 대신한다). Worker 페이지는 1280×800·390×844.
-- 각 조합에서: axe(WCAG 2.x A·AA, 기존 `fixtures.ts`의 `app.axe()`) 위반 0, 모든 대화형 요소의 바운딩 박스 ≥ `--hit-min`(마우스 24, coarse 40), `x-large`·320 폭에서 가로 스크롤 없음(WCAG 1.4.10 리플로우), forced-colors에서 포커스 링이 그려짐(`outline-style` ≠ none)과 실패·일시정지 막대 채움이 보임, `inert` 아닌 층에 `.btn-primary` 정확히 1개이고 대화상자가 열리면 `document.activeElement`가 오른쪽 끝 버튼(D36), 정렬선(툴바 첫·끝 요소·배너·카드·토스트의 상자 x = 열 안쪽 x ± 2px), 계산값(`getComputedStyle`: 다크 + contrast more에서 `--fg-muted = `--fg`, hover 면 ≠ pressed 면), 720×520 기본 글자·마우스 조합에서 로그인 화면 네 요소와 카드 [받기]가 뷰포트 안(다른 조합은 스크롤로 닿음만), 토스트가 떠 있을 때 마지막 행 버튼이 가려지지 않음.
+- 각 조합에서: axe(WCAG 2.x A·AA, 기존 `fixtures.ts`의 `app.axe()`) 위반 0, 모든 대화형 요소의 바운딩 박스 ≥ `--hit-min`(마우스 24, coarse 40), `x-large`·320 폭에서 가로 스크롤 없음(WCAG 1.4.10 리플로우), forced-colors에서 포커스 링이 그려짐(`outline-style` ≠ none)과 실패·일시정지 막대 채움이 보임, `inert` 아닌 층에 `.btn-primary` 정확히 1개이고 대화상자가 열리면 `document.activeElement`가 오른쪽 끝 버튼(D36), 정렬선(툴바 첫·끝 요소·배너·카드·토스트의 상자 x = 열 안쪽 x ± 2px), 계산값(`getComputedStyle`: 다크 + contrast more에서 `--fg-muted` = `--fg`, hover 면 ≠ pressed 면), 720×520 기본 글자·마우스 조합에서 로그인 화면 네 요소와 카드 [받기]가 뷰포트 안(다른 조합은 스크롤로 닿음만), 토스트가 떠 있을 때 마지막 행 버튼이 가려지지 않음.
 - **ratchet 영향**: `tests.playwright`가 늘어난다(조이기만이라 로그 불필요). `measure.mjs tests-playwright`가 `report.json`에서 프로젝트 구분 없이 세므로 그대로 쓴다.
 - 상태: `e2e-web` 작업 안에서 돌므로 그 작업과 함께 관찰 → 편입된다. 따로 `OBSERVED_JOBS` 항목을 두지 않는다. **관찰 중에는 비차단**이므로 C2·C7의 필수 보장은 `frontend`(로그인 뷰 네 키 렌더)가 든다(검토 U-19).
 
@@ -258,11 +258,11 @@ export const ICON_BUTTON_ICONS = ['x', 'ellipsis', 'chevron-down', 'chevron-up',
 
 | # | gate | 검사 | 원천 |
 |---|---|---|---|
-| DX1 | `design-lint` | `data-tauri-drag-region 0개, `titleBarStyle`·`hiddenTitle` 없음 | platform §3 |
+| DX1 | `design-lint` | `data-tauri-drag-region` 0개, `titleBarStyle`·`hiddenTitle` 없음 | platform §3 |
 | DX2 | `design-lint` | `cursor: not-allowed` 0개, `cursor`·`user-select` 선언은 `app.css`의 규칙에만(컴포넌트 0개) | platform §4.1·§4.2 |
 | DX3 | `design-lint` | `<img`·`<a ` 요소에 `draggable="false"` 필수(앱 소스) | platform §4.6 |
 | DX4 | `design-lint` | `wheel`·`gesturestart`·`gesturechange`·`webkitmouseforce*`·`contextmenu` 리스너는 `guards.ts`에만 | platform §4.3·§4.5·§5 |
-| DX5 | `design-lint` | `matchMedia('(pointer·`maxTouchPoints`·`navigator.platform`·`navigator.userAgent` 금지(플랫폼은 Rust가 준다) | platform §20 |
+| DX5 | `design-lint` | `matchMedia('(pointer`·`maxTouchPoints`·`navigator.platform`·`navigator.userAgent` 금지(플랫폼은 Rust가 준다) | platform §20 |
 | DX6 | `design-lint` | `keydown` 리스너가 있는 파일은 `isImeKey`를 import; `<input` 요소의 `onkeydown`에 `Enter` 분기 금지; `compositionend` + `setTimeout` 패턴 금지 | platform §17.1, patterns §8 |
 | DX7 | `design-lint` | `navigator.clipboard.readText(` 0개 | platform §17.2 |
 | DX8 | `design-lint` | `prefers-contrast: less`·`custom` 0개 | platform §10.3 |
@@ -297,7 +297,7 @@ export const ICON_BUTTON_ICONS = ['x', 'ellipsis', 'chevron-down', 'chevron-up',
 | **R1** | 화면(`.svelte` 마크업·CSS, Worker 템플릿)이 바뀜 | 스크린샷 **네 장**: 라이트 960×700, 다크 960×700, 라이트 720×520, forced-colors(Windows 실기 또는 `emulateMedia`). 갤러리 섹션이면 `design-shots`의 diff 이미지로 대신한다 | (1) 열 정렬: 툴바 안쪽·배너·카드·토스트의 왼쪽 선이 한 x좌표(foundations §8 "기준선 하나"), (2) 12px 글자가 단독으로 의미를 전하는 곳 없음(§3.2), (3) `--fg-disabled`가 비활성 외에 쓰인 곳 없음(§1 규칙 5), (4) `--separator` 선 하나로만 구분되는 의미 경계 없음(§6.2), (5) 720에서 가로 스크롤·잘림 없음, (6) 숫자 열(퍼센트·크기)이 `.num` 유틸로 정렬 | `design-gallery`(axe·리플로우), `design-shots`(회귀) |
 | **R2** | `design/tokens/` diff가 있음 | ADR 번호, 바뀐 토큰의 이름·전후 값, 근거 등급(E0~E4) | ADR 파일이 PR에 있고 상태가 `제안` 또는 `채택(잠정)`/`채택`, 근거 표의 최고 등급이 적혀 있다(E3 미만이면 `채택`이 아니다), [취향] 값은 [취향]으로 표시. foundations 표·§13·생성물이 같은 PR에서 바뀜 | `design-tokens`(T14 패리티), `scripts-test`(`adr.test.mjs`) |
 | **R3** | `copy/` 또는 Worker `copy.ts` diff | copy deck diff 요약(추가·변경 키)과 `content.md` 용어집 대조 결과("비표준 어휘 없음" 또는 예외 이유) | 새 문자열이 content.md 어미·구두점·조사 규칙에 맞고, OS별 문자열은 `platform` 분기 객체에만, 오류 문구는 3요소(무슨 일·왜·다음 행동, C6) | `design-copy`(C1~C9) |
-| **R4** | 글자 토큰(`--text-*`·`--leading-*`·`--weight-*`·`--font-*`) diff | Windows 실기 스크린샷 2장(맑은 고딕, 배율 100%·125%) + `getComputedStyle(document.body).fontFamily` 값 | 13px 400 한글이 판독되고 600이 400과 구별되며 숫자 열이 정렬된다(README §6-1). 안 되면 README §6-1의 조치(`--text-body`·`--leading-body → 14/18)를 같은 PR에서 한다 | — (실기만) |
+| **R4** | 글자 토큰(`--text-*`·`--leading-*`·`--weight-*`·`--font-*`) diff | Windows 실기 스크린샷 2장(맑은 고딕, 배율 100%·125%) + `getComputedStyle(document.body).fontFamily` 값 | 13px 400 한글이 판독되고 600이 400과 구별되며 숫자 열이 정렬된다(README §6-1). 안 되면 README §6-1의 조치(`--text-body`·`--leading-body` → 14/18)를 같은 PR에서 한다 | — (실기만) |
 | **R5** | `icons.ts`에 항목 추가·변경 | foundations §9.1 은유 표에 더한 행 + 광학 보정 시트(16·20 격자 위 렌더, DPR 1·2) | 다른 동작에 이미 쓰인 모양이 아니고, stroke가 화면 px 고정이며, 수평선이 격자에 걸치지 않는다(`icons-blur.mjs` 결과 첨부) | `design-icons`(I1~I7, 번짐 측정) |
 | **R6** | 대화상자·확인 흐름(Dialog 사용처, 창 닫기·업데이트·로그아웃·취소·덮어쓰기, Worker 확인 페이지) 변경 | 표 한 장: 대화상자마다 [왼쪽 버튼 / 오른쪽 버튼 / 채움 / Enter 대상 / Esc 결과 / 파괴 동작 위치] | 오른쪽 끝 = 안전(아무것도 하지 않은 것과 같은 결과) = 채움 = Enter = 기본 포커스, 실행 쪽 = 왼쪽(되돌릴 수 없으면 `tone=danger` 왼쪽 끝), `inert` 아닌 층에 채움 정확히 1개, Esc = 닫기, 라벨이 `content.md` §5.3 표와 같다(D36, ADR-0005) | `frontend`(Dialog 테스트), `design-gallery`(채움 1개·포커스) |
 | **R7** | 새 알림·상태 표시(Notice 사용처, 토스트, 배너, 행 상태) | 위계 중 어디인지(행 상태 > 인라인 > 토스트 > 배너 > 대화상자)와 "한 사건에 수단 하나"인지 한 줄, 같은 사건이 다른 곳에도 표시되면 그 이유 | 같은 사건이 두 수단으로 나오지 않음(`J-F-*` "같은 사건을 두 번 말한다" 결함 금지), 정보 토스트는 `TOAST_MS`[취향]+정지, 오류·동작 토스트는 대기열·닫을 때까지(D37), 정보 톤은 중립 면 | `frontend`(Toast·Banner) |
@@ -441,7 +441,7 @@ README D62의 여섯 항목을 관찰 가능한 문장으로 적었다. 각 항�
 
 ### 6.5 기록 양식
 
-``
+```
 시험 ID: VT-YYYYMMDD-회차-P번호   진행자:   기록자:
 앱 버전:   OS(종류·배율만):   집단(스트리머/지인):
 동의: 녹화[예/아니오] 인용[예/아니오] 관찰자[없음/N]   대본 판: v1   파일럿: [예/아니오]
@@ -454,7 +454,7 @@ T1 | … | | | | |
 의외였던 행동:
 화면에 보인 개인정보(종류만):
 녹화 삭제 예정일:
-``
+```
 
 기록에 채널 이름·영상 제목·영상 번호·계정 이름·인증 값을 적지 않는다(공개 저장소 규칙. 강제 `scan` gate가 `docs/`도 본다). 회차 요약 파일은 PR로 올리고, 그 PR이 ADR을 갱신한다(README §7.1 조건 6).
 
@@ -508,7 +508,7 @@ README가 이 문서에 등록을 맡긴 과제다. 각 과제는 끝나면 ADR 
 | ③ | 공개 스토어(App Store·Microsoft Store·Flathub)에 올린다 | 배포 결정 | 계획 없음 |
 | ④ | KIPRIS에 "치지직" 상표가 소프트웨어류(9류·42류)로 등록되어 있다 | KIPRIS 조회 | [미확인] |
 
-트리거와 무관하게 유지하는 것: 비공식 고지 4곳(D34), Worker 헤더 배지, 치지직 로고·색 미사용(C1). 강제 `design-copy` DC6(고지 상수), `design-tokens DT9(C1).
+트리거와 무관하게 유지하는 것: 비공식 고지 4곳(D34), Worker 헤더 배지, 치지직 로고·색 미사용(C1). 강제 `design-copy` DC6(고지 상수), `design-tokens` DT9(C1).
 
 ---
 
@@ -521,8 +521,8 @@ README가 이 문서에 등록을 맡긴 과제다. 각 과제는 끝나면 ADR 
 | 항목 | 내용 |
 |---|---|
 | 범위 | `design/tokens/*.tokens.json`(foundations 전부)·`design/ui.css`(components.md), `design/copy/terms.json`, `scripts/design/{tokens,check-tokens,css,lint,copy,icons,contrast,stem,spec-check,adr.test,allow.test,pr-template.test}.mjs` + 테스트(편집 때 쓴 scratchpad `spec-tools/`를 옮긴다), 생성물 셋(`app/src/styles/tokens.css` 교체, `app/src/styles/ui.css`·`worker/src/http/site-css.generated.ts` 신설. **이 단계에서는 Worker가 아직 쓰지 않는다**), `app/src/lib/timing.ts`·`crates/shell/src/consts.rs`(foundations §14 상수, 아직 참조 없음), `gates.mjs`·ci.yml `lint` 작업에 네 gate, 훅 `when`, selftest 씨앗, `allow.json`(현재 위반 전부), `.github/PULL_REQUEST_TEMPLATE.md`, ADR 0001~0010(이미 있음), `app/src/styles/tokens.test.ts` 삭제 |
-| 완료 조건 | `run.mjs design-tokens·`design-lint`·`design-copy`·`design-icons` 모두 0(허용 목록으로), `parity` 0, `selftest`에 여덟 씨앗 기대대로, `--check`가 생성물 손 수정을 잡는 씨앗 통과, foundations §13·§14 패리티 통과, `spec-check.mjs` 0 |
-| e2e | 변화 없음(토큰 이름이 바뀌지만 옛 `tokens.css`를 쓰는 컴포넌트는 허용 목록 아래 그대로다. **주의**: 옛 토큰 이름(`--fg-faint·`--dur-*`·`--success`)이 사라지면 화면이 깨지므로 이 단계의 `tokens.css`는 **새 토큰 + 옛 이름의 `/* legacy */` 별칭 블록**을 끝에 둔다(`--fg-faint: var(--fg-disabled)` 등, 주석 "단계 (c)에서 제거"). 별칭 블록은 DT3·DT7에서 뺀다(foundations §12-18)) |
+| 완료 조건 | `run.mjs design-tokens`·`design-lint`·`design-copy`·`design-icons` 모두 0(허용 목록으로), `parity` 0, `selftest`에 여덟 씨앗 기대대로, `--check`가 생성물 손 수정을 잡는 씨앗 통과, foundations §13·§14 패리티 통과, `spec-check.mjs` 0 |
+| e2e | 변화 없음(토큰 이름이 바뀌지만 옛 `tokens.css`를 쓰는 컴포넌트는 허용 목록 아래 그대로다. **주의**: 옛 토큰 이름(`--fg-faint`·`--dur-*`·`--success`)이 사라지면 화면이 깨지므로 이 단계의 `tokens.css`는 **새 토큰 + 옛 이름의 `/* legacy */` 별칭 블록**을 끝에 둔다(`--fg-faint: var(--fg-disabled)` 등, 주석 "단계 (c)에서 제거"). 별칭 블록은 DT3·DT7에서 뺀다(foundations §12-18)) |
 | ratchet | `tests.vitest` 감소 → `RATCHET_LOG.md` 줄. 새 키 `design.allow_entries`(CI 측정값으로 시작, 늘면 실패) |
 | ADR | 없음(0001~0010은 명세 PR에 있다) |
 
@@ -530,8 +530,8 @@ README가 이 문서에 등록을 맡긴 과제다. 각 과제는 끝나면 ADR 
 
 | 항목 | 내용 |
 |---|---|
-| 범위 | `vocab.ts`, Button(`loading` 추가, `variant`/`tone` 분리, 끝자리 보정)·IconButton·TextField·SecretField·Select·Switch·RadioGroup·Badge(`kind`)·ProgressBar(`scaleX`, forced 형태 단서)·**Notice**(InlineAlert·Banner·Toast 통합, tone × variant)·Toast(대기열)·Dialog(D36 배치, `primary`/`secondary`)·Menu(`trigger`)·Disclosure·Surface·SettingsRow·FieldRow·EmptyState·DropOverlay·Toolbar·Icon(`non-scaling-stroke, 메타). `components.md`가 명세. `app.css` 전역 리셋(`html { font-size: 16px }`, `keep-all`, `.num`·`.ellipsis` 유틸, `[data-focus-container]`). 코드 주석의 `ui-visual §n` 인용을 `docs/design/system/` 절로. 갤러리 진입점과 `gallery.spec.ts`, `design-gallery`를 `e2e-web`에, `release-hygiene`에 gallery 없음 검사 |
-| 완료 조건 | `ui/`의 `allow.json` 항목 0(허용 목록은 `views/`·`components/{app,jobs,receive,settings}` 항목만 남는다), 컴포넌트 단위 테스트(Dialog·ProgressBar·Switch·접근 이름 타입), 갤러리에서 axe 0·대상 크기·forced 포커스 링 통과, `design-icons` I1~I7 통과(Lucide 메타·고지 파일 `licenses/lucide.txt`·정보 화면 고지 행) |
+| 범위 | `vocab.ts`, Button(`loading` 추가, `variant`/`tone` 분리, 끝자리 보정)·IconButton·TextField·SecretField·Select·Switch·RadioGroup·Badge(`kind`)·ProgressBar(`scaleX`, forced 형태 단서)·**Notice**(InlineAlert·Banner·Toast 통합, tone × variant)·Toast(대기열)·Dialog(D36 배치, `primary`/`secondary`)·Menu(`trigger`)·Disclosure·Surface·SettingsRow·FieldRow·EmptyState·DropOverlay·Toolbar·Icon(`non-scaling-stroke`, 메타). `components.md`가 명세. `app.css` 전역 리셋(`html { font-size: 16px }`, `keep-all`, `.num`·`.ellipsis` 유틸, `[data-focus-container]`). 코드 주석의 `ui-visual §n` 인용을 `docs/design/system/` 절로. 갤러리 진입점과 `gallery.spec.ts`, `design-gallery`를 `e2e-web`에, `release-hygiene`에 gallery 없음 검사 |
+| 완료 조건 | `ui/`의 `allow.json` 항목 0(허용 목록은 `views/`·`components/{app,jobs,receive,settings}` 항목만 남는다), 컴포넌트 단위 테스트(Dialog·ProgressBar·Switch·접근 이름 타입), 갤러리에서 axe 0·대상 크기·forced 포커스 링 통과, `design-icons` I1~I7 통과(Lucide 메타·고지 파일 `licenses/lucide.txt`·정보 화면 고지 행), 이 단계가 고친 파일의 코드 주석 `ui-visual §n` 인용을 `system/` 절로 바꿈 |
 | e2e | `app/e2e/mock/backend.ts`는 그대로(DTO 불변). spec은 role·name 기반 selector라 대부분 그대로이나 InlineAlert·Banner·Toast → Notice로 `role`이 바뀐 곳(`alert`/`status`)은 spec을 고친다. Dialog 버튼 순서가 바뀌므로 `flow.spec.ts`·`settings.spec.ts`의 "취소 대화상자" 단계를 D36 순서로 |
 | ratchet | `tests.vitest` 증가, `tests.playwright` 증가(gallery), `design.allow_entries` 감소(조이기, `ratchet.mjs write`) |
 | ADR | 새 컴포넌트(Notice·Surface·SettingsRow·FieldRow·DropOverlay·Toolbar) 각 1장 |
@@ -541,7 +541,7 @@ README가 이 문서에 등록을 맡긴 과제다. 각 과제는 끝나면 ADR 
 | 항목 | 내용 |
 |---|---|
 | 범위 | `patterns.md`대로: 홈(빈 상태 2종·최근 영상 목록 + [다시 열기]·붙여넣기 힌트 `{paste}`), 영상 카드([불러오기] 테두리·[받기] 채움 하나·sticky 바닥·"가장 좋은 화질" 꼬리표·"받다 만 파일" 안내), 작업 행(상태 어휘 두 층, 레일 제거, 퍼센트 열 `--pct-w`, 제목 2줄·배지 뒤, 동작 자기 줄, 완료 그룹 접힘), 설정(그룹 상자, 계정 행, 모양 RadioGroup은 Linux만, 글자 크기 RadioGroup, [⚙] 자리 유지), 로그인·거부 화면(네 요소), 툴바(이름 13px 600, 계정 Menu·[⚙]), 레이아웃 열 800·`layout.css` 두 블록, 토스트 열 기준·대기열, `data-text-scale` 설정 연결(셸 설정 DTO 변경 → `UPDATE_BINDINGS=1`), 비활성 창 `data-window-active`(Tauri 창 이벤트), 대화상자 7종(D7 덮어쓰기 포함), `.part` 취소 확인, 옛 토큰 별칭 블록 제거 |
-| 완료 조건 | `allow.json` 항목 0(**gate가 허용 목록 없이 통과**), `design-tokens DT3 미사용 0, 갤러리 네 화면 + 로그인 화면 + Windows 고정 데이터, 720×520 최악 조합에서 카드 [받기]가 뷰포트 안(sticky), `R1` 네 장·`R6` 표·`R7` 한 줄 첨부 |
+| 완료 조건 | `allow.json` 항목 0(**gate가 허용 목록 없이 통과**), `design-tokens` DT3 미사용 0, 갤러리 네 화면 + 로그인 화면 + Windows 고정 데이터, 720×520 최악 조합에서 카드 [받기]가 뷰포트 안(sticky), `R1` 네 장·`R6` 표·`R7` 한 줄 첨부, 저장소에 `ui-visual` 인용 0(`git grep ui-visual`이 `docs/design/ui-visual.md` 자신과 이 명세·ADR·ROADMAP의 이력 문장만 남김)이고 **`docs/design/ui-visual.md` 스텁을 같은 PR에서 삭제** |
 | e2e | **가장 큰 영향.** `backend.ts`에 최근 VOD 목록(`recentVods`는 이미 DTO에 있다)·완료 그룹·"연결 대기" 상태(DTO에 단계 추가 시) 시나리오 추가. 모든 spec의 화면 문구 selector를 새 copy로(문구는 (d)에서 다시 바뀌므로, 이 단계에서 spec이 `copy/ko.ts`를 import해 문자열을 참조하도록 바꾼다 → (d)에서 spec 수정 0). `e2e-native` 흐름(받기 하나)은 [받기] 버튼의 role·name이 같으면 그대로 |
 | ratchet | `design.allow_entries` → 0(키를 지우지 않고 0으로 둔다), `tests.playwright`·`tests.vitest` 증가, `tests.app`(Rust 창 이벤트·설정 DTO 테스트) 증가 |
 | ADR | 패턴 변경(최근 목록·완료 그룹·연결 대기) 각 1장, D28 글자 크기 단계[잠정] 1장 |
@@ -561,7 +561,7 @@ README가 이 문서에 등록을 맡긴 과제다. 각 과제는 끝나면 ADR 
 | 항목 | 내용 |
 |---|---|
 | 범위 | `web.md`대로: `site-css.ts` → `site-css.generated.ts`(토큰 + ui + `site.css`), 골격(`theme-color` 2종·`color-scheme`·skip link·`caption`·`th scope`·헤더 `.col`), 읽기 척도 `main[data-scale="reading"]`(랜딩·help·privacy·licenses만), 랜딩 구조(D53: 내 OS 버튼 36 하나, 다른 OS 접힘, 설치 안내(SAC 경고 Notice·그래도 열기 조건문), SHA-256 접힘, 휴대폰 블록, 고지 히어로 아래·바닥글, 로그인 전 고지 네 줄·`loginForFiles`·`loginTwice`, "막히면" + 연락 자리표시), 헤더 배지 "비공식 도구", 폼 위험도 2단(D54, 허가 어휘), 결과 페이지(웹 흐름 denied `circle-x`·`doneDenied.next`·cancelled, grant 없는 failed, 옛 앱 안내 `outdatedApp`. 앱 흐름 결과는 셸 수신기라 (e) 밖, `web.md` §6.5), 오류 페이지 nav, `/notice`(D41), `/licenses`(Lucide 고지), OG 이미지 |
-| 완료 조건 | `worker` gate의 골격 검사·`help-check` 통과, `design-tokens DT1(공통 구간 동일)·DT3(Worker 소스에서 `--text-hero` 사용), `design-lint`가 `worker/src/http`를 허용 목록 없이 통과, `R8` 기록 첨부, Worker vitest(1148+)에 골격·폼 테스트 추가, `worker.md` 구현 중 변경 번호(`web.md` §14의 열린 다섯 항목. 6번 확인 코드 제거는 루프백이 닫았다) |
+| 완료 조건 | `worker` gate의 골격 검사·`help-check` 통과, `design-tokens` DT1(공통 구간 동일)·DT3(Worker 소스에서 `--text-hero` 사용), `design-lint`가 `worker/src/http`를 허용 목록 없이 통과, `R8` 기록 첨부, Worker vitest(1148+)에 골격·폼 테스트 추가, `worker.md` 구현 중 변경 번호(`web.md` §14의 열린 다섯 항목. 6번 확인 코드 제거는 루프백이 닫았다) |
 | e2e | `worker-e2e`(관찰 작업)의 로그인·관리 흐름은 경로·폼 이름이 같으면 그대로. 폼 위험도 2단으로 "허용 빼기"에 확인 페이지가 끼므로 그 흐름 한 단계 추가. `site-css.test.ts`의 해시 기대값 → 생성기 해시로 |
 | ratchet | `tests.worker` 증가 |
 | ADR | D41 서비스 공지(fail-open 72h) 1장, D54 위험도 2단 1장 |
@@ -580,7 +580,7 @@ README가 이 문서에 등록을 맡긴 과제다. 각 과제는 끝나면 ADR 
 
 - 각 PR 뒤 글로벌 지침의 Codex 리뷰(없으면 서브에이전트 2종)를 돈다.
 - `docs/ROADMAP.md`의 "현재 위치"와 체크리스트를 단계마다 갱신한다(CLAUDE.md 작업 규칙).
-- `docs/design/ui-visual.md`는 명세 PR에서 삭제했다(README §3-1, app.md 구현 중 변경 67). `app.md` §8·§9·§10 본문은 고치지 않고(app.md 50 "본문은 설계 당시 기록") 67이 가리킨다. 코드 주석의 `ui-visual §n`은 (b)·(c)에서 바꾼다.
+- `docs/design/ui-visual.md`는 대체 표만 담은 호환 스텁으로 남겼고 (b)·(c)에서 지운다(README §3-1, app.md 구현 중 변경 67). `app.md` §8·§9·§10 본문은 고치지 않고(app.md 50 "본문은 설계 당시 기록") 67이 가리킨다. 코드 주석의 `ui-visual §n`은 (b)·(c)에서 바꾼다.
 - 관찰 작업 편입: `e2e-web`(+`design-gallery`)와 `design-shots`의 D14 시작일은 각각 (b) 머지 뒤 첫 master 녹색 실행, (a) 머지 뒤 첫 master 녹색 실행이다. 편입 예정일은 ROADMAP에 적는다(cicd.md 구현 중 변경 47 (다)).
 
 ---

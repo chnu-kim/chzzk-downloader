@@ -4,7 +4,7 @@ Cloudflare Worker가 서버에서 그리는 페이지(랜딩·로그인·결과�
 
 읽는 법:
 - 토큰 이름과 수치는 `foundations.md`의 것만 쓴다. 여기 없는 값이 필요하면 지어내지 않고 §13 "foundations에 추가 요청"에 적었다.
-- 규칙마다 (a) 근거와 (b) 강제 수단을 붙였다. 강제 수단은 `node scripts/ci/run.mjs <gate>`의 gate 이름(`worker`·`design-tokens·`design-lint`·`design-copy`·`design-icons`·`design-gallery`·`design-shots`·`scan`) 또는 리뷰 체크리스트 번호(`R1`·`R3`·`R7`·`R8`, README §4.2)다. 도움말 원천 검사(초안의 "gate `help`")는 `worker` gate 안의 단계 `help-check`다(governance §2.9 DX22). `worker` gate는 `scripts/ci/worker-config.mjs`(정적 검사. 배포 설정 모듈 `worker-deploy.mjs`를 import한다)·`worker/test/**`(vitest, Workers 런타임)·`pnpm build`(`wrangler deploy --dry-run`)와 그 번들의 `worker-config.mjs --dist` 검사로 이뤄지고 CI에서는 **worker 영역**(`changes` 작업의 `worker` 출력, `governance.md` §2.0) 작업이다. 이 문서가 "`worker` 테스트"라고 적은 것은 vitest에 더할 단언이고, "`worker-config`"라고 적은 것은 `worker-config.mjs`에 더할 정적 검사다.
+- 규칙마다 (a) 근거와 (b) 강제 수단을 붙였다. 강제 수단은 `node scripts/ci/run.mjs <gate>`의 gate 이름(`worker`·`design-tokens`·`design-lint`·`design-copy`·`design-icons`·`design-gallery`·`design-shots`·`scan`) 또는 리뷰 체크리스트 번호(`R1`·`R3`·`R7`·`R8`, README §4.2)다. 도움말 원천 검사(초안의 "gate `help`")는 `worker` gate 안의 단계 `help-check`다(governance §2.9 DX22). `worker` gate는 `scripts/ci/worker-config.mjs`(정적 검사. 배포 설정 모듈 `worker-deploy.mjs`를 import한다)·`worker/test/**`(vitest, Workers 런타임)·`pnpm build`(`wrangler deploy --dry-run`)와 그 번들의 `worker-config.mjs --dist` 검사로 이뤄지고 CI에서는 **worker 영역**(`changes` 작업의 `worker` 출력, `governance.md` §2.0) 작업이다. 이 문서가 "`worker` 테스트"라고 적은 것은 vitest에 더할 단언이고, "`worker-config`"라고 적은 것은 `worker-config.mjs`에 더할 정적 검사다.
 - **[잠정]**은 확인되지 않은 값(확인 방법을 같은 줄에), **[취향]**은 출처 없는 선택이다.
 - 예시 값(버전·날짜·크기·해시·채널 이름)은 전부 가짜다(`scan`).
 - 근거는 `docs/research/design-system.md`의 ID로 인용한다(README 머리). a-worker §…처럼 ID가 없는 절은 약칭으로 남겼다. `worker.md`는 `docs/design/worker.md`(끝의 "구현 중 변경"이 본문보다 우선)다. 문구는 `content.md` §15.3의 키로 가리킨다.
@@ -37,14 +37,14 @@ Worker가 그리는 페이지는 한 골격(`htmlPage`, worker.md §4 공통·�
 
 | 규칙 | 값 | 근거 | 강제 |
 |---|---|---|---|
-| 토큰 원천 | 앱과 **같은 생성물**. `design/tokens/*.tokens.json` + `design/ui.css` → `scripts/design/tokens.mjs` → `worker/src/http/site-css.generated.ts`(토큰 + ui + 웹 CSS를 이어 붙인 문자열 상수 `SITE_CSS`·`SITE_CSS_HASH`). Worker 소스는 `app/`을 import하지 않는다(독립 pnpm 루트) | D3, foundations 머리말(토큰 구간은 reading·text-scale 블록을 뺀 나머지가 바이트까지 같다), `A-WORKER-0` A안 | `design-tokens DT1 |
+| 토큰 원천 | 앱과 **같은 생성물**. `design/tokens/*.tokens.json` + `design/ui.css` → `scripts/design/tokens.mjs` → `worker/src/http/site-css.generated.ts`(토큰 + ui + 웹 CSS를 이어 붙인 문자열 상수 `SITE_CSS`·`SITE_CSS_HASH`). Worker 소스는 `app/`을 import하지 않는다(독립 pnpm 루트) | D3, foundations 머리말(토큰 구간은 reading·text-scale 블록을 뺀 나머지가 바이트까지 같다), `A-WORKER-0` A안 | `design-tokens` DT1 |
 | 읽기 척도 범위 | `<main data-scale="reading">`은 **랜딩·`/help`·`/privacy`·`/licenses`**에만. 속성이 `main`에 있으므로 사이트 헤더·바닥글은 앱 척도(13)다. 로그인 확인·결과·안내·관리·확인 페이지는 앱 척도(13/16) | D11, foundations §3.3(문단을 읽는 화면만 15/22), judgment §2.3-6 | `worker` 테스트: 경로마다 `main[data-scale]` 유무를 단언(읽기 4경로만 있음) |
-| 읽기 열 폭 | `main`의 `max-width: var(--reading-max)`(680) 가운데, 좌우 `var(--edge)`(20). 앱 척도 페이지는 `var(--content-max)`(800). 사이트 헤더 안쪽 `.col`도 그 페이지의 `main`과 같은 폭(읽기 페이지 680, UI 페이지 800) | foundations §8(`--reading-max [취향]), D24, 정렬선 하나 | `design-lint` DL2(px 리터럴 금지), `design-gallery`(헤더·main 가장자리 x 동일) |
+| 읽기 열 폭 | `main`의 `max-width: var(--reading-max)`(680) 가운데, 좌우 `var(--edge)`(20). 앱 척도 페이지는 `var(--content-max)`(800). 사이트 헤더 안쪽 `.col`도 그 페이지의 `main`과 같은 폭(읽기 페이지 680, UI 페이지 800) | foundations §8(`--reading-max` [취향]), D24, 정렬선 하나 | `design-lint` DL2(px 리터럴 금지), `design-gallery`(헤더·main 가장자리 x 동일) |
 | 분기점 | 600 미만이 좁은 레이아웃. 미디어 쿼리는 생성기 상수 `BREAKPOINT_NARROW`(foundations §14)로 Worker 소스 `worker/src/http/site.css`와 생성물에만 쓴다 | foundations §8 분기점 [잠정] | `design-lint` DL13(폭 미디어 쿼리 허용 파일) |
 | 글꼴 | `--font-sans`·`--font-mono` 두 토큰만. 글꼴 이름 리터럴·`@font-face`·`url(`·`@import` 없음 | 사용자 결정 2(시스템 글꼴), foundations §3.1, `A-WORKER` §6.2(웹폰트는 CSP `font-src`도 없다) | `worker-config`(`url(`·`@import` 금지, 기존 `site-css.test.ts` 규칙 승계), `design-tokens`(`@font-face` 0) |
 | 줄바꿈 | `html { word-break: keep-all; overflow-wrap: anywhere }`, 해시·코드·채널 ID는 `word-break: break-all`, `lang="ko"` | foundations §3.5, `A-WORKER` §2.2("한국어가 글자 단위로 끊긴다" 결함) | `design-lint`(`break-word`·`justify` 금지) |
 | 숫자 | 버전·시각·횟수·크기·해시 열은 `.num`(`font-variant-numeric: tabular-nums`) | foundations §3.4, `A-WORKER` §2.2(숫자 열이 흔들린다) | `design-lint`(`.num` 유틸 하나), `R1` |
-| 커서·선택 | `body.web { cursor: auto; user-select: text }`, 링크·버튼·`summary`는 `pointer. 앱의 `default` 규칙은 웹에 적용하지 않는다 | D25(웹은 링크·버튼 `pointer), `E-DESK-N07` | `design-lint` DL8의 `cursor: pointer 금지는 **앱 소스만** 대상이다(Worker 소스는 허용, governance §2.3) |
+| 커서·선택 | `body.web { cursor: auto; user-select: text }`, 링크·버튼·`summary`는 `pointer`. 앱의 `default` 규칙은 웹에 적용하지 않는다 | D25(웹은 링크·버튼 `pointer`), `E-DESK-N07` | `design-lint` DL8의 `cursor: pointer` 금지는 **앱 소스만** 대상이다(Worker 소스는 허용, governance §2.3) |
 | 링크 | 색 `--accent-ink`, 밑줄 유지(`text-decoration: underline`, `text-underline-offset: var(--space-2)`), `:hover`는 밑줄 굵기 변화 없이 색 유지, `:focus-visible`은 D20 링. 헤더 이름 링크와 `a.btn`만 밑줄 없음 | foundations §2.3(`--accent-ink` = 웹 링크), WCAG 1.4.1(색만으로 링크를 구별하지 않는다), `A-WORKER` §3.2(헤더 링크가 본문 링크와 같은 모양) | `design-gallery`(axe link-in-text-block), `R1` |
 | 포커스 | `:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px }` 전역 하나. UA 기본 링에 맡기지 않는다 | D20, `A-WORKER` §2.5(브라우저마다 다른 기본 링) | `design-lint`(`outline: none` 금지) |
 | 모션 | 전환 없음. `summary` 펼침·flash 등장 모두 즉시 | D22(정지가 기본), P5. 웹에 자주 쓰는 상호작용이 없어 모션을 둘 이유가 없다 | `design-lint`(`ms` 리터럴 금지) + 생성물에 `transition` 선언 0개를 `worker` 테스트로 단언 |
@@ -59,7 +59,7 @@ Worker가 그리는 페이지는 한 골격(`htmlPage`, worker.md §4 공통·�
 
 모든 페이지가 아래 한 골격을 쓴다(`A-WORKER` §4 "유지할 것 1"). 순서가 규칙이다.
 
-``html
+```html
 <!doctype html>
 <html lang="ko">
 <head>
@@ -94,7 +94,7 @@ Worker가 그리는 페이지는 한 골격(`htmlPage`, worker.md §4 공통·�
   </footer>
 </body>
 </html>
-``
+```
 
 | 요소 | 규칙 | 근거 | 강제 |
 |---|---|---|---|
@@ -105,13 +105,13 @@ Worker가 그리는 페이지는 한 골격(`htmlPage`, worker.md §4 공통·�
 | 헤더 | 높이 `--toolbar-h`(44), 아래 `1px solid var(--separator)`, 안쪽은 `main`과 같은 `.col`(읽기 페이지 680·UI 페이지 800). 왼콽 **이름만**(13, `--weight-strong`, 색 `--fg`, 밑줄 없음, `href="/"`). 마크(D33)가 나오면 이름 앞 `--icon-md`(20) `<img>`. 이름 옆 배지 "비공식 도구"(§3.1). 오른쪽 `<nav aria-label="사이트">`: 비로그인은 [도움말] · [로그인], 로그인은 [도움말] · [관리](관리자만) · 채널 이름(링크 아님). `/auth/*` 결과·오류 페이지에는 [로그인]을 두지 않는다(갈 곳은 본문 아래 링크 하나다: 앱 흐름이면 앱으로, 웹 흐름이면 "처음으로"의 랜딩 로그인으로 가므로 헤더에 웹 로그인 길을 하나 더 열지 않는다, `G-WEB-R24`, 검토 U-31) | D26·D34(마크 전까지 이름만, Worker 헤더에만 배지), judgment §2.3-7, `A-WORKER-3.6`(내비게이션이 화면마다 다름)·`3.2`(헤더 링크 모양) | `worker` 테스트(모든 페이지에 같은 헤더 마크업, 관리 링크는 관리자만, `/auth/*`에 로그인 링크 없음) |
 | `<main id="main">` | 하나. 첫 요소는 flash 또는 오류 요약(있을 때), 그다음 `<h1>` 하나 | `G-WEB-R25`, GOV.UK 알림 배너·오류 요약(`E-KO-B4`) | `worker` 테스트(h1 정확히 1개, `main` 첫 자식 규칙) |
 | 헤딩 위계 | h1 `--text-display`(17 → 읽기 22) 600, h2 `--text-title`(15 → 17) 600, h3 `--text-body` 600. h3를 UA 기본으로 두지 않는다. 읽기 척도의 랜딩 h1만 `--text-hero`(28, 600 미만 22) | foundations §3.2·§3.3, `A-WORKER-3.x`(h3가 h2보다 크다), D13(700 없음) | `design-lint` DL5(font-size·font-weight 리터럴 금지), `worker` 테스트(생성물에 `h1,h2,h3` 규칙 존재) |
-| 바닥글 | 링크 셋(도움말·처리방침·라이선스) → 비공식 고지 상수 → 저작권 줄. 글자 `--text-caption`, 색 `--fg-muted, 위 `1px solid var(--separator)`, 위아래 `--space-32` | D34(고지 4곳 중 "랜딩 바닥글"), g-legal §4(바닥글 관례), `G-ID-R1` | `worker` 테스트(모든 페이지 바닥글에 고지 상수 포함), `design-copy`(두 deck의 고지 문자열 동일) |
+| 바닥글 | 링크 셋(도움말·처리방침·라이선스) → 비공식 고지 상수 → 저작권 줄. 글자 `--text-caption`, 색 `--fg-muted`, 위 `1px solid var(--separator)`, 위아래 `--space-32` | D34(고지 4곳 중 "랜딩 바닥글"), g-legal §4(바닥글 관례), `G-ID-R1` | `worker` 테스트(모든 페이지 바닥글에 고지 상수 포함), `design-copy`(두 deck의 고지 문자열 동일) |
 | 저작권 줄 | 앱 라이선스 결정(D58) 전까지 `copyright` 상수("© {year} {owner}. 모든 권리 보유.", `content.md` §11) | D58, `G-LEGAL-D1` | `design-copy` DC6(문자열 상수 하나) |
 | 셀렉터 | 요소 이름 전역 규칙은 `html`·`body`·`h1~h3`·`p`·`a`·`code`·`pre`·`table`·`th`·`td`·`ol`·`ul`·`details`·`summary`·`input`·`button`·`label`에만. 그 밖은 클래스(`.site-header`·`.btn`·`.field`·`.notice`·`.scroll`…) | `A-WORKER` §3.6(`header{}` 전역 규칙이 카드 안 `<header>`에 번진다), 클래스 체계 부재 | `design-lint`(허용 요소 셀렉터 목록) |
 
 ### 3.1 배지 "비공식 도구"
 
-헤더의 "비공식 도구"는 Badge 컴포넌트(`components.md`)와 같은 모양이다: `--surface-2` 면, `--fg-muted 12px 600(`--text-caption`), 높이 `--badge-h`(18), 가로 패딩 `--space-6`, 반경 **`--radius-badge`(4)**. C 후보가 "pill"이라 불렀지만 알약 반경은 스위치·진행 막대에만 쓴다(D18, `E-APPLE-20`). 색이 없는 이유: 고지는 경고도 위험도 아니다(D10 정보 톤 = 중립). 읽기 척도 페이지에서는 `--text-caption`이 13이 되고 높이는 `min-height`라 따라 늘어난다.
+헤더의 "비공식 도구"는 Badge 컴포넌트(`components.md`)와 같은 모양이다: `--surface-2` 면, `--fg-muted` 12px 600(`--text-caption`), 높이 `--badge-h`(18), 가로 패딩 `--space-6`, 반경 **`--radius-badge`(4)**. C 후보가 pill이라 불렀지만 알약 반경은 스위치·진행 막대에만 쓴다(D18, `E-APPLE-20`). 색이 없는 이유: 고지는 경고도 위험도 아니다(D10 정보 톤 = 중립). 읽기 척도 페이지에서는 `--text-caption`이 13이 되고 높이는 `min-height`라 따라 늘어난다.
 
 근거: D34(Worker 헤더에만), judgment §2.3-7, C2(비공식임이 첫 화면에). 강제: `worker` 테스트(모든 페이지 헤더에 배지 문자열), `design-copy`(문자열 상수).
 
@@ -123,7 +123,7 @@ CSP는 그대로다(worker.md, `A-WORKER` §6.1): `default-src 'none'; style-src
 
 | 규칙 | 값 | 근거 | 강제 |
 |---|---|---|---|
-| 스타일시트 | **한 파일** `/assets/site.{hash}.css` = 토큰 생성물 + `design/ui.css` + 웹 전용 CSS `worker/src/http/site.css`를 생성기가 이어 붙인 문자열 상수(`worker/src/http/site-css.generated.ts`). 압축은 생성기 | `A-WORKER` §6.2(외부 CSS 한 파일이 가장 싸고 CSP 그대로)·§6.4 A안·§8(한 줄 압축이 읽기 어렵다), judgment §1.4(A 재촬영 기록 7) | `design-tokens DT1(`--check`: 생성물 ≠ 원천이면 실패), `worker-config`(`<link rel="stylesheet">` 1개) |
+| 스타일시트 | **한 파일** `/assets/site.{hash}.css` = 토큰 생성물 + `design/ui.css` + 웹 전용 CSS `worker/src/http/site.css`를 생성기가 이어 붙인 문자열 상수(`worker/src/http/site-css.generated.ts`). 압축은 생성기 | `A-WORKER` §6.2(외부 CSS 한 파일이 가장 싸고 CSP 그대로)·§6.4 A안·§8(한 줄 압축이 읽기 어렵다), judgment §1.4(A 재촬영 기록 7) | `design-tokens` DT1(`--check`: 생성물 ≠ 원천이면 실패), `worker-config`(`<link rel="stylesheet">` 1개) |
 | 해시 | 경로의 16 hex는 생성기가 계산해 상수에 쓴다. 손으로 갱신하지 않는다 | `A-WORKER` §6.3(지금은 테스트가 수동 갱신을 안내), 기존 `site-css.test.ts` | `worker` 테스트(해시 = SHA-256 앞 16 hex, 기존 테스트 유지) |
 | 금지 | `<style>`, `style=`(SVG 안 포함), `<script`, `url(`, `@import`, `data:`, 외부 출처. 모두 소스 문자열 수준에서 막는다 | `A-WORKER` §6.2, worker.md 구현 중 변경 39(`checkHtmlSources`), g-web §7.2 | `worker-config`(기존 검사 유지 + `url(`·`@import`를 생성물에도 적용) |
 | 에셋 표 | `GET /assets/:file`은 **표**(`ASSETS: { [이름]: { body, contentType, hash } }`)를 조회한다. 항목: `site.css`, `icon.svg`, `favicon.ico`, `apple-touch-icon.png`, `og.png`. 모두 `Cache-Control: public, max-age=31536000, immutable`(no-store의 유일한 예외 범위를 worker.md에 갱신) | `A-WORKER` §6.3(핸들러 일반화), `G-ID-R10`, `G-WEB-R13`·`G-WEB-R16`(OG 이미지 주소는 해시 경로) | `worker` 테스트(표의 모든 항목이 200·올바른 `Content-Type`·immutable, 표 밖 이름은 404), `worker-config`(에셋 바이너리는 `worker/assets/` 아래 체크인된 파일에서 생성기가 base64 상수로 만든다: 소스에 `data:` 없음) |
@@ -143,12 +143,12 @@ CSP는 그대로다(worker.md, `A-WORKER` §6.1): `default-src 'none'; style-src
 | # | 블록 | 내용 | 조건 | 근거 |
 |---|---|---|---|---|
 | 1 | 휴대폰 안내 | Notice(중립, 아이콘 `monitor`): `mobileBlock`(제목·본문), 읽기 전용 입력 칸(`readonly`, `components.md` §0.3: 면 `--surface-2`, 값 = 이 페이지 주소, 라벨 "이 페이지 주소"), 한 줄 `mobileHint`(카카오톡 ‘나와의 채팅’에 붙여넣어 컴퓨터에서 열어도 된다) | `entryContext.kind === "phone"`일 때만. 그 아래 내용은 **그대로 이어진다**(숨기지 않는다) | `G-WEB-R1`~`G-WEB-R4`(UA `Mobi` 또는 `Sec-CH-UA-Mobile: ?1`만, 순서와 강조만 바꾼다, QR·공유 버튼 없음), brief §6.13-5 |
-| 2 | 히어로 | `<h1>` = `siteName`("치지직 다운로더", hero 척도) + lead `landingLead`(`--leading-read, "본인 채널의 영상만"·"허가받은 채널만") | 항상 | C8(사전 고지), D34 title, `content.md` §4(h1은 앱 이름) |
+| 2 | 히어로 | `<h1>` = `siteName`("치지직 다운로더", hero 척도) + lead `landingLead`(`--leading-read`, "본인 채널의 영상만"·"허가받은 채널만") | 항상 | C8(사전 고지), D34 title, `content.md` §4(h1은 앱 이름) |
 | 3 | 비공식 고지 | Notice(중립, 아이콘 `info`): `NOTICE_SHORT`. **스크롤 없이** 보인다(히어로 바로 아래, 1280×800과 390×844에서) | 항상 | D34(히어로 바로 아래), C2, `G-ID-R1` |
-| 4 | CTA | **유일한 채움 버튼** `.btn.btn-primary.btn-lg`(높이 `--control-h-lg` 36, 글자 `--text-title` 600). 비로그인: [치지직으로 로그인](`form action="/auth/web/start"`), 바로 위에 로그인 전 고지 네 줄(§5.3)과 `loginForFiles`("로그인하면 내 컴퓨터용 설치 파일이 보여요."). 허가 사용자: [{내 OS}용 받기] 링크 버튼 + meta 줄(`.num`, `--fg-muted): "버전 {0.1.2} · {2026. 10. 3.} · {최소 OS} 이상". macOS면 다음 줄에 **늘** `appleSiliconOnly`. 좁은 레이아웃에서 버튼은 전폭 | 항상 | D53(36, 유일한 채움), P3, `G-WEB-R5`·`G-WEB-R6`·`G-WEB-R26`(최소 OS 한 줄, `Accept-CH` 안 씀), `G-INSTALL-R12`(`v` 없음), D42("macOS용 받기"), 검토 U-11 |
+| 4 | CTA | **유일한 채움 버튼** `.btn.btn-primary.btn-lg`(높이 `--control-h-lg` 36, 글자 `--text-title` 600). 비로그인: [치지직으로 로그인](`form action="/auth/web/start"`), 바로 위에 로그인 전 고지 네 줄(§5.3)과 `loginForFiles`("로그인하면 내 컴퓨터용 설치 파일이 보여요."). 허가 사용자: [{내 OS}용 받기] 링크 버튼 + meta 줄(`.num`, `--fg-muted`): "버전 {0.1.2} · {2026. 10. 3.} · {최소 OS} 이상". macOS면 다음 줄에 **늘** `appleSiliconOnly`. 좁은 레이아웃에서 버튼은 전폭 | 항상 | D53(36, 유일한 채움), P3, `G-WEB-R5`·`G-WEB-R6`·`G-WEB-R26`(최소 OS 한 줄, `Accept-CH` 안 씀), `G-INSTALL-R12`(`v` 없음), D42("macOS용 받기"), 검토 U-11 |
 | 5 | 경고 예고 | 한 줄 "처음 열 때 경고가 나올 수 있어요. 앱이 문제라는 뜻이 아니에요." | 허용 사용자 | `G-INSTALL-R1`, brief D53 근거 |
 | 6 | 다른 운영체제 | `<details>` "다른 운영체제": `<table>`에 `<caption>설치 파일 (버전 {0.1.2})</caption>`, `th scope="col"`(운영체제·파일·최소 버전), 행머리 `th scope="row"`. 파일명은 `.num`이 아닌 `code`. 감지 실패(`unknown`·`bot`)면 4번의 큰 버튼을 만들지 않고 이 표를 `<details open>`으로 펼친다 | 허용 사용자 | D53, brief §6.13-2(caption·scope), `G-WEB-R2`·`G-WEB-R5`(틀려도 모든 행이 한 번의 탭 안에), `A-WORKER` §3.3(scope·caption 없음) |
-| 7 | 설치하기 `<h2 id="install">` | 감지한 OS 절은 `<details open>`, 다른 OS 절은 `<details>`(닫힘). 감지 실패면 셋 모두 `open`. 각 절은 `<ol>` 단계(한 단계 한 동작, macOS 3단계 이하). **macOS**: `macDamaged` 문단 → ① `macMove` ② `macOpenAnyway`(처음 열 때 경고가 나오면 **시스템 설정 › 개인정보 보호 및 보안 › 그래도 열기**) [잠정, §14-1] ③ `macTerminal`(그 단추가 없으면 터미널에 아래 한 줄) — `<pre><code class="selectable">xattr -dr com.apple.quarantine "/Applications/치지직 다운로더.app"</code></pre>` + `macXattrNote`(두 문장: 표시만 지운다 / 다른 명령은 사기). **Windows**: `winSac`(경고 Notice `--warning-soft, 단계 **앞**: 스마트 앱 컨트롤을 끄면 되돌릴 수 없으니 관리자에게 먼저 묻기) → ① `winSmartScreen`(‘PC 보호’ 창 → ‘추가 정보’ › ‘실행’). **Linux**: AppImage는 `libfuse2`(24.04는 `libfuse2t64`) + 실행 권한 한 줄, `.deb`는 `apt install ./…`("관리자 권한이 필요할 수 있어요") | 항상(비로그인에서도 읽을 수 있다) | D53·D55("그래도 열기" 경로 먼저 + xattr 폴백), D52(복사 버튼 대신 선택 가능한 코드 + 사기 경고), `G-INSTALL-R2`~`G-INSTALL-R8`, `G-PRIVACY-R2`, `G-HELP-H5`(앵커 id는 `<details>` 밖 = h2에만), 검토 U-37(비가역 경고는 행동 앞), 앱 이름은 `productName`(worker-config `checkLandingAppName`) |
+| 7 | 설치하기 `<h2 id="install">` | 감지한 OS 절은 `<details open>`, 다른 OS 절은 `<details>`(닫힘). 감지 실패면 셋 모두 `open`. 각 절은 `<ol>` 단계(한 단계 한 동작, macOS 3단계 이하). **macOS**: `macDamaged` 문단 → ① `macMove` ② `macOpenAnyway`(처음 열 때 경고가 나오면 **시스템 설정 › 개인정보 보호 및 보안 › 그래도 열기**) [잠정, §14-1] ③ `macTerminal`(그 단추가 없으면 터미널에 아래 한 줄) — `<pre><code class="selectable">xattr -dr com.apple.quarantine "/Applications/치지직 다운로더.app"</code></pre>` + `macXattrNote`(두 문장: 표시만 지운다 / 다른 명령은 사기). **Windows**: `winSac`(경고 Notice `--warning-soft`, 단계 **앞**: 스마트 앱 컨트롤을 끄면 되돌릴 수 없으니 관리자에게 먼저 묻기) → ① `winSmartScreen`(‘PC 보호’ 창 → ‘추가 정보’ › ‘실행’). **Linux**: AppImage는 `libfuse2`(24.04는 `libfuse2t64`) + 실행 권한 한 줄, `.deb`는 `apt install ./…`("관리자 권한이 필요할 수 있어요") | 항상(비로그인에서도 읽을 수 있다) | D53·D55("그래도 열기" 경로 먼저 + xattr 폴백), D52(복사 버튼 대신 선택 가능한 코드 + 사기 경고), `G-INSTALL-R2`~`G-INSTALL-R8`, `G-PRIVACY-R2`, `G-HELP-H5`(앵커 id는 `<details>` 밖 = h2에만), 검토 U-37(비가역 경고는 행동 앞), 앱 이름은 `productName`(worker-config `checkLandingAppName`) |
 | 8 | 파일 확인(선택) | `<details>` "파일 확인(선택)": 한 문장 + `<table>`(`caption`, `th scope`, 열: 파일·SHA-256 `code.selectable`). 해시는 주 표에서 **여기로 이동**한다 | 허용 사용자 | `G-WEB-R27`, g-install §4-7, D53. worker.md §9.5 "SHA-256 텍스트" 변경 → §14 |
 | 9 | 처음 열면 로그인해요 `<h2 id="login">` | 한 문단: 앱에서 [치지직으로 로그인]을 누르면 브라우저가 열린다 / 받는 것은 채널 이름과 채널 ID / 네이버 비밀번호는 받지 않는다 / 허가되지 않으면 이유와 다음 할 일을 앱이 알려 준다 / `loginTwice`("이 페이지에서 로그인했어도 앱을 처음 열 때 한 번 더 로그인해요.") | 항상 | C7, B 후보 절, `G-PRIVACY-R9`·`G-PRIVACY-R17`, 검토 U-11 |
 | 10 | 막히면 `<h2 id="help">` | 한 문단: `/help` 링크 + `content.md` §11 "문제가 있을 때" 상수 + 연락 수단 `landing.contact`(자리표시, 출시 전 사람이 채운다) | 항상 | B 후보 절, `G-INSTALL-R14`(문의 경로), `G-PRIVACY-R16`, D51, 검토 U-07 |
@@ -166,7 +166,7 @@ CSP는 그대로다(worker.md, `A-WORKER` §6.1): `default-src 'none'; style-src
 
 ### 5.3 로그인 전 고지(비로그인 CTA 위)
 
-[치지직으로 로그인] 바로 위에 `landing.consent.*` 네 줄(`--leading-read, 색 `--fg` — 신뢰 판단 글자라 muted가 아니다; 앱 로그인 화면 `auth.consent`도 같다): 받는 것(채널 이름·채널 ID) / 쓰는 곳(허가 확인·내 기기 표시) / 받지 않는 것(네이버 비밀번호) / **끊는 길**(로그인한 기기는 ‘내 기기’에서 끊을 수 있다) + "[개인정보 처리방침]" 링크 + `loginForFiles`. 문장은 `content.md` §11·§15.3이 소유한다.
+[치지직으로 로그인] 바로 위에 `landing.consent.*` 네 줄(`--leading-read`, 색 `--fg` — 신뢰 판단 글자라 muted가 아니다; 앱 로그인 화면 `auth.consent`도 같다): 받는 것(채널 이름·채널 ID) / 쓰는 곳(허가 확인·내 기기 표시) / 받지 않는 것(네이버 비밀번호) / **끊는 길**(로그인한 기기는 ‘내 기기’에서 끊을 수 있다) + "[개인정보 처리방침]" 링크 + `loginForFiles`. 문장은 `content.md` §11·§15.3이 소유한다.
 
 근거: `G-PRIVACY-R17`(로그인 버튼이 있는 모든 화면), 개인정보 보호법 제15조 제2항 네 가지, C7(왜·무엇·어디까지·어떻게 끊나, 검토 U-04). 강제: `worker` 테스트(로그인 폼이 있는 응답에 `/privacy` 링크와 네 항목 문장이 있다), `design-copy` DC6.
 
@@ -183,7 +183,7 @@ CSP는 그대로다(worker.md, `A-WORKER` §6.1): `default-src 'none'; style-src
 |---|---|---|---|---|---|
 | ok | 로그인했어요 · 치지직 다운로더 | `doneOk.title` | `circle-check` `--fg-muted` | 없음(어느 흐름인지 말하지 않는다) | 링크 하나: "처음으로". 콜백은 ok로 이 페이지에 보내지 않는다: 웹 ok는 303 `/`(F 삭제)에 flash "로그인했어요"(§6.3), 앱 ok는 앱 수신기 페이지(§6.5)다. 이 행은 `/auth/done?r=ok`를 손으로 연 경우뿐이다 |
 | denied(웹 흐름) | 이 채널은 사용 허가가 없어요 · … | `doneDenied.title` | `circle-x` `--danger-ink`(막힘 = danger, `components.md` §2.12 tone 기준. 앱의 거부 화면과 같은 은유) | Notice(중립): "채널: {이름} · 채널 ID: {id}"(본인에게 비밀이 아니다, worker.md §8.3) → `doneDenied.body` → `doneDenied.next`("허가를 받은 뒤 다시 로그인해 주세요.") | 링크 하나: "처음으로"(랜딩에 로그인 폼이 있다). 이 페이지에 폼을 두지 않는다 |
-| cancelled(웹 흐름) | 로그인을 취소했어요 · … | `doneCancelled.title` | `info` `--fg-muted | `doneCancelled.body`("처음 화면에서 다시 로그인할 수 있어요.") | 링크 하나 |
+| cancelled(웹 흐름) | 로그인을 취소했어요 · … | `doneCancelled.title` | `info` `--fg-muted` | `doneCancelled.body`("처음 화면에서 다시 로그인할 수 있어요.") | 링크 하나 |
 | failed | 오류: 로그인하지 못했어요 · … | `doneFailed.title` | `circle-x` `--danger-ink` | 앱 흐름이거나 흐름을 모르면 `doneFailed.body`("앱에서 다시 시도해 주세요."), 웹 흐름이면 `doneFailed.webBody`("처음 화면에서 다시 로그인해 주세요.") + `inApp === "kakao"`일 때만 `inAppHint` 한 단락(앱 안 화면에서는 끊길 수 있으니 기본 브라우저에서 열기) | 링크 하나 |
 
 근거: D10(성공색 없음 → 완료는 `check` 계열 + 글자), foundations §9.1 은유 표(오류 `circle-x` ≠ 경고 `triangle-alert`), C8(거부 화면에 원인·본인 채널 정보·다음 행동, 검토 U-12), `G-WEB-R9`(인앱에서도 막지 않고 실패 뒤에만 보충)·`G-WEB-R24`(링크는 갈 곳 하나), `A-COPY` §1(`채널: 이름 · 채널 ID: id` 콜론 대칭). 고지는 붙이지 않는다(`G-ID-R3`). 강제: `worker` 테스트(상태별 h1·아이콘 이름·title 접두, 인앱 보충 단락은 `failed` × `kakao`에만, `/auth/*` 헤더에 로그인 링크 없음), `design-icons` DI4(은유 유일성), `design-copy` DC8.
@@ -223,7 +223,7 @@ flash와 `seeOther` "쿼리 없는 두 곳" 계약의 보완은 worker.md 구현
 
 ### 6.4 로그인 확인 페이지(확인 코드 없음)
 
-`<h1>치지직 다운로더 로그인</h1>`(`loginTitle`) → 경고 Notice(`--warning-soft + `triangle-alert`, `loginWarning` 세 문장: 앱에서 직접 시작한 로그인이 아니면 창을 닫아 달라는 것, 다른 사람이 보낸 주소라면 계속하지 않기, **로그인 뒤 주소창에 나오는 주소를 다른 사람에게 보내지 않기**(루프백 주소창 grant + 사회공학 잔여 위험, `worker.md` 88 (라))) → [계속](이 페이지의 유일한 채움 버튼, `A-WORKER-3.1` "가장 중요한 동작이 primary가 아니다" 해소). 확인 코드 블록·`letter-spacing`·`.code` 글자 크기는 **없다**(루프백 전환으로 코드 대조가 사라졌다, `patterns.md` §13·§17-6; 초안 §13-1의 큰 숫자 토큰 요청도 함께 사라졌다). 휴대폰·인앱에서도 [계속]은 동작하고 새 차단을 더하지 않는다(`G-WEB-R12`). 단계 자체는 남는다(§1). CSP `form-action` 예외는 §4.
+`<h1>치지직 다운로더 로그인</h1>`(`loginTitle`) → 경고 Notice(`--warning-soft` + `triangle-alert`, `loginWarning` 세 문장: 앱에서 직접 시작한 로그인이 아니면 창을 닫아 달라는 것, 다른 사람이 보낸 주소라면 계속하지 않기, **로그인 뒤 주소창에 나오는 주소를 다른 사람에게 보내지 않기**(루프백 주소창 grant + 사회공학 잔여 위험, `worker.md` 88 (라))) → [계속](이 페이지의 유일한 채움 버튼, `A-WORKER-3.1` "가장 중요한 동작이 primary가 아니다" 해소). 확인 코드 블록·`letter-spacing`·`.code` 글자 크기는 **없다**(루프백 전환으로 코드 대조가 사라졌다, `patterns.md` §13·§17-6; 초안 §13-1의 큰 숫자 토큰 요청도 함께 사라졌다). 휴대폰·인앱에서도 [계속]은 동작하고 새 차단을 더하지 않는다(`G-WEB-R12`). 단계 자체는 남는다(§1). CSP `form-action` 예외는 §4.
 
 강제: `worker` 테스트(채움 버튼 1개, 경고 Notice 존재, 코드 요소 없음, 경고 세 문장 — 지금 `login-app.test.ts`가 세 문장과 코드 문구 없음을 본다), `design-copy`.
 
@@ -249,11 +249,11 @@ flash와 `seeOther` "쿼리 없는 두 곳" 계약의 보완은 worker.md 구현
 | 테두리 버튼 | `.btn.btn-secondary` | `--surface` 면 + `1px solid var(--border-strong)` + `--fg` 글자, 눌림 `--surface-2`. hover 없음 | D19(의미 경계 3:1), D21(테두리 버튼 hover 없음), `A-WORKER` §2.6(현재 1.35:1) | `design-tokens`(경계 쌍), `design-lint` |
 | 위험 테두리 버튼 | `.btn.btn-secondary.tone-danger` | 글자·테두리 `--danger-ink`, 눌림 `--danger-soft`. 채움 위험 버튼은 없다 | D36(파괴 = 빨간 글자 테두리), foundations §2.3(`--danger` 채움 버튼 금지) | `design-lint` |
 | 글자 버튼 | `.btn.btn-ghost` | 글자 `--fg`(앱과 같다, README D21), hover `--surface-2`, 눌림 `--surface-pressed` | D21, `components.md` §2.1 | — |
-| 링크 버튼 | `a.btn` | 버튼과 같은 모양, 밑줄 없음, `cursor: pointer | A 후보 결함 2(CTA에 링크 밑줄이 덮어씌워짐) | `design-gallery` |
+| 링크 버튼 | `a.btn` | 버튼과 같은 모양, 밑줄 없음, `cursor: pointer` | A 후보 결함 2(CTA에 링크 밑줄이 덮어씌워짐) | `design-gallery` |
 | 입력 | `.field` | 높이 `--control-h`, `--surface` 면 + `1px solid var(--border-strong)`, `--radius-control`, 폭 100%, 라벨은 **위**에 `<label for>`(블록, `--gap-label` 6 아래), 보조 설명은 라벨 아래 `--text-caption`. 채널 ID 입력은 `--font-mono`. 읽기 전용(`readonly`)은 `--surface-2` 면(`components.md` §0.3). 오류 `aria-invalid="true"` → 테두리 `--danger-ink` + 옆 문구 | foundations §2.3(흰 면 = 만질 수 있는 것), `A-WORKER-3.x`(인라인 라벨 + 100% 입력이 밀린다, mono 아님), `G-WEB-R19` | `worker` 테스트(모든 `<input>`에 짝 `<label for>`), `design-gallery`(axe label) |
 | 인라인 폼 모음 | `.actions` | `display: flex; gap: var(--gap-sibling); flex-wrap: wrap` | `A-WORKER` §3.1(버튼 간격을 공백 문자에 맡긴다) | `design-lint` |
 | `<details>` | `.disclosure` | `--surface` 면 + `1px solid var(--separator)` + `--radius-group`(10), `summary`는 `min-height: var(--row-h)`(36), `--weight-strong`, chevron 아이콘 `chevron-right`(열리면 CSS로 `chevron-down`은 만들지 않고 `rotate(90deg)`: 아이콘은 정지 글자 요소가 아니다) | D18·foundations §6.3, components.md Disclosure | `design-lint`(`transform`은 아이콘에만 허용) |
-| 비활성 | 쓰지 않는다. 폼은 서버가 거른다 | GOV.UK 버튼(비활성 버튼은 대비가 낮고 혼란), `G-WEB-R22` | `worker` 테스트(`disabled` 속성 0개) |
+| 비활성 | — | 쓰지 않는다. 폼은 서버가 거른다 | GOV.UK 버튼(비활성 버튼은 대비가 낮고 혼란), `G-WEB-R22` | `worker` 테스트(`disabled` 속성 0개) |
 
 터치 값(`any-pointer: coarse` 40/44)은 생성물의 토큰 블록이 알아서 올린다(foundations §5.1). 컴포넌트 CSS에 `@media (pointer…)`를 쓰지 않는다(`design-lint`).
 
@@ -285,11 +285,11 @@ flash와 `seeOther` "쿼리 없는 두 곳" 계약의 보완은 worker.md 구현
 
 | 규칙 | 값 | 근거 | 강제 |
 |---|---|---|---|
-| 구조 | 모든 `<table>`에 `<caption>`(보이는 글자, `--text-caption` `--fg-muted, 왼쪽 정렬), `<thead>` `th scope="col"`, 행머리 `th scope="row"`. 빈 `<th>`를 두지 않는다: 동작 열 머리는 "동작"(`.sr-only`로 시각 숨김 가능) | brief §6.13-2, `A-WORKER` §3.3(scope·caption 없음, 이름 없는 열 머리) | `worker` 테스트(모든 `<th>`에 `scope`, 비어 있지 않음, `<table>`마다 `<caption>`) |
-| 셀 | 상하 `--space-6`, 좌우 `--space-8`, 아래 `1px solid var(--separator)`, `vertical-align: top`. 머리 글자 `--fg-muted `--weight-strong` | foundations §4, `A-WORKER` §2.3(0.4rem = 6.4px 어긋남) | `design-lint`(px 리터럴) |
+| 구조 | 모든 `<table>`에 `<caption>`(보이는 글자, `--text-caption` `--fg-muted`, 왼쪽 정렬), `<thead>` `th scope="col"`, 행머리 `th scope="row"`. 빈 `<th>`를 두지 않는다: 동작 열 머리는 "동작"(`.sr-only`로 시각 숨김 가능) | brief §6.13-2, `A-WORKER` §3.3(scope·caption 없음, 이름 없는 열 머리) | `worker` 테스트(모든 `<th>`에 `scope`, 비어 있지 않음, `<table>`마다 `<caption>`) |
+| 셀 | 상하 `--space-6`, 좌우 `--space-8`, 아래 `1px solid var(--separator)`, `vertical-align: top`. 머리 글자 `--fg-muted` `--weight-strong` | foundations §4, `A-WORKER` §2.3(0.4rem = 6.4px 어긋남) | `design-lint`(px 리터럴) |
 | 숫자·시각 열 | `.num` + 오른쪽 정렬(횟수·세션 수·복구). 시각은 D49 형식을 앱과 **같은 format 함수**(골든 JSON 공유)로. 열 머리에서 "(KST)"를 빼고 `<caption>`에 `tableTimeNote`("시각은 한국 시간이에요.")를 한 번 | D49(Worker 관리 화면도 같은 함수), `A-WORKER-3.x`(열 이름이 길어진다), `A-COPY` §1(시각 형식 셋) | `worker` 테스트(`format.test.ts` 골든), `design-copy` DC4(숫자·단위 직접 문자열 금지) |
 | 가로 스크롤 | `<div class="scroll" tabindex="0" role="region" aria-labelledby="{caption id}">`로 감싼다. 키보드로 스크롤할 수 있어야 한다 | `A-WORKER` §3.3(가로 스크롤 영역에 포커스를 줄 수 없다), WCAG 2.1.1 | `worker` 테스트(`.scroll`에 `tabindex="0"`·`role`·이름), `R8` |
-| 열 수 | 5열을 목표로 한다. 보조 정보(채널 ID·기기 정보)는 첫 열의 둘째 줄 `--text-caption` `--fg-muted `.num`로 합친다(현재 `sessionRow`의 방식). 7열 허용 채널 표는 메모·추가한 관리자를 둘째 줄로 내린다 **[잠정]** | `A-WORKER` §4 나쁜 점 4(열 수·폭·정렬 제각각, 동작 열이 스크롤 끝) | 리뷰 `R1`(390 폭 스크린샷). 확인: 관리자가 휴대폰에서 [빼기]에 닿는지(g-web C-9) |
+| 열 수 | 5열을 목표로 한다. 보조 정보(채널 ID·기기 정보)는 첫 열의 둘째 줄 `--text-caption` `--fg-muted` `.num`로 합친다(현재 `sessionRow`의 방식). 7열 허가 채널 표는 메모·추가한 관리자를 둘째 줄로 내린다 **[잠정]** | `A-WORKER` §4 나쁜 점 4(열 수·폭·정렬 제각각, 동작 열이 스크롤 끝) | 리뷰 `R1`(390 폭 스크린샷). 확인: 관리자가 휴대폰에서 [빼기]에 닿는지(g-web C-9) |
 | 동작 열 | 마지막 열. 버튼은 `.btn-secondary` 24(`--control-h-sm`)가 아니라 **28**(`--control-h`): 표 행 높이가 28 + 상하 6 = 40으로 터치 바닥(40)에 맞는다 | foundations §5.1(터치 40), g-web J9(손가락 오누름) | `design-gallery`(대상 크기) |
 | 빈 상태 | 표 대신 한 문장 `<p>`(기존 `allowEmpty` 등). 아이콘·일러스트 없음 | foundations §9(빈 상태에 아이콘을 두지 않는다) | `worker` 테스트(기존 "빈 화면은 빈 문구 네 개") |
 | 줄무늬·hover | 없다 | D21(작업 행 hover 없음), P4 | `design-lint` |
@@ -366,9 +366,9 @@ flash와 `seeOther` "쿼리 없는 두 곳" 계약의 보완은 worker.md 구현
 | 절 사이(`h2` 위) | `--space-40`(읽기) / `--space-24`(앱 척도) |
 | `h2` 아래 | `--space-12` |
 | 문단 사이 | `--space-12` |
-| Notice | `components.md` §2.12 표(면·반경·패딩 `var(--space-8) var(--space-12)`·아이콘 20)가 원천. 톤 면 `--surface-2`(정보) · `--warning-soft · `--danger-soft` |
+| Notice | `components.md` §2.12 표(면·반경·패딩 `var(--space-8) var(--space-12)`·아이콘 20)가 원천. 톤 면 `--surface-2`(정보) · `--warning-soft` · `--danger-soft` |
 | 코드 블록 `pre` | `--surface-2` 면, `--radius-control`, 안쪽 `--space-12`, `--font-mono` `--text-caption`, `white-space: pre; overflow-x: auto`(글자 단위로 끊지 않는다 — 390 폭에서 `/Appli cations`처럼 보이던 결함, 검토 U-34), `user-select: text` |
-| 바닥글 | 위 `1px solid var(--separator)`, 위아래 `--space-32`, `--text-caption` `--fg-muted |
+| 바닥글 | 위 `1px solid var(--separator)`, 위아래 `--space-32`, `--text-caption` `--fg-muted` |
 | 좁은 레이아웃(600 미만) | `main` 좌우 `--edge` 유지, CTA 전폭, `h1` hero → 22/28(생성물 블록), 표는 가로 스크롤(§8) |
 
 근거: foundations §4·§8, A 후보 `.site` 구조. 강제: `design-lint`(px 리터럴 금지 → 위 표의 값은 모두 토큰), `design-gallery`(1280·390 폭 axe + 리플로우 320).
@@ -427,7 +427,7 @@ g-web §4.2 G1~G7(세션 없는 POST 무안내, 재삭제 404, 성공 피드백 
 | 읽기 전용 입력 면 | `components.md` §0.3 readonly(`--surface-2` + `--border-strong`) |
 | `[data-window-active]` 블록이 Worker 생성물에 남는 것 | 토큰이 아니라 selector라 DT3(이름 기준)에 걸리지 않는다. 생성기가 Worker 생성물에서 이 블록을 빼지 않는다(공통 구간 유지) |
 | "pill" 낱말 | README D34·content §11을 "배지"로 |
-| `design-lint`의 `cursor: pointer 금지는 앱만 | governance §2.3 DL8 |
+| `design-lint`의 `cursor: pointer` 금지는 앱만 | governance §2.3 DL8 |
 | `design-gallery`·`design-shots` 범위에 Worker 정적 HTML | governance §2.6(렌더 문자열을 `setContent`) |
 | 로그인 확인 페이지 존속 | 루프백(v0.3.0)이 확인 코드만 빼고 단계를 남겼다(`worker.md` 88 (가)). §1·§6.4를 그 판으로 고쳤고 [잠정]을 닫았다 |
 | `A-WORKER` §7.1-5 JS 허용 여부 | D52로 닫혔다 |

@@ -3,7 +3,7 @@
 디자인 시스템 「무색」의 모든 토큰을 이름과 값으로 확정한다. `README.md`의 결정 표(D1~D62)가 "무엇을" 정했고, 이 문서는 그것을 "어떤 이름의 어떤 값"으로 코드에 내리는 단일 원천이다. 토큰은 여기 적힌 것만 존재한다. 여기 없는 값을 컴포넌트가 쓰면 `design-lint`가 막고, 여기 있는데 쓰지 않는 토큰은 `design-tokens`가 막는다.
 
 읽는 법:
-- 모든 길이는 **px**이고 루트 글자 크기는 **16px**이다. 어떤 토큰도 rem이 아니다. 문서의 숫자가 곧 화면의 숫자다(`A-VIS-01`, brief §6.2-4, ADR-0002. 강제 `design-tokens DT4: rem 단위 0개, `html { font-size: 16px }` 고정).
+- 모든 길이는 **px**이고 루트 글자 크기는 **16px**이다. 어떤 토큰도 rem이 아니다. 문서의 숫자가 곧 화면의 숫자다(`A-VIS-01`, brief §6.2-4, ADR-0002. 강제 `design-tokens` DT4: rem 단위 0개, `html { font-size: 16px }` 고정).
 - 층은 둘이다. **ref**(팔레트: 값만 있고 뜻이 없다)와 **sys**(의미: 컴포넌트가 쓰는 유일한 층). **comp 층은 비운다.** 컴포넌트·갤러리(`governance.md` §2.6)는 sys 토큰만 참조하고 자기 토큰을 만들지 않는다(gov, brief D3 권고. 강제 `design-lint` DL7: `.svelte`·컴포넌트 CSS 안의 `--` 선언 금지, 예외는 `components.md`가 적는 상태 변수 `--p` 하나). 컴포넌트 전용 치수(라벨 열·퍼센트 칸)도 여기(§5.2)의 토큰이다.
 - 표기 **[잠정]**은 확인되지 않은 값이다. 확인 방법을 같은 줄에 적었고 `README.md` §6에 모았다. **[취향]**은 출처 없는 선택이다. 뒤집어도 체계가 깨지지 않는다.
 - 근거는 `docs/research/design-system.md`의 ID로 인용한다(README 머리). refuted 값(`X-*`)은 쓰지 않았다.
@@ -29,13 +29,13 @@
 | 강도 | `2` `muted` `disabled` `soft` `strong` | — | `--surface-2`, `--border-strong` |
 | 상태 | `pressed` | — | `--accent-pressed`, `--surface-pressed` |
 
-규칙(강제 `design-tokens DT7: 속성이 위 표의 허용 값이고, 값 이름 토큰은 이름 = 값이며, 전체 이름 집합이 §13 생성물과 같다. 의미 자리는 정규식으로 검사하지 않는다 — 새 이름은 §13에 더해야 생기고 그것이 ADR이다):
+규칙(강제 `design-tokens` DT7: 속성이 위 표의 허용 값이고, 값 이름 토큰은 이름 = 값이며, 전체 이름 집합이 §13 생성물과 같다. 의미 자리는 정규식으로 검사하지 않는다 — 새 이름은 §13에 더해야 생기고 그것이 ADR이다):
 
 1. **역할 이름에는 값을 넣지 않는다.** `--text-body`는 13이지만 이름은 13을 말하지 않는다. 그래서 Windows 실기 뒤 14로 바꿔도 이름이 거짓이 되지 않는다(README D11).
 2. **값 이름 토큰은 값을 바꾸지 않는다.** `--space-8`은 영원히 8px이다. 격자가 바뀌면 토큰을 새로 만들고 옛것을 지운다. "문서 숫자 = 화면 숫자"를 이름이 보증한다(B 후보의 방식, judgment §2.4 D12).
 3. **ref는 `--ref-{색상}-{L}`**이고 L은 무채색 `gray`가 **×1000**(`--ref-gray-965` = OKLCH L 0.965. 계단이 촘촘해 세 자리가 필요하다), 유채색이 **×100**(`--ref-blue-54` = L 0.54)이다. 알파 색은 `--ref-{black|white}-a{α×100}`이다. ref는 컴포넌트가 직접 쓰지 않는다(`design-lint` DL6: 컴포넌트 CSS에 `--ref-` 0개).
-4. **테마·OS·플랫폼은 이름에 넣지 않는다.** 다크 값은 같은 이름을 다크 블록이 재정의한다(brief §6.1-2). `--bg-dark 같은 이름은 없다.
-5. **비활성 전용 색은 이름에 `disabled`를 박는다.** `--fg-disabled`는 비활성 글자·아이콘에만 쓴다. 정보 글자에 쓰면 리뷰(`R1` 스크린샷)에서 걸리고 `design-gallery`의 axe 대비 검사가 잡는다(brief §6.5-3, `A-DRIFT-S2` `fg-faint 오용 재발 방지).
+4. **테마·OS·플랫폼은 이름에 넣지 않는다.** 다크 값은 같은 이름을 다크 블록이 재정의한다(brief §6.1-2). `--bg-dark` 같은 이름은 없다.
+5. **비활성 전용 색은 이름에 `disabled`를 박는다.** `--fg-disabled`는 비활성 글자·아이콘에만 쓴다. 정보 글자에 쓰면 리뷰(`R1` 스크린샷)에서 걸리고 `design-gallery`의 axe 대비 검사가 잡는다(brief §6.5-3, `A-DRIFT-S2` `fg-faint` 오용 재발 방지).
 6. 상태는 `pressed`만 둔다. hover 전용 색은 없다. hover는 `--surface-2` 채움, 눌림은 `--surface-pressed` 채움으로만 표현한다(D21. 둘이 같은 색이면 눌림 피드백이 없다 — 편집 전 `--track`을 눌림에 겸용하던 결함, §12-11).
 
 ---
@@ -106,12 +106,12 @@ OKLCH로 설계하고 sRGB hex로 커밋한다(brief §6.1-3, `G-ENGINE-R4`). he
 | `--bg` | `#F3F3F3` | `#1F1F1F` | 창 바탕, 툴바, Worker `theme-color` | — |
 | `--surface` | `#FFFFFF` | `#2B2B2B` | 그룹 상자·카드·입력칸·버튼 면: "만질 수 있는 것"은 이 면 | bg 위에 직접 놓는 입력칸은 없다(`A-DRIFT-D2` UrlBar 해소) |
 | `--surface-2` | `#E8E8E8` | `#3A3A3A` | hover 채움, 배지 바탕, 코드 블록, 정보 톤 안내 면, 읽기 전용 입력 면, 비활성 창의 선택 면 | 위에 `--accent` 채움 표시(§2.4 주석) |
-| `--surface-pressed` | `#DBDBDB` | `#484848` | 눌림 채움(유령·아이콘 버튼, 메뉴 항목, 라디오 행, 최근 목록 행). 글자는 `--fg`, 아이콘은 `--fg-muted | hover(hover는 `--surface-2`) |
+| `--surface-pressed` | `#DBDBDB` | `#484848` | 눌림 채움(유령·아이콘 버튼, 메뉴 항목, 라디오 행, 최근 목록 행). 글자는 `--fg`, 아이콘은 `--fg-muted` | hover(hover는 `--surface-2`) |
 | `--raised` | `#FFFFFF` | `#333333` | 대화상자·메뉴·토스트. 그림자와 함께만 | 떠 있지 않은 것 |
 | `--track` | `#E8E8E8` | `#1F1F1F` | 진행 막대 트랙(막대는 `--surface` 위에만 놓인다 — 다크 `--bg` 위에서는 트랙이 보이지 않는다) | 눌림 채움 |
 | `--fg` | `#1B1B1B` | `#E8E8E8` | 본문·제목·숫자·오류 상태 줄 | — |
-| `--fg-muted | `#5D5D5D` | `#A4A4A4` | 보조 설명, 상태 조각, 도움말, 그룹 머리, placeholder, ✓ 완료 아이콘, 아이콘 버튼 아이콘 | 유일한 정보 전달 글자(12px와 겹치지 않게. 허용 목록은 §3.2) |
-| `--fg-disabled | `#9E9E9E` | `#6F6F6F` | 비활성 글자·아이콘 **전용**(1.4.3 예외) | 그 밖의 모든 글자 |
+| `--fg-muted` | `#5D5D5D` | `#A4A4A4` | 보조 설명, 상태 조각, 도움말, 그룹 머리, placeholder, ✓ 완료 아이콘, 아이콘 버튼 아이콘 | 유일한 정보 전달 글자(12px와 겹치지 않게. 허용 목록은 §3.2) |
+| `--fg-disabled` | `#9E9E9E` | `#6F6F6F` | 비활성 글자·아이콘 **전용**(1.4.3 예외) | 그 밖의 모든 글자 |
 | `--separator` | `rgba(0,0,0,.10)` | `rgba(255,255,255,.10)` | 장식 구분선, 그룹 상자 윤곽, 툴바 밑선, 비활성 버튼 테두리 | 의미 있는 경계 |
 | `--border-strong` | `#808080` | `#868686` | 입력칸·테두리 버튼·팝업·라디오·스위치 꺼짐 트랙·멈춤 진행 채움 | 장식 |
 | `--accent` | `#0067DF` | `#1E72E4` | 채움: 주 버튼, 진행 채움, 스위치 켜짐, 연결 대기 줄무늬 | 글자, 작은 표시(→ `--accent-ink`), surface-2·raised 위 |
@@ -122,24 +122,24 @@ OKLCH로 설계하고 sRGB hex로 커밋한다(brief §6.1-3, `G-ENGINE-R4`). he
 | `--danger` | `#C51E21` | `#CC3430` | 채움: 실패 진행 채움(track 위 4.79 / 3.22) | 버튼 채움(파괴 동작에 primary 금지, HIG buttons), 글자 |
 | `--danger-ink` | `#BE2323` | `#FA8880` | 위험 글자 버튼, ⊗ 오류 아이콘, `aria-invalid` 테두리 | 본문 |
 | `--danger-soft` | `#FFE7E4` | `#502824` | 오류 안내 면, 위험 유령 버튼의 눌림 면(hover는 `--surface-2`) | — |
-| `--warning-ink | `#945500` | `#E8AA4E` | ⚠ 경고 아이콘·글자 | 채움 |
-| `--warning-soft | `#FFF0D4` | `#433215` | 경고 안내 면, 서비스 공지 배너(block) | — |
+| `--warning-ink` | `#945500` | `#E8AA4E` | ⚠ 경고 아이콘·글자 | 채움 |
+| `--warning-soft` | `#FFF0D4` | `#433215` | 경고 안내 면, 서비스 공지 배너(block) | — |
 | `--focus` | = `--accent-ink` | = `--accent-ink` | `outline` 색 | — |
 | `--scrim` | `rgba(0,0,0,.30)` | `rgba(0,0,0,.50)` | 대화상자 뒤 | — |
 
-성공색이 없는 이유와 재검토 조건은 §2.1. 정보 톤은 `--surface-2` + ⓘ 아이콘(`--fg-muted)이다(D10=C. `A-VIS-41`: 정보 = 브랜드 = CTA가 구별되지 않던 결함). 종류 배지(일반 VOD·빠른 다시보기·클립)와 성인 "19"는 `--surface-2` 면 + **`--fg`** 12px 600 글자다(D10=B, `A-VIS-31`, `G-ICON-2` "종류 배지에 아이콘 불필요". 글자가 `--fg`인 이유: 배지는 종류·연령의 유일한 신호라 12px `--fg-muted 단독 금지(§3.2)에 걸린다).
+성공색이 없는 이유와 재검토 조건은 §2.1. 정보 톤은 `--surface-2` + ⓘ 아이콘(`--fg-muted`)이다(D10=C. `A-VIS-41`: 정보 = 브랜드 = CTA가 구별되지 않던 결함). 종류 배지(일반 VOD·빠른 다시보기·클립)와 성인 "19"는 `--surface-2` 면 + **`--fg`** 12px 600 글자다(D10=B, `A-VIS-31`, `G-ICON-2` "종류 배지에 아이콘 불필요". 글자가 `--fg`인 이유: 배지는 종류·연령의 유일한 신호라 12px `--fg-muted` 단독 금지(§3.2)에 걸린다).
 
 비활성 창(macOS `data-window-active="false"`, `E-APPLE-13`): `--accent-soft`를 `--surface-2`로 재정의하는 블록 하나다(selector는 §10). 새 토큰은 없다. 선택 행의 라디오 점은 `--accent-ink`라 `--surface-2` 위에서도 4.5:1을 넘긴다(§2.4). 편집 전 점이 `--accent`였을 때 다크 비활성 창에서 2.48이던 결함을 이것으로 닫았다.
 
 ### 2.4 대비 계산값
 
-편집 때 쓴 대조 스크립트(단계 (a)에서 `scripts/design/contrast.mjs`)가 WCAG 2.x 상대 휘도로 계산했다(라이트 46쌍·다크 46쌍 판정 모두 PASS, 테마마다 참고값 3행). `design-tokens DT8은 같은 쌍 목록을 `design/tokens/contrast.tokens.json`에서 읽어 다시 계산한다. 쌍 목록을 줄이는 변경은 ADR이 필요하다.
+편집 때 쓴 대조 스크립트(단계 (a)에서 `scripts/design/contrast.mjs`)가 WCAG 2.x 상대 휘도로 계산했다(라이트 46쌍·다크 46쌍 판정 모두 PASS, 테마마다 참고값 3행). `design-tokens` DT8은 같은 쌍 목록을 `design/tokens/contrast.tokens.json`에서 읽어 다시 계산한다. 쌍 목록을 줄이는 변경은 ADR이 필요하다.
 
 주석:
 - 채움 `--accent`·`--danger`를 **상태 표시**(진행 채움·스위치 트랙)로 쓰는 바탕은 `bg`·`surface`·`track`뿐이다. `surface-2`·`raised`·`accent-soft` 위의 작은 표시(라디오 점·선택 ✓)는 `--accent-ink`로 그린다(다크 `accent / surface-2` 2.48, `/ raised` 2.76이라 3:1 미달). 강제 `design-gallery`(forced·다크 axe) + `R1`.
 - 채움 **버튼**의 윤곽에는 대비 요구가 없다. WCAG 1.4.11 Understanding: 글자로 식별되는 컴포넌트의 경계는 예외다. 글자 대비(`on-accent / accent`)만 본다.
 - 선택된 라디오의 상태 표시는 점(`--accent-ink`) ↔ 안쪽 고리(`--surface`)다(라이트 6.18·다크 6.11, `accent-ink / surface` 행). 고리 바깥 테두리 ↔ `--accent-soft` 면은 윤곽이라 요구가 없다.
-- 눌림 면(`--surface-pressed`) 위에는 `--fg` 글자와 `--fg-muted 아이콘만 놓인다(위험 톤의 눌림 면은 `--danger-soft`라 기존 쌍이 덮는다).
+- 눌림 면(`--surface-pressed`) 위에는 `--fg` 글자와 `--fg-muted` 아이콘만 놓인다(위험 톤의 눌림 면은 `--danger-soft`라 기존 쌍이 덮는다).
 - `--fg-disabled`는 1.4.3 비활성 예외라 참고값만 적었다. 면 단계(`surface / bg`, `surface-2 / surface`)는 장식이고 의미를 싣지 않는다.
 
 #### 라이트
@@ -147,52 +147,52 @@ OKLCH로 설계하고 sRGB hex로 커밋한다(brief §6.1-3, `G-ENGINE-R4`). he
 | 전경 | 바탕 | 대비 | 최소 | 판정 | 종류 |
 |---|---|---|---|---|---|
 | `--fg` #1B1B1B | `--bg` #F3F3F3 | 15.52 | 4.5 | PASS | 글자 |
-| `--fg-muted #5D5D5D | `--bg` #F3F3F3 | 5.93 | 4.5 | PASS | 글자 |
+| `--fg-muted` #5D5D5D | `--bg` #F3F3F3 | 5.93 | 4.5 | PASS | 글자 |
 | `--accent-ink` #085DC7 | `--bg` #F3F3F3 | 5.57 | 4.5 | PASS | 글자 |
 | `--danger-ink` #BE2323 | `--bg` #F3F3F3 | 5.48 | 4.5 | PASS | 글자 |
-| `--warning-ink #945500 | `--bg` #F3F3F3 | 5.32 | 4.5 | PASS | 글자 |
+| `--warning-ink` #945500 | `--bg` #F3F3F3 | 5.32 | 4.5 | PASS | 글자 |
 | `--border-strong` #808080 | `--bg` #F3F3F3 | 3.56 | 3 | PASS | 경계 |
 | `--fg` #1B1B1B | `--surface` #FFFFFF | 17.22 | 4.5 | PASS | 글자 |
-| `--fg-muted #5D5D5D | `--surface` #FFFFFF | 6.58 | 4.5 | PASS | 글자 |
+| `--fg-muted` #5D5D5D | `--surface` #FFFFFF | 6.58 | 4.5 | PASS | 글자 |
 | `--accent-ink` #085DC7 | `--surface` #FFFFFF | 6.18 | 4.5 | PASS | 글자 |
 | `--danger-ink` #BE2323 | `--surface` #FFFFFF | 6.08 | 4.5 | PASS | 글자 |
-| `--warning-ink #945500 | `--surface` #FFFFFF | 5.90 | 4.5 | PASS | 글자 |
+| `--warning-ink` #945500 | `--surface` #FFFFFF | 5.90 | 4.5 | PASS | 글자 |
 | `--border-strong` #808080 | `--surface` #FFFFFF | 3.95 | 3 | PASS | 경계 |
 | `--fg` #1B1B1B | `--surface-2` #E8E8E8 | 14.06 | 4.5 | PASS | 글자 |
-| `--fg-muted #5D5D5D | `--surface-2` #E8E8E8 | 5.37 | 4.5 | PASS | 글자 |
+| `--fg-muted` #5D5D5D | `--surface-2` #E8E8E8 | 5.37 | 4.5 | PASS | 글자 |
 | `--accent-ink` #085DC7 | `--surface-2` #E8E8E8 | 5.04 | 4.5 | PASS | 글자 |
 | `--danger-ink` #BE2323 | `--surface-2` #E8E8E8 | 4.96 | 4.5 | PASS | 글자 |
-| `--warning-ink #945500 | `--surface-2` #E8E8E8 | 4.82 | 4.5 | PASS | 글자 |
+| `--warning-ink` #945500 | `--surface-2` #E8E8E8 | 4.82 | 4.5 | PASS | 글자 |
 | `--border-strong` #808080 | `--surface-2` #E8E8E8 | 3.22 | 3 | PASS | 경계 |
 | `--fg` #1B1B1B | `--raised` #FFFFFF | 17.22 | 4.5 | PASS | 글자 |
-| `--fg-muted #5D5D5D | `--raised` #FFFFFF | 6.58 | 4.5 | PASS | 글자 |
+| `--fg-muted` #5D5D5D | `--raised` #FFFFFF | 6.58 | 4.5 | PASS | 글자 |
 | `--accent-ink` #085DC7 | `--raised` #FFFFFF | 6.18 | 4.5 | PASS | 글자 |
 | `--danger-ink` #BE2323 | `--raised` #FFFFFF | 6.08 | 4.5 | PASS | 글자 |
-| `--warning-ink #945500 | `--raised` #FFFFFF | 5.90 | 4.5 | PASS | 글자 |
+| `--warning-ink` #945500 | `--raised` #FFFFFF | 5.90 | 4.5 | PASS | 글자 |
 | `--border-strong` #808080 | `--raised` #FFFFFF | 3.95 | 3 | PASS | 경계 |
 | `--accent` #0067DF | `--bg` #F3F3F3 | 4.72 | 3 | PASS | 상태 표시 채움 |
 | `--accent` #0067DF | `--surface` #FFFFFF | 5.24 | 3 | PASS | 상태 표시 채움 |
 | `--accent` #0067DF | `--track` #E8E8E8 | 4.28 | 3 | PASS | 상태 표시 채움 |
 | `--fg` #1B1B1B | `--accent-soft` #E2F0FF | 14.88 | 4.5 | PASS | 글자(면 위) |
-| `--fg-muted #5D5D5D | `--accent-soft` #E2F0FF | 5.69 | 4.5 | PASS | 글자(면 위) |
+| `--fg-muted` #5D5D5D | `--accent-soft` #E2F0FF | 5.69 | 4.5 | PASS | 글자(면 위) |
 | `--accent-ink` #085DC7 | `--accent-soft` #E2F0FF | 5.33 | 4.5 | PASS | 글자(면 위) |
 | `--fg` #1B1B1B | `--danger-soft` #FFE7E4 | 14.60 | 4.5 | PASS | 글자(면 위) |
-| `--fg-muted #5D5D5D | `--danger-soft` #FFE7E4 | 5.58 | 4.5 | PASS | 글자(면 위) |
+| `--fg-muted` #5D5D5D | `--danger-soft` #FFE7E4 | 5.58 | 4.5 | PASS | 글자(면 위) |
 | `--danger-ink` #BE2323 | `--danger-soft` #FFE7E4 | 5.15 | 4.5 | PASS | 글자(면 위) |
-| `--fg` #1B1B1B | `--warning-soft #FFF0D4 | 15.31 | 4.5 | PASS | 글자(면 위) |
-| `--fg-muted #5D5D5D | `--warning-soft #FFF0D4 | 5.85 | 4.5 | PASS | 글자(면 위) |
-| `--warning-ink #945500 | `--warning-soft #FFF0D4 | 5.25 | 4.5 | PASS | 글자(면 위) |
+| `--fg` #1B1B1B | `--warning-soft` #FFF0D4 | 15.31 | 4.5 | PASS | 글자(면 위) |
+| `--fg-muted` #5D5D5D | `--warning-soft` #FFF0D4 | 5.85 | 4.5 | PASS | 글자(면 위) |
+| `--warning-ink` #945500 | `--warning-soft` #FFF0D4 | 5.25 | 4.5 | PASS | 글자(면 위) |
 | `--on-accent` #FFFFFF | `--accent` #0067DF | 5.24 | 4.5 | PASS | 채움 위 글자 |
 | `--on-accent` #FFFFFF | `--accent-pressed` #0056C5 | 6.69 | 4.5 | PASS | 채움 위 글자 |
 | `--danger` #C51E21 | `--track` #E8E8E8 | 4.79 | 3 | PASS | 실패 채움/트랙 |
 | `--accent-ink` #085DC7 | `--danger-soft` #FFE7E4 | 5.23 | 4.5 | PASS | 글자(면 위) |
-| `--accent-ink` #085DC7 | `--warning-soft #FFF0D4 | 5.49 | 4.5 | PASS | 글자(면 위) |
+| `--accent-ink` #085DC7 | `--warning-soft` #FFF0D4 | 5.49 | 4.5 | PASS | 글자(면 위) |
 | `--fg` #1B1B1B | `--surface-pressed` #DBDBDB | 12.44 | 4.5 | PASS | 글자(눌림 면) |
-| `--fg-muted #5D5D5D | `--surface-pressed` #DBDBDB | 4.76 | 3 | PASS | 아이콘(눌림 면) |
+| `--fg-muted` #5D5D5D | `--surface-pressed` #DBDBDB | 4.76 | 3 | PASS | 아이콘(눌림 면) |
 | `--border-strong` #808080 | `--track` #E8E8E8 | 3.22 | 3 | PASS | 일시정지 채움/트랙 |
 | `--danger-ink` #BE2323 | `--surface` #FFFFFF | 6.08 | 3 | PASS | 오류 테두리(aria-invalid) |
 | `--danger-ink` #BE2323 | `--bg` #F3F3F3 | 5.48 | 3 | PASS | 오류 테두리(aria-invalid) |
-| `--fg-disabled #9E9E9E | `--surface` #FFFFFF | 2.68 | — | — | 비활성(예외, 참고값) |
+| `--fg-disabled` #9E9E9E | `--surface` #FFFFFF | 2.68 | — | — | 비활성(예외, 참고값) |
 | `--surface` #FFFFFF | `--bg` #F3F3F3 | 1.11 | — | — | 면 단계(장식, 참고값) |
 | `--surface-2` #E8E8E8 | `--surface` #FFFFFF | 1.23 | — | — | 면 단계(장식, 참고값) |
 
@@ -204,52 +204,52 @@ separator `rgba(0,0,0,.10)` 합성값: bg 위 `#DBDBDB`(1.25:1), surface 위 `#E
 | 전경 | 바탕 | 대비 | 최소 | 판정 | 종류 |
 |---|---|---|---|---|---|
 | `--fg` #E8E8E8 | `--bg` #1F1F1F | 13.45 | 4.5 | PASS | 글자 |
-| `--fg-muted #A4A4A4 | `--bg` #1F1F1F | 6.61 | 4.5 | PASS | 글자 |
+| `--fg-muted` #A4A4A4 | `--bg` #1F1F1F | 6.61 | 4.5 | PASS | 글자 |
 | `--accent-ink` #70ADFB | `--bg` #1F1F1F | 7.11 | 4.5 | PASS | 글자 |
 | `--danger-ink` #FA8880 | `--bg` #1F1F1F | 6.98 | 4.5 | PASS | 글자 |
-| `--warning-ink #E8AA4E | `--bg` #1F1F1F | 8.08 | 4.5 | PASS | 글자 |
+| `--warning-ink` #E8AA4E | `--bg` #1F1F1F | 8.08 | 4.5 | PASS | 글자 |
 | `--border-strong` #868686 | `--bg` #1F1F1F | 4.53 | 3 | PASS | 경계 |
 | `--fg` #E8E8E8 | `--surface` #2B2B2B | 11.56 | 4.5 | PASS | 글자 |
-| `--fg-muted #A4A4A4 | `--surface` #2B2B2B | 5.68 | 4.5 | PASS | 글자 |
+| `--fg-muted` #A4A4A4 | `--surface` #2B2B2B | 5.68 | 4.5 | PASS | 글자 |
 | `--accent-ink` #70ADFB | `--surface` #2B2B2B | 6.11 | 4.5 | PASS | 글자 |
 | `--danger-ink` #FA8880 | `--surface` #2B2B2B | 6.00 | 4.5 | PASS | 글자 |
-| `--warning-ink #E8AA4E | `--surface` #2B2B2B | 6.94 | 4.5 | PASS | 글자 |
+| `--warning-ink` #E8AA4E | `--surface` #2B2B2B | 6.94 | 4.5 | PASS | 글자 |
 | `--border-strong` #868686 | `--surface` #2B2B2B | 3.89 | 3 | PASS | 경계 |
 | `--fg` #E8E8E8 | `--surface-2` #3A3A3A | 9.28 | 4.5 | PASS | 글자 |
-| `--fg-muted #A4A4A4 | `--surface-2` #3A3A3A | 4.56 | 4.5 | PASS | 글자 |
+| `--fg-muted` #A4A4A4 | `--surface-2` #3A3A3A | 4.56 | 4.5 | PASS | 글자 |
 | `--accent-ink` #70ADFB | `--surface-2` #3A3A3A | 4.91 | 4.5 | PASS | 글자 |
 | `--danger-ink` #FA8880 | `--surface-2` #3A3A3A | 4.82 | 4.5 | PASS | 글자 |
-| `--warning-ink #E8AA4E | `--surface-2` #3A3A3A | 5.57 | 4.5 | PASS | 글자 |
+| `--warning-ink` #E8AA4E | `--surface-2` #3A3A3A | 5.57 | 4.5 | PASS | 글자 |
 | `--border-strong` #868686 | `--surface-2` #3A3A3A | 3.12 | 3 | PASS | 경계 |
 | `--fg` #E8E8E8 | `--raised` #333333 | 10.31 | 4.5 | PASS | 글자 |
-| `--fg-muted #A4A4A4 | `--raised` #333333 | 5.07 | 4.5 | PASS | 글자 |
+| `--fg-muted` #A4A4A4 | `--raised` #333333 | 5.07 | 4.5 | PASS | 글자 |
 | `--accent-ink` #70ADFB | `--raised` #333333 | 5.45 | 4.5 | PASS | 글자 |
 | `--danger-ink` #FA8880 | `--raised` #333333 | 5.35 | 4.5 | PASS | 글자 |
-| `--warning-ink #E8AA4E | `--raised` #333333 | 6.19 | 4.5 | PASS | 글자 |
+| `--warning-ink` #E8AA4E | `--raised` #333333 | 6.19 | 4.5 | PASS | 글자 |
 | `--border-strong` #868686 | `--raised` #333333 | 3.47 | 3 | PASS | 경계 |
 | `--accent` #1E72E4 | `--bg` #1F1F1F | 3.60 | 3 | PASS | 상태 표시 채움 |
 | `--accent` #1E72E4 | `--surface` #2B2B2B | 3.09 | 3 | PASS | 상태 표시 채움 |
 | `--accent` #1E72E4 | `--track` #1F1F1F | 3.60 | 3 | PASS | 상태 표시 채움 |
 | `--fg` #E8E8E8 | `--accent-soft` #233651 | 9.98 | 4.5 | PASS | 글자(면 위) |
-| `--fg-muted #A4A4A4 | `--accent-soft` #233651 | 4.90 | 4.5 | PASS | 글자(면 위) |
+| `--fg-muted` #A4A4A4 | `--accent-soft` #233651 | 4.90 | 4.5 | PASS | 글자(면 위) |
 | `--accent-ink` #70ADFB | `--accent-soft` #233651 | 5.27 | 4.5 | PASS | 글자(면 위) |
 | `--fg` #E8E8E8 | `--danger-soft` #502824 | 10.26 | 4.5 | PASS | 글자(면 위) |
-| `--fg-muted #A4A4A4 | `--danger-soft` #502824 | 5.04 | 4.5 | PASS | 글자(면 위) |
+| `--fg-muted` #A4A4A4 | `--danger-soft` #502824 | 5.04 | 4.5 | PASS | 글자(면 위) |
 | `--danger-ink` #FA8880 | `--danger-soft` #502824 | 5.33 | 4.5 | PASS | 글자(면 위) |
-| `--fg` #E8E8E8 | `--warning-soft #433215 | 10.05 | 4.5 | PASS | 글자(면 위) |
-| `--fg-muted #A4A4A4 | `--warning-soft #433215 | 4.94 | 4.5 | PASS | 글자(면 위) |
-| `--warning-ink #E8AA4E | `--warning-soft #433215 | 6.03 | 4.5 | PASS | 글자(면 위) |
+| `--fg` #E8E8E8 | `--warning-soft` #433215 | 10.05 | 4.5 | PASS | 글자(면 위) |
+| `--fg-muted` #A4A4A4 | `--warning-soft` #433215 | 4.94 | 4.5 | PASS | 글자(면 위) |
+| `--warning-ink` #E8AA4E | `--warning-soft` #433215 | 6.03 | 4.5 | PASS | 글자(면 위) |
 | `--on-accent` #FFFFFF | `--accent` #1E72E4 | 4.58 | 4.5 | PASS | 채움 위 글자 |
 | `--on-accent` #FFFFFF | `--accent-pressed` #085DC7 | 6.18 | 4.5 | PASS | 채움 위 글자 |
 | `--danger` #CC3430 | `--track` #1F1F1F | 3.22 | 3 | PASS | 실패 채움/트랙 |
 | `--accent-ink` #70ADFB | `--danger-soft` #502824 | 5.42 | 4.5 | PASS | 글자(면 위) |
-| `--accent-ink` #70ADFB | `--warning-soft #433215 | 5.31 | 4.5 | PASS | 글자(면 위) |
+| `--accent-ink` #70ADFB | `--warning-soft` #433215 | 5.31 | 4.5 | PASS | 글자(면 위) |
 | `--fg` #E8E8E8 | `--surface-pressed` #484848 | 7.46 | 4.5 | PASS | 글자(눌림 면) |
-| `--fg-muted #A4A4A4 | `--surface-pressed` #484848 | 3.67 | 3 | PASS | 아이콘(눌림 면) |
+| `--fg-muted` #A4A4A4 | `--surface-pressed` #484848 | 3.67 | 3 | PASS | 아이콘(눌림 면) |
 | `--border-strong` #868686 | `--track` #1F1F1F | 4.53 | 3 | PASS | 일시정지 채움/트랙 |
 | `--danger-ink` #FA8880 | `--surface` #2B2B2B | 6.00 | 3 | PASS | 오류 테두리(aria-invalid) |
 | `--danger-ink` #FA8880 | `--bg` #1F1F1F | 6.98 | 3 | PASS | 오류 테두리(aria-invalid) |
-| `--fg-disabled #6F6F6F | `--surface` #2B2B2B | 2.82 | — | — | 비활성(예외, 참고값) |
+| `--fg-disabled` #6F6F6F | `--surface` #2B2B2B | 2.82 | — | — | 비활성(예외, 참고값) |
 | `--surface` #2B2B2B | `--bg` #1F1F1F | 1.16 | — | — | 면 단계(장식, 참고값) |
 | `--surface-2` #3A3A3A | `--surface` #2B2B2B | 1.24 | — | — | 면 단계(장식, 참고값) |
 
@@ -262,12 +262,12 @@ macOS "대비 증가"와 GNOME 고대비는 `forced-colors`가 아니라 이 쿼
 
 | 토큰 | 재정의 | 결과 대비(라이트 / 다크) |
 |---|---|---|
-| `--fg-muted | `var(--fg)` | fg / surface 17.22 / 11.56 |
+| `--fg-muted` | `var(--fg)` | fg / surface 17.22 / 11.56 |
 | `--separator` | `var(--fg)` | 장식선이 의미 경계 수준으로 |
 | `--border-strong` | `var(--fg)` | 17.22 / 11.56 |
 | `--track` | 바꾸지 않는다(채움 accent / track 4.28 / 3.60 유지) | 대신 진행 막대 트랙에 `1px solid var(--fg)` 테두리를 더한다(components.md ProgressBar). 트랙을 진하게 하면 채움과의 대비가 깨진다 |
 
-이 블록이 다크 블록을 이기려면 특이도가 같거나 높고 소스에서 뒤에 와야 한다. 그래서 테마·상태 블록의 selector는 전부 `:root:where(…)`로 특이도 (0,1,0)에 맞추고 순서로 결정한다(§10, §13. 편집 전 다크 블록이 (0,2,0)이라 다크 + 대비 증가에서 이 블록이 죽던 결함). 강제: `design-tokens DT11(블록 값) + DT16(계산값: 다크 + `prefers-contrast: more`에서 `--fg-muted = `--fg`, 비활성 창에서 `--accent-soft` = `--surface-2`) + `design-gallery`(에뮬레이션 axe).
+이 블록이 다크 블록을 이기려면 특이도가 같거나 높고 소스에서 뒤에 와야 한다. 그래서 테마·상태 블록의 selector는 전부 `:root:where(…)`로 특이도 (0,1,0)에 맞추고 순서로 결정한다(§10, §13. 편집 전 다크 블록이 (0,2,0)이라 다크 + 대비 증가에서 이 블록이 죽던 결함). 강제: `design-tokens` DT11(블록 값) + DT16(계산값: 다크 + `prefers-contrast: more`에서 `--fg-muted` = `--fg`, 비활성 창에서 `--accent-soft` = `--surface-2`) + `design-gallery`(에뮬레이션 axe).
 
 ### 2.6 C1 색상각 검사 결과
 
@@ -280,13 +280,13 @@ macOS "대비 증가"와 GNOME 고대비는 `forced-colors`가 아니라 이 쿼
 | sys 토큰 / 요소 | 시스템 색 | 비고 |
 |---|---|---|
 | `--bg` `--surface` `--surface-2` `--raised` `--track` | `Canvas` | 면 단계가 사라지므로 아래 경계 규칙이 위계를 대신한다 |
-| `--fg` `--fg-muted | `CanvasText` | 보조 글자도 `CanvasText`다. `GrayText`를 보조 글자에 쓰지 않는다(R-OS-4) |
-| `--fg-disabled | `GrayText` | 비활성에만 |
+| `--fg` `--fg-muted` | `CanvasText` | 보조 글자도 `CanvasText`다. `GrayText`를 보조 글자에 쓰지 않는다(R-OS-4) |
+| `--fg-disabled` | `GrayText` | 비활성에만 |
 | `--separator` `--border-strong` | `CanvasText` | 모든 경계가 같은 색이 된다 |
 | `--accent`(채움) + `--on-accent` | `Highlight` + `HighlightText` | 주 버튼·스위치 켜짐·진행 채움 |
 | `--accent-soft`(선택 행) | `Highlight` 면 + `HighlightText` 글자, 또는 `outline: 1px solid Highlight` | 둘 중 하나. components.md가 컴포넌트별로 정한다 |
 | `--accent-ink` 작은 표시 | `CanvasText`(라디오 점·✓), 웹 링크는 `LinkText` | — |
-| `--danger-ink` `--warning-ink | `CanvasText` | 색이 사라지므로 아이콘 모양(⊗·⚠)과 글자가 뜻을 전한다(§9 은유 표) |
+| `--danger-ink` `--warning-ink` | `CanvasText` | 색이 사라지므로 아이콘 모양(⊗·⚠)과 글자가 뜻을 전한다(§9 은유 표) |
 | `--focus` | UA가 `outline`을 시스템 색으로 그린다 | `outline` 기반이므로 자동으로 살아 있다(D20). box-shadow 링은 사라진다 |
 | `--scrim` | `transparent` | — |
 | `--shadow-*` | `none`(자동) | 대신 대화상자·메뉴·토스트에 `2px solid CanvasText` 테두리 |
@@ -312,11 +312,11 @@ macOS "대비 증가"와 GNOME 고대비는 `forced-colors`가 아니라 이 쿼
 
 시스템 글꼴만 쓴다. 번들하지 않는다(사용자 결정 2. 강제 `design-tokens`: 기존 `tokens.test.ts`의 "번들 글꼴 없음" + `url(`·`@font-face` 0개, Worker는 `worker` gate의 `url(`·`@import` 금지).
 
-``css
+```css
 --font-sans: system-ui, 'Apple SD Gothic Neo', 'Malgun Gothic', 'Noto Sans CJK KR', 'Noto Sans KR',
              'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', sans-serif;
 --font-mono: ui-monospace, 'SF Mono', Menlo, Consolas, 'Cascadia Mono', 'D2Coding', monospace;
-``
+```
 
 | OS | 라틴·숫자 | 한글 | 확인 수준 |
 |---|---|---|---|
@@ -340,11 +340,11 @@ macOS 텍스트 스타일 표를 그대로 가져왔다(`E-APPLE-02`: 17/22, 15/
 | body | **13px** | 16px | 400 | 본문, 컨트롤, 행, 상태 줄, 섹션 제목(600) |
 | title | **15px** | 20px | 600 | 카드 제목, 대화상자 제목, 랜딩 CTA 글자 |
 | display | **17px** | 22px | 600 | 화면 제목(설정), 빈 상태 머리 |
-| read(행간만) | — | `--leading-read 20px | — | 두 줄 넘는 문단(안내·오류 본문·대화상자 본문). 13px × 1.54. WCAG 1.4.12(1.5배 덮어쓰기)에 대비 |
+| read(행간만) | — | `--leading-read` 20px | — | 두 줄 넘는 문단(안내·오류 본문·대화상자 본문). 13px × 1.54. WCAG 1.4.12(1.5배 덮어쓰기)에 대비 |
 
-- 최소 글자 크기는 **12px**이다. 11px은 쓰지 않는다(`G-SCALE-7`: Windows 캡션 12와 같은 하한, 100% 배율 Linux가 가장 취약. 강제 `design-tokens DT5: 모든 `--text-*` ≥ 12, `design-lint` DL5: `font-size` 리터럴 금지). **12px `--fg-muted 글자 하나만으로 의미를 전하지 않는다**(brief §6.4-3. 리뷰 `R1`). 허용 목록(다른 단서와 겹치거나 보조이기 때문): 그룹 머리의 개수(행이 셀 수 있다), 설정·입력 도움말(라벨이 뜻을 가진다), 붙여넣기 힌트, Worker 표 둘째 줄, kbd. 배지는 글자가 `--fg`이고(§2.3), "가장 좋은 화질" 꼬리표는 13px `--fg-muted`다.
+- 최소 글자 크기는 **12px**이다. 11px은 쓰지 않는다(`G-SCALE-7`: Windows 캡션 12와 같은 하한, 100% 배율 Linux가 가장 취약. 강제 `design-tokens` DT5: 모든 `--text-*` ≥ 12, `design-lint` DL5: `font-size` 리터럴 금지). **12px `--fg-muted` 글자 하나만으로 의미를 전하지 않는다**(brief §6.4-3. 리뷰 `R1`). 허용 목록(다른 단서와 겹치거나 보조이기 때문): 그룹 머리의 개수(행이 셀 수 있다), 설정·입력 도움말(라벨이 뜻을 가진다), 붙여넣기 힌트, Worker 표 둘째 줄, kbd. 배지는 글자가 `--fg`이고(§2.3), "가장 좋은 화질" 꼬리표는 13px `--fg-muted`다.
 - 섹션 제목(13/600) < 카드 제목(15) < 화면 제목(17)으로 역전이 없다(`A-VIS-17` 해소).
-- 본문 13은 **[잠정]**이다(사용자 결정 4). 근거는 macOS 기본 13(`E-APPLE-01`), C3 "12~14", 치지직 웹 12~14(비공식). 반례는 데스크톱 수렴 14(bigtech confirmed). **Windows 실기(맑은 고딕 13px 판독, 600 렌더, tnum)에서 작으면 `--text-body`·`--leading-body 두 줄을 14/18로 바꾼다.** 컨트롤 28은 14/18에서도 상하 5px 여유가 있어 연쇄 변경이 없다. 그 외 토큰은 건드리지 않는다. 확인 방법은 README §6-1.
+- 본문 13은 **[잠정]**이다(사용자 결정 4). 근거는 macOS 기본 13(`E-APPLE-01`), C3 "12~14", 치지직 웹 12~14(비공식). 반례는 데스크톱 수렴 14(bigtech confirmed). **Windows 실기(맑은 고딕 13px 판독, 600 렌더, tnum)에서 작으면 `--text-body`·`--leading-body` 두 줄을 14/18로 바꾼다.** 컨트롤 28은 14/18에서도 상하 5px 여유가 있어 연쇄 변경이 없다. 그 외 토큰은 건드리지 않는다. 확인 방법은 README §6-1.
 - 앱 안 "글자 크기" 설정(D28)은 `:root[data-text-scale]`가 글자·행간 토큰만 재정의한다. 컨트롤 높이는 `min-height`라 따라 늘어난다(g-input: 크기 토큰은 글자와 분리).
 
 | `data-text-scale` | caption | body | title | display | read | 근거 |
@@ -353,7 +353,7 @@ macOS 텍스트 스타일 표를 그대로 가져왔다(`E-APPLE-02`: 17/22, 15/
 | `large` | 16/20 | 17/22 | 20/26 | 22/28 | 26 | ×1.3 [잠정] |
 | `x-large` | 24/30 | 26/34 | 30/38 | 34/44 | 40 | ×2.0 = WCAG 1.4.4 200%(`E-APPLE-08`) [잠정]. 720×520에서 리플로우가 깨지지 않아야 한다(`design-gallery` x-large 스냅) |
 
-유도 규칙(생성기가 계산하고 원천에는 기본값과 배율 1.3·2.0만 둔다. 그래서 `--text-body`를 14로 바꾸면 이 블록도 따라온다, README D11): 크기 = round(기본 × 배율), 행간 = 크기 × 1.25 이상인 가장 작은 짝수, 읽기 행간 = round(20 × 배율). 강제 `design-tokens DT11(블록 값이 이 식과 같다).
+유도 규칙(생성기가 계산하고 원천에는 기본값과 배율 1.3·2.0만 둔다. 그래서 `--text-body`를 14로 바꾸면 이 블록도 따라온다, README D11): 크기 = round(기본 × 배율), 행간 = 크기 × 1.25 이상인 가장 작은 짝수, 읽기 행간 = round(20 × 배율). 강제 `design-tokens` DT11(블록 값이 이 식과 같다).
 
 ### 3.3 Worker 읽기 척도
 
@@ -367,7 +367,7 @@ macOS 텍스트 스타일 표를 그대로 가져왔다(`E-APPLE-02`: 17/22, 15/
 | display(h2) | 22/28 | macOS 22/26 → 4 격자 28 [잠정] |
 | hero(h1) | 28/36 | judgment §2.3-6 "h1 28" [잠정]. 폭 600 미만에서는 22/28 |
 | `--control-h-lg` | 36 | 랜딩 CTA. 44는 쓰지 않는다(judgment §2.5) |
-| `--reading-max | 680px | 읽기 열 폭 **[취향]**(A, ADR-0009). 15px 한글 약 45자. 읽기 페이지의 사이트 헤더 안쪽 폭도 이 값이다 |
+| `--reading-max` | 680px | 읽기 열 폭 **[취향]**(A, ADR-0009). 15px 한글 약 45자. 읽기 페이지의 사이트 헤더 안쪽 폭도 이 값이다 |
 
 확인: 첫 시험 D62에서 소영 과업(랜딩 → 설치)을 1280 화면과 휴대폰 폭에서 보고, Windows·Linux 실기 스크린샷을 `R1`로 남긴다.
 
@@ -411,7 +411,7 @@ macOS 텍스트 스타일 표를 그대로 가져왔다(`E-APPLE-02`: 17/22, 15/
 | `--space-32` | 32px | 열 하단 여백, 빈 상태 상하 |
 | `--space-40` | 40px | Worker 절 사이, 히어로 위 |
 
-허용 값은 이 열 개뿐이다. 48·64는 쓸 자리가 없어 두지 않는다(미사용 토큰 0개 원칙). 광학 보정 토큰은 없다. 아이콘 글리프 보정은 에셋 안에서 하고(§9), 열·행 **끝자리**의 유령·아이콘 버튼은 자기 가로 패딩만큼 바깥 여백을 음수로 둬 글자·아이콘 상자 가장자리를 정렬선에 맞춘다(`components.md` §2.1·§2.2, `calc(0px - var(--space-6))`). 강제: `design-tokens DT6(값 집합 고정) + `design-lint` DL2(컴포넌트의 px 리터럴 금지. 예외: `0`·`0px`, `1px`·`2px` 선 굵기, `50%`·`100%`).
+허용 값은 이 열 개뿐이다. 48·64는 쓸 자리가 없어 두지 않는다(미사용 토큰 0개 원칙). 광학 보정 토큰은 없다. 아이콘 글리프 보정은 에셋 안에서 하고(§9), 열·행 **끝자리**의 유령·아이콘 버튼은 자기 가로 패딩만큼 바깥 여백을 음수로 둬 글자·아이콘 상자 가장자리를 정렬선에 맞춘다(`components.md` §2.1·§2.2, `calc(0px - var(--space-6))`). 강제: `design-tokens` DT6(값 집합 고정) + `design-lint` DL2(컴포넌트의 px 리터럴 금지. 예외: `0`·`0px`, `1px`·`2px` 선 굵기, `50%`·`100%`).
 
 **`calc()` 정책**(`design-lint` DL2): 피연산자가 전부 토큰·`0px`·`100%`·정수 계수인 `calc()`만 허용한다. 숫자 리터럴 피연산자(`calc(100% - 20px)`)는 금지다. 쓰는 곳: 스위치 손잡이 이동 `calc(var(--switch-w) - var(--switch-h))`, 대화상자 `max-width: calc(100% - 2 * var(--edge))`·`max-height`, 토스트 폭, 스크롤 영역 `scroll-padding`, 끝자리 보정 음수 여백.
 
@@ -440,7 +440,7 @@ AppKit Tahoe 실측 regular 24 · large 28 · extraLarge 36(`E-APPLE-19`, `E-DES
 | `--toolbar-h` | **44px** | 44px | 앱 툴바(네이티브 타이틀바 아래) | [취향] A. Windows 타이틀바 32·검색 포함 48 사이 |
 | `--hit-min` | **24px** | 40px | 모든 대화형 요소의 최소 폭·높이 | WCAG 2.5.8 AA |
 
-터치 값은 `tokens.css`의 `@media (any-pointer: coarse)` 블록 **한 곳**에만 있다(`G-INPUT-IN5`·`G-INPUT-IN6`: `hover: none`·`pointer: coarse` 분기 금지, 시작 때 JS 판정 금지). 강제 `design-tokens`(coarse 블록 존재·값) + `design-lint`(컴포넌트 CSS 안 `@media (pointer·`hover` 금지) + `design-gallery`(`availablePointerTypes` 흉내로 40·44 검사).
+터치 값은 `tokens.css`의 `@media (any-pointer: coarse)` 블록 **한 곳**에만 있다(`G-INPUT-IN5`·`G-INPUT-IN6`: `hover: none`·`pointer: coarse` 분기 금지, 시작 때 JS 판정 금지). 강제 `design-tokens`(coarse 블록 존재·값) + `design-lint`(컴포넌트 CSS 안 `@media (pointer`·`hover` 금지) + `design-gallery`(`availablePointerTypes` 흉내로 40·44 검사).
 
 ### 5.2 그 밖의 크기
 
@@ -451,7 +451,7 @@ AppKit Tahoe 실측 regular 24 · large 28 · extraLarge 36(`E-APPLE-19`, `E-DES
 | `--radio-size` | 16px | AppKit regular 라디오·체크박스 16(확정 19) |
 | `--progress-h` | 6px | **[취향]**(A). AppKit 막대 상자 20 안의 실제 두께를 재지 않았다. 다크 720에서 트랙과 채움 구분(B의 4px은 가늘다, `J-F-B8`). 확인: 첫 시험 때 D62 "진행을 읽는가" |
 | `--badge-h` | 18px | 캡션 행간 16 + 상하 1. 종류 배지·"19"·kbd. `min-height`라 큰 글자에서 늘어난다 |
-| `--dialog-w | 440px | **[취향]**(A, ADR-0009). 대화상자와 로그인 패널. 720 창에서 좌우 140(열 안쪽 680 기준 120) |
+| `--dialog-w` | 440px | **[취향]**(A, ADR-0009). 대화상자와 로그인 패널. 720 창에서 좌우 140(열 안쪽 680 기준 120) |
 | `--label-w` | 80px | 카드 폼(FieldRow)의 라벨 열 폭 **[취향]**(A, ADR-0009). 4글자 라벨 + 여유. 좁은 레이아웃에서는 1열이라 쓰이지 않는다 |
 | `--pct-w` | 40px | 작업 행 퍼센트 칸 폭 **[취향]**(A, ADR-0009). "100%" 네 글자 tabular 13px이 글꼴마다 달라 토큰으로 고정한다 |
 
@@ -479,7 +479,7 @@ AppKit Tahoe 실측 regular 24 · large 28 · extraLarge 36(`E-APPLE-19`, `E-DES
 |---|---|---|---|
 | 굵기 | **1px과 2px만**. 0.5·1.5·소수 금지 | g-scale §2.2 실측: 1px은 125~175%에서 늘 1기기 픽셀 완전 덮임, 1.5는 125%에서 1·150%에서 2로 뒤집힘 | `design-lint`: `border`·`outline` 굵기 리터럴 1px·2px 외 금지 |
 | 그리는 법 | `border`·`outline`만. box-shadow 링·gradient 선은 장식 윤곽에만 | g-scale §5.2. box-shadow 링은 125·175%에서 반 픽셀 번진다 | `design-lint`: `:focus-visible`에 `box-shadow` 금지 |
-| 의미 경계 | `--border-strong`, 인접 모든 바탕에 ≥ 3:1(§2.4 표 8쌍 모두 통과) | WCAG 1.4.11 | `design-tokens |
+| 의미 경계 | `--border-strong`, 인접 모든 바탕에 ≥ 3:1(§2.4 표 8쌍 모두 통과) | WCAG 1.4.11 | `design-tokens` |
 | 장식선 | `--separator` α.10. 대비 요구 없음, 단독으로 의미 전달 금지 | `E-APPLE-11`(separator α0.10 구조) | 리뷰 `R1` |
 | 금지 | `calc(N - 1px)`, `translate(-50%,-50%)` 가운데 정렬, 정지 상태 글자 요소의 `transform` | g-scale §5.2(스냅 안 됨) | `design-lint` grep |
 
@@ -546,13 +546,13 @@ AppKit Tahoe 실측 regular 24 · large 28 · extraLarge 36(`E-APPLE-19`, `E-DES
 
 | 항목 | 값 | 근거 | 강제 |
 |---|---|---|---|
-| 본문 열 `--content-max` | **800px**(가장자리 20 포함, 안쪽 760). 가운데 정렬 | 사용자 결정 5. 720 최소 창에서 꽉 차고(안쪽 680) 960 기본 창에서 좌우 80. A의 720과 B의 960 사이 절충이며 **출처 없음 → ADR-0001** | `design-tokens + `design-gallery` 720·960 스냅 |
+| 본문 열 `--content-max` | **800px**(가장자리 20 포함, 안쪽 760). 가운데 정렬 | 사용자 결정 5. 720 최소 창에서 꽉 차고(안쪽 680) 960 기본 창에서 좌우 80. A의 720과 B의 960 사이 절충이며 **출처 없음 → ADR-0001** | `design-tokens` + `design-gallery` 720·960 스냅 |
 | 열 기준 | 툴바 안쪽·배너·토스트·대화상자 모두 같은 열에 정렬. 기준선 하나 | `A-VIS-02`~`A-VIS-04`(폭 3종·기준선 3종 P0 해소) | 리뷰 `R1` |
 | 가장자리 `--edge` | 20px | §4 | — |
 | 분기점 | **600px 하나**: 미만이면 좁은 레이아웃(Worker 휴대폰 폭, Windows 텍스트 225%) **[잠정]**. 미디어 쿼리에 변수를 못 쓰므로 토큰이 아니라 생성기 상수 `BREAKPOINT_NARROW`(§14)이고 폭 쿼리는 허용 파일(앱 `tokens.css`·`layout.css`, Worker `site.css`·생성물)에만 쓴다. 앱의 `x-large` 글자는 뷰포트를 바꾸지 않으므로 좁은 레이아웃 규칙은 `layout.css`에 `@media (max-width: 599px)` 블록과 `:root[data-text-scale="x-large"]` 접두 블록 **두 번** 쓰고 둘의 선언이 같아야 한다 | `A-FEAT-R1`(840 분기가 6곳) 해소. 확인: Windows 텍스트 크기 225%(CSS 약 320×231)에서 1.4.10 리플로우 검사 | `design-lint` DL13(허용 파일, 두 블록 동일), `design-gallery`(320 폭·x-large) |
 | 최소 창 | 720×520(변경 없음) | tauri.conf.json | `tauri` |
 | 520 높이 | 주소 입력줄은 툴바 아래 첫 요소. 카드 바닥 버튼 줄은 `position: sticky; bottom: 0`이라 카드가 길어도 늘 보인다(토큰 그대로 카드가 다 들어가는 조합은 제목 1줄·화질 3행뿐이다, `patterns.md` §15) | `A-FEAT-R1`·`R2` | `design-gallery` 720×520(최악 조합 고정 데이터에서 [받기] 뷰포트 안) |
-| Worker 읽기 열 `--reading-max | 680px [취향] | §3.3 | — |
+| Worker 읽기 열 `--reading-max` | 680px [취향] | §3.3 | — |
 
 ---
 
@@ -561,7 +561,7 @@ AppKit Tahoe 실측 regular 24 · large 28 · extraLarge 36(`E-APPLE-19`, `E-DES
 | 항목 | 값 | 근거 | 강제 |
 |---|---|---|---|
 | 세트 | **Lucide**(ISC + Feather MIT) 한 세트. path만 `icons.ts`에 벤더링, 항목마다 `{ set: 'lucide', name, version }` 메타 | D31=A, g-icon(SF Symbols·Segoe Fluent Icons 글꼴은 쓸 수 없다, brief §2.7). 고지는 앱 정보·설치 폴더·`/licenses`에 즉시 | `design-icons`(메타 없는 항목 타입 오류, 고지 파일과 세트·버전 일치, `<svg` 직접 사용 금지, `SF Symbols`·`MDL2` 문자열 금지) |
-| 크기 | `--icon-sm` 16(행·배지 옆·행 버튼), `--icon-md` 20(툴바·안내). **32는 없다**(빈 상태에 아이콘을 두지 않는다. HIG writing "빈 화면엔 다음 행동") | D32, judgment §2.4. 12는 만들지 않는다(Fluent 2 "12는 상호작용에 너무 작다") | `design-tokens |
+| 크기 | `--icon-sm` 16(행·배지 옆·행 버튼), `--icon-md` 20(툴바·안내). **32는 없다**(빈 상태에 아이콘을 두지 않는다. HIG writing "빈 화면엔 다음 행동") | D32, judgment §2.4. 12는 만들지 않는다(Fluent 2 "12는 상호작용에 너무 작다") | `design-tokens` |
 | 선 굵기 | `--icon-stroke: 1.5px`를 CSS `stroke-width: var(--icon-stroke)` + `vector-effect: non-scaling-stroke`(path마다)로 화면 px 고정(16·20 공통) **[잠정]**. SVG 속성 `stroke-width="1.5"` 리터럴은 쓰지 않는다(앱·Worker 모두 CSS) | HIG "옆 글자 굵기에 맞춘다"(`E-APPLE-31`). 13px 400 한글 줄기 ≈ 1.1px, 600은 WKWebView 1.24px(`E-ID-K28b`). `G-ICON-4` 범위 16px 1.2 / 20px 1.25~1.5의 위쪽(뒤집음: 한 값). 16px·DPR1 번짐이 알려진 한계(`G-ICON-5`). 확인: `icons-blur.mjs` 측정("16·20px 수평선 최대 농도 ≥ .5, 두께합 ≥ 1.0")을 `design-gallery`에 넣고, 실패하면 16px만 1.25로 내린다 | `design-icons` DI3(stroke가 CSS 토큰이고 `size/24` 비례가 아님), `design-lint` DL14 예외(`--icon-stroke` 정의) |
 | 색 | `currentColor`만. fill 없음 | `G-A11Y-OS5` | `design-icons` |
 | 광학 보정 | 에셋 좌표 안에서(`download`·`play`·`chevron-*`). CSS `translate` 금지 | HIG icons(`E-APPLE-31`), g-icon §8.3 | `design-lint` + 리뷰 `R5` |
@@ -586,11 +586,11 @@ AppKit Tahoe 실측 regular 24 · large 28 · extraLarge 36(`E-APPLE-19`, `E-DES
 | 붙여넣기(클립보드 제안) | `clipboard-paste` | [붙여넣기] | — |
 | 복사 | `copy` | [주소 복사] [정보 복사] | 같은 줄에 나란히 두지 않는다 |
 | 오류 | `circle-x` `--danger-ink` | 상태 글자 | 경고와 모양이 다르다(색각) |
-| 경고 | `triangle-alert` `--warning-ink | 상태 글자 | — |
-| 정보 | `info` `--fg-muted | 안내 글자 | 중립 톤 |
-| 완료 | `check` `--fg-muted | "완료" | 성공색 없음(§2.1). 토스트는 `circle-check` |
+| 경고 | `triangle-alert` `--warning-ink` | 상태 글자 | — |
+| 정보 | `info` `--fg-muted` | 안내 글자 | 중립 톤 |
+| 완료 | `check` `--fg-muted` | "완료" | 성공색 없음(§2.1). 토스트는 `circle-check` |
 | 설정 | `settings` | `aria-label` "설정" | NN/g 경계선 → D62 시험 대상. 못 찾으면 글자를 붙인다 |
-| 로그인 | `log-in | [로그인] | 사람 실루엣 금지 |
+| 로그인 | `log-in` | [로그인] | 사람 실루엣 금지 |
 | 기기(관리 페이지) | `monitor` | "기기" | — |
 | 외부 열기 | `external-link` | [치지직 열기] | — |
 | 종류(VOD·클립·빠른 다시보기)·성인 | 없음 | 글자 배지, "19" | 아이콘 불필요 |
@@ -602,12 +602,12 @@ AppKit Tahoe 실측 regular 24 · large 28 · extraLarge 36(`E-APPLE-19`, `E-DES
 
 | 규칙 | 값 | 근거 | 강제 |
 |---|---|---|---|
-| 기본 | OS를 따른다. `:root { color-scheme: light dark }` + `@media (prefers-color-scheme: dark)` | HIG "앱별 외관 설정 금지"(`E-APPLE-12`) | `design-tokens |
+| 기본 | OS를 따른다. `:root { color-scheme: light dark }` + `@media (prefers-color-scheme: dark)` | HIG "앱별 외관 설정 금지"(`E-APPLE-12`) | `design-tokens` |
 | Linux만 선택 | 설정 › 보기 › 모양(시스템/밝게/어둡게, RadioGroup 3개) → `:root:where([data-theme="light"])`·`:root:where([data-theme="dark"])`가 `@media`를 이긴다(소스 순서). macOS·Windows에는 행이 없다 | `G-A11Y-OS10`(3 OS 선택)은 D7이 뒤집음. GTK3 다크 감지는 테마 이름 휴리스틱(`E-A11Y-A53`) | `frontend`(플랫폼별 행 노출 테스트) |
-| 다크 정의 한 곳 | sys 다크 블록은 `@media (prefers-color-scheme: dark) { :root:where(:not([data-theme="light"])) }`와 `:root:where([data-theme="dark"])` 두 selector에 **생성기가** 같은 내용을 쓴다. 손으로 두 번 쓰지 않는다. 모든 테마·상태 블록은 `:root:where(…)`로 특이도 (0,1,0)이고 소스 순서(라이트 → 다크 → 비활성 창 → reading → text-scale → 대비 증가 → coarse → reduce)가 결정한다 | brief §6.1-2, §2.5 특이도 | `design-tokens DT10(두 블록 동일)·DT16(계산값) |
+| 다크 정의 한 곳 | sys 다크 블록은 `@media (prefers-color-scheme: dark) { :root:where(:not([data-theme="light"])) }`와 `:root:where([data-theme="dark"])` 두 selector에 **생성기가** 같은 내용을 쓴다. 손으로 두 번 쓰지 않는다. 모든 테마·상태 블록은 `:root:where(…)`로 특이도 (0,1,0)이고 소스 순서(라이트 → 다크 → 비활성 창 → reading → text-scale → 대비 증가 → coarse → reduce)가 결정한다 | brief §6.1-2, §2.5 특이도 | `design-tokens` DT10(두 블록 동일)·DT16(계산값) |
 | Worker | OS만 따른다(JS 없음, D52). `<meta name="theme-color" media="(prefers-color-scheme: light)" content="#F3F3F3">` + dark `#1F1F1F`, `<meta name="color-scheme" content="light dark">` | B 후보 골격(judgment §2.2-6), brief §6.13-2 | `worker` gate(meta 존재 테스트) |
 | 첫 페인트 | 창·웹뷰 `backgroundColor`를 테마별 `--bg` 값으로, 첫 CSS에 `color-scheme`과 배경. `visible:false` → 첫 그림 뒤 show | g-launch 3겹(brief §6.8-9) | `tauri` 테스트 |
-| 비활성 창 | `:root:where([data-window-active="false"]) { --accent-soft: var(--surface-2) }`(다크 블록 뒤) | `E-APPLE-13` | `frontend`, `design-tokens DT16 |
+| 비활성 창 | `:root:where([data-window-active="false"]) { --accent-soft: var(--surface-2) }`(다크 블록 뒤) | `E-APPLE-13` | `frontend`, `design-tokens` DT16 |
 | 강조색 추종 | 하지 않는다(고정). WebKit `AccentColor`는 늘 파랑 | `E-DESK-R33` | `design-lint`(`AccentColor` 키워드 금지) |
 
 ---
@@ -625,7 +625,7 @@ AppKit Tahoe 실측 regular 24 · large 28 · extraLarge 36(`E-APPLE-19`, `E-DES
 | `light-dark()` | 17.5 | 라이트·다크 두 블록(생성기) |
 | `linear()` 이징 | 17.2 | `cubic-bezier` 둘(§7.1) |
 | `text-wrap: balance` / `pretty` | 17.5 / 26 | 쓰지 않는다. 레이아웃이 기대지 않는 장식조차 두지 않는다(검사가 단순해진다) |
-| `@starting-style | 17.5 | 등장은 클래스 토글 + transition |
+| `@starting-style` | 17.5 | 등장은 클래스 토글 + transition |
 | View Transitions | 18 | 쓰지 않는다 |
 | `scrollbar-gutter`, `scrollbar-width` | 18.2 | OS 스크롤바 + Windows `fluentOverlay`(D27). 여백 예약 없음 |
 | `backdrop-filter` | 18(무접두) | 쓰지 않는다(§6.3) |
@@ -647,7 +647,7 @@ AppKit Tahoe 실측 regular 24 · large 28 · extraLarge 36(`E-APPLE-19`, `E-DES
 1. **행간을 px 토큰으로** 둔다(brief §6.1-7은 "단위 없는 숫자"). 의도(`normal` 금지, 결정적 값)는 같고, px 토큰은 "문서 숫자 = 화면 숫자"와 생성기 검사에 더 맞는다. `normal`·비율 리터럴 금지는 유지한다.
 2. **다크 `--danger-ink`를 `#FD736D` → `#FA8880`**으로 올렸다(§2.1). 모든 잉크가 네 바탕 전부에서 4.5:1을 넘긴다는 불변식 때문이다.
 3. **스위치를 40×24 → 54×24**로 바꿨다. A의 40은 출처가 없고 AppKit regular 54×24는 실측 confirmed다(`E-APPLE-19`).
-4. **`--fg-tertiary → `--fg-disabled`**로 이름을 바꿨다. 이름이 유일한 허용 용도를 말한다(§1 규칙 5).
+4. **`--fg-tertiary` → `--fg-disabled`**로 이름을 바꿨다. 이름이 유일한 허용 용도를 말한다(§1 규칙 5).
 5. **터치 `--control-h-sm`을 32 → 40**으로 올렸다. `G-INPUT-IN4`(행 안 동작 40, Windows 7.5mm ≈ 40epx confirmed)를 따른다.
 6. **z-index에 `--z-drop` 30**을 더하고 토스트 40·대화상자 50으로 밀었다. 층마다 주인 하나.
 7. **간격 이름을 값으로**(`--space-8` = 8px) 했다. A는 번호(`--space-4` = 8px)였다.
@@ -668,9 +668,9 @@ AppKit Tahoe 실측 regular 24 · large 28 · extraLarge 36(`E-APPLE-19`, `E-DES
 
 ## 13. 생성물 기대 모양(`tokens.css`)
 
-`design/tokens/*.tokens.json`에서 생성기가 아래를 만든다. 이 블록이 `design-tokens DT14의 비교 대상이다(이름 → 값 사전). 다크 블록 두 개는 생성기가 같은 내용을 두 selector에 쓴다(여기서는 한 번만 적었다). 블록 순서가 캐스케이드를 결정한다(§2.5·§10).
+`design/tokens/*.tokens.json`에서 생성기가 아래를 만든다. 이 블록이 `design-tokens` DT14의 비교 대상이다(이름 → 값 사전). 다크 블록 두 개는 생성기가 같은 내용을 두 selector에 쓴다(여기서는 한 번만 적었다). 블록 순서가 캐스케이드를 결정한다(§2.5·§10).
 
-``css
+```css
 :root {
   color-scheme: light dark;
 
@@ -804,7 +804,7 @@ AppKit Tahoe 실측 regular 24 · large 28 · extraLarge 36(`E-APPLE-19`, `E-DES
 @media (prefers-reduced-motion: reduce) {
   :root:where(*) { --motion-base: 1ms; --motion-slow: 1ms; --progress-tween: 1ms; }
 }
-``
+```
 
 `--ref-black-a8: rgba(0, 0, 0, 0.08)`은 그림자 전용 ref이고 위 ref 알파 줄에 함께 생성된다(그림자 토큰이 리터럴 대신 ref를 참조하므로 `--ref-white-a8`도 쓰인다). `--text-hero`·`--leading-hero`는 reading 블록에서만 정의된다(앱에서는 미정의 토큰이므로 앱 컴포넌트가 쓰면 `design-tokens`가 막는다). 생성기는 reading 블록을 Worker 생성물에만, `data-text-scale` 블록을 앱 생성물에만 포함한다. 그 둘을 뺀 나머지는 두 생성물에서 바이트까지 같다. 단계 (a)의 `/* legacy */` 별칭 블록은 앱 생성물 끝에만 있고 검사에서 뺀다(§12-18).
 
@@ -812,7 +812,7 @@ AppKit Tahoe 실측 regular 24 · large 28 · extraLarge 36(`E-APPLE-19`, `E-DES
 
 ## 14. 상수 표(CSS 토큰이 아닌 값)
 
-JS 타이머·Rust 셸이 쓰는 값이다. 이름과 값의 단일 원천은 이 표이고, 코드의 위치는 열 "파일"이다. `design-tokens DT15가 표와 두 파일을 대조한다(`scripts/design/check-tokens.mjs`가 `timing.ts`와 `crates/shell/src/consts.rs`의 `pub const`를 파싱). 표기 [제안]·[취향]·[잠정] 값은 ADR-0009에 묶였고 바꿀 때 상수 하나만 바뀐다.
+JS 타이머·Rust 셸이 쓰는 값이다. 이름과 값의 단일 원천은 이 표이고, 코드의 위치는 열 "파일"이다. `design-tokens` DT15가 표와 두 파일을 대조한다(`scripts/design/check-tokens.mjs`가 `timing.ts`와 `crates/shell/src/consts.rs`의 `pub const`를 파싱). 표기 [제안]·[취향]·[잠정] 값은 ADR-0009에 묶였고 바꿀 때 상수 하나만 바뀐다.
 
 | 이름 | 값 | 표기 | 파일 | 쓰는 곳 | 근거·확인 |
 |---|---|---|---|---|---|

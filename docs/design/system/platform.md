@@ -74,7 +74,7 @@
 
 | 규칙 | 값 | 근거 | 강제 |
 |---|---|---|---|
-| 타이틀바 | **네이티브.** `titleBarStyle`·`hiddenTitle`·`data-tauri-drag-region`을 쓰지 않는다 | HIG "커스텀 창 UI 금지"(`E-APPLE-15`), 커스텀 타이틀바는 macOS 창 동작 일부를 잃는다(Tauri 문서, `G-SHELL-H10`), Windows Snap Layout 보존(v-desk §2.2 타이틀바 규칙). desktop 보고서의 Overlay 권고는 judgment §2.4가 A(네이티브)로 판정 | `tauri`(키 없음), `design-lint`(`data-tauri-drag-region 0개) |
+| 타이틀바 | **네이티브.** `titleBarStyle`·`hiddenTitle`·`data-tauri-drag-region`을 쓰지 않는다 | HIG "커스텀 창 UI 금지"(`E-APPLE-15`), 커스텀 타이틀바는 macOS 창 동작 일부를 잃는다(Tauri 문서, `G-SHELL-H10`), Windows Snap Layout 보존(v-desk §2.2 타이틀바 규칙). desktop 보고서의 Overlay 권고는 judgment §2.4가 A(네이티브)로 판정 | `tauri`(키 없음), `design-lint`(`data-tauri-drag-region` 0개) |
 | 창 제목 | `치지직 다운로더`. 부제·"비공식"·버전을 붙이지 않는다. 작업 수·퍼센트를 제목에 넣지 않는다 | g-id §2(창 제목은 짧게, 고지는 정보 화면), 제목 진행 표시는 브라우저 탭 관습이고 OS에는 Dock·작업 표시줄이 있다(§8) | `tauri`(`title` 고정) |
 | 툴바 | `components.md` §2.28 Toolbar: 높이 `--toolbar-h`(44px [취향], ADR-0009), 스크롤 영역 밖. 왼쪽 [마크(`--icon-md` 20) + "치지직 다운로더"(`--text-body` 13px, `--weight-strong` 600)], 오른쪽 [계정 ▾]·[설정]. 마크는 D33 결과물이 나오기 전까지 **이름만**. 설정 화면에서도 [설정] 자리를 비우지 않는다(`aria-current="page"`) | 사용자 결정 2(README §3-5). 이름을 그리는 이유: Linux 일부 창 관리자·전체 화면에서 타이틀바가 숨으면 앱 이름이 어디에도 없다(`J-Q2`). HIG 툴바 "앱 이름 금지"(`E-APPLE-25`)는 **창 제목이 있는 전제**라 Linux 사례에는 맞지 않는다고 판단했다 → README P1 예외로 ADR-0001 §결정에 기록, D62 과업 V5 | `frontend`(툴바 이름 렌더·화면별 구성), `design-gallery` |
 | 툴바 안쪽 정렬 | 본문 열(`--content-max`)과 같은 기준선 | foundations §8 "열 기준" | `R1` |
@@ -89,11 +89,11 @@
 
 | 규칙 | 값 | 근거 | 강제 |
 |---|---|---|---|
-| 컨트롤 | `button, [role=button], summary, label[for], select, [role=switch], [role=radio], [role=menuitem], [role=tab] { cursor: default }`를 `app.css` **한 곳**에 둔다. 컴포넌트는 `cursor`를 선언하지 않는다 | HIG pointing-devices: 화살표 = 인터페이스 요소 표준, 손가락 = URL 링크(`E-DESK-N07`, §2.3). Microsoft: 클릭 가능한 요소에 항상 화살표, 손가락 금지, 커서를 호버 피드백으로 쓰지 않는다(v-desk §2.2). Raycast 선례(v-desk §2.6). 현재 8개 컴포넌트가 `cursor: pointer`(g-shell §2, G3) | `design-lint`(앱 CSS `cursor: pointer 금지, 컴포넌트 `cursor` 선언 금지) |
+| 컨트롤 | `button, [role=button], summary, label[for], select, [role=switch], [role=radio], [role=menuitem], [role=tab] { cursor: default }`를 `app.css` **한 곳**에 둔다. 컴포넌트는 `cursor`를 선언하지 않는다 | HIG pointing-devices: 화살표 = 인터페이스 요소 표준, 손가락 = URL 링크(`E-DESK-N07`, §2.3). Microsoft: 클릭 가능한 요소에 항상 화살표, 손가락 금지, 커서를 호버 피드백으로 쓰지 않는다(v-desk §2.2). Raycast 선례(v-desk §2.6). 현재 8개 컴포넌트가 `cursor: pointer`(g-shell §2, G3) | `design-lint`(앱 CSS `cursor: pointer` 금지, 컴포넌트 `cursor` 선언 금지) |
 | 비활성 | `default`. `not-allowed`를 쓰지 않는다 | HIG의 "허용 안 됨" 포인터는 끌어놓기 전용(`G-SHELL-H5`) | `design-lint`(`not-allowed` 0개) |
 | 글자 | 입력칸·`.selectable`만 `text` | HIG I빔 = 텍스트 선택·삽입 | `design-lint` |
-| 진짜 URL | 외부 주소로 이동하는 요소만 `pointer. v1 앱 화면에는 그런 요소가 없다(외부 열기는 버튼 + Rust 고정 주소 표, brief §6.14-8) | HIG 손가락 = URL 링크 | `design-lint`(허용 목록 비어 있음) |
-| Worker | 웹 관습대로 링크·버튼 `pointer | 랜딩은 브라우저 안이다(D25) | `web.md` 소관 |
+| 진짜 URL | 외부 주소로 이동하는 요소만 `pointer`. v1 앱 화면에는 그런 요소가 없다(외부 열기는 버튼 + Rust 고정 주소 표, brief §6.14-8) | HIG 손가락 = URL 링크 | `design-lint`(허용 목록 비어 있음) |
+| Worker | 웹 관습대로 링크·버튼 `pointer` | 랜딩은 브라우저 안이다(D25) | `web.md` 소관 |
 
 ### 4.2 글자 선택(`user-select`)
 
@@ -156,7 +156,7 @@
 | 스크롤 영역 | `html, body { height: 100%; overflow: hidden }`. 스크롤은 안쪽 `.main` 하나에서만. 툴바는 `.main` 밖(층 없음), 주소 입력줄은 `.main` 안 `position: sticky; top: 0`(`--z-sticky`) | `G-SHELL-H7`(짧은 문서에서도 트랙패드 고무줄이 걸리는 WebKit 버그 215709 계열), `patterns.md` §14.1 | `design-lint`(`app.css` 규칙 존재), `frontend` |
 | `overscroll-behavior` | `.main { overscroll-behavior: contain }`(안쪽 탄성 유지 + 전파 차단). `html, body`에 `none`을 **적되 믿지 않는다**: 구조(위 행)가 1차 방어다 [잠정] 확인: §21 M7 | `overscroll-behavior`는 Safari 16에서 partial(스크롤할 내용 없는 컨테이너에 효과 없음, v-desk §2.1·§3 refuted). 1Password 8 베타 "탄성 없음이 거슬린다" 불만(`G-SHELL-H7`) → 안쪽 탄성은 살린다 | `design-lint`(`.main`에 `contain`) |
 | 관성·시스템 제스처 | 스크롤·관성·힘 클릭·세 손가락 탭을 JS로 가로채지 않는다. 메뉴는 `pointerdown`으로만 닫는다(관성 스크롤에 닫히지 않게) | g-input §7.2·IN-10, HIG 제스처 원칙 | `design-lint`(위 리스너 금지, 확장 요청 §22) |
-| 포커스 가려짐 | `.main { scroll-padding-top: calc(var(--control-h) + var(--space-8)) }`(sticky 입력줄 높이. 툴바는 스크롤 영역 밖). 토스트가 떠 있는 동안 `scroll-padding-bottom·`padding-bottom`(`components.md` §2.13) | WCAG 2.4.11(brief §6.7-3), `patterns.md` F-7 | `design-gallery`(axe·가려짐 검사) |
+| 포커스 가려짐 | `.main { scroll-padding-top: calc(var(--control-h) + var(--space-8)) }`(sticky 입력줄 높이. 툴바는 스크롤 영역 밖). 토스트가 떠 있는 동안 `scroll-padding-bottom`·`padding-bottom`(`components.md` §2.13) | WCAG 2.4.11(brief §6.7-3), `patterns.md` F-7 | `design-gallery`(axe·가려짐 검사) |
 
 ---
 
@@ -266,7 +266,7 @@ app.md 52행 "작업 표시줄 진행률은 없다"를 바꾸는 결정이다(ap
 
 | 규칙 | 값 | 근거 | 강제 |
 |---|---|---|---|
-| 기본 | OS 추종. `:root { color-scheme: light dark }` + `@media (prefers-color-scheme: dark)`(foundations §10) | HIG "앱별 외관 설정 금지"(`E-APPLE-12`) | `design-tokens |
+| 기본 | OS 추종. `:root { color-scheme: light dark }` + `@media (prefers-color-scheme: dark)`(foundations §10) | HIG "앱별 외관 설정 금지"(`E-APPLE-12`) | `design-tokens` |
 | Linux만 선택 | 설정 › 보기 › 모양(시스템/밝게/어둡게) → `:root[data-theme]`. macOS·Windows에는 이 행이 **없다** | GTK3 빌드의 `prefers-color-scheme`은 `gtk-application-prefer-dark-theme` 또는 테마 이름 `-dark` 휴리스틱(g-a11y §2.1 [소스]), Yaak 등 Tauri 앱의 같은 보고 | `frontend`(플랫폼별 행 노출 골든) |
 | 첫 프레임 배경 | §2.1(Linux 선택값 우선) | — | `tauri` |
 | 전달 신뢰도 | macOS·Windows(`PreferredColorScheme` AUTO)는 OS 추종이 문서로 확인됨. Linux는 [미확인] → §21 M14 기록 | g-a11y §2.1 | — |
@@ -287,9 +287,9 @@ app.md 52행 "작업 표시줄 진행률은 없다"를 바꾸는 결정이다(ap
 
 | 설정 | 전달 | 우리 규칙 | 근거 | 강제 |
 |---|---|---|---|---|
-| macOS "대비 증가", GNOME 고대비 | `prefers-contrast: more`(WKWebView `accessibilityDisplayShouldIncreaseContrast`, GTK3는 테마 이름 `HighContrast`) | foundations §2.5 블록(`--fg-muted·`--separator`·`--border-strong` → `--fg`) | g-a11y §2.1·R-OS-7 | `design-tokens, `design-gallery` |
+| macOS "대비 증가", GNOME 고대비 | `prefers-contrast: more`(WKWebView `accessibilityDisplayShouldIncreaseContrast`, GTK3는 테마 이름 `HighContrast`) | foundations §2.5 블록(`--fg-muted`·`--separator`·`--border-strong` → `--fg`) | g-a11y §2.1·R-OS-7 | `design-tokens`, `design-gallery` |
 | `prefers-contrast: less`·`custom` | macOS·GTK3에서 오지 않음, Windows 매핑 [미확인] | 쓰지 않는다 | g-a11y §2.2 | `design-lint`(`less`·`custom` 0개) |
-| 동작 줄이기 | 세 엔진 모두 전달. macOS는 실행 중 변경도 반영(수정됨), GTK3는 `gtk-enable-animations` | foundations §7.1 reduce 블록. 정보(진행 막대·스피너)는 숨기지 않는다(현재 ProgressBar `display:none` 버그) | g-a11y §2.1, brief §6.6-4 | `design-tokens, `design-gallery` |
+| 동작 줄이기 | 세 엔진 모두 전달. macOS는 실행 중 변경도 반영(수정됨), GTK3는 `gtk-enable-animations` | foundations §7.1 reduce 블록. 정보(진행 막대·스피너)는 숨기지 않는다(현재 ProgressBar `display:none` 버그) | g-a11y §2.1, brief §6.6-4 | `design-tokens`, `design-gallery` |
 | 투명도 줄이기 | **WebKit 미지원**(bug 175497 NEW). Windows만 Chromium 118 | 반투명·블러에 의미나 가독성을 싣지 않는다(이미 `backdrop-filter` 금지, foundations §6.3) | `E-APPLE-14`, `G-A11Y-OS8` | `design-lint` |
 | 색 반전(macOS) | `inverted-colors` macOS만 | 규칙을 두지 않는다(WebKit이 이미지 반전 보정) | g-a11y §2.2 | — |
 
@@ -299,12 +299,12 @@ app.md 52행 "작업 표시줄 진행률은 없다"를 바꾸는 결정이다(ap
 
 | OS 설정 | 웹뷰 반영 | 우리 규칙 | 근거 | 강제 |
 |---|---|---|---|---|
-| 앱 안 글자 크기 | `:root[data-text-scale="large"|"x-large"]`가 글자·행간 토큰만 재정의(×1.3 / ×2.0, foundations §3.2 [잠정]). 컨트롤은 `min-height`라 따라 늘어난다 | 설정 › 보기 › 글자 크기(기본/크게/아주 크게). 웹뷰 줌 대신 이것이 WCAG 1.4.4 수단 | D28, macOS에 Dynamic Type 없음(`E-APPLE-08`), g-input(크기 토큰은 글자와 분리) | `design-tokens, `design-gallery`(x-large 720×520 리플로우) |
+| 앱 안 글자 크기 | `:root[data-text-scale="large"|"x-large"]`가 글자·행간 토큰만 재정의(×1.3 / ×2.0, foundations §3.2 [잠정]). 컨트롤은 `min-height`라 따라 늘어난다 | 설정 › 보기 › 글자 크기(기본/크게/아주 크게). 웹뷰 줌 대신 이것이 WCAG 1.4.4 수단 | D28, macOS에 Dynamic Type 없음(`E-APPLE-08`), g-input(크기 토큰은 글자와 분리) | `design-tokens`, `design-gallery`(x-large 720×520 리플로우) |
 | Windows 설정 › 텍스트 크기(최대 225%) | WebView2 래스터 배율 = DPI × 텍스트 배율. **CSS 뷰포트가 줄어든다**(폭·높이 모두). Tauri `LogicalSize`는 이를 반영하지 않는다(#5437 계획 없음) | 최소 창 720×520이 225%에서 CSS 약 **320×231** [추정]. 그 안에서 가로 스크롤 없이 모든 기능이 되게 한다(WCAG 1.4.10). 좁은 레이아웃은 `layout.css`의 두 블록(`max-width: 599px` + `x-large`, foundations §8)이 덮고 대화상자는 `max-height` + 본문 스크롤(`components.md` §2.10) | `G-A11Y-OS13`·`OS14`, foundations §8 | `design-gallery`(320×231 리플로우), §21 M16(실기 100·150·225%) |
 | Windows 디스플레이 배율 | `devicePixelRatio` | 선 1·2px, outline 포커스(foundations §6.2). 스냅샷은 `--force-device-scale-factor` | g-scale §2 실측 | `design-shots`(DPR 1·2) |
 | macOS | 시스템 "큰 텍스트" 설정이 없다 | 앱 안 설정이 유일한 수단 | g-a11y §4.1 | — |
-| GNOME 큰 글자(`text-scaling-factor) | WebKitGTK가 `gtk-xft-dpi`를 읽지만 CSS `px`에 미치는 영향 [미확인] | 루트 16px 고정(D4)을 유지하고 실기로 본다 | g-a11y §4.4 | §21 M17 |
-| 레이아웃 | 글자를 고정 `px` 높이에 가두지 않는다(`min-height`만) | `G-A11Y-OS11`, `G-INPUT-IN5` | `design-lint`(컨트롤 `height` 리터럴 금지) |
+| GNOME 큰 글자(`text-scaling-factor`) | WebKitGTK가 `gtk-xft-dpi`를 읽지만 CSS `px`에 미치는 영향 [미확인] | 루트 16px 고정(D4)을 유지하고 실기로 본다 | g-a11y §4.4 | §21 M17 |
+| 레이아웃 | 모든 OS | 글자를 고정 `px` 높이에 가두지 않는다(`min-height`만) | `G-A11Y-OS11`, `G-INPUT-IN5` | `design-lint`(컨트롤 `height` 리터럴 금지) |
 
 ---
 
@@ -510,11 +510,11 @@ D33은 별도 과제(ADR)다. 이 절은 그 과제의 **규격**이다. 결과�
 | macOS 26+ | `.icon`(Icon Composer) → `actool`로 `Assets.car` + `CFBundleIconName`. Default·Dark·Mono 지정, Mono는 한 요소 흰색·나머지 회색 | 1024 캔버스, 배경 1 + 전경 1, 글자는 윤곽선, 정적 그림자 없음 | WWDC25 220·361(g-id §4.1). `tauri icon`은 `.icon` 미지원(#14207) → 컴파일 결과를 저장소에 커밋(CI `actool` 불안정 보고) [잠정] 확인: 번들러가 `Assets.car`를 받는지 | `bundle`(`Info.plist` `CFBundleIconName`·`Assets.car` 존재) |
 | macOS 구형 | `icon.icns` 10항목(16·16@2x·32·32@2x·128·128@2x·256·256@2x·512·512@2x), 둥근 사각 합성 | Tauri `icns.json`과 같다(현재 충족) | g-id §4.1 | `bundle`(`iconutil` 항목 수) |
 | Windows | `icon.ico` 층 **16·20·24·30·32·36·40·48·64·96·256**, 32를 첫 층. 16·24·32는 별도로 다듬는다. 투명 배경 | Microsoft: 정확한 크기가 없으면 다음 큰 것을 줄인다 → 중간 크기가 있어야 100%·125%·150%에서 선명. 현재 6층(16·24·32·48·64·256) | g-id §4.2 | `bundle`(ico 헤더 층 집합) |
-| Windows 다크 작업 표시줄 | 플레이트 명도를 소폭 올린 변형 검토 [잠정] 확인: 다크 `#1F1F1F` 위 3:1 실측 | 현재 2.98(g-id §4.2) | `design-icons`(대비 계산) |
+| Windows | 다크 작업 표시줄 변형 | 플레이트 명도를 소폭 올린 변형 검토 [잠정] 확인: 다크 `#1F1F1F` 위 3:1 실측 | 현재 2.98(g-id §4.2) | `design-icons`(대비 계산) |
 | Linux | `hicolor/{16,22,24,32,48,64,128,256,512}x…/apps/*.png` + `scalable/apps/*.svg`. 48은 필수 | freedesktop 아이콘 테마 스펙("최소 48 hicolor"), 현재 16·22·24·48 없음·SVG 미설치 | g-id §4.3 | `bundle`(`.deb` `dpkg -c` hicolor 경로) |
-| Linux `.desktop | `Name=chzzk-downloader`, `Name[ko]=치지직 다운로더` [잠정] 확인: Desktop Entry 스펙 로케일 키 원문 | 지금은 ASCII만(app.md 구현 중 변경 51(가)) | `bundle` |
-| Worker | `favicon.ico`(32), `icon.svg`(`prefers-color-scheme` 변형), `apple-touch-icon.png`(180, 불투명 [미확인]), `og:image` 1200×630 + `og:image:alt`(로고·캡처·채널명 없음) | g-id §5. 현재 Worker에 셋 다 없음 | `worker`(미로그인 `/` 응답 link·og 태그, 자산 200·content-type·크기) → 배치는 `web.md` |
-| 생성 | 스크립트 하나가 `icon-fg`·`icon-bg`에서 전부 만들고 `--check`로 산출물 = 원본 확인 | `gen-fixtures.mjs --check` 패턴 | `design-icons`(`icons:check`) |
+| Linux | `.desktop` | `Name=chzzk-downloader`, `Name[ko]=치지직 다운로더` [잠정] 확인: Desktop Entry 스펙 로케일 키 원문 | 지금은 ASCII만(app.md 구현 중 변경 51(가)) | `bundle` |
+| Worker | 웹 아이콘 | `favicon.ico`(32), `icon.svg`(`prefers-color-scheme` 변형), `apple-touch-icon.png`(180, 불투명 [미확인]), `og:image` 1200×630 + `og:image:alt`(로고·캡처·채널명 없음) | g-id §5. 현재 Worker에 셋 다 없음 | `worker`(미로그인 `/` 응답 link·og 태그, 자산 200·content-type·크기) → 배치는 `web.md` |
+| 공통 | 생성 | 스크립트 하나가 `icon-fg`·`icon-bg`에서 전부 만들고 `--check`로 산출물 = 원본 확인 | `gen-fixtures.mjs --check` 패턴 | `design-icons`(`icons:check`) |
 
 ---
 
@@ -527,7 +527,7 @@ D33은 별도 과제(ADR)다. 이 절은 그 과제의 **규격**이다. 결과�
 | 창 제목 | `치지직 다운로더` | 없음 | 짧게, 항상 보임(g-id §2) | `tauri` |
 | 툴바(앱 안) | 마크 + `치지직 다운로더`(마크 전까지 이름만) | 없음(Worker 헤더 배지 "비공식 도구"는 Worker만) | judgment §2.3-7 | `frontend` |
 | macOS 앱 메뉴·About | `치지직 다운로더에 관하여` 등 §7 표. About 창은 쓰지 않고 설정 › 정보로 보낸다[취향] | 정보 화면이 고지 위치 | macOS About은 Windows·Linux에 없다(brief §6.14-4) | `tauri` |
-| Dock·작업 표시줄·시작 메뉴·설치 폴더 | `치지직 다운로더`(Linux는 `.desktop `Name[ko]`, §18.2) | 없음 | g-id §2 | `bundle` |
+| Dock·작업 표시줄·시작 메뉴·설치 폴더 | `치지직 다운로더`(Linux는 `.desktop` `Name[ko]`, §18.2) | 없음 | g-id §2 | `bundle` |
 | OS 알림 발신자 | OS가 번들·AUMID에서 읽는 `치지직 다운로더`(Linux [잠정] §9) | 제목·본문에 "비공식"을 넣지 않는다 | g-id §2 | `rust` |
 | 설치 파일 | `chzzk-downloader_<버전>_<플랫폼>.<확장>` | 릴리스 노트 한 줄(`content.md`) | bundle.mjs 주석(한글 정규화 회피) | `bundle` |
 | 번들 식별자 | `io.github.chnu-kim.chzzk-downloader`(개명해도 유지) | — | 바꾸면 데이터 폴더·updater가 끊긴다 | `tauri` |
@@ -562,7 +562,7 @@ OS별로 **달라지는 모든 것**은 이 표에 있다. 여기 없는 것은 
 | 테마 선택 행 | 없음 | 없음 | 있음(시스템/밝게/어둡게) | D7 | `frontend` |
 | 스크롤바 | OS(오버레이·상시는 시스템 설정) | `fluentOverlay` | OS | D27 | `tauri` |
 | 고대비 경로 | `prefers-contrast: more` | `forced-colors: active` + `prefers-contrast` | `prefers-contrast: more`(GTK 테마 이름) | §10 | `design-gallery` |
-| 글자 크기 OS 설정 | 없음 → 앱 설정만 | 텍스트 크기 225% → 320px 리플로우 | `text-scaling-factor [미확인] | §11 | `design-gallery` |
+| 글자 크기 OS 설정 | 없음 → 앱 설정만 | 텍스트 크기 225% → 320px 리플로우 | `text-scaling-factor` [미확인] | §11 | `design-gallery` |
 | 진행 표시 | Dock, 색 3종 | 작업 표시줄, 색 3종, 고대비 숨김 | libunity 있을 때만, 색 없음 | §8 | `rust`(집계는 공통) |
 | 알림 | `NSUserNotification` 경로, 서명 없는 빌드 [미확인] | 설치본만 제 이름 | 헤더 `chzzk-app` 가능 | §9 | §21 |
 | 클립보드 제안 | `accessBehavior == alwaysAllow`일 때만 | 켬 | 켬(Wayland는 비어 올 수 있음) | D56 | `rust` |
@@ -624,7 +624,7 @@ OS별로 **달라지는 모든 것**은 이 표에 있다. 여기 없는 것은 
 | 9 | 창 상태 복원 범위 | 전체 화면은 복원하지 않는다[취향]. D30 본문에는 없는 세부 | ADR-0009 |
 | 10 | 도움말 메뉴 항목 | `G-SHELL-NS16`의 "로그 폴더 열기·문제 신고 복사" 후보는 설정 화면에 이미 있어 메뉴에 더하지 않는다. 도움말 항목은 랜딩 `/help` 하나 | 이 문서 §7 |
 | 11 | 툴바 앱 이름 vs HIG | HIG 툴바 "앱 이름 금지"(`E-APPLE-25`)와 사용자 결정 2가 충돌한다. Linux 타이틀바 숨김 사례와 D62 V5로 정당화했고 README P1 예외다 | ADR-0001 §결정(사용자 결정 2) |
-| 12 | `design-lint` 확장 | `data-tauri-drag-region 0개 · `not-allowed` 0개 · `user-select`·`cursor` 선언 위치 제한 · `<img>`·`<a>` `draggable="false"` 필수 · `wheel`·`gesturestart`·`webkitmouseforce*`·`contextmenu`(guards.ts 외) 리스너 금지 · `matchMedia('(pointer·`maxTouchPoints`·`navigator.platform` 금지 · `keydown` 핸들러 파일의 `isImeKey` import · `<input>`의 Enter keydown 금지 · `compositionend`+`setTimeout` 금지 · `readText(` 0개 · `prefers-contrast: less|custom` 0개 · 컨트롤 `height` 리터럴 금지 · 로딩 표시는 공용 훅 경유 | governance §2.9 DX1~DX13 |
+| 12 | `design-lint` 확장 | `data-tauri-drag-region` 0개 · `not-allowed` 0개 · `user-select`·`cursor` 선언 위치 제한 · `<img>`·`<a>` `draggable="false"` 필수 · `wheel`·`gesturestart`·`webkitmouseforce*`·`contextmenu`(guards.ts 외) 리스너 금지 · `matchMedia('(pointer`·`maxTouchPoints`·`navigator.platform` 금지 · `keydown` 핸들러 파일의 `isImeKey` import · `<input>`의 Enter keydown 금지 · `compositionend`+`setTimeout` 금지 · `readText(` 0개 · `prefers-contrast: less|custom` 0개 · 컨트롤 `height` 리터럴 금지 · 로딩 표시는 공용 훅 경유 | governance §2.9 DX1~DX13 |
 | 13 | `release-hygiene` 확장 | 전원 금지 심볼(`PreventSystemSleep`·`ES_AWAYMODE_REQUIRED`·`ES_DISPLAY_REQUIRED`·`PreventUserIdleDisplaySleep`·`handle-lid-switch`·`disablesleep`), OS 전원 심볼 위치 제한(`crates/shell/src/power*`·`app/src-tauri/src/power*`), `WEBKIT_DISABLE_*`·`__NV_DISABLE_*` 무조건 설정 금지, "서명 신원 없음 ↔ TCC 안내 켜짐" 일치 | governance §2.9 DX14~DX17 |
 | 14 | `tauri` gate 확장 | `backgroundColor` = `--bg` 라이트 hex · `allowLinkPreview:false` · `minimumSystemVersion 13.3` · `theme`·`titleBarStyle`·`transparent` 키 없음 · `Cargo.toml` devtools feature 없음 · 메뉴 전수 한국어 · Windows `with_webview` 호출 존재 · `set_badge_*` 0개 · Dock 호출 빈도 · 알림 옵션 없음 · 권한 `allow-set-webview-zoom` 없음 · 안전장치 타임아웃 | governance §2.8·§2.9 DX18 |
 | 15 | `smoke-bin` 마커 키 | `probe`(엔진 프로브)·`t_show_ms`·`t_ready_ms`를 더한다. 키 집합이 고정이라 `MARKER_KEYS`·`smoke.mjs`·테스트를 함께 바꾼다 | governance §2.9 DX19(cicd.md 구현 중 변경은 적용 PR (f)) |

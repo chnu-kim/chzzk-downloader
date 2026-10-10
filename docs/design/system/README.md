@@ -37,13 +37,13 @@
 | `adr/NNNN-slug.md` | 결정 기록(0001~0010). 템플릿과 쓰는 때는 §7 | 개별 결정 |
 | `docs/research/design-system.md` | 근거 문서: 약칭 표, 브리프 요약, 검증 결과(confirmed/refuted 목록), 후보 세 개와 판정 요약, 감사 결함 색인(파일:줄). 설계 문서가 인용하는 ID의 원천 | — |
 
-소유권 규칙: 한 결정은 한 문서에만 적는다. 다른 문서는 "`foundations.md` §5.1"처럼 가리키기만 한다. 수치는 `foundations.md`에만 있고(§13 생성물 블록과 §14 상수 표), 다른 문서는 토큰·상수 **이름**을 쓴다. 이름 옆에 값을 함께 적을 때는 ` `--dialog-w 440`처럼 쓰고, `design-tokens`(DT14)가 §13과 생성물의 패리티를, `scripts-test`의 `spec-check.mjs`(governance §2.9)가 다른 문서의 "이름 + 값" 쌍이 §13·§14와 같은지를 본다. 문구는 `content.md`에만 있고 다른 문서는 copy deck 키를 가리킨다(`design-copy` DC10 문서 패리티).
+소유권 규칙: 한 결정은 한 문서에만 적는다. 다른 문서는 "`foundations.md` §5.1"처럼 가리키기만 한다. 수치는 `foundations.md`에만 있고(§13 생성물 블록과 §14 상수 표), 다른 문서는 토큰·상수 **이름**을 쓴다. 이름 옆에 값을 함께 적을 때는 `` `--dialog-w` 440``처럼 쓰고, `design-tokens`(DT14)가 §13과 생성물의 패리티를, `scripts-test`의 `spec-check.mjs`(governance §2.9)가 다른 문서의 "이름 + 값" 쌍이 §13·§14와 같은지를 본다. 문구는 `content.md`에만 있고 다른 문서는 copy deck 키를 가리킨다(`design-copy` DC10 문서 패리티).
 
 ---
 
 ## 3. 읽는 법과 우선순위
 
-1. **이 시스템이 옛 `docs/design/ui-visual.md` 전체와 `docs/design/app.md` §8(화면)·§9(문구)·§10(컴포넌트)의 시각·문구 규칙을 대체한다.** 그 절들의 흐름 규칙(§8.10)·상태 머신·DTO·command는 유지되고, 색·글자·간격·컴포넌트 모양·문구 형식은 이 폴더가 원천이다. 충돌하면 이 폴더가 이긴다. `ui-visual.md`는 이 문서 PR에서 삭제했다(옛 내용은 git 이력, app.md 구현 중 변경 67). 코드 주석의 `ui-visual §n` 인용은 적용 단계 (b)·(c)에서 이 폴더의 절로 바꾼다.
+1. **이 시스템이 옛 `docs/design/ui-visual.md` 전체와 `docs/design/app.md` §8(화면)·§9(문구)·§10(컴포넌트)의 시각·문구 규칙을 대체한다.** 그 절들의 흐름 규칙(§8.10)·상태 머신·DTO·command는 유지되고, 색·글자·간격·컴포넌트 모양·문구 형식은 이 폴더가 원천이다. 충돌하면 이 폴더가 이긴다. `ui-visual.md`는 대체 표만 담은 호환 스텁으로 남기고(옛 내용은 git 이력의 커밋 `3b9ea8d` 이전, app.md 구현 중 변경 67), 코드 주석의 `ui-visual §n` 인용을 이 폴더의 절로 바꾸는 적용 단계 (b)·(c)에서 지운다. **강제는 적용 PR (a)부터 켜진다. 그 전까지는 R 체크리스트로 지킨다.**
 2. `docs/design/app.md`·`worker.md`·`core.md`의 "구현 중 변경"은 그 문서 본문보다 우선한다. 그중 시각·문구에 관한 항목은 이 폴더로 옮기고 원문에는 번호와 "→ system/…"만 남긴다.
 3. 이 폴더 안의 우선순위: `README.md` 결정 표 > `foundations.md` > 나머지. 결정 표와 다른 문서가 어긋나면 결정 표가 맞고, 어긋남 자체가 수정 대상이다.
 4. 근거의 등급(brief §0.3, g-evid §7.1): E0 외부 지침·플랫폼 규칙, E1 전문가·정적 감사, E2 사용자 자발 신호, E3 우리 사용자 관찰 3명 미만 한 회, E4 두 회 이상 또는 5명 이상. **지금 E3·E4 근거는 하나도 없다.** 그래서 영향이 큰 결정(D5·D11·D16·D36·D42·D44·D62 등)은 "채택(잠정)"이고 첫 사용자 시험(D62)으로 다시 확인한다. 시험 결과는 "N명 중 M명"으로만 쓴다(brief §6.15-2).
@@ -53,14 +53,14 @@
 
 ## 4. 강제 수단
 
-규칙마다 아래 이름 중 하나를 단다. gate는 `node scripts/ci/run.mjs <gate>`로 돌고 `scripts/ci/gates.mjs`에 등록된다(cicd.md `parity`). 여섯 `design-*` gate는 새로 만들며 명세는 `governance.md`가 적는다. `R*`는 PR 템플릿의 리뷰 체크리스트 번호다.
+규칙마다 아래 이름 중 하나를 단다. gate는 `node scripts/ci/run.mjs <gate>`로 돌고 `scripts/ci/gates.mjs`에 등록된다(cicd.md `parity`). **강제는 적용 PR (a)부터 켜진다. 그 전까지는 R 체크리스트로 지킨다.** 여섯 `design-*` gate는 새로 만들며 명세는 `governance.md`가 적는다. `R*`는 PR 템플릿의 리뷰 체크리스트 번호다.
 
 ### 4.1 자동 gate
 
 | gate | 검사하는 것 | 자리 |
 |---|---|---|
-| `design-tokens | `design/tokens/*.tokens.json`·`design/ui.css` → 생성물 셋(`app/src/styles/tokens.css`·`app/src/styles/ui.css`·`worker/src/http/site-css.generated.ts`) `--check`, 미정의·미사용 토큰 0, 모든 길이 px·rem 0, 정수 행간·최소 12px, 간격·반경·높이 값 집합, 이름 규칙(foundations §1), 대비 쌍 전수(foundations §2.4, 라이트·다크 판정 92쌍), C1 HSL 스캔, 다크 두 블록 동일, reduce·coarse·contrast 블록 값과 **계산값**(다크 + 대비 증가에서 `--fg-muted = `--fg`), 시스템 글꼴만(`url(`·`@font-face` 0), z 토큰 사용처 1개, 문서 패리티(§13 사전·§14 상수) | 기존 `frontend`의 `tokens.test.ts`를 대체·확장. `ci-ok` 필수. 검사 번호 `DT1`~`DT17`(governance §2.2) |
-| `design-lint` | 선언 단위 파서(`scripts/design/css.mjs`) + 소스 스캔 + prop 어휘: 컴포넌트의 색·px·ms·z-index·font-size·font-weight·border-radius 리터럴 금지, `calc()`는 피연산자가 토큰·`0px`·`100%`·정수 계수뿐인 것만, `--ref-` 직접 사용 금지, 컴포넌트 안 `--` 선언 금지, `!important`, `transition: all`, `outline: none`·`outline: 0`, `:focus-visible`의 `box-shadow`, `forced-color-adjust`, `letter-spacing`, `-webkit-font-smoothing`, `line-height: normal`·리터럴, `break-word`·`justify`, `backdrop-filter`, `cursor: pointer`(앱만), `::-webkit-scrollbar`, 0.5px·1.5px 선(예외: `--icon-stroke` 정의), `calc(… - 1px)`, `translate(-50%`, 정지 글자 요소 `transform`, `:hover`가 `display`·`visibility`·`opacity`·크기를 바꾸는 규칙(`G-INPUT-IN1`), `title=` 허용 목록(`G-INPUT-IN2`), 컴포넌트 안 `@media (pointer …)`·`(hover …)`·`(width …)`, 폭 미디어 쿼리 허용 파일, 좁은 레이아웃 두 블록 동일, 하한 밖 기능(foundations §11 표), `{@html}`, `<svg` 직접 사용, `AccentColor`, `.svelte` 안 한글 리터럴, 셸 규칙(`data-tauri-drag-region·`not-allowed`·`readText(`·`isImeKey` import·`compositionend`+`setTimeout`·`navigator.platform` 등, governance §2.9) | 신설. `ci-ok` 필수. 검사 번호 `DL1`~`DL14`·`DS1`~`DS9`·`DP1`~`DP5` + 확장 `DX*` |
+| `design-tokens` | `design/tokens/*.tokens.json`·`design/ui.css` → 생성물 셋(`app/src/styles/tokens.css`·`app/src/styles/ui.css`·`worker/src/http/site-css.generated.ts`) `--check`, 미정의·미사용 토큰 0, 모든 길이 px·rem 0, 정수 행간·최소 12px, 간격·반경·높이 값 집합, 이름 규칙(foundations §1), 대비 쌍 전수(foundations §2.4, 라이트·다크 판정 92쌍), C1 HSL 스캔, 다크 두 블록 동일, reduce·coarse·contrast 블록 값과 **계산값**(다크 + 대비 증가에서 `--fg-muted` = `--fg`), 시스템 글꼴만(`url(`·`@font-face` 0), z 토큰 사용처 1개, 문서 패리티(§13 사전·§14 상수) | 기존 `frontend`의 `tokens.test.ts`를 대체·확장. `ci-ok` 필수. 검사 번호 `DT1`~`DT17`(governance §2.2) |
+| `design-lint` | 선언 단위 파서(`scripts/design/css.mjs`) + 소스 스캔 + prop 어휘: 컴포넌트의 색·px·ms·z-index·font-size·font-weight·border-radius 리터럴 금지, `calc()`는 피연산자가 토큰·`0px`·`100%`·정수 계수뿐인 것만, `--ref-` 직접 사용 금지, 컴포넌트 안 `--` 선언 금지, `!important`, `transition: all`, `outline: none`·`outline: 0`, `:focus-visible`의 `box-shadow`, `forced-color-adjust`, `letter-spacing`, `-webkit-font-smoothing`, `line-height: normal`·리터럴, `break-word`·`justify`, `backdrop-filter`, `cursor: pointer`(앱만), `::-webkit-scrollbar`, 0.5px·1.5px 선(예외: `--icon-stroke` 정의), `calc(… - 1px)`, `translate(-50%`, 정지 글자 요소 `transform`, `:hover`가 `display`·`visibility`·`opacity`·크기를 바꾸는 규칙(`G-INPUT-IN1`), `title=` 허용 목록(`G-INPUT-IN2`), 컴포넌트 안 `@media (pointer …)`·`(hover …)`·`(width …)`, 폭 미디어 쿼리 허용 파일, 좁은 레이아웃 두 블록 동일, 하한 밖 기능(foundations §11 표), `{@html}`, `<svg` 직접 사용, `AccentColor`, `.svelte` 안 한글 리터럴, 셸 규칙(`data-tauri-drag-region`·`not-allowed`·`readText(`·`isImeKey` import·`compositionend`+`setTimeout`·`navigator.platform` 등, governance §2.9) | 신설. `ci-ok` 필수. 검사 번호 `DL1`~`DL14`·`DS1`~`DS9`·`DP1`~`DP5` + 확장 `DX*` |
 | `design-copy` | copy deck(`ko.ts`·`errors.ts`·`copy.ts`·`help/*.md`) 검사: 금지어(`(?<!비)공식`·인증·파트너·제공·클릭·"우리"·감탄사·`~시겠어요`·`되어요`·`~기 바랍니다`), 합니다체 어미, 요청 어미 "해 주세요" 단일, "다시 시도해 주세요" 단독 금지, 변수 뒤 조사 패턴(`{…}이`·`‘{…}’은` 꼴 포함) 금지, 숫자+단위 직접 문자열 금지(format 함수만), `...` 세 점(U+2026만), 역할 접미별 마침표, `?`·`!` 범위, 따옴표 ‘ ’만, 구분 기호, 복합어 표기, 중복 값 키 금지, `a11y.*` 어순, 두 deck의 비공식 고지·저작권 줄 동일, 용어집 비표준 어휘(다운로드 동사·링크·조회·폴더 열기·멈춤·중단·허용) 금지, `ol` 대신 번호 박힌 문자열 금지, 오류 코드·HTTP 번호가 제목·본문에 없음, OS 문자열은 `platform` 분기 객체에만, 문서 패리티(`content.md` §15 표 ↔ deck) | 신설. `ci-ok` 필수. 검사 번호 `DC1`~`DC12`(governance §2.4) |
 | `design-icons` | `icons.ts` 항목 메타 `{set,name,version}` 필수, 고지 파일과 세트·버전 일치, Feather 유래면 MIT 단락, 은유 유일성(같은 아이콘 ≠ 다른 동작, 예외 `copy`), IconButton 허용 목록(foundations §9 표), stroke가 화면 px 고정(CSS `var(--icon-stroke)`, SVG 속성 리터럴 금지), `currentColor`만, 16·20 두 크기, 앱·Worker 아이콘 원천 동일 | 신설. `ci-ok` 필수. 검사 번호 `DI1`~`DI7`(governance §2.5). DPR1 번짐 측정은 래스터라 `design-gallery`에 있다 |
 | `design-gallery` | `/__gallery`(모든 컴포넌트·상태) + 네 화면 + 로그인 화면 + Worker 정적 HTML을 Playwright로 라이트·다크·720×520·960×700·320×231(Windows 텍스트 225% 흉내)·`prefers-reduced-motion`·`prefers-contrast: more`·`forced-colors: active`·`any-pointer: coarse` 흉내·`data-text-scale="x-large"`·`platform=windows` 고정 데이터에서 axe(대비·이름·대상 크기 24/40·리플로우 320), 계산값 검사(다크 + 대비 증가), 정렬선 x, 채움 1개, 아이콘 DPR1 번짐 측정(`icons-blur.mjs`) | 신설. `e2e-web` 작업 안. **D14 관찰 중에는 비차단**이고 편입 예정일은 ROADMAP에 적는다 |
@@ -75,7 +75,7 @@
 
 | 번호 | 항목 |
 |---|---|
-| R1 | 화면을 바꾼 PR은 **네 장**의 스크린샷을 붙인다: 라이트 960, 다크 960, 720×520, forced-colors. 열 정렬선·12px 단독 정보·`fg-disabled 오용·장식선 단독 의미를 본다 |
+| R1 | 화면을 바꾼 PR은 **네 장**의 스크린샷을 붙인다: 라이트 960, 다크 960, 720×520, forced-colors. 열 정렬선·12px 단독 정보·`fg-disabled` 오용·장식선 단독 의미를 본다 |
 | R2 | 토큰을 더하거나 바꾸면 ADR 번호와 근거 등급(E0~E4)을 적는다. [취향] 값은 [취향]이라고 쓴다 |
 | R3 | 문구를 바꾸면 copy deck diff와 `content.md` 용어집 대조 결과를 적는다. OS별 문자열은 `platform.md` 분기 표에만 있다 |
 | R4 | 글자 토큰(크기·굵기·스택)을 바꾸면 Windows 실기 스크린샷(맑은 고딕 100%·125%)을 붙인다 |
@@ -98,7 +98,7 @@
 |---|---|---|---|
 | D1 엔진 하한 | **Safari 16.4 / Chrome 111 / WebKitGTK 2.40**, macOS `minimumSystemVersion` 13.3. `cssTarget ['chrome111','safari16.4']` + lightningcss. 하한 밖 기능은 선택지가 아니라 금지(→ foundations §11). 미달 엔진은 시작 때 알린다. Ubuntu 22.04 미갱신(2.36)은 지원 밖 | g-engine, v-desk §2.1(E-04~E-25 행, `E-DESK-E25`)(13.3이 Safari 16.4를 보장하는 첫 macOS). 세 후보 공통 | `design-lint`(금지 목록), `frontend`(vite 설정), `tauri`(minimumSystemVersion) |
 | D2 기준 플랫폼 | **macOS 실측 수치가 원천**(A 뼈대). OS가 **규정하는** 값만 분기: 바이트 진법(D47), "Finder에서 보기"/"폴더에서 보기", 경로 표기(`~`·`\`), 메뉴 용어(Apple 한국어), 단축키 표기(⌘/Ctrl). 버튼 순서는 분기하지 않는다(Windows 관례 미확인) | judgment §2.4. 주 사용자가 Windows라는 반론: Windows 수치 관례(14·32)는 Fluent 웹 관례이고 Win32 다운로더는 13px급(A 설명). 분기는 `naming::Platform`처럼 인자로 받아 한 호스트에서 테스트한다 | `design-copy`(OS 문자열은 `platform.md` 표에만), `rust`·`frontend` 골든 |
-| D3 토큰 원천 | **DTCG JSON `design/tokens/*.tokens.json` + UI CSS `design/ui.css` → 생성기 `scripts/design/tokens.mjs` → `app/src/styles/tokens.css`·`app/src/styles/ui.css`·`worker/src/http/site-css.generated.ts` 커밋 + `--check`**. 층 ref → sys, comp 비움. 접두 없음. OKLCH 설계 → hex 커밋. 다크 두 블록은 생성기가 복제 | brief D3 권고(bindings·fixture와 같은 패턴), `G-ENGINE-R4`, `A-WORKER-0`(한 원천). C 후보 구조 + A 후보 2층. ADR-0007 | `design-tokens |
+| D3 토큰 원천 | **DTCG JSON `design/tokens/*.tokens.json` + UI CSS `design/ui.css` → 생성기 `scripts/design/tokens.mjs` → `app/src/styles/tokens.css`·`app/src/styles/ui.css`·`worker/src/http/site-css.generated.ts` 커밋 + `--check`**. 층 ref → sys, comp 비움. 접두 없음. OKLCH 설계 → hex 커밋. 다크 두 블록은 생성기가 복제 | brief D3 권고(bindings·fixture와 같은 패턴), `G-ENGINE-R4`, `A-WORKER-0`(한 원천). C 후보 구조 + A 후보 2층. ADR-0007 | `design-tokens` |
 | D4 루트 단위 | **루트 16px, 모든 토큰 px.** 글자 확대는 D28 설정이 글자 토큰만 재정의 | `A-VIS-01`(루트 14로 모든 rem 토큰이 12.5% 작게 렌더되던 P0), g-input(크기 토큰은 글자와 분리) | `design-tokens`(rem 0개) |
 
 ### B. 색
@@ -116,7 +116,7 @@
 
 | D | 최종 값 | 근거 | 강제 |
 |---|---|---|---|
-| D11 본문 크기 | **앱 13/16[잠정]**(사용자 결정 4). **Worker 읽기 페이지 15/22**(`html[data-scale="reading"]`, 랜딩·help·privacy·licenses만). 로그인·관리 페이지는 앱 척도. `--text-body`·`--leading-body 두 줄만 바꾸면 14/18로 전환되고 컨트롤 28은 그대로 | macOS 기본 13(`E-APPLE-01`), C3 12~14, 치지직 웹 12~14. 데스크톱 수렴 14가 반례. 15는 TDS 작은 본문(confirmed)이고 모바일·문서 맥락이라 앱에는 안 쓴다(judgment §2.5). 맑은 고딕 13px **[미확인]** → §6-1 | `design-tokens`(값), `R4` |
+| D11 본문 크기 | **앱 13/16[잠정]**(사용자 결정 4). **Worker 읽기 페이지 15/22**(`html[data-scale="reading"]`, 랜딩·help·privacy·licenses만). 로그인·관리 페이지는 앱 척도. `--text-body`·`--leading-body` 두 줄만 바꾸면 14/18로 전환되고 컨트롤 28은 그대로 | macOS 기본 13(`E-APPLE-01`), C3 12~14, 치지직 웹 12~14. 데스크톱 수렴 14가 반례. 15는 TDS 작은 본문(confirmed)이고 모바일·문서 맥락이라 앱에는 안 쓴다(judgment §2.5). 맑은 고딕 13px **[미확인]** → §6-1 | `design-tokens`(값), `R4` |
 | D12 척도·행간 | **12/16 · 13/16 · 13/16 600 · 15/20 600 · 17/22 600**, 읽기 행간 20. 읽기 척도 13/18 · 15/22 · 17/24 · 22/28 · 28/36[잠정]. 행간은 **정수 px 토큰** `--leading-*`. 글자 크기 설정 ×1/×1.3/×2.0[잠정] | macOS 텍스트 스타일(`E-APPLE-02`), bigtech 정수 행간, WCAG 1.4.12·1.4.4. 섹션 13 < 카드 15 < 화면 17 역전 해소(`A-VIS-17`) | `design-tokens`(정수·최소 12), `design-gallery`(x-large 리플로우) |
 | D13 굵기 | **400 / 600 두 단계.** 500·700·Light 없음 | SEED "500은 플랫폼마다 다르게 보인다", KRDS 기본 400+700. 맑은 고딕의 굵기는 Semilight·Regular·Bold 셋(`E-A11Y-D25`)이고, CSS 600이 Bold로 폴백돼 400과 구별되는지(렌더)만 **[미확인]** → 두 단계가 어느 결과에서도 안전. Light 금지(`E-APPLE-03`) | `design-lint`(font-weight 리터럴), `R4` |
 | D14 자간 | **전면 0.** `letter-spacing` 선언 없음 | SF 트래킹 곡선에 가산(`E-APPLE-04`·`E-APPLE-05`), klreq·KRDS 0 | `design-lint` |
@@ -128,19 +128,19 @@
 |---|---|---|---|
 | D16 컨트롤 높이 | **24(sm) / 28(기본) / 36(랜딩 CTA만)**, 설정 행 36, 툴바 44[취향], 터치(`any-pointer: coarse`) 40/40/44·행 44·히트 40 | AppKit regular 24·large 28·XL 36 **confirmed**(`E-APPLE-19`, `E-DESK-R37`). "32 수렴" 부분 refuted. 36 기본은 웹 냄새(desktop). Windows 터치 40epx(`G-INPUT-IN4`) | `design-tokens`(coarse 블록), `design-gallery`(대상 크기) |
 | D17 간격 | **2·4·6·8·12·16·20·24·32·40**, 가장자리 20, 형제 8, 라벨 6. 이름 = 값. 광학 보정 토큰 없음 | AppKit 상수(`E-APPLE-17`), bigtech 2px 반단계 confirmed | `design-tokens`(값 집합), `design-lint`(px 리터럴) |
-| D18 반경 | **배지 4 · 컨트롤 6 · 그룹 10 · 오버레이 12 · 알약(스위치·막대만)**. 동심 10 − 4 = 6 | WWDC25 356 동심(유도식임 명시), Win11 오버레이 > 표면, HIG 캡슐은 눈에 띄는 동작에만(`E-APPLE-20`) | `design-tokens, `design-lint` |
+| D18 반경 | **배지 4 · 컨트롤 6 · 그룹 10 · 오버레이 12 · 알약(스위치·막대만)**. 동심 10 − 4 = 6 | WWDC25 356 동심(유도식임 명시), Win11 오버레이 > 표면, HIG 캡슐은 눈에 띄는 동작에만(`E-APPLE-20`) | `design-tokens`, `design-lint` |
 | D19 면·경계 | **혼합**: 바탕 > 흰 그룹 상자(α.10 장식선) > 떠 있는 것(그림자 3단, 다크 안쪽 선). 의미 경계 `#808080`/`#868686` 모든 바탕에 ≥ 3:1(3.12~4.53). 선은 1·2px만 | brief §6.3(g-scale 실측: 1px은 모든 배율에서 선명, 흐린 원인은 색 부족), `A-DRIFT-S1`(UrlBar 2.89 위반 해소), K10. HIG 베젤(α.15)보다 진하다 — WCAG가 이긴다(P1) | `design-tokens`(경계 8쌍), `design-lint`(선 굵기·box-shadow 허용 목록) |
 | D20 포커스 | **`outline: 2px solid var(--focus)` + `outline-offset: 2px`**, 색 `--accent-ink` 불투명(bg 5.57 / 7.11). 버튼류는 `:focus-visible`(키보드만), 입력칸은 브라우저 휴리스틱. `[tabindex="-1"]` 컨테이너만 링 숨김 | g-scale(outline은 정수 스냅, box-shadow 링은 반 픽셀 번짐), `E-KO-B6`(forced-colors에서 box-shadow none → 현재 링이 사라지는 P0 F1 해소), WCAG 2.4.13(2px·3:1). macOS α0.5 링은 3:1 미달이라 불투명 | `design-lint`(`outline: none` 금지, 포커스 box-shadow 금지), `design-gallery`(forced) |
 | D21 상태 레이어 | **개별 토큰.** hover는 유령 버튼·아이콘 버튼·메뉴 항목·최근 목록 행만(`--surface-2` 채움), 테두리 버튼·작업 행·스위치는 hover 없음. 눌림은 모든 컨트롤이고 hover와 다른 면(`--surface-pressed`, 위험 톤은 `--danger-soft`). 비활성은 전용 색 `--fg-disabled`(opacity 금지), 사유가 있으면 보인다. hover는 상태(오류 테두리)를 덮지 않는다. 유령 버튼 글자는 `--fg`(파랑 아님: 행마다 파랑·빨강이 겹치지 않게, P2) | `E-DESK-R30`(Raycast·Evil Martians), HIG 눌림 필수(`E-APPLE-21`), `A-DRIFT-K4`, `A-PRIM-T1`(hover가 invalid를 덮던 특이도 버그), `A-VIS-29`(비활성 주 버튼 회색 상자 → 홈에 채움 버튼 없음) | `design-lint`(`G-INPUT-IN1`·`G-INPUT-IN7`, opacity 비활성), `frontend`, `design-gallery`(hover ≠ pressed 계산값) |
 | D22 모션 | **100 / 200 / 300ms**, `cubic-bezier(.2,0,0,1)` 등장·`(.4,0,1,1)` 퇴장, 스프링 없음. reduce: base·slow·진행 1ms, fast(눌림)·opacity 유지, 정보는 숨기지 않음 | NN/g 100~500·등장 > 퇴장(`E-KO-B2`), HIG bounce 0(`E-APPLE-28`·`E-APPLE-29`), web.dev 1ms. 현재 0ms 전면(transitionend 깨짐, 막대 숨김 버그) 탈락 | `design-tokens`(reduce 블록), `design-lint`(ms 리터럴) |
 | D23 진행 막대 전환 | **`transform: scaleX` 250ms linear, 값이 줄면 전환 없이 즉시.** forced-colors: 트랙 1px CanvasText, 채움 Highlight, 일시정지 Canvas + 2px CanvasText | g-launch(합성 단계), `G-INTER-DL6`(뒤로 가지 않음), K9 재정의. 틱 250ms = 전환 길이라 계속 움직여 보인다 | `frontend`(ProgressBar), `design-gallery`(forced·reduce) |
-| D24 레이아웃 | **열 하나 `--content-max: 800`**(사용자 결정 5), 가운데, 가장자리 20, 툴바 안쪽·배너·토스트·대화상자 같은 열 기준. **분기 600 하나**[잠정] | `A-VIS-02`~`A-VIS-04`(폭 3종·기준선 3종·840 분기 6곳 P0). 720 창에서 꽉 차고 960에서 좌우 80. 800은 A 720·B 960 사이 절충으로 **출처 없음 → ADR-0001** | `design-tokens, `design-gallery`(720·960), `design-lint`(폭 쿼리 파일 둘) |
+| D24 레이아웃 | **열 하나 `--content-max: 800`**(사용자 결정 5), 가운데, 가장자리 20, 툴바 안쪽·배너·토스트·대화상자 같은 열 기준. **분기 600 하나**[잠정] | `A-VIS-02`~`A-VIS-04`(폭 3종·기준선 3종·840 분기 6곳 P0). 720 창에서 꽉 차고 960에서 좌우 80. 800은 A 720·B 960 사이 절충으로 **출처 없음 → ADR-0001** | `design-tokens`, `design-gallery`(720·960), `design-lint`(폭 쿼리 파일 둘) |
 
 ### E. 셸·플랫폼
 
 | D | 최종 값 | 근거 | 강제 |
 |---|---|---|---|
-| D25 커서 | **앱은 `default`**(선택 가능한 글자·입력칸만 `text`, 진짜 URL만 `pointer, 비활성도 `default`). **웹은 링크·버튼 `pointer`** | HIG pointing-devices(손가락 = URL 링크, `E-DESK-N07`), MS(클릭 가능 요소에도 화살표), Raycast | `design-lint`(앱 CSS `cursor: pointer 금지) |
+| D25 커서 | **앱은 `default`**(선택 가능한 글자·입력칸만 `text`, 진짜 URL만 `pointer`, 비활성도 `default`). **웹은 링크·버튼 `pointer`** | HIG pointing-devices(손가락 = URL 링크, `E-DESK-N07`), MS(클릭 가능 요소에도 화살표), Raycast | `design-lint`(앱 CSS `cursor: pointer` 금지) |
 | D26 타이틀바 | **네이티브 유지.** 본문 툴바 44에 왼쪽 [마크 + "치지직 다운로더"(마크 전까지 이름만, 13px 600)], 오른쪽 [계정 ▾]·[설정] | HIG "커스텀 창 UI 금지"(`E-APPLE-15`), Windows Snap Layout 보존(`G-SHELL-H10`). 이름을 그리는 이유: Linux 일부 창 관리자·전체 화면에서 타이틀바가 숨으면 앱 이름이 어디에도 없다(`J-Q2`, 사용자 결정) | `tauri`(decorations), `frontend`(툴바 이름) |
 | D27 스크롤바 | **OS 기본** + Windows `scrollBarStyle: fluentOverlay`. `scrollbar-gutter` 못 쓰므로 여백 예약 없음(열 좌우 여백이 흡수) | `E-DESK-R24`(WebView2 125+), N-12·N-13 | `tauri`, `design-lint`(`::-webkit-scrollbar` 금지) |
 | D28 줌·글자 크기 | **웹뷰 줌 끔**(`zoomHotkeysEnabled: false`) + 설정 › 보기 › 글자 크기(기본/크게/아주 크게 = ×1/×1.3/×2.0, `data-text-scale`)[잠정]. 컨트롤은 `min-height`라 따라 늘어난다 | WCAG 1.4.4·HIG 200%(`E-APPLE-08`), macOS에 Dynamic Type 없음, `G-SHELL-H3`(Ctrl+±는 실수로 화면이 깨진다), g-input | `tauri`, `design-tokens`(블록), `design-gallery`(x-large) |
@@ -152,7 +152,7 @@
 | D | 최종 값 | 근거 | 강제 |
 |---|---|---|---|
 | D31 아이콘 세트 | **Lucide**(ISC + Feather MIT). path 벤더링 `icons.ts` + `{set,name,version}` 메타. 고지는 앱 정보·`licenses/`·`/licenses`에 **즉시**(현재 고지 0개는 위반 상태) | g-icon(SF Symbols·Segoe Fluent Icons 글꼴 사용 불가, brief §2.7; Tabler·Phosphor 등 탈락 사유), 현재 Feather path와 연속 | `design-icons` |
-| D32 아이콘 크기·굵기·은유 | **16 / 20 두 크기**(32 없음, 12 금지), **`non-scaling-stroke 1.5px 고정[잠정]**, `currentColor`, 광학 보정은 에셋 안. 은유 표(→ foundations §9.1): 이어받기 `play` ≠ 다시 시도 `rotate-cw`, 취소는 글자 필수, 오류 `circle-x` ≠ 경고 `triangle-alert`, 완료 `check`, 파일 `file-video`, 폴더 `folder`(라벨만 OS별). 글자 없는 아이콘 버튼은 foundations §9 허용 목록만 | `G-ICON-3`·`G-ICON-4`(뒤집음: 32 없음, 1.5 고정)·`G-ICON-7`(은유 충돌 `A-VIS-23`·`A-VIS-09`·`A-FEAT-G6` 해소), HIG 옆 글자 굵기(`E-APPLE-31`), NN/g 라벨, 상자−아이콘 차 짝수. 1.5의 DPR1 번짐은 §6-4 | `design-icons` |
+| D32 아이콘 크기·굵기·은유 | **16 / 20 두 크기**(32 없음, 12 금지), **`non-scaling-stroke` 1.5px 고정[잠정]**, `currentColor`, 광학 보정은 에셋 안. 은유 표(→ foundations §9.1): 이어받기 `play` ≠ 다시 시도 `rotate-cw`, 취소는 글자 필수, 오류 `circle-x` ≠ 경고 `triangle-alert`, 완료 `check`, 파일 `file-video`, 폴더 `folder`(라벨만 OS별). 글자 없는 아이콘 버튼은 foundations §9 허용 목록만 | `G-ICON-3`·`G-ICON-4`(뒤집음: 32 없음, 1.5 고정)·`G-ICON-7`(은유 충돌 `A-VIS-23`·`A-VIS-09`·`A-FEAT-G6` 해소), HIG 옆 글자 굵기(`E-APPLE-31`), NN/g 라벨, 상자−아이콘 차 짝수. 1.5의 DPR1 번짐은 §6-4 | `design-icons` |
 | D33 앱 아이콘 | **별도 과제**(ADR로 등록). 조건: 전경·배경 분리 원본, 플레이트 = D5 파랑 하나, 치지직 로고·색과 다름, 16px에서 선 2px 이상, 흑백 식별, 글자 없음. 결과물이 **헤더 마크**가 된다(그 전까지 헤더는 이름만) | g-id(Icon Composer 레이어·마스크 이중, Windows 다크 작업 표시줄 대비 2.98 경계), C1, `J-Q2` | `governance.md` 과제 등록, `R2`, 5초 시험(D62) |
 | D34 앱 이름·고지 | **"치지직 다운로더" 유지** + 비공식 고지 **4곳**: 랜딩 히어로 바로 아래(스크롤 없이), 랜딩 바닥글, 로그인 첫 화면, 설정 › 정보. Worker 헤더에만 배지 "비공식 도구"(반경 4, 알약 아님 — D18). 창 제목에는 붙이지 않음. 문구는 상수(긴 판 `NOTICE_UNOFFICIAL`·한 줄 `NOTICE_SHORT`, `content.md` §11). 랜딩 title "치지직 다운로더 — 비공식 다시보기·클립 다운로더" | `G-ID-R1`·`G-ID-R2`, C2(미충족 → 충족), YouTube API 브랜딩 관례. 개명 트리거(약관 금지·네이버 이의·공개 스토어·KIPRIS)는 `governance.md` §9. 치지직 약관 상표 조항 **[미확인]** → §6-9 | `design-copy`(금지어·두 deck 동일), `worker`(랜딩 고지 위치 테스트) |
 
@@ -162,11 +162,11 @@
 |---|---|---|---|
 | D35 API 어휘 | **`variant`(외형만, 컴포넌트별 리터럴) · `tone`(neutral/info/warning/danger, 컴포넌트는 부분집합) · `size`(sm/md/lg) · `kind`(vod/clip/rewind/adult, Badge만) · `state`(active/paused/failed/waiting, ProgressBar만)**. 위험은 `tone=danger`(의미). 알림은 **Notice 하나**(`tone × variant`, variant = inline/banner/row/toast). 불리언 prop은 `disabled`·`open`·`loading`·`required`·`readonly`·`invalid`만(`checked`는 없다: 값은 `value`), `onX` 이벤트 하나씩, 접근 이름 필수 타입, id 생성기 하나. Button `loading` 추가. 유일한 원천은 `ui/vocab.ts`(components §1, governance `DP1`~`DP5`) | gov, `A-PRIM-N1`(variant에 의도·외형 혼재)·`N6`(닫기 이벤트 2종)·`N9`(이름 prop 4종)·`N10`(접근 이름 미강제 P0), `A-FEAT-N1`~`N9`(알림 9갈래) | `frontend`(svelte-check 타입), `design-lint` |
 | D36 대화상자 버튼 | **오른쪽 끝 = Enter = 채움 = 기본 포커스 = 안전한 쪽**(사용자 결정 3). **안전한 쪽 = 그 대화상자를 연 뒤 아무것도 하지 않은 것과 같은 결과**(현 상태 유지: 계속 받기·그대로 두기·나중에·로그인 유지). 실행 쪽은 **왼쪽**이고 되돌릴 수 없으면 빨간 글자 테두리 버튼(`variant=secondary tone=danger`, 버튼 줄 왼쪽 끝), 되돌릴 수 있으면 회색 테두리 버튼(채움 버튼 옆). 채움은 포커스할 수 있는 층마다 하나. **Esc = 닫기**(`onclose`, 어떤 버튼도 실행하지 않는다 = 안전한 쪽과 같은 결과). 포인터로 열어도 포커스는 오른쪽 버튼이고 링은 `:focus-visible` 휴리스틱. OS 분기 없음. 대화상자 7종의 제목·라벨 표는 `content.md` §5.3이 소유한다 | HIG 기본 trailing(`E-APPLE-22`) + NN/g "위험한 쪽을 기본으로 두지 않는다"(`G-INTER-CF4` 뒤집음: 면이 아니라 글자) → 안전한 쪽이 trailing·채움. HIG "취소 leading"과 충돌하는 유일한 경우(취소 확인)는 안전한 쪽이 곧 취소이므로 예외로 명시. 규칙 하나가 대화상자 7종(`A-VIS-05`·`A-VIS-06`)을 모두 덮는다. Windows 관례 **[미확인]**이라 분기 안 함. ADR-0005 | `frontend`(Dialog 테스트), `R6`, D62 과업 V2·V3 |
-| D37 알림 해부 | **토스트는 본문 열 기준 하단, 폭 = 열 안쪽 폭, 한 번에 하나 보이고 나머지는 대기열.** 정보·완료 토스트는 **6초[취향]** + hover·포커스 정지, 새 토스트가 오면 즉시 대체된다. 오류·동작 있는 토스트는 대체되지 않고 닫을 때까지 남으며 뒤에 온 것은 줄을 선다(오류가 몰려도 유실 없음). 예외: [되돌리기] 토스트는 6초 + 정지이고 지연 삭제는 그 토스트가 닫힐 때(타이머·[×]·대기열 교체 모두) 확정된다. 같은 동작은 다른 곳에서도. 토스트가 떠 있는 동안 스크롤 영역 바닥에 토스트 높이만큼 여백. 배너는 h1 앞 한 장, 오류 우선, 정보 = `--surface-2`, 경고·block = `--warning-soft, 오류 = `--danger-soft`. 복사 확인은 버튼 라벨 전환("복사했어요") | Carbon·GOV.UK(`E-KO-31`·`E-KO-32`), `G-INTER-NT5`·`G-INTER-NT6`·`G-INTER-NT7`(`NT7` 10초·`NT8` 3개는 뒤집음: 대기열), `G-OUTAGE` 위계, WCAG 2.2.2(포커스 중만 정지는 수단이 아님), `A-VIS-32`(창 기준 토스트가 목록을 가림). 6초는 출처 없음(ADR-0009) | `frontend`(Toast 대기열·지연 삭제·Banner), `design-gallery`, `R7` |
+| D37 알림 해부 | **토스트는 본문 열 기준 하단, 폭 = 열 안쪽 폭, 한 번에 하나 보이고 나머지는 대기열.** 정보·완료 토스트는 **6초[취향]** + hover·포커스 정지, 새 토스트가 오면 즉시 대체된다. 오류·동작 있는 토스트는 대체되지 않고 닫을 때까지 남으며 뒤에 온 것은 줄을 선다(오류가 몰려도 유실 없음). 예외: [되돌리기] 토스트는 6초 + 정지이고 지연 삭제는 그 토스트가 닫힐 때(타이머·[×]·대기열 교체 모두) 확정된다. 같은 동작은 다른 곳에서도. 토스트가 떠 있는 동안 스크롤 영역 바닥에 토스트 높이만큼 여백. 배너는 h1 앞 한 장, 오류 우선, 정보 = `--surface-2`, 경고·block = `--warning-soft`, 오류 = `--danger-soft`. 복사 확인은 버튼 라벨 전환("복사했어요") | Carbon·GOV.UK(`E-KO-31`·`E-KO-32`), `G-INTER-NT5`·`G-INTER-NT6`·`G-INTER-NT7`(`NT7` 10초·`NT8` 3개는 뒤집음: 대기열), `G-OUTAGE` 위계, WCAG 2.2.2(포커스 중만 정지는 수단이 아님), `A-VIS-32`(창 기준 토스트가 목록을 가림). 6초는 출처 없음(ADR-0009) | `frontend`(Toast 대기열·지연 삭제·Banner), `design-gallery`, `R7` |
 | D38 OS 알림 | 제목 **"다운로드를 마쳤어요"** / 본문 = 정리된 영상 제목(**40자소 절단[취향]**, 묶음 "{첫 제목} 외 {n}개"). 실패는 따로 묶음. 채널명·경로·URL·쿠키·오류 원문 금지. 앱이 앞에 있으면 OS 알림 대신 행 상태. Linux는 `<>&` 이스케이프. 문자열은 `content.md` §14 한 곳 | HIG 알림(앱 이름 금지·제목 끝 구두점 없음·본문 완전한 문장, `E-DESK-N34`), `G-SHELL-NS21`·`G-SHELL-NS22`(20자·3초는 뒤집음, `X-DESK-N45`), `G-UGT-R*`. 서명 없는 macOS에서 알림이 뜨는지 **[미확인]** | `tauri`(문자열 테스트 = deck 상수), `design-copy` |
 | D39 완료 후 동작 | **[열기] 다음 [Finder에서 보기]/[폴더에서 보기]**(아이콘 `file-video`·`folder`). 파일이 없으면 [열기] 숨김. 완료 11개 넘으면 그룹 접힘 + 최근 5개. 멈춘 지 30일 "{n}일 전에 멈췄어요 · 디스크 {size} 차지". "편집기로 보내기" 없음. 보관 기한은 추정하지 않고 "올린 지 {n}일"만 | g-handoff, g-repeat(Chrome Remove는 목록만), `X-ID-U31`(보관 기한 값은 확정 불가 → 쓰지 않음) | `frontend`, `design-copy` |
 | D40 잠자기·대기 | **잠자기 방지 기본 켬**(유휴 잠자기만) + 설정 토글(`settings.keepAwake`). **"연결 대기" 단계**: 막대 줄무늬(forced는 dashed), 퍼센트 유지, 속도·남은 시간 숨김, 빨강·실패 문구 없음. 상태 조각 `job.status.waitingNetwork`("연결 대기 중 · 2분째 · 1.6GB 받음") + 본문 줄 `job.waitingNetwork.body` | `G-POWER-R8`·`G-POWER-R11`·`G-POWER-R13`~`G-POWER-R15`(macOS·Windows·systemd inhibitor, Transmission), brief §6.9-7(대기는 오류가 아님) | `rust`·`tauri`(상태 머신), `frontend`, `design-copy`(상태 조각에 해요체 없음) |
-| D41 서비스 공지 | **Worker `GET /notice`**(인증 없음, 활성 1개, 만료 ≤ 72h, fail-open) + 배너 `--warning-soft + 실패 지점 인라인. 종류별 새 받기만 막고 앱 전체는 막지 않음. 진단 3분류(local/service/unknown)로 "인터넷이 불안정해요"가 치지직 장애에 사용자를 탓하지 않게 | g-outage(어느 사례에도 없어 설계로 정당화, yt-dlp 분류, GOV.UK) | `worker`, `frontend`, `design-copy` |
+| D41 서비스 공지 | **Worker `GET /notice`**(인증 없음, 활성 1개, 만료 ≤ 72h, fail-open) + 배너 `--warning-soft` + 실패 지점 인라인. 종류별 새 받기만 막고 앱 전체는 막지 않음. 진단 3분류(local/service/unknown)로 "인터넷이 불안정해요"가 치지직 장애에 사용자를 탓하지 않게 | g-outage(어느 사례에도 없어 설계로 정당화, yt-dlp 분류, GOV.UK) | `worker`, `frontend`, `design-copy` |
 
 ### H. 문구
 
@@ -206,7 +206,7 @@
 
 | D | 최종 값 | 근거 | 강제 |
 |---|---|---|---|
-| D61 강제 장치 | §4.1 여섯 gate: `design-tokens·`design-lint`·`design-copy`·`design-icons`는 `ci-ok` 필수, `design-gallery`는 `e2e-web` 안(D14 관찰 뒤 필수), `design-shots`는 관찰. 스냅샷은 Linux 한 곳(시스템 글꼴이 OS마다 다름), `--force-device-scale-factor`로 DPR | gov, a-drift §강제 장치 지도(없는 것 9개), g-scale(`deviceScaleFactor`는 스냅 재현 안 함) | `parity`(gates.mjs 등록) |
+| D61 강제 장치 | §4.1 여섯 gate: `design-tokens`·`design-lint`·`design-copy`·`design-icons`는 `ci-ok` 필수, `design-gallery`는 `e2e-web` 안(D14 관찰 뒤 필수), `design-shots`는 관찰. 스냅샷은 Linux 한 곳(시스템 글꼴이 OS마다 다름), `--force-device-scale-factor`로 DPR | gov, a-drift §강제 장치 지도(없는 것 9개), g-scale(`deviceScaleFactor`는 스냅 재현 안 함) | `parity`(gates.mjs 등록) |
 | D62 첫 사용자 시험 | **둘 다**(적용 전 현재 앱 기준선 + 적용 뒤). 회당 3명(스트리머·지인 각 1명 이상), 두 회 이상, 과업 UT1~UT7(`governance.md` §6.2), 판정은 관찰 횟수+심각도, "N명 중 M명"으로만. 시험 기록에 채널명·제목 금지. 확인 과업 V1~V8(`governance.md` §6.4): 완료를 색 없이 알아보는가 / 오른쪽 파랑을 안전으로 읽는가 / 왼쪽 빨간 글자를 파괴로 읽는가 / 13px이 작게 느껴지는가 / 헤더 이름만으로 무엇인지 아는가 / 툴바 톱니를 찾는가 / 연결 대기를 오류로 읽는가 / 토스트 6초를 다 읽는가 | `G-EVID-R1`~`G-EVID-R10`, `J-Q1`~`J-Q5` | `R10`, `governance.md` 시험 항목 목록 |
 
 ---
@@ -217,7 +217,7 @@
 
 | # | 항목 | 상태 | 확인 방법 | 나쁘면 |
 |---|---|---|---|---|
-| 1 | **Windows 맑은 고딕 13px 판독, 600 굵기 렌더(Bold로 폴백돼 400과 구별되는지), `tabular-nums` 동작, `system-ui` 해석** (D11·D13, foundations §3.1·§3.2) | [잠정]/[미확인] | Windows 10 22H2·11 실기, 배율 100%·125%·150%, 홈·목록·설정 스크린샷 + `getComputedStyle(fontFamily)` + 숫자 열 정렬 캡처(줄기 측정은 `scripts/design/stem.mjs`, 단계 (a)에서 scratchpad 도구를 옮긴다). `R4`로 PR에 첨부 | `--text-body`·`--leading-body → 14/18(두 줄. 글자 크기 설정 블록은 생성기가 배율로 유도하므로 함께 바뀐다). 600이 Bold로 보이면 그대로 둔다(두 단계라 위계 유지). tnum이 안 되면 숫자 요소에 `--font-mono` 폴백 검토(ADR) |
+| 1 | **Windows 맑은 고딕 13px 판독, 600 굵기 렌더(Bold로 폴백돼 400과 구별되는지), `tabular-nums` 동작, `system-ui` 해석** (D11·D13, foundations §3.1·§3.2) | [잠정]/[미확인] | Windows 10 22H2·11 실기, 배율 100%·125%·150%, 홈·목록·설정 스크린샷 + `getComputedStyle(fontFamily)` + 숫자 열 정렬 캡처(줄기 측정은 `scripts/design/stem.mjs`, 단계 (a)에서 scratchpad 도구를 옮긴다). `R4`로 PR에 첨부 | `--text-body`·`--leading-body` → 14/18(두 줄. 글자 크기 설정 블록은 생성기가 배율로 유도하므로 함께 바뀐다). 600이 Bold로 보이면 그대로 둔다(두 단계라 위계 유지). tnum이 안 되면 숫자 요소에 `--font-mono` 폴백 검토(ADR) |
 | 2 | **Linux 글꼴·테마 감지**: fontconfig `system-ui`, Noto Sans CJK KR 유무, GNOME `prefers-color-scheme` 정확도, 분수 배율 | [미확인] | Ubuntu 22.04·24.04 실기(WebKitGTK 2.50·2.52), 같은 캡처 | 랜딩 설치 안내에 Noto CJK 설치 한 줄. 테마는 이미 Linux만 앱 안 선택(D7) |
 | 3 | **첫 사용자 시험(D62)**: 기준선(현재 앱) + 적용 뒤 | 계획 | §5 D62 과업 6개. 회당 3명 × 2회 이상 | 완료 색(→ 5), 버튼 배치(D36 뒤집기 → ADR), 본문 14(→ 1), 톱니에 글자, 헤더 마크 우선순위 |
 | 4 | **아이콘 16px·stroke 1.5의 DPR1 번짐** (D32) | [잠정] | `design-gallery`의 `scripts/design/icons-blur.mjs` 측정("수평선 최대 농도 ≥ .5, 두께합 ≥ 1.0") Chromium DPR1·2 + Windows 100% 실기 아이콘 시트 | 16px만 1.25px로 내린다(`--icon-stroke-sm` 분리, ADR) |
@@ -254,7 +254,7 @@
 
 파일은 `docs/design/system/adr/NNNN-slug.md`(4자리 연번, 영어 slug). 한국어, 짧은 평서문. 틀(`G-EVID-R1`·`G-EVID-R3`, brief §6.2-5). `scripts/design/adr.test.mjs`(DA1~DA10, governance §4.3)가 이 모양을 검사한다:
 
-``
+```
 # NNNN 제목
 상태: 제안 | 채택(잠정) | 채택 | 폐기(→ NNNN)   날짜: YYYY-MM-DD   관련: D번호, §6-번호, 이전 ADR
 ## 맥락
@@ -270,7 +270,7 @@
 ### 재검증 조건
 어떤 관찰·실측이 나오면 다시 본다. 확인 방법(D62 과업, 실기 OS, gate). 영향 "큼"이면 필수.
 ## 대안과 버린 이유
-``
+```
 
 규칙:
 - 등급 E3 미만만으로 영향 큰 결정을 "채택"이라 쓰지 않는다. "채택(잠정)"으로 두고 재검증 조건을 적는다(brief §6.15-1).

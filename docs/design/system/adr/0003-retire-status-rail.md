@@ -17,7 +17,7 @@
 | 겹 | 수단 | 토큰·모양 |
 |---|---|---|
 | 색 | 진행 막대 채움 | 받는 중 `--accent`, 일시정지 `--border-strong`, 실패 `--danger`, 완료 막대 없음 |
-| 모양 | 아이콘 | 실패 `circle-x`(`--danger-ink`), 경고 `triangle-alert`(`--warning-ink), 완료 `check`(`--fg-muted), 연결 대기 막대 줄무늬(forced-colors에서는 dashed 테두리) |
+| 모양 | 아이콘 | 실패 `circle-x`(`--danger-ink`), 경고 `triangle-alert`(`--warning-ink`), 완료 `check`(`--fg-muted`), 연결 대기 막대 줄무늬(forced-colors에서는 dashed 테두리) |
 | 글자 | 상태 줄 | "받는 중 · 2.3GB / 4.0GB", "일시정지됨", "저장 공간이 부족해요 · …", "완료" |
 
 실패 행은 막대·아이콘·글자 외에 테두리·면 색을 바꾸지 않는다(빨강은 두 곳: 막대 채움과 아이콘·상태 글자). 색각 이상·forced-colors에서는 모양(아이콘)과 글자가 남는다(WCAG 1.4.1).
@@ -39,7 +39,7 @@
 
 - `patterns.md` 작업 행 절이 세 겹 표를 소유한다. `components.md` Row는 왼쪽 레일 슬롯을 갖지 않는다.
 - `A-DRIFT-K3`의 "유지" 분류를 이 ADR이 번복한다. brief §6.16 K3은 "세 겹 유지, 레일 폐기(ADR-0003)"로 읽는다.
-- `design-lint`: 작업 행 CSS에 `border-left`·`border-inline-start` 선언이 있으면 실패(허용 목록 없음). `design-tokens T13과 무관.
+- `design-lint`: 작업 행 CSS에 `border-left`·`border-inline-start` 선언이 있으면 실패(허용 목록 없음). `design-tokens` T13과 무관.
 - `design-gallery`: 작업 목록 상태 6종이 forced-colors·다크·라이트에서 axe를 통과하고, 실패 행의 `--danger`·`--danger-ink` 사용 요소가 막대·아이콘·상태 글자 셋뿐인지 DOM에서 센다.
 - e2e: `errors.spec.ts`가 레일 색을 보지 않는다(role·text 기반). 영향 없음.
 

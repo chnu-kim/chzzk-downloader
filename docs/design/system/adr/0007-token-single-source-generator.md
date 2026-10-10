@@ -15,7 +15,7 @@
 3. 두 생성물은 `data-text-scale` 블록(앱만)과 `data-scale="reading"` 블록(Worker만)을 뺀 나머지가 **바이트까지 같다**. Worker는 부분집합이 아니라 같은 파일을 쓴다(brief §6.2-1을 이렇게 해석: a-worker가 제안한 "공유 안"의 가장 단순한 형태).
 4. 층은 ref → sys 둘, comp 층은 비운다. 다크는 생성기가 두 selector 블록에 같은 내용을 쓴다(손으로 쓰지 않는다).
 5. 색은 OKLCH로 설계하고 **hex를 커밋**한다. 원천의 색 객체에 `components`(oklch)와 `hex`를 함께 두고 생성기가 ±1/255 일치를 검사한다.
-6. 문서 패리티: `foundations.md` §13 코드 블록 = 생성물의 토큰 사전(`design-tokens T14).
+6. 문서 패리티: `foundations.md` §13 코드 블록 = 생성물의 토큰 사전(`design-tokens` T14).
 
 ## 근거
 
@@ -28,13 +28,13 @@
 | 5 | 생성기 + `--check` 패턴의 선례 둘이 저장소에 있다 | E1 | `scripts/fixtures/gen-fixtures.mjs`, `crates/shell/tests/bindings.rs` | — |
 | 6 | 2025.10에서 색 `$value`는 hex 문자열이 아니라 색 객체다(옛 초안 예제를 베끼면 도구가 거부) | E0 | tokens §1.2 주의 | — |
 | 7 | OKLCH 설계 → hex 커밋: `oklch()`는 하한(Safari 16.4) 안이지만 생성물에 hex를 두면 검사(대비·C1)가 한 색 공간에서 끝난다 | E1 | brief §6.1-3, `G-ENGINE-R4` | — |
-| 8 | 세 후보 모두 "DTCG JSON → 변환기 → tokens.css 커밋 + --check"로 수렴했다 | E1 | judgment §2.4 D3`(C 구조 + A 2층) | — |
+| 8 | 세 후보 모두 "DTCG JSON → 변환기 → tokens.css 커밋 + --check"로 수렴했다 | E1 | judgment §2.4 D3(C 구조 + A 2층) | — |
 
 최고 등급: E1 / 결정 영향: 중간(구조) / 판정: 채택(잠정)
 
 ## 결과
 
-- governance §1(파이프라인)·§2.2(`design-tokens T1~T15)가 이 결정의 구현 명세다.
+- governance §1(파이프라인)·§2.2(`design-tokens` T1~T15)가 이 결정의 구현 명세다.
 - `app/src/styles/tokens.css`는 생성물이 된다(머리줄 주석 "손으로 고치지 않는다"). `worker/src/http/site-css.ts`는 `tokens.css.ts`(생성물) + `site.css.ts`(컴포넌트 CSS, sys 토큰만)로 나뉜다. `SITE_CSS_HASH` 관례는 생성기가 `TOKENS_CSS_HASH`로 계산한다.
 - `tokens.test.ts`(vitest)는 지워지고 검사는 `scripts/design/`으로 옮겨 `lint` 작업에서 pnpm 없이 돈다. `tests.vitest` ratchet 감소 → `RATCHET_LOG.md`.
 - 토큰 변경 절차는 governance §1.4(ADR → JSON → 생성 → foundations → gate).

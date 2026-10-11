@@ -12,7 +12,7 @@ name = "chzzk_shell"
 [dependencies]
 base64 = "0.23.1"
 chzzk-core = { path = "../core" }
-getrandom = "0.3.4"
+getrandom = "0.4.3"
 # 잠자기 방지(power.rs 한 곳, DX15). 기본 기능(bin)은 CLI용이라 끈다
 keepawake = { version = "0.6.1", default-features = false }
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls"] }

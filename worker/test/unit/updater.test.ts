@@ -111,6 +111,11 @@ describe("decideUpdate: url 출처를 응답하는 Worker에 맞춘다", () => {
     expect(out.platforms).toEqual({ a: { signature: "s", url: "not a url" }, b: { signature: "s" }, c: "x" });
   });
 
+  it("https가 아닌 url은 바꾸지 않는다(앱이 거부한다)", () => {
+    const m = manifest({ a: { signature: "s", url: "http://old.example.test/releases/2.0.0/x.exe" } });
+    expect(body(decideUpdate(m, cur("1.0.0"), ORIGIN)).platforms.a?.url).toBe("http://old.example.test/releases/2.0.0/x.exe");
+  });
+
   it("/releases/ 아래가 아닌 경로는 바꾸지 않는다", () => {
     const m = manifest({ a: { signature: "s", url: `${OLD}/elsewhere/x.exe` } });
     expect(body(decideUpdate(m, cur("1.0.0"), ORIGIN)).platforms.a?.url).toBe(`${OLD}/elsewhere/x.exe`);

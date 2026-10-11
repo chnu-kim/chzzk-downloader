@@ -45,7 +45,7 @@ function withOrigin(url: unknown, origin: string): string | null {
   } catch {
     return null;
   }
-  if (u.origin === origin || !u.pathname.startsWith("/releases/")) return null;
+  if (u.protocol !== "https:" || u.origin === origin || !u.pathname.startsWith("/releases/")) return null;
   return origin + u.pathname + u.search + u.hash;
 }
 

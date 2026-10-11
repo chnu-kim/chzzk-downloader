@@ -22,7 +22,7 @@ describe('tauri.conf.json 불변식', () => {
   // deb·rpm 패키지 이름은 productName을 kebab으로 만든 것이다. dpkg는 소문자 ASCII·숫자·`+-.`만 받으므로
   // Linux에서는 ASCII productName으로 덮어쓴다(창 제목은 windows[].title이 따로 정한다, app.md 구현 중 변경 51(가)).
   it('Linux 패키지 이름은 dpkg가 받는 ASCII다', () => {
-    expect(Object.keys(linuxConf).filter((k) => k !== '$schema')).toEqual(['productName']);
+    expect(Object.keys(linuxConf).filter((k) => k !== '$schema')).toEqual(['productName', 'bundle']);
     const merged = { ...conf, ...linuxConf };
     const pkg = merged.productName
       .replace(/([a-z0-9])([A-Z])/g, '$1-$2')
@@ -35,6 +35,17 @@ describe('tauri.conf.json 불변식', () => {
     // 기본 설정의 한글 이름은 그대로라 Windows·macOS 번들 이름과 창 제목은 바뀌지 않는다.
     expect(conf.productName).toBe('VOD 클립 다운로더');
     expect(conf.app.windows[0].title).toBe('VOD 클립 다운로더');
+  });
+
+  // 실행 메뉴(.desktop)의 Name은 Linux productName(ASCII)에서 나와 `chzzk-downloader`가 보였다. 패키지 이름을 바꾸면
+  // 기존 설치와 파일이 겹치므로 productName은 두고, 커스텀 템플릿으로 Name만 제품명으로 덮는다.
+  it('Linux 실행 메뉴 이름은 제품명이고 서비스 이름이 없다', () => {
+    expect(linuxConf.bundle.linux.deb.desktopTemplate).toBe('linux/main.desktop');
+    const tpl = read('../src-tauri/linux/main.desktop');
+    expect(tpl).toContain(`Name=${conf.productName}\n`);
+    // 나머지 항목은 번들러가 채우는 변수(Handlebars)다. 서비스 이름·`chzzk`는 템플릿에 직접 쓰지 않는다
+    expect(tpl).not.toMatch(/chzzk|치지직|naver/i);
+    for (const v of ['categories', 'exec', 'icon']) expect(tpl).toContain(`{{${v}}}`);
   });
 
   it('프런트 빌드 연결', () => {

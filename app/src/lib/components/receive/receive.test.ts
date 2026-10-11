@@ -31,7 +31,7 @@ const { default: InputPanel } = await import('./InputPanel.svelte');
 
 const settingsDto: SettingsDto = {
   downloadFolder: null,
-  effectiveDownloadFolder: '/Users/me/Movies/치지직',
+  effectiveDownloadFolder: '/Users/me/Movies/VOD Clip Downloader',
   useNaverCookies: false,
   naverCookiesSaved: false,
   lastQualityLabel: null,
@@ -428,7 +428,7 @@ describe('ResolveCard', () => {
     vi.mocked(api.updateSettings).mockResolvedValue({ ...settingsDto, downloadFolder: '/Volumes/외장/영상' });
     const user = await openCard();
     await user.click(screen.getByRole('button', { name: t('folder.change') }));
-    expect(api.pickFolder).toHaveBeenCalledWith('/Users/me/Movies/치지직');
+    expect(api.pickFolder).toHaveBeenCalledWith('/Users/me/Movies/VOD Clip Downloader');
     expect(api.updateSettings).toHaveBeenCalledWith({ downloadFolder: '/Volumes/외장/영상' });
     expect(await screen.findByText('/Volumes/외장/영상')).toBeInTheDocument();
     await user.click(await downloadButton());

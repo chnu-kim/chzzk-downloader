@@ -1,7 +1,7 @@
 //! 앱 경로와 설정 서비스(docs/design/app.md §3 "쿠키 토글은 클라이언트 교체", §7.2).
 //!
-//! - **`AppPaths`**: Tauri가 준 폴더로 만든다. 기본 저장 폴더는 `비디오/치지직` → `다운로드/치지직` →
-//!   `홈/치지직` → `{data}/downloads` 순서다(§16, platform §16.1). Tauri에 의존하지 않도록 OS 폴더는 인자로 받는다.
+//! - **`AppPaths`**: Tauri가 준 폴더로 만든다. 기본 저장 폴더는 `비디오/<이름>` → `다운로드/<이름>` →
+//!   `홈/<이름>` → `{data}/downloads` 순서다(§16, platform §16.1). Tauri에 의존하지 않도록 OS 폴더는 인자로 받는다.
 //! - **`SettingsService`**: `SettingsStore`(settings.json)·`CredentialStore`(credentials.json)·코어 클라이언트를
 //!   한곳에서 관리한다. 코어 `Chzzk`는 만들 때 쿠키를 굳히므로, 쿠키 사용 여부·쿠키 값이 바뀌면 **새 클라이언트를
 //!   먼저 만들고 → 저장하고 → 바꿔 끼운다**. 만들기에 실패하면(헤더로 보낼 수 없는 쿠키) 아무것도 저장하지 않고,
@@ -33,8 +33,11 @@ use crate::manager::{ClientFn, DownloadManager, JobDefaults, MAX_PARALLEL, MIN_P
 use crate::ownership::OwnershipGate;
 use crate::volume;
 
-/// 기본 저장 폴더 이름(비디오·다운로드 폴더 아래).
-pub const DEFAULT_FOLDER_NAME: &str = "치지직";
+/// 기본 저장 폴더 이름(비디오·다운로드 폴더 아래). 서비스 상표도 한글도 넣지 않는다(제품명 변경).
+pub const DEFAULT_FOLDER_NAME: &str = "VOD Clip Downloader";
+
+/// 제품명 변경 전의 기본 저장 폴더 이름. 고른 상위 폴더에 이미 있으면 계속 쓴다.
+pub const LEGACY_FOLDER_NAME: &str = "치지직";
 
 /// 앱의 진행률 콜백 간격(§3).
 pub const PROGRESS_INTERVAL: Duration = Duration::from_millis(250);
@@ -78,13 +81,16 @@ impl AppPaths {
     }
 }
 
-/// 기본 저장 폴더: `video/치지직` → `downloads/치지직` → `home/치지직` → `{data}/downloads`.
+/// 기본 저장 폴더: `video/<이름>` → `downloads/<이름>` → `home/<이름>` → `{data}/downloads`.
+///
+/// `<이름>`은 `DEFAULT_FOLDER_NAME`이다. 다만 고른 상위 폴더에 옛 `LEGACY_FOLDER_NAME` 폴더가 이미 있으면 그것을
+/// 쓴다. 이 값은 설정에 저장되지 않고 매번 계산하므로, 이름만 바꾸면 기존 사용자의 새 다운로드가 다른 폴더로 갈라진다.
 ///
 /// 마지막 `{data}/downloads`는 홈 폴더조차 없을 때만 닿는 자리다(실제로는 거의 닿지 않는다). 사용자가 자기 파일을
 /// 찾을 수 없는 앱 데이터 폴더 안이라 홈을 앞에 둔다(platform §16.1, X8).
 ///
 /// OS 폴더는 절대 경로이고, UTF-8이며, 실제로 있는 폴더일 때만 쓴다. UTF-8이 아닌 폴더는 작업 목록에 저장할
-/// 수 없어 매니저가 거부하므로(구현 중 변경 33) 처음부터 고르지 않는다. `치지직` 폴더는 첫 다운로드 때 코어가 만든다.
+/// 수 없어 매니저가 거부하므로(구현 중 변경 33) 처음부터 고르지 않는다. 기본 이름의 폴더는 첫 다운로드 때 코어가 만든다.
 pub fn default_download_folder(
     video: Option<&Path>,
     downloads: Option<&Path>,
@@ -95,7 +101,14 @@ pub fn default_download_folder(
         .into_iter()
         .flatten()
         .find(|d| d.is_absolute() && d.to_str().is_some() && d.is_dir())
-        .map(|d| d.join(DEFAULT_FOLDER_NAME))
+        .map(|d| {
+            let legacy = d.join(LEGACY_FOLDER_NAME);
+            if legacy.is_dir() {
+                legacy
+            } else {
+                d.join(DEFAULT_FOLDER_NAME)
+            }
+        })
         .unwrap_or_else(|| data.join("downloads"))
 }
 

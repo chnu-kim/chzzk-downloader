@@ -9,7 +9,8 @@ use std::sync::Arc;
 use chzzk_core::{ClientConfig, ContentRef, PlaybackKind, RecentKind, TextScale, Theme};
 use chzzk_shell::dto::{Nullable, SettingsPatch};
 use chzzk_shell::services::{
-    AppPaths, DEFAULT_FOLDER_NAME, SettingsService, default_download_folder, enqueue,
+    AppPaths, DEFAULT_FOLDER_NAME, LEGACY_FOLDER_NAME, SettingsService, default_download_folder,
+    enqueue,
 };
 use chzzk_shell::{ErrorCode, OwnershipGate};
 use common::fake::Script;
@@ -92,7 +93,7 @@ fn default_folder_fallbacks() {
             None,
             down.join(DEFAULT_FOLDER_NAME),
         ),
-        // 비디오·다운로드 폴더가 없으면 홈/치지직(platform §16.1, X8)
+        // 비디오·다운로드 폴더가 없으면 홈/<기본 폴더 이름>(platform §16.1, X8)
         (None, None, Some(&home), home.join(DEFAULT_FOLDER_NAME)),
         (
             Some(&missing),
@@ -118,6 +119,45 @@ fn default_folder_fallbacks() {
         None,
     );
     assert_eq!(p.default_download, video.join(DEFAULT_FOLDER_NAME));
+}
+
+/// 새 기본 폴더 이름에는 상표 단어도 한글도 없다(제품명 변경, 사용자 결정).
+#[test]
+fn default_folder_name_is_plain_ascii() {
+    assert_eq!(DEFAULT_FOLDER_NAME, "VOD Clip Downloader");
+    assert!(DEFAULT_FOLDER_NAME.is_ascii());
+}
+
+/// 옛 기본 폴더(`치지직`)가 고른 상위 폴더에 이미 있으면 그대로 쓴다: 설정에 저장되지 않는 값이라
+/// 이름만 바꾸면 기존 사용자의 새 다운로드가 다른 폴더로 갈라진다.
+#[test]
+fn default_folder_keeps_existing_legacy_folder() {
+    let t = TempDir::new().unwrap();
+    let data = t.path().join("data");
+    let video = t.path().join("Videos");
+    let down = t.path().join("Downloads");
+    std::fs::create_dir_all(&video).unwrap();
+    std::fs::create_dir_all(down.join(LEGACY_FOLDER_NAME)).unwrap();
+    std::fs::create_dir_all(&data).unwrap();
+
+    // 고른 상위(비디오)에 옛 폴더가 없으면 다운로드에 있어도 새 이름이다(옛 규칙도 비디오를 골랐다)
+    assert_eq!(
+        default_download_folder(Some(&video), Some(&down), None, &data),
+        video.join(DEFAULT_FOLDER_NAME)
+    );
+    // 고른 상위(다운로드)에 옛 폴더가 있으면 그것을 쓴다
+    assert_eq!(
+        default_download_folder(None, Some(&down), None, &data),
+        down.join(LEGACY_FOLDER_NAME)
+    );
+    // 옛 이름이 폴더가 아니라 파일이면 쓰지 않는다
+    let other = t.path().join("Other");
+    std::fs::create_dir_all(&other).unwrap();
+    std::fs::write(other.join(LEGACY_FOLDER_NAME), b"x").unwrap();
+    assert_eq!(
+        default_download_folder(None, Some(&other), None, &data),
+        other.join(DEFAULT_FOLDER_NAME)
+    );
 }
 
 /// UTF-8이 아닌 OS 폴더는 고르지 않는다(작업 목록에 저장할 수 없다).

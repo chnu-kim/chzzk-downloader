@@ -44,7 +44,7 @@ export function resolved(over: Partial<ResolvedDto> = {}): ResolvedDto {
 export function check(over: Partial<OutputCheck> = {}): OutputCheck {
   return {
     fileName: '[251003] 채널이름 - 금요 노가리 방송',
-    path: '/Movies/치지직/[251003] 채널이름 - 금요 노가리 방송.mp4',
+    path: '/Movies/VOD Clip Downloader/[251003] 채널이름 - 금요 노가리 방송.mp4',
     truncated: false,
     exists: false,
     freeFileName: null,

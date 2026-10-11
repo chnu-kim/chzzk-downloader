@@ -496,7 +496,8 @@ const scenarios = [
     async () => {
       const cfg = parseJsonc(readFileSync(join(WORKER, "wrangler.jsonc"), "utf8"));
       must(cfg.r2_buckets?.[0]?.bucket_name === E2E_BUCKET, "wrangler.jsonc의 R2 버킷 이름이 E2E_BUCKET과 다르다");
-      seed = await buildSeed(TABLE, E2E_VERSIONS);
+      // 매니페스트 url 출처 = 이 Worker의 PUBLIC_ORIGIN(운영의 정상 상태). 다르면 /update가 출처를 맞춰 다시 쓴다(worker.md 구현 중 변경 103)
+      seed = await buildSeed(TABLE, E2E_VERSIONS, { base: E2E_ORIGIN });
       sums = new Map();
       for (const line of dec.decode(seed.get(`releases/${LATEST}/SHA256SUMS`)).split("\n")) {
         const m = /^([0-9a-f]{64}) {2}(.+)$/.exec(line);

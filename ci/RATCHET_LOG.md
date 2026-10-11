@@ -32,3 +32,4 @@
 | 2026-10-10 | `size.dist_gz` | 73316 → 76248 | 디자인 시스템 단계 (f)(governance §10 (f) ratchet 칸): 프런트 연결 대기·잠자기 방지·미달 엔진 안내·메뉴·가드 화면과 copy deck 문구(단일 JS 청크, 테스트 데이터·중복 혼입 없음 확인, 실행 38061272721의 CI 측정값, +4.00%) |
 | 2026-10-11 | `size.binary.windows` | 20665344 → 21329920 | 디자인 시스템 단계 (f)(governance §10 (f) ratchet 칸): window-state·keepawake·windows/webview2-com 크레이트와 WebView2 보강. Windows 번들은 PR에서 돌지 않아 master 실행 38087544439의 CI 측정값(+3.22%)으로 올린다 |
 | 2026-10-11 | `size.bundle.windows-msi` | 7319552 → 7540736 | 같은 증가분이 msi에 반영됨(master 실행 38087544439의 CI 측정값, +3.02%) |
+| 2026-10-11 | `size.bundle.windows-setup` | 4945876 → 5095510 | v0.5.0 태그 빌드(release.yml 실행 38098273571, `build (windows-latest)`)가 +3.03%로 허용 3%를 넘었다. 같은 커밋의 master 실행 38097752345는 +2.99%로 통과해 버전 PR에서 드러나지 않았다(태그 빌드는 updater 산출물·Worker 주소가 들어가 조금 크다). PR #77(관리자 예외 안내·판정) 누적분이고 태그 빌드 측정값으로 올린다 |

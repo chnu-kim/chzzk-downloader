@@ -623,7 +623,7 @@ version = "0.6.1"
 dependencies = [
  "base64 0.23.1",
  "chzzk-core",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "keepawake",
  "libc",
  "objc2",

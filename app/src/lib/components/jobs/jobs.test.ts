@@ -186,7 +186,7 @@ describe('JobList', () => {
     const acts = row.querySelector('.job-actions') as HTMLElement;
     expect(acts).not.toBeNull();
     const buttons = within(acts).getAllByRole('button');
-    expect(buttons.map((b) => b.textContent?.trim())).toEqual([t('action.pause'), t('action.cancel'), '']);
+    expect(buttons.map((b) => b.textContent?.trim())).toEqual([t('action.pause'), t('common.cancel'), '']);
     for (const b of buttons.slice(0, 2)) {
       expect(b).toHaveClass('btn-ghost');
       expect(b).toHaveClass('btn-sm');
@@ -276,7 +276,7 @@ describe('JobList', () => {
 });
 
 describe('취소(D2): .part가 있으면 크기와 무관하게 묻는다', () => {
-  it('받은 바이트 0은 [취소] 즉시, 1바이트부터는 [취소…] + D2', async () => {
+  it('받은 바이트 0은 [취소] 즉시(neutral), 1바이트부터는 danger [취소] + D2', async () => {
     await load([
       job(1, { status: 'paused', title: '빈 것' }),
       job(2, { status: 'paused', partialBytes: 1, title: '한 바이트' }),
@@ -289,7 +289,6 @@ describe('취소(D2): .part가 있으면 크기와 무관하게 묻는다', () =
     const plain = within(waiting).getByRole('button', { name: t('a11y.cancelJob', { title: '대기' }) });
     expect(plain).toHaveTextContent(t('common.cancel'));
     expect(plain).not.toHaveClass('tone-danger');
-    expect(within(waiting).queryByText(t('action.cancel'))).toBeNull();
     await user.click(plain);
     expect(api.removeJob).toHaveBeenCalledWith(3);
     expect(toasts.items).toHaveLength(0);
@@ -301,7 +300,7 @@ describe('취소(D2): .part가 있으면 크기와 무관하게 묻는다', () =
 
     const some = screen.getByRole('article', { name: '한 바이트' });
     const danger = within(some).getByRole('button', { name: t('a11y.cancelJob', { title: '한 바이트' }) });
-    expect(danger).toHaveTextContent(t('action.cancel'));
+    expect(danger).toHaveTextContent(t('common.cancel'));
     expect(danger).toHaveClass('tone-danger');
     // 취소는 글자뿐이다(x 아이콘 없음, foundations §9.1)
     expect(danger.querySelector('svg, .icon')).toBeNull();
@@ -618,8 +617,8 @@ describe('막힌 작업(A5)', () => {
     expect(within(item).getByText(t('job.otherChannel.body'))).toBeInTheDocument();
     expect(item).toHaveAccessibleDescription(t('job.otherChannel.body'));
     expect(within(item).queryByRole('button', { name: t('action.resume') })).toBeNull();
-    // 지우기는 남는다(.part가 있으니 [취소…])
-    expect(within(item).getByRole('button', { name: t('a11y.cancelJob', { title: '남의 영상' }) })).toHaveTextContent(t('action.cancel'));
+    // 지우기는 남는다(.part가 있으니 danger [취소])
+    expect(within(item).getByRole('button', { name: t('a11y.cancelJob', { title: '남의 영상' }) })).toHaveTextContent(t('common.cancel'));
     item.focus();
     await user.keyboard(' ');
     expect(api.resumeJob).not.toHaveBeenCalled();
@@ -647,7 +646,7 @@ describe('막힌 작업(A5)', () => {
 describe('연결 대기·회복·멈춘 지 30일 행(patterns.md §3.2)', () => {
   const WAIT = prog({ phase: 'waitingNetwork', speedBps: null, etaSecs: null });
 
-  it('연결 대기: 줄무늬 막대·퍼센트 유지, 속도·남은 시간 없음, 본문 한 줄, [일시정지][취소…], 오류 모양 없음', async () => {
+  it('연결 대기: 줄무늬 막대·퍼센트 유지, 속도·남은 시간 없음, 본문 한 줄, [일시정지]danger [취소], 오류 모양 없음', async () => {
     await load([job(1, { title: '끊긴 영상', status: 'running', progress: WAIT })]);
     render(JobList);
     const item = screen.getByRole('article', { name: '끊긴 영상' });

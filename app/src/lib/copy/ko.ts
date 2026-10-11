@@ -143,7 +143,6 @@ export const ko = {
   'action.resume': '이어받기',
   'action.retry': '다시 시도',
   'action.restartFresh': '처음부터 다시 받기',
-  'action.cancel': '취소…',
   'action.undo': '되돌리기',
   'action.showTitle': '제목 전체 보기',
   'action.openFile': '열기',

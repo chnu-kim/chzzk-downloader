@@ -118,7 +118,7 @@ test('JSONC: 문자열 안의 // 는 남기고 주석·끝 쉼표를 지운다',
 });
 
 test('씨앗: wrangler.jsonc에 account_id를 넣으면 실패(gate 진입점으로)', () => {
-  const d = copy({ 'worker/wrangler.jsonc': read('wrangler.jsonc').replace('"name": "chzzk-downloader",', '"name": "chzzk-downloader",\n  "account_id": "0123",') });
+  const d = copy({ 'worker/wrangler.jsonc': read('wrangler.jsonc').replace('"name": "vod-clip-downloader",', '"name": "vod-clip-downloader",\n  "account_id": "0123",') });
   assert.notDeepEqual(checkWorker(d), []);
   assert.ok(checkWorker(d).some((e) => e.includes('account_id')));
   // 진입점(run.mjs가 부르는 것과 같은 main)도 1

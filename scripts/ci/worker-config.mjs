@@ -78,7 +78,7 @@ const ROOT_DEFAULT = join(fileURLToPath(import.meta.url), '..', '..', '..');
 export const WORKER_DIR = 'worker';
 
 // ---- 고정 값(바꾸려면 설계 문서와 함께) ----
-export const WORKER_NAME = 'chzzk-downloader';
+export const WORKER_NAME = 'vod-clip-downloader';
 export const DO_CLASS = 'AuthStore';
 export const DO_BINDING = 'AUTH';
 export const R2_BINDING = 'DIST';

@@ -1,4 +1,11 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "chzzk-downloader"
+  "productName": "chzzk-downloader",
+  "bundle": {
+    "linux": {
+      "deb": {
+        "desktopTemplate": "linux/main.desktop"
+      }
+    }
+  }
 }

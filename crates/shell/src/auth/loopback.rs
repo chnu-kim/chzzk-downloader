@@ -81,7 +81,7 @@ impl ReceiverPage {
     pub fn message(self) -> &'static str {
         match self {
             ReceiverPage::SignedIn => {
-                "로그인했어요. 치지직 다운로더 앱으로 돌아가 주세요. 이 창은 닫아도 돼요."
+                "로그인했어요. VOD 클립 다운로더 앱으로 돌아가 주세요. 이 창은 닫아도 돼요."
             }
             ReceiverPage::Denied => "이 채널은 사용 허가가 없어요. 앱에서 안내를 확인해 주세요.",
             ReceiverPage::Cancelled => "로그인을 취소했어요. 앱에서 다시 로그인할 수 있어요.",
@@ -93,12 +93,12 @@ impl ReceiverPage {
 }
 
 /// 400·404·405 공통 문구
-pub const PAGE_REJECTED: &str = "치지직 다운로더가 처리할 수 없는 요청이에요.";
+pub const PAGE_REJECTED: &str = "VOD 클립 다운로더가 처리할 수 없는 요청이에요.";
 
 /// 결과 페이지 HTML(외부 리소스 없음)
 fn page_html(message: &str) -> String {
     format!(
-        "<!doctype html><html lang=\"ko\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><link rel=\"icon\" href=\"data:,\"><title>치지직 다운로더</title><style>body{{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;font-family:system-ui,sans-serif;background:#fff;color:#111}}@media (prefers-color-scheme:dark){{body{{background:#111;color:#eee}}}}p{{max-width:28em;padding:0 16px;font-size:18px;line-height:1.5;text-align:center}}</style></head><body><p>{message}</p></body></html>"
+        "<!doctype html><html lang=\"ko\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><link rel=\"icon\" href=\"data:,\"><title>VOD 클립 다운로더</title><style>body{{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;font-family:system-ui,sans-serif;background:#fff;color:#111}}@media (prefers-color-scheme:dark){{body{{background:#111;color:#eee}}}}p{{max-width:28em;padding:0 16px;font-size:18px;line-height:1.5;text-align:center}}</style></head><body><p>{message}</p></body></html>"
     )
 }
 

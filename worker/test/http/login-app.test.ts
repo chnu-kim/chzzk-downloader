@@ -403,8 +403,8 @@ describe("확인 페이지", () => {
     const text = await res.text();
     expect(text).not.toContain(handleOf(body.loginUrl));
     expect(text).toContain('<form method="post">');
-    expect(text).toContain("<h1>치지직 다운로더 로그인</h1>");
-    expect(text).toContain("치지직 다운로더 앱에서 직접 시작한 로그인이 아니면 이 창을 닫아 주세요.");
+    expect(text).toContain("<h1>VOD 클립 다운로더 로그인</h1>");
+    expect(text).toContain("VOD 클립 다운로더 앱에서 직접 시작한 로그인이 아니면 이 창을 닫아 주세요.");
     expect(text).toContain("다른 사람이 보낸 주소라면 계속하지 마세요.");
     expect(text).toContain("로그인 뒤 주소창에 나오는 주소는 다른 사람에게 보내지 마세요.");
     expect(text).not.toContain("확인 코드");

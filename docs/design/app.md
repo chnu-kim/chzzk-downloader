@@ -102,8 +102,8 @@ app/
 ```
 
 - `app/`은 독립 pnpm 프로젝트다. 나중의 `worker/`는 vitest 4(Workers 플러그인 peer)를 쓰므로 루트 workspace로 묶지 않는다.
-- `tauri.conf.json`: `frontendDist = "../dist"`, `devUrl = "http://localhost:1420"`, `beforeDevCommand = "pnpm dev"`, `beforeBuildCommand = "pnpm build"`. 창은 `width 960, height 700, minWidth 720, minHeight 520`, 제목 `치지직 다운로더`, `dragDropEnabled: false`.
-- `identifier`는 한 번 정하면 바꾸지 않는다(`app_config_dir`·`app_data_dir`·`app_log_dir`이 여기서 나온다). 치지직 금칙어(`chzzk`, `naver`)를 피해 `io.github.chnu-kim.vod-downloader`로 둔다. `productName`은 `치지직 다운로더`.
+- `tauri.conf.json`: `frontendDist = "../dist"`, `devUrl = "http://localhost:1420"`, `beforeDevCommand = "pnpm dev"`, `beforeBuildCommand = "pnpm build"`. 창은 `width 960, height 700, minWidth 720, minHeight 520`, 제목 `VOD 클립 다운로더`, `dragDropEnabled: false`.
+- `identifier`는 한 번 정하면 바꾸지 않는다(`app_config_dir`·`app_data_dir`·`app_log_dir`이 여기서 나온다). 치지직 금칙어(`chzzk`, `naver`)를 피해 `io.github.chnu-kim.vod-downloader`로 둔다. `productName`은 `VOD 클립 다운로더`.
 - `chzzk-app`은 `crate-type = ["rlib"]`(모바일용 `staticlib`·`cdylib` 불필요).
 - `.gitignore`에 `app/dist/`, `app/src-tauri/gen/`을 더한다. 루트 `dist/`·`node_modules/`·`target/`은 이미 있다.
 
@@ -551,7 +551,7 @@ UI는 결과로 **서로 독립인 세 안내**를 한다(§8.3 ConflictNotice).
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
-│ 치지직 다운로더                                    {AccountSlot} [설정] │  ← AppHeader (48px)
+│ VOD 클립 다운로더                                    {AccountSlot} [설정] │  ← AppHeader (48px)
 ├────────────────────────────────────────────────────────────────────────┤
 │ ┌──────────────────────────────────────────────────────────┐ ┌───────┐ │
 │ │ 치지직 VOD나 클립 주소를 붙여넣으세요                     │ │불러오기│ │  ← UrlBar
@@ -713,7 +713,7 @@ UI는 결과로 **서로 독립인 세 안내**를 한다(§8.3 ConflictNotice).
 │   [저장] [지우기]   저장됨 / 저장된 값 없음   > 값을 찾는 방법            │
 │                                                                        │
 │ 이전 버전                                                              │
-│   예전 치지직 다운로더(명령줄 버전)의 설정과 최근 VOD를 가져와요.         │
+│   예전 VOD 클립 다운로더(명령줄 버전)의 설정과 최근 VOD를 가져와요.         │
 │   [폴더 선택해서 가져오기]     마지막 가져오기: D:\tools\chzzk           │
 │   (가져온 뒤) [!] 옛 파일에 평문 쿠키가 남아 있습니다 …                  │
 │                                                                        │
@@ -742,7 +742,7 @@ UI는 결과로 **서로 독립인 세 안내**를 한다(§8.3 ConflictNotice).
 ```
 idle                                         pending (폴링 중, 약 5분)
 ┌──────────────────────────────────┐        ┌──────────────────────────────────┐
-│       치지직 다운로더            │        │   브라우저에서 로그인해 주세요     │
+│       VOD 클립 다운로더            │        │   브라우저에서 로그인해 주세요     │
 │  허가된 채널만 사용할 수 있어요.   │        │   로그인을 마치면 자동으로        │
 │  치지직 계정으로 로그인하세요.     │        │   넘어가요.  남은 시간 4:12       │
 │   [ 치지직으로 로그인 ]           │        │  [브라우저 다시 열기]  [취소]     │
@@ -819,7 +819,7 @@ denied                                       expired / cancelled / error
 
 | 키 | 문구 |
 |---|---|
-| `app.title` / `header.settings` | 치지직 다운로더 / 설정 |
+| `app.title` / `header.settings` | VOD 클립 다운로더 / 설정 |
 | `url.placeholder` / `url.submit` / `url.hintExample` | 치지직 VOD나 클립 주소를 붙여넣으세요 / 불러오기 / 예: https://chzzk.naver.com/video/1234567 |
 | `recent.title` / `recent.reopen` | 최근 VOD / 다시 열기 |
 | `resolve.loading` / `resolve.cancel` | 영상 정보를 불러오는 중이에요… / 취소 |
@@ -852,12 +852,12 @@ denied                                       expired / cancelled / error
 | `banner.interrupted` / `banner.resumeAll` | 지난번에 받다가 멈춘 다운로드가 {n}개 있어요. / 모두 이어받기 |
 | `dialog.close.*` | 다운로드를 멈추고 닫을까요? / 받는 중인 영상이 {n}개 있어요. 닫으면 일시정지되고, 다음에 앱을 열면 이어받을 수 있어요. / 계속 받기 / 닫기 |
 | `dialog.cancel.*` | 다운로드를 취소할까요? / 지금까지 받은 {size}도 함께 지워져요. / 취소하고 지우기 / 돌아가기 |
-| `dialog.legacy.*` | 이전 버전 설정을 찾았어요 / 예전 치지직 다운로더의 저장 폴더와 최근 VOD {n}개{cookies}를 가져올까요? / , 네이버 로그인 정보 / 가져오기 / 나중에 |
+| `dialog.legacy.*` | 이전 버전 설정을 찾았어요 / 예전 VOD 클립 다운로더의 저장 폴더와 최근 VOD {n}개{cookies}를 가져올까요? / , 네이버 로그인 정보 / 가져오기 / 나중에 |
 | `legacy.done` / `legacy.notFound` | 설정을 가져왔어요 / 이 폴더에서 예전 설정을 찾지 못했어요 |
 | `settings.*` | 설정 / 저장 / 기본 저장 폴더 / 다운로드 / 빠른 다시보기 연결 수 / (도움말) 빠른 다시보기는 영상을 작은 조각으로 나눠 받아요. 숫자가 클수록 빠르지만 네트워크를 더 많이 써요. |
 | `settings.cookie.*` | 고급: 네이버 로그인 정보 / (why) 연령 제한이나 구독자 전용 영상은 네이버에 로그인한 상태여야 받을 수 있어요. 브라우저의 네이버 로그인 쿠키 두 개를 넣으면 이 컴퓨터에만 저장되고, 치지직 영상 정보를 조회할 때만 쓰여요. / (danger) 이 값은 비밀번호와 같아요. 다른 사람에게 보여 주지 마세요. 네이버에서 로그아웃하면 값이 만료돼 다시 넣어야 해요. / 로그인 정보 사용 / 저장됨 / 저장된 값 없음 / 저장 / 지우기 / 값을 찾는 방법 / 두 값을 모두 넣어 주세요 |
 | `settings.cookie.howto.steps` | 1. 브라우저에서 chzzk.naver.com에 로그인해요. 2. F12를 눌러 개발자 도구를 열어요. 3. 애플리케이션(Application) > 쿠키 > https://chzzk.naver.com 을 열어요. 4. NID_AUT, NID_SES의 값을 각각 복사해 붙여넣어요. |
-| `settings.legacy.*` | 이전 버전 / 예전 치지직 다운로더(명령줄 버전)의 설정과 최근 VOD를 가져와요. / 폴더 선택해서 가져오기 / 마지막 가져오기: {path} |
+| `settings.legacy.*` | 이전 버전 / 예전 VOD 클립 다운로더(명령줄 버전)의 설정과 최근 VOD를 가져와요. / 폴더 선택해서 가져오기 / 마지막 가져오기: {path} |
 | `settings.about.*` | 정보 / 버전 {app} (코어 {core}) / 설정 폴더 열기 / 로그 폴더 열기 |
 | `banner.settingsError` | 설정을 저장하지 못했어요. 디스크 공간과 권한을 확인해 주세요. |
 | `auth.*` (Phase 3) | 허가된 채널만 사용할 수 있어요. 치지직 계정으로 로그인하세요. / 치지직으로 로그인 / 브라우저에서 로그인해 주세요 / 로그인을 마치면 자동으로 넘어가요. 남은 시간 {mm:ss} / 브라우저 다시 열기 / 취소 / 사용 허가가 없는 채널이에요 / 채널: {channelName}. 허가를 받으려면 관리자에게 채널 이름을 알려 주세요. / 다른 계정으로 로그인 / 로그인 시간이 지났어요. 다시 시도해 주세요. / 로그인을 취소했어요. / 로그인 서버에 연결하지 못했어요. 인터넷 연결을 확인해 주세요. / 다시 로그인 / 로그아웃 / 로그아웃할까요? 받는 중인 다운로드는 계속돼요. |
@@ -1201,7 +1201,7 @@ jobs:
     - **코어 `VERSION`.** `AppInfo.coreVersion`을 채우려고 코어에 `pub const VERSION = env!("CARGO_PKG_VERSION")` 한 줄을 더했다(코어 API 추가만).
     - **capabilities는 `core:default` + 앱 command 21개뿐이다.** §15-11 지시문은 dialog·opener·notification·clipboard-manager(읽기)를 capabilities에 적었지만, 네 플러그인 모두 Rust command 안에서만 부르므로 JS 권한은 쓰는 곳 없이 공격 면만 넓힌다(§0·§11, 2번). §16의 "`clipboard-manager` 읽기 권한만"은 **Rust command `clipboard_link`**로 지킨다: Rust가 `read_text`로 읽고 `app::chzzk_link`가 공백으로 나눈 토큰 중 `parse_content_url`이 받는 첫 토큰만 돌려준다(4096바이트 넘는 글은 보지 않는다). 클립보드의 다른 글(비밀번호 등)은 웹뷰에 닿지 않고 로그에도 쓰지 않는다. 프런트는 창 포커스 때 이것을 부른다. 드래그 앤 드롭은 HTML5 `drop`이라 Rust 배선이 없다(5번).
     - **command 목록은 한 곳(`src/command_names.rs`)**이다(`generate_handler!` 목록과의 일치는 38(라)). `build.rs`(AppManifest)와 `lib.rs`(`COMMANDS`)가 `include!`로 함께 쓰고, `tests/ipc.rs`가 capabilities 권한 집합 = `core:default` ∪ `allow-<kebab>`(목록 전체)인지 검사한다.
-    - **완료 알림(§16 OS 알림 + §6.1 `request_user_attention`)은 sink 밖 태스크가 한다.** 매니저는 상태 잠금을 쥔 채 sink를 부르고, 창 API·OS 알림은 메인 스레드를 오가므로 sink에서 부르면 메인 스레드의 창 닫기 처리(`running_count`가 같은 잠금)와 교착할 수 있다. `ChannelSink`는 `Status(completed)`의 제목을 큐(`Notifier`, 구독이 바뀌어도 하나)에 넣고 `channel.send(e).is_ok()`만 돌려준다. `spawn_notifier` 태스크가 main 창에 포커스가 **없을 때만** 주의 요청(`Informational`)과 OS 알림(제목 `치지직 다운로더`, 본문 copy deck `toast.completed` "'{title}' 다운로드를 마쳤어요")을 띄운다. 포커스가 있으면 프런트 토스트로 충분하다. 알림 끄기 설정은 v1에 없다. 문구 두 개가 Rust(`sink.rs`)에도 있어 copy deck과 함께 고쳐야 한다.
+    - **완료 알림(§16 OS 알림 + §6.1 `request_user_attention`)은 sink 밖 태스크가 한다.** 매니저는 상태 잠금을 쥔 채 sink를 부르고, 창 API·OS 알림은 메인 스레드를 오가므로 sink에서 부르면 메인 스레드의 창 닫기 처리(`running_count`가 같은 잠금)와 교착할 수 있다. `ChannelSink`는 `Status(completed)`의 제목을 큐(`Notifier`, 구독이 바뀌어도 하나)에 넣고 `channel.send(e).is_ok()`만 돌려준다. `spawn_notifier` 태스크가 main 창에 포커스가 **없을 때만** 주의 요청(`Informational`)과 OS 알림(제목 `VOD 클립 다운로더`, 본문 copy deck `toast.completed` "'{title}' 다운로드를 마쳤어요")을 띄운다. 포커스가 있으면 프런트 토스트로 충분하다. 알림 끄기 설정은 v1에 없다. 문구 두 개가 Rust(`sink.rs`)에도 있어 copy deck과 함께 고쳐야 한다.
     - **창 닫기와 앱 종료.** `CloseRequested`(main)와 `RunEvent::ExitRequested { code: None }`(macOS Cmd+Q·Dock 종료는 창 닫기 없이 여기로 온다) 둘 다 `guard_close`를 거친다(38(가)·(나)·(다)에서 바뀜): `quit` 중이 아니고 `running_count() > 0`이면 막고 main 창을 앞으로 가져와 `close-requested`(`CloseRequestedPayload { running }`, ts-rs 바인딩 추가)를 보낸다. `quit` command는 `Quitting` 깃발을 먼저 세워 3초 대기 중 D1이 다시 뜨지 않게 하고, `manager.quit` 뒤 `app.exit(0)`(`code: Some(0)`이라 막지 않는다). `RunEvent::Exit`에서 `manager.flush()`로 쓰기 스레드에 밀린 `jobs.json`을 디스크에 닿게 한다(완료 직후 창을 닫는 경우). 실제 Cmd+Q가 `ExitRequested`로 오는지는 macOS에서 수동으로 확인해야 한다(§15-17 스모크).
     - **로그**(§7.3): `tracing-appender` daily·7개, 이름 `chzzk-downloader.YYYY-MM-DD.log`, 개발 빌드는 stdout에도. 필터 기본값에 `chzzk_app_lib=debug`를 더했다. 폴더를 먼저 만든다(없으면 appender가 오래된 파일 정리 중 오류를 찍는 것을 실측). 파일을 열지 못해도 앱은 뜬다. `WorkerGuard`는 managed state로 앱 수명 동안 둔다. 패닉 훅이 `tracing::error!` 뒤 기존 훅을 부른다.
     - **남은 command**: S2의 "설정 폴더 열기 / 로그 폴더 열기"(copy deck `settings.about.*`)는 JS에 opener 권한이 없으므로 §15-16에서 Rust command(예: `open_app_folder(kind)`)를 더해야 한다. 그때 `command_names.rs`·`handler`·capabilities를 함께 고친다.
@@ -1274,7 +1274,7 @@ jobs:
 47. **§15-17 창 닫기·알림·접근성·마무리 세부.**
     - **D1 `CloseGuard`**: `api.onCloseRequested`(이 파일만 `listen`을 부른다, `core:default`의 이벤트 권한으로 충분하다)로 `close-requested`를 듣고 `{running}`을 문구에 넣는다. 열린 채 다시 오면 수만 바꾼다. [계속 받기](기본 포커스)·Esc는 닫기만, [닫기]는 `quit()`을 **한 번만** 부르고 그동안 버튼을 막는다(Rust도 38(가)로 한 번만 돈다). `quit`이 실패하면 토스트로 알리고 다시 누를 수 있게 한다. `ConfirmDialog`의 버튼에 `disabled`를 더했다. `core:default`가 `core:event:default`(`allow-listen`·`allow-unlisten`)를 포함하는 것을 `gen/schemas/acl-manifests.json`으로 확인했고, IPC `main_window_may_listen_for_close_requested`가 실제 ACL에서 `plugin:event|listen`이 허락되는지 본다.
     - **OS 알림을 실패에도 띄운다**(§16 "완료 OS 알림"을 완료·실패로 넓힘). 받는 동안 창을 내려 둔 사용자가 실패를 놓치면 다시 열 때까지 아무 일도 없기 때문이다. `sink::notice_of`가 `Status(completed)`→`Completed`, `Status(failed)`→`Failed`를 큐에 넣고(`Added`·건너뜀·멈춤은 알리지 않는다), 알림 태스크는 그대로 main 창에 포커스가 없을 때만 `request_user_attention(Informational)`과 OS 알림을 띄운다. 실패 본문은 copy deck `job.failed`("'{title}' 다운로드에 실패했어요", LiveAnnouncer와 같은 문구)이고 `sink.rs`에도 있다. `quit`이 멈춘 작업은 `interrupted`라 종료 때 실패 알림이 쏟아지지 않는다.
-    - **시작 실패 안내(38(바))**: `App::open`이 실패하면 `setup`이 오류를 삼키고 main 창을 숨긴 뒤 dialog 플러그인의 비동기 오류 창(제목 "치지직 다운로더를 시작하지 못했어요", 본문 `startup_failure_message`: 할 일 + 로그 폴더 + 원문 오류)을 띄우고 닫으면 `exit(1)`한다. Tauri 2.12.1 소스로 확인한 것: config 창은 사용자 `setup`보다 먼저 만들어지고(`app.rs` `setup()`), 상태가 없는 command는 패닉하지 않고 "state not managed" 오류를 돌려준다(`state.rs`). 닫기 가드는 상태가 없으면 막지 않는다. `blocking_show`는 메인 스레드(setup)에서 멈추므로 `show(콜백)`을 쓴다. 이 문구는 웹뷰가 뜨기 전이라 Rust에만 있다. **GUI 경로는 확인하지 못했다**(아래 스모크 표).
+    - **시작 실패 안내(38(바))**: `App::open`이 실패하면 `setup`이 오류를 삼키고 main 창을 숨긴 뒤 dialog 플러그인의 비동기 오류 창(제목 "VOD 클립 다운로더를 시작하지 못했어요", 본문 `startup_failure_message`: 할 일 + 로그 폴더 + 원문 오류)을 띄우고 닫으면 `exit(1)`한다. Tauri 2.12.1 소스로 확인한 것: config 창은 사용자 `setup`보다 먼저 만들어지고(`app.rs` `setup()`), 상태가 없는 command는 패닉하지 않고 "state not managed" 오류를 돌려준다(`state.rs`). 닫기 가드는 상태가 없으면 막지 않는다. `blocking_show`는 메인 스레드(setup)에서 멈추므로 `show(콜백)`을 쓴다. 이 문구는 웹뷰가 뜨기 전이라 Rust에만 있다. **GUI 경로는 확인하지 못했다**(아래 스모크 표).
     - **접근성 점검**: (가) 뷰를 바꾸면 누르던 버튼이 사라져 포커스가 body로 떨어지던 것을, 설정은 제목(`h1 tabindex=-1`), 홈은 입력줄로 옮긴다(다른 곳이 이미 옮겼으면 두고, 쿠키 섹션 펼치기는 첫 입력칸). (나) `src/a11y.test.ts`가 앱 전체를 그려 랜드마크(`banner`·`main`·"다운로드" 구획), 홈·설정의 모든 버튼·스위치·셀렉트·진행 막대에 이름이 있는지, 뷰 전환·Esc 뒤 포커스, 멈춤·완료 항목이 아이콘과 문구를 함께 쓰는지 본다. (다) reduced-motion: 새 항목 강조는 CSS에서 끈다(줄무늬·스피너·스켈레톤은 41에서 이미). (마) 자체 점검 수정: [목록에서 보기] 포커스 요청을 한 번 쓰고 비운다(남아 있으면 설정에서 돌아와 목록이 다시 그려질 때 옛 항목이 입력줄 포커스를 빼앗았다). JobList가 사라지면(뷰 전환) 열린 D2를 닫는다(돌아왔을 때 다시 뜨지 않게). (라) 진행 막대 `aria-valuetext`("57퍼센트, 2분 18초 남음")·대화상자 포커스 가둠·복귀는 45·41의 테스트가 본다.
     - 빌드 확인(macOS, 2026-10-05): `pnpm build` 결과에 `style="`·`setAttribute("style"`이 없고, `pnpm tauri build --debug --no-bundle`이 통과하며 그 바이너리가 setup을 끝까지 돌아 시작 로그를 남긴다(패닉 없음).
 48. **§15-15~17 리뷰 반영.**
@@ -1297,7 +1297,7 @@ jobs:
     - (라) **Linux apt는 §14 목록 + `patchelf`**를 clippy 전에 설치한다(clippy도 webkit2gtk에 링크한다). 러너는 `ubuntu-22.04` 그대로.
     - (마) **액션 버전**: 새 액션은 §14대로 `pnpm/action-setup@v6`·`actions/setup-node@v7`(node 24)과 `actions/upload-artifact@v7`(2026-10-05 최신). `actions/checkout`은 `core.yml`·`shell`과 같게 `@v4`로 둔다(한 파일 안에서 갈리지 않게, 올리려면 두 워크플로를 함께).
     - (바) `frontend`는 `ubuntu-22.04` 하나, `tauri`는 3 OS `needs: [shell, frontend]`, `fail-fast: false`. `tauri`의 rust-toolchain은 `clippy`만(fmt는 `shell`이 본다).
-    - (사) **MSI는 `bundle.windows.wix.language: "ko-KR"`로 만든다.** 한글 `productName`("치지직 다운로더")은 WiX 기본 en-US(코드 페이지 1252)로 MSI를 만들 때 `light.exe`가 LGHT0311로 실패한다(같은 문제의 공개 사례: 중국어 `productName` → `zh-CN`). 949 코드 페이지인 `ko-KR`로 바꾸고 `tauri-conf.test.ts`가 고정한다. **Linux deb·rpm의 패키지 이름**은 `productName`을 소문자 kebab으로 만든 것이라 한글이 들어가 거부될 수 있다. 확인하지 못해 그대로 두고, master 첫 번들 실행에서 실패하면 `tauri.linux.conf.json`에 ASCII `productName`을 두는 것(창 제목은 `windows[].title`이 따로 정한다)을 가장 작은 고침으로 본다.
+    - (사) **MSI는 `bundle.windows.wix.language: "ko-KR"`로 만든다.** 한글 `productName`("VOD 클립 다운로더")은 WiX 기본 en-US(코드 페이지 1252)로 MSI를 만들 때 `light.exe`가 LGHT0311로 실패한다(같은 문제의 공개 사례: 중국어 `productName` → `zh-CN`). 949 코드 페이지인 `ko-KR`로 바꾸고 `tauri-conf.test.ts`가 고정한다. **Linux deb·rpm의 패키지 이름**은 `productName`을 소문자 kebab으로 만든 것이라 한글이 들어가 거부될 수 있다. 확인하지 못해 그대로 두고, master 첫 번들 실행에서 실패하면 `tauri.linux.conf.json`에 ASCII `productName`을 두는 것(창 제목은 `windows[].title`이 따로 정한다)을 가장 작은 고침으로 본다.
     - **확인한 것**: `actionlint` 통과. macOS에서 `pnpm tauri build --ci --debug --no-bundle`(custom-protocol, `dist`를 바이너리에 넣는 경로)이 성공하고 그 바이너리가 시작 로그를 남기며 떴다(아래 표). Linux는 `ubuntu:22.04` 컨테이너(arm64, Docker)에서 위 apt 목록으로 `cargo clippy -p chzzk-app --all-targets --locked -- -D warnings`와 `cargo test -p chzzk-app --locked`(IPC 17개 포함)가 화면·D-Bus 없이 통과했다. 그래서 `xvfb-run`은 두지 않는다. **GitHub에서 3 OS로 돌려 보지는 않았다**(푸시 금지). Windows `tauri` 작업과 Linux `targets: all` 번들(AppImage·deb·rpm, linuxdeploy 내려받기)은 첫 master 실행에서 확인한다.
 
 50. **§15-19 문서 정리.** 1~49는 고치거나 다시 번호를 매기지 않고, 이 절 머리에 "읽는 법"(뒤 항목 우선, 우선순위 §16 > 이 절 > 본문)과 주제별 "지금 기준" 표를 더했다. 본문(§0~§17)은 설계 당시 기록으로 두고 고치지 않는다(§14의 `git diff`·`pnpm build` 선행 같은 어긋남은 표가 35·49로 보낸다). CLAUDE.md는 레이아웃(`crates/shell`·`app/`·`app/src-tauri`·`app.yml`), 앱 실행·빌드 명령, Linux 의존성 메모, app.md 기준 규칙으로 갱신했다.

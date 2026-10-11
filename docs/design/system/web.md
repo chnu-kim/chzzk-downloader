@@ -78,7 +78,7 @@ Worker가 그리는 페이지는 한 골격(`htmlPage`, worker.md §4 공통·�
 <body class="web">
   <a class="skip" href="#main">본문으로 건너가기</a>   <!-- skipLink -->
   <header class="site-header"><div class="col [col-reading]">   <!-- main과 같은 열 폭 -->
-    <a class="site-name" href="/">치지직 다운로더</a>   <!-- 마크(D33)가 나오면 그 앞에 <img> 20px -->
+    <a class="site-name" href="/">VOD 클립 다운로더</a>   <!-- 마크(D33)가 나오면 그 앞에 <img> 20px -->
     <span class="badge">비공식 도구</span>
     <nav aria-label="사이트">…</nav>   <!-- 앱 로그인 실패 계열 페이지(/auth/*)에는 [로그인] 없음 -->
   </div></header>
@@ -100,7 +100,7 @@ Worker가 그리는 페이지는 한 골격(`htmlPage`, worker.md §4 공통·�
 |---|---|---|---|
 | `theme-color` | 라이트 `#F3F3F3` = `--bg`, 다크 `#1F1F1F` = `--bg`. 값은 생성기가 토큰에서 넣는다(손으로 적지 않는다) | foundations §10 Worker 행, B 후보 골격(judgment §2.2-6), brief §6.13-2 | `worker` 테스트(meta 둘 존재 + 값이 생성물 `--bg`와 같음), `design-tokens`(문서 패리티) |
 | `color-scheme` meta | CSS가 로드되기 전 첫 페인트의 폼 컨트롤·스크롤바 색을 OS에 맞춘다 | `A-WORKER` §3.6(첫 페인트 흰 번쩍임), g-launch 3겹(brief §6.8-9) | `worker` 테스트 |
-| `<title>` | 랜딩 `siteTitle`("치지직 다운로더 — 비공식 다시보기·클립 다운로더", D34). 그 밖은 `{화면} · 치지직 다운로더`(현행 유지). 오류·검증 실패 페이지는 **`errorTitlePrefix` "오류: "** 접두. 같은 경로의 제목은 로그인 여부에 따라 바뀌지 않는다 | D34, `G-WEB-R19`·`G-WEB-R24`(GOV.UK "Error:" 접두, `E-KO-B4`), `A-COPY` §1(같은 URL의 h1·title이 상태마다 다름) | `worker` 테스트(상태 코드 ≥ 400이면 title이 `오류: `로 시작, `/`의 title은 세션 유무와 무관) |
+| `<title>` | 랜딩 `siteTitle`("VOD 클립 다운로더 — 치지직 영상을 받는 비공식 도구", D34). 그 밖은 `{화면} · VOD 클립 다운로더`(현행 유지). 오류·검증 실패 페이지는 **`errorTitlePrefix` "오류: "** 접두. 같은 경로의 제목은 로그인 여부에 따라 바뀌지 않는다 | D34, `G-WEB-R19`·`G-WEB-R24`(GOV.UK "Error:" 접두, `E-KO-B4`), `A-COPY` §1(같은 URL의 h1·title이 상태마다 다름) | `worker` 테스트(상태 코드 ≥ 400이면 title이 `오류: `로 시작, `/`의 title은 세션 유무와 무관) |
 | skip link | `body`의 첫 요소, 글자 `skipLink`(`content.md` §10). 평소 화면 밖, `:focus`에서 `--edge` 위치에 `--surface` 면 + `1px solid var(--border-strong)` + `--radius-control` | brief §6.13-2, B 후보 `.skip`, WCAG 2.4.1 | `worker` 테스트(첫 `<a>`의 `href="#main"`과 `id="main"` 존재), `R8` |
 | 헤더 | 높이 `--toolbar-h`(44), 아래 `1px solid var(--separator)`, 안쪽은 `main`과 같은 `.col`(읽기 페이지 680·UI 페이지 800). 왼콽 **이름만**(13, `--weight-strong`, 색 `--fg`, 밑줄 없음, `href="/"`). 마크(D33)가 나오면 이름 앞 `--icon-md`(20) `<img>`. 이름 옆 배지 "비공식 도구"(§3.1). 오른쪽 `<nav aria-label="사이트">`: 비로그인은 [도움말] · [로그인], 로그인은 [도움말] · [관리](관리자만) · 채널 이름(링크 아님). `/auth/*` 결과·오류 페이지에는 [로그인]을 두지 않는다(갈 곳은 본문 아래 링크 하나다: 앱 흐름이면 앱으로, 웹 흐름이면 "처음으로"의 랜딩 로그인으로 가므로 헤더에 웹 로그인 길을 하나 더 열지 않는다, `G-WEB-R24`, 검토 U-31) | D26·D34(마크 전까지 이름만, Worker 헤더에만 배지), judgment §2.3-7, `A-WORKER-3.6`(내비게이션이 화면마다 다름)·`3.2`(헤더 링크 모양) | `worker` 테스트(모든 페이지에 같은 헤더 마크업, 관리 링크는 관리자만, `/auth/*`에 로그인 링크 없음) |
 | `<main id="main">` | 하나. 첫 요소는 flash 또는 오류 요약(있을 때), 그다음 `<h1>` 하나 | `G-WEB-R25`, GOV.UK 알림 배너·오류 요약(`E-KO-B4`) | `worker` 테스트(h1 정확히 1개, `main` 첫 자식 규칙) |
@@ -143,12 +143,12 @@ CSP는 그대로다(worker.md, `A-WORKER` §6.1): `default-src 'none'; style-src
 | # | 블록 | 내용 | 조건 | 근거 |
 |---|---|---|---|---|
 | 1 | 휴대폰 안내 | Notice(중립, 아이콘 `monitor`): `mobileBlock`(제목·본문), 읽기 전용 입력 칸(`readonly`, `components.md` §0.3: 면 `--surface-2`, 값 = 이 페이지 주소, 라벨 "이 페이지 주소"), 한 줄 `mobileHint`(카카오톡 ‘나와의 채팅’에 붙여넣어 컴퓨터에서 열어도 된다) | `entryContext.kind === "phone"`일 때만. 그 아래 내용은 **그대로 이어진다**(숨기지 않는다) | `G-WEB-R1`~`G-WEB-R4`(UA `Mobi` 또는 `Sec-CH-UA-Mobile: ?1`만, 순서와 강조만 바꾼다, QR·공유 버튼 없음), brief §6.13-5 |
-| 2 | 히어로 | `<h1>` = `siteName`("치지직 다운로더", hero 척도) + lead `landingLead`(`--leading-read`, "본인 채널의 영상만"·"허가받은 채널만") | 항상 | C8(사전 고지), D34 title, `content.md` §4(h1은 앱 이름) |
+| 2 | 히어로 | `<h1>` = `siteName`("VOD 클립 다운로더", hero 척도) + lead `landingLead`(`--leading-read`, "본인 채널의 영상만"·"허가받은 채널만") | 항상 | C8(사전 고지), D34 title, `content.md` §4(h1은 앱 이름) |
 | 3 | 비공식 고지 | Notice(중립, 아이콘 `info`): `NOTICE_SHORT`. **스크롤 없이** 보인다(히어로 바로 아래, 1280×800과 390×844에서) | 항상 | D34(히어로 바로 아래), C2, `G-ID-R1` |
 | 4 | CTA | **유일한 채움 버튼** `.btn.btn-primary.btn-lg`(높이 `--control-h-lg` 36, 글자 `--text-title` 600). 비로그인: [치지직으로 로그인](`form action="/auth/web/start"`), 바로 위에 로그인 전 고지 네 줄(§5.3)과 `loginForFiles`("로그인하면 내 컴퓨터용 설치 파일이 보여요."). 허가 사용자: [{내 OS}용 받기] 링크 버튼 + meta 줄(`.num`, `--fg-muted`): "버전 {0.1.2} · {2026. 10. 3.} · {최소 OS} 이상". macOS면 다음 줄에 **늘** `appleSiliconOnly`. 좁은 레이아웃에서 버튼은 전폭 | 항상 | D53(36, 유일한 채움), P3, `G-WEB-R5`·`G-WEB-R6`·`G-WEB-R26`(최소 OS 한 줄, `Accept-CH` 안 씀), `G-INSTALL-R12`(`v` 없음), D42("macOS용 받기"), 검토 U-11 |
 | 5 | 경고 예고 | 한 줄 "처음 열 때 경고가 나올 수 있어요. 앱이 문제라는 뜻이 아니에요." | 허용 사용자 | `G-INSTALL-R1`, brief D53 근거 |
 | 6 | 다른 운영체제 | `<details>` "다른 운영체제": `<table>`에 `<caption>설치 파일(버전 {0.1.2})</caption>`, `th scope="col"`(운영체제·파일·최소 버전), 행머리 `th scope="row"`. 파일명은 `.num`이 아닌 `code`. 감지 실패(`unknown`·`bot`)면 4번의 큰 버튼을 만들지 않고 이 표를 `<details open>`으로 펼친다 | 허용 사용자 | D53, brief §6.13-2(caption·scope), `G-WEB-R2`·`G-WEB-R5`(틀려도 모든 행이 한 번의 탭 안에), `A-WORKER` §3.3(scope·caption 없음) |
-| 7 | 설치하기 `<h2 id="install">` | 감지한 OS 절은 `<details open>`, 다른 OS 절은 `<details>`(닫힘). 감지 실패면 셋 모두 `open`. 각 절은 `<ol>` 단계(한 단계 한 동작, macOS 3단계 이하). **macOS**: `macDamaged` 문단 → ① `macMove` ② `macOpenAnyway`(처음 열 때 경고가 나오면 **시스템 설정 › 개인정보 보호 및 보안 › 그래도 열기**) [잠정, §14-1] ③ `macTerminal`(그 단추가 없으면 터미널에 아래 한 줄) — `<pre><code class="selectable">xattr -dr com.apple.quarantine "/Applications/치지직 다운로더.app"</code></pre>` + `macXattrNote`(두 문장: 표시만 지운다 / 다른 명령은 사기). **Windows**: `winSac`(경고 Notice `--warning-soft`, 단계 **앞**: 스마트 앱 컨트롤을 끄면 되돌릴 수 없으니 관리자에게 먼저 묻기) → ① `winSmartScreen`(‘PC 보호’ 창 → ‘추가 정보’ › ‘실행’). **Linux**: AppImage는 `libfuse2`(24.04는 `libfuse2t64`) + 실행 권한 한 줄, `.deb`는 `apt install ./…`("관리자 권한이 필요할 수 있어요") | 항상(비로그인에서도 읽을 수 있다) | D53·D55("그래도 열기" 경로 먼저 + xattr 폴백), D52(복사 버튼 대신 선택 가능한 코드 + 사기 경고), `G-INSTALL-R2`~`G-INSTALL-R8`, `G-PRIVACY-R2`, `G-HELP-H5`(앵커 id는 `<details>` 밖 = h2에만), 검토 U-37(비가역 경고는 행동 앞), 앱 이름은 `productName`(worker-config `checkLandingAppName`) |
+| 7 | 설치하기 `<h2 id="install">` | 감지한 OS 절은 `<details open>`, 다른 OS 절은 `<details>`(닫힘). 감지 실패면 셋 모두 `open`. 각 절은 `<ol>` 단계(한 단계 한 동작, macOS 3단계 이하). **macOS**: `macDamaged` 문단 → ① `macMove` ② `macOpenAnyway`(처음 열 때 경고가 나오면 **시스템 설정 › 개인정보 보호 및 보안 › 그래도 열기**) [잠정, §14-1] ③ `macTerminal`(그 단추가 없으면 터미널에 아래 한 줄) — `<pre><code class="selectable">xattr -dr com.apple.quarantine "/Applications/VOD 클립 다운로더.app"</code></pre>` + `macXattrNote`(두 문장: 표시만 지운다 / 다른 명령은 사기). **Windows**: `winSac`(경고 Notice `--warning-soft`, 단계 **앞**: 스마트 앱 컨트롤을 끄면 되돌릴 수 없으니 관리자에게 먼저 묻기) → ① `winSmartScreen`(‘PC 보호’ 창 → ‘추가 정보’ › ‘실행’). **Linux**: AppImage는 `libfuse2`(24.04는 `libfuse2t64`) + 실행 권한 한 줄, `.deb`는 `apt install ./…`("관리자 권한이 필요할 수 있어요") | 항상(비로그인에서도 읽을 수 있다) | D53·D55("그래도 열기" 경로 먼저 + xattr 폴백), D52(복사 버튼 대신 선택 가능한 코드 + 사기 경고), `G-INSTALL-R2`~`G-INSTALL-R8`, `G-PRIVACY-R2`, `G-HELP-H5`(앵커 id는 `<details>` 밖 = h2에만), 검토 U-37(비가역 경고는 행동 앞), 앱 이름은 `productName`(worker-config `checkLandingAppName`) |
 | 8 | 파일 확인(선택) | `<details>` "파일 확인(선택)": 한 문장 + `<table>`(`caption`, `th scope`, 열: 파일·SHA-256 `code.selectable`). 해시는 주 표에서 **여기로 이동**한다 | 허용 사용자 | `G-WEB-R27`, g-install §4-7, D53. worker.md §9.5 "SHA-256 텍스트" 변경 → §14 |
 | 9 | 처음 열면 로그인해요 `<h2 id="login">` | 한 문단: 앱에서 [치지직으로 로그인]을 누르면 브라우저가 열린다 / 받는 것은 채널 이름과 채널 ID / 네이버 비밀번호는 받지 않는다 / 허가되지 않으면 이유와 다음 할 일을 앱이 알려 준다 / `loginTwice`("이 페이지에서 로그인했어도 앱을 처음 열 때 한 번 더 로그인해요.") | 항상 | C7, B 후보 절, `G-PRIVACY-R9`·`G-PRIVACY-R17`, 검토 U-11 |
 | 10 | 막히면 `<h2 id="help">` | 한 문단: `/help` 링크 + `content.md` §11 "문제가 있을 때" 상수 + 연락 수단 `landing.contact` + GitHub 이슈 링크 `landing.contactLink`(2026-10-10 사용자 결정) | 항상 | B 후보 절, `G-INSTALL-R14`(문의 경로), `G-PRIVACY-R16`, D51, 검토 U-07 |
@@ -181,7 +181,7 @@ CSP는 그대로다(worker.md, `A-WORKER` §6.1): `default-src 'none'; style-src
 
 | 상태 | `<title>` | `<h1>` | 아이콘(색) | 본문 | 다음 행동 |
 |---|---|---|---|---|---|
-| ok | 로그인했어요 · 치지직 다운로더 | `doneOk.title` | `circle-check` `--fg-muted` | 없음(어느 흐름인지 말하지 않는다) | 링크 하나: "처음으로". 콜백은 ok로 이 페이지에 보내지 않는다: 웹 ok는 303 `/`(F 삭제)에 flash "로그인했어요"(§6.3), 앱 ok는 앱 수신기 페이지(§6.5)다. 이 행은 `/auth/done?r=ok`를 손으로 연 경우뿐이다 |
+| ok | 로그인했어요 · VOD 클립 다운로더 | `doneOk.title` | `circle-check` `--fg-muted` | 없음(어느 흐름인지 말하지 않는다) | 링크 하나: "처음으로". 콜백은 ok로 이 페이지에 보내지 않는다: 웹 ok는 303 `/`(F 삭제)에 flash "로그인했어요"(§6.3), 앱 ok는 앱 수신기 페이지(§6.5)다. 이 행은 `/auth/done?r=ok`를 손으로 연 경우뿐이다 |
 | denied(웹 흐름) | 이 채널은 사용 허가가 없어요 · … | `doneDenied.title` | `circle-x` `--danger-ink`(막힘 = danger, `components.md` §2.12 tone 기준. 앱의 거부 화면과 같은 은유) | Notice(중립): "채널: {이름} · 채널 ID: {id}"(본인에게 비밀이 아니다, worker.md §8.3) → `doneDenied.body` → `doneDenied.next`("허가를 받은 뒤 다시 로그인해 주세요.") | 링크 하나: "처음으로"(랜딩에 로그인 폼이 있다). 이 페이지에 폼을 두지 않는다 |
 | cancelled(웹 흐름) | 로그인을 취소했어요 · … | `doneCancelled.title` | `info` `--fg-muted` | `doneCancelled.body`("처음 화면에서 다시 로그인할 수 있어요.") | 링크 하나 |
 | failed | 오류: 로그인하지 못했어요 · … | `doneFailed.title` | `circle-x` `--danger-ink` | 앱 흐름이거나 흐름을 모르면 `doneFailed.body`("앱에서 다시 시도해 주세요."), 웹 흐름이면 `doneFailed.webBody`("처음 화면에서 다시 로그인해 주세요.") + `inApp === "kakao"`일 때만 `inAppHint` 한 단락(앱 안 화면에서는 끊길 수 있으니 기본 브라우저에서 열기) | 링크 하나 |
@@ -190,7 +190,7 @@ CSP는 그대로다(worker.md, `A-WORKER` §6.1): `default-src 'none'; style-src
 
 ### 6.2 안내·오류 페이지(4xx·5xx)
 
-`noticePage`의 제목 "안내" 하나를 **상태별 제목**으로 바꾼다. 형식: `<title>오류: {h1} · 치지직 다운로더</title>`, `<h1>`에 무슨 일인지, 본문에 다음에 할 일, 링크는 **갈 곳 하나**(오류가 난 화면). 상태 코드·`bad request`·`not_found` 같은 말은 화면에 없다.
+`noticePage`의 제목 "안내" 하나를 **상태별 제목**으로 바꾼다. 형식: `<title>오류: {h1} · VOD 클립 다운로더</title>`, `<h1>`에 무슨 일인지, 본문에 다음에 할 일, 링크는 **갈 곳 하나**(오류가 난 화면). 상태 코드·`bad request`·`not_found` 같은 말은 화면에 없다.
 
 | 상황 | h1(키) | 본문·링크 |
 |---|---|---|
@@ -223,7 +223,7 @@ flash와 `seeOther` "쿼리 없는 두 곳" 계약의 보완은 worker.md 구현
 
 ### 6.4 로그인 확인 페이지(확인 코드 없음)
 
-`<h1>치지직 다운로더 로그인</h1>`(`loginTitle`) → 경고 Notice(`--warning-soft` + `triangle-alert`, `loginWarning` 세 문장: 앱에서 직접 시작한 로그인이 아니면 창을 닫아 달라는 것, 다른 사람이 보낸 주소라면 계속하지 않기, **로그인 뒤 주소창에 나오는 주소를 다른 사람에게 보내지 않기**(루프백 주소창 grant + 사회공학 잔여 위험, `worker.md` 88 (라))) → [계속](이 페이지의 유일한 채움 버튼, `A-WORKER-3.1` "가장 중요한 동작이 primary가 아니다" 해소). 확인 코드 블록·`letter-spacing`·`.code` 글자 크기는 **없다**(루프백 전환으로 코드 대조가 사라졌다, `patterns.md` §13·§17-6; 초안 §13-1의 큰 숫자 토큰 요청도 함께 사라졌다). 휴대폰·인앱에서도 [계속]은 동작하고 새 차단을 더하지 않는다(`G-WEB-R12`). 단계 자체는 남는다(§1). CSP `form-action` 예외는 §4.
+`<h1>VOD 클립 다운로더 로그인</h1>`(`loginTitle`) → 경고 Notice(`--warning-soft` + `triangle-alert`, `loginWarning` 세 문장: 앱에서 직접 시작한 로그인이 아니면 창을 닫아 달라는 것, 다른 사람이 보낸 주소라면 계속하지 않기, **로그인 뒤 주소창에 나오는 주소를 다른 사람에게 보내지 않기**(루프백 주소창 grant + 사회공학 잔여 위험, `worker.md` 88 (라))) → [계속](이 페이지의 유일한 채움 버튼, `A-WORKER-3.1` "가장 중요한 동작이 primary가 아니다" 해소). 확인 코드 블록·`letter-spacing`·`.code` 글자 크기는 **없다**(루프백 전환으로 코드 대조가 사라졌다, `patterns.md` §13·§17-6; 초안 §13-1의 큰 숫자 토큰 요청도 함께 사라졌다). 휴대폰·인앱에서도 [계속]은 동작하고 새 차단을 더하지 않는다(`G-WEB-R12`). 단계 자체는 남는다(§1). CSP `form-action` 예외는 §4.
 
 강제: `worker` 테스트(채움 버튼 1개, 경고 Notice 존재, 코드 요소 없음, 경고 세 문장 — 지금 `login-app.test.ts`가 세 문장과 코드 문구 없음을 본다), `design-copy`.
 
@@ -315,7 +315,7 @@ flash와 `seeOther` "쿼리 없는 두 곳" 계약의 보완은 worker.md 구현
 
 | 태그 | 값 | 근거 |
 |---|---|---|
-| `og:title` | 치지직 다운로더 — 비공식 VOD·클립 다운로더 | D34 |
+| `og:title` | VOD 클립 다운로더 — 비공식 VOD·클립 다운로더 | D34 |
 | `og:type` | `website` | ogp.me 필수 4속성(g-web F55, `E-ID-I41`) |
 | `og:url` | `PUBLIC_ORIGIN + "/"` 정식 주소 하나 | `G-WEB-R13`(카카오: `og:url`이 다르면 그 주소를 다시 스크랩) |
 | `og:description` · `description` | 부제 한두 문장 + 비공식 고지 포함. 로그인 여부·채널·버전과 무관한 **고정** 문구 | `G-WEB-R14`·`G-WEB-R28`, `G-ID-R10` |
@@ -466,7 +466,7 @@ g-web §4.2 G1~G7(세션 없는 POST 무안내, 재삭제 404, 성공 피드백 
 15. **Worker 문구 개정(적용 단계 (d))이 (e) 전에 마크업에 닿은 곳은 셋뿐이다.** ① `noticePage(config, status, title, body | null)`: h1이 상태별 제목이 되고 본문은 없을 수 있다(4xx·5xx `<title>`에 `errorTitlePrefix`). 명세가 제목을 정하지 않은 `notFound`·`isAdmin`·`bootstrapAdmin`·`adminNoAllow`·`badBody`는 현재 문장을 제목과 본문으로 가르기만 했다(`content.md` §15.3). ② macOS 설치 단계 셋은 `<ol><li>`(번호가 문자열에서 빠졌다). ③ 시각 열이 있는 표에 `<caption>`(`tableTimeNote`)을 한 줄 더했다(열 제목에서 "(KST)"를 뺀 대신. §8의 caption 모양 CSS는 (e)). 랜딩 `<title>`이 `siteTitle`이면 `htmlPage`는 " · 앱 이름" 꼬리를 붙이지 않는다. 나머지 새 키(`landing.consent.*`·`skipLink`·`confirmDisallow.*` 등)는 (e)가 화면을 만들 때 참조한다.
 16. **`design-worker`는 페이지를 `setContent`가 아니라 순수 렌더 함수 + `page.route`로 연다**(governance §2.6b를 바꾼다). spec이 각 `render*` 함수를 합성 데이터로 불러 `Response`를 만들고, 본문과 헤더(CSP 포함)를 가짜 출처 `https://worker.test`로 내보낸다. 실제 CSP가 걸리므로 인라인 `style`·`<script` 회귀가 콘솔의 CSP 위반으로 잡힌다. 렌더 함수가 있는 모듈은 라우터·저장소 클래스·`cloudflare:`를 값으로 import하지 않는다. `worker.md` 구현 중 변경 98, governance §12 (e).
 17. **`.btn-secondary`는 `.btn`으로 읽는다.** `design/ui.css`에 `.btn-secondary`가 없다. 보조(테두리) 버튼은 `.btn` 하나, 채움은 `.btn.btn-primary`(페이지당 ≤ 1), 위험은 `.btn.tone-danger`(확인 페이지 최종 버튼에만), 랜딩 큰 버튼은 `.btn.btn-primary.btn-lg`다. 이 문서 본문의 `.btn-secondary`는 모두 이 뜻이다. 표 안 버튼([끊기]·[지우기]·[허가])은 위험 표시 없이 `.btn`이고 `postButton`의 위험 옵션은 `tone: "danger"`다(§7.2).
-18. **`og:title`은 `siteTitle`(content §11)이다.** §9.2 표의 "VOD" 낱말은 content §11이 나중에 "다시보기·클립"으로 정했다(`siteTitle` = "치지직 다운로더 — 비공식 다시보기·클립 다운로더"). `og:description`은 `ogDescription`, `og:image:alt`는 `siteTitle`이다. `og:`는 랜딩에만 있고 다른 경로에는 0개다(`pages.test.ts` "OG"). 랜딩 `<title>`이 `siteTitle`이면 꼬리(" · 앱 이름")가 없다.
+18. **`og:title`은 `siteTitle`(content §11)이다.** §9.2 표의 "VOD" 낱말은 content §11이 나중에 "다시보기·클립"으로 정했다(`siteTitle` = "VOD 클립 다운로더 — 치지직 영상을 받는 비공식 도구"). `og:description`은 `ogDescription`, `og:image:alt`는 `siteTitle`이다. `og:`는 랜딩에만 있고 다른 경로에는 0개다(`pages.test.ts` "OG"). 랜딩 `<title>`이 `siteTitle`이면 꼬리(" · 앱 이름")가 없다.
 19. **헤더 [로그인]은 폼이 아니라 `/#start` 링크다.** 비로그인 랜딩의 CTA 블록을 `<div id="start">`로 감쌌고 헤더 링크가 거기로 간다. `/auth/*` 페이지에는 로그인 링크가 없다(§15-9). 로그인한 사람의 본문에는 [관리] 링크가 없고 헤더 nav가 맡는다(허가 사용자의 랜딩에는 e2e 계약대로 `href="/admin"`이 헤더에 있다).
 20. **관리 동작의 성공 flash는 두지 않는다.** content.md에 문구가 없고 표의 변화가 결과를 보인다(§6.3). flash 종류는 `loggedIn`(웹 로그인 성공, `303 /`)·`alreadyDone`(이미 처리된 대상의 멱등 303)·`sessionGone`(세션 없는 웹 POST, `303 /`) 셋이고 그 밖에는 만들지 않는다. 오류 요약이 있는 화면에는 flash가 오지 않는다(`renderAdmin`이 오류가 있으면 flash를 무시한다).
 21. **앱 아이콘(청록 `#0f766e`)과 웹 파비콘·`apple-touch-icon`·OG 글리프(D5 파랑 `#0067DF`)가 어긋난다.** §9.3의 임시 글리프([잠정], 파랑 둥근 사각 + 흰 Lucide `download`)를 그대로 만들었고 앱 아이콘(`app/src-tauri/icons/icon-source.svg`)은 이 단계에서 바꾸지 않았다. 앱 마크(D33)는 (f) 몫이고 정해지면 둘을 함께 맞춘다. 확인: D33 결정. 래스터 에셋은 `worker/scripts/render-assets.mjs`로 한 번 찍어 체크인했고 CI에서 다시 만들지 않는다(글꼴로 바이트가 흔들린다).

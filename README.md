@@ -1,6 +1,8 @@
-# chzzk-downloader
+# VOD 클립 다운로더
 
 치지직(CHZZK) 스트리머가 **자신의 VOD·클립**을 내려받기 위한 데스크톱 앱(Tauri v2 + Svelte 5, Rust 코어)이다.
+
+> 네이버·치지직과 관련 없는 비공식 도구이며, 제휴하거나 보증받지 않았다. 치지직과 NAVER는 NAVER Corp.의 상표일 수 있다.
 
 ## 이용 범위
 

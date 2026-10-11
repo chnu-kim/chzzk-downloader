@@ -12,7 +12,7 @@ use crate::QUIT_MENU_ID;
 
 /// "설정…"을 눌렀을 때 main 창으로 가는 이벤트(페이로드 `null`). 프런트는 설정 화면으로 간다.
 pub const MENU_SETTINGS: &str = "menu-settings";
-/// "치지직 다운로더에 관하여"를 눌렀을 때 main 창으로 가는 이벤트(페이로드 `null`). 프런트는 설정 › 정보로 간다.
+/// "VOD 클립 다운로더에 관하여"를 눌렀을 때 main 창으로 가는 이벤트(페이로드 `null`). 프런트는 설정 › 정보로 간다.
 pub const MENU_ABOUT: &str = "menu-about";
 
 /// 메뉴 항목 id.
@@ -58,17 +58,17 @@ pub const MENU: &[Menu] = &[
     (
         None,
         &[
-            Item::Custom(MENU_ID_ABOUT, "치지직 다운로더에 관하여", None),
+            Item::Custom(MENU_ID_ABOUT, "VOD 클립 다운로더에 관하여", None),
             Item::Separator,
             Item::Custom(MENU_ID_SETTINGS, "설정…", Some("CmdOrCtrl+,")),
             Item::Separator,
             Item::Predefined(Predef::Services, "서비스"),
             Item::Separator,
-            Item::Predefined(Predef::Hide, "치지직 다운로더 가리기"),
+            Item::Predefined(Predef::Hide, "VOD 클립 다운로더 가리기"),
             Item::Predefined(Predef::HideOthers, "기타 가리기"),
             Item::Predefined(Predef::ShowAll, "모두 보기"),
             Item::Separator,
-            Item::Custom(QUIT_MENU_ID, "치지직 다운로더 종료", Some("CmdOrCtrl+Q")),
+            Item::Custom(QUIT_MENU_ID, "VOD 클립 다운로더 종료", Some("CmdOrCtrl+Q")),
         ],
     ),
     (
@@ -102,7 +102,7 @@ pub const MENU: &[Menu] = &[
     ),
     (
         Some("도움말"),
-        &[Item::Custom(MENU_ID_HELP, "치지직 다운로더 도움말", None)],
+        &[Item::Custom(MENU_ID_HELP, "VOD 클립 다운로더 도움말", None)],
     ),
 ];
 
@@ -242,16 +242,22 @@ mod tests {
         }
     }
 
-    // 메뉴 텍스트에 영어 단어가 남지 않는다("Quit"·"File"·"Toggle Full Screen" 0개)
+    // 메뉴 텍스트에 영어 단어가 남지 않는다("Quit"·"File"·"Toggle Full Screen" 0개).
+    // 제품명 "VOD 클립 다운로더"의 "VOD"는 이름의 일부라서 지우고 본다.
     #[test]
     fn menu_text_has_no_latin_letters() {
+        let no_latin = |t: &str| {
+            !t.replace("VOD 클립 다운로더", "")
+                .chars()
+                .any(|c| c.is_ascii_alphabetic())
+        };
         for (title, items) in MENU {
             if let Some(t) = title {
-                assert!(!t.chars().any(|c| c.is_ascii_alphabetic()), "{t}");
+                assert!(no_latin(t), "{t}");
             }
             for item in *items {
                 if let Some(t) = label_of(item) {
-                    assert!(!t.chars().any(|c| c.is_ascii_alphabetic()), "{t}");
+                    assert!(no_latin(t), "{t}");
                 }
             }
         }
@@ -312,7 +318,7 @@ mod tests {
         let (_, app_menu) = MENU[0];
         assert_eq!(
             app_menu[0],
-            Item::Custom("about", "치지직 다운로더에 관하여", None)
+            Item::Custom("about", "VOD 클립 다운로더에 관하여", None)
         );
         assert_eq!(app_menu[1], Item::Separator);
         assert!(

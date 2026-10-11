@@ -1,4 +1,4 @@
-# 치지직 다운로더 디자인 시스템 「무색(無色)」
+# VOD 클립 다운로더 디자인 시스템 「무색(無色)」
 
 **정의**: 앱이 자기 색을 지우고 콘텐츠·상태·OS 관례만 남겨, 비기술자인 스트리머와 지인이 설명 없이 "붙여넣고, 받고, 파일을 찾는" 일을 끝내게 하는 디자인 시스템이다. Tauri 2 + Svelte 5 데스크톱 앱(`app/`)과 Cloudflare Worker의 서버 렌더 페이지(`worker/`: 랜딩·로그인·관리)가 **한 시스템**이고 전면 적용한다(사용자 결정 1~4).
 
@@ -142,7 +142,7 @@
 | D | 최종 값 | 근거 | 강제 |
 |---|---|---|---|
 | D25 커서 | **앱은 `default`**(선택 가능한 글자·입력칸만 `text`, 진짜 URL만 `pointer`, 비활성도 `default`). **웹은 링크·버튼 `pointer`** | HIG pointing-devices(손가락 = URL 링크, `E-DESK-N07`), MS(클릭 가능 요소에도 화살표), Raycast | `design-lint`(앱 CSS `cursor: pointer` 금지) |
-| D26 타이틀바 | **네이티브 유지.** 본문 툴바 44에 왼쪽 [마크 + "치지직 다운로더"(마크 전까지 이름만, 13px 600)], 오른쪽 [계정 ▾]·[설정] | HIG "커스텀 창 UI 금지"(`E-APPLE-15`), Windows Snap Layout 보존(`G-SHELL-H10`). 이름을 그리는 이유: Linux 일부 창 관리자·전체 화면에서 타이틀바가 숨으면 앱 이름이 어디에도 없다(`J-Q2`, 사용자 결정) | `tauri`(decorations), `frontend`(툴바 이름) |
+| D26 타이틀바 | **네이티브 유지.** 본문 툴바 44에 왼쪽 [마크 + "VOD 클립 다운로더"(마크 전까지 이름만, 13px 600)], 오른쪽 [계정 ▾]·[설정] | HIG "커스텀 창 UI 금지"(`E-APPLE-15`), Windows Snap Layout 보존(`G-SHELL-H10`). 이름을 그리는 이유: Linux 일부 창 관리자·전체 화면에서 타이틀바가 숨으면 앱 이름이 어디에도 없다(`J-Q2`, 사용자 결정) | `tauri`(decorations), `frontend`(툴바 이름) |
 | D27 스크롤바 | **OS 기본** + Windows `scrollBarStyle: fluentOverlay`. `scrollbar-gutter` 못 쓰므로 여백 예약 없음(열 좌우 여백이 흡수) | `E-DESK-R24`(WebView2 125+), N-12·N-13 | `tauri`, `design-lint`(`::-webkit-scrollbar` 금지) |
 | D28 줌·글자 크기 | **웹뷰 줌 끔**(`zoomHotkeysEnabled: false`) + 설정 › 보기 › 글자 크기(기본/크게/아주 크게 = ×1/×1.3/×2.0, `data-text-scale`)[잠정]. 컨트롤은 `min-height`라 따라 늘어난다 | WCAG 1.4.4·HIG 200%(`E-APPLE-08`), macOS에 Dynamic Type 없음, `G-SHELL-H3`(Ctrl+±는 실수로 화면이 깨진다), g-input | `tauri`, `design-tokens`(블록), `design-gallery`(x-large) |
 | D29 Dock·작업 표시줄 진행 | **켬.** 집계 규칙 g-shell §5.2, 초당 1회 이하, 고대비에서 숨김, 배지는 v1에서 끔. Windows 상태 PAUSED(노랑) ≠ ERROR | Transmission 선례(users §4), `E-DESK-N31`(상태 우선순위 confirmed). "OS의 일부"라면 OS의 진행 자리를 쓴다(P1). ADR-0022 | `tauri`(집계 테스트) |
@@ -155,7 +155,7 @@
 | D31 아이콘 세트 | **Lucide**(ISC + Feather MIT). path 벤더링 `icons.ts` + `{set,name,version}` 메타. 고지는 앱 정보·`licenses/`·`/licenses`에 **즉시**(현재 고지 0개는 위반 상태) | g-icon(SF Symbols·Segoe Fluent Icons 글꼴 사용 불가, brief §2.7; Tabler·Phosphor 등 탈락 사유), 현재 Feather path와 연속 | `design-icons` |
 | D32 아이콘 크기·굵기·은유 | **16 / 20 두 크기**(32 없음, 12 금지), **`non-scaling-stroke` 1.5px 고정[잠정]**, `currentColor`, 광학 보정은 에셋 안. 은유 표(→ foundations §9.1): 이어받기 `play` ≠ 다시 시도 `rotate-cw`, 취소는 글자 필수, 오류 `circle-x` ≠ 경고 `triangle-alert`, 완료 `check`, 파일 `file-video`, 폴더 `folder`(라벨만 OS별). 글자 없는 아이콘 버튼은 foundations §9 허용 목록만 | `G-ICON-3`·`G-ICON-4`(뒤집음: 32 없음, 1.5 고정)·`G-ICON-7`(은유 충돌 `A-VIS-23`·`A-VIS-09`·`A-FEAT-G6` 해소), HIG 옆 글자 굵기(`E-APPLE-31`), NN/g 라벨, 상자−아이콘 차 짝수. 1.5의 DPR1 번짐은 §6-4 | `design-icons` |
 | D33 앱 아이콘 | **별도 과제**(ADR로 등록). 조건: 전경·배경 분리 원본, 플레이트 = D5 파랑 하나, 치지직 로고·색과 다름, 16px에서 선 2px 이상, 흑백 식별, 글자 없음. 결과물이 **헤더 마크**가 된다(그 전까지 헤더는 이름만) | g-id(Icon Composer 레이어·마스크 이중, Windows 다크 작업 표시줄 대비 2.98 경계), C1, `J-Q2` | `governance.md` 과제 등록, `R2`, 5초 시험(D62) |
-| D34 앱 이름·고지 | **"치지직 다운로더" 유지** + 비공식 고지 **4곳**: 랜딩 히어로 바로 아래(스크롤 없이), 랜딩 바닥글, 로그인 첫 화면, 설정 › 정보. Worker 헤더에만 배지 "비공식 도구"(반경 4, 알약 아님 — D18). 창 제목에는 붙이지 않음. 문구는 상수(긴 판 `NOTICE_UNOFFICIAL`·한 줄 `NOTICE_SHORT`, `content.md` §11). 랜딩 title "치지직 다운로더 — 비공식 다시보기·클립 다운로더" | `G-ID-R1`·`G-ID-R2`, C2(미충족 → 충족), YouTube API 브랜딩 관례. 개명 트리거(약관 금지·네이버 이의·공개 스토어·KIPRIS)는 `governance.md` §9. 치지직 약관 상표 조항 **[미확인]** → §6-9 | `design-copy`(금지어·두 deck 동일), `worker`(랜딩 고지 위치 테스트) |
+| D34 앱 이름·고지 | **"VOD 클립 다운로더" 유지** + 비공식 고지 **4곳**: 랜딩 히어로 바로 아래(스크롤 없이), 랜딩 바닥글, 로그인 첫 화면, 설정 › 정보. Worker 헤더에만 배지 "비공식 도구"(반경 4, 알약 아님 — D18). 창 제목에는 붙이지 않음. 문구는 상수(긴 판 `NOTICE_UNOFFICIAL`·한 줄 `NOTICE_SHORT`, `content.md` §11). 랜딩 title "VOD 클립 다운로더 — 치지직 영상을 받는 비공식 도구" | `G-ID-R1`·`G-ID-R2`, C2(미충족 → 충족), YouTube API 브랜딩 관례. 개명 트리거(약관 금지·네이버 이의·공개 스토어·KIPRIS)는 `governance.md` §9. 치지직 약관 상표 조항 **[미확인]** → §6-9 | `design-copy`(금지어·두 deck 동일), `worker`(랜딩 고지 위치 테스트) |
 
 ### G. 컴포넌트·패턴
 

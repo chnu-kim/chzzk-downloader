@@ -69,7 +69,7 @@ test('tokenize: 객체 키 자리와 import 경로 문자열은 표시되고 all
 
 test('deckEntries: 평평한 키와 중첩 객체 경로, 함수 몸통의 템플릿', () => {
   const src = `export const COPY = {
-  siteName: '치지직 다운로더',
+  siteName: 'VOD 클립 다운로더',
   'a.b': '값 하나',
   artifact: { dmg: 'macOS', deb: "Linux" },
   signedInAs: (name: string): string => \`\${name} 채널로 로그인했어요.\`,
@@ -81,7 +81,7 @@ export const NOTICE_SHORT = '비공식 도구예요';
 `;
   const e = deckEntries(src);
   const byKey = (k) => e.filter((x) => x.key === k).map((x) => x.value);
-  assert.deepEqual(byKey('siteName'), ['치지직 다운로더']);
+  assert.deepEqual(byKey('siteName'), ['VOD 클립 다운로더']);
   assert.deepEqual(byKey('a.b'), ['값 하나']);
   assert.deepEqual(byKey('artifact.dmg'), ['macOS']);
   assert.deepEqual(byKey('artifact.deb'), ['Linux']);
@@ -148,7 +148,7 @@ test('loadTerms: patterns에 없는 avoid 항목은 입력 오류(throw)다', ()
 
 test('깨끗한 deck은 위반 0', () => {
   const v = run(
-    ko(`  'app.title': '치지직 다운로더',
+    ko(`  'app.title': 'VOD 클립 다운로더',
   'url.label': '영상 주소',
   'card.download': '받기',
   'dialog.cancel.title': '‘{title}’ 받기를 취소할까요?',
@@ -164,7 +164,7 @@ test('깨끗한 deck은 위반 0', () => {
 });
 
 test('selftest 씨앗: ko.ts 끝의 top-level 리터럴 "클릭하세요"가 잡힌다(deck 밖 리터럴 포함)', () => {
-  const src = `export const ko = {\n  'app.title': '치지직 다운로더',\n} as const;\nexport const selftestSeed = '여기를 클릭하세요';\n`;
+  const src = `export const ko = {\n  'app.title': 'VOD 클립 다운로더',\n} as const;\nexport const selftestSeed = '여기를 클릭하세요';\n`;
   const v = run({ 'app/src/lib/copy/ko.ts': src });
   assert.ok(has(v, 'DC1', '여기를 클릭하세요'));
   assert.ok(has(v, 'DC2', '여기를 클릭하세요'));
@@ -233,7 +233,7 @@ test('통과 짝: 비공식·마세요·해 주세요·dialog 제목 물음표·
 });
 
 test('DC5 쉘 명령 상수는 따옴표 검사에서 뺀다', () => {
-  const v = run(ko(`  'mac.xattr': 'xattr -dr com.apple.quarantine "/Applications/치지직 다운로더.app"',`));
+  const v = run(ko(`  'mac.xattr': 'xattr -dr com.apple.quarantine "/Applications/VOD 클립 다운로더.app"',`));
   assert.deepEqual(v.filter((x) => x.rule === 'DC5'), []);
 });
 
@@ -270,7 +270,7 @@ test('DC11 미참조 키: 다른 소스가 문자열·동적 접두로 쓰는 �
 
 test('DC11 Worker deck: COPY.경로 참조와 중첩 객체 통째 참조를 인식한다', () => {
   const root = mkRoot({
-    'worker/src/http/copy.ts': "export const COPY = {\n  siteName: '치지직 다운로더',\n  artifact: { dmg: 'macOS', deb: 'Linux' },\n  gone: '안 써요',\n} as const;\n",
+    'worker/src/http/copy.ts': "export const COPY = {\n  siteName: 'VOD 클립 다운로더',\n  artifact: { dmg: 'macOS', deb: 'Linux' },\n  gone: '안 써요',\n} as const;\n",
     'worker/src/http/x.ts': "import { COPY } from './copy';\nexport const a = COPY.siteName + COPY.artifact[kind];\n",
   });
   const v = check(root);
@@ -281,12 +281,12 @@ test('DC11 Worker deck: COPY.경로 참조와 중첩 객체 통째 참조를 인
 
 test('DC6 두 deck의 공통 상수가 다르면 잡는다', () => {
   const ok = run({
-    ...ko("  'app.title': '치지직 다운로더',"),
-    'worker/src/http/copy.ts': "export const COPY = { siteName: '치지직 다운로더' } as const;\n",
+    ...ko("  'app.title': 'VOD 클립 다운로더',"),
+    'worker/src/http/copy.ts': "export const COPY = { siteName: 'VOD 클립 다운로더' } as const;\n",
   });
   assert.ok(!has(ok, 'DC6'));
   const bad = run({
-    ...ko("  'app.title': '치지직 다운로더',"),
+    ...ko("  'app.title': 'VOD 클립 다운로더',"),
     'worker/src/http/copy.ts': "export const COPY = { siteName: '치지직 내려받기' } as const;\n",
   });
   assert.ok(has(bad, 'DC6', 'app.title'));

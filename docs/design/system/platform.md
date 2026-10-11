@@ -75,8 +75,8 @@
 | 규칙 | 값 | 근거 | 강제 |
 |---|---|---|---|
 | 타이틀바 | **네이티브.** `titleBarStyle`·`hiddenTitle`·`data-tauri-drag-region`을 쓰지 않는다 | HIG "커스텀 창 UI 금지"(`E-APPLE-15`), 커스텀 타이틀바는 macOS 창 동작 일부를 잃는다(Tauri 문서, `G-SHELL-H10`), Windows Snap Layout 보존(v-desk §2.2 타이틀바 규칙). desktop 보고서의 Overlay 권고는 judgment §2.4가 A(네이티브)로 판정 | `tauri`(키 없음), `design-lint`(`data-tauri-drag-region` 0개) |
-| 창 제목 | `치지직 다운로더`. 부제·"비공식"·버전을 붙이지 않는다. 작업 수·퍼센트를 제목에 넣지 않는다 | g-id §2(창 제목은 짧게, 고지는 정보 화면), 제목 진행 표시는 브라우저 탭 관습이고 OS에는 Dock·작업 표시줄이 있다(§8) | `tauri`(`title` 고정) |
-| 툴바 | `components.md` §2.28 Toolbar: 높이 `--toolbar-h`(44px [취향], ADR-0009), 스크롤 영역 밖. 왼쪽 [마크(`--icon-md` 20) + "치지직 다운로더"(`--text-body` 13px, `--weight-strong` 600)], 오른쪽 [계정 ▾]·[설정]. 마크는 D33 결과물이 나오기 전까지 **이름만**. 설정 화면에서도 [설정] 자리를 비우지 않는다(`aria-current="page"`) | 사용자 결정 2(README §3-5). 이름을 그리는 이유: Linux 일부 창 관리자·전체 화면에서 타이틀바가 숨으면 앱 이름이 어디에도 없다(`J-Q2`). HIG 툴바 "앱 이름 금지"(`E-APPLE-25`)는 **창 제목이 있는 전제**라 Linux 사례에는 맞지 않는다고 판단했다 → README P1 예외로 ADR-0001 §결정에 기록, D62 과업 V5 | `frontend`(툴바 이름 렌더·화면별 구성), `design-gallery` |
+| 창 제목 | `VOD 클립 다운로더`. 부제·"비공식"·버전을 붙이지 않는다. 작업 수·퍼센트를 제목에 넣지 않는다 | g-id §2(창 제목은 짧게, 고지는 정보 화면), 제목 진행 표시는 브라우저 탭 관습이고 OS에는 Dock·작업 표시줄이 있다(§8) | `tauri`(`title` 고정) |
+| 툴바 | `components.md` §2.28 Toolbar: 높이 `--toolbar-h`(44px [취향], ADR-0009), 스크롤 영역 밖. 왼쪽 [마크(`--icon-md` 20) + "VOD 클립 다운로더"(`--text-body` 13px, `--weight-strong` 600)], 오른쪽 [계정 ▾]·[설정]. 마크는 D33 결과물이 나오기 전까지 **이름만**. 설정 화면에서도 [설정] 자리를 비우지 않는다(`aria-current="page"`) | 사용자 결정 2(README §3-5). 이름을 그리는 이유: Linux 일부 창 관리자·전체 화면에서 타이틀바가 숨으면 앱 이름이 어디에도 없다(`J-Q2`). HIG 툴바 "앱 이름 금지"(`E-APPLE-25`)는 **창 제목이 있는 전제**라 Linux 사례에는 맞지 않는다고 판단했다 → README P1 예외로 ADR-0001 §결정에 기록, D62 과업 V5 | `frontend`(툴바 이름 렌더·화면별 구성), `design-gallery` |
 | 툴바 안쪽 정렬 | 본문 열(`--content-max`)과 같은 기준선 | foundations §8 "열 기준" | `R1` |
 | 비활성 창 | macOS에서 창이 비활성이면 `html[data-window-active="false"]`. 토큰 재정의는 foundations §10 한 줄뿐(`--accent-soft` → `--surface-2`, selector `:root:where(…)`) | HIG 비활성 창 선택 회색(`E-APPLE-13`) | `frontend`(속성 토글), `tauri`(Focused 이벤트 → 속성) |
 | 창 그림자·투명·vibrancy | 쓰지 않는다. `transparent`·`windowEffects`·window-vibrancy 금지 | `transparent`는 macOS private API, vibrancy는 Linux 미지원(v-desk §2.4), 콘텐츠 층에 Liquid Glass 금지(`E-APPLE-15`) | `tauri`(키 없음), `deny`/`machete`(크레이트 없음) |
@@ -186,12 +186,12 @@ Windows·Linux에는 메뉴 막대를 **두지 않는다**. Tauri는 macOS에서
 
 | 메뉴 | 항목(단축키) | 비고 |
 |---|---|---|
-| 치지직 다운로더 | 치지직 다운로더에 관하여 / — / 설정…(⌘,) / — / 서비스 / — / 치지직 다운로더 가리기(⌘H) / 기타 가리기(⌥⌘H) / 모두 보기 / — / 치지직 다운로더 종료(⌘Q) | About은 첫 항목·구분선으로 단독, 버전 번호 없음(HIG, v-desk §2.3). "설정…"은 말줄임 U+2026(D45). 종료는 보통 `MenuItem`(id `quit`) → `request_quit`(app.md 구현 중 변경 52) |
+| VOD 클립 다운로더 | VOD 클립 다운로더에 관하여 / — / 설정…(⌘,) / — / 서비스 / — / VOD 클립 다운로더 가리기(⌘H) / 기타 가리기(⌥⌘H) / 모두 보기 / — / VOD 클립 다운로더 종료(⌘Q) | About은 첫 항목·구분선으로 단독, 버전 번호 없음(HIG, v-desk §2.3). "설정…"은 말줄임 U+2026(D45). 종료는 보통 `MenuItem`(id `quit`) → `request_quit`(app.md 구현 중 변경 52) |
 | 파일 | 윈도우 닫기(⌘W) | HIG: 닫기는 파일 메뉴에(윈도우 메뉴가 아니다) |
 | 편집 | 실행 취소(⌘Z) / 실행 복귀(⇧⌘Z) / — / 오려두기(⌘X) / 복사하기(⌘C) / 붙여넣기(⌘V) / 전체 선택(⌘A) | predefined 그대로. WKWebView가 responder chain으로 받는다. **지우지 않는다**(입력칸 밖 `paste` 이벤트가 메뉴 가속키에 의존, `G-IME-R11`) |
 | 보기 | 전체 화면 시작 / 전체 화면 종료(⌃⌘F) | 제목 자동 전환 여부 [잠정] 확인: §21 M8. 안 되면 `on_window_event`로 바꾼다. "새로고침" 없음 |
 | 윈도우 | 최소화(⌘M) / 확대/축소 / — / 모두 앞으로 가져오기 | "Maximize"·중복 닫기 제거. 창이 하나여도 둔다(HIG) |
-| 도움말 | 치지직 다운로더 도움말(랜딩 `/help` 열기) | 최대 3개. 화면 안에도 같은 길이 있는 항목만(설정 › 정보의 도움말 링크). 로그 폴더 열기·정보 복사는 설정 화면에 있으므로 메뉴에 더하지 않는다[취향] |
+| 도움말 | VOD 클립 다운로더 도움말(랜딩 `/help` 열기) | 최대 3개. 화면 안에도 같은 길이 있는 항목만(설정 › 정보의 도움말 링크). 로그 폴더 열기·정보 복사는 설정 화면에 있으므로 메뉴에 더하지 않는다[취향] |
 
 | 규칙 | 근거 | 강제 |
 |---|---|---|
@@ -248,14 +248,14 @@ app.md 52행 "작업 표시줄 진행률은 없다"를 바꾸는 결정이다(ap
 
 | 규칙 | 근거 | 강제 |
 |---|---|---|
-| 제목은 한 문장, 끝 구두점 없음, 앱 이름 없음(OS가 붙인다. 현재 `sink.rs` 15행 `NOTIFY_TITLE` = 앱 이름, 결함 g-shell G5). 본문은 정리된 영상 제목(`cleanDisplayText` + `clipGraphemes(NOTIFY_TITLE_MAX_GRAPHEMES)`) | HIG: 제목에 앱 이름 금지·끝 구두점 없음·본문은 완전한 문장(`E-DESK-N34`). Windows는 헤더에 앱 이름이 이미 있다(`G-SHELL-NS21`) | `rust`(`format_batch` 속성 테스트: 제목에 "치지직 다운로더" 없음, 본문 ≤ 40자소) |
+| 제목은 한 문장, 끝 구두점 없음, 앱 이름 없음(OS가 붙인다. 현재 `sink.rs` 15행 `NOTIFY_TITLE` = 앱 이름, 결함 g-shell G5). 본문은 정리된 영상 제목(`cleanDisplayText` + `clipGraphemes(NOTIFY_TITLE_MAX_GRAPHEMES)`) | HIG: 제목에 앱 이름 금지·끝 구두점 없음·본문은 완전한 문장(`E-DESK-N34`). Windows는 헤더에 앱 이름이 이미 있다(`G-SHELL-NS21`) | `rust`(`format_batch` 속성 테스트: 제목에 "VOD 클립 다운로더" 없음, 본문 ≤ 40자소) |
 | 알림은 창에 포커스가 없을 때만. 포커스가 있으면 행 상태(홈) 또는 토스트(다른 화면). 세부는 `patterns.md` §1.1 규칙 1 | HIG "앞에 있을 때는 조용한 갱신"(`E-DESK-N34`), 현행 `should_notify` | `tauri`(기존 테스트) |
 | **금지 내용**: 채널 이름·경로·URL·쿠키·토큰·원문 오류 문구·원인 문장. 영상 제목만 허용(사용자가 직접 고른 항목). Linux는 `<>&` 이스케이프 | 방송 중 화면 노출(brief §1.4), `G-UGT-R*`, HIG "민감 정보 금지" | `rust`(본문에 `/`·`\`·`http`·`NID_` 패턴 없음 속성 테스트) |
 | 묶음: 첫 완료·실패 이벤트 뒤 `NOTIFY_BATCH_MS`(foundations §14 [취향]) 동안 모아 완료 묶음·실패 묶음 **각각 한 건**. `request_user_attention`도 묶음당 한 번 | 플러그인이 그룹을 무시하므로 앱이 한다(`G-SHELL-NS22`. 보고서의 3초·24자는 근거 없음 `X-DESK-N45`, 값은 ADR-0009) | `rust`(`tokio::time::pause`로 병합 테스트) |
 | 소리·시간 민감 수준은 지정하지 않는다 | HIG managing-notifications: 다운로드 완료는 능동 수준 | `tauri`(옵션 없음) |
 | 클릭하면 앱 창이 앞으로 온다. 특정 작업으로 이동은 약속하지 않는다 | 플러그인 데스크톱 클릭 콜백 없음 | §21 M11 |
 | 알림이 안 떠도 사용자가 상태를 놓치지 않는다(S5). 권한 창이 생기는 경로(`UNUserNotificationCenter`)로 바꾸면 **앱 시작 때가 아니라 처음 [받기]를 누를 때** 요청한다 [잠정] | `G-SHELL-NS25`(Apple 원문 미확보) | `tauri`(요청 시점 테스트, 경로 변경 시) |
-| Linux 헤더 `chzzk-app`은 (a) 허용을 기본으로 두고 실측에서 거슬리면 (b) `notify-rust` 직접 의존으로 `appname("치지직 다운로더")` [잠정] 확인: §21 M12 | `G-SHELL-NS23` | — |
+| Linux 헤더 `chzzk-app`은 (a) 허용을 기본으로 두고 실측에서 거슬리면 (b) `notify-rust` 직접 의존으로 `appname("VOD 클립 다운로더")` [잠정] 확인: §21 M12 | `G-SHELL-NS23` | — |
 | 알림 끄기 설정은 v1에 없다(app.md 확정). 방송 노출 위험이 현실이면 "알림에 영상 제목 표시" 토글을 후속 검토 | `G-SHELL-NS24` | `R10`(D62 관찰 항목) |
 
 ---
@@ -512,7 +512,7 @@ D33은 별도 과제(ADR)다. 이 절은 그 과제의 **규격**이다. 결과�
 | Windows | `icon.ico` 층 **16·20·24·30·32·36·40·48·64·96·256**, 32를 첫 층. 16·24·32는 별도로 다듬는다. 투명 배경 | Microsoft: 정확한 크기가 없으면 다음 큰 것을 줄인다 → 중간 크기가 있어야 100%·125%·150%에서 선명. 현재 6층(16·24·32·48·64·256) | g-id §4.2 | `bundle`(ico 헤더 층 집합) |
 | Windows | 다크 작업 표시줄 변형 | 플레이트 명도를 소폭 올린 변형 검토 [잠정] 확인: 다크 `#1F1F1F` 위 3:1 실측 | 현재 2.98(g-id §4.2) | `design-icons`(대비 계산) |
 | Linux | `hicolor/{16,22,24,32,48,64,128,256,512}x…/apps/*.png` + `scalable/apps/*.svg`. 48은 필수 | freedesktop 아이콘 테마 스펙("최소 48 hicolor"), 현재 16·22·24·48 없음·SVG 미설치 | g-id §4.3 | `bundle`(`.deb` `dpkg -c` hicolor 경로) |
-| Linux | `.desktop` | `Name=chzzk-downloader`, `Name[ko]=치지직 다운로더` [잠정] 확인: Desktop Entry 스펙 로케일 키 원문 | 지금은 ASCII만(app.md 구현 중 변경 51(가)) | `bundle` |
+| Linux | `.desktop` | `Name=chzzk-downloader`, `Name[ko]=VOD 클립 다운로더` [잠정] 확인: Desktop Entry 스펙 로케일 키 원문 | 지금은 ASCII만(app.md 구현 중 변경 51(가)) | `bundle` |
 | Worker | 웹 아이콘 | `favicon.ico`(32), `icon.svg`(`prefers-color-scheme` 변형), `apple-touch-icon.png`(180, 불투명 [미확인]), `og:image` 1200×630 + `og:image:alt`(로고·캡처·채널명 없음) | g-id §5. 현재 Worker에 셋 다 없음 | `worker`(미로그인 `/` 응답 link·og 태그, 자산 200·content-type·크기) → 배치는 `web.md` |
 | 공통 | 생성 | 스크립트 하나가 `icon-fg`·`icon-bg`에서 전부 만들고 `--check`로 산출물 = 원본 확인 | `gen-fixtures.mjs --check` 패턴 | `design-icons`(`icons:check`) |
 
@@ -520,15 +520,15 @@ D33은 별도 과제(ADR)다. 이 절은 그 과제의 **규격**이다. 결과�
 
 ## 19. 이름과 비공식 표기의 위치(D34)
 
-이름은 `치지직 다운로더`(한글 표시 이름), `chzzk-downloader`(ASCII 파일·패키지·URL)이고 둘은 `productName`과 `scripts/ci/bundle.mjs` 한 곳에서 파생한다. 고지 **문구**는 상수 하나(`unofficialNotice`, 앱 `ko.ts`와 Worker `copy.ts` 동일)이고 `content.md`가 소유한다. 이 표는 **어느 OS 접점에 무엇이 보이는가**만 정한다.
+이름은 `VOD 클립 다운로더`(한글 표시 이름), `chzzk-downloader`(ASCII 파일·패키지·URL)이고 둘은 `productName`과 `scripts/ci/bundle.mjs` 한 곳에서 파생한다. 고지 **문구**는 상수 하나(`unofficialNotice`, 앱 `ko.ts`와 Worker `copy.ts` 동일)이고 `content.md`가 소유한다. 이 표는 **어느 OS 접점에 무엇이 보이는가**만 정한다.
 
 | 접점 | 표기 | 고지 | 근거 | 강제 |
 |---|---|---|---|---|
-| 창 제목 | `치지직 다운로더` | 없음 | 짧게, 항상 보임(g-id §2) | `tauri` |
-| 툴바(앱 안) | 마크 + `치지직 다운로더`(마크 전까지 이름만) | 없음(Worker 헤더 배지 "비공식 도구"는 Worker만) | judgment §2.3-7 | `frontend` |
-| macOS 앱 메뉴·About | `치지직 다운로더에 관하여` 등 §7 표. About 창은 쓰지 않고 설정 › 정보로 보낸다[취향] | 정보 화면이 고지 위치 | macOS About은 Windows·Linux에 없다(brief §6.14-4) | `tauri` |
-| Dock·작업 표시줄·시작 메뉴·설치 폴더 | `치지직 다운로더`(Linux는 `.desktop` `Name[ko]`, §18.2) | 없음 | g-id §2 | `bundle` |
-| OS 알림 발신자 | OS가 번들·AUMID에서 읽는 `치지직 다운로더`(Linux [잠정] §9) | 제목·본문에 "비공식"을 넣지 않는다 | g-id §2 | `rust` |
+| 창 제목 | `VOD 클립 다운로더` | 없음 | 짧게, 항상 보임(g-id §2) | `tauri` |
+| 툴바(앱 안) | 마크 + `VOD 클립 다운로더`(마크 전까지 이름만) | 없음(Worker 헤더 배지 "비공식 도구"는 Worker만) | judgment §2.3-7 | `frontend` |
+| macOS 앱 메뉴·About | `VOD 클립 다운로더에 관하여` 등 §7 표. About 창은 쓰지 않고 설정 › 정보로 보낸다[취향] | 정보 화면이 고지 위치 | macOS About은 Windows·Linux에 없다(brief §6.14-4) | `tauri` |
+| Dock·작업 표시줄·시작 메뉴·설치 폴더 | `VOD 클립 다운로더`(Linux는 `.desktop` `Name[ko]`, §18.2) | 없음 | g-id §2 | `bundle` |
+| OS 알림 발신자 | OS가 번들·AUMID에서 읽는 `VOD 클립 다운로더`(Linux [잠정] §9) | 제목·본문에 "비공식"을 넣지 않는다 | g-id §2 | `rust` |
 | 설치 파일 | `chzzk-downloader_<버전>_<플랫폼>.<확장>` | 릴리스 노트 한 줄(`content.md`) | bundle.mjs 주석(한글 정규화 회피) | `bundle` |
 | 번들 식별자 | `io.github.chnu-kim.chzzk-downloader`(개명해도 유지) | — | 바꾸면 데이터 폴더·updater가 끊긴다 | `tauri` |
 | 설정 › 정보 | 앱 이름 · 버전 `0.1.2`(v 없음) · [정보 복사] · **비공식 고지** · 처리방침 · 오픈소스 라이선스 · 저작권 줄 | 있음(4곳 중 하나) | D34, brief §6.14-4(필수 7요소), `G-INSTALL-R12` | `frontend`(7요소), `design-copy` |
@@ -590,7 +590,7 @@ OS별로 **달라지는 모든 것**은 이 표에 있다. 여기 없는 것은 
 | M7 | 목록 끝에서 탄성이 있고 툴바가 같이 움직이지 않음. 짧은 목록에서도 전체가 튀지 않음 | ○ | — | — | §5 |
 | M8 | 메뉴 전부 한국어, `⌘,`가 설정을 한 번만 열고, 전체 화면 항목 제목이 시작/종료로 바뀜 | ○ | — | — | §6·§7 |
 | M9 | Dock·작업 표시줄 진행이 퍼센트대로 차고 일시정지 노랑·실패 뒤 빨강. Dock 아이콘 다크·틴트 변형 회귀 없음 | ○ | ○ | △ | §8 |
-| M10 | 설치본에서 완료 알림 제목에 앱 이름이 없고 3건이 한 알림으로 묶임. Windows 헤더가 `치지직 다운로더`와 앱 아이콘 | ○ | ○(NSIS·MSI) | ○ | §9 |
+| M10 | 설치본에서 완료 알림 제목에 앱 이름이 없고 3건이 한 알림으로 묶임. Windows 헤더가 `VOD 클립 다운로더`와 앱 아이콘 | ○ | ○(NSIS·MSI) | ○ | §9 |
 | M11 | 알림 클릭이 앱을 앞으로 가져옴 | ○ | ○ | ○ | §9 |
 | M12 | Linux 알림 헤더가 `chzzk-app`인지 | — | — | ○ | §9 |
 | M13 | 대비 테마에서 작업 표시줄 진행이 숨겨져도 앱이 문제 삼지 않음 | — | ○ | — | §8 |
@@ -645,7 +645,7 @@ OS별로 **달라지는 모든 것**은 이 표에 있다. 여기 없는 것은 
 | 30 | 지원 기준선의 CSS 변환 | `app/baseline.json`(원천)에서 `vite.config.ts`가 `build.cssTarget`(`chrome111`·`safari16.4`)과 `css.transformer:'lightningcss'` + `css.lightningcss.targets`(`major<<16 \| minor<<8` 정수)를 계산한다. **vite 8 안에 있는 lightningcss라 새 패키지 의존이 없다.** `baseline.test.ts`는 `// @vitest-environment node`다(jsdom에서는 `vite.config.ts` 안의 모듈 URL(import.meta.url)이 file 스킴이 아니어서 import가 실패한다) | 단계 (f), §13 |
 | 31 | 메뉴(macOS) | 항목 표를 `cfg` 없는 순수 데이터(`app/src-tauri/src/menu.rs` `MENU`)로 두고 `build_menu`(cfg macos)가 그 표로 만든다. 표 테스트는 3 OS에서 돈다(라틴 글자 0, "새로고침"·"Reload" 없음, id `settings`·`about`·`quit`·`help`, ⌘, 가속키). 도움말 항목은 Worker 주소가 없는 빌드면 **비활성**이다(메뉴가 `App` 상태가 생기기 전에 만들어져 상태를 볼 수 없어 `build_worker_base().is_some()`로 정했다. 숨기지 않는다). "설정…"·"관하여"는 `focus_main`으로 창을 앞으로 가져온 뒤 `menu-settings`·`menu-about`을 `null` 페이로드로 emit한다(숨긴 창에서도 동작). 프런트는 `menu-about`을 `ui.focusAbout`로 받아 정보 절 제목(`tabindex=-1`)에 포커스한다(요청은 한 번 쓰고 비우며 `goHome`에서도 비운다). `quit`은 `request_quit`이라 기존 종료 가드를 유지한다 | 단계 (f), §7.1 |
 | 32 | Dock·작업 표시줄 집계(D29) | `crates/shell/src/dock.rs` 순수 `DockMeter`. **배치 구성원** = 배치가 열린 뒤 한 번이라도 running·pausing·queued였던 작업 id. 배치 끝 = 구성원이 모두 completed·skipped·failed이거나 목록에서 사라졌을 때만(paused·interrupted 구성원은 열어 둔다). 진행값 = 구성원 전체 받은 합 ÷ 전체 합 × 100 내림(100으로 캡), 전체를 모르는 구성원은 분자·분모에서 뺀다. 배치 안 값은 줄지 않는다. 상태: running·pausing·queued 있음 → Normal(일부 실패해도), 없고 paused·interrupted 있음 → Paused(failed가 함께 있어도 Paused가 이긴다), 배치 끝 + 실패 + 포커스 없음 → Error(마지막으로 내보낸 값 floor), 포커스가 오면 None으로 닫는다(**포커스 중에 끝난 실패는 곧바로 None**), 실패 없음 → None. 전체를 아는 구성원이 없으면 Normal + 진행값 없음. 앱 시작 때 지난 실행의 paused만 있으면 배치가 열리지 않아 None. `app/src-tauri/src/status.rs`가 1Hz(`DOCK_PROGRESS_MIN_INTERVAL_MS`)로 `list` 스냅샷을 읽어(매니저는 고치지 않고, 잠금을 쥔 채 OS API를 부르지 않는다) `set_progress_bar`를 부른다. **첫 틱의 "지우기"는 OS로 보내지 않고 한 번이라도 칠한 뒤의 지우기부터 보낸다**(`StatusState::should_paint`; tao의 Windows `ITaskbarList3` 호출은 호출마다 COM 객체를 만들고 `unwrap`하므로 아무것도 보인 적 없는 시작 틱에서 부를 이유가 없다. `DockMeter`의 "처음 호출은 늘 Some"은 그대로다). `set_badge_*` 호출은 0개다. ADR-0022 | 단계 (f), §8.2, app.md 73 |
-| 33 | 잠자기 방지(D40) | `crates/shell/src/power.rs`(OS 전원 심볼은 `power*` 파일에만, DX15). `PowerKeeper::update(enabled, running)`은 `enabled && running>0`의 0↔1 전이에서만 `acquire`/`release`한다. 대상 = running + pausing 작업(**연결 대기 중인 running도 잡는다**). 사유는 `notify::power_reason(n)`을 `SLEEP_REASON_MAX` 바이트 안으로 문자 경계에서 자른다. `acquire` 실패면 표시 false·로그만(다운로드는 계속). `SystemGuard`는 `keepawake` 0.6.1(`default-features=false`)의 빌더에 `.idle(true).display(false).sleep(false)`를 **명시**하고 핸들은 전용 `std::thread`가 소유한다(Windows `ES_CONTINUOUS` 스레드 귀속). macOS는 같은 스레드에서 `beginActivityWithOptions`(잠자기는 허용 수준)로 App Nap도 푼다. 앱 이름은 "치지직 다운로더", 역도메인은 `io.github.chnu-kim.chzzk-downloader`. 표시 이벤트 `keep-awake`는 보호를 **실제로 얻었을 때만** `active:true`이고 바뀔 때와 `frontend_ready` 직후 한 번(`PowerKeeper::active()`, `clip_reason`) 나간다. 격리 실행·mock 테스트는 `NoopGuard`다. 설정 `keepAwake`(코어 `UserSettings`, 기본 true, 없는 키·모르는 값도 true). **§15.2의 "깨어남·연결 복구 신호를 받으면 예산을 처음부터" 행은 구현하지 않았다**: Tauri에 전원 이벤트가 없다. 대신 인내 예산이 잠든 시간을 세지 않는다(34번). 효과 확인은 §21 M19 | 단계 (f), §15.2 |
+| 33 | 잠자기 방지(D40) | `crates/shell/src/power.rs`(OS 전원 심볼은 `power*` 파일에만, DX15). `PowerKeeper::update(enabled, running)`은 `enabled && running>0`의 0↔1 전이에서만 `acquire`/`release`한다. 대상 = running + pausing 작업(**연결 대기 중인 running도 잡는다**). 사유는 `notify::power_reason(n)`을 `SLEEP_REASON_MAX` 바이트 안으로 문자 경계에서 자른다. `acquire` 실패면 표시 false·로그만(다운로드는 계속). `SystemGuard`는 `keepawake` 0.6.1(`default-features=false`)의 빌더에 `.idle(true).display(false).sleep(false)`를 **명시**하고 핸들은 전용 `std::thread`가 소유한다(Windows `ES_CONTINUOUS` 스레드 귀속). macOS는 같은 스레드에서 `beginActivityWithOptions`(잠자기는 허용 수준)로 App Nap도 푼다. 앱 이름은 "VOD 클립 다운로더", 역도메인은 `io.github.chnu-kim.chzzk-downloader`. 표시 이벤트 `keep-awake`는 보호를 **실제로 얻었을 때만** `active:true`이고 바뀔 때와 `frontend_ready` 직후 한 번(`PowerKeeper::active()`, `clip_reason`) 나간다. 격리 실행·mock 테스트는 `NoopGuard`다. 설정 `keepAwake`(코어 `UserSettings`, 기본 true, 없는 키·모르는 값도 true). **§15.2의 "깨어남·연결 복구 신호를 받으면 예산을 처음부터" 행은 구현하지 않았다**: Tauri에 전원 이벤트가 없다. 대신 인내 예산이 잠든 시간을 세지 않는다(34번). 효과 확인은 §21 M19 | 단계 (f), §15.2 |
 | 34 | 연결 대기: 인내 모드(D40) | 구현은 `core.md` 구현 중 변경 56이 소유한다. 이 문서 §15.2와 다른 점: ① 대상은 작업 안의 `Job::resolve`(처음·재조회)와 다운로드 루프이고 **홈 카드의 대화형 `resolve` command는 인내가 없다**(사용자가 30분을 기다리면 안 된다; §15.2의 "`resolve`도 같은 예산"을 좁힌다). ② 빠른 5회(상한 8초)는 조용히 그대로이고 그것을 다 쓴 `Error::Network`만 `WaitingNetwork`로 넘어간다. 5xx·408·429·길이 불일치는 현행 5회. ③ 예산 = Σ(요청한 대기) + Σ min(시도 한 번의 시간, `patience_cap`)이라 **잠든 시간을 세지 않는다**(깨어남 신호의 대체). ④ 바이트가 늘면(progressive는 `.part` 증가, segmented는 세그먼트 한 개 기록) 시계와 phase를 되돌린다. ⑤ 인내 상수는 foundations §14의 파일 열이 `Rust(core)`라 `crates/core/src/download/retry.rs`에 있고 `download::{NETWORK_PATIENCE_MS, RETRY_BACKOFF_MAX_MS}`로 재수출한다(`consts.rs`에 두면 DT15가 실패시킨다). ⑥ 셸 `stage_of`는 `WaitingNetwork`를 Download로 센다(초기 resolve 중 대기하다 실패해도 Download로 나온다). ⑦ `RetryPolicy`에 `patience`·`patience_cap`이 생겨 테스트 클라이언트는 `RetryPolicy::none()`(0·0)이나 0 리터럴을 준다(`ipc.rs`·`e2e.rs` 포함). ⑧ 통합 테스트(`crates/core/tests/patience.rs`)는 wiremock 앞 `GateProxy`로 단절을 만들고 예산을 1초대로 줄였다(실제 시간 2~3초, 지터가 있어 CI에서 흔들리면 patience 값만 키운다). ADR-0024 | 단계 (f), §15.2, core.md 56 |
 | 35 | 멈춘 시각 `stoppedAt` | `JobRecord.stopped_at`(`#[serde(default)]`, unix 초)·`JobDto.stoppedAt`. paused(사용자 일시정지·대기 중 일시정지 포함)·interrupted(quit·reconcile)·failed로 바뀔 때 `Some(now)`, queued·running·completed·skipped로 바뀔 때 `None`. reconcile이 running → interrupted로 바꿀 때는 기존 값이 없을 때만 now. `finished_at`은 완료·건너뜀 전용(정렬에 쓰인다)이라 재사용하지 않는다. **옛 레코드는 null이고 값을 만들어 주지 않는다**(그래서 업그레이드 직후엔 "멈춘 지 30일" 줄이 없다) | 단계 (f), §15.2, ADR-0024 |
 | 36 | 저장 폴더와 볼륨 기준 `naming::Platform` | `default_download_folder`는 영상/치지직 → 다운로드/치지직 → **홈/치지직** → (홈도 없을 때만) 옛 `{data}/downloads` 순이다(마지막은 거의 닿지 않는 자리). `AppPaths::new`에 `home: Option<PathBuf>`가 생겼다(스모크·E2E·테스트는 `None`). 파일 이름 규칙은 `chzzk_shell::volume::platform_for_dir(&폴더)`로 고른다: host가 Windows면 Windows, 그 밖은 폴더(또는 가장 가까운 존재하는 조상)의 파일 시스템이 FAT·exFAT·NTFS·원격(SMB·NFS·WebDAV)·알 수 없음이면 Windows 규칙, 유닉스 계열이면 host 규칙, 감지 실패는 Windows 규칙. 대상은 `manager`의 `output_path`·`check_output`과 `services`의 제안 파일 이름이고 `AppInfo.platform`(화면 OS)은 그대로다. 감지 매핑(macOS `f_fstypename`·Linux `f_type`)은 순수 함수라 3 OS에서 테스트한다. `detect`의 tempdir 스모크는 macOS에서만 `Unix`로 단정한다(Linux 러너의 임시 폴더 파일 시스템이 컨테이너마다 달라서). core.md 57 | 단계 (f), §16.1·§16.3, app.md 67 (사) |

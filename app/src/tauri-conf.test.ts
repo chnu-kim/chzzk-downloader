@@ -11,7 +11,7 @@ const read = (rel: string): string => readFileSync(new URL(rel, import.meta.url)
 describe('tauri.conf.json 불변식', () => {
   it('identifier와 제품 이름', () => {
     expect(conf.identifier).toBe('io.github.chnu-kim.chzzk-downloader');
-    expect(conf.productName).toBe('치지직 다운로더');
+    expect(conf.productName).toBe('VOD 클립 다운로더');
   });
 
   // 한글 제품 이름은 WiX 기본(en-US, 코드 페이지 1252)으로 MSI를 만들 때 LGHT0311로 실패한다(app.md 구현 중 변경 49(사))
@@ -33,8 +33,8 @@ describe('tauri.conf.json 불변식', () => {
     expect(pkg).toMatch(/^[a-z0-9][a-z0-9+.-]*$/);
     expect(pkg).toBe('chzzk-downloader');
     // 기본 설정의 한글 이름은 그대로라 Windows·macOS 번들 이름과 창 제목은 바뀌지 않는다.
-    expect(conf.productName).toBe('치지직 다운로더');
-    expect(conf.app.windows[0].title).toBe('치지직 다운로더');
+    expect(conf.productName).toBe('VOD 클립 다운로더');
+    expect(conf.app.windows[0].title).toBe('VOD 클립 다운로더');
   });
 
   it('프런트 빌드 연결', () => {
@@ -47,7 +47,7 @@ describe('tauri.conf.json 불변식', () => {
     const [main] = conf.app.windows;
     expect(main).toMatchObject({
       label: 'main',
-      title: '치지직 다운로더',
+      title: 'VOD 클립 다운로더',
       width: 960,
       height: 700,
       minWidth: 720,

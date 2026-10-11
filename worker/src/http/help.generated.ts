@@ -14,7 +14,7 @@ export const HELP = [
   { id: "install-mac", title: "macOS에서 손상 경고가 나올 때", blocks: [
     { t: "p", text: "처음 열 때 앱이 손상돼 열 수 없다는 경고가 나와도 휴지통으로 옮기지 마세요. Apple 공증을 받지 않은 앱이라 macOS가 막는 거예요. 앱이 문제라는 뜻이 아니에요. 아래 순서대로 해 주세요." },
     { t: "ol", items: ["받은 .dmg를 열고 앱을 ‘응용 프로그램’ 폴더로 옮겨 주세요.", "터미널을 열고 아래 명령을 붙여넣어 실행해 주세요.", "응용 프로그램 폴더에서 앱을 다시 열어 주세요."] },
-    { t: "pre", text: "xattr -dr com.apple.quarantine \"/Applications/치지직 다운로더.app\"" },
+    { t: "pre", text: "xattr -dr com.apple.quarantine \"/Applications/VOD 클립 다운로더.app\"" },
     { t: "p", text: "이 명령은 ‘인터넷에서 받은 파일’ 표시만 지워요. 이 명령 말고 다른 명령을 붙여넣으라고 하지 않아요. 그런 안내를 받았다면 사기예요." },
     { t: "p", text: "앱에서 [문제 보고용 정보 복사]를 누른 뒤 관리자에게 보내 주세요. 복사한 내용에는 채널 이름이나 로그인 정보가 들어가지 않아요. 관리자는 쿠키나 비밀번호를 절대 묻지 않아요." },
   ] },

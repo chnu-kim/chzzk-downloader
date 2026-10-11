@@ -7,7 +7,7 @@
 3. 응용 프로그램 폴더에서 앱을 다시 열어 주세요.
 
 ```
-xattr -dr com.apple.quarantine "/Applications/치지직 다운로더.app"
+xattr -dr com.apple.quarantine "/Applications/VOD 클립 다운로더.app"
 ```
 
 이 명령은 ‘인터넷에서 받은 파일’ 표시만 지워요. 이 명령 말고 다른 명령을 붙여넣으라고 하지 않아요. 그런 안내를 받았다면 사기예요.

@@ -196,7 +196,7 @@ describe("noticePage", () => {
     expectSkeleton(t);
     expect(h1Text(t)).toBe("로그인 주소가 만료됐어요");
     expect(t).toContain("<p>앱에서 다시 로그인해 주세요.</p>");
-    expect(t).toContain("<title>오류: 로그인 주소가 만료됐어요 · 치지직 다운로더</title>");
+    expect(t).toContain("<title>오류: 로그인 주소가 만료됐어요 · VOD 클립 다운로더</title>");
     expect(countOf(mainOf(t), /<a /g)).toBe(1);
     expect(mainOf(t)).toContain(`<a href="/">${COPY.home}</a>`);
     expect(h1Text(t)).not.toBe("안내");
@@ -222,7 +222,7 @@ describe("noticePage", () => {
     expect(h1Text(adminOnly)).toBe("관리자만 볼 수 있어요");
     expect(mainOf(adminOnly).match(/<p>/g)).toHaveLength(1); // 링크 문단뿐
     const outdated = await noticePage(CONFIG, 200, COPY.outdatedApp.title, COPY.outdatedApp.body).text();
-    expect(outdated).toContain("<title>앱을 업데이트해야 해요 · 치지직 다운로더</title>");
+    expect(outdated).toContain("<title>앱을 업데이트해야 해요 · VOD 클립 다운로더</title>");
   });
 
   it("nav 기본은 auth(로그인 링크 없음), 링크 대상과 nav·headers 옵션을 바꿀 수 있다", async () => {
@@ -246,7 +246,7 @@ describe("donePage", () => {
     expect(h1Text(web)).toBe("로그인하지 못했어요");
     expect(web).toContain("처음 화면에서 다시 로그인해 주세요.");
     expect(web).not.toContain("앱에서 다시 시도해 주세요.");
-    expect(web).toContain("<title>오류: 로그인하지 못했어요 · 치지직 다운로더</title>");
+    expect(web).toContain("<title>오류: 로그인하지 못했어요 · VOD 클립 다운로더</title>");
     for (const v of [view({ kind: "app", status: "failed" }), null]) {
       const t = await donePage(CONFIG, "failed", v, null, DESKTOP).text();
       expect(t).toContain("앱에서 다시 시도해 주세요.");

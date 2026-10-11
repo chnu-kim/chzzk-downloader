@@ -118,7 +118,7 @@ export const WINDOW_FOCUS = 'window-focus';
 export const onWindowFocus = (cb: (focused: boolean) => void): Promise<UnlistenFn> =>
   listen<WindowFocusPayload>(WINDOW_FOCUS, (e) => cb(e.payload.focused));
 
-/** macOS 메뉴 "설정…"(⌘,)·"치지직 다운로더에 관하여"(platform.md §7). 페이로드는 없다 */
+/** macOS 메뉴 "설정…"(⌘,)·"VOD 클립 다운로더에 관하여"(platform.md §7). 페이로드는 없다 */
 export const MENU_SETTINGS = 'menu-settings';
 export const MENU_ABOUT = 'menu-about';
 export const onMenuSettings = (cb: () => void): Promise<UnlistenFn> => listen(MENU_SETTINGS, () => cb());

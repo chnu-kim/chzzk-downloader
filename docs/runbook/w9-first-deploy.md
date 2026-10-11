@@ -228,7 +228,7 @@ Cloudflare 계정을 다른 Worker들과 함께 쓰므로 하루 요청 한도�
 | Content-Length | Range 없이 GET, 그리고 `curl -I`(HEAD) | GET 200·206·HEAD 모두 `Content-Length` 있음. 없으면 `FixedLengthStream` 수정 PR | 32 (가) ③ |
 | 압축 없음 | `-H 'Accept-Encoding: gzip, br'`로 `SHA256SUMS`와 `/releases/latest.json` | `Content-Encoding` 없음(`no-transform`) | 32 (가) ④ |
 | Actions 로그 마스킹 | `H=${BASE#https://}; gh run view <릴리스 실행 id> --log \| grep -cF "$H"` | `0` | cicd.md 84 (다) |
-| macOS Gatekeeper | 실기기에 `.dmg` 설치 → 처음 열 때 문구, `xattr -dr com.apple.quarantine "/Applications/치지직 다운로더.app"` | 처음 열 때 손상 경고(공증 없음) → 응용 프로그램으로 옮긴 뒤 `xattr -dr com.apple.quarantine "/Applications/치지직 다운로더.app"` → 열림. 랜딩 설치 안내(`worker/src/http/copy.ts`)와 같음 | 38 (아), §9.5 |
+| macOS Gatekeeper | 실기기에 `.dmg` 설치 → 처음 열 때 문구, `xattr -dr com.apple.quarantine "/Applications/VOD 클립 다운로더.app"` | 처음 열 때 손상 경고(공증 없음) → 응용 프로그램으로 옮긴 뒤 `xattr -dr com.apple.quarantine "/Applications/VOD 클립 다운로더.app"` → 열림. 랜딩 설치 안내(`worker/src/http/copy.ts`)와 같음 | 38 (아), §9.5 |
 
 **결과(2026-10-07, `v0.1.0` 실행 37551340797)**: `--check-only` health+7 통과. 일반·접미 Range 206, 끝 넘는 Range 206(크기로 잘림, 32 (가) ②), 만족 불가 Range 416(운영 R2는 던진다, ①), `Content-Length` GET·206·HEAD 있음(③), 압축 없음(④), `/update` 200/204, Actions 로그 마스킹 호스트 0건(cicd.md 84 (다)). macOS Gatekeeper 실기기 문구: [그래도 열기]가 아닌 손상 경고였다(사용자 확인) → 랜딩 안내를 응용 프로그램 이동 + xattr로 바꿨다(worker.md 구현 중 변경 45).
 

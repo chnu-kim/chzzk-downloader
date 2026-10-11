@@ -61,7 +61,7 @@ async function renderOg(browser) {
   const page = await browser.newPage({ viewport: { width: 1200, height: 630 }, deviceScaleFactor: 1 });
   await page.setContent(`<!doctype html><meta charset="utf-8"><body style="margin:0;width:1200px;height:630px;background:${BG};font-family:${FONT};color:${FG};display:flex;align-items:center;justify-content:center">
 <div style="width:1000px;height:500px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center">
-<div style="font-size:112px;font-weight:700;line-height:1.2">치지직 다운로더</div>
+<div style="font-size:112px;font-weight:700;line-height:1.2">VOD 클립 다운로더</div>
 <div style="font-size:44px;line-height:1.4;margin-top:24px;color:${MUTED}">비공식 다시보기·클립 다운로더</div>
 <div style="font-size:30px;line-height:1;margin-top:48px;padding:14px 24px;border:2px solid ${ACCENT};border-radius:4px;color:${ACCENT};font-weight:600">비공식 도구</div>
 </div></body>`);

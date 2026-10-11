@@ -4,7 +4,7 @@
 // 웹뷰 밖 문구(OS 알림 `crates/shell/src/notify.rs`, 시작 실패 창 `app/src-tauri/src/lib.rs`)는 Rust 상수이고, `tauri` gate가 이 값과 비교한다.
 
 export const ko = {
-  'app.title': '치지직 다운로더',
+  'app.title': 'VOD 클립 다운로더',
   'header.settings': '설정',
   'header.back': '뒤로',
 
@@ -34,7 +34,7 @@ export const ko = {
   // 비공식 고지(content.md §11, design-copy DC6: Worker copy.ts와 바이트까지 같다)
   'notice.short': '비공식 도구예요 · 네이버·치지직과 제휴하거나 보증받지 않았어요',
   'notice.unofficial':
-    '치지직 다운로더는 네이버나 치지직과 관련 없는 비공식 도구예요. 치지직과 NAVER는 NAVER Corp.의 상표일 수 있어요. 이 앱은 로그인한 채널의 영상과 클립만 받아요.',
+    'VOD 클립 다운로더는 네이버나 치지직과 관련 없는 비공식 도구예요. 치지직과 NAVER는 NAVER Corp.의 상표일 수 있어요. 이 앱은 로그인한 채널의 영상과 클립만 받아요.',
 
   'url.label': '영상 주소',
   'url.placeholder': '치지직 영상 주소',
@@ -180,7 +180,7 @@ export const ko = {
   'dialog.cancel.keepRunning': '계속 받기',
   'dialog.cancel.keepPaused': '그대로 두기',
   'dialog.legacy.title': '예전 설정을 가져올까요?',
-  'dialog.legacy.body': '예전 치지직 다운로더에서 찾은 것이에요.',
+  'dialog.legacy.body': '예전 명령줄 버전에서 찾은 것이에요.',
   // 가져올 것의 항목이자 같은 글자를 쓰는 화면의 라벨(저장 폴더 필드, 쿠키 섹션 머리)이다: 같은 문구는 키 하나(content.md §2)
   'dialog.legacy.item.folder': '저장 폴더',
   'dialog.legacy.item.recent': '최근 영상 {n}개',
@@ -241,7 +241,7 @@ export const ko = {
   'settings.cookie.howto.step4': '{cookieA}와 {cookieB}의 값을 각각 복사해 붙여넣어 주세요',
 
   'settings.legacy.title': '이전 버전',
-  'settings.legacy.body': '예전 치지직 다운로더(명령줄 버전)의 설정과 최근 영상을 가져와요.',
+  'settings.legacy.body': '예전 명령줄 버전의 설정과 최근 영상을 가져와요.',
   'settings.legacy.pick': '폴더 고르기…',
   'settings.legacy.last': '마지막 가져오기: {path}',
 

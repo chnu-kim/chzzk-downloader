@@ -347,7 +347,7 @@ describe("설치하기(§5.1 7번)", () => {
     const order = [
       COPY.macDamaged,
       `<ol class="steps"><li>${COPY.macMove}</li><li>${COPY.macOpenAnyway}</li><li>${COPY.macTerminal}</li></ol>`,
-      '<pre tabindex="0"><code class="selectable">xattr -dr com.apple.quarantine &quot;/Applications/치지직 다운로더.app&quot;</code></pre>',
+      '<pre tabindex="0"><code class="selectable">xattr -dr com.apple.quarantine &quot;/Applications/VOD 클립 다운로더.app&quot;</code></pre>',
       `<p>${COPY.macXattrNote}</p>`,
     ].map((s) => mac.indexOf(s));
     expect(order.every((i) => i > -1)).toBe(true);

@@ -142,7 +142,7 @@ impl Held {
             .display(false)
             .sleep(false)
             .reason(reason)
-            .app_name("치지직 다운로더")
+            .app_name("VOD 클립 다운로더")
             .app_reverse_domain("io.github.chnu-kim.chzzk-downloader")
             .create()
             .map_err(|e| e.to_string())?;

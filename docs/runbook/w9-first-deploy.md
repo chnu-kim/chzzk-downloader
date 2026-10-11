@@ -284,3 +284,14 @@ ROADMAP Phase 3 W9 줄과 "현재 위치"에 **날짜와 결과 낱말만** 적�
 ## 8. (선택) 두 번째 릴리스 0.1.1 뒤 rollback 확인
 
 `previous`가 생긴 뒤에 한 번: `gh workflow run rollback.yml -f version=0.1.0` → `--check-only --version 0.1.0`(§5-5 명령)이 통과하는지 → `gh workflow run rollback.yml -f version=0.1.1`로 다시 올리고 `--version 0.1.1`로 확인한다. rollback은 `latest.json`만 바꾸고 Worker는 그대로다. prune은 latest 이하 최신 5개 + previous를 남기므로 0.1.0은 그때도 있다(cicd.md 97).
+
+## 9. Worker 이름 변경 전환(`vod-clip-downloader`, worker.md 구현 중 변경 103)
+
+새 Worker를 만드는 일이라 옛 Worker(`chzzk-downloader`)와 **한동안 둘이 같이 산다**. 값은 이 문서에 적지 않는다(`<새 주소>`·`<옛 주소>` 자리표시).
+
+1. 이 변경(PR)을 master에 머지한다. 배포는 하지 않는다.
+2. 새 Worker 첫 수동 배포(§2와 같은 순서: 배포 → secret 셋 → `ADMIN_CHANNEL_IDS`). 배포 토큰 환경에서 `worker/`의 배포용 wrangler로 `--var PUBLIC_ORIGIN:<새 주소>`. 새 주소는 배포 출력에서 확인한다.
+3. 치지직 운영 앱의 리디렉션 URL에 `<새 주소>/auth/callback`을 **더한다**(옛 것은 지우지 않는다. 앱 로그인은 루프백이라 웹 로그인용이다). §2의 로그인으로 관리자 부트스트랩을 다시 한다(DO가 새것이라 허가 목록이 비었다).
+4. 저장소 secret `DIST_BASE_URL`을 `<새 주소>`로 바꾼다. 그러면 다음 태그 빌드부터 앱에 새 주소가 들어가고 매니페스트 url도 새 주소다.
+5. 다음 릴리스(앱 버전)를 정상 절차로 낸다. 이 릴리스가 `latest.json`을 옛 주소의 Worker(같은 R2)가 계속 주므로 설치된 앱이 업데이트하며 새 주소로 넘어온다.
+6. 충분히 지난 뒤(대부분 업데이트) 옛 Worker를 내린다(대시보드 삭제 또는 `wrangler delete`, 사용자 승인). 그 전에는 지우지 않는다.

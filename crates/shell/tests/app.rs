@@ -313,7 +313,7 @@ fn volume_platform_picks_windows_names_on_fat() {
     use chzzk_core::naming::output_path;
     use chzzk_shell::volume::{VolumeFs, naming_platform};
 
-    let folder = Path::new("/vol/치지직");
+    let folder = Path::new("/vol/VOD Clip Downloader");
     let name = "[261004] 채널 - 질문: 뭐? 1.mp4";
     let windows = output_path(folder, name, Platform::Windows);
     for host in [Platform::MacOs, Platform::Linux, Platform::Windows] {

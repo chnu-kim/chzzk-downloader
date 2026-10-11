@@ -30,7 +30,7 @@ const { default: LegacyFound } = await import('./LegacyFound.svelte');
 
 const base: SettingsDto = {
   downloadFolder: null,
-  effectiveDownloadFolder: '/Users/me/Movies/치지직',
+  effectiveDownloadFolder: '/Users/me/Movies/VOD Clip Downloader',
   useNaverCookies: false,
   naverCookiesSaved: false,
   lastQualityLabel: null,
@@ -51,7 +51,7 @@ const info: AppInfo = {
   configDir: '/c',
   dataDir: '/d',
   logDir: '/l',
-  defaultDownloadFolder: '/Users/me/Movies/치지직',
+  defaultDownloadFolder: '/Users/me/Movies/VOD Clip Downloader',
   features: { auth: false },
   legacyCandidate: null,
   platform: 'macos',
@@ -155,7 +155,7 @@ describe('설정: 즉시 저장', () => {
   it('저장 폴더 열기·설정 폴더 열기·로그 폴더 열기, 버전', async () => {
     const user = userEvent.setup();
     render(SettingsView);
-    expect(screen.getByText('/Users/me/Movies/치지직')).toBeInTheDocument();
+    expect(screen.getByText('/Users/me/Movies/VOD Clip Downloader')).toBeInTheDocument();
     expect(screen.getByText(t('settings.about.version', { app: '0.1.0' }))).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: revealLabel('macos') }));
     await user.click(screen.getByRole('button', { name: t('common.openConfigFolder') }));

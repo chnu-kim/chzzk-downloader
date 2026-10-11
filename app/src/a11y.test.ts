@@ -12,7 +12,7 @@ class FakeChannel {
 
 const dto: SettingsDto = {
   downloadFolder: null,
-  effectiveDownloadFolder: '/Movies/치지직',
+  effectiveDownloadFolder: '/Movies/VOD Clip Downloader',
   useNaverCookies: false,
   naverCookiesSaved: true,
   lastQualityLabel: null,
@@ -50,7 +50,7 @@ vi.mock('./lib/api', () => ({
     configDir: '/c',
     dataDir: '/d',
     logDir: '/l',
-    defaultDownloadFolder: '/Movies/치지직',
+    defaultDownloadFolder: '/Movies/VOD Clip Downloader',
     features: { auth: false },
     legacyCandidate: null,
   })),

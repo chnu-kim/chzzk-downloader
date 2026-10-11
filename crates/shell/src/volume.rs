@@ -223,7 +223,7 @@ mod tests {
     #[test]
     fn detect_smoke_on_temp_dir() {
         let t = tempfile::TempDir::new().unwrap();
-        let missing = t.path().join("치지직").join("하위");
+        let missing = t.path().join("폴더").join("하위");
         let a = detect(t.path());
         let b = detect(&missing);
         assert_eq!(a, b, "없는 하위 폴더는 가장 가까운 조상으로 본다");

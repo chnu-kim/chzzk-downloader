@@ -36,7 +36,7 @@ const { default: AppBanners } = await import('../app/AppBanners.svelte');
 
 const baseSettings: SettingsDto = {
   downloadFolder: null,
-  effectiveDownloadFolder: '/Users/me/Movies/치지직',
+  effectiveDownloadFolder: '/Users/me/Movies/VOD Clip Downloader',
   useNaverCookies: false,
   naverCookiesSaved: false,
   lastQualityLabel: null,

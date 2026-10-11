@@ -97,6 +97,17 @@ describe("/help", () => {
     for (const m of main.matchAll(/<(\w+)[^>]* id="/g)) expect(m[1]).toBe("h2");
   });
 
+  // 제품명 변경(0.6.0): Windows는 이름이 바뀌면 옛 앱을 덮어쓰지 않으므로 옛 앱을 지우라고 안내한다
+  it("Windows 옛 앱 안내가 있고 새·옛 이름을 모두 말한다", async () => {
+    const t = await (await new Browser().get("/help")).text();
+    expect(t).toContain('<h2 id="windows-old-app">Windows에서 업데이트한 뒤 옛 앱이 남아 있을 때</h2>');
+    const page = HELP.find((a) => a.id === "windows-old-app");
+    expect(page).toBeDefined();
+    expect(t).toContain("‘치지직 다운로더’");
+    expect(t).toContain("‘VOD 클립 다운로더’");
+    expect(t).toContain("앱 데이터까지 지우는 선택 항목이 보이면 켜지 마세요");
+  });
+
   it("블록 모양: 단계는 ol.steps, 코드는 code.selectable", async () => {
     const t = await (await new Browser().get("/help")).text();
     const blocks = (HELP as readonly { readonly blocks: readonly { readonly t: string }[] }[]).flatMap((a) => a.blocks);

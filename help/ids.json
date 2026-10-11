@@ -5,7 +5,8 @@
     "install-mac",
     "install-windows",
     "login-browser",
-    "report"
+    "report",
+    "windows-old-app"
   ],
   "retired": []
 }

@@ -123,7 +123,7 @@ test('받는 중인 작업을 취소하면 확인(D2)을 거쳐 목록에서 지
   await page.getByRole('button', { name: t('card.download') }).click();
   await app.ctl((c, gb) => c.progress(1, 1 * gb, 4 * gb), GB);
   const item = page.getByRole('article', { name: r.meta.title });
-  // 받은 부분(.part)이 있으면 크기와 무관하게 [취소…]가 확인을 연다
+  // 받은 부분(.part)이 있으면 크기와 무관하게 danger [취소]가 확인을 연다
   await item.getByRole('button', { name: t('a11y.cancelJob', { title: r.meta.title }), exact: true }).click();
   const dialog = page.getByRole('dialog', { name: t('dialog.cancel.title', { title: r.meta.title }) });
   await expect(dialog).toBeVisible();

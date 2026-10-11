@@ -412,7 +412,7 @@ export type JobAction =
 export interface JobButtons {
   /** 동작 줄의 기본 버튼(0~3개) */
   primary: JobAction[];
-  /** [취소…]·[취소](= remove_job, §6.3). 라벨·확인은 `cancelLabel`·`removeRoute` */
+  /** [취소](= remove_job, §6.3). 라벨·확인은 `cancelLabel`·`removeRoute` */
   cancel: boolean;
   /** […] 메뉴 */
   menu: JobAction[];
@@ -438,8 +438,8 @@ export function failedCopy(job: JobDto, cookiesEnabled: boolean) {
 
 /**
  * 상태별 버튼(patterns.md §3.2 표가 app.md §8.5보다 우선한다).
- * - 받는 중: [일시정지][취소…] / 준비 중: [취소] / 마무리 중·멈추는 중: 없음
- * - 대기: [취소] / 일시정지·중단: [이어받기][취소…]
+ * - 받는 중: [일시정지][취소] / 준비 중: [취소] / 마무리 중·멈추는 중: 없음
+ * - 대기: [취소] / 일시정지·중단: [이어받기][취소]
  * - 실패: 오류 표(§9)의 동작 / 완료: [파일 열기][폴더에서 보기](파일이 없으면 [폴더에서 보기]) / 건너뜀: [파일 열기][덮어쓰고 받기…]
  * 메뉴: 제목 전체 보기(늘), 주소 복사(늘), 처음부터 다시 받기(`.part`가 있을 때), 문제 보고용 정보 복사(실패),
  * 목록에서 지우기(끝난 항목). 기본 버튼에 이미 있는 동작은 메뉴에 다시 넣지 않는다.
@@ -534,7 +534,7 @@ const ACTION_LABEL: Record<Exclude<JobAction, 'openFolder'>, CopyKey> = {
   resume: 'action.resume',
   retry: 'action.retry',
   restartFresh: 'action.restartFresh',
-  cancel: 'action.cancel',
+  cancel: 'common.cancel',
   openFile: 'action.openFile',
   remove: 'action.remove',
   copyUrl: 'action.copyUrl',
@@ -578,10 +578,10 @@ export function needsCancelConfirm(job: JobDto, p: ProgressDto | null | undefine
   return receivedBytes(job, p) > 0;
 }
 
-/** 취소 버튼: D2를 여는 [취소…](danger 글자)와 즉시 지우는 [취소](neutral). 둘은 같은 조건으로 갈린다 */
+/** 취소 버튼: 라벨은 늘 [취소]다. D2를 여는 쪽은 danger 글자, 즉시 지우는 쪽은 neutral로만 갈린다 */
 export function cancelLabel(job: JobDto, p: ProgressDto | null | undefined): { label: string; tone: 'danger' | 'neutral' } {
   return needsCancelConfirm(job, p)
-    ? { label: t('action.cancel'), tone: 'danger' }
+    ? { label: t('common.cancel'), tone: 'danger' }
     : { label: t('common.cancel'), tone: 'neutral' };
 }
 

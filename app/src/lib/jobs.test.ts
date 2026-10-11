@@ -308,7 +308,7 @@ describe('작업 행 진행 영역 표(patterns.md §3.2): 상태마다 막대·
       line: '받는 중 · 2.3GB / 4.0GB · 12.4MB/s · 약 2분 남음',
       body: null,
       primary: ['pause'],
-      cancel: t('action.cancel'),
+      cancel: t('common.cancel'),
     },
     {
       name: '받는 중(빠른 다시보기)',
@@ -317,7 +317,7 @@ describe('작업 행 진행 영역 표(patterns.md §3.2): 상태마다 막대·
       line: '받는 중 · 1.2GB / 약 5.1GB · 조각 1,210/5,580 · 8.1MB/s · 약 14분 남음',
       body: null,
       primary: ['pause'],
-      cancel: t('action.cancel'),
+      cancel: t('common.cancel'),
     },
     {
       name: '준비 중: value null, 퍼센트 칸 비움, 취소는 즉시',
@@ -336,7 +336,7 @@ describe('작업 행 진행 영역 표(patterns.md §3.2): 상태마다 막대·
       line: t('job.phase.reresolving'),
       body: null,
       primary: ['pause'],
-      cancel: t('action.cancel'),
+      cancel: t('common.cancel'),
     },
     {
       name: '연결 대기: 줄무늬, 퍼센트 유지, 속도·남은 시간 숨김, 빨강·오류 문구 없음, 본문 한 줄',
@@ -347,7 +347,7 @@ describe('작업 행 진행 영역 표(patterns.md §3.2): 상태마다 막대·
       line: '연결 대기 중 · 2분째 · 2.30GB 받음',
       body: t('job.waitingNetwork.body'),
       primary: ['pause'],
-      cancel: t('action.cancel'),
+      cancel: t('common.cancel'),
     },
     {
       name: '회복 직후(1분 넘긴 단절): 상태 줄 그대로, 본문 job.recovered.body',
@@ -357,7 +357,7 @@ describe('작업 행 진행 영역 표(patterns.md §3.2): 상태마다 막대·
       line: '받는 중 · 2.3GB / 4.0GB · 12.4MB/s · 약 2분 남음',
       body: t('job.recovered.body'),
       primary: ['pause'],
-      cancel: t('action.cancel'),
+      cancel: t('common.cancel'),
     },
     {
       name: '멈춘 지 30일 넘음(일시정지): 상태 줄 그대로, 본문 job.stale.body',
@@ -366,7 +366,7 @@ describe('작업 행 진행 영역 표(patterns.md §3.2): 상태마다 막대·
       line: t('job.paused', { bytes: '5.00MB' }),
       body: t('job.stale.body', { days: 31, size: '5.00MB' }),
       primary: ['resume'],
-      cancel: t('action.cancel'),
+      cancel: t('common.cancel'),
     },
     {
       name: '마무리 중: 마지막 값, 100%를 보이지 않는다, 동작 없음',
@@ -402,7 +402,7 @@ describe('작업 행 진행 영역 표(patterns.md §3.2): 상태마다 막대·
       line: t('job.paused', { bytes: '5.00MB' }),
       body: null,
       primary: ['resume'],
-      cancel: t('action.cancel'),
+      cancel: t('common.cancel'),
     },
     {
       name: '중단(앱 종료)도 일시정지 어휘',
@@ -411,7 +411,7 @@ describe('작업 행 진행 영역 표(patterns.md §3.2): 상태마다 막대·
       line: t('job.paused', { bytes: '5.00MB' }),
       body: null,
       primary: ['resume'],
-      cancel: t('action.cancel'),
+      cancel: t('common.cancel'),
     },
     {
       name: '실패(이어받기 가능): 빨간 막대 + 퍼센트 유지',
@@ -563,8 +563,8 @@ describe('취소 확인(D2): .part가 있으면 크기와 무관하게', () => {
     expect(needsCancelConfirm(job(1, { status: 'skipped' }), null)).toBe(false);
   });
 
-  it('취소 라벨은 같은 조건으로 갈린다: [취소…] danger / [취소] neutral', () => {
-    expect(cancelLabel(job(1, { status: 'paused', partialBytes: 1 }), null)).toEqual({ label: t('action.cancel'), tone: 'danger' });
+  it('취소 라벨은 늘 [취소]이고 톤만 갈린다: danger(D2) / neutral(즉시)', () => {
+    expect(cancelLabel(job(1, { status: 'paused', partialBytes: 1 }), null)).toEqual({ label: t('common.cancel'), tone: 'danger' });
     expect(cancelLabel(job(1), null)).toEqual({ label: t('common.cancel'), tone: 'neutral' });
     expect(cancelLabel(job(1, { status: 'running' }), prog({ phase: 'resolving', bytes: 0 }))).toEqual({
       label: t('common.cancel'),
@@ -837,7 +837,7 @@ describe('연결 대기·회복·멈춘 지 30일 판단(patterns.md §3.2)', ()
     expect(bodyLine(old, null, { now: NOW, base: 1024 })).toBe(t('job.stale.body', { days: 40, size: '1.00KB' }));
   });
 
-  it('연결 대기 동작: 일시정지와 취소(취소는 .part가 있어 [취소…])', () => {
+  it('연결 대기 동작: 일시정지와 취소(취소는 .part가 있어 danger [취소])', () => {
     const b = jobButtons(waitingJob, waitingJob.progress);
     expect(b.primary).toEqual(['pause']);
     expect(b.cancel).toBe(true);

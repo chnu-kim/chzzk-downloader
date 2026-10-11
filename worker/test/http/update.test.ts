@@ -4,6 +4,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 import { LATEST_MAX } from "../../src/http/update";
 import { SUMS_CACHE } from "../../src/http/releases";
 import { createFakeChzzk } from "../fake-chzzk.mjs";
+import { SEED_BASE } from "../seed-release.mjs";
 import { installFakeChzzk, type FakeNet } from "../network";
 import { ORIGIN, useClock, viaExports } from "./harness";
 import { contractPath, DEPLOY_CONTRACT, GARBAGE_BEARER } from "../deploy-contract.mjs";
@@ -40,21 +41,25 @@ async function get(path: string, cred: Cred, headers: Record<string, string> = {
 }
 const bytes = async (res: Response) => new Uint8Array(await res.arrayBuffer());
 const latest = () => seed.get("releases/latest.json") as Uint8Array;
+// 시드 latest.json의 url 출처(SEED_BASE)는 테스트 Worker 출처(ORIGIN)와 다르다. /update는 url 출처를 응답하는 Worker에 맞추므로 기대값도 그렇게 만든다
+const servedJson = () => JSON.parse(new TextDecoder().decode(latest()).replaceAll(SEED_BASE, ORIGIN)) as unknown;
+const json = async (res: Response) => JSON.parse(new TextDecoder().decode(await bytes(res))) as unknown;
 
 describe("200·204", () => {
   it("ci /update/0.1.0: 200, 본문 = latest.json 바이트, 헤더", async () => {
     const res = await get("/update/0.1.0", "ci");
     expect(res.status).toBe(200);
     expect(res.headers.get("Content-Type")).toBe("application/json");
-    expect(res.headers.get("Content-Length")).toBe(String(latest().byteLength));
+    const body = await bytes(res);
+    expect(res.headers.get("Content-Length")).toBe(String(body.byteLength));
     expect(res.headers.get("Cache-Control")).toBe("private, no-store, no-transform");
-    expect(await bytes(res)).toEqual(latest());
+    expect(JSON.parse(new TextDecoder().decode(body))).toEqual(servedJson());
   });
 
   it("app /update/0.1.0: 200", async () => {
     const res = await get("/update/0.1.0", "app");
     expect(res.status).toBe(200);
-    expect(await bytes(res)).toEqual(latest());
+    expect(await json(res)).toEqual(servedJson());
   });
 
   it.each(["0.2.0", "0.3.0", "0.2.1-rc.1"])("app /update/%s: 204, 본문 없음", async (v) => {
@@ -147,6 +152,28 @@ describe("latest.json 상태", () => {
   });
 });
 
+describe("Worker 이름 변경 전환(구현 중 변경 103): 옛 앱이 출처 불일치로 Untrusted가 되지 않는다", () => {
+  it("R2의 latest.json이 다른 Worker 출처를 품어도 응답의 platforms[*].url은 이 Worker 출처다", async () => {
+    const other = "https://other-worker.example.test";
+    const m = JSON.parse(new TextDecoder().decode(latest())) as { platforms: Record<string, { signature: string; url: string }> };
+    const sigs = Object.fromEntries(Object.entries(m.platforms).map(([k, v]) => [k, v.signature]));
+    for (const v of Object.values(m.platforms)) v.url = v.url.replace(SEED_BASE, other);
+    expect(Object.values(m.platforms).every((v) => v.url.startsWith(other))).toBe(true);
+    try {
+      await env.DIST.put("releases/latest.json", new TextEncoder().encode(JSON.stringify(m)));
+      const res = await get("/update/0.1.0", "app");
+      expect(res.status).toBe(200);
+      const out = (await res.json()) as { platforms: Record<string, { signature: string; url: string }> };
+      for (const [k, v] of Object.entries(out.platforms)) {
+        expect(new URL(v.url).origin, k).toBe(ORIGIN);
+        expect(v.signature, k).toBe(sigs[k]);
+      }
+    } finally {
+      await env.DIST.put("releases/latest.json", latest());
+    }
+  });
+});
+
 describe("deploy-worker 검사 계약(§9.4, 구현 중 변경 36 (아), 표는 test/deploy-contract.mjs)", () => {
   // 같은 표를 scripts/ci/release.test.mjs가 release.mjs WORKER_CHECKS·judgeCheck·가짜 Worker(worker-stub.mjs)와 대조한다
   const version = "0.2.0";
@@ -164,7 +191,10 @@ describe("deploy-worker 검사 계약(§9.4, 구현 중 변경 36 (아), 표는 
       else expect(res.status).toBe(row.status);
       if (row.location !== undefined) expect(res.headers.get("Location")).toBe(row.location);
       const body = await bytes(res);
-      if (row.body === "latest") expect(body).toEqual(latest());
+      if (row.body === "latest") {
+        if (row.path.startsWith("/update/")) expect(JSON.parse(new TextDecoder().decode(body))).toEqual(servedJson());
+        else expect(body).toEqual(latest());
+      }
       if (row.code !== undefined) expect(JSON.parse(new TextDecoder().decode(body))).toEqual({ code: row.code });
       if (row.status === 204) expect(body.byteLength).toBe(0);
     });

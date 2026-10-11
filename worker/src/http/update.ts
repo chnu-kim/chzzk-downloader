@@ -1,5 +1,5 @@
 // GET /update/{current}(docs/design/worker.md §9.3, 구현 중 변경 14 (사)·31). 판정: current(400 bad_version, R2 0회)
-// → 자격(releaseAuth, 웹 쿠키 불가) → latest.json 1회 읽기 → decideUpdate. 롤백 직후에도 맞게 캐시하지 않는다.
+// → 자격(releaseAuth, 웹 쿠키 불가) → latest.json 1회 읽기 → decideUpdate(url 출처를 PUBLIC_ORIGIN에 맞춘다, 구현 중 변경 103). 롤백 직후에도 맞게 캐시하지 않는다.
 import { LATEST_KEY } from "../core/keys";
 import { decideUpdate, parseCurrentVersion } from "../core/updater";
 import type { Ctx } from "../routes";
@@ -17,11 +17,11 @@ export async function update(req: Request, ctx: Ctx): Promise<Response> {
   if (!who.ok) return who.response;
   const obj = await releaseBucket(ctx.env).get(LATEST_KEY, null);
   let d: ReturnType<typeof decideUpdate>;
-  if (obj === null) d = decideUpdate(null, current);
+  if (obj === null) d = decideUpdate(null, current, ctx.config.publicOrigin);
   else if (obj.size > LATEST_MAX) {
     await obj.body.cancel();
     d = { kind: "invalid_latest" };
-  } else d = decideUpdate(new Uint8Array(await obj.arrayBuffer()), current);
+  } else d = decideUpdate(new Uint8Array(await obj.arrayBuffer()), current, ctx.config.publicOrigin);
   switch (d.kind) {
     case "invalid_latest":
       ctx.log("release.latest_invalid", { level: "error", route: ctx.route });

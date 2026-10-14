@@ -21,6 +21,6 @@
     "axe-core": "4.13.0",
     "typescript": "7.0.2",
     "vitest": "4.1.11",
-    "wrangler": "4.147.0"
+    "wrangler": "4.148.0"
   }
 }

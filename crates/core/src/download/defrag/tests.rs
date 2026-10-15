@@ -1125,3 +1125,454 @@ fn huge_sample_count_without_per_sample_fields_is_bounded() {
     assert!(matches!(e, Error::Parse { .. }), "{e:?}");
     assert_eq!(b, before);
 }
+
+// ---------------------------------------------------------------------------------------------
+// 잘못된 입력 방어 분기
+
+/// 종류 4바이트가 처음 나오는 위치(상자 시작 + 4).
+fn kind_pos(b: &[u8], kind: &[u8; 4]) -> usize {
+    b.windows(4)
+        .position(|w| w == kind)
+        .unwrap_or_else(|| panic!("{} 없음", String::from_utf8_lossy(kind)))
+}
+
+/// 상자 하나(처음 나오는 `kind`)의 본문을 `f`로 바꾸고, 그 상자를 품은 상위 상자(`moof`·`traf`·`moov` 등)의 크기도 맞춘다.
+fn edit_box(b: &mut Vec<u8>, kind: &[u8; 4], f: impl FnOnce(&mut Vec<u8>)) {
+    let start = kind_pos(b, kind) - 4;
+    let size = be32(&b[start..]) as usize;
+    let mut body = b[start + 8..start + size].to_vec();
+    f(&mut body);
+    let delta = body.len() as i64 - (size as i64 - 8);
+    // 수정 전 바이트로 상위 상자를 찾는다(앞쪽 위치는 바뀌지 않는다).
+    let mut parents = Vec::new();
+    for q in 4..b.len().saturating_sub(3) {
+        let is_container = [
+            b"moof", b"traf", b"moov", b"trak", b"mdia", b"minf", b"stbl", b"mvex",
+        ]
+        .iter()
+        .any(|k| &b[q..q + 4] == *k);
+        if is_container && q - 4 < start {
+            let ps = q - 4;
+            if start < ps + be32(&b[ps..]) as usize {
+                parents.push(ps);
+            }
+        }
+    }
+    let mut new = Vec::new();
+    new.extend_from_slice(&((body.len() + 8) as u32).to_be_bytes());
+    new.extend_from_slice(kind);
+    new.extend_from_slice(&body);
+    b.splice(start..start + size, new);
+    for ps in parents {
+        let s = (be32(&b[ps..]) as i64 + delta) as u32;
+        b[ps..ps + 4].copy_from_slice(&s.to_be_bytes());
+    }
+}
+
+fn rename_kind(b: &mut [u8], from: &[u8; 4], to: &[u8; 4]) {
+    let p = kind_pos(b, from);
+    b[p..p + 4].copy_from_slice(to);
+}
+
+fn with_fragment(mut b: Vec<u8>) -> Vec<u8> {
+    push_fragment(
+        &mut b,
+        &[traf(1, 0, vec![video_trun(3, true)])],
+        &[VIDEO],
+        false,
+    );
+    b
+}
+
+/// 올바른 합성 파일(비디오 트랙 하나, 샘플 셋).
+fn good() -> Vec<u8> {
+    with_fragment(init_bytes(1000, &[VIDEO]))
+}
+
+/// 변환이 `Error::Parse`로 거절하고 바이트를 바꾸지 않으며 설명에 `needle`이 있어야 한다.
+fn assert_rejected(name: &str, b: Vec<u8>, needle: &str) {
+    let before = b.clone();
+    let mut work = b;
+    match defragment_bytes(&mut work) {
+        Err(Error::Parse { detail, .. }) => {
+            assert!(
+                detail.contains(needle),
+                "{name}: 설명에 {needle:?}이 없다: {detail:?}"
+            );
+        }
+        other => panic!("{name}: Parse 오류여야 한다: {other:?}"),
+    }
+    assert_eq!(work, before, "{name}: 거절한 입력을 바꾸면 안 된다");
+    // 계획 단계(순수 함수)도 같은 이유로 거절한다.
+    assert!(
+        matches!(plan_bytes(&before), Err(Error::Parse { .. })),
+        "{name}"
+    );
+}
+
+#[test]
+fn valid_synthetic_input_converts_as_control() {
+    let (out, r) = convert(&good());
+    assert_eq!(
+        r,
+        DefragReport::Converted {
+            tracks: 1,
+            samples: 3,
+            discontinuities: 0
+        }
+    );
+    assert!(plan_bytes(&out).unwrap().is_none());
+}
+
+#[test]
+fn malformed_top_level_boxes_are_rejected() {
+    let tail = |extra: &[u8]| {
+        let mut b = good();
+        b.extend_from_slice(extra);
+        b
+    };
+    let mut large_small = vec![0, 0, 0, 1];
+    large_small.extend_from_slice(b"free");
+    large_small.extend_from_slice(&8u64.to_be_bytes());
+    let cases: Vec<(&str, Vec<u8>, &str)> = vec![
+        ("끝 헤더 잘림", tail(&[0, 0, 0, 0]), "끝 상자 헤더가 잘렸다"),
+        (
+            "largesize 헤더 잘림",
+            tail(&[0, 0, 0, 1, b'f', b'r', b'e', b'e']),
+            "largesize 헤더가 잘렸다",
+        ),
+        (
+            "크기가 헤더보다 작음",
+            tail(&[0, 0, 0, 4, b'f', b'r', b'e', b'e']),
+            "상자 크기가 헤더보다 작다",
+        ),
+        (
+            "largesize가 헤더보다 작음",
+            tail(&large_small),
+            "상자 크기가 헤더보다 작다",
+        ),
+        (
+            "파일 끝을 넘음",
+            tail(&[0, 0, 0, 99, b'f', b'r', b'e', b'e']),
+            "파일 끝을 넘는다",
+        ),
+    ];
+    for (name, b, needle) in cases {
+        assert_rejected(name, b, needle);
+    }
+}
+
+#[test]
+fn malformed_init_is_rejected() {
+    let append = |extra: &[u8]| {
+        let mut init = init_bytes(1000, &[VIDEO]);
+        edit_box(&mut init, b"moov", |b| b.extend_from_slice(extra));
+        with_fragment(init)
+    };
+    let patched = |kind: &'static [u8; 4], f: fn(&mut Vec<u8>)| {
+        let mut init = init_bytes(1000, &[VIDEO]);
+        edit_box(&mut init, kind, f);
+        with_fragment(init)
+    };
+    let mut no_mvhd = bx(b"ftyp", b"iso6\0\0\0\0");
+    no_mvhd.extend(bx(b"moov", &bx(b"mvex", &[])));
+    let no_mvhd = with_fragment(no_mvhd);
+    let mut huge_large = vec![0, 0, 0, 1];
+    huge_large.extend_from_slice(b"free");
+    huge_large.extend_from_slice(&(1u64 << 40).to_be_bytes());
+    let cases: Vec<(&str, Vec<u8>, &str)> = vec![
+        ("mvhd 없음", no_mvhd, "moov에 mvhd이 없다"),
+        (
+            "mvhd timescale 0",
+            patched(b"mvhd", |b| b[12..16].fill(0)),
+            "mvhd timescale이 0이다",
+        ),
+        (
+            "mdhd timescale 0",
+            patched(b"mdhd", |b| b[12..16].fill(0)),
+            "mdhd timescale이 0이다",
+        ),
+        (
+            "트랙 없음",
+            with_fragment(init_bytes(1000, &[])),
+            "init에 트랙이 없다",
+        ),
+        (
+            "트랙 ID 중복",
+            with_fragment(init_bytes(1000, &[VIDEO, VIDEO])),
+            "두 번 있다",
+        ),
+        (
+            "tkhd version 1인데 ID가 다른 자리",
+            patched(b"tkhd", |b| b[0] = 1),
+            "trex가 없다",
+        ),
+        ("자식 헤더 잘림", append(&[0; 4]), "자식 상자 헤더가 잘렸다"),
+        (
+            "자식 largesize 헤더 잘림",
+            append(&[0, 0, 0, 1, b'f', b'r', b'e', b'e']),
+            "자식 largesize 헤더가 잘렸다",
+        ),
+        (
+            "자식 크기가 본문보다 큼",
+            append(&[0, 0, 0, 99, b'f', b'r', b'e', b'e']),
+            "크기가 맞지 않다",
+        ),
+        (
+            "자식 크기가 헤더보다 작음",
+            append(&[0, 0, 0, 4, b'f', b'r', b'e', b'e']),
+            "크기가 맞지 않다",
+        ),
+        (
+            "자식 largesize가 본문보다 큼",
+            append(&huge_large),
+            "크기가 맞지 않다",
+        ),
+    ];
+    for (name, b, needle) in cases {
+        assert_rejected(name, b, needle);
+    }
+}
+
+#[test]
+fn child_boxes_with_size_zero_or_largesize_are_accepted() {
+    // 자식 size 0(상위 끝까지)과 64비트 largesize는 올바른 입력이다.
+    let mut large = vec![0, 0, 0, 1];
+    large.extend_from_slice(b"free");
+    large.extend_from_slice(&19u64.to_be_bytes());
+    large.extend_from_slice(&[1, 2, 3]);
+    let mut zero = vec![0, 0, 0, 0];
+    zero.extend_from_slice(b"free");
+    zero.extend_from_slice(&[1, 2, 3]);
+    for extra in [large, zero] {
+        let mut init = init_bytes(1000, &[VIDEO]);
+        edit_box(&mut init, b"moov", |b| b.extend_from_slice(&extra));
+        let (_, r) = convert(&with_fragment(init));
+        assert!(matches!(r, DefragReport::Converted { samples: 3, .. }));
+    }
+}
+
+#[test]
+fn malformed_fragments_are_rejected() {
+    let patched = |kind: &'static [u8; 4], f: fn(&mut Vec<u8>)| {
+        let mut b = good();
+        edit_box(&mut b, kind, f);
+        b
+    };
+    let mut no_tfhd = good();
+    rename_kind(&mut no_tfhd, b"tfhd", b"free");
+    let empty = with_fragment_of(vec![video_trun(0, false)]);
+    let cases: Vec<(&str, Vec<u8>, &str)> = vec![
+        (
+            "암호화된 조각",
+            patched(b"traf", |b| b.extend(bx(b"senc", &[0; 8]))),
+            "암호화된 조각이다",
+        ),
+        ("tfhd 없음", no_tfhd, "traf에 tfhd이 없다"),
+        (
+            "tfhd 본문이 짧음",
+            patched(b"tfhd", |b| b.truncate(4)),
+            "상자 본문이 짧다",
+        ),
+        (
+            "tfhd base_data_offset 없음",
+            patched(b"tfhd", |b| b[3] |= 0x1),
+            "상자 본문이 짧다",
+        ),
+        (
+            "tfhd 기본 필드 없음",
+            patched(b"tfhd", |b| b[3] |= 0x2),
+            "상자 본문이 짧다",
+        ),
+        (
+            "tfdt version 1이 짧음",
+            patched(b"tfdt", |b| *b = vec![1, 0, 0, 0, 0, 0, 0, 0]),
+            "상자 본문이 짧다",
+        ),
+        (
+            "tfdt version 0이 짧음",
+            patched(b"tfdt", |b| *b = vec![0, 0, 0, 0]),
+            "상자 본문이 짧다",
+        ),
+        (
+            "trun 샘플 수 없음",
+            patched(b"trun", |b| b.truncate(4)),
+            "상자 본문이 짧다",
+        ),
+        (
+            "trun data_offset 없음",
+            patched(b"trun", |b| b.truncate(8)),
+            "상자 본문이 짧다",
+        ),
+        (
+            "trun first_sample_flags 없음",
+            patched(b"trun", |b| b.truncate(12)),
+            "상자 본문이 짧다",
+        ),
+        (
+            "trun 샘플 수가 본문보다 많음",
+            patched(b"trun", |b| b[4..8].copy_from_slice(&1000u32.to_be_bytes())),
+            "trun 샘플 수가 본문보다 많다",
+        ),
+        ("샘플이 하나도 없음", empty, "샘플이 하나도 없다"),
+    ];
+    for (name, b, needle) in cases {
+        assert_rejected(name, b, needle);
+    }
+}
+
+/// 비디오 trun들만 담은 조각 하나가 붙은 합성 파일.
+fn with_fragment_of(truns: Vec<TrunDef>) -> Vec<u8> {
+    let mut b = init_bytes(1000, &[VIDEO]);
+    push_fragment(&mut b, &[traf(1, 0, truns)], &[VIDEO], false);
+    b
+}
+
+#[test]
+fn short_duration_slots_are_rejected() {
+    // mvhd 본문이 timescale까지만 있으면 duration을 쓸 자리가 없다(version 0·1 모두).
+    let mut v0 = init_bytes(1000, &[VIDEO]);
+    edit_box(&mut v0, b"mvhd", |b| b.truncate(16));
+    let mut v1 = init_bytes(1000, &[VIDEO]);
+    edit_box(&mut v1, b"mvhd", |b| {
+        *b = [&[1, 0, 0, 0][..], &[0; 16], &1000u32.to_be_bytes(), &[0; 4]].concat();
+    });
+    for (name, init) in [("version 0", v0), ("version 1", v1)] {
+        assert_rejected(name, with_fragment(init), "duration 자리가 없다");
+    }
+}
+
+#[test]
+fn version1_headers_get_their_durations_rewritten() {
+    let mut init = init_bytes(1000, &[VIDEO]);
+    let zeros = |n: usize| vec![0u8; n];
+    edit_box(&mut init, b"mvhd", |b| {
+        *b = [
+            &[1, 0, 0, 0][..],
+            &zeros(16),
+            &1000u32.to_be_bytes(),
+            &zeros(8),
+            &zeros(80),
+        ]
+        .concat();
+    });
+    edit_box(&mut init, b"tkhd", |b| {
+        *b = [
+            &[1, 0, 0, 7][..],
+            &zeros(16),
+            &1u32.to_be_bytes(),
+            &zeros(4),
+            &zeros(8),
+            &zeros(60),
+        ]
+        .concat();
+    });
+    edit_box(&mut init, b"mdhd", |b| {
+        *b = [
+            &[1, 0, 0, 0][..],
+            &zeros(16),
+            &6000u32.to_be_bytes(),
+            &zeros(8),
+            &zeros(4),
+        ]
+        .concat();
+    });
+    let (out, r) = convert(&with_fragment(init));
+    assert!(matches!(r, DefragReport::Converted { samples: 3, .. }));
+    // 샘플 셋 x 기본 길이 100(트랙 timescale 6000) = 300틱 = 영상 시간 50
+    let tops = top_boxes(&out);
+    let (_, off, hdr, size) = tops.iter().rfind(|t| t.0 == "moov").unwrap().clone();
+    let moov = kids(&out[off + hdr..off + size]);
+    let mvhd = get(&moov, b"mvhd");
+    assert_eq!(be64(&mvhd.body[24..]), 50);
+    let trak = kids(get(&moov, b"trak").body);
+    assert_eq!(be64(&get(&trak, b"tkhd").body[28..]), 50);
+    let mdia = kids(get(&trak, b"mdia").body);
+    assert_eq!(be64(&get(&mdia, b"mdhd").body[24..]), 300);
+}
+
+#[test]
+fn fragment_without_tfdt_after_a_first_one_is_accepted() {
+    let mut b = init_bytes(1000, &[VIDEO]);
+    push_fragment(
+        &mut b,
+        &[traf(1, 0, vec![video_trun(3, true)])],
+        &[VIDEO],
+        false,
+    );
+    let mut second = traf(1, 0, vec![video_trun(2, true)]);
+    second.tfdt = None;
+    push_fragment(&mut b, &[second], &[VIDEO], false);
+    let (_, r) = convert(&b);
+    assert_eq!(
+        r,
+        DefragReport::Converted {
+            tracks: 1,
+            samples: 5,
+            discontinuities: 0
+        }
+    );
+}
+
+#[test]
+fn read_failures_map_to_parse_or_io_errors() {
+    // 읽다가 파일 끝: 구조 문제(Parse), 그 밖의 입출력 오류는 Io
+    let e = Fail::Io(io::ErrorKind::UnexpectedEof.into()).into_error();
+    assert!(
+        matches!(&e, Error::Parse { detail, .. } if detail.contains("예상보다 짧다")),
+        "{e:?}"
+    );
+    let e = Fail::Io(io::ErrorKind::PermissionDenied.into()).into_error();
+    assert!(matches!(e, Error::Io { op: "read", .. }), "{e:?}");
+    // 본문까지 읽는 상자의 크기 상한
+    let e = read_vec(&mut SliceSrc(&[]), 0, MAX_META_BOX + 1).unwrap_err();
+    assert!(
+        matches!(&e, Fail::Bad(d) if d.contains("너무 크다")),
+        "{e:?}"
+    );
+}
+
+#[test]
+fn append_failure_restores_length_and_reports_io() {
+    // 읽기 전용으로 연 파일: 계획은 세워지지만 새 moov를 붙이는 쓰기가 실패한다.
+    let b = good();
+    let mut tmp = tempfile::NamedTempFile::new().unwrap();
+    tmp.write_all(&b).unwrap();
+    tmp.flush().unwrap();
+    let mut ro = std::fs::File::open(tmp.path()).unwrap();
+    let e = defragment(&mut ro).unwrap_err();
+    assert!(matches!(e, Error::Io { op: "write", .. }), "{e:?}");
+    assert_eq!(
+        std::fs::read(tmp.path()).unwrap(),
+        b,
+        "파일이 그대로여야 한다"
+    );
+}
+
+/// 읽기마다 실패하는 원본(길이만 있다).
+struct FailingSrc;
+
+impl Source for FailingSrc {
+    fn len(&self) -> u64 {
+        100
+    }
+    fn read_at(&mut self, _off: u64, _buf: &mut [u8]) -> io::Result<()> {
+        Err(io::ErrorKind::PermissionDenied.into())
+    }
+}
+
+#[test]
+fn source_read_error_surfaces_as_io_error() {
+    let e = plan(&mut FailingSrc).map(|_| ()).unwrap_err().into_error();
+    assert!(matches!(e, Error::Io { op: "read", .. }), "{e:?}");
+}
+
+#[test]
+fn file_api_reports_not_fragmented_without_changes() {
+    let mut b = bx(b"ftyp", b"initinit");
+    b.extend(bx(b"styp", &[0; 8]));
+    let mut f = tempfile::tempfile().unwrap();
+    f.write_all(&b).unwrap();
+    assert_eq!(defragment(&mut f).unwrap(), DefragReport::NotFragmented);
+    assert_eq!(f.metadata().unwrap().len(), b.len() as u64);
+}

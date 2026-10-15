@@ -536,6 +536,21 @@ mod tests {
         assert_eq!(v["hls"]["nextIndex"], 0);
     }
 
+    /// `Debug`는 경로와 바이트 수만 보인다(서명 값이 없다). `path()`는 `.part` 경로를 돌려준다.
+    #[test]
+    fn debug_and_path_of_part_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("a.mp4");
+        let mut p = PartFile::create(&out, sidecar()).unwrap();
+        p.write(b"abc").unwrap();
+        assert_eq!(p.path(), part_path(&out));
+        let d = format!("{p:?}");
+        assert!(
+            d.contains("PartFile") && d.contains("written: 3") && d.contains("committed: 0"),
+            "{d}"
+        );
+    }
+
     #[tokio::test]
     async fn create_writes_sidecar_immediately() {
         let dir = tempfile::tempdir().unwrap();

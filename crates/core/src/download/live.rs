@@ -122,7 +122,10 @@ pub(crate) async fn run(
     };
     let mut patience = Patience::default();
     let mut since_progress = TokioInstant::now();
+    // playlist·init 읽기의 연속 일시 오류 수와, 세그먼트의 연속 일시 오류 수. 서로 성공해도 상대를 되돌리지 않는다
+    // (모든 새 세그먼트가 5xx인 서버가 playlist만 성공한다고 한도에 영영 닿지 않으면 녹화가 끝나지 않는다)
     let mut flaky = 0u32;
+    let mut seg_flaky = 0u32;
     let mut quiet = TokioInstant::now();
 
     // 첫 playlist와 init. 방송 시작 직후라 playlist가 아직 없거나 세그먼트가 0개일 수 있다.
@@ -290,7 +293,7 @@ pub(crate) async fn run(
                         st.recorded_ms += u64::from(dur);
                         st.segments += 1;
                         got_any = true;
-                        flaky = 0;
+                        seg_flaky = 0;
                         patience.reset();
                         since_progress = TokioInstant::now();
                         job.refreshes = 0;
@@ -334,8 +337,8 @@ pub(crate) async fn run(
                     // 일시 오류(5xx를 다 쓴 재시도·본문 검증 실패 등): 구멍으로 세고 계속한다.
                     // 연달아 한도를 넘으면 서버가 아무것도 못 주는 것이라 오류로 끝낸다(`.part`는 남는다).
                     Err(Failure::Retry(e) | Failure::Fatal(e)) if is_transient(&e) => {
-                        flaky += 1;
-                        if flaky > MAX_FLAKY {
+                        seg_flaky += 1;
+                        if seg_flaky > MAX_FLAKY {
                             return Err(e);
                         }
                         st.gaps += 1;

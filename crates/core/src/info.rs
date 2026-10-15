@@ -561,6 +561,67 @@ mod tests {
         assert!(!e.to_string().contains("hmac"), "{e}");
     }
 
+    /// 재생 정보가 깨진 응답은 `Parse`이고 메시지에 서명 주소가 없다.
+    #[test]
+    fn live_detail_malformed_playback_is_parse_error() {
+        let edit = |f: &dyn Fn(&mut Value)| {
+            let mut v: Value =
+                serde_json::from_slice(&fixture("testdata/live/live_detail.json")).unwrap();
+            f(&mut v["content"]);
+            parse_live_detail(&serde_json::to_vec(&v).unwrap())
+        };
+        let playback = |c: &mut Value, f: &dyn Fn(&mut Value)| {
+            let mut j: Value =
+                serde_json::from_str(c["livePlaybackJson"].as_str().unwrap()).unwrap();
+            f(&mut j);
+            c["livePlaybackJson"] = Value::String(j.to_string());
+        };
+        // content 필드 타입이 틀리면(liveId가 문자열) 읽지 못한다
+        assert!(matches!(
+            edit(&|c| c["liveId"] = Value::String("x".into())),
+            Err(Error::Parse {
+                what: "live detail",
+                ..
+            })
+        ));
+        // livePlaybackJson이 JSON이 아니다
+        assert!(matches!(
+            edit(&|c| c["livePlaybackJson"] = Value::String("{not json".into())),
+            Err(Error::Parse {
+                what: "livePlaybackJson",
+                ..
+            })
+        ));
+        // HLS media에 path가 없다
+        assert!(matches!(
+            edit(&|c| playback(c, &|j| {
+                j["media"][0].as_object_mut().unwrap().remove("path");
+            })),
+            Err(Error::Parse {
+                what: "livePlaybackJson",
+                ..
+            })
+        ));
+        // path가 주소가 아니다(오류에 원문을 넣지 않는다)
+        let e = edit(&|c| {
+            playback(c, &|j| {
+                j["media"][0]["path"] = Value::String("not a url".into())
+            })
+        })
+        .unwrap_err();
+        assert!(
+            matches!(
+                e,
+                Error::Parse {
+                    what: "livePlaybackJson",
+                    ..
+                }
+            ),
+            "{e:?}"
+        );
+        assert!(!e.to_string().contains("not a url"), "{e}");
+    }
+
     #[test]
     fn live_detail_debug_redacts() {
         let (_, d) = parse_live_detail(&fixture("testdata/live/live_detail.json")).unwrap();

@@ -4,11 +4,13 @@
 //! 방송을 낸다(`Detail`). 세그먼트 본문은 msn이 들어 있어 이어 붙인 순서를 검사할 수 있다.
 
 mod common;
+#[path = "support/mp4.rs"]
+mod mp4;
 
 use std::num::NonZeroU8;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
 use chzzk_core::{
@@ -71,7 +73,30 @@ struct Opts {
     bad_seg: Option<u64>,
     /// 모든 세그먼트 응답을 이만큼 늦춘다
     seg_delay: Option<Duration>,
+    /// init·세그먼트를 가짜 바이트 대신 합성 fMP4(`REAL`)의 조각으로 준다
+    real_media: bool,
 }
+
+/// `testdata/live/synthetic_frag.mp4`(ffmpeg lavfi 합성)를 init(`ftyp`+`moov`)과 `moof`+`mdat` 세그먼트로 나눈 것.
+/// 끝의 `mfra`는 생방송 세그먼트에 없으므로 뺀다.
+static REAL: LazyLock<(Vec<u8>, Vec<Vec<u8>>)> = LazyLock::new(|| {
+    let b = fixture("testdata/live/synthetic_frag.mp4");
+    let w = mp4::walk_boxes(&b).unwrap();
+    let mut off = 0usize;
+    let mut init = Vec::new();
+    let mut segs: Vec<Vec<u8>> = Vec::new();
+    for (ty, size) in &w.boxes {
+        let bx = &b[off..off + *size as usize];
+        match ty.as_str() {
+            "ftyp" | "moov" => init.extend_from_slice(bx),
+            "moof" => segs.push(bx.to_vec()),
+            "mdat" => segs.last_mut().unwrap().extend_from_slice(bx),
+            _ => {}
+        }
+        off += *size as usize;
+    }
+    (init, segs)
+});
 
 impl Stream {
     async fn start(
@@ -152,7 +177,13 @@ impl Stream {
 
         Mock::given(method("GET"))
             .and(path(format!("{DIR}/144p/init.mp4")))
-            .respond_with(ResponseTemplate::new(200).set_body_bytes(init_bytes()))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_bytes(if opts.real_media {
+                    REAL.0.clone()
+                } else {
+                    init_bytes()
+                }),
+            )
             .mount(&server)
             .await;
         Mock::given(method("GET"))
@@ -162,6 +193,11 @@ impl Stream {
                 let msn: u64 = name[3..name.len() - 4].parse().unwrap();
                 let t = if opts.bad_seg == Some(msn) {
                     ResponseTemplate::new(503)
+                } else if opts.real_media {
+                    match REAL.1.get(msn as usize) {
+                        Some(b) => ResponseTemplate::new(200).set_body_bytes(b.clone()),
+                        None => ResponseTemplate::new(404),
+                    }
                 } else {
                     ResponseTemplate::new(200).set_body_bytes(seg_bytes(msn))
                 };
@@ -949,4 +985,92 @@ async fn stop_keeps_segments_already_downloaded() {
     let msns = recorded_msns(&out);
     assert!(msns.len() >= 4, "받아 둔 조각을 버렸다: {msns:?}");
     assert!(msns.windows(2).all(|w| w[1] == w[0] + 1), "{msns:?}");
+}
+
+/// 최상위 상자가 일반 mp4 모양인지 본다: `moof` 없음, 끝은 `moov` 하나, `mdat` 있음.
+fn assert_flat_mp4(path: &Path) {
+    let b = std::fs::read(path).unwrap();
+    let w = mp4::walk_boxes(&b).unwrap();
+    assert!(!w.truncated);
+    let types = w.types();
+    assert!(!types.contains(&"moof"), "{types:?}");
+    assert_eq!(types.last(), Some(&"moov"), "{types:?}");
+    assert_eq!(
+        types.iter().filter(|t| **t == "moov").count(),
+        1,
+        "{types:?}"
+    );
+    assert!(types.contains(&"mdat"), "{types:?}");
+    assert_eq!(types[0], "ftyp");
+}
+
+/// I: 실제 fMP4 조각(합성)을 녹화하면 마무리에서 일반 mp4로 바뀐다(core.md 구현 중 변경 60).
+#[tokio::test]
+async fn real_fragments_are_converted_to_flat_mp4() {
+    let n = REAL.1.len() as u64;
+    assert!(n >= 4, "fixture 조각 수 {n}");
+    let s = Stream::start_with(
+        Opts {
+            real_media: true,
+            ..Opts::default()
+        },
+        move |_| window(0, n, true),
+        |_| Detail::Open(1),
+    )
+    .await;
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_path(&dir);
+    let r = record(&s, &out, None).await.unwrap();
+    let DownloadOutcome::Completed { bytes, .. } = r else {
+        panic!("{r:?}")
+    };
+    assert_flat_mp4(&out);
+    // 보고한 크기는 붙인 moov까지 포함한 최종 파일 크기다
+    assert_eq!(std::fs::metadata(&out).unwrap().len(), bytes);
+    let raw: usize = REAL.0.len() + REAL.1.iter().map(Vec::len).sum::<usize>();
+    assert!(bytes as usize > raw);
+    // 원래 바이트 자리는 그대로다(종류 4바이트만 free로 바뀐다)
+    let b = std::fs::read(&out).unwrap();
+    let orig: Vec<u8> = REAL
+        .0
+        .iter()
+        .chain(REAL.1.iter().flatten())
+        .copied()
+        .collect();
+    let changed = orig.iter().zip(&b).filter(|(a, b)| a != b).count();
+    assert!(changed <= 4 * (2 + REAL.1.len()), "{changed}");
+    no_part(&out);
+}
+
+/// J: 끊긴 `.part`를 다음 실행이 마무리할 때도 변환한다.
+#[tokio::test]
+async fn interrupted_real_recording_is_converted_when_finalized() {
+    let s = Stream::start_with(
+        Opts {
+            real_media: true,
+            ..Opts::default()
+        },
+        |n| Pl::Window {
+            first: 0,
+            len: 3,
+            ended: false,
+            tail: if n >= 1 {
+                "#EXT-X-KEY:METHOD=AES-128,URI=\"k\"\n"
+            } else {
+                ""
+            },
+        },
+        |_| Detail::Open(1),
+    )
+    .await;
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_path(&dir);
+    let r = record(&s, &out, None).await;
+    assert!(matches!(r, Err(Error::Unsupported(_))), "{r:?}");
+    let (part, _) = part_files(&out);
+    assert!(part.exists());
+    let r = record(&s, &out, None).await.unwrap();
+    assert!(matches!(r, DownloadOutcome::Completed { .. }), "{r:?}");
+    assert_flat_mp4(&out);
+    no_part(&out);
 }

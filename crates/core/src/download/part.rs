@@ -328,6 +328,37 @@ impl PartFile {
         Ok(())
     }
 
+    /// flush한 뒤 같은 열린 파일을 빌려 준다. 오래 걸리는 파일 작업(생방송 변환)이 런타임 스레드를 막지 않게,
+    /// flush 뒤 핸들을 복제(`try_clone`, 같은 열린 파일·같은 잠금)해 `spawn_blocking`에서 `f`를 돌린다.
+    pub(crate) async fn with_file_blocking<R: Send + 'static>(
+        &mut self,
+        f: impl FnOnce(&mut File) -> Result<R, Error> + Send + 'static,
+    ) -> Result<R, Error> {
+        self.w
+            .flush()
+            .map_err(|e| map_io_error("write", &self.part, e))?;
+        let mut file = self
+            .w
+            .get_ref()
+            .try_clone()
+            .map_err(|e| map_io_error("sync", &self.part, e))?;
+        let r = tokio::task::spawn_blocking(move || f(&mut file))
+            .await
+            .map_err(|e| Error::Io {
+                op: "write",
+                path: self.part.clone(),
+                source: io::Error::other(e.to_string()),
+            })?;
+        // 복제 핸들과 위치를 공유한다. `f`가 길이를 바꿀 수 있으니 성공·실패와 상관없이 (sidecar는 바꾸지 않는다) 쓰기 위치와 `written`을 맞춘다.
+        let end = self
+            .w
+            .get_mut()
+            .seek(SeekFrom::End(0))
+            .map_err(|e| map_io_error("seek", &self.part, e))?;
+        self.written = end;
+        r
+    }
+
     /// 받은 내용을 버리고 처음부터 쓴다(서버가 Range를 무시하고 200을 준 경우).
     /// sidecar는 `committed_len = 0`과 `update`를 적용해 곧바로 기록한다.
     pub async fn restart(&mut self, update: impl FnOnce(&mut Sidecar)) -> Result<(), Error> {

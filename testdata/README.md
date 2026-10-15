@@ -9,11 +9,12 @@
 - 날짜·시각·길이·비트레이트도 둥근 가짜 값이다(`2026-01-02 12:00:00`, 740초, `PT1H0M0.000S` 등).
 - 클립의 `makerChannel`(`…d4`, `제작자채널`)은 `ownerChannel`(`…c3`, `클립채널`)과 다르다. 소유 판정은 owner를 따라야 한다.
 - fMP4(`hls/init.mp4`, `seg0.m4v`, `seg1.m4v`)는 상자 구조(`ftyp`·`moov` / `styp`·(`moof`·`mdat`·`emsg`)×2)만 맞춘 가짜 바이트다. 디코드되지 않는다.
+- **예외: `live/synthetic_frag.mp4`는 생성기가 만들지 않는 정적 바이너리다**(`gen-fixtures.mjs`의 출력 목록에 없어 `--check`와 겹치지 않는다). ffmpeg lavfi 합성 신호(`testsrc` 64×64 30fps → libx264 High, B 프레임 2, GOP 30 / `sine` 440Hz 48kHz 모노 → AAC-LC, 3초)를 `-movflags frag_keyframe+empty_moov+default_base_moof`로 조각낸 디코드 가능한 fMP4다(`ftyp`·`moov`(mvex) / (`moof`·`mdat`)×7 / `mfra`, 약 21 KB). 모양은 예: `ffmpeg -f lavfi -i testsrc=duration=3:size=64x64:rate=30 -f lavfi -i sine=frequency=440:duration=3:sample_rate=48000 -c:v libx264 -g 30 -bf 2 -c:a aac -ac 1 -movflags frag_keyframe+empty_moov+default_base_moof synthetic_frag.mp4`(인코더 버전·프리셋에 따라 바이트는 달라진다. 테스트는 바이트가 아니라 구조와 원본 대비 등가성만 본다). 생방송 결과의 일반 mp4 변환(`download::defrag`)과 `tests/recording.rs`의 실제 조각 녹화가 쓴다.
 
 | 폴더 | 내용 | 테스트가 기대는 구조 |
 |---|---|---|
 | `hls/` | 빠른 다시보기(`inKey: null`) info, master(variant 5개), media(세그먼트 30개 × 2초), fMP4 | `liveRewindPlaybackJson`이 JSON이 든 **문자열**, variant URI 경로의 `hdntl=` 토큰, MAP URI 쿼리 보존 |
-| `live/` | 생방송 `live-detail` 응답 넷: 진행 중(HLS·LLHLS 순서 둘), 종료(`CLOSE`, 재생 정보 없음), 성인 차단(재생 정보 없음) | `livePlaybackJson`이 JSON이 든 **문자열**, 같은 `protocol: "HLS"`인 media 둘을 `mediaId`로 구분, `audioOnly` 트랙 |
+| `live/` | 생방송 `live-detail` 응답 넷: 진행 중(HLS·LLHLS 순서 둘), 종료(`CLOSE`, 재생 정보 없음), 성인 차단(재생 정보 없음). 그리고 정적 합성 fMP4 `synthetic_frag.mp4`(위 예외) | `livePlaybackJson`이 JSON이 든 **문자열**, 같은 `protocol: "HLS"`인 media 둘을 `mediaId`로 구분, `audioOnly` 트랙 |
 | `vod/` | 일반 VOD(`inKey` 있음) info와 MPD | `video/mp4` PD 2개 + `video/mp2t` UUID 2개(mimeType 상속, PD와 같은 라벨·서명 BaseURL·SegmentTemplate을 가진 미끼) + `audio/mp4` 1개(라벨·SegmentList), `ContentProtection` 없음 |
 | `clip/` | 클립 play-info 2개와 MPD(세로 영상, PD 2개) | `%xx` 인코딩 서명 쿼리 보존, resolution 라벨 기준 선택 |
 | `synthetic/` | `vod_info_aes.json`(`encryptionType: "AES"`), `media_*.m3u8`(태그 하나씩 넣거나 뺀 변형) | 미지원 태그·암호화 거부와 허용 규칙 |

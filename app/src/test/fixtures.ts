@@ -41,6 +41,28 @@ export function resolved(over: Partial<ResolvedDto> = {}): ResolvedDto {
   };
 }
 
+/** 진행 중인 생방송 카드: 길이를 모르고(durationSecs 없음) 화질 크기 예상이 없다. 합성 채널 ID */
+export function liveResolved(over: Partial<ResolvedDto> = {}): ResolvedDto {
+  const channelId = '000000000000000000000000000000e5';
+  return resolved({
+    url: `https://chzzk.naver.com/live/${channelId}`,
+    content: { kind: 'live', channelId },
+    meta: {
+      kind: 'live',
+      title: '오늘 저녁 생방송',
+      channelName: '채널이름',
+      channelId,
+      liveOpenDate: '2026-10-16 21:00:00',
+      publishDate: null,
+      adult: false,
+      durationSecs: null,
+    },
+    playbackKind: 'live',
+    suggestedFileName: '[생방송 261016-2100] 채널이름 - 오늘 저녁 생방송',
+    ...over,
+  });
+}
+
 export function check(over: Partial<OutputCheck> = {}): OutputCheck {
   return {
     fileName: '[251003] 채널이름 - 금요 노가리 방송',

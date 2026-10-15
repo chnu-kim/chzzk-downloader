@@ -143,7 +143,7 @@ describe('접근성', () => {
     await user.click(await screen.findByRole('button', { name: '뒤로' }));
     await waitFor(() => expect(screen.getByLabelText('영상 주소')).toHaveFocus());
 
-    jobs.confirm = { id: 2, title: '영상 2', bytes: 600 * 1024 * 1024, running: false };
+    jobs.confirm = { id: 2, title: '영상 2', bytes: 600 * 1024 * 1024, running: false, live: false };
     expect(await screen.findByRole('dialog', { name: t('dialog.cancel.title', { title: '영상 2' }) })).toBeInTheDocument();
     ui.goSettings();
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());

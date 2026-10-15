@@ -11,6 +11,9 @@ vi.mock('../../api', () => ({
 
 const api = await import('../../api');
 const { toasts } = await import('../../stores/toast.svelte');
+const { jobs } = await import('../../stores/jobs.svelte');
+const { fromSnapshot } = await import('../../stores/jobs.apply');
+const { job, liveProg } = await import('../../../test/jobFixtures');
 const { default: CloseGuard } = await import('./CloseGuard.svelte');
 
 let fire: (n: number) => void = () => {};
@@ -103,5 +106,38 @@ describe('D1 창 닫기 확인', () => {
     const r = await mounted();
     r.unmount();
     expect(unlisten).toHaveBeenCalled();
+  });
+});
+
+describe('D1 창 닫기 확인: 녹화 중인 생방송이 섞였을 때(ADR-0025)', () => {
+  it('제목·본문·실행 라벨이 "녹화를 마치고 저장한다"로 바뀌고 안전한 쪽은 그대로다', async () => {
+    jobs.state = fromSnapshot([
+      job(1, { kind: 'live', playbackKind: 'live', status: 'running', progress: liveProg() }),
+      job(2, { status: 'running' }),
+    ]);
+    try {
+      await mounted();
+      fire(2);
+      const d = await screen.findByRole('dialog', { name: t('dialog.closeLive.title') });
+      expect(within(d).getByText(t('dialog.closeLive.body', { n: 2 }))).toBeInTheDocument();
+      expect(within(d).getAllByRole('button').map((b) => b.textContent?.trim())).toEqual([
+        t('dialog.closeLive.confirm'),
+        t('dialog.cancel.keepRunning'),
+      ]);
+      await waitFor(() => expect(within(d).getByRole('button', { name: t('dialog.cancel.keepRunning') })).toHaveFocus());
+    } finally {
+      jobs.state = fromSnapshot([]);
+    }
+  });
+
+  it('생방송이 없거나 이미 끝났으면 일반 문구다', async () => {
+    jobs.state = fromSnapshot([job(1, { kind: 'live', playbackKind: 'live', status: 'completed' })]);
+    try {
+      await mounted();
+      fire(1);
+      await screen.findByRole('dialog', { name: t('dialog.close.title') });
+    } finally {
+      jobs.state = fromSnapshot([]);
+    }
   });
 });

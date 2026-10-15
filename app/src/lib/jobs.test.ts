@@ -3,7 +3,7 @@ import type { JobDto, JobStatus } from './bindings';
 import { t } from './copy/ko';
 import { COMPLETED_FOLD_AT, RECOVERY_SILENT_MS, STALE_DAYS } from './timing';
 import { ICONS } from './components/ui/icons';
-import { err, hlsProg, job, prog, signedInAs } from '../test/jobFixtures';
+import { err, hlsProg, job, liveProg, prog, signedInAs } from '../test/jobFixtures';
 import {
   FOLD_PREVIEW_COUNT,
   RESUMED_NOTE_MS,
@@ -845,5 +845,85 @@ describe('연결 대기·회복·멈춘 지 30일 판단(patterns.md §3.2)', ()
 
   it('낭독 낱말: 연결 대기 중', () => {
     expect(statusWord(waitingJob, waitingJob.progress)).toBe(t('job.phase.waitingNetwork'));
+  });
+});
+
+describe('생방송 녹화(ADR-0025): 막대·남은 시간 없이 글자만', () => {
+  const live = (over: Partial<JobDto> = {}) =>
+    job(1, { kind: 'live', playbackKind: 'live', status: 'running', progress: liveProg(), ...over });
+
+  it('상태 줄: 녹화 중 · 길이 · 받은 양. 총량·속도·남은 시간이 없다', () => {
+    const j = live();
+    expect(line(j)).toBe(`${t('job.live.running', { span: '1시간 2분', received: '3.40GB' })}`);
+    expect(line(j)).not.toMatch(/남음|\/s|%/);
+  });
+
+  it('놓친 조각이 있으면 상태 줄 끝에 더한다', () => {
+    const j = live({ progress: liveProg({ liveGaps: 3 }) });
+    expect(line(j)).toBe(`${t('job.live.running', { span: '1시간 2분', received: '3.40GB' })} · ${t('job.live.gaps', { n: 3 })}`);
+  });
+
+  it('준비 중·마무리 중·연결 대기·주소를 새로 받는 중은 일반 작업과 같은 조각이다', () => {
+    expect(line(live({ progress: prog({ phase: 'resolving' }) }))).toBe(t('job.status.resolving'));
+    expect(line(live({ progress: liveProg({ phase: 'finalizing' }) }))).toBe(t('job.status.finalizing'));
+    expect(line(live({ progress: liveProg({ phase: 'reresolving' }) }))).toBe(t('job.phase.reresolving'));
+  });
+
+  it('막대는 어느 상태에도 없다(퍼센트·줄무늬 모두)', () => {
+    for (const status of ['running', 'pausing', 'paused', 'interrupted', 'failed'] as const) {
+      const j = live({ status, partialBytes: 5, error: status === 'failed' ? err('network') : null });
+      expect(barView(j, j.progress), status).toBeNull();
+    }
+    expect(displayPercent(live(), liveProg())).toBeNull();
+  });
+
+  it('버튼: [녹화 마치기]와 [취소]. 일시정지는 없다', () => {
+    const j = live();
+    const b = jobButtons(j, j.progress);
+    expect(b.primary).toEqual(['stop']);
+    expect(b.cancel).toBe(true);
+    expect(jobActionLabel('stop', 'macos')).toBe(t('action.stopRecording'));
+    // 준비 중은 취소만, 마무리 중·마치는 중은 없다
+    expect(jobButtons(live({ progress: prog({ phase: 'resolving' }) }), prog({ phase: 'resolving' })).primary).toEqual([]);
+    expect(jobButtons(live({ status: 'pausing' }), null)).toEqual({ primary: [], cancel: false, menu: ['showTitle', 'copyUrl'] });
+  });
+
+  it('Space·Enter는 녹화를 마치지 않는다(되돌릴 수 없는 일이라 버튼으로만)', () => {
+    const j = live();
+    const b = jobButtons(j, j.progress);
+    expect(spaceAction(b)).toBeNull();
+    expect(enterAction(j, b)).toBeNull();
+    expect(deleteAction(j, b)).toBe('cancel');
+  });
+
+  it('마치는 중: 상태 줄과 낭독 낱말이 일시정지가 아니다', () => {
+    const j = live({ status: 'pausing' });
+    expect(line(j, null)).toBe(t('job.live.stopping'));
+    expect(statusWord(j, null)).toBe(t('job.live.stopping'));
+    expect(statusWord(live(), liveProg())).toBe(t('job.phase.recording'));
+  });
+
+  it('취소는 받은 부분을 지우므로 D2로 묻는다', () => {
+    const j = live();
+    expect(needsCancelConfirm(j, j.progress)).toBe(true);
+    expect(removeRoute(j, j.progress)).toBe('confirm');
+  });
+
+  it('끊겨 받다 만 생방송: 이어받기로 받은 부분까지 저장한다는 본문 줄', () => {
+    for (const status of ['paused', 'interrupted'] as const) {
+      const j = live({ status, partialBytes: 1000, progress: null });
+      expect(bodyLine(j, null, { base: 1024 }), status).toBe(t('job.live.partial.body'));
+      expect(jobButtons(j, null).primary).toEqual(['resume']);
+    }
+    // 받은 것이 없으면 줄이 없다. 일반 작업에는 이 줄이 없다
+    expect(bodyLine(live({ status: 'paused', partialBytes: 0, progress: null }), null)).toBeNull();
+    expect(bodyLine(job(2, { status: 'paused', partialBytes: 1000 }), null)).toBeNull();
+  });
+
+  it('오류 코드 notLive·nothingRecorded는 다시 시도 하나', () => {
+    for (const code of ['notLive', 'nothingRecorded'] as const) {
+      const j = live({ status: 'failed', progress: null, error: err(code) });
+      expect(jobButtons(j, null).primary, code).toEqual(['retry']);
+    }
   });
 });

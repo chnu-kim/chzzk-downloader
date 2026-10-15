@@ -439,6 +439,18 @@
 | (신설, 단계 (f)) `job.stale.body` | — | `job.stale.body` **{days}일 전에 멈췄어요. 디스크에 {size} 남아 있어요.**(`{days}`는 정수 일수, `formatCount`) | D39 |
 | (신설) `job.running`·`job.runningSegmented` | 조각 결합이 `jobs.ts`에 | **받는 중 · {received} / {total} · {speed} · {remaining}** / 빠른 다시보기는 **· 조각 {done}/{total}** 조각 포함 | §6.5(조각 결합도 deck), W5 |
 | `job.pausing` | 멈추는 중… | **일시정지하는 중** | §4, §6.3 |
+| `kind.live` | — | **생방송** | ADR-0025(D63) |
+| `card.live.body` | — | **지금 방송 중이에요. 받기를 누르면 녹화가 시작돼요. 방송이 끝나거나 녹화 마치기를 누를 때까지 받아요.** | ADR-0025. 카드 안 정보 안내 |
+| `job.phase.recording` | — | **녹화 중** | ADR-0025. 낭독용 낱말(`statusWord`) |
+| `job.live.running` | — | **녹화 중 · {span} · {received}** | ADR-0025. 길이를 모르므로 막대·퍼센트·남은 시간이 없다. `{span}`은 `formatSpan` |
+| `job.live.gaps` | — | **놓친 조각 {n}** | ADR-0025. 있을 때만 상태 줄 끝에 |
+| `job.live.stopping` | — | **녹화를 마치는 중** | ADR-0025 |
+| `job.live.partial.body` | — | **방송이 끊겨 이어 붙일 수 없어요. 이어받기를 누르면 받은 부분까지 저장해요.** | ADR-0025. 받다 만 생방송의 본문 줄 |
+| `action.stopRecording` | — | **녹화 마치기** | ADR-0025. 받은 만큼 최종 파일로 마무리 |
+| `dialog.cancel.live.body` | — | **{size}까지 녹화했어요. 취소하면 녹화한 부분이 지워지고 되돌릴 수 없어요.** | ADR-0025. 생방송 취소 확인 |
+| `dialog.closeLive.title` | — | **녹화를 마치고 닫을까요?** | ADR-0025. 창 닫기 확인(생방송이 섞였을 때) |
+| `dialog.closeLive.body` | — | **받는 중인 영상이 {n}개 있어요. 닫으면 녹화 중인 방송은 지금까지 받은 만큼 저장하고, 나머지는 일시정지돼요.** | ADR-0025 |
+| `dialog.closeLive.confirm` | — | **녹화를 마치고 닫기** | ADR-0025 |
 | `job.interrupted` | 중단됨 · {bytes} 받음 | 삭제 → `job.paused` **일시정지됨 · {bytes} 받음** | §4 |
 | `job.completed` | 완료 · {size} · {time} | 유지 + `job.completedNoTime` **완료 · {size}**(정규식 꼬리 제거 삭제) | §2 조각 |
 | `job.completedMissing` | 완료 · 파일을 찾을 수 없어요 | **완료 · 파일 없음** + 본문 `job.completedMissing.body` **파일을 옮기거나 지웠을 수 있어요.** | §3.1-2 |
@@ -530,7 +542,7 @@
 
 | 코드 | 제목 | 본문 | 버튼(L0, ≤ 3) | L1 |
 |---|---|---|---|---|
-| `invalidUrl` | 치지직 영상 주소가 아니에요 | 영상 주소는 chzzk.naver.com/video/… 또는 …/clips/… 모양이에요. 라이브 주소는 받을 수 없어요. | 없음(입력칸이 행동. 유일한 예외) | — |
+| `invalidUrl` | 치지직 영상 주소가 아니에요 | 영상 주소는 chzzk.naver.com/video/…, …/clips/…, …/live/… 모양이에요. | 없음(입력칸이 행동. 유일한 예외) | — |
 | `api` | 치지직이 요청을 거절했어요 | 잠시 뒤 다시 시도해 주세요. 계속되면 문제 보고용 정보를 복사해 관리자에게 보내 주세요. | 다시 시도 · 문제 보고용 정보 복사 | 치지직 응답: {apiMessage} / 치지직 응답 코드: {code} |
 | `http` 404·410 | 영상을 찾을 수 없어요 | 삭제됐거나 비공개로 바뀌었을 수 있어요. | 닫기 | HTTP {status} |
 | `http` 429 | 요청이 너무 많아요 | {mins}분쯤 뒤 다시 시도해 주세요. | 다시 시도 | HTTP 429 |

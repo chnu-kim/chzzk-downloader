@@ -57,11 +57,11 @@ pub fn default_filename(meta: &ContentMeta, p: Platform) -> String {
             match raw.and_then(parse_live_date) {
                 Some((y, m, d)) => match raw.and_then(parse_live_time) {
                     Some((hh, mm)) => {
-                        format!("[라이브 {:02}{m:02}{d:02}-{hh:02}{mm:02}] ", y % 100)
+                        format!("[생방송 {:02}{m:02}{d:02}-{hh:02}{mm:02}] ", y % 100)
                     }
-                    None => format!("[라이브 {:02}{m:02}{d:02}] ", y % 100),
+                    None => format!("[생방송 {:02}{m:02}{d:02}] ", y % 100),
                 },
-                None => "[라이브] ".to_string(),
+                None => "[생방송] ".to_string(),
             }
         }
         ContentKind::Video => {
@@ -534,12 +534,12 @@ mod tests {
         );
         assert_eq!(
             default_filename(&m, p),
-            "[라이브 260102-1234] 채널 - 제목.mp4"
+            "[생방송 260102-1234] 채널 - 제목.mp4"
         );
         let m = meta(ContentKind::Live, "채널", "제목", Some("2026-01-02"));
-        assert_eq!(default_filename(&m, p), "[라이브 260102] 채널 - 제목.mp4");
+        assert_eq!(default_filename(&m, p), "[생방송 260102] 채널 - 제목.mp4");
         let m = meta(ContentKind::Live, "채널", "제목", None);
-        assert_eq!(default_filename(&m, p), "[라이브] 채널 - 제목.mp4");
+        assert_eq!(default_filename(&m, p), "[생방송] 채널 - 제목.mp4");
         assert_eq!(parse_live_time("2026-01-02T05:06:07"), Some((5, 6)));
         assert_eq!(parse_live_time("2026-01-02 24:00:00"), None);
         assert_eq!(parse_live_time("2026-01-02 5:06"), None);

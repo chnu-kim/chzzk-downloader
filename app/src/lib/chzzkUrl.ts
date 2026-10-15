@@ -1,8 +1,13 @@
-// 치지직 VOD·클립 주소 모양 검사. 코어 `parse_content_url`(crates/core/src/url.rs)과 같은 규칙을 따르지만
+// 치지직 VOD·클립·생방송 주소 모양 검사. 코어 `parse_content_url`(crates/core/src/url.rs)과 같은 규칙을 따르지만
 // 판정은 늘 Rust가 다시 한다(`resolve`가 `invalidUrl`을 돌려준다). 여기서는 드롭한 글에서 주소 하나를 고를 때만 쓴다.
 
 const HOSTS = new Set(['chzzk.naver.com', 'm.chzzk.naver.com']);
 const MAX_SCAN = 4096; // 셸 `chzzk_link`와 같은 상한
+
+/** 채널 ID는 32자리 hex다(코어 `is_channel_id`) */
+function isChannelId(s: string): boolean {
+  return /^[0-9a-fA-F]{32}$/.test(s);
+}
 
 function isClipId(s: string): boolean {
   return /^[A-Za-z0-9_-]+$/.test(s);
@@ -22,6 +27,7 @@ export function isChzzkContentUrl(raw: string): boolean {
   const segs = url.pathname.split('/').slice(1);
   if (segs.length > 0 && segs[segs.length - 1] === '') segs.pop();
   if (segs.length === 2 && segs[0] === 'video') return /^\d+$/.test(segs[1]);
+  if (segs.length === 2 && segs[0] === 'live') return isChannelId(segs[1]);
   if (segs.length === 2 && segs[0] === 'clips') return isClipId(segs[1]);
   if (segs.length === 3 && segs[0] === 'embed' && segs[1] === 'clip') return isClipId(segs[2]);
   return false;

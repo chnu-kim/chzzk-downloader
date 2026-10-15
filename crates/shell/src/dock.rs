@@ -15,6 +15,8 @@
 
 use std::collections::HashSet;
 
+use chzzk_core::PlaybackKind;
+
 use crate::dto::{JobDto, JobId, JobStatus};
 
 /// OS에 칠할 진행 표시 상태.
@@ -67,6 +69,10 @@ fn is_active(s: JobStatus) -> bool {
 
 /// 작업이 진행값에 보태는 (받은 바이트, 전체 바이트). 전체를 모르면 `None`(분자·분모에서 뺀다).
 fn contribution(j: &JobDto) -> Option<(u64, u64)> {
+    // 생방송은 전체 길이가 없다. 끝난 녹화의 크기도 보태지 않는다(받는 중인 VOD의 퍼센트가 튀지 않게)
+    if j.playback_kind == PlaybackKind::Live {
+        return None;
+    }
     match j.status {
         JobStatus::Completed | JobStatus::Skipped => j.final_bytes.map(|b| (b, b)),
         _ => {
@@ -232,6 +238,34 @@ mod tests {
         let j = [running(1, 250, 1000)];
         assert_eq!(m.tick(&j, true), Some(state(DockStatus::Normal, Some(25))));
         assert_eq!(m.tick(&j, true), None);
+    }
+
+    /// 생방송은 진행값에 보태지 않는다: 녹화만 있으면 값 없는 Normal, 끝난 녹화 크기가 VOD 퍼센트를 흔들지 않는다
+    #[test]
+    fn live_recordings_do_not_contribute_to_progress() {
+        let live = |id: u64, status: JobStatus, final_bytes: Option<u64>| JobDto {
+            playback_kind: PlaybackKind::Live,
+            kind: ContentKindDto::Live,
+            final_bytes,
+            progress: Some(progress(7_000_000_000, None, None)),
+            ..job(id, status)
+        };
+        let mut m = DockMeter::default();
+        let only_live = [live(1, JobStatus::Running, None)];
+        assert_eq!(
+            m.tick(&only_live, true),
+            Some(state(DockStatus::Normal, None))
+        );
+
+        // 녹화가 끝나 크기가 7GB여도 VOD의 25%는 그대로 25%다
+        let jobs = [
+            live(1, JobStatus::Completed, Some(7_000_000_000)),
+            running(2, 250, 1000),
+        ];
+        assert_eq!(
+            m.tick(&jobs, true),
+            Some(state(DockStatus::Normal, Some(25)))
+        );
     }
 
     /// 시작 시 paused만 있으면 배치가 열리지 않아 표시가 없다

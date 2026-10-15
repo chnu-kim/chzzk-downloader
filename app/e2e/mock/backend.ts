@@ -103,6 +103,8 @@ export interface E2EController {
   authEvents: string[];
   /** 앱이 구독했는가(스냅샷을 보냈는가) */
   subscribed(): boolean;
+  /** 생방송 녹화 진행: 작업을 running으로 바꾸고 녹화한 길이(초)·놓친 조각을 보낸다(전체 길이를 모른다) */
+  liveProgress(id: number, bytes: number, recordedSecs: number, gaps?: number): void;
   /** 작업을 running으로 바꾸고 진행률을 보낸다. `phase`를 `waitingNetwork`로 주면 연결 대기(속도·남은 시간 없음)다 */
   progress(id: number, bytes: number, totalBytes: number, phase?: ProgressDto['phase']): void;
   complete(id: number, finalBytes: number): void;
@@ -201,7 +203,9 @@ export function install(scenario: Scenario = {}): E2EController {
         !('error' in r) &&
         (r.content.kind === 'video' && c.kind === 'video'
           ? r.content.videoNo === c.videoNo
-          : r.content.kind === 'clip' && c.kind === 'clip' && r.content.clipId === c.clipId),
+          : r.content.kind === 'live' && c.kind === 'live'
+            ? r.content.channelId === c.channelId
+            : r.content.kind === 'clip' && c.kind === 'clip' && r.content.clipId === c.clipId),
     );
   let settings: SettingsDto = { ...SETTINGS, ...scenario.settings };
   const jobs = new Map<number, JobDto>((scenario.jobs ?? []).map((j) => [j.id, j]));
@@ -367,6 +371,14 @@ export function install(scenario: Scenario = {}): E2EController {
       index = 0;
       return [...jobs.values()];
     },
+    // 셸 흉내: 생방송 녹화를 멈추고 받은 만큼 마무리한다(running → pausing → completed). 생방송이 아니면 invalidInput
+    stop_job: (a) => {
+      const j = must(a.id as number);
+      if (j.playbackKind !== 'live') throw err('invalidInput');
+      put({ ...j, status: 'pausing' });
+      put({ ...j, status: 'completed', progress: null, finalBytes: j.progress?.bytes ?? 0, finishedAt: clock++ });
+      return null;
+    },
     pause_job: (a) => {
       const j = must(a.id as number);
       // 실제 매니저는 pausing을 거쳐 paused가 된다(코어가 `.part`를 정리할 때까지)
@@ -421,6 +433,28 @@ export function install(scenario: Scenario = {}): E2EController {
     progress(id, bytes, totalBytes, phase = 'downloading') {
       const j = must(id);
       const p = progressDto(j, bytes, totalBytes, phase);
+      if (j.status !== 'running') put({ ...j, status: 'running', progress: p });
+      else jobs.set(id, { ...j, progress: p });
+      send({ type: 'progress', id, progress: p });
+    },
+    liveProgress(id, bytes, recordedSecs, gaps = 0) {
+      const j = must(id);
+      const p: ProgressDto = {
+        phase: 'downloading',
+        bytes,
+        totalBytes: null,
+        totalBytesEstimate: null,
+        segmentsDone: null,
+        segmentsTotal: null,
+        mediaSecsDone: null,
+        mediaSecsTotal: null,
+        speedBps: 1_000_000,
+        etaSecs: null,
+        resumedFrom: 0,
+        refreshes: 0,
+        liveRecordedSecs: recordedSecs,
+        liveGaps: gaps,
+      };
       if (j.status !== 'running') put({ ...j, status: 'running', progress: p });
       else jobs.set(id, { ...j, progress: p });
       send({ type: 'progress', id, progress: p });

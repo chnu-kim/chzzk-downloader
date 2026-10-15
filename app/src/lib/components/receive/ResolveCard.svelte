@@ -253,6 +253,11 @@
     />
   </div>
 
+  {#if tone === 'live'}
+    <!-- 생방송은 길이를 모르고 받기를 누르면 방송이 끝나거나 [녹화 마치기]를 누를 때까지 받는다(ADR-0025) -->
+    <Notice variant="inline" tone="info">{t('card.live.body')}</Notice>
+  {/if}
+
   {#if hasWarnings}
     <div class="warnings">
       {#if check && fresh}

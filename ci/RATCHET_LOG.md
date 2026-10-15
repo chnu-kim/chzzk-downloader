@@ -33,3 +33,5 @@
 | 2026-10-11 | `size.binary.windows` | 20665344 → 21329920 | 디자인 시스템 단계 (f)(governance §10 (f) ratchet 칸): window-state·keepawake·windows/webview2-com 크레이트와 WebView2 보강. Windows 번들은 PR에서 돌지 않아 master 실행 38087544439의 CI 측정값(+3.22%)으로 올린다 |
 | 2026-10-11 | `size.bundle.windows-msi` | 7319552 → 7540736 | 같은 증가분이 msi에 반영됨(master 실행 38087544439의 CI 측정값, +3.02%) |
 | 2026-10-11 | `size.bundle.windows-setup` | 4945876 → 5095510 | v0.5.0 태그 빌드(release.yml 실행 38098273571, `build (windows-latest)`)가 +3.03%로 허용 3%를 넘었다. 같은 커밋의 master 실행 38097752345는 +2.99%로 통과해 버전 PR에서 드러나지 않았다(태그 빌드는 updater 산출물·Worker 주소가 들어가 조금 크다). PR #77(관리자 예외 안내·판정) 누적분이고 태그 빌드 측정값으로 올린다 |
+| 2026-10-16 | `size.binary.darwin` | 23809376 → 24873424 | 생방송 녹화(코어 라이브 엔진·`defrag.rs` 일반 mp4 변환기·셸 lane·화면, PR #104·#105). macOS·Windows 번들은 master push·dispatch에서만 돌아 PR에서 드러나지 않았다(master 실행 38803078332의 CI 측정값, +4.47%) |
+| 2026-10-16 | `size.bundle.darwin-dmg` | 7748531 → 8114708 | 생방송 녹화(코어 라이브 엔진·`defrag.rs` 일반 mp4 변환기·셸 lane·화면, PR #104·#105). macOS·Windows 번들은 master push·dispatch에서만 돌아 PR에서 드러나지 않았다(master 실행 38803078332의 CI 측정값, +4.73%) |

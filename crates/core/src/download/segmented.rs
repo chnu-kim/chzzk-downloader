@@ -34,7 +34,7 @@ const CHECKPOINT_EVERY: Duration = Duration::from_secs(5);
 
 /// 응답 본문의 종류. 검사 방법이 다르다.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Body {
+pub(super) enum Body {
     /// master·media playlist(크기 상한만)
     Playlist,
     /// fMP4 init(`ftyp`)
@@ -276,12 +276,13 @@ async fn acquire(job: &mut Job<'_>, mut src: Option<(Url, Vec<Quality>)>) -> Res
             None => {
                 let r = job.reresolve().await?;
                 just_refreshed = true;
+                let now = r.kind();
                 match r.source {
                     Source::LiveRewindHls { master_url, tracks } => (master_url, tracks),
-                    Source::Progressive { .. } => {
+                    Source::Progressive { .. } | Source::Live { .. } => {
                         return Err(Error::PlaybackChanged {
                             was: PlaybackKind::LiveRewindHls,
-                            now: PlaybackKind::Progressive,
+                            now,
                         });
                     }
                 }
@@ -331,7 +332,7 @@ async fn load(job: &Job<'_>, master_url: &Url, tracks: &[Quality]) -> Result<Loa
     })
 }
 
-fn utf8<'a>(b: &'a [u8], what: &'static str) -> Result<&'a str, Failure> {
+pub(super) fn utf8<'a>(b: &'a [u8], what: &'static str) -> Result<&'a str, Failure> {
     std::str::from_utf8(b).map_err(|e| {
         Failure::Fatal(Error::Parse {
             what,
@@ -342,7 +343,7 @@ fn utf8<'a>(b: &'a [u8], what: &'static str) -> Result<&'a str, Failure> {
 
 /// `track_id == quality_id`인 variant. 없으면 `tracks`에서 그 화질의 높이를 찾아 `height`로 고른다
 /// (설계 §4.1). 그래도 없으면 `QualityNotFound`.
-fn pick_variant<'a>(
+pub(super) fn pick_variant<'a>(
     variants: &'a [Variant],
     quality_id: &str,
     tracks: &[Quality],
@@ -366,7 +367,7 @@ fn pick_variant<'a>(
 }
 
 /// 취소할 수 있는 `fetch`.
-async fn fetch_cancellable(
+pub(super) async fn fetch_cancellable(
     job: &Job<'_>,
     policy: RetryPolicy,
     url: &Url,
@@ -378,7 +379,7 @@ async fn fetch_cancellable(
 }
 
 /// 재시도를 포함한 GET. `Expired`와 `Fatal`, 재시도를 다 쓴 `Retry`를 돌려준다.
-async fn fetch(
+pub(super) async fn fetch(
     chzzk: &Chzzk,
     policy: RetryPolicy,
     url: &Url,

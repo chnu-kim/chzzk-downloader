@@ -13,6 +13,7 @@
 | 폴더 | 내용 | 테스트가 기대는 구조 |
 |---|---|---|
 | `hls/` | 빠른 다시보기(`inKey: null`) info, master(variant 5개), media(세그먼트 30개 × 2초), fMP4 | `liveRewindPlaybackJson`이 JSON이 든 **문자열**, variant URI 경로의 `hdntl=` 토큰, MAP URI 쿼리 보존 |
+| `live/` | 생방송 `live-detail` 응답 넷: 진행 중(HLS·LLHLS 순서 둘), 종료(`CLOSE`, 재생 정보 없음), 성인 차단(재생 정보 없음) | `livePlaybackJson`이 JSON이 든 **문자열**, 같은 `protocol: "HLS"`인 media 둘을 `mediaId`로 구분, `audioOnly` 트랙 |
 | `vod/` | 일반 VOD(`inKey` 있음) info와 MPD | `video/mp4` PD 2개 + `video/mp2t` UUID 2개(mimeType 상속, PD와 같은 라벨·서명 BaseURL·SegmentTemplate을 가진 미끼) + `audio/mp4` 1개(라벨·SegmentList), `ContentProtection` 없음 |
 | `clip/` | 클립 play-info 2개와 MPD(세로 영상, PD 2개) | `%xx` 인코딩 서명 쿼리 보존, resolution 라벨 기준 선택 |
 | `synthetic/` | `vod_info_aes.json`(`encryptionType: "AES"`), `media_*.m3u8`(태그 하나씩 넣거나 뺀 변형) | 미지원 태그·암호화 거부와 허용 규칙 |

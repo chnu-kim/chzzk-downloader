@@ -177,6 +177,8 @@ mod tests {
             eta_secs: None,
             resumed_from: 0,
             refreshes: 0,
+            live_recorded_secs: None,
+            live_gaps: None,
         }
     }
 

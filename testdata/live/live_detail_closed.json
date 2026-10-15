@@ -1,0 +1,35 @@
+{
+  "code": 200,
+  "message": null,
+  "content": {
+    "liveId": 9000003,
+    "liveTitle": "테스트 생방송",
+    "status": "CLOSE",
+    "liveImageUrl": "https://img.example.invalid/live/{type}.jpg",
+    "defaultThumbnailImageUrl": null,
+    "concurrentUserCount": 10,
+    "accumulateCount": 100,
+    "openDate": "2026-01-02 12:00:00",
+    "closeDate": "2026-01-02 14:00:00",
+    "adult": false,
+    "clipActive": true,
+    "tags": [
+      "테스트"
+    ],
+    "chatChannelId": "N0000",
+    "categoryType": "ETC",
+    "liveCategory": "test",
+    "liveCategoryValue": "test",
+    "timeMachineActive": false,
+    "livePlaybackJson": null,
+    "channel": {
+      "channelId": "000000000000000000000000000000e5",
+      "channelName": "생방송채널",
+      "channelImageUrl": "https://img.example.invalid/channel/000000000000000000000000000000e5.png",
+      "verifiedMark": false,
+      "verifiedMarkType": null,
+      "officialChannel": false
+    },
+    "userAdultStatus": null
+  }
+}

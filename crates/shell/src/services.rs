@@ -591,18 +591,22 @@ pub async fn enqueue<B: Backend>(
     let kind = recent_kind(&req.content, req.expected_kind);
     let date = req.content_date.clone();
     let job = manager.enqueue(req, &settings.job_defaults())?;
-    if let Err(e) = settings.record_enqueued(&url, &title, &label, kind, date.as_deref()) {
+    if let Some(kind) = kind
+        && let Err(e) = settings.record_enqueued(&url, &title, &label, kind, date.as_deref())
+    {
         tracing::warn!(code = ?e.code, error = %e.message, "최근 VOD를 저장하지 못함");
     }
     Ok(job)
 }
 
-/// 최근 영상 배지 종류: 클립 / 빠른 다시보기(HLS) / 일반 VOD(프런트 `kindTone`과 같은 규칙)
-pub fn recent_kind(content: &ContentRef, playback: PlaybackKind) -> RecentKind {
+/// 최근 영상 배지 종류: 클립 / 빠른 다시보기(HLS) / 일반 VOD(프런트 `kindTone`과 같은 규칙).
+/// 생방송은 다시 불러올 영상이 아니라 최근 목록에 넣지 않는다(`None`).
+pub fn recent_kind(content: &ContentRef, playback: PlaybackKind) -> Option<RecentKind> {
     match (content, playback) {
-        (ContentRef::Clip { .. }, _) => RecentKind::Clip,
-        (_, PlaybackKind::LiveRewindHls) => RecentKind::Rewind,
-        (_, PlaybackKind::Progressive) => RecentKind::Vod,
+        (ContentRef::Live { .. }, _) | (_, PlaybackKind::Live) => None,
+        (ContentRef::Clip { .. }, _) => Some(RecentKind::Clip),
+        (_, PlaybackKind::LiveRewindHls) => Some(RecentKind::Rewind),
+        (_, PlaybackKind::Progressive) => Some(RecentKind::Vod),
     }
 }
 

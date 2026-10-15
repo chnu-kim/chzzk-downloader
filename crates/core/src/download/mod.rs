@@ -4,6 +4,7 @@
 //! - `retry`: 재시도 정책과 실패 분류
 //! - `progressive`: PD mp4 단일 GET + Range 이어받기
 //! - `segmented`: 빠른 다시보기 HLS fMP4, 순서 보장 동시 fetch
+//! - `live`: 진행 중인 생방송 HLS fMP4, playlist를 계속 읽어 새 세그먼트를 이어 받는다
 //!
 //! 공통 골격(`Chzzk::download`):
 //! 1. 최종 파일이 있으면 `Skip` → `Skipped`(네트워크 0회), `Overwrite` → 계속.
@@ -16,6 +17,7 @@
 //! 실패·취소 시 `.part`와 sidecar를 남긴다(checkpoint 후). `is_resumable() == false`인 오류만 지운다.
 //! 단 `resolve` 실패와 작업 도중 재조회의 지문 불일치는 남긴다(`Job::keep_partial`).
 
+pub(crate) mod live;
 pub mod part;
 pub(crate) mod progressive;
 pub mod retry;
@@ -68,6 +70,9 @@ pub struct DownloadRequest {
     pub on_existing: DuplicatePolicy,
     /// HLS 동시 요청 수. 기본 4, 상한 8
     pub concurrency: NonZeroU8,
+    /// 생방송만: 이 토큰이 취소되면 지금까지 받은 것을 최종 파일로 마무리하고 `Completed`로 끝낸다
+    /// (`cancel`은 `.part`를 남기고 `Cancelled`로 끝나는 다른 뜻이다). 생방송이 아니면 쓰지 않는다.
+    pub live_stop: Option<CancellationToken>,
 }
 
 /// 다운로드 결과.
@@ -109,6 +114,7 @@ impl<'a> Reporter<'a> {
                 eta_secs: None,
                 resumed_from: 0,
                 refreshes: 0,
+                live: None,
             },
         }
     }
@@ -300,6 +306,11 @@ impl Chzzk {
 
 /// 엔진을 고른다.
 async fn run(job: &mut Job<'_>, part: &mut Option<PartFile>) -> Result<DownloadOutcome, Error> {
+    // 앞선 생방송 녹화가 중간에 끊겨 `.part`가 남았다면 이어 받지 않고(방송 흐름이 끊겼다) 받은 만큼을 마무리한다.
+    if job.req.expected_kind == PlaybackKind::Live && part.is_some() {
+        let resumed_from = part.as_ref().map_or(0, PartFile::written);
+        return finish(job, part, resumed_from).await;
+    }
     job.report.phase(Phase::Resolving);
     let resolved = job.resolve().await?;
     job.report.phase(Phase::Downloading);
@@ -308,6 +319,11 @@ async fn run(job: &mut Job<'_>, part: &mut Option<PartFile>) -> Result<DownloadO
         Source::LiveRewindHls { master_url, tracks } => {
             segmented::run(job, master_url, tracks, part).await
         }
+        Source::Live {
+            master_url,
+            tracks,
+            live_id,
+        } => live::run(job, master_url, tracks, live_id, part).await,
     }
 }
 

@@ -60,8 +60,8 @@ function sample(code: ErrorCode, stage: Stage | null = null): AppError {
 }
 
 describe('errorCopy 전체 표', () => {
-  it('오류 코드는 28개(코어 20 + 셸 8)', () => {
-    expect(ERROR_CODES).toHaveLength(28);
+  it('오류 코드는 30개(코어 22 + 셸 8)', () => {
+    expect(ERROR_CODES).toHaveLength(30);
   });
 
   // 모든 code × 위치 × .part 유무 × 쿠키 사용 × 진단에서 3요소가 갖춰지고 DC8·C6 규칙을 지킨다.
@@ -136,7 +136,7 @@ const PLAIN = err('noPlayback', { type: 'noPlayback', adult: false });
 const DISK = err('diskFull', pathPayload('D:\\영상'));
 const PATHED = (code: ErrorCode) => err(code, pathPayload('D:\\영상'));
 
-// content.md §15.2: 코드 28개 × 자리별 L0(제목·본문·버튼)와 L1
+// content.md §15.2: 코드 30개 × 자리별 L0(제목·본문·버튼)와 L1
 const GOLDEN: Row[] = [
   {
     name: 'invalidUrl: 버튼 없음(입력칸이 행동)',
@@ -289,6 +289,33 @@ const GOLDEN: Row[] = [
     title: '아직 받을 수 없는 영상이에요',
     body: '방송 직후라 처리 중이거나 다시보기가 꺼져 있을 수 있어요.',
     actions: ['reresolve'],
+    detail: null,
+  },
+  {
+    name: 'notLive R: 방송이 시작된 뒤 다시',
+    error: err('notLive'),
+    ctx: R,
+    title: '지금 방송 중이 아니에요',
+    body: '방송이 시작된 뒤 다시 시도해 주세요.',
+    actions: ['retry'],
+    detail: null,
+  },
+  {
+    name: 'notLive D: 같은 말, 받다 만 파일이 있으면 이어받기(저장)',
+    error: err('notLive'),
+    ctx: DP,
+    title: '지금 방송 중이 아니에요',
+    body: '방송이 시작된 뒤 다시 시도해 주세요.',
+    actions: ['resume'],
+    detail: null,
+  },
+  {
+    name: 'nothingRecorded D: 파일이 남지 않았다',
+    error: err('nothingRecorded'),
+    ctx: D,
+    title: '녹화된 내용이 없어요',
+    body: '방송 영상이 오기 전에 마쳤어요. 방송 중일 때 다시 시도해 주세요.',
+    actions: ['retry'],
     detail: null,
   },
   {
@@ -614,7 +641,7 @@ describe('errorCopy 골든(§15.2 코드별 L0·L1)', () => {
     });
   }
 
-  it('골든이 28개 코드를 모두 덮는다', () => {
+  it('골든이 30개 코드를 모두 덮는다', () => {
     const covered = new Set(GOLDEN.map((g) => (g.error.code === 'cancelled' ? 'cancelled' : g.error.code)));
     for (const code of ERROR_CODES) expect(covered.has(code), code).toBe(true);
   });

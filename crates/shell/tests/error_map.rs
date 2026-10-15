@@ -8,12 +8,14 @@ use chzzk_shell::{AppError, ErrorCode, ErrorPayload, JobId, RequestKindDto, Stag
 use serde_json::{Value, json};
 
 /// 코어 `ErrorKind` 전체. `sample`의 빠짐없는 match와 함께 새 종류를 놓치지 않게 한다.
-const ALL_KINDS: [ErrorKind; 20] = [
+const ALL_KINDS: [ErrorKind; 22] = [
     ErrorKind::InvalidUrl,
     ErrorKind::Api,
     ErrorKind::Http,
     ErrorKind::AuthRequired,
     ErrorKind::NoPlayback,
+    ErrorKind::NotLive,
+    ErrorKind::NothingRecorded,
     ErrorKind::Encrypted,
     ErrorKind::NoQualities,
     ErrorKind::QualityNotFound,
@@ -51,6 +53,8 @@ fn sample(k: ErrorKind) -> Error {
         },
         ErrorKind::AuthRequired => Error::AuthRequired { status: 403 },
         ErrorKind::NoPlayback => Error::NoPlayback { adult: true },
+        ErrorKind::NotLive => Error::NotLive,
+        ErrorKind::NothingRecorded => Error::NothingRecorded,
         ErrorKind::Encrypted => Error::EncryptedVod {
             method: "AES-128".into(),
         },
@@ -136,6 +140,8 @@ fn payload_per_kind() {
             ErrorKind::NoPlayback,
             json!({"type": "noPlayback", "adult": true}),
         ),
+        (ErrorKind::NotLive, Value::Null),
+        (ErrorKind::NothingRecorded, Value::Null),
         (ErrorKind::Encrypted, Value::Null),
         (ErrorKind::NoQualities, Value::Null),
         (

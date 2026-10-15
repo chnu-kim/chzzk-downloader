@@ -64,6 +64,7 @@ async fn download(
         output: output.clone(),
         on_existing: DuplicatePolicy::Overwrite,
         concurrency: chzzk_core::download::DEFAULT_CONCURRENCY,
+        live_stop: None,
     };
     let res = c.download(req, cancel, &cb).await;
     (res, output, seen.load(Ordering::SeqCst))

@@ -33,6 +33,7 @@ fn content_ref_json(c: &ContentRef) -> Value {
     match c {
         ContentRef::Video { video_no } => json!({"kind": "video", "videoNo": video_no}),
         ContentRef::Clip { clip_id } => json!({"kind": "clip", "clipId": clip_id}),
+        ContentRef::Live { channel_id } => json!({"kind": "live", "channelId": channel_id}),
     }
 }
 
@@ -49,6 +50,12 @@ fn content_ref_mirror_matches_core() {
             },
             json!({"kind": "clip", "clipId": "abc"}),
         ),
+        (
+            ContentRef::Live {
+                channel_id: "000000000000000000000000000000e5".into(),
+            },
+            json!({"kind": "live", "channelId": "000000000000000000000000000000e5"}),
+        ),
     ] {
         assert_eq!(to_json(&core), to_json(&ContentRefTs::from(&core)));
         assert_eq!(to_json(&core), s);
@@ -61,12 +68,17 @@ fn playback_kind_json(k: PlaybackKind) -> &'static str {
     match k {
         PlaybackKind::Progressive => "progressive",
         PlaybackKind::LiveRewindHls => "liveRewindHls",
+        PlaybackKind::Live => "live",
     }
 }
 
 #[test]
 fn playback_kind_mirror_matches_core() {
-    for core in [PlaybackKind::Progressive, PlaybackKind::LiveRewindHls] {
+    for core in [
+        PlaybackKind::Progressive,
+        PlaybackKind::LiveRewindHls,
+        PlaybackKind::Live,
+    ] {
         assert_eq!(to_json(&core), to_json(&PlaybackKindTs::from(core)));
         assert_eq!(to_json(&core), json!(playback_kind_json(core)));
     }
@@ -129,6 +141,7 @@ fn hls_progress() -> Progress {
         eta_secs: Some(138),
         resumed_from: 1_000,
         refreshes: 1,
+        live: None,
     }
 }
 
@@ -149,7 +162,9 @@ fn progress_tuples_are_flattened() {
             "speedBps": 1_048_576,
             "etaSecs": 138,
             "resumedFrom": 1_000,
-            "refreshes": 1
+            "refreshes": 1,
+            "liveRecordedSecs": null,
+            "liveGaps": null
         })
     );
     let progressive = Progress {
@@ -163,6 +178,7 @@ fn progress_tuples_are_flattened() {
         eta_secs: None,
         resumed_from: 0,
         refreshes: 0,
+        live: None,
     };
     let v = to_json(&ProgressDto::from(&progressive));
     assert_eq!(v["segmentsDone"], Value::Null);
@@ -666,7 +682,24 @@ fn progress_dto_keeps_every_core_field() {
         obj.insert(done.into(), v[0].clone());
         obj.insert(total.into(), v[1].clone());
     }
+    // 생방송 진행도 펼친다(없으면 둘 다 null)
+    let live = obj.remove("live").unwrap();
+    assert_eq!(live, Value::Null);
+    obj.insert("liveRecordedSecs".into(), Value::Null);
+    obj.insert("liveGaps".into(), Value::Null);
     assert_eq!(to_json(&ProgressDto::from(&p)), core);
+}
+
+#[test]
+fn live_progress_is_flattened() {
+    let mut p = hls_progress();
+    p.live = Some(chzzk_core::LiveProgress {
+        recorded_secs: 3725.5,
+        gaps: 2,
+    });
+    let v = to_json(&ProgressDto::from(&p));
+    assert_eq!(v["liveRecordedSecs"], json!(3725.5));
+    assert_eq!(v["liveGaps"], json!(2));
 }
 
 #[test]

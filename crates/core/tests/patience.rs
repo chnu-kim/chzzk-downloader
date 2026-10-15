@@ -61,6 +61,7 @@ fn pd_request(out: &Path) -> DownloadRequest {
         output: out.to_path_buf(),
         on_existing: DuplicatePolicy::Overwrite,
         concurrency: chzzk_core::download::DEFAULT_CONCURRENCY,
+        live_stop: None,
     }
 }
 
@@ -72,6 +73,7 @@ fn hls_request(out: &Path) -> DownloadRequest {
         output: out.to_path_buf(),
         on_existing: DuplicatePolicy::Overwrite,
         concurrency: std::num::NonZeroU8::new(1).unwrap(),
+        live_stop: None,
     }
 }
 

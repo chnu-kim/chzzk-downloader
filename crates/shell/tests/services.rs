@@ -337,21 +337,26 @@ fn recent_kind_follows_content_then_playback() {
     };
     assert_eq!(
         recent_kind(&video, PlaybackKind::Progressive),
-        RecentKind::Vod
+        Some(RecentKind::Vod)
     );
     assert_eq!(
         recent_kind(&video, PlaybackKind::LiveRewindHls),
-        RecentKind::Rewind
+        Some(RecentKind::Rewind)
     );
     // 클립이 먼저다: 재생 방식과 무관하게 clip
     assert_eq!(
         recent_kind(&clip, PlaybackKind::Progressive),
-        RecentKind::Clip
+        Some(RecentKind::Clip)
     );
     assert_eq!(
         recent_kind(&clip, PlaybackKind::LiveRewindHls),
-        RecentKind::Clip
+        Some(RecentKind::Clip)
     );
+    // 생방송은 최근 영상 목록에 넣지 않는다
+    let live = ContentRef::Live {
+        channel_id: "000000000000000000000000000000e5".into(),
+    };
+    assert_eq!(recent_kind(&live, PlaybackKind::Live), None);
 }
 
 #[test]

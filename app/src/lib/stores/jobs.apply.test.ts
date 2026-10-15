@@ -16,6 +16,8 @@ function progress(bytes: number): ProgressDto {
     etaSecs: 5,
     resumedFrom: 0,
     refreshes: 0,
+    liveRecordedSecs: null,
+    liveGaps: null,
   };
 }
 

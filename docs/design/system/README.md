@@ -26,7 +26,7 @@
 
 | 문서 | 내용 | 소유하는 결정 |
 |---|---|---|
-| `README.md`(이 문서) | 이름·원칙·우선순위·결정 표 D1~D62·열린 항목·변경 규칙 | 전부의 색인 |
+| `README.md`(이 문서) | 이름·원칙·우선순위·결정 표 D1~D63·열린 항목·변경 규칙 | 전부의 색인 |
 | `foundations.md` | 토큰 전부(이름·값). 색·대비·forced-colors, 글자·척도·글꼴 스택, 간격, 크기, 반경·선·면·그림자, 모션·z-index, 레이아웃, 아이콘, 테마, CSS 하한, 생성물 기대 모양 | D1 D3 D4 D5 D6 D8 D9 D11~D20 D22 D23 D24 D27 D31 D32 |
 | `components.md` | 컴포넌트 명세: API 어휘(`variant`·`tone`·`size`·`kind`·`state`), 상태(hover·pressed·disabled·focus), 치수 조합, forced-colors 행, 접근 이름 강제. Button·IconButton·TextField·SecretField·Select·Switch·RadioGroup·Disclosure·Menu·Dialog·ConfirmDialog·Notice·Toast·ErrorAlert·EmptyState·Surface·SettingsRow·FieldRow·PageContainer·Badge·ProgressBar·Spinner·Skeleton·Kbd·Icon·AppMark·DropOverlay·Toolbar | D21 D35 D37(해부) |
 | `patterns.md` | 화면 패턴: 홈(빈 상태 3단계·최근 영상·붙여넣기 힌트), 영상 카드, 작업 행과 상태 어휘, 설정, 로그인·거부, 대화상자 배치, 알림 위계와 상태 6종, 진행 표시, 완료 후 동작, 연결 대기, 공지. 문구 예시는 두지 않고 `content.md`의 키를 가리킨다 | D36 D37 D38 D39 D40 D41 D56 D57 |
@@ -209,6 +209,7 @@
 |---|---|---|---|
 | D61 강제 장치 | §4.1 일곱 gate: `design-tokens`·`design-lint`·`design-copy`·`design-icons`는 `ci-ok` 필수, `design-gallery`는 `e2e-web` 안(D14 관찰 뒤 필수), `design-shots`는 관찰(app 영역), `design-worker`는 관찰(worker 영역: Worker 페이지만 바뀐 PR에서 app 전체를 켜지 않으려고 Worker 촬영을 따로 둔다, 2026-10-10 사용자 결정). 스냅샷은 Linux 한 곳(시스템 글꼴이 OS마다 다름), `--force-device-scale-factor`로 DPR | gov, a-drift §강제 장치 지도(없는 것 9개), g-scale(`deviceScaleFactor`는 스냅 재현 안 함) | `parity`(gates.mjs 등록) |
 | D62 첫 사용자 시험 | **둘 다**(적용 전 현재 앱 기준선 + 적용 뒤). 회당 3명(스트리머·지인 각 1명 이상), 두 회 이상, 과업 UT1~UT7(`governance.md` §6.2), 판정은 관찰 횟수+심각도, "N명 중 M명"으로만. 시험 기록에 채널명·제목 금지. 확인 과업 V1~V8(`governance.md` §6.4): 완료를 색 없이 알아보는가 / 오른쪽 파랑을 안전으로 읽는가 / 왼쪽 빨간 글자를 파괴로 읽는가 / 13px이 작게 느껴지는가 / 헤더 이름만으로 무엇인지 아는가 / 툴바 톱니를 찾는가 / 연결 대기를 오류로 읽는가 / 토스트 6초를 다 읽는가 | `G-EVID-R1`~`G-EVID-R10`, `J-Q1`~`J-Q5` | `R10`, `governance.md` 시험 항목 목록 |
+| D63 생방송 녹화 | **종류 배지 "생방송"**, 진행 중인 방송을 받을 때만 명사 **"녹화"**(상태 줄 "녹화 중 · 1시간 2분 · 3.4GB"), 끝내는 버튼 **[녹화 마치기]**(받은 만큼 최종 파일로 마무리). 일시정지·진행 막대·남은 시간 없음. 본인 채널 게이트 그대로 | 사용자 결정(2026-10-16). 길이를 모르는 대상은 퍼센트를 만들지 않는다(D40·patterns §3.2). ADR-0025 | `design-copy`, `frontend` |
 
 ---
 
@@ -281,7 +282,7 @@
 - 예시 값은 가짜만 쓴다(`scan`).
 ### 7.3 처음에 쓴 ADR
 
-판정과 이 문서가 내린 결정의 기록으로 열 장을 썼다(`adr/`). 모두 E0~E1 근거라 `채택(잠정)`이다. 0011~0016은 적용 단계 (b)의 새 컴포넌트 여섯 장, 0017~0019는 (c)의 기능 화면 결정 셋, 0020·0021은 (e)의 Worker 결정 둘(서비스 공지 D41, 웹 폼 위험도 D54), 0022~0024는 (f)의 셸 결정 셋(Dock 집계 D29, 클립보드 제안 D56, 연결 대기 D40)이다.
+판정과 이 문서가 내린 결정의 기록으로 열 장을 썼다(`adr/`). 모두 E0~E1 근거라 `채택(잠정)`이다. 0011~0016은 적용 단계 (b)의 새 컴포넌트 여섯 장, 0017~0019는 (c)의 기능 화면 결정 셋, 0020·0021은 (e)의 Worker 결정 둘(서비스 공지 D41, 웹 폼 위험도 D54), 0022~0024는 (f)의 셸 결정 셋(Dock 집계 D29, 클립보드 제안 D56, 연결 대기 D40), 0025는 생방송 녹화(D63)다.
 
 | 번호 | 제목 | 관련 |
 |---|---|---|
@@ -309,5 +310,6 @@
 | 0022 | Dock·작업 표시줄 진행 집계: 배치 구성원 기준, 단조, 포커스 없을 때만 Error, 1Hz | D29, platform §8.2·§22 32 |
 | 0023 | 클립보드 제안: macOS는 alwaysAllow일 때만 읽고, 셀렉터가 없는 OS에서는 읽는다 | D56, platform §17.2·§22 37 |
 | 0024 | 연결 대기: 상태가 아니라 phase, 30분 인내, 잠든 시간은 세지 않는다 | D40, D39, platform §15.2·§22 33~35, core.md 56 |
+| 0025 | 생방송 녹화: 종류 배지 "생방송", 동사 "녹화", 끝내는 버튼 "녹화 마치기" | D43·D63, content.md §4·§15.2, core.md 58 |
 
 그 뒤 D33(앱 마크)·D58·D59·D60(사람 결정)·D55(실기 결과)·§6-1(Windows 실기)이 각각 ADR을 받는다(§6-1은 실기 결과가 나온 뒤).

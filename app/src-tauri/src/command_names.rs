@@ -15,6 +15,7 @@
     "list_jobs",
     "subscribe_jobs",
     "pause_job",
+    "stop_job",
     "resume_job",
     "remove_job",
     "clear_finished",

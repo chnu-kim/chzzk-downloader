@@ -20,6 +20,7 @@
     "allow-list-jobs",
     "allow-subscribe-jobs",
     "allow-pause-job",
+    "allow-stop-job",
     "allow-resume-job",
     "allow-remove-job",
     "allow-clear-finished",

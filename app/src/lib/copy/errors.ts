@@ -63,6 +63,8 @@ const ALL_CODES: Record<ErrorCode, true> = {
   http: true,
   authRequired: true,
   noPlayback: true,
+  notLive: true,
+  nothingRecorded: true,
   encrypted: true,
   noQualities: true,
   qualityNotFound: true,
@@ -302,6 +304,14 @@ export function errorCopy(raw: AppError, ctx: ErrorContext): ErrorCopy {
         '방송 직후라 처리 중이거나 다시보기가 꺼져 있을 수 있어요.',
         [reload],
       );
+
+    case 'notLive':
+      // 생방송 주소인데 방송 중이 아니다(ADR-0025). 방송이 시작된 뒤 다시 시도하면 된다
+      return copy('지금 방송 중이 아니에요', '방송이 시작된 뒤 다시 시도해 주세요.', [again]);
+
+    case 'nothingRecorded':
+      // 받기 시작했지만 영상 조각이 하나도 오기 전에 마쳤다. 저장할 것이 없어 파일이 남지 않았다
+      return copy('녹화된 내용이 없어요', '방송 영상이 오기 전에 마쳤어요. 방송 중일 때 다시 시도해 주세요.', [again]);
 
     case 'encrypted':
       // 우회 방법이나 쿠키 안내를 넣지 않는다(§9.2-6).

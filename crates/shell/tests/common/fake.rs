@@ -39,6 +39,9 @@ pub enum Step {
     Linger(Duration),
     /// 파일을 쓴다(코어의 `.part`·sidecar 쓰기 흉내)
     Write(PathBuf, Vec<u8>),
+    /// 생방송: `live_stop`이 취소될 때까지 기다리고 **다음 단계로 넘어간다**(받은 만큼 마무리하는 코어 흉내).
+    /// `cancel`이 오면 `Cancelled`다. 요청에 `live_stop`이 없으면 취소만 기다린다.
+    UntilStopped,
 }
 
 /// `download` 한 번의 대본.
@@ -98,6 +101,12 @@ impl Script {
         self
     }
 
+    /// 생방송 `live_stop`을 기다린 뒤 이어지는 단계와 결과로 마무리한다.
+    pub fn until_stopped(mut self) -> Self {
+        self.steps.push(Step::UntilStopped);
+        self
+    }
+
     pub fn write(mut self, path: impl Into<PathBuf>, bytes: impl Into<Vec<u8>>) -> Self {
         self.steps.push(Step::Write(path.into(), bytes.into()));
         self
@@ -127,6 +136,7 @@ pub fn progress(phase: Phase, bytes: u64, total: Option<u64>) -> Progress {
         eta_secs: None,
         resumed_from: 0,
         refreshes: 0,
+        live: None,
     }
 }
 
@@ -286,6 +296,13 @@ impl Backend for FakeBackend {
                 Step::UntilCancelled => cancel.cancelled().await,
                 Step::Linger(d) => tokio::time::sleep(d).await,
                 Step::Write(p, b) => std::fs::write(&p, b).unwrap(),
+                Step::UntilStopped => {
+                    let stop = req.live_stop.clone().unwrap_or_default();
+                    tokio::select! {
+                        _ = stop.cancelled() => {}
+                        _ = cancel.cancelled() => return Err(Error::Cancelled),
+                    }
+                }
             }
         }
         script.end.unwrap_or(Ok(DownloadOutcome::Completed {

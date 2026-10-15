@@ -40,6 +40,18 @@ pub struct Progress {
     pub eta_secs: Option<u64>,
     pub resumed_from: u64,
     pub refreshes: u32,
+    /// 생방송 녹화만
+    pub live: Option<LiveProgress>,
+}
+
+/// 생방송 녹화 진행. 전체 길이를 모르므로 `total_*`·ETA는 없다.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LiveProgress {
+    /// 지금까지 녹화한 미디어 길이(초)
+    pub recorded_secs: f64,
+    /// 놓친 세그먼트 수(서버 playlist 창을 벗어나 받지 못한 구멍)
+    pub gaps: u32,
 }
 
 /// 이번 실행에서 쓴 바이트와 경과 시간으로 (초당 바이트, 남은 초)를 구한다.
@@ -284,6 +296,7 @@ mod tests {
             eta_secs: None,
             resumed_from: 0,
             refreshes: 0,
+            live: None,
         }
     }
 

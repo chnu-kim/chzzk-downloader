@@ -123,6 +123,13 @@ impl Harness {
             .unwrap_or_else(|e| panic!("{name}: {e:?}"))
     }
 
+    /// 생방송 녹화 작업을 추가한다(파일 이름 `name`).
+    pub fn enqueue_live(&self, name: &str) -> JobDto {
+        self.mgr
+            .enqueue(live_request(name), &self.defaults())
+            .unwrap_or_else(|e| panic!("{name}: {e:?}"))
+    }
+
     pub fn job(&self, id: JobId) -> JobDto {
         self.mgr
             .list()
@@ -211,5 +218,17 @@ pub async fn until(what: &str, mut f: impl FnMut() -> bool) {
 pub async fn settle() {
     for _ in 0..50 {
         tokio::task::yield_now().await;
+    }
+}
+
+/// 생방송 녹화 요청(채널 ID는 합성 값).
+pub fn live_request(name: &str) -> EnqueueRequest {
+    EnqueueRequest {
+        url: "https://chzzk.naver.com/live/000000000000000000000000000000e5".into(),
+        content: ContentRef::Live {
+            channel_id: "000000000000000000000000000000e5".into(),
+        },
+        expected_kind: PlaybackKind::Live,
+        ..request(name)
     }
 }

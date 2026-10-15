@@ -204,9 +204,12 @@ async fn run(args: Args) -> Result<(), String> {
     println!("화질 {} → {}", quality.label, output.display());
 
     let cancel = CancellationToken::new();
+    // 생방송은 한도에서 취소가 아니라 "멈춤"(받은 만큼 마무리)으로 끝낸다.
+    let live = r.kind() == chzzk_core::PlaybackKind::Live;
+    let stop = CancellationToken::new();
     let hit_limit = Arc::new(AtomicBool::new(false));
     let on_progress = {
-        let cancel = cancel.clone();
+        let cancel = if live { stop.clone() } else { cancel.clone() };
         let hit_limit = hit_limit.clone();
         let limit = args.limit_bytes;
         move |p: Progress| {
@@ -223,6 +226,7 @@ async fn run(args: Args) -> Result<(), String> {
         output: output.clone(),
         on_existing: DuplicatePolicy::Overwrite,
         concurrency: chzzk_core::download::DEFAULT_CONCURRENCY,
+        live_stop: live.then(|| stop.clone()),
     };
     let result = chzzk.download(req, cancel, &on_progress).await;
     eprintln!();

@@ -292,6 +292,133 @@ fn parse_live_rewind(json: &str) -> Result<Playback, Error> {
     Ok(Playback::LiveRewind { master_url, tracks })
 }
 
+/// 생방송 `live-detail`에서 읽은 재생 정보. `Debug`는 주소를 `http::redact_url`로 가린다.
+#[derive(Clone, PartialEq, Eq)]
+pub struct LiveDetail {
+    /// 방송 회차. 종료·방송 교체 판정에 쓴다.
+    pub live_id: u64,
+    pub master_url: Url,
+    pub tracks: Vec<Quality>,
+}
+
+impl fmt::Debug for LiveDetail {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("LiveDetail")
+            .field("live_id", &self.live_id)
+            .field("master_url", &DebugUrl(&self.master_url))
+            .field("tracks", &self.tracks)
+            .finish()
+    }
+}
+
+/// `live-detail`(`/service/v3/channels/{id}/live-detail`)의 `content`.
+#[derive(Default, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+struct LiveContent {
+    live_id: Option<u64>,
+    live_title: Option<String>,
+    status: Option<String>,
+    open_date: Option<String>,
+    adult: Option<bool>,
+    live_playback_json: Option<String>,
+    channel: Option<ChannelRef>,
+}
+
+/// 생방송 `live-detail` 응답을 읽는다.
+///
+/// - `status != "OPEN"`이면 `Error::NotLive`
+/// - `livePlaybackJson`이 없으면 `Error::NoPlayback`(성인 인증이 없을 때 이렇게 온다)
+/// - media는 `mediaId == "HLS"`로 고른다. 저지연 `LLHLS`도 `protocol`이 `"HLS"`라서 순서에 기대면 안 된다.
+/// - 영상이 없는 트랙(`audioOnly`)은 화질 목록에서 뺀다.
+pub fn parse_live_detail(body: &[u8]) -> Result<(ContentMeta, LiveDetail), Error> {
+    const WHAT: &str = "live detail";
+    let content = open_envelope(body, WHAT)?;
+    let c: LiveContent = serde_json::from_value(content).map_err(|e| Error::Parse {
+        what: WHAT,
+        detail: e.to_string(),
+    })?;
+    if c.status.as_deref() != Some("OPEN") {
+        return Err(Error::NotLive);
+    }
+    let channel = c.channel.clone().unwrap_or_default();
+    let meta = ContentMeta {
+        kind: ContentKind::Live,
+        title: c.live_title.as_deref().unwrap_or("").trim().to_string(),
+        channel_name: channel.channel_name.unwrap_or_default(),
+        channel_id: non_empty(&channel.channel_id).map(str::to_lowercase),
+        live_open_date: owned_non_empty(&c.open_date),
+        publish_date: None,
+        adult: c.adult.unwrap_or(false),
+        duration_secs: None,
+    };
+    let live_id = c.live_id.ok_or_else(|| Error::Parse {
+        what: WHAT,
+        detail: "liveId가 없습니다".into(),
+    })?;
+    let Some(json) = non_empty(&c.live_playback_json) else {
+        return Err(Error::NoPlayback { adult: meta.adult });
+    };
+    let (master_url, tracks) = parse_live_media(json)?;
+    Ok((
+        meta,
+        LiveDetail {
+            live_id,
+            master_url,
+            tracks,
+        },
+    ))
+}
+
+/// `livePlaybackJson` 안쪽에서 `mediaId == "HLS"`인 media의 master 주소와 화질을 읽는다.
+fn parse_live_media(json: &str) -> Result<(Url, Vec<Quality>), Error> {
+    const WHAT: &str = "livePlaybackJson";
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Media {
+        media_id: Option<String>,
+        protocol: Option<String>,
+        path: Option<String>,
+        #[serde(default)]
+        encoding_track: Vec<EncodingTrack>,
+    }
+    #[derive(Deserialize)]
+    struct Playback {
+        #[serde(default)]
+        media: Vec<Media>,
+    }
+    let p: Playback = serde_json::from_str(json).map_err(|e| Error::Parse {
+        what: WHAT,
+        detail: e.to_string(),
+    })?;
+    let media = p
+        .media
+        .into_iter()
+        .find(|m| m.media_id.as_deref() == Some("HLS") && m.protocol.as_deref() == Some("HLS"))
+        .ok_or(Error::Unsupported(Unsupported::NoHlsMedia))?;
+    let path = non_empty(&media.path).ok_or_else(|| Error::Parse {
+        what: WHAT,
+        detail: "HLS media에 path가 없습니다".into(),
+    })?;
+    // 원문 URL에는 서명 토큰이 있으므로 오류에 넣지 않는다.
+    let master_url = Url::parse(path).map_err(|e| Error::Parse {
+        what: WHAT,
+        detail: format!("master 주소가 올바르지 않습니다: {e}"),
+    })?;
+    if !matches!(master_url.scheme(), "http" | "https") {
+        return Err(Error::Parse {
+            what: WHAT,
+            detail: "master 주소가 http(s)가 아닙니다".into(),
+        });
+    }
+    let tracks = media
+        .encoding_track
+        .into_iter()
+        .filter(|t| t.video_width.is_some() || t.video_height.is_some())
+        .map(EncodingTrack::into_quality)
+        .collect();
+    Ok((master_url, tracks))
+}
+
 /// 클립 info(`/service/v1/play-info/clip/{id}`)의 `content`.
 #[derive(Default, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -355,6 +482,90 @@ mod tests {
         parse_video_info(&serde_json::to_vec(&v).unwrap())
             .unwrap()
             .1
+    }
+
+    #[test]
+    fn live_detail_fixture() {
+        let (meta, d) = parse_live_detail(&fixture("testdata/live/live_detail.json")).unwrap();
+        assert_eq!(meta.kind, ContentKind::Live);
+        assert_eq!(meta.title, "테스트 생방송");
+        assert_eq!(meta.channel_name, "생방송채널");
+        assert_eq!(
+            meta.channel_id.as_deref(),
+            Some("000000000000000000000000000000e5")
+        );
+        assert_eq!(meta.live_open_date.as_deref(), Some("2026-01-02 12:00:00"));
+        assert_eq!(meta.duration_secs, None);
+        assert_eq!(d.live_id, 9000003);
+        assert!(d.master_url.path().ends_with("/hls_playlist.m3u8"));
+        // audioOnly는 화질이 아니다
+        let ids: Vec<&str> = d.tracks.iter().map(|t| t.id.as_str()).collect();
+        assert_eq!(ids, ["720p", "480p", "360p", "144p", "1080p"]);
+        assert_eq!(d.tracks[0].resolution, Some(720));
+    }
+
+    /// LLHLS가 앞에 와도 일반 HLS(`mediaId == "HLS"`)를 고른다.
+    #[test]
+    fn live_detail_picks_hls_by_media_id() {
+        let (_, d) =
+            parse_live_detail(&fixture("testdata/live/live_detail_llhls_first.json")).unwrap();
+        assert!(d.master_url.path().ends_with("/hls_playlist.m3u8"), "{d:?}");
+    }
+
+    #[test]
+    fn live_detail_closed_and_blocked() {
+        assert!(matches!(
+            parse_live_detail(&fixture("testdata/live/live_detail_closed.json")),
+            Err(Error::NotLive)
+        ));
+        assert!(matches!(
+            parse_live_detail(&fixture("testdata/live/live_detail_adult_blocked.json")),
+            Err(Error::NoPlayback { adult: true })
+        ));
+    }
+
+    #[test]
+    fn live_detail_errors() {
+        let edit = |f: &dyn Fn(&mut Value)| {
+            let mut v: Value =
+                serde_json::from_slice(&fixture("testdata/live/live_detail.json")).unwrap();
+            f(&mut v["content"]);
+            parse_live_detail(&serde_json::to_vec(&v).unwrap())
+        };
+        assert!(matches!(
+            edit(&|c| {
+                c.as_object_mut().unwrap().remove("liveId");
+            }),
+            Err(Error::Parse { .. })
+        ));
+        // media에서 HLS를 모두 빼면 지원하지 않는 스트림
+        assert!(matches!(
+            edit(&|c| {
+                let s = c["livePlaybackJson"]
+                    .as_str()
+                    .unwrap()
+                    .replace("\"HLS\"", "\"X\"");
+                c["livePlaybackJson"] = Value::String(s);
+            }),
+            Err(Error::Unsupported(Unsupported::NoHlsMedia))
+        ));
+        // 오류 메시지에 서명 토큰이 없다
+        let e = edit(&|c| {
+            let s = c["livePlaybackJson"]
+                .as_str()
+                .unwrap()
+                .replace("https://", "ftp://");
+            c["livePlaybackJson"] = Value::String(s);
+        })
+        .unwrap_err();
+        assert!(!e.to_string().contains("hmac"), "{e}");
+    }
+
+    #[test]
+    fn live_detail_debug_redacts() {
+        let (_, d) = parse_live_detail(&fixture("testdata/live/live_detail.json")).unwrap();
+        let s = format!("{d:?}");
+        assert!(!s.contains("hmac"), "{s}");
     }
 
     #[test]

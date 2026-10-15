@@ -14,7 +14,7 @@ const HOSTS: [&str; 2] = ["chzzk.naver.com", "m.chzzk.naver.com"];
 /// 치지직 VOD·클립 주소를 해석한다.
 ///
 /// - 호스트는 `chzzk.naver.com` 또는 `m.chzzk.naver.com`, 스킴은 http/https
-/// - path: `video/{숫자}` → Video, `clips/{id}` 또는 `embed/clip/{id}` → Clip (`id`: `[A-Za-z0-9_-]+`)
+/// - path: `live/{채널 ID(32자리 hex)}` → Live(소문자로 정규화), `video/{숫자}` → Video, `clips/{id}` 또는 `embed/clip/{id}` → Clip (`id`: `[A-Za-z0-9_-]+`)
 /// - 쿼리·fragment는 무시하고, 끝의 `/` 하나는 허용한다.
 /// - 스킴 없이 `chzzk.naver.com/...`로 붙여 넣은 주소는 `https://`를 붙여 읽는다.
 /// - 그 밖은 `Error::InvalidUrl`
@@ -41,6 +41,9 @@ pub fn parse_content_url(s: &str) -> Result<ContentRef, Error> {
         segs.pop();
     }
     match segs.as_slice() {
+        ["live", id] if is_channel_id(id) => Ok(ContentRef::Live {
+            channel_id: id.to_ascii_lowercase(),
+        }),
         ["video", no] => parse_video_no(no).map(|video_no| ContentRef::Video { video_no }),
         ["clips", id] | ["embed", "clip", id] if is_clip_id(id) => Ok(ContentRef::Clip {
             clip_id: (*id).to_string(),
@@ -57,6 +60,11 @@ fn parse_video_no(s: &str) -> Result<u64, Error> {
     s.parse().map_err(|_| Error::InvalidUrl)
 }
 
+/// 채널 ID는 32자리 hex다.
+fn is_channel_id(s: &str) -> bool {
+    s.len() == 32 && s.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
 fn is_clip_id(s: &str) -> bool {
     !s.is_empty()
         && s.bytes()
@@ -71,6 +79,26 @@ mod tests {
         ContentRef::Clip {
             clip_id: id.to_string(),
         }
+    }
+
+    #[test]
+    fn live_channel_id() {
+        let id = "000000000000000000000000000000E5"; // 대문자는 소문자로 정규화한다
+        let want = ContentRef::Live {
+            channel_id: id.to_ascii_lowercase(),
+        };
+        for s in [
+            format!("https://chzzk.naver.com/live/{id}"),
+            format!("https://m.chzzk.naver.com/live/{id}/?a=1#x"),
+            format!("chzzk.naver.com/live/{id}"),
+        ] {
+            assert_eq!(parse_content_url(&s).unwrap(), want, "{s}");
+        }
+        // 32자리 hex가 아니면 거부
+        for bad in ["live/abc", "live/00000000000000000000000000000g5", "live/"] {
+            assert_invalid(&format!("https://chzzk.naver.com/{bad}"));
+        }
+        assert_invalid(&format!("https://chzzk.naver.com/live/{id}/chat"));
     }
 
     fn video(no: u64) -> ContentRef {

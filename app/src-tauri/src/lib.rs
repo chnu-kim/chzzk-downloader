@@ -130,6 +130,7 @@ pub fn handler<R: Runtime>() -> impl Fn(Invoke<R>) -> bool + Send + Sync + 'stat
             commands::list_jobs,
             commands::subscribe_jobs,
             commands::pause_job,
+            commands::stop_job,
             commands::resume_job,
             commands::remove_job,
             commands::clear_finished,

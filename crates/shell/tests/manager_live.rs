@@ -238,3 +238,50 @@ async fn remove_running_live_discards() {
     h.mgr.remove(id).await.unwrap();
     assert!(h.mgr.list().iter().all(|j| j.id != id));
 }
+
+/// 앱이 비정상 종료되어 `interrupted`로 복원된 생방송: `.part`가 없으면 자동 이어받기가 새 녹화를 시작하지 않는다
+/// (며칠 전 입력한 채널이 지금 방송 중이라고 옛 제목·시각의 파일로 다른 방송을 녹화하면 안 된다).
+/// `.part`가 있으면 받은 만큼을 마무리하는 것이라 자동으로 줄 세운다.
+#[tokio::test(start_paused = true)]
+async fn auto_resume_skips_live_without_partial() {
+    use chzzk_core::download::part::{Sidecar, part_path, sidecar_path};
+    use chzzk_core::fsutil::atomic_write;
+    use chzzk_core::{ContentRef, PlaybackKind};
+
+    let h = Harness::new(2);
+    h.fake.script_for(h.output("none"), recording(1));
+    h.fake.script_for(h.output("kept"), recording(1));
+    let none = h.enqueue_live("none").id;
+    let kept = h.enqueue_live("kept").id;
+    until("둘 다 시작", || {
+        h.status(none) == JobStatus::Running && h.status(kept) == JobStatus::Running
+    })
+    .await;
+    // 하나는 `.part`와 sidecar가 있다(크래시 때 체크포인트까지 받았다)
+    let out = h.output("kept");
+    std::fs::create_dir_all(out.parent().unwrap()).unwrap();
+    std::fs::write(part_path(&out), vec![1u8; 100]).unwrap();
+    let mut sc = Sidecar::new(
+        ContentRef::Live {
+            channel_id: "000000000000000000000000000000e5".into(),
+        },
+        "720p",
+        PlaybackKind::Live,
+    );
+    sc.committed_len = 100;
+    atomic_write(&sidecar_path(&out), &serde_json::to_vec(&sc).unwrap()).unwrap();
+
+    // 앱이 꺼졌다 다시 열린다(`quit` 없이): running → interrupted로 복원된다
+    let m = h.reopen(2);
+    let list = m.list();
+    assert!(list.iter().all(|j| j.status == JobStatus::Interrupted));
+    assert_eq!(
+        m.resume_interrupted(),
+        1,
+        "`.part`가 있는 하나만 자동으로 줄 선다"
+    );
+    let after = m.list();
+    let status = |id| after.iter().find(|j| j.id == id).unwrap().status;
+    assert_eq!(status(none), JobStatus::Interrupted);
+    assert_ne!(status(kept), JobStatus::Interrupted);
+}

@@ -307,9 +307,18 @@ impl Chzzk {
 /// 엔진을 고른다.
 async fn run(job: &mut Job<'_>, part: &mut Option<PartFile>) -> Result<DownloadOutcome, Error> {
     // 앞선 생방송 녹화가 중간에 끊겨 `.part`가 남았다면 이어 받지 않고(방송 흐름이 끊겼다) 받은 만큼을 마무리한다.
-    if job.req.expected_kind == PlaybackKind::Live && part.is_some() {
-        let resumed_from = part.as_ref().map_or(0, PartFile::written);
-        return finish(job, part, resumed_from).await;
+    // init뿐인 `.part`(세그먼트를 하나도 받기 전에 끊겼다)는 재생할 수 없는 파일이 되므로 지우고 새로 녹화한다.
+    if job.req.expected_kind == PlaybackKind::Live
+        && let Some(p) = part.as_ref()
+    {
+        let init_len = p.staged().hls.map_or(0, |h| u64::from(h.init_len));
+        if init_len > 0 && p.written() > init_len {
+            let resumed_from = p.written();
+            return finish(job, part, resumed_from).await;
+        }
+        if let Some(p) = part.take() {
+            p.discard()?;
+        }
     }
     job.report.phase(Phase::Resolving);
     let resolved = job.resolve().await?;

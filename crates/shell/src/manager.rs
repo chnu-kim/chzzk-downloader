@@ -615,6 +615,9 @@ impl<B: Backend> DownloadManager<B> {
             .filter(|j| {
                 !j.removing
                     && j.rec.status == JobStatus::Interrupted
+                    // `.part`가 없는 생방송은 자동으로 다시 시작하지 않는다: 지금 방송 중인 다른 방송을 옛 제목·시각의
+                    // 파일로 녹화하게 된다. 받은 부분이 있으면 그것을 마무리하는 것이라 줄 세운다
+                    && (!j.is_live() || j.rec.partial_bytes.is_some_and(|b| b > 0))
                     && keep(j.rec.channel_id.as_deref())
             })
             .map(|j| j.rec.id)

@@ -64,6 +64,42 @@ enum Refreshed {
     Over,
 }
 
+/// 멈춤이 먼저 오면 `None`, 아니면 `Some(결과)`. 기다리는 구간(연결 대기·첫 playlist·재조회)에서 멈춤이 먹게 한다.
+macro_rules! until_stop {
+    ($stop:expr, $fut:expr) => {
+        tokio::select! {
+            biased;
+            _ = $stop.cancelled() => None,
+            r = $fut => Some(r),
+        }
+    };
+}
+
+/// 연달아 이만큼 일시 오류(5xx·본문 검증 실패)가 나면 녹화를 오류로 끝낸다. 하나하나는 구멍으로 세고 계속한다.
+const MAX_FLAKY: u32 = 10;
+/// msn이 거꾸로 간 playlist를 연달아 이만큼 봐야 스트림 재시작으로 본다(CDN 엣지가 낡은 playlist를 한 번 줄 수 있다).
+const BACK_CONFIRM: u32 = 3;
+/// 멈춤이 오면 이미 요청해 둔 세그먼트를 이만큼 더 기다려 마저 쓴다.
+const DRAIN: Duration = Duration::from_secs(3);
+
+/// playlist 읽기·init 받기 실패를 다룬 결과.
+enum Handled {
+    /// 기다렸다. 다시 시도한다.
+    Again,
+    /// 서명이 만료되었다. 호출한 쪽이 재조회한다.
+    Refresh,
+    /// 기다리는 동안 멈춤이 왔다.
+    Stopped,
+}
+
+/// init 주소의 파일 이름. 서명이 경로에 들어가는 주소가 바뀌어도 같은 init이면 같다.
+fn init_name(u: &Url) -> String {
+    u.path_segments()
+        .and_then(|mut s| s.next_back())
+        .unwrap_or("")
+        .to_string()
+}
+
 /// 녹화를 끝까지 한다.
 pub(crate) async fn run(
     job: &mut Job<'_>,
@@ -77,16 +113,21 @@ pub(crate) async fn run(
     let cfg = job.chzzk.config();
     let (poll, idle_check, policy) = (cfg.live_poll_interval, cfg.live_idle_check, cfg.retry);
 
+    let Some(media_url) = until_stop!(stop, variant_url(job, &master_url, &tracks)) else {
+        return Err(Error::NothingRecorded);
+    };
     let mut feed = Feed {
-        media_url: variant_url(job, &master_url, &tracks).await?,
+        media_url: media_url?,
         live_id,
     };
     let mut patience = Patience::default();
     let mut since_progress = TokioInstant::now();
+    let mut flaky = 0u32;
+    let mut quiet = TokioInstant::now();
 
-    // 첫 playlist와 init. 방송 시작 직후라 세그먼트가 아직 없을 수 있다.
+    // 첫 playlist와 init. 방송 시작 직후라 playlist가 아직 없거나 세그먼트가 0개일 수 있다.
     let (mut snap, init) = loop {
-        let attempt = async {
+        let attempt = until_stop!(stop, async {
             let s = read_playlist(job, &feed.media_url).await?;
             let init_url = s
                 .playlist
@@ -95,26 +136,64 @@ pub(crate) async fn run(
                 .ok_or(Failure::Fatal(Error::Unsupported(Unsupported::MissingMap)))?;
             let init = fetch_cancellable(job, policy, &init_url, Body::Init).await?;
             Ok::<_, Failure>((s, init))
-        }
-        .await;
+        });
+        let Some(attempt) = attempt else {
+            return Err(Error::NothingRecorded);
+        };
         match attempt {
             Ok(x) => break x,
             Err(f) => {
-                if !handle_failure(job, &mut patience, &mut since_progress, f).await?
-                    && let Refreshed::Over = refresh(job, &mut feed, &tracks).await?
+                match handle_failure(
+                    job,
+                    &mut patience,
+                    &mut since_progress,
+                    &mut flaky,
+                    &stop,
+                    poll,
+                    f,
+                )
+                .await?
                 {
-                    return Err(Error::NotLive);
+                    Handled::Stopped => return Err(Error::NothingRecorded),
+                    Handled::Again => {
+                        // 한참 아무것도 없다. 방송이 끝났는지 본다(403 재조회 예산은 쓰지 않는다).
+                        if quiet.elapsed() >= idle_check {
+                            quiet = TokioInstant::now();
+                            match until_stop!(stop, refresh_free(job, &mut feed, &tracks)) {
+                                None => return Err(Error::NothingRecorded),
+                                Some(r) => {
+                                    if let Refreshed::Over = r? {
+                                        return Err(Error::NotLive);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Handled::Refresh => {
+                        match until_stop!(stop, refresh(job, &mut feed, &tracks)) {
+                            None => return Err(Error::NothingRecorded),
+                            Some(r) => {
+                                if let Refreshed::Over = r? {
+                                    return Err(Error::NotLive);
+                                }
+                            }
+                        }
+                        if !wait_or_stop(job, &stop, poll).await? {
+                            return Err(Error::NothingRecorded);
+                        }
+                    }
                 }
             }
         }
     };
+    flaky = 0;
     job.resume_downloading();
 
-    let init_path = snap
+    let init_file = snap
         .playlist
         .init
         .as_ref()
-        .map(|u| u.path().to_string())
+        .map(init_name)
         .unwrap_or_default();
     let mut sc = Sidecar::new(
         job.req.content.clone(),
@@ -126,6 +205,8 @@ pub(crate) async fn run(
         ..HlsState::default()
     });
     let p = part.insert(PartFile::create(&job.req.output, sc)?);
+    // 이 뒤의 어떤 오류로 끝나도 받은 것은 지우지 않는다(다음 실행이 받은 만큼 마무리한다)
+    job.keep_partial = true;
     p.write(&init)?;
     p.checkpoint(|_| {}).await?;
 
@@ -138,18 +219,20 @@ pub(crate) async fn run(
     let mut last_cp = Instant::now();
     let mut since_cp = 0u32;
     let mut idle_since = TokioInstant::now();
+    let mut back_streak = 0u32;
 
     'poll: loop {
         let first = snap.playlist.segments.first().map(|s| s.msn);
         let last = snap.playlist.segments.last().map(|s| s.msn);
-        // 스트림이 다시 시작되었다: msn이 거꾸로 갔거나 init 경로가 바뀌었다.
+        // 스트림이 다시 시작되었다: msn이 연달아 거꾸로 갔거나 init 파일이 바뀌었다.
         let went_back = matches!((st.next_msn, last), (Some(next), Some(last)) if last + 1 < next);
+        back_streak = if went_back { back_streak + 1 } else { 0 };
         let new_init = snap
             .playlist
             .init
             .as_ref()
-            .is_some_and(|u| u.path() != init_path);
-        if went_back || new_init {
+            .is_some_and(|u| init_name(u) != init_file);
+        if back_streak >= BACK_CONFIRM || new_init {
             break;
         }
         // 창이 우리를 지나갔다: 놓친 만큼 구멍으로 센다.
@@ -180,11 +263,23 @@ pub(crate) async fn run(
                     (msn, dur, fetch(chzzk, policy, &u, Body::Segment).await)
                 })
                 .buffered(concurrency);
+            // 멈춤이 오면 이미 요청해 둔 세그먼트를 이 시각까지 마저 받아 쓴다.
+            let mut deadline: Option<TokioInstant> = None;
             loop {
                 let item = tokio::select! {
                     biased;
                     _ = job.cancel.cancelled() => return Err(Error::Cancelled),
-                    _ = stop.cancelled() => { stopped = true; break; }
+                    _ = stop.cancelled(), if deadline.is_none() => {
+                        stopped = true;
+                        deadline = Some(TokioInstant::now() + DRAIN);
+                        continue;
+                    }
+                    _ = async {
+                        match deadline {
+                            Some(d) => tokio::time::sleep_until(d).await,
+                            None => std::future::pending::<()>().await,
+                        }
+                    } => break,
                     it = segs.next() => it,
                 };
                 let Some((msn, dur, r)) = item else { break };
@@ -195,6 +290,7 @@ pub(crate) async fn run(
                         st.recorded_ms += u64::from(dur);
                         st.segments += 1;
                         got_any = true;
+                        flaky = 0;
                         patience.reset();
                         since_progress = TokioInstant::now();
                         job.refreshes = 0;
@@ -208,6 +304,8 @@ pub(crate) async fn run(
                             last_cp = Instant::now();
                         }
                     }
+                    // 멈춘 뒤 마저 받는 중의 실패는 그 조각만 포기한다.
+                    Err(_) if stopped => break,
                     // 창에서 이미 밀려난 세그먼트: 구멍으로 세고 넘어간다.
                     Err(Failure::Fatal(Error::HttpStatus {
                         status: 404 | 410, ..
@@ -222,11 +320,27 @@ pub(crate) async fn run(
                     }
                     Err(Failure::Retry(e)) if is_connection_failure(&e) => {
                         drop(segs);
-                        job.wait_for_network(&mut patience, e, since_progress.elapsed())
-                            .await?;
+                        match until_stop!(
+                            stop,
+                            job.wait_for_network(&mut patience, e, since_progress.elapsed())
+                        ) {
+                            None => break 'poll,
+                            Some(r) => r?,
+                        }
                         since_progress = TokioInstant::now();
                         // 같은 playlist로 `next_msn`부터 다시 시작한다.
                         continue 'poll;
+                    }
+                    // 일시 오류(5xx를 다 쓴 재시도·본문 검증 실패 등): 구멍으로 세고 계속한다.
+                    // 연달아 한도를 넘으면 서버가 아무것도 못 주는 것이라 오류로 끝낸다(`.part`는 남는다).
+                    Err(Failure::Retry(e) | Failure::Fatal(e)) if is_transient(&e) => {
+                        flaky += 1;
+                        if flaky > MAX_FLAKY {
+                            return Err(e);
+                        }
+                        st.gaps += 1;
+                        st.next_msn = Some(msn + 1);
+                        report(job, p.written(), &st);
                     }
                     Err(Failure::Retry(e) | Failure::Fatal(e)) => return Err(e),
                 }
@@ -247,10 +361,13 @@ pub(crate) async fn run(
         } else if snap.ended {
             break;
         } else if !got_any && idle_since.elapsed() >= idle_check {
-            // 한참 새 세그먼트가 없다. 방송이 끝났는지 본다.
-            match refresh(job, &mut feed, &tracks).await? {
-                Refreshed::Same => idle_since = TokioInstant::now(),
-                Refreshed::Over => break,
+            // 한참 새 세그먼트가 없다. 방송이 끝났는지 본다(403 재조회 예산은 쓰지 않는다).
+            match until_stop!(stop, refresh_free(job, &mut feed, &tracks)) {
+                None => break,
+                Some(r) => match r? {
+                    Refreshed::Same => idle_since = TokioInstant::now(),
+                    Refreshed::Over => break,
+                },
             }
         } else if !wait_or_stop(job, &stop, poll).await? {
             break;
@@ -258,14 +375,31 @@ pub(crate) async fn run(
 
         // 다음 playlist. 읽지 못하면 처리 방식에 따라 같은 자리로 돌아오거나 끝낸다.
         snap = match read_playlist(job, &feed.media_url).await {
-            Ok(s) => s,
+            Ok(s) => {
+                flaky = 0;
+                s
+            }
             Err(f) => {
-                if handle_failure(job, &mut patience, &mut since_progress, f).await? {
-                    continue 'poll;
-                }
-                match refresh(job, &mut feed, &tracks).await? {
-                    Refreshed::Same => continue 'poll,
-                    Refreshed::Over => break,
+                match handle_failure(
+                    job,
+                    &mut patience,
+                    &mut since_progress,
+                    &mut flaky,
+                    &stop,
+                    poll,
+                    f,
+                )
+                .await?
+                {
+                    Handled::Stopped => break,
+                    Handled::Again => continue 'poll,
+                    Handled::Refresh => match until_stop!(stop, refresh(job, &mut feed, &tracks)) {
+                        None => break,
+                        Some(r) => match r? {
+                            Refreshed::Same => continue 'poll,
+                            Refreshed::Over => break,
+                        },
+                    },
                 }
             }
         };
@@ -283,6 +417,14 @@ pub(crate) async fn run(
         });
     }
     finish(job, part, 0).await
+}
+
+/// 연달아 세어 한도까지 구멍으로 넘길 수 있는 일시 오류.
+fn is_transient(e: &Error) -> bool {
+    matches!(
+        e,
+        Error::HttpStatus { .. } | Error::Parse { .. } | Error::Network(_)
+    )
 }
 
 fn report(job: &mut Job<'_>, bytes: u64, st: &Recording) {
@@ -362,28 +504,67 @@ async fn read_playlist(job: &Job<'_>, url: &Url) -> Result<LiveSnapshot, Failure
     hls::parse_live_media(text, url).map_err(Failure::Fatal)
 }
 
-/// playlist 읽기·init 받기 실패를 다룬다. `true`면 처리했으니(연결 대기) 다시 시도하고,
-/// `false`면 서명이 만료된(또는 사라진) 것이라 호출한 쪽이 재조회한다.
+/// playlist 읽기·init 받기 실패를 다룬다.
+///
+/// - 서명 만료(403): 호출한 쪽이 재조회한다(`Handled::Refresh`).
+/// - 404·410: 아직 없거나 방송이 끝났다. 기다리고 다시 시도한다(조용한 시간이 길면 호출한 쪽이 방송 종료를 본다).
+/// - 연결 계열 실패: 인내 모드로 기다린다. 기다리는 동안에도 멈춤이 먹는다.
+/// - 그 밖의 일시 오류(5xx·본문 검증 실패): 기다리고 다시 시도하되 연달아 `MAX_FLAKY`번을 넘으면 오류.
+/// - 지원하지 않는 형식(암호화 등): 오류.
 async fn handle_failure(
     job: &mut Job<'_>,
     patience: &mut Patience,
     since_progress: &mut TokioInstant,
+    flaky: &mut u32,
+    stop: &CancellationToken,
+    poll: Duration,
     f: Failure,
-) -> Result<bool, Error> {
+) -> Result<Handled, Error> {
     match f {
-        Failure::Expired => Ok(false),
-        // 방송이 끝나 playlist가 사라졌을 수 있다. 재조회로 판정한다.
+        Failure::Expired => Ok(Handled::Refresh),
         Failure::Fatal(Error::HttpStatus {
             status: 404 | 410, ..
-        }) => Ok(false),
+        }) => Ok(if wait_or_stop(job, stop, poll).await? {
+            Handled::Again
+        } else {
+            Handled::Stopped
+        }),
         Failure::Retry(e) if is_connection_failure(&e) => {
-            job.wait_for_network(patience, e, since_progress.elapsed())
-                .await?;
+            let Some(r) = until_stop!(
+                stop,
+                job.wait_for_network(patience, e, since_progress.elapsed())
+            ) else {
+                return Ok(Handled::Stopped);
+            };
+            r?;
             *since_progress = TokioInstant::now();
-            Ok(true)
+            Ok(Handled::Again)
+        }
+        Failure::Retry(e) | Failure::Fatal(e) if is_transient(&e) => {
+            *flaky += 1;
+            if *flaky > MAX_FLAKY {
+                return Err(e);
+            }
+            Ok(if wait_or_stop(job, stop, poll).await? {
+                Handled::Again
+            } else {
+                Handled::Stopped
+            })
         }
         Failure::Retry(e) | Failure::Fatal(e) => Err(e),
     }
+}
+
+/// 403 재조회 예산(`job.refreshes`)을 쓰지 않는 재조회. 조용한 시간이 길어 방송이 끝났는지 볼 때 쓴다.
+async fn refresh_free(
+    job: &mut Job<'_>,
+    feed: &mut Feed,
+    tracks: &[Quality],
+) -> Result<Refreshed, Error> {
+    let before = job.refreshes;
+    let r = refresh(job, feed, tracks).await;
+    job.refreshes = before;
+    r
 }
 
 fn into_error(f: Failure) -> Error {

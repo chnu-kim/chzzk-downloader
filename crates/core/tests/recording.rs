@@ -64,9 +64,26 @@ fn seg_bytes(msn: u64) -> Vec<u8> {
     v
 }
 
+/// 가짜 서버의 세그먼트 응답 옵션.
+#[derive(Default, Clone, Copy)]
+struct Opts {
+    /// 이 msn의 세그먼트는 늘 503이다
+    bad_seg: Option<u64>,
+    /// 모든 세그먼트 응답을 이만큼 늦춘다
+    seg_delay: Option<Duration>,
+}
+
 impl Stream {
-    /// `pl(n)`은 n번째(0부터) playlist 요청에, `detail(n)`은 n번째 `live-detail` 요청에 답한다.
     async fn start(
+        pl: impl Fn(usize) -> Pl + Send + Sync + 'static,
+        detail: impl Fn(usize) -> Detail + Send + Sync + 'static,
+    ) -> Stream {
+        Self::start_with(Opts::default(), pl, detail).await
+    }
+
+    /// `pl(n)`은 n번째(0부터) playlist 요청에, `detail(n)`은 n번째 `live-detail` 요청에 답한다.
+    async fn start_with(
+        opts: Opts,
         pl: impl Fn(usize) -> Pl + Send + Sync + 'static,
         detail: impl Fn(usize) -> Detail + Send + Sync + 'static,
     ) -> Stream {
@@ -140,10 +157,18 @@ impl Stream {
             .await;
         Mock::given(method("GET"))
             .and(path_regex(r"^/live/kr/streamkey0/144p/seg\d+\.m4v$"))
-            .respond_with(|r: &Request| {
+            .respond_with(move |r: &Request| {
                 let name = r.url.path().rsplit('/').next().unwrap().to_string();
                 let msn: u64 = name[3..name.len() - 4].parse().unwrap();
-                ResponseTemplate::new(200).set_body_bytes(seg_bytes(msn))
+                let t = if opts.bad_seg == Some(msn) {
+                    ResponseTemplate::new(503)
+                } else {
+                    ResponseTemplate::new(200).set_body_bytes(seg_bytes(msn))
+                };
+                match opts.seg_delay {
+                    Some(d) => t.set_delay(d),
+                    None => t,
+                }
             })
             .mount(&server)
             .await;
@@ -654,3 +679,274 @@ async fn resolve_live() {
 /// 진행률 값 하나를 읽기 위한 도우미가 컴파일되는지(미사용 경고 방지).
 #[allow(dead_code)]
 fn _progress(_: Progress) {}
+
+// ---- 리뷰 지적(적대적·일반 서브에이전트) 재현 ----
+
+fn window(first: u64, len: u64, ended: bool) -> Pl {
+    Pl::Window {
+        first,
+        len,
+        ended,
+        tail: "",
+    }
+}
+
+/// A: 녹화 중 되돌릴 수 없는 오류(암호화 태그 등)가 나도 받은 `.part`를 지우지 않는다.
+/// 다음에 같은 요청을 부르면 받은 만큼 마무리한다.
+#[tokio::test]
+async fn unsupported_midway_keeps_part_and_next_run_finalizes() {
+    let s = Stream::start(
+        |n| Pl::Window {
+            first: n as u64,
+            len: 3,
+            ended: false,
+            tail: if n >= 4 {
+                "#EXT-X-KEY:METHOD=AES-128,URI=\"k\"\n"
+            } else {
+                ""
+            },
+        },
+        |_| Detail::Open(1),
+    )
+    .await;
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_path(&dir);
+    let r = record(&s, &out, None).await;
+    assert!(matches!(r, Err(Error::Unsupported(_))), "{r:?}");
+    let (part, side) = part_files(&out);
+    assert!(part.exists() && side.exists(), "`.part`가 지워졌다");
+    let polls = s.polls.load(Ordering::SeqCst);
+    let r = record(&s, &out, None).await.unwrap();
+    assert!(matches!(r, DownloadOutcome::Completed { .. }), "{r:?}");
+    assert_eq!(
+        s.polls.load(Ordering::SeqCst),
+        polls,
+        "마무리는 서버를 부르지 않는다"
+    );
+    assert!(recorded_msns(&out).len() >= 4);
+}
+
+/// B: 새 조각이 오래 없어서 하는 재조회는 403 재조회 예산(8회)을 쓰지 않는다.
+#[tokio::test]
+async fn long_idle_does_not_exhaust_refresh_budget() {
+    let s = Stream::start(|_| window(0, 2, false), |_| Detail::Open(1)).await;
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_path(&dir);
+    let stop = CancellationToken::new();
+    let s2 = stop.clone();
+    tokio::spawn(async move {
+        // idle_check 60ms 기준으로 20번이 넘게 재조회한다
+        tokio::time::sleep(Duration::from_millis(1500)).await;
+        s2.cancel();
+    });
+    let r = record(&s, &out, Some(stop)).await;
+    assert!(matches!(r, Ok(DownloadOutcome::Completed { .. })), "{r:?}");
+    assert!(s.details.load(Ordering::SeqCst) > 12);
+}
+
+/// C: 방송 시작 직후 playlist가 404여도 재조회 예산을 몇 ms에 다 쓰지 않고 기다린다.
+#[tokio::test]
+async fn playlist_not_ready_waits_instead_of_exhausting() {
+    let s = Stream::start(
+        |n| {
+            if n < 12 {
+                Pl::Status(404)
+            } else {
+                window(0, 2, true)
+            }
+        },
+        |_| Detail::Open(1),
+    )
+    .await;
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_path(&dir);
+    let r = record(&s, &out, None).await;
+    assert!(matches!(r, Ok(DownloadOutcome::Completed { .. })), "{r:?}");
+    assert_eq!(recorded_msns(&out), [0, 1]);
+}
+
+/// C: 첫 playlist를 기다리는 동안에도 멈춤이 먹는다(받은 것이 없으니 `NothingRecorded`).
+#[tokio::test]
+async fn stop_while_waiting_for_first_playlist() {
+    let s = Stream::start(|_| Pl::Status(404), |_| Detail::Open(1)).await;
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_path(&dir);
+    let stop = CancellationToken::new();
+    let s2 = stop.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        s2.cancel();
+    });
+    let started = std::time::Instant::now();
+    let r = record(&s, &out, Some(stop)).await;
+    assert!(matches!(r, Err(Error::NothingRecorded)), "{r:?}");
+    assert!(started.elapsed() < Duration::from_secs(5));
+    no_part(&out);
+}
+
+/// D: init만 든 `.part`는 마무리하지 않는다(재생할 수 없는 완료 파일이 된다). 지우고 새로 녹화한다.
+#[tokio::test]
+async fn init_only_part_is_not_finalized() {
+    use chzzk_core::download::part::{HlsState, PartFile, Sidecar};
+    let s = Stream::start(|n| window(n as u64, 3, n >= 2), |_| Detail::Open(1)).await;
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_path(&dir);
+    let init = init_bytes();
+    let mut sc = Sidecar::new(
+        ContentRef::Live {
+            channel_id: CHANNEL.into(),
+        },
+        "144p",
+        PlaybackKind::Live,
+    );
+    sc.hls = Some(HlsState {
+        init_len: init.len() as u32,
+        ..HlsState::default()
+    });
+    let mut p = PartFile::create(&out, sc).unwrap();
+    p.write(&init).unwrap();
+    p.checkpoint(|_| {}).await.unwrap();
+    drop(p);
+
+    let r = record(&s, &out, None).await.unwrap();
+    assert!(matches!(r, DownloadOutcome::Completed { .. }), "{r:?}");
+    assert!(s.polls.load(Ordering::SeqCst) > 0, "새로 녹화해야 한다");
+    assert!(!recorded_msns(&out).is_empty());
+}
+
+/// E: CDN 엣지가 한 번 낡은 playlist(msn이 뒤로 감)를 줘도 스트림 재시작으로 보지 않는다.
+#[tokio::test]
+async fn single_stale_playlist_is_not_a_restart() {
+    let s = Stream::start(
+        |n| match n {
+            0..=5 => window(n as u64, 3, false),
+            6 => window(0, 3, false), // 낡은 응답
+            _ => window(n as u64, 3, n >= 10),
+        },
+        |_| Detail::Open(1),
+    )
+    .await;
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_path(&dir);
+    let r = record(&s, &out, None).await.unwrap();
+    assert!(matches!(r, DownloadOutcome::Completed { .. }), "{r:?}");
+    assert_eq!(recorded_msns(&out), (0..=12).collect::<Vec<_>>());
+}
+
+/// E: 정상적인 서명 갱신으로 init 주소의 경로가 바뀌어도(파일 이름은 그대로) 재시작이 아니다.
+#[tokio::test]
+async fn init_path_change_with_same_file_is_not_a_restart() {
+    // 재조회(403)가 오면 서명이 경로에 든 주소로 바뀌었다고 흉내 낸다: 같은 서버, 같은 파일 이름
+    let s = Stream::start(
+        |n| {
+            if n == 3 {
+                Pl::Status(403)
+            } else {
+                let k = if n > 3 { n - 1 } else { n };
+                window(k as u64, 3, k >= 8)
+            }
+        },
+        |_| Detail::Open(1),
+    )
+    .await;
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_path(&dir);
+    let r = record(&s, &out, None).await.unwrap();
+    assert!(matches!(r, DownloadOutcome::Completed { .. }), "{r:?}");
+    assert_eq!(recorded_msns(&out), (0..=10).collect::<Vec<_>>());
+}
+
+/// F: 세그먼트 하나가 계속 5xx여도 구멍으로 세고 계속한다(몇 시간 녹화가 실패하지 않는다).
+#[tokio::test]
+async fn persistent_5xx_segment_becomes_a_gap() {
+    let s = Stream::start_with(
+        Opts {
+            bad_seg: Some(4),
+            ..Opts::default()
+        },
+        |n| window(n as u64, 3, n >= 8),
+        |_| Detail::Open(1),
+    )
+    .await;
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_path(&dir);
+    let events = Events::default();
+    let cb = events.callback();
+    let r = s
+        .client()
+        .download(request(&out, None), CancellationToken::new(), &cb)
+        .await
+        .unwrap();
+    assert!(matches!(r, DownloadOutcome::Completed { .. }), "{r:?}");
+    let msns = recorded_msns(&out);
+    assert!(!msns.contains(&4), "{msns:?}");
+    assert!(msns.contains(&3) && msns.contains(&5), "{msns:?}");
+    let live = events.all().into_iter().rev().find_map(|p| p.live).unwrap();
+    assert_eq!(live.gaps, 1);
+}
+
+/// F: 아무것도 안 되는 서버(모든 세그먼트가 5xx)는 계속 구멍으로 세지 않고 오류로 끝난다. `.part`는 남는다.
+#[tokio::test]
+async fn every_segment_failing_ends_with_error() {
+    // msn 0..2 중 하나만 나빠서는 연속 실패가 한도에 닿지 않는다: 새 조각이 모두 나쁜 서버
+    let s = Stream::start_with(
+        Opts {
+            bad_seg: Some(0),
+            ..Opts::default()
+        },
+        |_| window(0, 1, false),
+        |_| Detail::Open(1),
+    )
+    .await;
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_path(&dir);
+    let stop = CancellationToken::new();
+    let s2 = stop.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        s2.cancel();
+    });
+    let r = record(&s, &out, Some(stop)).await;
+    // 한 조각만 있는 창이 계속 그 조각을 가리키므로 구멍 하나 뒤 새 조각이 없다: 멈춤으로 끝나면 받은 것이 없다
+    assert!(matches!(r, Err(Error::NothingRecorded)), "{r:?}");
+    no_part(&out);
+}
+
+/// H: 멈춤 때 이미 받아 둔 세그먼트는 버리지 않고 마저 쓴다.
+#[tokio::test]
+async fn stop_keeps_segments_already_downloaded() {
+    let s = Stream::start_with(
+        Opts {
+            seg_delay: Some(Duration::from_millis(40)),
+            ..Opts::default()
+        },
+        |_| window(0, 6, false),
+        |_| Detail::Open(1),
+    )
+    .await;
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_path(&dir);
+    let stop = CancellationToken::new();
+    let events = Events::default();
+    let cb = {
+        let (stop, inner) = (stop.clone(), events.callback());
+        move |p: Progress| {
+            // 첫 세그먼트를 쓰는 순간 멈춘다. 같이 요청한 앞쪽 세그먼트들이 이미 도착해 있다
+            if p.live.is_some_and(|l| l.recorded_secs >= 2.0) {
+                stop.cancel();
+            }
+            inner(p);
+        }
+    };
+    let mut req = request(&out, Some(stop.clone()));
+    req.concurrency = NonZeroU8::new(4).unwrap();
+    let r = s
+        .client()
+        .download(req, CancellationToken::new(), &cb)
+        .await
+        .unwrap();
+    assert!(matches!(r, DownloadOutcome::Completed { .. }), "{r:?}");
+    let msns = recorded_msns(&out);
+    assert!(msns.len() >= 4, "받아 둔 조각을 버렸다: {msns:?}");
+    assert!(msns.windows(2).all(|w| w[1] == w[0] + 1), "{msns:?}");
+}

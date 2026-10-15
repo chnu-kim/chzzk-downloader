@@ -85,6 +85,7 @@ impl JobRecord {
             output: self.output.clone(),
             on_existing: self.on_existing.into(),
             concurrency: concurrency(self.concurrency),
+            live_stop: None,
         }
     }
 

@@ -37,6 +37,8 @@ pub struct JobId(pub u64);
 pub enum PlaybackKindTs {
     Progressive,
     LiveRewindHls,
+    /// 진행 중인 생방송
+    Live,
 }
 
 /// `chzzk_core::ContentRef`의 TS 모양.
@@ -50,6 +52,7 @@ pub enum PlaybackKindTs {
 pub enum ContentRefTs {
     Video { video_no: u64 },
     Clip { clip_id: String },
+    Live { channel_id: String },
 }
 
 /// `chzzk_core::Phase`의 TS 모양.
@@ -71,6 +74,7 @@ impl From<PlaybackKind> for PlaybackKindTs {
         match k {
             PlaybackKind::Progressive => PlaybackKindTs::Progressive,
             PlaybackKind::LiveRewindHls => PlaybackKindTs::LiveRewindHls,
+            PlaybackKind::Live => PlaybackKindTs::Live,
         }
     }
 }
@@ -84,6 +88,9 @@ impl From<&ContentRef> for ContentRefTs {
             },
             ContentRef::Clip { clip_id } => ContentRefTs::Clip {
                 clip_id: clip_id.clone(),
+            },
+            ContentRef::Live { channel_id } => ContentRefTs::Live {
+                channel_id: channel_id.clone(),
             },
         }
     }
@@ -204,6 +211,7 @@ impl From<Phase> for PhaseTs {
 pub enum ContentKindDto {
     Video,
     Clip,
+    Live,
 }
 
 impl From<ContentKind> for ContentKindDto {
@@ -211,6 +219,7 @@ impl From<ContentKind> for ContentKindDto {
         match k {
             ContentKind::Video => ContentKindDto::Video,
             ContentKind::Clip => ContentKindDto::Clip,
+            ContentKind::Live => ContentKindDto::Live,
         }
     }
 }
@@ -721,6 +730,10 @@ pub struct ProgressDto {
     pub eta_secs: Option<u64>,
     pub resumed_from: u64,
     pub refreshes: u32,
+    /// 생방송 녹화만: 지금까지 녹화한 길이(초)
+    pub live_recorded_secs: Option<f64>,
+    /// 생방송 녹화만: 놓친 세그먼트 수
+    pub live_gaps: Option<u32>,
 }
 
 impl From<&Progress> for ProgressDto {
@@ -737,6 +750,7 @@ impl From<&Progress> for ProgressDto {
             eta_secs,
             resumed_from,
             refreshes,
+            live,
         } = p;
         ProgressDto {
             phase: *phase,
@@ -751,6 +765,8 @@ impl From<&Progress> for ProgressDto {
             eta_secs: *eta_secs,
             resumed_from: *resumed_from,
             refreshes: *refreshes,
+            live_recorded_secs: live.map(|l| l.recorded_secs),
+            live_gaps: live.map(|l| l.gaps),
         }
     }
 }

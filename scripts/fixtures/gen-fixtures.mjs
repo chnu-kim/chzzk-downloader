@@ -46,6 +46,12 @@ export const FAKE = {
     title: '테스트 클립 하나',
     inKey: 'V1' + '0'.repeat(80) + 'c3',
   },
+  live: {
+    liveId: 9000003,
+    channelId: '000000000000000000000000000000e5',
+    channelName: '생방송채널',
+    title: '테스트 생방송',
+  },
   clipMulti: {
     clipId: 'TestClip02',
     videoId: '000000000000000000000000000000000C04',
@@ -175,6 +181,91 @@ function videoInfo(o) {
 }
 
 const json = (v) => JSON.stringify(v, null, 2) + '\n';
+
+// ---- 생방송(live-detail) ----
+
+const LIVE_DIR = `${HLS_HOST}/live/kr/streamkey0`;
+
+// HLS(일반)와 LLHLS(저지연) 두 media가 모두 protocol "HLS"다. 파서는 mediaId로 고른다.
+// 순서를 바꿔 LLHLS를 앞에 둔 변형으로 "첫 HLS"를 고르는 버그를 잡는다.
+function liveMedia(id, file) {
+  return {
+    mediaId: id,
+    protocol: 'HLS',
+    path: `${LIVE_DIR}/${file}?${HDNTS}`,
+    p2pPath: `/live/kr/streamkey0/${file}?p2p=0`,
+    ...(id === 'LLHLS' ? { latency: 'lowLatency' } : {}),
+    encodingTrack: [
+      ...TRACKS.map(([tid, vp, vb, ab, fr, w, h]) => ({
+        encodingTrackId: tid,
+        videoProfile: vp,
+        audioProfile: 'LC',
+        videoCodec: 'H264',
+        videoBitRate: vb,
+        audioBitRate: ab,
+        videoFrameRate: fr,
+        videoWidth: w,
+        videoHeight: h,
+        audioSamplingRate: 48000,
+        audioChannel: 2,
+        avoidReencoding: false,
+        videoDynamicRange: 'SDR',
+      })),
+      // 영상 없는 트랙. 화질 목록에서 빠져야 한다.
+      { encodingTrackId: 'audioOnly', audioProfile: 'LC', audioCodec: 'AAC', audioBitRate: 128000, audioSamplingRate: 48000, audioChannel: 2 },
+    ],
+  };
+}
+
+function liveDetail({ status, llhlsFirst, playback, adult }) {
+  const playbackJson = playback
+    ? {
+        meta: { videoId: null, streamSeq: 1, liveId: String(FAKE.live.liveId), paidLive: false, cdnInfo: { cdnType: 'TEST' }, cmcdEnabled: false, playbackAuthType: 'NONE' },
+        serviceMeta: { contentType: 'LIVE' },
+        live: { start: '2026-01-02T03:00:00.000Z', open: '2026-01-02T03:00:00.000Z', timeMachine: false, status },
+        api: [],
+        media: llhlsFirst
+          ? [liveMedia('LLHLS', 'llhls_playlist.m3u8'), liveMedia('HLS', 'hls_playlist.m3u8')]
+          : [liveMedia('HLS', 'hls_playlist.m3u8'), liveMedia('LLHLS', 'llhls_playlist.m3u8')],
+        thumbnail: { snapshotThumbnailTemplate: `${IMG_HOST}/thumb/{type}.jpg`, types: ['480'] },
+        multiview: [],
+      }
+    : null;
+  return {
+    code: 200,
+    message: null,
+    content: {
+      liveId: FAKE.live.liveId,
+      liveTitle: FAKE.live.title,
+      status,
+      liveImageUrl: `${IMG_HOST}/live/{type}.jpg`,
+      defaultThumbnailImageUrl: null,
+      concurrentUserCount: 10,
+      accumulateCount: 100,
+      openDate: '2026-01-02 12:00:00',
+      closeDate: status === 'CLOSE' ? '2026-01-02 14:00:00' : null,
+      adult: adult ?? false,
+      clipActive: true,
+      tags: ['테스트'],
+      chatChannelId: 'N0000',
+      categoryType: 'ETC',
+      liveCategory: 'test',
+      liveCategoryValue: 'test',
+      timeMachineActive: false,
+      // 원본처럼 JSON이 든 "문자열"이다(파서 계약).
+      livePlaybackJson: playbackJson ? JSON.stringify(playbackJson) : null,
+      channel: {
+        channelId: FAKE.live.channelId,
+        channelName: FAKE.live.channelName,
+        channelImageUrl: `${IMG_HOST}/channel/${FAKE.live.channelId}.png`,
+        verifiedMark: false,
+        verifiedMarkType: null,
+        officialChannel: false,
+      },
+      userAdultStatus: null,
+    },
+  };
+}
 
 function hlsVideoInfo() {
   return videoInfo({
@@ -547,6 +638,10 @@ export function outputs() {
     'testdata/hls/init.mp4': initMp4(),
     'testdata/hls/seg0.m4v': segment(0),
     'testdata/hls/seg1.m4v': segment(1),
+    'testdata/live/live_detail.json': json(liveDetail({ status: 'OPEN', playback: true })),
+    'testdata/live/live_detail_llhls_first.json': json(liveDetail({ status: 'OPEN', llhlsFirst: true, playback: true })),
+    'testdata/live/live_detail_closed.json': json(liveDetail({ status: 'CLOSE', playback: false })),
+    'testdata/live/live_detail_adult_blocked.json': json(liveDetail({ status: 'OPEN', playback: false, adult: true })),
     'testdata/vod/video_info.json': json(vodVideoInfo(null)),
     'testdata/vod/playback.mpd': vodMpd(),
     'testdata/clip/clip_playinfo.json': clipPlayinfo(FAKE.clip),

@@ -3,4 +3,4 @@
 /**
  * `chzzk_core::PlaybackKind`의 TS 모양.
  */
-export type PlaybackKind = "progressive" | "liveRewindHls";
+export type PlaybackKind = "progressive" | "liveRewindHls" | "live";

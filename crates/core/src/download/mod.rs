@@ -4,6 +4,8 @@
 //! - `retry`: 재시도 정책과 실패 분류
 //! - `progressive`: PD mp4 단일 GET + Range 이어받기
 //! - `segmented`: 빠른 다시보기 HLS fMP4, 순서 보장 동시 fetch
+//! - `live`: 진행 중인 생방송 HLS fMP4, playlist를 계속 읽어 새 세그먼트를 이어 받는다
+//! - `defrag`: 생방송 결과(조각난 fMP4)를 마무리 직전에 일반 mp4로 제자리 변환한다
 //!
 //! 공통 골격(`Chzzk::download`):
 //! 1. 최종 파일이 있으면 `Skip` → `Skipped`(네트워크 0회), `Overwrite` → 계속.
@@ -16,6 +18,8 @@
 //! 실패·취소 시 `.part`와 sidecar를 남긴다(checkpoint 후). `is_resumable() == false`인 오류만 지운다.
 //! 단 `resolve` 실패와 작업 도중 재조회의 지문 불일치는 남긴다(`Job::keep_partial`).
 
+pub mod defrag;
+pub(crate) mod live;
 pub mod part;
 pub(crate) mod progressive;
 pub mod retry;
@@ -68,6 +72,9 @@ pub struct DownloadRequest {
     pub on_existing: DuplicatePolicy,
     /// HLS 동시 요청 수. 기본 4, 상한 8
     pub concurrency: NonZeroU8,
+    /// 생방송만: 이 토큰이 취소되면 지금까지 받은 것을 최종 파일로 마무리하고 `Completed`로 끝낸다
+    /// (`cancel`은 `.part`를 남기고 `Cancelled`로 끝나는 다른 뜻이다). 생방송이 아니면 쓰지 않는다.
+    pub live_stop: Option<CancellationToken>,
 }
 
 /// 다운로드 결과.
@@ -109,6 +116,7 @@ impl<'a> Reporter<'a> {
                 eta_secs: None,
                 resumed_from: 0,
                 refreshes: 0,
+                live: None,
             },
         }
     }
@@ -300,6 +308,20 @@ impl Chzzk {
 
 /// 엔진을 고른다.
 async fn run(job: &mut Job<'_>, part: &mut Option<PartFile>) -> Result<DownloadOutcome, Error> {
+    // 앞선 생방송 녹화가 중간에 끊겨 `.part`가 남았다면 이어 받지 않고(방송 흐름이 끊겼다) 받은 만큼을 마무리한다.
+    // init뿐인 `.part`(세그먼트를 하나도 받기 전에 끊겼다)는 재생할 수 없는 파일이 되므로 지우고 새로 녹화한다.
+    if job.req.expected_kind == PlaybackKind::Live
+        && let Some(p) = part.as_ref()
+    {
+        let init_len = p.staged().hls.map_or(0, |h| u64::from(h.init_len));
+        if init_len > 0 && p.written() > init_len {
+            let resumed_from = p.written();
+            return finish(job, part, resumed_from).await;
+        }
+        if let Some(p) = part.take() {
+            p.discard()?;
+        }
+    }
     job.report.phase(Phase::Resolving);
     let resolved = job.resolve().await?;
     job.report.phase(Phase::Downloading);
@@ -308,6 +330,11 @@ async fn run(job: &mut Job<'_>, part: &mut Option<PartFile>) -> Result<DownloadO
         Source::LiveRewindHls { master_url, tracks } => {
             segmented::run(job, master_url, tracks, part).await
         }
+        Source::Live {
+            master_url,
+            tracks,
+            live_id,
+        } => live::run(job, master_url, tracks, live_id, part).await,
     }
 }
 
@@ -338,6 +365,28 @@ pub(crate) async fn finish(
     if let Err(e) = p.checkpoint(|_| {}).await {
         *part = Some(p);
         return Err(e);
+    }
+    // 생방송은 조각 구조를 일반 mp4로 바꾼다(core.md 구현 중 변경 60). 바로 위 checkpoint로 받은 바이트가 모두
+    // durable하므로, 변환 도중 죽어도 다음 실행의 `resume`이 붙인 moov만 잘라 내고 다시 변환한다.
+    // 실패는 경고만 남기고 조각 구조 그대로 마무리한다.
+    if job.req.expected_kind == PlaybackKind::Live {
+        // 파일 전체 훑기·fsync는 오래 걸릴 수 있어 blocking 스레드에서 한다.
+        match p.with_file_blocking(defrag::defragment).await {
+            Ok(r) => {
+                tracing::info!(report = ?r, "생방송 파일 변환");
+                // 변환이 붙인 moov까지 committed_len에 넣는다(마무리가 Skipped로 끝나 `.part`가 남아도 잘리지 않게).
+                // 변환에 실패했으면 checkpoint하지 않는다(디스크 부족에서 sidecar 쓰기가 또 실패해 녹화가 실패로 끝나면 안 된다).
+                if matches!(r, defrag::DefragReport::Converted { .. })
+                    && let Err(e) = p.checkpoint(|_| {}).await
+                {
+                    *part = Some(p);
+                    return Err(e);
+                }
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "생방송 파일을 일반 mp4로 바꾸지 못해 조각 구조로 둔다")
+            }
+        }
     }
     let bytes = p.written();
     match p.finalize(job.req.on_existing).await? {

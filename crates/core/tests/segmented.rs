@@ -27,6 +27,7 @@ fn request(out: &Path, concurrency: u8) -> DownloadRequest {
         output: out.to_path_buf(),
         on_existing: DuplicatePolicy::Overwrite,
         concurrency: NonZeroU8::new(concurrency).unwrap(),
+        live_stop: None,
     }
 }
 

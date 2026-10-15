@@ -3,6 +3,8 @@
 //! - **큐**: `enqueue`는 `queued`로 넣고 `pump()`한다. `pump()`는 스케줄러가 켜져 있고 `running + pausing`이
 //!   동시 작업 수(설정 `max_parallel_downloads`, 1~3)보다 적은 동안 가장 먼저 줄 선 `queued`를 시작한다.
 //!   `pausing`도 센다. 태스크가 아직 연결과 `.part` 잠금을 쥐고 있기 때문이다.
+//!   **생방송 녹화는 따로 센다**(`MAX_LIVE`개까지 별도 lane): 몇 시간씩 도는 녹화가 VOD·클립 슬롯을 막지 않게 하고,
+//!   VOD가 슬롯을 다 써도 방송이 시작될 때 바로 녹화가 시작되게 한다.
 //! - **이벤트 순서**: 상태를 바꾸고 저장할 목록을 넘기고 이벤트를 보내는 일을 모두 상태 잠금 안에서 한다. 그래서
 //!   `Added` → `Status(running)` → `Progress`… → `Status(끝)` 순서가 실제 전이 순서와 같고, `subscribe`의
 //!   스냅샷과 그 뒤 이벤트 사이에 빠지거나 겹치는 것이 없다. 잠금 순서는 상태 → sink 하나뿐이다.
@@ -17,6 +19,9 @@
 //! - **멈춤**: `pause`·`remove`·`quit`은 `stop`을 먼저 적고 토큰을 취소한다. 코어는 셋 다 `Error::Cancelled`로
 //!   끝나므로 `stop`으로 구분한다: `Pause` → `paused`, `Quit` → `interrupted`(다음 시작 때 이어받을 대상),
 //!   `Remove` → 지운다. 이유 없이 `Cancelled`가 오면 `failed{internal}`이다.
+//!   **생방송의 "중지"는 취소가 아니다**(`stop_job`, `StopReason::Finish`): 코어의 `live_stop`을 취소해 받은 만큼
+//!   최종 파일로 마무리하고 `completed`가 된다(아무것도 받지 못했으면 `failed{nothingRecorded}`). `pause`는 생방송에서
+//!   같은 뜻이고(`.part`를 남기는 일시정지는 이어 붙일 수 없어 없다), `quit`도 생방송은 마무리한다.
 //! - **`remove`의 순서**: 태스크의 `JoinHandle`을 꺼내 **잠금을 놓은 뒤** 기다리고, 그다음 `discard_partial`을
 //!   부른다. 끝나는 태스크가 같은 잠금을 잡으므로 잡은 채 기다리면 교착이고, 먼저 지우면 `.part` 잠금 때문에
 //!   `FileLocked`다(코어가 취소 뒤 체크포인트를 쓰는 중일 수도 있다).
@@ -54,6 +59,9 @@ pub type ClientFn<B> = Arc<dyn Fn() -> Arc<B> + Send + Sync>;
 /// 완료·건너뜀을 남기는 개수. 넘으면 오래된 것부터 지운다.
 pub const MAX_FINISHED: usize = 100;
 
+/// 동시에 녹화할 수 있는 생방송 수(VOD 슬롯과 별개 lane).
+pub const MAX_LIVE: usize = 3;
+
 /// 동시 작업 수 범위(코어 `settings::MAX_PARALLEL_DOWNLOADS`와 같다).
 pub const MIN_PARALLEL: u8 = 1;
 pub const MAX_PARALLEL: u8 = chzzk_core::settings::MAX_PARALLEL_DOWNLOADS;
@@ -79,6 +87,8 @@ enum StopReason {
     Pause,
     Remove,
     Quit,
+    /// 생방송 중지: 취소가 아니라 받은 만큼 마무리한다
+    Finish,
 }
 
 /// `enqueue` 때 설정에서 오는 값.
@@ -102,6 +112,8 @@ enum End {
 struct Job {
     rec: JobRecord,
     cancel: Option<CancellationToken>,
+    /// 생방송만: 취소하면 코어가 받은 만큼 마무리한다(`DownloadRequest::live_stop`)
+    live_stop: Option<CancellationToken>,
     handle: Option<JoinHandle<()>>,
     last_progress: Option<ProgressDto>,
     stop: Option<StopReason>,
@@ -121,6 +133,7 @@ impl Job {
         Job {
             rec,
             cancel: None,
+            live_stop: None,
             handle: None,
             last_progress: None,
             stop: None,
@@ -149,6 +162,23 @@ impl Job {
             JobStatus::Completed => true,
             JobStatus::Skipped => self.rec.partial_bytes.is_none(),
             _ => false,
+        }
+    }
+
+    /// 생방송 작업인가(별도 lane, 중지는 마무리).
+    fn is_live(&self) -> bool {
+        matches!(self.rec.content, ContentRef::Live { .. })
+    }
+
+    /// 멈춤 요청을 보낸다. 생방송은 마무리(`live_stop`), 나머지는 취소.
+    fn signal_stop(&self) {
+        let token = if self.is_live() {
+            self.live_stop.as_ref()
+        } else {
+            self.cancel.as_ref()
+        };
+        if let Some(t) = token {
+            t.cancel();
         }
     }
 
@@ -355,6 +385,7 @@ impl<B: Backend> DownloadManager<B> {
         let kind = match &req.content {
             ContentRef::Video { .. } => ContentKindDto::Video,
             ContentRef::Clip { .. } => ContentKindDto::Clip,
+            ContentRef::Live { .. } => ContentKindDto::Live,
         };
         let rec = JobRecord {
             id,
@@ -436,11 +467,45 @@ impl<B: Backend> DownloadManager<B> {
         };
         match job.rec.status {
             JobStatus::Running => {
-                job.stop = Some(StopReason::Pause);
+                // 생방송은 `.part`를 남기는 일시정지가 없다: 받은 만큼 마무리한다
+                job.stop = Some(if job.is_live() {
+                    StopReason::Finish
+                } else {
+                    StopReason::Pause
+                });
                 job.rec.status = JobStatus::Pausing;
-                if let Some(c) = &job.cancel {
-                    c.cancel();
-                }
+                job.signal_stop();
+            }
+            JobStatus::Queued => {
+                job.rec.set_status(JobStatus::Paused, now_secs());
+                job.rec.partial_bytes = partial_bytes(&job.rec);
+            }
+            _ => return Ok(()),
+        }
+        let dto = job.dto();
+        self.inner.save(&st);
+        st.emit(JobEvent::Status { job: dto });
+        Ok(())
+    }
+
+    /// 생방송 녹화를 멈추고 받은 만큼 최종 파일로 마무리한다. `running` → `pausing` → `completed`.
+    /// 줄 서 있던(`queued`) 작업은 `paused`가 된다. 이미 멈추는 중이거나 끝난 작업에는 아무것도 하지 않는다.
+    /// 생방송이 아닌 작업은 `invalidInput`(그쪽은 `pause`·`remove`다).
+    pub fn stop_job(&self, id: JobId) -> Result<(), AppError> {
+        let mut st = self.inner.lock();
+        let Some(job) = st.target(id)? else {
+            return Ok(());
+        };
+        if !job.is_live() {
+            return Err(AppError::invalid_input(
+                "생방송 녹화가 아닌 작업은 중지할 수 없습니다",
+            ));
+        }
+        match job.rec.status {
+            JobStatus::Running => {
+                job.stop = Some(StopReason::Finish);
+                job.rec.status = JobStatus::Pausing;
+                job.signal_stop();
             }
             JobStatus::Queued => {
                 job.rec.set_status(JobStatus::Paused, now_secs());
@@ -550,6 +615,9 @@ impl<B: Backend> DownloadManager<B> {
             .filter(|j| {
                 !j.removing
                     && j.rec.status == JobStatus::Interrupted
+                    // `.part`가 없는 생방송은 자동으로 다시 시작하지 않는다: 지금 방송 중인 다른 방송을 옛 제목·시각의
+                    // 파일로 녹화하게 된다. 받은 부분이 있으면 그것을 마무리하는 것이라 줄 세운다
+                    && (!j.is_live() || j.rec.partial_bytes.is_some_and(|b| b > 0))
                     && keep(j.rec.channel_id.as_deref())
             })
             .map(|j| j.rec.id)
@@ -752,11 +820,14 @@ impl<B: Backend> DownloadManager<B> {
             for job in st.jobs.values_mut() {
                 if job.rec.status == JobStatus::Running {
                     stopped.push(job.rec.id);
-                    job.stop = Some(StopReason::Quit);
+                    // 생방송은 취소가 아니라 마무리한다(받은 만큼이 바로 재생 가능한 파일이 된다)
+                    job.stop = Some(if job.is_live() {
+                        StopReason::Finish
+                    } else {
+                        StopReason::Quit
+                    });
                     job.rec.status = JobStatus::Pausing;
-                    if let Some(c) = &job.cancel {
-                        c.cancel();
-                    }
+                    job.signal_stop();
                     changed.push(job.dto());
                 }
                 if job.busy()
@@ -902,14 +973,22 @@ impl<B: Backend> Inner<B> {
     /// 슬롯이 있는 동안 가장 먼저 줄 선 `queued`를 시작한다.
     fn pump(self: &Arc<Self>, st: &mut State) {
         while st.scheduler_enabled {
-            let busy = st.jobs.values().filter(|j| j.occupies_slot()).count();
-            if busy >= st.max_running {
-                break;
-            }
+            let busy = |live: bool| {
+                st.jobs
+                    .values()
+                    .filter(|j| j.occupies_slot() && j.is_live() == live)
+                    .count()
+            };
+            // lane마다 자리가 있는지 본다(생방송 lane은 `MAX_LIVE`, 나머지는 설정의 동시 작업 수)
+            let (vod_free, live_free) = (busy(false) < st.max_running, busy(true) < MAX_LIVE);
             let next = st
                 .jobs
                 .values()
-                .filter(|j| j.rec.status == JobStatus::Queued && j.detached.is_none())
+                .filter(|j| {
+                    j.rec.status == JobStatus::Queued
+                        && j.detached.is_none()
+                        && if j.is_live() { live_free } else { vod_free }
+                })
                 .min_by_key(|j| j.queue_seq)
                 .map(|j| j.rec.id);
             let Some(id) = next else { break };
@@ -939,7 +1018,9 @@ impl<B: Backend> Inner<B> {
         job.stop = None;
         let cancel = CancellationToken::new();
         job.cancel = Some(cancel.clone());
-        let req = job.rec.to_request();
+        job.live_stop = job.is_live().then(CancellationToken::new);
+        let mut req = job.rec.to_request();
+        req.live_stop = job.live_stop.clone();
         let discard = job.rec.discard_on_start;
 
         let me = Arc::clone(self);
@@ -1008,6 +1089,7 @@ impl<B: Backend> Inner<B> {
             }
             let was_detached = job.detached.take().is_some();
             job.cancel = None;
+            job.live_stop = None;
             job.handle = None;
             if was_detached && !job.removing && job.rec.status != JobStatus::Interrupted {
                 // quit 뒤 다시 줄 세웠거나 멈춘 작업: 옛 태스크가 끝났으니 슬롯만 푼다
@@ -1039,7 +1121,7 @@ impl<B: Backend> Inner<B> {
                     job.last_progress = None;
                 }
                 End::Cancelled => match stop {
-                    Some(StopReason::Pause) => {
+                    Some(StopReason::Pause | StopReason::Finish) => {
                         r.set_status(JobStatus::Paused, now);
                         r.partial_bytes = partial_bytes(r);
                     }

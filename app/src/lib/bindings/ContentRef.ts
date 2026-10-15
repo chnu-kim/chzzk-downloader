@@ -3,4 +3,4 @@
 /**
  * `chzzk_core::ContentRef`의 TS 모양.
  */
-export type ContentRef = { "kind": "video", videoNo: number, } | { "kind": "clip", clipId: string, };
+export type ContentRef = { "kind": "video", videoNo: number, } | { "kind": "clip", clipId: string, } | { "kind": "live", channelId: string, };

@@ -27,6 +27,12 @@ pub enum Error {
     AuthRequired { status: u16 },
     #[error("재생 정보가 없습니다")]
     NoPlayback { adult: bool },
+    /// 생방송 주소인데 지금 방송 중이 아니다(`status != OPEN`).
+    #[error("지금 방송 중이 아닙니다")]
+    NotLive,
+    /// 생방송을 받기 시작했지만 세그먼트를 하나도 받기 전에 멈췄다(저장할 내용이 없다).
+    #[error("녹화된 내용이 없습니다")]
+    NothingRecorded,
     #[error("암호화된 VOD({method})는 지원하지 않습니다")]
     EncryptedVod { method: String },
     #[error("다운로드 가능한 화질이 없습니다")]
@@ -97,6 +103,8 @@ pub enum ErrorKind {
     Http,
     AuthRequired,
     NoPlayback,
+    NotLive,
+    NothingRecorded,
     Encrypted,
     NoQualities,
     QualityNotFound,
@@ -128,6 +136,8 @@ impl Error {
             Error::HttpStatus { .. } => ErrorKind::Http,
             Error::AuthRequired { .. } => ErrorKind::AuthRequired,
             Error::NoPlayback { .. } => ErrorKind::NoPlayback,
+            Error::NotLive => ErrorKind::NotLive,
+            Error::NothingRecorded => ErrorKind::NothingRecorded,
             Error::EncryptedVod { .. } => ErrorKind::Encrypted,
             Error::NoQualities => ErrorKind::NoQualities,
             Error::QualityNotFound { .. } => ErrorKind::QualityNotFound,
@@ -173,6 +183,8 @@ impl Error {
             | Error::Parse { .. }
             | Error::Api { .. }
             | Error::NoPlayback { .. }
+            | Error::NotLive
+            | Error::NothingRecorded
             | Error::InvalidUrl
             | Error::NoQualities
             | Error::QualityNotFound { .. }

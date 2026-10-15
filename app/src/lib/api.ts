@@ -63,6 +63,8 @@ export const enqueue = (req: EnqueueRequest) => call<JobDto>('enqueue', { req })
 export const listJobs = () => call<JobDto[]>('list_jobs');
 export const subscribeJobs = (onEvent: Channel<JobEvent>) => call<JobDto[]>('subscribe_jobs', { onEvent });
 export const pauseJob = (id: JobId) => call<void>('pause_job', { id });
+/** 생방송 녹화를 멈추고 받은 만큼 마무리한다(취소가 아니다) */
+export const stopJob = (id: JobId) => call<void>('stop_job', { id });
 export const resumeJob = (id: JobId, restart = false) => call<void>('resume_job', { id, restart });
 export const removeJob = (id: JobId) => call<void>('remove_job', { id });
 export const clearFinished = () => call<void>('clear_finished');

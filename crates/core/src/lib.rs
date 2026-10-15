@@ -40,7 +40,7 @@ pub use model::{
 };
 pub use naming::Platform;
 pub use ownership::{is_own_channel, is_own_content};
-pub use progress::{Meter, Phase, Progress};
+pub use progress::{LiveProgress, Meter, Phase, Progress};
 pub use settings::{
     RecentKind, RecentVod, SettingsStore, TextScale, Theme, UserSettings, add_recent_vod,
     add_recent_vod_with,

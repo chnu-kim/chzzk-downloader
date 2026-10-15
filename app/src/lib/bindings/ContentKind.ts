@@ -3,4 +3,4 @@
 /**
  * 컨텐츠 종류. 코어 `ContentKind`는 `"Video"`로 직렬화되므로 §5대로 `"video"`가 되게 셸이 옮긴다.
  */
-export type ContentKind = "video" | "clip";
+export type ContentKind = "video" | "clip" | "live";

@@ -51,6 +51,19 @@ pub fn default_filename(meta: &ContentMeta, p: Platform) -> String {
 
     let prefix = match meta.kind {
         ContentKind::Clip => "[클립] ".to_string(),
+        ContentKind::Live => {
+            // 같은 방송을 다시 받아도 이름이 겹치지 않도록 시작 시각(KST)까지 적는다.
+            let raw = meta.live_open_date.as_deref();
+            match raw.and_then(parse_live_date) {
+                Some((y, m, d)) => match raw.and_then(parse_live_time) {
+                    Some((hh, mm)) => {
+                        format!("[라이브 {:02}{m:02}{d:02}-{hh:02}{mm:02}] ", y % 100)
+                    }
+                    None => format!("[라이브 {:02}{m:02}{d:02}] ", y % 100),
+                },
+                None => "[라이브] ".to_string(),
+            }
+        }
         ContentKind::Video => {
             let date = meta
                 .live_open_date
@@ -239,6 +252,20 @@ pub fn parse_live_date(raw: &str) -> Option<(u16, u8, u8)> {
         return None;
     }
     Some((y, m, d))
+}
+
+/// `"YYYY-MM-DD HH:MM[:SS]"`(또는 `T` 구분)에서 시·분을 읽는다. 시간이 없거나 범위를 벗어나면 `None`.
+pub fn parse_live_time(raw: &str) -> Option<(u8, u8)> {
+    parse_live_date(raw)?;
+    let rest = raw.get(11..)?;
+    let (hh, mm) = (rest.get(..2)?, rest.get(3..5)?);
+    if rest.as_bytes().get(2) != Some(&b':')
+        || !hh.bytes().chain(mm.bytes()).all(|b| b.is_ascii_digit())
+    {
+        return None;
+    }
+    let (hh, mm): (u8, u8) = (hh.parse().ok()?, mm.parse().ok()?);
+    (hh < 24 && mm < 60).then_some((hh, mm))
 }
 
 #[cfg(test)]
@@ -494,6 +521,28 @@ mod tests {
         // 채널·날짜 없이 예약어 제목
         let m = meta(ContentKind::Video, "", "con", None);
         assert_eq!(default_filename(&m, Windows), "con_.mp4");
+    }
+
+    #[test]
+    fn live_filename_has_start_time() {
+        let p = Linux;
+        let m = meta(
+            ContentKind::Live,
+            "채널",
+            "제목",
+            Some("2026-01-02 12:34:56"),
+        );
+        assert_eq!(
+            default_filename(&m, p),
+            "[라이브 260102-1234] 채널 - 제목.mp4"
+        );
+        let m = meta(ContentKind::Live, "채널", "제목", Some("2026-01-02"));
+        assert_eq!(default_filename(&m, p), "[라이브 260102] 채널 - 제목.mp4");
+        let m = meta(ContentKind::Live, "채널", "제목", None);
+        assert_eq!(default_filename(&m, p), "[라이브] 채널 - 제목.mp4");
+        assert_eq!(parse_live_time("2026-01-02T05:06:07"), Some((5, 6)));
+        assert_eq!(parse_live_time("2026-01-02 24:00:00"), None);
+        assert_eq!(parse_live_time("2026-01-02 5:06"), None);
     }
 
     #[test]

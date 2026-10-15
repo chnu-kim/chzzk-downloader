@@ -184,6 +184,8 @@ function progressDto(job: JobDto, bytes: number, totalBytes: number, phase: Prog
     etaSecs: 10,
     resumedFrom: 0,
     refreshes: 0,
+    liveRecordedSecs: null,
+    liveGaps: null,
   };
 }
 

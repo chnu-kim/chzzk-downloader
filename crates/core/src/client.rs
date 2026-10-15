@@ -50,6 +50,10 @@ pub struct ClientConfig {
     pub connect_timeout: Duration,
     /// 읽기 idle timeout. 기본 30초. 전체 timeout은 두지 않는다.
     pub read_timeout: Duration,
+    /// 생방송 media playlist를 다시 읽는 간격. 기본 1초(세그먼트가 2초 길이다)
+    pub live_poll_interval: Duration,
+    /// 생방송에서 새 세그먼트가 이 시간 동안 없으면 방송이 끝났는지 다시 조회한다. 기본 30초
+    pub live_idle_check: Duration,
 }
 
 impl Default for ClientConfig {
@@ -62,6 +66,8 @@ impl Default for ClientConfig {
             progress_interval: Duration::from_millis(200),
             connect_timeout: Duration::from_secs(10),
             read_timeout: Duration::from_secs(30),
+            live_poll_interval: Duration::from_secs(1),
+            live_idle_check: Duration::from_secs(30),
         }
     }
 }
@@ -105,6 +111,7 @@ impl Chzzk {
     ///
     /// - Video: info → `classify` → DASH면 MPD → PD 화질 / 빠른 다시보기면 master 주소와 track
     /// - Clip: clip info → MPD → PD 화질
+    /// - Live: live-detail → master 주소와 화질(방송 중이 아니면 `NotLive`)
     /// - 암호화 VOD는 MPD를 받지 않고 `EncryptedVod`(AES seam, 설계 §11)
     pub async fn resolve(&self, c: &ContentRef) -> Result<Resolved, Error> {
         let (meta, source) = match c {
@@ -131,6 +138,25 @@ impl Chzzk {
                     }
                 };
                 (meta, source)
+            }
+            ContentRef::Live { channel_id } => {
+                let url = api_url(
+                    &self.cfg.endpoints.chzzk_api,
+                    &["service", "v3", "channels", channel_id, "live-detail"],
+                );
+                let body = self.fetch(url, RequestKind::Api).await?;
+                let (meta, d) = info::parse_live_detail(&body)?;
+                if d.tracks.is_empty() {
+                    return Err(Error::NoQualities);
+                }
+                (
+                    meta,
+                    Source::Live {
+                        master_url: d.master_url,
+                        tracks: d.tracks,
+                        live_id: d.live_id,
+                    },
+                )
             }
             ContentRef::Clip { clip_id } => {
                 let url = api_url(

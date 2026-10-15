@@ -4,4 +4,12 @@ import type { Phase } from "./Phase";
 /**
  * 코어 `Progress`를 평평하게 편 것(튜플은 JSON 배열이 되므로).
  */
-export type ProgressDto = { phase: Phase, bytes: number, totalBytes: number | null, totalBytesEstimate: number | null, segmentsDone: number | null, segmentsTotal: number | null, mediaSecsDone: number | null, mediaSecsTotal: number | null, speedBps: number | null, etaSecs: number | null, resumedFrom: number, refreshes: number, };
+export type ProgressDto = { phase: Phase, bytes: number, totalBytes: number | null, totalBytesEstimate: number | null, segmentsDone: number | null, segmentsTotal: number | null, mediaSecsDone: number | null, mediaSecsTotal: number | null, speedBps: number | null, etaSecs: number | null, resumedFrom: number, refreshes: number, 
+/**
+ * 생방송 녹화만: 지금까지 녹화한 길이(초)
+ */
+liveRecordedSecs: number | null, 
+/**
+ * 생방송 녹화만: 놓친 세그먼트 수
+ */
+liveGaps: number | null, };

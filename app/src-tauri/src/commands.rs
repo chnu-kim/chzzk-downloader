@@ -151,6 +151,12 @@ pub async fn pause_job(state: State<'_, App>, id: JobId) -> Res<()> {
     state.manager.pause(id)
 }
 
+/// 생방송 녹화를 멈추고 받은 만큼 마무리한다(취소가 아니다).
+#[tauri::command]
+pub async fn stop_job(state: State<'_, App>, id: JobId) -> Res<()> {
+    state.manager.stop_job(id)
+}
+
 #[tauri::command]
 pub async fn resume_job(state: State<'_, App>, id: JobId, restart: bool) -> Res<()> {
     state.resume_job(id, restart).await

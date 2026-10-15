@@ -20,6 +20,8 @@ extend-exclude = [
 # MP4 상자 이름(ISO/IEC 14496-12)
 trak = "trak"
 trun = "trun"
+# `trun` 상자 여러 개(defrag 테스트의 필드·변수 이름)
+truns = "truns"
 # MP4 메타데이터 '©nam'(제목) 상자 흉내
 nam = "nam"
 

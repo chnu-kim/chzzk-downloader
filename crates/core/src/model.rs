@@ -17,8 +17,16 @@ use crate::http::DebugUrl;
     rename_all_fields = "camelCase"
 )]
 pub enum ContentRef {
-    Video { video_no: u64 },
-    Clip { clip_id: String },
+    Video {
+        video_no: u64,
+    },
+    Clip {
+        clip_id: String,
+    },
+    /// 생방송. 채널 ID(32자리 소문자 hex)로 가리킨다.
+    Live {
+        channel_id: String,
+    },
 }
 
 /// 컨텐츠 종류.
@@ -26,6 +34,7 @@ pub enum ContentRef {
 pub enum ContentKind {
     Video,
     Clip,
+    Live,
 }
 
 /// 파일명·표시·소유 확인에 쓰는 메타데이터.
@@ -81,6 +90,8 @@ impl Quality {
 pub enum PlaybackKind {
     Progressive,
     LiveRewindHls,
+    /// 진행 중인 생방송(HLS, 방송이 끝나거나 사용자가 멈출 때까지 받는다)
+    Live,
 }
 
 /// PD(progressive mp4) 화질 하나와 그 다운로드 주소.
@@ -112,6 +123,12 @@ pub enum Source {
         master_url: Url,
         tracks: Vec<Quality>,
     },
+    /// 진행 중인 생방송. `live_id`는 방송이 바뀌었는지(종료 판정) 보는 데 쓴다.
+    Live {
+        master_url: Url,
+        tracks: Vec<Quality>,
+        live_id: u64,
+    },
 }
 
 impl fmt::Debug for Source {
@@ -124,6 +141,16 @@ impl fmt::Debug for Source {
                 .debug_struct("LiveRewindHls")
                 .field("master_url", &DebugUrl(master_url))
                 .field("tracks", tracks)
+                .finish(),
+            Source::Live {
+                master_url,
+                tracks,
+                live_id,
+            } => f
+                .debug_struct("Live")
+                .field("master_url", &DebugUrl(master_url))
+                .field("tracks", tracks)
+                .field("live_id", live_id)
                 .finish(),
         }
     }
@@ -143,6 +170,7 @@ impl Resolved {
         match self.source {
             Source::Progressive { .. } => PlaybackKind::Progressive,
             Source::LiveRewindHls { .. } => PlaybackKind::LiveRewindHls,
+            Source::Live { .. } => PlaybackKind::Live,
         }
     }
 
@@ -150,7 +178,9 @@ impl Resolved {
     pub fn qualities(&self) -> Vec<&Quality> {
         match &self.source {
             Source::Progressive { reps } => reps.iter().map(|r| &r.quality).collect(),
-            Source::LiveRewindHls { tracks, .. } => tracks.iter().collect(),
+            Source::LiveRewindHls { tracks, .. } | Source::Live { tracks, .. } => {
+                tracks.iter().collect()
+            }
         }
     }
 

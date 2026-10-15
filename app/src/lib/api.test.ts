@@ -44,7 +44,7 @@ async function record(run: () => Promise<unknown>): Promise<Call[]> {
 
 describe('api.ts', () => {
   it('command 목록을 읽었다', () => {
-    expect(COMMANDS).toHaveLength(33);
+    expect(COMMANDS).toHaveLength(34);
   });
 
   // Channel은 생성 때 IPC 내부를 쓰므로 mockIPC 뒤(호출 안)에서 만든다.
@@ -67,6 +67,7 @@ describe('api.ts', () => {
     [() => api.listJobs(), 'list_jobs', {}],
     [() => api.subscribeJobs(new api.Channel<JobEvent>()), 'subscribe_jobs', { onEvent: expect.anything() }],
     [() => api.pauseJob(3), 'pause_job', { id: 3 }],
+    [() => api.stopJob(3), 'stop_job', { id: 3 }],
     [() => api.resumeJob(3), 'resume_job', { id: 3, restart: false }],
     [() => api.removeJob(3), 'remove_job', { id: 3 }],
     [() => api.clearFinished(), 'clear_finished', {}],

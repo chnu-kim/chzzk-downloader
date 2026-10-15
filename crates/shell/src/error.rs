@@ -31,7 +31,7 @@ pub struct AppError {
     pub payload: Option<ErrorPayload>,
 }
 
-/// 오류 종류. 앞 20개는 `chzzk_core::ErrorKind`와 1:1, 뒤는 셸 전용이다.
+/// 오류 종류. 앞 22개는 `chzzk_core::ErrorKind`와 1:1, 뒤는 셸 전용이다.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub enum ErrorCode {
@@ -40,6 +40,8 @@ pub enum ErrorCode {
     Http,
     AuthRequired,
     NoPlayback,
+    NotLive,
+    NothingRecorded,
     Encrypted,
     NoQualities,
     QualityNotFound,
@@ -75,6 +77,8 @@ impl From<ErrorKind> for ErrorCode {
             ErrorKind::Http => ErrorCode::Http,
             ErrorKind::AuthRequired => ErrorCode::AuthRequired,
             ErrorKind::NoPlayback => ErrorCode::NoPlayback,
+            ErrorKind::NotLive => ErrorCode::NotLive,
+            ErrorKind::NothingRecorded => ErrorCode::NothingRecorded,
             ErrorKind::Encrypted => ErrorCode::Encrypted,
             ErrorKind::NoQualities => ErrorCode::NoQualities,
             ErrorKind::QualityNotFound => ErrorCode::QualityNotFound,

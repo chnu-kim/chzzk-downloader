@@ -19,6 +19,7 @@ fn request(out: &Path, on_existing: DuplicatePolicy) -> DownloadRequest {
         output: out.to_path_buf(),
         on_existing,
         concurrency: chzzk_core::download::DEFAULT_CONCURRENCY,
+        live_stop: None,
     }
 }
 

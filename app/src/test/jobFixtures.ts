@@ -15,6 +15,8 @@ export function prog(over: Partial<ProgressDto> = {}): ProgressDto {
     etaSecs: 138,
     resumedFrom: 0,
     refreshes: 0,
+    liveRecordedSecs: null,
+    liveGaps: null,
     ...over,
   };
 }

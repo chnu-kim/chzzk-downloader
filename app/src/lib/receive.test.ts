@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { check, quality, resolved } from '../test/fixtures';
+import { check, liveResolved, quality, resolved } from '../test/fixtures';
 import { t } from './copy/ko';
 import {
   BLOCK_REASON_ID,
@@ -24,6 +24,9 @@ describe('표시', () => {
     expect(kindTone('clip', 'progressive')).toBe('clip');
     expect(kindTone('video', 'liveRewindHls')).toBe('rewind');
     expect(kindTone('video', 'progressive')).toBe('vod');
+    // 생방송은 종류와 재생 방식 어느 쪽으로 와도 live(ADR-0025)
+    expect(kindTone('live', 'live')).toBe('live');
+    expect(kindTone('video', 'live')).toBe('live');
   });
 
   it('메타 줄: 방송 날짜가 있으면 방송, 없으면 업로드, 길이 H:MM:SS', () => {
@@ -34,6 +37,12 @@ describe('표시', () => {
     expect(metaParts(r)).toEqual(['채널이름', '2026. 10. 4. 업로드']);
     r.meta.publishDate = null;
     expect(metaParts(r)).toEqual(['채널이름']);
+  });
+
+  it('생방송 메타 줄: 길이가 없고 화질 예상 크기도 없다(길이를 모른다)', () => {
+    const r = liveResolved();
+    expect(metaParts(r)).toEqual(['채널이름', '2026. 10. 16. 오후 9:00 방송']);
+    expect(qualitySize(r.qualities[0], r.meta.durationSecs)).toBeNull();
   });
 
   it('화질 fps·예상 크기', () => {

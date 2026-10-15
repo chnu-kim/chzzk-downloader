@@ -224,7 +224,7 @@ export function errorCopy(raw: AppError, ctx: ErrorContext): ErrorCopy {
       // 유일하게 버튼이 없다: 입력칸이 행동이다
       return copy(
         '치지직 영상 주소가 아니에요',
-        '영상 주소는 chzzk.naver.com/video/… 또는 …/clips/… 모양이에요. 라이브 주소는 받을 수 없어요.',
+        '영상 주소는 chzzk.naver.com/video/…, …/clips/…, …/live/… 모양이에요.',
         [],
       );
 

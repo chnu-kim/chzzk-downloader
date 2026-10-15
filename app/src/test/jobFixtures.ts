@@ -36,6 +36,20 @@ export function hlsProg(over: Partial<ProgressDto> = {}): ProgressDto {
   });
 }
 
+/** 생방송 녹화 진행(전체 길이를 모른다: 막대·총량·남은 시간 없음) */
+export function liveProg(over: Partial<ProgressDto> = {}): ProgressDto {
+  return prog({
+    bytes: 3_650_722_201,
+    totalBytes: null,
+    totalBytesEstimate: null,
+    etaSecs: null,
+    speedBps: 1_000_000,
+    liveRecordedSecs: 3725,
+    liveGaps: 0,
+    ...over,
+  });
+}
+
 export function job(id: number, over: Partial<JobDto> = {}): JobDto {
   return {
     id,

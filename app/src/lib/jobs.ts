@@ -11,7 +11,7 @@ import {
   formatSpeed,
   type SizeBase,
 } from './format/bytes';
-import { formatCount, formatElapsed, formatRemaining, formatSpokenRemaining } from './format/duration';
+import { formatCount, formatElapsed, formatRemaining, formatSpan, formatSpokenRemaining } from './format/duration';
 import type { IconName } from './components/ui/icons';
 import { COMPLETED_FOLD_AT, RECOVERY_SILENT_MS, STALE_DAYS } from './timing';
 import { localOffsetMin, whenText } from './when';
@@ -136,6 +136,8 @@ export function receivedBytes(job: JobDto, progress: ProgressDto | null | undefi
 /** 0~1, 모르면 `null`. HLS는 재생 시간 비율(ETA와 맞춘다), progressive는 바이트 비율(§8.11) */
 export function progressFraction(job: JobDto, p: ProgressDto | null | undefined): number | null {
   if (!p) return null;
+  // 생방송은 전체 길이를 모른다(ADR-0025)
+  if (job.playbackKind === 'live') return null;
   if (job.playbackKind === 'liveRewindHls') {
     if (p.mediaSecsDone == null || !p.mediaSecsTotal || p.mediaSecsTotal <= 0) return null;
     return Math.min(1, Math.max(0, p.mediaSecsDone / p.mediaSecsTotal));
@@ -171,6 +173,8 @@ export interface BarView {
  * `floor`는 이 작업이 지금까지 보인 가장 큰 퍼센트다: 코어 값이 줄어도 표시는 뒤로 가지 않는다(P-4).
  */
 export function barView(job: JobDto, p: ProgressDto | null | undefined, floor = 0): BarView | null {
+  // 생방송은 막대·퍼센트·남은 시간이 없다. 상태 줄 글자만 말한다(ADR-0025)
+  if (job.playbackKind === 'live') return null;
   const s = job.status;
   if (s === 'queued' || s === 'completed' || s === 'skipped') return null;
   if ((s === 'paused' || s === 'interrupted' || s === 'failed') && !p) return null;
@@ -193,11 +197,12 @@ export function barView(job: JobDto, p: ProgressDto | null | undefined, floor = 
 export function statusWord(job: JobDto, p: ProgressDto | null | undefined): string {
   switch (job.status) {
     case 'running':
+      if (job.playbackKind === 'live' && p?.phase === 'downloading') return t('job.phase.recording');
       return t(PHASE_KEY[p?.phase ?? 'resolving']);
     case 'queued':
       return t('job.status.queued');
     case 'pausing':
-      return t('job.pausing');
+      return t(job.playbackKind === 'live' ? 'job.live.stopping' : 'job.pausing');
     // 중단(앱 종료·치지직 끊김)도 사용자가 멈춘 것과 같은 말이다: 다시 받으면 이어 받는다
     case 'paused':
     case 'interrupted':
@@ -247,6 +252,14 @@ function sizeParts(job: JobDto, p: ProgressDto, base: SizeBase): { received: str
   return hls ? { received: shown.received, total: formatEstimate(total, base) } : shown;
 }
 
+/** 녹화 중 상태 줄: `녹화 중 · 1시간 2분 · 3.4GB`. 길이를 모르므로 총량·속도·남은 시간이 없다(ADR-0025) */
+function liveLine(p: ProgressDto, base: SizeBase): string {
+  return t('job.live.running', {
+    span: formatSpan(p.liveRecordedSecs ?? 0),
+    received: formatFileSize(p.bytes, base),
+  });
+}
+
 /** 받는 중 상태 줄 하나(조각 결합도 deck이 한다, content.md §15.1 `job.running`) */
 function runningLine(job: JobDto, p: ProgressDto, base: SizeBase): string {
   const size = sizeParts(job, p, base);
@@ -291,7 +304,16 @@ export function statusParts(job: JobDto, p: ProgressDto | null | undefined, ctx:
         ];
       }
       // 주소를 새로 받는 동안은 속도·남은 시간이 의미가 없다: 상태 조각 하나만 보인다
-      const parts = [p.phase === 'reresolving' ? t('job.phase.reresolving') : runningLine(job, p, base)];
+      const parts = [
+        p.phase === 'reresolving'
+          ? t('job.phase.reresolving')
+          : job.playbackKind === 'live'
+            ? liveLine(p, base)
+            : runningLine(job, p, base),
+      ];
+      if (job.playbackKind === 'live' && p.phase !== 'reresolving' && (p.liveGaps ?? 0) > 0) {
+        parts.push(t('job.live.gaps', { n: formatCount(p.liveGaps ?? 0) }));
+      }
       const now = ctx.now ?? Date.now();
       if (p.resumedFrom > 0 && ctx.runStartedAt != null && now - ctx.runStartedAt < RESUMED_NOTE_MS) {
         parts.push(t('job.resumedFrom', { size: formatFileSize(p.resumedFrom, base) }));
@@ -299,7 +321,7 @@ export function statusParts(job: JobDto, p: ProgressDto | null | undefined, ctx:
       return parts;
     }
     case 'pausing':
-      return [t('job.pausing')];
+      return [t(job.playbackKind === 'live' ? 'job.live.stopping' : 'job.pausing')];
     case 'paused':
     case 'interrupted': {
       const bytes = receivedBytes(job, p);
@@ -384,6 +406,10 @@ export function bodyLine(job: JobDto, p: ProgressDto | null | undefined, ctx: Bo
     });
   }
   if (job.status === 'failed') return null;
+  // 끊긴 생방송: 이어 붙일 수 없어 받은 부분까지 저장한다(ADR-0025)
+  if (job.playbackKind === 'live' && (job.status === 'paused' || job.status === 'interrupted') && (job.partialBytes ?? 0) > 0) {
+    return t('job.live.partial.body');
+  }
   const key = bodyKey(job);
   return key ? t(key) : null;
 }
@@ -393,6 +419,7 @@ export function bodyLine(job: JobDto, p: ProgressDto | null | undefined, ctx: Bo
 /** 목록 항목의 동작 하나 */
 export type JobAction =
   | 'pause'
+  | 'stop'
   | 'resume'
   | 'retry'
   | 'restartFresh'
@@ -460,7 +487,10 @@ export function jobButtons(
       const phase = p?.phase ?? 'resolving';
       if (phase === 'finalizing') break;
       cancel = true;
-      if (phase === 'downloading' || phase === 'reresolving' || phase === 'waitingNetwork') primary = ['pause'];
+      if (phase === 'downloading' || phase === 'reresolving' || phase === 'waitingNetwork') {
+        // 생방송은 일시정지가 없다: 받은 만큼 마무리하는 [녹화 마치기]다(ADR-0025)
+        primary = [job.playbackKind === 'live' ? 'stop' : 'pause'];
+      }
       break;
     }
     case 'pausing':
@@ -531,6 +561,7 @@ export function blockCopyKey(_b: JobBlock): CopyKey {
 /** 폴더 보기(`openFolder`)는 OS마다 글자가 다르다(D39). 그 한 가지만 `actionLabel`이 OS로 고른다 */
 const ACTION_LABEL: Record<Exclude<JobAction, 'openFolder'>, CopyKey> = {
   pause: 'action.pause',
+  stop: 'action.stopRecording',
   resume: 'action.resume',
   retry: 'action.retry',
   restartFresh: 'action.restartFresh',
@@ -618,6 +649,8 @@ export function spaceAction(b: JobButtons): JobAction | null {
 /** Enter: 완료 항목은 파일 열기, 그 밖은 기본 버튼의 첫째 */
 export function enterAction(job: JobDto, b: JobButtons): JobAction | null {
   if (job.status === 'completed' && b.primary.includes('openFile')) return 'openFile';
+  // 녹화 마치기는 실수로 눌러 되돌릴 수 없는 일이라 Enter로는 하지 않는다
+  if (b.primary[0] === 'stop') return null;
   return b.primary[0] ?? null;
 }
 

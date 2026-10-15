@@ -42,6 +42,8 @@ export interface CancelConfirm {
   bytes: number;
   /** 받는 중이면 안전 쪽 라벨이 [계속 받기], 멈춘 작업이면 [그대로 두기](content.md §5.3 D2) */
   running: boolean;
+  /** 생방송이면 본문이 "녹화한 부분이 지워진다"로 달라진다(ADR-0025) */
+  live: boolean;
 }
 
 /** D7: 건너뜀 행의 [덮어쓰고 받기…]가 묻고 있는 작업과 덮어쓸 파일 이름 */
@@ -263,6 +265,10 @@ export class JobsStore {
         case 'pause':
           await api.pauseJob(id);
           break;
+        case 'stop':
+          // 생방송: 취소가 아니라 받은 만큼 마무리한다
+          await api.stopJob(id);
+          break;
         case 'resume':
         case 'retry':
         case 'overwrite':
@@ -325,6 +331,7 @@ export class JobsStore {
           title: job.title,
           bytes: receivedBytes(job, p),
           running: job.status === 'running' || job.status === 'pausing',
+          live: job.playbackKind === 'live',
         };
         return;
       case 'defer':

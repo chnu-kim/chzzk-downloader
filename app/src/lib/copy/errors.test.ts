@@ -143,7 +143,7 @@ const GOLDEN: Row[] = [
     error: err('invalidUrl'),
     ctx: R,
     title: '치지직 영상 주소가 아니에요',
-    body: '영상 주소는 chzzk.naver.com/video/… 또는 …/clips/… 모양이에요. 라이브 주소는 받을 수 없어요.',
+    body: '영상 주소는 chzzk.naver.com/video/…, …/clips/…, …/live/… 모양이에요.',
     actions: [],
     detail: null,
   },

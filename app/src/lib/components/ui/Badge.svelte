@@ -13,6 +13,7 @@
     vod: () => t('kind.vod'),
     clip: () => t('kind.clip'),
     rewind: () => t('kind.liveRewind'),
+    live: () => t('kind.live'),
     adult: () => t('badge.adult'),
   } as const;
 </script>

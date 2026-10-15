@@ -19,7 +19,7 @@ export const MENU_TRIGGER = ['icon', 'text'] as const;
 // ---- 의미·크기·종류·진행 상태
 export const TONE = ['neutral', 'info', 'warning', 'danger'] as const;
 export const SIZE = ['sm', 'md', 'lg'] as const;
-export const KIND = ['vod', 'clip', 'rewind', 'adult'] as const;
+export const KIND = ['vod', 'clip', 'rewind', 'live', 'adult'] as const;
 export const PROGRESS_STATE = ['active', 'paused', 'failed', 'waiting'] as const;
 
 /** ui/ 컴포넌트가 가질 수 있는 불리언 prop 전부(DP2). HTML·ARIA 상태와 같은 뜻만 */

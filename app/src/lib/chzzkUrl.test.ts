@@ -19,6 +19,10 @@ describe('isChzzkContentUrl', () => {
     'https://chzzk.naver.com/clips/AbCdEf1234?param=1',
     'https://chzzk.naver.com/embed/clip/AbCdEf1234?autoPlay=true',
     'https://chzzk.naver.com/clips/abc#a/b',
+    // 생방송: 채널 ID는 32자리 hex(대소문자 무관)
+    'https://chzzk.naver.com/live/000000000000000000000000000000e5',
+    'https://chzzk.naver.com/live/000000000000000000000000000000E5/',
+    'chzzk.naver.com/live/000000000000000000000000000000e5?a=1',
   ])('받는다: %s', (s) => {
     expect(isChzzkContentUrl(s)).toBe(true);
   });
@@ -27,6 +31,8 @@ describe('isChzzkContentUrl', () => {
     '',
     'https://chzzk.naver.com/',
     'https://chzzk.naver.com/live/abcd',
+    'https://chzzk.naver.com/live/000000000000000000000000000000g5',
+    'https://chzzk.naver.com/live/000000000000000000000000000000e5/chat',
     'https://chzzk.naver.com/clips/',
     'https://chzzk.naver.com/embed/clip/',
     'http://evil.com/?chzzk.naver.com/clips/abc',

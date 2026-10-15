@@ -8,12 +8,19 @@
   import type { AppError } from '../../bindings';
   import { errorCopy } from '../../copy/errors';
   import { t } from '../../copy/ko';
+  import { jobs } from '../../stores/jobs.svelte';
   import { toasts } from '../../stores/toast.svelte';
   import ConfirmDialog from '../ui/ConfirmDialog.svelte';
 
   let open = $state(false);
   let running = $state(0);
   let quitting = $state(false);
+  /** 녹화 중인 생방송이 섞여 있는가: 닫으면 그 녹화는 일시정지가 아니라 받은 만큼 저장하고 끝난다(ADR-0025) */
+  const hasLive = $derived(
+    [...jobs.state.jobs.values()].some(
+      (j) => j.playbackKind === 'live' && (j.status === 'running' || j.status === 'pausing'),
+    ),
+  );
 
   onMount(() => {
     let off: (() => void) | null = null;
@@ -56,9 +63,9 @@
 
 <ConfirmDialog
   {open}
-  title={t('dialog.close.title')}
-  body={t('dialog.close.body', { n: running })}
+  title={t(hasLive ? 'dialog.closeLive.title' : 'dialog.close.title')}
+  body={t(hasLive ? 'dialog.closeLive.body' : 'dialog.close.body', { n: running })}
   onclose={keep}
   primary={{ id: 'keep', label: t('dialog.cancel.keepRunning'), onclick: keep }}
-  secondary={{ id: 'confirm', label: t('dialog.close.confirm'), loading: quitting, onclick: () => void quit() }}
+  secondary={{ id: 'confirm', label: t(hasLive ? 'dialog.closeLive.confirm' : 'dialog.close.confirm'), loading: quitting, onclick: () => void quit() }}
 />

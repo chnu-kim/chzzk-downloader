@@ -13,14 +13,15 @@ import { formatDate, formatDateTime, parseKstWall } from './format/date';
 import { formatClock } from './format/duration';
 import { t, type CopyKey } from './copy/ko';
 
-export type KindTone = 'rewind' | 'vod' | 'clip';
+export type KindTone = 'rewind' | 'vod' | 'clip' | 'live';
 
 /** 파일 이름·화질·폴더가 바뀐 뒤 `check_output`을 부르기까지 기다리는 시간(patterns.md §6.5) */
 export const CHECK_DEBOUNCE_MS = 150;
 
-/** 종류 라벨(§8.3): 클립 / 빠른 다시보기(Video + HLS) / 일반 VOD(Video + progressive) */
+/** 종류 라벨(§8.3): 클립 / 생방송 / 빠른 다시보기(Video + HLS) / 일반 VOD(Video + progressive) */
 export function kindTone(kind: ContentKind, playback: PlaybackKind): KindTone {
   if (kind === 'clip') return 'clip';
+  if (kind === 'live' || playback === 'live') return 'live';
   return playback === 'liveRewindHls' ? 'rewind' : 'vod';
 }
 
@@ -28,6 +29,7 @@ const KIND_LABEL: Record<KindTone, CopyKey> = {
   rewind: 'kind.liveRewind',
   vod: 'kind.vod',
   clip: 'kind.clip',
+  live: 'kind.live',
 };
 
 export function kindLabel(tone: KindTone): string {

@@ -308,7 +308,7 @@ fn request(out: &Path, stop: Option<CancellationToken>) -> DownloadRequest {
 
 fn out_path(dir: &tempfile::TempDir) -> PathBuf {
     dir.path()
-        .join("[라이브 260102-1200] 생방송채널 - 테스트 생방송.mp4")
+        .join("[생방송 260102-1200] 생방송채널 - 테스트 생방송.mp4")
 }
 
 /// 최종 파일에서 init 뒤의 세그먼트 msn 목록을 읽는다.

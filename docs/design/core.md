@@ -810,9 +810,9 @@ tokio    = { version = "1.53.2", features = ["net", "test-util"] }
     - **엔진(`download/live.rs`).** `next_msn` 기준으로 새 세그먼트만 순서대로(`buffered`) 이어 쓴다. 창이 `next_msn`을 지나가면 놓친 수를 `Progress.live.gaps`로 세고 계속한다(실패하지 않는다). 끝나는 조건: `ENDLIST`·스트림 재시작(DISCONTINUITY·새 MAP·msn 역행·init 경로 변경)·재조회가 `NotLive`·`liveId` 변경(다른 방송을 이어 붙이지 않는다)·`live_stop`. playlist가 403·404이면 재조회하고, 새 세그먼트를 받을 때마다 `Job::refreshes`를 0으로 되돌린다(몇 시간 녹화에서 일시적 403이 쌓여 `MAX_REFRESHES`에 걸리지 않게). 새 세그먼트가 `live_idle_check`(30초) 없으면 재조회로 종료 여부를 본다. 폴링은 `live_poll_interval`(1초). 연결 계열 실패는 기존 `Patience`를 쓴다.
     - **멈춤과 취소는 다르다.** `DownloadRequest.live_stop`(`Option<CancellationToken>`)이 취소되면 받은 만큼 최종 파일로 마무리하고 `Completed`다. `cancel`은 예전처럼 `.part`를 남기고 `Cancelled`다. 아무것도 받지 못하고 끝나면 init만 든 파일을 남기지 않는다(멈춤 `NothingRecorded`, 방송 종료 `NotLive`).
     - **이어받기는 없다.** 끊긴 `.part`는 같은 요청을 다시 부르면(`download::run`) 받은 만큼을 마무리한다(방송 흐름이 끊겨 이어 붙일 수 없다). `HlsState`·sidecar는 그대로 쓰고 `kind = Live`다.
-    - **파일 이름.** `[라이브 YYMMDD-HHMM] {채널} - {제목}.mp4`(`live_open_date`의 KST 시각, `naming::parse_live_time`). 시각이 없으면 날짜만, 날짜도 없으면 `[라이브]`. 같은 방송을 다시 받으면 같은 이름이라 기존 중복 정책(건너뜀·덮어쓰기)이 적용된다.
+    - **파일 이름.** `[생방송 YYMMDD-HHMM] {채널} - {제목}.mp4`(`live_open_date`의 KST 시각, `naming::parse_live_time`). 시각이 없으면 날짜만, 날짜도 없으면 `[생방송]`. 같은 방송을 다시 받으면 같은 이름이라 기존 중복 정책(건너뜀·덮어쓰기)이 적용된다.
     - **`Progress.live`.** `LiveProgress { recorded_secs, gaps }`. 전체 길이·ETA가 없다.
-    - **알려진 한계(사용자 실기 확인 항목).** 라이브 init에 세그먼트를 이어 붙인 fMP4는 일부 플레이어에서 탐색(seek)이 안 될 수 있다(`moov` 안 길이 정보가 없다). 실서버 스모크 `tests/live.rs::live_record`는 사용자가 방송 중인 본인 채널로 `#[ignore]`로 돌린다.
+    - **알려진 한계(사용자 실기 확인 항목).** 라이브 init에 세그먼트를 이어 붙인 fMP4는 일부 플레이어에서 탐색(seek)이 안 될 수 있다(`moov` 안 길이 정보가 없다). 실서버 스모크 `tests/live_record.rs`는 사용자가 방송 중인 본인 채널로 `#[ignore]`로 돌린다.
     - 테스트는 `tests/recording.rs`(wiremock 상태 기계: ENDLIST·멈춤·취소 후 `.part` 마무리·gap·403 재조회 12회·방송 교체·종료 재조회·DISCONTINUITY·idle·시작 직후 세그먼트 0개·`resolve`)다. 종료 조건·gap 세기·재조회 횟수 리셋을 하나씩 깨 보고 해당 테스트가 실패(또는 멈춤)하는 것을 확인했다.
 59. **(생방송 리뷰 반영, 58의 수정) 오래 녹화할 때 받은 것을 잃지 않는 쪽으로 고쳤다.** Codex 대신 Claude 서브에이전트 둘(일반·적대적)이 낸 지적 중 코드로 재현되는 것을 실패하는 테스트(`tests/recording.rs` 후반, `manager_live.rs`)로 먼저 고정했다.
     - **어떤 오류로 끝나도 받은 `.part`를 지우지 않는다.** 엔진이 `.part`를 만든 직후 `Job::keep_partial`을 켠다(암호화 태그·4xx 같은 `is_resumable() == false` 오류가 몇 시간 녹화를 지우던 구멍). 다음 실행이 받은 만큼 마무리한다.

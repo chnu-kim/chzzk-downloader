@@ -3,7 +3,7 @@ import { tick } from 'svelte';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { JobDto, JobEvent, SettingsDto } from '../../bindings';
-import { err, job, prog, signedInAs } from '../../../test/jobFixtures';
+import { err, job, liveProg, prog, signedInAs } from '../../../test/jobFixtures';
 import { t } from '../../copy/ko';
 import { errorCopy } from '../../copy/errors';
 import { formatFileSize } from '../../format/bytes';
@@ -17,6 +17,7 @@ vi.mock('../../api', () => ({
   Channel: FakeChannel,
   subscribeJobs: vi.fn(),
   pauseJob: vi.fn(),
+  stopJob: vi.fn(),
   resumeJob: vi.fn(),
   removeJob: vi.fn(),
   clearFinished: vi.fn(),
@@ -75,7 +76,7 @@ async function pickMenu(user: ReturnType<typeof userEvent.setup>, item: HTMLElem
 
 beforeEach(() => {
   toasts.clear();
-  for (const f of [api.pauseJob, api.resumeJob, api.removeJob, api.clearFinished, api.openOutput, api.revealOutput]) {
+  for (const f of [api.pauseJob, api.stopJob, api.resumeJob, api.removeJob, api.clearFinished, api.openOutput, api.revealOutput]) {
     vi.mocked(f).mockReset().mockResolvedValue(undefined as never);
   }
   settings.dto = { ...baseSettings };
@@ -701,3 +702,53 @@ describe('연결 대기·회복·멈춘 지 30일 행(patterns.md §3.2)', () =>
   });
 });
 
+
+describe('생방송 행(ADR-0025)', () => {
+  const liveJob = (over: Partial<JobDto> = {}) =>
+    job(1, { title: '오늘 방송', kind: 'live', playbackKind: 'live', status: 'running', progress: liveProg(), ...over });
+
+  it('종류 배지 "생방송", 막대 없이 상태 줄만, [녹화 마치기]가 stop_job을 부른다', async () => {
+    const user = userEvent.setup();
+    await load([liveJob()]);
+    render(JobList);
+    const row = screen.getByRole('article', { name: '오늘 방송' });
+    expect(within(row).getByText(t('kind.live'))).toBeInTheDocument();
+    // 길이를 모르므로 막대·퍼센트가 없다
+    expect(within(row).queryByRole('progressbar')).toBeNull();
+    expect(row.querySelector('.job-pct')).toBeNull();
+    expect(row.querySelector('.job-status')?.textContent).toBe('녹화 중 · 1시간 2분 · 3.65GB');
+    // 일시정지는 없다
+    expect(within(row).queryByRole('button', { name: t('action.pause') })).toBeNull();
+    await user.click(within(row).getByRole('button', { name: t('action.stopRecording') }));
+    expect(api.stopJob).toHaveBeenCalledWith(1);
+    expect(api.pauseJob).not.toHaveBeenCalled();
+    expect(api.removeJob).not.toHaveBeenCalled();
+  });
+
+  it('놓친 조각이 있으면 상태 줄 끝에 보인다', async () => {
+    await load([liveJob({ progress: liveProg({ liveGaps: 2 }) })]);
+    render(JobList);
+    const row = screen.getByRole('article', { name: '오늘 방송' });
+    expect(row.querySelector('.job-status')?.textContent).toBe(`녹화 중 · 1시간 2분 · 3.65GB · ${t('job.live.gaps', { n: 2 })}`);
+  });
+
+  it('녹화 중 [취소]는 녹화한 부분이 지워진다고 묻는다(안전한 쪽은 [계속 받기])', async () => {
+    const user = userEvent.setup();
+    await load([liveJob()]);
+    render(JobList);
+    const row = screen.getByRole('article', { name: '오늘 방송' });
+    await user.click(within(row).getByRole('button', { name: t('a11y.cancelJob', { title: '오늘 방송' }) }));
+    const dialog = await screen.findByRole('dialog', { name: t('dialog.cancel.title', { title: '오늘 방송' }) });
+    expect(within(dialog).getByText(t('dialog.cancel.live.body', { size: '3.65GB' }))).toBeInTheDocument();
+    await user.click(within(dialog).getByRole('button', { name: t('dialog.cancel.keepRunning') }));
+    expect(api.removeJob).not.toHaveBeenCalled();
+  });
+
+  it('끝난 생방송은 일반 완료 행과 같다', async () => {
+    await load([liveJob({ status: 'completed', progress: null, finalBytes: 3_650_722_201, finishedAt: 1_759_668_060 })]);
+    render(JobList);
+    const row = screen.getByRole('article', { name: '오늘 방송' });
+    expect(within(row).getByRole('button', { name: t('action.openFile') })).toBeInTheDocument();
+    expect(within(row).queryByRole('button', { name: t('action.stopRecording') })).toBeNull();
+  });
+});

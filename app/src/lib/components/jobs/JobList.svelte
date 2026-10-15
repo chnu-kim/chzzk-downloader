@@ -227,7 +227,7 @@
 <ConfirmDialog
   open={jobs.confirm != null}
   title={t('dialog.cancel.title', { title: jobs.confirm?.title ?? '' })}
-  body={t('dialog.cancel.body', { size: jobs.confirmSize })}
+  body={t(jobs.confirm?.live ? 'dialog.cancel.live.body' : 'dialog.cancel.body', { size: jobs.confirmSize })}
   onclose={() => jobs.cancelConfirm()}
   primary={{
     id: 'back',

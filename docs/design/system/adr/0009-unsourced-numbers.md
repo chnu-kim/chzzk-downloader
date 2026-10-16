@@ -1,6 +1,6 @@
 # 0009 출처 없는 수치 묶음(제안값)
 
-상태: 채택(잠정)   날짜: 2026-10-10   관련: README §6-7, foundations §5.2·§6.4·§7.1·§8·§14, D37, D38, D39, D41, platform.md §2.3·§9·§14·§15
+상태: 채택(잠정)   날짜: 2026-10-10 (편집 2026-10-16: 편집자 위임 상수 행)   관련: README §6-7, foundations §5.2·§6.4·§7.1·§8·§14, D37, D38, D39, D41, platform.md §2.3·§9·§14·§15, ADR-0026
 
 ## 맥락
 
@@ -38,6 +38,11 @@
 | `NOTICE_TTL_H` / `NOTICE_CACHE_H` / `NOTICE_MAX_CHARS` / `CIRCUIT_FAILURES` | 72 / 24 / 80 / 3 | [잠정] | D41, `G-OUTAGE-R4`·`G-OUTAGE-R6`·`G-OUTAGE-R11` | 운영 기록(ROADMAP) |
 | 전체 화면 상태 복원 안 함 | — | [취향] | platform §2.3 | 방송 노출 위험(brief §1.4). 불만이 보고되면 재검토 |
 | `HIGHLIGHT_MS` / `COPIED_LABEL_MS` / `ETA_REFRESH_MS` | 1초 / 2초 / 1초 | [취향] | patterns §1.2, D50 | D62 관찰 |
+| `INVITE_TTL_MS` / `EDITORS_MAX` / `DELEGATIONS_MAX`(초대 주소 기한·채널 주인 한 명의 편집자 수(기다리는 중 포함)·편집자 한 명의 맡은 채널 수) | 7일 / 10 / 20 | [잠정] | ADR-0026, Worker `store/delegation.ts` | 사용자 인터뷰 "여러 채널을 맡는 편집자가 흔한가"(`docs/design/features/delegation.md` §18-2) |
+| `INVITE_CLAIMED_KEEP_MS` / `REVOKED_DELEGATION_KEEP_MS`(허가를 기다리는 청구 초대 보존·빼거나 그만둔 위임 행 보존) | 30일 / 30일 | [잠정] | ADR-0026, Worker `store/delegation.ts`, `/privacy` 보관 기간 | 운영 기록(관리자가 기한 안에 [허가]를 누르는가). 바꾸면 `/privacy` 문장도 같은 상수로 바뀐다 |
+| `DONE_WINDOW_MS`(완료 페이지가 방금 맺은 위임을 보이는 창) | 2분 | [잠정] | ADR-0026, Worker `store/delegation.ts` | 카카오톡 인앱 브라우저 초대 → 로그인 → 돌아오기 실측(`delegation.md` §18-1) |
+
+편집자 위임의 셸 쪽 값(판정 직전 자동 확인 간격 5분)은 기능 ① 셸 단계(①-4)가 머지된 뒤 이 표와 foundations §14에 행으로 덧붙인다.
 
 ## 근거
 
@@ -50,6 +55,7 @@
 | 네트워크 인내 30분·30초는 보고서 제안 | E1 | `G-POWER-R8` | — |
 | AppKit 막대 실제 두께는 재지 않았다 | E1 | `J-F-B8`(B의 4px은 가늘다) | 2026-10-09 |
 | 후보 A의 44·440·680·80·40은 출처 없음 | E1 | `J-A`, judgment §1.4 | — |
+| 편집자 위임 상한·기한(7일·10·20·30일·30일·2분)은 설계자가 고른 값이고 측정 근거가 없다 | E1 | `delegation.md` §15-7 | 2026-10-16 |
 
 최고 등급: E1 / 결정 영향: 작음(값 하나씩 바뀐다) / 판정: 채택(잠정)
 

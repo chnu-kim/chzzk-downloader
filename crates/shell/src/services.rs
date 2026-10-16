@@ -12,6 +12,7 @@
 //! - 쿠키 값은 `SettingsDto`·오류 메시지·로그 어디에도 넣지 않는다(`tests/secrets.rs`).
 
 use std::fmt;
+use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock};
 use std::time::Duration;
@@ -491,18 +492,37 @@ impl SettingsService {
 
     /// `resolve`: 주소를 풀고 지금 클라이언트로 조회한다. 서명 URL은 DTO에 없다.
     pub async fn resolve(&self, url: &str, gate: &OwnershipGate) -> Result<ResolvedDto, AppError> {
+        self.resolve_checked(url, gate, || async {}).await
+    }
+
+    /// `resolve` + 판정 직전 확인. 판정이 확인 대상(`needs_recheck`)이면 `recheck`를 기다린 뒤 다시 판정한다
+    pub async fn resolve_checked<R, RFut>(
+        &self,
+        url: &str,
+        gate: &OwnershipGate,
+        recheck: R,
+    ) -> Result<ResolvedDto, AppError>
+    where
+        R: FnOnce() -> RFut,
+        RFut: Future<Output = ()>,
+    {
         let url = url.trim();
         let content = parse_content_url(url)?;
         let client = self.client();
         let r = client.resolve(&content).await?;
         let last = self.store.get().last_quality_label;
+        let mut own = gate.on_resolved(&r.content, &r.meta);
+        if gate.needs_recheck(own, &r.content) {
+            recheck().await;
+            own = gate.on_resolved(&r.content, &r.meta);
+        }
         Ok(ResolvedDto::new(
             url.to_string(),
             &r,
             last.as_deref(),
             // 이름 규칙은 저장 폴더가 놓인 볼륨 기준이다(FAT·exFAT·NTFS·원격은 Windows 규칙, core.md 57).
             volume::platform_for_dir(&self.effective_download_folder()),
-            gate.on_resolved(&r.content, &r.meta),
+            own,
         ))
     }
 
@@ -568,8 +588,23 @@ pub async fn enqueue<B: Backend>(
     settings: &SettingsService,
     gate: &OwnershipGate,
     manager: &DownloadManager<B>,
-    mut req: EnqueueRequest,
+    req: EnqueueRequest,
 ) -> Result<JobDto, AppError> {
+    enqueue_checked(settings, gate, manager, req, || async {}).await
+}
+
+/// `enqueue` + 판정 직전 확인(`OwnershipGate::admit_checked`의 `recheck`)
+pub async fn enqueue_checked<B: Backend, R, RFut>(
+    settings: &SettingsService,
+    gate: &OwnershipGate,
+    manager: &DownloadManager<B>,
+    mut req: EnqueueRequest,
+    recheck: R,
+) -> Result<JobDto, AppError>
+where
+    R: FnOnce() -> RFut,
+    RFut: Future<Output = ()>,
+{
     // 판정·다운로드는 content로, 최근 VOD는 url로 한다. 둘이 다른 영상이면 받지 않는다(네트워크 전, A5 리뷰)
     if !parse_content_url(&req.url).is_ok_and(|c| c == req.content) {
         return Err(AppError::invalid_input("요청 주소와 영상이 맞지 않습니다"));
@@ -578,7 +613,7 @@ pub async fn enqueue<B: Backend>(
     let content = req.content.clone();
     // 게이트가 켜져 있으면 판정 결과로 늘 덮는다: 채널을 모르는 컨텐츠(관리자 허용)도 웹뷰 값을 버리고 None이 된다
     let owner = gate
-        .admit(&content, || settings.content_channel(&content))
+        .admit_checked(&content, || settings.content_channel(&content), recheck)
         .await?;
     if gate.is_enabled() {
         req.channel_id = owner;

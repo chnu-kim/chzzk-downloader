@@ -163,6 +163,30 @@ pub fn outcome_of_error(e: &ApiError, retried: bool) -> VerifyOutcome {
     }
 }
 
+/// /api/me·편집자 API 오류의 분류(delegation.md §9.4). refresh 기준인 `outcome_of_error`와 다르다:
+/// /api/me의 401 invalid_token은 access 만료·회전(하루에 한 번 정상으로 생긴다)이라 로그아웃이 아니다
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MeOutcome {
+    /// 403 not_allowed → refresh 거부와 같은 Denied 전이
+    Denied,
+    /// 401 session_revoked → Expired(Revoked, 파일 삭제) 전이
+    Revoked,
+    /// 그 밖의 모든 401(invalid_token·session_expired·모르는 코드) → refresh 한 번으로 서버에 다시 묻는다
+    NeedRefresh,
+    /// 나머지(네트워크·NotWorker·5xx·그 밖 4xx·계약 위반): 상태를 바꾸지 않는다. 호출자가 code로 더 가른다
+    Other,
+}
+
+/// `MeOutcome` 분류
+pub fn me_outcome(e: &ApiError) -> MeOutcome {
+    match e {
+        ApiError::Worker { status: 403, code } if code == "not_allowed" => MeOutcome::Denied,
+        ApiError::Worker { status: 401, code } if code == "session_revoked" => MeOutcome::Revoked,
+        ApiError::Worker { status: 401, .. } => MeOutcome::NeedRefresh,
+        _ => MeOutcome::Other,
+    }
+}
+
 /// 첫 시도의 결과가 응답 유실 후보인가(D9, 구현 중 변경 53): 서버가 회전을 커밋했는지 모르는 실패.
 /// 응답 없음·Worker 형식이 아닌 응답·2xx 계약 위반·Worker 형식 5xx(DO 커밋 뒤 `500 internal`이 날 수 있다).
 /// Worker 형식 4xx(400·429 등)는 서버가 커밋 전에 판정한 것이라 후보가 아니다

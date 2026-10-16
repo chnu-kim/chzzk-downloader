@@ -308,6 +308,9 @@ fn status(phase: AuthPhase, offline: bool) -> AuthStatus {
         }),
         verified_at: None,
         has_session: false,
+        delegated_channels: vec![],
+        delegations_verified: false,
+        delegations_checked_at: None,
     }
 }
 

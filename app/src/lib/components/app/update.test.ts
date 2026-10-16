@@ -45,6 +45,8 @@ const authDto = (state: AuthStatusDto['state']): AuthStatusDto => ({
   verifiedAt: null,
   canReconnect: false,
   isAdmin: false,
+  delegatedChannels: [],
+  delegationsCheckedAt: null,
 });
 
 const dto: SettingsDto = {

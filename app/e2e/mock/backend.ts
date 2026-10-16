@@ -13,6 +13,7 @@ import type {
   AppInfo,
   AuthStatusDto,
   ContentRef,
+  EditorsDto,
   EnqueueRequest,
   ErrorCode,
   JobDto,
@@ -54,6 +55,8 @@ export const AUTH_DISABLED: AuthStatusDto = {
   verifiedAt: null,
   canReconnect: false,
   isAdmin: false,
+  delegatedChannels: [],
+  delegationsCheckedAt: null,
 };
 
 export type UpdateScenario = {
@@ -84,6 +87,8 @@ export type Scenario = {
   authHeld?: AuthStatusDto;
   /** 업데이트(update_* command). 없으면 새 버전 없음 */
   update?: UpdateScenario;
+  /** editors_list 결과. 없으면 편집자 없음·맡은 채널은 auth.delegatedChannels(since 없음)·한도 10/20 */
+  editors?: EditorsDto;
   /** app_info의 OS(Windows 고정 데이터·단축키 표기·[Finder에서 보기] 분기). 없으면 linux */
   platform?: Os;
   /** app_info의 나머지 필드 덮어쓰기(D3 이전 설정 찾음 `legacyCandidate` 등). `platform`·`textScale`·`theme`은 위 필드와 설정이 이긴다 */
@@ -241,6 +246,14 @@ export function install(scenario: Scenario = {}): E2EController {
     return s;
   };
 
+  const resolveUrl = (a: Record<string, unknown>) => {
+    if (scenario.resolveHold?.includes(a.url as string)) return new Promise<never>(() => {});
+    const r = resolveTable[a.url as string];
+    if (!r) throw err('invalidUrl');
+    if ('error' in r) throw r.error;
+    return r;
+  };
+
   const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
     app_info: (): AppInfo => ({
       ...INFO,
@@ -306,13 +319,21 @@ export function install(scenario: Scenario = {}): E2EController {
     open_output: () => null,
     reveal_output: () => null,
     quit: () => null,
-    resolve: (a) => {
-      if (scenario.resolveHold?.includes(a.url as string)) return new Promise<never>(() => {});
-      const r = resolveTable[a.url as string];
-      if (!r) throw err('invalidUrl');
-      if ('error' in r) throw r.error;
-      return r;
-    },
+    resolve: (a) => resolveUrl(a),
+    // 편집자 위임(①-4): 화면은 ①-5. 셸 command 이름·모양만 흉내 낸다
+    editors_list: (): EditorsDto =>
+      scenario.editors ?? {
+        editors: [],
+        delegatedChannels: auth.delegatedChannels.map((d) => ({ ...d, since: null })),
+        pendingInviteUntil: null,
+        editorsMax: 10,
+        delegationsMax: 20,
+      },
+    // 가짜 주소(.invalid)
+    editors_invite: () => ({ url: `https://worker.example.invalid/invite/cdi_${'A'.repeat(43)}`, expiresAt: clock + 7 * 86400 }),
+    editors_remove: () => null,
+    delegations_leave: () => null,
+    ownership_recheck: (a) => resolveUrl(a),
     check_output: (a): OutputCheck => {
       const folder = (a.folder as string | null) ?? settings.effectiveDownloadFolder;
       const fileName = a.fileName as string;
@@ -391,7 +412,9 @@ export function install(scenario: Scenario = {}): E2EController {
       // 셸 흉내(A5): 다시 줄 세울 상태에서는 작업의 영상을 다시 판정한다. JobDto에는 컨텐츠가 없어 기록 채널로 흉내 낸다:
       // 다른 채널이면 거부하고, 채널이 없는 옛 작업은 셸이 본인 영상으로 판정한 것으로 본다
       if (auth.state === 'signedIn' && auth.channelId && !auth.isAdmin && ['paused', 'failed', 'interrupted', 'skipped'].includes(j.status)) {
-        if (j.channelId != null && j.channelId.toLowerCase() !== auth.channelId.toLowerCase()) throw err('notOwnContent');
+        // 맡은 채널의 영상·클립은 통과한다(생방송은 v1에서 맡은 채널로 받지 않는다)
+        const delegated = j.kind !== 'live' && auth.delegatedChannels.some((d) => d.channelId.toLowerCase() === j.channelId?.toLowerCase());
+        if (j.channelId != null && !delegated && j.channelId.toLowerCase() !== auth.channelId.toLowerCase()) throw err('notOwnContent');
       }
       // 셸 흉내(core.md 61): 받다 만 녹화는 "처음부터"로 지우지 않는다
       const requeueable = ['paused', 'failed', 'interrupted', 'skipped'].includes(j.status);

@@ -1043,7 +1043,7 @@ async fn resume_interrupted_where_filters_by_channel() {
     }
     settle().await;
     let m2 = h.reopen(1);
-    assert_eq!(m2.resume_interrupted_where(|c| c == Some("a1")), 1);
+    assert_eq!(m2.resume_interrupted_where(|_, c| c == Some("a1")), 1);
     let left: Vec<_> = m2
         .list()
         .into_iter()
@@ -1051,4 +1051,26 @@ async fn resume_interrupted_where_filters_by_channel() {
         .map(|j| j.channel_id)
         .collect();
     assert_eq!(left, vec![Some("c3".to_string()), None]);
+}
+
+/// 필터는 컨텐츠도 본다(맡은 채널은 생방송을 뺀다, L-D1)
+#[tokio::test(start_paused = true)]
+async fn resume_interrupted_where_sees_content() {
+    let h = Harness::new(1);
+    for (n, ch) in [("a", Some("a1")), ("b", Some("a1"))] {
+        h.fake.script_for(h.output(n), Script::new().wait_cancel());
+        enqueue_in(&h, n, ch);
+    }
+    settle().await;
+    let m2 = h.reopen(1);
+    // 모두 같은 종류의 컨텐츠라 Video만 통과시키면 모두, Clip만 통과시키면 하나도 줄 세우지 않는다
+    assert_eq!(
+        m2.resume_interrupted_where(|c, _| matches!(c, chzzk_core::ContentRef::Clip { .. })),
+        0
+    );
+    assert!(m2.list().iter().all(|j| j.status == JobStatus::Interrupted));
+    assert_eq!(
+        m2.resume_interrupted_where(|c, _| matches!(c, chzzk_core::ContentRef::Video { .. })),
+        2
+    );
 }

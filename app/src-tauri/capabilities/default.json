@@ -40,6 +40,11 @@
     "allow-auth-logout",
     "allow-update-check",
     "allow-update-available",
-    "allow-update-install"
+    "allow-update-install",
+    "allow-editors-list",
+    "allow-editors-invite",
+    "allow-editors-remove",
+    "allow-delegations-leave",
+    "allow-ownership-recheck"
   ]
 }

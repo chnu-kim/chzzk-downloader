@@ -421,6 +421,7 @@ fn ownership_names() {
     for (o, s) in [
         (Ownership::Unchecked, "unchecked"),
         (Ownership::Own, "own"),
+        (Ownership::Delegated, "delegated"),
         (Ownership::NotOwn, "notOwn"),
         (Ownership::Unknown, "unknown"),
         (Ownership::AdminOverride, "adminOverride"),
@@ -550,6 +551,9 @@ fn status(phase: AuthPhase) -> AuthStatus {
         offline: None,
         verified_at: None,
         has_session: false,
+        delegated_channels: vec![],
+        delegations_verified: false,
+        delegations_checked_at: None,
     }
 }
 
@@ -558,7 +562,7 @@ fn auth_status_dto_json_shapes() {
     let nulls = |state: &str| {
         json!({"state": state, "channelId": null, "channelName": null, "reason": null,
                "pending": null, "offline": null, "verifiedAt": null, "canReconnect": false,
-               "isAdmin": false})
+               "isAdmin": false, "delegatedChannels": [], "delegationsCheckedAt": null})
     };
     assert_eq!(to_json(&AuthStatusDto::disabled()), nulls("disabled"));
     assert_eq!(
@@ -596,8 +600,25 @@ fn auth_status_dto_json_shapes() {
         v,
         json!({"state": "signedIn", "channelId": ch, "channelName": "채널", "reason": "network",
                "pending": null, "offline": {"since": 1893456000, "graceUntil": 1893715200},
-               "verifiedAt": 1893452400, "canReconnect": true, "isAdmin": true})
+               "verifiedAt": 1893452400, "canReconnect": true, "isAdmin": true,
+               "delegatedChannels": [], "delegationsCheckedAt": null})
     );
+
+    // 맡은 채널과 마지막 확인 시각. 서버 확인 여부(delegations_verified)는 웹뷰에 보내지 않는다
+    let mut editor = status(AuthPhase::SignedIn);
+    editor.delegated_channels = vec![chzzk_shell::auth::DelegatedChannel {
+        channel_id: "000000000000000000000000000000d4".into(),
+        channel_name: "맡은채널".into(),
+    }];
+    editor.delegations_verified = true;
+    editor.delegations_checked_at = Some(at(T0 - 60));
+    let v = to_json(&AuthStatusDto::from_status(&editor));
+    assert_eq!(
+        v["delegatedChannels"],
+        json!([{"channelId": "000000000000000000000000000000d4", "channelName": "맡은채널"}])
+    );
+    assert_eq!(v["delegationsCheckedAt"], json!(T0 - 60));
+    assert!(v.get("delegationsVerified").is_none());
 
     let mut denied = status(AuthPhase::Denied);
     denied.channel_name = Some("채널".into());
@@ -881,4 +902,72 @@ fn appearance_enum_conversions_cover_every_variant() {
     assert_eq!(OsDto::from(Platform::MacOs), OsDto::Macos);
     assert_eq!(OsDto::from(Platform::Windows), OsDto::Windows);
     assert_eq!(OsDto::from(Platform::Linux), OsDto::Linux);
+}
+
+// ---------------------------------------------------------------------------
+// 편집자 위임(①-4): EditorsDto·InviteDto
+// ---------------------------------------------------------------------------
+
+#[test]
+fn editors_dto_json_shape() {
+    use chzzk_shell::auth::{
+        DelegatedChannel, DelegatedSince, EditorEntry, EditorStatus, MeResponse,
+    };
+    use chzzk_shell::dto::EditorsDto;
+    let ch = |id: &str| DelegatedChannel {
+        channel_id: id.into(),
+        channel_name: "이름".into(),
+    };
+    let me = MeResponse {
+        channel_id: "000000000000000000000000000000a1".into(),
+        channel_name: "채널".into(),
+        delegated: vec![
+            DelegatedSince {
+                channel: ch("000000000000000000000000000000d4"),
+                since: Some(at(T0)),
+            },
+            DelegatedSince {
+                channel: ch("000000000000000000000000000000e5"),
+                since: None,
+            },
+        ],
+        editors: vec![EditorEntry {
+            channel_id: "000000000000000000000000000000c3".into(),
+            channel_name: "편집자".into(),
+            since: at(T0 + 5),
+            status: EditorStatus::Pending,
+        }],
+        pending_invite_until: Some(at(T0 + 100)),
+        editors_max: 10,
+        delegations_max: 20,
+    };
+    assert_eq!(
+        to_json(&EditorsDto::from(&me)),
+        json!({
+            "editors": [{"channelId": "000000000000000000000000000000c3", "channelName": "편집자",
+                         "since": T0 + 5, "status": "pending"}],
+            "delegatedChannels": [
+                {"channelId": "000000000000000000000000000000d4", "channelName": "이름", "since": T0},
+                {"channelId": "000000000000000000000000000000e5", "channelName": "이름", "since": null},
+            ],
+            "pendingInviteUntil": T0 + 100,
+            "editorsMax": 10,
+            "delegationsMax": 20,
+        })
+    );
+}
+
+#[test]
+fn invite_dto_json_shape_and_debug() {
+    use chzzk_shell::dto::InviteDto;
+    let dto = InviteDto {
+        url: "https://worker.example.invalid/invite/cdi_SECRET".into(),
+        expires_at: T0 + 7,
+    };
+    // 웹뷰는 주소를 보여 줘야 하므로 직렬화는 그대로, Debug는 가린다
+    assert_eq!(
+        to_json(&dto),
+        json!({"url": "https://worker.example.invalid/invite/cdi_SECRET", "expiresAt": T0 + 7})
+    );
+    assert!(!format!("{dto:?}").contains("SECRET"));
 }

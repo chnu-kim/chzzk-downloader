@@ -39,3 +39,6 @@ pub const NOTICE_CACHE_H: u64 = 24;
 pub const NOTICE_MAX_CHARS: usize = 80;
 /// 서킷이 열리는 연속 실패 횟수
 pub const CIRCUIT_FAILURES: usize = 3;
+
+/// 맡은 채널 자동 확인 최소 간격(ms, delegation.md §9.4). [잠정]
+pub const DELEGATION_RECHECK_MIN_GAP_MS: u64 = 300_000;

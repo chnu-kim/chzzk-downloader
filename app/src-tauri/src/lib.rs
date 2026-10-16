@@ -151,6 +151,11 @@ pub fn handler<R: Runtime>() -> impl Fn(Invoke<R>) -> bool + Send + Sync + 'stat
             commands::update_check,
             commands::update_available,
             commands::update_install,
+            commands::editors_list,
+            commands::editors_invite,
+            commands::editors_remove,
+            commands::delegations_leave,
+            commands::ownership_recheck,
         ]);
     move |invoke: Invoke<R>| {
         let verdict = {

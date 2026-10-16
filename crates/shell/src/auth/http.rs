@@ -8,8 +8,9 @@ use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE};
 use serde_json::{Value, json};
 
 use super::api::{
-    ApiError, MAX_BODY, RedeemResponse, StartRequest, StartResponse, TokenBundle, WorkerApi,
-    is_json_type, parse_bundle, parse_error_response, parse_redeem, parse_start,
+    ApiError, InviteResponse, MAX_BODY, MeResponse, RedeemResponse, StartRequest, StartResponse,
+    TokenBundle, WorkerApi, is_json_type, parse_bundle, parse_error_response, parse_invite,
+    parse_me, parse_redeem, parse_start,
 };
 use super::base::WorkerBase;
 use super::token::Grant;
@@ -84,7 +85,29 @@ impl HttpWorkerApi {
         if let Some(b) = bearer {
             req = req.header(AUTHORIZATION, format!("Bearer {b}"));
         }
-        let mut resp = req.send().await.map_err(transport)?;
+        Self::read(req.send().await.map_err(transport)?).await
+    }
+
+    /// GET {origin}{path}, Bearer, 본문 없음
+    async fn get(&self, path: &str, bearer: &str) -> Result<Raw, ApiError> {
+        let resp = self
+            .client
+            .get(self.base.url(path))
+            .header(ACCEPT, "application/json")
+            .header(AUTHORIZATION, format!("Bearer {bearer}"))
+            .send()
+            .await
+            .map_err(|e| ApiError::Transport {
+                timed_out: e.is_timeout(),
+            })?;
+        Self::read(resp).await
+    }
+
+    /// 응답 읽기(상태·형식·64 KiB 상한). 오류 값(URL 포함)은 버리고 종류만 남긴다
+    async fn read(mut resp: reqwest::Response) -> Result<Raw, ApiError> {
+        let transport = |e: reqwest::Error| ApiError::Transport {
+            timed_out: e.is_timeout(),
+        };
         let status = resp.status().as_u16();
         let content_type = resp
             .headers()
@@ -127,6 +150,19 @@ fn expect<T>(raw: Raw, want: u16, parse: impl FnOnce(&[u8]) -> Option<T>) -> Res
         return Err(ApiError::NotWorker { status: want });
     }
     parse(&raw.body).ok_or(ApiError::Contract { status: want })
+}
+
+/// 204면 Ok, 아니면 오류 분류
+fn expect_no_content(raw: Raw) -> Result<(), ApiError> {
+    if raw.status == 204 {
+        return Ok(());
+    }
+    Err(parse_error_response(
+        raw.status,
+        raw.content_type.as_deref(),
+        &raw.body,
+        raw.truncated,
+    ))
 }
 
 impl WorkerApi for HttpWorkerApi {
@@ -186,6 +222,59 @@ impl WorkerApi for HttpWorkerApi {
                 &raw.body,
                 raw.truncated,
             ))
+        }
+    }
+    fn me(
+        &self,
+        access: &Secret<String>,
+    ) -> impl Future<Output = Result<MeResponse, ApiError>> + Send {
+        let bearer = access.expose().clone();
+        async move {
+            let raw = self.get("/api/me", &bearer).await?;
+            expect(raw, 200, parse_me)
+        }
+    }
+
+    fn create_invite(
+        &self,
+        access: &Secret<String>,
+    ) -> impl Future<Output = Result<InviteResponse, ApiError>> + Send {
+        let bearer = access.expose().clone();
+        async move {
+            let raw = self
+                .post("/api/editors/invite", json!({}), Some(&bearer))
+                .await?;
+            expect(raw, 200, |b| parse_invite(b, &self.base))
+        }
+    }
+
+    fn remove_editor(
+        &self,
+        access: &Secret<String>,
+        editor_channel_id: &str,
+    ) -> impl Future<Output = Result<(), ApiError>> + Send {
+        let bearer = access.expose().clone();
+        let body = json!({"channelId": editor_channel_id});
+        async move {
+            let raw = self
+                .post("/api/editors/remove", body, Some(&bearer))
+                .await?;
+            expect_no_content(raw)
+        }
+    }
+
+    fn leave_delegation(
+        &self,
+        access: &Secret<String>,
+        owner_channel_id: &str,
+    ) -> impl Future<Output = Result<(), ApiError>> + Send {
+        let bearer = access.expose().clone();
+        let body = json!({"channelId": owner_channel_id});
+        async move {
+            let raw = self
+                .post("/api/delegations/leave", body, Some(&bearer))
+                .await?;
+            expect_no_content(raw)
         }
     }
 }

@@ -7,11 +7,13 @@ import type {
   AppFolder,
   AppInfo,
   CloseRequestedPayload,
+  EditorsDto,
   EngineProbe,
   KeepAwakePayload,
   AuthStatusDto,
   ContentRef,
   EnqueueRequest,
+  InviteDto,
   JobDto,
   JobEvent,
   JobId,
@@ -113,6 +115,17 @@ export const updateCheck = () => call<UpdateCheckDto>('update_check');
 export const updateAvailable = () => call<UpdateInfoDto | null>('update_available');
 /** 업데이트 설치. 받는 중 작업이 있으면 `needsConfirm`이 오고, 확인한 뒤 `confirmPause=true`로 다시 부른다 */
 export const updateInstall = (confirmPause: boolean) => call<UpdateInstallDto>('update_install', { confirmPause });
+
+/** 편집자 목록·맡은 채널(설정 › 계정 그룹이 열릴 때, 간격 없는 서버 확인) */
+export const editorsList = () => call<EditorsDto>('editors_list');
+/** 편집자 초대 주소 만들기 */
+export const editorsInvite = () => call<InviteDto>('editors_invite');
+/** 편집자 빼기(편집자의 로그인 채널 ID) */
+export const editorsRemove = (channelId: string) => call<void>('editors_remove', { channelId });
+/** 편집자 그만두기(주인의 판정용 채널 ID) */
+export const delegationsLeave = (channelId: string) => call<void>('delegations_leave', { channelId });
+/** 막힌 카드의 [다시 불러오기]: 간격 없는 서버 확인 뒤 같은 주소를 다시 resolve */
+export const ownershipRecheck = (url: string) => call<ResolvedDto>('ownership_recheck', { url });
 
 /** 자동 확인이 새 버전을 찾았다는 이벤트(UpdateInfoDto) */
 /** main 창 포커스가 바뀔 때(비활성 창, platform.md §3) */

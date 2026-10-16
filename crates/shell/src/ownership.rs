@@ -8,6 +8,10 @@
 //!
 //! 관리자(로그인 묶음의 `isAdmin`)는 채널과 상관없이 허용한다(worker.md 구현 중 변경 102). 판정 값은 남의 영상·채널 모름
 //! 모두 `AdminOverride`이고, 허용할 때도 컨텐츠 채널 ID를 그대로 돌려줘 작업 기록에 실제 채널이 남는다.
+//!
+//! 맡은 채널(`Delegated`, 편집자 위임)의 영상·클립은 받을 수 있다. 판정 표는 `classify` 하나이고 순서는
+//! Own > Delegated > AdminOverride > NotOwn/Unknown이다. 생방송은 v1에서 맡은 채널로 받지 않는다(L-D1 (A)).
+//! 판정 직전 확인(`admit_checked`의 `recheck`)은 게이트가 아니라 호출자(App)가 클로저로 주입한다.
 
 use std::collections::VecDeque;
 use std::fmt;
@@ -30,6 +34,40 @@ pub struct Signer {
     pub channel_id: String,
     /// 관리자면 채널과 상관없이 허용
     pub is_admin: bool,
+    /// 맡은 채널(주인의 판정용 채널 ID, 소문자 32 hex). SignedIn이면 오프라인 유예 중에도 디스크 목록 그대로(신뢰 수준 (b))
+    pub delegated: Arc<[String]>,
+}
+
+impl Signer {
+    /// 이 채널을 맡았는가(대소문자 무시)
+    pub fn delegates(&self, channel: &str) -> bool {
+        self.delegated
+            .iter()
+            .any(|d| d.eq_ignore_ascii_case(channel))
+    }
+}
+
+/// 판정 표(delegation.md §9.1). 생방송은 v1에서 맡은 채널로 받지 않는다(L-D1 (A)): Live면 delegated를 보지 않는다
+pub fn classify(content: &ContentRef, channel: Option<&str>, me: &Signer) -> Ownership {
+    let own = is_own_channel(channel, &me.channel_id);
+    let delegated =
+        !matches!(content, ContentRef::Live { .. }) && channel.is_some_and(|c| me.delegates(c));
+    match own {
+        Some(true) => Ownership::Own,
+        _ if delegated => Ownership::Delegated,
+        _ if me.is_admin => Ownership::AdminOverride,
+        Some(false) => Ownership::NotOwn,
+        None => Ownership::Unknown,
+    }
+}
+
+/// 판정 → 허용·거부. Own·Delegated·AdminOverride는 허용, NotOwn은 notOwnContent, 그 밖은 ownershipUnknown(fail closed)
+pub fn verdict_in(o: Ownership) -> Result<(), AppError> {
+    match o {
+        Ownership::Own | Ownership::Delegated | Ownership::AdminOverride => Ok(()),
+        Ownership::NotOwn => Err(AppError::not_own_content()),
+        Ownership::Unknown | Ownership::Unchecked => Err(AppError::ownership_unknown()),
+    }
 }
 
 /// SignedIn일 때 판정 주체를 주는 것(앱은 `AuthService`, 테스트는 가짜)
@@ -105,16 +143,19 @@ impl OwnershipGate {
         let Some(me) = self.me() else {
             return Ownership::Unchecked;
         };
-        match is_own_channel(meta.channel_id.as_deref(), &me.channel_id) {
-            Some(true) => Ownership::Own,
-            _ if me.is_admin => Ownership::AdminOverride,
-            Some(false) => Ownership::NotOwn,
-            None => Ownership::Unknown,
-        }
+        classify(content, meta.channel_id.as_deref(), &me)
     }
 
-    /// `enqueue` 앞의 판정. 꺼진 게이트는 `Ok(None)`(fetch를 부르지 않는다), 로그인 아님은 `notLoggedIn`(fetch 없음).
-    /// 캐시에 있으면 그 값, 없으면 `fetch`로 다시 resolve한다(성공만 기록, 오류는 그대로). 허용이면 검증한 컨텐츠 채널 ID.
+    /// 판정 직전에 맡은 채널을 서버에서 다시 확인해야 하는가. Delegated(디스크 목록에만 남은 회수를 잡는다)와
+    /// NotOwn(방금 맡은 채널을 잡는다)만, 비관리자·생방송 아님·로그인 켜짐일 때
+    pub fn needs_recheck(&self, verdict: Ownership, content: &ContentRef) -> bool {
+        self.auth.is_some()
+            && matches!(verdict, Ownership::Delegated | Ownership::NotOwn)
+            && !matches!(content, ContentRef::Live { .. })
+            && self.me().is_some_and(|m| !m.is_admin)
+    }
+
+    /// `enqueue` 앞의 판정(판정 직전 확인 없음). `admit_checked`에 빈 확인을 준 것과 같다
     pub async fn admit<F, Fut>(
         &self,
         content: &ContentRef,
@@ -123,6 +164,24 @@ impl OwnershipGate {
     where
         F: FnOnce() -> Fut,
         Fut: Future<Output = Result<Option<String>, AppError>>,
+    {
+        self.admit_checked(content, fetch, || async {}).await
+    }
+
+    /// `enqueue` 앞의 판정. 꺼진 게이트는 `Ok(None)`(fetch를 부르지 않는다), 로그인 아님은 `notLoggedIn`(fetch 없음).
+    /// 캐시에 있으면 그 값, 없으면 `fetch`로 다시 resolve한다(성공만 기록, 오류는 그대로). 판정이 확인 대상이면
+    /// (`needs_recheck`) `recheck`를 기다린 뒤 최신 목록으로 다시 판정한다. 허용이면 검증한 컨텐츠 채널 ID.
+    pub async fn admit_checked<F, Fut, R, RFut>(
+        &self,
+        content: &ContentRef,
+        fetch: F,
+        recheck: R,
+    ) -> Result<Option<String>, AppError>
+    where
+        F: FnOnce() -> Fut,
+        Fut: Future<Output = Result<Option<String>, AppError>>,
+        R: FnOnce() -> RFut,
+        RFut: Future<Output = ()>,
     {
         if self.auth.is_none() {
             return Ok(None);
@@ -142,9 +201,16 @@ impl OwnershipGate {
         let Some(me) = self.me() else {
             return Err(AppError::not_logged_in());
         };
-        if !me.is_admin {
-            verdict(is_own_channel(owner.as_deref(), &me.channel_id))?;
+        let mut v = classify(content, owner.as_deref(), &me);
+        if self.needs_recheck(v, content) {
+            recheck().await;
+            // 확인 중에 로그아웃·거부됐으면 판정할 주체가 없다
+            let Some(me) = self.me() else {
+                return Err(AppError::not_logged_in());
+            };
+            v = classify(content, owner.as_deref(), &me);
         }
+        verdict_in(v)?;
         Ok(owner)
     }
 
@@ -193,6 +259,7 @@ mod tests {
 
     const A1: &str = "000000000000000000000000000000a1";
     const C3: &str = "000000000000000000000000000000c3";
+    const D4: &str = "000000000000000000000000000000d4";
 
     struct Me(Mutex<Option<Signer>>);
     impl Me {
@@ -206,6 +273,17 @@ mod tests {
             me.set_admin(Some(v));
             me
         }
+        /// 나(`me`)가 `delegated` 채널들을 맡은 편집자
+        fn editor(me: &str, delegated: &[&str]) -> Arc<Me> {
+            let m = Me::new(Some(me));
+            m.set_delegated(delegated);
+            m
+        }
+        fn set_delegated(&self, delegated: &[&str]) {
+            if let Some(s) = self.0.lock().unwrap().as_mut() {
+                s.delegated = delegated.iter().map(|d| d.to_string()).collect();
+            }
+        }
         fn set(&self, v: Option<&str>) {
             self.put(v, false);
         }
@@ -216,6 +294,7 @@ mod tests {
             *self.0.lock().unwrap() = v.map(|c| Signer {
                 channel_id: c.to_string(),
                 is_admin,
+                delegated: Arc::from(Vec::<String>::new()),
             });
         }
     }
@@ -523,5 +602,226 @@ mod tests {
             ErrorCode::NotOwnContent
         );
         assert_eq!(verdict(None).unwrap_err().code, ErrorCode::OwnershipUnknown);
+    }
+
+    fn live(ch: &str) -> ContentRef {
+        ContentRef::Live {
+            channel_id: ch.to_string(),
+        }
+    }
+
+    fn clip(id: &str) -> ContentRef {
+        ContentRef::Clip {
+            clip_id: id.to_string(),
+        }
+    }
+
+    /// recheck 호출 수를 세고 `act`를 실행하는 admit
+    async fn admit_counting(
+        g: &OwnershipGate,
+        c: &ContentRef,
+        owner: Option<&str>,
+        rechecks: &AtomicUsize,
+        act: impl FnOnce(),
+    ) -> Result<Option<String>, AppError> {
+        g.admit_checked(
+            c,
+            || async { Ok(owner.map(str::to_string)) },
+            || async {
+                rechecks.fetch_add(1, Ordering::SeqCst);
+                act();
+            },
+        )
+        .await
+    }
+
+    #[test]
+    fn o1_classify_table() {
+        let mine = Signer {
+            channel_id: A1.into(),
+            is_admin: false,
+            delegated: Arc::from(vec![D4.to_string()]),
+        };
+        let admin = Signer {
+            is_admin: true,
+            ..mine.clone()
+        };
+        assert_eq!(classify(&video(1), Some(A1), &mine), Ownership::Own);
+        assert_eq!(classify(&video(1), Some(D4), &mine), Ownership::Delegated);
+        assert_eq!(classify(&clip("c"), Some(D4), &mine), Ownership::Delegated);
+        assert_eq!(classify(&video(1), Some(C3), &mine), Ownership::NotOwn);
+        assert_eq!(classify(&video(1), None, &mine), Ownership::Unknown);
+        assert_eq!(
+            classify(&video(1), Some(C3), &admin),
+            Ownership::AdminOverride
+        );
+        assert_eq!(classify(&video(1), None, &admin), Ownership::AdminOverride);
+        // 관리자라도 맡은 채널이면 Delegated(Own > Delegated > AdminOverride)
+        assert_eq!(classify(&video(1), Some(D4), &admin), Ownership::Delegated);
+        assert_eq!(classify(&video(1), Some(A1), &admin), Ownership::Own);
+        // 대소문자 무시
+        assert_eq!(
+            classify(&video(1), Some(&D4.to_uppercase()), &mine),
+            Ownership::Delegated
+        );
+    }
+
+    #[test]
+    fn o2_live_never_delegated() {
+        let mine = Signer {
+            channel_id: A1.into(),
+            is_admin: false,
+            delegated: Arc::from(vec![D4.to_string()]),
+        };
+        let admin = Signer {
+            is_admin: true,
+            ..mine.clone()
+        };
+        assert_eq!(classify(&live(D4), Some(D4), &mine), Ownership::NotOwn);
+        assert_eq!(
+            classify(&live(D4), Some(D4), &admin),
+            Ownership::AdminOverride
+        );
+        // 본인 채널의 생방송은 그대로 Own
+        assert_eq!(classify(&live(A1), Some(A1), &mine), Ownership::Own);
+    }
+
+    #[tokio::test]
+    async fn o3_admit_delegated_returns_owner() {
+        let g = OwnershipGate::enabled(Me::editor(A1, &[D4]));
+        let calls = AtomicUsize::new(0);
+        let r = admit_with(&g, &video(1), &calls, Ok(Some(D4)))
+            .await
+            .unwrap();
+        assert_eq!(r.as_deref(), Some(D4));
+        assert_eq!(
+            g.on_resolved(&video(1), &meta(Some(D4))),
+            Ownership::Delegated
+        );
+    }
+
+    #[tokio::test]
+    async fn o4_admit_live_delegated_rejected() {
+        let g = OwnershipGate::enabled(Me::editor(A1, &[D4]));
+        let calls = AtomicUsize::new(0);
+        let e = admit_with(&g, &live(D4), &calls, Ok(Some(D4)))
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, ErrorCode::NotOwnContent);
+        // 관리자는 허용
+        let me = Me::admin(A1);
+        me.set_delegated(&[D4]);
+        let g = OwnershipGate::enabled(me);
+        admit_with(&g, &live(D4), &calls, Ok(Some(D4)))
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn o5_recheck_runs_only_when_needed() {
+        let rechecks = AtomicUsize::new(0);
+        let run = |g: OwnershipGate, c: ContentRef, owner: Option<&'static str>| {
+            let rechecks = &rechecks;
+            async move {
+                let before = rechecks.load(Ordering::SeqCst);
+                let _ = admit_counting(&g, &c, owner, rechecks, || {}).await;
+                rechecks.load(Ordering::SeqCst) - before
+            }
+        };
+        let editor = || OwnershipGate::enabled(Me::editor(A1, &[D4]));
+        // Delegated·NotOwn은 확인한다
+        assert_eq!(run(editor(), video(1), Some(D4)).await, 1);
+        assert_eq!(run(editor(), video(2), Some(C3)).await, 1);
+        // Own·채널 모름·관리자·생방송은 확인하지 않는다
+        assert_eq!(run(editor(), video(3), Some(A1)).await, 0);
+        assert_eq!(run(editor(), video(4), None).await, 0);
+        assert_eq!(run(editor(), live(D4), Some(D4)).await, 0);
+        let admin = Me::admin(A1);
+        assert_eq!(
+            run(OwnershipGate::enabled(admin), video(5), Some(C3)).await,
+            0
+        );
+        // 꺼진 게이트
+        assert_eq!(run(OwnershipGate::disabled(), video(6), Some(D4)).await, 0);
+    }
+
+    #[tokio::test]
+    async fn o6_recheck_revocation_applies() {
+        let me = Me::editor(A1, &[D4]);
+        let g = OwnershipGate::enabled(me.clone());
+        let rechecks = AtomicUsize::new(0);
+        let e = admit_counting(&g, &video(1), Some(D4), &rechecks, || me.set_delegated(&[]))
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, ErrorCode::NotOwnContent);
+    }
+
+    #[tokio::test]
+    async fn o7_recheck_grant_applies() {
+        let me = Me::editor(A1, &[]);
+        let g = OwnershipGate::enabled(me.clone());
+        let rechecks = AtomicUsize::new(0);
+        let r = admit_counting(&g, &video(1), Some(C3), &rechecks, || {
+            me.set_delegated(&[C3])
+        })
+        .await
+        .unwrap();
+        assert_eq!(r.as_deref(), Some(C3));
+    }
+
+    #[tokio::test]
+    async fn o8_recheck_sign_out_is_not_logged_in() {
+        let me = Me::editor(A1, &[D4]);
+        let g = OwnershipGate::enabled(me.clone());
+        let rechecks = AtomicUsize::new(0);
+        let e = admit_counting(&g, &video(1), Some(D4), &rechecks, || me.set(None))
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, ErrorCode::NotLoggedIn);
+    }
+
+    #[test]
+    fn o9_needs_recheck_table() {
+        let g = OwnershipGate::enabled(Me::editor(A1, &[D4]));
+        let v = video(1);
+        for (verdict, want) in [
+            (Ownership::Delegated, true),
+            (Ownership::NotOwn, true),
+            (Ownership::Own, false),
+            (Ownership::AdminOverride, false),
+            (Ownership::Unknown, false),
+            (Ownership::Unchecked, false),
+        ] {
+            assert_eq!(g.needs_recheck(verdict, &v), want, "{verdict:?}");
+        }
+        assert!(!g.needs_recheck(Ownership::Delegated, &live(D4)));
+        assert!(!g.needs_recheck(Ownership::NotOwn, &live(D4)));
+        // 관리자·로그아웃·꺼진 게이트
+        let admin = Me::admin(A1);
+        assert!(!OwnershipGate::enabled(admin).needs_recheck(Ownership::NotOwn, &v));
+        let out = Me::new(None);
+        assert!(!OwnershipGate::enabled(out).needs_recheck(Ownership::NotOwn, &v));
+        assert!(!OwnershipGate::disabled().needs_recheck(Ownership::NotOwn, &v));
+    }
+
+    #[test]
+    fn verdict_in_table() {
+        for ok in [
+            Ownership::Own,
+            Ownership::Delegated,
+            Ownership::AdminOverride,
+        ] {
+            assert!(verdict_in(ok).is_ok());
+        }
+        assert_eq!(
+            verdict_in(Ownership::NotOwn).unwrap_err().code,
+            ErrorCode::NotOwnContent
+        );
+        for bad in [Ownership::Unknown, Ownership::Unchecked] {
+            assert_eq!(
+                verdict_in(bad).unwrap_err().code,
+                ErrorCode::OwnershipUnknown
+            );
+        }
     }
 }

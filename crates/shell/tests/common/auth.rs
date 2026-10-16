@@ -7,9 +7,10 @@ use std::sync::{Arc, Mutex};
 use chzzk_core::Secret;
 use chzzk_shell::auth::token::Grant;
 use chzzk_shell::auth::{
-    ApiError, AuthService, BindError, Bound, Clock, CloseSignal, Delivery, GrantSource, GrantTx,
-    ReceiverPage, RedeemResponse, SessionStore, StartRequest, StartResponse, StoredSession,
-    TokenBundle, WorkerApi, WorkerBase, close_pair, grant_channel, parse_start,
+    ApiError, AuthService, BindError, Bound, Clock, CloseSignal, DelegatedChannel, DelegatedSince,
+    Delivery, GrantSource, GrantTx, InviteResponse, MeResponse, ReceiverPage, RedeemResponse,
+    SessionStore, StartRequest, StartResponse, StoredSession, TokenBundle, WorkerApi, WorkerBase,
+    close_pair, grant_channel, parse_invite, parse_start,
 };
 use time::OffsetDateTime;
 use tokio::sync::{Notify, oneshot};
@@ -55,7 +56,51 @@ pub fn bundle_with(n: u32, access_exp: OffsetDateTime, refresh_exp: OffsetDateTi
         channel_id: CH.to_string(),
         channel_name: "채널".to_string(),
         is_admin: false,
+        delegated_channels: vec![],
     }
+}
+
+/// 맡은 채널이 있는 n번째 묶음(이름은 "맡은채널")
+pub fn bundle_delegated(n: u32, now: OffsetDateTime, delegated: &[&str]) -> TokenBundle {
+    let mut b = bundle(n, now);
+    b.delegated_channels = delegated.iter().map(|id| delegated_channel(id)).collect();
+    b
+}
+
+/// 맡은 채널 하나(이름 "맡은채널")
+pub fn delegated_channel(id: &str) -> DelegatedChannel {
+    DelegatedChannel {
+        channel_id: id.to_string(),
+        channel_name: "맡은채널".to_string(),
+    }
+}
+
+/// `/api/me` 200 응답(이름 "맡은채널", since 없음, 편집자 없음, 한도 10·20)
+pub fn me_ok(channel: &str, delegated: &[&str]) -> MeResponse {
+    MeResponse {
+        channel_id: channel.to_string(),
+        channel_name: "채널".to_string(),
+        delegated: delegated
+            .iter()
+            .map(|id| DelegatedSince {
+                channel: delegated_channel(id),
+                since: None,
+            })
+            .collect(),
+        editors: vec![],
+        pending_invite_until: None,
+        editors_max: 10,
+        delegations_max: 20,
+    }
+}
+
+/// 초대 응답(가짜 주소 `.invalid`)
+pub fn invite_ok(tail: &str) -> InviteResponse {
+    let body = serde_json::json!({
+        "inviteUrl": format!("{ORIGIN}/invite/{}", tok("cdi_", tail)),
+        "expiresAt": "2031-01-01T00:00:00.000Z",
+    });
+    parse_invite(body.to_string().as_bytes(), &base()).expect("invite_ok 본문은 계약을 만족한다")
 }
 
 /// 저장 세션: `bundle(n, verified_at)`과 같은 토큰, refresh 만료 지정
@@ -184,6 +229,20 @@ pub enum Call {
         access: Option<String>,
         refresh: Option<String>,
     },
+    Me {
+        access: String,
+    },
+    CreateInvite {
+        access: String,
+    },
+    RemoveEditor {
+        access: String,
+        channel: String,
+    },
+    LeaveDelegation {
+        access: String,
+        channel: String,
+    },
 }
 
 #[derive(Default)]
@@ -192,6 +251,10 @@ struct FakeState {
     redeem: VecDeque<Reply<RedeemResponse>>,
     refresh: VecDeque<Reply<TokenBundle>>,
     logout: VecDeque<Reply<()>>,
+    me: VecDeque<Reply<MeResponse>>,
+    invite: VecDeque<Reply<InviteResponse>>,
+    remove: VecDeque<Reply<()>>,
+    leave: VecDeque<Reply<()>>,
     calls: Vec<Call>,
 }
 
@@ -211,6 +274,28 @@ impl FakeWorkerApi {
     }
     pub fn push_logout(&self, r: Reply<()>) {
         self.0.lock().unwrap().logout.push_back(r);
+    }
+    pub fn push_me(&self, r: Reply<MeResponse>) {
+        self.0.lock().unwrap().me.push_back(r);
+    }
+    pub fn push_invite(&self, r: Reply<InviteResponse>) {
+        self.0.lock().unwrap().invite.push_back(r);
+    }
+    pub fn push_remove(&self, r: Reply<()>) {
+        self.0.lock().unwrap().remove.push_back(r);
+    }
+    pub fn push_leave(&self, r: Reply<()>) {
+        self.0.lock().unwrap().leave.push_back(r);
+    }
+    /// Me 호출의 access를 순서대로
+    pub fn me_calls(&self) -> Vec<String> {
+        self.calls()
+            .into_iter()
+            .filter_map(|c| match c {
+                Call::Me { access } => Some(access),
+                _ => None,
+            })
+            .collect()
     }
     pub fn calls(&self) -> Vec<Call> {
         self.0.lock().unwrap().calls.clone()
@@ -306,6 +391,62 @@ impl WorkerApi for FakeWorkerApi {
                 refresh: refresh.map(|a| a.expose().clone()),
             },
             |s| s.logout.pop_front(),
+        );
+        resolve(r)
+    }
+
+    fn me(
+        &self,
+        access: &Secret<String>,
+    ) -> impl Future<Output = Result<MeResponse, ApiError>> + Send {
+        let r = self.take(
+            Call::Me {
+                access: access.expose().clone(),
+            },
+            |s| s.me.pop_front(),
+        );
+        resolve(r)
+    }
+
+    fn create_invite(
+        &self,
+        access: &Secret<String>,
+    ) -> impl Future<Output = Result<InviteResponse, ApiError>> + Send {
+        let r = self.take(
+            Call::CreateInvite {
+                access: access.expose().clone(),
+            },
+            |s| s.invite.pop_front(),
+        );
+        resolve(r)
+    }
+
+    fn remove_editor(
+        &self,
+        access: &Secret<String>,
+        editor_channel_id: &str,
+    ) -> impl Future<Output = Result<(), ApiError>> + Send {
+        let r = self.take(
+            Call::RemoveEditor {
+                access: access.expose().clone(),
+                channel: editor_channel_id.to_string(),
+            },
+            |s| s.remove.pop_front(),
+        );
+        resolve(r)
+    }
+
+    fn leave_delegation(
+        &self,
+        access: &Secret<String>,
+        owner_channel_id: &str,
+    ) -> impl Future<Output = Result<(), ApiError>> + Send {
+        let r = self.take(
+            Call::LeaveDelegation {
+                access: access.expose().clone(),
+                channel: owner_channel_id.to_string(),
+            },
+            |s| s.leave.pop_front(),
         );
         resolve(r)
     }

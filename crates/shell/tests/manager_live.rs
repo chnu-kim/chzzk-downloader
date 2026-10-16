@@ -100,6 +100,7 @@ async fn stop_job_finalizes_recording() {
             path: out.clone(),
             bytes: 4096,
             resumed_from: 0,
+            live: None,
         })),
     );
     let id = h.enqueue_live("l").id;

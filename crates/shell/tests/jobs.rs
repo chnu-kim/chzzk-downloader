@@ -19,6 +19,7 @@ fn record(id: u64, status: JobStatus) -> JobRecord {
         quality_id: "PD_720P".into(),
         quality_label: "720p".into(),
         expected_kind: PlaybackKind::Progressive,
+        recording_id: None,
         output: PathBuf::from(format!("/v/{id}.mp4")),
         on_existing: OnExisting::Overwrite,
         concurrency: 4,

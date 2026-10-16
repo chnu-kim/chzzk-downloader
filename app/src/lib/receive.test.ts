@@ -17,6 +17,7 @@ import {
   qualityFps,
   qualitySize,
   shouldSuggestClipboard,
+  usesFreeName,
 } from './receive';
 
 describe('표시', () => {
@@ -108,30 +109,88 @@ describe('buildEnqueueRequest (§6.4 표)', () => {
     // 파일이 없으면 덮어쓰기 선택이 남아 있어도(이전 입력) skip이다.
     expect(buildEnqueueRequest(r, q, null, check(), { existing: 'overwrite', partialFresh: false }).onExisting).toBe('skip');
     // 같은 작업의 .part만 있을 때도 skip(이어받아 마무리할 때 그사이 생긴 파일을 덮어쓰지 않는다).
-    const p = check({ partial: { bytes: 5, sameJob: true } });
+    const p = check({ partial: { bytes: 5, sameJob: true, recording: false } });
     expect(buildEnqueueRequest(r, q, null, p, DEFAULT_CHOICES).onExisting).toBe('skip');
   });
 
   it('같은 작업의 .part: 이어받기 false / 처음부터 true', () => {
-    const c = check({ partial: { bytes: 1_288_490_188, sameJob: true } });
+    const c = check({ partial: { bytes: 1_288_490_188, sameJob: true, recording: false } });
     expect(buildEnqueueRequest(r, q, null, c, DEFAULT_CHOICES).restart).toBe(false);
     expect(buildEnqueueRequest(r, q, null, c, { existing: 'number', partialFresh: true }).restart).toBe(true);
   });
 
   it('다른 .part는 안내만: restart=false', () => {
-    const c = check({ partial: { bytes: 10, sameJob: false } });
+    const c = check({ partial: { bytes: 10, sameJob: false, recording: false } });
     expect(buildEnqueueRequest(r, q, null, c, { existing: 'number', partialFresh: true }).restart).toBe(false);
   });
 
   it('번호 붙인 새 이름에는 .part 선택이 해당하지 않는다', () => {
-    const c = check({ exists: true, freeFileName: '이름 (2)', partial: { bytes: 5, sameJob: true } });
+    const c = check({ exists: true, freeFileName: '이름 (2)', partial: { bytes: 5, sameJob: true, recording: false } });
     expect(buildEnqueueRequest(r, q, null, c, { existing: 'number', partialFresh: true })).toMatchObject({
       fileName: '이름 (2)',
       restart: false,
     });
-    expect(notices(c, DEFAULT_CHOICES)).toEqual({ duplicate: false, exists: true, partialSame: null, partialOther: false });
+    expect(notices(c, DEFAULT_CHOICES)).toEqual({
+      duplicate: false,
+      exists: true,
+      partialSame: null,
+      partialOther: false,
+      partialRecording: false,
+    });
     // 덮어쓰기를 고르면 그 이름의 .part 안내가 다시 나온다
     expect(notices(c, { existing: 'overwrite', partialFresh: false }).partialSame).toBe(5);
+  });
+});
+
+describe('받다 만 녹화 .part (core.md 61)', () => {
+  const r = liveResolved();
+  const q = r.qualities[0];
+  const rec = (over = {}) =>
+    check({
+      exists: true,
+      freeFileName: '이름 (2)',
+      partial: { bytes: 5, sameJob: false, recording: true },
+      ...over,
+    });
+
+  it('안내만 띄우고 같은 이름 파일·받다 만 안내는 숨긴다', () => {
+    const n = notices(rec(), { existing: 'overwrite', partialFresh: true });
+    expect(n).toEqual({
+      duplicate: false,
+      exists: false,
+      partialSame: null,
+      partialOther: false,
+      partialRecording: true,
+    });
+    // 완성 파일이 없는 이름이어도 같다
+    expect(notices(rec({ exists: false }), DEFAULT_CHOICES).partialRecording).toBe(true);
+  });
+
+  it('덮어쓰기를 골라 둬도 늘 번호 이름이고 restart는 false다', () => {
+    for (const exists of [true, false]) {
+      const c = rec({ exists });
+      for (const existing of ['number', 'overwrite'] as const) {
+        expect(usesFreeName(c, { existing, partialFresh: true })).toBe(true);
+        expect(buildEnqueueRequest(r, q, null, c, { existing, partialFresh: true })).toMatchObject({
+          fileName: '이름 (2)',
+          restart: false,
+          onExisting: 'skip',
+        });
+      }
+    }
+  });
+
+  it('빈 번호 이름이 없으면 받을 수 없다', () => {
+    const base = {
+      fileName: 'a',
+      checkedKey: checkKey(null, 'a', 'q'),
+      currentKey: checkKey(null, 'a', 'q'),
+      busy: false,
+      ownership: 'unchecked' as const,
+      choices: DEFAULT_CHOICES,
+    };
+    expect(canDownload({ ...base, check: rec({ exists: false }) })).toBe(true);
+    expect(canDownload({ ...base, check: rec({ exists: false, freeFileName: null }) })).toBe(false);
   });
 });
 

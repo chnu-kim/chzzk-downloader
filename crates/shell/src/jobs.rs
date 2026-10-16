@@ -4,7 +4,7 @@
 //! - 깨진 파일(JSON 오류, 최상위가 object가 아님, 모르는 형식 버전)은 `jobs.json.bad-{unix_ts}`로 옮기고 빈 목록으로 시작한다.
 //!   권한 같은 읽기 오류는 옮기지 않고 `Io`다(옮길 이유가 없는 파일을 빈 목록으로 덮어쓰지 않으려고).
 //! - `DownloadRequest`·`DuplicatePolicy`·`NonZeroU8`는 serde 타입이 아니라 `JobRecord`가 같은 내용을 미러로 들고
-//!   `to_request()`로 요청을 만든다. **이어받기 동일성 키**(`content`, `qualityId`, `expectedKind`, `output`)는
+//!   `to_request()`로 요청을 만든다. **이어받기 동일성 키**(`content`, `qualityId`, `expectedKind`, `recordingId`, `output`)는
 //!   `.part`가 생긴 뒤 바꾸지 않는다.
 
 use std::ffi::OsString;
@@ -14,7 +14,7 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use chzzk_core::download::MAX_CONCURRENCY;
-use chzzk_core::download::part::{Sidecar, part_path, sidecar_path};
+use chzzk_core::download::part::{PartOwner, Sidecar, part_path, sidecar_path};
 use chzzk_core::fsutil::{atomic_write, map_io_error, rename_with_retry};
 use chzzk_core::{ContentRef, DownloadRequest, Error, PlaybackKind};
 use serde::{Deserialize, Serialize};
@@ -45,6 +45,9 @@ pub struct JobRecord {
     pub quality_id: String,
     pub quality_label: String,
     pub expected_kind: PlaybackKind,
+    /// 생방송 녹화 작업의 고유값(core.md 61). `enqueue`가 생방송에만 만든다. v0.7.0 레코드에는 없다(`None`)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recording_id: Option<String>,
     /// 최종 경로. 추가할 때 계산해 둔다(설정 폴더가 바뀌어도 같은 `.part`를 찾게)
     pub output: PathBuf,
     pub on_existing: OnExisting,
@@ -86,6 +89,17 @@ impl JobRecord {
             on_existing: self.on_existing.into(),
             concurrency: concurrency(self.concurrency),
             live_stop: None,
+            recording_id: self.recording_id.clone(),
+        }
+    }
+
+    /// 이 작업이 `.part`의 주인인지 가리는 열쇠.
+    pub fn owner(&self) -> PartOwner<'_> {
+        PartOwner {
+            content: &self.content,
+            quality_id: &self.quality_id,
+            kind: self.expected_kind,
+            recording_id: self.recording_id.as_deref(),
         }
     }
 
@@ -288,6 +302,7 @@ fn parse(bytes: &[u8]) -> Result<JobsFile, String> {
 /// |---|---|---|
 /// | `running`·`pausing`·`queued` | - | `interrupted`(자동 재개는 매니저가 설정을 보고 따로 한다), `stopped_at`이 없으면 지금 |
 /// | `paused`·`interrupted`·`failed`·`skipped` | `.part`·sidecar가 있고 같은 작업 | `partial_bytes = committed_len` |
+/// | 〃 | `.part`가 있고 sidecar를 읽지 못함(없음·깨짐이 아닌 오류) | `partial_bytes = .part 길이`(모른다, `partial_bytes`) |
 /// | 〃 | 그 밖 | `partial_bytes = None` |
 /// | `completed` | 최종 파일 없음 | `missing = true` |
 ///
@@ -316,25 +331,64 @@ pub fn reconcile(file: &mut JobsFile) {
 
 /// 이 작업이 이어받을 수 있는 `.part`의 바이트(sidecar `committed_len`).
 ///
-/// `.part`와 sidecar가 모두 있고 sidecar가 같은 작업(컨텐츠·화질·방식)일 때만 `Some`이다.
+/// `.part`와 sidecar가 모두 있고 sidecar가 같은 작업(컨텐츠·화질·방식)이며 `.part`가 `committed_len`보다 짧지 않을 때만 `Some`이다.
 /// `discard_on_start`(처음부터)가 켜져 있으면 늘 `None`이다.
 /// sidecar가 없거나 깨졌거나 다른 작업이면 코어가 재개 때 새로 시작하므로 `None`이다.
 /// (`check_output`은 이와 달리 sidecar가 없으면 `.part` 길이를 보여 준다. 섞지 않는다.)
+/// 생방송은 마무리할 영상 조각이 있을 때만(`has_live_media`) `Some`이다. init만 든 녹화는 코어가 다음 실행에서 init을
+/// 버리고 새로 녹화하므로 받은 것이 없다(core.md 61 M3). 그래서 경로 잡기(`keeps_recording`)·화면의 받은 부분 안내·
+/// 자동 이어받기가 모두 이 한 규칙을 따른다.
 /// sidecar는 잠그지 않고 읽기만 한다(`atomic_write`로 쓰이므로 반쯤 쓴 파일은 없다).
+/// sidecar를 **읽지 못하면**(없음·깨짐이 아닌 읽기 오류: Windows 공유 위반·권한 거부 등) 받은 부분이 없는 것이 아니라
+/// 모르는 것이라 `.part` 길이를 준다(Codex PR #113 2회차 ④). 그래야 실패한 녹화가 경로를 계속 잡고(`keeps_recording`),
+/// 같은 녹화의 다른 옛 기록이 받은 부분을 잃은 것처럼 보여 형제 갱신(`refresh_siblings`)에서 빠지지 않는다. 코어도 그
+/// sidecar를 읽지 못하면 아무것도 지우지 않고 오류다(`read_sidecar`의 세 상태).
 pub fn partial_bytes(j: &JobRecord) -> Option<u64> {
     // "처음부터"로 표시된 작업은 다음 시작 때 `.part`를 지우므로 이어받을 것이 없다.
-    if j.discard_on_start || !part_path(&j.output).is_file() {
+    if j.discard_on_start {
         return None;
     }
-    let sc = read_sidecar(&j.output)?;
-    sc.same_job(&j.content, &j.quality_id, j.expected_kind)
+    let part_len = std::fs::metadata(part_path(&j.output))
+        .ok()
+        .filter(|m| m.is_file())?
+        .len();
+    let sc = match read_sidecar_checked(&j.output) {
+        Ok(sc) => sc?,
+        Err(e) => {
+            tracing::warn!(error = %e, job = j.id.0, "sidecar를 읽지 못해 받은 부분이 있는 것으로 둔다");
+            return Some(part_len);
+        }
+    };
+    let live_without_media = sc.kind == PlaybackKind::Live && !sc.has_live_media();
+    // `committed_len`보다 짧은 `.part`는 이 sidecar의 파일이 아니다(코어 `resume`이 둘 다 지우고 새로 시작한다, `Sidecar::describes`)
+    (sc.owned_by(&j.owner()) && !live_without_media && sc.describes(part_len))
         .then_some(sc.committed_len)
 }
 
-/// `{output}.part.json`을 읽는다. 없거나 깨졌으면 `None`.
+/// 생방송 작업의 `.part`에 마무리할 영상 조각이 있는가(이 작업의 sidecar, init만이 아님). 자동 이어받기가 쓴다(core.md 61 M3).
+pub fn live_media_ready(j: &JobRecord) -> bool {
+    partial_bytes(j).is_some() && read_sidecar(&j.output).is_some_and(|s| s.has_live_media())
+}
+
+/// 새 생방송 녹화 작업의 고유값: 16바이트 난수 hex(32자).
+pub fn new_recording_id() -> String {
+    let mut b = [0u8; 16];
+    getrandom::fill(&mut b).expect("OS 난수원을 쓸 수 없다");
+    b.iter().map(|x| format!("{x:02x}")).collect()
+}
+
+/// `{output}.part.json`을 읽는다. 없거나 깨졌거나 읽지 못하면 `None`(안내용. 받은 부분 판단은 `partial_bytes`).
 pub fn read_sidecar(output: &Path) -> Option<Sidecar> {
-    let bytes = std::fs::read(sidecar_path(output)).ok()?;
-    serde_json::from_slice(&bytes).ok()
+    read_sidecar_checked(output).ok().flatten()
+}
+
+/// `{output}.part.json`을 읽는다. 없거나 깨졌으면 `Ok(None)`, 그 밖의 읽기 실패는 `Err`(주인을 확인하지 못했다).
+fn read_sidecar_checked(output: &Path) -> std::io::Result<Option<Sidecar>> {
+    match std::fs::read(sidecar_path(output)) {
+        Ok(bytes) => Ok(serde_json::from_slice(&bytes).ok()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e),
+    }
 }
 
 /// 지금 unix 초.

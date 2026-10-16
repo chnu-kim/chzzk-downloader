@@ -7,6 +7,7 @@ import { newSecret, sha256B64url, sha256Hex } from "../../src/core/token";
 import worker from "../../src/index";
 import { AUTH_STORE_NAME } from "../../src/store/AuthStore";
 import type { FakeAccountKey, FakeChzzk } from "../fake-chzzk.mjs";
+import { ADMINS } from "../store/helpers";
 
 export const ORIGIN = "http://localhost:8787";
 export const HOUR = 3_600_000;
@@ -39,7 +40,7 @@ export const store = () => env.AUTH.get(env.AUTH.idFromName(AUTH_STORE_NAME));
 /** 한 파일의 테스트는 같은 DO 저장소를 쓴다: 세션·허용목록·거부 기록을 세어 보는 테스트는 먼저 비운다(흐름 표는 건드리지 않는다) */
 export async function resetStore(): Promise<void> {
   await runInDurableObject(store(), (i) => {
-    for (const table of ["refresh", "session", "allowlist", "denied", "audit"]) i.db.run(`DELETE FROM ${table}`);
+    for (const table of ["refresh", "session", "allowlist", "denied", "audit", "delegation", "invite"]) i.db.run(`DELETE FROM ${table}`);
   });
 }
 
@@ -212,7 +213,7 @@ export async function appFlow(o: { fake: FakeChzzk; browser?: Browser; app?: App
 }
 
 /** 이 파일 공통 규약의 afterEach에서 쓴다 */
-export const allowedChannel = (channelId: string, by: string) => store().allow(channelId, "", by, Date.now());
+export const allowedChannel = (channelId: string, by: string) => store().allow(channelId, "", by, Date.now(), ADMINS);
 
 /** 페이지의 첫 h1 글자(안의 태그는 걷어 낸다). 상태 아이콘이 h1 안에 있어 마크업 그대로 비교하지 않는다 */
 export const h1Of = (t: string): string | null => {

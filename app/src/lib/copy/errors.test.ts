@@ -47,7 +47,9 @@ function sample(code: ErrorCode, stage: Stage | null = null): AppError {
     case 'qualityNotFound':
       return err(code, { type: 'qualityNotFound', requested: '1080p', available: ['720p'] }, stage);
     case 'diskFull':
+    case 'fileTooLarge':
     case 'fileLocked':
+    case 'partialRecording':
     case 'io':
     case 'settings':
     case 'fileMissing':
@@ -60,8 +62,8 @@ function sample(code: ErrorCode, stage: Stage | null = null): AppError {
 }
 
 describe('errorCopy 전체 표', () => {
-  it('오류 코드는 30개(코어 22 + 셸 8)', () => {
-    expect(ERROR_CODES).toHaveLength(30);
+  it('오류 코드는 32개(코어 24 + 셸 8)', () => {
+    expect(ERROR_CODES).toHaveLength(32);
   });
 
   // 모든 code × 위치 × .part 유무 × 쿠키 사용 × 진단에서 3요소가 갖춰지고 DC8·C6 규칙을 지킨다.
@@ -136,7 +138,7 @@ const PLAIN = err('noPlayback', { type: 'noPlayback', adult: false });
 const DISK = err('diskFull', pathPayload('D:\\영상'));
 const PATHED = (code: ErrorCode) => err(code, pathPayload('D:\\영상'));
 
-// content.md §15.2: 코드 30개 × 자리별 L0(제목·본문·버튼)와 L1
+// content.md §15.2: 코드 32개 × 자리별 L0(제목·본문·버튼)와 L1
 const GOLDEN: Row[] = [
   {
     name: 'invalidUrl: 버튼 없음(입력칸이 행동)',
@@ -235,6 +237,15 @@ const GOLDEN: Row[] = [
     title: '영상 서버가 접근을 막았어요',
     body: '주소를 새로 받아도 계속 거절돼요. 받다 만 파일은 지웠어요.',
     actions: ['restartFresh'],
+    detail: null,
+  },
+  {
+    name: 'authRequired download .part: 생방송 녹화는 남는다',
+    error: AUTH('download'),
+    ctx: DP,
+    title: '영상 서버가 접근을 막았어요',
+    body: `주소를 새로 받아도 계속 거절돼요. ${PART_KEPT}`,
+    actions: ['resume'],
     detail: null,
   },
   {
@@ -490,12 +501,39 @@ const GOLDEN: Row[] = [
     detail: '저장 폴더: D:\\영상',
   },
   {
+    name: 'fileTooLarge D .part: 받은 부분은 남는다',
+    error: PATHED('fileTooLarge'),
+    ctx: DP,
+    title: '파일이 저장 장치의 크기 한도를 넘었어요',
+    body: `FAT32처럼 파일 하나의 크기를 제한하는 저장 장치예요. 다른 저장 장치의 폴더로 바꿔 주세요. ${PART_KEPT}`,
+    actions: ['resume', 'openFolder'],
+    detail: '경로: D:\\영상',
+  },
+  {
+    name: 'fileTooLarge R: 폴더를 바꾼다',
+    error: PATHED('fileTooLarge'),
+    ctx: R,
+    title: '파일이 저장 장치의 크기 한도를 넘었어요',
+    body: 'FAT32처럼 파일 하나의 크기를 제한하는 저장 장치예요. 다른 저장 장치의 폴더로 바꿔 주세요.',
+    actions: ['changeFolder'],
+    detail: '경로: D:\\영상',
+  },
+  {
     name: 'fileLocked D',
     error: PATHED('fileLocked'),
     ctx: D,
     title: '다른 프로그램이 파일을 쓰고 있어요',
     body: '이 파일을 연 플레이어나 백신 검사가 끝난 뒤 다시 시도해 주세요.',
     actions: ['retry', 'openFolder'],
+    detail: '경로: D:\\영상',
+  },
+  {
+    name: 'partialRecording D: 지우지 않았다고 알리고 다른 이름을 권한다',
+    error: PATHED('partialRecording'),
+    ctx: D,
+    title: '같은 이름으로 받다 만 녹화가 있어요',
+    body: '녹화는 다시 받을 수 없어 그 파일을 지우지 않았어요. 다시 불러와 다른 이름으로 받아 주세요.',
+    actions: ['reresolve'],
     detail: '경로: D:\\영상',
   },
   {
@@ -641,7 +679,7 @@ describe('errorCopy 골든(§15.2 코드별 L0·L1)', () => {
     });
   }
 
-  it('골든이 30개 코드를 모두 덮는다', () => {
+  it('골든이 32개 코드를 모두 덮는다', () => {
     const covered = new Set(GOLDEN.map((g) => (g.error.code === 'cancelled' ? 'cancelled' : g.error.code)));
     for (const code of ERROR_CODES) expect(covered.has(code), code).toBe(true);
   });
@@ -684,14 +722,14 @@ describe('errorCopy 규칙', () => {
 
   it('resumable 코드: .part가 있으면 body가 "받은 부분은 그대로 있어요." 또는 "받다 만 파일" 문장 중 하나를 말한다', () => {
     // 코어 `is_resumable`이 true인 코드(.part를 남긴다)
-    const keep: AppError[] = [API_ERR, http(503), http(429), err('noQualities'), err('parse'), err('network'), DISK, PATHED('fileLocked'), PATHED('io'), err('refreshExhausted')];
+    const keep: AppError[] = [API_ERR, http(503), http(429), err('noQualities'), err('parse'), err('network'), DISK, PATHED('fileTooLarge'), PATHED('fileLocked'), PATHED('io'), err('refreshExhausted')];
     for (const e of keep) {
       expect(errorCopy(e, DP).body, `${e.code}`).toContain(PART_KEPT);
       // 받을 것이 없는 R에서는 말하지 않는다
       expect(errorCopy(e, R).body, `${e.code} R`).not.toContain(PART_KEPT);
     }
     // 코어가 .part를 지우는 코드는 지웠다고 말한다
-    const deleted: AppError[] = [AUTH('download'), QUALITY, err('sourceChanged'), err('lengthMismatch')];
+    const deleted: AppError[] = [QUALITY, err('sourceChanged'), err('lengthMismatch')];
     for (const e of deleted) expect(errorCopy(e, DP).body, `${e.code}`).toContain('받다 만 파일');
     // 4xx(408·429 제외)는 같은 요청이 끝내 실패해 .part를 지운다: 남아 있다고 말하지 않는다
     expect(errorCopy(http(403), DP).body).not.toContain(PART_KEPT);

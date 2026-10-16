@@ -92,6 +92,9 @@ export function disallow(db: Db, channelId: string, by: string, admins: readonly
   if (admins.includes(channelId)) return { ok: false, code: "is_admin" };
   if (db.run("DELETE FROM allowlist WHERE channel_id = ?", channelId) === 0) return { ok: false, code: "not_found" };
   db.run("UPDATE session SET status = 'revoked', revoked_at = ?, revoked_why = 'disallowed' WHERE channel_id = ? AND status <> 'revoked'", now, channelId);
+  // 위임·초대는 로그인 ID(허가 행의 키)로 지운다. 판정용 owner_channel_id로는 지우지 않는다(delegation.md §8.6)
+  db.run("DELETE FROM delegation WHERE owner_login_channel_id = ? OR editor_channel_id = ?", channelId, channelId);
+  db.run("DELETE FROM invite WHERE owner_login_channel_id = ? OR claimed_channel_id = ?", channelId, channelId);
   audit(db, "disallow", by, channelId, now);
   return { ok: true };
 }

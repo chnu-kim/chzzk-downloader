@@ -25,6 +25,8 @@ export type TokenBundle = {
   readonly channelId: string;
   readonly channelName: string;
   readonly isAdmin: boolean;
+  /** 맡은 채널(주인의 판정용 ID, 구현 중 변경 105) */
+  readonly delegatedChannels: readonly DelegatedChannel[];
 };
 
 /** startApp RPC 입력(객체 하나: 배포 중 옛 isolate의 위치 인자 호출은 객체 검사에서 bad_request, 구현 중 변경 88 (다)·89) */
@@ -53,8 +55,8 @@ export type LoopbackResult = "ok" | "denied" | "cancelled" | "failed";
 /** denied·cancelled·failed는 웹 흐름, 그리고 port가 NULL인 앱 흐름의 failed다 */
 export type FinishResult =
   | { readonly type: "loopback"; readonly result: LoopbackResult; readonly port: number; readonly grant: string; readonly state: string }
-  | { readonly type: "web"; readonly cookieToken: string; readonly csrf: string; readonly expiresAt: number }
-  | { readonly type: "denied" }
+  | { readonly type: "web"; readonly cookieToken: string; readonly csrf: string; readonly expiresAt: number; readonly invite?: InviteOutcome }
+  | { readonly type: "denied"; readonly invitePending?: string }
   | { readonly type: "cancelled" }
   | { readonly type: "failed" }
   /** 흐름이 없거나 exchanging이 아니거나 만료: Worker는 r=failed */
@@ -153,3 +155,23 @@ export type AdminView = {
   }[];
   readonly audit: readonly { readonly at: number; readonly actor: string; readonly action: AuditAction; readonly target: string | null }[];
 };
+
+// ---- 편집자 위임(docs/design/features/delegation.md §8, worker.md 구현 중 변경 105) ----
+/** 맡은 채널 하나(주인의 판정용 ID). since = 위임 created_at(epoch ms) */
+export type DelegatedChannel = { readonly channelId: string; readonly channelName: string; readonly since: number };
+export type EditorView = { readonly channelId: string; readonly channelName: string; readonly since: number; readonly status: "active" | "pending" };
+export type EditorsView = { readonly editors: readonly EditorView[]; readonly pendingInviteUntil: number | null };
+export type CreateInviteResult =
+  | { readonly ok: true; readonly token: string; readonly expiresAt: number }
+  | { readonly ok: false; readonly code: "limit" | "not_allowed" | "bad_request" };
+export type InviteView = { readonly ownerChannelId: string; readonly ownerName: string; readonly expiresAt: number; readonly relation: "open" | "own" | "already" | "full" };
+export type AcceptInviteResult =
+  | { readonly ok: true; readonly ownerChannelId: string; readonly ownerName: string }
+  | { readonly ok: false; readonly code: "gone" | "own" | "full" | "already" | "not_allowed" };
+export type ClaimInviteResult = { readonly ok: true; readonly ownerName: string } | { readonly ok: false; readonly code: "gone" | "full" };
+export type RemoveResult = { readonly ok: true } | { readonly ok: false; readonly code: "not_found" };
+/** finish의 초대 결과(웹 흐름에 invite_hash가 있을 때만) */
+export type InviteOutcome = "accepted" | "own" | "full" | "already" | "gone";
+export type StartWebInviteResult = StartWebResult | { readonly ok: false; readonly code: "gone" };
+/** /api/me 한 트랜잭션: check + 맡은 채널 + 내 편집자 */
+export type MeResult = (Extract<CheckResult, { ok: true }> & { readonly delegatedChannels: readonly DelegatedChannel[] } & EditorsView) | SessionDenial;

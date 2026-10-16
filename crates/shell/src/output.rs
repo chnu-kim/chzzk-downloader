@@ -5,6 +5,8 @@
 //!
 //! - `partial.bytes`는 sidecar `committed_len`이고, sidecar가 없거나 깨졌으면 `.part` 길이다. 작업의
 //!   `partial_bytes`(같은 작업의 sidecar가 있을 때만)와 규칙이 다르다. 여기서는 "무언가 남아 있다"를 보여 주는 것이 목적이다.
+//! - 녹화 `.part`(sidecar `kind = live`)가 있으면 완성 파일이 없어도 번호 이름을 준다. 녹화는 다시 받을 수 없어 이 이름으로
+//!   받지 않는다(`partial.recording`, core.md 61).
 //! - sidecar는 잠그지 않고 읽기만 한다.
 
 use std::path::{Path, PathBuf};
@@ -38,12 +40,12 @@ pub fn check_output(q: &OutputQuery<'_>, active: &dyn Fn(&Path) -> Option<JobId>
     let file_name = stem(&path);
     let truncated = file_name != q.file_name;
     let exists = path.exists();
-    let free_file_name = if exists {
+    let partial = partial_info(&path, q.content, q.quality_id, q.kind);
+    let free_file_name = if exists || partial.is_some_and(|p| p.recording) {
         free_name(q.folder, &file_name, q.platform, active)
     } else {
         None
     };
-    let partial = partial_info(&path, q.content, q.quality_id, q.kind);
     OutputCheck {
         file_name,
         path: path.to_string_lossy().into_owned(),
@@ -109,13 +111,20 @@ fn partial_info(
     let part = part_path(path);
     let meta = std::fs::metadata(&part).ok().filter(|m| m.is_file())?;
     Some(match read_sidecar(path) {
+        Some(sc) if sc.kind == PlaybackKind::Live => PartialInfo {
+            bytes: sc.committed_len,
+            same_job: false,
+            recording: true,
+        },
         Some(sc) => PartialInfo {
             bytes: sc.committed_len,
             same_job: sc.same_job(content, quality_id, kind),
+            recording: false,
         },
         None => PartialInfo {
             bytes: meta.len(),
             same_job: false,
+            recording: false,
         },
     })
 }

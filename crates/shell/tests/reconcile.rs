@@ -21,6 +21,7 @@ fn record(id: u64, status: JobStatus, output: PathBuf) -> JobRecord {
         quality_id: "720p".into(),
         quality_label: "720p".into(),
         expected_kind: PlaybackKind::LiveRewindHls,
+        recording_id: None,
         output,
         on_existing: OnExisting::Overwrite,
         concurrency: 4,
@@ -206,4 +207,40 @@ fn partial_bytes_helper_matches_table() {
     assert_eq!(partial_bytes(&r), None);
     write_partial(&o, Some(same_sidecar(7)), 7);
     assert_eq!(partial_bytes(&r), Some(7));
+}
+
+/// sidecar `committed_len`보다 짧은 `.part`는 그 sidecar의 파일이 아니다(코어 `resume`이 둘 다 지운다). 받은 부분으로 세지 않는다.
+/// 완료 뒤 sidecar 삭제에 실패해 남은 녹화 sidecar 옆에 빈 `.part`가 새로 생겨도, 끝난 옛 기록이 [이어받기]로 되살아나 경로를
+/// 잡지 않는다(Codex PR #113 확인).
+#[test]
+fn part_shorter_than_committed_is_not_partial() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("a.mp4");
+    write_partial(&out, Some(same_sidecar(4096)), 0);
+    let got = run(vec![record(1, JobStatus::Failed, out.clone())]);
+    assert_eq!(got[0].partial_bytes, None);
+    // 대조: 같은 길이면 받은 부분이다
+    write_partial(&out, Some(same_sidecar(4096)), 4096);
+    let got = run(vec![record(1, JobStatus::Failed, out)]);
+    assert_eq!(got[0].partial_bytes, Some(4096));
+}
+
+/// sidecar를 읽지 못하면(없음·깨짐이 아닌 읽기 오류) 받은 부분이 없는 것이 아니라 모르는 것이다. 불러올 때도 `.part` 길이를
+/// 받은 부분으로 두어, 실패한 녹화가 경로를 잡고 [처음부터]가 막힌다(Codex PR #113 2회차 ④). 없음·깨짐은 그대로 `None`이다.
+#[test]
+fn unreadable_sidecar_is_unknown_not_none() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("a.mp4");
+    write_partial(&out, None, 48);
+    // 같은 자리에 폴더: 읽기 오류(세 OS 공통)
+    std::fs::create_dir(sidecar_path(&out)).unwrap();
+    let got = run(vec![record(1, JobStatus::Failed, out.clone())]);
+    assert_eq!(got[0].partial_bytes, Some(48));
+    // 대조: 없음·깨짐은 받은 부분이 없다
+    std::fs::remove_dir(sidecar_path(&out)).unwrap();
+    let got = run(vec![record(1, JobStatus::Failed, out.clone())]);
+    assert_eq!(got[0].partial_bytes, None);
+    std::fs::write(sidecar_path(&out), b"{not json").unwrap();
+    let got = run(vec![record(1, JobStatus::Failed, out)]);
+    assert_eq!(got[0].partial_bytes, None);
 }

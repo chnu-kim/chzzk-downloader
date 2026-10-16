@@ -129,7 +129,8 @@ fn partial_same_job_other_job_and_no_sidecar() {
         check(d, "same", &none).partial,
         Some(PartialInfo {
             bytes: 800,
-            same_job: true
+            same_job: true,
+            recording: false
         })
     );
 
@@ -140,7 +141,8 @@ fn partial_same_job_other_job_and_no_sidecar() {
         check(d, "other", &none).partial,
         Some(PartialInfo {
             bytes: 700,
-            same_job: false
+            same_job: false,
+            recording: false
         })
     );
 
@@ -150,7 +152,8 @@ fn partial_same_job_other_job_and_no_sidecar() {
         check(d, "bare", &none).partial,
         Some(PartialInfo {
             bytes: 321,
-            same_job: false
+            same_job: false,
+            recording: false
         })
     );
     // .part만 있으면 완성 파일이 아니다(중복이 아니라 이어받기 후보)
@@ -213,4 +216,56 @@ async fn manager_check_output_reports_duplicate() {
         )
         .unwrap_err();
     assert_eq!(e.code, ErrorCode::InvalidInput);
+}
+
+/// 다시 받을 수 없는 생방송 녹화의 `.part`: 완성 파일이 없어도 번호 이름을 주고, 어떤 질의도 주인으로 보지 않는다.
+#[test]
+fn partial_recording_gets_free_name() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    let live = ContentRef::Live {
+        channel_id: "000000000000000000000000000000e5".into(),
+    };
+    let rec = d.join("rec.mp4");
+    std::fs::write(part_path(&rec), vec![0u8; 900]).unwrap();
+    let mut sc = Sidecar::new(live.clone(), "144p", PlaybackKind::Live);
+    sc.committed_len = 800;
+    sc.recording_id = Some("a".repeat(32));
+    atomic_write(&sidecar_path(&rec), &serde_json::to_vec(&sc).unwrap()).unwrap();
+
+    let q = |content: &ContentRef, kind| {
+        check_output(
+            &OutputQuery {
+                folder: d,
+                file_name: "rec",
+                content,
+                quality_id: "144p",
+                kind,
+                platform: Platform::current(),
+            },
+            &none,
+        )
+    };
+    // 같은 방송을 다시 붙여넣어도
+    let c = q(&live, PlaybackKind::Live);
+    assert!(!c.exists);
+    assert_eq!(
+        c.partial,
+        Some(PartialInfo {
+            bytes: 800,
+            same_job: false,
+            recording: true
+        })
+    );
+    assert_eq!(c.free_file_name.as_deref(), Some("rec (2)"));
+    // 같은 이름의 VOD도
+    let v = q(&CONTENT, PlaybackKind::Progressive);
+    assert!(v.partial.is_some_and(|p| p.recording && !p.same_job));
+    assert_eq!(v.free_file_name.as_deref(), Some("rec (2)"));
+    // 번호 이름이 이미 `.part`로 쓰이면 그것도 피한다
+    std::fs::write(part_path(&d.join("rec (2).mp4")), b"x").unwrap();
+    assert_eq!(
+        q(&live, PlaybackKind::Live).free_file_name.as_deref(),
+        Some("rec (3)")
+    );
 }

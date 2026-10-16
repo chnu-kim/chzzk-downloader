@@ -82,4 +82,15 @@ describe("토큰 원문은 저장되지 않는다", () => {
     expect(dumps[dumps.length - 1]).toContain(await sha(rec.bundle.accessToken));
     expect(dumps[dumps.length - 1]).toContain(await sha(rec.bundle.refreshToken));
   });
+
+  it("초대 토큰 원문은 어느 표에도 없고 해시는 있다(구현 중 변경 105)", async () => {
+    const stub = freshStub();
+    await stub.allow(A1, "", A1, T0, ADMINS);
+    const r = await stub.createInvite(A1, "관리자", ADMINS, T0 + 1);
+    if (!r.ok) throw new Error(r.code);
+    const d = await dump(stub);
+    expect(d).not.toContain(r.token);
+    expect(d).not.toContain(r.token.slice(4));
+    expect(d).toContain(await sha(r.token));
+  });
 });

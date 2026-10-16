@@ -37,6 +37,8 @@ enum Pl {
         tail: &'static str,
     },
     Status(u16),
+    /// 빈 창을 아주 늦게(30초) 답한다(읽는 도중 멈춤이 먹는지 본다)
+    Hang,
 }
 
 /// `live-detail` 응답.
@@ -48,6 +50,8 @@ enum Detail {
     Status(u16),
     /// 영상 화질이 하나도 없다(오디오 트랙뿐)
     AudioOnly,
+    /// `Open(1)`과 같은 본문을 이만큼 늦게 답한다(조회하는 도중 멈춤이 먹는지 본다)
+    Slow(Duration),
 }
 
 struct Stream {
@@ -56,6 +60,37 @@ struct Stream {
     details: Arc<AtomicUsize>,
     /// `Opts::via_proxy`일 때 미디어 요청이 지나는 단절 프록시
     proxy: Option<GateProxy>,
+}
+
+/// 방송 중 `live-detail` 본문(방송 번호만 바꾼다).
+fn open_body(base: &str, id: u64) -> Vec<u8> {
+    let b = rewrite_hosts(&fixture("testdata/live/live_detail.json"), base);
+    String::from_utf8(b)
+        .unwrap()
+        .replace(FIXTURE_LIVE_ID, &format!("\"liveId\": {id}"))
+        .into_bytes()
+}
+
+/// `n`이 `at` 이상이 되면 `stop`을 취소한다(요청이 서버에 닿았다는 뜻: wiremock은 도착할 때 센다).
+fn stop_when(n: Arc<AtomicUsize>, at: usize, stop: CancellationToken) {
+    tokio::spawn(async move {
+        while n.load(Ordering::SeqCst) < at {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        stop.cancel();
+    });
+}
+
+/// 멈춤이 3초 안에 먹어야 한다.
+async fn record_bounded(
+    s: &Stream,
+    out: &Path,
+    stop: CancellationToken,
+) -> Result<DownloadOutcome, Error> {
+    match tokio::time::timeout(Duration::from_secs(3), record(s, out, Some(stop))).await {
+        Ok(r) => r,
+        Err(_) => panic!("멈춤이 먹지 않았다"),
+    }
 }
 
 fn init_bytes() -> Vec<u8> {
@@ -159,12 +194,11 @@ impl Stream {
                         v["content"]["livePlaybackJson"] = serde_json::Value::String(j.to_string());
                         serde_json::to_vec(&v).unwrap()
                     }
-                    Detail::Open(id) => {
-                        let b = rewrite_hosts(&fixture("testdata/live/live_detail.json"), &u);
-                        String::from_utf8(b)
-                            .unwrap()
-                            .replace(FIXTURE_LIVE_ID, &format!("\"liveId\": {id}"))
-                            .into_bytes()
+                    Detail::Open(id) => open_body(&u, id),
+                    Detail::Slow(delay) => {
+                        return ResponseTemplate::new(200)
+                            .set_body_raw(open_body(&u, 1), "application/json")
+                            .set_delay(delay);
                     }
                     Detail::Closed => fixture("testdata/live/live_detail_closed.json"),
                 };
@@ -199,6 +233,13 @@ impl Stream {
                 };
                 match pl(n) {
                     Pl::Status(s) => close(ResponseTemplate::new(s)),
+                    Pl::Hang => close(
+                        ResponseTemplate::new(200)
+                            .set_body_string(
+                                "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-MAP:URI=\"init.mp4?t=1\"\n",
+                            )
+                            .set_delay(Duration::from_secs(30)),
+                    ),
                     Pl::Window {
                         first,
                         len,
@@ -303,6 +344,7 @@ fn request(out: &Path, stop: Option<CancellationToken>) -> DownloadRequest {
         on_existing: DuplicatePolicy::Overwrite,
         concurrency: NonZeroU8::new(2).unwrap(),
         live_stop: stop,
+        recording_id: None,
     }
 }
 
@@ -1525,4 +1567,200 @@ async fn live_without_video_tracks_has_no_qualities() {
         })
         .await;
     assert!(matches!(r, Err(Error::NoQualities)), "{r:?}");
+}
+
+/// 세그먼트 403 뒤 재조회를 기다리는 동안 멈춤이 오면 받은 만큼 마무리한다(core.md 61 F1).
+#[tokio::test]
+async fn stop_during_refresh_after_segment_403_finalizes() {
+    let s = Stream::start_with(
+        Opts {
+            expire_seg: Some(3),
+            ..Opts::default()
+        },
+        |n| window(n as u64, 3, false),
+        |n| {
+            if n == 0 {
+                Detail::Open(1)
+            } else {
+                Detail::Slow(Duration::from_secs(30))
+            }
+        },
+    )
+    .await;
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_path(&dir);
+    let stop = CancellationToken::new();
+    stop_when(s.details.clone(), 2, stop.clone());
+    let r = record_bounded(&s, &out, stop).await.unwrap();
+    assert!(matches!(r, DownloadOutcome::Completed { .. }), "{r:?}");
+    assert_eq!(recorded_msns(&out), vec![0, 1, 2]);
+    no_part(&out);
+}
+
+/// 받은 조각이 없을 때 재조회 중 멈춤이 오면 `NothingRecorded`다.
+#[tokio::test]
+async fn stop_during_refresh_before_any_segment_records_nothing() {
+    let s = Stream::start_with(
+        Opts {
+            expire_seg: Some(0),
+            ..Opts::default()
+        },
+        |n| window(n as u64, 3, false),
+        |n| {
+            if n == 0 {
+                Detail::Open(1)
+            } else {
+                Detail::Slow(Duration::from_secs(30))
+            }
+        },
+    )
+    .await;
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_path(&dir);
+    let stop = CancellationToken::new();
+    stop_when(s.details.clone(), 2, stop.clone());
+    let r = record_bounded(&s, &out, stop).await;
+    assert!(matches!(r, Err(Error::NothingRecorded)), "{r:?}");
+    no_part(&out);
+}
+
+/// 다음 playlist를 읽는 동안 멈춤이 오면 받은 만큼 마무리한다.
+#[tokio::test]
+async fn stop_while_reading_next_playlist_finalizes() {
+    let s = Stream::start(
+        |n| {
+            if n < 2 {
+                window(n as u64, 3, false)
+            } else {
+                Pl::Hang
+            }
+        },
+        |_| Detail::Open(1),
+    )
+    .await;
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_path(&dir);
+    let stop = CancellationToken::new();
+    stop_when(s.polls.clone(), 3, stop.clone());
+    let r = record_bounded(&s, &out, stop).await.unwrap();
+    assert!(matches!(r, DownloadOutcome::Completed { .. }), "{r:?}");
+    assert_eq!(recorded_msns(&out), vec![0, 1, 2, 3]);
+    no_part(&out);
+}
+
+/// 받은 조각이 없을 때 playlist를 읽는 동안 멈춤이 오면 `NothingRecorded`다.
+#[tokio::test]
+async fn stop_while_reading_playlist_before_any_segment_records_nothing() {
+    let s = Stream::start(
+        |n| {
+            if n == 0 {
+                window(0, 0, false)
+            } else {
+                Pl::Hang
+            }
+        },
+        |_| Detail::Open(1),
+    )
+    .await;
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_path(&dir);
+    let stop = CancellationToken::new();
+    stop_when(s.polls.clone(), 2, stop.clone());
+    let r = record_bounded(&s, &out, stop).await;
+    assert!(matches!(r, Err(Error::NothingRecorded)), "{r:?}");
+    no_part(&out);
+}
+
+/// 첫 조회를 기다리는 동안에도 멈춤이 먹는다.
+#[tokio::test]
+async fn stop_during_first_resolve_records_nothing() {
+    let s = Stream::start(
+        |n| window(n as u64, 3, false),
+        |_| Detail::Slow(Duration::from_secs(30)),
+    )
+    .await;
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_path(&dir);
+    let stop = CancellationToken::new();
+    stop_when(s.details.clone(), 1, stop.clone());
+    let r = record_bounded(&s, &out, stop).await;
+    assert!(matches!(r, Err(Error::NothingRecorded)), "{r:?}");
+    no_part(&out);
+    assert_eq!(s.polls.load(Ordering::SeqCst), 0);
+}
+
+/// 이전 녹화가 남긴 `.part`(init + 영상 조각 하나)를 `recording_id`와 함께 만든다.
+async fn leave_recording(out: &Path, id: &str) -> (Vec<u8>, Vec<u8>) {
+    use chzzk_core::download::part::{HlsState, PartFile, Sidecar};
+    let init = init_bytes();
+    let mut sc = Sidecar::new(
+        ContentRef::Live {
+            channel_id: CHANNEL.into(),
+        },
+        "144p",
+        PlaybackKind::Live,
+    );
+    sc.recording_id = Some(id.to_owned());
+    sc.hls = Some(HlsState {
+        init_len: init.len() as u32,
+        ..HlsState::default()
+    });
+    let mut p = PartFile::create(out, sc).unwrap();
+    p.write(&init).unwrap();
+    p.write(&seg_bytes(0)).unwrap();
+    p.checkpoint(|_| {}).await.unwrap();
+    drop(p);
+    let (part, sidecar) = part_files(out);
+    (
+        std::fs::read(part).unwrap(),
+        std::fs::read(sidecar).unwrap(),
+    )
+}
+
+/// 7-b: 같은 방송을 다시 붙여넣어도(새 작업 = 새 `recording_id`) 옛 녹화를 마무리하지 않고 건드리지도 않는다.
+#[tokio::test]
+async fn repaste_same_broadcast_does_not_finalize_old_part() {
+    let s = Stream::start(|n| window(n as u64, 3, n >= 2), |_| Detail::Open(1)).await;
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_path(&dir);
+    let (part_before, sc_before) = leave_recording(&out, &"a".repeat(32)).await;
+
+    let events = Events::default();
+    let cb = events.callback();
+    let mut req = request(&out, None);
+    req.recording_id = Some("b".repeat(32));
+    let r = s
+        .client()
+        .download(req, CancellationToken::new(), &cb)
+        .await;
+    assert!(matches!(r, Err(Error::PartialRecording { .. })), "{r:?}");
+    assert_eq!(s.polls.load(Ordering::SeqCst), 0);
+    assert_eq!(s.details.load(Ordering::SeqCst), 0);
+    assert!(!out.exists(), "최종 파일이 생기면 안 된다");
+    let (part, sidecar) = part_files(&out);
+    assert_eq!(std::fs::read(part).unwrap(), part_before);
+    assert_eq!(std::fs::read(sidecar).unwrap(), sc_before);
+}
+
+/// 대조: 같은 `recording_id`의 요청(= 저장)은 받은 만큼 마무리한다.
+#[tokio::test]
+async fn own_recording_part_is_finalized_by_same_id() {
+    let s = Stream::start(|n| window(n as u64, 3, n >= 2), |_| Detail::Open(1)).await;
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_path(&dir);
+    leave_recording(&out, &"a".repeat(32)).await;
+
+    let events = Events::default();
+    let cb = events.callback();
+    let mut req = request(&out, None);
+    req.recording_id = Some("a".repeat(32));
+    let r = s
+        .client()
+        .download(req, CancellationToken::new(), &cb)
+        .await
+        .unwrap();
+    assert!(matches!(r, DownloadOutcome::Completed { .. }), "{r:?}");
+    assert_eq!(s.polls.load(Ordering::SeqCst), 0);
+    assert_eq!(recorded_msns(&out), vec![0]);
+    no_part(&out);
 }

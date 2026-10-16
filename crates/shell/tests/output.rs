@@ -356,12 +356,26 @@ fn range_name_round_trips_through_output_path_on_three_platforms() {
                 "{p:?} {}",
                 c.file_name
             );
-            assert_eq!(
-                output_path(dir.path(), &c.file_name, p),
-                Path::new(&c.path),
-                "{p:?} {title:?}"
-            );
-            let name = Path::new(&c.path).file_name().unwrap().to_str().unwrap();
+            // 호스트와 다른 OS의 이름(예: `a:b`)은 호스트 경로로 해석하면 의미가 달라진다(Windows의 드라이브 접두사).
+            // 실제 경로 비교는 호스트와 같은 Platform에서만 하고, 나머지는 파일 이름 문자열로만 비교한다.
+            let again = output_path(dir.path(), &c.file_name, p);
+            let name = if p == Platform::current() {
+                assert_eq!(again, Path::new(&c.path), "{p:?} {title:?}");
+                Path::new(&c.path)
+                    .file_name()
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+                    .to_string()
+            } else {
+                let last = |s: &str| s.rsplit(['/', '\\']).next().unwrap().to_string();
+                assert_eq!(
+                    last(&again.to_string_lossy()),
+                    last(&c.path),
+                    "{p:?} {title:?}"
+                );
+                last(&c.path)
+            };
             assert!(name.len() <= MAX_FILENAME_BYTES, "{p:?} {}", name.len());
             assert!(name.ends_with(" (1.02.03~2.00.00).mp4"), "{p:?} {name}");
             assert_eq!(name.matches("(1.02.03").count(), 1);

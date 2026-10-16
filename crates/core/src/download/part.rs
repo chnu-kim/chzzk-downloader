@@ -188,10 +188,16 @@ fn open_locked(part: &Path, create: bool) -> Result<File, Error> {
     }
 }
 
-/// sidecar를 읽는다. 없거나 깨졌으면 `None`.
-fn read_sidecar(path: &Path) -> Option<Sidecar> {
-    let bytes = std::fs::read(path).ok()?;
-    serde_json::from_slice(&bytes).ok()
+/// sidecar를 읽는다. 없거나 깨졌으면 `Ok(None)`(주인 없는 파일).
+///
+/// 그 밖의 읽기 실패(권한·Windows 공유 위반 등)는 주인을 모르는 것이 아니라 확인하지 못한 것이라 오류다.
+/// 부르는 쪽은 아무것도 지우지 않고 알린다(남의 녹화일 수 있다, core.md 61 D4).
+fn read_sidecar(path: &Path) -> Result<Option<Sidecar>, Error> {
+    match std::fs::read(path) {
+        Ok(bytes) => Ok(serde_json::from_slice(&bytes).ok()),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(map_io_error("read", path, e)),
+    }
 }
 
 /// 파일을 지운다. 없으면 성공으로 본다.
@@ -227,7 +233,7 @@ impl PartFile {
             .metadata()
             .map_err(|e| map_io_error("stat", &part, e))?
             .len();
-        let sidecar = read_sidecar(&sc_path);
+        let sidecar = read_sidecar(&sc_path)?;
         if let Some(s) = &sidecar
             && s.is_other_recording(owner)
         {
@@ -538,7 +544,14 @@ pub fn discard_partial(final_path: &Path, owner: &PartOwner<'_>) -> Result<Disca
     match open_locked(&part, false) {
         Ok(f) => {
             remove_stale_temps(&sc);
-            if read_sidecar(&sc).is_some_and(|s| !s.owned_by(owner)) {
+            let sidecar = match read_sidecar(&sc) {
+                Ok(s) => s,
+                Err(e) => {
+                    drop(f);
+                    return Err(e);
+                }
+            };
+            if sidecar.is_some_and(|s| !s.owned_by(owner)) {
                 tracing::info!(part = %part.display(), "다른 작업의 .part라 지우지 않는다");
                 drop(f);
                 return Ok(Discarded::NotOwned);
@@ -670,7 +683,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let out = dir.path().join("a.mp4");
         let p = PartFile::create(&out, sidecar()).unwrap();
-        let sc = read_sidecar(&sidecar_path(&out)).unwrap();
+        let sc = read_sidecar(&sidecar_path(&out)).unwrap().unwrap();
         assert_eq!(sc.committed_len, 0);
         assert_eq!(sc.hls.unwrap().segment_count, 10);
         drop(p);
@@ -714,7 +727,7 @@ mod tests {
         p.checkpoint(|_| {}).await.unwrap();
         assert_eq!(p.sidecar().hls.unwrap().next_index, 1);
         assert_eq!(p.sidecar().committed_len, 3);
-        let on_disk = read_sidecar(&sidecar_path(&out)).unwrap();
+        let on_disk = read_sidecar(&sidecar_path(&out)).unwrap().unwrap();
         assert_eq!(on_disk, *p.sidecar());
     }
 
@@ -1038,6 +1051,33 @@ mod tests {
         std::fs::write(sidecar_path(&out), b"{}").unwrap();
         assert_eq!(discard(&out).unwrap(), Discarded::Removed);
         assert!(!sidecar_path(&out).exists());
+    }
+
+    /// sidecar를 읽지 못하면(권한·공유 위반 등) 주인을 모르는 것이 아니다: 지우지 않고 오류다(D4).
+    /// "없거나 깨졌을 때"만 주인 없는 파일로 본다.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn unreadable_sidecar_is_error_not_orphan() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("a.mp4");
+        write_recording(&out, Some("a")).await;
+        let sc = sidecar_path(&out);
+        std::fs::set_permissions(&sc, std::fs::Permissions::from_mode(0o000)).unwrap();
+        if std::fs::read(&sc).is_ok() {
+            // root로 돌면 권한을 무시한다. 이 검사는 의미가 없다
+            return;
+        }
+        let c = live_content();
+        assert!(discard_partial(&out, &live_owner(&c, Some("b"))).is_err());
+        assert!(part_path(&out).exists() && sc.exists());
+        assert!(PartFile::resume(&out, &live_owner(&c, Some("b"))).is_err());
+        assert!(part_path(&out).exists() && sc.exists());
+        // VOD 작업이 같은 경로를 처음부터 받으려 해도 지우지 않는다
+        assert!(discard(&out).is_err());
+        assert!(resume(&out, "720p").is_err());
+        assert!(part_path(&out).exists() && sc.exists());
+        std::fs::set_permissions(&sc, std::fs::Permissions::from_mode(0o600)).unwrap();
     }
 
     /// 같은 출력으로 두 작업: 두 번째는 `FileLocked`이고 첫 작업의 파일을 건드리지 않는다.

@@ -199,7 +199,7 @@ impl Chzzk {
     }
 
     /// API·MPD GET. 401/403은 `AuthRequired`, 그 밖의 2xx 아닌 응답은 `HttpStatus`.
-    async fn fetch(&self, url: Url, kind: RequestKind) -> Result<Bytes, Error> {
+    pub(crate) async fn fetch(&self, url: Url, kind: RequestKind) -> Result<Bytes, Error> {
         tracing::debug!(url = %http::redact_url(&url), ?kind, "GET");
         let resp = self
             .http
@@ -258,7 +258,7 @@ pub(crate) async fn read_capped(mut resp: reqwest::Response, max: usize) -> Resu
 }
 
 /// 기본 주소 뒤에 path 세그먼트를 붙인다. 세그먼트는 인코딩되므로 `/`·`?`가 섞여도 경로가 바뀌지 않는다.
-fn api_url(base: &Url, segs: &[&str]) -> Url {
+pub(crate) fn api_url(base: &Url, segs: &[&str]) -> Url {
     let mut u = base.clone();
     u.set_query(None);
     u.set_fragment(None);

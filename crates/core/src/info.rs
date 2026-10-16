@@ -122,7 +122,7 @@ struct Envelope {
 }
 
 /// 봉투를 읽고 `code == 200`이면 `content`를 돌려준다.
-fn open_envelope(body: &[u8], what: &'static str) -> Result<Value, Error> {
+pub(crate) fn open_envelope(body: &[u8], what: &'static str) -> Result<Value, Error> {
     let env: Envelope = serde_json::from_slice(body).map_err(|e| Error::Parse {
         what,
         detail: e.to_string(),

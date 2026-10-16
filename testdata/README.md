@@ -18,5 +18,6 @@
 | `vod/` | 일반 VOD(`inKey` 있음) info와 MPD | `video/mp4` PD 2개 + `video/mp2t` UUID 2개(mimeType 상속, PD와 같은 라벨·서명 BaseURL·SegmentTemplate을 가진 미끼) + `audio/mp4` 1개(라벨·SegmentList), `ContentProtection` 없음 |
 | `clip/` | 클립 play-info 2개와 MPD(세로 영상, PD 2개) | `%xx` 인코딩 서명 쿼리 보존, resolution 라벨 기준 선택 |
 | `synthetic/` | `vod_info_aes.json`(`encryptionType: "AES"`), `media_*.m3u8`(태그 하나씩 넣거나 뺀 변형) | 미지원 태그·암호화 거부와 허용 규칙 |
+| `chat/` | 다시보기 채팅 페이지 응답 아홉(첫 페이지·경계 되풀이·경계 쌍둥이·끝 셋·종류·이스케이프·형식 오류)과 자막 골든 `expected/` | 앞쪽 묶음은 버리고 뒤쪽 묶음만 쓴다, profile·extras는 JSON이 든 **문자열**, 닉네임·본문·작성자 해시는 가짜(가상시청자N, user-hash-NN) |
 
 fixture를 바꾸면 생성기를 고치고 다시 만든다. 새 값도 가짜여야 하며 `node scripts/ci/public-scan.mjs`를 통과해야 한다.

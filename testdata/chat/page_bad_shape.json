@@ -1,0 +1,21 @@
+{
+  "code": 200,
+  "message": null,
+  "content": {
+    "nextPlayerMessageTime": null,
+    "previousVideoChats": [],
+    "videoChats": [
+      {
+        "chatChannelId": "N1fakeChat",
+        "messageTime": 1767322801000,
+        "userIdHash": "user-hash-01",
+        "content": "형식 오류 본문",
+        "extras": "{}",
+        "messageTypeCode": 1,
+        "messageStatusType": "NORMAL",
+        "profile": "{\"nickname\":\"가상시청자1\"}",
+        "playerMessageTime": "1000"
+      }
+    ]
+  }
+}

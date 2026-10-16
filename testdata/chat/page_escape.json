@@ -1,0 +1,87 @@
+{
+  "code": 200,
+  "message": null,
+  "content": {
+    "nextPlayerMessageTime": null,
+    "previousVideoChats": [],
+    "videoChats": [
+      {
+        "chatChannelId": "N1fakeChat",
+        "messageTime": 1767322861234,
+        "userIdHash": "user-hash-01",
+        "content": "{중괄호} 와 \\역슬래시",
+        "extras": "{}",
+        "messageTypeCode": 1,
+        "messageStatusType": "NORMAL",
+        "profile": "{\"nickname\":\"가상시청자1\"}",
+        "playerMessageTime": 61234
+      },
+      {
+        "chatChannelId": "N1fakeChat",
+        "messageTime": 1767326400010,
+        "userIdHash": "user-hash-02",
+        "content": "첫 줄\n둘째 줄",
+        "extras": "{}",
+        "messageTypeCode": 1,
+        "messageStatusType": "NORMAL",
+        "profile": "{\"nickname\":\"가상시청자2\"}",
+        "playerMessageTime": 3600010
+      },
+      {
+        "chatChannelId": "N1fakeChat",
+        "messageTime": 1767326400020,
+        "userIdHash": "user-hash-03",
+        "content": "제어\u0007문자\t탭",
+        "extras": "{}",
+        "messageTypeCode": 1,
+        "messageStatusType": "NORMAL",
+        "profile": "{\"nickname\":\"가상시청자3\"}",
+        "playerMessageTime": 3600020
+      },
+      {
+        "chatChannelId": "N1fakeChat",
+        "messageTime": 1767326400030,
+        "userIdHash": "user-hash-04",
+        "content": "12345",
+        "extras": "{}",
+        "messageTypeCode": 1,
+        "messageStatusType": "NORMAL",
+        "profile": null,
+        "playerMessageTime": 3600030
+      },
+      {
+        "chatChannelId": "N1fakeChat",
+        "messageTime": 1767326400040,
+        "userIdHash": "user-hash-05",
+        "content": "이모티콘 {:smile:} 끝",
+        "extras": "{}",
+        "messageTypeCode": 1,
+        "messageStatusType": "NORMAL",
+        "profile": "{\"nickname\":\"가상시청자5\"}",
+        "playerMessageTime": 3600040
+      },
+      {
+        "chatChannelId": "N1fakeChat",
+        "messageTime": 1767326400050,
+        "userIdHash": "user-hash-06",
+        "content": "빈 줄\r\n\r\n뒤",
+        "extras": "{}",
+        "messageTypeCode": 1,
+        "messageStatusType": "NORMAL",
+        "profile": "{\"nickname\":\"가상시청자6\"}",
+        "playerMessageTime": 3600050
+      },
+      {
+        "chatChannelId": "N1fakeChat",
+        "messageTime": 1767326400060,
+        "userIdHash": "user-hash-07",
+        "content": "   ",
+        "extras": "{}",
+        "messageTypeCode": 1,
+        "messageStatusType": "NORMAL",
+        "profile": "{\"nickname\":\"가상시청자7\"}",
+        "playerMessageTime": 3600060
+      }
+    ]
+  }
+}

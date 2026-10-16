@@ -5,7 +5,7 @@
 //   node scripts/fixtures/gen-fixtures.mjs --check   # 저장소의 파일과 바이트가 같은지만 본다(다르면 1)
 //
 // 값은 모두 가짜다: 채널 ID는 0으로 채운 32자리 hex, 호스트는 *.example.invalid,
-// 서명 토큰은 exp=0·hmac=0000 같은 자리표시자다. 시각·길이·비트레이트도 둥근 가짜 값이다. 테스트가 기대는 구조(필드 이름, inKey 분기,
+// 서명 토큰은 exp=0·hmac=0000 같은 자리표시자다. 채팅 닉네임·본문·작성자 해시도 가짜다(가상시청자N, user-hash-NN). 시각·길이·비트레이트도 둥근 가짜 값이다. 테스트가 기대는 구조(필드 이름, inKey 분기,
 // 이중 인코딩 JSON, variant 5개, 세그먼트 30개, MPD의 PD/UUID/audio 구성, fMP4 상자 순서)는 그대로 둔다.
 
 import { createHash } from 'node:crypto';
@@ -628,6 +628,166 @@ function segment(msn) {
   return cat(...parts);
 }
 
+// ---- 채팅(기능 ④) ----
+// 닉네임·본문·작성자 해시는 모두 가짜다(가상시청자N, user-hash-NN). profile·extras는 JSON이 든 **문자열**이다.
+
+const CHAT_EPOCH = 1767322800000; // 2026-01-02 12:00:00 KST(가짜 작성 시각 기준)
+
+function chatMsg({ at, user, text = '테스트 메시지', type = 1, status = 'NORMAL', profile, extras = '{}' }) {
+  return {
+    chatChannelId: 'N1fakeChat',
+    messageTime: CHAT_EPOCH + at,
+    userIdHash: `user-hash-${String(user).padStart(2, '0')}`,
+    content: text,
+    extras,
+    messageTypeCode: type,
+    messageStatusType: status,
+    profile: profile === undefined ? JSON.stringify({ nickname: `가상시청자${user}` }) : profile,
+    playerMessageTime: at,
+  };
+}
+
+const chatPage = (next, chats, previous = []) => ({
+  code: 200,
+  message: null,
+  content: { nextPlayerMessageTime: next, previousVideoChats: previous, videoChats: chats },
+});
+
+function chatFixtures() {
+  const first = [
+    chatMsg({ at: 10000, user: 1 }),
+    chatMsg({ at: 11000, user: 2 }),
+    chatMsg({ at: 12000, user: 3 }),
+    chatMsg({ at: 13000, user: 4 }),
+    chatMsg({ at: 15000, user: 5 }),
+  ];
+  const previous = [chatMsg({ at: 1000, user: 7 }), chatMsg({ at: 2000, user: 8 }), chatMsg({ at: 3000, user: 9 })];
+  return {
+    'page_first.json': json(chatPage(15000, first, previous)),
+    'page_boundary.json': json(
+      chatPage(17000, [chatMsg({ at: 15000, user: 5 }), chatMsg({ at: 15000, user: 6, text: '다른 메시지' }), chatMsg({ at: 17000, user: 1 })]),
+    ),
+    'page_boundary_twins.json': json(
+      chatPage(18000, [chatMsg({ at: 15000, user: 5 }), chatMsg({ at: 15000, user: 5 }), chatMsg({ at: 18000, user: 2 })]),
+    ),
+    'page_last_null.json': json(chatPage(null, [chatMsg({ at: 20000, user: 3 })])),
+    'page_not_advancing.json': json(chatPage(20000, [chatMsg({ at: 20000, user: 4 })])),
+    'page_empty.json': json(chatPage(30000, [])),
+    'page_kinds.json': json(
+      chatPage(null, [
+        chatMsg({ at: 1000, user: 1, text: '일반 메시지' }),
+        chatMsg({ at: 2000, user: 2, text: '후원 메시지', type: 10, extras: '{"payAmount":1000}' }),
+        chatMsg({ at: 3000, user: 3, text: '구독 메시지', type: 11 }),
+        chatMsg({ at: 4000, user: 4, text: '시스템 메시지', type: 30, profile: 'null' }),
+        chatMsg({ at: 5000, user: 5, text: '모르는 종류', type: 99 }),
+        chatMsg({ at: 6000, user: 6, text: '가려진 메시지', status: 'HIDDEN' }),
+        chatMsg({ at: 7000, user: 7, text: '프로필 없음', profile: null }),
+        chatMsg({ at: 8000, user: 8, text: '프로필 깨짐', profile: '{"nickname":' }),
+      ]),
+    ),
+    'page_escape.json': json(
+      chatPage(null, [
+        chatMsg({ at: 61234, user: 1, text: '{중괄호} 와 \\역슬래시' }),
+        chatMsg({ at: 3600010, user: 2, text: '첫 줄\n둘째 줄' }),
+        chatMsg({ at: 3600020, user: 3, text: '제어\u0007문자\t탭' }),
+        chatMsg({ at: 3600030, user: 4, text: '12345', profile: null }),
+        chatMsg({ at: 3600040, user: 5, text: '이모티콘 {:smile:} 끝' }),
+        chatMsg({ at: 3600050, user: 6, text: '빈 줄\r\n\r\n뒤' }),
+        chatMsg({ at: 3600060, user: 7, text: '   ' }),
+      ]),
+    ),
+    'page_bad_shape.json': json(
+      chatPage(null, [{ ...chatMsg({ at: 1000, user: 1, text: '형식 오류 본문' }), playerMessageTime: '1000' }]),
+    ),
+  };
+}
+
+// 자막 골든. 생성기가 기대값의 원천이고 Rust 골든 테스트(chat/subtitle.rs)가 바이트로 비교한다.
+const ASS_HEADER = `[Script Info]
+ScriptType: v4.00+
+PlayResX: 1920
+PlayResY: 1080
+WrapStyle: 0
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Chat,sans-serif,40,&H00FFFFFF,&H00FFFFFF,&H00000000,&H64000000,0,0,0,0,100,100,0,0,1,2,0,1,40,40,40,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+`;
+
+const CHAT_KINDS_ASS = `${ASS_HEADER}Dialogue: 0,0:00:01.00,0:00:06.00,Chat,,0,0,0,,가상시청자1: 일반 메시지
+Dialogue: 0,0:00:02.00,0:00:07.00,Chat,,0,0,0,,가상시청자2 [후원]: 후원 메시지
+Dialogue: 0,0:00:03.00,0:00:08.00,Chat,,0,0,0,,가상시청자3: 구독 메시지
+Dialogue: 0,0:00:05.00,0:00:10.00,Chat,,0,0,0,,가상시청자5: 모르는 종류
+Dialogue: 0,0:00:07.00,0:00:12.00,Chat,,0,0,0,,프로필 없음
+Dialogue: 0,0:00:08.00,0:00:13.00,Chat,,0,0,0,,프로필 깨짐
+`;
+
+const CHAT_KINDS_SRT = `1
+00:00:01,000 --> 00:00:06,000
+가상시청자1: 일반 메시지
+
+2
+00:00:02,000 --> 00:00:07,000
+가상시청자2 [후원]: 후원 메시지
+
+3
+00:00:03,000 --> 00:00:08,000
+가상시청자3: 구독 메시지
+
+4
+00:00:05,000 --> 00:00:10,000
+가상시청자5: 모르는 종류
+
+5
+00:00:07,000 --> 00:00:12,000
+프로필 없음
+
+6
+00:00:08,000 --> 00:00:13,000
+프로필 깨짐
+
+`;
+
+const CHAT_ESCAPE_ASS = `${ASS_HEADER}Dialogue: 0,0:01:01.23,0:01:06.23,Chat,,0,0,0,,가상시청자1: ｛중괄호｝ 와 ＼역슬래시
+Dialogue: 0,1:00:00.01,1:00:05.01,Chat,,0,0,0,,가상시청자2: 첫 줄\\N둘째 줄
+Dialogue: 0,1:00:00.02,1:00:05.02,Chat,,0,0,0,,가상시청자3: 제어문자 탭
+Dialogue: 0,1:00:00.03,1:00:05.03,Chat,,0,0,0,,12345
+Dialogue: 0,1:00:00.04,1:00:05.04,Chat,,0,0,0,,가상시청자5: 이모티콘 :smile: 끝
+Dialogue: 0,1:00:00.05,1:00:05.05,Chat,,0,0,0,,가상시청자6: 빈 줄\\N뒤
+`;
+
+const CHAT_ESCAPE_SRT = `1
+00:01:01,234 --> 00:01:06,234
+가상시청자1: ｛중괄호｝ 와 ＼역슬래시
+
+2
+01:00:00,010 --> 01:00:05,010
+가상시청자2: 첫 줄
+둘째 줄
+
+3
+01:00:00,020 --> 01:00:05,020
+가상시청자3: 제어문자 탭
+
+4
+01:00:00,030 --> 01:00:05,030
+ 12345
+
+5
+01:00:00,040 --> 01:00:05,040
+가상시청자5: 이모티콘 :smile: 끝
+
+6
+01:00:00,050 --> 01:00:05,050
+가상시청자6: 빈 줄
+뒤
+
+`;
+
 // ---- 출력 ----
 
 export function outputs() {
@@ -652,6 +812,13 @@ export function outputs() {
   for (const [name, body] of Object.entries(SYNTHETIC_MEDIA)) {
     files[`testdata/synthetic/${name}`] = body;
   }
+  for (const [name, body] of Object.entries(chatFixtures())) {
+    files[`testdata/chat/${name}`] = body;
+  }
+  files['testdata/chat/expected/kinds.ass'] = CHAT_KINDS_ASS;
+  files['testdata/chat/expected/kinds.srt'] = CHAT_KINDS_SRT;
+  files['testdata/chat/expected/escape.ass'] = CHAT_ESCAPE_ASS;
+  files['testdata/chat/expected/escape.srt'] = CHAT_ESCAPE_SRT;
   return files;
 }
 

@@ -1,0 +1,99 @@
+{
+  "code": 200,
+  "message": null,
+  "content": {
+    "nextPlayerMessageTime": 15000,
+    "previousVideoChats": [
+      {
+        "chatChannelId": "N1fakeChat",
+        "messageTime": 1767322801000,
+        "userIdHash": "user-hash-07",
+        "content": "테스트 메시지",
+        "extras": "{}",
+        "messageTypeCode": 1,
+        "messageStatusType": "NORMAL",
+        "profile": "{\"nickname\":\"가상시청자7\"}",
+        "playerMessageTime": 1000
+      },
+      {
+        "chatChannelId": "N1fakeChat",
+        "messageTime": 1767322802000,
+        "userIdHash": "user-hash-08",
+        "content": "테스트 메시지",
+        "extras": "{}",
+        "messageTypeCode": 1,
+        "messageStatusType": "NORMAL",
+        "profile": "{\"nickname\":\"가상시청자8\"}",
+        "playerMessageTime": 2000
+      },
+      {
+        "chatChannelId": "N1fakeChat",
+        "messageTime": 1767322803000,
+        "userIdHash": "user-hash-09",
+        "content": "테스트 메시지",
+        "extras": "{}",
+        "messageTypeCode": 1,
+        "messageStatusType": "NORMAL",
+        "profile": "{\"nickname\":\"가상시청자9\"}",
+        "playerMessageTime": 3000
+      }
+    ],
+    "videoChats": [
+      {
+        "chatChannelId": "N1fakeChat",
+        "messageTime": 1767322810000,
+        "userIdHash": "user-hash-01",
+        "content": "테스트 메시지",
+        "extras": "{}",
+        "messageTypeCode": 1,
+        "messageStatusType": "NORMAL",
+        "profile": "{\"nickname\":\"가상시청자1\"}",
+        "playerMessageTime": 10000
+      },
+      {
+        "chatChannelId": "N1fakeChat",
+        "messageTime": 1767322811000,
+        "userIdHash": "user-hash-02",
+        "content": "테스트 메시지",
+        "extras": "{}",
+        "messageTypeCode": 1,
+        "messageStatusType": "NORMAL",
+        "profile": "{\"nickname\":\"가상시청자2\"}",
+        "playerMessageTime": 11000
+      },
+      {
+        "chatChannelId": "N1fakeChat",
+        "messageTime": 1767322812000,
+        "userIdHash": "user-hash-03",
+        "content": "테스트 메시지",
+        "extras": "{}",
+        "messageTypeCode": 1,
+        "messageStatusType": "NORMAL",
+        "profile": "{\"nickname\":\"가상시청자3\"}",
+        "playerMessageTime": 12000
+      },
+      {
+        "chatChannelId": "N1fakeChat",
+        "messageTime": 1767322813000,
+        "userIdHash": "user-hash-04",
+        "content": "테스트 메시지",
+        "extras": "{}",
+        "messageTypeCode": 1,
+        "messageStatusType": "NORMAL",
+        "profile": "{\"nickname\":\"가상시청자4\"}",
+        "playerMessageTime": 13000
+      },
+      {
+        "chatChannelId": "N1fakeChat",
+        "messageTime": 1767322815000,
+        "userIdHash": "user-hash-05",
+        "content": "테스트 메시지",
+        "extras": "{}",
+        "messageTypeCode": 1,
+        "messageStatusType": "NORMAL",
+        "profile": "{\"nickname\":\"가상시청자5\"}",
+        "playerMessageTime": 15000
+      }
+    ]
+  }
+}

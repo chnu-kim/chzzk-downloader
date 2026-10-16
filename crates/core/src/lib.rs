@@ -6,6 +6,7 @@
 /// 코어 crate 버전(앱 정보 화면에 "코어 {버전}"으로 보인다).
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+pub mod chat;
 pub mod client;
 pub mod credentials;
 pub mod download;

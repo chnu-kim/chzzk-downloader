@@ -371,6 +371,32 @@ async fn v070_two_failed_records_do_not_block_each_other() {
     }
 }
 
+/// 한 옛 기록이 그 녹화를 저장하면(`.part`가 없어진다) 다른 옛 기록은 받은 부분이 없어진 것으로 바로 바뀐다. 남아 있으면
+/// 화면이 [이어받기]를 앞세우고, 누르면 지금 방송을 옛 이름으로 새로 녹화해 방금 저장한 파일을 덮어쓴다.
+#[tokio::test(start_paused = true)]
+async fn v070_sibling_loses_partial_when_recording_is_saved() {
+    use chzzk_core::download::part::{part_path, sidecar_path};
+    use common::harness::open_with;
+
+    let dir = tempfile::tempdir().unwrap();
+    let out = v070_two_records(dir.path(), JobStatus::Failed);
+    let fake = FakeBackend::new();
+    let mgr = open_with(dir.path(), &fake, 2, false);
+    // 가짜 백엔드는 파일을 만지지 않는다: 코어가 마무리하며 `.part`·sidecar를 옮긴 것처럼 지운다
+    std::fs::remove_file(part_path(&out)).unwrap();
+    std::fs::remove_file(sidecar_path(&out)).unwrap();
+    fake.script_for(&out, Script::new());
+    mgr.resume(chzzk_shell::JobId(1), false).unwrap();
+    let job = |id: u64| {
+        mgr.list()
+            .into_iter()
+            .find(|j| j.id == chzzk_shell::JobId(id))
+            .unwrap()
+    };
+    until("완료", || job(1).status == JobStatus::Completed).await;
+    assert_eq!(job(2).partial_bytes, None);
+}
+
 /// 지우기는 다른 옛 기록이 잡은 `.part`를 지우지 않는다(레코드만 지운다).
 #[tokio::test(start_paused = true)]
 async fn v070_two_failed_records_remove_keeps_part() {

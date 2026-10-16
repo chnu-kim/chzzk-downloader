@@ -293,6 +293,32 @@ impl State {
     }
 }
 
+/// 녹화 작업 `rec`가 끝났다. 같은 녹화 `.part`를 함께 가리키던 멈춘 옛 기록(v0.7.0, `blocks_requeue`의 예외)의 받은 부분을
+/// 다시 센다. `rec`가 그 녹화를 저장했으면 `.part`가 없어져 `None`이 된다(남겨 두면 화면이 [이어받기]를 앞세우고, 누르면
+/// 지금 방송을 옛 이름으로 새로 녹화한다).
+fn refresh_siblings(st: &mut State, rec: &JobRecord) {
+    let key = output_key(&rec.output);
+    let mut changed = Vec::new();
+    for j in st.jobs.values_mut() {
+        if j.rec.id == rec.id
+            || j.uses_output()
+            || !j.keeps_recording()
+            || output_key(&j.rec.output) != key
+            || !same_owner(&j.rec, rec)
+        {
+            continue;
+        }
+        let now = partial_bytes(&j.rec);
+        if now != j.rec.partial_bytes {
+            j.rec.partial_bytes = now;
+            changed.push(j.dto());
+        }
+    }
+    for job in changed {
+        st.emit(JobEvent::Status { job });
+    }
+}
+
 /// 두 기록이 같은 `.part`의 주인인가(`PartOwner`의 네 값이 같다).
 fn same_owner(a: &JobRecord, b: &JobRecord) -> bool {
     let (x, y) = (a.owner(), b.owner());
@@ -1218,8 +1244,12 @@ impl<B: Backend> Inner<B> {
                 }
             }
             let dto = job.dto();
+            let live = job.is_live().then(|| job.rec.clone());
             // Status를 먼저 보낸다. 방금 끝난 작업이 정리 대상이면 Removed가 뒤에 와야 프런트에 유령이 남지 않는다.
             st.emit(JobEvent::Status { job: dto });
+            if let Some(rec) = live {
+                refresh_siblings(&mut st, &rec);
+            }
             self.prune_finished(&mut st);
             self.save(&st);
         }

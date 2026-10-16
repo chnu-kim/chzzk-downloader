@@ -299,8 +299,10 @@ export class JobsStore {
         case 'copyReport':
           if (job.error) await copyReport(job.error, settings.info);
           break;
+        case 'recordAgain':
         case 'reresolve':
-          // 그 주소를 입력줄에 넣고 다시 불러온다(§6.3). 옛 항목은 사용자가 지운다
+          // 그 주소를 입력줄에 넣고 다시 불러온다(§6.3). 재시작으로 끝난 녹화는 카드의 [받기]로 새 녹화를 시작한다(app.md 82).
+          // 옛 항목은 사용자가 지운다
           ui.goHome();
           void resolver.load(job.url);
           ui.urlTarget?.focus();

@@ -907,6 +907,62 @@ describe('생방송 녹화(ADR-0025): 막대·남은 시간 없이 글자만', (
     expect(deleteAction(j, b)).toBe('cancel');
   });
 
+  describe('끝난 녹화(L8, app.md 82)', () => {
+    const done = (over: Partial<JobDto> = {}) =>
+      live({ status: 'completed', progress: null, finalBytes: 5, finishedAt: FINISHED, ...over });
+
+    it('끝난 녹화: 놓친 조각은 상태 줄 끝, 끝난 이유는 본문 줄(L8)', () => {
+      const j = done({ liveEnd: { reason: 'restarted', gaps: 2 } });
+      const parts = statusParts(j, null, CTX);
+      expect(parts[parts.length - 1]).toBe(t('job.live.gaps', { n: '2' }));
+      expect(bodyLine(j, null, CTX)).toBe(t('job.live.end.restarted.body'));
+    });
+
+    it('끝난 이유마다 본문 한 문장', () => {
+      const keys = {
+        ended: 'job.live.end.ended.body',
+        stopped: 'job.live.end.stopped.body',
+        restarted: 'job.live.end.restarted.body',
+        other: 'job.live.end.other.body',
+      } as const;
+      for (const [reason, key] of Object.entries(keys)) {
+        const j = done({ liveEnd: { reason: reason as keyof typeof keys, gaps: 0 } });
+        expect(bodyLine(j, null, CTX), reason).toBe(t(key));
+      }
+    });
+
+    it('놓친 조각이 0이거나 모르면 상태 줄에 없다', () => {
+      for (const gaps of [0, null]) {
+        expect(statusParts(done({ liveEnd: { reason: 'ended', gaps } }), null, CTX)).toHaveLength(1);
+      }
+    });
+
+    it('재시작으로 끝난 녹화만 [다시 녹화]', () => {
+      const restarted = done({ liveEnd: { reason: 'restarted', gaps: 0 } });
+      expect(jobButtons(restarted, null).primary).toEqual(['openFile', 'openFolder', 'recordAgain']);
+      const missing = done({ liveEnd: { reason: 'restarted', gaps: 0 }, missing: true });
+      expect(jobButtons(missing, null).primary).toEqual(['openFolder', 'recordAgain']);
+      expect(bodyLine(missing, null, CTX)).toBe(t('job.completedMissing.body'));
+      expect(statusParts(missing, null, CTX)).toEqual([t('job.completedMissing')]);
+      for (const reason of ['ended', 'stopped', 'other'] as const) {
+        const j = done({ liveEnd: { reason, gaps: 0 } });
+        expect(jobButtons(j, null).primary, reason).toEqual(['openFile', 'openFolder']);
+      }
+      expect(jobActionLabel('recordAgain', 'macos')).toBe(t('action.recordAgain'));
+      expect(jobActionIcon('recordAgain')).toBeUndefined();
+      expect(enterAction(restarted, jobButtons(restarted, null))).toBe('openFile');
+    });
+
+    it('옛 기록(liveEnd 없음)은 지금과 같다', () => {
+      const j = done({ liveEnd: null });
+      expect(bodyLine(j, null, CTX)).toBeNull();
+      expect(jobButtons(j, null).primary).toEqual(['openFile', 'openFolder']);
+      const vod = job(2, { status: 'completed', finalBytes: 5, finishedAt: FINISHED });
+      expect(bodyLine(vod, null, CTX)).toBeNull();
+      expect(jobButtons(vod, null).primary).toEqual(['openFile', 'openFolder']);
+    });
+  });
+
   it('마치는 중: 상태 줄과 낭독 낱말이 일시정지가 아니다', () => {
     const j = live({ status: 'pausing' });
     expect(line(j, null)).toBe(t('job.live.stopping'));

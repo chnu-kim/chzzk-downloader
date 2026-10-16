@@ -1,5 +1,5 @@
 <script lang="ts">
-  // 카드 안 충돌 안내(system/patterns.md §6.5). 완성 파일 / 같은 작업의 .part / 다른 .part / 목록 중복은 서로 독립이다.
+  // 카드 안 충돌 안내(system/patterns.md §6.5). 완성 파일 / 같은 작업의 .part / 다른 .part / 받다 만 녹화 / 목록 중복은 서로 독립이다.
   // 모두 Notice 하나씩이고 선택은 RadioGroup이다. 목록 중복은 [받기]를 막으므로 id(BLOCK_REASON_ID)로 사유를 잇는다.
   import type { OutputCheck } from '../../bindings';
   import { t } from '../../copy/ko';
@@ -61,6 +61,12 @@
 
 {#if n.partialOther}
   <Notice variant="inline" tone="neutral">{t('conflict.partialOther')}</Notice>
+{/if}
+
+{#if n.partialRecording}
+  <Notice variant="inline" tone="neutral" title={t('conflict.partialRecording.title')}>
+    {#if check.freeFileName}{t('conflict.partialRecording.body', { name: check.freeFileName })}{/if}
+  </Notice>
 {/if}
 
 <style>

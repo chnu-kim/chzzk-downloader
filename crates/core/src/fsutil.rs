@@ -219,10 +219,31 @@ fn is_disk_full(e: &io::Error) -> bool {
     }
 }
 
-/// `io::Error`를 코어 오류로 바꾼다. 디스크 부족은 `DiskFull`, 나머지는 `Io`.
+/// 파일 크기 한도(파일 시스템 한도, 예: FAT32 4 GiB)를 넘었다는 OS 오류인가.
+/// Unix EFBIG(Linux·macOS 모두 27), Windows ERROR_FILE_TOO_LARGE(223). 값은 OS마다 뜻이 달라 cfg로 나눈다.
+fn is_file_too_large(e: &io::Error) -> bool {
+    if e.kind() == io::ErrorKind::FileTooLarge {
+        return true;
+    }
+    let Some(code) = e.raw_os_error() else {
+        return false;
+    };
+    if cfg!(windows) {
+        code == 223
+    } else {
+        code == 27
+    }
+}
+
+/// `io::Error`를 코어 오류로 바꾼다. 디스크 부족은 `DiskFull`, 파일 크기 한도는 `FileTooLarge`, 나머지는 `Io`.
 pub fn map_io_error(op: &'static str, path: &Path, e: io::Error) -> Error {
     if is_disk_full(&e) {
         return Error::DiskFull {
+            path: path.to_path_buf(),
+        };
+    }
+    if is_file_too_large(&e) {
+        return Error::FileTooLarge {
             path: path.to_path_buf(),
         };
     }
@@ -539,6 +560,40 @@ mod tests {
         assert!(matches!(
             map_io_error("write", p, io::Error::other("x")),
             Error::Io { op: "write", .. }
+        ));
+    }
+
+    #[test]
+    fn map_io_error_file_too_large() {
+        let p = Path::new("x.part");
+        let big = |e: io::Error| matches!(map_io_error("write", p, e), Error::FileTooLarge { .. });
+        assert!(big(io::Error::from(io::ErrorKind::FileTooLarge)));
+        #[cfg(unix)]
+        {
+            // EFBIG(Linux·macOS 모두 27)
+            assert_eq!(
+                io::Error::from_raw_os_error(27).kind(),
+                io::ErrorKind::FileTooLarge
+            );
+            assert!(big(io::Error::from_raw_os_error(27)));
+            // Windows의 223은 unix에서 다른 뜻이다
+            assert!(!big(io::Error::from_raw_os_error(223)));
+        }
+        #[cfg(windows)]
+        {
+            // ERROR_FILE_TOO_LARGE
+            assert_eq!(
+                io::Error::from_raw_os_error(223).kind(),
+                io::ErrorKind::FileTooLarge
+            );
+            assert!(big(io::Error::from_raw_os_error(223)));
+            // Windows 27은 FileTooLarge가 아니다
+            assert!(!big(io::Error::from_raw_os_error(27)));
+        }
+        // 디스크 부족과 다르다: 공간이 있어도 저장 장치가 파일 하나의 크기를 막는다
+        assert!(matches!(
+            map_io_error("write", p, io::Error::from(io::ErrorKind::StorageFull)),
+            Error::DiskFull { .. }
         ));
     }
 }

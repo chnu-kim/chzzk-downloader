@@ -227,7 +227,9 @@ async fn run(args: Args) -> Result<(), String> {
         on_existing: DuplicatePolicy::Overwrite,
         concurrency: chzzk_core::download::DEFAULT_CONCURRENCY,
         live_stop: live.then(|| stop.clone()),
+        recording_id: None,
     };
+    let kept = req.clone();
     let result = chzzk.download(req, cancel, &on_progress).await;
     eprintln!();
     match result {
@@ -254,7 +256,7 @@ async fn run(args: Args) -> Result<(), String> {
             println!("한도에서 멈춤: .part {}", format_bytes(len));
             let checked = check_mp4(&part);
             if !args.keep {
-                discard_partial(&output).map_err(|e| e.to_string())?;
+                discard_partial(&output, &kept.owner()).map_err(|e| e.to_string())?;
             }
             checked
         }

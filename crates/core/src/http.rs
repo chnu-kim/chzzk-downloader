@@ -411,6 +411,15 @@ mod tests {
         // 토큰이 마지막 세그먼트면 그것만 가린다.
         let last = Url::parse("https://c/a/hdntl=exp=1~sig=S").unwrap();
         assert_eq!(redact_url(&last), "https://c/a/hdntl=***");
+        // 생방송 모양: 경로 토큰의 acl에 `/`가 들어 있어 토큰이 여러 세그먼트에 걸친다
+        let live = Url::parse(
+            "https://c/live/kr/streamkey0/hdntl=exp=0~acl=*/kr/*~data=hdntl~hmac=0000/144p/seg1.m4v",
+        )
+        .unwrap();
+        assert_eq!(
+            redact_url(&live),
+            "https://c/live/kr/streamkey0/hdntl=***/144p/seg1.m4v"
+        );
         let plain = Url::parse("https://h.example/a/b.mp4").unwrap();
         assert_eq!(redact_url(&plain), "https://h.example/a/b.mp4");
     }

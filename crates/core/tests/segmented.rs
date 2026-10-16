@@ -28,6 +28,7 @@ fn request(out: &Path, concurrency: u8) -> DownloadRequest {
         on_existing: DuplicatePolicy::Overwrite,
         concurrency: NonZeroU8::new(concurrency).unwrap(),
         live_stop: None,
+        recording_id: None,
     }
 }
 

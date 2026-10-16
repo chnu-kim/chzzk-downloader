@@ -42,6 +42,11 @@ export interface ErrorContext {
   /** (Phase 3) 영상의 채널 이름과 로그인한 채널 이름 */
   channelName?: string;
   myChannel?: string;
+  /**
+   * D: 받다 만 녹화(생방송 + 영상 조각, 셸의 `partialBytes`)가 남은 항목. 코어는 어떤 오류로 끝나도 녹화를 지우지
+   * 않으므로(core.md 61) 오류 코드와 관계없이 본문 끝에 받은 부분 문장을 붙인다
+   */
+  keptRecording?: boolean;
 }
 
 export interface ErrorCopy {
@@ -76,7 +81,9 @@ const ALL_CODES: Record<ErrorCode, true> = {
   lengthMismatch: true,
   network: true,
   diskFull: true,
+  fileTooLarge: true,
   fileLocked: true,
+  partialRecording: true,
   io: true,
   settings: true,
   cancelled: true,
@@ -162,6 +169,7 @@ function keepsPart(e: AppError): boolean {
     case 'noQualities':
     case 'parse':
     case 'network':
+    case 'fileTooLarge':
     case 'fileLocked':
     case 'io':
     case 'refreshExhausted':
@@ -206,6 +214,16 @@ function pathLine(label: string, path: string | null): string | null {
  * 문구·동작이 달라진다. 자리 조합은 이 함수 하나가 한다(content §9.2-10).
  */
 export function errorCopy(raw: AppError, ctx: ErrorContext): ErrorCopy {
+  const c = codeCopy(raw, ctx);
+  // 받다 만 녹화는 남는다. 이미 받은 부분을 말했거나(withPart) 파일을 지웠다고 말하는 본문(녹화에는 오지 않는
+  // VOD 전용 코드)에는 붙이지 않는다
+  if (ctx.place === 'job' && ctx.keptRecording && !c.body.includes(PART_KEPT) && !/지웠|지우고/.test(c.body)) {
+    return { ...c, body: withKept(c.body) };
+  }
+  return c;
+}
+
+function codeCopy(raw: AppError, ctx: ErrorContext): ErrorCopy {
   const e = raw.code === 'cancelled' ? { ...raw, code: 'internal' as const } : raw;
   const job = ctx.place === 'job';
   const hasPart = job && (ctx.partialBytes ?? 0) > 0;
@@ -267,11 +285,10 @@ export function errorCopy(raw: AppError, ctx: ErrorContext): ErrorCopy {
 
     case 'authRequired':
       if (e.stage === 'download') {
-        return copy(
-          '영상 서버가 접근을 막았어요',
-          '주소를 새로 받아도 계속 거절돼요. 받다 만 파일은 지웠어요.',
-          [fresh],
-        );
+        // 생방송은 받던 중에 거절돼도 `.part`가 남는다(녹화는 다시 받을 수 없다, core.md 61). 그 밖은 코어가 지운다
+        return hasPart
+          ? copy('영상 서버가 접근을 막았어요', withKept('주소를 새로 받아도 계속 거절돼요.'), ['resume'])
+          : copy('영상 서버가 접근을 막았어요', '주소를 새로 받아도 계속 거절돼요. 받다 만 파일은 지웠어요.', [fresh]);
       }
       return ctx.cookiesEnabled
         ? copy(
@@ -419,11 +436,29 @@ export function errorCopy(raw: AppError, ctx: ErrorContext): ErrorCopy {
         : copy('저장 공간이 부족해요', '공간을 비운 뒤 다시 시도해 주세요.', ['retry', 'changeFolder'], detail);
     }
 
+    case 'fileTooLarge':
+      // FAT32 등 파일 하나의 크기를 제한하는 저장 장치(EFBIG·Windows 223). 받은 부분은 남는다(core.md 61)
+      return copy(
+        '파일이 저장 장치의 크기 한도를 넘었어요',
+        withPart(e, 'FAT32처럼 파일 하나의 크기를 제한하는 저장 장치예요. 다른 저장 장치의 폴더로 바꿔 주세요.', ctx),
+        job ? [again, 'openFolder'] : ['changeFolder'],
+        pathLine('경로', pathOf(e)),
+      );
+
     case 'fileLocked':
       return copy(
         '다른 프로그램이 파일을 쓰고 있어요',
         withPart(e, '이 파일을 연 플레이어나 백신 검사가 끝난 뒤 다시 시도해 주세요.', ctx),
         job ? [again, 'openFolder'] : [again],
+        pathLine('경로', pathOf(e)),
+      );
+
+    case 'partialRecording':
+      // 같은 경로에 다른 작업의 녹화가 받다 만 채로 있다. 다시 받을 수 없어 코어가 건드리지 않았다(core.md 61)
+      return copy(
+        '같은 이름으로 받다 만 녹화가 있어요',
+        '녹화는 다시 받을 수 없어 그 파일을 지우지 않았어요. 다시 불러와 다른 이름으로 받아 주세요.',
+        [reload],
         pathLine('경로', pathOf(e)),
       );
 

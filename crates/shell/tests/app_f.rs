@@ -128,6 +128,7 @@ fn record(id: u64, status: JobStatus, stopped_at: Option<u64>) -> JobRecord {
         quality_id: "720p".into(),
         quality_label: "720p".into(),
         expected_kind: PlaybackKind::Progressive,
+        recording_id: None,
         output: format!("/nonexistent/{id}.mp4").into(),
         on_existing: OnExisting::Overwrite,
         concurrency: 4,

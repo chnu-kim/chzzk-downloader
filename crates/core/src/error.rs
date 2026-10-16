@@ -62,8 +62,12 @@ pub enum Error {
     Network(#[source] reqwest::Error),
     #[error("디스크 공간이 부족합니다: {path}")]
     DiskFull { path: PathBuf },
+    #[error("파일이 저장 장치의 파일 크기 한도를 넘었습니다: {path}")]
+    FileTooLarge { path: PathBuf },
     #[error("다른 프로그램이 파일을 사용 중입니다: {path}")]
     FileLocked { path: PathBuf },
+    #[error("다른 녹화가 받다 만 파일이 있어 건드리지 않았습니다: {path}")]
+    PartialRecording { path: PathBuf },
     #[error("파일 오류({op}) {path}: {source}")]
     Io {
         op: &'static str,
@@ -116,7 +120,9 @@ pub enum ErrorKind {
     LengthMismatch,
     Network,
     DiskFull,
+    FileTooLarge,
     FileLocked,
+    PartialRecording,
     Io,
     Settings,
     Cancelled,
@@ -149,7 +155,9 @@ impl Error {
             Error::LengthMismatch { .. } => ErrorKind::LengthMismatch,
             Error::Network(_) => ErrorKind::Network,
             Error::DiskFull { .. } => ErrorKind::DiskFull,
+            Error::FileTooLarge { .. } => ErrorKind::FileTooLarge,
             Error::FileLocked { .. } => ErrorKind::FileLocked,
+            Error::PartialRecording { .. } => ErrorKind::PartialRecording,
             Error::Io { .. } => ErrorKind::Io,
             Error::Settings(_) => ErrorKind::Settings,
             Error::Cancelled => ErrorKind::Cancelled,
@@ -178,7 +186,10 @@ impl Error {
             | Error::Network(_)
             | Error::Cancelled
             | Error::DiskFull { .. }
+            | Error::FileTooLarge { .. }
             | Error::FileLocked { .. }
+            // 지우면 안 된다(이 요청의 .part는 없다)
+            | Error::PartialRecording { .. }
             | Error::Io { .. }
             | Error::Parse { .. }
             | Error::Api { .. }
@@ -234,6 +245,18 @@ mod tests {
         );
         assert!(
             Error::FileLocked {
+                path: PathBuf::from("a")
+            }
+            .is_resumable()
+        );
+        assert!(
+            Error::FileTooLarge {
+                path: PathBuf::from("a")
+            }
+            .is_resumable()
+        );
+        assert!(
+            Error::PartialRecording {
                 path: PathBuf::from("a")
             }
             .is_resumable()

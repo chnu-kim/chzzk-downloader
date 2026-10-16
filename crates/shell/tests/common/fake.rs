@@ -16,6 +16,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use chzzk_core::download::part::{HlsState, Sidecar, part_path, sidecar_path};
+use chzzk_core::fsutil::atomic_write;
 use chzzk_core::{
     CancellationToken, ContentRef, DownloadOutcome, DownloadRequest, Error, Phase, Progress,
     Resolved,
@@ -42,6 +44,8 @@ pub enum Step {
     /// 생방송: `live_stop`이 취소될 때까지 기다리고 **다음 단계로 넘어간다**(받은 만큼 마무리하는 코어 흉내).
     /// `cancel`이 오면 `Cancelled`다. 요청에 `live_stop`이 없으면 취소만 기다린다.
     UntilStopped,
+    /// 생방송: 코어처럼 `.part`(init `init_len` + 영상 `media_len`바이트)와 이 요청의 sidecar(`recording_id` 포함)를 쓴다
+    LivePart { init_len: u32, media_len: u64 },
 }
 
 /// `download` 한 번의 대본.
@@ -104,6 +108,15 @@ impl Script {
     /// 생방송 `live_stop`을 기다린 뒤 이어지는 단계와 결과로 마무리한다.
     pub fn until_stopped(mut self) -> Self {
         self.steps.push(Step::UntilStopped);
+        self
+    }
+
+    /// 코어가 쓰는 생방송 녹화 `.part`·sidecar를 흉내 낸다(`recording_id`는 요청 값).
+    pub fn live_part(mut self, init_len: u32, media_len: u64) -> Self {
+        self.steps.push(Step::LivePart {
+            init_len,
+            media_len,
+        });
         self
     }
 
@@ -296,6 +309,32 @@ impl Backend for FakeBackend {
                 Step::UntilCancelled => cancel.cancelled().await,
                 Step::Linger(d) => tokio::time::sleep(d).await,
                 Step::Write(p, b) => std::fs::write(&p, b).unwrap(),
+                Step::LivePart {
+                    init_len,
+                    media_len,
+                } => {
+                    if let Some(dir) = req.output.parent() {
+                        std::fs::create_dir_all(dir).unwrap();
+                    }
+                    let total = u64::from(init_len) + media_len;
+                    std::fs::write(part_path(&req.output), vec![0u8; total as usize]).unwrap();
+                    let mut sc = Sidecar::new(
+                        req.content.clone(),
+                        req.quality_id.clone(),
+                        req.expected_kind,
+                    );
+                    sc.recording_id = req.recording_id.clone();
+                    sc.committed_len = total;
+                    sc.hls = Some(HlsState {
+                        init_len,
+                        ..HlsState::default()
+                    });
+                    atomic_write(
+                        &sidecar_path(&req.output),
+                        &serde_json::to_vec(&sc).unwrap(),
+                    )
+                    .unwrap();
+                }
                 Step::UntilStopped => {
                     let stop = req.live_stop.clone().unwrap_or_default();
                     tokio::select! {

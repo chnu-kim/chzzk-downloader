@@ -1,9 +1,11 @@
 //! VOD 채팅(다시보기 채팅) 페이지 조회·파서·순회 판정·자막 렌더(기능 ④, PR 1).
 //!
-//! 이어받기 파일(`part`)과 수집(`collect_chat`)은 다음 PR이다. 실측 도구 `examples/vod_chat_check.rs`가
+//! 이어받기 파일(`part`, PR 2)이 더해졌고 수집(`collect_chat`)은 다음 PR이다. 실측 도구 `examples/vod_chat_check.rs`가
 //! 이 모듈만으로 페이지를 돈다. 닉네임·본문은 채팅 파일 밖(로그·오류·Debug)에 나오지 않는다.
 
 use std::time::Duration;
+
+use serde::{Deserialize, Serialize};
 
 use crate::client::Chzzk;
 use crate::download::RetryPolicy;
@@ -11,6 +13,7 @@ use crate::error::Error;
 use crate::http::RequestKind;
 
 pub mod page;
+pub mod part;
 pub mod probe;
 pub mod retry;
 pub mod subtitle;
@@ -31,7 +34,8 @@ pub const CHAT_TAIL_MS: u64 = 5_000;
 pub const CHAT_PREVIOUS_SIZE: u32 = 50;
 
 /// 정상 끝. **400은 여기 없다**(chat.md §3.2-3): 400은 늘 `Error::HttpStatus`로 남는다.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub enum ChatEnd {
     NoCursor,
     CursorNotAdvancing,

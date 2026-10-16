@@ -9,7 +9,8 @@
 //!
 //! 공통 골격(`Chzzk::download`):
 //! 1. 최종 파일이 있으면 `Skip` → `Skipped`(네트워크 0회), `Overwrite` → 계속.
-//! 2. 같은 작업의 `.part`가 있으면 잠그고 이어받는다. 다르면 지우고 새로 시작한다.
+//! 2. 같은 작업의 `.part`가 있으면 잠그고 이어받는다. 다르면 지우고 새로 시작한다(다른 작업의 생방송 녹화면
+//!    지우지 않고 `PartialRecording`).
 //! 3. `Resolving`: `resolve`. 방식이 바뀌었으면 `PlaybackChanged`.
 //! 4. 엔진 실행. 403이면 `Reresolving` → 재조회(상한 8회).
 //! 5. `Finalizing`: checkpoint → `.part` → 최종 파일. `Skip`이면 덮어쓰지 않는 rename을 쓰고, 받는 동안
@@ -39,7 +40,7 @@ use crate::fsutil::map_io_error;
 use crate::model::{ContentRef, PlaybackKind, Resolved, Source};
 use crate::progress::{Meter, Phase, Progress};
 
-pub use part::{Finalized, PartFile, Sidecar, discard_partial};
+pub use part::{Discarded, Finalized, PartFile, PartOwner, Sidecar, discard_partial};
 pub use retry::{Failure, NETWORK_PATIENCE_MS, RETRY_BACKOFF_MAX_MS, RetryPolicy};
 use retry::{Patience, is_connection_failure};
 
@@ -75,6 +76,21 @@ pub struct DownloadRequest {
     /// 생방송만: 이 토큰이 취소되면 지금까지 받은 것을 최종 파일로 마무리하고 `Completed`로 끝낸다
     /// (`cancel`은 `.part`를 남기고 `Cancelled`로 끝나는 다른 뜻이다). 생방송이 아니면 쓰지 않는다.
     pub live_stop: Option<CancellationToken>,
+    /// 생방송만: 이 녹화 작업의 고유값(셸이 작업을 만들 때 정한다). sidecar에 적고, 같은 값의 요청만 그 `.part`를
+    /// 마무리하거나 지운다. 새 녹화는 새 값이라 남의 `.part`를 마무리하지 않는다. `None`은 v0.7.0 작업(core.md 61)
+    pub recording_id: Option<String>,
+}
+
+impl DownloadRequest {
+    /// 이 요청이 `.part`의 주인인지 가리는 열쇠.
+    pub fn owner(&self) -> PartOwner<'_> {
+        PartOwner {
+            content: &self.content,
+            quality_id: &self.quality_id,
+            kind: self.expected_kind,
+            recording_id: self.recording_id.as_deref(),
+        }
+    }
 }
 
 /// 다운로드 결과.
@@ -277,12 +293,7 @@ impl Chzzk {
         if let Some(dir) = req.output.parent().filter(|d| !d.as_os_str().is_empty()) {
             std::fs::create_dir_all(dir).map_err(|e| map_io_error("create dir", dir, e))?;
         }
-        let mut part = PartFile::resume(
-            &req.output,
-            &req.content,
-            &req.quality_id,
-            req.expected_kind,
-        )?;
+        let mut part = PartFile::resume(&req.output, &req.owner())?;
         let mut job = Job {
             chzzk: self,
             req: &req,
@@ -313,8 +324,8 @@ async fn run(job: &mut Job<'_>, part: &mut Option<PartFile>) -> Result<DownloadO
     if job.req.expected_kind == PlaybackKind::Live
         && let Some(p) = part.as_ref()
     {
-        let init_len = p.staged().hls.map_or(0, |h| u64::from(h.init_len));
-        if init_len > 0 && p.written() > init_len {
+        // `resume` 직후라 `sidecar().committed_len == written()`이다
+        if p.sidecar().has_live_media() {
             let resumed_from = p.written();
             return finish(job, part, resumed_from).await;
         }
@@ -323,7 +334,19 @@ async fn run(job: &mut Job<'_>, part: &mut Option<PartFile>) -> Result<DownloadO
         }
     }
     job.report.phase(Phase::Resolving);
-    let resolved = job.resolve().await?;
+    // 생방송은 첫 조회를 기다리는 동안에도(연결 대기 최대 30분) [녹화 마치기]가 먹는다. 아직 받은 조각이 없으니
+    // `NothingRecorded`다(core.md 61). 토큰을 먼저 복제해 `job`을 빌린 채 기다리지 않는다.
+    let resolved = if job.req.expected_kind == PlaybackKind::Live
+        && let Some(stop) = job.req.live_stop.clone()
+    {
+        tokio::select! {
+            biased;
+            _ = stop.cancelled() => return Err(Error::NothingRecorded),
+            r = job.resolve() => r?,
+        }
+    } else {
+        job.resolve().await?
+    };
     job.report.phase(Phase::Downloading);
     match resolved.source {
         Source::Progressive { reps } => progressive::run(job, reps, part).await,
@@ -351,6 +374,30 @@ async fn cleanup(part: Option<PartFile>, keep: bool, e: &Error) {
     }
 }
 
+/// 생방송 변환 결과로 마무리를 이어 갈지 정한다(core.md 61 M4). `Ok(true)`: 바꿨으니 checkpoint 뒤 마무리,
+/// `Ok(false)`: 그대로 마무리(이미 일반 mp4·조각 아님·바꾸기 전 구조 판정 실패), `Err`: 마무리하지 않는다(바꾸는 도중
+/// 실패·읽기 입출력 오류로 파일 상태를 확인하지 못함, `DefragError::Modified`).
+fn defrag_verdict(
+    r: Result<Result<defrag::DefragReport, defrag::DefragError>, Error>,
+) -> Result<bool, Error> {
+    match r {
+        Ok(Ok(rep)) => {
+            tracing::info!(report = ?rep, "생방송 파일 변환");
+            Ok(matches!(rep, defrag::DefragReport::Converted { .. }))
+        }
+        Ok(Err(defrag::DefragError::Unchanged(e))) => {
+            tracing::warn!(error = %e, "생방송 파일을 일반 mp4로 바꾸지 못해 조각 구조로 둔다");
+            Ok(false)
+        }
+        Ok(Err(defrag::DefragError::Modified(e))) => {
+            tracing::warn!(error = %e, "생방송 파일 변환이 도중에 실패했거나 파일을 읽지 못해 .part로 둔다");
+            Err(e)
+        }
+        // 핸들 복제·flush·태스크 실패: 파일 상태를 모르니 마무리하지 않는다
+        Err(e) => Err(e),
+    }
+}
+
 /// 마지막 checkpoint 후 `.part`를 최종 파일로 옮긴다.
 pub(crate) async fn finish(
     job: &mut Job<'_>,
@@ -368,23 +415,26 @@ pub(crate) async fn finish(
     }
     // 생방송은 조각 구조를 일반 mp4로 바꾼다(core.md 구현 중 변경 60). 바로 위 checkpoint로 받은 바이트가 모두
     // durable하므로, 변환 도중 죽어도 다음 실행의 `resume`이 붙인 moov만 잘라 내고 다시 변환한다.
-    // 실패는 경고만 남기고 조각 구조 그대로 마무리한다.
+    // 바꾸기 전 실패는 경고만 남기고 조각 구조로 마무리하고, 바꾸는 도중 실패는 `.part`로 남긴다(core.md 61).
     if job.req.expected_kind == PlaybackKind::Live {
         // 파일 전체 훑기·fsync는 오래 걸릴 수 있어 blocking 스레드에서 한다.
-        match p.with_file_blocking(defrag::defragment).await {
-            Ok(r) => {
-                tracing::info!(report = ?r, "생방송 파일 변환");
+        let r = p.with_file_blocking(|f| Ok(defrag::defragment_in(f))).await;
+        match defrag_verdict(r) {
+            Ok(true) => {
                 // 변환이 붙인 moov까지 committed_len에 넣는다(마무리가 Skipped로 끝나 `.part`가 남아도 잘리지 않게).
                 // 변환에 실패했으면 checkpoint하지 않는다(디스크 부족에서 sidecar 쓰기가 또 실패해 녹화가 실패로 끝나면 안 된다).
-                if matches!(r, defrag::DefragReport::Converted { .. })
-                    && let Err(e) = p.checkpoint(|_| {}).await
-                {
+                if let Err(e) = p.checkpoint(|_| {}).await {
                     *part = Some(p);
                     return Err(e);
                 }
             }
+            Ok(false) => {}
             Err(e) => {
-                tracing::warn!(error = %e, "생방송 파일을 일반 mp4로 바꾸지 못해 조각 구조로 둔다")
+                // 변환 도중 실패: 반쯤 바뀐 파일을 최종 파일로 옮기지 않는다. 변환 전 길이까지만 남기고
+                // (다음 resume이 꼬리를 자른다) .part로 둔다
+                p.drop_uncommitted_tail();
+                *part = Some(p);
+                return Err(e);
             }
         }
     }
@@ -398,5 +448,52 @@ pub(crate) async fn finish(
         Finalized::TargetExists => Ok(DownloadOutcome::Skipped {
             path: job.req.output.clone(),
         }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use defrag::{DefragError, DefragReport};
+
+    fn parse_err() -> Error {
+        Error::Parse {
+            what: "fragmented mp4",
+            detail: "x".into(),
+        }
+    }
+
+    /// 변환 결과로 마무리를 이어 갈지 정하는 표(core.md 61 M4).
+    #[test]
+    fn defrag_verdict_table() {
+        let converted = DefragReport::Converted {
+            tracks: 1,
+            samples: 1,
+            discontinuities: 0,
+        };
+        assert!(matches!(defrag_verdict(Ok(Ok(converted))), Ok(true)));
+        assert!(matches!(
+            defrag_verdict(Ok(Ok(DefragReport::AlreadyFlat))),
+            Ok(false)
+        ));
+        assert!(matches!(
+            defrag_verdict(Ok(Ok(DefragReport::NotFragmented))),
+            Ok(false)
+        ));
+        // 바꾸기 전 실패(또는 되돌렸다): 조각 구조로 마무리한다
+        assert!(matches!(
+            defrag_verdict(Ok(Err(DefragError::Unchanged(parse_err())))),
+            Ok(false)
+        ));
+        // 바꾸는 도중 실패: 마무리하지 않는다
+        assert!(matches!(
+            defrag_verdict(Ok(Err(DefragError::Modified(parse_err())))),
+            Err(Error::Parse { .. })
+        ));
+        // 태스크·핸들 실패: 파일 상태를 모르니 마무리하지 않는다
+        assert!(matches!(
+            defrag_verdict(Err(Error::Cancelled)),
+            Err(Error::Cancelled)
+        ));
     }
 }

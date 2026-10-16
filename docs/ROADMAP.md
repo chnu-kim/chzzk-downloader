@@ -4,7 +4,7 @@
 
 ## 현재 위치
 
-- **⑤-F3 끝난 이유 표시(2026-10-16, 브랜치 `feat/live-end-reason`, core.md 65·app.md 82, `feat`)**: 녹화 결과·jobs.json·작업 행에 끝난 이유(방송 종료·녹화 마치기·재시작·그 밖)와 놓친 조각 수, 재시작이면 [다시 녹화]. 구현 완료, PR 대기(push 전).
+- **⑤-F3 끝난 이유 표시(2026-10-16, 브랜치 `feat/live-end-reason`, core.md 65·app.md 82, `feat`)**: 녹화 결과·jobs.json·작업 행에 끝난 이유(방송 종료·녹화 마치기·재시작·그 밖)와 놓친 조각 수, 재시작이면 [다시 녹화]. 구현·리뷰 반영 완료, PR 대기(push 전). 남은 것은 아래 ⑤ 체크리스트의 F3 후속.
 - **②-2 구간 받기 셸(2026-10-16, 브랜치 `feat/range-shell`, app.md 80·core.md 64.9)**: `TimeRangeDto`·`EnqueueRequest.range`·`JobDto.range`·`JobRecord.range`(JOBS_VERSION 1 그대로)·`check_output` 구간 접미사·`partialOther` 구간 비교·가짜 백엔드를 넣었다. 구현·리뷰 반영 완료, PR #123 대기(master #122 머지 반영). 다음은 ②-3 앱 카드 화면과 사용자 실측 M-②-2·6.
 - **기능 ① 편집자 위임 ①-4(2026-10-16, 브랜치 `feat/delegation-shell`, 커밋 넷(구현 + 리뷰 반영 + Codex 반영 + 확인 반영: 경로 없는 Worker의 404를 `/api/me`로 가름·401 뒤 refresh 세대 묶음, app.md 79 (하)), PR #122)**: 셸이 맡은 채널을 판정에 넣고(`classify` Own > Delegated > AdminOverride, 생방송 제외 L-D1) 판정 직전에 `/api/me`로 확인한다(5분 간격 [잠정], 수동은 간격 없음). `AuthService`에 `check_delegations`·편집자 쓰기 API·`refresh_lock` 공통 적용(N2)·`session_epoch` 세대, `session.json`의 `delegatedChannels`, command 다섯, DTO·bindings, `jobBlock`·가짜 백엔드 최소 반영(app.md 79). 리뷰 반영: 자동 확인 실패도 5분 간격을 시작(판정마다 `/api/me`·refresh 반복 방지), resolve 확인 중 거부는 `notLoggedIn`, 온라인 `/api/me` 실패 중 디스크 목록 허용을 D2 대가 ④로 기록(79 (바)·(카)·(타)). 남은 것: PR #122 머지, ①-5(화면·copy·네이티브 E2E, 지연 빼기의 기대 계정 대조 79 (하) ③).
 - **①-3 Worker 웹(2026-10-16, 브랜치 `feat/delegation-worker-web`)**: 편집자 초대·완료 페이지, 앱 편집자 API 3개(초대 만들기·빼기·그만두기), 관리 화면 초대 꼬리표, 거부 페이지 초대 줄, `/privacy` 편집자 항목을 구현했다, PR 대기. 도움말 editors는 ①-5로 옮겼다(worker.md 106). design-worker 새 기준선은 CI artifact로 `--accept`가 필요하다. Codex 적대적 리뷰 6건 반영(106 (차): quiet 접두, 거부 페이지 [초대 취소], 완료 화면을 수락에 묶음, `already`는 초대를 남김, 운영 앱 편집자 API는 릴리스 B까지 닫힘, `/privacy` 관리자 관계 예외).
@@ -279,7 +279,8 @@
 기능별 브랜치의 stacked PR이다. 트랙 사이는 서로 기다리지 않는다(`plan.md` §5-A에 적힌 기능 선행 조건만). 실측 결과는 범주·된다/안 된다만 여기 "사전 조사로 확정된 사실"에 적는다(공개 저장소 규칙).
 
 - [x] 설계·결정 문서를 저장소로 옮김(`docs/design/features/`, 이 PR, 문서만)
-- [ ] ⑤ 생방송 사후 점검 fix: F1 멈춤 계약(`live.rs:360`·다음 playlist 읽기·첫 resolve) · F2 녹화 `.part` 보호(삭제 진입점 소유권 검사·계약 구분·자동 재개 조건) · F3 끝난 이유 표시(`feat`) (구현 완료, PR 대기) · F4 EFBIG·223 매핑과 defrag 실패 계약 · F5 누출 테스트·LL 태그 경고 · F6 문서. F2가 ②-1보다 먼저
+- [ ] ⑤ 생방송 사후 점검 fix: F1 멈춤 계약(`live.rs:360`·다음 playlist 읽기·첫 resolve) · F2 녹화 `.part` 보호(삭제 진입점 소유권 검사·계약 구분·자동 재개 조건) · F3 끝난 이유 표시(`feat`) (구현·리뷰 반영 완료, PR 대기) · F4 EFBIG·223 매핑과 defrag 실패 계약 · F5 누출 테스트·LL 태그 경고 · F6 문서. F2가 ②-1보다 먼저
+- [ ] ⑤-F3 후속(범위 밖, 명세 R14·§5.5): 낭독(`a11y.jobStatus`)에 `restarted`일 때만 끝난 이유(`job.live.end.restarted.body`)를 잇기 · 갤러리 작업 목록에 생방송 행(녹화 중·완료+restarted)을 더하고 Linux CI에서 기준선 받기 · 가짜 백엔드 `pause_job`이 생방송을 셸처럼 완료(`liveEnd` stopped)로 흉내 내게 맞추기
 - [ ] ⑤ 실측 M-⑤-A~D(본인 방송 중, F3 뒤가 좋다)
 - [ ] 도구 PR 묶음과 사용자 실측 한 세션: ②-0 키프레임 도구(M-②-3) · ③-1 목록 도구(M-③-1~7) · ④-1 채팅 도구·자막 렌더러(M-④-1~9)
 - [ ] ① 편집자 위임: ①-1 문서·ADR-0026(용어집·상수 행·UT8·UT9, 브랜치 `docs/delegation-design`) · ①-2 Worker 저장소(DO V3) · ①-3 Worker 웹 · ①-3½ 버전 올림 → **릴리스 A(Worker 전용)** → ①-4 셸 · ①-5 앱 · ①-6 문서 → **릴리스 B**. ①-5에서 초대 UI를 열 때 Worker `notice.unofficial` 셋째 문장(앱 `ko.ts`와 DC6)·`inviteDone.refresh`(앱의 [다시 불러오기])를 함께 맞추고, `worker/src/config.ts` `EDITOR_API_PROD`를 `true`로 바꿔 앱 편집자 API를 연다(앱은 그 전 Worker의 404 `not_enabled`를 차단이 아닌 "아직 쓸 수 없음"으로 다룬다). 콜백 `already`는 초대를 남기기로 정했다(worker.md 구현 중 변경 106 (사)·(아)·(차))

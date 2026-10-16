@@ -344,6 +344,11 @@ pub fn partial_bytes(j: &JobRecord) -> Option<u64> {
     sc.owned_by(&j.owner()).then_some(sc.committed_len)
 }
 
+/// 생방송 작업의 `.part`에 마무리할 영상 조각이 있는가(이 작업의 sidecar, init만이 아님). 자동 이어받기가 쓴다(core.md 61 M3).
+pub fn live_media_ready(j: &JobRecord) -> bool {
+    partial_bytes(j).is_some() && read_sidecar(&j.output).is_some_and(|s| s.has_live_media())
+}
+
 /// 새 생방송 녹화 작업의 고유값: 16바이트 난수 hex(32자).
 pub fn new_recording_id() -> String {
     let mut b = [0u8; 16];

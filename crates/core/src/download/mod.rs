@@ -324,8 +324,8 @@ async fn run(job: &mut Job<'_>, part: &mut Option<PartFile>) -> Result<DownloadO
     if job.req.expected_kind == PlaybackKind::Live
         && let Some(p) = part.as_ref()
     {
-        let init_len = p.staged().hls.map_or(0, |h| u64::from(h.init_len));
-        if init_len > 0 && p.written() > init_len {
+        // `resume` 직후라 `sidecar().committed_len == written()`이다
+        if p.sidecar().has_live_media() {
             let resumed_from = p.written();
             return finish(job, part, resumed_from).await;
         }

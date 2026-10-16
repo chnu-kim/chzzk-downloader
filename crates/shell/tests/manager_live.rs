@@ -492,3 +492,48 @@ async fn remove_own_failed_recording_discards() {
     h.mgr.remove(id).await.unwrap();
     assert_eq!(sidecar_exists(&h, "a"), (false, false));
 }
+
+/// 앱이 꺼졌다 다시 열린 뒤 자동 이어받기가 몇 개를 줄 세우는지 본다(`out` 하나짜리 생방송).
+async fn reopened_auto_resume(
+    script: Script,
+    after_start: impl FnOnce(&Harness),
+) -> (usize, JobStatus) {
+    let h = Harness::new(2);
+    h.fake.script_for(h.output("a"), script.until_stopped());
+    let id = h.enqueue_live("a").id;
+    until("시작", || h.status(id) == JobStatus::Running).await;
+    until("코어 호출", || !h.fake.download_requests().is_empty()).await;
+    after_start(&h);
+    // 앱이 꺼졌다 다시 열린다(`quit` 없이): running → interrupted
+    let m = h.reopen(2);
+    assert_eq!(m.list()[0].status, JobStatus::Interrupted);
+    let n = m.resume_interrupted();
+    (n, m.list()[0].status)
+}
+
+/// M3: init만 든 `.part`는 코어가 지우고 지금 방송을 새로 녹화한다. 자동으로 줄 세우지 않는다.
+#[tokio::test(start_paused = true)]
+async fn auto_resume_skips_init_only_live_part() {
+    let (n, status) = reopened_auto_resume(Script::new().live_part(16, 0), |_| {}).await;
+    assert_eq!(n, 0);
+    assert_eq!(status, JobStatus::Interrupted);
+}
+
+/// 특성화: sidecar가 없는 `.part`도 줄 세우지 않는다.
+#[tokio::test(start_paused = true)]
+async fn auto_resume_skips_live_without_sidecar() {
+    let (n, status) = reopened_auto_resume(Script::new().live_part(16, 32), |h| {
+        std::fs::remove_file(sidecar_path(&h.output("a"))).unwrap();
+    })
+    .await;
+    assert_eq!(n, 0);
+    assert_eq!(status, JobStatus::Interrupted);
+}
+
+/// 회귀: 영상 조각이 있으면 받은 만큼 마무리하려고 줄 세운다.
+#[tokio::test(start_paused = true)]
+async fn auto_resume_requeues_live_with_media() {
+    let (n, status) = reopened_auto_resume(Script::new().live_part(16, 32), |_| {}).await;
+    assert_eq!(n, 1);
+    assert_ne!(status, JobStatus::Interrupted);
+}

@@ -631,7 +631,7 @@ pub struct EnqueueRequest {
     pub content_date: Option<String>,
     /// 구간 받기(빠른 다시보기만). 없으면 전체. 셸은 시작 < 끝과 방식만 검사한다(길이는 모른다, range.md §4.1)
     #[serde(default)]
-    #[ts(optional)]
+    #[ts(optional = nullable)]
     pub range: Option<TimeRangeDto>,
 }
 

@@ -525,6 +525,8 @@ impl<B: Backend> DownloadManager<B> {
         range: Option<TimeRangeDto>,
     ) -> Result<OutputCheck, AppError> {
         let folder = resolve_folder(folder, default_folder)?;
+        // `enqueue`가 거부할 구간에는 이름·충돌 판정도 내지 않는다(같은 규칙 한 곳)
+        let validated = crate::jobs::validated_range(kind, range)?;
         // 파일 시스템을 보는 동안 잠금을 쥐지 않도록 활성 경로를 먼저 떠 둔다.
         let active: Vec<(String, JobId)> = {
             let st = self.inner.lock();
@@ -547,7 +549,7 @@ impl<B: Backend> DownloadManager<B> {
                 quality_id,
                 kind,
                 platform: volume::platform_for_dir(&folder),
-                range: range.map(Into::into),
+                range: validated,
             },
             &find,
         ))

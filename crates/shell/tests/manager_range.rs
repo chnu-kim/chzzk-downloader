@@ -127,6 +127,23 @@ async fn enqueue_rejects_range_shell_can_judge() {
         .unwrap();
 }
 
+/// `check_output`도 `enqueue`와 같은 규칙으로 구간을 거른다(셸 안의 두 진입점이 어긋나지 않게).
+#[tokio::test(start_paused = true)]
+async fn check_output_rejects_range_enqueue_would_reject() {
+    let h = Harness::new(1);
+    let content = ContentRef::Video { video_no: 1 };
+    let check = |kind, r| {
+        h.mgr
+            .check_output(None, &h.downloads(), "a", &content, "720p", kind, Some(r))
+    };
+    let e = check(PlaybackKind::Progressive, dto(5_000, Some(10_000))).unwrap_err();
+    assert_eq!(e.code, ErrorCode::InvalidInput);
+    let e = check(PlaybackKind::LiveRewindHls, dto(5_000, Some(5_000))).unwrap_err();
+    assert_eq!(e.code, ErrorCode::InvalidInput);
+    let ok = check(PlaybackKind::LiveRewindHls, dto(5_000, Some(10_000))).unwrap();
+    assert_eq!(ok.file_name, "a (0.00.05~0.00.10)");
+}
+
 /// 일시정지 → 재개: 코어 요청의 `range`는 기록한 원값 그대로이고, 구간 `.part`를 이어받을 수 있는 것으로 센다.
 #[tokio::test(start_paused = true)]
 async fn resume_sends_recorded_range_and_counts_range_partial() {

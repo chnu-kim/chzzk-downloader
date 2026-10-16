@@ -947,6 +947,34 @@ describe('생방송 녹화(ADR-0025): 막대·남은 시간 없이 글자만', (
     expect(jobButtons(job(3, { status: 'paused', partialBytes: 1000 }), null).menu).toContain('restartFresh');
   });
 
+  it('받다 만 녹화는 어떤 오류로 끝나도 [이어받기]가 먼저다(D8)', () => {
+    // 코어는 이 오류들에도 `.part`를 남기고, 다음 실행이 조회 없이 받은 만큼 마무리한다
+    const cases: [string, ReturnType<typeof err>][] = [
+      ['unsupported', err('unsupported')],
+      ['playbackChanged', err('playbackChanged')],
+      ['authRequired resolve', err('authRequired', { stage: 'resolve' })],
+      ['noPlayback adult', err('noPlayback', { stage: 'resolve', payload: { type: 'noPlayback', adult: true } })],
+    ];
+    for (const [name, e] of cases) {
+      const j = live({ status: 'failed', partialBytes: 1000, progress: null, error: e });
+      const b = jobButtons(j, null);
+      expect(b.primary[0], name).toBe('resume');
+      expect(b.primary.filter((a) => a === 'resume'), name).toHaveLength(1);
+      expect([...b.primary, ...b.menu], name).not.toContain('restartFresh');
+      expect(failedCopy(j, false)?.body, name).toContain('받은 부분은 그대로 있어요');
+    }
+    // 오류가 고른 다른 동작은 뒤에 남는다
+    const changed = live({ status: 'failed', partialBytes: 1000, progress: null, error: err('playbackChanged') });
+    expect(jobButtons(changed, null).primary).toEqual(['resume', 'reresolve']);
+    // init만 든 녹화(셸이 partialBytes를 주지 않는다)와 VOD는 그대로다
+    const initOnly = live({ status: 'failed', partialBytes: null, progress: null, error: err('unsupported') });
+    expect(jobButtons(initOnly, null).primary).not.toContain('resume');
+    expect(failedCopy(initOnly, false)?.body).not.toContain('받은 부분은 그대로 있어요');
+    const vod = job(2, { status: 'failed', partialBytes: 1000, error: err('unsupported') });
+    expect(jobButtons(vod, null).primary).not.toContain('resume');
+    expect(failedCopy(vod, false)?.body).not.toContain('받은 부분은 그대로 있어요');
+  });
+
   it('오류 코드 notLive·nothingRecorded는 다시 시도 하나', () => {
     for (const code of ['notLive', 'nothingRecorded'] as const) {
       const j = live({ status: 'failed', progress: null, error: err(code) });

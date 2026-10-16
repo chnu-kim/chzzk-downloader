@@ -42,6 +42,11 @@ export interface ErrorContext {
   /** (Phase 3) 영상의 채널 이름과 로그인한 채널 이름 */
   channelName?: string;
   myChannel?: string;
+  /**
+   * D: 받다 만 녹화(생방송 + 영상 조각, 셸의 `partialBytes`)가 남은 항목. 코어는 어떤 오류로 끝나도 녹화를 지우지
+   * 않으므로(core.md 61) 오류 코드와 관계없이 본문 끝에 받은 부분 문장을 붙인다
+   */
+  keptRecording?: boolean;
 }
 
 export interface ErrorCopy {
@@ -209,6 +214,16 @@ function pathLine(label: string, path: string | null): string | null {
  * 문구·동작이 달라진다. 자리 조합은 이 함수 하나가 한다(content §9.2-10).
  */
 export function errorCopy(raw: AppError, ctx: ErrorContext): ErrorCopy {
+  const c = codeCopy(raw, ctx);
+  // 받다 만 녹화는 남는다. 이미 받은 부분을 말했거나(withPart) 파일을 지웠다고 말하는 본문(녹화에는 오지 않는
+  // VOD 전용 코드)에는 붙이지 않는다
+  if (ctx.place === 'job' && ctx.keptRecording && !c.body.includes(PART_KEPT) && !/지웠|지우고/.test(c.body)) {
+    return { ...c, body: withKept(c.body) };
+  }
+  return c;
+}
+
+function codeCopy(raw: AppError, ctx: ErrorContext): ErrorCopy {
   const e = raw.code === 'cancelled' ? { ...raw, code: 'internal' as const } : raw;
   const job = ctx.place === 'job';
   const hasPart = job && (ctx.partialBytes ?? 0) > 0;

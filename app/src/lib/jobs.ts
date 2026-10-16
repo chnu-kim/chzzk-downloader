@@ -460,7 +460,17 @@ const FROM_ERROR: Partial<Record<ActionId, JobAction>> = {
 /** 실패 항목의 오류 줄과 버튼(§9 D 열) */
 export function failedCopy(job: JobDto, cookiesEnabled: boolean) {
   if (!job.error) return null;
-  return errorCopy(job.error, { place: 'job', partialBytes: job.partialBytes, cookiesEnabled });
+  return errorCopy(job.error, {
+    place: 'job',
+    partialBytes: job.partialBytes,
+    cookiesEnabled,
+    keptRecording: keepsRecording(job),
+  });
+}
+
+/** 받다 만 녹화가 남은 생방송 작업. 셸은 영상 조각이 있을 때만 `partialBytes`를 준다(init만이면 `null`, core.md 61 M3) */
+function keepsRecording(job: JobDto): boolean {
+  return job.playbackKind === 'live' && (job.partialBytes ?? 0) > 0;
 }
 
 /**
@@ -480,7 +490,7 @@ export function jobButtons(
   let primary: JobAction[] = [];
   let cancel = false;
   // 받다 만 녹화는 다시 받을 수 없다: [처음부터 다시 받기]로 확인 없이 지우지 않는다(core.md 61). 지우려면 [취소]·[목록에서 지우기]다
-  const keepsRecording = job.playbackKind === 'live' && (job.partialBytes ?? 0) > 0;
+  const kept = keepsRecording(job);
   switch (job.status) {
     case 'queued':
       cancel = true;
@@ -507,10 +517,10 @@ export function jobButtons(
       primary = (c?.actions ?? ['retry'])
         .map((a) => FROM_ERROR[a])
         .filter((a): a is JobAction => !!a);
-      // 받다 만 녹화는 [처음부터 다시 받기]로 지우지 않는다(core.md 61). 받은 부분 저장은 [이어받기]다
-      if (keepsRecording) {
-        primary = primary.filter((a) => a !== 'restartFresh');
-        if (primary.length === 0) primary = ['resume'];
+      // 받다 만 녹화는 [처음부터 다시 받기]로 지우지 않는다(core.md 61). 받은 부분 저장은 어떤 오류든 [이어받기]다(D8):
+      // 코어는 녹화를 남기고 다음 실행이 조회 없이 받은 만큼 마무리한다. 오류가 고른 다른 동작은 그 뒤에 둔다
+      if (kept) {
+        primary = ['resume', ...primary.filter((a) => a !== 'restartFresh' && a !== 'resume')];
       }
       break;
     }
@@ -523,7 +533,7 @@ export function jobButtons(
   }
   const menu: JobAction[] = ['showTitle', 'copyUrl'];
   const stopped = job.status === 'paused' || job.status === 'interrupted' || job.status === 'failed';
-  if (stopped && (job.partialBytes ?? 0) > 0 && !keepsRecording) menu.push('restartFresh');
+  if (stopped && (job.partialBytes ?? 0) > 0 && !kept) menu.push('restartFresh');
   if (job.status === 'failed') menu.push('copyReport');
   if (job.status === 'completed' || job.status === 'skipped' || job.status === 'failed') menu.push('remove');
   const open = (a: JobAction) => !block || !RESUMING.includes(a);

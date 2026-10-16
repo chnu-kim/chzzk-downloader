@@ -12,7 +12,7 @@
 
 use chzzk_core::{
     ContentKind, ContentMeta, ContentRef, DuplicatePolicy, LegacyImport, Phase, Platform,
-    PlaybackKind, Progress, Quality, RecentKind, RecentVod, Resolved, TextScale, Theme,
+    PlaybackKind, Progress, Quality, RecentKind, RecentVod, Resolved, TextScale, Theme, TimeRange,
     naming::default_filename,
 };
 use serde::{Deserialize, Deserializer, Serialize};
@@ -555,7 +555,7 @@ pub struct OutputCheck {
     pub file_name: String,
     /// 최종 경로
     pub path: String,
-    /// 입력과 `file_name`이 다르다
+    /// 입력과 `file_name`이 다르다(잘림·정리·구간 접미사)
     pub truncated: bool,
     /// 완성 파일이 있다
     pub exists: bool,
@@ -578,6 +578,30 @@ pub struct PartialInfo {
     /// 다시 받을 수 없는 생방송 녹화의 `.part`다(sidecar `kind = live`). 새 요청은 이 녹화의 주인일 수 없어 `same_job`은 늘 false다.
     /// 카드는 이 이름을 쓰지 않고 `free_file_name`(번호 이름)으로 받는다(core.md 61)
     pub recording: bool,
+}
+
+/// 구간 받기의 시각 구간(ms, 반열린 `[start, end)`). 사용자가 넣은 값 그대로다.
+/// `endMs = null`은 영상 길이를 모를 때의 "끝까지"이고 셸·코어에서도 `None`으로 둔다(센티널 값 없음).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct TimeRangeDto {
+    pub start_ms: u64,
+    #[serde(default)]
+    pub end_ms: Option<u64>,
+}
+
+impl From<TimeRange> for TimeRangeDto {
+    fn from(r: TimeRange) -> Self {
+        let TimeRange { start_ms, end_ms } = r;
+        Self { start_ms, end_ms }
+    }
+}
+
+impl From<TimeRangeDto> for TimeRange {
+    fn from(r: TimeRangeDto) -> Self {
+        let TimeRangeDto { start_ms, end_ms } = r;
+        Self { start_ms, end_ms }
+    }
 }
 
 /// `enqueue` 인자.
@@ -605,6 +629,10 @@ pub struct EnqueueRequest {
     #[serde(default)]
     #[ts(optional)]
     pub content_date: Option<String>,
+    /// 구간 받기(빠른 다시보기만). 없으면 전체. 셸은 시작 < 끝과 방식만 검사한다(길이는 모른다, range.md §4.1)
+    #[serde(default)]
+    #[ts(optional)]
+    pub range: Option<TimeRangeDto>,
 }
 
 /// 완성 파일이 이미 있을 때.
@@ -688,6 +716,8 @@ pub struct JobDto {
     /// paused·interrupted·failed로 바뀐 시각(unix 초). 그 밖 상태와 옛 레코드는 null.
     /// "멈춘 지 30일" 판단에 쓴다(`finishedAt`은 완료·건너뜀 전용이라 따로 둔다)
     pub stopped_at: Option<u64>,
+    /// 구간 받기 작업의 요청 구간(사용자 입력 원값). 전체 받기는 null
+    pub range: Option<TimeRangeDto>,
 }
 
 /// 웹뷰 엔진 기능 검사(platform §5, `frontend_ready`의 인자). 하나라도 false면 프런트가 경고 배너를 띄운다.

@@ -200,6 +200,7 @@ pub fn request(name: &str) -> EnqueueRequest {
         on_existing: OnExisting::Overwrite,
         restart: false,
         content_date: None,
+        range: None,
     }
 }
 

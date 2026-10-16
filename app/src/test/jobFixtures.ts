@@ -70,6 +70,7 @@ export function job(id: number, over: Partial<JobDto> = {}): JobDto {
     createdAt: id,
     finishedAt: null,
     stoppedAt: null,
+    range: null,
     ...over,
   };
 }

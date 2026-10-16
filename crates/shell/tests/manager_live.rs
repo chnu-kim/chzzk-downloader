@@ -392,7 +392,15 @@ async fn failed_recording_is_not_a_duplicate_in_check_output() {
     };
     let c = h
         .mgr
-        .check_output(None, &h.downloads(), "a", &live, "720p", PlaybackKind::Live)
+        .check_output(
+            None,
+            &h.downloads(),
+            "a",
+            &live,
+            "720p",
+            PlaybackKind::Live,
+            None,
+        )
         .unwrap();
     assert_eq!(c.duplicate_job_id, None);
     assert!(c.partial.is_some_and(|p| p.recording));

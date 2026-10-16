@@ -2,6 +2,7 @@
 import type { ContentRef } from "./ContentRef";
 import type { OnExisting } from "./OnExisting";
 import type { PlaybackKind } from "./PlaybackKind";
+import type { TimeRangeDto } from "./TimeRangeDto";
 
 /**
  * `enqueue` 인자.
@@ -22,4 +23,8 @@ restart: boolean,
 /**
  * 방송·공개 날짜(`meta.liveOpenDate ?? meta.publishDate`). 최근 영상 둘째 줄에만 쓴다. 없어도 된다
  */
-contentDate?: string, };
+contentDate?: string, 
+/**
+ * 구간 받기(빠른 다시보기만). 없으면 전체. 셸은 시작 < 끝과 방식만 검사한다(길이는 모른다, range.md §4.1)
+ */
+range?: TimeRangeDto, };

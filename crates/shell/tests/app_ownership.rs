@@ -241,6 +241,7 @@ fn request(folder: &Path, name: &str, channel_id: Option<&str>) -> EnqueueReques
         on_existing: OnExisting::Overwrite,
         restart: false,
         content_date: None,
+        range: None,
     }
 }
 
@@ -264,6 +265,7 @@ fn record(id: u64, channel: Option<&str>, out: &Path) -> JobRecord {
         created_at: 1_759_650_000,
         finished_at: None,
         stopped_at: None,
+        range: None,
         final_bytes: None,
         last_error: None,
         discard_on_start: false,

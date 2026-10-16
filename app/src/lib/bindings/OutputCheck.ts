@@ -15,7 +15,7 @@ fileName: string,
  */
 path: string, 
 /**
- * 입력과 `file_name`이 다르다
+ * 입력과 `file_name`이 다르다(잘림·정리·구간 접미사)
  */
 truncated: boolean, 
 /**

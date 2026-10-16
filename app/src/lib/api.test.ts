@@ -63,6 +63,26 @@ describe('api.ts', () => {
       'check_output',
       { folder: null, fileName: 'f', content, qualityId: 'q', expectedKind: 'liveRewindHls' },
     ],
+    [
+      () =>
+        api.checkOutput({
+          folder: null,
+          fileName: 'f',
+          content,
+          qualityId: 'q',
+          expectedKind: 'liveRewindHls',
+          range: { startMs: 600_000, endMs: null },
+        }),
+      'check_output',
+      {
+        folder: null,
+        fileName: 'f',
+        content,
+        qualityId: 'q',
+        expectedKind: 'liveRewindHls',
+        range: { startMs: 600_000, endMs: null },
+      },
+    ],
     [() => api.enqueue(req), 'enqueue', { req }],
     [() => api.listJobs(), 'list_jobs', {}],
     [() => api.subscribeJobs(new api.Channel<JobEvent>()), 'subscribe_jobs', { onEvent: expect.anything() }],

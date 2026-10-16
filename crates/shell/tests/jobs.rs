@@ -27,6 +27,7 @@ fn record(id: u64, status: JobStatus) -> JobRecord {
         created_at: 1_759_650_000,
         finished_at: None,
         stopped_at: None,
+        range: None,
         final_bytes: None,
         last_error: None,
         discard_on_start: false,

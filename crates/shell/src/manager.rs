@@ -41,8 +41,8 @@ use tokio::task::JoinHandle;
 
 use crate::backend::Backend;
 use crate::dto::{
-    ContentKindDto, EnqueueRequest, JobDto, JobEvent, JobId, JobStatus, OnExisting, OutputCheck,
-    ProgressDto, TimeRangeDto,
+    ContentKindDto, EnqueueRequest, JobDto, JobEvent, JobId, JobStatus, LiveEndDto, OnExisting,
+    OutputCheck, ProgressDto, TimeRangeDto,
 };
 use crate::error::{AppError, Stage};
 use crate::events::EventSink;
@@ -494,6 +494,7 @@ impl<B: Backend> DownloadManager<B> {
             finished_at: None,
             stopped_at: None,
             final_bytes: None,
+            live_end: None,
             last_error: None,
             discard_on_start: req.restart,
             partial_bytes: None,
@@ -1138,6 +1139,7 @@ impl<B: Backend> Inner<B> {
         r.last_error = None;
         r.finished_at = None;
         r.final_bytes = None;
+        r.live_end = None; // 다시 줄 선 작업이 옛 끝 정보를 들고 다니지 않게(방어, 완료 작업은 resume이 거부한다)
         r.partial_bytes = None;
         r.missing = false;
         job.stop = None;
@@ -1243,9 +1245,10 @@ impl<B: Backend> Inner<B> {
             let r = &mut job.rec;
             let now = now_secs();
             match end {
-                End::Done(DownloadOutcome::Completed { bytes, .. }) => {
+                End::Done(DownloadOutcome::Completed { bytes, live, .. }) => {
                     r.set_status(JobStatus::Completed, now);
                     r.final_bytes = Some(bytes);
+                    r.live_end = live.map(LiveEndDto::from);
                     r.finished_at = Some(now_secs());
                     r.partial_bytes = None;
                     job.last_progress = None;

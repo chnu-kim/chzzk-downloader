@@ -222,6 +222,7 @@ fn v070_live_record(out: &std::path::Path, status: JobStatus) -> chzzk_shell::jo
         discard_on_start: false,
         partial_bytes: None,
         missing: false,
+        live_end: None,
     }
 }
 

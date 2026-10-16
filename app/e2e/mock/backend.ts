@@ -396,6 +396,7 @@ export function install(scenario: Scenario = {}): E2EController {
         finishedAt: null,
         stoppedAt: null,
         range: req.range ?? null,
+        liveEnd: null,
       };
       put(job, 'added');
       return job;

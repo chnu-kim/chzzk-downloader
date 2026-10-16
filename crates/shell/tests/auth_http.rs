@@ -671,3 +671,278 @@ fn offset_time_bounds_in_bundle_and_start() {
         );
     }
 }
+
+// ---- /api/me·편집자 API ----
+
+const X: &str = "000000000000000000000000000000d4";
+const Y: &str = "000000000000000000000000000000e5";
+
+async fn mount_get(server: &MockServer, p: &str, r: ResponseTemplate) {
+    Mock::given(method("GET"))
+        .and(path(p))
+        .respond_with(r)
+        .mount(server)
+        .await;
+}
+
+fn me_json() -> Value {
+    json!({
+        "channelId": CH,
+        "channelName": "채널",
+        "accessExpiresAt": "2030-01-02T00:00:00.000Z",
+        "serverTime": "2030-01-01T00:00:00.000Z",
+        "delegatedChannels": [{"channelId": X, "channelName": "맡은채널", "since": "2030-01-01T00:00:00.000Z"}],
+        "editors": [{"channelId": Y, "channelName": "편집자", "since": "2030-01-01T00:00:00.000Z", "status": "pending"}],
+        "pendingInviteUntil": "2030-01-08T00:00:00.000Z",
+        "limits": {"editors": 10, "delegations": 20},
+    })
+}
+
+#[tokio::test]
+async fn h1_me_get_with_bearer() {
+    let (server, _, api) = setup().await;
+    mount_get(&server, "/api/me", json_resp(200, &me_json().to_string())).await;
+    let me = api.me(&at()).await.unwrap();
+    let reqs = server.received_requests().await.unwrap();
+    assert_eq!(reqs[0].method.as_str(), "GET");
+    assert_eq!(
+        reqs[0]
+            .headers
+            .get("authorization")
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        format!("Bearer {}", tok("cda_", "acc1"))
+    );
+    assert!(reqs[0].body.is_empty());
+    assert_eq!(me.channel_id, CH);
+    assert_eq!(me.delegated.len(), 1);
+    assert_eq!(me.delegated[0].channel.channel_id, X);
+    assert!(me.delegated[0].since.is_some());
+    assert_eq!(me.editors[0].status, EditorStatus::Pending);
+    assert!(me.pending_invite_until.is_some());
+}
+
+#[tokio::test]
+async fn h2_invite_post_empty_object() {
+    let (server, _, api) = setup().await;
+    let url = format!("{}/invite/{}", server.uri(), tok("cdi_", "one"));
+    mount(
+        &server,
+        "/api/editors/invite",
+        json_resp(
+            200,
+            &json!({"inviteUrl": url, "expiresAt": "2030-01-08T00:00:00.000Z"}).to_string(),
+        ),
+    )
+    .await;
+    let r = api.create_invite(&at()).await.unwrap();
+    assert_eq!(r.invite_url.expose(), url);
+    assert_eq!(last_body(&server).await, json!({}));
+    let reqs = server.received_requests().await.unwrap();
+    assert!(
+        reqs[0]
+            .headers
+            .get("authorization")
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .starts_with("Bearer cda_")
+    );
+}
+
+#[tokio::test]
+async fn h3_remove_and_leave_bodies() {
+    let (server, _, api) = setup().await;
+    mount(&server, "/api/editors/remove", ResponseTemplate::new(204)).await;
+    mount(
+        &server,
+        "/api/delegations/leave",
+        ResponseTemplate::new(204),
+    )
+    .await;
+    api.remove_editor(&at(), Y).await.unwrap();
+    assert_eq!(last_body(&server).await, json!({"channelId": Y}));
+    api.leave_delegation(&at(), X).await.unwrap();
+    assert_eq!(last_body(&server).await, json!({"channelId": X}));
+}
+
+#[tokio::test]
+async fn h4_not_enabled_is_worker_error() {
+    let (server, _, api) = setup().await;
+    mount(
+        &server,
+        "/api/editors/invite",
+        json_resp(404, r#"{"code":"not_enabled"}"#),
+    )
+    .await;
+    mount(
+        &server,
+        "/api/editors/remove",
+        json_resp(404, r#"{"code":"not_found"}"#),
+    )
+    .await;
+    assert_eq!(
+        api.create_invite(&at()).await.unwrap_err(),
+        ApiError::Worker {
+            status: 404,
+            code: "not_enabled".into()
+        }
+    );
+    assert_eq!(
+        api.remove_editor(&at(), Y).await.unwrap_err(),
+        ApiError::Worker {
+            status: 404,
+            code: "not_found".into()
+        }
+    );
+}
+
+// ---- 파서(P1~P5) ----
+
+fn delegated_el(id: &str, name: Value) -> Value {
+    json!({"channelId": id, "channelName": name})
+}
+
+fn bundle_with_delegated(list: Value) -> Vec<u8> {
+    let mut b = bundle_json();
+    b["delegatedChannels"] = list;
+    b.to_string().into_bytes()
+}
+
+#[test]
+fn p1_bundle_without_key_is_empty_list() {
+    let b = parse_bundle(bundle_json().to_string().as_bytes()).unwrap();
+    assert!(b.delegated_channels.is_empty());
+}
+
+#[test]
+fn p2_delegated_element_rules() {
+    let upper = "000000000000000000000000000000D4";
+    let short = &X[1..];
+    let long_name = "가".repeat(200);
+    let mut many: Vec<Value> = (0..25)
+        .map(|n| delegated_el(&format!("{:032x}", 0x1000 + n), json!("c")))
+        .collect();
+    let list = json!([
+        delegated_el(upper, json!("대문자")),
+        delegated_el(short, json!("31자")),
+        delegated_el(Y, json!(7)),
+        5,
+        delegated_el(X, json!(long_name)),
+        delegated_el(X, json!("중복")),
+        delegated_el(CH, json!("자기 채널")),
+    ]);
+    let b = parse_bundle(&bundle_with_delegated(list)).unwrap();
+    assert_eq!(b.delegated_channels.len(), 1);
+    assert_eq!(b.delegated_channels[0].channel_id, X);
+    assert_eq!(b.delegated_channels[0].channel_name.chars().count(), 128);
+    // 25개는 20개까지
+    many.insert(0, delegated_el(X, json!("x")));
+    let b = parse_bundle(&bundle_with_delegated(Value::Array(many))).unwrap();
+    assert_eq!(b.delegated_channels.len(), DELEGATED_MAX);
+}
+
+#[test]
+fn p3_bad_delegated_does_not_reject_bundle() {
+    for bad in [json!(5), json!("x"), json!({"a": 1}), json!([null, 1, "z"])] {
+        let b = parse_bundle(&bundle_with_delegated(bad)).expect("묶음은 Some");
+        assert!(b.delegated_channels.is_empty());
+    }
+}
+
+#[test]
+fn p4_parse_me_rules() {
+    let body = |f: &dyn Fn(&mut Value)| {
+        let mut v = me_json();
+        f(&mut v);
+        v.to_string().into_bytes()
+    };
+    // channelId 없음·틀림·channelName 없음 → None
+    assert!(
+        parse_me(&body(&|v| {
+            v.as_object_mut().unwrap().remove("channelId");
+        }))
+        .is_none()
+    );
+    assert!(parse_me(&body(&|v| v["channelId"] = json!("ABC"))).is_none());
+    assert!(
+        parse_me(&body(&|v| {
+            v.as_object_mut().unwrap().remove("channelName");
+        }))
+        .is_none()
+    );
+    // editors: 모르는 status·since 없음 버림, 중복 버림
+    let me = parse_me(&body(&|v| {
+        v["editors"] = json!([
+            {"channelId": Y, "channelName": "a", "since": "2030-01-01T00:00:00Z", "status": "weird"},
+            {"channelId": Y, "channelName": "b", "status": "active"},
+            {"channelId": Y, "channelName": "c", "since": "2030-01-01T00:00:00Z", "status": "active"},
+            {"channelId": Y, "channelName": "d", "since": "2030-01-01T00:00:00Z", "status": "pending"},
+        ]);
+    }))
+    .unwrap();
+    assert_eq!(me.editors.len(), 1);
+    assert_eq!(me.editors[0].channel_name, "c");
+    assert_eq!(me.editors[0].status, EditorStatus::Active);
+    // pendingInviteUntil null, limits 없음 → 기본
+    let me = parse_me(&body(&|v| {
+        v["pendingInviteUntil"] = Value::Null;
+        v.as_object_mut().unwrap().remove("limits");
+    }))
+    .unwrap();
+    assert!(me.pending_invite_until.is_none());
+    assert_eq!((me.editors_max, me.delegations_max), (10, 20));
+    // limits 범위 밖 → 기본
+    let me = parse_me(&body(&|v| {
+        v["limits"] = json!({"editors": 0, "delegations": 5000})
+    }))
+    .unwrap();
+    assert_eq!((me.editors_max, me.delegations_max), (10, 20));
+    // 키가 모두 없는 옛 Worker: 빈 목록
+    let me = parse_me(
+        json!({"channelId": CH, "channelName": "채널"})
+            .to_string()
+            .as_bytes(),
+    )
+    .unwrap();
+    assert!(me.delegated.is_empty() && me.editors.is_empty());
+    // delegated since 있음/없음
+    let me = parse_me(&body(&|v| {
+        v["delegatedChannels"] = json!([
+            {"channelId": X, "channelName": "a", "since": "2030-01-01T00:00:00Z"},
+            {"channelId": Y, "channelName": "b"},
+        ]);
+    }))
+    .unwrap();
+    assert!(me.delegated[0].since.is_some());
+    assert!(me.delegated[1].since.is_none());
+}
+
+#[test]
+fn p5_parse_invite_rules() {
+    let b = base();
+    let good = format!("{ORIGIN}/invite/{}", tok("cdi_", "one"));
+    let body =
+        |url: &str| json!({"inviteUrl": url, "expiresAt": "2030-01-08T00:00:00Z"}).to_string();
+    assert!(parse_invite(body(&good).as_bytes(), &b).is_some());
+    // 다른 출처
+    let other = format!("https://evil.example.invalid/invite/{}", tok("cdi_", "one"));
+    assert!(parse_invite(body(&other).as_bytes(), &b).is_none());
+    // cdi_ 42자
+    let short = format!("{ORIGIN}/invite/cdi_{}", "A".repeat(42));
+    assert!(parse_invite(body(&short).as_bytes(), &b).is_none());
+    // 접두가 다른 토큰
+    let wrong = format!("{ORIGIN}/invite/{}", tok("cdr_", "one"));
+    assert!(parse_invite(body(&wrong).as_bytes(), &b).is_none());
+    // 만료가 시각이 아님
+    assert!(
+        parse_invite(
+            json!({"inviteUrl": good, "expiresAt": "soon"})
+                .to_string()
+                .as_bytes(),
+            &b
+        )
+        .is_none()
+    );
+}

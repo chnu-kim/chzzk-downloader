@@ -151,6 +151,7 @@ function bundle(ctx, access, refresh) {
     channelId: ctx.channelId ?? OWN_CHANNEL_ID,
     channelName: STUB_CHANNEL_NAME,
     isAdmin: false,
+    delegatedChannels: ctx.delegated ?? [],
     serverTime: iso(ctx.now),
   };
 }
@@ -196,6 +197,10 @@ export function workerRoute(method, path, ctx) {
         channelName: STUB_CHANNEL_NAME,
         accessExpiresAt: iso(ctx.now + 24 * 3600_000),
         serverTime: iso(ctx.now),
+        delegatedChannels: (ctx.delegated ?? []).map((d) => ({ ...d, since: iso(ctx.now) })),
+        editors: [],
+        pendingInviteUntil: null,
+        limits: { editors: 10, delegations: 20 },
       },
     };
   }
@@ -207,7 +212,7 @@ const MAX_BODY = 64 * 1024;
 
 // Worker 스텁 리스너(127.0.0.1:0) → { origin(끝 / 없음), log: [{method, path, status}], close() }. 요청 기록은 fixture 서버와 따로다
 // (fixture는 모든 응답이 200이어야 하고, 스텁은 201·204·303·404를 쓴다). 로그인 기록(포트·verifier)은 이 리스너가 쥔다.
-export function startWorker({ channelId = OWN_CHANNEL_ID } = {}) {
+export function startWorker({ channelId = OWN_CHANNEL_ID, delegated = [] } = {}) {
   const log = [];
   const ctx = { login: null };
   return new Promise((resolve, reject) => {
@@ -230,7 +235,7 @@ export function startWorker({ channelId = OWN_CHANNEL_ID } = {}) {
         }
         const origin = `http://127.0.0.1:${server.address().port}`;
         const bearer = /^Bearer (\S+)$/.exec(req.headers.authorization ?? '')?.[1] ?? null;
-        Object.assign(ctx, { origin, now: Date.now(), bearer, channelId, body });
+        Object.assign(ctx, { origin, now: Date.now(), bearer, channelId, delegated, body });
         const r = workerRoute(req.method ?? 'GET', u.pathname, ctx);
         log.push({ method: req.method, path: u.pathname, status: r.status });
         if (r.body === null) {

@@ -91,6 +91,8 @@ export function signedInAs(channelId: string | null, channelName: string | null 
     verifiedAt: null,
     canReconnect: false,
     isAdmin: false,
+    delegatedChannels: [],
+    delegationsCheckedAt: null,
   };
 }
 

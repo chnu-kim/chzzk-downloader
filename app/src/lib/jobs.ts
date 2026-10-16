@@ -560,6 +560,9 @@ export function jobBlock(job: JobDto, me: AuthStatusDto | null): JobBlock | null
   // 관리자는 다른 채널의 작업도 이어받는다(worker.md 102)
   if (me.isAdmin) return null;
   if (!REQUEUEABLE.includes(job.status) || job.channelId == null) return null;
+  // 맡은 채널의 영상·클립은 이어받는다(생방송은 v1에서 맡은 채널로 받지 않는다, delegation.md §9.1)
+  const ch = job.channelId.toLowerCase();
+  if (job.kind !== 'live' && me.delegatedChannels.some((d) => d.channelId.toLowerCase() === ch)) return null;
   return job.channelId.toLowerCase() === me.channelId.trim().toLowerCase() ? null : 'otherChannel';
 }
 

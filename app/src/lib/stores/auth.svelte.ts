@@ -1,12 +1,12 @@
 // 로그인 상태(worker.md §11, 구현 중 변경 62). 상태 판단은 Rust(`AuthService`)가 하고 여기서는 받은 값을 따라가며,
 // 화면은 이 값 하나로 게이트를 그린다. 셸 command 게이트(55)가 권위이고 화면은 어긋나지 않게만 한다.
 import * as api from '../api';
-import type { AuthStatusDto } from '../bindings';
+import type { AuthStatusDto, ChannelRefDto } from '../bindings';
 import { errorCopy, toAppError } from '../copy/errors';
 import { t } from '../copy/ko';
 import { toasts } from './toast.svelte';
 
-const EMPTY = { channelId: null, channelName: null, reason: null, pending: null, offline: null, verifiedAt: null, canReconnect: false, isAdmin: false } as const;
+const EMPTY = { channelId: null, channelName: null, reason: null, pending: null, offline: null, verifiedAt: null, canReconnect: false, isAdmin: false, delegatedChannels: [] as ChannelRefDto[], delegationsCheckedAt: null } as const;
 
 /** 상태를 알 수 없을 때(시작 실패 등): 닫힌 채로 두고 로그인 화면의 [다시 로그인]으로 갈 길을 둔다. 원인은 단정하지 않는다(사유 없음) */
 export const AUTH_UNKNOWN_ERROR: AuthStatusDto = { ...EMPTY, state: 'error' };

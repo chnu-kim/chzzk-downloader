@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use time::format_description::well_known::Rfc3339;
 use time::{OffsetDateTime, UtcOffset};
 
-use super::api::TokenBundle;
+use super::api::{DELEGATED_MAX, DelegatedChannel, TokenBundle};
 use super::base::WorkerBase;
 use super::token;
 
@@ -36,6 +36,8 @@ pub struct StoredSession {
     pub refresh_expires_at: OffsetDateTime,
     /// 마지막으로 서버가 확인해 준 시각(로컬 시계)
     pub verified_at: OffsetDateTime,
+    /// 맡은 채널(주인의 판정용 채널 ID·이름). 마지막으로 서버가 준 목록이다
+    pub delegated_channels: Vec<DelegatedChannel>,
 }
 
 impl StoredSession {
@@ -50,6 +52,7 @@ impl StoredSession {
             refresh_token: b.refresh_token,
             refresh_expires_at: b.refresh_expires_at,
             verified_at,
+            delegated_channels: b.delegated_channels,
         }
     }
 }
@@ -65,6 +68,7 @@ impl fmt::Debug for StoredSession {
             .field("refresh_token", &"***")
             .field("refresh_expires_at", &self.refresh_expires_at)
             .field("verified_at", &self.verified_at)
+            .field("delegated_channels", &self.delegated_channels)
             .finish()
     }
 }
@@ -82,6 +86,36 @@ struct SessionFile {
     refresh_token: String,
     refresh_expires_at: String,
     verified_at: String,
+    /// 원소 하나가 틀려도 파일 전체가 Corrupt(= 로그아웃)가 되지 않게 `Value`로 받아 손으로 거른다
+    #[serde(default)]
+    delegated_channels: serde_json::Value,
+}
+
+/// 파일의 맡은 채널 값 → 목록. 배열이 아니면 빈 목록, 틀린 원소·자기 채널·중복은 버리고 상한까지만 받는다
+fn load_delegated(v: &serde_json::Value, self_id: &str) -> Vec<DelegatedChannel> {
+    let Some(arr) = v.as_array() else {
+        return Vec::new();
+    };
+    let mut out: Vec<DelegatedChannel> = Vec::new();
+    for el in arr {
+        if out.len() >= DELEGATED_MAX {
+            break;
+        }
+        let (Some(id), Some(name)) = (
+            el.get("channelId").and_then(|x| x.as_str()),
+            el.get("channelName").and_then(|x| x.as_str()),
+        ) else {
+            continue;
+        };
+        if !token::is_channel_id(id) || id == self_id || out.iter().any(|d| d.channel_id == id) {
+            continue;
+        }
+        out.push(DelegatedChannel {
+            channel_id: id.to_string(),
+            channel_name: name.chars().take(128).collect(),
+        });
+    }
+    out
 }
 
 /// 읽은 결과(D21). `Loaded` 말고는 모두 로그인 안 함으로 시작하고 파일은 지우지 않는다.
@@ -203,6 +237,7 @@ impl SessionStore {
         {
             return LoadOutcome::Corrupt;
         }
+        let delegated_channels = load_delegated(&f.delegated_channels, &f.channel_id);
         LoadOutcome::Loaded(StoredSession {
             channel_id: f.channel_id,
             channel_name: f.channel_name,
@@ -212,6 +247,7 @@ impl SessionStore {
             refresh_token: Secret::new(f.refresh_token),
             refresh_expires_at,
             verified_at,
+            delegated_channels,
         })
     }
 
@@ -238,6 +274,17 @@ impl SessionStore {
             refresh_token: s.refresh_token.expose().clone(),
             refresh_expires_at: time(s.refresh_expires_at)?,
             verified_at: time(s.verified_at)?,
+            delegated_channels: serde_json::Value::Array(
+                s.delegated_channels
+                    .iter()
+                    .map(|d| {
+                        serde_json::json!({
+                            "channelId": d.channel_id,
+                            "channelName": d.channel_name,
+                        })
+                    })
+                    .collect(),
+            ),
         };
         let bytes = serde_json::to_vec_pretty(&file).map_err(|_| StoreError {
             op: "serialize",

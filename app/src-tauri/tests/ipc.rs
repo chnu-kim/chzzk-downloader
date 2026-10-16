@@ -917,6 +917,7 @@ fn save_session_at(dir: &Path, worker: &MockServer, verified_ago: time::Duration
         refresh_token: chzzk_core::Secret::new(format!("cdr_{}", "B".repeat(43))),
         refresh_expires_at: verified + time::Duration::days(30),
         verified_at: verified,
+        delegated_channels: vec![],
     })
     .unwrap();
 }
@@ -969,7 +970,8 @@ fn wait_until(what: &str, secs: u64, pred: impl Fn() -> bool) {
 
 fn disabled_json() -> Value {
     json!({"state":"disabled","channelId":null,"channelName":null,"reason":null,
-           "pending":null,"offline":null,"verifiedAt":null,"canReconnect":false,"isAdmin":false})
+           "pending":null,"offline":null,"verifiedAt":null,"canReconnect":false,"isAdmin":false,
+           "delegatedChannels":[],"delegationsCheckedAt":null})
 }
 
 #[test]
@@ -994,7 +996,7 @@ fn gated_commands_reject_before_sign_in() {
         let e = invoke(&f.main, name, json!({})).unwrap_err();
         assert_eq!(e, want, "{name}");
     }
-    assert_eq!(n, 21);
+    assert_eq!(n, 26);
 }
 
 /// 앱 상태가 없을 때(시작 실패, worker.md 구현 중 변경 55): 허용 목록 밖은 처리기 전에 notLoggedIn(fail closed)
@@ -1020,7 +1022,7 @@ fn gate_without_app_state_fails_closed() {
         n += 1;
         assert_eq!(invoke(&main, name, json!({})).unwrap_err(), want, "{name}");
     }
-    assert_eq!(n, 21);
+    assert_eq!(n, 26);
     // 허용 목록은 게이트를 지나 처리기로 간다(상태가 없어 처리기 쪽 오류일 수는 있어도 notLoggedIn은 아니다)
     for name in ["app_info", "auth_status", "list_jobs"] {
         if let Err(e) = invoke(&main, name, json!({})) {
@@ -1040,7 +1042,8 @@ fn open_commands_work_while_signed_out() {
     assert_eq!(
         invoke(&f.main, "auth_status", json!({})).unwrap(),
         json!({"state":"signedOut","channelId":null,"channelName":null,"reason":null,
-               "pending":null,"offline":null,"verifiedAt":null,"canReconnect":false,"isAdmin":false})
+               "pending":null,"offline":null,"verifiedAt":null,"canReconnect":false,"isAdmin":false,
+           "delegatedChannels":[],"delegationsCheckedAt":null})
     );
     assert_eq!(invoke(&f.main, "list_jobs", json!({})).unwrap(), json!([]));
     invoke(&f.main, "frontend_ready", probe(true)).unwrap();

@@ -140,6 +140,18 @@ test('Worker 스텁 응답 모양: api.rs 파서 규칙', () => {
   assert.deepEqual(workerRoute('GET', '/update/0.1.0', ctx()), { status: 204, body: null });
   assert.equal(workerRoute('GET', '/api/me', ctx()).status, 401);
   assert.equal(workerRoute('GET', '/api/me', ctx({ bearer: 'cda_x' })).body.channelId, OWN_CHANNEL_ID);
+  // 맡은 채널(편집자 위임): 기본은 빈 목록, delegated 옵션은 묶음에 두 키, /api/me에는 since까지
+  assert.deepEqual(ok.body.delegatedChannels, []);
+  assert.deepEqual(workerRoute('GET', '/api/me', ctx({ bearer: 'cda_x' })).body.delegatedChannels, []);
+  const owner = { channelId: 'd'.repeat(32), channelName: '맡은채널' };
+  const withOwner = ctx({ delegated: [owner] });
+  assert.deepEqual(workerRoute('POST', '/auth/refresh', withOwner).body.delegatedChannels, [owner]);
+  const meBody = workerRoute('GET', '/api/me', ctx({ bearer: 'cda_x', delegated: [owner] })).body;
+  assert.deepEqual(meBody.delegatedChannels, [{ ...owner, since: meBody.delegatedChannels[0].since }]);
+  assert.ok(Date.parse(meBody.delegatedChannels[0].since) > 0);
+  assert.deepEqual(meBody.editors, []);
+  assert.equal(meBody.pendingInviteUntil, null);
+  assert.deepEqual(meBody.limits, { editors: 10, delegations: 20 });
   const nf = workerRoute('GET', '/nope', ctx());
   assert.equal(nf.status, 404);
   assert.equal(nf.body.code, 'not_found');

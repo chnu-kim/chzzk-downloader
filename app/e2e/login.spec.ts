@@ -1,12 +1,12 @@
 // 로그인 화면과 AuthGate(worker.md 구현 중 변경 62): 잠긴 동안 로그인 화면만 보이고, 풀리면 홈이 열린다.
-import type { AuthStatusDto } from '../src/lib/bindings';
+import type { AuthStatusDto, ChannelRefDto } from '../src/lib/bindings';
 import { channelRow, t, tRegex, whenText } from './copy';
 import { expect, test } from './fixtures';
 
 /** playwright.config의 timezoneId(Asia/Seoul)와 같은 UTC 오프셋(분) */
 const KST_OFFSET_MIN = 540;
 
-const EMPTY = { channelId: null, channelName: null, reason: null, pending: null, offline: null, verifiedAt: null, canReconnect: false, isAdmin: false } as const;
+const EMPTY = { channelId: null, channelName: null, reason: null, pending: null, offline: null, verifiedAt: null, canReconnect: false, isAdmin: false, delegatedChannels: [] as ChannelRefDto[], delegationsCheckedAt: null } as const;
 const auth = (over: Partial<AuthStatusDto> & Pick<AuthStatusDto, 'state'>): AuthStatusDto => ({ ...EMPTY, ...over });
 
 test('로그인 전에는 로그인 화면만 보이고 게이트 뒤 command를 부르지 않는다', async ({ app }) => {

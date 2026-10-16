@@ -2,7 +2,7 @@
 
 mod common;
 
-use chzzk_shell::auth::{LoadOutcome, SessionStore, WorkerBase};
+use chzzk_shell::auth::{DELEGATED_MAX, LoadOutcome, SessionStore, WorkerBase};
 use common::auth::*;
 use time::Duration;
 
@@ -45,6 +45,7 @@ fn file_shape_is_v1_with_origin() {
         "refreshToken",
         "refreshExpiresAt",
         "verifiedAt",
+        "delegatedChannels",
     ];
     want.sort();
     assert_eq!(keys, want);
@@ -369,4 +370,88 @@ fn clear_truncates_when_remove_fails() {
     r.unwrap();
     assert_eq!(len.unwrap(), 0);
     assert!(matches!(outcome, LoadOutcome::Corrupt), "{outcome:?}");
+}
+
+// ---- 맡은 채널(delegatedChannels) ----
+
+const X: &str = "000000000000000000000000000000d4";
+const Y: &str = "000000000000000000000000000000e5";
+
+/// 저장 뒤 파일을 JSON으로 읽어 고치고 다시 쓴다
+fn edit_file(dir: &std::path::Path, f: impl FnOnce(&mut serde_json::Value)) {
+    let mut v = good_json(dir);
+    f(&mut v);
+    std::fs::write(dir.join("session.json"), serde_json::to_vec(&v).unwrap()).unwrap();
+}
+
+#[test]
+fn ss1_delegated_roundtrip() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut s = stored(1, t0(), t0() + Duration::days(30));
+    s.delegated_channels = vec![delegated_channel(X), delegated_channel(Y)];
+    store(dir.path()).save(&s).unwrap();
+    assert_eq!(loaded(store(dir.path()).load()), s);
+}
+
+#[test]
+fn ss2_old_file_without_key_loads_empty() {
+    let dir = tempfile::tempdir().unwrap();
+    edit_file(dir.path(), |v| {
+        v.as_object_mut().unwrap().remove("delegatedChannels");
+    });
+    assert!(
+        loaded(store(dir.path()).load())
+            .delegated_channels
+            .is_empty()
+    );
+}
+
+#[test]
+fn ss3_bad_elements_are_dropped_not_corrupt() {
+    let dir = tempfile::tempdir().unwrap();
+    edit_file(dir.path(), |v| {
+        v["delegatedChannels"] = serde_json::json!([
+            5,
+            {"channelId": "000000000000000000000000000000D4", "channelName": "대문자"},
+            {"channelId": X, "channelName": 7},
+            {"channelId": X, "channelName": "맡은채널"},
+            {"channelId": X, "channelName": "중복"},
+            {"channelId": CH, "channelName": "자기 채널"},
+        ]);
+    });
+    let got = loaded(store(dir.path()).load());
+    assert_eq!(got.delegated_channels, vec![delegated_channel(X)]);
+
+    // 키 값 자체가 배열이 아니어도 파일 전체를 버리지 않는다
+    edit_file(dir.path(), |v| {
+        v["delegatedChannels"] = serde_json::json!(5)
+    });
+    assert!(
+        loaded(store(dir.path()).load())
+            .delegated_channels
+            .is_empty()
+    );
+}
+
+#[test]
+fn ss4_unknown_keys_are_ignored() {
+    // 옛 앱이 새 파일을 읽는 성질: 모르는 키가 있어도 읽힌다
+    let dir = tempfile::tempdir().unwrap();
+    edit_file(dir.path(), |v| v["futureKey"] = serde_json::json!(1));
+    loaded(store(dir.path()).load());
+}
+
+#[test]
+fn ss5_delegated_cap_is_enforced_on_load() {
+    let dir = tempfile::tempdir().unwrap();
+    edit_file(dir.path(), |v| {
+        let list: Vec<_> = (0..25)
+            .map(|n| serde_json::json!({"channelId": format!("{n:032x}"), "channelName": "c"}))
+            .collect();
+        v["delegatedChannels"] = serde_json::Value::Array(list);
+    });
+    assert_eq!(
+        loaded(store(dir.path()).load()).delegated_channels.len(),
+        DELEGATED_MAX
+    );
 }

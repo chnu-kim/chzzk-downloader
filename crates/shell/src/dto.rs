@@ -18,7 +18,9 @@ use chzzk_core::{
 use serde::{Deserialize, Deserializer, Serialize};
 use ts_rs::TS;
 
-use crate::auth::{AuthPhase, AuthReason, AuthStatus};
+use crate::auth::{
+    AuthPhase, AuthReason, AuthStatus, DelegatedChannel, EditorStatus, InviteResponse, MeResponse,
+};
 use crate::error::AppError;
 
 // ---------------------------------------------------------------------------
@@ -538,6 +540,8 @@ impl From<&Quality> for QualityDto {
 pub enum Ownership {
     Unchecked,
     Own,
+    /// 맡은 채널의 영상·클립(받을 수 있다). 생방송은 이 값이 되지 않는다
+    Delegated,
     NotOwn,
     Unknown,
     AdminOverride,
@@ -886,6 +890,123 @@ pub struct AuthStatusDto {
     pub can_reconnect: bool,
     /// 관리자(채널과 상관없이 받는다, worker.md 구현 중 변경 102). 안내·막힌 작업 표시용이고 판정은 셸이 한다
     pub is_admin: bool,
+    /// 맡은 채널(표시용: 설정 행·빈 상태·notOwn 제목 분기). 판정은 셸이 한다
+    pub delegated_channels: Vec<ChannelRefDto>,
+    /// 맡은 채널을 마지막으로 서버에서 확인한 시각(묶음 verified_at과 마지막 /api/me 중 늦은 것)
+    pub delegations_checked_at: Option<i64>,
+}
+
+/// 맡은 채널(표시용)
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ChannelRefDto {
+    pub channel_id: String,
+    pub channel_name: String,
+}
+
+impl From<&DelegatedChannel> for ChannelRefDto {
+    fn from(d: &DelegatedChannel) -> Self {
+        ChannelRefDto {
+            channel_id: d.channel_id.clone(),
+            channel_name: d.channel_name.clone(),
+        }
+    }
+}
+
+/// 편집자 상태
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub enum EditorStatusDto {
+    Active,
+    Pending,
+}
+
+/// 편집자 한 명(설정 › 계정 그룹)
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct EditorDto {
+    pub channel_id: String,
+    pub channel_name: String,
+    pub since: i64,
+    pub status: EditorStatusDto,
+}
+
+/// 맡은 채널과 맡은 시각(옛 Worker는 시각이 없다)
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct DelegatedChannelDto {
+    pub channel_id: String,
+    pub channel_name: String,
+    pub since: Option<i64>,
+}
+
+/// `editors_list` 결과(설정 › 계정 그룹)
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct EditorsDto {
+    pub editors: Vec<EditorDto>,
+    pub delegated_channels: Vec<DelegatedChannelDto>,
+    pub pending_invite_until: Option<i64>,
+    pub editors_max: u32,
+    pub delegations_max: u32,
+}
+
+impl From<&MeResponse> for EditorsDto {
+    fn from(m: &MeResponse) -> Self {
+        EditorsDto {
+            editors: m
+                .editors
+                .iter()
+                .map(|e| EditorDto {
+                    channel_id: e.channel_id.clone(),
+                    channel_name: e.channel_name.clone(),
+                    since: e.since.unix_timestamp(),
+                    status: match e.status {
+                        EditorStatus::Active => EditorStatusDto::Active,
+                        EditorStatus::Pending => EditorStatusDto::Pending,
+                    },
+                })
+                .collect(),
+            delegated_channels: m
+                .delegated
+                .iter()
+                .map(|d| DelegatedChannelDto {
+                    channel_id: d.channel.channel_id.clone(),
+                    channel_name: d.channel.channel_name.clone(),
+                    since: d.since.map(|t| t.unix_timestamp()),
+                })
+                .collect(),
+            pending_invite_until: m.pending_invite_until.map(|t| t.unix_timestamp()),
+            editors_max: m.editors_max,
+            delegations_max: m.delegations_max,
+        }
+    }
+}
+
+/// `editors_invite` 결과. 웹뷰가 주소를 보여 줘야 해서 직렬화는 그대로지만 `Debug`는 가린다
+#[derive(Clone, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct InviteDto {
+    pub url: String,
+    pub expires_at: i64,
+}
+
+impl std::fmt::Debug for InviteDto {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("InviteDto")
+            .field("url", &"***")
+            .field("expires_at", &self.expires_at)
+            .finish()
+    }
+}
+
+impl From<&InviteResponse> for InviteDto {
+    fn from(r: &InviteResponse) -> Self {
+        InviteDto {
+            url: r.invite_url.expose().to_string(),
+            expires_at: r.expires_at.unix_timestamp(),
+        }
+    }
 }
 
 /// 로그인 대기(로컬 기한)
@@ -916,6 +1037,8 @@ impl AuthStatusDto {
             verified_at: None,
             can_reconnect: false,
             is_admin: false,
+            delegated_channels: vec![],
+            delegations_checked_at: None,
         }
     }
 
@@ -931,6 +1054,10 @@ impl AuthStatusDto {
             offline,
             verified_at,
             has_session,
+            delegated_channels,
+            // 서버 확인 여부는 셸 안의 자동 이어받기 판단용이라 웹뷰에 보내지 않는다
+            delegations_verified: _,
+            delegations_checked_at,
         } = s;
         AuthStatusDto {
             state: AuthState::from(*phase),
@@ -947,6 +1074,8 @@ impl AuthStatusDto {
             verified_at: verified_at.map(|t| t.unix_timestamp()),
             can_reconnect: *has_session,
             is_admin: *is_admin,
+            delegated_channels: delegated_channels.iter().map(ChannelRefDto::from).collect(),
+            delegations_checked_at: delegations_checked_at.map(|t| t.unix_timestamp()),
         }
     }
 }

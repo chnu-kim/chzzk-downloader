@@ -288,6 +288,20 @@ impl AppError {
         )
     }
 
+    /// (Phase 3 ①) 로그인 서버에 닿지 못했다(맡은 채널 확인·편집자 API). 판정은 디스크 목록으로 계속한다
+    pub fn worker_unreachable() -> Self {
+        Self::shell(
+            ErrorCode::Network,
+            "로그인 서버에 연결하지 못했습니다",
+            None,
+        )
+    }
+
+    /// (Phase 3 ①) 로그인 서버가 아직 이 기능을 열지 않았다(404 not_enabled). 차단이 아니다
+    pub fn delegation_not_enabled() -> Self {
+        Self::shell(ErrorCode::Unsupported, "아직 쓸 수 없는 기능입니다", None)
+    }
+
     /// 있어서는 안 되는 상태.
     pub fn internal(message: impl Into<String>) -> Self {
         Self::shell(ErrorCode::Internal, message, None)

@@ -22,6 +22,8 @@ const me: AuthStatusDto = {
   verifiedAt: 1_767_322_800,
   canReconnect: false,
   isAdmin: false,
+  delegatedChannels: [],
+  delegationsCheckedAt: null,
 };
 
 test('남의 영상은 카드에서 막히고, 본인 영상은 받는다', async ({ app }) => {

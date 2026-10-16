@@ -15,13 +15,13 @@ use tokio::runtime::Handle;
 
 use crate::JobId;
 use crate::auth::{
-    AuthPhase, AuthService, AuthStatus, BeginLogin, HttpWorkerApi, SessionStore, SystemClock,
-    WorkerBase, client_label,
+    AuthPhase, AuthService, AuthStatus, BeginLogin, DelegatedChannel, DelegationCheck,
+    EditorsError, HttpWorkerApi, SessionStore, SystemClock, WorkerBase, client_label, token,
 };
 use crate::dto::{
-    AppFolder, AppInfo, AuthStatusDto, EnqueueRequest, Features, JobDto, OutputCheck, ResolvedDto,
-    SettingsDto, SettingsPatch, TimeRangeDto, UpdateCheckDto, UpdateInfoDto, UpdateInstallDto,
-    WebPage,
+    AppFolder, AppInfo, AuthStatusDto, EditorsDto, EnqueueRequest, Features, InviteDto, JobDto,
+    OutputCheck, ResolvedDto, SettingsDto, SettingsPatch, TimeRangeDto, UpdateCheckDto,
+    UpdateInfoDto, UpdateInstallDto, WebPage,
 };
 use crate::error::{AppError, ErrorCode};
 use crate::gate;
@@ -68,6 +68,8 @@ pub struct App {
     pub updates: Updates,
     /// 로그인 뒤로 미룬 재시작 후 자동 이어받기(D15)
     auto_resume_pending: AtomicBool,
+    /// 맡은 채널 작업의 자동 이어받기: 이번 실행에서 서버가 맡은 채널을 확인한 뒤의 첫 SignedIn에서만(delegation.md §9.3)
+    auto_resume_delegated_pending: AtomicBool,
     /// 로그인 폴링 태스크를 띄울 런타임
     runtime: Handle,
 }
@@ -176,6 +178,7 @@ impl App {
             worker_base,
             updates: Updates::default(),
             auto_resume_pending: AtomicBool::new(defer),
+            auto_resume_delegated_pending: AtomicBool::new(defer),
             runtime,
         })
     }
@@ -244,12 +247,25 @@ impl App {
 
     /// `enqueue`: 게이트 → 매니저 → 최근 VOD(§6.2).
     pub async fn enqueue(&self, req: EnqueueRequest) -> Result<JobDto, AppError> {
-        services::enqueue(&self.settings, &self.gate, &self.manager, req).await
+        services::enqueue_checked(&self.settings, &self.gate, &self.manager, req, || {
+            self.recheck()
+        })
+        .await
     }
 
     /// `resolve`: 주소를 풀고 본인 영상 판정을 붙인다(A5).
     pub async fn resolve(&self, url: &str) -> Result<ResolvedDto, AppError> {
-        self.settings.resolve(url, &self.gate).await
+        self.settings
+            .resolve_checked(url, &self.gate, || self.recheck())
+            .await
+    }
+
+    /// 판정 직전 맡은 채널 자동 확인(간격 5분·오프라인이면 건너뛴다). 결과는 로그인 상태와 디스크 목록에 반영되고
+    /// 호출자는 판정을 다시 한다. 서버에 닿지 못해도 판정은 디스크 목록으로 계속한다
+    async fn recheck(&self) {
+        if let Some(a) = &self.auth {
+            let _ = a.check_delegations(false).await;
+        }
     }
 
     /// `resume_job`(이어받기·다시 시도·처음부터·덮어쓰고 받기): 로그인한 채널의 영상만(A5).
@@ -270,7 +286,11 @@ impl App {
         };
         let owner = match self
             .gate
-            .admit(&content, || self.settings.content_channel(&content))
+            .admit_checked(
+                &content,
+                || self.settings.content_channel(&content),
+                || self.recheck(),
+            )
             .await
         {
             Ok(o) => o,
@@ -341,7 +361,8 @@ impl App {
     }
 
     /// 상태가 바뀔 때마다(처음 포함) 앱이 부른다. 채널 ID가 있는 처음 SignedIn에서 미뤄 둔 자동 이어받기를 한 번 하고,
-    /// 그 채널의 interrupted만 줄 세운다(83). 관리자는 모두 줄 세운다(102). 줄 세운 수
+    /// 그 채널의 interrupted만 줄 세운다(83). 관리자는 모두 줄 세운다(102). 줄 세운 수.
+    /// 맡은 채널 작업(둘째 깃발)은 여기서 하지 않는다: `take_delegated_resume` → `resume_delegated_interrupted`(79 (아))
     pub fn on_auth_status(&self, st: &AuthStatus) -> usize {
         if st.phase != AuthPhase::SignedIn {
             return 0;
@@ -357,11 +378,48 @@ impl App {
         let admin = st.is_admin;
         let n = self
             .manager
-            .resume_interrupted_where(|c| admin || is_own_channel(c, me) == Some(true));
+            .resume_interrupted_where(|_, c| admin || is_own_channel(c, me) == Some(true));
         tracing::info!(
             count = n,
             admin,
             "로그인 뒤 같은 채널의 멈춘 작업을 자동으로 이어받는다"
+        );
+        n
+    }
+
+    /// 맡은 채널 자동 이어받기 깃발(둘째)을 쓸 때인가: 채널 있는 SignedIn이고 이번 실행에서 서버가 맡은 채널을 확인했다.
+    /// true면 한 번뿐이고, 호출자가 `resume_delegated_interrupted`를 띄운다
+    pub fn take_delegated_resume(&self, st: &AuthStatus) -> bool {
+        st.phase == AuthPhase::SignedIn
+            && st.channel_id.is_some()
+            && st.delegations_verified
+            && self
+                .auto_resume_delegated_pending
+                .swap(false, Ordering::SeqCst)
+    }
+
+    /// 맡은 채널의 멈춘 작업을 자동으로 이어받는다(둘째 깃발, PR 리뷰 P2). 기록의 `channelId`는 후보를 고르는 데만 쓰고,
+    /// 작업마다 `resume_job`과 같은 `OwnershipGate::admit_checked`로 **컨텐츠**를 다시 판정한 뒤에만 줄 세운다
+    /// (최근 resolve 캐시, 없으면 info 한 번. 판정 직전 확인은 간격 규칙이라 묶음 전체에서 /api/me 한 번 이하).
+    /// 판정 실패·조회 실패는 줄 세우지 않는다(fail closed). 남의 영상이면 기록을 실제 채널로 고친다. 줄 세운 수
+    pub async fn resume_delegated_interrupted(&self, delegated: &[DelegatedChannel]) -> usize {
+        let ids = self
+            .manager
+            .interrupted_where(|content, c| delegated_resume_target(content, c, delegated));
+        let mut n = 0;
+        for id in ids {
+            match self.resume_job(id, false).await {
+                Ok(()) => n += 1,
+                Err(e) => tracing::info!(
+                    id = id.0,
+                    code = ?e.code,
+                    "맡은 채널 작업을 자동으로 이어받지 않음(컨텐츠 재판정)"
+                ),
+            }
+        }
+        tracing::info!(
+            count = n,
+            "로그인 뒤 맡은 채널의 멈춘 작업을 자동으로 이어받는다"
         );
         n
     }
@@ -425,6 +483,113 @@ impl App {
             .map(|s| AuthStatusDto::from_status(&s))
             .map_err(|e| AppError::internal(format!("로그인 정보를 지우지 못했습니다({})", e.op)))
     }
+}
+
+impl App {
+    /// 편집자 API를 쓸 수 있는 서비스. 로그인을 쓰지 않는 빌드는 invalidInput
+    fn editors_auth(&self) -> Result<&Arc<AppAuth>, AppError> {
+        self.auth
+            .as_ref()
+            .ok_or_else(|| AppError::invalid_input("로그인 서버가 없는 빌드입니다"))
+    }
+
+    fn editors_app_error(e: EditorsError) -> AppError {
+        match e {
+            EditorsError::NotSignedIn | EditorsError::Blocked => AppError::not_logged_in(),
+            EditorsError::Discarded => AppError::internal("로그인 계정이 바뀌어 결과를 버렸습니다"),
+            EditorsError::Unreachable => AppError::worker_unreachable(),
+            EditorsError::NotEnabled => AppError::delegation_not_enabled(),
+            EditorsError::Limit => AppError::invalid_input("편집자는 더 맡길 수 없습니다"),
+            EditorsError::Rejected => AppError::internal("로그인 서버가 요청을 받지 않았습니다"),
+        }
+    }
+
+    /// 간격 없는 `/api/me` 확인. 계속 진행해도 되는 결과면 `Some(Fresh일 때의 응답)`, 그 밖은 오류
+    async fn forced_check(
+        &self,
+        auth: &AppAuth,
+    ) -> Result<Option<Arc<crate::auth::MeResponse>>, AppError> {
+        match auth.check_delegations(true).await {
+            DelegationCheck::Fresh(m) => Ok(Some(m)),
+            // 지금 주체로 다시 판정하면 된다
+            DelegationCheck::Discarded | DelegationCheck::Skipped => Ok(None),
+            DelegationCheck::NotSignedIn | DelegationCheck::Blocked => {
+                Err(AppError::not_logged_in())
+            }
+            DelegationCheck::Unreachable => Err(AppError::worker_unreachable()),
+        }
+    }
+
+    /// `editors_list`: 설정 › 계정 그룹이 열릴 때(간격 없는 /api/me)
+    pub async fn editors_list(&self) -> Result<EditorsDto, AppError> {
+        let auth = self.editors_auth()?;
+        match auth.check_delegations(true).await {
+            DelegationCheck::Fresh(m) => Ok(EditorsDto::from(&*m)),
+            DelegationCheck::NotSignedIn | DelegationCheck::Blocked => {
+                Err(AppError::not_logged_in())
+            }
+            DelegationCheck::Unreachable => Err(AppError::worker_unreachable()),
+            DelegationCheck::Discarded => {
+                Err(AppError::internal("로그인 계정이 바뀌어 결과를 버렸습니다"))
+            }
+            DelegationCheck::Skipped => Err(AppError::internal("있어서는 안 되는 상태")),
+        }
+    }
+
+    /// `editors_invite`: [초대 주소 만들기]
+    pub async fn editors_invite(&self) -> Result<InviteDto, AppError> {
+        let auth = self.editors_auth()?;
+        auth.create_invite()
+            .await
+            .map(|r| InviteDto::from(&r))
+            .map_err(Self::editors_app_error)
+    }
+
+    /// `editors_remove`: [편집자 빼기] 토스트가 닫힌 뒤(편집자의 로그인 채널 ID)
+    pub async fn editors_remove(&self, channel_id: &str) -> Result<(), AppError> {
+        let auth = self.editors_auth()?;
+        if !token::is_channel_id(channel_id) {
+            return Err(AppError::invalid_input("채널 ID 형식이 아닙니다"));
+        }
+        auth.remove_editor(channel_id)
+            .await
+            .map_err(Self::editors_app_error)
+    }
+
+    /// `delegations_leave`: [편집자 그만두기](주인의 판정용 채널 ID)
+    pub async fn delegations_leave(&self, channel_id: &str) -> Result<(), AppError> {
+        let auth = self.editors_auth()?;
+        if !token::is_channel_id(channel_id) {
+            return Err(AppError::invalid_input("채널 ID 형식이 아닙니다"));
+        }
+        auth.leave_delegation(channel_id)
+            .await
+            .map_err(Self::editors_app_error)
+    }
+
+    /// `ownership_recheck`: 막힌 카드의 [다시 불러오기](간격 없는 /api/me 뒤 같은 주소를 다시 resolve).
+    /// 서버에 닿지 못하면 resolve하지 않는다
+    pub async fn ownership_recheck(&self, url: &str) -> Result<ResolvedDto, AppError> {
+        if let Some(auth) = &self.auth {
+            self.forced_check(auth).await?;
+        }
+        // 이 안의 자동 확인은 방금 찍힌 last_me_try_at 때문에 간격 규칙으로 건너뛴다
+        self.resolve(url).await
+    }
+}
+
+/// 자동 이어받기 둘째 깃발(맡은 채널)의 대상인가. 생방송은 v1에서 맡은 채널로 받지 않는다(L-D1 (A))
+pub fn delegated_resume_target(
+    content: &ContentRef,
+    channel: Option<&str>,
+    delegated: &[DelegatedChannel],
+) -> bool {
+    !matches!(content, ContentRef::Live { .. })
+        && channel.is_some_and(|c| {
+            delegated
+                .iter()
+                .any(|d| d.channel_id.eq_ignore_ascii_case(c))
+        })
 }
 
 impl App {

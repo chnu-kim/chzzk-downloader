@@ -159,6 +159,17 @@ fn save_session(root: &Path, worker: &MockServer, channel: &str) {
 }
 
 fn save_session_as(root: &Path, worker: &MockServer, channel: &str, is_admin: bool) {
+    save_session_full(root, worker, channel, is_admin, &[]);
+}
+
+/// 디스크 세션에 맡은 채널 목록(이름 "맡은채널")까지 적는다
+fn save_session_full(
+    root: &Path,
+    worker: &MockServer,
+    channel: &str,
+    is_admin: bool,
+    delegated: &[&str],
+) {
     std::fs::create_dir_all(root.join("config")).unwrap();
     let verified = OffsetDateTime::now_utc() - time::Duration::hours(1);
     SessionStore::new(
@@ -174,6 +185,13 @@ fn save_session_as(root: &Path, worker: &MockServer, channel: &str, is_admin: bo
         refresh_token: Secret::new(format!("cdr_{}", "B".repeat(43))),
         refresh_expires_at: verified + time::Duration::days(30),
         verified_at: verified,
+        delegated_channels: delegated
+            .iter()
+            .map(|id| chzzk_shell::auth::DelegatedChannel {
+                channel_id: id.to_string(),
+                channel_name: "맡은채널".into(),
+            })
+            .collect(),
     })
     .unwrap();
 }
@@ -219,6 +237,9 @@ fn status(phase: AuthPhase, channel: Option<&str>) -> AuthStatus {
         offline: None,
         verified_at: None,
         has_session: false,
+        delegated_channels: vec![],
+        delegations_verified: false,
+        delegations_checked_at: None,
     }
 }
 
@@ -834,4 +855,563 @@ async fn unverified_admin_first_signed_in_auto_resumes_own_channel_only() {
     assert_eq!(app.on_auth_status(&st), 1);
     assert_eq!(status_of(&app, 2), JobStatus::Interrupted);
     app.manager.quit(Duration::from_secs(3)).await;
+}
+
+// ---------------------------------------------------------------------------
+// 맡은 채널(편집자 위임 ①-4, app.md 구현 중 변경 79)
+// ---------------------------------------------------------------------------
+
+/// 나(편집자). 영상 채널은 fixture의 `OWN`(b2)이고 이 채널을 맡은 채널로 쓴다
+const EDITOR: &str = "000000000000000000000000000000c3";
+
+/// `GET /api/me`를 목으로 건다. 200이 아니면 `{code}` 본문
+async fn mock_me(worker: &MockServer, channel: &str, delegated: &[&str], status: u16) {
+    worker.reset().await;
+    let body = if status == 200 {
+        serde_json::json!({
+            "channelId": channel,
+            "channelName": "채널",
+            "accessExpiresAt": "2030-01-02T00:00:00.000Z",
+            "serverTime": "2030-01-01T00:00:00.000Z",
+            "delegatedChannels": delegated
+                .iter()
+                .map(|id| serde_json::json!({
+                    "channelId": id, "channelName": "맡은채널", "since": "2030-01-01T00:00:00.000Z"
+                }))
+                .collect::<Vec<_>>(),
+            "editors": [],
+            "pendingInviteUntil": null,
+            "limits": {"editors": 10, "delegations": 20},
+        })
+    } else {
+        let code = match status {
+            401 => "invalid_token",
+            403 => "not_allowed",
+            _ => "internal",
+        };
+        serde_json::json!({ "code": code })
+    };
+    Mock::given(method("GET"))
+        .and(path("/api/me"))
+        .respond_with(
+            ResponseTemplate::new(status).set_body_raw(body.to_string(), "application/json"),
+        )
+        .mount(worker)
+        .await;
+}
+
+async fn me_requests(worker: &MockServer) -> usize {
+    worker
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .filter(|r| r.url.path() == "/api/me")
+        .count()
+}
+
+fn file_delegated(root: &Path) -> serde_json::Value {
+    let b = std::fs::read(root.join("config/session.json")).unwrap();
+    serde_json::from_slice::<serde_json::Value>(&b).unwrap()["delegatedChannels"].clone()
+}
+
+/// 재시작 후 자동 이어받기를 켜 두고 앱을 닫는다(다음 `open_auth`가 깃발을 들고 시작한다)
+fn enable_auto_resume(root: &Path, api: &MockServer) {
+    let app = open_plain(root, api);
+    app.update_settings(SettingsPatch {
+        auto_resume_interrupted: Some(true),
+        ..SettingsPatch::default()
+    })
+    .unwrap();
+    app.manager.flush();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a1_resolve_delegated_video() {
+    let api = mock_api(None).await;
+    let worker = MockServer::start().await;
+    let t = TempDir::new().unwrap();
+    save_session_full(t.path(), &worker, EDITOR, false, &[OWN]);
+    mock_me(&worker, EDITOR, &[OWN], 200).await;
+    let app = open_auth(t.path(), &api, &worker);
+    assert_eq!(
+        app.resolve(&url()).await.unwrap().ownership,
+        Ownership::Delegated
+    );
+    assert_eq!(me_requests(&worker).await, 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a2_resolve_reflects_revocation_at_first_judgement() {
+    let api = mock_api(None).await;
+    let worker = MockServer::start().await;
+    let t = TempDir::new().unwrap();
+    save_session_full(t.path(), &worker, EDITOR, false, &[OWN]);
+    mock_me(&worker, EDITOR, &[], 200).await;
+    let app = open_auth(t.path(), &api, &worker);
+    // 앱을 켠 뒤 첫 판정은 간격과 무관하게 확인한다: 디스크에만 남은 회수를 잡는다
+    assert_eq!(
+        app.resolve(&url()).await.unwrap().ownership,
+        Ownership::NotOwn
+    );
+    assert_eq!(file_delegated(t.path()), serde_json::json!([]));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a3_enqueue_delegated_records_owner() {
+    let api = mock_api(None).await;
+    let worker = MockServer::start().await;
+    let t = TempDir::new().unwrap();
+    save_session_full(t.path(), &worker, EDITOR, false, &[OWN]);
+    mock_me(&worker, EDITOR, &[OWN], 200).await;
+    let app = open_auth(t.path(), &api, &worker);
+    app.resolve(&url()).await.unwrap();
+    let job = app
+        .enqueue(request(t.path(), "x", Some(EDITOR)))
+        .await
+        .unwrap();
+    assert_eq!(job.channel_id.as_deref(), Some(OWN));
+    app.manager.quit(Duration::from_secs(3)).await;
+}
+
+/// 받는 중 /api/me가 403 not_allowed를 주면 새 작업은 모두 막히지만 받는 중인 작업은 끝까지 간다
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a4_me_not_allowed_blocks_new_jobs_keeps_running() {
+    let api = mock_api(Some(Duration::from_millis(1500))).await;
+    let worker = MockServer::start().await;
+    let t = TempDir::new().unwrap();
+    save_session_full(t.path(), &worker, EDITOR, false, &[OWN]);
+    mock_me(&worker, EDITOR, &[OWN], 200).await;
+    let app = open_auth(t.path(), &api, &worker);
+    let job = app
+        .enqueue(request(t.path(), "slow", Some(EDITOR)))
+        .await
+        .unwrap();
+    assert_eq!(job.channel_id.as_deref(), Some(OWN));
+    mock_me(&worker, EDITOR, &[OWN], 403).await;
+    let e = app.ownership_recheck(&url()).await.unwrap_err();
+    assert_eq!(e.code, ErrorCode::NotLoggedIn);
+    assert_eq!(app.auth.as_ref().unwrap().status().phase, AuthPhase::Denied);
+    let e = app
+        .enqueue(request(t.path(), "second", Some(EDITOR)))
+        .await
+        .unwrap_err();
+    assert_eq!(e.code, ErrorCode::NotLoggedIn);
+    wait_for(&app, job.id.0, JobStatus::Completed).await;
+    app.manager.quit(Duration::from_secs(3)).await;
+}
+
+/// 거부 뒤에는 본인 채널 영상의 새 작업도 notLoggedIn이다(delegation.md §14 N1 ①). 로그인 채널 = 영상 채널(OWN)
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a4b_denial_blocks_own_channel_too() {
+    let api = mock_api(None).await;
+    let worker = MockServer::start().await;
+    let t = TempDir::new().unwrap();
+    save_session_full(t.path(), &worker, OWN, false, &[]);
+    mock_me(&worker, OWN, &[], 200).await;
+    let app = open_auth(t.path(), &api, &worker);
+    assert_eq!(app.resolve(&url()).await.unwrap().ownership, Ownership::Own);
+    mock_me(&worker, OWN, &[], 403).await;
+    let e = app.ownership_recheck(&url()).await.unwrap_err();
+    assert_eq!(e.code, ErrorCode::NotLoggedIn);
+    assert_eq!(app.auth.as_ref().unwrap().status().phase, AuthPhase::Denied);
+    let e = app
+        .enqueue(request(t.path(), "own", Some(OWN)))
+        .await
+        .unwrap_err();
+    assert_eq!(e.code, ErrorCode::NotLoggedIn);
+    app.manager.quit(Duration::from_secs(3)).await;
+}
+
+/// resolve의 판정 직전 확인이 명시적 거부(403 not_allowed)를 받으면 받기 가능 카드(`unchecked`) 대신 notLoggedIn이다
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a4c_resolve_denied_during_recheck_is_not_logged_in() {
+    let api = mock_api(None).await;
+    let worker = MockServer::start().await;
+    let t = TempDir::new().unwrap();
+    save_session_full(t.path(), &worker, EDITOR, false, &[OWN]);
+    mock_me(&worker, EDITOR, &[OWN], 403).await;
+    let app = open_auth(t.path(), &api, &worker);
+    let e = app.resolve(&url()).await.unwrap_err();
+    assert_eq!(e.code, ErrorCode::NotLoggedIn);
+    assert_eq!(app.auth.as_ref().unwrap().status().phase, AuthPhase::Denied);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a5_ownership_recheck_ignores_gap() {
+    let api = mock_api(None).await;
+    let worker = MockServer::start().await;
+    let t = TempDir::new().unwrap();
+    save_session_full(t.path(), &worker, EDITOR, false, &[OWN]);
+    mock_me(&worker, EDITOR, &[OWN], 200).await;
+    let app = open_auth(t.path(), &api, &worker);
+    assert_eq!(
+        app.ownership_recheck(&url()).await.unwrap().ownership,
+        Ownership::Delegated
+    );
+    assert_eq!(
+        app.ownership_recheck(&url()).await.unwrap().ownership,
+        Ownership::Delegated
+    );
+    // 안의 resolve는 방금 찍힌 간격 규칙으로 건너뛰므로 수동 확인 둘만 센다
+    assert_eq!(me_requests(&worker).await, 2);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a6_ownership_recheck_unreachable_does_not_resolve() {
+    let api = mock_api(None).await;
+    let worker = MockServer::start().await;
+    let t = TempDir::new().unwrap();
+    save_session_full(t.path(), &worker, EDITOR, false, &[OWN]);
+    mock_me(&worker, EDITOR, &[OWN], 503).await;
+    let app = open_auth(t.path(), &api, &worker);
+    let e = app.ownership_recheck(&url()).await.unwrap_err();
+    assert_eq!(e.code, ErrorCode::Network);
+    assert!(api.received_requests().await.unwrap().is_empty());
+    assert_eq!(
+        app.auth.as_ref().unwrap().status().phase,
+        AuthPhase::SignedIn
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a7_resume_delegated_interrupted_job() {
+    let api = mock_api(None).await;
+    let worker = MockServer::start().await;
+    let t = TempDir::new().unwrap();
+    let out: PathBuf = t.path().join("out");
+    write_jobs(t.path(), vec![vod_record(1, Some(OWN), &out)]);
+    save_session_full(t.path(), &worker, EDITOR, false, &[OWN]);
+    mock_me(&worker, EDITOR, &[OWN], 200).await;
+    let app = open_auth(t.path(), &api, &worker);
+    app.resume_job(JobId(1), false).await.unwrap();
+    assert_ne!(status_of(&app, 1), JobStatus::Interrupted);
+    assert_eq!(channel_of(&app, 1).as_deref(), Some(OWN));
+    app.manager.quit(Duration::from_secs(3)).await;
+}
+
+fn delegated_status(verified: bool, delegated: &[&str]) -> AuthStatus {
+    let mut st = status(AuthPhase::SignedIn, Some(EDITOR));
+    st.delegations_verified = verified;
+    st.delegated_channels = delegated
+        .iter()
+        .map(|id| chzzk_shell::auth::DelegatedChannel {
+            channel_id: id.to_string(),
+            channel_name: "맡은채널".into(),
+        })
+        .collect();
+    st
+}
+
+/// 본인(c3) 작업 1과 맡은 채널(b2) 작업 2(실제 컨텐츠도 b2)가 멈춰 있고 자동 이어받기가 켜진 앱.
+/// 디스크 세션은 편집자(c3)이고 맡은 채널은 b2, /api/me도 같은 목록을 준다
+async fn delegated_flag_app(t: &TempDir, api: &MockServer, worker: &MockServer) -> App {
+    let out = t.path().join("out");
+    write_jobs(
+        t.path(),
+        vec![
+            record(1, Some(EDITOR), &out),
+            vod_record(2, Some(OWN), &out),
+        ],
+    );
+    enable_auto_resume(t.path(), api);
+    save_session_full(t.path(), worker, EDITOR, false, &[OWN]);
+    mock_me(worker, EDITOR, &[OWN], 200).await;
+    open_auth(t.path(), api, worker)
+}
+
+/// 둘째 깃발: 서버 확인 전에는 본인 작업만(동기), 확인 뒤 한 번 맡은 채널 작업을 컨텐츠 재판정을 거쳐 줄 세운다
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a8_delegated_flag_waits_for_server() {
+    let api = mock_api(None).await;
+    let worker = MockServer::start().await;
+    let t = TempDir::new().unwrap();
+    let app = delegated_flag_app(&t, &api, &worker).await;
+    // 서버 확인 전: 본인 작업만 줄 세우고 둘째 깃발은 쓰지 않는다
+    let st = delegated_status(false, &[OWN]);
+    assert_eq!(app.on_auth_status(&st), 1);
+    assert!(!app.take_delegated_resume(&st));
+    assert_ne!(status_of(&app, 1), JobStatus::Interrupted);
+    assert_eq!(status_of(&app, 2), JobStatus::Interrupted);
+    // 서버가 확인한 뒤 맡은 채널 작업을 줄 세운다
+    let st = delegated_status(true, &[OWN]);
+    assert_eq!(app.on_auth_status(&st), 0);
+    assert!(app.take_delegated_resume(&st));
+    assert_eq!(
+        app.resume_delegated_interrupted(&st.delegated_channels)
+            .await,
+        1
+    );
+    assert_ne!(status_of(&app, 2), JobStatus::Interrupted);
+    // 한 번뿐
+    assert!(!app.take_delegated_resume(&st));
+    app.manager.quit(Duration::from_secs(3)).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a9_delegated_flag_skips_when_list_dropped() {
+    let api = hanging_server().await;
+    let worker = MockServer::start().await;
+    let t = TempDir::new().unwrap();
+    let app = delegated_flag_app(&t, &api, &worker).await;
+    let st = delegated_status(true, &[]);
+    assert_eq!(app.on_auth_status(&st), 1);
+    assert!(app.take_delegated_resume(&st));
+    assert_eq!(
+        app.resume_delegated_interrupted(&st.delegated_channels)
+            .await,
+        0
+    );
+    assert_eq!(status_of(&app, 2), JobStatus::Interrupted);
+    app.manager.quit(Duration::from_secs(3)).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a10_delegated_flag_never_without_verification() {
+    let api = hanging_server().await;
+    let worker = MockServer::start().await;
+    let t = TempDir::new().unwrap();
+    let app = delegated_flag_app(&t, &api, &worker).await;
+    // 첫 호출은 본인 작업 하나, 그 뒤로는 서버 확인이 없으면 늘 0이고 둘째 깃발도 쓰지 않는다
+    let st = delegated_status(false, &[OWN]);
+    assert_eq!(app.on_auth_status(&st), 1);
+    for _ in 0..3 {
+        assert_eq!(app.on_auth_status(&st), 0);
+        assert!(!app.take_delegated_resume(&st));
+    }
+    assert_eq!(status_of(&app, 2), JobStatus::Interrupted);
+    app.manager.quit(Duration::from_secs(3)).await;
+}
+
+/// Codex 재현(PR 리뷰 P2 4): 기록의 channelId만 맡은 채널(a1)로 바꾼 남의(b2) 영상은 자동 이어받기가 줄 세우지 않는다.
+/// 컨텐츠를 다시 판정해 NotOwn이면 그대로 두고 기록을 실제 채널로 고친다
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a17_delegated_auto_resume_rejudges_content() {
+    let api = mock_api(None).await;
+    let worker = MockServer::start().await;
+    let t = TempDir::new().unwrap();
+    let out = t.path().join("out");
+    write_jobs(t.path(), vec![vod_record(2, Some(OTHER), &out)]);
+    enable_auto_resume(t.path(), &api);
+    save_session_full(t.path(), &worker, EDITOR, false, &[OTHER]);
+    mock_me(&worker, EDITOR, &[OTHER], 200).await;
+    let app = open_auth(t.path(), &api, &worker);
+    let st = delegated_status(true, &[OTHER]);
+    assert_eq!(app.on_auth_status(&st), 0);
+    assert!(app.take_delegated_resume(&st));
+    assert_eq!(
+        app.resume_delegated_interrupted(&st.delegated_channels)
+            .await,
+        0
+    );
+    assert_eq!(status_of(&app, 2), JobStatus::Interrupted);
+    assert_eq!(channel_of(&app, 2).as_deref(), Some(OWN));
+    app.manager.quit(Duration::from_secs(3)).await;
+}
+
+/// 컨텐츠 채널을 확인하지 못하면(채널 ID 없는 info) 줄 세우지 않는다(fail closed)
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a18_delegated_auto_resume_fails_closed() {
+    let api = mock_api_with(None, true).await;
+    let worker = MockServer::start().await;
+    let t = TempDir::new().unwrap();
+    let out = t.path().join("out");
+    write_jobs(t.path(), vec![vod_record(2, Some(OWN), &out)]);
+    enable_auto_resume(t.path(), &api);
+    save_session_full(t.path(), &worker, EDITOR, false, &[OWN]);
+    mock_me(&worker, EDITOR, &[OWN], 200).await;
+    let app = open_auth(t.path(), &api, &worker);
+    let st = delegated_status(true, &[OWN]);
+    assert!(app.take_delegated_resume(&st));
+    assert_eq!(
+        app.resume_delegated_interrupted(&st.delegated_channels)
+            .await,
+        0
+    );
+    assert_eq!(status_of(&app, 2), JobStatus::Interrupted);
+    app.manager.quit(Duration::from_secs(3)).await;
+}
+
+#[test]
+fn a11_delegated_resume_target_table() {
+    use chzzk_shell::app::delegated_resume_target;
+    use chzzk_shell::auth::DelegatedChannel;
+    let list = vec![DelegatedChannel {
+        channel_id: OWN.into(),
+        channel_name: "맡은채널".into(),
+    }];
+    let video = ContentRef::Video { video_no: 1 };
+    let clip = ContentRef::Clip {
+        clip_id: "c".into(),
+    };
+    let live = ContentRef::Live {
+        channel_id: OWN.into(),
+    };
+    assert!(delegated_resume_target(&video, Some(OWN), &list));
+    assert!(delegated_resume_target(&clip, Some(OWN), &list));
+    assert!(!delegated_resume_target(&live, Some(OWN), &list));
+    assert!(!delegated_resume_target(&video, Some(OTHER), &list));
+    assert!(!delegated_resume_target(&video, None, &list));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a12_editors_commands_without_auth() {
+    let api = mock_api(None).await;
+    let t = TempDir::new().unwrap();
+    let app = open_plain(t.path(), &api);
+    assert_eq!(
+        app.editors_list().await.unwrap_err().code,
+        ErrorCode::InvalidInput
+    );
+    assert_eq!(
+        app.editors_invite().await.unwrap_err().code,
+        ErrorCode::InvalidInput
+    );
+    assert_eq!(
+        app.editors_remove(OWN).await.unwrap_err().code,
+        ErrorCode::InvalidInput
+    );
+    assert_eq!(
+        app.delegations_leave(OWN).await.unwrap_err().code,
+        ErrorCode::InvalidInput
+    );
+    assert_eq!(
+        app.ownership_recheck(&url()).await.unwrap().ownership,
+        Ownership::Unchecked
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a13_editors_remove_rejects_bad_id() {
+    let api = mock_api(None).await;
+    let worker = MockServer::start().await;
+    let t = TempDir::new().unwrap();
+    save_session_full(t.path(), &worker, EDITOR, false, &[OWN]);
+    let app = open_auth(t.path(), &api, &worker);
+    for bad in ["ABC", &OWN.to_uppercase(), ""] {
+        assert_eq!(
+            app.editors_remove(bad).await.unwrap_err().code,
+            ErrorCode::InvalidInput
+        );
+        assert_eq!(
+            app.delegations_leave(bad).await.unwrap_err().code,
+            ErrorCode::InvalidInput
+        );
+    }
+    assert!(worker.received_requests().await.unwrap().is_empty());
+}
+
+/// 로그인 서버가 아직 이 기능을 열지 않았으면(404 not_enabled) 닿지 않은 것도 차단도 아닌 `unsupported`다
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a14_not_enabled_is_unsupported_not_a_block() {
+    let api = mock_api(None).await;
+    let worker = MockServer::start().await;
+    let t = TempDir::new().unwrap();
+    save_session_full(t.path(), &worker, EDITOR, false, &[OWN]);
+    Mock::given(method("POST"))
+        .and(path("/api/editors/invite"))
+        .respond_with(
+            ResponseTemplate::new(404)
+                .set_body_raw(r#"{"code":"not_enabled"}"#, "application/json"),
+        )
+        .mount(&worker)
+        .await;
+    let app = open_auth(t.path(), &api, &worker);
+    assert_eq!(
+        app.editors_invite().await.unwrap_err().code,
+        ErrorCode::Unsupported
+    );
+    assert_eq!(
+        app.auth.as_ref().unwrap().status().phase,
+        AuthPhase::SignedIn
+    );
+}
+
+/// 편집자 목록: DTO로 옮겨진다
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a15_editors_list_maps_me() {
+    let api = mock_api(None).await;
+    let worker = MockServer::start().await;
+    let t = TempDir::new().unwrap();
+    save_session_full(t.path(), &worker, EDITOR, false, &[]);
+    mock_me(&worker, EDITOR, &[OWN], 200).await;
+    let app = open_auth(t.path(), &api, &worker);
+    let dto = app.editors_list().await.unwrap();
+    assert_eq!(dto.delegated_channels.len(), 1);
+    assert_eq!(dto.delegated_channels[0].channel_id, OWN);
+    assert!(dto.delegated_channels[0].since.is_some());
+    assert_eq!((dto.editors_max, dto.delegations_max), (10, 20));
+    // 상태 DTO에도 반영된다
+    let st = app.auth_status();
+    assert_eq!(st.delegated_channels.len(), 1);
+    assert!(st.delegations_checked_at.is_some());
+}
+
+/// 그만두기 성공(204·확인된 멱등 404 not_found) 직후 그 채널 영상은 resolve·enqueue 모두 NotOwn이다(PR 리뷰 P2).
+/// 204에서는 /api/me가 아직 그 채널을 주지만 간격 안이라 다시 묻지 않는다: 막은 것은 로컬 회수다.
+/// 404는 같은 세션의 /api/me 한 번으로 그 채널이 없음을 확인한 뒤에만 성공이다(79 (하))
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a16_leave_success_revokes_locally_at_once() {
+    for (status, body) in [(204, ""), (404, r#"{"code":"not_found"}"#)] {
+        let api = mock_api(None).await;
+        let worker = MockServer::start().await;
+        let t = TempDir::new().unwrap();
+        save_session_full(t.path(), &worker, EDITOR, false, &[OWN]);
+        mock_me(&worker, EDITOR, &[OWN], 200).await;
+        let app = open_auth(t.path(), &api, &worker);
+        assert_eq!(
+            app.resolve(&url()).await.unwrap().ownership,
+            Ownership::Delegated
+        );
+        assert_eq!(me_requests(&worker).await, 1);
+        if status == 404 {
+            // 서버에서는 이미 없다(다른 기기에서 그만뒀다). mock_me는 받은 요청도 비운다
+            mock_me(&worker, EDITOR, &[], 200).await;
+        }
+        Mock::given(method("POST"))
+            .and(path("/api/delegations/leave"))
+            .respond_with(ResponseTemplate::new(status).set_body_raw(body, "application/json"))
+            .mount(&worker)
+            .await;
+        app.delegations_leave(OWN).await.unwrap();
+        assert_eq!(
+            app.resolve(&url()).await.unwrap().ownership,
+            Ownership::NotOwn,
+            "{status}"
+        );
+        let e = app
+            .enqueue(request(t.path(), "x", Some(OWN)))
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, ErrorCode::NotOwnContent, "{status}");
+        assert_eq!(me_requests(&worker).await, 1, "{status}");
+        assert_eq!(file_delegated(t.path()), serde_json::json!([]));
+        assert!(app.auth_status().delegated_channels.is_empty());
+    }
+}
+
+/// 그만두기 경로가 없는 Worker(①-2만): 경로 표 밖 404 `not_found`를 받고 /api/me가 그 채널을 아직 주면
+/// 거짓 성공이 아니라 `unsupported`이고, 맡은 채널은 그대로 Delegated다(Codex 확인 2)
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a16b_leave_on_worker_without_route_is_unsupported() {
+    let api = mock_api(None).await;
+    let worker = MockServer::start().await;
+    let t = TempDir::new().unwrap();
+    save_session_full(t.path(), &worker, EDITOR, false, &[OWN]);
+    mock_me(&worker, EDITOR, &[OWN], 200).await;
+    Mock::given(method("POST"))
+        .and(path("/api/delegations/leave"))
+        .respond_with(
+            ResponseTemplate::new(404).set_body_raw(r#"{"code":"not_found"}"#, "application/json"),
+        )
+        .mount(&worker)
+        .await;
+    let app = open_auth(t.path(), &api, &worker);
+    let e = app.delegations_leave(OWN).await.unwrap_err();
+    assert_eq!(e.code, ErrorCode::Unsupported);
+    assert_eq!(
+        app.resolve(&url()).await.unwrap().ownership,
+        Ownership::Delegated
+    );
+    assert_eq!(file_delegated(t.path()).as_array().unwrap().len(), 1);
 }

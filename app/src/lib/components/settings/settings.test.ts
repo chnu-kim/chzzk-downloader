@@ -91,6 +91,8 @@ const signedIn: AuthStatusDto = {
   verifiedAt: 1_760_000_000,
   canReconnect: false,
   isAdmin: false,
+  delegatedChannels: [],
+  delegationsCheckedAt: null,
 };
 
 async function openCookies(user: ReturnType<typeof userEvent.setup>) {

@@ -13,6 +13,8 @@ const st = (state: AuthState, reason: AuthReason | null = null, channelName: str
   verifiedAt: null,
   canReconnect: false,
   isAdmin: false,
+  delegatedChannels: [],
+  delegationsCheckedAt: null,
 });
 
 type Row = [

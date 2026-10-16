@@ -37,6 +37,8 @@ const disabled = {
   verifiedAt: null,
   canReconnect: false,
   isAdmin: false,
+  delegatedChannels: [],
+  delegationsCheckedAt: null,
 };
 
 vi.mock('./lib/api', () => ({

@@ -99,6 +99,7 @@ fn save_session(root: &Path, worker: &MockServer, verified: OffsetDateTime) {
             refresh_token: Secret::new(format!("cdr_{}", "B".repeat(43))),
             refresh_expires_at: verified + time::Duration::days(30),
             verified_at: verified,
+            delegated_channels: vec![],
         })
         .unwrap();
 }
@@ -139,6 +140,9 @@ fn plain_status(phase: AuthPhase) -> AuthStatus {
         offline: None,
         verified_at: None,
         has_session: false,
+        delegated_channels: vec![],
+        delegations_verified: false,
+        delegations_checked_at: None,
     }
 }
 

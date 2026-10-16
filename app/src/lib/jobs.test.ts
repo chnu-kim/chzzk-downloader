@@ -692,6 +692,15 @@ describe('막힌 작업(A5)', () => {
     }
   });
 
+  it('맡은 채널의 영상·클립은 막지 않고 생방송·목록 밖은 막는다', () => {
+    const D4 = '000000000000000000000000000000d4';
+    const editor = { ...me, delegatedChannels: [{ channelId: D4, channelName: '맡은채널' }] };
+    expect(jobBlock(job(1, { status: 'interrupted', channelId: D4, kind: 'video' }), editor)).toBeNull();
+    expect(jobBlock(job(1, { status: 'interrupted', channelId: D4.toUpperCase(), kind: 'clip' }), editor)).toBeNull();
+    expect(jobBlock(job(1, { status: 'interrupted', channelId: D4, kind: 'live' }), editor)).toBe('otherChannel');
+    expect(jobBlock(job(1, { status: 'interrupted', channelId: C3, kind: 'video' }), editor)).toBe('otherChannel');
+  });
+
   it('관리자는 다른 채널의 멈춘 작업도 막지 않는다', () => {
     for (const status of ['interrupted', 'paused', 'failed', 'skipped'] as const) {
       expect(jobBlock(job(1, { status, channelId: C3 }), { ...me, isAdmin: true })).toBeNull();

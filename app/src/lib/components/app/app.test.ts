@@ -2,7 +2,7 @@
 import { render, screen, waitFor, within } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AuthStatusDto, Os, SettingsDto } from '../../bindings';
+import type { AuthStatusDto, ChannelRefDto, Os, SettingsDto } from '../../bindings';
 import { t } from '../../copy/ko';
 import { job, prog } from '../../../test/jobFixtures';
 
@@ -10,7 +10,7 @@ class FakeChannel {
   onmessage: (e: unknown) => void = () => {};
 }
 
-const EMPTY = { channelId: null, channelName: null, reason: null, pending: null, offline: null, verifiedAt: null, canReconnect: false, isAdmin: false } as const;
+const EMPTY = { channelId: null, channelName: null, reason: null, pending: null, offline: null, verifiedAt: null, canReconnect: false, isAdmin: false, delegatedChannels: [] as ChannelRefDto[], delegationsCheckedAt: null } as const;
 const dto = (over: Partial<AuthStatusDto> & Pick<AuthStatusDto, 'state'>): AuthStatusDto => ({ ...EMPTY, ...over });
 
 const settingsDto: SettingsDto = {

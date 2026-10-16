@@ -11,6 +11,10 @@
 //! - **마무리**: 보조 파일(자막) → 기록 순으로 `.part`에서 최종 이름으로 옮긴다. `Skip`은 OS의
 //!   덮어쓰지 않는 rename이라 받는 동안 생긴 같은 이름 파일도 지킨다. 어느 파일이 막히면 거기서 멈추고
 //!   `.part`·sidecar를 남긴다. 닉네임·본문은 로그·`Debug`에 내지 않는다.
+//! - **실패 계약**: `commit_page`가 `Err`면(또는 그 future가 도중에 버려지면) 그 `ChatPart`는 독 상태가
+//!   되어 `commit_page`·`read_messages`·`for_each_message`·`finalize`가 모두 `Err`다. 파일에는 커밋하지
+//!   않은 줄이 남았을 수 있으므로, 호출자는 버리고 `open`으로 다시 열어(꼬리를 sidecar 길이로 자른다)
+//!   그 페이지부터 다시 한다. `commit_page`를 취소 지점(`select!`)으로 쓰지 않는다. 취소는 페이지 사이에서만 본다.
 
 use std::collections::BTreeMap;
 use std::fs::File;
@@ -105,6 +109,8 @@ pub struct ChatPart {
     sidecar: ChatSidecar,
     /// 쓴 바이트 수(버퍼 포함)
     written: u64,
+    /// 커밋이 끝나지 못했다(실패·취소). 파일에 커밋하지 않은 줄이 있을 수 있어 더 쓰거나 읽지 않는다.
+    poisoned: bool,
 }
 
 impl std::fmt::Debug for ChatPart {
@@ -215,6 +221,7 @@ impl ChatPart {
             sidecar_path: sc_path,
             record_path: record_path.to_path_buf(),
             written: sidecar.committed_len,
+            poisoned: false,
             sidecar,
         })
     }
@@ -263,12 +270,41 @@ impl ChatPart {
         self.sidecar.moved.contains(&key_of(to))
     }
 
+    /// 독 상태면 오류(실패 계약은 모듈 문서).
+    fn check_usable(&self) -> Result<(), Error> {
+        if self.poisoned {
+            return Err(Error::Io {
+                op: "commit",
+                path: self.part.clone(),
+                source: io::Error::other(
+                    "이전 커밋이 끝나지 못해 이 기록을 더 쓸 수 없습니다. 다시 여세요",
+                ),
+            });
+        }
+        Ok(())
+    }
+
     /// 한 페이지를 커밋한다. `kept`는 `next_step`이 남긴 메시지, `state`는 그 걸음 뒤의 상태
     /// (`Next::Continue`의 상태. 끝이면 `resume_state()`를 그대로 넘긴다), `end`는 정상 끝 이유다.
     ///
     /// 순서: 줄 덧붙임 → `flush` → `sync_data` → sidecar 원자적 쓰기. 실패하면 기록된 sidecar는
-    /// 바뀌지 않아 다음 `open`이 이전 커밋으로 되돌아간다.
+    /// 바뀌지 않아 다음 `open`이 이전 커밋으로 되돌아간다. 실패하거나 future가 버려지면 이 `ChatPart`는
+    /// 독 상태가 된다(모듈 문서의 실패 계약): 버리고 다시 `open`한다.
     pub async fn commit_page(
+        &mut self,
+        kept: &[&ChatMessage],
+        state: &WalkState,
+        end: Option<ChatEnd>,
+    ) -> Result<(), Error> {
+        self.check_usable()?;
+        // 끝까지 가면 푼다. 중간에 실패하거나 future가 버려지면 그대로 남는다.
+        self.poisoned = true;
+        self.commit_page_inner(kept, state, end).await?;
+        self.poisoned = false;
+        Ok(())
+    }
+
+    async fn commit_page_inner(
         &mut self,
         kept: &[&ChatMessage],
         state: &WalkState,
@@ -318,20 +354,24 @@ impl ChatPart {
         Ok(())
     }
 
-    /// 지금까지 커밋한 기록을 메시지로 읽는다(자막 렌더 입력). 잠근 핸들로 읽는다: Windows의 배타 잠금은
-    /// 다른 핸들의 읽기를 막기 때문이다. 읽은 뒤 쓰기 위치를 되돌린다.
-    pub fn read_messages(&mut self) -> Result<Vec<ChatMessage>, Error> {
+    /// 지금까지 커밋한 기록을 한 줄씩 읽어 `f`에 넘긴다(메모리에 모으지 않는다). 잠근 핸들로 읽는다:
+    /// Windows의 배타 잠금은 다른 핸들의 읽기를 막기 때문이다. 읽은 뒤(실패해도) 쓰기 위치를 되돌린다.
+    /// `f`가 `Err`를 내면 거기서 멈추고 그 오류를 돌려준다.
+    pub fn for_each_message(
+        &mut self,
+        mut f: impl FnMut(ChatMessage) -> Result<(), Error>,
+    ) -> Result<(), Error> {
+        self.check_usable()?;
         self.w
             .flush()
             .map_err(|e| map_io_error("write", &self.part, e))?;
         let end = self.written;
         let part = self.part.clone();
-        let f = self.w.get_mut();
-        f.seek(SeekFrom::Start(0))
+        let file = self.w.get_mut();
+        file.seek(SeekFrom::Start(0))
             .map_err(|e| map_io_error("seek", &part, e))?;
-        let mut out = Vec::new();
         let res = (|| -> Result<(), Error> {
-            let reader = BufReader::new((&*f).take(end));
+            let reader = BufReader::new((&*file).take(end));
             for line in reader.lines() {
                 let line = line.map_err(|e| map_io_error("read", &part, e))?;
                 if line.is_empty() {
@@ -341,14 +381,24 @@ impl ChatPart {
                     what: "chat",
                     detail: "기록 줄이 JSON이 아닙니다".into(),
                 })?;
-                out.push(ChatMessage::from_raw(raw)?);
+                f(ChatMessage::from_raw(raw)?)?;
             }
             Ok(())
         })();
         // 읽기가 실패해도 쓰기 위치는 되돌린다.
-        f.seek(SeekFrom::Start(end))
+        file.seek(SeekFrom::Start(end))
             .map_err(|e| map_io_error("seek", &part, e))?;
-        res?;
+        res
+    }
+
+    /// `for_each_message`를 `Vec`로 모은다. 기록 전체가 메모리에 올라가므로(메시지당 raw의 두 배
+    /// 남짓) 긴 영상의 대량 기록에는 `for_each_message`를 쓴다.
+    pub fn read_messages(&mut self) -> Result<Vec<ChatMessage>, Error> {
+        let mut out = Vec::new();
+        self.for_each_message(|m| {
+            out.push(m);
+            Ok(())
+        })?;
         Ok(out)
     }
 
@@ -359,12 +409,15 @@ impl ChatPart {
     /// - 보조 파일은 옮기면 sidecar `moved`에 적는다. 기록 이름이 막혀 다시 마무리할 때 이미 옮긴
     ///   자기 파일은 다시 옮기지 않는다. 기록은 모든 보조 파일이 옮겨진 뒤에야 옮기므로, sidecar가
     ///   있는 동안은 기록의 `.part`도 늘 있다.
-    /// - 기록을 옮긴 뒤의 sidecar 삭제 실패는 경고만 남긴다.
+    /// - `moved`에 있는 보조 파일은 다시 옮기지 않고, 호출자가 다시 만든 `from`(임시 파일)이 있으면
+    ///   지운다(고아 방지). `from`이 없고 `to`만 있으면(옮긴 뒤 `moved` 기록이 실패한 경우) 옮긴 것으로 본다.
+    /// - 기록을 옮긴 뒤의 sidecar 삭제 실패, 보조 파일 `moved` 기록 실패는 경고만 남긴다.
     pub async fn finalize(
         self,
         companions: &[Companion],
         policy: DuplicatePolicy,
     ) -> Result<ChatFinalized, Error> {
+        self.check_usable()?;
         match policy {
             DuplicatePolicy::Overwrite => {
                 self.finalize_using(companions, |a, b| rename_with_retry(a, b).map(|()| true))
@@ -405,6 +458,12 @@ impl ChatPart {
             for c in &companions {
                 let key = key_of(&c.to);
                 if sidecar.moved.contains(&key) {
+                    remove_if_exists(&c.from)?;
+                    continue;
+                }
+                // 옮겼는데 `moved` 기록이 실패했던 경우: 원본은 없고 최종 파일만 있다.
+                if !c.from.exists() && c.to.exists() {
+                    sidecar.moved.push(key);
                     continue;
                 }
                 if !rename(&c.from, &c.to)? {
@@ -412,7 +471,10 @@ impl ChatPart {
                     return Ok(ChatFinalized::TargetExists { path: c.to.clone() });
                 }
                 sidecar.moved.push(key);
-                write_sidecar(&sidecar_path, &sidecar)?;
+                // 이미 옮겼다. 기록이 실패해도 멈추지 않는다(다시 마무리할 때 위의 경우로 이어진다).
+                if let Err(e) = write_sidecar(&sidecar_path, &sidecar) {
+                    tracing::warn!(error = %e, "옮긴 보조 파일을 sidecar에 적지 못함");
+                }
             }
             // Windows는 열린 파일을 옮길 수 없어 먼저 닫는다(잠금도 풀린다). Unix는 잠금을 쥔 채
             // 옮겨, 그 사이에 같은 출력의 다른 작업이 `.part`를 잠그고 지우거나 자르지 못하게 한다.

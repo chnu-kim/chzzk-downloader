@@ -402,3 +402,140 @@ async fn overwrite_companion_and_record() {
     assert_eq!(read(&sub_to), b"NEW-ASS");
     assert_ne!(read(&e.record), b"OLD");
 }
+
+/// 사이드카 자리를 디렉터리로 막아 다음 커밋의 sidecar 쓰기를 실패시킨다(`restore`로 되돌린다).
+fn block_sidecar(record: &Path) -> PathBuf {
+    let sc = sidecar_path(record);
+    let aside = sc.with_extension("json.aside");
+    std::fs::rename(&sc, &aside).unwrap();
+    std::fs::create_dir(&sc).unwrap();
+    aside
+}
+
+fn restore_sidecar(record: &Path, aside: &Path) {
+    let sc = sidecar_path(record);
+    std::fs::remove_dir(&sc).unwrap();
+    std::fs::rename(aside, &sc).unwrap();
+}
+
+#[tokio::test]
+async fn failed_commit_poisons_part_and_reopen_has_no_duplicates() {
+    let e = env();
+    let p1 = [raw_msg(10, "a", "one")];
+    let p2 = [raw_msg(20, "b", "two")];
+    let mut p = ChatPart::open(&e.record, VIDEO, false).unwrap();
+    p.commit_page(&refs(&p1), &state(15), None).await.unwrap();
+
+    let aside = block_sidecar(&e.record);
+    assert!(p.commit_page(&refs(&p2), &state(25), None).await.is_err());
+    // 독 상태: 같은 페이지 재시도, 읽기, 마무리가 모두 막힌다(커밋하지 않은 줄을 섞지 않는다)
+    assert!(p.commit_page(&refs(&p2), &state(25), None).await.is_err());
+    assert!(p.read_messages().is_err());
+    assert!(p.for_each_message(|_| Ok(())).is_err());
+    assert!(p.finalize(&[], DuplicatePolicy::Overwrite).await.is_err());
+
+    // 다시 열면 첫 커밋으로 돌아가 꼬리가 잘리고, 같은 페이지를 다시 커밋해도 한 번만 들어간다.
+    restore_sidecar(&e.record, &aside);
+    let mut p = ChatPart::open(&e.record, VIDEO, false).unwrap();
+    assert_eq!(p.lines(), 1);
+    p.commit_page(&refs(&p2), &state(25), None).await.unwrap();
+    assert_eq!(p.lines(), 2);
+    assert_eq!(p.read_messages().unwrap().len(), 2);
+    assert_eq!(
+        read(&part_path(&e.record))
+            .iter()
+            .filter(|&&b| b == b'\n')
+            .count(),
+        2
+    );
+}
+
+#[tokio::test]
+async fn dropped_commit_future_poisons_part() {
+    let e = env();
+    let a = [raw_msg(10, "a", "one")];
+    let mut p = ChatPart::open(&e.record, VIDEO, false).unwrap();
+    // 첫 poll에서 blocking 작업을 기다리다 멈추고, 이어서 준비된 가지가 이겨 future가 버려진다.
+    let (kept, st) = (refs(&a), state(50));
+    tokio::select! {
+        biased;
+        _ = p.commit_page(&kept, &st, None) => panic!("끝나면 안 된다"),
+        _ = std::future::ready(()) => {}
+    }
+    assert!(p.read_messages().is_err());
+    assert!(p.commit_page(&refs(&a), &state(50), None).await.is_err());
+}
+
+#[tokio::test]
+async fn for_each_message_streams_stops_early_and_keeps_write_position() {
+    let e = env();
+    let a = [raw_msg(10, "a", "one"), raw_msg(20, "b", "two")];
+    let mut p = ChatPart::open(&e.record, VIDEO, false).unwrap();
+    p.commit_page(&refs(&a), &state(30), None).await.unwrap();
+    let mut seen = 0;
+    p.for_each_message(|_| {
+        seen += 1;
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(seen, 2);
+    // 콜백 오류에서 멈추고 그 오류를 돌려준다
+    let mut n = 0;
+    let err = p
+        .for_each_message(|_| {
+            n += 1;
+            Err(Error::Parse {
+                what: "chat",
+                detail: "stop".into(),
+            })
+        })
+        .unwrap_err();
+    assert_eq!(n, 1);
+    assert!(matches!(err, Error::Parse { .. }));
+    // 읽은 뒤에도 쓰기 위치가 끝이라 다음 커밋이 덧붙는다
+    let b = [raw_msg(40, "c", "three")];
+    p.commit_page(&refs(&b), &state(50), None).await.unwrap();
+    assert_eq!(p.read_messages().unwrap().len(), 3);
+}
+
+#[tokio::test]
+async fn moved_companion_temp_recreated_by_caller_is_removed() {
+    let e = env();
+    let sub_to = e.record.with_file_name("영상.ass");
+    let sub_from = part_path(&sub_to);
+    std::fs::write(&sub_from, b"ASS").unwrap();
+    std::fs::write(&e.record, b"USER-RECORD").unwrap();
+    let comp = [Companion {
+        from: sub_from.clone(),
+        to: sub_to.clone(),
+    }];
+    let p = filled(&e).await;
+    p.finalize(&comp, DuplicatePolicy::Skip).await.unwrap();
+
+    // 다시 마무리하면서 호출자가 자막을 다시 렌더해 `.part`를 또 만들었다: 고아로 남기지 않는다.
+    std::fs::write(&sub_from, b"ASS2").unwrap();
+    let p = ChatPart::open(&e.record, VIDEO, false).unwrap();
+    let r = p.finalize(&comp, DuplicatePolicy::Overwrite).await.unwrap();
+    assert_eq!(r, ChatFinalized::Moved);
+    assert!(!sub_from.exists());
+    assert_eq!(read(&sub_to), b"ASS");
+}
+
+#[tokio::test]
+async fn companion_already_in_place_without_moved_note_counts_as_moved() {
+    // 자막은 옮겼는데 `moved` 기록이 실패한 상태: 원본은 없고 최종 파일만 있다.
+    let e = env();
+    let sub_to = e.record.with_file_name("영상.ass");
+    let sub_from = part_path(&sub_to);
+    std::fs::write(&sub_to, b"ASS").unwrap();
+    let comp = [Companion {
+        from: sub_from,
+        to: sub_to.clone(),
+    }];
+    let p = filled(&e).await;
+    assert!(!p.is_moved(&sub_to));
+    let r = p.finalize(&comp, DuplicatePolicy::Skip).await.unwrap();
+    assert_eq!(r, ChatFinalized::Moved);
+    assert_eq!(read(&sub_to), b"ASS");
+    assert!(e.record.exists());
+}

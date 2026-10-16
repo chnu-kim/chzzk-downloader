@@ -406,6 +406,110 @@ async fn v070_sibling_loses_partial_when_recording_is_saved() {
     );
 }
 
+/// Codex PR #113 2회차 ④: sidecar를 잠깐 읽지 못하는 동안(Windows 공유 위반·권한 거부) 옛 기록 B가 실패해도, 그 읽기
+/// 실패를 "받은 부분 없음"으로 삼켜 A·B의 받은 부분을 내리지 않는다(경로를 계속 잡는다). 그래야 뒤에 B가 녹화를 저장했을
+/// 때 형제 갱신이 A를 놓치지 않고 덮어쓰기를 건너뛰기로 내려, A의 다시 시도가 B가 저장한 녹화를 덮어쓰지 않는다.
+#[tokio::test(start_paused = true)]
+async fn v070_sibling_keeps_partial_while_sidecar_is_unreadable() {
+    use chzzk_core::download::part::{part_path, sidecar_path};
+    use common::harness::{live_request, open_with};
+
+    // 1. 같은 녹화를 가리키는 v0.7.0 실패 기록 A(1)·B(2), 둘 다 덮어쓰기·받은 부분 있음
+    let dir = tempfile::tempdir().unwrap();
+    let out = v070_two_records(dir.path(), JobStatus::Failed);
+    let fake = FakeBackend::new();
+    let mgr = open_with(dir.path(), &fake, 2, false);
+    let job = |id: u64| {
+        mgr.list()
+            .into_iter()
+            .find(|j| j.id == chzzk_shell::JobId(id))
+            .unwrap()
+    };
+    assert_eq!(job(1).partial_bytes, Some(48));
+    assert_eq!(job(2).partial_bytes, Some(48));
+    // 2. sidecar를 읽지 못하게 한다(같은 자리에 폴더: 없음이 아닌 읽기 오류, 세 OS 공통)
+    let sc_bytes = std::fs::read(sidecar_path(&out)).unwrap();
+    std::fs::remove_file(sidecar_path(&out)).unwrap();
+    std::fs::create_dir(sidecar_path(&out)).unwrap();
+    // 3. B를 이어받는다. 코어는 sidecar 읽기 오류로 실패하고 녹화 파일을 남긴다
+    fake.script_for(
+        &out,
+        Script::new().fails(chzzk_core::Error::Io {
+            op: "read",
+            path: sidecar_path(&out),
+            source: std::io::Error::other("공유 위반"),
+        }),
+    );
+    mgr.resume(chzzk_shell::JobId(2), false).unwrap();
+    until("B 실패", || job(2).status == JobStatus::Failed).await;
+    // 4. 읽지 못한 sidecar를 "받은 부분 없음"으로 보지 않는다: A·B 모두 받은 부분이 있고 경로를 잡는다
+    assert!(job(1).partial_bytes.is_some(), "{:?}", job(1));
+    assert!(job(2).partial_bytes.is_some(), "{:?}", job(2));
+    let defaults = JobDefaults {
+        download_folder: dir.path().join("downloads"),
+        segment_concurrency: 4,
+    };
+    let e = mgr.enqueue(live_request("a"), &defaults).unwrap_err();
+    assert_eq!(e.code, chzzk_shell::ErrorCode::DuplicateOutput);
+    // 5. 접근을 되살리고 B를 다시 이어받아 저장한다(가짜 백엔드 대신 `.part`·sidecar를 옮긴 것처럼 지운다)
+    std::fs::remove_dir(sidecar_path(&out)).unwrap();
+    atomic_write(&sidecar_path(&out), &sc_bytes).unwrap();
+    std::fs::remove_file(part_path(&out)).unwrap();
+    std::fs::remove_file(sidecar_path(&out)).unwrap();
+    fake.script_for(&out, Script::new());
+    mgr.resume(chzzk_shell::JobId(2), false).unwrap();
+    until("B 완료", || job(2).status == JobStatus::Completed).await;
+    // 6. 형제 갱신이 A를 놓치지 않는다
+    assert_eq!(job(1).partial_bytes, None);
+    // 7. A의 다시 시도는 B가 저장한 녹화를 덮어쓰지 않는다(건너뛰기)
+    fake.script_for(&out, Script::new());
+    mgr.resume(chzzk_shell::JobId(1), false).unwrap();
+    until("A 요청", || fake.download_requests().len() == 3).await;
+    assert_eq!(
+        fake.download_requests()[2].on_existing,
+        chzzk_core::DuplicatePolicy::Skip
+    );
+}
+
+/// 형제 갱신은 받은 부분 표시가 이미 내려간 같은 주인의 끝난 옛 기록도 놓치지 않는다. A(1)는 [처음부터]로 표시돼 받은 부분이
+/// 없지만 덮어쓰기가 남아 있다. B(2)가 녹화를 저장하면 A의 덮어쓰기도 건너뛰기로 내려, A의 다시 시도가 B의 녹화를 덮어쓰지
+/// 않는다(Codex PR #113 2회차 ④).
+#[tokio::test(start_paused = true)]
+async fn v070_sibling_without_partial_is_downgraded_when_recording_is_saved() {
+    use chzzk_core::download::part::{part_path, sidecar_path};
+    use chzzk_shell::jobs::JobsFile;
+    use common::harness::open_with;
+
+    let dir = tempfile::tempdir().unwrap();
+    let out = v070_two_records(dir.path(), JobStatus::Failed);
+    let jobs_path = dir.path().join("data/jobs.json");
+    let mut file: JobsFile = serde_json::from_slice(&std::fs::read(&jobs_path).unwrap()).unwrap();
+    file.jobs[0].discard_on_start = true;
+    atomic_write(&jobs_path, &serde_json::to_vec(&file).unwrap()).unwrap();
+    let fake = FakeBackend::new();
+    let mgr = open_with(dir.path(), &fake, 2, false);
+    let job = |id: u64| {
+        mgr.list()
+            .into_iter()
+            .find(|j| j.id == chzzk_shell::JobId(id))
+            .unwrap()
+    };
+    assert_eq!(job(1).partial_bytes, None);
+    assert_eq!(job(2).partial_bytes, Some(48));
+    std::fs::remove_file(part_path(&out)).unwrap();
+    std::fs::remove_file(sidecar_path(&out)).unwrap();
+    fake.script_for(&out, Script::new());
+    mgr.resume(chzzk_shell::JobId(2), false).unwrap();
+    until("B 완료", || job(2).status == JobStatus::Completed).await;
+    fake.script_for(&out, Script::new());
+    mgr.resume(chzzk_shell::JobId(1), false).unwrap();
+    until("A 요청", || fake.download_requests().len() == 2).await;
+    assert_eq!(
+        fake.download_requests()[1].on_existing,
+        chzzk_core::DuplicatePolicy::Skip
+    );
+}
+
 /// 지우기는 다른 옛 기록이 잡은 `.part`를 지우지 않는다(레코드만 지운다).
 #[tokio::test(start_paused = true)]
 async fn v070_two_failed_records_remove_keeps_part() {

@@ -302,6 +302,7 @@ fn parse(bytes: &[u8]) -> Result<JobsFile, String> {
 /// |---|---|---|
 /// | `running`·`pausing`·`queued` | - | `interrupted`(자동 재개는 매니저가 설정을 보고 따로 한다), `stopped_at`이 없으면 지금 |
 /// | `paused`·`interrupted`·`failed`·`skipped` | `.part`·sidecar가 있고 같은 작업 | `partial_bytes = committed_len` |
+/// | 〃 | `.part`가 있고 sidecar를 읽지 못함(없음·깨짐이 아닌 오류) | `partial_bytes = .part 길이`(모른다, `partial_bytes`) |
 /// | 〃 | 그 밖 | `partial_bytes = None` |
 /// | `completed` | 최종 파일 없음 | `missing = true` |
 ///
@@ -338,6 +339,10 @@ pub fn reconcile(file: &mut JobsFile) {
 /// 버리고 새로 녹화하므로 받은 것이 없다(core.md 61 M3). 그래서 경로 잡기(`keeps_recording`)·화면의 받은 부분 안내·
 /// 자동 이어받기가 모두 이 한 규칙을 따른다.
 /// sidecar는 잠그지 않고 읽기만 한다(`atomic_write`로 쓰이므로 반쯤 쓴 파일은 없다).
+/// sidecar를 **읽지 못하면**(없음·깨짐이 아닌 읽기 오류: Windows 공유 위반·권한 거부 등) 받은 부분이 없는 것이 아니라
+/// 모르는 것이라 `.part` 길이를 준다(Codex PR #113 2회차 ④). 그래야 실패한 녹화가 경로를 계속 잡고(`keeps_recording`),
+/// 같은 녹화의 다른 옛 기록이 받은 부분을 잃은 것처럼 보여 형제 갱신(`refresh_siblings`)에서 빠지지 않는다. 코어도 그
+/// sidecar를 읽지 못하면 아무것도 지우지 않고 오류다(`read_sidecar`의 세 상태).
 pub fn partial_bytes(j: &JobRecord) -> Option<u64> {
     // "처음부터"로 표시된 작업은 다음 시작 때 `.part`를 지우므로 이어받을 것이 없다.
     if j.discard_on_start {
@@ -347,7 +352,13 @@ pub fn partial_bytes(j: &JobRecord) -> Option<u64> {
         .ok()
         .filter(|m| m.is_file())?
         .len();
-    let sc = read_sidecar(&j.output)?;
+    let sc = match read_sidecar_checked(&j.output) {
+        Ok(sc) => sc?,
+        Err(e) => {
+            tracing::warn!(error = %e, job = j.id.0, "sidecar를 읽지 못해 받은 부분이 있는 것으로 둔다");
+            return Some(part_len);
+        }
+    };
     let live_without_media = sc.kind == PlaybackKind::Live && !sc.has_live_media();
     // `committed_len`보다 짧은 `.part`는 이 sidecar의 파일이 아니다(코어 `resume`이 둘 다 지우고 새로 시작한다, `Sidecar::describes`)
     (sc.owned_by(&j.owner()) && !live_without_media && sc.describes(part_len))
@@ -366,10 +377,18 @@ pub fn new_recording_id() -> String {
     b.iter().map(|x| format!("{x:02x}")).collect()
 }
 
-/// `{output}.part.json`을 읽는다. 없거나 깨졌으면 `None`.
+/// `{output}.part.json`을 읽는다. 없거나 깨졌거나 읽지 못하면 `None`(안내용. 받은 부분 판단은 `partial_bytes`).
 pub fn read_sidecar(output: &Path) -> Option<Sidecar> {
-    let bytes = std::fs::read(sidecar_path(output)).ok()?;
-    serde_json::from_slice(&bytes).ok()
+    read_sidecar_checked(output).ok().flatten()
+}
+
+/// `{output}.part.json`을 읽는다. 없거나 깨졌으면 `Ok(None)`, 그 밖의 읽기 실패는 `Err`(주인을 확인하지 못했다).
+fn read_sidecar_checked(output: &Path) -> std::io::Result<Option<Sidecar>> {
+    match std::fs::read(sidecar_path(output)) {
+        Ok(bytes) => Ok(serde_json::from_slice(&bytes).ok()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e),
+    }
 }
 
 /// 지금 unix 초.

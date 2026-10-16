@@ -224,3 +224,23 @@ fn part_shorter_than_committed_is_not_partial() {
     let got = run(vec![record(1, JobStatus::Failed, out)]);
     assert_eq!(got[0].partial_bytes, Some(4096));
 }
+
+/// sidecar를 읽지 못하면(없음·깨짐이 아닌 읽기 오류) 받은 부분이 없는 것이 아니라 모르는 것이다. 불러올 때도 `.part` 길이를
+/// 받은 부분으로 두어, 실패한 녹화가 경로를 잡고 [처음부터]가 막힌다(Codex PR #113 2회차 ④). 없음·깨짐은 그대로 `None`이다.
+#[test]
+fn unreadable_sidecar_is_unknown_not_none() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("a.mp4");
+    write_partial(&out, None, 48);
+    // 같은 자리에 폴더: 읽기 오류(세 OS 공통)
+    std::fs::create_dir(sidecar_path(&out)).unwrap();
+    let got = run(vec![record(1, JobStatus::Failed, out.clone())]);
+    assert_eq!(got[0].partial_bytes, Some(48));
+    // 대조: 없음·깨짐은 받은 부분이 없다
+    std::fs::remove_dir(sidecar_path(&out)).unwrap();
+    let got = run(vec![record(1, JobStatus::Failed, out.clone())]);
+    assert_eq!(got[0].partial_bytes, None);
+    std::fs::write(sidecar_path(&out), b"{not json").unwrap();
+    let got = run(vec![record(1, JobStatus::Failed, out)]);
+    assert_eq!(got[0].partial_bytes, None);
+}

@@ -300,6 +300,9 @@ impl State {
 /// 저장했으면 그 옛 기록의 덮어쓰기(`overwrite`)를 건너뛰기(`skip`)로 내린다. 받은 부분이 없어진 옛 기록을 다시 시도하면
 /// 지금 방송을 같은 출력에 새로 녹화하는데, 덮어쓰기면 방금 저장한 녹화를 덮어쓴다(Codex PR #113 확인). 건너뛰기면 코어가
 /// 녹화를 시작하지 않고 `skipped`로 끝나고, 덮어쓰려면 사용자가 [덮어쓰고 받기]를 따로 누른다(`requeue`).
+///
+/// 대상은 받은 부분 표시(`keeps_recording`)와 관계없이 같은 출력·같은 주인인 끝난(failed·skipped) 생방송 기록 모두다.
+/// 앞서 받은 부분이 내려간 기록도 덮어쓰기가 남아 있으면 다시 시도로 저장된 녹화를 덮어쓴다(Codex PR #113 2회차 ④).
 fn refresh_siblings(st: &mut State, rec: &JobRecord) {
     let key = output_key(&rec.output);
     let saved = rec.status == JobStatus::Completed;
@@ -307,18 +310,21 @@ fn refresh_siblings(st: &mut State, rec: &JobRecord) {
     for j in st.jobs.values_mut() {
         if j.rec.id == rec.id
             || j.uses_output()
-            || !j.keeps_recording()
+            || !j.is_live()
+            || !matches!(j.rec.status, JobStatus::Failed | JobStatus::Skipped)
             || output_key(&j.rec.output) != key
             || !same_owner(&j.rec, rec)
         {
             continue;
         }
         let now = partial_bytes(&j.rec);
-        if now != j.rec.partial_bytes {
-            j.rec.partial_bytes = now;
-            if saved && now.is_none() && j.rec.on_existing == OnExisting::Overwrite {
-                j.rec.on_existing = OnExisting::Skip;
-            }
+        let mut touched = now != j.rec.partial_bytes;
+        j.rec.partial_bytes = now;
+        if saved && now.is_none() && j.rec.on_existing == OnExisting::Overwrite {
+            j.rec.on_existing = OnExisting::Skip;
+            touched = true;
+        }
+        if touched {
             changed.push(j.dto());
         }
     }

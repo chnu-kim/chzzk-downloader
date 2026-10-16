@@ -23,12 +23,13 @@ export function sweep(db: Db, now: number): { readonly deleted: number; readonly
   deleted += db.run(`DELETE FROM audit WHERE id IN (SELECT id FROM audit ORDER BY id DESC LIMIT -1 OFFSET ${AUDIT_CAP})`);
   deleted += db.run("DELETE FROM invite WHERE expires_at <= ?", now);
   deleted += db.run("DELETE FROM delegation WHERE revoked_at IS NOT NULL AND revoked_at <= ?", now - REVOKED_DELEGATION_KEEP_MS);
-  // 허가 시각이 어긋난 행(관리자로 맺은 NULL 행은 admins를 모르므로 읽는 쪽 판정에 맡긴다, 구현 중 변경 105 (마))
+  // 허가 시각이나 주인의 판정용 ID가 어긋난 행(관리자로 맺은 NULL 행은 admins를 모르므로 읽는 쪽 판정에 맡긴다, 구현 중 변경 105 (라)(마)).
+  // 안쪽 a는 늘 있는 행이라 판정용 ID를 channel_id로 메워도 된다(admission과 같은 규칙)
   deleted += db.run(
-    "DELETE FROM delegation WHERE (owner_allowed_at IS NOT NULL AND NOT EXISTS (SELECT 1 FROM allowlist a WHERE a.channel_id = delegation.owner_login_channel_id AND a.added_at = delegation.owner_allowed_at)) OR (editor_allowed_at IS NOT NULL AND NOT EXISTS (SELECT 1 FROM allowlist a WHERE a.channel_id = delegation.editor_channel_id AND a.added_at = delegation.editor_allowed_at))",
+    "DELETE FROM delegation WHERE (owner_allowed_at IS NOT NULL AND NOT EXISTS (SELECT 1 FROM allowlist a WHERE a.channel_id = delegation.owner_login_channel_id AND a.added_at = delegation.owner_allowed_at AND COALESCE(a.owner_channel_id, a.channel_id) = delegation.owner_channel_id)) OR (editor_allowed_at IS NOT NULL AND NOT EXISTS (SELECT 1 FROM allowlist a WHERE a.channel_id = delegation.editor_channel_id AND a.added_at = delegation.editor_allowed_at))",
   );
   deleted += db.run(
-    "DELETE FROM invite WHERE owner_allowed_at IS NOT NULL AND NOT EXISTS (SELECT 1 FROM allowlist a WHERE a.channel_id = invite.owner_login_channel_id AND a.added_at = invite.owner_allowed_at)",
+    "DELETE FROM invite WHERE owner_allowed_at IS NOT NULL AND NOT EXISTS (SELECT 1 FROM allowlist a WHERE a.channel_id = invite.owner_login_channel_id AND a.added_at = invite.owner_allowed_at AND COALESCE(a.owner_channel_id, a.channel_id) = invite.owner_channel_id)",
   );
   // 활성 위임은 세지 않는다(세면 알람이 영원히 1시간마다 돈다)
   const left = db.first<{ n: number }>(

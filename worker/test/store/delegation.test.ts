@@ -192,14 +192,16 @@ describe("inviteView", () => {
     expect(await stub.inviteView(inv.hash, null, ADMINS, T0 + 4)).toBeNull();
   });
 
-  it("IV3 relation: self·already·full", async () => {
+  it("IV3 relation: own·already·full, 쓰기 0", async () => {
     const stub = freshStub();
     await allowAt(stub, B2, T0);
     await link(stub, B2, C3, T0 + 10);
     const inv = await invite(stub, B2, T0 + 100);
+    const b1 = await meter(stub);
     expect((await stub.inviteView(inv.hash, B2, ADMINS, T0 + 101))?.relation).toBe("own");
     expect((await stub.inviteView(inv.hash, C3, ADMINS, T0 + 101))?.relation).toBe("already");
     expect((await stub.inviteView(inv.hash, D4, ADMINS, T0 + 101))?.relation).toBe("open");
+    expect((await meter(stub)).written).toBe(b1.written);
     // 보는 사람이 이미 20채널을 맡았다
     const s2 = freshStub();
     await allowAt(s2, B2, T0);
@@ -208,14 +210,18 @@ describe("inviteView", () => {
       await link(s2, chan(i), C3, T0 + 10 + i * 10);
     }
     const inv2 = await invite(s2, B2, T0 + 1000);
+    const b2 = await meter(s2);
     expect((await s2.inviteView(inv2.hash, C3, ADMINS, T0 + 1001))?.relation).toBe("full");
+    expect((await meter(s2)).written).toBe(b2.written);
     // 주인의 편집자가 가득 찼다: 보는 사람이 없어도 full
     const s3 = freshStub();
     await allowAt(s3, B2, T0);
     for (let i = 0; i < 9; i++) await link(s3, B2, chan(i), T0 + 10 + i * 10);
     const inv3 = await invite(s3, B2, T0 + 500);
     await seedActive(s3, B2, B2, chan(50), T0 + 600);
+    const b3 = await meter(s3);
     expect((await s3.inviteView(inv3.hash, null, ADMINS, T0 + 601))?.relation).toBe("full");
+    expect((await meter(s3)).written).toBe(b3.written);
   });
 
   it("IV4 무효여도 지우지 않는다", async () => {
@@ -224,7 +230,10 @@ describe("inviteView", () => {
     const inv = await invite(stub, B2, T0 + 1);
     await v2Disallow(stub, B2, T0 + 2);
     await v2Allow(stub, B2, T0 + 5);
+    const before = await meter(stub);
     expect(await stub.inviteView(inv.hash, null, ADMINS, T0 + 6)).toBeNull();
+    expect(await stub.inviteView(inv.hash, C3, ADMINS, T0 + 6)).toBeNull();
+    expect((await meter(stub)).written).toBe(before.written);
     expect(await invites(stub)).toHaveLength(1);
   });
 });
@@ -920,29 +929,121 @@ describe("N3-v 다시 SELECT하지 않는다", () => {
   });
 
   it.each([
-    ["보통", B2],
-    ["대안 B", C3],
-  ] as const)("(2) 초대 뒤 허가 시각이 바뀌면 gone %s", async (_n, L) => {
+    ["보통", B2, B2],
+    ["대안 B", C3, D4],
+  ] as const)("(2) 초대 뒤 허가 시각이 바뀌면 gone %s", async (_n, L, J) => {
     const stub = freshStub();
     await allowAt(stub, L, T0);
+    if (L !== J) await altB(stub, L, J);
     await allowAt(stub, F6, T0 + 1);
     const inv = await invite(stub, L, T0 + 2);
+    expect((await invites(stub))[0]).toMatchObject({ owner_channel_id: J, owner_login_channel_id: L, owner_allowed_at: T0 });
     await runInDurableObject(stub, (i) => i.db.run("UPDATE allowlist SET added_at = added_at + 1 WHERE channel_id = ?", L));
     expect(await accept(stub, inv.hash, F6, T0 + 3)).toEqual({ ok: false, code: "gone" });
     expect(await delegations(stub)).toHaveLength(0);
   });
 
   it.each([
-    ["보통", B2],
-    ["대안 B", C3],
-  ] as const)("(3) 관리자가 된 주인에게도 초대 값 그대로 옮긴다 %s", async (_n, L) => {
+    ["보통", B2, B2],
+    ["대안 B", C3, D4],
+  ] as const)("(3) 관리자가 된 주인에게도 초대 값 그대로 옮긴다 %s", async (_n, L, J) => {
     const stub = freshStub();
     await allowAt(stub, L, T0);
+    if (L !== J) await altB(stub, L, J);
     await allowAt(stub, F6, T0 + 1);
     const inv = await invite(stub, L, T0 + 2);
+    expect((await invites(stub))[0]).toMatchObject({ owner_channel_id: J, owner_login_channel_id: L, owner_allowed_at: T0 });
+    // admins에는 로그인 ID를 넣는다(관리자 판정은 로그인 ID로 한다)
     const r = await stub.acceptInvite(inv.hash, F6, "편집자", [A1, L], T0 + 3);
     expect(r.ok).toBe(true);
-    expect((await delegations(stub))[0]!.owner_allowed_at).toBe(T0);
+    expect((await delegations(stub))[0]).toMatchObject({ owner_channel_id: J, owner_login_channel_id: L, owner_allowed_at: T0 });
+  });
+});
+
+describe("대안 B 판정용 ID 바꾸기", () => {
+  // 손 SQL로 allowlist.owner_channel_id를 바꾸면 옛 판정용 ID로 맺은 위임·초대는 무효다(구현 중 변경 105 (라))
+  it("JB1 맺은 뒤 판정용 ID가 바뀌면 위임이 빈다", async () => {
+    const stub = freshStub();
+    await allowAt(stub, C3, T0);
+    await altB(stub, C3, D4);
+    await allowAt(stub, B2, T0 + 1);
+    const inv = await invite(stub, C3, T0 + 2);
+    expect((await accept(stub, inv.hash, B2, T0 + 3)).ok).toBe(true);
+    expect(await mine(stub, B2)).toEqual([{ channelId: D4, channelName: "주인", since: T0 + 3 }]);
+    await altB(stub, C3, F6);
+    expect(await mine(stub, B2)).toEqual([]);
+    expect((await editorsSide(stub, D4, T0 + 4)).editors).toEqual([]);
+    await sweepNow(stub, T0 + 5);
+    expect(await delegations(stub)).toHaveLength(0);
+  });
+
+  it("JB2 판정용 ID가 NULL로 돌아가도(= 로그인 ID) 옛 위임은 빈다", async () => {
+    const stub = freshStub();
+    await allowAt(stub, C3, T0);
+    await altB(stub, C3, D4);
+    await allowAt(stub, B2, T0 + 1);
+    const inv = await invite(stub, C3, T0 + 2);
+    expect((await accept(stub, inv.hash, B2, T0 + 3)).ok).toBe(true);
+    await runInDurableObject(stub, (i) => i.db.run("UPDATE allowlist SET owner_channel_id = NULL WHERE channel_id = ?", C3));
+    expect(await mine(stub, B2)).toEqual([]);
+  });
+
+  it("JB3 초대 뒤 판정용 ID가 바뀌면 열리지도 수락되지도 않고 sweep이 지운다", async () => {
+    const stub = freshStub();
+    await allowAt(stub, C3, T0);
+    await altB(stub, C3, D4);
+    await allowAt(stub, B2, T0 + 1);
+    const inv = await invite(stub, C3, T0 + 2);
+    await altB(stub, C3, F6);
+    expect(await stub.inviteView(inv.hash, null, ADMINS, T0 + 3)).toBeNull();
+    expect(await accept(stub, inv.hash, B2, T0 + 3)).toEqual({ ok: false, code: "gone" });
+    expect(await delegations(stub)).toHaveLength(0);
+    const inv2 = await invite(stub, C3, T0 + 4);
+    await altB(stub, C3, D4);
+    await sweepNow(stub, T0 + 5);
+    expect((await invites(stub)).map((r) => r.token_hash)).not.toContain(inv2.hash);
+  });
+
+  it("JB4 음성 대조: 허가 행 없는 관리자 주인과 판정용 ID를 가진 관리자 주인은 활성이다", async () => {
+    const stub = freshStub();
+    await allowAt(stub, B2, T0);
+    const a = await invite(stub, A1, T0 + 1);
+    expect((await accept(stub, a.hash, B2, T0 + 2)).ok).toBe(true);
+    expect(await mine(stub, B2)).toEqual([{ channelId: A1, channelName: "주인", since: T0 + 2 }]);
+    await sweepNow(stub, T0 + 3);
+    expect(await mine(stub, B2)).toHaveLength(1);
+    const s2 = freshStub();
+    await allowAt(s2, A1, T0);
+    await altB(s2, A1, D4);
+    await allowAt(s2, B2, T0);
+    const b = await invite(s2, A1, T0 + 1);
+    expect((await invites(s2))[0]).toMatchObject({ owner_channel_id: D4, owner_allowed_at: null });
+    expect((await accept(s2, b.hash, B2, T0 + 2)).ok).toBe(true);
+    expect(await mine(s2, B2)).toEqual([{ channelId: D4, channelName: "주인", since: T0 + 2 }]);
+  });
+});
+
+describe("받아들인 구멍(구현 중 변경 105)", () => {
+  it("AH1 관리자로 맺은 위임은 강등되면 비고, sweep은 지우지 않으며, 다시 관리자가 되면 되살아난다", async () => {
+    const stub = freshStub();
+    await allowAt(stub, C3, T0);
+    const inv = await invite(stub, A1, T0 + 1);
+    expect((await accept(stub, inv.hash, C3, T0 + 2)).ok).toBe(true);
+    expect(await mine(stub, C3, [F6])).toEqual([]);
+    await sweepNow(stub, T0 + 400 * DAY);
+    expect(await delegations(stub)).toHaveLength(1);
+    expect(await mine(stub, C3, [A1])).toHaveLength(1);
+  });
+
+  it("AH2 V2로 되돌린 동안 허가·제외를 거친 청구는 V3의 다음 허가에서 위임이 된다", async () => {
+    const stub = freshStub();
+    await allowAt(stub, B2, T0);
+    const inv = await invite(stub, B2, T0 + 1);
+    expect(await inviteLogin(stub, inv.hash, E5, T0 + 2)).toHaveProperty("invitePending");
+    await v2Allow(stub, E5, T0 + 3);
+    await v2Disallow(stub, E5, T0 + 4);
+    await allowAt(stub, E5, T0 + 5);
+    expect(await mine(stub, E5)).toEqual([{ channelId: B2, channelName: "주인", since: T0 + 5 }]);
   });
 });
 

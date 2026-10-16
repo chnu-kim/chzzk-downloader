@@ -4,7 +4,7 @@
 // 새 위임의 owner_allowed_at은 판정을 통과한 초대 행의 값을 그대로 옮긴다(allowlist를 다시 읽지 않는다: N3).
 // 로그인 ID(owner_login_channel_id·editor_channel_id)가 허가 행의 키이고, 판정용 owner_channel_id는 앱이 보는 채널이다(대안 B, §8.6).
 // 상수는 [잠정]이다(ADR-0009 묶음).
-import { CHANNEL_ID, NAME_MAX, admission, clip } from "./allowlist";
+import { NAME_MAX, admission, clip } from "./allowlist";
 import type { Db } from "./db";
 import type { AcceptInviteResult, ClaimInviteResult, CreateInviteResult, DelegatedChannel, EditorView, EditorsView, InviteView, Minted, RemoveResult } from "./types";
 
@@ -43,6 +43,7 @@ export type InviteRow = {
   claimed_name: string | null;
   claimed_at: number | null;
   owner_added: number | null;
+  owner_judge: string;
 };
 export type DelegationRow = {
   owner_channel_id: string;
@@ -55,22 +56,27 @@ export type DelegationRow = {
   created_at: number;
   owner_added: number | null;
   editor_added: number | null;
+  owner_judge: string;
 };
 
-// 초대 + 주인 허가 행의 지금 added_at
+// 초대 + 주인 허가 행의 지금 added_at·지금 판정용 ID. owner_judge는 admission의 ownerChannelId와 같은 규칙이다(행이 없으면 로그인 ID)
 const INVITE_SELECT =
-  "SELECT i.token_hash, i.owner_channel_id, i.owner_login_channel_id, i.owner_name, i.owner_allowed_at, i.created_at, i.expires_at, i.claimed_channel_id, i.claimed_name, i.claimed_at, a.added_at AS owner_added FROM invite i LEFT JOIN allowlist a ON a.channel_id = i.owner_login_channel_id";
-// 회수되지 않은 위임 + 두 당사자 허가 행의 지금 added_at
+  "SELECT i.token_hash, i.owner_channel_id, i.owner_login_channel_id, i.owner_name, i.owner_allowed_at, i.created_at, i.expires_at, i.claimed_channel_id, i.claimed_name, i.claimed_at, a.added_at AS owner_added, COALESCE(a.owner_channel_id, i.owner_login_channel_id) AS owner_judge FROM invite i LEFT JOIN allowlist a ON a.channel_id = i.owner_login_channel_id";
+// 회수되지 않은 위임 + 두 당사자 허가 행의 지금 added_at + 주인의 지금 판정용 ID
 const LIVE_SELECT =
-  "SELECT d.owner_channel_id, d.owner_login_channel_id, d.editor_channel_id, d.owner_name, d.editor_name, d.owner_allowed_at, d.editor_allowed_at, d.created_at, ao.added_at AS owner_added, ae.added_at AS editor_added FROM delegation d LEFT JOIN allowlist ao ON ao.channel_id = d.owner_login_channel_id LEFT JOIN allowlist ae ON ae.channel_id = d.editor_channel_id WHERE d.revoked_at IS NULL";
+  "SELECT d.owner_channel_id, d.owner_login_channel_id, d.editor_channel_id, d.owner_name, d.editor_name, d.owner_allowed_at, d.editor_allowed_at, d.created_at, ao.added_at AS owner_added, ae.added_at AS editor_added, COALESCE(ao.owner_channel_id, d.owner_login_channel_id) AS owner_judge FROM delegation d LEFT JOIN allowlist ao ON ao.channel_id = d.owner_login_channel_id LEFT JOIN allowlist ae ON ae.channel_id = d.editor_channel_id WHERE d.revoked_at IS NULL";
 
-/** 초대의 판정식 inviteValid(delegation.md §8.1 3차): 미만료 ∧ 주인 partyOk */
-export function inviteValid(r: InviteRow, admins: readonly string[], now: number): boolean {
-  return r.expires_at > now && partyOk(r.owner_allowed_at, r.owner_added, r.owner_login_channel_id, admins);
+/** 주인 쪽 판정: partyOk ∧ 맺을 때의 판정용 ID가 지금 지정과 같다(손 SQL로 대안 B 지정을 바꾸면 옛 관계는 무효, 구현 중 변경 105 (라)) */
+function ownerOk(r: { owner_allowed_at: number | null; owner_added: number | null; owner_login_channel_id: string; owner_channel_id: string; owner_judge: string }, admins: readonly string[]): boolean {
+  return r.owner_judge === r.owner_channel_id && partyOk(r.owner_allowed_at, r.owner_added, r.owner_login_channel_id, admins);
 }
-/** 활성 위임: 회수 안 됨(쿼리가 거른다) ∧ 두 당사자 partyOk */
+/** 초대의 판정식 inviteValid(delegation.md §8.1 3차): 미만료 ∧ 주인 쪽 판정 */
+export function inviteValid(r: InviteRow, admins: readonly string[], now: number): boolean {
+  return r.expires_at > now && ownerOk(r, admins);
+}
+/** 활성 위임: 회수 안 됨(쿼리가 거른다) ∧ 주인 쪽 판정 ∧ 편집자 partyOk(편집자에게는 판정용 ID가 없다) */
 export function delegationActive(r: DelegationRow, admins: readonly string[]): boolean {
-  return partyOk(r.owner_allowed_at, r.owner_added, r.owner_login_channel_id, admins) && partyOk(r.editor_allowed_at, r.editor_added, r.editor_channel_id, admins);
+  return ownerOk(r, admins) && partyOk(r.editor_allowed_at, r.editor_added, r.editor_channel_id, admins);
 }
 
 // 규칙: 상한은 SQL에 두지 않는다. 후보를 다 읽고 JS에서 판정한 뒤 자른다(무효 행이 유효 행을 밀어내지 않게).
@@ -316,6 +322,3 @@ export function leaveDelegation(db: Db, editorLoginId: string, ownerChannelId: s
   const n = db.run("UPDATE delegation SET revoked_at = ?, revoked_by = 'editor' WHERE editor_channel_id = ? AND owner_channel_id = ? AND revoked_at IS NULL", now, editorLoginId, ownerChannelId);
   return n === 0 ? { ok: false, code: "not_found" } : { ok: true };
 }
-
-/** 채널 ID 형식(AuthStore가 SQL 전에 거른다) */
-export const isChannelId = (v: unknown): v is string => typeof v === "string" && CHANNEL_ID.test(v);

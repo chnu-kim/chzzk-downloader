@@ -5,7 +5,7 @@
 //! - `progressive`: PD mp4 단일 GET + Range 이어받기
 //! - `segmented`: 빠른 다시보기 HLS fMP4, 순서 보장 동시 fetch
 //! - `live`: 진행 중인 생방송 HLS fMP4, playlist를 계속 읽어 새 세그먼트를 이어 받는다
-//! - `defrag`: 생방송 결과(조각난 fMP4)를 마무리 직전에 일반 mp4로 제자리 변환한다
+//! - `defrag`: 생방송·구간 받기 결과(조각난 fMP4)를 마무리 직전에 일반 mp4로 제자리 변환한다
 //!
 //! 공통 골격(`Chzzk::download`):
 //! 1. 최종 파일이 있으면 `Skip` → `Skipped`(네트워크 0회), `Overwrite` → 계속.
@@ -35,9 +35,9 @@ use tokio::time::Instant as TokioInstant;
 use tokio_util::sync::CancellationToken;
 
 use crate::client::Chzzk;
-use crate::error::Error;
+use crate::error::{Error, Unsupported};
 use crate::fsutil::map_io_error;
-use crate::model::{ContentRef, PlaybackKind, Resolved, Source};
+use crate::model::{ContentRef, PlaybackKind, Resolved, Source, TimeRange};
 use crate::progress::{Meter, Phase, Progress};
 
 pub use part::{Discarded, Finalized, PartFile, PartOwner, Sidecar, discard_partial};
@@ -79,6 +79,10 @@ pub struct DownloadRequest {
     /// 생방송만: 이 녹화 작업의 고유값(셸이 작업을 만들 때 정한다). sidecar에 적고, 같은 값의 요청만 그 `.part`를
     /// 마무리하거나 지운다. 새 녹화는 새 값이라 남의 `.part`를 마무리하지 않는다. `None`은 v0.7.0 작업(core.md 61)
     pub recording_id: Option<String>,
+    /// 빠른 다시보기만: 이 시각 구간만 받는다(기능 ②). `None`은 전체다.
+    /// `Some`이면 `expected_kind`가 `LiveRewindHls`여야 하고, 아니면 `Unsupported(RangeNotHls)`다.
+    /// 결과는 마무리 때 일반 mp4로 바꾼다(`finish`).
+    pub range: Option<TimeRange>,
 }
 
 impl DownloadRequest {
@@ -89,6 +93,7 @@ impl DownloadRequest {
             quality_id: &self.quality_id,
             kind: self.expected_kind,
             recording_id: self.recording_id.as_deref(),
+            range: self.range,
         }
     }
 }
@@ -287,6 +292,20 @@ impl Chzzk {
         cancel: CancellationToken,
         on_progress: &(dyn Fn(Progress) + Send + Sync),
     ) -> Result<DownloadOutcome, Error> {
+        // 구간 요청의 검증은 맨 앞이다. `resume`보다 뒤면 같은 경로의 다른 작업 `.part`가 소유 불일치로
+        // 지워지고, Skip보다 뒤면 잘못된 요청이 `Skipped`로 조용히 성공한다(core.md 64).
+        if let Some(r) = req.range {
+            if req.expected_kind != PlaybackKind::LiveRewindHls {
+                return Err(Error::Unsupported(Unsupported::RangeNotHls));
+            }
+            if let Some(e) = r.end_ms
+                && r.start_ms >= e
+            {
+                return Err(Error::RangeOutOfBounds {
+                    detail: format!("시작 {}ms가 끝 {e}ms보다 늦거나 같습니다", r.start_ms),
+                });
+            }
+        }
         if req.output.exists() && req.on_existing == DuplicatePolicy::Skip {
             return Ok(DownloadOutcome::Skipped { path: req.output });
         }
@@ -374,7 +393,7 @@ async fn cleanup(part: Option<PartFile>, keep: bool, e: &Error) {
     }
 }
 
-/// 생방송 변환 결과로 마무리를 이어 갈지 정한다(core.md 61 M4). `Ok(true)`: 바꿨으니 checkpoint 뒤 마무리,
+/// 조각 구조 변환 결과로 마무리를 이어 갈지 정한다(core.md 61 M4). `Ok(true)`: 바꿨으니 checkpoint 뒤 마무리,
 /// `Ok(false)`: 그대로 마무리(이미 일반 mp4·조각 아님·바꾸기 전 구조 판정 실패), `Err`: 마무리하지 않는다(바꾸는 도중
 /// 실패·읽기 입출력 오류로 파일 상태를 확인하지 못함, `DefragError::Modified`).
 fn defrag_verdict(
@@ -382,15 +401,15 @@ fn defrag_verdict(
 ) -> Result<bool, Error> {
     match r {
         Ok(Ok(rep)) => {
-            tracing::info!(report = ?rep, "생방송 파일 변환");
+            tracing::info!(report = ?rep, "조각 구조 파일을 일반 mp4로 변환");
             Ok(matches!(rep, defrag::DefragReport::Converted { .. }))
         }
         Ok(Err(defrag::DefragError::Unchanged(e))) => {
-            tracing::warn!(error = %e, "생방송 파일을 일반 mp4로 바꾸지 못해 조각 구조로 둔다");
+            tracing::warn!(error = %e, "일반 mp4로 바꾸지 못해 조각 구조로 둔다");
             Ok(false)
         }
         Ok(Err(defrag::DefragError::Modified(e))) => {
-            tracing::warn!(error = %e, "생방송 파일 변환이 도중에 실패했거나 파일을 읽지 못해 .part로 둔다");
+            tracing::warn!(error = %e, "변환이 도중에 실패했거나 파일을 읽지 못해 .part로 둔다");
             Err(e)
         }
         // 핸들 복제·flush·태스크 실패: 파일 상태를 모르니 마무리하지 않는다
@@ -413,12 +432,24 @@ pub(crate) async fn finish(
         *part = Some(p);
         return Err(e);
     }
-    // 생방송은 조각 구조를 일반 mp4로 바꾼다(core.md 구현 중 변경 60). 바로 위 checkpoint로 받은 바이트가 모두
+    // 생방송과 구간 받기 결과는 조각 구조를 일반 mp4로 바꾼다(core.md 구현 중 변경 60·64). 바로 위 checkpoint로 받은 바이트가 모두
     // durable하므로, 변환 도중 죽어도 다음 실행의 `resume`이 붙인 moov만 잘라 내고 다시 변환한다.
     // 바꾸기 전 실패는 경고만 남기고 조각 구조로 마무리하고, 바꾸는 도중 실패는 `.part`로 남긴다(core.md 61).
-    if job.req.expected_kind == PlaybackKind::Live {
+    if job.req.expected_kind == PlaybackKind::Live || job.req.range.is_some() {
         // 파일 전체 훑기·fsync는 오래 걸릴 수 있어 blocking 스레드에서 한다.
         let r = p.with_file_blocking(|f| Ok(defrag::defragment_in(f))).await;
+        // 구간 조각의 시각이 이어지지 않으면 경고만 남긴다(판정이나 오류로 쓰지 않는다).
+        if job.req.range.is_some()
+            && let Ok(Ok(defrag::DefragReport::Converted {
+                discontinuities, ..
+            })) = &r
+            && *discontinuities > 0
+        {
+            tracing::warn!(
+                discontinuities = *discontinuities,
+                "구간 조각의 시각이 이어지지 않는다"
+            );
+        }
         match defrag_verdict(r) {
             Ok(true) => {
                 // 변환이 붙인 moov까지 committed_len에 넣는다(마무리가 Skipped로 끝나 `.part`가 남아도 잘리지 않게).

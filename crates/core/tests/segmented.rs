@@ -1,17 +1,19 @@
 //! 빠른 다시보기 HLS(fMP4) 다운로드 통합 테스트(설계 §5.4, §8.2 segmented). 네트워크는 wiremock뿐이다.
 
 mod common;
+#[path = "support/mp4.rs"]
+mod mp4;
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use chzzk_core::{
     CancellationToken, Chzzk, ClientConfig, ContentRef, DownloadOutcome, DownloadRequest,
-    DuplicatePolicy, Error, Phase, PlaybackKind, Progress,
+    DuplicatePolicy, Error, Phase, PlaybackKind, Progress, TimeRange,
 };
 use common::{
     Events, HLS_NO, config, fixture, hls_info, mount_synth_hls, part_files, rewrite_hosts, suffix,
-    synth_expected, synth_media, synth_segment,
+    synth_expected, synth_init, synth_media, synth_segment,
 };
 use std::num::NonZeroU8;
 use wiremock::matchers::{method, path};
@@ -29,6 +31,7 @@ fn request(out: &Path, concurrency: u8) -> DownloadRequest {
         concurrency: NonZeroU8::new(concurrency).unwrap(),
         live_stop: None,
         recording_id: None,
+        range: None,
     }
 }
 
@@ -1011,4 +1014,594 @@ async fn refresh_exhausted() {
         std::fs::read(part_files(&out).0).unwrap(),
         synth_expected(9)
     );
+}
+
+// ---- 구간 받기(기능 ②, core.md 64) ----
+
+fn range_request(out: &Path, conc: u8, start_ms: u64, end_ms: Option<u64>) -> DownloadRequest {
+    DownloadRequest {
+        range: Some(TimeRange { start_ms, end_ms }),
+        ..request(out, conc)
+    }
+}
+
+/// 합성 바이트(변환되지 않는다)의 구간 결과: init ‖ seg[first..last_excl].
+fn synth_range(first: usize, last_excl: usize) -> Vec<u8> {
+    let mut v = synth_init();
+    for i in first..last_excl {
+        v.extend(synth_segment(i));
+    }
+    v
+}
+
+async fn seg_count(server: &MockServer, prefix: &str, i: usize) -> usize {
+    requests(server, &format!("{prefix}/144p/seg{i}.m4v"))
+        .await
+        .len()
+}
+
+/// 고른 조각만 요청하고, 진행률의 분모는 구간이다.
+#[tokio::test]
+async fn range_requests_only_selected_segments() {
+    const N: usize = 20;
+    let server = MockServer::start().await;
+    mount_info(&server, "/g0", None).await;
+    mount_synth_hls(&server, "/g0", N).await;
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_path(&dir);
+    let events = Events::default();
+    let cb = events.callback();
+    let r = run(
+        config(&server),
+        range_request(&out, 4, 7000, Some(23000)),
+        CancellationToken::new(),
+        &cb,
+    )
+    .await
+    .unwrap();
+    let want = synth_range(3, 12);
+    assert_eq!(
+        r,
+        DownloadOutcome::Completed {
+            path: out.clone(),
+            bytes: want.len() as u64,
+            resumed_from: 0
+        }
+    );
+    // 합성 바이트는 진짜 fMP4가 아니라 변환되지 않는다.
+    assert_eq!(std::fs::read(&out).unwrap(), want);
+    for i in (0..3).chain(12..N) {
+        assert_eq!(seg_count(&server, "/g0", i).await, 0, "seg{i}");
+    }
+    for i in 3..12 {
+        assert_eq!(seg_count(&server, "/g0", i).await, 1, "seg{i}");
+    }
+    let last = events.last();
+    assert_eq!(last.segments, Some((9, 9)));
+    assert_eq!(last.media_secs, Some((18.0, 18.0)));
+    let (part, sidecar) = part_files(&out);
+    assert!(!part.exists() && !sidecar.exists());
+}
+
+/// seg8에서 취소한 구간 `.part`: sidecar는 v2이고 구간·위치를 적는다.
+async fn cancel_range_at_seg8(server: &MockServer, out: &Path, n: usize) -> serde_json::Value {
+    let cancel = CancellationToken::new();
+    Mock::given(method("GET"))
+        .and(path("/g0/144p/seg8.m4v"))
+        .respond_with(CancelOnRequest(cancel.clone(), synth_segment(8)))
+        .up_to_n_times(1)
+        .with_priority(1)
+        .mount(server)
+        .await;
+    mount_info(server, "/g0", None).await;
+    mount_synth_hls(server, "/g0", n).await;
+    let r = run(
+        config(server),
+        range_request(out, 1, 7000, Some(23000)),
+        cancel,
+        &|_| {},
+    )
+    .await;
+    assert!(matches!(r, Err(Error::Cancelled)), "{r:?}");
+    sidecar_json(out)
+}
+
+#[tokio::test]
+async fn range_sidecar_is_v2() {
+    let server = MockServer::start().await;
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_path(&dir);
+    let sc = cancel_range_at_seg8(&server, &out, 20).await;
+    assert_eq!(sc["v"], 2);
+    assert_eq!(
+        sc["hls"]["range"],
+        serde_json::json!({"first": 3, "lastExcl": 12, "startMs": 7000, "endMs": 23000})
+    );
+    let next = sc["hls"]["nextIndex"].as_u64().unwrap() as usize;
+    assert!((3..=8).contains(&next), "{next}");
+    assert_eq!(
+        sc["committedLen"],
+        synth_range(3, next).len() as u64,
+        "committedLen은 조각 경계다"
+    );
+    assert_eq!(
+        std::fs::read(part_files(&out).0).unwrap(),
+        synth_range(3, next)
+    );
+}
+
+#[tokio::test]
+async fn range_cancel_then_resume_byte_identical() {
+    const N: usize = 20;
+    let server = MockServer::start().await;
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_path(&dir);
+    let sc = cancel_range_at_seg8(&server, &out, N).await;
+    let next = sc["hls"]["nextIndex"].as_u64().unwrap() as usize;
+    let committed = synth_range(3, next).len() as u64;
+
+    let events = Events::default();
+    let cb = events.callback();
+    let r = run(
+        config(&server),
+        range_request(&out, 4, 7000, Some(23000)),
+        CancellationToken::new(),
+        &cb,
+    )
+    .await
+    .unwrap();
+    let want = synth_range(3, 12);
+    assert_eq!(
+        r,
+        DownloadOutcome::Completed {
+            path: out.clone(),
+            bytes: want.len() as u64,
+            resumed_from: committed,
+        }
+    );
+    assert_eq!(events.all()[0].resumed_from, committed);
+    let resumed = std::fs::read(&out).unwrap();
+    assert_eq!(resumed, want);
+
+    // 끊김 없이 받은 같은 구간과 바이트가 같다.
+    let server2 = MockServer::start().await;
+    mount_info(&server2, "/g0", None).await;
+    mount_synth_hls(&server2, "/g0", N).await;
+    let dir2 = tempfile::tempdir().unwrap();
+    let out2 = out_path(&dir2);
+    run(
+        config(&server2),
+        range_request(&out2, 4, 7000, Some(23000)),
+        CancellationToken::new(),
+        &|_| {},
+    )
+    .await
+    .unwrap();
+    assert_eq!(std::fs::read(&out2).unwrap(), resumed);
+
+    // 1회차에 커밋된 조각은 2회차에 다시 요청하지 않는다.
+    for i in 3..next {
+        assert_eq!(seg_count(&server, "/g0", i).await, 1, "seg{i}");
+    }
+    let (part, sidecar) = part_files(&out);
+    assert!(!part.exists() && !sidecar.exists());
+}
+
+/// init만 쓰고 첫 checkpoint 전에 죽은 구간 sidecar(`committedLen 0`, `nextIndex 3`)에서 재개하면
+/// init을 다시 쓰고 `nextIndex`를 구간 시작(3)으로 둔다. init이 두 번 들어가지 않는다.
+#[tokio::test]
+async fn range_resume_from_empty_commit_writes_init_at_first() {
+    const N: usize = 20;
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_path(&dir);
+    // 1회차: 구간 첫 조각(seg3)이 503이고 재시도가 없어 init만 쓰고 끝난다.
+    let server = MockServer::start().await;
+    mount_info(&server, "/g0", None).await;
+    Mock::given(method("GET"))
+        .and(path("/g0/144p/seg3.m4v"))
+        .respond_with(ResponseTemplate::new(503))
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    mount_synth_hls(&server, "/g0", N).await;
+    let cfg = ClientConfig {
+        retry: chzzk_core::RetryPolicy::none(),
+        ..config(&server)
+    };
+    assert!(
+        run(
+            cfg,
+            range_request(&out, 1, 7000, Some(23000)),
+            CancellationToken::new(),
+            &|_| {}
+        )
+        .await
+        .is_err()
+    );
+    let (part, sidecar) = part_files(&out);
+    assert_eq!(std::fs::read(&part).unwrap(), synth_init());
+    let mut sc = sidecar_json(&out);
+    assert_eq!(sc["hls"]["nextIndex"], 3);
+    // init을 쓴 뒤 checkpoint 전에 죽은 상태: sidecar는 0이고 `.part`에는 init과 쓰레기 꼬리가 있다.
+    sc["committedLen"] = 0.into();
+    std::fs::write(&sidecar, serde_json::to_vec(&sc).unwrap()).unwrap();
+    {
+        use std::io::Write;
+        let mut f = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&part)
+            .unwrap();
+        f.write_all(b"GARBAGE-TAIL").unwrap();
+    }
+
+    let server = MockServer::start().await;
+    mount_info(&server, "/g0", None).await;
+    mount_synth_hls(&server, "/g0", N).await;
+    let r = run(
+        config(&server),
+        range_request(&out, 2, 7000, Some(23000)),
+        CancellationToken::new(),
+        &|_| {},
+    )
+    .await
+    .unwrap();
+    let want = synth_range(3, 12);
+    assert_eq!(
+        r,
+        DownloadOutcome::Completed {
+            path: out.clone(),
+            bytes: want.len() as u64,
+            resumed_from: 0,
+        }
+    );
+    assert_eq!(std::fs::read(&out).unwrap(), want);
+    assert_eq!(requests(&server, "/g0/144p/init.m4s").await.len(), 1);
+    for i in (0..3).chain(12..N) {
+        assert_eq!(seg_count(&server, "/g0", i).await, 0, "seg{i}");
+    }
+    assert!(!part.exists() && !sidecar.exists());
+}
+
+/// 구간 중간에 주소가 만료돼도(403) 같은 위치부터 구간 끝까지 잇는다.
+#[tokio::test]
+async fn range_expired_mid_range_reresolves() {
+    const N: usize = 20;
+    let server = MockServer::start().await;
+    mount_info(&server, "/g0", Some(1)).await;
+    mount_info(&server, "/g1", None).await;
+    for i in 6..N {
+        Mock::given(method("GET"))
+            .and(path(format!("/g0/144p/seg{i}.m4v")))
+            .respond_with(ResponseTemplate::new(403))
+            .with_priority(1)
+            .mount(&server)
+            .await;
+    }
+    mount_synth_hls(&server, "/g0", N).await;
+    mount_synth_hls(&server, "/g1", N).await;
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_path(&dir);
+    let events = Events::default();
+    let cb = events.callback();
+    run(
+        config(&server),
+        range_request(&out, 4, 7000, Some(23000)),
+        CancellationToken::new(),
+        &cb,
+    )
+    .await
+    .unwrap();
+    assert_eq!(std::fs::read(&out).unwrap(), synth_range(3, 12));
+    for i in 3..6 {
+        assert_eq!(seg_count(&server, "/g0", i).await, 1, "g0 seg{i}");
+        assert_eq!(seg_count(&server, "/g1", i).await, 0, "g1 seg{i}");
+    }
+    for i in 6..12 {
+        assert_eq!(seg_count(&server, "/g1", i).await, 1, "g1 seg{i}");
+    }
+    for i in (0..3).chain(12..N) {
+        assert_eq!(seg_count(&server, "/g0", i).await, 0, "g0 seg{i}");
+        assert_eq!(seg_count(&server, "/g1", i).await, 0, "g1 seg{i}");
+    }
+    assert_eq!(events.last().refreshes, 1);
+}
+
+/// 재조회 직후 같은 조각이 또 403이면 `AuthRequired`이고 `.part`를 지운다.
+#[tokio::test]
+async fn range_forbidden_after_refresh_is_auth_required() {
+    let server = MockServer::start().await;
+    mount_info(&server, "/g0", None).await;
+    Mock::given(method("GET"))
+        .and(path("/g0/144p/seg6.m4v"))
+        .respond_with(ResponseTemplate::new(403))
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    mount_synth_hls(&server, "/g0", 20).await;
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_path(&dir);
+    let r = run(
+        config(&server),
+        range_request(&out, 3, 7000, Some(23000)),
+        CancellationToken::new(),
+        &|_| {},
+    )
+    .await;
+    assert!(
+        matches!(r, Err(Error::AuthRequired { status: 403 })),
+        "{r:?}"
+    );
+    assert_eq!(requests(&server, INFO_PATH).await.len(), 2);
+    assert_eq!(seg_count(&server, "/g0", 6).await, 2);
+    for i in 0..3 {
+        assert_eq!(seg_count(&server, "/g0", i).await, 0, "seg{i}");
+    }
+    let (part, sidecar) = part_files(&out);
+    assert!(!part.exists() && !sidecar.exists());
+}
+
+/// 재조회한 playlist가 다르면 `SourceChanged`이고 받은 구간은 남긴다.
+#[tokio::test]
+async fn range_refresh_fingerprint_mismatch_keeps_part() {
+    let server = MockServer::start().await;
+    mount_info(&server, "/g0", Some(1)).await;
+    mount_info(&server, "/g1", None).await;
+    Mock::given(method("GET"))
+        .and(path("/g0/144p/seg6.m4v"))
+        .respond_with(ResponseTemplate::new(403))
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/g1/144p/media.m3u8"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(synth_media(21, "2.000")))
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    mount_synth_hls(&server, "/g0", 20).await;
+    mount_synth_hls(&server, "/g1", 20).await;
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_path(&dir);
+    let r = run(
+        config(&server),
+        range_request(&out, 1, 7000, Some(23000)),
+        CancellationToken::new(),
+        &|_| {},
+    )
+    .await;
+    assert!(matches!(r, Err(Error::SourceChanged { .. })), "{r:?}");
+    let sc = sidecar_json(&out);
+    assert!(sc["committedLen"].as_u64().unwrap() > 0);
+    assert_eq!(sc["v"], 2);
+    assert_eq!(
+        std::fs::read(part_files(&out).0).unwrap(),
+        synth_range(3, 6)
+    );
+}
+
+/// 구간이 영상 밖이면 `.part`를 만들지 않고 조각도 받지 않는다.
+#[tokio::test]
+async fn range_out_of_bounds_creates_no_part() {
+    let server = MockServer::start().await;
+    mount_info(&server, "/g0", None).await;
+    mount_synth_hls(&server, "/g0", 5).await;
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_path(&dir);
+    let r = run(
+        config(&server),
+        range_request(&out, 2, 10000, None),
+        CancellationToken::new(),
+        &|_| {},
+    )
+    .await;
+    assert!(matches!(r, Err(Error::RangeOutOfBounds { .. })), "{r:?}");
+    let (part, sidecar) = part_files(&out);
+    assert!(!part.exists() && !sidecar.exists());
+    for i in 0..5 {
+        assert_eq!(seg_count(&server, "/g0", i).await, 0, "seg{i}");
+    }
+}
+
+/// 다른 구간의 `.part`는 이어받지 않고 새로 시작한다.
+#[tokio::test]
+async fn range_different_from_sidecar_restarts() {
+    let server = MockServer::start().await;
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_path(&dir);
+    cancel_range_at_seg8(&server, &out, 20).await;
+    let r = run(
+        config(&server),
+        range_request(&out, 2, 2000, Some(9000)),
+        CancellationToken::new(),
+        &|_| {},
+    )
+    .await
+    .unwrap();
+    let want = synth_range(1, 5);
+    assert_eq!(
+        r,
+        DownloadOutcome::Completed {
+            path: out.clone(),
+            bytes: want.len() as u64,
+            resumed_from: 0,
+        }
+    );
+    assert_eq!(std::fs::read(&out).unwrap(), want);
+}
+
+/// 구간 `.part` 뒤의 전체 받기는 새로 시작하고, 조각 구조 그대로 둔다(전체 받기 회귀).
+#[tokio::test]
+async fn full_after_range_part_restarts_and_stays_fragmented() {
+    const N: usize = 20;
+    let server = MockServer::start().await;
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_path(&dir);
+    cancel_range_at_seg8(&server, &out, N).await;
+    let r = run(
+        config(&server),
+        request(&out, 4),
+        CancellationToken::new(),
+        &|_| {},
+    )
+    .await
+    .unwrap();
+    assert!(matches!(
+        r,
+        DownloadOutcome::Completed {
+            resumed_from: 0,
+            ..
+        }
+    ));
+    assert_eq!(std::fs::read(&out).unwrap(), synth_expected(N));
+}
+
+// ---- 실제 fMP4 조각(합성)으로 일반 mp4 변환 ----
+
+static REAL: std::sync::LazyLock<(Vec<u8>, Vec<Vec<u8>>)> =
+    std::sync::LazyLock::new(|| mp4::split_fragments(&fixture("testdata/live/synthetic_frag.mp4")));
+
+/// init·조각을 합성 fMP4(`REAL`)로 준다. 조각 수를 돌려준다.
+async fn mount_real_hls(server: &MockServer, prefix: &str) -> usize {
+    let n = REAL.1.len();
+    Mock::given(method("GET"))
+        .and(path(format!("{prefix}/master.m3u8")))
+        .respond_with(ResponseTemplate::new(200).set_body_string(common::SYNTH_MASTER))
+        .mount(server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("{prefix}/144p/media.m3u8")))
+        .respond_with(ResponseTemplate::new(200).set_body_string(synth_media(n, "2.000")))
+        .mount(server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("{prefix}/144p/init.m4s")))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(REAL.0.clone()))
+        .mount(server)
+        .await;
+    for (i, seg) in REAL.1.iter().enumerate() {
+        Mock::given(method("GET"))
+            .and(path(format!("{prefix}/144p/seg{i}.m4v")))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(seg.clone()))
+            .mount(server)
+            .await;
+    }
+    n
+}
+
+/// 조각의 `tfdt` baseMediaDecodeTime(v0 32비트, v1 64비트). 상자 탐색 없이 첫 `tfdt`를 찾는다.
+fn tfdt_of(seg: &[u8]) -> u64 {
+    let at = seg.windows(4).position(|w| w == b"tfdt").expect("tfdt");
+    let body = &seg[at + 4..];
+    match body[0] {
+        0 => u64::from(u32::from_be_bytes(body[4..8].try_into().unwrap())),
+        _ => u64::from_be_bytes(body[4..12].try_into().unwrap()),
+    }
+}
+
+/// 구간 결과는 일반 mp4이고, 고른 조각의 미디어 데이터가 순서대로 들어 있다.
+#[tokio::test]
+async fn range_result_is_flat_mp4_from_nonzero_tfdt() {
+    let server = MockServer::start().await;
+    mount_info(&server, "/g0", None).await;
+    let n = mount_real_hls(&server, "/g0").await;
+    assert_eq!(n, 7);
+    // fixture 가정: 구간 첫 조각의 시각은 0이 아니다(시각을 0부터 다시 쌓는지 보려면 필요하다).
+    assert_ne!(tfdt_of(&REAL.1[2]), 0, "fixture 가정이 틀렸다");
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_path(&dir);
+    let r = run(
+        config(&server),
+        range_request(&out, 2, 4000, Some(10000)),
+        CancellationToken::new(),
+        &|_| {},
+    )
+    .await
+    .unwrap();
+    let got = std::fs::read(&out).unwrap();
+    let DownloadOutcome::Completed { bytes, .. } = r else {
+        panic!("{r:?}")
+    };
+    assert_eq!(bytes, got.len() as u64);
+    mp4::assert_flat_mp4(&got);
+    let want: Vec<u8> = REAL.1[2..5]
+        .iter()
+        .flat_map(|s| mp4::mdat_payloads(s))
+        .flatten()
+        .collect();
+    let have: Vec<u8> = mp4::mdat_payloads(&got).into_iter().flatten().collect();
+    assert_eq!(have, want);
+    for i in [0, 1, 5, 6] {
+        assert_eq!(seg_count(&server, "/g0", i).await, 0, "seg{i}");
+    }
+}
+
+/// 전체 받기는 조각 구조 그대로다(구간 변환이 전체 받기를 바꾸지 않는다).
+#[tokio::test]
+async fn full_download_stays_fragmented() {
+    let server = MockServer::start().await;
+    mount_info(&server, "/g0", None).await;
+    mount_real_hls(&server, "/g0").await;
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_path(&dir);
+    run(
+        config(&server),
+        request(&out, 2),
+        CancellationToken::new(),
+        &|_| {},
+    )
+    .await
+    .unwrap();
+    let mut want = REAL.0.clone();
+    for s in &REAL.1 {
+        want.extend_from_slice(s);
+    }
+    assert_eq!(std::fs::read(&out).unwrap(), want);
+}
+
+/// 변환이 끝난 뒤 rename 전에 끊긴 구간 `.part`는 조각을 다시 받지 않고 마무리한다.
+#[tokio::test]
+async fn range_converted_then_skipped_resumes_without_refetch() {
+    let server = MockServer::start().await;
+    mount_info(&server, "/g0", None).await;
+    mount_real_hls(&server, "/g0").await;
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_path(&dir);
+    let (part, sidecar) = part_files(&out);
+
+    // 1회차: 마무리 단계에서 최종 경로에 파일이 생겨 `Skipped`로 끝난다(변환은 끝난 뒤다).
+    let out2 = out.clone();
+    let cb = move |p: Progress| {
+        if p.phase == Phase::Finalizing {
+            std::fs::write(&out2, b"someone else").unwrap();
+        }
+    };
+    let req = DownloadRequest {
+        on_existing: DuplicatePolicy::Skip,
+        ..range_request(&out, 2, 4000, Some(10000))
+    };
+    let r = run(config(&server), req, CancellationToken::new(), &cb)
+        .await
+        .unwrap();
+    assert!(matches!(r, DownloadOutcome::Skipped { .. }), "{r:?}");
+    let converted = std::fs::read(&part).unwrap();
+    mp4::assert_flat_mp4(&converted);
+    assert!(sidecar.exists());
+
+    // 2회차: 최종 파일을 지우고 덮어쓰기로. 조각은 다시 받지 않는다.
+    std::fs::remove_file(&out).unwrap();
+    let r = run(
+        config(&server),
+        range_request(&out, 2, 4000, Some(10000)),
+        CancellationToken::new(),
+        &|_| {},
+    )
+    .await
+    .unwrap();
+    assert!(matches!(r, DownloadOutcome::Completed { .. }), "{r:?}");
+    for i in 0..7 {
+        let want = usize::from((2..5).contains(&i));
+        assert_eq!(seg_count(&server, "/g0", i).await, want, "seg{i}");
+    }
+    assert_eq!(std::fs::read(&out).unwrap(), converted);
+    assert!(!part.exists() && !sidecar.exists());
 }

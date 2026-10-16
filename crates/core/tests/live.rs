@@ -17,7 +17,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use chzzk_core::download::part::part_path;
 use chzzk_core::{
     CancellationToken, Chzzk, ClientConfig, ContentRef, DownloadOutcome, DownloadRequest,
-    DuplicatePolicy, Error, PlaybackKind, Progress, Resolved,
+    DuplicatePolicy, Error, PlaybackKind, Progress, Resolved, TimeRange,
 };
 
 fn env(name: &str) -> String {
@@ -39,6 +39,7 @@ async fn download(
     content: ContentRef,
     expect: PlaybackKind,
     limit: Option<u64>,
+    range: Option<TimeRange>,
     dir: &std::path::Path,
 ) -> (Result<DownloadOutcome, Error>, std::path::PathBuf, u64) {
     let c = Chzzk::new(ClientConfig::default()).unwrap();
@@ -66,6 +67,7 @@ async fn download(
         concurrency: chzzk_core::download::DEFAULT_CONCURRENCY,
         live_stop: None,
         recording_id: None,
+        range,
     };
     let res = c.download(req, cancel, &cb).await;
     (res, output, seen.load(Ordering::SeqCst))
@@ -81,6 +83,7 @@ async fn live_hls_partial() {
         ContentRef::Video { video_no: no },
         PlaybackKind::LiveRewindHls,
         Some(limit),
+        None,
         dir.path(),
     )
     .await;
@@ -108,6 +111,7 @@ async fn live_dash_partial() {
         ContentRef::Video { video_no: no },
         PlaybackKind::Progressive,
         Some(limit),
+        None,
         dir.path(),
     )
     .await;
@@ -148,6 +152,7 @@ async fn live_clip_full() {
     let (res, out, _) = download(
         ContentRef::Clip { clip_id: id },
         PlaybackKind::Progressive,
+        None,
         None,
         dir.path(),
     )
@@ -204,4 +209,29 @@ fn walk_boxes_on_fixture() {
     let w = mp4::walk_boxes(&huge).unwrap();
     assert_eq!(w.types(), ["free", "mdat"]);
     assert!(w.truncated);
+}
+
+/// 빠른 다시보기의 시각 구간만 받아 일반 mp4로 마무리되는지 본다. 값(크기·시각)은 출력하지 않는다.
+#[tokio::test]
+#[ignore = "실서버 접속"]
+async fn live_hls_range() {
+    let no: u64 = env("CHZZK_LIVE_HLS").parse().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let (res, out, _) = download(
+        ContentRef::Video { video_no: no },
+        PlaybackKind::LiveRewindHls,
+        None,
+        Some(TimeRange {
+            start_ms: 10_000,
+            end_ms: Some(20_000),
+        }),
+        dir.path(),
+    )
+    .await;
+    assert!(
+        matches!(res, Ok(DownloadOutcome::Completed { .. })),
+        "{res:?}"
+    );
+    mp4::assert_flat_mp4(&std::fs::read(&out).unwrap());
+    println!("구간 받기: 된다");
 }

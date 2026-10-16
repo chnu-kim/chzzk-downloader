@@ -13,6 +13,7 @@ use ::url::Url;
 
 use crate::error::{Error, Unsupported};
 use crate::http::DebugUrl;
+use crate::model::TimeRange;
 
 /// master playlist의 variant 하나. `Debug`는 주소를 `http::redact_url`로 가린다.
 #[derive(Clone, PartialEq, Eq)]
@@ -367,6 +368,76 @@ fn parse_duration_ms(secs: &str) -> Option<u32> {
     (ms <= f64::from(u32::MAX)).then_some(ms as u32)
 }
 
+/// `select_range`가 고른 조각 범위. playlist 안 위치 [first, last_excl).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SegmentSpan {
+    pub first: u32,
+    pub last_excl: u32,
+}
+
+/// 시각 구간을 조각 범위로 고른다(기능 ②, range.md).
+///
+/// - 입력은 `parse_media`(VOD)가 만든 playlist뿐이다. 생방송 창(`parse_live_media`)에는 쓰지 않는다.
+///   창이 계속 밀려서 위치 기반 구간이 성립하지 않는다.
+/// - 전제: "playlist 첫 조각의 시작 = 치지직 플레이어 0:00:00"이다. EXTINF는 지속 시간일 뿐이다
+///   (RFC 8216 §4.3.2.1). 이 전제는 사용자 실측 M-②-2로만 확인한다.
+/// - 마무리 defrag는 파일 안 시각만 0부터 다시 쌓는다. 이 대응에는 관여하지 않는다.
+///
+/// 규칙: 조각 i의 시작 누적 `c[i] = Σ d[0..i]`일 때, `first`는 `c[i] <= start`인 가장 큰 i(시작은 내린다),
+/// `last_excl`은 `c[j] >= end`인 가장 작은 j(끝은 올린다)다. 끝이 playlist보다 크면 자른다.
+/// 받는 시각 `[c[first], c[last_excl])`은 요청 구간을 늘 포함한다. 길이 0 조각이 시작 경계에 있으면
+/// 가장 큰 i 규칙 때문에 건너뛴다.
+pub fn select_range(pl: &MediaPlaylist, r: TimeRange) -> Result<SegmentSpan, Error> {
+    let start = r.start_ms;
+    let total = pl.total_duration_ms;
+    if let Some(e) = r.end_ms
+        && start >= e
+    {
+        return Err(Error::RangeOutOfBounds {
+            detail: format!("시작 {start}ms가 끝 {e}ms보다 늦거나 같습니다"),
+        });
+    }
+    if start >= total {
+        return Err(Error::RangeOutOfBounds {
+            detail: format!("시작 {start}ms가 전체 {total}ms 뒤입니다"),
+        });
+    }
+    let end = r.end_ms.unwrap_or(total).min(total);
+    let n = pl.segments.len();
+    // 앞에서부터 누적하며 c[i] > start가 되기 직전의 i를 고른다.
+    let mut first = 0usize;
+    let mut c = 0u64;
+    for (i, s) in pl.segments.iter().enumerate() {
+        if c > start {
+            break;
+        }
+        first = i;
+        c += u64::from(s.duration_ms);
+    }
+    // c[first]부터 다시 센다. c[j] >= end인 가장 작은 j(j > first).
+    let mut acc: u64 = pl.segments[..first]
+        .iter()
+        .map(|s| u64::from(s.duration_ms))
+        .sum();
+    let mut last_excl = first;
+    for j in first + 1..=n {
+        acc += u64::from(pl.segments[j - 1].duration_ms);
+        last_excl = j;
+        if acc >= end {
+            break;
+        }
+    }
+    if last_excl <= first {
+        return Err(Error::RangeOutOfBounds {
+            detail: "고른 조각이 없습니다".into(),
+        });
+    }
+    Ok(SegmentSpan {
+        first: first as u32,
+        last_excl: last_excl as u32,
+    })
+}
+
 /// EXTINF(ms) 시퀀스의 crc32. sidecar 지문으로 재조회 전후 playlist가 같은지 본다.
 ///
 /// 각 값을 u32 little-endian 4바이트로 이어 붙인 바이트열의 crc32다.
@@ -382,6 +453,90 @@ pub fn durations_crc(p: &MediaPlaylist) -> u32 {
 mod tests {
     use super::*;
     use crate::testutil::fixture_str;
+
+    fn pl(d: &[u32]) -> MediaPlaylist {
+        MediaPlaylist {
+            media_sequence: 0,
+            init: None,
+            segments: d
+                .iter()
+                .enumerate()
+                .map(|(i, &duration_ms)| Segment {
+                    msn: i as u64,
+                    duration_ms,
+                    uri: Url::parse(&format!("http://h/s{i}.m4v")).unwrap(),
+                })
+                .collect(),
+            total_duration_ms: d.iter().map(|&x| u64::from(x)).sum(),
+        }
+    }
+
+    fn tr(start_ms: u64, end_ms: Option<u64>) -> TimeRange {
+        TimeRange { start_ms, end_ms }
+    }
+
+    fn span(p: &MediaPlaylist, r: TimeRange) -> Result<(u32, u32), Error> {
+        select_range(p, r).map(|s| (s.first, s.last_excl))
+    }
+
+    #[test]
+    fn select_range_table() {
+        let p = pl(&[2000; 10]);
+        let ok = [
+            (tr(0, Some(20000)), (0, 10)),
+            (tr(0, None), (0, 10)),
+            (tr(4000, Some(8000)), (2, 4)),
+            (tr(4001, Some(7999)), (2, 4)),
+            (tr(3999, Some(8001)), (1, 5)),
+            (tr(0, Some(1)), (0, 1)),
+            (tr(19999, None), (9, 10)),
+            (tr(5000, Some(99999)), (2, 10)),
+        ];
+        for (r, want) in ok {
+            assert_eq!(span(&p, r).unwrap(), want, "{r:?}");
+        }
+        for r in [
+            tr(20000, None),
+            tr(25000, Some(30000)),
+            tr(6000, Some(6000)),
+            tr(7000, Some(6000)),
+        ] {
+            assert!(
+                matches!(select_range(&p, r), Err(Error::RangeOutOfBounds { .. })),
+                "{r:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn select_range_uneven_rounding() {
+        // c = 0, 1999, 4000, 6000, 7500
+        let p = pl(&[1999, 2001, 2000, 1500]);
+        assert_eq!(span(&p, tr(1999, Some(4000))).unwrap(), (1, 2));
+        assert_eq!(span(&p, tr(1998, Some(4001))).unwrap(), (0, 3));
+        assert_eq!(span(&p, tr(6000, None)).unwrap(), (3, 4));
+        assert_eq!(span(&p, tr(5999, Some(7500))).unwrap(), (2, 4));
+    }
+
+    /// 길이 0 조각이 시작 경계에 있으면 건너뛴다(문서화한 동작).
+    #[test]
+    fn select_range_zero_length_segment_at_start() {
+        let p = pl(&[0, 2000, 2000]);
+        assert_eq!(span(&p, tr(0, None)).unwrap(), (1, 3));
+    }
+
+    #[test]
+    fn select_range_via_parse_media() {
+        let mut t = String::from(
+            "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-MAP:URI=\"init.mp4\"\n",
+        );
+        for i in 0..30 {
+            t.push_str(&format!("#EXTINF:2.000,\nseg{i}.m4v\n"));
+        }
+        t.push_str("#EXT-X-ENDLIST\n");
+        let p = parse_media(&t, &media_base()).unwrap();
+        assert_eq!(span(&p, tr(10000, Some(20000))).unwrap(), (5, 10));
+    }
 
     const MASTER_BASE: &str = "https://hls.example.invalid/live_rewind/kr/streamkey0/vod_playlist.m3u8?hdnts=st=0~exp=0~acl=*/kr/*~hmac=0000";
     const MEDIA_BASE: &str = "https://hls.example.invalid/live_rewind/kr/streamkey0/144p/hdntl=exp=0~acl=*/kr/*~data=hdntl~hmac=fakepath/vod_chunklist.m3u8";

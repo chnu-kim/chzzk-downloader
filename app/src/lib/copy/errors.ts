@@ -75,6 +75,7 @@ const ALL_CODES: Record<ErrorCode, true> = {
   qualityNotFound: true,
   playbackChanged: true,
   sourceChanged: true,
+  rangeOutOfBounds: true,
   refreshExhausted: true,
   unsupported: true,
   parse: true,
@@ -359,6 +360,14 @@ function codeCopy(raw: AppError, ctx: ErrorContext): ErrorCopy {
       return copy(
         '영상 형식이 바뀌었어요',
         '치지직이 영상을 다시 처리했어요. 다시 불러와서 화질을 골라 처음부터 받아야 해요.',
+        [reload],
+      );
+
+    case 'rangeOutOfBounds':
+      // 고른 구간이 playlist 밖이다(기능 ②, R1). 받다 만 파일은 없다(구간을 고르기 전에 끝난다)
+      return copy(
+        '고른 구간을 이 영상에서 찾지 못했어요',
+        '영상 길이가 바뀌었을 수 있어요. 구간을 다시 골라 주세요.',
         [reload],
       );
 

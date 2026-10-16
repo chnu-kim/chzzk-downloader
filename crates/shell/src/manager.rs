@@ -333,13 +333,14 @@ fn refresh_siblings(st: &mut State, rec: &JobRecord) {
     }
 }
 
-/// 두 기록이 같은 `.part`의 주인인가(`PartOwner`의 네 값이 같다).
+/// 두 기록이 같은 `.part`의 주인인가(`PartOwner`의 다섯 값이 같다).
 fn same_owner(a: &JobRecord, b: &JobRecord) -> bool {
     let (x, y) = (a.owner(), b.owner());
     x.content == y.content
         && x.quality_id == y.quality_id
         && x.kind == y.kind
         && x.recording_id == y.recording_id
+        && x.range == y.range
 }
 
 /// 같은 파일인지 비교할 열쇠.

@@ -19,14 +19,21 @@ import type { Nav } from "./layout";
 /** 없음·만료·사용됨·형식 밖을 가르지 않는 하나의 404(delegation.md §11) */
 const gonePage = (ctx: Ctx, nav: Nav): Response => noticePage(ctx.config, 404, COPY.invite.gone.title, COPY.invite.gone.body, { nav });
 
+/** workerd가 없는 RPC 메서드를 부를 때 던지는 모양: TypeError이고 메시지가 RPC와 따옴표 친 메서드 이름을 품는다 */
+const missingRpc = (e: unknown, method: string): boolean => e instanceof TypeError && e.message.includes("RPC") && e.message.includes(`"${method}"`);
+
 /** GET /invite/:token */
 export async function inviteGet(req: Request, ctx: Ctx): Promise<Response> {
   const token = ctx.params.token ?? "";
   if (!isToken("invite", token)) return gonePage(ctx, { kind: "auth" });
   const cookie = readCookie(req.headers.get("Cookie"), ctx.cookies.session);
   const cookieHash = isToken("web", cookie) ? await sha256Hex(cookie) : null;
-  // 배포 창에서 새 Worker가 invitePage가 없는 옛 DO를 부르면 RPC가 던진다: 500 JSON 대신 안내 페이지(106 (차) ⑤). quiet라 로그는 없다
-  const p = await ctx.store.invitePage(await sha256Hex(token), cookieHash, ctx.config.adminChannelIds, ctx.now).catch(() => null);
+  // 배포 창에서 새 Worker가 invitePage가 없는 옛 DO를 부르면 RPC가 던진다: 500 JSON 대신 안내 페이지(106 (차) ⑤). quiet라 로그는 없다.
+  // 그 모양(메서드 이름을 품은 TypeError)만 안내로 바꾸고 다른 DO 예외는 그대로 던져 500 internal로 남긴다(응답 코드로 구분, 106 (차) ⑦)
+  const p = await ctx.store.invitePage(await sha256Hex(token), cookieHash, ctx.config.adminChannelIds, ctx.now).catch((e: unknown) => {
+    if (missingRpc(e, "invitePage")) return null;
+    throw e;
+  });
   if (p === null) return noticePage(ctx.config, 503, COPY.invite.unavailable.title, COPY.retryLater.body);
   // 읽기 페이지는 상태를 바꾸지 않는다: 형식 밖·끝난 세션 쿠키도 지우지 않는다(106 D-12)
   const s = p.web !== null && p.web.ok ? webSessionOf(p.web) : null;

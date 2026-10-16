@@ -656,6 +656,35 @@ describe("removeEditor·leaveDelegation·목록", () => {
     expect(await invites(stub)).toHaveLength(1);
   });
 
+  it("CC3 흐름이 만료된 뒤에도 같은 채널로 다시 로그인하면(초대 없는 웹 흐름) 거부 페이지에 그 청구가 다시 보이고 취소할 수 있다", async () => {
+    const stub = freshStub();
+    await allowAt(stub, B2, T0);
+    const inv = await invite(stub, B2, T0 + 1);
+    expect(await inviteLogin(stub, inv.hash, E5, T0 + 2)).toHaveProperty("invitePending");
+    const later = T0 + 2 + 3_600_000; // 첫 흐름은 이미 만료
+    const plain = async (channelId: string, now: number) => {
+      const s = await stub.startWeb("203.0.113.40", 1000, now);
+      if (!s.ok) throw new Error(s.code);
+      const binder = await sha(s.binder);
+      const k = await stub.consume(await sha(s.state), binder, now);
+      if (!k.ok) throw new Error(k.code);
+      expect(await stub.finish(k.flowId, { type: "user", channelId, channelName: "x" }, ADMINS, now + 1)).toEqual({ type: "denied" });
+      return binder;
+    };
+    // 남의 청구는 보이지 않고 지울 수도 없다
+    const other = await plain(F6, later);
+    expect(await stub.doneView(other, later + 2, ADMINS)).toMatchObject({ status: "denied", inviteOwnerName: null });
+    expect(await stub.cancelClaim(other, later + 2)).toBe(false);
+    expect(await invites(stub)).toHaveLength(1);
+    // 청구한 채널 자신은 다시 본다
+    const mineBinder = await plain(E5, later + 10);
+    expect(await stub.doneView(mineBinder, later + 12, ADMINS)).toMatchObject({ status: "denied", inviteOwnerName: "주인" });
+    expect(await stub.cancelClaim(mineBinder, later + 12)).toBe(true);
+    expect(await invites(stub)).toHaveLength(0);
+    await stub.allowDenied(E5, A1, later + 13, ADMINS);
+    expect(await delegations(stub)).toEqual([]);
+  });
+
   it("LS1 delegationsOf는 20개까지, since 오름차순", async () => {
     const stub = freshStub();
     await allowAt(stub, C3, T0);

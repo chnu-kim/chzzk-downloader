@@ -162,8 +162,10 @@ describe("/privacy", () => {
     expect(t).toContain(`<h2>${COPY.privacy.editors.title}</h2><p>${escapeHtml(COPY.privacy.editors.body(REVOKED_DELEGATION_KEEP_MS / DAY, INVITE_CLAIMED_KEEP_MS / DAY))}</p>`);
     expect(COPY.privacy.editors.body(1, 2)).toContain("허가를 기다리는 동안");
     expect(COPY.privacy.editors.body(1, 2)).toMatch(/최대 2일 보관해요.*1일 뒤 지워지고/);
-    // 허가 행 없는 관리자로 맺은 관계는 관리자에서 빠져도 청소가 지우지 않는다(105 (마)): 처리방침이 그 예외를 말한다(106 (차) ⑥)
-    expect(COPY.privacy.editors.body(1, 2)).toContain("관리자 채널이 맺은 관계는 관리자에서 빠져도 지워지지 않고, 편집자를 빼거나 그만둘 때까지 남아요.");
+    // 허가 행 없는 관리자로 맺은 관계는 관리자에서 빠져도 청소가 지우지 않는다(105 (마)): 처리방침이 그 예외와 지우는 길(연락처)을 말한다(106 (차) ⑥·⑦).
+    // 당사자가 끝낼 길이 없으므로(강등된 주인은 로그인 못 하고 편집자 목록은 활성 위임만 보인다) "그만둘 때까지"라고 약속하지 않는다
+    expect(COPY.privacy.editors.body(1, 2)).not.toContain("그만둘 때까지");
+    expect(COPY.privacy.editors.body(1, 2)).toContain("관리자 채널이 주인이나 편집자로 맺은 관계는 그 채널이 관리자에서 빠지고 사용 허가도 없으면 더는 쓰이지 않지만, 바로 지워지지는 않아요. 지우려면 아래 연락처로 알려 주세요.");
     expect(t.indexOf(`<h2>${COPY.privacy.use.title}</h2>`)).toBeLessThan(t.indexOf(`<h2>${COPY.privacy.editors.title}</h2>`));
     expect(t.indexOf(`<h2>${COPY.privacy.editors.title}</h2>`)).toBeLessThan(t.indexOf(`<h2>${COPY.privacy.exclude.title}</h2>`));
   });

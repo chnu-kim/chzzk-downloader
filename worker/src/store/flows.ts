@@ -6,7 +6,7 @@
 // 예외 하나: 앱이 수령(redeem ok)한 흐름은 now + 2분으로 앞당긴다(허용 채널의 로그인이 끝난 뒤라 슬롯 순환과 무관, 구현 중 변경 28 (마)).
 import { CHANNEL_ID, NAME_MAX, admission, clip, recordDenied, touchAllowedName } from "./allowlist";
 import type { Db } from "./db";
-import { acceptInvite, claimInvite, claimedInviteOwner } from "./delegation";
+import { acceptInvite, claimInvite, claimedInviteOwner, firstClaimedInvite } from "./delegation";
 import { activate, insertUnclaimed, insertWeb, type TokenPair } from "./sessions";
 import type {
   ConsumeResult,
@@ -211,6 +211,11 @@ export function finish(
     if (row.invite_hash !== null) {
       const c = claimInvite(db, row.invite_hash, outcome.channelId, name, admins, now);
       if (c.ok) return { type: "denied", invitePending: c.ownerName };
+    } else {
+      // 초대 없이 들어온 웹 흐름: 이 채널이 앞서 청구한 유효한 초대가 있으면 흐름에 묶는다. 흐름이 만료된 뒤에 잘못된 계정임을 안 사람도
+      // 같은 계정으로 다시 로그인하면 거부 페이지에서 그 청구를 보고 [초대 취소]할 수 있다(106 (차) ⑦). 청구 자체는 바꾸지 않는다
+      const claimed = firstClaimedInvite(db, outcome.channelId, admins, now);
+      if (claimed !== null) db.run("UPDATE flow SET invite_hash = ? WHERE id = ?", claimed, row.id);
     }
     return { type: "denied" };
   }

@@ -345,12 +345,18 @@ export function claimedInviteOwner(db: Db, hash: string, claimedBy: string, admi
   return r.owner_name ?? "";
 }
 
-/** 관리 꼬리표: 그 채널이 청구한 초대 중 inviteValid인 첫 초대(claimed_at, token_hash 순)의 주인 이름, 없으면 null. 쓰기 0 */
-export function invitedBy(db: Db, channelId: string, admins: readonly string[], now: number): string | null {
+/** 그 채널이 청구한 초대 중 inviteValid인 첫 초대(claimed_at, token_hash 순)의 해시, 없으면 null. 쓰기 0 */
+export function firstClaimedInvite(db: Db, channelId: string, admins: readonly string[], now: number): string | null {
   for (const r of db.all<InviteRow>(`${INVITE_SELECT} WHERE i.claimed_channel_id = ? ORDER BY i.claimed_at, i.token_hash`, channelId)) {
-    if (inviteValid(r, admins, now)) return r.owner_name ?? "";
+    if (inviteValid(r, admins, now)) return r.token_hash;
   }
   return null;
+}
+
+/** 관리 꼬리표: firstClaimedInvite의 주인 이름(없으면 ""), 청구가 없으면 null. 쓰기 0 */
+export function invitedBy(db: Db, channelId: string, admins: readonly string[], now: number): string | null {
+  const hash = firstClaimedInvite(db, channelId, admins, now);
+  return hash === null ? null : claimedInviteOwner(db, hash, channelId, admins, now);
 }
 
 /**

@@ -419,6 +419,22 @@ describe("IV9~IV11 콜백", () => {
     expect(await res.text()).not.toContain("/auth/claim/cancel");
     expect(b.jar.has("cdl_f")).toBe(false);
   });
+
+  it("IV11e 나중에 안 사람: 초대 흐름 밖(처음 화면)에서 같은 계정으로 다시 로그인해도 거부 페이지에 그 청구와 [초대 취소]가 나온다", async () => {
+    const t = await makeInvite(await ownerAccess());
+    await inviteLogin(new Browser(), t.token, "d4");
+    const b = new Browser();
+    fake.state.account = "d4";
+    fake.state.authorize = "approve";
+    const cb = await b.get(await b.authorize(await b.post("/auth/web/start"), fake));
+    expect(cb.headers.get("Location")).toBe("/auth/done?r=denied");
+    const done = await (await b.get("/auth/done?r=denied")).text();
+    expect(done).toContain(COPY.doneDenied.invite(NAME.b2));
+    expect(done).toContain('action="/auth/claim/cancel"');
+    const ok = await b.post("/auth/claim/cancel");
+    expect(ok.headers.getSetCookie().some((l) => l.startsWith("cdl_flash=inviteCancelled;"))).toBe(true);
+    expect(JSON.parse(await tables())[0]).toEqual([]);
+  });
 });
 
 describe("IV12 POST /invite/:token/accept", () => {
@@ -690,7 +706,8 @@ describe("IV16 배포 호환(106 (차) ⑤)", () => {
     const oldDo = {
       idFromName: () => ({}),
       get: () => ({
-        invitePage: () => Promise.reject(new TypeError('The RPC receiver does not implement "invitePage".')),
+        // workerd 1.20261001의 실제 문구(worker-rpc의 JSG_EXCEPTION(TypeError))
+        invitePage: () => Promise.reject(new TypeError('The RPC receiver does not implement the method "invitePage".')),
       }),
     };
     const res = await viaEnv({ AUTH: oldDo })(`${ORIGIN}/invite/${t.token}`, { method: "GET" });
@@ -700,5 +717,14 @@ describe("IV16 배포 호환(106 (차) ⑤)", () => {
     expect(h1Of(text)).toBe(COPY.invite.unavailable.title);
     expect(text).toContain(COPY.retryLater.body);
     expect(text).not.toContain(t.token);
+  });
+
+  it("GET /invite/:token: 옛 DO가 아닌 다른 DO 예외는 배포 창 안내로 덮지 않는다(500 internal, 응답 코드로 구분된다)", async () => {
+    const t = await makeInvite(await ownerAccess());
+    for (const err of [new Error("SQLITE_ERROR: boom"), new TypeError("Cannot read properties of undefined (reading 'x')"), new TypeError('The RPC receiver does not implement the method "other".')]) {
+      const broken = { idFromName: () => ({}), get: () => ({ invitePage: () => Promise.reject(err) }) };
+      const res = await viaEnv({ AUTH: broken })(`${ORIGIN}/invite/${t.token}`, { method: "GET" });
+      expect([err.message, res.status, await res.json()]).toEqual([err.message, 500, { code: "internal" }]);
+    }
   });
 });

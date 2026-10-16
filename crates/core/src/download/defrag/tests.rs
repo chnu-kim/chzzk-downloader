@@ -1031,7 +1031,7 @@ enum Fault {
     AppendAndTruncate,
     /// `after`번 패치를 쓴 뒤 다음 패치가 실패한다
     Patch { after: usize },
-    /// 첫 읽기 한 번이 입출력 오류(EIO)로 실패한다. 그 뒤 읽기·쓰기·sync는 된다
+    /// 첫 읽기 한 번이 입출력 오류(EIO 같은, 파일 끝이 아닌 오류)로 실패한다. 그 뒤 읽기·쓰기·sync는 된다
     ReadOnce,
 }
 
@@ -1059,7 +1059,7 @@ impl Read for FaultyFile {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         self.reads += 1;
         if matches!(self.fault, Fault::ReadOnce) && self.reads == 1 {
-            return Err(io::Error::from_raw_os_error(5));
+            return Err(io::Error::other("읽기 오류 주입"));
         }
         self.c.read(buf)
     }
@@ -1209,10 +1209,9 @@ fn plan_read_error_after_earlier_patch_is_not_unchanged() {
         "{r:?}"
     );
     assert_eq!(second.c.get_ref(), &before, "아무것도 쓰지 않았다");
-    assert!(
-        crate::download::defrag_verdict(Ok(r)).is_err(),
-        "마무리하지 않는다"
-    );
+    // 마무리하지 않고, 그 오류는 이어받을 수 있어 정리(`cleanup(keep = is_resumable)`)가 `.part`·sidecar를 남긴다
+    let e = crate::download::defrag_verdict(Ok(r)).unwrap_err();
+    assert!(e.is_resumable(), "{e:?}");
     // 다음 시도는 같은 결과로 변환한다
     let mut b = second.c.into_inner();
     let r = defragment_bytes(&mut b).unwrap();

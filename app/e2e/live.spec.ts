@@ -78,3 +78,27 @@ test('방송 중이 아니면 안내하고 다시 시도할 수 있다', async (
   await expect(page.getByText(errorCopy(error, { place: 'resolve' }).title)).toBeVisible();
   await app.axe('방송 중 아님');
 });
+
+test('받다 만 녹화가 있는 이름이면 번호 이름으로 녹화한다', async ({ app }) => {
+  const r = liveResolved();
+  const { page } = app;
+  const free = `${r.suggestedFileName} (2)`;
+  await app.open({
+    resolve: { [r.url]: r },
+    outputs: { [r.suggestedFileName]: { partial: { bytes: 5, sameJob: false, recording: true }, freeFileName: free } },
+  });
+  await page.getByLabel(t('url.label')).fill(r.url);
+  await page.getByRole('button', { name: t('common.load') }).click();
+  const card = page.getByRole('region', { name: r.meta.title });
+  // 받다 만 녹화는 지우지 않고 번호 이름으로 받는다: 처음부터·이어받기 안내는 없다
+  await expect(card.getByText(t('conflict.partialRecording.title'))).toBeVisible();
+  await expect(card.getByText(t('conflict.partialRecording.body', { name: free }))).toBeVisible();
+  await expect(card.getByRole('button', { name: t('action.restartFresh') })).toHaveCount(0);
+  await app.axe('받다 만 녹화');
+
+  await card.getByRole('button', { name: t('card.download') }).click();
+  const enq = (await app.args('enqueue')) as { req: { fileName: string; restart: boolean } }[];
+  expect(enq).toHaveLength(1);
+  expect(enq[0].req.fileName).toBe(free);
+  expect(enq[0].req.restart).toBe(false);
+});

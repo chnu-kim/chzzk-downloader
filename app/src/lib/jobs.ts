@@ -468,7 +468,7 @@ export function failedCopy(job: JobDto, cookiesEnabled: boolean) {
  * - 받는 중: [일시정지][취소] / 준비 중: [취소] / 마무리 중·멈추는 중: 없음
  * - 대기: [취소] / 일시정지·중단: [이어받기][취소]
  * - 실패: 오류 표(§9)의 동작 / 완료: [파일 열기][폴더에서 보기](파일이 없으면 [폴더에서 보기]) / 건너뜀: [파일 열기][덮어쓰고 받기…]
- * 메뉴: 제목 전체 보기(늘), 주소 복사(늘), 처음부터 다시 받기(`.part`가 있을 때), 문제 보고용 정보 복사(실패),
+ * 메뉴: 제목 전체 보기(늘), 주소 복사(늘), 처음부터 다시 받기(`.part`가 있을 때, 받다 만 녹화는 빼고), 문제 보고용 정보 복사(실패),
  * 목록에서 지우기(끝난 항목). 기본 버튼에 이미 있는 동작은 메뉴에 다시 넣지 않는다.
  */
 export function jobButtons(
@@ -479,6 +479,8 @@ export function jobButtons(
 ): JobButtons {
   let primary: JobAction[] = [];
   let cancel = false;
+  // 받다 만 녹화는 다시 받을 수 없다: [처음부터 다시 받기]로 확인 없이 지우지 않는다(core.md 61). 지우려면 [취소]·[목록에서 지우기]다
+  const keepsRecording = job.playbackKind === 'live' && (job.partialBytes ?? 0) > 0;
   switch (job.status) {
     case 'queued':
       cancel = true;
@@ -505,6 +507,11 @@ export function jobButtons(
       primary = (c?.actions ?? ['retry'])
         .map((a) => FROM_ERROR[a])
         .filter((a): a is JobAction => !!a);
+      // 받다 만 녹화는 [처음부터 다시 받기]로 지우지 않는다(core.md 61). 받은 부분 저장은 [이어받기]다
+      if (keepsRecording) {
+        primary = primary.filter((a) => a !== 'restartFresh');
+        if (primary.length === 0) primary = ['resume'];
+      }
       break;
     }
     case 'completed':
@@ -516,7 +523,7 @@ export function jobButtons(
   }
   const menu: JobAction[] = ['showTitle', 'copyUrl'];
   const stopped = job.status === 'paused' || job.status === 'interrupted' || job.status === 'failed';
-  if (stopped && (job.partialBytes ?? 0) > 0) menu.push('restartFresh');
+  if (stopped && (job.partialBytes ?? 0) > 0 && !keepsRecording) menu.push('restartFresh');
   if (job.status === 'failed') menu.push('copyReport');
   if (job.status === 'completed' || job.status === 'skipped' || job.status === 'failed') menu.push('remove');
   const open = (a: JobAction) => !block || !RESUMING.includes(a);

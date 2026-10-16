@@ -239,6 +239,15 @@ const GOLDEN: Row[] = [
     detail: null,
   },
   {
+    name: 'authRequired download .part: 생방송 녹화는 남는다',
+    error: AUTH('download'),
+    ctx: DP,
+    title: '영상 서버가 접근을 막았어요',
+    body: `주소를 새로 받아도 계속 거절돼요. ${PART_KEPT}`,
+    actions: ['resume'],
+    detail: null,
+  },
+  {
     name: 'authRequired 쿠키 켜짐',
     error: AUTH('resolve'),
     ctx: { ...R, cookiesEnabled: true },
@@ -701,7 +710,7 @@ describe('errorCopy 규칙', () => {
       expect(errorCopy(e, R).body, `${e.code} R`).not.toContain(PART_KEPT);
     }
     // 코어가 .part를 지우는 코드는 지웠다고 말한다
-    const deleted: AppError[] = [AUTH('download'), QUALITY, err('sourceChanged'), err('lengthMismatch')];
+    const deleted: AppError[] = [QUALITY, err('sourceChanged'), err('lengthMismatch')];
     for (const e of deleted) expect(errorCopy(e, DP).body, `${e.code}`).toContain('받다 만 파일');
     // 4xx(408·429 제외)는 같은 요청이 끝내 실패해 .part를 지운다: 남아 있다고 말하지 않는다
     expect(errorCopy(http(403), DP).body).not.toContain(PART_KEPT);

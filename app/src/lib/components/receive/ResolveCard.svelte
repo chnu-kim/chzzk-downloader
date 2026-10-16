@@ -22,6 +22,7 @@
     kindTone,
     metaParts,
     notices,
+    usesFreeName,
     type CardChoices,
   } from '../../receive';
   import { announcer } from '../../stores/announce.svelte';
@@ -77,7 +78,7 @@
   let recheck = $state(0);
 
   function wantsOverwrite(c: OutputCheck | null, ch: CardChoices): boolean {
-    return !!c && c.exists && ch.existing === 'overwrite';
+    return !!c && c.exists && ch.existing === 'overwrite' && !usesFreeName(c, ch);
   }
 
   const quality = $derived(view.qualities[qualityIndex]);
@@ -107,7 +108,7 @@
   /** 카드 안 경고가 하나라도 있는가(없으면 간격도 두지 않는다) */
   const hasWarnings = $derived.by(() => {
     const n = fresh && check ? notices(check, choices) : null;
-    const conflict = !!n && (n.duplicate || n.exists || n.partialSame != null || n.partialOther);
+    const conflict = !!n && (n.duplicate || n.exists || n.partialSame != null || n.partialOther || n.partialRecording);
     return conflict || view.ownership === 'notOwn' || view.ownership === 'unknown' || view.ownership === 'adminOverride' || !!shownError;
   });
   // 가장 최근에 요청한 열쇠. 늦게 온 결과는 이것과 다르면 버린다.

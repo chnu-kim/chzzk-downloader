@@ -79,6 +79,8 @@ export const ko = {
   'conflict.partial.body': '{size}까지 받았어요. 이어받으면 받던 곳부터 이어가요.',
   'conflict.partial.freshChosen': '받다 만 파일을 지우고 처음부터 받아요.',
   'conflict.partialOther': '다른 화질로 받다 만 파일이 있어요. 지우고 처음부터 받아요.',
+  'conflict.partialRecording.title': '같은 이름으로 받다 만 녹화가 있어요',
+  'conflict.partialRecording.body': '녹화는 다시 받을 수 없어 그 파일은 그대로 두고, 이번에는 ‘{name}’ 이름으로 받아요.',
   'conflict.inQueue': '이미 다운로드 목록에 있는 영상이에요',
 
   'list.title': '다운로드',

@@ -329,7 +329,7 @@ describe('ResolveCard', () => {
   });
 
   it('같은 작업의 .part: 기본 이어받기, [처음부터 받기]면 restart', async () => {
-    setCheck({ partial: { bytes: 1288490188, sameJob: true } });
+    setCheck({ partial: { bytes: 1288490188, sameJob: true, recording: false } });
     const user = await openCard();
     expect(await screen.findByText(t('conflict.partial.title'))).toBeInTheDocument();
     expect(screen.getByText(t('conflict.partial.body', { size: '1.29GB' }))).toBeInTheDocument();
@@ -340,11 +340,26 @@ describe('ResolveCard', () => {
   });
 
   it('다른 .part: 안내만, restart=false', async () => {
-    setCheck({ partial: { bytes: 10, sameJob: false } });
+    setCheck({ partial: { bytes: 10, sameJob: false, recording: false } });
     const user = await openCard();
     expect(await screen.findByText(t('conflict.partialOther'))).toBeInTheDocument();
     await user.click(await downloadButton());
     expect(vi.mocked(api.enqueue).mock.lastCall?.[0]).toMatchObject({ restart: false });
+  });
+
+  it('받다 만 녹화: 안내만 띄우고 번호 이름으로, 처음부터·이어받기 선택은 없다', async () => {
+    setCheck({
+      partial: { bytes: 10, sameJob: false, recording: true },
+      freeFileName: 'x (2)',
+    });
+    const user = await openCard();
+    expect(await screen.findByText(t('conflict.partialRecording.title'))).toBeInTheDocument();
+    expect(screen.getByText(t('conflict.partialRecording.body', { name: 'x (2)' }))).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: t('action.restartFresh') })).toBeNull();
+    expect(screen.queryByText(t('conflict.partialOther'))).toBeNull();
+    await user.click(await downloadButton());
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(vi.mocked(api.enqueue).mock.lastCall?.[0]).toMatchObject({ fileName: 'x (2)', restart: false });
   });
 
   it('목록에 같은 파일이 있으면 [받기]를 막고 사유 문장을 aria-describedby로 잇는다', async () => {

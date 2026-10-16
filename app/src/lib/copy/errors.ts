@@ -268,11 +268,10 @@ export function errorCopy(raw: AppError, ctx: ErrorContext): ErrorCopy {
 
     case 'authRequired':
       if (e.stage === 'download') {
-        return copy(
-          '영상 서버가 접근을 막았어요',
-          '주소를 새로 받아도 계속 거절돼요. 받다 만 파일은 지웠어요.',
-          [fresh],
-        );
+        // 생방송은 받던 중에 거절돼도 `.part`가 남는다(녹화는 다시 받을 수 없다, core.md 61). 그 밖은 코어가 지운다
+        return hasPart
+          ? copy('영상 서버가 접근을 막았어요', withKept('주소를 새로 받아도 계속 거절돼요.'), ['resume'])
+          : copy('영상 서버가 접근을 막았어요', '주소를 새로 받아도 계속 거절돼요. 받다 만 파일은 지웠어요.', [fresh]);
       }
       return ctx.cookiesEnabled
         ? copy(

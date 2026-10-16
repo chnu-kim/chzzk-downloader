@@ -377,6 +377,28 @@ async fn failed_recording_holds_its_path() {
     h.mgr.stop_job(id).unwrap();
 }
 
+/// 끝난 녹화는 `check_output`의 중복이 아니다(`partial.recording`으로 알린다).
+#[tokio::test(start_paused = true)]
+async fn failed_recording_is_not_a_duplicate_in_check_output() {
+    let h = Harness::new(2);
+    h.fake.script_for(
+        h.output("a"),
+        Script::new().live_part(16, 32).fails(http_503()),
+    );
+    let id = h.enqueue_live("a").id;
+    until("실패", || h.status(id) == JobStatus::Failed).await;
+    let live = chzzk_core::ContentRef::Live {
+        channel_id: "000000000000000000000000000000e5".into(),
+    };
+    let c = h
+        .mgr
+        .check_output(None, &h.downloads(), "a", &live, "720p", PlaybackKind::Live)
+        .unwrap();
+    assert_eq!(c.duplicate_job_id, None);
+    assert!(c.partial.is_some_and(|p| p.recording));
+    assert!(c.free_file_name.is_some());
+}
+
 fn sidecar_exists(h: &Harness, name: &str) -> (bool, bool) {
     let out = h.output(name);
     (part_path(&out).exists(), sidecar_path(&out).exists())

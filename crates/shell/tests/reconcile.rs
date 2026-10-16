@@ -208,3 +208,19 @@ fn partial_bytes_helper_matches_table() {
     write_partial(&o, Some(same_sidecar(7)), 7);
     assert_eq!(partial_bytes(&r), Some(7));
 }
+
+/// sidecar `committed_len`보다 짧은 `.part`는 그 sidecar의 파일이 아니다(코어 `resume`이 둘 다 지운다). 받은 부분으로 세지 않는다.
+/// 완료 뒤 sidecar 삭제에 실패해 남은 녹화 sidecar 옆에 빈 `.part`가 새로 생겨도, 끝난 옛 기록이 [이어받기]로 되살아나 경로를
+/// 잡지 않는다(Codex PR #113 확인).
+#[test]
+fn part_shorter_than_committed_is_not_partial() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("a.mp4");
+    write_partial(&out, Some(same_sidecar(4096)), 0);
+    let got = run(vec![record(1, JobStatus::Failed, out.clone())]);
+    assert_eq!(got[0].partial_bytes, None);
+    // 대조: 같은 길이면 받은 부분이다
+    write_partial(&out, Some(same_sidecar(4096)), 4096);
+    let got = run(vec![record(1, JobStatus::Failed, out)]);
+    assert_eq!(got[0].partial_bytes, Some(4096));
+}

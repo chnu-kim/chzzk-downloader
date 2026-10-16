@@ -386,6 +386,29 @@ async fn record(
 }
 
 /// 창이 한 칸씩 밀리다 ENDLIST가 나오면 구멍 없이 마무리한다.
+/// 재조회(`details`)가 `target`번 이상 쌓일 때까지 기다렸다가 멈춘다.
+/// 고정 sleep은 느린 CI에서 횟수가 모자라 흔들리므로, 횟수로 기다리고 상한(30초)만 시간으로 둔다.
+fn stop_after_details(
+    details: Arc<AtomicUsize>,
+    target: usize,
+    stop: CancellationToken,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+        while details.load(Ordering::SeqCst) < target {
+            if tokio::time::Instant::now() >= deadline {
+                stop.cancel();
+                panic!(
+                    "30초 안에 재조회 {target}번에 이르지 못했다(현재 {}번)",
+                    details.load(Ordering::SeqCst)
+                );
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        stop.cancel();
+    })
+}
+
 #[tokio::test]
 async fn endlist_finishes_without_gaps() {
     let end = 5usize;
@@ -724,11 +747,7 @@ async fn idle_but_still_live_keeps_waiting() {
     let dir = tempfile::tempdir().unwrap();
     let out = out_path(&dir);
     let stop = CancellationToken::new();
-    let s2 = stop.clone();
-    let canceller = tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(400)).await;
-        s2.cancel();
-    });
+    let canceller = stop_after_details(s.details.clone(), 3, stop.clone());
     let r = record(&s, &out, Some(stop)).await.unwrap();
     canceller.await.unwrap();
     assert!(matches!(r, DownloadOutcome::Completed { .. }), "{r:?}");
@@ -875,13 +894,10 @@ async fn long_idle_does_not_exhaust_refresh_budget() {
     let dir = tempfile::tempdir().unwrap();
     let out = out_path(&dir);
     let stop = CancellationToken::new();
-    let s2 = stop.clone();
-    tokio::spawn(async move {
-        // idle_check 60ms 기준으로 20번이 넘게 재조회한다
-        tokio::time::sleep(Duration::from_millis(1500)).await;
-        s2.cancel();
-    });
+    // 예산(8회)보다 많은 13번 넘게 idle 재조회가 일어날 때까지 기다린다
+    let canceller = stop_after_details(s.details.clone(), 13, stop.clone());
     let r = record(&s, &out, Some(stop)).await;
+    canceller.await.unwrap();
     assert!(matches!(r, Ok(DownloadOutcome::Completed { .. })), "{r:?}");
     assert!(s.details.load(Ordering::SeqCst) > 12);
 }

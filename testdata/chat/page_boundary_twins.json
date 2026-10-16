@@ -1,0 +1,43 @@
+{
+  "code": 200,
+  "message": null,
+  "content": {
+    "nextPlayerMessageTime": 18000,
+    "previousVideoChats": [],
+    "videoChats": [
+      {
+        "chatChannelId": "N1fakeChat",
+        "messageTime": 1767322815000,
+        "userIdHash": "user-hash-05",
+        "content": "테스트 메시지",
+        "extras": "{}",
+        "messageTypeCode": 1,
+        "messageStatusType": "NORMAL",
+        "profile": "{\"nickname\":\"가상시청자5\"}",
+        "playerMessageTime": 15000
+      },
+      {
+        "chatChannelId": "N1fakeChat",
+        "messageTime": 1767322815000,
+        "userIdHash": "user-hash-05",
+        "content": "테스트 메시지",
+        "extras": "{}",
+        "messageTypeCode": 1,
+        "messageStatusType": "NORMAL",
+        "profile": "{\"nickname\":\"가상시청자5\"}",
+        "playerMessageTime": 15000
+      },
+      {
+        "chatChannelId": "N1fakeChat",
+        "messageTime": 1767322818000,
+        "userIdHash": "user-hash-02",
+        "content": "테스트 메시지",
+        "extras": "{}",
+        "messageTypeCode": 1,
+        "messageStatusType": "NORMAL",
+        "profile": "{\"nickname\":\"가상시청자2\"}",
+        "playerMessageTime": 18000
+      }
+    ]
+  }
+}

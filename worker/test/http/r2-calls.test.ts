@@ -140,6 +140,9 @@ const ROWS: readonly Row[] = [
   { n: 59, cred: "cookieRevoked", path: "/", cache: "miss", status: 200, get: 0, head: 0, rpc: 1 },
   // R2가 던져도 랜딩은 200(구현 중 변경 38 (가)): latest.json get 1회에서 멈춘다
   { n: 60, cred: "web", path: "/", cache: "miss", opts: { throwOnGet: [LATEST.slice(1)] }, status: 200, get: 1, head: 0, rpc: 2 },
+  // /api/me는 store me RPC 하나(구현 중 변경 105 (바)): 위임 읽기를 더해도 DO 호출 수가 늘지 않는다. R2는 만지지 않는다
+  { n: 61, cred: "app", path: "/api/me", status: 200, get: 0, head: 0, rpc: 1 },
+  { n: 62, cred: "garbage", path: "/api/me", status: 401, get: 0, head: 0, rpc: 0 },
 ];
 
 function authHeaders(cred: Row["cred"]): Record<string, string> {
@@ -187,8 +190,8 @@ it("etag를 읽었다", () => {
   expect(etag).toMatch(/^"[0-9a-f]+"$/);
 });
 
-it("표는 60행이고 번호가 1부터 이어진다", () => {
-  expect(ROWS.map((r) => r.n)).toEqual(Array.from({ length: 60 }, (_, i) => i + 1));
+it("표는 62행이고 번호가 1부터 이어진다", () => {
+  expect(ROWS.map((r) => r.n)).toEqual(Array.from({ length: 62 }, (_, i) => i + 1));
 });
 
 it.each(ROWS.map((r) => [`#${r.n} ${r.cred} ${r.method ?? "GET"} ${r.path} ${JSON.stringify(r.headers ?? {})} ${r.cache ?? ""}`, r] as const))("%s", async (_name, row) => {

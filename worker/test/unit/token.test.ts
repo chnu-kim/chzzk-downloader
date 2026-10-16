@@ -29,6 +29,7 @@ describe("생성", () => {
     expect(newToken("flow", fill(0))).toBe(`cdf_${"A".repeat(43)}`);
     expect(newToken("grant", fill(0))).toBe(`cdg_${"A".repeat(43)}`);
     expect(newToken("grant", fill(0xa5))).toBe("cdg_paWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaU");
+    expect(newToken("invite", fill(0))).toBe(`cdi_${"A".repeat(43)}`);
     expect(newId(fill(0))).toBe("A".repeat(22));
     expect(newSecret(fill(0xfb))).toBe(`${"-_v7".repeat(10)}-_s`);
   });
@@ -61,6 +62,9 @@ describe("형식 판정", () => {
     ["web", `cdw_${"_-".repeat(21)}x`, true],
     ["grant", `cdg_${body}`, true],
     ["grant", `cda_${body}`, false],
+    ["invite", `cdi_${body}`, true],
+    ["invite", `cdg_${body}`, false],
+    ["grant", `cdi_${body}`, false],
     ["access", `cdg_${body}`, false],
     ["access", `cdr_${body}`, false],
     ["refresh", `cda_${body}`, false],

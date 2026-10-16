@@ -375,7 +375,8 @@ async fn cleanup(part: Option<PartFile>, keep: bool, e: &Error) {
 }
 
 /// 생방송 변환 결과로 마무리를 이어 갈지 정한다(core.md 61 M4). `Ok(true)`: 바꿨으니 checkpoint 뒤 마무리,
-/// `Ok(false)`: 그대로 마무리(이미 일반 mp4·조각 아님·바꾸기 전 실패), `Err`: 마무리하지 않는다.
+/// `Ok(false)`: 그대로 마무리(이미 일반 mp4·조각 아님·바꾸기 전 구조 판정 실패), `Err`: 마무리하지 않는다(바꾸는 도중
+/// 실패·읽기 입출력 오류로 파일 상태를 확인하지 못함, `DefragError::Modified`).
 fn defrag_verdict(
     r: Result<Result<defrag::DefragReport, defrag::DefragError>, Error>,
 ) -> Result<bool, Error> {
@@ -389,7 +390,7 @@ fn defrag_verdict(
             Ok(false)
         }
         Ok(Err(defrag::DefragError::Modified(e))) => {
-            tracing::warn!(error = %e, "생방송 파일 변환이 도중에 실패해 .part로 둔다");
+            tracing::warn!(error = %e, "생방송 파일 변환이 도중에 실패했거나 파일을 읽지 못해 .part로 둔다");
             Err(e)
         }
         // 핸들 복제·flush·태스크 실패: 파일 상태를 모르니 마무리하지 않는다

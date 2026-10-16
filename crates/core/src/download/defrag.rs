@@ -12,9 +12,10 @@
 //! 3. 마지막에 원래 `moov`(init)·`moof`·`styp`·`emsg`와 모르는 상자의 4바이트 종류를 `free`로 바꾼다(오프셋
 //!    오름차순으로 한 번에, 그리고 sync). 데이터는 움직이지 않는다. `ftyp`·`mdat`·`free`·`skip`은 그대로다.
 //!
-//! 변환은 최선 노력이다. 구조를 읽지 못하거나(가짜 바이트·잘린 파일·모르는 구조) 검증에 실패하면 파일을 바꾸지
-//! 않고 `Err`를 돌려준다. 호출한 쪽은 경고만 남기고 조각 구조 그대로 마무리한다. 바꾸는 도중의 실패는
-//! `DefragError::Modified`이고 호출한 쪽은 마무리하지 않는다(덧붙인 `moov`를 잘라 되돌렸으면 `Unchanged`).
+//! 변환은 최선 노력이다. 구조를 해석하지 못하거나(가짜 바이트·잘린 파일·모르는 구조) 검증에 실패하면 파일을 바꾸지
+//! 않고 `Err`를 돌려준다. 호출한 쪽은 경고만 남기고 조각 구조 그대로 마무리한다. 바꾸는 도중의 실패와 읽기 입출력
+//! 오류(파일이 이미 바뀌었는지 확인하지 못했다)는 `DefragError::Modified`이고 호출한 쪽은 마무리하지 않는다(덧붙인
+//! `moov`를 잘라 되돌렸으면 `Unchanged`).
 //!
 //! **멱등.** 최상위에 `mvex` 없는 진짜 `moov`가 있으면 이미 일반 mp4다(`AlreadyFlat`). 3단계 도중 끊겨 일부 상자만
 //! `free`로 바뀐 채 끝의 `moov`가 잘려 나간 파일(크래시 후 `PartFile::resume`이 `committed_len`으로 자른다)은,
@@ -95,10 +96,10 @@ impl DefragFile for File {
 /// `defragment_in`의 실패. 파일을 바꿨는지로 나눈다(호출한 쪽이 마무리할지 정한다).
 #[derive(Debug)]
 pub(crate) enum DefragError {
-    /// 파일은 원래 그대로다(구조 검증·읽기 실패, 또는 덧붙인 `moov`를 잘라 되돌렸다). 조각 구조로 마무리해도 된다
+    /// 파일은 원래 그대로다(구조 검증 실패, 또는 덧붙인 `moov`를 잘라 되돌렸다). 조각 구조로 마무리해도 된다
     Unchanged(Error),
-    /// 바꾸는 도중 실패했고 되돌리지 못했다(또는 앞선 시도가 이미 바꿔 둔 파일이다). 최종 파일로 옮기지 않는다(다음 실행이
-    /// committed_len으로 잘라 다시 변환한다)
+    /// 바꾸는 도중 실패했고 되돌리지 못했다(또는 앞선 시도가 이미 바꿔 둔 파일이거나, 길이·구조를 읽다 입출력 오류가 나
+    /// 그런 파일인지 확인하지 못했다). 최종 파일로 옮기지 않는다(다음 실행이 committed_len으로 잘라 다시 변환한다)
     Modified(Error),
 }
 
@@ -122,12 +123,20 @@ pub fn defragment(file: &mut File) -> Result<DefragReport, Error> {
 /// `defragment`의 본체. 실패를 `DefragError`(파일이 원래 그대로인가)로 나눈다.
 pub(crate) fn defragment_in<F: DefragFile>(file: &mut F) -> Result<DefragReport, DefragError> {
     let io_err = |op: &'static str| move |e: io::Error| map_io_error(op, Path::new(WHAT), e);
+    // 길이·구조를 읽다 입출력 오류가 나면 파일이 원래 조각 구조인지 확인하지 못한 것이다(앞선 시도가 init `moov`를 이미
+    // `free`로 바꿔 둔 파일일 수 있다). 조각 구조로 마무리하지 않게 `Modified`로 알린다(core.md 61, Codex PR #113 2회차 ②).
+    // 구조 판정(가짜 바이트·잘린 파일·모르는 구조)은 같은 바이트에서 결정적이라 `Unchanged`다.
     let len = file
         .file_len()
-        .map_err(|e| DefragError::Unchanged(io_err("stat")(e)))?;
+        .map_err(|e| DefragError::Modified(io_err("stat")(e)))?;
     let outcome = {
         let mut src = FileSrc { f: file, len };
-        plan(&mut src).map_err(|f| DefragError::Unchanged(f.into_error()))?
+        plan(&mut src).map_err(|f| match f {
+            Fail::Io(e) if e.kind() != io::ErrorKind::UnexpectedEof => {
+                DefragError::Modified(map_io_error("read", Path::new(WHAT), e))
+            }
+            f => DefragError::Unchanged(f.into_error()),
+        })?
     };
     let p = match outcome {
         Outcome::Flat => return Ok(DefragReport::AlreadyFlat),

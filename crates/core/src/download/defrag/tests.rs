@@ -1031,6 +1031,8 @@ enum Fault {
     AppendAndTruncate,
     /// `after`번 패치를 쓴 뒤 다음 패치가 실패한다
     Patch { after: usize },
+    /// 첫 읽기 한 번이 입출력 오류(EIO)로 실패한다. 그 뒤 읽기·쓰기·sync는 된다
+    ReadOnce,
 }
 
 struct FaultyFile {
@@ -1038,6 +1040,7 @@ struct FaultyFile {
     base: u64,
     fault: Fault,
     patches: usize,
+    reads: usize,
 }
 
 impl FaultyFile {
@@ -1047,12 +1050,17 @@ impl FaultyFile {
             base: FIXTURE.len() as u64,
             fault,
             patches: 0,
+            reads: 0,
         }
     }
 }
 
 impl Read for FaultyFile {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.reads += 1;
+        if matches!(self.fault, Fault::ReadOnce) && self.reads == 1 {
+            return Err(io::Error::from_raw_os_error(5));
+        }
         self.c.read(buf)
     }
 }
@@ -1177,6 +1185,52 @@ fn append_failure_after_patchless_attempt_is_unchanged() {
     let mut second = faulty_on(b, Fault::Append);
     let r = defragment_in(&mut second);
     assert!(matches!(r, Err(DefragError::Unchanged(_))), "{r:?}");
+}
+
+/// Codex PR #113 2회차 ②: 앞선 시도가 init `moov`를 `free`로 바꾼 채 `.part`로 남았고, 다음 시도의 계획 단계에서 읽기가
+/// 입출력 오류로 실패했다. 파일이 원래 조각 구조인지 확인하지 못했으니 `Unchanged`(조각 구조로 마무리)가 아니다.
+/// 마무리 판정도 `Err`라 `finish`는 `Completed`로 끝내지 않고 `.part`·sidecar를 남긴다(`defrag_verdict`).
+#[test]
+fn plan_read_error_after_earlier_patch_is_not_unchanged() {
+    let (clean, _) = convert(FIXTURE);
+    let mut first = FaultyFile::new(Fault::Patch { after: 1 });
+    let r = defragment_in(&mut first);
+    assert!(matches!(r, Err(DefragError::Modified(_))), "{r:?}");
+    let mut b = first.c.into_inner();
+    b.truncate(FIXTURE.len());
+    let moov = kind_pos(FIXTURE, b"moov");
+    assert_eq!(&b[moov..moov + 4], b"free");
+    let before = b.clone();
+
+    let mut second = faulty_on(b, Fault::ReadOnce);
+    let r = defragment_in(&mut second);
+    assert!(
+        matches!(r, Err(DefragError::Modified(Error::Io { .. }))),
+        "{r:?}"
+    );
+    assert_eq!(second.c.get_ref(), &before, "아무것도 쓰지 않았다");
+    assert!(
+        crate::download::defrag_verdict(Ok(r)).is_err(),
+        "마무리하지 않는다"
+    );
+    // 다음 시도는 같은 결과로 변환한다
+    let mut b = second.c.into_inner();
+    let r = defragment_bytes(&mut b).unwrap();
+    assert!(matches!(r, DefragReport::Converted { .. }), "{r:?}");
+    assert_eq!(b, clean);
+}
+
+/// 계획 단계의 읽기 입출력 오류는 앞선 패치가 없어도 `Unchanged`가 아니다(무엇을 읽었는지 모른다). 구조 판정
+/// (잘린 파일·가짜 바이트)은 아래 `plan_failure_is_unchanged`처럼 그대로 `Unchanged`다.
+#[test]
+fn plan_read_error_is_not_unchanged() {
+    let mut f = FaultyFile::new(Fault::ReadOnce);
+    let r = defragment_in(&mut f);
+    assert!(
+        matches!(r, Err(DefragError::Modified(Error::Io { .. }))),
+        "{r:?}"
+    );
+    assert_eq!(f.c.get_ref().as_slice(), FIXTURE);
 }
 
 /// 구조를 읽지 못하면 아무것도 쓰기 전이라 `Unchanged`다.

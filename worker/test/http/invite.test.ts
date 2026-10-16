@@ -3,6 +3,8 @@
 import { runInDurableObject } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { COPY } from "../../src/http/copy";
+import { delegationsLeave, editorsInvite, editorsRemove } from "../../src/http/editors";
+import type { Ctx } from "../../src/routes";
 import { sha256Hex } from "../../src/core/token";
 import { DONE_WINDOW_MS, INVITE_TTL_MS } from "../../src/store/delegation";
 import { createFakeChzzk, FAKE_ACCOUNTS, type FakeAccountKey, type FakeChzzk } from "../fake-chzzk.mjs";
@@ -684,21 +686,32 @@ describe("IV16 배포 호환(106 (차) ⑤)", () => {
     START_RATE_10M: "",
   };
 
-  it("운영 모드에서는 앱 편집자 API 셋이 꺼져 있다: 형식 있는 404 not_enabled(차단 코드 401·403이 아니다), DO 0회", async () => {
+  it("IV16a 운영 모드에서도 앱 편집자 API 셋이 열려 있다(107)", async () => {
     const access = await ownerAccess();
     const { send, calls } = countingSend(PROD_PATCH);
+    const post = (path: string, body: object) =>
+      send(PROD_ORIGIN + path, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${access}` }, body: JSON.stringify(body) });
+    const invite = await post("/api/editors/invite", {});
+    expect(invite.status).toBe(200);
+    expect(((await invite.json()) as { inviteUrl: string }).inviteUrl.startsWith(PROD_ORIGIN + "/invite/")).toBe(true);
+    expect(calls).toEqual(["check", "createInvite"]);
+    // 대상이 없으면 닫힌 것이 아니라 열린 채로 not_found(또는 멱등 204)다
     for (const [path, body] of [
-      ["/api/editors/invite", {}],
       ["/api/editors/remove", { channelId: C3 }],
       ["/api/delegations/leave", { channelId: B2 }],
     ] as const) {
-      const res = await send(PROD_ORIGIN + path, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${access}` }, body: JSON.stringify(body) });
-      expect([path, res.status, await res.json()]).toEqual([path, 404, { code: "not_enabled" }]);
+      const res = await post(path, body);
+      if (res.status === 404) expect(((await res.json()) as { code: string }).code).not.toBe("not_enabled");
+      else expect(res.status).toBe(204);
     }
-    expect(calls).toEqual([]);
-    // 대조: 같은 운영 모드의 /api/me는 그대로다
-    const me = await send(PROD_ORIGIN + "/api/me", { method: "GET", headers: { Authorization: `Bearer ${access}` } });
-    expect(me.status).toBe(200);
+  });
+
+  it("IV16b 꺼 두면(되돌리기 스위치) Bearer·본문보다 먼저 404 not_enabled, DO 0회", async () => {
+    const ctx = { config: { editorApi: false } } as unknown as Ctx;
+    for (const handler of [editorsInvite, editorsRemove, delegationsLeave]) {
+      const res = await handler(new Request("https://worker.example.invalid/x", { method: "POST" }), ctx);
+      expect([res.status, await res.json()]).toEqual([404, { code: "not_enabled" }]);
+    }
   });
 
   it("GET /invite/:token이 invitePage RPC 없는 옛 DO를 만나면 500 JSON이 아니라 안내 페이지(503)", async () => {

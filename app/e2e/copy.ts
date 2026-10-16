@@ -8,10 +8,10 @@ export { engineFixText, revealLabel, shortcutText } from '../src/lib/platform';
 // 화면에 보이는 값을 만드는 순수 함수(날짜·크기·종류 글자·시간 상수): spec이 같은 함수로 기대값을 만든다
 export { formatFileSize, sizeBaseOf } from '../src/lib/format/bytes';
 export { formatDate, formatDateTime, parseKstWall } from '../src/lib/format/date';
-export { whenText } from '../src/lib/when';
+export { dayText, whenText } from '../src/lib/when';
 export { channelRow } from '../src/lib/auth';
 export { CHECK_DEBOUNCE_MS, kindLabel, recentSecondLine } from '../src/lib/receive';
-export { COMPLETED_FOLD_AT, LOADER_DELAY_MS, LOADER_MIN_MS, RECOVERY_NOTICE_MS, RECOVERY_SILENT_MS, STALE_DAYS, TOAST_MS } from '../src/lib/timing';
+export { COMPLETED_FOLD_AT, COPIED_LABEL_MS, LOADER_DELAY_MS, LOADER_MIN_MS, RECOVERY_NOTICE_MS, RECOVERY_SILENT_MS, STALE_DAYS, TOAST_MS } from '../src/lib/timing';
 
 import { t, type CopyKey, type CopyVars } from '../src/lib/copy/ko';
 

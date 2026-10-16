@@ -37,11 +37,12 @@ export const DEV_ORIGIN = "http://localhost:8787";
 export const DEV_REDIRECT_URI = DEV_ORIGIN + CALLBACK_PATH;
 // 운영의 /auth/start IP당 10분 한도(§5). dev 모드에서만 START_RATE_10M으로 바꿀 수 있다
 export const DEFAULT_START_RATE_10M = 6;
-// 운영에서 앱 편집자 API(/api/editors/*·/api/delegations/leave)를 여는가(worker.md 구현 중 변경 106 (차) ⑤).
-// 릴리스 A(Worker 전용)는 닫고, 초대 UI를 여는 앱 릴리스 B의 PR(①-5)이 true로 바꾼다: 앱 UI가 없다는 것은 보호 장치가 아니다.
+// 운영에서 앱 편집자 API(/api/editors/*·/api/delegations/leave)를 여는가(worker.md 구현 중 변경 106 (차) ⑤ → 107).
+// 릴리스 A(Worker 전용)는 닫혀 나갔고 초대 UI를 여는 앱 릴리스 B(①-5)가 연다. 되돌리려면 false로 바꿔 배포한다
+// (닫히면 세 API가 Bearer보다 먼저 404 not_enabled, 앱은 '아직 쓸 수 없음'으로 다룬다).
 // dev 모드(루프백 출처: vitest·worker-e2e·pnpm dev)는 늘 연다. 배포 변수가 아니라 코드 상수인 까닭: wrangler deploy가 vars를 새로 쓰므로
 // 변수로 두어도 켜고 끄는 길은 배포 하나뿐이고, vars 불변식(worker-config.mjs PROD_VARS)을 넓히지 않는다
-export const EDITOR_API_PROD = false;
+export const EDITOR_API_PROD = true;
 
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 const CHANNEL_ID = /^[0-9a-f]{32}$/;

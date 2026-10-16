@@ -347,13 +347,13 @@
 
 | 문구 | 값 | 쓰는 곳 | 근거 |
 |---|---|---|---|
-| 고지(긴 판) `NOTICE_UNOFFICIAL` | **VOD 클립 다운로더는 네이버나 치지직과 관련 없는 비공식 도구예요. 치지직과 NAVER는 NAVER Corp.의 상표일 수 있어요. 이 앱은 로그인한 채널의 영상과 클립만 받아요.** | 랜딩 바닥글, 설정 › 정보 | `G-ID-R1`·`G-ID-R2`(원문 "내려받아요"는 D42에 맞춰 "받아요"로. 셋째 문장은 C8 "본인 채널만"과 같은 뜻으로 좁혔다, 검토 U-05). 상표 등록 확인 전까지 "상표일 수 있어요"(README §6-9) |
+| 고지(긴 판) `NOTICE_UNOFFICIAL` | **VOD 클립 다운로더는 네이버나 치지직과 관련 없는 비공식 도구예요. 치지직과 NAVER는 NAVER Corp.의 상표일 수 있어요. 이 앱은 로그인한 채널과 맡은 채널의 영상과 클립만 받아요.** | 랜딩 바닥글, 설정 › 정보 | `G-ID-R1`·`G-ID-R2`(원문 "내려받아요"는 D42에 맞춰 "받아요"로. 셋째 문장은 C8 "본인 채널만"과 같은 뜻으로 좁혔다, 검토 U-05. 셋째 문장은 기능 ① 편집자 위임으로 맡은 채널까지 넓혔다, ADR-0026). 상표 등록 확인 전까지 "상표일 수 있어요"(README §6-9) |
 | 고지(한 줄) `NOTICE_SHORT` | **비공식 도구예요 · 네이버·치지직과 제휴하거나 보증받지 않았어요** | 랜딩 히어로 바로 아래(스크롤 없이), 앱 로그인 첫 화면(패널 안 Notice) | `G-ID-R1`, C2 |
 | Worker 헤더 배지 `pill` | **비공식 도구** | Worker만(모양은 배지, `web.md` §3.1) | judgment §2.3-7 |
 | 랜딩 `<title>`·OG | **VOD 클립 다운로더 — 치지직 영상을 받는 비공식 도구** / og:description **내 치지직 다시보기와 클립을 내 컴퓨터에 받아요. 네이버·치지직과 무관한 비공식 도구예요.** | Worker | D34, `G-ID-R10`. "VOD"는 배지에만, "저장"은 영상에 쓰지 않는다(§4) |
 | 저작권 줄 | **© {year} {owner}. 모든 권리 보유.** D58(라이선스) 결정 전까지 | 정보 화면, 바닥글 | D58 |
 | 로그인 전 고지 `auth.consent` | **로그인하면 채널 이름과 채널 ID만 알게 되고, 네이버 비밀번호는 받지 않아요. 언제든 설정 › 계정에서 로그아웃할 수 있어요.** + 링크 "개인정보 처리방침"(`auth.privacy`). 랜딩은 세 줄 `landing.consent.*`(받는 것 / 쓰는 곳 / 받지 않는 것) + "로그인한 기기는 ‘내 기기’에서 끊을 수 있어요." | 로그인 첫 화면, 랜딩 CTA 위 | brief §6.14-7, C7(왜·무엇·어디까지·**어떻게 끊나**), `G-PRIVACY-R17` |
-| 범위 고지 | **허가받은 채널만 쓸 수 있어요.**(`auth.intro` 앞 문장) / 설정 계정 행 `account.scope` **허가받은 채널이에요** / 홈 빈 상태 `list.empty.scope` **내 채널의 영상과 클립을 받을 수 있어요** | 로그인 화면, 설정, 홈 | C8, judgment §2.2-7·§2.3-3 |
+| 범위 고지 | **허가받은 채널만 쓸 수 있어요.**(`auth.intro` 앞 문장) / 설정 계정 행 `account.scope` **허가받은 채널이에요** / 홈 빈 상태 `list.empty.scope` **내 채널의 영상과 클립을 받을 수 있어요** / 맡은 채널이 있으면 `list.empty.scopeDelegated` **내 채널과 맡은 채널의 영상과 클립을 받을 수 있어요** | 로그인 화면, 설정, 홈 | C8, judgment §2.2-7·§2.3-3 |
 | 쿠키 사칭 경고 | **개발자나 관리자는 이 값을 묻지 않아요. 보내 달라는 메시지를 받으면 사기예요.** | 설정 › 네이버 로그인 정보 | g-privacy §1.4·`G-PRIVACY-R16` |
 | xattr 안내 | **이 명령은 ‘인터넷에서 받은 파일’ 표시만 지워요. 이 명령 말고 다른 명령을 붙여넣으라고 하지 않아요. 그런 안내를 받았다면 사기예요.** | 랜딩 설치 안내 | D52, g-privacy G1 |
 | 문제가 있을 때 | **앱에서 [문제 보고용 정보 복사]를 누른 뒤 관리자에게 보내 주세요. 복사한 내용에는 채널 이름이나 로그인 정보가 들어가지 않아요. 관리자는 쿠키나 비밀번호를 절대 묻지 않아요.** + 연락 수단 `landing.contact`(자리표시) | 랜딩 "막히면" 절, 도움말 끝 | `G-PRIVACY-R16`, g-help D8 |
@@ -469,7 +469,7 @@
 | `job.skipped` | 이미 같은 이름의 파일이 있어 받지 않았어요 | 상태 `job.status.skipped` + `job.skipped.body` **같은 이름의 파일이 이미 있어요.** | §3.1-2 |
 | `job.skippedMeanwhile` | 받는 동안 같은 이름의 파일이 생겨 저장하지 않았어요 | `job.skippedMeanwhile.body` **받는 동안 같은 이름의 파일이 생겼어요.** | §4(저장) |
 | `job.eta` | {t} 남음 | 삭제(`formatRemaining`이 "약 14분 남음" 전체를 낸다) | §7 |
-| `job.otherChannel` | 다른 채널로 로그인해 이어받을 수 없어요 | `job.otherChannel.body` **다른 채널로 로그인한 상태라 이어받을 수 없어요. 이 영상의 채널로 로그인해 주세요.** | §9 |
+| `job.otherChannel` | 다른 채널로 로그인해 이어받을 수 없어요 | `job.otherChannel.body` **지금 로그인한 채널로는 이어받을 수 없는 영상이에요. 이 영상의 채널로 로그인하거나 그 채널의 편집자여야 해요.** | §9 |
 | `job.resumedFrom` | {size}부터 이어받음 | 유지, 괄호 없이 조각으로 결합(`jobs.ts:233` 괄호 제거) | §6.5 |
 | `job.percent` | {n}퍼센트 | `a11y.progress` **{percent}퍼센트 받았어요. {remaining}** (`{remaining}`은 "약 14분 남아요"/"남은 시간을 계산하고 있어요") | §10 |
 | `job.more` | {title} 더 보기 | `a11y.more` **‘{title}’ 더 보기** | §10 |
@@ -548,6 +548,7 @@
 | (신설, 단계 (c)) `settings.view`·`settings.textScale`·`settings.theme`·`settings.account`·`settings.advanced` | — | **보기** / **글자 크기** / **모양** / **계정** / **고급** | `patterns.md` §14.4 |
 | (신설, 단계 (c)) `settings.textScale.default`·`settings.textScale.large`·`settings.textScale.xLarge` | — | **기본** / **크게** / **아주 크게** | ADR-0019 |
 | (신설, 단계 (c)) `settings.theme.system`·`settings.theme.light`·`settings.theme.dark` | — | **시스템** / **밝게** / **어둡게**(Linux만) | `platform.md` §11 |
+| (신설, ①-5) 편집자 위임 | — | `editors.title` **편집자** / `editors.empty` **영상 받기를 맡긴 사람이 없어요.** / `editors.help` **맡긴 사람은 내 채널의 영상과 클립을 받을 수 있어요.** / `editors.pending` **보낸 초대 주소가 있어요 · {date}까지** / `editors.limit` **편집자는 {n}명까지 맡길 수 있어요.** / `editors.offline` **로그인 서버에 연결되면 초대 주소를 만들 수 있어요.** / `editors.loadFailed` **편집자 목록을 불러오지 못했어요. 설정을 다시 열어 주세요.** / `editors.notReady` **로그인 서버가 아직 이 기능을 준비하지 못했어요. 잠시 뒤 다시 시도해 주세요.** / `editors.since` **{date}부터** / `editors.waiting` **관리자 확인 기다리는 중 · {date}에 초대를 열었어요** / `editors.invite.make` **초대 주소 만들기** / `editors.invite.label` **초대 주소** / `editors.invite.help` **편집자에게 보내 주세요. 주소를 연 사람이 편집자가 되니 다른 사람에게는 보내지 마세요. 한 번만 쓸 수 있고 {days}일 뒤 사라져요.** / `editors.invite.made` **초대 주소를 만들었어요** / `editors.invite.failed` **초대 주소를 만들지 못했어요. 잠시 뒤 다시 시도해 주세요.** / `editors.remove` **편집자 빼기** / `editors.remove.failed` **편집자를 빼지 못했어요. 잠시 뒤 다시 시도해 주세요.** / `delegated.title` **맡은 채널** / `delegated.help` **이 채널의 영상과 클립도 받을 수 있어요.** / `delegated.leave` **편집자 그만두기** / `delegated.leave.failed` **편집자를 그만두지 못했어요. 잠시 뒤 다시 시도해 주세요.** / `toast.editorRemoved` **‘{name}’ 편집자를 뺐어요** / `toast.delegationLeft` **‘{name}’ 채널의 편집자를 그만뒀어요** / `a11y.removeEditor` **‘{name}’ 편집자 빼기** / `a11y.leaveDelegation` **‘{name}’ 채널의 편집자 그만두기** / `receive.recheck.offline` **로그인 서버에 연결하지 못했어요. 연결되면 다시 불러와 주세요.** / `list.empty.scopeDelegated` **내 채널과 맡은 채널의 영상과 클립을 받을 수 있어요** / `auth.denied.editorHint` **초대 주소를 열었다면 관리자가 허가할 때 편집자가 돼요.** | delegation.md §4·§5·§7, ADR-0026 |
 | 지운 키(단계 (c)) | `url.hintExample` `conflict.partial` `list.empty.body` `job.word.*` `job.phase.resolving`·`finalizing` `job.pausedNoBytes` `job.interruptedNoBytes` `job.interrupted` `job.skipped` `job.skippedMeanwhile` `action.openFolder` `auth.offline.badge` `account.lastVerified` `auth.logout` `update.later` `card.close` `card.cancel` `filename.ext` | 새 키로 옮기고 참조가 사라져 지웠다(`design-copy` DC11) | 위 행들 |
 
 ### 15.2 `errors.ts`(코드별 L0, L1)
@@ -591,11 +592,14 @@
 | `invalidInput` 쿠키 | 두 값을 모두 넣어 주세요 | — | 없음(입력칸이 행동) | — |
 | `invalidInput` 그 밖 | 입력한 값을 쓸 수 없어요 | 다른 값을 넣어 주세요. | 없음(입력칸이 행동) | 원문 |
 | `notLoggedIn` | 로그인이 필요해요 | 치지직 계정으로 로그인한 뒤 다시 시도해 주세요. | 치지직으로 로그인 | — |
-| `notOwnContent` | 내 채널의 영상만 받을 수 있어요 | 이 영상은 다른 채널의 영상이에요. + 행 **영상의 채널**: ‘{channelName}’ / **로그인한 채널**: ‘{myChannel}’ | 닫기 | — |
+| `notOwnContent` | 내 채널의 영상만 받을 수 있어요 / (맡은 채널 ≥ 1) 내 채널이나 맡은 채널의 영상만 받을 수 있어요 | (R) 이 영상은 다른 채널의 영상이에요. 이 채널의 편집자라면 채널 주인에게 초대 주소를 받아 열어 주세요. / (D) 이 영상은 다른 채널의 영상이에요. + 행 **영상의 채널**: ‘{channelName}’ / **로그인한 채널**: ‘{myChannel}’ | (R) 다시 불러오기 · 닫기 / (D) 목록에서 지우기 | — |
+| `notOwnContent` 맡은 채널 생방송(`delegatedLive`) | 맡은 채널의 생방송은 녹화할 수 없어요 | 방송이 끝나고 영상이 올라오면 받을 수 있어요. + 행 **영상의 채널**: ‘{channelName}’ | 닫기 / 목록에서 지우기 | — |
 | `ownershipUnknown` | 영상의 채널을 확인하지 못했어요 | 내 채널의 영상인지 확인해야 받을 수 있어요. 다시 불러와 주세요. | 다시 불러오기 | 원문 |
 | `jobNotFound`·`internal`·default | 문제가 생겼어요 | 앱을 다시 시작해 주세요. 계속되면 문제 보고용 정보를 복사해 관리자에게 보내 주세요. | 문제 보고용 정보 복사 | 원문 |
 
 버튼 열은 `errorCopy(code, ctx).actions`의 골든이다(`frontend`). "/"는 `.part` 유무에 따른 분기, "·"는 둘 다다. 본문이 "문제 보고용 정보를 복사해"를 말하면 그 버튼이 반드시 있다(C6, 검토 U-07·U-08).
+
+**막힌 카드의 [다시 불러오기]**(`recheck`): 누르면 늘 로그인 서버에 맡은 채널을 물은 뒤 같은 주소를 다시 불러온다(간격 없음, delegation.md §5.1). 카드 안 Notice는 바닥의 [닫기]와 겹치는 [닫기]를 그리지 않는다(app.md 구현 중 변경 81).
 
 **받다 만 녹화(행)**: 영상 조각이 있는 생방송 녹화가 남은 실패 항목(`partialBytes` > 0, init만이면 셸이 값을 주지 않는다)은 위 표의 코드와 관계없이 버튼 맨 앞이 **이어받기**(받은 만큼 저장)이고 [처음부터 다시 받기]는 어디에도 없다. 오류가 고른 다른 동작은 그 뒤에 둔다(`playbackChanged`면 이어받기 · 다시 불러오기). 본문에 받은 부분 문장이 없으면 끝에 "받은 부분은 그대로 있어요."를 붙인다(`ErrorContext.keptRecording`, D8·core.md 61).
 
@@ -635,7 +639,7 @@
 | (신설) `alreadyDone` | — | `alreadyDone` **이미 처리됐어요.** | brief §6.13-3 |
 | (신설) `errorSummary`·`errorTitlePrefix` | — | `errorSummary` **확인해 주세요** / `errorTitlePrefix` **오류: **(뒤에 공백 하나) | §9.2-9 |
 | (신설) `mobileBlock` | — | `mobileBlock` **컴퓨터에서 받는 앱이에요. 휴대폰에는 설치할 수 없어요. 컴퓨터에서 이 주소를 열어 주세요.** | brief §6.13-5 |
-| (신설) `notice.*`·`copyright`·`pill` | — | §11 상수: `notice.unofficial` **VOD 클립 다운로더는 네이버나 치지직과 관련 없는 비공식 도구예요. 치지직과 NAVER는 NAVER Corp.의 상표일 수 있어요. 이 앱은 로그인한 채널의 영상과 클립만 받아요.** / `notice.short` **비공식 도구예요 · 네이버·치지직과 제휴하거나 보증받지 않았어요** / `pill` **비공식 도구**. 저작권 줄 `copyright` **© {year} {owner}. 모든 권리 보유.**은 D58 전까지 deck에 두지 않는다(사용자 결정, 줄을 그리지 않는다) | D34 |
+| (신설) `notice.*`·`copyright`·`pill` | — | §11 상수: `notice.unofficial` **VOD 클립 다운로더는 네이버나 치지직과 관련 없는 비공식 도구예요. 치지직과 NAVER는 NAVER Corp.의 상표일 수 있어요. 이 앱은 로그인한 채널과 맡은 채널의 영상과 클립만 받아요.** / `notice.short` **비공식 도구예요 · 네이버·치지직과 제휴하거나 보증받지 않았어요** / `pill` **비공식 도구**. 저작권 줄 `copyright` **© {year} {owner}. 모든 권리 보유.**은 D58 전까지 deck에 두지 않는다(사용자 결정, 줄을 그리지 않는다) | D34 |
 | (신설, 적용 단계 (e)) 골격·안내: `siteNav`·`reloadAdmin`·`inAppHint`·`helpTitle`·`privacyTitle`·`licensesTitle`·`loginLink`·`ogDescription` | — | `siteNav` **사이트**(헤더 `nav`의 `aria-label`) / `reloadAdmin` **관리 화면 새로 열기**(csrf·Origin 거절 페이지의 링크. 위 "오류 페이지 본문" 행의 같은 말에 키를 붙였다) / `inAppHint` **카카오톡 안에서 연 화면에서는 로그인이 끊길 수 있어요. 기본 브라우저에서 이 주소를 다시 열어 주세요.**(웹 흐름의 실패 × 카카오톡 인앱에서만 덧붙이는 한 단락, 막지 않고 실패 뒤에만 보충한다) / `helpTitle` **도움말** / `privacyTitle` **개인정보 처리방침** / `licensesTitle` **오픈소스 라이선스** / `loginLink` **로그인**(헤더 nav·바닥글·읽기 페이지 제목이 같은 키를 쓴다, §19-14) / `ogDescription` **내 치지직 다시보기와 클립을 내 컴퓨터에 받아요. 네이버·치지직과 무관한 비공식 도구예요.**(§11 og:description과 같은 값) | `web.md` §3·§6.1·§9.2. `siteNav`·`inAppHint`는 (e) 묶음 B가 지었다(§19-21) |
 | (신설, (e)) 랜딩 설치: `getFor`·`metaLine`·`warnPreview`·`otherOs`·`colOs`·`colMinVersion`·`filesCaption`·`fileCheck`·`fileCheckLead`·`installTitle`·`savedFile` | — | `getFor` **{os}용 받기**(함수 값, 큰 버튼 라벨) / `metaLine` **버전 {v} · {d} · {minOs} 이상**(함수 값. 날짜를 모르면 가운데 항목을 뺀다. `{d}`는 D49 형식 "2026. 10. 3.") / `warnPreview` **처음 열 때 경고가 나올 수 있어요. 앱이 문제라는 뜻이 아니에요.** / `otherOs` **다른 운영체제** / `colOs` **운영체제** / `colMinVersion` **최소 버전** / `filesCaption` **설치 파일(버전 {v})**(함수 값, 표 `caption`) / `fileCheck` **파일 확인(선택)** / `fileCheckLead` **받은 파일이 올바른지 확인하려면 아래 SHA-256 값과 비교할 수 있어요.** / `installTitle` **설치하기** / `savedFile` **파일이름**(버전을 모를 때 Linux 명령에 넣는 자리표시. 공백이 없어야 한다) | `web.md` §5.1. `warnPreview`·`fileCheckLead`는 (e) 묶음 C가 지었다(§19-21). 의무 어미는 "…비교할 수 있어요."(DC2가 "보세요"를 막는다) |
 | (신설, (e)) 설치 단계: `macOpenAnyway`·`linuxAppImage`·`linuxDeb` | — | `macOpenAnyway` **처음 열 때 경고가 나오면 시스템 설정 › 개인정보 보호 및 보안에서 ‘그래도 열기’를 눌러 주세요. 그 단추가 없으면 다음 단계로 넘어가 주세요.**[잠정] / `linuxAppImage` **AppImage는 libfuse2(Ubuntu 24.04는 libfuse2t64)를 설치한 뒤 아래 명령으로 실행 권한을 주고 열어 주세요.** / `linuxDeb` **deb는 아래 명령으로 설치해요. 관리자 권한이 필요할 수 있어요.** | `web.md` §5.1-7, §14-1. `macOpenAnyway`의 [잠정]은 실기 전까지 조건문으로 두는 것이다 — 확인: README §6-11 macOS 실기(ad-hoc 서명). 세 문구는 (e) 묶음 C가 지었다 |

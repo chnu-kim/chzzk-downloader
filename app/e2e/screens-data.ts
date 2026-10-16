@@ -59,6 +59,16 @@ const RECENT: RecentVodDto[] = [
 ];
 
 const R = resolved();
+// 편집자 위임 화면용 합성 채널 ID(실제 값 아님)
+const EDITOR_ID = '000000000000000000000000000000b2';
+const EDITOR2_ID = '000000000000000000000000000000d4';
+const DELEGATED_ID = '000000000000000000000000000000c3';
+const NOT_OWN = resolved({
+  url: 'https://chzzk.naver.com/video/7654321',
+  content: { kind: 'video', videoNo: 7654321 },
+  ownership: 'notOwn',
+  meta: { ...R.meta, title: '남의 방송', channelName: '다른 채널', channelId: DELEGATED_ID },
+});
 const WORST = worstCaseResolved();
 const SLOW_URL = 'https://chzzk.naver.com/video/7777777';
 
@@ -223,6 +233,42 @@ export const SCREENS: Screen[] = [
       only: ['라이트 720', '다크 960'],
     }),
   ),
+  {
+    id: '설정(편집자)',
+    slug: 'settings-editors',
+    scenario: (_env, now) => ({
+      auth: { ...SIGNED_IN, delegatedChannels: [{ channelId: DELEGATED_ID, channelName: '맡긴 채널' }] },
+      editors: {
+        editors: [
+          { channelId: EDITOR_ID, channelName: '편집자 하나', since: now - 13 * 86400, status: 'active' },
+          { channelId: EDITOR2_ID, channelName: '편집자 둘', since: now - 86400, status: 'pending' },
+        ],
+        delegatedChannels: [{ channelId: DELEGATED_ID, channelName: '맡긴 채널', since: now - 13 * 86400 }],
+        pendingInviteUntil: null,
+        editorsMax: 10,
+        delegationsMax: 20,
+      },
+    }),
+    drive: async (app) => {
+      await open(app.page, t('header.settings')).click();
+      await open(app.page, t('editors.invite.make')).click();
+    },
+    ready: (p) => p.getByLabel(t('editors.invite.label')),
+    only: ['라이트 720', '다크 960', '아주 크게 320 다크'],
+  },
+  {
+    id: '카드(남의 영상)',
+    slug: 'card-not-own',
+    scenario: (_env, now) => ({
+      auth: { ...SIGNED_IN, delegationsCheckedAt: now - 3600 },
+      resolve: { [NOT_OWN.url]: NOT_OWN },
+    }),
+    drive: async (app) => {
+      await loadCard(app, NOT_OWN.url);
+    },
+    ready: (p) => p.getByRole('region', { name: NOT_OWN.meta.title }),
+    card: true,
+  },
   {
     id: '설정(고급 펼침)',
     slug: 'settings-advanced',

@@ -27,6 +27,7 @@
   } from '../../receive';
   import { announcer } from '../../stores/announce.svelte';
   import { platform } from '../../stores/platform.svelte';
+  import { resolver } from '../../stores/resolve.svelte';
   import { settings } from '../../stores/settings.svelte';
   import { modKey } from '../../stores/ui.svelte';
   import OverwriteDialog from '../app/OverwriteDialog.svelte';
@@ -200,6 +201,7 @@
     const err = shownError;
     if (!err) return;
     if (a === 'close') onclose();
+    else if (a === 'recheck') void resolver.recheck();
     else if (a === 'showInList' && err.payload?.type === 'duplicateOutput') onshowjob(err.payload.jobId);
     else if (a === 'retry') {
       if (enqueueError) {
@@ -264,7 +266,13 @@
       {#if check && fresh}
         <ConflictNotice {check} bind:choices onshowinlist={() => check?.duplicateJobId != null && onshowjob(check.duplicateJobId)} />
       {/if}
-      <OwnershipNotice ownership={view.ownership} channelName={view.meta.channelName} channelKnown={!!view.meta.channelId} />
+      <OwnershipNotice
+        ownership={view.ownership}
+        channelName={view.meta.channelName}
+        channelId={view.meta.channelId}
+        live={view.meta.kind === 'live'}
+        channelKnown={!!view.meta.channelId}
+      />
       {#if errCopy}
         <Notice variant="inline" tone="danger" title={errCopy.title} actions={errActions}>
           {#if errCopy.body}<p class="line">{errCopy.body}</p>{/if}

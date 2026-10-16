@@ -15,6 +15,7 @@ export type ActionId =
   | 'openCookieSettings' // 설정의 고급 섹션을 펼쳐 연다
   | 'reenterCookies' // 같은 곳, 문구만 다르다
   | 'reresolve' // 그 작업의 주소를 입력줄에 넣고 다시 불러온다(D)
+  | 'recheck' // 맡은 채널을 로그인 서버에 묻고 같은 주소를 다시 불러온다(R, ownership_recheck)
   | 'copyReport'
   | 'openFolder'
   | 'openConfigFolder'
@@ -42,6 +43,10 @@ export interface ErrorContext {
   /** (Phase 3) 영상의 채널 이름과 로그인한 채널 이름 */
   channelName?: string;
   myChannel?: string;
+  /** (①-5) 맡은 채널 수. 1 이상이면 notOwnContent 제목이 "내 채널이나 맡은 채널…" */
+  delegatedCount?: number;
+  /** (①-5) 맡은 채널의 생방송(v1은 녹화하지 않는다, L-D1). notOwnContent를 생방송 갈래로 */
+  delegatedLive?: boolean;
   /**
    * D: 받다 만 녹화(생방송 + 영상 조각, 셸의 `partialBytes`)가 남은 항목. 코어는 어떤 오류로 끝나도 녹화를 지우지
    * 않으므로(core.md 61) 오류 코드와 관계없이 본문 끝에 받은 부분 문장을 붙인다
@@ -510,12 +515,22 @@ function codeCopy(raw: AppError, ctx: ErrorContext): ErrorCopy {
       return copy('로그인이 필요해요', '치지직 계정으로 로그인한 뒤 다시 시도해 주세요.', ['login']);
 
     case 'notOwnContent': {
-      // 본문은 한 문장, 두 채널 이름은 "라벨: ‘값’" 행이다(서술형과 섞지 않는다, §6.4)
+      // 맡은 채널의 생방송(L-D1 (A)): 이미 편집자라 초대 안내와 다시 불러오기는 막다른 길이다. [닫기]만
+      if (ctx.delegatedLive) {
+        const liveRows = ctx.channelName ? [`영상의 채널: ‘${ctx.channelName}’`] : [];
+        return copy('맡은 채널의 생방송은 녹화할 수 없어요', '방송이 끝나고 영상이 올라오면 받을 수 있어요.', [dismiss], null, liveRows);
+      }
+      // 본문은 한 문자열, 두 채널 이름은 "라벨: ‘값’" 행이다(서술형과 섞지 않는다, §6.4)
       const rows =
         ctx.channelName && ctx.myChannel
           ? [`영상의 채널: ‘${ctx.channelName}’`, `로그인한 채널: ‘${ctx.myChannel}’`]
           : [];
-      return copy('내 채널의 영상만 받을 수 있어요', '이 영상은 다른 채널의 영상이에요.', [dismiss], null, rows);
+      const title = (ctx.delegatedCount ?? 0) > 0 ? '내 채널이나 맡은 채널의 영상만 받을 수 있어요' : '내 채널의 영상만 받을 수 있어요';
+      // 카드(R)만 편집자 안내와 [다시 불러오기]가 있다. 작업 행(D)은 job.otherChannel.body가 맡는다
+      if (ctx.place === 'resolve') {
+        return copy(title, '이 영상은 다른 채널의 영상이에요. 이 채널의 편집자라면 채널 주인에게 초대 주소를 받아 열어 주세요.', ['recheck', dismiss], null, rows);
+      }
+      return copy(title, '이 영상은 다른 채널의 영상이에요.', [dismiss], null, rows);
     }
 
     case 'ownershipUnknown':
@@ -549,6 +564,7 @@ const ACTION_LABEL: Record<Exclude<ActionId, 'openFolder'>, CopyKey> = {
   openCookieSettings: 'action.openCookieSettings',
   reenterCookies: 'action.reenterCookies',
   reresolve: 'action.reresolve',
+  recheck: 'action.reresolve',
   copyReport: 'action.copyReport',
   openConfigFolder: 'common.openConfigFolder',
   showInList: 'common.showInList',

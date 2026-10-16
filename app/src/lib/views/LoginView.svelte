@@ -97,6 +97,7 @@
       {:else}
         {#if screen.body}<p class="body" role={screen.problem ? 'alert' : undefined}>{screen.body}</p>{/if}
         {#if screen.channelRow}<p class="help">{screen.channelRow}</p>{/if}
+        {#if screen.hint}<p class="help">{screen.hint}</p>{/if}
         {#if idle}
           <!-- 비공식 고지: 받는 것·받지 않는 것: 끊는 길이 스크롤 없이 720×520 안에 든다 -->
           <Notice tone="neutral" icon="info">{t('notice.short')}</Notice>

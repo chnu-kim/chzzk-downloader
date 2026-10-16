@@ -754,7 +754,7 @@ describe('막힌 작업(A5)', () => {
 
   it('copy deck 키', () => {
     expect(blockCopyKey('otherChannel')).toBe('job.otherChannel.body');
-    expect(t('job.otherChannel.body')).toContain('이어받을 수 없어요');
+    expect(t('job.otherChannel.body')).toContain('이어받을 수 없는 영상이에요');
   });
 });
 

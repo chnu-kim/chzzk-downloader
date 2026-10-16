@@ -23,6 +23,8 @@ export interface LoginScreen {
   body: string | null;
   /** 거부·허가 취소 화면의 `로그인한 채널: ‘이름’` 행(채널 이름을 모르면 null) */
   channelRow: string | null;
+  /** 거부 화면의 편집자 안내 한 줄(delegation.md §5.4). 없으면 null */
+  hint: string | null;
   /** 오류·거부 화면이면 true(경고 아이콘) */
   problem: boolean;
   /** 왼쪽부터 */
@@ -52,8 +54,9 @@ function message(
   buttons: LoginButton[],
   otherAccount: LoginScreen['otherAccount'] = null,
   channelRow: string | null = null,
+  hint: string | null = null,
 ): LoginScreen {
-  return { kind: 'message', title: t(title), body, channelRow, problem, buttons, otherAccount, stuck: false };
+  return { kind: 'message', title: t(title), body, channelRow, hint, problem, buttons, otherAccount, stuck: false };
 }
 
 /**
@@ -88,6 +91,7 @@ function baseScreen(s: AuthStatusDto, nowMs: number): LoginScreen | null {
         title: t('auth.checking'),
         body: t('auth.checking.body', { secs: AUTH_CHECK_TIMEOUT_MS / 1000 }),
         channelRow: null,
+        hint: null,
         problem: false,
         buttons: [login('auth.relogin', 'link')],
         otherAccount: null,
@@ -103,6 +107,7 @@ function baseScreen(s: AuthStatusDto, nowMs: number): LoginScreen | null {
         title: t('auth.pending.title'),
         body: null,
         channelRow: null,
+        hint: null,
         problem: false,
         buttons: [],
         otherAccount: 'help',
@@ -114,7 +119,7 @@ function baseScreen(s: AuthStatusDto, nowMs: number): LoginScreen | null {
       if (s.reason === 'removedFromAllowlist') {
         return message('auth.removed.title', t('auth.removed.body'), true, [login('action.retry', 'primary')], 'link', channelRow(name));
       }
-      return message('auth.denied.title', t('auth.denied.body'), true, [login('action.retry', 'primary')], 'link', channelRow(name));
+      return message('auth.denied.title', t('auth.denied.body'), true, [login('action.retry', 'primary')], 'link', channelRow(name), t('auth.denied.editorHint'));
     case 'expired':
       switch (s.reason) {
         case 'loginTimeout':

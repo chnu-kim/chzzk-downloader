@@ -19,6 +19,7 @@ import {
   formatAgo,
   formatDate,
   formatDateTime,
+  formatMonthDay,
   formatWhen,
   parseKstWall,
   wallOf,
@@ -190,5 +191,15 @@ describe('formatMmss', () => {
     expect(formatMmss(599)).toBe('9:59');
     expect(formatMmss(59)).toBe('0:59');
     for (const v of [0, -5, Number.NaN]) expect(formatMmss(v)).toBe('0:00');
+  });
+});
+
+describe('formatMonthDay: 날짜만(편집자 행·초대 기한)', () => {
+  const now = { y: 2026, mo: 10, d: 16, h: 9, mi: 0 };
+  it('같은 해는 연도를 생략한다', () => {
+    expect(formatMonthDay({ y: 2026, mo: 10, d: 23, h: 0, mi: 0 }, now)).toBe('10월 23일');
+  });
+  it('다른 해는 연도를 붙이고 끝 마침표가 없다', () => {
+    expect(formatMonthDay({ y: 2027, mo: 1, d: 2, h: 0, mi: 0 }, now)).toBe('2027년 1월 2일');
   });
 });

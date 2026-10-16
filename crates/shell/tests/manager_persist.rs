@@ -407,3 +407,81 @@ async fn v070_failed_and_interrupted_records_auto_resume() {
     let e = mgr.resume(chzzk_shell::JobId(1), false).unwrap_err();
     assert_eq!(e.code, chzzk_shell::ErrorCode::DuplicateOutput);
 }
+
+/// 실제 시간으로 조건을 기다린다(async, 최대 10초). 쓰기 스레드·`spawn_blocking`을 기다리는 테스트용.
+async fn until_real(what: &str, mut f: impl FnMut() -> bool) {
+    for _ in 0..10_000 {
+        if f() {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(1)).await;
+    }
+    panic!("기다리던 조건이 오지 않음: {what}");
+}
+
+/// 늘 실패하는 `jobs.json` 쓰기로 연 매니저(다운로드 폴더 쓰기는 정상).
+fn open_failing_store(
+    dir: &std::path::Path,
+    fake: &Arc<FakeBackend>,
+) -> DownloadManager<FakeBackend> {
+    let store = JobStore::new(dir.join("data")).with_write_fn(Arc::new(|p, _| {
+        Err(chzzk_core::Error::DiskFull {
+            path: p.to_path_buf(),
+        })
+    }));
+    common::harness::open_store(store, fake, 2, false)
+}
+
+/// Codex PR #113 ③: 새 녹화는 주인 기록(`recordingId`)이 `jobs.json`에 저장된 뒤에만 시작한다. 저장하지 못하면
+/// 녹화를 시작하지 않고(코어를 부르지 않는다) 저장 실패 오류로 끝난다. 받은 녹화가 주인 없이 남지 않는다.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn live_does_not_start_until_owner_record_is_saved() {
+    let dir = tempfile::tempdir().unwrap();
+    let fake = FakeBackend::new();
+    let mgr = open_failing_store(dir.path(), &fake);
+    let defaults = JobDefaults {
+        download_folder: dir.path().join("downloads"),
+        segment_concurrency: 4,
+    };
+    let out = dir.path().join("downloads").join("a.mp4");
+    fake.script_for(&out, Script::new().wait_cancel());
+    let id = mgr
+        .enqueue(common::harness::live_request("a"), &defaults)
+        .unwrap()
+        .id;
+    until_real("실패", || {
+        mgr.list()
+            .iter()
+            .any(|j| j.id == id && j.status == JobStatus::Failed)
+    })
+    .await;
+    let job = mgr.list().into_iter().find(|j| j.id == id).unwrap();
+    assert_eq!(
+        job.error.as_ref().map(|e| e.code),
+        Some(chzzk_shell::ErrorCode::DiskFull),
+        "{job:?}"
+    );
+    assert!(
+        fake.download_requests().is_empty(),
+        "녹화를 시작하지 않는다"
+    );
+    assert!(!chzzk_core::download::part::part_path(&out).exists());
+}
+
+/// 대조: VOD는 이전처럼 저장 실패와 상관없이 받는다(저장을 기다리지 않는다).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn vod_starts_even_if_jobs_json_save_fails() {
+    let dir = tempfile::tempdir().unwrap();
+    let fake = FakeBackend::new();
+    let mgr = open_failing_store(dir.path(), &fake);
+    let defaults = JobDefaults {
+        download_folder: dir.path().join("downloads"),
+        segment_concurrency: 4,
+    };
+    fake.script_for(
+        dir.path().join("downloads").join("a.mp4"),
+        Script::new().wait_cancel(),
+    );
+    mgr.enqueue(request("a"), &defaults).unwrap();
+    until_real("요청", || !fake.download_requests().is_empty()).await;
+}

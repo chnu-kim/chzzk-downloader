@@ -123,6 +123,9 @@ struct Job {
     queue_seq: u64,
     /// 태스크 세대. `start`마다 새로 받고 태스크가 `finish`·진행률에 들고 온다. 자기 세대가 아닌 태스크의 보고는 버린다
     run: u64,
+    /// 이 기록이 `jobs.json`에 저장된 것을 확인했는가. 파일에서 읽은 기록은 `true`, 새로 추가한 생방송 녹화는 `false`이고
+    /// 첫 시작이 저장을 확인한다(주인 기록 없이 녹화를 남기지 않는다, core.md 61)
+    saved: bool,
     /// `quit` 기한 안에 멈추지 않아 태스크가 아직 도는 세대(worker.md 구현 중 변경 76·80). 그 태스크가 `finish`할 때까지
     /// 슬롯(`max_running`)과 출력 경로를 차지하고 같은 작업을 새로 시작하지 않는다(옛 태스크가 아직 `.part`를 쓴다)
     detached: Option<u64>,
@@ -140,6 +143,7 @@ impl Job {
             removing: false,
             queue_seq,
             run: 0,
+            saved: true,
             detached: None,
         }
     }
@@ -452,7 +456,9 @@ impl<B: Backend> DownloadManager<B> {
             missing: false,
         };
         let seq = st.seq();
-        let job = Job::new(rec, seq);
+        let mut job = Job::new(rec, seq);
+        // 새 녹화는 주인 기록(`recordingId`)이 저장된 뒤에만 시작한다(`run_download`). VOD는 다시 받을 수 있어 기다리지 않는다
+        job.saved = !job.is_live();
         let dto = job.dto();
         st.jobs.insert(id, job);
         self.inner.save(&st);
@@ -1074,6 +1080,8 @@ impl<B: Backend> Inner<B> {
         let mut req = job.rec.to_request();
         req.live_stop = job.live_stop.clone();
         let discard = job.rec.discard_on_start;
+        // 아직 저장을 확인하지 못한 새 녹화: 태스크가 쓰기 스레드를 기다린다(상태 잠금 밖)
+        let confirm = (!job.saved).then(|| self.writer.flusher());
 
         let me = Arc::clone(self);
         let runtime = self.runtime.clone();
@@ -1084,7 +1092,7 @@ impl<B: Backend> Inner<B> {
                 id,
                 run,
                 req,
-                discard,
+                Before { discard, confirm },
                 cancel,
                 client,
             ));
@@ -1100,6 +1108,16 @@ impl<B: Backend> Inner<B> {
         let dto = job.dto();
         self.save(st);
         st.emit(JobEvent::Status { job: dto });
+    }
+
+    /// 새 녹화의 주인 기록이 저장된 것을 확인했다. 다음 시작은 기다리지 않는다.
+    fn confirm_saved(&self, id: JobId, run: u64) {
+        let mut st = self.lock();
+        if let Some(j) = st.jobs.get_mut(&id)
+            && j.run == run
+        {
+            j.saved = true;
+        }
     }
 
     /// `restart`로 지운 뒤 표시를 내린다.
@@ -1239,16 +1257,43 @@ fn stage_of(last: Option<&ProgressDto>) -> Stage {
     }
 }
 
+/// 코어를 부르기 전에 할 일.
+struct Before {
+    /// "처음부터": `.part`를 지운다
+    discard: bool,
+    /// 새 녹화: 주인 기록의 저장을 확인한다
+    confirm: Option<Flusher>,
+}
+
 /// 작업 태스크 본체.
 async fn run_download<B: Backend>(
     inner: Arc<Inner<B>>,
     id: JobId,
     run: u64,
     req: DownloadRequest,
-    discard: bool,
+    Before { discard, confirm }: Before,
     cancel: CancellationToken,
     client: Arc<B>,
 ) -> End {
+    if let Some(flusher) = confirm {
+        // 주인 기록이 디스크에 닿기 전에 녹화하면, 저장이 실패한 채 앱이 꺼졌을 때 남의 것도 내 것도 아닌 `.part`가
+        // 남는다(저장·삭제 모두 막힌다). 저장을 확인한 뒤에만 녹화를 시작한다(Codex PR #113 ③)
+        let wait = tokio::task::spawn_blocking(move || flusher.flush_checked());
+        let saved = tokio::select! {
+            biased;
+            _ = cancel.cancelled() => return End::Cancelled,
+            r = wait => r,
+        };
+        match saved {
+            Ok(Ok(())) => inner.confirm_saved(id, run),
+            Ok(Err(e)) => return End::Failed(e),
+            Err(e) => {
+                return End::Failed(AppError::internal(format!(
+                    "작업 목록 저장을 확인하지 못했습니다: {e}"
+                )));
+            }
+        }
+    }
     if discard {
         if cancel.is_cancelled() {
             return End::Cancelled;

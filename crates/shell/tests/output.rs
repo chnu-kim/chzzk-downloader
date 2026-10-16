@@ -356,23 +356,21 @@ fn range_name_round_trips_through_output_path_on_three_platforms() {
                 "{p:?} {}",
                 c.file_name
             );
-            // 호스트와 다른 OS의 이름(예: `a:b`)은 호스트 경로로 해석하면 의미가 달라진다(Windows의 드라이브 접두사).
-            // 경로 왕복은 호스트와 같은 Platform에서만 보고, 나머지는 `check.path`의 마지막 조각이
-            // `{fileName}.mp4`인지 문자열로만 본다(호스트 경로 API를 거치지 않는다).
-            let name = if p == Platform::current() {
-                let again = output_path(dir.path(), &c.file_name, p);
-                assert_eq!(again, Path::new(&c.path), "{p:?} {title:?}");
-                Path::new(&c.path)
-                    .file_name()
-                    .unwrap()
-                    .to_str()
-                    .unwrap()
-                    .to_string()
-            } else {
-                let last = c.path.rsplit(['/', '\\']).next().unwrap().to_string();
-                assert_eq!(last, format!("{}.mp4", c.file_name), "{p:?} {title:?}");
-                last
-            };
+            // 호스트와 다른 OS의 이름(예: `a:b`)은 `check_output` 안의 호스트 경로 해석부터 의미가 달라진다
+            // (Windows 호스트는 `a:`를 드라이브 접두사로 뗀다). 제품은 늘 호스트 Platform만 쓰므로
+            // 경로 왕복은 호스트와 같은 Platform에서만 보고, 나머지는 위의 접미사 단언과 이름 길이만 본다.
+            if p != Platform::current() {
+                assert_eq!(c.file_name.matches("(1.02.03").count(), 1, "{p:?}");
+                continue;
+            }
+            let again = output_path(dir.path(), &c.file_name, p);
+            assert_eq!(again, Path::new(&c.path), "{p:?} {title:?}");
+            let name = Path::new(&c.path)
+                .file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .to_string();
             assert!(name.len() <= MAX_FILENAME_BYTES, "{p:?} {}", name.len());
             assert!(name.ends_with(" (1.02.03~2.00.00).mp4"), "{p:?} {name}");
             assert_eq!(name.matches("(1.02.03").count(), 1);

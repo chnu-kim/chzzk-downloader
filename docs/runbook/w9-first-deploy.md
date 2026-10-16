@@ -252,7 +252,7 @@ Cloudflare 계정을 다른 Worker들과 함께 쓰므로 하루 요청 한도�
 
 `v0.1.0` 앱은 **Worker 로그인이 없는 앱**이다(Phase 3b A1~A5 전, cicd.md 구현 중 변경 82 (나)의 태그 모드 `CHZZK_WORKER_BASE` 비교도 A2 몫). 앱에 updater 주소(`plugins.updater.endpoints`)가 없어 **스스로 업데이트하지 않는다**: 0.1.0 → 0.1.x는 랜딩(로그인·허용된 사용자)에서 받아 직접 설치한다(구현 중 변경 42 (바)).
 
-실패하면: `sign-publish` 전 실패는 R2에 아무것도 없다. verify 판정 실패는 `latest.json`이 자동으로 되돌아간다. deploy-worker 실패(1·2)는 R2 릴리스와 무관하다 — 묶음의 wrangler로 §2.3을 손으로 하거나 원인을 고쳐 다시 돌린다. Worker 되돌리기는 사람이 `w rollback`(DO 선언 변경은 되돌아가지 않는다, §9.4). 태그를 짧은 간격으로 셋 이상 밀지 않는다(36 (카)).
+실패하면: `sign-publish` 전 실패는 R2에 아무것도 없다. verify 판정 실패는 `latest.json`이 자동으로 되돌아간다. deploy-worker 실패(1·2)는 R2 릴리스와 무관하다 — 묶음의 wrangler로 §2.3을 손으로 하거나 원인을 고쳐 다시 돌린다. Worker 되돌리기는 사람이 `w rollback`(DO 선언 변경은 되돌아가지 않는다, §9.4). DO 스키마 V3(편집자 위임, worker.md 구현 중 변경 105) 뒤의 Worker 되돌리기는 **V3 직전(스키마 V2) 버전까지**만 확인된 범위다: V2 코드는 새 표를 모른 채 돌고, 그 사이의 허가 제외·재허가는 V3로 돌아왔을 때 허가 시각 판정이 위임·초대를 되살리지 않는다(`docs/design/features/delegation.md` §8.1, store 롤백 호환 테스트). 그보다 앞선 Worker로는 시험하지 않았다. 태그를 짧은 간격으로 셋 이상 밀지 않는다(36 (카)).
 
 ## 6. 무료 한도 확인(첫 릴리스 며칠 뒤)
 

@@ -280,7 +280,7 @@
 - [ ] ⑤ 생방송 사후 점검 fix: F1 멈춤 계약(`live.rs:360`·다음 playlist 읽기·첫 resolve) · F2 녹화 `.part` 보호(삭제 진입점 소유권 검사·계약 구분·자동 재개 조건) · F3 끝난 이유 표시(`feat`) · F4 EFBIG·223 매핑과 defrag 실패 계약 · F5 누출 테스트·LL 태그 경고 · F6 문서. F2가 ②-1보다 먼저
 - [ ] ⑤ 실측 M-⑤-A~D(본인 방송 중, F3 뒤가 좋다)
 - [ ] 도구 PR 묶음과 사용자 실측 한 세션: ②-0 키프레임 도구(M-②-3) · ③-1 목록 도구(M-③-1~7) · ④-1 채팅 도구·자막 렌더러(M-④-1~9)
-- [ ] ① 편집자 위임: ①-1 문서·ADR-0026 · ①-2 Worker 저장소(DO V3) · ①-3 Worker 웹 · ①-3½ 버전 올림 → **릴리스 A(Worker 전용)** → ①-4 셸 · ①-5 앱 · ①-6 문서 → **릴리스 B**. ①-5에서 초대 UI를 열 때 Worker `notice.unofficial` 셋째 문장(앱 `ko.ts`와 DC6)·`inviteDone.refresh`(앱의 [다시 불러오기])를 함께 맞추고, `worker/src/config.ts` `EDITOR_API_PROD`를 `true`로 바꿔 앱 편집자 API를 연다(앱은 그 전 Worker의 404 `not_enabled`를 차단이 아닌 "아직 쓸 수 없음"으로 다룬다). 콜백 `already`는 초대를 남기기로 정했다(worker.md 구현 중 변경 106 (사)·(아)·(차))
+- [ ] ① 편집자 위임: ①-1 문서·ADR-0026(용어집·상수 행·UT8·UT9, 브랜치 `docs/delegation-design`) · ①-2 Worker 저장소(DO V3) · ①-3 Worker 웹 · ①-3½ 버전 올림 → **릴리스 A(Worker 전용)** → ①-4 셸 · ①-5 앱 · ①-6 문서 → **릴리스 B**. ①-5에서 초대 UI를 열 때 Worker `notice.unofficial` 셋째 문장(앱 `ko.ts`와 DC6)·`inviteDone.refresh`(앱의 [다시 불러오기])를 함께 맞추고, `worker/src/config.ts` `EDITOR_API_PROD`를 `true`로 바꿔 앱 편집자 API를 연다(앱은 그 전 Worker의 404 `not_enabled`를 차단이 아닌 "아직 쓸 수 없음"으로 다룬다). 콜백 `already`는 초대를 남기기로 정했다(worker.md 구현 중 변경 106 (사)·(아)·(차))
 - [ ] ② 구간만 받기: ②-1 코어(⑤-F2 뒤, #121 머지, core.md 64) → 실측 M-②-2·6(`dl --range`) → ②-2 셸 → ②-3 앱 → ②-5 문서. 실측 불일치면 deferred
 - [ ] ④ 채팅 함께 받기: ④-2 `chat::part` · ④-3 코어 수집 · ④-4 셸 · ④-5 앱(U2 확정 뒤) · ④-6 문서. ②와 무관하게 단독 릴리스
 - [ ] ③ 내 채널 새 영상·모아 받기: ③-2 목록 코어 · ③-3 원장 · ③-4 서비스 · ③-5 Checkbox ADR · ③-6 뷰 → **릴리스 ③(가)** → ③-7 스케줄러 → ③-8 맡은 채널 대상 고르기(①-4 뒤)

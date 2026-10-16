@@ -137,7 +137,7 @@ impl std::fmt::Debug for PartFile {
 }
 
 /// `.part`를 열고 배타 잠금한다. 잠겨 있으면 `FileLocked`.
-fn open_locked(part: &Path, create: bool) -> Result<File, Error> {
+pub(crate) fn open_locked(part: &Path, create: bool) -> Result<File, Error> {
     let f = OpenOptions::new()
         .read(true)
         .write(true)
@@ -161,7 +161,7 @@ fn read_sidecar(path: &Path) -> Option<Sidecar> {
 }
 
 /// 파일을 지운다. 없으면 성공으로 본다.
-fn remove_if_exists(p: &Path) -> Result<(), Error> {
+pub(crate) fn remove_if_exists(p: &Path) -> Result<(), Error> {
     match std::fs::remove_file(p) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),

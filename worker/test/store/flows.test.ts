@@ -307,7 +307,7 @@ describe("finish·redeem 표", () => {
     expect(await query(stub, "SELECT status, poll_verifier, session_id, grant_hash, expires_at FROM flow")).toEqual([
       { status: "ok", poll_verifier: null, session_id: null, grant_hash: null, expires_at: T0 + 120_000 },
     ]);
-    expect(await stub.doneView(await sha(b.binder), T0 + 1000)).toEqual({ kind: "app", status: "ok", channelName: null, channelId: null });
+    expect(await stub.doneView(await sha(b.binder), T0 + 1000)).toEqual({ kind: "app", status: "ok", channelName: null, channelId: null, inviteOwnerName: null });
     expect(await query(stub, "SELECT status FROM session")).toEqual([{ status: "active" }]);
     expect(await stub.redeem(gh, b.verifier, ADMINS, T0 + 1500)).toEqual({ status: "not_found" });
     expect(await stub.doneView(await sha(b.binder), T0 + 119_999)).not.toBeNull();
@@ -433,7 +433,7 @@ describe("finish·redeem 표", () => {
     if (!k.ok) throw new Error("consume");
     expect(await stub.finish(k.flowId, { type: "user", channelId: C3, channelName: "남" }, ADMINS, T0)).toEqual({ type: "denied" });
     const v = await stub.doneView(await sha(s.binder), T0 + 1);
-    expect(v).toEqual({ kind: "web", status: "denied", channelName: "남", channelId: C3 });
+    expect(v).toEqual({ kind: "web", status: "denied", channelName: "남", channelId: C3, inviteOwnerName: null });
     expect(v).not.toHaveProperty("userCode");
   });
 
@@ -453,7 +453,7 @@ describe("finish·redeem 표", () => {
     await stub.allow(B2, "", A1, T0);
     await stub.finish(k.flowId, { type: "user", channelId: B2, channelName: "채널" }, ADMINS, T0);
     const v = await stub.doneView(await sha(c.binder), T0);
-    expect(v).toEqual({ kind: "app", status: "ok", channelName: null, channelId: null });
+    expect(v).toEqual({ kind: "app", status: "ok", channelName: null, channelId: null, inviteOwnerName: null });
     expect(v).not.toHaveProperty("userCode");
     expect(await stub.doneView(await sha(c.binder), T0 + 600_000)).toBeNull();
     expect(await stub.doneView("x", T0)).toBeNull();

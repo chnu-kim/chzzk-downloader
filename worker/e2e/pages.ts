@@ -12,6 +12,7 @@ import { asset } from "../src/http/assets";
 import { COPY } from "../src/http/copy";
 import { renderLanding, type MemberModel } from "../src/http/landing-view";
 import { donePage, loginConfirmPage, noticePage } from "../src/http/pages";
+import { renderDelegationDone, renderInvite, renderInviteConfirm, renderInviteOwn } from "../src/http/invite-view";
 import { renderHelp, renderLicenses, renderPrivacy } from "../src/http/reading-view";
 import type { Ctx } from "../src/routes";
 import type { AdminView } from "../src/store/types";
@@ -27,6 +28,7 @@ const B2 = ch("b2");
 const C3 = ch("c3");
 const D4 = ch("d4");
 const CSRF = "C".repeat(43);
+const INVITE_TOKEN = "cdi_" + "A".repeat(43);
 
 // 합성 환경: 운영 모양의 값(자리표시)이다. 어떤 파일도 읽지 않는다
 const loaded = loadConfig({
@@ -71,8 +73,8 @@ const adminView: AdminView = {
     { channelId: B2, channelName: "합성채널", ownerChannelId: null, note: "합성 메모", addedBy: A1, addedAt: FIXED_NOW - 86_400_000 * 3, activeSessions: 2 },
   ],
   denied: [
-    { channelId: C3, channelName: "합성 거부 채널", firstAt: FIXED_NOW - 86_400_000, lastAt: FIXED_NOW - 3_600_000, attempts: 3 },
-    { channelId: D4, channelName: null, firstAt: FIXED_NOW - 7_200_000, lastAt: FIXED_NOW - 7_200_000, attempts: 1 },
+    { channelId: C3, channelName: "합성 거부 채널", firstAt: FIXED_NOW - 86_400_000, lastAt: FIXED_NOW - 3_600_000, attempts: 3, invitedBy: "합성채널" },
+    { channelId: D4, channelName: null, firstAt: FIXED_NOW - 7_200_000, lastAt: FIXED_NOW - 7_200_000, attempts: 1, invitedBy: null },
   ],
   sessions: [
     { id: "a".repeat(16), kind: "web", channelId: B2, channelName: "합성채널", client: "Chrome 합성", createdAt: FIXED_NOW - 7_200_000, lastSeenAt: FIXED_NOW - 60_000, recovered: 0 },
@@ -91,7 +93,7 @@ export interface PageDef {
   readonly build: () => Response | Promise<Response>;
 }
 
-/** 갤러리가 도는 열여섯 페이지(계약 §5) */
+/** 갤러리가 도는 스물셋 페이지(계약 §5, 위임 일곱은 구현 중 변경 106) */
 export const PAGES: readonly PageDef[] = [
   { name: "landing-anon", build: () => renderLanding(config, { entry: MAC, nav: ANON_NAV, flash: null, member: null }) },
   { name: "landing-member-mac", build: () => renderLanding(config, { entry: MAC, nav: MEMBER_NAV, flash: null, member }) },
@@ -108,12 +110,22 @@ export const PAGES: readonly PageDef[] = [
       }),
   },
   { name: "admin-confirm", build: () => renderDisallowConfirm(config, { channelId: B2, channelName: "합성채널", activeSessions: 2, csrf: CSRF, nav: MEMBER_NAV }) },
-  { name: "done-denied", build: () => donePage(config, "denied", { kind: "web", status: "denied", channelName: "합성 거부 채널", channelId: C3 }, null, DESKTOP_WIN) },
-  { name: "done-cancelled", build: () => donePage(config, "cancelled", { kind: "web", status: "cancelled", channelName: null, channelId: null }, null, DESKTOP_WIN) },
-  { name: "done-failed-kakao", build: () => donePage(config, "failed", { kind: "web", status: "failed", channelName: null, channelId: null }, null, KAKAO_PHONE) },
+  { name: "done-denied", build: () => donePage(config, "denied", { kind: "web", status: "denied", channelName: "합성 거부 채널", channelId: C3, inviteOwnerName: null }, null, DESKTOP_WIN) },
+  { name: "done-cancelled", build: () => donePage(config, "cancelled", { kind: "web", status: "cancelled", channelName: null, channelId: null, inviteOwnerName: null }, null, DESKTOP_WIN) },
+  { name: "done-failed-kakao", build: () => donePage(config, "failed", { kind: "web", status: "failed", channelName: null, channelId: null, inviteOwnerName: null }, null, KAKAO_PHONE) },
+  {
+    name: "done-denied-invite",
+    build: () => donePage(config, "denied", { kind: "web", status: "denied", channelName: "합성 거부 채널", channelId: C3, inviteOwnerName: "합성채널" }, null, DESKTOP_WIN),
+  },
   { name: "login-confirm", build: () => loginConfirmPage(config) },
   { name: "outdated-app", build: () => noticePage(config, 200, COPY.outdatedApp.title, COPY.outdatedApp.body) },
   { name: "error-404", build: () => noticePage(config, 404, COPY.linkGone.title, COPY.linkGone.body) },
+  { name: "invite-anon", build: () => renderInvite(config, { ownerName: "합성채널", token: INVITE_TOKEN }) },
+  { name: "invite-confirm", build: () => renderInviteConfirm(config, { ownerName: "합성채널", me: "합성 편집자", csrf: CSRF, token: INVITE_TOKEN, nav: MEMBER_NAV }) },
+  { name: "invite-own", build: () => renderInviteOwn(config, MEMBER_NAV) },
+  { name: "invite-gone", build: () => noticePage(config, 404, COPY.invite.gone.title, COPY.invite.gone.body) },
+  { name: "invite-full", build: () => noticePage(config, 409, COPY.invite.full.title, COPY.invite.full.body) },
+  { name: "delegation-done", build: () => renderDelegationDone(config, { ownerName: "합성채널", ownerChannelId: B2, me: "합성 편집자", csrf: CSRF, entry: MAC, nav: MEMBER_NAV }) },
   { name: "help", build: () => renderHelp(config, ANON_NAV) },
   { name: "privacy", build: () => renderPrivacy(config, ANON_NAV) },
   { name: "licenses", build: () => renderLicenses(config, ANON_NAV) },

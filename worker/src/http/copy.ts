@@ -27,6 +27,9 @@ export const COPY = {
     title: "이 채널은 사용 허가가 없어요",
     body: "관리자에게 채널 이름을 알려 주세요. 다른 계정으로 로그인하려면 네이버에서 먼저 로그아웃해 주세요.",
     next: "허가를 받은 뒤 다시 로그인해 주세요.",
+    invite: (owner: string): string => `초대는 기록해 뒀어요. 관리자가 허가하면 ‘${owner}’ 채널의 편집자가 돼요.`,
+    // 초대 줄 아래 [초대 취소]의 안내(106 (차) ②). 잘못된 계정으로 들어온 사람이 스스로 끊는 길이다
+    cancelHint: "다른 채널로 로그인했다면 초대를 취소해 주세요.",
   },
   doneCancelled: { title: "로그인을 취소했어요", body: "처음 화면에서 다시 로그인할 수 있어요." },
   // body = 앱 흐름(또는 흐름을 모를 때), webBody = 웹 흐름
@@ -43,7 +46,7 @@ export const COPY = {
   landing: {
     consent: {
       collect: "로그인하면 채널 이름과 채널 ID만 알게 돼요.",
-      use: "허가 확인과 ‘내 기기’ 표시에만 써요.",
+      use: "허가 확인과 ‘내 기기’ 표시, 편집자 목록에만 써요.",
       exclude: "네이버 비밀번호는 받지 않아요.",
       revoke: "로그인한 기기는 ‘내 기기’에서 끊을 수 있어요.",
     },
@@ -85,7 +88,12 @@ export const COPY = {
       title: "받는 정보",
       body: "로그인하면 치지직이 알려 주는 채널 이름과 채널 ID를 받아요. 로그인한 기기를 구분하려고 앱 버전이나 브라우저 같은 기기 정보와 로그인한 시각도 적어 둬요.",
     },
-    use: { title: "쓰는 곳", body: "허가받은 채널인지 확인하고 ‘내 기기’에 보여 주는 데만 써요. 광고나 통계에는 쓰지 않아요." },
+    use: { title: "쓰는 곳", body: "허가받은 채널인지 확인하고 ‘내 기기’와 편집자 목록에 보여 주는 데만 써요. 광고나 통계에는 쓰지 않아요." },
+    editors: {
+      title: "편집자",
+      body: (days: number, claimDays: number): string =>
+        `다른 채널에 영상 받기를 맡기거나 맡으면 두 채널의 이름과 채널 ID, 맡긴 시각을 함께 저장해요. 사용 허가가 없는 채널이 초대 주소로 로그인하면 관리자의 허가를 기다리는 동안 그 채널의 이름과 채널 ID를 최대 ${claimDays}일 보관해요. 편집자를 빼거나 그만두면 ${days}일 뒤 지워지고, 허가가 빠지면 함께 지워져요. 관리자 채널이 주인이나 편집자로 맺은 관계는 그 채널이 관리자에서 빠지고 사용 허가도 없으면 더는 쓰이지 않지만, 바로 지워지지는 않아요. 지우려면 아래 연락처로 알려 주세요.`,
+    },
     exclude: {
       title: "받지 않는 정보",
       body: "네이버 비밀번호와 네이버 로그인 정보는 받지 않아요. 접속 주소(IP)는 요청이 너무 많은지 살피는 데만 쓰고 그대로 저장하지 않아요.",
@@ -109,6 +117,47 @@ export const COPY = {
   // flash 알림·오류 요약(web.md §6.3)
   sessionGone: "로그인이 만료됐어요. 다시 로그인한 뒤 같은 동작을 해 주세요.",
   alreadyDone: "이미 처리됐어요.",
+  // 편집자 위임(delegation.md §5·§7.3, worker.md 구현 중 변경 106). 함수 값의 이름은 공격자가 정한다: 화면은 태그드 템플릿이 이스케이프한다
+  myChannel: "내 채널",
+  leaveDelegation: "편집자 그만두기",
+  cancelInvite: "초대 취소",
+  invite: {
+    title: (owner: string): string => `‘${owner}’ 채널이 영상 받기를 맡기려고 해요`,
+    body: "치지직으로 로그인하면 이 채널의 편집자가 되고, 앱에서 이 채널의 영상과 클립을 받을 수 있어요. 받은 영상은 내 컴퓨터에만 저장돼요.",
+    consent: {
+      use: (owner: string): string => `허가 확인과 ‘내 기기’ 표시, ‘${owner}’ 채널의 편집자 목록에만 써요.`,
+      revoke: "편집자는 언제든 그만둘 수 있고, 채널 주인도 언제든 뺄 수 있어요.",
+    },
+    confirm: {
+      title: (owner: string): string => `‘${owner}’ 채널의 편집자가 될까요?`,
+      owner: "맡기는 채널",
+      body: (owner: string): string => `편집자가 되면 앱에서 ‘${owner}’ 채널의 영상과 클립을 받을 수 있어요.`,
+      body2: (owner: string): string => `내 채널 이름이 ‘${owner}’ 채널의 편집자 목록에 보여요. 언제든 그만둘 수 있어요.`,
+    },
+    accept: "편집자 되기",
+    own: { title: "내 채널의 초대 주소예요", body: "이 주소는 편집자에게 보내 주세요." },
+    gone: { title: "초대 주소가 만료됐어요", body: "채널 주인에게 새 초대 주소를 받아 주세요." },
+    full: { title: "지금은 더 맡을 수 없어요", body: "채널 주인이나 관리자에게 알려 주세요." },
+    // 배포 중 잠깐(새 Worker가 옛 저장소를 만남). 본문은 COPY.retryLater.body
+    unavailable: { title: "지금은 초대 주소를 열 수 없어요" },
+  },
+  inviteDone: {
+    title: (owner: string): string => `‘${owner}’ 채널의 편집자가 됐어요`,
+    body: (owner: string): string => `이제 앱에서 ‘${owner}’ 채널의 영상 주소를 붙여넣으면 받을 수 있어요.`,
+    refresh: "앱이 이미 열려 있다면 영상 카드의 [다시 불러오기]를 눌러 주세요.",
+    desktop: "앱은 컴퓨터에서 설치해요.",
+    otherAccount: "다른 계정으로 하려 했다면 아래에서 그만둔 뒤 처음 화면과 네이버에서 로그아웃하고, 채널 주인에게 새 초대 주소를 받아 주세요.",
+  },
+  // flash 알림(종류 코드 → 문구, layout.ts flashNotice)
+  delegationLeft: "편집자를 그만뒀어요. 받던 영상은 끝까지 받아요.",
+  inviteOwn: "내 채널의 초대 주소예요. 편집자에게 보내 주세요.",
+  inviteFull: "지금은 더 맡을 수 없어요. 채널 주인이나 관리자에게 알려 주세요.",
+  inviteGone: "초대 주소가 만료됐어요. 채널 주인에게 새 초대 주소를 받아 주세요.",
+  inviteCancelled: "초대를 취소했어요. 채널 주인에게 새 초대 주소를 받아 주세요.",
+  // 이미 편집자인 사람이 새 초대를 열었을 때. flash는 값을 싣지 못하고 처음 화면에 뜨므로 "이 채널"이라 하지 않는다
+  alreadyEditor: "이미 이 초대를 보낸 채널의 편집자예요.",
+  // 관리 화면 거부된 시도 행의 꼬리표(Badge가 아니라 글자)
+  invitedBy: (owner: string): string => `초대 받음 · ‘${owner}’`,
   errorSummary: "확인해 주세요",
   loginWithChzzk: "치지직으로 로그인",
   signedInAs: (name: string): string => `‘${name}’ 채널로 로그인했어요.`,

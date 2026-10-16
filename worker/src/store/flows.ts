@@ -6,7 +6,7 @@
 // 예외 하나: 앱이 수령(redeem ok)한 흐름은 now + 2분으로 앞당긴다(허용 채널의 로그인이 끝난 뒤라 슬롯 순환과 무관, 구현 중 변경 28 (마)).
 import { CHANNEL_ID, NAME_MAX, admission, clip, recordDenied, touchAllowedName } from "./allowlist";
 import type { Db } from "./db";
-import { acceptInvite, claimInvite } from "./delegation";
+import { acceptInvite, claimInvite, claimedInviteOwner, firstClaimedInvite } from "./delegation";
 import { activate, insertUnclaimed, insertWeb, type TokenPair } from "./sessions";
 import type {
   ConsumeResult,
@@ -211,6 +211,11 @@ export function finish(
     if (row.invite_hash !== null) {
       const c = claimInvite(db, row.invite_hash, outcome.channelId, name, admins, now);
       if (c.ok) return { type: "denied", invitePending: c.ownerName };
+    } else {
+      // 초대 없이 들어온 웹 흐름: 이 채널이 앞서 청구한 유효한 초대가 있으면 흐름에 묶는다. 흐름이 만료된 뒤에 잘못된 계정임을 안 사람도
+      // 같은 계정으로 다시 로그인하면 거부 페이지에서 그 청구를 보고 [초대 취소]할 수 있다(106 (차) ⑦). 청구 자체는 바꾸지 않는다
+      const claimed = firstClaimedInvite(db, outcome.channelId, admins, now);
+      if (claimed !== null) db.run("UPDATE flow SET invite_hash = ? WHERE id = ?", claimed, row.id);
     }
     return { type: "denied" };
   }
@@ -222,24 +227,46 @@ export function finish(
   }
   const expiresAt = insertWeb(db, { id: issued.sessionId, channelId: outcome.channelId, channelName: name, cookieHash: issued.cookie.hash, csrf: issued.csrf }, now);
   let invite: InviteOutcome | undefined;
+  let inviteOwner: string | undefined;
   if (row.invite_hash !== null) {
     const a = acceptInvite(db, row.invite_hash, outcome.channelId, name, admins, now);
     invite = a.ok ? "accepted" : a.code === "not_allowed" ? "gone" : a.code;
+    if (a.ok) inviteOwner = a.ownerChannelId;
   }
   db.run("DELETE FROM flow WHERE id = ?", row.id);
-  return invite === undefined
-    ? { type: "web", cookieToken: issued.cookie.token, csrf: issued.csrf, expiresAt }
-    : { type: "web", cookieToken: issued.cookie.token, csrf: issued.csrf, expiresAt, invite };
+  const web = { type: "web", cookieToken: issued.cookie.token, csrf: issued.csrf, expiresAt } as const;
+  if (invite === undefined) return web;
+  return inviteOwner === undefined ? { ...web, invite } : { ...web, invite, inviteOwner };
 }
 
-/** 완료 페이지: binder 쿠키로 자기 흐름의 결과를 본다 */
-export function doneView(db: Db, binderHash: string, now: number): DoneView | null {
-  const r = db.first<{ kind: FlowKind; status: DoneView["status"]; channel_name: string | null; channel_id: string | null }>(
-    "SELECT kind, status, channel_name, channel_id FROM flow WHERE binder_hash = ? AND expires_at > ? AND status IN ('ok','denied','cancelled','failed') LIMIT 1",
+/**
+ * 거부 페이지의 [초대 취소](106 (차) ②): binder 쿠키로 찾은 거부된 웹 흐름(만료 전)이 청구한 초대를 지운다. 그 흐름의 채널이 청구한 그 초대만이다.
+ * 잘못된 계정으로 로그인한 사람이 관리자 허가 뒤 자동으로 편집자가 되지 않게 스스로 끊는 길이다. 흐름의 invite_hash를 비워 한 번만 된다
+ */
+export function cancelClaim(db: Db, binderHash: string, now: number): boolean {
+  const r = db.first<{ id: string; invite_hash: string | null; channel_id: string | null }>(
+    "SELECT id, invite_hash, channel_id FROM flow WHERE binder_hash = ? AND kind = 'web' AND status = 'denied' AND expires_at > ? LIMIT 1",
     binderHash,
     now,
   );
-  return r === null ? null : { kind: r.kind, status: r.status, channelName: r.channel_name, channelId: r.channel_id };
+  if (r === null || r.invite_hash === null || r.channel_id === null) return false;
+  const n = db.run("DELETE FROM invite WHERE token_hash = ? AND claimed_channel_id = ?", r.invite_hash, r.channel_id);
+  db.run("UPDATE flow SET invite_hash = NULL WHERE id = ?", r.id);
+  return n > 0;
+}
+
+/** 완료 페이지: binder 쿠키로 자기 흐름의 결과를 본다 */
+export function doneView(db: Db, binderHash: string, admins: readonly string[] | null, now: number): DoneView | null {
+  const r = db.first<{ kind: FlowKind; status: DoneView["status"]; channel_name: string | null; channel_id: string | null; invite_hash: string | null }>(
+    "SELECT kind, status, channel_name, channel_id, invite_hash FROM flow WHERE binder_hash = ? AND expires_at > ? AND status IN ('ok','denied','cancelled','failed') LIMIT 1",
+    binderHash,
+    now,
+  );
+  if (r === null) return null;
+  // 거부된 웹 흐름 행은 invite_hash를 그대로 품고 남는다: 그 초대를 이 채널이 청구했고 아직 유효할 때만 주인 이름을 준다
+  const inviteOwnerName =
+    r.status === "denied" && r.invite_hash !== null && r.channel_id !== null && admins !== null ? claimedInviteOwner(db, r.invite_hash, r.channel_id, admins, now) : null;
+  return { kind: r.kind, status: r.status, channelName: r.channel_name, channelId: r.channel_id, inviteOwnerName };
 }
 
 /**

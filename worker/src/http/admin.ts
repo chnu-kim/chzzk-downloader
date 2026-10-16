@@ -54,7 +54,7 @@ export async function adminPage(req: Request, ctx: Ctx): Promise<Response> {
     ctx.log("web.page.rejected", { level: "warn", route: ctx.route, reason: "not_admin" });
     return noticePage(ctx.config, 403, COPY.adminOnly.title, null, { nav: memberNav(r.s) });
   }
-  const view = await ctx.store.adminView(ctx.now);
+  const view = await ctx.store.adminView(ctx.now, ctx.config.adminChannelIds);
   // flash(303 뒤 알림)는 한 번 그리고 같은 응답에서 지운다
   const f = readFlash(req, ctx.cookies);
   const headers = setCookieHeaders([f.clear]);
@@ -95,7 +95,7 @@ export async function adminAllow(req: Request, ctx: Ctx): Promise<Response> {
   const notes = g.form.getAll("note");
   if (channelId === null || !CHANNEL_ID.test(channelId)) {
     ctx.log("admin.rejected", { route: ctx.route, reason: "bad_channel_id" });
-    const view = await ctx.store.adminView(ctx.now);
+    const view = await ctx.store.adminView(ctx.now, ctx.config.adminChannelIds);
     return renderAdmin(
       ctx.config,
       { view, admins: ctx.config.adminChannelIds, csrf: g.s.csrf, nav: memberNav(g.s) },

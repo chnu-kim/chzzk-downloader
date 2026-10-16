@@ -5,6 +5,7 @@ import type { JobId } from "./JobId";
 import type { JobStatus } from "./JobStatus";
 import type { PlaybackKind } from "./PlaybackKind";
 import type { ProgressDto } from "./ProgressDto";
+import type { TimeRangeDto } from "./TimeRangeDto";
 
 /**
  * 작업 하나.
@@ -42,4 +43,8 @@ createdAt: number, finishedAt: number | null,
  * paused·interrupted·failed로 바뀐 시각(unix 초). 그 밖 상태와 옛 레코드는 null.
  * "멈춘 지 30일" 판단에 쓴다(`finishedAt`은 완료·건너뜀 전용이라 따로 둔다)
  */
-stoppedAt: number | null, };
+stoppedAt: number | null, 
+/**
+ * 구간 받기 작업의 요청 구간(사용자 입력 원값). 전체 받기는 null
+ */
+range: TimeRangeDto | null, };

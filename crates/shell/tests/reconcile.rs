@@ -29,6 +29,7 @@ fn record(id: u64, status: JobStatus, output: PathBuf) -> JobRecord {
         created_at: 1,
         finished_at: None,
         stopped_at: None,
+        range: None,
         final_bytes: None,
         last_error: None,
         discard_on_start: false,

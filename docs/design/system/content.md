@@ -436,7 +436,7 @@
 | `conflict.partial` | 이전에 받다 만 파일이 있어요 ({size}). 이어서 받아요. | `conflict.partial.title` **받다 만 파일이 있어요** / `conflict.partial.body` **{size}까지 받았어요. 이어받으면 받던 곳부터 이어가요.** | §6.5 괄호, §3.2 |
 | `conflict.partial.continue` | 이어서 받기 | **이어받기** | §4 |
 | `conflict.partial.fresh` | 처음부터 받기 | **처음부터 다시 받기** | §4 |
-| `conflict.partialOther` | 다른 화질로 받다 만 파일이 있어요. 처음부터 받아요. | **다른 화질로 받다 만 파일이 있어요. 지우고 처음부터 받아요.** | §3.1-4 |
+| `conflict.partialOther` | 다른 화질로 받다 만 파일이 있어요. 처음부터 받아요. | **조건이 다른 받다 만 파일이 있어요. 지우고 처음부터 받아요.**(화질뿐 아니라 구간이 달라도 이 안내가 뜬다, range.md R4) | §3.1-4 |
 | (신설) `conflict.partialRecording.title` / `conflict.partialRecording.body` | — | `title` **같은 이름으로 받다 만 녹화가 있어요** / `body` **녹화는 다시 받을 수 없어 그 파일은 그대로 두고, 이번에는 ‘{name}’ 이름으로 받아요.** | core.md 61·app.md 78. 녹화 `.part`는 지우지 않고 번호 이름으로 받는다 |
 | `conflict.inQueue` | 이 파일은 이미 다운로드 목록에 있어요. | **이미 다운로드 목록에 있는 영상이에요**(제목) | §6.1, §9 |
 | (신설) `list.clearFinished.help` | — | **목록에서만 지워요. 파일은 그대로 있어요.** | g-repeat |

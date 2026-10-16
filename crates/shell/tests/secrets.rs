@@ -165,6 +165,7 @@ fn request(no: u64, name: &str, folder: &Path) -> EnqueueRequest {
         on_existing: OnExisting::Overwrite,
         restart: false,
         content_date: None,
+        range: None,
     }
 }
 

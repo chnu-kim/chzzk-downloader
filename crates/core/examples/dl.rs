@@ -23,7 +23,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use chzzk_core::download::part::part_path;
-use chzzk_core::naming::{MAX_FILENAME_BYTES, default_filename, output_path};
+use chzzk_core::naming::{default_filename, output_path, range_stem};
 use chzzk_core::progress::{format_bytes, format_hms};
 use chzzk_core::{
     CancellationToken, Chzzk, ClientConfig, DownloadOutcome, DownloadRequest, DuplicatePolicy,
@@ -136,41 +136,9 @@ fn parse_range(s: &str) -> Result<TimeRange, String> {
     })
 }
 
-/// 파일 이름에 쓸 수 있는 `H.MM.SS`(`:` 없음).
-fn dot(ms: u64) -> String {
-    let s = ms / 1000;
-    format!("{}.{:02}.{:02}", s / 3600, s / 60 % 60, s % 60)
-}
-
-/// 이름 끝에 붙일 접미사.
-fn range_suffix(r: TimeRange) -> String {
-    format!(
-        " ({}~{})",
-        dot(r.start_ms),
-        r.end_ms.map(dot).unwrap_or_default()
-    )
-}
-
-/// 구간 파일 이름. 길이 상한을 넘으면 `output_path`가 끝(접미사)을 자르므로 제목 쪽을 먼저 줄인다.
-/// 접미사가 잘리면 다른 구간이 같은 경로를 써서 `Skipped`가 되거나 남의 `.part`를 지운다.
+/// 구간 파일 이름(확장자 포함). 접미사·제목 줄이기는 코어 `naming::range_stem`이 한다(앱 셸과 같은 규칙).
 fn range_name(name: &str, r: TimeRange) -> String {
-    const EXT: &str = ".mp4";
-    let suffix = range_suffix(r);
-    let base = strip_mp4(name);
-    let room = MAX_FILENAME_BYTES.saturating_sub(suffix.len() + EXT.len());
-    let mut cut = base.len().min(room);
-    while !base.is_char_boundary(cut) {
-        cut -= 1;
-    }
-    format!("{}{suffix}{EXT}", base[..cut].trim_end())
-}
-
-/// 끝의 `.mp4`(대소문자 무시)를 뗀다.
-fn strip_mp4(name: &str) -> &str {
-    match name.len().checked_sub(4) {
-        Some(i) if name.is_char_boundary(i) && name[i..].eq_ignore_ascii_case(".mp4") => &name[..i],
-        _ => name,
-    }
+    format!("{}.mp4", range_stem(name, &r, Platform::current()))
 }
 
 /// 보조 대조: playlist의 EXTINF 누적이 영상 길이(±1조각)와 같은가. 원점이 맞는지는 증명하지 않는다.
@@ -445,6 +413,7 @@ async fn run(args: Args) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chzzk_core::naming::MAX_FILENAME_BYTES;
 
     #[test]
     fn clock_table() {
@@ -507,17 +476,12 @@ mod tests {
             start_ms: 3_723_999,
             end_ms: Some(7_200_000),
         };
-        assert_eq!(range_suffix(r), " (1.02.03~2.00.00)");
+        assert_eq!(range_name("a", r), "a (1.02.03~2.00.00).mp4");
         let open = TimeRange {
             start_ms: 5_000,
             end_ms: None,
         };
-        assert_eq!(range_suffix(open), " (0.00.05~)");
-        assert!(!range_suffix(r).contains(':'));
-        assert_eq!(strip_mp4("a.MP4"), "a");
-        assert_eq!(strip_mp4("a.mp4x"), "a.mp4x");
-        assert_eq!(strip_mp4("한.mp4"), "한");
-        assert_eq!(strip_mp4("mp4"), "mp4");
+        assert_eq!(range_name("a.MP4", open), "a (0.00.05~).mp4");
     }
 
     /// 긴 제목이어도 접미사는 남고 제목 쪽이 줄어든다(구간이 다르면 경로도 다르다).

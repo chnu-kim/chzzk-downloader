@@ -42,7 +42,7 @@ use tokio::task::JoinHandle;
 use crate::backend::Backend;
 use crate::dto::{
     ContentKindDto, EnqueueRequest, JobDto, JobEvent, JobId, JobStatus, OnExisting, OutputCheck,
-    ProgressDto,
+    ProgressDto, TimeRangeDto,
 };
 use crate::error::{AppError, Stage};
 use crate::events::EventSink;
@@ -457,7 +457,9 @@ impl<B: Backend> DownloadManager<B> {
     ///
     /// 소유 검사(`OwnershipGate`)와 설정의 최근 VOD·마지막 화질 갱신은 부르는 쪽(command)이 한다.
     pub fn enqueue(&self, req: EnqueueRequest, defaults: &JobDefaults) -> Result<JobDto, AppError> {
+        let range = crate::jobs::validated_range(req.expected_kind, req.range)?;
         let folder = resolve_folder(req.folder.as_deref(), &defaults.download_folder)?;
+        // 이름은 `check_output`이 접미사까지 붙여 돌려준 최종 이름이다. 여기서는 다시 붙이지 않는다(range.md §4.2)
         let output = output_path(&folder, &req.file_name, volume::platform_for_dir(&folder));
 
         let mut st = self.inner.lock();
@@ -482,6 +484,7 @@ impl<B: Backend> DownloadManager<B> {
             quality_id: req.quality_id,
             quality_label: req.quality_label,
             expected_kind: req.expected_kind,
+            range,
             recording_id: matches!(kind, ContentKindDto::Live).then(crate::jobs::new_recording_id),
             output,
             on_existing: req.on_existing,
@@ -509,6 +512,8 @@ impl<B: Backend> DownloadManager<B> {
     }
 
     /// 최종 경로와 충돌을 미리 본다(§6.4). 폴더 규칙은 `enqueue`와 같다.
+    /// 구간(`range`)이 있으면 이름 끝에 접미사를 붙이고 `.part`의 구간도 비교한다(range.md §4.2).
+    #[allow(clippy::too_many_arguments)] // command 인자를 그대로 펼쳐 받는다(`commands::check_output`)
     pub fn check_output(
         &self,
         folder: Option<&str>,
@@ -517,8 +522,11 @@ impl<B: Backend> DownloadManager<B> {
         content: &ContentRef,
         quality_id: &str,
         kind: PlaybackKind,
+        range: Option<TimeRangeDto>,
     ) -> Result<OutputCheck, AppError> {
         let folder = resolve_folder(folder, default_folder)?;
+        // `enqueue`가 거부할 구간에는 이름·충돌 판정도 내지 않는다(같은 규칙 한 곳)
+        let validated = crate::jobs::validated_range(kind, range)?;
         // 파일 시스템을 보는 동안 잠금을 쥐지 않도록 활성 경로를 먼저 떠 둔다.
         let active: Vec<(String, JobId)> = {
             let st = self.inner.lock();
@@ -541,6 +549,7 @@ impl<B: Backend> DownloadManager<B> {
                 quality_id,
                 kind,
                 platform: volume::platform_for_dir(&folder),
+                range: validated,
             },
             &find,
         ))

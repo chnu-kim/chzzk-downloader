@@ -4,9 +4,12 @@ mod common;
 
 use std::path::Path;
 
-use chzzk_core::download::part::{Sidecar, part_path, sidecar_path};
+use chzzk_core::TimeRange;
+use chzzk_core::download::part::{
+    HlsRange, HlsState, SIDECAR_VERSION_RANGE, Sidecar, part_path, sidecar_path,
+};
 use chzzk_core::fsutil::atomic_write;
-use chzzk_core::naming::MAX_FILENAME_BYTES;
+use chzzk_core::naming::{MAX_FILENAME_BYTES, output_path};
 use chzzk_core::{ContentRef, Platform, PlaybackKind};
 use chzzk_shell::dto::{OutputCheck, PartialInfo};
 use chzzk_shell::output::{OutputQuery, check_output};
@@ -25,6 +28,7 @@ fn check(folder: &Path, name: &str, active: &dyn Fn(&Path) -> Option<JobId>) -> 
             quality_id: "720p",
             kind: PlaybackKind::LiveRewindHls,
             platform: Platform::current(),
+            range: None,
         },
         active,
     )
@@ -184,6 +188,7 @@ async fn manager_check_output_reports_duplicate() {
             &CONTENT,
             "720p",
             PlaybackKind::LiveRewindHls,
+            None,
         )
         .unwrap();
     assert_eq!(c.duplicate_job_id, Some(a));
@@ -199,6 +204,7 @@ async fn manager_check_output_reports_duplicate() {
             &CONTENT,
             "720p",
             PlaybackKind::LiveRewindHls,
+            None,
         )
         .unwrap();
     assert_eq!(c.duplicate_job_id, None);
@@ -213,6 +219,7 @@ async fn manager_check_output_reports_duplicate() {
             &CONTENT,
             "720p",
             PlaybackKind::LiveRewindHls,
+            None,
         )
         .unwrap_err();
     assert_eq!(e.code, ErrorCode::InvalidInput);
@@ -242,6 +249,7 @@ fn partial_recording_gets_free_name() {
                 quality_id: "144p",
                 kind,
                 platform: Platform::current(),
+                range: None,
             },
             &none,
         )
@@ -268,4 +276,233 @@ fn partial_recording_gets_free_name() {
         q(&live, PlaybackKind::Live).free_file_name.as_deref(),
         Some("rec (3)")
     );
+}
+
+// ---------------------------------------------------------------------------
+// 구간 받기(range.md §4.1·§4.2, ②-2)
+// ---------------------------------------------------------------------------
+
+const ALL: [Platform; 3] = [Platform::Windows, Platform::MacOs, Platform::Linux];
+
+fn tr(start_ms: u64, end_ms: Option<u64>) -> TimeRange {
+    TimeRange { start_ms, end_ms }
+}
+
+fn check_range(
+    folder: &Path,
+    name: &str,
+    range: Option<TimeRange>,
+    platform: Platform,
+) -> OutputCheck {
+    check_output(
+        &OutputQuery {
+            folder,
+            file_name: name,
+            content: &CONTENT,
+            quality_id: "720p",
+            kind: PlaybackKind::LiveRewindHls,
+            platform,
+            range,
+        },
+        &none,
+    )
+}
+
+#[test]
+fn range_suffix_is_appended_once_by_check_output() {
+    let dir = tempfile::tempdir().unwrap();
+    let c = check_range(
+        dir.path(),
+        "제목",
+        Some(tr(600_000, Some(1_200_000))),
+        Platform::current(),
+    );
+    assert_eq!(c.file_name, "제목 (0.10.00~0.20.00)");
+    assert!(c.truncated, "최종 이름이 입력과 다르다(구간 접미사)");
+    assert_eq!(
+        Path::new(&c.path),
+        dir.path().join("제목 (0.10.00~0.20.00).mp4")
+    );
+    // 끝을 모르면 끝 시각을 지어내지 않는다
+    let open = check_range(
+        dir.path(),
+        "제목",
+        Some(tr(600_000, None)),
+        Platform::current(),
+    );
+    assert_eq!(open.file_name, "제목 (0.10.00~)");
+    // 구간이 없으면 그대로(전체 받기)
+    let full = check_range(dir.path(), "제목", None, Platform::current());
+    assert_eq!(full.file_name, "제목");
+    assert!(!full.truncated);
+}
+
+/// `enqueue`는 `check.fileName`으로 `output_path`를 다시 만든다. 그 경로가 `check.path`와 같아야 접미사가 두 번 붙지 않는다.
+#[test]
+fn range_name_round_trips_through_output_path_on_three_platforms() {
+    let dir = tempfile::tempdir().unwrap();
+    let r = tr(3_723_000, Some(7_200_000));
+    for p in ALL {
+        for title in [
+            "제목".to_string(),
+            "a:b?c".to_string(),
+            "가".repeat(100),
+            "x".repeat(250),
+            "CON".to_string(),
+        ] {
+            let c = check_range(dir.path(), &title, Some(r), p);
+            assert!(
+                c.file_name.ends_with(" (1.02.03~2.00.00)"),
+                "{p:?} {}",
+                c.file_name
+            );
+            // 호스트와 다른 OS의 이름(예: `a:b`)은 `check_output` 안의 호스트 경로 해석부터 의미가 달라진다
+            // (Windows 호스트는 `a:`를 드라이브 접두사로 뗀다). 제품은 늘 호스트 Platform만 쓰므로
+            // 경로 왕복은 호스트와 같은 Platform에서만 보고, 나머지는 위의 접미사 단언과 이름 길이만 본다.
+            if p != Platform::current() {
+                assert_eq!(c.file_name.matches("(1.02.03").count(), 1, "{p:?}");
+                continue;
+            }
+            let again = output_path(dir.path(), &c.file_name, p);
+            assert_eq!(again, Path::new(&c.path), "{p:?} {title:?}");
+            let name = Path::new(&c.path)
+                .file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .to_string();
+            assert!(name.len() <= MAX_FILENAME_BYTES, "{p:?} {}", name.len());
+            assert!(name.ends_with(" (1.02.03~2.00.00).mp4"), "{p:?} {name}");
+            assert_eq!(name.matches("(1.02.03").count(), 1);
+        }
+    }
+}
+
+/// 긴 제목이어도 다른 구간은 다른 경로다(접미사가 잘리지 않는다).
+#[test]
+fn long_title_keeps_range_distinct_on_three_platforms() {
+    let dir = tempfile::tempdir().unwrap();
+    let long = "나".repeat(100);
+    for p in ALL {
+        let a = check_range(dir.path(), &long, Some(tr(0, Some(10_000))), p);
+        let b = check_range(dir.path(), &long, Some(tr(10_000, Some(20_000))), p);
+        assert_ne!(a.path, b.path, "{p:?}");
+        assert!(a.truncated && b.truncated);
+    }
+}
+
+#[test]
+fn numbered_name_keeps_range_suffix_before_number() {
+    let dir = tempfile::tempdir().unwrap();
+    let r = tr(600_000, Some(1_200_000));
+    for p in ALL {
+        let first = check_range(dir.path(), "제목", Some(r), p);
+        touch(Path::new(&first.path));
+        let c = check_range(dir.path(), "제목", Some(r), p);
+        assert!(c.exists);
+        assert_eq!(
+            c.free_file_name.as_deref(),
+            Some("제목 (0.10.00~0.20.00) (2)"),
+            "{p:?}"
+        );
+        std::fs::remove_file(&first.path).unwrap();
+    }
+}
+
+/// 긴 제목의 번호 이름도 구간 접미사를 지키고 제목 쪽만 줄어든다.
+#[test]
+fn numbered_long_name_cuts_title_not_range_suffix() {
+    let dir = tempfile::tempdir().unwrap();
+    let r = tr(600_000, Some(1_200_000));
+    let long = "다".repeat(100);
+    for p in ALL {
+        let first = check_range(dir.path(), &long, Some(r), p);
+        touch(Path::new(&first.path));
+        let c = check_range(dir.path(), &long, Some(r), p);
+        let free = c.free_file_name.unwrap();
+        assert!(free.ends_with(" (0.10.00~0.20.00) (2)"), "{p:?} {free}");
+        assert!(free.len() + ".mp4".len() <= MAX_FILENAME_BYTES, "{p:?}");
+        // 번호 이름을 다시 넣어도 더 잘리거나 접미사가 늘지 않는다(enqueue는 그대로 쓴다)
+        assert_eq!(
+            output_path(dir.path(), &free, p)
+                .file_name()
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            format!("{free}.mp4")
+        );
+        std::fs::remove_file(&first.path).unwrap();
+    }
+}
+
+fn range_sidecar(r: TimeRange) -> Vec<u8> {
+    let mut sc = Sidecar::new(CONTENT, "720p", PlaybackKind::LiveRewindHls);
+    sc.v = SIDECAR_VERSION_RANGE;
+    sc.committed_len = 800;
+    sc.hls = Some(HlsState {
+        next_index: 3,
+        segment_count: 12,
+        durations_crc: 0,
+        init_len: 0,
+        media_sequence: 0,
+        range: Some(HlsRange {
+            first: 3,
+            last_excl: 12,
+            start_ms: r.start_ms,
+            end_ms: r.end_ms,
+        }),
+    });
+    serde_json::to_vec(&sc).unwrap()
+}
+
+/// 같은 이름·다른 구간의 `.part`는 `partial.sameJob = false`(카드는 `conflict.partialOther`)다.
+#[test]
+fn same_name_other_range_is_partial_other() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    let a = tr(7_000, Some(23_000));
+    // 접미사는 같지만(초 단위) 요청 시각이 다른 구간: 같은 경로를 쓴다
+    let sub_second = tr(7_500, Some(23_000));
+    let out = check_range(d, "제목", Some(a), Platform::current());
+    let path = Path::new(&out.path).to_path_buf();
+    std::fs::write(part_path(&path), vec![0u8; 900]).unwrap();
+    atomic_write(&sidecar_path(&path), &range_sidecar(a)).unwrap();
+
+    let same = |range| {
+        check_range(d, "제목", range, Platform::current())
+            .partial
+            .map(|p| (p.same_job, p.bytes))
+    };
+    assert_eq!(same(Some(a)), Some((true, 800)));
+    assert_eq!(same(Some(sub_second)), Some((false, 800)));
+    // 끝이 없으면 접미사가 달라져 다른 경로라 이 `.part`는 보이지 않는다
+    assert_eq!(same(Some(tr(7_000, None))), None);
+    // 구간 없는 요청(전체 받기)이 같은 경로를 보면 다른 작업이다
+    let full = check_range(d, "제목 (0.00.07~0.00.23)", None, Platform::current());
+    assert_eq!(full.partial.map(|p| p.same_job), Some(false));
+}
+
+/// 끝 없음 `.part`는 끝 없음 요청과만 같은 작업이다(`same_job`의 '끝 없음' 행).
+#[test]
+fn open_ended_range_partial_matches_only_open_ended() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    let open = tr(600_000, None);
+    let c = check_range(d, "제목", Some(open), Platform::current());
+    let path = Path::new(&c.path).to_path_buf();
+    std::fs::write(part_path(&path), vec![0u8; 900]).unwrap();
+    atomic_write(&sidecar_path(&path), &range_sidecar(open)).unwrap();
+    let q = |r| {
+        check_range(d, "제목", r, Platform::current())
+            .partial
+            .map(|p| p.same_job)
+    };
+    assert_eq!(q(Some(open)), Some(true));
+    // 접미사는 같지만(초 단위) 시작 시각이 다른 끝 없음 구간
+    assert_eq!(q(Some(tr(600_500, None))), Some(false));
+    // 끝이 있는 구간은 접미사가 달라 이 `.part`가 보이지 않는다
+    assert_eq!(q(Some(tr(600_000, Some(1_200_000)))), None);
+    // 구간 없는 요청이 접미사까지 직접 친 같은 이름을 보면 다른 작업이다
+    let full = check_range(d, "제목 (0.10.00~)", None, Platform::current());
+    assert_eq!(full.partial.map(|p| p.same_job), Some(false));
 }

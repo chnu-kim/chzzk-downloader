@@ -24,9 +24,19 @@ import type {
   ResolvedDto,
   SettingsDto,
   SettingsPatch,
+  TimeRangeDto,
   UpdateCheckDto,
   UpdateInfoDto,
 } from '../../src/lib/bindings';
+
+/** 파일 이름에 쓰는 `H.MM.SS`(셸 `naming::range_suffix`와 같은 모양, 끝을 모르면 `~` 뒤가 빈다) */
+function rangeSuffix(r: TimeRangeDto): string {
+  const dots = (ms: number) => {
+    const s = Math.floor(ms / 1000);
+    return `${Math.floor(s / 3600)}.${String(Math.floor(s / 60) % 60).padStart(2, '0')}.${String(s % 60).padStart(2, '0')}`;
+  };
+  return ` (${dots(r.startMs)}~${r.endMs == null ? '' : dots(r.endMs)})`;
+}
 
 /** 로그인 없이 부를 수 있는 command(crates/shell/src/gate.rs OPEN_COMMANDS와 같다, src/lib/gate-sync.test.ts) */
 export const OPEN_COMMANDS = [
@@ -337,12 +347,15 @@ export function install(scenario: Scenario = {}): E2EController {
     check_output: (a): OutputCheck => {
       const folder = (a.folder as string | null) ?? settings.effectiveDownloadFolder;
       const fileName = a.fileName as string;
-      const path = `${folder}/${fileName}.mp4`;
+      // 셸 흉내(range.md §4.2): 구간이 있으면 이름 끝에 ` (H.MM.SS~H.MM.SS)`를 붙이고 `truncated`가 true다(번호 이름은 흉내 내지 않는다)
+      const range = a.range as TimeRangeDto | null | undefined;
+      const finalName = range ? `${fileName}${rangeSuffix(range)}` : fileName;
+      const path = `${folder}/${finalName}.mp4`;
       const dup = [...jobs.values()].find((j) => j.output === path && ['queued', 'running', 'pausing', 'paused'].includes(j.status));
       return {
-        fileName,
+        fileName: finalName,
         path,
-        truncated: false,
+        truncated: finalName !== fileName,
         exists: false,
         freeFileName: null,
         partial: null,
@@ -382,6 +395,7 @@ export function install(scenario: Scenario = {}): E2EController {
         createdAt: clock++,
         finishedAt: null,
         stoppedAt: null,
+        range: req.range ?? null,
       };
       put(job, 'added');
       return job;

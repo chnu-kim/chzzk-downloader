@@ -395,8 +395,8 @@ scrim(`--scrim`, `--z-dialog` 50) 위, 창 가운데
 |---|---|---|
 | 화질 | 라디오 행 3~5개: `1080p` `60fps` … `약 7.8GB`. 꼬리표는 늘 가장 높은 화질 행. 기본 선택 = 마지막에 고른 화질이 이 영상에 있으면 그 행, 없으면 가장 높은 화질(기억된 낮은 화질이 조용히 기본이 되지만 꼬리표가 더 좋은 행을 가리킨다 [잠정] — D62 UT4에서 "가장 높은 화질"을 찾는지 본다) | `G-REPEAT-R6`, `components.md` §2.7 |
 | 저장 폴더 | 값(경로, muted, selectable) + [변경…] | 바꾸면 설정의 기본 폴더도 바뀐다(`app.md` §8.3) |
-| 파일 이름 | 입력칸(`--fg`) + ".mp4" 라벨 + [원래 이름으로](ghost sm, `filename.reset` — "되돌리기"는 목록 지우기 토스트의 말이라 쓰지 않는다, W1). 150ms 디바운스로 `check_output`. 잘리면 아래 `filename.willSave`(caption muted) | `app.md` §8.3. 한글을 치는 칸이라 Enter에 동작을 달지 않고 Mod+Enter도 IME 가드(§8) |
-| 카드 안 경고 | 해당 행 **아래** `Notice variant=inline`: 같은 이름 파일(warning + 라디오 `conflict.number`/`conflict.overwrite`, 덮어쓰기를 고르면 [받기]가 D7을 연다), 받다 만 파일(neutral `conflict.partial.*` + [처음부터 다시 받기]), 다른 화질 `.part`(neutral `conflict.partialOther`), 받다 만 녹화(neutral `conflict.partialRecording.*`, 버튼 없음. 늘 번호 이름 `freeFileName`으로 받고 `restart = false`, `onExisting = skip`이며 그때는 같은 이름 파일 안내·라디오를 띄우지 않고 "처음부터"·"이어받기"도 없다. 빈 번호 이름이 없으면 [받기] 비활성. 근거 `core.md` 61·`app.md` 78), 이미 목록에 있음(neutral `conflict.inQueue` + [목록에서 보기], [받기] 비활성 + 사유), 본인 영상 아님(danger `notOwnContent`, [받기] 비활성 + 사유), 종류 차단 B5(warning "지금 받을 수 없는 종류예요: {kind}", [받기] 비활성) | `app.md` §6.4, README D41, `G-OUTAGE-R12` |
+| 파일 이름 | 입력칸(`--fg`) + ".mp4" 라벨 + [원래 이름으로](ghost sm, `filename.reset` — "되돌리기"는 목록 지우기 토스트의 말이라 쓰지 않는다, W1). 150ms 디바운스로 `check_output`. 최종 이름이 입력과 다를 때(잘림·정리·구간 접미사) 아래 `filename.willSaveAs`(caption muted) | `app.md` §8.3. 한글을 치는 칸이라 Enter에 동작을 달지 않고 Mod+Enter도 IME 가드(§8) |
+| 카드 안 경고 | 해당 행 **아래** `Notice variant=inline`: 같은 이름 파일(warning + 라디오 `conflict.number`/`conflict.overwrite`, 덮어쓰기를 고르면 [받기]가 D7을 연다), 받다 만 파일(neutral `conflict.partial.*` + [처음부터 다시 받기]), 조건(화질·구간)이 다른 `.part`(neutral `conflict.partialOther`), 받다 만 녹화(neutral `conflict.partialRecording.*`, 버튼 없음. 늘 번호 이름 `freeFileName`으로 받고 `restart = false`, `onExisting = skip`이며 그때는 같은 이름 파일 안내·라디오를 띄우지 않고 "처음부터"·"이어받기"도 없다. 빈 번호 이름이 없으면 [받기] 비활성. 근거 `core.md` 61·`app.md` 78), 이미 목록에 있음(neutral `conflict.inQueue` + [목록에서 보기], [받기] 비활성 + 사유), 본인 영상 아님(danger `notOwnContent`, [받기] 비활성 + 사유), 종류 차단 B5(warning "지금 받을 수 없는 종류예요: {kind}", [받기] 비활성) | `app.md` §6.4, README D41, `G-OUTAGE-R12` |
 | 바닥 | [닫기](secondary) [받기 ⌘↩](primary, 층의 유일한 채움). `position: sticky; bottom: 0`(카드가 길어도 보인다, foundations §8) | README D42(불러오기는 테두리), `A-FEAT-D11` |
 
 ---
@@ -710,7 +710,7 @@ Worker 쪽 확인 페이지(`loginWarning` + [계속], 확인 코드 없음)와 
 │ 저장 폴더  ~/Movies/치지직                                   [변경…]   │ FieldRow: 라벨 fg(--label-w 80) · 값 muted selectable
 │ 12                                                                   │
 │ 파일 이름  [ [251003] 채널이름 - 금요 저녁 방송 - 신작 게… ] .mp4 [원래 이름으로] │ 입력칸 28 + 라벨 + ghost 24 .edge-end
-│           저장될 이름: [251003] 채널이름 - 금요 저녁 방송 - 신작 게임 첫 플레이 (2부).mp4 │ filename.willSave caption muted(잘릴 때만)
+│           저장될 이름: [251003] 채널이름 - 금요 저녁 방송 - 신작 게임 첫 플레이 (2부).mp4 │ filename.willSaveAs caption muted(최종 이름이 입력과 다를 때만)
 │ 12                                                                   │
 │ (카드 안 경고 Notice, 있을 때만)                                        │
 │ 16                                                                   │

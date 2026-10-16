@@ -497,6 +497,7 @@ async fn dot_segments_in_folder_are_rejected() {
                 &content,
                 "720p",
                 chzzk_core::PlaybackKind::LiveRewindHls,
+                None,
             )
             .unwrap_err();
         assert_eq!(e.code, ErrorCode::InvalidInput, "{folder}");
@@ -634,6 +635,7 @@ async fn non_utf8_default_folder_is_rejected() {
             &chzzk_core::ContentRef::Video { video_no: 1 },
             "720p",
             chzzk_core::PlaybackKind::LiveRewindHls,
+            None,
         )
         .unwrap_err();
     assert_eq!(e.code, ErrorCode::InvalidInput);

@@ -182,10 +182,22 @@ pub fn spawn_auth_tasks<R: Runtime>(handle: AppHandle<R>, auth: Arc<AppAuth>) {
     let h = handle.clone();
     tauri::async_runtime::spawn(forward_status(auth.subscribe(), move |st| {
         // 세션 확인이 처음 성공한 직후 한 번만 업데이트를 확인한다(D8). 상태 전달 뒤에 띄운다
+        let mut delegated = false;
         let auto = h.try_state::<App>().is_some_and(|app| {
             app.on_auth_status(&st);
+            delegated = app.take_delegated_resume(&st);
             app.take_auto_update_check(&st)
         });
+        if delegated {
+            // 맡은 채널 작업은 컨텐츠를 다시 판정한 뒤에만 줄 세운다(네트워크라 상태 전달을 막지 않게 띄운다)
+            let h2 = h.clone();
+            let list = st.delegated_channels.clone();
+            tauri::async_runtime::spawn(async move {
+                if let Some(app) = h2.try_state::<App>() {
+                    app.resume_delegated_interrupted(&list).await;
+                }
+            });
+        }
         if let Err(e) = h.emit_to("main", AUTH_CHANGED, AuthStatusDto::from_status(&st)) {
             tracing::warn!(error = %e, "auth-changed를 보내지 못함");
         }

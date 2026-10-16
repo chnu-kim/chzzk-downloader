@@ -395,13 +395,14 @@ async fn s15_auto_failure_starts_gap() {
     }
 }
 
-/// 재전송도 401이면 다음 자동 확인은 건너뛴다: 판정마다 refresh(토큰 회전)를 되풀이하지 않는다
+/// 재전송도 (차단이 아닌) 401이면 다음 자동 확인은 건너뛴다: 판정마다 refresh(토큰 회전)를 되풀이하지 않는다.
+/// 재전송의 invalid_token은 이제 차단이라(n1_6) 상태를 바꾸지 않는 모르는 코드로 본다
 #[tokio::test(start_paused = true)]
 async fn s16_resend_401_does_not_repeat_refresh() {
     let e = Env::online_with(&[X]).await;
     e.api.push_me(Reply::Now(Err(worker(401, "invalid_token"))));
     e.api.push_refresh(Reply::Now(Ok(bundle(3, e.now()))));
-    e.api.push_me(Reply::Now(Err(worker(401, "invalid_token"))));
+    e.api.push_me(Reply::Now(Err(worker(401, "unknown_code"))));
     assert_eq!(
         e.svc.check_delegations(false).await,
         DelegationCheck::Unreachable
@@ -549,30 +550,100 @@ async fn n1_4_access_expired_me_is_not_logout() {
     assert!(e.file_exists());
 }
 
+/// Codex 재현 2(PR 리뷰 P1): 형식 있는 세션 거부(`session_expired`)는 refresh의 네트워크 실패로 유예가 되지 않는다.
+/// ROADMAP "Worker의 형식 있는 401·403은 즉시 차단": refresh를 보내지 않고 바로 Expired(SessionExpired, 파일 삭제)
 #[tokio::test(start_paused = true)]
-async fn n1_5_me_401_other_code_needs_refresh() {
+async fn n1_5_me_session_expired_blocks_without_refresh() {
     let e = Env::online_with(&[X]).await;
+    let before = e.refresh_count();
     e.api
         .push_me(Reply::Now(Err(worker(401, "session_expired"))));
+    // 예전 코드는 여기서 refresh를 보냈고, 연결 실패로 오프라인 SignedIn이 남았다
+    e.refresh_fail_all();
+    assert_eq!(
+        e.svc.check_delegations(true).await,
+        DelegationCheck::Blocked
+    );
+    let st = e.svc.status();
+    assert_eq!(st.phase, AuthPhase::Expired);
+    assert_eq!(st.reason, Some(AuthReason::SessionExpired));
+    assert!(!e.file_exists());
+    assert_eq!(e.refresh_count(), before);
+    assert!(
+        e.svc.signer().is_none(),
+        "맡은 채널 X로 새 작업을 받지 않는다"
+    );
+}
+
+/// 모르는 401 코드는 refresh 쪽 표(`outcome_of_error`)처럼 형식 거부로 보지 않는다: refresh 한 번으로 서버에 다시 묻는다
+#[tokio::test(start_paused = true)]
+async fn n1_5b_me_unknown_401_code_needs_refresh() {
+    let e = Env::online_with(&[X]).await;
+    e.api.push_me(Reply::Now(Err(worker(401, "unknown_code"))));
     e.api.push_refresh(Reply::Now(Ok(bundle(3, e.now()))));
     e.me_ok(&[X]);
-    // 바로 Expired가 아니라 refresh 한 번으로 서버에 다시 묻는다
     fresh(&e.svc.check_delegations(true).await);
     assert_eq!(e.svc.status().phase, AuthPhase::SignedIn);
 }
 
+/// 재전송도 invalid_token: 방금 성공한 refresh가 준 access를 서버가 거부했다 = 세션이 이미 끝났다.
+/// refresh 표의 invalid_token과 같이 Expired(SessionExpired, 파일 삭제)다(예전: 로그아웃 없이 Unreachable)
 #[tokio::test(start_paused = true)]
-async fn n1_6_resend_401_does_not_logout() {
+async fn n1_6_resend_invalid_token_blocks() {
     let e = Env::online_with(&[X]).await;
     e.api.push_me(Reply::Now(Err(worker(401, "invalid_token"))));
     e.api.push_refresh(Reply::Now(Ok(bundle(3, e.now()))));
     e.api.push_me(Reply::Now(Err(worker(401, "invalid_token"))));
     assert_eq!(
         e.svc.check_delegations(true).await,
+        DelegationCheck::Blocked
+    );
+    let st = e.svc.status();
+    assert_eq!(st.phase, AuthPhase::Expired);
+    assert_eq!(st.reason, Some(AuthReason::SessionExpired));
+    assert!(!e.file_exists());
+}
+
+/// 재전송의 401도 그 코드의 분류대로: session_revoked → Expired(Revoked), 모르는 코드 → 상태 불변(refresh 표의 Transient)
+#[tokio::test(start_paused = true)]
+async fn n1_6b_resend_401_follows_its_code() {
+    let e = Env::online_with(&[X]).await;
+    e.api.push_me(Reply::Now(Err(worker(401, "invalid_token"))));
+    e.api.push_refresh(Reply::Now(Ok(bundle(3, e.now()))));
+    e.api.push_me(Reply::Now(Err(worker(401, "unknown_code"))));
+    assert_eq!(
+        e.svc.check_delegations(true).await,
         DelegationCheck::Unreachable
     );
     assert_eq!(e.svc.status().phase, AuthPhase::SignedIn);
     assert!(e.file_exists());
+
+    let e = Env::online_with(&[X]).await;
+    e.api.push_me(Reply::Now(Err(worker(401, "invalid_token"))));
+    e.api.push_refresh(Reply::Now(Ok(bundle(3, e.now()))));
+    e.api
+        .push_me(Reply::Now(Err(worker(401, "session_revoked"))));
+    assert_eq!(
+        e.svc.check_delegations(true).await,
+        DelegationCheck::Blocked
+    );
+    let st = e.svc.status();
+    assert_eq!(st.phase, AuthPhase::Expired);
+    assert_eq!(st.reason, Some(AuthReason::Revoked));
+    assert!(!e.file_exists());
+}
+
+/// 쓰기 API도 같은 표다: session_expired는 refresh 없이 차단
+#[tokio::test(start_paused = true)]
+async fn n1_8_write_session_expired_blocks() {
+    let e = Env::online_with(&[X]).await;
+    let before = e.refresh_count();
+    e.api
+        .push_remove(Reply::Now(Err(worker(401, "session_expired"))));
+    e.refresh_fail_all();
+    assert_eq!(e.svc.remove_editor(Y).await, Err(EditorsError::Blocked));
+    assert_eq!(e.svc.status().phase, AuthPhase::Expired);
+    assert_eq!(e.refresh_count(), before);
 }
 
 #[tokio::test(start_paused = true)]
@@ -838,4 +909,157 @@ async fn w9_server_trouble_is_unreachable() {
         EditorsError::Rejected
     );
     assert_eq!(e.svc.status().phase, AuthPhase::SignedIn);
+}
+
+// ------------------------------------------------------------ X 쓰기는 시작한 계정에 묶인다(PR 리뷰 P1)
+
+/// 편집자 쓰기 셋
+#[derive(Clone, Copy, Debug)]
+enum Write {
+    Invite,
+    Remove,
+    Leave,
+}
+
+impl Write {
+    fn push_ok(self, e: &Env) {
+        match self {
+            Write::Invite => e.api.push_invite(Reply::Now(Ok(invite_ok("x")))),
+            Write::Remove => e.api.push_remove(Reply::Now(Ok(()))),
+            Write::Leave => e.api.push_leave(Reply::Now(Ok(()))),
+        }
+    }
+
+    async fn run(self, s: Arc<Svc>) -> Result<(), EditorsError> {
+        match self {
+            Write::Invite => s.create_invite().await.map(|_| ()),
+            Write::Remove => s.remove_editor(Y).await,
+            Write::Leave => s.leave_delegation(X).await,
+        }
+    }
+
+    fn sent(self, e: &Env) -> usize {
+        e.api.count(|c| match self {
+            Write::Invite => matches!(c, Call::CreateInvite { .. }),
+            Write::Remove => matches!(c, Call::RemoveEditor { .. }),
+            Write::Leave => matches!(c, Call::LeaveDelegation { .. }),
+        })
+    }
+}
+
+/// Codex 재현 1~6: A의 `/api/me`가 refresh_lock을 쥔 동안 A에서 쓰기를 부르고, A를 로그아웃해 B로 로그인한 뒤
+/// me를 풀어 준다. 쓰기는 B의 토큰으로 나가면 안 된다(보내지 않고 버린다)
+async fn write_queued_across_switch(w: Write) {
+    let e = Env::online_with(&[X]).await;
+    let n = Arc::new(Notify::new());
+    e.api.push_me(Reply::Hold(n.clone(), Ok(me_ok(CH, &[X]))));
+    let c = tokio::spawn({
+        let s = e.svc.clone();
+        async move { s.check_delegations(true).await }
+    });
+    wait_me_calls(&e, 1).await;
+    let wr = tokio::spawn(w.run(e.svc.clone()));
+    settle().await;
+    switch_to_b(&e).await;
+    // 오늘 코드가 B의 토큰으로 보냈다면 이 응답을 받아 성공했을 것이다
+    w.push_ok(&e);
+    n.notify_one();
+    assert_eq!(c.await.unwrap(), DelegationCheck::Discarded);
+    assert_eq!(wr.await.unwrap(), Err(EditorsError::Discarded), "{w:?}");
+    assert_eq!(w.sent(&e), 0, "{w:?}: B 계정으로 나가면 안 된다");
+    // B 계정은 그대로다
+    let sg = e.svc.signer().unwrap();
+    assert_eq!(sg.channel_id, B);
+    assert_eq!(sg.delegated.to_vec(), vec![Z.to_string()]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn x1_remove_queued_across_switch_is_not_sent() {
+    write_queued_across_switch(Write::Remove).await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn x2_invite_queued_across_switch_is_not_sent() {
+    write_queued_across_switch(Write::Invite).await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn x3_leave_queued_across_switch_is_not_sent() {
+    write_queued_across_switch(Write::Leave).await;
+}
+
+/// 재전송 직전: 첫 시도가 401 invalid_token → refresh 성공 → 재전송이 잠금을 다시 기다리는 동안 계정이 바뀌면 보내지 않는다
+#[tokio::test(start_paused = true)]
+async fn x4_resend_after_refresh_is_bound_to_initiating_account() {
+    let e = Env::online_with(&[X]).await;
+    e.api
+        .push_remove(Reply::Now(Err(worker(401, "invalid_token"))));
+    let r = Arc::new(Notify::new());
+    e.api.push_refresh(Reply::Hold(
+        r.clone(),
+        Ok(bundle_delegated(3, e.now(), &[X])),
+    ));
+    let before = e.refresh_count();
+    let wr = tokio::spawn(Write::Remove.run(e.svc.clone()));
+    while e.refresh_count() == before {
+        tokio::task::yield_now().await;
+    }
+    // refresh가 잠금을 쥔 동안 me가 그 뒤에 줄 선다(재전송보다 먼저 잠금을 얻는다)
+    let m = Arc::new(Notify::new());
+    e.api.push_me(Reply::Hold(m.clone(), Ok(me_ok(CH, &[X]))));
+    let me_before = e.me_count();
+    let c = tokio::spawn({
+        let s = e.svc.clone();
+        async move { s.check_delegations(true).await }
+    });
+    settle().await;
+    r.notify_one();
+    wait_me_calls(&e, me_before + 1).await;
+    // 재전송은 잠금을 기다리는 중이다. 이제 B로 바꾼다
+    switch_to_b(&e).await;
+    e.api.push_remove(Reply::Now(Ok(())));
+    m.notify_one();
+    assert_eq!(c.await.unwrap(), DelegationCheck::Discarded);
+    assert_eq!(wr.await.unwrap(), Err(EditorsError::Discarded));
+    assert_eq!(Write::Remove.sent(&e), 1, "첫 시도(A)만 나갔다");
+    assert!(!e.api.calls().contains(&Call::RemoveEditor {
+        access: acc(5),
+        channel: Y.into()
+    }));
+}
+
+// ------------------------------------------------------------ L 그만두기 성공은 그 자리에서 회수한다(PR 리뷰 P2)
+
+/// 204와 멱등 성공 404 not_found 모두: 메모리·session.json·공유 응답에서 그 채널을 뺀다(다른 맡은 채널은 남는다)
+#[tokio::test(start_paused = true)]
+async fn l1_leave_success_drops_channel_locally() {
+    for reply in [Ok(()), Err(worker(404, "not_found"))] {
+        let e = Env::online_with(&[X, Y]).await;
+        e.me_ok(&[X, Y]);
+        fresh(&e.svc.check_delegations(true).await);
+        e.api.push_leave(Reply::Now(reply.clone()));
+        // 대소문자가 달라도 같은 채널이다
+        e.svc
+            .leave_delegation(&X.to_ascii_uppercase())
+            .await
+            .unwrap();
+        assert_eq!(e.delegated_now(), vec![Y.to_string()], "{reply:?}");
+        assert_eq!(
+            e.file_delegated(),
+            serde_json::json!([{"channelId": Y, "channelName": "맡은채널"}]),
+            "{reply:?}"
+        );
+        let st = e.svc.status();
+        assert_eq!(st.delegated_channels.len(), 1);
+        // 간격 안의 자동 확인이 함께 쓰는 마지막 응답에서도 빠졌다
+        let me = e.me_count();
+        match e.svc.check_delegations(false).await {
+            DelegationCheck::Skipped => {}
+            DelegationCheck::Fresh(m) => {
+                assert!(m.delegated.iter().all(|d| d.channel.channel_id != X));
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(e.me_count(), me, "간격 안이라 다시 묻지 않는다");
+    }
 }

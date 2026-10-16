@@ -163,25 +163,39 @@ pub fn outcome_of_error(e: &ApiError, retried: bool) -> VerifyOutcome {
     }
 }
 
-/// /api/me·편집자 API 오류의 분류(delegation.md §9.4). refresh 기준인 `outcome_of_error`와 다르다:
-/// /api/me의 401 invalid_token은 access 만료·회전(하루에 한 번 정상으로 생긴다)이라 로그아웃이 아니다
+/// /api/me·편집자 API 오류의 분류(delegation.md §9.4, app.md 구현 중 변경 79 (라)). refresh 기준인 `outcome_of_error`와 다르다:
+/// /api/me의 401 invalid_token은 access 만료·회전(하루에 한 번 정상으로 생긴다)이라 바로 로그아웃이 아니고 refresh 한 번으로
+/// 서버에 다시 묻는다. 세션 자체를 거부하는 형식 있는 401(`session_expired`·`session_revoked`)은 ROADMAP의
+/// "Worker의 형식 있는 401·403은 즉시 차단"대로 그 자리에서 차단한다(PR 리뷰 P1)
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MeOutcome {
     /// 403 not_allowed → refresh 거부와 같은 Denied 전이
     Denied,
     /// 401 session_revoked → Expired(Revoked, 파일 삭제) 전이
     Revoked,
-    /// 그 밖의 모든 401(invalid_token·session_expired·모르는 코드) → refresh 한 번으로 서버에 다시 묻는다
+    /// 401 session_expired, 또는 refresh 직후 재전송의 401 invalid_token → Expired(SessionExpired, 파일 삭제) 전이
+    /// (refresh 표의 `InvalidToken`·`SessionExpired`와 같은 전이)
+    Expired,
+    /// 첫 시도의 401 invalid_token·모르는 401 코드 → refresh 한 번으로 서버에 다시 묻는다
     NeedRefresh,
-    /// 나머지(네트워크·NotWorker·5xx·그 밖 4xx·계약 위반): 상태를 바꾸지 않는다. 호출자가 code로 더 가른다
+    /// 나머지(네트워크·NotWorker·5xx·그 밖 4xx·계약 위반, 재전송의 모르는 401 코드): 상태를 바꾸지 않는다.
+    /// 호출자가 code로 더 가른다
     Other,
 }
 
-/// `MeOutcome` 분류
-pub fn me_outcome(e: &ApiError) -> MeOutcome {
+/// `MeOutcome` 분류. `resent`는 refresh 뒤 같은 요청을 다시 보낸 결과인지
+pub fn me_outcome(e: &ApiError, resent: bool) -> MeOutcome {
     match e {
         ApiError::Worker { status: 403, code } if code == "not_allowed" => MeOutcome::Denied,
         ApiError::Worker { status: 401, code } if code == "session_revoked" => MeOutcome::Revoked,
+        ApiError::Worker { status: 401, code } if code == "session_expired" => MeOutcome::Expired,
+        // 방금 성공한 refresh가 준 access를 거부했다: access 만료일 수 없다(세션이 서버에서 끝났다)
+        ApiError::Worker { status: 401, code } if code == "invalid_token" && resent => {
+            MeOutcome::Expired
+        }
+        // 모르는 401 코드는 refresh 표(`outcome_of_error`)에서도 형식 거부가 아니다(Transient). 첫 시도는 refresh로 묻고,
+        // 재전송에서 또 나오면 상태를 바꾸지 않고 실패한다
+        ApiError::Worker { status: 401, .. } if resent => MeOutcome::Other,
         ApiError::Worker { status: 401, .. } => MeOutcome::NeedRefresh,
         _ => MeOutcome::Other,
     }

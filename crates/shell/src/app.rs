@@ -359,7 +359,8 @@ impl App {
     }
 
     /// 상태가 바뀔 때마다(처음 포함) 앱이 부른다. 채널 ID가 있는 처음 SignedIn에서 미뤄 둔 자동 이어받기를 한 번 하고,
-    /// 그 채널의 interrupted만 줄 세운다(83). 관리자는 모두 줄 세운다(102). 줄 세운 수
+    /// 그 채널의 interrupted만 줄 세운다(83). 관리자는 모두 줄 세운다(102). 줄 세운 수.
+    /// 맡은 채널 작업(둘째 깃발)은 여기서 하지 않는다: `take_delegated_resume` → `resume_delegated_interrupted`(79 (아))
     pub fn on_auth_status(&self, st: &AuthStatus) -> usize {
         if st.phase != AuthPhase::SignedIn {
             return 0;
@@ -368,36 +369,56 @@ impl App {
         let Some(me) = st.channel_id.as_deref() else {
             return 0;
         };
-        let mut n = 0;
-        if self.auto_resume_pending.swap(false, Ordering::SeqCst) {
-            // 관리자는 채널과 상관없이 받으므로 멈춘 작업을 모두 이어받는다(worker.md 구현 중 변경 102)
-            let admin = st.is_admin;
-            let m = self
-                .manager
-                .resume_interrupted_where(|_, c| admin || is_own_channel(c, me) == Some(true));
-            tracing::info!(
-                count = m,
-                admin,
-                "로그인 뒤 같은 채널의 멈춘 작업을 자동으로 이어받는다"
-            );
-            n += m;
+        if !self.auto_resume_pending.swap(false, Ordering::SeqCst) {
+            return 0;
         }
-        // 맡은 채널 작업은 이번 실행에서 서버가 목록을 확인한 뒤에만 이어받는다(디스크 목록만으로는 줄 세우지 않는다)
-        if st.delegations_verified
+        // 관리자는 채널과 상관없이 받으므로 멈춘 작업을 모두 이어받는다(worker.md 구현 중 변경 102)
+        let admin = st.is_admin;
+        let n = self
+            .manager
+            .resume_interrupted_where(|_, c| admin || is_own_channel(c, me) == Some(true));
+        tracing::info!(
+            count = n,
+            admin,
+            "로그인 뒤 같은 채널의 멈춘 작업을 자동으로 이어받는다"
+        );
+        n
+    }
+
+    /// 맡은 채널 자동 이어받기 깃발(둘째)을 쓸 때인가: 채널 있는 SignedIn이고 이번 실행에서 서버가 맡은 채널을 확인했다.
+    /// true면 한 번뿐이고, 호출자가 `resume_delegated_interrupted`를 띄운다
+    pub fn take_delegated_resume(&self, st: &AuthStatus) -> bool {
+        st.phase == AuthPhase::SignedIn
+            && st.channel_id.is_some()
+            && st.delegations_verified
             && self
                 .auto_resume_delegated_pending
                 .swap(false, Ordering::SeqCst)
-        {
-            let d = &st.delegated_channels;
-            let m = self
-                .manager
-                .resume_interrupted_where(|content, c| delegated_resume_target(content, c, d));
-            tracing::info!(
-                count = m,
-                "로그인 뒤 맡은 채널의 멈춘 작업을 자동으로 이어받는다"
-            );
-            n += m;
+    }
+
+    /// 맡은 채널의 멈춘 작업을 자동으로 이어받는다(둘째 깃발, PR 리뷰 P2). 기록의 `channelId`는 후보를 고르는 데만 쓰고,
+    /// 작업마다 `resume_job`과 같은 `OwnershipGate::admit_checked`로 **컨텐츠**를 다시 판정한 뒤에만 줄 세운다
+    /// (최근 resolve 캐시, 없으면 info 한 번. 판정 직전 확인은 간격 규칙이라 묶음 전체에서 /api/me 한 번 이하).
+    /// 판정 실패·조회 실패는 줄 세우지 않는다(fail closed). 남의 영상이면 기록을 실제 채널로 고친다. 줄 세운 수
+    pub async fn resume_delegated_interrupted(&self, delegated: &[DelegatedChannel]) -> usize {
+        let ids = self
+            .manager
+            .interrupted_where(|content, c| delegated_resume_target(content, c, delegated));
+        let mut n = 0;
+        for id in ids {
+            match self.resume_job(id, false).await {
+                Ok(()) => n += 1,
+                Err(e) => tracing::info!(
+                    id = id.0,
+                    code = ?e.code,
+                    "맡은 채널 작업을 자동으로 이어받지 않음(컨텐츠 재판정)"
+                ),
+            }
         }
+        tracing::info!(
+            count = n,
+            "로그인 뒤 맡은 채널의 멈춘 작업을 자동으로 이어받는다"
+        );
         n
     }
 

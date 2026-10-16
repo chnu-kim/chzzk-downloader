@@ -1299,7 +1299,7 @@ impl<A: WorkerApi, C: Clock> AuthService<A, C> {
         self.signer().map(|s| s.channel_id)
     }
 
-    /// Bearer 호출 공용 절차(delegation.md §9.4). 시도는 최대 두 번이다: 첫 시도가 401(형식 거부 둘 제외)이면
+    /// Bearer 호출 공용 절차(delegation.md §9.4). 시도는 최대 두 번이다: 첫 시도가 401 invalid_token(또는 모르는 코드)이면
     /// refresh를 한 번 하고 같은 요청을 다시 보낸다. 오프라인 추적·verified_at·admin_verified·first_online·refresh_gen은
     /// 건드리지 않는다(refresh_inner가 한 것만 남는다)
     async fn authed<T, R, S, SFut, J, Ap, Fl>(
@@ -1318,12 +1318,21 @@ impl<A: WorkerApi, C: Clock> AuthService<A, C> {
     {
         let mut apply = Some(apply);
         let mut attempt = 0usize;
+        // 시작 세대는 잠금을 기다리기 **전에** 잡는다(PR 리뷰 P1): 기다리는 동안 A를 로그아웃하고 B로 로그인하면
+        // 잠금 뒤에 읽는 access는 B의 것이라, 그 뒤에 잡은 세대로는 A에서 시작한 쓰기가 B로 나가는 것을 막지 못한다.
+        // 로그인 수락은 refresh_lock을 잡지 않으므로 아래의 "잠금을 얻은 뒤 access를 읽는 자리"마다 다시 대조한다
+        let epoch = self.lock().session_epoch;
         loop {
             // 이 잠금은 refresh와 순서를 세운다(N2): 쥐는 동안 refresh가 나가지 않고, 기다린 뒤에는 회전한 access를 읽는다(s13).
             // 늦은 me 응답이 뒤 refresh의 목록을 덮는 것은 아래 세대 비교(refresh_gen)로도 막힌다(두 겹)
             let guard = self.refresh_lock.lock().await;
-            let (access, epoch, rgen) = {
+            let (access, rgen) = {
                 let i = self.lock();
+                if i.session_epoch != epoch {
+                    // 시작한 계정이 아니다: 보내지 않고 버린다(첫 시도·재전송 모두)
+                    info!(result = "discarded", "맡은 채널 확인");
+                    return Err(AuthedError::Discarded);
+                }
                 if attempt == 0
                     && let Some(r) = joined(&i)
                 {
@@ -1331,9 +1340,7 @@ impl<A: WorkerApi, C: Clock> AuthService<A, C> {
                 }
                 match (&i.phase, &i.held) {
                     // access는 여기서 읽는다(기다리는 동안 앞 refresh가 회전했을 수 있다)
-                    (AuthPhase::SignedIn, Some(h)) => {
-                        (h.access_token.clone(), i.session_epoch, i.refresh_gen)
-                    }
+                    (AuthPhase::SignedIn, Some(h)) => (h.access_token.clone(), i.refresh_gen),
                     _ => return Err(AuthedError::NotSignedIn),
                 }
             };
@@ -1356,15 +1363,18 @@ impl<A: WorkerApi, C: Clock> AuthService<A, C> {
                             self.publish(i);
                             Attempt::Done(r)
                         }
-                        Err(e) => match me_outcome(&e) {
-                            MeOutcome::Denied | MeOutcome::Revoked => {
-                                let next = if me_outcome(&e) == MeOutcome::Denied {
-                                    Next::Denied
-                                } else {
-                                    Next::Expired {
+                        Err(e) => match me_outcome(&e, attempt > 0) {
+                            o @ (MeOutcome::Denied | MeOutcome::Revoked | MeOutcome::Expired) => {
+                                let next = match o {
+                                    MeOutcome::Denied => Next::Denied,
+                                    MeOutcome::Revoked => Next::Expired {
                                         reason: AuthReason::Revoked,
                                         delete_file: true,
-                                    }
+                                    },
+                                    _ => Next::Expired {
+                                        reason: AuthReason::SessionExpired,
+                                        delete_file: true,
+                                    },
                                 };
                                 let sess = i.held.clone().expect("위에서 확인했다");
                                 let r = self.apply_next(&mut i, &sess, next, now, now);
@@ -1377,7 +1387,7 @@ impl<A: WorkerApi, C: Clock> AuthService<A, C> {
                                 Attempt::Done(Err(AuthedError::Api(e)))
                             }
                             MeOutcome::NeedRefresh if attempt > 0 => {
-                                // 재전송도 401: 로그아웃하지 않고 실패
+                                // me_outcome은 재전송에서 NeedRefresh를 내지 않는다(남은 401은 Other·Expired)
                                 failed(&mut i, now);
                                 Attempt::Done(Err(AuthedError::Unreachable))
                             }
@@ -1583,7 +1593,9 @@ impl<A: WorkerApi, C: Clock> AuthService<A, C> {
         r
     }
 
-    /// `POST /api/delegations/leave`(주인의 판정용 채널 ID). 이미 없으면 성공(멱등)
+    /// `POST /api/delegations/leave`(주인의 판정용 채널 ID). 이미 없으면 성공(멱등).
+    /// 성공(204·멱등 404 not_found)을 받으면 그 채널을 메모리·`session.json`·공유 응답(`last_me`)에서 바로 뺀다(PR 리뷰 P2):
+    /// 이 클라이언트는 회수 성공을 직접 받았으므로 다음 `/api/me`나 refresh 묶음을 기다리지 않는다
     pub async fn leave_delegation(&self, owner_channel_id: &str) -> Result<(), EditorsError> {
         let id = owner_channel_id.to_string();
         let r = self
@@ -1591,15 +1603,55 @@ impl<A: WorkerApi, C: Clock> AuthService<A, C> {
                 |_| None,
                 |a: Secret<String>| {
                     let id = id.clone();
-                    async move { self.api.leave_delegation(&a, &id).await }
+                    async move {
+                        // 멱등 404도 성공으로 바꿔 apply(세대 검사 뒤, 같은 잠금 안)에서 회수하게 한다
+                        match self.api.leave_delegation(&a, &id).await {
+                            Err(ApiError::Worker { status: 404, code }) if code == "not_found" => {
+                                Ok(())
+                            }
+                            r => r,
+                        }
+                    }
                 },
-                |_, _, t: (), _| Ok(t),
+                |svc: &Self, i: &mut Inner, (): (), _| {
+                    svc.drop_delegated(i, &id);
+                    Ok(())
+                },
                 |_, _| {},
             )
             .await
             .or_else(|e| Self::editors_error(e, true));
         Self::log_editors(&r);
         r
+    }
+
+    /// 맡은 채널 하나를 로컬에서 뺀다(그만두기 성공). 확인 시각(`last_me_at`)·깃발은 그대로 둔다
+    fn drop_delegated(&self, i: &mut Inner, owner: &str) {
+        let Some(h) = i.held.as_mut() else {
+            return;
+        };
+        let before = h.delegated_channels.len();
+        h.delegated_channels
+            .retain(|d| !d.channel_id.eq_ignore_ascii_case(owner));
+        if h.delegated_channels.len() != before {
+            match self.store.save(h) {
+                Ok(()) => i.dirty = false,
+                Err(e) => {
+                    i.dirty = true;
+                    warn!(op = e.op, "session.json을 쓰지 못함(메모리 세션으로 계속)");
+                }
+            }
+        }
+        if let Some(m) = &i.last_me
+            && m.delegated
+                .iter()
+                .any(|d| d.channel.channel_id.eq_ignore_ascii_case(owner))
+        {
+            let mut m = (**m).clone();
+            m.delegated
+                .retain(|d| !d.channel.channel_id.eq_ignore_ascii_case(owner));
+            i.last_me = Some(Arc::new(m));
+        }
     }
 
     /// SignedIn일 때 본인 판정 채널 ID와 관리자 여부(한 잠금에서 함께 읽는다, worker.md 구현 중 변경 102)

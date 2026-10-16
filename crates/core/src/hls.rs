@@ -306,13 +306,19 @@ fn parse_media_inner(text: &str, base: &Url, live: bool) -> Result<(MediaPlaylis
             "#EXT-X-DISCONTINUITY" => return Err(Error::Unsupported(Unsupported::Discontinuity)),
             "#EXT-X-BYTERANGE" => return Err(Error::Unsupported(Unsupported::ByteRange)),
             // 표시된 세그먼트가 없거나(GAP) 목록에서 세그먼트가 빠진(SKIP, delta playlist) 경우라
-            // 이어 붙이면 구멍 난 파일이 된다. PART·PRELOAD-HINT는 전체 세그먼트가 함께 있으므로 무시한다.
+            // 이어 붙이면 구멍 난 파일이 된다.
             "#EXT-X-GAP" => return Err(Error::Unsupported(Unsupported::Gap)),
             "#EXT-X-SKIP" => return Err(Error::Unsupported(Unsupported::Skip)),
             "#EXT-X-ENDLIST" => ended = true,
             "#EXT-X-STREAM-INF" => {
                 return Err(parse_err(WHAT, "master playlist입니다"));
             }
+            // LL-HLS 태그는 전체 세그먼트가 함께 있으니 조용히 무시한다(폴링마다 경고가 쌓이지 않게, core.md 61)
+            "#EXT-X-PART"
+            | "#EXT-X-PART-INF"
+            | "#EXT-X-PRELOAD-HINT"
+            | "#EXT-X-SERVER-CONTROL"
+            | "#EXT-X-RENDITION-REPORT" => {}
             other => tracing::warn!(tag = other, "모르는 HLS 태그를 무시합니다"),
         }
     }
@@ -423,6 +429,48 @@ mod tests {
             parse_media(&live_text("", 100..103, ""), &media_base()),
             Err(Error::Unsupported(Unsupported::NotEnded))
         ));
+    }
+
+    /// 로그를 모으는 writer(스레드 지역 subscriber용).
+    #[derive(Clone, Default)]
+    struct LogBuf(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl std::io::Write for LogBuf {
+        fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(b);
+            Ok(b.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// LL-HLS 태그는 전체 세그먼트가 함께 있으니 조용히 무시한다(폴링마다 경고가 쌓이지 않게, core.md 61).
+    /// 모르는 태그는 지금처럼 경고한다(양성 대조).
+    #[test]
+    fn live_ll_tags_do_not_warn() {
+        let buf = LogBuf::default();
+        let w = buf.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::TRACE)
+            .with_ansi(false)
+            .with_writer(move || w.clone())
+            .finish();
+        let log = || String::from_utf8(buf.0.lock().unwrap().clone()).unwrap();
+        let before = "#EXT-X-SERVER-CONTROL:CAN-BLOCK-RELOAD=YES,PART-HOLD-BACK=1.5\n#EXT-X-PART-INF:PART-TARGET=0.5\n";
+        let tail = "#EXT-X-PART:DURATION=0.5,URI=\"p0.m4s\"\n#EXT-X-PART:DURATION=0.5,URI=\"p1.m4s\"\n#EXT-X-PRELOAD-HINT:TYPE=PART,URI=\"p2.m4s\"\n#EXT-X-RENDITION-REPORT:URI=\"../audio/chunklist.m3u8\",LAST-MSN=102\n";
+        tracing::subscriber::with_default(subscriber, || {
+            let snap = parse_live_media(&live_text(before, 100..102, tail), &media_base()).unwrap();
+            assert_eq!(snap.playlist.segments.len(), 2);
+            assert!(!log().contains("모르는 HLS 태그"), "{}", log());
+            // 대조: 정말 모르는 태그는 경고한다
+            parse_live_media(
+                &live_text("#EXT-X-UNKNOWNTAG:1\n", 100..102, ""),
+                &media_base(),
+            )
+            .unwrap();
+            assert!(log().contains("모르는 HLS 태그"), "{}", log());
+        });
     }
 
     #[test]

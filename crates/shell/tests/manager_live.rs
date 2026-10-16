@@ -537,3 +537,84 @@ async fn auto_resume_requeues_live_with_media() {
     assert_eq!(n, 1);
     assert_ne!(status, JobStatus::Interrupted);
 }
+
+/// M3와 같은 규칙: init만 든 녹화 `.part`는 받은 것이 없다. 이어받을 바이트로 보이지 않고 경로도 잡지 않는다
+/// (다음 실행은 init을 버리고 지금 방송을 새로 녹화한다).
+#[tokio::test(start_paused = true)]
+async fn failed_init_only_recording_keeps_nothing() {
+    let h = Harness::new(2);
+    h.fake.script_for(
+        h.output("a"),
+        Script::new().live_part(16, 0).fails(http_503()),
+    );
+    let id = h.enqueue_live("a").id;
+    until("실패", || h.status(id) == JobStatus::Failed).await;
+    assert_eq!(sidecar_exists(&h, "a"), (true, true));
+    assert_eq!(h.job(id).partial_bytes, None);
+    // 같은 이름으로 받을 수 있다(이 작업이 경로를 잡지 않는다)
+    h.fake.script_for(h.output("a"), Script::new());
+    h.mgr.enqueue(request("a"), &h.defaults()).unwrap();
+}
+
+/// 받다 만 녹화는 셸에서도 "처음부터"(`restart`)로 지우지 않는다(D8, 화면 밖 IPC 방어).
+#[tokio::test(start_paused = true)]
+async fn restart_is_rejected_for_kept_recording() {
+    let h = Harness::new(2);
+    h.fake.script_for(
+        h.output("a"),
+        Script::new().live_part(16, 32).fails(http_503()),
+    );
+    let id = h.enqueue_live("a").id;
+    until("실패", || h.status(id) == JobStatus::Failed).await;
+    let e = h.mgr.resume(id, true).unwrap_err();
+    assert_eq!(e.code, ErrorCode::InvalidInput);
+    assert_eq!(h.status(id), JobStatus::Failed);
+    assert_eq!(sidecar_exists(&h, "a"), (true, true));
+    // 받은 부분 저장(이어받기)은 그대로 된다
+    h.fake.script_for(h.output("a"), recording(5));
+    h.mgr.resume(id, false).unwrap();
+    until("다시 시작", || h.status(id) == JobStatus::Running).await;
+    h.mgr.stop_job(id).unwrap();
+}
+
+/// init만 든 녹화는 받은 것이 없으니 "처음부터"를 막지 않는다.
+#[tokio::test(start_paused = true)]
+async fn restart_is_allowed_for_init_only_recording() {
+    let h = Harness::new(2);
+    h.fake.script_for(
+        h.output("a"),
+        Script::new().live_part(16, 0).fails(http_503()),
+    );
+    let id = h.enqueue_live("a").id;
+    until("실패", || h.status(id) == JobStatus::Failed).await;
+    h.fake.script_for(h.output("a"), recording(5));
+    h.mgr.resume(id, true).unwrap();
+    until("다시 시작", || h.status(id) == JobStatus::Running).await;
+    h.mgr.stop_job(id).unwrap();
+}
+
+/// M1(Codex r3): 남의 녹화 때문에 보호 오류(`PartialRecording`)로 끝난 VOD 작업은 그 `.part`를 자기 것으로
+/// 세지 않고 경로도 잡지 않는다. 지워도 녹화는 남는다(`discard_partial`의 소유 판정).
+#[tokio::test(start_paused = true)]
+async fn vod_failed_on_foreign_recording_keeps_it_on_remove() {
+    let h = Harness::new(2);
+    write_foreign_recording(&h, "a", "x");
+    h.fake.script_for(
+        h.output("a"),
+        Script::new().fails(Error::PartialRecording {
+            path: part_path(&h.output("a")),
+        }),
+    );
+    let v = h.enqueue("a").id;
+    until("VOD 실패", || h.status(v) == JobStatus::Failed).await;
+    assert_eq!(h.job(v).partial_bytes, None);
+    // 이 작업 때문에 같은 이름이 duplicateOutput으로 막히지 않는다
+    h.fake
+        .script_for(h.output("a"), Script::new().fails(http_503()));
+    let other = h.mgr.enqueue(request("a"), &h.defaults()).unwrap().id;
+    until("다른 작업 끝", || h.status(other) == JobStatus::Failed).await;
+
+    h.mgr.remove(v).await.unwrap();
+    assert!(h.mgr.list().iter().all(|j| j.id != v));
+    assert_eq!(sidecar_exists(&h, "a"), (true, true));
+}

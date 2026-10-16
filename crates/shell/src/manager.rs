@@ -571,6 +571,13 @@ impl<B: Backend> DownloadManager<B> {
         };
         let verified = match job.rec.status {
             JobStatus::Paused | JobStatus::Failed | JobStatus::Interrupted | JobStatus::Skipped => {
+                // 받다 만 녹화(영상 조각이 있는 이 작업의 `.part`)는 다시 받을 수 없다: "처음부터"로 확인 없이 지우지 않는다.
+                // 화면은 이 버튼을 보이지 않는다(D8). 화면 밖 호출·늦게 그려진 버튼을 여기서 막는다(core.md 61)
+                if restart && job.is_live() && job.rec.partial_bytes.is_some() {
+                    return Err(AppError::invalid_input(
+                        "받다 만 녹화는 처음부터 다시 받을 수 없습니다",
+                    ));
+                }
                 check(&job.rec.content)?
             }
             JobStatus::Queued | JobStatus::Running | JobStatus::Pausing => return Ok(()),
@@ -703,6 +710,7 @@ impl<B: Backend> DownloadManager<B> {
     /// - `queued`·`paused`·`interrupted`·`failed`: `discard_partial` → 지운다(다시 줄 선 작업도 `.part`가 있을 수 있다).
     ///   quit 기한을 넘긴 옛 태스크가 아직 돌면(`detached`) 받는 중처럼 그 끝을 기다린 뒤 지운다.
     ///   단 `failed`의 경로를 다른 활성 작업이 가져갔으면 `.part`는 그 작업의 것이므로 레코드만 지운다.
+    /// - `.part`의 sidecar가 이 작업의 것이 아니면(`Discarded::NotOwned`) 지우지 않고 레코드만 지운다(core.md 61).
     ///
     /// `.part`를 지우지 못하면(다른 프로그램이 잠금 등) 오류를 돌려주고 레코드를 멈춘 상태로 남긴다.
     pub async fn remove(&self, id: JobId) -> Result<(), AppError> {

@@ -269,6 +269,33 @@ impl State {
             })
             .map(|j| j.rec.id)
     }
+
+    /// 작업 `id`를 다시 줄 세울 때 같은 경로를 막는 다른 작업. `active_with_output`과 같고, 멈춰 있으면서 같은 녹화
+    /// `.part`의 주인인 기록(`keeps_recording`이고 `PartOwner`가 같다)은 막지 않는다. v0.7.0은 실패한 작업의 경로를
+    /// 새 작업에 내줬고 옛 기록·sidecar는 모두 `recordingId`가 없어(None = None) 한 녹화를 여럿이 함께 가리킬 수 있다.
+    /// 그중 하나로 이어받으면 그 녹화를 저장한다(Codex PR #113 ④). 새 녹화(`enqueue`)와 `remove`는 이 예외를 쓰지 않는다.
+    fn blocks_requeue(&self, id: JobId) -> Option<JobId> {
+        let me = &self.jobs.get(&id)?.rec;
+        let key = output_key(&me.output);
+        self.jobs
+            .values()
+            .find(|j| {
+                j.rec.id != id
+                    && j.holds_output()
+                    && output_key(&j.rec.output) == key
+                    && !(!j.uses_output() && j.keeps_recording() && same_owner(&j.rec, me))
+            })
+            .map(|j| j.rec.id)
+    }
+}
+
+/// 두 기록이 같은 `.part`의 주인인가(`PartOwner`의 네 값이 같다).
+fn same_owner(a: &JobRecord, b: &JobRecord) -> bool {
+    let (x, y) = (a.owner(), b.owner());
+    x.content == y.content
+        && x.quality_id == y.quality_id
+        && x.kind == y.kind
+        && x.recording_id == y.recording_id
 }
 
 /// 같은 파일인지 비교할 열쇠.
@@ -587,8 +614,7 @@ impl<B: Backend> DownloadManager<B> {
                 ));
             }
         };
-        let output = job.rec.output.clone();
-        if let Some(other) = st.active_with_output(&output, Some(id)) {
+        if let Some(other) = st.blocks_requeue(id) {
             return Err(AppError::duplicate_output(other));
         }
         let seq = st.seq();
@@ -646,8 +672,7 @@ impl<B: Backend> DownloadManager<B> {
             .collect();
         let mut n = 0;
         for id in ids {
-            let output = st.jobs[&id].rec.output.clone();
-            if st.active_with_output(&output, Some(id)).is_some() {
+            if st.blocks_requeue(id).is_some() {
                 continue;
             }
             let seq = st.seq();
@@ -681,8 +706,7 @@ impl<B: Backend> DownloadManager<B> {
             if job.removing || job.rec.status != JobStatus::Interrupted {
                 continue;
             }
-            let output = job.rec.output.clone();
-            if st.active_with_output(&output, Some(id)).is_some() {
+            if st.blocks_requeue(id).is_some() {
                 continue;
             }
             let seq = st.seq();

@@ -295,3 +295,115 @@ async fn v070_failed_recording_upgrade() {
     assert_eq!(fake.download_requests()[0].recording_id, None);
     assert!(part_path(&out).exists(), "`.part`는 그대로");
 }
+
+/// v0.7.0 녹화 `.part`(init 16 + 영상 32, recordingId 없음)와, 그것을 같이 가리키는 옛 기록 둘(id 1·2)을 둔다.
+/// v0.7.0은 실패한 작업의 경로를 새 작업에 내줬으므로 A(1, init만 받고 실패)와 B(2, 조각을 받고 실패)가 함께 남을 수 있다.
+fn v070_two_records(dir: &std::path::Path, status: JobStatus) -> std::path::PathBuf {
+    use chzzk_core::download::part::{HlsState, Sidecar, part_path, sidecar_path};
+    use chzzk_shell::jobs::JobsFile;
+
+    let out = dir.join("downloads").join("a.mp4");
+    std::fs::create_dir_all(out.parent().unwrap()).unwrap();
+    std::fs::write(part_path(&out), vec![0u8; 48]).unwrap();
+    let mut sc = Sidecar::new(
+        chzzk_core::ContentRef::Live {
+            channel_id: "000000000000000000000000000000e5".into(),
+        },
+        "720p",
+        chzzk_core::PlaybackKind::Live,
+    );
+    sc.committed_len = 48;
+    sc.hls = Some(HlsState {
+        init_len: 16,
+        ..Default::default()
+    });
+    atomic_write(&sidecar_path(&out), &serde_json::to_vec(&sc).unwrap()).unwrap();
+    let a = v070_live_record(&out, status);
+    let mut b = a.clone();
+    b.id = chzzk_shell::JobId(2);
+    let file = JobsFile {
+        v: 1,
+        next_id: 3,
+        jobs: vec![a, b],
+    };
+    std::fs::create_dir_all(dir.join("data")).unwrap();
+    atomic_write(
+        &dir.join("data/jobs.json"),
+        &serde_json::to_vec(&file).unwrap(),
+    )
+    .unwrap();
+    out
+}
+
+/// Codex PR #113 ④: 같은 v0.7.0 녹화를 가리키는 옛 기록 둘은 업그레이드 뒤 둘 다 받은 부분이 있다. 멈춰 있는 같은 주인
+/// 기록끼리는 이어받기를 막지 않는다(어느 쪽으로든 저장된다). 새 녹화에 대한 보호와 `remove`의 `.part` 보존은 그대로다.
+#[tokio::test(start_paused = true)]
+async fn v070_two_failed_records_do_not_block_each_other() {
+    use chzzk_core::download::part::part_path;
+    use common::harness::{live_request, open_with};
+
+    for pick in [1u64, 2] {
+        let dir = tempfile::tempdir().unwrap();
+        let out = v070_two_records(dir.path(), JobStatus::Failed);
+        let fake = FakeBackend::new();
+        let mgr = open_with(dir.path(), &fake, 2, false);
+        for j in mgr.list() {
+            assert_eq!(j.partial_bytes, Some(48), "{:?}", j.id);
+        }
+        // 새 녹화는 여전히 같은 이름을 가져가지 못한다
+        let defaults = JobDefaults {
+            download_folder: dir.path().join("downloads"),
+            segment_concurrency: 4,
+        };
+        let e = mgr.enqueue(live_request("a"), &defaults).unwrap_err();
+        assert_eq!(e.code, chzzk_shell::ErrorCode::DuplicateOutput);
+
+        fake.script_for(&out, Script::new().wait_cancel());
+        mgr.resume(chzzk_shell::JobId(pick), false)
+            .unwrap_or_else(|e| panic!("{pick}: {e:?}"));
+        until("요청", || !fake.download_requests().is_empty()).await;
+        assert_eq!(fake.download_requests()[0].recording_id, None);
+        // 받는 중인 쪽이 있으면 다른 쪽은 막힌다(활성 작업은 늘 경로를 잡는다)
+        let other = chzzk_shell::JobId(3 - pick);
+        let e = mgr.resume(other, false).unwrap_err();
+        assert_eq!(e.code, chzzk_shell::ErrorCode::DuplicateOutput);
+        assert!(part_path(&out).exists());
+    }
+}
+
+/// 지우기는 다른 옛 기록이 잡은 `.part`를 지우지 않는다(레코드만 지운다).
+#[tokio::test(start_paused = true)]
+async fn v070_two_failed_records_remove_keeps_part() {
+    use chzzk_core::download::part::part_path;
+    use common::harness::open_with;
+
+    let dir = tempfile::tempdir().unwrap();
+    let out = v070_two_records(dir.path(), JobStatus::Failed);
+    let fake = FakeBackend::new();
+    let mgr = open_with(dir.path(), &fake, 2, false);
+    mgr.remove(chzzk_shell::JobId(1)).await.unwrap();
+    assert!(part_path(&out).exists(), "B가 잡은 녹화는 남는다");
+    assert_eq!(mgr.list().len(), 1);
+}
+
+/// 자동 이어받기: A는 init만 받고 실패(failed), B는 조각을 받다 앱이 꺼졌다(interrupted). A가 경로를 잡아 B를 막던 것을
+/// 풀어 B를 줄 세운다(멈춘 interrupted·paused는 원래 경로를 잡으므로 A의 이어받기는 B가 막는다, v0.7.0과 같다).
+#[tokio::test(start_paused = true)]
+async fn v070_failed_and_interrupted_records_auto_resume() {
+    use chzzk_shell::jobs::JobsFile;
+    use common::harness::open_with;
+
+    let dir = tempfile::tempdir().unwrap();
+    let out = v070_two_records(dir.path(), JobStatus::Failed);
+    let path = dir.path().join("data/jobs.json");
+    let mut file: JobsFile = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    file.jobs[1].status = JobStatus::Interrupted;
+    atomic_write(&path, &serde_json::to_vec(&file).unwrap()).unwrap();
+    let fake = FakeBackend::new();
+    fake.script_for(&out, Script::new().wait_cancel());
+    let mgr = open_with(dir.path(), &fake, 2, false);
+    assert_eq!(mgr.resume_interrupted(), 1);
+    until("요청", || !fake.download_requests().is_empty()).await;
+    let e = mgr.resume(chzzk_shell::JobId(1), false).unwrap_err();
+    assert_eq!(e.code, chzzk_shell::ErrorCode::DuplicateOutput);
+}

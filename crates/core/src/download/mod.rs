@@ -323,7 +323,19 @@ async fn run(job: &mut Job<'_>, part: &mut Option<PartFile>) -> Result<DownloadO
         }
     }
     job.report.phase(Phase::Resolving);
-    let resolved = job.resolve().await?;
+    // 생방송은 첫 조회를 기다리는 동안에도(연결 대기 최대 30분) [녹화 마치기]가 먹는다. 아직 받은 조각이 없으니
+    // `NothingRecorded`다(core.md 61). 토큰을 먼저 복제해 `job`을 빌린 채 기다리지 않는다.
+    let resolved = if job.req.expected_kind == PlaybackKind::Live
+        && let Some(stop) = job.req.live_stop.clone()
+    {
+        tokio::select! {
+            biased;
+            _ = stop.cancelled() => return Err(Error::NothingRecorded),
+            r = job.resolve() => r?,
+        }
+    } else {
+        job.resolve().await?
+    };
     job.report.phase(Phase::Downloading);
     match resolved.source {
         Source::Progressive { reps } => progressive::run(job, reps, part).await,

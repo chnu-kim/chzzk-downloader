@@ -64,7 +64,7 @@ enum Refreshed {
     Over,
 }
 
-/// 멈춤이 먼저 오면 `None`, 아니면 `Some(결과)`. 기다리는 구간(연결 대기·첫 playlist·재조회)에서 멈춤이 먹게 한다.
+/// 멈춤이 먼저 오면 `None`, 아니면 `Some(결과)`. 기다리는 구간(연결 대기·playlist 읽기·재조회)에서 멈춤이 먹게 한다.
 macro_rules! until_stop {
     ($stop:expr, $fut:expr) => {
         tokio::select! {
@@ -357,9 +357,13 @@ pub(crate) async fn run(
         }
 
         if expired {
-            match refresh(job, &mut feed, &tracks).await? {
-                Refreshed::Same => {}
-                Refreshed::Over => break,
+            // 서명 만료 뒤 재조회. 기다리는 동안 멈춤이 오면 받은 만큼 마무리한다(core.md 61)
+            match until_stop!(stop, refresh(job, &mut feed, &tracks)) {
+                None => break,
+                Some(r) => match r? {
+                    Refreshed::Same => {}
+                    Refreshed::Over => break,
+                },
             }
         } else if snap.ended {
             break;
@@ -376,8 +380,12 @@ pub(crate) async fn run(
             break;
         }
 
-        // 다음 playlist. 읽지 못하면 처리 방식에 따라 같은 자리로 돌아오거나 끝낸다.
-        snap = match read_playlist(job, &feed.media_url).await {
+        // 다음 playlist. 읽는 동안에도 멈춤이 먹는다(공통 fetch 도우미는 cancel만 본다).
+        // 읽지 못하면 처리 방식에 따라 같은 자리로 돌아오거나 끝낸다.
+        let Some(read) = until_stop!(stop, read_playlist(job, &feed.media_url)) else {
+            break;
+        };
+        snap = match read {
             Ok(s) => {
                 flaky = 0;
                 s

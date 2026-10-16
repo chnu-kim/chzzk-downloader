@@ -1192,6 +1192,57 @@ describe("관리자로 맺은 관계의 세대(구현 중 변경 105 (라))", ()
     expect(await active(promoted)).toBeLessThanOrEqual(20);
   });
 
+  // 반대 당사자의 NULL 세대(허가 행 없는 관리자)가 강등 동안 빈 자리를 다른 관계가 채운 뒤 재등록으로 되살아나는 경우(구현 중 변경 105 (타))
+  it("GN5 주인 쪽: 허가 행 없는 관리자 편집자의 관계가 되살아나도 권한을 받는 편집자 수 = 주인 목록 길이 ≤ 10", async () => {
+    const stub = freshStub();
+    await allowAt(stub, B2, T0);
+    const promoted = [A1, D4];
+    const r = await stub.createInvite(B2, "주인", promoted, T0 + 1);
+    if (!r.ok) throw new Error(r.code);
+    expect((await stub.acceptInvite(await sha(r.token), D4, "편집자", promoted, T0 + 2)).ok).toBe(true);
+    for (let i = 0; i < 9; i++) expect(await linkAs(stub, B2, chan(i), T0 + 10 + i * 10, promoted)).toBe(true);
+    // 강등: D4 관계가 비어 목록은 9명, 열 번째 자리를 chan(9)가 채운다
+    expect((await editorsSide(stub, B2, T0 + 500)).editors).toHaveLength(9);
+    expect(await linkAs(stub, B2, chan(9), T0 + 1000, ADMINS)).toBe(true);
+    await sweepNow(stub, T0 + 1100);
+    const eds = [D4, ...Array.from({ length: 10 }, (_, i) => chan(i))];
+    await invariant(stub, B2, eds, ADMINS, T0 + 1200);
+    await invariant(stub, B2, eds, promoted, T0 + 1200);
+    // 되살아난 쪽이 먼저 맺은 관계라 가장 늦은 chan(9)가 잠든다(닫힌 쪽: 권한도 목록도 없다)
+    expect(await mine(stub, D4, promoted)).toHaveLength(1);
+    expect(await mine(stub, chan(9), promoted)).toEqual([]);
+    expect((await editorsSide(stub, B2, T0 + 1200, promoted)).editors.map((e) => e.channelId)).not.toContain(chan(9));
+  });
+
+  it("GN6 편집자 쪽: 허가 행 없는 관리자 주인의 관계가 되살아나도 맡은 채널 = 편집자를 active로 보는 주인 수 ≤ 20", async () => {
+    const stub = freshStub();
+    await allowAt(stub, C3, T0);
+    const promoted = [A1, D4];
+    const owners = Array.from({ length: 20 }, (_, i) => chan(200 + i));
+    const acceptFrom = async (owner: string, t: number, admins: readonly string[]) => {
+      if (owner !== D4) await allowAt(stub, owner, t);
+      const r = await stub.createInvite(owner, "주인", admins, t + 1);
+      if (!r.ok) throw new Error(r.code);
+      return stub.acceptInvite(await sha(r.token), C3, "편집자", admins, t + 2);
+    };
+    expect((await acceptFrom(D4, T0 + 1, promoted)).ok).toBe(true);
+    for (let i = 0; i < 19; i++) expect((await acceptFrom(owners[i]!, T0 + 10 + i * 10, promoted)).ok).toBe(true);
+    // 강등: D4 관계가 비어 19, 스무 번째 자리를 owners[19]가 채운다
+    expect(await mine(stub, C3, ADMINS)).toHaveLength(19);
+    expect((await acceptFrom(owners[19]!, T0 + 1000, ADMINS)).ok).toBe(true);
+    await sweepNow(stub, T0 + 1100);
+    for (const admins of [ADMINS, promoted]) {
+      let shown = 0;
+      for (const o of [D4, ...owners]) if ((await editorsSide(stub, o, T0 + 1200, admins)).editors.some((e) => e.channelId === C3 && e.status === "active")) shown++;
+      const got = await mine(stub, C3, admins);
+      expect(shown).toBe(got.length);
+      expect(got.length).toBeLessThanOrEqual(20);
+    }
+    const got = (await mine(stub, C3, promoted)).map((d) => d.channelId);
+    expect(got).toContain(D4);
+    expect(got).not.toContain(owners[19]);
+  });
+
   it("GN3 허가 행 없는 관리자 편집자: 허가 행이 생기면 옛 관계는 끝난다", async () => {
     const stub = freshStub();
     await allowAt(stub, B2, T0);

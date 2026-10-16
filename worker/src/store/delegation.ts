@@ -19,7 +19,8 @@ export const DONE_WINDOW_MS = 120_000;
 /**
  * 당사자 하나가 지금도 그 관계를 맺은 허가 세대인가(구현 중 변경 105 (라)). 세대는 허가 행이다:
  * 숫자 = 그 당사자 허가 행의 added_at이 같을 때만(관리자 여부와 상관없다), NULL = 허가 행 없는 관리자로 맺음 → 지금도 관리자이고 허가 행이 없을 때만.
- * 허가 행이 생기면 NULL 관계는 끝나므로 한 당사자에게 살아 있는 세대는 늘 하나이고 상한(10·20)이 그 세대 안에서 지켜진다
+ * 허가 행이 생기면 NULL 관계는 끝나므로 한 당사자 자신에게 살아 있는 세대는 늘 하나다. 반대 당사자의 NULL 세대는 재등록으로 되살아날 수 있어
+ * 판정 통과 행 수는 상한(10·20)을 넘을 수 있다. 권한·목록은 그 위에 순위 상한을 더한 granted가 정한다(구현 중 변경 105 (타))
  */
 export function partyOk(allowedAt: number | null, addedNow: number | null, loginId: string, admins: readonly string[]): boolean {
   if (admins.length === 0) return false;
@@ -102,11 +103,37 @@ function dropInvite(db: Db, hash: string): void {
 
 type Pending = EditorView & { readonly tokenHash: string };
 
-/** 주인의 활성 편집자 + 기다리는 편집자(유효한 청구 초대, 활성과 같은 채널은 뺀다) + 유효한 미청구 초대 만료(최댓값 또는 null). 상한 셈과 editorsOf가 같이 쓴다 */
-function ownerSide(db: Db, ownerChannelId: string, admins: readonly string[], now: number): { active: EditorView[]; pending: Pending[]; openUntil: number | null } {
+/** 주인의 판정 통과 위임 행(created_at, editor_channel_id 오름차순) */
+function ownerRows(db: Db, ownerChannelId: string, admins: readonly string[]): DelegationRow[] {
+  return db.all<DelegationRow>(`${LIVE_SELECT} AND d.owner_channel_id = ? ORDER BY d.created_at, d.editor_channel_id`, ownerChannelId).filter((r) => delegationActive(r, admins));
+}
+/** 편집자의 판정 통과 위임 행(created_at, owner_channel_id 오름차순) */
+function editorRows(db: Db, editorLoginId: string, admins: readonly string[]): DelegationRow[] {
+  return db.all<DelegationRow>(`${LIVE_SELECT} AND d.editor_channel_id = ? ORDER BY d.created_at, d.owner_channel_id`, editorLoginId).filter((r) => delegationActive(r, admins));
+}
+
+/**
+ * 권한이 나가는 위임(구현 중 변경 105 (타)): 판정 통과 ∧ 주인 쪽 순위 < EDITORS_MAX ∧ 편집자 쪽 순위 < DELEGATIONS_MAX.
+ * 두 순위는 판정 통과 행에서 센다(순환 없음). 반대 당사자의 NULL 세대가 되살아나 한쪽이 상한을 넘어도
+ * 권한을 받는 쪽과 목록에 보이는 쪽이 같은 규칙이라 어긋나지 않고, 넘친 가장 늦은 관계는 양쪽 모두에서 잠든다(닫힌 쪽)
+ */
+function granted(db: Db, r: DelegationRow, admins: readonly string[]): boolean {
+  const o = ownerRows(db, r.owner_channel_id, admins).findIndex((x) => x.editor_channel_id === r.editor_channel_id);
+  const e = editorRows(db, r.editor_channel_id, admins).findIndex((x) => x.owner_channel_id === r.owner_channel_id);
+  return o >= 0 && o < EDITORS_MAX && e >= 0 && e < DELEGATIONS_MAX;
+}
+
+/**
+ * 주인의 판정 통과 편집자(active, 상한 셈용) + 권한이 나가는 편집자(shown, 목록용) + 기다리는 편집자(유효한 청구 초대, 판정 통과 편집자와 같은 채널은 뺀다)
+ * + 유효한 미청구 초대 만료(최댓값 또는 null). 상한 셈과 editorsOf가 같이 쓴다
+ */
+function ownerSide(db: Db, ownerChannelId: string, admins: readonly string[], now: number): { active: EditorView[]; shown: EditorView[]; pending: Pending[]; openUntil: number | null } {
   const active: EditorView[] = [];
-  for (const r of db.all<DelegationRow>(`${LIVE_SELECT} AND d.owner_channel_id = ? ORDER BY d.created_at, d.editor_channel_id`, ownerChannelId)) {
-    if (delegationActive(r, admins)) active.push({ channelId: r.editor_channel_id, channelName: r.editor_name ?? "", since: r.created_at, status: "active" });
+  const shown: EditorView[] = [];
+  for (const r of ownerRows(db, ownerChannelId, admins)) {
+    const v: EditorView = { channelId: r.editor_channel_id, channelName: r.editor_name ?? "", since: r.created_at, status: "active" };
+    active.push(v);
+    if (granted(db, r, admins)) shown.push(v);
   }
   const pending: Pending[] = [];
   let openUntil: number | null = null;
@@ -120,16 +147,14 @@ function ownerSide(db: Db, ownerChannelId: string, admins: readonly string[], no
     if (active.some((a) => a.channelId === who) || pending.some((p) => p.channelId === who)) continue;
     pending.push({ channelId: who, channelName: r.claimed_name ?? "", since: r.claimed_at ?? r.created_at, status: "pending", tokenHash: r.token_hash });
   }
-  return { active, pending, openUntil };
+  return { active, shown, pending, openUntil };
 }
 
-/** 편집자의 활성 위임(created_at, owner_channel_id 오름차순). 자르기는 호출자가 한다 */
+const toDelegated = (r: DelegationRow): DelegatedChannel => ({ channelId: r.owner_channel_id, channelName: r.owner_name ?? "", since: r.created_at });
+
+/** 편집자의 판정 통과 위임(상한 셈용). 권한이 나가는 것은 delegationsOf다 */
 function editorSide(db: Db, editorLoginId: string, admins: readonly string[]): DelegatedChannel[] {
-  const out: DelegatedChannel[] = [];
-  for (const r of db.all<DelegationRow>(`${LIVE_SELECT} AND d.editor_channel_id = ? ORDER BY d.created_at, d.owner_channel_id`, editorLoginId)) {
-    if (delegationActive(r, admins)) out.push({ channelId: r.owner_channel_id, channelName: r.owner_name ?? "", since: r.created_at });
-  }
-  return out;
+  return editorRows(db, editorLoginId, admins).map(toDelegated);
 }
 
 /** 같은 주인·편집자 쌍의 청구를 모두 지운다(수락·자동 완성·그만두기·빼기 뒤 남은 청구가 위임을 되살리지 않게) */
@@ -318,18 +343,22 @@ export function completeClaimed(db: Db, channelId: string, traced: readonly stri
 /** 방금(DONE_WINDOW_MS 안에) 맺어진 위임 중 가장 늦은 하나. 완료 페이지가 쓴다. 쓰기 0 */
 export function recentDelegationFor(db: Db, editorLoginId: string, admins: readonly string[], now: number): DelegatedChannel | null {
   let best: DelegatedChannel | null = null;
-  for (const d of editorSide(db, editorLoginId, admins)) if (d.since > now - DONE_WINDOW_MS && (best === null || d.since >= best.since)) best = d;
+  for (const d of delegationsOf(db, editorLoginId, admins)) if (d.since > now - DONE_WINDOW_MS && (best === null || d.since >= best.since)) best = d;
   return best;
 }
 
+/** 권한이 나가는 맡은 채널(granted). 토큰 묶음·me·완료 페이지가 쓴다 */
 export function delegationsOf(db: Db, editorLoginId: string, admins: readonly string[]): DelegatedChannel[] {
-  return editorSide(db, editorLoginId, admins).slice(0, DELEGATIONS_MAX);
+  return editorRows(db, editorLoginId, admins)
+    .slice(0, DELEGATIONS_MAX)
+    .filter((r) => granted(db, r, admins))
+    .map(toDelegated);
 }
 
 export function editorsOf(db: Db, ownerChannelId: string, admins: readonly string[], now: number): EditorsView {
   const s = ownerSide(db, ownerChannelId, admins, now);
   const waiting: EditorView[] = s.pending.map(({ tokenHash: _t, ...e }) => e);
-  return { editors: [...s.active, ...waiting].slice(0, EDITORS_MAX), pendingInviteUntil: s.openUntil };
+  return { editors: [...s.shown, ...waiting].slice(0, EDITORS_MAX), pendingInviteUntil: s.openUntil };
 }
 
 /** 주인이 편집자를 뺀다(활성 위임 회수 + 기다리는 초대 지움). 판정식은 보지 않는다: 무효 행이어도 회수로 닫는 것이 맞다 */

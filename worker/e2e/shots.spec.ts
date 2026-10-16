@@ -5,8 +5,8 @@
 import { expect, test } from "@playwright/test";
 import { FIXED_NOW, ORIGIN, PAGES, serve } from "./pages";
 
-/** 찍는 여덟 페이지(계약 §5) */
-const SHOT_PAGES = ["landing-anon", "landing-member-mac", "admin", "admin-confirm", "done-denied", "login-confirm", "error-404", "help"] as const;
+/** 찍는 열두 페이지(계약 §5, 위임 넷은 구현 중 변경 106) */
+const SHOT_PAGES = ["landing-anon", "landing-member-mac", "admin", "admin-confirm", "done-denied", "login-confirm", "error-404", "help", "invite-anon", "invite-confirm", "invite-gone", "delegation-done"] as const;
 
 /** 테마 셋: forced는 라이트 위에 forced-colors를 켠 것이다 */
 const THEMES = [

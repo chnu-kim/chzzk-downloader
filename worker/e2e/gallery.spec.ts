@@ -1,4 +1,4 @@
-// design-worker 갤러리(docs/design/system/governance.md §2.6b, 계약 §5): 열여섯 페이지를 환경 행렬로 돌며
+// design-worker 갤러리(docs/design/system/governance.md §2.6b, 계약 §5): 스물세 페이지를 환경 행렬로 돌며
 // axe · 대상 크기 · 가로 스크롤 · forced-colors 포커스 링 · contrast 계산값 · 채움 버튼 수 · CSP 위반 · 320 리플로우 · 랜딩 고지 위치를 본다.
 // 프로젝트 `gallery`(playwright.config.ts)에서만 돈다. 페이지는 순수 렌더 함수의 응답을 가짜 출처로 내보낸 것이다(pages.ts).
 // axe는 page.evaluate(소스)로 넣는다: CDP 평가라 CSP를 타지 않는다. addScriptTag·bypassCSP는 쓰지 않는다(CSP 회귀 검사가 사라진다).
@@ -165,7 +165,7 @@ test.describe("320 리플로우", () => {
   }
 });
 
-test("페이지 목록은 열여섯이고 이름이 겹치지 않는다", () => {
-  expect(PAGES.length).toBe(16);
-  expect(new Set(PAGES.map((p) => p.name)).size).toBe(16);
+test("페이지 목록은 스물셋이고 이름이 겹치지 않는다", () => {
+  expect(PAGES.length).toBe(23);
+  expect(new Set(PAGES.map((p) => p.name)).size).toBe(23);
 });

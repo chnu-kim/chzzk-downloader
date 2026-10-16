@@ -8,6 +8,7 @@ import { LICENSES } from "../../src/http/licenses.generated";
 import { AUDIT_CAP, DENIED_CAP, DENIED_KEEP_MS } from "../../src/store/allowlist";
 import { FLOW_TTL_MS } from "../../src/store/flows";
 import { REFRESH_TTL_MS, SESSION_MAX_MS, WEB_TTL_MS } from "../../src/store/sessions";
+import { INVITE_CLAIMED_KEEP_MS, REVOKED_DELEGATION_KEEP_MS } from "../../src/store/delegation";
 import { REVOKED_KEEP_MS } from "../../src/store/sweep";
 import { createFakeChzzk, FAKE_ACCOUNTS, type FakeChzzk } from "../fake-chzzk.mjs";
 import { installFakeChzzk, type FakeNet } from "../network";
@@ -153,6 +154,18 @@ describe("/privacy", () => {
     }
   });
 
+  it("편집자 절의 보관 일수 = 코드 상수이고 쓰는 곳 절과 받지 않는 정보 절 사이에 있다", async () => {
+    const t = await (await new Browser().get("/privacy")).text();
+    expect(Number.isInteger(REVOKED_DELEGATION_KEEP_MS / DAY)).toBe(true);
+    expect(Number.isInteger(INVITE_CLAIMED_KEEP_MS / DAY)).toBe(true);
+    // 둘째 인자는 허가를 기다리는 청구의 보관 기간이다(지금은 같은 30일이라 인자를 바꿔 넣어도 통과하지 않게 함수 자체를 따로 본다)
+    expect(t).toContain(`<h2>${COPY.privacy.editors.title}</h2><p>${escapeHtml(COPY.privacy.editors.body(REVOKED_DELEGATION_KEEP_MS / DAY, INVITE_CLAIMED_KEEP_MS / DAY))}</p>`);
+    expect(COPY.privacy.editors.body(1, 2)).toContain("허가를 기다리는 동안");
+    expect(COPY.privacy.editors.body(1, 2)).toMatch(/최대 2일 보관해요.*1일 뒤 지워지고/);
+    expect(t.indexOf(`<h2>${COPY.privacy.use.title}</h2>`)).toBeLessThan(t.indexOf(`<h2>${COPY.privacy.editors.title}</h2>`));
+    expect(t.indexOf(`<h2>${COPY.privacy.editors.title}</h2>`)).toBeLessThan(t.indexOf(`<h2>${COPY.privacy.exclude.title}</h2>`));
+  });
+
   it("관리자는 GitHub 계정 이름, 연락처는 GitHub 이슈 링크다", async () => {
     const t = await (await new Browser().get("/privacy")).text();
     expect(t).toContain(`<dt>${COPY.adminsTitle}</dt><dd>${COPY.privacy.operator}</dd>`);
@@ -162,7 +175,7 @@ describe("/privacy", () => {
   it("받는 것·받지 않는 것·해외 서버·끊는 길 절이 있다", async () => {
     const t = await (await new Browser().get("/privacy")).text();
     const p = COPY.privacy;
-    for (const h of [p.collect.title, p.use.title, p.exclude.title, p.cookie.title, p.keep.title, p.abroad.title, p.cut.title, p.contact.title]) expect(t).toContain(`<h2>${h}</h2>`);
+    for (const h of [p.collect.title, p.use.title, p.editors.title, p.exclude.title, p.cookie.title, p.keep.title, p.abroad.title, p.cut.title, p.contact.title]) expect(t).toContain(`<h2>${h}</h2>`);
   });
 });
 

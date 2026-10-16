@@ -75,6 +75,16 @@ function flashNotice(kind: FlashKind): SafeHtml {
       return notice({ tone: "warning", body: COPY.alreadyDone, banner: true, id: "flash" });
     case "sessionGone":
       return notice({ tone: "warning", body: COPY.sessionGone, banner: true, id: "flash" });
+    case "delegationLeft":
+      return notice({ tone: "info", body: COPY.delegationLeft, banner: true, id: "flash" });
+    case "inviteOwn":
+      return notice({ tone: "info", body: COPY.inviteOwn, banner: true, id: "flash" });
+    case "inviteFull":
+      return notice({ tone: "warning", body: COPY.inviteFull, banner: true, id: "flash" });
+    case "inviteGone":
+      return notice({ tone: "warning", body: COPY.inviteGone, banner: true, id: "flash" });
+    case "alreadyEditor":
+      return notice({ tone: "info", body: COPY.alreadyEditor, banner: true, id: "flash" });
   }
 }
 

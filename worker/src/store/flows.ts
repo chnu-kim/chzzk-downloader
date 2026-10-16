@@ -6,7 +6,7 @@
 // 예외 하나: 앱이 수령(redeem ok)한 흐름은 now + 2분으로 앞당긴다(허용 채널의 로그인이 끝난 뒤라 슬롯 순환과 무관, 구현 중 변경 28 (마)).
 import { CHANNEL_ID, NAME_MAX, admission, clip, recordDenied, touchAllowedName } from "./allowlist";
 import type { Db } from "./db";
-import { acceptInvite, claimInvite } from "./delegation";
+import { acceptInvite, claimInvite, claimedInviteOwner } from "./delegation";
 import { activate, insertUnclaimed, insertWeb, type TokenPair } from "./sessions";
 import type {
   ConsumeResult,
@@ -233,13 +233,17 @@ export function finish(
 }
 
 /** 완료 페이지: binder 쿠키로 자기 흐름의 결과를 본다 */
-export function doneView(db: Db, binderHash: string, now: number): DoneView | null {
-  const r = db.first<{ kind: FlowKind; status: DoneView["status"]; channel_name: string | null; channel_id: string | null }>(
-    "SELECT kind, status, channel_name, channel_id FROM flow WHERE binder_hash = ? AND expires_at > ? AND status IN ('ok','denied','cancelled','failed') LIMIT 1",
+export function doneView(db: Db, binderHash: string, admins: readonly string[] | null, now: number): DoneView | null {
+  const r = db.first<{ kind: FlowKind; status: DoneView["status"]; channel_name: string | null; channel_id: string | null; invite_hash: string | null }>(
+    "SELECT kind, status, channel_name, channel_id, invite_hash FROM flow WHERE binder_hash = ? AND expires_at > ? AND status IN ('ok','denied','cancelled','failed') LIMIT 1",
     binderHash,
     now,
   );
-  return r === null ? null : { kind: r.kind, status: r.status, channelName: r.channel_name, channelId: r.channel_id };
+  if (r === null) return null;
+  // 거부된 웹 흐름 행은 invite_hash를 그대로 품고 남는다: 그 초대를 이 채널이 청구했고 아직 유효할 때만 주인 이름을 준다
+  const inviteOwnerName =
+    r.status === "denied" && r.invite_hash !== null && r.channel_id !== null && admins !== null ? claimedInviteOwner(db, r.invite_hash, r.channel_id, admins, now) : null;
+  return { kind: r.kind, status: r.status, channelName: r.channel_name, channelId: r.channel_id, inviteOwnerName };
 }
 
 /**

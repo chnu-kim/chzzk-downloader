@@ -6,6 +6,7 @@ import type { Ctx } from "../routes";
 import { COPY } from "./copy";
 import { flashCookie } from "./flash";
 import type { Nav } from "./layout";
+import type { WebCheckResult } from "../store/types";
 import { noticePage } from "./pages";
 import { FORM_MAX, isFormContentType, readCapped, sameOriginPost } from "./request";
 
@@ -17,6 +18,10 @@ export interface WebSession {
   readonly channelName: string;
   readonly isAdmin: boolean;
   readonly csrf: string;
+}
+/** webCheck 성공 결과 → WebSession(readWebSession과 초대 페이지가 같은 매핑을 쓴다) */
+export function webSessionOf(c: Extract<WebCheckResult, { ok: true }>): WebSession {
+  return { sessionId: c.sessionId, channelId: c.channelId, ownerChannelId: c.ownerChannelId, channelName: c.channelName, isAdmin: c.isAdmin, csrf: c.csrf };
 }
 export type WebSessionResult = { readonly ok: true; readonly s: WebSession } | { readonly ok: false; readonly clear: string | null };
 
@@ -31,14 +36,11 @@ export async function readWebSession(req: Request, ctx: Ctx): Promise<WebSession
   if (!isToken("web", token)) return { ok: false, clear };
   const c = await ctx.store.webCheck(await sha256Hex(token), ctx.config.adminChannelIds, ctx.now);
   if (!c.ok) return { ok: false, clear };
-  return {
-    ok: true,
-    s: { sessionId: c.sessionId, channelId: c.channelId, ownerChannelId: c.ownerChannelId, channelName: c.channelName, isAdmin: c.isAdmin, csrf: c.csrf },
-  };
+  return { ok: true, s: webSessionOf(c) };
 }
 
-/** 303. 위치는 쿼리 없는 두 곳뿐이다 */
-export function seeOther(location: "/" | "/admin", cookies: readonly string[] = []): Response {
+/** 303. 위치는 쿼리 없는 세 곳뿐이다 */
+export function seeOther(location: "/" | "/admin" | "/me/delegations/done", cookies: readonly string[] = []): Response {
   const headers = new Headers({ Location: location });
   for (const c of cookies) headers.append("Set-Cookie", c);
   return new Response(null, { status: 303, headers });

@@ -13,7 +13,7 @@ import { log } from "../core/log";
 import { isHexHash, isId, isSecret, newId, newSecret, newToken, sha256Hex, type TokenKind } from "../core/token";
 import { CHANNEL_ID, adminView, allow, allowDenied, audit, clip, disallow, dismissDenied } from "./allowlist";
 import { Db } from "./db";
-import { acceptInvite, completeClaimed, createInvite, delegationsOf, editorsOf, inviteOpen, inviteView, leaveDelegation, recentDelegationFor, removeEditor, tracedClaims } from "./delegation";
+import { acceptInvite, completeClaimed, createInvite, delegationsOf, editorsOf, inviteOpen, invitedBy, inviteView, leaveDelegation, recentDelegationFor, removeEditor, tracedClaims } from "./delegation";
 import {
   CLIENT_MAX,
   FLOW_CAP,
@@ -47,6 +47,7 @@ import type {
   DoneView,
   FinishResult,
   FinishSettled,
+  InvitePageResult,
   InviteView,
   LoginLogHint,
   LoginOutcome,
@@ -228,9 +229,11 @@ export class AuthStore extends DurableObject<Env> {
     return r;
   }
 
-  async doneView(binderHash: string, now: number): Promise<DoneView | null> {
+  /** 꼬리 인자 admins: 배열이 아니면 초대 줄 없음(구현 중 변경 106, 105 (다) 규칙) */
+  async doneView(binderHash: string, now: number, admins?: readonly string[]): Promise<DoneView | null> {
     if (!isHexHash(binderHash)) return null;
-    return this.write(now, () => doneView(this.db, binderHash, now));
+    const adm = adminsOf(admins);
+    return this.write(now, () => doneView(this.db, binderHash, adm, now));
   }
 
   /** 앱 수령(구현 중 변경 88 (가)): grant 해시 + loginVerifier. 스로틀은 없다(grant는 추측할 수 없고 틀린 verifier는 쓰기 0, 88 (다)) */
@@ -303,8 +306,14 @@ export class AuthStore extends DurableObject<Env> {
 
   // ---- 관리 ----
 
-  async adminView(now: number): Promise<AdminView> {
-    return this.write(now, () => adminView(this.db, now));
+  /** 꼬리 인자 admins: 배열이 아니면 꼬리표 없음(구현 중 변경 106) */
+  async adminView(now: number, admins?: readonly string[]): Promise<AdminView> {
+    const adm = adminsOf(admins);
+    return this.write(now, () => {
+      const v = adminView(this.db, now);
+      if (adm === null) return v;
+      return { ...v, denied: v.denied.map((d) => ({ ...d, invitedBy: invitedBy(this.db, d.channelId, adm, now) })) };
+    });
   }
 
   async allow(channelId: string, note: string, by: string, now: number, admins?: readonly string[]): Promise<AllowResult> {
@@ -356,6 +365,18 @@ export class AuthStore extends DurableObject<Env> {
     if (!isHexHash(inviteHash) || adm === null) return null;
     if (viewerLoginId !== null && !CHANNEL_ID.test(viewerLoginId)) return null;
     return this.write(now, () => inviteView(this.db, inviteHash, viewerLoginId, adm, now));
+  }
+
+  /** 초대 페이지(구현 중 변경 106): 웹 세션 확인과 초대 보기를 한 트랜잭션에서 한다(인증 없는 요청도 RPC 1회, 38 (라)) */
+  async invitePage(inviteHash: string, cookieHash: string | null, admins: readonly string[], now: number): Promise<InvitePageResult> {
+    const adm = adminsOf(admins);
+    if (!isHexHash(inviteHash) || adm === null) return { web: null, view: null };
+    const c = isHexHash(cookieHash) ? cookieHash : null;
+    return this.write<InvitePageResult>(now, () => {
+      const w = c === null ? null : webCheck(this.db, c, adm, now);
+      const viewer = w !== null && w.ok ? w.channelId : null;
+      return { web: w, view: inviteView(this.db, inviteHash, viewer, adm, now) };
+    });
   }
 
   async acceptInvite(inviteHash: string, editorLoginId: string, editorName: string, admins: readonly string[], now: number): Promise<AcceptInviteResult> {

@@ -70,6 +70,8 @@ export type DoneView = {
   readonly status: "ok" | "denied" | "cancelled" | "failed";
   readonly channelName: string | null;
   readonly channelId: string | null;
+  /** 거부된 웹 흐름이 유효한 초대를 청구했을 때만 그 주인 이름, 그 밖 null(구현 중 변경 106) */
+  readonly inviteOwnerName: string | null;
 };
 export type RedeemResult =
   | { readonly status: "not_found" }
@@ -142,6 +144,8 @@ export type AdminView = {
     readonly firstAt: number;
     readonly lastAt: number;
     readonly attempts: number;
+    /** 유효한 청구 초대의 주인 이름(없으면 null, 구현 중 변경 106). AuthStore가 채운다 */
+    readonly invitedBy: string | null;
   }[];
   readonly sessions: readonly {
     readonly id: string;
@@ -172,6 +176,8 @@ export type ClaimInviteResult = { readonly ok: true; readonly ownerName: string 
 export type RemoveResult = { readonly ok: true } | { readonly ok: false; readonly code: "not_found" };
 /** finish의 초대 결과(웹 흐름에 invite_hash가 있을 때만) */
 export type InviteOutcome = "accepted" | "own" | "full" | "already" | "gone";
+/** 초대 페이지 RPC: 웹 세션 확인(쿠키가 없으면 null)과 초대 보기를 한 트랜잭션에서(구현 중 변경 106) */
+export type InvitePageResult = { readonly web: WebCheckResult | null; readonly view: InviteView | null };
 export type StartWebInviteResult = StartWebResult | { readonly ok: false; readonly code: "gone" };
 /** /api/me 한 트랜잭션: check + 맡은 채널 + 내 편집자 */
 export type MeResult = (Extract<CheckResult, { ok: true }> & { readonly delegatedChannels: readonly DelegatedChannel[] } & EditorsView) | SessionDenial;

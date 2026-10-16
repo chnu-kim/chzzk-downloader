@@ -758,6 +758,11 @@
       "key": "confirmDisallow.title",
       "word": "?",
       "reason": "확인 페이지(D54)의 제목이 앱 dialog.*.title과 같은 위치다(content.md §15.3)"
+    },
+    {
+      "key": "invite.confirm.title",
+      "word": "?",
+      "reason": "초대 확인 페이지의 제목이 앱 dialog.*.title과 같은 위치다(확인 한 번, delegation.md §5.2 (나), content.md §15.3)"
     }
   ]
 }

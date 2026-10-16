@@ -22,10 +22,13 @@ Worker가 그리는 페이지는 한 골격(`htmlPage`, worker.md §4 공통·�
 | 옛 앱 안내 | `GET`·`POST /auth/login/<예약 handle>` | 앱 | 없음 | 루프백 전 앱(v0.1.1 이하)이 여는 200 안내 페이지 `outdatedApp`(§6.2). DO를 부르지 않는다(`worker.md` 88 (가) "옛 앱 미끼"·89 (가)) |
 | 로그인 결과 | `GET /auth/done` | 앱 | 없음 | 웹 흐름의 denied·cancelled·failed와 앱 흐름의 grant 없는 failed(§6.1). 웹 ok는 303 `/`, 앱 흐름의 결과는 앱 수신기가 그린다(§6.5) |
 | 안내·오류 | 4xx·5xx | 앱 | — | 상태별 제목(§6). "안내" 하나로 뭉치지 않는다 |
+| 편집자 초대 | `GET /invite/:token` | 앱 | 웹 세션 선택 | 비로그인은 고지 네 줄 + [치지직으로 로그인], 로그인했으면 [편집자 되기] 확인(delegation.md §5.2). 상태별 제목 `invite.own.title`·`invite.gone.title`·`invite.full.title`. quiet·noindex |
+| 편집자 완료 | `GET /me/delegations/done` | 앱 | 웹 세션 | `inviteDone.title` + [편집자 그만두기](테두리, 확인 없음, 303 + flash). 최근 2분 안의 위임만 |
 | 관리 | `GET /admin` | 앱 | 관리자 | 표 5개와 폼(§7·§8) |
 | 허가 빼기 확인 | `GET /admin/…/disallow`(신설) | 앱 | 관리자 | D54의 유일한 확인 페이지(§7.3) |
 | 도움말·처리방침·라이선스 | `GET /help`·`/privacy`·`/licenses`(신설) | 읽기 | 없음 | §10. `/terms`는 두지 않는다(D60) |
 | 공지 | `GET /notice` | — | 없음 | JSON이다. 페이지가 아니므로 이 문서의 대상이 아니다(D41, g-outage §4) |
+| (대상 밖) 앱 편집자 API | `POST /api/editors/*`·`/api/delegations/leave` | — | 앱 access | JSON이다. 페이지가 아니다 |
 | (대상 밖) 앱 수신 | `POST /auth/redeem`·`POST /auth/poll` | — | 없음 | JSON이다. `/auth/poll`은 수령하지 않는 404 비석이다(`worker.md` 88 (가)). 페이지가 아니다 |
 | (대상 밖) 수신기 결과 | `http://127.0.0.1:<포트>/chzzk-downloader/login` | — | — | Worker가 아니라 **앱 셸**이 그리는 브라우저 페이지다. 규칙은 §6.5 |
 
@@ -182,7 +185,7 @@ CSP는 그대로다(worker.md, `A-WORKER` §6.1): `default-src 'none'; style-src
 | 상태 | `<title>` | `<h1>` | 아이콘(색) | 본문 | 다음 행동 |
 |---|---|---|---|---|---|
 | ok | 로그인했어요 · VOD 클립 다운로더 | `doneOk.title` | `circle-check` `--fg-muted` | 없음(어느 흐름인지 말하지 않는다) | 링크 하나: "처음으로". 콜백은 ok로 이 페이지에 보내지 않는다: 웹 ok는 303 `/`(F 삭제)에 flash "로그인했어요"(§6.3), 앱 ok는 앱 수신기 페이지(§6.5)다. 이 행은 `/auth/done?r=ok`를 손으로 연 경우뿐이다 |
-| denied(웹 흐름) | 이 채널은 사용 허가가 없어요 · … | `doneDenied.title` | `circle-x` `--danger-ink`(막힘 = danger, `components.md` §2.12 tone 기준. 앱의 거부 화면과 같은 은유) | Notice(중립): "채널: {이름} · 채널 ID: {id}"(본인에게 비밀이 아니다, worker.md §8.3) → `doneDenied.body` → `doneDenied.next`("허가를 받은 뒤 다시 로그인해 주세요.") | 링크 하나: "처음으로"(랜딩에 로그인 폼이 있다). 이 페이지에 폼을 두지 않는다 |
+| denied(웹 흐름) | 이 채널은 사용 허가가 없어요 · … | `doneDenied.title` | `circle-x` `--danger-ink`(막힘 = danger, `components.md` §2.12 tone 기준. 앱의 거부 화면과 같은 은유) | Notice(중립): "채널: {이름} · 채널 ID: {id}"(본인에게 비밀이 아니다, worker.md §8.3) → (초대로 들어온 흐름만 `doneDenied.invite`, worker.md 구현 중 변경 106 (마)) → `doneDenied.body` → `doneDenied.next`("허가를 받은 뒤 다시 로그인해 주세요.") | 링크 하나: "처음으로"(랜딩에 로그인 폼이 있다). 이 페이지에 폼을 두지 않는다 |
 | cancelled(웹 흐름) | 로그인을 취소했어요 · … | `doneCancelled.title` | `info` `--fg-muted` | `doneCancelled.body`("처음 화면에서 다시 로그인할 수 있어요.") | 링크 하나 |
 | failed | 오류: 로그인하지 못했어요 · … | `doneFailed.title` | `circle-x` `--danger-ink` | 앱 흐름이거나 흐름을 모르면 `doneFailed.body`("앱에서 다시 시도해 주세요."), 웹 흐름이면 `doneFailed.webBody`("처음 화면에서 다시 로그인해 주세요.") + `inApp === "kakao"`일 때만 `inAppHint` 한 단락(앱 안 화면에서는 끊길 수 있으니 기본 브라우저에서 열기) | 링크 하나 |
 
@@ -219,7 +222,7 @@ CSP는 그대로다(worker.md, `A-WORKER` §6.1): `default-src 'none'; style-src
 | 멱등 | 삭제·끊기 계열은 이미 처리된 대상이면 오류가 아니라 `303` + flash `alreadyDone`("이미 처리됐어요."). `404`는 형식이 틀린 경로에만 | `G-WEB-R20`·g-web G2, GOV.UK 버튼(서버 중복 방어) | `worker` 테스트(같은 삭제 POST 두 번 모두 303) |
 | 세션 만료 POST | `303 /` + flash(경고 톤) `sessionGone`("로그인이 만료됐어요. 다시 로그인한 뒤 같은 동작을 해 주세요."). 폼 값은 보존하지 않는다 | `G-WEB-R23`·g-web G1 | `worker` 테스트 |
 
-flash와 `seeOther` "쿼리 없는 두 곳" 계약의 보완은 worker.md 구현 중 변경이 필요하다(§14).
+flash 종류(여덟)와 `seeOther` 위치(쿼리 없는 세 곳)는 `worker.md` 구현 중 변경 106이 정한다.
 
 ### 6.4 로그인 확인 페이지(확인 코드 없음)
 
@@ -263,6 +266,9 @@ flash와 `seeOther` "쿼리 없는 두 곳" 계약의 보완은 worker.md 구현
 |---|---|---|---|---|
 | 치지직으로 로그인 | 랜딩(비로그인) | primary | — | 그 페이지의 다음 단계 |
 | {OS}용 받기 | 랜딩(허용) | primary(링크 버튼, lg) | — | 유일한 채움 |
+| 치지직으로 로그인(초대) | 초대 페이지(비로그인) | primary | — | 그 페이지의 다음 단계, 로그인 = 수락 |
+| 편집자 되기 | 초대 확인 페이지 | primary | 이 페이지가 확인 한 번 | 이미 로그인된 브라우저에서만 |
+| 편집자 그만두기 | 편집자 완료 페이지 | secondary(neutral) | 없음 + flash | 되돌릴 수 있다(새 초대) |
 | 계속 | 로그인 확인 | primary | — | `A-WORKER` §3.1 결함 해소 |
 | 로그아웃 | 랜딩 | secondary | 없음 | 되돌리기 쉽다(다시 로그인) |
 | 끊기(내 기기·관리자 세션) | 표 행 | secondary(neutral) | 없음 + flash | `G-WEB-R21` (가). 끊긴 기기는 다시 로그인한다 |
@@ -485,3 +491,4 @@ g-web §4.2 G1~G7(세션 없는 POST 무안내, 재삭제 404, 성공 피드백 
 34. **시각 대조(검증 담당)가 고친 것.** ① 읽기 척도 본문: body가 `--text-body`를 13으로 먼저 계산해 상속하므로 `.page[data-scale="reading"]`가 글자 크기·행간을 다시 선언한다(15/22, 헤더·바닥글은 13). ② 표: `th`는 `nowrap`, `td`·`th`는 `overflow-wrap: normal`이라 한글을 글자 단위로 끊지 않고 좁으면 `.scroll`이 스크롤한다. 숫자 열 `td.num`도 `nowrap`. ③ 폼: `section > h3` 위 24, `form` 안 자식 사이 12. ④ 599px 이하의 `pre`는 `pre-wrap` + `overflow-wrap: anywhere`(복사 글자는 같다). ⑤ `/admin*`의 404(`notFound`)는 비로그인 nav([로그인] 포함)로 낸다(§15-9는 `/auth/*`만 뺀다). 고치지 않은 것: forced-colors의 `.btn-primary` 글자(`Highlight`/`HighlightText`는 foundations §2.7대로이고 macOS headless의 반투명 `Highlight` 인공물일 수 있어 Linux CI 기준선에서 확인한다), 경고 Notice 굵기(CSS에 굵기 규칙이 없다, 재현되지 않으면 닫는다), `dataTable`의 `role=region`은 `aria-labelledby`(caption)로 이미 이름이 있다. §8의 `YYYY-MM-DD HH:MM`은 `format.ts`(D49)의 `2025. 12. 31. 오후 11:00`이 맞다.
 35. **표 칸의 시각·ID·버튼(CI 기준선에서 찾은 표 결함).** ① 시각은 `when()`(`ui.ts`)이 날짜(`2025. 12. 31.`)와 시각(`오후 11:00`) 두 덩어리(`.when`, `nowrap`)로 그리고, 칸이 좁을 때만 둘 사이에서 줄이 바뀐다(글자는 `kst()`와 같다). 시각 칸은 `td.num`이 아니라 평범한 `td`다(왼쪽 정렬, 머리와 같은 쪽). ② 표 안 `.mono`(채널 ID)는 `nowrap`이고 `word-break: normal`이라 한 글자만 다음 줄로 떨어지지 않는다(좁으면 `.scroll`이 가로로 스크롤, 1280에서는 넘치지 않는다). ③ 표 칸의 `.actions`는 `nowrap`, 간격 `--space-8`이라 [허가]·[지우기]가 한 줄에 나란히 놓인다. ④ 표 양 끝 칸은 바깥쪽 안쪽 여백이 0이다(본문 가장자리와 맞추고 열 밖으로 새지 않게). 앞 항목 34 ②의 `td.num` `nowrap`은 그대로다. ⑤ (2차, 폭 여유에 기대지 않는 구조) 동작 칸(`th:has(> .sr-only)`·`td:has(> .actions)`·`td:has(> form)`)은 `width: 1%` + `nowrap`으로 내용 폭에 고정하고, 표 안 `.mono`는 `overflow-wrap: anywhere`라 글꼴이 넓은 환경에서는 이름·메모 칸의 ID가 줄어들며 줄바꿈한다(1280에서 `.scroll` 가로 넘침 없음, 글꼴 폭을 Verdana로 키워 확인. 599px 이하는 전부 `nowrap` + 스크롤). ⑥ 칸 안 폼은 `form > * + *`의 위 간격을 쓰지 않는다(숨은 입력 뒤 [끊기]가 다른 칸보다 12px 내려가던 것).
 36. **운영자·연락처를 채웠다(2026-10-10 사용자 결정).** 운영자는 GitHub 계정 이름 `chnu-kim`(`privacy.operator`, 화면 이름은 content §11대로 "관리자"), 연락처는 저장소 GitHub Issues(`issuesUrl`)다. `landing.contact`는 "문의는 GitHub 이슈로 남겨 주세요. 이슈는 공개되니 쿠키·비밀번호·개인 정보는 적지 마세요."이고, 링크 라벨 `landing.contactLink`("GitHub 이슈 열기")를 랜딩 "막히면" 절과 `/privacy` 연락처 칸에 `<a rel="noopener noreferrer">`로 그린다(외부 링크는 새 탭 없이 `noopener noreferrer`만). `privacy.placeholder.*`는 없앴다. 남은 것은 `/privacy` 법적 문안 검토뿐이다.
+37. **편집자 위임 화면(①-3, `worker.md` 구현 중 변경 106).** 새 화면(초대·초대 확인·자기 초대·완료)은 §12 결함 대조표의 "적용 뒤" 열을 채우는 길이 아니다: §12는 a-worker 감사가 찾은 결함 26건의 표라 새 화면에 해당하는 결함 행이 없다. 새 화면의 강제(테스트 이름·gate)는 이 항목과 `worker.md` 구현 중 변경 106이 적는다. 채움 버튼은 비로그인 1 · 확인 1 · 자기 초대 0 · 완료 0 · 없음(404)·상한(409) 0이고, 상태 코드는 열 수 있음 200 · 자기 초대 200(`info` 아이콘) · 상한 409(`triangle-alert`, `<title>` "오류: " 접두) · 없음·만료·사용됨·형식 밖 404(넷을 가르지 않는다)다. 이미 편집자면 GET·수락 POST·콜백 모두 303 + `alreadyEditor`("이미 이 초대를 보낸 채널의 편집자예요.")다. 멱등 행의 `alreadyDone`("이미 처리됐어요.")은 이 브라우저가 처리한 일이 없는 첫 방문에 맞지 않아 상태를 말하는 종류를 따로 두었다(`FlashKind` 여덟). 인앱 안내(`inAppHint`)를 초대 폼 아래에 두지 않고 휴대폰 차단 블록도 두지 않는다(로그인이 끊기면 기존 `/auth/done` 실패 페이지가 보인다, `G-WEB-R9`). 관리 화면의 초대 꼬리표는 Badge가 아니라 이름 아래 `.meta` 글자다(버튼·열은 그대로). 강제: `worker` 테스트 `test/http/invite.test.ts`·`test/unit/invite-view.test.ts`·`test/matrix.test.ts`, `design-worker` 갤러리(스물셋 페이지), `design-copy`(DC10).

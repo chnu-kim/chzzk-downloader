@@ -16,7 +16,7 @@ import type { DoneView } from "../../src/store/types";
 const CONFIG = { authorizeUrl: "https://chzzk.example.invalid/authorize", publicOrigin: "https://worker.test" } as unknown as Config;
 const CH = "0".repeat(30) + "c3";
 const CSRF = "C".repeat(43);
-const view = (o: Partial<DoneView>): DoneView => ({ kind: "web", status: "denied", channelName: "합성채널", channelId: CH, ...o });
+const view = (o: Partial<DoneView>): DoneView => ({ kind: "web", status: "denied", channelName: "합성채널", channelId: CH, inviteOwnerName: null, ...o });
 const DESKTOP: EntryContext = { kind: "desktop", os: "mac", inApp: null };
 const KAKAO: EntryContext = { kind: "phone", os: null, inApp: "kakao" };
 
@@ -172,8 +172,17 @@ describe("htmlPage 골격", () => {
   });
 
   it("flash: main의 첫 자식 배너 하나, 종류별 문구, 없으면 배너가 없다", async () => {
-    const want: Record<FlashKind, string> = { loggedIn: COPY.doneOk.title, alreadyDone: COPY.alreadyDone, sessionGone: COPY.sessionGone };
-    for (const kind of ["loggedIn", "alreadyDone", "sessionGone"] as const) {
+    const want: Record<FlashKind, string> = {
+      loggedIn: COPY.doneOk.title,
+      alreadyDone: COPY.alreadyDone,
+      sessionGone: COPY.sessionGone,
+      delegationLeft: COPY.delegationLeft,
+      inviteOwn: COPY.inviteOwn,
+      inviteFull: COPY.inviteFull,
+      inviteGone: COPY.inviteGone,
+      alreadyEditor: COPY.alreadyEditor,
+    };
+    for (const kind of ["loggedIn", "alreadyDone", "sessionGone", "delegationLeft", "inviteOwn", "inviteFull", "inviteGone", "alreadyEditor"] as const) {
       const t = await text(page({ scale: "app", nav: { kind: "auth" }, flash: kind }));
       expectSkeleton(t);
       const main = mainOf(t);
@@ -279,6 +288,23 @@ describe("donePage", () => {
     const xss = await donePage(CONFIG, "denied", view({ channelName: "<b>x</b>" }), null, DESKTOP).text();
     expect(xss).toContain("&lt;b&gt;x&lt;/b&gt;");
     expect(xss).not.toContain("<b>");
+  });
+
+  it("거부 + 초대: 초대 줄은 채널 정보 바로 뒤(본문 앞)에 있고, 주인 이름이 없으면 줄이 없다", async () => {
+    const t = await donePage(CONFIG, "denied", view({ inviteOwnerName: "합성주인" }), null, DESKTOP).text();
+    const line = COPY.doneDenied.invite("합성주인");
+    expect(t).toContain(`<p>${line}</p>`);
+    expect(t.indexOf(line)).toBeGreaterThan(t.indexOf("채널 ID:"));
+    expect(t.indexOf(line)).toBeLessThan(t.indexOf("관리자에게 채널 이름을 알려 주세요."));
+    expect(t.indexOf("관리자에게 채널 이름을 알려 주세요.")).toBeLessThan(t.indexOf("허가를 받은 뒤 다시 로그인해 주세요."));
+    // 허가 뒤에도 다시 로그인해야 하므로 "바로 받을 수 있어요"라고 약속하지 않는다
+    expect(line).not.toContain("바로");
+    expect(await donePage(CONFIG, "denied", view({}), null, DESKTOP).text()).not.toContain("초대는 기록해 뒀어요");
+    // 옛 DO의 응답(필드 없음)도 줄이 없다
+    const old = { kind: "web", status: "denied", channelName: "x", channelId: CH } as unknown as DoneView;
+    expect(await donePage(CONFIG, "denied", old, null, DESKTOP).text()).not.toContain("초대는 기록해 뒀어요");
+    const xss = await donePage(CONFIG, "denied", view({ inviteOwnerName: "<i>x</i>" }), null, DESKTOP).text();
+    expect(xss).toContain("&lt;i&gt;x&lt;/i&gt;");
   });
 
   it("취소·성공: 제목이 상태를 말한다(성공은 본문 없음), 링크는 처음으로 하나, 로그인 링크 없음", async () => {

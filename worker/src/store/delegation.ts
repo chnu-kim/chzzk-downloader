@@ -340,6 +340,21 @@ export function completeClaimed(db: Db, channelId: string, traced: readonly stri
   return made;
 }
 
+/** 거부 페이지 한 줄: 그 해시의 초대를 claimedBy가 청구했고 inviteValid면 주인 이름(없으면 ""), 아니면 null. 쓰기 0 */
+export function claimedInviteOwner(db: Db, hash: string, claimedBy: string, admins: readonly string[], now: number): string | null {
+  const r = inviteByHash(db, hash);
+  if (r === null || r.claimed_channel_id !== claimedBy || !inviteValid(r, admins, now)) return null;
+  return r.owner_name ?? "";
+}
+
+/** 관리 꼬리표: 그 채널이 청구한 초대 중 inviteValid인 첫 초대(claimed_at, token_hash 순)의 주인 이름, 없으면 null. 쓰기 0 */
+export function invitedBy(db: Db, channelId: string, admins: readonly string[], now: number): string | null {
+  for (const r of db.all<InviteRow>(`${INVITE_SELECT} WHERE i.claimed_channel_id = ? ORDER BY i.claimed_at, i.token_hash`, channelId)) {
+    if (inviteValid(r, admins, now)) return r.owner_name ?? "";
+  }
+  return null;
+}
+
 /** 방금(DONE_WINDOW_MS 안에) 맺어진 위임 중 가장 늦은 하나. 완료 페이지가 쓴다. 쓰기 0 */
 export function recentDelegationFor(db: Db, editorLoginId: string, admins: readonly string[], now: number): DelegatedChannel | null {
   let best: DelegatedChannel | null = null;

@@ -131,7 +131,7 @@ export function adminView(db: Db, now: number): AdminView {
       addedAt: r.added_at,
       activeSessions: r.active_sessions,
     })),
-    denied: denied.map((r) => ({ channelId: r.channel_id, channelName: r.channel_name, firstAt: r.first_at, lastAt: r.last_at, attempts: r.attempts })),
+    denied: denied.map((r) => ({ channelId: r.channel_id, channelName: r.channel_name, firstAt: r.first_at, lastAt: r.last_at, attempts: r.attempts, invitedBy: null })),
     sessions: sessions.map((r) => ({
       id: r.id,
       kind: r.kind,

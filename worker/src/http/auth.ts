@@ -18,9 +18,9 @@ import { isLoopbackPort, loopbackUrl } from "../core/loopback";
 import { isId, isSecret, isToken, sha256B64url, sha256Hex } from "../core/token";
 import type { Ctx } from "../routes";
 import { redeemEvent } from "../store/login-log";
-import type { ConsumeResult, FinishResult, LoginLogHint } from "../store/types";
+import type { ConsumeResult, FinishResult, InviteOutcome, LoginLogHint } from "../store/types";
 import { COPY } from "./copy";
-import { flashCookie } from "./flash";
+import { type FlashKind, flashCookie } from "./flash";
 import { type DoneR, donePage, loginConfirmPage, noticePage } from "./pages";
 import { readJsonObject, sameOriginPost } from "./request";
 import { errorJson, iso, json } from "./respond";
@@ -144,6 +144,28 @@ export async function webStart(req: Request, ctx: Ctx): Promise<Response> {
   return noticePage(ctx.config, 503, COPY.busy.title, COPY.retryLater.body);
 }
 
+/**
+ * POST /invite/:token/start (quiet 경로, 106): 초대 페이지의 [치지직으로 로그인]. 로그인이 곧 수락이다(delegation.md §5.1).
+ * 세션이 없는 POST라서 webStart와 같은 Origin·Sec-Fetch-Site 검사만 하고, IP 스로틀·흐름 상한 32도 같은 맵을 쓴다.
+ * 열 수 없는 초대는 흐름을 만들지 않는다. 토큰이 URL에 있어 ctx.log를 부르지 않는다
+ */
+export async function inviteStart(req: Request, ctx: Ctx): Promise<Response> {
+  if (!sameOriginPost(req, ctx.config.publicOrigin)) return noticePage(ctx.config, 403, COPY.badRequest.title, COPY.badRequest.body);
+  const gone = () => noticePage(ctx.config, 404, COPY.invite.gone.title, COPY.invite.gone.body);
+  const token = ctx.params.token ?? "";
+  if (!isToken("invite", token)) return gone();
+  const r = await ctx.store.startWebInvite(await sha256Hex(token), req.headers.get("CF-Connecting-IP"), ctx.config.startRate10m, ctx.config.adminChannelIds, ctx.now);
+  if (r.ok) return toChzzk(authorizeRedirect(chzzkApp(ctx.config), r.state), setCookie(ctx.cookies, "flow", r.binder));
+  switch (r.code) {
+    case "gone":
+      return gone();
+    case "rate_limited":
+      return noticePage(ctx.config, 429, COPY.rateLimited.title, COPY.retryLater.body, { headers: { "Retry-After": String(r.retryAfterSec) } });
+    case "busy":
+      return noticePage(ctx.config, 503, COPY.busy.title, COPY.retryLater.body);
+  }
+}
+
 // ---- 콜백 ----
 
 /** GET /auth/callback: 늘 303이다(상세 사유는 DO가 남기는 로그 이벤트, DO가 남길 수 없으면 done의 why 낱말로) */
@@ -214,6 +236,24 @@ async function settle(ctx: Ctx, k: Extract<ConsumeResult, { ok: true }>, code: s
   return afterFinish(ctx, await ctx.store.finish(k.flowId, { type: "user", channelId: id.channelId, channelName: id.channelName }, admins, ctx.now, { flowKind }));
 }
 
+/** 웹 로그인 성공 뒤 목적지. invite가 없으면 지금까지의 동작(알림 loggedIn), 모르는 값(배포 중 Worker·DO 판이 엇갈림)도 같다 */
+function webDestination(invite: InviteOutcome | undefined): { location: "/" | "/me/delegations/done"; flash: FlashKind | null } {
+  switch (invite) {
+    case "accepted":
+      return { location: "/me/delegations/done", flash: null };
+    case "own":
+      return { location: "/", flash: "inviteOwn" };
+    case "full":
+      return { location: "/", flash: "inviteFull" };
+    case "already":
+      return { location: "/", flash: "alreadyEditor" };
+    case "gone":
+      return { location: "/", flash: "inviteGone" };
+    default:
+      return { location: "/", flash: "loggedIn" };
+  }
+}
+
 /**
  * finish 결과 → 303. r은 outcome이 아니라 DO가 정한 결과를 따른다(port NULL 옛 앱 흐름은 취소여도 failed, 구현 중 변경 89 (바)).
  * 모르는 모양(배포 중 Worker·DO 판이 엇갈린 경우)은 예외 대신 failed로 끝낸다(구현 중 변경 89 (타))
@@ -222,18 +262,19 @@ function afterFinish(ctx: Ctx, f: FinishResult): Response {
   switch (f?.type) {
     case "loopback":
       return toLoopback(ctx, f);
-    case "web":
-      // 웹 로그인은 세션 쿠키를 심고 F를 지운다(콜백이 state를 이미 소비했다). 다음 GET /가 한 번 "로그인했어요"를 보인다(flash)
-      return new Response(null, {
-        status: 303,
-        headers: [
-          ["Location", "/"],
-          ["Referrer-Policy", "no-referrer"],
-          ["Set-Cookie", setCookie(ctx.cookies, "session", f.cookieToken)],
-          ["Set-Cookie", clearCookie(ctx.cookies, "flow")],
-          ["Set-Cookie", flashCookie(ctx.cookies, "loggedIn")],
-        ],
-      });
+    case "web": {
+      // 웹 로그인은 세션 쿠키를 심고 F를 지운다(콜백이 state를 이미 소비했다). 다음 GET /가 한 번 알림을 보인다(flash).
+      // 초대에서 시작한 로그인은 결과에 따라 목적지와 알림이 갈린다(106 §5.3). 로그인 자체는 늘 성공이라 세션 쿠키는 늘 심는다
+      const to = webDestination(f.invite);
+      const headers: [string, string][] = [
+        ["Location", to.location],
+        ["Referrer-Policy", "no-referrer"],
+        ["Set-Cookie", setCookie(ctx.cookies, "session", f.cookieToken)],
+        ["Set-Cookie", clearCookie(ctx.cookies, "flow")],
+      ];
+      if (to.flash !== null) headers.push(["Set-Cookie", flashCookie(ctx.cookies, to.flash)]);
+      return new Response(null, { status: 303, headers });
+    }
     case "denied":
       return toDone("denied");
     case "cancelled":
@@ -256,7 +297,7 @@ export async function done(req: Request, ctx: Ctx): Promise<Response> {
   if (why !== null && whyLevel !== undefined) ctx.log("auth.login.failed", { level: whyLevel, reason: why });
   const header = req.headers.get("Cookie");
   const flowCookie = readCookie(header, ctx.cookies.flow);
-  const view = isToken("flow", flowCookie) ? await ctx.store.doneView(await sha256Hex(flowCookie), ctx.now) : null;
+  const view = isToken("flow", flowCookie) ? await ctx.store.doneView(await sha256Hex(flowCookie), ctx.now, ctx.config.adminChannelIds) : null;
   // 그 이름의 쿠키가 있었으면 값·중복과 상관없이 지운다(남은 F로는 아무것도 할 수 없다, 구현 중 변경 28)
   const clear = hasCookieName(header, ctx.cookies.flow) ? clearCookie(ctx.cookies, "flow") : null;
   return donePage(ctx.config, r, view, clear, entryContext(req.headers));

@@ -1,7 +1,8 @@
 // 경로 표(데이터)와 진입 처리(docs/design/worker.md §4). 라우터 의존성 없이 표 + 정확한 경로 비교다.
 //
 // /health, 로그인 흐름(/auth/*, 앱은 루프백 수령 /auth/redeem, /auth/poll은 비석), 앱 세션(/auth/refresh·/auth/logout·/api/me), 릴리스 읽기(/update/:current·/releases/**),
-// 랜딩(/)·에셋(/assets/:file, /favicon.ico)·웹 로그아웃·내 기기(/me/*)·관리(/admin*)·서비스 공지(/notice)·읽기 페이지(/help·/privacy·/licenses). auth 값(자격 종류 §4)으로 자격 × 경로 행렬 테스트를 만든다(§4.5).
+// 랜딩(/)·에셋(/assets/:file, /favicon.ico)·웹 로그아웃·내 기기(/me/*)·관리(/admin*)·서비스 공지(/notice)·읽기 페이지(/help·/privacy·/licenses),
+// 초대(/invite/:token·start·accept)·편집자 완료·그만두기(/me/delegations/*)·앱 편집자 API(/api/editors/*·/api/delegations/leave). auth 값(자격 종류 §4)으로 자격 × 경로 행렬 테스트를 만든다(§4.5).
 // 처리 순서: 설정 검사(실패하면 모든 경로 500, /health는 503) → 요청 출처 = PUBLIC_ORIGIN → 경로 표 → 핸들러.
 // 패턴의 ":이름" 조각은 비어 있지 않은 조각 하나와 맞는다(디코드하지 않는다. 값 검사는 핸들러가 한다, 구현 중 변경 27 (마)).
 
@@ -10,7 +11,9 @@ import { type CookieSpec, cookieSpec } from "./core/cookies";
 import { type Logger, log, silent } from "./core/log";
 import { asset, faviconAlias } from "./http/assets";
 import { adminAllow, adminDeniedAllow, adminDeniedDismiss, adminDisallow, adminDisallowConfirm, adminPage, adminRevokeSession } from "./http/admin";
-import { authRedeem, authStart, callback, done, loginContinue, loginPageGet, pollGone, webStart } from "./http/auth";
+import { authRedeem, authStart, callback, done, inviteStart, loginContinue, loginPageGet, pollGone, webStart } from "./http/auth";
+import { delegationsLeave, editorsInvite, editorsRemove } from "./http/editors";
+import { delegationDone, delegationLeave, inviteAccept, inviteGet } from "./http/invite";
 import { health } from "./http/health";
 import { landing, meRevoke, webLogout } from "./http/landing";
 import { notice } from "./http/notice";
@@ -91,6 +94,16 @@ export const ROUTES: readonly Route[] = [
   { method: "GET", pattern: "/help", auth: "none", handler: help },
   { method: "GET", pattern: "/privacy", auth: "none", handler: privacy },
   { method: "GET", pattern: "/licenses", auth: "none", handler: licenses },
+  // 편집자 위임(delegation.md §5·§8.3, 구현 중 변경 106). 초대 토큰이 URL에 실리는 셋은 quiet다. 완료 경로는 /invite/done이 아니라
+  // /me/delegations/done이다(/invite/done은 /invite/:token과 맞아 quiet가 되고 핸들러가 겨룬다)
+  { method: "GET", pattern: "/invite/:token", auth: "web_optional", handler: inviteGet, quiet: true },
+  { method: "POST", pattern: "/invite/:token/start", auth: "none", handler: inviteStart, quiet: true },
+  { method: "POST", pattern: "/invite/:token/accept", auth: "web", handler: inviteAccept, quiet: true },
+  { method: "GET", pattern: "/me/delegations/done", auth: "web", handler: delegationDone },
+  { method: "POST", pattern: "/me/delegations/leave", auth: "web", handler: delegationLeave },
+  { method: "POST", pattern: "/api/editors/invite", auth: "app", handler: editorsInvite },
+  { method: "POST", pattern: "/api/editors/remove", auth: "app", handler: editorsRemove },
+  { method: "POST", pattern: "/api/delegations/leave", auth: "app", handler: delegationsLeave },
 ];
 
 /** "/**"로 끝나는 패턴은 앞부분 뒤의 비지 않은 나머지와 맞는다(조각 수 무관, 디코드하지 않는다). 그 밖에는 패턴 조각 수 = 경로 조각 수, ":이름"은 비지 않은 조각 하나(디코드하지 않는다), 나머지는 글자 그대로 */

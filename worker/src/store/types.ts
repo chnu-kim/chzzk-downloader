@@ -55,7 +55,15 @@ export type LoopbackResult = "ok" | "denied" | "cancelled" | "failed";
 /** denied·cancelled·failed는 웹 흐름, 그리고 port가 NULL인 앱 흐름의 failed다 */
 export type FinishResult =
   | { readonly type: "loopback"; readonly result: LoopbackResult; readonly port: number; readonly grant: string; readonly state: string }
-  | { readonly type: "web"; readonly cookieToken: string; readonly csrf: string; readonly expiresAt: number; readonly invite?: InviteOutcome }
+  | {
+      readonly type: "web";
+      readonly cookieToken: string;
+      readonly csrf: string;
+      readonly expiresAt: number;
+      readonly invite?: InviteOutcome;
+      /** invite가 accepted일 때만: 그 수락이 맺은 위임의 주인(판정용 ID). 완료 페이지 주소에 싣는다(106 (차) ③) */
+      readonly inviteOwner?: string;
+    }
   | { readonly type: "denied"; readonly invitePending?: string }
   | { readonly type: "cancelled" }
   | { readonly type: "failed" }

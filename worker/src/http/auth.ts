@@ -17,6 +17,7 @@ import { entryContext } from "../core/entry";
 import { isLoopbackPort, loopbackUrl } from "../core/loopback";
 import { isId, isSecret, isToken, sha256B64url, sha256Hex } from "../core/token";
 import type { Ctx } from "../routes";
+import { CHANNEL_ID } from "../store/allowlist";
 import { redeemEvent } from "../store/login-log";
 import type { ConsumeResult, FinishResult, InviteOutcome, LoginLogHint } from "../store/types";
 import { COPY } from "./copy";
@@ -25,6 +26,7 @@ import { type DoneR, donePage, loginConfirmPage, noticePage } from "./pages";
 import { readJsonObject, sameOriginPost } from "./request";
 import { errorJson, iso, json } from "./respond";
 import { tokenBundleJson } from "./session";
+import { type DoneLocation, doneLocation } from "./web-session";
 
 // 호출 때 전역을 찾는 화살표여야 테스트의 스파이가 보인다(바로 넘기면 만든 시점의 함수가 고정된다)
 const CHZZK_DEPS: ChzzkDeps = { fetch: (url, init) => fetch(url, init) };
@@ -236,11 +238,14 @@ async function settle(ctx: Ctx, k: Extract<ConsumeResult, { ok: true }>, code: s
   return afterFinish(ctx, await ctx.store.finish(k.flowId, { type: "user", channelId: id.channelId, channelName: id.channelName }, admins, ctx.now, { flowKind }));
 }
 
-/** 웹 로그인 성공 뒤 목적지. invite가 없으면 지금까지의 동작(알림 loggedIn), 모르는 값(배포 중 Worker·DO 판이 엇갈림)도 같다 */
-function webDestination(invite: InviteOutcome | undefined): { location: "/" | "/me/delegations/done"; flash: FlashKind | null } {
+/**
+ * 웹 로그인 성공 뒤 목적지. invite가 없으면 지금까지의 동작(알림 loggedIn), 모르는 값(배포 중 Worker·DO 판이 엇갈림)도 같다.
+ * accepted는 그 수락이 맺은 위임의 주인을 주소에 싣는다(106 (차) ③). 주인이 없거나 형식 밖이면 모르는 모양으로 본다
+ */
+function webDestination(invite: InviteOutcome | undefined, owner: string | undefined): { location: "/" | DoneLocation; flash: FlashKind | null } {
   switch (invite) {
     case "accepted":
-      return { location: "/me/delegations/done", flash: null };
+      return typeof owner === "string" && CHANNEL_ID.test(owner) ? { location: doneLocation(owner), flash: null } : { location: "/", flash: "loggedIn" };
     case "own":
       return { location: "/", flash: "inviteOwn" };
     case "full":
@@ -265,7 +270,7 @@ function afterFinish(ctx: Ctx, f: FinishResult): Response {
     case "web": {
       // 웹 로그인은 세션 쿠키를 심고 F를 지운다(콜백이 state를 이미 소비했다). 다음 GET /가 한 번 알림을 보인다(flash).
       // 초대에서 시작한 로그인은 결과에 따라 목적지와 알림이 갈린다(106 §5.3). 로그인 자체는 늘 성공이라 세션 쿠키는 늘 심는다
-      const to = webDestination(f.invite);
+      const to = webDestination(f.invite, f.inviteOwner);
       const headers: [string, string][] = [
         ["Location", to.location],
         ["Referrer-Policy", "no-referrer"],
@@ -298,9 +303,29 @@ export async function done(req: Request, ctx: Ctx): Promise<Response> {
   const header = req.headers.get("Cookie");
   const flowCookie = readCookie(header, ctx.cookies.flow);
   const view = isToken("flow", flowCookie) ? await ctx.store.doneView(await sha256Hex(flowCookie), ctx.now, ctx.config.adminChannelIds) : null;
-  // 그 이름의 쿠키가 있었으면 값·중복과 상관없이 지운다(남은 F로는 아무것도 할 수 없다, 구현 중 변경 28)
-  const clear = hasCookieName(header, ctx.cookies.flow) ? clearCookie(ctx.cookies, "flow") : null;
+  // 그 이름의 쿠키가 있었으면 값·중복과 상관없이 지운다(남은 F로는 아무것도 할 수 없다, 구현 중 변경 28).
+  // 예외 하나: 초대를 청구한 거부 페이지는 [초대 취소]의 증거로 F를 남긴다(흐름 만료까지, 106 (차) ②)
+  const keep = (view?.inviteOwnerName ?? null) !== null;
+  const clear = !keep && hasCookieName(header, ctx.cookies.flow) ? clearCookie(ctx.cookies, "flow") : null;
   return donePage(ctx.config, r, view, clear, entryContext(req.headers));
+}
+
+/**
+ * POST /auth/claim/cancel: 거부 페이지의 [초대 취소](106 (차) ②). 세션이 없는 POST라 webStart와 같은 Origin·Sec-Fetch-Site 검사를 하고,
+ * 증거는 F 쿠키(SameSite=Lax라 다른 사이트의 POST에는 실리지 않는다)다. 성공·이미 처리됨 모두 F를 지우고 303 / + flash
+ */
+export async function claimCancel(req: Request, ctx: Ctx): Promise<Response> {
+  if (!sameOriginPost(req, ctx.config.publicOrigin)) {
+    ctx.log("web.post.rejected", { level: "warn", route: ctx.route, reason: "bad_origin" });
+    return noticePage(ctx.config, 403, COPY.badRequest.title, COPY.badRequest.body);
+  }
+  const header = req.headers.get("Cookie");
+  const flowCookie = readCookie(header, ctx.cookies.flow);
+  const ok = isToken("flow", flowCookie) && (await ctx.store.cancelClaim(await sha256Hex(flowCookie), ctx.now));
+  const headers: [string, string][] = [["Location", "/"]];
+  if (hasCookieName(header, ctx.cookies.flow)) headers.push(["Set-Cookie", clearCookie(ctx.cookies, "flow")]);
+  headers.push(["Set-Cookie", flashCookie(ctx.cookies, ok ? "inviteCancelled" : "alreadyDone")]);
+  return new Response(null, { status: 303, headers });
 }
 
 // ---- 앱 수령 ----

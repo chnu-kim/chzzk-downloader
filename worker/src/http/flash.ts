@@ -1,11 +1,11 @@
-// flash 쿠키(계약 §2.4): 303으로 옮겨 간 화면에 안내를 한 번 보이는 길. 값은 종류 코드 여덟뿐이고 모르는 값은 무시한다.
+// flash 쿠키(계약 §2.4): 303으로 옮겨 간 화면에 안내를 한 번 보이는 길. 값은 종류 코드 아홉뿐이고 모르는 값은 무시한다.
 // 쓰기는 응답의 Set-Cookie(web-session의 seeOther에 cookies 배열로 넣는다), 읽기는 다음 GET에서 하고 같은 응답에서 지운다.
 // 속성은 공통(HttpOnly; SameSite=Lax; Path=/)에 Max-Age=60이고 https면 __Host-cdl_flash + Secure, http(루프백 dev)면 cdl_flash다.
 import { type CookieSpec, clearCookie, hasCookieName, readCookie, setCookie } from "../core/cookies";
 
-export type FlashKind = "loggedIn" | "alreadyDone" | "sessionGone" | "delegationLeft" | "inviteOwn" | "inviteFull" | "inviteGone" | "alreadyEditor";
+export type FlashKind = "loggedIn" | "alreadyDone" | "sessionGone" | "delegationLeft" | "inviteOwn" | "inviteFull" | "inviteGone" | "alreadyEditor" | "inviteCancelled";
 
-const KINDS: readonly FlashKind[] = ["loggedIn", "alreadyDone", "sessionGone", "delegationLeft", "inviteOwn", "inviteFull", "inviteGone", "alreadyEditor"];
+const KINDS: readonly FlashKind[] = ["loggedIn", "alreadyDone", "sessionGone", "delegationLeft", "inviteOwn", "inviteFull", "inviteGone", "alreadyEditor", "inviteCancelled"];
 
 const isFlashKind = (v: string): v is FlashKind => (KINDS as readonly string[]).includes(v);
 

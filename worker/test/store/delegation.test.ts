@@ -285,12 +285,15 @@ describe("acceptInvite", () => {
     expect(await accept(stub, inv.hash, F6, T0 + 4)).toEqual({ ok: false, code: "own" });
   });
 
-  it("AC4 already: 초대가 지워진다", async () => {
+  it("AC4 already: 초대를 남긴다(기존 편집자가 남에게 보낸 초대를 없애지 못한다, 106 (차) ④) → 원래 받을 사람이 수락한다", async () => {
     const stub = freshStub();
     await allowAt(stub, B2, T0);
     await link(stub, B2, C3, T0 + 1);
+    await allowAt(stub, D4, T0);
     const inv = await invite(stub, B2, T0 + 10);
     expect(await accept(stub, inv.hash, C3, T0 + 11)).toEqual({ ok: false, code: "already" });
+    expect(await invites(stub)).toHaveLength(1);
+    expect(await accept(stub, inv.hash, D4, T0 + 12)).toMatchObject({ ok: true, ownerChannelId: B2 });
     expect(await invites(stub)).toHaveLength(0);
   });
 
@@ -606,6 +609,53 @@ describe("removeEditor·leaveDelegation·목록", () => {
     expect(await stub.leaveDelegation("x", B2, T0 + 10)).toEqual({ ok: false, code: "not_found" });
   });
 
+  it("LV2 위임 행이 없어도 같은 쌍의 청구는 지운다(그만두기 = 이 주인과의 관계를 끝낸다)", async () => {
+    const stub = freshStub();
+    await allowAt(stub, B2, T0);
+    const inv = await invite(stub, B2, T0 + 1);
+    expect(await inviteLogin(stub, inv.hash, E5, T0 + 2)).toHaveProperty("invitePending");
+    expect(await stub.leaveDelegation(E5, B2, T0 + 3)).toEqual({ ok: true });
+    expect(await invites(stub)).toHaveLength(0);
+    expect(await stub.leaveDelegation(E5, B2, T0 + 4)).toEqual({ ok: false, code: "not_found" });
+  });
+
+  it("CC1 cancelClaim: 거부된 초대 웹 흐름의 binder로 그 흐름의 청구만 지운다(한 번, 만료 전, 남의 binder 불가)", async () => {
+    const stub = freshStub();
+    await allowAt(stub, B2, T0);
+    const inv = await invite(stub, B2, T0 + 1);
+    const s = await stub.startWebInvite(inv.hash, "203.0.113.30", 1000, ADMINS, T0 + 2);
+    if (!s.ok) throw new Error(s.code);
+    const binder = await sha(s.binder);
+    const k = await stub.consume(await sha(s.state), binder, T0 + 2);
+    if (!k.ok) throw new Error(k.code);
+    expect(await stub.finish(k.flowId, { type: "user", channelId: E5, channelName: "잘못 들어온 채널" }, ADMINS, T0 + 3)).toHaveProperty("invitePending");
+    expect(await stub.cancelClaim("f".repeat(64), T0 + 4)).toBe(false);
+    expect(await stub.cancelClaim("zz", T0 + 4)).toBe(false);
+    expect(await invites(stub)).toHaveLength(1);
+    expect(await stub.cancelClaim(binder, T0 + 4)).toBe(true);
+    expect(await invites(stub)).toHaveLength(0);
+    expect(await stub.cancelClaim(binder, T0 + 5)).toBe(false);
+    // 거부 페이지에 초대 줄도 없다
+    expect(await stub.doneView(binder, T0 + 5, ADMINS)).toMatchObject({ status: "denied", inviteOwnerName: null });
+    // 자동 완성으로 이어지지 않는다
+    await stub.allowDenied(E5, A1, T0 + 6, ADMINS);
+    expect(await delegations(stub)).toEqual([]);
+  });
+
+  it("CC2 cancelClaim: 흐름이 만료되면(완료 2분) 지우지 않는다", async () => {
+    const stub = freshStub();
+    await allowAt(stub, B2, T0);
+    const inv = await invite(stub, B2, T0 + 1);
+    const s = await stub.startWebInvite(inv.hash, "203.0.113.30", 1000, ADMINS, T0 + 2);
+    if (!s.ok) throw new Error(s.code);
+    const binder = await sha(s.binder);
+    const k = await stub.consume(await sha(s.state), binder, T0 + 2);
+    if (!k.ok) throw new Error(k.code);
+    await stub.finish(k.flowId, { type: "user", channelId: E5, channelName: "x" }, ADMINS, T0 + 3);
+    expect(await stub.cancelClaim(binder, T0 + 2 + 600_000)).toBe(false);
+    expect(await invites(stub)).toHaveLength(1);
+  });
+
   it("LS1 delegationsOf는 20개까지, since 오름차순", async () => {
     const stub = freshStub();
     await allowAt(stub, C3, T0);
@@ -644,15 +694,17 @@ describe("removeEditor·leaveDelegation·목록", () => {
     expect(await mine(stub, C3)).toEqual([{ channelId: B2, channelName: "주인", since: T0 + 102 }]);
   });
 
-  it("LS3 recentDelegationFor: 2분 창", async () => {
+  it("LS3 recentDelegationFor: 그 주인과의 위임만, 2분 창", async () => {
     const stub = freshStub();
     await allowAt(stub, B2, T0);
     await allowAt(stub, C3, T0);
     const inv = await invite(stub, B2, T0 + 1);
     await accept(stub, inv.hash, C3, T0 + 3);
-    expect(await stub.recentDelegationFor(C3, ADMINS, T0 + 3 + DONE_WINDOW_MS - 1)).toEqual({ channelId: B2, channelName: "주인", since: T0 + 3 });
-    expect(await stub.recentDelegationFor(C3, ADMINS, T0 + 3 + DONE_WINDOW_MS)).toBeNull();
-    expect(await stub.recentDelegationFor("x", ADMINS, T0 + 4)).toBeNull();
+    expect(await stub.recentDelegationFor(C3, B2, ADMINS, T0 + 3 + DONE_WINDOW_MS - 1)).toEqual({ channelId: B2, channelName: "주인", since: T0 + 3 });
+    expect(await stub.recentDelegationFor(C3, A1, ADMINS, T0 + 4)).toBeNull();
+    expect(await stub.recentDelegationFor(C3, B2, ADMINS, T0 + 3 + DONE_WINDOW_MS)).toBeNull();
+    expect(await stub.recentDelegationFor("x", B2, ADMINS, T0 + 4)).toBeNull();
+    expect(await stub.recentDelegationFor(C3, "x", ADMINS, T0 + 4)).toBeNull();
   });
 
   it("LS4 editorsOf 모양: 활성, 기다림, 미청구 만료", async () => {

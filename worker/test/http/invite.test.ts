@@ -269,12 +269,12 @@ describe("IV9~IV11 콜백", () => {
     const b = new Browser();
     const cb = await inviteLogin(b, t.token, "c3");
     expect(cb.status).toBe(303);
-    expect(cb.headers.get("Location")).toBe("/me/delegations/done");
+    expect(cb.headers.get("Location")).toBe(`/me/delegations/done/${B2}`);
     const cookies = cb.headers.getSetCookie();
     expect(cookies).toHaveLength(2);
     expect(cookies[0]).toMatch(/^cdl_s=cdw_/);
     expect(cookies[1]).toBe("cdl_f=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax");
-    const page = await b.get("/me/delegations/done");
+    const page = await b.get(`/me/delegations/done/${B2}`);
     expect(page.status).toBe(200);
     const text = await page.text();
     expect(h1Of(text)).toBe(COPY.inviteDone.title(NAME.b2));
@@ -304,7 +304,7 @@ describe("IV9~IV11 콜백", () => {
     // 이미 편집자
     const first = await makeInvite(access);
     const cb1 = new Browser();
-    expect((await inviteLogin(cb1, first.token, "c3")).headers.get("Location")).toBe("/me/delegations/done");
+    expect((await inviteLogin(cb1, first.token, "c3")).headers.get("Location")).toBe(`/me/delegations/done/${B2}`);
     const second = await makeInvite(access);
     const cb2 = new Browser();
     await seen(await inviteLogin(cb2, second.token, "c3"), cb2, "alreadyEditor", COPY.alreadyEditor);
@@ -317,6 +317,20 @@ describe("IV9~IV11 콜백", () => {
     const callbackUrl = await gb.authorize(start, fake);
     await makeInvite(access);
     await seen(await gb.get(callbackUrl), gb, "inviteGone", COPY.inviteGone);
+  });
+
+  it("IV10c 기존 편집자가 남에게 보낸 새 초대로 로그인해도 초대는 남고, 원래 받을 사람이 수락한다", async () => {
+    await allowedChannel(C3, A1);
+    await allowedChannel(D4, A1);
+    const access = await ownerAccess();
+    const first = await makeInvite(access);
+    expect((await inviteLogin(new Browser(), first.token, "c3")).headers.get("Location")).toMatch(/^\/me\/delegations\/done/);
+    const forN = await makeInvite(access);
+    const e = await inviteLogin(new Browser(), forN.token, "c3");
+    expect(e.headers.getSetCookie().some((l) => l.startsWith("cdl_flash=alreadyEditor;"))).toBe(true);
+    const n = new Browser();
+    expect((await n.get(`/invite/${forN.token}`)).status).toBe(200);
+    expect((await inviteLogin(n, forN.token, "d4")).headers.get("Location")).toMatch(/^\/me\/delegations\/done/);
   });
 
   it("IV10b 상한: 콜백도 inviteFull", async () => {
@@ -363,6 +377,48 @@ describe("IV9~IV11 콜백", () => {
     const { browser: admin } = await webLoginHttp(fake, "a1");
     expect(await (await admin.get("/admin")).text()).not.toContain("초대 받음");
   });
+
+  it("IV11c 잘못된 계정: 거부 페이지의 [초대 취소](F 증거·같은 출처)로 청구를 지우면 [허가] 뒤에도 위임이 생기지 않는다", async () => {
+    const t = await makeInvite(await ownerAccess());
+    const b = new Browser();
+    await inviteLogin(b, t.token, "d4");
+    const res = await b.get("/auth/done?r=denied");
+    const done = await res.text();
+    // 취소에 쓸 F를 지우지 않는다. 버튼은 채움이 아니고(튀지 않게) 안내 한 줄과 함께 있다(숨지 않게)
+    expect(res.headers.getSetCookie()).toEqual([]);
+    expect(b.jar.has("cdl_f")).toBe(true);
+    expect(done).toContain('action="/auth/claim/cancel"');
+    expect(done).toContain(COPY.doneDenied.cancelHint);
+    expect(done).toContain(COPY.cancelInvite);
+    expect(done).not.toContain("btn-primary");
+    expect(done.match(/<form /g)).toHaveLength(1);
+    // 다른 출처의 POST는 403이고 청구는 그대로다
+    expect((await b.post("/auth/claim/cancel", { Origin: "https://evil.example", "Sec-Fetch-Site": "cross-site" })).status).toBe(403);
+    expect(JSON.parse(await tables())[0]).toHaveLength(1);
+    const ok = await b.post("/auth/claim/cancel");
+    expect([ok.status, ok.headers.get("Location")]).toEqual([303, "/"]);
+    expect(ok.headers.getSetCookie().some((l) => l.startsWith("cdl_flash=inviteCancelled;"))).toBe(true);
+    expect(b.jar.has("cdl_f")).toBe(false);
+    expect(await (await b.get("/")).text()).toContain(COPY.inviteCancelled);
+    expect(JSON.parse(await tables())[0]).toEqual([]);
+    // F 없이 다시: 이미 처리됨
+    const again = await b.post("/auth/claim/cancel");
+    expect(again.headers.getSetCookie().some((l) => l.startsWith("cdl_flash=alreadyDone;"))).toBe(true);
+    // 관리자가 허가해도 위임이 생기지 않는다
+    await store().allowDenied(D4, A1, Date.now(), ADMINS);
+    expect(JSON.parse(await tables())[1]).toEqual([]);
+  });
+
+  it("IV11d 초대 없는 거부 페이지는 지금처럼 F를 지우고 취소 버튼이 없다", async () => {
+    const b = new Browser();
+    fake.state.account = "d4";
+    fake.state.authorize = "approve";
+    const cb = await b.get(await b.authorize(await b.post("/auth/web/start"), fake));
+    expect(cb.headers.get("Location")).toBe("/auth/done?r=denied");
+    const res = await b.get("/auth/done?r=denied");
+    expect(await res.text()).not.toContain("/auth/claim/cancel");
+    expect(b.jar.has("cdl_f")).toBe(false);
+  });
 });
 
 describe("IV12 POST /invite/:token/accept", () => {
@@ -396,7 +452,7 @@ describe("IV12 POST /invite/:token/accept", () => {
     const { send, calls } = countingSend();
     const ok = await asSend(c, send).post(`/invite/${t.token}/accept`, undefined, formBody({ csrf }));
     expect(ok.status).toBe(303);
-    expect(ok.headers.get("Location")).toBe("/me/delegations/done");
+    expect(ok.headers.get("Location")).toBe(`/me/delegations/done/${B2}`);
     expect(calls).toEqual(["webCheck", "acceptInvite"]);
     expect((await c.post(`/invite/${t.token}/accept`, undefined, formBody({ csrf }))).status).toBe(404);
   });
@@ -413,7 +469,7 @@ describe("IV12 POST /invite/:token/accept", () => {
     const c = await editorSession();
     const first = await makeInvite(access);
     const csrfC = await csrfOf(c, first.token);
-    expect((await c.post(`/invite/${first.token}/accept`, undefined, formBody({ csrf: csrfC }))).headers.get("Location")).toBe("/me/delegations/done");
+    expect((await c.post(`/invite/${first.token}/accept`, undefined, formBody({ csrf: csrfC }))).headers.get("Location")).toBe(`/me/delegations/done/${B2}`);
     const second = await makeInvite(access);
     const r2 = await c.post(`/invite/${second.token}/accept`, undefined, formBody({ csrf: csrfC }));
     expect(r2.headers.getSetCookie().some((l) => l.startsWith("cdl_flash=alreadyEditor;"))).toBe(true);
@@ -427,35 +483,62 @@ describe("IV12 POST /invite/:token/accept", () => {
   });
 });
 
-describe("IV13 GET /me/delegations/done", () => {
+describe("IV13 GET /me/delegations/done/:owner", () => {
+  const DONE_B2 = `/me/delegations/done/${B2}`;
   async function accepted() {
     await allowedChannel(C3, A1);
     const t = await makeInvite(await ownerAccess());
     const b = new Browser();
-    expect((await inviteLogin(b, t.token, "c3")).headers.get("Location")).toBe("/me/delegations/done");
+    expect((await inviteLogin(b, t.token, "c3")).headers.get("Location")).toBe(DONE_B2);
     return b;
   }
 
-  it("세션 없음·최근 위임 없음·창이 지난 뒤는 303 /", async () => {
-    const none = await new Browser().get("/me/delegations/done");
+  it("세션 없음·그 주인과의 최근 위임 없음·형식 밖 주인·창이 지난 뒤는 303 /", async () => {
+    const none = await new Browser().get(DONE_B2);
     expect([none.status, none.headers.get("Location")]).toEqual([303, "/"]);
     await allowedChannel(C3, A1);
     const { browser: c } = await webLoginHttp(fake, "c3");
-    expect((await c.get("/me/delegations/done")).headers.get("Location")).toBe("/");
+    expect((await c.get(DONE_B2)).headers.get("Location")).toBe("/");
     const b = await accepted();
-    expect((await b.get("/me/delegations/done")).status).toBe(200);
+    expect((await b.get(DONE_B2)).status).toBe(200);
+    expect((await b.get(`/me/delegations/done/${A1}`)).headers.get("Location")).toBe("/");
+    expect((await b.get("/me/delegations/done/zz")).headers.get("Location")).toBe("/");
+    expect((await b.get("/me/delegations/done")).status).toBe(404);
     advance(DONE_WINDOW_MS + 1);
-    expect((await b.get("/me/delegations/done")).headers.get("Location")).toBe("/");
+    expect((await b.get(DONE_B2)).headers.get("Location")).toBe("/");
   });
 
-  it("컴퓨터 설치 안내는 휴대폰·카카오톡 UA에서만 있고 이 경로는 quiet가 아니다", async () => {
+  it("컴퓨터 설치 안내는 휴대폰·카카오톡 UA에서만 있고, 주인 ID가 실린 이 경로는 quiet다", async () => {
     const b = await accepted();
-    const text = (ua: string) => b.get("/me/delegations/done", { "User-Agent": ua }).then((r) => r.text());
+    const text = (ua: string) => b.get(DONE_B2, { "User-Agent": ua }).then((r) => r.text());
     expect(await text(MAC_UA)).not.toContain(COPY.inviteDone.desktop);
     expect(await text(MOBILE_UA)).toContain(COPY.inviteDone.desktop);
     expect(await text(KAKAO_UA)).toContain(COPY.inviteDone.desktop);
     const { isQuietPath } = await import("../../src/routes");
-    expect(isQuietPath("/me/delegations/done")).toBe(false);
+    expect(isQuietPath(DONE_B2)).toBe(true);
+    expect(isQuietPath("/me/delegations/leave")).toBe(false);
+  });
+
+  it("IV13c 두 탭: 수락 O1의 303을 늦게 따라가도 O1의 결과가 나오고, 그만두기는 O1만 회수한다", async () => {
+    await allowedChannel(C3, A1);
+    const t1 = await makeInvite(await ownerAccess("b2"));
+    const t2 = await makeInvite(await ownerAccess("a1"));
+    const { browser: c } = await webLoginHttp(fake, "c3");
+    const csrf = csrfIn(await (await c.get(`/invite/${t1.token}`)).text()) ?? "";
+    const r1 = await c.post(`/invite/${t1.token}/accept`, undefined, formBody({ csrf }));
+    const r2 = await c.post(`/invite/${t2.token}/accept`, undefined, formBody({ csrf }));
+    expect([r1.headers.get("Location"), r2.headers.get("Location")]).toEqual([DONE_B2, `/me/delegations/done/${A1}`]);
+    const page = await (await c.get(r1.headers.get("Location") ?? "")).text();
+    expect(h1Of(page)).toBe(COPY.inviteDone.title(NAME.b2));
+    expect(page).toContain(`name="owner" value="${B2}"`);
+    expect(page).not.toContain(A1);
+    const left = await c.post("/me/delegations/leave", undefined, formBody({ csrf: csrfIn(page) ?? "", owner: B2 }));
+    expect(left.headers.getSetCookie().some((l) => l.startsWith("cdl_flash=delegationLeft;"))).toBe(true);
+    const rows = await runInDurableObject(store(), (i) => i.db.all<{ owner_channel_id: string; revoked_at: number | null }>("SELECT owner_channel_id, revoked_at FROM delegation ORDER BY owner_channel_id"));
+    expect(rows.map((r) => [r.owner_channel_id, r.revoked_at === null])).toEqual([
+      [A1, true],
+      [B2, false],
+    ]);
   });
 });
 
@@ -466,7 +549,7 @@ describe("IV14 POST /me/delegations/leave", () => {
     const t = await makeInvite(access);
     const b = new Browser();
     await inviteLogin(b, t.token, "c3");
-    const csrf = csrfIn(await (await b.get("/me/delegations/done")).text()) ?? "";
+    const csrf = csrfIn(await (await b.get(`/me/delegations/done/${B2}`)).text()) ?? "";
     expect((await b.post("/me/delegations/leave", undefined, formBody({ csrf, owner: "zz" }))).status).toBe(400);
     expect((await b.post("/me/delegations/leave", undefined, formBody({ csrf }))).status).toBe(400);
     expect((await b.post("/me/delegations/leave", undefined, `csrf=${csrf}&owner=${B2}&owner=${D4}`)).status).toBe(400);
@@ -523,7 +606,7 @@ describe("IV15 앱 편집자 API", () => {
     await allowedChannel(C3, A1);
     const access = await ownerAccess();
     const t = await makeInvite(access);
-    expect((await inviteLogin(new Browser(), t.token, "c3")).headers.get("Location")).toBe("/me/delegations/done");
+    expect((await inviteLogin(new Browser(), t.token, "c3")).headers.get("Location")).toBe(`/me/delegations/done/${B2}`);
     expect((await api("/api/editors/remove", access, { channelId: "zz" })).status).toBe(400);
     expect((await api("/api/editors/remove", access, {})).status).toBe(400);
     expect((await api("/api/editors/remove", access, { channelId: 5 })).status).toBe(400);
@@ -571,5 +654,51 @@ describe("IV15 앱 편집자 API", () => {
     // 본문 오류는 check 전에 거른다
     expect((await api("/api/editors/remove", access, { channelId: "zz" }, {}, send)).status).toBe(400);
     expect(calls).toEqual([]);
+  });
+});
+
+describe("IV16 배포 호환(106 (차) ⑤)", () => {
+  const PROD_ORIGIN = "https://worker.example.invalid";
+  // 운영 모드 설정: 출처는 https, 치지직 주소는 운영 값, dev 전용 키는 비운다(빈 문자열은 없는 것과 같다)
+  const PROD_PATCH = {
+    PUBLIC_ORIGIN: PROD_ORIGIN,
+    CHZZK_REDIRECT_URI: "",
+    CHZZK_AUTHORIZE_URL: "https://chzzk.naver.com/account-interlock",
+    CHZZK_API_BASE: "https://openapi.chzzk.naver.com",
+    START_RATE_10M: "",
+  };
+
+  it("운영 모드에서는 앱 편집자 API 셋이 꺼져 있다: 형식 있는 404 not_enabled(차단 코드 401·403이 아니다), DO 0회", async () => {
+    const access = await ownerAccess();
+    const { send, calls } = countingSend(PROD_PATCH);
+    for (const [path, body] of [
+      ["/api/editors/invite", {}],
+      ["/api/editors/remove", { channelId: C3 }],
+      ["/api/delegations/leave", { channelId: B2 }],
+    ] as const) {
+      const res = await send(PROD_ORIGIN + path, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${access}` }, body: JSON.stringify(body) });
+      expect([path, res.status, await res.json()]).toEqual([path, 404, { code: "not_enabled" }]);
+    }
+    expect(calls).toEqual([]);
+    // 대조: 같은 운영 모드의 /api/me는 그대로다
+    const me = await send(PROD_ORIGIN + "/api/me", { method: "GET", headers: { Authorization: `Bearer ${access}` } });
+    expect(me.status).toBe(200);
+  });
+
+  it("GET /invite/:token이 invitePage RPC 없는 옛 DO를 만나면 500 JSON이 아니라 안내 페이지(503)", async () => {
+    const t = await makeInvite(await ownerAccess());
+    const oldDo = {
+      idFromName: () => ({}),
+      get: () => ({
+        invitePage: () => Promise.reject(new TypeError('The RPC receiver does not implement "invitePage".')),
+      }),
+    };
+    const res = await viaEnv({ AUTH: oldDo })(`${ORIGIN}/invite/${t.token}`, { method: "GET" });
+    expect(res.status).toBe(503);
+    expect(res.headers.get("Content-Type")).toMatch(/^text\/html/);
+    const text = await res.text();
+    expect(h1Of(text)).toBe(COPY.invite.unavailable.title);
+    expect(text).toContain(COPY.retryLater.body);
+    expect(text).not.toContain(t.token);
   });
 });

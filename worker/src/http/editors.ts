@@ -1,5 +1,5 @@
 // 앱 편집자 API(docs/design/features/delegation.md §8.3, worker.md 구현 중 변경 106): 초대 만들기·편집자 빼기·맡은 채널 그만두기.
-// Bearer 앱 access만 본다(쿠키는 보지 않는다). 순서: Bearer 형식 → 본문 → check → 동작. 거절 코드는 /api/me와 같다.
+// Bearer 앱 access만 본다(쿠키는 보지 않는다). 순서: 열림(config.editorApi) → Bearer 형식 → 본문 → check → 동작. 거절 코드는 /api/me와 같다.
 // 초대 주소는 응답 본문에만 있고 로그에 남기지 않는다. 새 로그 이벤트는 없다.
 import { bearer, isToken, sha256Hex } from "../core/token";
 import type { Ctx } from "../routes";
@@ -22,11 +22,19 @@ async function authorize(access: string, ctx: Ctx): Promise<{ ok: true; c: Grant
   return c.ok ? { ok: true, c } : { ok: false, response: errorJson(c.code === "not_allowed" ? 403 : 401, c.code) };
 }
 
+/**
+ * 꺼져 있으면(운영 릴리스 A, 106 (차) ⑤) Bearer·본문보다 먼저 형식 있는 404 not_enabled. DO 호출 0.
+ * 401·403은 앱이 세션 차단으로 읽으므로(worker.md §11.3 classify_verify) 쓰지 않는다
+ */
+const disabled = (ctx: Ctx): Response | null => (ctx.config.editorApi ? null : errorJson(404, "not_enabled"));
+
 /** 본문의 channelId: 문자열이고 채널 ID 모양일 때만 */
 const channelIdOf = (body: Record<string, unknown>): string | null => (typeof body.channelId === "string" && CHANNEL_ID.test(body.channelId) ? body.channelId : null);
 
 /** POST /api/editors/invite: 새 초대 주소(이전 미청구 초대는 대체된다) */
 export async function editorsInvite(req: Request, ctx: Ctx): Promise<Response> {
+  const off = disabled(ctx);
+  if (off !== null) return off;
   const a = accessOf(req);
   if (a === null) return errorJson(401, "invalid_token");
   const body = await readJsonObject(req, true);
@@ -41,6 +49,8 @@ export async function editorsInvite(req: Request, ctx: Ctx): Promise<Response> {
 
 /** POST /api/editors/remove: 주인이 편집자를 뺀다(기다리는 편집자도) */
 export async function editorsRemove(req: Request, ctx: Ctx): Promise<Response> {
+  const off = disabled(ctx);
+  if (off !== null) return off;
   const a = accessOf(req);
   if (a === null) return errorJson(401, "invalid_token");
   const body = await readJsonObject(req);
@@ -55,6 +65,8 @@ export async function editorsRemove(req: Request, ctx: Ctx): Promise<Response> {
 
 /** POST /api/delegations/leave: 편집자가 맡은 채널을 그만둔다 */
 export async function delegationsLeave(req: Request, ctx: Ctx): Promise<Response> {
+  const off = disabled(ctx);
+  if (off !== null) return off;
   const a = accessOf(req);
   if (a === null) return errorJson(401, "invalid_token");
   const body = await readJsonObject(req);

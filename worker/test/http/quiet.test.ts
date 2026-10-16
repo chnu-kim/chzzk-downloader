@@ -93,7 +93,7 @@ afterEach(() => {
 });
 
 describe("경로 표", () => {
-  it("quiet 행은 URL에 금지 값이 실리는 열한 행이다", () => {
+  it("quiet 행은 URL에 금지 값이 실리는 열두 행이다", () => {
     expect(ROUTES.filter((r) => r.quiet).map((r) => `${r.method} ${r.pattern}`)).toEqual([
       "GET /auth/login/:handle",
       "POST /auth/login/:handle",
@@ -106,14 +106,34 @@ describe("경로 표", () => {
       "GET /invite/:token",
       "POST /invite/:token/start",
       "POST /invite/:token/accept",
+      "GET /me/delegations/done/:owner",
     ]);
   });
 
-  it("isQuietPath는 메서드와 상관없이 패턴으로 본다", () => {
-    for (const p of ["/auth/callback", "/auth/login/x", "/me/sessions/x/revoke", "/admin/sessions/x/revoke", "/admin/denied/x/allow", "/admin/denied/x/dismiss", "/admin/x/disallow", "/invite/x", "/invite/x/start", "/invite/x/accept"]) {
+  it("isQuietPath는 메서드와 상관없이 패턴의 앞 조각과 /invite/ 접두로 본다", () => {
+    for (const p of [
+      "/auth/callback",
+      "/auth/callback/x",
+      "/auth/login/x",
+      "/auth/login/x/",
+      "/me/sessions/x/revoke",
+      "/me/sessions/x/revoke/y",
+      "/admin/sessions/x/revoke",
+      "/admin/denied/x/allow",
+      "/admin/denied/x/dismiss",
+      "/admin/x/disallow",
+      "/invite/x",
+      "/invite/x/",
+      "/invite/x/start",
+      "/invite/x/accept",
+      "/invite/x/y/z",
+      "/invite//x",
+      "/invite/",
+      "/me/delegations/done/x",
+    ]) {
       expect([p, isQuietPath(p)]).toEqual([p, true]);
     }
-    for (const p of ["/", "/health", "/auth/done", "/auth/start", "/auth/web/start", "/auth/poll", "/auth/redeem", "/admin", "/admin/allow", "/notice", "/auth/login", "/auth/callback/x", "/me/delegations/done", "/me/delegations/leave", "/api/editors/invite", "/invite"]) {
+    for (const p of ["/", "/health", "/auth/done", "/auth/start", "/auth/web/start", "/auth/poll", "/auth/redeem", "/admin", "/admin/allow", "/admin/x", "/notice", "/auth/login", "/auth/login/", "/me/delegations/done", "/me/delegations/leave", "/api/editors/invite", "/invite", "/invitex/y"]) {
       expect([p, isQuietPath(p)]).toEqual([p, false]);
     }
   });
@@ -344,7 +364,7 @@ describe("초대: /invite/*의 Worker 호출은 로그 0, 결과는 DO가 남긴
     expect((await anon.post(`/invite/${t1}/start`, { Origin: null })).status).toBe(403);
     fake.state.account = "c3";
     const cb = await anon.get(await anon.authorize(await anon.post(`/invite/${t1}/start`), fake));
-    expect(cb.headers.get("Location")).toBe("/me/delegations/done");
+    expect(cb.headers.get("Location")).toBe(`/me/delegations/done/${B2}`);
     // 이미 로그인한 다른 편집자(d4)가 새 초대를 수락: 틀린 csrf(403)와 정상
     fake.state.account = "d4";
     const other = new Browser(send);
@@ -378,6 +398,18 @@ describe("라우터의 로그(config.error·http.internal)도 quiet 경로에서
     // 대조: 같은 설정 오류가 /health에서는 남는다
     expect((await bad(ORIGIN + "/health", { method: "GET" })).status).toBe(503);
     expect(workerEvents("/health")).toEqual([{ event: "config.error", level: "error", key: "ADMIN_CHANNEL_IDS" }]);
+  });
+
+  it("QP1 설정 오류: 초대 토큰이 실린 /invite/ 아래 변형(끝 '/'·더 붙은 조각·빈 조각)도 로그 0, 접두가 같은 다른 경로는 그대로 남긴다", async () => {
+    const bad = sender({ patch: { ADMIN_CHANNEL_IDS: "not-a-channel-id" } });
+    const tok = "cdi_" + "T".repeat(43);
+    for (const p of [`/invite/${tok}`, `/invite/${tok}/`, `/invite/${tok}/start/`, `/invite/${tok}/x/y`, `/invite//${tok}`, `/auth/login/${"Q".repeat(22)}/`, `/me/sessions/${"Q".repeat(22)}/revoke/`]) {
+      expect([p, (await bad(ORIGIN + p, { method: "GET" })).status]).toEqual([p, 500]);
+    }
+    expect(recs).toEqual([]);
+    // 대조: 조각이 다른 관리 경로는 quiet가 아니다(/admin/:channelId/disallow의 접두 /admin/ 전체를 막지 않는다)
+    expect((await bad(ORIGIN + "/admin/allow", { method: "POST" })).status).toBe(500);
+    expect(workerEvents("/admin/allow")).toEqual([{ event: "config.error", level: "error", key: "ADMIN_CHANNEL_IDS" }]);
   });
 
   it("핸들러 예외(route의 catch)", async () => {

@@ -5,7 +5,7 @@ import { type FlashKind, flashCookie, readFlash } from "../../src/http/flash";
 
 const https = cookieSpec("https://dist.example.test");
 const dev = cookieSpec("http://localhost:8787");
-const KINDS: readonly FlashKind[] = ["loggedIn", "alreadyDone", "sessionGone", "delegationLeft", "inviteOwn", "inviteFull", "inviteGone", "alreadyEditor"];
+const KINDS: readonly FlashKind[] = ["loggedIn", "alreadyDone", "sessionGone", "delegationLeft", "inviteOwn", "inviteFull", "inviteGone", "alreadyEditor", "inviteCancelled"];
 const req = (cookie?: string) => new Request("https://dist.example.test/", { headers: cookie === undefined ? {} : { Cookie: cookie } });
 
 describe("flashCookie", () => {

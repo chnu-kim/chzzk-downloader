@@ -40,7 +40,7 @@ describe("matchPattern: /** 패턴(나머지 전부, 디코드하지 않는다)"
 });
 
 describe("경로 표", () => {
-  it("39쌍이 정확히 이 순서다", () => {
+  it("40쌍이 정확히 이 순서다", () => {
     expect(ROUTES.map((r) => `${r.method} ${r.pattern}`)).toEqual([
       "GET /health",
       "POST /auth/start",
@@ -76,11 +76,12 @@ describe("경로 표", () => {
       "GET /invite/:token",
       "POST /invite/:token/start",
       "POST /invite/:token/accept",
-      "GET /me/delegations/done",
+      "GET /me/delegations/done/:owner",
       "POST /me/delegations/leave",
       "POST /api/editors/invite",
       "POST /api/editors/remove",
       "POST /api/delegations/leave",
+      "POST /auth/claim/cancel",
     ]);
   });
 

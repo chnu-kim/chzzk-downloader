@@ -222,14 +222,32 @@ export function finish(
   }
   const expiresAt = insertWeb(db, { id: issued.sessionId, channelId: outcome.channelId, channelName: name, cookieHash: issued.cookie.hash, csrf: issued.csrf }, now);
   let invite: InviteOutcome | undefined;
+  let inviteOwner: string | undefined;
   if (row.invite_hash !== null) {
     const a = acceptInvite(db, row.invite_hash, outcome.channelId, name, admins, now);
     invite = a.ok ? "accepted" : a.code === "not_allowed" ? "gone" : a.code;
+    if (a.ok) inviteOwner = a.ownerChannelId;
   }
   db.run("DELETE FROM flow WHERE id = ?", row.id);
-  return invite === undefined
-    ? { type: "web", cookieToken: issued.cookie.token, csrf: issued.csrf, expiresAt }
-    : { type: "web", cookieToken: issued.cookie.token, csrf: issued.csrf, expiresAt, invite };
+  const web = { type: "web", cookieToken: issued.cookie.token, csrf: issued.csrf, expiresAt } as const;
+  if (invite === undefined) return web;
+  return inviteOwner === undefined ? { ...web, invite } : { ...web, invite, inviteOwner };
+}
+
+/**
+ * 거부 페이지의 [초대 취소](106 (차) ②): binder 쿠키로 찾은 거부된 웹 흐름(만료 전)이 청구한 초대를 지운다. 그 흐름의 채널이 청구한 그 초대만이다.
+ * 잘못된 계정으로 로그인한 사람이 관리자 허가 뒤 자동으로 편집자가 되지 않게 스스로 끊는 길이다. 흐름의 invite_hash를 비워 한 번만 된다
+ */
+export function cancelClaim(db: Db, binderHash: string, now: number): boolean {
+  const r = db.first<{ id: string; invite_hash: string | null; channel_id: string | null }>(
+    "SELECT id, invite_hash, channel_id FROM flow WHERE binder_hash = ? AND kind = 'web' AND status = 'denied' AND expires_at > ? LIMIT 1",
+    binderHash,
+    now,
+  );
+  if (r === null || r.invite_hash === null || r.channel_id === null) return false;
+  const n = db.run("DELETE FROM invite WHERE token_hash = ? AND claimed_channel_id = ?", r.invite_hash, r.channel_id);
+  db.run("UPDATE flow SET invite_hash = NULL WHERE id = ?", r.id);
+  return n > 0;
 }
 
 /** 완료 페이지: binder 쿠키로 자기 흐름의 결과를 본다 */

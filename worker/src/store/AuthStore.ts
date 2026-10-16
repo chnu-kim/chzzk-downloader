@@ -18,6 +18,7 @@ import {
   CLIENT_MAX,
   FLOW_CAP,
   FLOW_TTL_MS,
+  cancelClaim,
   consume,
   continueApp,
   doneView,
@@ -236,6 +237,12 @@ export class AuthStore extends DurableObject<Env> {
     return this.write(now, () => doneView(this.db, binderHash, adm, now));
   }
 
+  /** 거부 페이지의 [초대 취소]: binder 해시로 그 거부된 웹 흐름의 청구를 지운다(106 (차) ②) */
+  async cancelClaim(binderHash: string, now: number): Promise<boolean> {
+    if (!isHexHash(binderHash)) return false;
+    return this.write(now, () => cancelClaim(this.db, binderHash, now));
+  }
+
   /** 앱 수령(구현 중 변경 88 (가)): grant 해시 + loginVerifier. 스로틀은 없다(grant는 추측할 수 없고 틀린 verifier는 쓰기 0, 88 (다)) */
   async redeem(grantHash: string, verifier: string, admins: readonly string[], now: number): Promise<RedeemResult> {
     if (!isHexHash(grantHash) || !isSecret(verifier)) return { status: "not_found" };
@@ -385,10 +392,10 @@ export class AuthStore extends DurableObject<Env> {
     return this.write(now, () => acceptInvite(this.db, inviteHash, editorLoginId, editorName, adm, now));
   }
 
-  async recentDelegationFor(editorLoginId: string, admins: readonly string[], now: number): Promise<DelegatedChannel | null> {
+  async recentDelegationFor(editorLoginId: string, ownerChannelId: string, admins: readonly string[], now: number): Promise<DelegatedChannel | null> {
     const adm = adminsOf(admins);
-    if (!CHANNEL_ID.test(editorLoginId) || adm === null) return null;
-    return this.write(now, () => recentDelegationFor(this.db, editorLoginId, adm, now));
+    if (!CHANNEL_ID.test(editorLoginId) || !CHANNEL_ID.test(ownerChannelId) || adm === null) return null;
+    return this.write(now, () => recentDelegationFor(this.db, editorLoginId, ownerChannelId, adm, now));
   }
 
   async removeEditor(ownerChannelId: string, editorChannelId: string, now: number): Promise<RemoveResult> {

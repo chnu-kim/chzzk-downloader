@@ -23,7 +23,7 @@ Worker가 그리는 페이지는 한 골격(`htmlPage`, worker.md §4 공통·�
 | 로그인 결과 | `GET /auth/done` | 앱 | 없음 | 웹 흐름의 denied·cancelled·failed와 앱 흐름의 grant 없는 failed(§6.1). 웹 ok는 303 `/`, 앱 흐름의 결과는 앱 수신기가 그린다(§6.5) |
 | 안내·오류 | 4xx·5xx | 앱 | — | 상태별 제목(§6). "안내" 하나로 뭉치지 않는다 |
 | 편집자 초대 | `GET /invite/:token` | 앱 | 웹 세션 선택 | 비로그인은 고지 네 줄 + [치지직으로 로그인], 로그인했으면 [편집자 되기] 확인(delegation.md §5.2). 상태별 제목 `invite.own.title`·`invite.gone.title`·`invite.full.title`. quiet·noindex |
-| 편집자 완료 | `GET /me/delegations/done` | 앱 | 웹 세션 | `inviteDone.title` + [편집자 그만두기](테두리, 확인 없음, 303 + flash). 최근 2분 안의 위임만 |
+| 편집자 완료 | `GET /me/delegations/done/:owner`(quiet) | 앱 | 웹 세션 | `inviteDone.title` + [편집자 그만두기](테두리, 확인 없음, 303 + flash). 수락이 303 주소에 실은 그 주인과 최근 2분 안에 맺은 위임만(worker.md 106 (차) ③) |
 | 관리 | `GET /admin` | 앱 | 관리자 | 표 5개와 폼(§7·§8) |
 | 허가 빼기 확인 | `GET /admin/…/disallow`(신설) | 앱 | 관리자 | D54의 유일한 확인 페이지(§7.3) |
 | 도움말·처리방침·라이선스 | `GET /help`·`/privacy`·`/licenses`(신설) | 읽기 | 없음 | §10. `/terms`는 두지 않는다(D60) |
@@ -222,7 +222,7 @@ CSP는 그대로다(worker.md, `A-WORKER` §6.1): `default-src 'none'; style-src
 | 멱등 | 삭제·끊기 계열은 이미 처리된 대상이면 오류가 아니라 `303` + flash `alreadyDone`("이미 처리됐어요."). `404`는 형식이 틀린 경로에만 | `G-WEB-R20`·g-web G2, GOV.UK 버튼(서버 중복 방어) | `worker` 테스트(같은 삭제 POST 두 번 모두 303) |
 | 세션 만료 POST | `303 /` + flash(경고 톤) `sessionGone`("로그인이 만료됐어요. 다시 로그인한 뒤 같은 동작을 해 주세요."). 폼 값은 보존하지 않는다 | `G-WEB-R23`·g-web G1 | `worker` 테스트 |
 
-flash 종류(여덟)와 `seeOther` 위치(쿼리 없는 세 곳)는 `worker.md` 구현 중 변경 106이 정한다.
+flash 종류(아홉: `inviteCancelled` 추가)와 `seeOther` 위치(쿼리 없는 세 곳, 셋째는 `/me/delegations/done/:owner`)는 `worker.md` 구현 중 변경 106과 그 (차)이 정한다.
 
 ### 6.4 로그인 확인 페이지(확인 코드 없음)
 

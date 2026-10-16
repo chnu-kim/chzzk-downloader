@@ -181,8 +181,9 @@ describe("htmlPage 골격", () => {
       inviteFull: COPY.inviteFull,
       inviteGone: COPY.inviteGone,
       alreadyEditor: COPY.alreadyEditor,
+      inviteCancelled: COPY.inviteCancelled,
     };
-    for (const kind of ["loggedIn", "alreadyDone", "sessionGone", "delegationLeft", "inviteOwn", "inviteFull", "inviteGone", "alreadyEditor"] as const) {
+    for (const kind of ["loggedIn", "alreadyDone", "sessionGone", "delegationLeft", "inviteOwn", "inviteFull", "inviteGone", "alreadyEditor", "inviteCancelled"] as const) {
       const t = await text(page({ scale: "app", nav: { kind: "auth" }, flash: kind }));
       expectSkeleton(t);
       const main = mainOf(t);

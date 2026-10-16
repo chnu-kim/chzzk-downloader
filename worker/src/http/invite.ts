@@ -13,7 +13,7 @@ import { flashCookie } from "./flash";
 import { renderDelegationDone, renderInvite, renderInviteConfirm, renderInviteOwn } from "./invite-view";
 import { noticePage } from "./pages";
 import { oneField } from "./request";
-import { guardWebPost, memberNav, readWebSession, seeOther, toHome, webSessionOf } from "./web-session";
+import { doneLocation, guardWebPost, memberNav, readWebSession, seeOther, toHome, webSessionOf } from "./web-session";
 import type { Nav } from "./layout";
 
 /** 없음·만료·사용됨·형식 밖을 가르지 않는 하나의 404(delegation.md §11) */
@@ -25,7 +25,9 @@ export async function inviteGet(req: Request, ctx: Ctx): Promise<Response> {
   if (!isToken("invite", token)) return gonePage(ctx, { kind: "auth" });
   const cookie = readCookie(req.headers.get("Cookie"), ctx.cookies.session);
   const cookieHash = isToken("web", cookie) ? await sha256Hex(cookie) : null;
-  const p = await ctx.store.invitePage(await sha256Hex(token), cookieHash, ctx.config.adminChannelIds, ctx.now);
+  // 배포 창에서 새 Worker가 invitePage가 없는 옛 DO를 부르면 RPC가 던진다: 500 JSON 대신 안내 페이지(106 (차) ⑤). quiet라 로그는 없다
+  const p = await ctx.store.invitePage(await sha256Hex(token), cookieHash, ctx.config.adminChannelIds, ctx.now).catch(() => null);
+  if (p === null) return noticePage(ctx.config, 503, COPY.invite.unavailable.title, COPY.retryLater.body);
   // 읽기 페이지는 상태를 바꾸지 않는다: 형식 밖·끝난 세션 쿠키도 지우지 않는다(106 D-12)
   const s = p.web !== null && p.web.ok ? webSessionOf(p.web) : null;
   const nav: Nav = s === null ? { kind: "auth" } : memberNav(s);
@@ -52,7 +54,7 @@ export async function inviteAccept(req: Request, ctx: Ctx): Promise<Response> {
   const token = ctx.params.token ?? "";
   if (!isToken("invite", token)) return gonePage(ctx, memberNav(g.s));
   const a = await ctx.store.acceptInvite(await sha256Hex(token), g.s.channelId, g.s.channelName, ctx.config.adminChannelIds, ctx.now);
-  if (a.ok) return seeOther("/me/delegations/done");
+  if (a.ok) return seeOther(doneLocation(a.ownerChannelId));
   switch (a.code) {
     case "already":
       return seeOther("/", [flashCookie(ctx.cookies, "alreadyEditor")]);
@@ -67,11 +69,17 @@ export async function inviteAccept(req: Request, ctx: Ctx): Promise<Response> {
   }
 }
 
-/** GET /me/delegations/done: 방금(2분 안에) 맺은 위임이 있을 때만. 없으면 처음 화면으로 */
+/**
+ * GET /me/delegations/done/:owner (quiet: 주인 채널 ID가 경로에 실린다): 그 주인과 방금(2분 안에) 맺은 위임이 권한이 나갈 때만. 없으면 처음 화면으로.
+ * 주인은 수락이 303 주소에 실어 보낸 값이다: 결과는 그 수락에 묶이고, 다른 탭의 수락이 이 화면을 바꾸지 못한다(106 (차) ③).
+ * 주소를 손으로 바꿔도 내 세션의 내 위임만 보이므로 서명하지 않는다
+ */
 export async function delegationDone(req: Request, ctx: Ctx): Promise<Response> {
   const r = await readWebSession(req, ctx);
   if (!r.ok) return toHome(r.clear);
-  const d = await ctx.store.recentDelegationFor(r.s.channelId, ctx.config.adminChannelIds, ctx.now);
+  const owner = ctx.params.owner ?? "";
+  if (!CHANNEL_ID.test(owner)) return seeOther("/");
+  const d = await ctx.store.recentDelegationFor(r.s.channelId, owner, ctx.config.adminChannelIds, ctx.now);
   if (d === null) return seeOther("/");
   return renderDelegationDone(ctx.config, {
     ownerName: d.channelName,

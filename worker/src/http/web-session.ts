@@ -40,7 +40,11 @@ export async function readWebSession(req: Request, ctx: Ctx): Promise<WebSession
 }
 
 /** 303. 위치는 쿼리 없는 세 곳뿐이다 */
-export function seeOther(location: "/" | "/admin" | "/me/delegations/done", cookies: readonly string[] = []): Response {
+/** 완료 페이지 주소: 수락이 맺은 위임의 주인(판정용 ID)을 경로에 싣는다(quiet 경로, 106 (차) ③) */
+export type DoneLocation = `/me/delegations/done/${string}`;
+export const doneLocation = (ownerChannelId: string): DoneLocation => `/me/delegations/done/${ownerChannelId}`;
+
+export function seeOther(location: "/" | "/admin" | DoneLocation, cookies: readonly string[] = []): Response {
   const headers = new Headers({ Location: location });
   for (const c of cookies) headers.append("Set-Cookie", c);
   return new Response(null, { status: 303, headers });

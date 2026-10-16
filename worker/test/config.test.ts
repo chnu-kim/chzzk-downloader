@@ -1,6 +1,7 @@
 // 설정 가드 표(docs/design/worker.md §10.1·§8.3, W1 수락 기준). loadConfig는 순수 함수라 env 객체를 직접 넘긴다.
 import { describe, expect, it } from "vitest";
 import {
+  EDITOR_API_PROD,
   CALLBACK_PATH,
   CONFIG_KEYS,
   type ConfigEnv,
@@ -71,6 +72,7 @@ describe("통과", () => {
     expect(c.bootstrap).toBe(false);
     expect(c.startRate10m).toBe(1000);
     expect(c.buildId).toBe("dev");
+    expect(c.editorApi).toBe(true);
   });
 
   it.each(["http://127.0.0.1:8787", "http://[::1]:8787", "https://localhost:8787"])("루프백 출처 %s는 dev 모드", (origin) => {
@@ -102,6 +104,9 @@ describe("통과", () => {
     expect(c.redirectUri).toBe(PROD_ORIGIN + "/auth/callback");
     expect(c.startRate10m).toBe(6);
     expect(c.buildId).toBe("abc1234");
+    // 앱 편집자 API는 릴리스 B(①-5)가 EDITOR_API_PROD를 바꿀 때까지 닫혀 있다(106 (차) ⑤)
+    expect(EDITOR_API_PROD).toBe(false);
+    expect(c.editorApi).toBe(false);
   });
 
   it("운영: 치지직 주소가 없으면 운영 값", () => {

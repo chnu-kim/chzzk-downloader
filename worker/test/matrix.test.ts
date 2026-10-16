@@ -149,11 +149,13 @@ const MATRIX: Readonly<Record<string, readonly MatrixCase[]>> = {
   "GET /invite/:token": [{ name: "모르는 초대", request: plain(`/invite/${INVITE_UNKNOWN}`), expect: all(404) }],
   "POST /invite/:token/start": [{ name: "모르는 초대", request: form(`/invite/${INVITE_UNKNOWN}/start`), expect: all(404) }],
   "POST /invite/:token/accept": [{ name: "모르는 초대", request: webForm(`/invite/${INVITE_UNKNOWN}/accept`), expect: by(303, 303, 303, 303, 404, 404, 303, 303) }],
-  "GET /me/delegations/done": [{ name: "최근 위임 없음", request: plain("/me/delegations/done"), expect: all(303) }],
+  "GET /me/delegations/done/:owner": [{ name: "그 주인과 최근 위임 없음", request: plain(`/me/delegations/done/${D4}`), expect: all(303) }],
   "POST /me/delegations/leave": [{ name: "관계 없음", request: webForm("/me/delegations/leave", { owner: D4 }), expect: all(303) }],
   "POST /api/editors/invite": [{ name: "초대 만들기", request: jsonPost("/api/editors/invite", () => ({})), expect: by(401, 200, 401, 403, 401, 401, 401, 401) }],
   "POST /api/editors/remove": [{ name: "관계 없는 채널", request: jsonPost("/api/editors/remove", () => ({ channelId: D4 })), expect: by(401, 404, 401, 403, 401, 401, 401, 401) }],
   "POST /api/delegations/leave": [{ name: "관계 없는 채널", request: jsonPost("/api/delegations/leave", () => ({ channelId: D4 })), expect: by(401, 404, 401, 403, 401, 401, 401, 401) }],
+  // F 쿠키가 없으면 어느 자격이든 303 / + alreadyDone(세션·Bearer는 보지 않는다)
+  "POST /auth/claim/cancel": [{ name: "F 없음", request: form("/auth/claim/cancel"), expect: all(303) }],
 };
 
 const keyOf = (r: { method: string; pattern: string }) => `${r.method} ${r.pattern}`;

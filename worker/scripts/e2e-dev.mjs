@@ -975,9 +975,9 @@ const scenarios = [
       const cb2 = await authorizeToCallback(await browserPost(jarC, page2, `${t2.path}/start`, {}, { ip: IP_DLG_C3B }));
       const callback2 = await req("GET", cb2, { jar: jarC });
       isStatus(callback2, 303, "초대 콜백(수락)");
-      must(new URL(callback2.headers.get("location") ?? "", E2E_ORIGIN).pathname === "/me/delegations/done", "수락 콜백이 /me/delegations/done으로 보내지 않았다");
+      must(new URL(callback2.headers.get("location") ?? "", E2E_ORIGIN).pathname === `/me/delegations/done/${ID("b2")}`, "수락 콜백이 그 주인의 완료 페이지로 보내지 않았다");
       must(jarC.has("cdl_s") && !jarC.has("cdl_f") && !jarC.has("cdl_flash"), "수락 콜백의 쿠키가 세션 하나뿐이 아니다");
-      const done = await browserGet(jarC, "/me/delegations/done");
+      const done = await browserGet(jarC, `/me/delegations/done/${ID("b2")}`);
       isStatus(done, 200, "완료 페이지");
       for (const t of [FAKE_ACCOUNTS.b2.channelName, "편집자가 됐어요", 'action="/me/delegations/leave"', `name="owner" value="${ID("b2")}"`]) must(done.html.includes(t), `완료 페이지에 ${t}가 없다`);
       must(!done.html.includes("<script>alert(1)</script>"), "완료 페이지에 c3 이름이 이스케이프되지 않고 나왔다");
@@ -1016,7 +1016,7 @@ const scenarios = [
       must(confirm.html.includes("편집자가 될까요?") && confirm.html.includes(`action="${t3.path}/accept"`), "확인 페이지에 질문이나 수락 폼이 없다");
       const acc = await browserPost(jarC, confirm, `${t3.path}/accept`, { csrf: pageCsrf(confirm, "확인 페이지") });
       isStatus(acc, 303, "수락 POST");
-      must(new URL(acc.headers.get("location") ?? "", E2E_ORIGIN).pathname === "/me/delegations/done", "수락 POST가 완료 페이지로 보내지 않았다");
+      must(new URL(acc.headers.get("location") ?? "", E2E_ORIGIN).pathname === `/me/delegations/done/${ID("b2")}`, "수락 POST가 그 주인의 완료 페이지로 보내지 않았다");
 
       // 7. 이미 편집자
       const t4 = await makeInvite();

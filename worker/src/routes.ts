@@ -11,7 +11,7 @@ import { type CookieSpec, cookieSpec } from "./core/cookies";
 import { type Logger, log, silent } from "./core/log";
 import { asset, faviconAlias } from "./http/assets";
 import { adminAllow, adminDeniedAllow, adminDeniedDismiss, adminDisallow, adminDisallowConfirm, adminPage, adminRevokeSession } from "./http/admin";
-import { authRedeem, authStart, callback, done, inviteStart, loginContinue, loginPageGet, pollGone, webStart } from "./http/auth";
+import { authRedeem, authStart, callback, claimCancel, done, inviteStart, loginContinue, loginPageGet, pollGone, webStart } from "./http/auth";
 import { delegationsLeave, editorsInvite, editorsRemove } from "./http/editors";
 import { delegationDone, delegationLeave, inviteAccept, inviteGet } from "./http/invite";
 import { health } from "./http/health";
@@ -95,15 +95,18 @@ export const ROUTES: readonly Route[] = [
   { method: "GET", pattern: "/privacy", auth: "none", handler: privacy },
   { method: "GET", pattern: "/licenses", auth: "none", handler: licenses },
   // 편집자 위임(delegation.md §5·§8.3, 구현 중 변경 106). 초대 토큰이 URL에 실리는 셋은 quiet다. 완료 경로는 /invite/done이 아니라
-  // /me/delegations/done이다(/invite/done은 /invite/:token과 맞아 quiet가 되고 핸들러가 겨룬다)
+  // /me/delegations/done/:owner다(/invite/ 아래는 모두 quiet이고 /invite/done은 /invite/:token과 겨룬다). 수락이 맺은 위임의 주인 채널 ID가
+  // 경로에 실려 quiet다(106 (차) ③). 그만두기 POST는 주인을 본문으로 받아 quiet가 아니다
   { method: "GET", pattern: "/invite/:token", auth: "web_optional", handler: inviteGet, quiet: true },
   { method: "POST", pattern: "/invite/:token/start", auth: "none", handler: inviteStart, quiet: true },
   { method: "POST", pattern: "/invite/:token/accept", auth: "web", handler: inviteAccept, quiet: true },
-  { method: "GET", pattern: "/me/delegations/done", auth: "web", handler: delegationDone },
+  { method: "GET", pattern: "/me/delegations/done/:owner", auth: "web", handler: delegationDone, quiet: true },
   { method: "POST", pattern: "/me/delegations/leave", auth: "web", handler: delegationLeave },
   { method: "POST", pattern: "/api/editors/invite", auth: "app", handler: editorsInvite },
   { method: "POST", pattern: "/api/editors/remove", auth: "app", handler: editorsRemove },
   { method: "POST", pattern: "/api/delegations/leave", auth: "app", handler: delegationsLeave },
+  // 거부 페이지의 [초대 취소](106 (차) ②). 세션 없이 F 쿠키가 증거다. 경로는 pages.ts CLAIM_CANCEL_PATH와 같다
+  { method: "POST", pattern: "/auth/claim/cancel", auth: "flow", handler: claimCancel },
 ];
 
 /** "/**"로 끝나는 패턴은 앞부분 뒤의 비지 않은 나머지와 맞는다(조각 수 무관, 디코드하지 않는다). 그 밖에는 패턴 조각 수 = 경로 조각 수, ":이름"은 비지 않은 조각 하나(디코드하지 않는다), 나머지는 글자 그대로 */
@@ -127,9 +130,27 @@ export function matchPattern(pattern: string, pathname: string): Record<string, 
   return params;
 }
 
-/** 경로가 quiet 행의 패턴과 맞는가(메서드와 상관없이). 설정 검사보다 먼저 정해야 config.error도 막는다 */
+/** 초대 토큰이 실리는 경로 접두(106 (차) ①). 이 아래는 조각 모양과 상관없이 모두 quiet다(끝 '/'·빈 조각·더 붙은 조각) */
+export const QUIET_PREFIXES: readonly string[] = ["/invite/"];
+
+/** quiet 패턴이 경로의 앞 조각들과 맞는가(뒤에 조각이 더 붙어도 된다: 끝 '/'는 빈 조각 하나다). 조각마다의 규칙은 matchPattern과 같다 */
+function quietPatternPrefix(pattern: string, pathname: string): boolean {
+  const want = pattern.split("/");
+  const got = pathname.split("/");
+  if (got.length < want.length) return false;
+  return want.every((w, i) => {
+    const g = got[i] ?? "";
+    return w.startsWith(":") ? g !== "" : w === g;
+  });
+}
+
+/**
+ * 경로가 quiet인가(메서드와 상관없이). 설정 검사보다 먼저 정해야 config.error도 막는다.
+ * 정확히 맞는 경로만 보면 '/invite/<토큰>/' 같은 변형이 설정 오류 때 URL째 로그에 남는다(106 (차) ①): 접두 기반이다.
+ * quiet 패턴의 앞 조각들과 맞거나 QUIET_PREFIXES로 시작하면 quiet다. 조각이 다른 경로(/admin/allow)는 quiet가 아니다
+ */
 export function isQuietPath(pathname: string): boolean {
-  return ROUTES.some((r) => r.quiet === true && matchPattern(r.pattern, pathname) !== null);
+  return QUIET_PREFIXES.some((p) => pathname.startsWith(p)) || ROUTES.some((r) => r.quiet === true && quietPatternPrefix(r.pattern, pathname));
 }
 
 // URL을 해석하지 못하면 무엇이 실렸는지 모르므로 조용히 둔다

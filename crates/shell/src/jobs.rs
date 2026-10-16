@@ -90,6 +90,7 @@ impl JobRecord {
             concurrency: concurrency(self.concurrency),
             live_stop: None,
             recording_id: self.recording_id.clone(),
+            range: None,
         }
     }
 
@@ -100,6 +101,7 @@ impl JobRecord {
             quality_id: &self.quality_id,
             kind: self.expected_kind,
             recording_id: self.recording_id.as_deref(),
+            range: None, // ②-2가 JobRecord.range로 바꾼다
         }
     }
 

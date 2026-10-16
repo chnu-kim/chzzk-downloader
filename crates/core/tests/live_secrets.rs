@@ -158,6 +158,7 @@ async fn live_signatures_never_leak() {
         concurrency: NonZeroU8::new(2).unwrap(),
         live_stop: None,
         recording_id: Some("a".repeat(32)),
+        range: None,
     };
     let events = Events::default();
     let cb = events.callback();

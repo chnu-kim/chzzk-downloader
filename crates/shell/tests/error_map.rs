@@ -8,7 +8,7 @@ use chzzk_shell::{AppError, ErrorCode, ErrorPayload, JobId, RequestKindDto, Stag
 use serde_json::{Value, json};
 
 /// 코어 `ErrorKind` 전체. `sample`의 빠짐없는 match와 함께 새 종류를 놓치지 않게 한다.
-const ALL_KINDS: [ErrorKind; 24] = [
+const ALL_KINDS: [ErrorKind; 25] = [
     ErrorKind::InvalidUrl,
     ErrorKind::Api,
     ErrorKind::Http,
@@ -21,6 +21,7 @@ const ALL_KINDS: [ErrorKind; 24] = [
     ErrorKind::QualityNotFound,
     ErrorKind::PlaybackChanged,
     ErrorKind::SourceChanged,
+    ErrorKind::RangeOutOfBounds,
     ErrorKind::RefreshExhausted,
     ErrorKind::Unsupported,
     ErrorKind::Parse,
@@ -72,6 +73,7 @@ fn sample(k: ErrorKind) -> Error {
         ErrorKind::SourceChanged => Error::SourceChanged {
             detail: "길이".into(),
         },
+        ErrorKind::RangeOutOfBounds => Error::RangeOutOfBounds { detail: "x".into() },
         ErrorKind::RefreshExhausted => Error::RefreshExhausted,
         ErrorKind::Unsupported => Error::Unsupported(Unsupported::Discontinuity),
         ErrorKind::Parse => Error::Parse {
@@ -161,6 +163,7 @@ fn payload_per_kind() {
             json!({"type": "playbackChanged", "was": "liveRewindHls", "now": "progressive"}),
         ),
         (ErrorKind::SourceChanged, Value::Null),
+        (ErrorKind::RangeOutOfBounds, Value::Null),
         (ErrorKind::RefreshExhausted, Value::Null),
         (ErrorKind::Unsupported, Value::Null),
         (ErrorKind::Parse, Value::Null),
@@ -316,6 +319,7 @@ fn playlist_encryption_maps_to_encrypted() {
         Unsupported::NoHlsMedia,
         Unsupported::Gap,
         Unsupported::Skip,
+        Unsupported::RangeNotHls,
     ] {
         let app = AppError::from(Error::Unsupported(u.clone()));
         assert_eq!(app.code, ErrorCode::Unsupported, "{u:?}");

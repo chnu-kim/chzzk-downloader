@@ -94,6 +94,17 @@ pub enum PlaybackKind {
     Live,
 }
 
+/// 시각 구간 [start, end)(ms). 빠른 다시보기 구간 받기(기능 ②)에 쓴다.
+/// `end_ms = None`은 "playlist 끝까지"다(영상 길이를 모를 수 있다, `ContentMeta::duration_secs`).
+/// 시각만 담고 비밀값이 없어 `Debug`를 derive한다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TimeRange {
+    pub start_ms: u64,
+    #[serde(default)]
+    pub end_ms: Option<u64>,
+}
+
 /// PD(progressive mp4) 화질 하나와 그 다운로드 주소.
 ///
 /// `Debug`는 주소를 `http::redact_url`로 가린다.

@@ -17,7 +17,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use chzzk_core::download::part::part_path;
 use chzzk_core::{
     CancellationToken, Chzzk, ClientConfig, ContentRef, DownloadOutcome, DownloadRequest,
-    DuplicatePolicy, Error, PlaybackKind, Progress, Resolved,
+    DuplicatePolicy, Error, PlaybackKind, Progress, Resolved, TimeRange,
 };
 
 fn env(name: &str) -> String {
@@ -39,6 +39,7 @@ async fn download(
     content: ContentRef,
     expect: PlaybackKind,
     limit: Option<u64>,
+    range: Option<TimeRange>,
     dir: &std::path::Path,
 ) -> (Result<DownloadOutcome, Error>, std::path::PathBuf, u64) {
     let c = Chzzk::new(ClientConfig::default()).unwrap();
@@ -66,6 +67,7 @@ async fn download(
         concurrency: chzzk_core::download::DEFAULT_CONCURRENCY,
         live_stop: None,
         recording_id: None,
+        range,
     };
     let res = c.download(req, cancel, &cb).await;
     (res, output, seen.load(Ordering::SeqCst))
@@ -81,6 +83,7 @@ async fn live_hls_partial() {
         ContentRef::Video { video_no: no },
         PlaybackKind::LiveRewindHls,
         Some(limit),
+        None,
         dir.path(),
     )
     .await;
@@ -108,6 +111,7 @@ async fn live_dash_partial() {
         ContentRef::Video { video_no: no },
         PlaybackKind::Progressive,
         Some(limit),
+        None,
         dir.path(),
     )
     .await;
@@ -148,6 +152,7 @@ async fn live_clip_full() {
     let (res, out, _) = download(
         ContentRef::Clip { clip_id: id },
         PlaybackKind::Progressive,
+        None,
         None,
         dir.path(),
     )

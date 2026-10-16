@@ -63,6 +63,7 @@ fn pd_request(out: &Path) -> DownloadRequest {
         concurrency: chzzk_core::download::DEFAULT_CONCURRENCY,
         live_stop: None,
         recording_id: None,
+        range: None,
     }
 }
 
@@ -76,6 +77,7 @@ fn hls_request(out: &Path) -> DownloadRequest {
         concurrency: std::num::NonZeroU8::new(1).unwrap(),
         live_stop: None,
         recording_id: None,
+        range: None,
     }
 }
 

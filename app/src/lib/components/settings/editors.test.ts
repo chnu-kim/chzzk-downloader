@@ -18,6 +18,7 @@ const api = await import('../../api');
 const { editors } = await import('../../stores/editors.svelte');
 const { auth } = await import('../../stores/auth.svelte');
 const { toasts } = await import('../../stores/toast.svelte');
+const { announcer } = await import('../../stores/announce.svelte');
 const { default: AccountSection } = await import('./AccountSection.svelte');
 
 const A = 'a'.repeat(31) + '1';
@@ -257,6 +258,26 @@ describe('화면 수명·포커스(EV12~EV15, 리뷰 반영)', () => {
     expect(label('action.copyUrl')).not.toHaveClass('off');
   });
 
+  it('복사 중 주소가 바뀌면 앞 주소의 [복사했어요]를 낭독하지 않는다', async () => {
+    await show();
+    const exp = Math.floor(Date.now() / 1000) + 7 * 86400;
+    vi.mocked(api.editorsInvite)
+      .mockResolvedValueOnce({ url: 'https://w.example.invalid/invite/cdi_one', expiresAt: exp })
+      .mockResolvedValueOnce({ url: 'https://w.example.invalid/invite/cdi_two', expiresAt: exp });
+    const h = held<void>();
+    const user = userEvent.setup();
+    vi.spyOn(navigator.clipboard, 'writeText').mockReturnValueOnce(h.promise);
+    const say = vi.spyOn(announcer, 'say');
+    await user.click(makeButton());
+    await screen.findByLabelText(t('editors.invite.label'));
+    await user.click(screen.getByText(t('action.copyUrl')));
+    await user.click(makeButton());
+    await waitFor(() => expect(screen.getByLabelText(t('editors.invite.label'))).toHaveValue('https://w.example.invalid/invite/cdi_two'));
+    h.resolve();
+    await tickAll();
+    expect(say).not.toHaveBeenCalledWith(t('action.copied'));
+  });
+
   it('EV13 그만두기 응답 전에 포커스를 옮겼으면 성공 뒤에 빼앗지 않는다', async () => {
     const X = 'e'.repeat(31) + '5';
     await show(
@@ -292,6 +313,50 @@ describe('화면 수명·포커스(EV12~EV15, 리뷰 반영)', () => {
     await waitFor(() =>
       expect(screen.getByRole('button', { name: t('a11y.leaveDelegation', { name: '채널 와이' }) })).toHaveFocus(),
     );
+  });
+
+  it('EV13 dto가 없는 경로: 응답 뒤 auth-changed로 행이 사라질 때 포커스가 다음 행으로 간다', async () => {
+    const X = 'e'.repeat(31) + '5';
+    const refs = [
+      { channelId: C, channelName: '채널 엑스' },
+      { channelId: X, channelName: '채널 와이' },
+    ];
+    signIn({ delegatedChannels: refs });
+    vi.mocked(api.editorsList).mockRejectedValue(appError('network'));
+    render(AccountSection);
+    await waitFor(() => expect(editors.load).toBe('failed'));
+    expect(editors.dto).toBeNull();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: t('a11y.leaveDelegation', { name: '채널 엑스' }) }));
+    await waitFor(() => expect(api.delegationsLeave).toHaveBeenCalledWith(C));
+    await waitFor(() => expect(toasts.current?.message).toBe(t('toast.delegationLeft', { name: '채널 엑스' })));
+    await tickAll();
+    expect(document.querySelector(`[data-delegated="${C}"]`)).not.toBeNull(); // 아직 auth-changed 전
+    signIn({ delegatedChannels: [refs[1]] });
+    await waitFor(() => expect(document.querySelector(`[data-delegated="${C}"]`)).toBeNull());
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: t('a11y.leaveDelegation', { name: '채널 와이' }) })).toHaveFocus(),
+    );
+  });
+
+  it('EV13 dto가 없는 경로: 응답 뒤 포커스를 옮겼으면 행이 사라져도 빼앗지 않는다', async () => {
+    const X = 'e'.repeat(31) + '5';
+    const refs = [
+      { channelId: C, channelName: '채널 엑스' },
+      { channelId: X, channelName: '채널 와이' },
+    ];
+    signIn({ delegatedChannels: refs });
+    vi.mocked(api.editorsList).mockRejectedValue(appError('network'));
+    render(AccountSection);
+    await waitFor(() => expect(editors.load).toBe('failed'));
+    await userEvent.setup().click(screen.getByRole('button', { name: t('a11y.leaveDelegation', { name: '채널 엑스' }) }));
+    await waitFor(() => expect(toasts.current?.message).toBe(t('toast.delegationLeft', { name: '채널 엑스' })));
+    await tickAll();
+    makeButton().focus();
+    signIn({ delegatedChannels: [refs[1]] });
+    await waitFor(() => expect(document.querySelector(`[data-delegated="${C}"]`)).toBeNull());
+    await tickAll();
+    expect(makeButton()).toHaveFocus();
   });
 
   it('EV14 기다리는 편집자 빼기도 응답 전에 옮긴 포커스를 빼앗지 않는다', async () => {

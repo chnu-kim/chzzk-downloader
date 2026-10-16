@@ -87,6 +87,8 @@
       toasts.push(t('toast.copyFailed'), 'danger');
       return;
     }
+    // 기다리는 사이 주소가 바뀌었으면(앞 주소는 무효) 틀린 내용을 알리지 않는다
+    if (editors.invite?.url !== url) return;
     copiedUrl = url;
     announcer.say(t('action.copied'));
     if (copiedTimer) clearTimeout(copiedTimer);
@@ -110,21 +112,38 @@
     return (rows[i + 1] ?? rows[i - 1])?.channelId;
   }
 
+  // 응답이 왔는데도 행이 아직 있으면(dto가 없어 auth-changed가 와야 사라지는 경로) 포커스가 그 행에 있는 채로 기다린다.
+  // 행이 사라질 때 포커스가 아직 그 행이었거나 body로 떨어졌을 때만 옮긴다(다른 곳으로 옮겼으면 빼앗지 않는다)
+  let handoff: { attr: 'data-editor' | 'data-delegated'; id: string; next: string | undefined } | null = null;
+  const rowOf = (attr: string, id: string) => document.querySelector<HTMLElement>(`[${attr}="${CSS.escape(id)}"]`);
+
+  async function settle(attr: 'data-editor' | 'data-delegated', id: string, next: string | undefined) {
+    await tick();
+    const row = rowOf(attr, id);
+    if (!row) return focusRowButton(attr, next);
+    if (row.contains(document.activeElement)) handoff = { attr, id, next };
+  }
+
+  $effect(() => {
+    void editors.editors;
+    void editors.delegated;
+    const h = handoff;
+    if (!h) return;
+    void tick().then(() => {
+      if (rowOf(h.attr, h.id)) return;
+      if (handoff === h) handoff = null;
+      focusRowButton(h.attr, h.next);
+    });
+  });
+
   async function removeEditor(ed: EditorDto) {
-    const rows = editors.editors;
-    const next = nextOf(rows, ed.channelId);
-    if (await editors.remove(ed)) {
-      await tick();
-      focusRowButton('data-editor', next);
-    }
+    const next = nextOf(editors.editors, ed.channelId);
+    if (await editors.remove(ed)) await settle('data-editor', ed.channelId, next);
   }
 
   async function leave(ch: { channelId: string; channelName: string }) {
     const next = nextOf(editors.delegated, ch.channelId);
-    if (await editors.leave(ch)) {
-      await tick();
-      focusRowButton('data-delegated', next);
-    }
+    if (await editors.leave(ch)) await settle('data-delegated', ch.channelId, next);
   }
 
   // [되돌리기]로 행이 돌아오면(토스트 안에 있던 포커스가 body로 떨어진다) 그 행의 버튼으로 옮긴다

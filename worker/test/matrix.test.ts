@@ -1,5 +1,5 @@
 // 자격 × 경로 행렬(docs/design/worker.md §4.5, 구현 중 변경 31 (타)). 표의 키는 경로 표(ROUTES)와 같아야 한다:
-// 경로를 더하고 기대를 정하지 않으면 실패한다. W6이 더한 /·/assets/:file·/auth/web/logout·/me/*·/admin*과 /notice·/favicon.ico·/admin/:channelId/disallow와 읽기 페이지 셋(/help·/privacy·/licenses)까지 31쌍이다.
+// 경로를 더하고 기대를 정하지 않으면 실패한다. W6이 더한 /·/assets/:file·/auth/web/logout·/me/*·/admin*과 /notice·/favicon.ico·/admin/:channelId/disallow와 읽기 페이지 셋(/help·/privacy·/licenses)에 편집자 위임 여덟 행(초대 셋·완료·그만두기·앱 편집자 API 셋, 구현 중 변경 106)을 더한 39쌍이다.
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { newId, newSecret, newToken, sha256B64url } from "../src/core/token";
 import { type Auth, ROUTES } from "../src/routes";
@@ -9,7 +9,7 @@ import { assetPath } from "../src/http/assets";
 import { createFakeChzzk } from "./fake-chzzk.mjs";
 import { allowedChannel, formBody, ORIGIN, useClock, viaExports } from "./http/harness";
 import { type Cred, type Creds, credHeaders, DMG, makeCreds, seedDist, V2 } from "./http/release-fixture";
-import { A1, C3 } from "./store/helpers";
+import { A1, C3, D4 } from "./store/helpers";
 import { installFakeChzzk, type FakeNet } from "./network";
 
 const CREDS: readonly Cred[] = ["none", "app", "appRevoked", "appDisallowed", "web", "webAdmin", "ci", "garbage"];
@@ -57,6 +57,7 @@ const jsonPost = (path: string, body: (c: Creds, cred: Cred) => unknown | Promis
   init: { method: "POST", headers: { ...credHeaders(c, cred), "Content-Type": "application/json" }, body: JSON.stringify(await body(c, cred)) },
 });
 
+const INVITE_UNKNOWN = `cdi_${"A".repeat(43)}`;
 const R = (name: string) => `/releases/${V2}/${name}`;
 const MATRIX: Readonly<Record<string, readonly MatrixCase[]>> = {
   "GET /health": [{ name: "health", request: plain("/health"), expect: all(200) }],
@@ -144,6 +145,17 @@ const MATRIX: Readonly<Record<string, readonly MatrixCase[]>> = {
   "GET /help": [{ name: "도움말", request: plain("/help"), expect: all(200) }],
   "GET /privacy": [{ name: "개인정보 처리방침", request: plain("/privacy"), expect: all(200) }],
   "GET /licenses": [{ name: "오픈소스 라이선스", request: plain("/licenses"), expect: all(200) }],
+  // 편집자 위임(구현 중 변경 106). T는 형식은 맞고 저장소에 없는 초대 토큰, D4는 관계가 없는 채널이다
+  "GET /invite/:token": [{ name: "모르는 초대", request: plain(`/invite/${INVITE_UNKNOWN}`), expect: all(404) }],
+  "POST /invite/:token/start": [{ name: "모르는 초대", request: form(`/invite/${INVITE_UNKNOWN}/start`), expect: all(404) }],
+  "POST /invite/:token/accept": [{ name: "모르는 초대", request: webForm(`/invite/${INVITE_UNKNOWN}/accept`), expect: by(303, 303, 303, 303, 404, 404, 303, 303) }],
+  "GET /me/delegations/done/:owner": [{ name: "그 주인과 최근 위임 없음", request: plain(`/me/delegations/done/${D4}`), expect: all(303) }],
+  "POST /me/delegations/leave": [{ name: "관계 없음", request: webForm("/me/delegations/leave", { owner: D4 }), expect: all(303) }],
+  "POST /api/editors/invite": [{ name: "초대 만들기", request: jsonPost("/api/editors/invite", () => ({})), expect: by(401, 200, 401, 403, 401, 401, 401, 401) }],
+  "POST /api/editors/remove": [{ name: "관계 없는 채널", request: jsonPost("/api/editors/remove", () => ({ channelId: D4 })), expect: by(401, 404, 401, 403, 401, 401, 401, 401) }],
+  "POST /api/delegations/leave": [{ name: "관계 없는 채널", request: jsonPost("/api/delegations/leave", () => ({ channelId: D4 })), expect: by(401, 404, 401, 403, 401, 401, 401, 401) }],
+  // F 쿠키가 없으면 어느 자격이든 303 / + alreadyDone(세션·Bearer는 보지 않는다)
+  "POST /auth/claim/cancel": [{ name: "F 없음", request: form("/auth/claim/cancel"), expect: all(303) }],
 };
 
 const keyOf = (r: { method: string; pattern: string }) => `${r.method} ${r.pattern}`;

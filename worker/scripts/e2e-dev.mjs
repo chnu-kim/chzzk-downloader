@@ -62,6 +62,10 @@ const IP_ADMIN = "198.51.100.10";
 const IP_B2 = "198.51.100.20";
 const IP_C3 = "198.51.100.30";
 const IP_CANCEL = "198.51.100.40";
+// 위임(E09b·E16b): start 수는 IP당 b2 2 · c3 2 · c3B 1 (한도 3 이하)
+const IP_DLG_B2 = "198.51.100.50";
+const IP_DLG_C3 = "198.51.100.60";
+const IP_DLG_C3B = "198.51.100.61";
 const IP_T4 = "203.0.113.7";
 const IP_T4B = "203.0.113.8";
 const IP_T6A = "2001:db8:7:7::1";
@@ -69,7 +73,7 @@ const IP_T6B = "2001:db8:7:7::2";
 const IP_T6C = "2001:db8:7:8::1";
 
 // E17이 요구하는 카나리 종류와 최소 수(2026-10-09 실측 103개: 루프백 전환 뒤 loginId·userCode 카나리가 없어졌다, worker.md 구현 중 변경 89 (자))
-const REQUIRED_CANARY_LABELS = ["ip", "cookie.cdl_s", "cookie.cdl_f", "state", "sessionId", "csrf", "loginSecret", "loginVerifier", "grant", "loopState", "handle", "access", "refresh", "chzzk.code", "chzzk.token"];
+const REQUIRED_CANARY_LABELS = ["ip", "cookie.cdl_s", "cookie.cdl_f", "state", "sessionId", "csrf", "loginSecret", "loginVerifier", "grant", "loopState", "handle", "access", "refresh", "chzzk.code", "chzzk.token", "invite"];
 const MIN_CANARIES = 100;
 
 const LOOPBACK_PATH = "/chzzk-downloader/login"; // src/core/loopback.ts LOOPBACK_PATH
@@ -477,7 +481,26 @@ async function xtaskGet(path, token) {
 
 // ---- 시나리오 ----
 
-const S = { nonce: "", flowA: null, csrfA: null, b2: null, c3: null, jarA: new CookieJar() };
+const S = { nonce: "", flowA: null, csrfA: null, b2: null, c3: null, jarA: new CookieJar(), dlg: { b2A: null, c3A: null, jarC: null } };
+
+// 초대 주소의 토큰(경로에 실려 wrangler 요청 줄에는 찍힌다: handle처럼 path 카나리다)
+const inviteToken = (url) => new URL(url).pathname.split("/").pop();
+/** 주인(b2)이 새 초대를 만든다 → { token, path } */
+async function makeInvite() {
+  const res = await jsonPost("/api/editors/invite", {}, { headers: bearer(S.dlg.b2A) });
+  isStatus(res, 200, "초대 만들기");
+  const url = json(res).inviteUrl;
+  must(typeof url === "string" && url.startsWith(`${E2E_ORIGIN}/invite/cdi_`), "초대 주소가 우리 출처의 /invite/cdi_로 시작하지 않는다");
+  const token = inviteToken(url);
+  canaries.add("path", "invite", token);
+  return { token, path: `/invite/${token}` };
+}
+const meOf = async (access) => {
+  const r = await req("GET", "/api/me", { headers: bearer(access) });
+  isStatus(r, 200, "/api/me");
+  return json(r);
+};
+const flashSet = (res, kind) => res.headers.getSetCookie().some((l) => l.startsWith(`cdl_flash=${kind}`));
 
 const scenarios = [
   [
@@ -539,7 +562,7 @@ const scenarios = [
         canaries.add("path", "channelId", a.channelId);
       }
       // 스로틀용 합성 IP(§14 "IP 원문" 금지). 요청 줄·배너에는 클라이언트 IP가 찍히지 않아 비밀 종류다. 127.0.0.1은 배너에 찍혀 넣지 않는다
-      for (const ip of [IP_ADMIN, IP_B2, IP_C3, IP_CANCEL, IP_T4, IP_T4B, IP_T6A, IP_T6B, IP_T6C]) canaries.add("secret", "ip", ip);
+      for (const ip of [IP_ADMIN, IP_B2, IP_C3, IP_CANCEL, IP_DLG_B2, IP_DLG_C3, IP_DLG_C3B, IP_T4, IP_T4B, IP_T6A, IP_T6B, IP_T6C]) canaries.add("secret", "ip", ip);
     },
   ],
   [
@@ -773,6 +796,39 @@ const scenarios = [
     },
   ],
   [
+    "E09b-invite-denied",
+    async () => {
+      // 거부 → 청구 → (E10) 관리자 [허가] → 자동 완성. 새 계정 없이 한 번에 지난다
+      const b = await appLogin("b2", IP_DLG_B2);
+      must(b.redeem.status === "ok", "b2 앱 로그인이 ok가 아니다");
+      S.dlg.b2A = b.redeem.accessToken;
+      const t1 = await makeInvite();
+      fakeServer.fake.state.account = "c3";
+      const jar = new CookieJar();
+      const page = await browserGet(jar, t1.path);
+      isStatus(page, 200, "비로그인 초대 페이지");
+      must(page.html.includes(FAKE_ACCOUNTS.b2.channelName), "초대 페이지에 주인 이름이 없다");
+      must(page.html.includes(`action="${t1.path}/start"`), "초대 페이지에 로그인 폼이 없다");
+      must(!page.html.includes("<script"), "초대 페이지에 <script가 있다");
+      must(page.res.headers.get("x-robots-tag") === "noindex", "초대 페이지가 noindex가 아니다");
+      const start = await browserPost(jar, page, `${t1.path}/start`, {}, { ip: IP_DLG_C3 });
+      const cb = await authorizeToCallback(start);
+      const callback = await req("GET", cb, { jar });
+      isStatus(callback, 303, "초대 콜백(거부)");
+      const to = new URL(callback.headers.get("location") ?? "", E2E_ORIGIN);
+      must(to.pathname === "/auth/done" && to.searchParams.get("r") === "denied", "거부 콜백이 /auth/done?r=denied로 보내지 않았다");
+      const done = await browserGet(jar, `${to.pathname}${to.search}`);
+      isStatus(done, 200, "거부 페이지");
+      must(done.html.includes("초대는 기록해 뒀어요.") && done.html.includes(`‘${FAKE_ACCOUNTS.b2.channelName}’`), "거부 페이지에 초대 줄이 없다");
+      const me = await meOf(S.dlg.b2A);
+      must(me.editors.length === 1 && me.editors[0].channelId === ID("c3") && me.editors[0].status === "pending", "주인의 editors에 기다리는 c3가 하나 없다");
+      must(me.pendingInviteUntil === null, "청구된 초대인데 pendingInviteUntil이 null이 아니다");
+      const admin = await browserGet(S.jarA, "/admin");
+      isStatus(admin, 200, "/admin");
+      must(admin.html.includes(`초대 받음 · ‘${FAKE_ACCOUNTS.b2.channelName}’`), "관리 화면에 초대 꼬리표가 없다");
+    },
+  ],
+  [
     "E10-allow-c3",
     async () => {
       const jar = S.jarA;
@@ -786,6 +842,10 @@ const scenarios = [
       const r = await appLogin("c3", IP_C3);
       must(r.redeem.status === "ok" && r.redeem.channelId === ID("c3"), "허용 뒤 c3 로그인이 ok가 아니다");
       S.c3 = { A: r.redeem.accessToken, R: r.redeem.refreshToken };
+      // 관리자 [허가]가 청구된 초대를 위임으로 완성했다(같은 트랜잭션)
+      must(JSON.stringify(r.redeem.delegatedChannels) === JSON.stringify([{ channelId: ID("b2"), channelName: FAKE_ACCOUNTS.b2.channelName }]), "허가 뒤 c3의 delegatedChannels가 b2 하나가 아니다");
+      const me = await meOf(S.dlg.b2A);
+      must(me.editors.length === 1 && me.editors[0].channelId === ID("c3") && me.editors[0].status === "active", "허가 뒤 주인의 editors에 활성 c3가 없다");
     },
   ],
   [
@@ -889,6 +949,86 @@ const scenarios = [
       must(good.status === 0, `release.mjs worker --check-only(${LATEST}) 종료 ${good.status}, 기대 0\n${good.out.split("\n").filter((l) => /fail|error/i.test(l)).slice(0, 12).join("\n")}`);
       const wrong = await runCheckOnly(E2E_VERSIONS[0], S.nonce);
       must(wrong.status === 1, `release.mjs worker --check-only(${E2E_VERSIONS[0]}) 종료 ${wrong.status}, 기대 1`);
+    },
+  ],
+  [
+    "E16b-delegation",
+    async () => {
+      // 1. 앱 그만두기
+      const c = await appLogin("c3", IP_DLG_C3);
+      must(c.redeem.status === "ok" && c.redeem.delegatedChannels.some((d) => d.channelId === ID("b2")), "c3 앱 로그인 묶음에 b2가 없다");
+      S.dlg.c3A = c.redeem.accessToken;
+      isStatus(await jsonPost("/api/delegations/leave", { channelId: ID("b2") }, { headers: bearer(S.dlg.c3A) }), 204, "앱 그만두기");
+      const again = await jsonPost("/api/delegations/leave", { channelId: ID("b2") }, { headers: bearer(S.dlg.c3A) });
+      isStatus(again, 404, "앱 그만두기 다시");
+      must(json(again).code === "not_found", "다시 그만두기의 code가 not_found가 아니다");
+      must((await meOf(S.dlg.b2A)).editors.length === 0, "그만둔 뒤에도 주인의 editors가 남았다");
+      must((await meOf(S.dlg.c3A)).delegatedChannels.length === 0, "그만둔 뒤에도 c3의 delegatedChannels가 남았다");
+
+      // 2. 로그인 = 수락
+      const t2 = await makeInvite();
+      fakeServer.fake.state.account = "c3";
+      const jarC = new CookieJar();
+      S.dlg.jarC = jarC;
+      const page2 = await browserGet(jarC, t2.path);
+      isStatus(page2, 200, "비로그인 초대 페이지");
+      const cb2 = await authorizeToCallback(await browserPost(jarC, page2, `${t2.path}/start`, {}, { ip: IP_DLG_C3B }));
+      const callback2 = await req("GET", cb2, { jar: jarC });
+      isStatus(callback2, 303, "초대 콜백(수락)");
+      must(new URL(callback2.headers.get("location") ?? "", E2E_ORIGIN).pathname === `/me/delegations/done/${ID("b2")}`, "수락 콜백이 그 주인의 완료 페이지로 보내지 않았다");
+      must(jarC.has("cdl_s") && !jarC.has("cdl_f") && !jarC.has("cdl_flash"), "수락 콜백의 쿠키가 세션 하나뿐이 아니다");
+      const done = await browserGet(jarC, `/me/delegations/done/${ID("b2")}`);
+      isStatus(done, 200, "완료 페이지");
+      for (const t of [FAKE_ACCOUNTS.b2.channelName, "편집자가 됐어요", 'action="/me/delegations/leave"', `name="owner" value="${ID("b2")}"`]) must(done.html.includes(t), `완료 페이지에 ${t}가 없다`);
+      must(!done.html.includes("<script>alert(1)</script>"), "완료 페이지에 c3 이름이 이스케이프되지 않고 나왔다");
+      must((await meOf(S.dlg.b2A)).editors.some((e) => e.channelId === ID("c3") && e.status === "active"), "수락 뒤 주인의 editors에 활성 c3가 없다");
+
+      // 3. 웹 그만두기(두 번)
+      const csrf = pageCsrf(done, "완료 페이지");
+      const out = await browserPost(jarC, done, "/me/delegations/leave", { csrf, owner: ID("b2") });
+      isStatus(out, 303, "웹 그만두기");
+      must(new URL(out.headers.get("location") ?? "", E2E_ORIGIN).pathname === "/", "웹 그만두기가 /로 보내지 않았다");
+      must((await browserGet(jarC, "/")).html.includes("편집자를 그만뒀어요."), "그만둔 뒤 랜딩에 알림이 없다");
+      isStatus(await browserPost(jarC, done, "/me/delegations/leave", { csrf, owner: ID("b2") }), 303, "웹 그만두기 다시");
+      must((await browserGet(jarC, "/")).html.includes("이미 처리됐어요."), "다시 그만둔 뒤 랜딩에 이미 처리됨 알림이 없다");
+      must((await meOf(S.dlg.b2A)).editors.length === 0, "웹으로 그만둔 뒤에도 주인의 editors가 남았다");
+
+      // 4. 같은 토큰 두 번
+      const gone = await browserGet(jarC, t2.path);
+      isStatus(gone, 404, "쓴 초대 주소");
+      must(gone.html.includes("초대 주소가 만료됐어요"), "쓴 초대 주소 페이지에 만료 안내가 없다");
+
+      // 5. 자기 초대
+      const t3 = await makeInvite();
+      fakeServer.fake.state.account = "b2";
+      const jarB = new CookieJar();
+      const home = await browserGet(jarB, "/");
+      const cbB = await authorizeToCallback(await browserPost(jarB, home, "/auth/web/start", {}, { ip: IP_DLG_B2 }));
+      const callbackB = await req("GET", cbB, { jar: jarB });
+      isStatus(callbackB, 303, "b2 웹 콜백");
+      const own = await browserGet(jarB, t3.path);
+      isStatus(own, 200, "자기 초대 페이지");
+      must(own.html.includes("내 채널의 초대 주소예요"), "자기 초대 페이지에 안내가 없다");
+
+      // 6. 이미 로그인한 확인 페이지 → [편집자 되기]
+      const confirm = await browserGet(jarC, t3.path);
+      isStatus(confirm, 200, "확인 페이지");
+      must(confirm.html.includes("편집자가 될까요?") && confirm.html.includes(`action="${t3.path}/accept"`), "확인 페이지에 질문이나 수락 폼이 없다");
+      const acc = await browserPost(jarC, confirm, `${t3.path}/accept`, { csrf: pageCsrf(confirm, "확인 페이지") });
+      isStatus(acc, 303, "수락 POST");
+      must(new URL(acc.headers.get("location") ?? "", E2E_ORIGIN).pathname === `/me/delegations/done/${ID("b2")}`, "수락 POST가 그 주인의 완료 페이지로 보내지 않았다");
+
+      // 7. 이미 편집자
+      const t4 = await makeInvite();
+      const already = await browserGet(jarC, t4.path);
+      isStatus(already, 303, "이미 편집자의 초대 페이지");
+      must(new URL(already.res.headers.get("location") ?? "", E2E_ORIGIN).pathname === "/" && flashSet(already.res, "alreadyEditor"), "이미 편집자가 /와 alreadyEditor로 가지 않았다");
+
+      // 8. 주인이 빼기
+      isStatus(await jsonPost("/api/editors/remove", { channelId: ID("c3") }, { headers: bearer(S.dlg.b2A) }), 204, "주인이 빼기");
+      must((await meOf(S.dlg.c3A)).delegatedChannels.length === 0, "뺀 뒤에도 c3의 delegatedChannels가 남았다");
+      const missing = await jsonPost("/api/editors/remove", { channelId: ID("c3") }, { headers: bearer(S.dlg.b2A) });
+      isStatus(missing, 404, "주인이 빼기 다시");
     },
   ],
   [

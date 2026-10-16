@@ -29,7 +29,7 @@ describe("renderAdmin", () => {
       { channelId: A1, channelName: "관리자", ownerChannelId: null, note: null, addedBy: A1, addedAt: Date.UTC(2030, 0, 1), activeSessions: 1 },
       { channelId: B2, channelName: null, ownerChannelId: null, note: "<img src=x onerror=1>", addedBy: A1, addedAt: Date.UTC(2030, 0, 1), activeSessions: 0 },
     ],
-    denied: [{ channelId: C3, channelName: "<i>거부</i>", firstAt: Date.UTC(2030, 0, 1), lastAt: Date.UTC(2030, 0, 2), attempts: 2 }],
+    denied: [{ channelId: C3, channelName: "<i>거부</i>", firstAt: Date.UTC(2030, 0, 1), lastAt: Date.UTC(2030, 0, 2), attempts: 2, invitedBy: null }],
     sessions: [{ id: "sid", kind: "app", channelId: B2, channelName: "허용", client: "<x>", createdAt: 0, lastSeenAt: 0, recovered: 1 }],
     audit: [{ at: 0, actor: A1, action: "allow", target: B2 }],
   };
@@ -180,5 +180,33 @@ describe("renderDisallowConfirm", () => {
 
   it("title에 오류 접두가 없다", async () => {
     expect(titleOf(await render().text()).startsWith(COPY.errorTitlePrefix)).toBe(false);
+  });
+});
+
+describe("관리 꼬리표 invitedBy", () => {
+  const row = (invitedBy: string | null) => ({
+    ...EMPTY,
+    denied: [{ channelId: C3, channelName: "거부", firstAt: 0, lastAt: 0, attempts: 1, invitedBy }],
+  });
+  const render = (view: AdminView) => renderAdmin(CONFIG, { view, admins: [A1], csrf: CSRF, nav: NAV }).text();
+
+  it("이름 아래 .meta 글자이고 버튼·열은 그대로다", async () => {
+    const t = await render(row("합성주인"));
+    expect(t).toContain(`<br><span class="meta">${COPY.invitedBy("합성주인")}</span>`);
+    expect(t).toContain(`action="/admin/denied/${C3}/allow"`);
+    expect(count(t, /class="badge/g)).toBe(1);
+  });
+
+  it("null이거나 필드가 없으면(옛 DO) 꼬리표가 없다", async () => {
+    expect(await render(row(null))).not.toContain("초대 받음");
+    const old = { ...EMPTY, denied: [{ channelId: C3, channelName: "거부", firstAt: 0, lastAt: 0, attempts: 1 }] } as unknown as AdminView;
+    expect(await render(old)).not.toContain("초대 받음");
+  });
+
+  it("주인 이름은 이스케이프되고 빈 이름도 꼬리표를 낸다", async () => {
+    const t = await render(row("<b>x</b>"));
+    expect(t).toContain("&lt;b&gt;x&lt;/b&gt;");
+    expect(t).not.toContain("<b>x");
+    expect(await render(row(""))).toContain("초대 받음 · ‘’");
   });
 });

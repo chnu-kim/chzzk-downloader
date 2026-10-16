@@ -650,7 +650,7 @@ pub struct Signer { pub channel_id: String, pub is_admin: bool, pub delegated: A
 | 항목 | 규칙 |
 |---|---|
 | 언제 | (1) `resolve`에서 `meta.channel_id`가 Some이고 내 채널이 아니며 관리자가 아니고 **컨텐츠가 생방송이 아닐 때**(생방송은 v1에서 위임 판정을 쓰지 않는다, §9.1) (2) `admit`·`resume_job`에서 판정이 `delegated`에 달릴 때 (3) [다시 불러오기](`ownership_recheck`) |
-| 자동 간격 | (1)·(2): phase SignedIn ∧ 오프라인 아님 ∧ `now - last_me_at ≥ DELEGATION_RECHECK_MIN_GAP`(5분 [잠정]). `last_me_at`은 메모리에만 두고 시작값 None이라 **앱을 켠 뒤 첫 판정은 늘 확인한다**(파일에 적지 않는다). **(3) [다시 불러오기]는 간격 없이 늘 보낸다**(§5.1). 모두 single-flight(진행 중이면 그 결과를 함께 기다린다). 설정 화면의 `editors_list`(§4.1)도 같은 `me` 경로·같은 잠금을 쓴다 |
+| 자동 간격 | (1)·(2): phase SignedIn ∧ 오프라인 아님 ∧ `now - last_me_at ≥ DELEGATION_RECHECK_MIN_GAP_MS`(5분 [잠정]). `last_me_at`은 메모리에만 두고 시작값 None이라 **앱을 켠 뒤 첫 판정은 늘 확인한다**(파일에 적지 않는다). **(3) [다시 불러오기]는 간격 없이 늘 보낸다**(§5.1). 모두 single-flight(진행 중이면 그 결과를 함께 기다린다). 설정 화면의 `editors_list`(§4.1)도 같은 `me` 경로·같은 잠금을 쓴다 |
 | **적용 순서**(3차 개정, Codex N2) | **`/api/me`도 refresh와 같은 `refresh_lock`을 잡고 보낸다**(`service.rs:502` `let _g = self.refresh_lock.lock().await` [확인]). 그러면 앱 안에서 위임 목록을 싣는 요청(refresh·`me`)은 **한 번에 하나**이고 다음 요청은 앞 응답을 받은 뒤에 나가므로, **응답 적용 순서 = Worker의 처리 순서**다. N2의 순서("회수 전 `me` 지연 → 회수 → refresh가 빈 목록 적용 → 늦은 `me`가 옛 목록 저장")는 refresh가 `me` 응답 전에 나갈 수 없어 생기지 않는다. 세부 규칙: ① **access 토큰은 잠금을 잡은 뒤에 `held`에서 읽는다**(기다리는 동안 앞 refresh가 회전했을 수 있다. 회전된 옛 access는 `sessions.ts:246`이 `access_hash`를 바꿔 `invalid_token`이 되므로 옛 값을 쓰면 헛 refresh 고리가 생긴다) ② `me`는 **`refresh_gen`을 올리지 않는다**(올리면 뒤에 줄 선 refresh가 `service.rs:505` "다른 호출이 방금 끝냈다"로 보고 건너뛴다) ③ 잠금을 잡은 채로 `refresh_inner`를 부르지 않는다(tokio `Mutex`는 재진입이 안 돼 멈춘다): `invalid_token`이면 **잠금을 놓은 뒤** `refresh_inner`를 부른다 ④ 이중 장치로 잠금 안에서 요청 전 `(session_epoch, refresh_gen)`을 잡고 적용 직전에 둘 다 같은지 본다(잠금이 있으면 늘 같다. 이 검사만으로는 N2를 막지 못한다: 잠금 없이 두 요청이 겹치면 늦게 처리된 쪽 응답이 먼저 도착할 수 있어 세대 비교로 순서를 알 수 없다 — **잠금을 "중복"으로 보고 빼면 N2가 다시 열린다**고 코드 주석에 적는다). 대안 "DO의 위임 revision을 응답에 실어 비교"는 계약·스키마가 늘고 V2 롤백 창에서 revision이 오르지 않는 변경(옛 `disallow`)이 생겨 고르지 않았다 |
 | 시간 상한(정정) | `/api/me` 요청 자체는 `HttpWorkerApi`의 요청당 `REQUEST_TIMEOUT` 10초(`http.rs:18`·`:41-50` [확인]). **`AUTH_CHECK_TIMEOUT_MS` 40초는 쓰지 않는다**: 셸 코드에서 이 상수를 읽는 곳은 정의(`consts.rs:5`)뿐이고 앱은 안내 문구의 초 수로만 쓴다(`auth.ts:89` `auth.checking.body` [확인]). refresh를 기다리는 경우는 refresh 자체의 상한을 따른다: 요청 10초 + 응답 유실 재시도 0·10·30초(`verify.rs:183-187` `LOST_RETRY_AT`, `service.rs:524-547` [확인], 마지막 전송 45초 `LOST_RETRY_LAST_SEND`) → 최대 약 55초 [확인된 상수의 합]. **잠금 대기(3차)**: 진행 중인 refresh가 있으면 `me`는 그것이 끝날 때까지 기다리므로 최악은 "앞 refresh 약 55초 + `me` 10초", `invalid_token`이면 그 뒤 refresh 약 55초가 더 붙는다. 그 동안 판정 버튼은 `loading`이다. 새 타이머·상수는 만들지 않는다 |
 | **세션 세대**(개정, Codex 지적) | 요청 전에 `session_epoch`를 잡고, 응답 뒤 같은 잠금에서 `session_epoch`가 다르면 **응답을 버린다**(메모리·파일·판정 어디에도 적용하지 않는다). 성공 응답뿐 아니라 **명시적 거부의 상태 전이도** 세대가 같을 때만 한다(3차: A의 늦은 거부가 B를 로그아웃시키지 않게). 기존 refresh가 `service.rs:513`에서 잡고 `:551`에서 버리는 것 [확인]과 같은 규칙이고, 세대는 로그인 완료(`:920`)·로그아웃(`:1116`)에서 오른다 [확인]. 판정을 기다리던 호출자는 버려진 결과 대신 **현재 세대의 `signer()`를 다시 읽어** 판정한다(`ownership.rs:130` 방식) |
@@ -660,7 +660,7 @@ pub struct Signer { pub channel_id: String, pub is_admin: bool, pub delegated: A
 | 왜 `/api/me`인가 | refresh 회전은 채널별 10분 10회 상한(`sessions.ts:14-15` `ROTATE_RATE_10M = 10` [확인])을 소모해 429 → 앱은 오프라인처럼 보인다(`verify.rs:157-158` Worker 형식 4xx(429 포함) → Transient(Server) [확인]). `/api/me`는 회전이 없고 `check` RPC 1회(`session.ts:61-66` [확인]) |
 | 비용 | 남의 채널 영상을 불러올 때 5분에 최대 1회 RPC(자동) + 사람이 누른 만큼(수동). 본인 영상에는 0. **Worker 쪽 상한은 없다**(`/api/me`는 429를 내지 않는다 `session.ts:61-69` [확인]; 429는 refresh `session.ts:38-40`·start `auth.ts:102`·`:143`뿐 [확인]). 성공 경로 쓰기 0(`sessions.ts:137` [확인]). 상한이 필요해지면 §18-12 |
 
-`DELEGATION_RECHECK_MIN_GAP`은 `crates/shell/src/consts.rs`(DT15 대상 [확인])와 foundations §14 표에 올린다.
+`DELEGATION_RECHECK_MIN_GAP_MS`은 `crates/shell/src/consts.rs`(DT15 대상 [확인])와 foundations §14 표에 올린다.
 
 ### 9.5 `WorkerApi` 확장(`auth/api.rs:158-181` 지금 start·redeem·refresh·logout뿐 [확인])
 
@@ -749,7 +749,7 @@ pub struct Signer { pub channel_id: String, pub is_admin: bool, pub delegated: A
 | worker-e2e(`scripts/e2e-dev.mjs`, 가짜 치지직 계정 a1·b2·c3·d4 `fake-chzzk-server.mjs:92` [확인]) | a1(허가 주인) 앱 API로 초대 → b2(허가 편집자) 비로그인 브라우저로 열어 로그인 → `/me/delegations/done` → a1의 `/api/me`에 b2 · b2 묶음에 a1 · c3(비허가) 열어 로그인 → denied 페이지 줄 → 관리자 [허가] → c3 묶음에 a1 · b2 [편집자 그만두기] → 빠짐 · 같은 토큰 두 번 → gone · a1이 자기 주소 열기 → self 페이지 |
 | e2e-native(Linux·Windows) | 픽스처 묶음 `delegatedChannels: []` 유지 + 사례 하나로 맡은 채널 영상 받기 1회(결과 sha256) |
 | design-worker | 초대 페이지(비로그인·확인·만료)·완료 페이지 스냅샷 기준선(Linux CI) |
-| 사용자 시험(D62) | UT8 "다른 사람에게 영상 받기를 맡겨 보세요"(설정 행만으로 찾는가) · UT9 "받은 초대 주소로 그 채널 영상을 받아 보세요"(로그인 = 수락이 놀라움인가, **열려 있던 거부 카드에서 [다시 불러오기]를 찾는가**). **D62 조건과의 관계**(개정): D62·`governance.md:419` §6.1은 "1회차 = 적용 전 현재 앱(기준선), 2회차 이후 = 적용 뒤, 두 회차의 대본은 같은 판"이고 `:423`은 "대본이 바뀌면 이전 회차와 합산하지 않는다" [확인]. 아직 시험 기록은 하나도 없다(`docs/design/system/tests/` 없음 [확인]). UT8·UT9는 적용 전 앱에 기능이 없어 **기준선 회차에서 측정 대상이 없다**. 그래서 ① UT8·UT9는 대본 판을 올리는 **추가 과업**이고 D62의 "기준선 ↔ 적용 뒤" 비교는 UT1~UT7에만 성립한다 ② UT8·UT9의 합산은 이 기능이 들어간 뒤의 회차끼리만(두 회 이상, 회당 3명 — D62의 횟수·인원 조건은 그대로) ③ 이 기능 전에 1회차(기준선)를 이미 돌렸다면 UT8·UT9 행은 그 회차에 "기능 없음·측정 없음"으로 적고 합산에서 뺀다 ④ 한 회만 돌리면 "축소한 시험"으로 적어 발견성·로그인 수락 방식의 확정 근거로 쓰지 않는다(Codex 지적). "D62 충족 조건은 그대로"라는 이전 문장은 UT8·UT9에 기준선이 없다는 점을 빠뜨린 것이라 거둔다 |
+| 사용자 시험(D62) | UT8(설정 행만으로 찾는가)·UT9(로그인 = 수락이 놀라움인가, **열려 있던 거부 카드에서 [다시 불러오기]를 찾는가**). 낭독문·확인 과업 V9·V10·과업별 합산 판정은 governance §6.2·§6.4가 원천이다(화면 단어를 쓰지 않는 규칙으로 고쳐 썼다). **D62 조건과의 관계**(개정): D62·`governance.md:419` §6.1은 "1회차 = 적용 전 현재 앱(기준선), 2회차 이후 = 적용 뒤, 두 회차의 대본은 같은 판"이고 `:423`은 "대본이 바뀌면 이전 회차와 합산하지 않는다" [확인]. 아직 시험 기록은 하나도 없다(`docs/design/system/tests/` 없음 [확인]). UT8·UT9는 적용 전 앱에 기능이 없어 **기준선 회차에서 측정 대상이 없다**. 그래서 ① UT8·UT9는 대본 판을 올리는 **추가 과업**이고 D62의 "기준선 ↔ 적용 뒤" 비교는 UT1~UT7에만 성립한다 ② UT8·UT9의 합산은 이 기능이 들어간 뒤의 회차끼리만(두 회 이상, 회당 3명 — D62의 횟수·인원 조건은 그대로) ③ 이 기능 전에 1회차(기준선)를 이미 돌렸다면 UT8·UT9 행은 그 회차에 "기능 없음·측정 없음"으로 적고 합산에서 뺀다 ④ 한 회만 돌리면 "축소한 시험"으로 적어 발견성·로그인 수락 방식의 확정 근거로 쓰지 않는다(Codex 지적). "D62 충족 조건은 그대로"라는 이전 문장은 UT8·UT9에 기준선이 없다는 점을 빠뜨린 것이라 거둔다 |
 | ratchet | `tests.worker`·`tests.vitest`·`tests.rust`·`tests.playwright` 증가, `tests.app_e2e.<os>` 유지 이상 |
 
 ---
@@ -793,7 +793,7 @@ pub struct Signer { pub channel_id: String, pub is_admin: bool, pub delegated: A
 
 | # | 커밋 타입: 요약 | 범위 | 완료 조건 |
 |---|---|---|---|
-| 1 | `docs: 편집자 위임 설계를 적는다` | worker.md 구현 중 변경 105·106(①-2·①-3이 적었다)·app.md 구현 중 변경(78은 ⑤ fix가 가져갔고 셸 항목은 ①-4가 적는다), content.md 용어집(행 추가 + 되돌리기 행 수정) + `terms.json`, patterns §1.2·§4·§14.4, web.md §1·§6.3·§7.2·`landingLead` 표기 정정, foundations §14 상수, ADR-0026 + ADR-0009 행, governance UT8·UT9, ROADMAP 행 고침·체크리스트, runbook 롤백 범위 | `design-copy` 패리티·`adr.test`·`spec-check` 녹색 |
+| 1 | `docs: 편집자 위임 설계를 적는다` | worker.md 구현 중 변경 105·106(①-2·①-3이 적었다)·app.md 구현 중 변경(78은 ⑤ fix가 가져갔고 셸 항목은 ①-4가 적는다), content.md 용어집(행 추가 + 되돌리기 행 수정) + `terms.json`, web.md `landingLead`·flash 값 표기 정정(§7.3, 화면 표·§6.3·§7.2는 ①-3이 적었다), foundations §14 Worker 상수(셸 상수 행은 ①-4 머지 뒤), patterns §1.2·§4·§14.4·§6.5는 ①-5로 옮긴다(화면과 함께 바뀐다), ADR-0026 + ADR-0009 행, governance UT8·UT9, ROADMAP 행 고침·체크리스트, runbook 롤백 범위 | `design-copy` 패리티·`adr.test`·`spec-check` 녹색 |
 | 2 | `feat: Worker DO에 위임·초대 표와 RPC를 더하고 토큰 묶음에 맡은 채널을 싣는다` | `schema.ts` V3, `store/delegation.ts`, `sessions.ts`·`allowlist.ts`·`sweep.ts` 확장, `types.ts`, `core/token.ts`(`invite` 접두), `session.ts`(`/api/me` 확장·`tokenBundleJson`) | store 단위 + V2 롤백 호환 + 묶음·`/api/me` 모양 + RPC 수 표. 이 PR만 배포돼도 옛 앱 무영향 |
 | 3 | `feat: Worker 초대·완료 페이지와 앱 편집자 API를 연다` | `routes.ts`(10행), `http/invite.ts`·`invite-view.ts`, `auth.ts` 콜백 분기, `web-session.ts` `seeOther` 세 곳, `flash.ts` 종류 셋, `admin-view.ts` 꼬리표, `copy.ts`, `/privacy`, 도움말 `editors`, worker-e2e 흐름, design-worker 기준선 | 행렬·상태표·quiet·R8 기록 |
 | 3½ | `chore: 버전을 0.8.0으로 올린다` | `Cargo.toml` `[workspace.package] version`·`tauri.conf.json`·`app/package.json`(`versions` gate가 셋을 대조) | 릴리스 1에 **필수**(개정): 태그 gate는 "버전 = 태그, 단조 증가"를 본다(`release.yml:50-79` `release-gate` 작업·`scripts/ci/release.mjs:6`·`:355` [확인]). 버전 올림이 PR 6에만 있으면 릴리스 1 태그 `v0.8.0`이 gate에서 빨개진다. 지금 버전은 0.7.0(`Cargo.toml:9` [확인], 생방송 녹화 릴리스)이다(3차). `node scripts/ci/release.mjs next-version`으로 확인 |
@@ -874,7 +874,7 @@ pub struct Signer { pub channel_id: String, pub is_admin: bool, pub delegated: A
 - 사용자 결정 §15의 8개(특히 2 신뢰 수준 (b), 4 로그인 = 수락, 5 지연 회수). 추천은 적었고 모두 [가정]·[잠정] 위에 있다.
 - §17 릴리스를 둘로 나눌지(Worker 먼저 → §8.7 창 제거) 또는 하나로 묶고 창을 받아들일지.
 - [실측 필요] §18-1(카카오톡 인앱 왕복), §18-5(scope 추가가 동의 화면을 바꾸는지), §18-9(태그 릴리스의 앱→Worker 창 길이), §18-10(`/api/me` 300ms), §18-11(초대 주소가 미리보기·기록에 남는 범위).
-- [잠정] 상수 여섯(§8.1)과 `DELEGATION_RECHECK_MIN_GAP`: ADR-0009 묶음 등록, §18-2 인터뷰.
+- [잠정] 상수 여섯(§8.1)과 `DELEGATION_RECHECK_MIN_GAP_MS`: ADR-0009 묶음 등록, §18-2 인터뷰.
 - D62 UT8·UT9 관찰 전에는 1안 채점(§1.1)·로그인 = 수락(§15-4)·경고 없음(§11)이 모두 [가정]이다.
 - `web.md:146` `landingLead` 표기와 `web.md` §6.3 "표시용 값도 허용"이 코드(`copy.ts`·`flash.ts:1`)와 다른 점은 이 문서 범위 밖이라 PR 1에서 표기만 바로잡는다.
 

@@ -146,7 +146,7 @@ CSP는 그대로다(worker.md, `A-WORKER` §6.1): `default-src 'none'; style-src
 | # | 블록 | 내용 | 조건 | 근거 |
 |---|---|---|---|---|
 | 1 | 휴대폰 안내 | Notice(중립, 아이콘 `monitor`): `mobileBlock`(제목·본문), 읽기 전용 입력 칸(`readonly`, `components.md` §0.3: 면 `--surface-2`, 값 = 이 페이지 주소, 라벨 "이 페이지 주소"), 한 줄 `mobileHint`(카카오톡 ‘나와의 채팅’에 붙여넣어 컴퓨터에서 열어도 된다) | `entryContext.kind === "phone"`일 때만. 그 아래 내용은 **그대로 이어진다**(숨기지 않는다) | `G-WEB-R1`~`G-WEB-R4`(UA `Mobi` 또는 `Sec-CH-UA-Mobile: ?1`만, 순서와 강조만 바꾼다, QR·공유 버튼 없음), brief §6.13-5 |
-| 2 | 히어로 | `<h1>` = `siteName`("VOD 클립 다운로더", hero 척도) + lead `landingLead`(`--leading-read`, "본인 채널의 영상만"·"허가받은 채널만") | 항상 | C8(사전 고지), D34 title, `content.md` §4(h1은 앱 이름) |
+| 2 | 히어로 | `<h1>` = `siteName`("VOD 클립 다운로더", hero 척도) + lead(`--leading-read`): 비로그인은 `anonLead`, 로그인은 `signedInAs`(`landing-view.ts`. 옛 표기 `landingLead`는 코드에 없는 키였다, `docs/design/features/delegation.md` §7.3) | 항상 | C8(사전 고지), D34 title, `content.md` §4(h1은 앱 이름) |
 | 3 | 비공식 고지 | Notice(중립, 아이콘 `info`): `NOTICE_SHORT`. **스크롤 없이** 보인다(히어로 바로 아래, 1280×800과 390×844에서) | 항상 | D34(히어로 바로 아래), C2, `G-ID-R1` |
 | 4 | CTA | **유일한 채움 버튼** `.btn.btn-primary.btn-lg`(높이 `--control-h-lg` 36, 글자 `--text-title` 600). 비로그인: [치지직으로 로그인](`form action="/auth/web/start"`), 바로 위에 로그인 전 고지 네 줄(§5.3)과 `loginForFiles`("로그인하면 내 컴퓨터용 설치 파일이 보여요."). 허가 사용자: [{내 OS}용 받기] 링크 버튼 + meta 줄(`.num`, `--fg-muted`): "버전 {0.1.2} · {2026. 10. 3.} · {최소 OS} 이상". macOS면 다음 줄에 **늘** `appleSiliconOnly`. 좁은 레이아웃에서 버튼은 전폭 | 항상 | D53(36, 유일한 채움), P3, `G-WEB-R5`·`G-WEB-R6`·`G-WEB-R26`(최소 OS 한 줄, `Accept-CH` 안 씀), `G-INSTALL-R12`(`v` 없음), D42("macOS용 받기"), 검토 U-11 |
 | 5 | 경고 예고 | 한 줄 "처음 열 때 경고가 나올 수 있어요. 앱이 문제라는 뜻이 아니에요." | 허용 사용자 | `G-INSTALL-R1`, brief D53 근거 |
@@ -215,7 +215,7 @@ CSP는 그대로다(worker.md, `A-WORKER` §6.1): `default-src 'none'; style-src
 | 규칙 | 값 | 근거 | 강제 |
 |---|---|---|---|
 | PRG | 상태를 바꾸는 POST가 성공하면 `303`으로 GET 페이지로. 성공을 POST 본문에 그리지 않는다 | `G-WEB-R17`, brief §6.13-3 | `worker` 테스트(성공 POST 모두 303) |
-| flash | 일회용 `__Host-cdl_flash`(60초, `HttpOnly`, `SameSite=Lax`, `Path=/`). GET이 읽고 같은 응답에서 지운다. 값은 고정된 알림 종류 코드 + 표시용 값만(비밀값 없음) | `G-WEB-R18`·`G-WEB-R23`, Django 메시지(F43) | `worker` 테스트(303 뒤 GET 한 번만 알림, 두 번째 GET엔 없음, 쿠키 값에 토큰 없음 `hygiene.test.ts`) |
+| flash | 일회용 `__Host-cdl_flash`(60초, `HttpOnly`, `SameSite=Lax`, `Path=/`). GET이 읽고 같은 응답에서 지운다. 값은 고정된 알림 종류 코드만(`flash.ts` `FlashKind` 아홉, 모르는 값은 무시한다. 표시용 값은 싣지 않는다. 비밀값 없음) | `G-WEB-R18`·`G-WEB-R23`, Django 메시지(F43) | `worker` 테스트(303 뒤 GET 한 번만 알림, 두 번째 GET엔 없음, 쿠키 값에 토큰 없음 `hygiene.test.ts`) |
 | flash 모양 | Notice `banner`: `--surface-2` 면(정보) 또는 `--warning-soft`(세션 만료·이미 처리됨), 아이콘 + 한 문장, `<main>` 첫 자식, `<h1>` 바로 앞, 폭 = 열 폭, 한 화면에 하나, 자동으로 사라지지 않음, 닫기 버튼 없음(JS 없음. 다음 이동에서 사라진다) | D37(배너는 h1 앞 한 장), `G-WEB-R25`, GOV.UK 알림 배너(`E-KO-B4`) | `worker` 테스트(`main`의 첫 자식이 `.notice` 또는 `h1`), `R7` |
 | 오류 요약 | 검증 실패는 **같은 페이지를 400**으로 다시 그리고 입력값을 채워 둔다. `<main>` 첫 자식에 Notice(`--danger-soft`, `circle-x`): 제목 "확인해 주세요" + 필드로 가는 링크 목록(`href="#field-id"`), 필드 옆에 같은 문구, 필드에 `aria-invalid="true"` + `aria-describedby`, `<title>` 앞 "오류: ". 자동 포커스 이동이 없으므로 읽는 순서에서 먼저 나오게 한다 | `G-WEB-R19`·g-web G4(GOV.UK 오류 요약·validation, `E-KO-B4`), C6(입력값을 지우지 않는다) | `worker` 테스트(400 본문에 입력값 그대로(이스케이프), 요약이 `main` 첫 자식, 링크 `href`가 입력 `id`와 일치, `title` 접두) |
 | 둘의 공존 | 같은 화면에 flash와 오류 요약이 함께 나오지 않는다(오류가 있으면 성공은 없다) | `G-WEB-R25` | `worker` 테스트 |

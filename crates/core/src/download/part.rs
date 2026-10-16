@@ -275,11 +275,26 @@ impl PartFile {
     /// 새 `.part`를 만든다. 잠근 뒤 길이를 0으로 하고 sidecar(`committed_len = 0`)를 곧바로 쓴다.
     ///
     /// sidecar를 바로 써 두어야 첫 checkpoint 전에 죽어도 다음 실행이 `.part`를 버리지 않는다.
+    ///
+    /// `resume`이 `None`을 준 뒤 첫 응답을 기다리는 사이 다른 작업(다른 프로세스·코어 직접 호출)이 같은 경로에 녹화를
+    /// 남기고 잠금을 풀었을 수 있다. 그래서 잠금을 쥔 뒤 sidecar를 다시 보고, 다른 작업의 생방송 녹화면 자르지 않고
+    /// `PartialRecording`이다(core.md 61). sidecar를 읽지 못하면 자르지 않고 오류다(`read_sidecar`).
     pub fn create(final_path: &Path, mut sidecar: Sidecar) -> Result<PartFile, Error> {
         let part = part_path(final_path);
         let sc_path = sidecar_path(final_path);
         let f = open_locked(&part, true)?;
         remove_stale_temps(&sc_path);
+        let owner = PartOwner {
+            content: &sidecar.content,
+            quality_id: &sidecar.quality_id,
+            kind: sidecar.kind,
+            recording_id: sidecar.recording_id.as_deref(),
+        };
+        if read_sidecar(&sc_path)?.is_some_and(|old| old.is_other_recording(&owner)) {
+            tracing::info!(part = %part.display(), "다른 작업의 녹화가 생겨 새로 만들지 않는다");
+            drop(f);
+            return Err(Error::PartialRecording { path: part });
+        }
         f.set_len(0)
             .map_err(|e| map_io_error("truncate", &part, e))?;
         sidecar.committed_len = 0;
@@ -473,6 +488,8 @@ impl PartFile {
             f.sync_data().map_err(|e| map_io_error("sync", &part, e))?;
             // Windows는 열린 파일을 옮길 수 없어 먼저 닫는다(잠금도 풀린다). Unix는 잠금을 쥔 채
             // 옮겨, 그 사이에 같은 출력의 다른 작업이 `.part`를 잠그고 지우거나 자르지 못하게 한다.
+            // Windows의 이 틈에도 sidecar는 rename 뒤에야 지우므로, 잠금을 쥔 뒤 소유를 다시 보는 `resume`·`create`·
+            // `discard_partial`은 남의 녹화를 자르거나 지우지 않는다. 남는 것은 같은 주인(같은 녹화 고유값·같은 VOD)뿐이다.
             let held = if cfg!(windows) {
                 drop(f);
                 None
@@ -976,6 +993,61 @@ mod tests {
             .unwrap();
         assert_eq!(p.written(), p.committed());
         assert_eq!(p.written(), 12);
+    }
+
+    /// 경합: A가 `resume`(없음)을 지난 뒤 응답을 기다리는 동안 B가 녹화를 남기고 잠금을 풀었다. A의 `create`는
+    /// 잠금을 쥔 뒤 sidecar를 다시 보고 B의 녹화를 자르지 않는다(Codex PR #113 ①). VOD 요청도 같다.
+    #[tokio::test]
+    async fn create_refuses_recording_left_meanwhile() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("a.mp4");
+        let c = live_content();
+        assert!(
+            PartFile::resume(&out, &live_owner(&c, Some("a")))
+                .unwrap()
+                .is_none()
+        );
+        write_recording(&out, Some("b")).await;
+        let before = std::fs::read(part_path(&out)).unwrap();
+        let sc_before = std::fs::read(sidecar_path(&out)).unwrap();
+        let err = PartFile::create(&out, live_sc(Some("a"), 4, 0)).unwrap_err();
+        assert!(
+            matches!(&err, Error::PartialRecording { path } if *path == part_path(&out)),
+            "{err:?}"
+        );
+        let vod = Sidecar::new(
+            ContentRef::Video { video_no: 1 },
+            "720p",
+            PlaybackKind::Progressive,
+        );
+        let err = PartFile::create(&out, vod).unwrap_err();
+        assert!(matches!(err, Error::PartialRecording { .. }), "{err:?}");
+        assert_eq!(std::fs::read(part_path(&out)).unwrap(), before);
+        assert_eq!(std::fs::read(sidecar_path(&out)).unwrap(), sc_before);
+        // 잠금은 풀렸다: 주인은 이어 받는다
+        let p = PartFile::resume(&out, &live_owner(&c, Some("b")))
+            .unwrap()
+            .unwrap();
+        assert_eq!(p.written(), 12);
+    }
+
+    /// 대조: 남의 VOD `.part`나 주인 없는 `.part`는 지금처럼 잘라 새로 시작한다.
+    #[tokio::test]
+    async fn create_truncates_other_vod_or_orphan_part() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("a.mp4");
+        let mut p = PartFile::create(&out, sidecar()).unwrap();
+        p.write(b"abcdef").unwrap();
+        p.checkpoint(|_| {}).await.unwrap();
+        drop(p);
+        let p = PartFile::create(&out, live_sc(Some("a"), 4, 0)).unwrap();
+        assert_eq!(p.written(), 0);
+        drop(p);
+        std::fs::remove_file(sidecar_path(&out)).unwrap();
+        std::fs::write(part_path(&out), b"orphan").unwrap();
+        let p = PartFile::create(&out, sidecar()).unwrap();
+        assert_eq!(p.written(), 0);
+        assert_eq!(std::fs::metadata(part_path(&out)).unwrap().len(), 0);
     }
 
     /// N4: 같은 경로를 쓰는 VOD 요청도 남의 생방송 녹화를 지우지 않는다.

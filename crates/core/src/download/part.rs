@@ -588,7 +588,8 @@ impl PartFile {
 }
 
 /// 완료 뒤 sidecar를 지운다. 옮긴 뒤 지우기 전 틈에 다른 작업이 새 `.part`를 만들고 자기 sidecar를 썼으면 그것은
-/// 두고 간다(첫 checkpoint 전에 주인을 잃지 않게). 읽기와 지우기 사이의 더 좁은 틈은 남는다. 실패는 경고만 남긴다:
+/// 두고 간다(첫 checkpoint 전에 주인을 잃지 않게). 읽지 못해도 지우지 않는다. 읽기와 지우기 사이의 더 좁은 틈은 남는다.
+/// 실패는 경고만 남긴다:
 /// 남은 sidecar는 `.part` 없이는 아무것도 막지 않는다(`create`가 덮어쓴다).
 fn remove_own_sidecar(path: &Path, mine: &Sidecar) {
     let owner = PartOwner {
@@ -597,11 +598,17 @@ fn remove_own_sidecar(path: &Path, mine: &Sidecar) {
         kind: mine.kind,
         recording_id: mine.recording_id.as_deref(),
     };
-    if let Ok(Some(now)) = read_sidecar(path)
-        && !now.owned_by(&owner)
-    {
-        tracing::info!(path = %path.display(), "다른 작업이 새로 쓴 sidecar라 지우지 않는다");
-        return;
+    match read_sidecar(path) {
+        Ok(Some(now)) if !now.owned_by(&owner) => {
+            tracing::info!(path = %path.display(), "다른 작업이 새로 쓴 sidecar라 지우지 않는다");
+            return;
+        }
+        // 읽지 못하면(Windows 공유 위반: 다른 작업의 원자적 쓰기가 닿는 중일 수 있다) 지우지 않는다
+        Err(e) => {
+            tracing::warn!(error = %e, "완료 후 sidecar를 읽지 못해 지우지 않는다");
+            return;
+        }
+        Ok(_) => {}
     }
     if let Err(e) = remove_if_exists(path) {
         tracing::warn!(error = %e, "완료 후 sidecar 삭제 실패");

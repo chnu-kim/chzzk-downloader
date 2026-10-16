@@ -296,8 +296,13 @@ impl State {
 /// 녹화 작업 `rec`가 끝났다. 같은 녹화 `.part`를 함께 가리키던 멈춘 옛 기록(v0.7.0, `blocks_requeue`의 예외)의 받은 부분을
 /// 다시 센다. `rec`가 그 녹화를 저장했으면 `.part`가 없어져 `None`이 된다(남겨 두면 화면이 [이어받기]를 앞세우고, 누르면
 /// 지금 방송을 옛 이름으로 새로 녹화한다).
+///
+/// 저장했으면 그 옛 기록의 덮어쓰기(`overwrite`)를 건너뛰기(`skip`)로 내린다. 받은 부분이 없어진 옛 기록을 다시 시도하면
+/// 지금 방송을 같은 출력에 새로 녹화하는데, 덮어쓰기면 방금 저장한 녹화를 덮어쓴다(Codex PR #113 확인). 건너뛰기면 코어가
+/// 녹화를 시작하지 않고 `skipped`로 끝나고, 덮어쓰려면 사용자가 [덮어쓰고 받기]를 따로 누른다(`requeue`).
 fn refresh_siblings(st: &mut State, rec: &JobRecord) {
     let key = output_key(&rec.output);
+    let saved = rec.status == JobStatus::Completed;
     let mut changed = Vec::new();
     for j in st.jobs.values_mut() {
         if j.rec.id == rec.id
@@ -311,6 +316,9 @@ fn refresh_siblings(st: &mut State, rec: &JobRecord) {
         let now = partial_bytes(&j.rec);
         if now != j.rec.partial_bytes {
             j.rec.partial_bytes = now;
+            if saved && now.is_none() && j.rec.on_existing == OnExisting::Overwrite {
+                j.rec.on_existing = OnExisting::Skip;
+            }
             changed.push(j.dto());
         }
     }

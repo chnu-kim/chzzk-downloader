@@ -395,6 +395,15 @@ async fn v070_sibling_loses_partial_when_recording_is_saved() {
     };
     until("완료", || job(1).status == JobStatus::Completed).await;
     assert_eq!(job(2).partial_bytes, None);
+    // B를 다시 시도해도 A가 방금 저장한 녹화를 덮어쓰지 않는다: B의 덮어쓰기를 건너뛰기로 내려 둔다(Codex PR #113 확인).
+    // 코어는 최종 파일이 있으면 녹화를 시작하지 않고 건너뛴다. 덮어쓰려면 사용자가 [덮어쓰고 받기]를 따로 누른다.
+    fake.script_for(&out, Script::new());
+    mgr.resume(chzzk_shell::JobId(2), false).unwrap();
+    until("B 요청", || fake.download_requests().len() == 2).await;
+    assert_eq!(
+        fake.download_requests()[1].on_existing,
+        chzzk_core::DuplicatePolicy::Skip
+    );
 }
 
 /// 지우기는 다른 옛 기록이 잡은 `.part`를 지우지 않는다(레코드만 지운다).

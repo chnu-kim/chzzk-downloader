@@ -506,7 +506,7 @@ pub struct HlsRange {
 - v2 sidecar를 v1만 아는 규칙(옛 앱 흉내)으로 비교하면 false.
 
 ### 10.5 실서버·fuzz
-- `live.rs`에 `#[ignore]` 구간 스모크 하나를 둔다(본인 빠른 다시보기). 결과는 kind와 된다/안 된다만 남기고, `assert_flat_mp4`도 확인한다.
+- `tests/live_range.rs`(nightly drift 목록인 `live.rs` 밖)에 `#[ignore]` 구간 스모크 하나를 둔다(본인 빠른 다시보기). 결과는 kind와 된다/안 된다만 남기고, `assert_flat_mp4`도 확인한다.
 - **fuzz target은 더하지 않는다**(3차 개정). 1·2차의 `mp4frag` target(4 → 5)은 없앴다. 지금 target은 `url`·`info`·`mpd`·`hls` 넷이다(`scripts/ci/fuzz.mjs:28` `export const TARGETS = ['url', 'info', 'mpd', 'hls']`). defrag도 fuzz target이 없다. defrag에 target을 더할지는 생방송 쪽 판단이다. 구간 입력은 앱이 받은 조각이라 생방송과 위험 성격이 같으므로 이 기능에서 따로 열지 않는다(**가정**).
 - ratchet: 테스트 수와 커버리지는 올라가기만 한다. 앱 크기 변화는 작다고 본다(**가정**). 새 모듈이 없어 1·2차보다 더 작다. 번들 크기 ratchet으로 확인한다.
 

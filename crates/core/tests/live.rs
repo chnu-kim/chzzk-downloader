@@ -210,28 +210,3 @@ fn walk_boxes_on_fixture() {
     assert_eq!(w.types(), ["free", "mdat"]);
     assert!(w.truncated);
 }
-
-/// 빠른 다시보기의 시각 구간만 받아 일반 mp4로 마무리되는지 본다. 값(크기·시각)은 출력하지 않는다.
-#[tokio::test]
-#[ignore = "실서버 접속"]
-async fn live_hls_range() {
-    let no: u64 = env("CHZZK_LIVE_HLS").parse().unwrap();
-    let dir = tempfile::tempdir().unwrap();
-    let (res, out, _) = download(
-        ContentRef::Video { video_no: no },
-        PlaybackKind::LiveRewindHls,
-        None,
-        Some(TimeRange {
-            start_ms: 10_000,
-            end_ms: Some(20_000),
-        }),
-        dir.path(),
-    )
-    .await;
-    assert!(
-        matches!(res, Ok(DownloadOutcome::Completed { .. })),
-        "{res:?}"
-    );
-    mp4::assert_flat_mp4(&std::fs::read(&out).unwrap());
-    println!("구간 받기: 된다");
-}

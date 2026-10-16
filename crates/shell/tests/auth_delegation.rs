@@ -838,19 +838,101 @@ async fn w5_invite_limit() {
     );
 }
 
+/// 편집자 목록에 `editors`가 있는 `/api/me`
+fn me_with_editors(e: &Env, delegated: &[&str], editors: &[&str]) -> MeResponse {
+    let mut m = me_ok(CH, delegated);
+    m.editors = editors
+        .iter()
+        .map(|id| EditorEntry {
+            channel_id: id.to_string(),
+            channel_name: "편집자".into(),
+            since: e.now(),
+            status: EditorStatus::Active,
+        })
+        .collect();
+    m
+}
+
+/// 404 `not_found`는 같은 access의 `/api/me`가 대상이 없다고 확인할 때만 멱등 성공이다(Codex 확인 2, 79 (하))
 #[tokio::test(start_paused = true)]
-async fn w6_remove_and_leave_not_found_is_ok() {
+async fn w6_not_found_is_ok_only_when_me_confirms_absent() {
     let e = Env::online_with(&[X]).await;
+    let me0 = e.me_count();
     e.api.push_remove(Reply::Now(Err(worker(404, "not_found"))));
-    e.api.push_leave(Reply::Now(Err(worker(404, "not_found"))));
+    e.api
+        .push_me(Reply::Now(Ok(me_with_editors(&e, &[X], &[Z]))));
     e.svc.remove_editor(Y).await.unwrap();
+    e.api.push_leave(Reply::Now(Err(worker(404, "not_found"))));
+    e.me_ok(&[]);
     e.svc.leave_delegation(X).await.unwrap();
-    // 초대에서의 not_found는 거부다
+    assert!(e.delegated_now().is_empty());
+    assert_eq!(e.file_delegated(), serde_json::json!([]));
+    // 확인은 쓰기와 같은 access(같은 세션)로 나갔다
+    assert_eq!(e.api.me_calls()[me0..], [acc(2), acc(2)]);
+    // 초대에는 멱등 not_found가 없다: 경로 표 밖 404라 아직 안 열린 것이다
     e.api.push_invite(Reply::Now(Err(worker(404, "not_found"))));
     assert_eq!(
         e.svc.create_invite().await.unwrap_err(),
-        EditorsError::Rejected
+        EditorsError::NotEnabled
     );
+}
+
+/// 경로가 없는 Worker(①-2만, `routes.ts` 경로 표 밖 404 `not_found`): 대상이 `/api/me`에 남아 있으면 성공이 아니라
+/// NotEnabled이고, 그만두기는 로컬 목록을 건드리지 않는다(다음 refresh 묶음이 되살리는 거짓 성공을 막는다)
+#[tokio::test(start_paused = true)]
+async fn w10_not_found_while_still_listed_is_not_enabled() {
+    let e = Env::online_with(&[X]).await;
+    e.me_ok(&[X]);
+    fresh(&e.svc.check_delegations(true).await);
+    let before = e.refresh_count();
+    let file = read_session(e.path());
+    e.api.push_remove(Reply::Now(Err(worker(404, "not_found"))));
+    e.api.push_me(Reply::Now(Ok(me_with_editors(
+        &e,
+        &[X],
+        &[&Y.to_ascii_uppercase()],
+    ))));
+    assert_eq!(
+        e.svc.remove_editor(Y).await.unwrap_err(),
+        EditorsError::NotEnabled
+    );
+    e.api.push_leave(Reply::Now(Err(worker(404, "not_found"))));
+    e.me_ok(&[X]);
+    assert_eq!(
+        e.svc.leave_delegation(X).await.unwrap_err(),
+        EditorsError::NotEnabled
+    );
+    assert_eq!(e.delegated_now(), vec![X.to_string()]);
+    assert_eq!(read_session(e.path()), file);
+    assert_eq!(e.svc.status().delegated_channels.len(), 1);
+    assert_eq!(e.svc.status().phase, AuthPhase::SignedIn);
+    assert_eq!(e.refresh_count(), before);
+}
+
+/// 확인 `/api/me`가 실패하거나 다른 계정을 말하면 성공이 아니다(로컬 목록 그대로)
+#[tokio::test(start_paused = true)]
+async fn w11_unconfirmed_not_found_is_unreachable() {
+    let e = Env::online_with(&[X]).await;
+    // 확인 me 줄이 비어 있다 → 연결 실패
+    e.api.push_leave(Reply::Now(Err(worker(404, "not_found"))));
+    assert_eq!(
+        e.svc.leave_delegation(X).await.unwrap_err(),
+        EditorsError::Unreachable
+    );
+    e.api.push_leave(Reply::Now(Err(worker(404, "not_found"))));
+    e.api.push_me(Reply::Now(Ok(me_ok(B, &[]))));
+    assert_eq!(
+        e.svc.leave_delegation(X).await.unwrap_err(),
+        EditorsError::Unreachable
+    );
+    e.api.push_remove(Reply::Now(Err(worker(404, "not_found"))));
+    e.api.push_me(Reply::Now(Ok(me_ok(B, &[]))));
+    assert_eq!(
+        e.svc.remove_editor(Y).await.unwrap_err(),
+        EditorsError::Unreachable
+    );
+    assert_eq!(e.delegated_now(), vec![X.to_string()]);
+    assert_eq!(e.svc.status().phase, AuthPhase::SignedIn);
 }
 
 #[tokio::test(start_paused = true)]
@@ -1028,9 +1110,76 @@ async fn x4_resend_after_refresh_is_bound_to_initiating_account() {
     }));
 }
 
+/// 첫 시도 401 뒤 refresh가 잠금을 기다리는 동안 A→B로 바뀌면 B의 refresh 토큰으로 회전하지 않는다(Codex 확인 5)
+#[tokio::test(start_paused = true)]
+async fn x5_refresh_after_401_is_bound_to_initiating_account() {
+    let e = Env::online_with(&[X]).await;
+    let w = Arc::new(Notify::new());
+    e.api
+        .push_remove(Reply::Hold(w.clone(), Err(worker(401, "invalid_token"))));
+    let wr = tokio::spawn(Write::Remove.run(e.svc.clone()));
+    while Write::Remove.sent(&e) == 0 {
+        tokio::task::yield_now().await;
+    }
+    // 쓰기가 잠금을 쥔 동안 me가 줄 선다: 401 뒤 refresh는 me 다음으로 잠금을 기다린다
+    let m = Arc::new(Notify::new());
+    e.api.push_me(Reply::Hold(m.clone(), Ok(me_ok(CH, &[X]))));
+    let me_before = e.me_count();
+    let c = tokio::spawn({
+        let s = e.svc.clone();
+        async move { s.check_delegations(true).await }
+    });
+    settle().await;
+    w.notify_one();
+    wait_me_calls(&e, me_before + 1).await;
+    settle().await;
+    let before = e.refresh_count();
+    switch_to_b(&e).await;
+    // 오늘 코드가 B로 회전했다면 이 응답을 받았을 것이다
+    e.api
+        .push_refresh(Reply::Now(Ok(bundle_delegated(6, e.now(), &[Z]))));
+    m.notify_one();
+    assert_eq!(c.await.unwrap(), DelegationCheck::Discarded);
+    assert_eq!(wr.await.unwrap(), Err(EditorsError::Discarded));
+    assert_eq!(e.refresh_count(), before, "B의 refresh가 나가면 안 된다");
+    let sg = e.svc.signer().unwrap();
+    assert_eq!(sg.channel_id, B);
+    assert_eq!(sg.delegated.to_vec(), vec![Z.to_string()]);
+}
+
+/// 그만두기 404 뒤 확인 `/api/me`를 기다리는 동안 A→B로 바뀌면 버리고 B의 목록을 건드리지 않는다
+#[tokio::test(start_paused = true)]
+async fn x6_confirm_me_across_switch_is_discarded() {
+    let e = Env::online_with(&[X]).await;
+    e.api.push_leave(Reply::Now(Err(worker(404, "not_found"))));
+    let m = Arc::new(Notify::new());
+    e.api.push_me(Reply::Hold(m.clone(), Ok(me_ok(CH, &[]))));
+    let me_before = e.me_count();
+    let wr = tokio::spawn({
+        let s = e.svc.clone();
+        async move { s.leave_delegation(Z).await }
+    });
+    // 확인 me가 나가지 않는 구현이면 여기서 멈추지 않고 실패한다
+    for _ in 0..1000 {
+        if e.me_count() > me_before {
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(
+        e.me_count(),
+        me_before + 1,
+        "404 뒤 확인 /api/me가 나가야 한다"
+    );
+    switch_to_b(&e).await;
+    m.notify_one();
+    assert_eq!(wr.await.unwrap(), Err(EditorsError::Discarded));
+    assert_eq!(e.delegated_now(), vec![Z.to_string()]);
+}
+
 // ------------------------------------------------------------ L 그만두기 성공은 그 자리에서 회수한다(PR 리뷰 P2)
 
-/// 204와 멱등 성공 404 not_found 모두: 메모리·session.json·공유 응답에서 그 채널을 뺀다(다른 맡은 채널은 남는다)
+/// 204와 (확인된) 멱등 성공 404 not_found 모두: 메모리·session.json·공유 응답에서 그 채널을 뺀다(다른 맡은 채널은 남는다)
 #[tokio::test(start_paused = true)]
 async fn l1_leave_success_drops_channel_locally() {
     for reply in [Ok(()), Err(worker(404, "not_found"))] {
@@ -1038,6 +1187,10 @@ async fn l1_leave_success_drops_channel_locally() {
         e.me_ok(&[X, Y]);
         fresh(&e.svc.check_delegations(true).await);
         e.api.push_leave(Reply::Now(reply.clone()));
+        if reply.is_err() {
+            // 멱등 404는 같은 세션의 /api/me가 X가 없다고 확인해야 성공이다(79 (하))
+            e.me_ok(&[Y]);
+        }
         // 대소문자가 달라도 같은 채널이다
         e.svc
             .leave_delegation(&X.to_ascii_uppercase())

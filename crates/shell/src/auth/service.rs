@@ -356,6 +356,14 @@ enum Attempt<R> {
     },
 }
 
+/// 빼기·그만두기의 서버 응답(`confirm_gone`)
+enum Gone {
+    /// 204
+    Done,
+    /// 404 `not_found` 뒤 같은 access로 물은 `/api/me`
+    NotFound(MeResponse),
+}
+
 /// 앱 로그인 상태 머신
 pub struct AuthService<A: WorkerApi, C: Clock> {
     api: A,
@@ -599,12 +607,22 @@ impl<A: WorkerApi, C: Clock> AuthService<A, C> {
     }
 
     async fn refresh_inner(&self) -> AuthStatus {
+        self.refresh_bound(None).await
+    }
+
+    /// `expected`가 있으면 그 세션 세대일 때만 회전한다. 로그인 수락은 `refresh_gen`을 올리지 않으므로, 잠금을 기다리는 사이
+    /// A에서 B로 바뀌면 single-flight 검사만으로는 A의 쓰기가 B의 refresh 토큰을 회전시킨다(Codex 확인 5)
+    async fn refresh_bound(&self, expected: Option<u64>) -> AuthStatus {
         let gen0 = self.lock().refresh_gen;
         let _g = self.refresh_lock.lock().await;
         let (sess, epoch, started) = {
             let mut i = self.lock();
             if i.refresh_gen != gen0 {
                 // 다른 호출이 방금 끝냈다(single-flight)
+                return status_of(&i);
+            }
+            if expected.is_some_and(|e| e != i.session_epoch) {
+                // 시작한 계정이 아니다: 보내지 않는다(호출자가 세대를 보고 버린다)
                 return status_of(&i);
             }
             let Some(sess) = i.held.clone() else {
@@ -1401,7 +1419,7 @@ impl<A: WorkerApi, C: Clock> AuthService<A, C> {
                 Attempt::Refresh { epoch } => {
                     // tokio Mutex는 재진입이 안 되므로 놓고 부른다
                     drop(guard);
-                    self.refresh_inner().await;
+                    self.refresh_bound(Some(epoch)).await;
                     let i = self.lock();
                     if i.session_epoch != epoch {
                         return Err(AuthedError::Discarded);
@@ -1507,23 +1525,21 @@ impl<A: WorkerApi, C: Clock> AuthService<A, C> {
         }
     }
 
-    /// 편집자 API 오류 → `EditorsError`. `not_found`는 호출자가 멱등으로 다룬다(`idempotent`)
-    fn editors_error(e: AuthedError, idempotent: bool) -> Result<(), EditorsError> {
+    /// 편집자 API 오류 → `EditorsError`. 404 `not_enabled`와 경로 표 밖 404 `not_found`(이 경로가 없는 Worker)는
+    /// 모두 아직 안 열림이다. 빼기·그만두기의 멱등 `not_found`는 여기 오기 전에 `confirm_gone`이 가른다(79 (하))
+    fn editors_error(e: AuthedError) -> EditorsError {
         match e {
-            AuthedError::NotSignedIn => Err(EditorsError::NotSignedIn),
-            AuthedError::Discarded => Err(EditorsError::Discarded),
-            AuthedError::Blocked => Err(EditorsError::Blocked),
-            AuthedError::Unreachable => Err(EditorsError::Unreachable),
-            AuthedError::Api(ApiError::Worker { status: 404, code }) if code == "not_enabled" => {
-                Err(EditorsError::NotEnabled)
-            }
+            AuthedError::NotSignedIn => EditorsError::NotSignedIn,
+            AuthedError::Discarded => EditorsError::Discarded,
+            AuthedError::Blocked => EditorsError::Blocked,
+            AuthedError::Unreachable => EditorsError::Unreachable,
             AuthedError::Api(ApiError::Worker { status: 404, code })
-                if code == "not_found" && idempotent =>
+                if code == "not_enabled" || code == "not_found" =>
             {
-                Ok(())
+                EditorsError::NotEnabled
             }
             AuthedError::Api(ApiError::Worker { status: 409, code }) if code == "limit" => {
-                Err(EditorsError::Limit)
+                EditorsError::Limit
             }
             AuthedError::Api(
                 ApiError::Transport { .. }
@@ -1531,8 +1547,43 @@ impl<A: WorkerApi, C: Clock> AuthService<A, C> {
                 | ApiError::Worker {
                     status: 500..=599, ..
                 },
-            ) => Err(EditorsError::Unreachable),
-            AuthedError::Api(_) => Err(EditorsError::Rejected),
+            ) => EditorsError::Unreachable,
+            AuthedError::Api(_) => EditorsError::Rejected,
+        }
+    }
+
+    /// 빼기·그만두기를 보내고, 404 `not_found`면 **같은 access**로 `/api/me`를 묻는다(같은 잠금·같은 세션).
+    /// 멱등 `not_found`(이미 없음)와 경로 표 밖 404 `not_found`(이 경로가 없는 Worker, `worker/src/routes.ts`)가 같은
+    /// 모양이라 응답만으로는 가를 수 없다. 앱과 Worker는 따로 배포되므로 어긋난 조합이 생긴다(Codex 확인 2)
+    async fn confirm_gone(
+        &self,
+        access: &Secret<String>,
+        write: impl Future<Output = Result<(), ApiError>>,
+    ) -> Result<Gone, ApiError> {
+        match write.await {
+            Ok(()) => Ok(Gone::Done),
+            Err(ApiError::Worker { status: 404, code }) if code == "not_found" => {
+                self.api.me(access).await.map(Gone::NotFound)
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// `Gone::NotFound`의 판정: 같은 계정의 응답이고 대상이 목록에 없을 때만 멱등 성공이다.
+    /// 아직 있으면 이 Worker에 경로가 없는 것이다(NotEnabled). 다른 계정을 말하면 형식 밖(Unreachable)
+    fn judge_not_found(i: &Inner, me: &MeResponse, listed: bool) -> Result<(), EditorsError> {
+        let same = i
+            .held
+            .as_ref()
+            .is_some_and(|h| h.channel_id.eq_ignore_ascii_case(&me.channel_id));
+        if !same {
+            info!(result = "channel_mismatch", "편집자 API 확인");
+            Err(EditorsError::Unreachable)
+        } else if listed {
+            info!(result = "still_listed", "편집자 API 확인");
+            Err(EditorsError::NotEnabled)
+        } else {
+            Ok(())
         }
     }
 
@@ -1566,15 +1617,15 @@ impl<A: WorkerApi, C: Clock> AuthService<A, C> {
                 Ok(t)
             }
             Err(e) => {
-                let r = Self::editors_error(e, false);
-                Self::log_editors(&r);
-                // not_found는 초대에서는 Rejected
-                Err(r.err().unwrap_or(EditorsError::Rejected))
+                let e = Self::editors_error(e);
+                Self::log_editors(&Err(e.clone()));
+                Err(e)
             }
         }
     }
 
-    /// `POST /api/editors/remove`(편집자의 로그인 채널 ID). 이미 없으면 성공(멱등)
+    /// `POST /api/editors/remove`(편집자의 로그인 채널 ID). 이미 없으면 성공(멱등): 404 `not_found`는 같은 세션의
+    /// `/api/me` 편집자 목록에 그 채널이 없을 때만 성공이다(79 (하))
     pub async fn remove_editor(&self, editor_channel_id: &str) -> Result<(), EditorsError> {
         let id = editor_channel_id.to_string();
         let r = self
@@ -1582,20 +1633,35 @@ impl<A: WorkerApi, C: Clock> AuthService<A, C> {
                 |_| None,
                 |a: Secret<String>| {
                     let id = id.clone();
-                    async move { self.api.remove_editor(&a, &id).await }
+                    async move {
+                        let w = self.api.remove_editor(&a, &id);
+                        self.confirm_gone(&a, w).await
+                    }
                 },
-                |_, _, t: (), _| Ok(t),
+                |_, i: &mut Inner, g: Gone, _| {
+                    Ok(match g {
+                        Gone::Done => Ok(()),
+                        Gone::NotFound(me) => {
+                            let listed = me
+                                .editors
+                                .iter()
+                                .any(|e| e.channel_id.eq_ignore_ascii_case(&id));
+                            Self::judge_not_found(i, &me, listed)
+                        }
+                    })
+                },
                 |_, _| {},
             )
             .await
-            .or_else(|e| Self::editors_error(e, true));
+            .unwrap_or_else(|e| Err(Self::editors_error(e)));
         Self::log_editors(&r);
         r
     }
 
     /// `POST /api/delegations/leave`(주인의 판정용 채널 ID). 이미 없으면 성공(멱등).
-    /// 성공(204·멱등 404 not_found)을 받으면 그 채널을 메모리·`session.json`·공유 응답(`last_me`)에서 바로 뺀다(PR 리뷰 P2):
-    /// 이 클라이언트는 회수 성공을 직접 받았으므로 다음 `/api/me`나 refresh 묶음을 기다리지 않는다
+    /// 성공(204, 또는 같은 세션의 `/api/me`로 없음을 확인한 404 `not_found`)을 받으면 그 채널을 메모리·`session.json`·
+    /// 공유 응답(`last_me`)에서 바로 뺀다(PR 리뷰 P2): 이 클라이언트는 회수 성공을 직접 받았으므로 다음 `/api/me`나
+    /// refresh 묶음을 기다리지 않는다. 회수는 `authed`의 세대 검사 뒤 같은 잠금 안의 apply에서 한다
     pub async fn leave_delegation(&self, owner_channel_id: &str) -> Result<(), EditorsError> {
         let id = owner_channel_id.to_string();
         let r = self
@@ -1604,23 +1670,30 @@ impl<A: WorkerApi, C: Clock> AuthService<A, C> {
                 |a: Secret<String>| {
                     let id = id.clone();
                     async move {
-                        // 멱등 404도 성공으로 바꿔 apply(세대 검사 뒤, 같은 잠금 안)에서 회수하게 한다
-                        match self.api.leave_delegation(&a, &id).await {
-                            Err(ApiError::Worker { status: 404, code }) if code == "not_found" => {
-                                Ok(())
-                            }
-                            r => r,
-                        }
+                        let w = self.api.leave_delegation(&a, &id);
+                        self.confirm_gone(&a, w).await
                     }
                 },
-                |svc: &Self, i: &mut Inner, (): (), _| {
-                    svc.drop_delegated(i, &id);
-                    Ok(())
+                |svc: &Self, i: &mut Inner, g: Gone, _| {
+                    let r = match g {
+                        Gone::Done => Ok(()),
+                        Gone::NotFound(me) => {
+                            let listed = me
+                                .delegated
+                                .iter()
+                                .any(|d| d.channel.channel_id.eq_ignore_ascii_case(&id));
+                            Self::judge_not_found(i, &me, listed)
+                        }
+                    };
+                    if r.is_ok() {
+                        svc.drop_delegated(i, &id);
+                    }
+                    Ok(r)
                 },
                 |_, _| {},
             )
             .await
-            .or_else(|e| Self::editors_error(e, true));
+            .unwrap_or_else(|e| Err(Self::editors_error(e)));
         Self::log_editors(&r);
         r
     }

@@ -1345,8 +1345,9 @@ async fn a15_editors_list_maps_me() {
     assert!(st.delegations_checked_at.is_some());
 }
 
-/// 그만두기 성공(204·멱등 404 not_found) 직후 그 채널 영상은 resolve·enqueue 모두 NotOwn이다(PR 리뷰 P2).
-/// /api/me는 아직 그 채널을 주지만 간격 안이라 다시 묻지 않는다: 막은 것은 로컬 회수다
+/// 그만두기 성공(204·확인된 멱등 404 not_found) 직후 그 채널 영상은 resolve·enqueue 모두 NotOwn이다(PR 리뷰 P2).
+/// 204에서는 /api/me가 아직 그 채널을 주지만 간격 안이라 다시 묻지 않는다: 막은 것은 로컬 회수다.
+/// 404는 같은 세션의 /api/me 한 번으로 그 채널이 없음을 확인한 뒤에만 성공이다(79 (하))
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a16_leave_success_revokes_locally_at_once() {
     for (status, body) in [(204, ""), (404, r#"{"code":"not_found"}"#)] {
@@ -1355,17 +1356,21 @@ async fn a16_leave_success_revokes_locally_at_once() {
         let t = TempDir::new().unwrap();
         save_session_full(t.path(), &worker, EDITOR, false, &[OWN]);
         mock_me(&worker, EDITOR, &[OWN], 200).await;
-        Mock::given(method("POST"))
-            .and(path("/api/delegations/leave"))
-            .respond_with(ResponseTemplate::new(status).set_body_raw(body, "application/json"))
-            .mount(&worker)
-            .await;
         let app = open_auth(t.path(), &api, &worker);
         assert_eq!(
             app.resolve(&url()).await.unwrap().ownership,
             Ownership::Delegated
         );
         assert_eq!(me_requests(&worker).await, 1);
+        if status == 404 {
+            // 서버에서는 이미 없다(다른 기기에서 그만뒀다). mock_me는 받은 요청도 비운다
+            mock_me(&worker, EDITOR, &[], 200).await;
+        }
+        Mock::given(method("POST"))
+            .and(path("/api/delegations/leave"))
+            .respond_with(ResponseTemplate::new(status).set_body_raw(body, "application/json"))
+            .mount(&worker)
+            .await;
         app.delegations_leave(OWN).await.unwrap();
         assert_eq!(
             app.resolve(&url()).await.unwrap().ownership,
@@ -1381,4 +1386,30 @@ async fn a16_leave_success_revokes_locally_at_once() {
         assert_eq!(file_delegated(t.path()), serde_json::json!([]));
         assert!(app.auth_status().delegated_channels.is_empty());
     }
+}
+
+/// 그만두기 경로가 없는 Worker(①-2만): 경로 표 밖 404 `not_found`를 받고 /api/me가 그 채널을 아직 주면
+/// 거짓 성공이 아니라 `unsupported`이고, 맡은 채널은 그대로 Delegated다(Codex 확인 2)
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a16b_leave_on_worker_without_route_is_unsupported() {
+    let api = mock_api(None).await;
+    let worker = MockServer::start().await;
+    let t = TempDir::new().unwrap();
+    save_session_full(t.path(), &worker, EDITOR, false, &[OWN]);
+    mock_me(&worker, EDITOR, &[OWN], 200).await;
+    Mock::given(method("POST"))
+        .and(path("/api/delegations/leave"))
+        .respond_with(
+            ResponseTemplate::new(404).set_body_raw(r#"{"code":"not_found"}"#, "application/json"),
+        )
+        .mount(&worker)
+        .await;
+    let app = open_auth(t.path(), &api, &worker);
+    let e = app.delegations_leave(OWN).await.unwrap_err();
+    assert_eq!(e.code, ErrorCode::Unsupported);
+    assert_eq!(
+        app.resolve(&url()).await.unwrap().ownership,
+        Ownership::Delegated
+    );
+    assert_eq!(file_delegated(t.path()).as_array().unwrap().len(), 1);
 }

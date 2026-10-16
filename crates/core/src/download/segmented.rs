@@ -4,7 +4,8 @@
 //! 2. media GET → `parse_media` → 지문(세그먼트 수, EXTINF crc32, init 길이). init GET.
 //!    - 새로 시작: `.part`에 init을 쓰고 checkpoint(`next_index = 0`).
 //!    - 재개: sidecar 지문과 비교해 다르면 `SourceChanged`.
-//! 3. `stream::iter(next_index..n).map(fetch).buffered(c)`. `buffered`가 순서를 지키므로 writer는 단일 루프다.
+//! 3. `stream::iter(next_index..n).map(fetch).buffered(c)`(구간이면 `next_index..last_excl`). `buffered`가 순서를 지키므로
+//!    writer는 단일 루프다.
 //! 4. 세그먼트마다 2xx, `Content-Length` 일치, 첫 상자(`styp`/`moof`/`sidx`, init은 `ftyp`)를 검사한다.
 //!    CDN의 HTML 오류 페이지를 이어 붙이지 않기 위해서다. 통과하면 쓰고 `next_index += 1`.
 //!    `committed_len`은 항상 세그먼트 경계다.
@@ -19,7 +20,7 @@ use futures_util::StreamExt;
 use futures_util::stream;
 use tokio::time::Instant as TokioInstant;
 
-use super::part::{HlsState, PartFile, Sidecar};
+use super::part::{HlsRange, HlsState, PartFile, SIDECAR_VERSION_RANGE, Sidecar};
 use super::retry::{Failure, Patience, RetryPolicy, classify_failure, is_connection_failure};
 use super::{DownloadOutcome, Job, MAX_CONCURRENCY, finish};
 use crate::client::{Chzzk, MAX_API_BODY, read_capped};
@@ -103,13 +104,15 @@ impl Loaded {
         (!diff.is_empty()).then(|| diff.join(", "))
     }
 
-    fn state(&self) -> HlsState {
+    /// 새 `.part`의 HLS 상태. 구간이면 `next_index`는 구간의 첫 조각이다.
+    fn state(&self, range: Option<HlsRange>) -> HlsState {
         HlsState {
-            next_index: 0,
+            next_index: range.map_or(0, |r| r.first),
             segment_count: self.segment_count(),
             durations_crc: self.crc,
             init_len: self.init.len() as u32,
             media_sequence: self.playlist.media_sequence,
+            range,
         }
     }
 }
@@ -125,7 +128,8 @@ pub(crate) async fn run(
     let mut loaded = acquire(job, Some((master_url, tracks))).await?;
     let concurrency = usize::from(job.req.concurrency.get().min(MAX_CONCURRENCY));
 
-    // 재개면 지문을 확인하고, 아니면 `.part`를 만들어 init을 쓴다.
+    let n = loaded.segment_count();
+    // 재개면 지문과 구간을 확인하고, 아니면 구간을 고른 뒤 `.part`를 만들어 init을 쓴다.
     let p = match part {
         Some(p) => {
             let st = p.staged().hls.ok_or_else(|| Error::SourceChanged {
@@ -134,52 +138,93 @@ pub(crate) async fn run(
             if let Some(d) = loaded.mismatch(&st) {
                 return Err(Error::SourceChanged { detail: d });
             }
+            // 방어 검사: `owned_by`가 이미 구간이 다른 `.part`를 걸렀다
+            if st.range.map(|r| r.time_range()) != job.req.range {
+                return Err(Error::SourceChanged {
+                    detail: "sidecar의 구간이 요청과 다릅니다".into(),
+                });
+            }
+            if let Some(r) = st.range
+                && !(r.first < r.last_excl && r.last_excl <= n)
+            {
+                return Err(Error::SourceChanged {
+                    detail: format!(
+                        "sidecar의 구간 {}..{}이 전체 {n}과 맞지 않습니다",
+                        r.first, r.last_excl
+                    ),
+                });
+            }
             p
         }
         None => {
+            // `.part`를 만들기 전에 구간을 고른다. 잘못된 구간이면 `.part`가 생기지 않는다.
+            let range = match job.req.range {
+                Some(r) => {
+                    let sp = hls::select_range(&loaded.playlist, r)?;
+                    Some(HlsRange {
+                        first: sp.first,
+                        last_excl: sp.last_excl,
+                        start_ms: r.start_ms,
+                        end_ms: r.end_ms,
+                    })
+                }
+                None => None,
+            };
             let mut sc = Sidecar::new(
                 job.req.content.clone(),
                 job.req.quality_id.clone(),
                 PlaybackKind::LiveRewindHls,
             );
-            sc.hls = Some(loaded.state());
+            sc.hls = Some(loaded.state(range));
+            if range.is_some() {
+                sc.v = SIDECAR_VERSION_RANGE;
+            }
             part.insert(PartFile::create(&job.req.output, sc)?)
         }
     };
+    // 받을 조각 범위. 재조회 뒤에도 바뀌지 않는다(지문이 같으면 같은 위치다).
+    let (first, last_excl) = p
+        .staged()
+        .hls
+        .and_then(|h| h.range)
+        .map_or((0, n), |r| (r.first, r.last_excl));
     // committed_len > 0이면 init은 이미 쓰였다(init 쓰기와 첫 checkpoint가 함께 일어난다).
     if p.written() == 0 {
         resumed_from = 0;
         p.write(&loaded.init)?;
         p.checkpoint(|s| {
             if let Some(h) = s.hls.as_mut() {
-                h.next_index = 0;
+                h.next_index = first;
             }
         })
         .await?;
     }
 
-    let n = loaded.segment_count();
     let durations: Vec<u32> = loaded
         .playlist
         .segments
         .iter()
         .map(|s| s.duration_ms)
         .collect();
-    let total_ms = loaded.playlist.total_duration_ms;
-    let mut next = p.staged().hls.map_or(0, |h| h.next_index);
-    if next > n {
-        return Err(Error::SourceChanged {
-            detail: format!("sidecar의 다음 세그먼트 {next}가 전체 {n}보다 큽니다"),
-        });
-    }
-    let mut done_ms: u64 = durations[..next as usize]
+    let total_ms: u64 = durations[first as usize..last_excl as usize]
         .iter()
         .map(|&d| u64::from(d))
         .sum();
+    let mut next = p.staged().hls.map_or(first, |h| h.next_index);
+    if next < first || next > last_excl {
+        return Err(Error::SourceChanged {
+            detail: format!("sidecar의 다음 세그먼트 {next}가 범위 {first}..{last_excl} 밖입니다"),
+        });
+    }
+    let mut done_ms: u64 = durations[first as usize..next as usize]
+        .iter()
+        .map(|&d| u64::from(d))
+        .sum();
+    // `k`는 playlist 안 절대 index. 진행률은 구간 기준이다.
     let report = |job: &mut Job<'_>, bytes: u64, k: u32, done_ms: u64| {
         job.report.update(|r| {
             r.bytes = bytes;
-            r.segments = Some((k, n));
+            r.segments = Some((k - first, last_excl - first));
             r.media_secs = Some((done_ms as f64 / 1000.0, total_ms as f64 / 1000.0));
             r.total_bytes_estimate =
                 (done_ms > 0).then(|| (bytes as f64 * total_ms as f64 / done_ms as f64) as u64);
@@ -198,7 +243,7 @@ pub(crate) async fn run(
     // 마지막 진전(또는 스트림 시작) 이후 시각. 실패한 시도가 예산에서 차지하는 시간을 잰다.
     let mut since_progress = TokioInstant::now();
     'refresh: loop {
-        let uris: Vec<Url> = loaded.playlist.segments[next as usize..]
+        let uris: Vec<Url> = loaded.playlist.segments[next as usize..last_excl as usize]
             .iter()
             .map(|s| s.uri.clone())
             .collect();
@@ -260,7 +305,22 @@ pub(crate) async fn run(
         }
         break;
     }
+    if let Err(e) = ensure_complete(next, last_excl) {
+        job.keep_partial = true; // 받은 조각은 맞다. 지우지 않는다
+        return Err(e);
+    }
     finish(job, part, resumed_from).await
+}
+
+/// 받기 루프가 끝났는데 범위 끝에 닿지 않았으면 `SourceChanged`. 덜 받은 파일을 마무리(변환)하지 않는다.
+/// 지금 루프 구조로는 닿을 수 없는 방어 검사다(URI 목록을 모두 소비해야 끝난다).
+fn ensure_complete(next: u32, last_excl: u32) -> Result<(), Error> {
+    if next == last_excl {
+        return Ok(());
+    }
+    Err(Error::SourceChanged {
+        detail: format!("조각 {next}에서 멈췄습니다(끝 {last_excl})"),
+    })
 }
 
 /// playlist와 init을 받는다. `src`가 없으면 먼저 재조회한다.
@@ -516,6 +576,16 @@ mod tests {
                 r => panic!("{r:?}"),
             }
         }
+    }
+
+    #[test]
+    fn ensure_complete_table() {
+        assert!(ensure_complete(5, 5).is_ok());
+        assert!(ensure_complete(0, 0).is_ok());
+        assert!(matches!(
+            ensure_complete(4, 5),
+            Err(Error::SourceChanged { .. })
+        ));
     }
 
     #[test]

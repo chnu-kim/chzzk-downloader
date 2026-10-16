@@ -31,6 +31,7 @@ fn request(output: &str) -> DownloadRequest {
         concurrency: NonZeroU8::new(4).unwrap(),
         live_stop: None,
         recording_id: None,
+        range: None,
     }
 }
 

@@ -130,24 +130,8 @@ struct Opts {
 
 /// `testdata/live/synthetic_frag.mp4`(ffmpeg lavfi 합성)를 init(`ftyp`+`moov`)과 `moof`+`mdat` 세그먼트로 나눈 것.
 /// 끝의 `mfra`는 생방송 세그먼트에 없으므로 뺀다.
-static REAL: LazyLock<(Vec<u8>, Vec<Vec<u8>>)> = LazyLock::new(|| {
-    let b = fixture("testdata/live/synthetic_frag.mp4");
-    let w = mp4::walk_boxes(&b).unwrap();
-    let mut off = 0usize;
-    let mut init = Vec::new();
-    let mut segs: Vec<Vec<u8>> = Vec::new();
-    for (ty, size) in &w.boxes {
-        let bx = &b[off..off + *size as usize];
-        match ty.as_str() {
-            "ftyp" | "moov" => init.extend_from_slice(bx),
-            "moof" => segs.push(bx.to_vec()),
-            "mdat" => segs.last_mut().unwrap().extend_from_slice(bx),
-            _ => {}
-        }
-        off += *size as usize;
-    }
-    (init, segs)
-});
+static REAL: LazyLock<(Vec<u8>, Vec<Vec<u8>>)> =
+    LazyLock::new(|| mp4::split_fragments(&fixture("testdata/live/synthetic_frag.mp4")));
 
 impl Stream {
     async fn start(
@@ -345,6 +329,7 @@ fn request(out: &Path, stop: Option<CancellationToken>) -> DownloadRequest {
         concurrency: NonZeroU8::new(2).unwrap(),
         live_stop: stop,
         recording_id: None,
+        range: None,
     }
 }
 
@@ -1109,23 +1094,6 @@ async fn stop_keeps_segments_already_downloaded() {
     assert!(msns.windows(2).all(|w| w[1] == w[0] + 1), "{msns:?}");
 }
 
-/// 최상위 상자가 일반 mp4 모양인지 본다: `moof` 없음, 끝은 `moov` 하나, `mdat` 있음.
-fn assert_flat_mp4(path: &Path) {
-    let b = std::fs::read(path).unwrap();
-    let w = mp4::walk_boxes(&b).unwrap();
-    assert!(!w.truncated);
-    let types = w.types();
-    assert!(!types.contains(&"moof"), "{types:?}");
-    assert_eq!(types.last(), Some(&"moov"), "{types:?}");
-    assert_eq!(
-        types.iter().filter(|t| **t == "moov").count(),
-        1,
-        "{types:?}"
-    );
-    assert!(types.contains(&"mdat"), "{types:?}");
-    assert_eq!(types[0], "ftyp");
-}
-
 /// I: 실제 fMP4 조각(합성)을 녹화하면 마무리에서 일반 mp4로 바뀐다(core.md 구현 중 변경 60).
 #[tokio::test]
 async fn real_fragments_are_converted_to_flat_mp4() {
@@ -1146,7 +1114,7 @@ async fn real_fragments_are_converted_to_flat_mp4() {
     let DownloadOutcome::Completed { bytes, .. } = r else {
         panic!("{r:?}")
     };
-    assert_flat_mp4(&out);
+    mp4::assert_flat_mp4(&std::fs::read(&out).unwrap());
     // 보고한 크기는 붙인 moov까지 포함한 최종 파일 크기다
     assert_eq!(std::fs::metadata(&out).unwrap().len(), bytes);
     let raw: usize = REAL.0.len() + REAL.1.iter().map(Vec::len).sum::<usize>();
@@ -1193,7 +1161,7 @@ async fn interrupted_real_recording_is_converted_when_finalized() {
     assert!(part.exists());
     let r = record(&s, &out, None).await.unwrap();
     assert!(matches!(r, DownloadOutcome::Completed { .. }), "{r:?}");
-    assert_flat_mp4(&out);
+    mp4::assert_flat_mp4(&std::fs::read(&out).unwrap());
     no_part(&out);
 }
 

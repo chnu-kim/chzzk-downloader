@@ -62,8 +62,8 @@ function sample(code: ErrorCode, stage: Stage | null = null): AppError {
 }
 
 describe('errorCopy 전체 표', () => {
-  it('오류 코드는 32개(코어 24 + 셸 8)', () => {
-    expect(ERROR_CODES).toHaveLength(32);
+  it('오류 코드는 33개(코어 25 + 셸 8)', () => {
+    expect(ERROR_CODES).toHaveLength(33);
   });
 
   // 모든 code × 위치 × .part 유무 × 쿠키 사용 × 진단에서 3요소가 갖춰지고 DC8·C6 규칙을 지킨다.
@@ -138,7 +138,7 @@ const PLAIN = err('noPlayback', { type: 'noPlayback', adult: false });
 const DISK = err('diskFull', pathPayload('D:\\영상'));
 const PATHED = (code: ErrorCode) => err(code, pathPayload('D:\\영상'));
 
-// content.md §15.2: 코드 32개 × 자리별 L0(제목·본문·버튼)와 L1
+// content.md §15.2: 코드 33개 × 자리별 L0(제목·본문·버튼)와 L1
 const GOLDEN: Row[] = [
   {
     name: 'invalidUrl: 버튼 없음(입력칸이 행동)',
@@ -380,6 +380,15 @@ const GOLDEN: Row[] = [
     ctx: D,
     title: '영상 형식이 바뀌었어요',
     body: '치지직이 영상을 다시 처리했어요. 다시 불러와서 화질을 골라 처음부터 받아야 해요.',
+    actions: ['reresolve'],
+    detail: null,
+  },
+  {
+    name: 'rangeOutOfBounds',
+    error: err('rangeOutOfBounds'),
+    ctx: D,
+    title: '고른 구간을 이 영상에서 찾지 못했어요',
+    body: '영상 길이가 바뀌었을 수 있어요. 구간을 다시 골라 주세요.',
     actions: ['reresolve'],
     detail: null,
   },
@@ -679,7 +688,7 @@ describe('errorCopy 골든(§15.2 코드별 L0·L1)', () => {
     });
   }
 
-  it('골든이 32개 코드를 모두 덮는다', () => {
+  it('골든이 33개 코드를 모두 덮는다', () => {
     const covered = new Set(GOLDEN.map((g) => (g.error.code === 'cancelled' ? 'cancelled' : g.error.code)));
     for (const code of ERROR_CODES) expect(covered.has(code), code).toBe(true);
   });

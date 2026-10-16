@@ -73,3 +73,61 @@ pub fn walk_boxes(b: &[u8]) -> Result<BoxWalk, String> {
         truncated: false,
     })
 }
+
+/// 조각난 mp4를 init(`ftyp`+`moov`)과 조각(`moof`+`mdat`)으로 나눈다. 끝의 `mfra` 등은 버린다.
+#[allow(dead_code)]
+pub fn split_fragments(b: &[u8]) -> (Vec<u8>, Vec<Vec<u8>>) {
+    let w = walk_boxes(b).unwrap();
+    let mut off = 0usize;
+    let mut init = Vec::new();
+    let mut segs: Vec<Vec<u8>> = Vec::new();
+    for (ty, size) in &w.boxes {
+        let bx = &b[off..off + *size as usize];
+        match ty.as_str() {
+            "ftyp" | "moov" => init.extend_from_slice(bx),
+            "moof" => segs.push(bx.to_vec()),
+            "mdat" => segs.last_mut().unwrap().extend_from_slice(bx),
+            _ => {}
+        }
+        off += *size as usize;
+    }
+    (init, segs)
+}
+
+/// 최상위 상자가 일반 mp4 모양인지 본다: `moof` 없음, 끝은 `moov` 하나, `mdat` 있음.
+#[allow(dead_code)]
+pub fn assert_flat_mp4(b: &[u8]) {
+    let w = walk_boxes(b).unwrap();
+    assert!(!w.truncated);
+    let types = w.types();
+    assert!(!types.contains(&"moof"), "{types:?}");
+    assert_eq!(types.last(), Some(&"moov"), "{types:?}");
+    assert_eq!(
+        types.iter().filter(|t| **t == "moov").count(),
+        1,
+        "{types:?}"
+    );
+    assert!(types.contains(&"mdat"), "{types:?}");
+    assert_eq!(types[0], "ftyp");
+}
+
+/// 최상위 `mdat`의 본문(헤더 제외)을 순서대로 모은다.
+#[allow(dead_code)]
+pub fn mdat_payloads(b: &[u8]) -> Vec<Vec<u8>> {
+    let w = walk_boxes(b).unwrap();
+    let mut off = 0usize;
+    let mut out = Vec::new();
+    for (ty, size) in &w.boxes {
+        let size = *size as usize;
+        if ty == "mdat" {
+            let header = if u32::from_be_bytes(b[off..off + 4].try_into().unwrap()) == 1 {
+                16
+            } else {
+                8
+            };
+            out.push(b[off + header..off + size].to_vec());
+        }
+        off += size;
+    }
+    out
+}

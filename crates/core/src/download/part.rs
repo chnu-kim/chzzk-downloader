@@ -19,10 +19,12 @@ use crate::error::Error;
 use crate::fsutil::{
     atomic_write, map_io_error, remove_stale_temps, rename_noclobber_with_retry, rename_with_retry,
 };
-use crate::model::{ContentRef, PlaybackKind};
+use crate::model::{ContentRef, PlaybackKind, TimeRange};
 
-/// sidecar 형식 버전.
+/// sidecar 형식 버전. 전체 받기·생방송은 1 그대로다(올리면 진행 중인 모든 `.part`가 불일치로 지워진다)
 pub const SIDECAR_VERSION: u8 = 1;
+/// 구간 받기 sidecar 버전. `hls.range`가 있을 때만 쓴다. 옛 앱은 이 값을 모르므로 `same_job`이 false다
+pub const SIDECAR_VERSION_RANGE: u8 = 2;
 
 /// 쓰기 버퍼 크기.
 const WRITE_BUF: usize = 1 << 20;
@@ -35,13 +37,15 @@ pub struct PartOwner<'a> {
     pub kind: PlaybackKind,
     /// 생방송 녹화 작업의 고유값. 그 밖은 `None`
     pub recording_id: Option<&'a str>,
+    /// 구간 받기의 요청 구간. 전체 받기·생방송은 `None`(core.md 64)
+    pub range: Option<TimeRange>,
 }
 
 /// `.part.json`. 이어받기에 필요한 상태를 담는다.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Sidecar {
-    /// 형식 버전(1)
+    /// 형식 버전(1, 구간 받기는 2)
     pub v: u8,
     pub content: ContentRef,
     pub quality_id: String,
@@ -73,17 +77,50 @@ impl Sidecar {
         }
     }
 
-    /// 같은 작업(컨텐츠·화질·방식)의 sidecar인가.
-    pub fn same_job(&self, content: &ContentRef, quality_id: &str, kind: PlaybackKind) -> bool {
-        self.v == SIDECAR_VERSION
+    /// 이 sidecar가 기록한 요청 구간(`hls.range`). 없으면 전체 받기다.
+    pub fn range(&self) -> Option<TimeRange> {
+        self.hls.and_then(|h| h.range).map(|r| r.time_range())
+    }
+
+    /// 이 sidecar를 쓴 작업의 주인 열쇠(`create`의 소유 재확인, 완료 뒤 sidecar 삭제가 쓴다).
+    pub(crate) fn owner(&self) -> PartOwner<'_> {
+        PartOwner {
+            content: &self.content,
+            quality_id: &self.quality_id,
+            kind: self.kind,
+            recording_id: self.recording_id.as_deref(),
+            range: self.range(),
+        }
+    }
+
+    /// 같은 작업(컨텐츠·화질·방식·구간)의 sidecar인가.
+    ///
+    /// 버전 규칙: v1이면 구간이 없어야 하고, v2(`SIDECAR_VERSION_RANGE`)면 구간이 있어야 한다. 그 밖의 버전은 모른다.
+    /// 구간은 요청 시각(`start_ms`·`end_ms`)이 같아야 한다. 고른 조각 위치(`first`·`last_excl`)는 비교하지 않는다.
+    /// 같은 지문의 playlist에서는 같은 위치다.
+    pub fn same_job(
+        &self,
+        content: &ContentRef,
+        quality_id: &str,
+        kind: PlaybackKind,
+        range: Option<TimeRange>,
+    ) -> bool {
+        let has_range = self.hls.is_some_and(|h| h.range.is_some());
+        let version_ok = match self.v {
+            SIDECAR_VERSION => !has_range,
+            SIDECAR_VERSION_RANGE => has_range,
+            _ => false,
+        };
+        version_ok
             && &self.content == content
             && self.quality_id == quality_id
             && self.kind == kind
+            && self.range() == range
     }
 
     /// 이 요청이 이 `.part`의 주인인가. 생방송은 녹화 고유값까지 같아야 한다(`None == None`은 v0.7.0 호환으로 같다).
     pub fn owned_by(&self, o: &PartOwner<'_>) -> bool {
-        self.same_job(o.content, o.quality_id, o.kind)
+        self.same_job(o.content, o.quality_id, o.kind, o.range)
             && (self.kind != PlaybackKind::Live || self.recording_id.as_deref() == o.recording_id)
     }
 
@@ -126,6 +163,31 @@ pub struct HlsState {
     pub durations_crc: u32,
     pub init_len: u32,
     pub media_sequence: u64,
+    /// 구간 받기만(sidecar v2). 없으면 직렬화하지 않는다(v1 sidecar 모양 그대로)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub range: Option<HlsRange>,
+}
+
+/// HLS 구간 받기 상태(sidecar v2). 위치는 playlist 안 index다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HlsRange {
+    pub first: u32,
+    pub last_excl: u32,
+    /// 사용자가 요청한 시각. 같은 작업인지 비교할 때 쓴다
+    pub start_ms: u64,
+    #[serde(default)]
+    pub end_ms: Option<u64>,
+}
+
+impl HlsRange {
+    /// 요청 구간.
+    pub fn time_range(&self) -> TimeRange {
+        TimeRange {
+            start_ms: self.start_ms,
+            end_ms: self.end_ms,
+        }
+    }
 }
 
 /// `{final}.part`
@@ -310,12 +372,7 @@ impl PartFile {
         let sc_path = sidecar_path(final_path);
         let f = open_locked_using(&part, true, before_lock)?;
         remove_stale_temps(&sc_path);
-        let owner = PartOwner {
-            content: &sidecar.content,
-            quality_id: &sidecar.quality_id,
-            kind: sidecar.kind,
-            recording_id: sidecar.recording_id.as_deref(),
-        };
+        let owner = sidecar.owner();
         if let Some(old) = read_sidecar(&sc_path)?
             && old.is_other_recording(&owner)
         {
@@ -572,12 +629,7 @@ impl PartFile {
 /// 실패는 경고만 남긴다:
 /// 남은 sidecar는 `.part` 없이는 아무것도 막지 않는다(`create`가 덮어쓴다).
 fn remove_own_sidecar(path: &Path, mine: &Sidecar) {
-    let owner = PartOwner {
-        content: &mine.content,
-        quality_id: &mine.quality_id,
-        kind: mine.kind,
-        recording_id: mine.recording_id.as_deref(),
-    };
+    let owner = mine.owner();
     match read_sidecar(path) {
         Ok(Some(now)) if !now.owned_by(&owner) => {
             tracing::info!(path = %path.display(), "다른 작업이 새로 쓴 sidecar라 지우지 않는다");
@@ -671,6 +723,7 @@ mod tests {
             durations_crc: 7,
             init_len: 3,
             media_sequence: 0,
+            range: None,
         });
         s
     }
@@ -688,6 +741,7 @@ mod tests {
             quality_id: quality,
             kind: PlaybackKind::LiveRewindHls,
             recording_id: None,
+            range: None,
         }
     }
 
@@ -723,6 +777,7 @@ mod tests {
             quality_id: "144p",
             kind: PlaybackKind::Live,
             recording_id: id,
+            range: None,
         }
     }
 
@@ -731,6 +786,233 @@ mod tests {
         let mut p = PartFile::create(out, live_sc(id, 4, 0)).unwrap();
         p.write(b"initMEDIAmed").unwrap();
         p.checkpoint(|_| {}).await.unwrap();
+    }
+
+    fn tr(start_ms: u64, end_ms: Option<u64>) -> TimeRange {
+        TimeRange { start_ms, end_ms }
+    }
+
+    /// 구간 받기 sidecar(v2). 고른 조각은 (3, 12)다.
+    fn range_sc(r: TimeRange) -> Sidecar {
+        let mut s = sidecar();
+        s.v = SIDECAR_VERSION_RANGE;
+        s.hls = s.hls.map(|h| HlsState {
+            next_index: 3,
+            range: Some(HlsRange {
+                first: 3,
+                last_excl: 12,
+                start_ms: r.start_ms,
+                end_ms: r.end_ms,
+            }),
+            ..h
+        });
+        s
+    }
+
+    fn range_owner<'a>(c: &'a ContentRef, r: Option<TimeRange>) -> PartOwner<'a> {
+        PartOwner {
+            range: r,
+            ..owner(c, "720p")
+        }
+    }
+
+    #[test]
+    fn range_sidecar_json_shape() {
+        let sc = range_sc(tr(7000, Some(23000)));
+        let v = serde_json::to_value(&sc).unwrap();
+        assert_eq!(v["v"], 2);
+        assert_eq!(
+            v["hls"]["range"],
+            serde_json::json!({"first": 3, "lastExcl": 12, "startMs": 7000, "endMs": 23000})
+        );
+        let back: Sidecar = serde_json::from_value(v).unwrap();
+        assert_eq!(back, sc);
+        // 끝을 모르면 null로 직렬화되고 다시 읽으면 같다
+        let open = range_sc(tr(7000, None));
+        let v = serde_json::to_value(&open).unwrap();
+        assert!(v["hls"]["range"]["endMs"].is_null());
+        let back: Sidecar = serde_json::from_value(v).unwrap();
+        assert_eq!(back, open);
+        assert_eq!(back.range(), Some(tr(7000, None)));
+    }
+
+    #[test]
+    fn same_job_version_and_range_rules() {
+        let c = content();
+        let r = tr(7000, Some(23000));
+        let same = |s: &Sidecar, want: Option<TimeRange>| {
+            s.same_job(&c, "720p", PlaybackKind::LiveRewindHls, want)
+        };
+        // (1) v1 + 구간 없음 + 요청 None
+        assert!(same(&sidecar(), None));
+        // (2) v2 + 같은 요청
+        assert!(same(&range_sc(r), Some(r)));
+        // (3) v2 + 요청 None
+        assert!(!same(&range_sc(r), None));
+        // (4) v1 + 요청 Some
+        assert!(!same(&sidecar(), Some(r)));
+        // (5) 시작이 다름
+        assert!(!same(&range_sc(r), Some(tr(7001, Some(23000)))));
+        // (6) 끝 Some <-> None
+        assert!(!same(&range_sc(r), Some(tr(7000, None))));
+        assert!(!same(&range_sc(tr(7000, None)), Some(r)));
+        // (7) v=2인데 hls.range 없음
+        let mut s = sidecar();
+        s.v = SIDECAR_VERSION_RANGE;
+        assert!(!same(&s, None));
+        // (8) v=1인데 hls.range 있음
+        let mut s = range_sc(r);
+        s.v = SIDECAR_VERSION;
+        assert!(!same(&s, Some(r)));
+        // (9) 모르는 버전
+        let mut s = range_sc(r);
+        s.v = 3;
+        assert!(!same(&s, Some(r)));
+        let mut s = sidecar();
+        s.v = 3;
+        assert!(!same(&s, None));
+        // 고른 위치만 다르고 시각이 같으면 같은 작업이다
+        let mut s = range_sc(r);
+        if let Some(h) = s.hls.as_mut().and_then(|h| h.range.as_mut()) {
+            h.first = 4;
+            h.last_excl = 9;
+        }
+        assert!(same(&s, Some(r)));
+    }
+
+    #[test]
+    fn old_app_rule_rejects_range_sidecar() {
+        // 이 저장소 이전 버전의 규칙: v가 SIDECAR_VERSION(1)일 때만 같은 작업이다
+        let old_rule = |s: &Sidecar| s.v == SIDECAR_VERSION;
+        let s = range_sc(tr(1000, None));
+        assert_ne!(s.v, SIDECAR_VERSION);
+        assert!(!old_rule(&s));
+        assert!(old_rule(&sidecar()));
+    }
+
+    #[test]
+    fn v1_sidecar_json_without_range_still_matches() {
+        let json = r#"{"v":1,"content":{"kind":"video","videoNo":1},"qualityId":"720p","kind":"liveRewindHls","committedLen":5,"hls":{"nextIndex":2,"segmentCount":10,"durationsCrc":7,"initLen":3,"mediaSequence":0}}"#;
+        let s: Sidecar = serde_json::from_str(json).unwrap();
+        let c = content();
+        assert!(s.same_job(&c, "720p", PlaybackKind::LiveRewindHls, None));
+        assert!(!s.same_job(&c, "720p", PlaybackKind::LiveRewindHls, Some(tr(0, None))));
+    }
+
+    /// 업데이트가 v0.7.0이 남긴 생방송 `.part`를 지우지 않는다.
+    #[test]
+    fn live_v1_sidecar_without_range_still_owned() {
+        let c = live_content();
+        let json = |extra: &str| {
+            format!(
+                r#"{{"v":1,"content":{{"kind":"live","channelId":"chan"}},"qualityId":"144p","kind":"live","committedLen":12,"hls":{{"nextIndex":0,"segmentCount":0,"durationsCrc":0,"initLen":4,"mediaSequence":0}}{extra}}}"#
+            )
+        };
+        let s: Sidecar = serde_json::from_str(&json("")).unwrap();
+        assert!(s.owned_by(&live_owner(&c, None)));
+        let s: Sidecar = serde_json::from_str(&json(r#","recordingId":"a""#)).unwrap();
+        assert!(s.owned_by(&live_owner(&c, Some("a"))));
+    }
+
+    #[tokio::test]
+    async fn resume_range_request_drops_full_part() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("a.mp4");
+        let mut p = PartFile::create(&out, sidecar()).unwrap();
+        p.write(b"abc").unwrap();
+        p.checkpoint(|_| {}).await.unwrap();
+        drop(p);
+        let c = content();
+        assert!(
+            PartFile::resume(&out, &range_owner(&c, Some(tr(0, Some(5000)))))
+                .unwrap()
+                .is_none()
+        );
+        assert!(!part_path(&out).exists() && !sidecar_path(&out).exists());
+    }
+
+    #[tokio::test]
+    async fn resume_full_request_drops_range_part() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("a.mp4");
+        let r = tr(0, Some(5000));
+        let mut p = PartFile::create(&out, range_sc(r)).unwrap();
+        p.write(b"abc").unwrap();
+        p.checkpoint(|_| {}).await.unwrap();
+        drop(p);
+        let c = content();
+        assert!(
+            PartFile::resume(&out, &range_owner(&c, None))
+                .unwrap()
+                .is_none()
+        );
+        assert!(!part_path(&out).exists() && !sidecar_path(&out).exists());
+    }
+
+    #[tokio::test]
+    async fn resume_range_keeps_same_range_part() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("a.mp4");
+        let r = tr(0, Some(5000));
+        let mut p = PartFile::create(&out, range_sc(r)).unwrap();
+        p.write(b"abc").unwrap();
+        p.checkpoint(|_| {}).await.unwrap();
+        drop(p);
+        let c = content();
+        let p = PartFile::resume(&out, &range_owner(&c, Some(r)))
+            .unwrap()
+            .unwrap();
+        assert_eq!(p.committed(), 3);
+        assert_eq!(p.written(), 3);
+    }
+
+    #[tokio::test]
+    async fn range_request_does_not_touch_other_recording() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("a.mp4");
+        write_recording(&out, Some("a")).await;
+        let before = std::fs::read(part_path(&out)).unwrap();
+        let c = content();
+        let err = PartFile::resume(&out, &range_owner(&c, Some(tr(0, Some(5000))))).unwrap_err();
+        assert!(matches!(err, Error::PartialRecording { .. }), "{err:?}");
+        assert_eq!(std::fs::read(part_path(&out)).unwrap(), before);
+    }
+
+    /// 구간 받기를 마치면 내 sidecar를 지운다(`owner()`가 range를 담지 않으면 남의 것으로 보고 남긴다).
+    #[tokio::test]
+    async fn finalize_removes_own_range_sidecar() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("a.mp4");
+        let mut p = PartFile::create(&out, range_sc(tr(7000, Some(23000)))).unwrap();
+        p.write(b"abc").unwrap();
+        p.checkpoint(|_| {}).await.unwrap();
+        let path = moved(p.finalize(DuplicatePolicy::Overwrite).await.unwrap());
+        assert_eq!(std::fs::read(path).unwrap(), b"abc");
+        assert!(!sidecar_path(&out).exists());
+        assert!(!part_path(&out).exists());
+    }
+
+    #[tokio::test]
+    async fn create_rechecks_owner_with_range() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("a.mp4");
+        let r = tr(7000, Some(23000));
+        // 같은 구간의 v2 sidecar와 그 바이트가 있어도 VOD라 자르고 새로 만든다
+        let mut p = PartFile::create(&out, range_sc(r)).unwrap();
+        p.write(b"abc").unwrap();
+        p.checkpoint(|_| {}).await.unwrap();
+        drop(p);
+        let p = PartFile::create(&out, range_sc(r)).unwrap();
+        assert_eq!(p.written(), 0);
+        assert_eq!(std::fs::metadata(part_path(&out)).unwrap().len(), 0);
+        drop(p);
+        // 남의 생방송 sidecar면 자르지 않고 PartialRecording
+        let out2 = dir.path().join("b.mp4");
+        write_recording(&out2, Some("a")).await;
+        let before = std::fs::read(part_path(&out2)).unwrap();
+        let err = PartFile::create(&out2, range_sc(r)).unwrap_err();
+        assert!(matches!(err, Error::PartialRecording { .. }), "{err:?}");
+        assert_eq!(std::fs::read(part_path(&out2)).unwrap(), before);
     }
 
     #[test]
@@ -749,6 +1031,8 @@ mod tests {
         assert_eq!(v["kind"], "liveRewindHls");
         assert_eq!(v["committedLen"], 0);
         assert_eq!(v["hls"]["nextIndex"], 0);
+        // 전체 받기의 sidecar 모양은 구간 필드가 생겨도 그대로다
+        assert!(v["hls"].get("range").is_none());
     }
 
     /// `Debug`는 경로와 바이트 수만 보인다(서명 값이 없다). `path()`는 `.part` 경로를 돌려준다.
@@ -980,6 +1264,7 @@ mod tests {
             quality_id: "720p",
             kind: PlaybackKind::LiveRewindHls,
             recording_id: id,
+            range: None,
         };
         assert!(v.owned_by(&vo(None)) && v.owned_by(&vo(Some("x"))));
         assert!(!v.is_other_recording(&vo(None)));
@@ -1267,6 +1552,7 @@ mod tests {
             quality_id: "720p",
             kind: PlaybackKind::Progressive,
             recording_id: None,
+            range: None,
         };
         let err = PartFile::resume(&out, &o).unwrap_err();
         assert!(matches!(err, Error::PartialRecording { .. }), "{err:?}");

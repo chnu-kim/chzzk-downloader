@@ -4,6 +4,7 @@
 // 토큰 원문은 여기 들어오지 않는다: 호출자(AuthStore)가 만든 { token, hash } 쌍에서 hash만 저장한다.
 import { admission, audit } from "./allowlist";
 import type { Db } from "./db";
+import { delegationsOf } from "./delegation";
 import type { CheckResult, MySessionView, Minted, RevokeWhy, RotateResult, TokenBundle, WebCheckResult } from "./types";
 
 export const ACCESS_TTL_MS = 86_400_000;
@@ -114,6 +115,7 @@ export function activate(db: Db, sessionId: string, pair: TokenPair, admins: rea
       channelId: adm.ownerChannelId,
       channelName: s.channel_name ?? "",
       isAdmin: adm.isAdmin,
+      delegatedChannels: delegationsOf(db, s.channel_id, admins),
     },
   };
 }
@@ -235,6 +237,7 @@ export function rotate(db: Db, refreshHash: string, pair: TokenPair, admins: rea
     channelId: adm.ownerChannelId,
     channelName: r.channel_name ?? "",
     isAdmin: adm.isAdmin,
+    delegatedChannels: delegationsOf(db, r.channel_id, admins),
   };
   const sid = r.session_id;
 

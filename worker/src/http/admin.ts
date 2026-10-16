@@ -110,7 +110,7 @@ export async function adminAllow(req: Request, ctx: Ctx): Promise<Response> {
   if (ctx.config.adminChannelIds.includes(channelId)) return adminChannel(ctx);
   // 메모는 store가 64자로 자르고, 비어 있으면 있던 메모를 그대로 둔다(구현 중 변경 38 (카)). 같은 이름이 둘 이상이면 어느 쪽이 맞는지 알 수 없어 거절한다
   if (notes.length > 1) return badBody(ctx);
-  const r = await ctx.store.allow(channelId, notes[0] ?? "", g.s.channelId, ctx.now);
+  const r = await ctx.store.allow(channelId, notes[0] ?? "", g.s.channelId, ctx.now, ctx.config.adminChannelIds);
   if (!r.ok) return badChannel(ctx);
   ctx.log("admin.allow", { route: ctx.route });
   return seeOther("/admin");
@@ -154,7 +154,7 @@ export async function adminDeniedAllow(req: Request, ctx: Ctx): Promise<Response
   if (!CHANNEL_ID.test(id)) return notFound(ctx);
   if (ctx.config.adminChannelIds.includes(id)) return adminChannel(ctx);
   // 성공 이벤트(admin.denied_allow)는 allowDenied RPC가 남긴다. 거부 기록이 이미 없으면 오류가 아니다
-  if (!(await ctx.store.allowDenied(id, g.s.channelId, ctx.now))) return alreadyDone(ctx);
+  if (!(await ctx.store.allowDenied(id, g.s.channelId, ctx.now, ctx.config.adminChannelIds))) return alreadyDone(ctx);
   return seeOther("/admin");
 }
 

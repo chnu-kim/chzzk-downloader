@@ -4,7 +4,7 @@
 // 저장 해시 = 접두를 포함한 토큰 문자열 전체의 UTF-8 바이트를 SHA-256한 소문자 hex.
 // loginVerifier = b64url(SHA-256(UTF-8(loginSecret 문자열))): 원시 32바이트가 아니라 전송되는 b64url 문자열을 해시한다.
 
-export const TOKEN_PREFIX = { access: "cda_", refresh: "cdr_", web: "cdw_", flow: "cdf_", grant: "cdg_" } as const;
+export const TOKEN_PREFIX = { access: "cda_", refresh: "cdr_", web: "cdw_", flow: "cdf_", grant: "cdg_", invite: "cdi_" } as const;
 export type TokenKind = keyof typeof TOKEN_PREFIX;
 
 /** n바이트 난수. 테스트는 고정 바이트를 주입한다 */

@@ -45,7 +45,7 @@ describe("redeemEvent", () => {
     expect(redeemEvent({ status: "denied", channelName: "x" })).toEqual(["auth.redeem.denied", {}]);
     expect(redeemEvent({ status: "cancelled" })).toEqual(["auth.redeem.cancelled", {}]);
     expect(redeemEvent({ status: "failed", code: "token" })).toEqual(["auth.redeem.failed", { reason: "token" }]);
-    const bundle = { accessToken: "a", accessExpiresAt: 1, refreshToken: "r", refreshExpiresAt: 2, channelId: "c", channelName: "n", isAdmin: false };
+    const bundle = { accessToken: "a", accessExpiresAt: 1, refreshToken: "r", refreshExpiresAt: 2, channelId: "c", channelName: "n", isAdmin: false, delegatedChannels: [] };
     expect(redeemEvent({ status: "ok", bundle })).toEqual(["auth.redeem.ok", {}]);
   });
 });

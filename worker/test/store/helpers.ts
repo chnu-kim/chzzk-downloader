@@ -52,7 +52,7 @@ export async function appLogin(stub: Stub, o: LoginOpts = {}) {
 
 /** 허용목록에 넣은 뒤 앱 로그인 */
 export async function allowedLogin(stub: Stub, o: LoginOpts = {}) {
-  await stub.allow(o.channelId ?? B2, "", A1, o.now ?? T0);
+  await stub.allow(o.channelId ?? B2, "", A1, o.now ?? T0, ADMINS);
   return appLogin(stub, o);
 }
 

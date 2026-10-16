@@ -6,7 +6,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::model::{ContentKind, ContentMeta};
+use crate::model::{ContentKind, ContentMeta, TimeRange};
 
 /// 파일명 전체의 UTF-8 바이트 상한(확장자 포함).
 pub const MAX_FILENAME_BYTES: usize = 200;
@@ -227,6 +227,44 @@ pub fn output_path(folder: &Path, filename: &str, p: Platform) -> PathBuf {
         name = sanitize_filename(&format!("{base}{ext}"), p);
     }
     folder.join(name)
+}
+
+/// 파일 이름에 쓸 수 있는 `H.MM.SS`(`:`는 Windows·macOS가 `_`로 바꾼다). 초 미만은 버린다.
+fn clock_dots(ms: u64) -> String {
+    let s = ms / 1000;
+    format!("{}.{:02}.{:02}", s / 3600, s / 60 % 60, s % 60)
+}
+
+/// 구간 받기 파일 이름 끝에 붙이는 접미사 ` (H.MM.SS~H.MM.SS)`. 끝을 모르면(`end_ms = None`) ` (H.MM.SS~)`다.
+///
+/// 끝 시각을 지어내 찍지 않는다. `~`·`.`·괄호는 어느 OS에서도 금지 문자가 아니고, 번호 이름의 ` (2)`와
+/// 모양이 겹치지 않는다(`제목 (0.10.00~0.20.00) (2)`).
+pub fn range_suffix(r: &TimeRange) -> String {
+    format!(
+        " ({}~{})",
+        clock_dots(r.start_ms),
+        r.end_ms.map(clock_dots).unwrap_or_default()
+    )
+}
+
+/// 구간 받기 파일 이름(확장자 제외): `{제목}{접미사}`.
+///
+/// 제목은 `sanitize_filename`을 거치고, `.mp4`까지 `MAX_FILENAME_BYTES`를 넘지 않도록 **제목 쪽을 줄인다**.
+/// `output_path`는 이름 끝부터 자르므로 접미사가 붙은 채로 넘기면 접미사가 잘려, 다른 구간이 같은 경로가 된다.
+/// 이 함수의 결과를 `output_path`에 넘기면 더 자르지 않는다.
+pub fn range_stem(title: &str, r: &TimeRange, p: Platform) -> String {
+    let suffix = range_suffix(r);
+    let title = match title.len().checked_sub(EXT.len()) {
+        Some(i) if title.is_char_boundary(i) && title[i..].eq_ignore_ascii_case(EXT) => &title[..i],
+        _ => title,
+    };
+    let base = sanitize_filename(title, p);
+    let room = MAX_FILENAME_BYTES.saturating_sub(EXT.len() + suffix.len());
+    let mut head = trim_piece(truncate_utf8(&base, room), p);
+    if head.is_empty() {
+        head.push('_');
+    }
+    head + &suffix
 }
 
 /// `"YYYY-MM-DD"`로 시작하는 날짜를 읽는다. 뒤는 끝, 공백, `T` 중 하나여야 한다.
@@ -768,5 +806,89 @@ mod tests {
         let sib_name = sib.file_name().unwrap().to_str().unwrap();
         assert_eq!(sib_name.len(), 217);
         assert!(sib_name.starts_with(&name[..196]));
+    }
+
+    fn tr(start_ms: u64, end_ms: Option<u64>) -> TimeRange {
+        TimeRange { start_ms, end_ms }
+    }
+
+    #[test]
+    fn range_suffix_shape() {
+        assert_eq!(
+            range_suffix(&tr(600_000, Some(1_200_000))),
+            " (0.10.00~0.20.00)"
+        );
+        assert_eq!(
+            range_suffix(&tr(3_723_999, Some(7_200_000))),
+            " (1.02.03~2.00.00)"
+        );
+        // 끝을 모르면 끝 시각을 지어내지 않는다
+        assert_eq!(range_suffix(&tr(600_000, None)), " (0.10.00~)");
+        assert!(!range_suffix(&tr(1, None)).contains(':'));
+    }
+
+    #[test]
+    fn range_stem_short_names_keep_title() {
+        let r = tr(0, Some(10_000));
+        for p in ALL {
+            assert_eq!(range_stem("짧은", &r, p), "짧은 (0.00.00~0.00.10)");
+            // 끝의 `.mp4`는 한 번만 뗀다
+            assert_eq!(range_stem("짧은.MP4", &r, p), "짧은 (0.00.00~0.00.10)");
+        }
+    }
+
+    /// 금지 문자는 제목 쪽에서 정리되고 접미사의 `~`·`.`은 세 OS 모두 그대로다.
+    #[test]
+    fn range_stem_sanitizes_title_only() {
+        let r = tr(600_000, None);
+        assert_eq!(range_stem("a:b", &r, Windows), "a_b (0.10.00~)");
+        assert_eq!(range_stem("a:b", &r, MacOs), "a_b (0.10.00~)");
+        assert_eq!(range_stem("a:b", &r, Linux), "a:b (0.10.00~)");
+        assert_eq!(range_stem("a?*b", &r, Windows), "a__b (0.10.00~)");
+        // Windows 예약어 제목은 `_`를 붙인다
+        assert_eq!(range_stem("CON", &r, Windows), "CON_ (0.10.00~)");
+        // 제목이 비면 `_`
+        assert_eq!(range_stem("", &r, Linux), "_ (0.10.00~)");
+    }
+
+    /// 긴 제목은 제목 쪽을 자르고 접미사는 남는다. 최종 경로도 200바이트 안이고, 구간이 다르면 경로도 다르다.
+    #[test]
+    fn range_stem_cuts_title_not_suffix() {
+        let a = tr(0, Some(10_000));
+        let b = tr(10_000, Some(20_000));
+        let dir = Path::new("out");
+        for p in ALL {
+            for long in [
+                "가".repeat(100),
+                "a".repeat(300),
+                "가 ".repeat(100),
+                format!("{}. 끝", "a".repeat(177)),
+                format!("{}....", "a".repeat(190)),
+            ] {
+                let pa = super::output_path(dir, &range_stem(&long, &a, p), p);
+                let pb = super::output_path(dir, &range_stem(&long, &b, p), p);
+                let na = pa.file_name().unwrap().to_str().unwrap();
+                let nb = pb.file_name().unwrap().to_str().unwrap();
+                assert!(na.ends_with(" (0.00.00~0.00.10).mp4"), "{p:?} {na}");
+                assert!(nb.ends_with(" (0.00.10~0.00.20).mp4"), "{p:?} {nb}");
+                assert!(na.len() <= MAX_FILENAME_BYTES, "{p:?} {}", na.len());
+                assert_ne!(pa, pb);
+                // 이름이 이미 자른 결과라 `output_path`가 한 번 더 다듬어도 같다(멱등)
+                let stem = range_stem(&long, &a, p);
+                assert_eq!(sanitize_filename(&stem, p), stem, "{p:?}");
+            }
+        }
+    }
+
+    /// 자른 자리에 공백·마침표가 오면 Windows는 지운다(접미사 앞 공백 하나만 남는다).
+    #[test]
+    fn range_stem_windows_trims_cut_edge() {
+        let r = tr(0, None);
+        let title = format!("{}. 끝", "a".repeat(180));
+        let room = MAX_FILENAME_BYTES - EXT.len() - range_suffix(&r).len();
+        let stem = range_stem(&title, &r, Windows);
+        let head = stem.strip_suffix(&range_suffix(&r)).unwrap();
+        assert!(head.len() <= room);
+        assert!(!head.ends_with(['.', ' ']), "{head:?}");
     }
 }

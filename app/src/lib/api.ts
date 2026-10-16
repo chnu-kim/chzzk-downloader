@@ -23,6 +23,7 @@ import type {
   ResolvedDto,
   SettingsDto,
   SettingsPatch,
+  TimeRangeDto,
   UpdateCheckDto,
   UpdateInfoDto,
   UpdateInstallDto,
@@ -48,6 +49,8 @@ export interface CheckOutputArgs {
   content: ContentRef;
   qualityId: string;
   expectedKind: PlaybackKind;
+  /** 구간 받기(빠른 다시보기만). 있으면 셸이 이름 끝에 구간 접미사를 붙여 돌려준다 */
+  range?: TimeRangeDto | null;
 }
 
 export const appInfo = () => call<AppInfo>('app_info');

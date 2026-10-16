@@ -17,7 +17,7 @@ use chzzk_core::{
     CancellationToken, Chzzk, ClientConfig, ContentRef, DownloadOutcome, DownloadRequest,
     DuplicatePolicy, Error, PlaybackKind, Progress,
 };
-use common::{Events, GateProxy, config, fixture, part_files, rewrite_hosts};
+use common::{Events, Gate, GateProxy, config, fixture, part_files, rewrite_hosts};
 use wiremock::matchers::{method, path, path_regex};
 use wiremock::{Mock, MockServer, Request, ResponseTemplate};
 
@@ -58,6 +58,8 @@ struct Stream {
     server: MockServer,
     polls: Arc<AtomicUsize>,
     details: Arc<AtomicUsize>,
+    /// 서버에 닿은 세그먼트 요청 수
+    segs: Arc<AtomicUsize>,
     /// `Opts::via_proxy`일 때 미디어 요청이 지나는 단절 프록시
     proxy: Option<GateProxy>,
 }
@@ -150,6 +152,7 @@ impl Stream {
         let server = MockServer::start().await;
         let polls = Arc::new(AtomicUsize::new(0));
         let details = Arc::new(AtomicUsize::new(0));
+        let segs = Arc::new(AtomicUsize::new(0));
         let proxy = opts.via_proxy.then(|| GateProxy::start(*server.address()));
         // `live-detail`은 서버에 직접, 그 안의 미디어 주소는 프록시로 낸다
         let uri = proxy.as_ref().map_or_else(|| server.uri(), GateProxy::url);
@@ -258,9 +261,11 @@ impl Stream {
             )
             .mount(&server)
             .await;
+        let sg = segs.clone();
         Mock::given(method("GET"))
             .and(path_regex(r"^/live/kr/streamkey0/144p/seg\d+\.m4v$"))
             .respond_with(move |r: &Request| {
+                sg.fetch_add(1, Ordering::SeqCst);
                 let name = r.url.path().rsplit('/').next().unwrap().to_string();
                 let msn: u64 = name[3..name.len() - 4].parse().unwrap();
                 let t = if opts.bad_seg == Some(msn) || opts.bad_from.is_some_and(|f| msn >= f) {
@@ -294,6 +299,7 @@ impl Stream {
             server,
             polls,
             details,
+            segs,
             proxy,
         }
     }
@@ -392,6 +398,33 @@ fn stop_after_details(
         }
         stop.cancel();
     })
+}
+
+/// 요청 수 `counter`가 `target`에 이르면 `gate`를 `dur` 동안 끊는다(녹화가 한창일 때 단절을 보장한다).
+/// 고정 sleep은 빠른 CI에서 녹화가 먼저 끝나 단절이 없을 수 있으므로, 횟수로 기다리고 상한(30초)만 시간으로 둔다.
+fn down_after(
+    counter: Arc<AtomicUsize>,
+    target: usize,
+    gate: Gate,
+    dur: Duration,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        wait_count(&counter, target, "단절을 걸").await;
+        gate.down_for(dur);
+    })
+}
+
+/// `counter`가 `target` 이상이 될 때까지 10ms 간격으로 기다린다. 30초를 넘기면 panic이다.
+async fn wait_count(counter: &AtomicUsize, target: usize, what: &str) {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+    while counter.load(Ordering::SeqCst) < target {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "30초 안에 요청 {target}번에 이르지 못해 {what}지 못했다(현재 {}번)",
+            counter.load(Ordering::SeqCst)
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
 }
 
 #[tokio::test]
@@ -1355,14 +1388,12 @@ async fn outage_midstream_is_waited_out() {
     )
     .await;
     let gate = s.proxy.as_ref().unwrap().gate();
-    tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(100)).await;
-        gate.down_for(Duration::from_millis(250));
-    });
+    let outage = down_after(s.polls.clone(), 5, gate, Duration::from_millis(250));
     let dir = tempfile::tempdir().unwrap();
     let out = out_path(&dir);
     let r = record(&s, &out, None).await.unwrap();
     assert!(matches!(r, DownloadOutcome::Completed { .. }), "{r:?}");
+    outage.await.unwrap();
     assert!(s.proxy.as_ref().unwrap().refused() > 0, "단절이 없었다");
     let msns = recorded_msns(&out);
     assert!(msns.windows(2).all(|w| w[1] == w[0] + 1), "{msns:?}");
@@ -1474,14 +1505,12 @@ async fn outage_during_segment_fetch_is_waited_out() {
     )
     .await;
     let gate = s.proxy.as_ref().unwrap().gate();
-    tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        gate.down_for(Duration::from_millis(250));
-    });
+    let outage = down_after(s.segs.clone(), 2, gate, Duration::from_millis(250));
     let dir = tempfile::tempdir().unwrap();
     let out = out_path(&dir);
     let r = record(&s, &out, None).await.unwrap();
     assert!(matches!(r, DownloadOutcome::Completed { .. }), "{r:?}");
+    outage.await.unwrap();
     assert!(s.proxy.as_ref().unwrap().refused() > 0, "단절이 없었다");
     assert_eq!(recorded_msns(&out), (0..=7).collect::<Vec<_>>());
 }
@@ -1502,8 +1531,9 @@ async fn stop_while_waiting_out_a_segment_outage_finalizes() {
     let gate = s.proxy.as_ref().unwrap().gate();
     let stop = CancellationToken::new();
     let s2 = stop.clone();
+    let segs = s.segs.clone();
     tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        wait_count(&segs, 2, "단절을 걸").await;
         gate.down_for(Duration::from_secs(20));
         tokio::time::sleep(Duration::from_millis(300)).await;
         s2.cancel();

@@ -206,6 +206,7 @@ fn job(status: JobStatus) -> JobDto {
         created_at: 1_759_650_000,
         finished_at: None,
         stopped_at: None,
+        range: None,
     }
 }
 
@@ -255,7 +256,8 @@ fn job_event_status_snapshot() {
                 "missing": false,
                 "createdAt": 1_759_650_000u64,
                 "finishedAt": 1_759_650_100u64,
-                "stoppedAt": null
+                "stoppedAt": null,
+                "range": null
             }
         })
     );
@@ -902,6 +904,25 @@ fn appearance_enum_conversions_cover_every_variant() {
     assert_eq!(OsDto::from(Platform::MacOs), OsDto::Macos);
     assert_eq!(OsDto::from(Platform::Windows), OsDto::Windows);
     assert_eq!(OsDto::from(Platform::Linux), OsDto::Linux);
+}
+
+/// 구간 DTO의 JSON 모양: camelCase, 끝 없음은 null이고 `endMs`를 빼고 보내도 끝 없음이다.
+#[test]
+fn time_range_dto_json_shape() {
+    use chzzk_shell::dto::TimeRangeDto;
+    let r = TimeRangeDto {
+        start_ms: 600_000,
+        end_ms: None,
+    };
+    assert_eq!(
+        serde_json::to_value(r).unwrap(),
+        serde_json::json!({"startMs": 600000, "endMs": null})
+    );
+    let back: TimeRangeDto = serde_json::from_value(serde_json::json!({"startMs": 5})).unwrap();
+    assert_eq!(back.end_ms, None);
+    let back: TimeRangeDto =
+        serde_json::from_value(serde_json::json!({"startMs": 5, "endMs": 9})).unwrap();
+    assert_eq!(back.end_ms, Some(9));
 }
 
 // ---------------------------------------------------------------------------

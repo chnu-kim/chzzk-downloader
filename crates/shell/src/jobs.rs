@@ -16,10 +16,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use chzzk_core::download::MAX_CONCURRENCY;
 use chzzk_core::download::part::{PartOwner, Sidecar, part_path, sidecar_path};
 use chzzk_core::fsutil::{atomic_write, map_io_error, rename_with_retry};
-use chzzk_core::{ContentRef, DownloadRequest, Error, PlaybackKind};
+use chzzk_core::{ContentRef, DownloadRequest, Error, PlaybackKind, TimeRange};
 use serde::{Deserialize, Serialize};
 
-use crate::dto::{ContentKindDto, JobDto, JobId, JobStatus, OnExisting, ProgressDto};
+use crate::dto::{ContentKindDto, JobDto, JobId, JobStatus, OnExisting, ProgressDto, TimeRangeDto};
 use crate::error::AppError;
 
 /// 작업 목록 파일 이름.
@@ -45,6 +45,10 @@ pub struct JobRecord {
     pub quality_id: String,
     pub quality_label: String,
     pub expected_kind: PlaybackKind,
+    /// 구간 받기의 요청 구간(사용자 입력 원값, 끝 없음은 `None`). 이어받기 동일성 키다(`.part`가 생긴 뒤 바꾸지 않는다).
+    /// 옛 레코드에는 없다(전체 받기). 재개 요청은 이 값을 그대로 코어에 넘긴다
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub range: Option<TimeRange>,
     /// 생방송 녹화 작업의 고유값(core.md 61). `enqueue`가 생방송에만 만든다. v0.7.0 레코드에는 없다(`None`)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recording_id: Option<String>,
@@ -90,7 +94,7 @@ impl JobRecord {
             concurrency: concurrency(self.concurrency),
             live_stop: None,
             recording_id: self.recording_id.clone(),
-            range: None,
+            range: self.range,
         }
     }
 
@@ -101,7 +105,7 @@ impl JobRecord {
             quality_id: &self.quality_id,
             kind: self.expected_kind,
             recording_id: self.recording_id.as_deref(),
-            range: None, // ②-2가 JobRecord.range로 바꾼다
+            range: self.range,
         }
     }
 
@@ -126,6 +130,7 @@ impl JobRecord {
             created_at: self.created_at,
             finished_at: self.finished_at,
             stopped_at: self.stopped_at,
+            range: self.range.map(TimeRangeDto::from),
         }
     }
 
@@ -417,4 +422,28 @@ fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
     let mut s: OsString = path.as_os_str().to_owned();
     s.push(suffix);
     PathBuf::from(s)
+}
+
+/// `enqueue`의 구간 재검증. 셸은 영상 길이를 모르므로(`EnqueueRequest`에 길이가 없다) 길이 없이 할 수 있는 것만 본다.
+/// 시작이 길이를 넘는지·끝을 자를지는 코어 `select_range`(`rangeOutOfBounds`)가 맡는다.
+///
+/// 값은 바꾸지 않는다(끝 없음 `None`·초 미만 그대로): 정규화 자리는 이 한 번의 형 변환뿐이다.
+pub fn validated_range(
+    kind: PlaybackKind,
+    range: Option<TimeRangeDto>,
+) -> Result<Option<TimeRange>, AppError> {
+    let Some(r) = range else {
+        return Ok(None);
+    };
+    if kind != PlaybackKind::LiveRewindHls {
+        return Err(AppError::invalid_input(
+            "구간은 빠른 다시보기에서만 받을 수 있습니다",
+        ));
+    }
+    if r.end_ms.is_some_and(|end| r.start_ms >= end) {
+        return Err(AppError::invalid_input(
+            "구간의 시작이 끝보다 앞이어야 합니다",
+        ));
+    }
+    Ok(Some(r.into()))
 }

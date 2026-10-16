@@ -204,6 +204,7 @@ mod tests {
             created_at: 0,
             finished_at: None,
             stopped_at: None,
+            range: None,
         }
     }
 

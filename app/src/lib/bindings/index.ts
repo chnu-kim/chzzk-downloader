@@ -48,6 +48,7 @@ export type * from "./SettingsPatch";
 export type * from "./Stage";
 export type * from "./TextScale";
 export type * from "./Theme";
+export type * from "./TimeRangeDto";
 export type * from "./UpdateCheckDto";
 export type * from "./UpdateInfoDto";
 export type * from "./UpdateInstallDto";

@@ -12,8 +12,8 @@
 use std::path::{Path, PathBuf};
 
 use chzzk_core::download::part::part_path;
-use chzzk_core::naming::{MAX_FILENAME_BYTES, output_path};
-use chzzk_core::{ContentRef, Platform, PlaybackKind};
+use chzzk_core::naming::{MAX_FILENAME_BYTES, output_path, range_stem, range_suffix};
+use chzzk_core::{ContentRef, Platform, PlaybackKind, TimeRange};
 
 use crate::dto::{JobId, OutputCheck, PartialInfo};
 use crate::jobs::read_sidecar;
@@ -32,17 +32,25 @@ pub struct OutputQuery<'a> {
     pub quality_id: &'a str,
     pub kind: PlaybackKind,
     pub platform: Platform,
+    /// 구간 받기의 요청 구간. 있으면 이름 끝에 접미사를 붙이고 `.part`의 구간도 비교한다
+    pub range: Option<TimeRange>,
 }
 
 /// `check_output`. `active`는 경로를 쓰는 활성 작업을 찾는다(매니저가 준다).
 pub fn check_output(q: &OutputQuery<'_>, active: &dyn Fn(&Path) -> Option<JobId>) -> OutputCheck {
-    let path = output_path(q.folder, q.file_name, q.platform);
+    // 구간 접미사는 이 함수 한 곳에서만 붙인다. `enqueue`는 돌려준 이름을 그대로 쓴다(range.md §4.2).
+    // 접미사가 붙은 이름은 이미 200바이트 안이라 `output_path`가 더 자르지 않는다(제목 쪽이 줄어든다)
+    let named = match &q.range {
+        Some(r) => range_stem(q.file_name, r, q.platform),
+        None => q.file_name.to_string(),
+    };
+    let path = output_path(q.folder, &named, q.platform);
     let file_name = stem(&path);
     let truncated = file_name != q.file_name;
     let exists = path.exists();
-    let partial = partial_info(&path, q.content, q.quality_id, q.kind);
+    let partial = partial_info(&path, q.content, q.quality_id, q.kind, q.range);
     let free_file_name = if exists || partial.is_some_and(|p| p.recording) {
-        free_name(q.folder, &file_name, q.platform, active)
+        free_name(q.folder, &file_name, q.range.as_ref(), q.platform, active)
     } else {
         None
     };
@@ -71,18 +79,27 @@ fn stem(path: &Path) -> String {
 }
 
 /// `"{name} (2)"`, `(3)` … 중 완성 파일·`.part`·활성 작업 어디에도 없는 첫 이름.
-/// 접미사가 잘리지 않도록 이름을 먼저 줄여 `.mp4`까지 200바이트 안에 둔다.
+/// 번호가 잘리지 않도록 이름을 먼저 줄여 `.mp4`까지 200바이트 안에 둔다.
+/// 구간 이름이면 `{제목을 줄인 것}{구간 접미사} ({n})`이다: 줄이는 쪽은 제목이고 접미사는 번호 앞에 그대로 남는다.
 fn free_name(
     folder: &Path,
     name: &str,
+    range: Option<&TimeRange>,
     p: Platform,
     active: &dyn Fn(&Path) -> Option<JobId>,
 ) -> Option<String> {
+    let range_tail = range.map(range_suffix).unwrap_or_default();
+    let title = name.strip_suffix(range_tail.as_str()).unwrap_or(name);
     for n in 2..=MAX_NUMBERED {
-        let suffix = format!(" ({n})");
-        let room = MAX_FILENAME_BYTES - EXT.len() - suffix.len();
-        let base = truncate_utf8(name, room);
-        let candidate: PathBuf = output_path(folder, &format!("{base}{suffix}"), p);
+        let number = format!(" ({n})");
+        let room = MAX_FILENAME_BYTES - EXT.len() - number.len() - range_tail.len();
+        let base = truncate_utf8(title, room);
+        let base = if range.is_some() {
+            base.trim_end()
+        } else {
+            base
+        };
+        let candidate: PathBuf = output_path(folder, &format!("{base}{range_tail}{number}"), p);
         if !candidate.exists() && !part_path(&candidate).exists() && active(&candidate).is_none() {
             return Some(stem(&candidate));
         }
@@ -107,6 +124,7 @@ fn partial_info(
     content: &ContentRef,
     quality_id: &str,
     kind: PlaybackKind,
+    range: Option<TimeRange>,
 ) -> Option<PartialInfo> {
     let part = part_path(path);
     let meta = std::fs::metadata(&part).ok().filter(|m| m.is_file())?;
@@ -118,8 +136,7 @@ fn partial_info(
         },
         Some(sc) => PartialInfo {
             bytes: sc.committed_len,
-            // ②-2가 OutputQuery.range를 넘긴다
-            same_job: sc.same_job(content, quality_id, kind, None),
+            same_job: sc.same_job(content, quality_id, kind, range),
             recording: false,
         },
         None => PartialInfo {

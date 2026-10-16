@@ -10,7 +10,7 @@ use chzzk_core::{ContentRef, PlaybackKind};
 use chzzk_shell::app::{Reveal, chzzk_link};
 use chzzk_shell::dto::{
     AppFolder, AppInfo, AuthStatusDto, EditorsDto, EngineProbe, EnqueueRequest, InviteDto, JobDto,
-    JobEvent, LegacyImportDto, OutputCheck, ResolvedDto, SettingsDto, SettingsPatch,
+    JobEvent, LegacyImportDto, OutputCheck, ResolvedDto, SettingsDto, SettingsPatch, TimeRangeDto,
     UpdateCheckDto, UpdateInfoDto, UpdateInstallDto, WebPage,
 };
 use chzzk_shell::manager::QUIT_TIMEOUT;
@@ -113,6 +113,7 @@ pub async fn check_output(
     content: ContentRef,
     quality_id: String,
     expected_kind: PlaybackKind,
+    range: Option<TimeRangeDto>,
 ) -> Res<OutputCheck> {
     state.check_output(
         folder.as_deref(),
@@ -120,6 +121,7 @@ pub async fn check_output(
         &content,
         &quality_id,
         expected_kind,
+        range,
     )
 }
 

@@ -1,5 +1,5 @@
 <script lang="ts">
-  // 파일 이름 행(system/patterns.md §6.5): 입력칸(fg) + 확장자 + [원래 이름으로]. 잘리면 아래 caption으로 저장될 이름.
+  // 파일 이름 행(system/patterns.md §6.5): 입력칸(fg) + 확장자 + [원래 이름으로]. 최종 이름이 입력과 다르면 아래 caption으로 저장될 이름.
   // 한글을 치는 칸이라 Enter에 동작을 달지 않는다(제출은 카드의 Mod+Enter).
   import { t } from '../../copy/ko';
   import { FILE_EXT } from '../../receive';

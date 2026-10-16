@@ -20,8 +20,8 @@ use crate::auth::{
 };
 use crate::dto::{
     AppFolder, AppInfo, AuthStatusDto, EditorsDto, EnqueueRequest, Features, InviteDto, JobDto,
-    OutputCheck, ResolvedDto, SettingsDto, SettingsPatch, UpdateCheckDto, UpdateInfoDto,
-    UpdateInstallDto, WebPage,
+    OutputCheck, ResolvedDto, SettingsDto, SettingsPatch, TimeRangeDto, UpdateCheckDto,
+    UpdateInfoDto, UpdateInstallDto, WebPage,
 };
 use crate::error::{AppError, ErrorCode};
 use crate::gate;
@@ -231,6 +231,7 @@ impl App {
         content: &ContentRef,
         quality_id: &str,
         kind: PlaybackKind,
+        range: Option<TimeRangeDto>,
     ) -> Result<OutputCheck, AppError> {
         let defaults = self.settings.job_defaults();
         self.manager.check_output(
@@ -240,6 +241,7 @@ impl App {
             content,
             quality_id,
             kind,
+            range,
         )
     }
 

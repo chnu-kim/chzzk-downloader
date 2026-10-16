@@ -511,3 +511,40 @@ async fn vod_starts_even_if_jobs_json_save_fails() {
     mgr.enqueue(request("a"), &defaults).unwrap();
     until_real("요청", || !fake.download_requests().is_empty()).await;
 }
+
+/// 새 녹화는 주인 기록의 쓰기가 끝날 때까지 코어를 부르지 않고, 쓰기가 성공하면 시작한다(③의 순서).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn live_starts_after_owner_record_write_lands() {
+    let dir = tempfile::tempdir().unwrap();
+    let fake = FakeBackend::new();
+    let gate = Gate::default();
+    let _release = OpenOnDrop(gate.clone());
+    let writes = Arc::new(AtomicUsize::new(0));
+    let store = {
+        let gate = gate.clone();
+        let writes = Arc::clone(&writes);
+        // 여는 때의 첫 쓰기는 통과시키고(`open_store`가 기다린다) 그 뒤 쓰기는 문이 열릴 때까지 막는다
+        JobStore::new(dir.path().join("data")).with_write_fn(Arc::new(move |p, b| {
+            if writes.fetch_add(1, Ordering::SeqCst) >= 1 {
+                gate.wait();
+            }
+            atomic_write(p, b)
+        }))
+    };
+    let mgr = common::harness::open_store(store, &fake, 2, false);
+    let out = dir.path().join("downloads").join("a.mp4");
+    fake.script_for(&out, Script::new().wait_cancel());
+    let defaults = JobDefaults {
+        download_folder: dir.path().join("downloads"),
+        segment_concurrency: 4,
+    };
+    mgr.enqueue(common::harness::live_request("a"), &defaults)
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert!(
+        fake.download_requests().is_empty(),
+        "저장 전에는 녹화를 시작하지 않는다"
+    );
+    gate.open();
+    until_real("요청", || !fake.download_requests().is_empty()).await;
+}

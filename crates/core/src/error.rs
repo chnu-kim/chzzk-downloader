@@ -64,6 +64,8 @@ pub enum Error {
     DiskFull { path: PathBuf },
     #[error("다른 프로그램이 파일을 사용 중입니다: {path}")]
     FileLocked { path: PathBuf },
+    #[error("다른 녹화가 받다 만 파일이 있어 건드리지 않았습니다: {path}")]
+    PartialRecording { path: PathBuf },
     #[error("파일 오류({op}) {path}: {source}")]
     Io {
         op: &'static str,
@@ -117,6 +119,7 @@ pub enum ErrorKind {
     Network,
     DiskFull,
     FileLocked,
+    PartialRecording,
     Io,
     Settings,
     Cancelled,
@@ -150,6 +153,7 @@ impl Error {
             Error::Network(_) => ErrorKind::Network,
             Error::DiskFull { .. } => ErrorKind::DiskFull,
             Error::FileLocked { .. } => ErrorKind::FileLocked,
+            Error::PartialRecording { .. } => ErrorKind::PartialRecording,
             Error::Io { .. } => ErrorKind::Io,
             Error::Settings(_) => ErrorKind::Settings,
             Error::Cancelled => ErrorKind::Cancelled,
@@ -179,6 +183,8 @@ impl Error {
             | Error::Cancelled
             | Error::DiskFull { .. }
             | Error::FileLocked { .. }
+            // 지우면 안 된다(이 요청의 .part는 없다)
+            | Error::PartialRecording { .. }
             | Error::Io { .. }
             | Error::Parse { .. }
             | Error::Api { .. }
@@ -234,6 +240,12 @@ mod tests {
         );
         assert!(
             Error::FileLocked {
+                path: PathBuf::from("a")
+            }
+            .is_resumable()
+        );
+        assert!(
+            Error::PartialRecording {
                 path: PathBuf::from("a")
             }
             .is_resumable()

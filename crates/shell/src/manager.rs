@@ -32,8 +32,8 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use chzzk_core::naming::output_path;
 use chzzk_core::{
-    CancellationToken, ContentRef, DownloadOutcome, DownloadRequest, Error, Phase, PlaybackKind,
-    Progress, discard_partial,
+    CancellationToken, ContentRef, Discarded, DownloadOutcome, DownloadRequest, Error, Phase,
+    PlaybackKind, Progress, discard_partial,
 };
 use std::time::Duration;
 use tokio::runtime::Handle;
@@ -148,10 +148,22 @@ impl Job {
         self.rec.to_dto(self.last_progress.clone())
     }
 
-    /// 중복 검사에서 이 작업이 최종 경로를 차지하는가. 활성 상태이거나, 지우는 중이다(곧 `.part`를 지운다.
-    /// `failed`를 지우는 동안 새 작업이 같은 경로를 가져가면 그 작업의 `.part`를 지우게 된다).
-    fn holds_output(&self) -> bool {
+    /// 지금 경로를 쓰거나(활성·quit 기한을 넘긴 옛 태스크) 곧 `.part`를 지운다(지우는 중).
+    /// `failed`를 지우는 동안 새 작업이 같은 경로를 가져가면 그 작업의 `.part`를 지우게 된다.
+    fn uses_output(&self) -> bool {
         self.removing || self.rec.status.is_active() || self.detached.is_some()
+    }
+
+    /// 끝났지만(failed·skipped) 이 작업의 녹화 `.part`가 남은 생방송. 다시 받을 수 없으니 경로를 내주지 않는다(core.md 61).
+    fn keeps_recording(&self) -> bool {
+        self.is_live()
+            && matches!(self.rec.status, JobStatus::Failed | JobStatus::Skipped)
+            && self.rec.partial_bytes.is_some()
+    }
+
+    /// 같은 경로 충돌 검사에서 이 작업이 최종 경로를 차지하는가: `uses_output`이거나 `keeps_recording`.
+    fn holds_output(&self) -> bool {
+        self.uses_output() || self.keeps_recording()
     }
 
     /// "완료 지우기"·오래된 기록 정리가 레코드만 지워도 되는가. `completed`와 `.part`가 없는 `skipped`.
@@ -398,6 +410,7 @@ impl<B: Backend> DownloadManager<B> {
             quality_id: req.quality_id,
             quality_label: req.quality_label,
             expected_kind: req.expected_kind,
+            recording_id: matches!(kind, ContentKindDto::Live).then(crate::jobs::new_recording_id),
             output,
             on_existing: req.on_existing,
             concurrency: crate::jobs::concurrency(defaults.segment_concurrency).get(),
@@ -437,7 +450,8 @@ impl<B: Backend> DownloadManager<B> {
             let st = self.inner.lock();
             st.jobs
                 .values()
-                .filter(|j| j.holds_output())
+                // 끝난 녹화는 중복으로 보이지 않는다. 카드가 `partial.recording`을 보고 번호 이름으로 피한다(core.md 61)
+                .filter(|j| j.uses_output())
                 .map(|j| (output_key(&j.rec.output), j.rec.id))
                 .collect()
         };
@@ -691,7 +705,7 @@ impl<B: Backend> DownloadManager<B> {
     ///
     /// `.part`를 지우지 못하면(다른 프로그램이 잠금 등) 오류를 돌려주고 레코드를 멈춘 상태로 남긴다.
     pub async fn remove(&self, id: JobId) -> Result<(), AppError> {
-        let (handle, output) = {
+        let (handle, output, rec) = {
             let mut st = self.inner.lock();
             let quitting = !st.scheduler_enabled;
             let Some(job) = st.target(id)? else {
@@ -699,6 +713,8 @@ impl<B: Backend> DownloadManager<B> {
                 return Ok(());
             };
             let output = job.rec.output.clone();
+            // `.part`의 주인을 가릴 열쇠. 잠금 밖에서 지울 때 쓴다
+            let rec = job.rec.clone();
             let records_only = match job.rec.status {
                 JobStatus::Completed => true,
                 // 건너뛴 작업은 받다 남긴 `.part`가 있을 때만 지운다(받는 동안 같은 이름의 파일이 생긴 경우)
@@ -739,17 +755,20 @@ impl<B: Backend> DownloadManager<B> {
                 }
                 None
             };
-            (handle, output)
+            (handle, output, rec)
         };
         if let Some(h) = handle {
             // 바깥 태스크는 패닉을 안쪽에서 받으므로 여기서 JoinError가 나는 것은 런타임 종료뿐이다.
             let _ = h.await;
         }
-        let discarded = discard_partial(&output);
+        let discarded = discard_partial(&output, &rec.owner());
 
         let mut st = self.inner.lock();
         match discarded {
-            Ok(()) => {
+            Ok(d) => {
+                if d == Discarded::NotOwned {
+                    tracing::info!(job = id.0, "다른 작업의 .part라 레코드만 지웠다");
+                }
                 if st.jobs.remove(&id).is_some() {
                     self.inner.save(&st);
                     st.emit(JobEvent::Removed { id });
@@ -1201,7 +1220,7 @@ async fn run_download<B: Backend>(
         if cancel.is_cancelled() {
             return End::Cancelled;
         }
-        if let Err(e) = discard_partial(&req.output) {
+        if let Err(e) = discard_partial(&req.output, &req.owner()) {
             return End::Error(e);
         }
         inner.discarded(id, run);

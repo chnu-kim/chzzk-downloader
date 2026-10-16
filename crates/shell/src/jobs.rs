@@ -4,7 +4,7 @@
 //! - 깨진 파일(JSON 오류, 최상위가 object가 아님, 모르는 형식 버전)은 `jobs.json.bad-{unix_ts}`로 옮기고 빈 목록으로 시작한다.
 //!   권한 같은 읽기 오류는 옮기지 않고 `Io`다(옮길 이유가 없는 파일을 빈 목록으로 덮어쓰지 않으려고).
 //! - `DownloadRequest`·`DuplicatePolicy`·`NonZeroU8`는 serde 타입이 아니라 `JobRecord`가 같은 내용을 미러로 들고
-//!   `to_request()`로 요청을 만든다. **이어받기 동일성 키**(`content`, `qualityId`, `expectedKind`, `output`)는
+//!   `to_request()`로 요청을 만든다. **이어받기 동일성 키**(`content`, `qualityId`, `expectedKind`, `recordingId`, `output`)는
 //!   `.part`가 생긴 뒤 바꾸지 않는다.
 
 use std::ffi::OsString;
@@ -14,7 +14,7 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use chzzk_core::download::MAX_CONCURRENCY;
-use chzzk_core::download::part::{Sidecar, part_path, sidecar_path};
+use chzzk_core::download::part::{PartOwner, Sidecar, part_path, sidecar_path};
 use chzzk_core::fsutil::{atomic_write, map_io_error, rename_with_retry};
 use chzzk_core::{ContentRef, DownloadRequest, Error, PlaybackKind};
 use serde::{Deserialize, Serialize};
@@ -45,6 +45,9 @@ pub struct JobRecord {
     pub quality_id: String,
     pub quality_label: String,
     pub expected_kind: PlaybackKind,
+    /// 생방송 녹화 작업의 고유값(core.md 61). `enqueue`가 생방송에만 만든다. v0.7.0 레코드에는 없다(`None`)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recording_id: Option<String>,
     /// 최종 경로. 추가할 때 계산해 둔다(설정 폴더가 바뀌어도 같은 `.part`를 찾게)
     pub output: PathBuf,
     pub on_existing: OnExisting,
@@ -86,6 +89,17 @@ impl JobRecord {
             on_existing: self.on_existing.into(),
             concurrency: concurrency(self.concurrency),
             live_stop: None,
+            recording_id: self.recording_id.clone(),
+        }
+    }
+
+    /// 이 작업이 `.part`의 주인인지 가리는 열쇠.
+    pub fn owner(&self) -> PartOwner<'_> {
+        PartOwner {
+            content: &self.content,
+            quality_id: &self.quality_id,
+            kind: self.expected_kind,
+            recording_id: self.recording_id.as_deref(),
         }
     }
 
@@ -327,8 +341,14 @@ pub fn partial_bytes(j: &JobRecord) -> Option<u64> {
         return None;
     }
     let sc = read_sidecar(&j.output)?;
-    sc.same_job(&j.content, &j.quality_id, j.expected_kind)
-        .then_some(sc.committed_len)
+    sc.owned_by(&j.owner()).then_some(sc.committed_len)
+}
+
+/// 새 생방송 녹화 작업의 고유값: 16바이트 난수 hex(32자).
+pub fn new_recording_id() -> String {
+    let mut b = [0u8; 16];
+    getrandom::fill(&mut b).expect("OS 난수원을 쓸 수 없다");
+    b.iter().map(|x| format!("{x:02x}")).collect()
 }
 
 /// `{output}.part.json`을 읽는다. 없거나 깨졌으면 `None`.

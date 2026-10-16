@@ -344,6 +344,7 @@ fn request(out: &Path, stop: Option<CancellationToken>) -> DownloadRequest {
         on_existing: DuplicatePolicy::Overwrite,
         concurrency: NonZeroU8::new(2).unwrap(),
         live_stop: stop,
+        recording_id: None,
     }
 }
 
@@ -1552,15 +1553,6 @@ async fn live_without_video_tracks_has_no_qualities() {
     assert!(matches!(r, Err(Error::NoQualities)), "{r:?}");
 }
 
-fn win(n: usize, len: u64) -> Pl {
-    Pl::Window {
-        first: n as u64,
-        len,
-        ended: false,
-        tail: "",
-    }
-}
-
 /// 세그먼트 403 뒤 재조회를 기다리는 동안 멈춤이 오면 받은 만큼 마무리한다(core.md 61 F1).
 #[tokio::test]
 async fn stop_during_refresh_after_segment_403_finalizes() {
@@ -1569,7 +1561,7 @@ async fn stop_during_refresh_after_segment_403_finalizes() {
             expire_seg: Some(3),
             ..Opts::default()
         },
-        |n| win(n, 3),
+        |n| window(n as u64, 3, false),
         |n| {
             if n == 0 {
                 Detail::Open(1)
@@ -1597,7 +1589,7 @@ async fn stop_during_refresh_before_any_segment_records_nothing() {
             expire_seg: Some(0),
             ..Opts::default()
         },
-        |n| win(n, 3),
+        |n| window(n as u64, 3, false),
         |n| {
             if n == 0 {
                 Detail::Open(1)
@@ -1620,7 +1612,13 @@ async fn stop_during_refresh_before_any_segment_records_nothing() {
 #[tokio::test]
 async fn stop_while_reading_next_playlist_finalizes() {
     let s = Stream::start(
-        |n| if n < 2 { win(n, 3) } else { Pl::Hang },
+        |n| {
+            if n < 2 {
+                window(n as u64, 3, false)
+            } else {
+                Pl::Hang
+            }
+        },
         |_| Detail::Open(1),
     )
     .await;
@@ -1638,7 +1636,13 @@ async fn stop_while_reading_next_playlist_finalizes() {
 #[tokio::test]
 async fn stop_while_reading_playlist_before_any_segment_records_nothing() {
     let s = Stream::start(
-        |n| if n == 0 { win(0, 0) } else { Pl::Hang },
+        |n| {
+            if n == 0 {
+                window(0, 0, false)
+            } else {
+                Pl::Hang
+            }
+        },
         |_| Detail::Open(1),
     )
     .await;
@@ -1654,7 +1658,11 @@ async fn stop_while_reading_playlist_before_any_segment_records_nothing() {
 /// 첫 조회를 기다리는 동안에도 멈춤이 먹는다.
 #[tokio::test]
 async fn stop_during_first_resolve_records_nothing() {
-    let s = Stream::start(|n| win(n, 3), |_| Detail::Slow(Duration::from_secs(30))).await;
+    let s = Stream::start(
+        |n| window(n as u64, 3, false),
+        |_| Detail::Slow(Duration::from_secs(30)),
+    )
+    .await;
     let dir = tempfile::tempdir().unwrap();
     let out = out_path(&dir);
     let stop = CancellationToken::new();
@@ -1663,4 +1671,80 @@ async fn stop_during_first_resolve_records_nothing() {
     assert!(matches!(r, Err(Error::NothingRecorded)), "{r:?}");
     no_part(&out);
     assert_eq!(s.polls.load(Ordering::SeqCst), 0);
+}
+
+/// 이전 녹화가 남긴 `.part`(init + 영상 조각 하나)를 `recording_id`와 함께 만든다.
+async fn leave_recording(out: &Path, id: &str) -> (Vec<u8>, Vec<u8>) {
+    use chzzk_core::download::part::{HlsState, PartFile, Sidecar};
+    let init = init_bytes();
+    let mut sc = Sidecar::new(
+        ContentRef::Live {
+            channel_id: CHANNEL.into(),
+        },
+        "144p",
+        PlaybackKind::Live,
+    );
+    sc.recording_id = Some(id.to_owned());
+    sc.hls = Some(HlsState {
+        init_len: init.len() as u32,
+        ..HlsState::default()
+    });
+    let mut p = PartFile::create(out, sc).unwrap();
+    p.write(&init).unwrap();
+    p.write(&seg_bytes(0)).unwrap();
+    p.checkpoint(|_| {}).await.unwrap();
+    drop(p);
+    let (part, sidecar) = part_files(out);
+    (
+        std::fs::read(part).unwrap(),
+        std::fs::read(sidecar).unwrap(),
+    )
+}
+
+/// 7-b: 같은 방송을 다시 붙여넣어도(새 작업 = 새 `recording_id`) 옛 녹화를 마무리하지 않고 건드리지도 않는다.
+#[tokio::test]
+async fn repaste_same_broadcast_does_not_finalize_old_part() {
+    let s = Stream::start(|n| window(n as u64, 3, n >= 2), |_| Detail::Open(1)).await;
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_path(&dir);
+    let (part_before, sc_before) = leave_recording(&out, &"a".repeat(32)).await;
+
+    let events = Events::default();
+    let cb = events.callback();
+    let mut req = request(&out, None);
+    req.recording_id = Some("b".repeat(32));
+    let r = s
+        .client()
+        .download(req, CancellationToken::new(), &cb)
+        .await;
+    assert!(matches!(r, Err(Error::PartialRecording { .. })), "{r:?}");
+    assert_eq!(s.polls.load(Ordering::SeqCst), 0);
+    assert_eq!(s.details.load(Ordering::SeqCst), 0);
+    assert!(!out.exists(), "최종 파일이 생기면 안 된다");
+    let (part, sidecar) = part_files(&out);
+    assert_eq!(std::fs::read(part).unwrap(), part_before);
+    assert_eq!(std::fs::read(sidecar).unwrap(), sc_before);
+}
+
+/// 대조: 같은 `recording_id`의 요청(= 저장)은 받은 만큼 마무리한다.
+#[tokio::test]
+async fn own_recording_part_is_finalized_by_same_id() {
+    let s = Stream::start(|n| window(n as u64, 3, n >= 2), |_| Detail::Open(1)).await;
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_path(&dir);
+    leave_recording(&out, &"a".repeat(32)).await;
+
+    let events = Events::default();
+    let cb = events.callback();
+    let mut req = request(&out, None);
+    req.recording_id = Some("a".repeat(32));
+    let r = s
+        .client()
+        .download(req, CancellationToken::new(), &cb)
+        .await
+        .unwrap();
+    assert!(matches!(r, DownloadOutcome::Completed { .. }), "{r:?}");
+    assert_eq!(s.polls.load(Ordering::SeqCst), 0);
+    assert_eq!(recorded_msns(&out), vec![0]);
+    no_part(&out);
 }

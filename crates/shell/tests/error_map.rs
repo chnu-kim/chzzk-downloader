@@ -8,7 +8,7 @@ use chzzk_shell::{AppError, ErrorCode, ErrorPayload, JobId, RequestKindDto, Stag
 use serde_json::{Value, json};
 
 /// 코어 `ErrorKind` 전체. `sample`의 빠짐없는 match와 함께 새 종류를 놓치지 않게 한다.
-const ALL_KINDS: [ErrorKind; 22] = [
+const ALL_KINDS: [ErrorKind; 23] = [
     ErrorKind::InvalidUrl,
     ErrorKind::Api,
     ErrorKind::Http,
@@ -28,6 +28,7 @@ const ALL_KINDS: [ErrorKind; 22] = [
     ErrorKind::Network,
     ErrorKind::DiskFull,
     ErrorKind::FileLocked,
+    ErrorKind::PartialRecording,
     ErrorKind::Io,
     ErrorKind::Settings,
     ErrorKind::Cancelled,
@@ -85,6 +86,9 @@ fn sample(k: ErrorKind) -> Error {
             path: PathBuf::from("/v/a.mp4.part"),
         },
         ErrorKind::FileLocked => Error::FileLocked {
+            path: PathBuf::from("/v/a.mp4.part"),
+        },
+        ErrorKind::PartialRecording => Error::PartialRecording {
             path: PathBuf::from("/v/a.mp4.part"),
         },
         ErrorKind::Io => Error::Io {
@@ -160,6 +164,7 @@ fn payload_per_kind() {
         (ErrorKind::Network, Value::Null),
         (ErrorKind::DiskFull, path.clone()),
         (ErrorKind::FileLocked, path.clone()),
+        (ErrorKind::PartialRecording, path.clone()),
         (ErrorKind::Io, path),
         (ErrorKind::Settings, Value::Null),
         (ErrorKind::Cancelled, Value::Null),

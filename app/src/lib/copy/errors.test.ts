@@ -48,6 +48,7 @@ function sample(code: ErrorCode, stage: Stage | null = null): AppError {
       return err(code, { type: 'qualityNotFound', requested: '1080p', available: ['720p'] }, stage);
     case 'diskFull':
     case 'fileLocked':
+    case 'partialRecording':
     case 'io':
     case 'settings':
     case 'fileMissing':
@@ -60,8 +61,8 @@ function sample(code: ErrorCode, stage: Stage | null = null): AppError {
 }
 
 describe('errorCopy 전체 표', () => {
-  it('오류 코드는 30개(코어 22 + 셸 8)', () => {
-    expect(ERROR_CODES).toHaveLength(30);
+  it('오류 코드는 31개(코어 23 + 셸 8)', () => {
+    expect(ERROR_CODES).toHaveLength(31);
   });
 
   // 모든 code × 위치 × .part 유무 × 쿠키 사용 × 진단에서 3요소가 갖춰지고 DC8·C6 규칙을 지킨다.
@@ -136,7 +137,7 @@ const PLAIN = err('noPlayback', { type: 'noPlayback', adult: false });
 const DISK = err('diskFull', pathPayload('D:\\영상'));
 const PATHED = (code: ErrorCode) => err(code, pathPayload('D:\\영상'));
 
-// content.md §15.2: 코드 30개 × 자리별 L0(제목·본문·버튼)와 L1
+// content.md §15.2: 코드 31개 × 자리별 L0(제목·본문·버튼)와 L1
 const GOLDEN: Row[] = [
   {
     name: 'invalidUrl: 버튼 없음(입력칸이 행동)',
@@ -499,6 +500,15 @@ const GOLDEN: Row[] = [
     detail: '경로: D:\\영상',
   },
   {
+    name: 'partialRecording D: 지우지 않았다고 알리고 다른 이름을 권한다',
+    error: PATHED('partialRecording'),
+    ctx: D,
+    title: '같은 이름으로 받다 만 녹화가 있어요',
+    body: '녹화는 다시 받을 수 없어 그 파일을 지우지 않았어요. 다시 불러와 다른 이름으로 받아 주세요.',
+    actions: ['reresolve'],
+    detail: '경로: D:\\영상',
+  },
+  {
     name: 'io D: 경로와 원문은 L1',
     error: PATHED('io'),
     ctx: DP,
@@ -641,7 +651,7 @@ describe('errorCopy 골든(§15.2 코드별 L0·L1)', () => {
     });
   }
 
-  it('골든이 30개 코드를 모두 덮는다', () => {
+  it('골든이 31개 코드를 모두 덮는다', () => {
     const covered = new Set(GOLDEN.map((g) => (g.error.code === 'cancelled' ? 'cancelled' : g.error.code)));
     for (const code of ERROR_CODES) expect(covered.has(code), code).toBe(true);
   });

@@ -9,7 +9,8 @@
 //!
 //! 공통 골격(`Chzzk::download`):
 //! 1. 최종 파일이 있으면 `Skip` → `Skipped`(네트워크 0회), `Overwrite` → 계속.
-//! 2. 같은 작업의 `.part`가 있으면 잠그고 이어받는다. 다르면 지우고 새로 시작한다.
+//! 2. 같은 작업의 `.part`가 있으면 잠그고 이어받는다. 다르면 지우고 새로 시작한다(다른 작업의 생방송 녹화면
+//!    지우지 않고 `PartialRecording`).
 //! 3. `Resolving`: `resolve`. 방식이 바뀌었으면 `PlaybackChanged`.
 //! 4. 엔진 실행. 403이면 `Reresolving` → 재조회(상한 8회).
 //! 5. `Finalizing`: checkpoint → `.part` → 최종 파일. `Skip`이면 덮어쓰지 않는 rename을 쓰고, 받는 동안
@@ -39,7 +40,7 @@ use crate::fsutil::map_io_error;
 use crate::model::{ContentRef, PlaybackKind, Resolved, Source};
 use crate::progress::{Meter, Phase, Progress};
 
-pub use part::{Finalized, PartFile, Sidecar, discard_partial};
+pub use part::{Discarded, Finalized, PartFile, PartOwner, Sidecar, discard_partial};
 pub use retry::{Failure, NETWORK_PATIENCE_MS, RETRY_BACKOFF_MAX_MS, RetryPolicy};
 use retry::{Patience, is_connection_failure};
 
@@ -75,6 +76,21 @@ pub struct DownloadRequest {
     /// 생방송만: 이 토큰이 취소되면 지금까지 받은 것을 최종 파일로 마무리하고 `Completed`로 끝낸다
     /// (`cancel`은 `.part`를 남기고 `Cancelled`로 끝나는 다른 뜻이다). 생방송이 아니면 쓰지 않는다.
     pub live_stop: Option<CancellationToken>,
+    /// 생방송만: 이 녹화 작업의 고유값(셸이 작업을 만들 때 정한다). sidecar에 적고, 같은 값의 요청만 그 `.part`를
+    /// 마무리하거나 지운다. 새 녹화는 새 값이라 남의 `.part`를 마무리하지 않는다. `None`은 v0.7.0 작업(core.md 61)
+    pub recording_id: Option<String>,
+}
+
+impl DownloadRequest {
+    /// 이 요청이 `.part`의 주인인지 가리는 열쇠.
+    pub fn owner(&self) -> PartOwner<'_> {
+        PartOwner {
+            content: &self.content,
+            quality_id: &self.quality_id,
+            kind: self.expected_kind,
+            recording_id: self.recording_id.as_deref(),
+        }
+    }
 }
 
 /// 다운로드 결과.
@@ -277,12 +293,7 @@ impl Chzzk {
         if let Some(dir) = req.output.parent().filter(|d| !d.as_os_str().is_empty()) {
             std::fs::create_dir_all(dir).map_err(|e| map_io_error("create dir", dir, e))?;
         }
-        let mut part = PartFile::resume(
-            &req.output,
-            &req.content,
-            &req.quality_id,
-            req.expected_kind,
-        )?;
+        let mut part = PartFile::resume(&req.output, &req.owner())?;
         let mut job = Job {
             chzzk: self,
             req: &req,

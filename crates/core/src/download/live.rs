@@ -203,6 +203,7 @@ pub(crate) async fn run(
         job.req.quality_id.clone(),
         PlaybackKind::Live,
     );
+    sc.recording_id = job.req.recording_id.clone();
     sc.hls = Some(HlsState {
         init_len: init.len() as u32,
         ..HlsState::default()

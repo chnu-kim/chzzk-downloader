@@ -3,8 +3,8 @@
 mod common;
 
 use chzzk_core::{
-    CancellationToken, Chzzk, ContentRef, DownloadOutcome, DownloadRequest, DuplicatePolicy,
-    PlaybackKind, discard_partial,
+    CancellationToken, Chzzk, ContentRef, DownloadOutcome, DownloadRequest, DuplicatePolicy, Error,
+    PartOwner, PlaybackKind, discard_partial,
 };
 use common::{RangeBody, VOD_NO, VOD_VIDEO_ID, config, fixture, part_files, pd_mpd, test_bytes};
 use std::path::Path;
@@ -20,6 +20,7 @@ fn request(out: &Path, on_existing: DuplicatePolicy) -> DownloadRequest {
         on_existing,
         concurrency: chzzk_core::download::DEFAULT_CONCURRENCY,
         live_stop: None,
+        recording_id: None,
     }
 }
 
@@ -115,7 +116,60 @@ async fn discard_partial_removes_files() {
     let (part, sidecar) = part_files(&out);
     std::fs::write(&part, b"x").unwrap();
     std::fs::write(&sidecar, b"{}").unwrap();
-    discard_partial(&out).unwrap();
+    // 깨진 sidecar는 주인을 모르는 파일이라 지운다
+    let content = ContentRef::Video { video_no: VOD_NO };
+    let owner = PartOwner {
+        content: &content,
+        quality_id: "PD_720P_TEST",
+        kind: PlaybackKind::Progressive,
+        recording_id: None,
+    };
+    discard_partial(&out, &owner).unwrap();
     assert!(!part.exists());
     assert!(!sidecar.exists());
+}
+
+/// N4: 같은 경로에 생방송 녹화 `.part`가 있으면 VOD 요청이 그것을 지우지도 덮어쓰지도 않고(서버에도 가지 않고) 거부한다.
+#[tokio::test]
+async fn vod_download_onto_recording_part_keeps_it() {
+    use chzzk_core::download::part::{HlsState, PartFile, Sidecar};
+    let server = MockServer::start().await; // mock 없음: 요청이 닿으면 404
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("a.mp4");
+    let mut sc = Sidecar::new(
+        ContentRef::Live {
+            channel_id: "000000000000000000000000000000e5".into(),
+        },
+        "144p",
+        PlaybackKind::Live,
+    );
+    sc.recording_id = Some("a".repeat(32));
+    sc.hls = Some(HlsState {
+        init_len: 16,
+        ..HlsState::default()
+    });
+    let mut p = PartFile::create(&out, sc).unwrap();
+    p.write(&[1u8; 16]).unwrap();
+    p.write(&[2u8; 32]).unwrap();
+    p.checkpoint(|_| {}).await.unwrap();
+    drop(p);
+    let (part, sidecar) = part_files(&out);
+    let (part_before, sc_before) = (
+        std::fs::read(&part).unwrap(),
+        std::fs::read(&sidecar).unwrap(),
+    );
+
+    let cb = |_| {};
+    let r = Chzzk::new(config(&server))
+        .unwrap()
+        .download(
+            request(&out, DuplicatePolicy::Overwrite),
+            CancellationToken::new(),
+            &cb,
+        )
+        .await;
+    assert!(matches!(r, Err(Error::PartialRecording { .. })), "{r:?}");
+    assert_eq!(std::fs::read(&part).unwrap(), part_before);
+    assert_eq!(std::fs::read(&sidecar).unwrap(), sc_before);
+    assert!(server.received_requests().await.unwrap().is_empty());
 }

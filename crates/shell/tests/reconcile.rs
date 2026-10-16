@@ -21,6 +21,7 @@ fn record(id: u64, status: JobStatus, output: PathBuf) -> JobRecord {
         quality_id: "720p".into(),
         quality_label: "720p".into(),
         expected_kind: PlaybackKind::LiveRewindHls,
+        recording_id: None,
         output,
         on_existing: OnExisting::Overwrite,
         concurrency: 4,

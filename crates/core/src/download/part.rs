@@ -27,6 +27,16 @@ pub const SIDECAR_VERSION: u8 = 1;
 /// 쓰기 버퍼 크기.
 const WRITE_BUF: usize = 1 << 20;
 
+/// `.part`의 주인을 가리는 열쇠(core.md 61). `DownloadRequest::owner`·셸 `JobRecord::owner`가 만든다.
+#[derive(Clone, Copy, Debug)]
+pub struct PartOwner<'a> {
+    pub content: &'a ContentRef,
+    pub quality_id: &'a str,
+    pub kind: PlaybackKind,
+    /// 생방송 녹화 작업의 고유값. 그 밖은 `None`
+    pub recording_id: Option<&'a str>,
+}
+
 /// `.part.json`. 이어받기에 필요한 상태를 담는다.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -42,6 +52,10 @@ pub struct Sidecar {
     pub progressive: Option<ProgressiveState>,
     #[serde(default)]
     pub hls: Option<HlsState>,
+    /// 생방송 녹화 작업의 고유값(`DownloadRequest::recording_id`). 같은 값의 요청만 이 `.part`를 마무리하거나 지운다.
+    /// v0.7.0이 쓴 sidecar에는 없다(`None`, core.md 61 호환 규칙)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recording_id: Option<String>,
 }
 
 impl Sidecar {
@@ -55,6 +69,7 @@ impl Sidecar {
             committed_len: 0,
             progressive: None,
             hls: None,
+            recording_id: None,
         }
     }
 
@@ -64,6 +79,25 @@ impl Sidecar {
             && &self.content == content
             && self.quality_id == quality_id
             && self.kind == kind
+    }
+
+    /// 이 요청이 이 `.part`의 주인인가. 생방송은 녹화 고유값까지 같아야 한다(`None == None`은 v0.7.0 호환으로 같다).
+    pub fn owned_by(&self, o: &PartOwner<'_>) -> bool {
+        self.same_job(o.content, o.quality_id, o.kind)
+            && (self.kind != PlaybackKind::Live || self.recording_id.as_deref() == o.recording_id)
+    }
+
+    /// 다른 작업의 생방송 녹화인가(다시 받을 수 없으니 지우지도 이어 쓰지도 않는다).
+    pub fn is_other_recording(&self, o: &PartOwner<'_>) -> bool {
+        self.kind == PlaybackKind::Live && !self.owned_by(o)
+    }
+
+    /// 마무리할 영상 조각이 있는 생방송 `.part`인가(init만 든 것은 아니다). `download::run`과 셸 자동 이어받기가 같은 규칙을 쓴다.
+    pub fn has_live_media(&self) -> bool {
+        self.kind == PlaybackKind::Live
+            && self
+                .hls
+                .is_some_and(|h| h.init_len > 0 && self.committed_len > u64::from(h.init_len))
     }
 }
 
@@ -175,13 +209,9 @@ impl PartFile {
     /// - `.part`가 없으면 `None`(새로 시작. `.part`는 응답을 확인한 뒤 `create`로 만든다).
     /// - sidecar가 없거나 다른 작업이거나 `.part`가 `committed_len`보다 짧으면, 잠금을 쥔 채
     ///   둘 다 지우고 `None`.
+    /// - 다른 작업의 생방송 녹화면 `PartialRecording`(아무것도 지우지 않는다. 녹화는 다시 받을 수 없다).
     /// - 다른 작업이 잠그고 있으면 `FileLocked`.
-    pub fn resume(
-        final_path: &Path,
-        content: &ContentRef,
-        quality_id: &str,
-        kind: PlaybackKind,
-    ) -> Result<Option<PartFile>, Error> {
+    pub fn resume(final_path: &Path, owner: &PartOwner<'_>) -> Result<Option<PartFile>, Error> {
         let part = part_path(final_path);
         let sc_path = sidecar_path(final_path);
         let mut f = match open_locked(&part, false) {
@@ -197,8 +227,16 @@ impl PartFile {
             .metadata()
             .map_err(|e| map_io_error("stat", &part, e))?
             .len();
-        let sidecar = read_sidecar(&sc_path)
-            .filter(|s| s.same_job(content, quality_id, kind) && len >= s.committed_len);
+        let sidecar = read_sidecar(&sc_path);
+        if let Some(s) = &sidecar
+            && s.is_other_recording(owner)
+        {
+            // 다른 작업의 녹화다. 다시 받을 수 없으니 지우지 않고 잠금만 풀고 알린다(core.md 61)
+            tracing::info!(part = %part.display(), "다른 작업의 녹화라 건드리지 않는다");
+            drop(f);
+            return Err(Error::PartialRecording { path: part });
+        }
+        let sidecar = sidecar.filter(|s| s.owned_by(owner) && len >= s.committed_len);
         let Some(sidecar) = sidecar else {
             tracing::info!(part = %part.display(), "맞지 않는 .part를 지우고 새로 시작");
             // 잠금을 쥔 채 지운다(std는 Windows에서도 FILE_SHARE_DELETE로 연다).
@@ -467,21 +505,37 @@ fn write_sidecar(path: &Path, s: &Sidecar) -> Result<(), Error> {
     atomic_write(path, &json)
 }
 
-/// 최종 경로에 딸린 `.part`와 sidecar를 지운다(UI의 "처음부터").
+/// `discard_partial`의 결과.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Discarded {
+    /// 지웠다(없었던 경우 포함)
+    Removed,
+    /// 다른 작업의 `.part`라 지우지 않았다
+    NotOwned,
+}
+
+/// 이 작업의 `.part`와 sidecar를 지운다(UI의 "처음부터"·목록에서 지우기).
 ///
-/// 다른 작업이 `.part`를 잠그고 있으면 `FileLocked`이고 아무것도 지우지 않는다.
-pub fn discard_partial(final_path: &Path) -> Result<(), Error> {
+/// - sidecar가 `owner`의 것이 아니면 아무것도 지우지 않고 `NotOwned`(core.md 61 M1). sidecar가 없거나 깨졌으면
+///   주인을 모르는 파일이라 지운다(생방송 `.part`는 `create`가 sidecar를 곧바로 쓴다).
+/// - 다른 작업이 `.part`를 잠그고 있으면 `FileLocked`이고 아무것도 지우지 않는다.
+pub fn discard_partial(final_path: &Path, owner: &PartOwner<'_>) -> Result<Discarded, Error> {
     let part = part_path(final_path);
     let sc = sidecar_path(final_path);
     match open_locked(&part, false) {
         Ok(f) => {
             remove_stale_temps(&sc);
+            if read_sidecar(&sc).is_some_and(|s| !s.owned_by(owner)) {
+                tracing::info!(part = %part.display(), "다른 작업의 .part라 지우지 않는다");
+                drop(f);
+                return Ok(Discarded::NotOwned);
+            }
             let res = remove_if_exists(&sc).and(remove_if_exists(&part));
             drop(f);
-            res
+            res.map(|()| Discarded::Removed)
         }
         Err(Error::Io { source, .. }) if source.kind() == io::ErrorKind::NotFound => {
-            remove_if_exists(&sc)
+            remove_if_exists(&sc).map(|()| Discarded::Removed)
         }
         Err(e) => Err(e),
     }
@@ -514,8 +568,55 @@ mod tests {
         }
     }
 
+    fn owner<'a>(c: &'a ContentRef, quality: &'a str) -> PartOwner<'a> {
+        PartOwner {
+            content: c,
+            quality_id: quality,
+            kind: PlaybackKind::LiveRewindHls,
+            recording_id: None,
+        }
+    }
+
     fn resume(out: &Path, quality: &str) -> Result<Option<PartFile>, Error> {
-        PartFile::resume(out, &content(), quality, PlaybackKind::LiveRewindHls)
+        PartFile::resume(out, &owner(&content(), quality))
+    }
+
+    fn discard(out: &Path) -> Result<Discarded, Error> {
+        discard_partial(out, &owner(&content(), "720p"))
+    }
+
+    fn live_content() -> ContentRef {
+        ContentRef::Live {
+            channel_id: "chan".into(),
+        }
+    }
+
+    /// 생방송 sidecar(영상 조각 `committed - init`바이트)
+    fn live_sc(id: Option<&str>, init: u32, committed: u64) -> Sidecar {
+        let mut s = Sidecar::new(live_content(), "144p", PlaybackKind::Live);
+        s.recording_id = id.map(str::to_owned);
+        s.committed_len = committed;
+        s.hls = Some(HlsState {
+            init_len: init,
+            ..HlsState::default()
+        });
+        s
+    }
+
+    fn live_owner<'a>(c: &'a ContentRef, id: Option<&'a str>) -> PartOwner<'a> {
+        PartOwner {
+            content: c,
+            quality_id: "144p",
+            kind: PlaybackKind::Live,
+            recording_id: id,
+        }
+    }
+
+    /// 생방송 `.part`(init 4바이트 + 영상 8바이트)를 만들어 checkpoint하고 놓는다.
+    async fn write_recording(out: &Path, id: Option<&str>) {
+        let mut p = PartFile::create(out, live_sc(id, 4, 0)).unwrap();
+        p.write(b"initMEDIAmed").unwrap();
+        p.checkpoint(|_| {}).await.unwrap();
     }
 
     #[test]
@@ -673,6 +774,191 @@ mod tests {
         assert!(resume(&out, "720p").unwrap().is_none());
     }
 
+    #[test]
+    fn owned_by_compat_rules() {
+        let c = live_content();
+        let a = live_sc(Some("a"), 4, 12);
+        let none = live_sc(None, 4, 12);
+        // 옛 작업(None)+옛 sidecar(None) = 내 것
+        assert!(none.owned_by(&live_owner(&c, None)));
+        // 새 작업(Some)+옛 sidecar(None) = 남의 것
+        assert!(!none.owned_by(&live_owner(&c, Some("a"))));
+        assert!(none.is_other_recording(&live_owner(&c, Some("a"))));
+        // 옛 작업(None)+새 sidecar(Some) = 남의 것
+        assert!(!a.owned_by(&live_owner(&c, None)));
+        // Some == Some = 내 것, 다르면 남의 것
+        assert!(a.owned_by(&live_owner(&c, Some("a"))));
+        assert!(!a.owned_by(&live_owner(&c, Some("b"))));
+        assert!(!a.is_other_recording(&live_owner(&c, Some("a"))));
+        // VOD sidecar는 recording_id를 보지 않는다
+        let v = sidecar();
+        let vc = content();
+        let vo = |id| PartOwner {
+            content: &vc,
+            quality_id: "720p",
+            kind: PlaybackKind::LiveRewindHls,
+            recording_id: id,
+        };
+        assert!(v.owned_by(&vo(None)) && v.owned_by(&vo(Some("x"))));
+        assert!(!v.is_other_recording(&vo(None)));
+        // 다른 화질의 생방송 sidecar는 주인이 아니다
+        let o = PartOwner {
+            quality_id: "720p",
+            ..live_owner(&c, Some("a"))
+        };
+        assert!(!a.owned_by(&o));
+    }
+
+    #[test]
+    fn has_live_media_needs_more_than_init() {
+        assert!(!live_sc(None, 10, 10).has_live_media());
+        assert!(live_sc(None, 10, 11).has_live_media());
+        // init 길이를 모르면 마무리할 수 없다
+        assert!(!live_sc(None, 0, 100).has_live_media());
+        let mut no_hls = live_sc(None, 10, 100);
+        no_hls.hls = None;
+        assert!(!no_hls.has_live_media());
+        let mut vod = sidecar();
+        vod.committed_len = 100;
+        assert!(!vod.has_live_media());
+    }
+
+    #[test]
+    fn recording_id_is_omitted_when_absent() {
+        let v = serde_json::to_value(sidecar()).unwrap();
+        assert!(v.get("recordingId").is_none());
+        let v = serde_json::to_value(live_sc(Some("a"), 1, 1)).unwrap();
+        assert_eq!(v["recordingId"], "a");
+        // v0.7.0 sidecar(필드 없음)를 읽는다
+        let old: Sidecar =
+            serde_json::from_value(serde_json::to_value(sidecar()).unwrap()).unwrap();
+        assert_eq!(old.recording_id, None);
+    }
+
+    /// 다른 작업의 녹화는 지우지도 이어 쓰지도 않는다(M5): 잠금은 풀려 주인은 계속 쓸 수 있다.
+    #[tokio::test]
+    async fn resume_refuses_recording_of_other_job() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("a.mp4");
+        write_recording(&out, Some("a")).await;
+        let before = std::fs::read(part_path(&out)).unwrap();
+        let sc_before = std::fs::read(sidecar_path(&out)).unwrap();
+        let c = live_content();
+        let err = PartFile::resume(&out, &live_owner(&c, Some("b"))).unwrap_err();
+        assert!(
+            matches!(&err, Error::PartialRecording { path } if *path == part_path(&out)),
+            "{err:?}"
+        );
+        assert_eq!(std::fs::read(part_path(&out)).unwrap(), before);
+        assert_eq!(std::fs::read(sidecar_path(&out)).unwrap(), sc_before);
+        // 잠금이 풀렸다: 주인은 이어 받는다
+        let p = PartFile::resume(&out, &live_owner(&c, Some("a")))
+            .unwrap()
+            .unwrap();
+        assert_eq!(p.written(), 12);
+    }
+
+    #[tokio::test]
+    async fn resume_refuses_v070_recording_for_new_job() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("a.mp4");
+        write_recording(&out, None).await;
+        let before = std::fs::read(part_path(&out)).unwrap();
+        let c = live_content();
+        let err = PartFile::resume(&out, &live_owner(&c, Some("b"))).unwrap_err();
+        assert!(matches!(err, Error::PartialRecording { .. }), "{err:?}");
+        assert_eq!(std::fs::read(part_path(&out)).unwrap(), before);
+        assert!(sidecar_path(&out).exists());
+    }
+
+    #[tokio::test]
+    async fn resume_v070_job_keeps_v070_recording() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("a.mp4");
+        write_recording(&out, None).await;
+        let c = live_content();
+        let p = PartFile::resume(&out, &live_owner(&c, None))
+            .unwrap()
+            .unwrap();
+        assert_eq!(p.written(), p.committed());
+        assert_eq!(p.written(), 12);
+    }
+
+    /// N4: 같은 경로를 쓰는 VOD 요청도 남의 생방송 녹화를 지우지 않는다.
+    #[tokio::test]
+    async fn resume_vod_refuses_recording() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("a.mp4");
+        write_recording(&out, Some("a")).await;
+        let before = std::fs::read(part_path(&out)).unwrap();
+        let vc = ContentRef::Video { video_no: 1 };
+        let o = PartOwner {
+            content: &vc,
+            quality_id: "720p",
+            kind: PlaybackKind::Progressive,
+            recording_id: None,
+        };
+        let err = PartFile::resume(&out, &o).unwrap_err();
+        assert!(matches!(err, Error::PartialRecording { .. }), "{err:?}");
+        assert_eq!(std::fs::read(part_path(&out)).unwrap(), before);
+        assert!(sidecar_path(&out).exists());
+    }
+
+    /// 지우기(M1): 남의 `.part`는 생방송이든 VOD든 지우지 않는다.
+    #[tokio::test]
+    async fn discard_partial_keeps_other_jobs_part() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("a.mp4");
+        write_recording(&out, Some("a")).await;
+        let c = live_content();
+        assert_eq!(
+            discard_partial(&out, &live_owner(&c, Some("b"))).unwrap(),
+            Discarded::NotOwned
+        );
+        assert!(part_path(&out).exists() && sidecar_path(&out).exists());
+        // 다른 화질의 VOD `.part`
+        let out2 = dir.path().join("b.mp4");
+        let mut p = PartFile::create(&out2, sidecar()).unwrap();
+        p.write(b"0123").unwrap();
+        p.checkpoint(|_| {}).await.unwrap();
+        drop(p);
+        assert_eq!(
+            discard_partial(&out2, &owner(&content(), "1080p")).unwrap(),
+            Discarded::NotOwned
+        );
+        assert!(part_path(&out2).exists() && sidecar_path(&out2).exists());
+    }
+
+    #[tokio::test]
+    async fn discard_partial_removes_own_and_orphan() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("a.mp4");
+        // 내 것
+        write_recording(&out, Some("a")).await;
+        let c = live_content();
+        assert_eq!(
+            discard_partial(&out, &live_owner(&c, Some("a"))).unwrap(),
+            Discarded::Removed
+        );
+        assert!(!part_path(&out).exists() && !sidecar_path(&out).exists());
+        // sidecar 없는 .part(주인을 모른다)
+        std::fs::write(part_path(&out), b"xx").unwrap();
+        assert_eq!(
+            discard_partial(&out, &live_owner(&c, Some("a"))).unwrap(),
+            Discarded::Removed
+        );
+        assert!(!part_path(&out).exists());
+        // 깨진 sidecar
+        std::fs::write(part_path(&out), b"xx").unwrap();
+        std::fs::write(sidecar_path(&out), b"{not json").unwrap();
+        assert_eq!(discard(&out).unwrap(), Discarded::Removed);
+        assert!(!part_path(&out).exists() && !sidecar_path(&out).exists());
+        // .part 없는 sidecar
+        std::fs::write(sidecar_path(&out), b"{}").unwrap();
+        assert_eq!(discard(&out).unwrap(), Discarded::Removed);
+        assert!(!sidecar_path(&out).exists());
+    }
+
     /// 같은 출력으로 두 작업: 두 번째는 `FileLocked`이고 첫 작업의 파일을 건드리지 않는다.
     #[tokio::test]
     async fn double_download_file_locked() {
@@ -692,10 +978,7 @@ mod tests {
             resume(&out, "1080p"),
             Err(Error::FileLocked { .. })
         ));
-        assert!(matches!(
-            discard_partial(&out),
-            Err(Error::FileLocked { .. })
-        ));
+        assert!(matches!(discard(&out), Err(Error::FileLocked { .. })));
         assert!(part_path(&out).exists());
 
         // 첫 작업은 그대로 끝난다.
@@ -786,7 +1069,7 @@ mod tests {
         assert!(!stale.exists());
         drop(p);
         std::fs::write(&stale, b"{").unwrap();
-        discard_partial(&out).unwrap();
+        discard(&out).unwrap();
         assert!(!stale.exists());
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
     }
@@ -807,10 +1090,10 @@ mod tests {
         assert!(!sidecar_path(&out).exists());
 
         // discard_partial: 없으면 성공, 있으면 지운다.
-        discard_partial(&out).unwrap();
+        discard(&out).unwrap();
         let p = PartFile::create(&out, sidecar()).unwrap();
         drop(p);
-        discard_partial(&out).unwrap();
+        discard(&out).unwrap();
         assert!(!part_path(&out).exists());
         assert!(!sidecar_path(&out).exists());
     }

@@ -4,12 +4,13 @@ mod common;
 
 use std::time::Duration;
 
-use chzzk_core::{DownloadOutcome, Error, LiveProgress, Phase};
+use chzzk_core::download::part::{part_path, sidecar_path};
+use chzzk_core::{DownloadOutcome, Error, LiveProgress, Phase, PlaybackKind, RequestKind};
 use chzzk_shell::ErrorCode;
 use chzzk_shell::dto::JobStatus;
 use chzzk_shell::manager::MAX_LIVE;
 use common::fake::{Script, progress};
-use common::harness::{Harness, until};
+use common::harness::{Harness, live_request, request, until};
 
 /// 녹화 중 진행률(`live` 값 포함).
 fn live_progress(bytes: u64, secs: f64, gaps: u32) -> chzzk_core::Progress {
@@ -257,6 +258,7 @@ async fn auto_resume_skips_live_without_partial() {
         h.status(none) == JobStatus::Running && h.status(kept) == JobStatus::Running
     })
     .await;
+    until("코어 호출", || h.fake.download_requests().len() == 2).await;
     // 하나는 `.part`와 sidecar가 있다(크래시 때 체크포인트까지 받았다)
     let out = h.output("kept");
     std::fs::create_dir_all(out.parent().unwrap()).unwrap();
@@ -269,6 +271,17 @@ async fn auto_resume_skips_live_without_partial() {
         PlaybackKind::Live,
     );
     sc.committed_len = 100;
+    // 이 작업의 `.part`다(작업 고유값은 코어에 넘어간 요청에서 꺼낸다). 영상 조각도 있다(init 10바이트)
+    sc.recording_id = h
+        .fake
+        .download_requests()
+        .into_iter()
+        .find(|r| r.output == out)
+        .and_then(|r| r.recording_id);
+    sc.hls = Some(chzzk_core::download::part::HlsState {
+        init_len: 10,
+        ..Default::default()
+    });
     atomic_write(&sidecar_path(&out), &serde_json::to_vec(&sc).unwrap()).unwrap();
 
     // 앱이 꺼졌다 다시 열린다(`quit` 없이): running → interrupted로 복원된다
@@ -284,4 +297,176 @@ async fn auto_resume_skips_live_without_partial() {
     let status = |id| after.iter().find(|j| j.id == id).unwrap().status;
     assert_eq!(status(none), JobStatus::Interrupted);
     assert_ne!(status(kept), JobStatus::Interrupted);
+}
+
+/// 503으로 끝난 생방송(이어받을 수 있는 오류라 `.part`가 남는다).
+fn http_503() -> Error {
+    Error::HttpStatus {
+        status: 503,
+        kind: RequestKind::Media,
+    }
+}
+
+fn recorded_hex(h: &Harness, i: usize) -> String {
+    h.fake.download_requests()[i]
+        .recording_id
+        .clone()
+        .expect("생방송 요청에는 recordingId가 있다")
+}
+
+#[tokio::test(start_paused = true)]
+async fn enqueue_live_gets_recording_id() {
+    let h = Harness::new(2);
+    h.fake.script_for(h.output("l"), Script::new());
+    h.fake.script_for(h.output("v"), Script::new());
+    h.enqueue_live("l");
+    h.enqueue("v");
+    until("둘 다 호출", || h.fake.download_requests().len() == 2).await;
+    let reqs = h.fake.download_requests();
+    let live = reqs.iter().find(|r| r.output == h.output("l")).unwrap();
+    let vod = reqs.iter().find(|r| r.output == h.output("v")).unwrap();
+    let id = live.recording_id.as_deref().unwrap();
+    assert_eq!(id.len(), 32);
+    assert!(id.bytes().all(|b| b.is_ascii_hexdigit()), "{id}");
+    assert_eq!(vod.recording_id, None);
+    // VOD 레코드에는 키가 없다(옛 파일 모양 그대로)
+    let v = h.jobs_json();
+    let jobs = v["jobs"].as_array().unwrap();
+    let rec = |name: &str| {
+        jobs.iter()
+            .find(|j| j["output"].as_str().unwrap().ends_with(name))
+            .unwrap()
+    };
+    assert!(rec("v.mp4").get("recordingId").is_none());
+    assert_eq!(rec("l.mp4")["recordingId"], id);
+}
+
+/// 새 작업은 늘 새 값이다(같은 방송을 다시 붙여넣어도 이전 녹화의 주인이 아니다).
+#[tokio::test(start_paused = true)]
+async fn each_live_job_gets_its_own_recording_id() {
+    let h = Harness::new(2);
+    h.fake.script_for(h.output("a"), Script::new());
+    h.fake.script_for(h.output("b"), Script::new());
+    h.enqueue_live("a");
+    h.enqueue_live("b");
+    until("둘 다 호출", || h.fake.download_requests().len() == 2).await;
+    assert_ne!(recorded_hex(&h, 0), recorded_hex(&h, 1));
+}
+
+/// 실패한 녹화는 `.part`가 남은 동안 경로를 잡는다: 같은 이름으로 새로 시작할 수 없다.
+#[tokio::test(start_paused = true)]
+async fn failed_recording_holds_its_path() {
+    let h = Harness::new(2);
+    h.fake.script_for(
+        h.output("a"),
+        Script::new().live_part(16, 32).fails(http_503()),
+    );
+    let id = h.enqueue_live("a").id;
+    until("실패", || h.status(id) == JobStatus::Failed).await;
+    assert_eq!(h.job(id).partial_bytes, Some(48));
+
+    // 같은 이름의 생방송도, VOD도 거부된다(`.part`는 다시 받을 수 없는 녹화다)
+    let e = h.mgr.enqueue(live_request("a"), &h.defaults()).unwrap_err();
+    assert_eq!(e.code, ErrorCode::DuplicateOutput);
+    let e = h.mgr.enqueue(request("a"), &h.defaults()).unwrap_err();
+    assert_eq!(e.code, ErrorCode::DuplicateOutput);
+    // 이어받기 대상 자신은 막히지 않는다
+    h.fake.script_for(h.output("a"), recording(5));
+    h.mgr.resume(id, false).unwrap();
+    until("다시 시작", || h.status(id) == JobStatus::Running).await;
+    h.mgr.stop_job(id).unwrap();
+}
+
+fn sidecar_exists(h: &Harness, name: &str) -> (bool, bool) {
+    let out = h.output(name);
+    (part_path(&out).exists(), sidecar_path(&out).exists())
+}
+
+/// M1: 같은 경로를 쓰던 VOD 작업을 지워도 남의 녹화 `.part`는 남는다.
+#[tokio::test(start_paused = true)]
+async fn remove_vod_keeps_recording_part() {
+    let h = Harness::new(2);
+    h.fake
+        .script_for(h.output("a"), Script::new().fails(http_503()));
+    let v = h.enqueue("a").id;
+    until("VOD 실패", || h.status(v) == JobStatus::Failed).await;
+    h.fake.script_for(
+        h.output("a"),
+        Script::new().live_part(16, 32).fails(http_503()),
+    );
+    let l = h.enqueue_live("a").id;
+    until("녹화 실패", || h.status(l) == JobStatus::Failed).await;
+
+    h.mgr.remove(v).await.unwrap();
+    assert!(h.mgr.list().iter().all(|j| j.id != v));
+    assert_eq!(sidecar_exists(&h, "a"), (true, true));
+    assert_eq!(h.status(l), JobStatus::Failed);
+}
+
+/// 소유 판정만 따로: 작업 레코드 없는 남의 녹화도 지우지 않는다.
+#[tokio::test(start_paused = true)]
+async fn remove_vod_keeps_orphan_recording_part() {
+    let h = Harness::new(2);
+    h.fake
+        .script_for(h.output("a"), Script::new().fails(http_503()));
+    let v = h.enqueue("a").id;
+    until("VOD 실패", || h.status(v) == JobStatus::Failed).await;
+    write_foreign_recording(&h, "a", "x");
+
+    h.mgr.remove(v).await.unwrap();
+    assert!(h.mgr.list().iter().all(|j| j.id != v));
+    assert_eq!(sidecar_exists(&h, "a"), (true, true));
+}
+
+/// 레코드가 없는 남의 생방송 녹화(`recording_id`가 이 앱의 어떤 작업과도 다르다)를 디스크에 만든다.
+fn write_foreign_recording(h: &Harness, name: &str, id: &str) {
+    use chzzk_core::download::part::{HlsState, Sidecar};
+    use chzzk_core::fsutil::atomic_write;
+    let out = h.output(name);
+    std::fs::create_dir_all(out.parent().unwrap()).unwrap();
+    std::fs::write(part_path(&out), vec![0u8; 48]).unwrap();
+    let mut sc = Sidecar::new(
+        chzzk_core::ContentRef::Live {
+            channel_id: "000000000000000000000000000000e5".into(),
+        },
+        "720p",
+        PlaybackKind::Live,
+    );
+    sc.recording_id = Some(id.into());
+    sc.committed_len = 48;
+    sc.hls = Some(HlsState {
+        init_len: 16,
+        ..Default::default()
+    });
+    atomic_write(&sidecar_path(&out), &serde_json::to_vec(&sc).unwrap()).unwrap();
+}
+
+/// 카드의 "처음부터" 경로(`restart`): 새 작업은 남의 녹화를 지우지 않는다.
+#[tokio::test(start_paused = true)]
+async fn restart_new_job_keeps_other_recording() {
+    let h = Harness::new(2);
+    write_foreign_recording(&h, "a", "x");
+    let req = chzzk_shell::dto::EnqueueRequest {
+        restart: true,
+        ..live_request("a")
+    };
+    let id = h.mgr.enqueue(req, &h.defaults()).unwrap().id;
+    until("호출", || !h.fake.download_requests().is_empty()).await;
+    until("끝", || h.status(id) != JobStatus::Running).await;
+    assert_eq!(sidecar_exists(&h, "a"), (true, true));
+}
+
+/// 회귀: 자기 실패 녹화를 지우면 `.part`도 지운다.
+#[tokio::test(start_paused = true)]
+async fn remove_own_failed_recording_discards() {
+    let h = Harness::new(2);
+    h.fake.script_for(
+        h.output("a"),
+        Script::new().live_part(16, 32).fails(http_503()),
+    );
+    let id = h.enqueue_live("a").id;
+    until("실패", || h.status(id) == JobStatus::Failed).await;
+    assert_eq!(sidecar_exists(&h, "a"), (true, true));
+    h.mgr.remove(id).await.unwrap();
+    assert_eq!(sidecar_exists(&h, "a"), (false, false));
 }

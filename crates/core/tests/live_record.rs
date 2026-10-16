@@ -61,6 +61,7 @@ async fn live_record() {
         on_existing: DuplicatePolicy::Overwrite,
         concurrency: chzzk_core::download::DEFAULT_CONCURRENCY,
         live_stop: Some(stop),
+        recording_id: None,
     };
     let res = c
         .download(req, CancellationToken::new(), &cb)

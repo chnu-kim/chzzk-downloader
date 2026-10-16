@@ -77,6 +77,7 @@ const ALL_CODES: Record<ErrorCode, true> = {
   network: true,
   diskFull: true,
   fileLocked: true,
+  partialRecording: true,
   io: true,
   settings: true,
   cancelled: true,
@@ -424,6 +425,15 @@ export function errorCopy(raw: AppError, ctx: ErrorContext): ErrorCopy {
         '다른 프로그램이 파일을 쓰고 있어요',
         withPart(e, '이 파일을 연 플레이어나 백신 검사가 끝난 뒤 다시 시도해 주세요.', ctx),
         job ? [again, 'openFolder'] : [again],
+        pathLine('경로', pathOf(e)),
+      );
+
+    case 'partialRecording':
+      // 같은 경로에 다른 작업의 녹화가 받다 만 채로 있다. 다시 받을 수 없어 코어가 건드리지 않았다(core.md 61)
+      return copy(
+        '같은 이름으로 받다 만 녹화가 있어요',
+        '녹화는 다시 받을 수 없어 그 파일을 지우지 않았어요. 다시 불러와 다른 이름으로 받아 주세요.',
+        [reload],
         pathLine('경로', pathOf(e)),
       );
 

@@ -190,3 +190,108 @@ async fn jobs_json_write_failure_does_not_stop_jobs() {
         [(a.0, "completed".to_owned()), (b.0, "completed".to_owned())]
     );
 }
+
+/// v0.7.0이 쓴 생방송 레코드(`recordingId` 없음): 읽히고, 쓰지 않으면 키도 없다.
+fn v070_live_record(out: &std::path::Path, status: JobStatus) -> chzzk_shell::jobs::JobRecord {
+    use chzzk_core::{ContentRef, PlaybackKind};
+    use chzzk_shell::dto::{ContentKindDto, OnExisting};
+    chzzk_shell::jobs::JobRecord {
+        id: chzzk_shell::JobId(1),
+        url: "u".into(),
+        content: ContentRef::Live {
+            channel_id: "000000000000000000000000000000e5".into(),
+        },
+        title: "t".into(),
+        channel_name: "c".into(),
+        channel_id: None,
+        kind: ContentKindDto::Live,
+        quality_id: "720p".into(),
+        quality_label: "720p".into(),
+        expected_kind: PlaybackKind::Live,
+        recording_id: None,
+        output: out.to_path_buf(),
+        on_existing: OnExisting::Overwrite,
+        concurrency: 4,
+        status,
+        created_at: 1,
+        finished_at: None,
+        stopped_at: Some(2),
+        final_bytes: None,
+        last_error: None,
+        discard_on_start: false,
+        partial_bytes: None,
+        missing: false,
+    }
+}
+
+#[test]
+fn v070_live_record_without_recording_id_loads() {
+    let out = std::path::Path::new("/d/a.mp4");
+    let rec = v070_live_record(out, JobStatus::Failed);
+    let mut v = serde_json::to_value(&rec).unwrap();
+    assert!(v.get("recordingId").is_none(), "None은 쓰지 않는다");
+    v.as_object_mut().unwrap().remove("recordingId");
+    let back: chzzk_shell::jobs::JobRecord = serde_json::from_value(v).unwrap();
+    assert_eq!(back.recording_id, None);
+}
+
+/// L7 "v0.7.0 파일 호환": 업그레이드 뒤에도 옛 `failed` 녹화는 경로를 잡고, 이어받으면 그대로 저장된다
+/// (옛 작업(None) + 옛 sidecar(None) = 내 것).
+#[tokio::test(start_paused = true)]
+async fn v070_failed_recording_upgrade() {
+    use chzzk_core::download::part::{HlsState, Sidecar, part_path, sidecar_path};
+    use chzzk_shell::jobs::JobsFile;
+    use common::harness::{live_request, open_with};
+
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("downloads").join("a.mp4");
+    std::fs::create_dir_all(out.parent().unwrap()).unwrap();
+    // v0.7.0이 남긴 `.part`(init 16 + 영상 32)와 sidecar(recordingId 없음)
+    std::fs::write(part_path(&out), vec![0u8; 48]).unwrap();
+    let mut sc = Sidecar::new(
+        chzzk_core::ContentRef::Live {
+            channel_id: "000000000000000000000000000000e5".into(),
+        },
+        "720p",
+        chzzk_core::PlaybackKind::Live,
+    );
+    sc.committed_len = 48;
+    sc.hls = Some(HlsState {
+        init_len: 16,
+        ..Default::default()
+    });
+    atomic_write(&sidecar_path(&out), &serde_json::to_vec(&sc).unwrap()).unwrap();
+    // v0.7.0 모양의 jobs.json
+    let file = JobsFile {
+        v: 1,
+        next_id: 2,
+        jobs: vec![v070_live_record(&out, JobStatus::Failed)],
+    };
+    std::fs::create_dir_all(dir.path().join("data")).unwrap();
+    atomic_write(
+        &dir.path().join("data/jobs.json"),
+        &serde_json::to_vec(&file).unwrap(),
+    )
+    .unwrap();
+
+    let fake = FakeBackend::new();
+    let mgr = open_with(dir.path(), &fake, 2, false);
+    let id = chzzk_shell::JobId(1);
+    let job = mgr.list().into_iter().find(|j| j.id == id).unwrap();
+    assert_eq!(job.partial_bytes, Some(48));
+
+    // 같은 이름으로 새 녹화를 시작할 수 없다
+    let defaults = JobDefaults {
+        download_folder: dir.path().join("downloads"),
+        segment_concurrency: 4,
+    };
+    let e = mgr.enqueue(live_request("a"), &defaults).unwrap_err();
+    assert_eq!(e.code, chzzk_shell::ErrorCode::DuplicateOutput);
+
+    // 이어받기(= 저장)는 v0.7.0처럼 값 없이 간다
+    fake.script_for(&out, Script::new());
+    mgr.resume(id, false).unwrap();
+    until("요청", || !fake.download_requests().is_empty()).await;
+    assert_eq!(fake.download_requests()[0].recording_id, None);
+    assert!(part_path(&out).exists(), "`.part`는 그대로");
+}

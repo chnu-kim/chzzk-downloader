@@ -31,7 +31,7 @@ pub struct AppError {
     pub payload: Option<ErrorPayload>,
 }
 
-/// 오류 종류. 앞 23개는 `chzzk_core::ErrorKind`와 1:1, 뒤는 셸 전용이다.
+/// 오류 종류. 앞 24개는 `chzzk_core::ErrorKind`와 1:1, 뒤는 셸 전용이다.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub enum ErrorCode {
@@ -53,6 +53,7 @@ pub enum ErrorCode {
     LengthMismatch,
     Network,
     DiskFull,
+    FileTooLarge,
     FileLocked,
     PartialRecording,
     Io,
@@ -91,6 +92,7 @@ impl From<ErrorKind> for ErrorCode {
             ErrorKind::LengthMismatch => ErrorCode::LengthMismatch,
             ErrorKind::Network => ErrorCode::Network,
             ErrorKind::DiskFull => ErrorCode::DiskFull,
+            ErrorKind::FileTooLarge => ErrorCode::FileTooLarge,
             ErrorKind::FileLocked => ErrorCode::FileLocked,
             ErrorKind::PartialRecording => ErrorCode::PartialRecording,
             ErrorKind::Io => ErrorCode::Io,
@@ -160,7 +162,7 @@ pub enum ErrorPayload {
         #[ts(as = "PlaybackKindTs")]
         now: PlaybackKind,
     },
-    /// `DiskFull`, `FileLocked`, `PartialRecording`, `Io`, `FileMissing`
+    /// `DiskFull`, `FileTooLarge`, `FileLocked`, `PartialRecording`, `Io`, `FileMissing`
     Path {
         path: String,
     },
@@ -207,6 +209,7 @@ fn payload_of(e: &Error) -> Option<ErrorPayload> {
             now: *now,
         }),
         Error::DiskFull { path }
+        | Error::FileTooLarge { path }
         | Error::FileLocked { path }
         | Error::PartialRecording { path }
         | Error::Io { path, .. } => path_payload(path),

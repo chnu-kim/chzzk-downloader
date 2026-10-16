@@ -76,6 +76,7 @@ const ALL_CODES: Record<ErrorCode, true> = {
   lengthMismatch: true,
   network: true,
   diskFull: true,
+  fileTooLarge: true,
   fileLocked: true,
   partialRecording: true,
   io: true,
@@ -163,6 +164,7 @@ function keepsPart(e: AppError): boolean {
     case 'noQualities':
     case 'parse':
     case 'network':
+    case 'fileTooLarge':
     case 'fileLocked':
     case 'io':
     case 'refreshExhausted':
@@ -418,6 +420,15 @@ export function errorCopy(raw: AppError, ctx: ErrorContext): ErrorCopy {
           )
         : copy('저장 공간이 부족해요', '공간을 비운 뒤 다시 시도해 주세요.', ['retry', 'changeFolder'], detail);
     }
+
+    case 'fileTooLarge':
+      // FAT32 등 파일 하나의 크기를 제한하는 저장 장치(EFBIG·Windows 223). 받은 부분은 남는다(core.md 61)
+      return copy(
+        '파일이 저장 장치의 크기 한도를 넘었어요',
+        withPart(e, 'FAT32처럼 파일 하나의 크기를 제한하는 저장 장치예요. 다른 저장 장치의 폴더로 바꿔 주세요.', ctx),
+        job ? [again, 'openFolder'] : ['changeFolder'],
+        pathLine('경로', pathOf(e)),
+      );
 
     case 'fileLocked':
       return copy(

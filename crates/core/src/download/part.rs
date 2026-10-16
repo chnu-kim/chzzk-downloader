@@ -322,11 +322,18 @@ impl PartFile {
         &self.staged
     }
 
-    /// 버퍼에 쓴다. 디스크 부족은 `DiskFull`.
+    /// 버퍼에 쓴다. 디스크 부족은 `DiskFull`, 파일 크기 한도는 `FileTooLarge`(받은 부분은 남는다, core.md 61).
     pub fn write(&mut self, buf: &[u8]) -> Result<(), Error> {
-        self.w
-            .write_all(buf)
-            .map_err(|e| map_io_error("write", &self.part, e))?;
+        self.write_using(buf, |w, b| w.write_all(b))
+    }
+
+    /// `write`의 본체. 쓰기를 주입받아, 실패한 쓰기가 `written`을 늘리지 않는지 테스트한다.
+    fn write_using(
+        &mut self,
+        buf: &[u8],
+        write: impl FnOnce(&mut BufWriter<File>, &[u8]) -> io::Result<()>,
+    ) -> Result<(), Error> {
+        write(&mut self.w, buf).map_err(|e| map_io_error("write", &self.part, e))?;
         self.written += buf.len() as u64;
         Ok(())
     }
@@ -744,6 +751,39 @@ mod tests {
         assert!(resume(&out, "720p").unwrap().is_none());
         assert!(!part_path(&out).exists());
         assert!(!sidecar_path(&out).exists());
+    }
+
+    /// F4: 파일 크기 한도(EFBIG)로 쓰기가 반쯤 실패해도 `written`은 늘지 않고, checkpoint는 그 앞까지만 기록한다.
+    /// 다음 `resume`은 반쯤 쓴 꼬리를 자르고, 받은 만큼 마무리할 수 있다.
+    #[tokio::test]
+    async fn write_failure_keeps_committed_prefix() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("a.mp4");
+        let mut p = PartFile::create(&out, sidecar()).unwrap();
+        p.write(b"aaaa").unwrap();
+        p.checkpoint(|_| {}).await.unwrap();
+        p.write(b"bbbb").unwrap();
+        let err = p
+            .write_using(b"cccccccc", |w, b| {
+                w.flush()?;
+                w.get_mut().write_all(&b[..3])?;
+                Err(io::Error::from(io::ErrorKind::FileTooLarge))
+            })
+            .unwrap_err();
+        assert!(
+            matches!(&err, Error::FileTooLarge { path } if *path == part_path(&out)),
+            "{err:?}"
+        );
+        assert_eq!(p.written(), 8, "실패한 쓰기는 written을 늘리지 않는다");
+        // 실패 뒤 정리(`cleanup(keep)`)와 같은 순서
+        p.checkpoint(|_| {}).await.unwrap();
+        assert_eq!(p.committed(), 8);
+        drop(p);
+        assert_eq!(std::fs::metadata(part_path(&out)).unwrap().len(), 11);
+        let p = resume(&out, "720p").unwrap().unwrap();
+        assert_eq!(p.written(), 8);
+        let path = moved(p.finalize(DuplicatePolicy::Overwrite).await.unwrap());
+        assert_eq!(std::fs::read(path).unwrap(), b"aaaabbbb");
     }
 
     #[tokio::test]

@@ -7,12 +7,13 @@
 //! **복사 없이 제자리에서** 한다:
 //! 1. 파일을 읽어(최상위 상자는 헤더만, `moov`·`moof`만 본문까지) 전부 검증하고 새 `moov`를 메모리에서 완성한다.
 //!    `mdat` 본문은 읽지 않는다.
-//! 2. 새 `moov`를 파일 끝에 붙이고 sync한다. 실패하면 붙인 것을 `set_len`으로 되돌린다.
+//! 2. 새 `moov`를 파일 끝에 붙이고 sync한다. 실패하면 붙인 것을 `set_len`으로 되돌린다(되돌리기도 실패하면 `Modified`).
 //! 3. 마지막에 원래 `moov`(init)·`moof`·`styp`·`emsg`와 모르는 상자의 4바이트 종류를 `free`로 바꾼다(오프셋
 //!    오름차순으로 한 번에, 그리고 sync). 데이터는 움직이지 않는다. `ftyp`·`mdat`·`free`·`skip`은 그대로다.
 //!
 //! 변환은 최선 노력이다. 구조를 읽지 못하거나(가짜 바이트·잘린 파일·모르는 구조) 검증에 실패하면 파일을 바꾸지
-//! 않고 `Err`를 돌려준다. 호출한 쪽은 경고만 남기고 조각 구조 그대로 마무리한다.
+//! 않고 `Err`를 돌려준다. 호출한 쪽은 경고만 남기고 조각 구조 그대로 마무리한다. 바꾸는 도중의 실패는
+//! `DefragError::Modified`이고 호출한 쪽은 마무리하지 않는다(덧붙인 `moov`를 잘라 되돌렸으면 `Unchanged`).
 //!
 //! **멱등.** 최상위에 `mvex` 없는 진짜 `moov`가 있으면 이미 일반 mp4다(`AlreadyFlat`). 3단계 도중 끊겨 일부 상자만
 //! `free`로 바뀐 채 끝의 `moov`가 잘려 나간 파일(크래시 후 `PartFile::resume`이 `committed_len`으로 자른다)은,
@@ -71,16 +72,60 @@ pub enum DefragReport {
     NotFragmented,
 }
 
+/// 2·3단계가 쓰는 파일 조작. 테스트가 쓰기 실패를 주입하려고 둔다(core.md 61).
+pub(crate) trait DefragFile: Read + Write + Seek {
+    fn file_len(&mut self) -> io::Result<u64>;
+    fn truncate_to(&mut self, len: u64) -> io::Result<()>;
+    fn sync(&mut self) -> io::Result<()>;
+}
+
+impl DefragFile for File {
+    fn file_len(&mut self) -> io::Result<u64> {
+        self.metadata().map(|m| m.len())
+    }
+    fn truncate_to(&mut self, len: u64) -> io::Result<()> {
+        self.set_len(len)
+    }
+    fn sync(&mut self) -> io::Result<()> {
+        self.sync_data()
+    }
+}
+
+/// `defragment_in`의 실패. 파일을 바꿨는지로 나눈다(호출한 쪽이 마무리할지 정한다).
+#[derive(Debug)]
+pub(crate) enum DefragError {
+    /// 파일은 원래 그대로다(구조 검증·읽기 실패, 또는 덧붙인 `moov`를 잘라 되돌렸다). 조각 구조로 마무리해도 된다
+    Unchanged(Error),
+    /// 바꾸는 도중 실패했고 되돌리지 못했다. 최종 파일로 옮기지 않는다(다음 실행이 committed_len으로 잘라 다시 변환한다)
+    Modified(Error),
+}
+
+impl DefragError {
+    pub(crate) fn into_error(self) -> Error {
+        match self {
+            Self::Unchanged(e) | Self::Modified(e) => e,
+        }
+    }
+}
+
 /// 열린 파일(읽기·쓰기 가능)을 제자리에서 일반 mp4로 바꾼다. 끝나면 위치는 파일 끝이다.
 ///
 /// 구조를 읽지 못하면 파일을 바꾸지 않고 `Error::Parse`다. 쓰는 도중의 입출력 오류는 `Error::Io`(디스크 부족은
-/// `DiskFull`)이고, 2단계 실패는 붙인 부분을 잘라 원래 길이로 되돌린다.
+/// `DiskFull`, 파일 크기 한도는 `FileTooLarge`)이고, 2단계 실패는 붙인 부분을 잘라 원래 길이로 되돌린다.
+/// 파일을 바꿨는지 구분이 필요하면 `defragment_in`을 쓴다.
 pub fn defragment(file: &mut File) -> Result<DefragReport, Error> {
+    defragment_in(file).map_err(DefragError::into_error)
+}
+
+/// `defragment`의 본체. 실패를 `DefragError`(파일이 원래 그대로인가)로 나눈다.
+pub(crate) fn defragment_in<F: DefragFile>(file: &mut F) -> Result<DefragReport, DefragError> {
     let io_err = |op: &'static str| move |e: io::Error| map_io_error(op, Path::new(WHAT), e);
-    let len = file.metadata().map_err(io_err("stat"))?.len();
+    let len = file
+        .file_len()
+        .map_err(|e| DefragError::Unchanged(io_err("stat")(e)))?;
     let outcome = {
         let mut src = FileSrc { f: file, len };
-        plan(&mut src).map_err(Fail::into_error)?
+        plan(&mut src).map_err(|f| DefragError::Unchanged(f.into_error()))?
     };
     let p = match outcome {
         Outcome::Flat => return Ok(DefragReport::AlreadyFlat),
@@ -91,12 +136,16 @@ pub fn defragment(file: &mut File) -> Result<DefragReport, Error> {
     let appended = (|| {
         file.seek(SeekFrom::Start(len))?;
         file.write_all(&p.moov)?;
-        file.sync_data()
+        file.sync()
     })();
     if let Err(e) = appended {
-        let _ = file.set_len(len);
-        let _ = file.sync_data();
-        return Err(io_err("write")(e));
+        let err = io_err("write")(e);
+        // 붙인 것을 잘라 되돌린다. 자르기와 그 sync가 모두 성공해야 원래 파일이다
+        let restored = file.truncate_to(len).and_then(|()| file.sync());
+        return Err(match restored {
+            Ok(()) => DefragError::Unchanged(err),
+            Err(_) => DefragError::Modified(err),
+        });
     }
     // 3단계: 종류 패치를 오름차순으로 몰아서 쓴다.
     let patched = (|| {
@@ -104,10 +153,10 @@ pub fn defragment(file: &mut File) -> Result<DefragReport, Error> {
             file.seek(SeekFrom::Start(*off))?;
             file.write_all(b"free")?;
         }
-        file.sync_data()?;
+        file.sync()?;
         file.seek(SeekFrom::End(0)).map(|_| ())
     })();
-    patched.map_err(io_err("write"))?;
+    patched.map_err(|e| DefragError::Modified(io_err("write")(e)))?;
     Ok(DefragReport::Converted {
         tracks: p.tracks,
         samples: p.samples,
@@ -189,12 +238,12 @@ trait Source {
     fn read_at(&mut self, off: u64, buf: &mut [u8]) -> io::Result<()>;
 }
 
-struct FileSrc<'a> {
-    f: &'a mut File,
+struct FileSrc<'a, F> {
+    f: &'a mut F,
     len: u64,
 }
 
-impl Source for FileSrc<'_> {
+impl<F: Read + Seek> Source for FileSrc<'_, F> {
     fn len(&self) -> u64 {
         self.len
     }

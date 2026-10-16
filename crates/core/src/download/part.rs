@@ -404,6 +404,12 @@ impl PartFile {
         r
     }
 
+    /// 마지막 checkpoint 뒤에 쓴 바이트를 버린 것으로 한다(`written = committed`). 파일 꼬리는 그대로 두고, 다음 checkpoint는
+    /// 그 앞까지만 기록하며 다음 `resume`이 꼬리를 자른다. 생방송 변환이 도중에 실패했을 때 쓴다(core.md 61 M4).
+    pub(crate) fn drop_uncommitted_tail(&mut self) {
+        self.written = self.sidecar.committed_len;
+    }
+
     /// 받은 내용을 버리고 처음부터 쓴다(서버가 Range를 무시하고 200을 준 경우).
     /// sidecar는 `committed_len = 0`과 `update`를 적용해 곧바로 기록한다.
     pub async fn restart(&mut self, update: impl FnOnce(&mut Sidecar)) -> Result<(), Error> {
@@ -784,6 +790,41 @@ mod tests {
         assert_eq!(p.written(), 8);
         let path = moved(p.finalize(DuplicatePolicy::Overwrite).await.unwrap());
         assert_eq!(std::fs::read(path).unwrap(), b"aaaabbbb");
+    }
+
+    /// M4: 변환이 파일 끝을 늘린 채 실패하면 `written`을 마지막 checkpoint로 돌린다. 그래야 정리 checkpoint가
+    /// 반쯤 붙은 꼬리를 `committed_len`에 넣지 않고, 다음 `resume`이 그 꼬리를 자른다.
+    #[tokio::test]
+    async fn dropped_tail_is_not_committed() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("a.mp4");
+        let mut p = PartFile::create(&out, sidecar()).unwrap();
+        p.write(b"abc").unwrap();
+        p.checkpoint(|_| {}).await.unwrap();
+        p.with_file_blocking(|f| {
+            f.seek(SeekFrom::End(0)).map_err(|e| Error::Io {
+                op: "seek",
+                path: PathBuf::from("t"),
+                source: e,
+            })?;
+            f.write_all(b"XYZ").map_err(|e| Error::Io {
+                op: "write",
+                path: PathBuf::from("t"),
+                source: e,
+            })
+        })
+        .await
+        .unwrap();
+        assert_eq!(p.written(), 6, "변환이 늘린 길이까지 센다");
+        p.drop_uncommitted_tail();
+        assert_eq!(p.written(), 3);
+        p.checkpoint(|_| {}).await.unwrap();
+        assert_eq!(p.committed(), 3);
+        drop(p);
+        let p = resume(&out, "720p").unwrap().unwrap();
+        assert_eq!(p.written(), 3);
+        let path = moved(p.finalize(DuplicatePolicy::Overwrite).await.unwrap());
+        assert_eq!(std::fs::read(path).unwrap(), b"abc");
     }
 
     #[tokio::test]

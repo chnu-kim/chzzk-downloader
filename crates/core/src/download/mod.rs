@@ -374,6 +374,29 @@ async fn cleanup(part: Option<PartFile>, keep: bool, e: &Error) {
     }
 }
 
+/// 생방송 변환 결과로 마무리를 이어 갈지 정한다(core.md 61 M4). `Ok(true)`: 바꿨으니 checkpoint 뒤 마무리,
+/// `Ok(false)`: 그대로 마무리(이미 일반 mp4·조각 아님·바꾸기 전 실패), `Err`: 마무리하지 않는다.
+fn defrag_verdict(
+    r: Result<Result<defrag::DefragReport, defrag::DefragError>, Error>,
+) -> Result<bool, Error> {
+    match r {
+        Ok(Ok(rep)) => {
+            tracing::info!(report = ?rep, "생방송 파일 변환");
+            Ok(matches!(rep, defrag::DefragReport::Converted { .. }))
+        }
+        Ok(Err(defrag::DefragError::Unchanged(e))) => {
+            tracing::warn!(error = %e, "생방송 파일을 일반 mp4로 바꾸지 못해 조각 구조로 둔다");
+            Ok(false)
+        }
+        Ok(Err(defrag::DefragError::Modified(e))) => {
+            tracing::warn!(error = %e, "생방송 파일 변환이 도중에 실패해 .part로 둔다");
+            Err(e)
+        }
+        // 핸들 복제·flush·태스크 실패: 파일 상태를 모르니 마무리하지 않는다
+        Err(e) => Err(e),
+    }
+}
+
 /// 마지막 checkpoint 후 `.part`를 최종 파일로 옮긴다.
 pub(crate) async fn finish(
     job: &mut Job<'_>,
@@ -391,23 +414,26 @@ pub(crate) async fn finish(
     }
     // 생방송은 조각 구조를 일반 mp4로 바꾼다(core.md 구현 중 변경 60). 바로 위 checkpoint로 받은 바이트가 모두
     // durable하므로, 변환 도중 죽어도 다음 실행의 `resume`이 붙인 moov만 잘라 내고 다시 변환한다.
-    // 실패는 경고만 남기고 조각 구조 그대로 마무리한다.
+    // 바꾸기 전 실패는 경고만 남기고 조각 구조로 마무리하고, 바꾸는 도중 실패는 `.part`로 남긴다(core.md 61).
     if job.req.expected_kind == PlaybackKind::Live {
         // 파일 전체 훑기·fsync는 오래 걸릴 수 있어 blocking 스레드에서 한다.
-        match p.with_file_blocking(defrag::defragment).await {
-            Ok(r) => {
-                tracing::info!(report = ?r, "생방송 파일 변환");
+        let r = p.with_file_blocking(|f| Ok(defrag::defragment_in(f))).await;
+        match defrag_verdict(r) {
+            Ok(true) => {
                 // 변환이 붙인 moov까지 committed_len에 넣는다(마무리가 Skipped로 끝나 `.part`가 남아도 잘리지 않게).
                 // 변환에 실패했으면 checkpoint하지 않는다(디스크 부족에서 sidecar 쓰기가 또 실패해 녹화가 실패로 끝나면 안 된다).
-                if matches!(r, defrag::DefragReport::Converted { .. })
-                    && let Err(e) = p.checkpoint(|_| {}).await
-                {
+                if let Err(e) = p.checkpoint(|_| {}).await {
                     *part = Some(p);
                     return Err(e);
                 }
             }
+            Ok(false) => {}
             Err(e) => {
-                tracing::warn!(error = %e, "생방송 파일을 일반 mp4로 바꾸지 못해 조각 구조로 둔다")
+                // 변환 도중 실패: 반쯤 바뀐 파일을 최종 파일로 옮기지 않는다. 변환 전 길이까지만 남기고
+                // (다음 resume이 꼬리를 자른다) .part로 둔다
+                p.drop_uncommitted_tail();
+                *part = Some(p);
+                return Err(e);
             }
         }
     }
@@ -421,5 +447,52 @@ pub(crate) async fn finish(
         Finalized::TargetExists => Ok(DownloadOutcome::Skipped {
             path: job.req.output.clone(),
         }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use defrag::{DefragError, DefragReport};
+
+    fn parse_err() -> Error {
+        Error::Parse {
+            what: "fragmented mp4",
+            detail: "x".into(),
+        }
+    }
+
+    /// 변환 결과로 마무리를 이어 갈지 정하는 표(core.md 61 M4).
+    #[test]
+    fn defrag_verdict_table() {
+        let converted = DefragReport::Converted {
+            tracks: 1,
+            samples: 1,
+            discontinuities: 0,
+        };
+        assert!(matches!(defrag_verdict(Ok(Ok(converted))), Ok(true)));
+        assert!(matches!(
+            defrag_verdict(Ok(Ok(DefragReport::AlreadyFlat))),
+            Ok(false)
+        ));
+        assert!(matches!(
+            defrag_verdict(Ok(Ok(DefragReport::NotFragmented))),
+            Ok(false)
+        ));
+        // 바꾸기 전 실패(또는 되돌렸다): 조각 구조로 마무리한다
+        assert!(matches!(
+            defrag_verdict(Ok(Err(DefragError::Unchanged(parse_err())))),
+            Ok(false)
+        ));
+        // 바꾸는 도중 실패: 마무리하지 않는다
+        assert!(matches!(
+            defrag_verdict(Ok(Err(DefragError::Modified(parse_err())))),
+            Err(Error::Parse { .. })
+        ));
+        // 태스크·핸들 실패: 파일 상태를 모르니 마무리하지 않는다
+        assert!(matches!(
+            defrag_verdict(Err(Error::Cancelled)),
+            Err(Error::Cancelled)
+        ));
     }
 }

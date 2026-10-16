@@ -119,6 +119,29 @@
 - 본인 영상 판정: VOD는 `content.channel.channelId`, 클립은 `ownerChannel.channelId`(제작자 `makerChannel` 아님). OAuth `users/me`의 `channelId`와 같은 식별자인지는 Phase 3에서 실측.
 - Tauri 2.12 계열, Svelte 템플릿은 SvelteKit+adapter-static(SPA). 진행률은 Channel API. 버전 근거는 `docs/research/stack.md`.
 
+### 기능 ③·④ 사용자 실측(대기, 도구 2026-10-16)
+
+결과는 범주·된다/안 된다만 적는다(ID·개수 원값 없음). 도구: ③ `node worker/scripts/listing-check.mjs <본인 VOD 주소> [--burst] [--soak <초>]`, ④ 아래.
+
+- M-③-1 VOD 목록 비로그인 · 페이지 방식 · 총 개수 범주 · size 관찰 · 정렬(관찰 표본, 호출·항목 수): (대기)
+- M-③-2 클립 목록(이 경로) · 페이지 방식 · 다음 페이지: (대기)
+- M-③-3 목록 항목 채널 ID = info 채널 ID: (대기)
+- M-③-4 쿠키 켬 총 개수 비교 · 성인 표시(비공개·구독자 전용은 개발 빌드): (대기)
+- M-③-5 항목 필드 있음/없음: (대기)
+- M-③-6 짧은 간격 20회 429(`--burst`): (대기)
+- M-③-6-2 겹쳐 돌리기(`--soak` + ④ 도구 동시): (대기)
+- M-③-7 VOD 자동 삭제(치지직 화면): (대기)
+- 도구 ④: `cargo run -p chzzk-core --example vod_chat_check -- <본인 VOD 주소> [--cookies] [--rewind] [--write-ass <mp4> | --write-srt <mp4>]`
+- M-④-1 비로그인 첫 페이지: (대기)
+- M-④-2 로그인 첫 페이지(`--cookies`): (대기)
+- M-④-3 info v2 채팅 사용 여부 필드: (대기)
+- M-④-4 끝 신호·400 위치(Q8, 일반·빠른 다시보기 각 2개 이상) · 경계 되풀이: (대기)
+- M-④-5 페이지 수 범주 · 429: (대기)
+- M-④-6 재생 위치 단조 · 길이 넘김: (대기)
+- M-④-7 작성 시각 흩어짐 · 가려진 메시지: (대기)
+- M-④-8 `.ass` 자동 열림 mpv·VLC · 시각 · 빠른 다시보기 mp4 길이·탐색(U2 입력): (대기)
+- M-④-9 `.srt` 편집 프로그램 읽힘 · 겹친 줄(U2 입력): (대기)
+
 ## 단계
 
 ### Phase 0 — 하네스 재구축

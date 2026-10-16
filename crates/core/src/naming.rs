@@ -268,6 +268,36 @@ pub fn parse_live_time(raw: &str) -> Option<(u8, u8)> {
     (hh < 24 && mm < 60).then_some((hh, mm))
 }
 
+/// 영상 최종 경로 옆 파일 경로. 파일 이름 끝의 `.mp4`(대소문자 무시)만 `ext`로 바꾼다. `.mp4`로 끝나지 않으면
+/// 이름 뒤에 `ext`를 붙인다. `ext`는 점을 포함한다(`".ass"`, `".chat.jsonl"`). 메타데이터로 이름을 다시 만들지 않고
+/// 길이도 자르지 않는다(최대 `.chat.jsonl.part.json`으로 217바이트).
+pub fn sibling_path(video: &Path, ext: &str) -> PathBuf {
+    debug_assert!(ext.starts_with('.'));
+    let Some(name) = video.file_name() else {
+        let mut p = video.as_os_str().to_owned();
+        p.push(ext);
+        return PathBuf::from(p);
+    };
+    match name.to_str() {
+        Some(n) => {
+            let stem = match n.len().checked_sub(EXT.len()) {
+                Some(cut)
+                    if cut > 0 && n.is_char_boundary(cut) && n[cut..].eq_ignore_ascii_case(EXT) =>
+                {
+                    &n[..cut]
+                }
+                _ => n,
+            };
+            video.with_file_name(format!("{stem}{ext}"))
+        }
+        None => {
+            let mut n = name.to_owned();
+            n.push(ext);
+            video.with_file_name(n)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -675,5 +705,68 @@ mod tests {
         } else {
             assert_eq!(p, Linux);
         }
+    }
+
+    #[test]
+    fn sibling_path_replaces_mp4() {
+        let v = Path::new("/out/[260102] 테스트채널 - 테스트 다시보기.mp4");
+        assert_eq!(
+            sibling_path(v, ".ass"),
+            Path::new("/out/[260102] 테스트채널 - 테스트 다시보기.ass")
+        );
+    }
+
+    #[test]
+    fn sibling_path_upper_ext() {
+        assert_eq!(sibling_path(Path::new("a.MP4"), ".srt"), Path::new("a.srt"));
+    }
+
+    #[test]
+    fn sibling_path_numbered() {
+        assert_eq!(
+            sibling_path(Path::new("a (1).mp4"), ".chat.jsonl"),
+            Path::new("a (1).chat.jsonl")
+        );
+    }
+
+    #[test]
+    fn sibling_path_no_mp4() {
+        assert_eq!(
+            sibling_path(Path::new("a.mkv"), ".ass"),
+            Path::new("a.mkv.ass")
+        );
+        assert_eq!(sibling_path(Path::new("a"), ".ass"), Path::new("a.ass"));
+        // 이름이 ".mp4" 하나뿐이면 앞부분이 없으므로 바꾸지 않고 뒤에 붙인다
+        assert_eq!(
+            sibling_path(Path::new(".mp4"), ".ass"),
+            Path::new(".mp4.ass")
+        );
+    }
+
+    #[test]
+    fn sibling_path_three_os() {
+        for p in ALL {
+            let out = super::output_path(Path::new("out"), "CON. 제목 .mp4", p);
+            let sib = sibling_path(&out, ".ass");
+            let out_name = out.file_name().unwrap().to_str().unwrap();
+            let sib_name = sib.file_name().unwrap().to_str().unwrap();
+            // 정리 결과를 다시 만들지 않는다: 끝 4바이트만 바뀐다
+            assert_eq!(
+                sib_name,
+                format!("{}.ass", &out_name[..out_name.len() - 4]),
+                "{p:?}"
+            );
+            assert_eq!(sib.parent(), out.parent());
+        }
+    }
+
+    #[test]
+    fn sibling_path_full_length() {
+        let name = format!("{}a.mp4", "가".repeat(65));
+        assert_eq!(name.len(), 200);
+        let sib = sibling_path(Path::new(&name), ".chat.jsonl.part.json");
+        let sib_name = sib.file_name().unwrap().to_str().unwrap();
+        assert_eq!(sib_name.len(), 217);
+        assert!(sib_name.starts_with(&name[..196]));
     }
 }

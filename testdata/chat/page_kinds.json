@@ -1,0 +1,98 @@
+{
+  "code": 200,
+  "message": null,
+  "content": {
+    "nextPlayerMessageTime": null,
+    "previousVideoChats": [],
+    "videoChats": [
+      {
+        "chatChannelId": "N1fakeChat",
+        "messageTime": 1767322801000,
+        "userIdHash": "user-hash-01",
+        "content": "일반 메시지",
+        "extras": "{}",
+        "messageTypeCode": 1,
+        "messageStatusType": "NORMAL",
+        "profile": "{\"nickname\":\"가상시청자1\"}",
+        "playerMessageTime": 1000
+      },
+      {
+        "chatChannelId": "N1fakeChat",
+        "messageTime": 1767322802000,
+        "userIdHash": "user-hash-02",
+        "content": "후원 메시지",
+        "extras": "{\"payAmount\":1000}",
+        "messageTypeCode": 10,
+        "messageStatusType": "NORMAL",
+        "profile": "{\"nickname\":\"가상시청자2\"}",
+        "playerMessageTime": 2000
+      },
+      {
+        "chatChannelId": "N1fakeChat",
+        "messageTime": 1767322803000,
+        "userIdHash": "user-hash-03",
+        "content": "구독 메시지",
+        "extras": "{}",
+        "messageTypeCode": 11,
+        "messageStatusType": "NORMAL",
+        "profile": "{\"nickname\":\"가상시청자3\"}",
+        "playerMessageTime": 3000
+      },
+      {
+        "chatChannelId": "N1fakeChat",
+        "messageTime": 1767322804000,
+        "userIdHash": "user-hash-04",
+        "content": "시스템 메시지",
+        "extras": "{}",
+        "messageTypeCode": 30,
+        "messageStatusType": "NORMAL",
+        "profile": "null",
+        "playerMessageTime": 4000
+      },
+      {
+        "chatChannelId": "N1fakeChat",
+        "messageTime": 1767322805000,
+        "userIdHash": "user-hash-05",
+        "content": "모르는 종류",
+        "extras": "{}",
+        "messageTypeCode": 99,
+        "messageStatusType": "NORMAL",
+        "profile": "{\"nickname\":\"가상시청자5\"}",
+        "playerMessageTime": 5000
+      },
+      {
+        "chatChannelId": "N1fakeChat",
+        "messageTime": 1767322806000,
+        "userIdHash": "user-hash-06",
+        "content": "가려진 메시지",
+        "extras": "{}",
+        "messageTypeCode": 1,
+        "messageStatusType": "HIDDEN",
+        "profile": "{\"nickname\":\"가상시청자6\"}",
+        "playerMessageTime": 6000
+      },
+      {
+        "chatChannelId": "N1fakeChat",
+        "messageTime": 1767322807000,
+        "userIdHash": "user-hash-07",
+        "content": "프로필 없음",
+        "extras": "{}",
+        "messageTypeCode": 1,
+        "messageStatusType": "NORMAL",
+        "profile": null,
+        "playerMessageTime": 7000
+      },
+      {
+        "chatChannelId": "N1fakeChat",
+        "messageTime": 1767322808000,
+        "userIdHash": "user-hash-08",
+        "content": "프로필 깨짐",
+        "extras": "{}",
+        "messageTypeCode": 1,
+        "messageStatusType": "NORMAL",
+        "profile": "{\"nickname\":",
+        "playerMessageTime": 8000
+      }
+    ]
+  }
+}

@@ -36,6 +36,9 @@ fn env() -> Env {
     Env { _dir: dir, record }
 }
 
+/// 주의: `ChatPart`가 살아 있는 동안 그 `.part`를 이 함수로 읽지 않는다. Windows의 배타 잠금
+/// (LockFileEx)은 다른 핸들의 읽기도 막아 `os error 33`이 난다(macOS·Linux의 advisory lock은 안 막는다).
+/// 읽기 전에 `drop(p)`로 잠금을 풀거나, 잠근 핸들을 쓰는 `read_messages`·`for_each_message`를 쓴다.
 fn read(p: &Path) -> Vec<u8> {
     std::fs::read(p).unwrap()
 }
@@ -79,6 +82,7 @@ async fn commit_then_resume_restores_cursor_boundary_and_lines() {
     assert_eq!(p.resume_state().boundary_ms, Some(100));
     assert_eq!(p.resume_state().boundary.values().sum::<u32>(), 2);
     assert_eq!(p.lines(), 2);
+    drop(p); // 잠금을 풀어야 다른 핸들로 읽을 수 있다(Windows)
     assert_eq!(
         read(&part_path(&e.record))
             .iter()
@@ -106,7 +110,11 @@ async fn crash_tail_longer_than_sidecar_is_cut_and_no_duplicates() {
     assert!(read(&part_path(&e.record)).len() as u64 > committed);
 
     let mut p = ChatPart::open(&e.record, VIDEO, false).unwrap();
-    assert_eq!(read(&part_path(&e.record)).len() as u64, committed);
+    // 길이는 메타데이터로 본다(내용을 읽지 않으므로 잠금과 부딪히지 않는다)
+    assert_eq!(
+        std::fs::metadata(part_path(&e.record)).unwrap().len(),
+        committed
+    );
     let b = [raw_msg(60, "b", "two")];
     p.commit_page(&refs(&b), &state(90), None).await.unwrap();
     let got = p.read_messages().unwrap();
@@ -124,8 +132,8 @@ async fn missing_or_foreign_or_short_state_starts_over() {
     std::fs::write(part_path(&e.record), b"{\"junk\":1}\n").unwrap();
     let p = ChatPart::open(&e.record, VIDEO, false).unwrap();
     assert_eq!(p.resume_state().cursor, ChatCursor(0));
-    assert_eq!(read(&part_path(&e.record)), b"");
     drop(p);
+    assert_eq!(read(&part_path(&e.record)), b"");
 
     // 다른 영상의 사이드카
     let e = env();
@@ -136,8 +144,8 @@ async fn missing_or_foreign_or_short_state_starts_over() {
     let p = ChatPart::open(&e.record, VIDEO + 1, false).unwrap();
     assert_eq!(p.resume_state().cursor, ChatCursor(0));
     assert_eq!(p.lines(), 0);
-    assert_eq!(read(&part_path(&e.record)), b"");
     drop(p);
+    assert_eq!(read(&part_path(&e.record)), b"");
 
     // .part가 sidecar보다 짧음
     let e = env();
@@ -168,6 +176,7 @@ async fn committed_len_not_on_line_boundary_starts_over() {
     std::fs::write(part_path(&e.record), bytes).unwrap();
     let p = ChatPart::open(&e.record, VIDEO, false).unwrap();
     assert_eq!(p.resume_state().cursor, ChatCursor(0));
+    drop(p);
     assert_eq!(read(&part_path(&e.record)), b"");
 }
 
@@ -181,6 +190,7 @@ async fn restart_discards_received() {
     let p = ChatPart::open(&e.record, VIDEO, true).unwrap();
     assert_eq!(p.resume_state(), WalkState::default());
     assert_eq!(p.lines(), 0);
+    drop(p);
     assert_eq!(read(&part_path(&e.record)), b"");
 }
 
@@ -190,16 +200,18 @@ async fn second_open_is_file_locked_and_leaves_bytes_alone() {
     let a = [raw_msg(10, "a", "one")];
     let mut p = ChatPart::open(&e.record, VIDEO, false).unwrap();
     p.commit_page(&refs(&a), &state(50), None).await.unwrap();
+    drop(p); // 바이트는 잠금이 풀린 상태에서 읽는다(Windows)
     let before = read(&part_path(&e.record));
     let sc_before = read(&sidecar_path(&e.record));
+    let p = ChatPart::open(&e.record, VIDEO, false).unwrap();
     // 잠근 쪽이 살아 있는 동안: 이어받기도 restart도 막히고 아무것도 바뀌지 않는다
     for restart in [false, true] {
         let err = ChatPart::open(&e.record, VIDEO, restart).unwrap_err();
         assert!(matches!(err, Error::FileLocked { .. }), "{err:?}");
     }
-    assert_eq!(read(&part_path(&e.record)), before);
     assert_eq!(read(&sidecar_path(&e.record)), sc_before);
     drop(p);
+    assert_eq!(read(&part_path(&e.record)), before);
     // 풀리면 다시 열린다
     ChatPart::open(&e.record, VIDEO, false).unwrap();
 }
@@ -211,10 +223,11 @@ async fn raw_with_line_breaks_stays_one_line() {
     let m = ChatMessage::from_raw(RawValue::from_string(raw.to_string()).unwrap()).unwrap();
     let mut p = ChatPart::open(&e.record, VIDEO, false).unwrap();
     p.commit_page(&[&m], &state(9), None).await.unwrap();
+    let back = p.read_messages().unwrap();
+    drop(p);
     let bytes = read(&part_path(&e.record));
     assert_eq!(bytes.iter().filter(|&&b| b == b'\n').count(), 1);
     assert_eq!(*bytes.last().unwrap(), b'\n');
-    let back = p.read_messages().unwrap();
     assert_eq!(back.len(), 1);
     assert_eq!(back[0].text, "줄\n바꿈");
 }
@@ -247,6 +260,14 @@ async fn debug_has_no_message_text() {
     );
 }
 
+/// `filled`가 `.part`에 쓰는 바이트(`raw_msg(10, "a", "one")` 한 줄). 잠긴 `.part`를 읽지 않고 비교한다.
+fn filled_bytes() -> Vec<u8> {
+    let mut v =
+        br#"{"playerMessageTime":10,"userIdHash":"a","content":"one","messageTime":10}"#.to_vec();
+    v.push(b'\n');
+    v
+}
+
 async fn filled(e: &Env) -> ChatPart {
     let a = [raw_msg(10, "a", "one")];
     let mut p = ChatPart::open(&e.record, VIDEO, false).unwrap();
@@ -260,7 +281,7 @@ async fn filled(e: &Env) -> ChatPart {
 async fn finalize_moves_and_removes_sidecar() {
     let e = env();
     let p = filled(&e).await;
-    let want = read(&part_path(&e.record));
+    let want = filled_bytes();
     let r = p.finalize(&[], DuplicatePolicy::Skip).await.unwrap();
     assert_eq!(r, ChatFinalized::Moved);
     assert_eq!(read(&e.record), want);
@@ -290,7 +311,7 @@ async fn overwrite_replaces_and_reuses_kept_part() {
     let e = env();
     std::fs::write(&e.record, b"USER-FILE").unwrap();
     let p = filled(&e).await;
-    let want = read(&part_path(&e.record));
+    let want = filled_bytes();
     p.finalize(&[], DuplicatePolicy::Skip).await.unwrap();
     // Conflict 뒤 동의: 남은 .part로 요청 없이 마무리된다(end가 sidecar에 남아 있다)
     let p = ChatPart::open(&e.record, VIDEO, false).unwrap();
@@ -441,6 +462,7 @@ async fn failed_commit_poisons_part_and_reopen_has_no_duplicates() {
     p.commit_page(&refs(&p2), &state(25), None).await.unwrap();
     assert_eq!(p.lines(), 2);
     assert_eq!(p.read_messages().unwrap().len(), 2);
+    drop(p);
     assert_eq!(
         read(&part_path(&e.record))
             .iter()

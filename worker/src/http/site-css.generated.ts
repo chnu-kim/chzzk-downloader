@@ -1012,6 +1012,11 @@ export const SITE_CSS = `/* [root] 라이트 기본값. ref 팔레트와 sys 토
   min-width: 0;
   margin: 0;
 }
+/* 동작 버튼이 있으면 본문 열이 약 12글자보다 좁아지기 전에 버튼이 아래 줄로 간다(components.md §2.12 "좁으면 아래 줄").
+   글자 크기를 따라 커지고, 아이콘과 한 줄에 남도록 열 폭에서 아이콘·gap을 뺀 값을 넘지 않는다 */
+.notice:has(> .notice-actions) > .notice-text {
+  min-width: min(calc(100% - var(--icon-md) - var(--space-8)), calc(12 * var(--text-body)));
+}
 .notice-title {
   font-weight: var(--weight-strong);
 }
@@ -2124,4 +2129,4 @@ pre.license {
   }
 }
 `;
-export const SITE_CSS_HASH = "d31876ab73819da4";
+export const SITE_CSS_HASH = "93ddfe5ea73a0cde";

@@ -102,6 +102,21 @@ describe('빈 상태 두 종류(J13)', () => {
     expect(screen.queryByRole('button', { name: t('list.clearFinished') })).toBeNull();
   });
 
+  it('맡은 채널이 있으면 범위 문장이 넓어진다', async () => {
+    auth.status = { ...signedInAs('a1'), delegatedChannels: [{ channelId: 'c3', channelName: '맡긴 채널' }] };
+    await load([]);
+    render(JobList);
+    expect(screen.getByText(t('list.empty.scopeDelegated'))).toBeInTheDocument();
+    expect(screen.queryByText(t('list.empty.scope'))).toBeNull();
+  });
+
+  it('맡은 채널이 없으면 기존 범위 문장이다', async () => {
+    auth.status = signedInAs('a1');
+    await load([]);
+    render(JobList);
+    expect(screen.getByText(t('list.empty.scope'))).toBeInTheDocument();
+  });
+
   it('최근 영상이 있으면 비운 뒤: list.cleared 한 줄만', async () => {
     settings.dto = {
       ...baseSettings,

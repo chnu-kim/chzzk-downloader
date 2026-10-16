@@ -67,7 +67,7 @@ export const COPY = {
   // 헤더 nav의 이름(보조 기술이 읽는다)
   siteNav: "사이트",
   notice: {
-    unofficial: "VOD 클립 다운로더는 네이버나 치지직과 관련 없는 비공식 도구예요. 치지직과 NAVER는 NAVER Corp.의 상표일 수 있어요. 이 앱은 로그인한 채널의 영상과 클립만 받아요.",
+    unofficial: "VOD 클립 다운로더는 네이버나 치지직과 관련 없는 비공식 도구예요. 치지직과 NAVER는 NAVER Corp.의 상표일 수 있어요. 이 앱은 로그인한 채널과 맡은 채널의 영상과 클립만 받아요.",
     short: "비공식 도구예요 · 네이버·치지직과 제휴하거나 보증받지 않았어요",
   },
   // 랜딩 OG·description(content.md §11). 로그인 여부·채널·버전과 무관한 고정 문구

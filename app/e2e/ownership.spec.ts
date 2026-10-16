@@ -42,12 +42,13 @@ test('남의 영상은 카드에서 막히고, 본인 영상은 받는다', asyn
   await app.open({ auth: me, resolve: { [own.url]: own, [other.url]: other } });
 
   await page.getByLabel(t('url.label')).fill(other.url);
-  await page.getByRole('button', { name: t('common.load') }).click();
+  await page.getByRole('button', { name: t('common.load'), exact: true }).click();
   const card = page.getByRole('region', { name: '남의 방송' });
   await expect(card).toBeVisible();
   const why = notOwn('다른 채널');
-  await expect(card.getByText(why.title)).toBeVisible();
-  await expect(card.getByText(why.body as string)).toBeVisible();
+  await expect(card.getByText(why.title, { exact: true })).toBeVisible();
+  // [받기]의 설명용 숨은 요소(제목 + 본문)가 같은 글자를 품으므로 본문 요소만 정확히 고른다
+  await expect(card.getByText(why.body as string, { exact: true })).toBeVisible();
   // 못 받는 이유가 있으면 [받기]는 aria-disabled이고 그 문장이 설명이다
   const download = card.getByRole('button', { name: t('card.download') });
   await expect(download).toHaveAttribute('aria-disabled', 'true');
@@ -57,7 +58,7 @@ test('남의 영상은 카드에서 막히고, 본인 영상은 받는다', asyn
   await app.axe('남의 영상 카드');
 
   await page.getByLabel(t('url.label')).fill(own.url);
-  await page.getByRole('button', { name: t('common.load') }).click();
+  await page.getByRole('button', { name: t('common.load'), exact: true }).click();
   const mine = page.getByRole('region', { name: '내 방송' });
   await expect(mine).toBeVisible();
   await mine.getByRole('button', { name: t('card.download') }).click();
@@ -121,7 +122,7 @@ test('관리자는 남의 영상을 안내와 함께 받고, 다른 채널의 �
   await expect(stopped.getByText(t('job.otherChannel.body'))).toHaveCount(0);
 
   await page.getByLabel(t('url.label')).fill(other.url);
-  await page.getByRole('button', { name: t('common.load') }).click();
+  await page.getByRole('button', { name: t('common.load'), exact: true }).click();
   const card = page.getByRole('region', { name: '남의 방송' });
   await expect(card).toBeVisible();
   await expect(card.getByText(t('receive.admin.otherChannel.title'))).toBeVisible();

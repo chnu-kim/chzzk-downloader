@@ -622,10 +622,40 @@ const GOLDEN: Row[] = [
     error: err('notOwnContent'),
     ctx: { ...R, channelName: '남의 채널', myChannel: '내 채널' },
     title: '내 채널의 영상만 받을 수 있어요',
-    body: '이 영상은 다른 채널의 영상이에요.',
-    actions: ['close'],
+    body: '이 영상은 다른 채널의 영상이에요. 이 채널의 편집자라면 채널 주인에게 초대 주소를 받아 열어 주세요.',
+    actions: ['recheck', 'close'],
     detail: null,
     rows: ['영상의 채널: ‘남의 채널’', '로그인한 채널: ‘내 채널’'],
+  },
+  {
+    name: 'notOwnContent R: 맡은 채널이 있으면 제목이 넓어진다',
+    error: err('notOwnContent'),
+    ctx: { ...R, channelName: '남의 채널', myChannel: '내 채널', delegatedCount: 1 },
+    title: '내 채널이나 맡은 채널의 영상만 받을 수 있어요',
+    body: '이 영상은 다른 채널의 영상이에요. 이 채널의 편집자라면 채널 주인에게 초대 주소를 받아 열어 주세요.',
+    actions: ['recheck', 'close'],
+    detail: null,
+    rows: ['영상의 채널: ‘남의 채널’', '로그인한 채널: ‘내 채널’'],
+  },
+  {
+    name: 'notOwnContent R: 맡은 채널의 생방송(L-D1)',
+    error: err('notOwnContent'),
+    ctx: { ...R, channelName: '남의 채널', myChannel: '내 채널', delegatedCount: 1, delegatedLive: true },
+    title: '맡은 채널의 생방송은 녹화할 수 없어요',
+    body: '방송이 끝나고 영상이 올라오면 받을 수 있어요.',
+    actions: ['close'],
+    detail: null,
+    rows: ['영상의 채널: ‘남의 채널’'],
+  },
+  {
+    name: 'notOwnContent D: 맡은 채널의 생방송은 [목록에서 지우기]만',
+    error: err('notOwnContent'),
+    ctx: { ...D, channelName: '남의 채널', delegatedLive: true },
+    title: '맡은 채널의 생방송은 녹화할 수 없어요',
+    body: '방송이 끝나고 영상이 올라오면 받을 수 있어요.',
+    actions: ['remove'],
+    detail: null,
+    rows: ['영상의 채널: ‘남의 채널’'],
   },
   {
     name: 'notOwnContent D: 이름을 모르면 행이 없다',
@@ -820,5 +850,11 @@ describe('AppError 좁히기', () => {
     expect(toAppError(err('cancelled')).code).toBe('internal');
     const io = err('io');
     expect(toAppError(io)).toBe(io);
+  });
+});
+
+describe('recheck 동작 글자', () => {
+  it('[다시 불러오기]는 reresolve와 같은 글자다', () => {
+    expect(actionLabel('recheck')).toBe(t('action.reresolve'));
   });
 });

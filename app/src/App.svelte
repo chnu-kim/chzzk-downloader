@@ -14,6 +14,7 @@
   import PageContainer from './lib/components/ui/PageContainer.svelte';
   import { t } from './lib/copy/ko';
   import { auth } from './lib/stores/auth.svelte';
+  import { editors } from './lib/stores/editors.svelte';
   import { jobs } from './lib/stores/jobs.svelte';
   import { platform } from './lib/stores/platform.svelte';
   import { power } from './lib/stores/power.svelte';
@@ -112,6 +113,12 @@
         loginInFlight = false;
       } else if (st.state !== 'checking') loginInFlight = false;
     });
+  });
+
+  // 편집자 지연 빼기는 시작한 계정에 묶인다(app.md 구현 중 변경 81 (나))
+  $effect(() => {
+    const st = auth.status;
+    untrack(() => editors.onAuth(st));
   });
 
   // 잠금이 풀릴 때마다 설정을 다시 읽는다(get_settings는 게이트 뒤, app.md 구현 중 변경 60 (3)).

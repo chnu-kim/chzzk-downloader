@@ -67,6 +67,7 @@ export function bestQualityIndex(qualities: readonly QualityDto[]): number | nul
 /** 메타 줄 조각: 채널 · 날짜 · 길이. 없는 것은 뺀다. */
 export function metaParts(r: ResolvedDto): string[] {
   const parts = [r.meta.channelName];
+  if (r.ownership === 'delegated') parts.push(t('delegated.title'));
   // API 날짜는 KST 벽시계 그대로다(시간대 변환 없음, content.md §7)
   const live = parseKstWall(r.meta.liveOpenDate);
   const pub = parseKstWall(r.meta.publishDate);

@@ -125,3 +125,17 @@ describe('remainingSecs', () => {
     expect(remainingSecs(1000, 2_000_000)).toBe(0);
   });
 });
+
+describe('loginScreen: 거부 화면의 편집자 안내 한 줄(Z6)', () => {
+  it('일반 거부에만 hint가 있다', () => {
+    expect(loginScreen(st('denied'), 0)!.hint).toBe(t('auth.denied.editorHint'));
+    expect(loginScreen(st('denied', null, '테스트 채널'), 0)!.hint).toBe(t('auth.denied.editorHint'));
+  });
+  it('허가에서 빠진 거부·그 밖의 화면은 hint가 null이다', () => {
+    expect(loginScreen(st('denied', 'removedFromAllowlist'), 0)!.hint).toBeNull();
+    expect(loginScreen(st('signedOut'), 0)!.hint).toBeNull();
+    expect(loginScreen(st('checking'), 0)!.hint).toBeNull();
+    expect(loginScreen({ ...st('pending'), pending: { expiresAt: 1 } }, 0)!.hint).toBeNull();
+    expect(loginScreen(st('expired', 'revoked'), 0)!.hint).toBeNull();
+  });
+});

@@ -293,3 +293,18 @@ describe('상수', () => {
     expect(CHECK_DEBOUNCE_MS).toBe(150);
   });
 });
+
+describe('metaParts: 맡은 채널 조각(RV7)', () => {
+  it('delegated면 채널 이름 다음에 `맡은 채널` 조각이 붙는다', () => {
+    expect(metaParts(resolved({ ownership: 'delegated' }))).toEqual([
+      '채널이름',
+      t('delegated.title'),
+      '2026. 10. 3. 오후 9:00 방송',
+      '3:12:45',
+    ]);
+  });
+  it('own·unchecked면 없다', () => {
+    expect(metaParts(resolved({ ownership: 'own' }))).not.toContain(t('delegated.title'));
+    expect(metaParts(resolved({ ownership: 'unchecked' }))).not.toContain(t('delegated.title'));
+  });
+});

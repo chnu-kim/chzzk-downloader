@@ -59,6 +59,16 @@ const RECENT: RecentVodDto[] = [
 ];
 
 const R = resolved();
+// 편집자 위임 화면용 합성 채널 ID(실제 값 아님)
+const EDITOR_ID = '000000000000000000000000000000b2';
+const EDITOR2_ID = '000000000000000000000000000000d4';
+const DELEGATED_ID = '000000000000000000000000000000c3';
+const NOT_OWN = resolved({
+  url: 'https://chzzk.naver.com/video/7654321',
+  content: { kind: 'video', videoNo: 7654321 },
+  ownership: 'notOwn',
+  meta: { ...R.meta, title: '남의 방송', channelName: '다른 채널', channelId: DELEGATED_ID },
+});
 const WORST = worstCaseResolved();
 const SLOW_URL = 'https://chzzk.naver.com/video/7777777';
 
@@ -101,6 +111,12 @@ export const open = (page: Page, name: string) => page.getByRole('button', { nam
 const loadCard = async (app: App, url: string) => {
   await app.page.getByLabel(t('url.label')).fill(url);
   await open(app.page, t('common.load')).click();
+};
+
+// 높이 231에서는 sticky 입력줄·카드 바닥이 화면의 절반을 쓴다. 스크롤 위치는 포커스·레이아웃 순서에 따라 달라지고,
+// 입력줄이 카드 머리의 [닫기]를 덮으면 axe가 대상 크기(가려짐)로 잡는다: 카드 머리를 입력줄 바로 아래에 두고 잰다
+const settleCardTop = async (page: Page, env: Env) => {
+  if (env.vp.height < 400) await page.locator('.video-card').evaluate((el) => el.scrollIntoView({ block: 'start' }));
 };
 
 export const SCREENS: Screen[] = [
@@ -148,10 +164,7 @@ export const SCREENS: Screen[] = [
       await expect(app.page.getByText(t('conflict.exists'))).toBeVisible();
     },
     ready: (p) => p.getByRole('region', { name: WORST_TITLE }),
-    // 높이 231에서는 sticky 입력줄·카드 바닥이 화면의 절반을 쓴다: 카드 머리를 입력줄 바로 아래에 두고 잰다
-    settle: async (page, env) => {
-      if (env.vp.height < 400) await page.locator('.video-card').evaluate((el) => el.scrollIntoView({ block: 'start' }));
-    },
+    settle: settleCardTop,
     aligned: ['입력줄 왼쪽', '배너 왼쪽', '배너 오른쪽', '카드 왼쪽', '카드 오른쪽'],
     card: true,
   },
@@ -223,6 +236,43 @@ export const SCREENS: Screen[] = [
       only: ['라이트 720', '다크 960'],
     }),
   ),
+  {
+    id: '설정(편집자)',
+    slug: 'settings-editors',
+    scenario: (_env, now) => ({
+      auth: { ...SIGNED_IN, delegatedChannels: [{ channelId: DELEGATED_ID, channelName: '맡긴 채널' }] },
+      editors: {
+        editors: [
+          { channelId: EDITOR_ID, channelName: '편집자 하나', since: now - 13 * 86400, status: 'active' },
+          { channelId: EDITOR2_ID, channelName: '편집자 둘', since: now - 86400, status: 'pending' },
+        ],
+        delegatedChannels: [{ channelId: DELEGATED_ID, channelName: '맡긴 채널', since: now - 13 * 86400 }],
+        pendingInviteUntil: null,
+        editorsMax: 10,
+        delegationsMax: 20,
+      },
+    }),
+    drive: async (app) => {
+      await open(app.page, t('header.settings')).click();
+      await open(app.page, t('editors.invite.make')).click();
+    },
+    ready: (p) => p.getByLabel(t('editors.invite.label')),
+    only: ['라이트 720', '다크 960', '아주 크게 320 다크'],
+  },
+  {
+    id: '카드(남의 영상)',
+    slug: 'card-not-own',
+    scenario: (_env, now) => ({
+      auth: { ...SIGNED_IN, delegationsCheckedAt: now - 3600 },
+      resolve: { [NOT_OWN.url]: NOT_OWN },
+    }),
+    drive: async (app) => {
+      await loadCard(app, NOT_OWN.url);
+    },
+    ready: (p) => p.getByRole('region', { name: NOT_OWN.meta.title }),
+    settle: settleCardTop,
+    card: true,
+  },
   {
     id: '설정(고급 펼침)',
     slug: 'settings-advanced',

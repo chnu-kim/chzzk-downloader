@@ -309,7 +309,7 @@
 │  │ 영상 받기를 맡긴 사람이 없어요.                                       │
 │  │────────────────────────────────────────────────────────────────────│
 │  │ 맡은 채널                                                           │ delegated.title(라벨 fg)
-│  │ 이 채널의 영상과 클립도 받을 수 있어요.                                │ delegated.help
+│  │ 맡은 채널의 영상과 클립도 받을 수 있어요.                              │ delegated.help
 │  │────────────────────────────────────────────────────────────────────│
 │  │ 채널이름1                                       [편집자 그만두기] │ 36 │ <bdi> · ghost sm neutral
 │  │ 10월 3일부터                                                        │    │
@@ -384,7 +384,7 @@
 | `editors.remove.failed` | 편집자를 빼지 못했어요. 잠시 뒤 다시 시도해 주세요. | inline danger |
 | `toast.editorRemoved` | ‘{name}’ 편집자를 뺐어요 | 토스트 + [되돌리기](`action.undo` `ko.ts:154` [확인]) |
 | `delegated.title` | 맡은 채널 | 행 라벨 |
-| `delegated.help` | 이 채널의 영상과 클립도 받을 수 있어요. | |
+| `delegated.help` | 맡은 채널의 영상과 클립도 받을 수 있어요. | |
 | `delegated.leave` | 편집자 그만두기 | 버튼 |
 | `delegated.leave.failed` | 편집자를 그만두지 못했어요. 잠시 뒤 다시 시도해 주세요. | inline danger |
 | `toast.delegationLeft` | ‘{name}’ 채널의 편집자를 그만뒀어요 | 토스트 |

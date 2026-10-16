@@ -6,7 +6,8 @@
     "install-windows",
     "login-browser",
     "report",
-    "windows-old-app"
+    "windows-old-app",
+    "editors"
   ],
   "retired": []
 }

@@ -242,3 +242,26 @@ async fn full_flow_leaks_nothing() {
     }
     assert!(!log.is_empty(), "로그가 비어 있다(subscriber 확인)");
 }
+
+/// 초대 주소는 가진 사람이 편집자가 되는 자격이라 어떤 `Debug`에도 토큰 조각이 없다
+#[test]
+fn invite_url_is_hidden_in_debug() {
+    let tail = "A".repeat(43);
+    let url = format!("https://worker.example.invalid/invite/cdi_{tail}");
+    let body = json!({"inviteUrl": url, "expiresAt": "2030-01-08T00:00:00Z"}).to_string();
+    let base = WorkerBase::parse("https://worker.example.invalid").unwrap();
+    let r = parse_invite(body.as_bytes(), &base).unwrap();
+    // 양성 대조: 값은 실제로 들고 있다
+    assert_eq!(r.invite_url.expose(), url);
+    let dto = chzzk_shell::dto::InviteDto::from(&r);
+    assert_eq!(dto.url, url);
+    for t in [
+        format!("{:?}", r.invite_url),
+        format!("{r:?}"),
+        format!("{dto:?}"),
+        format!("{:?}", Some(&r)),
+    ] {
+        assert!(!t.contains(&tail), "Debug에 초대 토큰이 있다: {t}");
+        assert!(!t.contains("cdi_"), "Debug에 초대 접두가 있다: {t}");
+    }
+}

@@ -59,6 +59,20 @@ impl fmt::Debug for StartResponse {
     }
 }
 
+/// 맡은 채널 목록 상한(셸 쪽 파싱 가드, Worker DELEGATIONS_MAX와 같다)
+pub const DELEGATED_MAX: usize = 20;
+/// 편집자 목록 상한(셸 쪽 파싱 가드, Worker EDITORS_MAX와 같다)
+pub const EDITORS_PARSE_MAX: usize = 10;
+
+/// 맡은 채널 하나(주인의 판정용 채널 ID·표시 이름). 비밀이 아니다
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DelegatedChannel {
+    /// 주인의 판정용 채널 ID
+    pub channel_id: String,
+    /// 표시 이름
+    pub channel_name: String,
+}
+
 /// 성공한 토큰 묶음(redeem ok·refresh 200)
 #[derive(Clone, PartialEq, Eq)]
 pub struct TokenBundle {
@@ -76,6 +90,8 @@ pub struct TokenBundle {
     pub channel_name: String,
     /// 관리자 여부
     pub is_admin: bool,
+    /// 맡은 채널(없으면 빈 목록)
+    pub delegated_channels: Vec<DelegatedChannel>,
 }
 
 impl fmt::Debug for TokenBundle {
@@ -88,8 +104,85 @@ impl fmt::Debug for TokenBundle {
             .field("channel_id", &self.channel_id)
             .field("channel_name", &self.channel_name)
             .field("is_admin", &self.is_admin)
+            .field("delegated_channels", &self.delegated_channels)
             .finish()
     }
+}
+
+/// 편집자 상태
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EditorStatus {
+    /// 활성
+    Active,
+    /// 초대 수락 대기
+    Pending,
+}
+
+/// 편집자 한 명
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EditorEntry {
+    /// 편집자의 로그인 채널 ID
+    pub channel_id: String,
+    /// 표시 이름
+    pub channel_name: String,
+    /// 맡은 시각
+    pub since: OffsetDateTime,
+    /// 상태
+    pub status: EditorStatus,
+}
+
+/// 맡은 채널과 맡은 시각(옛 Worker는 시각이 없다)
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DelegatedSince {
+    /// 채널
+    pub channel: DelegatedChannel,
+    /// 맡은 시각
+    pub since: Option<OffsetDateTime>,
+}
+
+/// `GET /api/me` 200
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MeResponse {
+    /// 판정용 채널 ID
+    pub channel_id: String,
+    /// 채널 이름
+    pub channel_name: String,
+    /// 맡은 채널
+    pub delegated: Vec<DelegatedSince>,
+    /// 편집자
+    pub editors: Vec<EditorEntry>,
+    /// 열려 있는 초대의 만료 시각
+    pub pending_invite_until: Option<OffsetDateTime>,
+    /// 편집자 상한
+    pub editors_max: u32,
+    /// 맡은 채널 상한
+    pub delegations_max: u32,
+}
+
+/// 초대 주소(`{origin}/invite/cdi_…`). 가진 사람 누구나 편집자가 되는 자격이라 Debug·로그에 내지 않는다
+#[derive(Clone, PartialEq, Eq)]
+pub struct InviteUrl(Secret<String>);
+
+impl InviteUrl {
+    /// 주소 문자열(웹뷰에 보여 줄 때만 쓴다)
+    pub fn expose(&self) -> &str {
+        self.0.expose()
+    }
+}
+
+impl fmt::Debug for InviteUrl {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("InviteUrl(***)")
+    }
+}
+
+/// `POST /api/editors/invite` 200
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InviteResponse {
+    /// 초대 주소
+    pub invite_url: InviteUrl,
+    /// 만료 시각
+    pub expires_at: OffsetDateTime,
 }
 
 /// `/auth/redeem` 200 응답
@@ -177,6 +270,28 @@ pub trait WorkerApi: Send + Sync + 'static {
         &self,
         access: Option<&Secret<String>>,
         refresh: Option<&Secret<String>>,
+    ) -> impl Future<Output = Result<(), ApiError>> + Send;
+    /// `GET /api/me`
+    fn me(
+        &self,
+        access: &Secret<String>,
+    ) -> impl Future<Output = Result<MeResponse, ApiError>> + Send;
+    /// `POST /api/editors/invite`
+    fn create_invite(
+        &self,
+        access: &Secret<String>,
+    ) -> impl Future<Output = Result<InviteResponse, ApiError>> + Send;
+    /// `POST /api/editors/remove`(본문은 편집자의 로그인 채널 ID). 204면 Ok
+    fn remove_editor(
+        &self,
+        access: &Secret<String>,
+        editor_channel_id: &str,
+    ) -> impl Future<Output = Result<(), ApiError>> + Send;
+    /// `POST /api/delegations/leave`(본문은 주인의 판정용 채널 ID). 204면 Ok
+    fn leave_delegation(
+        &self,
+        access: &Secret<String>,
+        owner_channel_id: &str,
     ) -> impl Future<Output = Result<(), ApiError>> + Send;
 }
 
@@ -284,6 +399,11 @@ pub fn parse_bundle(body: &[u8]) -> Option<TokenBundle> {
     {
         return None;
     }
+    let channel_id_s = channel_id.to_string();
+    let delegated_channels = parse_delegated(v.get("delegatedChannels"), &channel_id_s, false)
+        .into_iter()
+        .map(|d| d.channel)
+        .collect();
     Some(TokenBundle {
         access_token: Secret::new(access.to_string()),
         access_expires_at: parse_time(v.get("accessExpiresAt")?.as_str()?)?,
@@ -292,5 +412,127 @@ pub fn parse_bundle(body: &[u8]) -> Option<TokenBundle> {
         channel_id: channel_id.to_string(),
         channel_name: truncate_chars(v.get("channelName")?.as_str()?, 128),
         is_admin: v.get("isAdmin")?.as_bool()?,
+        delegated_channels,
+    })
+}
+
+/// 맡은 채널 배열 → 목록. 틀린 원소는 버릴 뿐 전체를 거부하지 않는다(redeem ok는 한 번뿐).
+/// 자기 채널·중복은 버리고 `DELEGATED_MAX`개까지만 받는다
+fn parse_delegated(v: Option<&Value>, self_id: &str, with_since: bool) -> Vec<DelegatedSince> {
+    let Some(Value::Array(arr)) = v else {
+        return Vec::new();
+    };
+    let mut out: Vec<DelegatedSince> = Vec::new();
+    for el in arr {
+        if out.len() >= DELEGATED_MAX {
+            break;
+        }
+        let Some(id) = el
+            .get("channelId")
+            .and_then(Value::as_str)
+            .filter(|c| token::is_channel_id(c))
+        else {
+            continue;
+        };
+        let Some(name) = el.get("channelName").and_then(Value::as_str) else {
+            continue;
+        };
+        if id == self_id || out.iter().any(|d| d.channel.channel_id == id) {
+            continue;
+        }
+        let since = if with_since {
+            el.get("since").and_then(Value::as_str).and_then(parse_time)
+        } else {
+            None
+        };
+        out.push(DelegatedSince {
+            channel: DelegatedChannel {
+                channel_id: id.to_string(),
+                channel_name: truncate_chars(name, 128),
+            },
+            since,
+        });
+    }
+    out
+}
+
+/// `GET /api/me` 200 본문. 없는 키는 빈 목록·`None`·기본 한도(옛 Worker·배포 창). `channelId`·`channelName`이 틀리면 None
+pub fn parse_me(body: &[u8]) -> Option<MeResponse> {
+    let v: Value = serde_json::from_slice(body).ok()?;
+    let channel_id = v.get("channelId")?.as_str()?;
+    if !token::is_channel_id(channel_id) {
+        return None;
+    }
+    let channel_name = truncate_chars(v.get("channelName")?.as_str()?, 128);
+    let delegated = parse_delegated(v.get("delegatedChannels"), channel_id, true);
+    let mut editors: Vec<EditorEntry> = Vec::new();
+    if let Some(Value::Array(arr)) = v.get("editors") {
+        for el in arr {
+            if editors.len() >= EDITORS_PARSE_MAX {
+                break;
+            }
+            let Some(id) = el
+                .get("channelId")
+                .and_then(Value::as_str)
+                .filter(|c| token::is_channel_id(c))
+            else {
+                continue;
+            };
+            let Some(name) = el.get("channelName").and_then(Value::as_str) else {
+                continue;
+            };
+            let Some(since) = el.get("since").and_then(Value::as_str).and_then(parse_time) else {
+                continue;
+            };
+            let status = match el.get("status").and_then(Value::as_str) {
+                Some("active") => EditorStatus::Active,
+                Some("pending") => EditorStatus::Pending,
+                _ => continue,
+            };
+            if editors.iter().any(|e| e.channel_id == id) {
+                continue;
+            }
+            editors.push(EditorEntry {
+                channel_id: id.to_string(),
+                channel_name: truncate_chars(name, 128),
+                since,
+                status,
+            });
+        }
+    }
+    let pending_invite_until = v
+        .get("pendingInviteUntil")
+        .and_then(Value::as_str)
+        .and_then(parse_time);
+    let limit = |key: &str, default: u32| {
+        v.get("limits")
+            .and_then(|l| l.get(key))
+            .and_then(Value::as_u64)
+            .filter(|n| (1..=1000).contains(n))
+            .map_or(default, |n| n as u32)
+    };
+    Some(MeResponse {
+        channel_id: channel_id.to_string(),
+        channel_name,
+        delegated,
+        editors,
+        pending_invite_until,
+        editors_max: limit("editors", 10),
+        delegations_max: limit("delegations", 20),
+    })
+}
+
+/// `POST /api/editors/invite` 200 본문. 주소는 `{origin}/invite/cdi_…`여야 하고 만료는 시각이어야 한다
+pub fn parse_invite(body: &[u8], base: &WorkerBase) -> Option<InviteResponse> {
+    let v: Value = serde_json::from_slice(body).ok()?;
+    let url = v.get("inviteUrl")?.as_str()?;
+    let expires_at = parse_time(v.get("expiresAt")?.as_str()?)?;
+    let tok = url.strip_prefix(&format!("{}/invite/", base.origin()))?;
+    if !token::is_invite_token(tok) {
+        return None;
+    }
+    Some(InviteResponse {
+        invite_url: InviteUrl(Secret::new(url.to_string())),
+        expires_at,
     })
 }

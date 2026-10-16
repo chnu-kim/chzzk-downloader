@@ -697,14 +697,21 @@ impl<B: Backend> DownloadManager<B> {
     /// `interrupted`를 모두 다시 줄 세운다(id 순). 같은 경로의 활성 작업이 있으면 그 작업은 건너뛴다.
     /// 재시작 후 자동 이어받기(설정)에 쓴다. 줄 세운 수를 돌려준다.
     pub fn resume_interrupted(&self) -> usize {
-        self.resume_interrupted_where(|_| true)
+        self.resume_interrupted_where(|_, _| true)
     }
 
-    /// `resume_interrupted`와 같고, 작업의 소유 채널 ID가 `keep`을 통과한 것만 줄 세운다(A5: 같은 채널만).
-    pub fn resume_interrupted_where(&self, keep: impl Fn(Option<&str>) -> bool) -> usize {
-        let mut st = self.inner.lock();
-        let ids: Vec<JobId> = st
-            .jobs
+    /// 자동 이어받기 후보(`resume_interrupted_where`와 같은 거르기)를 줄 세우지 않고 돌려준다. 호출자가 작업마다
+    /// 컨텐츠를 다시 판정한 뒤 `resume_job` 경로로 줄 세운다(맡은 채널, app.md 구현 중 변경 79 (아))
+    pub fn interrupted_where(
+        &self,
+        keep: impl Fn(&ContentRef, Option<&str>) -> bool,
+    ) -> Vec<JobId> {
+        let st = self.inner.lock();
+        Self::auto_resume_ids(&st, keep)
+    }
+
+    fn auto_resume_ids(st: &State, keep: impl Fn(&ContentRef, Option<&str>) -> bool) -> Vec<JobId> {
+        st.jobs
             .values()
             .filter(|j| {
                 !j.removing
@@ -713,10 +720,20 @@ impl<B: Backend> DownloadManager<B> {
                     // 파일로 녹화하게 된다. 받은 영상 조각이 있으면 그것을 마무리하는 것이라 줄 세운다.
                     // init만 든 `.part`는 코어가 지우고 지금 방송을 새로 녹화하므로(download/mod.rs) 줄 세우지 않는다(core.md 61 M3)
                     && (!j.is_live() || crate::jobs::live_media_ready(&j.rec))
-                    && keep(j.rec.channel_id.as_deref())
+                    && keep(&j.rec.content, j.rec.channel_id.as_deref())
             })
             .map(|j| j.rec.id)
-            .collect();
+            .collect()
+    }
+
+    /// `resume_interrupted`와 같고, 작업의 컨텐츠와 소유 채널 ID가 `keep`을 통과한 것만 줄 세운다
+    /// (A5, 맡은 채널은 생방송을 뺀다 L-D1).
+    pub fn resume_interrupted_where(
+        &self,
+        keep: impl Fn(&ContentRef, Option<&str>) -> bool,
+    ) -> usize {
+        let mut st = self.inner.lock();
+        let ids = Self::auto_resume_ids(&st, keep);
         let mut n = 0;
         for id in ids {
             if st.blocks_requeue(id).is_some() {

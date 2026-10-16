@@ -36,4 +36,9 @@
     "update_check",
     "update_available",
     "update_install",
+    "editors_list",
+    "editors_invite",
+    "editors_remove",
+    "delegations_leave",
+    "ownership_recheck",
 ]

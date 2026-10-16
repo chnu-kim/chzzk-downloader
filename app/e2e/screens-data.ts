@@ -1,7 +1,7 @@
 // 화면 갤러리가 여는 화면과 환경의 표(screens.spec.ts가 검사하고 shots.spec.ts가 찍는다). 이 파일은 Playwright가 Node에서 읽는다:
 // 화면 글자는 모두 e2e/copy.ts(copy deck)에서 오고, 데이터는 합성이다(실제 채널·영상 값 아님).
 import type { Page, Locator } from '@playwright/test';
-import type { AuthStatusDto, Os, RecentVodDto, UpdateInfoDto } from '../src/lib/bindings';
+import type { AuthStatusDto, ChannelRefDto, Os, RecentVodDto, UpdateInfoDto } from '../src/lib/bindings';
 import { check as outputCheck, resolved, worstCaseResolved, WORST_TITLE } from '../src/test/fixtures';
 import { finishedSet, job, jobStateSet, MY_CHANNEL_ID, prog, SAME_PREFIX_TITLES } from '../src/test/jobFixtures';
 import { CHECK_DEBOUNCE_MS, revealLabel, t } from './copy';
@@ -46,7 +46,7 @@ export const ENVS: Env[] = [
 
 // ───────────────────────── 고정 데이터 ─────────────────────────
 
-const EMPTY_AUTH = { channelId: null, channelName: null, reason: null, pending: null, offline: null, verifiedAt: null, canReconnect: false, isAdmin: false } as const;
+const EMPTY_AUTH = { channelId: null, channelName: null, reason: null, pending: null, offline: null, verifiedAt: null, canReconnect: false, isAdmin: false, delegatedChannels: [] as ChannelRefDto[], delegationsCheckedAt: null } as const;
 const auth = (over: Partial<AuthStatusDto> & Pick<AuthStatusDto, 'state'>): AuthStatusDto => ({ ...EMPTY_AUTH, ...over });
 const SIGNED_IN = auth({ state: 'signedIn', channelId: MY_CHANNEL_ID, channelName: '테스트 채널', verifiedAt: 1_767_322_800 });
 const AVAILABLE: UpdateInfoDto = { version: '9.9.9', current: '0.0.0-e2e', notes: null, pubDate: null };

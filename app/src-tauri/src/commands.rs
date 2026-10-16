@@ -9,9 +9,9 @@ use std::sync::atomic::Ordering;
 use chzzk_core::{ContentRef, PlaybackKind};
 use chzzk_shell::app::{Reveal, chzzk_link};
 use chzzk_shell::dto::{
-    AppFolder, AppInfo, AuthStatusDto, EngineProbe, EnqueueRequest, JobDto, JobEvent,
-    LegacyImportDto, OutputCheck, ResolvedDto, SettingsDto, SettingsPatch, UpdateCheckDto,
-    UpdateInfoDto, UpdateInstallDto, WebPage,
+    AppFolder, AppInfo, AuthStatusDto, EditorsDto, EngineProbe, EnqueueRequest, InviteDto, JobDto,
+    JobEvent, LegacyImportDto, OutputCheck, ResolvedDto, SettingsDto, SettingsPatch,
+    UpdateCheckDto, UpdateInfoDto, UpdateInstallDto, WebPage,
 };
 use chzzk_shell::manager::QUIT_TIMEOUT;
 use chzzk_shell::{App, AppError, JobId};
@@ -386,4 +386,34 @@ pub async fn update_install<R: Runtime>(
     Ok(state
         .update_install(&PluginUpdateSource::new(app), &host, confirm_pause)
         .await)
+}
+
+/// 편집자 목록·맡은 채널(설정 › 계정 그룹이 열릴 때, 간격 없는 `/api/me`)
+#[tauri::command]
+pub async fn editors_list(state: State<'_, App>) -> Res<EditorsDto> {
+    state.editors_list().await
+}
+
+/// 편집자 초대 주소 만들기
+#[tauri::command]
+pub async fn editors_invite(state: State<'_, App>) -> Res<InviteDto> {
+    state.editors_invite().await
+}
+
+/// 편집자 빼기(편집자의 로그인 채널 ID)
+#[tauri::command]
+pub async fn editors_remove(state: State<'_, App>, channel_id: String) -> Res<()> {
+    state.editors_remove(&channel_id).await
+}
+
+/// 편집자 그만두기(주인의 판정용 채널 ID)
+#[tauri::command]
+pub async fn delegations_leave(state: State<'_, App>, channel_id: String) -> Res<()> {
+    state.delegations_leave(&channel_id).await
+}
+
+/// 막힌 카드의 [다시 불러오기]: 간격 없는 `/api/me` 뒤 같은 주소를 다시 resolve
+#[tauri::command]
+pub async fn ownership_recheck(state: State<'_, App>, url: String) -> Res<ResolvedDto> {
+    state.ownership_recheck(&url).await
 }

@@ -13,6 +13,8 @@ const signedIn: AuthStatusDto = {
   verifiedAt: 1_767_322_800,
   canReconnect: false,
   isAdmin: false,
+  delegatedChannels: [],
+  delegationsCheckedAt: null,
 };
 const available: UpdateInfoDto = { version: '9.9.9', current: '0.0.0-e2e', notes: null, pubDate: null };
 

@@ -12,6 +12,8 @@ use sha2::{Digest, Sha256};
 pub const ACCESS_PREFIX: &str = "cda_";
 /// refresh 토큰 접두
 pub const REFRESH_PREFIX: &str = "cdr_";
+/// 편집자 초대 접두
+pub const INVITE_PREFIX: &str = "cdi_";
 /// 32바이트 난수의 b64url(패딩 없음) 길이
 pub const SECRET_LEN: usize = 43;
 /// 16바이트 id(loginId·handle)의 b64url 길이
@@ -37,6 +39,12 @@ pub fn is_access_token(s: &str) -> bool {
 /// `^cdr_[A-Za-z0-9_-]{43}$`
 pub fn is_refresh_token(s: &str) -> bool {
     s.strip_prefix(REFRESH_PREFIX)
+        .is_some_and(|b| is_b64url_of_len(b, SECRET_LEN))
+}
+
+/// `^cdi_[A-Za-z0-9_-]{43}$`
+pub fn is_invite_token(s: &str) -> bool {
+    s.strip_prefix(INVITE_PREFIX)
         .is_some_and(|b| is_b64url_of_len(b, SECRET_LEN))
 }
 

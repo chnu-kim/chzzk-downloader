@@ -31,7 +31,7 @@ pub struct AppError {
     pub payload: Option<ErrorPayload>,
 }
 
-/// 오류 종류. 앞 24개는 `chzzk_core::ErrorKind`와 1:1, 뒤는 셸 전용이다.
+/// 오류 종류. 앞 25개는 `chzzk_core::ErrorKind`와 1:1, 뒤는 셸 전용이다.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub enum ErrorCode {
@@ -47,6 +47,7 @@ pub enum ErrorCode {
     QualityNotFound,
     PlaybackChanged,
     SourceChanged,
+    RangeOutOfBounds,
     RefreshExhausted,
     Unsupported,
     Parse,
@@ -86,6 +87,7 @@ impl From<ErrorKind> for ErrorCode {
             ErrorKind::QualityNotFound => ErrorCode::QualityNotFound,
             ErrorKind::PlaybackChanged => ErrorCode::PlaybackChanged,
             ErrorKind::SourceChanged => ErrorCode::SourceChanged,
+            ErrorKind::RangeOutOfBounds => ErrorCode::RangeOutOfBounds,
             ErrorKind::RefreshExhausted => ErrorCode::RefreshExhausted,
             ErrorKind::Unsupported => ErrorCode::Unsupported,
             ErrorKind::Parse => ErrorCode::Parse,

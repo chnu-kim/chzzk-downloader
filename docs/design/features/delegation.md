@@ -102,7 +102,7 @@
                                                                         │   ├ 허가 채널: 로그인 = 편집자 됨 → 303 /me/delegations/done
                                                                         │   │   "‘A’ 채널의 편집자가 됐어요 · 내 채널 ‘B’" [편집자 그만두기]
                                                                         │   └ 허가 없음: /auth/done denied + "초대는 기록해 뒀어요.
-                                                                        │       관리자가 허가하면 바로 받을 수 있어요"
+                                                                        │       관리자가 허가하면 ‘A’ 채널의 편집자가 돼요"
                                                                         │       (관리 화면 거부된 시도 행에 꼬리표 "초대 받음 · ‘A’")
                                                                         └ 로그인 됨: "‘A’ 채널의 편집자가 될까요?" [편집자 되기] → 303 /me/delegations/done
 편집자 행에 ‘B’가 뜬다(설정을 열 때 /api/me)                                                                      ‘A’ 영상 주소 붙여넣기
@@ -255,10 +255,10 @@
 |---|---|---|---|
 | 로그인 안 됨 | 웹 세션 없음 ∧ 토큰 유효 | `invite.title` | (가) |
 | 로그인 됨 | 웹 세션 ∧ 토큰 유효 ∧ 상한 미만 | `invite.confirm.title` | (나) |
-| 허가 없음(가+) | 콜백에서 admission 실패 | 기존 `/auth/done` denied 페이지 | `doneDenied.*` + 새 줄 `doneDenied.invite` — 흐름 행에 `invite_hash`가 있을 때만 |
+| 허가 없음(가+) | 콜백에서 admission 실패 | 기존 `/auth/done` denied 페이지 | `doneDenied.*` + 새 줄 `doneDenied.invite` — 흐름 행에 `invite_hash`가 있을 때만. 자리는 채널 정보 바로 뒤, `doneDenied.body` 앞(worker.md 구현 중 변경 106 (마)) |
 | 자기 채널(GET) | 로그인 채널의 판정 ID == 초대 주인 | `invite.self.title` 내 채널의 초대 주소예요 | `invite.self.body` + 처음으로. 아이콘 `info` |
 | 자기 채널(콜백·accept POST 뒤) | 같음 | — | 303 `/` + flash `inviteSelf`(같은 문장). 쿼리를 쓰지 않는다(§8.3) |
-| 이미 편집자 | 활성 행이 이미 있음 | 303 `/` + flash `alreadyDone`(`flash.ts:5` 기존 [확인]) | 멱등(`web.md` §6.3 [확인]) |
+| 이미 편집자 | 활성 행이 이미 있음 | 303 `/` + flash `alreadyEditor`(worker.md 구현 중 변경 106 (마): `alreadyDone` "이미 처리됐어요."는 이 브라우저가 처리한 일이 없는 첫 방문에 맞지 않는다) | 상태를 말한다 |
 | 만료·사용됨·없음·형식 밖 | 토큰 무효 | `invite.gone.title` 초대 주소가 만료됐어요 | `invite.gone.body` + 처음으로. 셋을 구별하지 않는다 |
 | 상한(GET) | 편집자 10 또는 맡은 채널 20 | `invite.full.title` 지금은 더 맡을 수 없어요 | `invite.full.body` |
 | 상한(콜백·POST 뒤) | 같음 | — | 303 `/` + flash `inviteFull` |
@@ -279,7 +279,7 @@
 │  이제 앱에서 ‘채널이름’ 채널의 영상 주소를 붙여넣으면 받을 수 있어요.          │ inviteDone.body
 │  앱이 이미 열려 있다면 영상 카드의 [다시 불러오기]를 눌러 주세요.                 │ inviteDone.refresh
 │  앱은 컴퓨터에서 설치해요.                                                │ inviteDone.desktop(휴대폰·인앱일 때만)
-│  다른 계정으로 하려 했다면 아래에서 그만두고 네이버에서 로그아웃한 뒤 주소를 다시 열어 주세요. │ inviteDone.otherAccount
+│  다른 계정으로 하려 했다면 아래에서 그만둔 뒤 처음 화면과 네이버에서 로그아웃하고, 채널 주인에게 새 초대 주소를 받아 주세요. │ inviteDone.otherAccount
 │  [편집자 그만두기]        처음으로                                         │ btn-secondary(neutral) POST /me/delegations/leave(body owner) → 303 / + flash delegationLeft
 ```
 
@@ -445,17 +445,18 @@
 | `inviteDone.body(owner)` | 이제 앱에서 ‘{owner}’ 채널의 영상 주소를 붙여넣으면 받을 수 있어요. |
 | `inviteDone.refresh` | 앱이 이미 열려 있다면 영상 카드의 [다시 불러오기]를 눌러 주세요. |
 | `inviteDone.desktop` | 앱은 컴퓨터에서 설치해요. |
-| `inviteDone.otherAccount` | 다른 계정으로 하려 했다면 아래에서 그만두고 네이버에서 로그아웃한 뒤 주소를 다시 열어 주세요. |
+| `inviteDone.otherAccount` | 다른 계정으로 하려 했다면 아래에서 그만둔 뒤 처음 화면과 네이버에서 로그아웃하고, 채널 주인에게 새 초대 주소를 받아 주세요.(수락한 초대는 소비되고 그만두기는 되살리지 않으며 네이버 로그아웃은 이 사이트의 웹 세션을 지우지 않는다, worker.md 구현 중 변경 106 (마)) |
 | `leaveDelegation` | 편집자 그만두기 |
 | flash `delegationLeft` | 편집자를 그만뒀어요. 받던 영상은 끝까지 받아요. |
 | flash `inviteSelf` | 내 채널의 초대 주소예요. 편집자에게 보내 주세요. |
 | flash `inviteFull` | 지금은 더 맡을 수 없어요. 채널 주인이나 관리자에게 알려 주세요. |
-| `doneDenied.invite(owner)` | 초대는 기록해 뒀어요. 관리자가 허가하면 바로 ‘{owner}’ 채널의 영상을 받을 수 있어요. |
+| `doneDenied.invite(owner)` | 초대는 기록해 뒀어요. 관리자가 허가하면 ‘{owner}’ 채널의 편집자가 돼요.(허가 뒤에도 다시 로그인해야 하므로 "바로 받을 수 있어요"라 하지 않는다, worker.md 구현 중 변경 106 (마)) |
+| `alreadyEditor`(flash) | 이미 이 초대를 보낸 채널의 편집자예요. |
 | 관리 꼬리표 `deniedInvited(owner)` | 초대 받음 · ‘{owner}’ |
 | `anonLead` | 바뀌지 않는다(`copy.ts:41` "허가받은 채널만 쓸 수 있어요." [확인]) |
 | 허가 사용자 lead | **바꿀 대상이 없다**(정정, 근거 확인 D7): `landing-view.ts:172`는 `signedInAs`를 쓰고 [확인] "본인 채널의 영상만" 문장은 코드에 없다. `landingLead` 키도 `copy.ts`에 없다(web.md:146의 표기가 코드와 다르다 — 이 문서 범위 밖, PR 1에서 web.md 표기만 바로잡는다) |
-| `notice.unofficial` · `landing.consent.use` | §7.1과 같은 문자열(DC6는 `notice.*` 둘에 걸린다 `ko.ts:34` [확인]). `landing.consent.use`는 "허가 확인과 ‘내 기기’·편집자 표시에만 써요."로 Worker만 바꾼다(앱에는 짝 키가 없다) |
-| `/privacy` 새 항목 `privacy.editors` | 제목 "편집자" / 본문 "다른 채널에 영상 받기를 맡기거나 맡으면 두 채널의 이름과 채널 ID, 맡긴 시각을 함께 저장해요. 편집자를 빼거나 그만두면 {days}일 뒤 지워지고, 허가가 빠지면 함께 지워져요." |
+| `notice.unofficial` · `landing.consent.use` | §7.1과 같은 문자열(DC6는 `notice.*` 둘에 걸린다 `ko.ts:34` [확인]). `landing.consent.use`는 "허가 확인과 ‘내 기기’ 표시, 편집자 목록에만 써요."로 Worker만 바꾼다(앱에는 짝 키가 없다) |
+| `/privacy` 새 항목 `privacy.editors` | 제목 "편집자" / 본문 "다른 채널에 영상 받기를 맡기거나 맡으면 두 채널의 이름과 채널 ID, 맡긴 시각을 함께 저장해요. 사용 허가가 없는 채널이 초대 주소로 로그인하면 관리자의 허가를 기다리는 동안 그 채널의 이름과 채널 ID를 최대 {claimDays}일 보관해요. 편집자를 빼거나 그만두면 {days}일 뒤 지워지고, 허가가 빠지면 함께 지워져요."(`claimDays` = `INVITE_CLAIMED_KEEP_MS`) |
 
 flash 종류 추가: `delegationLeft`·`inviteSelf`·`inviteFull`(종류 코드만, 값 없음 — `flash.ts:1` [확인]). `FlashKind`는 지금 셋(`flash.ts:5` `"loggedIn" | "alreadyDone" | "sessionGone"` [확인])이라 **계약 확장**이고, `web.md:222` "flash와 `seeOther` … 계약의 보완은 worker.md 구현 중 변경이 필요하다" [확인]대로 `seeOther` 세 곳과 **같은 구현 중 변경 105**에 적는다(§8.3·§13).
 
@@ -549,7 +550,7 @@ ALTER TABLE flow ADD COLUMN invite_hash TEXT;
 | `GET /invite/:token` | `web_optional` | O(토큰) | 200 페이지(§5.2 상태별) | 토큰 형식 밖·무효 → `invite.gone` 페이지(404). DO RPC ≤ 2(inviteView + webCheck) |
 | `POST /invite/:token/start` | `none` | O | `startWebInvite` → 303 치지직 + F 쿠키 | 토큰 무효 404. **CSRF**: 세션이 없어 hidden `csrf`는 없고 `webStart`와 같은 `sameOriginPost`(Origin = `PUBLIC_ORIGIN`, `auth.ts:136` [확인]) + 같은 IP 스로틀·32행 상한(`config.ts:39`·`flows.ts:27` [확인]) |
 | `GET /auth/callback` | `flow` | O(기존) | 흐름에 `invite_hash`: 허가 채널이면 세션 쿠키 + 303 `/me/delegations/done`; `self`·`full`은 303 `/` + flash `inviteSelf`·`inviteFull`; 거부 채널이면 303 `/auth/done?r=denied`(기존 경로, done 페이지가 새 줄) | 기존 |
-| `POST /invite/:token/accept` | `web` | O | `acceptInvite` → 303 `/me/delegations/done`. `already` → 303 `/` + flash `alreadyDone` | `gone` 페이지(404), `self`·`full` → 303 `/` + flash |
+| `POST /invite/:token/accept` | `web` | O | `acceptInvite` → 303 `/me/delegations/done`. `already` → 303 `/` + flash `alreadyEditor` | `gone` 페이지(404), `self`·`full` → 303 `/` + flash |
 | `GET /me/delegations/done` | `web` | — | 최근 위임 페이지. 없으면 303 `/` | |
 | `POST /me/delegations/leave` | `web` | — | 본문 `owner`(32 hex) → `leaveDelegation` → 303 `/` + flash `delegationLeft`(멱등) | 400 형식 |
 | `GET /api/me` | `app` | — | 응답 확장(§8.4) | 기존 |
@@ -775,7 +776,7 @@ pub struct Signer { pub channel_id: String, pub is_admin: bool, pub delegated: A
 |---|---|---|---|
 | ROADMAP "확정된 결정 › 본인 영상 제한"(`ROADMAP.md:72` [확인]) | 클라이언트에서 로그인 채널 ID == VOD/클립 채널 ID | 로그인 채널 **또는 그 채널 주인이 맡긴 채널** == 영상 채널. 신뢰 수준·판정 자리는 그대로 | 그 행을 `~~옛 결정~~ → **2026-10-16 …**` 꼴로 고친다(`ROADMAP.md:74` 관례 [확인]) + ADR-0026 |
 | 공개 약속 문구 `notice.unofficial` 끝 문장(`ko.ts:34-37`·`copy.ts:67` DC6 [확인]) | "이 앱은 로그인한 채널의 영상과 클립만 받아요." | "… 그리고 채널 주인이 맡긴 채널의 영상과 클립만 받아요." | 두 deck 함께 바뀜 |
-| Worker 로그인 고지 "쓰는 곳" `landing.consent.use`(`copy.ts:46` [확인]) | 허가 확인과 ‘내 기기’ 표시에만 | + 편집자 표시 | Worker만(앱 `auth.consent`에는 "쓰는 곳" 줄이 없다 `ko.ts:270-271` [확인]) |
+| Worker 로그인 고지 "쓰는 곳" `landing.consent.use`(`copy.ts:46` [확인]) | 허가 확인과 ‘내 기기’ 표시에만 | + 편집자 목록 | Worker만(앱 `auth.consent`에는 "쓰는 곳" 줄이 없다 `ko.ts:270-271` [확인]) |
 | `/privacy` | 채널 이름·ID만 | 편집자 항목 추가 | 함께 바뀜 |
 | `notOwnContent` 제목·`list.empty.scope` | 내 채널만 | 맡은 채널이 있을 때 "내 채널이나 맡은 채널" | 함께 바뀜. ~~`landingLead`~~는 코드에 없어 대상이 아니다(§7.3) |
 | `content.md:107` 용어집 "되돌리기" 자리 | 목록 지우기 토스트의 버튼에만 | 되돌리기 토스트의 버튼에만(목록 지우기·편집자 빼기) | 같은 뜻·같은 수단, 자리 추가. ADR-0026에 함께 |

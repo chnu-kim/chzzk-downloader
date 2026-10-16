@@ -99,7 +99,9 @@ function allowSection(rows: readonly Allow[], admins: readonly string[], csrf: s
 }
 
 function deniedRow(d: Denied, csrf: string): SafeHtml {
-  return html`<tr>${rowHead(html`${dash(d.channelName)}${idLine(d.channelId)}`)}<td><span class="num">${d.attempts}</span></td><td>${when(d.firstAt)}</td><td>${when(d.lastAt)}</td><td><div class="actions">${postButton(`/admin/denied/${d.channelId}/allow`, csrf, COPY.allow)}${postButton(`/admin/denied/${d.channelId}/dismiss`, csrf, COPY.dismiss)}</div></td></tr>`;
+  // 유효한 초대로 들어온 시도의 꼬리표(Badge가 아니라 .meta 글자). typeof가 옛 DO(필드 없음)의 응답을 받는다
+  const tag = typeof d.invitedBy === "string" ? html`<br><span class="meta">${COPY.invitedBy(d.invitedBy)}</span>` : "";
+  return html`<tr>${rowHead(html`${dash(d.channelName)}${idLine(d.channelId)}${tag}`)}<td><span class="num">${d.attempts}</span></td><td>${when(d.firstAt)}</td><td>${when(d.lastAt)}</td><td><div class="actions">${postButton(`/admin/denied/${d.channelId}/allow`, csrf, COPY.allow)}${postButton(`/admin/denied/${d.channelId}/dismiss`, csrf, COPY.dismiss)}</div></td></tr>`;
 }
 
 function deniedSection(rows: readonly Denied[], csrf: string): SafeHtml {

@@ -243,10 +243,8 @@ export function acceptInvite(db: Db, hash: string, editorLoginId: string, editor
   if (!adm.allowed || editorAllowedAt === undefined) return { ok: false, code: "not_allowed" };
   if (r.owner_channel_id === adm.ownerChannelId || r.owner_login_channel_id === editorLoginId) return { ok: false, code: "own" };
   const live = db.first<DelegationRow>(`${LIVE_SELECT} AND d.owner_channel_id = ? AND d.editor_channel_id = ?`, r.owner_channel_id, editorLoginId);
-  if (live !== null && delegationActive(live, admins)) {
-    dropInvite(db, hash);
-    return { ok: false, code: "already" };
-  }
+  // 이미 편집자면 초대를 남긴다: 링크는 다른 사람에게 보낸 것일 수 있고, 지우면 기존 편집자가 남의 초대를 없앨 수 있다(106 (차) ④, 105 (아)를 뒤집음)
+  if (live !== null && delegationActive(live, admins)) return { ok: false, code: "already" };
   const s = ownerSide(db, r.owner_channel_id, admins, now);
   const pendingOthers = s.pending.filter((p) => p.tokenHash !== r.token_hash && p.channelId !== editorLoginId).length;
   if (s.active.length + pendingOthers >= EDITORS_MAX || editorSide(db, editorLoginId, admins).length >= DELEGATIONS_MAX) return { ok: false, code: "full" };
@@ -340,11 +338,33 @@ export function completeClaimed(db: Db, channelId: string, traced: readonly stri
   return made;
 }
 
-/** 방금(DONE_WINDOW_MS 안에) 맺어진 위임 중 가장 늦은 하나. 완료 페이지가 쓴다. 쓰기 0 */
-export function recentDelegationFor(db: Db, editorLoginId: string, admins: readonly string[], now: number): DelegatedChannel | null {
-  let best: DelegatedChannel | null = null;
-  for (const d of delegationsOf(db, editorLoginId, admins)) if (d.since > now - DONE_WINDOW_MS && (best === null || d.since >= best.since)) best = d;
-  return best;
+/** 거부 페이지 한 줄: 그 해시의 초대를 claimedBy가 청구했고 inviteValid면 주인 이름(없으면 ""), 아니면 null. 쓰기 0 */
+export function claimedInviteOwner(db: Db, hash: string, claimedBy: string, admins: readonly string[], now: number): string | null {
+  const r = inviteByHash(db, hash);
+  if (r === null || r.claimed_channel_id !== claimedBy || !inviteValid(r, admins, now)) return null;
+  return r.owner_name ?? "";
+}
+
+/** 그 채널이 청구한 초대 중 inviteValid인 첫 초대(claimed_at, token_hash 순)의 해시, 없으면 null. 쓰기 0 */
+export function firstClaimedInvite(db: Db, channelId: string, admins: readonly string[], now: number): string | null {
+  for (const r of db.all<InviteRow>(`${INVITE_SELECT} WHERE i.claimed_channel_id = ? ORDER BY i.claimed_at, i.token_hash`, channelId)) {
+    if (inviteValid(r, admins, now)) return r.token_hash;
+  }
+  return null;
+}
+
+/** 관리 꼬리표: firstClaimedInvite의 주인 이름(없으면 ""), 청구가 없으면 null. 쓰기 0 */
+export function invitedBy(db: Db, channelId: string, admins: readonly string[], now: number): string | null {
+  const hash = firstClaimedInvite(db, channelId, admins, now);
+  return hash === null ? null : claimedInviteOwner(db, hash, channelId, admins, now);
+}
+
+/**
+ * 완료 페이지: 이 편집자와 그 주인(판정용 ID)의 위임이 권한이 나가고 방금(DONE_WINDOW_MS 안에) 맺어졌으면 그 위임, 아니면 null. 쓰기 0.
+ * 주인을 인자로 받는다: 전체 중 최신 하나를 고르면 두 탭에서 다른 초대를 수락했을 때 다른 수락의 결과를 보인다(106 (차) ③)
+ */
+export function recentDelegationFor(db: Db, editorLoginId: string, ownerChannelId: string, admins: readonly string[], now: number): DelegatedChannel | null {
+  return delegationsOf(db, editorLoginId, admins).find((d) => d.channelId === ownerChannelId && d.since > now - DONE_WINDOW_MS) ?? null;
 }
 
 /** 권한이 나가는 맡은 채널(granted). 토큰 묶음·me·완료 페이지가 쓴다 */
@@ -368,10 +388,9 @@ export function removeEditor(db: Db, ownerChannelId: string, editorChannelId: st
   return a + b === 0 ? { ok: false, code: "not_found" } : { ok: true };
 }
 
-/** 편집자가 그만둔다 */
+/** 편집자가 그만둔다. 위임 행이 없어도 같은 쌍의 청구는 지운다(빼기와 같은 규칙, 106 (차) ②): 둘 다 없을 때만 not_found */
 export function leaveDelegation(db: Db, editorLoginId: string, ownerChannelId: string, now: number): RemoveResult {
   const n = db.run("UPDATE delegation SET revoked_at = ?, revoked_by = 'editor' WHERE editor_channel_id = ? AND owner_channel_id = ? AND revoked_at IS NULL", now, editorLoginId, ownerChannelId);
-  if (n === 0) return { ok: false, code: "not_found" };
-  dropPairClaims(db, ownerChannelId, editorLoginId);
-  return { ok: true };
+  const c = db.run("DELETE FROM invite WHERE owner_channel_id = ? AND claimed_channel_id = ?", ownerChannelId, editorLoginId);
+  return n + c === 0 ? { ok: false, code: "not_found" } : { ok: true };
 }

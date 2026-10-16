@@ -12,10 +12,13 @@ import { notice } from "./ui";
 
 export type DoneR = "ok" | "denied" | "cancelled" | "failed";
 
+/** 거부 페이지 [초대 취소]의 폼 주소(routes.ts의 POST 행과 같다) */
+export const CLAIM_CANCEL_PATH = "/auth/claim/cancel";
+
 type Tone = "muted" | "warning" | "danger";
 
 /** 상태 제목(h1): 아이콘이 제목 앞에 온다. 색은 톤 클래스(site.css)가 정한다. 색만으로 전하지 않는다: 제목 글자가 상태를 말한다 */
-function statusTitle(name: WorkerIconName, tone: Tone, title: string): SafeHtml {
+export function statusTitle(name: WorkerIconName, tone: Tone, title: string): SafeHtml {
   return html`<h1 class="status status-${tone}">${icon(name)}<span>${title}</span></h1>`;
 }
 
@@ -59,10 +62,17 @@ function doneParts(r: DoneR, view: DoneView | null, entry: EntryContext): { read
         view?.channelId
           ? notice({ tone: "info", body: `${COPY.channelLabel}: ${view.channelName ?? ""} · ${COPY.channelIdLabel}: ${view.channelId}` })
           : html``;
+      // 초대로 들어온 거부: 청구는 기록됐고 관리자가 허가하면 이어진다. 초대받은 사람이 먼저 읽도록 채널 정보 바로 뒤에 둔다. ?? null이 옛 DO(필드 없음)의 응답을 받는다
+      const owner = view?.inviteOwnerName ?? null;
+      // 잘못된 계정이면 스스로 청구를 끊는다: 안내 한 줄 + 테두리 버튼(채움 아님). 폼은 세션이 없어 F 쿠키와 같은 출처 검사가 증거다(106 (차) ②)
+      const inviteLine =
+        owner === null
+          ? html``
+          : html`<p>${COPY.doneDenied.invite(owner)}</p><p>${COPY.doneDenied.cancelHint}</p><div class="actions"><form method="post" action="${CLAIM_CANCEL_PATH}"><button type="submit" class="btn">${COPY.cancelInvite}</button></form></div>`;
       return {
         title: COPY.doneDenied.title,
         head: statusTitle("circle-x", "danger", COPY.doneDenied.title),
-        body: html`${who}<p>${COPY.doneDenied.body}</p><p>${COPY.doneDenied.next}</p>`,
+        body: html`${who}${inviteLine}<p>${COPY.doneDenied.body}</p><p>${COPY.doneDenied.next}</p>`,
       };
     }
     case "cancelled":

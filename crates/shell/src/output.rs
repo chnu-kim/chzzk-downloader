@@ -118,7 +118,8 @@ fn partial_info(
         },
         Some(sc) => PartialInfo {
             bytes: sc.committed_len,
-            same_job: sc.same_job(content, quality_id, kind),
+            // ②-2가 OutputQuery.range를 넘긴다
+            same_job: sc.same_job(content, quality_id, kind, None),
             recording: false,
         },
         None => PartialInfo {

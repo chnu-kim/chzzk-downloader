@@ -38,7 +38,7 @@ pub use http::{NaverCookies, RequestKind, Secret};
 pub use info::Playback;
 pub use legacy::{LegacyImport, import_legacy};
 pub use model::{
-    ContentKind, ContentMeta, ContentRef, PdRep, PlaybackKind, Quality, Resolved, Source,
+    ContentKind, ContentMeta, ContentRef, PdRep, PlaybackKind, Quality, Resolved, Source, TimeRange,
 };
 pub use naming::Platform;
 pub use ownership::{is_own_channel, is_own_content};

@@ -49,6 +49,9 @@ pub enum Error {
     },
     #[error("원본이 바뀌어 이어받을 수 없습니다: {detail}")]
     SourceChanged { detail: String },
+    /// 고른 구간이 playlist 밖이거나 비었다(기능 ②, R1)
+    #[error("고른 구간을 이 영상에서 찾지 못했습니다: {detail}")]
+    RangeOutOfBounds { detail: String },
     #[error("토큰 갱신 한도를 넘었습니다")]
     RefreshExhausted,
     #[error("지원하지 않는 스트림: {0:?}")]
@@ -96,6 +99,8 @@ pub enum Unsupported {
     Gap,
     /// `EXT-X-SKIP`: delta playlist라 세그먼트가 빠져 있다
     Skip,
+    /// 구간 받기는 빠른 다시보기(HLS)만 된다(클립·일반 VOD·생방송 요청에 구간)
+    RangeNotHls,
 }
 
 /// UI 분기용 오류 종류. `Error::kind()`로 얻는다.
@@ -114,6 +119,7 @@ pub enum ErrorKind {
     QualityNotFound,
     PlaybackChanged,
     SourceChanged,
+    RangeOutOfBounds,
     RefreshExhausted,
     Unsupported,
     Parse,
@@ -149,6 +155,7 @@ impl Error {
             Error::QualityNotFound { .. } => ErrorKind::QualityNotFound,
             Error::PlaybackChanged { .. } => ErrorKind::PlaybackChanged,
             Error::SourceChanged { .. } => ErrorKind::SourceChanged,
+            Error::RangeOutOfBounds { .. } => ErrorKind::RangeOutOfBounds,
             Error::RefreshExhausted => ErrorKind::RefreshExhausted,
             Error::Unsupported(_) => ErrorKind::Unsupported,
             Error::Parse { .. } => ErrorKind::Parse,
@@ -174,6 +181,7 @@ impl Error {
         match self {
             Error::LengthMismatch { .. }
             | Error::SourceChanged { .. }
+            | Error::RangeOutOfBounds { .. }
             | Error::PlaybackChanged { .. }
             | Error::AuthRequired { .. }
             | Error::EncryptedVod { .. }
@@ -223,6 +231,14 @@ mod tests {
             ErrorKind::Unsupported
         );
         assert_eq!(Error::Cancelled.kind(), ErrorKind::Cancelled);
+        assert_eq!(
+            Error::RangeOutOfBounds { detail: "x".into() }.kind(),
+            ErrorKind::RangeOutOfBounds
+        );
+        assert_eq!(
+            Error::Unsupported(Unsupported::RangeNotHls).kind(),
+            ErrorKind::Unsupported
+        );
     }
 
     #[test]
@@ -270,6 +286,7 @@ mod tests {
             .is_resumable()
         );
         assert!(!Error::SourceChanged { detail: "x".into() }.is_resumable());
+        assert!(!Error::RangeOutOfBounds { detail: "x".into() }.is_resumable());
         let changed = Error::PlaybackChanged {
             was: PlaybackKind::LiveRewindHls,
             now: PlaybackKind::Progressive,

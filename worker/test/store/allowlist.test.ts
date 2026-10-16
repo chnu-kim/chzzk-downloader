@@ -144,7 +144,7 @@ describe("관리 화면·내 세션", () => {
       [B2, 1],
     ]);
     expect(v.allowlist.find((a) => a.channelId === B2)).toMatchObject({ note: "메모", addedBy: A1, addedAt: T0 });
-    expect(v.denied).toEqual([{ channelId: D4, channelName: "거부됨", firstAt: T0 + 20, lastAt: T0 + 20, attempts: 1 }]);
+    expect(v.denied).toEqual([{ channelId: D4, channelName: "거부됨", firstAt: T0 + 20, lastAt: T0 + 20, attempts: 1, invitedBy: null }]);
     expect(v.sessions.map((s) => [s.kind, s.channelId, s.recovered]).sort()).toEqual([
       ["app", B2, 1],
       ["web", A1, 0],

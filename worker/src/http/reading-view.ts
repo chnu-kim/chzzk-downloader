@@ -5,6 +5,7 @@
 import type { Config } from "../config";
 import { html, type SafeHtml } from "../core/html";
 import { AUDIT_CAP, DENIED_CAP, DENIED_KEEP_MS } from "../store/allowlist";
+import { INVITE_CLAIMED_KEEP_MS, REVOKED_DELEGATION_KEEP_MS } from "../store/delegation";
 import { FLOW_TTL_MS } from "../store/flows";
 import { REFRESH_TTL_MS, SESSION_MAX_MS, WEB_TTL_MS } from "../store/sessions";
 import { REVOKED_KEEP_MS } from "../store/sweep";
@@ -43,7 +44,7 @@ export function renderPrivacy(config: Config, nav: Nav): Response {
   const p = COPY.privacy;
   const keep = html`<ul><li>${p.keep.web(WEB_TTL_MS / HOUR_MS)}</li><li>${p.keep.app(REFRESH_TTL_MS / DAY_MS, SESSION_MAX_MS / DAY_MS)}</li><li>${p.keep.revoked(REVOKED_KEEP_MS / DAY_MS)}</li><li>${p.keep.denied(DENIED_KEEP_MS / DAY_MS, DENIED_CAP)}</li><li>${p.keep.audit(AUDIT_CAP)}</li><li>${p.keep.flow(FLOW_TTL_MS / MINUTE_MS)}</li></ul>`;
   const contact = html`<dl class="summary"><dt>${COPY.adminsTitle}</dt><dd>${p.operator}</dd><dt>${p.contact.label}</dt><dd><p>${COPY.landing.contact}</p><p><a href="${COPY.issuesUrl}" rel="noopener noreferrer">${COPY.landing.contactLink}</a></p></dd></dl>`;
-  const body = html`<h1>${COPY.privacyTitle}</h1><p>${p.intro.body}</p><h2>${p.collect.title}</h2><p>${p.collect.body}</p><h2>${p.use.title}</h2><p>${p.use.body}</p><h2>${p.exclude.title}</h2><p>${p.exclude.body}</p><h2>${p.cookie.title}</h2><p>${p.cookie.body}</p><h2>${p.keep.title}</h2><p>${p.keep.body}</p>${keep}<h2>${p.abroad.title}</h2><p>${p.abroad.body}</p><h2>${p.cut.title}</h2><p>${p.cut.body}</p><h2>${p.contact.title}</h2><p>${p.contact.body}</p>${contact}`;
+  const body = html`<h1>${COPY.privacyTitle}</h1><p>${p.intro.body}</p><h2>${p.collect.title}</h2><p>${p.collect.body}</p><h2>${p.use.title}</h2><p>${p.use.body}</p><h2>${p.editors.title}</h2><p>${p.editors.body(REVOKED_DELEGATION_KEEP_MS / DAY_MS, INVITE_CLAIMED_KEEP_MS / DAY_MS)}</p><h2>${p.exclude.title}</h2><p>${p.exclude.body}</p><h2>${p.cookie.title}</h2><p>${p.cookie.body}</p><h2>${p.keep.title}</h2><p>${p.keep.body}</p>${keep}<h2>${p.abroad.title}</h2><p>${p.abroad.body}</p><h2>${p.cut.title}</h2><p>${p.cut.body}</p><h2>${p.contact.title}</h2><p>${p.contact.body}</p>${contact}`;
   return htmlPage(config, 200, COPY.privacyTitle, body, { scale: "reading", nav, index: true });
 }
 

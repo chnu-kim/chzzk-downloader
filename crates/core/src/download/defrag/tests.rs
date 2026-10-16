@@ -1129,6 +1129,56 @@ fn patch_failure_is_modified_and_reconverts_after_truncate() {
     assert_eq!(b, clean);
 }
 
+/// `bytes`에서 시작하는 실패 주입 파일.
+fn faulty_on(bytes: Vec<u8>, fault: Fault) -> FaultyFile {
+    let mut f = FaultyFile::new(fault);
+    f.base = bytes.len() as u64;
+    f.c = io::Cursor::new(bytes);
+    f
+}
+
+/// 앞선 시도가 init `moov`를 `free`로 바꾼 채 `.part`로 남았고, 다음 시도의 붙이기마저 실패해 잘라 되돌렸다.
+/// 파일은 이번 시도 전 상태지만 진짜 `moov`가 없어 재생할 수 없으니 `Unchanged`(마무리해도 된다)가 아니다(core.md 61 M4).
+#[test]
+fn append_failure_after_earlier_patch_is_not_unchanged() {
+    let (clean, _) = convert(FIXTURE);
+    let mut first = FaultyFile::new(Fault::Patch { after: 1 });
+    let r = defragment_in(&mut first);
+    assert!(matches!(r, Err(DefragError::Modified(_))), "{r:?}");
+    let mut b = first.c.into_inner();
+    b.truncate(FIXTURE.len());
+    let moov = kind_pos(FIXTURE, b"moov");
+    assert_eq!(
+        &b[moov..moov + 4],
+        b"free",
+        "init moov가 free로 바뀐 상태여야 한다"
+    );
+
+    let mut second = faulty_on(b, Fault::Append);
+    let r = defragment_in(&mut second);
+    assert!(matches!(r, Err(DefragError::Modified(_))), "{r:?}");
+    // 그래도 다음 시도는 같은 결과로 변환한다
+    let mut b = second.c.into_inner();
+    assert_eq!(b.len(), FIXTURE.len(), "붙인 것은 되돌렸다");
+    let r = defragment_bytes(&mut b).unwrap();
+    assert!(matches!(r, DefragReport::Converted { .. }), "{r:?}");
+    assert_eq!(b, clean);
+}
+
+/// 대조: 앞선 시도가 아무 패치도 남기지 않았으면 붙이기 실패는 여전히 `Unchanged`다.
+#[test]
+fn append_failure_after_patchless_attempt_is_unchanged() {
+    let mut first = FaultyFile::new(Fault::Patch { after: 0 });
+    let r = defragment_in(&mut first);
+    assert!(matches!(r, Err(DefragError::Modified(_))), "{r:?}");
+    let mut b = first.c.into_inner();
+    b.truncate(FIXTURE.len());
+    assert_eq!(b, FIXTURE);
+    let mut second = faulty_on(b, Fault::Append);
+    let r = defragment_in(&mut second);
+    assert!(matches!(r, Err(DefragError::Unchanged(_))), "{r:?}");
+}
+
 /// 구조를 읽지 못하면 아무것도 쓰기 전이라 `Unchanged`다.
 #[test]
 fn plan_failure_is_unchanged() {

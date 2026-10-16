@@ -8,6 +8,7 @@
 //! 1. 파일을 읽어(최상위 상자는 헤더만, `moov`·`moof`만 본문까지) 전부 검증하고 새 `moov`를 메모리에서 완성한다.
 //!    `mdat` 본문은 읽지 않는다.
 //! 2. 새 `moov`를 파일 끝에 붙이고 sync한다. 실패하면 붙인 것을 `set_len`으로 되돌린다(되돌리기도 실패하면 `Modified`).
+//!    앞선 시도가 3단계 도중 끊긴 파일(아래 멱등)은 되돌려도 원래 조각 구조가 아니라서 `Modified`다.
 //! 3. 마지막에 원래 `moov`(init)·`moof`·`styp`·`emsg`와 모르는 상자의 4바이트 종류를 `free`로 바꾼다(오프셋
 //!    오름차순으로 한 번에, 그리고 sync). 데이터는 움직이지 않는다. `ftyp`·`mdat`·`free`·`skip`은 그대로다.
 //!
@@ -96,7 +97,8 @@ impl DefragFile for File {
 pub(crate) enum DefragError {
     /// 파일은 원래 그대로다(구조 검증·읽기 실패, 또는 덧붙인 `moov`를 잘라 되돌렸다). 조각 구조로 마무리해도 된다
     Unchanged(Error),
-    /// 바꾸는 도중 실패했고 되돌리지 못했다. 최종 파일로 옮기지 않는다(다음 실행이 committed_len으로 잘라 다시 변환한다)
+    /// 바꾸는 도중 실패했고 되돌리지 못했다(또는 앞선 시도가 이미 바꿔 둔 파일이다). 최종 파일로 옮기지 않는다(다음 실행이
+    /// committed_len으로 잘라 다시 변환한다)
     Modified(Error),
 }
 
@@ -142,9 +144,11 @@ pub(crate) fn defragment_in<F: DefragFile>(file: &mut F) -> Result<DefragReport,
         let err = io_err("write")(e);
         // 붙인 것을 잘라 되돌린다. 자르기와 그 sync가 모두 성공해야 원래 파일이다
         let restored = file.truncate_to(len).and_then(|()| file.sync());
+        // 앞선 시도가 바꿔 둔 파일(`resumed`)은 이번 시도 전으로 되돌려도 재생할 수 있는 조각 구조가 아니다(init `moov`나
+        // `moof`가 이미 `free`다). 그대로 마무리하면 안 되니 `Modified`로 알린다(core.md 61 M4)
         return Err(match restored {
-            Ok(()) => DefragError::Unchanged(err),
-            Err(_) => DefragError::Modified(err),
+            Ok(()) if !p.resumed => DefragError::Unchanged(err),
+            _ => DefragError::Modified(err),
         });
     }
     // 3단계: 종류 패치를 오름차순으로 몰아서 쓴다.
@@ -806,6 +810,8 @@ struct Plan {
     tracks: usize,
     samples: u64,
     discontinuities: u32,
+    /// 앞선 변환이 3단계 도중 끊겨 이미 `free`로 바꾼 `moof`·init `moov`가 있다(파일이 원래 조각 구조가 아니다)
+    resumed: bool,
 }
 
 enum Outcome {
@@ -820,6 +826,7 @@ fn plan(src: &mut dyn Source) -> Result<Outcome, Fail> {
     let mut patches = Vec::new();
     let mut moofs = Vec::new();
     let mut mdats = Vec::new();
+    let mut resumed = false;
     for t in &tops {
         let body_off = t.off + t.hdr;
         let body_len = t.size - t.hdr;
@@ -847,11 +854,15 @@ fn plan(src: &mut dyn Source) -> Result<Outcome, Fail> {
                     let mut h = [0u8; 8];
                     src.read_at(body_off, &mut h)?;
                     match &h[4..8] {
-                        b"mfhd" => moofs.push(*t),
+                        b"mfhd" => {
+                            moofs.push(*t);
+                            resumed = true;
+                        }
                         b"mvhd" if init_body.is_none() => {
                             let body = read_vec(src, body_off, body_len)?;
                             if find(&children(&body)?, b"mvex").is_some() {
                                 init_body = Some(body);
+                                resumed = true;
                             }
                         }
                         _ => {}
@@ -880,6 +891,7 @@ fn plan(src: &mut dyn Source) -> Result<Outcome, Fail> {
         tracks: tables.iter().filter(|t| t.count > 0).count(),
         samples: tables.iter().map(|t| u64::from(t.count)).sum(),
         discontinuities: tables.iter().map(|t| t.discontinuities).sum(),
+        resumed,
     }))
 }
 

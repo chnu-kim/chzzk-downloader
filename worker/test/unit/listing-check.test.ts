@@ -158,6 +158,11 @@ describe("sortVerdict", () => {
     const b = [{ videoNo: 2 }, { videoNo: 1 }];
     expect(sortVerdict({ repeatA: a, repeatB: b, pages: [a] }).verdict).toBe("아님");
   });
+  it("두 번째 요청이 실패하면 아님이 아니라 판정 불가", () => {
+    const a = [v(1, "12:00:00"), v(2, "11:00:00")];
+    expect(sortVerdict({ repeatA: a, repeatB: [], pages: [a], repeatOk: false }).verdict).toBe("판정 불가");
+    expect(sortVerdict({ repeatA: a, repeatB: a, pages: [a], repeatOk: true }).verdict).toBe("내림차순");
+  });
   it("날짜 없음", () => {
     const a = [v(1, "12:00:00"), { videoNo: 2 }];
     expect(sortVerdict({ repeatA: a, repeatB: a, pages: [a] }).verdict).toBe("판정 불가");

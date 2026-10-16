@@ -281,7 +281,9 @@ pub fn sibling_path(video: &Path, ext: &str) -> PathBuf {
     match name.to_str() {
         Some(n) => {
             let stem = match n.len().checked_sub(EXT.len()) {
-                Some(cut) if n.is_char_boundary(cut) && n[cut..].eq_ignore_ascii_case(EXT) => {
+                Some(cut)
+                    if cut > 0 && n.is_char_boundary(cut) && n[cut..].eq_ignore_ascii_case(EXT) =>
+                {
                     &n[..cut]
                 }
                 _ => n,
@@ -734,8 +736,11 @@ mod tests {
             Path::new("a.mkv.ass")
         );
         assert_eq!(sibling_path(Path::new("a"), ".ass"), Path::new("a.ass"));
-        // 이름이 ".mp4" 하나뿐이면 앞부분이 없어도 확장자만 바뀐다
-        assert_eq!(sibling_path(Path::new(".mp4"), ".ass"), Path::new(".ass"));
+        // 이름이 ".mp4" 하나뿐이면 앞부분이 없으므로 바꾸지 않고 뒤에 붙인다
+        assert_eq!(
+            sibling_path(Path::new(".mp4"), ".ass"),
+            Path::new(".mp4.ass")
+        );
     }
 
     #[test]

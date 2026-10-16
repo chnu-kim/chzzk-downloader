@@ -40,7 +40,7 @@ export declare function sizeVerdict(requested: number, got: number, total: unkno
 export declare function sizeLine(requested: number, got: number, total: unknown): string;
 export declare function itemDate(item: Item): number | null;
 export declare function itemKey(item: Item): string | null;
-export declare function sortVerdict(input: { repeatA: Item[]; repeatB: Item[]; pages: Item[][] }): {
+export declare function sortVerdict(input: { repeatA: Item[]; repeatB: Item[]; pages: Item[][]; repeatOk?: boolean }): {
   verdict: "내림차순" | "아님" | "판정 불가";
   calls: number;
   items: number;

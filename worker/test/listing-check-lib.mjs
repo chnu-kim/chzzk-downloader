@@ -175,7 +175,8 @@ export function itemKey(item) {
   return null;
 }
 
-export function sortVerdict({ repeatA, repeatB, pages }) {
+// repeatOk=false: 두 번째 첫 페이지 요청이 실패했다. 비교 자료가 없으니 '아님'이 아니라 판정 불가다.
+export function sortVerdict({ repeatA, repeatB, pages, repeatOk = true }) {
   const calls = pages.length + 1;
   const seen = new Set();
   const items = [];
@@ -192,7 +193,7 @@ export function sortVerdict({ repeatA, repeatB, pages }) {
     items.push(it);
   }
   const out = (verdict) => ({ verdict, calls, items: items.length, overlap });
-  if (items.length < 2) return out('판정 불가');
+  if (items.length < 2 || !repeatOk) return out('판정 불가');
   if (repeatA.map(itemKey).join() !== repeatB.map(itemKey).join()) return out('아님');
   const dates = items.map(itemDate);
   if (dates.some((d) => d === null)) return out('판정 불가');

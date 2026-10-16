@@ -121,7 +121,10 @@ async function listVideos(channelId, cookie) {
   const A = await get(videoListPath(channelId, 0, PAGE_SIZE));
   say(`VOD 목록(비로그인): ${statusLabel(A)}`);
   if (A.kind !== 'ok') {
-    for (const k of ['페이지 방식', '크기 관찰', '정렬', '필드', '항목 채널 ID']) say(`VOD ${k}: 건너뜀`);
+    // 성공할 때와 같은 줄 머리로 낸다(ROADMAP 칸과 대조). 항목 채널 ID 줄은 main이 낸다.
+    for (const k of ['페이지 방식', '총 개수', '총 페이지', ...SIZE_PROBES.map((s) => `size ${s} 요청`), '정렬(관찰 표본)', '페이지 겹침 항목', '필드', '종류 구분 값 종류 수']) {
+      say(`VOD ${k}: 건너뜀`);
+    }
     return { A, items: [] };
   }
   await sleep(STEP_GAP_MS);
@@ -152,7 +155,8 @@ async function listVideos(channelId, cookie) {
     if (r.kind !== 'ok' || its.length === 0) break;
     pages.push(its);
   }
-  const sv = sortVerdict({ repeatA: itemsA, repeatB: itemsB, pages });
+  if (B.kind !== 'ok') say(`VOD 목록 두 번째 요청: ${statusLabel(B)}`);
+  const sv = sortVerdict({ repeatA: itemsA, repeatB: itemsB, pages, repeatOk: B.kind === 'ok' });
   say(`VOD 정렬(관찰 표본): ${sv.verdict} (호출 ${sv.calls}회 · 항목 ${countBucket(sv.items)})`);
   say(`VOD 페이지 겹침 항목: ${sv.overlap ? '있음' : '없음'}`);
   say('  ※ 관찰일 뿐 보장이 아니다. 조기 종료를 켜는 근거로 쓰지 않는다(E1)');

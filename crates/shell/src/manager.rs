@@ -32,8 +32,8 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use chzzk_core::naming::output_path;
 use chzzk_core::{
-    CancellationToken, ContentRef, DownloadOutcome, DownloadRequest, Error, Phase, PlaybackKind,
-    Progress, discard_partial,
+    CancellationToken, ContentRef, Discarded, DownloadOutcome, DownloadRequest, Error, Phase,
+    PlaybackKind, Progress, discard_partial,
 };
 use std::time::Duration;
 use tokio::runtime::Handle;
@@ -123,6 +123,9 @@ struct Job {
     queue_seq: u64,
     /// 태스크 세대. `start`마다 새로 받고 태스크가 `finish`·진행률에 들고 온다. 자기 세대가 아닌 태스크의 보고는 버린다
     run: u64,
+    /// 이 기록이 `jobs.json`에 저장된 것을 확인했는가. 파일에서 읽은 기록은 `true`, 새로 추가한 생방송 녹화는 `false`이고
+    /// 첫 시작이 저장을 확인한다(주인 기록 없이 녹화를 남기지 않는다, core.md 61)
+    saved: bool,
     /// `quit` 기한 안에 멈추지 않아 태스크가 아직 도는 세대(worker.md 구현 중 변경 76·80). 그 태스크가 `finish`할 때까지
     /// 슬롯(`max_running`)과 출력 경로를 차지하고 같은 작업을 새로 시작하지 않는다(옛 태스크가 아직 `.part`를 쓴다)
     detached: Option<u64>,
@@ -140,6 +143,7 @@ impl Job {
             removing: false,
             queue_seq,
             run: 0,
+            saved: true,
             detached: None,
         }
     }
@@ -148,10 +152,22 @@ impl Job {
         self.rec.to_dto(self.last_progress.clone())
     }
 
-    /// 중복 검사에서 이 작업이 최종 경로를 차지하는가. 활성 상태이거나, 지우는 중이다(곧 `.part`를 지운다.
-    /// `failed`를 지우는 동안 새 작업이 같은 경로를 가져가면 그 작업의 `.part`를 지우게 된다).
-    fn holds_output(&self) -> bool {
+    /// 지금 경로를 쓰거나(활성·quit 기한을 넘긴 옛 태스크) 곧 `.part`를 지운다(지우는 중).
+    /// `failed`를 지우는 동안 새 작업이 같은 경로를 가져가면 그 작업의 `.part`를 지우게 된다.
+    fn uses_output(&self) -> bool {
         self.removing || self.rec.status.is_active() || self.detached.is_some()
+    }
+
+    /// 끝났지만(failed·skipped) 이 작업의 녹화 `.part`가 남은 생방송. 다시 받을 수 없으니 경로를 내주지 않는다(core.md 61).
+    fn keeps_recording(&self) -> bool {
+        self.is_live()
+            && matches!(self.rec.status, JobStatus::Failed | JobStatus::Skipped)
+            && self.rec.partial_bytes.is_some()
+    }
+
+    /// 같은 경로 충돌 검사에서 이 작업이 최종 경로를 차지하는가: `uses_output`이거나 `keeps_recording`.
+    fn holds_output(&self) -> bool {
+        self.uses_output() || self.keeps_recording()
     }
 
     /// "완료 지우기"·오래된 기록 정리가 레코드만 지워도 되는가. `completed`와 `.part`가 없는 `skipped`.
@@ -257,6 +273,73 @@ impl State {
             })
             .map(|j| j.rec.id)
     }
+
+    /// 작업 `id`를 다시 줄 세울 때 같은 경로를 막는 다른 작업. `active_with_output`과 같고, 멈춰 있으면서 같은 녹화
+    /// `.part`의 주인인 기록(`keeps_recording`이고 `PartOwner`가 같다)은 막지 않는다. v0.7.0은 실패한 작업의 경로를
+    /// 새 작업에 내줬고 옛 기록·sidecar는 모두 `recordingId`가 없어(None = None) 한 녹화를 여럿이 함께 가리킬 수 있다.
+    /// 그중 하나로 이어받으면 그 녹화를 저장한다(Codex PR #113 ④). 새 녹화(`enqueue`)와 `remove`는 이 예외를 쓰지 않는다.
+    fn blocks_requeue(&self, id: JobId) -> Option<JobId> {
+        let me = &self.jobs.get(&id)?.rec;
+        let key = output_key(&me.output);
+        self.jobs
+            .values()
+            .find(|j| {
+                j.rec.id != id
+                    && j.holds_output()
+                    && output_key(&j.rec.output) == key
+                    && !(!j.uses_output() && j.keeps_recording() && same_owner(&j.rec, me))
+            })
+            .map(|j| j.rec.id)
+    }
+}
+
+/// 녹화 작업 `rec`가 끝났다. 같은 녹화 `.part`를 함께 가리키던 멈춘 옛 기록(v0.7.0, `blocks_requeue`의 예외)의 받은 부분을
+/// 다시 센다. `rec`가 그 녹화를 저장했으면 `.part`가 없어져 `None`이 된다(남겨 두면 화면이 [이어받기]를 앞세우고, 누르면
+/// 지금 방송을 옛 이름으로 새로 녹화한다).
+///
+/// 저장했으면 그 옛 기록의 덮어쓰기(`overwrite`)를 건너뛰기(`skip`)로 내린다. 받은 부분이 없어진 옛 기록을 다시 시도하면
+/// 지금 방송을 같은 출력에 새로 녹화하는데, 덮어쓰기면 방금 저장한 녹화를 덮어쓴다(Codex PR #113 확인). 건너뛰기면 코어가
+/// 녹화를 시작하지 않고 `skipped`로 끝나고, 덮어쓰려면 사용자가 [덮어쓰고 받기]를 따로 누른다(`requeue`).
+///
+/// 대상은 받은 부분 표시(`keeps_recording`)와 관계없이 같은 출력·같은 주인인 끝난(failed·skipped) 생방송 기록 모두다.
+/// 앞서 받은 부분이 내려간 기록도 덮어쓰기가 남아 있으면 다시 시도로 저장된 녹화를 덮어쓴다(Codex PR #113 2회차 ④).
+fn refresh_siblings(st: &mut State, rec: &JobRecord) {
+    let key = output_key(&rec.output);
+    let saved = rec.status == JobStatus::Completed;
+    let mut changed = Vec::new();
+    for j in st.jobs.values_mut() {
+        if j.rec.id == rec.id
+            || j.uses_output()
+            || !j.is_live()
+            || !matches!(j.rec.status, JobStatus::Failed | JobStatus::Skipped)
+            || output_key(&j.rec.output) != key
+            || !same_owner(&j.rec, rec)
+        {
+            continue;
+        }
+        let now = partial_bytes(&j.rec);
+        let mut touched = now != j.rec.partial_bytes;
+        j.rec.partial_bytes = now;
+        if saved && now.is_none() && j.rec.on_existing == OnExisting::Overwrite {
+            j.rec.on_existing = OnExisting::Skip;
+            touched = true;
+        }
+        if touched {
+            changed.push(j.dto());
+        }
+    }
+    for job in changed {
+        st.emit(JobEvent::Status { job });
+    }
+}
+
+/// 두 기록이 같은 `.part`의 주인인가(`PartOwner`의 네 값이 같다).
+fn same_owner(a: &JobRecord, b: &JobRecord) -> bool {
+    let (x, y) = (a.owner(), b.owner());
+    x.content == y.content
+        && x.quality_id == y.quality_id
+        && x.kind == y.kind
+        && x.recording_id == y.recording_id
 }
 
 /// 같은 파일인지 비교할 열쇠.
@@ -398,6 +481,7 @@ impl<B: Backend> DownloadManager<B> {
             quality_id: req.quality_id,
             quality_label: req.quality_label,
             expected_kind: req.expected_kind,
+            recording_id: matches!(kind, ContentKindDto::Live).then(crate::jobs::new_recording_id),
             output,
             on_existing: req.on_existing,
             concurrency: crate::jobs::concurrency(defaults.segment_concurrency).get(),
@@ -412,7 +496,9 @@ impl<B: Backend> DownloadManager<B> {
             missing: false,
         };
         let seq = st.seq();
-        let job = Job::new(rec, seq);
+        let mut job = Job::new(rec, seq);
+        // 새 녹화는 주인 기록(`recordingId`)이 저장된 뒤에만 시작한다(`run_download`). VOD는 다시 받을 수 있어 기다리지 않는다
+        job.saved = !job.is_live();
         let dto = job.dto();
         st.jobs.insert(id, job);
         self.inner.save(&st);
@@ -437,7 +523,8 @@ impl<B: Backend> DownloadManager<B> {
             let st = self.inner.lock();
             st.jobs
                 .values()
-                .filter(|j| j.holds_output())
+                // 끝난 녹화는 중복으로 보이지 않는다. 카드가 `partial.recording`을 보고 번호 이름으로 피한다(core.md 61)
+                .filter(|j| j.uses_output())
                 .map(|j| (output_key(&j.rec.output), j.rec.id))
                 .collect()
         };
@@ -557,6 +644,13 @@ impl<B: Backend> DownloadManager<B> {
         };
         let verified = match job.rec.status {
             JobStatus::Paused | JobStatus::Failed | JobStatus::Interrupted | JobStatus::Skipped => {
+                // 받다 만 녹화(영상 조각이 있는 이 작업의 `.part`)는 다시 받을 수 없다: "처음부터"로 확인 없이 지우지 않는다.
+                // 화면은 이 버튼을 보이지 않는다(D8). 화면 밖 호출·늦게 그려진 버튼을 여기서 막는다(core.md 61)
+                if restart && job.is_live() && job.rec.partial_bytes.is_some() {
+                    return Err(AppError::invalid_input(
+                        "받다 만 녹화는 처음부터 다시 받을 수 없습니다",
+                    ));
+                }
                 check(&job.rec.content)?
             }
             JobStatus::Queued | JobStatus::Running | JobStatus::Pausing => return Ok(()),
@@ -566,8 +660,7 @@ impl<B: Backend> DownloadManager<B> {
                 ));
             }
         };
-        let output = job.rec.output.clone();
-        if let Some(other) = st.active_with_output(&output, Some(id)) {
+        if let Some(other) = st.blocks_requeue(id) {
             return Err(AppError::duplicate_output(other));
         }
         let seq = st.seq();
@@ -616,16 +709,16 @@ impl<B: Backend> DownloadManager<B> {
                 !j.removing
                     && j.rec.status == JobStatus::Interrupted
                     // `.part`가 없는 생방송은 자동으로 다시 시작하지 않는다: 지금 방송 중인 다른 방송을 옛 제목·시각의
-                    // 파일로 녹화하게 된다. 받은 부분이 있으면 그것을 마무리하는 것이라 줄 세운다
-                    && (!j.is_live() || j.rec.partial_bytes.is_some_and(|b| b > 0))
+                    // 파일로 녹화하게 된다. 받은 영상 조각이 있으면 그것을 마무리하는 것이라 줄 세운다.
+                    // init만 든 `.part`는 코어가 지우고 지금 방송을 새로 녹화하므로(download/mod.rs) 줄 세우지 않는다(core.md 61 M3)
+                    && (!j.is_live() || crate::jobs::live_media_ready(&j.rec))
                     && keep(j.rec.channel_id.as_deref())
             })
             .map(|j| j.rec.id)
             .collect();
         let mut n = 0;
         for id in ids {
-            let output = st.jobs[&id].rec.output.clone();
-            if st.active_with_output(&output, Some(id)).is_some() {
+            if st.blocks_requeue(id).is_some() {
                 continue;
             }
             let seq = st.seq();
@@ -659,8 +752,7 @@ impl<B: Backend> DownloadManager<B> {
             if job.removing || job.rec.status != JobStatus::Interrupted {
                 continue;
             }
-            let output = job.rec.output.clone();
-            if st.active_with_output(&output, Some(id)).is_some() {
+            if st.blocks_requeue(id).is_some() {
                 continue;
             }
             let seq = st.seq();
@@ -688,10 +780,11 @@ impl<B: Backend> DownloadManager<B> {
     /// - `queued`·`paused`·`interrupted`·`failed`: `discard_partial` → 지운다(다시 줄 선 작업도 `.part`가 있을 수 있다).
     ///   quit 기한을 넘긴 옛 태스크가 아직 돌면(`detached`) 받는 중처럼 그 끝을 기다린 뒤 지운다.
     ///   단 `failed`의 경로를 다른 활성 작업이 가져갔으면 `.part`는 그 작업의 것이므로 레코드만 지운다.
+    /// - `.part`의 sidecar가 이 작업의 것이 아니면(`Discarded::NotOwned`) 지우지 않고 레코드만 지운다(core.md 61).
     ///
     /// `.part`를 지우지 못하면(다른 프로그램이 잠금 등) 오류를 돌려주고 레코드를 멈춘 상태로 남긴다.
     pub async fn remove(&self, id: JobId) -> Result<(), AppError> {
-        let (handle, output) = {
+        let (handle, output, rec) = {
             let mut st = self.inner.lock();
             let quitting = !st.scheduler_enabled;
             let Some(job) = st.target(id)? else {
@@ -699,6 +792,8 @@ impl<B: Backend> DownloadManager<B> {
                 return Ok(());
             };
             let output = job.rec.output.clone();
+            // `.part`의 주인을 가릴 열쇠. 잠금 밖에서 지울 때 쓴다
+            let rec = job.rec.clone();
             let records_only = match job.rec.status {
                 JobStatus::Completed => true,
                 // 건너뛴 작업은 받다 남긴 `.part`가 있을 때만 지운다(받는 동안 같은 이름의 파일이 생긴 경우)
@@ -739,17 +834,20 @@ impl<B: Backend> DownloadManager<B> {
                 }
                 None
             };
-            (handle, output)
+            (handle, output, rec)
         };
         if let Some(h) = handle {
             // 바깥 태스크는 패닉을 안쪽에서 받으므로 여기서 JoinError가 나는 것은 런타임 종료뿐이다.
             let _ = h.await;
         }
-        let discarded = discard_partial(&output);
+        let discarded = discard_partial(&output, &rec.owner());
 
         let mut st = self.inner.lock();
         match discarded {
-            Ok(()) => {
+            Ok(d) => {
+                if d == Discarded::NotOwned {
+                    tracing::info!(job = id.0, "다른 작업의 .part라 레코드만 지웠다");
+                }
                 if st.jobs.remove(&id).is_some() {
                     self.inner.save(&st);
                     st.emit(JobEvent::Removed { id });
@@ -1022,6 +1120,8 @@ impl<B: Backend> Inner<B> {
         let mut req = job.rec.to_request();
         req.live_stop = job.live_stop.clone();
         let discard = job.rec.discard_on_start;
+        // 아직 저장을 확인하지 못한 새 녹화: 태스크가 쓰기 스레드를 기다린다(상태 잠금 밖)
+        let confirm = (!job.saved).then(|| self.writer.flusher());
 
         let me = Arc::clone(self);
         let runtime = self.runtime.clone();
@@ -1032,7 +1132,7 @@ impl<B: Backend> Inner<B> {
                 id,
                 run,
                 req,
-                discard,
+                Before { discard, confirm },
                 cancel,
                 client,
             ));
@@ -1048,6 +1148,16 @@ impl<B: Backend> Inner<B> {
         let dto = job.dto();
         self.save(st);
         st.emit(JobEvent::Status { job: dto });
+    }
+
+    /// 새 녹화의 주인 기록이 저장된 것을 확인했다. 다음 시작은 기다리지 않는다.
+    fn confirm_saved(&self, id: JobId, run: u64) {
+        let mut st = self.lock();
+        if let Some(j) = st.jobs.get_mut(&id)
+            && j.run == run
+        {
+            j.saved = true;
+        }
     }
 
     /// `restart`로 지운 뒤 표시를 내린다.
@@ -1148,8 +1258,12 @@ impl<B: Backend> Inner<B> {
                 }
             }
             let dto = job.dto();
+            let live = job.is_live().then(|| job.rec.clone());
             // Status를 먼저 보낸다. 방금 끝난 작업이 정리 대상이면 Removed가 뒤에 와야 프런트에 유령이 남지 않는다.
             st.emit(JobEvent::Status { job: dto });
+            if let Some(rec) = live {
+                refresh_siblings(&mut st, &rec);
+            }
             self.prune_finished(&mut st);
             self.save(&st);
         }
@@ -1187,21 +1301,48 @@ fn stage_of(last: Option<&ProgressDto>) -> Stage {
     }
 }
 
+/// 코어를 부르기 전에 할 일.
+struct Before {
+    /// "처음부터": `.part`를 지운다
+    discard: bool,
+    /// 새 녹화: 주인 기록의 저장을 확인한다
+    confirm: Option<Flusher>,
+}
+
 /// 작업 태스크 본체.
 async fn run_download<B: Backend>(
     inner: Arc<Inner<B>>,
     id: JobId,
     run: u64,
     req: DownloadRequest,
-    discard: bool,
+    Before { discard, confirm }: Before,
     cancel: CancellationToken,
     client: Arc<B>,
 ) -> End {
+    if let Some(flusher) = confirm {
+        // 주인 기록이 디스크에 닿기 전에 녹화하면, 저장이 실패한 채 앱이 꺼졌을 때 남의 것도 내 것도 아닌 `.part`가
+        // 남는다(저장·삭제 모두 막힌다). 저장을 확인한 뒤에만 녹화를 시작한다(Codex PR #113 ③)
+        let wait = tokio::task::spawn_blocking(move || flusher.flush_checked());
+        let saved = tokio::select! {
+            biased;
+            _ = cancel.cancelled() => return End::Cancelled,
+            r = wait => r,
+        };
+        match saved {
+            Ok(Ok(())) => inner.confirm_saved(id, run),
+            Ok(Err(e)) => return End::Failed(e),
+            Err(e) => {
+                return End::Failed(AppError::internal(format!(
+                    "작업 목록 저장을 확인하지 못했습니다: {e}"
+                )));
+            }
+        }
+    }
     if discard {
         if cancel.is_cancelled() {
             return End::Cancelled;
         }
-        if let Err(e) = discard_partial(&req.output) {
+        if let Err(e) = discard_partial(&req.output, &req.owner()) {
             return End::Error(e);
         }
         inner.discarded(id, run);

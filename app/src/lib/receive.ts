@@ -104,9 +104,11 @@ export function checkKey(folder: string | null, fileName: string, qualityId: str
   return JSON.stringify([folder, fileName, qualityId]);
 }
 
-/** 이번 선택으로 실제로 쓸 파일이 번호 붙인 새 이름인가 */
+/** 이번 선택으로 실제로 쓸 파일이 번호 붙인 새 이름인가. 받다 만 녹화가 있는 이름은 늘 피한다(core.md 61) */
 export function usesFreeName(check: OutputCheck, choices: CardChoices): boolean {
-  return check.exists && choices.existing === 'number' && check.freeFileName != null;
+  if (check.freeFileName == null) return false;
+  if (check.partial?.recording) return true;
+  return check.exists && choices.existing === 'number';
 }
 
 /** 카드가 보여 줄 충돌 안내(§8.3 ConflictNotice). 서로 독립이다(§6.4). */
@@ -117,17 +119,22 @@ export interface Notices {
   partialSame: number | null;
   /** 다른 화질 등의 `.part`: 안내만(코어가 지우고 새로 받는다) */
   partialOther: boolean;
+  /** 다른 작업이 받다 만 녹화가 이 이름에 있다: 지우지 않고 번호 이름으로 받는다 */
+  partialRecording: boolean;
 }
 
 export function notices(check: OutputCheck, choices: CardChoices): Notices {
   // 번호 붙인 새 이름은 `.part`가 없는 이름이라 받다 만 안내가 해당하지 않는다.
   const fresh = usesFreeName(check, choices);
-  const p = fresh ? null : check.partial;
+  const recording = check.partial?.recording === true;
+  const p = fresh || recording ? null : check.partial;
   return {
     duplicate: check.duplicateJobId != null,
-    exists: check.exists,
+    // 녹화 때문에 이름이 바뀌면 같은 이름 파일의 번호/덮어쓰기 선택은 뜻이 없다
+    exists: check.exists && !recording,
     partialSame: p && p.sameJob ? p.bytes : null,
     partialOther: !!p && !p.sameJob,
+    partialRecording: recording,
   };
 }
 
@@ -139,6 +146,7 @@ export function notices(check: OutputCheck, choices: CardChoices): Notices {
  *   끝나고, 받은 `.part`는 남아 "덮어쓰고 받기"로 이어받는다).
  * - 같은 작업의 `.part`: 이어받기 `restart = false`, 처음부터 `restart = true`.
  * - 다른 `.part`: `restart = false`(코어가 sidecar 불일치로 지우고 새로 시작).
+ * - 받다 만 녹화: 늘 `freeFileName`, `restart = false`(녹화는 다시 받을 수 없어 지우지 않는다, core.md 61).
  * 이름은 `check_output`이 정리한 `fileName`을 보낸다(검사한 경로와 같게).
  */
 export function buildEnqueueRequest(
@@ -162,7 +170,7 @@ export function buildEnqueueRequest(
     expectedKind: r.playbackKind,
     folder,
     fileName,
-    onExisting: check.exists && choices.existing === 'overwrite' ? 'overwrite' : 'skip',
+    onExisting: !fresh && check.exists && choices.existing === 'overwrite' ? 'overwrite' : 'skip',
     restart,
     // 최근 영상 둘째 줄의 날짜(바인딩 타입이 string이라 없으면 보내지 않는다)
     contentDate: r.meta.liveOpenDate ?? r.meta.publishDate ?? undefined,
@@ -204,6 +212,8 @@ export function canDownload(args: {
   if (downloadBlock(ownership, check) != null) return false;
   // 번호를 골랐는데 빈 이름이 없으면 덮어쓰게 되므로 막는다(셸은 exists면 늘 채운다).
   if (check.exists && choices.existing === 'number' && check.freeFileName == null) return false;
+  // 받다 만 녹화가 있는 이름은 쓸 수 없는데 빈 번호 이름도 없다
+  if (check.partial?.recording && check.freeFileName == null) return false;
   return true;
 }
 

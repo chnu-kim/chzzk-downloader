@@ -30,6 +30,7 @@ fn request(output: &str) -> DownloadRequest {
         on_existing: DuplicatePolicy::Overwrite,
         concurrency: NonZeroU8::new(4).unwrap(),
         live_stop: None,
+        recording_id: None,
     }
 }
 

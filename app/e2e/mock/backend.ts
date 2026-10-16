@@ -393,6 +393,9 @@ export function install(scenario: Scenario = {}): E2EController {
       if (auth.state === 'signedIn' && auth.channelId && !auth.isAdmin && ['paused', 'failed', 'interrupted', 'skipped'].includes(j.status)) {
         if (j.channelId != null && j.channelId.toLowerCase() !== auth.channelId.toLowerCase()) throw err('notOwnContent');
       }
+      // 셸 흉내(core.md 61): 받다 만 녹화는 "처음부터"로 지우지 않는다
+      const requeueable = ['paused', 'failed', 'interrupted', 'skipped'].includes(j.status);
+      if (a.restart && requeueable && j.playbackKind === 'live' && (j.partialBytes ?? 0) > 0) throw err('invalidInput');
       put({ ...j, status: 'queued', error: null, partialBytes: a.restart ? null : j.partialBytes });
       return null;
     },

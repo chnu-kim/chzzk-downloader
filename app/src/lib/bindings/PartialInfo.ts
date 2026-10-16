@@ -9,6 +9,11 @@ export type PartialInfo = {
  */
 bytes: number, 
 /**
- * 같은 컨텐츠·화질·방식의 `.part`다
+ * 같은 컨텐츠·화질·방식의 `.part`다. 다시 받을 수 없는 생방송 녹화(`recording`)는 늘 false다
  */
-sameJob: boolean, };
+sameJob: boolean, 
+/**
+ * 다시 받을 수 없는 생방송 녹화의 `.part`다(sidecar `kind = live`). 새 요청은 이 녹화의 주인일 수 없어 `same_job`은 늘 false다.
+ * 카드는 이 이름을 쓰지 않고 `free_file_name`(번호 이름)으로 받는다(core.md 61)
+ */
+recording: boolean, };

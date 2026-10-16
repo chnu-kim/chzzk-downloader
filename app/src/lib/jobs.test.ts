@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { JobDto, JobStatus } from './bindings';
 import { t } from './copy/ko';
+import { ERROR_CODES } from './copy/errors';
 import { COMPLETED_FOLD_AT, RECOVERY_SILENT_MS, STALE_DAYS } from './timing';
 import { ICONS } from './components/ui/icons';
 import { err, hlsProg, job, liveProg, prog, signedInAs } from '../test/jobFixtures';
@@ -17,6 +18,7 @@ import {
   jobActionIcon,
   jobActionLabel,
   enterAction,
+  failedCopy,
   groupJobs,
   isWaitingNetwork,
   isClearable,
@@ -918,6 +920,72 @@ describe('생방송 녹화(ADR-0025): 막대·남은 시간 없이 글자만', (
     // 받은 것이 없으면 줄이 없다. 일반 작업에는 이 줄이 없다
     expect(bodyLine(live({ status: 'paused', partialBytes: 0, progress: null }), null)).toBeNull();
     expect(bodyLine(job(2, { status: 'paused', partialBytes: 1000 }), null)).toBeNull();
+  });
+
+  it('받다 만 녹화에는 처음부터 다시 받기가 없다(core.md 61)', () => {
+    // 기본 버튼에도 메뉴에도 없다
+    for (const status of ['paused', 'interrupted'] as const) {
+      const b = jobButtons(live({ status, partialBytes: 1000, progress: null }), null);
+      expect(b.primary, status).toEqual(['resume']);
+      expect(b.menu, status).not.toContain('restartFresh');
+    }
+    // 받던 중 서버가 막은 녹화: 받은 부분이 그대로 있어 [이어받기]다
+    const authed = live({
+      status: 'failed',
+      partialBytes: 1000,
+      progress: null,
+      error: err('authRequired', { stage: 'download' }),
+    });
+    const b = jobButtons(authed, null);
+    expect(b.primary).toEqual(['resume']);
+    expect(b.menu).not.toContain('restartFresh');
+    expect(failedCopy(authed, false)?.body).toContain('받은 부분은 그대로 있어요');
+    // 받은 것이 없는 생방송과 VOD는 그대로다
+    const none = live({ status: 'failed', progress: null, error: err('authRequired', { stage: 'download' }) });
+    expect(jobButtons(none, null).primary).toEqual(['restartFresh']);
+    const vod = job(2, { status: 'failed', partialBytes: 1000, error: err('diskFull', { payload: { type: 'path', path: '/v' } }) });
+    expect(jobButtons(vod, null).menu).toContain('restartFresh');
+    expect(jobButtons(job(3, { status: 'paused', partialBytes: 1000 }), null).menu).toContain('restartFresh');
+  });
+
+  it('받다 만 녹화는 어떤 오류로 끝나도 [이어받기]가 먼저다(D8)', () => {
+    // 코어는 이 오류들에도 `.part`를 남기고, 다음 실행이 조회 없이 받은 만큼 마무리한다
+    const cases: [string, ReturnType<typeof err>][] = [
+      ['unsupported', err('unsupported')],
+      ['playbackChanged', err('playbackChanged')],
+      ['authRequired resolve', err('authRequired', { stage: 'resolve' })],
+      ['noPlayback adult', err('noPlayback', { stage: 'resolve', payload: { type: 'noPlayback', adult: true } })],
+    ];
+    for (const [name, e] of cases) {
+      const j = live({ status: 'failed', partialBytes: 1000, progress: null, error: e });
+      const b = jobButtons(j, null);
+      expect(b.primary[0], name).toBe('resume');
+      expect(b.primary.filter((a) => a === 'resume'), name).toHaveLength(1);
+      expect([...b.primary, ...b.menu], name).not.toContain('restartFresh');
+      expect(failedCopy(j, false)?.body, name).toContain('받은 부분은 그대로 있어요');
+    }
+    // 오류가 고른 다른 동작은 뒤에 남는다
+    const changed = live({ status: 'failed', partialBytes: 1000, progress: null, error: err('playbackChanged') });
+    expect(jobButtons(changed, null).primary).toEqual(['resume', 'reresolve']);
+    // init만 든 녹화(셸이 partialBytes를 주지 않는다)와 VOD는 그대로다
+    const initOnly = live({ status: 'failed', partialBytes: null, progress: null, error: err('unsupported') });
+    expect(jobButtons(initOnly, null).primary).not.toContain('resume');
+    expect(failedCopy(initOnly, false)?.body).not.toContain('받은 부분은 그대로 있어요');
+    const vod = job(2, { status: 'failed', partialBytes: 1000, error: err('unsupported') });
+    expect(jobButtons(vod, null).primary).not.toContain('resume');
+    expect(failedCopy(vod, false)?.body).not.toContain('받은 부분은 그대로 있어요');
+  });
+
+  it('받다 만 녹화의 실패 행은 모든 오류 코드에서 이어받기가 먼저이고 버튼은 셋 이하다', () => {
+    for (const code of ERROR_CODES) {
+      for (const stage of ['resolve', 'download'] as const) {
+        const j = live({ status: 'failed', partialBytes: 1000, progress: null, error: err(code, { stage }) });
+        const b = jobButtons(j, null);
+        expect(b.primary[0], `${code} ${stage}`).toBe('resume');
+        expect(b.primary.length, `${code} ${stage}`).toBeLessThanOrEqual(3);
+        expect([...b.primary, ...b.menu], `${code} ${stage}`).not.toContain('restartFresh');
+      }
+    }
   });
 
   it('오류 코드 notLive·nothingRecorded는 다시 시도 하나', () => {

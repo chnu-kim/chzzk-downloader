@@ -91,7 +91,7 @@ export function delegationActive(r: DelegationRow, admins: readonly string[]): b
 }
 
 // 규칙: 상한은 SQL에 두지 않는다. 후보를 다 읽고 JS에서 판정한 뒤 자른다(무효 행이 유효 행을 밀어내지 않게).
-// 한 채널의 행 수는 상한(10·20)과 30일 청소로 묶인다.
+// 한 채널의 행 수는 상한(10·20)과 30일 청소로 묶인다. 예외는 청소가 지우지 않는 허가 행 없는 옛 관리자의 NULL 행뿐이다(구현 중 변경 105 (마)·(타)).
 
 function inviteByHash(db: Db, hash: string): InviteRow | null {
   return db.first<InviteRow>(`${INVITE_SELECT} WHERE i.token_hash = ?`, hash);

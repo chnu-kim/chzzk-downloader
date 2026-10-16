@@ -98,6 +98,28 @@ impl DownloadRequest {
     }
 }
 
+/// 생방송 녹화가 끝난 이유(core.md 구현 중 변경 65).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LiveEndReason {
+    /// 방송이 끝났다: `EXT-X-ENDLIST`, 재조회가 방송 종료(`NotLive`)
+    Ended,
+    /// 사용자가 [녹화 마치기]를 눌렀다(`DownloadRequest::live_stop`)
+    Stopped,
+    /// 스트림이 다시 시작되었다: msn이 `BACK_CONFIRM`번 연달아 거꾸로 감, init 파일 이름 바뀜,
+    /// `EXT-X-DISCONTINUITY`·두 번째 `EXT-X-MAP`, 재조회 결과의 방송 ID가 바뀜. 채널은 지금도 방송 중일 수 있다
+    Restarted,
+    /// 그 밖: 앞선 실행에서 끊긴 `.part`를 이번 실행이 받은 만큼 마무리했다
+    Other,
+}
+
+/// 생방송 녹화의 끝 정보.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LiveEnd {
+    pub reason: LiveEndReason,
+    /// 놓친 세그먼트 수. 앞선 실행의 `.part`를 마무리한 경우(`Other`)는 모른다(`None`)
+    pub gaps: Option<u32>,
+}
+
 /// 다운로드 결과.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DownloadOutcome {
@@ -107,10 +129,32 @@ pub enum DownloadOutcome {
         bytes: u64,
         /// 이어받기 시작 위치(새로 받았으면 0)
         resumed_from: u64,
+        /// 생방송 녹화만: 끝난 이유와 놓친 세그먼트 수. 생방송이 아니면 `None`
+        live: Option<LiveEnd>,
     },
     /// `Skip`인데 최종 파일이 있었다. 시작 전에 있었으면 네트워크 0회, 받는 동안 생겼으면 받은 `.part`와
     /// sidecar가 남는다(같은 요청을 `Overwrite`로 다시 부르면 이어받아 곧바로 마무리된다).
     Skipped { path: PathBuf },
+}
+
+impl DownloadOutcome {
+    /// 생방송 결과에 끝 정보를 붙인다. `Skipped`는 그대로 둔다.
+    pub(crate) fn with_live(self, end: LiveEnd) -> Self {
+        match self {
+            DownloadOutcome::Completed {
+                path,
+                bytes,
+                resumed_from,
+                ..
+            } => DownloadOutcome::Completed {
+                path,
+                bytes,
+                resumed_from,
+                live: Some(end),
+            },
+            s @ DownloadOutcome::Skipped { .. } => s,
+        }
+    }
 }
 
 /// 진행률 콜백 연결. 엔진은 상태를 바꾸고 `update`/`phase`를 부른다.
@@ -346,7 +390,13 @@ async fn run(job: &mut Job<'_>, part: &mut Option<PartFile>) -> Result<DownloadO
         // `resume` 직후라 `sidecar().committed_len == written()`이다
         if p.sidecar().has_live_media() {
             let resumed_from = p.written();
-            return finish(job, part, resumed_from).await;
+            // 앞선 실행에서 끊긴 녹화를 받은 만큼 마무리한다. 구멍 수는 sidecar에 없어 모른다
+            return finish(job, part, resumed_from).await.map(|o| {
+                o.with_live(LiveEnd {
+                    reason: LiveEndReason::Other,
+                    gaps: None,
+                })
+            });
         }
         if let Some(p) = part.take() {
             p.discard()?;
@@ -475,6 +525,7 @@ pub(crate) async fn finish(
             path,
             bytes,
             resumed_from,
+            live: None,
         }),
         Finalized::TargetExists => Ok(DownloadOutcome::Skipped {
             path: job.req.output.clone(),
@@ -486,6 +537,38 @@ pub(crate) async fn finish(
 mod tests {
     use super::*;
     use defrag::{DefragError, DefragReport};
+
+    /// 끝 정보는 `Completed`에만 붙고 `Skipped`는 그대로 둔다.
+    #[test]
+    fn with_live_keeps_skipped() {
+        let e = LiveEnd {
+            reason: LiveEndReason::Stopped,
+            gaps: Some(2),
+        };
+        let s = DownloadOutcome::Skipped {
+            path: PathBuf::from("a.mp4"),
+        };
+        assert!(matches!(s.with_live(e), DownloadOutcome::Skipped { .. }));
+        let c = DownloadOutcome::Completed {
+            path: PathBuf::from("a.mp4"),
+            bytes: 7,
+            resumed_from: 3,
+            live: None,
+        };
+        match c.with_live(e) {
+            DownloadOutcome::Completed {
+                path,
+                bytes,
+                resumed_from,
+                live,
+            } => {
+                assert_eq!(path, PathBuf::from("a.mp4"));
+                assert_eq!((bytes, resumed_from), (7, 3));
+                assert_eq!(live, Some(e));
+            }
+            o => panic!("{o:?}"),
+        }
+    }
 
     fn parse_err() -> Error {
         Error::Parse {

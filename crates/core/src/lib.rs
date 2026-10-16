@@ -30,8 +30,8 @@ mod testutil;
 pub use client::{Chzzk, ClientConfig, Endpoints};
 pub use credentials::CredentialStore;
 pub use download::{
-    Discarded, DownloadOutcome, DownloadRequest, DuplicatePolicy, PartOwner, RetryPolicy,
-    discard_partial,
+    Discarded, DownloadOutcome, DownloadRequest, DuplicatePolicy, LiveEnd, LiveEndReason,
+    PartOwner, RetryPolicy, discard_partial,
 };
 pub use error::{Error, ErrorKind, Unsupported};
 pub use http::{NaverCookies, RequestKind, Secret};

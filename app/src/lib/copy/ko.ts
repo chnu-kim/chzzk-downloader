@@ -133,6 +133,10 @@ export const ko = {
   'job.live.gaps': '놓친 조각 {n}',
   'job.live.stopping': '녹화를 마치는 중',
   'job.live.partial.body': '방송이 끊겨 이어 붙일 수 없어요. 이어받기를 누르면 받은 부분까지 저장해요.',
+  'job.live.end.ended.body': '방송이 끝나 녹화를 마쳤어요.',
+  'job.live.end.stopped.body': '직접 녹화를 마쳤어요.',
+  'job.live.end.restarted.body': '방송이 다시 시작되어 녹화를 마쳤어요.',
+  'job.live.end.other.body': '끊긴 녹화를 받은 부분까지 저장했어요.',
   'job.paused': '일시정지됨 · {bytes} 받음',
   'receive.admin.otherChannel.title': '다른 채널의 영상이에요',
   'receive.admin.otherChannel.body': '관리자라서 받을 수 있어요.',
@@ -154,6 +158,7 @@ export const ko = {
 
   'action.pause': '일시정지',
   'action.stopRecording': '녹화 마치기',
+  'action.recordAgain': '다시 녹화',
   'action.resume': '이어받기',
   'action.retry': '다시 시도',
   'action.restartFresh': '처음부터 다시 받기',

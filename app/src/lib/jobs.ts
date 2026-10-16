@@ -1,6 +1,6 @@
 // 다운로드 목록(§8.5·§8.11, docs/design/system/patterns.md §2·§3·§14.3)의 판단을 순수 함수로 둔다. 상태 판단은 Rust가 하고,
 // 여기서는 받은 레코드로 무엇을 어떻게 보일지만 정한다. 컴포넌트는 표시와 입력만 한다.
-import type { AuthStatusDto, JobDto, JobId, JobStatus, Os, ProgressDto } from './bindings';
+import type { AuthStatusDto, JobDto, JobId, JobStatus, LiveEndReason, Os, ProgressDto } from './bindings';
 import { actionLabel, errorCopy, type ActionId } from './copy/errors';
 import { t, type CopyKey } from './copy/ko';
 import {
@@ -330,7 +330,7 @@ export function statusParts(job: JobDto, p: ProgressDto | null | undefined, ctx:
     case 'completed': {
       if (job.missing) return [t('job.completedMissing')];
       const size = formatFileSize(job.finalBytes ?? 0, base);
-      return [
+      const parts = [
         job.finishedAt != null
           ? t('job.completed', {
               size,
@@ -338,6 +338,10 @@ export function statusParts(job: JobDto, p: ProgressDto | null | undefined, ctx:
             })
           : t('job.completedNoTime', { size }),
       ];
+      // 끝난 녹화의 놓친 조각(있을 때만, L8). 녹화 중 상태 줄과 같은 조각이다
+      const gaps = job.liveEnd?.gaps ?? 0;
+      if (gaps > 0) parts.push(t('job.live.gaps', { n: formatCount(gaps) }));
+      return parts;
     }
     case 'skipped':
       return [t('job.status.skipped')];
@@ -351,13 +355,23 @@ export function statusLine(parts: readonly string[]): string {
   return parts.join(' · ');
 }
 
+/** 끝난 생방송 녹화의 본문 줄(L8, app.md 구현 중 변경 82). 키를 조립하지 않고 표로 고른다 */
+const LIVE_END_BODY: Record<LiveEndReason, CopyKey> = {
+  ended: 'job.live.end.ended.body',
+  stopped: 'job.live.end.stopped.body',
+  restarted: 'job.live.end.restarted.body',
+  other: 'job.live.end.other.body',
+};
+
 /**
- * 본문 줄(해요체 한 문장)의 키. 완료인데 파일이 없을 때와 건너뜀에만 있다. 건너뜀은 받은 `.part`가 남았으면
+ * 본문 줄(해요체 한 문장)의 키. 완료인데 파일이 없을 때, 끝난 생방송 녹화(끝난 이유), 건너뜀에만 있다. 건너뜀은 받은 `.part`가 남았으면
  * (`partialBytes`) 시작 전이 아니라 받는 동안 같은 이름의 파일이 생겨 덮어쓰지 않은 것이다.
  * 실패의 본문은 오류 표(`failedCopy`)가, 막힌 작업의 안내는 `blockCopyKey`가 맡는다.
  */
 export function bodyKey(job: JobDto): CopyKey | null {
   if (job.status === 'completed' && job.missing) return 'job.completedMissing.body';
+  // 끝난 생방송 녹화: 끝난 이유 한 문장(L8). 옛 기록(`liveEnd` 없음)은 지금처럼 본문이 없다
+  if (job.status === 'completed' && job.liveEnd) return LIVE_END_BODY[job.liveEnd.reason];
   if (job.status === 'skipped') return job.partialBytes != null ? 'job.skippedMeanwhile.body' : 'job.skipped.body';
   return null;
 }
@@ -430,6 +444,8 @@ export type JobAction =
   | 'copyUrl'
   | 'copyReport'
   | 'reresolve'
+  /** 재시작으로 끝난 녹화: 그 주소를 다시 불러와 새로 녹화한다(동작은 reresolve와 같다) */
+  | 'recordAgain'
   | 'overwrite'
   | 'openCookieSettings'
   | 'reenterCookies'
@@ -478,7 +494,7 @@ function keepsRecording(job: JobDto): boolean {
  * 상태별 버튼(patterns.md §3.2 표가 app.md §8.5보다 우선한다).
  * - 받는 중: [일시정지][취소] / 준비 중: [취소] / 마무리 중·멈추는 중: 없음
  * - 대기: [취소] / 일시정지·중단: [이어받기][취소]
- * - 실패: 오류 표(§9)의 동작 / 완료: [파일 열기][폴더에서 보기](파일이 없으면 [폴더에서 보기]) / 건너뜀: [파일 열기][덮어쓰고 받기…]
+ * - 실패: 오류 표(§9)의 동작 / 완료: [파일 열기][폴더에서 보기](파일이 없으면 [폴더에서 보기]), 재시작으로 끝난 녹화는 끝에 [다시 녹화] / 건너뜀: [파일 열기][덮어쓰고 받기…]
  * 메뉴: 제목 전체 보기(늘), 주소 복사(늘), 처음부터 다시 받기(`.part`가 있을 때, 받다 만 녹화는 빼고), 문제 보고용 정보 복사(실패),
  * 목록에서 지우기(끝난 항목). 기본 버튼에 이미 있는 동작은 메뉴에 다시 넣지 않는다.
  */
@@ -527,6 +543,8 @@ export function jobButtons(
     }
     case 'completed':
       primary = job.missing ? ['openFolder'] : ['openFile', 'openFolder'];
+      // 스트림이 다시 시작되어 끝난 녹화: 같은 채널을 새로 녹화하는 길(카드의 [받기]를 거친다, R12)
+      if (job.liveEnd?.reason === 'restarted') primary.push('recordAgain');
       break;
     case 'skipped':
       primary = ['openFile', 'overwrite'];
@@ -592,6 +610,7 @@ const ACTION_LABEL: Record<Exclude<JobAction, 'openFolder'>, CopyKey> = {
   copyUrl: 'action.copyUrl',
   copyReport: 'action.copyReport',
   reresolve: 'action.reresolve',
+  recordAgain: 'action.recordAgain',
   overwrite: 'action.overwriteAndDownload',
   openCookieSettings: 'action.openCookieSettings',
   reenterCookies: 'action.reenterCookies',

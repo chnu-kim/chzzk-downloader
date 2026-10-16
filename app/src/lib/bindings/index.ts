@@ -28,6 +28,8 @@ export type * from "./JobStatus";
 export type * from "./KeepAwakePayload";
 export type * from "./LegacyCandidate";
 export type * from "./LegacyImportDto";
+export type * from "./LiveEndDto";
+export type * from "./LiveEndReason";
 export type * from "./OfflineDto";
 export type * from "./OnExisting";
 export type * from "./Os";

@@ -5,9 +5,11 @@ mod common;
 use std::time::Duration;
 
 use chzzk_core::download::part::{part_path, sidecar_path};
-use chzzk_core::{DownloadOutcome, Error, LiveProgress, Phase, PlaybackKind, RequestKind};
+use chzzk_core::{
+    DownloadOutcome, Error, LiveEnd, LiveEndReason, LiveProgress, Phase, PlaybackKind, RequestKind,
+};
 use chzzk_shell::ErrorCode;
-use chzzk_shell::dto::JobStatus;
+use chzzk_shell::dto::{self, JobStatus, LiveEndDto};
 use chzzk_shell::manager::MAX_LIVE;
 use common::fake::{Script, progress};
 use common::harness::{Harness, live_request, request, until};
@@ -100,6 +102,10 @@ async fn stop_job_finalizes_recording() {
             path: out.clone(),
             bytes: 4096,
             resumed_from: 0,
+            live: Some(LiveEnd {
+                reason: LiveEndReason::Stopped,
+                gaps: Some(1),
+            }),
         })),
     );
     let id = h.enqueue_live("l").id;
@@ -115,6 +121,13 @@ async fn stop_job_finalizes_recording() {
     let j = h.job(id);
     assert_eq!(j.final_bytes, Some(4096));
     assert_eq!(j.error, None);
+    assert_eq!(
+        j.live_end,
+        Some(LiveEndDto {
+            reason: dto::LiveEndReason::Stopped,
+            gaps: Some(1)
+        })
+    );
     // 두 번 눌러도 그대로
     h.mgr.stop_job(id).unwrap();
     assert_eq!(
@@ -130,6 +143,45 @@ async fn stop_job_finalizes_recording() {
     // 요청에는 멈춤 토큰이 실린다
     let reqs = h.fake.download_requests();
     assert!(reqs[0].live_stop.as_ref().is_some_and(|t| t.is_cancelled()));
+}
+
+/// 끝난 이유는 jobs.json에 남아 앱을 다시 켜도 보인다(core.md 65, app.md 82).
+#[tokio::test(start_paused = true)]
+async fn restarted_live_end_survives_reopen() {
+    let h = Harness::new(2);
+    let out = h.output("l");
+    h.fake.script_for(
+        &out,
+        Script::new().ends(Ok(DownloadOutcome::Completed {
+            path: out.clone(),
+            bytes: 10,
+            resumed_from: 0,
+            live: Some(LiveEnd {
+                reason: LiveEndReason::Restarted,
+                gaps: Some(2),
+            }),
+        })),
+    );
+    let id = h.enqueue_live("l").id;
+    until("완료", || h.status(id) == JobStatus::Completed).await;
+    let want = Some(LiveEndDto {
+        reason: dto::LiveEndReason::Restarted,
+        gaps: Some(2),
+    });
+    assert_eq!(h.job(id).live_end, want);
+    let m = h.reopen(2);
+    let got = m.list().into_iter().find(|j| j.id == id).unwrap();
+    assert_eq!(got.status, JobStatus::Completed);
+    assert_eq!(got.live_end, want);
+}
+
+/// VOD 완료에는 끝 정보가 없다.
+#[tokio::test(start_paused = true)]
+async fn vod_completion_has_no_live_end() {
+    let h = Harness::new(2);
+    let id = h.enqueue("v").id;
+    until("완료", || h.status(id) == JobStatus::Completed).await;
+    assert_eq!(h.job(id).live_end, None);
 }
 
 /// 일반 작업의 요청에는 멈춤 토큰이 없고, `stop_job`은 거부한다.

@@ -138,7 +138,8 @@ async fn byte_identity() {
         DownloadOutcome::Completed {
             path: out.clone(),
             bytes: SIZE as u64,
-            resumed_from: 0
+            resumed_from: 0,
+            live: None,
         }
     );
     assert_eq!(std::fs::read(&out).unwrap(), body);
@@ -262,7 +263,8 @@ async fn truncated_body_resumes() {
         DownloadOutcome::Completed {
             path: out.clone(),
             bytes: 1000,
-            resumed_from: 500
+            resumed_from: 500,
+            live: None,
         }
     );
     let reqs = media_requests(&server, MEDIA_PATH).await;
@@ -431,7 +433,8 @@ async fn range_416_complete() {
         DownloadOutcome::Completed {
             path: out.clone(),
             bytes: 2000,
-            resumed_from: 2000
+            resumed_from: 2000,
+            live: None,
         }
     );
     assert_eq!(std::fs::read(&out).unwrap(), body);
@@ -818,7 +821,8 @@ async fn skip_does_not_clobber_file_created_while_downloading() {
         DownloadOutcome::Completed {
             path: out.clone(),
             bytes: SIZE as u64,
-            resumed_from: SIZE as u64
+            resumed_from: SIZE as u64,
+            live: None,
         }
     );
     assert_eq!(std::fs::read(&out).unwrap(), body);

@@ -19,6 +19,7 @@ import type {
   ErrorCode,
   JobDto,
   JobEvent,
+  LiveEndDto,
   Os,
   OutputCheck,
   ProgressDto,
@@ -125,7 +126,8 @@ export interface E2EController {
   liveProgress(id: number, bytes: number, recordedSecs: number, gaps?: number): void;
   /** 작업을 running으로 바꾸고 진행률을 보낸다. `phase`를 `waitingNetwork`로 주면 연결 대기(속도·남은 시간 없음)다 */
   progress(id: number, bytes: number, totalBytes: number, phase?: ProgressDto['phase']): void;
-  complete(id: number, finalBytes: number): void;
+  /** 작업을 완료로 바꾼다. 생방송은 끝난 이유·놓친 조각(`liveEnd`)을 줄 수 있다(없으면 null) */
+  complete(id: number, finalBytes: number, liveEnd?: LiveEndDto | null): void;
   fail(id: number, error: AppError, partialBytes?: number | null): void;
   /** Rust가 보내는 앱 이벤트(close-requested 등) */
   emit(event: string, payload: unknown): Promise<void>;
@@ -439,6 +441,7 @@ export function install(scenario: Scenario = {}): E2EController {
         finishedAt: null,
         stoppedAt: null,
         range: req.range ?? null,
+        liveEnd: null,
       };
       put(job, 'added');
       return job;
@@ -454,7 +457,15 @@ export function install(scenario: Scenario = {}): E2EController {
       const j = must(a.id as number);
       if (j.playbackKind !== 'live') throw err('invalidInput');
       put({ ...j, status: 'pausing' });
-      put({ ...j, status: 'completed', progress: null, finalBytes: j.progress?.bytes ?? 0, finishedAt: clock++ });
+      put({
+        ...j,
+        status: 'completed',
+        progress: null,
+        finalBytes: j.progress?.bytes ?? 0,
+        finishedAt: clock++,
+        // 진짜 셸: 코어가 `stopped`와 구멍 수를 준다
+        liveEnd: { reason: 'stopped', gaps: j.progress?.liveGaps ?? 0 },
+      });
       return null;
     },
     pause_job: (a) => {
@@ -542,8 +553,8 @@ export function install(scenario: Scenario = {}): E2EController {
       else jobs.set(id, { ...j, progress: p });
       send({ type: 'progress', id, progress: p });
     },
-    complete(id, finalBytes) {
-      put({ ...must(id), status: 'completed', progress: null, finalBytes, finishedAt: clock++ });
+    complete(id, finalBytes, liveEnd = null) {
+      put({ ...must(id), status: 'completed', progress: null, finalBytes, finishedAt: clock++, liveEnd });
     },
     fail(id, error, partialBytes = null) {
       put({ ...must(id), status: 'failed', progress: null, error, partialBytes, finishedAt: clock++ });

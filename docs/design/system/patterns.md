@@ -242,6 +242,7 @@
 | 실패(이어받기 가능) | `failed` | 유지 | 오류 제목(§10.3) | 오류 본문 | [이어받기] [폴더에서 보기] [⋯] |
 | 실패(처음부터) | `failed`(막대 있으면) | 유지 | 오류 제목 | 오류 본문 | [처음부터 다시 받기] [⋯] |
 | 완료 | 없음 | 없음 | ✓ + `job.completed`(완료 · {size} · {time}) | — | [열기] [Finder에서 보기 / 폴더에서 보기] [⋯] |
+| 완료 · 생방송 | 없음 | 없음 | ✓ + `job.completed`(놓친 조각이 있으면 끝에 ` · ` + `job.live.gaps`) | 끝난 이유 하나: `job.live.end.ended.body` / `job.live.end.stopped.body` / `job.live.end.restarted.body` / `job.live.end.other.body`(옛 기록은 —) | [열기] [Finder에서 보기 / 폴더에서 보기] (재시작이면 + `action.recordAgain`) [⋯] |
 | 완료 · 파일 없음 | 없음 | 없음 | ⚠ + `job.completedMissing`(완료 · 파일 없음) | `job.completedMissing.body` | [폴더에서 보기] [처음부터 다시 받기] [⋯] |
 | 건너뜀 | 없음 | 없음 | `job.status.skipped`(받지 않음) | `job.skipped.body` | [열기] [덮어쓰고 받기…] [⋯] |
 | 멈춘 지 `STALE_DAYS` 넘음 | 그대로 | 유지 | 그대로 | `job.stale.body`({days}일 전에 멈췄어요. 디스크에 {size} 남아 있어요.) | 그대로 |

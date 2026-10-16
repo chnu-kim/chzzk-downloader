@@ -44,10 +44,41 @@ test('생방송 주소를 불러와 녹화하고 [녹화 마치기]로 마친다
   // [녹화 마치기]: 취소가 아니라 stop_job → 완료(받은 만큼 저장)
   await item.getByRole('button', { name: t('action.stopRecording') }).click();
   await expect(item).toContainText(tRegex('job.completed'));
+  // 끝난 이유와 놓친 조각(앞에서 2를 보냈다)이 남는다
+  await expect(item).toContainText(t('job.live.end.stopped.body'));
+  await expect(item).toContainText(t('job.live.gaps', { n: 2 }));
   expect(await app.args('stop_job')).toEqual([{ id: 1 }]);
   expect(await app.cmds()).not.toContain('pause_job');
   expect(await app.cmds()).not.toContain('remove_job');
   await app.axe('녹화를 마침');
+});
+
+test('방송이 다시 시작되어 끝난 녹화는 [다시 녹화]로 그 주소를 다시 불러온다', async ({ app }) => {
+  const r = liveResolved();
+  const { page } = app;
+  await app.open({ resolve: { [r.url]: r } });
+
+  await page.getByLabel(t('url.label')).fill(r.url);
+  await page.getByRole('button', { name: t('common.load') }).click();
+  const card = page.getByRole('region', { name: r.meta.title });
+  await card.getByRole('button', { name: t('card.download') }).click();
+  await expect(card).toBeHidden();
+
+  const item = page.getByRole('article', { name: r.meta.title });
+  await app.ctl((c, gb) => c.liveProgress(1, 3 * gb, 3725), GB);
+  await expect(item).toContainText(tRegex('job.live.running'));
+  await app.ctl((c, gb) => c.complete(1, 3 * gb, { reason: 'restarted', gaps: 0 }), GB);
+  await expect(item).toContainText(t('job.live.end.restarted.body'));
+  await expect(item).not.toContainText(t('job.live.gaps', { n: 0 }));
+  await app.axe('재시작으로 끝난 녹화');
+
+  // [다시 녹화]: 그 주소를 다시 불러와 카드가 뜬다. 받기는 사용자가 누른다(자동으로 시작하지 않는다)
+  await item.getByRole('button', { name: t('action.recordAgain') }).click();
+  await expect(page.getByLabel(t('url.label'))).toHaveValue(r.url);
+  const again = page.getByRole('region', { name: r.meta.title });
+  await expect(again).toBeVisible();
+  await expect(again.getByText(t('card.live.body'))).toBeVisible();
+  expect(await app.args('enqueue')).toHaveLength(1);
 });
 
 test('녹화 중인 작업을 취소하면 녹화한 부분이 지워진다고 묻는다', async ({ app }) => {

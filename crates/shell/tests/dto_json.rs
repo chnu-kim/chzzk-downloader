@@ -9,9 +9,9 @@ use chzzk_shell::auth::{AuthPhase, AuthReason, AuthStatus, Cause, OfflineInfo, P
 use chzzk_shell::dto::{AppInfo, Features, OsDto};
 use chzzk_shell::dto::{
     AuthReasonDto, AuthStatusDto, ContentKindDto, ContentMetaDto, ContentRefTs, EnqueueRequest,
-    JobDto, JobEvent, JobStatus, LegacyImportDto, Nullable, OnExisting, Ownership, PhaseTs,
-    PlaybackKindTs, ProgressDto, QualityDto, RecentVodDto, ResolvedDto, SettingsPatch, WebPage,
-    WindowFocusPayload,
+    JobDto, JobEvent, JobStatus, LegacyImportDto, LiveEndDto, LiveEndReason, Nullable, OnExisting,
+    Ownership, PhaseTs, PlaybackKindTs, ProgressDto, QualityDto, RecentVodDto, ResolvedDto,
+    SettingsPatch, WebPage, WindowFocusPayload,
 };
 use chzzk_shell::{AppError, JobId, Stage};
 use serde_json::{Value, json};
@@ -207,6 +207,7 @@ fn job(status: JobStatus) -> JobDto {
         finished_at: None,
         stopped_at: None,
         range: None,
+        live_end: None,
     }
 }
 
@@ -257,9 +258,32 @@ fn job_event_status_snapshot() {
                 "createdAt": 1_759_650_000u64,
                 "finishedAt": 1_759_650_100u64,
                 "stoppedAt": null,
-                "range": null
+                "range": null,
+                "liveEnd": null
             }
         })
+    );
+}
+
+/// 끝난 생방송 녹화의 이유 모양(`gaps`는 모르면 null).
+#[test]
+fn job_dto_live_end_shape() {
+    let mut j = job(JobStatus::Completed);
+    j.live_end = Some(LiveEndDto {
+        reason: LiveEndReason::Restarted,
+        gaps: Some(3),
+    });
+    assert_eq!(
+        to_json(&j)["liveEnd"],
+        json!({"reason": "restarted", "gaps": 3})
+    );
+    j.live_end = Some(LiveEndDto {
+        reason: LiveEndReason::Other,
+        gaps: None,
+    });
+    assert_eq!(
+        to_json(&j)["liveEnd"],
+        json!({"reason": "other", "gaps": null})
     );
 }
 

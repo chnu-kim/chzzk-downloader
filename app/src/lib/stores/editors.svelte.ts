@@ -58,6 +58,11 @@ export class EditorsStore {
   #deferred = new Map<string, { ed: EditorDto; owner: string }>();
   /** 늦은 `editors_list` 응답 버리기 */
   #loadSeq = 0;
+  /** 화면 세대: closeView·계정 바뀜에 올린다. 초대 응답은 같은 세대일 때만 적용한다(화면 수명, delegation.md §4.2) */
+  #viewGen = 0;
+  /** 이번 읽기를 시작한 뒤 회수에 성공한 ID(소문자). 늦게 온 옛 목록에서 걸러 낸다. 편집자·맡은 채널은 같은 ID가 양쪽에 있을 수 있어 따로 둔다 */
+  #goneEditors = new Set<string>();
+  #goneDelegated = new Set<string>();
 
   get editors(): EditorDto[] {
     return (this.dto?.editors ?? []).filter((e) => !this.hidden.has(lc(e.channelId)));
@@ -99,14 +104,17 @@ export class EditorsStore {
     this.load = 'idle';
     this.invite = null;
     this.inviteError = null;
+    this.inviting = false;
     this.#loadSeq++;
+    this.#viewGen++;
+    this.#goneEditors.clear();
+    this.#goneDelegated.clear();
   }
 
   /** 설정 화면이 열릴 때 */
   async openView() {
+    // 실패 줄은 여기서 지우지 않는다: 설정 밖에서 실패한 지연 빼기·그만두기를 다시 들어왔을 때 보이게(closeView가 지운다)
     this.inviteError = null;
-    this.rowError.clear();
-    this.leaveError.clear();
     const current = ownerOf(auth.status);
     if (!current || auth.status?.offline) return; // 오프라인이면 묻지 않는다
     // App effect(onAuth)보다 먼저 불렸으면 지금 계정으로 먼저 맞춘다(그 뒤 onAuth가 응답을 버리지 않게)
@@ -114,11 +122,18 @@ export class EditorsStore {
     const seq = ++this.#loadSeq;
     const owner = this.#owner;
     if (this.load !== 'ready') this.load = 'loading';
+    this.#goneEditors.clear();
+    this.#goneDelegated.clear();
     try {
       const d = await api.editorsList();
       if (!d) throw new Error('empty editors_list');
       if (seq !== this.#loadSeq || owner !== this.#owner) return;
-      this.dto = d;
+      // 읽는 사이 회수에 성공한 행은 옛 스냅샷에 남아 있어도 다시 그리지 않는다
+      this.dto = {
+        ...d,
+        editors: d.editors.filter((e) => !this.#goneEditors.has(lc(e.channelId))),
+        delegatedChannels: d.delegatedChannels.filter((c) => !this.#goneDelegated.has(lc(c.channelId))),
+      };
       this.load = 'ready';
     } catch {
       if (seq !== this.#loadSeq) return;
@@ -128,7 +143,9 @@ export class EditorsStore {
   }
 
   closeView() {
+    this.#viewGen++; // 진행 중인 초대 만들기의 응답을 버린다
     this.invite = null;
+    this.inviting = false;
     this.inviteError = null;
     this.rowError.clear();
     this.leaveError.clear();
@@ -139,16 +156,19 @@ export class EditorsStore {
     this.inviting = true;
     this.inviteError = null;
     const owner = this.#owner;
+    const gen = this.#viewGen;
+    const same = () => gen === this.#viewGen && owner === this.#owner;
     try {
       const inv = await api.editorsInvite();
-      if (owner !== this.#owner) return;
+      if (!same()) return;
       this.invite = inv;
       if (this.dto) this.dto = { ...this.dto, pendingInviteUntil: inv.expiresAt };
       announcer.say(t('editors.invite.made'));
     } catch (e) {
-      if (owner === this.#owner) this.inviteError = failText(toAppError(e), 'editors.invite.failed', this.dto?.editorsMax);
+      if (same()) this.inviteError = failText(toAppError(e), 'editors.invite.failed', this.dto?.editorsMax);
     } finally {
-      this.inviting = false;
+      // 화면이 닫혔다 다시 열렸으면 새 요청의 표시를 건드리지 않는다
+      if (gen === this.#viewGen) this.inviting = false;
     }
   }
 
@@ -223,6 +243,7 @@ export class EditorsStore {
   }
 
   #dropEditor(id: string) {
+    this.#goneEditors.add(id);
     if (this.dto) this.dto = { ...this.dto, editors: this.dto.editors.filter((e) => lc(e.channelId) !== id) };
   }
 
@@ -236,6 +257,7 @@ export class EditorsStore {
     try {
       await api.delegationsLeave(ch.channelId);
       if (owner !== this.#owner) return false;
+      this.#goneDelegated.add(id);
       if (this.dto) {
         this.dto = { ...this.dto, delegatedChannels: this.dto.delegatedChannels.filter((d) => lc(d.channelId) !== id) };
       }

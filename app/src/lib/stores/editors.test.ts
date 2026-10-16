@@ -311,3 +311,110 @@ describe('읽기·그만두기·닫기', () => {
     expect(toasts.current?.message).toBe(t('toast.editorRemoved', { name: '가'.repeat(39) + '…' }));
   });
 });
+
+describe('화면 수명과 늦은 응답(EZ19~EZ22, 리뷰 반영)', () => {
+  function held<T>() {
+    let resolve!: (v: T) => void;
+    let reject!: (e: unknown) => void;
+    const promise = new Promise<T>((res, rej) => {
+      resolve = res;
+      reject = rej;
+    });
+    return { promise, resolve, reject };
+  }
+
+  it('EZ19 설정을 떠난 뒤 실패한 지연 빼기는 다음 설정 진입에 그 행의 실패 줄로 보인다', async () => {
+    await open();
+    vi.mocked(api.editorsRemove).mockRejectedValue(appError('network'));
+    editors.remove(editors.editors[0]);
+    editors.closeView(); // 홈으로 돌아갔다(토스트는 화면 밖에서도 산다)
+    await vi.advanceTimersByTimeAsync(TOAST_MS + 10);
+    vi.mocked(api.editorsList).mockResolvedValue(list());
+    const p = editors.openView();
+    expect(editors.rowError.get(B)).toBe(t('editors.remove.failed'));
+    await p;
+    expect(editors.rowError.get(B)).toBe(t('editors.remove.failed'));
+    expect(editors.editors.map((e) => e.channelId)).toEqual([B, D]);
+    // 다시 닫으면 비운다(본 뒤에는 남기지 않는다)
+    editors.closeView();
+    expect(editors.rowError.size).toBe(0);
+  });
+
+  it('EZ20 설정이 닫힌 뒤 도착한 초대 응답은 주소를 되살리지 않는다', async () => {
+    await open();
+    const h = held<{ url: string; expiresAt: number }>();
+    vi.mocked(api.editorsInvite).mockReturnValue(h.promise);
+    const p = editors.createInvite();
+    editors.closeView();
+    expect(editors.inviting).toBe(false);
+    h.resolve({ url: 'https://w.example.invalid/invite/cdi_old', expiresAt: 1_760_600_000 });
+    await p;
+    await open();
+    expect(editors.invite).toBeNull();
+    expect(editors.inviting).toBe(false);
+  });
+
+  it('EZ20 닫힌 뒤의 초대 실패도 버리고, 다시 연 화면의 새 요청은 막히지 않는다', async () => {
+    await open();
+    const h = held<{ url: string; expiresAt: number }>();
+    vi.mocked(api.editorsInvite).mockReturnValueOnce(h.promise);
+    const p = editors.createInvite();
+    editors.closeView();
+    await open();
+    const h2 = held<{ url: string; expiresAt: number }>();
+    vi.mocked(api.editorsInvite).mockReturnValueOnce(h2.promise);
+    const p2 = editors.createInvite();
+    expect(api.editorsInvite).toHaveBeenCalledTimes(2);
+    h.reject(appError('network'));
+    await p;
+    expect(editors.inviteError).toBeNull();
+    expect(editors.inviting).toBe(true); // 앞 요청의 finally가 새 요청의 표시를 끄지 않는다
+    h2.resolve({ url: 'https://w.example.invalid/invite/cdi_new', expiresAt: 1_760_600_000 });
+    await p2;
+    expect(editors.invite?.url).toContain('cdi_new');
+    expect(editors.inviting).toBe(false);
+  });
+
+  it('EZ21 늦게 도착한 목록이 그 사이 성공한 그만두기를 덮지 않는다', async () => {
+    await open();
+    const h = held<EditorsDto>();
+    vi.mocked(api.editorsList).mockReturnValue(h.promise);
+    const p = editors.openView();
+    await editors.leave(editors.dto!.delegatedChannels[0]);
+    h.resolve(list()); // C가 들어 있는 옛 스냅샷
+    await p;
+    expect(editors.delegated.map((d) => d.channelId)).toEqual([]);
+    expect(editors.load).toBe('ready');
+  });
+
+  it('EZ21 늦게 도착한 목록이 그 사이 성공한 지연 빼기·즉시 빼기를 덮지 않는다', async () => {
+    await open(list({ editors: [ed(B, '편집자 하나'), ed(D, '편집자 둘', 'pending')] }));
+    editors.remove(editors.editors[0]); // B: 지연 빼기
+    const h = held<EditorsDto>();
+    vi.mocked(api.editorsList).mockReturnValue(h.promise);
+    const p = editors.openView();
+    await editors.remove(editors.editors.find((e) => e.channelId === D)!); // D: 기다리는 편집자, 즉시
+    await vi.advanceTimersByTimeAsync(TOAST_MS + 10); // B 전송 성공
+    expect(api.editorsRemove).toHaveBeenCalledTimes(2);
+    h.resolve(list({ editors: [ed(B, '편집자 하나'), ed(D, '편집자 둘', 'pending')] }));
+    await p;
+    expect(editors.editors).toEqual([]);
+    // 다음 읽기는 새 목록을 그대로 믿는다(같은 ID가 다시 편집자가 됐을 수 있다)
+    await open(list({ editors: [ed(B, '편집자 하나')] }));
+    expect(editors.editors.map((e) => e.channelId)).toEqual([B]);
+  });
+
+  it('EZ22 auth에서 온 맡은 채널을 그만둔 뒤 목록이 오면 그 채널은 빠지고 load는 ready가 된다', async () => {
+    auth.apply({ ...signedInAs(A), delegatedChannels: [{ channelId: C, channelName: '맡긴 채널' }] });
+    editors.onAuth(auth.status);
+    const h = held<EditorsDto>();
+    vi.mocked(api.editorsList).mockReturnValue(h.promise);
+    const p = editors.openView();
+    expect(editors.dto).toBeNull();
+    await editors.leave(editors.delegated[0]);
+    h.resolve(list());
+    await p;
+    expect(editors.load).toBe('ready');
+    expect(editors.delegated).toEqual([]);
+  });
+});

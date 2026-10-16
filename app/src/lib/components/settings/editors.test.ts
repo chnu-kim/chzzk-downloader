@@ -231,3 +231,98 @@ describe('빼기·그만두기', () => {
     expect(helpOf(makeButton())).toBeTruthy();
   });
 });
+
+describe('화면 수명·포커스(EV12~EV15, 리뷰 반영)', () => {
+  function held<T>() {
+    let resolve!: (v: T) => void;
+    const promise = new Promise<T>((res) => (resolve = res));
+    return { promise, resolve };
+  }
+
+  it('EV12 다시 만든 주소에는 앞 주소의 [복사했어요]가 남지 않는다', async () => {
+    await show();
+    const exp = Math.floor(Date.now() / 1000) + 7 * 86400;
+    vi.mocked(api.editorsInvite).mockResolvedValueOnce({ url: 'https://w.example.invalid/invite/cdi_one', expiresAt: exp });
+    const user = userEvent.setup();
+    vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue(undefined);
+    await user.click(makeButton());
+    await screen.findByLabelText(t('editors.invite.label'));
+    const label = (key: 'action.copyUrl' | 'action.copied') => screen.getByText(t(key));
+    await user.click(label('action.copyUrl'));
+    await waitFor(() => expect(label('action.copied')).not.toHaveClass('off'));
+    vi.mocked(api.editorsInvite).mockResolvedValueOnce({ url: 'https://w.example.invalid/invite/cdi_two', expiresAt: exp });
+    await user.click(makeButton());
+    await waitFor(() => expect(screen.getByLabelText(t('editors.invite.label'))).toHaveValue('https://w.example.invalid/invite/cdi_two'));
+    expect(label('action.copied')).toHaveClass('off');
+    expect(label('action.copyUrl')).not.toHaveClass('off');
+  });
+
+  it('EV13 그만두기 응답 전에 포커스를 옮겼으면 성공 뒤에 빼앗지 않는다', async () => {
+    const X = 'e'.repeat(31) + '5';
+    await show(
+      list({
+        delegatedChannels: [
+          { channelId: C, channelName: '채널 엑스', since: SINCE },
+          { channelId: X, channelName: '채널 와이', since: SINCE },
+        ],
+      }),
+    );
+    const h = held<void>();
+    vi.mocked(api.delegationsLeave).mockReturnValueOnce(h.promise);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: t('a11y.leaveDelegation', { name: '채널 엑스' }) }));
+    makeButton().focus(); // Tab으로 다른 곳에 갔다
+    h.resolve();
+    await waitFor(() => expect(document.querySelector(`[data-delegated="${C}"]`)).toBeNull());
+    await tickAll();
+    expect(makeButton()).toHaveFocus();
+  });
+
+  it('EV13 포커스가 사라진 행에 남아 body로 떨어졌으면 다음 행으로 옮긴다', async () => {
+    const X = 'e'.repeat(31) + '5';
+    await show(
+      list({
+        delegatedChannels: [
+          { channelId: C, channelName: '채널 엑스', since: SINCE },
+          { channelId: X, channelName: '채널 와이', since: SINCE },
+        ],
+      }),
+    );
+    await userEvent.setup().click(screen.getByRole('button', { name: t('a11y.leaveDelegation', { name: '채널 엑스' }) }));
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: t('a11y.leaveDelegation', { name: '채널 와이' }) })).toHaveFocus(),
+    );
+  });
+
+  it('EV14 기다리는 편집자 빼기도 응답 전에 옮긴 포커스를 빼앗지 않는다', async () => {
+    await show(list({ editors: [ed(B, '편집자 하나', 'pending'), ed(D, '편집자 둘')] }));
+    const h = held<void>();
+    vi.mocked(api.editorsRemove).mockReturnValueOnce(h.promise);
+    await userEvent.setup().click(screen.getByRole('button', { name: t('a11y.removeEditor', { name: '편집자 하나' }) }));
+    makeButton().focus();
+    h.resolve();
+    await waitFor(() => expect(document.querySelector(`[data-editor="${B}"]`)).toBeNull());
+    await tickAll();
+    expect(makeButton()).toHaveFocus();
+  });
+
+  it('EV15 설정을 떠난 뒤 실패한 지연 빼기는 다시 들어오면 그 행 안에 alert', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const view = await show(list({ editors: [ed(B, '편집자 하나')] }));
+    vi.mocked(api.editorsRemove).mockRejectedValue(appError('network'));
+    await userEvent.setup({ advanceTimers: vi.advanceTimersByTime }).click(
+      screen.getByRole('button', { name: t('a11y.removeEditor', { name: '편집자 하나' }) }),
+    );
+    view.unmount(); // 홈으로
+    await vi.advanceTimersByTimeAsync(7000);
+    expect(api.editorsRemove).toHaveBeenCalledWith(B);
+    await show(list({ editors: [ed(B, '편집자 하나')] }));
+    const row = document.querySelector(`[data-editor="${B}"]`) as HTMLElement;
+    expect(within(row).getByRole('alert')).toHaveTextContent(t('editors.remove.failed'));
+  });
+});
+
+async function tickAll() {
+  for (let i = 0; i < 5; i++) await Promise.resolve();
+  await new Promise((r) => setTimeout(r, 0));
+}

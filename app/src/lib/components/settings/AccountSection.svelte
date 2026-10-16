@@ -71,29 +71,36 @@
   });
 
   // ── 주소 복사 ──
-  let copied = $state(false);
+  // [복사했어요]는 복사한 그 주소에 묶는다: 다시 만들어 주소가 바뀌면(앞 주소는 무효) 곧바로 [주소 복사]로 돌아간다
+  let copiedUrl: string | null = $state(null);
+  const copied = $derived(copiedUrl != null && copiedUrl === editors.invite?.url);
   let copiedTimer: ReturnType<typeof setTimeout> | null = null;
   onDestroy(() => {
     if (copiedTimer) clearTimeout(copiedTimer);
   });
   async function copyInvite() {
     if (!editors.invite) return;
+    const url = editors.invite.url;
     try {
-      await navigator.clipboard.writeText(editors.invite.url);
+      await navigator.clipboard.writeText(url);
     } catch {
       toasts.push(t('toast.copyFailed'), 'danger');
       return;
     }
-    copied = true;
+    copiedUrl = url;
     announcer.say(t('action.copied'));
     if (copiedTimer) clearTimeout(copiedTimer);
-    copiedTimer = setTimeout(() => (copied = false), COPIED_LABEL_MS);
+    copiedTimer = setTimeout(() => (copiedUrl = null), COPIED_LABEL_MS);
   }
 
   // ── 포커스(F-4): 행이 사라지면 다음 행 → 이전 행 → 머리 행 버튼 ──
+  // 응답을 기다리는 사이 사용자가 포커스를 다른 곳으로 옮겼으면 빼앗지 않는다(JobList와 같은 규칙):
+  // 사라진 행에 있던 포커스는 body로 떨어지므로, body(또는 없음)일 때만 옮긴다
   let makeBtn: HTMLButtonElement | null = $state(null);
 
   function focusRowButton(attr: 'data-editor' | 'data-delegated', id: string | undefined) {
+    const active = document.activeElement;
+    if (active && active !== document.body) return;
     const el = id ? document.querySelector<HTMLElement>(`[${attr}="${CSS.escape(id)}"] button`) : null;
     (el ?? makeBtn)?.focus();
   }
@@ -128,7 +135,6 @@
     prevHidden = now;
     if (!back) return;
     void tick().then(() => {
-      if (document.activeElement && document.activeElement !== document.body) return;
       const id = editors.editors.find((e) => e.channelId.toLowerCase() === back)?.channelId;
       focusRowButton('data-editor', id);
     });

@@ -747,6 +747,44 @@ describe('막힌 카드의 [다시 불러오기](R)', () => {
   });
 });
 
+describe('막힌 생방송 카드·받기 실패의 다시 불러오기(①-5 수정)', () => {
+  const OTHER = '0'.repeat(31) + 'c';
+  const liveMeta = { ...resolved().meta, kind: 'live' as const, channelName: '다른 채널', channelId: OTHER };
+
+  afterEach(() => {
+    auth.status = null;
+  });
+
+  it('RV9 막힌 생방송 카드는 "받기를 누르면 녹화가 시작돼요" 안내를 그리지 않는다', async () => {
+    auth.status = { ...signedInAs('a1', '내 채널'), delegatedChannels: [{ channelId: OTHER, channelName: '다른 채널' }] };
+    await openCard({ ownership: 'notOwn', playbackKind: 'live', meta: liveMeta });
+    expect(screen.getByText('맡은 채널의 생방송은 녹화할 수 없어요')).toBeInTheDocument();
+    expect(screen.queryByText(t('card.live.body'))).toBeNull();
+  });
+
+  it('RV9 막히지 않은 생방송 카드는 안내를 그대로 둔다', async () => {
+    auth.status = signedInAs('a1', '내 채널');
+    await openCard({ ownership: 'own', playbackKind: 'live', meta: liveMeta });
+    expect(screen.getByText(t('card.live.body'))).toBeInTheDocument();
+  });
+
+  it('RV10 받기 실패 Notice는 맡은 채널 수로 제목을 넓히고, 다시 불러오는 동안 aria-busy, 연결 실패 줄을 그 안에 보인다', async () => {
+    auth.status = { ...signedInAs('a1', '내 채널'), delegatedChannels: [{ channelId: OTHER, channelName: '다른 채널' }] };
+    vi.mocked(api.enqueue).mockRejectedValue(appError('notOwnContent'));
+    let reject!: (e: unknown) => void;
+    vi.mocked(api.ownershipRecheck).mockReturnValue(new Promise((_, r) => (reject = r)));
+    const user = await openCard({ ownership: 'delegated' });
+    await user.click(await downloadButton());
+    const notice = (await screen.findByText('내 채널이나 맡은 채널의 영상만 받을 수 있어요')).closest('.notice') as HTMLElement;
+    const btn = within(notice).getByRole('button', { name: t('action.reresolve') });
+    await user.click(btn);
+    await waitFor(() => expect(btn).toHaveAttribute('aria-busy', 'true'));
+    reject(appError('network'));
+    expect(await within(notice).findByText(t('receive.recheck.offline'))).toBeInTheDocument();
+    expect(btn).not.toHaveAttribute('aria-busy', 'true');
+  });
+});
+
 describe('붙여넣기 힌트', () => {
   it.each([
     ['macos', '⌘V'],

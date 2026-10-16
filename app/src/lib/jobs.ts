@@ -458,12 +458,13 @@ const FROM_ERROR: Partial<Record<ActionId, JobAction>> = {
 };
 
 /** 실패 항목의 오류 줄과 버튼(§9 D 열) */
-export function failedCopy(job: JobDto, cookiesEnabled: boolean) {
+export function failedCopy(job: JobDto, cookiesEnabled: boolean, delegatedCount = 0) {
   if (!job.error) return null;
   return errorCopy(job.error, {
     place: 'job',
     partialBytes: job.partialBytes,
     cookiesEnabled,
+    delegatedCount,
     keptRecording: keepsRecording(job),
   });
 }

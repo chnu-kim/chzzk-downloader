@@ -168,6 +168,38 @@ describe('계정이 바뀌면(Z1, EZ5~EZ8)', () => {
   });
 });
 
+describe('checking 중에 토스트가 끝나면(EZ16·EZ17)', () => {
+  const checking = () => {
+    auth.apply({ ...signedInAs(null), state: 'checking', channelName: null });
+    editors.onAuth(auth.status);
+  };
+
+  it('EZ16 보내기를 미뤘다가 같은 계정으로 돌아오면 보낸다', async () => {
+    await open();
+    editors.remove(editors.editors[0]);
+    checking();
+    await vi.advanceTimersByTimeAsync(TOAST_MS + 10);
+    expect(api.editorsRemove).not.toHaveBeenCalled();
+    expect(editors.hidden.has(B)).toBe(true); // 아직 빠진 것으로 보인다
+    signIn(A);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(api.editorsRemove).toHaveBeenCalledTimes(1);
+    expect(api.editorsRemove).toHaveBeenCalledWith(B);
+    expect(editors.editors.map((e) => e.channelId)).toEqual([D]);
+  });
+
+  it('EZ17 미룬 사이 다른 계정이 되면 보내지 않는다', async () => {
+    await open();
+    editors.remove(editors.editors[0]);
+    checking();
+    await vi.advanceTimersByTimeAsync(TOAST_MS + 10);
+    signIn(C);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(api.editorsRemove).not.toHaveBeenCalled();
+    expect(editors.hidden.size).toBe(0);
+  });
+});
+
 describe('실패 줄(EZ9·EZ11)', () => {
   it('EZ9 빼기 실패면 행이 돌아오고 실패 줄이 선다', async () => {
     await open();
@@ -227,6 +259,16 @@ describe('읽기·그만두기·닫기', () => {
     resolve(list());
     await p;
     expect(editors.dto).toBeNull();
+  });
+
+  it('EZ18 onAuth보다 먼저 열려도 지금 계정으로 읽어 버리지 않는다', async () => {
+    await open();
+    auth.apply(signedInAs(C)); // App effect(onAuth)가 아직 돌지 않았다
+    vi.mocked(api.editorsList).mockResolvedValue(list({ editors: [] }));
+    await editors.openView();
+    editors.onAuth(auth.status); // 그 뒤에 App effect가 돈다
+    expect(editors.load).toBe('ready');
+    expect(editors.dto?.editors).toEqual([]);
   });
 
   it('처음 읽기가 실패하면 failed, 값이 있으면 그대로 둔다', async () => {

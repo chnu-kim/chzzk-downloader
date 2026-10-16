@@ -26,6 +26,7 @@
     type CardChoices,
   } from '../../receive';
   import { announcer } from '../../stores/announce.svelte';
+  import { auth } from '../../stores/auth.svelte';
   import { platform } from '../../stores/platform.svelte';
   import { resolver } from '../../stores/resolve.svelte';
   import { settings } from '../../stores/settings.svelte';
@@ -100,11 +101,31 @@
   const overwriting = $derived(fresh && wantsOverwrite(check, choices));
   const shownError: AppError | null = $derived<AppError | null>(enqueueError ?? checkError);
   const errCopy = $derived(
-    shownError ? errorCopy(shownError, { place: 'resolve', cookiesEnabled: settings.cookiesEnabled }) : null,
+    shownError
+      ? errorCopy(shownError, {
+          place: 'resolve',
+          cookiesEnabled: settings.cookiesEnabled,
+          // notOwnContent 제목은 막힌 카드 Notice와 같은 규칙으로 맡은 채널 수를 본다(content.md §15.2)
+          delegatedCount: auth.status?.delegatedChannels.length ?? 0,
+        })
+      : null,
   );
   const errActions = $derived(
-    (errCopy?.actions ?? []).map((a) => ({ id: a, label: actionLabel(a), onclick: () => onErrorAction(a) })),
+    (errCopy?.actions ?? []).map((a) => ({
+      id: a,
+      label: actionLabel(a),
+      loading: a === 'recheck' ? resolver.rechecking : undefined,
+      onclick: () => onErrorAction(a),
+    })),
   );
+  /** 오류 Notice의 [다시 불러오기]가 실패했을 때의 줄. 막힌 카드면 OwnershipNotice가 같은 줄을 그리므로 여기서는 그리지 않는다 */
+  const recheckFailLine = $derived.by(() => {
+    const f = resolver.recheckFailure;
+    if (!f || !errCopy?.actions.includes('recheck') || view.ownership === 'notOwn' || view.ownership === 'unknown') return null;
+    return f.code === 'network' ? t('receive.recheck.offline') : errorCopy(f, { place: 'other' }).title;
+  });
+  /** 소유권으로 막힌 카드: 생방송 안내("받기를 누르면 녹화가 시작돼요")가 막힘 안내와 반대 말을 하지 않게 그리지 않는다 */
+  const ownershipBlocked = $derived(view.ownership === 'notOwn' || view.ownership === 'unknown');
 
   /** 카드 안 경고가 하나라도 있는가(없으면 간격도 두지 않는다) */
   const hasWarnings = $derived.by(() => {
@@ -256,7 +277,7 @@
     />
   </div>
 
-  {#if tone === 'live'}
+  {#if tone === 'live' && !ownershipBlocked}
     <!-- 생방송은 길이를 모르고 받기를 누르면 방송이 끝나거나 [녹화 마치기]를 누를 때까지 받는다(ADR-0025) -->
     <Notice variant="inline" tone="info">{t('card.live.body')}</Notice>
   {/if}
@@ -277,6 +298,7 @@
         <Notice variant="inline" tone="danger" title={errCopy.title} actions={errActions}>
           {#if errCopy.body}<p class="line">{errCopy.body}</p>{/if}
           {#if errCopy.detail}<p class="line detail">{errCopy.detail}</p>{/if}
+          {#if recheckFailLine}<p class="line">{recheckFailLine}</p>{/if}
         </Notice>
       {/if}
     </div>

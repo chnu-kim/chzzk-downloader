@@ -61,12 +61,13 @@
     void editors.openView();
     return () => editors.closeView();
   });
-  // 로그인이 바뀌어 이미 마운트된 채 다시 signedIn이 되면 다시 읽는다
-  let wasSignedIn = auth.signedIn;
+  // 이미 마운트된 채 로그인한 계정이 바뀌면(다시 signedIn, 또는 A → B) 다시 읽는다
+  const signedInChannel = () => (auth.signedIn ? (auth.status?.channelId?.toLowerCase() ?? null) : null);
+  let lastChannel = signedInChannel();
   $effect(() => {
-    const now = auth.signedIn;
-    if (now && !wasSignedIn) void editors.openView();
-    wasSignedIn = now;
+    const now = signedInChannel();
+    if (now && now !== lastChannel) void editors.openView();
+    lastChannel = now;
   });
 
   // ── 주소 복사 ──

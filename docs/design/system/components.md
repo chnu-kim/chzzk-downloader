@@ -415,7 +415,7 @@ type NoticeProps = {
 | `row` | 면 없음, 패딩 0 | `--icon-sm` 16 | `--leading-body` 16 | 0 | 작업 행의 오류·막힘 줄, 입력칸 아래 오류 한 줄 |
 | `toast` | `--raised`, `--shadow-toast`, 반경 `--radius-overlay` | 20 | 20 | `var(--space-8) var(--space-8) var(--space-8) var(--space-16)`(닫기 쪽 8) | Toast가 쓴다(§2.13) |
 
-내부 gap `--space-8`, 동작 버튼은 전부 `Button secondary sm`이고 글자 뒤 같은 flex 줄에서 `flex: none`으로 오른쪽, 좁으면 `flex-wrap`으로 아래 줄(규칙 하나, `A-FEAT-C6`의 4종 → 1종). `row`에는 `actions`·`onclose`가 없다(행의 동작 열이 맡는다).
+내부 gap `--space-8`, 동작 버튼은 전부 `Button secondary sm`이고 글자 뒤 같은 flex 줄에서 `flex: none`으로 오른쪽, 좁으면 `flex-wrap`으로 아래 줄(규칙 하나, `A-FEAT-C6`의 4종 → 1종). "좁으면"의 기준은 **최소 본문 폭**이다: 동작 버튼이 있는 Notice의 본문 열은 `min-width: min(calc(100% - var(--icon-md) - var(--space-8)), calc(12 * var(--text-body)))`(약 12글자, 글자 크기를 따라 커지고 아이콘과 한 줄에 남도록 열 폭에서 아이콘·gap을 뺀 값을 넘지 않는다)라서, 본문이 이보다 좁아지기 전에 버튼이 아래 줄로 간다(320폭·아주 크게 글자에서 본문이 한 글자씩 쪼개지지 않는다, app.md 구현 중 변경 81 (하) ⑤). 원천은 `design/ui.css`의 `.notice:has(> .notice-actions) > .notice-text`이고 앱·Worker 생성물이 따른다. `row`에는 `actions`·`onclose`가 없다(행의 동작 열이 맡는다).
 
 **role**: `inline`·`banner`·`toast`에서 `danger` → `role="alert"`, 그 밖 → `role="status"`(`E-KO-22`, brief §6.9-4, `A-FEAT-C2` ConflictNotice warn alert 위반 해소). `row`에는 role이 없다: 작업 행의 실패 줄은 앱 시작 때 수십 개가 한꺼번에 그려질 수 있고 새 실패는 라이브 루트 하나가 알린다(`patterns.md` §1.5). `banner`는 `<section aria-labelledby={titleId}>`로 감싸고 role은 **안쪽 글자 요소**에 둔다(GOV.UK 배너·JAWS). `aria-atomic="true"`. 강제: `frontend`(tone×variant→role 테스트), `design-lint` DS1(`role="alert"` 리터럴은 `Notice.svelte`에만).
 

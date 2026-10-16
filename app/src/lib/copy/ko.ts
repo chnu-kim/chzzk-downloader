@@ -347,7 +347,7 @@ export const ko = {
   'editors.remove': '편집자 빼기',
   'editors.remove.failed': '편집자를 빼지 못했어요. 잠시 뒤 다시 시도해 주세요.',
   'delegated.title': '맡은 채널',
-  'delegated.help': '이 채널의 영상과 클립도 받을 수 있어요.',
+  'delegated.help': '맡은 채널의 영상과 클립도 받을 수 있어요.',
   'delegated.leave': '편집자 그만두기',
   'delegated.leave.failed': '편집자를 그만두지 못했어요. 잠시 뒤 다시 시도해 주세요.',
 

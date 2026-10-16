@@ -120,11 +120,34 @@ test('D4 맡은 채널의 생방송은 막다른 길이라 버튼 없이 이유�
   await expect(card.getByText(copy.title, { exact: true })).toBeVisible();
   await expect(card.getByText(copy.body as string, { exact: true })).toBeVisible();
   await expect(card.locator('.notice-actions')).toHaveCount(0);
+  // "받기를 누르면 녹화가 시작돼요"는 막힌 카드와 반대 말이라 그리지 않는다(patterns.md §1.1 규칙 1)
+  await expect(card.getByText(t('card.live.body'))).toHaveCount(0);
   await expect(card.getByRole('button', { name: t('card.download') })).toHaveAttribute('aria-disabled', 'true');
+});
+
+test('D12 좁은 폭·아주 큰 글자에서도 막힌 카드 본문은 글자 열이 눌리지 않고 버튼이 아래 줄로 간다', async ({ app }) => {
+  const r = other();
+  const { page } = app;
+  await page.setViewportSize({ width: 320, height: 640 });
+  await app.open({ auth: { ...me, delegationsCheckedAt: NOW }, resolve: { [r.url]: r } });
+  await page.evaluate(() => (document.documentElement.dataset.textScale = 'x-large'));
+  await loadUrl(page, r.url);
+  const notice = page.getByRole('region', { name: '남의 방송' }).locator('.notice.tone-danger');
+  await expect(notice).toBeVisible();
+  const box = async (sel: string) => (await notice.locator(sel).first().boundingBox())!;
+  const whole = (await notice.boundingBox())!;
+  const text = await box('.notice-text');
+  const actions = await box('.notice-actions');
+  // 본문 열은 Notice 폭의 절반을 넘는다(한 글자 열로 쪼개지지 않는다)
+  expect(text.width).toBeGreaterThan(whole.width / 2);
+  // 버튼은 본문 아래 줄이다
+  expect(actions.y).toBeGreaterThanOrEqual(text.y + text.height - 1);
 });
 
 test('D5 초대 주소를 만들고 복사한다', async ({ app }) => {
   const { page } = app;
+  // 가짜 백엔드의 시각(NOW)과 웹뷰의 Date.now를 맞춘다: 기한 날짜와 "{days}일 뒤"가 같은 원천을 본다
+  await page.clock.install({ time: NOW * 1000 });
   await app.open({ auth: me, editors: editorsDto({ editors: [] }) });
   await openSettings(page);
   await expect(page.getByText(t('editors.empty'))).toBeVisible();
@@ -134,7 +157,8 @@ test('D5 초대 주소를 만들고 복사한다', async ({ app }) => {
   await page.getByRole('button', { name: t('editors.invite.make') }).click();
   const field = page.getByLabel(t('editors.invite.label'));
   await expect(field).toHaveValue(/\/invite\//);
-  await expect(page.getByText(t('editors.pending', { date: dayText(NOW + 7 * 86400, Date.now()) }))).toBeVisible();
+  await expect(page.getByText(t('editors.pending', { date: dayText(NOW + 7 * 86400, NOW * 1000) }))).toBeVisible();
+  await expect(page.getByText(t('editors.invite.help', { days: 7 }))).toBeVisible();
   await app.axe('초대 주소');
   await page.getByRole('button', { name: t('action.copyUrl') }).click();
   await expect(page.getByRole('button', { name: t('action.copied') })).toBeVisible();

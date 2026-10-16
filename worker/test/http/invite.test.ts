@@ -696,21 +696,33 @@ describe("IV16 배포 호환(106 (차) ⑤)", () => {
     expect(((await invite.json()) as { inviteUrl: string }).inviteUrl.startsWith(PROD_ORIGIN + "/invite/")).toBe(true);
     expect(calls).toEqual(["check", "createInvite"]);
     // 대상이 없으면 닫힌 것이 아니라 열린 채로 not_found(또는 멱등 204)다
-    for (const [path, body] of [
-      ["/api/editors/remove", { channelId: C3 }],
-      ["/api/delegations/leave", { channelId: B2 }],
+    for (const [path, body, rpc] of [
+      ["/api/editors/remove", { channelId: C3 }, "removeEditor"],
+      ["/api/delegations/leave", { channelId: B2 }, "leaveDelegation"],
     ] as const) {
+      calls.length = 0;
       const res = await post(path, body);
       if (res.status === 404) expect(((await res.json()) as { code: string }).code).not.toBe("not_enabled");
       else expect(res.status).toBe(204);
+      // 열린 경로는 DO까지 간다(인증 확인 + 그 RPC 하나)
+      expect(calls).toEqual(["check", rpc]);
     }
   });
 
   it("IV16b 꺼 두면(되돌리기 스위치) Bearer·본문보다 먼저 404 not_enabled, DO 0회", async () => {
-    const ctx = { config: { editorApi: false } } as unknown as Ctx;
+    // ctx에서 읽은 필드를 모두 적는다: config 말고는(env·DO 스텁 등) 하나도 읽지 않아야 한다
+    const reads: string[] = [];
+    const ctx = new Proxy({ config: { editorApi: false } }, {
+      get(t, p) {
+        reads.push(String(p));
+        return Reflect.get(t, p);
+      },
+    }) as unknown as Ctx;
     for (const handler of [editorsInvite, editorsRemove, delegationsLeave]) {
-      const res = await handler(new Request("https://worker.example.invalid/x", { method: "POST" }), ctx);
+      reads.length = 0;
+      const res = await handler(new Request("https://worker.example.invalid/x", { method: "POST", headers: { Authorization: "Bearer x" }, body: "{}" }), ctx);
       expect([res.status, await res.json()]).toEqual([404, { code: "not_enabled" }]);
+      expect(reads).toEqual(["config"]);
     }
   });
 

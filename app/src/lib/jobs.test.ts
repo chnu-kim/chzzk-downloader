@@ -957,6 +957,12 @@ describe('생방송 녹화(ADR-0025): 막대·남은 시간 없이 글자만', (
     expect(jobButtons(job(3, { status: 'paused', partialBytes: 1000 }), null).menu).toContain('restartFresh');
   });
 
+  it('notOwnContent 실패 행 제목은 맡은 채널이 있으면 넓어진다(content.md §15.2)', () => {
+    const j = job(9, { status: 'failed', error: err('notOwnContent') });
+    expect(failedCopy(j, false)?.title).toBe('내 채널의 영상만 받을 수 있어요');
+    expect(failedCopy(j, false, 1)?.title).toBe('내 채널이나 맡은 채널의 영상만 받을 수 있어요');
+  });
+
   it('받다 만 녹화는 어떤 오류로 끝나도 [이어받기]가 먼저다(D8)', () => {
     // 코어는 이 오류들에도 `.part`를 남기고, 다음 실행이 조회 없이 받은 만큼 마무리한다
     const cases: [string, ReturnType<typeof err>][] = [

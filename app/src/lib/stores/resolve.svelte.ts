@@ -53,7 +53,8 @@ export class ResolveStore {
    * ({#key gen}: 제목 포커스·a11y.resolved 낭독은 카드가 한다). 카드 하나에 한 번에 하나(single-flight)
    */
   async recheck(): Promise<void> {
-    if (this.state.kind !== 'ready' || this.recheckGen !== null) return;
+    // 카드(gen)마다 한 번에 하나: 앞 카드의 늦은 요청이 새 카드의 누름을 막지 않는다(늦은 응답은 gen이 달라 버린다)
+    if (this.state.kind !== 'ready' || this.recheckGen === this.state.gen) return;
     const { gen, view } = this.state;
     this.recheckGen = gen;
     this.#recheckError = null;

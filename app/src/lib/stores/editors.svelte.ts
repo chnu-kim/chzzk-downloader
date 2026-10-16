@@ -54,6 +54,8 @@ export class EditorsStore {
   #owner: string | null = null;
   /** 대기 중인 지연 빼기 */
   #pending = new Map<string, { toastId: number; owner: string }>();
+  /** checking 중에 토스트가 닫혀 미룬 빼기. 다음 signedIn에서 같은 계정이면 보내고, 아니면 버린다 */
+  #deferred = new Map<string, { ed: EditorDto; owner: string }>();
   /** 늦은 `editors_list` 응답 버리기 */
   #loadSeq = 0;
 
@@ -70,7 +72,14 @@ export class EditorsStore {
   onAuth(s: AuthStatusDto | null) {
     if (s?.state === 'checking') return; // 지나가는 상태: 아무것도 하지 않는다
     const owner = ownerOf(s);
-    if (owner === this.#owner) return;
+    if (owner === this.#owner) {
+      // checking을 지나 같은 계정으로 돌아왔다: 미룬 빼기를 보낸다(#send가 다시 대조한다)
+      const ds = [...this.#deferred.values()];
+      this.#deferred.clear();
+      for (const d of ds) void this.#send(d.ed, d.owner);
+      return;
+    }
+    this.#deferred.clear();
     // 계정이 바뀌었거나 로그인을 벗어났다: 대기 중인 빼기는 보내지 않는다(행은 다음에 다시 보인다).
     // onclose가 #pending에 항목이 없음을 보고 보내지 않도록 먼저 지우고 닫는다
     const ps = [...this.#pending.values()];
@@ -98,7 +107,10 @@ export class EditorsStore {
     this.inviteError = null;
     this.rowError.clear();
     this.leaveError.clear();
-    if (!ownerOf(auth.status) || auth.status?.offline) return; // 오프라인이면 묻지 않는다
+    const current = ownerOf(auth.status);
+    if (!current || auth.status?.offline) return; // 오프라인이면 묻지 않는다
+    // App effect(onAuth)보다 먼저 불렸으면 지금 계정으로 먼저 맞춘다(그 뒤 onAuth가 응답을 버리지 않게)
+    if (current !== this.#owner) this.onAuth(auth.status);
     const seq = ++this.#loadSeq;
     const owner = this.#owner;
     if (this.load !== 'ready') this.load = 'loading';
@@ -170,6 +182,11 @@ export class EditorsStore {
 
   async #send(ed: EditorDto, owner: string) {
     const id = lc(ed.channelId);
+    // checking(다시 연결 등) 중이면 판단하지 않고 미룬다: 다음 signedIn에서 onAuth가 다시 부른다(행은 숨긴 채)
+    if (auth.status?.state === 'checking' && owner === this.#owner) {
+      this.#deferred.set(id, { ed, owner });
+      return;
+    }
     // 보내기 직전 대조(Z1 ②): 지금 같은 계정이 아니면 보내지 않고 행을 되돌린다
     if (ownerOf(auth.status) !== owner || owner !== this.#owner) {
       this.hidden.delete(id);
@@ -235,6 +252,7 @@ export class EditorsStore {
   /** 테스트용: 모든 상태 초기화(토스트는 건드리지 않는다) */
   reset() {
     this.#pending.clear();
+    this.#deferred.clear();
     this.#resetView();
     this.#owner = null;
   }

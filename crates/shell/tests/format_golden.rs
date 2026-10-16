@@ -77,6 +77,10 @@ fn call(name: &str, a: &[Value]) -> Value {
             a[0].as_i64().expect("unix"),
             a[1].as_i64().expect("now"),
         )),
+        "parseClock" => match a[0].as_str().and_then(parse_clock) {
+            Some(ms) => json!(ms),
+            None => Value::Null,
+        },
         "parseKstWall" => match a[0].as_str().and_then(parse_kst_wall) {
             Some(w) => wall_json(w),
             None => Value::Null,

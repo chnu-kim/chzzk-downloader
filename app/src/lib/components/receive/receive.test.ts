@@ -2,12 +2,12 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/sve
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppError, OutputCheck, RecentVodDto, SettingsDto } from '../../bindings';
-import { check, quality, resolved } from '../../../test/fixtures';
+import { check, liveResolved, quality, resolved } from '../../../test/fixtures';
 import { signedInAs } from '../../../test/jobFixtures';
 import { errorCopy } from '../../copy/errors';
 import { t } from '../../copy/ko';
 import { shortcutText } from '../../platform';
-import { CHECK_DEBOUNCE_MS } from '../../receive';
+import { CHECK_DEBOUNCE_MS, qualitySize } from '../../receive';
 import { LOADER_DELAY_MS } from '../../timing';
 
 vi.mock('../../api', () => ({
@@ -448,6 +448,213 @@ describe('ResolveCard', () => {
     expect(await screen.findByText('/Volumes/외장/영상')).toBeInTheDocument();
     await user.click(await downloadButton());
     expect(vi.mocked(api.enqueue).mock.lastCall?.[0]).toMatchObject({ folder: '/Volumes/외장/영상' });
+  });
+});
+
+describe('구간 받기(ResolveCard)', () => {
+  type User = ReturnType<typeof userEvent.setup>;
+  const toggleEl = () => screen.getByText(t('range.toggle'));
+  const detailsEl = () => toggleEl().closest('details') as HTMLDetailsElement;
+  const startEl = () => screen.getByLabelText(t('range.start')) as HTMLInputElement;
+  const endEl = () => screen.getByLabelText(t('range.end')) as HTMLInputElement;
+  const settle = () => new Promise((r) => setTimeout(r, CHECK_DEBOUNCE_MS + 60));
+
+  async function openRange(user: User) {
+    await user.click(toggleEl());
+    await waitFor(() => expect(detailsEl()).toHaveAttribute('open'));
+  }
+  async function fill(user: User, el: HTMLInputElement, text: string) {
+    await user.clear(el);
+    await user.type(el, text);
+  }
+  /** 마지막 checkOutput 호출의 인자 */
+  const lastCheckArg = () => vi.mocked(api.checkOutput).mock.lastCall?.[0] as unknown as Record<string, unknown>;
+  const lastEnqueueArg = () => vi.mocked(api.enqueue).mock.lastCall?.[0] as unknown as Record<string, unknown>;
+
+  it('접힘이 기본이다', async () => {
+    await openCard();
+    expect(detailsEl()).not.toHaveAttribute('open');
+  });
+
+  it('접힌 채 받으면 요청에 range가 없다', async () => {
+    const user = await openCard();
+    await user.click(await downloadButton());
+    await waitFor(() => expect(api.enqueue).toHaveBeenCalledTimes(1));
+    expect('range' in lastEnqueueArg()).toBe(false);
+    expect('range' in lastCheckArg()).toBe(false);
+  });
+
+  it('펼쳤다 접고 받으면 range가 없다', async () => {
+    const user = await openCard();
+    await openRange(user);
+    await fill(user, startEl(), '0:10:00');
+    await user.click(toggleEl());
+    await waitFor(() => expect(detailsEl()).not.toHaveAttribute('open'));
+    await settle();
+    await user.click(await downloadButton());
+    await waitFor(() => expect(api.enqueue).toHaveBeenCalledTimes(1));
+    expect('range' in lastEnqueueArg()).toBe(false);
+  });
+
+  it('펼치기만 하면 초깃값(전체)이라 range가 없다', async () => {
+    const user = await openCard();
+    await openRange(user);
+    expect(startEl()).toHaveValue('0:00:00');
+    expect(endEl()).toHaveValue('3:12:45');
+    await settle();
+    await user.click(await downloadButton());
+    await waitFor(() => expect(api.enqueue).toHaveBeenCalledTimes(1));
+    expect('range' in lastEnqueueArg()).toBe(false);
+  });
+
+  it('구간을 고르면 checkOutput과 enqueue가 같은 range를 쓴다', async () => {
+    const user = await openCard();
+    await openRange(user);
+    await fill(user, startEl(), '0:10:00');
+    await fill(user, endEl(), '0:20:00');
+    await waitFor(() => expect(lastCheckArg().range).toEqual({ startMs: 600000, endMs: 1200000 }));
+    await settle();
+    await user.click(await downloadButton());
+    await waitFor(() => expect(api.enqueue).toHaveBeenCalledTimes(1));
+    expect(lastEnqueueArg().range).toEqual({ startMs: 600000, endMs: 1200000 });
+  });
+
+  it('타이핑 중에는 오류를 내지 않는다(검증은 [받기] 때만)', async () => {
+    const user = await openCard();
+    await openRange(user);
+    await fill(user, startEl(), 'abc');
+    await settle();
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(startEl()).not.toHaveAttribute('aria-invalid');
+    expect('range' in lastCheckArg()).toBe(false);
+  });
+
+  it('제출 오류(형식): 그 칸 아래 알림, aria-invalid, 포커스, 입력 보존, 받지 않음', async () => {
+    const user = await openCard();
+    await openRange(user);
+    await fill(user, startEl(), 'abc');
+    await settle();
+    await user.click(await downloadButton());
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(t('range.error.format', { example: '0:10:00' }));
+    expect(alert.closest('.notice-inline')).not.toBeNull();
+    expect(startEl()).toHaveAttribute('aria-invalid', 'true');
+    // 설명 요소는 알림을 품은 Notice 루트다
+    const ids = (startEl().getAttribute('aria-describedby') ?? '').split(' ');
+    expect(ids.some((id) => document.getElementById(id)?.contains(alert))).toBe(true);
+    expect(startEl()).toHaveFocus();
+    expect(startEl()).toHaveValue('abc');
+    expect(api.enqueue).not.toHaveBeenCalled();
+  });
+
+  it('제출 오류(순서): 끝 칸', async () => {
+    const user = await openCard();
+    await openRange(user);
+    await fill(user, startEl(), '0:30:00');
+    await fill(user, endEl(), '0:20:00');
+    await settle();
+    await user.click(await downloadButton());
+    expect(await screen.findByRole('alert')).toHaveTextContent(t('range.error.order'));
+    expect(endEl()).toHaveAttribute('aria-invalid', 'true');
+    expect(endEl()).toHaveFocus();
+    expect(api.enqueue).not.toHaveBeenCalled();
+  });
+
+  it('제출 오류(길이 넘음): 시작 칸', async () => {
+    const user = await openCard();
+    await openRange(user);
+    await fill(user, startEl(), '4:00:00');
+    await settle();
+    await user.click(await downloadButton());
+    expect(await screen.findByRole('alert')).toHaveTextContent(t('range.error.beyond'));
+    expect(startEl()).toHaveFocus();
+  });
+
+  it('접으면 오류가 사라진다', async () => {
+    const user = await openCard();
+    await openRange(user);
+    await fill(user, startEl(), 'abc');
+    await settle();
+    await user.click(await downloadButton());
+    await screen.findByRole('alert');
+    await user.click(toggleEl());
+    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+  });
+
+  it('Mod+Enter도 같은 검증을 한다', async () => {
+    const user = await openCard();
+    await openRange(user);
+    await fill(user, startEl(), 'abc');
+    await settle();
+    await user.keyboard('{Control>}{Enter}{/Control}');
+    expect(await screen.findByRole('alert')).toHaveTextContent(t('range.error.format', { example: '0:10:00' }));
+    expect(api.enqueue).not.toHaveBeenCalled();
+  });
+
+  it('조합 중에는 오류 칸을 전체 선택하지 않는다', async () => {
+    const user = await openCard();
+    await openRange(user);
+    await fill(user, startEl(), 'abc');
+    await settle();
+    const select = vi.spyOn(HTMLInputElement.prototype, 'select');
+    await fireEvent.compositionStart(startEl());
+    await user.click(await downloadButton());
+    await screen.findByRole('alert');
+    expect(select).not.toHaveBeenCalled();
+    select.mockRestore();
+  });
+
+  it('칸이 읽히면 화질 크기가 구간 기준이 되고, 못 읽으면 전체 기준이다', async () => {
+    const user = await openCard();
+    await openRange(user);
+    const radio = () => screen.getAllByRole('radio')[0].closest('label') as HTMLElement;
+    const q0 = resolved().qualities[0];
+    await fill(user, endEl(), '1:00:00');
+    await waitFor(() => expect(radio()).toHaveTextContent(qualitySize(q0, 3600) as string));
+    await fill(user, endEl(), '1:00:0');
+    await waitFor(() => expect(radio()).toHaveTextContent(qualitySize(q0, 11565) as string));
+  });
+
+  it('구간만 바꾸면 검사가 끝날 때까지 [받기]가 막힌다', async () => {
+    const user = await openCard();
+    await openRange(user);
+    await fill(user, endEl(), '0:20:00');
+    await settle();
+    await downloadButton();
+    await user.clear(endEl());
+    await user.type(endEl(), '0:30:00');
+    expectBlocked(screen.getByRole('button', { name: downloadName() }));
+  });
+
+  it('일반 VOD·클립·생방송 카드에는 구간 줄이 없다', async () => {
+    await openCard({ playbackKind: 'progressive' });
+    expect(screen.queryByText(t('range.toggle'))).toBeNull();
+  });
+
+  it('클립 카드에는 구간 줄이 없다', async () => {
+    await openCard({ meta: { ...resolved().meta, kind: 'clip' }, playbackKind: 'progressive' });
+    expect(screen.queryByText(t('range.toggle'))).toBeNull();
+  });
+
+  it('생방송 카드에는 구간 줄이 없다', async () => {
+    vi.mocked(api.resolve).mockResolvedValue(liveResolved());
+    const user = userEvent.setup();
+    render(InputPanel);
+    await user.type(urlInput(), 'https://chzzk.naver.com/live/abcd{Enter}');
+    await screen.findByRole('heading', { name: liveResolved().meta.title });
+    expect(screen.queryByText(t('range.toggle'))).toBeNull();
+  });
+
+  it('길이를 모르면 끝 칸이 비고 placeholder가 끝까지다', async () => {
+    const user = await openCard({ meta: { ...resolved().meta, durationSecs: null } });
+    await openRange(user);
+    expect(endEl()).toHaveValue('');
+    expect(endEl()).toHaveAttribute('placeholder', t('range.toEnd'));
+    await fill(user, startEl(), '0:10:00');
+    await settle();
+    await user.click(await downloadButton());
+    await waitFor(() => expect(api.enqueue).toHaveBeenCalledTimes(1));
+    expect(lastEnqueueArg().range).toEqual({ startMs: 600000, endMs: null });
   });
 });
 

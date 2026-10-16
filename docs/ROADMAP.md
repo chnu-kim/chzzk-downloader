@@ -4,6 +4,7 @@
 
 ## 현재 위치
 
+- **②-3 구간 받기 앱(2026-10-16, 브랜치 `feat/range-app`, app.md 81 가번호)**: 빠른 다시보기 카드 화질 아래 「일부만 받기」(접힘 기본, FieldRow + 시각 칸 둘)·`parseClock` 골든(TS·Rust)·검사 열쇠·크기 미리보기·작업 행 1줄 구간 조각·웹 E2E `range.spec.ts`·갤러리 장면 넷. 머지 조건은 사용자 실측 M-②-2·M-②-6 통과. design-shots 기준선은 Linux CI에서 받는다. 다음은 실측과 ②-5 문서.
 - **②-2 구간 받기 셸(2026-10-16, 브랜치 `feat/range-shell`, app.md 80·core.md 64.9)**: `TimeRangeDto`·`EnqueueRequest.range`·`JobDto.range`·`JobRecord.range`(JOBS_VERSION 1 그대로)·`check_output` 구간 접미사·`partialOther` 구간 비교·가짜 백엔드를 넣었다. 구현·리뷰 반영 완료, PR #123 대기(master #122 머지 반영). 다음은 ②-3 앱 카드 화면과 사용자 실측 M-②-2·6.
 - **기능 ① 편집자 위임 ①-4(2026-10-16, 브랜치 `feat/delegation-shell`, 커밋 넷(구현 + 리뷰 반영 + Codex 반영 + 확인 반영: 경로 없는 Worker의 404를 `/api/me`로 가름·401 뒤 refresh 세대 묶음, app.md 79 (하)), PR #122)**: 셸이 맡은 채널을 판정에 넣고(`classify` Own > Delegated > AdminOverride, 생방송 제외 L-D1) 판정 직전에 `/api/me`로 확인한다(5분 간격 [잠정], 수동은 간격 없음). `AuthService`에 `check_delegations`·편집자 쓰기 API·`refresh_lock` 공통 적용(N2)·`session_epoch` 세대, `session.json`의 `delegatedChannels`, command 다섯, DTO·bindings, `jobBlock`·가짜 백엔드 최소 반영(app.md 79). 리뷰 반영: 자동 확인 실패도 5분 간격을 시작(판정마다 `/api/me`·refresh 반복 방지), resolve 확인 중 거부는 `notLoggedIn`, 온라인 `/api/me` 실패 중 디스크 목록 허용을 D2 대가 ④로 기록(79 (바)·(카)·(타)). 남은 것: PR #122 머지, ①-5(화면·copy·네이티브 E2E, 지연 빼기의 기대 계정 대조 79 (하) ③).
 - **①-3 Worker 웹(2026-10-16, 브랜치 `feat/delegation-worker-web`)**: 편집자 초대·완료 페이지, 앱 편집자 API 3개(초대 만들기·빼기·그만두기), 관리 화면 초대 꼬리표, 거부 페이지 초대 줄, `/privacy` 편집자 항목을 구현했다, PR 대기. 도움말 editors는 ①-5로 옮겼다(worker.md 106). design-worker 새 기준선은 CI artifact로 `--accept`가 필요하다. Codex 적대적 리뷰 6건 반영(106 (차): quiet 접두, 거부 페이지 [초대 취소], 완료 화면을 수락에 묶음, `already`는 초대를 남김, 운영 앱 편집자 API는 릴리스 B까지 닫힘, `/privacy` 관리자 관계 예외).
@@ -282,7 +283,7 @@
 - [ ] ⑤ 실측 M-⑤-A~D(본인 방송 중, F3 뒤가 좋다)
 - [ ] 도구 PR 묶음과 사용자 실측 한 세션: ②-0 키프레임 도구(M-②-3) · ③-1 목록 도구(M-③-1~7) · ④-1 채팅 도구·자막 렌더러(M-④-1~9)
 - [ ] ① 편집자 위임: ①-1 문서·ADR-0026(용어집·상수 행·UT8·UT9, 브랜치 `docs/delegation-design`) · ①-2 Worker 저장소(DO V3) · ①-3 Worker 웹 · ①-3½ 버전 올림 → **릴리스 A(Worker 전용)** → ①-4 셸 · ①-5 앱 · ①-6 문서 → **릴리스 B**. ①-5에서 초대 UI를 열 때 Worker `notice.unofficial` 셋째 문장(앱 `ko.ts`와 DC6)·`inviteDone.refresh`(앱의 [다시 불러오기])를 함께 맞추고, `worker/src/config.ts` `EDITOR_API_PROD`를 `true`로 바꿔 앱 편집자 API를 연다(앱은 그 전 Worker의 404 `not_enabled`를 차단이 아닌 "아직 쓸 수 없음"으로 다룬다). 콜백 `already`는 초대를 남기기로 정했다(worker.md 구현 중 변경 106 (사)·(아)·(차))
-- [ ] ② 구간만 받기: ②-1 코어(⑤-F2 뒤, #121 머지, core.md 64) → 실측 M-②-2·6(`dl --range`) → ②-2 셸(#123, app.md 80) → ②-3 앱 → ②-5 문서. 실측 불일치면 deferred
+- [ ] ② 구간만 받기: ②-1 코어(⑤-F2 뒤, #121 머지, core.md 64) → 실측 M-②-2·6(`dl --range`) → ②-2 셸(#123, app.md 80) → ②-3 앱(브랜치 `feat/range-app`, app.md 81 가번호, 실측 통과 뒤 머지) → ②-5 문서. 실측 불일치면 deferred
 - [ ] ④ 채팅 함께 받기: ④-2 `chat::part` · ④-3 코어 수집 · ④-4 셸 · ④-5 앱(U2 확정 뒤) · ④-6 문서. ②와 무관하게 단독 릴리스
 - [ ] ③ 내 채널 새 영상·모아 받기: ③-2 목록 코어 · ③-3 원장 · ③-4 서비스 · ③-5 Checkbox ADR · ③-6 뷰 → **릴리스 ③(가)** → ③-7 스케줄러 → ③-8 맡은 채널 대상 고르기(①-4 뒤)
 - [ ] 후속(별도 설계): 방송 상태 감시·자동 녹화·홈 「내 방송」·녹화 중 허가 제외(⑤(나)), 별도 임시 파일 체계 `.rec.part`

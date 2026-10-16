@@ -7,10 +7,11 @@ import type {
   QualityDto,
   RecentVodDto,
   ResolvedDto,
+  TimeRangeDto,
 } from './bindings';
 import { estimateSize, formatEstimate, type SizeBase } from './format/bytes';
 import { formatDate, formatDateTime, parseKstWall } from './format/date';
-import { formatClock } from './format/duration';
+import { formatClock, parseClock } from './format/duration';
 import { t, type CopyKey } from './copy/ko';
 
 export type KindTone = 'rewind' | 'vod' | 'clip' | 'live';
@@ -99,9 +100,88 @@ export interface CardChoices {
 
 export const DEFAULT_CHOICES: CardChoices = { existing: 'number', partialFresh: false };
 
-/** `check_output`을 다시 불러야 하는 입력. 결과가 이 열쇠와 같을 때만 믿는다. */
-export function checkKey(folder: string | null, fileName: string, qualityId: string): string {
-  return JSON.stringify([folder, fileName, qualityId]);
+/**
+ * `check_output`을 다시 불러야 하는 입력. 결과가 이 열쇠와 같을 때만 믿는다.
+ * range는 칸 글자가 아니라 `effectiveRange` 결과다(같은 구간을 다르게 적어도 같은 열쇠).
+ */
+export function checkKey(
+  folder: string | null,
+  fileName: string,
+  qualityId: string,
+  range: TimeRangeDto | null = null,
+): string {
+  return JSON.stringify([folder, fileName, qualityId, range]);
+}
+
+/** 구간 줄의 입력(카드 상태). open = Disclosure가 펼쳐져 있고 빠른 다시보기 카드다 */
+export interface RangeInput {
+  open: boolean;
+  start: string;
+  end: string;
+}
+
+/** 제출 검증 결과: 어느 칸이 왜 틀렸나(한 번에 하나, 앞 칸·앞 규칙 먼저) */
+export interface RangeError {
+  field: 'start' | 'end';
+  kind: 'format' | 'order' | 'beyond';
+}
+
+/** 형식 오류 문구의 예시 시각(초). 문구에 숫자를 직접 쓰지 않는다(content.md W5) */
+export const RANGE_FORMAT_EXAMPLE_SECS = 600;
+
+/** 영상 길이(올림, ms). 모르면 null */
+function knownMs(d: number | null): number | null {
+  return d != null && Number.isFinite(d) && d > 0 ? Math.ceil(d) * 1000 : null;
+}
+
+/** 칸 초깃값이 보여 주는 길이(내림, ms). 모르면 null */
+function floorMs(d: number | null): number | null {
+  return d != null && Number.isFinite(d) && d > 0 ? Math.floor(d) * 1000 : null;
+}
+
+/** [받기] 때의 구간 검증(range.md §5.2). 처음 걸린 오류 하나만 돌려준다. 끝이 길이를 넘는 것은 오류가 아니다(자른다) */
+export function rangeError(input: RangeInput, durationSecs: number | null): RangeError | null {
+  if (!input.open) return null;
+  const s = parseClock(input.start);
+  if (s == null) return { field: 'start', kind: 'format' };
+  const endBlank = input.end.trim() === '';
+  const e = endBlank ? null : parseClock(input.end);
+  if (!endBlank && e == null) return { field: 'end', kind: 'format' };
+  const d = knownMs(durationSecs);
+  if (d != null && s >= d) return { field: 'start', kind: 'beyond' };
+  if (e != null && e <= s) return { field: 'end', kind: 'order' };
+  return null;
+}
+
+/**
+ * 실제로 보낼 구간. 검사 열쇠·`checkOutput`·`enqueue`·크기 미리보기가 모두 이 값 하나를 쓴다.
+ * 접힘·못 읽음·오류·전체를 덮음이면 null(전체 받기). 길이를 모르면 끝 없음(`endMs: null`)을 그대로 둔다.
+ */
+export function effectiveRange(input: RangeInput, durationSecs: number | null): TimeRangeDto | null {
+  if (!input.open || rangeError(input, durationSecs) != null) return null;
+  const s = parseClock(input.start) as number;
+  const e = input.end.trim() === '' ? null : parseClock(input.end);
+  const d = knownMs(durationSecs);
+  const f = floorMs(durationSecs);
+  if (d != null && f != null) {
+    // 끝 칸이 비었거나 보이는(내림) 길이 이상이면 영상 끝(올림)까지. 초깃값 그대로면 전체가 된다
+    const endMs = e == null || e >= f ? d : e;
+    return s === 0 && endMs === d ? null : { startMs: s, endMs };
+  }
+  return s === 0 && e == null ? null : { startMs: s, endMs: e };
+}
+
+/** 크기 미리보기에 쓸 길이(초). 구간이 없으면 영상 길이 그대로, 끝을 모르면 null(크기 예상 없음) */
+export function rangeSecs(range: TimeRangeDto | null, durationSecs: number | null): number | null {
+  if (!range) return durationSecs;
+  if (range.endMs == null) return null;
+  return (range.endMs - range.startMs) / 1000;
+}
+
+/** 작업 행 1줄의 구간 조각(content.md §6.5 범위 기호 `~`): `0:10:00~0:20:00`, 끝을 모르면 `0:10:00~` */
+export function rangeChip(r: TimeRangeDto): string {
+  const start = formatClock(r.startMs / 1000);
+  return r.endMs == null ? t('range.chipToEnd', { start }) : t('range.chip', { start, end: formatClock(r.endMs / 1000) });
 }
 
 /** 이번 선택으로 실제로 쓸 파일이 번호 붙인 새 이름인가. 받다 만 녹화가 있는 이름은 늘 피한다(core.md 61) */
@@ -144,6 +224,7 @@ export function notices(check: OutputCheck, choices: CardChoices): Notices {
  * - `onExisting`: 덮어쓰기를 직접 고른 때만 `overwrite`, 그 밖(충돌 없음·번호 붙인 새 이름)은 `skip`.
  *   검사 뒤 받는 동안 같은 이름의 파일이 생겨도 덮어쓰지 않는다(코어가 덮어쓰지 않고 마무리해 `skipped`로
  *   끝나고, 받은 `.part`는 남아 "덮어쓰고 받기"로 이어받는다).
+ * - 구간: `effectiveRange` 값이 있을 때만 `range`(없으면 키 없음 = 전체)
  * - 같은 작업의 `.part`: 이어받기 `restart = false`, 처음부터 `restart = true`.
  * - 다른 `.part`: `restart = false`(코어가 sidecar 불일치로 지우고 새로 시작).
  * - 받다 만 녹화: 늘 `freeFileName`, `restart = false`(녹화는 다시 받을 수 없어 지우지 않는다, core.md 61).
@@ -155,6 +236,7 @@ export function buildEnqueueRequest(
   folder: string | null,
   check: OutputCheck,
   choices: CardChoices,
+  range: TimeRangeDto | null = null,
 ): EnqueueRequest {
   const fresh = usesFreeName(check, choices);
   const fileName = fresh ? (check.freeFileName as string) : check.fileName;
@@ -174,6 +256,7 @@ export function buildEnqueueRequest(
     restart,
     // 최근 영상 둘째 줄의 날짜(바인딩 타입이 string이라 없으면 보내지 않는다)
     contentDate: r.meta.liveOpenDate ?? r.meta.publishDate ?? undefined,
+    ...(range ? { range } : {}),
   };
 }
 

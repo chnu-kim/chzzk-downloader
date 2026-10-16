@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { check, liveResolved, quality, resolved } from '../test/fixtures';
 import { t } from './copy/ko';
+import { formatClock } from './format/duration';
 import {
   BLOCK_REASON_ID,
   CHECK_DEBOUNCE_MS,
@@ -16,6 +17,11 @@ import {
   notices,
   qualityFps,
   qualitySize,
+  RANGE_FORMAT_EXAMPLE_SECS,
+  effectiveRange,
+  rangeChip,
+  rangeError,
+  rangeSecs,
   shouldSuggestClipboard,
   usesFreeName,
 } from './receive';
@@ -291,5 +297,114 @@ describe('downloadBlock', () => {
 describe('상수', () => {
   it('check_output 디바운스는 150ms', () => {
     expect(CHECK_DEBOUNCE_MS).toBe(150);
+  });
+});
+
+describe('구간 받기 순수 함수(range.md §5)', () => {
+  const D = 11565; // 3:12:45
+  const open = (start: string, end: string) => ({ open: true, start, end });
+
+  describe('rangeError', () => {
+    it('접혀 있으면 검증하지 않는다', () => {
+      expect(rangeError({ open: false, start: 'abc', end: 'x' }, D)).toBeNull();
+    });
+    it('시작이 틀리거나 비면 start/format', () => {
+      expect(rangeError(open('abc', ''), D)).toEqual({ field: 'start', kind: 'format' });
+      expect(rangeError(open('', ''), D)).toEqual({ field: 'start', kind: 'format' });
+    });
+    it('끝이 틀리면 end/format, 둘 다 틀리면 앞 칸 먼저', () => {
+      expect(rangeError(open('0:00:00', 'x'), D)).toEqual({ field: 'end', kind: 'format' });
+      expect(rangeError(open('abc', 'x'), D)).toEqual({ field: 'start', kind: 'format' });
+    });
+    it('시작이 길이 이상이면 start/beyond, 올림 길이 안이면 통과', () => {
+      expect(rangeError(open('3:12:44', ''), D)).toBeNull();
+      expect(rangeError(open('3:12:45', ''), D)).toEqual({ field: 'start', kind: 'beyond' });
+      expect(rangeError(open('3:12:45', ''), 11565.4)).toBeNull();
+      expect(rangeError(open('3:12:46', ''), 11565.4)).toEqual({ field: 'start', kind: 'beyond' });
+    });
+    it('끝이 시작보다 앞이거나 같으면 end/order', () => {
+      expect(rangeError(open('0:30:00', '0:20:00'), D)).toEqual({ field: 'end', kind: 'order' });
+      expect(rangeError(open('0:10:00', '0:10:00'), D)).toEqual({ field: 'end', kind: 'order' });
+    });
+    it('끝이 길이를 넘는 것은 오류가 아니다', () => {
+      expect(rangeError(open('0:10:00', '9:00:00'), D)).toBeNull();
+    });
+    it('길이를 모르면 길이 비교를 하지 않는다', () => {
+      expect(rangeError(open('9:00:00', ''), null)).toBeNull();
+    });
+  });
+
+  describe('effectiveRange', () => {
+    it('접힘·오류·초깃값(전체)은 null', () => {
+      expect(effectiveRange({ open: false, start: '0:10:00', end: '0:20:00' }, D)).toBeNull();
+      expect(effectiveRange(open('0:30:00', '0:20:00'), D)).toBeNull();
+      expect(effectiveRange(open('abc', ''), D)).toBeNull();
+      expect(effectiveRange(open(formatClock(0), formatClock(D)), D)).toBeNull();
+    });
+    it('내림 길이 이상이면 끝까지(11565.4 초깃값 = 전체)', () => {
+      expect(effectiveRange(open('0:00:00', formatClock(11565.4)), 11565.4)).toBeNull();
+    });
+    it('구간은 ms, 표기가 달라도 같은 값', () => {
+      expect(effectiveRange(open('0:10:00', '0:20:00'), D)).toEqual({ startMs: 600000, endMs: 1200000 });
+      expect(effectiveRange(open('10:00', '20:00'), D)).toEqual({ startMs: 600000, endMs: 1200000 });
+    });
+    it('끝이 길이를 넘으면 올림 길이로 자른다', () => {
+      expect(effectiveRange(open('0:10:00', '9:00:00'), 11565.4)).toEqual({ startMs: 600000, endMs: 11566000 });
+    });
+    it('끝 칸이 비면 올림 길이까지(시작 0이면 전체)', () => {
+      expect(effectiveRange(open('0:10:00', ''), 11565.4)).toEqual({ startMs: 600000, endMs: 11566000 });
+      expect(effectiveRange(open('0:00:00', ''), D)).toBeNull();
+    });
+    it('길이를 모르면 끝 없음(null)을 그대로 둔다', () => {
+      expect(effectiveRange(open('0:10:00', ''), null)).toEqual({ startMs: 600000, endMs: null });
+      expect(effectiveRange(open('0:00:00', ''), null)).toBeNull();
+      expect(effectiveRange(open('0:00:00', '0:20:00'), null)).toEqual({ startMs: 0, endMs: 1200000 });
+    });
+    it('결과는 늘 1000의 배수', () => {
+      const r = effectiveRange(open('0:10:01', '0:20:59'), 11565.4);
+      expect(r!.startMs % 1000).toBe(0);
+      expect(r!.endMs! % 1000).toBe(0);
+    });
+  });
+
+  it('rangeSecs: 없으면 영상 길이, 끝 없음이면 null', () => {
+    expect(rangeSecs(null, D)).toBe(D);
+    expect(rangeSecs({ startMs: 600000, endMs: 1200000 }, D)).toBe(600);
+    expect(rangeSecs({ startMs: 600000, endMs: null }, D)).toBeNull();
+  });
+
+  it('rangeChip', () => {
+    expect(rangeChip({ startMs: 600000, endMs: 1200000 })).toBe(t('range.chip', { start: '0:10:00', end: '0:20:00' }));
+    expect(rangeChip({ startMs: 600000, endMs: null })).toBe(t('range.chipToEnd', { start: '0:10:00' }));
+  });
+
+  it('형식 오류 예시는 0:10:00', () => {
+    expect(formatClock(RANGE_FORMAT_EXAMPLE_SECS)).toBe('0:10:00');
+  });
+
+  it('checkKey: 구간이 열쇠에 들어간다', () => {
+    expect(checkKey(null, 'a', 'q')).toBe(checkKey(null, 'a', 'q', null));
+    const r1 = effectiveRange(open('0:10:00', '0:20:00'), D);
+    const r2 = effectiveRange(open('10:00', '20:00'), D);
+    const r3 = effectiveRange(open('0:10:00', '0:30:00'), D);
+    expect(checkKey(null, 'a', 'q', r1)).toBe(checkKey(null, 'a', 'q', r2));
+    expect(checkKey(null, 'a', 'q', r1)).not.toBe(checkKey(null, 'a', 'q', r3));
+    expect(checkKey(null, 'a', 'q', r1)).not.toBe(checkKey(null, 'a', 'q'));
+    for (const inp of [
+      { open: false, start: '0:10:00', end: '0:20:00' },
+      open('abc', ''),
+      open(formatClock(0), formatClock(D)),
+    ]) {
+      expect(checkKey(null, 'a', 'q', effectiveRange(inp, D))).toBe(checkKey(null, 'a', 'q', null));
+    }
+  });
+
+  it('buildEnqueueRequest: range가 있을 때만 키가 있다', () => {
+    const r = resolved();
+    const q = r.qualities[1];
+    const range = { startMs: 600000, endMs: 1200000 };
+    expect(buildEnqueueRequest(r, q, null, check(), DEFAULT_CHOICES, range).range).toEqual(range);
+    expect('range' in buildEnqueueRequest(r, q, null, check(), DEFAULT_CHOICES, null)).toBe(false);
+    expect('range' in buildEnqueueRequest(r, q, null, check(), DEFAULT_CHOICES)).toBe(false);
   });
 });

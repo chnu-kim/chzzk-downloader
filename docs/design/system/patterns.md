@@ -220,7 +220,7 @@
 행 세로(1줄 제목·막대·상태·동작): 패딩 12 + 16 + 4 + 16(막대 줄 = 퍼센트 행간) + 4 + 16 + 4 + 24 + 패딩 12 = 108. 제목 2줄 +16, 본문 줄 +20. 막대 없는 완료 행 88
 ```
 
-상태 줄은 **명사형 조각**만, 사건 설명은 **본문 줄**(해요체 한 문장)이다(`content.md` §3.1-2). 동작 줄은 상태 줄 아래 자기 줄이라 폭이 좁아도 접히지 않고, 제목은 2줄까지(`-webkit-line-clamp: 2`) 보여 끝에서 갈리는 "1부/2부"를 구별한다(`G-INPUT-IN2`). 문구는 키로 가리키고 값은 `content.md` §15.1이다.
+상태 줄은 **명사형 조각**만, 사건 설명은 **본문 줄**(해요체 한 문장)이다(`content.md` §3.1-2). 동작 줄은 상태 줄 아래 자기 줄이라 폭이 좁아도 접히지 않고, 제목은 2줄까지(`-webkit-line-clamp: 2`) 보여 끝에서 갈리는 "1부/2부"를 구별한다(`G-INPUT-IN2`). 문구는 키로 가리키고 값은 `content.md` §15.1이다. 구간 작업은 1줄 화질 칸이 `1080p · 0:10:00~0:20:00`(끝을 모르면 `1080p · 0:10:00~`)이고 deck 함수 `qualityText`가 잇는다.
 
 | 상태 | 막대(`state`) | 퍼센트 | 상태 줄 키 | 본문 줄 키 | 동작(왼쪽부터) |
 |---|---|---|---|---|---|
@@ -394,6 +394,7 @@ scrim(`--scrim`, `--z-dialog` 50) 위, 창 가운데
 | 행 | 내용 | 규칙 |
 |---|---|---|
 | 화질 | 라디오 행 3~5개: `1080p` `60fps` … `약 7.8GB`. 꼬리표는 늘 가장 높은 화질 행. 기본 선택 = 마지막에 고른 화질이 이 영상에 있으면 그 행, 없으면 가장 높은 화질(기억된 낮은 화질이 조용히 기본이 되지만 꼬리표가 더 좋은 행을 가리킨다 [잠정] — D62 UT4에서 "가장 높은 화질"을 찾는지 본다) | `G-REPEAT-R6`, `components.md` §2.7 |
+| 구간(빠른 다시보기만) | 화질 아래 `Disclosure variant=inline` 한 줄 `range.toggle`. 늘 보이고 기본 접힘, 카드마다 새로 시작(기억 안 함). 펼치면 FieldRow `range.label` + 시각 칸 둘(`range.start`·`range.end`, 기준 폭 `calc(6 * var(--text-body))`, 좁으면 줄어든다 [잠정] ADR-0009) + 도움말 `range.help`. 길이를 모르면 끝 칸은 비고 placeholder `range.toEnd`. 접혀 있거나 초깃값이면 전체 받기다. 칸이 파싱되면 화질 크기와 파일 이름 행의 저장될 이름 안내가 구간 기준(150ms 디바운스, 오류 없음). 검증은 [받기] 때만(§6.1): `range.error.*` inline danger, 그 칸 `aria-invalid` + 포커스. 일반 VOD·클립·생방송 카드에는 그리지 않는다 | `docs/design/features/range.md` §5, decisions R3 |
 | 저장 폴더 | 값(경로, muted, selectable) + [변경…] | 바꾸면 설정의 기본 폴더도 바뀐다(`app.md` §8.3) |
 | 파일 이름 | 입력칸(`--fg`) + ".mp4" 라벨 + [원래 이름으로](ghost sm, `filename.reset` — "되돌리기"는 목록 지우기 토스트의 말이라 쓰지 않는다, W1). 150ms 디바운스로 `check_output`. 최종 이름이 입력과 다를 때(잘림·정리·구간 접미사) 아래 `filename.willSaveAs`(caption muted) | `app.md` §8.3. 한글을 치는 칸이라 Enter에 동작을 달지 않고 Mod+Enter도 IME 가드(§8) |
 | 카드 안 경고 | 해당 행 **아래** `Notice variant=inline`: 같은 이름 파일(warning + 라디오 `conflict.number`/`conflict.overwrite`, 덮어쓰기를 고르면 [받기]가 D7을 연다), 받다 만 파일(neutral `conflict.partial.*` + [처음부터 다시 받기]), 조건(화질·구간)이 다른 `.part`(neutral `conflict.partialOther`), 받다 만 녹화(neutral `conflict.partialRecording.*`, 버튼 없음. 늘 번호 이름 `freeFileName`으로 받고 `restart = false`, `onExisting = skip`이며 그때는 같은 이름 파일 안내·라디오를 띄우지 않고 "처음부터"·"이어받기"도 없다. 빈 번호 이름이 없으면 [받기] 비활성. 근거 `core.md` 61·`app.md` 78), 이미 목록에 있음(neutral `conflict.inQueue` + [목록에서 보기], [받기] 비활성 + 사유), 본인 영상 아님(danger `notOwnContent`, [받기] 비활성 + 사유), 종류 차단 B5(warning "지금 받을 수 없는 종류예요: {kind}", [받기] 비활성) | `app.md` §6.4, README D41, `G-OUTAGE-R12` |
@@ -706,6 +707,8 @@ Worker 쪽 확인 페이지(`loginWarning` + [계속], 확인 코드 없음)와 
 │ 화질      (●) 1080p  60fps  가장 좋은 화질               약 10.8GB     │ 라디오 행 28, 선택 `--accent-soft`(면은 값 열 x부터), 꼬리표 quality.best
 │           ( ) 720p   60fps                               약 5.4GB     │
 │           ( ) 480p   30fps                               약 2.1GB     │
+│ 12                                                                   │
+│ ▸ 일부만 받기                                                         │ Disclosure inline 24(빠른 다시보기만, 기본 접힘). 펼치면 FieldRow 구간 [0:10:00] ~ [0:20:00] + 도움말
 │ 12                                                                   │
 │ 저장 폴더  ~/Movies/치지직                                   [변경…]   │ FieldRow: 라벨 fg(--label-w 80) · 값 muted selectable
 │ 12                                                                   │

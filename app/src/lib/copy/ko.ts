@@ -66,6 +66,18 @@ export const ko = {
   'quality.title': '화질',
   'quality.best': '가장 좋은 화질',
 
+  'range.toggle': '일부만 받기',
+  'range.label': '구간',
+  'range.start': '시작 시각',
+  'range.end': '끝 시각',
+  'range.toEnd': '끝까지',
+  'range.help': '앞뒤로 몇 초 더 받을 수 있어요.',
+  'range.chip': '{start}~{end}',
+  'range.chipToEnd': '{start}~',
+  'range.error.format': '시각은 {example}처럼 적어 주세요.',
+  'range.error.order': '끝 시각이 시작 시각보다 뒤여야 해요.',
+  'range.error.beyond': '시작 시각이 영상 길이보다 뒤예요.',
+
   'folder.change': '변경…',
 
   'filename.label': '파일 이름',

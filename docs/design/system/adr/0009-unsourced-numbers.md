@@ -1,6 +1,6 @@
 # 0009 출처 없는 수치 묶음(제안값)
 
-상태: 채택(잠정)   날짜: 2026-10-10 (편집 2026-10-16: 편집자 위임 상수 행)   관련: README §6-7, foundations §5.2·§6.4·§7.1·§8·§14, D37, D38, D39, D41, platform.md §2.3·§9·§14·§15, ADR-0026
+상태: 채택(잠정)   날짜: 2026-10-10 (편집 2026-10-16: 편집자 위임 상수 행·구간 칸 폭)   관련: README §6-7, foundations §5.2·§6.4·§7.1·§8·§14, D37, D38, D39, D41, platform.md §2.3·§9·§14·§15, ADR-0026
 
 ## 맥락
 
@@ -20,6 +20,7 @@
 | `--dialog-w` | 440px | [취향] | foundations §5.2 | 720·x-large 스냅(`design-gallery`) |
 | `--reading-max` | 680px | [취향] | foundations §3.3 | 1280·휴대폰 캡처(`R1`) |
 | `--label-w` / `--pct-w` | 80px / 40px | [취향] | foundations §5.2 | 갤러리 고정 데이터(긴 라벨·"100%")에서 흔들림 없음 |
+| 구간 시각 칸 기준 폭 `calc(6 * var(--text-body))`(`RangeField` `.clock`, 좁으면 줄어든다) · 작업 행 화질 칸 상한 `max-width: 50%` | 글자 크기 × 6 / 50% | [잠정] | patterns §6.5·§3.2, range.md §5.2·§5.4 | 갤러리 `card-range`에서 `100:00:00`이 잘리지 않음(기본 글자), `card-range`·`jobs-range` x-large 320에서 가로 스크롤 0 |
 | `--motion-spin` | 800ms | [취향] | foundations §7.1 | reduce 스냅에서 정지 호 |
 | `--surface-pressed` | #DBDBDB / #484848 | [취향] | foundations §2.3 | DT16 hover ≠ pressed, `R1` |
 | `--shadow-*` 수치 | foundations §6.4 | [취향] | foundations §6.4 | `R1` 다크·라이트 |
@@ -55,6 +56,7 @@
 | 네트워크 인내 30분·30초는 보고서 제안 | E1 | `G-POWER-R8` | — |
 | AppKit 막대 실제 두께는 재지 않았다 | E1 | `J-F-B8`(B의 4px은 가늘다) | 2026-10-09 |
 | 후보 A의 44·440·680·80·40은 출처 없음 | E1 | `J-A`, judgment §1.4 | — |
+| 구간 칸 폭 계수 6은 `H:MM:SS` 여덟 글자와 패딩을 어림한 값이다 | E1 | range.md §5.2 | 2026-10-16 |
 | 편집자 위임 상한·기한(7일·10·20·30일·30일·2분)은 설계자가 고른 값이고 측정 근거가 없다 | E1 | `delegation.md` §15-7 | 2026-10-16 |
 
 최고 등급: E1 / 결정 영향: 작음(값 하나씩 바뀐다) / 판정: 채택(잠정)

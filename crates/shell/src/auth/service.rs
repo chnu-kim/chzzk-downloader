@@ -169,6 +169,11 @@ struct Inner {
     delegations_verified: bool,
     /// 마지막으로 /api/me가 성공한 시각(주입 시계). 메모리에만 두고 시작값 None → 앱을 켠 뒤 첫 판정은 늘 확인한다
     last_me_at: Option<OffsetDateTime>,
+    /// 마지막으로 /api/me 응답을 받아 끝낸 시각(성공·실패 모두, 주입 시계). 자동 확인 간격은 이것으로 잰다:
+    /// 실패해도 간격이 시작돼 판정마다 /api/me·refresh를 되풀이하지 않는다. 메모리에만, 계정이 바뀌면 None
+    last_me_try_at: Option<OffsetDateTime>,
+    /// 끝난 /api/me 시도마다 +1(성공·실패). 함께 기다린 자동 호출이 앞 호출의 실패를 보고 건너뛴다
+    me_try_gen: u64,
     /// /api/me single-flight: 성공해 적용할 때마다 +1. refresh_gen과 따로다(me는 refresh_gen을 올리지 않는다)
     me_gen: u64,
     /// 마지막으로 적용한 /api/me 응답(함께 기다린 호출이 쓴다)
@@ -415,6 +420,8 @@ impl<A: WorkerApi, C: Clock> AuthService<A, C> {
             pub_seq: 0,
             delegations_verified: false,
             last_me_at: None,
+            last_me_try_at: None,
+            me_try_gen: 0,
             me_gen: 0,
             last_me: None,
         };
@@ -536,6 +543,7 @@ impl<A: WorkerApi, C: Clock> AuthService<A, C> {
         i.admin_verified = false;
         i.delegations_verified = false;
         i.last_me_at = None;
+        i.last_me_try_at = None;
         i.last_me = None;
         i.offline = None;
         i.dirty = false;
@@ -1025,6 +1033,7 @@ impl<A: WorkerApi, C: Clock> AuthService<A, C> {
                 i.session_epoch += 1;
                 // 새 계정은 처음부터 확인한다
                 i.last_me_at = None;
+                i.last_me_try_at = None;
                 i.last_me = None;
                 // 남아 있던 저장 세션(유예 지남·Checking 중 재로그인)은 서버에서도 끝낸다(호출한 쪽, 실패 무시)
                 old = i.held.take();
@@ -1218,6 +1227,7 @@ impl<A: WorkerApi, C: Clock> AuthService<A, C> {
             i.admin_verified = false;
             i.delegations_verified = false;
             i.last_me_at = None;
+            i.last_me_try_at = None;
             i.last_me = None;
             i.login = None;
             i.pending_rx = None;
@@ -1292,23 +1302,25 @@ impl<A: WorkerApi, C: Clock> AuthService<A, C> {
     /// Bearer 호출 공용 절차(delegation.md §9.4). 시도는 최대 두 번이다: 첫 시도가 401(형식 거부 둘 제외)이면
     /// refresh를 한 번 하고 같은 요청을 다시 보낸다. 오프라인 추적·verified_at·admin_verified·first_online·refresh_gen은
     /// 건드리지 않는다(refresh_inner가 한 것만 남는다)
-    async fn authed<T, R, S, SFut, J, Ap>(
+    async fn authed<T, R, S, SFut, J, Ap, Fl>(
         &self,
         joined: J,
         send: S,
         apply: Ap,
+        failed: Fl,
     ) -> Result<R, AuthedError>
     where
         S: Fn(Secret<String>) -> SFut,
         SFut: Future<Output = Result<T, ApiError>>,
         J: Fn(&Inner) -> Option<R>,
         Ap: FnOnce(&Self, &mut Inner, T, OffsetDateTime) -> Result<R, AuthedError>,
+        Fl: Fn(&mut Inner, OffsetDateTime),
     {
         let mut apply = Some(apply);
         let mut attempt = 0usize;
         loop {
-            // 이 잠금을 중복으로 보고 빼면 늦은 me 응답이 뒤 refresh의 빈 목록을 덮는다(N2).
-            // 세대 비교만으로는 순서를 알 수 없다
+            // 이 잠금은 refresh와 순서를 세운다(N2): 쥐는 동안 refresh가 나가지 않고, 기다린 뒤에는 회전한 access를 읽는다(s13).
+            // 늦은 me 응답이 뒤 refresh의 목록을 덮는 것은 아래 세대 비교(refresh_gen)로도 막힌다(두 겹)
             let guard = self.refresh_lock.lock().await;
             let (access, epoch, rgen) = {
                 let i = self.lock();
@@ -1360,9 +1372,13 @@ impl<A: WorkerApi, C: Clock> AuthService<A, C> {
                                 self.publish(i);
                                 Attempt::Done(Err(AuthedError::Blocked))
                             }
-                            MeOutcome::Other => Attempt::Done(Err(AuthedError::Api(e))),
+                            MeOutcome::Other => {
+                                failed(&mut i, now);
+                                Attempt::Done(Err(AuthedError::Api(e)))
+                            }
                             MeOutcome::NeedRefresh if attempt > 0 => {
                                 // 재전송도 401: 로그아웃하지 않고 실패
+                                failed(&mut i, now);
                                 Attempt::Done(Err(AuthedError::Unreachable))
                             }
                             MeOutcome::NeedRefresh => Attempt::Refresh { epoch },
@@ -1406,22 +1422,33 @@ impl<A: WorkerApi, C: Clock> AuthService<A, C> {
                 if i.offline.is_some() {
                     return DelegationCheck::Skipped;
                 }
-                // 시계가 되돌려졌으면(now < t) 확인할 때로 본다
-                if let Some(t) = i.last_me_at
+                // 시계가 되돌려졌으면(now < t) 확인할 때로 본다. 실패한 시도도 간격을 시작한다
+                if let Some(t) = i.last_me_try_at
                     && t <= now
                     && now - t < time::Duration::milliseconds(DELEGATION_RECHECK_MIN_GAP_MS as i64)
                 {
                     return DelegationCheck::Skipped;
                 }
             }
-            i.me_gen
+            (i.me_gen, i.me_try_gen)
         };
+        let (gen0, try0) = gen0;
         let joined = |i: &Inner| {
-            if !force && i.me_gen != gen0 {
+            if force {
+                None
+            } else if i.me_gen != gen0 {
                 i.last_me.clone().map(DelegationCheck::Fresh)
+            } else if i.me_try_gen != try0 {
+                // 기다린 앞 호출이 실패했다: 다시 보내지 않고 디스크 목록으로 판정한다
+                Some(DelegationCheck::Skipped)
             } else {
                 None
             }
+        };
+        // 실패 시도도 간격을 시작한다(성공 시각 last_me_at은 그대로)
+        let failed = |i: &mut Inner, now: OffsetDateTime| {
+            i.last_me_try_at = Some(now);
+            i.me_try_gen += 1;
         };
         let send = |a: Secret<String>| async move { self.api.me(&a).await };
         let apply = |svc: &Self, i: &mut Inner, me: MeResponse, now: OffsetDateTime| {
@@ -1431,6 +1458,7 @@ impl<A: WorkerApi, C: Clock> AuthService<A, C> {
                 .is_some_and(|h| h.channel_id.eq_ignore_ascii_case(&me.channel_id));
             if !same {
                 info!(result = "channel_mismatch", "맡은 채널 확인");
+                failed(i, now);
                 return Ok(DelegationCheck::Discarded);
             }
             let saved = {
@@ -1446,6 +1474,8 @@ impl<A: WorkerApi, C: Clock> AuthService<A, C> {
                 }
             }
             i.last_me_at = Some(now);
+            i.last_me_try_at = Some(now);
+            i.me_try_gen += 1;
             i.delegations_verified = true;
             i.me_gen += 1;
             let count = me.delegated.len();
@@ -1454,7 +1484,7 @@ impl<A: WorkerApi, C: Clock> AuthService<A, C> {
             info!(result = "ok", count, "맡은 채널 확인");
             Ok(DelegationCheck::Fresh(m))
         };
-        match self.authed(joined, send, apply).await {
+        match self.authed(joined, send, apply, failed).await {
             Ok(c) => c,
             Err(AuthedError::NotSignedIn) => DelegationCheck::NotSignedIn,
             Err(AuthedError::Discarded) => DelegationCheck::Discarded,
@@ -1517,6 +1547,7 @@ impl<A: WorkerApi, C: Clock> AuthService<A, C> {
                 |_| None,
                 |a: Secret<String>| async move { self.api.create_invite(&a).await },
                 |_, _, t: InviteResponse, _| Ok(t),
+                |_, _| {},
             )
             .await;
         match r {
@@ -1544,6 +1575,7 @@ impl<A: WorkerApi, C: Clock> AuthService<A, C> {
                     async move { self.api.remove_editor(&a, &id).await }
                 },
                 |_, _, t: (), _| Ok(t),
+                |_, _| {},
             )
             .await
             .or_else(|e| Self::editors_error(e, true));
@@ -1562,6 +1594,7 @@ impl<A: WorkerApi, C: Clock> AuthService<A, C> {
                     async move { self.api.leave_delegation(&a, &id).await }
                 },
                 |_, _, t: (), _| Ok(t),
+                |_, _| {},
             )
             .await
             .or_else(|e| Self::editors_error(e, true));

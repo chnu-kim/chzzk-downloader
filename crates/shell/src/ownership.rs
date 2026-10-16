@@ -123,6 +123,11 @@ impl OwnershipGate {
         self.auth.is_some()
     }
 
+    /// 지금 판정 주체가 있는가(SignedIn). 꺼진 게이트는 false
+    pub fn has_signer(&self) -> bool {
+        self.me().is_some()
+    }
+
     fn me(&self) -> Option<Signer> {
         self.auth.as_ref().and_then(|a| a.signed_in())
     }
@@ -778,6 +783,40 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(e.code, ErrorCode::NotLoggedIn);
+    }
+
+    /// 확인 중에 다른 계정으로 바뀌면 새 주체 기준으로 다시 판정한다(세션 세대, delegation.md §14)
+    #[tokio::test]
+    async fn o10_recheck_account_switch_uses_new_signer() {
+        let rechecks = AtomicUsize::new(0);
+        // A1이 D4를 맡았다가 C3(맡은 채널 없음)으로 바뀜 → 남의 영상
+        let me = Me::editor(A1, &[D4]);
+        let g = OwnershipGate::enabled(me.clone());
+        let e = admit_counting(&g, &video(1), Some(D4), &rechecks, || me.set(Some(C3)))
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, ErrorCode::NotOwnContent);
+        // A1(맡은 채널 없음)의 남의 영상 C3 → C3 본인으로 바뀜 → 본인 영상
+        let me = Me::editor(A1, &[]);
+        let g = OwnershipGate::enabled(me.clone());
+        let r = admit_counting(&g, &video(2), Some(C3), &rechecks, || me.set(Some(C3)))
+            .await
+            .unwrap();
+        assert_eq!(r.as_deref(), Some(C3));
+        // A1(맡은 채널 없음)의 남의 영상 D4 → D4를 맡은 C3으로 바뀜 → 맡은 채널
+        let me = Me::editor(A1, &[]);
+        let g = OwnershipGate::enabled(me.clone());
+        let r = admit_counting(&g, &video(3), Some(D4), &rechecks, || {
+            me.set(Some(C3));
+            me.set_delegated(&[D4]);
+        })
+        .await
+        .unwrap();
+        assert_eq!(r.as_deref(), Some(D4));
+        assert_eq!(
+            g.on_resolved(&video(3), &meta(Some(D4))),
+            Ownership::Delegated
+        );
     }
 
     #[test]

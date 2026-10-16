@@ -550,7 +550,7 @@ impl App {
         if let Some(auth) = &self.auth {
             self.forced_check(auth).await?;
         }
-        // 이 안의 자동 확인은 방금 찍힌 last_me_at 때문에 간격 규칙으로 건너뛴다
+        // 이 안의 자동 확인은 방금 찍힌 last_me_try_at 때문에 간격 규칙으로 건너뛴다
         self.resolve(url).await
     }
 }

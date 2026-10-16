@@ -999,6 +999,42 @@ async fn a4_me_not_allowed_blocks_new_jobs_keeps_running() {
     app.manager.quit(Duration::from_secs(3)).await;
 }
 
+/// 거부 뒤에는 본인 채널 영상의 새 작업도 notLoggedIn이다(delegation.md §14 N1 ①). 로그인 채널 = 영상 채널(OWN)
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a4b_denial_blocks_own_channel_too() {
+    let api = mock_api(None).await;
+    let worker = MockServer::start().await;
+    let t = TempDir::new().unwrap();
+    save_session_full(t.path(), &worker, OWN, false, &[]);
+    mock_me(&worker, OWN, &[], 200).await;
+    let app = open_auth(t.path(), &api, &worker);
+    assert_eq!(app.resolve(&url()).await.unwrap().ownership, Ownership::Own);
+    mock_me(&worker, OWN, &[], 403).await;
+    let e = app.ownership_recheck(&url()).await.unwrap_err();
+    assert_eq!(e.code, ErrorCode::NotLoggedIn);
+    assert_eq!(app.auth.as_ref().unwrap().status().phase, AuthPhase::Denied);
+    let e = app
+        .enqueue(request(t.path(), "own", Some(OWN)))
+        .await
+        .unwrap_err();
+    assert_eq!(e.code, ErrorCode::NotLoggedIn);
+    app.manager.quit(Duration::from_secs(3)).await;
+}
+
+/// resolve의 판정 직전 확인이 명시적 거부(403 not_allowed)를 받으면 받기 가능 카드(`unchecked`) 대신 notLoggedIn이다
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a4c_resolve_denied_during_recheck_is_not_logged_in() {
+    let api = mock_api(None).await;
+    let worker = MockServer::start().await;
+    let t = TempDir::new().unwrap();
+    save_session_full(t.path(), &worker, EDITOR, false, &[OWN]);
+    mock_me(&worker, EDITOR, &[OWN], 403).await;
+    let app = open_auth(t.path(), &api, &worker);
+    let e = app.resolve(&url()).await.unwrap_err();
+    assert_eq!(e.code, ErrorCode::NotLoggedIn);
+    assert_eq!(app.auth.as_ref().unwrap().status().phase, AuthPhase::Denied);
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a5_ownership_recheck_ignores_gap() {
     let api = mock_api(None).await;

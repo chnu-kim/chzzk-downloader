@@ -361,6 +361,101 @@ async fn s14_me_does_not_bump_refresh_gen() {
     assert_eq!(e.refresh_count(), before + 1);
 }
 
+// ------------------------------------------------------------ 실패 뒤 간격
+
+/// 자동 확인이 실패해도(5xx·연결 실패·계정 불일치) 간격이 시작된다: 판정마다 /api/me를 다시 보내지 않는다.
+/// 수동은 그대로 보내고, 간격이 지나면 자동도 다시 보낸다
+#[tokio::test(start_paused = true)]
+async fn s15_auto_failure_starts_gap() {
+    for fail in [
+        Err(worker(503, "unavailable")),
+        Err(transport()),
+        Ok(me_ok(B, &[Y])),
+    ] {
+        let e = Env::online_with(&[X]).await;
+        let want = if fail.is_ok() {
+            DelegationCheck::Discarded
+        } else {
+            DelegationCheck::Unreachable
+        };
+        e.api.push_me(Reply::Now(fail));
+        assert_eq!(e.svc.check_delegations(false).await, want);
+        assert_eq!(
+            e.svc.check_delegations(false).await,
+            DelegationCheck::Skipped
+        );
+        assert_eq!(e.me_count(), 1);
+        e.me_ok(&[X]);
+        fresh(&e.svc.check_delegations(true).await);
+        assert_eq!(e.me_count(), 2);
+        e.clock.advance(mins(5));
+        e.me_ok(&[X]);
+        fresh(&e.svc.check_delegations(false).await);
+        assert_eq!(e.me_count(), 3);
+    }
+}
+
+/// 재전송도 401이면 다음 자동 확인은 건너뛴다: 판정마다 refresh(토큰 회전)를 되풀이하지 않는다
+#[tokio::test(start_paused = true)]
+async fn s16_resend_401_does_not_repeat_refresh() {
+    let e = Env::online_with(&[X]).await;
+    e.api.push_me(Reply::Now(Err(worker(401, "invalid_token"))));
+    e.api.push_refresh(Reply::Now(Ok(bundle(3, e.now()))));
+    e.api.push_me(Reply::Now(Err(worker(401, "invalid_token"))));
+    assert_eq!(
+        e.svc.check_delegations(false).await,
+        DelegationCheck::Unreachable
+    );
+    let (me, refresh) = (e.me_count(), e.refresh_count());
+    assert_eq!(me, 2);
+    for _ in 0..3 {
+        assert_eq!(
+            e.svc.check_delegations(false).await,
+            DelegationCheck::Skipped
+        );
+    }
+    assert_eq!(e.me_count(), me);
+    assert_eq!(e.refresh_count(), refresh);
+}
+
+/// 자동 확인 둘이 겹치고 앞 호출이 실패하면 뒤 호출은 다시 보내지 않는다(실패도 single-flight)
+#[tokio::test(start_paused = true)]
+async fn s17_auto_single_flight_on_failure() {
+    let e = Env::online_with(&[X]).await;
+    let n = Arc::new(Notify::new());
+    e.api
+        .push_me(Reply::Hold(n.clone(), Err(worker(503, "unavailable"))));
+    let a = tokio::spawn({
+        let s = e.svc.clone();
+        async move { s.check_delegations(false).await }
+    });
+    wait_me_calls(&e, 1).await;
+    let b = tokio::spawn({
+        let s = e.svc.clone();
+        async move { s.check_delegations(false).await }
+    });
+    settle().await;
+    n.notify_one();
+    assert_eq!(a.await.unwrap(), DelegationCheck::Unreachable);
+    assert_eq!(b.await.unwrap(), DelegationCheck::Skipped);
+    assert_eq!(e.me_count(), 1);
+}
+
+/// 계정이 바뀌면 앞 계정의 실패 간격은 새 계정에 남지 않는다
+#[tokio::test(start_paused = true)]
+async fn s18_failure_gap_resets_on_account_switch() {
+    let e = Env::online_with(&[X]).await;
+    e.api.push_me(Reply::Now(Err(worker(503, "unavailable"))));
+    assert_eq!(
+        e.svc.check_delegations(false).await,
+        DelegationCheck::Unreachable
+    );
+    switch_to_b(&e).await;
+    e.api.push_me(Reply::Now(Ok(me_ok(B, &[Z]))));
+    fresh(&e.svc.check_delegations(false).await);
+    assert_eq!(e.me_count(), 2);
+}
+
 // ------------------------------------------------------------ N1 거부 전이
 
 #[tokio::test(start_paused = true)]
@@ -498,6 +593,9 @@ async fn n1_7_invalid_token_path_terminates() {
 
 // ------------------------------------------------------------ N2 순서
 
+/// 이 테스트가 잠금 쪽에서 고정하는 것은 순서다: me가 refresh_lock을 쥐는 동안 refresh는 me 응답 전에 나가지 않는다
+/// (중간 단언). 끝 상태(늦은 me가 빈 목록을 덮지 않음)는 잠금이 없어도 refresh_gen 비교가 늦은 me를 버려 녹색이다:
+/// 덮어쓰기는 세대 검사와 잠금 두 겹으로 막고, 잠금만의 몫은 순서와 회전 뒤 access 읽기(s13)다
 #[tokio::test(start_paused = true)]
 async fn n2_late_me_does_not_overwrite_revocation() {
     let e = Env::online_with(&[X]).await;
@@ -528,7 +626,7 @@ async fn n2_late_me_does_not_overwrite_revocation() {
     fresh(&c.await.unwrap());
     r.await.unwrap();
     assert_eq!(e.refresh_count(), startup_refreshes + 1);
-    // 늦은 me 응답이 뒤 refresh의 빈 목록을 덮지 못한다
+    // 늦은 me 응답이 뒤 refresh의 빈 목록을 덮지 못한다(세대 검사로도 막힌다)
     assert!(e.delegated_now().is_empty());
     assert_eq!(e.file_delegated(), serde_json::json!([]));
 }

@@ -514,6 +514,11 @@ impl SettingsService {
         let mut own = gate.on_resolved(&r.content, &r.meta);
         if gate.needs_recheck(own, &r.content) {
             recheck().await;
+            // 확인이 명시적 거부(not_allowed·session_revoked)로 끝났으면 판정할 주체가 없다:
+            // `unchecked` 카드(받기 가능으로 보인다) 대신 admit_checked와 같은 notLoggedIn
+            if !gate.has_signer() {
+                return Err(AppError::not_logged_in());
+            }
             own = gate.on_resolved(&r.content, &r.meta);
         }
         Ok(ResolvedDto::new(

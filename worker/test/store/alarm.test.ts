@@ -99,25 +99,33 @@ function seedDelegation({ db }: Seed) {
   const E = chan(2010);
   db.run("INSERT INTO allowlist (channel_id, channel_name, owner_channel_id, note, added_by, added_at) VALUES (?, 'o', NULL, NULL, 'x', ?)", O, T0);
   db.run("INSERT INTO allowlist (channel_id, channel_name, owner_channel_id, note, added_by, added_at) VALUES (?, 'e', NULL, NULL, 'x', ?)", E, T0 + 1);
-  const inv = (hash: string, expiresAt: number, ownerAllowedAt: number | null) =>
+  // 허가 행 없는 (옛) 관리자: NULL 관계는 admins를 모르는 청소가 지우지 않는다
+  const N = chan(2001);
+  const inv = (hash: string, expiresAt: number, ownerAllowedAt: number | null, owner = O, claim: [string, number] | null = null) =>
     db.run(
-      "INSERT INTO invite (token_hash, owner_channel_id, owner_login_channel_id, owner_name, owner_allowed_at, created_at, expires_at) VALUES (?, ?, ?, 'o', ?, ?, ?)",
+      "INSERT INTO invite (token_hash, owner_channel_id, owner_login_channel_id, owner_name, owner_allowed_at, created_at, expires_at, claimed_channel_id, claimed_name, claimed_at) VALUES (?, ?, ?, 'o', ?, ?, ?, ?, 'c', ?)",
       hash,
-      O,
-      O,
+      owner,
+      owner,
       ownerAllowedAt,
       T0,
       expiresAt,
+      claim?.[0] ?? null,
+      claim?.[1] ?? null,
     );
   inv("i-exp", T0 + 31 * DAY, T0);
   inv("i-live", T0 + 31 * DAY + 1, T0);
-  inv("i-null", T0 + 31 * DAY + 1, null);
+  inv("i-null", T0 + 31 * DAY + 1, null, N);
+  inv("i-null-row", T0 + 31 * DAY + 1, null); // NULL인데 주인에게 허가 행이 있다
   inv("i-skew", T0 + 31 * DAY + 1, T0 + 99);
-  const del = (editor: string, ownerAt: number | null, editorAt: number | null, revokedAt: number | null) =>
+  // 청구 흔적: chan(201)의 거부 기록 first_at = T0 + 2일 + 200, chan(150)은 T0 + 2일 + 149
+  inv("i-claim-ok", T0 + 31 * DAY + 1, T0, O, [chan(201), T0 + 2 * DAY + 200]);
+  inv("i-claim-dead", T0 + 31 * DAY + 1, T0, O, [chan(150), T0 + 2 * DAY + 100]);
+  const del = (editor: string, ownerAt: number | null, editorAt: number | null, revokedAt: number | null, owner = O) =>
     db.run(
       "INSERT INTO delegation (owner_channel_id, owner_login_channel_id, editor_channel_id, owner_name, editor_name, owner_allowed_at, editor_allowed_at, created_at, revoked_at, revoked_by) VALUES (?, ?, ?, 'o', 'e', ?, ?, ?, ?, ?)",
-      O,
-      O,
+      owner,
+      owner,
       editor,
       ownerAt,
       editorAt,
@@ -126,11 +134,13 @@ function seedDelegation({ db }: Seed) {
       revokedAt === null ? null : "owner",
     );
   del(chan(2010), T0, T0 + 1, null); // 맞는 활성
-  del(chan(2011), null, null, null); // 관리자로 맺은 NULL: 읽는 쪽 판정에 맡긴다
+  del(chan(2011), null, null, null, N); // 허가 행 없는 관리자로 맺은 NULL: 읽는 쪽 판정에 맡긴다
   del(chan(2012), T0 + 99, T0 + 1, null); // 주인 시각 어긋남
   del(chan(2013), T0, T0 + 99, null); // 편집자 시각 어긋남
-  del(chan(2014), null, null, NOW - 31 * DAY); // 회수 31일 전
-  del(chan(2015), null, null, NOW - 29 * DAY); // 회수 29일 전
+  del(chan(2014), null, null, NOW - 31 * DAY, N); // 회수 31일 전
+  del(chan(2015), null, null, NOW - 29 * DAY, N); // 회수 29일 전
+  del(chan(2016), null, null, null); // 주인 NULL인데 허가 행이 있다
+  del(E, null, null, null, N); // 편집자 NULL인데 허가 행이 있다
 }
 
 function names(db: Db, sql: string): string[] {
@@ -147,10 +157,14 @@ function expectSwept(db: Db) {
   expect(db.first<{ n: number }>("SELECT count(*) AS n FROM denied WHERE channel_id = ?", chan(1))?.n).toBe(0);
   expect(db.first<{ n: number }>("SELECT count(*) AS n FROM denied WHERE channel_id = ?", chan(201))?.n).toBe(1);
   expect(db.first<{ n: number; lo: number }>("SELECT count(*) AS n, min(id) AS lo FROM audit")).toEqual({ n: 500, lo: 2 });
-  // 만료 초대·시각 어긋난 초대는 지우고 미만료·NULL(관리자)은 둔다
-  expect(names(db, "SELECT token_hash AS n FROM invite ORDER BY token_hash")).toEqual(["i-live", "i-null"]);
-  // 맞는 활성·NULL 행·회수 29일 전 행은 유지, 회수 31일 전·시각 어긋난 행은 삭제
-  expect(names(db, "SELECT editor_channel_id AS n FROM delegation ORDER BY editor_channel_id")).toEqual([chan(2010), chan(2011), chan(2015)]);
+  // 만료·시각 어긋남·허가 행 있는 NULL·흔적 끊긴 청구는 지우고 미만료·허가 행 없는 NULL·흔적 있는 청구는 둔다
+  expect(names(db, "SELECT token_hash AS n FROM invite ORDER BY token_hash")).toEqual(["i-claim-ok", "i-live", "i-null"]);
+  // 맞는 활성·허가 행 없는 NULL 행·회수 29일 전 행은 유지, 회수 31일 전·시각 어긋남·허가 행 있는 NULL 행은 삭제
+  expect(names(db, "SELECT owner_channel_id || ':' || editor_channel_id AS n FROM delegation ORDER BY owner_channel_id, editor_channel_id")).toEqual([
+    `${chan(2000)}:${chan(2010)}`,
+    `${chan(2001)}:${chan(2011)}`,
+    `${chan(2001)}:${chan(2015)}`,
+  ]);
 }
 
 

@@ -16,19 +16,23 @@ export const DELEGATIONS_MAX = 20;
 export const REVOKED_DELEGATION_KEEP_MS = 30 * DAY_MS;
 export const DONE_WINDOW_MS = 120_000;
 
-/** 당사자 하나가 지금도 그 관계를 맺은 허가 상태인가(구현 중 변경 105 (라)). allowedAt NULL = 관리자로 맺음 → 지금도 관리자일 때만 */
+/**
+ * 당사자 하나가 지금도 그 관계를 맺은 허가 세대인가(구현 중 변경 105 (라)). 세대는 허가 행이다:
+ * 숫자 = 그 당사자 허가 행의 added_at이 같을 때만(관리자 여부와 상관없다), NULL = 허가 행 없는 관리자로 맺음 → 지금도 관리자이고 허가 행이 없을 때만.
+ * 허가 행이 생기면 NULL 관계는 끝나므로 한 당사자에게 살아 있는 세대는 늘 하나이고 상한(10·20)이 그 세대 안에서 지켜진다
+ */
 export function partyOk(allowedAt: number | null, addedNow: number | null, loginId: string, admins: readonly string[]): boolean {
   if (admins.length === 0) return false;
-  if (allowedAt === null) return admins.includes(loginId);
+  if (allowedAt === null) return addedNow === null && admins.includes(loginId);
   return addedNow !== null && addedNow === allowedAt;
 }
 
-/** 지금 허가 상태면 맺을 때 적을 allowed_at(관리자 null), 허가가 아니면 undefined. admission과 같은 규칙 */
+/** 지금 허가 상태면 맺을 때 적을 allowed_at(허가 행이 있으면 관리자여도 그 added_at, 허가 행 없는 관리자는 null), 허가가 아니면 undefined. admission과 같은 규칙 */
 export function allowedAtNow(db: Db, loginId: string, admins: readonly string[]): number | null | undefined {
   if (admins.length === 0) return undefined;
-  if (admins.includes(loginId)) return null;
   const r = db.first<{ added_at: number }>("SELECT added_at FROM allowlist WHERE channel_id = ?", loginId);
-  return r === null ? undefined : r.added_at;
+  if (r !== null) return r.added_at;
+  return admins.includes(loginId) ? null : undefined;
 }
 
 export type InviteRow = {
@@ -44,6 +48,7 @@ export type InviteRow = {
   claimed_at: number | null;
   owner_added: number | null;
   owner_judge: string;
+  claim_traced: number;
 };
 export type DelegationRow = {
   owner_channel_id: string;
@@ -59,9 +64,14 @@ export type DelegationRow = {
   owner_judge: string;
 };
 
-// 초대 + 주인 허가 행의 지금 added_at·지금 판정용 ID. owner_judge는 admission의 ownerChannelId와 같은 규칙이다(행이 없으면 로그인 ID)
-const INVITE_SELECT =
-  "SELECT i.token_hash, i.owner_channel_id, i.owner_login_channel_id, i.owner_name, i.owner_allowed_at, i.created_at, i.expires_at, i.claimed_channel_id, i.claimed_name, i.claimed_at, a.added_at AS owner_added, COALESCE(a.owner_channel_id, i.owner_login_channel_id) AS owner_judge FROM invite i LEFT JOIN allowlist a ON a.channel_id = i.owner_login_channel_id";
+/**
+ * 청구 흔적(구현 중 변경 105 (아)): 청구자의 거부 기록이 청구 때부터 이어진다(first_at <= claimed_at).
+ * 허가는 V2·V3 모두 같은 트랜잭션에서 거부 기록을 지우고 거부 기록의 first_at은 새 행을 만들 때의 시각이므로,
+ * 흔적이 있으면 청구 뒤 그 채널은 한 번도 허가되지 않았다. 흔적이 끊긴 청구(허가·제외를 거침, 거부 기록 닫기·상한 밀림·청소)는 죽은 청구다
+ */
+export const CLAIM_TRACED = "EXISTS (SELECT 1 FROM denied dn WHERE dn.channel_id = i.claimed_channel_id AND dn.first_at <= i.claimed_at)";
+// 초대 + 주인 허가 행의 지금 added_at·지금 판정용 ID + 청구 흔적. owner_judge는 admission의 ownerChannelId와 같은 규칙이다(행이 없으면 로그인 ID)
+const INVITE_SELECT = `SELECT i.token_hash, i.owner_channel_id, i.owner_login_channel_id, i.owner_name, i.owner_allowed_at, i.created_at, i.expires_at, i.claimed_channel_id, i.claimed_name, i.claimed_at, a.added_at AS owner_added, COALESCE(a.owner_channel_id, i.owner_login_channel_id) AS owner_judge, ${CLAIM_TRACED} AS claim_traced FROM invite i LEFT JOIN allowlist a ON a.channel_id = i.owner_login_channel_id`;
 // 회수되지 않은 위임 + 두 당사자 허가 행의 지금 added_at + 주인의 지금 판정용 ID
 const LIVE_SELECT =
   "SELECT d.owner_channel_id, d.owner_login_channel_id, d.editor_channel_id, d.owner_name, d.editor_name, d.owner_allowed_at, d.editor_allowed_at, d.created_at, ao.added_at AS owner_added, ae.added_at AS editor_added, COALESCE(ao.owner_channel_id, d.owner_login_channel_id) AS owner_judge FROM delegation d LEFT JOIN allowlist ao ON ao.channel_id = d.owner_login_channel_id LEFT JOIN allowlist ae ON ae.channel_id = d.editor_channel_id WHERE d.revoked_at IS NULL";
@@ -70,9 +80,9 @@ const LIVE_SELECT =
 function ownerOk(r: { owner_allowed_at: number | null; owner_added: number | null; owner_login_channel_id: string; owner_channel_id: string; owner_judge: string }, admins: readonly string[]): boolean {
   return r.owner_judge === r.owner_channel_id && partyOk(r.owner_allowed_at, r.owner_added, r.owner_login_channel_id, admins);
 }
-/** 초대의 판정식 inviteValid(delegation.md §8.1 3차): 미만료 ∧ 주인 쪽 판정 */
+/** 초대의 판정식 inviteValid(delegation.md §8.1 3차): 미만료 ∧ 주인 쪽 판정 ∧ (미청구 ∨ 청구 흔적) */
 export function inviteValid(r: InviteRow, admins: readonly string[], now: number): boolean {
-  return r.expires_at > now && ownerOk(r, admins);
+  return r.expires_at > now && ownerOk(r, admins) && (r.claimed_channel_id === null || r.claim_traced === 1);
 }
 /** 활성 위임: 회수 안 됨(쿼리가 거른다) ∧ 주인 쪽 판정 ∧ 편집자 partyOk(편집자에게는 판정용 ID가 없다) */
 export function delegationActive(r: DelegationRow, admins: readonly string[]): boolean {
@@ -120,6 +130,11 @@ function editorSide(db: Db, editorLoginId: string, admins: readonly string[]): D
     if (delegationActive(r, admins)) out.push({ channelId: r.owner_channel_id, channelName: r.owner_name ?? "", since: r.created_at });
   }
   return out;
+}
+
+/** 같은 주인·편집자 쌍의 청구를 모두 지운다(수락·자동 완성·그만두기·빼기 뒤 남은 청구가 위임을 되살리지 않게) */
+function dropPairClaims(db: Db, ownerChannelId: string, editorId: string): void {
+  db.run("DELETE FROM invite WHERE owner_channel_id = ? AND claimed_channel_id = ?", ownerChannelId, editorId);
 }
 
 /** 위임 upsert(되살림 포함): 회수된 행·무효 행 위에 덮어쓰고 created_at = now, revoked_* = NULL */
@@ -225,6 +240,7 @@ export function acceptInvite(db: Db, hash: string, editorLoginId: string, editor
     now,
   );
   dropInvite(db, hash);
+  dropPairClaims(db, r.owner_channel_id, editorLoginId);
   return { ok: true, ownerChannelId: r.owner_channel_id, ownerName: r.owner_name ?? "" };
 }
 
@@ -249,17 +265,23 @@ export function claimInvite(db: Db, hash: string, channelId: string, name: strin
   return { ok: true, ownerName: r.owner_name ?? "" };
 }
 
+/** 그 채널의 청구 중 흔적이 있는 것의 해시. 허가가 거부 기록을 지우기 전에 같은 트랜잭션에서 읽어 completeClaimed에 넘긴다 */
+export function tracedClaims(db: Db, channelId: string): string[] {
+  return db.all<{ token_hash: string }>(`SELECT i.token_hash FROM invite i WHERE i.claimed_channel_id = ? AND ${CLAIM_TRACED}`, channelId).map((r) => r.token_hash);
+}
+
 /**
  * 관리자 [허가] 뒤 그 채널이 청구한 초대를 위임으로 바꾼다(AuthStore allow·allowDenied가 같은 트랜잭션에서 부른다). 만든 위임 수를 돌려준다.
- * 편집자의 허가 시각은 지금 허가 행의 added_at이다: 이미 허가돼 있던 채널을 다시 허가해도 allow의 upsert가 added_at을 그대로 두므로 now를 쓰지 않는다
+ * traced = 허가 쓰기 전에 읽은 tracedClaims: 허가가 거부 기록을 지웠으므로 여기서 다시 보면 모든 청구가 흔적 없음이다. 흔적 없는 청구는 지운다.
+ * 편집자의 허가 시각은 지금 허가 행의 added_at이다(now를 쓰지 않는다)
  */
-export function completeClaimed(db: Db, channelId: string, admins: readonly string[], now: number): number {
+export function completeClaimed(db: Db, channelId: string, traced: readonly string[], admins: readonly string[], now: number): number {
   const editorAllowedAt = allowedAtNow(db, channelId, admins);
   if (editorAllowedAt === undefined) return 0;
   const adm = admission(db, channelId, admins);
   let made = 0;
   for (const row of db.all<InviteRow>(`${INVITE_SELECT} WHERE i.claimed_channel_id = ? ORDER BY i.claimed_at, i.token_hash`, channelId)) {
-    if (!inviteValid(row, admins, now)) {
+    if (!traced.includes(row.token_hash) || !inviteValid({ ...row, claim_traced: 1 }, admins, now)) {
       dropInvite(db, row.token_hash);
       continue;
     }
@@ -287,7 +309,7 @@ export function completeClaimed(db: Db, channelId: string, admins: readonly stri
       },
       now,
     );
-    dropInvite(db, row.token_hash);
+    dropPairClaims(db, row.owner_channel_id, channelId);
     made++;
   }
   return made;
@@ -320,5 +342,7 @@ export function removeEditor(db: Db, ownerChannelId: string, editorChannelId: st
 /** 편집자가 그만둔다 */
 export function leaveDelegation(db: Db, editorLoginId: string, ownerChannelId: string, now: number): RemoveResult {
   const n = db.run("UPDATE delegation SET revoked_at = ?, revoked_by = 'editor' WHERE editor_channel_id = ? AND owner_channel_id = ? AND revoked_at IS NULL", now, editorLoginId, ownerChannelId);
-  return n === 0 ? { ok: false, code: "not_found" } : { ok: true };
+  if (n === 0) return { ok: false, code: "not_found" };
+  dropPairClaims(db, ownerChannelId, editorLoginId);
+  return { ok: true };
 }

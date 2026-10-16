@@ -2,7 +2,7 @@
 // 정확성은 청소에 기대지 않는다(모든 조회가 만료를 스스로 거른다). 외래 키가 강제되므로 refresh를 session보다 먼저 지운다.
 import { AUDIT_CAP, DENIED_CAP_SQL, DENIED_KEEP_MS } from "./allowlist";
 import type { Db } from "./db";
-import { REVOKED_DELEGATION_KEEP_MS } from "./delegation";
+import { CLAIM_TRACED, REVOKED_DELEGATION_KEEP_MS } from "./delegation";
 
 export const SWEEP_DELAY_MS = 15 * 60_000;
 export const SWEEP_INTERVAL_MS = 3_600_000;
@@ -23,11 +23,18 @@ export function sweep(db: Db, now: number): { readonly deleted: number; readonly
   deleted += db.run(`DELETE FROM audit WHERE id IN (SELECT id FROM audit ORDER BY id DESC LIMIT -1 OFFSET ${AUDIT_CAP})`);
   deleted += db.run("DELETE FROM invite WHERE expires_at <= ?", now);
   deleted += db.run("DELETE FROM delegation WHERE revoked_at IS NOT NULL AND revoked_at <= ?", now - REVOKED_DELEGATION_KEEP_MS);
-  // 허가 시각이나 주인의 판정용 ID가 어긋난 행(관리자로 맺은 NULL 행은 admins를 모르므로 읽는 쪽 판정에 맡긴다, 구현 중 변경 105 (라)(마)).
+  // 허가 시각이나 주인의 판정용 ID가 어긋난 행(허가 행 없는 관리자로 맺은 NULL 행은 admins를 모르므로 읽는 쪽 판정에 맡긴다, 구현 중 변경 105 (라)(마)).
   // 안쪽 a는 늘 있는 행이라 판정용 ID를 channel_id로 메워도 된다(admission과 같은 규칙)
   deleted += db.run(
     "DELETE FROM delegation WHERE (owner_allowed_at IS NOT NULL AND NOT EXISTS (SELECT 1 FROM allowlist a WHERE a.channel_id = delegation.owner_login_channel_id AND a.added_at = delegation.owner_allowed_at AND COALESCE(a.owner_channel_id, a.channel_id) = delegation.owner_channel_id)) OR (editor_allowed_at IS NOT NULL AND NOT EXISTS (SELECT 1 FROM allowlist a WHERE a.channel_id = delegation.editor_channel_id AND a.added_at = delegation.editor_allowed_at))",
   );
+  // 허가 행 없는 관리자로 맺은 NULL 당사자에게 허가 행이 생겼으면 그 관계는 admins와 상관없이 끝났다(partyOk)
+  deleted += db.run(
+    "DELETE FROM delegation WHERE (owner_allowed_at IS NULL AND EXISTS (SELECT 1 FROM allowlist a WHERE a.channel_id = delegation.owner_login_channel_id)) OR (editor_allowed_at IS NULL AND EXISTS (SELECT 1 FROM allowlist a WHERE a.channel_id = delegation.editor_channel_id))",
+  );
+  deleted += db.run("DELETE FROM invite WHERE owner_allowed_at IS NULL AND EXISTS (SELECT 1 FROM allowlist a WHERE a.channel_id = invite.owner_login_channel_id)");
+  // 흔적이 끊긴 청구는 다시 이어지지 않는다(새 거부 기록의 first_at은 청구보다 늦다)
+  deleted += db.run(`DELETE FROM invite AS i WHERE i.claimed_channel_id IS NOT NULL AND NOT ${CLAIM_TRACED}`);
   deleted += db.run(
     "DELETE FROM invite WHERE owner_allowed_at IS NOT NULL AND NOT EXISTS (SELECT 1 FROM allowlist a WHERE a.channel_id = invite.owner_login_channel_id AND a.added_at = invite.owner_allowed_at AND COALESCE(a.owner_channel_id, a.channel_id) = invite.owner_channel_id)",
   );

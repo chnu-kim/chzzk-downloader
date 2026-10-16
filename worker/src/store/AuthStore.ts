@@ -13,7 +13,7 @@ import { log } from "../core/log";
 import { isHexHash, isId, isSecret, newId, newSecret, newToken, sha256Hex, type TokenKind } from "../core/token";
 import { CHANNEL_ID, adminView, allow, allowDenied, audit, clip, disallow, dismissDenied } from "./allowlist";
 import { Db } from "./db";
-import { acceptInvite, completeClaimed, createInvite, delegationsOf, editorsOf, inviteOpen, inviteView, leaveDelegation, recentDelegationFor, removeEditor } from "./delegation";
+import { acceptInvite, completeClaimed, createInvite, delegationsOf, editorsOf, inviteOpen, inviteView, leaveDelegation, recentDelegationFor, removeEditor, tracedClaims } from "./delegation";
 import {
   CLIENT_MAX,
   FLOW_CAP,
@@ -310,9 +310,11 @@ export class AuthStore extends DurableObject<Env> {
   async allow(channelId: string, note: string, by: string, now: number, admins?: readonly string[]): Promise<AllowResult> {
     const adm = adminsOf(admins);
     return this.write(now, () => {
+      // 청구 흔적은 허가가 거부 기록을 지우기 전에 읽는다(구현 중 변경 105 (아))
+      const traced = tracedClaims(this.db, channelId);
       const r = allow(this.db, channelId, note, by, now);
       // 같은 트랜잭션에서 청구된 초대를 위임으로 완성한다. admins가 없으면 건너뛴다(초대를 지우지도 위임을 만들지도 않는다)
-      if (r.ok && adm !== null) completeClaimed(this.db, channelId, adm, now);
+      if (r.ok && adm !== null) completeClaimed(this.db, channelId, traced, adm, now);
       return r;
     });
   }
@@ -321,8 +323,9 @@ export class AuthStore extends DurableObject<Env> {
   async allowDenied(channelId: string, by: string, now: number, admins?: readonly string[]): Promise<boolean> {
     const adm = adminsOf(admins);
     const changed = await this.write(now, () => {
+      const traced = tracedClaims(this.db, channelId);
       const c = allowDenied(this.db, channelId, by, now);
-      if (c && adm !== null) completeClaimed(this.db, channelId, adm, now);
+      if (c && adm !== null) completeClaimed(this.db, channelId, traced, adm, now);
       return c;
     });
     if (changed) log("admin.denied_allow", { route: "/admin/denied/:channelId/allow" });

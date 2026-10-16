@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { JobDto, JobStatus } from './bindings';
 import { t } from './copy/ko';
+import { ERROR_CODES } from './copy/errors';
 import { COMPLETED_FOLD_AT, RECOVERY_SILENT_MS, STALE_DAYS } from './timing';
 import { ICONS } from './components/ui/icons';
 import { err, hlsProg, job, liveProg, prog, signedInAs } from '../test/jobFixtures';
@@ -973,6 +974,18 @@ describe('생방송 녹화(ADR-0025): 막대·남은 시간 없이 글자만', (
     const vod = job(2, { status: 'failed', partialBytes: 1000, error: err('unsupported') });
     expect(jobButtons(vod, null).primary).not.toContain('resume');
     expect(failedCopy(vod, false)?.body).not.toContain('받은 부분은 그대로 있어요');
+  });
+
+  it('받다 만 녹화의 실패 행은 모든 오류 코드에서 이어받기가 먼저이고 버튼은 셋 이하다', () => {
+    for (const code of ERROR_CODES) {
+      for (const stage of ['resolve', 'download'] as const) {
+        const j = live({ status: 'failed', partialBytes: 1000, progress: null, error: err(code, { stage }) });
+        const b = jobButtons(j, null);
+        expect(b.primary[0], `${code} ${stage}`).toBe('resume');
+        expect(b.primary.length, `${code} ${stage}`).toBeLessThanOrEqual(3);
+        expect([...b.primary, ...b.menu], `${code} ${stage}`).not.toContain('restartFresh');
+      }
+    }
   });
 
   it('오류 코드 notLive·nothingRecorded는 다시 시도 하나', () => {

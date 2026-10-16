@@ -744,6 +744,46 @@ describe('생방송 행(ADR-0025)', () => {
     expect(api.removeJob).not.toHaveBeenCalled();
   });
 
+  it('재시작으로 끝난 녹화: 이유 문장과 [다시 녹화]가 그 주소를 다시 불러온다', async () => {
+    const user = userEvent.setup();
+    const url = 'https://chzzk.naver.com/live/000000000000000000000000000000a1';
+    vi.mocked(api.resolve).mockReturnValue(new Promise(() => {}));
+    await load([
+      liveJob({
+        status: 'completed',
+        progress: null,
+        finalBytes: 3_650_722_201,
+        finishedAt: 1_759_668_060,
+        url,
+        liveEnd: { reason: 'restarted', gaps: 2 },
+      }),
+    ]);
+    render(JobList);
+    const row = screen.getByRole('article', { name: '오늘 방송' });
+    expect(within(row).getByText(t('job.live.end.restarted.body'))).toBeInTheDocument();
+    expect(row.querySelector('.job-status')?.textContent?.endsWith(` · ${t('job.live.gaps', { n: 2 })}`)).toBe(true);
+    await user.click(within(row).getByRole('button', { name: t('action.recordAgain') }));
+    expect(api.resolve).toHaveBeenCalledWith(url);
+    expect(api.resumeJob).not.toHaveBeenCalled();
+  });
+
+  it('끝난 이유 본문 줄은 ✓ 상태 줄 밑이라 아이콘 폭만큼 들여쓴다(§10.3)', async () => {
+    await load([
+      liveJob({
+        status: 'completed',
+        progress: null,
+        finalBytes: 3_650_722_201,
+        finishedAt: 1_759_668_060,
+        liveEnd: { reason: 'ended', gaps: 0 },
+      }),
+    ]);
+    render(JobList);
+    const row = screen.getByRole('article', { name: '오늘 방송' });
+    const body = within(row).getByText(t('job.live.end.ended.body'));
+    expect(body.classList.contains('job-body')).toBe(true);
+    expect(body.classList.contains('indent')).toBe(true);
+  });
+
   it('끝난 생방송은 일반 완료 행과 같다', async () => {
     await load([liveJob({ status: 'completed', progress: null, finalBytes: 3_650_722_201, finishedAt: 1_759_668_060 })]);
     render(JobList);

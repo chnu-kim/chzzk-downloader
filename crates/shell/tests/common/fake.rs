@@ -348,6 +348,7 @@ impl Backend for FakeBackend {
             path: req.output,
             bytes: last_bytes,
             resumed_from: 0,
+            live: None,
         }))
     }
 }

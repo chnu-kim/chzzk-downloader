@@ -3,6 +3,7 @@ import type { AppError } from "./AppError";
 import type { ContentKind } from "./ContentKind";
 import type { JobId } from "./JobId";
 import type { JobStatus } from "./JobStatus";
+import type { LiveEndDto } from "./LiveEndDto";
 import type { PlaybackKind } from "./PlaybackKind";
 import type { ProgressDto } from "./ProgressDto";
 import type { TimeRangeDto } from "./TimeRangeDto";
@@ -47,4 +48,8 @@ stoppedAt: number | null,
 /**
  * 구간 받기 작업의 요청 구간(사용자 입력 원값). 전체 받기는 null
  */
-range: TimeRangeDto | null, };
+range: TimeRangeDto | null, 
+/**
+ * 끝난 생방송 녹화의 이유와 놓친 조각 수(completed 생방송만, 옛 기록·VOD는 null)
+ */
+liveEnd: LiveEndDto | null, };

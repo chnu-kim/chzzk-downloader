@@ -149,7 +149,8 @@ async fn fixture_concat_box_order() {
         DownloadOutcome::Completed {
             path: out.clone(),
             bytes: want.len() as u64,
-            resumed_from: 0
+            resumed_from: 0,
+            live: None,
         }
     );
     let got = std::fs::read(&out).unwrap();
@@ -306,6 +307,7 @@ async fn cancel_then_resume_byte_identical() {
             path: out.clone(),
             bytes: synth_expected(N).len() as u64,
             resumed_from: committed.len() as u64,
+            live: None,
         }
     );
     assert_eq!(events.all()[0].resumed_from, committed.len() as u64);
@@ -375,6 +377,7 @@ async fn resume_from_empty_commit_writes_init() {
             path: out.clone(),
             bytes: synth_expected(N).len() as u64,
             resumed_from: 0,
+            live: None,
         }
     );
     assert_eq!(std::fs::read(&out).unwrap(), synth_expected(N));
@@ -1065,7 +1068,8 @@ async fn range_requests_only_selected_segments() {
         DownloadOutcome::Completed {
             path: out.clone(),
             bytes: want.len() as u64,
-            resumed_from: 0
+            resumed_from: 0,
+            live: None,
         }
     );
     // 합성 바이트는 진짜 fMP4가 아니라 변환되지 않는다.
@@ -1157,6 +1161,7 @@ async fn range_cancel_then_resume_byte_identical() {
             path: out.clone(),
             bytes: want.len() as u64,
             resumed_from: committed,
+            live: None,
         }
     );
     assert_eq!(events.all()[0].resumed_from, committed);
@@ -1252,6 +1257,7 @@ async fn range_resume_from_empty_commit_writes_init_at_first() {
             path: out.clone(),
             bytes: want.len() as u64,
             resumed_from: 0,
+            live: None,
         }
     );
     assert_eq!(std::fs::read(&out).unwrap(), want);
@@ -1424,6 +1430,7 @@ async fn range_different_from_sidecar_restarts() {
             path: out.clone(),
             bytes: want.len() as u64,
             resumed_from: 0,
+            live: None,
         }
     );
     assert_eq!(std::fs::read(&out).unwrap(), want);

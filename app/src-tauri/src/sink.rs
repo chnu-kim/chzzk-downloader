@@ -220,6 +220,7 @@ mod tests {
             finished_at: None,
             stopped_at: None,
             range: None,
+            live_end: None,
         }
     }
 

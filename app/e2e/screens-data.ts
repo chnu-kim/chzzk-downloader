@@ -113,6 +113,12 @@ const loadCard = async (app: App, url: string) => {
   await open(app.page, t('common.load')).click();
 };
 
+// 높이 231에서는 sticky 입력줄·카드 바닥이 화면의 절반을 쓴다. 스크롤 위치는 포커스·레이아웃 순서에 따라 달라지고,
+// 입력줄이 카드 머리의 [닫기]를 덮으면 axe가 대상 크기(가려짐)로 잡는다: 카드 머리를 입력줄 바로 아래에 두고 잰다
+const settleCardTop = async (page: Page, env: Env) => {
+  if (env.vp.height < 400) await page.locator('.video-card').evaluate((el) => el.scrollIntoView({ block: 'start' }));
+};
+
 export const SCREENS: Screen[] = [
   {
     id: '홈 빈 상태(첫 실행)',
@@ -158,10 +164,7 @@ export const SCREENS: Screen[] = [
       await expect(app.page.getByText(t('conflict.exists'))).toBeVisible();
     },
     ready: (p) => p.getByRole('region', { name: WORST_TITLE }),
-    // 높이 231에서는 sticky 입력줄·카드 바닥이 화면의 절반을 쓴다: 카드 머리를 입력줄 바로 아래에 두고 잰다
-    settle: async (page, env) => {
-      if (env.vp.height < 400) await page.locator('.video-card').evaluate((el) => el.scrollIntoView({ block: 'start' }));
-    },
+    settle: settleCardTop,
     aligned: ['입력줄 왼쪽', '배너 왼쪽', '배너 오른쪽', '카드 왼쪽', '카드 오른쪽'],
     card: true,
   },
@@ -267,6 +270,7 @@ export const SCREENS: Screen[] = [
       await loadCard(app, NOT_OWN.url);
     },
     ready: (p) => p.getByRole('region', { name: NOT_OWN.meta.title }),
+    settle: settleCardTop,
     card: true,
   },
   {

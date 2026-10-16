@@ -64,9 +64,10 @@ test('D1 맡은 채널 영상은 경고 없이 메타 조각만 보이고 받는
   await expect(card).toBeVisible();
   await expect(card.locator('.meta')).toContainText(t('delegated.title'));
   await expect(card.locator('.tone-danger')).toHaveCount(0);
-  await app.axe('맡은 채널 영상 카드');
+  // 대상 확인이 끝나 [받기]가 활성으로 바뀐 뒤에 잰다: 바뀌는 순간 글자는 바로 흰색이고 배경만 전환되므로(flow.spec.ts와 같다)
   const download = card.getByRole('button', { name: t('card.download') });
   await expect(download).not.toHaveAttribute('aria-disabled', 'true');
+  await app.axe('맡은 채널 영상 카드');
   await download.click();
   await expect.poll(async () => (await app.cmds()).includes('enqueue')).toBe(true);
 });

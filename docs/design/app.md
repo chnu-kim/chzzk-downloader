@@ -1433,3 +1433,4 @@ CLI 세션에서는 웹뷰 화면·개발자 도구를 조작할 수 없어 대�
     5. **ADR 없음.** [다시 녹화]는 시작 버튼이 아니라 다시 불러오는 동작의 라벨이고 시작은 카드의 [받기]다. 명사 "녹화"는 D63 범위 안이다(디자인 시스템 README §7.1 "문구 하나"). content.md §4 용어집 행의 예시에 더했다.
     6. **그대로 둔 것.** OS 알림("다운로드를 마쳤어요")·LiveAnnouncer 문장·Dock 집계. 끝난 이유가 모르는 값이면(뒤 버전이 더한 이유) 본문이 없는 옛 기록처럼 보인다.
     7. **테스트.** 셸 `manager_live.rs`(`stop_job_finalizes_recording`·`restarted_live_end_survives_reopen`·`vod_completion_has_no_live_end`)·`jobs.rs`(옛 레코드·왕복·모르는 이유)·`dto_json.rs`, 프런트 `jobs.test.ts`(상태 줄·본문·버튼 표)·`components/jobs/jobs.test.ts`([다시 녹화]가 주소를 다시 불러옴), 웹 E2E `live.spec.ts`.
+    8. **알려진 한계(이번에 고치지 않았다).** ① 위 core.md 65의 7: `Skipped` 뒤 [덮어쓰고 받기]로 같은 `.part`를 저장하면 기록의 끝난 이유와 놓친 조각 수가 `Other`/`None`으로 바뀌고, 재시작 안내와 [다시 녹화]도 사라진다(녹화 파일은 보존). ② 다운그레이드: `liveEnd` 필드가 없는 옛 앱이 시작 때 `jobs.json`을 다시 저장하면 `liveEnd`가 사라진다. `JobRecord`에 모르는 필드를 보존하는 장치가 없기 때문이다. 목록과 파일은 유지되고 읽기 호환은 된다.

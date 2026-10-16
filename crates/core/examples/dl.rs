@@ -10,7 +10,8 @@
 //!   --keep            --limit-mb로 멈춘 `.part`를 지우지 않는다(다시 실행하면 이어받는다)
 //!   --range <A~B>     빠른 다시보기의 시각 구간만 받는다(A·B는 H:MM:SS, M:SS, 초). B를 비우면(A~) 끝까지.
 //!                     결과는 코어 경로 그대로(마무리 때 일반 mp4로 변환). 이름 끝에 " (H.MM.SS~H.MM.SS)"를 붙인다.
-//!                     보조로 "EXTINF 누적 = 영상 길이(±1조각)"를 같다/다르다/모름으로만 찍는다(원점 검사가 아니다).
+//!                     이름이 길면 제목 쪽을 줄여 접미사를 지킨다.
+//!                     보조로 "EXTINF 누적 = 영상 길이(±1조각)"를 같다/다르다/모름(실패면 확인 못 함)으로만 찍는다(원점 검사가 아니다).
 //! ```
 //!
 //! 성인 컨텐츠는 환경 변수 `CHZZK_NID_AUT`, `CHZZK_NID_SES`로 쿠키를 준다(값은 출력하지 않는다).
@@ -22,7 +23,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use chzzk_core::download::part::part_path;
-use chzzk_core::naming::{default_filename, output_path};
+use chzzk_core::naming::{MAX_FILENAME_BYTES, default_filename, output_path};
 use chzzk_core::progress::{format_bytes, format_hms};
 use chzzk_core::{
     CancellationToken, Chzzk, ClientConfig, DownloadOutcome, DownloadRequest, DuplicatePolicy,
@@ -150,6 +151,20 @@ fn range_suffix(r: TimeRange) -> String {
     )
 }
 
+/// 구간 파일 이름. 길이 상한을 넘으면 `output_path`가 끝(접미사)을 자르므로 제목 쪽을 먼저 줄인다.
+/// 접미사가 잘리면 다른 구간이 같은 경로를 써서 `Skipped`가 되거나 남의 `.part`를 지운다.
+fn range_name(name: &str, r: TimeRange) -> String {
+    const EXT: &str = ".mp4";
+    let suffix = range_suffix(r);
+    let base = strip_mp4(name);
+    let room = MAX_FILENAME_BYTES.saturating_sub(suffix.len() + EXT.len());
+    let mut cut = base.len().min(room);
+    while !base.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    format!("{}{suffix}{EXT}", base[..cut].trim_end())
+}
+
 /// 끝의 `.mp4`(대소문자 무시)를 뗀다.
 fn strip_mp4(name: &str) -> &str {
     match name.len().checked_sub(4) {
@@ -176,7 +191,8 @@ async fn extinf_check(r: &Resolved, quality: &Quality) -> String {
             }
             None => "모름".into(),
         },
-        Err(stage) => format!("확인 못 함({stage})"),
+        // 단계 이름은 내지 않는다(설계 §8은 판정만 찍는다)
+        Err(_) => "확인 못 함".into(),
     }
 }
 
@@ -353,7 +369,7 @@ async fn run(args: Args) -> Result<(), String> {
     let p = Platform::current();
     let mut name = default_filename(&r.meta, p);
     if let Some(range) = args.range {
-        name = format!("{}{}", strip_mp4(&name), range_suffix(range));
+        name = range_name(&name, range);
     }
     let output = output_path(&args.out, &name, p);
     println!("화질 {} → {}", quality.label, output.display());
@@ -502,5 +518,37 @@ mod tests {
         assert_eq!(strip_mp4("a.mp4x"), "a.mp4x");
         assert_eq!(strip_mp4("한.mp4"), "한");
         assert_eq!(strip_mp4("mp4"), "mp4");
+    }
+
+    /// 긴 제목이어도 접미사는 남고 제목 쪽이 줄어든다(구간이 다르면 경로도 다르다).
+    #[test]
+    fn long_name_keeps_suffix() {
+        let a = TimeRange {
+            start_ms: 0,
+            end_ms: Some(10_000),
+        };
+        let b = TimeRange {
+            start_ms: 10_000,
+            end_ms: Some(20_000),
+        };
+        let dir = std::path::Path::new("out");
+        for p in [Platform::Windows, Platform::MacOs, Platform::Linux] {
+            for long in [
+                format!("{}.mp4", "가".repeat(66)),
+                format!("{}.mp4", "a".repeat(196)),
+                format!("{} .mp4", "가 ".repeat(60)),
+            ] {
+                let pa = output_path(dir, &range_name(&long, a), p);
+                let pb = output_path(dir, &range_name(&long, b), p);
+                let na = pa.file_name().unwrap().to_str().unwrap();
+                let nb = pb.file_name().unwrap().to_str().unwrap();
+                assert!(na.ends_with(" (0.00.00~0.00.10).mp4"), "{p:?} {na}");
+                assert!(nb.ends_with(" (0.00.10~0.00.20).mp4"), "{p:?} {nb}");
+                assert!(na.len() <= MAX_FILENAME_BYTES, "{}", na.len());
+                assert_ne!(pa, pb);
+            }
+            // 짧은 이름은 그대로 붙인다
+            assert_eq!(range_name("짧은.mp4", a), "짧은 (0.00.00~0.00.10).mp4");
+        }
     }
 }

@@ -1,7 +1,8 @@
-// 앱 세션 핸들러(docs/design/worker.md §4.2·§6.3, 구현 중 변경 27 (바)(사)): refresh·logout·/api/me.
+// 앱 세션 핸들러(docs/design/worker.md §4.2·§6.3, 구현 중 변경 27 (바)(사)): refresh·logout·/api/me. /api/me는 store me RPC 하나(구현 중 변경 105).
 // 자격이 없을 때: JSON이 깨졌거나 객체가 아니면 400, 토큰이 없거나 형식이 틀리면 401 invalid_token.
 import { bearer, isToken, sha256Hex } from "../core/token";
 import type { Ctx } from "../routes";
+import { DELEGATIONS_MAX, EDITORS_MAX } from "../store/delegation";
 import type { TokenBundle } from "../store/types";
 import { readJsonObject } from "./request";
 import { errorJson, iso, json } from "./respond";
@@ -17,6 +18,8 @@ export function tokenBundleJson(b: TokenBundle, now: number): Record<string, unk
     channelId: b.channelId,
     channelName: b.channelName,
     isAdmin: b.isAdmin,
+    // 키가 없는 묶음은 빈 배열로 싣는다: 배포 중 새 isolate가 옛 DO를 부르면 키가 없고, 거기서 던지면 옛 앱의 refresh(핵심 경로)가 500이 된다(구현 중 변경 89·105)
+    delegatedChannels: (b.delegatedChannels ?? []).map((d) => ({ channelId: d.channelId, channelName: d.channelName })),
     serverTime: iso(now),
   };
 }
@@ -61,9 +64,18 @@ export async function logout(req: Request, ctx: Ctx): Promise<Response> {
 export async function me(req: Request, ctx: Ctx): Promise<Response> {
   const a = bearer(req.headers.get("Authorization"));
   if (!isToken("access", a)) return errorJson(401, "invalid_token");
-  const c = await ctx.store.check(await sha256Hex(a), ctx.config.adminChannelIds, ctx.now);
+  const c = await ctx.store.me(await sha256Hex(a), ctx.config.adminChannelIds, ctx.now);
   if (c.ok) {
-    return json(200, { channelId: c.ownerChannelId, channelName: c.channelName, accessExpiresAt: iso(c.accessExpiresAt), serverTime: iso(ctx.now) });
+    return json(200, {
+      channelId: c.ownerChannelId,
+      channelName: c.channelName,
+      accessExpiresAt: iso(c.accessExpiresAt),
+      serverTime: iso(ctx.now),
+      delegatedChannels: c.delegatedChannels.map((d) => ({ channelId: d.channelId, channelName: d.channelName, since: iso(d.since) })),
+      editors: c.editors.map((e) => ({ channelId: e.channelId, channelName: e.channelName, since: iso(e.since), status: e.status })),
+      pendingInviteUntil: c.pendingInviteUntil === null ? null : iso(c.pendingInviteUntil),
+      limits: { editors: EDITORS_MAX, delegations: DELEGATIONS_MAX },
+    });
   }
   return errorJson(c.code === "not_allowed" ? 403 : 401, c.code);
 }

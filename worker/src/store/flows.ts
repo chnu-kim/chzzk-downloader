@@ -6,6 +6,7 @@
 // 예외 하나: 앱이 수령(redeem ok)한 흐름은 now + 2분으로 앞당긴다(허용 채널의 로그인이 끝난 뒤라 슬롯 순환과 무관, 구현 중 변경 28 (마)).
 import { CHANNEL_ID, NAME_MAX, admission, clip, recordDenied, touchAllowedName } from "./allowlist";
 import type { Db } from "./db";
+import { acceptInvite, claimInvite } from "./delegation";
 import { activate, insertUnclaimed, insertWeb, type TokenPair } from "./sessions";
 import type {
   ConsumeResult,
@@ -15,6 +16,7 @@ import type {
   FinishSettled,
   FlowKind,
   FlowStatus,
+  InviteOutcome,
   LoginFailCode,
   LoginOutcome,
   LoginPageView,
@@ -88,14 +90,16 @@ export function insertAppFlow(db: Db, f: { id: string; handleHash: string; verif
   );
 }
 
-export function insertWebFlow(db: Db, f: { id: string; stateHash: string; binderHash: string }, now: number): void {
+/** inviteHash: 초대 페이지에서 시작한 웹 로그인이면 그 초대의 해시(구현 중 변경 105) */
+export function insertWebFlow(db: Db, f: { id: string; stateHash: string; binderHash: string; inviteHash?: string | null }, now: number): void {
   db.run(
-    "INSERT INTO flow (id, kind, handle_hash, state_hash, binder_hash, poll_verifier, user_code, client, status, session_id, channel_name, channel_id, fail_code, created_at, expires_at) VALUES (?, 'web', NULL, ?, ?, NULL, NULL, NULL, 'redirected', NULL, NULL, NULL, NULL, ?, ?)",
+    "INSERT INTO flow (id, kind, handle_hash, state_hash, binder_hash, poll_verifier, user_code, client, status, session_id, channel_name, channel_id, fail_code, created_at, expires_at, invite_hash) VALUES (?, 'web', NULL, ?, ?, NULL, NULL, NULL, 'redirected', NULL, NULL, NULL, NULL, ?, ?, ?)",
     f.id,
     f.stateHash,
     f.binderHash,
     now,
     now + FLOW_TTL_MS,
+    f.inviteHash ?? null,
   );
 }
 
@@ -153,8 +157,8 @@ export function finish(
   admins: readonly string[],
   now: number,
 ): FinishSettled {
-  const row = db.first<{ id: string; kind: FlowKind; client: string | null; port: number | null; poll_verifier: string | null; expires_at: number }>(
-    "SELECT id, kind, client, port, poll_verifier, expires_at FROM flow WHERE id = ? AND status = 'exchanging' AND expires_at > ?",
+  const row = db.first<{ id: string; kind: FlowKind; client: string | null; port: number | null; poll_verifier: string | null; expires_at: number; invite_hash: string | null }>(
+    "SELECT id, kind, client, port, poll_verifier, expires_at, invite_hash FROM flow WHERE id = ? AND status = 'exchanging' AND expires_at > ?",
     flowId,
     now,
   );
@@ -202,7 +206,13 @@ export function finish(
       g?.exp ?? null,
       row.id,
     );
-    return isApp ? app("denied") : { type: "denied" };
+    if (isApp) return app("denied");
+    // 초대에서 시작한 웹 흐름이면 거부 채널이 그 초대를 청구한다(관리자 [허가] 때 위임이 된다)
+    if (row.invite_hash !== null) {
+      const c = claimInvite(db, row.invite_hash, outcome.channelId, name, admins, now);
+      if (c.ok) return { type: "denied", invitePending: c.ownerName };
+    }
+    return { type: "denied" };
   }
   touchAllowedName(db, outcome.channelId, name);
   if (isApp) {
@@ -211,8 +221,15 @@ export function finish(
     return app("ok");
   }
   const expiresAt = insertWeb(db, { id: issued.sessionId, channelId: outcome.channelId, channelName: name, cookieHash: issued.cookie.hash, csrf: issued.csrf }, now);
+  let invite: InviteOutcome | undefined;
+  if (row.invite_hash !== null) {
+    const a = acceptInvite(db, row.invite_hash, outcome.channelId, name, admins, now);
+    invite = a.ok ? "accepted" : a.code === "not_allowed" ? "gone" : a.code;
+  }
   db.run("DELETE FROM flow WHERE id = ?", row.id);
-  return { type: "web", cookieToken: issued.cookie.token, csrf: issued.csrf, expiresAt };
+  return invite === undefined
+    ? { type: "web", cookieToken: issued.cookie.token, csrf: issued.csrf, expiresAt }
+    : { type: "web", cookieToken: issued.cookie.token, csrf: issued.csrf, expiresAt, invite };
 }
 
 /** 완료 페이지: binder 쿠키로 자기 흐름의 결과를 본다 */

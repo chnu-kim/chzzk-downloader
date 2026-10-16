@@ -13,6 +13,7 @@ import { log } from "../core/log";
 import { isHexHash, isId, isSecret, newId, newSecret, newToken, sha256Hex, type TokenKind } from "../core/token";
 import { CHANNEL_ID, adminView, allow, allowDenied, audit, clip, disallow, dismissDenied } from "./allowlist";
 import { Db } from "./db";
+import { acceptInvite, completeClaimed, createInvite, delegationsOf, editorsOf, inviteOpen, inviteView, leaveDelegation, recentDelegationFor, removeEditor } from "./delegation";
 import {
   CLIENT_MAX,
   FLOW_CAP,
@@ -34,24 +35,31 @@ import { migrate } from "./schema";
 import { ROTATE_RATE_10M, check, logout, mySessions, revokeMine, revokeSession, rotate, webCheck } from "./sessions";
 import { SWEEP_DELAY_MS, SWEEP_INTERVAL_MS, sweep } from "./sweep";
 import type {
+  AcceptInviteResult,
   AdminView,
   AllowResult,
   CheckResult,
   ConsumeResult,
   ContinueResult,
+  CreateInviteResult,
+  DelegatedChannel,
   DisallowResult,
   DoneView,
   FinishResult,
   FinishSettled,
+  InviteView,
   LoginLogHint,
   LoginOutcome,
   LoginPageView,
+  MeResult,
   Minted,
   MySessionView,
   RedeemResult,
+  RemoveResult,
   RotateResult,
   StartAppInput,
   StartAppResult,
+  StartWebInviteResult,
   StartWebResult,
   WebCheckResult,
 } from "./types";
@@ -64,6 +72,12 @@ const DAY_MS = 86_400_000;
 async function mint(kind: TokenKind): Promise<Minted> {
   const token = newToken(kind);
   return { token, hash: await sha256Hex(token) };
+}
+
+// 꼬리 인자 admins: 문자열 배열이 아니면 null(배포 중 옛 isolate의 호출, 구현 중 변경 105 (다)).
+// []로 보지 않는다: []면 관리자 주인의 초대가 무효로 판정돼 지워진다
+function adminsOf(v: unknown): readonly string[] | null {
+  return Array.isArray(v) && v.every((x) => typeof x === "string") ? (v as string[]) : null;
 }
 
 export class AuthStore extends DurableObject<Env> {
@@ -156,6 +170,26 @@ export class AuthStore extends DurableObject<Env> {
     });
   }
 
+  /** 초대 페이지에서 시작하는 웹 로그인(구현 중 변경 105). 열 수 없는 초대는 gone이고 흐름을 만들지 않는다 */
+  async startWebInvite(inviteHash: string, ip: string | null, limit: number, admins: readonly string[], now: number): Promise<StartWebInviteResult> {
+    const adm = adminsOf(admins);
+    if (!isHexHash(inviteHash) || adm === null) return { ok: false, code: "gone" };
+    const lim = Number.isInteger(limit) && limit >= 1 ? limit : DEFAULT_START_RATE_10M;
+    const key = await this.ipKey(ip, now);
+    const id = newId();
+    const state = newSecret();
+    const binder = newToken("flow");
+    const [stateHash, binderHash] = await Promise.all([sha256Hex(state), sha256Hex(binder)]);
+    const t = throttle(this.starts, key, lim, now);
+    if (!t.ok) return { ok: false, code: "rate_limited", retryAfterSec: t.retryAfterSec };
+    return this.write<StartWebInviteResult>(now, () => {
+      if (!inviteOpen(this.db, inviteHash, adm, now)) return { ok: false, code: "gone" };
+      if (liveFlowCount(this.db, now) >= FLOW_CAP) return { ok: false, code: "busy" };
+      insertWebFlow(this.db, { id, stateHash, binderHash, inviteHash }, now);
+      return { ok: true, state, binder, expiresAt: now + FLOW_TTL_MS };
+    });
+  }
+
   async loginPage(handleHash: string, now: number): Promise<LoginPageView | null> {
     if (!isHexHash(handleHash)) return null;
     return this.write(now, () => loginPage(this.db, handleHash, now));
@@ -213,6 +247,17 @@ export class AuthStore extends DurableObject<Env> {
     return this.write(now, () => check(this.db, accessHash, admins, now));
   }
 
+  /** /api/me: check + 맡은 채널 + 내 편집자를 한 트랜잭션에(구현 중 변경 105 (바)). check는 바꾸지 않는다 */
+  async me(accessHash: string, admins: readonly string[], now: number): Promise<MeResult> {
+    if (!isHexHash(accessHash)) return { ok: false, code: "invalid_token", why: null };
+    return this.write<MeResult>(now, () => {
+      const c = check(this.db, accessHash, admins, now);
+      if (!c.ok) return c;
+      // 맡은 채널은 로그인 ID로, 내 편집자는 판정용 ID로 찾는다(대안 B)
+      return { ...c, delegatedChannels: delegationsOf(this.db, c.channelId, admins), ...editorsOf(this.db, c.ownerChannelId, admins, now) };
+    });
+  }
+
   async webCheck(cookieHash: string, admins: readonly string[], now: number): Promise<WebCheckResult> {
     if (!isHexHash(cookieHash)) return { ok: false, code: "invalid_token", why: null };
     return this.write(now, () => webCheck(this.db, cookieHash, admins, now));
@@ -262,13 +307,24 @@ export class AuthStore extends DurableObject<Env> {
     return this.write(now, () => adminView(this.db, now));
   }
 
-  async allow(channelId: string, note: string, by: string, now: number): Promise<AllowResult> {
-    return this.write(now, () => allow(this.db, channelId, note, by, now));
+  async allow(channelId: string, note: string, by: string, now: number, admins?: readonly string[]): Promise<AllowResult> {
+    const adm = adminsOf(admins);
+    return this.write(now, () => {
+      const r = allow(this.db, channelId, note, by, now);
+      // 같은 트랜잭션에서 청구된 초대를 위임으로 완성한다. admins가 없으면 건너뛴다(초대를 지우지도 위임을 만들지도 않는다)
+      if (r.ok && adm !== null) completeClaimed(this.db, channelId, adm, now);
+      return r;
+    });
   }
 
   // 거부 기록의 허용·지우기는 URL에 채널 id가 실리는 quiet 경로다: 성공 이벤트를 여기서 남긴다(채널 id는 싣지 않는다)
-  async allowDenied(channelId: string, by: string, now: number): Promise<boolean> {
-    const changed = await this.write(now, () => allowDenied(this.db, channelId, by, now));
+  async allowDenied(channelId: string, by: string, now: number, admins?: readonly string[]): Promise<boolean> {
+    const adm = adminsOf(admins);
+    const changed = await this.write(now, () => {
+      const c = allowDenied(this.db, channelId, by, now);
+      if (c && adm !== null) completeClaimed(this.db, channelId, adm, now);
+      return c;
+    });
     if (changed) log("admin.denied_allow", { route: "/admin/denied/:channelId/allow" });
     return changed;
   }
@@ -281,5 +337,43 @@ export class AuthStore extends DurableObject<Env> {
     const changed = await this.write(now, () => dismissDenied(this.db, channelId, by, now));
     if (changed) log("admin.denied_dismiss", { route: "/admin/denied/:channelId/dismiss" });
     return changed;
+  }
+
+  // ---- 편집자 위임(구현 중 변경 105) ----
+
+  async createInvite(ownerLoginId: string, ownerName: string, admins: readonly string[], now: number): Promise<CreateInviteResult> {
+    const adm = adminsOf(admins);
+    if (!CHANNEL_ID.test(ownerLoginId) || adm === null) return { ok: false, code: "bad_request" };
+    const invite = await mint("invite");
+    return this.write(now, () => createInvite(this.db, { ownerLoginId, ownerName, invite }, adm, now));
+  }
+
+  async inviteView(inviteHash: string, viewerLoginId: string | null, admins: readonly string[], now: number): Promise<InviteView | null> {
+    const adm = adminsOf(admins);
+    if (!isHexHash(inviteHash) || adm === null) return null;
+    if (viewerLoginId !== null && !CHANNEL_ID.test(viewerLoginId)) return null;
+    return this.write(now, () => inviteView(this.db, inviteHash, viewerLoginId, adm, now));
+  }
+
+  async acceptInvite(inviteHash: string, editorLoginId: string, editorName: string, admins: readonly string[], now: number): Promise<AcceptInviteResult> {
+    const adm = adminsOf(admins);
+    if (!isHexHash(inviteHash) || !CHANNEL_ID.test(editorLoginId) || adm === null) return { ok: false, code: "gone" };
+    return this.write(now, () => acceptInvite(this.db, inviteHash, editorLoginId, editorName, adm, now));
+  }
+
+  async recentDelegationFor(editorLoginId: string, admins: readonly string[], now: number): Promise<DelegatedChannel | null> {
+    const adm = adminsOf(admins);
+    if (!CHANNEL_ID.test(editorLoginId) || adm === null) return null;
+    return this.write(now, () => recentDelegationFor(this.db, editorLoginId, adm, now));
+  }
+
+  async removeEditor(ownerChannelId: string, editorChannelId: string, now: number): Promise<RemoveResult> {
+    if (!CHANNEL_ID.test(ownerChannelId) || !CHANNEL_ID.test(editorChannelId)) return { ok: false, code: "not_found" };
+    return this.write(now, () => removeEditor(this.db, ownerChannelId, editorChannelId, now));
+  }
+
+  async leaveDelegation(editorLoginId: string, ownerChannelId: string, now: number): Promise<RemoveResult> {
+    if (!CHANNEL_ID.test(editorLoginId) || !CHANNEL_ID.test(ownerChannelId)) return { ok: false, code: "not_found" };
+    return this.write(now, () => leaveDelegation(this.db, editorLoginId, ownerChannelId, now));
   }
 }

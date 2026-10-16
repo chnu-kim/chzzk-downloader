@@ -2,8 +2,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createFakeChzzk, FAKE_ACCOUNTS, type FakeChzzk } from "../fake-chzzk.mjs";
 import { installFakeChzzk, type FakeNet } from "../network";
-import { A1, B2 } from "../store/helpers";
-import { advance, allowedChannel, AppClient, appFlow, HOUR, store, useClock } from "./harness";
+import { A1, ADMINS, B2, C3 } from "../store/helpers";
+import { advance, allowedChannel, AppClient, appFlow, HOUR, resetStore, store, useClock } from "./harness";
+import { sha256Hex } from "../../src/core/token";
 import { iso } from "../../src/http/respond";
 
 let fake: FakeChzzk;
@@ -142,12 +143,18 @@ describe("허용 제외·끊기", () => {
 });
 
 describe("/api/me", () => {
-  it("200: 네 키만", async () => {
+  it("200: 기존 네 키 + 위임 키 넷", async () => {
+    await resetStore();
+    await allowedChannel(B2, A1);
     const l = await login();
     const res = await app.me(l.accessToken);
     expect(res.status).toBe(200);
     const b: any = await res.json();
-    expect(Object.keys(b).sort()).toEqual(["accessExpiresAt", "channelId", "channelName", "serverTime"]);
+    expect(Object.keys(b).sort()).toEqual(["accessExpiresAt", "channelId", "channelName", "delegatedChannels", "editors", "limits", "pendingInviteUntil", "serverTime"]);
+    expect(b.delegatedChannels).toEqual([]);
+    expect(b.editors).toEqual([]);
+    expect(b.pendingInviteUntil).toBeNull();
+    expect(b.limits).toEqual({ editors: 10, delegations: 20 });
     expect(b.channelId).toBe(B2);
     expect(b.channelName).toBe(FAKE_ACCOUNTS.b2.channelName);
     expect(b.serverTime).toBe(iso(Date.now()));
@@ -198,5 +205,37 @@ describe("logout", () => {
     const l = await login();
     expect((await app.logout({ access: l.accessToken, raw: "{" })).status).toBe(400);
     expect((await app.logout({ refresh: "cdr_nope" })).status).toBe(401);
+  });
+});
+
+describe("위임이 묶음과 /api/me에 실린다(구현 중 변경 105)", () => {
+  it("맡은 채널이 묶음과 /api/me에 실린다", async () => {
+    await resetStore();
+    await allowedChannel(B2, A1);
+    const inv = await store().createInvite(A1, "관리자 채널", ADMINS, Date.now());
+    if (!inv.ok) throw new Error(inv.code);
+    const acc = await store().acceptInvite(await sha256Hex(inv.token), B2, "허용 채널", ADMINS, Date.now());
+    expect(acc.ok).toBe(true);
+    const l: any = await login();
+    // 묶음 원소는 정확히 두 키(since가 새지 않는다)
+    expect(l.delegatedChannels).toEqual([{ channelId: A1, channelName: "관리자 채널" }]);
+    const rf = await app.refresh(l.refreshToken);
+    const rb: any = await rf.json();
+    expect(rb.delegatedChannels).toEqual([{ channelId: A1, channelName: "관리자 채널" }]);
+    const me: any = await (await app.me(rb.accessToken)).json();
+    expect(me.delegatedChannels).toEqual([{ channelId: A1, channelName: "관리자 채널", since: iso(Date.now()) }]);
+  });
+
+  it("주인 쪽 /api/me: 편집자 목록", async () => {
+    await resetStore();
+    await allowedChannel(B2, A1);
+    await allowedChannel(C3, A1);
+    const inv = await store().createInvite(B2, "허용 채널", ADMINS, Date.now());
+    if (!inv.ok) throw new Error(inv.code);
+    expect((await store().acceptInvite(await sha256Hex(inv.token), C3, "편집자", ADMINS, Date.now())).ok).toBe(true);
+    const l = await login();
+    const me: any = await (await app.me(l.accessToken)).json();
+    expect(me.editors).toEqual([{ channelId: C3, channelName: "편집자", since: iso(Date.now()), status: "active" }]);
+    expect(me.pendingInviteUntil).toBeNull();
   });
 });

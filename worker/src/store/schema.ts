@@ -37,7 +37,29 @@ ALTER TABLE flow ADD COLUMN grant_exp INTEGER;
 CREATE UNIQUE INDEX flow_grant ON flow(grant_hash)
 `;
 
-export const MIGRATIONS: readonly string[] = [V1, V2];
+// 편집자 위임(docs/design/features/delegation.md §8.1, worker.md 구현 중 변경 105): 더하기만 한다.
+// delegation: 주인(판정용 owner_channel_id, 로그인 owner_login_channel_id) → 편집자(로그인 editor_channel_id). 회수는 revoked_at을 채우고 30일 뒤 청소가 지운다.
+// *_allowed_at: 만들 때 그 당사자 allowlist 행의 added_at(관리자로 만든 관계는 NULL). V2로 되돌린 동안의 제외·재허가는 added_at을 바꾸므로
+// 판정(delegation.ts partyOk)이 그 행을 무효로 본다.
+// invite: 토큰 해시만. 허가 전 편집자가 열면 claimed_*가 채워지고 관리자 [허가] 때 위임으로 바뀐다. flow.invite_hash는 초대에서 시작한 웹 로그인 흐름 표시
+const V3 = `
+CREATE TABLE delegation (owner_channel_id TEXT NOT NULL CHECK (length(owner_channel_id) = 32), owner_login_channel_id TEXT NOT NULL CHECK (length(owner_login_channel_id) = 32),
+  editor_channel_id TEXT NOT NULL CHECK (length(editor_channel_id) = 32), owner_name TEXT, editor_name TEXT, owner_allowed_at INTEGER, editor_allowed_at INTEGER,
+  created_at INTEGER NOT NULL, revoked_at INTEGER, revoked_by TEXT CHECK (revoked_by IN ('owner','editor')), PRIMARY KEY (owner_channel_id, editor_channel_id));
+CREATE INDEX delegation_editor ON delegation(editor_channel_id, revoked_at);
+CREATE INDEX delegation_owner_login ON delegation(owner_login_channel_id);
+CREATE INDEX delegation_revoked ON delegation(revoked_at);
+CREATE TABLE invite (token_hash TEXT PRIMARY KEY, owner_channel_id TEXT NOT NULL CHECK (length(owner_channel_id) = 32),
+  owner_login_channel_id TEXT NOT NULL CHECK (length(owner_login_channel_id) = 32), owner_name TEXT, owner_allowed_at INTEGER, created_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL, claimed_channel_id TEXT, claimed_name TEXT, claimed_at INTEGER);
+CREATE INDEX invite_owner ON invite(owner_channel_id);
+CREATE INDEX invite_owner_login ON invite(owner_login_channel_id);
+CREATE INDEX invite_claimed ON invite(claimed_channel_id);
+CREATE INDEX invite_expires ON invite(expires_at);
+ALTER TABLE flow ADD COLUMN invite_hash TEXT
+`;
+
+export const MIGRATIONS: readonly string[] = [V1, V2, V3];
 export const SCHEMA_VERSION = MIGRATIONS.length;
 
 export type MigrateResult = { readonly from: number; readonly to: number; readonly ahead: boolean };

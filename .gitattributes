@@ -18,3 +18,6 @@ app/e2e/__shots__/** -text
 
 # Worker 정적 HTML 시각 회귀 기준선(docs/design/system/governance.md §2.6b). Linux CI가 만든 PNG를 바이트 그대로 둔다
 worker/e2e/__shots__/** -text
+
+# 누출 검사기 고정 오라클(origin/master public-scan.mjs 사본, blob 해시를 테스트가 확인한다)
+scripts/ci/testdata/** text eol=lf

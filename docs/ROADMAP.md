@@ -4,6 +4,7 @@
 
 ## 현재 위치
 
+- **비공개 denylist PNG 오탐 fix(2026-10-17, 브랜치 `fix/private-scan-png`, PR #136, 이슈 #75, cicd.md 115)**: 필드별로 글자를 모으던 접근이 Codex 5회 연속 "master는 잡는데 놓치는" 우회를 내서 방식을 바꿨다. 온전한 PNG는 IDAT 데이터 바이트만 0으로 바꾼 사본에 origin/master와 같은 파일 전체 검사를 돌리고(IDAT 밖 바이트는 자리·이웃 그대로라 master 결과를 포함한다), 텍스트 청크(zTXt·iTXt는 풀어서)를 더 본다. origin/master 검사기를 고정 오라클(`scripts/ci/testdata/public-scan-master.mjs`)로 둔 속성 테스트가 포함 관계를 직접 비교한다. 남은 것: 머지 뒤 `gh workflow run nightly.yml --ref master -f only=private-scan`으로 녹색 확인.
 - **④ 후속 둘(2026-10-17, 브랜치 `fix/chat-sidecar-read`, core.md 69·app.md 87, `fix`)**: 채팅 sidecar 읽기 실패를 없음과 나눠 기록을 자르거나 지우지 않는다(Codex high), 맡은 채널 자동 이어받기는 소유 판정 뒤 매니저 잠금 안에서 아직 같은 의도의 `interrupted` 후보일 때만 줄 세운다(Codex 5차 medium). PR 대기.
 - **④-3a·④-4 후속 다섯 건(2026-10-17, 브랜치 `fix/chat-followups`, core.md 68·app.md 86, `fix`)**: 자막 단계 `spawn_blocking`(잠근 `ChatPart` 소유 유지), 낡은 `moved` 자막 다시 만들기, `enqueue`의 채팅 `restart`, 맡은 채널의 끊긴 채팅 자동 이어받기(컨텐츠 재판정 뒤 `fetch_chat`), 기다리던 채팅의 영상 파일 재확인. PR 대기.
 - **v0.9.0 릴리스(2026-10-17)**: 태그 `v0.9.0`(버전 PR #147 머지 커밋 `50b2ac7`), release 실행 39022230252의 gate·worker-bundle·xtask·build(3 OS)·smoke·stage·sign-publish·verify·prune·deploy-worker·report 전 단계 success. 들어간 PR: #132·#133·#134·#135·#137·#138·#139·#140·#141·#100·#147. 빠진 것: #136(Codex high 지적 남음), #127(실측 M-②-2·6 대기), #143·#145(dependabot, wrangler FIFO 재확인 필요). 아래는 그 버전 PR의 기록이다.
@@ -274,6 +275,7 @@
 - [ ] G6 뒤 사용자 할 일: 환경 `release`에 시크릿·변수(cicd.md §8). 서명 키는 이 작업에서 로컬 `~/.tauri/chzzk-downloader-updater.key`(+`.password`)로 만들었고 공개 키만 커밋했다(백업할 것. 바꾸려면 첫 릴리스 전에 `release/updater.pub`·`tauri.conf.json`을 함께). R2 버킷·S3 토큰·`DIST_BASE_URL`은 Phase 3. 그 뒤 첫 실제 태그(버린 pre-release 버전)에서 `verify` 녹색과 `latest.json` 버전 = 태그, 변조 → rollback을 실제 R2에서 확인한다
 - [x] G7 보호: 선언·도구(5dcfb5c), ruleset `master`(id 24547748) 적용(cicd.md 75), 나머지 7건(Actions 허용 목록·SHA 핀 강제·fork 승인·환경 관리자 우회·ruleset `tags`)은 2026-10-06 사용자가 `node scripts/ci/repo-settings.mjs --apply --yes`로 적용했고 `--check`가 드리프트 0(설정 11종·ruleset 2개)이다. 적용 직후의 거짓 drift(태그 update 규칙 기본값 parameters)는 52eb2af로 고쳤다. nightly `ruleset-drift`는 환경 `audit`의 `RULESET_READ_TOKEN`이 등록되면 녹색이 된다
 - [ ] 비공개 denylist 고리(nightly `private-scan`, 환경 `audit`의 secret `PRIVATE_DENYLIST`, cicd.md 77): 브랜치에서 `no_secret` 실패·시험 이슈를 확인했다. secret이 있는 녹색은 머지 뒤 `gh workflow run nightly.yml --ref master -f only=private-scan`으로 확인한다
+- [ ] private-scan PNG 수정 후속(Codex 리뷰 후속, PR #136): 비공개 denylist는 리뷰에서 확인하지 못했다. 머지 뒤 nightly `private-scan`을 비공개 denylist로 돌려 처음 오탐이 사라졌는지 확인한다
 - [ ] worker-e2e 편입(cicd.md 100 (나)): 2026-10-21 이후 관찰 기간 실패가 환경 요인이 아니었으면 `OBSERVED_JOBS` → `CODE_GATED_JOBS`(`ci-ok` needs·guard)
 - [ ] G4 편입(Windows 네이티브 E2E, cicd.md 79): 사용자 결정(2026-10-06, 선택지 C)으로 ci.yml `e2e-native (windows)`가 코드 PR마다 돈다(`OBSERVED_JOBS` `e2e-native-windows`, `ci-ok` 밖, master 실패는 `master-failure` 이슈, nightly 매주 실행과 캐시 공유). 관찰 시작은 **머지 뒤 첫 master 실행 날**(머지하면 날짜를 적는다), 편입 판정은 그 14일 뒤 이후에 Linux와 따로 한다(D7을 관찰 결과로 다시 본다)
 - [x] CI 벽시계 단축(cicd.md 78): `tauri` gate를 `tauri-clippy`·`tauri`·`tauri-build`로 나눠 clippy를 따로 작업으로, dev 디버그 정보 `line-tables-only`, e2e-native 캐시 공유, nightly의 PR 트리거 제거. cold PR 10.2~11.8분 → 8.1분

@@ -233,6 +233,7 @@ pub fn write_chat_part(video: &Path, video_no: u64, lines: u64) {
         committed_len: body.len() as u64,
         end: None,
         moved: Vec::new(),
+        moving: Vec::new(),
     };
     atomic_write(&sidecar_path(&record), &serde_json::to_vec(&sc).unwrap()).unwrap();
 }

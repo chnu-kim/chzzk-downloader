@@ -161,10 +161,25 @@ impl Job {
         self.rec.to_dto(self.last_progress.clone())
     }
 
-    /// 지금 경로를 쓰거나(활성·quit 기한을 넘긴 옛 태스크) 곧 `.part`를 지운다(지우는 중).
+    /// 지금 경로를 쓰거나(활성·quit 기한을 넘긴 옛 태스크·완료 뒤 채팅 대기·받는 중) 곧 `.part`를 지운다(지우는 중).
     /// `failed`를 지우는 동안 새 작업이 같은 경로를 가져가면 그 작업의 `.part`를 지우게 된다.
     fn uses_output(&self) -> bool {
-        self.removing || self.rec.status.is_active() || self.detached.is_some()
+        self.removing
+            || self.rec.status.is_active()
+            || self.detached.is_some()
+            || self.collects_chat()
+    }
+
+    /// 영상은 완료됐고 채팅이 줄에 있거나 받는 중이다. 그동안 같은 출력에 다른 영상이 들어오면 바뀐 영상 옆에
+    /// 원래 영상의 채팅·자막이 놓이므로 출력을 예약한다(Codex PR #141 ①, app.md 83). 완료가 아닌 작업의 대기 채팅은
+    /// 영상 상태가 예약을 정한다. 멈춘·실패한 채팅은 예약하지 않는다(다른 영상이면 코어가 sidecar를 보고 처음부터 받는다).
+    fn collects_chat(&self) -> bool {
+        self.rec.status == JobStatus::Completed
+            && self
+                .rec
+                .chat
+                .as_ref()
+                .is_some_and(|c| matches!(c.phase, ChatPhase::Waiting | ChatPhase::Running))
     }
 
     /// 끝났지만(failed·skipped) 이 작업의 녹화 `.part`가 남은 생방송. 다시 받을 수 없으니 경로를 내주지 않는다(core.md 61).
@@ -286,6 +301,19 @@ impl State {
                 Some(j.rec.id) != except && j.holds_output() && output_key(&j.rec.output) == key
             })
             .map(|j| j.rec.id)
+    }
+
+    /// 같은 출력의 다른 기록(`except` 제외, 지우는 중 제외)이 받다 만 채팅 파일을 쥐고 있는가(`ChatState::holds_files`).
+    /// 같은 영상이면 채팅 `.part`·sidecar 하나를 함께 가리키므로(멈춘 채팅은 출력을 예약하지 않는다) 지우지 않는다
+    /// (Codex PR #141 ③).
+    fn chat_part_shared(&self, output: &Path, except: JobId) -> bool {
+        let key = output_key(output);
+        self.jobs.values().any(|j| {
+            j.rec.id != except
+                && !j.removing
+                && output_key(&j.rec.output) == key
+                && j.rec.chat.as_ref().is_some_and(ChatState::holds_files)
+        })
     }
 
     /// 작업 `id`를 다시 줄 세울 때 같은 경로를 막는 다른 작업. `active_with_output`과 같고, 멈춰 있으면서 같은 녹화
@@ -769,6 +797,14 @@ impl<B: Backend> DownloadManager<B> {
                 "영상 파일이 없어 채팅을 받을 수 없습니다",
             ));
         }
+        // 같은 출력을 다른 작업이 쓰고 있다(영상을 받는 중·채팅 대기·받는 중). 이 채팅이 그 파일 옆에 놓이면 짝이 어긋난다
+        let output = job.rec.output.clone();
+        if let Some(other) = st.active_with_output(&output, Some(id)) {
+            return Err(AppError::duplicate_output(other));
+        }
+        let Some(job) = st.target(id)? else {
+            return Ok(());
+        };
         let verified = check(&job.rec.content)?;
         if let Some(ch) = verified {
             job.rec.channel_id = ch;
@@ -1095,6 +1131,8 @@ impl<B: Backend> DownloadManager<B> {
         if let Some(h) = chat_handle {
             let _ = h.await;
         }
+        // 같은 받다 만 채팅 파일을 다른 기록도 쥐고 있으면 채팅 파일은 남긴다(그 기록의 것이기도 하다)
+        let chat_shared = self.inner.lock().chat_part_shared(&output, id);
         // 완료된 영상에는 `.part`가 없다(남은 것은 채팅뿐이다)
         let discarded = if rec.status == JobStatus::Completed {
             Ok(Discarded::Removed)
@@ -1102,7 +1140,7 @@ impl<B: Backend> DownloadManager<B> {
             discard_partial(&output, &rec.owner())
         }
         .and_then(|d| match (&rec.content, &rec.chat) {
-            (ContentRef::Video { video_no }, Some(_)) => {
+            (ContentRef::Video { video_no }, Some(_)) if !chat_shared => {
                 discard_chat_partial(&output, *video_no).map(|_| d)
             }
             _ => Ok(d),
@@ -1425,6 +1463,11 @@ impl<B: Backend> Inner<B> {
     fn start(self: &Arc<Self>, st: &mut State, id: JobId) {
         let client = (self.client)();
         let run = st.seq();
+        // 영상 "처음부터"도 다른 기록과 함께 쥔 받다 만 채팅 파일은 지우지 않는다(`remove`와 같다)
+        let chat_shared = st
+            .jobs
+            .get(&id)
+            .is_some_and(|j| st.chat_part_shared(&j.rec.output, id));
         let Some(job) = st.jobs.get_mut(&id) else {
             return;
         };
@@ -1449,7 +1492,7 @@ impl<B: Backend> Inner<B> {
         req.live_stop = job.live_stop.clone();
         let discard = job.rec.discard_on_start;
         let chat_video = match (&job.rec.content, &job.rec.chat) {
-            (ContentRef::Video { video_no }, Some(_)) if discard => Some(*video_no),
+            (ContentRef::Video { video_no }, Some(_)) if discard && !chat_shared => Some(*video_no),
             _ => None,
         };
         // 아직 저장을 확인하지 못한 새 녹화: 태스크가 쓰기 스레드를 기다린다(상태 잠금 밖)
@@ -1704,22 +1747,6 @@ impl<B: Backend> Inner<B> {
         st.emit(JobEvent::Chat { id, chat });
     }
 
-    /// 코어 수집을 시작한다: "처음부터"(`restart`)는 코어가 `.part`를 비우는 이번 호출로 쓰였다. 그 전(길이 조회 중)에
-    /// 멈추면 남아 다음 시작에 다시 쓰인다. 저장은 다음 전이 때 한다.
-    fn begin_collect(&self, id: JobId, run: u64) {
-        let mut st = self.lock();
-        if !st
-            .chat
-            .running_mut()
-            .is_some_and(|r| r.id == id && r.run == run)
-        {
-            return;
-        }
-        if let Some(c) = st.jobs.get_mut(&id).and_then(|j| j.rec.chat.as_mut()) {
-            c.restart = false;
-        }
-    }
-
     /// 처음 알아낸 영상 길이를 채팅 상태에 적는다(다음 이어받기는 다시 묻지 않는다). 저장은 다음 전이 때 한다.
     fn note_chat_duration(&self, id: JobId, run: u64, duration_ms: u64) {
         let mut st = self.lock();
@@ -1732,7 +1759,7 @@ impl<B: Backend> Inner<B> {
         }
     }
 
-    /// 채팅 진행. 퍼센트는 뒤로 가지 않고(P-4), 퍼센트·메시지 수가 바뀔 때만 알린다. `jobs.json`은 쓰지 않는다.
+    /// 채팅 진행. 퍼센트는 뒤로 가지 않고(P-4), 퍼센트·메시지 수가 바뀔 때만 알린다. `jobs.json`은 "처음부터"를 내릴 때만 쓴다.
     fn on_chat_progress(&self, id: JobId, run: u64, p: ChatProgress) {
         let mut st = self.lock();
         if !st
@@ -1741,6 +1768,17 @@ impl<B: Backend> Inner<B> {
             .is_some_and(|r| r.id == id && r.run == run)
         {
             return;
+        }
+        // 코어는 `.part`를 열고(`restart`면 비우고) 난 뒤에 첫 진행을 낸다(core.md 66.10·67.4). 그 전의 실패
+        // (`FileLocked`·취소·폴더 만들기)에는 "처음부터"가 남아 다음 시작도 처음부터다(Codex PR #141 ②)
+        if let Some(c) = st
+            .jobs
+            .get_mut(&id)
+            .and_then(|j| j.rec.chat.as_mut())
+            .filter(|c| c.restart)
+        {
+            c.restart = false;
+            self.save(&st);
         }
         let Some(c) = st.jobs.get_mut(&id).and_then(|j| j.rec.chat.as_mut()) else {
             return;
@@ -1794,6 +1832,8 @@ impl<B: Backend> Inner<B> {
             }) => {
                 tracing::info!(job = id.0, messages, subtitle_failed, "채팅을 받았다");
                 c.phase = ChatPhase::Completed;
+                // 코어가 끝까지 갔으면 `.part`를 열었다(진행을 흉내 내지 않는 Backend도 같게)
+                c.restart = false;
                 c.messages = messages;
                 c.percent = None;
                 c.error = None;
@@ -1806,6 +1846,7 @@ impl<B: Backend> Inner<B> {
                     "받는 동안 같은 이름의 채팅 파일이 생겨 덮어쓰지 않았다"
                 );
                 c.phase = ChatPhase::Conflict;
+                c.restart = false;
                 c.partial_bytes = partial();
             }
             Err(ChatEnd::Core(chzzk_core::Error::Cancelled)) => {
@@ -1900,7 +1941,6 @@ async fn run_chat<B: Backend>(
     if cancel.is_cancelled() {
         return Err(Error::Cancelled);
     }
-    inner.begin_collect(id, run);
     let cb = Arc::clone(&inner);
     let on_progress = move |p: ChatProgress| cb.on_chat_progress(id, run, p);
     client.collect_chat(req, cancel, &on_progress).await

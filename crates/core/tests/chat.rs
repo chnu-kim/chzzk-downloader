@@ -831,6 +831,37 @@ async fn concurrent_collect_on_same_output_is_locked() {
     );
 }
 
+/// 셸이 기대는 계약(core.md 67.4): 첫 진행 콜백은 `.part`를 열고(`restart`면 비우고) 난 뒤에만 온다.
+/// `restart`인데 다른 작업이 잠가 `FileLocked`면 진행 콜백이 한 번도 없고 남의 `.part`는 그대로다.
+#[tokio::test]
+async fn locked_restart_reports_no_progress_and_keeps_part() {
+    let server = MockServer::start().await;
+    mount_chain(&server).await;
+    let e = Env::new();
+    let holder = ChatPart::open(&e.record(), VOD_NO, false).unwrap();
+    let part = chzzk_core::download::part::part_path(&e.record());
+    let before = std::fs::read(&part).unwrap();
+    let calls = Arc::new(AtomicU64::new(0));
+    let calls2 = calls.clone();
+    let err = chzzk(&server)
+        .collect_chat(
+            ChatRequest {
+                restart: true,
+                ..e.req(SubtitleFormat::None)
+            },
+            CancellationToken::new(),
+            &move |_| {
+                calls2.fetch_add(1, Ordering::Relaxed);
+            },
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(err, Error::FileLocked { .. }), "{err:?}");
+    assert_eq!(calls.load(Ordering::Relaxed), 0, "열기 전에는 진행이 없다");
+    assert_eq!(std::fs::read(&part).unwrap(), before);
+    drop(holder);
+}
+
 /// 다른 영상의 sidecar는 이어받지 않는다(처음부터).
 #[tokio::test]
 async fn other_video_sidecar_is_not_resumed() {

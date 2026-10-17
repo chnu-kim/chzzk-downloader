@@ -760,3 +760,206 @@ async fn restart_survives_pause_before_collect() {
     until("완료", || h.phase(id) == Some(ChatPhase::Completed)).await;
     assert!(h.fake.chat_requests()[0].restart);
 }
+
+// ---------------------------------------------------------------------------
+// 출력 예약·"처음부터"·공유 `.part`(Codex PR #141)
+// ---------------------------------------------------------------------------
+
+/// 영상은 완료됐지만 채팅을 받는 중이면 그 출력은 아직 쓰이고 있다. 같은 출력에 다른 영상을 덮어쓰며 받는 작업은
+/// `duplicateOutput`으로 거부한다(받아들이면 바뀐 영상 옆에 원래 영상의 채팅·자막이 놓인다). 채팅이 끝나면 풀린다.
+#[tokio::test(start_paused = true)]
+async fn running_chat_reserves_output_against_other_video() {
+    let h = Harness::new(2);
+    let gate = Arc::new(Notify::new());
+    h.fake
+        .chat_for(h.output("a"), ChatScript::new().hold(Arc::clone(&gate)));
+    let a = h.enqueue_chat("a");
+    until("채팅 받는 중", || {
+        h.phase(a) == Some(ChatPhase::Running)
+    })
+    .await;
+    assert_eq!(h.status(a), JobStatus::Completed);
+    let mut other = request("a");
+    other.content = ContentRef::Video { video_no: 2 };
+    other.url = "https://chzzk.naver.com/video/2".into();
+    other.on_existing = OnExisting::Overwrite;
+    let err = h.mgr.enqueue(other.clone(), &h.defaults()).unwrap_err();
+    assert_eq!(err.code, ErrorCode::DuplicateOutput);
+    // 이름 미리 보기도 같은 판정이다(카드가 "비었다"고 하고 추가가 거부되지 않게)
+    let check = h
+        .mgr
+        .check_output(
+            None,
+            &h.downloads(),
+            "a",
+            &other.content,
+            "720p",
+            PlaybackKind::LiveRewindHls,
+            None,
+            None,
+        )
+        .unwrap();
+    assert_eq!(check.duplicate_job_id, Some(a));
+    gate.notify_one();
+    until("채팅 완료", || h.phase(a) == Some(ChatPhase::Completed)).await;
+    h.mgr.enqueue(other, &h.defaults()).unwrap();
+}
+
+/// 같은 출력을 쓰는 다른 기록의 채팅이 받는 중이면 채팅만 받기(`start_chat`)도 `duplicateOutput`이고 상태는 그대로다.
+#[tokio::test(start_paused = true)]
+async fn start_chat_rejects_output_held_by_other_chat() {
+    let h = Harness::new(1);
+    let b = h.enqueue("a").id;
+    until("b 완료", || h.status(b) == JobStatus::Completed).await;
+    let gate = Arc::new(Notify::new());
+    h.fake
+        .chat_for(h.output("a"), ChatScript::new().hold(Arc::clone(&gate)));
+    let a = h.enqueue_chat("a");
+    until("a 채팅 받는 중", || {
+        h.phase(a) == Some(ChatPhase::Running)
+    })
+    .await;
+    h.touch_video("a");
+    let err = h
+        .mgr
+        .start_chat(b, false, OnExisting::Skip, SubtitleFormat::Ass, |_| {
+            Ok(None)
+        })
+        .unwrap_err();
+    assert_eq!(err.code, ErrorCode::DuplicateOutput);
+    assert_eq!(h.chat(b), None);
+    gate.notify_one();
+    until("a 완료", || h.phase(a) == Some(ChatPhase::Completed)).await;
+    settle().await;
+    assert_eq!(h.fake.chat_requests().len(), 1);
+}
+
+/// "처음부터"가 코어의 `.part` 열기 전에 실패하면(같은 출력을 다른 작업이 잠가 `FileLocked`) 의도가 남아,
+/// 이어받기로 다시 시작해도 처음부터다(옛 커서로 잇지 않는다).
+#[tokio::test(start_paused = true)]
+async fn restart_survives_file_locked_before_open() {
+    let h = Harness::new(1);
+    let id = h.enqueue("a").id;
+    until("완료", || h.status(id) == JobStatus::Completed).await;
+    h.touch_video("a");
+    write_chat_part(&h.output("a"), VIDEO_NO, 2);
+    h.fake.chat_for(
+        h.output("a"),
+        ChatScript::new().fails(Error::FileLocked {
+            path: record_part(&h.output("a")),
+        }),
+    );
+    h.mgr
+        .start_chat(id, true, OnExisting::Skip, SubtitleFormat::Ass, |_| {
+            Ok(None)
+        })
+        .unwrap();
+    until("실패", || h.phase(id) == Some(ChatPhase::Failed)).await;
+    h.mgr
+        .start_chat(id, false, OnExisting::Skip, SubtitleFormat::Ass, |_| {
+            Ok(None)
+        })
+        .unwrap();
+    until("완료", || h.phase(id) == Some(ChatPhase::Completed)).await;
+    let reqs = h.fake.chat_requests();
+    assert!(reqs[0].restart);
+    assert!(reqs[1].restart, "열기 전 실패는 \"처음부터\"를 쓰지 않았다");
+}
+
+/// 코어가 `.part`를 열었다는 첫 진행 뒤에 멈추면 "처음부터"는 쓰였다: 다음 이어받기는 이어서 받는다.
+#[tokio::test(start_paused = true)]
+async fn restart_is_consumed_after_first_progress() {
+    let h = Harness::new(1);
+    let id = h.enqueue("a").id;
+    until("완료", || h.status(id) == JobStatus::Completed).await;
+    h.touch_video("a");
+    write_chat_part(&h.output("a"), VIDEO_NO, 2);
+    h.fake.chat_for(
+        h.output("a"),
+        ChatScript::new().progress(0, 0).part(1).wait_cancel(),
+    );
+    h.mgr
+        .start_chat(id, true, OnExisting::Skip, SubtitleFormat::Ass, |_| {
+            Ok(None)
+        })
+        .unwrap();
+    until(".part", || h.fake.chat_requests().len() == 1).await;
+    until("받는 중", || h.phase(id) == Some(ChatPhase::Running)).await;
+    settle().await;
+    h.mgr.pause_chat(id).unwrap();
+    until("일시정지", || h.phase(id) == Some(ChatPhase::Paused)).await;
+    h.mgr
+        .start_chat(id, false, OnExisting::Skip, SubtitleFormat::Ass, |_| {
+            Ok(None)
+        })
+        .unwrap();
+    until("완료", || h.phase(id) == Some(ChatPhase::Completed)).await;
+    assert!(!h.fake.chat_requests()[1].restart);
+}
+
+/// 같은 영상·출력의 두 기록이 받다 만 채팅 `.part` 하나를 함께 가리키면(멈춘 채팅은 출력을 예약하지 않는다)
+/// 하나를 지워도 파일은 남는다. 마지막 기록을 지울 때 지운다.
+#[tokio::test(start_paused = true)]
+async fn remove_keeps_chat_part_shared_with_other_record() {
+    let h = Harness::new(1);
+    h.fake
+        .chat_for(h.output("a"), ChatScript::new().part(3).wait_cancel());
+    let a = h.enqueue_chat("a");
+    until("a 채팅 받는 중", || {
+        h.phase(a) == Some(ChatPhase::Running)
+    })
+    .await;
+    until(".part", || record_part(&h.output("a")).exists()).await;
+    h.mgr.pause_chat(a).unwrap();
+    until("a 일시정지", || h.phase(a) == Some(ChatPhase::Paused)).await;
+
+    h.fake
+        .chat_for(h.output("a"), ChatScript::new().part(5).wait_cancel());
+    let b = h.enqueue_chat("a");
+    until("b 채팅 받는 중", || {
+        h.phase(b) == Some(ChatPhase::Running)
+    })
+    .await;
+    h.mgr.pause_chat(b).unwrap();
+    until("b 일시정지", || h.phase(b) == Some(ChatPhase::Paused)).await;
+    assert!(h.chat(a).unwrap().partial_bytes.is_some());
+
+    h.mgr.remove(a).await.unwrap();
+    assert!(record_part(&h.output("a")).exists(), "b가 아직 쓰는 파일");
+    assert!(record_sidecar(&h.output("a")).exists());
+    assert!(h.chat(b).unwrap().partial_bytes.is_some());
+
+    h.mgr.remove(b).await.unwrap();
+    assert!(!record_part(&h.output("a")).exists());
+    assert!(!record_sidecar(&h.output("a")).exists());
+}
+
+/// 영상 "처음부터"도 다른 기록이 함께 쥔 받다 만 채팅 파일은 지우지 않는다(채팅은 코어가 처음부터 다시 비운다).
+#[tokio::test(start_paused = true)]
+async fn video_restart_keeps_chat_part_shared_with_other_record() {
+    let h = Harness::new(1);
+    h.fake
+        .chat_for(h.output("a"), ChatScript::new().part(3).wait_cancel());
+    let a = h.enqueue_chat("a");
+    until("a 채팅 받는 중", || {
+        h.phase(a) == Some(ChatPhase::Running)
+    })
+    .await;
+    until(".part", || record_part(&h.output("a")).exists()).await;
+    h.mgr.pause_chat(a).unwrap();
+    until("a 일시정지", || h.phase(a) == Some(ChatPhase::Paused)).await;
+
+    h.fake
+        .script_for(h.output("a"), Script::new().wait_cancel());
+    let b = h.enqueue_chat("a");
+    until("b 받는 중", || h.status(b) == JobStatus::Running).await;
+    h.mgr.pause(b).unwrap();
+    until("b 일시정지", || h.status(b) == JobStatus::Paused).await;
+    h.fake
+        .script_for(h.output("a"), Script::new().wait_cancel());
+    h.mgr.resume(b, true).unwrap();
+    until("b 다시 받는 중", || h.status(b) == JobStatus::Running).await;
+    settle().await;
+    assert!(record_part(&h.output("a")).exists(), "a가 쥔 파일");
+    assert!(record_sidecar(&h.output("a")).exists());
+}

@@ -533,6 +533,10 @@ mod tests {
 
         assert!(Body::Segment.limit() > Body::Init.limit());
         assert_eq!(Body::Playlist.limit(), MAX_API_BODY);
+        // 상한 값 자체(곱셈 상수가 바뀌면 실물 세그먼트가 막히거나 상한이 사라진다)
+        assert_eq!(MAX_API_BODY, 8 << 20);
+        assert_eq!(Body::Init.limit(), 16 << 20);
+        assert_eq!(Body::Segment.limit(), 256 << 20);
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .respond_with(ResponseTemplate::new(200).set_body_bytes(vec![b'x'; 100]))

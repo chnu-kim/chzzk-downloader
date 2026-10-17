@@ -2,33 +2,44 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { HLS_VIDEO_NO, OTHER_VIDEO_NO, STUB_HANDLE } from './e2e-fixture-server.mjs';
+import { DELEGATED_VIDEO_NO, HLS_VIDEO_NO, OTHER_VIDEO_NO, STUB_HANDLE } from './e2e-fixture-server.mjs';
 import { isWindowVisible, judge, judgeWorker, pickWindowsDriver, until } from './e2e-native.mjs';
 
 const EXP = { sha256: 'a'.repeat(64), bytes: 10 };
 const LOG = [
   `/service/v2/videos/${HLS_VIDEO_NO}`,
   `/service/v2/videos/${OTHER_VIDEO_NO}`,
+  `/service/v2/videos/${DELEGATED_VIDEO_NO}`,
   '/live_rewind/kr/streamkey0/vod_playlist.m3u8',
   '/live_rewind/kr/streamkey0/144p/h/vod_chunklist.m3u8',
   '/live_rewind/kr/streamkey0/144p/h/144p_0_0_0.m4s',
   '/live_rewind/kr/streamkey0/144p/h/144p_seg0.m4v',
   '/live_rewind/kr/streamkey0/144p/h/144p_seg1.m4v',
 ].map((path) => ({ method: 'GET', path, status: 200 }));
-const OK = { files: ['[260102] 테스트채널 - 테스트 다시보기.mp4'], sha256: EXP.sha256, bytes: 10 };
+const OWN_FILE = '[260102] 테스트채널 - 테스트 다시보기.mp4';
+const DEL_FILE = '[260102] 맡은채널 - 테스트 다시보기.mp4';
+const OTHER_FILE = '[260102] 다른채널 - 테스트 다시보기.mp4';
+const out = (over = {}) => ({ sha256: EXP.sha256, bytes: EXP.bytes, ...over });
+const OK = { files: [DEL_FILE, OWN_FILE], outputs: { [OWN_FILE]: out(), [DEL_FILE]: out() } };
 
-test('judge: 파일 하나·해시 같음·요청 모두 200이면 통과', () => {
+test('judge: 본인·맡은 채널 파일 하나씩·해시 같음·요청 모두 200이면 통과', () => {
   assert.deepEqual(judge(OK, LOG, EXP), []);
 });
 
-test('judge: 파일 수·중간 파일·해시·크기·요청 누락·404는 실패', () => {
+test('judge: 파일 수·채널·중간 파일·해시·크기·요청 누락·404는 실패', () => {
   const cases = {
-    '파일 없음': [{ files: [], sha256: null, bytes: null }, LOG],
-    '파일 둘': [{ ...OK, files: ['a.mp4', 'b.mp4'] }, LOG],
+    '파일 없음': [{ files: [], outputs: {} }, LOG],
+    '본인 영상만': [{ files: [OWN_FILE], outputs: { [OWN_FILE]: out() } }, LOG],
+    '맡은 채널 영상만': [{ files: [DEL_FILE], outputs: { [DEL_FILE]: out() } }, LOG],
+    '본인 둘': [{ files: [OWN_FILE, OWN_FILE.replace('.mp4', ' (1).mp4')], outputs: { [OWN_FILE]: out(), [OWN_FILE.replace('.mp4', ' (1).mp4')]: out() } }, LOG],
+    '남의 영상 받힘': [{ files: [OWN_FILE, OTHER_FILE], outputs: { [OWN_FILE]: out(), [OTHER_FILE]: out() } }, LOG],
+    '셋': [{ files: [...OK.files, OTHER_FILE], outputs: { ...OK.outputs, [OTHER_FILE]: out() } }, LOG],
     '.part 남음': [{ ...OK, files: [...OK.files, 'x.mp4.part', 'x.mp4.part.json'] }, LOG],
-    '해시 다름': [{ ...OK, sha256: 'b'.repeat(64) }, LOG],
-    '크기 다름': [{ ...OK, bytes: 11 }, LOG],
+    '해시 다름': [{ ...OK, outputs: { ...OK.outputs, [DEL_FILE]: out({ sha256: 'b'.repeat(64) }) } }, LOG],
+    '크기 다름': [{ ...OK, outputs: { ...OK.outputs, [OWN_FILE]: out({ bytes: 11 }) } }, LOG],
+    '해시 없음': [{ ...OK, outputs: { [OWN_FILE]: out() } }, LOG],
     '남의 영상 info 요청 없음': [OK, LOG.filter((l) => !l.path.endsWith(`/${OTHER_VIDEO_NO}`))],
+    '맡은 채널 영상 info 요청 없음': [OK, LOG.filter((l) => !l.path.endsWith(`/${DELEGATED_VIDEO_NO}`))],
     '조각 요청 없음': [OK, LOG.filter((l) => !l.path.endsWith('seg1.m4v'))],
     '404 응답': [OK, [...LOG, { method: 'GET', path: '/x', status: 404 }]],
   };

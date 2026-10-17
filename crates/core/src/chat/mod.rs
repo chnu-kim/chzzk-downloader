@@ -33,6 +33,10 @@ pub const CHAT_RETRY_MAX: u32 = 3;
 pub const CHAT_CUE_MS: u64 = 5_000;
 /// 영상 길이 뒤로 자막에 넣는 여유(ms). [잠정] 근거 없음, 실측·ADR-0009 묶음 등록(Q6).
 pub const CHAT_TAIL_MS: u64 = 5_000;
+/// 자막을 만들 때 읽는 채팅 기록(`.chat.jsonl`)의 최대 바이트 수. 넘으면 기록을 읽지 않고 자막 실패로 끝낸다
+/// (렌더러가 기록 전체를 메모리에 올리므로 할당 실패로 프로세스가 죽지 않게 하는 예산이다). [잠정] 근거 없음,
+/// 실측 M-④-5 뒤 조정·ADR-0009 묶음 등록(core.md 구현 중 변경 66).
+pub const CHAT_SUBTITLE_MAX_BYTES: u64 = 256 * 1024 * 1024;
 /// 요청 인자: 커서 앞쪽 메시지 수. 받은 앞쪽 묶음은 버린다.
 pub const CHAT_PREVIOUS_SIZE: u32 = 50;
 

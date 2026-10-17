@@ -58,6 +58,8 @@ pub struct ClientConfig {
     pub chat_page_interval: Duration,
     /// 채팅 요청 재시도 정책. 기본 `chat::chat_retry_policy()`(미디어용 `retry`와 따로다, chat.md §3.2-5)
     pub chat_retry: RetryPolicy,
+    /// 자막을 만들 채팅 기록의 최대 바이트 수. 기본 `chat::CHAT_SUBTITLE_MAX_BYTES`(넘으면 자막 실패, 기록은 완성)
+    pub chat_subtitle_max_bytes: u64,
 }
 
 impl Default for ClientConfig {
@@ -74,6 +76,7 @@ impl Default for ClientConfig {
             live_idle_check: Duration::from_secs(30),
             chat_page_interval: Duration::from_millis(crate::chat::CHAT_PAGE_INTERVAL_MS),
             chat_retry: crate::chat::chat_retry_policy(),
+            chat_subtitle_max_bytes: crate::chat::CHAT_SUBTITLE_MAX_BYTES,
         }
     }
 }

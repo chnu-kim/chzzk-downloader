@@ -859,3 +859,32 @@ async fn enqueue_records_recent_kind_and_date() {
     );
     assert_eq!(d.recent_vods[2].kind, Some(RecentKind::Vod));
 }
+
+/// 채팅 설정 두 키(core.md 67-1): 패치로 바뀌고 저장되며, 받기 기본값(`job_defaults`)에 자막 형식이 들어간다.
+#[test]
+fn chat_settings_patch_round_trips() {
+    use chzzk_core::chat::SubtitleFormat;
+    let t = TempDir::new().unwrap();
+    let svc = open(t.path());
+    let d = svc.get();
+    assert!(!d.save_chat);
+    assert_eq!(d.chat_subtitle, SubtitleFormat::Ass);
+
+    let d = svc
+        .update(SettingsPatch {
+            save_chat: Some(true),
+            chat_subtitle: Some(SubtitleFormat::Srt),
+            ..patch()
+        })
+        .unwrap();
+    assert!(d.save_chat);
+    assert_eq!(d.chat_subtitle, SubtitleFormat::Srt);
+    assert_eq!(svc.job_defaults().chat_subtitle, SubtitleFormat::Srt);
+
+    // 키 없음은 그대로, 다시 열어도 남는다
+    let d = svc.update(patch()).unwrap();
+    assert!(d.save_chat);
+    let d = open(t.path()).get();
+    assert!(d.save_chat);
+    assert_eq!(d.chat_subtitle, SubtitleFormat::Srt);
+}

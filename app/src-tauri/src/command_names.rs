@@ -41,4 +41,7 @@
     "editors_remove",
     "delegations_leave",
     "ownership_recheck",
+    "check_chat_output",
+    "fetch_chat",
+    "pause_chat",
 ]

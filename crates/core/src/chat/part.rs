@@ -64,6 +64,11 @@ pub struct ChatSidecar {
     /// 이미 최종 이름으로 옮긴 보조 파일의 이름(다시 마무리할 때 다시 옮기지 않는다)
     #[serde(default)]
     pub moved: Vec<String>,
+    /// 옮기려는 보조 파일의 이름(이동 의도). rename 전에 durable하게 적고, 옮기면 `moved`로 넘기고
+    /// 막히면 지운다. rename과 `moved` 기록 사이에 멈췄을 때 최종 이름의 파일이 우리 것인지(여기 있음)
+    /// 원래 있던 무관한 파일인지(없음) 가른다.
+    #[serde(default)]
+    pub moving: Vec<String>,
 }
 
 impl ChatSidecar {
@@ -79,6 +84,7 @@ impl ChatSidecar {
             committed_len: 0,
             end: None,
             moved: Vec::new(),
+            moving: Vec::new(),
         }
     }
 }
@@ -154,6 +160,11 @@ fn ends_on_line(f: &mut File, part: &Path, committed: u64) -> Result<bool, Error
 /// 토큰 사이 공백이고, 공백으로 바꿔도 같은 JSON이다.
 fn single_line(raw: &str) -> String {
     raw.replace(['\r', '\n'], " ")
+}
+
+/// sidecar `s`로 본 `ChatPart::is_move_interrupted`.
+fn interrupted(s: &ChatSidecar, from: &Path, to: &Path) -> bool {
+    s.moving.contains(&key_of(to)) && !from.exists() && to.exists()
 }
 
 /// 보조 파일을 sidecar `moved`에서 가리키는 키(최종 파일 이름).
@@ -268,6 +279,13 @@ impl ChatPart {
     /// 보조 파일 `to`를 이미 최종 이름으로 옮겼는가.
     pub fn is_moved(&self, to: &Path) -> bool {
         self.sidecar.moved.contains(&key_of(to))
+    }
+
+    /// 보조 파일 `from` → `to` 이동이 rename 뒤·`moved` 기록 전에 멈췄는가: 이동 의도가 적혀 있고,
+    /// 원본(임시 파일)은 없고 최종 파일만 있다. 참이면 최종 파일은 우리가 옮긴 것이다(다시 만들지 않는다).
+    /// 의도가 없으면 최종 파일은 무관한 기존 파일로 본다.
+    pub fn is_move_interrupted(&self, from: &Path, to: &Path) -> bool {
+        interrupted(&self.sidecar, from, to)
     }
 
     /// 독 상태면 오류(실패 계약은 모듈 문서).
@@ -410,8 +428,11 @@ impl ChatPart {
     ///   자기 파일은 다시 옮기지 않는다. 기록은 모든 보조 파일이 옮겨진 뒤에야 옮기므로, sidecar가
     ///   있는 동안은 기록의 `.part`도 늘 있다.
     /// - `moved`에 있는 보조 파일은 다시 옮기지 않고, 호출자가 다시 만든 `from`(임시 파일)이 있으면
-    ///   지운다(고아 방지). `from`이 없고 `to`만 있으면(옮긴 뒤 `moved` 기록이 실패한 경우) 옮긴 것으로 본다.
-    /// - 기록을 옮긴 뒤의 sidecar 삭제 실패, 보조 파일 `moved` 기록 실패는 경고만 남긴다.
+    ///   지운다(고아 방지).
+    /// - 보조 파일을 옮기기 전에 이동 의도(`moving`)를 sidecar에 적는다. 적지 못하면 옮기지 않고 `Err`다.
+    ///   막히면(`TargetExists`) 의도를 지운다. 의도가 있고 `from`이 없고 `to`만 있으면(rename 뒤 `moved`
+    ///   기록 전에 멈춘 경우) 옮긴 것으로 본다. 의도가 없으면 `to`는 무관한 기존 파일이라 덮어쓰지 않는다.
+    /// - 기록을 옮긴 뒤의 sidecar 삭제 실패, 보조 파일 `moved` 기록·의도 지우기 실패는 경고만 남긴다.
     pub async fn finalize(
         self,
         companions: &[Companion],
@@ -461,15 +482,31 @@ impl ChatPart {
                     remove_if_exists(&c.from)?;
                     continue;
                 }
-                // 옮겼는데 `moved` 기록이 실패했던 경우: 원본은 없고 최종 파일만 있다.
-                if !c.from.exists() && c.to.exists() {
+                // rename 뒤 `moved` 기록 전에 멈췄던 경우: 의도가 있고 원본은 없고 최종 파일만 있다.
+                if interrupted(&sidecar, &c.from, &c.to) {
+                    sidecar.moving.retain(|k| *k != key);
                     sidecar.moved.push(key);
                     continue;
                 }
-                if !rename(&c.from, &c.to)? {
+                // 의도를 먼저 durable하게 적는다. 적지 못하면 옮기지 않는다(옮긴 뒤 멈추면 무관한
+                // 파일과 가를 수 없다).
+                if !sidecar.moving.contains(&key) {
+                    sidecar.moving.push(key.clone());
+                }
+                write_sidecar(&sidecar_path, &sidecar)?;
+                let moved = rename(&c.from, &c.to);
+                if !matches!(moved, Ok(true)) {
+                    // 옮기지 않았다: 의도를 지운다(남으면 임시 파일이 사라졌을 때 무관한 파일을 우리 것으로 본다).
+                    sidecar.moving.retain(|k| *k != key);
+                    if let Err(e) = write_sidecar(&sidecar_path, &sidecar) {
+                        tracing::warn!(error = %e, "보조 파일 이동 의도를 지우지 못함");
+                    }
+                }
+                if !moved? {
                     tracing::info!("받는 동안 같은 이름의 파일이 생겨 덮어쓰지 않았다(보조 파일)");
                     return Ok(ChatFinalized::TargetExists { path: c.to.clone() });
                 }
+                sidecar.moving.retain(|k| *k != key);
                 sidecar.moved.push(key);
                 // 이미 옮겼다. 기록이 실패해도 멈추지 않는다(다시 마무리할 때 위의 경우로 이어진다).
                 if let Err(e) = write_sidecar(&sidecar_path, &sidecar) {
@@ -503,6 +540,69 @@ impl ChatPart {
             source: io::Error::other(e.to_string()),
         })?
     }
+}
+
+/// 영상 `video` 옆 채팅 기록의 경로(`{stem}.chat.jsonl`).
+fn record_of(video: &Path) -> PathBuf {
+    crate::naming::sibling_path(video, super::collect::RECORD_EXT)
+}
+
+/// 영상 `video`(최종 경로) 옆의 받다 만 채팅 바이트(셸의 `ChatState.partial_bytes`, chat.md §4.1).
+///
+/// - 같은 영상의 sidecar가 있고 `.part`가 `committed_len`보다 짧지 않으면 `committed_len`(0일 수 있다: `open`이
+///   sidecar를 곧바로 쓰므로 첫 페이지 전에 실패해도 파일이 남는다).
+/// - sidecar가 없거나 깨졌는데 `.part`가 있으면 `.part` 길이(주인을 모르는 남은 파일이다. 지우기 경로가 확인을 거치게).
+/// - 다른 영상의 sidecar, `.part` 없음은 `None`.
+///
+/// 잠그지 않고 읽기만 한다(sidecar는 `atomic_write`로 쓰인다).
+pub fn chat_partial_bytes(video: &Path, video_no: u64) -> Option<u64> {
+    let record = record_of(video);
+    let part_len = std::fs::metadata(part_path(&record))
+        .ok()
+        .filter(|m| m.is_file())?
+        .len();
+    match read_sidecar(&sidecar_path(&record)) {
+        Some(sc) if sc.video_no != video_no => None,
+        Some(sc) => (part_len >= sc.committed_len).then_some(sc.committed_len),
+        None => Some(part_len),
+    }
+}
+
+/// 영상 `video` 옆의 받다 만 채팅 파일(기록 `.part`·sidecar, 자막 임시 파일)을 지운다(목록에서 지우기·처음부터).
+/// 완성된 채팅 파일은 건드리지 않는다.
+///
+/// - sidecar가 다른 영상의 것이면 아무것도 지우지 않고 `NotOwned`. 없거나 깨졌으면 주인을 모르는 파일이라 지운다
+///   (`download::part::discard_partial`과 같은 규칙).
+/// - 다른 작업이 `.part`를 잠그고 있으면 `FileLocked`이고 아무것도 지우지 않는다.
+pub fn discard_chat_partial(
+    video: &Path,
+    video_no: u64,
+) -> Result<crate::download::part::Discarded, Error> {
+    use crate::download::part::Discarded;
+    let record = record_of(video);
+    let part = part_path(&record);
+    let sc = sidecar_path(&record);
+    let lock = match open_locked(&part, false) {
+        Ok(f) => Some(f),
+        Err(Error::Io { source, .. }) if source.kind() == io::ErrorKind::NotFound => None,
+        Err(e) => return Err(e),
+    };
+    remove_stale_temps(&sc);
+    if read_sidecar(&sc).is_some_and(|s| s.video_no != video_no) {
+        tracing::info!("다른 영상의 채팅 .part라 지우지 않는다");
+        return Ok(Discarded::NotOwned);
+    }
+    let mut res = remove_if_exists(&sc);
+    for ext in [".ass", ".srt"] {
+        res = res.and(remove_if_exists(&part_path(&crate::naming::sibling_path(
+            video, ext,
+        ))));
+    }
+    if lock.is_some() {
+        res = res.and(remove_if_exists(&part));
+    }
+    drop(lock);
+    res.map(|()| Discarded::Removed)
 }
 
 #[cfg(test)]

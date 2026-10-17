@@ -72,6 +72,7 @@ export function check(over: Partial<OutputCheck> = {}): OutputCheck {
     freeFileName: null,
     partial: null,
     duplicateJobId: null,
+    conflictNames: [],
     ...over,
   };
 }

@@ -25,16 +25,16 @@
   "size": {
     "dist_gz": 82975,
     "binary": {
-      "linux": 35912568,
-      "darwin": 24873424,
-      "windows": 22349824
+      "linux": 36721064,
+      "darwin": 26112320,
+      "windows": 23037952
     },
     "bundle": {
       "linux-AppImage": 86813176,
-      "linux-deb": 10708762,
-      "darwin-dmg": 8114708,
-      "windows-setup": 5295201,
-      "windows-msi": 7860224
+      "linux-deb": 10930230,
+      "darwin-dmg": 8473169,
+      "windows-setup": 5433698,
+      "windows-msi": 8069120
     },
     "tolerance_pct": 3
   },

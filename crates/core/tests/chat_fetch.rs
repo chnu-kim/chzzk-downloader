@@ -1,5 +1,5 @@
 //! `Chzzk::fetch_chat_page`·`info_chat_flag` 통합 테스트. 네트워크는 wiremock뿐이다.
-//! (`tests/chat.rs`는 이후 `collect_chat` 통합 테스트 자리라 이 파일은 `chat_fetch`다.)
+//! (`collect_chat` 통합 테스트는 `tests/chat.rs`다.)
 
 mod common;
 

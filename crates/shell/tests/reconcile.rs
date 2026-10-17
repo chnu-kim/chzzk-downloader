@@ -33,9 +33,11 @@ fn record(id: u64, status: JobStatus, output: PathBuf) -> JobRecord {
         final_bytes: None,
         last_error: None,
         discard_on_start: false,
+        output_replaced: false,
         partial_bytes: Some(999), // reconcile이 다시 채우는지 보려고 엉뚱한 값
         missing: false,
         live_end: None,
+        chat: None,
     }
 }
 
@@ -245,4 +247,59 @@ fn unreadable_sidecar_is_unknown_not_none() {
     std::fs::write(sidecar_path(&out), b"{not json").unwrap();
     let got = run(vec![record(1, JobStatus::Failed, out)]);
     assert_eq!(got[0].partial_bytes, None);
+}
+
+// ---------------------------------------------------------------------------
+// 채팅(④-4, chat.md §4.2 "앱을 다시 열 때")
+// ---------------------------------------------------------------------------
+
+fn with_chat(mut r: JobRecord, phase: chzzk_shell::chat::ChatPhase) -> JobRecord {
+    let mut c = chzzk_shell::chat::ChatState::waiting(
+        chzzk_core::chat::SubtitleFormat::Ass,
+        OnExisting::Skip,
+    );
+    c.phase = phase;
+    c.partial_bytes = Some(999);
+    r.chat = Some(c);
+    r
+}
+
+#[test]
+fn chat_reconcile_table() {
+    use chzzk_shell::chat::ChatPhase as P;
+    let dir = tempfile::tempdir().unwrap();
+    let out = |n: &str| dir.path().join(format!("{n}.mp4"));
+    let mut file = JobsFile {
+        v: 1,
+        next_id: 10,
+        jobs: vec![
+            with_chat(record(1, JobStatus::Completed, out("a")), P::Running),
+            with_chat(record(2, JobStatus::Completed, out("b")), P::Waiting),
+            with_chat(record(3, JobStatus::Paused, out("c")), P::Waiting),
+            with_chat(record(4, JobStatus::Completed, out("d")), P::Paused),
+            with_chat(record(5, JobStatus::Completed, out("e")), P::Completed),
+        ],
+    };
+    // d에만 받다 만 채팅 파일이 있다(sidecar 없음 → .part 길이)
+    let rec_d = chzzk_core::naming::sibling_path(&out("d"), ".chat.jsonl");
+    std::fs::write(part_path(&rec_d), b"{}\n{}\n").unwrap();
+    reconcile(&mut file);
+    let got: Vec<(P, Option<u64>)> = file
+        .jobs
+        .iter()
+        .map(|j| {
+            let c = j.chat.as_ref().unwrap();
+            (c.phase, c.partial_bytes)
+        })
+        .collect();
+    assert_eq!(
+        got,
+        vec![
+            (P::Interrupted, None),
+            (P::Interrupted, None),
+            (P::Waiting, None),
+            (P::Paused, Some(6)),
+            (P::Completed, None),
+        ]
+    );
 }

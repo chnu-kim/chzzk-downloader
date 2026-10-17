@@ -29,6 +29,7 @@ fn check(folder: &Path, name: &str, active: &dyn Fn(&Path) -> Option<JobId>) -> 
             kind: PlaybackKind::LiveRewindHls,
             platform: Platform::current(),
             range: None,
+            chat: None,
         },
         active,
     )
@@ -189,6 +190,7 @@ async fn manager_check_output_reports_duplicate() {
             "720p",
             PlaybackKind::LiveRewindHls,
             None,
+            None,
         )
         .unwrap();
     assert_eq!(c.duplicate_job_id, Some(a));
@@ -205,6 +207,7 @@ async fn manager_check_output_reports_duplicate() {
             "720p",
             PlaybackKind::LiveRewindHls,
             None,
+            None,
         )
         .unwrap();
     assert_eq!(c.duplicate_job_id, None);
@@ -219,6 +222,7 @@ async fn manager_check_output_reports_duplicate() {
             &CONTENT,
             "720p",
             PlaybackKind::LiveRewindHls,
+            None,
             None,
         )
         .unwrap_err();
@@ -250,6 +254,7 @@ fn partial_recording_gets_free_name() {
                 kind,
                 platform: Platform::current(),
                 range: None,
+                chat: None,
             },
             &none,
         )
@@ -303,6 +308,7 @@ fn check_range(
             kind: PlaybackKind::LiveRewindHls,
             platform,
             range,
+            chat: None,
         },
         &none,
     )

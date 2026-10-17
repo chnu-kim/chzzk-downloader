@@ -33,4 +33,8 @@ partial: PartialInfo | null,
 /**
  * 같은 경로의 활성 작업
  */
-duplicateJobId: JobId | null, };
+duplicateJobId: JobId | null, 
+/**
+ * 실제로 덮어쓸 파일 이름 전부(채팅을 함께 받으면 자막 → 기록 → 영상 순, chat.md §4.4). 비면 겹치는 파일이 없다
+ */
+conflictNames: Array<string>, };

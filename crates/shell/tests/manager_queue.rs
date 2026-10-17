@@ -317,6 +317,7 @@ async fn enqueue_computes_output_and_freezes_concurrency() {
     let defaults = JobDefaults {
         download_folder: h.downloads(),
         segment_concurrency: 7,
+        chat_subtitle: chzzk_core::chat::SubtitleFormat::Ass,
     };
     let dto = h.mgr.enqueue(r, &defaults).unwrap();
     let name = if cfg!(target_os = "linux") {
@@ -498,6 +499,7 @@ async fn dot_segments_in_folder_are_rejected() {
                 "720p",
                 chzzk_core::PlaybackKind::LiveRewindHls,
                 None,
+                None,
             )
             .unwrap_err();
         assert_eq!(e.code, ErrorCode::InvalidInput, "{folder}");
@@ -506,6 +508,7 @@ async fn dot_segments_in_folder_are_rejected() {
     let defaults = JobDefaults {
         download_folder: h.downloads().join("..").join(&name),
         segment_concurrency: 4,
+        chat_subtitle: chzzk_core::chat::SubtitleFormat::Ass,
     };
     let e = h.mgr.enqueue(request("a"), &defaults).unwrap_err();
     assert_eq!(e.code, ErrorCode::InvalidInput);
@@ -623,6 +626,7 @@ async fn non_utf8_default_folder_is_rejected() {
     let defaults = JobDefaults {
         download_folder: bad.clone(),
         segment_concurrency: 4,
+        chat_subtitle: chzzk_core::chat::SubtitleFormat::Ass,
     };
     let e = h.mgr.enqueue(request("a"), &defaults).unwrap_err();
     assert_eq!(e.code, ErrorCode::InvalidInput);
@@ -635,6 +639,7 @@ async fn non_utf8_default_folder_is_rejected() {
             &chzzk_core::ContentRef::Video { video_no: 1 },
             "720p",
             chzzk_core::PlaybackKind::LiveRewindHls,
+            None,
             None,
         )
         .unwrap_err();

@@ -50,6 +50,8 @@ const baseSettings: SettingsDto = {
   textScale: 'default',
   theme: 'system',
   keepAwake: true,
+  saveChat: false,
+  chatSubtitle: 'ass',
 };
 
 let send: (e: JobEvent) => void = () => {};

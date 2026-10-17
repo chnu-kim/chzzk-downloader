@@ -12,6 +12,7 @@ import type {
   HelpId,
   KeepAwakePayload,
   AuthStatusDto,
+  ChatOutputCheck,
   ContentRef,
   EnqueueRequest,
   InviteDto,
@@ -19,11 +20,13 @@ import type {
   JobEvent,
   JobId,
   LegacyImportDto,
+  OnExisting,
   OutputCheck,
   PlaybackKind,
   ResolvedDto,
   SettingsDto,
   SettingsPatch,
+  SubtitleFormat,
   TimeRangeDto,
   UpdateCheckDto,
   UpdateInfoDto,
@@ -52,6 +55,10 @@ export interface CheckOutputArgs {
   expectedKind: PlaybackKind;
   /** 구간 받기(빠른 다시보기만). 있으면 셸이 이름 끝에 구간 접미사를 붙여 돌려준다 */
   range?: TimeRangeDto | null;
+  /** 채팅도 함께 받으면 같은 이름의 채팅 파일도 충돌·번호 이름 판정에 넣는다(chat.md §4.4) */
+  saveChat?: boolean;
+  /** 채팅 자막 형식. 없으면 지금 설정 `chatSubtitle` */
+  chatSubtitle?: SubtitleFormat;
 }
 
 export const appInfo = () => call<AppInfo>('app_info');
@@ -73,6 +80,14 @@ export const pauseJob = (id: JobId) => call<void>('pause_job', { id });
 export const stopJob = (id: JobId) => call<void>('stop_job', { id });
 export const resumeJob = (id: JobId, restart = false) => call<void>('resume_job', { id, restart });
 export const removeJob = (id: JobId) => call<void>('remove_job', { id });
+/** 완료 작업의 채팅 파일 이름 충돌(자막 → 기록). 비면 충돌 없음 */
+export const checkChatOutput = (id: JobId, subtitle: SubtitleFormat) =>
+  call<ChatOutputCheck>('check_chat_output', { id, subtitle });
+/** 완료 작업의 채팅을 받거나 이어받는다. `onExisting`은 늘 명시한다(덮어쓰기는 D7 동의 뒤에만) */
+export const fetchChat = (id: JobId, restart: boolean, onExisting: OnExisting) =>
+  call<void>('fetch_chat', { id, restart, onExisting });
+/** 받는 중·대기 중인 채팅을 멈춘다 */
+export const pauseChat = (id: JobId) => call<void>('pause_chat', { id });
 export const clearFinished = () => call<void>('clear_finished');
 export const openOutput = (id: JobId) => call<void>('open_output', { id });
 export const revealOutput = (id: JobId) => call<void>('reveal_output', { id });

@@ -45,6 +45,9 @@
     "allow-editors-invite",
     "allow-editors-remove",
     "allow-delegations-leave",
-    "allow-ownership-recheck"
+    "allow-ownership-recheck",
+    "allow-check-chat-output",
+    "allow-fetch-chat",
+    "allow-pause-chat"
   ]
 }

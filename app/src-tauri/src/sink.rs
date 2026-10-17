@@ -221,6 +221,7 @@ mod tests {
             stopped_at: None,
             range: None,
             live_end: None,
+            chat: None,
         }
     }
 

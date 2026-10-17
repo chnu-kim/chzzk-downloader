@@ -1,9 +1,14 @@
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import type { AppError, ErrorCode, ErrorPayload, Stage } from '../bindings';
 import {
   ERROR_CODES,
+  LINKED_HELP_IDS,
   actionLabel,
   errorCopy,
+  helpLinkLabel,
+  helpTopic,
   isAppError,
   toAppError,
   type ActionId,
@@ -125,6 +130,7 @@ interface Row {
   actions: ActionId[];
   detail: string | null;
   rows?: string[];
+  helpId?: 'editors';
 }
 
 const PART_KEPT = '받은 부분은 그대로 있어요.';
@@ -626,6 +632,7 @@ const GOLDEN: Row[] = [
     actions: ['recheck', 'close'],
     detail: null,
     rows: ['영상의 채널: ‘남의 채널’', '로그인한 채널: ‘내 채널’'],
+    helpId: 'editors',
   },
   {
     name: 'notOwnContent R: 맡은 채널이 있으면 제목이 넓어진다',
@@ -636,6 +643,7 @@ const GOLDEN: Row[] = [
     actions: ['recheck', 'close'],
     detail: null,
     rows: ['영상의 채널: ‘남의 채널’', '로그인한 채널: ‘내 채널’'],
+    helpId: 'editors',
   },
   {
     name: 'notOwnContent R: 맡은 채널의 생방송(L-D1)',
@@ -714,6 +722,7 @@ describe('errorCopy 골든(§15.2 코드별 L0·L1)', () => {
         rows: g.rows ?? [],
         detail: g.detail,
         actions: g.actions,
+        helpId: g.helpId ?? null,
       });
     });
   }
@@ -856,5 +865,38 @@ describe('AppError 좁히기', () => {
 describe('recheck 동작 글자', () => {
   it('[다시 불러오기]는 reresolve와 같은 글자다', () => {
     expect(actionLabel('recheck')).toBe(t('action.reresolve'));
+  });
+});
+
+// L2 도움말 링크(patterns.md §10.1, app.md 구현 중 변경 83)
+describe('도움말 L2 링크', () => {
+  const repo = (rel: string) => fileURLToPath(new globalThis.URL(`../../../../${rel}`, import.meta.url).href);
+  const ids = (JSON.parse(readFileSync(repo('help/ids.json'), 'utf8')) as { ids: string[] }).ids;
+
+  it('링크하는 주제는 help/ids.json에 있고 이름은 help/<id>.md의 제목 그대로다(content.md §9.1)', () => {
+    expect(LINKED_HELP_IDS.length).toBeGreaterThan(0);
+    for (const id of LINKED_HELP_IDS) {
+      expect(ids, id).toContain(id);
+      const h1 = readFileSync(repo(`help/${id}.md`), 'utf8').split('\n')[0];
+      expect(h1, id).toBe(`# ${helpTopic(id)}`);
+    }
+  });
+
+  it('링크 글자는 "도움말 보기: {주제}"다', () => {
+    expect(helpLinkLabel('editors')).toBe(t('help.link.label', { topic: t('help.editors.title') }));
+    expect(helpLinkLabel('editors')).toBe('도움말 보기: 다른 채널의 영상 받기');
+  });
+
+  it('helpId는 편집자 안내가 있는 카드(R)의 notOwnContent에만 붙는다', () => {
+    const places: ErrorPlace[] = ['resolve', 'job', 'cookie', 'other'];
+    for (const code of ERROR_CODES) {
+      for (const place of places) {
+        for (const delegatedLive of [false, true]) {
+          const c = errorCopy(err(code), { place, delegatedLive });
+          const want = code === 'notOwnContent' && place === 'resolve' && !delegatedLive ? 'editors' : null;
+          expect(c.helpId, `${code} ${place} live=${delegatedLive}`).toBe(want);
+        }
+      }
+    }
   });
 });

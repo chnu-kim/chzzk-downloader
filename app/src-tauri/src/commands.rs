@@ -9,9 +9,9 @@ use std::sync::atomic::Ordering;
 use chzzk_core::{ContentRef, PlaybackKind};
 use chzzk_shell::app::{Reveal, chzzk_link};
 use chzzk_shell::dto::{
-    AppFolder, AppInfo, AuthStatusDto, EditorsDto, EngineProbe, EnqueueRequest, InviteDto, JobDto,
-    JobEvent, LegacyImportDto, OutputCheck, ResolvedDto, SettingsDto, SettingsPatch, TimeRangeDto,
-    UpdateCheckDto, UpdateInfoDto, UpdateInstallDto, WebPage,
+    AppFolder, AppInfo, AuthStatusDto, EditorsDto, EngineProbe, EnqueueRequest, HelpId, InviteDto,
+    JobDto, JobEvent, LegacyImportDto, OutputCheck, ResolvedDto, SettingsDto, SettingsPatch,
+    TimeRangeDto, UpdateCheckDto, UpdateInfoDto, UpdateInstallDto, WebPage,
 };
 use chzzk_shell::manager::QUIT_TIMEOUT;
 use chzzk_shell::{App, AppError, JobId};
@@ -239,14 +239,16 @@ pub async fn open_app_folder<R: Runtime>(
         .map_err(|e| internal("폴더 열기", e))
 }
 
-/// 로그인 서버의 고정 페이지(개인정보 처리방침·라이선스)를 기본 브라우저로 연다. 로그인 전에도 부를 수 있다(gate 허용 목록)
+/// 로그인 서버의 고정 페이지(개인정보 처리방침·라이선스·도움말)를 기본 브라우저로 연다. 로그인 전에도 부를 수 있다(gate 허용 목록).
+/// `anchor`는 도움말 주제(오류 L2 링크, `/help#<id>`). 닫힌 집합 밖은 역직렬화에서, 도움말 밖의 앵커는 `invalidInput`으로 거부한다
 #[tauri::command]
 pub async fn open_web_page(
     state: State<'_, App>,
     io: State<'_, AuthIoState>,
     page: WebPage,
+    anchor: Option<HelpId>,
 ) -> Res<()> {
-    let url = state.web_page_url(page)?;
+    let url = state.web_page_url(page, anchor)?;
     if io.0.open_url(&url) {
         Ok(())
     } else {

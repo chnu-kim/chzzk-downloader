@@ -68,3 +68,5 @@ export interface Action {
 export type DialogAction = Action;
 /** Notice 동작은 진행 중(`loading`)을 보일 수 있다: 누른 버튼이 눌린 채 `aria-disabled`로 남아 포커스가 끊기지 않는다(components.md §7-29) */
 export type NoticeAction = Action & { loading?: boolean };
+/** Notice의 도움말 링크(오류 L2, patterns.md §10.1): 버튼이 아니라 동작 줄과 분리된 줄의 텍스트 링크 하나 */
+export type NoticeHelp = { label: string; onclick: () => void };

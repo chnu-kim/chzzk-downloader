@@ -1030,6 +1030,12 @@ export const SITE_CSS = `/* [root] 라이트 기본값. ref 팔레트와 sys 토
   gap: var(--gap-sibling);
   margin-inline-start: auto;
 }
+/* 오류 L2 도움말 링크(patterns.md §10.1): 동작 버튼 줄과 분리된 자기 줄. 본문 열(아이콘 + gap 뒤)에 맞춘다 */
+.notice-help {
+  flex: 1 0 100%;
+  min-width: 0;
+  padding-inline-start: calc(var(--icon-md) + var(--space-8));
+}
 :where(.notice).tone-warning {
   background: var(--warning-soft);
 }
@@ -2129,4 +2135,4 @@ pre.license {
   }
 }
 `;
-export const SITE_CSS_HASH = "93ddfe5ea73a0cde";
+export const SITE_CSS_HASH = "8e9e46ebdcd3857e";

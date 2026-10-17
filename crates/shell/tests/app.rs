@@ -10,8 +10,8 @@ use chzzk_core::{
     ClientConfig, ContentRef, Endpoints, PlaybackKind, RetryPolicy, TextScale, Theme,
 };
 use chzzk_shell::app::Reveal;
-use chzzk_shell::dto::WebPage;
 use chzzk_shell::dto::{AppFolder, JobStatus, Nullable, SettingsPatch};
+use chzzk_shell::dto::{HelpId, WebPage};
 use chzzk_shell::services::AppPaths;
 use chzzk_shell::{App, AuthSetup, ErrorCode, ErrorPayload, JobId, WorkerBase};
 use common::harness::request;
@@ -134,7 +134,7 @@ async fn web_page_url_needs_a_worker_base() {
     let off = open(t.path(), &server);
     for page in [WebPage::Privacy, WebPage::Licenses] {
         assert_eq!(
-            off.web_page_url(page).unwrap_err().code,
+            off.web_page_url(page, None).unwrap_err().code,
             ErrorCode::InvalidInput
         );
     }
@@ -153,12 +153,43 @@ async fn web_page_url_needs_a_worker_base() {
     )
     .unwrap();
     assert_eq!(
-        on.web_page_url(WebPage::Privacy).unwrap(),
+        on.web_page_url(WebPage::Privacy, None).unwrap(),
         "https://worker.example.invalid/privacy"
     );
     assert_eq!(
-        on.web_page_url(WebPage::Licenses).unwrap(),
+        on.web_page_url(WebPage::Licenses, None).unwrap(),
         "https://worker.example.invalid/licenses"
+    );
+    // 도움말은 앵커 없이 `/help`, 앵커가 있으면 그 주제의 제목(`h2 id`)으로 간다(오류 L2 링크, app.md 구현 중 변경 83)
+    assert_eq!(
+        on.web_page_url(WebPage::Help, None).unwrap(),
+        "https://worker.example.invalid/help"
+    );
+    assert_eq!(
+        on.web_page_url(WebPage::Help, Some(HelpId::Editors))
+            .unwrap(),
+        "https://worker.example.invalid/help#editors"
+    );
+    assert_eq!(
+        on.web_page_url(WebPage::Help, Some(HelpId::DiskFull))
+            .unwrap(),
+        "https://worker.example.invalid/help#disk-full"
+    );
+    // 앵커는 도움말에만 붙는다. 다른 페이지에 붙이면 거부한다
+    for page in [WebPage::Privacy, WebPage::Licenses] {
+        assert_eq!(
+            on.web_page_url(page, Some(HelpId::Editors))
+                .unwrap_err()
+                .code,
+            ErrorCode::InvalidInput
+        );
+    }
+    // 로그인 서버가 없는 빌드는 앵커가 있어도 열 곳이 없다
+    assert_eq!(
+        off.web_page_url(WebPage::Help, Some(HelpId::Editors))
+            .unwrap_err()
+            .code,
+        ErrorCode::InvalidInput
     );
 }
 

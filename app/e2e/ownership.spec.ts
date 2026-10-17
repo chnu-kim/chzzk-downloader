@@ -3,7 +3,7 @@
 import type { AuthStatusDto } from '../src/lib/bindings';
 import { err, job } from '../src/test/jobFixtures';
 import { resolved } from '../src/test/fixtures';
-import { errorCopy, t } from './copy';
+import { errorCopy, helpLinkLabel, t } from './copy';
 import { expect, test } from './fixtures';
 
 const A1 = '000000000000000000000000000000a1';
@@ -56,6 +56,9 @@ test('남의 영상은 카드에서 막히고, 본인 영상은 받는다', asyn
   await download.click({ force: true });
   expect(await app.cmds()).not.toContain('enqueue');
   await app.axe('남의 영상 카드');
+  // L2 도움말 링크: 웹 도움말의 그 주제(`/help#editors`)를 연다(app.md 구현 중 변경 83)
+  await card.getByRole('button', { name: helpLinkLabel('editors') }).click();
+  await expect.poll(() => app.args('open_web_page')).toEqual([{ page: 'help', anchor: 'editors' }]);
 
   await page.getByLabel(t('url.label')).fill(own.url);
   await page.getByRole('button', { name: t('common.load'), exact: true }).click();

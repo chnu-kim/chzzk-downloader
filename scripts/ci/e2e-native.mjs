@@ -3,6 +3,8 @@
 // (Linux: WebKitWebDriver, Windows: msedgedriver)로 띄워 로그인과 받기 흐름을 끝까지 돌린다:
 //   [치지직으로 로그인] → 대기 화면 → 홈(브라우저는 열지 않는다: 스텁의 303 → `E2eAuthIo`가 앱 수신기에 GET → redeem 1번)
 //   → 입력줄에 본인 영상 주소 → [불러오기] → 카드의 [다운로드] → 목록 항목이 "완료"
+//   → 맡은 채널 영상 주소(Worker 스텁이 로그인 묶음·/api/me의 delegatedChannels로 그 채널을 맡겼다) → 카드 메타에 "맡은 채널"
+//     → [다운로드] → 목록 항목 둘이 모두 "완료"(편집자 위임 ①, app.md 구현 중 변경 83)
 //   → 남의 영상 주소 → 카드가 "내 채널의 영상만 받을 수 있어요"로 막히고 [다운로드]가 꺼짐
 //   → WebDriver execute/async로 enqueue를 직접 불러(웹뷰의 channelId를 본인 채널로 속여) 셸이 notOwnContent로 거부함(A5).
 // 앱은 CHZZK_E2E_API_BASE로 로컬 fixture 서버(e2e-fixture-server.mjs, testdata/만 서빙)에, CHZZK_E2E_WORKER_BASE로 Worker 스텁에
@@ -10,8 +12,9 @@
 //
 //   node scripts/ci/e2e-native.mjs [--exe <경로>]   # 기본 <target>/debug/chzzk-app[.exe] (gate가 먼저 빌드한다)
 //
-// 판정(결정적): 결과 폴더에 .mp4가 정확히 하나(남의 영상이 받히지 않았음도 증명한다), .part 없음, 그 sha256이 init‖seg0‖seg1과
-// 같음, fixture 서버가 받은 요청이 모두 200이고 info·남의 영상 info·master·media·init·조각 둘을 모두 받음, Worker 스텁이 start 201·
+// 판정(결정적): 결과 폴더에 .mp4가 정확히 둘(본인 채널 이름·맡은 채널 이름이 든 것 하나씩, 남의 채널 이름이 든 것은 없음:
+// 남의 영상이 받히지 않았음도 증명한다), .part 없음, 둘 다 sha256이 init‖seg0‖seg1과 같음, fixture 서버가 받은 요청이 모두 200이고
+// info·남의 영상 info·맡은 채널 영상 info·master·media·init·조각 둘을 모두 받음, Worker 스텁이 start 201·
 // 확인 페이지 303·redeem 200을 각각 정확히 1번 받고 오류 응답이 없음. 화면 글자는 기다림의 신호로만 쓴다(판정은 파일이다).
 // 실패하면 target/ci/e2e-native/에 스크린샷·페이지 HTML·드라이버 로그·앱 로그를 남긴다(합성 fixture라 공개해도 된다).
 // macOS는 WebDriver가 없다(tauri-driver 미지원): 2로 끝난다. 종료 코드: 통과 0, 실패 1, 환경·사용법 2.
@@ -24,12 +27,17 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
+  DELEGATED,
+  DELEGATED_CHANNEL_NAME,
+  DELEGATED_URL,
+  DELEGATED_VIDEO_NO,
   HLS_URL,
   HLS_VIDEO_NO,
   OTHER_CHANNEL_NAME,
   OTHER_URL,
   OTHER_VIDEO_NO,
   OWN_CHANNEL_ID,
+  OWN_CHANNEL_NAME,
   STUB_HANDLE,
   expectedOutput,
   start,
@@ -132,21 +140,32 @@ export async function until(what, cond, ms) {
 // 안전장치(SHOW_DEADLINE_MS) 뒤엔 어쨌든 보이므로 STEP_MS 안엔 'visible'이 된다.
 export const isWindowVisible = (state) => state === 'visible';
 
-// 판정: 결과 폴더와 서버 요청 기록 → 문제 목록(빈 배열이면 통과)
-export function judge({ files, sha256, bytes }, serverLog, expected) {
+// 판정: 결과 폴더와 서버 요청 기록 → 문제 목록(빈 배열이면 통과).
+// files는 결과 폴더의 모든 파일(상대 경로), outputs는 .mp4마다 { sha256, bytes }다
+export function judge({ files, outputs }, serverLog, expected) {
   const bad = [];
   const mp4 = files.filter((f) => f.endsWith('.mp4'));
   const partial = files.filter((f) => /\.part$|\.part\.json$/.test(f));
-  if (mp4.length !== 1) bad.push(`결과 .mp4가 ${mp4.length}개다(정확히 1개여야 한다): ${files.join(', ') || '(없음)'}`);
+  if (mp4.length !== 2) bad.push(`결과 .mp4가 ${mp4.length}개다(본인·맡은 채널 하나씩, 정확히 2개여야 한다): ${files.join(', ') || '(없음)'}`);
+  for (const [who, name] of [['본인 채널', OWN_CHANNEL_NAME], ['맡은 채널', DELEGATED_CHANNEL_NAME]]) {
+    const n = mp4.filter((f) => f.includes(name)).length;
+    if (n !== 1) bad.push(`${who}(${name}) 이름이 든 .mp4가 ${n}개다(정확히 1개여야 한다)`);
+  }
+  const other = mp4.filter((f) => f.includes(OTHER_CHANNEL_NAME));
+  if (other.length) bad.push(`남의 채널 영상이 받혔다: ${other.join(', ')}`);
   if (partial.length) bad.push(`남은 중간 파일: ${partial.join(', ')}`);
-  if (mp4.length === 1 && (sha256 !== expected.sha256 || bytes !== expected.bytes)) {
-    bad.push(`결과 파일이 init‖seg0‖seg1과 다르다(sha256 ${sha256} ${bytes}B ≠ ${expected.sha256} ${expected.bytes}B)`);
+  for (const f of mp4) {
+    const o = outputs?.[f];
+    if (!o || o.sha256 !== expected.sha256 || o.bytes !== expected.bytes) {
+      bad.push(`결과 파일 ${f}이(가) init‖seg0‖seg1과 다르다(sha256 ${o?.sha256 ?? '-'} ${o?.bytes ?? '-'}B ≠ ${expected.sha256} ${expected.bytes}B)`);
+    }
   }
   const not200 = serverLog.filter((l) => l.status !== 200);
   if (not200.length) bad.push(`fixture 서버가 200이 아닌 응답을 했다: ${not200.map((l) => `${l.method} ${l.path} ${l.status}`).join(', ')}`);
   const need = [
     ['info', (p) => p === `/service/v2/videos/${HLS_VIDEO_NO}`],
     ['other info', (p) => p === `/service/v2/videos/${OTHER_VIDEO_NO}`],
+    ['delegated info', (p) => p === `/service/v2/videos/${DELEGATED_VIDEO_NO}`],
     ['master', (p) => p.endsWith('/vod_playlist.m3u8')],
     ['media', (p) => p.endsWith('/vod_chunklist.m3u8')],
     ['init', (p) => /_0_0_0\.m4s$/.test(p)],
@@ -283,7 +302,8 @@ export async function run(exe) {
   rmSync(join(ROOT, OUT_DIR), { recursive: true, force: true });
   const e2eDir = mkdtempSync(join(tmpdir(), 'chzzk-e2e-'));
   const server = await start();
-  const worker = await startWorker();
+  // 맡은 채널 하나를 맡긴 계정(로그인 묶음·/api/me의 delegatedChannels). 실제 로그인 경로 그대로라 앱에 E2E 전용 seam이 없다
+  const worker = await startWorker({ delegated: [DELEGATED] });
   const env = {
     ...process.env,
     CHZZK_E2E_API_BASE: server.url,
@@ -387,6 +407,51 @@ export async function run(exe) {
     if (state.failed) throw new Error(`작업이 실패했다: ${state.text.replace(/\s+/g, ' ').slice(0, 400)}`);
     log(`목록 항목: ${state.text.replace(/\s+/g, ' ').slice(0, 200)}`);
 
+    // 맡은 채널 영상: 카드 메타에 "맡은 채널"이 붙고(셸 판정 delegated) 받을 수 있다
+    const inputD = await until('주소 입력줄(맡은 채널 영상)', () => wd.find(sid, 'css selector', '#url-input'), STEP_MS);
+    await wd.clear(sid, inputD);
+    await wd.type(sid, inputD, DELEGATED_URL);
+    await wd.click(sid, await wd.find(sid, 'css selector', 'form.urlbar button[type=submit]'));
+    log('맡은 채널 영상을 불러왔다');
+    // 본인 영상 카드가 남아 있는 동안 [다운로드]를 누르지 않게, 카드가 맡은 채널 영상으로 바뀐 뒤에 버튼을 찾는다
+    await until(
+      '맡은 채널 영상 카드',
+      () =>
+        wd.exec(
+          sid,
+          "const c = document.querySelector('section.video-card'); return !!c && c.innerText.includes(arguments[0]) && c.innerText.includes(arguments[1])",
+          [DELEGATED_CHANNEL_NAME, '맡은 채널'],
+        ),
+      STEP_MS,
+    );
+    const btnD = await until(
+      '맡은 채널 영상 카드의 다운로드 버튼',
+      async () => {
+        const el = await wd.find(sid, 'xpath', DL);
+        const enabled = !(await wd.exec(sid, IS_OFF, [elementRef(el)]));
+        return enabled ? el : null;
+      },
+      STEP_MS,
+    );
+    await wd.click(sid, btnD);
+    log('맡은 채널 영상의 다운로드를 눌렀다');
+    // 목록 항목 둘이 모두 완료(하나라도 실패면 바로 멈춘다). 목록 순서는 보지 않는다
+    const both = await until(
+      '맡은 채널 영상 다운로드 완료',
+      async () => {
+        const s = await wd.exec(
+          sid,
+          "return Array.from(document.querySelectorAll('article[data-job-id]'), (a) => ({ failed: a.classList.contains('failed'), text: a.innerText }))",
+        );
+        const failed = (s ?? []).find((a) => a.failed);
+        if (failed) return { failed };
+        return s?.length === 2 && s.every((a) => /완료/.test(a.text)) ? { items: s } : null;
+      },
+      DONE_MS,
+    );
+    if (both.failed) throw new Error(`작업이 실패했다: ${both.failed.text.replace(/\s+/g, ' ').slice(0, 400)}`);
+    log('맡은 채널 영상까지 목록 항목 둘이 완료');
+
     // 남의 영상, 화면: 카드가 막히고 [다운로드]가 꺼진다
     const input2 = await until('주소 입력줄(남의 영상)', () => wd.find(sid, 'css selector', '#url-input'), STEP_MS);
     await wd.clear(sid, input2);
@@ -437,20 +502,17 @@ export async function run(exe) {
     const dl = join(e2eDir, 'data', 'downloads');
     const files = listFiles(dl);
     const mp4 = files.filter((f) => f.endsWith('.mp4'));
-    let sha256 = null;
-    let bytes = null;
-    if (mp4.length === 1) {
-      const buf = readFileSync(join(dl, mp4[0]));
-      sha256 = createHash('sha256').update(buf).digest('hex');
-      bytes = buf.length;
+    const outputs = {};
+    for (const f of mp4) {
+      const buf = readFileSync(join(dl, f));
+      outputs[f] = { sha256: createHash('sha256').update(buf).digest('hex'), bytes: buf.length };
     }
-    const bad = [...judge({ files, sha256, bytes }, server.log, expectedOutput()), ...judgeWorker(worker.log)];
+    const bad = [...judge({ files, outputs }, server.log, expectedOutput()), ...judgeWorker(worker.log)];
     const result = {
       ok: bad.length === 0,
       os: osKey(),
       files,
-      sha256,
-      bytes,
+      outputs,
       expected: expectedOutput(),
       requests: server.log,
       workerRequests: worker.log,
@@ -459,7 +521,7 @@ export async function run(exe) {
     mkdirSync(join(ROOT, OUT_DIR), { recursive: true });
     writeFileSync(join(ROOT, OUT_DIR, 'result.json'), JSON.stringify(result, null, 2) + '\n');
     for (const b of bad) console.error(`::error::e2e-native: ${b}`);
-    if (!bad.length) log(`통과: ${mp4[0]} sha256 ${sha256} (${bytes}B), 요청 ${server.log.length}개 모두 200, Worker 스텁 요청 ${worker.log.length}개`);
+    if (!bad.length) log(`통과: ${mp4.join(', ')} sha256 ${expectedOutput().sha256} (${expectedOutput().bytes}B), 요청 ${server.log.length}개 모두 200, Worker 스텁 요청 ${worker.log.length}개`);
     ok = bad.length === 0;
   } catch (e) {
     console.error(`::error::e2e-native: ${e.message}`);

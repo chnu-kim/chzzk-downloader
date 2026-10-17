@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use chzzk_core::chat::SubtitleFormat;
 use chzzk_core::{
     Chzzk, ClientConfig, ContentRef, PlaybackKind, is_own_channel, parse_content_url,
 };
@@ -20,7 +21,7 @@ use crate::auth::{
 };
 use crate::dto::{
     AppFolder, AppInfo, AuthStatusDto, EditorsDto, EnqueueRequest, Features, InviteDto, JobDto,
-    OutputCheck, ResolvedDto, SettingsDto, SettingsPatch, TimeRangeDto, UpdateCheckDto,
+    OnExisting, OutputCheck, ResolvedDto, SettingsDto, SettingsPatch, TimeRangeDto, UpdateCheckDto,
     UpdateInfoDto, UpdateInstallDto, WebPage,
 };
 use crate::error::{AppError, ErrorCode};
@@ -82,6 +83,14 @@ impl std::fmt::Debug for App {
             .field("auth", &self.auth.is_some())
             .finish_non_exhaustive()
     }
+}
+
+/// `check_output`의 채팅 인자(chat.md §4.4). 둘 다 없으면 채팅 없이 판정한다(옛 호출과 같다).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ChatCheck {
+    pub save_chat: bool,
+    /// 없으면 지금 설정 `chatSubtitle`
+    pub subtitle: Option<SubtitleFormat>,
 }
 
 /// `reveal_output`이 보여 줄 것.
@@ -224,6 +233,7 @@ impl App {
     }
 
     /// `check_output`. 폴더가 없으면 `enqueue`와 같은 폴더(설정 폴더, 없으면 기본 폴더)를 쓴다.
+    #[allow(clippy::too_many_arguments)] // command 인자를 그대로 펼쳐 받는다(`commands::check_output`)
     pub fn check_output(
         &self,
         folder: Option<&str>,
@@ -232,8 +242,13 @@ impl App {
         quality_id: &str,
         kind: PlaybackKind,
         range: Option<TimeRangeDto>,
+        chat: ChatCheck,
     ) -> Result<OutputCheck, AppError> {
         let defaults = self.settings.job_defaults();
+        // 채팅을 함께 받으면 그 자막 형식(주지 않으면 지금 설정)의 채팅 파일도 충돌 판정에 넣는다(chat.md §4.4)
+        let chat = chat
+            .save_chat
+            .then(|| chat.subtitle.unwrap_or(defaults.chat_subtitle));
         self.manager.check_output(
             folder,
             &defaults.download_folder,
@@ -242,7 +257,58 @@ impl App {
             quality_id,
             kind,
             range,
+            chat,
         )
+    }
+
+    /// `fetch_chat`(완료 행 [⋯] › 채팅 받기·다시 받기·이어받기·덮어쓰고 받기, chat.md §4.5).
+    ///
+    /// `resume_job`과 같은 순서다(worker.md 구현 중 변경 86 (가)): 로그인을 쓰지 않는 빌드는 판정 없이, 쓰면 매니저 잠금 밖에서
+    /// enqueue와 같은 `OwnershipGate::admit`으로 **작업 컨텐츠**를 판정하고(기록의 `channelId`는 믿지 않는다), 잠금 안에서 같은
+    /// 컨텐츠인지만 다시 본 뒤 통과한 채널 ID를 기록에 고쳐 쓴다. 거부되면 채팅 상태·`.part`는 그대로다.
+    pub async fn fetch_chat(
+        &self,
+        id: JobId,
+        restart: bool,
+        on_existing: OnExisting,
+    ) -> Result<(), AppError> {
+        let setting = self.settings.job_defaults().chat_subtitle;
+        if !self.gate.is_enabled() {
+            return self
+                .manager
+                .start_chat(id, restart, on_existing, setting, |_| Ok(None));
+        }
+        let Some(content) = self.manager.chat_content(id)? else {
+            // 지우는 중: 아무것도 하지 않는다
+            return Ok(());
+        };
+        let owner = match self
+            .gate
+            .admit_checked(
+                &content,
+                || self.settings.content_channel(&content),
+                || self.recheck(),
+            )
+            .await
+        {
+            Ok(o) => o,
+            Err(e) => {
+                if e.code == ErrorCode::NotOwnContent
+                    && let Some(real) = self.gate.known_channel(&content)
+                {
+                    self.manager.note_channel(id, &content, real);
+                }
+                return Err(e);
+            }
+        };
+        self.manager
+            .start_chat(id, restart, on_existing, setting, |c| {
+                if *c == content {
+                    Ok(Some(owner))
+                } else {
+                    Err(AppError::ownership_unknown())
+                }
+            })
     }
 
     /// `enqueue`: 게이트 → 매니저 → 최근 VOD(§6.2).

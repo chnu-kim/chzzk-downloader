@@ -8,6 +8,7 @@ pub mod app;
 pub mod auth;
 pub mod backend;
 pub mod bindings;
+pub mod chat;
 pub mod consts;
 pub mod dock;
 pub mod dto;

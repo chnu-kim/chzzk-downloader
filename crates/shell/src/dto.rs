@@ -21,7 +21,9 @@ use ts_rs::TS;
 use crate::auth::{
     AuthPhase, AuthReason, AuthStatus, DelegatedChannel, EditorStatus, InviteResponse, MeResponse,
 };
+use crate::chat::{ChatStateDto, SubtitleFormatTs};
 use crate::error::AppError;
+use chzzk_core::chat::SubtitleFormat;
 
 // ---------------------------------------------------------------------------
 // 코어 타입의 TS 모양
@@ -319,6 +321,11 @@ pub struct SettingsDto {
     pub theme: Theme,
     /// 받는 동안 잠들지 않게 한다(기본 켜짐, platform §10)
     pub keep_awake: bool,
+    /// 영상과 함께 채팅도 받기(기본 꺼짐, 마지막 선택, chat.md §4.4)
+    pub save_chat: bool,
+    /// 채팅 자막 형식(기본 [잠정] U2 결정 대기 `ass`)
+    #[ts(as = "SubtitleFormatTs")]
+    pub chat_subtitle: SubtitleFormat,
 }
 
 /// 최근 VOD 한 항목.
@@ -377,6 +384,12 @@ pub struct SettingsPatch {
     #[serde(default)]
     #[ts(optional)]
     pub keep_awake: Option<bool>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub save_chat: Option<bool>,
+    #[serde(default)]
+    #[ts(as = "Option<SubtitleFormatTs>", optional)]
+    pub chat_subtitle: Option<SubtitleFormat>,
 }
 
 /// 키 없음·`null`·값을 구분하는 패치 필드. `#[serde(default)]`와 함께 써야 키 없음이 `Keep`이 된다.
@@ -569,6 +582,8 @@ pub struct OutputCheck {
     pub partial: Option<PartialInfo>,
     /// 같은 경로의 활성 작업
     pub duplicate_job_id: Option<JobId>,
+    /// 실제로 덮어쓸 파일 이름 전부(채팅을 함께 받으면 자막 → 기록 → 영상 순, chat.md §4.4). 비면 겹치는 파일이 없다
+    pub conflict_names: Vec<String>,
 }
 
 /// 받다 만 `.part` 정보.
@@ -669,6 +684,11 @@ pub struct EnqueueRequest {
     #[serde(default)]
     #[ts(optional = nullable)]
     pub range: Option<TimeRangeDto>,
+    /// 영상이 끝난 뒤 채팅도 받는다(chat.md §4.4). 영상(Video) 전체 받기에만 쓸 수 있고, 클립·생방송·구간이면 `invalidInput`.
+    /// 자막 형식은 받기 시점의 설정 `chatSubtitle`이고 `onExisting`은 영상과 채팅에 함께 적용한다
+    #[serde(default)]
+    #[ts(as = "Option<bool>", optional)]
+    pub save_chat: bool,
 }
 
 /// 완성 파일이 이미 있을 때.
@@ -756,6 +776,8 @@ pub struct JobDto {
     pub range: Option<TimeRangeDto>,
     /// 끝난 생방송 녹화의 이유와 놓친 조각 수(completed 생방송만, 옛 기록·VOD는 null)
     pub live_end: Option<LiveEndDto>,
+    /// 채팅 함께 받기의 하위 상태(chat.md §4.1). 채팅을 고르지 않은 작업·생방송·클립은 null
+    pub chat: Option<ChatStateDto>,
 }
 
 /// 웹뷰 엔진 기능 검사(platform §5, `frontend_ready`의 인자). 하나라도 false면 프런트가 경고 배너를 띄운다.
@@ -863,6 +885,11 @@ pub enum JobEvent {
     },
     Removed {
         id: JobId,
+    },
+    /// 채팅 하위 상태만 바뀌었다(chat.md §4.2). 영상 상태·진행률은 그대로다
+    Chat {
+        id: JobId,
+        chat: ChatStateDto,
     },
 }
 

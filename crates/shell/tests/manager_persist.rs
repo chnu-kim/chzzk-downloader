@@ -97,6 +97,7 @@ async fn blocked_jobs_json_write_does_not_hold_state_lock() {
             let defaults = JobDefaults {
                 download_folder: downloads,
                 segment_concurrency: 4,
+                chat_subtitle: chzzk_core::chat::SubtitleFormat::Ass,
             };
             let id = mgr.enqueue(request("a"), &defaults).unwrap().id;
             wait_std("진행률", || {
@@ -223,6 +224,7 @@ fn v070_live_record(out: &std::path::Path, status: JobStatus) -> chzzk_shell::jo
         partial_bytes: None,
         missing: false,
         live_end: None,
+        chat: None,
     }
 }
 
@@ -286,6 +288,7 @@ async fn v070_failed_recording_upgrade() {
     let defaults = JobDefaults {
         download_folder: dir.path().join("downloads"),
         segment_concurrency: 4,
+        chat_subtitle: chzzk_core::chat::SubtitleFormat::Ass,
     };
     let e = mgr.enqueue(live_request("a"), &defaults).unwrap_err();
     assert_eq!(e.code, chzzk_shell::ErrorCode::DuplicateOutput);
@@ -356,6 +359,7 @@ async fn v070_two_failed_records_do_not_block_each_other() {
         let defaults = JobDefaults {
             download_folder: dir.path().join("downloads"),
             segment_concurrency: 4,
+            chat_subtitle: chzzk_core::chat::SubtitleFormat::Ass,
         };
         let e = mgr.enqueue(live_request("a"), &defaults).unwrap_err();
         assert_eq!(e.code, chzzk_shell::ErrorCode::DuplicateOutput);
@@ -450,6 +454,7 @@ async fn v070_sibling_keeps_partial_while_sidecar_is_unreadable() {
     let defaults = JobDefaults {
         download_folder: dir.path().join("downloads"),
         segment_concurrency: 4,
+        chat_subtitle: chzzk_core::chat::SubtitleFormat::Ass,
     };
     let e = mgr.enqueue(live_request("a"), &defaults).unwrap_err();
     assert_eq!(e.code, chzzk_shell::ErrorCode::DuplicateOutput);
@@ -583,6 +588,7 @@ async fn live_does_not_start_until_owner_record_is_saved() {
     let defaults = JobDefaults {
         download_folder: dir.path().join("downloads"),
         segment_concurrency: 4,
+        chat_subtitle: chzzk_core::chat::SubtitleFormat::Ass,
     };
     let out = dir.path().join("downloads").join("a.mp4");
     fake.script_for(&out, Script::new().wait_cancel());
@@ -618,6 +624,7 @@ async fn vod_starts_even_if_jobs_json_save_fails() {
     let defaults = JobDefaults {
         download_folder: dir.path().join("downloads"),
         segment_concurrency: 4,
+        chat_subtitle: chzzk_core::chat::SubtitleFormat::Ass,
     };
     fake.script_for(
         dir.path().join("downloads").join("a.mp4"),
@@ -652,6 +659,7 @@ async fn live_starts_after_owner_record_write_lands() {
     let defaults = JobDefaults {
         download_folder: dir.path().join("downloads"),
         segment_concurrency: 4,
+        chat_subtitle: chzzk_core::chat::SubtitleFormat::Ass,
     };
     mgr.enqueue(common::harness::live_request("a"), &defaults)
         .unwrap();

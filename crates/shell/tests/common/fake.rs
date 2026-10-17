@@ -16,8 +16,12 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use chzzk_core::chat::collect::RECORD_EXT;
+use chzzk_core::chat::part::{ChatSidecar, SIDECAR_VERSION};
+use chzzk_core::chat::{ChatEnd, ChatOutcome, ChatProgress, ChatRequest};
 use chzzk_core::download::part::{HlsState, Sidecar, part_path, sidecar_path};
 use chzzk_core::fsutil::atomic_write;
+use chzzk_core::naming::sibling_path;
 use chzzk_core::{
     CancellationToken, ContentRef, DownloadOutcome, DownloadRequest, Error, Phase, Progress,
     Resolved,
@@ -153,12 +157,94 @@ pub fn progress(phase: Phase, bytes: u64, total: Option<u64>) -> Progress {
     }
 }
 
+/// 채팅 대본 한 단계.
+pub enum ChatStep {
+    /// 진행 콜백을 부른다(커서 ms, 메시지 수)
+    Progress { cursor_ms: u64, messages: u64 },
+    /// 테스트가 `notify_one`할 때까지 기다린다(취소되면 `Cancelled`)
+    Hold(Arc<Notify>),
+    /// 취소될 때까지 기다린 뒤 `Cancelled`
+    WaitCancel,
+    /// 코어처럼 받다 만 기록(`.chat.jsonl.part`, `lines`줄)과 이 영상의 sidecar를 쓴다
+    Part { lines: u64 },
+}
+
+/// `collect_chat` 한 번의 대본. 결과를 정하지 않으면 `Completed`(받다 만 파일을 지우고 기록을 최종 이름으로 쓴다).
+#[derive(Default)]
+pub struct ChatScript {
+    steps: Vec<ChatStep>,
+    end: Option<Result<ChatOutcome, Error>>,
+}
+
+impl ChatScript {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn progress(mut self, cursor_ms: u64, messages: u64) -> Self {
+        self.steps.push(ChatStep::Progress {
+            cursor_ms,
+            messages,
+        });
+        self
+    }
+
+    pub fn hold(mut self, n: Arc<Notify>) -> Self {
+        self.steps.push(ChatStep::Hold(n));
+        self
+    }
+
+    pub fn wait_cancel(mut self) -> Self {
+        self.steps.push(ChatStep::WaitCancel);
+        self
+    }
+
+    pub fn part(mut self, lines: u64) -> Self {
+        self.steps.push(ChatStep::Part { lines });
+        self
+    }
+
+    pub fn ends(mut self, r: Result<ChatOutcome, Error>) -> Self {
+        self.end = Some(r);
+        self
+    }
+
+    pub fn fails(self, e: Error) -> Self {
+        self.ends(Err(e))
+    }
+}
+
+/// 코어 `ChatPart`처럼 받다 만 기록과 sidecar를 쓴다(`lines`줄, 정상 끝 없음).
+pub fn write_chat_part(video: &Path, video_no: u64, lines: u64) {
+    let record = sibling_path(video, RECORD_EXT);
+    if let Some(dir) = record.parent() {
+        std::fs::create_dir_all(dir).unwrap();
+    }
+    let body: Vec<u8> = (0..lines).flat_map(|_| b"{}\n".to_vec()).collect();
+    std::fs::write(part_path(&record), &body).unwrap();
+    let sc = ChatSidecar {
+        v: SIDECAR_VERSION,
+        video_no,
+        cursor_ms: lines * 1000,
+        boundary_ms: None,
+        boundary: Vec::new(),
+        lines,
+        last_offset_ms: None,
+        committed_len: body.len() as u64,
+        end: None,
+        moved: Vec::new(),
+    };
+    atomic_write(&sidecar_path(&record), &serde_json::to_vec(&sc).unwrap()).unwrap();
+}
+
 /// 가짜가 받은 호출.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Call {
     Resolve(ContentRef),
     /// 출력 경로
     Download(PathBuf),
+    /// 채팅(영상 출력 경로)
+    Chat(PathBuf),
 }
 
 #[derive(Default)]
@@ -170,6 +256,10 @@ pub struct FakeBackend {
     requests: Mutex<Vec<DownloadRequest>>,
     active: AtomicUsize,
     max_active: AtomicUsize,
+    chats: Mutex<HashMap<PathBuf, VecDeque<ChatScript>>>,
+    chat_requests: Mutex<Vec<ChatRequest>>,
+    chat_active: AtomicUsize,
+    chat_max_active: AtomicUsize,
 }
 
 impl FakeBackend {
@@ -206,7 +296,7 @@ impl FakeBackend {
             .into_iter()
             .filter_map(|c| match c {
                 Call::Download(p) => Some(p),
-                Call::Resolve(_) => None,
+                Call::Resolve(_) | Call::Chat(_) => None,
             })
             .collect()
     }
@@ -214,6 +304,26 @@ impl FakeBackend {
     /// `download`가 받은 요청 전체(호출 순서). `DownloadRequest`는 `PartialEq`가 아니라 `Call`과 따로 둔다.
     pub fn download_requests(&self) -> Vec<DownloadRequest> {
         self.requests.lock().unwrap().clone()
+    }
+
+    /// 영상 `video`(출력 경로)의 다음 `collect_chat` 대본. 없으면 바로 `Completed`.
+    pub fn chat_for(&self, video: impl AsRef<Path>, s: ChatScript) {
+        self.chats
+            .lock()
+            .unwrap()
+            .entry(video.as_ref().to_path_buf())
+            .or_default()
+            .push_back(s);
+    }
+
+    /// `collect_chat`이 받은 요청 전체(호출 순서).
+    pub fn chat_requests(&self) -> Vec<ChatRequest> {
+        self.chat_requests.lock().unwrap().clone()
+    }
+
+    /// 지금까지 동시에 실행된 `collect_chat` 수의 최댓값.
+    pub fn chat_max_active(&self) -> usize {
+        self.chat_max_active.load(Ordering::SeqCst)
     }
 
     /// 지금 실행 중인 `download` 수.
@@ -350,5 +460,77 @@ impl Backend for FakeBackend {
             resumed_from: 0,
             live: None,
         }))
+    }
+
+    async fn collect_chat(
+        &self,
+        req: ChatRequest,
+        cancel: CancellationToken,
+        on_progress: &(dyn Fn(ChatProgress) + Send + Sync),
+    ) -> Result<ChatOutcome, Error> {
+        self.calls
+            .lock()
+            .unwrap()
+            .push(Call::Chat(req.output.clone()));
+        self.chat_requests.lock().unwrap().push(req.clone());
+        let now = self.chat_active.fetch_add(1, Ordering::SeqCst) + 1;
+        self.chat_max_active.fetch_max(now, Ordering::SeqCst);
+        let _guard = ActiveGuard(&self.chat_active);
+        let script = self
+            .chats
+            .lock()
+            .unwrap()
+            .get_mut(&req.output)
+            .and_then(VecDeque::pop_front)
+            .unwrap_or_default();
+        if cancel.is_cancelled() {
+            return Err(Error::Cancelled);
+        }
+        let mut messages = 0;
+        for step in script.steps {
+            match step {
+                ChatStep::Progress {
+                    cursor_ms,
+                    messages: m,
+                } => {
+                    messages = m;
+                    on_progress(ChatProgress {
+                        cursor_ms,
+                        duration_ms: req.duration_ms,
+                        messages: m,
+                    });
+                }
+                ChatStep::Hold(n) => {
+                    tokio::select! {
+                        _ = n.notified() => {}
+                        _ = cancel.cancelled() => return Err(Error::Cancelled),
+                    }
+                }
+                ChatStep::WaitCancel => {
+                    cancel.cancelled().await;
+                    return Err(Error::Cancelled);
+                }
+                ChatStep::Part { lines } => write_chat_part(&req.output, req.video_no, lines),
+            }
+        }
+        match script.end {
+            Some(r) => r,
+            None => {
+                // 코어의 마무리: 받다 만 파일을 지우고 최종 기록을 쓴다
+                let record = sibling_path(&req.output, RECORD_EXT);
+                let _ = std::fs::remove_file(part_path(&record));
+                let _ = std::fs::remove_file(sidecar_path(&record));
+                if let Some(dir) = record.parent() {
+                    std::fs::create_dir_all(dir).unwrap();
+                }
+                std::fs::write(&record, b"").unwrap();
+                Ok(ChatOutcome::Completed {
+                    messages,
+                    last_offset_ms: None,
+                    end: ChatEnd::NoCursor,
+                    subtitle_failed: false,
+                })
+            }
+        }
     }
 }

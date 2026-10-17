@@ -109,6 +109,7 @@ impl Harness {
         JobDefaults {
             download_folder: self.downloads(),
             segment_concurrency: 4,
+            chat_subtitle: chzzk_core::chat::SubtitleFormat::Ass,
         }
     }
 
@@ -201,6 +202,7 @@ pub fn request(name: &str) -> EnqueueRequest {
         restart: false,
         content_date: None,
         range: None,
+        save_chat: false,
     }
 }
 

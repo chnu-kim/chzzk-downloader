@@ -19,6 +19,7 @@ use chzzk_core::fsutil::{atomic_write, map_io_error, rename_with_retry};
 use chzzk_core::{ContentRef, DownloadRequest, Error, PlaybackKind, TimeRange};
 use serde::{Deserialize, Serialize};
 
+use crate::chat::{ChatPhase, ChatState};
 use crate::dto::{
     ContentKindDto, JobDto, JobId, JobStatus, LiveEndDto, OnExisting, ProgressDto, TimeRangeDto,
 };
@@ -80,6 +81,14 @@ pub struct JobRecord {
     pub live_end: Option<LiveEndDto>,
     #[serde(default)]
     pub last_error: Option<AppError>,
+    /// 채팅 함께 받기의 하위 상태(chat.md §4.1). 채팅을 고르지 않았거나 옛 레코드면 `None`. 생방송·클립은 늘 `None`.
+    /// 모르는 모양(뒤 버전이 더한 단계)은 버리고 `None`으로 읽는다: jobs.json 전체를 못 읽게 되면 안 된다
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "lenient_chat"
+    )]
+    pub chat: Option<ChatState>,
     /// 다음 시작 때 `download()` 전에 `discard_partial(output)`한다("처음부터"). 시작하기 전에 앱이 꺼져도
     /// 남아 있어야 옛 `.part`를 이어받지 않는다. 지운 뒤 false로 저장한다.
     #[serde(default)]
@@ -96,6 +105,12 @@ pub struct JobRecord {
 fn lenient_live_end<'de, D: serde::Deserializer<'de>>(
     d: D,
 ) -> Result<Option<LiveEndDto>, D::Error> {
+    let v = Option::<serde_json::Value>::deserialize(d)?;
+    Ok(v.and_then(|v| serde_json::from_value(v).ok()))
+}
+
+/// `chat`을 읽되 모르는 모양이면 `None`으로 둔다(`lenient_live_end`와 같은 이유).
+fn lenient_chat<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<ChatState>, D::Error> {
     let v = Option::<serde_json::Value>::deserialize(d)?;
     Ok(v.and_then(|v| serde_json::from_value(v).ok()))
 }
@@ -150,6 +165,7 @@ impl JobRecord {
             stopped_at: self.stopped_at,
             range: self.range.map(TimeRangeDto::from),
             live_end: self.live_end,
+            chat: self.chat.as_ref().map(ChatState::to_dto),
         }
     }
 
@@ -352,7 +368,38 @@ pub fn reconcile(file: &mut JobsFile) {
             JobStatus::Completed => j.missing = !j.output.exists(),
             _ => {}
         }
+        reconcile_chat(j);
     }
+}
+
+/// 채팅 하위 상태의 reconcile(chat.md §4.2 "앱을 다시 열 때").
+///
+/// | 저장된 채팅 | 영상 | 결과 |
+/// |---|---|---|
+/// | `running` | - | `interrupted` |
+/// | `waiting` | 완료 | `interrupted`(채팅 차례를 기다리다 꺼짐) |
+/// | `waiting` | 완료가 아님 | 그대로(영상을 이어받아 완료하면 줄 선다) |
+/// | 그 밖 | - | 그대로 |
+///
+/// 받다 만 채팅 바이트(`partial_bytes`)는 늘 실제 파일로 다시 센다(`chat_partial_bytes`). 영상이 아닌 기록의 채팅은 버린다.
+fn reconcile_chat(j: &mut JobRecord) {
+    let ContentRef::Video { video_no } = j.content else {
+        j.chat = None;
+        return;
+    };
+    let completed = j.status == JobStatus::Completed;
+    let Some(c) = j.chat.as_mut() else {
+        return;
+    };
+    match c.phase {
+        ChatPhase::Running => c.phase = ChatPhase::Interrupted,
+        ChatPhase::Waiting if completed => c.phase = ChatPhase::Interrupted,
+        _ => {}
+    }
+    c.partial_bytes = match c.phase {
+        ChatPhase::Completed => None,
+        _ => chzzk_core::chat::chat_partial_bytes(&j.output, video_no),
+    };
 }
 
 /// 이 작업이 이어받을 수 있는 `.part`의 바이트(sidecar `committed_len`).

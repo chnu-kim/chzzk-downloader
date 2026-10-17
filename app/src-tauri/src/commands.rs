@@ -6,12 +6,14 @@
 
 use std::sync::atomic::Ordering;
 
+use chzzk_core::chat::SubtitleFormat;
 use chzzk_core::{ContentRef, PlaybackKind};
-use chzzk_shell::app::{Reveal, chzzk_link};
+use chzzk_shell::app::{ChatCheck, Reveal, chzzk_link};
+use chzzk_shell::chat::ChatOutputCheck;
 use chzzk_shell::dto::{
     AppFolder, AppInfo, AuthStatusDto, EditorsDto, EngineProbe, EnqueueRequest, InviteDto, JobDto,
-    JobEvent, LegacyImportDto, OutputCheck, ResolvedDto, SettingsDto, SettingsPatch, TimeRangeDto,
-    UpdateCheckDto, UpdateInfoDto, UpdateInstallDto, WebPage,
+    JobEvent, LegacyImportDto, OnExisting, OutputCheck, ResolvedDto, SettingsDto, SettingsPatch,
+    TimeRangeDto, UpdateCheckDto, UpdateInfoDto, UpdateInstallDto, WebPage,
 };
 use chzzk_shell::manager::QUIT_TIMEOUT;
 use chzzk_shell::{App, AppError, JobId};
@@ -105,7 +107,9 @@ pub async fn resolve(state: State<'_, App>, url: String) -> Res<ResolvedDto> {
     state.resolve(&url).await
 }
 
+/// `saveChat`·`chatSubtitle`은 없어도 된다(채팅 없이 판정, chat.md §4.4).
 #[tauri::command]
+#[allow(clippy::too_many_arguments)] // command 인자는 IPC 키 그대로 펼친다
 pub async fn check_output(
     state: State<'_, App>,
     folder: Option<String>,
@@ -114,6 +118,8 @@ pub async fn check_output(
     quality_id: String,
     expected_kind: PlaybackKind,
     range: Option<TimeRangeDto>,
+    save_chat: Option<bool>,
+    chat_subtitle: Option<SubtitleFormat>,
 ) -> Res<OutputCheck> {
     state.check_output(
         folder.as_deref(),
@@ -122,6 +128,10 @@ pub async fn check_output(
         &quality_id,
         expected_kind,
         range,
+        ChatCheck {
+            save_chat: save_chat.unwrap_or(false),
+            subtitle: chat_subtitle,
+        },
     )
 }
 
@@ -162,6 +172,33 @@ pub async fn stop_job(state: State<'_, App>, id: JobId) -> Res<()> {
 #[tauri::command]
 pub async fn resume_job(state: State<'_, App>, id: JobId, restart: bool) -> Res<()> {
     state.resume_job(id, restart).await
+}
+
+/// 완료 작업의 채팅 파일 이름 충돌(자막 → 기록, chat.md §4.4).
+#[tauri::command]
+pub async fn check_chat_output(
+    state: State<'_, App>,
+    id: JobId,
+    subtitle: SubtitleFormat,
+) -> Res<ChatOutputCheck> {
+    state.manager.check_chat_output(id, subtitle)
+}
+
+/// 완료 작업의 채팅을 받거나 이어받는다(소유 판정은 `resume_job`과 같은 길, chat.md §4.5).
+#[tauri::command]
+pub async fn fetch_chat(
+    state: State<'_, App>,
+    id: JobId,
+    restart: bool,
+    on_existing: OnExisting,
+) -> Res<()> {
+    state.fetch_chat(id, restart, on_existing).await
+}
+
+/// 받는 중·대기 중인 채팅을 멈춘다.
+#[tauri::command]
+pub async fn pause_chat(state: State<'_, App>, id: JobId) -> Res<()> {
+    state.manager.pause_chat(id)
 }
 
 #[tauri::command]

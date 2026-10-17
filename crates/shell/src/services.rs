@@ -240,6 +240,7 @@ impl SettingsService {
         JobDefaults {
             download_folder: effective_folder(&s, &self.default_download),
             segment_concurrency: s.segment_concurrency,
+            chat_subtitle: s.chat_subtitle,
         }
     }
 
@@ -317,6 +318,12 @@ impl SettingsService {
             }
             if let Some(on) = patch.keep_awake {
                 s.keep_awake = on;
+            }
+            if let Some(on) = patch.save_chat {
+                s.save_chat = on;
+            }
+            if let Some(f) = patch.chat_subtitle {
+                s.chat_subtitle = f;
             }
         })?;
         if let Some(c) = new_client {
@@ -553,6 +560,8 @@ impl SettingsService {
             text_scale: s.text_scale,
             theme: s.theme,
             keep_awake: s.keep_awake,
+            save_chat: s.save_chat,
+            chat_subtitle: s.chat_subtitle,
         }
     }
 

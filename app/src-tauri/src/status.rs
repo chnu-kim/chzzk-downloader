@@ -9,6 +9,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use chzzk_shell::App;
+use chzzk_shell::chat::ChatPhase;
 use chzzk_shell::consts::DOCK_PROGRESS_MIN_INTERVAL_MS;
 use chzzk_shell::dock::{DockMeter, DockState, DockStatus};
 use chzzk_shell::dto::{JobDto, JobStatus, KeepAwakePayload};
@@ -103,10 +104,16 @@ pub struct Step {
     pub keep_awake: Option<bool>,
 }
 
-/// 잠자기 방지 대상 작업 수 = running + pausing. 연결 대기 중(phase만 다른 running)도 센다.
+/// 잠자기 방지 대상 작업 수 = running + pausing + 받는 중인 채팅(chat.md §4.2: 긴 VOD의 채팅을 받다 잠들지 않게).
+/// 연결 대기 중(phase만 다른 running)도 센다. 창 닫기 확인(`running_count`)은 채팅을 세지 않는다.
 pub fn busy_count(jobs: &[JobDto]) -> usize {
     jobs.iter()
-        .filter(|j| matches!(j.status, JobStatus::Running | JobStatus::Pausing))
+        .filter(|j| {
+            matches!(j.status, JobStatus::Running | JobStatus::Pausing)
+                || j.chat
+                    .as_ref()
+                    .is_some_and(|c| c.phase == ChatPhase::Running)
+        })
         .count()
 }
 
@@ -206,6 +213,7 @@ mod tests {
             stopped_at: None,
             range: None,
             live_end: None,
+            chat: None,
         }
     }
 
@@ -281,6 +289,28 @@ mod tests {
         ];
         assert_eq!(busy_count(&jobs), 2);
         assert_eq!(busy_count(&[]), 0);
+    }
+
+    /// 받는 중인 채팅도 잠자기 방지에 센다(대기·멈춤 채팅은 세지 않는다).
+    #[test]
+    fn busy_counts_running_chat() {
+        use chzzk_core::chat::SubtitleFormat;
+        use chzzk_shell::chat::{ChatPhase, ChatState};
+        use chzzk_shell::dto::OnExisting;
+        let with_chat = |id, phase| {
+            let mut j = job(id, JobStatus::Completed);
+            let mut c = ChatState::waiting(SubtitleFormat::Ass, OnExisting::Skip);
+            c.phase = phase;
+            j.chat = Some(c.to_dto());
+            j
+        };
+        let jobs = [
+            with_chat(1, ChatPhase::Running),
+            with_chat(2, ChatPhase::Waiting),
+            with_chat(3, ChatPhase::Paused),
+            job(4, JobStatus::Running),
+        ];
+        assert_eq!(busy_count(&jobs), 2);
     }
 
     // 호출은 바뀔 때만이다: 같은 스냅샷을 되풀이해도 두 번째부터는 아무것도 보내지 않는다(처음은 늘 Some)

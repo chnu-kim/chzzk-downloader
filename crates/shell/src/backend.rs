@@ -9,12 +9,13 @@
 
 use std::future::Future;
 
+use chzzk_core::chat::{ChatOutcome, ChatProgress, ChatRequest};
 use chzzk_core::{
     CancellationToken, Chzzk, ContentRef, DownloadOutcome, DownloadRequest, Error, Progress,
     Resolved,
 };
 
-/// 셸이 쓰는 코어 동작 두 가지.
+/// 셸이 쓰는 코어 동작 세 가지.
 pub trait Backend: Send + Sync + 'static {
     /// 컨텐츠 정보와 화질 목록을 가져온다.
     fn resolve(&self, c: &ContentRef) -> impl Future<Output = Result<Resolved, Error>> + Send;
@@ -26,6 +27,14 @@ pub trait Backend: Send + Sync + 'static {
         cancel: CancellationToken,
         on_progress: &(dyn Fn(Progress) + Send + Sync),
     ) -> impl Future<Output = Result<DownloadOutcome, Error>> + Send;
+
+    /// 영상 옆에 채팅 기록(과 자막)을 받는다(chat.md §3.2). `.part` 이어받기·재시도·요청 간격은 코어가 한다.
+    fn collect_chat(
+        &self,
+        req: ChatRequest,
+        cancel: CancellationToken,
+        on_progress: &(dyn Fn(ChatProgress) + Send + Sync),
+    ) -> impl Future<Output = Result<ChatOutcome, Error>> + Send;
 }
 
 impl Backend for Chzzk {
@@ -40,5 +49,14 @@ impl Backend for Chzzk {
         on_progress: &(dyn Fn(Progress) + Send + Sync),
     ) -> impl Future<Output = Result<DownloadOutcome, Error>> + Send {
         Chzzk::download(self, req, cancel, on_progress)
+    }
+
+    fn collect_chat(
+        &self,
+        req: ChatRequest,
+        cancel: CancellationToken,
+        on_progress: &(dyn Fn(ChatProgress) + Send + Sync),
+    ) -> impl Future<Output = Result<ChatOutcome, Error>> + Send {
+        Chzzk::collect_chat(self, req, cancel, on_progress)
     }
 }

@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 
 use ts_rs::{Config, TS};
 
+use crate::chat::ChatOutputCheck;
 use crate::dto::{
     AppFolder, AppInfo, AuthStatusDto, CloseRequestedPayload, EditorsDto, EngineProbe,
     EnqueueRequest, InviteDto, JobDto, JobEvent, KeepAwakePayload, LegacyImportDto, OutputCheck,
@@ -64,6 +65,7 @@ pub fn export(dir: &Path) -> io::Result<()> {
     WindowFocusPayload::export_all(&cfg).map_err(ts_err)?;
     EngineProbe::export_all(&cfg).map_err(ts_err)?;
     KeepAwakePayload::export_all(&cfg).map_err(ts_err)?;
+    ChatOutputCheck::export_all(&cfg).map_err(ts_err)?;
 
     let mut names: Vec<String> = std::fs::read_dir(dir)?
         .filter_map(|e| e.ok())

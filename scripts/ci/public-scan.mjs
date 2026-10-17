@@ -335,8 +335,22 @@ function utf16(buf) {
 // 파일 전체를 예전처럼 글자 검사한다(안전 쪽).
 
 const PNG_SIG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
-// 글자를 담지 않는 픽셀·구조·고정 크기 숫자 청크. 여기 없는 청크는 데이터를 글자 검사한다.
-const PNG_SKIP = new Set(['IHDR', 'PLTE', 'IDAT', 'IEND', 'tRNS', 'gAMA', 'cHRM', 'sRGB', 'pHYs', 'bKGD']);
+// 글자 검사를 건너뛰는 청크와 그 모양 검사. IDAT(압축 픽셀)만 내용이 자유롭고, IHDR·IEND는 모양이 정해져 있어
+// 글자를 숨길 자리가 없다(너비·높이는 65535 이하라 위 두 바이트가 0이다). 여기 없는 청크(PLTE·tRNS·gAMA 같은
+// 보조 청크 포함)는 데이터를 글자 검사한다. 모양이 틀리면 파일 전체 검사로 돌아간다.
+const IHDR_DEPTHS = { 0: [1, 2, 4, 8, 16], 2: [8, 16], 3: [1, 2, 4, 8], 4: [8, 16], 6: [8, 16] };
+const PNG_SKIP = {
+  IHDR: (d) => {
+    if (d.length !== 13) return false;
+    const w = d.readUInt32BE(0);
+    const h = d.readUInt32BE(4);
+    const depths = IHDR_DEPTHS[d[9]];
+    return w >= 1 && w <= 0xffff && h >= 1 && h <= 0xffff && !!depths && depths.includes(d[8]) &&
+      d[10] === 0 && d[11] === 0 && (d[12] === 0 || d[12] === 1);
+  },
+  IDAT: () => true,
+  IEND: (d) => d.length === 0,
+};
 const PNG_INFLATE_MAX = 8 * 1024 * 1024;
 const CRC_TABLE = Array.from({ length: 256 }, (_, n) => {
   let c = n;
@@ -349,10 +363,15 @@ function crc32(buf) {
   return (c ^ 0xffffffff) >>> 0;
 }
 
-/** 압축 방식 0(zlib)만 받는다. 풀리지 않거나 너무 크면 예외. */
+/**
+ * 압축 방식 0(zlib)만 받는다. 풀리지 않거나 너무 크거나 스트림 뒤에 남는 바이트가 있으면 예외
+ * (inflate는 스트림 뒤 바이트를 말없이 버려, 거기 둔 평문이 검사를 비껴간다).
+ */
 function pngInflate(method, data) {
   if (method !== 0) throw new Error('압축 방식');
-  return inflateSync(data, { maxOutputLength: PNG_INFLATE_MAX });
+  const { buffer, engine } = inflateSync(data, { maxOutputLength: PNG_INFLATE_MAX, info: true });
+  if (engine.bytesWritten !== data.length) throw new Error('스트림 뒤 바이트');
+  return buffer;
 }
 
 /** NUL로 나눈 앞 조각들과 나머지. 모자라면 예외. */
@@ -418,8 +437,11 @@ export function pngTexts(buf) {
     const data = buf.subarray(at + 8, at + 8 + len);
     if (crc32(buf.subarray(at + 4, at + 8 + len)) !== buf.readUInt32BE(at + 8 + len)) return null;
     at += 12 + len;
-    if (type === 'IEND') return at === buf.length && len === 0 ? texts : null;
-    if (PNG_SKIP.has(type)) continue;
+    if (Object.hasOwn(PNG_SKIP, type)) {
+      if (!PNG_SKIP[type](data)) return null;
+      if (type === 'IEND') return at === buf.length ? texts : null;
+      continue;
+    }
     try {
       texts.push(...pngChunkTexts(type, data));
     } catch {

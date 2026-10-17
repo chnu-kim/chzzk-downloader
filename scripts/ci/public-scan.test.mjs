@@ -260,8 +260,39 @@ test('PNG: 깨지거나 모르는 모양이면 파일 전체를 지금처럼 글
   const z = (m, data) => chunk('zTXt', Buffer.concat([Buffer.from('k'), NUL, Buffer.from([m]), data]));
   assert.ok(hit(png(chunk('IDAT', body), z(1, deflateSync(Buffer.from('x'))))), '압축 방식');
   assert.ok(hit(png(chunk('IDAT', body), z(0, Buffer.from('not zlib')))), '풀리지 않음');
-  // 모르는 청크(iCCP·eXIf·사설 청크)는 건너뛰지 않고 그 데이터를 글자 검사한다
-  for (const t of ['iCCP', 'eXIf', 'prVt']) {
+  // 압축 스트림 뒤에 덧붙인 평문(inflate는 남은 바이트를 말없이 버린다)
+  const tail = Buffer.concat([deflateSync(Buffer.from('ok')), Buffer.from(' 가짜스트리머 ')]);
+  assert.ok(hit(png(chunk('IDAT', body), z(0, tail))), 'zTXt 스트림 뒤');
+  const it = chunk('iTXt', Buffer.concat([Buffer.from('k'), NUL, Buffer.from([1, 0]), NUL, NUL, tail]));
+  assert.ok(hit(png(chunk('IDAT', body), it)), 'iTXt 스트림 뒤');
+  // 건너뛰는 청크도 정해진 모양이어야 한다: 길이가 틀린 IHDR·IEND, 필드가 틀린 IHDR은 파일 전체 검사
+  const cookie = Buffer.from(PLANTED['naver-cookie']);
+  const hitCookie = (buf) => scanBuffer(buf, new Set()).some((f) => f.rule === 'naver-cookie');
+  const withHdr = (hdr) => Buffer.concat([PNG_SIG, hdr, chunk('IDAT', body), IEND]);
+  assert.ok(hitCookie(withHdr(chunk('IHDR', Buffer.concat([IHDR.subarray(8, 21), cookie])))), 'IHDR 길이');
+  assert.ok(hitCookie(Buffer.concat([PNG_SIG, IHDR, chunk('IDAT', body), chunk('IEND', cookie)])), 'IEND 길이');
+  const ihdr = (w, depth, color) => {
+    const d = Buffer.alloc(13);
+    d.writeUInt32BE(w, 0);
+    d.writeUInt32BE(1, 4);
+    d[8] = depth;
+    d[9] = color;
+    return withHdr(chunk('IHDR', d));
+  };
+  assert.notEqual(pngTexts(ihdr(1, 8, 2)), null);
+  for (const [name, buf] of Object.entries({
+    '너비 0': ihdr(0, 8, 2),
+    '너비 65536': ihdr(0x10000, 8, 2),
+    '너비에 글자': ihdr(0x41424344, 8, 2),
+    '비트 깊이': ihdr(1, 7, 2),
+    '색 형식': ihdr(1, 8, 5),
+  })) {
+    assert.equal(pngTexts(buf), null, name);
+  }
+  // 픽셀이 아닌 보조 청크(gAMA·PLTE·tRNS·cHRM 등)와 모르는 청크(iCCP·eXIf·사설 청크)는
+  // 건너뛰지 않고 그 데이터를 글자 검사한다
+  for (const t of ['gAMA', 'PLTE', 'tRNS', 'cHRM', 'pHYs', 'iCCP', 'eXIf', 'prVt']) {
+    assert.ok(hitCookie(png(chunk(t, cookie))), `${t} 쿠키`);
     assert.ok(hit(png(chunk(t, Buffer.from('nam 가짜스트리머 x')))), t);
   }
 });

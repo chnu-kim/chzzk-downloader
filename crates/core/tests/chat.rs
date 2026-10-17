@@ -881,3 +881,90 @@ async fn subtitle_failure_still_completes_record() {
     assert!(!e.ass().exists());
     assert!(!sidecar_of(&e.record()).exists());
 }
+
+// ---- 중단된 자막 이동 ----
+
+/// 기록 이름이 막혀 `TargetExists`로 끝나게 한다(자막은 옮겨지고 sidecar에 `end`가 남는다).
+async fn run_until_record_blocked(server: &MockServer, e: &Env) {
+    mount_at(server, 0, json(page("page_first.json"))).await;
+    mount_at(server, 15000, json(page("page_boundary.json"))).await;
+    mount_at(
+        server,
+        17000,
+        CreateThenRespond {
+            body: page("page_last_null.json"),
+            file: e.record(),
+            bytes: b"user record",
+        },
+    )
+    .await;
+    let out = run(&chzzk(server), e.req(SubtitleFormat::Ass))
+        .await
+        .unwrap();
+    assert_eq!(out, ChatOutcome::TargetExists { path: e.record() });
+}
+
+/// 자막 rename 뒤·sidecar `moved` 갱신 전에 프로세스가 멈춘 상태: 최종 자막은 있고 임시 파일은 없고,
+/// sidecar에는 `moved` 대신 이동 의도(`moving`)만 남았다. `Skip` 재시도가 자기 자막에 막히지 않고 끝난다.
+#[tokio::test]
+async fn interrupted_subtitle_move_resumes_and_completes_with_skip() {
+    let server = MockServer::start().await;
+    let e = Env::new();
+    run_until_record_blocked(&server, &e).await;
+    let ass = std::fs::read(e.ass()).unwrap();
+    // 중단 상태를 만든다: 옮긴 자막이 `moved`에 아직 적히지 않았다
+    let sc = sidecar_of(&e.record());
+    let mut v: serde_json::Value = serde_json::from_slice(&std::fs::read(&sc).unwrap()).unwrap();
+    let key = v["moved"].as_array().unwrap()[0].clone();
+    assert_eq!(key, "영상.ass");
+    v["moved"] = serde_json::json!([]);
+    v["moving"] = serde_json::json!([key]);
+    std::fs::write(&sc, serde_json::to_vec(&v).unwrap()).unwrap();
+    assert!(!part_of(&e.ass()).exists());
+    std::fs::remove_file(e.record()).unwrap();
+
+    server.reset().await;
+    let out = run(&chzzk(&server), e.req(SubtitleFormat::Ass))
+        .await
+        .unwrap();
+    assert!(
+        matches!(
+            out,
+            ChatOutcome::Completed {
+                messages: 8,
+                subtitle_failed: false,
+                ..
+            }
+        ),
+        "{out:?}"
+    );
+    assert!(cursors(&server).await.is_empty());
+    assert_eq!(std::fs::read(e.ass()).unwrap(), ass);
+    assert_eq!(lines(&e.record()).len(), 8);
+    for p in [part_of(&e.record()), sc, part_of(&e.ass())] {
+        assert!(!p.exists(), "{}", p.display());
+    }
+}
+
+/// 이동 의도 기록이 없으면 최종 자막은 사용자 것이다. 임시 파일이 없어도 우리 자막으로 치지 않고,
+/// 자막을 다시 만들어 `Skip`이 막는다(사용자 자막·기록 이름 그대로).
+#[tokio::test]
+async fn unrelated_existing_subtitle_without_intent_is_kept() {
+    let server = MockServer::start().await;
+    mount_chain(&server).await;
+    let e = Env::new();
+    std::fs::write(e.ass(), b"user subtitle").unwrap();
+    let c = chzzk(&server);
+    let out = run(&c, e.req(SubtitleFormat::Ass)).await.unwrap();
+    assert_eq!(out, ChatOutcome::TargetExists { path: e.ass() });
+    // 임시 파일이 사라져 "최종 자막 있음·임시 파일 없음"이 된다
+    std::fs::remove_file(part_of(&e.ass())).unwrap();
+
+    let out = run(&c, e.req(SubtitleFormat::Ass)).await.unwrap();
+    assert_eq!(out, ChatOutcome::TargetExists { path: e.ass() });
+    assert_eq!(std::fs::read(e.ass()).unwrap(), b"user subtitle");
+    assert!(!e.record().exists());
+    assert!(part_of(&e.record()).exists() && sidecar_of(&e.record()).exists());
+    // 끝까지 받은 뒤라 다시 요청하지 않았다
+    assert_eq!(cursors(&server).await, ["0", "15000", "17000"]);
+}

@@ -543,21 +543,130 @@ async fn moved_companion_temp_recreated_by_caller_is_removed() {
     assert_eq!(read(&sub_to), b"ASS");
 }
 
+/// 자막 rename 직후(`moved` 기록 전) 프로세스가 멈춘다: rename을 실제로 한 뒤 패닉한다.
 #[tokio::test]
-async fn companion_already_in_place_without_moved_note_counts_as_moved() {
-    // 자막은 옮겼는데 `moved` 기록이 실패한 상태: 원본은 없고 최종 파일만 있다.
+async fn companion_move_interrupted_after_rename_is_recovered_by_intent() {
     let e = env();
     let sub_to = e.record.with_file_name("영상.ass");
     let sub_from = part_path(&sub_to);
-    std::fs::write(&sub_to, b"ASS").unwrap();
+    std::fs::write(&sub_from, b"ASS").unwrap();
     let comp = [Companion {
-        from: sub_from,
+        from: sub_from.clone(),
         to: sub_to.clone(),
     }];
     let p = filled(&e).await;
+    let r = p
+        .finalize_using(&comp, |a, b| {
+            std::fs::rename(a, b).unwrap();
+            panic!("rename 뒤 중단");
+        })
+        .await;
+    assert!(r.is_err());
+    assert_eq!(read(&sub_to), b"ASS");
+    assert!(!sub_from.exists());
+
+    // 다시 열면 `moved`에는 없지만 이동 의도가 남아 있어 옮긴 것으로 본다
+    let p = ChatPart::open(&e.record, VIDEO, false).unwrap();
     assert!(!p.is_moved(&sub_to));
+    assert_eq!(p.sidecar().moving, ["영상.ass"]);
+    assert!(p.is_move_interrupted(&sub_from, &sub_to));
     let r = p.finalize(&comp, DuplicatePolicy::Skip).await.unwrap();
     assert_eq!(r, ChatFinalized::Moved);
     assert_eq!(read(&sub_to), b"ASS");
     assert!(e.record.exists());
+    assert!(!sidecar_path(&e.record).exists());
+}
+
+/// 이동 의도가 없으면 원본 없이 최종 파일만 있어도 우리 것으로 치지 않는다(무관한 기존 파일을 지킨다).
+#[tokio::test]
+async fn companion_in_place_without_intent_is_not_ours() {
+    let e = env();
+    let sub_to = e.record.with_file_name("영상.ass");
+    let sub_from = part_path(&sub_to);
+    std::fs::write(&sub_to, b"USER-SUB").unwrap();
+    let comp = [Companion {
+        from: sub_from.clone(),
+        to: sub_to.clone(),
+    }];
+    let p = filled(&e).await;
+    assert!(!p.is_move_interrupted(&sub_from, &sub_to));
+    let r = p.finalize(&comp, DuplicatePolicy::Skip).await.unwrap();
+    assert_eq!(
+        r,
+        ChatFinalized::TargetExists {
+            path: sub_to.clone()
+        }
+    );
+    assert_eq!(read(&sub_to), b"USER-SUB");
+    assert!(!e.record.exists());
+    let p = ChatPart::open(&e.record, VIDEO, false).unwrap();
+    assert!(!p.is_moved(&sub_to));
+    assert!(p.sidecar().moving.is_empty());
+}
+
+/// 막힌 보조 파일의 이동 의도는 지운다. 남으면 그 뒤 임시 파일이 사라졌을 때 사용자 파일을 우리 것으로 본다.
+#[tokio::test]
+async fn blocked_companion_clears_intent() {
+    let e = env();
+    let sub_to = e.record.with_file_name("영상.srt");
+    let sub_from = part_path(&sub_to);
+    std::fs::write(&sub_from, b"SRT").unwrap();
+    std::fs::write(&sub_to, b"USER-SUB").unwrap();
+    let comp = [Companion {
+        from: sub_from.clone(),
+        to: sub_to.clone(),
+    }];
+    let p = filled(&e).await;
+    let r = p.finalize(&comp, DuplicatePolicy::Skip).await.unwrap();
+    assert!(matches!(r, ChatFinalized::TargetExists { .. }));
+    std::fs::remove_file(&sub_from).unwrap();
+    let p = ChatPart::open(&e.record, VIDEO, false).unwrap();
+    assert!(p.sidecar().moving.is_empty());
+    assert!(!p.is_move_interrupted(&sub_from, &sub_to));
+    assert_eq!(read(&sub_to), b"USER-SUB");
+}
+
+/// rename이 오류여도 의도를 지운다.
+#[tokio::test]
+async fn failed_companion_rename_clears_intent() {
+    let e = env();
+    let sub_to = e.record.with_file_name("영상.ass");
+    let sub_from = part_path(&sub_to);
+    std::fs::write(&sub_from, b"ASS").unwrap();
+    let comp = [Companion {
+        from: sub_from.clone(),
+        to: sub_to.clone(),
+    }];
+    let p = filled(&e).await;
+    let r = p
+        .finalize_using(&comp, |_, b| {
+            Err(map_io_error("rename", b, io::Error::other("디스크 오류")))
+        })
+        .await;
+    assert!(r.is_err());
+    let p = ChatPart::open(&e.record, VIDEO, false).unwrap();
+    assert!(p.sidecar().moving.is_empty());
+    assert!(sub_from.exists() && !sub_to.exists());
+}
+
+/// 이동 의도를 적지 못하면 옮기지 않는다(옮긴 뒤 멈추면 무관한 파일과 가를 수 없다).
+#[tokio::test]
+async fn companion_not_moved_when_intent_cannot_be_written() {
+    let e = env();
+    let sub_to = e.record.with_file_name("영상.ass");
+    let sub_from = part_path(&sub_to);
+    std::fs::write(&sub_from, b"ASS").unwrap();
+    let comp = [Companion {
+        from: sub_from.clone(),
+        to: sub_to.clone(),
+    }];
+    let p = filled(&e).await;
+    let aside = block_sidecar(&e.record);
+    assert!(p.finalize(&comp, DuplicatePolicy::Skip).await.is_err());
+    assert!(sub_from.exists());
+    assert!(!sub_to.exists());
+    assert!(!e.record.exists());
+    restore_sidecar(&e.record, &aside);
+    let p = ChatPart::open(&e.record, VIDEO, false).unwrap();
+    assert!(p.sidecar().moving.is_empty());
 }

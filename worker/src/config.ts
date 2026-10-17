@@ -9,6 +9,7 @@
 //     운영 모드에서는 이 키가 있으면 오류다(운영 redirectUri는 PUBLIC_ORIGIN이 원천, 구현 중 변경 12 (라)·27 (다)).
 //   - dev 모드에서 CONFIG_KEYS 밖의 문자열 바인딩이 있으면 오류다(공용 1Password Environment에 다른 서비스의 키가 섞인 경우,
 //     구현 중 변경 12 (라)·27 (라)). 결과에는 키 이름만 있고 값은 어디에도 없다. 운영 모드는 검사하지 않는다.
+//     예외는 @cloudflare/vitest-plugin 1.4.0이 테스트 env에 넣는 내부 문자열 바인딩 한 개뿐이다(TEST_RUNTIME_KEYS, 구현 중 변경 108).
 
 // 코드가 읽는 키 전부. worker/.dev.vars.example의 키 집합과 같아야 한다(scripts/ci/worker-config.mjs가 이 배열을 읽어 비교한다).
 export const CONFIG_KEYS = [
@@ -149,12 +150,16 @@ function buildId(env: ConfigEnv): string | null {
   return v;
 }
 
+// vitest 플러그인(@cloudflare/vitest-plugin 1.4.0 이상)이 테스트 env에 문자열로 넣는 내부 바인딩. 글자가 정확히 같은 것만 허용한다
+// (접두 허용은 하지 않는다: 플러그인을 올려 새 키가 생기면 여기서 멈추고 사람이 본다)
+const TEST_RUNTIME_KEYS: ReadonlySet<string> = new Set(["__VITEST_POOL_WORKERS_VITEST_MAJOR_VERSION"]);
+
 // dev 모드: CONFIG_KEYS 밖의 문자열 바인딩이 있으면 이름 정렬의 첫 키로 오류. object 바인딩(DO·R2·테스트 내부)은 보지 않는다
 function rejectUnknownStrings(env: ConfigEnv): void {
   const all = env as Readonly<Record<string, unknown>>;
   const known = new Set<string>(CONFIG_KEYS);
   const bad = Object.keys(all)
-    .filter((k) => !known.has(k) && typeof all[k] === "string")
+    .filter((k) => !known.has(k) && !TEST_RUNTIME_KEYS.has(k) && typeof all[k] === "string")
     .sort();
   const first = bad[0];
   if (first !== undefined) throw new ConfigError(KEY_NAME.test(first) ? first : "(invalid_key_name)");

@@ -201,6 +201,16 @@ describe("dev 모드의 모르는 문자열 바인딩", () => {
     expect(JSON.stringify(r)).not.toContain("bad-key");
   });
 
+  it("vitest 플러그인의 내부 문자열 바인딩은 글자가 정확히 같을 때만 통과한다", () => {
+    const k = "__VITEST_POOL_WORKERS_VITEST_MAJOR_VERSION";
+    const withKey = (base: ConfigEnv, key: string, v: string): Record<string, unknown> => ({ ...base, [key]: v });
+    expect(loadConfig(withKey(DEV, k, "4") as ConfigEnv).ok).toBe(true);
+    expect(loadConfig(withKey(DEV, k + "_X", canary) as ConfigEnv)).toEqual({ ok: false, key: k + "_X" });
+    expect(loadConfig(withKey(DEV, "__VITEST_POOL_WORKERS_OTHER", canary) as ConfigEnv)).toEqual({ ok: false, key: "__VITEST_POOL_WORKERS_OTHER" });
+    // 운영 모드는 이 예외와 상관없이 모르는 문자열을 검사하지 않는다(위 케이스와 같은 규칙)
+    expect(loadConfig(withKey(PROD, k, "4") as ConfigEnv).ok).toBe(true);
+  });
+
   it("문자열이 아닌 모르는 키(DO·R2·테스트 내부 바인딩)는 보지 않는다", () => {
     const e: Record<string, unknown> = { ...DEV, AUTH_LIKE: {}, N: 1 };
     expect(loadConfig(e).ok).toBe(true);

@@ -202,7 +202,7 @@ pub fn parse_master(text: &str, base: &Url) -> Result<Vec<Variant>, Error> {
 /// - 세그먼트가 없거나 EXTINF 없는 URI, URI 없는 EXTINF, 숫자가 아닌 값,
 ///   u64를 넘는 msn은 `Error::Parse`
 pub fn parse_media(text: &str, base: &Url) -> Result<MediaPlaylist, Error> {
-    parse_media_inner(text, base, false).map(|(p, _)| p)
+    parse_media_inner(text, base, false).map(|(p, _, _)| p)
 }
 
 /// 라이브 media playlist 한 번의 스냅샷.
@@ -213,18 +213,29 @@ pub struct LiveSnapshot {
     /// `EXT-X-ENDLIST`가 있거나, 스트림이 다시 시작되었다(`EXT-X-DISCONTINUITY`·두 번째 `EXT-X-MAP`).
     /// 다시 시작된 쪽의 세그먼트는 `playlist`에 담지 않는다. 이어 붙이면 init이 맞지 않는 파일이 된다.
     pub ended: bool,
+    /// `ended` 가운데 스트림이 다시 시작된 경우(`EXT-X-DISCONTINUITY`·두 번째 `EXT-X-MAP`). `ENDLIST`만이면 false
+    pub restarted: bool,
 }
 
 /// 진행 중인 방송의 media playlist를 읽는다.
 ///
 /// `parse_media`와 달리 `ENDLIST`가 없어도 되고 세그먼트가 없어도 된다. 그 밖의 거부 규칙(KEY, BYTERANGE,
-/// GAP, SKIP)은 같고, DISCONTINUITY·두 번째 MAP은 오류가 아니라 `ended`로 알린다.
+/// GAP, SKIP)은 같고, DISCONTINUITY·두 번째 MAP은 오류가 아니라 `ended`·`restarted`로 알린다.
 pub fn parse_live_media(text: &str, base: &Url) -> Result<LiveSnapshot, Error> {
-    let (playlist, ended) = parse_media_inner(text, base, true)?;
-    Ok(LiveSnapshot { playlist, ended })
+    let (playlist, ended, restarted) = parse_media_inner(text, base, true)?;
+    Ok(LiveSnapshot {
+        playlist,
+        ended,
+        restarted,
+    })
 }
 
-fn parse_media_inner(text: &str, base: &Url, live: bool) -> Result<(MediaPlaylist, bool), Error> {
+/// 반환: (목록, `ended`, `restarted`)
+fn parse_media_inner(
+    text: &str,
+    base: &Url,
+    live: bool,
+) -> Result<(MediaPlaylist, bool, bool), Error> {
     const WHAT: &str = "media playlist";
     check_header(text, WHAT)?;
     let mut media_sequence: u64 = 0;
@@ -233,6 +244,7 @@ fn parse_media_inner(text: &str, base: &Url, live: bool) -> Result<(MediaPlaylis
     let mut uris: Vec<Url> = Vec::new();
     let mut pending: Option<u32> = None;
     let mut ended = false;
+    let mut restarted = false;
 
     for line in lines(text) {
         if line.is_empty() {
@@ -278,6 +290,7 @@ fn parse_media_inner(text: &str, base: &Url, live: bool) -> Result<(MediaPlaylis
                 if init.is_some() || !uris.is_empty() {
                     if live && init.is_some() {
                         ended = true;
+                        restarted = true;
                         break;
                     }
                     return Err(Error::Unsupported(Unsupported::SecondMap));
@@ -302,6 +315,7 @@ fn parse_media_inner(text: &str, base: &Url, live: bool) -> Result<(MediaPlaylis
             }
             "#EXT-X-DISCONTINUITY" if live => {
                 ended = true;
+                restarted = true;
                 break;
             }
             "#EXT-X-DISCONTINUITY" => return Err(Error::Unsupported(Unsupported::Discontinuity)),
@@ -355,6 +369,7 @@ fn parse_media_inner(text: &str, base: &Url, live: bool) -> Result<(MediaPlaylis
             total_duration_ms,
         },
         ended,
+        restarted,
     ))
 }
 
@@ -632,11 +647,11 @@ mod tests {
     fn live_media_ended_and_empty() {
         let snap =
             parse_live_media(&live_text("", 5..7, "#EXT-X-ENDLIST\n"), &media_base()).unwrap();
-        assert!(snap.ended);
+        assert!(snap.ended && !snap.restarted);
         assert_eq!(snap.playlist.segments.len(), 2);
         // 방송 시작 직후: 세그먼트가 아직 없다
         let snap = parse_live_media(&live_text("", 0..0, ""), &media_base()).unwrap();
-        assert!(!snap.ended && snap.playlist.segments.is_empty());
+        assert!(!snap.ended && !snap.restarted && snap.playlist.segments.is_empty());
     }
 
     /// DISCONTINUITY·새 MAP은 스트림이 다시 시작되었다는 뜻이다. 그 앞까지만 담고 끝으로 알린다.
@@ -648,7 +663,7 @@ mod tests {
             "#EXT-X-DISCONTINUITY\n#EXTINF:2.000,\nafter.m4v\n",
         );
         let snap = parse_live_media(&t, &media_base()).unwrap();
-        assert!(snap.ended);
+        assert!(snap.ended && snap.restarted);
         assert_eq!(snap.playlist.segments.len(), 2);
         let t = live_text(
             "",
@@ -656,7 +671,7 @@ mod tests {
             "#EXT-X-MAP:URI=\"init2.mp4\"\n#EXTINF:2.000,\nafter.m4v\n",
         );
         let snap = parse_live_media(&t, &media_base()).unwrap();
-        assert!(snap.ended);
+        assert!(snap.ended && snap.restarted);
         assert_eq!(snap.playlist.segments.len(), 2);
         // VOD용 파서는 여전히 거부한다.
         let t = live_text(

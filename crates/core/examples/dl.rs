@@ -383,6 +383,7 @@ async fn run(args: Args) -> Result<(), String> {
             path,
             bytes,
             resumed_from,
+            live,
         }) => {
             println!(
                 "완료 {} ({}, 이어받기 {})",
@@ -390,6 +391,10 @@ async fn run(args: Args) -> Result<(), String> {
                 format_bytes(bytes),
                 format_bytes(resumed_from)
             );
+            if let Some(end) = live {
+                // 실측 M-⑤-A(재조회 뒤 msn)에서 끝난 이유를 바로 본다
+                println!("녹화 끝: {:?}, 놓친 조각 {:?}", end.reason, end.gaps);
+            }
             check_mp4(&path)
         }
         Ok(DownloadOutcome::Skipped { path }) => {

@@ -12,12 +12,14 @@ import type {
   AppError,
   AppInfo,
   AuthStatusDto,
+  ChannelRefDto,
   ContentRef,
   EditorsDto,
   EnqueueRequest,
   ErrorCode,
   JobDto,
   JobEvent,
+  LiveEndDto,
   Os,
   OutputCheck,
   ProgressDto,
@@ -99,6 +101,8 @@ export type Scenario = {
   update?: UpdateScenario;
   /** editors_list 결과. 없으면 편집자 없음·맡은 채널은 auth.delegatedChannels(since 없음)·한도 10/20 */
   editors?: EditorsDto;
+  /** 다음 한 번의 호출을 이 오류로 실패시킨다(command 이름 → 오류). editors_*·delegations_leave·ownership_recheck */
+  fail?: Partial<Record<'editors_list' | 'editors_invite' | 'editors_remove' | 'delegations_leave' | 'ownership_recheck', AppError>>;
   /** app_info의 OS(Windows 고정 데이터·단축키 표기·[Finder에서 보기] 분기). 없으면 linux */
   platform?: Os;
   /** app_info의 나머지 필드 덮어쓰기(D3 이전 설정 찾음 `legacyCandidate` 등). `platform`·`textScale`·`theme`은 위 필드와 설정이 이긴다 */
@@ -122,7 +126,8 @@ export interface E2EController {
   liveProgress(id: number, bytes: number, recordedSecs: number, gaps?: number): void;
   /** 작업을 running으로 바꾸고 진행률을 보낸다. `phase`를 `waitingNetwork`로 주면 연결 대기(속도·남은 시간 없음)다 */
   progress(id: number, bytes: number, totalBytes: number, phase?: ProgressDto['phase']): void;
-  complete(id: number, finalBytes: number): void;
+  /** 작업을 완료로 바꾼다. 생방송은 끝난 이유·놓친 조각(`liveEnd`)을 줄 수 있다(없으면 null) */
+  complete(id: number, finalBytes: number, liveEnd?: LiveEndDto | null): void;
   fail(id: number, error: AppError, partialBytes?: number | null): void;
   /** Rust가 보내는 앱 이벤트(close-requested 등) */
   emit(event: string, payload: unknown): Promise<void>;
@@ -131,6 +136,10 @@ export interface E2EController {
   setResolve(url: string, r: ResolvedDto | { error: AppError }): void;
   /** 로그인 상태를 바꾸고 auth-changed를 보낸다 */
   setAuth(s: AuthStatusDto): Promise<void>;
+  /** 맡은 채널을 바꾸고 auth-changed를 보낸다(셸의 /api/me 성공을 흉내) */
+  setDelegated(channels: ChannelRefDto[]): Promise<void>;
+  /** 다음 한 번의 그 command를 실패시킨다 */
+  failNext(cmd: string, error: AppError): void;
   /** main 창 포커스를 바꾼다(Rust `window-focus` 이벤트 흉내, `WindowFocusPayload`) */
   windowFocus(focused: boolean): Promise<void>;
   /** 그 파일 이름의 다음 check_output 결과를 바꾼다(scenario.outputs와 같은 모양) */
@@ -230,6 +239,24 @@ export function install(scenario: Scenario = {}): E2EController {
   let auth: AuthStatusDto = scenario.auth ?? AUTH_DISABLED;
   let channel: { id: number } | null = null;
   let index = 0;
+  /** 다음 한 번씩만 실패시킬 command(failNext·scenario.fail) */
+  const failures: Record<string, AppError | undefined> = { ...scenario.fail };
+  const takeFail = (cmd: string) => {
+    const e = failures[cmd];
+    if (!e) return;
+    delete failures[cmd];
+    throw e;
+  };
+  /** editors_list가 돌려주는 가변 상태(편집자 빼기·그만두기가 바꾼다). 처음 부를 때 만든다 */
+  let editorsState: EditorsDto | null = scenario.editors ? structuredClone(scenario.editors) : null;
+  const editorsNow = (): EditorsDto =>
+    (editorsState ??= {
+      editors: [],
+      delegatedChannels: auth.delegatedChannels.map((d) => ({ ...d, since: null })),
+      pendingInviteUntil: null,
+      editorsMax: 10,
+      delegationsMax: 20,
+    });
 
   const send = (message: JobEvent) => {
     if (!channel) return;
@@ -330,20 +357,38 @@ export function install(scenario: Scenario = {}): E2EController {
     reveal_output: () => null,
     quit: () => null,
     resolve: (a) => resolveUrl(a),
-    // 편집자 위임(①-4): 화면은 ①-5. 셸 command 이름·모양만 흉내 낸다
-    editors_list: (): EditorsDto =>
-      scenario.editors ?? {
-        editors: [],
-        delegatedChannels: auth.delegatedChannels.map((d) => ({ ...d, since: null })),
-        pendingInviteUntil: null,
-        editorsMax: 10,
-        delegationsMax: 20,
-      },
+    // 편집자 위임(①-4 command, ①-5 화면): 셸 command 이름·모양만 흉내 낸다
+    editors_list: (): EditorsDto => {
+      takeFail('editors_list');
+      return editorsNow();
+    },
     // 가짜 주소(.invalid)
-    editors_invite: () => ({ url: `https://worker.example.invalid/invite/cdi_${'A'.repeat(43)}`, expiresAt: clock + 7 * 86400 }),
-    editors_remove: () => null,
-    delegations_leave: () => null,
-    ownership_recheck: (a) => resolveUrl(a),
+    editors_invite: () => {
+      takeFail('editors_invite');
+      const expiresAt = clock + 7 * 86400;
+      editorsNow().pendingInviteUntil = expiresAt;
+      return { url: `https://worker.example.invalid/invite/cdi_${'A'.repeat(43)}`, expiresAt };
+    },
+    editors_remove: (a) => {
+      takeFail('editors_remove');
+      const e = editorsNow();
+      e.editors = e.editors.filter((x) => x.channelId.toLowerCase() !== String(a.channelId).toLowerCase());
+      return null;
+    },
+    delegations_leave: (a) => {
+      takeFail('delegations_leave');
+      const id = String(a.channelId).toLowerCase();
+      const e = editorsNow();
+      e.delegatedChannels = e.delegatedChannels.filter((x) => x.channelId.toLowerCase() !== id);
+      setAuth({ ...auth, delegatedChannels: auth.delegatedChannels.filter((x) => x.channelId.toLowerCase() !== id) });
+      return null;
+    },
+    // 셸은 서버에 맡은 채널을 다시 묻고(확인 시각이 갱신된다) 같은 주소를 다시 불러온다
+    ownership_recheck: (a) => {
+      takeFail('ownership_recheck');
+      setAuth({ ...auth, delegationsCheckedAt: clock });
+      return resolveUrl(a);
+    },
     check_output: (a): OutputCheck => {
       const folder = (a.folder as string | null) ?? settings.effectiveDownloadFolder;
       const fileName = a.fileName as string;
@@ -396,6 +441,7 @@ export function install(scenario: Scenario = {}): E2EController {
         finishedAt: null,
         stoppedAt: null,
         range: req.range ?? null,
+        liveEnd: null,
       };
       put(job, 'added');
       return job;
@@ -411,7 +457,15 @@ export function install(scenario: Scenario = {}): E2EController {
       const j = must(a.id as number);
       if (j.playbackKind !== 'live') throw err('invalidInput');
       put({ ...j, status: 'pausing' });
-      put({ ...j, status: 'completed', progress: null, finalBytes: j.progress?.bytes ?? 0, finishedAt: clock++ });
+      put({
+        ...j,
+        status: 'completed',
+        progress: null,
+        finalBytes: j.progress?.bytes ?? 0,
+        finishedAt: clock++,
+        // 진짜 셸: 코어가 `stopped`와 구멍 수를 준다
+        liveEnd: { reason: 'stopped', gaps: j.progress?.liveGaps ?? 0 },
+      });
       return null;
     },
     pause_job: (a) => {
@@ -499,8 +553,8 @@ export function install(scenario: Scenario = {}): E2EController {
       else jobs.set(id, { ...j, progress: p });
       send({ type: 'progress', id, progress: p });
     },
-    complete(id, finalBytes) {
-      put({ ...must(id), status: 'completed', progress: null, finalBytes, finishedAt: clock++ });
+    complete(id, finalBytes, liveEnd = null) {
+      put({ ...must(id), status: 'completed', progress: null, finalBytes, finishedAt: clock++, liveEnd });
     },
     fail(id, error, partialBytes = null) {
       put({ ...must(id), status: 'failed', progress: null, error, partialBytes, finishedAt: clock++ });
@@ -513,6 +567,15 @@ export function install(scenario: Scenario = {}): E2EController {
     setAuth(s) {
       auth = s;
       return emit('auth-changed', s);
+    },
+    setDelegated(channels) {
+      auth = { ...auth, delegatedChannels: channels, delegationsCheckedAt: clock };
+      const e = editorsNow();
+      e.delegatedChannels = channels.map((c) => e.delegatedChannels.find((d) => d.channelId === c.channelId) ?? { ...c, since: null });
+      return emit('auth-changed', auth);
+    },
+    failNext(cmd, error) {
+      failures[cmd] = error;
     },
     windowFocus: (focused) => emit('window-focus', { focused }),
     setOutput(fileName, over) {

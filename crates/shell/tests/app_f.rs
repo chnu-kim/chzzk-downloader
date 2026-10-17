@@ -142,6 +142,7 @@ fn record(id: u64, status: JobStatus, stopped_at: Option<u64>) -> JobRecord {
         discard_on_start: false,
         partial_bytes: None,
         missing: false,
+        live_end: None,
     }
 }
 

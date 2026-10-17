@@ -19,7 +19,9 @@ use chzzk_core::fsutil::{atomic_write, map_io_error, rename_with_retry};
 use chzzk_core::{ContentRef, DownloadRequest, Error, PlaybackKind, TimeRange};
 use serde::{Deserialize, Serialize};
 
-use crate::dto::{ContentKindDto, JobDto, JobId, JobStatus, OnExisting, ProgressDto, TimeRangeDto};
+use crate::dto::{
+    ContentKindDto, JobDto, JobId, JobStatus, LiveEndDto, OnExisting, ProgressDto, TimeRangeDto,
+};
 use crate::error::AppError;
 
 /// 작업 목록 파일 이름.
@@ -68,6 +70,14 @@ pub struct JobRecord {
     pub stopped_at: Option<u64>,
     #[serde(default)]
     pub final_bytes: Option<u64>,
+    /// 끝난 생방송 녹화의 이유와 놓친 조각 수(core.md 65). `Completed`일 때만 있다. 옛 레코드에는 없다(`None`).
+    /// 모르는 값(뒤 버전이 더한 이유)은 버리고 `None`으로 읽는다: jobs.json 전체를 못 읽게 되면 안 된다
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "lenient_live_end"
+    )]
+    pub live_end: Option<LiveEndDto>,
     #[serde(default)]
     pub last_error: Option<AppError>,
     /// 다음 시작 때 `download()` 전에 `discard_partial(output)`한다("처음부터"). 시작하기 전에 앱이 꺼져도
@@ -80,6 +90,14 @@ pub struct JobRecord {
     /// completed인데 파일이 없다. 저장하지 않고 reconcile이 채운다
     #[serde(skip)]
     pub missing: bool,
+}
+
+/// `liveEnd`를 읽되 모르는 모양이면 `None`으로 둔다(앱을 옛 버전으로 되돌렸을 때 jobs.json을 지키려고).
+fn lenient_live_end<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> Result<Option<LiveEndDto>, D::Error> {
+    let v = Option::<serde_json::Value>::deserialize(d)?;
+    Ok(v.and_then(|v| serde_json::from_value(v).ok()))
 }
 
 impl JobRecord {
@@ -131,6 +149,7 @@ impl JobRecord {
             finished_at: self.finished_at,
             stopped_at: self.stopped_at,
             range: self.range.map(TimeRangeDto::from),
+            live_end: self.live_end,
         }
     }
 

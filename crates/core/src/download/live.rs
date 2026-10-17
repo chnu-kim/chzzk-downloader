@@ -11,6 +11,8 @@
 //!    - 재조회 결과가 방송 종료(`NotLive`)이거나 `liveId`가 바뀜(다른 방송을 이어 붙이지 않는다)
 //!    - 사용자의 멈춤(`DownloadRequest::live_stop`)
 //!
+//!    끝난 이유는 `DownloadOutcome::Completed.live`(`LiveEnd`)에 싣는다(core.md 65).
+//!
 //!    `cancel`은 이것과 다르다: `.part`를 남기고 `Cancelled`로 끝난다.
 //! 5. 403/404로 playlist를 못 읽으면 재조회한다. 새 세그먼트를 받으면 재조회 횟수를 다시 센다
 //!    (몇 시간 녹화에서 일시적 403이 쌓여 `RefreshExhausted`가 되지 않도록).
@@ -31,7 +33,7 @@ use tokio_util::sync::CancellationToken;
 use super::part::{HlsState, PartFile, Sidecar};
 use super::retry::{Failure, Patience, is_connection_failure};
 use super::segmented::{Body, fetch, fetch_cancellable, pick_variant, utf8};
-use super::{DownloadOutcome, Job, MAX_CONCURRENCY, finish};
+use super::{DownloadOutcome, Job, LiveEnd, LiveEndReason, MAX_CONCURRENCY, finish};
 use crate::error::{Error, Unsupported};
 use crate::hls::{self, LiveSnapshot};
 use crate::model::{PlaybackKind, Quality, Source};
@@ -60,8 +62,21 @@ struct Recording {
 enum Refreshed {
     /// 같은 방송이다. `feed`가 새 주소로 바뀌었다.
     Same,
-    /// 방송이 끝났거나 다른 방송이다.
-    Over,
+    /// 방송이 끝났다(`NotLive`).
+    Ended,
+    /// 다른 방송이다(방송 ID가 바뀜). 채널은 지금 방송 중이다.
+    NewLive,
+}
+
+impl Refreshed {
+    /// 녹화를 끝내야 하면 그 이유. 같은 방송이면 `None`.
+    fn end(self) -> Option<LiveEndReason> {
+        match self {
+            Refreshed::Same => None,
+            Refreshed::Ended => Some(LiveEndReason::Ended),
+            Refreshed::NewLive => Some(LiveEndReason::Restarted),
+        }
+    }
 }
 
 /// 멈춤이 먼저 오면 `None`, 아니면 `Some(결과)`. 기다리는 구간(연결 대기·playlist 읽기·재조회)에서 멈춤이 먹게 한다.
@@ -165,7 +180,7 @@ pub(crate) async fn run(
                             match until_stop!(stop, refresh_free(job, &mut feed, &tracks)) {
                                 None => return Err(Error::NothingRecorded),
                                 Some(r) => {
-                                    if let Refreshed::Over = r? {
+                                    if r?.end().is_some() {
                                         return Err(Error::NotLive);
                                     }
                                 }
@@ -176,7 +191,7 @@ pub(crate) async fn run(
                         match until_stop!(stop, refresh(job, &mut feed, &tracks)) {
                             None => return Err(Error::NothingRecorded),
                             Some(r) => {
-                                if let Refreshed::Over = r? {
+                                if r?.end().is_some() {
                                     return Err(Error::NotLive);
                                 }
                             }
@@ -225,7 +240,7 @@ pub(crate) async fn run(
     let mut idle_since = TokioInstant::now();
     let mut back_streak = 0u32;
 
-    'poll: loop {
+    let end = 'poll: loop {
         let first = snap.playlist.segments.first().map(|s| s.msn);
         let last = snap.playlist.segments.last().map(|s| s.msn);
         // 스트림이 다시 시작되었다: msn이 연달아 거꾸로 갔거나 init 파일이 바뀌었다.
@@ -237,7 +252,7 @@ pub(crate) async fn run(
             .as_ref()
             .is_some_and(|u| init_name(u) != init_file);
         if back_streak >= BACK_CONFIRM || new_init {
-            break;
+            break 'poll LiveEndReason::Restarted;
         }
         // 창이 우리를 지나갔다: 놓친 만큼 구멍으로 센다.
         match (st.next_msn, first) {
@@ -328,7 +343,7 @@ pub(crate) async fn run(
                             stop,
                             job.wait_for_network(&mut patience, e, since_progress.elapsed())
                         ) {
-                            None => break 'poll,
+                            None => break 'poll LiveEndReason::Stopped,
                             Some(r) => r?,
                         }
                         since_progress = TokioInstant::now();
@@ -351,7 +366,7 @@ pub(crate) async fn run(
             }
         }
         if stopped {
-            break;
+            break 'poll LiveEndReason::Stopped;
         }
         if got_any {
             idle_since = TokioInstant::now();
@@ -360,31 +375,36 @@ pub(crate) async fn run(
         if expired {
             // 서명 만료 뒤 재조회. 기다리는 동안 멈춤이 오면 받은 만큼 마무리한다(core.md 61)
             match until_stop!(stop, refresh(job, &mut feed, &tracks)) {
-                None => break,
-                Some(r) => match r? {
-                    Refreshed::Same => {}
-                    Refreshed::Over => break,
-                },
+                None => break 'poll LiveEndReason::Stopped,
+                Some(r) => {
+                    if let Some(end) = r?.end() {
+                        break 'poll end;
+                    }
+                }
             }
         } else if snap.ended {
-            break;
+            break 'poll if snap.restarted {
+                LiveEndReason::Restarted
+            } else {
+                LiveEndReason::Ended
+            };
         } else if !got_any && idle_since.elapsed() >= idle_check {
             // 한참 새 세그먼트가 없다. 방송이 끝났는지 본다(403 재조회 예산은 쓰지 않는다).
             match until_stop!(stop, refresh_free(job, &mut feed, &tracks)) {
-                None => break,
-                Some(r) => match r? {
-                    Refreshed::Same => idle_since = TokioInstant::now(),
-                    Refreshed::Over => break,
+                None => break 'poll LiveEndReason::Stopped,
+                Some(r) => match r?.end() {
+                    None => idle_since = TokioInstant::now(),
+                    Some(end) => break 'poll end,
                 },
             }
         } else if !wait_or_stop(job, &stop, poll).await? {
-            break;
+            break 'poll LiveEndReason::Stopped;
         }
 
         // 다음 playlist. 읽는 동안에도 멈춤이 먹는다(공통 fetch 도우미는 cancel만 본다).
         // 읽지 못하면 처리 방식에 따라 같은 자리로 돌아오거나 끝낸다.
         let Some(read) = until_stop!(stop, read_playlist(job, &feed.media_url)) else {
-            break;
+            break 'poll LiveEndReason::Stopped;
         };
         snap = match read {
             Ok(s) => {
@@ -403,19 +423,19 @@ pub(crate) async fn run(
                 )
                 .await?
                 {
-                    Handled::Stopped => break,
+                    Handled::Stopped => break 'poll LiveEndReason::Stopped,
                     Handled::Again => continue 'poll,
                     Handled::Refresh => match until_stop!(stop, refresh(job, &mut feed, &tracks)) {
-                        None => break,
-                        Some(r) => match r? {
-                            Refreshed::Same => continue 'poll,
-                            Refreshed::Over => break,
+                        None => break 'poll LiveEndReason::Stopped,
+                        Some(r) => match r?.end() {
+                            None => continue 'poll,
+                            Some(end) => break 'poll end,
                         },
                     },
                 }
             }
         };
-    }
+    };
 
     if st.segments == 0 {
         // 아무것도 받지 못했다. init만 든 파일은 남기지 않는다.
@@ -428,7 +448,13 @@ pub(crate) async fn run(
             Error::NotLive
         });
     }
-    finish(job, part, 0).await
+    let gaps = st.gaps;
+    finish(job, part, 0).await.map(|o| {
+        o.with_live(LiveEnd {
+            reason: end,
+            gaps: Some(gaps),
+        })
+    })
 }
 
 /// 연달아 세어 한도까지 구멍으로 넘길 수 있는 일시 오류.
@@ -457,7 +483,7 @@ async fn refresh(
 ) -> Result<Refreshed, Error> {
     let r = match job.reresolve().await {
         Ok(r) => r,
-        Err(Error::NotLive) => return Ok(Refreshed::Over),
+        Err(Error::NotLive) => return Ok(Refreshed::Ended),
         Err(e) => return Err(e),
     };
     let now = r.kind();
@@ -474,7 +500,7 @@ async fn refresh(
     };
     // 다른 방송을 이어 붙이지 않는다.
     if live_id != feed.live_id {
-        return Ok(Refreshed::Over);
+        return Ok(Refreshed::NewLive);
     }
     let tracks = if fresh.is_empty() { tracks } else { &fresh };
     feed.media_url = variant_url(job, &master_url, tracks).await?;

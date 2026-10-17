@@ -124,7 +124,8 @@ async fn fake_runs_script_in_spawned_task() {
         DownloadOutcome::Completed {
             path: PathBuf::from("/x/a.mp4"),
             bytes: 30,
-            resumed_from: 0
+            resumed_from: 0,
+            live: None,
         }
     );
     let seen = seen.lock().unwrap();

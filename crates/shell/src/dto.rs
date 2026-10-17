@@ -608,6 +608,38 @@ impl From<TimeRangeDto> for TimeRange {
     }
 }
 
+/// 생방송 녹화가 끝난 이유(코어 `LiveEndReason`, core.md 65·app.md 82).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub enum LiveEndReason {
+    Ended,
+    Stopped,
+    Restarted,
+    Other,
+}
+
+/// 끝난 생방송 녹화의 이유와 놓친 세그먼트 수(`gaps`는 모르면 null).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct LiveEndDto {
+    pub reason: LiveEndReason,
+    pub gaps: Option<u32>,
+}
+
+impl From<chzzk_core::LiveEnd> for LiveEndDto {
+    fn from(e: chzzk_core::LiveEnd) -> Self {
+        // `..` 없이 분해한다. 코어에 필드나 이유가 늘면 여기서 컴파일이 깨진다.
+        let chzzk_core::LiveEnd { reason, gaps } = e;
+        let reason = match reason {
+            chzzk_core::LiveEndReason::Ended => LiveEndReason::Ended,
+            chzzk_core::LiveEndReason::Stopped => LiveEndReason::Stopped,
+            chzzk_core::LiveEndReason::Restarted => LiveEndReason::Restarted,
+            chzzk_core::LiveEndReason::Other => LiveEndReason::Other,
+        };
+        Self { reason, gaps }
+    }
+}
+
 /// `enqueue` 인자.
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -722,6 +754,8 @@ pub struct JobDto {
     pub stopped_at: Option<u64>,
     /// 구간 받기 작업의 요청 구간(사용자 입력 원값). 전체 받기는 null
     pub range: Option<TimeRangeDto>,
+    /// 끝난 생방송 녹화의 이유와 놓친 조각 수(completed 생방송만, 옛 기록·VOD는 null)
+    pub live_end: Option<LiveEndDto>,
 }
 
 /// 웹뷰 엔진 기능 검사(platform §5, `frontend_ready`의 인자). 하나라도 false면 프런트가 경고 배너를 띄운다.

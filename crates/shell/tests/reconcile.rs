@@ -35,6 +35,7 @@ fn record(id: u64, status: JobStatus, output: PathBuf) -> JobRecord {
         discard_on_start: false,
         partial_bytes: Some(999), // reconcile이 다시 채우는지 보려고 엉뚱한 값
         missing: false,
+        live_end: None,
     }
 }
 

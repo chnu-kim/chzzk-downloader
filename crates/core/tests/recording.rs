@@ -15,7 +15,7 @@ use std::time::Duration;
 
 use chzzk_core::{
     CancellationToken, Chzzk, ClientConfig, ContentRef, DownloadOutcome, DownloadRequest,
-    DuplicatePolicy, Error, PlaybackKind, Progress,
+    DuplicatePolicy, Error, LiveEnd, LiveEndReason, PlaybackKind, Progress,
 };
 use common::{Events, Gate, GateProxy, config, fixture, part_files, rewrite_hosts};
 use wiremock::matchers::{method, path, path_regex};
@@ -359,6 +359,14 @@ fn recorded_msns(path: &Path) -> Vec<u64> {
         .collect()
 }
 
+/// 생방송 결과의 끝 정보. `Completed { live: Some(..) }`가 아니면 실패한다.
+fn live_end(r: &DownloadOutcome) -> LiveEnd {
+    match r {
+        DownloadOutcome::Completed { live: Some(e), .. } => *e,
+        _ => panic!("{r:?}"),
+    }
+}
+
 fn no_part(out: &Path) {
     let (p, s) = part_files(out);
     assert!(!p.exists() && !s.exists(), "`.part`가 남아 있다");
@@ -450,6 +458,13 @@ async fn endlist_finishes_without_gaps() {
         .await
         .unwrap();
     assert!(matches!(r, DownloadOutcome::Completed { .. }), "{r:?}");
+    assert_eq!(
+        live_end(&r),
+        LiveEnd {
+            reason: LiveEndReason::Ended,
+            gaps: Some(0)
+        }
+    );
     // poll 0: 0,1,2 → poll k: k+2가 새로 생김. 마지막 poll(5)의 끝은 7
     assert_eq!(recorded_msns(&out), (0..=7).collect::<Vec<_>>());
     no_part(&out);
@@ -497,11 +512,21 @@ async fn stop_finalizes_recording() {
     }
     stop.cancel();
     let r = task.await.unwrap().unwrap();
-    let DownloadOutcome::Completed { path, bytes, .. } = r else {
+    let DownloadOutcome::Completed {
+        path, bytes, live, ..
+    } = r
+    else {
         panic!("{r:?}")
     };
     assert_eq!(path, out);
     assert_eq!(bytes, std::fs::metadata(&out).unwrap().len());
+    assert_eq!(
+        live,
+        Some(LiveEnd {
+            reason: LiveEndReason::Stopped,
+            gaps: Some(0)
+        })
+    );
     let msns = recorded_msns(&out);
     assert!(msns.len() >= 6, "{msns:?}");
     assert!(msns.windows(2).all(|w| w[1] == w[0] + 1), "{msns:?}");
@@ -582,6 +607,13 @@ async fn gaps_are_counted_and_recording_continues() {
         .await
         .unwrap();
     assert!(matches!(r, DownloadOutcome::Completed { .. }));
+    assert_eq!(
+        live_end(&r),
+        LiveEnd {
+            reason: LiveEndReason::Ended,
+            gaps: Some(6)
+        }
+    );
     // poll k: 5k..5k+3. 사이마다 2개씩 놓친다.
     assert_eq!(
         recorded_msns(&out),
@@ -649,6 +681,7 @@ async fn different_live_id_ends_recording() {
     let out = out_path(&dir);
     let r = record(&s, &out, None).await.unwrap();
     assert!(matches!(r, DownloadOutcome::Completed { .. }), "{r:?}");
+    assert_eq!(live_end(&r).reason, LiveEndReason::Restarted);
     assert_eq!(recorded_msns(&out), (0..=5).collect::<Vec<_>>());
     no_part(&out);
 }
@@ -682,6 +715,7 @@ async fn closed_after_expiry_finishes() {
     let out = out_path(&dir);
     let r = record(&s, &out, None).await.unwrap();
     assert!(matches!(r, DownloadOutcome::Completed { .. }), "{r:?}");
+    assert_eq!(live_end(&r).reason, LiveEndReason::Ended);
     assert_eq!(recorded_msns(&out), (0..=4).collect::<Vec<_>>());
 }
 
@@ -719,6 +753,7 @@ async fn discontinuity_ends_recording() {
     let out = out_path(&dir);
     let r = record(&s, &out, None).await.unwrap();
     assert!(matches!(r, DownloadOutcome::Completed { .. }), "{r:?}");
+    assert_eq!(live_end(&r).reason, LiveEndReason::Restarted);
     assert_eq!(recorded_msns(&out), (0..=4).collect::<Vec<_>>());
 }
 
@@ -745,6 +780,13 @@ async fn idle_rechecks_status() {
     let out = out_path(&dir);
     let r = record(&s, &out, None).await.unwrap();
     assert!(matches!(r, DownloadOutcome::Completed { .. }), "{r:?}");
+    assert_eq!(
+        live_end(&r),
+        LiveEnd {
+            reason: LiveEndReason::Ended,
+            gaps: Some(0)
+        }
+    );
     assert_eq!(recorded_msns(&out), [0, 1, 2]);
     assert_eq!(s.details.load(Ordering::SeqCst), 2);
 }
@@ -898,6 +940,13 @@ async fn unsupported_midway_keeps_part_and_next_run_finalizes() {
     let r = record(&s, &out, None).await.unwrap();
     assert!(matches!(r, DownloadOutcome::Completed { .. }), "{r:?}");
     assert_eq!(
+        live_end(&r),
+        LiveEnd {
+            reason: LiveEndReason::Other,
+            gaps: None
+        }
+    );
+    assert_eq!(
         s.polls.load(Ordering::SeqCst),
         polls,
         "마무리는 서버를 부르지 않는다"
@@ -1006,7 +1055,34 @@ async fn single_stale_playlist_is_not_a_restart() {
     let out = out_path(&dir);
     let r = record(&s, &out, None).await.unwrap();
     assert!(matches!(r, DownloadOutcome::Completed { .. }), "{r:?}");
+    assert_eq!(live_end(&r).reason, LiveEndReason::Ended);
     assert_eq!(recorded_msns(&out), (0..=12).collect::<Vec<_>>());
+}
+
+/// msn이 연달아 BACK_CONFIRM(3)번 거꾸로 가면 스트림 재시작으로 보고 그 앞까지 마무리한다(live-audit (3)(a)).
+#[tokio::test]
+async fn three_backward_playlists_end_as_restart() {
+    let s = Stream::start(
+        |n| match n {
+            0..=5 => window(n as u64, 3, false),
+            _ => window(0, 3, false),
+        },
+        |_| Detail::Open(1),
+    )
+    .await;
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_path(&dir);
+    let r = record(&s, &out, None).await.unwrap();
+    assert!(matches!(r, DownloadOutcome::Completed { .. }), "{r:?}");
+    assert_eq!(recorded_msns(&out), (0..=7).collect::<Vec<_>>());
+    assert_eq!(
+        live_end(&r),
+        LiveEnd {
+            reason: LiveEndReason::Restarted,
+            gaps: Some(0)
+        }
+    );
+    no_part(&out);
 }
 
 /// E: 정상적인 서명 갱신으로 init 주소의 경로가 바뀌어도(파일 이름은 그대로) 재시작이 아니다.
@@ -1194,6 +1270,13 @@ async fn interrupted_real_recording_is_converted_when_finalized() {
     assert!(part.exists());
     let r = record(&s, &out, None).await.unwrap();
     assert!(matches!(r, DownloadOutcome::Completed { .. }), "{r:?}");
+    assert_eq!(
+        live_end(&r),
+        LiveEnd {
+            reason: LiveEndReason::Other,
+            gaps: None
+        }
+    );
     mp4::assert_flat_mp4(&std::fs::read(&out).unwrap());
     no_part(&out);
 }

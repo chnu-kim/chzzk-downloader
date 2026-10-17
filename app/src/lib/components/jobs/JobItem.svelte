@@ -22,6 +22,7 @@
     type JobBlock,
   } from '../../jobs';
   import { kindTone } from '../../receive';
+  import { auth } from '../../stores/auth.svelte';
   import { platform } from '../../stores/platform.svelte';
   import { ETA_REFRESH_MS } from '../../timing';
   import Badge from '../ui/Badge.svelte';
@@ -92,7 +93,10 @@
   );
   const buttons = $derived(jobButtons(job, progress, cookiesEnabled, block));
   const cancel = $derived(cancelLabel(job, progress));
-  const err = $derived(job.status === 'failed' ? failedCopy(job, cookiesEnabled) : null);
+  // notOwnContent 제목은 맡은 채널 수로 넓어진다(카드와 같은 규칙, content.md §15.2)
+  const err = $derived(
+    job.status === 'failed' ? failedCopy(job, cookiesEnabled, auth.status?.delegatedChannels.length ?? 0) : null,
+  );
   const body = $derived(bodyLine(job, progress, { base, recovered }));
   const missing = $derived(job.status === 'completed' && job.missing);
   /** 제목 전체 보기(행 아래 인라인 펼침). 잘린 제목에 키보드·터치로 닿는 길이다 */
@@ -167,9 +171,10 @@
     {#if err.body}<p class="job-body indent">{err.body}</p>{/if}
     {#if err.detail}<p class="job-body indent detail selectable">{err.detail}</p>{/if}
   {/if}
-  <!-- 본문 줄: 연결 대기 · 회복 직후 · 멈춘 지 30일 · 완료(파일 없음)·건너뜀. 실패 작업은 위 오류 본문 아래에 멈춘 지 30일 줄만 더한다 -->
+  <!-- 본문 줄: 연결 대기 · 회복 직후 · 멈춘 지 30일 · 완료(파일 없음) · 끝난 생방송 녹화(끝난 이유) · 건너뜀. 실패 작업은 위 오류 본문 아래에 멈춘 지 30일 줄만 더한다.
+       완료 행은 상태 줄에 늘 아이콘(✓ 또는 ⚠)이 있으므로 들여쓴다 -->
   {#if body}
-    <p class="job-body" class:indent={missing || !!err}>{body}</p>
+    <p class="job-body" class:indent={job.status === 'completed' || !!err}>{body}</p>
   {/if}
 
   {#if block}

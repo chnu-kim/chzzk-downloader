@@ -12,6 +12,7 @@ import { LOADER_DELAY_MS } from '../../timing';
 
 vi.mock('../../api', () => ({
   resolve: vi.fn(),
+  ownershipRecheck: vi.fn(),
   checkOutput: vi.fn(),
   enqueue: vi.fn(),
   clipboardLink: vi.fn(),
@@ -83,6 +84,7 @@ async function downloadButton() {
 
 beforeEach(() => {
   vi.mocked(api.resolve).mockReset();
+  vi.mocked(api.ownershipRecheck).mockReset();
   vi.mocked(api.checkOutput).mockReset();
   vi.mocked(api.enqueue).mockReset().mockResolvedValue({} as never);
   vi.mocked(api.clipboardLink).mockReset().mockResolvedValue(null);
@@ -839,6 +841,154 @@ describe('남의 영상 안내(A5)', () => {
     expect(document.getElementById('ownership-notice')).toBeNull();
     expect(screen.queryByText(t('receive.admin.otherChannel.title'))).toBeNull();
     expect(screen.queryByText(t('receive.admin.unknown.title'))).toBeNull();
+  });
+});
+
+describe('막힌 카드의 [다시 불러오기](R)', () => {
+  const OTHER = '0'.repeat(31) + 'c';
+  const notOwn = (over = {}) => ({
+    ownership: 'notOwn' as const,
+    meta: { ...resolved().meta, channelName: '다른 채널', channelId: OTHER },
+    ...over,
+  });
+  const recheckBtn = () => screen.getByRole('button', { name: t('action.reresolve') });
+
+  beforeEach(() => {
+    auth.status = { ...signedInAs('a1', '내 채널'), delegationsCheckedAt: 1_760_000_000 };
+  });
+  afterEach(() => {
+    auth.status = null;
+  });
+
+  it('RV1 둘째 문장·두 채널 행·마지막 확인, Notice 안 버튼은 [다시 불러오기] 하나, [받기] 설명은 제목+본문', async () => {
+    await openCard(notOwn());
+    const copy = errorCopy(appError('notOwnContent'), { place: 'resolve', channelName: '다른 채널', myChannel: '내 채널' });
+    expect(copy.body).toContain('초대 주소');
+    expect(screen.getByText(copy.body)).toBeInTheDocument();
+    expect(screen.getByText('영상의 채널: ‘다른 채널’')).toBeInTheDocument();
+    expect(screen.getByText('로그인한 채널: ‘내 채널’')).toBeInTheDocument();
+    expect(screen.getByText(new RegExp(t('account.lastSeen', { time: '.+' })))).toBeInTheDocument();
+    const notice = screen.getByText(copy.title).closest('.notice') as HTMLElement;
+    expect(within(notice).getAllByRole('button').map((b) => b.textContent?.trim())).toEqual([t('action.reresolve')]);
+    const btn = screen.getByRole('button', { name: downloadName() });
+    expectBlocked(btn);
+    expect(btn).toHaveAccessibleDescription(`${copy.title} ${copy.body}`);
+  });
+
+  it('RV2 누르면 ownershipRecheck를 한 번 부르고 기다리는 동안 aria-busy', async () => {
+    let resolve!: (r: ReturnType<typeof resolved>) => void;
+    vi.mocked(api.ownershipRecheck).mockReturnValue(new Promise((r) => (resolve = r)));
+    const user = await openCard(notOwn());
+    await user.click(recheckBtn());
+    await waitFor(() => expect(recheckBtn()).toHaveAttribute('aria-busy', 'true'));
+    await user.click(recheckBtn());
+    expect(api.ownershipRecheck).toHaveBeenCalledTimes(1);
+    expect(api.ownershipRecheck).toHaveBeenCalledWith(resolved().url);
+    resolve(resolved(notOwn()));
+    await waitFor(() => expect(recheckBtn()).not.toHaveAttribute('aria-busy', 'true'));
+  });
+
+  it('RV3 맡은 채널이 되면 카드가 다시 그려져 막힘이 풀린다', async () => {
+    vi.mocked(api.ownershipRecheck).mockResolvedValue(resolved({ ownership: 'delegated', meta: { ...resolved().meta, channelId: OTHER, channelName: '다른 채널' } }));
+    const user = await openCard(notOwn());
+    await user.click(recheckBtn());
+    await waitFor(() => expect(screen.queryByText(t('action.reresolve'))).toBeNull());
+    expect(screen.getByText(t('delegated.title'))).toBeInTheDocument();
+    expect(document.getElementById('ownership-notice')).toBeNull();
+    await downloadButton();
+  });
+
+  it('RV4 판정이 그대로면 카드를 그대로 둔다', async () => {
+    vi.mocked(api.ownershipRecheck).mockResolvedValue(resolved(notOwn()));
+    const user = await openCard(notOwn());
+    const title = screen.getByRole('heading', { name: '금요 노가리 방송 - 신작 게임 해보기' });
+    await user.click(recheckBtn());
+    await waitFor(() => expect(api.ownershipRecheck).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(recheckBtn()).not.toHaveAttribute('aria-busy', 'true'));
+    expect(screen.getByRole('heading', { name: '금요 노가리 방송 - 신작 게임 해보기' })).toBe(title);
+  });
+
+  it('RV5 연결하지 못하면 그 줄이 보이고 카드는 그대로', async () => {
+    vi.mocked(api.ownershipRecheck).mockRejectedValue(appError('network'));
+    const user = await openCard(notOwn());
+    await user.click(recheckBtn());
+    expect(await screen.findByText(t('receive.recheck.offline'))).toBeInTheDocument();
+    expectBlocked(screen.getByRole('button', { name: downloadName() }));
+  });
+
+  it('RV6 맡은 채널의 생방송은 막다른 길이라 버튼·마지막 확인·초대 안내가 없다', async () => {
+    auth.status = {
+      ...signedInAs('a1', '내 채널'),
+      delegatedChannels: [{ channelId: OTHER, channelName: '다른 채널' }],
+      delegationsCheckedAt: 1_760_000_000,
+    };
+    await openCard(
+      notOwn({ meta: { ...resolved().meta, kind: 'live', channelName: '다른 채널', channelId: OTHER } }),
+    );
+    const copy = errorCopy(appError('notOwnContent'), { place: 'resolve', channelName: '다른 채널', delegatedLive: true });
+    expect(copy.title).toBe('맡은 채널의 생방송은 녹화할 수 없어요');
+    const notice = screen.getByText(copy.title).closest('.notice') as HTMLElement;
+    expect(within(notice).queryAllByRole('button')).toHaveLength(0);
+    expect(within(notice).queryByText(new RegExp(t('account.lastSeen', { time: '.+' })))).toBeNull();
+    expect(within(notice).queryByText(/초대 주소/)).toBeNull();
+    expectBlocked(screen.getByRole('button', { name: downloadName() }));
+  });
+
+  it('맡은 채널이 있으면 제목이 넓어진다', async () => {
+    auth.status = { ...signedInAs('a1', '내 채널'), delegatedChannels: [{ channelId: 'zz', channelName: '다른 맡은 채널' }] };
+    await openCard(notOwn());
+    expect(screen.getByText('내 채널이나 맡은 채널의 영상만 받을 수 있어요')).toBeInTheDocument();
+  });
+
+  it('RV8 받기가 notOwnContent로 실패하면 오류 Notice에는 [다시 불러오기]와 [닫기]가 모두 있고 누르면 다시 묻는다', async () => {
+    vi.mocked(api.enqueue).mockRejectedValue(appError('notOwnContent'));
+    vi.mocked(api.ownershipRecheck).mockResolvedValue(resolved());
+    const user = await openCard();
+    await user.click(await downloadButton());
+    const title = errorCopy(appError('notOwnContent'), { place: 'resolve' }).title;
+    const notice = (await screen.findByText(title)).closest('.notice') as HTMLElement;
+    const labels = within(notice).getAllByRole('button').map((b) => b.textContent?.trim());
+    expect(labels).toEqual([t('action.reresolve'), t('common.close')]);
+    await user.click(within(notice).getByRole('button', { name: t('action.reresolve') }));
+    await waitFor(() => expect(api.ownershipRecheck).toHaveBeenCalledTimes(1));
+  });
+});
+
+describe('막힌 생방송 카드·받기 실패의 다시 불러오기(①-5 수정)', () => {
+  const OTHER = '0'.repeat(31) + 'c';
+  const liveMeta = { ...resolved().meta, kind: 'live' as const, channelName: '다른 채널', channelId: OTHER };
+
+  afterEach(() => {
+    auth.status = null;
+  });
+
+  it('RV9 막힌 생방송 카드는 "받기를 누르면 녹화가 시작돼요" 안내를 그리지 않는다', async () => {
+    auth.status = { ...signedInAs('a1', '내 채널'), delegatedChannels: [{ channelId: OTHER, channelName: '다른 채널' }] };
+    await openCard({ ownership: 'notOwn', playbackKind: 'live', meta: liveMeta });
+    expect(screen.getByText('맡은 채널의 생방송은 녹화할 수 없어요')).toBeInTheDocument();
+    expect(screen.queryByText(t('card.live.body'))).toBeNull();
+  });
+
+  it('RV9 막히지 않은 생방송 카드는 안내를 그대로 둔다', async () => {
+    auth.status = signedInAs('a1', '내 채널');
+    await openCard({ ownership: 'own', playbackKind: 'live', meta: liveMeta });
+    expect(screen.getByText(t('card.live.body'))).toBeInTheDocument();
+  });
+
+  it('RV10 받기 실패 Notice는 맡은 채널 수로 제목을 넓히고, 다시 불러오는 동안 aria-busy, 연결 실패 줄을 그 안에 보인다', async () => {
+    auth.status = { ...signedInAs('a1', '내 채널'), delegatedChannels: [{ channelId: OTHER, channelName: '다른 채널' }] };
+    vi.mocked(api.enqueue).mockRejectedValue(appError('notOwnContent'));
+    let reject!: (e: unknown) => void;
+    vi.mocked(api.ownershipRecheck).mockReturnValue(new Promise((_, r) => (reject = r)));
+    const user = await openCard({ ownership: 'delegated' });
+    await user.click(await downloadButton());
+    const notice = (await screen.findByText('내 채널이나 맡은 채널의 영상만 받을 수 있어요')).closest('.notice') as HTMLElement;
+    const btn = within(notice).getByRole('button', { name: t('action.reresolve') });
+    await user.click(btn);
+    await waitFor(() => expect(btn).toHaveAttribute('aria-busy', 'true'));
+    reject(appError('network'));
+    expect(await within(notice).findByText(t('receive.recheck.offline'))).toBeInTheDocument();
+    expect(btn).not.toHaveAttribute('aria-busy', 'true');
   });
 });
 

@@ -61,6 +61,11 @@ export function formatDate(w: Wall): string {
   return `${w.y}. ${w.mo}. ${w.d}.`;
 }
 
+/** 날짜만: 같은 해 `10월 23일`, 다른 해 `2027년 1월 2일`(편집자 행·초대 기한) */
+export function formatMonthDay(w: Wall, now: Wall): string {
+  return w.y === now.y ? `${w.mo}월 ${w.d}일` : `${w.y}년 ${w.mo}월 ${w.d}일`;
+}
+
 /** 12시간 `오후 9:00`(0시는 오전 12:00, 12시는 오후 12:00) */
 function timeOfDay(w: Wall): string {
   return `${w.h < 12 ? '오전' : '오후'} ${w.h % 12 || 12}:${String(w.mi).padStart(2, '0')}`;

@@ -292,6 +292,7 @@ fn record(id: u64, channel: Option<&str>, out: &Path) -> JobRecord {
         discard_on_start: false,
         partial_bytes: None,
         missing: false,
+        live_end: None,
     }
 }
 

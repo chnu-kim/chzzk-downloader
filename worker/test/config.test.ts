@@ -104,9 +104,9 @@ describe("통과", () => {
     expect(c.redirectUri).toBe(PROD_ORIGIN + "/auth/callback");
     expect(c.startRate10m).toBe(6);
     expect(c.buildId).toBe("abc1234");
-    // 앱 편집자 API는 릴리스 B(①-5)가 EDITOR_API_PROD를 바꿀 때까지 닫혀 있다(106 (차) ⑤)
-    expect(EDITOR_API_PROD).toBe(false);
-    expect(c.editorApi).toBe(false);
+    // 앱 편집자 API는 릴리스 B(①-5)에서 운영에도 열린다(106 (차) ⑤, 107)
+    expect(EDITOR_API_PROD).toBe(true);
+    expect(c.editorApi).toBe(true);
   });
 
   it("운영: 치지직 주소가 없으면 운영 값", () => {

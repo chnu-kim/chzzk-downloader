@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 
 use chzzk_core::{ContentRef, DuplicatePolicy, PlaybackKind};
-use chzzk_shell::dto::{ContentKindDto, JobStatus, OnExisting};
+use chzzk_shell::dto::{ContentKindDto, JobStatus, LiveEndDto, LiveEndReason, OnExisting};
 use chzzk_shell::jobs::{JOBS_FILE, JobRecord, JobStore, JobsFile, concurrency};
 use chzzk_shell::{AppError, JobId};
 
@@ -29,6 +29,7 @@ fn record(id: u64, status: JobStatus) -> JobRecord {
         stopped_at: None,
         range: None,
         final_bytes: None,
+        live_end: None,
         last_error: None,
         discard_on_start: false,
         partial_bytes: None,
@@ -96,6 +97,73 @@ fn json_shape() {
     assert_eq!(j["discardOnStart"], false);
     assert!(j.get("partialBytes").is_none());
     assert!(j.get("missing").is_none());
+}
+
+fn record_json(live_end: Option<&str>) -> String {
+    let extra = live_end
+        .map(|l| format!(r#","liveEnd":{l}"#))
+        .unwrap_or_default();
+    format!(
+        r#"{{"v":1,"nextId":2,"jobs":[{{"id":1,"url":"u","content":{{"kind":"clip","clipId":"abc"}},
+            "title":"t","channelName":"c","kind":"clip","qualityId":"q","qualityLabel":"720p",
+            "expectedKind":"progressive","output":"/v/a.mp4","onExisting":"overwrite",
+            "concurrency":4,"status":"completed","createdAt":1{extra}}}]}}"#
+    )
+}
+
+/// 끝난 이유가 없는 옛 레코드는 `None`으로 읽고, 다시 쓰면 `liveEnd` 키가 없다.
+#[test]
+fn record_without_live_end_reads_none() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join(JOBS_FILE), record_json(None)).unwrap();
+    let store = JobStore::new(dir.path());
+    let file = store.load().unwrap().file;
+    assert_eq!(file.jobs[0].live_end, None);
+    store.save(&file).unwrap();
+    let v: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(dir.path().join(JOBS_FILE)).unwrap()).unwrap();
+    assert!(v["jobs"][0].get("liveEnd").is_none());
+}
+
+#[test]
+fn live_end_round_trips() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = JobStore::new(dir.path());
+    let mut r = record(1, JobStatus::Completed);
+    r.live_end = Some(LiveEndDto {
+        reason: LiveEndReason::Ended,
+        gaps: None,
+    });
+    let file = JobsFile {
+        v: 1,
+        next_id: 2,
+        jobs: vec![r.clone()],
+    };
+    store.save(&file).unwrap();
+    let v: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(dir.path().join(JOBS_FILE)).unwrap()).unwrap();
+    assert_eq!(
+        v["jobs"][0]["liveEnd"],
+        serde_json::json!({"reason": "ended", "gaps": null})
+    );
+    assert_eq!(store.load().unwrap().file.jobs, vec![r]);
+}
+
+/// 뒤 버전이 더한 이유는 버리고 `None`으로 읽는다: jobs.json 전체를 못 읽게 되면 안 된다.
+#[test]
+fn unknown_live_end_reason_is_dropped() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join(JOBS_FILE),
+        record_json(Some(r#"{"reason":"zzz","gaps":1}"#)),
+    )
+    .unwrap();
+    let loaded = JobStore::new(dir.path()).load().unwrap();
+    assert!(loaded.backup.is_none());
+    let j = &loaded.file.jobs[0];
+    assert_eq!(j.live_end, None);
+    assert_eq!(j.id, JobId(1));
+    assert_eq!(j.status, JobStatus::Completed);
 }
 
 /// 선택 필드가 없는 레코드도 읽는다.

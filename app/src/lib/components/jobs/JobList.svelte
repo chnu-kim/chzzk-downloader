@@ -194,7 +194,7 @@
         title={t('list.empty.title')}
         steps={[t('list.empty.step1'), t('list.empty.step2'), t('list.empty.step3')]}
       >
-        {t('list.empty.scope')}
+        {(auth.status?.delegatedChannels.length ?? 0) > 0 ? t('list.empty.scopeDelegated') : t('list.empty.scope')}
       </EmptyState>
     </Surface>
   {:else if emptyKind === 'cleared'}

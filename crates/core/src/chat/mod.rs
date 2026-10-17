@@ -23,6 +23,7 @@ pub mod walk;
 
 pub use collect::{ChatOutcome, ChatProgress, ChatRequest};
 pub use page::{ChatCursor, ChatMessage, ChatMessageKind, ChatPage, message_hash, parse_chat_page};
+pub use part::{chat_partial_bytes, discard_chat_partial};
 pub use walk::{BoundaryRepeat, Next, Step, WalkState, next_step};
 
 /// 요청 사이 최소 간격(ms). [잠정] 근거 없음, 실측·ADR-0009 묶음 등록(Q5).
@@ -45,8 +46,9 @@ pub enum ChatEnd {
     EmptyPage,
 }
 
-/// 자막 형식.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// 자막 형식. 직렬화는 `"none"`·`"ass"`·`"srt"`(설정·작업 목록에 저장된다).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub enum SubtitleFormat {
     #[default]
     None,

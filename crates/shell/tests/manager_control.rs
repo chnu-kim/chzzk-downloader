@@ -1074,3 +1074,52 @@ async fn resume_interrupted_where_sees_content() {
         2
     );
 }
+
+/// 맡은 채널 자동 이어받기 전용 `resume_interrupted_checked`(app.md 구현 중 변경 87): `interrupted`만 줄 세우고, 사용자가
+/// 이어받은 뒤 일시정지한 작업(`paused`)·대기 중인 작업은 건너뛴다(`false`). 판정 거부는 그 오류이고 상태는 그대로다.
+#[tokio::test(start_paused = true)]
+async fn resume_interrupted_checked_only_requeues_interrupted() {
+    let h = Harness::new(1);
+    h.fake
+        .script_for(h.output("a"), Script::new().wait_cancel());
+    let a = h.enqueue("a").id;
+    until("받는 중", || h.status(a) == JobStatus::Running).await;
+    h.mgr.quit(QUIT_TIMEOUT).await;
+    assert_eq!(h.status(a), JobStatus::Interrupted);
+    h.mgr.flush();
+
+    let m = open_with(h.dir.path(), &h.fake, 1, false);
+    let status = || m.list()[0].status;
+    let err = m
+        .resume_interrupted_checked(a, |_| Err(chzzk_shell::AppError::ownership_unknown()))
+        .unwrap_err();
+    assert_eq!(err.code, ErrorCode::OwnershipUnknown);
+    assert_eq!(status(), JobStatus::Interrupted);
+    // 사용자가 이어받고 일시정지했다
+    h.fake
+        .script_for(h.output("a"), Script::new().wait_cancel());
+    m.resume(a, false).unwrap();
+    m.pause(a).unwrap();
+    until("일시정지", || status() == JobStatus::Paused).await;
+    assert!(!m.resume_interrupted_checked(a, |_| Ok(None)).unwrap());
+    settle().await;
+    assert_eq!(status(), JobStatus::Paused);
+}
+
+#[tokio::test(start_paused = true)]
+async fn resume_interrupted_checked_requeues_interrupted() {
+    let h = Harness::new(1);
+    h.fake
+        .script_for(h.output("a"), Script::new().wait_cancel());
+    let a = h.enqueue("a").id;
+    until("받는 중", || h.status(a) == JobStatus::Running).await;
+    h.mgr.quit(QUIT_TIMEOUT).await;
+    h.mgr.flush();
+    let m = open_with(h.dir.path(), &h.fake, 1, false);
+    h.fake
+        .script_for(h.output("a"), Script::new().wait_cancel());
+    assert!(m.resume_interrupted_checked(a, |_| Ok(None)).unwrap());
+    assert_ne!(m.list()[0].status, JobStatus::Interrupted);
+    // 이미 줄에 있다: 건너뛴다
+    assert!(!m.resume_interrupted_checked(a, |_| Ok(None)).unwrap());
+}

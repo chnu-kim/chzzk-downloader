@@ -295,6 +295,9 @@
 - [ ] ④ 채팅 함께 받기: ④-2 `chat::part` · ④-3a 코어 수집(실측 없이, 2026-10-17 `feat/chat-collect-core`, core.md 66) · ④-3b 실측 뒤 Q3·Q8 · ④-4 셸(2026-10-17 `feat/chat-shell`, app.md 85·core.md 67, 자막 기본 [잠정] `.ass` U2 대기) · ④-5 앱(U2 확정 뒤) · ④-6 문서. ②와 무관하게 단독 릴리스
 - [ ] ④-3a 후속(Codex 3차 P2): 자막 생성(기록 읽기·렌더·쓰기·sync_all)을 spawn_blocking으로 옮겨 실행기를 막지 않는다
 - [ ] ④-3a 후속(Codex 3차 medium): 재시도 마무리에서 sidecar의 moved 자막이 실제로 있는지 확인하고, 없으면 moved를 지우고 기록에서 다시 만든다(TargetExists 뒤 사용자가 자막을 옮긴 경우 subtitle_failed=false로 잘못 끝남)
+- [ ] ④-4 후속(Codex 4차 medium): enqueue(save_chat·restart=true)가 ChatState.restart를 false로 만든다. 공유 .part가 있거나 지우기 실패면 새 받기가 옛 채팅 커서를 이어받는다 → req.restart로 초기화하고 공유 .part·지우기 실패 테스트
+- [ ] ④-4 후속(Codex 4차 medium): 맡은 채널(위임) 작업은 interrupted_where 경로라 영상 완료·채팅 중단 작업이 자동 이어받기에서 빠진다 → 위임 복구 후보에 중단된 채팅을 넣고 소유 재검증 뒤 fetch_chat
+- [ ] ④-4 후속(3차 남은 한계): 이어받기로 waiting이 된 채팅이 다른 채팅 뒤에서 기다리는 동안 영상 파일이 지워지면 chat_pump가 다시 보지 않는다
 - [ ] ③ 내 채널 새 영상·모아 받기: ③-2 목록 코어 · ③-3 원장 · ③-4 서비스 · ③-5 Checkbox ADR · ③-6 뷰 → **릴리스 ③(가)** → ③-7 스케줄러 → ③-8 맡은 채널 대상 고르기(①-4 뒤)
 - [ ] 후속(별도 설계): 방송 상태 감시·자동 녹화·홈 「내 방송」·녹화 중 허가 제외(⑤(나)), 별도 임시 파일 체계 `.rec.part`
 - [ ] 사용자: D62 시험(UT8·UT9·③·⑤ 과업), 결정 대기 C2(릴리스 A 앞)·U2(④-5 앞)·R5(M-②-6 뒤)·C3·D2(수정 반영 뒤 확인 요청), C6·C7은 확정이고 시점만 남음

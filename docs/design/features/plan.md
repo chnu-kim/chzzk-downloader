@@ -102,7 +102,7 @@ Codex 2회차 N1~N9는 각 설계가 3차·4차 개정에서 처리했다(N1·N2
 | mpv·VLC가 빠른 다시보기 mp4(조각 구조 그대로, 변환은 생방송에만 `download/mod.rs:6`·`:372` [확인: 문서])의 길이·탐색을 바르게 다루는가 | [실측 필요] | M-④-8과 함께 |
 | 생방송 카드 안내(`card.live.body`)에 "채팅은 다시보기가 생기면" 한 줄을 더할지(R12, ADR-0025 영역) | [가정] | ⑤-F6 docs 때 F가 판단 |
 | `conflict_names` 순서·"형식 바꾸기"가 카드에서 튀지 않는지·`dialog.removeChat` 문구·채팅 수치 ADR·`examples/` 번들 제외(B22) | [가정]·리뷰 | ④-5 `design-shots`·R1, ④-1 |
-| ④-1 얇은 루프와 ④-3 `collect_chat`이 같은 `walk::next_step`을 쓴다 | [가정] | ④-3 리뷰 |
+| ④-1 얇은 루프와 ④-3a `collect_chat`이 같은 `walk::next_step`을 쓴다 | [가정] | ④-3a 리뷰 |
 
 ### ⑤ 생방송 녹화(배포됨, `live-audit.md`)
 | 남은 것 | 종류 | 처리 자리 |
@@ -212,7 +212,8 @@ Codex 2회차 N1~N9는 각 설계가 3차·4차 개정에서 처리했다(N1·N2
 | `chore/chat-probe` `[P]` | ④-1 `chore:` 채팅 fixture 생성기·`chat::page`·`walk`·`retry`(400은 오류, 음성 테스트)·공개 seam `fetch_chat_page`·채팅 `RetryPolicy`·`chat::probe`·**`chat::subtitle`(`render_ass`·`render_srt` + 골든)·`naming::sibling_path`**(N5)·`examples/vod_chat_check.rs`(**`--write-ass`·`--write-srt`**, 둘을 한 번에 쓰지 않고 기존 파일을 덮지 않음) | O(serde 이름·fixture 설계) → 구현 S | 없음 | `rust`·`scan`·`--check`, `examples/` 번들 제외 확인(B22) |
 | ⏸ | 사용자 실측 M-④-1~9 | 사람 | ④-1 | §11 표로 확정. **U2 결정 입력** |
 | `refactor/chat-core-part` `[P]` | ④-2 `refactor:` `chat::part`(`DuplicatePolicy` 마무리·경쟁 테스트)만 | S | 없음(④-1 머지 전에도 가능) | `rust` |
-| `refactor/chat-core-collect` | ④-3 `refactor:` `Chzzk::collect_chat`·wiremock·(Q3 있다면) `chat_enabled`·`ContentMeta.chat`(리터럴 셋 갱신)·(Q8 A면) `ChatEnd::PastEnd` | O | ④-1·④-2·실측 | `rust`·`coverage` |
+| `feat/chat-collect-core` | ④-3a `refactor:` `Chzzk::collect_chat`(④-1의 fetch·walk·subtitle + ④-2의 part)·`ChatRequest`·`ChatOutcome`·`ChatProgress`·wiremock 통합 테스트(400 음성 (가)(나)(다)·429 경계·취소·재개·경쟁). **실측 Q3·Q8에 기대는 것은 넣지 않는다**(사용자 승인 2026-10-17: ④-3을 실측 없는 부분 먼저로 나눈다) | O | ④-1·④-2(실측 불필요) | `rust`·`coverage` |
+| `refactor/chat-core-measured` | ④-3b `refactor:` 실측 뒤 얇게: (Q3 "있다"면) `VideoContent.chat_enabled`·`ContentMeta.chat`(리터럴 셋·셸 DTO 미러 갱신), (Q8 A면) `ChatEnd::PastEnd` 양성 테스트(④-3a의 조건 밖 400 음성 테스트는 그대로). Q3·Q8이 B면 문서만 고친다(사용자 승인 2026-10-17) | O | ④-3a · 실측 M-④-3·M-④-4 | `rust` |
 | `refactor/chat-shell` | ④-4 `refactor:` `ChatQueue`·`ChatState`·`JobEvent::Chat`·`on_auth_status` 채팅 이어받기·`clearable()`·`check_output` 충돌·`conflict_names`·생방송·클립 `save_chat` 거부·command 3·설정 두 키·DTO + bindings·가짜 Backend + **프런트 `jobs.apply.ts` `Chat` 분기·vitest·가짜 백엔드 타입** | O(생명주기 표 13행·정리 규칙) | ④-3 · (②-2가 머지돼 있으면 그 뒤, 아니면 **기다리지 않는다**) | `rust`·`tauri`·`tauri-clippy`·**`frontend`** |
 | `feat/chat-app` | ④-5 `feat:` 카드 채팅 행 + "형식 바꾸기"·행 조각·[⋯] 항목·D7 변형·D2 변형·`isClearable`·`removeRoute`·접힘 규칙·설정 두 행·copy·content §4·§5.3·§15.1·`terms.json` `opensWindow`·patterns 표 행 + §17-34·채팅 수치 ADR·갤러리·e2e·네이티브 fixture·(②-3이 먼저 머지돼 있으면) 구간 켜짐 → 채팅 행 숨김 + 두 행 합산 높이 | O 구현, **F 리뷰**(카드 두 요소가 튀지 않는지, U2 반영) | ④-4 · **U2 확정**(실측 뒤) · U1·U3·U4·U5 확정 · (②-3이 머지돼 있으면 그 뒤, 아니면 기다리지 않는다) | `frontend`·`design-copy`·`design-tokens`·`e2e-web`·`design-shots`·`e2e-native` |
 | `docs/chat-done` | ④-6 `docs:` core.md·app.md 번호·ROADMAP·CLAUDE.md 모듈 목록 `chat` | S | ④-5 | `scan` |
@@ -247,6 +248,8 @@ Codex 2회차 N1~N9는 각 설계가 3차·4차 개정에서 처리했다(N1·N2
 | M-②-3 "된다" | ②-1 이후 전체(deferred 여부) | 키프레임 |
 | M-②-2 셋 "일치" ∧ M-②-6 "된다" | ②-3 | 장면 대응·재생 |
 | M-④-1~9 → U2 확정 | ④-5 | 기본 형식이 도움말 키·라디오 순서를 정한다(`chat.md` §12) |
+| ④-1·④-2 | ④-3a | 실측 없이 시작·머지한다(사용자 승인 2026-10-17). ④-4는 ④-3a에만 기댄다 |
+| ④-3a ∧ M-④-3·M-④-4(Q3·Q8) | ④-3b | 채팅 사용 여부 필드와 `PastEnd`는 실측 결과로만 정한다. ④-5의 카드 비활성 경로(Q3)가 이것에 기대므로 ④-5 앞 |
 | ③-6을 실제로 씀 ∧ M-③-6 | ③-7 | 스케줄러 수치 |
 | 트랙 안 stacked 순서 | 각 PR 표 | — |
 
@@ -264,8 +267,8 @@ Codex 2회차 N1~N9는 각 설계가 3차·4차 개정에서 처리했다(N1·N2
 ⑤ : ✔L6·L7·L8(확정) → ⑤-F1 ∥ ⑤-F4 ∥ ⑤-F5 ∥ (⑤-F2 → ⑤-F3) → ⑤-F6 ⇒ [릴리스 ⑤ fix, 0.7.1 또는 다음 feat에 합류] → ⏸M-⑤-A~D
 ① : ①-1 → ①-2 → ①-3 → ①-3½ ⇒ [릴리스 A(Worker)] → ①-4(⑤-F2 뒤) → ①-5 → ①-6 ⇒ [릴리스 B]
 ② : ②-0 ⏸M-②-3 → ②-1(**⑤-F2 뒤**, §5-A) → ⏸M-②-2·6(`dl --range`) ∥ ②-2 → ②-3 → ②-5
-④ : ④-1 ⏸M-④-1~9 → ⏸U2 ─┐        (②-2 있으면 그 뒤)  (②-3 있으면 그 뒤)
-     ④-2 ───────→ ④-3 ──┴→ ④-4 ───────────→ ④-5 ───────────→ ④-6
+④ : ④-1 ⏸M-④-1~9 ──→ ④-3b(Q3·Q8, ④-3a 뒤) ─→ ⏸U2 ─┐   (②-2 있으면 그 뒤)  (②-3 있으면 그 뒤)
+     ④-2 ──→ ④-3a ──→ ④-4 ────────────────────────────┴→ ④-5 ───────────→ ④-6
 ③ : ③-1 ⏸M-③-1~7·E1 → ③-2 → ③-3 → ③-4 → ③-6 ⇒ [릴리스 ③(가)] → ③-7 ⇒ [릴리스 ③(나)]
                              ③-5 ─────┘                ③-8(①-4 뒤)
 ⑤(나) 후속: ③(나) 뒤 별도 설계(LiveWatch·자동 녹화·L-D1·O-4)

@@ -31,7 +31,8 @@ it("각 설정 바인딩 = .dev.vars.example의 자리표시 값", () => {
 });
 
 it("문자열 바인딩은 설정 키뿐이다(CI 씨앗 LEAK_SENTINEL 같은 다른 env 파일의 키가 섞이지 않았다)", () => {
-  const strings = Object.keys(e).filter((k) => typeof e[k] === "string");
+  // 플러그인 1.4.0이 넣는 내부 바인딩 하나는 뺀다(src/config.ts TEST_RUNTIME_KEYS와 같은 글자)
+  const strings = Object.keys(e).filter((k) => typeof e[k] === "string" && k !== "__VITEST_POOL_WORKERS_VITEST_MAJOR_VERSION");
   expect(strings.sort()).toEqual([...CONFIG_KEYS].sort());
 });
 

@@ -44,7 +44,7 @@ async function record(run: () => Promise<unknown>): Promise<Call[]> {
 
 describe('api.ts', () => {
   it('command 목록을 읽었다', () => {
-    expect(COMMANDS).toHaveLength(39);
+    expect(COMMANDS).toHaveLength(42);
   });
 
   // Channel은 생성 때 IPC 내부를 쓰므로 mockIPC 뒤(호출 안)에서 만든다.
@@ -83,7 +83,33 @@ describe('api.ts', () => {
         range: { startMs: 600_000, endMs: null },
       },
     ],
+    [
+      () =>
+        api.checkOutput({
+          folder: null,
+          fileName: 'f',
+          content,
+          qualityId: 'q',
+          expectedKind: 'progressive',
+          saveChat: true,
+          chatSubtitle: 'srt',
+        }),
+      'check_output',
+      {
+        folder: null,
+        fileName: 'f',
+        content,
+        qualityId: 'q',
+        expectedKind: 'progressive',
+        saveChat: true,
+        chatSubtitle: 'srt',
+      },
+    ],
     [() => api.enqueue(req), 'enqueue', { req }],
+    [() => api.enqueue({ ...req, saveChat: true }), 'enqueue', { req: { ...req, saveChat: true } }],
+    [() => api.checkChatOutput(3, 'ass'), 'check_chat_output', { id: 3, subtitle: 'ass' }],
+    [() => api.fetchChat(3, false, 'skip'), 'fetch_chat', { id: 3, restart: false, onExisting: 'skip' }],
+    [() => api.pauseChat(3), 'pause_chat', { id: 3 }],
     [() => api.listJobs(), 'list_jobs', {}],
     [() => api.subscribeJobs(new api.Channel<JobEvent>()), 'subscribe_jobs', { onEvent: expect.anything() }],
     [() => api.pauseJob(3), 'pause_job', { id: 3 }],
@@ -95,6 +121,7 @@ describe('api.ts', () => {
     [() => api.revealOutput(3), 'reveal_output', { id: 3 }],
     [() => api.quit(), 'quit', {}],
     [() => api.openWebPage('privacy'), 'open_web_page', { page: 'privacy' }],
+    [() => api.openWebPage('help', 'editors'), 'open_web_page', { page: 'help', anchor: 'editors' }],
     [() => api.authStatus(), 'auth_status', {}],
     [() => api.authLogin(), 'auth_login', {}],
     [() => api.authReopen(), 'auth_reopen', {}],

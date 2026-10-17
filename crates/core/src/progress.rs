@@ -411,6 +411,77 @@ mod tests {
         assert!((1000..=1250).contains(&speed), "{speed}");
     }
 
+    /// 창 경계: 표본이 둘뿐이면 5초 넘게 벌어져도 남기고, 셋 이상이면 정확히 창 시작 표본만 남긴다.
+    #[test]
+    fn window_keeps_last_two_samples_and_drops_exactly_at_five_seconds() {
+        let t0 = Instant::now();
+        let s = |n: u64| t0 + Duration::from_secs(n);
+        // 표본 둘: 6초 떨어져 있어도 앞 표본을 버리지 않는다(버리면 경과 0이라 속도가 없다).
+        let mut m = Meter::new(Duration::ZERO);
+        let mut p = progress(Phase::Downloading, 0);
+        m.observe(&mut p, s(0), false);
+        p.bytes = 600;
+        m.observe(&mut p, s(6), false);
+        assert_eq!(p.speed_bps, Some(100));
+
+        // 매초 표본, 누적 바이트 = 100·t². 10초 시점의 창 시작은 5초 표본(바로 다음 표본이 정확히 5초 전이면 버린다).
+        let mut m = Meter::new(Duration::ZERO);
+        let mut p = progress(Phase::Downloading, 0);
+        for t in 0..=10u64 {
+            p.bytes = 100 * t * t;
+            m.observe(&mut p, s(t), false);
+        }
+        // (10000 − 2500) / 5 = 1500. 창이 길면 1400대, 짧으면 1900, 전부 쓰면 1000이다.
+        assert_eq!(p.speed_bps, Some(1500));
+    }
+
+    /// 멈춘 전송은 속도·ETA가 없다(0으로 나눈 무한대 ETA를 만들지 않는다).
+    #[test]
+    fn stalled_transfer_has_no_speed_or_eta() {
+        let t0 = Instant::now();
+        let s = |n: u64| t0 + Duration::from_secs(n);
+        let mut m = Meter::new(Duration::ZERO);
+        let mut p = progress(Phase::Downloading, 100);
+        p.total_bytes = Some(1000);
+        m.observe(&mut p, s(0), false);
+        m.observe(&mut p, s(2), false);
+        assert_eq!((p.speed_bps, p.eta_secs), (None, None));
+
+        // 같은 바이트가 이어지면 창을 새로 시작하지 않는다(줄었을 때만 새로 시작).
+        let mut m = Meter::new(Duration::ZERO);
+        let mut p = progress(Phase::Downloading, 100);
+        m.observe(&mut p, s(0), false);
+        m.observe(&mut p, s(1), false);
+        p.bytes = 300;
+        m.observe(&mut p, s(2), false);
+        assert_eq!(p.speed_bps, Some(100), "(300−100)/2s: 첫 표본부터 잰다");
+    }
+
+    /// 미디어 시간 ETA: 처리율이 0이거나 이미 끝났으면 없다.
+    #[test]
+    fn media_eta_needs_progress_and_remaining() {
+        let t0 = Instant::now();
+        let s = |n: u64| t0 + Duration::from_secs(n);
+        let mut m = Meter::new(Duration::ZERO);
+        let mut p = progress(Phase::Downloading, 0);
+        p.media_secs = Some((10.0, 100.0));
+        m.observe(&mut p, s(0), false);
+        // 미디어 초가 그대로(처리율 0)
+        m.observe(&mut p, s(2), false);
+        assert_eq!(p.eta_secs, None);
+        // 끝까지 처리: 남은 것이 없다
+        p.media_secs = Some((100.0, 100.0));
+        m.observe(&mut p, s(4), false);
+        assert_eq!(p.eta_secs, None);
+        // 처리율이 있고 남았으면 있다(2초에 10초 → 5배속, 남은 80초 → 16초)
+        let mut m = Meter::new(Duration::ZERO);
+        p.media_secs = Some((10.0, 100.0));
+        m.observe(&mut p, s(0), false);
+        p.media_secs = Some((20.0, 100.0));
+        m.observe(&mut p, s(2), false);
+        assert_eq!(p.eta_secs, Some(16));
+    }
+
     #[test]
     fn restart_resets_window() {
         let t0 = Instant::now();

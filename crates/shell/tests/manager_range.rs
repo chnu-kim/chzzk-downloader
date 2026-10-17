@@ -133,8 +133,16 @@ async fn check_output_rejects_range_enqueue_would_reject() {
     let h = Harness::new(1);
     let content = ContentRef::Video { video_no: 1 };
     let check = |kind, r| {
-        h.mgr
-            .check_output(None, &h.downloads(), "a", &content, "720p", kind, Some(r))
+        h.mgr.check_output(
+            None,
+            &h.downloads(),
+            "a",
+            &content,
+            "720p",
+            kind,
+            Some(r),
+            None,
+        )
     };
     let e = check(PlaybackKind::Progressive, dto(5_000, Some(10_000))).unwrap_err();
     assert_eq!(e.code, ErrorCode::InvalidInput);

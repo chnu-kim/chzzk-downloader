@@ -3,11 +3,13 @@
 
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { test } from 'node:test';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { deflateSync } from 'node:zlib';
 
 import {
   decode,
@@ -20,6 +22,7 @@ import {
   loadDenylist,
   parseRange,
   PRIVATE_COMMITS_PATH,
+  pngParts,
   scanBuffer,
   scanText,
 } from './public-scan.mjs';
@@ -170,6 +173,470 @@ test('NUL이 든 파일도 글자 조각과 UTF-16을 본다', () => {
   assert.ok(scanBuffer(u16, new Set()).some((f) => f.rule === 'hex-id'));
   const u16be = Buffer.from('x ' + PLANTED['hex-id'], 'utf16le').swap16();
   assert.ok(scanBuffer(u16be, new Set()).some((f) => f.rule === 'hex-id'));
+  // BOM 없는 UTF-16BE: 추정한 엔디언을 BOM처럼 보고 앞 두 바이트를 떼면 첫 글자를 잃는다(Codex 리뷰)
+  const bareBe = Buffer.from('NID_' + 'AUT=' + 'Ab9'.repeat(10), 'utf16le').swap16();
+  assert.ok(scanBuffer(bareBe, new Set()).some((f) => f.rule === 'naver-cookie'), 'BOM 없는 UTF-16BE 첫 글자');
+  const bareLe = Buffer.from('NID_' + 'AUT=' + 'Ab9'.repeat(10), 'utf16le');
+  assert.ok(scanBuffer(bareLe, new Set()).some((f) => f.rule === 'naver-cookie'), 'BOM 없는 UTF-16LE 첫 글자');
+});
+
+test('base64 후보 찾기는 공백 없는 아주 긴 줄에서도 스택이 넘치지 않는다', () => {
+  // 정규식 {24,}가 수백만 글자 덩어리에서 'Maximum call stack size exceeded'로 죽었다(8M 글자에서 재현)
+  const line = 'QUFB'.repeat(2_500_000);
+  assert.doesNotThrow(() => scanText(line, new Set()));
+  // 같은 경로가 덩어리를 그대로 풀어 검사하는지(길이 24 이상, 뒤 '=' 두 개까지)
+  const deny = sel('가짜스트리머');
+  const b64 = Buffer.from('채널 가짜스트리머 방송입니다').toString('base64');
+  assert.ok(scanText('x' + '!' + b64 + ' y', deny).some((f) => f.rule === 'denylist'));
+});
+
+// PNG 조립: 청크마다 길이·형식·데이터·CRC(테스트 안의 표로 따로 계산한다)
+const CRC_TABLE = Array.from({ length: 256 }, (_, n) => {
+  let c = n;
+  for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+  return c >>> 0;
+});
+const crc = (buf) => {
+  let c = 0xffffffff;
+  for (const b of buf) c = CRC_TABLE[(c ^ b) & 0xff] ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
+};
+const PNG_SIG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+function chunk(type, data) {
+  const td = Buffer.concat([Buffer.from(type, 'latin1'), Buffer.from(data)]);
+  const len = Buffer.alloc(4);
+  len.writeUInt32BE(data.length);
+  const c = Buffer.alloc(4);
+  c.writeUInt32BE(crc(td));
+  return Buffer.concat([len, td, c]);
+}
+const ihdrData = (w, h, depth, color, interlace = 0) => {
+  const d = Buffer.alloc(13);
+  d.writeUInt32BE(w, 0);
+  d.writeUInt32BE(h, 4);
+  d[8] = depth;
+  d[9] = color;
+  d[12] = interlace;
+  return d;
+};
+// 1×1 RGB 8비트: 픽셀 데이터는 필터 바이트 하나 + 3바이트
+const IHDR = chunk('IHDR', ihdrData(1, 1, 8, 2));
+const IDAT0_DATA = deflateSync(Buffer.from([0, 1, 2, 3]));
+const IDAT0 = chunk('IDAT', IDAT0_DATA);
+const IEND = chunk('IEND', Buffer.alloc(0));
+const png = (...chunks) => Buffer.concat([PNG_SIG, IHDR, IDAT0, ...chunks, IEND]);
+// IDAT가 없는 PNG(문지기를 통과하지 못해 원본 그대로 예전 검사를 탄다)
+const pngNoIdat = (...chunks) => Buffer.concat([PNG_SIG, IHDR, ...chunks, IEND]);
+// 회색 8비트 한 줄 이미지의 픽셀 바이트가 곧 글자다. 무압축 블록(level 0)이라 IDAT에 글자가 그대로 남는다
+// (실제 스냅샷에서 압축 픽셀 바이트가 우연히 글자 모양이 된 오탐을 흉내 낸다).
+function grayShot(text) {
+  const px = Buffer.from(text);
+  const hdr = chunk('IHDR', ihdrData(px.length, 1, 8, 0));
+  const idatData = deflateSync(Buffer.concat([NUL, px]), { level: 0 });
+  assert.ok(idatData.includes(px));
+  const idat = chunk('IDAT', idatData);
+  return { hdr, idat, idatData, buf: Buffer.concat([PNG_SIG, hdr, idat, IEND]) };
+}
+const NUL = Buffer.from([0]);
+const le16 = (s) => Buffer.from(s, 'utf16le');
+const be16 = (s) => Buffer.from(s, 'utf16le').swap16();
+const tEXt = (key, body) => chunk('tEXt', Buffer.concat([Buffer.from(key, 'latin1'), NUL, Buffer.from(body)]));
+const zTXt = (key, body) => chunk('zTXt', Buffer.concat([Buffer.from(key, 'latin1'), NUL, Buffer.from([0]), deflateSync(body)]));
+const iTXt = (body, key = 'Title') => chunk('iTXt', Buffer.concat([Buffer.from(key), NUL, Buffer.from([0, 0]), NUL, NUL, Buffer.from(body)]));
+const iTXtZ = (body, key = 'Title') => chunk('iTXt', Buffer.concat([Buffer.from(key), NUL, Buffer.from([1, 0]), NUL, NUL, deflateSync(body)]));
+const zeroedOf = (buf) => pngParts(buf).zeroed;
+
+test('PNG: 문지기를 통과하면 IDAT 데이터 바이트만 0으로 바꾼 사본을 검사한다(#75 픽셀 오탐)', () => {
+  const deny = sel('가짜스트리머');
+  const { hdr, idat, buf: shot } = grayShot('nam 가짜스트리머 ' + PLANTED['signed-token']);
+  assert.deepEqual(scanBuffer(shot, deny), []);
+  // 사본은 원본과 길이가 같고, IDAT 데이터 자리만 0이다(길이·형식·CRC 포함 나머지는 그대로)
+  const z = zeroedOf(shot);
+  assert.ok(z);
+  assert.equal(z.length, shot.length);
+  const dataAt = PNG_SIG.length + hdr.length + 8;
+  const dataEnd = PNG_SIG.length + hdr.length + idat.length - 4;
+  for (let i = 0; i < shot.length; i++) assert.equal(z[i], i >= dataAt && i < dataEnd ? 0 : shot[i], `바이트 ${i}`);
+  // IDAT를 여러 청크로 나눠도(연달아 있으면) 같다
+  const half = IDAT0_DATA.length >> 1;
+  const split = Buffer.concat([PNG_SIG, IHDR, chunk('IDAT', IDAT0_DATA.subarray(0, half)), chunk('IDAT', IDAT0_DATA.subarray(half)), IEND]);
+  assert.ok(zeroedOf(split));
+  // 픽셀에 글자가 있어도 메타데이터(UTF-16 본문 포함)는 그대로 보고, 픽셀은 보지 않는다
+  const meta = tEXt('Software', 'playwright');
+  const u16 = tEXt('Comment', le16('NID_' + 'AUT=' + 'Ab9'.repeat(10)));
+  const withMeta = Buffer.concat([PNG_SIG, hdr, meta, u16, idat, iTXtZ(Buffer.from('shot')), IEND]);
+  assert.ok(zeroedOf(withMeta));
+  assert.deepEqual([...new Set(scanBuffer(withMeta, deny).map((f) => f.rule))], ['naver-cookie']);
+  // 내용 전체 해시(denylist-blob)는 원본 바이트에 건다
+  assert.deepEqual(scanBuffer(shot, new Set([hashBlob(shot)])).map((f) => f.rule), ['denylist-blob']);
+});
+
+test('PNG: tEXt·zTXt·iTXt(압축·비압축) 메타데이터는 검사한다', () => {
+  const deny = sel('가짜스트리머');
+  // 압축본에 원문 바이트가 그대로 남지 않게 반복한다(짧으면 deflate가 무압축 블록으로 둔다)
+  const zKo = deflateSync(Buffer.from('채널 가짜스트리머 '.repeat(8)));
+  const zTok = deflateSync(Buffer.from((PLANTED['signed-token'] + ' ').repeat(4)));
+  assert.ok(!zKo.includes(Buffer.from('가짜스트리머')) && !zTok.includes(Buffer.from('hdntl')));
+  const cases = {
+    tEXt: chunk('tEXt', Buffer.concat([Buffer.from('Comment'), NUL, Buffer.from('fake ' + PLANTED['signed-token'], 'latin1')])),
+    'tEXt 키워드': chunk('tEXt', Buffer.concat([Buffer.from(PLANTED['hex-id'].slice(0, 70), 'latin1'), NUL, Buffer.from('x')])),
+    zTXt: chunk('zTXt', Buffer.concat([Buffer.from('Comment'), NUL, Buffer.from([0]), zTok])),
+    'iTXt 비압축': chunk('iTXt', Buffer.concat([Buffer.from('Title'), NUL, Buffer.from([0, 0]), Buffer.from('ko'), NUL, NUL, Buffer.from('채널 가짜스트리머')])),
+    'iTXt 압축': chunk('iTXt', Buffer.concat([Buffer.from('Title'), NUL, Buffer.from([1, 0]), Buffer.from('ko'), NUL, NUL, zKo])),
+    // 규격(latin1)을 어기고 UTF-8을 넣은 tEXt·zTXt도 원래 바이트대로 잡는다
+    'tEXt UTF-8': chunk('tEXt', Buffer.concat([Buffer.from('Comment'), NUL, Buffer.from('채널 가짜스트리머 방송')])),
+    'tEXt UTF-8 키워드': chunk('tEXt', Buffer.concat([Buffer.from('가짜스트리머'), NUL, Buffer.from('x')])),
+    'zTXt UTF-8': chunk('zTXt', Buffer.concat([Buffer.from('Comment'), NUL, Buffer.from([0]), zKo])),
+    'iTXt 언어 태그 UTF-8': chunk('iTXt', Buffer.concat([Buffer.from('Title'), NUL, Buffer.from([0, 0]), Buffer.from('가짜스트리머'), NUL, NUL, Buffer.from('x')])),
+    'iTXt 번역 키워드': chunk('iTXt', Buffer.concat([Buffer.from('Title'), NUL, Buffer.from([0, 0]), Buffer.from('ko'), NUL, Buffer.from('가짜스트리머'), NUL, Buffer.from('x')])),
+  };
+  // 규격대로 latin1로 쓴 글자(UTF-8로는 깨진다): 위 첨자 ³(0xB3)은 NFKC로 숫자 3이 된다
+  const latin = chunk('tEXt', Buffer.concat([Buffer.from('Comment'), NUL, Buffer.from('no 987654³ x', 'latin1')]));
+  assert.ok(scanBuffer(png(latin), sel('9876543')).some((f) => f.rule === 'denylist'), 'tEXt latin1');
+  for (const [name, c] of Object.entries(cases)) {
+    const rules = scanBuffer(png(c), deny).map((f) => f.rule);
+    assert.ok(rules.includes('denylist') || rules.includes('signed-token') || rules.includes('hex-id'), `${name}: ${rules}`);
+    assert.ok(zeroedOf(png(c)), name);
+  }
+});
+
+test('PNG: 문지기를 통과하지 못하면 원본 그대로 예전처럼 검사한다(면제 없음)', () => {
+  const deny = sel('가짜스트리머');
+  const { hdr, idat, idatData, buf: good } = grayShot('nam 가짜스트리머 방송');
+  const hit = (buf) => scanBuffer(buf, deny).some((f) => f.rule === 'denylist');
+  const cookie = Buffer.from(PLANTED['naver-cookie']);
+  const hitCookie = (buf) => scanBuffer(buf, new Set()).some((f) => f.rule === 'naver-cookie');
+  assert.equal(hit(good), false);
+  // 문지기가 null을 내고, 픽셀 글자가 다시 보이는 것까지 확인한다
+  const fallback = (buf, name) => {
+    assert.equal(zeroedOf(buf), null, name);
+    assert.ok(hit(buf), name);
+  };
+  // IDAT CRC 한 바이트 바꿈
+  const badCrc = Buffer.from(good);
+  badCrc[PNG_SIG.length + hdr.length + idat.length - 4] ^= 0xff;
+  fallback(badCrc, 'CRC');
+  // 길이가 파일 끝을 넘음
+  const badLen = Buffer.from(good);
+  badLen.writeUInt32BE(0x7fffffff, PNG_SIG.length + hdr.length);
+  fallback(badLen, '길이');
+  fallback(Buffer.concat([good, Buffer.from(' 가짜스트리머 ')]), 'IEND 뒤');
+  fallback(Buffer.concat([PNG_SIG, hdr, idat]), 'IEND 없음');
+  fallback(Buffer.concat([PNG_SIG, hdr, chunk('ID@T', idatData), IEND]), '형식 이름');
+  fallback(Buffer.concat([PNG_SIG, idat, hdr, IEND]), 'IHDR 먼저');
+  fallback(Buffer.concat([PNG_SIG.subarray(0, 7), Buffer.from([0]), hdr, idat, IEND]), '시그니처');
+  // IDAT: 없음, zlib가 아님, 스트림 뒤 평문, 풀린 크기가 IHDR과 다름, 사이에 다른 청크, 인터레이스
+  const withIdat = (...cs) => Buffer.concat([PNG_SIG, IHDR, ...cs, IEND]);
+  assert.equal(zeroedOf(withIdat()), null, 'IDAT 없음');
+  fallback(withIdat(chunk('IDAT', Buffer.from('nam 가짜스트리머 방송'))), 'IDAT zlib 아님');
+  const tailIdat = withIdat(chunk('IDAT', Buffer.concat([IDAT0_DATA, cookie])));
+  assert.equal(zeroedOf(tailIdat), null, 'IDAT 스트림 뒤');
+  assert.ok(hitCookie(tailIdat), 'IDAT 스트림 뒤');
+  assert.equal(zeroedOf(withIdat(chunk('IDAT', deflateSync(Buffer.from([0, 1, 2]))))), null, 'IDAT 짧음');
+  assert.equal(zeroedOf(withIdat(chunk('IDAT', deflateSync(Buffer.from([0, 1, 2, 3, 4]))))), null, 'IDAT 김');
+  const half = IDAT0_DATA.length >> 1;
+  const gap = tEXt('k', 'v');
+  assert.equal(zeroedOf(withIdat(chunk('IDAT', IDAT0_DATA.subarray(0, half)), gap, chunk('IDAT', IDAT0_DATA.subarray(half)))), null, 'IDAT 사이');
+  assert.equal(zeroedOf(Buffer.concat([PNG_SIG, chunk('IHDR', ihdrData(1, 1, 8, 2, 1)), IDAT0, IEND])), null, '인터레이스');
+  assert.equal(zeroedOf(Buffer.concat([PNG_SIG, IHDR, IHDR, IDAT0, IEND])), null, 'IHDR 둘');
+  // 너비 65536은 IDAT 크기가 맞아도 받지 않는다
+  const wide = (w) => Buffer.concat([PNG_SIG, chunk('IHDR', ihdrData(w, 1, 1, 0)), chunk('IDAT', deflateSync(Buffer.alloc(1 + w / 8))), IEND]);
+  assert.ok(zeroedOf(wide(0xfff8)), '너비 65528');
+  assert.equal(zeroedOf(wide(0x10000)), null, '너비 65536');
+  // IHDR·IEND는 지우지 않으므로 모양이 틀려도 그 안의 글자는 어차피 보지만, 문지기도 받지 않는다
+  const withHdr = (h) => Buffer.concat([PNG_SIG, h, IDAT0, IEND]);
+  assert.ok(hitCookie(withHdr(chunk('IHDR', Buffer.concat([ihdrData(1, 1, 8, 2), cookie])))), 'IHDR 길이');
+  assert.ok(hitCookie(Buffer.concat([PNG_SIG, IHDR, IDAT0, chunk('IEND', cookie)])), 'IEND 길이');
+  const ihdr = (w, depth, color) => withHdr(chunk('IHDR', ihdrData(w, 1, depth, color)));
+  assert.ok(zeroedOf(ihdr(1, 8, 2)));
+  for (const [name, buf] of Object.entries({
+    '너비 0': ihdr(0, 8, 2),
+    '너비에 글자': ihdr(0x41424344, 8, 2),
+    '비트 깊이': ihdr(1, 7, 2),
+    '색 형식': ihdr(1, 8, 5),
+  })) {
+    assert.equal(zeroedOf(buf), null, name);
+  }
+  // 텍스트 청크의 압축이 깨져도 문지기와는 상관없다(그 바이트는 지우지 않으므로 예전처럼 본다)
+  const z = (m, data) => chunk('zTXt', Buffer.concat([Buffer.from('k'), NUL, Buffer.from([m]), data]));
+  assert.ok(zeroedOf(png(z(1, deflateSync(Buffer.from('x'))))), '압축 방식');
+  assert.ok(zeroedOf(png(z(0, Buffer.from('not zlib')))), '풀리지 않음');
+  // 압축 스트림 뒤에 덧붙인 평문(inflate는 남은 바이트를 말없이 버린다): 파일 바이트에 있으므로 잡힌다
+  const tail = Buffer.concat([deflateSync(Buffer.from('ok')), Buffer.from(' 가짜스트리머 ')]);
+  assert.ok(hit(png(z(0, tail))), 'zTXt 스트림 뒤');
+  const it = chunk('iTXt', Buffer.concat([Buffer.from('k'), NUL, Buffer.from([1, 0]), NUL, NUL, tail]));
+  assert.ok(hit(png(it)), 'iTXt 스트림 뒤');
+  // 깨진 PNG라도(또는 CRC만 틀린 그 청크에서도) 압축 메타데이터는 풀어 검사한다(압축된 글자는 바이트 검사로 못 본다)
+  const zCookie = z(0, deflateSync(Buffer.from((PLANTED['naver-cookie'] + ' ').repeat(4))));
+  assert.ok(!zCookie.includes(Buffer.from('NID_')));
+  const badEnd = Buffer.from(png(zCookie));
+  badEnd[badEnd.length - 1] ^= 0xff;
+  assert.equal(zeroedOf(badEnd), null);
+  assert.ok(hitCookie(badEnd), '압축 쿠키 + IEND CRC');
+  assert.ok(hitCookie(png(zCookie, chunk('ID@T', Buffer.from('x')))), '압축 쿠키 + 형식 이름');
+  const badZ = Buffer.from(png(zCookie));
+  badZ[PNG_SIG.length + IHDR.length + IDAT0.length + zCookie.length - 1] ^= 0xff;
+  assert.equal(zeroedOf(badZ), null);
+  assert.ok(hitCookie(badZ), '압축 쿠키 청크의 CRC');
+  // IDAT가 아닌 청크(보조·모르는 청크)는 지우지 않으므로 데이터를 예전처럼 글자 검사한다
+  for (const t of ['gAMA', 'PLTE', 'tRNS', 'cHRM', 'pHYs', 'iCCP', 'eXIf', 'prVt']) {
+    assert.ok(zeroedOf(png(chunk(t, cookie))), t);
+    assert.ok(hitCookie(png(chunk(t, cookie))), `${t} 쿠키`);
+    assert.ok(hit(png(chunk(t, Buffer.from('nam 가짜스트리머 x')))), t);
+  }
+});
+
+test('PNG: 텍스트 청크 본문의 UTF-16도 검사한다', () => {
+  const le = le16(('NID_' + 'AUT=' + 'abcdefghijklmnop').repeat(12));
+  const be = Buffer.from(le).swap16();
+  const hitCookie = (buf) => scanBuffer(buf, new Set()).some((f) => f.rule === 'naver-cookie');
+  // Codex 재현: CRC가 맞는 tEXt 'Comment\0' + UTF-16LE 쿠키(origin/master는 잡았다)
+  assert.ok(hitCookie(png(tEXt('Comment', le))), 'tEXt UTF-16LE');
+  assert.ok(hitCookie(png(tEXt('Comment', be))), 'tEXt UTF-16BE');
+  // 앞에 NUL 없는 큰 청크가 있어 파일 전체의 UTF-16 추정(앞 8000바이트)이 빗나가도 본문 디코드가 잡는다
+  const filler = chunk('prVt', Buffer.alloc(9000, 0x2e));
+  assert.ok(hitCookie(png(filler, tEXt('Comment', le))), '큰 청크 뒤 tEXt UTF-16LE');
+  assert.ok(hitCookie(png(filler, tEXt('Comment', be))), '큰 청크 뒤 tEXt UTF-16BE');
+  const zLe = deflateSync(le);
+  assert.ok(!zLe.includes(Buffer.from('N\0I\0D\0')));
+  const cases = {
+    'zTXt UTF-16LE': zTXt('Comment', le),
+    'iTXt 압축 UTF-16LE': iTXtZ(le),
+    'iTXt 비압축 UTF-16BE': iTXt(be),
+  };
+  for (const [name, c] of Object.entries(cases)) {
+    assert.ok(hitCookie(png(c)), name);
+    assert.ok(hitCookie(png(filler, c)), `큰 청크 뒤 ${name}`);
+  }
+});
+
+// Codex 리뷰가 이전 접근(필드별 수집)에서 찾은 우회 재현. origin/master가 잡은 것은 모두 잡아야 한다.
+const CODEX_CASES = (() => {
+  const cookie1 = 'NID_' + 'AUT=' + 'Ab9'.repeat(10);
+  const zc = deflateSync(Buffer.from((PLANTED['naver-cookie'] + ' ').repeat(4)));
+  const tail = Buffer.concat([zc, Buffer.from([0x20])]);
+  const A = ' Fake Studio ';
+  const B = ' Demo Reel ';
+  const phrase = 'Fake Studio Demo Reel';
+  return {
+    'iTXt 비압축 BOM 없는 UTF-16BE 쿠키 하나(첫 글자)': [new Set(), iTXt(be16(cookie1)), 'naver-cookie'],
+    'tEXt BOM 없는 UTF-16BE 쿠키 하나(첫 글자)': [new Set(), tEXt('Comment', be16(cookie1)), 'naver-cookie'],
+    'tEXt UTF-16LE 쿠키': [new Set(), tEXt('Comment', le16(cookie1)), 'naver-cookie'],
+    'tEXt UTF-16LE BOM 쿠키': [new Set(), tEXt('Comment', Buffer.concat([Buffer.from([0xff, 0xfe]), le16(cookie1)])), 'naver-cookie'],
+    'zTXt 압축 쿠키 + 꼬리 1바이트': [new Set(), chunk('zTXt', Buffer.concat([Buffer.from('Comment'), NUL, Buffer.from([0]), tail])), 'naver-cookie'],
+    'iTXt 압축 쿠키 + 꼬리 1바이트': [new Set(), chunk('iTXt', Buffer.concat([Buffer.from('Title'), NUL, Buffer.from([1, 0]), Buffer.from('ko'), NUL, NUL, tail])), 'naver-cookie'],
+    'tEXt 키워드 + 본문 n-gram': [sel(phrase), tEXt('Title Fake Studio', 'Demo Reel '), 'denylist'],
+    'zTXt 키워드 + 풀린 본문 n-gram': [sel(phrase), zTXt('Fake Studio', Buffer.from('Demo Reel ')), 'denylist'],
+    'tEXt 청크 둘 n-gram': [sel(phrase), Buffer.concat([tEXt('Title', 'Fake Studio'), tEXt('Demo', 'Reel')]), 'denylist'],
+    'iTXt 비압축 UTF-16LE 둘': [sel(phrase), Buffer.concat([iTXt(le16(A)), iTXt(le16(B))]), 'denylist'],
+    'iTXt 비압축 UTF-16BE 둘': [sel(phrase), Buffer.concat([iTXt(be16(A)), iTXt(be16(B))]), 'denylist'],
+    'iTXt 압축 UTF-16LE 둘': [sel(phrase), Buffer.concat([iTXtZ(le16(A)), iTXtZ(le16(B))]), 'denylist'],
+    'zTXt UTF-16BE 둘': [sel(phrase), Buffer.concat([zTXt('Comment', be16(A)), zTXt('Comment', be16(B))]), 'denylist'],
+    'LE·BE 섞음': [sel(phrase), Buffer.concat([iTXt(le16(A)), zTXt('Comment', be16(B))]), 'denylist'],
+    '홀짝 엇갈림': [sel(phrase), Buffer.concat([iTXt(le16(A), 'Title'), iTXt(le16(B), 'Titles')]), 'denylist'],
+    'tEXt UTF-16 + zTXt 압축 UTF-16': [sel(phrase), Buffer.concat([tEXt('Comment', le16(A)), zTXt('Comment', le16(B))]), 'denylist'],
+    // 두 tEXt 본문 사이에 키워드가 끼임: 키워드 'X'(5바이트 미만 조각)가 끼면 구가 끊긴다
+    'tEXt 본문 둘 사이 키워드': [sel(phrase), Buffer.concat([tEXt('X', '\n Fake Studio \n'), tEXt('X', '\n Demo Reel \n')]), 'denylist'],
+    // 모르는 청크의 짧은 payload: 데이터만 떼어 보면 6바이트 미만이라 글자 조각이 안 된다(형식 이름과 붙어 잡힌다)
+    '모르는 청크 짧은 payload': [sel('Bob'), chunk('prVt', Buffer.from(' Bob ')), 'denylist'],
+  };
+})();
+
+test('PNG: 회귀(Codex 리뷰 재현) 모두 잡는다', () => {
+  for (const [name, [deny, meta, rule]] of Object.entries(CODEX_CASES)) {
+    for (const [kind, buf] of [['IDAT 있음', png(meta)], ['IDAT 없음', pngNoIdat(meta)]]) {
+      assert.ok(scanBuffer(buf, deny).some((f) => f.rule === rule), `${name} (${kind})`);
+    }
+    assert.ok(zeroedOf(png(meta)), `${name}: 온전한 PNG(문지기 통과)`);
+  }
+  // 본문 앞에 NUL 없는 긴 글자를 두어 본문별 UTF-16 추정(한쪽 바이트 30%)이 빗나가도 LE·BE로 다 읽는다
+  const deny = sel('Fake Studio Demo Reel');
+  const hit = (buf) => scanBuffer(buf, deny).some((f) => f.rule === 'denylist');
+  const pad = Buffer.from('x'.repeat(400));
+  assert.ok(hit(png(iTXt(Buffer.concat([pad, le16(' Fake Studio ')])), iTXt(Buffer.concat([pad, le16(' Demo Reel ')])))), 'iTXt 비압축, 추정 빗나감');
+  assert.ok(hit(png(zTXt('k', Buffer.concat([pad, be16(' Fake Studio ')])), zTXt('k', Buffer.concat([pad, be16(' Demo Reel ')])))), 'zTXt 압축 BE, 추정 빗나감');
+});
+
+// origin/master의 scanBuffer(PNG 처리 전, blob c2f4025)를 고정 오라클로 둔다. CI의 얕은 클론(Windows)에서도 돌게
+// git show 대신 저장소에 그대로 넣은 사본을 쓰고, 사본이 그 blob과 같은지 확인한다.
+const ORACLE_BLOB = 'c2f4025ad7cd1a22b77a26634463107ab11288f1';
+const ORACLE_PATH = join(HERE, 'testdata', 'public-scan-master.mjs');
+
+test('오라클 사본은 origin/master의 public-scan.mjs(blob c2f4025) 그대로다', () => {
+  const body = Buffer.from(readFileSync(ORACLE_PATH, 'utf8').replace(/\r\n/g, '\n'));
+  const sha = createHash('sha1').update(`blob ${body.length}\0`).update(body).digest('hex');
+  assert.equal(sha, ORACLE_BLOB);
+});
+
+// 작은 결정적 난수(mulberry32)
+function rng(seed) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+test('PNG: 속성 — 이 브랜치의 결과 ⊇ origin/master scanBuffer의 결과(오라클과 직접 비교)', async () => {
+  const master = await import(pathToFileURL(ORACLE_PATH).href);
+  const WORDS = ['Fake', 'Studio', 'Demo', 'Reel', 'Bob', 'Zq7Kp2Lm9X', '가짜스트리머', '9876543'];
+  const PHRASES = [...WORDS, 'Fake Studio', 'Demo Reel', 'Fake Studio Demo Reel', 'Studio Demo'];
+  const rand = rng(0x75);
+  const pick = (xs) => xs[Math.floor(rand() * xs.length)];
+  const SEPS = [' ', '\n', '\0', '', '\t', ' x ', '\0\0'];
+  const text = () => {
+    const n = 1 + Math.floor(rand() * 4);
+    let s = pick(SEPS);
+    for (let i = 0; i < n; i++) s += pick(WORDS) + pick(SEPS);
+    if (rand() < 0.15) s += 'NID_' + 'AUT=' + 'Ab9'.repeat(10) + pick(SEPS);
+    return s;
+  };
+  const enc = (s) => {
+    const r = rand();
+    if (r < 0.35) return Buffer.from(s);
+    if (r < 0.5) return Buffer.from(s, 'latin1');
+    if (r < 0.75) return le16(s);
+    if (r < 0.9) return be16(s);
+    return Buffer.concat([Buffer.from([0xff, 0xfe]), le16(s)]);
+  };
+  const meta = () => {
+    const r = rand();
+    const key = pick(['Title', 'Comment', 'X', 'Software', pick(WORDS)]);
+    if (r < 0.3) return tEXt(key, enc(text()));
+    if (r < 0.5) return iTXt(enc(text()), key);
+    if (r < 0.62) return zTXt(key, enc(text()));
+    if (r < 0.72) return iTXtZ(enc(text()), key);
+    if (r < 0.8) return chunk(pick(['gAMA', 'pHYs', 'eXIf']), enc(text()));
+    return chunk(pick(['prVt', 'abCd']), enc(text()));
+  };
+  const cases = Object.entries(CODEX_CASES).map(([name, [, m]]) => [name, m]);
+  for (let i = 0; i < 120; i++) {
+    const n = 1 + Math.floor(rand() * 4);
+    cases.push([`무작위 ${i}`, Buffer.concat(Array.from({ length: n }, meta))]);
+  }
+  // 큰 청크로 파일 전체 UTF-16 추정의 경계를 흔든 것도 섞는다
+  for (let i = 0; i < 20; i++) {
+    const filler = chunk('prVt', Buffer.alloc(Math.floor(rand() * 9000), pick([0x2e, 0])));
+    cases.push([`큰 청크 ${i}`, Buffer.concat([filler, meta(), meta()])]);
+  }
+  const rulesOf = (fs) => new Set(fs.map((f) => f.rule));
+  let masterHits = 0;
+  const codexHit = new Set();
+  for (const [name, m] of cases) {
+    for (const [kind, buf] of [['IDAT 있음', png(m)], ['IDAT 없음', pngNoIdat(m)]]) {
+      const where = `${name} (${kind})`;
+      // 규칙 집합(denylist 없음): 쿠키 등
+      const mine0 = rulesOf(scanBuffer(buf, new Set()));
+      for (const r of rulesOf(master.scanBuffer(buf, new Set()))) assert.ok(mine0.has(r), `${where}: ${r}`);
+      // denylist 항목 하나씩: master가 잡으면 이 브랜치도 잡는다
+      let any = mine0.size > 0;
+      for (const p of PHRASES) {
+        const deny = sel(p);
+        if (!master.scanBuffer(buf, deny).some((f) => f.rule === 'denylist')) continue;
+        any = true;
+        masterHits++;
+        assert.ok(scanBuffer(buf, deny).some((f) => f.rule === 'denylist'), `${where}: '${p}'`);
+      }
+      if (CODEX_CASES[name] && any) codexHit.add(name);
+    }
+  }
+  // 비교가 헛돌지 않게: master가 실제로 잡는 사례가 충분해야 한다(압축 재현은 master가 못 본다)
+  assert.ok(codexHit.size >= 10, `master가 잡은 Codex 재현 ${codexHit.size}개: ${[...codexHit]}`);
+  assert.ok(masterHits > 200, `master 일치 ${masterHits}건`);
+});
+
+test('속성 — PNG가 아닌 파일(UTF-16 등)도 이 브랜치의 결과 ⊇ origin/master scanBuffer의 결과', async () => {
+  const master = await import(pathToFileURL(ORACLE_PATH).href);
+  // 재현: BOM 없는 UTF-16BE에서 master는 앞 두 바이트를 떼고 읽는다. 첫 글자를 살려 읽기만 하면
+  // 'X'가 첫 토큰에 붙어(xbob) 'Bob' 일치를 잃는다. 두 해석을 모두 본다
+  const bob = sel('Bob');
+  const xb = be16('XBob rest');
+  assert.ok(master.scanBuffer(xb, bob).some((f) => f.rule === 'denylist'));
+  assert.ok(scanBuffer(xb, bob).some((f) => f.rule === 'denylist'), 'BOM 없는 UTF-16BE 앞 글자 + 토큰');
+  const WORDS = ['Fake', 'Studio', 'Demo', 'Reel', 'Bob', 'Zq7Kp2Lm9X', '가짜스트리머', '9876543'];
+  const PHRASES = [...WORDS, 'Fake Studio', 'Demo Reel', 'Fake Studio Demo Reel'];
+  const rand = rng(0x16);
+  const pick = (xs) => xs[Math.floor(rand() * xs.length)];
+  let masterHits = 0;
+  for (let i = 0; i < 200; i++) {
+    let s = pick(['', 'X', 'a1', ' ', '\n']);
+    for (let k = 1 + Math.floor(rand() * 4); k > 0; k--) s += pick(WORDS) + pick([' ', '\n', '', '\0', 'x']);
+    if (rand() < 0.2) s += 'NID_' + 'AUT=' + 'Ab9'.repeat(10);
+    const r = rand();
+    const body = r < 0.3 ? le16(s) : r < 0.6 ? be16(s) : r < 0.75 ? Buffer.concat([Buffer.from([0xff, 0xfe]), le16(s)]) : r < 0.9 ? Buffer.concat([Buffer.from([0xfe, 0xff]), be16(s)]) : Buffer.concat([Buffer.from(s), NUL, Buffer.from(pick(WORDS))]);
+    const mine0 = new Set(scanBuffer(body, new Set()).map((f) => f.rule));
+    for (const f of master.scanBuffer(body, new Set())) assert.ok(mine0.has(f.rule), `${i}: ${f.rule}`);
+    for (const p of PHRASES) {
+      const deny = sel(p);
+      if (!master.scanBuffer(body, deny).some((f) => f.rule === 'denylist')) continue;
+      masterHits++;
+      assert.ok(scanBuffer(body, deny).some((f) => f.rule === 'denylist'), `${i}: '${p}'`);
+    }
+  }
+  assert.ok(masterHits > 100, `master 일치 ${masterHits}건`);
+});
+
+test('PNG: IDAT를 0으로 바꿔 UTF-16 추정이 뒤집혀도 원본 추정 쪽 해석을 잃지 않는다', async () => {
+  const master = await import(pathToFileURL(ORACLE_PATH).href);
+  const cookie = 'NID_' + 'AUT=' + 'Ab9'.repeat(10);
+  const hitCookie = (s, buf) => s.scanBuffer(buf, new Set()).some((f) => f.rule === 'naver-cookie');
+  // 텍스트 청크가 아닌 청크에 둔다(추가 검사가 아니라 파일 전체 UTF-16 해석만 본다).
+  // 픽셀이 [x, 0]을 되풀이해 한쪽 홀짝에 0이 몰린 IDAT(무압축 블록)와, 반대쪽에 0이 몰린 큰 UTF-16 본문을 둔다.
+  // 원본은 IDAT 쪽이 이겨 그 엔디언으로 쿠키 본문을 읽지만, IDAT를 0으로 지우면 양쪽이 같이 늘어 본문 쪽이 이긴다.
+  let found = null;
+  for (let w = 600; w <= 1400 && !found; w += 2) {
+    for (let k = 1; k <= 4 && !found; k++) {
+      for (const [big, small] of [[be16, le16], [le16, be16]]) {
+        const px = Buffer.alloc(1 + w);
+        for (let i = 1; i <= w; i++) px[i] = i % 2 ? 0x41 : 0;
+        const hdr = chunk('IHDR', ihdrData(w, 1, 8, 0));
+        const idat = chunk('IDAT', deflateSync(px, { level: 0 }));
+        const buf = Buffer.concat([PNG_SIG, hdr, chunk('prVt', Buffer.concat([Buffer.alloc(k, 0x4b), big('b'.repeat(300))])), chunk('prVt', small(cookie)), idat, IEND]);
+        const z = zeroedOf(buf);
+        if (z && hitCookie(master, buf) && !hitCookie(master, z)) found = buf;
+      }
+    }
+  }
+  assert.ok(found, '추정이 뒤집히는 사례를 만들지 못했다');
+  assert.ok(hitCookie({ scanBuffer }, found));
+});
+
+test('PNG: 추적 중인 PNG는 모두 문지기를 통과하고(픽셀을 지운다) 검사가 깨끗하다', () => {
+  const files = spawnSync('git', ['ls-files', '-z', '*.png'], { cwd: ROOT, encoding: 'utf8' }).stdout.split('\0').filter(Boolean);
+  assert.ok(files.length > 0);
+  const deny = loadDenylist([DENYLIST_PATH]);
+  for (const f of files) {
+    const buf = readFileSync(join(ROOT, f));
+    assert.ok(zeroedOf(buf), f);
+    assert.deepEqual(scanBuffer(buf, deny), [], f);
+  }
+});
+
+test('PNG: 풀린 크기가 상한(8 MiB)을 넘는 압축 메타데이터는 검사 오류(unscannable)로 실패한다', () => {
+  const MAX = 8 * 1024 * 1024;
+  const big = (n) => deflateSync(Buffer.alloc(n, 0x20));
+  const z = (n) => chunk('zTXt', Buffer.concat([Buffer.from('k'), NUL, Buffer.from([0]), big(n)]));
+  const it = (n) => chunk('iTXt', Buffer.concat([Buffer.from('k'), NUL, Buffer.from([1, 0]), NUL, NUL, big(n)]));
+  const rules = (buf) => scanBuffer(buf, new Set()).map((f) => f.rule);
+  for (const [name, c] of Object.entries({ zTXt: z, iTXt: it })) {
+    assert.deepEqual(rules(png(c(MAX))), [], `${name} 상한 그대로`);
+    assert.deepEqual(rules(png(c(MAX + 1))), ['unscannable'], `${name} 상한 넘음`);
+    // 상한은 청크 전체에 걸린다(작은 청크 여럿으로 나눠도 넘으면 실패)
+    const half = (n) => c(n);
+    assert.deepEqual(rules(png(half(MAX / 2), half(MAX / 2 + 1))), ['unscannable'], `${name} 둘로 나눔`);
+    // CRC만 틀린 청크, 깨진 PNG(IEND 뒤 바이트)에서도 같다
+    const badCrc = Buffer.from(png(c(MAX + 1)));
+    badCrc[badCrc.length - IEND.length - 1] ^= 0xff;
+    assert.ok(rules(badCrc).includes('unscannable'), `${name} CRC`);
+    assert.ok(rules(Buffer.concat([png(c(MAX + 1)), Buffer.from('x')])).includes('unscannable'), `${name} IEND 뒤`);
+  }
+  // 픽셀(IDAT)이 IHDR 크기보다 크게 풀리는 것은 검사 오류가 아니라 문지기 실패(원본 검사)다
+  const fat = Buffer.concat([PNG_SIG, IHDR, chunk('IDAT', big(MAX + 1)), IEND]);
+  assert.equal(zeroedOf(fat), null);
+  assert.ok(!rules(fat).includes('unscannable'));
 });
 
 test('작성자 이메일 허용 목록', () => {

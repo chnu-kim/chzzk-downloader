@@ -65,7 +65,7 @@ test('D1 맡은 채널 영상은 경고 없이 메타 조각만 보이고 받는
   await expect(card.locator('.meta')).toContainText(t('delegated.title'));
   await expect(card.locator('.tone-danger')).toHaveCount(0);
   // 대상 확인이 끝나 [받기]가 활성으로 바뀐 뒤에 잰다: 바뀌는 순간 글자는 바로 흰색이고 배경만 전환되므로(flow.spec.ts와 같다)
-  const download = card.getByRole('button', { name: t('card.download') });
+  const download = card.getByRole('button', { name: t('card.download'), exact: true });
   await expect(download).not.toHaveAttribute('aria-disabled', 'true');
   await app.axe('맡은 채널 영상 카드');
   await download.click();
@@ -83,7 +83,7 @@ test('D2 남의 영상은 막히고, 맡은 채널이 된 뒤 [다시 불러오�
   await expect(card.getByText(why.body as string, { exact: true })).toBeVisible();
   await expect(card.getByText('영상의 채널: ‘맡긴 채널’')).toBeVisible();
   await expect(card.getByText(new RegExp(t('account.lastSeen', { time: '.+' })))).toBeVisible();
-  const download = card.getByRole('button', { name: t('card.download') });
+  const download = card.getByRole('button', { name: t('card.download'), exact: true });
   await expect(download).toHaveAttribute('aria-disabled', 'true');
   await expect(download).toHaveAccessibleDescription(`${why.title} ${why.body}`);
   await app.axe('막힌 카드');
@@ -95,7 +95,7 @@ test('D2 남의 영상은 막히고, 맡은 채널이 된 뒤 [다시 불러오�
   await expect(card.locator('.meta')).toContainText(t('delegated.title'));
   expect(await cmdCount(app, 'ownership_recheck')).toBe(1);
   expect(await cmdCount(app, 'resolve')).toBe(resolveBefore);
-  await expect(page.getByRole('region', { name: '남의 방송' }).getByRole('button', { name: t('card.download') })).not.toHaveAttribute('aria-disabled', 'true');
+  await expect(page.getByRole('region', { name: '남의 방송' }).getByRole('button', { name: t('card.download'), exact: true })).not.toHaveAttribute('aria-disabled', 'true');
 });
 
 test('D3 [다시 불러오기]가 서버에 닿지 못하면 그 줄이 보이고 카드는 그대로다', async ({ app }) => {
@@ -107,7 +107,7 @@ test('D3 [다시 불러오기]가 서버에 닿지 못하면 그 줄이 보이�
   await app.ctl((c, e) => c.failNext('ownership_recheck', e), appError('network'));
   await card.getByRole('button', { name: t('action.reresolve') }).first().click();
   await expect(card.getByText(t('receive.recheck.offline'))).toBeVisible();
-  await expect(card.getByRole('button', { name: t('card.download') })).toHaveAttribute('aria-disabled', 'true');
+  await expect(card.getByRole('button', { name: t('card.download'), exact: true })).toHaveAttribute('aria-disabled', 'true');
 });
 
 test('D4 맡은 채널의 생방송은 막다른 길이라 버튼 없이 이유만 말한다', async ({ app }) => {
@@ -123,7 +123,7 @@ test('D4 맡은 채널의 생방송은 막다른 길이라 버튼 없이 이유�
   await expect(card.locator('.notice-actions')).toHaveCount(0);
   // "받기를 누르면 녹화가 시작돼요"는 막힌 카드와 반대 말이라 그리지 않는다(patterns.md §1.1 규칙 1)
   await expect(card.getByText(t('card.live.body'))).toHaveCount(0);
-  await expect(card.getByRole('button', { name: t('card.download') })).toHaveAttribute('aria-disabled', 'true');
+  await expect(card.getByRole('button', { name: t('card.download'), exact: true })).toHaveAttribute('aria-disabled', 'true');
 });
 
 test('D12 좁은 폭·아주 큰 글자에서도 막힌 카드 본문은 글자 열이 눌리지 않고 버튼이 아래 줄로 간다', async ({ app }) => {

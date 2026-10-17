@@ -27,4 +27,9 @@ contentDate?: string,
 /**
  * 구간 받기(빠른 다시보기만). 없으면 전체. 셸은 시작 < 끝과 방식만 검사한다(길이는 모른다, range.md §4.1)
  */
-range?: TimeRangeDto | null, };
+range?: TimeRangeDto | null, 
+/**
+ * 영상이 끝난 뒤 채팅도 받는다(chat.md §4.4). 영상(Video) 전체 받기에만 쓸 수 있고, 클립·생방송·구간이면 `invalidInput`.
+ * 자막 형식은 받기 시점의 설정 `chatSubtitle`이고 `onExisting`은 영상과 채팅에 함께 적용한다
+ */
+saveChat?: boolean, };

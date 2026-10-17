@@ -78,9 +78,9 @@ Codex 2회차 N1~N9는 각 설계가 3차·4차 개정에서 처리했다(N1·N2
 ### ② 구간만 받기(`range.md` 4차)
 | 남은 것 | 종류 | 처리 자리 |
 |---|---|---|
-| 실측 M-②-2(세 시각 장면 대응)·M-②-3(키프레임)·M-②-6(defrag한 구간 파일 재생). **2·6이 ②-3 머지 조건**, 하나라도 실패면 ② deferred(보정 상수 없음) | [실측 필요] | ②-0 도구(3번) · ②-1 `dl --range`(2·6번) |
+| 실측 M-②-2(세 시각 장면 대응)·M-②-3(키프레임)·M-②-6(defrag한 구간 파일 재생). **2·6이 ②-3 머지 조건**, 하나라도 실패면 ② deferred(보정 상수 없음) | **2·6 통과**(2026-10-18, 세 시각 일치·구간 파일 재생 된다). 3은 부분 관찰(세 구간 첫 프레임 키프레임, 도구 미작성), 결과는 ROADMAP "기능 ② 사용자 실측" | ②-0 도구(3번) · ②-1 `dl --range`(2·6번) |
 | 전체 빠른 다시보기에도 defrag를 적용할지(이 기능 밖 새 결정, M-②-6 "전체 받기 파일" 관찰이 재료) | **확정: 실측 뒤**(2026-10-16). 적용하면 ⑤-F4의 defrag 실패 계약을 같이 쓴다 | `decisions.md` R5 |
-| M-②-6 마무리 시간·메모리 관찰(기준 "10초" [잠정]) → `Finalizing` 하위 표시·변환 중 취소 | [실측 필요] | ②-3 범위 판단 |
+| M-②-6 마무리 시간·메모리 관찰(기준 "10초" [잠정]) → `Finalizing` 하위 표시·변환 중 취소 | [실측 필요](2026-10-18 실측에서 아직 안 봄) | ②-3 범위 판단 |
 | `truncated` 필드 이름 · `patterns.md:398`·`:713` 키 이름 `filename.willSave` ≠ 실제 `willSaveAs` · `design-shots`에 `conflict.partialOther` 장면 유무 | 리뷰·확인 | ②-2 리뷰, ②-3 |
 | 같은 경로의 생방송 `.part`가 VOD·구간 받기로 지워지는 위험(N4와 같은 구조) | ⑤ 몫 | ⑤-F2가 먼저(§5-A), ②-1은 그 위에서 `same_job`을 바꾼다 |
 | 칸 폭 `ch`·moov 크기 상한 | [잠정] | ②-3 ADR-0009 행 |
@@ -102,7 +102,7 @@ Codex 2회차 N1~N9는 각 설계가 3차·4차 개정에서 처리했다(N1·N2
 | mpv·VLC가 빠른 다시보기 mp4(조각 구조 그대로, 변환은 생방송에만 `download/mod.rs:6`·`:372` [확인: 문서])의 길이·탐색을 바르게 다루는가 | [실측 필요] | M-④-8과 함께 |
 | 생방송 카드 안내(`card.live.body`)에 "채팅은 다시보기가 생기면" 한 줄을 더할지(R12, ADR-0025 영역) | [가정] | ⑤-F6 docs 때 F가 판단 |
 | `conflict_names` 순서·"형식 바꾸기"가 카드에서 튀지 않는지·`dialog.removeChat` 문구·채팅 수치 ADR·`examples/` 번들 제외(B22) | [가정]·리뷰 | ④-5 `design-shots`·R1, ④-1 |
-| ④-1 얇은 루프와 ④-3 `collect_chat`이 같은 `walk::next_step`을 쓴다 | [가정] | ④-3 리뷰 |
+| ④-1 얇은 루프와 ④-3a `collect_chat`이 같은 `walk::next_step`을 쓴다 | [가정] | ④-3a 리뷰 |
 
 ### ⑤ 생방송 녹화(배포됨, `live-audit.md`)
 | 남은 것 | 종류 | 처리 자리 |
@@ -200,7 +200,7 @@ Codex 2회차 N1~N9는 각 설계가 3차·4차 개정에서 처리했다(N1·N2
 | `chore/range-check` `[P]` | ②-0 `chore:` `examples/range_check.rs`(오프라인 판정 하나: 조각 첫 샘플이 동기 샘플인가, M-②-3) + 판정 lib 단위 테스트 + non-sync 음성 fixture | S | 없음 | `rust`·`scan`·fixtures `--check` |
 | ⏸ | 사용자 실측 M-②-3 | 사람 | ②-0 | "안 된다"면 ② deferred |
 | `feat/range-core` `[P]` | ②-1 `feat:` `TimeRange`(end `Option`)·`hls::select_range`·`HlsState.range`/`HlsRange`·sidecar v1/v2·`same_job` 셋(+ `resume` 인자)·segmented §3.4 표·`finish` defrag 조건 `range.is_some()`·`Unsupported::RangeNotHls`(`Chzzk::download` 맨 처음)·`rangeOutOfBounds`(23번째)·`DownloadRequest` 리터럴 `range: None` 목록(테스트 셋 + `dl.rs:229` 포함)·fixture·`assert_flat_mp4` 이동·wiremock·**생방송 sidecar 호환 단위 테스트**·`examples/dl.rs --range`(M-②-2·6용, 보조 "EXTINF 누적 = info 길이") | O(엔진 8곳·재개 불변식) | R1 확정. **⑤-F2 뒤**(§3 `same_job`). 실측 전에도 진행 가능 | `rust`·`coverage` |
-| ⏸ | 사용자 실측 M-②-2(세 시각)·M-②-6(재생 + 전체 받기 관찰 + 마무리 시간·메모리) | 사람 | ②-1 `dl --range` | 2·6 둘 다 통과해야 ②-3 |
+| ⏸ | 사용자 실측 M-②-2(세 시각)·M-②-6(재생 + 전체 받기 관찰 + 마무리 시간·메모리) | 사람 | ②-1 `dl --range` | 2·6 둘 다 통과해야 ②-3. **2026-10-18 구간 파일 판정 통과**(전체 받기·마무리 관찰은 남음) |
 | `feat/range-shell` | ②-2 `feat:` DTO `range`·`check_output` 인자·`JobRecord.range`·`partial_bytes` 비교·재검증 둘(생방송 포함)·`range_suffix` + 제목 쪽 자르기·`truncated` 뜻·`error_map.rs`·bindings·가짜 Backend | S(명세 확정) | ②-1 | `rust`·`tauri`, "접미사 한 번" 테스트 |
 | ~~②-4~~ | **없앴다**(range.md 3차). defrag가 그 일을 한다 | — | — | — |
 | `feat/range-app` | ②-3 `feat:` 카드 Disclosure·`parseClock` 골든·`checkKey`·`effectiveRange`·조용한 미리보기·1줄 조각·copy(`conflict.partialOther` R4)·`errors.ts`·`content.md` §6.5 기호 행·§15·`patterns.md:398`·`:399`·`:713`·e2e·갤러리·(④-5가 먼저 머지돼 있으면) 구간 켜짐 → 채팅 행 숨김 | S(와이어·copy 확정) · 리뷰 F(줄 하나가 튀지 않는지) | ②-2 · R2~R4 확정 · **M-②-2 셋 "일치" · M-②-6 "된다"** | `frontend`·`e2e-web`·`design-copy`·`design-shots` |
@@ -212,7 +212,8 @@ Codex 2회차 N1~N9는 각 설계가 3차·4차 개정에서 처리했다(N1·N2
 | `chore/chat-probe` `[P]` | ④-1 `chore:` 채팅 fixture 생성기·`chat::page`·`walk`·`retry`(400은 오류, 음성 테스트)·공개 seam `fetch_chat_page`·채팅 `RetryPolicy`·`chat::probe`·**`chat::subtitle`(`render_ass`·`render_srt` + 골든)·`naming::sibling_path`**(N5)·`examples/vod_chat_check.rs`(**`--write-ass`·`--write-srt`**, 둘을 한 번에 쓰지 않고 기존 파일을 덮지 않음) | O(serde 이름·fixture 설계) → 구현 S | 없음 | `rust`·`scan`·`--check`, `examples/` 번들 제외 확인(B22) |
 | ⏸ | 사용자 실측 M-④-1~9 | 사람 | ④-1 | §11 표로 확정. **U2 결정 입력** |
 | `refactor/chat-core-part` `[P]` | ④-2 `refactor:` `chat::part`(`DuplicatePolicy` 마무리·경쟁 테스트)만 | S | 없음(④-1 머지 전에도 가능) | `rust` |
-| `refactor/chat-core-collect` | ④-3 `refactor:` `Chzzk::collect_chat`·wiremock·(Q3 있다면) `chat_enabled`·`ContentMeta.chat`(리터럴 셋 갱신)·(Q8 A면) `ChatEnd::PastEnd` | O | ④-1·④-2·실측 | `rust`·`coverage` |
+| `feat/chat-collect-core` | ④-3a `refactor:` `Chzzk::collect_chat`(④-1의 fetch·walk·subtitle + ④-2의 part)·`ChatRequest`·`ChatOutcome`·`ChatProgress`·wiremock 통합 테스트(400 음성 (가)(나)(다)·429 경계·취소·재개·경쟁). **실측 Q3·Q8에 기대는 것은 넣지 않는다**(사용자 승인 2026-10-17: ④-3을 실측 없는 부분 먼저로 나눈다) | O | ④-1·④-2(실측 불필요) | `rust`·`coverage` |
+| `refactor/chat-core-measured` | ④-3b `refactor:` 실측 뒤 얇게: (Q3 "있다"면) `VideoContent.chat_enabled`·`ContentMeta.chat`(리터럴 셋·셸 DTO 미러 갱신), (Q8 A면) `ChatEnd::PastEnd` 양성 테스트(④-3a의 조건 밖 400 음성 테스트는 그대로). Q3·Q8이 B면 문서만 고친다(사용자 승인 2026-10-17) | O | ④-3a · 실측 M-④-3·M-④-4 | `rust` |
 | `refactor/chat-shell` | ④-4 `refactor:` `ChatQueue`·`ChatState`·`JobEvent::Chat`·`on_auth_status` 채팅 이어받기·`clearable()`·`check_output` 충돌·`conflict_names`·생방송·클립 `save_chat` 거부·command 3·설정 두 키·DTO + bindings·가짜 Backend + **프런트 `jobs.apply.ts` `Chat` 분기·vitest·가짜 백엔드 타입** | O(생명주기 표 13행·정리 규칙) | ④-3 · (②-2가 머지돼 있으면 그 뒤, 아니면 **기다리지 않는다**) | `rust`·`tauri`·`tauri-clippy`·**`frontend`** |
 | `feat/chat-app` | ④-5 `feat:` 카드 채팅 행 + "형식 바꾸기"·행 조각·[⋯] 항목·D7 변형·D2 변형·`isClearable`·`removeRoute`·접힘 규칙·설정 두 행·copy·content §4·§5.3·§15.1·`terms.json` `opensWindow`·patterns 표 행 + §17-34·채팅 수치 ADR·갤러리·e2e·네이티브 fixture·(②-3이 먼저 머지돼 있으면) 구간 켜짐 → 채팅 행 숨김 + 두 행 합산 높이 | O 구현, **F 리뷰**(카드 두 요소가 튀지 않는지, U2 반영) | ④-4 · **U2 확정**(실측 뒤) · U1·U3·U4·U5 확정 · (②-3이 머지돼 있으면 그 뒤, 아니면 기다리지 않는다) | `frontend`·`design-copy`·`design-tokens`·`e2e-web`·`design-shots`·`e2e-native` |
 | `docs/chat-done` | ④-6 `docs:` core.md·app.md 번호·ROADMAP·CLAUDE.md 모듈 목록 `chat` | S | ④-5 | `scan` |
@@ -247,6 +248,8 @@ Codex 2회차 N1~N9는 각 설계가 3차·4차 개정에서 처리했다(N1·N2
 | M-②-3 "된다" | ②-1 이후 전체(deferred 여부) | 키프레임 |
 | M-②-2 셋 "일치" ∧ M-②-6 "된다" | ②-3 | 장면 대응·재생 |
 | M-④-1~9 → U2 확정 | ④-5 | 기본 형식이 도움말 키·라디오 순서를 정한다(`chat.md` §12) |
+| ④-1·④-2 | ④-3a | 실측 없이 시작·머지한다(사용자 승인 2026-10-17). ④-4는 ④-3a에만 기댄다 |
+| ④-3a ∧ M-④-3·M-④-4(Q3·Q8) | ④-3b | 채팅 사용 여부 필드와 `PastEnd`는 실측 결과로만 정한다. ④-5의 카드 비활성 경로(Q3)가 이것에 기대므로 ④-5 앞 |
 | ③-6을 실제로 씀 ∧ M-③-6 | ③-7 | 스케줄러 수치 |
 | 트랙 안 stacked 순서 | 각 PR 표 | — |
 
@@ -264,8 +267,8 @@ Codex 2회차 N1~N9는 각 설계가 3차·4차 개정에서 처리했다(N1·N2
 ⑤ : ✔L6·L7·L8(확정) → ⑤-F1 ∥ ⑤-F4 ∥ ⑤-F5 ∥ (⑤-F2 → ⑤-F3) → ⑤-F6 ⇒ [릴리스 ⑤ fix, 0.7.1 또는 다음 feat에 합류] → ⏸M-⑤-A~D
 ① : ①-1 → ①-2 → ①-3 → ①-3½ ⇒ [릴리스 A(Worker)] → ①-4(⑤-F2 뒤) → ①-5 → ①-6 ⇒ [릴리스 B]
 ② : ②-0 ⏸M-②-3 → ②-1(**⑤-F2 뒤**, §5-A) → ⏸M-②-2·6(`dl --range`) ∥ ②-2 → ②-3 → ②-5
-④ : ④-1 ⏸M-④-1~9 → ⏸U2 ─┐        (②-2 있으면 그 뒤)  (②-3 있으면 그 뒤)
-     ④-2 ───────→ ④-3 ──┴→ ④-4 ───────────→ ④-5 ───────────→ ④-6
+④ : ④-1 ⏸M-④-1~9 ──→ ④-3b(Q3·Q8, ④-3a 뒤) ─→ ⏸U2 ─┐   (②-2 있으면 그 뒤)  (②-3 있으면 그 뒤)
+     ④-2 ──→ ④-3a ──→ ④-4 ────────────────────────────┴→ ④-5 ───────────→ ④-6
 ③ : ③-1 ⏸M-③-1~7·E1 → ③-2 → ③-3 → ③-4 → ③-6 ⇒ [릴리스 ③(가)] → ③-7 ⇒ [릴리스 ③(나)]
                              ③-5 ─────┘                ③-8(①-4 뒤)
 ⑤(나) 후속: ③(나) 뒤 별도 설계(LiveWatch·자동 녹화·L-D1·O-4)

@@ -1,7 +1,8 @@
-//! VOD 채팅(다시보기 채팅) 페이지 조회·파서·순회 판정·자막 렌더(기능 ④, PR 1).
+//! VOD 채팅(다시보기 채팅) 페이지 조회·파서·순회 판정·자막 렌더(기능 ④, PR 1), 이어받기 파일(`part`, PR 2),
+//! 수집 `Chzzk::collect_chat`(`collect`, ④-3a).
 //!
-//! 이어받기 파일(`part`, PR 2)이 더해졌고 수집(`collect_chat`)은 다음 PR이다. 실측 도구 `examples/vod_chat_check.rs`가
-//! 이 모듈만으로 페이지를 돈다. 닉네임·본문은 채팅 파일 밖(로그·오류·Debug)에 나오지 않는다.
+//! 실측 도구 `examples/vod_chat_check.rs`가 이 모듈만으로 페이지를 돈다. 닉네임·본문은 채팅 파일 밖(로그·오류·Debug)에
+//! 나오지 않는다.
 
 use std::time::Duration;
 
@@ -12,6 +13,7 @@ use crate::download::RetryPolicy;
 use crate::error::Error;
 use crate::http::RequestKind;
 
+pub mod collect;
 pub mod page;
 pub mod part;
 pub mod probe;
@@ -19,7 +21,9 @@ pub mod retry;
 pub mod subtitle;
 pub mod walk;
 
+pub use collect::{ChatOutcome, ChatProgress, ChatRequest};
 pub use page::{ChatCursor, ChatMessage, ChatMessageKind, ChatPage, message_hash, parse_chat_page};
+pub use part::{chat_partial_bytes, discard_chat_partial};
 pub use walk::{BoundaryRepeat, Next, Step, WalkState, next_step};
 
 /// 요청 사이 최소 간격(ms). [잠정] 근거 없음, 실측·ADR-0009 묶음 등록(Q5).
@@ -30,6 +34,10 @@ pub const CHAT_RETRY_MAX: u32 = 3;
 pub const CHAT_CUE_MS: u64 = 5_000;
 /// 영상 길이 뒤로 자막에 넣는 여유(ms). [잠정] 근거 없음, 실측·ADR-0009 묶음 등록(Q6).
 pub const CHAT_TAIL_MS: u64 = 5_000;
+/// 자막을 만들 때 읽는 채팅 기록(`.chat.jsonl`)의 최대 바이트 수. 넘으면 기록을 읽지 않고 자막 실패로 끝낸다
+/// (렌더러가 기록 전체를 메모리에 올리므로 할당 실패로 프로세스가 죽지 않게 하는 예산이다). [잠정] 근거 없음,
+/// 실측 M-④-5 뒤 조정·ADR-0009 묶음 등록(core.md 구현 중 변경 66).
+pub const CHAT_SUBTITLE_MAX_BYTES: u64 = 256 * 1024 * 1024;
 /// 요청 인자: 커서 앞쪽 메시지 수. 받은 앞쪽 묶음은 버린다.
 pub const CHAT_PREVIOUS_SIZE: u32 = 50;
 
@@ -42,8 +50,9 @@ pub enum ChatEnd {
     EmptyPage,
 }
 
-/// 자막 형식.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// 자막 형식. 직렬화는 `"none"`·`"ass"`·`"srt"`(설정·작업 목록에 저장된다).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub enum SubtitleFormat {
     #[default]
     None,

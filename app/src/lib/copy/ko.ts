@@ -368,6 +368,10 @@ export const ko = {
   'delegated.leave': '편집자 그만두기',
   'delegated.leave.failed': '편집자를 그만두지 못했어요. 잠시 뒤 다시 시도해 주세요.',
 
+  // 오류 L2 도움말 링크(patterns.md §10.1, content.md §9.1): 주제 이름은 `help/<id>.md`의 제목 그대로다
+  'help.link.label': '도움말 보기: {topic}',
+  'help.editors.title': '다른 채널의 영상 받기',
+
   'update.banner': '새 버전이 있어요: {version}',
   'update.install': '지금 업데이트',
   'update.downloading': '업데이트 받는 중 · {percent}',

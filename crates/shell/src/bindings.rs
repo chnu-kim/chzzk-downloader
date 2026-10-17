@@ -10,11 +10,12 @@ use std::path::{Path, PathBuf};
 
 use ts_rs::{Config, TS};
 
+use crate::chat::ChatOutputCheck;
 use crate::dto::{
     AppFolder, AppInfo, AuthStatusDto, CloseRequestedPayload, EditorsDto, EngineProbe,
-    EnqueueRequest, InviteDto, JobDto, JobEvent, KeepAwakePayload, LegacyImportDto, OutputCheck,
-    ResolvedDto, SettingsDto, SettingsPatch, UpdateCheckDto, UpdateInfoDto, UpdateInstallDto,
-    UpdateProgressEvent, WebPage, WindowFocusPayload,
+    EnqueueRequest, HelpId, InviteDto, JobDto, JobEvent, KeepAwakePayload, LegacyImportDto,
+    OutputCheck, ResolvedDto, SettingsDto, SettingsPatch, UpdateCheckDto, UpdateInfoDto,
+    UpdateInstallDto, UpdateProgressEvent, WebPage, WindowFocusPayload,
 };
 use crate::error::AppError;
 
@@ -61,9 +62,11 @@ pub fn export(dir: &Path) -> io::Result<()> {
     CloseRequestedPayload::export_all(&cfg).map_err(ts_err)?;
     AppFolder::export_all(&cfg).map_err(ts_err)?;
     WebPage::export_all(&cfg).map_err(ts_err)?;
+    HelpId::export_all(&cfg).map_err(ts_err)?;
     WindowFocusPayload::export_all(&cfg).map_err(ts_err)?;
     EngineProbe::export_all(&cfg).map_err(ts_err)?;
     KeepAwakePayload::export_all(&cfg).map_err(ts_err)?;
+    ChatOutputCheck::export_all(&cfg).map_err(ts_err)?;
 
     let mut names: Vec<String> = std::fs::read_dir(dir)?
         .filter_map(|e| e.ok())

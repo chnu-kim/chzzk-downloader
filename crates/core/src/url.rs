@@ -81,6 +81,29 @@ mod tests {
         }
     }
 
+    /// 클립 ID는 영숫자·`_`·`-`만 받는다(`_`나 `-`만으로 이뤄진 ID도 형식은 맞다).
+    #[test]
+    fn clip_id_charset() {
+        for (url, id) in [
+            ("https://chzzk.naver.com/clips/ab_cd-9", "ab_cd-9"),
+            ("https://chzzk.naver.com/clips/_", "_"),
+            ("https://chzzk.naver.com/clips/-", "-"),
+            ("https://chzzk.naver.com/embed/clip/Z_-z", "Z_-z"),
+        ] {
+            assert_eq!(
+                parse_content_url(url).unwrap(),
+                ContentRef::Clip { clip_id: id.into() },
+                "{url}"
+            );
+        }
+        for bad in ["a.b", "a b", "a%20b", "한글", "a+b"] {
+            assert!(
+                parse_content_url(&format!("https://chzzk.naver.com/clips/{bad}")).is_err(),
+                "{bad}"
+            );
+        }
+    }
+
     #[test]
     fn live_channel_id() {
         let id = "000000000000000000000000000000E5"; // 대문자는 소문자로 정규화한다

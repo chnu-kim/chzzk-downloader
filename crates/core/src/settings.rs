@@ -13,6 +13,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Deserializer, Serialize};
 
+use crate::chat::SubtitleFormat;
 use crate::download::DEFAULT_CONCURRENCY;
 use crate::error::Error;
 use crate::fsutil::{atomic_write, map_io_error, rename_with_retry};
@@ -34,6 +35,10 @@ pub const DEFAULT_PARALLEL_DOWNLOADS: u8 = 2;
 
 /// 동시에 받는 작업 수 상한. 더 큰 숫자는 이 값으로 읽는다.
 pub const MAX_PARALLEL_DOWNLOADS: u8 = 3;
+
+/// 채팅 자막 기본 형식. **[잠정] U2 결정 대기**: 사용자가 실측(M-④-8·9) 뒤 정한다(decisions.md U2). 그때까지는
+/// 설계 와이어프레임(chat.md §5.4)이 고른 값인 영상 플레이어용 `.ass`를 쓴다. 바꿀 때는 이 상수 하나만 고친다.
+pub const DEFAULT_CHAT_SUBTITLE: SubtitleFormat = SubtitleFormat::Ass;
 
 /// 최근 VOD 제목 길이 상한(문자 수). 넘으면 47자 + `...`.
 const RECENT_TITLE_MAX_CHARS: usize = 50;
@@ -79,6 +84,12 @@ pub struct UserSettings {
     /// 받는 동안 컴퓨터가 잠들지 않게 한다(system/platform.md §10, 기본 켜짐). 없는 키·모르는 값은 켜짐으로 읽는다.
     #[serde(deserialize_with = "bool_or_true")]
     pub keep_awake: bool,
+    /// 영상과 함께 채팅도 받기(chat.md §4.4, 기본 꺼짐. 카드에서 마지막으로 고른 값). 불리언이 아닌 값은 꺼짐으로 읽는다.
+    #[serde(deserialize_with = "lenient_or_default")]
+    pub save_chat: bool,
+    /// 채팅 자막 형식(기본 `DEFAULT_CHAT_SUBTITLE`, [잠정] U2 결정 대기). 없는 키·모르는 값은 기본값으로 읽는다.
+    #[serde(deserialize_with = "subtitle_or_default")]
+    pub chat_subtitle: SubtitleFormat,
 }
 
 /// 앱 안 글자 크기(×1 / ×1.3 / ×2.0, system/foundations.md §3.2). 직렬화 값은 `data-text-scale` 값과 같다
@@ -130,6 +141,8 @@ impl Default for UserSettings {
             text_scale: TextScale::Default,
             theme: Theme::System,
             keep_awake: true,
+            save_chat: false,
+            chat_subtitle: DEFAULT_CHAT_SUBTITLE,
         }
     }
 }
@@ -163,6 +176,16 @@ where
     let v = Option::<serde_json::Value>::deserialize(d)?;
     Ok(v.and_then(|v| serde_json::from_value(v).ok())
         .unwrap_or_default())
+}
+
+/// 자막 형식을 읽되 모르는 값·`null`은 `DEFAULT_CHAT_SUBTITLE`(코어 `SubtitleFormat::default()`는 `None`이라 쓰지 않는다).
+fn subtitle_or_default<'de, D>(d: D) -> Result<SubtitleFormat, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let v = Option::<serde_json::Value>::deserialize(d)?;
+    Ok(v.and_then(|v| serde_json::from_value(v).ok())
+        .unwrap_or(DEFAULT_CHAT_SUBTITLE))
 }
 
 /// 불리언이 아닌 값(null·문자열·숫자)은 켜짐(`true`)으로 읽는다. 손으로 고친 값 하나로 파일 전체가 깨지지 않게 한다.
@@ -446,6 +469,84 @@ fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
 mod tests {
     use super::*;
 
+    fn names(dir: &Path) -> Vec<String> {
+        let mut v: Vec<String> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .collect();
+        v.sort();
+        v
+    }
+
+    /// 원본이 없으면 보존할 것이 없어 성공이고, 읽을 수 없으면 오류다.
+    #[test]
+    fn preserve_legacy_source_missing_or_unreadable() {
+        let dir = tempfile::tempdir().unwrap();
+        preserve_legacy(dir.path()).unwrap();
+        assert!(names(dir.path()).is_empty());
+        std::fs::create_dir(dir.path().join(SETTINGS_FILE)).unwrap();
+        assert!(matches!(
+            preserve_legacy(dir.path()),
+            Err(Error::Io { op: "read", .. })
+        ));
+        assert_eq!(names(dir.path()), [SETTINGS_FILE]);
+    }
+
+    /// `.v1`이 없으면 만들고, 같으면 그대로 두고, 다르면 따로 남긴다. `.v1`을 읽을 수 없으면 오류다.
+    #[test]
+    fn preserve_legacy_backup_rules() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join(SETTINGS_FILE);
+        let v1 = dir.path().join(LEGACY_BACKUP_FILE);
+        std::fs::write(&src, b"one").unwrap();
+        preserve_legacy(dir.path()).unwrap();
+        assert_eq!(std::fs::read(&v1).unwrap(), b"one");
+        assert_eq!(names(dir.path()).len(), 2);
+
+        // 같은 내용이면 새 파일을 만들지 않는다.
+        preserve_legacy(dir.path()).unwrap();
+        assert_eq!(names(dir.path()).len(), 2);
+
+        // 다른 내용이면 원본 `.v1`은 두고 `.v1-{ts}`로 남긴다.
+        std::fs::write(&src, b"two").unwrap();
+        preserve_legacy(dir.path()).unwrap();
+        assert_eq!(std::fs::read(&v1).unwrap(), b"one");
+        let extra: Vec<String> = names(dir.path())
+            .into_iter()
+            .filter(|n| n.starts_with("settings.json.v1-"))
+            .collect();
+        assert_eq!(extra.len(), 1, "{extra:?}");
+        assert_eq!(std::fs::read(dir.path().join(&extra[0])).unwrap(), b"two");
+
+        // `.v1`을 읽을 수 없으면(디렉터리) 덮어쓰지 않고 읽기 오류다.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(SETTINGS_FILE), b"x").unwrap();
+        std::fs::create_dir(dir.path().join(LEGACY_BACKUP_FILE)).unwrap();
+        assert!(matches!(
+            preserve_legacy(dir.path()),
+            Err(Error::Io { op: "read", .. })
+        ));
+    }
+
+    /// 같은 초에 이미 있는 이름은 `-1`, `-2` …로 피한다.
+    #[test]
+    fn unique_sibling_skips_taken_names() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path().join("f");
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        // 시계가 넘어가도 겹치도록 앞뒤 몇 초를 미리 채운다.
+        for ts in now - 2..now + 5 {
+            std::fs::write(with_suffix(&base, &format!("-{ts}")), b"").unwrap();
+            std::fs::write(with_suffix(&base, &format!("-{ts}-1")), b"").unwrap();
+        }
+        let p = unique_sibling(&base, "-");
+        assert!(!p.exists());
+        assert!(p.to_string_lossy().ends_with("-2"), "{}", p.display());
+    }
+
     #[test]
     fn defaults() {
         let s = UserSettings::default();
@@ -570,6 +671,56 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(parse(&serde_json::to_vec(&off).unwrap()).unwrap(), off);
+    }
+
+    /// 채팅 두 키(chat.md §4.4): 없는 키·모르는 값은 기본값(채팅 꺼짐, 자막은 [잠정] U2 결정 대기 `.ass`). 나머지 키는 남는다.
+    #[test]
+    fn chat_keys_default_and_lenient() {
+        use crate::chat::SubtitleFormat;
+        let d = UserSettings::default();
+        assert!(!d.save_chat);
+        assert_eq!(d.chat_subtitle, SubtitleFormat::Ass);
+        assert_eq!(DEFAULT_CHAT_SUBTITLE, SubtitleFormat::Ass);
+        for (raw, save, sub) in [
+            ("", false, SubtitleFormat::Ass),
+            (
+                r#","saveChat":true,"chatSubtitle":"srt""#,
+                true,
+                SubtitleFormat::Srt,
+            ),
+            (
+                r#","saveChat":false,"chatSubtitle":"none""#,
+                false,
+                SubtitleFormat::None,
+            ),
+            (
+                r#","saveChat":"yes","chatSubtitle":"vtt""#,
+                false,
+                SubtitleFormat::Ass,
+            ),
+            (
+                r#","saveChat":null,"chatSubtitle":null"#,
+                false,
+                SubtitleFormat::Ass,
+            ),
+            (r#","chatSubtitle":3"#, false, SubtitleFormat::Ass),
+        ] {
+            let s = parse(format!(r#"{{"downloadFolder":"/x"{raw}}}"#).as_bytes())
+                .unwrap_or_else(|e| panic!("{raw}: {e}"));
+            assert_eq!(s.save_chat, save, "{raw}");
+            assert_eq!(s.chat_subtitle, sub, "{raw}");
+            assert_eq!(s.download_folder.as_deref(), Some(Path::new("/x")), "{raw}");
+        }
+        let v = UserSettings {
+            save_chat: true,
+            chat_subtitle: SubtitleFormat::None,
+            ..Default::default()
+        };
+        let bytes = serde_json::to_vec(&v).unwrap();
+        let text = String::from_utf8(bytes.clone()).unwrap();
+        assert!(text.contains(r#""saveChat":true"#), "{text}");
+        assert!(text.contains(r#""chatSubtitle":"none""#), "{text}");
+        assert_eq!(parse(&bytes).unwrap(), v);
     }
 
     /// 접미사는 바이트 그대로 붙는다(UTF-8이 아닌 폴더 이름).

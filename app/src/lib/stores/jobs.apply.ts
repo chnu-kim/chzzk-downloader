@@ -54,6 +54,7 @@ export function fromSnapshot(list: readonly JobDto[]): JobsState {
  * - `added`·`status`: 레코드 전체를 바꾼다. 레코드의 `progress`가 없으면 진행률도 지운다. 퍼센트 바닥은 올리기만 한다.
  * - `progress`: 모르는 id(이미 지워졌거나 스냅샷 전)는 버린다.
  * - `removed`: 둘 다에서 지운다.
+ * - `chat`: 그 작업의 `chat`만 바꾼다(모르는 id는 버린다).
  */
 export function applyEvent(state: JobsState, event: JobEvent): JobsState {
   switch (event.type) {
@@ -73,6 +74,15 @@ export function applyEvent(state: JobsState, event: JobEvent): JobsState {
       const progress = new Map(state.progress);
       progress.set(event.id, event.progress);
       return { jobs: state.jobs, progress, percent: withPercent(state.percent, job, event.progress) };
+    }
+    case 'chat': {
+      // 채팅 하위 상태만 갈아 끼운다(chat.md §4.2). 영상 상태·진행률·퍼센트 바닥은 그대로다.
+      // 모르는 id(이미 지워졌거나 스냅샷 전)는 버린다
+      const job = state.jobs.get(event.id);
+      if (!job) return state;
+      const jobs = new Map(state.jobs);
+      jobs.set(event.id, { ...job, chat: event.chat });
+      return { jobs, progress: state.progress, percent: state.percent };
     }
     case 'removed': {
       if (!state.jobs.has(event.id) && !state.progress.has(event.id)) return state;

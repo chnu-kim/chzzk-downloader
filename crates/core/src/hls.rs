@@ -952,6 +952,36 @@ mod tests {
         }
     }
 
+    /// `#EXTM3U`로 시작하지 않으면 master든 media든 거부한다(앞 빈 줄·CRLF·BOM은 허용).
+    #[test]
+    fn header_is_required() {
+        let b = media_base();
+        let body = "#EXTINF:2,\na.m4v\n#EXT-X-ENDLIST\n";
+        assert!(matches!(parse_media(body, &b), Err(Error::Parse { .. })));
+        assert!(matches!(
+            parse_master("#EXT-X-STREAM-INF:BANDWIDTH=1\nv.m3u8\n", &b),
+            Err(Error::Parse { .. })
+        ));
+        assert!(matches!(
+            parse_media(&format!("#EXTM3Uxx\n{body}"), &b),
+            Err(Error::Parse { .. })
+        ));
+        assert!(parse_media(&format!("\n#EXTM3U\r\n{body}"), &b).is_ok());
+    }
+
+    #[test]
+    fn duration_ms_rounding_and_bounds() {
+        assert_eq!(parse_duration_ms("0"), Some(0));
+        assert_eq!(parse_duration_ms("0.0004"), Some(0));
+        assert_eq!(parse_duration_ms("0.0005"), Some(1));
+        assert_eq!(parse_duration_ms("2.0"), Some(2000));
+        assert_eq!(parse_duration_ms("-0.001"), None);
+        assert_eq!(parse_duration_ms("NaN"), None);
+        assert_eq!(parse_duration_ms("inf"), None);
+        assert_eq!(parse_duration_ms("4294967.295"), Some(u32::MAX));
+        assert_eq!(parse_duration_ms("4294967.296"), None);
+    }
+
     #[test]
     fn parse_attrs_quoted() {
         assert_eq!(

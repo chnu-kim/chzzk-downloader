@@ -996,7 +996,7 @@ fn gated_commands_reject_before_sign_in() {
         let e = invoke(&f.main, name, json!({})).unwrap_err();
         assert_eq!(e, want, "{name}");
     }
-    assert_eq!(n, 26);
+    assert_eq!(n, 29); // 채팅 command 셋(④-4)도 허용 목록 밖이다
 }
 
 /// 앱 상태가 없을 때(시작 실패, worker.md 구현 중 변경 55): 허용 목록 밖은 처리기 전에 notLoggedIn(fail closed)
@@ -1022,7 +1022,7 @@ fn gate_without_app_state_fails_closed() {
         n += 1;
         assert_eq!(invoke(&main, name, json!({})).unwrap_err(), want, "{name}");
     }
-    assert_eq!(n, 26);
+    assert_eq!(n, 29); // 채팅 command 셋(④-4)도 허용 목록 밖이다
     // 허용 목록은 게이트를 지나 처리기로 간다(상태가 없어 처리기 쪽 오류일 수는 있어도 notLoggedIn은 아니다)
     for name in ["app_info", "auth_status", "list_jobs"] {
         if let Err(e) = invoke(&main, name, json!({})) {
@@ -1281,6 +1281,45 @@ fn open_web_page_opens_fixed_worker_pages_while_signed_out() {
     );
     // 모르는 페이지는 거부하고 아무것도 열지 않는다
     assert!(invoke(&f.main, "open_web_page", json!({"page": "terms"})).is_err());
+    assert_eq!(f.io.opened.lock().unwrap().len(), 2);
+}
+
+/// 오류 L2 도움말 링크: 앵커는 도움말에만, 닫힌 집합(`help/ids.json`) 안에서만 붙는다(app.md 구현 중 변경 84).
+#[test]
+fn open_web_page_help_anchor_opens_topic_and_rejects_others() {
+    let worker = worker_server(None);
+    let f = fixture_auth(&worker);
+    invoke(
+        &f.main,
+        "open_web_page",
+        json!({"page": "help", "anchor": "editors"}),
+    )
+    .unwrap();
+    invoke(&f.main, "open_web_page", json!({"page": "help"})).unwrap();
+    let base = worker.uri();
+    assert_eq!(
+        *f.io.opened.lock().unwrap(),
+        vec![format!("{base}/help#editors"), format!("{base}/help")]
+    );
+    // 도움말이 아닌 페이지의 앵커는 invalidInput, 모르는 주제는 거부. 둘 다 아무것도 열지 않는다
+    let e = invoke(
+        &f.main,
+        "open_web_page",
+        json!({"page": "privacy", "anchor": "editors"}),
+    )
+    .unwrap_err();
+    assert_eq!(e["code"], json!("invalidInput"));
+    for bad in ["terms", "Editors", "editors#x", "../privacy"] {
+        assert!(
+            invoke(
+                &f.main,
+                "open_web_page",
+                json!({"page": "help", "anchor": bad})
+            )
+            .is_err(),
+            "{bad}"
+        );
+    }
     assert_eq!(f.io.opened.lock().unwrap().len(), 2);
 }
 

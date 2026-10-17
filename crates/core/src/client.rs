@@ -54,6 +54,12 @@ pub struct ClientConfig {
     pub live_poll_interval: Duration,
     /// 생방송에서 새 세그먼트가 이 시간 동안 없으면 방송이 끝났는지 다시 조회한다. 기본 30초
     pub live_idle_check: Duration,
+    /// 채팅 페이지 요청 사이 최소 간격. 기본 `chat::CHAT_PAGE_INTERVAL_MS`(재시도 요청에도 지킨다)
+    pub chat_page_interval: Duration,
+    /// 채팅 요청 재시도 정책. 기본 `chat::chat_retry_policy()`(미디어용 `retry`와 따로다, chat.md §3.2-5)
+    pub chat_retry: RetryPolicy,
+    /// 자막을 만들 채팅 기록의 최대 바이트 수. 기본 `chat::CHAT_SUBTITLE_MAX_BYTES`(넘으면 자막 실패, 기록은 완성)
+    pub chat_subtitle_max_bytes: u64,
 }
 
 impl Default for ClientConfig {
@@ -68,6 +74,9 @@ impl Default for ClientConfig {
             read_timeout: Duration::from_secs(30),
             live_poll_interval: Duration::from_secs(1),
             live_idle_check: Duration::from_secs(30),
+            chat_page_interval: Duration::from_millis(crate::chat::CHAT_PAGE_INTERVAL_MS),
+            chat_retry: crate::chat::chat_retry_policy(),
+            chat_subtitle_max_bytes: crate::chat::CHAT_SUBTITLE_MAX_BYTES,
         }
     }
 }

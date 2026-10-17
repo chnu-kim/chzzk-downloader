@@ -13,6 +13,8 @@ import type {
   AppInfo,
   AuthStatusDto,
   ChannelRefDto,
+  ChatOutputCheck,
+  ChatStateDto,
   ContentRef,
   EditorsDto,
   EnqueueRequest,
@@ -20,6 +22,7 @@ import type {
   JobDto,
   JobEvent,
   LiveEndDto,
+  OnExisting,
   Os,
   OutputCheck,
   ProgressDto,
@@ -153,6 +156,18 @@ declare global {
   }
 }
 
+/** 받기로 막 생긴 채팅 상태(셸 `ChatState::waiting`) */
+const waitingChat = (subtitle: SettingsDto['chatSubtitle'], onExisting: OnExisting): ChatStateDto => ({
+  phase: 'waiting',
+  subtitle,
+  onExisting,
+  messages: 0,
+  percent: null,
+  error: null,
+  subtitleFailed: false,
+  partialBytes: null,
+});
+
 const err = (code: ErrorCode, over: Partial<AppError> = {}): AppError => ({
   code,
   message: code,
@@ -191,6 +206,8 @@ export const SETTINGS: SettingsDto = {
   textScale: 'default',
   theme: 'system',
   keepAwake: true,
+  saveChat: false,
+  chatSubtitle: 'ass',
 };
 
 // 코어 Progress와 같은 모양: progressive는 바이트 총량, 빠른 다시보기(HLS)는 조각·미디어 초로 진행을 센다(app jobs.ts progressFraction)
@@ -269,6 +286,11 @@ export function install(scenario: Scenario = {}): E2EController {
     jobs.set(j.id, j);
     send({ type, job: j });
   };
+  /** 채팅 하위 상태만 바꾸고 `chat` 이벤트를 보낸다(셸 `JobEvent::Chat`) */
+  const setChat = (j: JobDto, chat: ChatStateDto) => {
+    jobs.set(j.id, { ...j, chat });
+    send({ type: 'chat', id: j.id, chat });
+  };
   const must = (id: number): JobDto => {
     const j = jobs.get(id);
     if (!j) throw err('jobNotFound');
@@ -300,7 +322,11 @@ export function install(scenario: Scenario = {}): E2EController {
       textScale: settings.textScale,
       theme: settings.theme,
     }),
-    open_web_page: () => null,
+    // 셸 흉내(App::web_page_url): 앵커는 도움말에만 붙는다. 다른 페이지에 붙이면 invalidInput
+    open_web_page: (a) => {
+      if (a.anchor != null && a.page !== 'help') throw err('invalidInput');
+      return null;
+    },
     get_settings: () => settings,
     update_settings: (a) => {
       settings = { ...settings, ...(a.patch as SettingsPatch) } as SettingsDto;
@@ -397,7 +423,8 @@ export function install(scenario: Scenario = {}): E2EController {
       const finalName = range ? `${fileName}${rangeSuffix(range)}` : fileName;
       const path = `${folder}/${finalName}.mp4`;
       const dup = [...jobs.values()].find((j) => j.output === path && ['queued', 'running', 'pausing', 'paused'].includes(j.status));
-      return {
+      const over = outputs[fileName];
+      const r: OutputCheck = {
         fileName: finalName,
         path,
         truncated: finalName !== fileName,
@@ -405,8 +432,32 @@ export function install(scenario: Scenario = {}): E2EController {
         freeFileName: null,
         partial: null,
         duplicateJobId: dup?.id ?? null,
-        ...outputs[fileName],
+        conflictNames: [],
+        ...over,
       };
+      // 셸 흉내(chat.md §4.4): 시나리오가 이름을 주지 않았으면 같은 이름의 영상 하나가 겹친다(채팅 파일은 흉내 내지 않는다)
+      if (r.exists && over?.conflictNames === undefined) r.conflictNames = [`${finalName}.mp4`];
+      return r;
+    },
+    // 셸 흉내(chat.md §4.5): 채팅 파일 충돌은 흉내 내지 않는다(늘 없음). 완료가 아니면 invalidInput
+    check_chat_output: (a): ChatOutputCheck => {
+      const j = must(a.id as number);
+      if (j.status !== 'completed' || j.kind !== 'video') throw err('invalidInput');
+      return { conflictNames: [] };
+    },
+    // 셸 흉내: 완료된 영상의 채팅을 줄 세운다(waiting). 실제 수집은 흉내 내지 않는다
+    fetch_chat: (a) => {
+      const j = must(a.id as number);
+      if (j.status !== 'completed' || j.kind !== 'video' || j.range) throw err('invalidInput');
+      if (j.chat?.phase === 'waiting' || j.chat?.phase === 'running') return null;
+      setChat(j, waitingChat(settings.chatSubtitle, a.onExisting as OnExisting));
+      return null;
+    },
+    pause_chat: (a) => {
+      const j = must(a.id as number);
+      if (!j.chat) throw err('invalidInput');
+      if (j.chat.phase === 'waiting' || j.chat.phase === 'running') setChat(j, { ...j.chat, phase: 'paused' });
+      return null;
     },
     enqueue: (a): JobDto => {
       const req = a.req as EnqueueRequest;
@@ -442,7 +493,10 @@ export function install(scenario: Scenario = {}): E2EController {
         stoppedAt: null,
         range: req.range ?? null,
         liveEnd: null,
+        // 셸 흉내: 채팅을 고르면 영상이 끝나기를 기다린다(클립·생방송·구간은 셸이 invalidInput으로 거부한다)
+        chat: req.saveChat ? waitingChat(settings.chatSubtitle, req.onExisting) : null,
       };
+      if (req.saveChat && (req.content.kind !== 'video' || req.range)) throw err('invalidInput');
       put(job, 'added');
       return job;
     },

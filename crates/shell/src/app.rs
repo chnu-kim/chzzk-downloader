@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use chzzk_core::chat::SubtitleFormat;
 use chzzk_core::{
     Chzzk, ClientConfig, ContentRef, PlaybackKind, is_own_channel, parse_content_url,
 };
@@ -19,9 +20,9 @@ use crate::auth::{
     EditorsError, HttpWorkerApi, SessionStore, SystemClock, WorkerBase, client_label, token,
 };
 use crate::dto::{
-    AppFolder, AppInfo, AuthStatusDto, EditorsDto, EnqueueRequest, Features, InviteDto, JobDto,
-    OutputCheck, ResolvedDto, SettingsDto, SettingsPatch, TimeRangeDto, UpdateCheckDto,
-    UpdateInfoDto, UpdateInstallDto, WebPage,
+    AppFolder, AppInfo, AuthStatusDto, EditorsDto, EnqueueRequest, Features, HelpId, InviteDto,
+    JobDto, OnExisting, OutputCheck, ResolvedDto, SettingsDto, SettingsPatch, TimeRangeDto,
+    UpdateCheckDto, UpdateInfoDto, UpdateInstallDto, WebPage,
 };
 use crate::error::{AppError, ErrorCode};
 use crate::gate;
@@ -82,6 +83,14 @@ impl std::fmt::Debug for App {
             .field("auth", &self.auth.is_some())
             .finish_non_exhaustive()
     }
+}
+
+/// `check_output`의 채팅 인자(chat.md §4.4). 둘 다 없으면 채팅 없이 판정한다(옛 호출과 같다).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ChatCheck {
+    pub save_chat: bool,
+    /// 없으면 지금 설정 `chatSubtitle`
+    pub subtitle: Option<SubtitleFormat>,
 }
 
 /// `reveal_output`이 보여 줄 것.
@@ -205,7 +214,8 @@ impl App {
 
     /// `open_web_page`가 열 주소: 로그인 서버(Worker) 출처 아래 고정 경로(system/patterns.md §13·§14.4).
     /// 로그인을 쓰지 않는 빌드는 열 곳이 없다(화면이 링크를 그리지 않는다).
-    pub fn web_page_url(&self, page: WebPage) -> Result<String, AppError> {
+    /// `anchor`는 도움말에만 붙는다(`/help#<id>`, 오류 L2 링크, app.md 구현 중 변경 84). 다른 페이지에 붙이면 `invalidInput`.
+    pub fn web_page_url(&self, page: WebPage, anchor: Option<HelpId>) -> Result<String, AppError> {
         let base = self
             .worker_base
             .as_ref()
@@ -215,7 +225,13 @@ impl App {
             WebPage::Licenses => "/licenses",
             WebPage::Help => "/help",
         };
-        Ok(base.url(path))
+        match (page, anchor) {
+            (_, None) => Ok(base.url(path)),
+            (WebPage::Help, Some(id)) => Ok(base.url(&format!("{path}#{}", id.as_str()))),
+            (_, Some(_)) => Err(AppError::invalid_input(
+                "도움말이 아닌 페이지에는 앵커를 붙일 수 없습니다",
+            )),
+        }
     }
 
     /// `update_settings`. 동시 작업 수를 매니저에도 반영한다.
@@ -224,6 +240,7 @@ impl App {
     }
 
     /// `check_output`. 폴더가 없으면 `enqueue`와 같은 폴더(설정 폴더, 없으면 기본 폴더)를 쓴다.
+    #[allow(clippy::too_many_arguments)] // command 인자를 그대로 펼쳐 받는다(`commands::check_output`)
     pub fn check_output(
         &self,
         folder: Option<&str>,
@@ -232,8 +249,13 @@ impl App {
         quality_id: &str,
         kind: PlaybackKind,
         range: Option<TimeRangeDto>,
+        chat: ChatCheck,
     ) -> Result<OutputCheck, AppError> {
         let defaults = self.settings.job_defaults();
+        // 채팅을 함께 받으면 그 자막 형식(주지 않으면 지금 설정)의 채팅 파일도 충돌 판정에 넣는다(chat.md §4.4)
+        let chat = chat
+            .save_chat
+            .then(|| chat.subtitle.unwrap_or(defaults.chat_subtitle));
         self.manager.check_output(
             folder,
             &defaults.download_folder,
@@ -242,7 +264,63 @@ impl App {
             quality_id,
             kind,
             range,
+            chat,
         )
+    }
+
+    /// `fetch_chat`(완료 행 [⋯] › 채팅 받기·다시 받기·이어받기·덮어쓰고 받기, chat.md §4.5).
+    ///
+    /// `resume_job`과 같은 순서다(worker.md 구현 중 변경 86 (가)): 로그인을 쓰지 않는 빌드는 판정 없이, 쓰면 매니저 잠금 밖에서
+    /// enqueue와 같은 `OwnershipGate::admit`으로 **작업 컨텐츠**를 판정하고(기록의 `channelId`는 믿지 않는다), 잠금 안에서 같은
+    /// 컨텐츠인지만 다시 본 뒤 통과한 채널 ID를 기록에 고쳐 쓴다. 거부되면 채팅 상태·`.part`는 그대로다.
+    pub async fn fetch_chat(
+        &self,
+        id: JobId,
+        restart: bool,
+        on_existing: OnExisting,
+    ) -> Result<(), AppError> {
+        let setting = self.settings.job_defaults().chat_subtitle;
+        if !self.gate.is_enabled() {
+            return self
+                .manager
+                .start_chat(id, restart, on_existing, setting, |_| Ok(None));
+        }
+        let Some(content) = self.manager.chat_content(id)? else {
+            // 지우는 중: 아무것도 하지 않는다
+            return Ok(());
+        };
+        let owner = self.admit_job(id, &content).await?;
+        self.manager.start_chat(
+            id,
+            restart,
+            on_existing,
+            setting,
+            same_content(content, owner),
+        )
+    }
+
+    /// 작업 `id`의 컨텐츠를 잠금 밖에서 판정한다(`resume_job`·`fetch_chat`·맡은 채널 자동 이어받기가 같이 쓴다). 허용이면 검증한
+    /// 채널 ID. 남의 영상이면 기록을 실제 채널로 고친다: 화면이 막힌 작업으로 보이고 B1이 다시 세지 않는다
+    async fn admit_job(&self, id: JobId, content: &ContentRef) -> Result<Option<String>, AppError> {
+        match self
+            .gate
+            .admit_checked(
+                content,
+                || self.settings.content_channel(content),
+                || self.recheck(),
+            )
+            .await
+        {
+            Ok(o) => Ok(o),
+            Err(e) => {
+                if e.code == ErrorCode::NotOwnContent
+                    && let Some(real) = self.gate.known_channel(content)
+                {
+                    self.manager.note_channel(id, content, real);
+                }
+                Err(e)
+            }
+        }
     }
 
     /// `enqueue`: 게이트 → 매니저 → 최근 VOD(§6.2).
@@ -284,33 +362,9 @@ impl App {
                 Err(AppError::ownership_unknown())
             });
         };
-        let owner = match self
-            .gate
-            .admit_checked(
-                &content,
-                || self.settings.content_channel(&content),
-                || self.recheck(),
-            )
-            .await
-        {
-            Ok(o) => o,
-            Err(e) => {
-                // 남의 영상이면 실제 채널로 기록을 고친다: 화면이 막힌 작업으로 보이고 B1이 다시 세지 않는다
-                if e.code == ErrorCode::NotOwnContent
-                    && let Some(real) = self.gate.known_channel(&content)
-                {
-                    self.manager.note_channel(id, &content, real);
-                }
-                return Err(e);
-            }
-        };
-        self.manager.resume_checked(id, restart, |c| {
-            if *c == content {
-                Ok(Some(owner))
-            } else {
-                Err(AppError::ownership_unknown())
-            }
-        })
+        let owner = self.admit_job(id, &content).await?;
+        self.manager
+            .resume_checked(id, restart, same_content(content, owner))
     }
 
     /// `open_output`이 열 파일. 최종 파일이 없으면 `fileMissing`.
@@ -401,19 +455,47 @@ impl App {
     /// 맡은 채널의 멈춘 작업을 자동으로 이어받는다(둘째 깃발, PR 리뷰 P2). 기록의 `channelId`는 후보를 고르는 데만 쓰고,
     /// 작업마다 `resume_job`과 같은 `OwnershipGate::admit_checked`로 **컨텐츠**를 다시 판정한 뒤에만 줄 세운다
     /// (최근 resolve 캐시, 없으면 info 한 번. 판정 직전 확인은 간격 규칙이라 묶음 전체에서 /api/me 한 번 이하).
-    /// 판정 실패·조회 실패는 줄 세우지 않는다(fail closed). 남의 영상이면 기록을 실제 채널로 고친다. 줄 세운 수
+    /// 판정 실패·조회 실패는 줄 세우지 않는다(fail closed). 남의 영상이면 기록을 실제 채널로 고친다. 영상이 완료되고
+    /// 채팅만 끊긴 작업도 같은 판정(`fetch_chat`)으로 채팅을 줄 세운다. 줄 세운 수(영상 + 채팅)
+    ///
+    /// 후보 목록은 판정(네트워크) 전에 찍은 것이다. 그 사이 사용자가 후보를 이어받고 일시정지했거나 채팅 의도를 바꿨을 수 있어,
+    /// 줄 세우기는 일반 자동 이어받기처럼 매니저 잠금 하나 안에서 "아직 같은 의도의 `interrupted` 후보인가"를 다시 보고 한다
+    /// (`resume_interrupted_checked`·`start_interrupted_chat`, app.md 구현 중 변경 87). 아니면 건너뛰고 세지 않는다.
     pub async fn resume_delegated_interrupted(&self, delegated: &[DelegatedChannel]) -> usize {
         let ids = self
             .manager
             .interrupted_where(|content, c| delegated_resume_target(content, c, delegated));
         let mut n = 0;
         for id in ids {
-            match self.resume_job(id, false).await {
-                Ok(()) => n += 1,
+            match self.resume_delegated_job(id).await {
+                Ok(true) => n += 1,
+                Ok(false) => tracing::info!(
+                    id = id.0,
+                    "맡은 채널 작업이 판정 중에 바뀌어 자동으로 이어받지 않음"
+                ),
                 Err(e) => tracing::info!(
                     id = id.0,
                     code = ?e.code,
                     "맡은 채널 작업을 자동으로 이어받지 않음(컨텐츠 재판정)"
+                ),
+            }
+        }
+        // 영상은 완료, 채팅만 끊긴 작업: `fetch_chat`과 같은 판정(컨텐츠 재판정 → 잠금 안 재확인) 뒤에만 줄 세운다.
+        // 그 채팅의 덮어쓰기 선택과 "처음부터" 의도를 그대로 넘긴다(app.md 구현 중 변경 86-4)
+        let chats = self
+            .manager
+            .interrupted_chats_where(|content, c| delegated_resume_target(content, c, delegated));
+        for (id, on_existing, restart) in chats {
+            match self.resume_delegated_chat(id, restart, on_existing).await {
+                Ok(true) => n += 1,
+                Ok(false) => tracing::info!(
+                    id = id.0,
+                    "맡은 채널 작업의 채팅이 판정 중에 바뀌어 자동으로 이어받지 않음"
+                ),
+                Err(e) => tracing::info!(
+                    id = id.0,
+                    code = ?e.code,
+                    "맡은 채널 작업의 채팅을 자동으로 이어받지 않음(컨텐츠 재판정)"
                 ),
             }
         }
@@ -422,6 +504,37 @@ impl App {
             "로그인 뒤 맡은 채널의 멈춘 작업을 자동으로 이어받는다"
         );
         n
+    }
+
+    /// 맡은 채널 영상 하나: `resume_job`과 같은 판정 뒤, 잠금 안에서 아직 `interrupted` 후보일 때만 줄 세운다
+    async fn resume_delegated_job(&self, id: JobId) -> Result<bool, AppError> {
+        let Some(content) = self.manager.requeue_content(id)? else {
+            return Ok(false);
+        };
+        let owner = self.admit_job(id, &content).await?;
+        self.manager
+            .resume_interrupted_checked(id, same_content(content, owner))
+    }
+
+    /// 맡은 채널 채팅 하나: `fetch_chat`과 같은 판정 뒤, 잠금 안에서 아직 같은 의도의 `interrupted` 채팅일 때만 줄 세운다
+    async fn resume_delegated_chat(
+        &self,
+        id: JobId,
+        restart: bool,
+        on_existing: OnExisting,
+    ) -> Result<bool, AppError> {
+        let setting = self.settings.job_defaults().chat_subtitle;
+        let Some(content) = self.manager.chat_content(id)? else {
+            return Ok(false);
+        };
+        let owner = self.admit_job(id, &content).await?;
+        self.manager.start_interrupted_chat(
+            id,
+            restart,
+            on_existing,
+            setting,
+            same_content(content, owner),
+        )
     }
 
     /// `auth_login`(D13): Started일 때만 수령 대기 태스크를 먼저 띄운 뒤 `open(로그인 주소)`을 부른다
@@ -657,6 +770,20 @@ pub fn chzzk_link(text: &str) -> Option<String> {
     text.split_whitespace()
         .find(|t| parse_content_url(t).is_ok())
         .map(str::to_string)
+}
+
+/// 잠금 안 재확인: 판정한 컨텐츠와 같을 때만 검증한 채널 ID로 고쳐 쓰게 한다(`resume_checked`·`start_chat`의 `check`)
+fn same_content(
+    content: ContentRef,
+    owner: Option<String>,
+) -> impl FnOnce(&ContentRef) -> Result<Option<Option<String>>, AppError> {
+    move |c| {
+        if *c == content {
+            Ok(Some(owner))
+        } else {
+            Err(AppError::ownership_unknown())
+        }
+    }
 }
 
 fn path_string(p: &Path) -> String {

@@ -6,6 +6,7 @@ use chzzk_core::{
     TextScale, Theme, UserSettings,
 };
 use chzzk_shell::auth::{AuthPhase, AuthReason, AuthStatus, Cause, OfflineInfo, PendingInfo};
+use chzzk_shell::dto::HelpId;
 use chzzk_shell::dto::{AppInfo, Features, OsDto};
 use chzzk_shell::dto::{
     AuthReasonDto, AuthStatusDto, ContentKindDto, ContentMetaDto, ContentRefTs, EnqueueRequest,
@@ -208,6 +209,7 @@ fn job(status: JobStatus) -> JobDto {
         stopped_at: None,
         range: None,
         live_end: None,
+        chat: None,
     }
 }
 
@@ -259,7 +261,8 @@ fn job_event_status_snapshot() {
                 "finishedAt": 1_759_650_100u64,
                 "stoppedAt": null,
                 "range": null,
-                "liveEnd": null
+                "liveEnd": null,
+                "chat": null
             }
         })
     );
@@ -1015,4 +1018,119 @@ fn invite_dto_json_shape_and_debug() {
         json!({"url": "https://worker.example.invalid/invite/cdi_SECRET", "expiresAt": T0 + 7})
     );
     assert!(!format!("{dto:?}").contains("SECRET"));
+}
+
+// ---------------------------------------------------------------------------
+// 채팅(④-4)
+// ---------------------------------------------------------------------------
+
+/// 코어 `SubtitleFormat` 직렬화와 셸 미러(`SubtitleFormatTs`)가 같다.
+#[test]
+fn subtitle_format_mirror_matches_core() {
+    use chzzk_core::chat::SubtitleFormat;
+    use chzzk_shell::chat::SubtitleFormatTs;
+    for s in [
+        SubtitleFormat::None,
+        SubtitleFormat::Ass,
+        SubtitleFormat::Srt,
+    ] {
+        assert_eq!(to_json(&s), to_json(&SubtitleFormatTs::from(s)));
+    }
+    assert_eq!(to_json(&SubtitleFormat::Ass), json!("ass"));
+}
+
+/// `JobDto.chat`은 늘 직렬화되고(없으면 null), `Chat` 이벤트는 id와 채팅 상태만 싣는다.
+#[test]
+fn chat_event_and_job_dto_shape() {
+    use chzzk_core::chat::SubtitleFormat;
+    use chzzk_shell::chat::{ChatPhase, ChatState};
+    let j = job(JobStatus::Completed);
+    assert_eq!(to_json(&j)["chat"], Value::Null);
+    let mut c = ChatState::waiting(SubtitleFormat::Srt, OnExisting::Skip);
+    c.phase = ChatPhase::Running;
+    c.messages = 12_345;
+    c.percent = Some(38);
+    c.partial_bytes = Some(10);
+    let v = to_json(&JobEvent::Chat {
+        id: JobId(41),
+        chat: c.to_dto(),
+    });
+    assert_eq!(
+        v,
+        json!({
+            "type": "chat",
+            "id": 41,
+            "chat": {
+                "phase": "running",
+                "subtitle": "srt",
+                "onExisting": "skip",
+                "messages": 12345,
+                "percent": 38,
+                "error": null,
+                "subtitleFailed": false,
+                "partialBytes": 10
+            }
+        })
+    );
+}
+
+/// `EnqueueRequest.saveChat`은 없어도 된다(옛 호출은 채팅 없이 받는다).
+#[test]
+fn enqueue_request_save_chat_is_optional() {
+    let base = json!({
+        "url": "https://chzzk.naver.com/video/1",
+        "content": {"kind": "video", "videoNo": 1},
+        "title": "t", "channelName": "c", "channelId": null,
+        "qualityId": "720p", "qualityLabel": "720p", "expectedKind": "progressive",
+        "folder": null, "fileName": "a", "onExisting": "skip", "restart": false
+    });
+    let r: EnqueueRequest = serde_json::from_value(base.clone()).unwrap();
+    assert!(!r.save_chat);
+    let mut with = base;
+    with["saveChat"] = json!(true);
+    let r: EnqueueRequest = serde_json::from_value(with).unwrap();
+    assert!(r.save_chat);
+}
+
+/// 도움말 앵커(`open_web_page`의 `anchor`): kebab-case 왕복, 닫힌 집합 밖은 거부.
+#[test]
+fn help_id_json_round_trips_and_rejects_unknown() {
+    for id in HelpId::ALL {
+        let v = to_json(&id);
+        assert_eq!(v, json!(id.as_str()));
+        assert_eq!(serde_json::from_value::<HelpId>(v).unwrap(), id);
+    }
+    assert_eq!(to_json(&HelpId::DiskFull), json!("disk-full"));
+    assert_eq!(to_json(&HelpId::WindowsOldApp), json!("windows-old-app"));
+    for bad in [
+        "",
+        "Editors",
+        "editors ",
+        "terms",
+        "disk_full",
+        "../privacy",
+        "editors#x",
+    ] {
+        assert!(
+            serde_json::from_value::<HelpId>(json!(bad)).is_err(),
+            "{bad:?}"
+        );
+    }
+}
+
+/// Rust 집합 = `help/ids.json`의 `ids`(Worker `/help`가 h2 id로 다는 집합). 한쪽만 고치면 깨진다.
+#[test]
+fn help_id_set_matches_help_ids_json() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../help/ids.json");
+    let raw: Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    let mut want: Vec<String> = raw["ids"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap().to_owned())
+        .collect();
+    let mut got: Vec<String> = HelpId::ALL.iter().map(|i| i.as_str().to_owned()).collect();
+    want.sort();
+    got.sort();
+    assert_eq!(got, want);
 }

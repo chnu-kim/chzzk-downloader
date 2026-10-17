@@ -300,7 +300,11 @@ export function install(scenario: Scenario = {}): E2EController {
       textScale: settings.textScale,
       theme: settings.theme,
     }),
-    open_web_page: () => null,
+    // 셸 흉내(App::web_page_url): 앵커는 도움말에만 붙는다. 다른 페이지에 붙이면 invalidInput
+    open_web_page: (a) => {
+      if (a.anchor != null && a.page !== 'help') throw err('invalidInput');
+      return null;
+    },
     get_settings: () => settings,
     update_settings: (a) => {
       settings = { ...settings, ...(a.patch as SettingsPatch) } as SettingsDto;

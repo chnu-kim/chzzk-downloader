@@ -2,14 +2,14 @@
   import type { Snippet } from 'svelte';
   import type { HTMLAttributes } from 'svelte/elements';
   import type { IconName } from './icons';
-  import type { NoticeAction, NoticeVariant, Tone } from './vocab';
+  import type { NoticeAction, NoticeHelp, NoticeVariant, Tone } from './vocab';
 
   type NoticeVariantWithActions = Exclude<NoticeVariant, 'row'>;
 
-  /** row는 동작 버튼·닫기가 없다(행의 동작 열이 맡는다) */
+  /** row는 동작 버튼·닫기·도움말 링크가 없다(행의 동작 열이 맡는다) */
   type VariantProps =
-    | { variant?: NoticeVariantWithActions; actions?: NoticeAction[]; onclose?: () => void }
-    | { variant: 'row'; actions?: never; onclose?: never };
+    | { variant?: NoticeVariantWithActions; actions?: NoticeAction[]; onclose?: () => void; help?: NoticeHelp }
+    | { variant: 'row'; actions?: never; onclose?: never; help?: never };
 
   /** 아이콘은 neutral일 때만 호출부가 고른다. 나머지 톤은 아이콘이 정해져 있다 */
   type ToneProps = { tone: 'neutral'; icon?: IconName } | { tone?: Exclude<Tone, 'neutral'>; icon?: never };
@@ -48,6 +48,7 @@
     children,
     actions,
     onclose,
+    help,
     class: klass = '',
     ...rest
   }: NoticeProps = $props();
@@ -82,6 +83,12 @@
           <Button variant="secondary" size="sm" loading={a.loading} onclick={a.onclick}>{a.label}</Button>
         {/each}
         {#if onclose}<IconButton icon="x" size="sm" label={t('common.close')} onclick={onclose} />{/if}
+      </div>
+    {/if}
+    {#if help}
+      <!-- L2: 동작 버튼 줄과 분리된 줄의 링크 하나(patterns.md §10.1). 라이브 영역(notice-text) 밖이라 낭독에 섞이지 않는다 -->
+      <div class="notice-help">
+        <Button variant="ghost" size="sm" class="edge-start btn-inline" onclick={help.onclick}>{help.label}</Button>
       </div>
     {/if}
   </div>

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { NoticeAction } from '../vocab';
+  import type { NoticeAction, NoticeHelp } from '../vocab';
   import Notice from '../Notice.svelte';
 
   // Notice의 tone×variant 조합을 문자열 props로 흔들기 위한 하네스(타입 유니온을 풀어 준다)
@@ -10,8 +10,9 @@
     title?: string;
     actions?: NoticeAction[];
     onclose?: () => void;
+    help?: NoticeHelp;
   }
-  let { tone = 'info', variant = 'inline', icon, title, actions, onclose }: Props = $props();
+  let { tone = 'info', variant = 'inline', icon, title, actions, onclose, help }: Props = $props();
 </script>
 
 {#if variant === 'row'}
@@ -21,7 +22,7 @@
     <Notice variant="row" {tone} {title}>본문 글</Notice>
   {/if}
 {:else if tone === 'neutral'}
-  <Notice {variant} tone="neutral" {icon} {title} {actions} {onclose}>본문 글</Notice>
+  <Notice {variant} tone="neutral" {icon} {title} {actions} {onclose} {help}>본문 글</Notice>
 {:else}
-  <Notice {variant} {tone} {title} {actions} {onclose}>본문 글</Notice>
+  <Notice {variant} {tone} {title} {actions} {onclose} {help}>본문 글</Notice>
 {/if}

@@ -166,7 +166,7 @@ fn open_help<R: Runtime>(app: &AppHandle<R>) {
     ) else {
         return;
     };
-    match state.web_page_url(chzzk_shell::dto::WebPage::Help) {
+    match state.web_page_url(chzzk_shell::dto::WebPage::Help, None) {
         Ok(url) => {
             if !io.0.open_url(&url) {
                 tracing::warn!("도움말 페이지를 열지 못함");

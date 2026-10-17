@@ -314,6 +314,18 @@ test('PNG: 깨지거나 모르는 모양이면 파일 전체를 지금처럼 글
   assert.ok(hit(png(z(0, tail))), 'zTXt 스트림 뒤');
   const it = chunk('iTXt', Buffer.concat([Buffer.from('k'), NUL, Buffer.from([1, 0]), NUL, NUL, tail]));
   assert.ok(hit(png(it)), 'iTXt 스트림 뒤');
+  // 깨진 PNG라도 그때까지(또는 CRC만 틀린 그 청크에서) 풀어 낸 압축 메타데이터는 검사한다(압축된 글자는 바이트 검사로 못 본다)
+  const zCookie = z(0, deflateSync(Buffer.from((PLANTED['naver-cookie'] + ' ').repeat(4))));
+  assert.ok(!zCookie.includes(Buffer.from('NID_')));
+  const badEnd = Buffer.from(png(zCookie));
+  badEnd[badEnd.length - 1] ^= 0xff;
+  assert.equal(pngTexts(badEnd), null);
+  assert.ok(hitCookie(badEnd), '압축 쿠키 + IEND CRC');
+  assert.ok(hitCookie(png(zCookie, chunk('ID@T', Buffer.from('x')))), '압축 쿠키 + 형식 이름');
+  const badZ = Buffer.from(png(zCookie));
+  badZ[PNG_SIG.length + IHDR.length + IDAT0.length + zCookie.length - 1] ^= 0xff;
+  assert.equal(pngTexts(badZ), null);
+  assert.ok(hitCookie(badZ), '압축 쿠키 청크의 CRC');
   // 건너뛰는 청크도 정해진 모양이어야 한다: 길이가 틀린 IHDR·IEND, 필드가 틀린 IHDR은 파일 전체 검사
   const withHdr = (h) => Buffer.concat([PNG_SIG, h, IDAT0, IEND]);
   assert.ok(hitCookie(withHdr(chunk('IHDR', Buffer.concat([ihdrData(1, 1, 8, 2), cookie])))), 'IHDR 길이');

@@ -358,6 +358,7 @@ function pngPixelBytes(d) {
   return size <= PNG_PIXELS_MAX ? size : null;
 }
 const PNG_INFLATE_MAX = 8 * 1024 * 1024;
+const PNG_TEXT_CHUNKS = new Set(['tEXt', 'zTXt', 'iTXt']);
 const CRC_TABLE = Array.from({ length: 256 }, (_, n) => {
   let c = n;
   for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
@@ -434,11 +435,10 @@ function pngChunkTexts(type, data) {
 
 /**
  * 온전한 PNG에서 검사할 글자들. PNG가 아니거나 깨졌으면 null(시그니처·길이·형식 이름·CRC·IEND로 끝남·
- * IEND 뒤 바이트 없음·텍스트 청크 구조와 압축을 모두 확인한다).
+ * IEND 뒤 바이트 없음·텍스트 청크 구조와 압축을 모두 확인한다). 깨졌어도 그때까지 뽑은 글자는 texts에 남는다.
  */
-export function pngTexts(buf) {
+export function pngTexts(buf, texts = []) {
   if (buf.length < PNG_SIG.length || !buf.subarray(0, PNG_SIG.length).equals(PNG_SIG)) return null;
-  const texts = [];
   let at = PNG_SIG.length;
   let first = true;
   let pixelBytes = null;
@@ -455,7 +455,17 @@ export function pngTexts(buf) {
     if (first && type !== 'IHDR') return null;
     first = false;
     const data = buf.subarray(at + 8, at + 8 + len);
-    if (crc32(buf.subarray(at + 4, at + 8 + len)) !== buf.readUInt32BE(at + 8 + len)) return null;
+    if (crc32(buf.subarray(at + 4, at + 8 + len)) !== buf.readUInt32BE(at + 8 + len)) {
+      // CRC만 틀린 텍스트 청크도 풀 수 있으면 풀어 둔다(압축된 글자는 바이트 검사로 못 본다)
+      if (PNG_TEXT_CHUNKS.has(type)) {
+        try {
+          texts.push(...pngChunkTexts(type, data));
+        } catch {
+          // 풀리지 않으면 바이트 검사만
+        }
+      }
+      return null;
+    }
     at += 12 + len;
     if (type === 'IHDR') {
       if (pixelBytes !== null || (pixelBytes = pngPixelBytes(data)) === null) return null;
@@ -496,11 +506,11 @@ export function pngTexts(buf) {
 export function scanBuffer(buf, deny) {
   const found = [];
   if (deny.has(hashBlob(buf))) found.push({ line: 0, rule: 'denylist-blob' });
-  const png = pngTexts(buf);
-  if (png) {
-    for (const t of png) for (const f of scanText(t, deny)) found.push({ line: 0, rule: f.rule });
-    return found;
-  }
+  // 깨진 PNG도 그때까지 풀어 낸 메타데이터는 검사하고, 그다음 파일 전체를 예전처럼 본다
+  const decoded = [];
+  const png = pngTexts(buf, decoded);
+  for (const t of decoded) for (const f of scanText(t, deny)) found.push({ line: 0, rule: f.rule });
+  if (png) return found;
   const head = buf.subarray(0, 8000);
   if (!head.includes(0)) return found.concat(scanText(buf.toString('utf8'), deny));
   const texts = [textRuns(buf)];

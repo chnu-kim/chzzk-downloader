@@ -156,6 +156,9 @@ pub fn handler<R: Runtime>() -> impl Fn(Invoke<R>) -> bool + Send + Sync + 'stat
             commands::editors_remove,
             commands::delegations_leave,
             commands::ownership_recheck,
+            commands::check_chat_output,
+            commands::fetch_chat,
+            commands::pause_chat,
         ]);
     move |invoke: Invoke<R>| {
         let verdict = {

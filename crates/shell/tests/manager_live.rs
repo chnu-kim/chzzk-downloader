@@ -452,6 +452,7 @@ async fn failed_recording_is_not_a_duplicate_in_check_output() {
             "720p",
             PlaybackKind::Live,
             None,
+            None,
         )
         .unwrap();
     assert_eq!(c.duplicate_job_id, None);

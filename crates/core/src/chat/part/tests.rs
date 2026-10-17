@@ -670,3 +670,108 @@ async fn companion_not_moved_when_intent_cannot_be_written() {
     let p = ChatPart::open(&e.record, VIDEO, false).unwrap();
     assert!(p.sidecar().moving.is_empty());
 }
+
+// ---------------------------------------------------------------------------
+// 셸이 쓰는 정리·확인(④-4): `discard_chat_partial`·`chat_partial_bytes`
+// ---------------------------------------------------------------------------
+
+/// 영상 최종 경로와 그 옆 기록 경로.
+fn video_env() -> (tempfile::TempDir, PathBuf, PathBuf) {
+    let dir = tempfile::tempdir().unwrap();
+    let video = dir.path().join("영상.mp4");
+    let record = crate::naming::sibling_path(&video, crate::chat::collect::RECORD_EXT);
+    (dir, video, record)
+}
+
+#[tokio::test]
+async fn discard_removes_part_sidecar_and_subtitle_temps() {
+    let (_d, video, record) = video_env();
+    let p = ChatPart::open(&record, VIDEO, false).unwrap();
+    drop(p);
+    let ass_tmp = part_path(&crate::naming::sibling_path(&video, ".ass"));
+    let srt_tmp = part_path(&crate::naming::sibling_path(&video, ".srt"));
+    std::fs::write(&ass_tmp, b"x").unwrap();
+    std::fs::write(&srt_tmp, b"x").unwrap();
+    // 완성 파일은 건드리지 않는다
+    let done_ass = crate::naming::sibling_path(&video, ".ass");
+    std::fs::write(&done_ass, b"user").unwrap();
+
+    assert_eq!(
+        discard_chat_partial(&video, VIDEO).unwrap(),
+        crate::download::part::Discarded::Removed
+    );
+    assert!(!part_path(&record).exists());
+    assert!(!sidecar_path(&record).exists());
+    assert!(!ass_tmp.exists());
+    assert!(!srt_tmp.exists());
+    assert_eq!(read(&done_ass), b"user");
+}
+
+#[tokio::test]
+async fn discard_keeps_other_videos_part() {
+    let (_d, video, record) = video_env();
+    drop(ChatPart::open(&record, VIDEO + 1, false).unwrap());
+    assert_eq!(
+        discard_chat_partial(&video, VIDEO).unwrap(),
+        crate::download::part::Discarded::NotOwned
+    );
+    assert!(part_path(&record).exists());
+    assert!(sidecar_path(&record).exists());
+}
+
+#[tokio::test]
+async fn discard_without_files_is_ok() {
+    let (_d, video, _record) = video_env();
+    assert_eq!(
+        discard_chat_partial(&video, VIDEO).unwrap(),
+        crate::download::part::Discarded::Removed
+    );
+}
+
+#[tokio::test]
+async fn discard_while_locked_is_file_locked_and_keeps_files() {
+    let (_d, video, record) = video_env();
+    let p = ChatPart::open(&record, VIDEO, false).unwrap();
+    let err = discard_chat_partial(&video, VIDEO).unwrap_err();
+    assert!(matches!(err, Error::FileLocked { .. }), "{err:?}");
+    drop(p);
+    assert!(part_path(&record).exists());
+    assert!(sidecar_path(&record).exists());
+}
+
+#[tokio::test]
+async fn partial_bytes_reads_committed_len_of_same_video_only() {
+    let (_d, video, record) = video_env();
+    assert_eq!(chat_partial_bytes(&video, VIDEO), None);
+    let page = parse_chat_page(
+        br#"{"code":200,"content":{"nextPlayerMessageTime":500,"videoChats":[
+        {"playerMessageTime":100,"userIdHash":"a","content":"x","messageTime":100}]}}"#,
+    )
+    .unwrap();
+    let step = next_step(&WalkState::default(), &page);
+    let Next::Continue(st) = step.next.clone() else {
+        panic!()
+    };
+    let kept: Vec<&ChatMessage> = step.keep.iter().map(|&i| &page.messages[i]).collect();
+    let mut p = ChatPart::open(&record, VIDEO, false).unwrap();
+    // 첫 페이지 전(open 직후)에도 sidecar가 있어 0이다: 받은 것이 없어도 "남은 파일이 있다"
+    let committed = p.committed();
+    assert_eq!(committed, 0);
+    p.commit_page(&kept, &st, None).await.unwrap();
+    let committed = p.committed();
+    drop(p);
+    assert!(committed > 0);
+    assert_eq!(chat_partial_bytes(&video, VIDEO), Some(committed));
+    assert_eq!(chat_partial_bytes(&video, VIDEO + 1), None);
+    // sidecar보다 짧은 `.part`는 이 sidecar의 파일이 아니다
+    std::fs::write(part_path(&record), b"").unwrap();
+    assert_eq!(chat_partial_bytes(&video, VIDEO), None);
+}
+
+#[test]
+fn partial_bytes_without_sidecar_is_part_len_when_part_exists() {
+    let (_d, video, record) = video_env();
+    std::fs::write(part_path(&record), b"abc\n").unwrap();
+    // sidecar가 없으면 주인을 모르는 남은 파일이다: 지우기 경로가 D2를 거치도록 길이를 준다
+    assert_eq!(chat_partial_bytes(&video, VIDEO), Some(4));
+}

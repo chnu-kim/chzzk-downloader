@@ -43,6 +43,8 @@ const base: SettingsDto = {
   textScale: 'default',
   theme: 'system',
   keepAwake: true,
+  saveChat: false,
+  chatSubtitle: 'ass',
 };
 
 const info: AppInfo = {

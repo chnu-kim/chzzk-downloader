@@ -542,5 +542,68 @@ impl ChatPart {
     }
 }
 
+/// 영상 `video` 옆 채팅 기록의 경로(`{stem}.chat.jsonl`).
+fn record_of(video: &Path) -> PathBuf {
+    crate::naming::sibling_path(video, super::collect::RECORD_EXT)
+}
+
+/// 영상 `video`(최종 경로) 옆의 받다 만 채팅 바이트(셸의 `ChatState.partial_bytes`, chat.md §4.1).
+///
+/// - 같은 영상의 sidecar가 있고 `.part`가 `committed_len`보다 짧지 않으면 `committed_len`(0일 수 있다: `open`이
+///   sidecar를 곧바로 쓰므로 첫 페이지 전에 실패해도 파일이 남는다).
+/// - sidecar가 없거나 깨졌는데 `.part`가 있으면 `.part` 길이(주인을 모르는 남은 파일이다. 지우기 경로가 확인을 거치게).
+/// - 다른 영상의 sidecar, `.part` 없음은 `None`.
+///
+/// 잠그지 않고 읽기만 한다(sidecar는 `atomic_write`로 쓰인다).
+pub fn chat_partial_bytes(video: &Path, video_no: u64) -> Option<u64> {
+    let record = record_of(video);
+    let part_len = std::fs::metadata(part_path(&record))
+        .ok()
+        .filter(|m| m.is_file())?
+        .len();
+    match read_sidecar(&sidecar_path(&record)) {
+        Some(sc) if sc.video_no != video_no => None,
+        Some(sc) => (part_len >= sc.committed_len).then_some(sc.committed_len),
+        None => Some(part_len),
+    }
+}
+
+/// 영상 `video` 옆의 받다 만 채팅 파일(기록 `.part`·sidecar, 자막 임시 파일)을 지운다(목록에서 지우기·처음부터).
+/// 완성된 채팅 파일은 건드리지 않는다.
+///
+/// - sidecar가 다른 영상의 것이면 아무것도 지우지 않고 `NotOwned`. 없거나 깨졌으면 주인을 모르는 파일이라 지운다
+///   (`download::part::discard_partial`과 같은 규칙).
+/// - 다른 작업이 `.part`를 잠그고 있으면 `FileLocked`이고 아무것도 지우지 않는다.
+pub fn discard_chat_partial(
+    video: &Path,
+    video_no: u64,
+) -> Result<crate::download::part::Discarded, Error> {
+    use crate::download::part::Discarded;
+    let record = record_of(video);
+    let part = part_path(&record);
+    let sc = sidecar_path(&record);
+    let lock = match open_locked(&part, false) {
+        Ok(f) => Some(f),
+        Err(Error::Io { source, .. }) if source.kind() == io::ErrorKind::NotFound => None,
+        Err(e) => return Err(e),
+    };
+    remove_stale_temps(&sc);
+    if read_sidecar(&sc).is_some_and(|s| s.video_no != video_no) {
+        tracing::info!("다른 영상의 채팅 .part라 지우지 않는다");
+        return Ok(Discarded::NotOwned);
+    }
+    let mut res = remove_if_exists(&sc);
+    for ext in [".ass", ".srt"] {
+        res = res.and(remove_if_exists(&part_path(&crate::naming::sibling_path(
+            video, ext,
+        ))));
+    }
+    if lock.is_some() {
+        res = res.and(remove_if_exists(&part));
+    }
+    drop(lock);
+    res.map(|()| Discarded::Removed)
+}
+
 #[cfg(test)]
 mod tests;

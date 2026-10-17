@@ -30,8 +30,10 @@ fn record(id: u64, status: JobStatus) -> JobRecord {
         range: None,
         final_bytes: None,
         live_end: None,
+        chat: None,
         last_error: None,
         discard_on_start: false,
+        output_replaced: false,
         partial_bytes: None,
         missing: false,
     }
@@ -267,4 +269,72 @@ fn to_dto_carries_runtime_fields() {
     assert_eq!(d.final_bytes, Some(5));
     assert_eq!(d.output, r.output.to_string_lossy());
     assert_eq!(d.playback_kind, PlaybackKind::Progressive);
+}
+
+// ---------------------------------------------------------------------------
+// 채팅 하위 상태(④-4, chat.md §4.1): JOBS_VERSION 1 그대로
+// ---------------------------------------------------------------------------
+
+/// `chat`이 없는 옛 레코드는 `None`으로 읽고, 다시 써도 `chat` 키가 없고 버전은 1이다.
+#[test]
+fn record_without_chat_reads_none_and_version_stays() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join(JOBS_FILE), record_json(None)).unwrap();
+    let store = JobStore::new(dir.path());
+    let file = store.load().unwrap().file;
+    assert_eq!(file.jobs[0].chat, None);
+    store.save(&file).unwrap();
+    let v: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(dir.path().join(JOBS_FILE)).unwrap()).unwrap();
+    assert!(v["jobs"][0].get("chat").is_none());
+    assert_eq!(v["v"], serde_json::json!(1));
+}
+
+/// 채팅 상태는 왕복하고, 받다 만 바이트(`partialBytes`)는 저장하지 않는다(reconcile이 다시 센다).
+#[test]
+fn chat_round_trips_without_partial_bytes() {
+    use chzzk_core::chat::SubtitleFormat;
+    use chzzk_shell::chat::{ChatPhase, ChatState};
+    let dir = tempfile::tempdir().unwrap();
+    let store = JobStore::new(dir.path());
+    let mut r = record(1, JobStatus::Completed);
+    let mut c = ChatState::waiting(SubtitleFormat::Srt, OnExisting::Skip);
+    c.phase = ChatPhase::Paused;
+    c.messages = 7;
+    c.percent = Some(40);
+    c.duration_ms = Some(60_000);
+    c.partial_bytes = Some(123);
+    r.chat = Some(c);
+    let file = JobsFile {
+        v: 1,
+        next_id: 2,
+        jobs: vec![r.clone()],
+    };
+    store.save(&file).unwrap();
+    let v: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(dir.path().join(JOBS_FILE)).unwrap()).unwrap();
+    let chat = &v["jobs"][0]["chat"];
+    assert_eq!(chat["phase"], serde_json::json!("paused"));
+    assert_eq!(chat["subtitle"], serde_json::json!("srt"));
+    assert!(chat.get("partialBytes").is_none());
+    let loaded = store.load().unwrap().file.jobs.remove(0);
+    let lc = loaded.chat.unwrap();
+    assert_eq!(lc.partial_bytes, None);
+    assert_eq!(lc.messages, 7);
+    assert_eq!(lc.duration_ms, Some(60_000));
+}
+
+/// 뒤 버전이 더한 채팅 단계·모양은 버리고 `None`으로 읽는다(목록 전체는 읽힌다).
+#[test]
+fn unknown_chat_phase_is_dropped() {
+    let dir = tempfile::tempdir().unwrap();
+    let json = record_json(None).replace(
+        r#""createdAt":1"#,
+        r#""createdAt":1,"chat":{"phase":"zzz","subtitle":"ass","onExisting":"skip"}"#,
+    );
+    std::fs::write(dir.path().join(JOBS_FILE), json).unwrap();
+    let loaded = JobStore::new(dir.path()).load().unwrap();
+    assert!(loaded.backup.is_none());
+    assert_eq!(loaded.file.jobs[0].chat, None);
+    assert_eq!(loaded.file.jobs[0].status, JobStatus::Completed);
 }

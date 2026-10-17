@@ -263,6 +263,7 @@ fn request(folder: &Path, name: &str, channel_id: Option<&str>) -> EnqueueReques
         restart: false,
         content_date: None,
         range: None,
+        save_chat: false,
     }
 }
 
@@ -290,9 +291,11 @@ fn record(id: u64, channel: Option<&str>, out: &Path) -> JobRecord {
         final_bytes: None,
         last_error: None,
         discard_on_start: false,
+        output_replaced: false,
         partial_bytes: None,
         missing: false,
         live_end: None,
+        chat: None,
     }
 }
 
@@ -1415,4 +1418,114 @@ async fn a16b_leave_on_worker_without_route_is_unsupported() {
         Ownership::Delegated
     );
     assert_eq!(file_delegated(t.path()).as_array().unwrap().len(), 1);
+}
+
+// ---------------------------------------------------------------------------
+// 채팅만 받기(`fetch_chat`, chat.md §4.5): `resume_job`과 같은 판정 순서
+// ---------------------------------------------------------------------------
+
+/// 완료된 VOD 작업(영상 파일 있음).
+fn done_vod(root: &Path, id: u64, channel: Option<&str>) -> JobRecord {
+    let out = root.join("out");
+    let mut r = vod_record(id, channel, &out);
+    r.status = JobStatus::Completed;
+    std::fs::create_dir_all(&out).unwrap();
+    std::fs::write(&r.output, b"mp4").unwrap();
+    r
+}
+
+fn chat_of(app: &App, id: u64) -> Option<chzzk_shell::chat::ChatStateDto> {
+    app.manager
+        .list()
+        .into_iter()
+        .find(|j| j.id == JobId(id))
+        .unwrap()
+        .chat
+}
+
+/// 기록의 채널을 무엇으로 바꿔 두어도 판정은 작업 컨텐츠로 한다. 거부되면 채팅 상태는 그대로이고 기록 채널만 실제 채널로 고친다.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn fetch_chat_judges_content_not_record() {
+    let api = mock_api(None).await;
+    let worker = MockServer::start().await;
+    let t = TempDir::new().unwrap();
+    write_jobs(t.path(), vec![done_vod(t.path(), 1, Some(OTHER))]);
+    save_session(t.path(), &worker, OTHER);
+    let app = open_auth(t.path(), &api, &worker);
+    assert_eq!(
+        app.fetch_chat(JobId(1), false, OnExisting::Skip)
+            .await
+            .unwrap_err()
+            .code,
+        ErrorCode::NotOwnContent
+    );
+    assert_eq!(chat_of(&app, 1), None);
+    assert_eq!(channel_of(&app, 1).as_deref(), Some(OWN));
+    app.manager.quit(Duration::from_secs(3)).await;
+}
+
+/// 본인 영상이면 채팅을 줄 세우고 검증한 채널로 기록을 고친다.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn fetch_chat_admits_own_content() {
+    let api = mock_api(None).await;
+    let worker = MockServer::start().await;
+    let t = TempDir::new().unwrap();
+    write_jobs(t.path(), vec![done_vod(t.path(), 1, None)]);
+    save_session(t.path(), &worker, OWN);
+    let app = open_auth(t.path(), &api, &worker);
+    app.fetch_chat(JobId(1), false, OnExisting::Skip)
+        .await
+        .unwrap();
+    assert!(chat_of(&app, 1).is_some());
+    assert_eq!(channel_of(&app, 1).as_deref(), Some(OWN));
+    app.manager.quit(Duration::from_secs(3)).await;
+}
+
+/// 로그인하지 않았으면 조회 없이 `notLoggedIn`, 완료가 아니면 판정 전에 `invalidInput`(조회 없음).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn fetch_chat_signed_out_or_not_completed_makes_no_request() {
+    let api = mock_api(None).await;
+    let worker = MockServer::start().await;
+    let t = TempDir::new().unwrap();
+    let out = t.path().join("out");
+    write_jobs(
+        t.path(),
+        vec![
+            done_vod(t.path(), 1, Some(OWN)),
+            vod_record(2, Some(OWN), &out),
+        ],
+    );
+    let app = open_auth(t.path(), &api, &worker);
+    assert_eq!(
+        app.fetch_chat(JobId(1), false, OnExisting::Skip)
+            .await
+            .unwrap_err()
+            .code,
+        ErrorCode::NotLoggedIn
+    );
+    assert_eq!(
+        app.fetch_chat(JobId(2), false, OnExisting::Skip)
+            .await
+            .unwrap_err()
+            .code,
+        ErrorCode::InvalidInput
+    );
+    assert!(api.received_requests().await.unwrap().is_empty());
+    assert_eq!(chat_of(&app, 1), None);
+}
+
+/// 로그인을 쓰지 않는 빌드는 판정 없이 받는다.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn fetch_chat_passes_when_auth_disabled() {
+    let api = hanging_server().await;
+    let t = TempDir::new().unwrap();
+    let mut r = done_vod(t.path(), 1, Some(OTHER));
+    r.content = ContentRef::Video { video_no: 1 };
+    write_jobs(t.path(), vec![r]);
+    let app = open_plain(t.path(), &api);
+    app.fetch_chat(JobId(1), false, OnExisting::Skip)
+        .await
+        .unwrap();
+    assert!(chat_of(&app, 1).is_some());
+    app.manager.quit(Duration::from_secs(3)).await;
 }

@@ -166,6 +166,7 @@ fn request(no: u64, name: &str, folder: &Path) -> EnqueueRequest {
         restart: false,
         content_date: None,
         range: None,
+        save_chat: false,
     }
 }
 

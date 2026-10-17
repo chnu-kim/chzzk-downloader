@@ -230,6 +230,7 @@ async fn check_output_defaults_to_settings_folder() {
             "720p",
             PlaybackKind::LiveRewindHls,
             None,
+            Default::default(),
         )
         .unwrap();
     assert_eq!(Path::new(&c.path), custom.join("이름.mp4"));
@@ -243,6 +244,7 @@ async fn check_output_defaults_to_settings_folder() {
             "720p",
             PlaybackKind::LiveRewindHls,
             None,
+            Default::default(),
         )
         .unwrap();
     assert_eq!(Path::new(&c.path), other.join("이름.mp4"));

@@ -200,11 +200,11 @@ Codex 2회차 N1~N9는 각 설계가 3차·4차 개정에서 처리했다(N1·N2
 | `chore/range-check` `[P]` | ②-0 `chore:` `examples/range_check.rs`(오프라인 판정 하나: 조각 첫 샘플이 동기 샘플인가, M-②-3) + 판정 lib 단위 테스트 + non-sync 음성 fixture | S | 없음 | `rust`·`scan`·fixtures `--check` |
 | ⏸ | 사용자 실측 M-②-3 | 사람 | ②-0 | "안 된다"면 ② deferred |
 | `feat/range-core` `[P]` | ②-1 `feat:` `TimeRange`(end `Option`)·`hls::select_range`·`HlsState.range`/`HlsRange`·sidecar v1/v2·`same_job` 셋(+ `resume` 인자)·segmented §3.4 표·`finish` defrag 조건 `range.is_some()`·`Unsupported::RangeNotHls`(`Chzzk::download` 맨 처음)·`rangeOutOfBounds`(23번째)·`DownloadRequest` 리터럴 `range: None` 목록(테스트 셋 + `dl.rs:229` 포함)·fixture·`assert_flat_mp4` 이동·wiremock·**생방송 sidecar 호환 단위 테스트**·`examples/dl.rs --range`(M-②-2·6용, 보조 "EXTINF 누적 = info 길이") | O(엔진 8곳·재개 불변식) | R1 확정. **⑤-F2 뒤**(§3 `same_job`). 실측 전에도 진행 가능 | `rust`·`coverage` |
-| ⏸ | 사용자 실측 M-②-2(세 시각)·M-②-6(재생 + 전체 받기 관찰 + 마무리 시간·메모리) | 사람 | ②-1 `dl --range` | 2·6 둘 다 통과해야 ②-3. **2026-10-18 구간 파일 판정 통과**(전체 받기·마무리 관찰은 남음) |
+| ⏸ | 사용자 실측 M-②-2(세 시각)·M-②-6(재생 + 전체 받기 관찰 + 마무리 시간·메모리) | 사람 | ②-1 `dl --range` | 2·6 둘 다 통과해야 ②-3. **2026-10-18 구간 파일 판정 통과**(macOS QuickTime. 전체 받기·마무리 시간·메모리·Windows 미디어 플레이어 관찰은 남음) |
 | `feat/range-shell` | ②-2 `feat:` DTO `range`·`check_output` 인자·`JobRecord.range`·`partial_bytes` 비교·재검증 둘(생방송 포함)·`range_suffix` + 제목 쪽 자르기·`truncated` 뜻·`error_map.rs`·bindings·가짜 Backend | S(명세 확정) | ②-1 | `rust`·`tauri`, "접미사 한 번" 테스트 |
 | ~~②-4~~ | **없앴다**(range.md 3차). defrag가 그 일을 한다 | — | — | — |
 | `feat/range-app` | ②-3 `feat:` 카드 Disclosure·`parseClock` 골든·`checkKey`·`effectiveRange`·조용한 미리보기·1줄 조각·copy(`conflict.partialOther` R4)·`errors.ts`·`content.md` §6.5 기호 행·§15·`patterns.md:398`·`:399`·`:713`·e2e·갤러리·(④-5가 먼저 머지돼 있으면) 구간 켜짐 → 채팅 행 숨김 | S(와이어·copy 확정) · 리뷰 F(줄 하나가 튀지 않는지) | ②-2 · R2~R4 확정 · **M-②-2 셋 "일치" · M-②-6 "된다"** | `frontend`·`e2e-web`·`design-copy`·`design-shots` |
-| `docs/range-done` | ②-5 `docs:` core.md 61+·app.md 78+·ROADMAP·`/help`(선택) | S | ②-3 | `scan` |
+| `docs/range-done` | ②-5 `docs:` core.md 61+·app.md 78+·ROADMAP·`/help`(선택). **끝**(2026-10-18, 따로 브랜치를 두지 않고 v0.10.0 버전 PR `release/v0.10.0`에 넣었다. core.md 64.8·app.md 89, `/help`는 더하지 않음) | S | ②-3 | `scan` |
 
 ### 트랙 ④ 채팅 함께 받기(`chat.md` §12 4차)
 | 브랜치 | PR | 모델 | 의존 | 완료 조건 |
@@ -289,7 +289,7 @@ Codex 2회차 N1~N9는 각 설계가 3차·4차 개정에서 처리했다(N1·N2
 | **릴리스 ⑤ fix** | ⑤-F1·F2·F4·F5·F6(`fix`·`test`·`docs`) + ⑤-F3(`feat`) | F3 없이 먼저 내면 **0.7.1**, F3까지면 **0.8.0** | 가장 먼저 준비된다. 다른 `feat` 릴리스에 합류해도 된다(계약 없음). F가 go/no-go |
 | **릴리스 A** | ①-2·①-3·①-3½(**Worker 전용**) | 그때 `next-version`(`feat` → MINOR) | C2 (가)일 때. `deploy-worker`가 앱 매니페스트보다 **뒤**에 도는 순서(`release.yml:398`·`:480` `needs:` [확인])에서 "앱이 먼저 닿는 창"을 없애는 가장 작은 방법. DO V3(두 번째 마이그레이션) 승인 |
 | **릴리스 B** | ①-4·①-5·①-6 | 그다음 MINOR | C2 (나)면 A·B를 하나로 묶고 창(길이 M-①-4 [실측 필요])을 받아들인다 |
-| **릴리스 ②** | ②-1~③·②-5 | MINOR | M-②-2·3·6 통과 뒤. ④와 **각각**(N6). 같은 시기에 둘 다 준비되면 한 릴리스로 묶어도 된다 |
+| **릴리스 ②** | ②-1~③·②-5 | MINOR | M-②-2·3·6 통과 뒤. ④와 **각각**(N6). 같은 시기에 둘 다 준비되면 한 릴리스로 묶어도 된다. **v0.10.0**(2026-10-18 버전 PR): M-②-2·6 통과, M-②-3은 부분 관찰(세 구간 첫 프레임 키프레임, 도구 미작성)인 채로 담는다(app.md 구현 중 변경 89) |
 | **릴리스 ④** | ④-1~⑥ | MINOR | U2 확정 뒤. ② deferred·미정이어도 낸다 |
 | **릴리스 ③(가)** | ③-2~⑥ | MINOR | 수동 [새 영상 찾기] |
 | **릴리스 ③(나)** | ③-7(+ ③-8이 ①-4 뒤 준비됐으면 함께) | MINOR | (가)를 실제로 쓴 뒤 |

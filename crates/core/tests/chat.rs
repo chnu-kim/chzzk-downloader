@@ -1069,3 +1069,78 @@ async fn unrelated_existing_subtitle_without_intent_is_kept() {
     // 끝까지 받은 뒤라 다시 요청하지 않았다
     assert_eq!(cursors(&server).await, ["0", "15000", "17000"]);
 }
+
+/// sidecar `moved`에 적힌 자막이 실제로는 없으면(옮긴 뒤 기록 이름에 막혀 멈춘 사이 사용자가 지웠다) 낡은 표시다.
+/// 재시도는 표시를 지우고 커밋된 기록으로 자막을 다시 만들어 옮긴다(Codex 3차 medium, core.md 구현 중 변경 68-2).
+#[tokio::test]
+async fn stale_moved_subtitle_is_regenerated_on_retry() {
+    let server = MockServer::start().await;
+    let e = Env::new();
+    run_until_record_blocked(&server, &e).await;
+    let ass = std::fs::read(e.ass()).unwrap();
+    assert!(!ass.is_empty());
+    let sc: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(sidecar_of(&e.record())).unwrap()).unwrap();
+    assert_eq!(sc["moved"], serde_json::json!(["영상.ass"]));
+    // 사용자가 막힌 기록 이름을 치우고, 이미 옮겨진 자막도 지웠다
+    std::fs::remove_file(e.record()).unwrap();
+    std::fs::remove_file(e.ass()).unwrap();
+
+    server.reset().await;
+    let out = run(&chzzk(&server), e.req(SubtitleFormat::Ass))
+        .await
+        .unwrap();
+    assert!(
+        matches!(
+            out,
+            ChatOutcome::Completed {
+                messages: 8,
+                subtitle_failed: false,
+                ..
+            }
+        ),
+        "{out:?}"
+    );
+    // 끝까지 받은 기록이라 요청 없이 마무리했다
+    assert!(cursors(&server).await.is_empty());
+    assert_eq!(
+        std::fs::read(e.ass()).unwrap(),
+        ass,
+        "자막을 다시 만들지 않았다"
+    );
+    assert_eq!(lines(&e.record()).len(), 8);
+    for p in [
+        part_of(&e.record()),
+        sidecar_of(&e.record()),
+        part_of(&e.ass()),
+    ] {
+        assert!(!p.exists(), "{}", p.display());
+    }
+}
+
+/// 표시가 맞으면(옮긴 자막이 그대로 있다) 다시 만들지 않는다: 사용자가 고친 자막 바이트를 지킨다.
+#[tokio::test]
+async fn moved_subtitle_still_present_is_not_regenerated() {
+    let server = MockServer::start().await;
+    let e = Env::new();
+    run_until_record_blocked(&server, &e).await;
+    std::fs::write(e.ass(), b"edited by user").unwrap();
+    std::fs::remove_file(e.record()).unwrap();
+
+    server.reset().await;
+    let out = run(&chzzk(&server), e.req(SubtitleFormat::Ass))
+        .await
+        .unwrap();
+    assert!(
+        matches!(
+            out,
+            ChatOutcome::Completed {
+                subtitle_failed: false,
+                ..
+            }
+        ),
+        "{out:?}"
+    );
+    assert_eq!(std::fs::read(e.ass()).unwrap(), b"edited by user");
+    assert!(!part_of(&e.ass()).exists());
+}

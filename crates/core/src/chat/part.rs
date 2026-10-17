@@ -281,6 +281,13 @@ impl ChatPart {
         self.sidecar.moved.contains(&key_of(to))
     }
 
+    /// `moved` 표시에서 `to`를 지운다(메모리만). 옮긴 자막이 사라졌을 때 쓴다: 다음 `finalize`가 표시를 보고
+    /// 새로 만든 임시 파일을 버리지 않고 옮긴다. `finalize`가 rename 전에 sidecar를 다시 쓰므로 따로 쓰지 않는다.
+    pub fn forget_moved(&mut self, to: &Path) {
+        let key = key_of(to);
+        self.sidecar.moved.retain(|k| *k != key);
+    }
+
     /// 보조 파일 `from` → `to` 이동이 rename 뒤·`moved` 기록 전에 멈췄는가: 이동 의도가 적혀 있고,
     /// 원본(임시 파일)은 없고 최종 파일만 있다. 참이면 최종 파일은 우리가 옮긴 것이다(다시 만들지 않는다).
     /// 의도가 없으면 최종 파일은 무관한 기존 파일로 본다.

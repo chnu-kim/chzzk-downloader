@@ -131,9 +131,9 @@ describe('main 창 첫 프레임·웹 흔적 설정', () => {
     expect(toml).not.toMatch(/devtools/);
   });
 
-  it('window-state는 Rust 전용이고 2.4.1에 고정이다', () => {
+  it('window-state는 Rust 전용이고 2.5.0에 고정이다', () => {
     const toml = read('../src-tauri/Cargo.toml');
-    expect(toml).toMatch(/tauri-plugin-window-state = "=2\.4\.1"/);
+    expect(toml).toMatch(/tauri-plugin-window-state = "=2\.5\.0"/);
   });
 });
 

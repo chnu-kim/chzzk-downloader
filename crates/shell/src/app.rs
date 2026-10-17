@@ -205,7 +205,7 @@ impl App {
 
     /// `open_web_page`가 열 주소: 로그인 서버(Worker) 출처 아래 고정 경로(system/patterns.md §13·§14.4).
     /// 로그인을 쓰지 않는 빌드는 열 곳이 없다(화면이 링크를 그리지 않는다).
-    /// `anchor`는 도움말에만 붙는다(`/help#<id>`, 오류 L2 링크, app.md 구현 중 변경 83). 다른 페이지에 붙이면 `invalidInput`.
+    /// `anchor`는 도움말에만 붙는다(`/help#<id>`, 오류 L2 링크, app.md 구현 중 변경 84). 다른 페이지에 붙이면 `invalidInput`.
     pub fn web_page_url(&self, page: WebPage, anchor: Option<HelpId>) -> Result<String, AppError> {
         let base = self
             .worker_base

@@ -56,7 +56,7 @@ test('남의 영상은 카드에서 막히고, 본인 영상은 받는다', asyn
   await download.click({ force: true });
   expect(await app.cmds()).not.toContain('enqueue');
   await app.axe('남의 영상 카드');
-  // L2 도움말 링크: 웹 도움말의 그 주제(`/help#editors`)를 연다(app.md 구현 중 변경 83)
+  // L2 도움말 링크: 웹 도움말의 그 주제(`/help#editors`)를 연다(app.md 구현 중 변경 84)
   await card.getByRole('button', { name: helpLinkLabel('editors') }).click();
   await expect.poll(() => app.args('open_web_page')).toEqual([{ page: 'help', anchor: 'editors' }]);
 

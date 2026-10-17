@@ -1,4 +1,4 @@
-// 오류 L2 도움말 링크(patterns.md §10.1, app.md 구현 중 변경 83): 웹 도움말의 그 주제(`/help#<id>`)를 기본 브라우저로 연다.
+// 오류 L2 도움말 링크(patterns.md §10.1, app.md 구현 중 변경 84): 웹 도움말의 그 주제(`/help#<id>`)를 기본 브라우저로 연다.
 import * as api from './api';
 import type { NoticeHelp } from './components/ui/vocab';
 import { errorCopy, helpLinkLabel, toAppError, type LinkedHelpId } from './copy/errors';

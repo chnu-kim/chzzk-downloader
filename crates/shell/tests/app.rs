@@ -160,7 +160,7 @@ async fn web_page_url_needs_a_worker_base() {
         on.web_page_url(WebPage::Licenses, None).unwrap(),
         "https://worker.example.invalid/licenses"
     );
-    // 도움말은 앵커 없이 `/help`, 앵커가 있으면 그 주제의 제목(`h2 id`)으로 간다(오류 L2 링크, app.md 구현 중 변경 83)
+    // 도움말은 앵커 없이 `/help`, 앵커가 있으면 그 주제의 제목(`h2 id`)으로 간다(오류 L2 링크, app.md 구현 중 변경 84)
     assert_eq!(
         on.web_page_url(WebPage::Help, None).unwrap(),
         "https://worker.example.invalid/help"

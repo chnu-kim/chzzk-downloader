@@ -868,7 +868,7 @@ describe('recheck 동작 글자', () => {
   });
 });
 
-// L2 도움말 링크(patterns.md §10.1, app.md 구현 중 변경 83)
+// L2 도움말 링크(patterns.md §10.1, app.md 구현 중 변경 84)
 describe('도움말 L2 링크', () => {
   const repo = (rel: string) => fileURLToPath(new globalThis.URL(`../../../../${rel}`, import.meta.url).href);
   const ids = (JSON.parse(readFileSync(repo('help/ids.json'), 'utf8')) as { ids: string[] }).ids;

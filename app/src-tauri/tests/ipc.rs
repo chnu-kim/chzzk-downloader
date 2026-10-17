@@ -1284,7 +1284,7 @@ fn open_web_page_opens_fixed_worker_pages_while_signed_out() {
     assert_eq!(f.io.opened.lock().unwrap().len(), 2);
 }
 
-/// 오류 L2 도움말 링크: 앵커는 도움말에만, 닫힌 집합(`help/ids.json`) 안에서만 붙는다(app.md 구현 중 변경 83).
+/// 오류 L2 도움말 링크: 앵커는 도움말에만, 닫힌 집합(`help/ids.json`) 안에서만 붙는다(app.md 구현 중 변경 84).
 #[test]
 fn open_web_page_help_anchor_opens_topic_and_rejects_others() {
     let worker = worker_server(None);

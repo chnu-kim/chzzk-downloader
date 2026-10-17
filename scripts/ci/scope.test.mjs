@@ -145,6 +145,7 @@ const READ_WAIVERS = {
   },
   'scripts/ci/version-check.mjs': {
     'Cargo.toml': 'main()의 readSources(versions gate·tag preflight)만 읽는다. worker 영역은 release.mjs worker --check-only만 띄운다',
+    'Cargo.lock': 'main()의 minisign-verify 단일 검사(versions gate)만 읽는다. worker 영역은 release.mjs worker --check-only만 띄운다',
   },
 };
 const STRING = /'((?:[^'\\\n]|\\.)*)'|"((?:[^"\\\n]|\\.)*)"|`([^`$\\\n]*)`/g;

@@ -662,6 +662,17 @@ fn check_in_mdat(mdats: &[(u64, u64)], off: u64, len: u64) -> Result<(), Fail> {
     }
 }
 
+/// trun 안 `i`번째(0부터) 샘플의 sample_flags(ISO/IEC 14496-12 §8.8.8.3). 판정 규칙은 이 한 곳이다(`keyframe`도 쓴다).
+///
+/// 우선순위: 첫 샘플이고 `first_sample_flags`가 있으면 그 값 → 샘플별 `sample_flags` → `default`.
+/// `default`는 부르는 쪽이 고른 `tfhd` `default_sample_flags`(있으면, §8.8.7) 또는 `trex` `default_sample_flags`(§8.8.3)다.
+fn sample_flags(i: u32, first: Option<u32>, per_sample: Option<u32>, default: u32) -> u32 {
+    match (i, first) {
+        (0, Some(f)) => f,
+        _ => per_sample.unwrap_or(default),
+    }
+}
+
 /// `moof` 하나를 읽어 트랙 표에 더한다.
 fn parse_moof(
     moof_off: u64,
@@ -781,10 +792,7 @@ fn parse_moof(
                 } else {
                     None
                 };
-                let flags = match (i, first_flags) {
-                    (0, Some(f)) => f,
-                    _ => sf.unwrap_or(def_flags),
-                };
+                let flags = sample_flags(i, first_flags, sf, def_flags);
                 let cts = if fl & TR_CTS != 0 {
                     let c = r.u32()?;
                     if v == 0 {
@@ -1163,6 +1171,8 @@ fn put_stbl(o: &mut Vec<u8>, stsd: &[u8], t: &Tables, shift: i64) -> Result<(), 
         })
     })
 }
+
+pub mod keyframe;
 
 #[cfg(test)]
 mod tests;

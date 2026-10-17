@@ -594,11 +594,13 @@ function initMp4() {
   return cat(ftyp, box('moov', mvhd, trak(1, 'vide'), trak(2, 'soun'), mvex));
 }
 
-function fragment(seq, track, baseTime, payload) {
+// firstFlags가 있으면 trun에 first_sample_flags를 싣는다(flags 0x000305). 없으면 첫 샘플도 trex 기본값(0, 동기)이다.
+function fragment(seq, track, baseTime, payload, firstFlags) {
   const samples = 4;
   const size = Math.floor(payload.length / samples);
+  const first = firstFlags === undefined ? [] : [be32(firstFlags)];
   const trunBody = (offset) =>
-    cat(be32(samples), be32(offset), ...Array.from({ length: samples }, () => cat(be32(1000), be32(size))));
+    cat(be32(samples), be32(offset), ...first, ...Array.from({ length: samples }, () => cat(be32(1000), be32(size))));
   const build = (offset) =>
     box(
       'moof',
@@ -607,7 +609,7 @@ function fragment(seq, track, baseTime, payload) {
         'traf',
         full('tfhd', 0, 0x020000, be32(track)),
         full('tfdt', 1, 0, be64(baseTime)),
-        full('trun', 0, 0x000301, trunBody(offset)),
+        full('trun', 0, firstFlags === undefined ? 0x000301 : 0x000305, trunBody(offset)),
       ),
     );
   const moof = build(build(0).length + 8);
@@ -618,15 +620,20 @@ function emsg(id) {
   return full('emsg', 0, 0, ascii('urn:example:test\0'), ascii('\0'), be32(1000), be32(0), be32(0), be32(id), ascii('test'));
 }
 
-function segment(msn) {
+// videoFirstFlags: 비디오(트랙 1) 첫 샘플의 first_sample_flags. 키프레임 판정 도구(PR ②-0)의 음성 fixture가 쓴다.
+function segment(msn, videoFirstFlags) {
   const styp = box('styp', ascii('iso6'), be32(0), ascii('iso6'));
   const parts = [styp];
   for (let k = 0; k < 2; k++) {
     const track = k + 1;
-    parts.push(fragment(msn * 2 + k + 1, track, msn * 2000, noise(2048 + 256 * k, msn * 16 + k + 1)), emsg(msn * 2 + k));
+    const first = track === 1 ? videoFirstFlags : undefined;
+    parts.push(fragment(msn * 2 + k + 1, track, msn * 2000, noise(2048 + 256 * k, msn * 16 + k + 1), first), emsg(msn * 2 + k));
   }
   return cat(...parts);
 }
+
+// sample_flags: sample_depends_on = 1(다른 샘플에 기댄다) + sample_is_non_sync_sample = 1(ISO/IEC 14496-12 §8.8.3.1)
+const NON_SYNC_P_FLAGS = 0x01010000;
 
 // ---- 채팅(기능 ④) ----
 // 닉네임·본문·작성자 해시는 모두 가짜다(가상시청자N, user-hash-NN). profile·extras는 JSON이 든 **문자열**이다.
@@ -798,6 +805,7 @@ export function outputs() {
     'testdata/hls/init.mp4': initMp4(),
     'testdata/hls/seg0.m4v': segment(0),
     'testdata/hls/seg1.m4v': segment(1),
+    'testdata/hls/seg_nonsync.m4v': segment(2, NON_SYNC_P_FLAGS),
     'testdata/live/live_detail.json': json(liveDetail({ status: 'OPEN', playback: true })),
     'testdata/live/live_detail_llhls_first.json': json(liveDetail({ status: 'OPEN', llhlsFirst: true, playback: true })),
     'testdata/live/live_detail_closed.json': json(liveDetail({ status: 'CLOSE', playback: false })),

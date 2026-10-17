@@ -72,6 +72,7 @@ export function job(id: number, over: Partial<JobDto> = {}): JobDto {
     stoppedAt: null,
     range: null,
     liveEnd: null,
+    chat: null,
     ...over,
   };
 }

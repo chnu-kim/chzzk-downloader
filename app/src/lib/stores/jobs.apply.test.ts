@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { JobDto, ProgressDto } from '../bindings';
+import type { ChatStateDto, JobDto, ProgressDto } from '../bindings';
 import { applyEvent, emptyJobs, fromSnapshot } from './jobs.apply';
 
 function progress(bytes: number): ProgressDto {
@@ -43,6 +43,21 @@ function job(id: number, over: Partial<JobDto> = {}): JobDto {
     stoppedAt: null,
     range: null,
     liveEnd: null,
+    chat: null,
+    ...over,
+  };
+}
+
+function chat(over: Partial<ChatStateDto> = {}): ChatStateDto {
+  return {
+    phase: 'running',
+    subtitle: 'ass',
+    onExisting: 'skip',
+    messages: 0,
+    percent: null,
+    error: null,
+    subtitleFailed: false,
+    partialBytes: null,
     ...over,
   };
 }
@@ -148,5 +163,38 @@ describe('applyEvent', () => {
   it('스냅샷의 진행률로 바닥을 채운다', () => {
     const s = fromSnapshot([job(1, { status: 'paused', progress: progress(250), partialBytes: 250 })]);
     expect(s.percent.get(1)).toBe(25);
+  });
+});
+
+describe('applyEvent: chat(④-4)', () => {
+  it('같은 id의 chat만 바꾸고 영상 상태·진행률·퍼센트는 그대로다', () => {
+    let s = fromSnapshot([
+      job(1, { status: 'completed', finalBytes: 10, chat: chat({ phase: 'waiting' }) }),
+      job(2, { status: 'running', progress: progress(500) }),
+    ]);
+    const before = s;
+    s = applyEvent(s, { type: 'chat', id: 1, chat: chat({ messages: 12, percent: 38 }) });
+    expect(s.jobs.get(1)?.status).toBe('completed');
+    expect(s.jobs.get(1)?.finalBytes).toBe(10);
+    expect(s.jobs.get(1)?.chat).toEqual(chat({ messages: 12, percent: 38 }));
+    expect(s.jobs.get(2)).toBe(before.jobs.get(2));
+    expect(s.progress).toBe(before.progress);
+    expect(s.percent).toBe(before.percent);
+  });
+
+  it('모르는 id와 지워진 뒤 늦게 온 chat은 버린다', () => {
+    let s = fromSnapshot([job(1, { status: 'completed' })]);
+    const same = applyEvent(s, { type: 'chat', id: 9, chat: chat() });
+    expect(same).toBe(s);
+    s = applyEvent(s, { type: 'removed', id: 1 });
+    const late = applyEvent(s, { type: 'chat', id: 1, chat: chat() });
+    expect(late).toBe(s);
+    expect(late.jobs.has(1)).toBe(false);
+  });
+
+  it('재동기화 스냅샷에 실린 chat을 그대로 쓴다', () => {
+    const s = fromSnapshot([job(1, { status: 'completed', chat: chat({ phase: 'paused', partialBytes: 7 }) })]);
+    expect(s.jobs.get(1)?.chat?.phase).toBe('paused');
+    expect(s.jobs.get(1)?.chat?.partialBytes).toBe(7);
   });
 });

@@ -32,6 +32,14 @@ export function compareVersions(sources, tag) {
   return { ok: problems.length === 0, problems };
 }
 
+// Cargo.lock 문자열 → minisign-verify 버전 목록. xtask verify-sig는 updater(tauri-plugin-updater)와 같은 검증기여야 하므로
+// 잠금 파일에 정확히 한 버전만 있어야 한다(xtask/src/sig.rs, cicd.md 구현 중 변경 65). 하나라도 없거나 둘 이상이면 문제를 돌려준다.
+export function checkMinisignSingle(lockText) {
+  const versions = [...lockText.matchAll(/^\[\[package\]\]\nname = "minisign-verify"\nversion = "([^"]+)"/gm)].map((m) => m[1]);
+  if (versions.length === 1) return [];
+  return [`Cargo.lock의 minisign-verify가 정확히 하나여야 한다 (${versions.length}개: ${versions.join(', ') || '없음'})`];
+}
+
 export function readSources(root) {
   const r = spawnSync(
     'cargo',
@@ -70,10 +78,16 @@ export function main(argv) {
     return 2;
   }
   const { ok, problems } = compareVersions(sources, tag);
+  try {
+    problems.push(...checkMinisignSingle(readFileSync(join(root, 'Cargo.lock'), 'utf8')));
+  } catch (e) {
+    console.error(`version-check: ${e.message}`);
+    return 2;
+  }
   for (const s of sources) console.log(`${s.source.padEnd(34)}${s.version}`);
   if (tag !== undefined) console.log(`${'tag'.padEnd(34)}${tag}`);
   for (const p of problems) console.error(`version-check: ${p}`);
-  return ok ? 0 : 1;
+  return problems.length === 0 ? 0 : 1;
 }
 
 // 심볼릭 링크 경로(/tmp → /private/tmp 등)로 불러도 main이 돌도록 실제 경로로 비교한다. 안 돌면 조용히 0으로 끝난다.

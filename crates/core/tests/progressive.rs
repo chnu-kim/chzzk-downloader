@@ -828,3 +828,25 @@ async fn skip_does_not_clobber_file_created_while_downloading() {
     assert_eq!(std::fs::read(&out).unwrap(), body);
     assert_no_partial(&out);
 }
+
+/// PD mp4는 마무리에서 바꾸지 않는다(core.md 구현 중 변경 71). 조각 구조 본문을 줘도 받은 그대로 남는다
+/// (일반 mp4 본문이면 변환이 `AlreadyFlat`으로 넘어가 이 검사가 아무것도 가르지 못한다).
+#[tokio::test]
+async fn fragmented_body_is_not_converted() {
+    let server = MockServer::start().await;
+    setup(&server).await;
+    let body = fixture("testdata/live/synthetic_frag.mp4");
+    Mock::given(method("GET"))
+        .and(path(MEDIA_PATH))
+        .respond_with(RangeBody(body.clone()))
+        .mount(&server)
+        .await;
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_path(&dir);
+    let r = download(config(&server), &out, &Events::default())
+        .await
+        .unwrap();
+    assert!(matches!(r, DownloadOutcome::Completed { .. }), "{r:?}");
+    assert_eq!(std::fs::read(&out).unwrap(), body);
+    assert_no_partial(&out);
+}

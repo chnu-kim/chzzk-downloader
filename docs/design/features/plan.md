@@ -79,7 +79,7 @@ Codex 2회차 N1~N9는 각 설계가 3차·4차 개정에서 처리했다(N1·N2
 | 남은 것 | 종류 | 처리 자리 |
 |---|---|---|
 | 실측 M-②-2(세 시각 장면 대응)·M-②-3(키프레임)·M-②-6(defrag한 구간 파일 재생). **2·6이 ②-3 머지 조건**, 하나라도 실패면 ② deferred(보정 상수 없음) | **2·6 통과**(2026-10-18, 세 시각 일치·구간 파일 재생 된다). 3은 부분 관찰(세 구간 첫 프레임 키프레임, 도구 미작성), 결과는 ROADMAP "기능 ② 사용자 실측" | ②-0 도구(3번) · ②-1 `dl --range`(2·6번) |
-| 전체 빠른 다시보기에도 defrag를 적용할지(이 기능 밖 새 결정, M-②-6 "전체 받기 파일" 관찰이 재료) | **확정: 실측 뒤**(2026-10-16). 적용하면 ⑤-F4의 defrag 실패 계약을 같이 쓴다 | `decisions.md` R5 |
+| 전체 빠른 다시보기에도 defrag를 적용할지(이 기능 밖 새 결정, M-②-6 "전체 받기 파일" 관찰이 재료) | **확정: 실측 뒤**(2026-10-16). 적용하면 ⑤-F4의 defrag 실패 계약을 같이 쓴다. **적용(2026-10-18)**: 관찰 "안 된다" → `fix/defrag-full-hls`(core.md 71), 실패 계약은 같은 `finish` 분기로 그대로 | `decisions.md` R5 |
 | M-②-6 마무리 시간·메모리 관찰(기준 "10초" [잠정]) → `Finalizing` 하위 표시·변환 중 취소 | [실측 필요](2026-10-18 실측에서 아직 안 봄) | ②-3 범위 판단 |
 | `truncated` 필드 이름 · `patterns.md:398`·`:713` 키 이름 `filename.willSave` ≠ 실제 `willSaveAs` · `design-shots`에 `conflict.partialOther` 장면 유무 | 리뷰·확인 | ②-2 리뷰, ②-3 |
 | 같은 경로의 생방송 `.part`가 VOD·구간 받기로 지워지는 위험(N4와 같은 구조) | ⑤ 몫 | ⑤-F2가 먼저(§5-A), ②-1은 그 위에서 `same_job`을 바꾼다 |
@@ -99,7 +99,7 @@ Codex 2회차 N1~N9는 각 설계가 3차·4차 개정에서 처리했다(N1·N2
 |---|---|---|
 | 실측 M-④-1~9(도구 ④-1, `--write-ass`·`--write-srt` 포함). M-④-1 "안 된다"면 ④ 가치를 ROADMAP에서 재판단 | [실측 필요] | ④-1 |
 | **U2 자막 기본 형식**: 실측 M-④-8·9 뒤 사용자가 정한다. **U2 전에는 ④-5를 머지하지 않는다**(`chat.md` §12) | 사용자 결정(확정된 절차) | `decisions.md` U2 |
-| mpv·VLC가 빠른 다시보기 mp4(조각 구조 그대로, 변환은 생방송에만 `download/mod.rs:6`·`:372` [확인: 문서])의 길이·탐색을 바르게 다루는가 | [실측 필요] | M-④-8과 함께 |
+| mpv·VLC가 빠른 다시보기 mp4(조각 구조 그대로, 변환은 생방송에만 `download/mod.rs:6`·`:372` [확인: 문서]. core.md 71부터는 전체 받기도 일반 mp4다)의 길이·탐색을 바르게 다루는가 | [실측 필요] | M-④-8과 함께 |
 | 생방송 카드 안내(`card.live.body`)에 "채팅은 다시보기가 생기면" 한 줄을 더할지(R12, ADR-0025 영역) | [가정] | ⑤-F6 docs 때 F가 판단 |
 | `conflict_names` 순서·"형식 바꾸기"가 카드에서 튀지 않는지·`dialog.removeChat` 문구·채팅 수치 ADR·`examples/` 번들 제외(B22) | [가정]·리뷰 | ④-5 `design-shots`·R1, ④-1 |
 | ④-1 얇은 루프와 ④-3a `collect_chat`이 같은 `walk::next_step`을 쓴다 | [가정] | ④-3a 리뷰 |
@@ -142,7 +142,7 @@ Codex 2회차 N1~N9는 각 설계가 3차·4차 개정에서 처리했다(N1·N2
 | `EnqueueRequest`·`JobDto`·`check_output` 인자(`dto.rs:583`·`:659`, `manager.rs:425`, `app.rs:223`, `commands.rs`, `api.ts`) + bindings + `app/e2e/mock/backend.ts` + `tests/common/fake.rs` | ②-2(`range`) · ④-4(`save_chat`·`chat`·`conflict_names`) · ⑤-F2(`OutputCheck.partialRecording`) · ⑤-F3(`JobDto` 끝난 이유) | **더하기만**. 둘 다 진행하면 ②-2 → ④-4 순(§5 B표). 뒤에 머지되는 쪽이 rebase 뒤 `UPDATE_BINDINGS=1` 재생성. ③-4는 새 타입만이라 병렬 |
 | `crates/core/src/download/part.rs` `Sidecar::same_job`·`PartFile::resume`·`discard_partial` | ②-1(`range` 비교 + `resume` 인자) · ⑤-F2(소유권 검사 + `live_id` 기록·비교 + 남의 `Live` sidecar는 지우지 않고 오류) | **같은 함수 둘**. **⑤-F2 → ②-1은 기능 선행 조건**(§5-A)이다: ⑤-F2가 소유권·`live_id` 계약을 정한 위에서 ②-1이 `range` 비교를 얹는다. 둘 다 "생방송 `.part`가 살아남는다" 단언을 둔다 |
 | `crates/shell/src/manager.rs` 삭제 진입점(`remove`·`discard_on_start`·`discard_partial` 호출)·자동 이어받기 필터(`:610`~`:621`) | ⑤-F2(소유권 검사, 마무리할 조각이 있는 `.part`만 자동 재개) · ①-4(L-D1 (A): 필터에 **컨텐츠 종류**도 넘겨 맡은 채널 생방송을 뺀다. 지금 필터는 채널 ID만 받는다) | 같은 필터를 둘이 고친다. 머지 순서: ⑤-F2 먼저 |
-| `crates/core/src/download/mod.rs` `finish`의 defrag 호출·실패 정책 | ⑤-F4(변경 도중 I/O 실패는 `.part` 보존) · ②-1(`range.is_some()` 조건) · R5(관찰 뒤 확대) | 같은 호출부. 계약은 ⑤-F4가 정한다. ⑤-F4가 늦으면 ②-1은 현재 정책(경고만)으로 가고 F4가 구간 결과에도 적용된다(§5-B) |
+| `crates/core/src/download/mod.rs` `finish`의 defrag 호출·실패 정책 | ⑤-F4(변경 도중 I/O 실패는 `.part` 보존) · ②-1(`range.is_some()` 조건) · R5(관찰 뒤 확대, 적용됨: `converts_on_finish`, core.md 71) | 같은 호출부. 계약은 ⑤-F4가 정한다. ⑤-F4가 늦으면 ②-1은 현재 정책(경고만)으로 가고 F4가 구간 결과에도 적용된다(§5-B) |
 | `crates/shell/src/output.rs` `check_output`·`PartialInfo` · `ConflictNotice.svelte`·`ko.ts` `conflict.*` | ②-2(`range` 비교·`partialOther` 뜻) · ②-3(R4 문구) · ⑤-F2(`partialRecording` 안내, 번호 이름 기본, "처음부터" D7) · ④-4(채팅 충돌) | 더하기만. R4 새 문구("조건이 다른 받다 만 파일…")와 ⑤-F2 녹화 문구는 **다른 키**(녹화는 다시 받을 수 없어 중립 문구를 쓰면 안 된다, `live-audit.md` (1)-4) |
 | `crates/shell/src/ownership.rs` `verdict`·`on_resolved`·`admit` | ①-4(`Delegated` + `ContentRef::Live` 예외 세 곳) | ③·④는 호출만. L6은 (가)로 확정돼(배포 동작 유지) 이 파일에서 ⑤ fix가 할 일이 없다 |
 | `ErrorKind`/`ErrorCode` 1:1 표(`crates/shell/src/error.rs:34`)·`errors.ts` 전수 매핑·`content.md` §15.2·가짜 백엔드 | ②-1(`rangeOutOfBounds`) · ⑤-F2(`partialRecording`) · ⑤-F4(`fileTooLarge` [가정]) · ①-5(`ErrorContext.delegatedLive`) | 직렬(머지 순). 각 PR이 `frontend` gate를 지난다 |

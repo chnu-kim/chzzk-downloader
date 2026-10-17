@@ -1560,6 +1560,49 @@ mod tests {
         assert!(sidecar_path(&out).exists());
     }
 
+    /// `PartFile`의 `Debug`는 경로와 쓴 바이트·기록한 길이를 낸다(빈 출력이 아니다).
+    #[tokio::test]
+    async fn part_file_debug_shows_progress() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("a.mp4");
+        let mut p = PartFile::create(&out, sidecar()).unwrap();
+        p.write(b"0123").unwrap();
+        let s = format!("{p:?}");
+        assert!(s.starts_with("PartFile {"), "{s}");
+        assert!(s.contains("a.mp4.part"), "{s}");
+        assert!(
+            s.contains("written: 4") && s.contains("committed: 0"),
+            "{s}"
+        );
+    }
+
+    /// NotFound만 "없음"이다. 지우기 실패(여기서는 파일 자리에 디렉터리)는 오류로 올린다.
+    #[test]
+    fn remove_if_exists_only_swallows_not_found() {
+        let dir = tempfile::tempdir().unwrap();
+        remove_if_exists(&dir.path().join("none")).unwrap();
+        let f = dir.path().join("f");
+        std::fs::write(&f, b"x").unwrap();
+        remove_if_exists(&f).unwrap();
+        assert!(!f.exists());
+        let d = dir.path().join("d");
+        std::fs::create_dir(&d).unwrap();
+        assert!(matches!(remove_if_exists(&d), Err(Error::Io { .. })));
+        assert!(d.exists());
+    }
+
+    /// `.part` 자리에 디렉터리가 있어 열 수 없으면 "없음"(새로 시작)이 아니라 오류다.
+    #[tokio::test]
+    async fn resume_and_discard_propagate_non_not_found_open_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("a.mp4");
+        // 아무것도 없으면 새로 시작(None)
+        assert!(resume(&out, "720p").unwrap().is_none());
+        std::fs::create_dir(part_path(&out)).unwrap();
+        assert!(matches!(resume(&out, "720p"), Err(Error::Io { .. })));
+        assert!(matches!(discard(&out), Err(Error::Io { .. })));
+    }
+
     /// 지우기(M1): 남의 `.part`는 생방송이든 VOD든 지우지 않는다.
     #[tokio::test]
     async fn discard_partial_keeps_other_jobs_part() {

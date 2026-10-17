@@ -1,7 +1,7 @@
 // 오류 문구와 복구 동작(docs/design/system/content.md §9 틀·§15.2 코드별 L0 표). `errorCopy`가 표를 조합한다.
 // L0 = 제목(사건 한 문장) + 본문(할 일 한 가지, 알면 이유를 앞에) + 버튼(≤3). L1 = '자세히' 안에만 가는 `detail`.
 // 코어·셸 원문(`e.message`)과 `apiMessage`는 제목·본문에 넣지 않는다(DC8): `detail`로만 간다.
-import type { AppError, ErrorCode, ErrorPayload, Os } from '../bindings';
+import type { AppError, ErrorCode, ErrorPayload, HelpId, Os } from '../bindings';
 import { revealLabel } from '../platform';
 import { t, type CopyKey } from './ko';
 
@@ -65,6 +65,29 @@ export interface ErrorCopy {
   detail: string | null;
   /** L0 버튼, 최대 3 */
   actions: ActionId[];
+  /** L2 도움말 주제(`help/ids.json`). 있으면 동작 줄과 분리된 줄에 "도움말 보기: {주제}" 링크를 그린다. 없으면 `null` */
+  helpId: LinkedHelpId | null;
+}
+
+/**
+ * 오류가 링크하는 도움말 주제. 주제 이름(링크 글자)의 copy 키가 있는 것만 여기 둔다: 새 오류에 helpId를 붙이려면
+ * 이 표에 주제를 더해야 컴파일된다(쓰지 않는 키를 미리 두지 않는다, DC11)
+ */
+const HELP_TOPIC = {
+  editors: 'help.editors.title',
+} as const satisfies Partial<Record<HelpId, CopyKey>>;
+export type LinkedHelpId = keyof typeof HELP_TOPIC;
+/** 링크가 있는 주제 전부(테스트가 `help/<id>.md` 제목과 대조한다) */
+export const LINKED_HELP_IDS = Object.keys(HELP_TOPIC) as LinkedHelpId[];
+
+/** 도움말 주제 이름(= `help/<id>.md`의 첫 제목) */
+export function helpTopic(id: LinkedHelpId): string {
+  return t(HELP_TOPIC[id]);
+}
+
+/** L2 링크 글자 "도움말 보기: {주제}"(content.md §9.1) */
+export function helpLinkLabel(id: LinkedHelpId): string {
+  return t('help.link.label', { topic: helpTopic(id) });
 }
 
 const ALL_CODES: Record<ErrorCode, true> = {
@@ -141,8 +164,9 @@ function copy(
   actions: ActionId[],
   detail: string | null = null,
   rows: string[] = [],
+  helpId: LinkedHelpId | null = null,
 ): ErrorCopy {
-  return { title, body, rows, detail, actions };
+  return { title, body, rows, detail, actions, helpId };
 }
 
 /** 줄 목록에서 빈 것을 빼고 잇는다. 하나도 없으면 `null` */
@@ -527,8 +551,9 @@ function codeCopy(raw: AppError, ctx: ErrorContext): ErrorCopy {
           : [];
       const title = (ctx.delegatedCount ?? 0) > 0 ? '내 채널이나 맡은 채널의 영상만 받을 수 있어요' : '내 채널의 영상만 받을 수 있어요';
       // 카드(R)만 편집자 안내와 [다시 불러오기]가 있다. 작업 행(D)은 job.otherChannel.body가 맡는다
+      // L2: 편집자 안내를 하는 카드만 도움말 '다른 채널의 영상 받기'로 잇는다(맡은 채널의 생방송은 위에서 끝났다)
       if (ctx.place === 'resolve') {
-        return copy(title, '이 영상은 다른 채널의 영상이에요. 이 채널의 편집자라면 채널 주인에게 초대 주소를 받아 열어 주세요.', ['recheck', dismiss], null, rows);
+        return copy(title, '이 영상은 다른 채널의 영상이에요. 이 채널의 편집자라면 채널 주인에게 초대 주소를 받아 열어 주세요.', ['recheck', dismiss], null, rows, 'editors');
       }
       return copy(title, '이 영상은 다른 채널의 영상이에요.', [dismiss], null, rows);
     }

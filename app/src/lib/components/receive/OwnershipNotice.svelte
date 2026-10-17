@@ -5,6 +5,7 @@
   import type { Ownership } from '../../bindings';
   import { t } from '../../copy/ko';
   import { actionLabel, errorCopy } from '../../copy/errors';
+  import { noticeHelp } from '../../help';
   import { BLOCK_REASON_ID } from '../../receive';
   import { auth } from '../../stores/auth.svelte';
   import { resolver } from '../../stores/resolve.svelte';
@@ -65,7 +66,7 @@
     {t(channelKnown ? 'receive.admin.otherChannel.body' : 'receive.admin.unknown.body')}
   </Notice>
 {:else if copy}
-  <Notice variant="inline" tone={ownership === 'notOwn' ? 'danger' : 'warning'} title={copy.title} {actions}>
+  <Notice variant="inline" tone={ownership === 'notOwn' ? 'danger' : 'warning'} title={copy.title} {actions} help={noticeHelp(copy.helpId)}>
     <!-- [받기]의 aria-describedby 대상: 제목 + 본문만(버튼·행·마지막 확인 글자가 설명에 섞이지 않게). 숨긴 요소도 설명 계산에 든다 -->
     <span id={BLOCK_REASON_ID.ownership} hidden>{copy.title} {copy.body}</span>
     <p class="line">{copy.body}</p>

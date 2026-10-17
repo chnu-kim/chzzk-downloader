@@ -4,6 +4,7 @@
 
 ## 현재 위치
 
+- **v0.10.1 버전 PR(2026-10-18, 브랜치 `release/v0.10.1`)**: v0.10.0 뒤 커밋 3개를 담는다(태그 전, `fix`라 patch, `release.mjs next-version` 최소 0.10.1). PR: #155 빠른 다시보기 전체 받기도 마무리에서 일반 mp4로 바꾸는 fix(R5), #154 ②-0 키프레임 실측 도구(chore), #153 v0.10.0 기록. 태그 push·운영 배포는 사용자 승인 뒤.
 - **R5 전체 빠른 다시보기 defrag(2026-10-18, 브랜치 `fix/defrag-full-hls`, core.md 71·cicd.md 116, `fix`)**: 사용자 관찰(M-②-6 전체 받기)이 "안 된다"(조각 구조 전체 받기 파일이 QuickTime에서 첫 조각만 재생, core.md 60과 같은 증상)라 decisions.md R5 (가)대로 `finish`의 변환 조건을 `download::converts_on_finish`(`LiveRewindHls | Live`, `Progressive`는 아님)로 넓혔다. DASH는 PD 단일 mp4뿐이라 넣지 않는다. 실패 계약은 61 M4 그대로. 합성 fixture 결과가 바뀌어 golden `testdata/hls/full2_flat.mp4`를 코어 테스트와 네이티브 E2E가 함께 쓴다. 남은 것: PR 리뷰·머지, 구간 파일 Windows 미디어 플레이어 재생
 - **②-0 키프레임 실측 도구(2026-10-18, 브랜치 `chore/range-check`, core.md 70, `chore`)**: `examples/range_check.rs`(오프라인)가 구간 없이 끝까지 받은 빠른 다시보기 파일의 HLS 조각(`styp` 경계, 없으면 `moof`)마다 첫 비디오 샘플이 동기 샘플인지 보고 된다/안 된다/확인 못 함 + 조각 수 집계를 낸다. 판정은 `download::defrag::keyframe`(non-sync 비트, sample_flags 우선순위는 defrag와 한 곳), 음성 fixture `testdata/hls/seg_nonsync.m4v`. 남은 것: 사용자 실측 M-②-3(결과는 범주만 아래 "기능 ② 사용자 실측"에)
 - **v0.10.0 릴리스(2026-10-18)**: 태그 `v0.10.0`(버전 PR #152 머지 커밋 `82885bf`), release 실행 39050160770의 gate·worker-bundle·xtask·build(3 OS)·smoke·stage·sign-publish·verify·prune·deploy-worker·report 전 단계 success. 들어간 PR: #127 구간 받기 앱(②-3), #150·#151 채팅 후속 fix, #136 비공개 denylist PNG 오탐 fix, #149 Worker 의존성(dependabot #143·#145 대체), #148 v0.9.0 기록, #152. 운영 실기 확인: 사용자가 앱을 0.10.0으로 업데이트한 뒤 구간 받기가 동작함을 확인했다(2026-10-18). 아래는 그 버전 PR의 기록이다.

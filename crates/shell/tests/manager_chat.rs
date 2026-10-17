@@ -1021,3 +1021,212 @@ async fn auto_resume_defers_chat_when_other_video_holds_output() {
         .unwrap();
     assert_eq!(ca.phase, ChatPhase::Interrupted);
 }
+
+// ---------------------------------------------------------------------------
+// 대체된 출력·종료와 일시정지·늦게 끝난 실행·지우기 실패(Codex PR #141 2차)
+// ---------------------------------------------------------------------------
+
+/// 같은 이름·다른 영상 요청(덮어쓰기). A의 출력을 차지한다.
+fn other_video(name: &str) -> chzzk_shell::dto::EnqueueRequest {
+    let mut other = request(name);
+    other.content = ContentRef::Video { video_no: 2 };
+    other.url = "https://chzzk.naver.com/video/2".into();
+    other.on_existing = OnExisting::Overwrite;
+    other
+}
+
+/// A 완료 → 다른 영상 B가 같은 출력을 덮어쓰며 받아 완료(채팅 없음)하면 그 파일은 B의 영상이다. A의 채팅만 받기는
+/// 거부되고(B 영상 옆에 A 채팅·자막이 놓이지 않는다) B 기록을 지운 뒤에도, 다시 연 뒤에도 그렇다.
+#[tokio::test(start_paused = true)]
+async fn start_chat_rejects_output_replaced_by_other_video() {
+    let h = Harness::new(1);
+    let a = h.enqueue("a").id;
+    until("a 완료", || h.status(a) == JobStatus::Completed).await;
+    let b = h.mgr.enqueue(other_video("a"), &h.defaults()).unwrap().id;
+    until("b 완료", || h.status(b) == JobStatus::Completed).await;
+    h.touch_video("a");
+
+    let fetch = |m: &chzzk_shell::manager::DownloadManager<common::fake::FakeBackend>| {
+        m.start_chat(a, false, OnExisting::Skip, SubtitleFormat::Ass, |_| {
+            Ok(None)
+        })
+    };
+    let err = fetch(&h.mgr).unwrap_err();
+    assert_eq!(err.code, ErrorCode::InvalidInput);
+    assert_eq!(h.chat(a), None);
+
+    // B 기록을 치워도(파일은 그대로 B의 영상이다) 거부한다
+    h.mgr.remove(b).await.unwrap();
+    assert_eq!(fetch(&h.mgr).unwrap_err().code, ErrorCode::InvalidInput);
+    h.mgr.flush();
+    let reopened = open_with(h.dir.path(), &h.fake, 1, true);
+    settle().await;
+    assert_eq!(fetch(&reopened).unwrap_err().code, ErrorCode::InvalidInput);
+    settle().await;
+    assert!(h.fake.chat_requests().is_empty());
+    assert!(!sibling_path(&h.output("a"), RECORD_EXT).exists());
+}
+
+/// 자동 이어받기: 끊긴 A 채팅의 출력을 B가 덮어써 완료하고 B 기록이 정리된 뒤에도 A 채팅은 되살리지 않는다.
+/// 같은 영상을 다시 받아 완료하면 그 기록은 다시 출력의 주인이다.
+#[tokio::test(start_paused = true)]
+async fn auto_resume_skips_chat_whose_output_was_replaced() {
+    let h = Harness::new(1);
+    h.fake
+        .chat_for(h.output("a"), ChatScript::new().part(2).wait_cancel());
+    let a = h.enqueue_chat("a");
+    until("a 채팅 받는 중", || {
+        h.phase(a) == Some(ChatPhase::Running)
+    })
+    .await;
+    h.mgr.quit(std::time::Duration::from_secs(3)).await;
+    assert_eq!(h.phase(a), Some(ChatPhase::Interrupted));
+    h.mgr.flush();
+
+    let m = open_with(h.dir.path(), &h.fake, 1, false);
+    let b = m.enqueue(other_video("a"), &h.defaults()).unwrap().id;
+    until("b 완료", || {
+        m.list()
+            .into_iter()
+            .any(|j| j.id == b && j.status == JobStatus::Completed)
+    })
+    .await;
+    // 채팅 없는 B는 정리된다. A는 받다 만 채팅 파일이 있어 남는다
+    m.clear_finished();
+    assert!(m.list().iter().all(|j| j.id != b));
+    m.flush();
+    drop(m);
+
+    let on = open_with(h.dir.path(), &h.fake, 1, true);
+    settle().await;
+    assert_eq!(on.resume_interrupted(), 0);
+    settle().await;
+    assert_eq!(
+        h.fake.chat_requests().len(),
+        1,
+        "A의 채팅은 B 영상 옆에서 다시 돌지 않는다"
+    );
+    let ca = on
+        .list()
+        .into_iter()
+        .find(|j| j.id == a)
+        .unwrap()
+        .chat
+        .unwrap();
+    assert_eq!(ca.phase, ChatPhase::Interrupted);
+}
+
+/// 사용자가 일시정지한 채팅이 아직 끝나기 전에 종료가 오면 일시정지가 남는다(자동 이어받기 대상이 아니다).
+/// 기한을 넘겨도 마찬가지다.
+#[tokio::test(start_paused = true)]
+async fn quit_keeps_user_pause_of_running_chat() {
+    for late in [false, true] {
+        let h = Harness::new(1);
+        let gate = Arc::new(Notify::new());
+        h.fake.chat_for(
+            h.output("a"),
+            ChatScript::new().part(2).stubborn(Arc::clone(&gate)),
+        );
+        let id = h.enqueue_chat("a");
+        until("받는 중", || h.phase(id) == Some(ChatPhase::Running)).await;
+        settle().await;
+        h.mgr.pause_chat(id).unwrap();
+        if !late {
+            // 페이지 커밋이 종료 기한 안에 끝난다
+            let g = Arc::clone(&gate);
+            tokio::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                g.notify_one();
+            });
+        }
+        h.mgr.quit(std::time::Duration::from_secs(3)).await;
+        assert_eq!(h.phase(id), Some(ChatPhase::Paused), "late={late}");
+        gate.notify_one();
+        settle().await;
+        assert_eq!(h.phase(id), Some(ChatPhase::Paused), "late={late}");
+        h.mgr.flush();
+        let reopened = open_with(h.dir.path(), &h.fake, 1, true);
+        settle().await;
+        let j = reopened.list().into_iter().find(|j| j.id == id).unwrap();
+        assert_eq!(j.chat.unwrap().phase, ChatPhase::Paused, "late={late}");
+        assert_eq!(h.fake.chat_requests().len(), 1, "late={late}");
+    }
+}
+
+/// 종료 기한을 넘긴 채팅 뒤 `cancel_quit`: 옛 실행이 늦게 페이지를 커밋하고 `Cancelled`로 끝나면 그 뒤에 새 실행이
+/// 시작된다(재개가 사라지지 않는다).
+#[tokio::test(start_paused = true)]
+async fn cancel_quit_resumes_chat_after_late_run_ends() {
+    let h = Harness::new(1);
+    let gate = Arc::new(Notify::new());
+    h.fake.chat_for(
+        h.output("a"),
+        ChatScript::new().part(2).stubborn(Arc::clone(&gate)),
+    );
+    let id = h.enqueue_chat("a");
+    until("받는 중", || h.phase(id) == Some(ChatPhase::Running)).await;
+    settle().await;
+    h.mgr.quit(std::time::Duration::from_secs(3)).await;
+    assert_eq!(h.phase(id), Some(ChatPhase::Interrupted));
+    assert_eq!(h.mgr.cancel_quit(), 1);
+    assert_eq!(h.phase(id), Some(ChatPhase::Waiting));
+    settle().await;
+    assert_eq!(
+        h.fake.chat_requests().len(),
+        1,
+        "옛 실행이 끝나기 전에는 시작하지 않는다"
+    );
+
+    // 옛 실행이 늦게 커밋하고 끝난다 → 새 실행
+    gate.notify_one();
+    until("다시 받음", || h.fake.chat_requests().len() == 2).await;
+    until("완료", || h.phase(id) == Some(ChatPhase::Completed)).await;
+    assert!(!h.fake.chat_requests()[1].restart);
+}
+
+/// 대기 중인 채팅(받다 만 파일 있음)의 행을 지우다 파일 삭제가 실패하면 줄에서 빠진 채 `waiting`으로 남지 않고
+/// `paused`가 된다(다시 시작하거나 다시 지울 수 있다).
+#[tokio::test(start_paused = true)]
+async fn remove_failure_pauses_waiting_chat() {
+    let h = Harness::new(1);
+    // b의 채팅이 도는 동안 a의 채팅은 줄에서 기다린다
+    let gate = Arc::new(Notify::new());
+    h.fake
+        .chat_for(h.output("b"), ChatScript::new().hold(Arc::clone(&gate)));
+    let b = h.enqueue_chat("b");
+    until("b 채팅 받는 중", || {
+        h.phase(b) == Some(ChatPhase::Running)
+    })
+    .await;
+    let a = h.enqueue("a").id;
+    until("a 완료", || h.status(a) == JobStatus::Completed).await;
+    h.touch_video("a");
+    write_chat_part(&h.output("a"), VIDEO_NO, 2);
+    h.mgr
+        .start_chat(a, false, OnExisting::Skip, SubtitleFormat::Ass, |_| {
+            Ok(None)
+        })
+        .unwrap();
+    assert_eq!(h.phase(a), Some(ChatPhase::Waiting));
+
+    let locker = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(record_part(&h.output("a")))
+        .unwrap();
+    locker.lock().unwrap();
+    let e = h.mgr.remove(a).await.unwrap_err();
+    assert_eq!(e.code, ErrorCode::FileLocked);
+    assert_eq!(h.phase(a), Some(ChatPhase::Paused));
+    drop(locker);
+
+    // 다시 시작할 수 있다
+    gate.notify_one();
+    until("b 완료", || h.phase(b) == Some(ChatPhase::Completed)).await;
+    h.mgr
+        .start_chat(a, false, OnExisting::Skip, SubtitleFormat::Ass, |_| {
+            Ok(None)
+        })
+        .unwrap();
+    until("a 완료", || h.phase(a) == Some(ChatPhase::Completed)).await;
+}

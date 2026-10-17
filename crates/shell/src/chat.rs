@@ -163,6 +163,9 @@ pub struct ChatRun {
     pub cancel: CancellationToken,
     pub handle: Option<JoinHandle<()>>,
     pub stop: Option<ChatStop>,
+    /// 이 실행이 끝나기 전에 같은 작업을 다시 줄 세우려 했다(종료 기한을 넘긴 실행 뒤 `cancel_quit`·이어받기).
+    /// 끝이 `Cancelled`면 `interrupted`로 두지 않고 새 실행을 줄 세운다(Codex PR #141 2차 ③, app.md 83-14)
+    pub requeue: bool,
 }
 
 /// 채팅 수집 줄. 한 번에 하나만 돈다(§4.2).
@@ -173,15 +176,21 @@ pub struct ChatQueue {
 }
 
 impl ChatQueue {
-    /// 줄 끝에 세운다(이미 있거나 돌고 있으면 그대로).
+    /// 줄 끝에 세운다(이미 있으면 그대로). 그 작업이 아직 돌고 있으면(멈춘 옛 실행이 늦게 끝나는 중) 줄에 넣지 않고
+    /// 재개 의도(`ChatRun::requeue`)로 남긴다. 옛 실행이 끝난 뒤 `finish_chat`이 줄 세운다.
     pub fn push(&mut self, id: JobId) {
-        if !self.waiting.contains(&id) && self.running_id() != Some(id) {
+        if let Some(r) = self.running.as_mut().filter(|r| r.id == id) {
+            r.requeue = true;
+        } else if !self.waiting.contains(&id) {
             self.waiting.push_back(id);
         }
     }
 
-    /// 줄에서 뺀다(돌고 있는 것은 건드리지 않는다). 있었으면 true.
+    /// 줄에서 뺀다. 돌고 있는 것은 멈추지 않고 재개 의도만 지운다. 줄에 있었으면 true.
     pub fn remove(&mut self, id: JobId) -> bool {
+        if let Some(r) = self.running.as_mut().filter(|r| r.id == id) {
+            r.requeue = false;
+        }
         let before = self.waiting.len();
         self.waiting.retain(|&w| w != id);
         before != self.waiting.len()
@@ -259,6 +268,7 @@ mod tests {
             cancel: CancellationToken::new(),
             handle: None,
             stop: None,
+            requeue: false,
         });
         assert_eq!(q.take_next(), None, "하나가 도는 동안 다음을 꺼내지 않는다");
         q.push(JobId(2));
@@ -266,8 +276,12 @@ mod tests {
             !q.is_waiting(JobId(2)),
             "돌고 있는 것은 다시 줄 세우지 않는다"
         );
+        assert!(q.running_mut().unwrap().requeue, "재개 의도로 남긴다");
+        q.remove(JobId(2));
+        assert!(!q.running_mut().unwrap().requeue, "빼면 의도도 지운다");
+        q.push(JobId(2));
         assert!(q.finish(JobId(2), 6).is_none(), "옛 세대는 버린다");
-        assert!(q.finish(JobId(2), 7).is_some());
+        assert!(q.finish(JobId(2), 7).is_some_and(|r| r.requeue));
         assert_eq!(q.take_next(), Some(JobId(1)));
         assert!(!q.remove(JobId(1)));
     }

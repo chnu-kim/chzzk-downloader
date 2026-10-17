@@ -305,10 +305,11 @@ impl State {
 
     /// 작업 `id`의 끊긴 채팅을 되살리면 안 되는가: 같은 출력을 다른 작업이 쓰고 있다(그 사이 다른 영상이 들어왔다).
     /// 영상의 `blocks_requeue`처럼 이번에는 건너뛰고 `interrupted`로 둔다(Codex PR #141 ①, app.md 83-13).
+    /// 출력이 다른 컨텐츠로 대체된 기록(`output_replaced`)도 같다(Codex PR #141 2차 ①).
     fn chat_output_taken(&self, id: JobId) -> bool {
-        self.jobs
-            .get(&id)
-            .is_some_and(|j| self.active_with_output(&j.rec.output, Some(id)).is_some())
+        self.jobs.get(&id).is_some_and(|j| {
+            j.rec.output_replaced || self.active_with_output(&j.rec.output, Some(id)).is_some()
+        })
     }
 
     /// 같은 출력의 다른 기록(`except` 제외, 지우는 중 제외)이 받다 만 채팅 파일을 쥐고 있는가(`ChatState::holds_files`).
@@ -559,6 +560,7 @@ impl<B: Backend> DownloadManager<B> {
                 .save_chat
                 .then(|| ChatState::waiting(defaults.chat_subtitle, req.on_existing)),
             discard_on_start: req.restart,
+            output_replaced: false,
             partial_bytes: None,
             missing: false,
         };
@@ -877,6 +879,10 @@ impl<B: Backend> DownloadManager<B> {
                 c.partial_bytes = video_no.and_then(|no| chat_partial_bytes(&output, no));
                 let chat = c.to_dto();
                 st.chat.remove(id);
+                // 멈춘 옛 실행이 아직 돌면(재개 의도만 있었다) 그 끝도 일시정지로 둔다
+                if let Some(r) = st.chat.running_mut().filter(|r| r.id == id) {
+                    r.stop = Some(ChatStop::Pause);
+                }
                 self.inner.save(&st);
                 st.emit(JobEvent::Chat { id, chat });
             }
@@ -1185,8 +1191,9 @@ impl<B: Backend> DownloadManager<B> {
                     job.rec.partial_bytes = partial_bytes(&job.rec);
                     // 멈춘 채팅은 일시정지로 남기고 받은 부분을 다시 센다(지우기를 다시 누를 수 있다)
                     let video_no = video_no_of(&job.rec.content);
+                    // 대기 중이던 채팅도 위에서 줄에서 뺐으니 일시정지로 둔다(대기로 남으면 영영 돌지 않는다, Codex PR #141 2차 ④)
                     if let (Some(c), Some(no)) = (&mut job.rec.chat, video_no) {
-                        if c.phase == ChatPhase::Running {
+                        if matches!(c.phase, ChatPhase::Running | ChatPhase::Waiting) {
                             c.phase = ChatPhase::Paused;
                         }
                         c.partial_bytes = chat_partial_bytes(&job.rec.output, no);
@@ -1262,15 +1269,23 @@ impl<B: Backend> DownloadManager<B> {
             }
             st.quit_stopped = stopped;
             // 채팅: 멈춰 `interrupted`로 남긴다(커서부터 이어받으므로 잃는 것이 없다, chat.md §4.2). 같은 기한 안에서 기다린다
+            // 사용자가 먼저 멈춘(일시정지·지우기) 실행은 그 이유를 지킨다(종료가 덮어쓰면 `interrupted`로 자동 재개된다,
+            // Codex PR #141 2차 ②). 남은 재개 의도도 버린다(이번 종료가 다시 멈춘다)
             st.quit_stopped_chat = None;
             if let Some(r) = st.chat.running_mut() {
-                r.stop = Some(ChatStop::Quit);
+                r.requeue = false;
+                let user_stop = r.stop.is_some_and(|s| s != ChatStop::Quit);
+                if !user_stop {
+                    r.stop = Some(ChatStop::Quit);
+                }
                 r.cancel.cancel();
                 let id = r.id;
                 if let Some(h) = r.handle.take() {
                     handles.push((id, h));
                 }
-                st.quit_stopped_chat = Some(id);
+                if !user_stop {
+                    st.quit_stopped_chat = Some(id);
+                }
             }
             if !changed.is_empty() {
                 self.inner.save(&st);
@@ -1311,11 +1326,15 @@ impl<B: Backend> DownloadManager<B> {
                 }
             }
             // 기한 안에 끝나지 않은 채팅도 `interrupted`로 저장한다(태스크의 끝은 같은 세대라 나중에 와도 `interrupted`다)
-            if let Some(cid) = st.chat.running_id()
+            // 사용자가 멈춘 실행은 `paused`다(끝이 와도 같다). 재개 의도만 있던 `waiting`도 다시 멈춘 것이라 같이 본다
+            if let Some((cid, stop)) = st.chat.running_mut().map(|r| (r.id, r.stop))
                 && let Some(c) = st.jobs.get_mut(&cid).and_then(|j| j.rec.chat.as_mut())
-                && c.phase == ChatPhase::Running
+                && matches!(c.phase, ChatPhase::Running | ChatPhase::Waiting)
             {
-                c.phase = ChatPhase::Interrupted;
+                c.phase = match stop {
+                    Some(ChatStop::Pause | ChatStop::Remove) => ChatPhase::Paused,
+                    _ => ChatPhase::Interrupted,
+                };
                 let chat = c.to_dto();
                 st.emit(JobEvent::Chat { id: cid, chat });
             }
@@ -1343,6 +1362,12 @@ fn chat_target(rec: &JobRecord) -> Result<u64, AppError> {
     if rec.status != JobStatus::Completed {
         return Err(AppError::invalid_input(
             "완료된 작업에서만 채팅을 받을 수 있습니다",
+        ));
+    }
+    // 그 파일은 이제 다른 영상이다. 옆에 이 영상의 채팅·자막을 놓으면 짝이 어긋난다(Codex PR #141 2차 ①)
+    if rec.output_replaced {
+        return Err(AppError::invalid_input(
+            "영상 파일이 다른 영상으로 바뀌어 채팅을 받을 수 없습니다",
         ));
     }
     match (&rec.content, rec.range) {
@@ -1607,9 +1632,13 @@ impl<B: Backend> Inner<B> {
             let r = &mut job.rec;
             let now = now_secs();
             let mut queue_chat = false;
+            // 완료하면 이 기록이 출력의 주인이다. 같은 출력의 다른 컨텐츠 완료 기록은 파일을 잃었다(Codex PR #141 2차 ①)
+            let mut replaced: Option<(String, ContentRef)> = None;
             match end {
                 End::Done(DownloadOutcome::Completed { bytes, live, .. }) => {
                     r.set_status(JobStatus::Completed, now);
+                    r.output_replaced = false;
+                    replaced = Some((output_key(&r.output), r.content.clone()));
                     r.final_bytes = Some(bytes);
                     r.live_end = live.map(LiveEndDto::from);
                     r.finished_at = Some(now_secs());
@@ -1664,6 +1693,17 @@ impl<B: Backend> Inner<B> {
             }
             let dto = job.dto();
             let live = job.is_live().then(|| job.rec.clone());
+            if let Some((key, content)) = replaced {
+                for j in st.jobs.values_mut() {
+                    if j.rec.id != id
+                        && j.rec.status == JobStatus::Completed
+                        && j.rec.content != content
+                        && output_key(&j.rec.output) == key
+                    {
+                        j.rec.output_replaced = true;
+                    }
+                }
+            }
             // Status를 먼저 보낸다. 방금 끝난 작업이 정리 대상이면 Removed가 뒤에 와야 프런트에 유령이 남지 않는다.
             st.emit(JobEvent::Status { job: dto });
             if let Some(rec) = live {
@@ -1686,6 +1726,7 @@ impl<B: Backend> Inner<B> {
             let Some(id) = st.chat.take_next() else { break };
             let ready = st.jobs.get(&id).is_some_and(|j| {
                 !j.removing
+                    && !j.rec.output_replaced
                     && j.rec.status == JobStatus::Completed
                     && j.rec
                         .chat
@@ -1754,6 +1795,7 @@ impl<B: Backend> Inner<B> {
             cancel,
             handle: Some(handle),
             stop: None,
+            requeue: false,
         });
         self.save(st);
         st.emit(JobEvent::Chat { id, chat });
@@ -1836,6 +1878,7 @@ impl<B: Backend> Inner<B> {
             return;
         };
         let partial = || video_no.and_then(|no| chat_partial_bytes(&output, no));
+        let mut requeue = false;
         match end {
             Ok(ChatOutcome::Completed {
                 messages,
@@ -1864,6 +1907,11 @@ impl<B: Backend> Inner<B> {
             Err(ChatEnd::Core(chzzk_core::Error::Cancelled)) => {
                 c.phase = match r.stop {
                     Some(ChatStop::Pause | ChatStop::Remove) => ChatPhase::Paused,
+                    // 종료로 멈췄지만 그 사이 재개를 요청받았다(`cancel_quit` 등): 이제 새 실행을 줄 세운다
+                    Some(ChatStop::Quit) if r.requeue => {
+                        requeue = true;
+                        ChatPhase::Waiting
+                    }
                     Some(ChatStop::Quit) => ChatPhase::Interrupted,
                     None => {
                         c.error = Some(AppError::internal("멈춘 이유 없이 취소되었습니다"));
@@ -1886,6 +1934,9 @@ impl<B: Backend> Inner<B> {
             }
         }
         let chat = c.to_dto();
+        if requeue {
+            st.chat.push(id);
+        }
         self.save(&st);
         st.emit(JobEvent::Chat { id, chat });
         self.chat_pump(&mut st);

@@ -165,6 +165,8 @@ pub enum ChatStep {
     Hold(Arc<Notify>),
     /// 취소될 때까지 기다린 뒤 `Cancelled`
     WaitCancel,
+    /// 취소를 무시하고 테스트가 `notify_one`할 때까지 기다린다(늦게 끝나는 페이지 커밋). 그 사이 취소됐으면 `Cancelled`
+    Stubborn(Arc<Notify>),
     /// 코어처럼 받다 만 기록(`.chat.jsonl.part`, `lines`줄)과 이 영상의 sidecar를 쓴다
     Part { lines: u64 },
 }
@@ -196,6 +198,11 @@ impl ChatScript {
 
     pub fn wait_cancel(mut self) -> Self {
         self.steps.push(ChatStep::WaitCancel);
+        self
+    }
+
+    pub fn stubborn(mut self, n: Arc<Notify>) -> Self {
+        self.steps.push(ChatStep::Stubborn(n));
         self
     }
 
@@ -510,6 +517,12 @@ impl Backend for FakeBackend {
                 ChatStep::WaitCancel => {
                     cancel.cancelled().await;
                     return Err(Error::Cancelled);
+                }
+                ChatStep::Stubborn(n) => {
+                    n.notified().await;
+                    if cancel.is_cancelled() {
+                        return Err(Error::Cancelled);
+                    }
                 }
                 ChatStep::Part { lines } => write_chat_part(&req.output, req.video_no, lines),
             }

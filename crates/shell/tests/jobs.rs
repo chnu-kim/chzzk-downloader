@@ -33,6 +33,7 @@ fn record(id: u64, status: JobStatus) -> JobRecord {
         chat: None,
         last_error: None,
         discard_on_start: false,
+        output_replaced: false,
         partial_bytes: None,
         missing: false,
     }

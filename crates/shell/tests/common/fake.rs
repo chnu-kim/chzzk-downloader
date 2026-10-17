@@ -165,7 +165,8 @@ pub enum ChatStep {
     Hold(Arc<Notify>),
     /// 취소될 때까지 기다린 뒤 `Cancelled`
     WaitCancel,
-    /// 취소를 무시하고 테스트가 `notify_one`할 때까지 기다린다(늦게 끝나는 페이지 커밋). 그 사이 취소됐으면 `Cancelled`
+    /// 취소를 무시하고 테스트가 `notify_one`할 때까지 기다린다(늦게 끝나는 페이지 커밋). 그 사이 취소됐으면 `Cancelled`.
+    /// 받다 만 기록(`.part`)이 있으면 코어처럼 기다리는 동안 그 파일을 잠가 둔다(지우기는 `FileLocked`)
     Stubborn(Arc<Notify>),
     /// 코어처럼 받다 만 기록(`.chat.jsonl.part`, `lines`줄)과 이 영상의 sidecar를 쓴다
     Part { lines: u64 },
@@ -519,7 +520,14 @@ impl Backend for FakeBackend {
                     return Err(Error::Cancelled);
                 }
                 ChatStep::Stubborn(n) => {
+                    let held = std::fs::OpenOptions::new()
+                        .read(true)
+                        .write(true)
+                        .open(part_path(&sibling_path(&req.output, RECORD_EXT)))
+                        .ok()
+                        .filter(|f| f.try_lock().is_ok());
                     n.notified().await;
+                    drop(held);
                     if cancel.is_cancelled() {
                         return Err(Error::Cancelled);
                     }

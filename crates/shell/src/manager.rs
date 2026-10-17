@@ -37,7 +37,7 @@ use chzzk_core::chat::{
 use chzzk_core::naming::output_path;
 use chzzk_core::{
     CancellationToken, ContentRef, Discarded, DownloadOutcome, DownloadRequest, Error, Phase,
-    PlaybackKind, Progress, discard_partial,
+    PlaybackKind, Progress, TimeRange, discard_partial,
 };
 use std::time::Duration;
 use tokio::runtime::Handle;
@@ -109,6 +109,9 @@ pub struct JobDefaults {
     pub chat_subtitle: SubtitleFormat,
 }
 
+/// 세대와 그 태스크 핸들(`quit`이 기한을 넘긴 채팅 실행에 돌려준다).
+type RunHandle = (u64, JoinHandle<()>);
+
 /// 태스크의 끝.
 enum End {
     Done(DownloadOutcome),
@@ -138,6 +141,10 @@ struct Job {
     /// `quit` 기한 안에 멈추지 않아 태스크가 아직 도는 세대(worker.md 구현 중 변경 76·80). 그 태스크가 `finish`할 때까지
     /// 슬롯(`max_running`)과 출력 경로를 차지하고 같은 작업을 새로 시작하지 않는다(옛 태스크가 아직 `.part`를 쓴다)
     detached: Option<u64>,
+    /// 이 작업의 채팅 태스크(`ChatRun`)가 살아 있다. `start_chat_task`가 켜고 `finish_chat`이 `ChatRun`을 꺼낼 때 끈다.
+    /// 종료 기한을 넘긴 실행은 `paused`·`interrupted`로 보여도 아직 채팅 파일을 쓰므로, 출력 예약·정리 보호는 표시 단계가
+    /// 아니라 이것을 본다(Codex PR #141 3차 ①)
+    chat_alive: bool,
 }
 
 impl Job {
@@ -154,6 +161,7 @@ impl Job {
             run: 0,
             saved: true,
             detached: None,
+            chat_alive: false,
         }
     }
 
@@ -173,13 +181,15 @@ impl Job {
     /// 영상은 완료됐고 채팅이 줄에 있거나 받는 중이다. 그동안 같은 출력에 다른 영상이 들어오면 바뀐 영상 옆에
     /// 원래 영상의 채팅·자막이 놓이므로 출력을 예약한다(Codex PR #141 ①, app.md 83). 완료가 아닌 작업의 대기 채팅은
     /// 영상 상태가 예약을 정한다. 멈춘·실패한 채팅은 예약하지 않는다(다른 영상이면 코어가 sidecar를 보고 처음부터 받는다).
+    /// 단 채팅 태스크가 아직 살아 있으면(종료 기한을 넘겨 멈춘 것으로 보이는 실행) 끝날 때까지 예약한다(3차 ①).
     fn collects_chat(&self) -> bool {
-        self.rec.status == JobStatus::Completed
-            && self
-                .rec
-                .chat
-                .as_ref()
-                .is_some_and(|c| matches!(c.phase, ChatPhase::Waiting | ChatPhase::Running))
+        self.chat_alive
+            || self.rec.status == JobStatus::Completed
+                && self
+                    .rec
+                    .chat
+                    .as_ref()
+                    .is_some_and(|c| matches!(c.phase, ChatPhase::Waiting | ChatPhase::Running))
     }
 
     /// 끝났지만(failed·skipped) 이 작업의 녹화 `.part`가 남은 생방송. 다시 받을 수 없으니 경로를 내주지 않는다(core.md 61).
@@ -200,7 +210,9 @@ impl Job {
     /// 채팅이 돌고 있거나(대기·받는 중) 받다 만 채팅 파일이 남은 완료 작업도 같은 이유로 정리하지 않는다(chat.md §4.3).
     fn clearable(&self) -> bool {
         match self.rec.status {
-            JobStatus::Completed => !self.rec.chat.as_ref().is_some_and(ChatState::holds_files),
+            JobStatus::Completed => {
+                !self.chat_alive && !self.rec.chat.as_ref().is_some_and(ChatState::holds_files)
+            }
             JobStatus::Skipped => self.rec.partial_bytes.is_none(),
             _ => false,
         }
@@ -983,6 +995,9 @@ impl<B: Backend> DownloadManager<B> {
                         .chat
                         .as_ref()
                         .is_some_and(|c| c.phase == ChatPhase::Interrupted)
+                    // 완료된 영상 파일이 지워졌으면 `start_chat`처럼 받지 않는다(빈 폴더에 채팅만 놓지 않는다,
+                    // Codex PR #141 3차 ③). `interrupted`로 남아 파일이 돌아오면 다음 이어받기가 줄 세운다
+                    && j.rec.output.is_file()
                     && keep(&j.rec.content, j.rec.channel_id.as_deref())
             })
             .map(|j| j.rec.id)
@@ -1240,7 +1255,8 @@ impl<B: Backend> DownloadManager<B> {
     /// 대기 중(`queued`)인 작업은 그대로 저장되고 다음 시작 때 reconcile이 `interrupted`로 바꾼다.
     /// 프로세스 종료(`app.exit`)는 부르는 쪽이 한다.
     pub async fn quit(&self, timeout: Duration) {
-        let mut handles: Vec<(JobId, JoinHandle<()>)> = {
+        // 채팅 핸들은 따로 둔다(세대와 함께). 기한 안에 끝나지 않으면 `ChatRun`에 돌려준다
+        let (mut handles, mut chat_handle): (Vec<(JobId, JoinHandle<()>)>, Option<RunHandle>) = {
             let mut st = self.inner.lock();
             st.scheduler_enabled = false;
             // 되살린 뒤 다시 quit해도 옛 id가 남지 않게 비우고 이번에 멈추는 작업으로 채운다
@@ -1272,6 +1288,7 @@ impl<B: Backend> DownloadManager<B> {
             // 사용자가 먼저 멈춘(일시정지·지우기) 실행은 그 이유를 지킨다(종료가 덮어쓰면 `interrupted`로 자동 재개된다,
             // Codex PR #141 2차 ②). 남은 재개 의도도 버린다(이번 종료가 다시 멈춘다)
             st.quit_stopped_chat = None;
+            let mut chat_handle = None;
             if let Some(r) = st.chat.running_mut() {
                 r.requeue = false;
                 let user_stop = r.stop.is_some_and(|s| s != ChatStop::Quit);
@@ -1280,9 +1297,7 @@ impl<B: Backend> DownloadManager<B> {
                 }
                 r.cancel.cancel();
                 let id = r.id;
-                if let Some(h) = r.handle.take() {
-                    handles.push((id, h));
-                }
+                chat_handle = r.handle.take().map(|h| (r.run, h));
                 if !user_stop {
                     st.quit_stopped_chat = Some(id);
                 }
@@ -1293,10 +1308,13 @@ impl<B: Backend> DownloadManager<B> {
             for dto in changed {
                 st.emit(JobEvent::Status { job: dto });
             }
-            handles
+            (handles, chat_handle)
         };
         let all = async {
             for (_, h) in handles.iter_mut() {
+                let _ = h.await;
+            }
+            if let Some((_, h)) = chat_handle.as_mut() {
                 let _ = h.await;
             }
         };
@@ -1324,6 +1342,13 @@ impl<B: Backend> DownloadManager<B> {
                     late.push(job.dto());
                     late_ids.push(job.rec.id);
                 }
+            }
+            // 기한 안에 끝나지 않은 채팅의 핸들을 그 실행에 돌려준다. `cancel_quit` 뒤 `remove`가 옛 실행의 끝을 기다린 뒤
+            // 받다 만 파일을 지운다(버리면 잠긴 `.part`를 바로 지우려다 `FileLocked`다, Codex PR #141 3차 ②)
+            if let Some((run, h)) = chat_handle.take().filter(|(_, h)| !h.is_finished())
+                && let Some(r) = st.chat.running_mut().filter(|r| r.run == run)
+            {
+                r.handle = Some(h);
             }
             // 기한 안에 끝나지 않은 채팅도 `interrupted`로 저장한다(태스크의 끝은 같은 세대라 나중에 와도 `interrupted`다)
             // 사용자가 멈춘 실행은 `paused`다(끝이 와도 같다). 재개 의도만 있던 `waiting`도 다시 멈춘 것이라 같이 본다
@@ -1632,13 +1657,14 @@ impl<B: Backend> Inner<B> {
             let r = &mut job.rec;
             let now = now_secs();
             let mut queue_chat = false;
-            // 완료하면 이 기록이 출력의 주인이다. 같은 출력의 다른 컨텐츠 완료 기록은 파일을 잃었다(Codex PR #141 2차 ①)
-            let mut replaced: Option<(String, ContentRef)> = None;
+            // 완료하면 이 기록이 출력의 주인이다. 같은 출력의 다른 컨텐츠 완료 기록은 파일을 잃었다(Codex PR #141 2차 ①).
+            // 정체성은 컨텐츠와 구간이다: 같은 영상의 구간 받기가 전체 영상을 덮어도 파일을 잃었다(3차 ⑤)
+            let mut replaced: Option<(String, ContentRef, Option<TimeRange>)> = None;
             match end {
                 End::Done(DownloadOutcome::Completed { bytes, live, .. }) => {
                     r.set_status(JobStatus::Completed, now);
                     r.output_replaced = false;
-                    replaced = Some((output_key(&r.output), r.content.clone()));
+                    replaced = Some((output_key(&r.output), r.content.clone(), r.range));
                     r.final_bytes = Some(bytes);
                     r.live_end = live.map(LiveEndDto::from);
                     r.finished_at = Some(now_secs());
@@ -1693,11 +1719,11 @@ impl<B: Backend> Inner<B> {
             }
             let dto = job.dto();
             let live = job.is_live().then(|| job.rec.clone());
-            if let Some((key, content)) = replaced {
+            if let Some((key, content, range)) = replaced {
                 for j in st.jobs.values_mut() {
                     if j.rec.id != id
                         && j.rec.status == JobStatus::Completed
-                        && j.rec.content != content
+                        && (j.rec.content != content || j.rec.range != range)
                         && output_key(&j.rec.output) == key
                     {
                         j.rec.output_replaced = true;
@@ -1789,6 +1815,7 @@ impl<B: Backend> Inner<B> {
             };
             me.finish_chat(id, run, end);
         });
+        job.chat_alive = true;
         st.chat.set_running(ChatRun {
             id,
             run,
@@ -1866,6 +1893,7 @@ impl<B: Backend> Inner<B> {
             self.chat_pump(&mut st);
             return;
         };
+        job.chat_alive = false;
         if job.removing {
             // `remove`가 이어서 채팅 파일을 지우고 레코드를 없앤다
             self.chat_pump(&mut st);
@@ -1906,12 +1934,13 @@ impl<B: Backend> Inner<B> {
             }
             Err(ChatEnd::Core(chzzk_core::Error::Cancelled)) => {
                 c.phase = match r.stop {
-                    Some(ChatStop::Pause | ChatStop::Remove) => ChatPhase::Paused,
-                    // 종료로 멈췄지만 그 사이 재개를 요청받았다(`cancel_quit` 등): 이제 새 실행을 줄 세운다
-                    Some(ChatStop::Quit) if r.requeue => {
+                    // 종료로 멈췄지만 그 사이 재개를 요청받았다(`cancel_quit` 등): 이제 새 실행을 줄 세운다.
+                    // 그 뒤 일시정지로 이유가 바뀌었어도 다시 받기를 눌렀으면 같다(지우기는 의도를 지운다, Codex PR #141 3차 ④)
+                    Some(ChatStop::Pause | ChatStop::Quit) if r.requeue => {
                         requeue = true;
                         ChatPhase::Waiting
                     }
+                    Some(ChatStop::Pause | ChatStop::Remove) => ChatPhase::Paused,
                     Some(ChatStop::Quit) => ChatPhase::Interrupted,
                     None => {
                         c.error = Some(AppError::internal("멈춘 이유 없이 취소되었습니다"));

@@ -335,22 +335,28 @@ function utf16(buf) {
 // 파일 전체를 예전처럼 글자 검사한다(안전 쪽).
 
 const PNG_SIG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
-// 글자 검사를 건너뛰는 청크와 그 모양 검사. IDAT(압축 픽셀)만 내용이 자유롭고, IHDR·IEND는 모양이 정해져 있어
-// 글자를 숨길 자리가 없다(너비·높이는 65535 이하라 위 두 바이트가 0이다). 여기 없는 청크(PLTE·tRNS·gAMA 같은
+// 글자 검사를 건너뛰는 청크는 IHDR·IDAT·IEND뿐이고, 모두 모양을 확인한다. IHDR·IEND는 모양이 정해져 있어 글자를
+// 숨길 자리가 없다(너비·높이는 65535 이하라 위 두 바이트가 0이다). IDAT는 연달아 있어야 하고, 이어 붙인 것이
+// 온전한 zlib 스트림이어서 끝까지 쓰이고, 풀린 크기가 IHDR이 정한 픽셀 데이터 크기와 같아야 한다(스트림 뒤나
+// 밖에 덧붙인 평문은 남지 않는다). 인터레이스는 받지 않는다(스냅샷에 없다). 여기 없는 청크(PLTE·tRNS·gAMA 같은
 // 보조 청크 포함)는 데이터를 글자 검사한다. 모양이 틀리면 파일 전체 검사로 돌아간다.
 const IHDR_DEPTHS = { 0: [1, 2, 4, 8, 16], 2: [8, 16], 3: [1, 2, 4, 8], 4: [8, 16], 6: [8, 16] };
-const PNG_SKIP = {
-  IHDR: (d) => {
-    if (d.length !== 13) return false;
-    const w = d.readUInt32BE(0);
-    const h = d.readUInt32BE(4);
-    const depths = IHDR_DEPTHS[d[9]];
-    return w >= 1 && w <= 0xffff && h >= 1 && h <= 0xffff && !!depths && depths.includes(d[8]) &&
-      d[10] === 0 && d[11] === 0 && (d[12] === 0 || d[12] === 1);
-  },
-  IDAT: () => true,
-  IEND: (d) => d.length === 0,
-};
+const IHDR_CHANNELS = { 0: 1, 2: 3, 3: 1, 4: 2, 6: 4 };
+const PNG_PIXELS_MAX = 64 * 1024 * 1024;
+
+/** IHDR가 온전하고 인터레이스가 아니면 풀린 IDAT 크기(줄마다 필터 바이트 하나 + 픽셀), 아니면 null. */
+function pngPixelBytes(d) {
+  if (d.length !== 13) return null;
+  const w = d.readUInt32BE(0);
+  const h = d.readUInt32BE(4);
+  const depth = d[8];
+  const color = d[9];
+  const depths = IHDR_DEPTHS[color];
+  if (!(w >= 1 && w <= 0xffff && h >= 1 && h <= 0xffff) || !depths || !depths.includes(depth)) return null;
+  if (d[10] !== 0 || d[11] !== 0 || d[12] !== 0) return null;
+  const size = h * (1 + Math.ceil((w * IHDR_CHANNELS[color] * depth) / 8));
+  return size <= PNG_PIXELS_MAX ? size : null;
+}
 const PNG_INFLATE_MAX = 8 * 1024 * 1024;
 const CRC_TABLE = Array.from({ length: 256 }, (_, n) => {
   let c = n;
@@ -367,9 +373,9 @@ function crc32(buf) {
  * 압축 방식 0(zlib)만 받는다. 풀리지 않거나 너무 크거나 스트림 뒤에 남는 바이트가 있으면 예외
  * (inflate는 스트림 뒤 바이트를 말없이 버려, 거기 둔 평문이 검사를 비껴간다).
  */
-function pngInflate(method, data) {
+function pngInflate(method, data, max = PNG_INFLATE_MAX) {
   if (method !== 0) throw new Error('압축 방식');
-  const { buffer, engine } = inflateSync(data, { maxOutputLength: PNG_INFLATE_MAX, info: true });
+  const { buffer, engine } = inflateSync(data, { maxOutputLength: Math.max(1, max), info: true });
   if (engine.bytesWritten !== data.length) throw new Error('스트림 뒤 바이트');
   return buffer;
 }
@@ -425,6 +431,10 @@ export function pngTexts(buf) {
   const texts = [];
   let at = PNG_SIG.length;
   let first = true;
+  let pixelBytes = null;
+  const idat = [];
+  let idatOpen = false;
+  let idatDone = false;
   while (at < buf.length) {
     if (at + 12 > buf.length) return null;
     const len = buf.readUInt32BE(at);
@@ -437,10 +447,28 @@ export function pngTexts(buf) {
     const data = buf.subarray(at + 8, at + 8 + len);
     if (crc32(buf.subarray(at + 4, at + 8 + len)) !== buf.readUInt32BE(at + 8 + len)) return null;
     at += 12 + len;
-    if (Object.hasOwn(PNG_SKIP, type)) {
-      if (!PNG_SKIP[type](data)) return null;
-      if (type === 'IEND') return at === buf.length ? texts : null;
+    if (type === 'IHDR') {
+      if (pixelBytes !== null || (pixelBytes = pngPixelBytes(data)) === null) return null;
       continue;
+    }
+    if (type === 'IDAT') {
+      if (idatDone) return null; // IDAT 사이에 다른 청크
+      idat.push(data);
+      idatOpen = true;
+      continue;
+    }
+    if (idatOpen) {
+      idatOpen = false;
+      idatDone = true;
+    }
+    if (type === 'IEND') {
+      if (len !== 0 || at !== buf.length || idat.length === 0) return null;
+      try {
+        if (pngInflate(0, Buffer.concat(idat), pixelBytes).length !== pixelBytes) return null;
+      } catch {
+        return null;
+      }
+      return texts;
     }
     try {
       texts.push(...pngChunkTexts(type, data));

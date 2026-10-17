@@ -194,18 +194,42 @@ function chunk(type, data) {
   c.writeUInt32BE(crc(td));
   return Buffer.concat([len, td, c]);
 }
-const IHDR = chunk('IHDR', Buffer.from([0, 0, 0, 1, 0, 0, 0, 1, 8, 2, 0, 0, 0]));
+const ihdrData = (w, h, depth, color, interlace = 0) => {
+  const d = Buffer.alloc(13);
+  d.writeUInt32BE(w, 0);
+  d.writeUInt32BE(h, 4);
+  d[8] = depth;
+  d[9] = color;
+  d[12] = interlace;
+  return d;
+};
+// 1×1 RGB 8비트: 픽셀 데이터는 필터 바이트 하나 + 3바이트
+const IHDR = chunk('IHDR', ihdrData(1, 1, 8, 2));
+const IDAT0_DATA = deflateSync(Buffer.from([0, 1, 2, 3]));
+const IDAT0 = chunk('IDAT', IDAT0_DATA);
 const IEND = chunk('IEND', Buffer.alloc(0));
-const png = (...chunks) => Buffer.concat([PNG_SIG, IHDR, ...chunks, IEND]);
-// 픽셀 바이트에 우연히 생긴 글자 모양(실제 스냅샷의 오탐을 흉내 낸다)
-const pixels = (text) => Buffer.concat([Buffer.from([0x78, 0x9c, 0, 1]), Buffer.from(text), Buffer.from([0, 2, 3])]);
+const png = (...chunks) => Buffer.concat([PNG_SIG, IHDR, IDAT0, ...chunks, IEND]);
+// 회색 8비트 한 줄 이미지의 픽셀 바이트가 곧 글자다. 무압축 블록(level 0)이라 IDAT에 글자가 그대로 남는다
+// (실제 스냅샷에서 압축 픽셀 바이트가 우연히 글자 모양이 된 오탐을 흉내 낸다).
+function grayShot(text) {
+  const px = Buffer.from(text);
+  const hdr = chunk('IHDR', ihdrData(px.length, 1, 8, 0));
+  const idatData = deflateSync(Buffer.concat([NUL, px]), { level: 0 });
+  assert.ok(idatData.includes(px));
+  const idat = chunk('IDAT', idatData);
+  return { hdr, idat, idatData, buf: Buffer.concat([PNG_SIG, hdr, idat, IEND]) };
+}
 const NUL = Buffer.from([0]);
 
-test('PNG: 픽셀·구조 청크(IDAT 등)의 바이트는 글자로 검사하지 않는다', () => {
+test('PNG: 픽셀·구조 청크(IHDR·IDAT·IEND)의 바이트는 글자로 검사하지 않는다', () => {
   const deny = sel('가짜스트리머');
-  const shot = png(chunk('IDAT', pixels('nam 가짜스트리머 ' + PLANTED['signed-token'])));
+  const { buf: shot } = grayShot('nam 가짜스트리머 ' + PLANTED['signed-token']);
   assert.deepEqual(scanBuffer(shot, deny), []);
   assert.deepEqual(pngTexts(shot), []);
+  // IDAT를 여러 청크로 나눠도(연달아 있으면) 같다
+  const half = IDAT0_DATA.length >> 1;
+  const split = Buffer.concat([PNG_SIG, IHDR, chunk('IDAT', IDAT0_DATA.subarray(0, half)), chunk('IDAT', IDAT0_DATA.subarray(half)), IEND]);
+  assert.deepEqual(pngTexts(split), []);
   // 내용 전체 해시(denylist-blob)는 PNG에도 그대로 건다
   assert.deepEqual(scanBuffer(shot, new Set([hashBlob(shot)])).map((f) => f.rule), ['denylist-blob']);
 });
@@ -233,52 +257,60 @@ test('PNG: tEXt·zTXt·iTXt(압축·비압축) 메타데이터는 검사한다',
 
 test('PNG: 깨지거나 모르는 모양이면 파일 전체를 지금처럼 글자 검사한다', () => {
   const deny = sel('가짜스트리머');
-  const body = pixels('nam 가짜스트리머 방송');
-  const good = png(chunk('IDAT', body));
+  const { hdr, idat, idatData, buf: good } = grayShot('nam 가짜스트리머 방송');
   const hit = (buf) => scanBuffer(buf, deny).some((f) => f.rule === 'denylist');
+  const cookie = Buffer.from(PLANTED['naver-cookie']);
+  const hitCookie = (buf) => scanBuffer(buf, new Set()).some((f) => f.rule === 'naver-cookie');
   assert.equal(hit(good), false);
   // IDAT CRC 한 바이트 바꿈
   const badCrc = Buffer.from(good);
-  const at = PNG_SIG.length + IHDR.length + 8 + body.length;
-  badCrc[at] ^= 0xff;
+  badCrc[PNG_SIG.length + hdr.length + idat.length - 4] ^= 0xff;
   assert.equal(pngTexts(badCrc), null);
   assert.ok(hit(badCrc), 'CRC');
   // 길이가 파일 끝을 넘음
   const badLen = Buffer.from(good);
-  badLen.writeUInt32BE(0x7fffffff, PNG_SIG.length + IHDR.length);
+  badLen.writeUInt32BE(0x7fffffff, PNG_SIG.length + hdr.length);
   assert.ok(hit(badLen), '길이');
   // IEND 뒤에 붙인 바이트
   assert.ok(hit(Buffer.concat([good, Buffer.from(' 가짜스트리머 ')])), 'IEND 뒤');
   // IEND 없음
-  assert.ok(hit(Buffer.concat([PNG_SIG, IHDR, chunk('IDAT', body)])), 'IEND 없음');
+  assert.ok(hit(Buffer.concat([PNG_SIG, hdr, idat])), 'IEND 없음');
   // 형식 이름이 글자가 아님
-  assert.equal(pngTexts(png(chunk('ID@T', body))), null, '형식 이름');
-  assert.ok(hit(png(chunk('ID@T', body))), '형식 이름');
+  const badType = Buffer.concat([PNG_SIG, hdr, chunk('ID@T', idatData), IEND]);
+  assert.equal(pngTexts(badType), null, '형식 이름');
+  assert.ok(hit(badType), '형식 이름');
   // 첫 청크가 IHDR이 아님
-  assert.equal(pngTexts(Buffer.concat([PNG_SIG, chunk('IDAT', body), IHDR, IEND])), null, 'IHDR 먼저');
+  assert.equal(pngTexts(Buffer.concat([PNG_SIG, idat, hdr, IEND])), null, 'IHDR 먼저');
+  // IDAT: 없음, zlib가 아님, 스트림 뒤 평문, 풀린 크기가 IHDR과 다름, 사이에 다른 청크, 인터레이스
+  const withIdat = (...cs) => Buffer.concat([PNG_SIG, IHDR, ...cs, IEND]);
+  assert.equal(pngTexts(withIdat()), null, 'IDAT 없음');
+  assert.ok(hit(withIdat(chunk('IDAT', Buffer.from('nam 가짜스트리머 방송')))), 'IDAT zlib 아님');
+  assert.ok(hitCookie(withIdat(chunk('IDAT', Buffer.concat([IDAT0_DATA, cookie])))), 'IDAT 스트림 뒤');
+  assert.equal(pngTexts(withIdat(chunk('IDAT', deflateSync(Buffer.from([0, 1, 2]))))), null, 'IDAT 짧음');
+  assert.equal(pngTexts(withIdat(chunk('IDAT', deflateSync(Buffer.from([0, 1, 2, 3, 4]))))), null, 'IDAT 김');
+  const half = IDAT0_DATA.length >> 1;
+  const gap = chunk('tEXt', Buffer.concat([Buffer.from('k'), NUL, Buffer.from('v')]));
+  assert.equal(pngTexts(withIdat(chunk('IDAT', IDAT0_DATA.subarray(0, half)), gap, chunk('IDAT', IDAT0_DATA.subarray(half)))), null, 'IDAT 사이');
+  assert.equal(pngTexts(Buffer.concat([PNG_SIG, chunk('IHDR', ihdrData(1, 1, 8, 2, 1)), IDAT0, IEND])), null, '인터레이스');
+  assert.equal(pngTexts(Buffer.concat([PNG_SIG, IHDR, IHDR, IDAT0, IEND])), null, 'IHDR 둘');
+  // 너비 65536은 IDAT 크기가 맞아도 받지 않는다(너비·높이 위 두 바이트가 늘 0이게)
+  const wide = (w) => Buffer.concat([PNG_SIG, chunk('IHDR', ihdrData(w, 1, 1, 0)), chunk('IDAT', deflateSync(Buffer.alloc(1 + w / 8))), IEND]);
+  assert.notEqual(pngTexts(wide(0xfff8)), null, '너비 65528');
+  assert.equal(pngTexts(wide(0x10000)), null, '너비 65536');
   // 압축 방식이 0이 아니거나 풀리지 않는 zTXt
   const z = (m, data) => chunk('zTXt', Buffer.concat([Buffer.from('k'), NUL, Buffer.from([m]), data]));
-  assert.ok(hit(png(chunk('IDAT', body), z(1, deflateSync(Buffer.from('x'))))), '압축 방식');
-  assert.ok(hit(png(chunk('IDAT', body), z(0, Buffer.from('not zlib')))), '풀리지 않음');
+  assert.equal(pngTexts(png(z(1, deflateSync(Buffer.from('x'))))), null, '압축 방식');
+  assert.equal(pngTexts(png(z(0, Buffer.from('not zlib')))), null, '풀리지 않음');
   // 압축 스트림 뒤에 덧붙인 평문(inflate는 남은 바이트를 말없이 버린다)
   const tail = Buffer.concat([deflateSync(Buffer.from('ok')), Buffer.from(' 가짜스트리머 ')]);
-  assert.ok(hit(png(chunk('IDAT', body), z(0, tail))), 'zTXt 스트림 뒤');
+  assert.ok(hit(png(z(0, tail))), 'zTXt 스트림 뒤');
   const it = chunk('iTXt', Buffer.concat([Buffer.from('k'), NUL, Buffer.from([1, 0]), NUL, NUL, tail]));
-  assert.ok(hit(png(chunk('IDAT', body), it)), 'iTXt 스트림 뒤');
+  assert.ok(hit(png(it)), 'iTXt 스트림 뒤');
   // 건너뛰는 청크도 정해진 모양이어야 한다: 길이가 틀린 IHDR·IEND, 필드가 틀린 IHDR은 파일 전체 검사
-  const cookie = Buffer.from(PLANTED['naver-cookie']);
-  const hitCookie = (buf) => scanBuffer(buf, new Set()).some((f) => f.rule === 'naver-cookie');
-  const withHdr = (hdr) => Buffer.concat([PNG_SIG, hdr, chunk('IDAT', body), IEND]);
-  assert.ok(hitCookie(withHdr(chunk('IHDR', Buffer.concat([IHDR.subarray(8, 21), cookie])))), 'IHDR 길이');
-  assert.ok(hitCookie(Buffer.concat([PNG_SIG, IHDR, chunk('IDAT', body), chunk('IEND', cookie)])), 'IEND 길이');
-  const ihdr = (w, depth, color) => {
-    const d = Buffer.alloc(13);
-    d.writeUInt32BE(w, 0);
-    d.writeUInt32BE(1, 4);
-    d[8] = depth;
-    d[9] = color;
-    return withHdr(chunk('IHDR', d));
-  };
+  const withHdr = (h) => Buffer.concat([PNG_SIG, h, IDAT0, IEND]);
+  assert.ok(hitCookie(withHdr(chunk('IHDR', Buffer.concat([ihdrData(1, 1, 8, 2), cookie])))), 'IHDR 길이');
+  assert.ok(hitCookie(Buffer.concat([PNG_SIG, IHDR, IDAT0, chunk('IEND', cookie)])), 'IEND 길이');
+  const ihdr = (w, depth, color) => withHdr(chunk('IHDR', ihdrData(w, 1, depth, color)));
   assert.notEqual(pngTexts(ihdr(1, 8, 2)), null);
   for (const [name, buf] of Object.entries({
     '너비 0': ihdr(0, 8, 2),
@@ -292,6 +324,7 @@ test('PNG: 깨지거나 모르는 모양이면 파일 전체를 지금처럼 글
   // 픽셀이 아닌 보조 청크(gAMA·PLTE·tRNS·cHRM 등)와 모르는 청크(iCCP·eXIf·사설 청크)는
   // 건너뛰지 않고 그 데이터를 글자 검사한다
   for (const t of ['gAMA', 'PLTE', 'tRNS', 'cHRM', 'pHYs', 'iCCP', 'eXIf', 'prVt']) {
+    assert.notEqual(pngTexts(png(chunk(t, cookie))), null, t);
     assert.ok(hitCookie(png(chunk(t, cookie))), `${t} 쿠키`);
     assert.ok(hit(png(chunk(t, Buffer.from('nam 가짜스트리머 x')))), t);
   }

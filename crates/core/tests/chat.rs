@@ -12,8 +12,8 @@ use std::time::{Duration, Instant};
 
 use chzzk_core::chat::part::ChatPart;
 use chzzk_core::chat::{
-    CHAT_PAGE_INTERVAL_MS, ChatEnd, ChatOutcome, ChatProgress, ChatRequest, SubtitleFormat,
-    chat_retry_policy,
+    CHAT_PAGE_INTERVAL_MS, CHAT_SUBTITLE_MAX_BYTES, ChatEnd, ChatOutcome, ChatProgress,
+    ChatRequest, SubtitleFormat, chat_retry_policy,
 };
 use chzzk_core::naming::sibling_path;
 use chzzk_core::{
@@ -911,6 +911,68 @@ async fn subtitle_failure_still_completes_record() {
     assert_eq!(lines(&e.record()).len(), 8);
     assert!(!e.ass().exists());
     assert!(!sidecar_of(&e.record()).exists());
+}
+
+/// 자막 상한(`chat_subtitle_max_bytes`)을 바꾼 클라이언트.
+fn chzzk_with_subtitle_max(server: &MockServer, max: u64) -> Chzzk {
+    Chzzk::new(ClientConfig {
+        chat_subtitle_max_bytes: max,
+        ..config(server)
+    })
+    .unwrap()
+}
+
+/// 사슬 셋을 자막 없이 받은 기록의 바이트 수(상한 경계를 잰다).
+async fn chain_record_len() -> u64 {
+    let server = MockServer::start().await;
+    mount_chain(&server).await;
+    let e = Env::new();
+    run(&chzzk(&server), e.req(SubtitleFormat::None))
+        .await
+        .unwrap();
+    std::fs::metadata(e.record()).unwrap().len()
+}
+
+/// 기록이 자막 상한을 넘으면 읽지 않고 자막 실패로 끝낸다. 기록은 완성으로 옮긴다.
+#[tokio::test]
+async fn subtitle_over_budget_fails_subtitle_but_keeps_record() {
+    let len = chain_record_len().await;
+    assert_eq!(
+        ClientConfig::default().chat_subtitle_max_bytes,
+        CHAT_SUBTITLE_MAX_BYTES
+    );
+    for (max, failed) in [(len - 1, true), (len, false), (0, true)] {
+        let server = MockServer::start().await;
+        mount_chain(&server).await;
+        let e = Env::new();
+        let out = run(
+            &chzzk_with_subtitle_max(&server, max),
+            e.req(SubtitleFormat::Srt),
+        )
+        .await
+        .unwrap();
+        assert!(
+            matches!(
+                out,
+                ChatOutcome::Completed {
+                    messages: 8,
+                    subtitle_failed,
+                    ..
+                } if subtitle_failed == failed
+            ),
+            "max {max}: {out:?}"
+        );
+        assert_eq!(lines(&e.record()).len(), 8);
+        assert_eq!(std::fs::metadata(e.record()).unwrap().len(), len);
+        assert_eq!(e.srt().exists(), !failed, "max {max}");
+        for p in [
+            part_of(&e.record()),
+            sidecar_of(&e.record()),
+            part_of(&e.srt()),
+        ] {
+            assert!(!p.exists(), "{}", p.display());
+        }
+    }
 }
 
 // ---- 중단된 자막 이동 ----

@@ -6,6 +6,8 @@
 //! - 취소는 요청·대기 중에만 본다. `commit_page`는 취소 지점으로 쓰지 않는다(`chat::part` 실패 계약).
 //! - 닉네임·본문은 로그에 내지 않는다.
 
+use std::fs::File;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use tokio::time::Instant;
@@ -114,7 +116,8 @@ impl Chzzk {
             let opts = SubtitleOpts {
                 duration_ms: req.duration_ms,
             };
-            match write_subtitle(&mut part, req.subtitle, &opts, &tmp) {
+            let max = self.config().chat_subtitle_max_bytes;
+            match write_subtitle(&mut part, req.subtitle, &opts, &tmp, &record, max) {
                 Ok(()) => companions.push(Companion { from: tmp, to }),
                 Err(e) => {
                     tracing::warn!(error = %e, "채팅 자막을 만들지 못함(기록만 남긴다)");
@@ -213,18 +216,77 @@ async fn cancellable<F: Future>(cancel: &CancellationToken, f: F) -> Result<F::O
     }
 }
 
-/// 커밋한 기록으로 자막을 만들어 `tmp`에 쓴다.
+/// 커밋한 기록으로 자막을 만들어 `tmp`에 쓴다(내용을 sync한 뒤에만 `Ok`).
+///
+/// 렌더러가 기록 전체를 메모리에 올리므로, 기록이 `max_bytes`를 넘으면 읽지 않고 `FileTooLarge`다
+/// (할당 실패로 프로세스가 죽는 대신 자막 실패로 끝낸다, core.md 구현 중 변경 66).
 fn write_subtitle(
     part: &mut ChatPart,
     format: SubtitleFormat,
     opts: &SubtitleOpts,
     tmp: &Path,
+    record: &Path,
+    max_bytes: u64,
 ) -> Result<(), Error> {
+    if part.committed() > max_bytes {
+        return Err(Error::FileTooLarge {
+            path: record.to_path_buf(),
+        });
+    }
     let msgs = part.read_messages()?;
     let text = match format {
         SubtitleFormat::Ass => render_ass(&msgs, opts),
         SubtitleFormat::Srt => render_srt(&msgs, opts),
         SubtitleFormat::None => return Ok(()),
     };
-    std::fs::write(tmp, text).map_err(|e| map_io_error("write", tmp, e))
+    write_synced(tmp, &text, File::sync_all)
+}
+
+/// `tmp`에 `text`를 쓰고 `sync`가 성공해야 `Ok`다. 크래시 뒤 덜 쓴 자막이 마무리(rename)로 넘어가
+/// 완성으로 취급되지 않게 한다. `sync`는 테스트가 실패를 주입하는 자리다(제품은 `File::sync_all`).
+fn write_synced(
+    tmp: &Path,
+    text: &str,
+    sync: impl FnOnce(&File) -> std::io::Result<()>,
+) -> Result<(), Error> {
+    let mut f = File::create(tmp).map_err(|e| map_io_error("write", tmp, e))?;
+    f.write_all(text.as_bytes())
+        .map_err(|e| map_io_error("write", tmp, e))?;
+    sync(&f).map_err(|e| map_io_error("sync", tmp, e))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+    use std::io;
+
+    use super::*;
+
+    /// sync는 내용을 다 쓴 뒤에 부르고, 그 성공 뒤에만 `Ok`다.
+    #[test]
+    fn write_synced_syncs_after_full_write() {
+        let dir = tempfile::tempdir().unwrap();
+        let tmp = dir.path().join("a.ass.part");
+        let called = Cell::new(false);
+        write_synced(&tmp, "자막 내용", |f| {
+            called.set(true);
+            assert_eq!(f.metadata()?.len(), "자막 내용".len() as u64);
+            Ok(())
+        })
+        .unwrap();
+        assert!(called.get(), "sync를 부르지 않았다");
+        assert_eq!(std::fs::read_to_string(&tmp).unwrap(), "자막 내용");
+    }
+
+    /// sync가 실패하면 `Err`다(호출자는 자막 실패로 처리하고 임시 파일을 지운다).
+    #[test]
+    fn write_synced_propagates_sync_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        let tmp = dir.path().join("a.srt.part");
+        let err = write_synced(&tmp, "x", |_| Err(io::Error::other("sync 주입 실패"))).unwrap_err();
+        assert!(
+            matches!(&err, Error::Io { op: "sync", path, .. } if path == &tmp),
+            "{err:?}"
+        );
+    }
 }

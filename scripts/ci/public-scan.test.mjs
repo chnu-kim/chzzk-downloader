@@ -246,8 +246,16 @@ test('PNG: tEXt·zTXt·iTXt(압축·비압축) 메타데이터는 검사한다',
     zTXt: chunk('zTXt', Buffer.concat([Buffer.from('Comment'), NUL, Buffer.from([0]), zTok])),
     'iTXt 비압축': chunk('iTXt', Buffer.concat([Buffer.from('Title'), NUL, Buffer.from([0, 0]), Buffer.from('ko'), NUL, NUL, Buffer.from('채널 가짜스트리머')])),
     'iTXt 압축': chunk('iTXt', Buffer.concat([Buffer.from('Title'), NUL, Buffer.from([1, 0]), Buffer.from('ko'), NUL, NUL, zKo])),
+    // 규격(latin1)을 어기고 UTF-8을 넣은 tEXt·zTXt도 원래 바이트대로 잡는다
+    'tEXt UTF-8': chunk('tEXt', Buffer.concat([Buffer.from('Comment'), NUL, Buffer.from('채널 가짜스트리머 방송')])),
+    'tEXt UTF-8 키워드': chunk('tEXt', Buffer.concat([Buffer.from('가짜스트리머'), NUL, Buffer.from('x')])),
+    'zTXt UTF-8': chunk('zTXt', Buffer.concat([Buffer.from('Comment'), NUL, Buffer.from([0]), zKo])),
+    'iTXt 언어 태그 UTF-8': chunk('iTXt', Buffer.concat([Buffer.from('Title'), NUL, Buffer.from([0, 0]), Buffer.from('가짜스트리머'), NUL, NUL, Buffer.from('x')])),
     'iTXt 번역 키워드': chunk('iTXt', Buffer.concat([Buffer.from('Title'), NUL, Buffer.from([0, 0]), Buffer.from('ko'), NUL, Buffer.from('가짜스트리머'), NUL, Buffer.from('x')])),
   };
+  // 규격대로 latin1로 쓴 글자(UTF-8로는 깨진다): 위 첨자 ³(0xB3)은 NFKC로 숫자 3이 된다
+  const latin = chunk('tEXt', Buffer.concat([Buffer.from('Comment'), NUL, Buffer.from('no 987654³ x', 'latin1')]));
+  assert.ok(scanBuffer(png(latin), sel('9876543')).some((f) => f.rule === 'denylist'), 'tEXt latin1');
   for (const [name, c] of Object.entries(cases)) {
     const rules = scanBuffer(png(c), deny).map((f) => f.rule);
     assert.ok(rules.includes('denylist') || rules.includes('signed-token') || rules.includes('hex-id'), `${name}: ${rules}`);

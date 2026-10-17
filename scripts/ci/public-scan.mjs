@@ -393,16 +393,26 @@ function splitNul(data, n) {
   return [parts, data.subarray(at)];
 }
 
+/**
+ * 바이트 조각을 UTF-8과 latin1 둘 다로 읽는다. 규격은 tEXt·zTXt·키워드를 latin1로 정하지만 실제로는 UTF-8을
+ * 넣는 도구가 있어, 한쪽으로만 읽으면 다른 쪽 글자가 깨져 검사를 비껴간다(Codex 리뷰).
+ */
+function bothEncodings(b) {
+  const u = b.toString('utf8');
+  const l = b.toString('latin1');
+  return u === l ? [u] : [u, l];
+}
+
 /** 텍스트 청크 하나를 글자들로. */
 function pngChunkTexts(type, data) {
   if (type === 'tEXt') {
     const [[key], text] = splitNul(data, 1);
-    return [key.toString('latin1'), text.toString('latin1')];
+    return [key, text].flatMap(bothEncodings);
   }
   if (type === 'zTXt') {
     const [[key], rest] = splitNul(data, 1);
     if (rest.length < 1) throw new Error('zTXt');
-    return [key.toString('latin1'), pngInflate(rest[0], rest.subarray(1)).toString('latin1')];
+    return [key, pngInflate(rest[0], rest.subarray(1))].flatMap(bothEncodings);
   }
   if (type === 'iTXt') {
     const [[key], rest] = splitNul(data, 1);
@@ -413,7 +423,7 @@ function pngChunkTexts(type, data) {
     if (flag === 0) text = body;
     else if (flag === 1) text = pngInflate(rest[1], body);
     else throw new Error('iTXt 압축 표지');
-    return [key.toString('latin1'), lang.toString('latin1'), tkey.toString('utf8'), text.toString('utf8')];
+    return [key, lang, tkey, text].flatMap(bothEncodings);
   }
   // 모르는 청크: 예전처럼 글자 조각과 UTF-16
   const out = [textRuns(data)];

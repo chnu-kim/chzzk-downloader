@@ -840,7 +840,9 @@ async fn locked_restart_reports_no_progress_and_keeps_part() {
     let e = Env::new();
     let holder = ChatPart::open(&e.record(), VOD_NO, false).unwrap();
     let part = chzzk_core::download::part::part_path(&e.record());
-    let before = std::fs::read(&part).unwrap();
+    // Windows는 잠긴 범위를 다른 핸들로 읽지 못한다(os error 33). 잠근 동안은 메타데이터만 보고 내용은 놓은 뒤에 본다.
+    let len_before = std::fs::metadata(&part).unwrap().len();
+    let sidecar_before = std::fs::read(sidecar_of(&e.record())).unwrap();
     let calls = Arc::new(AtomicU64::new(0));
     let calls2 = calls.clone();
     let err = chzzk(&server)
@@ -858,8 +860,14 @@ async fn locked_restart_reports_no_progress_and_keeps_part() {
         .unwrap_err();
     assert!(matches!(err, Error::FileLocked { .. }), "{err:?}");
     assert_eq!(calls.load(Ordering::Relaxed), 0, "열기 전에는 진행이 없다");
-    assert_eq!(std::fs::read(&part).unwrap(), before);
+    assert_eq!(std::fs::metadata(&part).unwrap().len(), len_before);
+    assert_eq!(holder.lines(), 0);
     drop(holder);
+    assert_eq!(std::fs::read(&part).unwrap().len() as u64, len_before);
+    assert_eq!(
+        std::fs::read(sidecar_of(&e.record())).unwrap(),
+        sidecar_before
+    );
 }
 
 /// 다른 영상의 sidecar는 이어받지 않는다(처음부터).

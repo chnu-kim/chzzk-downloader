@@ -1391,3 +1391,60 @@ async fn range_download_over_full_output_marks_it_replaced() {
     assert_eq!(err.code, ErrorCode::InvalidInput);
     assert_eq!(h.chat(a), None);
 }
+
+/// 채팅 태스크가 패닉해도 셸이 격리한다: 채팅만 `failed`(내부 오류)이고 영상은 완료 그대로, 다음 채팅이 돈다.
+#[tokio::test(start_paused = true)]
+async fn chat_task_panic_fails_only_that_chat() {
+    let h = Harness::new(1);
+    h.fake
+        .chat_for(h.output("a"), ChatScript::new().part(1).panics());
+    let a = h.enqueue_chat("a");
+    let b = h.enqueue_chat("b");
+    until("a 채팅 실패", || h.phase(a) == Some(ChatPhase::Failed)).await;
+    let j = h.job(a);
+    assert_eq!(j.status, JobStatus::Completed);
+    assert_eq!(j.error, None);
+    let c = j.chat.unwrap();
+    assert_eq!(c.error.unwrap().code, ErrorCode::Internal);
+    assert!(c.partial_bytes.is_some(), "받은 부분은 남는다");
+    until("b 채팅 완료", || {
+        h.phase(b) == Some(ChatPhase::Completed)
+    })
+    .await;
+}
+
+/// 멈춘 이유 없이 `Cancelled`로 끝나면(셸이 멈추지 않았다) 조용히 멈춤으로 두지 않고 `failed`(내부 오류)다.
+#[tokio::test(start_paused = true)]
+async fn cancelled_without_stop_reason_is_failed() {
+    let h = Harness::new(1);
+    h.fake
+        .chat_for(h.output("a"), ChatScript::new().fails(Error::Cancelled));
+    let id = h.enqueue_chat("a");
+    until("채팅 실패", || h.phase(id) == Some(ChatPhase::Failed)).await;
+    let c = h.chat(id).unwrap();
+    assert_eq!(c.error.unwrap().code, ErrorCode::Internal);
+    assert_eq!(h.job(id).status, JobStatus::Completed);
+}
+
+/// 끝난 채팅의 일시정지는 아무것도 하지 않고, 채팅이 없는 작업은 `invalidInput`이다.
+#[tokio::test(start_paused = true)]
+async fn pause_chat_ignores_finished_and_rejects_no_chat() {
+    let h = Harness::new(1);
+    let id = h.enqueue_chat("a");
+    until("채팅 완료", || {
+        h.phase(id) == Some(ChatPhase::Completed)
+    })
+    .await;
+    let before = h.rec.events().len();
+    h.mgr.pause_chat(id).unwrap();
+    settle().await;
+    assert_eq!(h.phase(id), Some(ChatPhase::Completed));
+    assert_eq!(h.rec.events().len(), before, "이벤트가 없다");
+
+    let plain = h.mgr.enqueue(request("b"), &h.defaults()).unwrap().id;
+    until("b 완료", || h.job(plain).status == JobStatus::Completed).await;
+    assert_eq!(
+        h.mgr.pause_chat(plain).unwrap_err().code,
+        ErrorCode::InvalidInput
+    );
+}

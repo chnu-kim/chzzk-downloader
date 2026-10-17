@@ -170,6 +170,8 @@ pub enum ChatStep {
     Stubborn(Arc<Notify>),
     /// 코어처럼 받다 만 기록(`.chat.jsonl.part`, `lines`줄)과 이 영상의 sidecar를 쓴다
     Part { lines: u64 },
+    /// 패닉한다(셸의 패닉 격리 확인용)
+    Panic,
 }
 
 /// `collect_chat` 한 번의 대본. 결과를 정하지 않으면 `Completed`(받다 만 파일을 지우고 기록을 최종 이름으로 쓴다).
@@ -209,6 +211,11 @@ impl ChatScript {
 
     pub fn part(mut self, lines: u64) -> Self {
         self.steps.push(ChatStep::Part { lines });
+        self
+    }
+
+    pub fn panics(mut self) -> Self {
+        self.steps.push(ChatStep::Panic);
         self
     }
 
@@ -533,6 +540,7 @@ impl Backend for FakeBackend {
                     }
                 }
                 ChatStep::Part { lines } => write_chat_part(&req.output, req.video_no, lines),
+                ChatStep::Panic => panic!("가짜 채팅 수집 패닉"),
             }
         }
         match script.end {

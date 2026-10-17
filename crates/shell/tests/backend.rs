@@ -86,8 +86,26 @@ fn chzzk_futures_are_send() {
         Arc::new(|_| {}),
     );
     assert_send_static(&f);
-    let f = resolve_task(chzzk, c);
+    let f = resolve_task(chzzk.clone(), c);
     assert_send_static(&f);
+
+    // 채팅 수집(④-4)도 같다
+    let on_chat = |_: chzzk_core::chat::ChatProgress| {};
+    let f = Backend::collect_chat(
+        &*chzzk,
+        chzzk_core::chat::ChatRequest {
+            video_no: 1,
+            output: PathBuf::from("/x/a.mp4"),
+            subtitle: chzzk_core::chat::SubtitleFormat::Ass,
+            duration_ms: None,
+            restart: false,
+            on_existing: DuplicatePolicy::Skip,
+        },
+        CancellationToken::new(),
+        &on_chat,
+    );
+    assert_send(&f);
+    drop(f);
 }
 
 fn collector() -> (Arc<Mutex<Vec<Progress>>>, Sink) {

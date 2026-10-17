@@ -570,6 +570,9 @@ export function scanBuffer(buf, deny) {
       if (!m || seen.has(m.be)) continue;
       seen.add(m.be);
       texts.push(utf16Decode(target, m));
+      // 예전 해석(추정한 빅엔디언도 BOM처럼 앞 두 바이트를 뗐다)도 본다. 첫 글자를 살리면 그 글자가 첫 토큰에
+      // 붙어 예전에 잡던 토큰을 잃을 수 있다(결과는 넓히기만 한다)
+      if (m.be && !m.bom) texts.push(utf16Decode(target, { be: true, bom: true }));
     }
   }
   for (const t of texts) for (const f of scanText(t, deny)) found.push({ line: 0, rule: f.rule });

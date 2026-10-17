@@ -548,6 +548,37 @@ test('PNG: 속성 — 이 브랜치의 결과 ⊇ origin/master scanBuffer의 �
   assert.ok(masterHits > 200, `master 일치 ${masterHits}건`);
 });
 
+test('속성 — PNG가 아닌 파일(UTF-16 등)도 이 브랜치의 결과 ⊇ origin/master scanBuffer의 결과', async () => {
+  const master = await import(pathToFileURL(ORACLE_PATH).href);
+  // 재현: BOM 없는 UTF-16BE에서 master는 앞 두 바이트를 떼고 읽는다. 첫 글자를 살려 읽기만 하면
+  // 'X'가 첫 토큰에 붙어(xbob) 'Bob' 일치를 잃는다. 두 해석을 모두 본다
+  const bob = sel('Bob');
+  const xb = be16('XBob rest');
+  assert.ok(master.scanBuffer(xb, bob).some((f) => f.rule === 'denylist'));
+  assert.ok(scanBuffer(xb, bob).some((f) => f.rule === 'denylist'), 'BOM 없는 UTF-16BE 앞 글자 + 토큰');
+  const WORDS = ['Fake', 'Studio', 'Demo', 'Reel', 'Bob', 'Zq7Kp2Lm9X', '가짜스트리머', '9876543'];
+  const PHRASES = [...WORDS, 'Fake Studio', 'Demo Reel', 'Fake Studio Demo Reel'];
+  const rand = rng(0x16);
+  const pick = (xs) => xs[Math.floor(rand() * xs.length)];
+  let masterHits = 0;
+  for (let i = 0; i < 200; i++) {
+    let s = pick(['', 'X', 'a1', ' ', '\n']);
+    for (let k = 1 + Math.floor(rand() * 4); k > 0; k--) s += pick(WORDS) + pick([' ', '\n', '', '\0', 'x']);
+    if (rand() < 0.2) s += 'NID_' + 'AUT=' + 'Ab9'.repeat(10);
+    const r = rand();
+    const body = r < 0.3 ? le16(s) : r < 0.6 ? be16(s) : r < 0.75 ? Buffer.concat([Buffer.from([0xff, 0xfe]), le16(s)]) : r < 0.9 ? Buffer.concat([Buffer.from([0xfe, 0xff]), be16(s)]) : Buffer.concat([Buffer.from(s), NUL, Buffer.from(pick(WORDS))]);
+    const mine0 = new Set(scanBuffer(body, new Set()).map((f) => f.rule));
+    for (const f of master.scanBuffer(body, new Set())) assert.ok(mine0.has(f.rule), `${i}: ${f.rule}`);
+    for (const p of PHRASES) {
+      const deny = sel(p);
+      if (!master.scanBuffer(body, deny).some((f) => f.rule === 'denylist')) continue;
+      masterHits++;
+      assert.ok(scanBuffer(body, deny).some((f) => f.rule === 'denylist'), `${i}: '${p}'`);
+    }
+  }
+  assert.ok(masterHits > 100, `master 일치 ${masterHits}건`);
+});
+
 test('PNG: IDAT를 0으로 바꿔 UTF-16 추정이 뒤집혀도 원본 추정 쪽 해석을 잃지 않는다', async () => {
   const master = await import(pathToFileURL(ORACLE_PATH).href);
   const cookie = 'NID_' + 'AUT=' + 'Ab9'.repeat(10);

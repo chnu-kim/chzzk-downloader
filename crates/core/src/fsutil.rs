@@ -330,6 +330,25 @@ mod tests {
     }
 
     /// 임시 파일은 대상 이름으로 시작하고, 남은 것은 그 대상의 것만 지운다.
+    /// 부모가 없는 상대 경로(`name`만)는 현재 폴더(`.`)에 쓰고 치운다. 빈 부모 경로로 열려 하지 않는다.
+    #[test]
+    fn bare_file_name_uses_current_dir() {
+        let name = format!("fsutil-bare-{}.tmpcheck", std::process::id());
+        let stale = format!("{name}.Ab12Cd.tmp");
+        let path = Path::new(&name);
+        assert!(path.parent().is_some_and(|d| d.as_os_str().is_empty()));
+        // 지울 때 남은 파일이 있으면 아래 단언이 헷갈리므로 먼저 치운다.
+        let _ = std::fs::remove_file(&name);
+        atomic_write(path, b"hello").unwrap();
+        assert_eq!(std::fs::read(&name).unwrap(), b"hello");
+        std::fs::write(&stale, b"stale").unwrap();
+        remove_stale_temps(path);
+        let stale_left = Path::new(&stale).exists();
+        let _ = std::fs::remove_file(&name);
+        let _ = std::fs::remove_file(&stale);
+        assert!(!stale_left, "현재 폴더의 남은 임시 파일을 지우지 못했다");
+    }
+
     #[test]
     fn stale_temps_named_and_removed() {
         let dir = tempfile::tempdir().unwrap();

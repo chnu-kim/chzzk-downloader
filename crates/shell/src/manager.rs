@@ -179,7 +179,7 @@ impl Job {
     }
 
     /// 영상은 완료됐고 채팅이 줄에 있거나 받는 중이다. 그동안 같은 출력에 다른 영상이 들어오면 바뀐 영상 옆에
-    /// 원래 영상의 채팅·자막이 놓이므로 출력을 예약한다(Codex PR #141 ①, app.md 83). 완료가 아닌 작업의 대기 채팅은
+    /// 원래 영상의 채팅·자막이 놓이므로 출력을 예약한다(Codex PR #141 ①, app.md 85). 완료가 아닌 작업의 대기 채팅은
     /// 영상 상태가 예약을 정한다. 멈춘·실패한 채팅은 예약하지 않는다(다른 영상이면 코어가 sidecar를 보고 처음부터 받는다).
     /// 단 채팅 태스크가 아직 살아 있으면(종료 기한을 넘겨 멈춘 것으로 보이는 실행) 끝날 때까지 예약한다(3차 ①).
     fn collects_chat(&self) -> bool {
@@ -316,7 +316,7 @@ impl State {
     }
 
     /// 작업 `id`의 끊긴 채팅을 되살리면 안 되는가: 같은 출력을 다른 작업이 쓰고 있다(그 사이 다른 영상이 들어왔다).
-    /// 영상의 `blocks_requeue`처럼 이번에는 건너뛰고 `interrupted`로 둔다(Codex PR #141 ①, app.md 83-13).
+    /// 영상의 `blocks_requeue`처럼 이번에는 건너뛰고 `interrupted`로 둔다(Codex PR #141 ①, app.md 85-13).
     /// 출력이 다른 컨텐츠로 대체된 기록(`output_replaced`)도 같다(Codex PR #141 2차 ①).
     fn chat_output_taken(&self, id: JobId) -> bool {
         self.jobs.get(&id).is_some_and(|j| {

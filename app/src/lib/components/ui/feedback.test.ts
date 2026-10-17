@@ -311,6 +311,28 @@ describe('Notice', () => {
     expect(run).not.toHaveBeenCalled();
   });
 
+  it('help는 동작 줄·라이브 영역과 분리된 줄의 링크형 버튼 하나이고 누르면 실행한다(L2)', async () => {
+    const user = userEvent.setup();
+    const open = vi.fn();
+    const { container } = render(NoticeHarness, {
+      tone: 'danger',
+      actions: [{ id: 'retry', label: '다시 시도', onclick: () => {} }],
+      help: { label: '도움말 보기: 주제', onclick: open },
+    });
+    const line = container.querySelector('.notice > .notice-help') as HTMLElement;
+    const link = within(line).getByRole('button', { name: '도움말 보기: 주제' });
+    expect(link).toHaveClass('btn-ghost', 'btn-sm', 'btn-inline', 'edge-start');
+    expect(container.querySelector('.notice-actions')?.contains(link)).toBe(false);
+    expect(container.querySelector('.notice-text')?.contains(link)).toBe(false);
+    // 동작 줄 뒤에 온다
+    expect(container.querySelector('.notice')?.lastElementChild).toBe(line);
+    await user.click(link);
+    expect(open).toHaveBeenCalledOnce();
+    // 없으면 그 줄도 없다
+    const plain = render(NoticeHarness, { tone: 'danger' });
+    expect(plain.container.querySelector('.notice-help')).toBeNull();
+  });
+
   it('동작이 3개를 넘으면 앞 3개만 보인다', () => {
     const actions = ['a', 'b', 'c', 'd'].map((id) => ({ id, label: id, onclick: () => {} }));
     const { container } = render(NoticeHarness, { actions });

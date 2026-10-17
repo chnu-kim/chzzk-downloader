@@ -93,7 +93,7 @@ pub struct JobRecord {
     /// 남아 있어야 옛 `.part`를 이어받지 않는다. 지운 뒤 false로 저장한다.
     #[serde(default)]
     pub discard_on_start: bool,
-    /// 완료 뒤 같은 출력을 다른 컨텐츠가 받아 완료해 영상 파일이 그 컨텐츠로 바뀌었다(Codex PR #141 2차 ①, app.md 83-14).
+    /// 완료 뒤 같은 출력을 다른 컨텐츠가 받아 완료해 영상 파일이 그 컨텐츠로 바뀌었다(Codex PR #141 2차 ①, app.md 85-14).
     /// 그 파일 옆에 이 기록의 채팅·자막을 놓지 않는다(채팅만 받기 거부, 자동·종료 취소 되살리기 건너뜀). 대체한 기록이
     /// 정리돼도 남아야 하므로 저장한다. 이 기록이 다시 받아 완료하면 지운다. 옛 레코드에는 없다(`false`)
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]

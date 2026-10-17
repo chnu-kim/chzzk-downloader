@@ -1284,6 +1284,45 @@ fn open_web_page_opens_fixed_worker_pages_while_signed_out() {
     assert_eq!(f.io.opened.lock().unwrap().len(), 2);
 }
 
+/// 오류 L2 도움말 링크: 앵커는 도움말에만, 닫힌 집합(`help/ids.json`) 안에서만 붙는다(app.md 구현 중 변경 84).
+#[test]
+fn open_web_page_help_anchor_opens_topic_and_rejects_others() {
+    let worker = worker_server(None);
+    let f = fixture_auth(&worker);
+    invoke(
+        &f.main,
+        "open_web_page",
+        json!({"page": "help", "anchor": "editors"}),
+    )
+    .unwrap();
+    invoke(&f.main, "open_web_page", json!({"page": "help"})).unwrap();
+    let base = worker.uri();
+    assert_eq!(
+        *f.io.opened.lock().unwrap(),
+        vec![format!("{base}/help#editors"), format!("{base}/help")]
+    );
+    // 도움말이 아닌 페이지의 앵커는 invalidInput, 모르는 주제는 거부. 둘 다 아무것도 열지 않는다
+    let e = invoke(
+        &f.main,
+        "open_web_page",
+        json!({"page": "privacy", "anchor": "editors"}),
+    )
+    .unwrap_err();
+    assert_eq!(e["code"], json!("invalidInput"));
+    for bad in ["terms", "Editors", "editors#x", "../privacy"] {
+        assert!(
+            invoke(
+                &f.main,
+                "open_web_page",
+                json!({"page": "help", "anchor": bad})
+            )
+            .is_err(),
+            "{bad}"
+        );
+    }
+    assert_eq!(f.io.opened.lock().unwrap().len(), 2);
+}
+
 /// 로그인 서버가 없는 빌드는 열 곳이 없어 `invalidInput`이고 브라우저를 열지 않는다.
 #[test]
 fn open_web_page_without_worker_is_invalid_input() {

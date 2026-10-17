@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // 네이티브 E2E의 가짜 치지직 서버(docs/design/cicd.md §6 "네이티브 E2E"). `testdata/`의 합성 fixture만 서빙한다:
 // 빠른 다시보기(HLS) 영상 하나(`testdata/hls/`)의 info → master → media(앞 두 조각 + ENDLIST) → init·조각 둘.
-// 같은 info에서 영상 번호·채널만 바꾼 "남의 영상" 하나(OTHER_URL)도 준다(본인 영상 검사, A5).
+// 같은 info에서 영상 번호·채널만 바꾼 "남의 영상" 하나(OTHER_URL, 본인 영상 검사 A5)와 "맡은 채널 영상" 하나(DELEGATED_URL,
+// 편집자 위임 ①: Worker 스텁의 delegatedChannels에 그 채널을 넣으면 받을 수 있다)도 준다.
 // `--features e2e` 앱이 `CHZZK_E2E_API_BASE`로 이 서버를 API·vodplay 기본 주소로 쓴다. 네트워크는 루프백뿐이다.
 //
 // 같은 모듈의 `startWorker()`는 로그인 Worker 스텁이다(별도 리스너, `CHZZK_E2E_WORKER_BASE`). worker/src 계약과 같은 모양의
@@ -31,7 +32,15 @@ export const OTHER_CHANNEL_ID = '000000000000000000000000000000c3';
 export const OTHER_VIDEO_NO = 9000101;
 export const OTHER_URL = `https://chzzk.naver.com/video/${OTHER_VIDEO_NO}`;
 export const OTHER_CHANNEL_NAME = '다른채널';
-const OWN_CHANNEL_NAME = '테스트채널';
+export const OWN_CHANNEL_NAME = '테스트채널';
+// 맡은 채널 영상(편집자 위임 ①, app.md 구현 중 변경 83): 같은 HLS info에서 영상 번호·채널만 바꾼다. 채널 ID는 셸
+// `token::is_channel_id`(소문자 hex 32자)를 지나야 맡은 목록에 남는다
+export const DELEGATED_CHANNEL_ID = '000000000000000000000000000000b2';
+export const DELEGATED_VIDEO_NO = 9000201;
+export const DELEGATED_URL = `https://chzzk.naver.com/video/${DELEGATED_VIDEO_NO}`;
+export const DELEGATED_CHANNEL_NAME = '맡은채널';
+// Worker 스텁 delegatedChannels 한 원소(실제 Worker tokenBundleJson과 같은 두 키. /api/me는 스텁이 since를 붙인다)
+export const DELEGATED = { channelId: DELEGATED_CHANNEL_ID, channelName: DELEGATED_CHANNEL_NAME };
 // media playlist에서 남길 조각 수(fixture 조각 파일은 seg0·seg1 둘뿐이다)
 const KEEP_SEGMENTS = 2;
 
@@ -55,19 +64,27 @@ export function truncateMedia(text, n = KEEP_SEGMENTS) {
   return `${kept.join('\n')}\n#EXT-X-ENDLIST\n`;
 }
 
-// HLS info → 남의 영상 info. 바꿀 문자열이 하나라도 없으면 throw(fixture가 바뀐 것을 조용히 넘기지 않는다)
-export function otherVideoInfo(text) {
+// HLS info → 영상 번호·채널 ID·채널 이름만 바꾼 info. 바꿀 문자열이 하나라도 없으면 throw(fixture가 바뀐 것을 조용히 넘기지 않는다)
+export function variantVideoInfo(text, { videoNo, channelId, channelName }) {
   let s = text;
   for (const [from, to] of [
-    [String(HLS_VIDEO_NO), String(OTHER_VIDEO_NO)],
-    [OWN_CHANNEL_ID, OTHER_CHANNEL_ID],
-    [OWN_CHANNEL_NAME, OTHER_CHANNEL_NAME],
+    [String(HLS_VIDEO_NO), String(videoNo)],
+    [OWN_CHANNEL_ID, channelId],
+    [OWN_CHANNEL_NAME, channelName],
   ]) {
-    if (!s.includes(from)) throw new Error(`남의 영상 info: fixture에 ${from}이(가) 없다`);
+    if (!s.includes(from)) throw new Error(`영상 info 변형: fixture에 ${from}이(가) 없다`);
     s = s.replaceAll(from, to);
   }
   return s;
 }
+
+// HLS info → 남의 영상 info
+export const otherVideoInfo = (text) =>
+  variantVideoInfo(text, { videoNo: OTHER_VIDEO_NO, channelId: OTHER_CHANNEL_ID, channelName: OTHER_CHANNEL_NAME });
+
+// HLS info → 맡은 채널 영상 info
+export const delegatedVideoInfo = (text) =>
+  variantVideoInfo(text, { videoNo: DELEGATED_VIDEO_NO, channelId: DELEGATED_CHANNEL_ID, channelName: DELEGATED_CHANNEL_NAME });
 
 export function expectedOutput(root = ROOT) {
   const bytes = Buffer.concat(['hls/init.mp4', 'hls/seg0.m4v', 'hls/seg1.m4v'].map((f) => fixture(root, f)));
@@ -82,6 +99,10 @@ export function route(root, path, origin) {
   if (path === `/service/v2/videos/${OTHER_VIDEO_NO}`) {
     const info = rewriteHosts(fixture(root, 'hls/video_info.json').toString('utf8'), origin);
     return ['application/json', Buffer.from(otherVideoInfo(info))];
+  }
+  if (path === `/service/v2/videos/${DELEGATED_VIDEO_NO}`) {
+    const info = rewriteHosts(fixture(root, 'hls/video_info.json').toString('utf8'), origin);
+    return ['application/json', Buffer.from(delegatedVideoInfo(info))];
   }
   if (path.endsWith('/vod_playlist.m3u8')) return ['application/vnd.apple.mpegurl', fixture(root, 'hls/master.m3u8')];
   if (path.endsWith('/vod_chunklist.m3u8')) {

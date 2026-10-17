@@ -164,7 +164,7 @@ pub struct ChatRun {
     pub handle: Option<JoinHandle<()>>,
     pub stop: Option<ChatStop>,
     /// 이 실행이 끝나기 전에 같은 작업을 다시 줄 세우려 했다(종료 기한을 넘긴 실행 뒤 `cancel_quit`·이어받기).
-    /// 끝이 `Cancelled`면 `interrupted`로 두지 않고 새 실행을 줄 세운다(Codex PR #141 2차 ③, app.md 83-14)
+    /// 끝이 `Cancelled`면 `interrupted`로 두지 않고 새 실행을 줄 세운다(Codex PR #141 2차 ③, app.md 85-14)
     pub requeue: bool,
 }
 

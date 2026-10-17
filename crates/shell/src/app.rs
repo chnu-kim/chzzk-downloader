@@ -20,9 +20,9 @@ use crate::auth::{
     EditorsError, HttpWorkerApi, SessionStore, SystemClock, WorkerBase, client_label, token,
 };
 use crate::dto::{
-    AppFolder, AppInfo, AuthStatusDto, EditorsDto, EnqueueRequest, Features, InviteDto, JobDto,
-    OnExisting, OutputCheck, ResolvedDto, SettingsDto, SettingsPatch, TimeRangeDto, UpdateCheckDto,
-    UpdateInfoDto, UpdateInstallDto, WebPage,
+    AppFolder, AppInfo, AuthStatusDto, EditorsDto, EnqueueRequest, Features, HelpId, InviteDto,
+    JobDto, OnExisting, OutputCheck, ResolvedDto, SettingsDto, SettingsPatch, TimeRangeDto,
+    UpdateCheckDto, UpdateInfoDto, UpdateInstallDto, WebPage,
 };
 use crate::error::{AppError, ErrorCode};
 use crate::gate;
@@ -214,7 +214,8 @@ impl App {
 
     /// `open_web_page`가 열 주소: 로그인 서버(Worker) 출처 아래 고정 경로(system/patterns.md §13·§14.4).
     /// 로그인을 쓰지 않는 빌드는 열 곳이 없다(화면이 링크를 그리지 않는다).
-    pub fn web_page_url(&self, page: WebPage) -> Result<String, AppError> {
+    /// `anchor`는 도움말에만 붙는다(`/help#<id>`, 오류 L2 링크, app.md 구현 중 변경 84). 다른 페이지에 붙이면 `invalidInput`.
+    pub fn web_page_url(&self, page: WebPage, anchor: Option<HelpId>) -> Result<String, AppError> {
         let base = self
             .worker_base
             .as_ref()
@@ -224,7 +225,13 @@ impl App {
             WebPage::Licenses => "/licenses",
             WebPage::Help => "/help",
         };
-        Ok(base.url(path))
+        match (page, anchor) {
+            (_, None) => Ok(base.url(path)),
+            (WebPage::Help, Some(id)) => Ok(base.url(&format!("{path}#{}", id.as_str()))),
+            (_, Some(_)) => Err(AppError::invalid_input(
+                "도움말이 아닌 페이지에는 앵커를 붙일 수 없습니다",
+            )),
+        }
     }
 
     /// `update_settings`. 동시 작업 수를 매니저에도 반영한다.

@@ -9,6 +9,7 @@ import type {
   CloseRequestedPayload,
   EditorsDto,
   EngineProbe,
+  HelpId,
   KeepAwakePayload,
   AuthStatusDto,
   ChatOutputCheck,
@@ -112,8 +113,12 @@ export const clipboardLink = () => call<string | null>('clipboard_link');
 export const openAppFolder = (kind: AppFolder) => call<void>('open_app_folder', { kind });
 /** 첫 화면을 그렸다는 신호(`ready.ts`가 한 번만 부른다). 보통 실행은 아무 일도 없고 `--smoke`면 앱이 끝난다 */
 export const frontendReady = (probe: EngineProbe) => call<void>('frontend_ready', { probe });
-/** 로그인 서버(Worker)의 고정 페이지를 기본 브라우저로 연다(로그인 전에도 부를 수 있다, gate 허용 목록) */
-export const openWebPage = (page: WebPage) => call<void>('open_web_page', { page });
+/**
+ * 로그인 서버(Worker)의 고정 페이지를 기본 브라우저로 연다(로그인 전에도 부를 수 있다, gate 허용 목록).
+ * `anchor`는 도움말 주제(`/help#<id>`, 오류 L2 링크). 도움말이 아닌 페이지에 붙이면 셸이 `invalidInput`으로 거부한다
+ */
+export const openWebPage = (page: WebPage, anchor?: HelpId) =>
+  call<void>('open_web_page', anchor === undefined ? { page } : { page, anchor });
 
 /** Rust가 창 닫기·앱 종료를 막았다는 이벤트 이름(§4). 받는 중인 작업 수와 함께 온다(D1) */
 export const CLOSE_REQUESTED = 'close-requested';

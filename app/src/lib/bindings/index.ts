@@ -23,6 +23,7 @@ export type * from "./EnqueueRequest";
 export type * from "./ErrorCode";
 export type * from "./ErrorPayload";
 export type * from "./Features";
+export type * from "./HelpId";
 export type * from "./InviteDto";
 export type * from "./JobDto";
 export type * from "./JobEvent";

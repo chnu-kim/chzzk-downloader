@@ -6,6 +6,7 @@ use chzzk_core::{
     TextScale, Theme, UserSettings,
 };
 use chzzk_shell::auth::{AuthPhase, AuthReason, AuthStatus, Cause, OfflineInfo, PendingInfo};
+use chzzk_shell::dto::HelpId;
 use chzzk_shell::dto::{AppInfo, Features, OsDto};
 use chzzk_shell::dto::{
     AuthReasonDto, AuthStatusDto, ContentKindDto, ContentMetaDto, ContentRefTs, EnqueueRequest,
@@ -1089,4 +1090,47 @@ fn enqueue_request_save_chat_is_optional() {
     with["saveChat"] = json!(true);
     let r: EnqueueRequest = serde_json::from_value(with).unwrap();
     assert!(r.save_chat);
+}
+
+/// 도움말 앵커(`open_web_page`의 `anchor`): kebab-case 왕복, 닫힌 집합 밖은 거부.
+#[test]
+fn help_id_json_round_trips_and_rejects_unknown() {
+    for id in HelpId::ALL {
+        let v = to_json(&id);
+        assert_eq!(v, json!(id.as_str()));
+        assert_eq!(serde_json::from_value::<HelpId>(v).unwrap(), id);
+    }
+    assert_eq!(to_json(&HelpId::DiskFull), json!("disk-full"));
+    assert_eq!(to_json(&HelpId::WindowsOldApp), json!("windows-old-app"));
+    for bad in [
+        "",
+        "Editors",
+        "editors ",
+        "terms",
+        "disk_full",
+        "../privacy",
+        "editors#x",
+    ] {
+        assert!(
+            serde_json::from_value::<HelpId>(json!(bad)).is_err(),
+            "{bad:?}"
+        );
+    }
+}
+
+/// Rust 집합 = `help/ids.json`의 `ids`(Worker `/help`가 h2 id로 다는 집합). 한쪽만 고치면 깨진다.
+#[test]
+fn help_id_set_matches_help_ids_json() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../help/ids.json");
+    let raw: Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    let mut want: Vec<String> = raw["ids"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap().to_owned())
+        .collect();
+    let mut got: Vec<String> = HelpId::ALL.iter().map(|i| i.as_str().to_owned()).collect();
+    want.sort();
+    got.sort();
+    assert_eq!(got, want);
 }

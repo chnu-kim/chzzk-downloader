@@ -155,7 +155,7 @@ export const GATES = {
     ],
   },
   versions: {
-    desc: 'Cargo 멤버·tauri.conf.json·app/package.json 버전 일치(--tag vX.Y.Z도 비교)',
+    desc: 'Cargo 멤버·tauri.conf.json·app/package.json 버전 일치(--tag vX.Y.Z도 비교) + Cargo.lock minisign-verify 단일',
     needs: ['cargo'],
     passArgs: true,
     steps: [{ cmd: ['node', S('version-check.mjs')] }],
@@ -545,7 +545,7 @@ export const PUBKEY_FILES = [/^release\/updater\.pub$/, /^release\/tauri\.releas
 // release-selftest가 기대는 파일: xtask, release/ 표, release.mjs와 그 상대 import 전부, 배포 설정 원본(worker/wrangler.jsonc, tools.json의 wrangler 버전)(release.test.mjs가 import 그래프로
 // 이 목록이 빠짐없는지 확인한다, 리뷰 G6), Cargo.lock(xtask 의존성)
 export const RELEASE_SELFTEST_FILES = [/^xtask\//, /^release\//, /^scripts\/ci\/(release|s3-fake|bundle|smoke|version-check|gates|run|push-guard|snapshot|public-scan|worker-deploy|worker-stub)\.mjs$/, /^scripts\/ci\/tools\.json$/, /^worker\/wrangler\.jsonc$/, /^Cargo\.lock$/];
-const VERSION_FILES = [/(^|\/)Cargo\.toml$/, /^app\/package\.json$/, /^app\/src-tauri\/tauri\.conf\.json$/];
+const VERSION_FILES = [/(^|\/)Cargo\.(toml|lock)$/, /^app\/package\.json$/, /^app\/src-tauri\/tauri\.conf\.json$/];
 // design-tokens가 읽는 원천·생성물·패리티 문서·상수 파일(governance.md §2.1)
 const DESIGN_TOKENS_FILES = [
   /^design\//,

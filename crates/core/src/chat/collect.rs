@@ -101,11 +101,14 @@ impl Chzzk {
             None => self.walk_pages(&mut part, &req, &cancel, &report).await?,
         };
 
-        // 자막(이미 최종 이름으로 옮겼으면 다시 만들지 않는다)
+        // 자막(이미 최종 이름으로 옮겼으면 다시 만들지 않는다). rename 뒤 `moved` 기록 전에 멈췄던
+        // 이동도 옮긴 것이다: 임시 파일을 다시 만들면 마무리가 자기 자막에 막힌다. 그 판정은 sidecar의
+        // 이동 의도로 하므로 원래 있던 무관한 자막은 여기 걸리지 않는다.
         let mut companions = Vec::new();
         let mut subtitle_failed = false;
         if let Some(to) = subtitle
             && !part.is_moved(&to)
+            && !part.is_move_interrupted(&part_path(&to), &to)
         {
             let tmp = part_path(&to);
             let opts = SubtitleOpts {

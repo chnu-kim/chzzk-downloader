@@ -20,6 +20,7 @@
 // 줄마다 원문과, 디코드한 형태(JSON \uXXXX·\/, HTML 엔티티, %xx를 세 겹까지, NFKC, 폭 없는 문자 제거)를
 // 함께 본다. 줄 안의 base64 덩어리가 글자로 풀리면 그것도 본다. NUL이 든 파일은 UTF-16과 글자 조각을 뽑아 본다.
 // 온전한 PNG는 픽셀·구조 청크를 건너뛰고 텍스트 청크(tEXt·zTXt·iTXt, 압축은 풀어서, 본문은 UTF-16으로도)와 모르는 청크만 본다.
+// 텍스트 청크 본문에 NUL이 하나라도 있으면(UTF-16일 수 있다) 그 PNG는 파일 전체도 예전처럼 본다.
 //
 // 규칙
 //   signed-token   hdnts=/hdntl= 토큰에 실제 시각(9자리 이상 숫자)이 든 것, 또는 어디서든 st=/exp=에 10자리 시각
@@ -355,10 +356,17 @@ function utf16(buf) {
   return sw.swap16().toString('utf16le');
 }
 
+/** 추정 없이 UTF-16LE·BE 두 벌로 읽는다(짝수 정렬의 BE는 홀수 오프셋의 LE를 읽는다). */
+function utf16Forced(buf) {
+  const b = buf.subarray(0, buf.length & ~1);
+  return [b.toString('utf16le'), Buffer.from(b).swap16().toString('utf16le')];
+}
+
 // ---- PNG ----
 // 스냅샷 PNG의 압축 픽셀 바이트에서 우연히 생긴 글자 조각이 n-gram에 맞는 오탐을 없앤다(cicd.md 구현 중 변경 115).
 // 사람이 넣을 수 있는 글자(텍스트 청크·모르는 청크)는 계속 본다. 조금이라도 어긋나면 null을 돌려
-// 파일 전체를 예전처럼 글자 검사한다(안전 쪽).
+// 파일 전체를 예전처럼 글자 검사한다(안전 쪽). 텍스트 청크 본문에 NUL이 있으면(UTF-16 의심) 온전해도
+// 파일 전체를 예전처럼 함께 본다: 필드 경계·엔디언·압축 조합의 우회를 하나씩 막지 않고 부류째 닫는다.
 
 const PNG_SIG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 // 글자 검사를 건너뛰는 청크는 IHDR·IDAT·IEND뿐이고, 모두 모양을 확인한다. IHDR·IEND는 모양이 정해져 있어 글자를
@@ -441,12 +449,16 @@ function splitNul(data, n) {
  * 줄 바꿈으로 이은 흐름을 UTF-8과 latin1 두 벌 만든다. n-gram이 필드·청크 경계를 넘어 이어져야
  * 키워드와 본문에 걸친 구도 잡힌다(필드마다 따로 검사하면 끊긴다, Codex 리뷰). 규격은 tEXt·zTXt·키워드를
  * latin1로 정하지만 UTF-8을 넣는 도구가 있어 둘 다 읽는다(한쪽만 읽으면 다른 쪽 글자가 깨진다).
- * 한 흐름에 여러 해석을 섞지 않는다: 본문의 UTF-16 해석은 따로 둔다(extra).
+ * 한 흐름에 여러 해석을 섞지 않는다: 본문·모르는 청크의 UTF-16 해석은 따로 UTF-16 흐름 하나로 잇는다(조각마다
+ * 엔디언·정렬을 따로 추정하고, 청크 여러 개에 나뉜 구도 이어진다, Codex 리뷰).
+ * suspect: 텍스트 청크 본문(풀린 것 포함)에 NUL이 있다. UTF-16일 수 있어 파일 전체 검사도 한다(scanBuffer).
  */
 class PngTextCollector {
   utf8 = [];
   latin1 = [];
-  extra = [];
+  u16 = [];
+  suspect = false;
+  bodies = [];
   field(b) {
     this.utf8.push(b.toString('utf8'));
     this.latin1.push(b.toString('latin1'));
@@ -454,8 +466,10 @@ class PngTextCollector {
   /** 텍스트 청크 본문: 흐름에 더해 UTF-16(BOM이 있거나 한쪽 바이트가 대부분 0이면)으로도 읽는다. */
   body(b) {
     this.field(b);
+    if (b.includes(0)) this.suspect = true;
+    this.bodies.push(b);
     const u = utf16(b);
-    if (u) this.extra.push(u);
+    if (u) this.u16.push(u);
   }
   /** 이미 글자인 것(모르는 청크의 글자 조각)은 두 흐름에 같이 넣는다. */
   text(t) {
@@ -470,21 +484,21 @@ class PngTextCollector {
       out.push(u);
       if (l !== u) out.push(l);
     }
-    return out.concat(this.extra);
+    if (this.u16.length) out.push(this.u16.join('\n'));
+    return out;
   }
 }
 
 /**
  * 청크 하나에서 검사할 글자를 col에 넣는다. 형식이 틀리면 그때까지 넣은 글자를 남기고 예외를 던진다
- * (tEXt 본문의 NUL은 넣은 뒤에 형식 위반으로 던진다: 본문 UTF-16과 파일 전체 검사로 이중으로 본다.
- * 압축 스트림 뒤의 바이트도 풀린 글자를 넣은 뒤에 던진다).
+ * (압축 스트림 뒤의 바이트는 풀린 글자를 넣은 뒤에 던진다. tEXt 본문의 NUL은 규격 위반이지만 던지지 않고
+ * suspect로 표시해 뒤 청크(압축 본문 포함)까지 계속 모은다: 파일 전체 검사가 어차피 뒤따른다).
  */
 function pngChunkTexts(type, data, col) {
   if (type === 'tEXt') {
     const [[key], text] = splitNul(data, 1);
     col.field(key);
     col.body(text);
-    if (text.includes(0)) throw new Error('tEXt 본문 NUL');
     return;
   }
   if (type === 'zTXt') {
@@ -511,20 +525,24 @@ function pngChunkTexts(type, data, col) {
   const runs = textRuns(data);
   if (runs) col.text(runs);
   const u = utf16(data);
-  if (u) col.extra.push(u);
+  if (u) col.u16.push(u);
 }
 
 /**
  * 온전한 PNG에서 검사할 글자들. PNG가 아니거나 깨졌으면 null(시그니처·길이·형식 이름·CRC·IEND로 끝남·
  * IEND 뒤 바이트 없음·텍스트 청크 구조와 압축을 모두 확인한다). 깨졌어도 그때까지 뽑은 글자는 texts에 남는다.
- * texts는 필드를 청크 순서대로 이은 흐름(UTF-8·latin1 한 벌씩)과 본문·모르는 청크의 UTF-16 해석이다.
+ * texts는 필드를 청크 순서대로 이은 흐름(UTF-8·latin1 한 벌씩)과 본문·모르는 청크의 UTF-16 해석을 이은 흐름이다.
  * 텍스트 청크의 압축이 풀린 크기 상한을 넘으면 errors에 'unscannable'을 넣는다(fail closed).
+ * flags.utf16Suspect: 텍스트 청크 본문에 NUL이 있었다(온전해도 파일 전체 검사를 함께 해야 한다).
+ * flags.bodies: 텍스트 청크 본문(압축은 푼 것)들, 청크 순서.
  */
-export function pngTexts(buf, texts = [], errors = []) {
+export function pngTexts(buf, texts = [], errors = [], flags = {}) {
   const col = new PngTextCollector();
   // 깨진 PNG(null)도 그때까지 모은 글자를 texts에 남긴다
   const ok = pngWalk(buf, col, errors);
   texts.push(...col.texts());
+  flags.utf16Suspect = col.suspect;
+  flags.bodies = col.bodies;
   return ok ? texts : null;
 }
 
@@ -592,8 +610,8 @@ function pngWalk(buf, col, errors) {
 }
 
 /**
- * blob(파일 내용) 하나를 검사한다. 온전한 PNG는 pngTexts만, NUL이 있으면 UTF-16 해석과 글자 조각을 본다
- * (줄 번호 0). 내용 전체 해시는 모든 파일에 건다.
+ * blob(파일 내용) 하나를 검사한다. 온전한 PNG는 pngTexts만(텍스트 청크 본문에 NUL이 있으면 아래 파일 전체
+ * 검사도), NUL이 있으면 UTF-16 해석과 글자 조각을 본다(줄 번호 0). 내용 전체 해시는 모든 파일에 건다.
  */
 export function scanBuffer(buf, deny) {
   const found = [];
@@ -601,15 +619,23 @@ export function scanBuffer(buf, deny) {
   // 깨진 PNG도 그때까지 풀어 낸 메타데이터는 검사하고, 그다음 파일 전체를 예전처럼 본다
   const decoded = [];
   const errors = [];
-  const png = pngTexts(buf, decoded, errors);
+  const flags = {};
+  const png = pngTexts(buf, decoded, errors, flags);
   for (const rule of errors) found.push({ line: 0, rule });
   for (const t of decoded) for (const f of scanText(t, deny)) found.push({ line: 0, rule: f.rule });
-  if (png) return found;
+  // UTF-16 의심(본문 NUL)이면 PNG 면제를 쓰지 않는다(cicd.md 구현 중 변경 115 (바))
+  if (png && !flags.utf16Suspect) return found;
   const head = buf.subarray(0, 8000);
   if (!head.includes(0)) return found.concat(scanText(buf.toString('utf8'), deny));
   const texts = [textRuns(buf)];
   const u = utf16(buf);
   if (u) texts.push(u);
+  if (flags.utf16Suspect) {
+    // 추정(한쪽 바이트 30%)이 빗나가도 보게 파일 전체와 본문(풀린 것)을 이은 흐름을 LE·BE로 다 읽는다
+    texts.push(...utf16Forced(buf));
+    const decoded16 = flags.bodies.map(utf16Forced);
+    for (const k of [0, 1]) texts.push(decoded16.map((d) => d[k]).join('\n'));
+  }
   for (const t of texts) for (const f of scanText(t, deny)) found.push({ line: 0, rule: f.rule });
   return found;
 }

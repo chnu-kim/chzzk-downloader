@@ -365,7 +365,7 @@ test('PNG: 깨지거나 모르는 모양이면 파일 전체를 지금처럼 글
   }
 });
 
-test('PNG: 텍스트 청크 본문의 UTF-16도 검사한다(본문 UTF-16 디코드 + tEXt 본문의 NUL은 형식 위반, 이중 방어)', () => {
+test('PNG: 텍스트 청크 본문의 UTF-16도 검사한다(본문 UTF-16 디코드 + 본문 NUL이면 파일 전체 검사, 이중 방어)', () => {
   const le = Buffer.from(('NID_' + 'AUT=' + 'abcdefghijklmnop').repeat(12), 'utf16le');
   const be = Buffer.from(le).swap16();
   const hitCookie = (buf) => scanBuffer(buf, new Set()).some((f) => f.rule === 'naver-cookie');
@@ -373,9 +373,15 @@ test('PNG: 텍스트 청크 본문의 UTF-16도 검사한다(본문 UTF-16 디�
   // Codex 재현: CRC가 맞는 tEXt 'Comment\0' + UTF-16LE 쿠키(origin/master는 잡았다)
   assert.ok(hitCookie(png(tEXt(le))), 'tEXt UTF-16LE');
   assert.ok(hitCookie(png(tEXt(be))), 'tEXt UTF-16BE');
-  // tEXt 본문(키워드 구분 NUL 뒤)의 NUL은 형식 위반이라 파일 전체 검사로 돌아간다
-  assert.equal(pngTexts(png(tEXt(le))), null, 'tEXt 본문 UTF-16');
-  assert.equal(pngTexts(png(tEXt(Buffer.from([0x61, 0, 0x62])))), null, 'tEXt 본문 NUL 하나');
+  // 본문(키워드 구분 NUL 뒤)에 NUL이 있으면 온전한 PNG여도 UTF-16 의심으로 파일 전체 검사를 함께 한다
+  const suspect = (buf) => {
+    const flags = {};
+    assert.notEqual(pngTexts(buf, [], [], flags), null);
+    return flags.utf16Suspect;
+  };
+  assert.equal(suspect(png(tEXt(le))), true, 'tEXt 본문 UTF-16');
+  assert.equal(suspect(png(tEXt(Buffer.from([0x61, 0, 0x62])))), true, 'tEXt 본문 NUL 하나');
+  assert.equal(suspect(png(tEXt(Buffer.from('plain')))), false, 'tEXt 본문 NUL 없음');
   // 앞에 NUL 없는 큰 청크가 있어 파일 전체의 UTF-16 추정(앞 8000바이트)이 빗나가도 본문 디코드가 잡는다
   const filler = chunk('prVt', Buffer.alloc(9000, 0x2e));
   assert.ok(hitCookie(png(filler, tEXt(le))), '큰 청크 뒤 tEXt UTF-16LE');
@@ -428,6 +434,54 @@ test('PNG: 회귀(Codex 리뷰) BOM 없는 UTF-16BE 본문 하나, 압축 스트
   assert.ok(hit(png(a, b)), '청크 둘');
   // 다른 해석(UTF-16)은 흐름에 섞지 않는다: 흐름은 UTF-8·latin1 따로, 빈 PNG는 빈 목록
   assert.deepEqual(pngTexts(png()), []);
+});
+
+test('PNG: 회귀(Codex 4차) 텍스트 청크 여러 개에 나뉜 UTF-16 구도 잡는다(의심되면 파일 전체 검사로 후퇴 + 본문 UTF-16을 한 흐름으로)', () => {
+  const deny = sel('Fake Studio Demo Reel');
+  const hit = (buf) => scanBuffer(buf, deny).some((f) => f.rule === 'denylist');
+  const le = (s) => Buffer.from(s, 'utf16le');
+  const be = (s) => Buffer.from(s, 'utf16le').swap16();
+  const iTXt = (body, key = 'Title') => chunk('iTXt', Buffer.concat([Buffer.from(key), NUL, Buffer.from([0, 0]), NUL, NUL, body]));
+  const iTXtZ = (body) => chunk('iTXt', Buffer.concat([Buffer.from('Title'), NUL, Buffer.from([1, 0]), NUL, NUL, deflateSync(body)]));
+  const zTXt = (body) => chunk('zTXt', Buffer.concat([Buffer.from('Comment'), NUL, Buffer.from([0]), deflateSync(body)]));
+  const tEXt = (body) => chunk('tEXt', Buffer.concat([Buffer.from('Comment'), NUL, body]));
+  const A = ' Fake Studio ';
+  const B = ' Demo Reel ';
+  // Codex 재현: CRC가 맞는 1×1 PNG + 비압축 iTXt 본문 둘(UTF-16LE). origin/master는 파일 전체 UTF-16 디코드로 잡았다
+  assert.ok(hit(png(iTXt(le(A)), iTXt(le(B)))), 'iTXt 비압축 UTF-16LE 둘');
+  const filler = chunk('prVt', Buffer.alloc(9000, 0x2e));
+  const cases = {
+    'iTXt 비압축 UTF-16BE 둘': png(iTXt(be(A)), iTXt(be(B))),
+    'iTXt 압축 UTF-16LE 둘': png(iTXtZ(le(A)), iTXtZ(le(B))),
+    'zTXt UTF-16LE 둘': png(zTXt(le(A)), zTXt(le(B))),
+    'zTXt UTF-16BE 둘': png(zTXt(be(A)), zTXt(be(B))),
+    'LE·BE 섞음': png(iTXt(le(A)), zTXt(be(B))),
+    // 키워드 길이를 1 바꿔 두 본문의 파일 오프셋 홀짝을 엇갈리게 한다
+    '홀짝 엇갈림': png(iTXt(le(A), 'Title'), iTXt(le(B), 'Titles')),
+    // 앞에 NUL 없는 큰 청크: 파일 전체의 UTF-16 추정(앞 8000바이트)이 빗나간다
+    '큰 청크 뒤': png(filler, iTXt(le(A)), iTXt(le(B))),
+    // tEXt 본문 NUL(형식 위반) 뒤의 압축 청크도 풀어 본다
+    'tEXt UTF-16 + zTXt 압축 UTF-16': png(tEXt(le(A)), zTXt(le(B))),
+  };
+  for (const [name, buf] of Object.entries(cases)) assert.ok(hit(buf), name);
+  // 본문 앞에 NUL 없는 긴 글자를 두어 본문별 UTF-16 추정(한쪽 바이트 30%)이 빗나가게 해도 후퇴 검사가 LE·BE로 다 읽는다
+  const pad = Buffer.from('x'.repeat(400));
+  assert.equal(scanText(le(A + B).toString('latin1'), deny).length, 0, '이어 붙인 UTF-16 바이트를 그대로 읽으면 안 잡힌다');
+  assert.ok(hit(png(iTXt(Buffer.concat([pad, le(A)])), iTXt(Buffer.concat([pad, le(B)])))), 'iTXt 비압축, 추정 빗나감');
+  assert.ok(hit(png(zTXt(Buffer.concat([pad, be(A)])), zTXt(Buffer.concat([pad, be(B)])))), 'zTXt 압축 BE, 추정 빗나감');
+  // 압축 본문은 파일 바이트에 글자가 남지 않는다(파일 전체 검사만으로는 못 본다)
+  assert.ok(!cases['zTXt UTF-16LE 둘'].includes(le('Demo')));
+});
+
+test('PNG: 본문에 NUL이 없으면 PNG 면제를 그대로 쓴다(#75 픽셀 오탐 해결 유지)', () => {
+  const deny = sel('가짜스트리머');
+  const { hdr, idat } = grayShot('nam 가짜스트리머 ' + PLANTED['signed-token']);
+  // 픽셀에 글자가 있어도 NUL 없는 일반 메타데이터만 있으면 픽셀은 보지 않는다
+  const meta = chunk('tEXt', Buffer.concat([Buffer.from('Software'), NUL, Buffer.from('playwright')]));
+  const itx = chunk('iTXt', Buffer.concat([Buffer.from('Title'), NUL, Buffer.from([1, 0]), NUL, NUL, deflateSync(Buffer.from('shot'))]));
+  const shot = Buffer.concat([PNG_SIG, hdr, idat, meta, itx, IEND]);
+  assert.notEqual(pngTexts(shot), null);
+  assert.deepEqual(scanBuffer(shot, deny), []);
 });
 
 test('PNG: 풀린 크기가 상한(8 MiB)을 넘는 압축 메타데이터는 검사 오류(unscannable)로 실패한다', () => {

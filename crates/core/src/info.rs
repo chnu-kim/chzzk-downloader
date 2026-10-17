@@ -627,6 +627,9 @@ mod tests {
         let (_, d) = parse_live_detail(&fixture("testdata/live/live_detail.json")).unwrap();
         let s = format!("{d:?}");
         assert!(!s.contains("hmac"), "{s}");
+        assert!(s.starts_with("LiveDetail {"), "{s}");
+        assert!(s.contains("live_id:") && s.contains("tracks:"), "{s}");
+        assert!(s.contains("master_url: \"https://"), "{s}");
     }
 
     #[test]

@@ -23,8 +23,10 @@ use tokio::sync::Notify;
 const VIDEO_NO: u64 = 1;
 
 impl Harness {
-    /// 채팅도 함께 받는 작업을 추가한다.
+    /// 채팅도 함께 받는 작업을 추가한다. 가짜 다운로드는 영상 파일을 쓰지 않으므로 완료될 영상 파일을 먼저 만든다
+    /// (채팅은 영상 파일이 있어야 시작한다).
     fn enqueue_chat(&self, name: &str) -> JobId {
+        self.touch_video(name);
         let mut r = request(name);
         r.save_chat = true;
         r.on_existing = OnExisting::Skip;
@@ -1316,7 +1318,7 @@ async fn auto_resume_skips_chat_whose_video_file_is_gone() {
     h.mgr.quit(std::time::Duration::from_secs(3)).await;
     assert_eq!(h.phase(id), Some(ChatPhase::Interrupted));
     h.mgr.flush();
-    assert!(!h.output("a").exists());
+    std::fs::remove_file(h.output("a")).unwrap();
 
     let m = open_with(h.dir.path(), &h.fake, 1, false);
     assert_eq!(m.resume_interrupted(), 0);
@@ -1447,4 +1449,117 @@ async fn pause_chat_ignores_finished_and_rejects_no_chat() {
         h.mgr.pause_chat(plain).unwrap_err().code,
         ErrorCode::InvalidInput
     );
+}
+
+// ---------------------------------------------------------------------------
+// ④-3a·④-4 후속(app.md 구현 중 변경 86)
+// ---------------------------------------------------------------------------
+
+impl Harness {
+    /// 채팅도 받고 영상은 "처음부터"(`restart`)인 새 작업.
+    fn enqueue_chat_restart(&self, name: &str) -> JobId {
+        self.touch_video(name);
+        let mut r = request(name);
+        r.save_chat = true;
+        r.restart = true;
+        r.on_existing = OnExisting::Skip;
+        self.mgr.enqueue(r, &self.defaults()).unwrap().id
+    }
+}
+
+/// 새 받기(`enqueue`)의 "처음부터"는 채팅에도 이어진다. 다른 기록이 함께 쥔 받다 만 채팅 `.part`는 지우지 않으므로
+/// (Codex PR #141 ③) 채팅 상태의 `restart`가 없으면 새 받기가 옛 커서를 이어받는다(Codex 4차 medium).
+#[tokio::test(start_paused = true)]
+async fn enqueue_restart_with_shared_chat_part_starts_chat_over() {
+    let h = Harness::new(1);
+    h.fake
+        .chat_for(h.output("a"), ChatScript::new().part(3).wait_cancel());
+    let a = h.enqueue_chat("a");
+    until("a 채팅 받는 중", || {
+        h.phase(a) == Some(ChatPhase::Running)
+    })
+    .await;
+    until(".part", || record_part(&h.output("a")).exists()).await;
+    h.mgr.pause_chat(a).unwrap();
+    until("a 일시정지", || h.phase(a) == Some(ChatPhase::Paused)).await;
+
+    let b = h.enqueue_chat_restart("a");
+    until("b 채팅 완료", || {
+        h.phase(b) == Some(ChatPhase::Completed)
+    })
+    .await;
+    let reqs = h.fake.chat_requests();
+    assert_eq!(reqs.len(), 2);
+    assert!(reqs[1].restart, "새 받기가 옛 채팅 커서를 이어받는다");
+}
+
+/// 받다 만 채팅 파일을 지우지 못해도(잠김) 새 받기의 채팅은 처음부터다.
+#[tokio::test(start_paused = true)]
+async fn enqueue_restart_when_chat_discard_fails_starts_chat_over() {
+    let h = Harness::new(1);
+    write_chat_part(&h.output("a"), VIDEO_NO, 3);
+    let held = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(record_part(&h.output("a")))
+        .unwrap();
+    held.try_lock().unwrap();
+    let id = h.enqueue_chat_restart("a");
+    until("채팅 완료", || {
+        h.phase(id) == Some(ChatPhase::Completed)
+    })
+    .await;
+    let reqs = h.fake.chat_requests();
+    assert_eq!(reqs.len(), 1);
+    assert!(reqs[0].restart, "지우지 못한 옛 채팅 커서를 이어받는다");
+    drop(held);
+}
+
+/// 다른 채팅 뒤에서 기다리는 동안 영상 파일이 지워지면 차례가 와도 받지 않고 `interrupted`로 둔다(빈 자리에
+/// 채팅만 놓지 않는다, `start_chat`·자동 이어받기와 같은 판정). 그 뒤 차례는 그대로 받는다.
+#[tokio::test(start_paused = true)]
+async fn waiting_chat_whose_video_is_gone_is_interrupted_not_started() {
+    let h = Harness::new(1);
+    let gate = Arc::new(Notify::new());
+    h.fake
+        .chat_for(h.output("a"), ChatScript::new().hold(gate.clone()));
+    let a = h.enqueue_chat("a");
+    until("a 채팅 받는 중", || {
+        h.phase(a) == Some(ChatPhase::Running)
+    })
+    .await;
+    let b = h.enqueue_chat("b");
+    let c = h.enqueue_chat("c");
+    until("b·c 영상 완료", || {
+        h.status(b) == JobStatus::Completed && h.status(c) == JobStatus::Completed
+    })
+    .await;
+    assert_eq!(h.phase(b), Some(ChatPhase::Waiting));
+    std::fs::remove_file(h.output("b")).unwrap();
+
+    gate.notify_one();
+    until("c 채팅 완료", || {
+        h.phase(c) == Some(ChatPhase::Completed)
+    })
+    .await;
+    assert_eq!(h.phase(b), Some(ChatPhase::Interrupted));
+    let outs: Vec<PathBuf> = h
+        .fake
+        .chat_requests()
+        .into_iter()
+        .map(|r| r.output)
+        .collect();
+    assert_eq!(outs, [h.output("a"), h.output("c")]);
+    assert_eq!(h.chat_trace(b).last(), Some(&ChatPhase::Interrupted));
+    // 파일이 돌아오면 [⋯]에서 다시 받는다
+    h.touch_video("b");
+    h.mgr
+        .start_chat(b, false, OnExisting::Skip, SubtitleFormat::Ass, |_| {
+            Ok(None)
+        })
+        .unwrap();
+    until("b 채팅 완료", || {
+        h.phase(b) == Some(ChatPhase::Completed)
+    })
+    .await;
 }

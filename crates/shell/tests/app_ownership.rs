@@ -1529,3 +1529,72 @@ async fn fetch_chat_passes_when_auth_disabled() {
     assert!(chat_of(&app, 1).is_some());
     app.manager.quit(Duration::from_secs(3)).await;
 }
+
+/// 영상은 완료, 채팅은 끊긴(`interrupted`) 맡은 채널(b2) 작업 2. 기록의 채널은 `channel`이다.
+fn delegated_chat_record(root: &Path, channel: &str) -> JobRecord {
+    let mut r = done_vod(root, 2, Some(channel));
+    r.chat = Some(chzzk_shell::chat::ChatState {
+        phase: chzzk_shell::chat::ChatPhase::Interrupted,
+        ..chzzk_shell::chat::ChatState::waiting(
+            chzzk_core::chat::SubtitleFormat::Ass,
+            OnExisting::Skip,
+        )
+    });
+    r
+}
+
+/// 맡은 채널 작업의 끊긴 채팅도 둘째 깃발이 컨텐츠를 다시 판정한 뒤 자동으로 이어받는다(Codex 4차 medium,
+/// app.md 구현 중 변경 86-4). 앞서는 영상만 보아 채팅이 [⋯]로만 받을 수 있게 남았다.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn delegated_auto_resume_picks_up_interrupted_chat() {
+    let api = mock_api(None).await;
+    let worker = MockServer::start().await;
+    let t = TempDir::new().unwrap();
+    write_jobs(t.path(), vec![delegated_chat_record(t.path(), OWN)]);
+    enable_auto_resume(t.path(), &api);
+    save_session_full(t.path(), &worker, EDITOR, false, &[OWN]);
+    mock_me(&worker, EDITOR, &[OWN], 200).await;
+    let app = open_auth(t.path(), &api, &worker);
+    let st = delegated_status(true, &[OWN]);
+    assert_eq!(app.on_auth_status(&st), 0, "본인 채널 작업이 아니다");
+    assert!(app.take_delegated_resume(&st));
+    assert_eq!(
+        app.resume_delegated_interrupted(&st.delegated_channels)
+            .await,
+        1
+    );
+    assert_eq!(status_of(&app, 2), JobStatus::Completed);
+    // 진짜 코어라 채팅 주소가 mock에 없어 곧 실패한다. 끊긴 채로 남지 않은 것만 본다
+    assert_ne!(
+        chat_of(&app, 2).unwrap().phase,
+        chzzk_shell::chat::ChatPhase::Interrupted
+    );
+    assert_eq!(channel_of(&app, 2).as_deref(), Some(OWN));
+    app.manager.quit(Duration::from_secs(3)).await;
+}
+
+/// 기록의 채널만 맡은 채널로 바꾼 남의 영상이면 채팅도 줄 세우지 않는다(fail closed). 기록은 실제 채널로 고친다.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn delegated_auto_resume_rejudges_chat_content() {
+    let api = mock_api(None).await;
+    let worker = MockServer::start().await;
+    let t = TempDir::new().unwrap();
+    write_jobs(t.path(), vec![delegated_chat_record(t.path(), OTHER)]);
+    enable_auto_resume(t.path(), &api);
+    save_session_full(t.path(), &worker, EDITOR, false, &[OTHER]);
+    mock_me(&worker, EDITOR, &[OTHER], 200).await;
+    let app = open_auth(t.path(), &api, &worker);
+    let st = delegated_status(true, &[OTHER]);
+    assert!(app.take_delegated_resume(&st));
+    assert_eq!(
+        app.resume_delegated_interrupted(&st.delegated_channels)
+            .await,
+        0
+    );
+    assert_eq!(
+        chat_of(&app, 2).unwrap().phase,
+        chzzk_shell::chat::ChatPhase::Interrupted
+    );
+    assert_eq!(channel_of(&app, 2).as_deref(), Some(OWN));
+    app.manager.quit(Duration::from_secs(3)).await;
+}

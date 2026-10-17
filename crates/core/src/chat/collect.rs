@@ -103,29 +103,26 @@ impl Chzzk {
             None => self.walk_pages(&mut part, &req, &cancel, &report).await?,
         };
 
-        // 자막(이미 최종 이름으로 옮겼으면 다시 만들지 않는다). rename 뒤 `moved` 기록 전에 멈췄던
-        // 이동도 옮긴 것이다: 임시 파일을 다시 만들면 마무리가 자기 자막에 막힌다. 그 판정은 sidecar의
-        // 이동 의도로 하므로 원래 있던 무관한 자막은 여기 걸리지 않는다.
+        // 자막(기록 읽기·렌더·쓰기·sync)은 블로킹 스레드에서 한다(실행기를 막지 않는다). 잠근 `part`는 그 작업이
+        // 끝날 때까지 작업 안에서 쥐고 있다가 돌려받는다.
         let mut companions = Vec::new();
         let mut subtitle_failed = false;
-        if let Some(to) = subtitle
-            && !part.is_moved(&to)
-            && !part.is_move_interrupted(&part_path(&to), &to)
-        {
-            let tmp = part_path(&to);
-            let opts = SubtitleOpts {
-                duration_ms: req.duration_ms,
+        if let Some(to) = subtitle {
+            let job = SubtitleJob {
+                format: req.subtitle,
+                opts: SubtitleOpts {
+                    duration_ms: req.duration_ms,
+                },
+                to,
+                record: record.clone(),
+                max_bytes: self.config().chat_subtitle_max_bytes,
             };
-            let max = self.config().chat_subtitle_max_bytes;
-            match write_subtitle(&mut part, req.subtitle, &opts, &tmp, &record, max) {
-                Ok(()) => companions.push(Companion { from: tmp, to }),
-                Err(e) => {
-                    tracing::warn!(error = %e, "채팅 자막을 만들지 못함(기록만 남긴다)");
-                    subtitle_failed = true;
-                    if let Err(re) = remove_if_exists(&tmp) {
-                        tracing::warn!(error = %re, "자막 임시 파일 삭제 실패");
-                    }
-                }
+            let (back, made) = subtitle_stage(part, job, File::sync_all).await?;
+            part = back;
+            match made {
+                SubtitleMade::Ready(c) => companions.push(c),
+                SubtitleMade::Kept => {}
+                SubtitleMade::Failed => subtitle_failed = true,
             }
         }
 
@@ -216,30 +213,116 @@ async fn cancellable<F: Future>(cancel: &CancellationToken, f: F) -> Result<F::O
     }
 }
 
+/// 자막 단계의 입력.
+struct SubtitleJob {
+    format: SubtitleFormat,
+    opts: SubtitleOpts,
+    /// 최종 자막 경로
+    to: PathBuf,
+    /// 기록 최종 경로(예산 초과 오류에 싣는다)
+    record: PathBuf,
+    max_bytes: u64,
+}
+
+/// 자막 단계의 결과.
+#[derive(Debug)]
+enum SubtitleMade {
+    /// 임시 파일을 다 썼다. 마무리가 옮긴다
+    Ready(Companion),
+    /// 이미 옮긴 자기 자막이 있어 다시 만들지 않았다
+    Kept,
+    /// 만들지 못했다(기록만 남긴다, `subtitle_failed`)
+    Failed,
+}
+
+/// 자막 단계: 다시 만들지 판정 → 기록 읽기 → 렌더 → 쓰기 → `sync`. 파일 입출력이라 블로킹 스레드에서 돌리고,
+/// 잠근 `part`는 그 작업이 끝날 때까지 작업이 쥐었다가 돌려준다(바깥 future가 버려져도 작업이 끝나야 잠금이
+/// 풀린다). 작업이 패닉하면 `part`는 잃으므로 `Err`다(`.part`·sidecar는 남아 다음 호출이 이어받는다).
+/// `sync`는 테스트 seam이다(제품은 `File::sync_all`).
+async fn subtitle_stage(
+    mut part: ChatPart,
+    job: SubtitleJob,
+    sync: impl FnOnce(&File) -> std::io::Result<()> + Send + 'static,
+) -> Result<(ChatPart, SubtitleMade), Error> {
+    let record = job.record.clone();
+    let run = move || {
+        let made = make_subtitle(&mut part, &job, sync);
+        (part, made)
+    };
+    run_blocking(run).await.map_err(|e| Error::Io {
+        op: "subtitle",
+        path: record,
+        source: std::io::Error::other(e.to_string()),
+    })
+}
+
+/// 블로킹 작업을 돌린다.
+async fn run_blocking<T: Send + 'static>(
+    f: impl FnOnce() -> T + Send + 'static,
+) -> Result<T, tokio::task::JoinError> {
+    tokio::task::spawn_blocking(f).await
+}
+
+/// `subtitle_stage`의 몸통(블로킹).
+///
+/// 이미 최종 이름으로 옮겼고 그 파일이 있으면 다시 만들지 않는다. rename 뒤 `moved` 기록 전에 멈췄던 이동도 옮긴 것이다:
+/// 임시 파일을 다시 만들면 마무리가 자기 자막에 막힌다. 그 판정은 sidecar의 이동 의도로 하므로 원래 있던
+/// 무관한 자막은 여기 걸리지 않는다.
+fn make_subtitle(
+    part: &mut ChatPart,
+    job: &SubtitleJob,
+    sync: impl FnOnce(&File) -> std::io::Result<()>,
+) -> SubtitleMade {
+    let tmp = part_path(&job.to);
+    // `moved`인데 최종 자막이 없으면 낡은 표시다(옮긴 뒤 기록 이름에 막혀 멈춘 사이 사용자가 지웠다).
+    // 표시를 지우고 커밋된 기록에서 다시 만든다. 있으면 사용자가 고쳤어도 그대로 둔다.
+    if part.is_moved(&job.to) {
+        if job.to.exists() {
+            return SubtitleMade::Kept;
+        }
+        tracing::info!("옮긴 자막이 없어 기록에서 다시 만든다");
+        part.forget_moved(&job.to);
+    }
+    if part.is_move_interrupted(&tmp, &job.to) {
+        return SubtitleMade::Kept;
+    }
+    match write_subtitle(part, job, &tmp, sync) {
+        Ok(()) => SubtitleMade::Ready(Companion {
+            from: tmp,
+            to: job.to.clone(),
+        }),
+        Err(e) => {
+            tracing::warn!(error = %e, "채팅 자막을 만들지 못함(기록만 남긴다)");
+            if let Err(re) = remove_if_exists(&tmp) {
+                tracing::warn!(error = %re, "자막 임시 파일 삭제 실패");
+            }
+            SubtitleMade::Failed
+        }
+    }
+}
+
 /// 커밋한 기록으로 자막을 만들어 `tmp`에 쓴다(내용을 sync한 뒤에만 `Ok`).
 ///
 /// 렌더러가 기록 전체를 메모리에 올리므로, 기록이 `max_bytes`를 넘으면 읽지 않고 `FileTooLarge`다
 /// (할당 실패로 프로세스가 죽는 대신 자막 실패로 끝낸다, core.md 구현 중 변경 66).
 fn write_subtitle(
     part: &mut ChatPart,
-    format: SubtitleFormat,
-    opts: &SubtitleOpts,
+    job: &SubtitleJob,
     tmp: &Path,
-    record: &Path,
-    max_bytes: u64,
+    sync: impl FnOnce(&File) -> std::io::Result<()>,
 ) -> Result<(), Error> {
-    if part.committed() > max_bytes {
+    if part.committed() > job.max_bytes {
         return Err(Error::FileTooLarge {
-            path: record.to_path_buf(),
+            path: job.record.clone(),
         });
     }
     let msgs = part.read_messages()?;
-    let text = match format {
-        SubtitleFormat::Ass => render_ass(&msgs, opts),
-        SubtitleFormat::Srt => render_srt(&msgs, opts),
+    let text = match job.format {
+        SubtitleFormat::Ass => render_ass(&msgs, &job.opts),
+        SubtitleFormat::Srt => render_srt(&msgs, &job.opts),
         SubtitleFormat::None => return Ok(()),
     };
-    write_synced(tmp, &text, File::sync_all)
+    write_synced(tmp, &text, sync)
 }
 
 /// `tmp`에 `text`를 쓰고 `sync`가 성공해야 `Ok`다. 크래시 뒤 덜 쓴 자막이 마무리(rename)로 넘어가
@@ -276,6 +359,59 @@ mod tests {
         .unwrap();
         assert!(called.get(), "sync를 부르지 않았다");
         assert_eq!(std::fs::read_to_string(&tmp).unwrap(), "자막 내용");
+    }
+
+    fn stage_job(dir: &Path) -> SubtitleJob {
+        let video = dir.join("영상.mp4");
+        SubtitleJob {
+            format: SubtitleFormat::Ass,
+            opts: SubtitleOpts::default(),
+            to: sibling_path(&video, ".ass"),
+            record: sibling_path(&video, RECORD_EXT),
+            max_bytes: u64::MAX,
+        }
+    }
+
+    /// 자막 단계는 실행기 스레드가 아닌 블로킹 스레드에서 쓰고 sync한다(Codex 3차 P2, core.md 구현 중 변경 68-1).
+    /// 잠근 `part`는 끝난 뒤 돌려받아 그대로 잠겨 있다.
+    #[tokio::test]
+    async fn subtitle_stage_runs_off_the_runtime_thread_and_keeps_the_lock() {
+        let dir = tempfile::tempdir().unwrap();
+        let job = stage_job(dir.path());
+        let (to, record) = (job.to.clone(), job.record.clone());
+        let part = ChatPart::open(&record, 1, false).unwrap();
+        let here = std::thread::current().id();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let (part, made) = subtitle_stage(part, job, move |_| {
+            tx.send(std::thread::current().id()).unwrap();
+            Ok(())
+        })
+        .await
+        .unwrap();
+        assert_ne!(rx.recv().unwrap(), here, "실행기 스레드에서 자막을 썼다");
+        assert!(
+            matches!(&made, SubtitleMade::Ready(c) if c.to == to && c.from.is_file()),
+            "{made:?}"
+        );
+        assert!(matches!(
+            ChatPart::open(&record, 1, false),
+            Err(Error::FileLocked { .. })
+        ));
+        drop(part);
+    }
+
+    /// 블로킹 작업이 패닉하면 `part`를 잃으므로 오류다(잠금은 풀려 다음 호출이 이어받는다).
+    #[tokio::test]
+    async fn subtitle_stage_panic_is_error_and_releases_lock() {
+        let dir = tempfile::tempdir().unwrap();
+        let job = stage_job(dir.path());
+        let record = job.record.clone();
+        let part = ChatPart::open(&record, 1, false).unwrap();
+        let err = subtitle_stage(part, job, |_| panic!("자막 sync 주입 패닉"))
+            .await
+            .unwrap_err();
+        assert!(matches!(&err, Error::Io { op: "subtitle", .. }), "{err:?}");
+        ChatPart::open(&record, 1, false).unwrap();
     }
 
     /// sync가 실패하면 `Err`다(호출자는 자막 실패로 처리하고 임시 파일을 지운다).

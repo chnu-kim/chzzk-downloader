@@ -568,9 +568,12 @@ impl<B: Backend> DownloadManager<B> {
             final_bytes: None,
             live_end: None,
             last_error: None,
-            chat: req
-                .save_chat
-                .then(|| ChatState::waiting(defaults.chat_subtitle, req.on_existing)),
+            // 영상 "처음부터"는 채팅에도 이어진다. 받다 만 채팅 파일을 다른 기록이 함께 쥐었거나 지우지 못하면
+            // 시작 때 남아 있으므로, 이 표시가 없으면 새 받기가 옛 커서를 이어받는다(app.md 구현 중 변경 86-3)
+            chat: req.save_chat.then(|| ChatState {
+                restart: req.restart,
+                ..ChatState::waiting(defaults.chat_subtitle, req.on_existing)
+            }),
             discard_on_start: req.restart,
             output_replaced: false,
             partial_bytes: None,
@@ -962,6 +965,38 @@ impl<B: Backend> DownloadManager<B> {
             .collect()
     }
 
+    /// 자동 이어받기 채팅 후보(`resume_interrupted_where`의 채팅 거르기)를 줄 세우지 않고 돌려준다. 값은 (작업, 그 채팅의
+    /// 덮어쓰기 선택, "처음부터" 의도)다. 호출자가 작업마다 컨텐츠를 다시 판정한 뒤 `fetch_chat` 경로로 받는다
+    /// (맡은 채널, app.md 구현 중 변경 86-4)
+    pub fn interrupted_chats_where(
+        &self,
+        keep: impl Fn(&ContentRef, Option<&str>) -> bool,
+    ) -> Vec<(JobId, OnExisting, bool)> {
+        let st = self.inner.lock();
+        Self::auto_resume_chats(&st, keep)
+    }
+
+    fn auto_resume_chats(
+        st: &State,
+        keep: impl Fn(&ContentRef, Option<&str>) -> bool,
+    ) -> Vec<(JobId, OnExisting, bool)> {
+        st.jobs
+            .values()
+            .filter(|j| {
+                !j.removing
+                    && j.rec.status == JobStatus::Completed
+                    // 완료된 영상 파일이 지워졌으면 `start_chat`처럼 받지 않는다(빈 폴더에 채팅만 놓지 않는다,
+                    // Codex PR #141 3차 ③). `interrupted`로 남아 파일이 돌아오면 다음 이어받기가 줄 세운다
+                    && j.rec.output.is_file()
+                    && keep(&j.rec.content, j.rec.channel_id.as_deref())
+            })
+            .filter_map(|j| {
+                let c = j.rec.chat.as_ref()?;
+                (c.phase == ChatPhase::Interrupted).then_some((j.rec.id, c.on_existing, c.restart))
+            })
+            .collect()
+    }
+
     /// `resume_interrupted`와 같고, 작업의 컨텐츠와 소유 채널 ID가 `keep`을 통과한 것만 줄 세운다
     /// (A5, 맡은 채널은 생방송을 뺀다 L-D1).
     pub fn resume_interrupted_where(
@@ -985,22 +1020,9 @@ impl<B: Backend> DownloadManager<B> {
             n += 1;
         }
         // 채팅: 영상이 완료된 작업의 `interrupted` 채팅을 같은 거르기로 줄 세운다(chat.md §4.2)
-        let chats: Vec<JobId> = st
-            .jobs
-            .values()
-            .filter(|j| {
-                !j.removing
-                    && j.rec.status == JobStatus::Completed
-                    && j.rec
-                        .chat
-                        .as_ref()
-                        .is_some_and(|c| c.phase == ChatPhase::Interrupted)
-                    // 완료된 영상 파일이 지워졌으면 `start_chat`처럼 받지 않는다(빈 폴더에 채팅만 놓지 않는다,
-                    // Codex PR #141 3차 ③). `interrupted`로 남아 파일이 돌아오면 다음 이어받기가 줄 세운다
-                    && j.rec.output.is_file()
-                    && keep(&j.rec.content, j.rec.channel_id.as_deref())
-            })
-            .map(|j| j.rec.id)
+        let chats: Vec<JobId> = Self::auto_resume_chats(&st, &keep)
+            .into_iter()
+            .map(|(id, _, _)| id)
             .collect();
         for id in chats {
             if st.chat_output_taken(id) {
@@ -1759,10 +1781,35 @@ impl<B: Backend> Inner<B> {
                         .as_ref()
                         .is_some_and(|c| c.phase == ChatPhase::Waiting)
             });
-            if ready {
-                self.start_chat_task(st, id);
+            if !ready {
+                continue;
             }
+            // 기다리는 동안 영상 파일이 지워졌으면 받지 않는다(`start_chat`·자동 이어받기와 같은 판정, 빈 자리에
+            // 채팅만 놓지 않는다). `interrupted`로 두어 파일이 돌아오면 다음 이어받기·[⋯]가 받는다(app.md 구현 중 변경 86-5)
+            if !st.jobs[&id].rec.output.is_file() {
+                self.chat_video_gone(st, id);
+                continue;
+            }
+            self.start_chat_task(st, id);
         }
+    }
+
+    /// 차례가 온 대기 채팅의 영상 파일이 없다: `interrupted`로 두고 알린다.
+    fn chat_video_gone(&self, st: &mut State, id: JobId) {
+        let Some(job) = st.jobs.get_mut(&id) else {
+            return;
+        };
+        let output = job.rec.output.clone();
+        let video_no = video_no_of(&job.rec.content);
+        let Some(c) = job.rec.chat.as_mut() else {
+            return;
+        };
+        tracing::info!(job = id.0, "영상 파일이 없어 기다리던 채팅을 받지 않는다");
+        c.phase = ChatPhase::Interrupted;
+        c.partial_bytes = video_no.and_then(|no| chat_partial_bytes(&output, no));
+        let chat = c.to_dto();
+        self.save(st);
+        st.emit(JobEvent::Chat { id, chat });
     }
 
     /// 채팅 `waiting` → `running`, 태스크를 띄운다. 잠금을 쥔 채 부르므로 태스크의 첫 보고는 `Chat(running)` 뒤다.

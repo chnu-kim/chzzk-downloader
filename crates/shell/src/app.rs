@@ -474,7 +474,8 @@ impl App {
     /// 맡은 채널의 멈춘 작업을 자동으로 이어받는다(둘째 깃발, PR 리뷰 P2). 기록의 `channelId`는 후보를 고르는 데만 쓰고,
     /// 작업마다 `resume_job`과 같은 `OwnershipGate::admit_checked`로 **컨텐츠**를 다시 판정한 뒤에만 줄 세운다
     /// (최근 resolve 캐시, 없으면 info 한 번. 판정 직전 확인은 간격 규칙이라 묶음 전체에서 /api/me 한 번 이하).
-    /// 판정 실패·조회 실패는 줄 세우지 않는다(fail closed). 남의 영상이면 기록을 실제 채널로 고친다. 줄 세운 수
+    /// 판정 실패·조회 실패는 줄 세우지 않는다(fail closed). 남의 영상이면 기록을 실제 채널로 고친다. 영상이 완료되고
+    /// 채팅만 끊긴 작업도 같은 판정(`fetch_chat`)으로 채팅을 줄 세운다. 줄 세운 수(영상 + 채팅)
     pub async fn resume_delegated_interrupted(&self, delegated: &[DelegatedChannel]) -> usize {
         let ids = self
             .manager
@@ -487,6 +488,21 @@ impl App {
                     id = id.0,
                     code = ?e.code,
                     "맡은 채널 작업을 자동으로 이어받지 않음(컨텐츠 재판정)"
+                ),
+            }
+        }
+        // 영상은 완료, 채팅만 끊긴 작업: `fetch_chat`과 같은 판정(컨텐츠 재판정 → 잠금 안 재확인) 뒤에만 줄 세운다.
+        // 그 채팅의 덮어쓰기 선택과 "처음부터" 의도를 그대로 넘긴다(app.md 구현 중 변경 86-4)
+        let chats = self
+            .manager
+            .interrupted_chats_where(|content, c| delegated_resume_target(content, c, delegated));
+        for (id, on_existing, restart) in chats {
+            match self.fetch_chat(id, restart, on_existing).await {
+                Ok(()) => n += 1,
+                Err(e) => tracing::info!(
+                    id = id.0,
+                    code = ?e.code,
+                    "맡은 채널 작업의 채팅을 자동으로 이어받지 않음(컨텐츠 재판정)"
                 ),
             }
         }

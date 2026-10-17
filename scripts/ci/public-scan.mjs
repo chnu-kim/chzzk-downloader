@@ -240,18 +240,38 @@ function hasTextEntries(deny) {
 
 // ---- 검사 ----
 
-const B64 = /[A-Za-z0-9+/_-]{24,}={0,2}/g;
+const isB64 = (c) =>
+  (c >= 0x41 && c <= 0x5a) || (c >= 0x61 && c <= 0x7a) || (c >= 0x30 && c <= 0x39) || c === 0x2b || c === 0x2f || c === 0x5f || c === 0x2d;
 
-/** 줄 안의 base64 덩어리 중 글자로 풀리는 것. */
+/**
+ * 줄 안의 base64 덩어리(base64·base64url 글자 24개 이상 + '=' 두 개까지) 중 글자로 풀리는 것.
+ * 정규식 /[...]{24,}={0,2}/g는 공백 없는 수백만 글자 덩어리에서 스택이 넘쳐 손으로 훑는다.
+ */
 function base64Texts(line) {
   const out = [];
-  for (const m of line.matchAll(B64)) {
-    const buf = Buffer.from(m[0].replace(/-/g, '+').replace(/_/g, '/'), 'base64');
+  for (let i = 0; i < line.length; ) {
+    if (!isB64(line.charCodeAt(i))) {
+      i++;
+      continue;
+    }
+    const start = i;
+    while (i < line.length && isB64(line.charCodeAt(i))) i++;
+    if (i - start < 24) continue;
+    let end = i;
+    while (end < line.length && end - i < 2 && line.charCodeAt(end) === 0x3d) end++;
+    const run = line.slice(start, end);
+    i = end;
+    const buf = Buffer.from(run.replace(/-/g, '+').replace(/_/g, '/'), 'base64');
     if (buf.length < 12) continue;
     const t = buf.toString('utf8');
     if (t.includes('�')) continue;
-    const printable = [...t].filter((c) => c >= ' ' || c === '\n' || c === '\t').length;
-    if (printable / [...t].length >= 0.9) out.push(t);
+    let all = 0;
+    let printable = 0;
+    for (const c of t) {
+      all++;
+      if (c >= ' ' || c === '\n' || c === '\t') printable++;
+    }
+    if (printable / all >= 0.9) out.push(t);
   }
   return out;
 }
@@ -309,10 +329,15 @@ function textRuns(buf) {
   return runs.join('\n');
 }
 
+/**
+ * UTF-16으로 읽는다: BOM이 있으면 그대로, 없으면 짝수/홀수 바이트 한쪽이 대부분 0일 때 엔디언을 추정한다.
+ * BOM을 떼는 것은 BOM이 있을 때뿐이다(추정한 빅엔디언을 BOM처럼 보고 떼면 첫 글자를 잃는다, Codex 리뷰).
+ */
 function utf16(buf) {
-  let be = buf[0] === 0xfe && buf[1] === 0xff;
-  const le = buf[0] === 0xff && buf[1] === 0xfe;
-  if (!be && !le) {
+  const bomBe = buf[0] === 0xfe && buf[1] === 0xff;
+  const bomLe = buf[0] === 0xff && buf[1] === 0xfe;
+  let be = bomBe;
+  if (!bomBe && !bomLe) {
     // BOM 없이 짝수/홀수 바이트 한쪽이 대부분 0이면 UTF-16으로 본다
     let even = 0;
     let odd = 0;
@@ -324,7 +349,7 @@ function utf16(buf) {
     if (n === 0 || Math.max(even, odd) / (n / 2) < 0.3) return null;
     be = even > odd;
   }
-  const body = buf.subarray(be || le ? 2 : 0);
+  const body = buf.subarray(bomBe || bomLe ? 2 : 0);
   if (!be) return body.toString('utf16le');
   const sw = Buffer.from(body.subarray(0, body.length & ~1));
   return sw.swap16().toString('utf16le');
@@ -375,8 +400,9 @@ function crc32(buf) {
 class PngLimit extends Error {}
 
 /**
- * 압축 방식 0(zlib)만 받는다. 풀리지 않거나 너무 크거나(PngLimit) 스트림 뒤에 남는 바이트가 있으면 예외
- * (inflate는 스트림 뒤 바이트를 말없이 버려, 거기 둔 평문이 검사를 비껴간다).
+ * 압축 방식 0(zlib)만 받는다. 풀리지 않거나 너무 크면(PngLimit) 예외. 결과는 풀린 바이트와, 스트림 뒤에 남는
+ * 바이트가 있는지(trailing). inflate는 스트림 뒤 바이트를 말없이 버리므로 부르는 쪽이 trailing을 형식 위반으로
+ * 다룬다(거기 둔 평문은 파일 전체 검사가 본다). 풀린 내용은 꼬리가 있어도 버리지 않는다(Codex 리뷰).
  */
 function pngInflate(method, data, max = PNG_INFLATE_MAX) {
   if (method !== 0) throw new Error('압축 방식');
@@ -387,8 +413,14 @@ function pngInflate(method, data, max = PNG_INFLATE_MAX) {
     if (e?.code === 'ERR_BUFFER_TOO_LARGE') throw new PngLimit('풀린 크기 상한');
     throw e;
   }
-  if (r.engine.bytesWritten !== data.length) throw new Error('스트림 뒤 바이트');
-  return r.buffer;
+  return { buffer: r.buffer, trailing: r.engine.bytesWritten !== data.length };
+}
+
+/** 텍스트 청크의 압축 본문: 풀린 글자를 먼저 넣고, 스트림 뒤에 바이트가 남으면 그다음에 형식 위반으로 던진다. */
+function inflateBody(method, data, col) {
+  const { buffer, trailing } = pngInflate(method, data);
+  col.body(buffer);
+  if (trailing) throw new Error('스트림 뒤 바이트');
 }
 
 /** NUL로 나눈 앞 조각들과 나머지. 모자라면 예외. */
@@ -405,75 +437,109 @@ function splitNul(data, n) {
 }
 
 /**
- * 바이트 조각을 UTF-8과 latin1 둘 다로 읽는다. 규격은 tEXt·zTXt·키워드를 latin1로 정하지만 실제로는 UTF-8을
- * 넣는 도구가 있어, 한쪽으로만 읽으면 다른 쪽 글자가 깨져 검사를 비껴간다(Codex 리뷰).
+ * 메타데이터 글자 모으기. 필드(키워드·언어 태그·번역 키워드·본문, 모르는 청크의 글자 조각)를 청크 순서대로
+ * 줄 바꿈으로 이은 흐름을 UTF-8과 latin1 두 벌 만든다. n-gram이 필드·청크 경계를 넘어 이어져야
+ * 키워드와 본문에 걸친 구도 잡힌다(필드마다 따로 검사하면 끊긴다, Codex 리뷰). 규격은 tEXt·zTXt·키워드를
+ * latin1로 정하지만 UTF-8을 넣는 도구가 있어 둘 다 읽는다(한쪽만 읽으면 다른 쪽 글자가 깨진다).
+ * 한 흐름에 여러 해석을 섞지 않는다: 본문의 UTF-16 해석은 따로 둔다(extra).
  */
-function bothEncodings(b) {
-  const u = b.toString('utf8');
-  const l = b.toString('latin1');
-  return u === l ? [u] : [u, l];
-}
-
-/** 텍스트 청크 본문: UTF-8·latin1에 더해 UTF-16(BOM이 있거나 한쪽 바이트가 대부분 0이면)으로도 읽는다. */
-function bodyTexts(b) {
-  const out = bothEncodings(b);
-  const u = utf16(b);
-  if (u) out.push(u);
-  return out;
+class PngTextCollector {
+  utf8 = [];
+  latin1 = [];
+  extra = [];
+  field(b) {
+    this.utf8.push(b.toString('utf8'));
+    this.latin1.push(b.toString('latin1'));
+  }
+  /** 텍스트 청크 본문: 흐름에 더해 UTF-16(BOM이 있거나 한쪽 바이트가 대부분 0이면)으로도 읽는다. */
+  body(b) {
+    this.field(b);
+    const u = utf16(b);
+    if (u) this.extra.push(u);
+  }
+  /** 이미 글자인 것(모르는 청크의 글자 조각)은 두 흐름에 같이 넣는다. */
+  text(t) {
+    this.utf8.push(t);
+    this.latin1.push(t);
+  }
+  texts() {
+    const out = [];
+    if (this.utf8.length) {
+      const u = this.utf8.join('\n');
+      const l = this.latin1.join('\n');
+      out.push(u);
+      if (l !== u) out.push(l);
+    }
+    return out.concat(this.extra);
+  }
 }
 
 /**
- * 청크 하나에서 검사할 글자를 texts에 넣는다. 형식이 틀리면 그때까지 넣은 글자를 남기고 예외를 던진다
- * (tEXt 본문의 NUL은 넣은 뒤에 형식 위반으로 던진다: 본문 UTF-16과 파일 전체 검사로 이중으로 본다).
+ * 청크 하나에서 검사할 글자를 col에 넣는다. 형식이 틀리면 그때까지 넣은 글자를 남기고 예외를 던진다
+ * (tEXt 본문의 NUL은 넣은 뒤에 형식 위반으로 던진다: 본문 UTF-16과 파일 전체 검사로 이중으로 본다.
+ * 압축 스트림 뒤의 바이트도 풀린 글자를 넣은 뒤에 던진다).
  */
-function pngChunkTexts(type, data, texts) {
+function pngChunkTexts(type, data, col) {
   if (type === 'tEXt') {
     const [[key], text] = splitNul(data, 1);
-    texts.push(...bothEncodings(key), ...bodyTexts(text));
+    col.field(key);
+    col.body(text);
     if (text.includes(0)) throw new Error('tEXt 본문 NUL');
     return;
   }
   if (type === 'zTXt') {
     const [[key], rest] = splitNul(data, 1);
-    texts.push(...bothEncodings(key));
+    col.field(key);
     if (rest.length < 1) throw new Error('zTXt');
-    texts.push(...bodyTexts(pngInflate(rest[0], rest.subarray(1))));
+    inflateBody(rest[0], rest.subarray(1), col);
     return;
   }
   if (type === 'iTXt') {
     const [[key], rest] = splitNul(data, 1);
-    texts.push(...bothEncodings(key));
+    col.field(key);
     if (rest.length < 2) throw new Error('iTXt');
     const flag = rest[0];
     const [[lang, tkey], body] = splitNul(rest.subarray(2), 2);
-    texts.push(...bothEncodings(lang), ...bothEncodings(tkey));
-    if (flag === 0) texts.push(...bodyTexts(body));
-    else if (flag === 1) texts.push(...bodyTexts(pngInflate(rest[1], body)));
+    col.field(lang);
+    col.field(tkey);
+    if (flag === 0) col.body(body);
+    else if (flag === 1) inflateBody(rest[1], body, col);
     else throw new Error('iTXt 압축 표지');
     return;
   }
-  // 모르는 청크: 예전처럼 글자 조각과 UTF-16
-  texts.push(textRuns(data));
+  // 모르는 청크: 예전처럼 글자 조각(흐름에)과 UTF-16(따로)
+  const runs = textRuns(data);
+  if (runs) col.text(runs);
   const u = utf16(data);
-  if (u) texts.push(u);
+  if (u) col.extra.push(u);
 }
 
 /**
  * 온전한 PNG에서 검사할 글자들. PNG가 아니거나 깨졌으면 null(시그니처·길이·형식 이름·CRC·IEND로 끝남·
  * IEND 뒤 바이트 없음·텍스트 청크 구조와 압축을 모두 확인한다). 깨졌어도 그때까지 뽑은 글자는 texts에 남는다.
+ * texts는 필드를 청크 순서대로 이은 흐름(UTF-8·latin1 한 벌씩)과 본문·모르는 청크의 UTF-16 해석이다.
  * 텍스트 청크의 압축이 풀린 크기 상한을 넘으면 errors에 'unscannable'을 넣는다(fail closed).
  */
 export function pngTexts(buf, texts = [], errors = []) {
+  const col = new PngTextCollector();
+  // 깨진 PNG(null)도 그때까지 모은 글자를 texts에 남긴다
+  const ok = pngWalk(buf, col, errors);
+  texts.push(...col.texts());
+  return ok ? texts : null;
+}
+
+/** pngTexts의 몸통: 온전하면 true, 아니면 false. */
+function pngWalk(buf, col, errors) {
   const chunkTexts = (type, data) => {
     try {
-      pngChunkTexts(type, data, texts);
+      pngChunkTexts(type, data, col);
       return true;
     } catch (e) {
       if (e instanceof PngLimit) errors.push('unscannable');
       return false;
     }
   };
-  if (buf.length < PNG_SIG.length || !buf.subarray(0, PNG_SIG.length).equals(PNG_SIG)) return null;
+  if (buf.length < PNG_SIG.length || !buf.subarray(0, PNG_SIG.length).equals(PNG_SIG)) return false;
   let at = PNG_SIG.length;
   let first = true;
   let pixelBytes = null;
@@ -481,27 +547,27 @@ export function pngTexts(buf, texts = [], errors = []) {
   let idatOpen = false;
   let idatDone = false;
   while (at < buf.length) {
-    if (at + 12 > buf.length) return null;
+    if (at + 12 > buf.length) return false;
     const len = buf.readUInt32BE(at);
-    if (len > 0x7fffffff || at + 12 + len > buf.length) return null;
+    if (len > 0x7fffffff || at + 12 + len > buf.length) return false;
     const typeBuf = buf.subarray(at + 4, at + 8);
-    if (!typeBuf.every((b) => (b >= 0x41 && b <= 0x5a) || (b >= 0x61 && b <= 0x7a))) return null;
+    if (!typeBuf.every((b) => (b >= 0x41 && b <= 0x5a) || (b >= 0x61 && b <= 0x7a))) return false;
     const type = typeBuf.toString('latin1');
-    if (first && type !== 'IHDR') return null;
+    if (first && type !== 'IHDR') return false;
     first = false;
     const data = buf.subarray(at + 8, at + 8 + len);
     if (crc32(buf.subarray(at + 4, at + 8 + len)) !== buf.readUInt32BE(at + 8 + len)) {
       // CRC만 틀린 텍스트 청크도 풀 수 있으면 풀어 둔다(압축된 글자는 바이트 검사로 못 본다)
       if (PNG_TEXT_CHUNKS.has(type)) chunkTexts(type, data);
-      return null;
+      return false;
     }
     at += 12 + len;
     if (type === 'IHDR') {
-      if (pixelBytes !== null || (pixelBytes = pngPixelBytes(data)) === null) return null;
+      if (pixelBytes !== null || (pixelBytes = pngPixelBytes(data)) === null) return false;
       continue;
     }
     if (type === 'IDAT') {
-      if (idatDone) return null; // IDAT 사이에 다른 청크
+      if (idatDone) return false; // IDAT 사이에 다른 청크
       idat.push(data);
       idatOpen = true;
       continue;
@@ -511,17 +577,18 @@ export function pngTexts(buf, texts = [], errors = []) {
       idatDone = true;
     }
     if (type === 'IEND') {
-      if (len !== 0 || at !== buf.length || idat.length === 0) return null;
+      if (len !== 0 || at !== buf.length || idat.length === 0) return false;
       try {
-        if (pngInflate(0, Buffer.concat(idat), pixelBytes).length !== pixelBytes) return null;
+        const r = pngInflate(0, Buffer.concat(idat), pixelBytes);
+        if (r.trailing || r.buffer.length !== pixelBytes) return false;
       } catch {
-        return null;
+        return false;
       }
-      return texts;
+      return true;
     }
-    if (!chunkTexts(type, data)) return null;
+    if (!chunkTexts(type, data)) return false;
   }
-  return null; // IEND 없음
+  return false; // IEND 없음
 }
 
 /**

@@ -172,6 +172,21 @@ test('NUL이 든 파일도 글자 조각과 UTF-16을 본다', () => {
   assert.ok(scanBuffer(u16, new Set()).some((f) => f.rule === 'hex-id'));
   const u16be = Buffer.from('x ' + PLANTED['hex-id'], 'utf16le').swap16();
   assert.ok(scanBuffer(u16be, new Set()).some((f) => f.rule === 'hex-id'));
+  // BOM 없는 UTF-16BE: 추정한 엔디언을 BOM처럼 보고 앞 두 바이트를 떼면 첫 글자를 잃는다(Codex 리뷰)
+  const bareBe = Buffer.from('NID_' + 'AUT=' + 'Ab9'.repeat(10), 'utf16le').swap16();
+  assert.ok(scanBuffer(bareBe, new Set()).some((f) => f.rule === 'naver-cookie'), 'BOM 없는 UTF-16BE 첫 글자');
+  const bareLe = Buffer.from('NID_' + 'AUT=' + 'Ab9'.repeat(10), 'utf16le');
+  assert.ok(scanBuffer(bareLe, new Set()).some((f) => f.rule === 'naver-cookie'), 'BOM 없는 UTF-16LE 첫 글자');
+});
+
+test('base64 후보 찾기는 공백 없는 아주 긴 줄에서도 스택이 넘치지 않는다', () => {
+  // 정규식 {24,}가 수백만 글자 덩어리에서 'Maximum call stack size exceeded'로 죽었다(8M 글자에서 재현)
+  const line = 'QUFB'.repeat(2_500_000);
+  assert.doesNotThrow(() => scanText(line, new Set()));
+  // 같은 경로가 덩어리를 그대로 풀어 검사하는지(길이 24 이상, 뒤 '=' 두 개까지)
+  const deny = sel('가짜스트리머');
+  const b64 = Buffer.from('채널 가짜스트리머 방송입니다').toString('base64');
+  assert.ok(scanText('x' + '!' + b64 + ' y', deny).some((f) => f.rule === 'denylist'));
 });
 
 // PNG 조립: 청크마다 길이·형식·데이터·CRC(테스트 안의 표로 따로 계산한다)
@@ -378,6 +393,41 @@ test('PNG: 텍스트 청크 본문의 UTF-16도 검사한다(본문 UTF-16 디�
     assert.ok(hitCookie(png(c)), name);
     assert.ok(hitCookie(png(filler, c)), `큰 청크 뒤 ${name}`);
   }
+});
+
+test('PNG: 회귀(Codex 리뷰) BOM 없는 UTF-16BE 본문 하나, 압축 스트림 뒤 꼬리, 필드 경계를 넘는 n-gram', () => {
+  const hitCookie = (buf) => scanBuffer(buf, new Set()).some((f) => f.rule === 'naver-cookie');
+  // (1) 비압축 iTXt 본문에 BOM 없는 UTF-16BE 쿠키 하나(반복 없음): 첫 글자 'N'을 잃으면 'ID_AUT='가 된다
+  const be = Buffer.from('NID_' + 'AUT=' + 'Ab9'.repeat(10), 'utf16le').swap16();
+  assert.equal(be[0], 0);
+  const itBe = chunk('iTXt', Buffer.concat([Buffer.from('Title'), NUL, Buffer.from([0, 0]), Buffer.from('ko'), NUL, NUL, be]));
+  assert.notEqual(pngTexts(png(itBe)), null);
+  assert.ok(hitCookie(png(itBe)), 'iTXt 비압축 UTF-16BE 쿠키 하나');
+  // (2) 압축 스트림 뒤 꼬리 1바이트: 풀린 쿠키를 버리고 압축 바이트만 보면 놓친다
+  const zc = deflateSync(Buffer.from((PLANTED['naver-cookie'] + ' ').repeat(4)));
+  assert.ok(!zc.includes(Buffer.from('NID_')));
+  const tail = Buffer.concat([zc, Buffer.from([0x20])]);
+  const zt = chunk('zTXt', Buffer.concat([Buffer.from('Comment'), NUL, Buffer.from([0]), tail]));
+  const it = chunk('iTXt', Buffer.concat([Buffer.from('Title'), NUL, Buffer.from([1, 0]), Buffer.from('ko'), NUL, NUL, tail]));
+  for (const [name, c] of Object.entries({ zTXt: zt, 'iTXt 압축': it })) {
+    assert.equal(pngTexts(png(c)), null, `${name}: 꼬리는 형식 위반`);
+    assert.ok(hitCookie(png(c)), `${name} 꼬리 1바이트`);
+  }
+  // (3) 키워드와 본문에 걸친 구(합성 denylist): 필드를 따로 검사하면 4토큰 창이 끊긴다
+  const deny = sel('Fake Studio Demo Reel');
+  const hit = (buf) => scanBuffer(buf, deny).some((f) => f.rule === 'denylist');
+  const tx = chunk('tEXt', Buffer.concat([Buffer.from('Title Fake Studio'), NUL, Buffer.from('Demo Reel ')]));
+  assert.notEqual(pngTexts(png(tx)), null);
+  assert.ok(hit(png(tx)), 'tEXt 키워드 + 본문');
+  const zDemo = deflateSync(Buffer.from('Demo Reel '));
+  const ztx = chunk('zTXt', Buffer.concat([Buffer.from('Fake Studio'), NUL, Buffer.from([0]), zDemo]));
+  assert.ok(hit(png(ztx)), 'zTXt 키워드 + 풀린 본문');
+  // 청크를 넘어서도 순서대로 이어진다
+  const a = chunk('tEXt', Buffer.concat([Buffer.from('Title'), NUL, Buffer.from('Fake Studio')]));
+  const b = chunk('tEXt', Buffer.concat([Buffer.from('Demo'), NUL, Buffer.from('Reel')]));
+  assert.ok(hit(png(a, b)), '청크 둘');
+  // 다른 해석(UTF-16)은 흐름에 섞지 않는다: 흐름은 UTF-8·latin1 따로, 빈 PNG는 빈 목록
+  assert.deepEqual(pngTexts(png()), []);
 });
 
 test('PNG: 풀린 크기가 상한(8 MiB)을 넘는 압축 메타데이터는 검사 오류(unscannable)로 실패한다', () => {

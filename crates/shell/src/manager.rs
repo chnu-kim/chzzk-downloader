@@ -731,6 +731,34 @@ impl<B: Backend> DownloadManager<B> {
         check: impl FnOnce(&ContentRef) -> Result<Option<Option<String>>, AppError>,
     ) -> Result<(), AppError> {
         let mut st = self.inner.lock();
+        self.resume_checked_in(&mut st, id, restart, check)
+    }
+
+    /// 자동 이어받기 전용 `resume_checked`(맡은 채널, app.md 구현 중 변경 87). 호출자가 잠금 밖에서 소유를 확인하는 동안
+    /// 사용자가 그 작업을 이어받고 일시정지했을 수 있다. 한 잠금 안에서 작업이 **아직 자동 이어받기 후보**(`interrupted`,
+    /// 지우는 중 아님, 마무리할 조각이 있는 생방송, 같은 출력의 활성 작업 없음)인지 다시 보고, 그럴 때만 `check` 뒤 줄 세운다.
+    /// 줄 세웠으면 `true`, 후보가 아니어서 건너뛰었으면 `false`(오류가 아니다). `check`가 거부하면 그 오류다.
+    pub fn resume_interrupted_checked(
+        &self,
+        id: JobId,
+        check: impl FnOnce(&ContentRef) -> Result<Option<Option<String>>, AppError>,
+    ) -> Result<bool, AppError> {
+        let mut st = self.inner.lock();
+        let still = st.jobs.get(&id).is_some_and(Self::auto_resume_video);
+        if !still || st.blocks_requeue(id).is_some() {
+            return Ok(false);
+        }
+        self.resume_checked_in(&mut st, id, false, check)?;
+        Ok(true)
+    }
+
+    fn resume_checked_in(
+        &self,
+        st: &mut State,
+        id: JobId,
+        restart: bool,
+        check: impl FnOnce(&ContentRef) -> Result<Option<Option<String>>, AppError>,
+    ) -> Result<(), AppError> {
         let Some(job) = st.target(id)? else {
             return Ok(());
         };
@@ -763,9 +791,9 @@ impl<B: Backend> DownloadManager<B> {
         }
         self.inner.requeue(job, seq, restart);
         let dto = job.dto();
-        self.inner.save(&st);
+        self.inner.save(st);
         st.emit(JobEvent::Status { job: dto });
-        self.inner.pump(&mut st);
+        self.inner.pump(st);
         Ok(())
     }
 
@@ -813,6 +841,44 @@ impl<B: Backend> DownloadManager<B> {
         check: impl FnOnce(&ContentRef) -> Result<Option<Option<String>>, AppError>,
     ) -> Result<(), AppError> {
         let mut st = self.inner.lock();
+        self.start_chat_in(&mut st, id, restart, on_existing, setting, check)
+    }
+
+    /// 자동 이어받기 전용 `start_chat`(맡은 채널, app.md 구현 중 변경 87). 호출자는 후보 목록의 의도(`restart`·`on_existing`,
+    /// `interrupted_chats_where`)를 찍어 두고 잠금 밖에서 소유를 확인한다. 그 사이 사용자가 채팅을 이어받고 일시정지했거나
+    /// 의도를 바꿨을 수 있으므로, 한 잠금 안에서 채팅이 **아직 같은 의도의 `interrupted` 후보**인지(`auto_resume_chats`와 같은
+    /// 거르기, 같은 출력을 다른 작업이 쓰지 않음) 다시 보고, 그럴 때만 `check` 뒤 줄 세운다. 줄 세웠으면 `true`, 건너뛰었으면
+    /// `false`(오류가 아니다). 찍어 둔 `restart`로 그 사이 모은 채팅을 자르지 않는다.
+    pub fn start_interrupted_chat(
+        &self,
+        id: JobId,
+        restart: bool,
+        on_existing: OnExisting,
+        setting: SubtitleFormat,
+        check: impl FnOnce(&ContentRef) -> Result<Option<Option<String>>, AppError>,
+    ) -> Result<bool, AppError> {
+        let mut st = self.inner.lock();
+        let still = st
+            .jobs
+            .get(&id)
+            .and_then(Self::auto_resume_chat)
+            .is_some_and(|intent| intent == (on_existing, restart));
+        if !still || st.chat_output_taken(id) {
+            return Ok(false);
+        }
+        self.start_chat_in(&mut st, id, restart, on_existing, setting, check)?;
+        Ok(true)
+    }
+
+    fn start_chat_in(
+        &self,
+        st: &mut State,
+        id: JobId,
+        restart: bool,
+        on_existing: OnExisting,
+        setting: SubtitleFormat,
+        check: impl FnOnce(&ContentRef) -> Result<Option<Option<String>>, AppError>,
+    ) -> Result<(), AppError> {
         let Some(job) = st.target(id)? else {
             return Ok(());
         };
@@ -863,9 +929,9 @@ impl<B: Backend> DownloadManager<B> {
         let chat = next.to_dto();
         job.rec.chat = Some(next);
         st.chat.push(id);
-        self.inner.save(&st);
+        self.inner.save(st);
         st.emit(JobEvent::Chat { id, chat });
-        self.inner.chat_pump(&mut st);
+        self.inner.chat_pump(st);
         Ok(())
     }
 
@@ -953,16 +1019,20 @@ impl<B: Backend> DownloadManager<B> {
         st.jobs
             .values()
             .filter(|j| {
-                !j.removing
-                    && j.rec.status == JobStatus::Interrupted
-                    // `.part`가 없는 생방송은 자동으로 다시 시작하지 않는다: 지금 방송 중인 다른 방송을 옛 제목·시각의
-                    // 파일로 녹화하게 된다. 받은 영상 조각이 있으면 그것을 마무리하는 것이라 줄 세운다.
-                    // init만 든 `.part`는 코어가 지우고 지금 방송을 새로 녹화하므로(download/mod.rs) 줄 세우지 않는다(core.md 61 M3)
-                    && (!j.is_live() || crate::jobs::live_media_ready(&j.rec))
-                    && keep(&j.rec.content, j.rec.channel_id.as_deref())
+                Self::auto_resume_video(j) && keep(&j.rec.content, j.rec.channel_id.as_deref())
             })
             .map(|j| j.rec.id)
             .collect()
+    }
+
+    /// 영상 자동 이어받기 후보인가(`keep` 거르기 전). 후보를 고를 때와 줄 세우기 직전(`resume_interrupted_checked`)이 같이 쓴다
+    fn auto_resume_video(j: &Job) -> bool {
+        !j.removing
+            && j.rec.status == JobStatus::Interrupted
+            // `.part`가 없는 생방송은 자동으로 다시 시작하지 않는다: 지금 방송 중인 다른 방송을 옛 제목·시각의
+            // 파일로 녹화하게 된다. 받은 영상 조각이 있으면 그것을 마무리하는 것이라 줄 세운다.
+            // init만 든 `.part`는 코어가 지우고 지금 방송을 새로 녹화하므로(download/mod.rs) 줄 세우지 않는다(core.md 61 M3)
+            && (!j.is_live() || crate::jobs::live_media_ready(&j.rec))
     }
 
     /// 자동 이어받기 채팅 후보(`resume_interrupted_where`의 채팅 거르기)를 줄 세우지 않고 돌려준다. 값은 (작업, 그 채팅의
@@ -982,19 +1052,25 @@ impl<B: Backend> DownloadManager<B> {
     ) -> Vec<(JobId, OnExisting, bool)> {
         st.jobs
             .values()
-            .filter(|j| {
-                !j.removing
-                    && j.rec.status == JobStatus::Completed
-                    // 완료된 영상 파일이 지워졌으면 `start_chat`처럼 받지 않는다(빈 폴더에 채팅만 놓지 않는다,
-                    // Codex PR #141 3차 ③). `interrupted`로 남아 파일이 돌아오면 다음 이어받기가 줄 세운다
-                    && j.rec.output.is_file()
-                    && keep(&j.rec.content, j.rec.channel_id.as_deref())
-            })
+            .filter(|j| keep(&j.rec.content, j.rec.channel_id.as_deref()))
             .filter_map(|j| {
-                let c = j.rec.chat.as_ref()?;
-                (c.phase == ChatPhase::Interrupted).then_some((j.rec.id, c.on_existing, c.restart))
+                let (on_existing, restart) = Self::auto_resume_chat(j)?;
+                Some((j.rec.id, on_existing, restart))
             })
             .collect()
+    }
+
+    /// 채팅 자동 이어받기 후보면 그 의도(덮어쓰기 선택, "처음부터")(`keep` 거르기 전). 후보를 고를 때와 줄 세우기 직전
+    /// (`start_interrupted_chat`)이 같이 쓴다
+    fn auto_resume_chat(j: &Job) -> Option<(OnExisting, bool)> {
+        let c = j.rec.chat.as_ref()?;
+        (!j.removing
+            && j.rec.status == JobStatus::Completed
+            // 완료된 영상 파일이 지워졌으면 `start_chat`처럼 받지 않는다(빈 폴더에 채팅만 놓지 않는다,
+            // Codex PR #141 3차 ③). `interrupted`로 남아 파일이 돌아오면 다음 이어받기가 줄 세운다
+            && j.rec.output.is_file()
+            && c.phase == ChatPhase::Interrupted)
+            .then_some((c.on_existing, c.restart))
     }
 
     /// `resume_interrupted`와 같고, 작업의 컨텐츠와 소유 채널 ID가 `keep`을 통과한 것만 줄 세운다

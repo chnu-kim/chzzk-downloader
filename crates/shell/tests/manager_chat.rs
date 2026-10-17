@@ -1563,3 +1563,59 @@ async fn waiting_chat_whose_video_is_gone_is_interrupted_not_started() {
     })
     .await;
 }
+
+/// 맡은 채널 자동 이어받기 전용 `start_interrupted_chat`(app.md 구현 중 변경 87): 찍어 둔 의도와 같은 `interrupted` 채팅만
+/// 줄 세운다. 의도가 다르거나 이미 대기·받는 중이거나 사용자가 일시정지했으면 건너뛰고(`false`) 상태를 바꾸지 않는다.
+#[tokio::test(start_paused = true)]
+async fn start_interrupted_chat_requires_same_intent_and_interrupted() {
+    let h = Harness::new(1);
+    h.fake
+        .chat_for(h.output("a"), ChatScript::new().part(2).wait_cancel());
+    let id = h.enqueue_chat("a");
+    until("받는 중", || h.phase(id) == Some(ChatPhase::Running)).await;
+    h.mgr.quit(std::time::Duration::from_secs(3)).await;
+    assert_eq!(h.phase(id), Some(ChatPhase::Interrupted));
+    h.mgr.flush();
+    h.touch_video("a");
+
+    let m = open_with(h.dir.path(), &h.fake, 1, false);
+    let phase = || {
+        m.list()
+            .into_iter()
+            .find(|j| j.id == id)
+            .unwrap()
+            .chat
+            .unwrap()
+            .phase
+    };
+    let start = |restart, on_existing| {
+        m.start_interrupted_chat(id, restart, on_existing, SubtitleFormat::Ass, |_| Ok(None))
+    };
+    // 의도가 다르다("처음부터"·덮어쓰기): 건너뛴다. 찍어 둔 restart로 모은 채팅을 자르지 않는다
+    assert!(!start(true, OnExisting::Skip).unwrap());
+    assert!(!start(false, OnExisting::Overwrite).unwrap());
+    assert_eq!(phase(), ChatPhase::Interrupted);
+    // 판정이 거부하면 그 오류이고 상태는 그대로다
+    let err = m
+        .start_interrupted_chat(id, false, OnExisting::Skip, SubtitleFormat::Ass, |_| {
+            Err(chzzk_shell::AppError::ownership_unknown())
+        })
+        .unwrap_err();
+    assert_eq!(err.code, ErrorCode::OwnershipUnknown);
+    assert_eq!(phase(), ChatPhase::Interrupted);
+    // 같은 의도: 줄 세운다
+    h.fake
+        .chat_for(h.output("a"), ChatScript::new().part(2).wait_cancel());
+    assert!(start(false, OnExisting::Skip).unwrap());
+    until("다시 받는 중", || phase() == ChatPhase::Running).await;
+    until("다시 받음", || h.fake.chat_requests().len() == 2).await;
+    // 이미 받는 중: 건너뛴다
+    assert!(!start(false, OnExisting::Skip).unwrap());
+    // 사용자가 일시정지: 되살리지 않는다
+    m.pause_chat(id).unwrap();
+    until("일시정지", || phase() == ChatPhase::Paused).await;
+    assert!(!start(false, OnExisting::Skip).unwrap());
+    settle().await;
+    assert_eq!(phase(), ChatPhase::Paused);
+    assert_eq!(h.fake.chat_requests().len(), 2);
+}

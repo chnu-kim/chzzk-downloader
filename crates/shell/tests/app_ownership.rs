@@ -1598,3 +1598,130 @@ async fn delegated_auto_resume_rejudges_chat_content() {
     assert_eq!(channel_of(&app, 2).as_deref(), Some(OWN));
     app.manager.quit(Duration::from_secs(3)).await;
 }
+
+// ---------------------------------------------------------------------------
+// 맡은 채널 자동 이어받기 경합(Codex 5차 medium, app.md 구현 중 변경 87): 소유 확인을 기다리는 동안 사용자가
+// 후보를 이어받고 일시정지하면 자동 경로는 그 작업을 건너뛴다(일시정지를 되살리지 않는다)
+// ---------------------------------------------------------------------------
+
+/// 소유 확인(info)을 `delay`만큼 늦추고, 채팅 요청은 오래 붙잡는 mock. 사용자가 시작한 채팅이 받는 중에 머문다
+async fn slow_judging_api(delay: Duration) -> MockServer {
+    let api = mock_api(Some(Duration::from_secs(60))).await;
+    Mock::given(method("GET"))
+        .and(path(format!("/service/v2/videos/{VOD_NO}")))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_raw(fixture("testdata/vod/video_info.json"), "application/json")
+                .set_delay(delay),
+        )
+        .with_priority(1)
+        .mount(&api)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("/service/v1/videos/{VOD_NO}/chats")))
+        .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_secs(60)))
+        .with_priority(1)
+        .mount(&api)
+        .await;
+    api
+}
+
+/// info 요청이 도착할 때까지 기다린다(자동 경로가 소유 확인 await에 들어갔다)
+async fn until_info_requested(api: &MockServer) {
+    let info = format!("/service/v2/videos/{VOD_NO}");
+    for _ in 0..200 {
+        let n = api
+            .received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .filter(|r| r.url.path() == info)
+            .count();
+        if n > 0 {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("소유 확인 요청이 오지 않았다");
+}
+
+async fn until_app(what: &str, mut f: impl FnMut() -> bool) {
+    for _ in 0..300 {
+        if f() {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("기다리다 지침: {what}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn delegated_auto_resume_skips_chat_paused_by_user_during_judging() {
+    use chzzk_shell::chat::ChatPhase;
+    let api = slow_judging_api(Duration::from_secs(3)).await;
+    let worker = MockServer::start().await;
+    let t = TempDir::new().unwrap();
+    write_jobs(t.path(), vec![delegated_chat_record(t.path(), OWN)]);
+    enable_auto_resume(t.path(), &api);
+    save_session_full(t.path(), &worker, EDITOR, false, &[OWN]);
+    mock_me(&worker, EDITOR, &[OWN], 200).await;
+    let app = open_auth(t.path(), &api, &worker);
+    let st = delegated_status(true, &[OWN]);
+    assert!(app.take_delegated_resume(&st));
+    let user = async {
+        until_info_requested(&api).await;
+        // 사용자: 이어받기 → 일시정지(판정은 화면 경로가 따로 한다. 여기서는 그 결과만 흉내 낸다)
+        app.manager
+            .start_chat(
+                JobId(2),
+                false,
+                OnExisting::Skip,
+                chzzk_core::chat::SubtitleFormat::Ass,
+                |_| Ok(None),
+            )
+            .unwrap();
+        app.manager.pause_chat(JobId(2)).unwrap();
+        until_app("사용자 일시정지", || {
+            chat_of(&app, 2).unwrap().phase == ChatPhase::Paused
+        })
+        .await;
+    };
+    let (n, ()) = tokio::join!(
+        app.resume_delegated_interrupted(&st.delegated_channels),
+        user
+    );
+    assert_eq!(n, 0, "사용자가 손댄 후보는 건너뛴다");
+    assert_eq!(chat_of(&app, 2).unwrap().phase, ChatPhase::Paused);
+    app.manager.quit(Duration::from_secs(3)).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn delegated_auto_resume_skips_video_paused_by_user_during_judging() {
+    let api = slow_judging_api(Duration::from_secs(3)).await;
+    let worker = MockServer::start().await;
+    let t = TempDir::new().unwrap();
+    let out = t.path().join("out");
+    write_jobs(t.path(), vec![vod_record(2, Some(OWN), &out)]);
+    enable_auto_resume(t.path(), &api);
+    save_session_full(t.path(), &worker, EDITOR, false, &[OWN]);
+    mock_me(&worker, EDITOR, &[OWN], 200).await;
+    let app = open_auth(t.path(), &api, &worker);
+    let st = delegated_status(true, &[OWN]);
+    assert!(app.take_delegated_resume(&st));
+    let user = async {
+        until_info_requested(&api).await;
+        app.manager.resume(JobId(2), false).unwrap();
+        app.manager.pause(JobId(2)).unwrap();
+        until_app("사용자 일시정지", || {
+            status_of(&app, 2) == JobStatus::Paused
+        })
+        .await;
+    };
+    let (n, ()) = tokio::join!(
+        app.resume_delegated_interrupted(&st.delegated_channels),
+        user
+    );
+    assert_eq!(n, 0, "사용자가 손댄 후보는 건너뛴다");
+    assert_eq!(status_of(&app, 2), JobStatus::Paused);
+    app.manager.quit(Duration::from_secs(3)).await;
+}

@@ -1704,6 +1704,22 @@ impl<B: Backend> Inner<B> {
         st.emit(JobEvent::Chat { id, chat });
     }
 
+    /// 코어 수집을 시작한다: "처음부터"(`restart`)는 코어가 `.part`를 비우는 이번 호출로 쓰였다. 그 전(길이 조회 중)에
+    /// 멈추면 남아 다음 시작에 다시 쓰인다. 저장은 다음 전이 때 한다.
+    fn begin_collect(&self, id: JobId, run: u64) {
+        let mut st = self.lock();
+        if !st
+            .chat
+            .running_mut()
+            .is_some_and(|r| r.id == id && r.run == run)
+        {
+            return;
+        }
+        if let Some(c) = st.jobs.get_mut(&id).and_then(|j| j.rec.chat.as_mut()) {
+            c.restart = false;
+        }
+    }
+
     /// 처음 알아낸 영상 길이를 채팅 상태에 적는다(다음 이어받기는 다시 묻지 않는다). 저장은 다음 전이 때 한다.
     fn note_chat_duration(&self, id: JobId, run: u64, duration_ms: u64) {
         let mut st = self.lock();
@@ -1770,7 +1786,6 @@ impl<B: Backend> Inner<B> {
             return;
         };
         let partial = || video_no.and_then(|no| chat_partial_bytes(&output, no));
-        c.restart = false;
         match end {
             Ok(ChatOutcome::Completed {
                 messages,
@@ -1882,6 +1897,10 @@ async fn run_chat<B: Backend>(
             }
         }
     }
+    if cancel.is_cancelled() {
+        return Err(Error::Cancelled);
+    }
+    inner.begin_collect(id, run);
     let cb = Arc::clone(&inner);
     let on_progress = move |p: ChatProgress| cb.on_chat_progress(id, run, p);
     client.collect_chat(req, cancel, &on_progress).await

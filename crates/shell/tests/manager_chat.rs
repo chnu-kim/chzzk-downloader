@@ -733,3 +733,30 @@ async fn check_chat_output_lists_existing_chat_files() {
         vec!["a.chat.jsonl".to_string()]
     );
 }
+
+/// "처음부터"는 코어 수집이 시작되기 전(길이 조회 중)에 멈추면 남아, 다음 시작도 처음부터다.
+#[tokio::test(start_paused = true)]
+async fn restart_survives_pause_before_collect() {
+    let h = Harness::new(1);
+    let id = h.enqueue("a").id;
+    until("완료", || h.status(id) == JobStatus::Completed).await;
+    h.touch_video("a");
+    write_chat_part(&h.output("a"), VIDEO_NO, 2);
+    // 길이 조회 전에 멈춘다: 태스크를 띄운 같은 잠금 구간 뒤 곧바로 일시정지
+    h.mgr
+        .start_chat(id, true, OnExisting::Skip, SubtitleFormat::Ass, |_| {
+            Ok(None)
+        })
+        .unwrap();
+    h.mgr.pause_chat(id).unwrap();
+    until("일시정지", || h.phase(id) == Some(ChatPhase::Paused)).await;
+    assert!(h.fake.chat_requests().is_empty(), "코어 수집 전에 멈췄다");
+    // 이어받기(restart 아님)로 다시 시작해도 남은 "처음부터"가 쓰인다
+    h.mgr
+        .start_chat(id, false, OnExisting::Skip, SubtitleFormat::Ass, |_| {
+            Ok(None)
+        })
+        .unwrap();
+    until("완료", || h.phase(id) == Some(ChatPhase::Completed)).await;
+    assert!(h.fake.chat_requests()[0].restart);
+}

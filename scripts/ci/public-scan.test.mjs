@@ -350,6 +350,59 @@ test('PNG: 깨지거나 모르는 모양이면 파일 전체를 지금처럼 글
   }
 });
 
+test('PNG: 텍스트 청크 본문의 UTF-16도 검사한다(본문 UTF-16 디코드 + tEXt 본문의 NUL은 형식 위반, 이중 방어)', () => {
+  const le = Buffer.from(('NID_' + 'AUT=' + 'abcdefghijklmnop').repeat(12), 'utf16le');
+  const be = Buffer.from(le).swap16();
+  const hitCookie = (buf) => scanBuffer(buf, new Set()).some((f) => f.rule === 'naver-cookie');
+  const tEXt = (b) => chunk('tEXt', Buffer.concat([Buffer.from('Comment'), NUL, b]));
+  // Codex 재현: CRC가 맞는 tEXt 'Comment\0' + UTF-16LE 쿠키(origin/master는 잡았다)
+  assert.ok(hitCookie(png(tEXt(le))), 'tEXt UTF-16LE');
+  assert.ok(hitCookie(png(tEXt(be))), 'tEXt UTF-16BE');
+  // tEXt 본문(키워드 구분 NUL 뒤)의 NUL은 형식 위반이라 파일 전체 검사로 돌아간다
+  assert.equal(pngTexts(png(tEXt(le))), null, 'tEXt 본문 UTF-16');
+  assert.equal(pngTexts(png(tEXt(Buffer.from([0x61, 0, 0x62])))), null, 'tEXt 본문 NUL 하나');
+  // 앞에 NUL 없는 큰 청크가 있어 파일 전체의 UTF-16 추정(앞 8000바이트)이 빗나가도 본문 디코드가 잡는다
+  const filler = chunk('prVt', Buffer.alloc(9000, 0x2e));
+  assert.ok(hitCookie(png(filler, tEXt(le))), '큰 청크 뒤 tEXt UTF-16LE');
+  assert.ok(hitCookie(png(filler, tEXt(be))), '큰 청크 뒤 tEXt UTF-16BE');
+  // zTXt·iTXt: 풀린(또는 비압축) 본문이 UTF-16이어도 잡는다
+  const zLe = deflateSync(le);
+  assert.ok(!zLe.includes(Buffer.from('N\0I\0D\0')));
+  const cases = {
+    'zTXt UTF-16LE': chunk('zTXt', Buffer.concat([Buffer.from('Comment'), NUL, Buffer.from([0]), zLe])),
+    'iTXt 압축 UTF-16LE': chunk('iTXt', Buffer.concat([Buffer.from('Title'), NUL, Buffer.from([1, 0]), Buffer.from('ko'), NUL, NUL, zLe])),
+    'iTXt 비압축 UTF-16BE': chunk('iTXt', Buffer.concat([Buffer.from('Title'), NUL, Buffer.from([0, 0]), Buffer.from('ko'), NUL, NUL, be])),
+  };
+  for (const [name, c] of Object.entries(cases)) {
+    assert.notEqual(pngTexts(png(c)), null, name);
+    assert.ok(hitCookie(png(c)), name);
+    assert.ok(hitCookie(png(filler, c)), `큰 청크 뒤 ${name}`);
+  }
+});
+
+test('PNG: 풀린 크기가 상한(8 MiB)을 넘는 압축 메타데이터는 검사 오류(unscannable)로 실패한다', () => {
+  const MAX = 8 * 1024 * 1024;
+  const big = (n) => deflateSync(Buffer.alloc(n, 0x20));
+  const z = (n) => chunk('zTXt', Buffer.concat([Buffer.from('k'), NUL, Buffer.from([0]), big(n)]));
+  const it = (n) => chunk('iTXt', Buffer.concat([Buffer.from('k'), NUL, Buffer.from([1, 0]), NUL, NUL, big(n)]));
+  const rules = (buf) => scanBuffer(buf, new Set()).map((f) => f.rule);
+  for (const [name, c] of Object.entries({ zTXt: z, iTXt: it })) {
+    assert.deepEqual(rules(png(c(MAX))), [], `${name} 상한 그대로`);
+    assert.notEqual(pngTexts(png(c(MAX))), null, `${name} 상한 그대로`);
+    assert.deepEqual(rules(png(c(MAX + 1))), ['unscannable'], `${name} 상한 넘음`);
+    assert.equal(pngTexts(png(c(MAX + 1))), null, `${name} 상한 넘음`);
+    // CRC만 틀린 청크, 깨진 PNG(IEND 뒤 바이트)에서도 같다
+    const badCrc = Buffer.from(png(c(MAX + 1)));
+    badCrc[badCrc.length - IEND.length - 1] ^= 0xff;
+    assert.ok(rules(badCrc).includes('unscannable'), `${name} CRC`);
+    assert.ok(rules(Buffer.concat([png(c(MAX + 1)), Buffer.from('x')])).includes('unscannable'), `${name} IEND 뒤`);
+  }
+  // 픽셀(IDAT)이 IHDR 크기보다 크게 풀리는 것은 검사 오류가 아니라 깨진 PNG(파일 전체 검사)다
+  const fat = Buffer.concat([PNG_SIG, IHDR, chunk('IDAT', big(MAX + 1)), IEND]);
+  assert.equal(pngTexts(fat), null);
+  assert.ok(!rules(fat).includes('unscannable'));
+});
+
 test('작성자 이메일 허용 목록', () => {
   for (const ok of ['1+someone@users.noreply.github.com', 'someone@users.noreply.github.com', 'noreply@github.com', 'noreply@anthropic.com', 't@example.invalid', '49699333+dependabot[bot]@users.noreply.github.com', '114627259+chnu-kim@users.noreply.github.com', 'chanuuuu@naver.com', 'Chanuuuu@Naver.com']) {
     assert.ok(emailAllowed(ok), ok);

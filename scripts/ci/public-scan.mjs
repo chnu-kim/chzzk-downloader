@@ -19,7 +19,7 @@
 //
 // 줄마다 원문과, 디코드한 형태(JSON \uXXXX·\/, HTML 엔티티, %xx를 세 겹까지, NFKC, 폭 없는 문자 제거)를
 // 함께 본다. 줄 안의 base64 덩어리가 글자로 풀리면 그것도 본다. NUL이 든 파일은 UTF-16과 글자 조각을 뽑아 본다.
-// 온전한 PNG는 픽셀·구조 청크를 건너뛰고 텍스트 청크(tEXt·zTXt·iTXt, 압축은 풀어서)와 모르는 청크만 본다.
+// 온전한 PNG는 픽셀·구조 청크를 건너뛰고 텍스트 청크(tEXt·zTXt·iTXt, 압축은 풀어서, 본문은 UTF-16으로도)와 모르는 청크만 본다.
 //
 // 규칙
 //   signed-token   hdnts=/hdntl= 토큰에 실제 시각(9자리 이상 숫자)이 든 것, 또는 어디서든 st=/exp=에 10자리 시각
@@ -33,6 +33,7 @@
 //   denylist       denylist의 해시와 같은 토큰·토큰 안 6~13글자·n-gram·한글 부분 문자열·blob
 //   private-commit (이력) 커밋 SHA가 denylist의 commit: 지문(비공개 저장소에만 있는 커밋)과 같은 것
 //   identity       (이력) 작성자·커미터·태거 이메일이 허용 목록(noreply 주소, 공개하기로 한 작성자 이메일)에 없는 것
+//   unscannable    검사 오류: PNG 압축 메타데이터(zTXt·iTXt)가 풀린 크기 상한(8 MiB)을 넘어 다 볼 수 없는 것(fail closed)
 
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -370,15 +371,24 @@ function crc32(buf) {
   return (c ^ 0xffffffff) >>> 0;
 }
 
+/** 풀린 크기가 상한을 넘었다. 텍스트 청크에서는 검사 오류(unscannable)로 실패한다. */
+class PngLimit extends Error {}
+
 /**
- * 압축 방식 0(zlib)만 받는다. 풀리지 않거나 너무 크거나 스트림 뒤에 남는 바이트가 있으면 예외
+ * 압축 방식 0(zlib)만 받는다. 풀리지 않거나 너무 크거나(PngLimit) 스트림 뒤에 남는 바이트가 있으면 예외
  * (inflate는 스트림 뒤 바이트를 말없이 버려, 거기 둔 평문이 검사를 비껴간다).
  */
 function pngInflate(method, data, max = PNG_INFLATE_MAX) {
   if (method !== 0) throw new Error('압축 방식');
-  const { buffer, engine } = inflateSync(data, { maxOutputLength: Math.max(1, max), info: true });
-  if (engine.bytesWritten !== data.length) throw new Error('스트림 뒤 바이트');
-  return buffer;
+  let r;
+  try {
+    r = inflateSync(data, { maxOutputLength: Math.max(1, max), info: true });
+  } catch (e) {
+    if (e?.code === 'ERR_BUFFER_TOO_LARGE') throw new PngLimit('풀린 크기 상한');
+    throw e;
+  }
+  if (r.engine.bytesWritten !== data.length) throw new Error('스트림 뒤 바이트');
+  return r.buffer;
 }
 
 /** NUL로 나눈 앞 조각들과 나머지. 모자라면 예외. */
@@ -404,40 +414,65 @@ function bothEncodings(b) {
   return u === l ? [u] : [u, l];
 }
 
-/** 텍스트 청크 하나를 글자들로. */
-function pngChunkTexts(type, data) {
-  if (type === 'tEXt') {
-    const [[key], text] = splitNul(data, 1);
-    return [key, text].flatMap(bothEncodings);
-  }
-  if (type === 'zTXt') {
-    const [[key], rest] = splitNul(data, 1);
-    if (rest.length < 1) throw new Error('zTXt');
-    return [key, pngInflate(rest[0], rest.subarray(1))].flatMap(bothEncodings);
-  }
-  if (type === 'iTXt') {
-    const [[key], rest] = splitNul(data, 1);
-    if (rest.length < 2) throw new Error('iTXt');
-    const flag = rest[0];
-    const [[lang, tkey], body] = splitNul(rest.subarray(2), 2);
-    let text;
-    if (flag === 0) text = body;
-    else if (flag === 1) text = pngInflate(rest[1], body);
-    else throw new Error('iTXt 압축 표지');
-    return [key, lang, tkey, text].flatMap(bothEncodings);
-  }
-  // 모르는 청크: 예전처럼 글자 조각과 UTF-16
-  const out = [textRuns(data)];
-  const u = utf16(data);
+/** 텍스트 청크 본문: UTF-8·latin1에 더해 UTF-16(BOM이 있거나 한쪽 바이트가 대부분 0이면)으로도 읽는다. */
+function bodyTexts(b) {
+  const out = bothEncodings(b);
+  const u = utf16(b);
   if (u) out.push(u);
   return out;
 }
 
 /**
+ * 청크 하나에서 검사할 글자를 texts에 넣는다. 형식이 틀리면 그때까지 넣은 글자를 남기고 예외를 던진다
+ * (tEXt 본문의 NUL은 넣은 뒤에 형식 위반으로 던진다: 본문 UTF-16과 파일 전체 검사로 이중으로 본다).
+ */
+function pngChunkTexts(type, data, texts) {
+  if (type === 'tEXt') {
+    const [[key], text] = splitNul(data, 1);
+    texts.push(...bothEncodings(key), ...bodyTexts(text));
+    if (text.includes(0)) throw new Error('tEXt 본문 NUL');
+    return;
+  }
+  if (type === 'zTXt') {
+    const [[key], rest] = splitNul(data, 1);
+    texts.push(...bothEncodings(key));
+    if (rest.length < 1) throw new Error('zTXt');
+    texts.push(...bodyTexts(pngInflate(rest[0], rest.subarray(1))));
+    return;
+  }
+  if (type === 'iTXt') {
+    const [[key], rest] = splitNul(data, 1);
+    texts.push(...bothEncodings(key));
+    if (rest.length < 2) throw new Error('iTXt');
+    const flag = rest[0];
+    const [[lang, tkey], body] = splitNul(rest.subarray(2), 2);
+    texts.push(...bothEncodings(lang), ...bothEncodings(tkey));
+    if (flag === 0) texts.push(...bodyTexts(body));
+    else if (flag === 1) texts.push(...bodyTexts(pngInflate(rest[1], body)));
+    else throw new Error('iTXt 압축 표지');
+    return;
+  }
+  // 모르는 청크: 예전처럼 글자 조각과 UTF-16
+  texts.push(textRuns(data));
+  const u = utf16(data);
+  if (u) texts.push(u);
+}
+
+/**
  * 온전한 PNG에서 검사할 글자들. PNG가 아니거나 깨졌으면 null(시그니처·길이·형식 이름·CRC·IEND로 끝남·
  * IEND 뒤 바이트 없음·텍스트 청크 구조와 압축을 모두 확인한다). 깨졌어도 그때까지 뽑은 글자는 texts에 남는다.
+ * 텍스트 청크의 압축이 풀린 크기 상한을 넘으면 errors에 'unscannable'을 넣는다(fail closed).
  */
-export function pngTexts(buf, texts = []) {
+export function pngTexts(buf, texts = [], errors = []) {
+  const chunkTexts = (type, data) => {
+    try {
+      pngChunkTexts(type, data, texts);
+      return true;
+    } catch (e) {
+      if (e instanceof PngLimit) errors.push('unscannable');
+      return false;
+    }
+  };
   if (buf.length < PNG_SIG.length || !buf.subarray(0, PNG_SIG.length).equals(PNG_SIG)) return null;
   let at = PNG_SIG.length;
   let first = true;
@@ -457,13 +492,7 @@ export function pngTexts(buf, texts = []) {
     const data = buf.subarray(at + 8, at + 8 + len);
     if (crc32(buf.subarray(at + 4, at + 8 + len)) !== buf.readUInt32BE(at + 8 + len)) {
       // CRC만 틀린 텍스트 청크도 풀 수 있으면 풀어 둔다(압축된 글자는 바이트 검사로 못 본다)
-      if (PNG_TEXT_CHUNKS.has(type)) {
-        try {
-          texts.push(...pngChunkTexts(type, data));
-        } catch {
-          // 풀리지 않으면 바이트 검사만
-        }
-      }
+      if (PNG_TEXT_CHUNKS.has(type)) chunkTexts(type, data);
       return null;
     }
     at += 12 + len;
@@ -490,11 +519,7 @@ export function pngTexts(buf, texts = []) {
       }
       return texts;
     }
-    try {
-      texts.push(...pngChunkTexts(type, data));
-    } catch {
-      return null;
-    }
+    if (!chunkTexts(type, data)) return null;
   }
   return null; // IEND 없음
 }
@@ -508,7 +533,9 @@ export function scanBuffer(buf, deny) {
   if (deny.has(hashBlob(buf))) found.push({ line: 0, rule: 'denylist-blob' });
   // 깨진 PNG도 그때까지 풀어 낸 메타데이터는 검사하고, 그다음 파일 전체를 예전처럼 본다
   const decoded = [];
-  const png = pngTexts(buf, decoded);
+  const errors = [];
+  const png = pngTexts(buf, decoded, errors);
+  for (const rule of errors) found.push({ line: 0, rule });
   for (const t of decoded) for (const f of scanText(t, deny)) found.push({ line: 0, rule: f.rule });
   if (png) return found;
   const head = buf.subarray(0, 8000);

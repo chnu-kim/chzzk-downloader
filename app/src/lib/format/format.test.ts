@@ -33,6 +33,7 @@ import {
   formatRemaining,
   formatSpan,
   formatSpokenRemaining,
+  parseClock,
 } from './duration';
 
 // design/format/*.json 골든: Rust(crates/shell/tests/format_golden.rs)도 같은 파일을 읽는다.
@@ -57,6 +58,7 @@ const FUNCTIONS: Record<string, (...args: any[]) => unknown> = {
   formatWhen,
   formatAgo,
   parseKstWall,
+  parseClock,
   wallOf,
   formatSpokenPercent,
   formatSpokenSize,

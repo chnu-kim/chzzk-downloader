@@ -78,9 +78,9 @@ Codex 2회차 N1~N9는 각 설계가 3차·4차 개정에서 처리했다(N1·N2
 ### ② 구간만 받기(`range.md` 4차)
 | 남은 것 | 종류 | 처리 자리 |
 |---|---|---|
-| 실측 M-②-2(세 시각 장면 대응)·M-②-3(키프레임)·M-②-6(defrag한 구간 파일 재생). **2·6이 ②-3 머지 조건**, 하나라도 실패면 ② deferred(보정 상수 없음) | [실측 필요] | ②-0 도구(3번) · ②-1 `dl --range`(2·6번) |
+| 실측 M-②-2(세 시각 장면 대응)·M-②-3(키프레임)·M-②-6(defrag한 구간 파일 재생). **2·6이 ②-3 머지 조건**, 하나라도 실패면 ② deferred(보정 상수 없음) | **2·6 통과**(2026-10-18, 세 시각 일치·구간 파일 재생 된다). 3은 부분 관찰(세 구간 첫 프레임 키프레임, 도구 미작성), 결과는 ROADMAP "기능 ② 사용자 실측" | ②-0 도구(3번) · ②-1 `dl --range`(2·6번) |
 | 전체 빠른 다시보기에도 defrag를 적용할지(이 기능 밖 새 결정, M-②-6 "전체 받기 파일" 관찰이 재료) | **확정: 실측 뒤**(2026-10-16). 적용하면 ⑤-F4의 defrag 실패 계약을 같이 쓴다 | `decisions.md` R5 |
-| M-②-6 마무리 시간·메모리 관찰(기준 "10초" [잠정]) → `Finalizing` 하위 표시·변환 중 취소 | [실측 필요] | ②-3 범위 판단 |
+| M-②-6 마무리 시간·메모리 관찰(기준 "10초" [잠정]) → `Finalizing` 하위 표시·변환 중 취소 | [실측 필요](2026-10-18 실측에서 아직 안 봄) | ②-3 범위 판단 |
 | `truncated` 필드 이름 · `patterns.md:398`·`:713` 키 이름 `filename.willSave` ≠ 실제 `willSaveAs` · `design-shots`에 `conflict.partialOther` 장면 유무 | 리뷰·확인 | ②-2 리뷰, ②-3 |
 | 같은 경로의 생방송 `.part`가 VOD·구간 받기로 지워지는 위험(N4와 같은 구조) | ⑤ 몫 | ⑤-F2가 먼저(§5-A), ②-1은 그 위에서 `same_job`을 바꾼다 |
 | 칸 폭 `ch`·moov 크기 상한 | [잠정] | ②-3 ADR-0009 행 |
@@ -200,7 +200,7 @@ Codex 2회차 N1~N9는 각 설계가 3차·4차 개정에서 처리했다(N1·N2
 | `chore/range-check` `[P]` | ②-0 `chore:` `examples/range_check.rs`(오프라인 판정 하나: 조각 첫 샘플이 동기 샘플인가, M-②-3) + 판정 lib 단위 테스트 + non-sync 음성 fixture | S | 없음 | `rust`·`scan`·fixtures `--check` |
 | ⏸ | 사용자 실측 M-②-3 | 사람 | ②-0 | "안 된다"면 ② deferred |
 | `feat/range-core` `[P]` | ②-1 `feat:` `TimeRange`(end `Option`)·`hls::select_range`·`HlsState.range`/`HlsRange`·sidecar v1/v2·`same_job` 셋(+ `resume` 인자)·segmented §3.4 표·`finish` defrag 조건 `range.is_some()`·`Unsupported::RangeNotHls`(`Chzzk::download` 맨 처음)·`rangeOutOfBounds`(23번째)·`DownloadRequest` 리터럴 `range: None` 목록(테스트 셋 + `dl.rs:229` 포함)·fixture·`assert_flat_mp4` 이동·wiremock·**생방송 sidecar 호환 단위 테스트**·`examples/dl.rs --range`(M-②-2·6용, 보조 "EXTINF 누적 = info 길이") | O(엔진 8곳·재개 불변식) | R1 확정. **⑤-F2 뒤**(§3 `same_job`). 실측 전에도 진행 가능 | `rust`·`coverage` |
-| ⏸ | 사용자 실측 M-②-2(세 시각)·M-②-6(재생 + 전체 받기 관찰 + 마무리 시간·메모리) | 사람 | ②-1 `dl --range` | 2·6 둘 다 통과해야 ②-3 |
+| ⏸ | 사용자 실측 M-②-2(세 시각)·M-②-6(재생 + 전체 받기 관찰 + 마무리 시간·메모리) | 사람 | ②-1 `dl --range` | 2·6 둘 다 통과해야 ②-3. **2026-10-18 구간 파일 판정 통과**(전체 받기·마무리 관찰은 남음) |
 | `feat/range-shell` | ②-2 `feat:` DTO `range`·`check_output` 인자·`JobRecord.range`·`partial_bytes` 비교·재검증 둘(생방송 포함)·`range_suffix` + 제목 쪽 자르기·`truncated` 뜻·`error_map.rs`·bindings·가짜 Backend | S(명세 확정) | ②-1 | `rust`·`tauri`, "접미사 한 번" 테스트 |
 | ~~②-4~~ | **없앴다**(range.md 3차). defrag가 그 일을 한다 | — | — | — |
 | `feat/range-app` | ②-3 `feat:` 카드 Disclosure·`parseClock` 골든·`checkKey`·`effectiveRange`·조용한 미리보기·1줄 조각·copy(`conflict.partialOther` R4)·`errors.ts`·`content.md` §6.5 기호 행·§15·`patterns.md:398`·`:399`·`:713`·e2e·갤러리·(④-5가 먼저 머지돼 있으면) 구간 켜짐 → 채팅 행 숨김 | S(와이어·copy 확정) · 리뷰 F(줄 하나가 튀지 않는지) | ②-2 · R2~R4 확정 · **M-②-2 셋 "일치" · M-②-6 "된다"** | `frontend`·`e2e-web`·`design-copy`·`design-shots` |

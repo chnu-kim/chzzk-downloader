@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { JobDto, JobStatus } from './bindings';
 import { t } from './copy/ko';
+import { rangeChip } from './receive';
 import { ERROR_CODES } from './copy/errors';
 import { COMPLETED_FOLD_AT, RECOVERY_SILENT_MS, STALE_DAYS } from './timing';
 import { ICONS } from './components/ui/icons';
@@ -35,6 +36,7 @@ import {
   shownJobs,
   spaceAction,
   staleDays,
+  qualityText,
   statusLine,
   statusParts,
   statusWord,
@@ -1064,5 +1066,21 @@ describe('생방송 녹화(ADR-0025): 막대·남은 시간 없이 글자만', (
       const j = live({ status: 'failed', progress: null, error: err(code) });
       expect(jobButtons(j, null).primary, code).toEqual(['retry']);
     }
+  });
+});
+
+describe('qualityText (1줄 화질 칸, 구간 조각)', () => {
+  it('구간이 없으면 화질 라벨 그대로', () => {
+    expect(qualityText(job(1, { range: null }))).toBe(job(1).qualityLabel);
+  });
+  it('구간이 있으면 화질 · 조각', () => {
+    const range = { startMs: 600000, endMs: 1200000 };
+    expect(qualityText(job(1, { range }))).toBe(statusLine([job(1).qualityLabel, rangeChip(range)]));
+  });
+  it('끝을 모르면 chipToEnd', () => {
+    const range = { startMs: 600000, endMs: null };
+    expect(qualityText(job(1, { range }))).toBe(
+      `${job(1).qualityLabel} · ${t('range.chipToEnd', { start: '0:10:00' })}`,
+    );
   });
 });

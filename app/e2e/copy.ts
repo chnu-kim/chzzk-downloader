@@ -10,7 +10,7 @@ export { formatFileSize, sizeBaseOf } from '../src/lib/format/bytes';
 export { formatDate, formatDateTime, parseKstWall } from '../src/lib/format/date';
 export { dayText, whenText } from '../src/lib/when';
 export { channelRow } from '../src/lib/auth';
-export { CHECK_DEBOUNCE_MS, kindLabel, recentSecondLine } from '../src/lib/receive';
+export { CHECK_DEBOUNCE_MS, kindLabel, rangeChip, recentSecondLine } from '../src/lib/receive';
 export { COMPLETED_FOLD_AT, COPIED_LABEL_MS, LOADER_DELAY_MS, LOADER_MIN_MS, RECOVERY_NOTICE_MS, RECOVERY_SILENT_MS, STALE_DAYS, TOAST_MS } from '../src/lib/timing';
 
 import { t, type CopyKey, type CopyVars } from '../src/lib/copy/ko';

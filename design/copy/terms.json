@@ -914,6 +914,16 @@
       "key": "invite.confirm.title",
       "word": "?",
       "reason": "초대 확인 페이지의 제목이 앱 dialog.*.title과 같은 위치다(확인 한 번, delegation.md §5.2 (나), content.md §15.3)"
+    },
+    {
+      "key": "range.chip",
+      "word": "~",
+      "reason": "시각 범위 기호다. DC9의 ~는 macOS 홈 경로 표기용이라 겹친다(content.md §6.5 범위 행, range.md §5.4)"
+    },
+    {
+      "key": "range.chipToEnd",
+      "word": "~",
+      "reason": "끝을 모르는 시각 범위 기호다. DC9의 ~는 macOS 홈 경로 표기용이라 겹친다(content.md §6.5 범위 행, range.md §5.4)"
     }
   ]
 }

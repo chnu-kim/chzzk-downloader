@@ -4,6 +4,7 @@
 
 ## 현재 위치
 
+- **②-3 구간 받기 앱(2026-10-16, 브랜치 `feat/range-app`, PR #127, app.md 88)**: 빠른 다시보기 카드 화질 아래 「일부만 받기」(접힘 기본, FieldRow + 시각 칸 둘)·`parseClock` 골든(TS·Rust)·검사 열쇠·크기 미리보기·작업 행 1줄 구간 조각·웹 E2E `range.spec.ts`·갤러리 장면 넷. 머지 조건이던 사용자 실측 M-②-2·M-②-6이 2026-10-18 둘 다 통과했다(아래 "기능 ② 사용자 실측"). 2026-10-18 master를 합쳐(app.md 구현 중 변경 83 → 88) 머지한다. 다음은 ②-5 문서, 남은 관찰은 전체 받기 파일 QuickTime 재생(R5 재료)·거의 전체 길이 구간의 마무리 시간·메모리, M-②-3 전체 조각 검사(②-0 도구).
 - **비공개 denylist PNG 오탐 fix(2026-10-17, 브랜치 `fix/private-scan-png`, PR #136, 이슈 #75, cicd.md 115)**: 필드별로 글자를 모으던 접근이 Codex 5회 연속 "master는 잡는데 놓치는" 우회를 내서 방식을 바꿨다. 온전한 PNG는 IDAT 데이터 바이트만 0으로 바꾼 사본에 origin/master와 같은 파일 전체 검사를 돌리고(IDAT 밖 바이트는 자리·이웃 그대로라 master 결과를 포함한다), 텍스트 청크(zTXt·iTXt는 풀어서)를 더 본다. origin/master 검사기를 고정 오라클(`scripts/ci/testdata/public-scan-master.mjs`)로 둔 속성 테스트가 포함 관계를 직접 비교한다. 남은 것: 머지 뒤 `gh workflow run nightly.yml --ref master -f only=private-scan`으로 녹색 확인.
 - **④ 후속 둘(2026-10-17, 브랜치 `fix/chat-sidecar-read`, core.md 69·app.md 87, `fix`)**: 채팅 sidecar 읽기 실패를 없음과 나눠 기록을 자르거나 지우지 않는다(Codex high), 맡은 채널 자동 이어받기는 소유 판정 뒤 매니저 잠금 안에서 아직 같은 의도의 `interrupted` 후보일 때만 줄 세운다(Codex 5차 medium). PR 대기.
 - **④-3a·④-4 후속 다섯 건(2026-10-17, 브랜치 `fix/chat-followups`, core.md 68·app.md 86, `fix`)**: 자막 단계 `spawn_blocking`(잠근 `ChatPart` 소유 유지), 낡은 `moved` 자막 다시 만들기, `enqueue`의 채팅 `restart`, 맡은 채널의 끊긴 채팅 자동 이어받기(컨텐츠 재판정 뒤 `fetch_chat`), 기다리던 채팅의 영상 파일 재확인. PR 대기.
@@ -13,10 +14,10 @@
 - **v0.8.0 버전 PR(2026-10-17)**: v0.7.0 뒤 76개 커밋을 담는다(`feat`라 minor, `release.mjs next-version` 최소 0.8.0). PR: #113 생방송 녹화 안전 수정, #118 채팅 이어받기 파일, #121·#123 구간 받기 코어·셸, #115·#119·#122·#124·#129 편집자 위임(Worker 저장소·웹·셸·문서·앱), #128 생방송 끝난 이유, #114 실측 도구, #116·#126 테스트. 큰 변화: 편집자 위임이 운영에서 켜진다(`EDITOR_API_PROD=true`), Worker DO 스키마 V3 마이그레이션이 이 태그로 운영에 들어간다(롤백 범위는 V3 직전까지 확인됨, 런북). 앱 전체 흐름의 운영 실기 확인은 아래 ①-5 항목의 후속에 남는다. ratchet 변경: `size.binary.windows`(+4.78%)·`size.bundle.windows-msi`(+4.24%)·`size.bundle.windows-setup`(+3.92%)를 측정값으로 올렸다(RATCHET_LOG). 크기: dispatch 실행 38952105058에서 Linux·macOS는 허용 3% 안(macOS 바이너리 25430800, dmg 8271982), Windows 셋만 넘어 위와 같이 올렸다.
 - **기능 ① 편집자 위임 ①-5 앱 화면(2026-10-16, 브랜치 `feat/delegation-app`, 커밋 셋(구현 + 기록 + 리뷰 반영: 막힌 생방송 info 숨김·오류 Notice [다시 불러오기]·checking 중 빼기 미루기·openView 계정 맞춤·Notice 버튼 줄바꿈 최소 본문 폭·`delegated.help`, app.md 81 (하)))**: 설정 › 계정에 편집자 머리 행([초대 주소 만들기]→읽기 전용 주소 칸·[주소 복사])·편집자 행들([편집자 빼기] 지연 회수 토스트 [되돌리기], 시작한 계정에 묶임)·맡은 채널 행들([편집자 그만두기]), 막힌 카드의 둘째 문장·[다시 불러오기](`ResolveStore.recheck`)·맡은 채널 생방송 갈래, 카드 메타 조각 '맡은 채널', 홈 빈 상태·로그인 거부 한 줄, Worker `EDITOR_API_PROD = true`·고지 셋째 문장·`help/editors.md`를 구현했다(app.md 81·worker.md 107, 설계와 다르게 정한 곳은 app.md 81 (나)~(카)). 새 컴포넌트·배너·대화상자 없음. 남은 것(PR #129 머지, 기준선 받기 커밋 `20ef5ce`, 버전 올림·릴리스 v0.8.0은 끝남): 도움말 L2 링크(Z4: 앵커 있는 `WebPage`, Rust·bindings 변경, 81 (마))·네이티브 E2E 맡은 채널 받기 1회(81 (차))·D62 UT8·UT9 사용자 시험·운영 실기 확인(업데이트 뒤 초대 → 로그인 → 맡은 채널 받기). 같은 목록이 아래 Phase 5 체크리스트에 있다.
 - **⑤-F3 끝난 이유 표시(2026-10-16, 브랜치 `feat/live-end-reason`, core.md 65·app.md 82, `feat`)**: 녹화 결과·jobs.json·작업 행에 끝난 이유(방송 종료·녹화 마치기·재시작·그 밖)와 놓친 조각 수, 재시작이면 [다시 녹화]. 구현·리뷰 반영 완료, PR #128 머지. 남은 것은 아래 ⑤ 체크리스트의 F3 후속.
-- **②-2 구간 받기 셸(2026-10-16, 브랜치 `feat/range-shell`, app.md 80·core.md 64.9)**: `TimeRangeDto`·`EnqueueRequest.range`·`JobDto.range`·`JobRecord.range`(JOBS_VERSION 1 그대로)·`check_output` 구간 접미사·`partialOther` 구간 비교·가짜 백엔드를 넣었다. 구현·리뷰 반영 완료, PR #123 머지. ②-3 앱 카드 화면은 PR #127이 열려 있고(머지 전), 사용자 실측 M-②-2·6은 대기.
+- **②-2 구간 받기 셸(2026-10-16, 브랜치 `feat/range-shell`, app.md 80·core.md 64.9)**: `TimeRangeDto`·`EnqueueRequest.range`·`JobDto.range`·`JobRecord.range`(JOBS_VERSION 1 그대로)·`check_output` 구간 접미사·`partialOther` 구간 비교·가짜 백엔드를 넣었다. 구현·리뷰 반영 완료, PR #123 머지. ②-3 앱 카드 화면은 PR #127(2026-10-18 머지), 사용자 실측 M-②-2·6은 2026-10-18 통과.
 - **기능 ① 편집자 위임 ①-4(2026-10-16, 브랜치 `feat/delegation-shell`, 커밋 넷(구현 + 리뷰 반영 + Codex 반영 + 확인 반영: 경로 없는 Worker의 404를 `/api/me`로 가름·401 뒤 refresh 세대 묶음, app.md 79 (하)), PR #122)**: 셸이 맡은 채널을 판정에 넣고(`classify` Own > Delegated > AdminOverride, 생방송 제외 L-D1) 판정 직전에 `/api/me`로 확인한다(5분 간격 [잠정], 수동은 간격 없음). `AuthService`에 `check_delegations`·편집자 쓰기 API·`refresh_lock` 공통 적용(N2)·`session_epoch` 세대, `session.json`의 `delegatedChannels`, command 다섯, DTO·bindings, `jobBlock`·가짜 백엔드 최소 반영(app.md 79). 리뷰 반영: 자동 확인 실패도 5분 간격을 시작(판정마다 `/api/me`·refresh 반복 방지), resolve 확인 중 거부는 `notLoggedIn`, 온라인 `/api/me` 실패 중 디스크 목록 허용을 D2 대가 ④로 기록(79 (바)·(카)·(타)). 남은 것: PR #122 머지, ①-5(화면·copy·네이티브 E2E, 지연 빼기의 기대 계정 대조 79 (하) ③).
 - **①-3 Worker 웹(2026-10-16, 브랜치 `feat/delegation-worker-web`)**: 편집자 초대·완료 페이지, 앱 편집자 API 3개(초대 만들기·빼기·그만두기), 관리 화면 초대 꼬리표, 거부 페이지 초대 줄, `/privacy` 편집자 항목을 구현했다, PR #119 머지. 도움말 editors는 ①-5로 옮겼다(worker.md 106). design-worker 새 기준선은 CI artifact로 `--accept`가 필요하다. Codex 적대적 리뷰 6건 반영(106 (차): quiet 접두, 거부 페이지 [초대 취소], 완료 화면을 수락에 묶음, `already`는 초대를 남김, 운영 앱 편집자 API는 릴리스 B까지 닫힘, `/privacy` 관리자 관계 예외).
-- **②-1 구간 받기 코어(2026-10-16, 브랜치 `feat/range-core`, core.md 64)**: `DownloadRequest.range`·`hls::select_range`·sidecar v2(`HlsRange`, `PartOwner.range`)·엔진의 구간 범위·마무리 defrag 확대(`Live || range`)·`Unsupported(RangeNotHls)`·`rangeOutOfBounds`(코어 25번째, 셸 33개)·`dl --range`를 넣었다. PR #121 머지. 이어서 ②-2 셸(#123 머지)·②-3 앱(#127 열림)이 올라갔고, 사용자 실측 M-②-2·6(`dl --range`)은 대기.
+- **②-1 구간 받기 코어(2026-10-16, 브랜치 `feat/range-core`, core.md 64)**: `DownloadRequest.range`·`hls::select_range`·sidecar v2(`HlsRange`, `PartOwner.range`)·엔진의 구간 범위·마무리 defrag 확대(`Live || range`)·`Unsupported(RangeNotHls)`·`rangeOutOfBounds`(코어 25번째, 셸 33개)·`dl --range`를 넣었다. PR #121 머지. 이어서 ②-2 셸(#123 머지)·②-3 앱(#127 머지)이 올라갔고, 사용자 실측 M-②-2·6(`dl --range`)은 2026-10-18 통과.
 - **생방송 사후 점검 ⑤ fix(2026-10-16, 브랜치 `fix/live-recording-safety`, 다음 patch)**: v0.7.0 점검에서 나온 녹화 안전 결함 다섯을 고친다(core.md 61·app.md 78). F1 `live_stop`이 재조회·playlist 읽기·첫 조회 중에도 먹고, M5·M1 `recordingId`로 `.part`의 주인을 가려 다른 작업(새 녹화·같은 이름의 VOD)이 받다 만 녹화를 지우거나 마무리하지 않으며, M3 자동 이어받기는 영상 조각이 있는 녹화만, F4 `fileTooLarge`(EFBIG·223)를 따로 알리고, M4 변환 도중 실패는 `.part`로 남기고, F5 LL 태그 경고를 멈췄다. 코드·테스트 완료(여덟 커밋), PR·CI·머지·릴리스는 남았다. 사용자 데이터·계약을 깨지 않는 선택 필드만 더했으므로 patch(0.7.1)다.
 - **차별 기능 다섯 착수(2026-10-16, Phase 5, 브랜치 `docs/differentiation-design`)**: 기존 VOD 다운로더와 갈라지는 다섯 기능(① 편집자 위임 ② 구간만 받기 ③ 내 채널 새 영상 확인과 모아 받기 ④ 채팅 함께 받기 ⑤ 생방송 녹화 사후 점검 fix)의 설계와 결정을 `docs/design/features/`로 옮겼다(이 PR은 문서만, 읽는 순서는 그 폴더의 `README.md`). 설계는 Codex 적대적 리뷰 3회차까지 끝났고, 사용자가 결정을 확정했다(아래 "차별 기능 결정"). 다음은 실측 도구 PR(②-0·③-1·④-1)과 ⑤ fix(F1·F2·F4·F5)다. 실측(키프레임·목록·채팅·자막)은 사용자가 도구 PR 머지 뒤 한 세션에 돌린다. 이 기능들이 담기는 다음 `feat` 릴리스는 최소 0.8.0이다.
 - **v0.7.0 릴리스(2026-10-16)**: 태그 `c8778f3`(버전 PR #107), release 실행 38810803876 전 단계 녹색(R2 발행·verify·prune·deploy-worker). 배포 뒤 사용자가 앱에서 생방송 녹화가 정상 동작함을 확인했다(위 "앱 전체 흐름 실기 확인 전" 항목 해소). 알려진 한계는 core.md 59·60.
@@ -132,6 +133,15 @@
 - OAuth: PKCE 없음 → Worker 대행 확정. 리디렉트 URI의 loopback 허용 여부는 문서에 없음 → **Worker 콜백 + 일회용 sid 폴링**으로 설계. 일회용 sid 저장소는 KV가 아닌 D1/Durable Object(KV는 최종 일관성).
 - 본인 영상 판정: VOD는 `content.channel.channelId`, 클립은 `ownerChannel.channelId`(제작자 `makerChannel` 아님). OAuth `users/me`의 `channelId`와 같은 식별자인지는 Phase 3에서 실측.
 - Tauri 2.12 계열, Svelte 템플릿은 SvelteKit+adapter-static(SPA). 진행률은 Channel API. 버전 근거는 `docs/research/stack.md`.
+
+### 기능 ② 사용자 실측(2026-10-18, `dl --range`)
+
+결과는 범주·된다/안 된다·일치/불일치만 적는다(영상 번호·채널·시각 원값 없음). 대상은 빠른 다시보기 한 편, 구간은 시작·중간·끝 세 시각의 짧은 구간 셋이다.
+
+- M-②-2 세 시각의 구간 파일 첫 장면 = 치지직 플레이어 같은 시각 장면(사용자 눈): **일치**(셋 모두). 보조 EXTINF 누적 = 영상 길이: **같다**
+- M-②-6 구간 파일이 macOS QuickTime에서 처음부터 재생·탐색: **된다**. ffprobe 길이 = 요청 구간: **맞다**, 전체 디코드 오류: **없다**
+- M-②-3 조각이 키프레임으로 시작: **부분 관찰** — 세 구간 파일의 첫 프레임이 모두 키프레임이다. 전체 조각 검사는 아니다(②-0 도구 `examples/range_check.rs` 미작성)
+- 아직 안 한 관찰(②-3 머지 조건 아님): 전체 받기 파일 QuickTime 재생·탐색(R5 재료) · 거의 전체 길이 구간의 마무리 시간·메모리
 
 ### 기능 ③·④ 사용자 실측(대기, 도구 2026-10-16, 도구 PR #114 머지. ③-2~·④-3~ 구현은 이 실측 결과를 기다린다)
 
@@ -297,7 +307,8 @@
 - [ ] ① 후속: 네이티브 E2E 맡은 채널 받기 1회(app.md 81 (차))
 - [ ] ① 후속: 사용자 D62 시험 UT8·UT9
 - [ ] ① 후속: 운영 실기 확인(업데이트 뒤 초대 → 로그인 → 맡은 채널 받기)
-- [ ] ② 구간만 받기: ②-1 코어(⑤-F2 뒤, #121 머지, core.md 64) → 실측 M-②-2·6(`dl --range`) → ②-2 셸(#123 머지, app.md 80) → ②-3 앱(PR #127 열림, 머지 전) → ②-5 문서. 실측 불일치면 deferred
+- [ ] ② 구간만 받기: ②-1 코어(⑤-F2 뒤, #121 머지, core.md 64) → 실측 M-②-2·6(`dl --range`, 2026-10-18 통과: 세 시각 일치·구간 파일 재생 된다) → ②-2 셸(#123 머지, app.md 80) → ②-3 앱(PR #127 머지, app.md 88) → ②-5 문서. 실측 불일치면 deferred
+- [ ] ② 남은 관찰(②-3 머지 조건 아님): 전체 받기 파일 QuickTime 재생·탐색(R5 재료) · 거의 전체 길이 구간의 마무리 시간·메모리(`Finalizing` 하위 표시 판단) · M-②-3 전체 조각 키프레임 검사(②-0 `examples/range_check.rs` 미작성, 지금은 세 구간 첫 프레임만 관찰)
 - [ ] ④ 채팅 함께 받기: ④-2 `chat::part` · ④-3a 코어 수집(실측 없이, 2026-10-17 `feat/chat-collect-core`, core.md 66) · ④-3b 실측 뒤 Q3·Q8 · ④-4 셸(2026-10-17 `feat/chat-shell`, app.md 85·core.md 67, 자막 기본 [잠정] `.ass` U2 대기) · ④-5 앱(U2 확정 뒤) · ④-6 문서. ②와 무관하게 단독 릴리스
 - [x] ④-3a 후속(Codex 3차 P2): 자막 생성(기록 읽기·렌더·쓰기·sync_all)을 spawn_blocking으로 옮겨 실행기를 막지 않는다 (2026-10-17 `fix/chat-followups`, core.md 68)
 - [x] ④-3a 후속(Codex 3차 medium): 재시도 마무리에서 sidecar의 moved 자막이 실제로 있는지 확인하고, 없으면 moved를 지우고 기록에서 다시 만든다(TargetExists 뒤 사용자가 자막을 옮긴 경우 subtitle_failed=false로 잘못 끝남) (2026-10-17 `fix/chat-followups`, core.md 68)

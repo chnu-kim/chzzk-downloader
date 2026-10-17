@@ -231,7 +231,8 @@
 
 | 기호 | 쓰임 | 모양 | 근거 |
 |---|---|---|---|
-| 조각 구분 | 상태 줄의 조각 사이 | ` · `(U+00B7, 양쪽 공백) | a-copy §4.5(이미 일관) |
+| 조각 구분 | 상태 줄의 조각 사이, 작업 행 1줄 화질 칸의 조각 사이(구간 작업 `1080p · 0:10:00~0:20:00`) | ` · `(U+00B7, 양쪽 공백) | a-copy §4.5(이미 일관) |
+| 범위 | 시각 두 개 사이 | `~`(붙임, 공백 없음): `0:10:00~0:20:00`, 끝을 모르면 `0:10:00~`. 파일 이름 접미사 ` (H.MM.SS~H.MM.SS)`와 모양을 맞춘다. DC9의 `~` 금지는 홈 경로 표기용이라 `range.chip`·`range.chipToEnd`만 `terms.json` allow로 예외다 | `docs/design/features/range.md` §5.4·R2, 근거 조사 없음 |
 | 열거 | 낱말 나열 | `·`(붙임): macOS·Windows, Debian·Ubuntu | a-copy §4.5 |
 | 라벨: 값 | 값 앞 | `: `(콜론 + 공백) 둘 다 있거나 둘 다 없다(`채널: {name} · 채널 ID: {id}`) | a-copy §4.4(wk:58 비대칭) |
 | 쉼표 | 문장 안 | ASCII `,` + 공백. **문자열 `join(', ')`에 쓰지 않는다** | a-copy §4.5(`jobs.ts:158`) |
@@ -265,6 +266,7 @@
 | 경과(연결 대기·멈춘 지) | **N분째** / **N시간 M분째**, 일 단위는 **N일 전에** | 2분째, 3일 전에 멈췄어요 | D40·D39 문구 | `formatElapsed` | 골든 |
 | 지속 시간(비진행) | 가장 큰 두 단위, 한글 단위, 단위 사이 띄움 | 2분 18초, 1시간 2분 | 국립국어원 숫자 뒤 단위 의존명사 붙임(`E-KO-11`) | `formatSpan` | 골든 |
 | 영상 길이 | **H:MM:SS**, 시 자리 맞춤 없음 | 0:00:45, 3:12:45 | g-units §5.1(길이는 속성, 남은 시간은 추정 — 모양을 나눈다) | `formatClock` | 골든 |
+| 구간 시각 입력 | `H:MM:SS`·`M:SS`·`MM:SS`(분·초 0~59, 시 0~999), 전각 콜론·앞뒤 공백 허용, 초만은 받지 않음 | 0:10:00, 10:00 | range.md §5.2 | `parseClock` | 골든 |
 | 개수 | 세 자리 쉼표, `만`·`억` 축약 금지. 문장에서는 `{n}개`, 그룹 머리·`조각 {done}/{total}`에서는 단위 없이 | 조각 1,210/5,580, 영상 3개 | brief §6.10-9, v-a11y U22(compact `1.2만` 금지) | `formatCount` | 골든, `design-copy`(`toLocaleString` 직접 호출 금지) |
 | 절대 날짜·시각 | **"2026. 10. 3. 오후 9:00"**(끝 마침표 포함, 12시간). 날짜만 "2026. 10. 3." | | D49. 국립국어원 연월일 마침표(v-a11y U27), Apple `DateFormatter` ko·ICU medium+short 동일 모양(U17·U19) | `formatDateTime`·`formatDate` | 골든 |
 | 올해·최근 | 올해는 연도 생략 "10월 3일 오후 9:00", 어제는 "어제 오후 9:00", 1분 미만 "방금", "N분 전", "N시간 전"까지. 요일 없음. `Intl.RelativeTimeFormat` 금지 | | D49, v-a11y U20(`현재 분`) | `formatWhen`·`formatAgo` | 골든 |
@@ -453,6 +455,14 @@
 | `job.pausing` | 멈추는 중… | **일시정지하는 중** | §4, §6.3 |
 | `kind.live` | — | **생방송** | ADR-0025(D63) |
 | `card.live.body` | — | **지금 방송 중이에요. 받기를 누르면 녹화가 시작돼요. 방송이 끝나거나 녹화 마치기를 누를 때까지 받아요.** | ADR-0025. 카드 안 정보 안내 |
+| (신설) `range.toggle` | — | `range.toggle` **일부만 받기** | §5.1 기본형. 빠른 다시보기 카드 화질 아래 Disclosure(range.md §5) |
+| (신설) `range.label` | — | `range.label` **구간** | 명사 라벨(DC5) |
+| (신설) `range.start` / `range.end` | — | `range.start` **시작 시각** / `range.end` **끝 시각** | sr 접근 이름 |
+| (신설) `range.toEnd` | — | `range.toEnd` **끝까지** | 길이를 모를 때 끝 칸 placeholder |
+| (신설) `range.help` | — | `range.help` **앞뒤로 몇 초 더 받을 수 있어요.** | 도움말 마침표(DC5). 조각 경계로 넓힌다(range.md §1.2) |
+| (신설) `range.chip` / `range.chipToEnd` | — | `range.chip` **{start}~{end}** / `range.chipToEnd` **{start}~** | 작업 행 1줄 조각, §6.5 범위 기호 |
+| (신설) `range.error.format` | — | `range.error.format` **시각은 {example}처럼 적어 주세요.** | 인라인 오류. `{example}`은 `formatClock`(W5) |
+| (신설) `range.error.order` / `range.error.beyond` | — | `range.error.order` **끝 시각이 시작 시각보다 뒤여야 해요.** / `range.error.beyond` **시작 시각이 영상 길이보다 뒤예요.** | 인라인 오류(patterns §6.1). 끝이 길이를 넘는 것은 오류가 아니다(자른다) |
 | `job.phase.recording` | — | **녹화 중** | ADR-0025. 낭독용 낱말(`statusWord`) |
 | `job.live.running` | — | **녹화 중 · {span} · {received}** | ADR-0025. 길이를 모르므로 막대·퍼센트·남은 시간이 없다. `{span}`은 `formatSpan` |
 | `job.live.gaps` | — | **놓친 조각 {n}** | ADR-0025. 있을 때만 상태 줄 끝에 |

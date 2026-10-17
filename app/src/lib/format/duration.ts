@@ -80,3 +80,22 @@ export function formatSpokenRemaining(secs: number | null): string {
   const m = Math.floor((s % 3600) / 60);
   return m > 0 ? `약 ${h}시간 ${m}분 남아요` : `약 ${h}시간 남아요`;
 }
+
+/** 앞뒤에서 자르는 공백: ASCII 공백(스페이스·탭·LF·FF·CR)과 전각 공백 U+3000만. `trim()`은 BOM·NBSP·세로 탭까지
+ * 잘라 Rust `str::trim`(NEL을 자른다)과 집합이 달라진다. Rust `CLOCK_TRIM`과 같다 */
+const CLOCK_TRIM = /^[ \t\n\f\r\u3000]+|[ \t\n\f\r\u3000]+$/g;
+
+/** 구간 시각 입력(range.md §5.2): `H:MM:SS`·`M:SS`·`MM:SS`, 전각 콜론·앞뒤 공백 허용. ms 또는 null. Rust `parse_clock`과 같은 골든 */
+export function parseClock(text: string): number | null {
+  const parts = text.replaceAll('：', ':').replace(CLOCK_TRIM, '').split(':');
+  if (parts.some((p) => !/^[0-9]*$/.test(p)) || (parts.length !== 2 && parts.length !== 3)) return null;
+  const withHour = parts.length === 3;
+  const [h, m, s] = withHour ? parts : ['0', ...parts];
+  const okLen = (p: string, min: number, max: number) => p.length >= min && p.length <= max;
+  if (withHour && !okLen(h, 1, 3)) return null;
+  if (!okLen(m, withHour ? 2 : 1, 2) || !okLen(s, 2, 2)) return null;
+  const mi = Number(m);
+  const se = Number(s);
+  if (mi > 59 || se > 59) return null;
+  return ((Number(h) * 60 + mi) * 60 + se) * 1000;
+}

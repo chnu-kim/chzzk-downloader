@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { JobDto, JobEvent, SettingsDto } from '../../bindings';
 import { err, job, liveProg, prog, signedInAs } from '../../../test/jobFixtures';
 import { t } from '../../copy/ko';
+import { qualityText } from '../../jobs';
 import { errorCopy } from '../../copy/errors';
 import { formatFileSize } from '../../format/bytes';
 import { COMPLETED_FOLD_AT, RECOVERY_NOTICE_MS, RECOVERY_SILENT_MS } from '../../timing';
@@ -290,6 +291,20 @@ describe('JobList', () => {
     const h = screen.getByRole('heading', { name: t('list.title') });
     expect(h).toHaveAttribute('tabindex', '-1');
     expect(h).toHaveAttribute('data-focus-container');
+  });
+});
+
+describe('작업 행 1줄 화질 칸(구간)', () => {
+  it('구간 작업은 화질 · 조각, 아니면 화질 라벨', async () => {
+    const withRange = job(1, { title: '구간 영상', range: { startMs: 600000, endMs: 1200000 } });
+    const plain = job(2, { title: '전체 영상', range: null });
+    await load([withRange, plain]);
+    render(JobList);
+    const a = screen.getByRole('article', { name: '구간 영상' });
+    const b = screen.getByRole('article', { name: '전체 영상' });
+    expect(a.querySelector('.job-quality')).toHaveTextContent(qualityText(withRange));
+    expect(a.querySelector('.job-quality')!.textContent).toContain('0:10:00~0:20:00');
+    expect(b.querySelector('.job-quality')!.textContent).toBe(plain.qualityLabel);
   });
 });
 

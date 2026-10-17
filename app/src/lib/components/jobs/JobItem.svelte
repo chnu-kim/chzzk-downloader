@@ -15,6 +15,7 @@
     jobActionLabel,
     jobButtons,
     isWaitingNetwork,
+    qualityText,
     statusLine,
     statusParts,
     type JobAction,
@@ -144,7 +145,7 @@
   <div class="job-head">
     <span class="job-title">{job.title}</span>
     <Badge kind={tone} />
-    <span class="job-quality num">{job.qualityLabel}</span>
+    <span class="job-quality num ellipsis">{qualityText(job)}</span>
   </div>
 
   {#if bar}
@@ -242,6 +243,7 @@
   }
   .job-quality {
     flex: none;
+    max-width: 50%;
     margin-inline-start: auto;
     padding-inline-start: var(--space-8);
     color: var(--fg-muted);

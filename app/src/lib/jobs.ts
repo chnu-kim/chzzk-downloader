@@ -3,6 +3,7 @@
 import type { AuthStatusDto, JobDto, JobId, JobStatus, LiveEndReason, Os, ProgressDto } from './bindings';
 import { actionLabel, errorCopy, type ActionId } from './copy/errors';
 import { t, type CopyKey } from './copy/ko';
+import { rangeChip } from './receive';
 import {
   formatEstimate,
   formatFileSize,
@@ -348,6 +349,11 @@ export function statusParts(job: JobDto, p: ProgressDto | null | undefined, ctx:
     case 'failed':
       return [];
   }
+}
+
+/** 작업 행 1줄 화질 칸(patterns.md §3.2): 구간 작업은 `1080p · 0:10:00~0:20:00`(조각 구분은 deck 함수가 잇는다, content.md §6.5) */
+export function qualityText(job: Pick<JobDto, 'qualityLabel' | 'range'>): string {
+  return job.range ? statusLine([job.qualityLabel, rangeChip(job.range)]) : job.qualityLabel;
 }
 
 /** 상태 줄 조각을 ` · `로 잇는다 */

@@ -169,6 +169,68 @@ export const SCREENS: Screen[] = [
     card: true,
   },
   {
+    id: '카드 구간 펼침',
+    slug: 'card-range',
+    scenario: () => ({ resolve: { [R.url]: R } }),
+    drive: async (app, env) => {
+      await loadCard(app, R.url);
+      await app.page.getByText(t('range.toggle')).click();
+      await app.page.getByLabel(t('range.start')).fill('0:10:00');
+      await app.page.getByLabel(t('range.end')).fill('0:20:00');
+      await env.tick?.(CHECK_DEBOUNCE_MS + 50);
+    },
+    ready: (p) => p.getByText(t('filename.willSaveAs', { name: `${R.suggestedFileName} (0.10.00~0.20.00)` })),
+    card: true,
+  },
+  {
+    id: '카드 구간 오류',
+    slug: 'card-range-error',
+    scenario: () => ({ resolve: { [R.url]: R } }),
+    drive: async (app, env) => {
+      await loadCard(app, R.url);
+      await app.page.getByText(t('range.toggle')).click();
+      await app.page.getByLabel(t('range.start')).fill('0:30:00');
+      await app.page.getByLabel(t('range.end')).fill('0:20:00');
+      await env.tick?.(CHECK_DEBOUNCE_MS + 50);
+      await open(app.page, t('card.download')).click();
+    },
+    ready: (p) => p.getByRole('alert').filter({ hasText: t('range.error.order') }),
+    // 높이 231에서는 [받기] 클릭·오류 포커스로 스크롤이 내려가 「일부만 받기」 줄이 sticky 입력줄 밑에 반쯤 걸린다
+    // (axe target-size). 구간 줄을 입력줄 바로 아래에 두고 잰다(card-worst와 같은 까닭)
+    settle: async (page, env) => {
+      if (env.vp.height < 400) await page.getByText(t('range.toggle')).evaluate((el) => el.scrollIntoView({ block: 'start' }));
+    },
+    card: true,
+  },
+  {
+    id: '카드 구간 길이 모름',
+    slug: 'card-range-unknown',
+    scenario: () => {
+      const r = resolved({ meta: { ...R.meta, durationSecs: null } });
+      return { resolve: { [r.url]: r } };
+    },
+    drive: async (app, env) => {
+      await loadCard(app, R.url);
+      await app.page.getByText(t('range.toggle')).click();
+      // 검사가 끝나 [받기]가 활성이 된 뒤의 모습(전환 중 색 대비를 피한다)
+      await env.tick?.(CHECK_DEBOUNCE_MS + 50);
+      await expect(open(app.page, t('card.download'))).not.toHaveAttribute('aria-disabled', 'true');
+    },
+    ready: (p) => p.getByLabel(t('range.end')),
+    card: true,
+  },
+  {
+    id: '작업 목록 구간',
+    slug: 'jobs-range',
+    scenario: () => ({
+      jobs: [
+        job(1, { title: '구간 받는 영상', status: 'running', progress: prog(), range: { startMs: 600000, endMs: 1200000 } }),
+        job(2, { title: '끝까지 받은 구간', status: 'completed', range: { startMs: 600000, endMs: null } }),
+      ],
+    }),
+    ready: (p) => p.getByRole('article', { name: '구간 받는 영상' }),
+  },
+  {
     id: '작업 목록(상태 전부)',
     slug: 'jobs-all',
     scenario: (_env, now) => ({ auth: SIGNED_IN, jobs: jobStateSet(true, now) }),

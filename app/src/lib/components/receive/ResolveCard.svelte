@@ -2,6 +2,7 @@
   // 영상 카드(system/patterns.md §6.5·§14.2 (c)). 화질·폴더·파일 이름을 고르고 `enqueue`한다.
   // 파일 이름·화질·폴더가 바뀔 때마다 CHECK_DEBOUNCE_MS 뒤 `check_output`을 부르고, 지금 입력의 결과가 올 때까지
   // [받기]를 막는다(낡은 결과로 충돌 안내를 건너뛰지 않게). 같은 이름 파일을 "덮어쓰기"로 골랐으면 [받기]가 D7을 연다.
+  // 빠른 다시보기는 화질 아래 구간 줄(RangeField)이 있고, 펼쳐져 있으면 검사 열쇠·요청·크기 미리보기가 effectiveRange 하나를 쓴다.
   // 영역(region)의 이름은 영상 제목이다(h3). 머리 h2는 섹션 제목 급의 `card.title`.
   // 카드와 `.main` 사이 어떤 조상에도 overflow를 두지 않는다: 바닥 줄(.card-footer)이 sticky라서다.
   import { onMount, untrack } from 'svelte';
@@ -9,6 +10,7 @@
   import type { AppError, OutputCheck, ResolvedDto } from '../../bindings';
   import { actionLabel, errorCopy, type ActionId } from '../../copy/errors';
   import { t } from '../../copy/ko';
+  import { formatClock } from '../../format/duration';
   import { noticeHelp } from '../../help';
   import { shortcutText } from '../../platform';
   import {
@@ -20,11 +22,15 @@
     canDownload,
     checkKey,
     downloadBlock,
+    effectiveRange,
     kindTone,
     metaParts,
     notices,
+    rangeError,
+    rangeSecs,
     usesFreeName,
     type CardChoices,
+    type RangeError,
   } from '../../receive';
   import { announcer } from '../../stores/announce.svelte';
   import { auth } from '../../stores/auth.svelte';
@@ -44,6 +50,7 @@
   import FolderField from './FolderField.svelte';
   import OwnershipNotice from './OwnershipNotice.svelte';
   import QualityPicker from './QualityPicker.svelte';
+  import RangeField from './RangeField.svelte';
 
   interface Props {
     view: ResolvedDto;
@@ -63,6 +70,15 @@
     quality: Math.min(Math.max(view.defaultQualityIndex, 0), Math.max(view.qualities.length - 1, 0)),
     fileName: view.suggestedFileName,
   }));
+
+  // 구간(range.md §5): 펼침은 카드마다 새로 시작하고 기억하지 않는다(다음 영상에서 실수로 구간을 받지 않게)
+  const initialEnd = untrack(() =>
+    view.meta.durationSecs != null && view.meta.durationSecs > 0 ? formatClock(view.meta.durationSecs) : '',
+  );
+  let rangeOpen = $state(false);
+  let rangeStart = $state(formatClock(0));
+  let rangeEnd = $state(initialEnd);
+  let rangeErr: RangeError | null = $state(null);
 
   let qualityIndex = $state(initial.quality);
   /** null = 설정의 저장 폴더 */
@@ -85,8 +101,13 @@
   }
 
   const quality = $derived(view.qualities[qualityIndex]);
-  const key = $derived(checkKey(folder, fileName, quality?.id ?? ''));
   const tone = $derived(kindTone(view.meta.kind, view.playbackKind));
+  /** 구간은 빠른 다시보기에서 펼쳐져 있을 때만 적용된다(R3: 그 밖의 카드에는 줄이 없다) */
+  const rangeInput = $derived({ open: rangeOpen && tone === 'rewind', start: rangeStart, end: rangeEnd });
+  const range = $derived(effectiveRange(rangeInput, view.meta.durationSecs));
+  const key = $derived(checkKey(folder, fileName, quality?.id ?? '', range));
+  /** 화질 행 "약 N GB"의 길이: 칸이 파싱될 때만 구간 기준(조용한 미리보기) */
+  const sizeSecs = $derived(rangeSecs(range, view.meta.durationSecs));
   const folderPath = $derived(
     folder ?? settings.dto?.effectiveDownloadFolder ?? settings.info?.defaultDownloadFolder ?? '',
   );
@@ -142,6 +163,7 @@
     const name = fileName;
     const f = folder;
     const q = quality;
+    const r = range;
     void recheck;
     latestKey = k;
     if (!q || !name.trim()) {
@@ -157,6 +179,7 @@
           content: view.content,
           qualityId: q.id,
           expectedKind: view.playbackKind,
+          ...(r ? { range: r } : {}),
         });
         if (latestKey !== k) return;
         check = c;
@@ -194,7 +217,11 @@
 
   /** [받기]·Mod+Enter: 덮어쓰기면 확인을 먼저 묻고, 아니면 곧바로 등록한다 */
   function download() {
-    if (!ready || !check || !quality) return;
+    if (!quality) return;
+    // 구간 검증은 [받기] 때만(patterns.md §6.1). 틀리면 그 칸 아래 오류를 보이고 받지 않는다
+    rangeErr = rangeError(rangeInput, view.meta.durationSecs);
+    if (rangeErr) return;
+    if (!ready || !check) return;
     if (overwriting) confirmOverwrite = true;
     else void enqueueNow();
   }
@@ -204,7 +231,7 @@
     busy = true;
     enqueueError = null;
     try {
-      await api.enqueue(buildEnqueueRequest(view, quality, folder, check, choices));
+      await api.enqueue(buildEnqueueRequest(view, quality, folder, check, choices, range));
       announcer.say(t('card.added'));
       void settings.refresh(); // 최근 VOD·마지막 화질이 바뀌었다
       onadded();
@@ -268,7 +295,20 @@
   </p>
 
   <div class="fields">
-    <QualityPicker qualities={view.qualities} durationSecs={view.meta.durationSecs} bind:selected={qualityIndex} />
+    <QualityPicker qualities={view.qualities} durationSecs={sizeSecs} bind:selected={qualityIndex} />
+    {#if tone === 'rewind'}
+      <RangeField
+        bind:open={rangeOpen}
+        bind:start={rangeStart}
+        bind:end={rangeEnd}
+        error={rangeErr}
+        lengthUnknown={view.meta.durationSecs == null || view.meta.durationSecs <= 0}
+        disabled={busy}
+        ontoggle={(o) => {
+          if (!o) rangeErr = null;
+        }}
+      />
+    {/if}
     <FolderField path={folderPath} onchange={changeFolder} disabled={busy} />
     <FilenameField
       bind:value={fileName}

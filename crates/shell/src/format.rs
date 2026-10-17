@@ -303,6 +303,45 @@ pub fn format_mmss(secs: u64) -> String {
     format!("{}:{:02}", secs / 60, secs % 60)
 }
 
+/// 시각 입력의 앞뒤에서 자르는 공백: ASCII 공백(스페이스·탭·LF·FF·CR)과 전각 공백 U+3000만.
+/// `str::trim`은 NEL·세로 탭·NBSP까지 잘라 TS `trim()`(BOM을 자른다)과 집합이 달라진다. TS `CLOCK_TRIM`과 같다.
+const CLOCK_TRIM: &[char] = &[' ', '\t', '\n', '\u{C}', '\r', '\u{3000}'];
+
+/// 구간 시각 입력 `H:MM:SS`·`M:SS`(전각 콜론·앞뒤 공백 허용)을 ms로. 틀리면 `None`.
+pub fn parse_clock(s: &str) -> Option<u64> {
+    let text = s.replace('\u{FF1A}', ":");
+    let text = text.trim_matches(CLOCK_TRIM);
+    if !text.chars().all(|c| c.is_ascii_digit() || c == ':') {
+        return None;
+    }
+    let parts: Vec<&str> = text.split(':').collect();
+    // 자릿수 검사: (최소, 최대)
+    let (h, m, sec) = match parts.as_slice() {
+        [h, m, sec] => (Some(*h), *m, *sec),
+        [m, sec] => (None, *m, *sec),
+        _ => return None,
+    };
+    let num = |p: &str, min: usize, max: usize| -> Option<u64> {
+        if p.len() < min || p.len() > max {
+            return None;
+        }
+        p.parse::<u64>().ok()
+    };
+    let hours = match h {
+        Some(h) => num(h, 1, 3)?,
+        None => 0,
+    };
+    let (minutes, seconds) = if h.is_some() {
+        (num(m, 2, 2)?, num(sec, 2, 2)?)
+    } else {
+        (num(m, 1, 2)?, num(sec, 2, 2)?)
+    };
+    if minutes > 59 || seconds > 59 {
+        return None;
+    }
+    Some(((hours * 60 + minutes) * 60 + seconds) * 1000)
+}
+
 /// 개수: 세 자리 쉼표(`1,210`).
 pub fn format_count(n: u64) -> String {
     let digits = n.to_string();

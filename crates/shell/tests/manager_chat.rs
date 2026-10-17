@@ -963,3 +963,61 @@ async fn video_restart_keeps_chat_part_shared_with_other_record() {
     assert!(record_part(&h.output("a")).exists(), "a가 쥔 파일");
     assert!(record_sidecar(&h.output("a")).exists());
 }
+
+/// 자동 이어받기: 끊긴 채팅(예약하지 않는다)의 출력에 다른 영상이 들어와 함께 끊겼으면, 그 영상이 다시 줄 서
+/// 출력을 쥐는 동안 채팅은 `interrupted`로 남는다(영상의 `blocks_requeue`처럼 미룬다).
+#[tokio::test(start_paused = true)]
+async fn auto_resume_defers_chat_when_other_video_holds_output() {
+    let h = Harness::new(1);
+    h.fake
+        .chat_for(h.output("a"), ChatScript::new().part(2).wait_cancel());
+    let a = h.enqueue_chat("a");
+    until("a 채팅 받는 중", || {
+        h.phase(a) == Some(ChatPhase::Running)
+    })
+    .await;
+    h.mgr.quit(std::time::Duration::from_secs(3)).await;
+    assert_eq!(h.phase(a), Some(ChatPhase::Interrupted));
+
+    // 끊긴 채팅은 출력을 예약하지 않으므로 다른 영상이 같은 이름으로 들어온다
+    let m = open_with(h.dir.path(), &h.fake, 1, false);
+    h.fake
+        .script_for(h.output("a"), Script::new().wait_cancel());
+    let mut other = request("a");
+    other.content = ContentRef::Video { video_no: 2 };
+    other.url = "https://chzzk.naver.com/video/2".into();
+    let b = m.enqueue(other, &h.defaults()).unwrap().id;
+    until("b 받는 중", || {
+        m.list()
+            .into_iter()
+            .any(|j| j.id == b && j.status == JobStatus::Running)
+    })
+    .await;
+    m.quit(std::time::Duration::from_secs(3)).await;
+    m.flush();
+    drop(m);
+
+    h.fake
+        .script_for(h.output("a"), Script::new().wait_cancel());
+    let on = open_with(h.dir.path(), &h.fake, 1, true);
+    until("b 다시 받는 중", || {
+        on.list()
+            .into_iter()
+            .any(|j| j.id == b && j.status == JobStatus::Running)
+    })
+    .await;
+    settle().await;
+    assert_eq!(
+        h.fake.chat_requests().len(),
+        1,
+        "a의 채팅은 다시 돌지 않는다"
+    );
+    let ca = on
+        .list()
+        .into_iter()
+        .find(|j| j.id == a)
+        .unwrap()
+        .chat
+        .unwrap();
+    assert_eq!(ca.phase, ChatPhase::Interrupted);
+}

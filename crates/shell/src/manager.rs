@@ -303,6 +303,14 @@ impl State {
             .map(|j| j.rec.id)
     }
 
+    /// 작업 `id`의 끊긴 채팅을 되살리면 안 되는가: 같은 출력을 다른 작업이 쓰고 있다(그 사이 다른 영상이 들어왔다).
+    /// 영상의 `blocks_requeue`처럼 이번에는 건너뛰고 `interrupted`로 둔다(Codex PR #141 ①, app.md 83-13).
+    fn chat_output_taken(&self, id: JobId) -> bool {
+        self.jobs
+            .get(&id)
+            .is_some_and(|j| self.active_with_output(&j.rec.output, Some(id)).is_some())
+    }
+
     /// 같은 출력의 다른 기록(`except` 제외, 지우는 중 제외)이 받다 만 채팅 파일을 쥐고 있는가(`ChatState::holds_files`).
     /// 같은 영상이면 채팅 `.part`·sidecar 하나를 함께 가리키므로(멈춘 채팅은 출력을 예약하지 않는다) 지우지 않는다
     /// (Codex PR #141 ③).
@@ -974,6 +982,9 @@ impl<B: Backend> DownloadManager<B> {
             .map(|j| j.rec.id)
             .collect();
         for id in chats {
+            if st.chat_output_taken(id) {
+                continue;
+            }
             let Some(c) = st.jobs.get_mut(&id).and_then(|j| j.rec.chat.as_mut()) else {
                 continue;
             };
@@ -1020,6 +1031,7 @@ impl<B: Backend> DownloadManager<B> {
         }
         // quit이 멈춘 채팅도 되살린다(멈춘 뒤 끝났으면 `interrupted`다)
         if let Some(cid) = st.quit_stopped_chat.take()
+            && !st.chat_output_taken(cid)
             && let Some(job) = st.jobs.get_mut(&cid).filter(|j| !j.removing)
             && let Some(c) = job.rec.chat.as_mut()
             && c.phase == ChatPhase::Interrupted

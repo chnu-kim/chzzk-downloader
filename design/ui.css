@@ -780,6 +780,12 @@
   min-width: 0;
   padding-inline-start: calc(var(--icon-md) + var(--space-8));
 }
+/* 링크 글자가 길어(주제 이름) 좁은 창·큰 글자에서 줄을 바꾼다(가로 스크롤 0) */
+.notice-help > .btn {
+  max-width: 100%;
+  white-space: normal;
+  text-align: start;
+}
 :where(.notice).tone-warning {
   background: var(--warning-soft);
 }

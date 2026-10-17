@@ -1036,6 +1036,12 @@ export const SITE_CSS = `/* [root] 라이트 기본값. ref 팔레트와 sys 토
   min-width: 0;
   padding-inline-start: calc(var(--icon-md) + var(--space-8));
 }
+/* 링크 글자가 길어(주제 이름) 좁은 창·큰 글자에서 줄을 바꾼다(가로 스크롤 0) */
+.notice-help > .btn {
+  max-width: 100%;
+  white-space: normal;
+  text-align: start;
+}
 :where(.notice).tone-warning {
   background: var(--warning-soft);
 }
@@ -2135,4 +2141,4 @@ pre.license {
   }
 }
 `;
-export const SITE_CSS_HASH = "8e9e46ebdcd3857e";
+export const SITE_CSS_HASH = "4eec942994c895e4";

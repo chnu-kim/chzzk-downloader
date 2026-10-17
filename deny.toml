@@ -10,6 +10,13 @@ ignore = [
   # proc-macro-error(unmaintained): Linux GTK3 스택(tauri → wry·tao·muda → gtk 0.18 → glib-macros)의 빌드 시점 proc-macro다.
   # 취약점이 아니라 관리 중단 알림이고 우리가 바꿀 수 없는 전이 의존성이다. tauri가 GTK4·glib 0.19+로 옮기면 지운다.
   { id = "RUSTSEC-2024-0370", reason = "unmaintained proc-macro, tauri GTK3 스택의 전이 의존성(바꿀 수 없음)" },
+  # zip 4.x 압축 풀기 취약점 셋(SUID 비트·심볼릭 링크 대상·링크 너머 권한). tauri-plugin-updater 2.13.x·2.14.0이 zip ^4를 요구해 올릴 수 없다.
+  # updater는 Windows에서만 zip을 풀고(extract: 바이트가 zip일 때만), 그 바이트는 download()가 minisign 서명(우리 키)을 확인한 뒤의 것이다
+  # (update_io.rs가 download → install(같은 바이트)). 우리 Windows updater 산출물은 zip이 아닌 -setup.exe·.msi 원본이라
+  # (release/expected-artifacts.json, createUpdaterArtifacts: true) zip 분기에 닿지 않는다. updater가 zip >= 9로 옮기면 지운다.
+  { id = "RUSTSEC-2026-0367", reason = "zip 4.x(updater 전이), Windows zip 분기는 서명 확인 뒤·우리 산출물은 exe/msi라 닿지 않음" },
+  { id = "RUSTSEC-2026-0368", reason = "zip 4.x(updater 전이), Windows zip 분기는 서명 확인 뒤·우리 산출물은 exe/msi라 닿지 않음" },
+  { id = "RUSTSEC-2026-0369", reason = "zip 4.x(updater 전이), Windows zip 분기는 서명 확인 뒤·우리 산출물은 exe/msi라 닿지 않음" },
 ]
 
 [licenses]

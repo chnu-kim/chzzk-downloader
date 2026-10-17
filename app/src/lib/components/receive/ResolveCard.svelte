@@ -9,6 +9,7 @@
   import type { AppError, OutputCheck, ResolvedDto } from '../../bindings';
   import { actionLabel, errorCopy, type ActionId } from '../../copy/errors';
   import { t } from '../../copy/ko';
+  import { noticeHelp } from '../../help';
   import { shortcutText } from '../../platform';
   import {
     BLOCK_REASON_ID,
@@ -295,7 +296,7 @@
         channelKnown={!!view.meta.channelId}
       />
       {#if errCopy}
-        <Notice variant="inline" tone="danger" title={errCopy.title} actions={errActions}>
+        <Notice variant="inline" tone="danger" title={errCopy.title} actions={errActions} help={noticeHelp(errCopy.helpId)}>
           {#if errCopy.body}<p class="line">{errCopy.body}</p>{/if}
           {#if errCopy.detail}<p class="line detail">{errCopy.detail}</p>{/if}
           {#if recheckFailLine}<p class="line">{recheckFailLine}</p>{/if}

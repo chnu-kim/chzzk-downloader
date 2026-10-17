@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppError, OutputCheck, RecentVodDto, SettingsDto } from '../../bindings';
 import { check, quality, resolved } from '../../../test/fixtures';
 import { signedInAs } from '../../../test/jobFixtures';
-import { errorCopy } from '../../copy/errors';
+import { errorCopy, helpLinkLabel } from '../../copy/errors';
 import { t } from '../../copy/ko';
 import { shortcutText } from '../../platform';
 import { CHECK_DEBOUNCE_MS } from '../../receive';
@@ -20,6 +20,7 @@ vi.mock('../../api', () => ({
   updateSettings: vi.fn(),
   getSettings: vi.fn(),
   appInfo: vi.fn(),
+  openWebPage: vi.fn(),
 }));
 
 const api = await import('../../api');
@@ -662,10 +663,30 @@ describe('막힌 카드의 [다시 불러오기](R)', () => {
     expect(screen.getByText('로그인한 채널: ‘내 채널’')).toBeInTheDocument();
     expect(screen.getByText(new RegExp(t('account.lastSeen', { time: '.+' })))).toBeInTheDocument();
     const notice = screen.getByText(copy.title).closest('.notice') as HTMLElement;
-    expect(within(notice).getAllByRole('button').map((b) => b.textContent?.trim())).toEqual([t('action.reresolve')]);
+    const actions = notice.querySelector('.notice-actions') as HTMLElement;
+    expect(within(actions).getAllByRole('button').map((b) => b.textContent?.trim())).toEqual([t('action.reresolve')]);
     const btn = screen.getByRole('button', { name: downloadName() });
     expectBlocked(btn);
     expect(btn).toHaveAccessibleDescription(`${copy.title} ${copy.body}`);
+  });
+
+  it('RV9 L2 도움말 링크는 동작 줄과 분리된 줄에 있고 누르면 웹 도움말의 그 주제를 연다', async () => {
+    vi.mocked(api.openWebPage).mockResolvedValue();
+    const user = await openCard(notOwn());
+    const copy = errorCopy(appError('notOwnContent'), { place: 'resolve', channelName: '다른 채널', myChannel: '내 채널' });
+    expect(copy.helpId).toBe('editors');
+    const notice = screen.getByText(copy.title).closest('.notice') as HTMLElement;
+    const link = within(notice).getByRole('button', { name: helpLinkLabel('editors') });
+    expect(link).toHaveTextContent('도움말 보기: 다른 채널의 영상 받기');
+    // 버튼이 아니라 링크 모양(유령 + 밑줄)이고, 동작 줄·라이브 영역 밖의 자기 줄이다
+    expect(link).toHaveClass('btn-ghost', 'btn-inline');
+    expect(link.closest('.notice-help')).not.toBeNull();
+    expect(link.closest('.notice-actions')).toBeNull();
+    expect(link.closest('.notice-text')).toBeNull();
+    // [받기]의 설명에는 섞이지 않는다
+    expect(screen.getByRole('button', { name: downloadName() })).toHaveAccessibleDescription(`${copy.title} ${copy.body}`);
+    await user.click(link);
+    expect(api.openWebPage).toHaveBeenCalledExactlyOnceWith('help', 'editors');
   });
 
   it('RV2 누르면 ownershipRecheck를 한 번 부르고 기다리는 동안 aria-busy', async () => {
@@ -740,8 +761,12 @@ describe('막힌 카드의 [다시 불러오기](R)', () => {
     await user.click(await downloadButton());
     const title = errorCopy(appError('notOwnContent'), { place: 'resolve' }).title;
     const notice = (await screen.findByText(title)).closest('.notice') as HTMLElement;
-    const labels = within(notice).getAllByRole('button').map((b) => b.textContent?.trim());
+    const labels = within(notice.querySelector('.notice-actions') as HTMLElement)
+      .getAllByRole('button')
+      .map((b) => b.textContent?.trim());
     expect(labels).toEqual([t('action.reresolve'), t('common.close')]);
+    // 받기 실패 Notice도 같은 L2 링크를 단다
+    expect(within(notice).getByRole('button', { name: helpLinkLabel('editors') })).toBeInTheDocument();
     await user.click(within(notice).getByRole('button', { name: t('action.reresolve') }));
     await waitFor(() => expect(api.ownershipRecheck).toHaveBeenCalledTimes(1));
   });

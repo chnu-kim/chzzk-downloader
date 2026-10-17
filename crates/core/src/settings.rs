@@ -446,6 +446,84 @@ fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
 mod tests {
     use super::*;
 
+    fn names(dir: &Path) -> Vec<String> {
+        let mut v: Vec<String> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .collect();
+        v.sort();
+        v
+    }
+
+    /// 원본이 없으면 보존할 것이 없어 성공이고, 읽을 수 없으면 오류다.
+    #[test]
+    fn preserve_legacy_source_missing_or_unreadable() {
+        let dir = tempfile::tempdir().unwrap();
+        preserve_legacy(dir.path()).unwrap();
+        assert!(names(dir.path()).is_empty());
+        std::fs::create_dir(dir.path().join(SETTINGS_FILE)).unwrap();
+        assert!(matches!(
+            preserve_legacy(dir.path()),
+            Err(Error::Io { op: "read", .. })
+        ));
+        assert_eq!(names(dir.path()), [SETTINGS_FILE]);
+    }
+
+    /// `.v1`이 없으면 만들고, 같으면 그대로 두고, 다르면 따로 남긴다. `.v1`을 읽을 수 없으면 오류다.
+    #[test]
+    fn preserve_legacy_backup_rules() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join(SETTINGS_FILE);
+        let v1 = dir.path().join(LEGACY_BACKUP_FILE);
+        std::fs::write(&src, b"one").unwrap();
+        preserve_legacy(dir.path()).unwrap();
+        assert_eq!(std::fs::read(&v1).unwrap(), b"one");
+        assert_eq!(names(dir.path()).len(), 2);
+
+        // 같은 내용이면 새 파일을 만들지 않는다.
+        preserve_legacy(dir.path()).unwrap();
+        assert_eq!(names(dir.path()).len(), 2);
+
+        // 다른 내용이면 원본 `.v1`은 두고 `.v1-{ts}`로 남긴다.
+        std::fs::write(&src, b"two").unwrap();
+        preserve_legacy(dir.path()).unwrap();
+        assert_eq!(std::fs::read(&v1).unwrap(), b"one");
+        let extra: Vec<String> = names(dir.path())
+            .into_iter()
+            .filter(|n| n.starts_with("settings.json.v1-"))
+            .collect();
+        assert_eq!(extra.len(), 1, "{extra:?}");
+        assert_eq!(std::fs::read(dir.path().join(&extra[0])).unwrap(), b"two");
+
+        // `.v1`을 읽을 수 없으면(디렉터리) 덮어쓰지 않고 읽기 오류다.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(SETTINGS_FILE), b"x").unwrap();
+        std::fs::create_dir(dir.path().join(LEGACY_BACKUP_FILE)).unwrap();
+        assert!(matches!(
+            preserve_legacy(dir.path()),
+            Err(Error::Io { op: "read", .. })
+        ));
+    }
+
+    /// 같은 초에 이미 있는 이름은 `-1`, `-2` …로 피한다.
+    #[test]
+    fn unique_sibling_skips_taken_names() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path().join("f");
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        // 시계가 넘어가도 겹치도록 앞뒤 몇 초를 미리 채운다.
+        for ts in now - 2..now + 5 {
+            std::fs::write(with_suffix(&base, &format!("-{ts}")), b"").unwrap();
+            std::fs::write(with_suffix(&base, &format!("-{ts}-1")), b"").unwrap();
+        }
+        let p = unique_sibling(&base, "-");
+        assert!(!p.exists());
+        assert!(p.to_string_lossy().ends_with("-2"), "{}", p.display());
+    }
+
     #[test]
     fn defaults() {
         let s = UserSettings::default();

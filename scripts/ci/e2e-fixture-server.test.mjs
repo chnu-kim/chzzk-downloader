@@ -6,6 +6,10 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 
 import {
+  DELEGATED,
+  DELEGATED_CHANNEL_ID,
+  DELEGATED_CHANNEL_NAME,
+  DELEGATED_VIDEO_NO,
   HLS_VIDEO_NO,
   MEDIA_HOSTS,
   OTHER_CHANNEL_ID,
@@ -16,6 +20,7 @@ import {
   LOOPBACK_STATE_DOMAIN,
   STUB_GRANT,
   STUB_HANDLE,
+  delegatedVideoInfo,
   expectedOutput,
   loopbackState,
   otherVideoInfo,
@@ -87,6 +92,26 @@ test('다른 채널 영상 info: 번호·채널 ID·이름만 바뀌고, 바꿀 
   const hit = route(ROOT, `/service/v2/videos/${OTHER_VIDEO_NO}`, 'http://127.0.0.1:9');
   assert.equal(hit[0], 'application/json');
   assert.equal(JSON.parse(hit[1].toString()).content.channel.channelId, OTHER_CHANNEL_ID);
+});
+
+test('맡은 채널 영상 info: 번호·채널 ID·이름만 바뀌고, 스텁 delegatedChannels 원소와 같은 채널이다', () => {
+  const info = readFileSync(join(ROOT, 'testdata/hls/video_info.json'), 'utf8');
+  const d = JSON.parse(delegatedVideoInfo(info));
+  assert.equal(d.content.videoNo, DELEGATED_VIDEO_NO);
+  assert.equal(d.content.channel.channelId, DELEGATED_CHANNEL_ID);
+  assert.equal(d.content.channel.channelName, DELEGATED_CHANNEL_NAME);
+  assert.ok(!delegatedVideoInfo(info).includes(OWN_CHANNEL_ID));
+  assert.throws(() => delegatedVideoInfo('{}'), /fixture에 .*이\(가\) 없다/);
+  // 셸 token::is_channel_id(소문자 hex 32자)를 지나야 parse_delegated가 버리지 않는다
+  assert.match(DELEGATED_CHANNEL_ID, /^[0-9a-f]{32}$/);
+  assert.notEqual(DELEGATED_CHANNEL_ID, OWN_CHANNEL_ID);
+  assert.notEqual(DELEGATED_CHANNEL_ID, OTHER_CHANNEL_ID);
+  // 실제 Worker tokenBundleJson과 같은 두 키만
+  assert.deepEqual(Object.keys(DELEGATED).sort(), ['channelId', 'channelName']);
+  assert.deepEqual(DELEGATED, { channelId: DELEGATED_CHANNEL_ID, channelName: DELEGATED_CHANNEL_NAME });
+  const hit = route(ROOT, `/service/v2/videos/${DELEGATED_VIDEO_NO}`, 'http://127.0.0.1:9');
+  assert.equal(hit[0], 'application/json');
+  assert.equal(JSON.parse(hit[1].toString()).content.channel.channelId, DELEGATED_CHANNEL_ID);
 });
 
 test('Worker 스텁 응답 모양: api.rs 파서 규칙', () => {

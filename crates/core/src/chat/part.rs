@@ -6,7 +6,9 @@
 //! - **커밋 순서**: 한 페이지의 줄을 덧붙임 → `flush` → `sync_data` → sidecar 원자적 쓰기.
 //!   그래서 sidecar의 `committed_len`은 늘 durable한 길이 이하이고 페이지 경계(줄 끝)에 있다.
 //! - **재개**: `.part`가 `committed_len`보다 길면(쓰다 죽은 꼬리) 그 길이로 자른다. 짧거나, sidecar가
-//!   없거나 깨졌거나 다른 영상이거나, `committed_len`이 줄 끝이 아니면 처음부터 시작한다.
+//!   없거나 깨졌거나 다른 영상이거나, `committed_len`이 줄 끝이 아니면 처음부터 시작한다. sidecar를 **읽지
+//!   못하면**(권한·Windows 공유 위반·I/O 오류) 없는 것이 아니라 확인하지 못한 것이라, 자르지 않고 오류다
+//!   (`download::part`와 같은 규칙, core.md 구현 중 변경 69).
 //! - **잠금**: `.part`를 배타 잠금한다. 잠그기 전에는 자르거나 지우지 않는다(다른 작업이 쓰는 중일 수 있다).
 //! - **마무리**: 보조 파일(자막) → 기록 순으로 `.part`에서 최종 이름으로 옮긴다. `Skip`은 OS의
 //!   덮어쓰지 않는 rename이라 받는 동안 생긴 같은 이름 파일도 지킨다. 어느 파일이 막히면 거기서 멈추고
@@ -129,10 +131,16 @@ impl std::fmt::Debug for ChatPart {
     }
 }
 
-/// 모르는 sidecar·깨진 sidecar는 `None`.
-fn read_sidecar(path: &Path) -> Option<ChatSidecar> {
-    let bytes = std::fs::read(path).ok()?;
-    serde_json::from_slice(&bytes).ok()
+/// sidecar를 읽는다. 없거나(NotFound) 깨졌으면(모르는 형식·파싱 실패) `Ok(None)`.
+///
+/// 그 밖의 읽기 실패(권한·Windows 공유 위반·I/O 오류)는 없는 것이 아니라 확인하지 못한 것이라 오류다.
+/// 부르는 쪽은 자르거나 지우기 전에 멈춘다(core.md 구현 중 변경 69, `download::part::read_sidecar`와 같은 규칙).
+fn read_sidecar(path: &Path) -> Result<Option<ChatSidecar>, Error> {
+    match std::fs::read(path) {
+        Ok(bytes) => Ok(serde_json::from_slice(&bytes).ok()),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(map_io_error("read", path, e)),
+    }
 }
 
 fn write_sidecar(path: &Path, s: &ChatSidecar) -> Result<(), Error> {
@@ -180,6 +188,7 @@ impl ChatPart {
     /// - `restart`가 아니고 같은 영상의 sidecar가 맞으면 `committed_len`까지 잘라 이어받는다.
     /// - 그 밖에는(`restart`, sidecar 없음·깨짐·다른 영상, `.part`가 짧음, 줄 끝이 아님) 잠금을 쥔 채
     ///   비우고 처음부터 시작한다. 새 sidecar는 곧바로 쓴다(첫 커밋 전에 죽어도 다음 실행이 이어받는다).
+    /// - `restart`가 아닌데 sidecar를 읽지 못하면(없음·깨짐이 아님) 아무것도 자르지 않고 오류다.
     /// - 다른 작업이 잠그고 있으면 `FileLocked`이고 아무것도 바꾸지 않는다.
     pub fn open(record_path: &Path, video_no: u64, restart: bool) -> Result<ChatPart, Error> {
         let part = part_path(record_path);
@@ -192,9 +201,14 @@ impl ChatPart {
             .metadata()
             .map_err(|e| map_io_error("stat", &part, e))?
             .len();
+        // 자르기 전에 읽는다: 읽지 못하면 여기서 멈춘다(받은 기록을 0으로 자르지 않는다). `restart`는 읽지 않는다
+        let existing = if restart {
+            None
+        } else {
+            read_sidecar(&sc_path)?
+        };
         let mut resumed = None;
-        if !restart
-            && let Some(s) = read_sidecar(&sc_path)
+        if let Some(s) = existing
             && s.v == SIDECAR_VERSION
             && s.video_no == video_no
             && len >= s.committed_len
@@ -558,7 +572,8 @@ fn record_of(video: &Path) -> PathBuf {
 ///
 /// - 같은 영상의 sidecar가 있고 `.part`가 `committed_len`보다 짧지 않으면 `committed_len`(0일 수 있다: `open`이
 ///   sidecar를 곧바로 쓰므로 첫 페이지 전에 실패해도 파일이 남는다).
-/// - sidecar가 없거나 깨졌는데 `.part`가 있으면 `.part` 길이(주인을 모르는 남은 파일이다. 지우기 경로가 확인을 거치게).
+/// - sidecar가 없거나 깨졌거나 읽지 못했는데 `.part`가 있으면 `.part` 길이(주인을 모르는 남은 파일이다. 숨기지 않고
+///   지우기 경로가 확인을 거치게. 읽지 못한 sidecar면 지우기는 `discard_chat_partial`이 오류로 멈춘다).
 /// - 다른 영상의 sidecar, `.part` 없음은 `None`.
 ///
 /// 잠그지 않고 읽기만 한다(sidecar는 `atomic_write`로 쓰인다).
@@ -569,9 +584,13 @@ pub fn chat_partial_bytes(video: &Path, video_no: u64) -> Option<u64> {
         .filter(|m| m.is_file())?
         .len();
     match read_sidecar(&sidecar_path(&record)) {
-        Some(sc) if sc.video_no != video_no => None,
-        Some(sc) => (part_len >= sc.committed_len).then_some(sc.committed_len),
-        None => Some(part_len),
+        Ok(Some(sc)) if sc.video_no != video_no => None,
+        Ok(Some(sc)) => (part_len >= sc.committed_len).then_some(sc.committed_len),
+        Ok(None) => Some(part_len),
+        Err(e) => {
+            tracing::warn!(error = %e, "채팅 sidecar를 읽지 못해 남은 파일로 센다");
+            Some(part_len)
+        }
     }
 }
 
@@ -579,7 +598,8 @@ pub fn chat_partial_bytes(video: &Path, video_no: u64) -> Option<u64> {
 /// 완성된 채팅 파일은 건드리지 않는다.
 ///
 /// - sidecar가 다른 영상의 것이면 아무것도 지우지 않고 `NotOwned`. 없거나 깨졌으면 주인을 모르는 파일이라 지운다
-///   (`download::part::discard_partial`과 같은 규칙).
+///   (`download::part::discard_partial`과 같은 규칙). 읽지 못하면(권한·공유 위반 등) 주인을 확인하지 못한 것이라
+///   아무것도 지우지 않고 오류다(core.md 구현 중 변경 69).
 /// - 다른 작업이 `.part`를 잠그고 있으면 `FileLocked`이고 아무것도 지우지 않는다.
 pub fn discard_chat_partial(
     video: &Path,
@@ -595,7 +615,14 @@ pub fn discard_chat_partial(
         Err(e) => return Err(e),
     };
     remove_stale_temps(&sc);
-    if read_sidecar(&sc).is_some_and(|s| s.video_no != video_no) {
+    let owner = match read_sidecar(&sc) {
+        Ok(s) => s,
+        Err(e) => {
+            drop(lock);
+            return Err(e);
+        }
+    };
+    if owner.is_some_and(|s| s.video_no != video_no) {
         tracing::info!("다른 영상의 채팅 .part라 지우지 않는다");
         return Ok(Discarded::NotOwned);
     }

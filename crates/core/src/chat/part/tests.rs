@@ -775,3 +775,97 @@ fn partial_bytes_without_sidecar_is_part_len_when_part_exists() {
     // sidecar가 없으면 주인을 모르는 남은 파일이다: 지우기 경로가 D2를 거치도록 길이를 준다
     assert_eq!(chat_partial_bytes(&video, VIDEO), Some(4));
 }
+
+// ---------------------------------------------------------------------------
+// sidecar 읽기 실패(core.md 구현 중 변경 69): 없음·깨짐과 달리 확인하지 못한 것이라 자르거나 지우지 않는다
+// ---------------------------------------------------------------------------
+
+/// 한 페이지를 커밋한 기록을 남기고, sidecar 자리를 디렉터리로 바꿔 읽기를 실패시킨다(플랫폼 무관:
+/// Linux·macOS는 EISDIR, Windows는 열기 거부. 어느 쪽도 NotFound가 아니다). 커밋한 `.part` 바이트를 돌려준다.
+async fn committed_with_unreadable_sidecar(record: &Path) -> Vec<u8> {
+    let msgs = vec![raw_msg(100, "a", "x"), raw_msg(200, "b", "y")];
+    let mut p = ChatPart::open(record, VIDEO, false).unwrap();
+    p.commit_page(&refs(&msgs), &state(300), None)
+        .await
+        .unwrap();
+    drop(p);
+    let bytes = read(&part_path(record));
+    assert!(!bytes.is_empty());
+    let sc = sidecar_path(record);
+    std::fs::remove_file(&sc).unwrap();
+    std::fs::create_dir(&sc).unwrap();
+    bytes
+}
+
+#[tokio::test]
+async fn open_with_unreadable_sidecar_errors_and_keeps_record() {
+    let e = env();
+    let bytes = committed_with_unreadable_sidecar(&e.record).await;
+    let err = ChatPart::open(&e.record, VIDEO, false).unwrap_err();
+    assert!(matches!(err, Error::Io { .. }), "{err:?}");
+    // 0으로 자르지 않았다
+    assert_eq!(read(&part_path(&e.record)), bytes);
+    assert!(sidecar_path(&e.record).is_dir());
+}
+
+#[tokio::test]
+async fn open_restart_ignores_sidecar_read() {
+    // 처음부터는 sidecar를 읽지 않는다(버리는 것이 의도다). 새 sidecar를 쓰지 못하는 것은 그다음 일이다
+    let e = env();
+    committed_with_unreadable_sidecar(&e.record).await;
+    std::fs::remove_dir(sidecar_path(&e.record)).unwrap();
+    let p = ChatPart::open(&e.record, VIDEO, true).unwrap();
+    assert_eq!(p.committed(), 0);
+}
+
+#[tokio::test]
+async fn discard_with_unreadable_sidecar_errors_and_keeps_files() {
+    let (_d, video, record) = video_env();
+    let bytes = committed_with_unreadable_sidecar(&record).await;
+    let ass_tmp = part_path(&crate::naming::sibling_path(&video, ".ass"));
+    let srt_tmp = part_path(&crate::naming::sibling_path(&video, ".srt"));
+    std::fs::write(&ass_tmp, b"ass").unwrap();
+    std::fs::write(&srt_tmp, b"srt").unwrap();
+    let err = discard_chat_partial(&video, VIDEO).unwrap_err();
+    assert!(matches!(err, Error::Io { .. }), "{err:?}");
+    assert_eq!(read(&part_path(&record)), bytes);
+    assert!(sidecar_path(&record).is_dir());
+    assert_eq!(read(&ass_tmp), b"ass");
+    assert_eq!(read(&srt_tmp), b"srt");
+}
+
+#[tokio::test]
+async fn discard_without_part_and_unreadable_sidecar_errors() {
+    // `.part`가 없어도(잠글 것이 없다) 읽지 못한 sidecar와 자막 임시 파일을 지우지 않는다
+    let (_d, video, record) = video_env();
+    committed_with_unreadable_sidecar(&record).await;
+    std::fs::remove_file(part_path(&record)).unwrap();
+    let ass_tmp = part_path(&crate::naming::sibling_path(&video, ".ass"));
+    std::fs::write(&ass_tmp, b"ass").unwrap();
+    assert!(discard_chat_partial(&video, VIDEO).is_err());
+    assert_eq!(read(&ass_tmp), b"ass");
+}
+
+#[tokio::test]
+async fn partial_bytes_with_unreadable_sidecar_is_part_len() {
+    // 주인을 확인하지 못한 남은 파일이다: 숨기지 않고 길이를 준다(지우기는 위처럼 오류로 멈춘다)
+    let (_d, video, record) = video_env();
+    let bytes = committed_with_unreadable_sidecar(&record).await;
+    assert_eq!(chat_partial_bytes(&video, VIDEO), Some(bytes.len() as u64));
+    assert_eq!(
+        chat_partial_bytes(&video, VIDEO + 1),
+        Some(bytes.len() as u64)
+    );
+}
+
+#[test]
+fn broken_sidecar_still_starts_over() {
+    // 깨진 sidecar(파싱 실패)는 그대로 "없음"이다: 처음부터 시작한다(모듈 문서)
+    let e = env();
+    std::fs::write(part_path(&e.record), b"{}\n").unwrap();
+    std::fs::write(sidecar_path(&e.record), b"not json").unwrap();
+    let p = ChatPart::open(&e.record, VIDEO, false).unwrap();
+    assert_eq!(p.committed(), 0);
+    drop(p);
+    assert_eq!(read(&part_path(&e.record)), b"");
+}

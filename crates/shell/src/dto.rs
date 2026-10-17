@@ -193,6 +193,50 @@ pub enum WebPage {
     Help,
 }
 
+/// 도움말 주제 id(`help/ids.json`의 `ids`, D51 "앵커 id는 추가만"). Worker `/help`가 주제마다 `h2 id`로 달아
+/// `open_web_page(help, anchor)`가 `/help#<id>`로 연다(오류 L2 링크, app.md 구현 중 변경 84).
+/// 닫힌 집합이라 모르는 id는 역직렬화에서 거부된다. `ids.json`과 같은지는 `tests/dto_json.rs`가 본다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "kebab-case")]
+pub enum HelpId {
+    Cookie,
+    DiskFull,
+    InstallMac,
+    InstallWindows,
+    LoginBrowser,
+    Report,
+    WindowsOldApp,
+    Editors,
+}
+
+impl HelpId {
+    /// 모든 주제(`ids.json` 대조용)
+    pub const ALL: [HelpId; 8] = [
+        HelpId::Cookie,
+        HelpId::DiskFull,
+        HelpId::InstallMac,
+        HelpId::InstallWindows,
+        HelpId::LoginBrowser,
+        HelpId::Report,
+        HelpId::WindowsOldApp,
+        HelpId::Editors,
+    ];
+
+    /// 앵커 글자(= serde 값). 주소의 `#` 뒤에 그대로 붙는다
+    pub fn as_str(self) -> &'static str {
+        match self {
+            HelpId::Cookie => "cookie",
+            HelpId::DiskFull => "disk-full",
+            HelpId::InstallMac => "install-mac",
+            HelpId::InstallWindows => "install-windows",
+            HelpId::LoginBrowser => "login-browser",
+            HelpId::Report => "report",
+            HelpId::WindowsOldApp => "windows-old-app",
+            HelpId::Editors => "editors",
+        }
+    }
+}
+
 impl From<Phase> for PhaseTs {
     /// 빠짐없는 match. 코어에 단계가 늘면 여기서 컴파일이 깨진다.
     fn from(p: Phase) -> Self {

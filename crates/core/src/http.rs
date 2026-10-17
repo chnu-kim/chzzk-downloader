@@ -398,6 +398,79 @@ mod tests {
         check(&format!("{resolved:?}"));
     }
 
+    /// 가림 래퍼와 수동 `Debug`가 빈 출력이 아니라 타입 이름·가린 모양을 정확히 낸다(mutant: 본문을 `Ok(())`로).
+    #[test]
+    fn debug_impls_show_masked_shape() {
+        use crate::hls::{parse_master, parse_media};
+        use crate::info::{Playback, classify, parse_video_info};
+        use crate::model::Source;
+        use crate::mpd::{parse_mpd, pd_reps};
+        use crate::testutil::{fixture, fixture_str};
+
+        // Secret / masked
+        assert_eq!(format!("{:?}", Secret::new("v")), "***");
+        assert_eq!(format!("{}", Secret::new("v")), "***");
+        assert_eq!(format!("{:?}", masked(&Some("v"))), "Some(***)");
+        assert_eq!(format!("{:?}", masked::<String>(&None)), "None");
+
+        // DebugUrl: 따옴표 문자열로 redact_url 결과를 그대로 낸다.
+        let u = Url::parse("https://h.example/a/hdntl=exp=1~hmac=x/b.m3u8?hdnts=1").unwrap();
+        assert_eq!(
+            format!("{:?}", DebugUrl(&u)),
+            "\"https://h.example/a/hdntl=***/b.m3u8\""
+        );
+
+        // 빠른 다시보기 계열
+        let (_, v) = parse_video_info(&fixture("testdata/hls/video_info.json")).unwrap();
+        let s = format!("{v:?}");
+        assert!(s.starts_with("VideoContent {"), "{s}");
+        assert!(s.contains("video_id:"), "{s}");
+        assert!(s.contains("live_rewind_playback_json: Some(***)"), "{s}");
+        let pb = classify(&v).unwrap();
+        let s = format!("{pb:?}");
+        assert!(s.starts_with("LiveRewind {"), "{s}");
+        assert!(s.contains("master_url: \"https://"), "{s}");
+        let Playback::LiveRewind { master_url, .. } = pb else {
+            unreachable!()
+        };
+        let variants = parse_master(&fixture_str("testdata/hls/master.m3u8"), &master_url).unwrap();
+        let s = format!("{:?}", variants[3]);
+        assert!(s.starts_with("Variant {"), "{s}");
+        assert!(s.contains("hdntl=***"), "{s}");
+        assert!(s.contains("track_id:") && s.contains("height:"), "{s}");
+        let media = parse_media(&fixture_str("testdata/hls/media.m3u8"), &variants[3].uri).unwrap();
+        let s = format!("{media:?}");
+        assert!(s.starts_with("MediaPlaylist {"), "{s}");
+        assert!(
+            s.contains("media_sequence:") && s.contains("total_duration_ms:"),
+            "{s}"
+        );
+        let s = format!("{:?}", media.segments[0]);
+        assert!(s.starts_with("Segment {"), "{s}");
+        assert!(s.contains("msn:") && s.contains("duration_ms:"), "{s}");
+
+        // DASH 계열
+        let (_, v) = parse_video_info(&fixture("testdata/vod/video_info.json")).unwrap();
+        let s = format!("{v:?}");
+        assert!(s.contains("in_key: Some(***)"), "{s}");
+        let s = format!("{:?}", classify(&v).unwrap());
+        assert!(s.starts_with("Dash {"), "{s}");
+        assert!(s.contains("in_key: ***"), "{s}");
+        let reps = parse_mpd(&fixture_str("testdata/vod/playback.mpd")).unwrap();
+        let s = format!("{:?}", reps[0]);
+        assert!(s.starts_with("Representation {"), "{s}");
+        assert!(s.contains("bandwidth:") && s.contains("base_urls:"), "{s}");
+        let pd = pd_reps(&reps).unwrap();
+        let s = format!("{:?}", pd[0]);
+        assert!(s.starts_with("PdRep {"), "{s}");
+        assert!(
+            s.contains("quality:") && s.contains("url: \"https://"),
+            "{s}"
+        );
+        let s = format!("{:?}", Source::Progressive { reps: pd });
+        assert!(s.starts_with("Progressive {"), "{s}");
+    }
+
     #[test]
     fn redact_url_rules() {
         let u =

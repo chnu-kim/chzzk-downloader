@@ -212,6 +212,17 @@ fn missing_file_is_default_and_update_creates_it() {
     assert!(raw.get("recentVodURLs").is_none(), "옛 키는 쓰지 않는다");
 }
 
+/// 읽기 실패(파일 자리에 디렉터리)는 기본값으로 덮지 않고 오류로 올린다.
+#[test]
+fn open_propagates_non_not_found_read_error() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join(SETTINGS_FILE)).unwrap();
+    assert!(matches!(
+        SettingsStore::open(dir.path().to_path_buf()),
+        Err(chzzk_core::Error::Io { .. })
+    ));
+}
+
 #[test]
 fn corrupt_backed_up() {
     let dir = tempfile::tempdir().unwrap();
@@ -301,6 +312,18 @@ mod credentials {
         store.clear().unwrap();
         assert_eq!(store.load().unwrap(), None);
         store.clear().unwrap();
+    }
+
+    /// 파일이 없을 때만 `None`/성공이다. 읽기·지우기 실패(파일 자리에 디렉터리)는 오류다.
+    #[test]
+    fn missing_is_ok_but_other_io_errors_propagate() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = CredentialStore::new(dir.path().to_path_buf());
+        assert!(store.load().unwrap().is_none());
+        store.clear().unwrap();
+        std::fs::create_dir(store.path()).unwrap();
+        assert!(matches!(store.load(), Err(chzzk_core::Error::Io { .. })));
+        assert!(matches!(store.clear(), Err(chzzk_core::Error::Io { .. })));
     }
 
     #[test]
@@ -434,6 +457,7 @@ mod legacy {
         let (dir, _) = legacy_dir(Some(&s), None);
         let imp = import_legacy(dir.path()).unwrap().unwrap();
         assert_eq!(imp.settings.recent_vods.len(), 5);
+        assert_eq!(imp.settings.recent_vods[0].url, "u0");
         assert_eq!(imp.settings.recent_vods[0].title, "t0");
         // 옛 Go 항목에는 종류·날짜가 없다
         assert!(
@@ -604,5 +628,65 @@ mod legacy {
         assert!(matches!(e, chzzk_core::Error::Settings(_)));
         assert!(!e.to_string().contains("secretAUT"));
         assert_untouched(dir.path(), &snap);
+    }
+
+    /// 평문 쿠키 경고는 쿠키가 어느 원천에든 실제로 있을 때만 붙는다.
+    #[test]
+    fn import_plaintext_warning_per_source() {
+        let warned = |settings: &str, cookie: Option<&str>| {
+            let (dir, _) = legacy_dir(Some(&go_settings(settings)), cookie);
+            let imp = import_legacy(dir.path()).unwrap().unwrap();
+            imp.warnings.iter().any(|w| w == WARN_PLAINTEXT_COOKIES)
+        };
+        assert!(warned(r#"{"nidAut":"a"}"#, None), "nidAut만 있어도 경고");
+        assert!(warned(r#"{"nidSes":"s"}"#, None), "nidSes만 있어도 경고");
+        assert!(
+            warned("{}", Some(r#"{"NID_AUT":"a"}"#)),
+            "cookie.json에만 있어도 경고"
+        );
+        assert!(
+            warned("{}", Some(r#"{"X":null,"NID_SES":"s"}"#)),
+            "cookie.json의 다른 값이 비어도 하나라도 있으면 경고"
+        );
+        assert!(
+            !warned(r#"{"nidAut":" ","nidSes":""}"#, None),
+            "공백뿐이면 경고 없음"
+        );
+        assert!(
+            !warned("{}", Some(r#"{"NID_AUT":null,"NID_SES":" ","X":""}"#)),
+            "비었거나 null이면 경고 없음"
+        );
+    }
+
+    /// NotFound만 "없음"이다. 읽기 실패(여기서는 파일 자리에 디렉터리)는 숨기지 않는다.
+    #[test]
+    fn import_read_errors_are_not_treated_as_missing() {
+        // settings.json 자리에 디렉터리 → 오류
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("settings.json")).unwrap();
+        assert!(matches!(
+            import_legacy(dir.path()),
+            Err(chzzk_core::Error::Io { .. })
+        ));
+        // settings.json.v1 자리에 디렉터리(새 형식 settings.json) → 오류
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("settings.json"), r#"{"schemaVersion":2}"#).unwrap();
+        std::fs::create_dir(dir.path().join("settings.json.v1")).unwrap();
+        assert!(matches!(
+            import_legacy(dir.path()),
+            Err(chzzk_core::Error::Io { .. })
+        ));
+        // cookie.json 자리에 디렉터리 → 경고를 남기고 가져오기는 계속
+        let s = go_settings("{}");
+        let (dir, _) = legacy_dir(Some(&s), None);
+        std::fs::create_dir_all(dir.path().join("dependent/cookie.json")).unwrap();
+        let imp = import_legacy(dir.path()).unwrap().unwrap();
+        assert!(imp.warnings.iter().any(|w| w.contains("열지 못해")));
+        // 아무것도 없으면 None
+        assert!(
+            import_legacy(tempfile::tempdir().unwrap().path())
+                .unwrap()
+                .is_none()
+        );
     }
 }

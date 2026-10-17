@@ -95,6 +95,7 @@ describe('api.ts', () => {
     [() => api.revealOutput(3), 'reveal_output', { id: 3 }],
     [() => api.quit(), 'quit', {}],
     [() => api.openWebPage('privacy'), 'open_web_page', { page: 'privacy' }],
+    [() => api.openWebPage('help', 'editors'), 'open_web_page', { page: 'help', anchor: 'editors' }],
     [() => api.authStatus(), 'auth_status', {}],
     [() => api.authLogin(), 'auth_login', {}],
     [() => api.authReopen(), 'auth_reopen', {}],

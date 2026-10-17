@@ -46,7 +46,7 @@ test('rewriteHosts: 합성 미디어 호스트를 모두 서버 주소로 바꾼
   assert.match(out, /http:\/\/127\.0\.0\.1:9\/y/);
 });
 
-test('서버: info → master → media → init·조각, 모르는 경로는 404, 결과는 init‖seg0‖seg1', async () => {
+test('서버: info → master → media → init·조각, 모르는 경로는 404, 결과는 init‖seg0‖seg1의 일반 mp4 golden', async () => {
   const s = await start();
   try {
     const get = async (p) => {
@@ -68,8 +68,12 @@ test('서버: info → master → media → init·조각, 모르는 경로는 40
     const init = await get('/x/144p/144p_0_0_0.m4s');
     const seg0 = await get('/x/144p/144p_seg0.m4v');
     const seg1 = await get('/x/144p/144p_seg1.m4v');
+    // 서빙하는 조각은 fixture 그대로이고, 기대 결과는 그것을 일반 mp4로 바꾼 golden이다(core.md 71)
     const all = Buffer.concat([init.body, seg0.body, seg1.body]);
-    assert.deepEqual(expectedOutput(), { bytes: all.length, sha256: createHash('sha256').update(all).digest('hex') });
+    const raw = ['init.mp4', 'seg0.m4v', 'seg1.m4v'].map((f) => readFileSync(join(ROOT, 'testdata', 'hls', f)));
+    assert.deepEqual(all, Buffer.concat(raw));
+    const flat = readFileSync(join(ROOT, 'testdata', 'hls', 'full2_flat.mp4'));
+    assert.deepEqual(expectedOutput(), { bytes: flat.length, sha256: createHash('sha256').update(flat).digest('hex') });
     assert.equal((await get('/x/144p/144p_seg2.m4v')).status, 404);
     assert.equal((await get('/service/v2/videos/1')).status, 404);
     assert.deepEqual(

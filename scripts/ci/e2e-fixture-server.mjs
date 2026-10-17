@@ -10,8 +10,9 @@
 //
 //   node scripts/ci/e2e-fixture-server.mjs [--port N]   # 직접 띄워 보기(주소를 출력하고 Ctrl+C까지 돈다)
 //
-// 결과 파일은 init‖seg0‖seg1과 바이트가 같아야 한다(코어 segmented.rs fixture_concat_box_order와 같은 기대값).
-// 판정용 sha256은 expectedOutput()이 fixture에서 계산한다.
+// 결과 파일은 init‖seg0‖seg1을 마무리에서 일반 mp4로 바꾼 정적 golden `testdata/hls/full2_flat.mp4`와 바이트가 같아야 한다
+// (코어 segmented.rs fixture_concat_box_order가 같은 golden을 확인한다, core.md 구현 중 변경 71).
+// 판정용 sha256은 expectedOutput()이 그 golden에서 계산한다.
 
 import { createHash } from 'node:crypto';
 import { readFileSync, realpathSync } from 'node:fs';
@@ -87,7 +88,7 @@ export const delegatedVideoInfo = (text) =>
   variantVideoInfo(text, { videoNo: DELEGATED_VIDEO_NO, channelId: DELEGATED_CHANNEL_ID, channelName: DELEGATED_CHANNEL_NAME });
 
 export function expectedOutput(root = ROOT) {
-  const bytes = Buffer.concat(['hls/init.mp4', 'hls/seg0.m4v', 'hls/seg1.m4v'].map((f) => fixture(root, f)));
+  const bytes = fixture(root, 'hls/full2_flat.mp4');
   return { bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') };
 }
 

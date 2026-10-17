@@ -13,7 +13,7 @@
 //   node scripts/ci/e2e-native.mjs [--exe <경로>]   # 기본 <target>/debug/chzzk-app[.exe] (gate가 먼저 빌드한다)
 //
 // 판정(결정적): 결과 폴더에 .mp4가 정확히 둘(본인 채널 이름·맡은 채널 이름이 든 것 하나씩, 남의 채널 이름이 든 것은 없음:
-// 남의 영상이 받히지 않았음도 증명한다), .part 없음, 둘 다 sha256이 init‖seg0‖seg1과 같음, fixture 서버가 받은 요청이 모두 200이고
+// 남의 영상이 받히지 않았음도 증명한다), .part 없음, 둘 다 sha256이 golden `testdata/hls/full2_flat.mp4`(init‖seg0‖seg1의 일반 mp4 변환)와 같음, fixture 서버가 받은 요청이 모두 200이고
 // info·남의 영상 info·맡은 채널 영상 info·master·media·init·조각 둘을 모두 받음, Worker 스텁이 start 201·
 // 확인 페이지 303·redeem 200을 각각 정확히 1번 받고 오류 응답이 없음. 화면 글자는 기다림의 신호로만 쓴다(판정은 파일이다).
 // 실패하면 target/ci/e2e-native/에 스크린샷·페이지 HTML·드라이버 로그·앱 로그를 남긴다(합성 fixture라 공개해도 된다).
@@ -159,7 +159,7 @@ export function judge({ files, outputs }, serverLog, expected) {
   for (const f of mp4) {
     const o = outputs?.[f];
     if (!o || o.sha256 !== expected.sha256 || o.bytes !== expected.bytes) {
-      bad.push(`결과 파일 ${f}이(가) init‖seg0‖seg1과 다르다(sha256 ${o?.sha256 ?? '-'} ${o?.bytes ?? '-'}B ≠ ${expected.sha256} ${expected.bytes}B)`);
+      bad.push(`결과 파일 ${f}이(가) golden full2_flat.mp4와 다르다(sha256 ${o?.sha256 ?? '-'} ${o?.bytes ?? '-'}B ≠ ${expected.sha256} ${expected.bytes}B)`);
     }
   }
   const not200 = serverLog.filter((l) => l.status !== 200);

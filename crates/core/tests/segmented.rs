@@ -91,7 +91,10 @@ fn box_types(mut b: &[u8]) -> Vec<String> {
     out
 }
 
-/// 합성 fixture(init·seg0·seg1)로 이어 붙인 결과가 init‖seg0‖seg1이고 상자 순서가 맞다.
+/// init‖seg0‖seg1을 마무리에서 일반 mp4로 바꾼 정적 golden(testdata/README.md).
+const FULL2_FLAT: &str = "testdata/hls/full2_flat.mp4";
+
+/// 합성 fixture(init·seg0·seg1)를 받은 결과는 그 조각들을 일반 mp4로 바꾼 것이고(golden과 같다) 미디어 순서가 맞다.
 #[tokio::test]
 async fn fixture_concat_box_order() {
     let server = MockServer::start().await;
@@ -141,9 +144,14 @@ async fn fixture_concat_box_order() {
     )
     .await
     .unwrap();
-    let mut want = fixture("testdata/hls/init.mp4");
-    want.extend(fixture("testdata/hls/seg0.m4v"));
-    want.extend(fixture("testdata/hls/seg1.m4v"));
+    let got = std::fs::read(&out).unwrap();
+    // 받은 init‖seg0‖seg1은 상자 순서가 맞는 조각 구조이고(`.part`), 마무리가 일반 mp4로 바꾼다(core.md 71).
+    // 결과는 정적 golden `testdata/hls/full2_flat.mp4`와 바이트가 같다(네이티브 E2E가 같은 파일로 판정한다).
+    if std::env::var_os("UPDATE_FLAT_GOLDEN").is_some() {
+        let path = format!("{}/../../{FULL2_FLAT}", env!("CARGO_MANIFEST_DIR"));
+        std::fs::write(path, &got).unwrap();
+    }
+    let want = fixture(FULL2_FLAT);
     assert_eq!(
         r,
         DownloadOutcome::Completed {
@@ -153,12 +161,21 @@ async fn fixture_concat_box_order() {
             live: None,
         }
     );
-    let got = std::fs::read(&out).unwrap();
-    assert_eq!(got, want);
-    let types = box_types(&got);
+    assert_eq!(
+        got, want,
+        "다시 만들기: UPDATE_FLAT_GOLDEN=1 cargo test -p chzzk-core --test segmented fixture_concat_box_order"
+    );
+    mp4::assert_flat_mp4(&got);
+    let mut concat = fixture("testdata/hls/init.mp4");
+    concat.extend(fixture("testdata/hls/seg0.m4v"));
+    concat.extend(fixture("testdata/hls/seg1.m4v"));
+    let types = box_types(&concat);
     assert_eq!(&types[..4], ["ftyp", "moov", "styp", "moof"]);
-    assert!(types.contains(&"mdat".to_string()));
     assert!(types.contains(&"emsg".to_string()));
+    // 미디어 데이터는 조각 순서 그대로 옮긴다(데이터는 움직이지 않고 `moov`가 끝에 붙는다)
+    let have: Vec<u8> = mp4::mdat_payloads(&got).into_iter().flatten().collect();
+    let want_media: Vec<u8> = mp4::mdat_payloads(&concat).into_iter().flatten().collect();
+    assert_eq!(have, want_media);
     let (part, sidecar) = part_files(&out);
     assert!(!part.exists() && !sidecar.exists());
 
@@ -1436,9 +1453,10 @@ async fn range_different_from_sidecar_restarts() {
     assert_eq!(std::fs::read(&out).unwrap(), want);
 }
 
-/// 구간 `.part` 뒤의 전체 받기는 새로 시작하고, 조각 구조 그대로 둔다(전체 받기 회귀).
+/// 구간 `.part` 뒤의 전체 받기는 새로 시작한다(전체 받기 회귀). 합성 조각은 해석할 수 없는 상자라 마무리 변환이
+/// 바꾸기 전에 멈추고(`DefragError::Unchanged`) 받은 바이트 그대로 마무리한다.
 #[tokio::test]
-async fn full_after_range_part_restarts_and_stays_fragmented() {
+async fn full_after_range_part_restarts() {
     const N: usize = 20;
     let server = MockServer::start().await;
     let dir = tempfile::tempdir().unwrap();
@@ -1542,15 +1560,16 @@ async fn range_result_is_flat_mp4_from_nonzero_tfdt() {
     }
 }
 
-/// 전체 받기는 조각 구조 그대로다(구간 변환이 전체 받기를 바꾸지 않는다).
+/// 전체 받기 결과도 일반 mp4이고, 모든 조각의 미디어 데이터가 순서대로 들어 있다(R5, core.md 구현 중 변경 71).
+/// 조각 구조로 두면 QuickTime이 첫 조각만 재생한다(core.md 60과 같은 증상).
 #[tokio::test]
-async fn full_download_stays_fragmented() {
+async fn full_download_result_is_flat_mp4() {
     let server = MockServer::start().await;
     mount_info(&server, "/g0", None).await;
-    mount_real_hls(&server, "/g0").await;
+    let n = mount_real_hls(&server, "/g0").await;
     let dir = tempfile::tempdir().unwrap();
     let out = out_path(&dir);
-    run(
+    let r = run(
         config(&server),
         request(&out, 2),
         CancellationToken::new(),
@@ -1558,11 +1577,71 @@ async fn full_download_stays_fragmented() {
     )
     .await
     .unwrap();
-    let mut want = REAL.0.clone();
-    for s in &REAL.1 {
-        want.extend_from_slice(s);
+    let got = std::fs::read(&out).unwrap();
+    let DownloadOutcome::Completed { bytes, .. } = r else {
+        panic!("{r:?}")
+    };
+    assert_eq!(bytes, got.len() as u64);
+    mp4::assert_flat_mp4(&got);
+    let want: Vec<u8> = REAL
+        .1
+        .iter()
+        .flat_map(|s| mp4::mdat_payloads(s))
+        .flatten()
+        .collect();
+    let have: Vec<u8> = mp4::mdat_payloads(&got).into_iter().flatten().collect();
+    assert_eq!(have, want);
+    for i in 0..n {
+        assert_eq!(seg_count(&server, "/g0", i).await, 1, "seg{i}");
     }
-    assert_eq!(std::fs::read(&out).unwrap(), want);
+    let (part, sidecar) = part_files(&out);
+    assert!(!part.exists() && !sidecar.exists());
+}
+
+/// 전체 받기도 변환이 끝난 뒤 rename 전에 끊기면(`Skipped`) 다음 실행이 조각을 다시 받지 않고 마무리한다.
+/// 구간 sidecar(v2)가 아닌 전체 받기 sidecar(v1) 위의 일반 mp4 `.part`를 이어받는 경로다.
+#[tokio::test]
+async fn full_converted_then_skipped_resumes_without_refetch() {
+    let server = MockServer::start().await;
+    mount_info(&server, "/g0", None).await;
+    let n = mount_real_hls(&server, "/g0").await;
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_path(&dir);
+    let (part, sidecar) = part_files(&out);
+
+    let out2 = out.clone();
+    let cb = move |p: Progress| {
+        if p.phase == Phase::Finalizing {
+            std::fs::write(&out2, b"someone else").unwrap();
+        }
+    };
+    let req = DownloadRequest {
+        on_existing: DuplicatePolicy::Skip,
+        ..request(&out, 2)
+    };
+    let r = run(config(&server), req, CancellationToken::new(), &cb)
+        .await
+        .unwrap();
+    assert!(matches!(r, DownloadOutcome::Skipped { .. }), "{r:?}");
+    let converted = std::fs::read(&part).unwrap();
+    mp4::assert_flat_mp4(&converted);
+    assert!(sidecar.exists());
+
+    std::fs::remove_file(&out).unwrap();
+    let r = run(
+        config(&server),
+        request(&out, 2),
+        CancellationToken::new(),
+        &|_| {},
+    )
+    .await
+    .unwrap();
+    assert!(matches!(r, DownloadOutcome::Completed { .. }), "{r:?}");
+    for i in 0..n {
+        assert_eq!(seg_count(&server, "/g0", i).await, 1, "seg{i}");
+    }
+    assert_eq!(std::fs::read(&out).unwrap(), converted);
+    assert!(!part.exists() && !sidecar.exists());
 }
 
 /// 변환이 끝난 뒤 rename 전에 끊긴 구간 `.part`는 조각을 다시 받지 않고 마무리한다.

@@ -19,6 +19,7 @@
 //
 // 줄마다 원문과, 디코드한 형태(JSON \uXXXX·\/, HTML 엔티티, %xx를 세 겹까지, NFKC, 폭 없는 문자 제거)를
 // 함께 본다. 줄 안의 base64 덩어리가 글자로 풀리면 그것도 본다. NUL이 든 파일은 UTF-16과 글자 조각을 뽑아 본다.
+// 온전한 PNG는 픽셀·구조 청크를 건너뛰고 텍스트 청크(tEXt·zTXt·iTXt, 압축은 풀어서)와 모르는 청크만 본다.
 //
 // 규칙
 //   signed-token   hdnts=/hdntl= 토큰에 실제 시각(9자리 이상 숫자)이 든 것, 또는 어디서든 st=/exp=에 10자리 시각
@@ -38,6 +39,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { delimiter, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { inflateSync } from 'node:zlib';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const DENYLIST_PATH = join(HERE, 'public-denylist.txt');
@@ -327,10 +329,118 @@ function utf16(buf) {
   return sw.swap16().toString('utf16le');
 }
 
-/** blob(파일 내용) 하나를 검사한다. NUL이 있으면 UTF-16 해석과 글자 조각을 본다(줄 번호 0). */
+// ---- PNG ----
+// 스냅샷 PNG의 압축 픽셀 바이트에서 우연히 생긴 글자 조각이 n-gram에 맞는 오탐을 없앤다(cicd.md 구현 중 변경 115).
+// 사람이 넣을 수 있는 글자(텍스트 청크·모르는 청크)는 계속 본다. 조금이라도 어긋나면 null을 돌려
+// 파일 전체를 예전처럼 글자 검사한다(안전 쪽).
+
+const PNG_SIG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+// 글자를 담지 않는 픽셀·구조·고정 크기 숫자 청크. 여기 없는 청크는 데이터를 글자 검사한다.
+const PNG_SKIP = new Set(['IHDR', 'PLTE', 'IDAT', 'IEND', 'tRNS', 'gAMA', 'cHRM', 'sRGB', 'pHYs', 'bKGD']);
+const PNG_INFLATE_MAX = 8 * 1024 * 1024;
+const CRC_TABLE = Array.from({ length: 256 }, (_, n) => {
+  let c = n;
+  for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+  return c >>> 0;
+});
+function crc32(buf) {
+  let c = 0xffffffff;
+  for (let i = 0; i < buf.length; i++) c = CRC_TABLE[(c ^ buf[i]) & 0xff] ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
+}
+
+/** 압축 방식 0(zlib)만 받는다. 풀리지 않거나 너무 크면 예외. */
+function pngInflate(method, data) {
+  if (method !== 0) throw new Error('압축 방식');
+  return inflateSync(data, { maxOutputLength: PNG_INFLATE_MAX });
+}
+
+/** NUL로 나눈 앞 조각들과 나머지. 모자라면 예외. */
+function splitNul(data, n) {
+  const parts = [];
+  let at = 0;
+  for (let k = 0; k < n; k++) {
+    const z = data.indexOf(0, at);
+    if (z < 0) throw new Error('NUL 없음');
+    parts.push(data.subarray(at, z));
+    at = z + 1;
+  }
+  return [parts, data.subarray(at)];
+}
+
+/** 텍스트 청크 하나를 글자들로. */
+function pngChunkTexts(type, data) {
+  if (type === 'tEXt') {
+    const [[key], text] = splitNul(data, 1);
+    return [key.toString('latin1'), text.toString('latin1')];
+  }
+  if (type === 'zTXt') {
+    const [[key], rest] = splitNul(data, 1);
+    if (rest.length < 1) throw new Error('zTXt');
+    return [key.toString('latin1'), pngInflate(rest[0], rest.subarray(1)).toString('latin1')];
+  }
+  if (type === 'iTXt') {
+    const [[key], rest] = splitNul(data, 1);
+    if (rest.length < 2) throw new Error('iTXt');
+    const flag = rest[0];
+    const [[lang, tkey], body] = splitNul(rest.subarray(2), 2);
+    let text;
+    if (flag === 0) text = body;
+    else if (flag === 1) text = pngInflate(rest[1], body);
+    else throw new Error('iTXt 압축 표지');
+    return [key.toString('latin1'), lang.toString('latin1'), tkey.toString('utf8'), text.toString('utf8')];
+  }
+  // 모르는 청크: 예전처럼 글자 조각과 UTF-16
+  const out = [textRuns(data)];
+  const u = utf16(data);
+  if (u) out.push(u);
+  return out;
+}
+
+/**
+ * 온전한 PNG에서 검사할 글자들. PNG가 아니거나 깨졌으면 null(시그니처·길이·형식 이름·CRC·IEND로 끝남·
+ * IEND 뒤 바이트 없음·텍스트 청크 구조와 압축을 모두 확인한다).
+ */
+export function pngTexts(buf) {
+  if (buf.length < PNG_SIG.length || !buf.subarray(0, PNG_SIG.length).equals(PNG_SIG)) return null;
+  const texts = [];
+  let at = PNG_SIG.length;
+  let first = true;
+  while (at < buf.length) {
+    if (at + 12 > buf.length) return null;
+    const len = buf.readUInt32BE(at);
+    if (len > 0x7fffffff || at + 12 + len > buf.length) return null;
+    const typeBuf = buf.subarray(at + 4, at + 8);
+    if (!typeBuf.every((b) => (b >= 0x41 && b <= 0x5a) || (b >= 0x61 && b <= 0x7a))) return null;
+    const type = typeBuf.toString('latin1');
+    if (first && type !== 'IHDR') return null;
+    first = false;
+    const data = buf.subarray(at + 8, at + 8 + len);
+    if (crc32(buf.subarray(at + 4, at + 8 + len)) !== buf.readUInt32BE(at + 8 + len)) return null;
+    at += 12 + len;
+    if (type === 'IEND') return at === buf.length && len === 0 ? texts : null;
+    if (PNG_SKIP.has(type)) continue;
+    try {
+      texts.push(...pngChunkTexts(type, data));
+    } catch {
+      return null;
+    }
+  }
+  return null; // IEND 없음
+}
+
+/**
+ * blob(파일 내용) 하나를 검사한다. 온전한 PNG는 pngTexts만, NUL이 있으면 UTF-16 해석과 글자 조각을 본다
+ * (줄 번호 0). 내용 전체 해시는 모든 파일에 건다.
+ */
 export function scanBuffer(buf, deny) {
   const found = [];
   if (deny.has(hashBlob(buf))) found.push({ line: 0, rule: 'denylist-blob' });
+  const png = pngTexts(buf);
+  if (png) {
+    for (const t of png) for (const f of scanText(t, deny)) found.push({ line: 0, rule: f.rule });
+    return found;
+  }
   const head = buf.subarray(0, 8000);
   if (!head.includes(0)) return found.concat(scanText(buf.toString('utf8'), deny));
   const texts = [textRuns(buf)];

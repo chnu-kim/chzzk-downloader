@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { deflateSync } from 'node:zlib';
 
 import {
   decode,
@@ -20,6 +21,7 @@ import {
   loadDenylist,
   parseRange,
   PRIVATE_COMMITS_PATH,
+  pngTexts,
   scanBuffer,
   scanText,
 } from './public-scan.mjs';
@@ -170,6 +172,98 @@ test('NUL이 든 파일도 글자 조각과 UTF-16을 본다', () => {
   assert.ok(scanBuffer(u16, new Set()).some((f) => f.rule === 'hex-id'));
   const u16be = Buffer.from('x ' + PLANTED['hex-id'], 'utf16le').swap16();
   assert.ok(scanBuffer(u16be, new Set()).some((f) => f.rule === 'hex-id'));
+});
+
+// PNG 조립: 청크마다 길이·형식·데이터·CRC(테스트 안의 표로 따로 계산한다)
+const CRC_TABLE = Array.from({ length: 256 }, (_, n) => {
+  let c = n;
+  for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+  return c >>> 0;
+});
+const crc = (buf) => {
+  let c = 0xffffffff;
+  for (const b of buf) c = CRC_TABLE[(c ^ b) & 0xff] ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
+};
+const PNG_SIG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+function chunk(type, data) {
+  const td = Buffer.concat([Buffer.from(type, 'latin1'), Buffer.from(data)]);
+  const len = Buffer.alloc(4);
+  len.writeUInt32BE(data.length);
+  const c = Buffer.alloc(4);
+  c.writeUInt32BE(crc(td));
+  return Buffer.concat([len, td, c]);
+}
+const IHDR = chunk('IHDR', Buffer.from([0, 0, 0, 1, 0, 0, 0, 1, 8, 2, 0, 0, 0]));
+const IEND = chunk('IEND', Buffer.alloc(0));
+const png = (...chunks) => Buffer.concat([PNG_SIG, IHDR, ...chunks, IEND]);
+// 픽셀 바이트에 우연히 생긴 글자 모양(실제 스냅샷의 오탐을 흉내 낸다)
+const pixels = (text) => Buffer.concat([Buffer.from([0x78, 0x9c, 0, 1]), Buffer.from(text), Buffer.from([0, 2, 3])]);
+const NUL = Buffer.from([0]);
+
+test('PNG: 픽셀·구조 청크(IDAT 등)의 바이트는 글자로 검사하지 않는다', () => {
+  const deny = sel('가짜스트리머');
+  const shot = png(chunk('IDAT', pixels('nam 가짜스트리머 ' + PLANTED['signed-token'])));
+  assert.deepEqual(scanBuffer(shot, deny), []);
+  assert.deepEqual(pngTexts(shot), []);
+  // 내용 전체 해시(denylist-blob)는 PNG에도 그대로 건다
+  assert.deepEqual(scanBuffer(shot, new Set([hashBlob(shot)])).map((f) => f.rule), ['denylist-blob']);
+});
+
+test('PNG: tEXt·zTXt·iTXt(압축·비압축) 메타데이터는 검사한다', () => {
+  const deny = sel('가짜스트리머');
+  // 압축본에 원문 바이트가 그대로 남지 않게 반복한다(짧으면 deflate가 무압축 블록으로 둔다)
+  const zKo = deflateSync(Buffer.from('채널 가짜스트리머 '.repeat(8)));
+  const zTok = deflateSync(Buffer.from((PLANTED['signed-token'] + ' ').repeat(4)));
+  assert.ok(!zKo.includes(Buffer.from('가짜스트리머')) && !zTok.includes(Buffer.from('hdntl')));
+  const cases = {
+    tEXt: chunk('tEXt', Buffer.concat([Buffer.from('Comment'), NUL, Buffer.from('fake ' + PLANTED['signed-token'], 'latin1')])),
+    'tEXt 키워드': chunk('tEXt', Buffer.concat([Buffer.from(PLANTED['hex-id'].slice(0, 70), 'latin1'), NUL, Buffer.from('x')])),
+    zTXt: chunk('zTXt', Buffer.concat([Buffer.from('Comment'), NUL, Buffer.from([0]), zTok])),
+    'iTXt 비압축': chunk('iTXt', Buffer.concat([Buffer.from('Title'), NUL, Buffer.from([0, 0]), Buffer.from('ko'), NUL, NUL, Buffer.from('채널 가짜스트리머')])),
+    'iTXt 압축': chunk('iTXt', Buffer.concat([Buffer.from('Title'), NUL, Buffer.from([1, 0]), Buffer.from('ko'), NUL, NUL, zKo])),
+    'iTXt 번역 키워드': chunk('iTXt', Buffer.concat([Buffer.from('Title'), NUL, Buffer.from([0, 0]), Buffer.from('ko'), NUL, Buffer.from('가짜스트리머'), NUL, Buffer.from('x')])),
+  };
+  for (const [name, c] of Object.entries(cases)) {
+    const rules = scanBuffer(png(c), deny).map((f) => f.rule);
+    assert.ok(rules.includes('denylist') || rules.includes('signed-token') || rules.includes('hex-id'), `${name}: ${rules}`);
+    assert.notEqual(pngTexts(png(c)), null, name);
+  }
+});
+
+test('PNG: 깨지거나 모르는 모양이면 파일 전체를 지금처럼 글자 검사한다', () => {
+  const deny = sel('가짜스트리머');
+  const body = pixels('nam 가짜스트리머 방송');
+  const good = png(chunk('IDAT', body));
+  const hit = (buf) => scanBuffer(buf, deny).some((f) => f.rule === 'denylist');
+  assert.equal(hit(good), false);
+  // IDAT CRC 한 바이트 바꿈
+  const badCrc = Buffer.from(good);
+  const at = PNG_SIG.length + IHDR.length + 8 + body.length;
+  badCrc[at] ^= 0xff;
+  assert.equal(pngTexts(badCrc), null);
+  assert.ok(hit(badCrc), 'CRC');
+  // 길이가 파일 끝을 넘음
+  const badLen = Buffer.from(good);
+  badLen.writeUInt32BE(0x7fffffff, PNG_SIG.length + IHDR.length);
+  assert.ok(hit(badLen), '길이');
+  // IEND 뒤에 붙인 바이트
+  assert.ok(hit(Buffer.concat([good, Buffer.from(' 가짜스트리머 ')])), 'IEND 뒤');
+  // IEND 없음
+  assert.ok(hit(Buffer.concat([PNG_SIG, IHDR, chunk('IDAT', body)])), 'IEND 없음');
+  // 형식 이름이 글자가 아님
+  assert.equal(pngTexts(png(chunk('ID@T', body))), null, '형식 이름');
+  assert.ok(hit(png(chunk('ID@T', body))), '형식 이름');
+  // 첫 청크가 IHDR이 아님
+  assert.equal(pngTexts(Buffer.concat([PNG_SIG, chunk('IDAT', body), IHDR, IEND])), null, 'IHDR 먼저');
+  // 압축 방식이 0이 아니거나 풀리지 않는 zTXt
+  const z = (m, data) => chunk('zTXt', Buffer.concat([Buffer.from('k'), NUL, Buffer.from([m]), data]));
+  assert.ok(hit(png(chunk('IDAT', body), z(1, deflateSync(Buffer.from('x'))))), '압축 방식');
+  assert.ok(hit(png(chunk('IDAT', body), z(0, Buffer.from('not zlib')))), '풀리지 않음');
+  // 모르는 청크(iCCP·eXIf·사설 청크)는 건너뛰지 않고 그 데이터를 글자 검사한다
+  for (const t of ['iCCP', 'eXIf', 'prVt']) {
+    assert.ok(hit(png(chunk(t, Buffer.from('nam 가짜스트리머 x')))), t);
+  }
 });
 
 test('작성자 이메일 허용 목록', () => {

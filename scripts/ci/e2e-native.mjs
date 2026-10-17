@@ -5,7 +5,7 @@
 //   → 입력줄에 본인 영상 주소 → [불러오기] → 카드의 [다운로드] → 목록 항목이 "완료"
 //   → 맡은 채널 영상 주소(Worker 스텁이 로그인 묶음·/api/me의 delegatedChannels로 그 채널을 맡겼다) → 카드 메타에 "맡은 채널"
 //     → [다운로드] → 목록 항목 둘이 모두 "완료"(편집자 위임 ①, app.md 구현 중 변경 83)
-//   → 남의 영상 주소 → 카드가 "내 채널의 영상만 받을 수 있어요"로 막히고 [다운로드]가 꺼짐
+//   → 남의 영상 주소 → 카드가 "내 채널이나 맡은 채널의 영상만 받을 수 있어요"로 막히고 [다운로드]가 꺼짐
 //   → WebDriver execute/async로 enqueue를 직접 불러(웹뷰의 channelId를 본인 채널로 속여) 셸이 notOwnContent로 거부함(A5).
 // 앱은 CHZZK_E2E_API_BASE로 로컬 fixture 서버(e2e-fixture-server.mjs, testdata/만 서빙)에, CHZZK_E2E_WORKER_BASE로 Worker 스텁에
 // 붙고, CHZZK_E2E_DIR 아래만 쓴다.
@@ -66,6 +66,8 @@ const ELEMENT = 'element-6066-11e4-a52e-4f735466cecf';
 // 이름 span 하나로 찾는다
 // 이름 글자 노드로 찾는다: 라벨 span 안에 단축키 표시도 들어 있어 span 전체 글자는 '받기'가 아니다
 export const CARD_DOWNLOAD_XPATH = "//section[contains(@class,'card')]//button[.//text()[normalize-space(.)='받기']]";
+// 남의 영상 카드 안내(맡은 채널이 하나 이상일 때의 문구, app/src/lib/copy/errors.ts notOwnContent)
+const NOT_OWN_DELEGATED = '내 채널이나 맡은 채널의 영상만 받을 수 있어요';
 // 못 누르는 버튼: primary는 disabled 대신 aria-disabled를 쓴다(components.md §2.1)
 const IS_OFF = "const b = arguments[0]; return b.disabled || b.getAttribute('aria-disabled') === 'true'";
 
@@ -463,8 +465,8 @@ export async function run(exe) {
       () =>
         wd.exec(
           sid,
-          "const c = document.querySelector('section.video-card'); return !!c && c.innerText.includes(arguments[0]) && c.innerText.includes('내 채널의 영상만 받을 수 있어요')",
-          [OTHER_CHANNEL_NAME],
+          "const c = document.querySelector('section.video-card'); return !!c && c.innerText.includes(arguments[0]) && c.innerText.includes(arguments[1])",
+          [OTHER_CHANNEL_NAME, NOT_OWN_DELEGATED],
         ),
       STEP_MS,
     );

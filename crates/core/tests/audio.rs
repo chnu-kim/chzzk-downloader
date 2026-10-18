@@ -337,38 +337,54 @@ async fn flattened_part_restarts_without_media_request() {
     assert_no_partial(&out);
 }
 
-/// 평탄화 도중 끊긴 상태(받은 길이까지만 committed, 그 뒤에 반쯤 쓴 꼬리)에서 다시 실행하면 꼬리를 자르고
-/// 요청 없이 다시 평탄화한다. 결과는 golden과 같다.
+/// 평탄화 3단계(상자 종류를 `free`로 바꾸기) 도중 끊긴 상태에서 다시 실행하면 요청 없이 같은 결과로 다시 평탄화한다.
+///
+/// 3단계는 받은 길이(`committed_len`) 안의 상자 종류를 오프셋 오름차순으로 바꾸므로, 끊긴 파일은 앞쪽 상자 몇 개만
+/// `free`가 되어 있고 끝에 붙인 `moov`(committed 밖)는 `resume`이 자른다. golden과 원본의 차이에서 바꾼 자리를 읽어
+/// 패치 `done`개까지 적용한 파일을 모든 `done`에 대해 만든다(`defrag/tests.rs`의 같은 이름 계열 시험을 오디오 단일
+/// 트랙 + `sidx` 입력으로 되풀이한다).
 #[tokio::test]
 async fn interrupted_flatten_is_redone_from_committed_length() {
     let src = fixture(SRC);
-    let dir = tempfile::tempdir().unwrap();
-    let out = out_path(&dir);
-    make_partial(&out, &src, Some(src.len() as u64)).await;
-    // checkpoint 뒤에 평탄화가 `moov` 일부만 쓰고 끊긴 모양: 받은 길이 뒤에 쓰레기 꼬리
-    let (part, _) = part_files(&out);
-    let mut f = std::fs::OpenOptions::new()
-        .append(true)
-        .open(&part)
-        .unwrap();
-    std::io::Write::write_all(&mut f, &[0xAB; 37]).unwrap();
-    drop(f);
+    let flat = golden();
+    // 원본과 golden이 다른 자리 = 3단계가 바꾼 4바이트 종류들(`moov`·`sidx`·`moof` × 3)
+    let diffs: Vec<usize> = (0..src.len()).filter(|&i| src[i] != flat[i]).collect();
+    assert_eq!(diffs.len() % 4, 0);
+    let patches: Vec<usize> = diffs.chunks(4).map(|c| c[0]).collect();
+    assert_eq!(patches.len(), 5, "moov·sidx·moof 셋: {patches:?}");
+    for done in 0..=patches.len() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = out_path(&dir);
+        make_partial(&out, &src, Some(src.len() as u64)).await;
+        // 끊기기 전 디스크 상태: 앞쪽 패치 `done`개 + 끝에 붙인 새 `moov`(아직 checkpoint되지 않았다)
+        let (part, _) = part_files(&out);
+        let mut b = std::fs::read(&part).unwrap();
+        for &at in &patches[..done] {
+            b[at..at + 4].copy_from_slice(&flat[at..at + 4]);
+        }
+        b.extend_from_slice(&flat[src.len()..]);
+        std::fs::write(&part, &b).unwrap();
 
-    let server = MockServer::start().await;
-    mount_info(&server).await;
-    mount_mpd(&server, AUDIO_PATH, None).await;
-    Mock::given(method("GET"))
-        .and(path(AUDIO_PATH))
-        .respond_with(RangeBody(src.clone()))
-        .expect(0)
-        .mount(&server)
-        .await;
-    let r = run_download(config(&server), request(&out), &Events::default())
-        .await
-        .unwrap();
-    assert!(matches!(r, DownloadOutcome::Completed { .. }), "{r:?}");
-    assert_eq!(std::fs::read(&out).unwrap(), golden());
-    assert!(requests_to(&server, AUDIO_PATH).await.is_empty());
+        let server = MockServer::start().await;
+        mount_info(&server).await;
+        mount_mpd(&server, AUDIO_PATH, None).await;
+        Mock::given(method("GET"))
+            .and(path(AUDIO_PATH))
+            .respond_with(RangeBody(src.clone()))
+            .expect(0)
+            .mount(&server)
+            .await;
+        let r = run_download(config(&server), request(&out), &Events::default())
+            .await
+            .unwrap();
+        assert!(
+            matches!(r, DownloadOutcome::Completed { .. }),
+            "{done}: {r:?}"
+        );
+        assert_eq!(std::fs::read(&out).unwrap(), flat, "패치 {done}개 뒤 끊김");
+        assert!(requests_to(&server, AUDIO_PATH).await.is_empty(), "{done}");
+        assert_no_partial(&out);
+    }
 }
 
 /// 서버가 Range를 무시하고 200으로 주면 처음부터 다시 받고 결과는 같다.

@@ -1,6 +1,6 @@
 # 오디오만 받기: 명세
 
-**상태·확정 결정(2026-10-18)**: **명세됨(specified)**, 코드는 아직 바꾸지 않았다. 사용자 결정은 두 가지다. "오디오만 받기, 원본 m4a(변환 없음)"(ROADMAP "경쟁력 개선 착수" (마))와 **범위 C**다. 범위 C에서는 **일반 VOD의 MPD에 서버의 오디오 전용 트랙이 있을 때만** 화질 목록에 "오디오만"을 보인다. 오디오 전용 트랙이 없는 경우(클립, 빠른 다시보기, 오디오 set이 없는 일반 VOD)에는 숨긴다. 클립과 빠른 다시보기에서 비디오 트랙을 빼는 리먹스는 후속이다(§12).
+**상태·확정 결정(2026-10-18)**: **A-1 코어(core.md 78)·A-2 셸(app.md 95)·A-3 앱(app.md 96) 구현됨.** 갤러리 기준선(`card-vod-audio`, Linux CI)과 실측 M-A1~A3은 남았다. 이 문서 본문은 구현에 맞게 고쳤다. 설계 시점과 달라진 곳은 core.md 78 ⑤~⑦과 app.md 95-3(채팅 가드 문구)이다. 사용자 결정은 두 가지다. "오디오만 받기, 원본 m4a(변환 없음)"(ROADMAP "경쟁력 개선 착수" (마))와 **범위 C**다. 범위 C에서는 **일반 VOD의 MPD에 서버의 오디오 전용 트랙이 있을 때만** 화질 목록에 "오디오만"을 보인다. 오디오 전용 트랙이 없는 경우(클립, 빠른 다시보기, 오디오 set이 없는 일반 VOD)에는 숨긴다. 클립과 빠른 다시보기에서 비디오 트랙을 빼는 리먹스는 후속이다(§12).
 
 기준 트리는 `origin/master` `26ca67d`(#165 속도 제한 머지 뒤)다. 이 문서의 `파일:줄`은 모두 이 트리에서 연 줄이다. 형식과 근거 표기는 `range.md`를 따른다.
 - **[확인]**: 직접 연 줄이 받친다.
@@ -183,7 +183,7 @@
 
   웹뷰의 별도 플래그는 없다(A5).
 - **가드**(`manager.rs:558-566`):
-  - 오디오 + `save_chat`이면 `invalidInput`이다(A9). 문구는 "채팅은 영상 전체를 받을 때만 함께 받을 수 있습니다"를 그대로 쓴다. 오디오도 "영상 전체"가 아니라서다.
+  - 오디오 + `save_chat`이면 `invalidInput`이다(A9). 문구는 채팅·영상 종류를 한 가드로 묶은 한 줄이다: "오디오만 받기는 채팅을 함께 받을 수 없고 일반 영상에서만 쓸 수 있습니다"(구현 중 확정, app.md 95-3. 기존 채팅 문구는 "영상 전체"를 말하는데 오디오는 영상이 아니라서 쓰지 않았다). 웹뷰는 이 오류를 정상 경로에서 보지 못한다(채팅 행이 없고 오디오 행은 일반 VOD 카드에만 있다).
   - 오디오인데 `expected_kind != Progressive`이거나 `content`가 `Video`가 아니면 `invalidInput`이다. 코어 검사(§4.5) 앞의 셸 방어선이다.
   - 구간은 `validated_range`가 이미 거부한다. 바꾸지 않는다.
 - **마지막 화질(A8)**: `enqueue_checked`(`services.rs:640-650`)는 `req.quality_id == AUDIO_QUALITY_ID`이면 `record_enqueued`에 빈 라벨을 넘긴다. 이 함수는 빈 라벨을 저장하지 않는다(`services.rs:489`). 최근 영상 기록은 그대로 남긴다.
@@ -287,7 +287,7 @@
   2. 중간에 끊고 이어받으면 Range를 요청하고, 결과가 같다.
   3. 403 → 재조회 → 같은 `"audio"`의 새 주소로 이어받는다.
   4. **평탄화 뒤 `finalize`가 `TargetExists`로 끝나 `.part`가 남은 상태에서 다시 실행하면, 미디어 요청 없이 완료(AlreadyFlat)된다.** A7을 빼면 이 테스트가 실패하는지 확인한다.
-  5. 평탄화 3단계 도중 실패를 주입한 뒤 다시 실행하면 다시 변환된다(`DefragFile` 주입 seam, `defrag.rs:78`).
+  5. 평탄화 3단계 도중 끊긴 파일을 다시 실행하면 요청 없이 같은 결과로 다시 변환된다. `DefragFile` 실패 주입 seam(`defrag.rs:78`)은 defrag 단위 시험(`defrag/tests.rs`의 `crash_during_patches_then_resume_truncation_reconverts_identically`·`patch_failure_is_modified_and_reconverts_after_truncate`)이 이미 고정한다. 오디오 통합 시험(`tests/audio.rs::interrupted_flatten_is_redone_from_committed_length`)은 엔진을 통해 오디오 단일 트랙 + `sidx` 입력의 모든 끊김 지점(패치 0~5개 + 끝에 붙인 `moov`)을 만들어 A7 경로(`written >= total_len` → 요청 없이 `finish`)에서 golden과 같은 결과가 나옴을 고정한다.
   6. 화질·확장자 불일치(`"audio"` + `.mp4`, PD id + `.m4a`)는 `Unsupported::AudioOutputMismatch`이고 같은 경로의 다른 `.part`를 지우지 않는다.
   7. 비디오 PD는 지금처럼 평탄화하지 않는다(`converts_on_finish` 표 테스트 갱신).
 - **`defrag` 단위**: 오디오 단일 트랙 + `sidx` 입력이 `Converted { tracks: 1 }`이고, 결과에 `stss`가 없다.

@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 use std::io::{Cursor, Read, Seek, SeekFrom, Write};
 
 use super::*;
+use crate::download::defrag::SliceSrc;
 
 #[path = "../../tests/support/mp4.rs"]
 #[allow(dead_code)]
@@ -295,228 +296,137 @@ fn cover_sniff_by_magic_only() {
 }
 
 // ---------------------------------------------------------------------------------------------
-// retag_in: 정상
+// plan_rewrite·write_rewrite: 정상
 
-/// 메모리 파일. 쓰기·자르기·읽기 실패를 주입한다.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Fault {
-    None,
-    /// 원래 길이 이후(붙이기)의 쓰기 실패, 자르기는 성공
-    Append,
-    /// 붙이기 실패 + 자르기 실패
-    AppendAndTruncate,
-    /// 원래 길이 안쪽(종류 패치)의 쓰기 실패
-    Patch,
-    /// 첫 읽기 실패
-    Read,
-}
-
-struct MemFile {
-    c: Cursor<Vec<u8>>,
-    base: u64,
-    fault: Fault,
-    reads: u32,
-}
-
-impl MemFile {
-    fn new(b: &[u8], fault: Fault) -> Self {
-        MemFile {
-            c: Cursor::new(b.to_vec()),
-            base: b.len() as u64,
-            fault,
-            reads: 0,
+/// 바이트 위에서 계획하고 메모리에 다시 쓴다. `None`은 이미 같은 태그다.
+fn rewrite(b: &[u8], udta: &[u8]) -> Result<Option<Vec<u8>>, Fail> {
+    match plan_rewrite(&mut SliceSrc(b), udta)? {
+        Plan::AlreadyTagged => Ok(None),
+        Plan::Rewrite(p) => {
+            let mut out = Vec::new();
+            write_rewrite(&mut Cursor::new(b), &p, &mut out).unwrap();
+            assert_eq!(out.len() as u64, p.out_len());
+            Ok(Some(out))
         }
     }
-    fn data(&self) -> &[u8] {
-        self.c.get_ref()
-    }
-}
-
-impl Read for MemFile {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        self.reads += 1;
-        if self.fault == Fault::Read && self.reads == 1 {
-            return Err(std::io::Error::other("읽기 오류 주입"));
-        }
-        self.c.read(buf)
-    }
-}
-impl Seek for MemFile {
-    fn seek(&mut self, p: SeekFrom) -> std::io::Result<u64> {
-        self.c.seek(p)
-    }
-}
-impl Write for MemFile {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        let appending = self.c.position() >= self.base;
-        match (self.fault, appending) {
-            (Fault::Append | Fault::AppendAndTruncate, true) | (Fault::Patch, false) => {
-                Err(std::io::Error::from(std::io::ErrorKind::FileTooLarge))
-            }
-            _ => self.c.write(buf),
-        }
-    }
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-}
-impl DefragFile for MemFile {
-    fn file_len(&mut self) -> std::io::Result<u64> {
-        Ok(self.c.get_ref().len() as u64)
-    }
-    fn truncate_to(&mut self, len: u64) -> std::io::Result<()> {
-        if self.fault == Fault::AppendAndTruncate {
-            return Err(std::io::Error::other("자르기 실패"));
-        }
-        self.c.get_mut().truncate(len as usize);
-        Ok(())
-    }
-    fn sync(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-}
-
-fn retag(b: &[u8], udta: &[u8]) -> (Result<TagReport, TagError>, Vec<u8>) {
-    let mut f = MemFile::new(b, Fault::None);
-    let r = retag_in(&mut f, udta);
-    (r, f.c.into_inner())
 }
 
 fn tagged() -> Vec<u8> {
-    let (r, out) = retag(PD, &udta());
-    assert_eq!(r.unwrap(), TagReport::Tagged);
-    out
+    rewrite(PD, &udta()).unwrap().unwrap()
 }
 
 fn types(b: &[u8]) -> Vec<String> {
     mp4::top_boxes(b).into_iter().map(|(k, _)| k).collect()
 }
 
-/// `moov` 본문의 자식 중 `udta`가 아닌 것의 바이트.
-fn moov_children_without_udta(moov_body: &[u8]) -> Vec<Vec<u8>> {
+/// 최상위 상자의 시작 위치(헤더 포함).
+fn top_off(b: &[u8], kind: &str) -> usize {
+    let (_, r) = mp4::top_boxes(b)
+        .into_iter()
+        .find(|(k, _)| k == kind)
+        .unwrap();
+    let hdr = if u32::from_be_bytes(b[r.start - 8..r.start - 4].try_into().unwrap()) == 1 {
+        16
+    } else {
+        8
+    };
+    r.start - hdr
+}
+
+/// 다시 쓴 파일의 모든 청크 위치가 원본에서 같은 바이트를 가리키는지 본다(`n`바이트씩).
+fn assert_chunks_follow(orig: &[u8], out: &[u8], n: usize) {
+    let old = mp4::chunk_offsets(mp4::find_path(orig, &["moov"]).unwrap()).unwrap();
+    let new = mp4::chunk_offsets(mp4::find_path(out, &["moov"]).unwrap()).unwrap();
+    assert_eq!(old.len(), new.len());
+    assert!(!old.is_empty());
+    for (o, w) in old.iter().zip(&new) {
+        let (o, w) = (*o as usize, *w as usize);
+        assert_eq!(orig[o..o + n], out[w..w + n], "청크 {o} → {w}");
+    }
+}
+
+/// `moov` 본문의 자식 중 `udta`·`trak`이 아닌 것의 바이트(`trak`은 청크 위치가 바뀐다).
+fn moov_children_without(moov_body: &[u8], skip: &[&str]) -> Vec<Vec<u8>> {
     mp4::child_boxes(moov_body)
         .unwrap()
         .into_iter()
-        .filter(|(k, _)| k != "udta")
+        .filter(|(k, _)| !skip.contains(&k.as_str()))
         .map(|(_, r)| moov_body[r].to_vec())
         .collect()
 }
 
 #[test]
-fn retag_appends_new_moov_and_frees_the_old_one() {
+fn rewrite_keeps_faststart_and_moves_chunk_offsets() {
     assert_eq!(types(PD), ["ftyp", "moov", "free", "mdat"]);
     let out = tagged();
-    assert_eq!(types(&out), ["ftyp", "free", "free", "mdat", "moov"]);
+    // moov는 앞에 남고(faststart) 들어가지 않는 free(8)는 뺀다
+    assert_eq!(types(&out), ["ftyp", "moov", "mdat"]);
     assert_eq!(mp4::top_moov_count(&out), 1);
-    assert_eq!(mp4::freed_moovs(&out).len(), 1);
-    // mdat 본문과 그 위치가 그대로다(stco가 가리키는 곳이 움직이지 않는다)
+    assert_eq!(out[..top_off(PD, "moov")], PD[..top_off(PD, "moov")]);
     assert_eq!(mp4::mdat_payloads(&out), mp4::mdat_payloads(PD));
-    let (_, mdat_before) = mp4::top_boxes(PD)
-        .into_iter()
-        .find(|(k, _)| k == "mdat")
-        .unwrap();
-    let (_, mdat_after) = mp4::top_boxes(&out)
-        .into_iter()
-        .find(|(k, _)| k == "mdat")
-        .unwrap();
-    assert_eq!(mdat_before, mdat_after);
-    // 새 moov는 udta 외 자식이 옛 moov와 바이트까지 같다
-    let old = mp4::find_path(PD, &["moov"]).unwrap();
-    let new = mp4::find_path_last(&out, &["moov"]).unwrap();
+    // 뒤 바이트가 움직인 만큼 청크 위치가 움직였고, 같은 바이트를 가리킨다
+    let delta = out.len() as i64 - PD.len() as i64;
+    assert!(delta > 0);
     assert_eq!(
-        moov_children_without_udta(old),
-        moov_children_without_udta(new)
+        top_off(&out, "mdat") as i64 - top_off(PD, "mdat") as i64,
+        delta
     );
-    // 옛 moov는 종류만 바뀌었다
-    let freed = mp4::freed_moovs(&out)[0];
-    let (_, old_range) = mp4::top_boxes(PD)
-        .into_iter()
-        .find(|(k, _)| k == "moov")
-        .unwrap();
-    assert_eq!(freed, old_range.start - 8);
-    assert_eq!(&out[freed + 12..freed + 16], b"mvhd");
-    // 새 moov에 ilst가 있다
-    let ilst = mp4::find_path_last(&out, &["moov", "udta", "meta", "ilst"]).unwrap();
+    let old = mp4::chunk_offsets(mp4::find_path(PD, &["moov"]).unwrap()).unwrap();
+    let new = mp4::chunk_offsets(mp4::find_path(&out, &["moov"]).unwrap()).unwrap();
+    assert_eq!(new[0] as i64 - old[0] as i64, delta);
+    assert_chunks_follow(PD, &out, 64);
+    // trak·udta 밖의 자식은 바이트까지 같다
+    let old_moov = mp4::find_path(PD, &["moov"]).unwrap();
+    let new_moov = mp4::find_path(&out, &["moov"]).unwrap();
+    assert_eq!(
+        moov_children_without(old_moov, &["udta", "trak"]),
+        moov_children_without(new_moov, &["udta", "trak"])
+    );
+    let ilst = mp4::find_path(&out, &["moov", "udta", "meta", "ilst"]).unwrap();
     assert_eq!(mp4::ilst_items(ilst).unwrap().len(), 5);
 }
 
 #[test]
-fn retag_replaces_an_existing_udta() {
+fn rewrite_moves_co64_offsets_and_keeps_co64() {
+    let out = rewrite(PD_CO64, &udta()).unwrap().unwrap();
+    assert_chunks_follow(PD_CO64, &out, 64);
+    let stbl = mp4::find_path(&out, &["moov", "trak", "mdia", "minf", "stbl"]).unwrap();
+    let kinds: Vec<String> = mp4::child_boxes(stbl)
+        .unwrap()
+        .into_iter()
+        .map(|(k, _)| k)
+        .collect();
+    assert!(kinds.contains(&"co64".to_string()), "{kinds:?}");
+    assert!(!kinds.contains(&"stco".to_string()), "{kinds:?}");
+}
+
+#[test]
+fn rewrite_replaces_an_existing_udta() {
     let before = mp4::find_path(PD_UDTA, &["moov", "udta", "meta", "ilst"]).unwrap();
     assert_eq!(mp4::ilst_items(before).unwrap()[0].0, "©too");
-    let (r, out) = retag(PD_UDTA, &udta());
-    assert_eq!(r.unwrap(), TagReport::Tagged);
-    let new = mp4::find_path_last(&out, &["moov"]).unwrap();
+    let out = rewrite(PD_UDTA, &udta()).unwrap().unwrap();
+    let new = mp4::find_path(&out, &["moov"]).unwrap();
     let udtas = mp4::child_boxes(new)
         .unwrap()
         .into_iter()
         .filter(|(k, _)| k == "udta")
         .count();
     assert_eq!(udtas, 1, "옛 udta는 빼고 새 것 하나만 둔다");
-    let ilst = mp4::find_path_last(&out, &["moov", "udta", "meta", "ilst"]).unwrap();
+    let ilst = mp4::find_path(&out, &["moov", "udta", "meta", "ilst"]).unwrap();
     let kinds: Vec<String> = mp4::ilst_items(ilst)
         .unwrap()
         .into_iter()
         .map(|i| i.0)
         .collect();
     assert!(!kinds.contains(&"©too".to_string()), "{kinds:?}");
-    // trak 안의 바이트는 손대지 않는다
-    let old = mp4::find_path(PD_UDTA, &["moov"]).unwrap();
-    assert_eq!(
-        moov_children_without_udta(old),
-        moov_children_without_udta(new)
-    );
+    assert_chunks_follow(PD_UDTA, &out, 64);
 }
 
 #[test]
-fn retag_keeps_stco_and_co64_bytes() {
-    for pd in [PD, PD_CO64] {
-        let out = retag(pd, &udta()).1;
-        let table = |b: &[u8], moov: &[u8]| -> Vec<u8> {
-            let _ = b;
-            let stbl = mp4::find_path(
-                &u_in_moov_raw(moov),
-                &["moov", "trak", "mdia", "minf", "stbl"],
-            )
-            .unwrap()
-            .to_vec();
-            let cs = mp4::child_boxes(&stbl).unwrap();
-            let (_, r) = cs
-                .into_iter()
-                .find(|(k, _)| k == "stco" || k == "co64")
-                .unwrap();
-            stbl[r].to_vec()
-        };
-        let old = table(pd, mp4::find_path(pd, &["moov"]).unwrap());
-        let new = table(&out, mp4::find_path_last(&out, &["moov"]).unwrap());
-        assert_eq!(old, new);
-    }
-    // co64 fixture는 정말 co64를 쓴다
-    let stbl = mp4::find_path(PD_CO64, &["moov", "trak", "mdia", "minf", "stbl"]).unwrap();
-    assert!(
-        mp4::child_boxes(stbl)
-            .unwrap()
-            .iter()
-            .any(|(k, _)| k == "co64")
-    );
-}
-
-/// 본문만 있는 `moov`를 다시 상자로 감싼다.
-fn u_in_moov_raw(body: &[u8]) -> Vec<u8> {
-    u_in_moov(body)
-}
-
-#[test]
-fn retag_is_idempotent() {
+fn rewrite_is_idempotent() {
     let once = tagged();
-    let (r, twice) = retag(&once, &udta());
-    assert_eq!(r.unwrap(), TagReport::AlreadyTagged);
-    assert_eq!(once, twice, "바이트가 그대로다");
-}
-
-#[test]
-fn retag_with_other_tags_appends_again_and_stays_valid() {
-    let once = tagged();
+    assert!(rewrite(&once, &udta()).unwrap().is_none(), "이미 같은 태그");
+    // 다른 태그로 다시 쓰면 다시 쓰고 여전히 올바르다
     let other = build_udta(
         &Tags {
             name: Some("다른 제목".into()),
@@ -525,20 +435,200 @@ fn retag_with_other_tags_appends_again_and_stays_valid() {
         None,
     )
     .unwrap();
-    let (r, out) = retag(&once, &other);
-    assert_eq!(r.unwrap(), TagReport::Tagged);
-    assert_eq!(mp4::top_moov_count(&out), 1);
-    let ilst = mp4::find_path_last(&out, &["moov", "udta", "meta", "ilst"]).unwrap();
+    let twice = rewrite(&once, &other).unwrap().unwrap();
+    assert_eq!(mp4::top_moov_count(&twice), 1);
+    let ilst = mp4::find_path(&twice, &["moov", "udta", "meta", "ilst"]).unwrap();
     assert_eq!(mp4::ilst_items(ilst).unwrap().len(), 1);
+    assert_chunks_follow(PD, &twice, 64);
+}
+
+/// `moov` 자식 순서가 `[free, mvhd, …]`여도 다시 쓰기는 순서를 그대로 두고 태그를 넣는다(Codex 리뷰 high 2: 옛 끝에
+/// 붙이기의 복구는 첫 자식 `mvhd`만 알아봤다. 다시 쓰기에는 복구 판정이 없다).
+#[test]
+fn rewrite_accepts_a_moov_whose_first_child_is_not_mvhd() {
+    let old = mp4::find_path(PD, &["moov"]).unwrap();
+    let mut body = put(b"free", &[0; 4]);
+    body.extend_from_slice(old);
+    let (b, _) = pd_with_moov_body(&body);
+    let out = rewrite(&b, &udta()).unwrap().unwrap();
+    let kids: Vec<String> = mp4::child_boxes(mp4::find_path(&out, &["moov"]).unwrap())
+        .unwrap()
+        .into_iter()
+        .map(|(k, _)| k)
+        .collect();
+    assert_eq!(kids, ["free", "mvhd", "trak", "udta"]);
+    assert_chunks_follow(&b, &out, 64);
 }
 
 // ---------------------------------------------------------------------------------------------
-// retag_in: 거부(파일이 그대로)
+// 옛 moov 뒤 free 흡수
 
-fn unchanged(b: &[u8]) {
-    let (r, out) = retag(b, &udta());
-    assert!(matches!(r, Err(TagError::Unchanged(_))), "{r:?}");
-    assert_eq!(out, b, "파일은 그대로여야 한다");
+/// `PD`의 `moov` 뒤 `free`를 본문 `n`바이트짜리로 바꾼 파일. `stco`는 새 `mdat` 위치를 가리키게 고친다.
+fn pd_with_free(n: usize) -> Vec<u8> {
+    let moov_end = mp4::top_boxes(PD)[1].1.end;
+    let free_end = mp4::top_boxes(PD)[2].1.end;
+    let mut b = PD[..moov_end].to_vec();
+    b.extend(put(b"free", &vec![0; n]));
+    b.extend_from_slice(&PD[free_end..]);
+    // stco 항목 하나를 늘어난 만큼 옮긴다(fixture는 trak 하나·청크 하나)
+    let grow = (n + 8 - (free_end - moov_end)) as u32;
+    let old = mp4::chunk_offsets(mp4::find_path(PD, &["moov"]).unwrap()).unwrap()[0] as u32;
+    let at = b[..moov_end].windows(4).position(|w| w == b"stco").unwrap() + 12;
+    b[at..at + 4].copy_from_slice(&(old + grow).to_be_bytes());
+    assert_chunks_follow(PD, &b, 64);
+    b
+}
+
+/// 새 `moov`가 옛 `moov` + 뒤 `free`에 들어가고 8바이트 이상 남으면 `free`를 줄여 채운다. 뒤 바이트·청크 위치가 그대로다.
+#[test]
+fn rewrite_absorbs_the_following_free() {
+    let b = pd_with_free(4096);
+    let out = rewrite(&b, &build_udta(&tags(), None).unwrap())
+        .unwrap()
+        .unwrap();
+    assert_eq!(out.len(), b.len());
+    assert_eq!(types(&out), ["ftyp", "moov", "free", "mdat"]);
+    assert_eq!(top_off(&out, "mdat"), top_off(&b, "mdat"));
+    assert_eq!(
+        mp4::chunk_offsets(mp4::find_path(&out, &["moov"]).unwrap()).unwrap(),
+        mp4::chunk_offsets(mp4::find_path(&b, &["moov"]).unwrap()).unwrap()
+    );
+    assert_eq!(out[top_off(&out, "mdat")..], b[top_off(&b, "mdat")..]);
+}
+
+/// 꼭 맞으면 `free` 없이 붙는다. 1~7바이트가 남으면 `free`를 만들 수 없어 빼고 뒤를 당긴다(`delta` < 0).
+#[test]
+fn rewrite_exact_fit_and_small_gap() {
+    let u = build_udta(&tags(), None).unwrap();
+    let growth = u.len(); // PD에는 udta가 없다
+    // 꼭 맞음: free 전체(헤더 포함) = 늘어난 만큼
+    let b = pd_with_free(growth - 8);
+    let out = rewrite(&b, &u).unwrap().unwrap();
+    assert_eq!(types(&out), ["ftyp", "moov", "mdat"]);
+    assert_eq!(out.len(), b.len());
+    assert_eq!(top_off(&out, "mdat"), top_off(&b, "mdat"));
+    // 4바이트 남음: free를 빼고 4바이트 당긴다
+    let b = pd_with_free(growth - 8 + 4);
+    let out = rewrite(&b, &u).unwrap().unwrap();
+    assert_eq!(types(&out), ["ftyp", "moov", "mdat"]);
+    assert_eq!(out.len() + 4, b.len());
+    assert_eq!(top_off(&out, "mdat") + 4, top_off(&b, "mdat"));
+    assert_chunks_follow(&b, &out, 64);
+}
+
+// ---------------------------------------------------------------------------------------------
+// 손으로 만든 moov
+
+fn stco(v: &[u32]) -> Vec<u8> {
+    let mut b = vec![0u8; 4];
+    b.extend_from_slice(&(v.len() as u32).to_be_bytes());
+    for x in v {
+        b.extend_from_slice(&x.to_be_bytes());
+    }
+    put(b"stco", &b)
+}
+
+fn co64(v: &[u64]) -> Vec<u8> {
+    let mut b = vec![0u8; 4];
+    b.extend_from_slice(&(v.len() as u32).to_be_bytes());
+    for x in v {
+        b.extend_from_slice(&x.to_be_bytes());
+    }
+    put(b"co64", &b)
+}
+
+/// `moov{ mvhd, trak{ mdia{ minf{ stbl{ tables } } } }… }`. trak마다 `stbl` 자식 바이트를 받는다.
+fn synth_moov(traks: &[Vec<u8>]) -> Vec<u8> {
+    let mut body = put(b"mvhd", &[0; 100]);
+    for t in traks {
+        body.extend(put(b"trak", &put(b"mdia", &put(b"minf", &put(b"stbl", t)))));
+    }
+    put(b"moov", &body)
+}
+
+fn ftyp() -> Vec<u8> {
+    put(b"ftyp", b"isom\0\0\x02\0isom")
+}
+
+/// `[ftyp, moov(stbl), mdat(32)]`. `mdat` 본문 위치를 돌려준다.
+fn faststart(stbl: impl Fn(u64) -> Vec<Vec<u8>>) -> Vec<u8> {
+    // moov 크기는 항목 값과 무관하니 0으로 한 번 재고 다시 만든다
+    let probe = synth_moov(&stbl(0));
+    let body_at = (ftyp().len() + probe.len() + 8) as u64;
+    let mut b = ftyp();
+    b.extend(synth_moov(&stbl(body_at)));
+    b.extend(put(b"mdat", &(0u8..32).collect::<Vec<_>>()));
+    b
+}
+
+/// trak 둘(`stco` 하나·`co64` 하나), 청크 여러 개.
+#[test]
+fn rewrite_moves_every_track_and_chunk() {
+    let b = faststart(|at| vec![stco(&[at as u32, at as u32 + 8]), co64(&[at + 16, at + 24])]);
+    let out = rewrite(&b, &udta()).unwrap().unwrap();
+    assert_chunks_follow(&b, &out, 8);
+}
+
+/// `moov`가 끝에 있는 파일(`[ftyp, mdat, moov]`): 옛 `moov` 앞을 가리키는 위치는 그대로다.
+#[test]
+fn rewrite_keeps_offsets_before_the_moov() {
+    let mdat = put(b"mdat", &(0u8..32).collect::<Vec<_>>());
+    let at = (ftyp().len() + 8) as u32;
+    let mut b = ftyp();
+    b.extend_from_slice(&mdat);
+    b.extend(synth_moov(&[stco(&[at, at + 16])]));
+    let out = rewrite(&b, &udta()).unwrap().unwrap();
+    assert_eq!(types(&out), ["ftyp", "mdat", "moov"]);
+    assert_chunks_follow(&b, &out, 16);
+    assert_eq!(
+        mp4::chunk_offsets(mp4::find_path(&out, &["moov"]).unwrap()).unwrap(),
+        [u64::from(at), u64::from(at) + 16]
+    );
+}
+
+/// 옮긴 `stco` 값이 32비트를 넘으면 `co64`로 올리지 않고 거부한다(태그 없이 원본, core.md 78). 같은 값의 `co64`는 된다.
+#[test]
+fn stco_overflow_is_rejected_but_co64_is_fine() {
+    let near = u32::MAX - 3;
+    let mut b = ftyp();
+    b.extend(synth_moov(&[stco(&[near])]));
+    b.extend(put(b"mdat", &[0; 8]));
+    let e = rewrite(&b, &udta()).unwrap_err();
+    assert!(format!("{e:?}").contains("4 GiB"), "{e:?}");
+    let mut b = ftyp();
+    b.extend(synth_moov(&[co64(&[u64::from(near)])]));
+    b.extend(put(b"mdat", &[0; 8]));
+    let out = rewrite(&b, &udta()).unwrap().unwrap();
+    let new = mp4::chunk_offsets(mp4::find_path(&out, &["moov"]).unwrap()).unwrap();
+    assert_eq!(new[0], u64::from(near) + (out.len() - b.len()) as u64);
+}
+
+#[test]
+fn malformed_chunk_tables_are_rejected() {
+    let moov_at = ftyp().len() as u32;
+    for (name, traks) in [
+        ("표 없음", vec![put(b"stsz", &[0; 12])]),
+        ("표 둘", vec![[stco(&[0]), co64(&[0])].concat()]),
+        ("옛 moov 안", vec![stco(&[moov_at + 8])]),
+        ("항목 수 불일치", {
+            let mut t = stco(&[0]);
+            t[12..16].copy_from_slice(&5u32.to_be_bytes());
+            vec![t]
+        }),
+    ] {
+        let mut b = ftyp();
+        b.extend(synth_moov(&traks));
+        b.extend(put(b"mdat", &[0; 8]));
+        assert!(rewrite(&b, &udta()).is_err(), "{name}");
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// 거부
+
+fn rejected(b: &[u8]) {
+    let r = rewrite(b, &udta());
+    assert!(r.is_err(), "{:?}", r.map(|o| o.map(|v| v.len())));
 }
 
 fn put(kind: &[u8; 4], body: &[u8]) -> Vec<u8> {
@@ -546,25 +636,25 @@ fn put(kind: &[u8; 4], body: &[u8]) -> Vec<u8> {
 }
 
 #[test]
-fn retag_rejects_unknown_structures_without_touching_the_file() {
+fn rewrite_rejects_unknown_structures() {
     // moov가 없다
-    unchanged(&PD[..mp4::top_boxes(PD)[1].1.start - 8]);
+    rejected(&PD[..mp4::top_boxes(PD)[1].1.start - 8]);
     // moov가 둘
     let mut two = PD.to_vec();
     let moov = PD[mp4::top_boxes(PD)[1].1.start - 8..mp4::top_boxes(PD)[1].1.end].to_vec();
     two.extend_from_slice(&moov);
-    unchanged(&two);
-    // 크기 0(파일 끝까지)인 끝 상자: 붙인 moov를 삼킨다
+    rejected(&two);
+    // 크기 0(파일 끝까지)인 끝 상자
     let mut zero = PD.to_vec();
     zero.extend_from_slice(&0u32.to_be_bytes());
     zero.extend_from_slice(b"mdat");
     zero.extend_from_slice(&[1, 2, 3]);
-    unchanged(&zero);
+    rejected(&zero);
     // 상자가 파일 끝을 넘는다(잘린 파일)
-    unchanged(&PD[..PD.len() - 5]);
+    rejected(&PD[..PD.len() - 5]);
     // 가짜 바이트
-    unchanged(b"not an mp4 at all, just text.");
-    unchanged(b"");
+    rejected(b"not an mp4 at all, just text.");
+    rejected(b"");
     // mvex가 있는 조각 구조
     let mvhd = mp4::child_boxes(mp4::find_path(PD, &["moov"]).unwrap()).unwrap()[0].clone();
     let old_body = mp4::find_path(PD, &["moov"]).unwrap();
@@ -572,206 +662,133 @@ fn retag_rejects_unknown_structures_without_touching_the_file() {
     body.extend(put(b"mvex", &put(b"trex", &[0; 24])));
     let mut frag = PD[..mp4::top_boxes(PD)[0].1.end].to_vec();
     frag.extend(put(b"moov", &body));
-    unchanged(&frag);
+    rejected(&frag);
 }
 
-/// `PD`의 `moov` 본문만 `body`로 바꾼 파일과, 그 `moov`의 종류 4바이트 자리.
+/// `PD`의 `moov` 본문만 `body`로 바꾼 파일과, 그 `moov`의 종류 4바이트 자리. 청크 위치는 늘어난 만큼 옮긴다.
 fn pd_with_moov_body(body: &[u8]) -> (Vec<u8>, usize) {
     let moov = mp4::top_boxes(PD)[1].1.clone();
     let mut b = PD[..moov.start - 8].to_vec();
     b.extend(put(b"moov", body));
+    let grow = (body.len() - moov.len()) as u32;
     b.extend_from_slice(&PD[moov.end..]);
+    if let Some(at) = b[moov.start..moov.start + body.len()]
+        .windows(4)
+        .position(|w| w == b"stco")
+    {
+        let at = moov.start + at + 12;
+        let v = u32::from_be_bytes(b[at..at + 4].try_into().unwrap());
+        b[at..at + 4].copy_from_slice(&(v + grow).to_be_bytes());
+    }
     (b, moov.start - 4)
-}
-
-/// 마지막 자식의 크기 칸이 0(부모 끝까지)인 `moov` 본문.
-fn moov_body_with_zero_sized_child() -> Vec<u8> {
-    let mut body = mp4::find_path(PD, &["moov"]).unwrap().to_vec();
-    body.extend_from_slice(&0u32.to_be_bytes());
-    body.extend_from_slice(b"skip");
-    body.extend_from_slice(&[1, 2, 3]);
-    body
 }
 
 /// 크기 0인 자식이 있으면 뒤에 붙인 `udta`가 그 자식 안으로 먹혀 태그가 보이지 않는다. 계획 단계에서 거부한다.
 #[test]
-fn retag_rejects_a_moov_with_a_zero_sized_child() {
-    let (b, _) = pd_with_moov_body(&moov_body_with_zero_sized_child());
-    unchanged(&b);
+fn rewrite_rejects_a_moov_with_a_zero_sized_child() {
+    let mut body = mp4::find_path(PD, &["moov"]).unwrap().to_vec();
+    body.extend_from_slice(&0u32.to_be_bytes());
+    body.extend_from_slice(b"skip");
+    body.extend_from_slice(&[1, 2, 3]);
+    let (b, _) = pd_with_moov_body(&body);
+    rejected(&b);
 }
 
-/// 크래시 복구(옛 moov가 이미 free)는 거부하면 moov 없는 파일이 되므로, 새 moov를 만들 수 없을 때 옛 본문 그대로 되살린다.
+/// 새 `moov`가 `MAX_META_BOX`를 넘으면 태그를 쓰지 않는다(mp4-metadata.md §6.2).
 #[test]
-fn recovery_restores_the_old_moov_when_the_new_one_cannot_be_built() {
-    let body = moov_body_with_zero_sized_child();
-    let (mut b, kind_at) = pd_with_moov_body(&body);
-    b[kind_at..kind_at + 4].copy_from_slice(b"free");
-    let (r, out) = retag(&b, &udta());
-    assert_eq!(r.unwrap(), TagReport::Tagged);
-    assert_eq!(types(&out), ["ftyp", "free", "free", "mdat", "moov"]);
-    assert_eq!(
-        mp4::find_path_last(&out, &["moov"]).unwrap(),
-        body.as_slice()
-    );
-}
-
-/// 새 `moov`가 `MAX_META_BOX`를 넘으면 태그를 쓰지 않는다(`Unchanged`, mp4-metadata.md §6.2).
-#[test]
-fn retag_does_not_write_a_moov_over_the_size_limit() {
+fn rewrite_does_not_write_a_moov_over_the_size_limit() {
     let huge = vec![0u8; MAX_META_BOX as usize];
-    let (r, out) = retag(PD, &huge);
-    assert!(matches!(r, Err(TagError::Unchanged(_))), "{r:?}");
-    assert_eq!(out, PD, "파일은 그대로여야 한다");
-}
-
-/// 크래시 복구 중이면 같은 경우에 옛 moov를 되살리고(태그 없음) moov 없는 파일로 두지 않는다.
-#[test]
-fn recovery_over_the_size_limit_restores_the_old_moov_without_tags() {
-    let huge = vec![0u8; MAX_META_BOX as usize];
-    let (r, out) = retag(&crashed_after_patch(), &huge);
-    assert_eq!(r.unwrap(), TagReport::Tagged);
-    assert_eq!(
-        mp4::find_path_last(&out, &["moov"]).unwrap(),
-        mp4::find_path(PD, &["moov"]).unwrap()
-    );
+    assert!(rewrite(PD, &huge).is_err());
 }
 
 // ---------------------------------------------------------------------------------------------
-// retag_in: 쓰기 실패
+// rewrite_to: 임시 파일
 
-#[test]
-fn retag_append_failure_is_restored_as_unchanged() {
-    let mut f = MemFile::new(PD, Fault::Append);
-    let r = retag_in(&mut f, &udta());
-    assert!(matches!(r, Err(TagError::Unchanged(_))), "{r:?}");
-    assert_eq!(f.data(), PD);
+/// `n`바이트까지 쓰고 그다음은 디스크 부족으로 실패하는 임시 파일(부분 기록).
+struct FullDisk {
+    f: std::fs::File,
+    left: usize,
 }
-
-#[test]
-fn retag_append_failure_not_restored_is_modified() {
-    let mut f = MemFile::new(PD, Fault::AppendAndTruncate);
-    let r = retag_in(&mut f, &udta());
-    assert!(matches!(r, Err(TagError::Modified(_))), "{r:?}");
+impl Write for FullDisk {
+    fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+        if self.left == 0 {
+            return Err(std::io::ErrorKind::StorageFull.into());
+        }
+        let n = b.len().min(self.left);
+        self.left -= n;
+        self.f.write(&b[..n])
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
 }
-
-#[test]
-fn retag_patch_failure_is_modified_and_recovers_after_truncate() {
-    let mut f = MemFile::new(PD, Fault::Patch);
-    let r = retag_in(&mut f, &udta());
-    assert!(matches!(r, Err(TagError::Modified(_))), "{r:?}");
-    assert!(f.data().len() > PD.len(), "붙인 moov가 남았다");
-    // 다음 실행의 resume이 원래 길이로 자르면 같은 결과로 다시 붙는다
-    let mut cut = f.c.into_inner();
-    cut.truncate(PD.len());
-    assert_eq!(retag(&cut, &udta()).1, tagged());
-}
-
-#[test]
-fn retag_read_error_is_modified() {
-    let mut f = MemFile::new(PD, Fault::Read);
-    let r = retag_in(&mut f, &udta());
-    assert!(matches!(r, Err(TagError::Modified(_))), "{r:?}");
-    assert_eq!(f.data(), PD);
-}
-
-// ---------------------------------------------------------------------------------------------
-// 크래시 복구
-
-/// 4단계(종류 패치)까지 마치고 죽은 뒤 `resume`이 붙인 moov를 잘라 낸 모양.
-fn crashed_after_patch() -> Vec<u8> {
-    let mut b = tagged();
-    b.truncate(PD.len());
-    b
-}
-
-#[test]
-fn crashed_file_is_retagged_to_the_same_bytes() {
-    let crashed = crashed_after_patch();
-    assert_eq!(types(&crashed), ["ftyp", "free", "free", "mdat"]);
-    let (r, out) = retag(&crashed, &udta());
-    assert_eq!(r.unwrap(), TagReport::Tagged);
-    assert_eq!(out, tagged());
-}
-
-#[test]
-fn crashed_file_with_other_tags_uses_the_new_ones() {
-    let crashed = crashed_after_patch();
-    let other = build_udta(&tags(), None).unwrap();
-    let (r, out) = retag(&crashed, &other);
-    assert_eq!(r.unwrap(), TagReport::Tagged);
-    let ilst = mp4::find_path_last(&out, &["moov", "udta", "meta", "ilst"]).unwrap();
-    assert_eq!(mp4::ilst_items(ilst).unwrap().len(), 4, "표지 없는 태그");
-}
-
-#[test]
-fn two_recovery_candidates_are_left_alone() {
-    let mut b = crashed_after_patch();
-    let freed = mp4::freed_moovs(&b)[0];
-    let (_, r) = mp4::top_boxes(&b)
-        .into_iter()
-        .find(|(_, r)| r.start - 8 == freed)
-        .unwrap();
-    let copy = b[freed..r.end].to_vec();
-    b.extend_from_slice(&copy);
-    assert_eq!(mp4::freed_moovs(&b).len(), 2);
-    unchanged(&b);
-    let mut f = MemFile::new(&b, Fault::None);
-    assert!(matches!(repair_in(&mut f), Err(TagError::Unchanged(_))));
-    assert_eq!(f.data(), b.as_slice());
-}
-
-#[test]
-fn recovery_append_failure_is_modified_even_when_restored() {
-    // 복구 중에는 되돌려도 moov가 없는 파일이라 마무리하면 안 된다
-    let crashed = crashed_after_patch();
-    let mut f = MemFile::new(&crashed, Fault::Append);
-    let r = retag_in(&mut f, &udta());
-    assert!(matches!(r, Err(TagError::Modified(_))), "{r:?}");
-}
-
-#[test]
-fn a_free_that_only_looks_like_a_moov_is_not_a_candidate() {
-    // 첫 자식이 mvhd지만 mvex가 있는 free(조각 구조의 init)는 후보가 아니다
-    let mut body = put(b"mvhd", &[0; 100]);
-    body.extend(put(b"mvex", &[]));
-    let mut b = PD[..mp4::top_boxes(PD)[0].1.end].to_vec();
-    b.extend(put(b"free", &body));
-    b.extend(put(b"mdat", &[0; 8]));
-    unchanged(&b);
-    let mut f = MemFile::new(&b, Fault::None);
-    assert_eq!(repair_in(&mut f).unwrap(), TagReport::NotApplicable);
-    assert_eq!(f.data(), b.as_slice());
-}
-
-#[test]
-fn repair_restores_the_original_pd_file_byte_for_byte() {
-    let mut f = MemFile::new(&crashed_after_patch(), Fault::None);
-    assert_eq!(repair_in(&mut f).unwrap(), TagReport::Repaired);
-    assert_eq!(f.data(), PD);
-}
-
-#[test]
-fn repair_does_nothing_when_a_moov_exists() {
-    for b in [PD.to_vec(), tagged()] {
-        let mut f = MemFile::new(&b, Fault::None);
-        assert_eq!(repair_in(&mut f).unwrap(), TagReport::NotApplicable);
-        assert_eq!(f.data(), b.as_slice());
+impl SyncWrite for FullDisk {
+    fn sync(&mut self) -> std::io::Result<()> {
+        Ok(())
     }
 }
 
 #[test]
-fn repair_on_garbage_is_unchanged_and_write_failure_is_modified() {
-    let mut f = MemFile::new(b"definitely not an mp4 file", Fault::None);
-    assert!(matches!(repair_in(&mut f), Err(TagError::Unchanged(_))));
-    let mut f = MemFile::new(&crashed_after_patch(), Fault::Patch);
-    assert!(matches!(repair_in(&mut f), Err(TagError::Modified(_))));
+fn rewrite_to_writes_the_same_bytes_and_replaces_a_leftover() {
+    let dir = tempfile::tempdir().unwrap();
+    let tmp = dir.path().join("a.mp4.part.tmp");
+    std::fs::write(&tmp, vec![7u8; PD.len() * 3]).unwrap();
+    let mut src = Cursor::new(PD.to_vec());
+    let r = rewrite_to(&mut src, PD.len() as u64, &udta(), &tmp, |t| {
+        std::fs::File::create(t)
+    })
+    .unwrap();
+    let want = tagged();
+    assert_eq!(
+        r,
+        Retagged::Written {
+            len: want.len() as u64
+        }
+    );
+    assert_eq!(std::fs::read(&tmp).unwrap(), want);
+    assert_eq!(src.into_inner(), PD, "원본은 읽기만 한다");
+}
+
+/// 쓰다가 디스크가 차면(일부만 기록) 임시 파일을 지우고 `DiskFull`이다. 원본은 그대로다.
+#[test]
+fn rewrite_to_disk_full_removes_the_partial_temp() {
+    for left in [0, 1, 37, PD.len()] {
+        let dir = tempfile::tempdir().unwrap();
+        let tmp = dir.path().join("a.mp4.part.tmp");
+        let mut src = Cursor::new(PD.to_vec());
+        let r = rewrite_to(&mut src, PD.len() as u64, &udta(), &tmp, |t| {
+            Ok(FullDisk {
+                f: std::fs::File::create(t)?,
+                left,
+            })
+        });
+        assert!(matches!(r, Err(Error::DiskFull { .. })), "{left}: {r:?}");
+        assert!(!tmp.exists(), "{left}: 임시 파일이 남았다");
+        assert_eq!(src.into_inner(), PD);
+    }
+}
+
+/// 구조를 모르면 임시 파일을 열지도 않는다.
+#[test]
+fn rewrite_to_unknown_structure_opens_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let tmp = dir.path().join("a.mp4.part.tmp");
+    let body = b"not an mp4".to_vec();
+    let r = rewrite_to(
+        &mut Cursor::new(body.clone()),
+        body.len() as u64,
+        &udta(),
+        &tmp,
+        |t| -> std::io::Result<std::fs::File> { panic!("열면 안 된다: {}", t.display()) },
+    );
+    assert!(matches!(r, Err(Error::Parse { .. })), "{r:?}");
 }
 
 // ---------------------------------------------------------------------------------------------
 // 큰 파일(co64·largesize)
 
-/// 쓴 구간만 들고 길이는 `len`으로 보이는 희소 파일. 실제 디스크에 큰 파일을 만들지 않는다
-/// (Windows NTFS `set_len`은 희소 파일을 보장하지 않는다).
+/// 쓴 구간만 들고 길이는 `len`으로 보이는 희소 파일(읽기 전용). 실제 디스크에 큰 파일을 만들지 않는다
+/// (Windows NTFS `set_len`은 희소 파일을 보장하지 않는다). 다시 쓰기는 계획만 본다(뒤는 바이트 그대로 옮기기다).
 struct SparseFile {
     len: u64,
     pos: u64,
@@ -779,27 +796,19 @@ struct SparseFile {
 }
 
 impl SparseFile {
-    fn new(head: &[u8], at: &[(u64, Vec<u8>)], len: u64) -> Self {
+    fn new(head: &[u8], len: u64) -> Self {
         let mut s = SparseFile {
             len,
             pos: 0,
             bytes: BTreeMap::new(),
         };
         s.put(0, head);
-        for (off, b) in at {
-            s.put(*off, b);
-        }
         s
     }
     fn put(&mut self, off: u64, b: &[u8]) {
         for (i, v) in b.iter().enumerate() {
             self.bytes.insert(off + i as u64, *v);
         }
-    }
-    fn get(&self, off: u64, n: usize) -> Vec<u8> {
-        (0..n as u64)
-            .map(|i| self.bytes.get(&(off + i)).copied().unwrap_or(0))
-            .collect()
     }
 }
 
@@ -825,51 +834,20 @@ impl Seek for SparseFile {
         Ok(self.pos)
     }
 }
-impl Write for SparseFile {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.put(self.pos, buf);
-        self.pos += buf.len() as u64;
-        self.len = self.len.max(self.pos);
-        Ok(buf.len())
-    }
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-}
-impl DefragFile for SparseFile {
-    fn file_len(&mut self) -> std::io::Result<u64> {
-        Ok(self.len)
-    }
-    fn truncate_to(&mut self, len: u64) -> std::io::Result<()> {
-        self.len = len;
-        self.bytes.retain(|k, _| *k < len);
-        Ok(())
-    }
-    fn sync(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
+
+fn plan_sparse(f: &mut SparseFile, udta: &[u8]) -> Result<Plan, Fail> {
+    let len = f.len;
+    plan_rewrite(&mut FileSrc { f, len }, udta)
 }
 
-/// `[ftyp, moov(co64 값이 4 GiB 넘음), free, mdat(largesize, 4 GiB 넘음)]`인 5 GiB 파일.
+/// `[ftyp, moov(co64 값이 4 GiB 넘음), free, mdat(largesize, 4 GiB 넘음)]`인 5 GiB 파일. `co64` 값이 늘어난 만큼
+/// 옮겨지고, `free` 뒤(largesize `mdat` 머리부터)는 바이트 그대로 옮긴다.
 #[test]
 fn big_file_with_co64_and_largesize_mdat() {
     const TOTAL: u64 = 5 << 30;
     const CHUNK_OFFSET: u64 = (4 << 30) + 123;
-    let ftyp = put(b"ftyp", b"isom\0\0\x02\0isom");
-    let mut co64_body = vec![0u8; 4];
-    co64_body.extend_from_slice(&1u32.to_be_bytes());
-    co64_body.extend_from_slice(&CHUNK_OFFSET.to_be_bytes());
-    let co64 = put(b"co64", &co64_body);
-    let stbl = put(b"stbl", &co64);
-    let mvhd = put(b"mvhd", &[0; 100]);
-    let moov = put(
-        b"moov",
-        &[
-            mvhd.clone(),
-            put(b"trak", &put(b"mdia", &put(b"minf", &stbl))),
-        ]
-        .concat(),
-    );
+    let ftyp = ftyp();
+    let moov = synth_moov(&[co64(&[CHUNK_OFFSET])]);
     let free = put(b"free", &[]);
     let head_len = (ftyp.len() + moov.len() + free.len()) as u64;
     let mdat_size = TOTAL - head_len;
@@ -877,57 +855,39 @@ fn big_file_with_co64_and_largesize_mdat() {
     mdat_hdr.extend_from_slice(b"mdat");
     mdat_hdr.extend_from_slice(&mdat_size.to_be_bytes());
     let head = [ftyp.clone(), moov.clone(), free, mdat_hdr].concat();
-    let mut f = SparseFile::new(&head, &[], TOTAL);
+    let mut f = SparseFile::new(&head, TOTAL);
 
-    let r = retag_in(&mut f, &udta());
-    assert_eq!(r.unwrap(), TagReport::Tagged);
-
-    // 새 moov는 5 GiB 위치에 붙었다
-    let new_off = TOTAL;
-    assert_eq!(f.get(new_off + 4, 4), b"moov");
-    let new_len = u32::from_be_bytes(f.get(new_off, 4).try_into().unwrap()) as u64;
-    assert_eq!(f.len, TOTAL + new_len);
-    let new_moov = f.get(new_off, new_len as usize);
-    // co64 항목이 바이트 그대로다(표 다시 쓰기가 없다)
-    assert!(new_moov.windows(8).any(|w| w == CHUNK_OFFSET.to_be_bytes()));
-    let new_stbl = mp4::find_path(&new_moov, &["moov", "trak", "mdia", "minf", "stbl"]).unwrap();
-    assert_eq!(new_stbl, &stbl[8..]);
-    // 옛 moov는 free가 됐고 mdat 머리는 그대로다
-    let old_off = ftyp.len() as u64;
-    assert_eq!(f.get(old_off + 4, 4), b"free");
-    assert_eq!(f.get(old_off + 8 + 4, 4), b"mvhd");
-    let mdat_off = head_len;
-    assert_eq!(f.get(mdat_off, 4), 1u32.to_be_bytes());
-    assert_eq!(f.get(mdat_off + 8, 8), mdat_size.to_be_bytes());
-    // 검사기가 largesize를 따라간다: 머리(앞 3개 + mdat 머리)만 메모리에 올려 확인한다
-    let mut hdr = f.get(0, head_len as usize + 16);
-    let sizes = mp4::walk_boxes(&hdr).unwrap();
-    assert_eq!(sizes.types(), ["ftyp", "free", "free", "mdat"]);
-    assert!(
-        sizes.truncated,
-        "mdat이 잘려 보이는 것은 머리만 올렸기 때문이다"
+    let Plan::Rewrite(p) = plan_sparse(&mut f, &udta()).unwrap() else {
+        panic!("다시 써야 한다");
+    };
+    assert_eq!(p.before, ftyp.len() as u64);
+    assert_eq!(
+        p.after, head_len,
+        "free(8)를 빼고 largesize mdat 머리부터 옮긴다"
     );
-    hdr.clear();
-    // 다시 부르면 이미 태그됐다
-    assert_eq!(retag_in(&mut f, &udta()).unwrap(), TagReport::AlreadyTagged);
+    assert_eq!(p.src_len, TOTAL);
+    let delta = p.out_len() as i64 - TOTAL as i64;
+    assert_eq!(delta, (p.moov.len() - moov.len() - 8) as i64);
+    let new = mp4::chunk_offsets(&p.moov[8..]).unwrap();
+    assert_eq!(new, [CHUNK_OFFSET + delta as u64]);
+    // 새 moov = 옛 자식(co64 값만 옮김) + 새 udta
+    let shifted = synth_moov(&[co64(&[CHUNK_OFFSET + delta as u64])]);
+    assert_eq!(p.moov, put(b"moov", &[&shifted[8..], &udta()[..]].concat()));
 }
 
 #[test]
 fn huge_moov_is_rejected_before_reading_its_body() {
     // 65 MiB라고 적힌 moov(본문은 읽지도 않는다)
     const LEN: u64 = 70 << 20;
-    let ftyp = put(b"ftyp", b"isom\0\0\x02\0isom");
+    let ftyp = ftyp();
     let mut moov_hdr = u32::try_from(65u64 << 20).unwrap().to_be_bytes().to_vec();
     moov_hdr.extend_from_slice(b"moov");
-    let mut tail = 0u32.to_be_bytes().to_vec();
-    tail.clear();
-    let mut f = SparseFile::new(&[ftyp.clone(), moov_hdr].concat(), &[], LEN);
+    let mut f = SparseFile::new(&[ftyp.clone(), moov_hdr].concat(), LEN);
     // 나머지는 free 하나로 채워 상자가 파일 끝에 딱 맞게 한다
     let used = ftyp.len() as u64 + (65 << 20);
     let mut free = u32::try_from(LEN - used).unwrap().to_be_bytes().to_vec();
     free.extend_from_slice(b"free");
     f.put(used, &free);
-    let r = retag_in(&mut f, &udta());
-    assert!(matches!(r, Err(TagError::Unchanged(_))), "{r:?}");
-    assert_eq!(f.len, LEN);
+    let e = plan_sparse(&mut f, &udta()).unwrap_err();
+    assert!(format!("{e:?}").contains("너무 크다"), "{e:?}");
 }

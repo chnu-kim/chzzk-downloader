@@ -274,7 +274,7 @@ fn check_mp4(path: &std::path::Path) -> Result<(), String> {
 }
 
 /// 받은 파일의 마지막 `moov`에 들어간 메타데이터 원자 이름과 표지 형식·크기만 찍는다(값은 찍지 않는다).
-/// 큰 파일을 통째로 읽지 않도록 `moov`가 든 꼬리만 본다(`moov`는 파일 끝에 붙는다).
+/// 큰 파일을 통째로 읽지 않도록 상자 머리만 훑고 `moov`만 읽는다(PD는 앞, 빠른 다시보기·생방송은 끝에 있다).
 fn tags_summary(path: &std::path::Path) {
     use std::io::{Read, Seek, SeekFrom};
     // 최상위 상자 머리만 훑어 마지막 `moov`의 위치를 찾고 그 상자만 읽는다

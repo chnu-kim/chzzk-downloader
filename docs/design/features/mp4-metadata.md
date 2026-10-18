@@ -1,6 +1,6 @@
 # 경쟁력 개선 (바) mp4 메타데이터와 표지: 설계
 
-**상태·확정 결정(2026-10-18)**: **M-1(코어 상자, core.md 75)·M-2(코어 배선, core.md 76)·M-3(셸·앱, app.md 91) 구현됨**, M-4(사용자 실측)만 남았다. 구현이 이 문서와 달라진 곳은 core.md 75·76 "구현 중 변경"이 우선한다(예: `Resolved.thumbnail_url`은 `Option<Url>`, `TagReport::Tagged`는 필드 없음, `ClientConfig.image_timeout`). 사용자 결정(2026-10-18, ROADMAP "경쟁력 개선 착수" (바)): 받은 mp4에 **제목·채널 이름·날짜·원본 주소**와 **썸네일 표지(`covr`)**를 넣는다. 설정에서 켜고 끌 수 있다. 기본값(켬)과 그 근거는 §9.1에 적었다. 나머지는 이 문서가 정한 설계 판단이다(**가정**·**[잠정]**·**[실측 필요]**는 표기대로).
+**상태·확정 결정(2026-10-18)**: **M-1(코어 상자, core.md 75)·M-2(코어 배선, core.md 76)·M-3(셸·앱, app.md 91) 구현됨**, M-4(사용자 실측)만 남았다. 구현이 이 문서와 달라진 곳은 core.md 75~78 "구현 중 변경"이 우선한다. **PD 쓰기 경로는 core.md 78에서 "끝에 붙이기"를 "임시 파일에 다시 쓰기"로 바꿨다(§6.2, 사용자 결정 2026-10-18)**(예: `Resolved.thumbnail_url`은 `Option<Url>`, `TagReport::Tagged`는 필드 없음, `ClientConfig.image_timeout`). 사용자 결정(2026-10-18, ROADMAP "경쟁력 개선 착수" (바)): 받은 mp4에 **제목·채널 이름·날짜·원본 주소**와 **썸네일 표지(`covr`)**를 넣는다. 설정에서 켜고 끌 수 있다. 기본값(켬)과 그 근거는 §9.1에 적었다. 나머지는 이 문서가 정한 설계 판단이다(**가정**·**[잠정]**·**[실측 필요]**는 표기대로).
 
 **기준 트리는 `origin/master` `55e0733`이다.** 이 문서의 `파일:줄`은 모두 그 커밋에서 연 줄이다. 표기는 `README.md`의 규칙을 따른다. **[확인]**은 직접 연 줄, **가정**은 근거 문서가 없는 설계 판단, **[실측 필요]**는 실물·플레이어로만 정할 수 있는 것, **[잠정]**은 출처 없는 수치다(ADR-0009 묶음).
 
@@ -30,9 +30,9 @@
 | 결정 | 처리 | 근거 |
 |---|---|---|
 | ROADMAP "ffmpeg 제거, 완전 무설치" | 유지한다. 상자를 직접 쓴다. 재인코딩·remux 도구는 없다 | `docs/ROADMAP.md`, range.md §1.1 |
-| core.md 60 "복사 없이 제자리, 새 `moov`를 끝에 붙이고 옛 상자 종류만 `free`로" | **같은 방식을 PD에도 쓴다**(§6.2). HLS·생방송은 defrag가 만드는 새 `moov`에 `udta`를 함께 넣는다(§6.1) | `core.md:830`, `crates/core/src/download/defrag.rs:124-176` |
-| core.md 60 한계 ④ "`moov`가 파일 끝에 있다(로컬 재생용)" | PD 결과도 메타데이터를 켜면 `moov`가 끝으로 간다(faststart를 잃는다). 같은 이유로 받아들인다 | `core.md:836` |
-| core.md 61 M4 "바꾸기 전 실패는 경고만, 바꾸는 도중 실패는 `.part`로" | 태그 쓰기에도 같은 두 갈래를 쓴다(§6.2 `TagError`) | `crates/core/src/download/mod.rs:446-470` |
+| core.md 60 "복사 없이 제자리, 새 `moov`를 끝에 붙이고 옛 상자 종류만 `free`로" | HLS·생방송은 그대로 defrag가 만드는 새 `moov`에 `udta`를 함께 넣는다(§6.1). **PD는 이 방식을 쓰지 않고 임시 파일에 다시 쓴다**(§6.2, core.md 78) | `core.md:830`, `crates/core/src/download/defrag.rs:124-176` |
+| core.md 60 한계 ④ "`moov`가 파일 끝에 있다(로컬 재생용)" | PD는 해당하지 않는다. 다시 쓰기가 `moov`를 앞에 둔다(faststart 유지, §6.2) | `core.md:836` |
+| core.md 61 M4 "바꾸기 전 실패는 경고만, 바꾸는 도중 실패는 `.part`로" | PD 태그 쓰기에는 "바꾸는 도중"이 없다(`.part`를 바꾸지 않는다). 어떤 실패든 경고 뒤 태그 없이 원본을 마무리한다(§6.2) | `crates/core/src/download/mod.rs:446-470` |
 | core.md 71 "`Progressive`는 변환하지 않는다" | 유지한다. PD는 defrag를 타지 않고, 태그 쓰기(§6.2)만 탄다. `converts_on_finish`는 바꾸지 않는다 | `mod.rs:474-481` |
 | 결정 8 "미디어에 쿠키 없음"(73·74에서 성인 HLS·PD 확인) | 썸네일 요청은 `cookies_on_media`와 상관없이 **늘** 쿠키를 보내지 않는다(§7) | `crates/core/src/http.rs:145-170`, `core.md:940-941` |
 | core.md 55 "`Skipped`면 `.part`가 남고 `Overwrite`로 다시 부르면 곧바로 마무리" | 지킨다. PD는 태그 뒤 checkpoint하지 않아 progressive 416 이어받기와 충돌하지 않는다(§6.4) | `core.md:796`, `crates/core/src/download/progressive.rs:146-154` |
@@ -43,7 +43,7 @@
 
 | 출력 | 지금 마무리 | 메타데이터 | 표지 |
 |---|---|---|---|
-| 일반 VOD(PD mp4) `Progressive` | 변환 없음. 결과는 `[ftyp, moov, free, mdat]`(core.md 74 실측) | **§6.2 끝에 붙이기**: 새 `moov`(옛 `moov` + 새 `udta`)를 끝에 붙이고 옛 `moov` 종류를 `free`로 바꾼다 | 있음(info `thumbnailImageUrl`) |
+| 일반 VOD(PD mp4) `Progressive` | 변환 없음. 결과는 `[ftyp, moov, free, mdat]`(core.md 74 실측) | **§6.2 임시 파일에 다시 쓰기**: `[ftyp, 새 moov(옛 자식 + 새 udta), mdat]`을 같은 폴더 임시 파일에 쓰고 청크 위치를 옮긴 뒤 최종 이름으로 rename | 있음(info `thumbnailImageUrl`) |
 | 클립(PD mp4) `Progressive` | 같음 | 같음. `©day` 없음 | **없음**(§1.2) |
 | 빠른 다시보기 전체·구간 `LiveRewindHls` | defrag로 일반 mp4(core.md 64·71) | **§6.1 defrag의 새 `moov`에 `udta`를 넣는다**(덧붙이기는 한 번뿐) | 있음 |
 | 생방송 녹화 `Live`(정상 마무리·[녹화 마치기]) | defrag | §6.1과 같음 | **없음**(§1.2) |
@@ -99,39 +99,27 @@ moov
 - 덧붙이는 `moov`는 그대로 하나다. 2단계(끝에 붙이고 sync)·3단계(종류 패치)·크래시 복구(`free`의 첫 자식이 `mfhd`/`mvhd`+`mvex`, `defrag.rs:868-887`)·`DefragError` 두 갈래는 **바뀌지 않는다**. 다시 변환할 때도 같은 `udta`를 넘기므로 같은 결과다. 표지 받기가 이번에만 실패하면 표지만 다를 수 있는데, 받아들인다.
 - 이 경로를 고른 이유는 셋이다. 하나, defrag가 이미 새 `moov`를 메모리에서 만든다. 둘, 따로 태그를 쓰면 `moov`를 한 번 더 붙이게 되어 죽은 공간(긴 녹화면 샘플 표 수 MB)과 fsync가 한 번씩 더 생긴다. 셋, 크래시 복구 규칙이 하나로 남는다.
 
-### 6.2 일반 VOD·클립(PD): 끝에 붙이기
+### 6.2 일반 VOD·클립(PD): 임시 파일에 다시 쓰기
 
-**선택지 비교**
+**결정(사용자, 2026-10-18, core.md 78)**: 처음 채택한 (a) 끝에 붙이기는 Codex 리뷰에서 high 둘이 나와 (c)로 바꿨다. (a)는 `.part` 안의 옛 `moov` 종류 4바이트를 `free`로 고쳐 쓰고, 그 중간 상태를 "첫 자식이 `mvhd`인 `free`"로 알아보는 복구에 기댔다. ① `write_all(b"free")`가 부분 기록되면(`foov` 등) 복구가 알아보지 못해 `moov` 없는 파일이 `Completed`로 옮겨진다. ② `moov` 자식 순서가 `[free, mvhd, …]`이면 정상 태깅은 되는데 복구는 첫 자식 `mvhd`만 인정해 같은 결과가 난다. (c)는 `.part`를 끝까지 바꾸지 않으므로 이런 중간 상태가 생기지 않는다.
 
 | 안 | 방법 | 장점 | 단점 | 판정 |
 |---|---|---|---|---|
-| (a) 끝에 붙이기 | 옛 `moov` 본문을 읽어 `udta`를 바꾼 새 `moov`를 파일 끝에 붙이고, 옛 `moov`의 4바이트 종류만 `free`로 바꾼다 | `mdat`이 움직이지 않으니 **`stco`/`co64`를 고칠 일이 없다**. defrag와 같은 순서·같은 복구 규칙이다. 쓰는 양은 `moov` 크기(수 MB)다 | faststart를 잃는다(로컬 재생은 영향 없음, core.md 60 한계 ④). 옛 `moov` 크기만큼 죽은 공간이 남는다 | **채택** |
-| (b) `free` 안에 맞추기 | `moov` 뒤 `free`의 자리를 써서 `moov`를 키운다 | faststart를 지키고 죽은 공간이 없다 | `committed_len` 안쪽의 두 곳(`moov` 크기 칸과 `free` 머리)을 한꺼번에 바꿔야 해서 크래시 중간 상태를 알아볼 수 없고 `resume`도 되돌리지 못한다((a)의 4바이트 패치는 중간 상태를 "첫 자식 `mvhd`인 `free`"로 알아본다). 실물 `free` 크기를 모르고, 표지(수백 KB)가 들어갈 만큼 크다는 근거도 없다 **[실측 필요]** | 기각. 크래시 안전을 지키려면 쓰기 순서가 여러 단계로 복잡해진다 |
-| (c) 새 파일로 복사 | `ftyp`+새 `moov`+`mdat`을 새 파일에 쓰고 `stco`/`co64`를 밀린 만큼 고친 뒤 rename | faststart, 죽은 공간 없음 | 디스크를 두 배 쓰고 GB 단위 복사 시간이 든다. `stco` 값이 4 GiB를 넘으면 `co64`로 바꿔야 해서 표 다시 쓰기가 생긴다 | 기각 |
+| (a) 끝에 붙이기 | 새 `moov`를 `.part` 끝에 붙이고 옛 `moov` 종류를 `free`로 | 쓰는 양이 `moov` 크기뿐, `stco`를 고칠 일이 없다 | 제자리 패치의 부분 기록·복구 판정 구멍(위 ①②), faststart를 잃는다, 죽은 공간 | **기각**(처음 채택, core.md 78에서 뒤집음) |
+| (b) `free` 안에만 맞추기 | `moov` 뒤 `free` 자리로 `moov`를 키운다 | faststart, 죽은 공간 없음 | 제자리 두 곳 쓰기라 크래시 중간 상태를 알아볼 수 없다. 표지가 들어갈 만큼 큰 `free`라는 근거가 없다 | 기각(대신 (c)가 `free`를 먼저 쓴다) |
+| (c) 임시 파일에 다시 쓰기 | `.part`에서 읽어 같은 폴더 임시 파일에 `[앞 상자, 새 moov, …, mdat]`을 쓰고 sync한 뒤 최종 이름으로 rename | `.part`가 rename 전까지 원본 그대로라 언제 죽어도 다음 실행이 원본으로 다시 마무리한다. faststart 유지. 죽은 공간 없음 | 마무리에 디스크를 잠깐 두 배 쓰고 전체 복사 시간이 든다(취소할 수 없는 blocking 작업). `stco`/`co64`를 고쳐야 한다 | **채택** |
 
-**(a)의 단계**: `mp4meta::retag_in<F: DefragFile>(file, udta) -> Result<TagReport, TagError>`이다. 파일 조작 trait는 defrag의 것(`defrag.rs:78-95`)을 쓴다.
-1. **훑기**: 최상위 상자 머리만 seek로 읽는다(largesize `size == 1` 지원). `moov` 본문만 읽는다(상한 64 MiB). 다음이면 파일을 바꾸지 않고 `Unchanged`다.
-   - 최상위 `moov`가 없다. 단 아래 복구 규칙은 예외다.
-   - `moov`가 둘 이상이다.
-   - `moov`에 `mvex`가 있다(조각 구조).
-   - 마지막 상자 크기가 0(파일 끝까지)이다. 붙인 `moov`를 삼키기 때문이다(core.md 60 검증 반영과 같은 규칙).
-   - 상자가 파일 끝을 넘는다.
-2. **새 `moov`**: 옛 `moov`의 자식을 순서대로 복사하되 `udta`는 빼고, 끝에 새 `udta`를 붙인다. **`stco`/`co64`·`stsz` 등 다른 바이트는 손대지 않는다**(바이트 그대로 복사). 옛 `moov`의 마지막 자식이 이미 새 `udta`와 바이트가 같으면 아무것도 하지 않고 `AlreadyTagged`다.
-3. **붙이기**: 끝에 새 `moov`를 쓰고 `sync`. 실패하면 `truncate_to(원래 길이)` + `sync`로 되돌린다. 되돌리기에 성공하면 `Unchanged`, 실패하면 `Modified`다.
-4. **패치**: 옛 `moov`의 종류 자리(`off + 4`)에 `free`를 쓰고 `sync`. 실패하면 `Modified`다.
+**단계**(`mp4meta::rewrite_to`, 호출은 `download::tag_pd_part`):
+1. **계획**(`plan_rewrite`, 원본은 읽기만): 최상위 상자 머리만 읽는다(largesize 지원). 다음이면 거부한다(태그 없이 원본 마무리): 최상위 `moov`가 없거나 둘 이상, `mvex` 있음, 크기 0(파일 끝까지) 상자, 파일 끝을 넘는 상자, `moov` 본문 64 MiB 초과, `moov` 자식의 크기 칸 0, 새 `moov`가 64 MiB 초과.
+2. **새 `moov`**: 옛 자식을 순서 그대로 복사하되 `udta`는 빼고 끝에 새 `udta`를 붙인다(자식 순서 `[free, mvhd, …]`도 그대로 된다). 옛 것과 바이트가 같으면 `AlreadyTagged`(임시 파일을 만들지 않고 원본을 옮긴다).
+3. **자리**: 옛 `moov`와 바로 뒤 `free`/`skip`(있으면)을 합친 칸을 `avail`이라 한다. 새 `moov`가 들어가고 **8바이트 이상 남으면** 남는 만큼 `free`로 채운다. 뒤 바이트가 움직이지 않아 청크 위치를 고치지 않는다. 아니면(꼭 맞음·1~7바이트 남음·넘침) 그 `free`를 빼고 뒤를 `delta = 새 moov - avail`만큼 옮긴다(음수일 수 있다).
+4. **청크 위치**(`delta ≠ 0`): 새 `moov` 안 모든 `trak`의 `mdia/minf/stbl`에서 `stco`/`co64`를 정확히 하나 찾는다(없거나 둘이면 거부). 항목 수와 표 길이가 맞아야 한다. 옛 위치가 `avail` 끝 이상이면 `+delta`, 옛 `moov` 앞이면 그대로(`moov`가 끝에 있는 파일), 그 사이(옛 `moov`·흡수한 `free` 안)면 거부한다. 폭이 그대로라 상자 크기가 바뀌지 않는다. **`stco` 값이 32비트를 넘게 되면 `co64`로 올리지 않고 거부한다**: 올리면 `moov`가 커져 `delta`가 다시 바뀌는 고리가 생기고, 이런 파일은 청크가 4 GiB 바로 아래(`delta` 안쪽, 표지 상한 2 MiB 수준)에 있을 때뿐이다. 그 크기의 파일은 muxer가 처음부터 `co64`를 쓴다(ffmpeg mov muxer는 위치가 32비트를 넘으면 `co64`로 쓴다). 거부해도 태그만 빠지고 받기는 성공이다.
+5. **쓰기**: `{최종}.part.tmp`를 만들어(남은 것이 있으면 덮는다) 원본 `[0, 옛 moov)` → 새 `moov`(+`free`) → 원본 `[avail 끝, 끝)`을 1 MiB 버퍼로 쓰고 flush → `sync_all`. 어디서든 실패하면(디스크 부족 ENOSPC·Windows 112·39 = `DiskFull`, 그 밖의 쓰기 실패) 임시 파일을 지우고 경고 로그 뒤 **태그 없이 원본 `.part`를 그대로 마무리한다**(받기 성공).
+6. **옮기기**(`PartFile::finalize_rewritten`): 임시 파일을 최종 이름으로 rename한다(기존 `finalize`와 같은 `rename_with_retry`·`rename_noclobber_with_retry`, Windows 잠금 재시도). 옮겼으면 잠금을 쥔 채(Unix) `.part`와 sidecar를 지운다. `Skip`인데 최종 파일이 있거나(`TargetExists`) rename이 실패하면 임시 파일만 지우고 `.part`·sidecar를 남긴다.
 
-**크래시 복구**: 최상위 `moov`가 없고 최상위 `free`/`skip` 중 **첫 자식이 `mvhd`이고 자식에 `mvex`가 없는 것이 정확히 하나**면, 그것을 4단계까지 마친 옛 `moov`로 본다. 그 본문으로 2~3단계를 다시 한다. 4단계는 이미 `free`라서 쓰지 않는다. 둘 이상이면 `Unchanged`다(모르는 구조). PD에는 defrag의 init `moov`(`mvex` 있음)가 없으므로 그 규칙과 겹치지 않는다. 같은 판정 함수(`free`의 첫 자식 보기)를 defrag와 나눠 쓴다.
+**임시 파일 이름과 정리**: `{최종 경로}.part.tmp` 하나다(무작위 글자 없음). `.part` 잠금을 쥔 작업만 만들고 지우므로 다른 작업의 파일과 겹치지 않는다. 죽어서 남은 것은 같은 출력의 `PartFile::resume`·`create`·`discard_partial`(모두 잠금을 쥔 뒤)이 지운다. 같은 폴더 다른 출력의 임시 파일과 비슷한 이름의 사용자 파일은 건드리지 않는다.
 
-**메타데이터를 끈 실행의 복구**: 앞선 실행이 켠 채로 4단계 뒤에 죽고 이번 실행이 끈 상태면, 끝에 붙인 `moov`는 잘렸고 옛 `moov`는 `free`다. 그대로 마무리하면 `moov` 없는 파일이 된다. 그래서 `finish`는 PD에서 **설정과 상관없이** 복구 판정을 먼저 한다. 꺼져 있으면 그 `free`의 종류를 `moov`로 되돌리기만 한다(4바이트 쓰기 + `sync`, `mp4meta::repair_in`). 옛 바이트가 그대로라서 원본 PD 파일과 같아진다.
-
-**보고와 판정**
-
-```rust
-pub(crate) enum TagReport { Tagged { cover: bool }, AlreadyTagged, Repaired, NotApplicable }
-pub(crate) enum TagError { Unchanged(Error), Modified(Error) }   // DefragError와 같은 뜻
-```
-
-`finish`의 판정은 `defrag_verdict`(`mod.rs:449-470`)와 같은 모양의 `tag_verdict`다. `Tagged`·`AlreadyTagged`·`Repaired`·`NotApplicable`·`Unchanged`면 마무리를 이어 간다(`Unchanged`는 `tracing::warn!`). `Modified`·핸들 오류면 `drop_uncommitted_tail` 뒤 `.part`로 두고 `Err`를 낸다(`Io`라 이어받을 수 있다). **PD는 태그 뒤 checkpoint하지 않는다**(§6.4).
+**판정**: `.part`를 바꾸지 않으므로 옛 `TagError::Modified`(마무리하지 않음)·`tag_verdict`·`drop_uncommitted_tail`·크래시 복구(`repair_in`, 첫 자식 `mvhd`인 `free` 찾기)가 필요 없어 지웠다. 이 브랜치는 배포 전이라 옛 방식으로 만든 파일을 되돌리는 하위 호환 복구도 두지 않는다. 결과는 `Retagged::{Written { len }, AlreadyTagged}` 또는 오류(태그 없이 원본)뿐이다. `DownloadOutcome::Completed.bytes`는 옮긴 파일의 길이다.
 
 ### 6.3 `finish` 순서(바뀐 뒤)
 
@@ -143,12 +131,13 @@ finish:
   udta = build_udta(tags, cover)
   if converts_on_finish(kind):                                    // HLS·생방송
       defragment_in(f, udta) → defrag_verdict → Converted면 checkpoint   // 지금 그대로 + udta 인자
-  else:                                                           // PD
-      retag_in(f, udta) 또는 (udta 없음) repair_in(f) → tag_verdict  // checkpoint 없음
-  finalize(on_existing)                                           // 지금 그대로(rename_with_retry·noclobber)
+  else if udta:                                                   // PD
+      rewrite_to(.part → {final}.part.tmp, udta)                  // .part는 그대로, checkpoint 없음
+      성공이면 finalize_rewritten(on_existing), 아니면(이미 같음·실패) finalize(on_existing)
+  else: finalize(on_existing)                                     // 지금 그대로(rename_with_retry·noclobber)
 ```
 
-- 최종 이름으로 옮기는 rename은 지금의 `finalize`(`part.rs:549-612`, Windows 잠금 재시도 `fsutil::rename_with_retry`·`rename_noclobber_with_retry`, `fsutil.rs:112`·`:126`)를 그대로 쓴다. 태그는 `.part` 위에서 쓰고, 완성된 `.part`만 한 번의 rename으로 최종 파일이 된다. 그래서 **임시 사본도 새 rename도 없다.** 태그 쓰기 도중 실패하거나 죽어도 최종 파일은 생기지 않는다. `.part`는 다음 실행이 committed_len으로 자른 뒤 다시 마무리한다.
+- 최종 이름으로 옮기는 rename은 지금의 `finalize`와 같은 재시도(`fsutil::rename_with_retry`·`rename_noclobber_with_retry`)를 쓴다. PD 태그는 `.part`가 아니라 임시 파일에 쓰고, 그 임시 파일이 한 번의 rename으로 최종 파일이 된다. 다시 쓰기 도중 실패하거나 죽어도 최종 파일은 생기지 않고 `.part`는 원본 그대로다.
 - 표지 받기는 파일 작업 **앞**에 둔다. 받는 도중 취소되면 파일은 바뀌지 않은 채 `Cancelled`로 끝난다.
 
 ### 6.4 이어받기·재시도·취소와의 관계
@@ -158,9 +147,10 @@ finish:
 | 받기 도중 실패·취소 | 지금 그대로(`.part` 남김). 태그는 마무리에서만 쓰므로 영향이 없다 | `mod.rs:371-379` |
 | 표지 받는 동안 취소 | `Cancelled`(이어받기 가능). 파일은 바뀌지 않았다. 다음 실행은 progressive가 416 → 곧바로 `finish`, segmented는 `next_index == last` → `finish` | `progressive.rs:146-154` |
 | 표지 받기 실패(네트워크·404·형식·크기·시간 초과) | 재시도 없이 표지만 빼고 계속한다(`tracing::warn!`) | §7 |
-| PD: 4단계 뒤·rename 전 크래시 | `resume`이 committed_len(= 원래 PD 크기)으로 잘라 새 `moov`가 사라진다. 다음 `finish`가 복구 규칙(§6.2)으로 다시 붙인다(끈 상태면 되돌린다) | `part.rs:329-337` |
-| PD: `Skip`인데 받는 동안 같은 이름 파일이 생김(`TargetExists`) | `.part`에 덧붙인 `moov`는 커밋되지 않았다. `Overwrite`로 다시 부르면 위 크래시와 같은 길로 마무리된다(전체를 다시 받지 않는다) | `mod.rs:537-547`, core.md 55 |
-| PD에서 checkpoint하지 않는 이유 | checkpoint하면 `committed_len > total_len`이 된다. 다음 실행의 `Range: bytes={committed}-`가 416을 받고, `total == offset` 검사(`progressive.rs:148`)에 걸려 `SourceChanged`로 지운 뒤 처음부터 받는다. core.md 55를 거스른다 | `progressive.rs:146-154` |
+| PD: 임시 파일을 쓰는 도중 크래시 | `.part`는 원본 그대로다. 다음 실행의 `resume`이 남은 `{최종}.part.tmp`를 지우고 416 → `finish`로 다시 쓴다(끈 상태면 원본 그대로 옮긴다) | §6.2 |
+| PD: rename 뒤·`.part` 삭제 전 크래시 | 최종 파일과 `.part`가 함께 남는다. `Overwrite`면 다음 실행이 416으로 다시 마무리해 같은 바이트로 덮고 `.part`를 지운다. `Skip`이면 시작 때 최종 파일이 있어 `Skipped`로 끝나고 `.part`가 남는다(지금의 `Skipped`와 같은 뜻, 받아들임) | `mod.rs` `download` 시작 검사 |
+| PD: `Skip`인데 받는 동안 같은 이름 파일이 생김(`TargetExists`) | 임시 파일을 지우고 원본 `.part`·sidecar를 남긴다. `Overwrite`로 다시 부르면 416 → 다시 쓰기로 마무리된다(전체를 다시 받지 않는다) | `mod.rs:537-547`, core.md 55 |
+| PD에서 checkpoint하지 않는 이유 | `.part`를 바꾸지 않으니 할 것이 없다. (옛 끝에 붙이기에서 checkpoint하면 `committed_len > total_len`이 됐다. 다음 실행의 `Range: bytes={committed}-`가 416을 받고, `total == offset` 검사(`progressive.rs:148`)에 걸려 `SourceChanged`로 지운 뒤 처음부터 받는다. core.md 55를 거스른다) | `progressive.rs:146-154` |
 | HLS·생방송: 변환(+`udta`) 뒤 크래시·`TargetExists` | 지금 그대로다. 변환 뒤 checkpoint(`mod.rs:518-525`)가 있으므로 다음 실행은 `AlreadyFlat` → 그대로 마무리한다 | core.md 71 (4) |
 | 재조회(403) | 태그 입력은 첫 `resolve` 결과로 정한다. 재조회 결과로 바꾸지 않는다 | `mod.rs:273-327` |
 | 소유 판정·sidecar | 메타데이터 켬·끔은 `PartOwner`(`part.rs:34-43`)에 넣지 않는다. 설정을 바꿔도 남은 `.part`는 그대로 이어받는다 | — |
@@ -169,7 +159,7 @@ finish:
 ## 7. 썸네일 받기
 
 - **요청 종류 `RequestKind::Image`를 새로 만든다**(`http.rs:18-25`). 헤더는 UA·Referer·`Accept: image/jpeg, image/png`이고, **Cookie는 `cookies_on_media`와 상관없이 늘 넣지 않는다**. `media_get`(`client.rs:235-243`)은 스위치가 켜지면 쿠키를 보내므로 쓰지 않는다. `Accept`를 좁히는 것은 이미지 CDN이 WebP를 협상해 줄 수 있어서다 **가정**.
-- 주소는 `https`만 받는다. userinfo가 있거나 `{`·`}`(틀 자리표시자)가 남은 주소는 받지 않는다. 호스트는 제한하지 않는다 **가정**. 실제 CDN 호스트 목록을 저장소에 두지 않고, 응답 크기·형식 검사로 충분하다고 본다. 테스트·E2E만 `ClientConfig.allow_loopback_http_images`(기본 false)로 `http://127.0.0.1`·`[::1]`을 허용한다. 이동(redirect)은 표지 전용 클라이언트가 **요청 전에** 같은 조건으로 거른다(어기면 따라가지 않는다, core.md 77).
+- 주소는 `https`만 받는다. userinfo가 있거나 `{`·`}`(틀 자리표시자)가 남은 주소는 받지 않는다. 호스트는 제한하지 않는다 **가정**. 실제 CDN 호스트 목록을 저장소에 두지 않고, 응답 크기·형식 검사로 충분하다고 본다. 테스트·E2E만 `ClientConfig.allow_loopback_http_images`(기본 false)로 `http://127.0.0.1`·`[::1]`을 허용한다. 이동(redirect)은 표지 전용 클라이언트가 **요청 전에** 같은 조건으로 거른다(어기면 따라가지 않는다, core.md 77). 이동한 요청에 reqwest가 앞 주소 전체(서명 쿼리 포함)를 `Referer`로 넣지 않게 표지 클라이언트는 `referer(false)`다. 처음 요청의 고정 `Referer`만 그대로 실린다(core.md 78).
 - 본문은 `read_capped`(`client.rs:251-268`)로 **2 MiB까지만** 읽는다 **[잠정]** 근거 없음, ADR-0009 묶음. 실물 썸네일은 수백 KB라고 **가정**한다.
 - 전체 시간 상한은 **15초**다 **[잠정]**(`tokio::time::timeout`). `build_client`에는 전체 timeout이 없어(`http.rs:174`) 연결 10초 + 읽기 idle 30초 그대로면 마무리가 40초 넘게 늘어질 수 있다. 재시도는 하지 않는다. 최선 노력이고, 연결 대기(인내 모드, core.md 56)도 타지 않는다.
 - **형식은 앞 바이트로만 정한다**: `FF D8 FF`면 JPEG(type 13), `89 50 4E 47 0D 0A 1A 0A`면 PNG(type 14), 그 밖은 버린다. `Content-Type`은 믿지 않는다. 디코드는 하지 않는다.
@@ -211,8 +201,8 @@ finish:
 - 작업 행·카드에는 아무것도 더하지 않는다. 표지가 빠졌다는 표시도 없다(로그에만 남긴다).
 
 ## 10. 오류·로그
-- **새 오류 종류는 없다.** 태그 실패의 두 갈래는 기존 오류(`Io`·`DiskFull`·`FileTooLarge`·`Parse`)로 나간다. `Modified`만 `Err`이고 이어받을 수 있다(core.md 61 M4와 같다). 셸 `AppError`·`errors.ts`도 바뀌지 않는다.
-- 로그(`tracing`): 표지 받기 실패 `warn`(이유 범주와 가린 주소), 태그 결과 `info`(`TagReport`), `Unchanged` `warn`. 제목·채널 이름은 로그에 남기지 않는다(파일 이름에 이미 있지만, 로그 파일을 남에게 줄 때 덜 새게 한다).
+- **새 오류 종류는 없다.** HLS·생방송 태그 실패는 defrag의 두 갈래 그대로다. PD 태그 실패(`Parse`·`DiskFull`·`Io`·`FileTooLarge`)는 `Err`로 나가지 않고 경고 로그 뒤 태그 없이 마무리한다(core.md 78). 셸 `AppError`·`errors.ts`도 바뀌지 않는다.
+- 로그(`tracing`): 표지 받기 실패 `warn`(이유 범주와 가린 주소), PD 태그 결과 `info`(다시 쓴 길이·이미 같음), 태그를 넣지 못함 `warn`(오류만, 주소 없음). 제목·채널 이름은 로그에 남기지 않는다(파일 이름에 이미 있지만, 로그 파일을 남에게 줄 때 덜 새게 한다).
 
 ## 11. 비밀값 규칙
 - 썸네일 요청에 쿠키를 보내지 않는다(§7). `http::headers` 표(`http.rs:138-144`)에 `Image` 행을 더하고, 기존 테스트 `headers_by_kind`(`http.rs:501-`)에 "`cookies_on_media = true`여도 `Image`는 Cookie 없음"을 더한다.
@@ -220,7 +210,7 @@ finish:
 - 썸네일 주소는 `redact_url`을 거쳐서만 로그에 남긴다.
 
 ## 12. OS별 분기
-- 파일 조작은 defrag와 같은 `DefragFile` trait(`set_len`·`sync_data`·seek 쓰기)뿐이라 OS 분기가 없다. 최종 rename의 Windows 잠금 재시도는 기존 `finalize`가 맡는다(core.md 37·38·55).
+- HLS·생방송 파일 조작은 defrag와 같은 `DefragFile` trait뿐이다. PD는 원본 읽기·임시 파일 쓰기·`sync_all`·rename뿐이라 OS 분기가 없다. 임시 파일 rename의 Windows 잠금 재시도는 기존 `finalize`와 같은 함수가 맡고(core.md 37·38·55), 임시 파일 핸들은 rename 전에 닫는다(Windows는 열린 파일을 옮길 수 없다). 디스크 부족 판정은 `map_io_error`(ENOSPC·Windows 112·39 → `DiskFull`)지만 PD에서는 어떤 쓰기 실패든 같은 갈래(태그 없이 원본)다.
 - Windows 탐색기가 어느 원자를 어느 열에 보여 주는지(`©cmt` vs `desc`, `©day` 형식)는 실기로만 안다(M-meta-1).
 
 ## 13. 테스트 계획(TDD)
@@ -237,29 +227,33 @@ finish:
 지금은 최상위 상자만 본다(`mp4.rs:26-`). 다음을 더한다. std만 쓴다(`examples/dl.rs`·`tests/live.rs`가 `#[path]`로 함께 쓴다).
 - `child_boxes(body) -> Vec<(String, Range)>`, 경로 탐색 `find_path(b, &["moov","udta","meta","ilst"])`. `meta`는 full box(4바이트 건너뜀)다.
 - `ilst_items(b) -> Vec<(String, u32 /*type*/, Vec<u8>)>`.
-- `top_moov_count`, 그리고 `free` 안의 옛 `moov` 알아보기(첫 자식 `mvhd`).
+- `top_moov_count`, `chunk_offsets(moov 본문)`(모든 trak의 `stco`/`co64` 항목, core.md 78). 옛 `freed_moovs`는 끝에 붙이기와 함께 지웠다.
 
 ### 13.3 단위
 - `mp4meta::build_udta`: 원자 순서·`data` type·locale·`hdlr` 바이트(1단계 ffmpeg 대조 뒤 바이트 golden), 빈 값 생략, 1 KiB 자르기(UTF-8 경계), 모두 비면 `None`.
 - `url::public_page_url`: 세 종류의 모양. `ContentRef`만 받으므로 쿼리가 들어갈 길이 없음을 시그니처로 보이고, 서명 주소 문자열이 결과에 없음을 확인한다(`http::assert_clean`과 같은 방식).
 - `©day`: `live_open_date` 우선, `publish_date` 대체, 잘못된 날짜는 생략(`parse_live_date` 표 재사용).
 - 표지 판정: JPEG·PNG·WebP·빈 본문·2 MiB + 1바이트.
-- `retag_in`(바이트 위 `SliceSrc`와 쓰기 실패를 주입하는 가짜 파일, defrag 테스트와 같은 도구):
-  - 정상: `[ftyp, free, free, mdat, moov]`, 새 `moov`의 `udta` 외 바이트가 옛 `moov`와 같다.
-  - 기존 `udta` 교체, `AlreadyTagged`, 크기 0인 끝 상자 거부, `moov` 둘 거부, `mvex` 거부, 64 MiB 초과 거부.
-  - 3단계 실패 → 되돌림(`Unchanged`)과 되돌림 실패(`Modified`), 4단계 실패(`Modified`).
-  - 크래시 복구: 옛 `moov`만 `free`인 바이트 → 다시 붙임. 같은 `free` 후보 둘 → `Unchanged`. `repair_in`이 원본과 바이트가 같은 파일을 돌려준다.
-- **큰 파일(co64·largesize) 경로**: 희소 가짜 파일(`DefragFile` 구현, 쓴 구간만 `BTreeMap`에 들고 길이는 5 GiB로 보이게)을 쓴다. 상자는 `ftyp`, `moov`(`co64` 값이 4 GiB 넘음), `free`, largesize(`size == 1`) `mdat`(4 GiB 넘게)다. 확인: 새 `moov`가 5 GiB 위치에 붙는다. `co64` 항목이 바이트 그대로다. 옛 `moov`가 `free`가 된다. 검사기가 largesize를 따라간다. 실제 디스크에 큰 파일을 만들지 않는다(Windows NTFS `set_len`이 희소 파일을 보장하지 않는다). `mdat`이 움직이지 않으니 `stco` → `co64` 승격 같은 표 다시 쓰기는 없다. 그것을 이 테스트로 고정한다.
+- PD 다시 쓰기(core.md 78, `mp4meta/tests.rs`, 바이트 위 `SliceSrc`·`Cursor`):
+  - 정상: `[ftyp, moov, mdat]`(faststart, 들어가지 않는 `free(8)`는 뺀다), 모든 청크 위치가 원본과 같은 바이트를 가리킨다(`stco`·`co64`·trak 둘·청크 여럿), `moov`가 끝에 있는 파일은 앞쪽 위치를 그대로 둔다.
+  - `free` 흡수: 8바이트 이상 남으면 `free`로 채워 길이·`mdat` 위치·청크 위치가 그대로다. 꼭 맞으면 `free` 없이, 1~7바이트 남으면 `free`를 빼고 당긴다(`delta` < 0).
+  - 기존 `udta` 교체, 이미 같음(`AlreadyTagged`), 다른 태그로 다시, 자식 순서 `[free, mvhd, …]`.
+  - 거부: `moov` 없음·둘·`mvex`·크기 0 끝 상자·잘린 파일·크기 0 자식·64 MiB 초과, `stco`가 32비트를 넘게 됨(같은 값의 `co64`는 된다), 표 없음·둘·옛 `moov` 안을 가리킴·항목 수 불일치.
+  - `rewrite_to`: 남은 임시 파일을 덮어 같은 바이트를 쓴다. 쓰기 도중 디스크 부족(0·1·37바이트·전체 뒤)이면 `DiskFull`이고 임시 파일이 없다. 구조를 모르면 임시 파일을 열지 않는다.
+  - `download/mod.rs`: 결함 주입(`StorageFull` 처음·중간, raw ENOSPC, 기타 오류, sync 실패, `FileTooLarge`, 열기 실패) → 임시 파일 없음, `.part` 그대로, 원본이 최종 파일. 성공·`TargetExists`·이미 같음. `part.rs`: 남은 `{최종}.part.tmp`를 `resume`·`create`·`discard_partial`이 지우고 다른 출력의 것은 남긴다, rename 실패면 임시 파일만 지운다.
+- **큰 파일(co64·largesize) 경로**: 희소 가짜 파일(쓴 구간만 `BTreeMap`에 들고 길이는 5 GiB로 보이게)에서 **계획만** 본다(뒤는 바이트 그대로 옮기기다). 상자는 `ftyp`, `moov`(`co64` 값이 4 GiB 넘음), `free`, largesize(`size == 1`) `mdat`이다. 확인: `co64` 값이 `delta`만큼 옮겨진 새 `moov`, 옮기기는 largesize `mdat` 머리부터, 길이는 5 GiB + `delta`. 실제 디스크에 큰 파일을 만들지 않는다(Windows NTFS `set_len`이 희소 파일을 보장하지 않는다).
 - defrag: `build_moov`에 `udta`를 주면 마지막 자식으로 붙는다. `None`이면 지금 결과와 바이트가 같다(기존 테스트가 그대로 녹색).
 - `headers_by_kind`에 `Image` 행(§11).
 
 ### 13.4 통합(wiremock, 오프라인)
 - `tests/progressive.rs`:
-  - `pd_metadata_moov_at_end`: 상자 순서, `ilst` 다섯 원자, `mdat` 본문이 원본과 같음, 썸네일 요청에 Cookie 없음(쿠키 설정 + `cookies_on_media = true`).
+  - `pd_metadata_rewrites_with_moov_first`: 상자 순서 `[ftyp, moov, mdat]`, 청크 위치가 원본과 같은 바이트를 가리킴, `ilst` 다섯 원자, `mdat` 본문이 원본과 같음, 썸네일 요청에 Cookie 없음(쿠키 설정 + `cookies_on_media = true`).
   - `pd_metadata_off_is_byte_identical`: 끄면 원본과 바이트가 같다.
   - 표지 실패 표(404·WebP·2 MiB 초과·시간 초과·`{type}` 주소·http 주소) → `Completed`, `covr`만 없음.
-  - `pd_tagged_then_skipped_resumes_without_refetch`: `Skip` + 받는 동안 생긴 같은 이름 파일 → `.part` 남음 → `Overwrite`로 다시 부름 → 미디어 GET은 416 한 번뿐, 결과는 태그된 파일이다(segmented의 `full_converted_then_skipped_resumes_without_refetch`와 짝).
-  - `pd_crash_after_patch_recovers`: 옛 `moov`를 `free`로 바꾼 `.part` + committed_len = 전체 sidecar를 손으로 만든다. 켠 실행이면 태그되고, 끈 실행이면 원본과 바이트가 같아진다(`repair_in`).
+  - `pd_tagged_then_skipped_resumes_without_refetch`: `Skip` + 받는 동안 생긴 같은 이름 파일 → 원본 그대로의 `.part` 남음(임시 파일 없음) → `Overwrite`로 다시 부름 → 미디어 GET은 416 한 번뿐, 결과는 태그된 파일이다(segmented의 `full_converted_then_skipped_resumes_without_refetch`와 짝).
+  - `pd_crash_during_rewrite_resumes_from_the_original_part`: 원본 `.part` + committed_len = 전체 sidecar + 반쯤 쓴 임시 파일. 켠 실행은 태그되고 끈 실행은 원본 그대로, 둘 다 416 한 번, 임시 파일이 지워지고 다른 출력의 임시 파일은 남는다.
+  - `pd_crash_after_rename_refinalizes_on_overwrite`: 최종 파일과 원본 `.part`가 함께 남은 상태 → 덮어쓰기 실행이 416 한 번으로 같은 바이트를 만들고 `.part`를 지운다.
+  - `cover_redirect_does_not_leak_the_previous_url_as_referer`: 표지 302 이동 뒤 요청의 `Referer`가 앞 주소(서명 쿼리)가 아니라 고정 값이고 Cookie가 없다(core.md 78).
   - 표지 받는 동안 취소 → `Cancelled`, `.part`가 바뀌지 않음.
 - `tests/segmented.rs`: 전체·구간 결과의 마지막 `moov`에 `udta`가 있다(구간은 `©nam`에 접미사). 변환 뒤 `Skipped` → 다시 받기 없이 마무리(기존 테스트에 켠 판을 더한다).
 - `tests/recording.rs`: 생방송 정상 마무리에 `covr` 없는 태그. 끊긴 `.part` 마무리에는 태그가 없다.
@@ -275,7 +269,7 @@ finish:
 
 | 단계 | 내용 | 끝나는 조건 |
 |---|---|---|
-| M-1 코어 상자 | `mp4meta`(`build_udta`·`retag_in`·`repair_in`, `free` 판정 공유), defrag `udta` 인자, `url::public_page_url`, fixture(§13.1), 검사기 확장(§13.2), 단위 테스트(§13.3, co64 희소 파일 포함). ffmpeg 참조 대조로 §5 배치 확정. 아직 배선하지 않는다 | `rust`·`fixtures --check`·`scan` 녹색. core.md 75 |
+| M-1 코어 상자 | `mp4meta`(`build_udta`·`retag_in`·`repair_in`, `free` 판정 공유. PD 경로는 core.md 78에서 `rewrite_to`로 바뀜), defrag `udta` 인자, `url::public_page_url`, fixture(§13.1), 검사기 확장(§13.2), 단위 테스트(§13.3, co64 희소 파일 포함). ffmpeg 참조 대조로 §5 배치 확정. 아직 배선하지 않는다 | `rust`·`fixtures --check`·`scan` 녹색. core.md 75 |
 | M-2 코어 배선 | `VideoContent.thumbnail_image_url`, `Resolved.thumbnail_url`, `RequestKind::Image`·표지 받기(§7), `DownloadRequest.embed_metadata`, `Job.tags`, `finish` 순서(§6.3)·PD 복구, 통합 테스트(§13.4), `examples/dl.rs --no-meta`(기본 켬) | 통합 테스트 녹색, 기존 golden 그대로. core.md 76 |
 | M-3 셸·앱 | `UserSettings.embed_metadata`(`bool_or_true`), `JobDefaults`·`JobRecord`(serde 기본 true), DTO·patch·bindings, 가짜 백엔드, `ko.ts`·`content.md`, 설정 행, vitest·웹 E2E, 네이티브 E2E golden 둘·fixture 서버(§13.5), shots 기준선 | `frontend`·`tauri`·`e2e-web`·`design-*` 녹색, 네이티브 E2E 녹색. app.md 91 |
 | M-4 실측·기록 | 사용자 실측(§16), 결과를 범주만 ROADMAP에. 필요하면 `©day` 형식·`desc` 추가를 고친다 | M-meta-1·2 판정 |
@@ -287,13 +281,12 @@ M-1·M-2는 사용자 데이터(받은 파일 구조)를 바꾸므로 "중요한
 | 위험 | 대응 |
 |---|---|
 | ilst 배치가 플레이어마다 다르게 읽힘 | M-1 ffmpeg 참조 대조, M-meta-1 실기 셋 |
-| PD faststart 상실로 네트워크 재생(NAS·DLNA)의 시작이 느려짐 | 받아들인다(로컬 재생 기준, core.md 60 한계 ④). 문제가 되면 끈다. (b)는 크래시 안전 설계가 따로 필요하다 |
-| PD 죽은 공간(옛 `moov` 크기) | 수 MB/수 GB로 1% 미만이라고 **가정**. M-meta-2에서 크기 범주만 본다 |
-| 크래시 복구가 엉뚱한 `free`를 `moov`로 봄 | "최상위 `moov` 없음 + 첫 자식 `mvhd` + `mvex` 없음 + 정확히 하나" 조건, 둘이면 포기(`Unchanged`) |
-| 꺼진 상태로 되돌린 실행에서 `moov` 없는 파일 | PD는 설정과 상관없이 `repair_in`을 먼저 한다(§6.2) |
+| PD 마무리가 디스크를 잠깐 두 배 쓰고 복사 시간이 듦 | 같은 폴더 임시 파일이라 rename이 원자적이다. 디스크가 모자라면 태그 없이 원본으로 끝난다(받기 성공). 복사는 blocking 스레드에서 하며 취소할 수 없다(받아들임) |
+| 청크 위치를 잘못 옮겨 재생이 깨짐 | 모든 trak의 표를 정확히 하나씩 찾고 항목 수를 검사한다. 옛 `moov` 안을 가리키면 거부. 단위·통합 테스트가 청크 위치가 같은 바이트를 가리키는지 본다 |
+| 옮긴 뒤 `.part` 삭제 전 크래시로 `.part`가 남음(`Skip`) | 지금의 `Skipped`와 같은 뜻이라 받아들인다(§6.4) |
 | 표지 받기가 마무리를 늦춤 | 15초 상한, 재시도 없음, 취소 가능 |
 | 썸네일 주소가 내부 주소를 가리킴 | `https`만 받는다. 쿠키를 보내지 않는다. 2 MiB 상한. 형식은 앞 바이트로 판정 |
-| 앱 되돌리기(옛 버전) | 옛 앱은 `embedMetadata` 키를 무시한다. 옛 앱이 §6.2 크래시 중간 상태의 `.part`를 만나면 `moov` 없는 파일로 마무리할 수 있다(창이 짧은 드문 경우라 받아들인다) |
+| 앱 되돌리기(옛 버전) | 옛 앱은 `embedMetadata` 키를 무시한다. PD 다시 쓰기는 `.part`를 바꾸지 않으므로 옛 앱이 이어받아도 원본 그대로다. 남은 `{최종}.part.tmp`는 옛 앱이 지우지 않는다(드문 경우라 받아들인다) |
 
 ## 16. 사용자 실측 목록(출력은 판정만)
 
@@ -308,4 +301,4 @@ M-1·M-2는 사용자 데이터(받은 파일 구조)를 바꾸므로 "중요한
 ## 17. 남은 결정
 - `©day`에 시각·시간대를 붙일지(M-meta-1 뒤).
 - 클립·생방송 표지(M-meta-3, `{type}` 값 확인 뒤).
-- (b) `free` 안에 맞추기를 크래시 안전하게 설계할 가치가 있는지. 실물 `free` 크기 범주를 본 뒤 정한다. 1차는 하지 않는다.
+- (b) `free` 안에 맞추기는 다시 쓰기(§6.2 3단계 `free` 흡수)로 대신했다.

@@ -119,6 +119,14 @@ fn assert_no_partial(out: &Path) {
     let (p, s) = part_files(out);
     assert!(!p.exists(), ".part가 남았다");
     assert!(!s.exists(), "sidecar가 남았다");
+    assert!(!tag_temp(out).exists(), "메타데이터 임시 파일이 남았다");
+}
+
+/// PD 메타데이터를 다시 쓰는 임시 파일 `{out}.part.tmp`(mp4-metadata.md §6.2).
+fn tag_temp(out: &Path) -> PathBuf {
+    let mut t = out.as_os_str().to_owned();
+    t.push(".part.tmp");
+    t.into()
 }
 
 /// spec §8.2 ByteIdentity
@@ -915,9 +923,20 @@ fn box_kinds(b: &[u8]) -> Vec<String> {
     mp4::top_boxes(b).into_iter().map(|(k, _)| k).collect()
 }
 
-/// 켜면 새 moov가 끝에 붙고 옛 moov는 free가 된다. 표지 요청에는 쿠키가 없다.
+/// 다시 쓴 파일의 청크 위치가 원본과 같은 바이트(fixture 청크 64바이트)를 가리킨다.
+fn assert_chunks_follow(orig: &[u8], b: &[u8]) {
+    let old = mp4::chunk_offsets(mp4::find_path(orig, &["moov"]).unwrap()).unwrap();
+    let new = mp4::chunk_offsets(mp4::find_path(b, &["moov"]).unwrap()).unwrap();
+    assert_eq!(old.len(), new.len());
+    for (o, n) in old.iter().zip(&new) {
+        let (o, n) = (*o as usize, *n as usize);
+        assert_eq!(orig[o..o + 64], b[n..n + 64]);
+    }
+}
+
+/// 켜면 새 moov를 앞에 둔 채(faststart) 다시 쓰고 청크 위치를 옮긴다. 표지 요청에는 쿠키가 없다.
 #[tokio::test]
-async fn pd_metadata_moov_at_end() {
+async fn pd_metadata_rewrites_with_moov_first() {
     let server = MockServer::start().await;
     setup_meta(&server, Some(&format!("{}{COVER_PATH}", server.uri()))).await;
     mount_cover(&server, fixture("testdata/synthetic/thumb.jpg")).await;
@@ -940,23 +959,11 @@ async fn pd_metadata_moov_at_end() {
             live: None,
         }
     );
-    assert_eq!(box_kinds(&b), ["ftyp", "free", "free", "mdat", "moov"]);
+    assert_eq!(box_kinds(&b), ["ftyp", "moov", "mdat"]);
     let orig = pd_bytes();
     assert!(b.len() > orig.len());
     assert_eq!(mp4::mdat_payloads(&b), mp4::mdat_payloads(&orig));
-    // mdat까지의 앞부분은 옛 moov의 종류 4바이트(moov→free)만 다르다
-    let before_mdat = mp4::top_boxes(&orig)
-        .into_iter()
-        .find(|(k, _)| k == "mdat")
-        .unwrap()
-        .1
-        .end;
-    let changed = orig[..before_mdat]
-        .iter()
-        .zip(&b)
-        .filter(|(a, b)| a != b)
-        .count();
-    assert_eq!(changed, 4, "m→f, o→r, o→e, v→e");
+    assert_chunks_follow(&orig, &b);
     let items = ilst_of(&b);
     assert_eq!(kinds(&items), ["©nam", "©ART", "©day", "©cmt", "covr"]);
     assert_eq!(items[0].2, "가상 일반 VOD 제목 (괄호) 테스트".as_bytes());
@@ -1173,6 +1180,56 @@ async fn cover_redirect_is_filtered_before_the_request() {
     }
 }
 
+/// 표지 이동(redirect)을 따라간 요청에 앞 주소(서명 쿼리 포함)가 `Referer`로 실리지 않는다. reqwest는 기본으로 이동할 때
+/// 앞 주소 전체를 `Referer`에 넣는다(https → http 강등만 뺀다). 표지 클라이언트는 그것을 끄고(`referer(false)`) 처음
+/// 요청의 고정 `Referer`만 그대로 둔다. 쿠키는 어느 요청에도 없다.
+#[tokio::test]
+async fn cover_redirect_does_not_leak_the_previous_url_as_referer() {
+    const FINAL: &str = "/thumb/final.jpg";
+    let server = MockServer::start().await;
+    setup_meta(
+        &server,
+        Some(&format!("{}{COVER_PATH}?hdnts=SECRET", server.uri())),
+    )
+    .await;
+    Mock::given(method("GET"))
+        .and(path(COVER_PATH))
+        .respond_with(
+            ResponseTemplate::new(302)
+                .insert_header("location", format!("{}{FINAL}", server.uri())),
+        )
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(FINAL))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_bytes(fixture("testdata/synthetic/thumb.jpg")),
+        )
+        .mount(&server)
+        .await;
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_path(&dir);
+    Chzzk::new(meta_config(&server))
+        .unwrap()
+        .download(meta_request(&out), CancellationToken::new(), &|_| {})
+        .await
+        .unwrap();
+    let first = media_requests(&server, COVER_PATH).await;
+    let second = media_requests(&server, FINAL).await;
+    assert_eq!((first.len(), second.len()), (1, 1));
+    // 양성 대조: 처음 요청에는 서명 쿼리가 실렸다
+    assert!(first[0].url.query().unwrap().contains("SECRET"));
+    for (name, q) in [("처음", &first[0]), ("이동한 뒤", &second[0])] {
+        assert_eq!(
+            header(q, "referer"),
+            Some("https://chzzk.naver.com/"),
+            "{name}: 고정 Referer만"
+        );
+        assert_eq!(header(q, "cookie"), None, "{name}");
+    }
+    assert_eq!(kinds(&ilst_of(&std::fs::read(&out).unwrap())).len(), 5);
+}
+
 /// 표지 주소의 서명 같은 쿼리는 태그·오류·`Debug`에 남지 않는다.
 #[tokio::test]
 async fn signed_thumbnail_query_stays_out_of_tags() {
@@ -1209,7 +1266,7 @@ async fn signed_thumbnail_query_stays_out_of_tags() {
 }
 
 /// 마무리에서 최종 경로에 파일이 생겨 `Skipped`로 끝난 뒤, 같은 요청을 다시 부르면 처음부터 받지 않고 마무리한다.
-/// 태그 뒤 checkpoint를 하지 않아(`committed_len`이 원래 크기) 416이 `SourceChanged`가 되지 않는다.
+/// 다시 쓰기는 `.part`를 바꾸지 않고 checkpoint도 하지 않아(`committed_len`이 원래 크기) 416이 `SourceChanged`가 되지 않는다.
 #[tokio::test]
 async fn pd_tagged_then_skipped_resumes_without_refetch() {
     let server = MockServer::start().await;
@@ -1236,10 +1293,11 @@ async fn pd_tagged_then_skipped_resumes_without_refetch() {
         .await
         .unwrap();
     assert!(matches!(r, DownloadOutcome::Skipped { .. }), "{r:?}");
-    let tagged = std::fs::read(&part).unwrap();
-    assert_eq!(box_kinds(&tagged).last().map(String::as_str), Some("moov"));
+    assert_eq!(std::fs::read(&out).unwrap(), b"someone else");
+    // `.part`는 원본 PD 바이트 그대로이고 임시 파일은 지웠다
+    assert_eq!(std::fs::read(&part).unwrap(), pd_bytes());
+    assert!(!tag_temp(&out).exists());
     assert!(sidecar.exists());
-    // sidecar는 원래 PD 크기를 가리킨다(태그 뒤 checkpoint 없음)
     let sc: serde_json::Value = serde_json::from_slice(&std::fs::read(&sidecar).unwrap()).unwrap();
     assert_eq!(
         sc["committedLen"].as_u64(),
@@ -1261,31 +1319,32 @@ async fn pd_tagged_then_skipped_resumes_without_refetch() {
         header(&media[1], "range"),
         Some(&*format!("bytes={}-", pd_bytes().len()))
     );
-    assert_eq!(std::fs::read(&out).unwrap(), tagged);
+    let b = std::fs::read(&out).unwrap();
+    assert_eq!(box_kinds(&b), ["ftyp", "moov", "mdat"]);
+    assert_eq!(
+        kinds(&ilst_of(&b)),
+        ["©nam", "©ART", "©day", "©cmt", "covr"]
+    );
+    assert_chunks_follow(&pd_bytes(), &b);
     assert_no_partial(&out);
 }
 
-/// 옛 moov를 free로 바꾼 직후 죽은 `.part`(새 moov는 resume이 잘라 냈다)를 이어받는 실행:
-/// 켜면 다시 붙여 태그를 마치고, 끄면 옛 moov로 되돌려 원본과 바이트가 같아진다.
+/// 임시 파일을 쓰는 도중 죽은 상황: 끝까지 받은 원본 `.part`(committed = 전체)와 반쯤 쓴 임시 파일이 남았다. 다음
+/// 실행은 416 한 번으로 이어받아 임시 파일을 지우고 다시 마무리한다. 켠 실행은 태그를 넣고, 끈 실행은 원본 그대로다.
 #[tokio::test]
-async fn pd_crash_after_patch_recovers() {
+async fn pd_crash_during_rewrite_resumes_from_the_original_part() {
     let orig = pd_bytes();
-    let (_, moov_body) = mp4::top_boxes(&orig)
-        .into_iter()
-        .find(|(k, _)| k == "moov")
-        .unwrap();
-    let mut crashed = orig.clone();
-    crashed[moov_body.start - 4..moov_body.start].copy_from_slice(b"free");
-    assert_eq!(mp4::freed_moovs(&crashed).len(), 1);
-    assert_eq!(mp4::top_moov_count(&crashed), 0);
-
     for embed in [true, false] {
         let server = MockServer::start().await;
         setup_meta(&server, Some(&format!("{}{COVER_PATH}", server.uri()))).await;
         mount_cover(&server, fixture("testdata/synthetic/thumb.jpg")).await;
         let dir = tempfile::tempdir().unwrap();
         let out = out_path(&dir);
-        make_partial(&out, &crashed, Some(crashed.len() as u64)).await;
+        make_partial(&out, &orig, Some(orig.len() as u64)).await;
+        std::fs::write(tag_temp(&out), &orig[..orig.len() / 2]).unwrap();
+        // 같은 폴더 다른 출력의 임시 파일은 건드리지 않는다
+        let other = tag_temp(&out.with_file_name("다른 영상.mp4"));
+        std::fs::write(&other, b"other job").unwrap();
         let req = DownloadRequest {
             embed_metadata: embed,
             ..request(&out)
@@ -1298,18 +1357,53 @@ async fn pd_crash_after_patch_recovers() {
         assert!(matches!(r, DownloadOutcome::Completed { .. }), "{r:?}");
         let b = std::fs::read(&out).unwrap();
         if embed {
-            assert_eq!(box_kinds(&b), ["ftyp", "free", "free", "mdat", "moov"]);
+            assert_eq!(box_kinds(&b), ["ftyp", "moov", "mdat"]);
             assert_eq!(
                 kinds(&ilst_of(&b)),
                 ["©nam", "©ART", "©day", "©cmt", "covr"]
             );
+            assert_chunks_follow(&orig, &b);
         } else {
-            assert_eq!(b, orig, "끈 실행은 옛 moov로 되돌린다");
+            assert_eq!(b, orig, "끈 실행은 원본 그대로");
         }
         // 받은 바이트를 다시 받지 않았다: 416 한 번뿐
         assert_eq!(media_requests(&server, MEDIA_PATH).await.len(), 1);
         assert_no_partial(&out);
+        assert_eq!(std::fs::read(&other).unwrap(), b"other job");
     }
+}
+
+/// 임시 파일을 최종 이름으로 옮긴 뒤 `.part`를 지우기 전에 죽은 상황: 최종 파일과 원본 `.part`가 함께 있다.
+/// 덮어쓰기 실행은 416 한 번으로 다시 마무리해 같은 바이트로 덮고 `.part`를 지운다.
+#[tokio::test]
+async fn pd_crash_after_rename_refinalizes_on_overwrite() {
+    let server = MockServer::start().await;
+    setup_meta(&server, Some(&format!("{}{COVER_PATH}", server.uri()))).await;
+    mount_cover(&server, fixture("testdata/synthetic/thumb.jpg")).await;
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_path(&dir);
+    let chzzk = Chzzk::new(meta_config(&server)).unwrap();
+    chzzk
+        .download(meta_request(&out), CancellationToken::new(), &|_| {})
+        .await
+        .unwrap();
+    let tagged = std::fs::read(&out).unwrap();
+    let orig = pd_bytes();
+    make_partial(&out, &orig, Some(orig.len() as u64)).await;
+
+    let r = chzzk
+        .download(meta_request(&out), CancellationToken::new(), &|_| {})
+        .await
+        .unwrap();
+    assert!(matches!(r, DownloadOutcome::Completed { .. }), "{r:?}");
+    assert_eq!(
+        std::fs::read(&out).unwrap(),
+        tagged,
+        "같은 입력은 같은 바이트"
+    );
+    let media = media_requests(&server, MEDIA_PATH).await;
+    assert_eq!(media.len(), 2, "처음 200 한 번 + 416 한 번");
+    assert_no_partial(&out);
 }
 
 /// 표지를 받는 동안 취소되면 `Cancelled`이고 `.part`는 바뀌지 않는다. 다음 실행이 이어서 마무리한다.

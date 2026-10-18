@@ -4,20 +4,20 @@
 //!
 //! - `build_udta`: 태그와 표지로 `udta` 상자 전체를 만드는 순수 함수. 빠른 다시보기·생방송은 이것을 defrag가 만드는
 //!   새 `moov`에 함께 넣는다(`defrag::defragment_in`의 `udta` 인자).
-//! - `retag_in`: 일반 VOD·클립(PD mp4, `[ftyp, moov, free, mdat]`)용. **`mdat`을 옮기지 않는다.** 옛 `moov` 본문에서 `udta`를
-//!   바꾼 새 `moov`를 파일 끝에 붙이고 옛 `moov`의 4바이트 종류만 `free`로 바꾼다. `mdat`이 움직이지 않으니
-//!   `stco`/`co64`는 바이트 그대로다. faststart(`moov`가 앞)를 잃는다.
-//! - `repair_in`: 위 4단계까지 마친 뒤 죽은 파일을 메타데이터를 끈 실행이 이어받았을 때 `free`를 `moov`로 되돌린다.
+//! - `rewrite_to`: 일반 VOD·클립(PD mp4, `[ftyp, moov, free, mdat]`)용. **원본 `.part`는 읽기만 한다.** 같은 폴더의 임시
+//!   파일에 `[ftyp, 새 moov(udta 포함), …, mdat]`을 쓰고 sync한다(faststart 유지). 새 `moov`가 커져 뒤 바이트가 움직이면
+//!   모든 `trak`의 `stco`/`co64`를 그만큼 고친다. 옛 `moov` 바로 뒤 `free`가 있으면 그 자리를 먼저 쓴다. 최종 이름으로
+//!   옮기는 것은 `PartFile::finalize_rewritten`이다(mp4-metadata.md §6.2, core.md 구현 중 변경 78).
 //!
-//! 쓰는 순서와 크래시 규칙은 defrag와 같다(붙이고 sync → 종류 패치 → sync). 파일을 바꿨는지로 `TagError`를 나눈다.
+//! 실패하면 임시 파일을 지우고 오류를 돌려준다. 원본이 그대로라 호출한 쪽은 태그 없이 원본을 마무리한다.
 //! 벽시계·앱 버전처럼 실행마다 달라지는 값은 넣지 않아 같은 입력이 같은 바이트가 된다.
 
-use std::io::{self, SeekFrom};
+use std::io::{self, Read, Seek, SeekFrom, Write};
+use std::ops::Range;
 use std::path::Path;
 
 use crate::download::defrag::{
-    DefragFile, Fail, FileSrc, MAX_META_BOX, Source, Top, bad, be32, children, find,
-    free_first_child, read_vec, scan,
+    Fail, FileSrc, MAX_META_BOX, Source, bad, be32, be64, children, find, read_vec, scan,
 };
 use crate::error::Error;
 use crate::fsutil::map_io_error;
@@ -226,79 +226,54 @@ pub(crate) fn build_udta(tags: &Tags, cover: Option<&Cover>) -> Option<Vec<u8>> 
 }
 
 // ---------------------------------------------------------------------------------------------
-// 끝에 붙이기
+// 임시 파일에 다시 쓰기(PD)
 
-/// `retag_in`·`repair_in`의 결과.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum TagReport {
-    /// 새 `moov`를 붙이고 옛 `moov`를 `free`로 바꿨다(또는 크래시 뒤 다시 붙였다)
-    Tagged,
-    /// 옛 `moov`가 이미 같은 `udta`로 끝난다. 아무것도 바꾸지 않았다
-    AlreadyTagged,
-    /// `free`로 바뀐 옛 `moov`를 `moov`로 되돌렸다(메타데이터를 끈 실행의 복구)
-    Repaired,
-    /// 할 일이 없다(`repair_in`: 이미 `moov`가 있거나 `moov`로 보이는 `free`가 없다)
-    NotApplicable,
-}
-
-/// 실패. 파일을 바꿨는지로 나눈다(`DefragError`와 같은 뜻).
+/// `plan_rewrite`의 결과.
 #[derive(Debug)]
-pub(crate) enum TagError {
-    /// 파일은 원래 그대로다(구조를 해석하지 못했거나, 붙인 `moov`를 잘라 되돌렸다). 그대로 마무리해도 된다
-    Unchanged(Error),
-    /// 바꾸는 도중 실패했고 되돌리지 못했다(또는 길이·구조를 읽다 입출력 오류가 나 상태를 확인하지 못했다).
-    /// 최종 파일로 옮기지 않는다
-    Modified(Error),
+pub(crate) enum Plan {
+    /// 옛 `moov`가 이미 같은 `udta`로 끝난다. 다시 쓸 것이 없다
+    AlreadyTagged,
+    Rewrite(Rewrite),
 }
 
-fn io_err(op: &'static str, e: io::Error) -> Error {
-    map_io_error(op, Path::new(WHAT), e)
+/// 다시 쓸 파일: 원본 `[0, before)` + `moov`(남는 자리를 채우는 `free` 포함) + 원본 `[after, src_len)`.
+#[derive(Debug)]
+pub(crate) struct Rewrite {
+    /// 옛 `moov`의 시작 위치. 그 앞은 바이트 그대로 옮긴다
+    pub(crate) before: u64,
+    /// 새 `moov`(청크 위치를 `delta`만큼 고친 것)와 남은 자리를 채우는 `free`
+    pub(crate) moov: Vec<u8>,
+    /// 옛 `moov`(와 흡수한 `free`)의 끝. 그 뒤는 바이트 그대로 옮긴다
+    pub(crate) after: u64,
+    /// 원본 길이
+    pub(crate) src_len: u64,
 }
 
-/// 계획 단계의 실패를 `TagError`로 나눈다. 구조 판정(같은 바이트에서 결정적)은 `Unchanged`, 읽기 입출력 오류는
-/// 파일 상태를 확인하지 못한 것이라 `Modified`다.
-fn plan_error(f: Fail) -> TagError {
+impl Rewrite {
+    /// 다시 쓴 파일의 길이.
+    pub(crate) fn out_len(&self) -> u64 {
+        self.before + self.moov.len() as u64 + (self.src_len - self.after)
+    }
+}
+
+/// `rewrite_to`의 결과.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Retagged {
+    /// 임시 파일에 다 쓰고 sync했다. 길이는 `len`이다
+    Written { len: u64 },
+    /// 이미 같은 태그다. 임시 파일을 만들지 않았다
+    AlreadyTagged,
+}
+
+fn fail_error(f: Fail) -> Error {
     match f {
-        Fail::Io(e) if e.kind() != io::ErrorKind::UnexpectedEof => {
-            TagError::Modified(io_err("read", e))
-        }
-        Fail::Io(_) => TagError::Unchanged(Error::Parse {
+        Fail::Io(e) if e.kind() == io::ErrorKind::UnexpectedEof => Error::Parse {
             what: WHAT,
             detail: "파일이 예상보다 짧다".into(),
-        }),
-        Fail::Bad(detail) => TagError::Unchanged(Error::Parse { what: WHAT, detail }),
+        },
+        Fail::Io(e) => map_io_error("read", Path::new(WHAT), e),
+        Fail::Bad(detail) => Error::Parse { what: WHAT, detail },
     }
-}
-
-/// 크래시 복구 후보: 최상위 `moov`가 없을 때, 첫 자식이 `mvhd`이고 `mvex`가 없는 `free`/`skip`.
-/// 앞선 실행이 4단계(종류 패치)까지 마치고 죽어 `resume`이 붙인 새 `moov`를 잘라 냈다고 본다.
-struct Recovered {
-    top: Top,
-    body: Vec<u8>,
-}
-
-/// 최상위 상자에서 복구 후보를 모은다. 본문을 읽지 못하거나 상자로 나뉘지 않는 `free`는 후보가 아니다.
-fn recovery_candidates(src: &mut dyn Source, tops: &[Top]) -> Result<Vec<Recovered>, Fail> {
-    let mut out = Vec::new();
-    for t in tops {
-        if !matches!(&t.kind, b"free" | b"skip") {
-            continue;
-        }
-        if free_first_child(src, t)?.as_ref() != Some(b"mvhd") {
-            continue;
-        }
-        let body_len = t.size - t.hdr;
-        if body_len > MAX_META_BOX {
-            continue;
-        }
-        let body = read_vec(src, t.off + t.hdr, body_len)?;
-        let Ok(cs) = children(&body) else { continue };
-        if find(&cs, b"mvex").is_some() {
-            continue;
-        }
-        out.push(Recovered { top: *t, body });
-    }
-    Ok(out)
 }
 
 /// `moov` 상자 하나: 헤더(크기 4 + 종류 4)를 붙인다.
@@ -311,10 +286,11 @@ fn moov_box(body: &[u8]) -> Result<Vec<u8>, Fail> {
     Ok(v)
 }
 
-/// 새 `moov` 바이트: 옛 본문의 자식에서 `udta`를 빼고 새 `udta`를 끝에 붙인다. 나머지는 바이트 그대로다.
+/// 새 `moov` 바이트: 옛 본문의 자식에서 `udta`를 빼고 새 `udta`를 끝에 붙인다. 나머지는 바이트 그대로다(자식 순서도
+/// 그대로라 `[free, mvhd, …]`처럼 `mvhd`가 첫 자식이 아니어도 된다).
 ///
 /// 거부(`Fail`): 크기 칸이 0인 자식(부모 끝까지라는 뜻이라 뒤에 붙인 `udta`가 그 자식 안으로 먹힌다)이 있을 때,
-/// 새 `moov`가 `MAX_META_BOX`를 넘을 때(다시 마무리할 때 `read_vec`가 못 읽는 파일이 되지 않게).
+/// 새 `moov`가 `MAX_META_BOX`를 넘을 때.
 fn new_moov(old_body: &[u8], udta: &[u8]) -> Result<Vec<u8>, Fail> {
     let mut body = Vec::with_capacity(old_body.len() + udta.len());
     for c in children(old_body)? {
@@ -332,139 +308,238 @@ fn new_moov(old_body: &[u8], udta: &[u8]) -> Result<Vec<u8>, Fail> {
     moov_box(&body)
 }
 
-enum Retag {
-    AlreadyTagged,
-    Append {
-        moov: Vec<u8>,
-        /// 종류를 `free`로 바꿀 옛 `moov`의 4바이트 자리. 크래시 복구면 이미 `free`라 `None`
-        patch: Option<u64>,
-    },
+/// 자식 상자 하나: (종류, `buf` 안 본문 범위).
+type Span = ([u8; 4], Range<usize>);
+
+/// `buf[body]`의 자식 상자.
+fn child_spans(buf: &[u8], body: Range<usize>) -> Result<Vec<Span>, Fail> {
+    let mut at = body.start;
+    let mut out = Vec::new();
+    for c in children(&buf[body])? {
+        let hdr = c.full.len() - c.body.len();
+        out.push((c.kind, at + hdr..at + c.full.len()));
+        at += c.full.len();
+    }
+    Ok(out)
 }
 
-fn plan_retag(src: &mut dyn Source, udta: &[u8]) -> Result<Retag, Fail> {
+fn only_child(spans: &[([u8; 4], Range<usize>)], kind: &[u8; 4]) -> Result<Range<usize>, Fail> {
+    let mut it = spans.iter().filter(|(k, _)| k == kind);
+    match (it.next(), it.next()) {
+        (Some((_, r)), None) => Ok(r.clone()),
+        (None, _) => Err(bad(format!(
+            "trak에 {}이 없다",
+            String::from_utf8_lossy(kind)
+        ))),
+        _ => Err(bad(format!(
+            "trak에 {}이 둘 이상이다",
+            String::from_utf8_lossy(kind)
+        ))),
+    }
+}
+
+/// 새 `moov`(`moov[8..]`이 본문) 안 모든 `trak`의 `stco`/`co64` 항목을 고친다. 옛 위치가 `region_end` 이상이면
+/// `delta`를 더하고, `region_start` 아래면(옛 `moov` 앞) 그대로 두고, 그 사이(옛 `moov`·흡수한 `free` 안)면 거부한다.
+///
+/// 항목 폭이 그대로라 상자 크기가 바뀌지 않는다. `stco`가 32비트를 넘게 되면 거부한다(`co64`로 올리면 `moov`가 커져
+/// `delta`가 다시 바뀐다. 그런 파일은 위치가 4 GiB 바로 아래에 있는 경우뿐이고, 그만큼 큰 파일은 muxer가 처음부터
+/// `co64`를 쓴다).
+fn shift_chunk_offsets(
+    moov: &mut [u8],
+    region_start: u64,
+    region_end: u64,
+    delta: i64,
+) -> Result<(), Fail> {
+    let mut tables = Vec::new();
+    for (kind, trak) in child_spans(moov, 8..moov.len())? {
+        if &kind != b"trak" {
+            continue;
+        }
+        let mdia = only_child(&child_spans(moov, trak)?, b"mdia")?;
+        let minf = only_child(&child_spans(moov, mdia)?, b"minf")?;
+        let stbl = only_child(&child_spans(moov, minf)?, b"stbl")?;
+        let ts: Vec<_> = child_spans(moov, stbl)?
+            .into_iter()
+            .filter(|(k, _)| k == b"stco" || k == b"co64")
+            .collect();
+        match ts.as_slice() {
+            [t] => tables.push(t.clone()),
+            [] => return Err(bad("trak에 청크 위치 표(stco/co64)가 없다")),
+            _ => return Err(bad("trak에 청크 위치 표가 둘 이상이다")),
+        }
+    }
+    for (kind, r) in tables {
+        let wide = &kind == b"co64";
+        let w = if wide { 8 } else { 4 };
+        let body = &mut moov[r];
+        if body.len() < 8 {
+            return Err(bad("청크 위치 표가 짧다"));
+        }
+        let count = be32(&body[4..8]) as usize;
+        if count.checked_mul(w).and_then(|n| n.checked_add(8)) != Some(body.len()) {
+            return Err(bad("청크 위치 표 길이가 항목 수와 맞지 않다"));
+        }
+        for e in body[8..].chunks_exact_mut(w) {
+            let old = if wide { be64(e) } else { u64::from(be32(e)) };
+            let new = if old >= region_end {
+                old.checked_add_signed(delta)
+                    .ok_or_else(|| bad("청크 위치가 넘친다"))?
+            } else if old >= region_start {
+                return Err(bad("청크 위치가 옛 moov 안을 가리킨다"));
+            } else {
+                old
+            };
+            if wide {
+                e.copy_from_slice(&new.to_be_bytes());
+            } else {
+                let v = u32::try_from(new).map_err(|_| bad("stco 위치가 4 GiB를 넘게 된다"))?;
+                e.copy_from_slice(&v.to_be_bytes());
+            }
+        }
+    }
+    Ok(())
+}
+
+/// PD mp4를 새 `udta`로 다시 쓸 계획을 세운다. 원본은 읽기만 한다.
+///
+/// - 최상위 `moov`가 정확히 하나이고 `mvex`가 없어야 한다. 상자가 파일 끝을 넘거나 크기가 0(파일 끝까지)이면 거부.
+/// - 새 `moov` = 옛 자식(`udta` 빼고, 순서 그대로) + 새 `udta`. 옛 것과 같으면 `AlreadyTagged`.
+/// - 자리: 옛 `moov`와 바로 뒤 `free`/`skip`(있으면)을 합친 칸(`avail`)에 넣는다. 8바이트 이상 남으면 남는 만큼
+///   `free`로 채워 뒤 바이트가 움직이지 않는다. 아니면 그 `free`를 빼고 뒤를 `delta = 새 - avail`만큼 옮기고(꼭 맞으면
+///   0, 1~7바이트 남으면 음수) `stco`/`co64`를 고친다(`shift_chunk_offsets`).
+pub(crate) fn plan_rewrite(src: &mut dyn Source, udta: &[u8]) -> Result<Plan, Fail> {
     let tops = scan(src)?;
-    let moovs: Vec<&Top> = tops.iter().filter(|t| &t.kind == b"moov").collect();
-    match moovs.as_slice() {
-        [] => {
-            let mut cands = recovery_candidates(src, &tops)?;
-            match cands.len() {
-                0 => Err(bad("moov가 없다")),
-                1 => {
-                    let c = cands.remove(0);
-                    // 옛 moov는 이미 free라 파일에 moov가 없다. 새 moov를 만들 수 없어도(크기 0인 자식·크기 상한) 거부하지 않고
-                    // 옛 본문 그대로 되살린다(태그만 없다). 거부하면 moov 없는 파일로 마무리된다.
-                    let moov = match new_moov(&c.body, udta) {
-                        Ok(m) => m,
-                        Err(_) => moov_box(&c.body)?,
-                    };
-                    Ok(Retag::Append { moov, patch: None })
-                }
-                _ => Err(bad("moov로 보이는 free가 둘 이상이다")),
-            }
-        }
-        [m] => {
-            let body_len = m.size - m.hdr;
-            if body_len > MAX_META_BOX {
-                return Err(bad(format!("moov가 너무 크다({body_len} B)")));
-            }
-            let body = read_vec(src, m.off + m.hdr, body_len)?;
-            if find(&children(&body)?, b"mvex").is_some() {
-                return Err(bad("조각 구조(mvex) 파일이다"));
-            }
-            let moov = new_moov(&body, udta)?;
-            if moov[8..] == body[..] {
-                return Ok(Retag::AlreadyTagged);
-            }
-            Ok(Retag::Append {
-                moov,
-                patch: Some(m.off + 4),
-            })
-        }
-        _ => Err(bad("moov가 둘 이상이다")),
+    let mut moovs = tops.iter().enumerate().filter(|(_, t)| &t.kind == b"moov");
+    let (idx, m) = match (moovs.next(), moovs.next()) {
+        (Some(x), None) => x,
+        (None, _) => return Err(bad("moov가 없다")),
+        _ => return Err(bad("moov가 둘 이상이다")),
+    };
+    let body_len = m.size - m.hdr;
+    if body_len > MAX_META_BOX {
+        return Err(bad(format!("moov가 너무 크다({body_len} B)")));
+    }
+    let body = read_vec(src, m.off + m.hdr, body_len)?;
+    if find(&children(&body)?, b"mvex").is_some() {
+        return Err(bad("조각 구조(mvex) 파일이다"));
+    }
+    let mut moov = new_moov(&body, udta)?;
+    if moov[8..] == body[..] {
+        return Ok(Plan::AlreadyTagged);
+    }
+    let free_after = tops
+        .get(idx + 1)
+        .filter(|t| matches!(&t.kind, b"free" | b"skip"))
+        .map_or(0, |t| t.size);
+    let avail = m.size + free_after;
+    let new_len = moov.len() as u64;
+    // 8바이트 이상 남으면 free로 채워 뒤를 그대로 두고, 아니면(꼭 맞음 포함) 뒤를 `delta`만큼 옮긴다
+    let delta = if let Some(pad) = avail
+        .checked_sub(new_len)
+        .filter(|p| *p >= 8)
+        .and_then(|p| u32::try_from(p).ok())
+    {
+        moov.extend_from_slice(&pad.to_be_bytes());
+        moov.extend_from_slice(b"free");
+        moov.resize(avail as usize, 0);
+        0
+    } else {
+        i64::try_from(new_len).map_err(|_| bad("moov 크기"))?
+            - i64::try_from(avail).map_err(|_| bad("moov 크기"))?
+    };
+    let region_end = m.off + avail;
+    if delta != 0 {
+        shift_chunk_offsets(&mut moov, m.off, region_end, delta)?;
+    }
+    Ok(Plan::Rewrite(Rewrite {
+        before: m.off,
+        moov,
+        after: region_end,
+        src_len: src.len(),
+    }))
+}
+
+/// `n`바이트를 그대로 옮긴다. 원본이 모자라면 `UnexpectedEof`다.
+fn copy_exact<R: Read, W: Write>(src: &mut R, out: &mut W, n: u64) -> io::Result<()> {
+    let copied = io::copy(&mut src.by_ref().take(n), out)?;
+    if copied != n {
+        return Err(io::ErrorKind::UnexpectedEof.into());
+    }
+    Ok(())
+}
+
+/// 계획대로 원본을 `out`에 쓴다(sync는 하지 않는다).
+pub(crate) fn write_rewrite<R: Read + Seek, W: Write>(
+    src: &mut R,
+    plan: &Rewrite,
+    out: &mut W,
+) -> io::Result<()> {
+    src.seek(SeekFrom::Start(0))?;
+    copy_exact(src, out, plan.before)?;
+    out.write_all(&plan.moov)?;
+    src.seek(SeekFrom::Start(plan.after))?;
+    copy_exact(src, out, plan.src_len - plan.after)
+}
+
+/// 임시 파일 쓰기. 테스트가 쓰기·sync 실패(디스크 부족 등)를 주입하려고 둔다.
+pub(crate) trait SyncWrite: Write {
+    fn sync(&mut self) -> io::Result<()>;
+}
+
+impl SyncWrite for std::fs::File {
+    fn sync(&mut self) -> io::Result<()> {
+        self.sync_all()
     }
 }
 
-/// 열린 PD mp4의 `moov`를 새 `udta`로 바꿔 끝에 붙이고 옛 `moov`를 `free`로 바꾼다. 끝나면 위치는 파일 끝이다.
+/// 임시 파일 쓰기 버퍼.
+const WRITE_BUF: usize = 1 << 20;
+
+/// PD `.part`(`src`, 길이 `src_len`)를 새 `udta`로 다시 써 `tmp`에 둔다. **원본은 바꾸지 않는다.**
 ///
-/// 1. 훑기: 최상위 상자 머리만 읽고 `moov` 본문만 읽는다. `moov`가 없거나 둘 이상이거나 `mvex`가 있거나, 상자가
-///    파일 끝을 넘거나 크기가 0(파일 끝까지)이면 파일을 바꾸지 않고 `Unchanged`다. 단 `moov`가 없고 `free` 하나가
-///    옛 `moov`로 보이면 크래시 복구로 그 본문을 다시 붙인다.
-/// 2. 새 `moov`를 파일 끝에 붙이고 sync. 실패하면 `truncate_to(원래 길이)`로 되돌린다(되돌리면 `Unchanged`,
-///    못 하면 `Modified`. 크래시 복구 중이었다면 되돌려도 `moov`가 없는 파일이라 `Modified`다).
-/// 3. 옛 `moov`의 종류를 `free`로 바꾸고 sync. 실패하면 `Modified`.
-pub(crate) fn retag_in<F: DefragFile>(file: &mut F, udta: &[u8]) -> Result<TagReport, TagError> {
-    let len = file
-        .file_len()
-        .map_err(|e| TagError::Modified(io_err("stat", e)))?;
+/// 계획(`plan_rewrite`) → `tmp`를 `open`으로 만들고(남은 것은 덮는다) 쓰기 → flush → sync. 쓰기 단계에서 실패하면
+/// `tmp`를 지우고 오류를 돌려준다(디스크 부족은 `DiskFull`). 계획이 거부되면 `tmp`를 열지 않는다. 호출한 쪽은 오류면
+/// 태그 없이 원본을 마무리한다.
+pub(crate) fn rewrite_to<R: Read + Seek, W: SyncWrite>(
+    src: &mut R,
+    src_len: u64,
+    udta: &[u8],
+    tmp: &Path,
+    open: impl FnOnce(&Path) -> io::Result<W>,
+) -> Result<Retagged, Error> {
     let plan = {
-        let mut src = FileSrc { f: file, len };
-        plan_retag(&mut src, udta).map_err(plan_error)?
+        let mut s = FileSrc {
+            f: &mut *src,
+            len: src_len,
+        };
+        plan_rewrite(&mut s, udta).map_err(fail_error)?
     };
-    let (moov, patch) = match plan {
-        Retag::AlreadyTagged => return Ok(TagReport::AlreadyTagged),
-        Retag::Append { moov, patch } => (moov, patch),
+    let plan = match plan {
+        Plan::AlreadyTagged => return Ok(Retagged::AlreadyTagged),
+        Plan::Rewrite(p) => p,
     };
-    let appended = (|| {
-        file.seek(SeekFrom::Start(len))?;
-        file.write_all(&moov)?;
-        file.sync()
-    })();
-    if let Err(e) = appended {
-        let err = io_err("write", e);
-        let restored = file.truncate_to(len).and_then(|()| file.sync());
-        return Err(match restored {
-            Ok(()) if patch.is_some() => TagError::Unchanged(err),
-            _ => TagError::Modified(err),
-        });
-    }
-    if let Some(off) = patch {
-        let patched = (|| {
-            file.seek(SeekFrom::Start(off))?;
-            file.write_all(b"free")?;
-            file.sync()
-        })();
-        patched.map_err(|e| TagError::Modified(io_err("write", e)))?;
-    }
-    file.seek(SeekFrom::End(0))
-        .map_err(|e| TagError::Modified(io_err("seek", e)))?;
-    Ok(TagReport::Tagged)
-}
-
-/// 메타데이터를 쓰지 않는 실행의 PD 복구: 앞선 실행이 `retag_in`의 마지막 단계까지 마치고 죽어 옛 `moov`가
-/// `free`이고 `moov`가 없으면, 그 `free`의 종류를 `moov`로 되돌린다. 옛 바이트가 그대로라 원본 PD 파일과 같아진다.
-///
-/// 할 일이 없으면(`moov`가 있다, `moov`로 보이는 `free`가 없다) `NotApplicable`이다. 구조를 읽지 못하거나
-/// 후보가 둘 이상이면 `Unchanged`다.
-pub(crate) fn repair_in<F: DefragFile>(file: &mut F) -> Result<TagReport, TagError> {
-    let len = file
-        .file_len()
-        .map_err(|e| TagError::Modified(io_err("stat", e)))?;
-    let target = {
-        let mut src = FileSrc { f: file, len };
-        let tops = scan(&mut src).map_err(plan_error)?;
-        if tops.iter().any(|t| &t.kind == b"moov") {
-            return Ok(TagReport::NotApplicable);
+    let written = (|| {
+        let mut f = open(tmp)?;
+        {
+            let mut w = io::BufWriter::with_capacity(WRITE_BUF, &mut f);
+            write_rewrite(src, &plan, &mut w)?;
+            w.flush()?;
         }
-        let cands = recovery_candidates(&mut src, &tops).map_err(plan_error)?;
-        match cands.as_slice() {
-            [] => return Ok(TagReport::NotApplicable),
-            [c] => c.top.off + 4,
-            _ => {
-                return Err(TagError::Unchanged(Error::Parse {
-                    what: WHAT,
-                    detail: "moov로 보이는 free가 둘 이상이다".into(),
-                }));
+        f.sync()
+    })();
+    match written {
+        Ok(()) => Ok(Retagged::Written {
+            len: plan.out_len(),
+        }),
+        Err(e) => {
+            if let Err(re) = std::fs::remove_file(tmp)
+                && re.kind() != io::ErrorKind::NotFound
+            {
+                tracing::warn!(error = %re, "메타데이터 임시 파일 삭제 실패");
             }
+            Err(map_io_error("write", tmp, e))
         }
-    };
-    let patched = (|| {
-        file.seek(SeekFrom::Start(target))?;
-        file.write_all(b"moov")?;
-        file.sync()?;
-        file.seek(SeekFrom::End(0)).map(|_| ())
-    })();
-    patched.map_err(|e| TagError::Modified(io_err("write", e)))?;
-    Ok(TagReport::Repaired)
+    }
 }
 
 #[cfg(test)]

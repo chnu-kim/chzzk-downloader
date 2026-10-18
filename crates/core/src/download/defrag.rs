@@ -434,7 +434,7 @@ pub(crate) fn find<'a>(cs: &[Child<'a>], kind: &[u8; 4]) -> Option<Child<'a>> {
 }
 
 /// 최상위 `free`/`skip`의 본문 첫 자식 상자 종류. 앞선 변환이 `free`로 바꿔 둔 `moov`·`moof`를 알아보는 데 쓴다
-/// (defrag 3단계, mp4 메타데이터 끝에 붙이기 4단계). 본문이 8바이트 미만이면 `None`이다.
+/// (defrag 3단계의 멱등 판정). 본문이 8바이트 미만이면 `None`이다.
 pub(crate) fn free_first_child(src: &mut dyn Source, t: &Top) -> Result<Option<[u8; 4]>, Fail> {
     let body_len = t.size - t.hdr;
     if body_len < 8 {

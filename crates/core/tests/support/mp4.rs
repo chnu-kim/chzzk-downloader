@@ -256,14 +256,35 @@ pub fn top_moov_count(b: &[u8]) -> usize {
     top_boxes(b).iter().filter(|(k, _)| k == "moov").count()
 }
 
-/// 최상위 `free`/`skip` 중 옛 `moov`가 바뀐 것(본문 첫 자식이 `mvhd`)의 파일 안 시작 위치.
+/// `moov` 본문 안 모든 `trak`의 청크 위치(`stco`/`co64` 항목, 파일 안 절대 위치)를 trak 순서대로 모은다.
 #[allow(dead_code)]
-pub fn freed_moovs(b: &[u8]) -> Vec<usize> {
-    top_boxes(b)
-        .into_iter()
-        .filter(|(k, r)| {
-            (k == "free" || k == "skip") && r.len() >= 8 && &b[r.start + 4..r.start + 8] == b"mvhd"
-        })
-        .map(|(_, r)| r.start - 8)
-        .collect()
+pub fn chunk_offsets(moov_body: &[u8]) -> Result<Vec<u64>, String> {
+    let mut out = Vec::new();
+    for (kind, r) in child_boxes(moov_body)? {
+        if kind != "trak" {
+            continue;
+        }
+        let stbl =
+            descend(&moov_body[r], &["mdia", "minf", "stbl"], false).ok_or("trak에 stbl이 없다")?;
+        for (k, t) in child_boxes(stbl)? {
+            let w = match k.as_str() {
+                "stco" => 4,
+                "co64" => 8,
+                _ => continue,
+            };
+            let b = &stbl[t];
+            let n = u32::from_be_bytes(b[4..8].try_into().unwrap()) as usize;
+            if b.len() != 8 + n * w {
+                return Err(format!("{k} 길이가 맞지 않다"));
+            }
+            for e in b[8..].chunks_exact(w) {
+                out.push(if w == 4 {
+                    u64::from(u32::from_be_bytes(e.try_into().unwrap()))
+                } else {
+                    u64::from_be_bytes(e.try_into().unwrap())
+                });
+            }
+        }
+    }
+    Ok(out)
 }

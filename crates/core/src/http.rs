@@ -208,6 +208,9 @@ pub(crate) fn build_image_client(
     reqwest::Client::builder()
         .connect_timeout(connect_timeout)
         .read_timeout(read_timeout)
+        // 이동할 때 reqwest가 앞 주소 전체(서명 쿼리 포함)를 `Referer`로 넣지 않게 한다. 처음 요청의 고정 `Referer`
+        // (`headers(RequestKind::Image)`)는 그대로 실린다(mp4-metadata.md §7, core.md 78)
+        .referer(false)
         .redirect(reqwest::redirect::Policy::custom(move |attempt| {
             if attempt.previous().len() < 10
                 && crate::client::image_url_allowed(attempt.url(), allow_loopback_http)

@@ -192,7 +192,10 @@ async fn info(app: &App, env: &mut Env<'_>, url: &str) -> u8 {
         .iter()
         .enumerate()
         .map(|(i, q)| {
-            if i as u32 == r.default_quality_index {
+            if q.audio_only {
+                // 코어 라벨("audio")이 아니라 GUI와 같은 말이다
+                copy::AUDIO_ONLY_LABEL.to_string()
+            } else if i as u32 == r.default_quality_index {
                 format!("{}{}", q.label, copy::INFO_DEFAULT_MARK)
             } else {
                 q.label.clone()

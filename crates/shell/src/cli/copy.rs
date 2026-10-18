@@ -79,6 +79,8 @@ pub const PHASE_WAITING_NETWORK: &str = "연결 대기 중";
 pub const PHASE_FINALIZING: &str = "마무리 중";
 /// `job.status.completed`
 pub const STATUS_COMPLETED: &str = "완료";
+/// `quality.audioOnly`(오디오만 받기 행의 라벨, 요청의 `qualityLabel`)
+pub const AUDIO_ONLY_LABEL: &str = "오디오만";
 /// `errors.ts` `notOwnContent`의 L0 제목(맡은 채널이 없을 때)
 pub const NOT_OWN_TITLE: &str = "내 채널의 영상만 받을 수 있어요";
 /// `errors.ts` `notOwnContent`의 L0 제목(맡은 채널이 있을 때)
@@ -153,6 +155,7 @@ pub fn invalid_rate(s: &str) -> String {
     format!("속도를 읽지 못했어요: {s} (예: 5m, 800k, 2000000)")
 }
 
+/// `labels`는 화질 라벨(오디오만 행은 `--audio`로 고르므로 뺀다).
 pub fn quality_not_found(label: &str, labels: &[String]) -> String {
     format!(
         "그 화질이 없어요: {label}. 고를 수 있는 화질: {}",
@@ -167,6 +170,8 @@ pub const DUPLICATE_OTHER: &str =
 /// 다른 화질의 받다 만 파일이 있다(코어가 지우고 새로 받는다).
 pub const PARTIAL_OTHER: &str = "다른 화질의 받다 만 파일이 있어 지우고 새로 받아요.";
 
+pub const AUDIO_WITH_QUALITY: &str = "`--audio`와 `--quality`는 함께 쓸 수 없어요.";
+pub const AUDIO_UNAVAILABLE: &str = "이 영상은 오디오만 받을 수 없어요. 일반 영상에만 있어요.";
 pub const NAME_UNAVAILABLE: &str = "새 파일 이름을 정하지 못했어요. 저장 폴더를 확인해 주세요.";
 pub const JOB_LOST: &str = "작업 상태를 읽지 못했어요.";
 pub const JOB_FAILED: &str = "받지 못했어요.";
@@ -190,13 +195,14 @@ pub fn help(topic: Option<&str>) -> String {
     let section = |name: &str| all || topic == Some(name);
     if section("download") {
         s.push_str(
-            "download <주소> [<주소> …] [--quality <라벨>] [--out <폴더>] [--range <시작>-<끝>] [--rate <속도>] [--overwrite]\n\
+            "download <주소> [<주소> …] [--quality <라벨>] [--out <폴더>] [--range <시작>-<끝>] [--rate <속도>] [--overwrite] [--audio]\n\
              \x20 주소를 차례로 받아요. 받은 파일의 경로를 한 줄씩 출력해요(진행은 stderr).\n\
              \x20 --quality   화질 라벨(예: 1080p). 없으면 앱과 같은 기본 화질\n\
              \x20 --out       저장 폴더. 없으면 앱 설정의 저장 폴더\n\
              \x20 --range     빠른 다시보기의 구간(예: 1:00-2:30). 끝을 비우면 끝까지\n\
              \x20 --rate      이 실행의 작업당 속도 상한(예: 5m, 800k). 설정은 바뀌지 않아요\n\
              \x20 --overwrite 같은 이름의 파일이 있으면 덮어써요(기본은 건너뛰기)\n\
+             \x20 --audio     영상 없이 오디오만 받아요(.m4a, 일반 영상만). --quality와 함께 쓸 수 없어요\n\
              \x20 받다 만 파일이 있으면 이어받아요. 마지막 화질과 최근 영상은 앱과 같이 설정에 남아요.\n",
         );
     }

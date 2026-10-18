@@ -180,19 +180,38 @@ impl Run<'_, '_> {
         self.follow(id, &notes).await
     }
 
-    /// `--quality` 라벨(대소문자 무시) 또는 기본 화질 → (id, label). 없으면 안내를 쓰고 `None`.
+    /// `--audio`면 오디오만 행, `--quality` 라벨(대소문자 무시)이면 그 화질, 없으면 기본 화질 → (id, label). 못 고르면 안내를
+    /// 쓰고 `None`. 오디오만 행은 화질이 아니라서 라벨·기본 화질 후보에서 뺀다(GUI 카드와 같다, audio-only.md §6.1).
     fn pick_quality(&mut self, r: &ResolvedDto) -> Option<(String, String)> {
+        if self.args.audio {
+            return match r.qualities.iter().find(|q| q.audio_only) {
+                // 요청의 라벨은 GUI와 같은 말이다(마지막 화질로 기억하지 않는다, 셸이 빈 라벨을 넘긴다)
+                Some(q) => Some((q.id.clone(), copy::AUDIO_ONLY_LABEL.to_string())),
+                None => {
+                    line(self.env.err, copy::AUDIO_UNAVAILABLE);
+                    None
+                }
+            };
+        }
         let picked = match &self.args.quality {
             Some(label) => r
                 .qualities
                 .iter()
-                .find(|q| q.label.eq_ignore_ascii_case(label)),
-            None => r.qualities.get(r.default_quality_index as usize),
+                .find(|q| !q.audio_only && q.label.eq_ignore_ascii_case(label)),
+            None => r
+                .qualities
+                .get(r.default_quality_index as usize)
+                .filter(|q| !q.audio_only),
         };
         match picked {
             Some(q) => Some((q.id.clone(), q.label.clone())),
             None => {
-                let labels: Vec<String> = r.qualities.iter().map(|q| q.label.clone()).collect();
+                let labels: Vec<String> = r
+                    .qualities
+                    .iter()
+                    .filter(|q| !q.audio_only)
+                    .map(|q| q.label.clone())
+                    .collect();
                 let want = self.args.quality.as_deref().unwrap_or_default();
                 line(self.env.err, &copy::quality_not_found(want, &labels));
                 None

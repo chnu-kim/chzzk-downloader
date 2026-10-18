@@ -312,6 +312,113 @@ async fn rate_applies_to_the_manager_only() {
     let _ = before;
 }
 
+/// `--audio`: 오디오만 행으로 `.m4a`를 받는다. 마지막 화질은 오디오로 바뀌지 않고, `--quality`는 오디오 행을 고르지 못한다.
+/// 오디오 트랙이 없는 영상은 사용법 오류(코드 2)
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn audio_flag_downloads_m4a_and_keeps_last_quality() {
+    let api = mock_api_with(None, false, true).await;
+    let t = TempDir::new().unwrap();
+    let app = open_cli(t.path(), &api, None);
+    let out = out_dir(&t);
+    // 화질 하나를 받아 마지막 화질을 정해 둔다
+    let r = run(
+        &app,
+        &["download", &url(), "--out", &out, "--quality", "720p"],
+        t.path(),
+    )
+    .await;
+    assert_eq!(r.code, exit::OK, "{r:?}");
+    assert_eq!(
+        app.settings.settings().last_quality_label.as_deref(),
+        Some("720p")
+    );
+
+    let r = run(
+        &app,
+        &["download", &url(), "--out", &out, "--audio"],
+        t.path(),
+    )
+    .await;
+    assert_eq!(r.code, exit::OK, "{r:?}");
+    let path = r.out.trim().to_string();
+    assert!(path.ends_with(".m4a"), "{path}");
+    assert_eq!(std::fs::metadata(&path).unwrap().len(), AUDIO_LEN as u64);
+    // 오디오는 마지막 화질로 기억하지 않는다(다음 영상이 오디오로 시작하지 않는다)
+    assert_eq!(
+        app.settings.settings().last_quality_label.as_deref(),
+        Some("720p")
+    );
+    let j = jobs_json(t.path());
+    let audio_job = j["jobs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|x| x["qualityId"] == "audio")
+        .unwrap();
+    assert_eq!(audio_job["status"], "completed");
+
+    // 같은 명령을 다시: 이미 있음(건너뜀)
+    let r = run(
+        &app,
+        &["download", &url(), "--out", &out, "--audio"],
+        t.path(),
+    )
+    .await;
+    assert_eq!(r.code, exit::OK, "{r:?}");
+    assert!(r.err.contains("이미 있어요"), "{r:?}");
+
+    // `--quality`로는 오디오 행을 고르지 못한다
+    let r = run(
+        &app,
+        &["download", &url(), "--out", &out, "--quality", "audio"],
+        t.path(),
+    )
+    .await;
+    assert_eq!(r.code, exit::USAGE, "{r:?}");
+    assert!(
+        r.err.trim_end().ends_with("고를 수 있는 화질: 720p"),
+        "{r:?}"
+    );
+
+    // info는 오디오 행을 GUI와 같은 말로 보인다
+    let r = run(&app, &["info", &url()], t.path()).await;
+    assert!(r.out.contains("720p (기본), 오디오만"), "{r:?}");
+
+    // 오디오 트랙이 없는 영상
+    let api2 = mock_api(None, false).await;
+    let t2 = TempDir::new().unwrap();
+    let app2 = open_cli(t2.path(), &api2, None);
+    let r = run(
+        &app2,
+        &["download", &url(), "--out", &out_dir(&t2), "--audio"],
+        t2.path(),
+    )
+    .await;
+    assert_eq!(r.code, exit::USAGE, "{r:?}");
+    assert!(r.err.contains("오디오만 받을 수 없어요"), "{r:?}");
+    assert!(job_statuses(t2.path()).is_empty());
+}
+
+/// 오디오만도 같은 게이트를 지난다: 남의 영상의 오디오는 거부(코드 4)
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn audio_is_gated_like_video() {
+    let api = mock_api_with(None, false, true).await;
+    let worker = MockServer::start().await;
+    let t = TempDir::new().unwrap();
+    save_session(t.path(), &worker, OTHER);
+    let app = open_cli(t.path(), &api, Some(&worker));
+    let out = out_dir(&t);
+    let r = run(
+        &app,
+        &["download", &url(), "--out", &out, "--audio"],
+        t.path(),
+    )
+    .await;
+    assert_eq!(r.code, exit::REJECTED, "{r:?}");
+    assert!(job_statuses(t.path()).is_empty());
+    assert!(ls(std::path::Path::new(&out)).is_empty());
+}
+
 // ---------------------------------------------------------------- Ctrl+C·이어받기(§9.2)
 
 /// 첫 Ctrl+C는 일시정지: 코드 130, `paused`가 디스크에 있고 `.part`가 남는다. 같은 명령을 다시 실행하면

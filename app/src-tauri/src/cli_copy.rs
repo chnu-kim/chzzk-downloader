@@ -76,6 +76,7 @@ mod tests {
             ("job.phase.waitingNetwork", PHASE_WAITING_NETWORK),
             ("job.status.finalizing", PHASE_FINALIZING),
             ("job.status.completed", STATUS_COMPLETED),
+            ("quality.audioOnly", AUDIO_ONLY_LABEL),
         ] {
             assert_eq!(deck_value(&d, key), rust, "{key}");
         }

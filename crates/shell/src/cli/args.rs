@@ -70,6 +70,8 @@ pub struct DownloadArgs {
     pub rate: Option<u64>,
     /// 이미 있는 파일을 덮어쓴다
     pub overwrite: bool,
+    /// 영상 없이 오디오 트랙만 받는다(`.m4a`, 일반 VOD에 서버 오디오 트랙이 있을 때만, audio-only.md). `--quality`와 함께 쓸 수 없다
+    pub audio: bool,
 }
 
 /// `args`는 프로그램 이름을 뺀 인자다.
@@ -167,17 +169,22 @@ fn parse_download(rest: &[String]) -> Result<DownloadArgs, UsageError> {
             "--range" => "--range",
             "--rate" => "--rate",
             "--overwrite" => "--overwrite",
+            "--audio" => "--audio",
             _ => return Err(usage(copy::unknown_flag("download", name))),
         };
         if seen.contains(&flag) {
             return Err(usage(copy::duplicate_flag(flag)));
         }
         seen.push(flag);
-        if flag == "--overwrite" {
+        if flag == "--overwrite" || flag == "--audio" {
             if inline.is_some() {
                 return Err(usage(copy::flag_takes_no_value(flag)));
             }
-            out.overwrite = true;
+            if flag == "--audio" {
+                out.audio = true;
+            } else {
+                out.overwrite = true;
+            }
             continue;
         }
         let value = match inline {
@@ -205,6 +212,10 @@ fn parse_download(rest: &[String]) -> Result<DownloadArgs, UsageError> {
     }
     if out.urls.is_empty() {
         return Err(usage(copy::missing_url("download")));
+    }
+    // 오디오만은 화질이 아니다(화질 라벨로 고르지 않는다)
+    if out.audio && out.quality.is_some() {
+        return Err(usage(copy::AUDIO_WITH_QUALITY));
     }
     Ok(out)
 }
@@ -329,8 +340,27 @@ mod tests {
                 }),
                 rate: Some(2_000_000),
                 overwrite: true,
+                audio: false,
             })
         );
+    }
+
+    #[test]
+    fn audio_flag_takes_no_value_and_excludes_quality() {
+        let Command::Download(d) = p(&["download", V, "--audio"]).unwrap() else {
+            panic!()
+        };
+        assert!(d.audio && d.quality.is_none());
+        for args in [
+            &["download", V, "--audio", "--quality", "720p"][..],
+            &["download", V, "--quality=720p", "--audio"],
+            &["download", V, "--audio=1"],
+            &["download", V, "--audio", "--audio"],
+        ] {
+            assert!(p(args).is_err(), "{args:?}");
+        }
+        // 구간과의 충돌은 셸이 거부한다(빠른 다시보기만 구간을 받고 오디오는 일반 VOD만): 해석 단계에서는 막지 않는다
+        assert!(p(&["download", V, "--audio", "--range", "0:10-0:20"]).is_ok());
     }
 
     #[test]

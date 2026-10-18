@@ -33,8 +33,12 @@ pub const VOD_NO: u64 = 9000002;
 pub const VOD_VIDEO_ID: &str = "000000000000000000000000000000000B02";
 pub const QUALITY: &str = "PD_720P_TEST";
 pub const MEDIA_PATH: &str = "/m1/pd/a.mp4";
+/// 오디오 트랙 경로(`audio: true`일 때만 MPD에 있다)
+pub const AUDIO_PATH: &str = "/m1/audio/0.m4a";
 /// 가짜 미디어 본문 길이
 pub const MEDIA_LEN: usize = 50_000;
+/// 가짜 오디오 본문 길이
+pub const AUDIO_LEN: usize = 20_000;
 
 pub fn url() -> String {
     format!("https://chzzk.naver.com/video/{VOD_NO}")
@@ -45,7 +49,18 @@ fn fixture(rel: &str) -> Vec<u8> {
     std::fs::read(&p).unwrap_or_else(|e| panic!("{p}: {e}"))
 }
 
-fn pd_mpd(url: &str) -> String {
+fn pd_mpd(url: &str, audio_url: Option<&str>) -> String {
+    let audio = audio_url.map_or_else(String::new, |u| {
+        format!(
+            r#"
+    <AdaptationSet mimeType="audio/mp4">
+      <Representation id="00000000-0000-0000-0000-0000000000b3" bandwidth="128000" mimeType="audio/mp4" codecs="mp4a.40.2" audioSamplingRate="48000">
+        <nvod:Label kind="qualityId">AUDIO_128</nvod:Label>
+        <BaseURL>{u}</BaseURL>
+      </Representation>
+    </AdaptationSet>"#
+        )
+    });
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <MPD xmlns="urn:mpeg:dash:schema:mpd:2011" xmlns:nvod="urn:naver:vod:2020">
@@ -55,7 +70,7 @@ fn pd_mpd(url: &str) -> String {
         <nvod:Label kind="resolution">720</nvod:Label>
         <BaseURL>{url}</BaseURL>
       </Representation>
-    </AdaptationSet>
+    </AdaptationSet>{audio}
   </Period>
 </MPD>"#
     )
@@ -64,6 +79,11 @@ fn pd_mpd(url: &str) -> String {
 /// 가짜 치지직 API. `media_base`가 없으면 같은 서버가 `MEDIA_LEN`바이트를 준다(느린 미디어는 `RawMedia`를 넘긴다).
 /// `channelless`면 info에 컨텐츠 채널 ID가 없다.
 pub async fn mock_api(media_base: Option<&str>, channelless: bool) -> MockServer {
+    mock_api_with(media_base, channelless, false).await
+}
+
+/// `audio`가 true면 일반 VOD처럼 MPD에 서버 오디오 트랙(m4a 한 파일)도 있다.
+pub async fn mock_api_with(media_base: Option<&str>, channelless: bool, audio: bool) -> MockServer {
     let server = MockServer::start().await;
     let info = if channelless {
         let mut v: serde_json::Value =
@@ -86,12 +106,26 @@ pub async fn mock_api(media_base: Option<&str>, channelless: bool) -> MockServer
         .and(path(format!(
             "/neonplayer/vodplay/v2/playback/{VOD_VIDEO_ID}"
         )))
-        .respond_with(ResponseTemplate::new(200).set_body_raw(
-            pd_mpd(&format!("{base}{MEDIA_PATH}?_lsu_sa_=sig")),
-            "application/dash+xml",
-        ))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_raw(
+                pd_mpd(
+                    &format!("{base}{MEDIA_PATH}?_lsu_sa_=sig"),
+                    audio
+                        .then(|| format!("{base}{AUDIO_PATH}?_lsu_sa_=sig"))
+                        .as_deref(),
+                ),
+                "application/dash+xml",
+            ),
+        )
         .mount(&server)
         .await;
+    if audio {
+        Mock::given(method("GET"))
+            .and(path(AUDIO_PATH))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(vec![2u8; AUDIO_LEN]))
+            .mount(&server)
+            .await;
+    }
     Mock::given(method("GET"))
         .and(path(MEDIA_PATH))
         .respond_with(ResponseTemplate::new(200).set_body_bytes(vec![1u8; MEDIA_LEN]))

@@ -13,7 +13,7 @@
 use chzzk_core::{
     ContentKind, ContentMeta, ContentRef, DuplicatePolicy, LegacyImport, Phase, Platform,
     PlaybackKind, Progress, Quality, RecentKind, RecentVod, Resolved, TextScale, Theme, TimeRange,
-    naming::default_filename,
+    naming::{FileNameTemplate, default_filename, render_filename, suggested_stem},
 };
 use serde::{Deserialize, Deserializer, Serialize};
 use ts_rs::TS;
@@ -209,11 +209,12 @@ pub enum HelpId {
     Report,
     WindowsOldApp,
     Editors,
+    LoginDenied,
 }
 
 impl HelpId {
     /// 모든 주제(`ids.json` 대조용)
-    pub const ALL: [HelpId; 8] = [
+    pub const ALL: [HelpId; 9] = [
         HelpId::Cookie,
         HelpId::DiskFull,
         HelpId::InstallMac,
@@ -222,6 +223,7 @@ impl HelpId {
         HelpId::Report,
         HelpId::WindowsOldApp,
         HelpId::Editors,
+        HelpId::LoginDenied,
     ];
 
     /// 앵커 글자(= serde 값). 주소의 `#` 뒤에 그대로 붙는다
@@ -235,6 +237,7 @@ impl HelpId {
             HelpId::Report => "report",
             HelpId::WindowsOldApp => "windows-old-app",
             HelpId::Editors => "editors",
+            HelpId::LoginDenied => "login-denied",
         }
     }
 }
@@ -372,6 +375,12 @@ pub struct SettingsDto {
     /// 채팅 자막 형식(기본 [잠정] U2 결정 대기 `ass`)
     #[ts(as = "SubtitleFormatTs")]
     pub chat_subtitle: SubtitleFormat,
+    /// 파일 이름 규칙(템플릿). `null`이면 기본 규칙이다(입력칸에는 `DEFAULT_TEMPLATE`을 보인다)
+    pub file_name_template: Option<String>,
+    /// 전체 합계 받기 속도 상한(바이트/초). `null` = 제한 없음(기본). 생방송 녹화는 제외(rate-limit.md)
+    pub total_rate_limit: Option<u64>,
+    /// 작업마다 받기 속도 상한(바이트/초). `null` = 제한 없음(기본)
+    pub job_rate_limit: Option<u64>,
 }
 
 /// 최근 VOD 한 항목.
@@ -439,6 +448,19 @@ pub struct SettingsPatch {
     #[serde(default)]
     #[ts(as = "Option<SubtitleFormatTs>", optional)]
     pub chat_subtitle: Option<SubtitleFormat>,
+    /// 키 없음 = 그대로, `null` = 기본 규칙으로, 문자열 = 그 템플릿으로(읽을 수 없으면 `invalidInput`,
+    /// 기본 템플릿 문자열과 같으면 `null`로 저장한다)
+    #[serde(default)]
+    #[ts(as = "Option<Option<String>>", optional)]
+    pub file_name_template: Nullable<String>,
+    /// 키 없음 = 그대로, `null` = 제한 없음, 수 = 그 값(바이트/초). 0은 끔, 최소(`MIN_RATE_LIMIT_BPS`)보다 작은 값은 최소로 올린다
+    #[serde(default)]
+    #[ts(as = "Option<Option<u64>>", optional)]
+    pub total_rate_limit: Nullable<u64>,
+    /// 작업마다 상한. 규칙은 `total_rate_limit`과 같다
+    #[serde(default)]
+    #[ts(as = "Option<Option<u64>>", optional)]
+    pub job_rate_limit: Nullable<u64>,
 }
 
 /// 키 없음·`null`·값을 구분하는 패치 필드. `#[serde(default)]`와 함께 써야 키 없음이 `Keep`이 된다.
@@ -483,25 +505,29 @@ pub struct ResolvedDto {
     pub qualities: Vec<QualityDto>,
     /// `Resolved::default_quality(last_quality_label)`
     pub default_quality_index: u32,
-    /// `default_filename`에서 `.mp4`를 뗀 것
+    /// 파일 이름 규칙(기본은 `default_filename`)으로 만든 이름에서 `.mp4`를 뗀 것
     pub suggested_file_name: String,
     pub ownership: Ownership,
 }
 
 impl ResolvedDto {
     /// `Resolved`를 옮긴다. 화질의 서명 URL은 버린다.
+    ///
+    /// `template`이 없으면 기본 규칙(`default_filename`)을 그대로 쓴다.
     pub fn new(
         url: String,
         r: &Resolved,
         last_quality_label: Option<&str>,
         platform: Platform,
+        template: Option<&FileNameTemplate>,
         ownership: Ownership,
     ) -> Self {
-        let name = default_filename(&r.meta, platform);
-        let suggested_file_name = match name.strip_suffix(".mp4") {
-            Some(base) => base.to_string(),
-            None => name,
+        let name = match template {
+            Some(t) => render_filename(t, &r.meta, &r.content, platform),
+            None => default_filename(&r.meta, platform),
         };
+        // 코어가 `suggested_stem` → `output_path` 왕복을 거친 이름을 주므로, 받을 때 이름이 달라지지 않는다
+        let suggested_file_name = suggested_stem(&name).to_string();
         ResolvedDto {
             url,
             content: r.content.clone(),
@@ -513,6 +539,57 @@ impl ResolvedDto {
             ownership,
         }
     }
+}
+
+/// `preview_file_name_template` 결과. 읽을 수 없는 템플릿은 오류가 아니라 데이터다(입력 중 상태).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, TS)]
+#[serde(
+    tag = "status",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum FileNameTemplatePreview {
+    /// 영상·클립·생방송 예시 이름(`.mp4` 포함, 저장 폴더 볼륨의 규칙)
+    Ok {
+        names: Vec<PreviewName>,
+    },
+    Invalid {
+        error: TemplateErrorDto,
+    },
+}
+
+/// 예시 이름 하나.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviewName {
+    pub kind: ContentKindDto,
+    pub name: String,
+}
+
+/// 템플릿을 거부한 이유(코어 `TemplateError`의 TS 모양). 문구는 화면 copy deck이 정한다.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct TemplateErrorDto {
+    pub kind: TemplateErrorKind,
+    /// `unknownToken`·`duplicateToken`일 때 그 토큰 이름
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub token: Option<String>,
+    /// `tooLong`일 때 길이 상한(바이트, 코어 `MAX_TEMPLATE_BYTES`). 화면 문구가 이 값을 쓴다
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub max: Option<u32>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub enum TemplateErrorKind {
+    UnbalancedBrace,
+    UnknownToken,
+    DuplicateToken,
+    PathSeparator,
+    MissingTitle,
+    TooLong,
 }
 
 /// `ContentMeta` 미러.
@@ -1220,7 +1297,7 @@ impl From<AuthPhase> for AuthState {
     }
 }
 
-/// 사유(worker.md §11.4의 10개). TS 이름은 `AuthReason`.
+/// 사유(worker.md §11.4의 10개 + 거부 이유 둘). TS 이름은 `AuthReason`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(rename = "AuthReason")]
@@ -1235,6 +1312,8 @@ pub enum AuthReasonDto {
     Server,
     LoginLost,
     Receiver,
+    DailyLimit,
+    Blocked,
 }
 
 impl From<AuthReason> for AuthReasonDto {
@@ -1250,6 +1329,8 @@ impl From<AuthReason> for AuthReasonDto {
             AuthReason::Server => AuthReasonDto::Server,
             AuthReason::LoginLost => AuthReasonDto::LoginLost,
             AuthReason::Receiver => AuthReasonDto::Receiver,
+            AuthReason::DailyLimit => AuthReasonDto::DailyLimit,
+            AuthReason::Blocked => AuthReasonDto::Blocked,
         }
     }
 }

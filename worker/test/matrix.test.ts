@@ -1,5 +1,5 @@
 // 자격 × 경로 행렬(docs/design/worker.md §4.5, 구현 중 변경 31 (타)). 표의 키는 경로 표(ROUTES)와 같아야 한다:
-// 경로를 더하고 기대를 정하지 않으면 실패한다. W6이 더한 /·/assets/:file·/auth/web/logout·/me/*·/admin*과 /notice·/favicon.ico·/admin/:channelId/disallow와 읽기 페이지 셋(/help·/privacy·/licenses)에 편집자 위임 여덟 행(초대 셋·완료·그만두기·앱 편집자 API 셋, 구현 중 변경 106)을 더한 39쌍이다.
+// 경로를 더하고 기대를 정하지 않으면 실패한다. W6이 더한 /·/assets/:file·/auth/web/logout·/me/*·/admin*과 /notice·/favicon.ico·/admin/:channelId/disallow와 읽기 페이지 셋(/help·/privacy·/licenses)에 편집자 위임 여덟 행(초대 셋·완료·그만두기·앱 편집자 API 셋, 구현 중 변경 106)을 더하고 하루 상한 저장(POST /admin/auto-allow, allowlist-open.md §4.4)을 더한 40쌍이다.
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { newId, newSecret, newToken, sha256B64url } from "../src/core/token";
 import { type Auth, ROUTES } from "../src/routes";
@@ -7,7 +7,7 @@ import { LATEST_VIEW_CACHE } from "../src/http/landing";
 import { SUMS_CACHE } from "../src/http/releases";
 import { assetPath } from "../src/http/assets";
 import { createFakeChzzk } from "./fake-chzzk.mjs";
-import { allowedChannel, formBody, ORIGIN, useClock, viaExports } from "./http/harness";
+import { allowedChannel, formBody, ORIGIN, store, useClock, viaExports } from "./http/harness";
 import { type Cred, type Creds, credHeaders, DMG, makeCreds, seedDist, V2 } from "./http/release-fixture";
 import { A1, C3, D4 } from "./store/helpers";
 import { installFakeChzzk, type FakeNet } from "./network";
@@ -124,10 +124,12 @@ const MATRIX: Readonly<Record<string, readonly MatrixCase[]>> = {
       expect: by(303, 303, 303, 303, 403, 303, 303, 303),
     },
   ],
+  // 하루 상한 저장: 기본값(20)과 같은 값을 보내 다른 행의 전제를 바꾸지 않는다
+  "POST /admin/auto-allow": [{ name: "하루 상한 저장", request: webForm("/admin/auto-allow", { cap: "20" }), expect: by(303, 303, 303, 303, 403, 303, 303, 303) }],
   "POST /admin/sessions/:id/revoke": [{ name: "모르는 세션", request: webForm(() => `/admin/sessions/${newId()}/revoke`), expect: by(303, 303, 303, 303, 403, 303, 303, 303) }],
   "POST /admin/denied/:channelId/allow": [{ name: "거부 기록 없음", request: webForm(`/admin/denied/${C3}/allow`), expect: by(303, 303, 303, 303, 403, 303, 303, 303) }],
   "POST /admin/denied/:channelId/dismiss": [{ name: "거부 기록 없음", request: webForm(`/admin/denied/${C3}/dismiss`), expect: by(303, 303, 303, 303, 403, 303, 303, 303) }],
-  // 허가 빼기 확인 페이지(GET, 상태를 바꾸지 않는다): GET /admin과 같은 모양이고, 관리자에게는 허가된 채널이면 200·허가에 없으면 멱등 303
+  // 차단 확인 페이지(GET, 상태를 바꾸지 않는다): GET /admin과 같은 모양이고, 관리자에게는 허가된 채널이거나 허가·차단 어디에도 없으면 200·이미 차단됐으면 멱등 303
   "GET /admin/:channelId/disallow": [
     {
       name: "허가된 채널의 확인 페이지",
@@ -137,7 +139,15 @@ const MATRIX: Readonly<Record<string, readonly MatrixCase[]>> = {
       },
       expect: by(303, 303, 303, 303, 403, 200, 303, 303),
     },
-    { name: "허가에 없는 채널", request: plain(`/admin/${"0".repeat(30)}e5/disallow`), expect: by(303, 303, 303, 303, 403, 303, 303, 303) },
+    { name: "허가에도 차단에도 없는 채널(미리 막을 수 있다)", request: plain(`/admin/${"0".repeat(30)}e5/disallow`), expect: by(303, 303, 303, 303, 403, 200, 303, 303) },
+    {
+      name: "이미 차단된 채널",
+      request: async (c, cred) => {
+        await store().disallow(`${"0".repeat(30)}f6`, A1, [A1], Date.now());
+        return plain(`/admin/${"0".repeat(30)}f6/disallow`)(c, cred);
+      },
+      expect: by(303, 303, 303, 303, 403, 303, 303, 303),
+    },
   ],
   // 서비스 공지: 자격과 상관없이 200(R2에 공지 객체가 없으면 notice null)
   "GET /notice": [{ name: "서비스 공지", request: plain("/notice"), expect: all(200) }],

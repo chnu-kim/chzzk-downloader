@@ -25,6 +25,7 @@ pub mod part;
 pub(crate) mod progressive;
 pub mod retry;
 pub(crate) mod segmented;
+pub mod throttle;
 
 use std::future::Future;
 use std::num::NonZeroU8;
@@ -44,6 +45,7 @@ use crate::progress::{Meter, Phase, Progress};
 pub use part::{Discarded, Finalized, PartFile, PartOwner, Sidecar, discard_partial};
 pub use retry::{Failure, NETWORK_PATIENCE_MS, RETRY_BACKOFF_MAX_MS, RetryPolicy};
 use retry::{Patience, is_connection_failure};
+pub use throttle::{RateKnob, Throttle, Throttles};
 
 /// 작업당 재조회 상한.
 pub const MAX_REFRESHES: u32 = 8;
@@ -87,6 +89,9 @@ pub struct DownloadRequest {
     /// 마무리에서 제목·채널·날짜·원본 주소와 표지를 mp4에 넣는다(mp4-metadata.md). 셸이 설정에서 정한다. 코어 기본값은
     /// 없다(모든 생성자가 값을 준다). 실패해도 받기는 성공이다(표지나 태그만 빠진다).
     pub embed_metadata: bool,
+    /// 속도 제한(rate-limit.md). 기본(`Default`)은 제한 없음. 생방송(`Live`)은 이 값을 무시한다.
+    /// 런타임 값이라 `owner()`와 sidecar에 들어가지 않는다.
+    pub throttle: Throttles,
 }
 
 impl DownloadRequest {
@@ -575,7 +580,7 @@ pub(crate) async fn finish(
     // 생방송과 빠른 다시보기(전체·구간) 결과는 조각 구조를 일반 mp4로 바꾼다(core.md 구현 중 변경 60·64·71). 바로 위
     // checkpoint로 받은 바이트가 모두 durable하므로, 변환 도중 죽어도 다음 실행의 `resume`이 붙인 moov만 잘라 내고 다시 변환한다.
     // 바꾸기 전 실패는 경고만 남기고 조각 구조로 마무리하고, 바꾸는 도중 실패는 `.part`로 남긴다(core.md 61).
-    // 메타데이터(`udta`)는 이 변환이 만드는 새 moov에 함께 넣는다(moov는 한 번만 덧붙인다, core.md 75).
+    // 메타데이터(`udta`)는 이 변환이 만드는 새 moov에 함께 넣는다(moov는 한 번만 덧붙인다, core.md 80).
     let mut rewritten = None;
     if converts_on_finish(job.req.expected_kind) {
         // 파일 전체 훑기·fsync는 오래 걸릴 수 있어 blocking 스레드에서 한다.

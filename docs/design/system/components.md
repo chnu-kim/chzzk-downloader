@@ -505,6 +505,8 @@ type SettingsRowProps = {
 
 **치수·색**: `min-height: var(--row-h)` 36, 패딩 `var(--space-6) var(--space-12)`, gap `--gap-sibling`, 라벨 `--fg` body, 도움말 `--text-caption`/`--leading-caption` `--fg-muted` 라벨 아래 `--space-4`, 값 `--fg-muted` body(`.ellipsis`, 경로는 가운데 말줄임 JS), 컨트롤 `flex: none`. **라벨 = `--fg`, 값·도움말 = `--fg-muted`**로 고정한다(`A-FEAT-E2` 역할 반전 해소. 카드 폼 FieldRow §2.26도 같다). 좁은 폭: 라벨 `flex: 1 1 50%`, 컨트롤 `flex: none`, `flex-wrap: wrap`으로 자연 줄바꿈한다. 폭 미디어 쿼리를 컴포넌트가 갖지 않는다(`design-lint`, foundations §8).
 
+**쌓은 행**(`<SettingsRow class="row-stack">`, app.md 구현 중 변경 97): 컨트롤이 긴 값을 치는 입력칸이면 컨트롤을 `flex: 1 1 100%`로 라벨·도움말 아래 전체 폭에 놓고 버튼은 그 아래로 줄바꿈한다. 입력칸은 TextField 하나가 테두리를 갖고 감싸는 칸에 전역 `.field` 클래스를 쓰지 않는다(겹 테두리). 지금 쓰는 곳은 파일 이름 규칙 행뿐이다.
+
 Worker 관리 페이지도 같은 클래스(`.row`·`.row-label`·`.row-help`·`.row-value`·`.row-control`).
 
 ### 2.18 PageContainer

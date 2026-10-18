@@ -976,6 +976,7 @@ async fn g6_redeem_denied() {
     let (s, page) = e
         .redeem_with(Ok(RedeemResponse::Denied {
             channel_name: "남의 채널".into(),
+            reason: None,
         }))
         .await;
     assert_eq!((s.phase, s.reason), (AuthPhase::Denied, None));
@@ -983,6 +984,40 @@ async fn g6_redeem_denied() {
     assert_eq!(s.channel_id, None);
     assert_eq!(page, ReceiverPage::Denied);
     assert!(!e.file_exists());
+}
+
+/// 거부 이유(허용목록 자동 허가 명세 §5.1): 이유가 있으면 상태에 실리고 수신기 페이지는 같다. 다시 로그인을 시작하면 지워진다
+#[tokio::test(start_paused = true)]
+async fn g6b_redeem_denied_reasons() {
+    for (why, want) in [
+        (DenyReason::DailyLimit, AuthReason::DailyLimit),
+        (DenyReason::Blocked, AuthReason::Blocked),
+    ] {
+        let e = pending_env().await;
+        let (s, page) = e
+            .redeem_with(Ok(RedeemResponse::Denied {
+                channel_name: "새 채널".into(),
+                reason: Some(why),
+            }))
+            .await;
+        assert_eq!(
+            (s.phase, s.reason),
+            (AuthPhase::Denied, Some(want)),
+            "{want:?}"
+        );
+        assert_eq!(s.channel_name.as_deref(), Some("새 채널"));
+        assert_eq!(page, ReceiverPage::Denied);
+        assert!(!e.file_exists());
+        // 다시 시도: 새 로그인이 시작되면 거부 이유가 남지 않는다
+        e.start_ok();
+        assert!(matches!(e.svc.begin_login().await, BeginLogin::Started(_)));
+        let st = e.svc.status();
+        assert_eq!(
+            (st.phase, st.reason),
+            (AuthPhase::Pending, None),
+            "{want:?}"
+        );
+    }
 }
 
 #[tokio::test(start_paused = true)]
@@ -1510,6 +1545,7 @@ async fn gate_table() {
     denied
         .redeem_with(Ok(RedeemResponse::Denied {
             channel_name: "x".into(),
+            reason: None,
         }))
         .await;
     cases.push(("denied", denied, false));
@@ -2065,6 +2101,7 @@ async fn signer_is_none_outside_signed_in_even_for_admin() {
     denied
         .redeem_with(Ok(RedeemResponse::Denied {
             channel_name: "x".into(),
+            reason: None,
         }))
         .await;
     assert!(denied.svc.signer().is_none());

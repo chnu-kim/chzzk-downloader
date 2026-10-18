@@ -172,6 +172,10 @@ async fn redeem_variants() {
         r#"{"status":"failed","code":"Bad Code"}"#.to_string(),
         r#"{"status":"pending"}"#.to_string(),
         r#"{"status":"weird"}"#.to_string(),
+        r#"{"status":"denied","channelName":"새","reason":"daily_limit"}"#.to_string(),
+        r#"{"status":"denied","channelName":"막","reason":"blocked"}"#.to_string(),
+        r#"{"status":"denied","channelName":"뒤","reason":"future_value"}"#.to_string(),
+        r#"{"status":"denied","channelName":"숫자","reason":7}"#.to_string(),
     ];
     // 먼저 올린 mock부터 한 번씩 맞는다(up_to_n_times(1)).
     for b in &bodies {
@@ -196,7 +200,8 @@ async fn redeem_variants() {
     assert_eq!(
         got[1],
         Ok(RedeemResponse::Denied {
-            channel_name: "가".repeat(128)
+            channel_name: "가".repeat(128),
+            reason: None
         })
     );
     assert_eq!(got[2], Ok(RedeemResponse::Cancelled));
@@ -215,6 +220,17 @@ async fn redeem_variants() {
     // pending은 수령 응답에 없다
     assert_eq!(got[5], Err(ApiError::Contract { status: 200 }));
     assert_eq!(got[6], Err(ApiError::Contract { status: 200 }));
+    // 거부 이유는 선택 키다: 아는 낱말 둘만 이유가 되고 모르는 낱말·숫자는 이유 없음(옛 응답과 같다)
+    let denied = |name: &str, reason| {
+        Ok(RedeemResponse::Denied {
+            channel_name: name.into(),
+            reason,
+        })
+    };
+    assert_eq!(got[7], denied("새", Some(DenyReason::DailyLimit)));
+    assert_eq!(got[8], denied("막", Some(DenyReason::Blocked)));
+    assert_eq!(got[9], denied("뒤", None));
+    assert_eq!(got[10], denied("숫자", None));
 }
 
 #[tokio::test]

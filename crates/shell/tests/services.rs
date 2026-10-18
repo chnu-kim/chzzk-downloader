@@ -771,6 +771,131 @@ async fn parallel_setting_reaches_manager() {
     }
 }
 
+/// 속도 상한 패치(rate-limit.md §5.2): 키 없음 = 그대로, `null` = 끔, 0 = 끔, 최소보다 작은 값 = 최소.
+/// 저장하고 DTO에 싣고 다시 열어도 남는다. 거부된 패치는 아무것도 바꾸지 않는다.
+#[test]
+fn rate_limit_patch_rules_persist_and_reach_dto() {
+    use chzzk_core::settings::MIN_RATE_LIMIT_BPS;
+    let t = TempDir::new().unwrap();
+    let svc = open(t.path());
+    let d = svc.get();
+    assert_eq!((d.total_rate_limit, d.job_rate_limit), (None, None));
+
+    let d = svc
+        .update(SettingsPatch {
+            total_rate_limit: Nullable::Set(5_000_000),
+            job_rate_limit: Nullable::Set(2_000_000),
+            ..patch()
+        })
+        .unwrap();
+    assert_eq!(
+        (d.total_rate_limit, d.job_rate_limit),
+        (Some(5_000_000), Some(2_000_000))
+    );
+    // 키 없음은 그대로
+    let d = svc.update(patch()).unwrap();
+    assert_eq!(
+        (d.total_rate_limit, d.job_rate_limit),
+        (Some(5_000_000), Some(2_000_000))
+    );
+    // 최소보다 작은 값은 최소로 올린다. 하나만 바뀐다.
+    let d = svc
+        .update(SettingsPatch {
+            job_rate_limit: Nullable::Set(1),
+            ..patch()
+        })
+        .unwrap();
+    assert_eq!(
+        (d.total_rate_limit, d.job_rate_limit),
+        (Some(5_000_000), Some(MIN_RATE_LIMIT_BPS))
+    );
+    // 다시 열어도 남는다
+    drop(svc);
+    let svc = open(t.path());
+    let d = svc.get();
+    assert_eq!(
+        (d.total_rate_limit, d.job_rate_limit),
+        (Some(5_000_000), Some(MIN_RATE_LIMIT_BPS))
+    );
+    // `null`과 0은 끔
+    let d = svc
+        .update(SettingsPatch {
+            total_rate_limit: Nullable::Clear,
+            job_rate_limit: Nullable::Set(0),
+            ..patch()
+        })
+        .unwrap();
+    assert_eq!((d.total_rate_limit, d.job_rate_limit), (None, None));
+    // 거부된 패치(잘못된 폴더)는 속도 상한도 바꾸지 않는다.
+    svc.update(SettingsPatch {
+        total_rate_limit: Nullable::Set(3_000_000),
+        ..patch()
+    })
+    .unwrap();
+    let e = svc
+        .update(SettingsPatch {
+            download_folder: Nullable::Set("relative".into()),
+            total_rate_limit: Nullable::Clear,
+            ..patch()
+        })
+        .unwrap_err();
+    assert_eq!(e.code, ErrorCode::InvalidInput);
+    assert_eq!(svc.get().total_rate_limit, Some(3_000_000));
+}
+
+/// 프런트가 보내는 JSON: 키 없음·`null`·숫자를 구분한다.
+#[test]
+fn rate_limit_patch_json_from_frontend() {
+    let p: SettingsPatch = serde_json::from_str(r#"{"jobRateLimit":null}"#).unwrap();
+    assert_eq!(
+        (p.total_rate_limit, p.job_rate_limit),
+        (Nullable::Keep, Nullable::Clear)
+    );
+    let p: SettingsPatch =
+        serde_json::from_str(r#"{"totalRateLimit":5000000,"jobRateLimit":2000000}"#).unwrap();
+    assert_eq!(
+        (p.total_rate_limit, p.job_rate_limit),
+        (Nullable::Set(5_000_000), Nullable::Set(2_000_000))
+    );
+}
+
+/// 속도 상한 변경은 설정 파일만이 아니라 도는 매니저에 반영된다.
+#[tokio::test(start_paused = true)]
+async fn rate_limit_setting_reaches_manager() {
+    let h = Harness::new(1);
+    let t = TempDir::new().unwrap();
+    let svc = open(t.path());
+    let d = svc
+        .update_and_apply(
+            SettingsPatch {
+                total_rate_limit: Nullable::Set(5_000_000),
+                job_rate_limit: Nullable::Set(2_000_000),
+                ..patch()
+            },
+            &h.mgr,
+        )
+        .unwrap();
+    assert_eq!(
+        (d.total_rate_limit, d.job_rate_limit),
+        (Some(5_000_000), Some(2_000_000))
+    );
+    assert_eq!(h.mgr.rate_limits(), (Some(5_000_000), Some(2_000_000)));
+    // 최소 아래·null도 매니저에 저장된 값 그대로 반영된다.
+    svc.update_and_apply(
+        SettingsPatch {
+            total_rate_limit: Nullable::Set(10),
+            job_rate_limit: Nullable::Clear,
+            ..patch()
+        },
+        &h.mgr,
+    )
+    .unwrap();
+    assert_eq!(h.mgr.rate_limits(), (Some(1_000_000), None));
+    // 키 없는 패치는 매니저 값을 바꾸지 않는다.
+    svc.update_and_apply(patch(), &h.mgr).unwrap();
+    assert_eq!(h.mgr.rate_limits(), (Some(1_000_000), None));
+}
+
 /// 작업 추가: 설정 폴더·연결 수를 쓰고, 마지막 화질·최근 VOD를 저장한다.
 #[tokio::test(start_paused = true)]
 async fn enqueue_uses_settings_and_records_recent() {
@@ -887,4 +1012,98 @@ fn chat_settings_patch_round_trips() {
     let d = open(t.path()).get();
     assert!(d.save_chat);
     assert_eq!(d.chat_subtitle, SubtitleFormat::Srt);
+}
+
+/// 파일 이름 규칙(core.md 78, app.md 95): 패치로 바뀌고 저장된다. 기본 템플릿 문자열·`null`은 `None`,
+/// 읽을 수 없는 값은 `invalidInput`이고 저장된 값은 그대로다.
+#[test]
+fn file_name_template_patch_round_trips() {
+    use chzzk_core::naming::DEFAULT_TEMPLATE;
+    let t = TempDir::new().unwrap();
+    let svc = open(t.path());
+    assert_eq!(svc.get().file_name_template, None);
+
+    let set = |tpl: &str| SettingsPatch {
+        file_name_template: Nullable::Set(tpl.to_string()),
+        ..patch()
+    };
+    let d = svc.update(set("{date}_{channel}_{title}")).unwrap();
+    assert_eq!(
+        d.file_name_template.as_deref(),
+        Some("{date}_{channel}_{title}")
+    );
+
+    // 키 없음은 그대로, 다시 열어도 남는다
+    let d = svc.update(patch()).unwrap();
+    assert_eq!(
+        d.file_name_template.as_deref(),
+        Some("{date}_{channel}_{title}")
+    );
+    assert_eq!(
+        open(t.path()).get().file_name_template.as_deref(),
+        Some("{date}_{channel}_{title}")
+    );
+
+    // 읽을 수 없는 값은 거부하고 저장된 값을 건드리지 않는다
+    for bad in [
+        "{title",
+        "{foo}",
+        "{title}{title}",
+        "{date}/{title}",
+        "{date}",
+        "",
+        &format!("{{title}}{}", "a".repeat(100)),
+    ] {
+        let e = svc.update(set(bad)).unwrap_err();
+        assert_eq!(e.code, ErrorCode::InvalidInput, "{bad:?}");
+        assert_eq!(
+            svc.get().file_name_template.as_deref(),
+            Some("{date}_{channel}_{title}"),
+            "{bad:?}"
+        );
+    }
+
+    // 기본 템플릿 문자열은 `None`으로 저장한다(앞뒤 공백은 무시)
+    for same in [DEFAULT_TEMPLATE, "  {prefix} {channel} - {title} "] {
+        svc.update(set("{title}")).unwrap();
+        let d = svc.update(set(same)).unwrap();
+        assert_eq!(d.file_name_template, None, "{same:?}");
+    }
+
+    // null은 기본으로
+    svc.update(set("{title}")).unwrap();
+    let d = svc
+        .update(SettingsPatch {
+            file_name_template: Nullable::Clear,
+            ..patch()
+        })
+        .unwrap();
+    assert_eq!(d.file_name_template, None);
+    assert_eq!(open(t.path()).get().file_name_template, None);
+
+    // 다른 키를 패치해도 템플릿은 그대로다
+    svc.update(set("{title}")).unwrap();
+    let d = svc
+        .update(SettingsPatch {
+            save_chat: Some(true),
+            ..patch()
+        })
+        .unwrap();
+    assert_eq!(d.file_name_template.as_deref(), Some("{title}"));
+}
+
+/// 미리보기 command는 저장된 설정과 무관하게 입력 문자열만 본다.
+#[test]
+fn file_name_template_preview_ignores_stored_value() {
+    use chzzk_shell::dto::FileNameTemplatePreview;
+    let t = TempDir::new().unwrap();
+    let svc = open(t.path());
+    svc.update(SettingsPatch {
+        file_name_template: Nullable::Set("{no}".into()),
+        ..SettingsPatch::default()
+    })
+    .unwrap_err(); // `{title}`이 없어 거부된다
+    let p = svc.preview_file_name_template("{title}");
+    assert!(matches!(p, FileNameTemplatePreview::Ok { .. }), "{p:?}");
+    assert_eq!(svc.get().file_name_template, None);
 }

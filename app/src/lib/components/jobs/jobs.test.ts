@@ -54,6 +54,9 @@ const baseSettings: SettingsDto = {
   embedMetadata: true,
   saveChat: false,
   chatSubtitle: 'ass',
+  fileNameTemplate: null,
+  totalRateLimit: null,
+  jobRateLimit: null,
 };
 
 let send: (e: JobEvent) => void = () => {};

@@ -3,7 +3,7 @@
 // redeem 이벤트는 Worker 핸들러가 ctx.log로 남긴다(/auth/redeem은 quiet가 아니다).
 // 순수 함수: 이벤트 이름과 필드만 정한다(출력은 AuthStore.ts).
 import type { LogFields } from "../core/log";
-import type { ConsumeResult, FinishResult, LoginLogHint, LoginOutcome, RedeemResult } from "./types";
+import type { ConsumeResult, DenyReason, FinishResult, LoginLogHint, LoginOutcome, RedeemResult } from "./types";
 
 export type LogEvent = readonly [event: string, fields: LogFields];
 
@@ -16,20 +16,21 @@ export function consumeEvent(r: ConsumeResult): LogEvent | null {
 
 /**
  * finish 이벤트. 취소·실패는 Worker가 정한 결과라 finish의 반환과 상관없이 그 이벤트다(사유는 힌트, 없으면 실패 코드).
+ * reason: 거부 이유(daily_limit·blocked)나 자동 허가(auto_allowed). 값만이고 채널 값은 싣지 않는다(allowlist-open.md §3.8).
  * 사용자 결과(user)는 finish가 정한다: ok(app·web) · denied · cancelled · failed·gone(reason = 그 종류)
  */
-export function finishEvent(outcome: LoginOutcome, r: FinishResult, hint: LoginLogHint = {}): LogEvent {
+export function finishEvent(outcome: LoginOutcome, r: FinishResult, hint: LoginLogHint = {}, reason?: DenyReason | "auto_allowed"): LogEvent {
   if (outcome.type === "cancelled") return ["auth.login.cancelled", kindOf(hint)];
   if (outcome.type === "failed") return ["auth.login.failed", { ...hint, reason: hint.reason ?? outcome.code }];
   // 앱 종결(loopback)은 result가 이벤트를 정한다
   const t = r.type === "loopback" ? r.result : r.type;
   switch (t) {
     case "ok":
-      return ["auth.login.ok", { flowKind: "app" }];
+      return ["auth.login.ok", { flowKind: "app", ...(reason === undefined ? {} : { reason }) }];
     case "web":
-      return ["auth.login.ok", { flowKind: "web" }];
+      return ["auth.login.ok", { flowKind: "web", ...(reason === undefined ? {} : { reason }) }];
     case "denied":
-      return ["auth.login.denied", kindOf(hint)];
+      return ["auth.login.denied", { ...kindOf(hint), ...(reason === undefined ? {} : { reason }) }];
     case "cancelled":
       return ["auth.login.cancelled", kindOf(hint)];
     case "failed":

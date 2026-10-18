@@ -9,6 +9,7 @@
     "clear_naver_cookies",
     "import_legacy",
     "pick_folder",
+    "preview_file_name_template",
     "resolve",
     "check_output",
     "enqueue",

@@ -9,7 +9,7 @@ use ::url::Url;
 use bytes::Bytes;
 use reqwest::header::HeaderValue;
 
-use crate::download::RetryPolicy;
+use crate::download::{RetryPolicy, Throttles};
 use crate::error::Error;
 use crate::http::{self, NaverCookies, RequestKind};
 use crate::info::{self, Playback};
@@ -363,7 +363,19 @@ pub(crate) const MAX_API_BODY: usize = 8 * 1024 * 1024;
 /// 응답 본문을 `max` 바이트까지만 읽는다. 넘으면 `Error::Parse`.
 ///
 /// `read_timeout`은 idle만 끊으므로, 계속 흘러오는 본문은 이 상한으로 막는다.
-pub(crate) async fn read_capped(mut resp: reqwest::Response, max: usize) -> Result<Bytes, Error> {
+pub(crate) async fn read_capped(resp: reqwest::Response, max: usize) -> Result<Bytes, Error> {
+    read_capped_throttled(resp, max, None).await
+}
+
+/// `read_capped`에 속도 제한을 더한 것(rate-limit.md §3.4). 조각을 받을 때마다 치르고 다음 읽기를 늦춘다.
+///
+/// 세그먼트 본문은 메모리로 다 읽힌 뒤에야 쓰기 루프로 넘어간다. 그래서 쓰기 루프가 아니라 여기서 늦춰야
+/// 네트워크가 늦춰진다. API·playlist·init은 `None`(제한 없음)이다.
+pub(crate) async fn read_capped_throttled(
+    mut resp: reqwest::Response,
+    max: usize,
+    throttle: Option<&Throttles>,
+) -> Result<Bytes, Error> {
     let too_large = || Error::Parse {
         what: "response",
         detail: format!("응답이 너무 큽니다(상한 {max}바이트)"),
@@ -377,6 +389,9 @@ pub(crate) async fn read_capped(mut resp: reqwest::Response, max: usize) -> Resu
             return Err(too_large());
         }
         buf.extend_from_slice(&chunk);
+        if let Some(t) = throttle {
+            t.consume(chunk.len() as u64).await;
+        }
     }
     Ok(Bytes::from(buf))
 }

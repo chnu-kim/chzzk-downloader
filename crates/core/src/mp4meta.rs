@@ -1,4 +1,4 @@
-//! 받은 mp4에 제목·채널·날짜·원본 주소와 표지를 넣는다(core.md 구현 중 변경 75, 설계 `docs/design/features/mp4-metadata.md`).
+//! 받은 mp4에 제목·채널·날짜·원본 주소와 표지를 넣는다(core.md 구현 중 변경 80, 설계 `docs/design/features/mp4-metadata.md`).
 //!
 //! iTunes 스타일 `moov/udta/meta/ilst`(ffmpeg의 mp4 muxer와 같은 배치)를 만든다.
 //!
@@ -7,7 +7,7 @@
 //! - `rewrite_to`: 일반 VOD·클립(PD mp4, `[ftyp, moov, free, mdat]`)용. **원본 `.part`는 읽기만 한다.** 같은 폴더의 임시
 //!   파일에 `[ftyp, 새 moov(udta 포함), …, mdat]`을 쓰고 sync한다(faststart 유지). 새 `moov`가 커져 뒤 바이트가 움직이면
 //!   모든 `trak`의 `stco`/`co64`를 그만큼 고친다. 옛 `moov` 바로 뒤 `free`가 있으면 그 자리를 먼저 쓴다. 최종 이름으로
-//!   옮기는 것은 `PartFile::finalize_rewritten`이다(mp4-metadata.md §6.2, core.md 구현 중 변경 78).
+//!   옮기는 것은 `PartFile::finalize_rewritten`이다(mp4-metadata.md §6.2, core.md 구현 중 변경 83).
 //!
 //! 실패하면 임시 파일을 지우고 오류를 돌려준다. 원본이 그대로라 호출한 쪽은 태그 없이 원본을 마무리한다.
 //! 벽시계·앱 버전처럼 실행마다 달라지는 값은 넣지 않아 같은 입력이 같은 바이트가 된다.
@@ -193,7 +193,7 @@ fn atom(kind: &[u8; 4], data_type: u32, value: &[u8]) -> Vec<u8> {
 
 /// `udta` 상자 전체를 만든다. 원자가 하나도 없으면 `None`이다.
 ///
-/// 배치(ffmpeg 참조 파일과 대조해 확정, core.md 75):
+/// 배치(ffmpeg 참조 파일과 대조해 확정, core.md 80):
 /// `udta { meta(full box) { hdlr('mdir','appl') ilst { ©nam ©ART ©day ©cmt covr } } }`.
 /// 원자 순서는 고정이다. `©`는 latin1 한 바이트(0xA9)다.
 pub(crate) fn build_udta(tags: &Tags, cover: Option<&Cover>) -> Option<Vec<u8>> {

@@ -27,6 +27,7 @@
 //!   `FileLocked`다(코어가 취소 뒤 체크포인트를 쓰는 중일 수도 있다).
 
 use std::collections::BTreeMap;
+use std::num::NonZeroU64;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 
@@ -37,7 +38,7 @@ use chzzk_core::chat::{
 use chzzk_core::naming::output_path;
 use chzzk_core::{
     CancellationToken, ContentRef, Discarded, DownloadOutcome, DownloadRequest, Error, Phase,
-    PlaybackKind, Progress, TimeRange, discard_partial,
+    PlaybackKind, Progress, RateKnob, Throttle, Throttles, TimeRange, discard_partial,
 };
 use std::time::Duration;
 use tokio::runtime::Handle;
@@ -83,6 +84,10 @@ pub struct ManagerConfig<B> {
     pub max_parallel: u8,
     /// 설정 `auto_resume_interrupted`. 켜져 있으면 열자마자 `interrupted`를 모두 다시 줄 세운다
     pub auto_resume: bool,
+    /// 설정 `total_rate_limit`(바이트/초, `None` = 끔). 생방송이 아닌 모든 작업의 합계 상한(rate-limit.md)
+    pub total_rate_limit: Option<u64>,
+    /// 설정 `job_rate_limit`(바이트/초, `None` = 끔). 생방송이 아닌 작업마다의 상한
+    pub job_rate_limit: Option<u64>,
 }
 
 /// 앱 종료(`quit`) 때 멈추기를 기다리는 시간.
@@ -433,6 +438,16 @@ struct Inner<B> {
     runtime: Handle,
     state: Mutex<State>,
     writer: JobsWriter,
+    /// 속도 상한 값(rate-limit.md §3.3). 꺼져 있어도 늘 작업에 붙여, 받는 중에 켜도 다음 조각부터 걸린다.
+    total_knob: RateKnob,
+    job_knob: RateKnob,
+    /// 전체 합계 bucket. 매니저가 사는 동안 하나이고 모든 (생방송이 아닌) 작업이 복제해서 쓴다.
+    shared: Throttle,
+}
+
+/// 설정의 바이트/초 값을 코어 knob 값으로. 0은 끔이다.
+fn rate_value(bps: Option<u64>) -> Option<NonZeroU64> {
+    bps.and_then(NonZeroU64::new)
 }
 
 /// 다운로드 작업 관리자. 복제하면 같은 매니저를 가리킨다.
@@ -472,11 +487,15 @@ impl<B: Backend> DownloadManager<B> {
             let seq = st.seq();
             st.jobs.insert(rec.id, Job::new(rec, seq));
         }
+        let total_knob = RateKnob::new(rate_value(cfg.total_rate_limit));
         let inner = Arc::new(Inner {
             client: cfg.client,
             runtime: cfg.runtime,
             state: Mutex::new(st),
             writer: JobsWriter::spawn(cfg.store),
+            shared: Throttle::new(total_knob.clone()),
+            total_knob,
+            job_knob: RateKnob::new(rate_value(cfg.job_rate_limit)),
         });
         let mgr = DownloadManager { inner };
         {
@@ -513,6 +532,21 @@ impl<B: Backend> DownloadManager<B> {
         let mut st = self.inner.lock();
         st.max_running = clamp_parallel(n);
         self.inner.pump(&mut st);
+    }
+
+    /// 속도 상한을 바꾼다(바이트/초, `None`·0 = 끔). 받는 중인 작업에도 곧바로 적용된다(다음 본문 조각부터,
+    /// 기다리던 조각도 다시 계산한다). knob은 원자값이라 상태 잠금을 잡지 않는다. 최소값 규칙은 설정 쪽이 지킨다.
+    pub fn set_rate_limits(&self, total: Option<u64>, job: Option<u64>) {
+        self.inner.total_knob.set(rate_value(total));
+        self.inner.job_knob.set(rate_value(job));
+    }
+
+    /// 지금 속도 상한 `(전체 합계, 작업마다)`(바이트/초, `None` = 끔).
+    pub fn rate_limits(&self) -> (Option<u64>, Option<u64>) {
+        (
+            self.inner.total_knob.get().map(NonZeroU64::get),
+            self.inner.job_knob.get().map(NonZeroU64::get),
+        )
     }
 
     /// 받는 중(`running`·`pausing`)인 작업 수. 창 닫기 확인(D1)에 쓴다.
@@ -1653,6 +1687,14 @@ impl<B: Backend> Inner<B> {
         job.live_stop = job.is_live().then(CancellationToken::new);
         let mut req = job.rec.to_request();
         req.live_stop = job.live_stop.clone();
+        if !job.is_live() {
+            // 속도 제한(rate-limit.md R3): 생방송 녹화는 느리면 놓친 조각이 생기므로 붙이지 않는다(엔진도 무시한다).
+            // 작업 bucket은 실행마다 새로 만든다. 일시정지 뒤 이어받기는 빚 없이 시작한다.
+            req.throttle = Throttles {
+                job: Some(Throttle::new(self.job_knob.clone())),
+                shared: Some(self.shared.clone()),
+            };
+        }
         let discard = job.rec.discard_on_start;
         let chat_video = match (&job.rec.content, &job.rec.chat) {
             (ContentRef::Video { video_no }, Some(_)) if discard && !chat_shared => Some(*video_no),

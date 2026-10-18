@@ -444,6 +444,7 @@ async fn run(args: Args) -> Result<(), String> {
     };
     let req = DownloadRequest {
         embed_metadata: !args.no_meta,
+        throttle: Default::default(),
         content: r.content.clone(),
         quality_id: quality.id.clone(),
         expected_kind: r.kind(),

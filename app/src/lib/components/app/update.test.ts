@@ -67,6 +67,9 @@ const dto: SettingsDto = {
   embedMetadata: true,
   saveChat: false,
   chatSubtitle: 'ass',
+  fileNameTemplate: null,
+  totalRateLimit: null,
+  jobRateLimit: null,
 };
 
 const appError = (code: AppError['code']): AppError => ({ code, message: code, stage: null, resumable: false, payload: null });

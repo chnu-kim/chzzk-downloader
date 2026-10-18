@@ -19,7 +19,7 @@ const PNG: &[u8] = include_bytes!("../../../../testdata/synthetic/thumb.png");
 const WEBP: &[u8] = include_bytes!("../../../../testdata/synthetic/thumb.webp");
 
 /// ffmpeg(`-c copy -fflags +bitexact -f mp4 -metadata title=T artist=A date=2026-01-02 comment=https://x`)가 만든
-/// 표지 없는 `udta`. 우리 배치가 참조 구현과 바이트까지 같은지 본다(core.md 75).
+/// 표지 없는 `udta`. 우리 배치가 참조 구현과 바이트까지 같은지 본다(core.md 80).
 const FFMPEG_UDTA: &str = "000000b275647461000000aa6d657461000000000000002168646c7200000000000000006d6469726170706c0000000000000000000000007d696c737400000019a96e616d000000116461746100000001000000005400000019a9415254000000116461746100000001000000004100000022a96461790000001a646174610000000100000000323032362d30312d303200000021a9636d740000001964617461000000010000000068747470733a2f2f78";
 
 fn unhex(s: &str) -> Vec<u8> {
@@ -586,7 +586,7 @@ fn rewrite_keeps_offsets_before_the_moov() {
     );
 }
 
-/// 옮긴 `stco` 값이 32비트를 넘으면 `co64`로 올리지 않고 거부한다(태그 없이 원본, core.md 78). 같은 값의 `co64`는 된다.
+/// 옮긴 `stco` 값이 32비트를 넘으면 `co64`로 올리지 않고 거부한다(태그 없이 원본, core.md 83). 같은 값의 `co64`는 된다.
 #[test]
 fn stco_overflow_is_rejected_but_co64_is_fine() {
     let near = u32::MAX - 3;

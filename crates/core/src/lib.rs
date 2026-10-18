@@ -32,7 +32,7 @@ pub use client::{Chzzk, ClientConfig, Endpoints};
 pub use credentials::CredentialStore;
 pub use download::{
     Discarded, DownloadOutcome, DownloadRequest, DuplicatePolicy, LiveEnd, LiveEndReason,
-    PartOwner, RetryPolicy, discard_partial,
+    PartOwner, RateKnob, RetryPolicy, Throttle, Throttles, discard_partial,
 };
 pub use error::{Error, ErrorKind, Unsupported};
 pub use http::{NaverCookies, RequestKind, Secret};

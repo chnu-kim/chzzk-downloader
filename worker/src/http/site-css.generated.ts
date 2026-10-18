@@ -1285,6 +1285,12 @@ export const SITE_CSS = `/* [root] 라이트 기본값. ref 팔레트와 sys 토
   margin-inline-start: auto;
 }
 
+/* 쌓은 행(components.md §2.17): 긴 값을 치는 입력칸은 라벨·도움말 아래 전체 폭에 두고 버튼이 그 아래로 이어진다 */
+.row-stack > .row-control {
+  flex: 1 1 100%;
+  margin-inline-start: 0;
+}
+
 .fieldrow {
   display: grid;
   grid-template-columns: var(--label-w) minmax(0, 1fr);
@@ -2141,4 +2147,4 @@ pre.license {
   }
 }
 `;
-export const SITE_CSS_HASH = "4eec942994c895e4";
+export const SITE_CSS_HASH = "de571b8340987991";

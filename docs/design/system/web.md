@@ -25,7 +25,7 @@ Worker가 그리는 페이지는 한 골격(`htmlPage`, worker.md §4 공통·�
 | 편집자 초대 | `GET /invite/:token` | 앱 | 웹 세션 선택 | 비로그인은 고지 네 줄 + [치지직으로 로그인], 로그인했으면 [편집자 되기] 확인(delegation.md §5.2). 상태별 제목 `invite.own.title`·`invite.gone.title`·`invite.full.title`. quiet·noindex |
 | 편집자 완료 | `GET /me/delegations/done/:owner`(quiet) | 앱 | 웹 세션 | `inviteDone.title` + [편집자 그만두기](테두리, 확인 없음, 303 + flash). 수락이 303 주소에 실은 그 주인과 최근 2분 안에 맺은 위임만(worker.md 106 (차) ③) |
 | 관리 | `GET /admin` | 앱 | 관리자 | 표 5개와 폼(§7·§8) |
-| 허가 빼기 확인 | `GET /admin/…/disallow`(신설) | 앱 | 관리자 | D54의 유일한 확인 페이지(§7.3) |
+| 차단 확인(예전의 허가 빼기) | `GET /admin/…/disallow`(신설) | 앱 | 관리자 | D54의 유일한 확인 페이지(§7.3). 허가·차단 어디에도 없는 채널도 연다 |
 | 도움말·처리방침·라이선스 | `GET /help`·`/privacy`·`/licenses`(신설) | 읽기 | 없음 | §10. `/terms`는 두지 않는다(D60) |
 | 공지 | `GET /notice` | — | 없음 | JSON이다. 페이지가 아니므로 이 문서의 대상이 아니다(D41, g-outage §4) |
 | (대상 밖) 앱 편집자 API | `POST /api/editors/*`·`/api/delegations/leave` | — | 앱 access | JSON이다. 페이지가 아니다 |
@@ -275,14 +275,14 @@ flash 종류(아홉: `inviteCancelled` 추가)와 `seeOther` 위치(쿼리 없�
 | 추가 | 관리 › 허가한 채널 | primary | 없음 + flash | 관리 페이지의 다음 단계. 페이지당 채움 하나 |
 | 허가(거부된 시도) | 표 행 | secondary | 없음 + flash | (가) |
 | 지우기(거부 기록) | 표 행 | secondary(neutral) | 없음 + flash | 비파괴. 지금 `danger`인 것은 과용(`A-WORKER` §3.1, D54) |
-| 허가 빼기…(허가한 채널) | 표 행 | secondary(neutral) **링크 버튼** → 확인 페이지 | **확인 페이지 한 번** | (나). 모든 세션이 끊기고 되돌릴 수 없다. 라벨 끝 말줄임(창을 연다, `content.md` §5.2) |
-| 허가 빼기(확인 페이지 최종) | 확인 페이지 | secondary **tone=danger** | — | 최종 단계에서만 위험 표시(GOV.UK warning button) |
+| 차단…(허가한 채널·거부된 시도) | 표 행 | secondary(neutral) **링크 버튼** → 확인 페이지 | **확인 페이지 한 번** | (나). 모든 세션이 끊기고 되돌릴 수 없다. 라벨 끝 말줄임(창을 연다, `content.md` §5.2) |
+| 차단(확인 페이지 최종) | 확인 페이지 | secondary **tone=danger** | — | 최종 단계에서만 위험 표시(GOV.UK warning button) |
 
 `tone=danger`는 "되돌릴 수 없는 것"에만 쓴다(D54, `G-WEB-R22`). 근거: `A-WORKER-3.1`(의미 규칙 없음: 끊기·빼기·지우기는 danger, 로그아웃은 일반), D35·D36. 강제: `worker` 테스트(`.tone-danger`는 `/admin/…/disallow` 확인 페이지 응답에만 있다), `design-copy` DC1(라벨 어휘: 끊기·빼기·지우기·허가·추가는 `content.md` 용어집. "허용"은 금지어).
 
-### 7.3 확인 페이지(허가 빼기)
+### 7.3 확인 페이지(차단, 예전의 허가 빼기)
 
-`GET /admin/<channelId>/disallow`(상태 변경·감사 기록 없음) → `<h1>` `confirmDisallow.title`("이 채널의 허가를 뺄까요?") → 요약 목록(`<dl>`: 이름 · 채널 ID(`.num` mono) · 활성 세션 수) → `confirmDisallow.body` → `.actions`: **왼쪽 [허가 빼기]**(`audit.disallow`, `btn-secondary tone-danger`, 폼 하나) · **오른쪽 링크** `confirmDisallow.back`("허가한 채널 목록으로", `/admin`). 폼 요소는 최종 버튼의 폼 하나뿐이다. 채움 버튼은 없다.
+`GET /admin/<channelId>/disallow`(상태 변경·감사 기록 없음) → `<h1>` `confirmDisallow.title`("이 채널을 차단할까요?") → 요약 목록(`<dl>`: 이름 · 채널 ID(`.num` mono) · 활성 세션 수) → `confirmDisallow.body` → `.actions`: **왼쪽 [차단]**(`audit.disallow`, `btn-secondary tone-danger`, 폼 하나) · **오른쪽 링크** `confirmDisallow.back`("허가한 채널 목록으로", `/admin`). 폼 요소는 최종 버튼의 폼 하나뿐이다. 채움 버튼은 없다.
 
 배치는 D36(파괴 동작은 왼쪽 빨간 글자, 안전한 쪽은 오른쪽)을 따르되 웹 페이지라 Enter 기본 버튼 개념이 없으므로 오른쬭은 링크다(`patterns.md` §14.5도 이렇게 적는다). 근거: D54, `G-WEB-R21`(나)·`G-WEB-R22`(MoJ confirm-an-action, WCAG 3.3.4 G168), D36. 강제: `worker` 테스트(GET은 DO 상태를 바꾸지 않는다, 폼 1개, `.tone-danger` 1개, 돌아가기는 `<a>`), `R6`(대화상자·확인 흐름 체크리스트: 웹 확인 페이지도 D36 표로 대조한다).
 

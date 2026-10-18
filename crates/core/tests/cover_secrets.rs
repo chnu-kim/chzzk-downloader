@@ -115,6 +115,7 @@ async fn cover_query_never_leaks() {
     let out = dir.path().join("a.mp4");
     let req = DownloadRequest {
         embed_metadata: true,
+        throttle: Default::default(),
         content,
         quality_id: QUALITY.into(),
         expected_kind: PlaybackKind::Progressive,

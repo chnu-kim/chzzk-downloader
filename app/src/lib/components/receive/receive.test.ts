@@ -49,6 +49,9 @@ const settingsDto: SettingsDto = {
   embedMetadata: true,
   saveChat: false,
   chatSubtitle: 'ass',
+  fileNameTemplate: null,
+  totalRateLimit: null,
+  jobRateLimit: null,
 };
 
 function appError(code: AppError['code'], over: Partial<AppError> = {}): AppError {

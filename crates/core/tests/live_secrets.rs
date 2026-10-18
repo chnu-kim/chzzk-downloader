@@ -151,6 +151,7 @@ async fn live_signatures_never_leak() {
     let out = dir.path().join("[생방송] 채널 - 제목.mp4");
     let req = DownloadRequest {
         embed_metadata: false,
+        throttle: Default::default(),
         content,
         quality_id: "144p".into(),
         expected_kind: PlaybackKind::Live,

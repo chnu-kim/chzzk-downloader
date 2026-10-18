@@ -142,6 +142,8 @@ impl JobRecord {
             live_stop: None,
             recording_id: self.recording_id.clone(),
             range: self.range,
+            // 속도 제한은 런타임 값이다. 매니저가 시작할 때 붙인다(jobs.json에는 쓰지 않는다).
+            throttle: Default::default(),
         }
     }
 

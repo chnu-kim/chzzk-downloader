@@ -29,6 +29,7 @@ fn content() -> ContentRef {
 fn request(out: &Path) -> DownloadRequest {
     DownloadRequest {
         embed_metadata: false,
+        throttle: Default::default(),
         content: content(),
         quality_id: QUALITY.into(),
         expected_kind: PlaybackKind::Progressive,
@@ -642,6 +643,7 @@ async fn playback_changed() {
     let dir = tempfile::tempdir().unwrap();
     let out = out_path(&dir);
     let req = DownloadRequest {
+        throttle: Default::default(),
         expected_kind: PlaybackKind::LiveRewindHls,
         ..request(&out)
     };
@@ -667,6 +669,7 @@ async fn quality_not_found() {
     let dir = tempfile::tempdir().unwrap();
     let out = out_path(&dir);
     let req = DownloadRequest {
+        throttle: Default::default(),
         quality_id: "PD_NONE".into(),
         ..request(&out)
     };

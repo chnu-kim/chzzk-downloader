@@ -129,7 +129,7 @@
         {/if}
 
         <div class="acts">
-          <Button loading={busy} onclick={save}>{t('settings.cookie.save')}</Button>
+          <Button loading={busy} onclick={save}>{t('common.save')}</Button>
           <Button variant="ghost" icon="trash-2" disabled={busy || !saved} onclick={clear}>{t('settings.cookie.clear')}</Button>
           <span class="howto">
             <Disclosure title={t('settings.cookie.howto')} variant="inline">

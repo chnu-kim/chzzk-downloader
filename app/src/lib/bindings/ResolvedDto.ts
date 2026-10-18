@@ -22,6 +22,6 @@ qualities: Array<QualityDto>,
  */
 defaultQualityIndex: number, 
 /**
- * `default_filename`에서 `.mp4`를 뗀 것
+ * 파일 이름 규칙(기본은 `default_filename`)으로 만든 이름에서 `.mp4`를 뗀 것
  */
 suggestedFileName: string, ownership: Ownership, };

@@ -16,7 +16,7 @@ import type { DoneView } from "../../src/store/types";
 const CONFIG = { authorizeUrl: "https://chzzk.example.invalid/authorize", publicOrigin: "https://worker.test" } as unknown as Config;
 const CH = "0".repeat(30) + "c3";
 const CSRF = "C".repeat(43);
-const view = (o: Partial<DoneView>): DoneView => ({ kind: "web", status: "denied", channelName: "합성채널", channelId: CH, inviteOwnerName: null, ...o });
+const view = (o: Partial<DoneView>): DoneView => ({ kind: "web", status: "denied", channelName: "합성채널", channelId: CH, inviteOwnerName: null, denyReason: null, ...o });
 const DESKTOP: EntryContext = { kind: "desktop", os: "mac", inApp: null };
 const KAKAO: EntryContext = { kind: "phone", os: null, inApp: "kakao" };
 
@@ -182,8 +182,9 @@ describe("htmlPage 골격", () => {
       inviteGone: COPY.inviteGone,
       alreadyEditor: COPY.alreadyEditor,
       inviteCancelled: COPY.inviteCancelled,
+      autoAllowSaved: COPY.autoAllowSaved,
     };
-    for (const kind of ["loggedIn", "alreadyDone", "sessionGone", "delegationLeft", "inviteOwn", "inviteFull", "inviteGone", "alreadyEditor", "inviteCancelled"] as const) {
+    for (const kind of ["loggedIn", "alreadyDone", "sessionGone", "delegationLeft", "inviteOwn", "inviteFull", "inviteGone", "alreadyEditor", "inviteCancelled", "autoAllowSaved"] as const) {
       const t = await text(page({ scale: "app", nav: { kind: "auth" }, flash: kind }));
       expectSkeleton(t);
       const main = mainOf(t);
@@ -271,6 +272,29 @@ describe("donePage", () => {
     expect(await hint(view({ status: "failed" }), "failed", DESKTOP)).not.toContain(COPY.inAppHint);
     for (const r of ["denied", "cancelled", "ok"] as const) {
       expect(await hint(view({ status: r }), r, KAKAO)).not.toContain(COPY.inAppHint);
+    }
+  });
+
+  it("거부 이유별 문구: 상한은 한국 시간 자정 안내, 차단은 막힌 채널 안내, 이유가 없거나 옛 DO(필드 없음)면 지금 문구(allowlist-open.md §5.3)", async () => {
+    const limit = await donePage(CONFIG, "denied", view({ denyReason: "daily_limit" }), null, DESKTOP).text();
+    expect(h1Text(limit)).toBe(COPY.doneDenied.dailyLimit.title);
+    expect(limit).toContain(COPY.doneDenied.dailyLimit.body);
+    expect(limit).not.toContain(COPY.doneDenied.next);
+    expect(limit).toContain(`채널 ID: ${CH}`);
+    const blocked = await donePage(CONFIG, "denied", view({ denyReason: "blocked" }), null, DESKTOP).text();
+    expect(h1Text(blocked)).toBe(COPY.doneDenied.blocked.title);
+    expect(blocked).toContain(COPY.doneDenied.blocked.body);
+    expect(blocked).not.toContain(COPY.doneDenied.next);
+    for (const v of [view({ denyReason: null }), { ...view({}), denyReason: undefined } as unknown as DoneView, view({ denyReason: "future" as never })]) {
+      const t = await donePage(CONFIG, "denied", v, null, DESKTOP).text();
+      expect(h1Text(t)).toBe(COPY.doneDenied.title);
+      expect(t).toContain(COPY.doneDenied.next);
+    }
+    // 초대 줄·[초대 취소]는 이유와 상관없이 붙는다
+    for (const reason of ["daily_limit", "blocked"] as const) {
+      const t = await donePage(CONFIG, "denied", view({ denyReason: reason, inviteOwnerName: "주인" }), null, DESKTOP).text();
+      expect(t).toContain(COPY.doneDenied.invite("주인"));
+      expect(t).toContain(`action="/auth/claim/cancel"`);
     }
   });
 

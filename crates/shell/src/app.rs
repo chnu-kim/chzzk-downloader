@@ -20,9 +20,10 @@ use crate::auth::{
     EditorsError, HttpWorkerApi, SessionStore, SystemClock, WorkerBase, client_label, token,
 };
 use crate::dto::{
-    AppFolder, AppInfo, AuthStatusDto, EditorsDto, EnqueueRequest, Features, HelpId, InviteDto,
-    JobDto, OnExisting, OutputCheck, ResolvedDto, SettingsDto, SettingsPatch, TimeRangeDto,
-    UpdateCheckDto, UpdateInfoDto, UpdateInstallDto, WebPage,
+    AppFolder, AppInfo, AuthStatusDto, EditorsDto, EnqueueRequest, Features,
+    FileNameTemplatePreview, HelpId, InviteDto, JobDto, OnExisting, OutputCheck, ResolvedDto,
+    SettingsDto, SettingsPatch, TimeRangeDto, UpdateCheckDto, UpdateInfoDto, UpdateInstallDto,
+    WebPage,
 };
 use crate::error::{AppError, ErrorCode};
 use crate::gate;
@@ -170,6 +171,8 @@ impl App {
             runtime: runtime.clone(),
             max_parallel: s.max_parallel_downloads,
             auto_resume: s.auto_resume_interrupted && auth.is_none(),
+            total_rate_limit: s.total_rate_limit,
+            job_rate_limit: s.job_rate_limit,
         })?;
         let gate = match &auth {
             Some(a) => {
@@ -237,6 +240,11 @@ impl App {
     /// `update_settings`. 동시 작업 수를 매니저에도 반영한다.
     pub fn update_settings(&self, patch: SettingsPatch) -> Result<SettingsDto, AppError> {
         self.settings.update_and_apply(patch, &self.manager)
+    }
+
+    /// `preview_file_name_template`.
+    pub fn preview_file_name_template(&self, template: &str) -> FileNameTemplatePreview {
+        self.settings.preview_file_name_template(template)
     }
 
     /// `check_output`. 폴더가 없으면 `enqueue`와 같은 폴더(설정 폴더, 없으면 기본 폴더)를 쓴다.

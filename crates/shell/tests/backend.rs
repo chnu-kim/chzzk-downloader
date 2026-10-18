@@ -24,6 +24,7 @@ fn assert_send_static<T: Send + 'static>(_: &T) {}
 fn request(output: &str) -> DownloadRequest {
     DownloadRequest {
         embed_metadata: false,
+        throttle: Default::default(),
         content: ContentRef::Video { video_no: 1 },
         quality_id: "720p".into(),
         expected_kind: PlaybackKind::LiveRewindHls,

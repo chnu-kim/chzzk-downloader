@@ -10,7 +10,7 @@ import { type Config, CALLBACK_PATH, loadConfig } from "./config";
 import { type CookieSpec, cookieSpec } from "./core/cookies";
 import { type Logger, log, silent } from "./core/log";
 import { asset, faviconAlias } from "./http/assets";
-import { adminAllow, adminDeniedAllow, adminDeniedDismiss, adminDisallow, adminDisallowConfirm, adminPage, adminRevokeSession } from "./http/admin";
+import { adminAllow, adminAutoAllow, adminDeniedAllow, adminDeniedDismiss, adminDisallow, adminDisallowConfirm, adminPage, adminRevokeSession } from "./http/admin";
 import { authRedeem, authStart, callback, claimCancel, done, inviteStart, loginContinue, loginPageGet, pollGone, webStart } from "./http/auth";
 import { delegationsLeave, editorsInvite, editorsRemove } from "./http/editors";
 import { delegationDone, delegationLeave, inviteAccept, inviteGet } from "./http/invite";
@@ -81,6 +81,7 @@ export const ROUTES: readonly Route[] = [
   { method: "GET", pattern: "/admin", auth: "admin", handler: adminPage },
   { method: "POST", pattern: "/admin/allow", auth: "admin", handler: adminAllow },
   { method: "POST", pattern: "/admin/disallow", auth: "admin", handler: adminDisallow },
+  { method: "POST", pattern: "/admin/auto-allow", auth: "admin", handler: adminAutoAllow },
   { method: "POST", pattern: "/admin/sessions/:id/revoke", auth: "admin", handler: adminRevokeSession, quiet: true },
   { method: "POST", pattern: "/admin/denied/:channelId/allow", auth: "admin", handler: adminDeniedAllow, quiet: true },
   { method: "POST", pattern: "/admin/denied/:channelId/dismiss", auth: "admin", handler: adminDeniedDismiss, quiet: true },
@@ -88,7 +89,7 @@ export const ROUTES: readonly Route[] = [
   { method: "GET", pattern: "/notice", auth: "none", handler: notice },
   // 아이콘 에셋의 별칭(해시 없는 주소의 직접 요청, 계약 §2.3)
   { method: "GET", pattern: "/favicon.ico", auth: "none", handler: faviconAlias },
-  // 허가 빼기 확인 페이지(D54, 계약 §2.5). URL에 채널 ID가 실려 quiet이다. 상태를 바꾸지 않는 GET이다
+  // 차단 확인 페이지(예전의 허가 빼기, D54, 계약 §2.5). URL에 채널 ID가 실려 quiet이다. 상태를 바꾸지 않는 GET이다
   { method: "GET", pattern: "/admin/:channelId/disallow", auth: "admin", handler: adminDisallowConfirm, quiet: true },
   // 읽기 페이지(도움말·개인정보 처리방침·오픈소스 라이선스, 계약 §5). 자격 없이 누구나 읽는다
   { method: "GET", pattern: "/help", auth: "none", handler: help },

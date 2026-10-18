@@ -217,6 +217,45 @@ fn commands_answer_with_camel_case_json() {
         json!(1)
     );
 
+    // 파일 이름 규칙(docs/design/features/filename-template.md): 미리보기는 데이터로 답하고, 설정에 저장된다
+    let p = invoke(
+        &f.main,
+        "preview_file_name_template",
+        json!({ "template": "{date}_{title}" }),
+    )
+    .unwrap();
+    assert_eq!(p["status"], json!("ok"));
+    assert_eq!(p["names"][0]["kind"], json!("video"));
+    assert_eq!(p["names"][0]["name"], json!("261018_저녁 방송.mp4"));
+    let p = invoke(
+        &f.main,
+        "preview_file_name_template",
+        json!({ "template": "{foo}" }),
+    )
+    .unwrap();
+    assert_eq!(
+        p,
+        json!({ "status": "invalid", "error": { "kind": "unknownToken", "token": "foo" } })
+    );
+    assert_eq!(
+        invoke(&f.main, "get_settings", json!({})).unwrap()["fileNameTemplate"],
+        Value::Null
+    );
+    let s = invoke(
+        &f.main,
+        "update_settings",
+        json!({ "patch": { "fileNameTemplate": "{date}_{title}" } }),
+    )
+    .unwrap();
+    assert_eq!(s["fileNameTemplate"], json!("{date}_{title}"));
+    let s = invoke(
+        &f.main,
+        "update_settings",
+        json!({ "patch": { "fileNameTemplate": null } }),
+    )
+    .unwrap();
+    assert_eq!(s["fileNameTemplate"], Value::Null);
+
     let c = invoke(
         &f.main,
         "check_output",
@@ -996,7 +1035,7 @@ fn gated_commands_reject_before_sign_in() {
         let e = invoke(&f.main, name, json!({})).unwrap_err();
         assert_eq!(e, want, "{name}");
     }
-    assert_eq!(n, 29); // 채팅 command 셋(④-4)도 허용 목록 밖이다
+    assert_eq!(n, 30); // 채팅 command 셋(④-4)과 파일 이름 규칙 미리보기도 허용 목록 밖이다
 }
 
 /// 앱 상태가 없을 때(시작 실패, worker.md 구현 중 변경 55): 허용 목록 밖은 처리기 전에 notLoggedIn(fail closed)
@@ -1022,7 +1061,7 @@ fn gate_without_app_state_fails_closed() {
         n += 1;
         assert_eq!(invoke(&main, name, json!({})).unwrap_err(), want, "{name}");
     }
-    assert_eq!(n, 29); // 채팅 command 셋(④-4)도 허용 목록 밖이다
+    assert_eq!(n, 30); // 채팅 command 셋(④-4)과 파일 이름 규칙 미리보기도 허용 목록 밖이다
     // 허용 목록은 게이트를 지나 처리기로 간다(상태가 없어 처리기 쪽 오류일 수는 있어도 notLoggedIn은 아니다)
     for name in ["app_info", "auth_status", "list_jobs"] {
         if let Err(e) = invoke(&main, name, json!({})) {

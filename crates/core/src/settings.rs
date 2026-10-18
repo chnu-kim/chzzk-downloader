@@ -36,6 +36,11 @@ pub const DEFAULT_PARALLEL_DOWNLOADS: u8 = 2;
 /// 동시에 받는 작업 수 상한. 더 큰 숫자는 이 값으로 읽는다.
 pub const MAX_PARALLEL_DOWNLOADS: u8 = 3;
 
+/// 속도 제한의 최소값(바이트/초, 1MB/s). 전체 합계·작업마다 두 상한에 같이 쓴다(rate-limit.md §4, R6).
+/// 서명 만료 재조회 예산과 읽기 idle timeout에서 계산한 하한 1.0MB/s를 넘는 가장 작은 둥근 값이다.
+/// 설정을 읽을 때·저장할 때 이보다 작은 값은 이 값으로 올린다. 바꿀 때는 이 상수 하나만 고친다.
+pub const MIN_RATE_LIMIT_BPS: u64 = 1_000_000;
+
 /// 채팅 자막 기본 형식. **[잠정] U2 결정 대기**: 사용자가 실측(M-④-8·9) 뒤 정한다(decisions.md U2). 그때까지는
 /// 설계 와이어프레임(chat.md §5.4)이 고른 값인 영상 플레이어용 `.ass`를 쓴다. 바꿀 때는 이 상수 하나만 고친다.
 pub const DEFAULT_CHAT_SUBTITLE: SubtitleFormat = SubtitleFormat::Ass;
@@ -94,6 +99,17 @@ pub struct UserSettings {
     /// 채팅 자막 형식(기본 `DEFAULT_CHAT_SUBTITLE`, [잠정] U2 결정 대기). 없는 키·모르는 값은 기본값으로 읽는다.
     #[serde(deserialize_with = "subtitle_or_default")]
     pub chat_subtitle: SubtitleFormat,
+    /// 파일 이름 템플릿(`naming::parse_template`이 읽는 문자열). `None`이면 기본 이름 규칙(`default_filename`)이다.
+    /// 없는 키·문자열이 아닌 값·읽을 수 없는 템플릿(손으로 고친 값, 되돌린 옛 앱이 모르는 토큰)은 `None`으로 읽는다.
+    #[serde(deserialize_with = "template_or_none")]
+    pub file_name_template: Option<String>,
+    /// 전체 합계 속도 상한(바이트/초, rate-limit.md). `None` = 끔(기본). 읽을 때 `MIN_RATE_LIMIT_BPS`보다 작은 양의
+    /// 정수는 그 값으로 올리고, 0·음수·소수·숫자 아님은 끔으로 읽는다. 생방송 녹화는 합계에 세지 않는다.
+    #[serde(deserialize_with = "rate_limit_or_off")]
+    pub total_rate_limit: Option<u64>,
+    /// 작업마다 속도 상한(바이트/초). 규칙은 `total_rate_limit`과 같다. 모든 작업이 같은 값을 쓴다(R4).
+    #[serde(deserialize_with = "rate_limit_or_off")]
+    pub job_rate_limit: Option<u64>,
 }
 
 /// 앱 안 글자 크기(×1 / ×1.3 / ×2.0, system/foundations.md §3.2). 직렬화 값은 `data-text-scale` 값과 같다
@@ -148,6 +164,9 @@ impl Default for UserSettings {
             embed_metadata: true,
             save_chat: false,
             chat_subtitle: DEFAULT_CHAT_SUBTITLE,
+            file_name_template: None,
+            total_rate_limit: None,
+            job_rate_limit: None,
         }
     }
 }
@@ -191,6 +210,18 @@ where
     let v = Option::<serde_json::Value>::deserialize(d)?;
     Ok(v.and_then(|v| serde_json::from_value(v).ok())
         .unwrap_or(DEFAULT_CHAT_SUBTITLE))
+}
+
+/// 파일 이름 템플릿을 읽되 `null`·문자열이 아닌 값·파싱에 실패하는 문자열은 `None`(기본 이름).
+fn template_or_none<'de, D>(d: D) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let v = Option::<serde_json::Value>::deserialize(d)?;
+    Ok(match v {
+        Some(serde_json::Value::String(s)) if crate::naming::parse_template(&s).is_ok() => Some(s),
+        _ => None,
+    })
 }
 
 /// 불리언이 아닌 값(null·문자열·숫자)은 켜짐(`true`)으로 읽는다. 손으로 고친 값 하나로 파일 전체가 깨지지 않게 한다.
@@ -263,6 +294,24 @@ where
         .filter(|&n| n > 0)
         .map(|n| n.min(u64::from(MAX_PARALLEL_DOWNLOADS)) as u8)
         .unwrap_or(DEFAULT_PARALLEL_DOWNLOADS))
+}
+
+/// 속도 상한 값을 정리한다. 0은 끔(`None`), 최소(`MIN_RATE_LIMIT_BPS`)보다 작은 양의 값은 최소로 올린다.
+/// 설정을 읽을 때와 패치를 저장할 때 같은 규칙을 쓴다.
+pub fn normalize_rate_limit(bps: u64) -> Option<u64> {
+    (bps > 0).then(|| bps.max(MIN_RATE_LIMIT_BPS))
+}
+
+/// 속도 상한. 양의 정수는 `normalize_rate_limit`으로, 그 밖의 값(없음·`null`·0·음수·소수·문자열·불리언)은 끔으로 읽는다.
+/// 손으로 고친 값 하나 때문에 파일 전체가 깨진 것으로 처리되지 않게 어떤 JSON 값이든 받는다.
+fn rate_limit_or_off<'de, D>(d: D) -> Result<Option<u64>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let v = Option::<serde_json::Value>::deserialize(d)?;
+    Ok(v.as_ref()
+        .and_then(serde_json::Value::as_u64)
+        .and_then(normalize_rate_limit))
 }
 
 /// 최근 VOD에 넣는다. 같은 URL은 지우고 맨 앞에 넣은 뒤 5개로 자른다. `last_url`도 바꾼다.
@@ -654,6 +703,64 @@ mod tests {
         );
     }
 
+    /// 속도 상한 두 키(rate-limit.md §5.1): 없는 키는 끔(옛 설정 파일이 그대로 읽힌다), 양의 정수는 최소로 올려서 읽고,
+    /// 0·음수·소수·문자열·불리언은 끔이다. 나머지 키는 남는다.
+    #[test]
+    fn rate_limit_keys_default_off_and_lenient() {
+        let d = UserSettings::default();
+        assert_eq!((d.total_rate_limit, d.job_rate_limit), (None, None));
+        assert_eq!(MIN_RATE_LIMIT_BPS, 1_000_000);
+        for (raw, want) in [
+            ("", None),
+            (r#","totalRateLimit":null"#, None),
+            (r#","totalRateLimit":0"#, None),
+            (r#","totalRateLimit":-5"#, None),
+            (r#","totalRateLimit":1.5"#, None),
+            (r#","totalRateLimit":5e6"#, None),
+            (r#","totalRateLimit":"5000000""#, None),
+            (r#","totalRateLimit":true"#, None),
+            (r#","totalRateLimit":1"#, Some(MIN_RATE_LIMIT_BPS)),
+            (r#","totalRateLimit":999999"#, Some(MIN_RATE_LIMIT_BPS)),
+            (r#","totalRateLimit":1000000"#, Some(1_000_000)),
+            (r#","totalRateLimit":1048576"#, Some(1_048_576)),
+            (r#","totalRateLimit":5000000"#, Some(5_000_000)),
+            (r#","totalRateLimit":18446744073709551615"#, Some(u64::MAX)),
+        ] {
+            let s = parse(format!(r#"{{"downloadFolder":"/x"{raw}}}"#).as_bytes())
+                .unwrap_or_else(|e| panic!("{raw}: {e}"));
+            assert_eq!(s.total_rate_limit, want, "{raw}");
+            assert_eq!(s.job_rate_limit, None, "{raw}: 다른 키는 그대로 끔");
+            assert_eq!(s.download_folder.as_deref(), Some(Path::new("/x")), "{raw}");
+            // 작업마다 키도 같은 규칙이다.
+            let j = raw.replace("totalRateLimit", "jobRateLimit");
+            let s = parse(format!(r#"{{"downloadFolder":"/x"{j}}}"#).as_bytes()).unwrap();
+            assert_eq!(s.job_rate_limit, want, "{j}");
+            assert_eq!(s.total_rate_limit, None, "{j}");
+        }
+        // 저장했다 다시 읽어도 같다.
+        let on = UserSettings {
+            total_rate_limit: Some(5_000_000),
+            job_rate_limit: Some(2_000_000),
+            ..Default::default()
+        };
+        assert_eq!(parse(&serde_json::to_vec(&on).unwrap()).unwrap(), on);
+        // 옛 설정 파일(키 없음)은 그대로 읽힌다.
+        let old = parse(br#"{"schemaVersion":2,"keepAwake":false}"#).unwrap();
+        assert_eq!((old.total_rate_limit, old.job_rate_limit), (None, None));
+        assert!(!old.keep_awake);
+    }
+
+    #[test]
+    fn normalize_rate_limit_rules() {
+        assert_eq!(normalize_rate_limit(0), None);
+        assert_eq!(normalize_rate_limit(1), Some(MIN_RATE_LIMIT_BPS));
+        assert_eq!(
+            normalize_rate_limit(MIN_RATE_LIMIT_BPS),
+            Some(MIN_RATE_LIMIT_BPS)
+        );
+        assert_eq!(normalize_rate_limit(7_000_000), Some(7_000_000));
+    }
+
     /// 잠자기 방지: 없는 키·모르는 값은 켜짐, `false`만 꺼짐. 나머지 키는 남는다.
     #[test]
     fn keep_awake_defaults_to_true() {
@@ -755,6 +862,43 @@ mod tests {
         let text = String::from_utf8(bytes.clone()).unwrap();
         assert!(text.contains(r#""saveChat":true"#), "{text}");
         assert!(text.contains(r#""chatSubtitle":"none""#), "{text}");
+        assert_eq!(parse(&bytes).unwrap(), v);
+    }
+
+    /// 파일명 템플릿(core.md 78): 없는 키·`null`·문자열이 아닌 값·읽을 수 없는 템플릿은 `None`(기본 이름).
+    /// 나머지 키는 남고, 올바른 템플릿은 그대로 왕복한다.
+    #[test]
+    fn file_name_template_lenient() {
+        assert_eq!(UserSettings::default().file_name_template, None);
+        for (raw, want) in [
+            ("", None),
+            (r#","fileNameTemplate":null"#, None),
+            (r#","fileNameTemplate":3"#, None),
+            (r#","fileNameTemplate":["{title}"]"#, None),
+            (r#","fileNameTemplate":"""#, None),
+            (r#","fileNameTemplate":"{foo}""#, None),
+            (r#","fileNameTemplate":"{title""#, None),
+            (r#","fileNameTemplate":"{date}/{title}""#, None),
+            (
+                r#","fileNameTemplate":"{date}_{title}""#,
+                Some("{date}_{title}"),
+            ),
+        ] {
+            let s = parse(format!(r#"{{"downloadFolder":"/x"{raw}}}"#).as_bytes())
+                .unwrap_or_else(|e| panic!("{raw}: {e}"));
+            assert_eq!(s.file_name_template.as_deref(), want, "{raw}");
+            assert_eq!(s.download_folder.as_deref(), Some(Path::new("/x")), "{raw}");
+        }
+        let v = UserSettings {
+            file_name_template: Some("{date}_{title}".into()),
+            ..Default::default()
+        };
+        let bytes = serde_json::to_vec(&v).unwrap();
+        let text = String::from_utf8(bytes.clone()).unwrap();
+        assert!(
+            text.contains(r#""fileNameTemplate":"{date}_{title}""#),
+            "{text}"
+        );
         assert_eq!(parse(&bytes).unwrap(), v);
     }
 

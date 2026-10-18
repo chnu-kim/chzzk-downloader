@@ -28,6 +28,9 @@ const dto: SettingsDto = {
   embedMetadata: true,
   saveChat: false,
   chatSubtitle: 'ass',
+  fileNameTemplate: null,
+  totalRateLimit: null,
+  jobRateLimit: null,
 };
 
 const disabled = {

@@ -1,0 +1,368 @@
+# 앱 CLI 모드: 설계 명세
+
+**상태·확정 결정(2026-10-18)**: **명세(specified), 구현 전.** 사용자 결정(ROADMAP "경쟁력 개선 착수" (다), `docs/ROADMAP.md:9`): 사용자용 CLI는 **앱 실행 파일의 CLI 모드**다. 같은 설치물, 같은 로그인 세션, 소유 게이트가 켜진 채로 돈다. `crates/core/examples/dl.rs`는 게이트가 없어서 배포하지 않는다. 같은 줄의 순서는 "(바) → (마) → (다)"다. 그래서 CLI는 일곱 개선 가운데 마지막이고, `--audio`는 오디오만 받기((마))가 머지된 뒤에 연다(§8). 인증·게이트를 건드리므로 구현 PR에 Codex 리뷰를 붙인다(같은 줄). 사용자에게 물을 것은 §15 "열린 결정" 표에 모았다. 본문의 추천은 그 표가 정해지기 전의 기준선이다.
+
+기준 트리는 `origin/master` `26ca67d`(v0.10.1 뒤, 속도 제한 #165 머지)다. 이 문서의 `파일:줄`은 모두 그 트리에서 연 줄이다. 같은 날 병렬로 진행 중인 PR 둘(#166 파일 이름 템플릿, #167 mp4 메타데이터)은 아직 머지되지 않아 줄 번호에 반영하지 않았다. 표기는 `features/README.md`를 따른다. **[확인]**은 직접 연 줄이 받침이고, **[확인: 문서]**는 설계 문서 인용, **[가정]**은 근거 없는 설계 판단, **[실측 필요]**는 실기기로만 정할 수 있는 것이다. 근거 없는 수치에는 **[잠정]**을 붙인다(ADR-0009 묶음). 예시 주소·번호는 모두 가짜다.
+
+이 명세는 코드를 바꾸지 않는다. 구현 PR은 `docs/design/app.md` "구현 중 변경"에 번호를 붙여 적는다. 지금 마지막 번호는 app.md 94, core.md 77이고, #166·#167이 먼저 머지되면 그 뒤를 잇는다.
+
+---
+
+## 0. 한 장 요약
+
+| 항목 | 결정(추천 기준선) | 근거 |
+|---|---|---|
+| 진입 | 같은 바이너리 `chzzk-app`. `argv[1]`이 정해진 하위 명령 넷(`download`·`info`·`status`·`help`) 가운데 하나면 **`tauri::Builder`를 만들기 전에** CLI로 갈라진다. 그 밖의 인자(`--smoke`, 인자 없음)는 지금과 같이 GUI다 | single-instance 플러그인이 `argv`를 버리고 창에 포커스만 준다 `app/src-tauri/src/lib.rs:681-683` [확인] |
+| 몸통 위치 | 명령 해석·흐름은 `crates/shell/src/cli/`(Tauri 비의존). 앱 crate는 argv 갈림, 콘솔 붙이기, 런타임, 경로만 맡는다 | `rust` gate가 webkit 없이 3 OS에서 테스트한다(CLAUDE.md "레이아웃") |
+| 게이트 | `App::gate_command` → `App::resolve` → `App::check_output` → `App::enqueue`. GUI와 **같은 함수**를 부르고, `classify`나 매니저를 직접 부르지 않는다 | 소유 판정은 `services::enqueue_checked` 안의 `admit_checked`에 있다 `crates/shell/src/services.rs:616-640` [확인] |
+| 단일 작성자 | CLI도 `<data>/app.lock`을 쥔다. 못 쥐면(GUI가 떠 있으면) 받지 않고 종료 코드 5로 끝난다 | 잠금 `lib.rs:434-455` [확인]. 앱 인스턴스 둘은 refresh 설계 밖이다 worker.md 구현 중 변경 25 (가) `docs/design/worker.md:868` [확인: 문서] |
+| 로그인 | CLI에서 로그인을 시작하지 않는다. 로그인이 없으면 "앱에서 먼저 로그인해 주세요"와 종료 코드 3. 갱신은 `AuthService::retry`(예정 전이면 네트워크 없음) | `crates/shell/src/auth/service.rs:593-610` [확인]. 회전 상한 10분 10번, worker.md 24 `docs/design/worker.md:867` [확인: 문서] |
+| 업데이트 | CLI는 업데이트를 확인하지 않는다 | 가장 작은 범위. GUI가 로그인 직후 한 번 확인한다 `crates/shell/src/app.rs:740` [확인] |
+| 인자 파서 | 손으로 짠 파서. 새 의존성 없음 | `Cargo.lock`에 clap·lexopt가 없다 [확인]. `dl.rs:48`도 손 파서다 |
+| Windows 콘솔 | 1안 `AttachConsole(ATTACH_PARENT_PROCESS)`(기존 `windows` 0.62.2 crate의 feature 하나). cmd.exe가 GUI 서브시스템 프로세스를 기다리지 않는 문제는 [실측 필요]이고, 결과에 따라 2안 콘솔 실행 파일로 간다(§15 O3) | `main.rs:2` `windows_subsystem = "windows"` [확인], `Cargo.toml:58` [확인] |
+| Ctrl+C | 첫 번째는 일시정지(`.part`를 남기고 `paused`로 저장), 두 번째는 바로 끝낸다(`interrupted`). 다음 `download`나 GUI가 이어받는다 | `DownloadManager::pause` `crates/shell/src/manager.rs:674-701`, `quit` `:1385-1389` [확인] |
+| 종료 코드 | 0 완료·이미 있음 / 1 받기 실패 / 2 사용법 / 3 로그인 필요 / 4 받을 수 없는 영상 / 5 앱이 열려 있음 / 130 Ctrl+C로 멈춤 | §9.3 |
+| 범위 밖(v1) | 생방송 녹화, 채팅 함께 받기, CLI 로그인·로그아웃, 작업 목록 관리, JSON 출력, PATH 등록 | §1.2 |
+| 배포물 | 1안이면 산출물·`expected-artifacts.json`이 그대로이고 크기만 조금 는다. 2안이면 Windows 번들 구성이 바뀐다 | `release/expected-artifacts.json` [확인] |
+
+## 1. 목표와 범위
+
+### 1.1 목표
+- 터미널과 스크립트에서 GUI 없이 받는다: `chzzk-app download <주소>`. 받는 규칙(화질 기본값, 파일 이름, 이어받기, 속도 상한, 저장 폴더)은 GUI와 같은 설정을 쓰고, 인자로 그 실행만 덮는다.
+- **소유 게이트를 우회하는 길을 만들지 않는다.** 로그인 채널의 영상, 맡은 채널의 영상, 관리자 허용만 받는다. 그 밖은 GUI와 같은 오류 코드로 거부한다.
+- GUI와 상태를 나눠 쓰되 서로 망가뜨리지 않는다. `jobs.json`·`settings.json`·`session.json`을 쓰는 프로세스는 늘 하나다.
+
+### 1.2 하지 않는 것(v1)
+- **생방송 녹화**(`/live/` 주소): 녹화는 일시정지가 없고 멈추면 받은 만큼 마무리한다(`manager.rs:683-687` [확인]). 그래서 Ctrl+C의 뜻이 VOD와 달라진다(§9.2). 또 맡은 채널 생방송은 v1에서 닫혀 있다(L-D1, `ownership.rs:51-53` [확인]). v1의 CLI는 생방송 주소를 사용법 오류(코드 2)로 거부하고 "생방송은 앱에서 녹화해 주세요"를 출력한다. 다시 열지는 §15 O8에서 정한다.
+- **채팅 함께 받기**: 기능 ④는 보류다(`docs/ROADMAP.md:10`).
+- **CLI 로그인·로그아웃**: §5.3. `status`만 둔다.
+- **작업 목록 관리**(목록·지우기·이어받기 명령): 같은 주소로 `download`를 다시 부르면 `.part`를 이어받는다(§9.2). 따로 명령을 두지 않는다.
+- **JSON 출력, 설치기의 PATH 등록**: §15 O6·O7.
+- **업데이트 확인·설치**: §10.
+- `dl.rs`의 공개 배포. 사용자 결정이다. `dl.rs`는 지금처럼 개발자 스모크 도구로만 남는다(`crates/core/examples/dl.rs`).
+
+## 2. 기존 결정과의 관계
+
+**뒤집는 결정은 없다.** 넓혀 쓰는 것만 있다.
+
+| 결정 | 처리 | 근거 |
+|---|---|---|
+| AuthGate: invoke 처리기 앞, 기본 거부 | CLI는 invoke를 거치지 않으므로 하위 명령마다 대응 command 이름으로 `App::gate_command`를 **명시적으로** 부른다(§4.1). 허용 목록은 바꾸지 않는다 | `lib.rs:163-180`, `crates/shell/src/gate.rs:19-33`, `app.rs:411-417` [확인] |
+| 본인 영상 게이트(A5)·위임(①)·관리자 override | 그대로 쓴다. CLI는 `App::enqueue`로만 작업을 만든다 | `ownership.rs:51-71`, `services.rs:616-656` [확인] |
+| 데이터 폴더 잠금(app.md 구현 중 변경 51 (다)) | **넓혀 쓴다.** 잠금을 쥐는 쪽에 CLI 프로세스를 더한다 | `lib.rs:425-455` [확인] |
+| refresh 회전 single-flight, 인스턴스 하나 | 지킨다. 잠금 덕에 CLI가 도는 동안 GUI는 세션을 쓰지 않는다 | worker.md 25 (가) [확인: 문서] |
+| 첫 로그인 뒤 자동 이어받기·업데이트 확인(D8·D15) | CLI는 부르지 않는다(`spawn_auth_tasks`·`on_auth_status`·`take_delegated_resume`·`take_auto_update_check`) | `lib.rs:183-215`, `app.rs:422-456`·`:740` [확인] |
+| copy deck 단일 원천(content.md) | CLI 문구는 웹뷰 밖이라 deck을 읽을 수 없다. 알림 문구와 같은 방식으로 Rust 상수를 두고 ko.ts와 대조 테스트한다 | `app/src-tauri/src/notify_copy.rs:1-3` [확인] |
+| `dl.rs`는 개발자 도구 | 그대로 둔다. 사용자 문서는 `dl.rs`를 언급하지 않는다 | ROADMAP:9 (다) |
+
+## 3. 진입과 명령 표면
+
+### 3.1 갈림 위치
+- `main.rs`는 `chzzk_app_lib::run()` 하나만 부른다(`main.rs:5` [확인]). `run()`의 **맨 앞**, `show::mark_start()`와 `SmokeConfig::from_env()`보다 먼저 `cli::wants_cli(std::env::args_os())`를 본다(`lib.rs:668-671` [확인]). 참이면 `cli_main()`을 부르고 Tauri는 만들지 않는다. **종료 순서**: 모든 끝(성공·실패·Ctrl+C)에서 `manager.flush()`를 부르고, `App`·로그 guard·런타임을 drop한 뒤에 종료 코드를 낸다(`main`이 `std::process::ExitCode`를 돌려주거나, drop 뒤 `std::process::exit`). `std::process::exit`는 `Drop`을 건너뛴다. `jobs.json`은 쓰기 스레드가 **가장 최근 제출만** 나중에 쓰므로(`crates/shell/src/writer.rs:7-12` [확인]) flush 없이 끝내면 `completed`가 디스크에 없을 수 있다. 그러면 다음 GUI 시작이 그 작업을 `interrupted`로 본다.
+- 이렇게 하면 single-instance 플러그인(`lib.rs:681`)도, 창도, webview도 만들어지지 않는다. Linux에서는 `DISPLAY`·`WAYLAND_DISPLAY` 없이 돈다(§14 스모크로 단정한다).
+- **갈림 규칙**: `argv[1]`이 정확히 `download`·`info`·`status`·`help` 가운데 하나일 때만 CLI다. 앱을 띄우는 지금의 인자는 이 집합과 겹치지 않는다.
+  - `--smoke`: `wants_smoke`가 인자 전체를 `.any()`로 본다(`smoke.rs:36-42` [확인]). `download --smoke`처럼 섞인 경우는 CLI로 가고 `--smoke`는 모르는 인자(코드 2)다.
+  - updater 재시작: `request_restart()`(`update_io.rs:203-205` [확인])는 현재 프로세스 인자로 다시 띄운다 [가정]. GUI 프로세스의 인자는 CLI 집합에 들지 않으므로 GUI로 다시 뜬다.
+  - Linux `.desktop` `Exec={{exec}}`(`app/src-tauri/linux/main.desktop:6` [확인]): 번들러가 실행 파일 경로만 넣는다 [가정: 인자 없음은 산출물에서 확인, §14].
+  - macOS LaunchServices가 붙이는 `-psn_…` 같은 인자는 `-`로 시작하므로 하위 명령 이름과 겹치지 않는다.
+- 하위 명령 이름은 앞으로 **더하기만** 한다. 같은 이름을 GUI 인자로 쓰지 않는다(갈림 테스트가 고정한다, §14).
+
+### 3.2 명령(v1, 가장 작은 범위)
+
+```text
+chzzk-app download <주소> [<주소> …] [--quality <라벨>] [--out <폴더>] [--range <시작>-<끝>]
+                                      [--rate <속도>] [--overwrite] [--audio]
+chzzk-app info <주소>
+chzzk-app status
+chzzk-app help [<명령>]
+```
+
+| 명령 | 하는 일 | 부르는 셸 함수 | 게이트 command 이름 |
+|---|---|---|---|
+| `download` | 주소마다 차례로 resolve → 화질 → 이름 검사 → enqueue → 끝날 때까지 진행률 → 다음 주소. 동시에 받지 않는다(설정의 동시 작업 수와 무관) | `App::resolve`·`App::check_output`·`App::enqueue`·`DownloadManager::subscribe`·`pause` | `resolve`, `check_output`, `enqueue` |
+| `info` | 제목·채널·종류·화질 목록·판정(받을 수 있음/없음)을 출력한다. 받지 않는다 | `App::resolve` | `resolve` |
+| `status` | 로그인 상태(로그인됨·채널 이름, 로그인 필요, 로그인을 쓰지 않는 빌드)와 앱 버전 | `App::auth_status`·`App::info` | `auth_status`(허용 목록) |
+| `help` | 사용법. 네트워크·데이터 폴더를 열지 않는다 | 없음 | 없음 |
+
+- 주소를 여러 개 받는 까닭: 한 프로세스가 refresh 한 번으로 여러 영상을 받게 하려는 것이다. 스크립트가 영상마다 프로세스를 띄우면 회전 상한(§5.2)에 닿을 수 있다.
+- 여러 주소 가운데 하나가 실패해도 다음 주소를 계속 받는다. 종료 코드는 §9.3의 "가장 나쁜 것"이다.
+- `--version`·`-h` 같은 전역 깃발은 두지 않는다. `help`와 `status`가 그 일을 한다(갈림 규칙을 하위 명령 이름 하나로 유지하려는 것이다).
+
+### 3.3 인자 파서
+- **추천: 손으로 짠 파서**(`crates/shell/src/cli/args.rs`). 하위 명령 넷, 깃발 일곱이라 표 하나로 충분하다. 새 crate가 없어서 `deny.toml`의 라이선스·소스 검사, `supply` 작업, 크기 ratchet이 바뀌지 않는다.
+- 규칙: `--깃발 값`과 `--깃발=값`을 둘 다 받는다. 같은 깃발이 두 번이면 코드 2다. `--` 뒤는 모두 주소로 본다. 인자는 `OsString`으로 받고 UTF-8이 아니면 코드 2다.
+- 대안(§15 O5): `lexopt`(MIT, 의존성 없음)는 새 crate 하나다. `clap`은 크기와 의존성 트리가 늘어 맞지 않는다.
+
+## 4. 게이트: AuthGate와 소유 판정
+
+### 4.1 AuthGate(로그인 게이트)
+- 지금 AuthGate는 Tauri invoke 처리기 안에서만 돈다. `handler()`가 command마다 `App::gate_command(cmd)`를 부르고, 실패하면 처리기에 닿지 않는다(`lib.rs:163-180` [확인]). CLI 경로는 invoke를 거치지 않으므로 **이 검사가 저절로 일어나지 않는다.**
+- CLI는 하위 명령이 부르는 셸 함수마다 GUI command 이름으로 `app.gate_command(name)?`를 먼저 부른다(§3.2 표의 마지막 열). 이름은 `app/src-tauri/src/command_names.rs`의 상수를 쓰지 않고 셸 쪽 상수 표 `cli::GATED`에 둔다(앱 crate를 거꾸로 참조하지 않게). 대조 테스트가 두 표의 이름이 실제 command 목록에 있는지 본다.
+- `gate_command`는 로그인을 쓰지 않는 빌드면 늘 통과하고, 허용 목록 command면 통과하고, 그 밖은 `require_signed_in`이다(`app.rs:411-417` [확인]). 그래서 `download`는 로그인이 없으면 네트워크 전에 `notLoggedIn`(코드 3)으로 끝난다.
+- **로그인을 쓰지 않는 빌드**(Worker 주소 없이 만든 debug)는 GUI와 같이 게이트가 꺼진다. 릴리스 빌드는 주소가 없으면 컴파일되지 않는다(`build.rs`, CLAUDE.md "레이아웃"). 배포물에서 게이트가 꺼지는 길은 없다.
+
+### 4.2 소유 판정
+- 작업은 **`App::enqueue`로만** 만든다. 이 함수가 `services::enqueue_checked`를 부르고, 그 안에서 주소·컨텐츠 일치 → `OwnershipGate::admit_checked`(최근 resolve 캐시, 없으면 다시 resolve, 맡은 채널이면 판정 직전 `/api/me` 확인) → 매니저 순으로 간다(`app.rs:329-334`, `services.rs:629-640` [확인]). 판정 표는 `classify` 하나다: Own > Delegated > AdminOverride > NotOwn/Unknown(`ownership.rs:51-63` [확인]).
+- CLI는 `classify`를 직접 부르지 않는다. 직접 부르면 채널 조회·캐시·판정 직전 확인(`App::recheck`, `app.rs:343-349`)·fail closed 경로(`ownership_unknown`)를 다시 짜야 하고 둘이 어긋날 수 있다.
+- CLI는 `DownloadManager::enqueue`나 코어 `download`를 직접 부르지 않는다. 셸 `cli` 모듈은 `&App`만 받는다(`manager`는 `pub`이지만 `subscribe`·`pause`·`quit`·`set_rate_limits`만 쓴다). 리뷰 체크리스트에 "cli 모듈에서 `manager.enqueue`·`chzzk_core::download` 호출 없음"을 넣고, 테스트로도 막는다(§14 T-G5).
+- `info`는 `App::resolve`가 붙이는 판정(`ResolvedDto`의 `ownership`)을 그대로 출력한다(`services.rs:504-540` [확인]). `info`가 "받을 수 있음"이라 해도 `download`는 enqueue 순간에 다시 판정한다(GUI와 같다).
+
+### 4.3 거부 테스트 계획(요지, 전체는 §14)
+| ID | 상황 | 기대 |
+|---|---|---|
+| T-G1 | 로그인 채널 A, 남의 채널 C의 영상 | `notOwnContent`, 종료 코드 4, `jobs.json`에 작업 없음, `.part` 없음 |
+| T-G2 | 로그인 없음(session.json 없음) | `notLoggedIn`, 코드 3, resolve 요청 0회(가짜 Backend 호출 수로 단정) |
+| T-G3 | 맡은 채널 D의 영상 | 받음(코드 0), 기록의 `channelId` = D |
+| T-G4 | 관리자, 채널 모름 | 받음(`AdminOverride`), 생방송은 v1 거부(코드 2) |
+| T-G5 | 게이트 호출을 빼는 변형 | T-G1·T-G2가 **실패해야 한다**(TDD 메모: 구현을 깨서 테스트가 잡는지 확인) |
+| T-G6 | 채널 ID가 없는 컨텐츠 | `ownershipUnknown`, 코드 4 |
+
+## 5. 단일 작성자, 로그인, 세션
+
+### 5.1 데이터 폴더 잠금
+- CLI는 `App::open_with_auth`를 부르기 **전에** `acquire_instance_lock(<data>)`를 부른다(GUI와 같은 함수와 순서, `lib.rs:575-595` [확인]). 이 함수는 앱 crate에 있으므로 CLI 갈림도 앱 crate에서 잠금을 쥔 뒤 셸 `cli::run`에 `App`을 넘긴다.
+  - `Acquired`: 프로세스가 끝날 때까지 쥔다.
+  - `HeldElsewhere`: GUI(또는 다른 CLI)가 떠 있다. 받지 않고 "앱이 열려 있어요. 앱을 닫은 뒤 다시 실행해 주세요."와 코드 5로 끝난다.
+  - `Unavailable`: GUI는 잠금 없이 계속한다(`lib.rs:590-592`). CLI는 **계속하지 않는다**(코드 1). 잠금 없이 돌면 아래 세 파일을 함께 쓸 수 있다.
+- 이 잠금 하나가 세 위험을 함께 막는다.
+  1. **refresh 회전 경합**: GUI와 CLI가 같은 `session.json`으로 동시에 refresh하면, 한쪽이 회전한 뒤 다른 쪽이 옛 refresh를 낸다. 60초 안이면 복구가 상대의 자식을 지우고, 60초 밖이면 재사용 감지로 세션이 폐기된다(worker.md §5.2 `used` 행 `docs/design/worker.md:317-318` [확인: 문서]). 결과는 둘 다 로그아웃이다. worker.md 25 (가)는 "앱 인스턴스가 둘(설계 밖)"이라고 적었다. 잠금이 그 전제를 CLI까지 넓혀 지킨다.
+  2. **`jobs.json`**: 두 매니저가 번갈아 덮어쓰면 한쪽 작업이 사라진다(`lib.rs:430-433` 주석 [확인]).
+  3. **`settings.json`**: `enqueue_checked`가 마지막 화질과 최근 영상을 저장한다(`services.rs:647-651` [확인]).
+- 프로세스 사이 파일 잠금이나 Worker 쪽 변경(세션 분리) 같은 다른 방법은 §15 O1의 대안이다.
+
+### 5.2 로그인 상태와 갱신
+- `App::open_with_auth`는 세션 파일만 읽고 네트워크를 쓰지 않는다. 유예 안이면 `SignedIn`(낙관), 밖이면 `Checking`, 60일 상한이 지났으면 `Expired`다(`service.rs:439-459`, `verify.rs:115-130` [확인]).
+- CLI는 열자마자 `AuthService::retry()`를 한 번 부른다. 온라인 `SignedIn`이고 갱신 예정 전이면 **네트워크 없이** 지금 상태를 돌려주고, `Checking`이나 예정이 지났으면 refresh한다(`service.rs:593-610` [확인], app.md 구현 중 변경 61).
+- `startup()`은 쓰지 않는다. `startup()`은 세션이 있으면 늘 refresh한다(`service.rs:574-584` [확인]). 스크립트가 CLI를 짧게 여러 번 부르면 채널당 10분 10번 회전 상한에 닿아 429가 된다(worker.md 24 (가) [확인: 문서]). `retry()`는 예정 전이면 회전하지 않으므로 이 문제가 없다.
+- `run_driver`(타이머·절전 복귀 갱신)는 띄우지 않는다(`driver.rs:44-61` [확인]). CLI 실행은 길어도 영상 하나 받는 시간이고, access 24시간 안에서 끝나는 경우가 대부분이다 [가정]. 받는 도중 access가 만료돼도 게이트 판정은 enqueue 순간에 끝났고, 다운로드 자체는 Worker 토큰을 쓰지 않는다(치지직 재생 경로는 앱 내부 경로다, range.md §1.2) [확인: 문서].
+- **자동 이어받기를 CLI에서 늘 끈다.** `App::open_with_auth`는 매니저를 `auto_resume: s.auto_resume_interrupted && auth.is_none()`로 연다(`app.rs:167-175` [확인]). 로그인을 쓰지 않는 빌드(debug, 테스트의 `AuthSetup::Disabled`)에서는 `DownloadManager::open`이 열자마자 `interrupted`를 모두 다시 줄 세운다. 그래서 `on_auth_status`를 부르지 않는 것만으로는 막히지 않는다. CLI-1에서 `App` 여는 옵션(예: `OpenOptions { auto_resume: false }`)을 더해 CLI는 로그인 여부와 무관하게 끈다.
+- 맡은 채널 영상의 판정 직전 확인(`check_delegations(false)`, 5분 간격)은 프로세스마다 처음이라 매번 `/api/me`를 부른다(`service.rs:1450` [확인]). `/api/me`는 읽기라 회전 상한과 관계가 없다 [확인: 문서 worker.md 24 (나) "쓰기가 생기는 성공 두 경로"만 센다].
+
+### 5.3 CLI에서 로그인하지 않는다(추천)
+- 로그인은 루프백 리디렉션 흐름이다. 앱이 `127.0.0.1` 수신기를 띄우고 브라우저로 로그인 주소를 연다(`app.rs:543-557`, `crates/shell/src/auth/loopback.rs` [확인]). CLI에서도 기술적으로는 된다(`App::auth_login(open)`에 브라우저 여는 함수를 주면 된다).
+- 그래도 v1은 하지 않는다. 까닭은 셋이다.
+  - (가) 세션은 GUI와 함께 쓰므로 GUI에서 한 번 로그인하면 CLI도 된다.
+  - (나) 브라우저가 없는 서버에서는 어차피 이 흐름이 끝나지 않는다. 로그인 주소를 터미널에 찍으면 비밀값 규칙(주소의 state·verifier)을 따로 따져야 한다(`login_url.expose()`, `app.rs:553`).
+  - (다) 로그인 화면·거부 화면(`auth.denied`)·초대 흐름의 문구를 CLI에 다시 만들어야 한다.
+- 출력: "로그인이 필요해요. 앱을 열어 로그인한 뒤 다시 실행해 주세요."와 코드 3. 로그인이 `Expired`·`Denied`면 같은 문구에 이유 한 줄을 붙인다(`AuthStatusDto`의 reason을 Rust 상수 문구로 바꾼다).
+- 로그아웃 명령도 두지 않는다. 로그아웃은 서버 폐기와 GUI 상태 전환을 함께 하는 일이라 GUI에 둔다(`app.rs:592-600`). 다시 열지는 §15 O2에서 정한다.
+
+## 6. GUI가 떠 있을 때, CLI가 도는 중에 GUI를 열 때
+
+### 6.1 GUI가 이미 떠 있을 때 CLI 실행
+- CLI는 single-instance 플러그인을 거치지 않는다(§3.1). 따라서 "기존 창에 포커스"가 일어나지 않고, §5.1의 잠금에서 `HeldElsewhere` → 코드 5로 끝난다.
+- 다른 길(§15 O4): 떠 있는 GUI에 주소를 넘겨 GUI가 받게 하는 방법. single-instance 콜백이 `argv`를 받으므로(`lib.rs:681`의 `_argv`) 기술적으로 된다. 하지만 GUI 쪽에 웹뷰 밖에서 오는 enqueue 경로와 CLI가 진행을 기다리는 IPC가 따로 필요해 v1 범위를 넘는다.
+
+### 6.2 CLI가 받는 중에 GUI를 열 때
+- 지금 GUI는 single-instance 확인을 통과한 뒤(CLI는 그 소켓이나 뮤텍스를 만들지 않으므로 통과한다) setup에서 잠금을 못 쥐면 **창을 숨기고 조용히 끝난다**(`lib.rs:579-588` [확인]). 이 동작은 macOS에서 거의 동시에 뜬 GUI 두 개의 경합을 위해 만든 것이다. 사용자 눈에는 "앱 아이콘을 눌렀는데 아무것도 안 뜬다"가 된다.
+- **추천(최소)**: CLI는 같은 폴더의 `cli.lock`을 **먼저** 배타로 쥐고 그다음 `app.lock`을 쥔다(같은 `File::try_lock`). `app.lock`을 못 쥐면 `cli.lock`을 바로 놓는다. 순서가 반대면 CLI가 `app.lock`만 쥔 틈에 뜬 GUI가 `cli.lock`이 비어 있다고 보고 조용히 끝난다. GUI는 `HeldElsewhere`일 때만 `cli.lock`을 `try_lock`해 본다. 우연히 쥐게 되면 바로 놓는다.
+  - 잠겨 있으면(CLI가 쥐고 있으면) 시작 실패 안내와 같은 대화상자(`startup_failed`, `lib.rs:393-409`)로 "명령줄에서 받는 중이에요. 끝난 뒤 다시 열어 주세요."를 보이고 끝난다.
+  - 잠겨 있지 않으면 지금처럼 조용히 끝난다(GUI 둘의 경합).
+  - 잠금 파일에 내용을 적어 구분하지 않는 까닭: Windows의 `LockFileEx` 배타 잠금은 다른 프로세스의 읽기도 막는다 [가정: `File::try_lock`의 Windows 구현이 전체 범위를 잠근다, 구현 PR에서 확인].
+- 이 대화상자 문구는 새 copy 키다(§11). 대화상자 없이 지금처럼 조용히 끝내는 안은 §15 O1-b다.
+
+## 7. OS별
+
+### 7.1 Windows: 콘솔 출력
+- 릴리스 빌드는 `windows_subsystem = "windows"`다(`main.rs:2` [확인]). 콘솔이 없어 `println!`이 아무 데도 가지 않는다.
+- **1안(추천 기준선): 같은 exe에서 `AttachConsole(ATTACH_PARENT_PROCESS)`.** CLI 갈림 직후 한 번 부른다. 부모 콘솔이 있으면 붙어 stdout·stderr를 쓴다. 출력이 파일·파이프로 돌려져 있으면 이미 유효한 표준 핸들을 그대로 쓴다 [가정: 상속된 핸들이 먼저다, 실측].
+  - 의존성: 이미 있는 `windows` 0.62.2(`Cargo.toml:58` [확인])에 feature `Win32_System_Console`을 더한다. 새 crate가 아니다.
+  - **[실측 필요] 알려진 문제**: cmd.exe는 GUI 서브시스템 프로세스를 기다리지 않는다. 그래서 프롬프트가 먼저 돌아와 출력과 섞이고, `%ERRORLEVEL%`이 CLI의 종료 코드가 아니게 된다. PowerShell도 대화형으로는 기다리지 않는다는 보고가 있다 [가정]. 우회는 `start /wait "" chzzk-app.exe download …`(cmd)와 `Start-Process -Wait`나 출력 파이프(PowerShell)다.
+  - CI 스모크로는 이 문제를 잡지 못한다. Node `child_process`는 서브시스템과 무관하게 기다린다(`scripts/ci/smoke.mjs`). 그래서 `win10/` VM에서 사용자 실측 M-CLI-1로 판정한다(§13).
+- **2안: 콘솔 서브시스템 실행 파일을 하나 더 둔다**(예: `chzzk-cli.exe` 또는 `chzzk-app.com`. cmd가 같은 이름이면 `.com`을 `.exe`보다 먼저 찾는다).
+  - 같은 crate의 둘째 `[[bin]]`이 같은 `lib`의 `cli_main`을 부른다. 설치물은 하나이고 로그인 세션도 같으므로 사용자 결정 안이다.
+  - 대가: Tauri 번들러에 실행 파일을 더하는 설정(`bundle.externalBin` 또는 NSIS·WiX 조각)이 필요하다. `expected-artifacts.json`의 설치 스모크·`release-hygiene`·크기 ratchet·updater 산출물 검사가 바뀐다.
+- **판정 규칙**: M-CLI-1에서 1안이 cmd·PowerShell 대화형 둘 다 "출력 순서가 맞고 종료 코드가 보인다"면 1안으로 끝낸다. 하나라도 아니면 2안 단계(§16 CLI-5)를 연다. §15 O3이다.
+- **한글 출력**: Rust `std`의 stdout은 콘솔 핸들이면 UTF-16 `WriteConsoleW`로 바꿔 쓴다. 그래서 코드 페이지(949)와 무관하게 한글이 보인다 [가정: AttachConsole 뒤에도 콘솔 핸들로 판별되는지 M-CLI-1에서 확인]. 파이프·파일로 돌려지면 UTF-8 바이트를 그대로 쓴다. 문서에 "PowerShell 5에서 파이프로 받으면 `[Console]::OutputEncoding`을 UTF-8로"를 한 줄 둔다 [실측 필요].
+- 종료 코드: `std::process::exit(code)`. Windows도 0~255 밖은 쓰지 않는다(130 포함).
+- 설치 경로: NSIS는 `%LOCALAPPDATA%\VOD 클립 다운로더\chzzk-app.exe`다(cicd.md 구현 중 변경 30 (나) `docs/design/cicd.md:469` [확인: 문서]). MSI는 `INSTALLDIR`이 다르므로(같은 절 (다)) 도움말은 "설치한 폴더의 `chzzk-app.exe`"로 쓰고 NSIS 경로를 예로 든다.
+
+### 7.2 macOS
+- 실행 파일은 `.app` 번들 안에 있다: `/Applications/VOD 클립 다운로더.app/Contents/MacOS/<CFBundleExecutable>`. 설치 스모크는 이름을 `Info.plist`에서 읽는다(`scripts/ci/smoke.mjs:14`·`:360` [확인]). 이름이 `chzzk-app`인지는 산출물로 확인한다 [실측 필요, CLI-4에서 smoke 로그로].
+- 터미널에서 이 바이너리를 직접 실행하면 `NSApplication`을 만들지 않으므로(§3.1, Tauri 빌더 전 갈림) Dock 아이콘이 뜨지 않는다 [가정, M-CLI-2].
+- quarantine: 처음 GUI로 한 번 연 설치본은 Gatekeeper 확인이 끝났다. GUI를 한 번도 열지 않은 채 터미널에서 실행하면 막힐 수 있다 [가정]. 도움말은 "앱을 한 번 열어 로그인한 뒤"를 첫 단계로 둔다. 로그인이 어차피 GUI에서만 되므로 같은 단계다.
+- PATH: 설치기가 등록하지 않는다(dmg는 끌어다 놓기라 그럴 수 없다). 도움말에 `alias`나 `~/bin` 심볼릭 링크 한 줄을 둔다. 공백·한글 경로라 따옴표가 필요하다.
+
+### 7.3 Linux
+- deb: `/usr/bin/chzzk-app`(app.md 구현 중 변경 76 `docs/design/app.md:1386` [확인: 문서]). PATH에 이미 있다.
+- AppImage: `./<파일>.AppImage download <주소>`. AppRun이 인자를 넘긴다 [가정: smoke-install AppImage 단계에서 `status`로 확인]. libfuse2 전제는 GUI와 같다(web.md §7).
+- 화면 없이 돈다(§3.1). SSH 세션이나 서버에서 쓸 수 있다. 다만 로그인은 GUI가 있는 곳에서 해야 하고 세션 파일은 기기마다 따로다. 그래서 "화면 없는 서버에서 CLI만"은 v1에서 되지 않는다(§15 O2).
+- rpm은 지금 산출물이 아니다(`expected-artifacts.json` linux bundles = appimage·deb [확인]).
+
+### 7.4 경로(Tauri 없이 같은 폴더)
+- GUI는 `app.path()`로 config·data·log·video·download·home을 얻는다(`lib.rs:537-560` [확인]). CLI는 Tauri 앱을 만들지 않으므로 같은 값을 `dirs`(이미 `Cargo.lock`의 `dirs` 7.0.0, Tauri가 쓰는 것 [확인: lock])와 identifier `io.github.chnu-kim.chzzk-downloader`로 만든다. macOS 로그 폴더는 `~/Library/Logs/<identifier>`로 따로다(CLAUDE.md "주의사항").
+  - `dirs`를 앱 crate의 직접 의존성으로 올리는 것은 새 crate가 아니다. 다만 버전은 Tauri가 쓰는 것과 같아야 한다(lock 하나).
+- **대조 테스트**: 앱 crate의 `tests/`에서 mock 런타임(`tauri` dev-dep `features = ["test"]`, `Cargo.toml:41` [확인])의 `app.path()` 값과 `cli_paths()` 값이 같은지 3 OS에서 본다(`tauri` gate). 다르면 CLI가 다른 세션·다른 `jobs.json`을 보게 되므로 이 테스트가 이 기능의 기둥 하나다.
+- 스모크·E2E 격리: `--features e2e` 빌드에서 `CHZZK_E2E_API_BASE`·`CHZZK_E2E_DIR`이 있으면 CLI도 그 경로·클라이언트·Worker 주소를 쓴다. 코드는 `e2e.rs`에만 둔다(`release-hygiene`, CLAUDE.md). `lib.rs`의 `e2e_override()`(`lib.rs:458-467` [확인])를 CLI 갈림에서도 부른다.
+- 로그: GUI와 같은 `logging::init(log_dir)`. 첫 줄에 `mode = "cli"`를 남긴다. **잠금을 쥔 뒤에** 로그를 시작한다. 코드 5로 끝나는 CLI가 떠 있는 GUI의 로그 파일에 덧붙이지 않게 하려는 것이다(GUI는 잠금 전에 로그를 연다, `lib.rs:529-536`, 잠금은 `:575` [확인]).
+
+## 8. 설정과 인자 덮어쓰기
+
+원칙: **설정을 그대로 읽고, 인자는 이 실행에서만 덮으며, 설정 파일에 쓰지 않는다.** 예외는 `enqueue_checked`가 원래 하는 저장(마지막 화질, 최근 영상)뿐이다. GUI와 같은 함수를 부르므로 이것도 같이 일어난다. 이 부작용은 도움말에 적는다(§11).
+
+| 인자 | 설정에서 오는 기본값 | 덮는 방법 | 근거 |
+|---|---|---|---|
+| `--quality <라벨>` | `Resolved::default_quality(last_quality_label)`(GUI 카드와 같다) | 라벨 정확 일치(`1080p` 등, 대소문자 무시). 없으면 코드 2와 함께 가능한 라벨을 출력한다. 받는 중 바뀌면 코어의 `PlaybackChanged`가 그대로 난다 | `crates/core/src/model.rs:202-215`, `services.rs` resolve DTO `default_quality_index` [확인] |
+| `--out <폴더>` | 설정 폴더, 없으면 기본 폴더(`job_defaults().download_folder`) | 상대 경로는 현재 폴더 기준 절대 경로로 바꾼 뒤 `EnqueueRequest.folder`로 넘긴다. 검사는 매니저의 `resolve_folder`·`check_folder_segments`가 한다 | `app.rs:244-270`, `manager.rs:566`·`:1580` [확인] |
+| 파일 이름 | `ResolvedDto.suggested_file_name` → `check_output`이 정리한 `file_name` | 이름 인자는 v1에 두지 않는다. #166(토큰 템플릿)이 머지되면 설정 템플릿이 `suggested_file_name`에 반영되므로 CLI는 바꿀 것이 없다 [가정: #166이 `suggested_file_name`을 바꾼다] | `dto.rs:493-513` [확인] |
+| 이미 있는 파일 | 건너뛴다(`onExisting: skip`, 코어가 `skipped`로 끝냄). "이미 있어요"와 코드 0 | `--overwrite`면 `overwrite` | `receive.ts:222-257`의 규칙을 그대로 옮긴다(번호 이름은 고르지 않는다) |
+| 같은 작업의 `.part` | 이어받는다(`restart: false`) | 처음부터 받는 인자는 v1에 없다. 지우고 다시 받으려면 `.part`를 지운다 | `receive.ts:247`, `dto.rs:648-659` [확인] |
+| 다른 화질의 `.part` | 코어가 sidecar 불일치로 지우고 새로 받는다(GUI의 `partialOther` 안내와 같다). CLI는 안내 한 줄을 출력한다 | — | `receive.ts:232-234` [확인] |
+| 받다 만 녹화 `.part` | `freeFileName`으로 받는다(녹화를 지우지 않는다) | — | `dto.rs:656-658` [확인] |
+| `--range <시작>-<끝>` | 없음(전체) | 시각은 셸 `format::parse_clock`(TS `parseClock`과 골든 공유)으로 읽는다. `<끝>`을 비우면 끝까지다. 빠른 다시보기가 아니면 매니저 `validated_range`가 `invalidInput`(코드 2) | `crates/shell/src/format.rs:311` [확인], `crates/shell/tests/format_golden.rs:80` [확인], `manager.rs:559` [확인] |
+| `--rate <속도>` | 설정 `job_rate_limit`·`total_rate_limit` | **이 프로세스의 매니저에만** `set_rate_limits(total, Some(rate))`. `update_settings`를 부르지 않는다(부르면 저장된다). 최소 1MB/s 미만은 최소로 올린다(설정과 같은 `normalize_rate_limit`). 값은 바이트/초 정수에 `k`·`m` 접미사(1000 진법)를 붙일 수 있다 [잠정] | `manager.rs:537-541` [확인], rate-limit.md §3, core.md 구현 중 변경 76 |
+| `--audio` | 오디오만 받기 설정(기능 (마), 미정) | **(마) 머지 전에는 깃발이 없다**(모르는 인자, 코드 2). (마) 명세가 정한 요청 필드를 그대로 켠다. CLI-6 단계(§16) | ROADMAP:9 순서 "(마) → (다)" |
+| 동시 작업 수 | 무관(CLI는 하나씩 받는다) | — | §3.2 |
+| 세그먼트 동시 수·쿠키 | 설정 그대로(`job_defaults`, `SettingsService::client_fn`) | 인자 없음 | `services.rs:217-246` [확인] |
+
+## 9. 진행률, 취소, 종료 코드
+
+### 9.1 진행률 출력
+- 매니저에 `EventSink`를 하나 등록해(`manager.rs:522`, `events.rs:13-15` [확인]) 이 실행의 `JobId` 이벤트만 본다.
+- 출력 채널: **진행률·안내는 stderr, 결과(완성 파일의 절대 경로 한 줄)는 stdout.** 스크립트가 `$(chzzk-app download …)`로 경로만 받을 수 있게 한다.
+- TTY 판정은 `std::io::IsTerminal`(std, 의존성 없음)로 한다.
+  - TTY: 한 줄을 `\r`로 고쳐 쓴다. 내용은 `받는 중 · 42% · 1.2GB / 2.9GB · 12.3MB/s`. 숫자는 셸 `format::format_percent`·`format_progress_size`·`format_speed`가 만든다(content.md W5 "숫자는 함수가 만든다", `format.rs:152-190` [확인]). 진법은 OS 기준(`size_base_of`)이다.
+  - 비TTY: 같은 내용을 **10%마다 또는 30초마다** 한 줄씩 [잠정, ADR-0009]. 로그 파일이 부풀지 않게 하려는 것이다.
+- 상태 전환(연결 대기·403 재조회·마무리 중 defrag)은 줄을 바꿔 한 번씩 출력한다. 문구는 GUI 작업 행 문구 키를 Rust 상수로 옮긴 것이다(§11).
+- 서명 주소나 토큰은 출력하지 않는다(§12).
+
+### 9.2 취소(Ctrl+C)와 이어받기
+- tokio `signal` feature로 `ctrl_c()`를 기다린다. 앱 crate의 tokio feature에 `signal`을 더한다(`Cargo.toml:34` [확인]). 필요한 `signal-hook-registry`는 이미 lock에 있다(`Cargo.lock:4278` [확인]). 새 crate가 아니다.
+- **첫 Ctrl+C**: `manager.pause(id)`를 부른다. `running` → `pausing` → `paused`이고 `.part`가 남는다(`manager.rs:674-701` [확인]). 그다음 `paused` 상태 이벤트를 기다리고 `manager.flush()`를 부른 뒤 "멈췄어요. 같은 명령을 다시 실행하면 이어받아요."와 코드 130으로 끝난다.
+  - `paused`로 남기는 까닭: GUI의 자동 이어받기는 `interrupted`만 대상이다(`app.rs:422-447` [확인]). 사용자가 멈춘 것을 GUI가 열리자마자 다시 받기 시작하면 안 된다.
+- **두 번째 Ctrl+C**(멈추는 중): `manager.quit(짧은 기한)`. 끝나지 않은 작업은 `interrupted`로 저장된다(`manager.rs:1385-1388` [확인]). 코드 130이다. 코어의 `committed_len` 불변식 덕에 다음에 이어받는다(core.md §5.1).
+- **다시 실행**: 같은 주소·화질·폴더로 `download`하면 `check_output`이 같은 작업의 `.part`(`same_job`)를 보고 `restart: false`로 이어받는다(§8 표). `jobs.json`에는 옛 `paused` 기록과 새 기록이 둘 다 남는다. 같은 출력의 **활성** 작업만 `duplicateOutput`이고(`manager.rs:571-573` [확인]) `paused`는 활성이 아니다 [가정: `active_with_output`이 paused를 활성으로 보지 않는다. CLI-2에서 테스트로 확인]. 옛 기록은 GUI 목록에 "받다 만"으로 보인다. 이것이 거슬리면 CLI가 새 작업을 만들기 전에 같은 출력의 `paused` 기록을 `resume_job`으로 다시 쓰는 안이 있다. 이 안은 게이트(`App::resume_job`, `app.rs:356-371`)를 지나므로 안전하지만 v1은 단순한 쪽(새 기록)을 고른다. §15 O9.
+- 창 닫기 가드(D1)·Dock 진행·잠자기 방지는 CLI에 없다. 잠자기 방지가 없으면 긴 받기 중에 기기가 잠들 수 있다. 이 경우 코어의 연결 대기·이어받기가 처리한다 [가정]. 넣을지는 §15 O10이다.
+
+### 9.3 종료 코드
+
+| 코드 | 뜻 | 오류 코드(`ErrorCode`, `crates/shell/src/error.rs:37-72` [확인]) |
+|---|---|---|
+| 0 | 모두 받았다(이미 있어서 건너뛴 것 포함). `info`·`status`·`help` 성공 | — |
+| 1 | 받기 실패(네트워크·디스크·파서·서버 등). 잠금 파일을 열지 못함 | 그 밖 전부 |
+| 2 | 사용법 오류: 모르는 명령·깃발, 잘못된 주소, 없는 화질, 생방송 주소(v1), 구간을 쓸 수 없는 영상 | `InvalidUrl`, `InvalidInput`, `QualityNotFound`, `RangeOutOfBounds` |
+| 3 | 로그인이 필요하다 | `NotLoggedIn` |
+| 4 | 이 계정으로 받을 수 없는 영상 | `NotOwnContent`, `OwnershipUnknown` |
+| 5 | 앱(또는 다른 CLI)이 열려 있다 | (잠금 `HeldElsewhere`) |
+| 130 | Ctrl+C로 멈췄다(`.part`는 남는다) | `Cancelled` |
+
+- 주소가 여럿이면 가장 나쁜 코드를 낸다. 순서는 130 > 5 > 3 > 4 > 1 > 2 > 0이다 [가정: 사람이 먼저 손대야 하는 것부터]. 다만 3·5는 첫 주소 전에 나므로 그 자리에서 끝난다.
+- `--smoke`의 종료 코드 2(시간 초과)·3(마커 실패)과 숫자가 겹친다(`smoke.rs:30-34` [확인]). 두 모드는 같은 실행에서 함께 일어나지 않는다(§3.1 갈림). 그래서 겹쳐도 되고, 두 표에 서로를 가리키는 주석을 단다.
+
+## 10. 업데이트
+- CLI 실행은 업데이트를 확인하지 않는다. GUI는 로그인 확인 직후 한 번 확인한다(`app.rs:740-745` [확인]). CLI만 쓰는 사용자는 GUI를 열 때 업데이트된다. `status`는 지금 버전만 출력한다.
+- GUI가 업데이트를 설치하는 동안 CLI는 잠금 때문에 시작하지 못한다(코드 5). 반대로 CLI가 도는 동안 GUI는 열리지 않으므로 바이너리를 바꾸는 일이 생기지 않는다.
+
+## 11. 문구·도움말
+- **CLI 문구의 원천**: 웹뷰 밖 Rust라 `ko.ts`를 읽을 수 없다. 알림처럼 `crates/shell/src/cli/copy.rs`에 상수로 두고, `ko.ts`에 같은 키(`cli.*`)를 두어 대조 테스트한다(`notify_copy.rs` 방식, content.md §14). 그러면 `design-copy`의 금지어·용어집 검사가 CLI 문구에도 걸린다.
+- 용어(content.md §4 용어집): 주소(링크·URL 아님), 로그인(세션·인증 아님), 받기·다운로드, "받다 만", 해요체, "잠시 뒤".
+- 문구 전표 초안(구현 PR에서 content.md 문구 전표 행과 함께 확정한다):
+
+| 키 | 초안 |
+|---|---|
+| `cli.loginNeeded.body` | 로그인이 필요해요. 앱을 열어 로그인한 뒤 다시 실행해 주세요. |
+| `cli.appOpen.body` | 앱이 열려 있어요. 앱을 닫은 뒤 다시 실행해 주세요. |
+| `cli.busy.body` (GUI 대화상자) | 명령줄에서 받는 중이에요. 끝난 뒤 다시 열어 주세요. |
+| `cli.paused.body` | 멈췄어요. 같은 명령을 다시 실행하면 이어받아요. |
+| `cli.exists.body` | 이미 있어요: {path} |
+| `cli.liveUnsupported.body` | 생방송은 앱에서 녹화해 주세요. |
+| `cli.notOwn.body` | `errors.ts` `notOwnContent`의 L0 본문을 그대로 쓴다(새 키 아님) |
+
+- `help` 출력: 명령·깃발 표와 종료 코드 표다. 이것도 상수다.
+- **웹 도움말**: `help/cli.md`를 새로 두고 `help/ids.json`에 `cli`를 더한다(D51 "앵커 id는 추가만"). 생성 모듈 `worker/src/http/help.generated.ts`는 `scripts/design/worker-gen.mjs`로 다시 만들고 `design-icons`(`--check`)가 확인한다. 내용은 다음과 같다.
+  - (1) 앱에서 먼저 로그인
+  - (2) OS별 실행 파일 위치(§7)와 PATH 한 줄
+  - (3) 명령 예시(가짜 주소)
+  - (4) 종료 코드 표
+  - (5) "앱이 열려 있으면 실행되지 않아요"
+  - (6) Windows cmd·PowerShell 주의(M-CLI-1 결과에 따라)
+  - (7) 받은 기록이 앱 목록에 남고 마지막 화질이 바뀐다는 점
+- 시각 결정(D 번호)이나 ADR은 없다. GUI 화면을 바꾸지 않는다. 바꾸는 것은 §6.2의 대화상자 문구 하나뿐이다.
+
+## 12. 비밀값
+- CLI는 로그인 주소·토큰·쿠키·서명 미디어 주소를 출력하지 않는다. 오류는 `AppError.message`(이미 `redact_url`을 거친 셸 오류)만 출력한다. `Debug` 형식(`{:?}`)으로 출력하지 않는다.
+- `info`는 제목·채널 이름·화질 라벨·판정만 출력하고 채널 ID는 출력하지 않는다. 채널 ID는 로그 금지 필드라 같은 결을 따른다(worker.md 로그 규칙 `docs/design/worker.md:752`).
+- 쿠키 인자는 두지 않는다. 쿠키는 GUI 설정의 자격증명 저장소에서만 온다.
+
+## 13. 배포물·크기·실측
+
+- **1안(AttachConsole)**: `release/expected-artifacts.json`, 번들 종류, updater 산출물은 그대로다. 크기는 CLI 코드와 `Win32_System_Console`·tokio `signal`만큼 늘어난다. size ratchet을 넘으면 `ci/RATCHET_LOG.md`에 키와 이유를 적는다 [잠정: 수십 KB 수준으로 본다].
+- **2안(콘솔 실행 파일)**: Windows 번들에 실행 파일 하나를 더한다. `expected-artifacts.json`의 `artifacts`(설치기 파일 수)는 그대로지만 설치 스모크(`smoke.mjs` nsis·msi)가 설치 폴더의 둘째 실행 파일을 확인해야 한다. 크기는 실행 파일 하나만큼 늘어난다(같은 lib을 정적 링크해서 수 MB) [잠정]. 버전 PR에 Windows·macOS 번들 크기를 함께 적는다(메모리 "버전 규칙").
+- 사용자 실측(출력은 판정만, 결과는 ROADMAP에 범주로):
+
+| ID | 무엇 | 누가 | 판정 |
+|---|---|---|---|
+| M-CLI-1 | Windows 10/11(`win10/` VM) cmd·PowerShell 대화형에서 1안 출력 순서·종료 코드·한글·Ctrl+C(cmd가 기다리지 않으면 Ctrl+C도 cmd가 함께 받는다) | 사용자(또는 VM에서 에이전트) | 된다/안 된다 → §15 O3 |
+| M-CLI-2 | macOS 설치본에서 터미널 `status`·`download`: Dock 아이콘 없음, quarantine | 사용자 | 된다/안 된다 |
+| M-CLI-3 | 실제 로그인 계정으로 본인 영상 받기 + 남의 영상 거부(코드 4) | 사용자 | 일치/불일치 |
+| M-CLI-4 | GUI를 연 채로 CLI(코드 5), CLI를 돌리는 중에 GUI 열기(대화상자) | 사용자 | 된다/안 된다 |
+
+## 14. 테스트 계획(TDD: 실패 테스트 먼저)
+
+### 14.1 셸 단위·통합(`crates/shell`, `rust` gate 3 OS)
+- `cli::args`: 하위 명령·깃발 표 골든. 중복 깃발, `--x=값`, `--` 뒤 주소, UTF-8 아님, 생방송 주소, `--range` 시각(`parse_clock` 골든 재사용), `--rate` 접미사·최소값.
+- `cli::run`을 가짜 Backend(`crates/shell/tests/common/fake.rs`)와 가짜 `WorkerApi`로 돌리는 `tests/cli.rs`:
+  - §4.3 T-G1~T-G6. T-G5는 구현 PR에서 게이트 호출을 일부러 빼 실패를 확인하고 되돌린다.
+  - 이어받기: 첫 실행을 Ctrl+C 신호(주입한 취소 future)로 멈추면 상태가 `paused`이고 `.part`가 있으며 코드 130이다. 둘째 실행이 같은 `.part`를 이어받는다(가짜 Backend의 시작 오프셋으로 단정).
+  - 이미 있음 → 코드 0·`skipped`. `--overwrite` → 덮어씀.
+  - `--rate`가 매니저에는 반영되고(`rate_limits()`) 설정 파일에는 쓰이지 않는다.
+  - 갱신: 유예 안 `SignedIn`이면 refresh 0회, `Checking`이면 1회(가짜 `WorkerApi` 호출 수). `startup` 변형이면 0회 단정이 실패한다.
+  - 자동 이어받기 없음: `jobs.json`에 다른 `interrupted` 작업이 있어도 CLI 실행 뒤 그 작업은 그대로다. `AuthSetup::Disabled`와 `Enabled` 두 경우 모두 본다.
+  - 끝난 기록: `cli::run`이 돌아온 직후 `jobs.json`을 다시 읽으면 상태가 `completed`(Ctrl+C면 `paused`)다. flush를 빼는 변형이면 실패한다.
+  - 여러 주소: 둘째가 실패해도 셋째를 받고 코드는 가장 나쁜 것.
+  - 출력 분리: stdout은 경로 한 줄, stderr에 진행률(주입한 writer 둘).
+- `cli::copy` ↔ `ko.ts` 대조 테스트(`notify_copy.rs` 방식).
+
+### 14.2 앱 crate(`tauri`·`tauri-clippy` gate 3 OS)
+- 갈림: `wants_cli(["download", …])` 참, `["--smoke"]`·`[]`·`["-psn_0_1"]` 거짓, `["download", "--smoke"]`는 CLI.
+- 경로 대조: `cli_paths()` == mock 런타임 `app.path()`(config·data·log·video·download·home).
+- 잠금: `app.lock`을 다른 핸들로 쥔 채 CLI를 돌리면 코드 5이고 `jobs.json`을 열지 않는다. `cli.lock` 판정 함수(GUI 쪽 §6.2) 표 테스트.
+
+### 14.3 네이티브·스모크
+- `smoke-bin`(debug 바이너리): `chzzk-app help`가 0, `chzzk-app status`가 3(로그인 없는 임시 데이터 폴더, `CHZZK_SMOKE_DIR`과 같은 격리 환경 변수를 CLI에도 둔다). Linux는 **`DISPLAY`·`WAYLAND_DISPLAY`를 지운 채** 돌려 Tauri를 만들지 않음을 단정한다.
+- `smoke-install`(설치본, 3 OS): 설치된 실행 파일로 `status` → 3. deb `/usr/bin/chzzk-app`, AppImage, macOS `.app` 안 `CFBundleExecutable`, NSIS·MSI 설치 폴더. Windows 1안에서는 Node가 종료 코드를 받으므로 이 단정이 된다(대화형 문제는 M-CLI-1).
+- `e2e-native`(Linux·Windows, `--features e2e`): 기존 fixture 서버와 가짜 Worker로 `download <fixture 주소>` → 코드 0과 파일 sha256, 남의 채널 fixture → 코드 4. 가짜 백엔드 `app/e2e/mock/backend.ts`는 바뀌지 않는다(command·DTO 변경 없음).
+- 웹 E2E(Playwright)는 영향이 없다. §6.2의 대화상자를 넣으면 Rust 대화상자라 웹 E2E 밖이다.
+
+## 15. 열린 결정(사용자에게 묻는다)
+
+| ID | 질문 | 선택지 | 추천 | 근거 |
+|---|---|---|---|---|
+| O1 | GUI와 CLI가 동시에 뜨는 경우 | (a) 잠금 하나로 **한쪽만**: CLI는 코드 5, GUI는 "명령줄에서 받는 중" 대화상자 (b) (a)와 같되 GUI는 지금처럼 조용히 끝남 (c) 세션·작업 파일을 프로세스 사이 잠금으로 나눠 쓰기(동시 실행 허용) | **(a)** | (c)는 refresh 회전·`jobs.json` 덮어쓰기를 모두 다시 설계해야 한다(worker.md 25 (가) "인스턴스 둘은 설계 밖"). (b)는 사용자가 "앱이 안 열린다"고 느낀다(`lib.rs:579-588`) |
+| O2 | CLI에서 로그인 | (a) 하지 않음, "앱에서 로그인" (b) `login` 명령: 브라우저를 열고 루프백으로 받기 (c) (b) + 화면 없는 서버용 "다른 기기에서 로그인" | **(a)** | 세션을 함께 쓰므로 GUI 로그인 한 번이면 된다. (c)는 Worker 계약 변경(새 흐름)이다. (b)는 문구·상태 화면을 CLI에 다시 만든다 |
+| O3 | Windows 콘솔 | (a) 같은 exe + `AttachConsole` (b) 콘솔 실행 파일 하나 더(`chzzk-cli.exe` 또는 `.com`) (c) (a)로 시작하고 M-CLI-1이 안 되면 (b) | **(c)** | (a)는 의존성·산출물 변화가 거의 없다. cmd가 GUI 프로세스를 기다리지 않는 문제는 실측 전이다(§7.1) |
+| O4 | GUI가 떠 있을 때 CLI가 GUI에 받기를 넘기기 | (a) 넘기지 않음(코드 5) (b) single-instance `argv`로 GUI 목록에 넣고 CLI는 바로 끝남 (c) (b) + CLI가 진행을 기다림(IPC) | **(a)** | (b)·(c)는 웹뷰 밖 enqueue 경로·게이트 재확인·IPC를 새로 만든다. v1 범위를 넘는다 |
+| O5 | 인자 파서 | (a) 손 파서 (b) `lexopt` (c) `clap` | **(a)** | 명령 넷·깃발 일곱. (b)는 새 crate 하나(deny·supply 검토). (c)는 트리·크기가 크다 |
+| O6 | 기계가 읽는 출력 | (a) 경로 한 줄(stdout)만 (b) `--json`(줄마다 JSON 이벤트) | **(a)** | 수요 근거가 없다. 더하기만 하면 되므로 뒤에 열어도 깨지지 않는다 |
+| O7 | PATH 등록 | (a) 도움말 안내만 (b) Windows 설치기가 PATH에 더함, deb는 이미 됨 | **(a)** | NSIS·MSI 설정과 제거 시 정리를 더해야 한다. macOS dmg는 어차피 못 한다 |
+| O8 | 생방송 녹화 | (a) v1 제외(코드 2) (b) Ctrl+C = [녹화 마치기](받은 만큼 마무리) | **(a)** | Ctrl+C의 뜻이 VOD와 달라진다(멈춤 vs 마무리). 녹화 `.part` 보호 규칙(L7)을 CLI에서 다시 확인해야 한다 |
+| O9 | 다시 실행할 때 옛 `paused` 기록 | (a) 새 기록을 만들고 옛 기록은 남김 (b) 같은 출력의 `paused` 기록을 `resume_job`으로 다시 씀 | **(a)** [잠정] | (a)가 단순하다. 목록이 지저분해지면 (b)로 바꾼다(게이트를 지나므로 안전) |
+| O10 | 받는 동안 잠자기 방지 | (a) 없음 (b) GUI와 같은 `power::SystemGuard` | **(b)** | 이미 셸에 있어 붙이기만 하면 된다(`lib.rs:636-641`). 긴 받기 중 잠들면 연결 대기로 늦어진다. 의존성 변화 없음 |
+| O11 | 설정 저장 부작용(마지막 화질·최근 영상) | (a) GUI와 같이 저장 (b) CLI는 저장하지 않음 | **(a)** | 같은 `enqueue_checked`를 쓰는 대가다. (b)는 셸에 분기를 더해 두 경로가 갈라진다 |
+
+## 16. 구현 단계(stacked PR)와 gate
+
+모든 PR은 브랜치 단계마다 커밋하고, 커밋 전에 `node scripts/ci/run.mjs scan`과 건드린 gate를 통과시킨다. CLI-1·CLI-3은 인증·게이트를 건드리므로 Codex 리뷰를 붙인다(ROADMAP:9).
+
+| 단계 | 내용 | 커밋 타입 | gate |
+|---|---|---|---|
+| CLI-0 | 이 명세 | `docs:` | `scan`, `scripts-test` |
+| CLI-1 | 셸 `cli` 모듈: 인자 파서, `run(&App, args, io)`, 게이트 순서, 종료 코드 표, 진행률 writer, `cli::copy` 상수 + ko.ts 키 + 대조 테스트, `App` 여는 옵션의 자동 이어받기 끔(§5.2). `tests/cli.rs`(T-G1~T-G6, 이어받기, 갱신 횟수, 출력 분리, 끝난 기록). 새 상수(종료 코드 표, 진행률 간격 10%·30초)를 `docs/design/system/foundations.md` §14 상수 표에 등록하고 진행률 간격 [잠정]을 ADR-0009 묶음에 더한다. 앱에서는 아직 부르지 않는다 | `feat:` | `fmt`, `rust`, `frontend`(ko.ts), `design-tokens`(spec-check·design-copy), `coverage`·`test-count` |
+| CLI-2 | 앱 crate 갈림: `wants_cli`, `cli_paths`(+ mock 런타임 대조), 잠금·`cli.lock`, tokio `signal`, Ctrl+C 두 단계, `e2e.rs` 격리 환경, 로그 `mode`. Windows `AttachConsole`(feature `Win32_System_Console`). GUI `HeldElsewhere` 대화상자(O1 (a)) | `feat:` | `tauri-clippy`, `tauri`, `tauri-build`, `smoke-bin`(help·status, Linux 화면 없음), `versions`, `supply`(feature 변화 확인) |
+| CLI-3 | 네이티브 E2E·설치 스모크: `e2e-native.mjs`에 CLI 받기·거부, `smoke.mjs`에 설치본 `status` → 3(3 OS). size ratchet 확인 | `test:`/`ci:` | `e2e-native`(Linux·Windows), `scripts-test`, `bundle`·`smoke-install`(master·dispatch), `size` |
+| CLI-4 | 도움말 `help/cli.md`·`ids.json`·생성 모듈, content.md 문구 전표, app.md 구현 중 변경, ROADMAP. M-CLI-1~4 요청 | `docs:` | `design-icons`(worker-gen `--check`), `worker`, `design-worker`(관찰), `scan` |
+| CLI-5 | (O3에서 (b)가 필요할 때만) Windows 콘솔 실행 파일: 둘째 `[[bin]]`, 번들 설정, 설치 스모크·`release-hygiene`·크기 | `feat:` | `tauri-build`, `bundle (windows)`, `smoke-install`, `release-selftest`, `size` |
+| CLI-6 | (기능 (마) 머지 뒤) `--audio`: (마)의 요청 필드를 켜고 테스트 | `feat:` | `rust`, `tauri`, `e2e-native` |
+
+- 릴리스: CLI-2가 들어간 버전이 처음 CLI를 싣는다. `feat`라 minor다(`docs/versioning.md`). 사용자 데이터·Worker 계약을 깨지 않으므로 `!`는 붙이지 않는다(`jobs.json`·`settings.json` 형식 변화 없음).
+
+## 17. 위험
+
+| 위험 | 영향 | 대응 |
+|---|---|---|
+| 경로가 Tauri와 한 글자라도 다름 | CLI가 다른 `session.json`·`jobs.json`을 봐서 로그인 없음으로 보이거나 작업이 따로 쌓인다 | §7.4 대조 테스트(3 OS) |
+| 누군가 cli 모듈에서 매니저를 직접 부름 | 소유 게이트 우회 | §4.2 리뷰 항목 + T-G5 |
+| Windows cmd에서 출력이 섞이고 종료 코드가 사라짐 | 스크립트가 실패를 모른다 | M-CLI-1 → O3 (b) |
+| `retry()` 대신 `startup()`을 씀 | 스크립트 반복에서 429 → 오프라인 유예 → 최악의 경우 재사용 폐기(worker.md 24 (다)) | §14.1 갱신 횟수 테스트 |
+| `paused`를 `interrupted`로 남김 | GUI가 열리자마자 사용자가 멈춘 것을 다시 받는다 | §9.2, 테스트 |
+| CLI가 도는 중 GUI를 열면 반응 없음 | "앱이 고장났다" | O1 (a) 대화상자 |

@@ -353,7 +353,8 @@ export function install(scenario: Scenario = {}): E2EController {
     },
     get_settings: () => settings,
     update_settings: (a) => {
-      const patch = a.patch as SettingsPatch;
+      // 앱이 보낸 인자(calls에 기록됨)를 고치지 않도록 복사한다
+      const patch = { ...(a.patch as SettingsPatch) };
       // 셸 흉내: 읽을 수 없는 규칙은 invalidInput, 기본 규칙 문자열은 null(기본)로 저장한다
       if (typeof patch.fileNameTemplate === 'string') {
         if (previewTemplate(patch.fileNameTemplate).status === 'invalid') throw err('invalidInput');

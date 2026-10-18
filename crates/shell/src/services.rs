@@ -256,6 +256,8 @@ impl SettingsService {
     /// - `downloadFolder`: `null`은 기본 폴더로, 문자열은 앞뒤 공백을 지운 절대 경로여야 한다(아니면 `invalidInput`).
     /// - `useNaverCookies: true`는 저장된 쿠키가 있어야 한다(아니면 `invalidInput`). 바뀌면 클라이언트를 바꾼다.
     /// - `segmentConcurrency`는 1~8, `maxParallelDownloads`는 1~3으로 자른다.
+    /// - `fileNameTemplate`: `null`은 기본 규칙으로, 문자열은 `parse_template`으로 다시 읽어 실패하면 `invalidInput`
+    ///   (저장된 값은 그대로)이고, 기본 템플릿 문자열과 같으면 `None`으로 저장한다.
     ///
     /// 동시 작업 수를 매니저에 반영하려면 `update_and_apply`를 쓴다.
     pub fn update(&self, patch: SettingsPatch) -> Result<SettingsDto, AppError> {

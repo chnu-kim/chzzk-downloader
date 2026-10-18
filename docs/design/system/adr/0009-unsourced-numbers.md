@@ -21,6 +21,7 @@
 | `--reading-max` | 680px | [취향] | foundations §3.3 | 1280·휴대폰 캡처(`R1`) |
 | `--label-w` / `--pct-w` | 80px / 40px | [취향] | foundations §5.2 | 갤러리 고정 데이터(긴 라벨·"100%")에서 흔들림 없음 |
 | 구간 시각 칸 기준 폭 `calc(6 * var(--text-body))`(`RangeField` `.clock`, 좁으면 줄어든다) · 작업 행 화질 칸 상한 `max-width: 50%` | 글자 크기 × 6 / 50% | [잠정] | patterns §6.5·§3.2, range.md §5.2·§5.4 | 갤러리 `card-range`에서 `100:00:00`이 잘리지 않음(기본 글자), `card-range`·`jobs-range` x-large 320에서 가로 스크롤 0 |
+| 파일 이름 규칙 템플릿 길이 상한 `MAX_TEMPLATE_BYTES`(코어 `naming.rs`) · 설정 입력칸 기준 폭 `calc(16 * var(--text-body))`·최소 `calc(10 * var(--text-body))`(`FileNameTemplateRow` `.field`) | 100바이트 / 글자 크기 × 16·× 10 | [잠정] | `filename-template.md` T4·§5.1, core.md 75, app.md 91 | 사용자가 쓰는 템플릿 길이 분포(가장 긴 고정 토큰 `{prefix}` 생방송 23바이트를 더해도 제목 몫 60바이트가 남는 여유로 잡은 값). 갤러리 설정 화면 x-large 320에서 가로 스크롤 0 |
 | `--motion-spin` | 800ms | [취향] | foundations §7.1 | reduce 스냅에서 정지 호 |
 | `--surface-pressed` | #DBDBDB / #484848 | [취향] | foundations §2.3 | DT16 hover ≠ pressed, `R1` |
 | `--shadow-*` 수치 | foundations §6.4 | [취향] | foundations §6.4 | `R1` 다크·라이트 |

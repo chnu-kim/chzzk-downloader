@@ -55,12 +55,13 @@ export function audit(db: Db, action: AuditAction, actor: string, target: string
   db.run("INSERT INTO audit (at, actor, action, target) VALUES (?, ?, ?, ?)", now, actor, action, target);
 }
 
-/** 허용(upsert). 빈 메모는 있던 메모를 그대로 둔다(관리 화면 [추가]를 메모 없이 다시 눌러도 지워지지 않는다, worker.md 구현 중 변경 38 (카)) */
+/** 허용(upsert). 새 행의 이름은 거부 기록, 없으면 차단 행의 것이다(둘 다 이 함수 끝에서 지우므로 먼저 읽는다). 빈 메모는 있던 메모를 그대로 둔다(관리 화면 [추가]를 메모 없이 다시 눌러도 지워지지 않는다, worker.md 구현 중 변경 38 (카)) */
 export function allow(db: Db, channelId: string, note: string, by: string, now: number): AllowResult {
   if (!CHANNEL_ID.test(channelId)) return { ok: false, code: "bad_channel_id" };
   const n = clip(note, NOTE_MAX);
   db.run(
-    "INSERT INTO allowlist (channel_id, channel_name, owner_channel_id, note, added_by, added_at) VALUES (?, (SELECT channel_name FROM denied WHERE channel_id = ?), NULL, ?, ?, ?) ON CONFLICT(channel_id) DO UPDATE SET note = COALESCE(excluded.note, allowlist.note)",
+    "INSERT INTO allowlist (channel_id, channel_name, owner_channel_id, note, added_by, added_at) VALUES (?, COALESCE((SELECT channel_name FROM denied WHERE channel_id = ?), (SELECT channel_name FROM blocked WHERE channel_id = ?)), NULL, ?, ?, ?) ON CONFLICT(channel_id) DO UPDATE SET note = COALESCE(excluded.note, allowlist.note)",
+    channelId,
     channelId,
     channelId,
     n === "" ? null : n,

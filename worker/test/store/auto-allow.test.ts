@@ -1,6 +1,7 @@
 // 허용목록 자동 허가 + 하루 새 채널 상한(docs/design/features/allowlist-open.md §3·§6.1, worker.md 구현 중 변경 109).
 import { runInDurableObject } from "cloudflare:test";
 import { describe, expect, it, vi } from "vitest";
+import { MIGRATIONS, migrate } from "../../src/store/schema";
 import { ADMIN_LIST_MAX, AUTO_ALLOW_CAP_MAX, kstDay } from "../../src/store/allowlist";
 import { A1, ADMINS, B2, C3, D4, T0, begin, closeAutoAllow, freshStub, meter, query, sha, type Stub } from "./helpers";
 
@@ -295,6 +296,58 @@ describe("차단", () => {
     });
     expect((await login(stub, B2)).r.status).toBe("ok");
     expect(await metaOf(stub, "auto_allow_count")).toBeNull();
+  });
+
+  it("S16b 허가 행과 차단 행이 함께 있는 채널을 거부 기록에서 [허용]하면 차단 행도 지운다(되돌리기 흔적 풀기)", async () => {
+    const stub = freshStub();
+    await runInDurableObject(stub, (i) => {
+      i.db.run("INSERT INTO blocked (channel_id, channel_name, blocked_by, blocked_at) VALUES (?, 'n', ?, 1)", B2, A1);
+      i.db.run("INSERT INTO allowlist (channel_id, channel_name, owner_channel_id, note, added_by, added_at) VALUES (?, 'n', NULL, NULL, ?, 1)", B2, A1);
+      i.db.run("INSERT INTO denied (channel_id, channel_name, first_at, last_at, attempts) VALUES (?, 'n', 1, 1, 1)", B2);
+    });
+    expect(await stub.allowDenied(B2, A1, T0, ADMINS)).toBe(true);
+    expect(await rows(stub, "blocked")).toEqual([]);
+    expect(await rows(stub, "denied")).toEqual([]);
+    // 허가 행은 그대로(이름·추가한 사람·시각을 바꾸지 않는다)
+    expect(await query(stub, "SELECT channel_id, added_by, added_at FROM allowlist")).toEqual([{ channel_id: B2, added_by: A1, added_at: 1 }]);
+  });
+
+  it("S16c 차단 표에서 [허가]하면 거부 기록이 없어도 차단 행의 이름을 허가 행에 옮긴다", async () => {
+    const stub = freshStub();
+    await runInDurableObject(stub, (i) => {
+      i.db.run("INSERT INTO blocked (channel_id, channel_name, blocked_by, blocked_at) VALUES (?, '차단된 이름', ?, 1)", B2, A1);
+    });
+    expect(await stub.allow(B2, "", A1, T0, ADMINS)).toEqual({ ok: true });
+    expect(await query(stub, "SELECT channel_id, channel_name FROM allowlist")).toEqual([{ channel_id: B2, channel_name: "차단된 이름" }]);
+    expect(await rows(stub, "blocked")).toEqual([]);
+  });
+
+  it("S16d 거부 기록과 차단 행에 모두 이름이 있으면 거부 기록(더 최근에 본 이름)을 쓴다", async () => {
+    const stub = freshStub();
+    await runInDurableObject(stub, (i) => {
+      i.db.run("INSERT INTO blocked (channel_id, channel_name, blocked_by, blocked_at) VALUES (?, '옛 이름', ?, 1)", B2, A1);
+      i.db.run("INSERT INTO denied (channel_id, channel_name, first_at, last_at, attempts) VALUES (?, '새 이름', 2, 2, 1)", B2);
+    });
+    await stub.allow(B2, "", A1, T0, ADMINS);
+    expect(await query(stub, "SELECT channel_name FROM allowlist")).toEqual([{ channel_name: "새 이름" }]);
+  });
+
+  it("S16e 옛 빼기 이력은 V4 마이그레이션이 차단으로 옮겨서, 배포 직후 상한이 열려도 자동 허가되지 않는다(allowlist-open.md §4.6 (나))", async () => {
+    const stub = freshStub();
+    await runInDurableObject(stub, (i, state) => {
+      for (const t of ["refresh", "session", "flow", "allowlist", "denied", "audit", "delegation", "invite", "blocked", "meta"]) i.db.run(`DROP TABLE IF EXISTS ${t}`);
+      for (let v = 0; v < 3; v++) i.db.run(MIGRATIONS[v]!);
+      i.db.run("INSERT INTO meta (k, v) VALUES ('schema_version', '3')");
+      i.db.run("INSERT INTO audit (at, actor, action, target) VALUES (1, ?, 'disallow', ?)", A1, C3);
+      migrate(i.db, (fn) => state.storage.transactionSync(fn));
+    });
+    const c = await login(stub, C3, T0 + 1);
+    expect(c.f).toMatchObject({ type: "loopback", result: "denied" });
+    expect(c.r).toMatchObject({ status: "denied", reason: "blocked" });
+    expect(await rows(stub, "allowlist")).toEqual([]);
+    expect(await metaOf(stub, "auto_allow_count")).toBeNull();
+    // 이력에 없는 다른 새 채널은 그대로 자동 허가된다
+    expect((await login(stub, D4, T0 + 2)).r.status).toBe("ok");
   });
 
   it("disallowTarget: 허가·차단·거부 기록 상태를 한 채널만 읽는다(쓰기 0)", async () => {

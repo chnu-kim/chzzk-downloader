@@ -176,7 +176,12 @@ else:            (지금 허용 갈래 그대로)
 CREATE TABLE blocked (channel_id TEXT PRIMARY KEY CHECK (length(channel_id) = 32), channel_name TEXT,
   blocked_by TEXT NOT NULL, blocked_at INTEGER NOT NULL);
 CREATE INDEX blocked_at ON blocked(blocked_at);
-ALTER TABLE flow ADD COLUMN deny_reason TEXT
+ALTER TABLE flow ADD COLUMN deny_reason TEXT;
+-- 옛 빼기 이력 옮기기(§4.6 마지막 항목): 감사의 채널별 마지막 allow/disallow가 disallow이고 지금 허가 행이 없는 채널
+INSERT OR IGNORE INTO blocked (channel_id, channel_name, blocked_by, blocked_at)
+  SELECT a.target, (SELECT d.channel_name FROM denied d WHERE d.channel_id = a.target), a.actor, a.at FROM audit a
+  WHERE a.id IN (SELECT max(id) FROM audit WHERE action IN ('allow','disallow') AND target IS NOT NULL AND length(target) = 32 GROUP BY target)
+    AND a.action = 'disallow' AND a.target NOT IN (SELECT channel_id FROM allowlist)
 ```
 
 - `flow.deny_reason`: 거부된 흐름의 이유(`daily_limit`·`blocked`·NULL). redeem·완료 페이지가 읽는다. CHECK는 두지 않는다(`ALTER TABLE ADD COLUMN`에 CHECK를 두면 옛 행 검사 규칙이 복잡해진다 [가정]). 쓰는 곳이 `finish` 하나라 값은 코드가 정한다.
@@ -230,6 +235,7 @@ ALTER TABLE flow ADD COLUMN deny_reason TEXT
 - 자동 허가 행은 보통 허가 행이라 옛 코드에서도 허가다. 차단된 채널은 허가 행이 없으니 옛 코드에서도 거부다(자동 허가가 없으므로).
 - 되돌린 동안 옛 `allow`가 차단 채널을 허가하면 차단 행이 남는다. V4로 돌아와도 허가가 이긴다(§3.3 (가)). 관리자가 의도한 대로다.
 - 되돌린 동안 옛 `disallow`로 뺀 채널은 차단 행이 없어 V4로 돌아온 뒤 자동 허가될 수 있다. 런북 한 줄로 알린다: "되돌린 동안 뺀 채널은 돌아온 뒤 다시 차단해 주세요."
+- **V4 마이그레이션이 옛 빼기 이력을 차단으로 옮긴다**(리뷰 반영). V1~V3의 "허가 빼기"는 감사 `disallow` 행만 남기고 `blocked`가 없으므로, 옮기지 않으면 배포 직후 기본 상한 20이 열리는 순간 그 채널이 다시 로그인해 자동 허가되고 그날 상한도 한 자리 차지한다("관리자가 차단한 채널은 자동 허가되지 않는다", §2.2 B1 위반이고 `/admin` 감사 기록에는 `audit.disallow` 라벨 "차단"으로 보이는데 실제로는 차단이 아닌 어긋남도 생긴다). 규칙은 **채널별 마지막 allow/disallow 감사 행이 disallow이고 지금 허가 행이 없는 채널**(`max(id)`로 마지막을 가른다)이다. 이름은 거부 기록에 있을 때만 채운다(허가 행을 지울 때 이름도 사라졌다). 감사 표는 `AUDIT_CAP` 500행으로 잘리므로 **그 안에 남은 이력까지만 되는 최선의 노력**이다. 그보다 오래된 빼기는 관리자가 `/admin`에서 다시 차단해야 한다. 대안(A2 나: 0으로 배포 → 옛 대상을 다시 차단 → 상한을 올림)은 사람이 빠뜨릴 수 있고 이력 전부를 관리자가 기억해야 해서 택하지 않았다. 되돌린 동안의 빼기(위 항목)는 V4가 이미 지난 뒤라 이 옮기기가 닿지 않는다.
 
 ### 4.7 호출 수·무료 한도
 
@@ -326,6 +332,8 @@ ALTER TABLE flow ADD COLUMN deny_reason TEXT
 | S18 | `setAutoAllowCap` 검증(소수·음수·101·문자열·관리자 ID 형식 아님) | `bad_request`, meta 그대로 |
 | S19 | `doneView`의 `denyReason`, `adminView`의 `autoAllow`·`blocked`·`LIMIT 200`·전체 수 | 값 일치, 201번째 행은 보이지 않음 |
 | S20 | 스키마 V3 → V4 마이그레이션(`schema.test.ts`) | 기존 행 보존, `/health` schema 4, V5 DB(앞섬)에서도 돈다 |
+| S20b | V3 DB의 감사 이력에서 옛 빼기 옮기기(`schema.test.ts`, `auto-allow.test.ts` S16e) | 마지막 동작이 disallow이고 허가 행이 없는 채널만 차단, 옮긴 채널은 상한이 열려도 `blocked`로 거부 |
+| S16b~d | 허가 행 + 차단 행을 `allowDenied`로 풀기 · 차단 표 [허가]의 이름 옮기기 | 차단 행이 비고, 이름은 거부 기록 → 차단 행 순서 |
 | S21 | `finishEvent` | 거부 이유·자동 허가 `reason` 값, 채널 값 없음(`log.test.ts`·`login-log.test.ts`) |
 
 ### 6.2 HTTP·화면(vitest)
@@ -415,4 +423,5 @@ ALTER TABLE flow ADD COLUMN deny_reason TEXT
 7. **§5.4 도움말**: `help/login-denied.md`와 짝으로 앱 셸에 `HelpId::LoginDenied`(9번째)를 더했다(`ids.json` 집합 일치 테스트).
 8. **§6.3 테스트 도우미**: store는 `closedStub()`/`closeAutoAllow(stub)`, HTTP는 `closeAutoAllow()`와 `resetStore()`(`meta`의 `auto_allow_*`도 비운다). 한 파일의 HTTP 테스트가 같은 DO를 쓰므로 오늘 센 수가 다음 테스트로 새지 않게 한다.
 9. **§6.4 worker-e2e**: E05 첫 동작이 상한 0, E05b `d4`는 200(미리 막기), E20~E22(E13이 관리자 웹 세션을 로그아웃하므로 E20이 새로 로그인한다). `admin.auto_allow_cap`이 필수 이벤트다. 가짜 계정 `e5`는 `worker/test/fake-chzzk.mjs`·`fake-chzzk-server.mjs`에 있다(`testdata/README.md`는 영상 fixture 문서라 계정 표가 없어 고치지 않았다).
-10. **하지 않은 것**: §8 R(버전 PR, ROADMAP 결정 행 취소선·`:269` 문장). `design-shots`·`design-worker` 기준선(Linux CI에서만 만든다)과 앱 `e2e-web` 실행은 로컬에서 하지 않았다.
+10. **하지 않은 것**: §8 R(버전 PR, ROADMAP 결정 행 취소선). `ROADMAP.md`의 `dev:real` 기대 결과 문장과 `patterns.md`의 로그인 와이어프레임은 리뷰 반영(11)에서 이 브랜치가 고쳤다. `design-shots`·`design-worker` 기준선(Linux CI에서만 만든다)과 앱 `e2e-web` 실행은 로컬에서 하지 않았다.
+11. **리뷰 반영**: (가) V4가 옛 빼기 이력을 차단으로 옮긴다(§4.6 마지막 항목, worker.md 109 (타)). (나) `allow()`가 새 허가 행의 이름을 거부 기록 → 차단 행 순서로 가져온다(차단 표 [허가] 때 거부 기록이 사라졌어도 이름이 남는다). (다) 테스트: S16b(허가 + 차단 행을 `allowDenied`로 풀기), S16c·d(이름), S16e(마이그레이션 → 로그인 거부), `schema.test.ts` 이력 옮기기.

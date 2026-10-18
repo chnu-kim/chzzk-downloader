@@ -122,4 +122,48 @@ describe("migrate", () => {
       expect(inst.db.all(SCHEMA_SQL)).toEqual(first);
     });
   });
+  it("v3 DB의 옛 빼기 이력 → v4: 감사의 채널별 마지막 동작이 disallow이고 허가 행이 없는 채널만 차단으로 옮긴다(allowlist-open.md §4.6 (나))", async () => {
+    await runInDurableObject(freshStub(), (inst, state) => {
+      const first = inst.db.all(SCHEMA_SQL);
+      dropAll(inst.db);
+      for (let v = 0; v < 3; v++) inst.db.run(MIGRATIONS[v]!);
+      inst.db.run("INSERT INTO meta (k, v) VALUES ('schema_version', '3')");
+      const id = (n: string) => "0".repeat(30) + n;
+      const audit = (at: number, actor: string, action: string, target: string | null) =>
+        inst.db.run("INSERT INTO audit (at, actor, action, target) VALUES (?, ?, ?, ?)", at, actor, action, target);
+      // c3: 빼기만(거부 기록에 이름이 남아 있다) → 차단
+      audit(10, id("a1"), "disallow", id("c3"));
+      inst.db.run("INSERT INTO denied (channel_id, channel_name, first_at, last_at, attempts) VALUES (?, '거부된 이름', 1, 2, 1)", id("c3"));
+      // d4: 허가 → 빼기 → 다시 빼기(마지막 행이 이긴다: 시각·사람이 마지막 것) → 차단
+      audit(11, id("a1"), "allow", id("d4"));
+      audit(12, id("a1"), "disallow", id("d4"));
+      audit(13, id("e5"), "disallow", id("d4"));
+      // f6: 빼기 → 다시 허가(허가 행 있음) → 차단 아님
+      audit(14, id("a1"), "disallow", id("f6"));
+      audit(15, id("a1"), "allow", id("f6"));
+      inst.db.run("INSERT INTO allowlist (channel_id, channel_name, owner_channel_id, note, added_by, added_at) VALUES (?, 'n', NULL, NULL, 'x', 15)", id("f6"));
+      // 07: 마지막 동작이 allow이고 허가 행은 없는 채널 → 차단 아님
+      audit(16, id("a1"), "disallow", id("07"));
+      audit(17, id("a1"), "allow", id("07"));
+      // 08: 빼기 뒤에 허가 행이 (감사 없이) 다시 생김 → 차단 아님
+      audit(18, id("a1"), "disallow", id("08"));
+      inst.db.run("INSERT INTO allowlist (channel_id, channel_name, owner_channel_id, note, added_by, added_at) VALUES (?, 'n', NULL, NULL, 'x', 19)", id("08"));
+      // 09: 빼기 뒤 dismiss는 마지막 동작이 아니다 → 차단
+      audit(20, id("a1"), "disallow", id("09"));
+      audit(21, id("a1"), "dismiss", id("09"));
+      // 형식이 아닌 대상·NULL 대상·다른 동작은 옮기지 않는다(CHECK에도 걸리지 않는다)
+      audit(22, id("a1"), "disallow", "xyz");
+      audit(23, id("a1"), "disallow", null);
+      audit(24, id("a1"), "revoke_session", id("0a"));
+      expect(migrate(inst.db, (fn) => state.storage.transactionSync(fn))).toEqual({ from: 3, to: 4, ahead: false });
+      expect(inst.db.all("SELECT channel_id, channel_name, blocked_by, blocked_at FROM blocked ORDER BY channel_id")).toEqual([
+        { channel_id: id("09"), channel_name: null, blocked_by: id("a1"), blocked_at: 20 },
+        { channel_id: id("c3"), channel_name: "거부된 이름", blocked_by: id("a1"), blocked_at: 10 },
+        { channel_id: id("d4"), channel_name: null, blocked_by: id("e5"), blocked_at: 13 },
+      ]);
+      // 감사·허가 행은 그대로
+      expect(inst.db.all("SELECT count(*) AS n FROM audit")).toEqual([{ n: 14 }]);
+      expect(inst.db.all(SCHEMA_SQL)).toEqual(first);
+    });
+  });
 });

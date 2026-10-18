@@ -1412,7 +1412,7 @@ async fn pd_crash_after_rename_refinalizes_on_overwrite() {
 /// 표지를 받는 동안 취소되면 `Cancelled`이고 `.part`는 바뀌지 않는다. 다음 실행이 이어서 마무리한다.
 #[tokio::test]
 async fn cancel_during_cover_fetch_leaves_part_untouched() {
-    let server = MockServer::start().await;
+    let server = std::sync::Arc::new(MockServer::start().await);
     setup_meta(&server, Some(&format!("{}{COVER_PATH}", server.uri()))).await;
     Mock::given(method("GET"))
         .and(path(COVER_PATH))
@@ -1428,18 +1428,16 @@ async fn cancel_during_cover_fetch_leaves_part_untouched() {
     let (part, sidecar) = part_files(&out);
     let chzzk = Chzzk::new(meta_config(&server)).unwrap();
 
+    // 시간에 기대지 않고 서버가 표지 요청을 받은 것을 본 뒤에 취소한다(부하가 큰 러너에서 300ms 대기가 요청보다 먼저 끝났다).
     let cancel = CancellationToken::new();
-    let c2 = cancel.clone();
-    let cb = move |p: chzzk_core::Progress| {
-        if p.phase == Phase::Finalizing {
-            let c3 = c2.clone();
-            tokio::spawn(async move {
-                tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-                c3.cancel();
-            });
+    let (c2, s2) = (cancel.clone(), server.clone());
+    tokio::spawn(async move {
+        while media_requests(&s2, COVER_PATH).await.is_empty() {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
         }
-    };
-    let r = chzzk.download(meta_request(&out), cancel, &cb).await;
+        c2.cancel();
+    });
+    let r = chzzk.download(meta_request(&out), cancel, &|_| {}).await;
     assert!(matches!(r, Err(Error::Cancelled)), "{r:?}");
     assert_eq!(
         media_requests(&server, COVER_PATH).await.len(),

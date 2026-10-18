@@ -32,6 +32,8 @@ const settingsDto: SettingsDto = {
   keepAwake: true,
   saveChat: false,
   chatSubtitle: 'ass',
+  totalRateLimit: null,
+  jobRateLimit: null,
 };
 
 const info = (legacy: boolean) => ({

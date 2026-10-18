@@ -519,6 +519,7 @@
 | `settings.parallel.help` | …네트워크를 더 많이 써요. | **둘 이상이면 빨라질 수 있지만 인터넷을 더 많이 써요.** | §4 |
 | `settings.segments` | 빠른 다시보기 연결 수 | **한 번에 받는 조각 수** | §4 |
 | `settings.segments.help` | … 네트워크를 더 많이 써요. | **빠른 다시보기는 영상을 작은 조각으로 나눠 받아요. 숫자가 클수록 빠르지만 인터넷을 더 많이 써요.** | §4 |
+| (신설, 속도 제한) `settings.totalRate`·`settings.totalRate.help`·`settings.jobRate`·`settings.jobRate.help`·`settings.rateLimit.off` | — | `settings.totalRate` **모든 영상을 합한 최대 속도** / `settings.totalRate.help` **여러 영상을 함께 받을 때 합쳐서 이 속도를 넘지 않아요. 생방송 녹화는 제한하지 않아요.** / `settings.jobRate` **영상 하나의 최대 속도** / `settings.jobRate.help` **영상마다 이 속도를 넘지 않아요. 받는 중인 영상에도 바로 적용돼요.** / `settings.rateLimit.off` **제한 없음** | `docs/design/features/rate-limit.md` §6.2. "받기 속도"보다 라벨만 읽어도 상한임이 드러나는 "최대 속도"를 쓴다. 숫자·단위는 deck에 쓰지 않고 옵션 라벨은 모두 `formatSpeed`가 만든다(W5, §7). 설정 › 받기의 Select 두 줄(`patterns.md` §14.4) |
 | `settings.autoResume` | 앱을 열면 멈춘 다운로드를 자동으로 이어받기 | **앱을 열면 받다 만 영상을 자동으로 이어받기** | §4 |
 | (신설, 단계 (f)) `settings.keepAwake`·`settings.keepAwake.help` | — | `settings.keepAwake` **받는 동안 컴퓨터가 잠들지 않게 하기** / `settings.keepAwake.help` **끄면 한동안 자리를 비울 때 받기가 멈출 수 있어요. 화면은 꺼져도 돼요.** | D40. 설정 › 받기 그룹의 Switch(`patterns.md` §14.4) |
 | (신설, 단계 (f)) `power.keepingAwake` | — | `power.keepingAwake` **받는 동안 잠들지 않아요**(받는 중 그룹 머리 옆 한 줄, 셸이 보호를 실제로 얻었을 때만) | `platform.md` §15, `G-POWER-R15` |

@@ -211,6 +211,31 @@ async fn manager_opens_with_saved_parallel_setting() {
     assert_eq!(app.settings.get().max_parallel_downloads, 3);
 }
 
+/// 저장된 속도 상한이 앱을 다시 열 때 매니저까지 닿는다(`App::open_with_auth`의 `ManagerConfig` 연결).
+/// 이 연결이 끊기면 재시작 뒤 상한이 조용히 꺼진다.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn manager_opens_with_saved_rate_limits() {
+    let t = TempDir::new().unwrap();
+    let server = MockServer::start().await;
+    std::fs::create_dir_all(t.path().join("config")).unwrap();
+    std::fs::write(
+        t.path().join("config").join("settings.json"),
+        r#"{"totalRateLimit":5000000,"jobRateLimit":2000000}"#,
+    )
+    .unwrap();
+    let app = open(t.path(), &server);
+    assert_eq!(
+        app.settings.get().total_rate_limit,
+        Some(5_000_000),
+        "설정 파일을 읽었다"
+    );
+    assert_eq!(
+        app.manager.rate_limits(),
+        (Some(5_000_000), Some(2_000_000)),
+        "매니저가 저장된 상한으로 열렸다"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn check_output_defaults_to_settings_folder() {
     let t = TempDir::new().unwrap();

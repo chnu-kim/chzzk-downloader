@@ -53,6 +53,8 @@ const baseSettings: SettingsDto = {
   keepAwake: true,
   saveChat: false,
   chatSubtitle: 'ass',
+  totalRateLimit: null,
+  jobRateLimit: null,
 };
 
 let send: (e: JobEvent) => void = () => {};

@@ -261,6 +261,8 @@ async fn cookies_never_leak() {
         runtime: tokio::runtime::Handle::current(),
         max_parallel: 2,
         auto_resume: false,
+        total_rate_limit: None,
+        job_rate_limit: None,
     })
     .unwrap();
     mgr.subscribe(Box::new(move |e: JobEvent| {

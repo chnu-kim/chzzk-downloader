@@ -19,7 +19,9 @@
   import Switch from '../components/ui/Switch.svelte';
   import { errorCopy } from '../copy/errors';
   import { t } from '../copy/ko';
+  import { sizeBaseOf } from '../format/bytes';
   import { revealLabel } from '../platform';
+  import { rateLimitFromStored, rateLimitOptions, rateLimitToStored } from '../rateLimit';
   import { platform } from '../stores/platform.svelte';
   import { settings } from '../stores/settings.svelte';
   import { useDelayedLoading } from '../useDelayedLoading.svelte';
@@ -32,6 +34,10 @@
   const errCopy = $derived(error && error.code !== 'settings' ? errorCopy(error, { place: 'other' }) : null);
 
   const dto = $derived(settings.dto);
+  // 속도 프리셋은 OS 진법의 MB다(Windows 1024, 그 밖 1000). 저장된 값이 프리셋에 없으면 그 값을 한 칸 더해 보인다.
+  const sizeBase = $derived(sizeBaseOf(platform.os));
+  const totalRateOptions = $derived(rateLimitOptions(sizeBase, dto?.totalRateLimit ?? null, t('settings.rateLimit.off')));
+  const jobRateOptions = $derived(rateLimitOptions(sizeBase, dto?.jobRateLimit ?? null, t('settings.rateLimit.off')));
   // 설정을 아직 못 읽었으면 값 자리는 가짜 기본값이 아니라 Skeleton이다(지연 표시)
   const loading = useDelayedLoading(() => !settings.dto);
 
@@ -113,6 +119,36 @@
               labelledby={labelId}
               aria-describedby={helpId}
               onchange={(n) => save({ segmentConcurrency: n })}
+            />
+          {:else}
+            {@render pending()}
+          {/if}
+        {/snippet}
+      </SettingsRow>
+      <SettingsRow label={t('settings.totalRate')} help={t('settings.totalRate.help')}>
+        {#snippet control({ labelId, helpId })}
+          {#if dto}
+            <Select
+              value={rateLimitFromStored(dto.totalRateLimit)}
+              options={totalRateOptions}
+              labelledby={labelId}
+              aria-describedby={helpId}
+              onchange={(v) => save({ totalRateLimit: rateLimitToStored(v) })}
+            />
+          {:else}
+            {@render pending()}
+          {/if}
+        {/snippet}
+      </SettingsRow>
+      <SettingsRow label={t('settings.jobRate')} help={t('settings.jobRate.help')}>
+        {#snippet control({ labelId, helpId })}
+          {#if dto}
+            <Select
+              value={rateLimitFromStored(dto.jobRateLimit)}
+              options={jobRateOptions}
+              labelledby={labelId}
+              aria-describedby={helpId}
+              onchange={(v) => save({ jobRateLimit: rateLimitToStored(v) })}
             />
           {:else}
             {@render pending()}

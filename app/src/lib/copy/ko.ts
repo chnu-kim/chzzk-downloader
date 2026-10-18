@@ -243,6 +243,11 @@ export const ko = {
   'settings.segments': '한 번에 받는 조각 수',
   'settings.segments.help':
     '빠른 다시보기는 영상을 작은 조각으로 나눠 받아요. 숫자가 클수록 빠르지만 인터넷을 더 많이 써요.',
+  'settings.totalRate': '모든 영상을 합한 최대 속도',
+  'settings.totalRate.help': '여러 영상을 함께 받을 때 합쳐서 이 속도를 넘지 않아요. 생방송 녹화는 제한하지 않아요.',
+  'settings.jobRate': '영상 하나의 최대 속도',
+  'settings.jobRate.help': '영상마다 이 속도를 넘지 않아요. 받는 중인 영상에도 바로 적용돼요.',
+  'settings.rateLimit.off': '제한 없음',
   'settings.autoResume': '앱을 열면 받다 만 영상을 자동으로 이어받기',
   'settings.autoResume.help': '꺼져 있으면 위쪽 안내 줄에서 직접 이어받아요.',
   'settings.keepAwake': '받는 동안 컴퓨터가 잠들지 않게 하기',

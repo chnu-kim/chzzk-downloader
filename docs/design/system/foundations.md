@@ -855,6 +855,8 @@ JS 타이머·Rust 셸이 쓰는 값이다. 이름과 값의 단일 원천은 �
 | `INVITE_TTL_MS` / `EDITORS_MAX` / `DELEGATIONS_MAX` | 7일 / 10 / 20 | [잠정] | Worker(`worker/src/store/delegation.ts`) | 초대 주소 기한·채널 주인 한 명의 편집자 수(기다리는 중 포함)·편집자 한 명의 맡은 채널 수(`docs/design/features/delegation.md` §8) | 근거 없음. ADR-0009 묶음, ADR-0026 |
 | `INVITE_CLAIMED_KEEP_MS` / `REVOKED_DELEGATION_KEEP_MS` | 30일 / 30일 | [잠정] | Worker(`worker/src/store/delegation.ts`) | 허가를 기다리는 청구 초대 보존·빼거나 그만둔 위임 행 보존(청소 `store/sweep.ts`, `/privacy` 보관 기간) | 근거 없음. ADR-0009 묶음 |
 | `DONE_WINDOW_MS` | 2분 | [잠정] | Worker(`worker/src/store/delegation.ts`) | 완료 페이지가 방금 맺은 위임을 보이는 창 | 근거 없음. ADR-0009 묶음 |
+| `THROTTLE_BURST` | 0.25초 | [잠정] | Rust(core `download/throttle.rs`) | 속도 제한 토큰 버킷의 채우기 상한 길이(`docs/design/features/rate-limit.md` §3.2·§5.5) | 근거 없음. ADR-0009 묶음 |
+| `MIN_RATE_LIMIT_BPS` | 1,000,000 | [잠정] | Rust(core `settings.rs`) | 받기 속도 상한의 최소값, 바이트/초(`rate-limit.md` §4.1) | 가장 큰 영상 크기 가정에서 계산한 파생값. ADR-0009 묶음 |
 
 편집자 위임의 Worker 상수 여섯(위 세 행)은 DT15 대조 밖이다: `check-tokens.mjs`는 Worker 쪽으로 공지 상수 둘(`core/notice.ts`)만 읽는다(넓힐지는 `delegation.md` §18-4). 셸의 판정 직전 자동 확인 간격은 기능 ① 셸 단계(①-4)가 이 표에 행을 더한다.
 

@@ -59,7 +59,23 @@ CREATE INDEX invite_expires ON invite(expires_at);
 ALTER TABLE flow ADD COLUMN invite_hash TEXT
 `;
 
-export const MIGRATIONS: readonly string[] = [V1, V2, V3];
+// 허용목록 자동 허가(docs/design/features/allowlist-open.md §4.1, worker.md 구현 중 변경 109): 더하기만 한다.
+// blocked: 관리자가 막은 채널. 자동 허가만 막고 허가 판정(admission)은 보지 않는다(허가 행이 있으면 허가가 이긴다, V3로 되돌려도 안전).
+// flow.deny_reason: 거부된 흐름의 이유(daily_limit·blocked·NULL). 쓰는 곳이 finish 하나라 CHECK는 두지 않는다
+// 옛 빼기 이력(allowlist-open.md §4.6, worker.md 구현 중 변경 109 (타)): V1~V3의 "허가 빼기"는 감사 disallow 행만 남기므로, blocked만 보는 자동 허가가 배포 순간 그 채널을 다시 받아들인다.
+// 그래서 감사의 채널별 마지막 allow/disallow가 disallow이고 지금 허가 행이 없는 채널을 차단으로 옮긴다(감사 AUDIT_CAP 500행 안에서만 되는 최선의 노력).
+// 이름은 거부 기록에 있을 때만 채운다(허가 행을 지울 때 이름도 사라졌다). target이 채널 ID 형식(32자)이 아닌 행은 옮기지 않는다
+const V4 = `
+CREATE TABLE blocked (channel_id TEXT PRIMARY KEY CHECK (length(channel_id) = 32), channel_name TEXT, blocked_by TEXT NOT NULL, blocked_at INTEGER NOT NULL);
+CREATE INDEX blocked_at ON blocked(blocked_at);
+ALTER TABLE flow ADD COLUMN deny_reason TEXT;
+INSERT OR IGNORE INTO blocked (channel_id, channel_name, blocked_by, blocked_at)
+  SELECT a.target, (SELECT d.channel_name FROM denied d WHERE d.channel_id = a.target), a.actor, a.at FROM audit a
+  WHERE a.id IN (SELECT max(id) FROM audit WHERE action IN ('allow','disallow') AND target IS NOT NULL AND length(target) = 32 GROUP BY target)
+    AND a.action = 'disallow' AND a.target NOT IN (SELECT channel_id FROM allowlist)
+`;
+
+export const MIGRATIONS: readonly string[] = [V1, V2, V3, V4];
 export const SCHEMA_VERSION = MIGRATIONS.length;
 
 export type MigrateResult = { readonly from: number; readonly to: number; readonly ahead: boolean };

@@ -376,7 +376,7 @@ fn pages_are_fixed_strings() {
         ),
         (
             ReceiverPage::Denied,
-            "이 채널은 사용 허가가 없어요. 앱에서 안내를 확인해 주세요.",
+            "이 채널로는 지금 쓸 수 없어요. 앱에서 이유와 다음에 할 일을 확인해 주세요.",
         ),
         (
             ReceiverPage::Cancelled,

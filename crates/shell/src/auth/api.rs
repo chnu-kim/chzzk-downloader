@@ -185,6 +185,27 @@ pub struct InviteResponse {
     pub expires_at: OffsetDateTime,
 }
 
+/// 거부 이유(`denied` 응답의 선택 키 `reason`, 허용목록 자동 허가 명세 §4.5).
+/// 모르는 값은 "이유 없음"으로 본다(Worker가 뒤에 값을 더해도 옛 앱은 지금 안내를 쓴다)
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DenyReason {
+    /// 오늘 새로 들어올 수 있는 채널 수를 다 썼다
+    DailyLimit,
+    /// 관리자가 막은 채널이다
+    Blocked,
+}
+
+impl DenyReason {
+    /// 응답 낱말 → 이유. 모르는 낱말은 None
+    fn parse(word: &str) -> Option<Self> {
+        match word {
+            "daily_limit" => Some(Self::DailyLimit),
+            "blocked" => Some(Self::Blocked),
+            _ => None,
+        }
+    }
+}
+
 /// `/auth/redeem` 200 응답
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RedeemResponse {
@@ -194,6 +215,8 @@ pub enum RedeemResponse {
     Denied {
         /// 채널 이름(없으면 빈 문자열)
         channel_name: String,
+        /// 거부 이유(옛 Worker·이유 없는 거부는 None)
+        reason: Option<DenyReason>,
     },
     /// 사용자가 확인 페이지에서 취소
     Cancelled,
@@ -367,6 +390,10 @@ pub fn parse_redeem(body: &[u8]) -> Option<RedeemResponse> {
                 .and_then(Value::as_str)
                 .map(|n| truncate_chars(n, 128))
                 .unwrap_or_default(),
+            reason: v
+                .get("reason")
+                .and_then(Value::as_str)
+                .and_then(DenyReason::parse),
         }),
         "cancelled" => Some(RedeemResponse::Cancelled),
         "failed" => {

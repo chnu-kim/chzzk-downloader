@@ -675,6 +675,8 @@ fn auth_reason_dto_names() {
         (AuthReason::Server, "server"),
         (AuthReason::LoginLost, "loginLost"),
         (AuthReason::Receiver, "receiver"),
+        (AuthReason::DailyLimit, "dailyLimit"),
+        (AuthReason::Blocked, "blocked"),
     ];
     for (r, name) in all {
         assert_eq!(to_json(&AuthReasonDto::from(r)), json!(name));

@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { isToken } from "../../src/core/token";
 import { DONE_WINDOW_MS, INVITE_TTL_MS, claimedInviteOwner, delegationsOf, editorsOf, invitedBy } from "../../src/store/delegation";
 import { sweep } from "../../src/store/sweep";
-import { A1, ADMINS, B2, C3, D4, DAY, T0, allowedLogin, appLogin, dumpAll, freshStub, meter, query, sha, webLogin, type Stub } from "./helpers";
+import { A1, ADMINS, B2, C3, D4, DAY, T0, allowedLogin, appLogin, dumpAll, closedStub, freshStub, meter, query, sha, webLogin, type Stub } from "./helpers";
 
 const E5 = "0".repeat(30) + "e5";
 const F6 = "0".repeat(30) + "f6";
@@ -87,7 +87,7 @@ async function seedActive(stub: Stub, ownerLogin: string, ownerJudge: string, ed
 
 describe("createInvite", () => {
   it("CI1 토큰·해시·만료", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await allowAt(stub, B2, T0);
     const r = await stub.createInvite(B2, "주인", ADMINS, T0 + 1);
     if (!r.ok) throw new Error(r.code);
@@ -111,13 +111,13 @@ describe("createInvite", () => {
   });
 
   it("CI2 관리자 주인은 owner_allowed_at NULL", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await invite(stub, A1, T0);
     expect((await invites(stub))[0]).toMatchObject({ owner_channel_id: A1, owner_allowed_at: null });
   });
 
   it("CI3 새로 만들면 이전 미청구 초대를 대체한다", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await allowAt(stub, B2, T0);
     const a = await invite(stub, B2, T0 + 1);
     const b = await invite(stub, B2, T0 + 2);
@@ -128,7 +128,7 @@ describe("createInvite", () => {
   });
 
   it("CI4 청구된 초대는 대체하지 않는다", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await allowAt(stub, B2, T0);
     const a = await invite(stub, B2, T0 + 1);
     await inviteLogin(stub, a.hash, E5, T0 + 2);
@@ -137,7 +137,7 @@ describe("createInvite", () => {
   });
 
   it("CI5 상한 10: 열한 번째는 limit이고 쓰기 0", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await allowAt(stub, B2, T0);
     for (let i = 0; i < 10; i++) await link(stub, B2, chan(i), T0 + 10 + i * 10);
     const before = await meter(stub);
@@ -146,7 +146,7 @@ describe("createInvite", () => {
   });
 
   it("CI6 상한 셈에 기다리는 편집자가 들어간다", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await allowAt(stub, B2, T0);
     for (let i = 0; i < 9; i++) await link(stub, B2, chan(i), T0 + 10 + i * 10);
     const inv = await invite(stub, B2, T0 + 500);
@@ -155,14 +155,14 @@ describe("createInvite", () => {
   });
 
   it("CI7 허가가 아니면 not_allowed이고 쓰기 0", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     const before = await meter(stub);
     expect(await stub.createInvite(D4, "주인", ADMINS, T0)).toEqual({ ok: false, code: "not_allowed" });
     expect((await meter(stub)).written).toBe(before.written);
   });
 
   it("CI8 형식 밖은 bad_request", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     expect(await stub.createInvite("x", "주인", ADMINS, T0)).toEqual({ ok: false, code: "bad_request" });
     expect(await stub.createInvite(B2, "주인", "a1" as never, T0)).toEqual({ ok: false, code: "bad_request" });
   });
@@ -170,7 +170,7 @@ describe("createInvite", () => {
 
 describe("inviteView", () => {
   it("IV1 열림", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await allowAt(stub, B2, T0);
     const inv = await invite(stub, B2, T0 + 1);
     const before = await meter(stub);
@@ -179,7 +179,7 @@ describe("inviteView", () => {
   });
 
   it("IV2 만료·사용·없음·형식 밖은 null이고 쓰기 0", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await allowAt(stub, B2, T0);
     await allowAt(stub, C3, T0);
     const inv = await invite(stub, B2, T0 + 1);
@@ -196,7 +196,7 @@ describe("inviteView", () => {
   });
 
   it("IV3 relation: own·already·full, 쓰기 0", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await allowAt(stub, B2, T0);
     await link(stub, B2, C3, T0 + 10);
     const inv = await invite(stub, B2, T0 + 100);
@@ -206,7 +206,7 @@ describe("inviteView", () => {
     expect((await stub.inviteView(inv.hash, D4, ADMINS, T0 + 101))?.relation).toBe("open");
     expect((await meter(stub)).written).toBe(b1.written);
     // 보는 사람이 이미 20채널을 맡았다
-    const s2 = freshStub();
+    const s2 = await closedStub();
     await allowAt(s2, B2, T0);
     for (let i = 0; i < 20; i++) {
       await allowAt(s2, chan(i), T0);
@@ -217,7 +217,7 @@ describe("inviteView", () => {
     expect((await s2.inviteView(inv2.hash, C3, ADMINS, T0 + 1001))?.relation).toBe("full");
     expect((await meter(s2)).written).toBe(b2.written);
     // 주인의 편집자가 가득 찼다: 보는 사람이 없어도 full
-    const s3 = freshStub();
+    const s3 = await closedStub();
     await allowAt(s3, B2, T0);
     for (let i = 0; i < 9; i++) await link(s3, B2, chan(i), T0 + 10 + i * 10);
     const inv3 = await invite(s3, B2, T0 + 500);
@@ -228,7 +228,7 @@ describe("inviteView", () => {
   });
 
   it("IV4 무효여도 지우지 않는다", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await allowAt(stub, B2, T0);
     const inv = await invite(stub, B2, T0 + 1);
     await v2Disallow(stub, B2, T0 + 2);
@@ -243,7 +243,7 @@ describe("inviteView", () => {
 
 describe("acceptInvite", () => {
   it("AC1 수락", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await allowAt(stub, B2, T0);
     await allowAt(stub, C3, T0 + 1);
     const inv = await invite(stub, B2, T0 + 2);
@@ -266,7 +266,7 @@ describe("acceptInvite", () => {
   });
 
   it("AC2 self는 초대를 남긴다", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await allowAt(stub, B2, T0);
     const inv = await invite(stub, B2, T0 + 1);
     expect(await accept(stub, inv.hash, B2, T0 + 2)).toEqual({ ok: false, code: "own" });
@@ -274,7 +274,7 @@ describe("acceptInvite", () => {
   });
 
   it("AC3 self(대안 B): 로그인 ID 일치와 판정용 ID 일치", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await allowAt(stub, C3, T0);
     await altB(stub, C3, D4);
     const inv = await invite(stub, C3, T0 + 1);
@@ -286,7 +286,7 @@ describe("acceptInvite", () => {
   });
 
   it("AC4 already: 초대를 남긴다(기존 편집자가 남에게 보낸 초대를 없애지 못한다, 106 (차) ④) → 원래 받을 사람이 수락한다", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await allowAt(stub, B2, T0);
     await link(stub, B2, C3, T0 + 1);
     await allowAt(stub, D4, T0);
@@ -298,7 +298,7 @@ describe("acceptInvite", () => {
   });
 
   it("AC5 gone: 모르는 해시·두 번째·만료", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await allowAt(stub, B2, T0);
     await allowAt(stub, C3, T0);
     expect(await accept(stub, "f".repeat(64), C3, T0 + 1)).toEqual({ ok: false, code: "gone" });
@@ -311,7 +311,7 @@ describe("acceptInvite", () => {
   });
 
   it("AC6 full(주인): 초대를 남긴다", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await allowAt(stub, B2, T0);
     for (let i = 0; i < 9; i++) await link(stub, B2, chan(i), T0 + 10 + i * 10);
     const inv = await invite(stub, B2, T0 + 500);
@@ -322,7 +322,7 @@ describe("acceptInvite", () => {
   });
 
   it("AC7 full(편집자)", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await allowAt(stub, B2, T0);
     for (let i = 0; i < 20; i++) {
       await allowAt(stub, chan(i), T0);
@@ -333,7 +333,7 @@ describe("acceptInvite", () => {
   });
 
   it("AC8 되살림: 같은 PK 행이 새 created_at으로 살아난다", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await allowAt(stub, B2, T0);
     await link(stub, B2, C3, T0 + 1);
     expect(await stub.leaveDelegation(C3, B2, T0 + 4)).toEqual({ ok: true });
@@ -345,7 +345,7 @@ describe("acceptInvite", () => {
   });
 
   it("AC9 남이 청구한 초대는 gone이고 행이 남는다", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await allowAt(stub, B2, T0);
     await allowAt(stub, C3, T0);
     const inv = await invite(stub, B2, T0 + 1);
@@ -355,7 +355,7 @@ describe("acceptInvite", () => {
   });
 
   it("AC10 not_allowed이고 쓰기 0", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await allowAt(stub, B2, T0);
     const inv = await invite(stub, B2, T0 + 1);
     const before = await meter(stub);
@@ -364,7 +364,7 @@ describe("acceptInvite", () => {
   });
 
   it("AC11 관리자 편집자: editor_allowed_at NULL", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await allowAt(stub, B2, T0);
     const inv = await invite(stub, B2, T0 + 1);
     expect((await accept(stub, inv.hash, A1, T0 + 2)).ok).toBe(true);
@@ -375,7 +375,7 @@ describe("acceptInvite", () => {
   });
 
   it("AC12 관리자 주인의 위임은 admins에서 빠지면 빈다", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     const inv = await invite(stub, A1, T0);
     await allowAt(stub, B2, T0);
     expect((await accept(stub, inv.hash, B2, T0 + 1)).ok).toBe(true);
@@ -387,7 +387,7 @@ describe("acceptInvite", () => {
 
 describe("청구·자동 완성(finish 경로)", () => {
   it("CL1 거부 채널이 열면 청구", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await allowAt(stub, B2, T0);
     const inv = await invite(stub, B2, T0 + 2);
     expect(await inviteLogin(stub, inv.hash, E5, T0 + 3)).toEqual({ type: "denied", invitePending: "주인" });
@@ -400,7 +400,7 @@ describe("청구·자동 완성(finish 경로)", () => {
   });
 
   it("CL2 허가 채널이 열면 수락", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await allowAt(stub, B2, T0);
     await allowAt(stub, C3, T0);
     const inv = await invite(stub, B2, T0 + 2);
@@ -412,7 +412,7 @@ describe("청구·자동 완성(finish 경로)", () => {
   });
 
   it("CL3 콜백 self·full: 웹 세션은 생긴다", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await allowAt(stub, B2, T0);
     await allowAt(stub, C3, T0);
     for (let i = 0; i < 9; i++) await link(stub, B2, chan(i), T0 + 10 + i * 10);
@@ -426,7 +426,7 @@ describe("청구·자동 완성(finish 경로)", () => {
   });
 
   it("CL4 초대 없는 흐름은 invite 키가 없다", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await allowAt(stub, B2, T0);
     const s = await stub.startWeb("203.0.113.40", 1000, T0);
     if (!s.ok) throw new Error("startWeb");
@@ -445,7 +445,7 @@ describe("청구·자동 완성(finish 경로)", () => {
   });
 
   it("CL5 startWebInvite gone: 무효·청구됨·모르는 해시, flow 행 0", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await allowAt(stub, B2, T0);
     const inv = await invite(stub, B2, T0 + 1);
     expect(await stub.startWebInvite("f".repeat(64), "203.0.113.30", 1000, ADMINS, T0 + 2)).toEqual({ ok: false, code: "gone" });
@@ -453,7 +453,7 @@ describe("청구·자동 완성(finish 경로)", () => {
     await v2Disallow(stub, B2, T0 + 3);
     await v2Allow(stub, B2, T0 + 4);
     expect(await stub.startWebInvite(inv.hash, "203.0.113.30", 1000, ADMINS, T0 + 5)).toEqual({ ok: false, code: "gone" });
-    const s2 = freshStub();
+    const s2 = await closedStub();
     await allowAt(s2, B2, T0);
     const inv2 = await invite(s2, B2, T0 + 1);
     await inviteLogin(s2, inv2.hash, E5, T0 + 2);
@@ -470,7 +470,7 @@ describe("청구·자동 완성(finish 경로)", () => {
   }
 
   it("AU1 allow가 자동 완성한다", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await claimed(stub);
     await allowAt(stub, E5, T0 + 10);
     const rows = await delegations(stub);
@@ -481,7 +481,7 @@ describe("청구·자동 완성(finish 경로)", () => {
   });
 
   it("AU2 allowDenied가 자동 완성한다", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await claimed(stub);
     expect(await stub.allowDenied(E5, A1, T0 + 10, ADMINS)).toBe(true);
     const rows = await delegations(stub);
@@ -492,7 +492,7 @@ describe("청구·자동 완성(finish 경로)", () => {
 
   it("AU3 이미 허가된 채널의 청구는 흔적이 없어 다시 허가해도 위임이 되지 않고 지워진다", async () => {
     // 허가는 거부 기록을 지우므로 이미 허가된 채널이 흔적 있는 청구를 가질 길은 없다(구현 중 변경 105 (아))
-    const stub = freshStub();
+    const stub = await closedStub();
     await allowAt(stub, B2, T0);
     await allowAt(stub, E5, T0 + 1);
     const inv = await invite(stub, B2, T0 + 2);
@@ -505,7 +505,7 @@ describe("청구·자동 완성(finish 경로)", () => {
   });
 
   it("AU4 꼬리 인자가 없으면 허가만 되고 초대는 남는다", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await claimed(stub);
     await stub.allow(E5, "", A1, T0 + 10);
     expect(await query(stub, "SELECT channel_id FROM allowlist WHERE channel_id = ?", E5)).toHaveLength(1);
@@ -514,7 +514,7 @@ describe("청구·자동 완성(finish 경로)", () => {
   });
 
   it("AU5 같은 트랜잭션: 위임 쓰기가 실패하면 허가도 되돌아간다", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await claimed(stub);
     await runInDurableObject(stub, (i) => i.db.run("DROP TABLE delegation"));
     // DO 안에서 직접 불러 던짐을 잡는다(RPC 경계로 나가면 러너가 미처리 거절로 보고한다)
@@ -532,7 +532,7 @@ describe("청구·자동 완성(finish 경로)", () => {
   });
 
   it("AU6 상한이면 위임 없이 초대를 지운다", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await claimed(stub);
     for (let i = 0; i < 10; i++) await seedActive(stub, B2, B2, chan(i), T0 + 100 + i * 10);
     await allowAt(stub, E5, T0 + 500);
@@ -541,7 +541,7 @@ describe("청구·자동 완성(finish 경로)", () => {
   });
 
   it("AU7 청구한 초대 자신은 상한 셈에서 뺀다", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await allowAt(stub, B2, T0);
     for (let i = 0; i < 9; i++) await link(stub, B2, chan(i), T0 + 10 + i * 10);
     const inv = await invite(stub, B2, T0 + 500);
@@ -552,7 +552,7 @@ describe("청구·자동 완성(finish 경로)", () => {
   });
 
   it("AU8 같은 채널의 재청구는 멱등이고 다른 채널은 청구하지 못한다", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await allowAt(stub, B2, T0);
     const inv = await invite(stub, B2, T0 + 1);
     // 청구 전에 흐름 셋을 열어 둔다(청구된 초대는 startWebInvite가 gone으로 막는다)
@@ -578,7 +578,7 @@ describe("청구·자동 완성(finish 경로)", () => {
 
 describe("removeEditor·leaveDelegation·목록", () => {
   it("RM1 회수", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await allowAt(stub, B2, T0);
     await link(stub, B2, C3, T0 + 1);
     expect(await stub.removeEditor(B2, C3, T0 + 9)).toEqual({ ok: true });
@@ -591,7 +591,7 @@ describe("removeEditor·leaveDelegation·목록", () => {
   });
 
   it("RM2 기다리는 편집자 빼기", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await allowAt(stub, B2, T0);
     const inv = await invite(stub, B2, T0 + 1);
     await inviteLogin(stub, inv.hash, E5, T0 + 2);
@@ -600,7 +600,7 @@ describe("removeEditor·leaveDelegation·목록", () => {
   });
 
   it("LV1 그만두기", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await allowAt(stub, B2, T0);
     await link(stub, B2, C3, T0 + 1);
     expect(await stub.leaveDelegation(C3, B2, T0 + 9)).toEqual({ ok: true });
@@ -610,7 +610,7 @@ describe("removeEditor·leaveDelegation·목록", () => {
   });
 
   it("LV2 위임 행이 없어도 같은 쌍의 청구는 지운다(그만두기 = 이 주인과의 관계를 끝낸다)", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await allowAt(stub, B2, T0);
     const inv = await invite(stub, B2, T0 + 1);
     expect(await inviteLogin(stub, inv.hash, E5, T0 + 2)).toHaveProperty("invitePending");
@@ -620,7 +620,7 @@ describe("removeEditor·leaveDelegation·목록", () => {
   });
 
   it("CC1 cancelClaim: 거부된 초대 웹 흐름의 binder로 그 흐름의 청구만 지운다(한 번, 만료 전, 남의 binder 불가)", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await allowAt(stub, B2, T0);
     const inv = await invite(stub, B2, T0 + 1);
     const s = await stub.startWebInvite(inv.hash, "203.0.113.30", 1000, ADMINS, T0 + 2);
@@ -643,7 +643,7 @@ describe("removeEditor·leaveDelegation·목록", () => {
   });
 
   it("CC2 cancelClaim: 흐름이 만료되면(완료 2분) 지우지 않는다", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await allowAt(stub, B2, T0);
     const inv = await invite(stub, B2, T0 + 1);
     const s = await stub.startWebInvite(inv.hash, "203.0.113.30", 1000, ADMINS, T0 + 2);
@@ -657,7 +657,7 @@ describe("removeEditor·leaveDelegation·목록", () => {
   });
 
   it("CC3 흐름이 만료된 뒤에도 같은 채널로 다시 로그인하면(초대 없는 웹 흐름) 거부 페이지에 그 청구가 다시 보이고 취소할 수 있다", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await allowAt(stub, B2, T0);
     const inv = await invite(stub, B2, T0 + 1);
     expect(await inviteLogin(stub, inv.hash, E5, T0 + 2)).toHaveProperty("invitePending");
@@ -686,7 +686,7 @@ describe("removeEditor·leaveDelegation·목록", () => {
   });
 
   it("LS1 delegationsOf는 20개까지, since 오름차순", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await allowAt(stub, C3, T0);
     for (let i = 0; i < 20; i++) {
       await allowAt(stub, chan(i), T0);
@@ -704,7 +704,7 @@ describe("removeEditor·leaveDelegation·목록", () => {
   });
 
   it("LS2 무효 행이 유효 행을 밀어내지 않는다", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await allowAt(stub, B2, T0);
     await runInDurableObject(stub, (i) => {
       for (let n = 0; n < 20; n++) {
@@ -724,7 +724,7 @@ describe("removeEditor·leaveDelegation·목록", () => {
   });
 
   it("LS3 recentDelegationFor: 그 주인과의 위임만, 2분 창", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await allowAt(stub, B2, T0);
     await allowAt(stub, C3, T0);
     const inv = await invite(stub, B2, T0 + 1);
@@ -737,7 +737,7 @@ describe("removeEditor·leaveDelegation·목록", () => {
   });
 
   it("LS4 editorsOf 모양: 활성, 기다림, 미청구 만료", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await allowAt(stub, B2, T0);
     await link(stub, B2, C3, T0 + 10);
     const a = await invite(stub, B2, T0 + 100);
@@ -754,7 +754,7 @@ describe("removeEditor·leaveDelegation·목록", () => {
 
 describe("disallow 확장", () => {
   it("DA1 주인 제외", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await allowAt(stub, B2, T0);
     await link(stub, B2, C3, T0 + 1);
     const a = await invite(stub, B2, T0 + 10);
@@ -766,7 +766,7 @@ describe("disallow 확장", () => {
   });
 
   it("DA2 편집자 제외", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await allowAt(stub, B2, T0);
     await link(stub, B2, C3, T0 + 1);
     expect(await stub.disallow(C3, A1, ADMINS, T0 + 20)).toEqual({ ok: true });
@@ -774,14 +774,15 @@ describe("disallow 확장", () => {
   });
 
   it("DA3 대안 B: 로그인 ID로 지운다", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await allowAt(stub, C3, T0);
     await altB(stub, C3, D4);
     const inv = await invite(stub, C3, T0 + 1);
     await allowAt(stub, B2, T0 + 2);
     expect((await accept(stub, inv.hash, B2, T0 + 3)).ok).toBe(true);
     expect((await delegations(stub))[0]).toMatchObject({ owner_channel_id: D4, owner_login_channel_id: C3 });
-    expect(await stub.disallow(D4, A1, ADMINS, T0 + 4)).toEqual({ ok: false, code: "not_found" });
+    // 판정용 주인 ID는 허가 행의 키가 아니다: 차단 행만 쓰고 위임은 건드리지 않는다(allowlist-open.md §3.3 (나))
+    expect(await stub.disallow(D4, A1, ADMINS, T0 + 4)).toEqual({ ok: true });
     expect(await delegations(stub)).toHaveLength(1);
     expect(await stub.disallow(C3, A1, ADMINS, T0 + 5)).toEqual({ ok: true });
     expect(await delegations(stub)).toHaveLength(0);
@@ -798,7 +799,7 @@ describe("키 규칙(대안 B)", () => {
   }
 
   it("KB1 묶음·rotate·me에는 판정용 ID가 실린다", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await kb(stub);
     const l = await appLogin(stub, { channelId: B2, now: T0 + 10 });
     expect(l.bundle.delegatedChannels).toEqual([{ channelId: D4, channelName: "주인", since: T0 + 3 }]);
@@ -810,7 +811,7 @@ describe("키 규칙(대안 B)", () => {
   });
 
   it("KB2 주인 쪽 me는 판정용 ID로 편집자를 찾는다", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await kb(stub);
     const l = await appLogin(stub, { channelId: C3, now: T0 + 10 });
     const m = await meOf(stub, l.bundle.accessToken, T0 + 11);
@@ -818,7 +819,7 @@ describe("키 규칙(대안 B)", () => {
   });
 
   it("KB3 V2 SQL로 제외·재허가하면 위임이 빈다", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await kb(stub);
     const l = await appLogin(stub, { channelId: B2, now: T0 + 10 });
     await v2Disallow(stub, C3, T0 + 20);
@@ -839,7 +840,7 @@ describe("V2 롤백 호환(위임)", () => {
   }
 
   it("RB1 주인 쪽: 판정에서 빠지고 sweep이 지운다", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await setup(stub);
     await v2Disallow(stub, B2, T0 + 4);
     await v2Allow(stub, B2, T0 + 5);
@@ -851,7 +852,7 @@ describe("V2 롤백 호환(위임)", () => {
   });
 
   it("RB2 편집자 쪽", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await setup(stub);
     await v2Disallow(stub, C3, T0 + 4);
     await v2Allow(stub, C3, T0 + 5);
@@ -863,7 +864,7 @@ describe("V2 롤백 호환(위임)", () => {
   });
 
   it("RB3 대안 B", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await allowAt(stub, C3, T0);
     await altB(stub, C3, D4);
     await allowAt(stub, B2, T0 + 1);
@@ -878,7 +879,7 @@ describe("V2 롤백 호환(위임)", () => {
   });
 
   it("RB4 음성 대조: 바뀌지 않으면 활성이고 sweep이 지우지 않는다", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await setup(stub);
     expect(await mine(stub, C3)).toHaveLength(1);
     await sweepNow(stub, T0 + 6);
@@ -886,7 +887,7 @@ describe("V2 롤백 호환(위임)", () => {
   });
 
   it("RB5 같은 ms에 재허가하면 활성으로 남는다(받아들인 구멍, 운영 롤백 대상은 V3 직전까지)", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await setup(stub);
     await v2Disallow(stub, B2, T0 + 4);
     await v2Allow(stub, B2, T0);
@@ -894,7 +895,7 @@ describe("V2 롤백 호환(위임)", () => {
   });
 
   it("RB6 관리자 NULL 함정: 관리자였던 채널이 admins에서 빠지면 위임이 빈다", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     const inv = await invite(stub, A1, T0);
     await allowAt(stub, B2, T0);
     await accept(stub, inv.hash, B2, T0 + 1);
@@ -920,7 +921,7 @@ describe.each([
   };
 
   it("N3-i 미청구: 무효 초대는 열리지도 수락되지도 않는다", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await prepare(stub);
     const inv = await invite(stub, L, T0 + 2);
     await reAllow(stub, T0 + 3);
@@ -933,7 +934,7 @@ describe.each([
   });
 
   it("N3-ii 청구됨: allow가 위임을 만들지 않고 초대를 지운다", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await prepare(stub);
     const inv = await invite(stub, L, T0 + 2);
     await inviteLogin(stub, inv.hash, E5, T0 + 3);
@@ -946,7 +947,7 @@ describe.each([
   });
 
   it("N3-iii 청구 전에 주인이 바뀌었다", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await prepare(stub);
     const inv = await invite(stub, L, T0 + 2);
     const s = await stub.startWebInvite(inv.hash, "203.0.113.30", 1000, ADMINS, T0 + 3);
@@ -963,24 +964,24 @@ describe.each([
   });
 
   it("N3-iv 음성 대조: 바뀌지 않으면 셋 모두 정상이다", async () => {
-    const a = freshStub();
+    const a = await closedStub();
     await prepare(a);
     const ia = await invite(a, L, T0 + 2);
     expect((await accept(a, ia.hash, F6, T0 + 3)).ok).toBe(true);
-    const b = freshStub();
+    const b = await closedStub();
     await prepare(b);
     const ib = await invite(b, L, T0 + 2);
     await inviteLogin(b, ib.hash, E5, T0 + 3);
     await allowAt(b, E5, T0 + 10);
     expect(await delegations(b)).toHaveLength(1);
-    const c = freshStub();
+    const c = await closedStub();
     await prepare(c);
     const ic = await invite(c, L, T0 + 2);
     expect(await inviteLogin(c, ic.hash, E5, T0 + 3)).toHaveProperty("invitePending");
   });
 
   it("N3-vi 무효 청구 열 개가 상한을 막지 않는다", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await prepare(stub);
     for (let i = 0; i < 10; i++) {
       const inv = await invite(stub, L, T0 + 10 + i * 10);
@@ -996,7 +997,7 @@ describe.each([
 describe("N3-v 다시 SELECT하지 않는다", () => {
   // 허가 행이 세대다: 관리자여도 허가 행이 있으면 그 added_at을 적는다(구현 중 변경 105 (라), 처음의 "관리자는 NULL"을 뒤집었다)
   it("(1) 허가 행도 가진 관리자 주인의 owner_allowed_at은 그 added_at이고 위임이 그대로 옮긴다", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await allowAt(stub, A1, T0);
     await allowAt(stub, C3, T0 + 1);
     const inv = await invite(stub, A1, T0 + 2);
@@ -1009,7 +1010,7 @@ describe("N3-v 다시 SELECT하지 않는다", () => {
     ["보통", B2, B2],
     ["대안 B", C3, D4],
   ] as const)("(2) 초대 뒤 허가 시각이 바뀌면 gone %s", async (_n, L, J) => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await allowAt(stub, L, T0);
     if (L !== J) await altB(stub, L, J);
     await allowAt(stub, F6, T0 + 1);
@@ -1024,7 +1025,7 @@ describe("N3-v 다시 SELECT하지 않는다", () => {
     ["보통", B2, B2],
     ["대안 B", C3, D4],
   ] as const)("(3) 관리자가 된 주인에게도 초대 값 그대로 옮긴다 %s", async (_n, L, J) => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await allowAt(stub, L, T0);
     if (L !== J) await altB(stub, L, J);
     await allowAt(stub, F6, T0 + 1);
@@ -1040,7 +1041,7 @@ describe("N3-v 다시 SELECT하지 않는다", () => {
 describe("대안 B 판정용 ID 바꾸기", () => {
   // 손 SQL로 allowlist.owner_channel_id를 바꾸면 옛 판정용 ID로 맺은 위임·초대는 무효다(구현 중 변경 105 (라))
   it("JB1 맺은 뒤 판정용 ID가 바뀌면 위임이 빈다", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await allowAt(stub, C3, T0);
     await altB(stub, C3, D4);
     await allowAt(stub, B2, T0 + 1);
@@ -1055,7 +1056,7 @@ describe("대안 B 판정용 ID 바꾸기", () => {
   });
 
   it("JB2 판정용 ID가 NULL로 돌아가도(= 로그인 ID) 옛 위임은 빈다", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await allowAt(stub, C3, T0);
     await altB(stub, C3, D4);
     await allowAt(stub, B2, T0 + 1);
@@ -1066,7 +1067,7 @@ describe("대안 B 판정용 ID 바꾸기", () => {
   });
 
   it("JB3 초대 뒤 판정용 ID가 바뀌면 열리지도 수락되지도 않고 sweep이 지운다", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await allowAt(stub, C3, T0);
     await altB(stub, C3, D4);
     await allowAt(stub, B2, T0 + 1);
@@ -1082,14 +1083,14 @@ describe("대안 B 판정용 ID 바꾸기", () => {
   });
 
   it("JB4 음성 대조: 허가 행 없는 관리자 주인과 판정용 ID를 가진 관리자 주인은 활성이다", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await allowAt(stub, B2, T0);
     const a = await invite(stub, A1, T0 + 1);
     expect((await accept(stub, a.hash, B2, T0 + 2)).ok).toBe(true);
     expect(await mine(stub, B2)).toEqual([{ channelId: A1, channelName: "주인", since: T0 + 2 }]);
     await sweepNow(stub, T0 + 3);
     expect(await mine(stub, B2)).toHaveLength(1);
-    const s2 = freshStub();
+    const s2 = await closedStub();
     await allowAt(s2, A1, T0);
     await altB(s2, A1, D4);
     await allowAt(s2, B2, T0);
@@ -1102,7 +1103,7 @@ describe("대안 B 판정용 ID 바꾸기", () => {
 
 describe("받아들인 구멍(구현 중 변경 105)", () => {
   it("AH1 허가 행 없는 관리자로 맺은 위임은 강등되면 비고, sweep은 지우지 않으며, 다시 관리자가 되면 되살아난다", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await allowAt(stub, C3, T0);
     const inv = await invite(stub, A1, T0 + 1);
     expect((await accept(stub, inv.hash, C3, T0 + 2)).ok).toBe(true);
@@ -1124,7 +1125,7 @@ describe("남은 청구가 회수된 위임을 되살리지 않는다(Codex 리�
   }
 
   it("SC4 흔적 없는 청구는 청구자 자신도 수락할 수 없다(닫힌 쪽 실패: 새 초대로 다시 한다)", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     const i1 = await staleClaim(stub);
     expect(await accept(stub, i1.hash, E5, T0 + 9)).toEqual({ ok: false, code: "gone" });
     expect(await invites(stub)).toHaveLength(0);
@@ -1133,7 +1134,7 @@ describe("남은 청구가 회수된 위임을 되살리지 않는다(Codex 리�
   });
 
   it("SC1 다른 초대를 수락하고 그만둔 뒤 메모만 바꾸는 허가가 위임을 되살리지 않는다", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await staleClaim(stub);
     const i2 = await invite(stub, B2, T0 + 4);
     expect((await accept(stub, i2.hash, E5, T0 + 5)).ok).toBe(true);
@@ -1146,7 +1147,7 @@ describe("남은 청구가 회수된 위임을 되살리지 않는다(Codex 리�
   });
 
   it("SC2 그만두기는 같은 쌍의 청구를 지운다", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await allowAt(stub, B2, T0);
     await link(stub, B2, E5, T0 + 1);
     // 활성 위임 옆에 청구가 남은 상태(손 SQL): 그만두기가 함께 지운다
@@ -1157,7 +1158,7 @@ describe("남은 청구가 회수된 위임을 되살리지 않는다(Codex 리�
   });
 
   it("SC3 흔적 없는 청구는 기다림으로 보이지 않고 허가가 위임으로 바꾸지 않으며 sweep이 지운다", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await staleClaim(stub);
     expect((await editorsSide(stub, B2, T0 + 4)).editors).toEqual([]);
     await allowAt(stub, E5, T0 + 5);
@@ -1176,7 +1177,7 @@ describe("허가 제외는 청구의 취소 경계다(구현 중 변경 105 (아
   }
 
   it("AH2 V2로 되돌린 동안 허가·제외를 거친 청구는 V3의 다음 허가에서 위임이 되지 않는다", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await claimedE5(stub);
     await v2Allow(stub, E5, T0 + 3);
     await v2Disallow(stub, E5, T0 + 4);
@@ -1186,7 +1187,7 @@ describe("허가 제외는 청구의 취소 경계다(구현 중 변경 105 (아
   });
 
   it("AH3 V2에서 제외 뒤 다시 거부돼도(새 first_at) 옛 청구는 쓰이지 않는다", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await claimedE5(stub);
     await v2Allow(stub, E5, T0 + 3);
     await v2Disallow(stub, E5, T0 + 4);
@@ -1198,7 +1199,7 @@ describe("허가 제외는 청구의 취소 경계다(구현 중 변경 105 (아
   });
 
   it("AH4 음성 대조: 흔적이 이어지면(거부 기록이 청구 전부터 남아 있으면) 허가가 위임을 만든다", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await claimedE5(stub);
     expect((await editorsSide(stub, B2, T0 + 3)).editors.map((e) => e.status)).toEqual(["pending"]);
     await allowAt(stub, E5, T0 + 4);
@@ -1224,7 +1225,7 @@ describe("관리자로 맺은 관계의 세대(구현 중 변경 105 (라))", ()
   const all = Array.from({ length: 20 }, (_, i) => chan(i));
 
   it("GN1 허가 행이 있는 주인: 관리자 시절 관계와 강등 뒤 관계가 함께 살아나 상한을 넘지 않는다", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await allowAt(stub, B2, T0);
     const promoted = [A1, B2];
     for (let i = 0; i < 10; i++) expect(await linkAs(stub, B2, chan(i), T0 + 10 + i * 10, promoted)).toBe(true);
@@ -1239,7 +1240,7 @@ describe("관리자로 맺은 관계의 세대(구현 중 변경 105 (라))", ()
   });
 
   it("GN2 허가 행 없는 관리자 주인: 강등 뒤 허가 행이 생기면 옛 관계는 끝나고 sweep이 지운다", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     const promoted = [A1, D4];
     for (let i = 0; i < 10; i++) expect(await linkAs(stub, D4, chan(i), T0 + 10 + i * 10, promoted)).toBe(true);
     await allowAt(stub, D4, T0 + 900);
@@ -1251,7 +1252,7 @@ describe("관리자로 맺은 관계의 세대(구현 중 변경 105 (라))", ()
   });
 
   it("GN4 허가 행이 있는 관리자 편집자: 강등 뒤에도 같은 세대라 스물한 번째는 full이고 재등록 뒤에도 20을 넘지 않는다", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await allowAt(stub, D4, T0);
     const promoted = [A1, D4];
     const owners = Array.from({ length: 21 }, (_, i) => chan(100 + i));
@@ -1275,7 +1276,7 @@ describe("관리자로 맺은 관계의 세대(구현 중 변경 105 (라))", ()
 
   // 반대 당사자의 NULL 세대(허가 행 없는 관리자)가 강등 동안 빈 자리를 다른 관계가 채운 뒤 재등록으로 되살아나는 경우(구현 중 변경 105 (타))
   it("GN5 주인 쪽: 허가 행 없는 관리자 편집자의 관계가 되살아나도 권한을 받는 편집자 수 = 주인 목록 길이 ≤ 10", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await allowAt(stub, B2, T0);
     const promoted = [A1, D4];
     const r = await stub.createInvite(B2, "주인", promoted, T0 + 1);
@@ -1296,7 +1297,7 @@ describe("관리자로 맺은 관계의 세대(구현 중 변경 105 (라))", ()
   });
 
   it("GN6 편집자 쪽: 허가 행 없는 관리자 주인의 관계가 되살아나도 맡은 채널 = 편집자를 active로 보는 주인 수 ≤ 20", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await allowAt(stub, C3, T0);
     const promoted = [A1, D4];
     const owners = Array.from({ length: 20 }, (_, i) => chan(200 + i));
@@ -1325,7 +1326,7 @@ describe("관리자로 맺은 관계의 세대(구현 중 변경 105 (라))", ()
   });
 
   it("GN3 허가 행 없는 관리자 편집자: 허가 행이 생기면 옛 관계는 끝난다", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await allowAt(stub, B2, T0);
     const inv = await invite(stub, B2, T0 + 1);
     expect((await accept(stub, inv.hash, A1, T0 + 2)).ok).toBe(true);
@@ -1339,13 +1340,13 @@ describe("관리자로 맺은 관계의 세대(구현 중 변경 105 (라))", ()
 
 describe("묶음·me", () => {
   it("BD1 위임이 없으면 빈 배열", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     const l = await allowedLogin(stub);
     expect(l.bundle.delegatedChannels).toEqual([]);
   });
 
   it("BD2 redeem·rotate 묶음", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await allowAt(stub, B2, T0);
     await allowAt(stub, C3, T0);
     const inv = await invite(stub, B2, T0 + 1);
@@ -1358,7 +1359,7 @@ describe("묶음·me", () => {
   });
 
   it("BD3 회수가 반영된다", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await allowAt(stub, B2, T0);
     await link(stub, B2, C3, T0 + 1);
     const l = await appLogin(stub, { channelId: C3, now: T0 + 10 });
@@ -1369,7 +1370,7 @@ describe("묶음·me", () => {
   });
 
   it("ME1 me는 check와 같은 거부를 준다", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     expect(await stub.me("x", ADMINS, T0)).toEqual({ ok: false, code: "invalid_token", why: null });
     expect(await stub.me(await sha("zz"), ADMINS, T0)).toEqual({ ok: false, code: "invalid_token", why: null });
     const l = await allowedLogin(stub);
@@ -1381,7 +1382,7 @@ describe("묶음·me", () => {
   });
 
   it("ME2 me의 쓰기 수는 check와 같다(0)", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     const l = await allowedLogin(stub);
     const h = await sha(l.bundle.accessToken);
     const b0 = await meter(stub);
@@ -1394,7 +1395,7 @@ describe("묶음·me", () => {
   });
 
   it("ME3 me 본문: 맡은 채널과 내 편집자", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await allowAt(stub, B2, T0);
     await link(stub, B2, C3, T0 + 1);
     const l = await appLogin(stub, { channelId: B2, now: T0 + 10 });
@@ -1407,7 +1408,7 @@ describe("묶음·me", () => {
 
 describe("①-3 페이지 조회(구현 중 변경 106)", () => {
   it("ST1 claimedInviteOwner: 청구자 일치 + 유효만 주인 이름, 쓰기 0", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await allowAt(stub, B2, T0);
     const inv = await invite(stub, B2, T0 + 1);
     expect(await inviteLogin(stub, inv.hash, E5, T0 + 2)).toHaveProperty("invitePending");
@@ -1424,7 +1425,7 @@ describe("①-3 페이지 조회(구현 중 변경 106)", () => {
   });
 
   it("ST2 invitedBy: 유효 청구가 둘이면 claimed_at이 이른 쪽, 흔적이 끊긴 청구는 null", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await allowAt(stub, B2, T0);
     await allowAt(stub, C3, T0);
     const i1 = await invite(stub, B2, T0 + 1);
@@ -1441,7 +1442,7 @@ describe("①-3 페이지 조회(구현 중 변경 106)", () => {
   });
 
   it("ST3 invitePage: 쿠키 없음·가짜 쿠키·유효 세션·모양 밖", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await allowAt(stub, B2, T0);
     await allowAt(stub, C3, T0);
     const inv = await invite(stub, B2, T0 + 1);
@@ -1466,7 +1467,7 @@ describe("①-3 페이지 조회(구현 중 변경 106)", () => {
   });
 
   it("ST3b invitePage는 초대·위임·흐름 행을 바꾸지 않는다", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await allowAt(stub, B2, T0);
     const inv = await invite(stub, B2, T0 + 1);
     const tables = () => runInDurableObject(stub, (i) => JSON.stringify([i.db.all("SELECT * FROM invite"), i.db.all("SELECT * FROM delegation"), i.db.all("SELECT * FROM flow")]));
@@ -1477,7 +1478,7 @@ describe("①-3 페이지 조회(구현 중 변경 106)", () => {
   });
 
   it("ST4 doneView: 초대에서 시작한 거부 흐름만 주인 이름, 꼬리 인자 없음이면 null", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await allowAt(stub, B2, T0);
     const inv = await invite(stub, B2, T0 + 1);
     const s = await stub.startWebInvite(inv.hash, "203.0.113.30", 1000, ADMINS, T0 + 2);
@@ -1486,7 +1487,7 @@ describe("①-3 페이지 조회(구현 중 변경 106)", () => {
     if (!k.ok) throw new Error("consume");
     await stub.finish(k.flowId, { type: "user", channelId: E5, channelName: "들어온 채널" }, ADMINS, T0 + 3);
     const b = await sha(s.binder);
-    expect(await stub.doneView(b, T0 + 4, ADMINS)).toEqual({ kind: "web", status: "denied", channelName: "들어온 채널", channelId: E5, inviteOwnerName: "주인" });
+    expect(await stub.doneView(b, T0 + 4, ADMINS)).toEqual({ kind: "web", status: "denied", channelName: "들어온 채널", channelId: E5, inviteOwnerName: "주인", denyReason: null });
     expect(await stub.doneView(b, T0 + 4)).toMatchObject({ inviteOwnerName: null });
     // 초대 없는 거부 흐름
     const s2 = await stub.startWeb("203.0.113.31", 1000, T0 + 5);
@@ -1498,7 +1499,7 @@ describe("①-3 페이지 조회(구현 중 변경 106)", () => {
   });
 
   it("ST5 adminView(now, admins): 청구한 거부 채널 행에 invitedBy, 꼬리 인자 없음이면 모두 null", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await allowAt(stub, B2, T0);
     const inv = await invite(stub, B2, T0 + 1);
     await inviteLogin(stub, inv.hash, E5, T0 + 2);

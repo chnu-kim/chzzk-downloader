@@ -11,7 +11,7 @@ import { iso } from "../../src/http/respond";
 import { createFakeChzzk, FAKE_ACCOUNTS, type FakeChzzk, type FakeFail } from "../fake-chzzk.mjs";
 import { installFakeChzzk, type FakeNet } from "../network";
 import { A1, B2 } from "../store/helpers";
-import { advance, allowedChannel, APP_PORT, AppClient, appFlow, Browser, countingSend, flowRows, h1Of, HOUR, ORIGIN, parseLoopback, store, useClock, viaEnv } from "./harness";
+import { advance, allowedChannel, APP_PORT, AppClient, appFlow, Browser, countingSend, flowRows, h1Of, HOUR, ORIGIN, parseLoopback, store, useClock, viaEnv, closeAutoAllow } from "./harness";
 
 let fake: FakeChzzk;
 let net: FakeNet;
@@ -22,6 +22,7 @@ beforeEach(async () => {
   fake = createFakeChzzk();
   net = installFakeChzzk(fake);
   await allowedChannel(B2, A1);
+  await closeAutoAllow();
 });
 
 afterEach(() => {

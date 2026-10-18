@@ -40,7 +40,7 @@ describe("matchPattern: /** 패턴(나머지 전부, 디코드하지 않는다)"
 });
 
 describe("경로 표", () => {
-  it("40쌍이 정확히 이 순서다", () => {
+  it("41쌍이 정확히 이 순서다", () => {
     expect(ROUTES.map((r) => `${r.method} ${r.pattern}`)).toEqual([
       "GET /health",
       "POST /auth/start",
@@ -64,6 +64,7 @@ describe("경로 표", () => {
       "GET /admin",
       "POST /admin/allow",
       "POST /admin/disallow",
+      "POST /admin/auto-allow",
       "POST /admin/sessions/:id/revoke",
       "POST /admin/denied/:channelId/allow",
       "POST /admin/denied/:channelId/dismiss",

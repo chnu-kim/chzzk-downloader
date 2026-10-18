@@ -4,13 +4,14 @@
 // 웹 흐름은 start 때 바로 redirected이고 허용되면 그 자리에서 지운다. 흐름 하나가 만료를 앞당기지 못한다(종결해도 expires_at은 그대로 이상).
 // 앱 흐름은 종결 때 1회용 grant(해시만 저장, 2분)를 받고 redeem이 grant + 앱 비밀(loginVerifier)로 결과를 한 번 건넨다(구현 중 변경 88).
 // 예외 하나: 앱이 수령(redeem ok)한 흐름은 now + 2분으로 앞당긴다(허용 채널의 로그인이 끝난 뒤라 슬롯 순환과 무관, 구현 중 변경 28 (마)).
-import { CHANNEL_ID, NAME_MAX, admission, clip, recordDenied, touchAllowedName } from "./allowlist";
+import { CHANNEL_ID, NAME_MAX, admission, autoAdmit, clip, recordDenied, touchAllowedName } from "./allowlist";
 import type { Db } from "./db";
-import { acceptInvite, claimInvite, claimedInviteOwner, firstClaimedInvite } from "./delegation";
+import { acceptInvite, claimInvite, claimedInviteOwner, completeClaimed, firstClaimedInvite, tracedClaims } from "./delegation";
 import { activate, insertUnclaimed, insertWeb, type TokenPair } from "./sessions";
 import type {
   ConsumeResult,
   ContinueResult,
+  DenyReason,
   DoneView,
   FailCode,
   FinishSettled,
@@ -194,36 +195,61 @@ export function finish(
   }
 
   const name = clip(outcome.channelName, NAME_MAX);
-  const adm = admission(db, outcome.channelId, admins);
+  let adm = admission(db, outcome.channelId, admins);
+  // 자동 허가(allowlist-open.md §3.1): 허가 판정이 거부일 때만, 같은 트랜잭션에서. 순서는 청구 흔적 읽기 → 허가 → 청구 초대 완성 → 거부 기록 삭제
+  // (관리자 [허가]와 같다: 거부 기록이 먼저 지워지면 흔적이 끊겨 위임이 생기지 않는다). admins가 문자열 배열이 아니면 자동 허가를 하지 않는다(fail closed)
+  let denyReason: DenyReason | null = null;
+  let capInvalid = false;
+  let autoAllowed = false;
+  if (!adm.allowed && Array.isArray(admins) && admins.every((x) => typeof x === "string")) {
+    const traced = tracedClaims(db, outcome.channelId);
+    const a = autoAdmit(db, outcome.channelId, name, admins, now);
+    if (a.ok) {
+      completeClaimed(db, outcome.channelId, traced, admins, now);
+      db.run("DELETE FROM denied WHERE channel_id = ?", outcome.channelId);
+      adm = admission(db, outcome.channelId, admins);
+      autoAllowed = true;
+    } else {
+      denyReason = a.reason;
+      capInvalid = a.capInvalid;
+    }
+  }
+  // AuthStore가 읽고 떼어 내는 로그용 값(FinishResult에는 실리지 않는다)
+  const logged = <T extends FinishSettled>(r: T): FinishSettled => ({
+    ...r,
+    ...(denyReason !== null ? { logReason: denyReason } : autoAllowed ? { logReason: "auto_allowed" as const } : {}),
+    ...(capInvalid ? { capInvalid: true as const } : {}),
+  });
   if (!adm.allowed) {
     recordDenied(db, outcome.channelId, name, now);
     db.run(
-      "UPDATE flow SET status = 'denied', channel_name = ?, channel_id = ?, expires_at = ?, grant_hash = ?, grant_exp = ? WHERE id = ?",
+      "UPDATE flow SET status = 'denied', channel_name = ?, channel_id = ?, expires_at = ?, grant_hash = ?, grant_exp = ?, deny_reason = ? WHERE id = ?",
       name,
       outcome.channelId,
       doneExp,
       g?.hash ?? null,
       g?.exp ?? null,
+      denyReason,
       row.id,
     );
-    if (isApp) return app("denied");
+    if (isApp) return logged(app("denied"));
     // 초대에서 시작한 웹 흐름이면 거부 채널이 그 초대를 청구한다(관리자 [허가] 때 위임이 된다)
     if (row.invite_hash !== null) {
       const c = claimInvite(db, row.invite_hash, outcome.channelId, name, admins, now);
-      if (c.ok) return { type: "denied", invitePending: c.ownerName };
+      if (c.ok) return logged({ type: "denied", invitePending: c.ownerName });
     } else {
       // 초대 없이 들어온 웹 흐름: 이 채널이 앞서 청구한 유효한 초대가 있으면 흐름에 묶는다. 흐름이 만료된 뒤에 잘못된 계정임을 안 사람도
       // 같은 계정으로 다시 로그인하면 거부 페이지에서 그 청구를 보고 [초대 취소]할 수 있다(106 (차) ⑦). 청구 자체는 바꾸지 않는다
       const claimed = firstClaimedInvite(db, outcome.channelId, admins, now);
       if (claimed !== null) db.run("UPDATE flow SET invite_hash = ? WHERE id = ?", claimed, row.id);
     }
-    return { type: "denied" };
+    return logged({ type: "denied" });
   }
   touchAllowedName(db, outcome.channelId, name);
   if (isApp) {
     insertUnclaimed(db, { id: issued.sessionId, channelId: outcome.channelId, channelName: name, client: row.client, expiresAt: doneExp }, now);
     db.run("UPDATE flow SET status = 'ok', session_id = ?, expires_at = ?, grant_hash = ?, grant_exp = ? WHERE id = ?", issued.sessionId, doneExp, g?.hash ?? null, g?.exp ?? null, row.id);
-    return app("ok");
+    return logged(app("ok"));
   }
   const expiresAt = insertWeb(db, { id: issued.sessionId, channelId: outcome.channelId, channelName: name, cookieHash: issued.cookie.hash, csrf: issued.csrf }, now);
   let invite: InviteOutcome | undefined;
@@ -235,8 +261,8 @@ export function finish(
   }
   db.run("DELETE FROM flow WHERE id = ?", row.id);
   const web = { type: "web", cookieToken: issued.cookie.token, csrf: issued.csrf, expiresAt } as const;
-  if (invite === undefined) return web;
-  return inviteOwner === undefined ? { ...web, invite } : { ...web, invite, inviteOwner };
+  if (invite === undefined) return logged(web);
+  return logged(inviteOwner === undefined ? { ...web, invite } : { ...web, invite, inviteOwner });
 }
 
 /**
@@ -255,10 +281,15 @@ export function cancelClaim(db: Db, binderHash: string, now: number): boolean {
   return n > 0;
 }
 
+// flow.deny_reason 열은 CHECK가 없다: 아는 값만 돌려준다
+function asDenyReason(v: string | null): DenyReason | null {
+  return v === "daily_limit" || v === "blocked" ? v : null;
+}
+
 /** 완료 페이지: binder 쿠키로 자기 흐름의 결과를 본다 */
 export function doneView(db: Db, binderHash: string, admins: readonly string[] | null, now: number): DoneView | null {
-  const r = db.first<{ kind: FlowKind; status: DoneView["status"]; channel_name: string | null; channel_id: string | null; invite_hash: string | null }>(
-    "SELECT kind, status, channel_name, channel_id, invite_hash FROM flow WHERE binder_hash = ? AND expires_at > ? AND status IN ('ok','denied','cancelled','failed') LIMIT 1",
+  const r = db.first<{ kind: FlowKind; status: DoneView["status"]; channel_name: string | null; channel_id: string | null; invite_hash: string | null; deny_reason: string | null }>(
+    "SELECT kind, status, channel_name, channel_id, invite_hash, deny_reason FROM flow WHERE binder_hash = ? AND expires_at > ? AND status IN ('ok','denied','cancelled','failed') LIMIT 1",
     binderHash,
     now,
   );
@@ -266,7 +297,12 @@ export function doneView(db: Db, binderHash: string, admins: readonly string[] |
   // 거부된 웹 흐름 행은 invite_hash를 그대로 품고 남는다: 그 초대를 이 채널이 청구했고 아직 유효할 때만 주인 이름을 준다
   const inviteOwnerName =
     r.status === "denied" && r.invite_hash !== null && r.channel_id !== null && admins !== null ? claimedInviteOwner(db, r.invite_hash, r.channel_id, admins, now) : null;
-  return { kind: r.kind, status: r.status, channelName: r.channel_name, channelId: r.channel_id, inviteOwnerName };
+  return { kind: r.kind, status: r.status, channelName: r.channel_name, channelId: r.channel_id, inviteOwnerName, denyReason: r.status === "denied" ? asDenyReason(r.deny_reason) : null };
+}
+
+// reason이 없으면 키 자체를 싣지 않는다(옛 응답과 같은 모양)
+function deniedResult(channelName: string, reason: DenyReason | null): RedeemResult {
+  return reason === null ? { status: "denied", channelName } : { status: "denied", channelName, reason };
 }
 
 /**
@@ -275,8 +311,8 @@ export function doneView(db: Db, binderHash: string, admins: readonly string[] |
  * denied·cancelled·failed는 grant만 비운다.
  */
 export function redeem(db: Db, grantHash: string, verifier: string, pair: TokenPair, admins: readonly string[], now: number): RedeemResult {
-  const row = db.first<{ id: string; status: FlowStatus; poll_verifier: string | null; session_id: string | null; channel_name: string | null; fail_code: string | null }>(
-    "SELECT id, status, poll_verifier, session_id, channel_name, fail_code FROM flow WHERE grant_hash = ? AND kind = 'app' AND grant_exp > ?",
+  const row = db.first<{ id: string; status: FlowStatus; poll_verifier: string | null; session_id: string | null; channel_name: string | null; fail_code: string | null; deny_reason: string | null }>(
+    "SELECT id, status, poll_verifier, session_id, channel_name, fail_code, deny_reason FROM flow WHERE grant_hash = ? AND kind = 'app' AND grant_exp > ?",
     grantHash,
     now,
   );
@@ -290,7 +326,7 @@ export function redeem(db: Db, grantHash: string, verifier: string, pair: TokenP
       return { status: "failed", code: (row.fail_code ?? "user") as FailCode };
     case "denied":
       db.run("UPDATE flow SET grant_hash = NULL WHERE id = ?", row.id);
-      return { status: "denied", channelName: row.channel_name ?? "" };
+      return deniedResult(row.channel_name ?? "", asDenyReason(row.deny_reason));
     case "ok": {
       const a = row.session_id === null ? ({ ok: false, code: "gone" } as const) : activate(db, row.session_id, pair, admins, now);
       if (a.ok) {
@@ -299,7 +335,8 @@ export function redeem(db: Db, grantHash: string, verifier: string, pair: TokenP
         return { status: "ok", bundle: a.bundle };
       }
       db.run("DELETE FROM flow WHERE id = ?", row.id);
-      if (a.code === "not_allowed") return { status: "denied", channelName: a.channelName };
+      // 종결 뒤 수령 사이에 허가가 빠진 경합: 그 순간 차단 행이 있으면 blocked, 없으면 이유 없음
+      if (a.code === "not_allowed") return deniedResult(a.channelName, row.session_id !== null && db.first("SELECT 1 AS x FROM blocked b JOIN session s ON s.channel_id = b.channel_id WHERE s.id = ?", row.session_id) !== null ? "blocked" : null);
       return { status: "failed", code: "session" };
     }
     default:

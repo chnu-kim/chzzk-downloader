@@ -87,6 +87,8 @@ function flashNotice(kind: FlashKind): SafeHtml {
       return notice({ tone: "info", body: COPY.alreadyEditor, banner: true, id: "flash" });
     case "inviteCancelled":
       return notice({ tone: "info", body: COPY.inviteCancelled, banner: true, id: "flash" });
+    case "autoAllowSaved":
+      return notice({ tone: "info", body: COPY.autoAllowSaved, banner: true, id: "flash" });
   }
 }
 

@@ -119,6 +119,13 @@ function baseScreen(s: AuthStatusDto, nowMs: number): LoginScreen | null {
       if (s.reason === 'removedFromAllowlist') {
         return message('auth.removed.title', t('auth.removed.body'), true, [login('action.retry', 'primary')], 'link', channelRow(name));
       }
+      // 거부 이유가 있으면 이유별 화면(허용목록 자동 허가 명세 §5.1): 상한은 자정 뒤 다시, 차단은 다른 채널이나 관리자에게. 이유가 없으면(부트스트랩·상한 0·옛 Worker) 지금 안내
+      if (s.reason === 'dailyLimit') {
+        return message('auth.dailyLimit.title', t('auth.dailyLimit.body'), true, [login('action.retry', 'primary')], 'link', channelRow(name), t('auth.dailyLimit.editorHint'));
+      }
+      if (s.reason === 'blocked') {
+        return message('auth.blocked.title', t('auth.blocked.body'), true, [login('action.retry', 'primary')], 'link', channelRow(name));
+      }
       return message('auth.denied.title', t('auth.denied.body'), true, [login('action.retry', 'primary')], 'link', channelRow(name), t('auth.denied.editorHint'));
     case 'expired':
       switch (s.reason) {

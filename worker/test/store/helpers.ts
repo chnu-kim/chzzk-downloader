@@ -17,6 +17,15 @@ export const ADMINS: readonly string[] = [A1];
 export const freshStub = () => env.AUTH.get(env.AUTH.idFromName(crypto.randomUUID()));
 export type Stub = ReturnType<typeof freshStub>;
 
+/** 자동 허가를 끈다(상한 0, allowlist-open.md §6.3): 모르는 채널이 거부되는 것을 전제로 한 테스트가 먼저 부른다 */
+export const closeAutoAllow = (stub: Stub, now = T0) => stub.setAutoAllowCap(0, A1, now);
+/** 자동 허가를 끈 새 DO */
+export async function closedStub(): Promise<Stub> {
+  const stub = freshStub();
+  await closeAutoAllow(stub);
+  return stub;
+}
+
 export const sha = sha256Hex;
 
 /** 앱 루프백 수신기 포트(테스트 기본값) */

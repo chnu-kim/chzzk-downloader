@@ -21,10 +21,10 @@ pub mod token;
 mod verify;
 
 pub use api::{
-    ApiError, DELEGATED_MAX, DelegatedChannel, DelegatedSince, EDITORS_PARSE_MAX, EditorEntry,
-    EditorStatus, InviteResponse, InviteUrl, LoginUrl, MAX_BODY, MeResponse, RedeemResponse,
-    StartRequest, StartResponse, TokenBundle, WorkerApi, parse_bundle, parse_error_response,
-    parse_invite, parse_me, parse_redeem, parse_start,
+    ApiError, DELEGATED_MAX, DelegatedChannel, DelegatedSince, DenyReason, EDITORS_PARSE_MAX,
+    EditorEntry, EditorStatus, InviteResponse, InviteUrl, LoginUrl, MAX_BODY, MeResponse,
+    RedeemResponse, StartRequest, StartResponse, TokenBundle, WorkerApi, parse_bundle,
+    parse_error_response, parse_invite, parse_me, parse_redeem, parse_start,
 };
 pub use base::{BaseError, WorkerBase, client_label};
 pub use clock::{Clock, SystemClock};

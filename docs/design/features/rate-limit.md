@@ -1,6 +1,6 @@
 # 속도 제한(전체 합계 + 작업마다): 설계 초안
 
-**상태(2026-10-18)**: **RL-1 코어(core.md 75)·RL-2 셸(core.md 76·app.md 91)·RL-3 앱(app.md 92) 구현됨. 갤러리 기준선(design-shots)과 실측 M-RL-1·M-RL-2는 남았다.** 아래 "구현 중 변경"이 본문보다 우선한다. 이 문서의 나머지 본문은 설계 시점 그대로다.
+**상태(2026-10-18)**: **RL-1 코어(core.md 75)·RL-2 셸(core.md 76·app.md 92)·RL-3 앱(app.md 93) 구현됨. 갤러리 기준선(design-shots)과 실측 M-RL-1·M-RL-2는 남았다.** 아래 "구현 중 변경"이 본문보다 우선한다. 이 문서의 나머지 본문은 설계 시점 그대로다.
 
 (설계 시점 상태: **설계됨(designed), 구현 전.** 문서만 있는 단계다. 기준 트리는 `origin/master` `55e0733`(v0.10.1 뒤)이고, 이 문서의 `파일:줄`은 모두 그 트리에서 연 줄이다(코드는 `90404f9`와 같다). 표기는 `README.md`의 규칙을 따른다. **[확인]**은 직접 연 줄, **[가정]**은 근거 문서가 없는 설계 판단, **[실측 필요]**는 실물로만 정할 수 있는 것, **[잠정]**은 출처 없는 수치다(ADR-0009 묶음, `docs/design/system/adr/0009-unsourced-numbers.md`).)
 
@@ -8,7 +8,7 @@
 
 **이미 뒤집힌 결정**: `docs/ROADMAP.md:9`(경쟁력 평가)은 "사용자용 CLI·**속도 제한**·오디오 전용 받기·자동 녹화는 … 이슈로 만들지 않는다"고 적었다. 사용자가 같은 날 `:8`에서 뒤집었다(§2 R0).
 
-구현 PR은 `docs/design/core.md`·`app.md`의 "구현 중 변경"에 번호를 붙여 적는다. 지금 마지막 번호는 core.md **74**(`docs/design/core.md:941`), app.md **90**(`docs/design/app.md:1482`)이다. 그래서 core.md는 **75부터**, app.md는 **91부터**다. 다른 worktree가 같은 번호를 먼저 쓸 수 있으므로 **번호는 머지 순서로 맞춘다**. 디자인 시스템 D 번호·ADR은 새로 받지 않는다(§6.4).
+구현 PR은 `docs/design/core.md`·`app.md`의 "구현 중 변경"에 번호를 붙여 적는다. 지금 마지막 번호는 core.md **74**(`docs/design/core.md:941`), app.md **91**이다. 그래서 core.md는 **75부터**, app.md는 **91부터**다. 다른 worktree가 같은 번호를 먼저 쓸 수 있으므로 **번호는 머지 순서로 맞춘다**. 디자인 시스템 D 번호·ADR은 새로 받지 않는다(§6.4).
 
 ---
 
@@ -367,8 +367,8 @@ core dev-dependency tokio에 `test-util`이 없다(`crates/core/Cargo.toml:28`).
 |---|---|---|---|---|
 | RL-0 | 이 문서 + ROADMAP 한 줄 + features/README 행 | `docs:` | — | scan |
 | RL-1 코어 | `download/throttle.rs`(Bucket·Throttle·RateKnob·Throttles), `DownloadRequest.throttle`, progressive·segmented seam, `read_capped_throttled`, live는 None, `MIN_RATE_LIMIT_BPS`·`THROTTLE_MAX_WAIT` 상수, tokio `test-util` dev-dep. §10.1~10.3·10.6 | `feat:` | core.md 75 | fmt·rust·coverage |
-| RL-2 셸 | `UserSettings` 두 필드 + 관대한 읽기, `SettingsDto`·`SettingsPatch`(Nullable), `update_locked` 최소 올림, `DownloadManager` knob·공유 bucket·`set_rate_limits`, `start`에서 붙이기(생방송 제외), `update_and_apply`, bindings. §10.4 | `feat:` | core.md 76(설정 필드)·app.md 91 | rust·tauri-clippy·tauri |
-| RL-3 앱 | 설정 › 받기 두 줄(Select 프리셋), copy deck 다섯 키, `content.md`·`patterns.md` 전표, 가짜 백엔드·Playwright spec, 갤러리 기준선. §10.5 | `feat:` | app.md 92 | frontend·design-tokens·e2e-web·design-shots |
+| RL-2 셸 | `UserSettings` 두 필드 + 관대한 읽기, `SettingsDto`·`SettingsPatch`(Nullable), `update_locked` 최소 올림, `DownloadManager` knob·공유 bucket·`set_rate_limits`, `start`에서 붙이기(생방송 제외), `update_and_apply`, bindings. §10.4 | `feat:` | core.md 76(설정 필드)·app.md 92 | rust·tauri-clippy·tauri |
+| RL-3 앱 | 설정 › 받기 두 줄(Select 프리셋), copy deck 다섯 키, `content.md`·`patterns.md` 전표, 가짜 백엔드·Playwright spec, 갤러리 기준선. §10.5 | `feat:` | app.md 93 | frontend·design-tokens·e2e-web·design-shots |
 
 - RL-2와 RL-3을 한 PR로 합쳐도 된다(DTO와 화면이 함께 바뀐다). 나누면 RL-2 머지 시점에 화면 없는 설정 키가 잠깐 있다. 기본 끔이라 사용자 동작은 같다.
 - 중요한 PR 기준(데이터·계약·인증·DO·릴리스)으로 보면 RL-2가 설정 파일 형식을 더하므로 Codex 리뷰 대상이다. RL-1·RL-3은 Claude 리뷰로 충분하다.
@@ -396,4 +396,4 @@ core dev-dependency tokio에 `test-util`이 없다(`crates/core/Cargo.toml:28`).
 4. **(RL-2) `DownloadManager::rate_limits()` getter를 더했다**(§3.3은 `set_rate_limits`만 적었다). 셸 테스트가 매니저가 가진 값을 직접 확인하고, 설정과 매니저가 어긋났는지 점검할 때 쓴다. 최소값 올림(`normalize_rate_limit`)은 설정 읽기·패치 저장 두 곳이 같은 함수를 쓰고, 매니저는 최소를 모르는 채 받은 값을 그대로 쓴다(0만 끔으로 본다).
 5. **(RL-2) 설정 파일에 끈 상태는 `null`로 적는다**(`skip_serializing_if` 없음). `last_url` 등 다른 `Option` 필드와 같은 모양이고, 설정 JSON을 통째로 비교하는 golden이 없어 깨지는 것이 없다.
 6. **(RL-3) 프리셋·덧칸 로직은 `app/src/lib/rateLimit.ts`에 순수 함수로 뒀다**(`rateLimitOptions`·`rateLimitToStored`·`rateLimitFromStored`). §10.5의 vitest 세 가지를 컴포넌트 없이도 단위로 확인하기 위해서다. 낭독용 단위는 `Select` 옵션에 `label`만 있어 주지 못했다(§6.2가 허용한 "못 주면 그대로").
-7. **(리뷰 반영, 2026-10-18) 호출 전체 대기 상한과 덧칸 라벨.** ① `THROTTLE_MAX_WAIT`는 bucket 하나가 아니라 `Throttles::consume` 한 번의 전체 대기에 건다(§3.2·§9 "빚 상한"보다 우선). 두 bucket에 같은 마감 상한(`cap`)을 주고, 받는 중 값을 낮춰 다시 계산한 마감도 `cap`으로 자른다(core.md 77). ② 덧칸 라벨(§6.1)이 프리셋 라벨과 같아지면(1000 진법의 1,048,576이 둘 다 "1.0MB/s") 덧칸만 `formatFileSize` 표기(`1.05MB/s`)로 구별한다(app.md 93). 숫자·단위는 `bytes.ts`만 만든다는 규칙(content.md W5)은 그대로다. ③ 읽기 제한 증거 테스트를 원시 TCP 서버 기반으로 바꿨다(core.md 77).
+7. **(리뷰 반영, 2026-10-18) 호출 전체 대기 상한과 덧칸 라벨.** ① `THROTTLE_MAX_WAIT`는 bucket 하나가 아니라 `Throttles::consume` 한 번의 전체 대기에 건다(§3.2·§9 "빚 상한"보다 우선). 두 bucket에 같은 마감 상한(`cap`)을 주고, 받는 중 값을 낮춰 다시 계산한 마감도 `cap`으로 자른다(core.md 77). ② 덧칸 라벨(§6.1)이 프리셋 라벨과 같아지면(1000 진법의 1,048,576이 둘 다 "1.0MB/s") 덧칸만 `formatFileSize` 표기(`1.05MB/s`)로 구별한다(app.md 94). 숫자·단위는 `bytes.ts`만 만든다는 규칙(content.md W5)은 그대로다. ③ 읽기 제한 증거 테스트를 원시 TCP 서버 기반으로 바꿨다(core.md 77).

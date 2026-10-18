@@ -127,3 +127,25 @@ it("확인 페이지의 채널 이름과 400 오류 화면의 되돌려 채운 �
   expect(t).toContain("&quot;&gt;&lt;script&gt;1&lt;/script&gt;");
   expect(t).toContain("&quot; onfocus=&quot;1");
 });
+
+it("차단한 채널 표의 이름과 하루 상한 400 화면의 되돌려 채운 값도 이스케이프된다(allowlist-open.md §6.2)", async () => {
+  const now = Date.now();
+  const s = store();
+  const { runInDurableObject } = await import("cloudflare:test");
+  await runInDurableObject(s, (i) => {
+    i.db.run("INSERT INTO blocked (channel_id, channel_name, blocked_by, blocked_at) VALUES (?, ?, ?, ?)", D4, "<script>blocked()</script>", A1, now);
+    i.db.run("INSERT INTO denied (channel_id, channel_name, first_at, last_at, attempts) VALUES (?, ?, ?, ?, 1)", D4, "<i>denied</i>", now, now);
+  });
+  const admin = (await webLoginHttp(fake, "a1")).browser;
+  const page = await (await admin.get("/admin")).text();
+  expect(page).not.toContain("<script");
+  expect(page).toContain("&lt;script&gt;blocked()&lt;/script&gt;");
+  expect(page).toContain('id="tbl-blocked"');
+
+  const csrf = /name="csrf" value="([^"]+)"/.exec(page)?.[1] ?? "";
+  const bad = await admin.post("/admin/auto-allow", undefined, new URLSearchParams({ csrf, cap: '"><script>1</script>' }).toString());
+  expect(bad.status).toBe(400);
+  const t = await bad.text();
+  expect(t).not.toContain("<script");
+  expect(t).toContain("&quot;&gt;&lt;");
+});

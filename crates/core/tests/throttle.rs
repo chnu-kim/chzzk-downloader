@@ -388,6 +388,12 @@ async fn segmented_throttles_the_body_read_not_the_write_loop() {
         expected.extend(big_segment(i));
     }
     assert_eq!(std::fs::read(&out).unwrap(), expected);
+    // Windows는 제외한다: 루프백에서 받는 쪽 수신 버퍼가 자동 조정으로 4MB 본문 하나쯤은 삼켜서(CI 실측 56ms)
+    // 서버의 `write_all` 완료 시각이 클라이언트의 읽기 속도를 비추지 못한다. 제한은 OS와 무관한 본문 읽기 경로에
+    // 있으므로 아래 단정은 Linux·macOS가 맡고, 위의 총 소요 하한(1.4초)은 모든 OS가 본다.
+    if cfg!(windows) {
+        return;
+    }
     // 가장 먼저 끝난 서버 전송도 첫 요청이 닿고 한참 뒤에 끝난다(세 본문이 제한을 나눠 읽었다는 뜻).
     // 커널 버퍼가 일부를 흡수하므로 실측은 1.2~1.7초(쓰기 루프 변형은 0.2~0.5초)라 그 사이의 하한을 단정한다.
     let t0 = stamps.first.lock().unwrap().expect("요청이 닿았다");

@@ -1,0 +1,58 @@
+{
+  "$comment": "손으로 계산한 기대값(docs/design/features/filename-template.md §7.2). Rust 코어(crates/core/tests/naming_golden.rs)와 셸 미리보기(crates/shell/tests/naming_preview.rs), 가짜 백엔드(app/e2e/mock)가 같은 파일을 읽는다. 값은 모두 가짜다. platform은 windows·macos·linux.",
+  "samples": {
+    "video": {"meta": {"kind": "video", "title": "저녁 방송", "channelName": "채널이름", "liveOpenDate": "2026-10-18 21:00:00"}, "content": {"kind": "video", "videoNo": 12345}},
+    "clip": {"meta": {"kind": "clip", "title": "웃긴 장면", "channelName": "채널이름"}, "content": {"kind": "clip", "clipId": "abcDEF123"}},
+    "live": {"meta": {"kind": "live", "title": "오늘 방송", "channelName": "채널이름", "liveOpenDate": "2026-10-18 20:30:00"}, "content": {"kind": "live", "channelId": "sample-channel"}},
+    "noChannel": {"meta": {"kind": "video", "title": "제목", "channelName": "", "liveOpenDate": "2024-01-02"}, "content": {"kind": "video", "videoNo": 7}},
+    "reserved": {"meta": {"kind": "video", "title": "con", "channelName": "", "liveOpenDate": null}, "content": {"kind": "video", "videoNo": 7}}
+  },
+  "cases": [
+    {"name": "기본 영상", "template": "{prefix} {channel} - {title}", "sample": "video", "platform": "linux", "out": "[261018] 채널이름 - 저녁 방송.mp4"},
+    {"name": "기본 클립", "template": "{prefix} {channel} - {title}", "sample": "clip", "platform": "linux", "out": "[클립] 채널이름 - 웃긴 장면.mp4"},
+    {"name": "기본 생방송", "template": "{prefix} {channel} - {title}", "sample": "live", "platform": "linux", "out": "[생방송 261018-2030] 채널이름 - 오늘 방송.mp4"},
+    {"name": "기본 채널 없음", "template": "{prefix} {channel} - {title}", "sample": "noChannel", "platform": "linux", "out": "[240102] 제목.mp4"},
+    {"name": "날짜_채널_제목", "template": "{date}_{channel}_{title}", "sample": "video", "platform": "macos", "out": "261018_채널이름_저녁 방송.mp4"},
+    {"name": "클립에는 날짜가 없다", "template": "{date} {title}", "sample": "clip", "platform": "linux", "out": "웃긴 장면.mp4"},
+    {"name": "클립 ID", "template": "{no}_{title}", "sample": "clip", "platform": "windows", "out": "abcDEF123_웃긴 장면.mp4"},
+    {"name": "영상 번호", "template": "{title} ({no})", "sample": "video", "platform": "linux", "out": "저녁 방송 (12345).mp4"},
+    {"name": "생방송에는 번호가 없다", "template": "{title}-{no}", "sample": "live", "platform": "linux", "out": "오늘 방송.mp4"},
+    {"name": "채널이 비면 앞 구분 문자도 뺀다", "template": "{title} - {channel}", "sample": "noChannel", "platform": "linux", "out": "제목.mp4"},
+    {"name": "콜론 linux", "template": "{date}: {title}", "sample": "video", "platform": "linux", "out": "261018: 저녁 방송.mp4"},
+    {"name": "콜론 macos", "template": "{date}: {title}", "sample": "video", "platform": "macos", "out": "261018_ 저녁 방송.mp4"},
+    {"name": "콜론 windows", "template": "{date}: {title}", "sample": "video", "platform": "windows", "out": "261018_ 저녁 방송.mp4"},
+    {"name": "물음표 windows", "template": "{title}?", "sample": "video", "platform": "windows", "out": "저녁 방송_.mp4"},
+    {"name": "물음표 linux", "template": "{title}?", "sample": "video", "platform": "linux", "out": "저녁 방송?.mp4"},
+    {"name": "예약어 windows", "template": "{title}", "sample": "reserved", "platform": "windows", "out": "con_.mp4"},
+    {"name": "예약어 linux", "template": "{title}", "sample": "reserved", "platform": "linux", "out": "con.mp4"},
+    {"name": "끝 마침표 windows", "template": "{title}.", "sample": "video", "platform": "windows", "out": "저녁 방송.mp4"},
+    {"name": "짝 오류", "template": "{title", "error": {"kind": "unbalancedBrace"}},
+    {"name": "이름 없는 중괄호", "template": "{}", "error": {"kind": "unbalancedBrace"}},
+    {"name": "모르는 토큰", "template": "{foo} {title}", "error": {"kind": "unknownToken", "token": "foo"}},
+    {"name": "대소문자를 구분한다", "template": "{Title}", "error": {"kind": "unknownToken", "token": "Title"}},
+    {"name": "같은 토큰 두 번", "template": "{title}{title}", "error": {"kind": "duplicateToken", "token": "title"}},
+    {"name": "슬래시", "template": "{date}/{title}", "error": {"kind": "pathSeparator"}},
+    {"name": "역슬래시", "template": "a\\{title}", "error": {"kind": "pathSeparator"}},
+    {"name": "제목 없음", "template": "{date}", "error": {"kind": "missingTitle"}},
+    {"name": "빈 템플릿", "template": "", "error": {"kind": "missingTitle"}},
+    {"name": "101바이트", "template": "{title}aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "error": {"kind": "tooLong"}}
+  ],
+  "preview": [
+    {"template": "{prefix} {channel} - {title}", "linux": [
+      {"kind": "video", "name": "[261018] 채널이름 - 저녁 방송.mp4"},
+      {"kind": "clip", "name": "[클립] 채널이름 - 웃긴 장면.mp4"},
+      {"kind": "live", "name": "[생방송 261018-2030] 채널이름 - 오늘 방송.mp4"}
+    ]},
+    {"template": "{date}_{channel}_{title}", "linux": [
+      {"kind": "video", "name": "261018_채널이름_저녁 방송.mp4"},
+      {"kind": "clip", "name": "채널이름_웃긴 장면.mp4"},
+      {"kind": "live", "name": "261018_채널이름_오늘 방송.mp4"}
+    ]},
+    {"template": "{title} [{no}]", "linux": [
+      {"kind": "video", "name": "저녁 방송 [12345].mp4"},
+      {"kind": "clip", "name": "웃긴 장면 [abcDEF123].mp4"},
+      {"kind": "live", "name": "오늘 방송 [].mp4"}
+    ]},
+    {"template": "{foo}", "error": {"kind": "unknownToken", "token": "foo"}}
+  ]
+}

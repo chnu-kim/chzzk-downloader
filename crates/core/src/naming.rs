@@ -6,7 +6,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::model::{ContentKind, ContentMeta, TimeRange};
+use crate::model::{ContentKind, ContentMeta, ContentRef, TimeRange};
 
 /// 파일명 전체의 UTF-8 바이트 상한(확장자 포함).
 pub const MAX_FILENAME_BYTES: usize = 200;
@@ -49,33 +49,7 @@ pub fn default_filename(meta: &ContentMeta, p: Platform) -> String {
         title.push('_');
     }
 
-    let prefix = match meta.kind {
-        ContentKind::Clip => "[클립] ".to_string(),
-        ContentKind::Live => {
-            // 같은 방송을 다시 받아도 이름이 겹치지 않도록 시작 시각(KST)까지 적는다.
-            let raw = meta.live_open_date.as_deref();
-            match raw.and_then(parse_live_date) {
-                Some((y, m, d)) => match raw.and_then(parse_live_time) {
-                    Some((hh, mm)) => {
-                        format!("[생방송 {:02}{m:02}{d:02}-{hh:02}{mm:02}] ", y % 100)
-                    }
-                    None => format!("[생방송 {:02}{m:02}{d:02}] ", y % 100),
-                },
-                None => "[생방송] ".to_string(),
-            }
-        }
-        ContentKind::Video => {
-            let date = meta
-                .live_open_date
-                .as_deref()
-                .and_then(parse_live_date)
-                .or_else(|| meta.publish_date.as_deref().and_then(parse_live_date));
-            match date {
-                Some((y, m, d)) => format!("[{:02}{m:02}{d:02}] ", y % 100),
-                None => String::new(),
-            }
-        }
-    };
+    let prefix = head_prefix(meta);
     let sep = if channel.is_empty() { "" } else { " - " };
 
     // 접두어·구분자·확장자를 뺀 나머지를 채널과 제목이 나눠 쓴다.
@@ -90,6 +64,38 @@ pub fn default_filename(meta: &ContentMeta, p: Platform) -> String {
     let sep = if channel.is_empty() { "" } else { sep };
 
     sanitize_filename(&format!("{prefix}{channel}{sep}{title}{EXT}"), p)
+}
+
+/// 종류별 이름 머리(끝 공백 포함): `[YYMMDD] `·`[클립] `·`[생방송 YYMMDD-HHMM] `. 날짜 없는 영상은 빈 문자열이다.
+fn head_prefix(meta: &ContentMeta) -> String {
+    match meta.kind {
+        ContentKind::Clip => "[클립] ".to_string(),
+        ContentKind::Live => {
+            // 같은 방송을 다시 받아도 이름이 겹치지 않도록 시작 시각(KST)까지 적는다.
+            let raw = meta.live_open_date.as_deref();
+            match raw.and_then(parse_live_date) {
+                Some((y, m, d)) => match raw.and_then(parse_live_time) {
+                    Some((hh, mm)) => {
+                        format!("[생방송 {:02}{m:02}{d:02}-{hh:02}{mm:02}] ", y % 100)
+                    }
+                    None => format!("[생방송 {:02}{m:02}{d:02}] ", y % 100),
+                },
+                None => "[생방송] ".to_string(),
+            }
+        }
+        ContentKind::Video => match meta_date(meta) {
+            Some((y, m, d)) => format!("[{:02}{m:02}{d:02}] ", y % 100),
+            None => String::new(),
+        },
+    }
+}
+
+/// 영상 날짜: 방송 시작일, 없거나 읽을 수 없으면 공개일.
+fn meta_date(meta: &ContentMeta) -> Option<(u16, u8, u8)> {
+    meta.live_open_date
+        .as_deref()
+        .and_then(parse_live_date)
+        .or_else(|| meta.publish_date.as_deref().and_then(parse_live_date))
 }
 
 /// 채널·제목 길이를 `avail` 바이트에 맞춘다. 제목부터 자르고, 그래도 넘치면 채널을 자른다.
@@ -334,6 +340,336 @@ pub fn sibling_path(video: &Path, ext: &str) -> PathBuf {
             video.with_file_name(n)
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// 파일명 템플릿(docs/design/features/filename-template.md, core.md 75)
+// ---------------------------------------------------------------------------
+
+/// 템플릿 문자열 길이 상한(바이트). **[잠정]** 근거 없는 수치다(ADR-0009 묶음). 가장 긴 고정 토큰(`{prefix}`
+/// 생방송 23바이트)을 더해도 제목 몫 `MIN_TITLE_BYTES`를 남기는 여유로 잡았다.
+pub const MAX_TEMPLATE_BYTES: usize = 100;
+
+/// 기본 템플릿. 설정에 템플릿이 없으면 `default_filename`을 그대로 쓰고, 이 문자열은 입력칸에 보이는 값이다.
+/// 이 템플릿을 엔진으로 만든 결과가 `default_filename`과 같다는 것은 테스트(`default_equivalence_*`)가 지킨다.
+pub const DEFAULT_TEMPLATE: &str = "{prefix} {channel} - {title}";
+
+/// 템플릿에 쓸 수 있는 토큰.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Token {
+    /// 제목(필수, 한 번)
+    Title,
+    /// 채널 이름
+    Channel,
+    /// `YYMMDD`
+    Date,
+    /// 영상 번호·클립 ID
+    No,
+    /// 종류별 머리: `[YYMMDD]`·`[클립]`·`[생방송 YYMMDD-HHMM]`
+    Prefix,
+}
+
+impl Token {
+    /// 템플릿에 쓰는 이름(중괄호 없이).
+    pub fn name(self) -> &'static str {
+        match self {
+            Token::Title => "title",
+            Token::Channel => "channel",
+            Token::Date => "date",
+            Token::No => "no",
+            Token::Prefix => "prefix",
+        }
+    }
+
+    fn from_name(s: &str) -> Option<Token> {
+        Some(match s {
+            "title" => Token::Title,
+            "channel" => Token::Channel,
+            "date" => Token::Date,
+            "no" => Token::No,
+            "prefix" => Token::Prefix,
+            _ => return None,
+        })
+    }
+}
+
+/// `parse_template`이 거부하는 이유. 하나만 돌려주며 순서는 짝 → 모르는 토큰 → 중복 → 경로 구분자 → 제목 → 길이다.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TemplateError {
+    /// `{` `}` 짝이 맞지 않거나 `{}`처럼 이름이 비었다
+    UnbalancedBrace,
+    /// 모르는 토큰 이름(대소문자를 구분한다)
+    UnknownToken(String),
+    /// 같은 토큰을 두 번 썼다
+    DuplicateToken(Token),
+    /// 리터럴에 `/`나 `\`가 있다(하위 폴더를 만들지 않는다)
+    PathSeparator,
+    /// `{title}`이 없다
+    MissingTitle,
+    /// `MAX_TEMPLATE_BYTES`를 넘는다
+    TooLong,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Piece {
+    Literal(String),
+    Token(Token),
+}
+
+/// 파싱된 파일명 템플릿. `parse_template`으로만 만든다.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FileNameTemplate {
+    pieces: Vec<Piece>,
+}
+
+/// 템플릿 문자열을 읽는다. 토큰은 `{title}` `{channel}` `{date}` `{no}` `{prefix}`다.
+pub fn parse_template(s: &str) -> Result<FileNameTemplate, TemplateError> {
+    use TemplateError::*;
+
+    // 1. 구조(짝). 이름이 있는 `{...}`와 리터럴로 나눈다.
+    enum Raw {
+        Lit(String),
+        Name(String),
+    }
+    let mut raw = Vec::new();
+    let mut lit = String::new();
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '{' => {
+                let mut name = String::new();
+                loop {
+                    match chars.next() {
+                        Some('}') => break,
+                        Some('{') | None => return Err(UnbalancedBrace),
+                        Some(c) => name.push(c),
+                    }
+                }
+                if name.is_empty() {
+                    return Err(UnbalancedBrace);
+                }
+                if !lit.is_empty() {
+                    raw.push(Raw::Lit(std::mem::take(&mut lit)));
+                }
+                raw.push(Raw::Name(name));
+            }
+            '}' => return Err(UnbalancedBrace),
+            c => lit.push(c),
+        }
+    }
+    if !lit.is_empty() {
+        raw.push(Raw::Lit(lit));
+    }
+
+    // 2. 모르는 토큰
+    let mut pieces = Vec::with_capacity(raw.len());
+    for r in raw {
+        pieces.push(match r {
+            Raw::Lit(l) => Piece::Literal(l),
+            Raw::Name(n) => match Token::from_name(&n) {
+                Some(t) => Piece::Token(t),
+                None => return Err(UnknownToken(n)),
+            },
+        });
+    }
+
+    // 3. 중복
+    let mut seen: Vec<Token> = Vec::new();
+    for p in &pieces {
+        if let Piece::Token(t) = p {
+            if seen.contains(t) {
+                return Err(DuplicateToken(*t));
+            }
+            seen.push(*t);
+        }
+    }
+
+    // 4. 경로 구분자
+    if pieces
+        .iter()
+        .any(|p| matches!(p, Piece::Literal(l) if l.contains(['/', '\\'])))
+    {
+        return Err(PathSeparator);
+    }
+
+    // 5. 제목
+    if !seen.contains(&Token::Title) {
+        return Err(MissingTitle);
+    }
+
+    // 6. 길이
+    if s.len() > MAX_TEMPLATE_BYTES {
+        return Err(TooLong);
+    }
+    Ok(FileNameTemplate { pieces })
+}
+
+/// 빈 토큰 옆에서 함께 지우는 구분 문자(공백 `-` `_` `.` `~` `,` `·`)뿐인 리터럴인가.
+fn is_separators(s: &str) -> bool {
+    !s.is_empty()
+        && s.chars()
+            .all(|c| matches!(c, ' ' | '-' | '_' | '.' | '~' | ',' | '·'))
+}
+
+/// 조립 결과의 한 조각. 제목·채널은 길이를 맞춘 뒤에 채운다.
+enum Out {
+    Text(String),
+    Title,
+    Channel,
+}
+
+/// 토큰 값(정리 전 아님: 문자 규칙은 적용했다). 빈 문자열은 "값 없음"이다.
+struct Values {
+    date: String,
+    no: String,
+    prefix: String,
+}
+
+impl Values {
+    fn new(meta: &ContentMeta, content: &ContentRef, p: Platform) -> Self {
+        let date = match meta.kind {
+            ContentKind::Video => meta_date(meta),
+            ContentKind::Live => meta.live_open_date.as_deref().and_then(parse_live_date),
+            ContentKind::Clip => None,
+        }
+        .map(|(y, m, d)| format!("{:02}{m:02}{d:02}", y % 100))
+        .unwrap_or_default();
+        let no = match content {
+            ContentRef::Video { video_no } => video_no.to_string(),
+            ContentRef::Clip { clip_id } => clean_component(clip_id, p),
+            ContentRef::Live { .. } => String::new(),
+        };
+        Values {
+            date,
+            no,
+            prefix: head_prefix(meta).trim_end().to_string(),
+        }
+    }
+}
+
+impl FileNameTemplate {
+    fn has(&self, t: Token) -> bool {
+        self.pieces.contains(&Piece::Token(t))
+    }
+
+    /// 조각을 순서대로 펼친다. 값이 빈 토큰은 빼고, 그 바로 뒤 리터럴이 구분 문자뿐이면 함께 뺀다.
+    /// 뒤에 값이 있는 토큰이 하나도 없으면(끝에 몰린 빈 토큰) 바로 앞 구분 문자 리터럴도 뺀다.
+    fn layout(&self, v: &Values, channel_empty: bool, p: Platform) -> Vec<Out> {
+        let is_empty = |t: Token| match t {
+            Token::Title => false,
+            Token::Channel => channel_empty,
+            Token::Date => v.date.is_empty(),
+            Token::No => v.no.is_empty(),
+            Token::Prefix => v.prefix.is_empty(),
+        };
+        let mut out: Vec<Out> = Vec::new();
+        let mut skip_next = false;
+        for (i, piece) in self.pieces.iter().enumerate() {
+            let skip = std::mem::take(&mut skip_next);
+            match piece {
+                Piece::Literal(l) => {
+                    if skip {
+                        continue;
+                    }
+                    let l = normalize_chars(l, p);
+                    if !l.is_empty() {
+                        out.push(Out::Text(l));
+                    }
+                }
+                Piece::Token(t) if is_empty(*t) => {
+                    if let Some(Piece::Literal(next)) = self.pieces.get(i + 1)
+                        && is_separators(&normalize_chars(next, p))
+                    {
+                        skip_next = true;
+                    }
+                    let tail = !self.pieces[i + 1..]
+                        .iter()
+                        .any(|q| matches!(q, Piece::Token(t) if !is_empty(*t)));
+                    if tail
+                        && let Some(Out::Text(last)) = out.last()
+                        && is_separators(last)
+                    {
+                        out.pop();
+                    }
+                }
+                Piece::Token(t) => {
+                    let text = match t {
+                        Token::Title => {
+                            out.push(Out::Title);
+                            continue;
+                        }
+                        Token::Channel => {
+                            out.push(Out::Channel);
+                            continue;
+                        }
+                        Token::Date => &v.date,
+                        Token::No => &v.no,
+                        Token::Prefix => &v.prefix,
+                    };
+                    out.push(Out::Text(text.clone()));
+                }
+            }
+        }
+        out
+    }
+}
+
+/// 템플릿으로 파일명을 만든다. 결과는 `sanitize_filename`을 거친 `….mp4`이고 200바이트 이하다
+/// (`default_filename`과 같은 계약). 기본 템플릿의 결과는 `default_filename`과 같다.
+///
+/// 순서: 토큰 값 → 빈 토큰 옆 구분 문자 제거 → 리터럴 문자 규칙 → 제목·채널 길이 맞추기(제목 먼저,
+/// `MIN_TITLE_BYTES` 바닥) → 채널이 비면 구분 문자 다시 제거 → `sanitize_filename`.
+pub fn render_filename(
+    t: &FileNameTemplate,
+    meta: &ContentMeta,
+    content: &ContentRef,
+    p: Platform,
+) -> String {
+    let v = Values::new(meta, content, p);
+    let mut title = trim_piece(&clean_component(&meta.title, p), p);
+    if title.is_empty() {
+        title.push('_');
+    }
+    // 템플릿에 없는 채널은 길이 몫에서도 뺀다.
+    let channel = if t.has(Token::Channel) {
+        clean_component(&meta.channel_name, p)
+    } else {
+        String::new()
+    };
+
+    let rest: usize = t
+        .layout(&v, channel.is_empty(), p)
+        .iter()
+        .map(|o| match o {
+            Out::Text(s) => s.len(),
+            _ => 0,
+        })
+        .sum();
+    let avail = MAX_FILENAME_BYTES.saturating_sub(rest + EXT.len());
+    let (mut channel, mut title) = fit_channel_title(&channel, &title, avail, p);
+    // 자른 제목이 다 지워지면 `_`로 채우고 그 1바이트를 채널에서 뺀다(`default_filename`과 같다).
+    if title.is_empty() {
+        title.push('_');
+        channel = trim_piece(truncate_utf8(&channel, avail.saturating_sub(1)), p);
+    }
+
+    let mut name = String::new();
+    for o in t.layout(&v, channel.is_empty(), p) {
+        match o {
+            Out::Text(s) => name.push_str(&s),
+            Out::Title => name.push_str(&title),
+            Out::Channel => name.push_str(&channel),
+        }
+    }
+    name.push_str(EXT);
+    let mut name = sanitize_filename(&name, p);
+    // `{no}`(클립 ID)처럼 줄일 수 없는 값이 길면 `output_path`와 같이 끝을 자른다.
+    if name.len() > MAX_FILENAME_BYTES {
+        let (base, ext) = name.split_at(name.len() - EXT.len());
+        let base = trim_piece(truncate_utf8(base, MAX_FILENAME_BYTES - EXT.len()), p);
+        name = sanitize_filename(&format!("{base}{ext}"), p);
+    }
+    name
 }
 
 #[cfg(test)]
@@ -893,5 +1229,371 @@ mod tests {
         let head = stem.strip_suffix(&range_suffix(&r)).unwrap();
         assert!(head.len() <= room);
         assert!(!head.ends_with(['.', ' ']), "{head:?}");
+    }
+
+    // ---------------------------------------------------------------------
+    // 파일명 템플릿(docs/design/features/filename-template.md)
+    // ---------------------------------------------------------------------
+
+    fn content_for(kind: ContentKind) -> ContentRef {
+        match kind {
+            ContentKind::Video => ContentRef::Video { video_no: 12345 },
+            ContentKind::Clip => ContentRef::Clip {
+                clip_id: "abcDEF123".into(),
+            },
+            ContentKind::Live => ContentRef::Live {
+                channel_id: "0".repeat(32),
+            },
+        }
+    }
+
+    fn render_default(m: &ContentMeta, p: Platform) -> String {
+        let t = parse_template(DEFAULT_TEMPLATE).unwrap();
+        render_filename(&t, m, &content_for(m.kind), p)
+    }
+
+    fn render_with(tpl: &str, m: &ContentMeta, p: Platform) -> String {
+        let t = parse_template(tpl).unwrap_or_else(|e| panic!("{tpl:?}: {e:?}"));
+        render_filename(&t, m, &content_for(m.kind), p)
+    }
+
+    /// 기본 템플릿 결과 = `default_filename`(T1). 세 OS 모두.
+    fn assert_default_equivalent(m: &ContentMeta) {
+        for p in ALL {
+            assert_eq!(render_default(m, p), default_filename(m, p), "{p:?} {m:?}");
+        }
+    }
+
+    #[test]
+    fn default_equivalence_existing_inputs() {
+        for rel in [
+            "testdata/hls/video_info.json",
+            "testdata/vod/video_info.json",
+            "testdata/clip/clip_playinfo.json",
+        ] {
+            assert_default_equivalent(&fixture_meta(rel));
+        }
+
+        // fallbacks
+        let mut m = meta(ContentKind::Video, "채널", "제목", None);
+        m.publish_date = Some("2026-03-04 05:06:07".into());
+        assert_default_equivalent(&m);
+        m.live_open_date = Some("garbage".into());
+        assert_default_equivalent(&m);
+        for m in [
+            meta(ContentKind::Video, "채널", "제목", None),
+            meta(ContentKind::Video, "  ", "제목", Some("2024-01-02")),
+            meta(ContentKind::Clip, "", "제목", None),
+            meta(ContentKind::Clip, "클립채널", "", None),
+            meta(ContentKind::Video, "a/b", "x: (y)?", Some("2024-01-02")),
+            meta(ContentKind::Video, "", "con", None),
+            // 생방송
+            meta(
+                ContentKind::Live,
+                "채널",
+                "제목",
+                Some("2026-01-02 12:34:56"),
+            ),
+            meta(ContentKind::Live, "채널", "제목", Some("2026-01-02")),
+            meta(ContentKind::Live, "채널", "제목", None),
+            // 길이
+            meta(
+                ContentKind::Video,
+                "채널",
+                &"가".repeat(100),
+                Some("2024-01-02"),
+            ),
+            meta(
+                ContentKind::Video,
+                "채널",
+                &format!("{}. 끝", "a".repeat(177)),
+                Some("2024-01-02"),
+            ),
+            meta(
+                ContentKind::Clip,
+                &"채".repeat(100),
+                &"가".repeat(100),
+                None,
+            ),
+            // Windows 끝 `.`
+            meta(ContentKind::Clip, &".".repeat(300), "제목", None),
+            meta(ContentKind::Video, "ch", "..", None),
+            meta(ContentKind::Video, "ch", "제목. .", None),
+        ] {
+            assert_default_equivalent(&m);
+        }
+
+        // 예산 경계
+        let long_ch = "a".repeat(300);
+        let cases = [
+            (long_ch.clone(), String::new()),
+            (long_ch.clone(), "..".to_string()),
+            (long_ch.clone(), "  ".to_string()),
+            (".".repeat(300), "제목".to_string()),
+            ("ch".to_string(), ". ".repeat(150)),
+            ("채".repeat(100), ". ".repeat(150)),
+            (long_ch.clone(), format!("{}x", ". ".repeat(150))),
+        ];
+        for kind in [ContentKind::Clip, ContentKind::Video] {
+            for (ch, title) in &cases {
+                assert_default_equivalent(&meta(kind, ch, title, Some("2024-01-02")));
+            }
+        }
+    }
+
+    /// 작은 값 전수: 채널·제목·날짜 조합, 세 종류, 세 OS.
+    #[test]
+    fn default_equivalence_exhaustive() {
+        let long = "a".repeat(300);
+        let long_ko = "가".repeat(100);
+        let vals: [&str; 9] = ["", " ", ".", "..", "a.", "con", "a b", &long, &long_ko];
+        for kind in [ContentKind::Video, ContentKind::Clip, ContentKind::Live] {
+            for ch in vals {
+                for title in vals {
+                    for live in [None, Some("2024-01-02"), Some("2024-01-02 12:34:56")] {
+                        assert_default_equivalent(&meta(kind, ch, title, live));
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn parse_template_errors() {
+        use TemplateError::*;
+        let cases: [(&str, TemplateError); 19] = [
+            ("{title", UnbalancedBrace),
+            ("title}", UnbalancedBrace),
+            ("{}", UnbalancedBrace),
+            ("{{title}}", UnbalancedBrace),
+            ("{title}}", UnbalancedBrace),
+            ("{ti{tle}", UnbalancedBrace),
+            ("{foo}{title", UnbalancedBrace), // 짝 오류가 모르는 토큰보다 먼저다
+            ("{foo} {title}", UnknownToken("foo".into())),
+            ("{Title}", UnknownToken("Title".into())),
+            ("{ title }", UnknownToken(" title ".into())),
+            ("{title}{title}", DuplicateToken(Token::Title)),
+            ("{date} {title} {date}", DuplicateToken(Token::Date)),
+            ("{date}/{title}", PathSeparator),
+            ("a\\{title}", PathSeparator),
+            ("{date}", MissingTitle),
+            ("", MissingTitle),
+            ("제목", MissingTitle),
+            ("{title}{title}/", DuplicateToken(Token::Title)), // 중복이 경로 구분자보다 먼저다
+            (
+                "{date}/{foo}",
+                UnknownToken("foo".into()), // 모르는 토큰이 경로 구분자보다 먼저다
+            ),
+        ];
+        for (s, want) in cases {
+            assert_eq!(parse_template(s).unwrap_err(), want, "{s:?}");
+        }
+        // 길이: 100바이트까지는 된다
+        let ok = format!("{{title}}{}", "a".repeat(100 - "{title}".len()));
+        assert_eq!(ok.len(), 100);
+        assert!(parse_template(&ok).is_ok());
+        let long = format!("{ok}a");
+        assert_eq!(parse_template(&long).unwrap_err(), TooLong);
+        // 길이는 바이트 기준이다
+        let ko = format!("{{title}}{}", "가".repeat(31)); // 7 + 93 = 100
+        assert!(parse_template(&ko).is_ok());
+        let ko = format!("{{title}}{}", "가".repeat(32)); // 103
+        assert_eq!(parse_template(&ko).unwrap_err(), TooLong);
+        // 길이 오류는 마지막 순서다(제목 없음이 먼저)
+        assert_eq!(parse_template(&"a".repeat(101)).unwrap_err(), MissingTitle);
+    }
+
+    #[test]
+    fn parse_template_accepts_all_tokens() {
+        let t = parse_template("{prefix} {channel} {date} {no} {title}").unwrap();
+        let m = meta(ContentKind::Video, "채널", "제목", Some("2024-01-02"));
+        assert_eq!(
+            render_filename(&t, &m, &ContentRef::Video { video_no: 7 }, Linux),
+            "[240102] 채널 240102 7 제목.mp4"
+        );
+        // 리터럴 중괄호는 쓸 수 없다(짝 오류). 다른 괄호는 된다.
+        assert!(parse_template("[{title}] ({channel})").is_ok());
+    }
+
+    #[test]
+    fn template_token_values() {
+        let p = Linux;
+        let v = meta(ContentKind::Video, "채널", "제목", Some("2024-01-02"));
+        let c = meta(ContentKind::Clip, "채널", "제목", None);
+        let l = meta(
+            ContentKind::Live,
+            "채널",
+            "제목",
+            Some("2026-01-02 12:34:56"),
+        );
+        assert_eq!(render_with("{date}_{title}", &v, p), "240102_제목.mp4");
+        assert_eq!(render_with("{no}_{title}", &v, p), "12345_제목.mp4");
+        assert_eq!(render_with("{no}_{title}", &c, p), "abcDEF123_제목.mp4");
+        assert_eq!(render_with("{prefix} {title}", &c, p), "[클립] 제목.mp4");
+        assert_eq!(
+            render_with("{prefix} {title}", &l, p),
+            "[생방송 260102-1234] 제목.mp4"
+        );
+        // 날짜: 영상은 방송 시작, 없으면 공개일. 생방송은 방송 시작. 클립은 없음
+        let mut v2 = meta(ContentKind::Video, "채널", "제목", None);
+        v2.publish_date = Some("2026-03-04 05:06:07".into());
+        assert_eq!(render_with("{date}_{title}", &v2, p), "260304_제목.mp4");
+        assert_eq!(render_with("{date}_{title}", &l, p), "260102_제목.mp4");
+        assert_eq!(render_with("{date}_{title}", &c, p), "제목.mp4");
+        // 생방송에는 번호가 없다
+        assert_eq!(render_with("{no}_{title}", &l, p), "제목.mp4");
+        // 이름 안의 `/`는 토큰 값에서 `_`가 된다
+        let m = meta(ContentKind::Video, "a/b", "c/d", None);
+        assert_eq!(render_with("{channel}-{title}", &m, p), "a_b-c_d.mp4");
+    }
+
+    /// T3: 값이 빈 토큰 옆의 구분 문자를 함께 지운다.
+    #[test]
+    fn template_empty_token_drops_separator() {
+        let p = Linux;
+        let clip = meta(ContentKind::Clip, "채널", "제목", None);
+        assert_eq!(render_with("{date} {title}", &clip, p), "제목.mp4");
+        assert_eq!(
+            render_with("{date}_{channel}_{title}", &clip, p),
+            "채널_제목.mp4"
+        );
+        let no_ch = meta(ContentKind::Video, "", "제목", Some("2024-01-02"));
+        assert_eq!(render_with("{channel} - {title}", &no_ch, p), "제목.mp4");
+        assert_eq!(render_with("{title} - {channel}", &no_ch, p), "제목.mp4");
+        assert_eq!(
+            render_with("{date}_{channel}_{title}", &no_ch, p),
+            "240102_제목.mp4"
+        );
+        // 끝의 빈 토큰이 둘이어도 앞 구분 문자가 남지 않는다
+        let live = meta(ContentKind::Live, "", "제목", None);
+        assert_eq!(render_with("{title}-{channel}-{no}", &live, p), "제목.mp4");
+        // 구분 문자가 아닌 리터럴은 남는다
+        assert_eq!(render_with("{title} ({channel})", &no_ch, p), "제목 ().mp4");
+        // 빈 토큰이 없으면 그대로
+        let v = meta(ContentKind::Video, "채널", "제목", Some("2024-01-02"));
+        assert_eq!(
+            render_with("{date}_{channel}_{title}", &v, p),
+            "240102_채널_제목.mp4"
+        );
+    }
+
+    /// T5: 날짜·번호가 뒤에 있어도 제목을 줄여 남긴다.
+    #[test]
+    fn template_length_keeps_trailing_tokens() {
+        let m = meta(
+            ContentKind::Video,
+            "채널",
+            &"a".repeat(300),
+            Some("2024-01-02"),
+        );
+        for p in ALL {
+            let name = render_with("{title} [{date}] {no}", &m, p);
+            assert!(name.len() <= MAX_FILENAME_BYTES, "{p:?} {}", name.len());
+            assert!(name.ends_with("[240102] 12345.mp4"), "{name}");
+            assert!(name.starts_with("aaaa"), "{name}");
+            assert_eq!(name.len(), MAX_FILENAME_BYTES);
+        }
+        // 채널과 제목이 함께 길면 제목을 먼저 줄이되 60바이트 밑으로는 줄이지 않는다
+        let m = meta(
+            ContentKind::Video,
+            &"채".repeat(100),
+            &"가".repeat(100),
+            Some("2024-01-02"),
+        );
+        let name = render_with("{title} {channel} {date}", &m, Linux);
+        assert!(name.len() <= MAX_FILENAME_BYTES);
+        assert_eq!(name.matches('가').count(), MIN_TITLE_BYTES / 3);
+        assert!(name.ends_with(" 240102.mp4"), "{name}");
+        // 채널이 템플릿에 없으면 제목만 줄인다
+        let name = render_with("{title}", &m, Linux);
+        assert_eq!(
+            name.len(),
+            MAX_FILENAME_BYTES - (MAX_FILENAME_BYTES - 4) % 3
+        );
+        assert!(!name.contains('채'));
+    }
+
+    /// 아주 긴 `{no}`(클립 ID)가 있어도 200바이트를 넘지 않는다.
+    #[test]
+    fn template_length_hard_cap() {
+        let m = meta(ContentKind::Clip, "채널", "제목", None);
+        let t = parse_template("{title} {no}").unwrap();
+        let huge = ContentRef::Clip {
+            clip_id: "x".repeat(400),
+        };
+        for p in ALL {
+            let name = render_filename(&t, &m, &huge, p);
+            assert!(name.len() <= MAX_FILENAME_BYTES, "{p:?} {}", name.len());
+            assert!(name.ends_with(".mp4"), "{name}");
+            assert_eq!(sanitize_filename(&name, p), name);
+        }
+    }
+
+    /// 템플릿 리터럴도 토큰 값 뒤에 같은 OS 정리를 거친다.
+    #[test]
+    fn template_literals_sanitized_per_os() {
+        let m = meta(ContentKind::Video, "채널", "제목", Some("2024-01-02"));
+        let t = "{date}: {channel}? {title}*";
+        assert_eq!(render_with(t, &m, Linux), "240102: 채널? 제목*.mp4");
+        assert_eq!(render_with(t, &m, MacOs), "240102_ 채널? 제목*.mp4");
+        assert_eq!(render_with(t, &m, Windows), "240102_ 채널_ 제목_.mp4");
+        // Windows 예약어
+        let m = meta(ContentKind::Video, "", "", None);
+        assert_eq!(render_with("{title}", &m, Windows), "_.mp4");
+        let m = meta(ContentKind::Video, "", "con", None);
+        assert_eq!(render_with("{title}", &m, Windows), "con_.mp4");
+        assert_eq!(render_with("{title}", &m, Linux), "con.mp4");
+        // 끝 `.`과 공백 (Windows만)
+        let m = meta(ContentKind::Video, "채널", "제목", None);
+        assert_eq!(render_with("{title}. ", &m, Windows), "제목.mp4");
+        assert_eq!(render_with("{title}..", &m, Linux), "제목...mp4");
+        // 제어 문자와 연속 공백
+        assert_eq!(
+            render_with("{title}\u{7}   {channel}", &m, Linux),
+            "제목 채널.mp4"
+        );
+    }
+
+    /// 어떤 템플릿·메타·OS든 결과는 멱등이고 200바이트 이하이며 `.mp4`로 끝난다.
+    #[test]
+    fn template_render_invariants() {
+        let long = "a".repeat(300);
+        let vals: [&str; 6] = ["", ".", "con", "a:b/c", "가 나", &long];
+        let tpls = [
+            "{title}",
+            "{prefix} {channel} - {title}",
+            "{date}_{channel}_{title}",
+            "{title}.{no}.",
+            "CON {title}",
+            "{channel}:{title}:{date}",
+        ];
+        for tpl in tpls {
+            let t = parse_template(tpl).unwrap();
+            for kind in [ContentKind::Video, ContentKind::Clip, ContentKind::Live] {
+                for ch in vals {
+                    for title in vals {
+                        let m = meta(kind, ch, title, Some("2024-01-02 03:04:05"));
+                        for p in ALL {
+                            let name = render_filename(&t, &m, &content_for(kind), p);
+                            assert!(name.len() <= MAX_FILENAME_BYTES, "{tpl:?} {p:?}");
+                            assert!(name.ends_with(".mp4"), "{name}");
+                            assert_eq!(sanitize_filename(&name, p), name, "{tpl:?} {p:?}");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// 구간 접미사는 템플릿 결과 뒤에 붙는다(T8).
+    #[test]
+    fn template_result_takes_range_suffix() {
+        let m = meta(ContentKind::Video, "채널", "제목", Some("2024-01-02"));
+        let name = render_with("{date}_{title}", &m, Linux);
+        let stem = name.strip_suffix(".mp4").unwrap();
+        assert_eq!(
+            range_stem(stem, &tr(0, Some(10_000)), Linux),
+            "240102_제목 (0.00.00~0.00.10)"
+        );
     }
 }

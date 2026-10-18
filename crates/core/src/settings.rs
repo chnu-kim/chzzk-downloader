@@ -90,6 +90,10 @@ pub struct UserSettings {
     /// 채팅 자막 형식(기본 `DEFAULT_CHAT_SUBTITLE`, [잠정] U2 결정 대기). 없는 키·모르는 값은 기본값으로 읽는다.
     #[serde(deserialize_with = "subtitle_or_default")]
     pub chat_subtitle: SubtitleFormat,
+    /// 파일 이름 템플릿(`naming::parse_template`이 읽는 문자열). `None`이면 기본 이름 규칙(`default_filename`)이다.
+    /// 없는 키·문자열이 아닌 값·읽을 수 없는 템플릿(손으로 고친 값, 되돌린 옛 앱이 모르는 토큰)은 `None`으로 읽는다.
+    #[serde(deserialize_with = "template_or_none")]
+    pub file_name_template: Option<String>,
 }
 
 /// 앱 안 글자 크기(×1 / ×1.3 / ×2.0, system/foundations.md §3.2). 직렬화 값은 `data-text-scale` 값과 같다
@@ -143,6 +147,7 @@ impl Default for UserSettings {
             keep_awake: true,
             save_chat: false,
             chat_subtitle: DEFAULT_CHAT_SUBTITLE,
+            file_name_template: None,
         }
     }
 }
@@ -186,6 +191,18 @@ where
     let v = Option::<serde_json::Value>::deserialize(d)?;
     Ok(v.and_then(|v| serde_json::from_value(v).ok())
         .unwrap_or(DEFAULT_CHAT_SUBTITLE))
+}
+
+/// 파일 이름 템플릿을 읽되 `null`·문자열이 아닌 값·파싱에 실패하는 문자열은 `None`(기본 이름).
+fn template_or_none<'de, D>(d: D) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let v = Option::<serde_json::Value>::deserialize(d)?;
+    Ok(match v {
+        Some(serde_json::Value::String(s)) if crate::naming::parse_template(&s).is_ok() => Some(s),
+        _ => None,
+    })
 }
 
 /// 불리언이 아닌 값(null·문자열·숫자)은 켜짐(`true`)으로 읽는다. 손으로 고친 값 하나로 파일 전체가 깨지지 않게 한다.
@@ -720,6 +737,43 @@ mod tests {
         let text = String::from_utf8(bytes.clone()).unwrap();
         assert!(text.contains(r#""saveChat":true"#), "{text}");
         assert!(text.contains(r#""chatSubtitle":"none""#), "{text}");
+        assert_eq!(parse(&bytes).unwrap(), v);
+    }
+
+    /// 파일명 템플릿(core.md 75): 없는 키·`null`·문자열이 아닌 값·읽을 수 없는 템플릿은 `None`(기본 이름).
+    /// 나머지 키는 남고, 올바른 템플릿은 그대로 왕복한다.
+    #[test]
+    fn file_name_template_lenient() {
+        assert_eq!(UserSettings::default().file_name_template, None);
+        for (raw, want) in [
+            ("", None),
+            (r#","fileNameTemplate":null"#, None),
+            (r#","fileNameTemplate":3"#, None),
+            (r#","fileNameTemplate":["{title}"]"#, None),
+            (r#","fileNameTemplate":"""#, None),
+            (r#","fileNameTemplate":"{foo}""#, None),
+            (r#","fileNameTemplate":"{title""#, None),
+            (r#","fileNameTemplate":"{date}/{title}""#, None),
+            (
+                r#","fileNameTemplate":"{date}_{title}""#,
+                Some("{date}_{title}"),
+            ),
+        ] {
+            let s = parse(format!(r#"{{"downloadFolder":"/x"{raw}}}"#).as_bytes())
+                .unwrap_or_else(|e| panic!("{raw}: {e}"));
+            assert_eq!(s.file_name_template.as_deref(), want, "{raw}");
+            assert_eq!(s.download_folder.as_deref(), Some(Path::new("/x")), "{raw}");
+        }
+        let v = UserSettings {
+            file_name_template: Some("{date}_{title}".into()),
+            ..Default::default()
+        };
+        let bytes = serde_json::to_vec(&v).unwrap();
+        let text = String::from_utf8(bytes.clone()).unwrap();
+        assert!(
+            text.contains(r#""fileNameTemplate":"{date}_{title}""#),
+            "{text}"
+        );
         assert_eq!(parse(&bytes).unwrap(), v);
     }
 

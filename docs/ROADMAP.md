@@ -175,7 +175,7 @@
 - M-CLI-3 (대기) 실제 계정으로 `login` → 본인 영상 `download` + 남의 영상 거부(코드 4) → 그 뒤 GUI를 열면 로그인되어 있음(세션 공유)
 - M-CLI-4 (대기) GUI를 연 채로 CLI(코드 5와 안내), CLI가 받는 중·`login` 기다리는 중에 GUI를 열면 "명령줄에서 받는 중이에요" 대화상자(`login` 기다림에도 그 문구가 어색하지 않은지)
 - M-CLI-5 (대기) Windows에서 앞 버전 설치본을 GUI 업데이트로 올린 뒤 `chzzk-cli.exe status`의 버전이 새 버전(설치기가 콘솔 실행 파일도 바꾸는지). 업데이트 중 `chzzk-cli.exe`가 떠 있을 때 덮어쓰기에서 막히는지는 일부러 해 보지 않는다(잠금이 대부분 막는다)
-- 크기 기록(로컬 macOS 측정, CI 값이 아니다): CLI를 더하기 전 master(오디오 #168 포함, `e5645db`) 릴리스 빌드 `size.binary.darwin` 26,470,272 · dmg 8,625,954 → 이 브랜치(CLI-1~6 + master 합침) 값은 CI 첫 macOS 번들 실행에서 `ratchet.mjs write --from-run`으로 올린다(RATCHET_LOG에 키·이유). Windows는 `size.binary.windows-cli`를 채우고 windows-setup·msi를 올린다
+- 크기 기록(로컬 macOS 측정, CI 값이 아니다): CLI를 더하기 전 master(오디오 #168 포함, `e5645db`) 릴리스 빌드 `size.binary.darwin` 26,470,272 · dmg 8,625,954 → 이 브랜치(CLI-1~6 + master 합침) 27,039,040 · 8,815,877이다(CLI 몫 약 +0.57MB·+2.2%). 기준 `size.binary.darwin` 26,112,320·`size.bundle.darwin-dmg` 8,473,169 대비 +3.55%·+4.04%라 허용 3%를 넘는다(master 쌓임분 포함). macOS·Windows 번들은 PR에서 돌지 않으므로 master 첫 실행의 CI 측정값을 `ratchet.mjs write --from-run`으로 올리고 RATCHET_LOG에 키·이유를 적는다. Windows는 `size.binary.windows-cli`를 채우고 windows-setup·msi를 올린다
 
 ### 기능 ③·④ 사용자 실측(**보류 2026-10-18**, 도구 2026-10-16, 도구 PR #114 머지. 두 기능을 보류해 아래 (대기)는 다시 시작할 때까지 하지 않는다)
 

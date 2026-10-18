@@ -753,6 +753,35 @@ mod tests {
         p
     }
 
+    /// 잠금을 쥔 핸들(`with_file_blocking`의 복제 핸들)로 `.part` 전체를 읽는다. Windows의 `try_lock`(`LockFileEx`,
+    /// 파일 전체 범위)은 강제 잠금이라, 잠긴 동안 경로로 새로 열어 읽으면 `ERROR_LOCK_VIOLATION`(33)이 난다.
+    async fn read_locked_part(p: &mut PartFile) -> Vec<u8> {
+        p.with_file_blocking(|f| {
+            use std::io::{Read, Seek, SeekFrom};
+            let mut b = Vec::new();
+            f.seek(SeekFrom::Start(0))
+                .and_then(|_| f.read_to_end(&mut b))
+                .map_err(|e| Error::Io {
+                    op: "read",
+                    path: PathBuf::new(),
+                    source: e,
+                })?;
+            Ok(b)
+        })
+        .await
+        .unwrap()
+    }
+
+    /// Windows 강제 잠금 흉내(Unix): `.part`의 권한을 없애 경로로 새로 여는 핸들은 읽지 못하게 한다. 이미 열린
+    /// 잠금 핸들은 그대로 읽고 쓴다. 다시 쓰기가 `.part`를 새로 열어 읽으면 실패해 원본으로 마무리된다.
+    /// root처럼 권한을 무시하면 흉내가 되지 않아 `false`다.
+    #[cfg(unix)]
+    fn deny_other_opens(path: &Path) -> bool {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o000)).unwrap();
+        std::fs::File::open(path).is_err()
+    }
+
     /// `n`바이트까지 쓰고 그다음 쓰기는 `fail`로 실패하는 임시 파일. `sync_fails`면 쓰기는 되고 sync가 실패한다.
     struct FailingTemp {
         f: std::fs::File,
@@ -848,11 +877,7 @@ mod tests {
             })
             .await;
             assert_eq!(r, None, "{name}");
-            assert_eq!(
-                std::fs::read(p.path()).unwrap(),
-                PD,
-                "{name}: .part는 그대로"
-            );
+            assert_eq!(read_locked_part(&mut p).await, PD, "{name}: .part는 그대로");
             assert!(
                 !part::tag_temp_path(&out).exists(),
                 "{name}: 임시 파일을 지웠다"
@@ -889,12 +914,19 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let out = dir.path().join("a.mp4");
         let mut p = pd_part(&out).await;
+        // 다시 쓰기는 잠금 핸들로만 `.part`를 읽는다(Windows에서 다른 핸들은 잠긴 범위를 읽지 못한다)
+        #[cfg(unix)]
+        let denied = deny_other_opens(p.path());
         let len = tag_pd_part(&mut p, udta(), |t| std::fs::File::create(t))
             .await
-            .unwrap();
+            .expect("잠금 핸들로 읽어 다시 쓴다");
+        #[cfg(unix)]
+        if denied {
+            assert!(std::fs::File::open(p.path()).is_err(), "흉내가 유지된다");
+        }
         let tmp = part::tag_temp_path(&out);
         assert_eq!(std::fs::metadata(&tmp).unwrap().len(), len);
-        assert_eq!(std::fs::read(p.path()).unwrap(), PD, ".part는 그대로");
+        assert_eq!(read_locked_part(&mut p).await, PD, ".part는 그대로");
         assert_eq!(p.committed(), PD.len() as u64);
         let Finalized::Moved(path) = p
             .finalize_rewritten(DuplicatePolicy::Overwrite)

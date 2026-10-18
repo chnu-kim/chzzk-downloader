@@ -23,6 +23,7 @@ const INFO_PATH: &str = "/service/v2/videos/9000001";
 
 fn request(out: &Path, concurrency: u8) -> DownloadRequest {
     DownloadRequest {
+        embed_metadata: false,
         content: ContentRef::Video { video_no: HLS_NO },
         quality_id: "144p".into(),
         expected_kind: PlaybackKind::LiveRewindHls,
@@ -1690,4 +1691,166 @@ async fn range_converted_then_skipped_resumes_without_refetch() {
     }
     assert_eq!(std::fs::read(&out).unwrap(), converted);
     assert!(!part.exists() && !sidecar.exists());
+}
+
+// ---- mp4 메타데이터(`embed_metadata`, mp4-metadata.md §6.1·§13.4) ----
+
+const COVER_PATH: &str = "/thumb/cover.jpg";
+
+/// info의 표지 주소를 mock 서버로 돌리고 표지를 mount한다.
+async fn mount_info_with_cover(server: &MockServer, prefix: &str) {
+    let master = format!("{}{prefix}/master.m3u8?hdnts=st=1~hmac=x", server.uri());
+    let body = common::with_thumbnail(
+        &hls_info(&master),
+        Some(&format!("{}{COVER_PATH}", server.uri())),
+    );
+    Mock::given(method("GET"))
+        .and(path(INFO_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
+        .mount(server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(COVER_PATH))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_bytes(fixture("testdata/synthetic/thumb.png")),
+        )
+        .mount(server)
+        .await;
+}
+
+fn meta_cfg(server: &MockServer) -> ClientConfig {
+    ClientConfig {
+        allow_loopback_http_images: true,
+        ..config(server)
+    }
+}
+
+fn ilst_last(b: &[u8]) -> Vec<(String, u32, Vec<u8>)> {
+    mp4::ilst_items(mp4::find_path_last(b, &["moov", "udta", "meta", "ilst"]).unwrap()).unwrap()
+}
+
+/// 전체 받기: 변환이 만든 새 moov에 태그와 표지가 함께 들어가고, moov는 하나뿐이다.
+#[tokio::test]
+async fn full_download_gets_tags_and_cover_in_the_converted_moov() {
+    let server = MockServer::start().await;
+    mount_info_with_cover(&server, "/g0").await;
+    mount_real_hls(&server, "/g0").await;
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_path(&dir);
+    let req = DownloadRequest {
+        embed_metadata: true,
+        ..request(&out, 2)
+    };
+    let r = run(meta_cfg(&server), req, CancellationToken::new(), &|_| {})
+        .await
+        .unwrap();
+    assert!(matches!(r, DownloadOutcome::Completed { .. }), "{r:?}");
+    let b = std::fs::read(&out).unwrap();
+    mp4::assert_flat_mp4(&b);
+    assert_eq!(mp4::top_moov_count(&b), 1);
+    let items = ilst_last(&b);
+    let kinds: Vec<&str> = items.iter().map(|i| i.0.as_str()).collect();
+    assert_eq!(kinds, ["©nam", "©ART", "©day", "©cmt", "covr"]);
+    assert_eq!(items[0].2, "테스트 다시보기".as_bytes());
+    assert_eq!(items[1].2, "테스트채널".as_bytes());
+    assert_eq!(items[2].2, b"2026-01-02");
+    assert_eq!(items[3].2, b"https://chzzk.naver.com/video/9000001");
+    assert_eq!(
+        (items[4].1, items[4].2.clone()),
+        (14, fixture("testdata/synthetic/thumb.png"))
+    );
+    // 표지 요청에는 쿠키가 없다
+    let cover = requests(&server, COVER_PATH).await;
+    assert_eq!(cover.len(), 1);
+    assert!(cover[0].headers.get("cookie").is_none());
+}
+
+/// 끄면 지금까지와 같다: 태그도 표지 요청도 없다.
+#[tokio::test]
+async fn full_download_with_metadata_off_has_no_udta() {
+    let server = MockServer::start().await;
+    mount_info_with_cover(&server, "/g0").await;
+    mount_real_hls(&server, "/g0").await;
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_path(&dir);
+    run(
+        meta_cfg(&server),
+        request(&out, 2),
+        CancellationToken::new(),
+        &|_| {},
+    )
+    .await
+    .unwrap();
+    let b = std::fs::read(&out).unwrap();
+    mp4::assert_flat_mp4(&b);
+    assert!(mp4::find_path_last(&b, &["moov", "udta"]).is_none());
+    assert!(requests(&server, COVER_PATH).await.is_empty());
+}
+
+/// 구간 받기: 제목 뒤에 파일 이름과 같은 접미사가 붙는다.
+#[tokio::test]
+async fn range_download_name_has_the_range_suffix() {
+    let server = MockServer::start().await;
+    mount_info_with_cover(&server, "/g0").await;
+    mount_real_hls(&server, "/g0").await;
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_path(&dir);
+    let req = DownloadRequest {
+        embed_metadata: true,
+        ..range_request(&out, 2, 4000, Some(10000))
+    };
+    run(meta_cfg(&server), req, CancellationToken::new(), &|_| {})
+        .await
+        .unwrap();
+    let b = std::fs::read(&out).unwrap();
+    mp4::assert_flat_mp4(&b);
+    let items = ilst_last(&b);
+    assert_eq!(items[0].0, "©nam");
+    assert_eq!(items[0].2, "테스트 다시보기 (0.00.04~0.00.10)".as_bytes());
+}
+
+/// 변환(+태그) 뒤 rename 전에 끊기면(`Skipped`) 다음 실행이 조각을 다시 받지 않고, 같은 결과로 마무리한다.
+#[tokio::test]
+async fn tagged_full_then_skipped_resumes_without_refetch() {
+    let server = MockServer::start().await;
+    mount_info_with_cover(&server, "/g0").await;
+    let n = mount_real_hls(&server, "/g0").await;
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_path(&dir);
+    let (part, sidecar) = part_files(&out);
+
+    let out2 = out.clone();
+    let cb = move |p: Progress| {
+        if p.phase == Phase::Finalizing {
+            std::fs::write(&out2, b"someone else").unwrap();
+        }
+    };
+    let req = DownloadRequest {
+        embed_metadata: true,
+        on_existing: DuplicatePolicy::Skip,
+        ..request(&out, 2)
+    };
+    let r = run(meta_cfg(&server), req, CancellationToken::new(), &cb)
+        .await
+        .unwrap();
+    assert!(matches!(r, DownloadOutcome::Skipped { .. }), "{r:?}");
+    let converted = std::fs::read(&part).unwrap();
+    mp4::assert_flat_mp4(&converted);
+    assert_eq!(ilst_last(&converted).len(), 5);
+    assert!(sidecar.exists());
+
+    std::fs::remove_file(&out).unwrap();
+    let req = DownloadRequest {
+        embed_metadata: true,
+        ..request(&out, 2)
+    };
+    let r = run(meta_cfg(&server), req, CancellationToken::new(), &|_| {})
+        .await
+        .unwrap();
+    assert!(matches!(r, DownloadOutcome::Completed { .. }), "{r:?}");
+    for i in 0..n {
+        assert_eq!(seg_count(&server, "/g0", i).await, 1, "seg{i}");
+    }
+    // 이미 일반 mp4라 다시 쓰지 않는다: 첫 실행이 넣은 태그가 그대로다
+    assert_eq!(std::fs::read(&out).unwrap(), converted);
 }

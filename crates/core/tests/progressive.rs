@@ -2,6 +2,8 @@
 //! 네트워크는 wiremock과 로컬 raw TCP뿐이다.
 
 mod common;
+#[path = "support/mp4.rs"]
+mod mp4;
 
 use chzzk_core::download::part::{PartFile, ProgressiveState, Sidecar};
 use chzzk_core::{
@@ -26,6 +28,7 @@ fn content() -> ContentRef {
 
 fn request(out: &Path) -> DownloadRequest {
     DownloadRequest {
+        embed_metadata: false,
         content: content(),
         quality_id: QUALITY.into(),
         expected_kind: PlaybackKind::Progressive,
@@ -849,4 +852,493 @@ async fn fragmented_body_is_not_converted() {
     assert!(matches!(r, DownloadOutcome::Completed { .. }), "{r:?}");
     assert_eq!(std::fs::read(&out).unwrap(), body);
     assert_no_partial(&out);
+}
+
+// ---- mp4 메타데이터(`embed_metadata`, mp4-metadata.md §6.2·§13.4) ----
+
+const COVER_PATH: &str = "/thumb/cover.jpg";
+
+fn pd_bytes() -> Vec<u8> {
+    fixture("testdata/vod/pd_faststart.mp4")
+}
+
+fn meta_request(out: &Path) -> DownloadRequest {
+    DownloadRequest {
+        embed_metadata: true,
+        ..request(out)
+    }
+}
+
+/// 표지 주소를 mock 서버로 돌린 VOD info + MPD + PD 미디어(`pd_faststart.mp4`).
+async fn setup_meta(server: &MockServer, thumb_url: Option<&str>) {
+    let info = common::with_thumbnail(&fixture("testdata/vod/video_info.json"), thumb_url);
+    Mock::given(method("GET"))
+        .and(path(format!("/service/v2/videos/{VOD_NO}")))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(info, "application/json"))
+        .mount(server)
+        .await;
+    mount_mpd(server, &format!("{}{MEDIA_PATH}", server.uri()), None).await;
+    Mock::given(method("GET"))
+        .and(path(MEDIA_PATH))
+        .respond_with(RangeBody(pd_bytes()))
+        .mount(server)
+        .await;
+}
+
+async fn mount_cover(server: &MockServer, body: Vec<u8>) {
+    Mock::given(method("GET"))
+        .and(path(COVER_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(body))
+        .mount(server)
+        .await;
+}
+
+/// 표지를 루프백 http로 받게 하고, 쿠키를 켠 채(미디어에도 보내는 스위치까지) 설정한다.
+fn meta_config(server: &MockServer) -> ClientConfig {
+    ClientConfig {
+        cookies: Some(NaverCookies::new("aut", "ses")),
+        cookies_on_media: true,
+        allow_loopback_http_images: true,
+        ..config(server)
+    }
+}
+
+fn ilst_of(b: &[u8]) -> Vec<(String, u32, Vec<u8>)> {
+    mp4::ilst_items(mp4::find_path_last(b, &["moov", "udta", "meta", "ilst"]).unwrap()).unwrap()
+}
+
+fn kinds(items: &[(String, u32, Vec<u8>)]) -> Vec<&str> {
+    items.iter().map(|(k, _, _)| k.as_str()).collect()
+}
+
+fn box_kinds(b: &[u8]) -> Vec<String> {
+    mp4::top_boxes(b).into_iter().map(|(k, _)| k).collect()
+}
+
+/// 켜면 새 moov가 끝에 붙고 옛 moov는 free가 된다. 표지 요청에는 쿠키가 없다.
+#[tokio::test]
+async fn pd_metadata_moov_at_end() {
+    let server = MockServer::start().await;
+    setup_meta(&server, Some(&format!("{}{COVER_PATH}", server.uri()))).await;
+    mount_cover(&server, fixture("testdata/synthetic/thumb.jpg")).await;
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_path(&dir);
+    let events = Events::default();
+    let cb = events.callback();
+    let r = Chzzk::new(meta_config(&server))
+        .unwrap()
+        .download(meta_request(&out), CancellationToken::new(), &cb)
+        .await
+        .unwrap();
+    let b = std::fs::read(&out).unwrap();
+    assert_eq!(
+        r,
+        DownloadOutcome::Completed {
+            path: out.clone(),
+            bytes: b.len() as u64,
+            resumed_from: 0,
+            live: None,
+        }
+    );
+    assert_eq!(box_kinds(&b), ["ftyp", "free", "free", "mdat", "moov"]);
+    let orig = pd_bytes();
+    assert!(b.len() > orig.len());
+    assert_eq!(mp4::mdat_payloads(&b), mp4::mdat_payloads(&orig));
+    // mdat까지의 앞부분은 옛 moov의 종류 4바이트(moov→free)만 다르다
+    let before_mdat = mp4::top_boxes(&orig)
+        .into_iter()
+        .find(|(k, _)| k == "mdat")
+        .unwrap()
+        .1
+        .end;
+    let changed = orig[..before_mdat]
+        .iter()
+        .zip(&b)
+        .filter(|(a, b)| a != b)
+        .count();
+    assert_eq!(changed, 4, "m→f, o→r, o→e, v→e");
+    let items = ilst_of(&b);
+    assert_eq!(kinds(&items), ["©nam", "©ART", "©day", "©cmt", "covr"]);
+    assert_eq!(items[0].2, "가상 일반 VOD 제목 (괄호) 테스트".as_bytes());
+    assert_eq!(items[1].2, "가상채널".as_bytes());
+    assert_eq!(items[2].2, b"2026-01-01");
+    assert_eq!(
+        items[3].2,
+        format!("https://chzzk.naver.com/video/{VOD_NO}").as_bytes()
+    );
+    assert_eq!(
+        (items[4].1, items[4].2.clone()),
+        (13, fixture("testdata/synthetic/thumb.jpg"))
+    );
+    assert_no_partial(&out);
+
+    // 표지 요청에는 쿠키가 없고(`cookies_on_media`가 켜져 있어도), 미디어에는 있다
+    let cover = media_requests(&server, COVER_PATH).await;
+    assert_eq!(cover.len(), 1);
+    assert_eq!(header(&cover[0], "cookie"), None);
+    assert_eq!(header(&cover[0], "accept"), Some("image/jpeg, image/png"));
+    assert!(header(&media_requests(&server, MEDIA_PATH).await[0], "cookie").is_some());
+}
+
+#[tokio::test]
+async fn pd_metadata_off_is_byte_identical() {
+    let server = MockServer::start().await;
+    setup_meta(&server, Some(&format!("{}{COVER_PATH}", server.uri()))).await;
+    mount_cover(&server, fixture("testdata/synthetic/thumb.jpg")).await;
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_path(&dir);
+    download(meta_config(&server), &out, &Events::default())
+        .await
+        .unwrap();
+    assert_eq!(std::fs::read(&out).unwrap(), pd_bytes());
+    assert!(
+        media_requests(&server, COVER_PATH).await.is_empty(),
+        "끄면 표지도 받지 않는다"
+    );
+    assert_no_partial(&out);
+}
+
+/// 썸네일 주소가 없어도(키 없음) 글자 태그는 들어간다.
+#[tokio::test]
+async fn pd_metadata_without_thumbnail_url_has_text_tags_only() {
+    let server = MockServer::start().await;
+    setup_meta(&server, None).await;
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_path(&dir);
+    Chzzk::new(meta_config(&server))
+        .unwrap()
+        .download(meta_request(&out), CancellationToken::new(), &|_| {})
+        .await
+        .unwrap();
+    let b = std::fs::read(&out).unwrap();
+    assert_eq!(kinds(&ilst_of(&b)), ["©nam", "©ART", "©day", "©cmt"]);
+}
+
+/// 표지를 못 받아도 받기는 `Completed`이고 covr만 빠진다. 재시도는 없다.
+#[tokio::test]
+async fn cover_failures_do_not_fail_the_download() {
+    let big = {
+        let mut v = vec![0xff, 0xd8, 0xff];
+        v.resize(2 * 1024 * 1024 + 1, 0);
+        v
+    };
+    // (이름, 표지 응답, 표지 주소를 바꾸는 법, 설정 변경, 표지 요청 수)
+    type Case = (
+        &'static str,
+        Option<ResponseTemplate>,
+        Option<&'static str>,
+        fn(&mut ClientConfig),
+        usize,
+    );
+    let cases: Vec<Case> = vec![
+        ("404", Some(ResponseTemplate::new(404)), None, |_| {}, 1),
+        ("403", Some(ResponseTemplate::new(403)), None, |_| {}, 1),
+        (
+            "webp",
+            Some(
+                ResponseTemplate::new(200).set_body_bytes(fixture("testdata/synthetic/thumb.webp")),
+            ),
+            None,
+            |_| {},
+            1,
+        ),
+        (
+            "html",
+            Some(ResponseTemplate::new(200).set_body_string("<html>not an image</html>")),
+            None,
+            |_| {},
+            1,
+        ),
+        (
+            "2MiB+1",
+            Some(ResponseTemplate::new(200).set_body_bytes(big)),
+            None,
+            |_| {},
+            1,
+        ),
+        (
+            "timeout",
+            Some(
+                ResponseTemplate::new(200)
+                    .set_body_bytes(fixture("testdata/synthetic/thumb.jpg"))
+                    .set_delay(std::time::Duration::from_secs(5)),
+            ),
+            None,
+            |c| c.image_timeout = std::time::Duration::from_millis(150),
+            1,
+        ),
+        // 틀 자리표시자가 남은 주소와 http 주소는 요청하지 않는다
+        ("placeholder", None, Some("/live/{type}.jpg"), |_| {}, 0),
+        (
+            "http",
+            None,
+            None,
+            |c| c.allow_loopback_http_images = false,
+            0,
+        ),
+    ];
+    for (name, resp, alt_path, tweak, want_requests) in cases {
+        let server = MockServer::start().await;
+        let thumb_path = alt_path.unwrap_or(COVER_PATH);
+        setup_meta(&server, Some(&format!("{}{thumb_path}", server.uri()))).await;
+        if let Some(r) = resp {
+            Mock::given(method("GET"))
+                .and(path(COVER_PATH))
+                .respond_with(r)
+                .mount(&server)
+                .await;
+        }
+        let mut cfg = meta_config(&server);
+        tweak(&mut cfg);
+        let dir = tempfile::tempdir().unwrap();
+        let out = out_path(&dir);
+        let r = Chzzk::new(cfg)
+            .unwrap()
+            .download(meta_request(&out), CancellationToken::new(), &|_| {})
+            .await;
+        assert!(
+            matches!(r, Ok(DownloadOutcome::Completed { .. })),
+            "{name}: {r:?}"
+        );
+        let b = std::fs::read(&out).unwrap();
+        assert_eq!(
+            kinds(&ilst_of(&b)),
+            ["©nam", "©ART", "©day", "©cmt"],
+            "{name}"
+        );
+        assert_eq!(
+            mp4::mdat_payloads(&b),
+            mp4::mdat_payloads(&pd_bytes()),
+            "{name}"
+        );
+        let all = server.received_requests().await.unwrap();
+        let n = all
+            .iter()
+            .filter(|q| q.url.path().starts_with("/thumb") || q.url.path().starts_with("/live"))
+            .count();
+        assert_eq!(n, want_requests, "{name}: 표지 요청 수");
+        assert_no_partial(&out);
+    }
+}
+
+/// 표지 주소의 서명 같은 쿼리는 태그·오류·`Debug`에 남지 않는다.
+#[tokio::test]
+async fn signed_thumbnail_query_stays_out_of_tags() {
+    let server = MockServer::start().await;
+    setup_meta(
+        &server,
+        Some(&format!(
+            "{}{COVER_PATH}?hdnts=SECRET&_lsu_sa_=SECRET",
+            server.uri()
+        )),
+    )
+    .await;
+    mount_cover(&server, fixture("testdata/synthetic/thumb.jpg")).await;
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_path(&dir);
+    let chzzk = Chzzk::new(meta_config(&server)).unwrap();
+    let resolved = chzzk.resolve(&content()).await.unwrap();
+    assert!(resolved.thumbnail_url.is_some());
+    assert!(!format!("{resolved:?}").contains("SECRET"));
+    chzzk
+        .download(meta_request(&out), CancellationToken::new(), &|_| {})
+        .await
+        .unwrap();
+    let b = std::fs::read(&out).unwrap();
+    // 요청에는 쿼리가 실렸지만(양성 대조) 파일 안 글자에는 없다
+    let cover = media_requests(&server, COVER_PATH).await;
+    assert!(cover[0].url.query().unwrap().contains("SECRET"));
+    for (k, _, v) in ilst_of(&b) {
+        if k != "covr" {
+            assert!(!String::from_utf8_lossy(&v).contains("SECRET"), "{k}");
+        }
+    }
+    assert!(!b.windows(6).any(|w| w == b"SECRET"));
+}
+
+/// 마무리에서 최종 경로에 파일이 생겨 `Skipped`로 끝난 뒤, 같은 요청을 다시 부르면 처음부터 받지 않고 마무리한다.
+/// 태그 뒤 checkpoint를 하지 않아(`committed_len`이 원래 크기) 416이 `SourceChanged`가 되지 않는다.
+#[tokio::test]
+async fn pd_tagged_then_skipped_resumes_without_refetch() {
+    let server = MockServer::start().await;
+    setup_meta(&server, Some(&format!("{}{COVER_PATH}", server.uri()))).await;
+    mount_cover(&server, fixture("testdata/synthetic/thumb.jpg")).await;
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_path(&dir);
+    let (part, sidecar) = part_files(&out);
+    let chzzk = Chzzk::new(meta_config(&server)).unwrap();
+
+    let out2 = out.clone();
+    let cb = move |p: chzzk_core::Progress| {
+        if p.phase == Phase::Finalizing {
+            std::fs::create_dir_all(out2.parent().unwrap()).unwrap();
+            std::fs::write(&out2, b"someone else").unwrap();
+        }
+    };
+    let req = DownloadRequest {
+        on_existing: DuplicatePolicy::Skip,
+        ..meta_request(&out)
+    };
+    let r = chzzk
+        .download(req, CancellationToken::new(), &cb)
+        .await
+        .unwrap();
+    assert!(matches!(r, DownloadOutcome::Skipped { .. }), "{r:?}");
+    let tagged = std::fs::read(&part).unwrap();
+    assert_eq!(box_kinds(&tagged).last().map(String::as_str), Some("moov"));
+    assert!(sidecar.exists());
+    // sidecar는 원래 PD 크기를 가리킨다(태그 뒤 checkpoint 없음)
+    let sc: serde_json::Value = serde_json::from_slice(&std::fs::read(&sidecar).unwrap()).unwrap();
+    assert_eq!(
+        sc["committedLen"].as_u64(),
+        Some(pd_bytes().len() as u64),
+        "{sc}"
+    );
+
+    std::fs::remove_file(&out).unwrap();
+    let r = chzzk
+        .download(meta_request(&out), CancellationToken::new(), &|_| {})
+        .await
+        .unwrap();
+    assert!(matches!(r, DownloadOutcome::Completed { .. }), "{r:?}");
+    // 미디어 GET은 두 번: 처음 200 전체, 다시 부를 때 416 한 번(전체를 다시 받지 않는다)
+    let media = media_requests(&server, MEDIA_PATH).await;
+    assert_eq!(media.len(), 2);
+    assert_eq!(header(&media[0], "range"), None);
+    assert_eq!(
+        header(&media[1], "range"),
+        Some(&*format!("bytes={}-", pd_bytes().len()))
+    );
+    assert_eq!(std::fs::read(&out).unwrap(), tagged);
+    assert_no_partial(&out);
+}
+
+/// 옛 moov를 free로 바꾼 직후 죽은 `.part`(새 moov는 resume이 잘라 냈다)를 이어받는 실행:
+/// 켜면 다시 붙여 태그를 마치고, 끄면 옛 moov로 되돌려 원본과 바이트가 같아진다.
+#[tokio::test]
+async fn pd_crash_after_patch_recovers() {
+    let orig = pd_bytes();
+    let (_, moov_body) = mp4::top_boxes(&orig)
+        .into_iter()
+        .find(|(k, _)| k == "moov")
+        .unwrap();
+    let mut crashed = orig.clone();
+    crashed[moov_body.start - 4..moov_body.start].copy_from_slice(b"free");
+    assert_eq!(mp4::freed_moovs(&crashed).len(), 1);
+    assert_eq!(mp4::top_moov_count(&crashed), 0);
+
+    for embed in [true, false] {
+        let server = MockServer::start().await;
+        setup_meta(&server, Some(&format!("{}{COVER_PATH}", server.uri()))).await;
+        mount_cover(&server, fixture("testdata/synthetic/thumb.jpg")).await;
+        let dir = tempfile::tempdir().unwrap();
+        let out = out_path(&dir);
+        make_partial(&out, &crashed, Some(crashed.len() as u64)).await;
+        let req = DownloadRequest {
+            embed_metadata: embed,
+            ..request(&out)
+        };
+        let r = Chzzk::new(meta_config(&server))
+            .unwrap()
+            .download(req, CancellationToken::new(), &|_| {})
+            .await
+            .unwrap();
+        assert!(matches!(r, DownloadOutcome::Completed { .. }), "{r:?}");
+        let b = std::fs::read(&out).unwrap();
+        if embed {
+            assert_eq!(box_kinds(&b), ["ftyp", "free", "free", "mdat", "moov"]);
+            assert_eq!(
+                kinds(&ilst_of(&b)),
+                ["©nam", "©ART", "©day", "©cmt", "covr"]
+            );
+        } else {
+            assert_eq!(b, orig, "끈 실행은 옛 moov로 되돌린다");
+        }
+        // 받은 바이트를 다시 받지 않았다: 416 한 번뿐
+        assert_eq!(media_requests(&server, MEDIA_PATH).await.len(), 1);
+        assert_no_partial(&out);
+    }
+}
+
+/// 표지를 받는 동안 취소되면 `Cancelled`이고 `.part`는 바뀌지 않는다. 다음 실행이 이어서 마무리한다.
+#[tokio::test]
+async fn cancel_during_cover_fetch_leaves_part_untouched() {
+    let server = MockServer::start().await;
+    setup_meta(&server, Some(&format!("{}{COVER_PATH}", server.uri()))).await;
+    Mock::given(method("GET"))
+        .and(path(COVER_PATH))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_bytes(fixture("testdata/synthetic/thumb.jpg"))
+                .set_delay(std::time::Duration::from_secs(10)),
+        )
+        .mount(&server)
+        .await;
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_path(&dir);
+    let (part, sidecar) = part_files(&out);
+    let chzzk = Chzzk::new(meta_config(&server)).unwrap();
+
+    let cancel = CancellationToken::new();
+    let c2 = cancel.clone();
+    let cb = move |p: chzzk_core::Progress| {
+        if p.phase == Phase::Finalizing {
+            let c3 = c2.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+                c3.cancel();
+            });
+        }
+    };
+    let r = chzzk.download(meta_request(&out), cancel, &cb).await;
+    assert!(matches!(r, Err(Error::Cancelled)), "{r:?}");
+    assert_eq!(
+        media_requests(&server, COVER_PATH).await.len(),
+        1,
+        "표지 요청은 시작했다"
+    );
+    assert_eq!(
+        std::fs::read(&part).unwrap(),
+        pd_bytes(),
+        "파일은 바뀌지 않았다"
+    );
+    assert!(sidecar.exists() && !out.exists());
+
+    // 다음 실행: 표지를 빨리 주면 이어받아 태그를 마친다
+    server.reset().await;
+    setup_meta(&server, Some(&format!("{}{COVER_PATH}", server.uri()))).await;
+    mount_cover(&server, fixture("testdata/synthetic/thumb.jpg")).await;
+    let r = chzzk
+        .download(meta_request(&out), CancellationToken::new(), &|_| {})
+        .await
+        .unwrap();
+    assert!(matches!(r, DownloadOutcome::Completed { .. }), "{r:?}");
+    assert_eq!(
+        media_requests(&server, MEDIA_PATH).await.len(),
+        1,
+        "416 한 번뿐"
+    );
+    assert_eq!(kinds(&ilst_of(&std::fs::read(&out).unwrap())).len(), 5);
+}
+
+/// 구조를 모르는 PD 본문(가짜 바이트)은 켜도 그대로 마무리한다(`Unchanged`, 경고만).
+#[tokio::test]
+async fn pd_metadata_on_non_mp4_body_is_left_alone() {
+    let server = MockServer::start().await;
+    setup(&server).await;
+    let body = test_bytes(5000, 7);
+    Mock::given(method("GET"))
+        .and(path(MEDIA_PATH))
+        .respond_with(RangeBody(body.clone()))
+        .mount(&server)
+        .await;
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_path(&dir);
+    let r = Chzzk::new(meta_config(&server))
+        .unwrap()
+        .download(meta_request(&out), CancellationToken::new(), &|_| {})
+        .await
+        .unwrap();
+    assert!(matches!(r, DownloadOutcome::Completed { .. }), "{r:?}");
+    assert_eq!(std::fs::read(&out).unwrap(), body);
 }

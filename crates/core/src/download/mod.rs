@@ -13,7 +13,7 @@
 //!    지우지 않고 `PartialRecording`).
 //! 3. `Resolving`: `resolve`. 방식이 바뀌었으면 `PlaybackChanged`.
 //! 4. 엔진 실행. 403이면 `Reresolving` → 재조회(상한 8회).
-//! 5. `Finalizing`: checkpoint → `.part` → 최종 파일. `Skip`이면 덮어쓰지 않는 rename을 쓰고, 받는 동안
+//! 5. `Finalizing`: checkpoint → (표지 받기) → 변환·메타데이터 → `.part` → 최종 파일. `Skip`이면 덮어쓰지 않는 rename을 쓰고, 받는 동안
 //!    최종 파일이 생겼으면 `.part`를 남긴 채 `Skipped`다.
 //!
 //! 실패·취소 시 `.part`와 sidecar를 남긴다(checkpoint 후). `is_resumable() == false`인 오류만 지운다.
@@ -38,6 +38,7 @@ use crate::client::Chzzk;
 use crate::error::{Error, Unsupported};
 use crate::fsutil::map_io_error;
 use crate::model::{ContentRef, PlaybackKind, Resolved, Source, TimeRange};
+use crate::mp4meta::{self, TagInput};
 use crate::progress::{Meter, Phase, Progress};
 
 pub use part::{Discarded, Finalized, PartFile, PartOwner, Sidecar, discard_partial};
@@ -83,6 +84,9 @@ pub struct DownloadRequest {
     /// `Some`이면 `expected_kind`가 `LiveRewindHls`여야 하고, 아니면 `Unsupported(RangeNotHls)`다.
     /// 결과는 마무리 때 일반 mp4로 바꾼다(`finish`).
     pub range: Option<TimeRange>,
+    /// 마무리에서 제목·채널·날짜·원본 주소와 표지를 mp4에 넣는다(mp4-metadata.md). 셸이 설정에서 정한다. 코어 기본값은
+    /// 없다(모든 생성자가 값을 준다). 실패해도 받기는 성공이다(표지나 태그만 빠진다).
+    pub embed_metadata: bool,
 }
 
 impl DownloadRequest {
@@ -218,6 +222,9 @@ pub(crate) struct Job<'a> {
     /// playlist의 지문 불일치는 이미 받은 바이트가 틀렸다는 증거가 아니다. 다음 실행의
     /// sidecar 동일성·지문 검사가 정말 낡은 `.part`를 거른다.
     pub(crate) keep_partial: bool,
+    /// 마무리에서 mp4에 넣을 태그의 재료. 첫 `resolve` 결과로 정한다(재조회로 바꾸지 않는다). `embed_metadata`가 꺼져
+    /// 있거나 resolve 전에 마무리하는 끊긴 생방송이면 `None`이다.
+    pub(crate) tags: Option<TagInput>,
 }
 
 impl Job<'_> {
@@ -364,6 +371,7 @@ impl Chzzk {
             report: Reporter::new(on_progress, self.config().progress_interval),
             refreshes: 0,
             keep_partial: false,
+            tags: None,
         };
         let resumed_from = part.as_ref().map_or(0, PartFile::written);
         job.report.p.resumed_from = resumed_from;
@@ -417,6 +425,15 @@ async fn run(job: &mut Job<'_>, part: &mut Option<PartFile>) -> Result<DownloadO
         job.resolve().await?
     };
     job.report.phase(Phase::Downloading);
+    // 태그 재료는 첫 조회 결과로 고정한다. 서명 주소는 들어오지 않는다(원본 주소는 `ContentRef`로만 만든다)
+    if job.req.embed_metadata {
+        job.tags = Some(TagInput {
+            meta: resolved.meta.clone(),
+            content: resolved.content.clone(),
+            range: job.req.range,
+            thumbnail_url: resolved.thumbnail_url.clone(),
+        });
+    }
     match resolved.source {
         Source::Progressive { reps } => progressive::run(job, reps, part).await,
         Source::LiveRewindHls { master_url, tracks } => {
@@ -467,6 +484,30 @@ fn defrag_verdict(
     }
 }
 
+/// PD mp4 메타데이터 쓰기 결과로 마무리를 이어 갈지 정한다(`defrag_verdict`와 같은 모양). `Ok`: 마무리를 이어 간다
+/// (태그를 썼거나 이미 있다/할 일이 없다/구조를 몰라 바꾸지 않았다), `Err`: 마무리하지 않는다(바꾸는 도중 실패·읽기 입출력
+/// 오류로 파일 상태를 확인하지 못함, `TagError::Modified`).
+fn tag_verdict(
+    r: Result<Result<mp4meta::TagReport, mp4meta::TagError>, Error>,
+) -> Result<(), Error> {
+    match r {
+        Ok(Ok(rep)) => {
+            tracing::info!(report = ?rep, "mp4 메타데이터 처리");
+            Ok(())
+        }
+        Ok(Err(mp4meta::TagError::Unchanged(e))) => {
+            tracing::warn!(error = %e, "mp4 메타데이터를 넣지 못해 그대로 둔다");
+            Ok(())
+        }
+        Ok(Err(mp4meta::TagError::Modified(e))) => {
+            tracing::warn!(error = %e, "메타데이터 쓰기가 도중에 실패했거나 파일을 읽지 못해 .part로 둔다");
+            Err(e)
+        }
+        // 핸들 복제·flush·태스크 실패: 파일 상태를 모르니 마무리하지 않는다
+        Err(e) => Err(e),
+    }
+}
+
 /// 이 방식의 결과가 조각난 fMP4라 마무리에서 일반 mp4로 바꾸는가(core.md 구현 중 변경 60·64·71).
 ///
 /// `expected_kind`로 정해도 되는 것은 `Job::resolve`가 재조회 방식이 다르면 `PlaybackChanged`로 멈추기 때문이다(엔진은
@@ -495,13 +536,38 @@ pub(crate) async fn finish(
         *part = Some(p);
         return Err(e);
     }
+    // 표지 받기는 파일을 바꾸기 **앞**에 한다. 받는 도중 취소되면 파일은 바뀌지 않은 채 `Cancelled`로 끝난다(이어받을 수 있다).
+    // 실패는 표지만 빼고 계속한다(`fetch_cover`가 경고를 남긴다).
+    let udta = match job.tags.clone() {
+        Some(t) => {
+            let cover = match &t.thumbnail_url {
+                Some(u) => match job.cancellable(job.chzzk.fetch_cover(u)).await {
+                    Ok(c) => c,
+                    Err(e) => {
+                        *part = Some(p);
+                        return Err(e);
+                    }
+                },
+                None => None,
+            };
+            let udta = mp4meta::build_udta(&t.tags(), cover.as_ref());
+            tracing::info!(
+                cover = cover.is_some(),
+                tags = udta.is_some(),
+                "mp4 메타데이터 준비"
+            );
+            udta
+        }
+        None => None,
+    };
     // 생방송과 빠른 다시보기(전체·구간) 결과는 조각 구조를 일반 mp4로 바꾼다(core.md 구현 중 변경 60·64·71). 바로 위
     // checkpoint로 받은 바이트가 모두 durable하므로, 변환 도중 죽어도 다음 실행의 `resume`이 붙인 moov만 잘라 내고 다시 변환한다.
     // 바꾸기 전 실패는 경고만 남기고 조각 구조로 마무리하고, 바꾸는 도중 실패는 `.part`로 남긴다(core.md 61).
+    // 메타데이터(`udta`)는 이 변환이 만드는 새 moov에 함께 넣는다(moov는 한 번만 덧붙인다, core.md 75).
     if converts_on_finish(job.req.expected_kind) {
         // 파일 전체 훑기·fsync는 오래 걸릴 수 있어 blocking 스레드에서 한다.
         let r = p
-            .with_file_blocking(|f| Ok(defrag::defragment_in(f, None)))
+            .with_file_blocking(move |f| Ok(defrag::defragment_in(f, udta.as_deref())))
             .await;
         // 빠른 다시보기 조각의 시각이 이어지지 않으면 경고만 남긴다(판정이나 오류로 쓰지 않는다). 생방송은 놓친 조각을
         // 따로 센다(`LiveEnd::gaps`).
@@ -533,6 +599,25 @@ pub(crate) async fn finish(
                 *part = Some(p);
                 return Err(e);
             }
+        }
+    } else {
+        // 일반 VOD·클립(PD mp4)은 변환하지 않는다. 메타데이터를 켰으면 새 moov를 끝에 붙이고 옛 moov를 free로 바꾼다
+        // (mdat은 움직이지 않는다). 태그가 없거나 끈 실행이면, 앞선 실행이 마지막 단계까지 마치고 죽은 파일의 free를
+        // moov로 되돌리기만 한다(설정과 상관없이 늘 먼저 본다, 아니면 moov 없는 파일이 된다).
+        // **checkpoint하지 않는다**: committed_len이 PD 전체 크기를 넘으면 다음 실행의 `Range` 요청이 416을 받고
+        // `SourceChanged`로 처음부터 다시 받는다(core.md 55). 죽으면 resume이 붙인 moov를 자르고 다시 붙인다.
+        let r = p
+            .with_file_blocking(move |f| {
+                Ok(match &udta {
+                    Some(u) => mp4meta::retag_in(f, u),
+                    None => mp4meta::repair_in(f),
+                })
+            })
+            .await;
+        if let Err(e) = tag_verdict(r) {
+            p.drop_uncommitted_tail();
+            *part = Some(p);
+            return Err(e);
         }
     }
     let bytes = p.written();

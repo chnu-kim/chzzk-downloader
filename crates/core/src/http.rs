@@ -22,6 +22,8 @@ pub enum RequestKind {
     Mpd,
     /// 미디어 CDN(PD mp4, HLS playlist·세그먼트)
     Media,
+    /// 표지 썸네일(mp4 메타데이터). 쿠키는 `cookies_on_media`와 상관없이 늘 보내지 않는다
+    Image,
 }
 
 /// `Debug`·`Display`에서 값을 `***`로 가리는 래퍼.
@@ -134,6 +136,8 @@ const REFERER_VALUE: &str = "https://chzzk.naver.com/";
 const ORIGIN_VALUE: &str = "https://chzzk.naver.com";
 const ACCEPT_JSON: &str = "application/json, */*";
 const ACCEPT_MPD: &str = "application/dash+xml, application/xml, */*";
+/// 이미지 CDN이 WebP를 협상해 주지 못하게 좁힌다(표지는 JPEG·PNG만 받는다).
+const ACCEPT_IMAGE: &str = "image/jpeg, image/png";
 
 /// 요청 종류별 헤더.
 ///
@@ -142,6 +146,7 @@ const ACCEPT_MPD: &str = "application/dash+xml, application/xml, */*";
 /// | Api | UA, Referer, Origin, `Accept: application/json, */*`, Cookie(있을 때) |
 /// | Mpd | Api와 같고 `Accept: application/dash+xml, application/xml, */*` |
 /// | Media | UA, Referer, Cookie(`cookies_on_media`일 때만) |
+/// | Image | UA, Referer, `Accept: image/jpeg, image/png`. Cookie는 늘 없다 |
 pub(crate) fn headers(
     kind: RequestKind,
     cookie: Option<&HeaderValue>,
@@ -162,6 +167,10 @@ pub(crate) fn headers(
             true
         }
         RequestKind::Media => cookies_on_media,
+        RequestKind::Image => {
+            h.insert(ACCEPT, HeaderValue::from_static(ACCEPT_IMAGE));
+            false
+        }
     };
     if send_cookie && let Some(c) = cookie {
         h.insert(COOKIE, c.clone());
@@ -357,6 +366,7 @@ mod tests {
                 master_url: master_url.clone(),
                 tracks,
             },
+            thumbnail_url: None,
         };
         check(&format!("{resolved:?}"));
 
@@ -394,6 +404,7 @@ mod tests {
             content: ContentRef::Video { video_no: 1 },
             meta,
             source: Source::Progressive { reps: pd },
+            thumbnail_url: None,
         };
         check(&format!("{resolved:?}"));
     }
@@ -453,6 +464,9 @@ mod tests {
         let (_, v) = parse_video_info(&fixture("testdata/vod/video_info.json")).unwrap();
         let s = format!("{v:?}");
         assert!(s.contains("in_key: Some(***)"), "{s}");
+        // 표지 주소는 쿼리가 서명일 수 있어 가린다
+        assert!(s.contains("thumbnail_image_url: Some(***)"), "{s}");
+        assert!(!s.contains("img.example.invalid"), "{s}");
         let s = format!("{:?}", classify(&v).unwrap());
         assert!(s.starts_with("Dash {"), "{s}");
         assert!(s.contains("in_key: ***"), "{s}");
@@ -521,6 +535,17 @@ mod tests {
         assert_eq!(media_on[COOKIE], "NID_AUT=a; NID_SES=b");
 
         assert!(!headers(RequestKind::Api, None, true).contains_key(COOKIE));
+
+        // 표지 요청: 스위치가 켜져 있어도 쿠키·Origin이 없고 Accept는 JPEG·PNG로 좁다
+        for on in [false, true] {
+            let img = headers(RequestKind::Image, Some(&cookie), on);
+            assert!(!img.contains_key(COOKIE), "cookies_on_media={on}");
+            assert!(!img.contains_key(ORIGIN));
+            assert_eq!(img[ACCEPT], "image/jpeg, image/png");
+            assert_eq!(img[USER_AGENT], user_agent());
+            assert_eq!(img[REFERER], "https://chzzk.naver.com/");
+            assert_eq!(img.len(), 3);
+        }
     }
 
     #[test]

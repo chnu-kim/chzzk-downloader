@@ -127,7 +127,9 @@ impl From<RequestKind> for RequestKindDto {
         match k {
             RequestKind::Api => RequestKindDto::Api,
             RequestKind::Mpd => RequestKindDto::Mpd,
-            RequestKind::Media => RequestKindDto::Media,
+            // 표지 썸네일 요청의 실패는 코어가 삼킨다(받기 성공에 걸지 않는다). 화면까지 올라오는 일이 없어 DTO에 새 값을
+            // 만들지 않고 미디어 CDN 요청으로 묶는다(mp4-metadata.md §10: 셸 `AppError`·`errors.ts`는 바뀌지 않는다)
+            RequestKind::Media | RequestKind::Image => RequestKindDto::Media,
         }
     }
 }

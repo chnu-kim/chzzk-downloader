@@ -251,14 +251,6 @@ pub(crate) enum TagError {
     Modified(Error),
 }
 
-impl TagError {
-    pub(crate) fn into_error(self) -> Error {
-        match self {
-            Self::Unchanged(e) | Self::Modified(e) => e,
-        }
-    }
-}
-
 fn io_err(op: &'static str, e: io::Error) -> Error {
     map_io_error(op, Path::new(WHAT), e)
 }

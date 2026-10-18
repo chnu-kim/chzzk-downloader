@@ -16,10 +16,12 @@ pub fn fixture(rel: &str) -> Vec<u8> {
 }
 
 /// 합성 fixture의 미디어 호스트.
-pub const MEDIA_HOSTS: [&str; 3] = [
+pub const MEDIA_HOSTS: [&str; 4] = [
     "hls.example.invalid",
     "clip.example.invalid",
     "vod.example.invalid",
+    // 표지 썸네일(mp4 메타데이터). 치환하지 않으면 `.invalid` DNS 조회가 일어난다
+    "img.example.invalid",
 ];
 
 /// fixture 안의 `https://{미디어 호스트}`를 mock 주소(`http://127.0.0.1:port`)로 바꾼다.
@@ -202,6 +204,21 @@ pub fn hls_info(master_url: &str) -> Vec<u8> {
         }
     }
     v["content"]["liveRewindPlaybackJson"] = serde_json::Value::String(pb.to_string());
+    serde_json::to_vec(&v).unwrap()
+}
+
+/// info JSON의 표지 주소(`content.thumbnailImageUrl`)를 바꾼다. `None`이면 키를 뺀다.
+pub fn with_thumbnail(info: &[u8], url: Option<&str>) -> Vec<u8> {
+    let mut v: serde_json::Value = serde_json::from_slice(info).unwrap();
+    match url {
+        Some(u) => v["content"]["thumbnailImageUrl"] = serde_json::Value::String(u.to_string()),
+        None => {
+            v["content"]
+                .as_object_mut()
+                .unwrap()
+                .remove("thumbnailImageUrl");
+        }
+    }
     serde_json::to_vec(&v).unwrap()
 }
 

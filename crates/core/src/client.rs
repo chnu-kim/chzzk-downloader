@@ -14,6 +14,7 @@ use crate::error::Error;
 use crate::http::{self, NaverCookies, RequestKind};
 use crate::info::{self, Playback};
 use crate::model::{ContentRef, Resolved, Source};
+use crate::mp4meta::{Cover, MAX_COVER_BYTES};
 use crate::mpd;
 
 /// API 기본 주소. 테스트는 mock 서버 주소로 바꾼다.
@@ -60,6 +61,11 @@ pub struct ClientConfig {
     pub chat_retry: RetryPolicy,
     /// 자막을 만들 채팅 기록의 최대 바이트 수. 기본 `chat::CHAT_SUBTITLE_MAX_BYTES`(넘으면 자막 실패, 기록은 완성)
     pub chat_subtitle_max_bytes: u64,
+    /// 표지 썸네일(mp4 메타데이터)을 받는 전체 시간 상한. 기본 15초 **[잠정]** 근거 없음, ADR-0009 묶음
+    /// (`build_client`에는 전체 timeout이 없다). 재시도는 하지 않는다.
+    pub image_timeout: Duration,
+    /// 테스트·E2E만: 표지 주소로 `http://127.0.0.1`·`[::1]`을 허용한다. 기본 false(https만 받는다)
+    pub allow_loopback_http_images: bool,
 }
 
 impl Default for ClientConfig {
@@ -77,6 +83,8 @@ impl Default for ClientConfig {
             chat_page_interval: Duration::from_millis(crate::chat::CHAT_PAGE_INTERVAL_MS),
             chat_retry: crate::chat::chat_retry_policy(),
             chat_subtitle_max_bytes: crate::chat::CHAT_SUBTITLE_MAX_BYTES,
+            image_timeout: Duration::from_secs(15),
+            allow_loopback_http_images: false,
         }
     }
 }
@@ -123,6 +131,7 @@ impl Chzzk {
     /// - Live: live-detail → master 주소와 화질(방송 중이 아니면 `NotLive`)
     /// - 암호화 VOD는 MPD를 받지 않고 `EncryptedVod`(AES seam, 설계 §11)
     pub async fn resolve(&self, c: &ContentRef) -> Result<Resolved, Error> {
+        let mut thumbnail_url = None;
         let (meta, source) = match c {
             ContentRef::Video { video_no } => {
                 let no = video_no.to_string();
@@ -132,6 +141,8 @@ impl Chzzk {
                 );
                 let body = self.fetch(url, RequestKind::Api).await?;
                 let (meta, v) = info::parse_video_info(&body)?;
+                // 표지는 일반 VOD·빠른 다시보기만 쓴다(클립·생방송은 1차 밖, mp4-metadata.md §1.2)
+                thumbnail_url = v.thumbnail_url();
                 let source = match info::classify(&v)? {
                     Playback::Encrypted { method, .. } => {
                         return Err(Error::EncryptedVod { method });
@@ -188,7 +199,20 @@ impl Chzzk {
             content: c.clone(),
             meta,
             source,
+            thumbnail_url,
         })
+    }
+
+    /// 클립 info 응답에 썸네일로 보이는 키(이름에 `thumb`)가 있는지만 알려 준다(값은 읽지 않는다).
+    /// 사용자가 본인 클립으로 확인하는 실측 M-meta-3(`examples/dl.rs --list`)용이다. 있으면 클립 표지를 뒤 PR로 연다.
+    pub async fn clip_has_thumbnail_field(&self, clip_id: &str) -> Result<bool, Error> {
+        let url = api_url(
+            &self.cfg.endpoints.chzzk_api,
+            &["service", "v1", "play-info", "clip", clip_id],
+        );
+        let body = self.fetch(url, RequestKind::Api).await?;
+        let content = info::open_envelope(&body, "clip info")?;
+        Ok(info::has_thumb_key(&content))
     }
 
     /// vodplay MPD를 받아 PD 화질 목록을 만든다.
@@ -231,6 +255,65 @@ impl Chzzk {
         read_capped(resp, MAX_API_BODY).await
     }
 
+    /// 표지 썸네일을 받는다(mp4 메타데이터, mp4-metadata.md §7). **최선 노력**이라 실패는 `None`과 경고 로그이고
+    /// 받기 성공에 영향을 주지 않는다. 호출한 쪽이 취소할 수 있게 `async`로 둔다.
+    ///
+    /// - 쿠키는 `cookies_on_media`와 상관없이 늘 보내지 않는다(`RequestKind::Image`).
+    /// - https만 받는다(테스트·E2E는 `allow_loopback_http_images`로 루프백 http). userinfo나 `{`·`}`(틀 자리표시자)가
+    ///   남은 주소와, 이동한 끝 주소가 그 조건을 어기면 버린다.
+    /// - 본문은 `MAX_COVER_BYTES`까지만 읽고, 전체 시간은 `image_timeout`이다. 재시도는 하지 않는다.
+    /// - 형식은 앞 바이트(JPEG·PNG)로만 정한다. 2xx가 아니면(401/403 포함) 표지 없음이다.
+    /// - 로그에는 `redact_url`을 거친 주소만 남긴다.
+    pub(crate) async fn fetch_cover(&self, url: &Url) -> Option<Cover> {
+        let allow = self.cfg.allow_loopback_http_images;
+        let shown = http::redact_url(url);
+        if !image_url_allowed(url, allow) {
+            tracing::warn!(url = %shown, "표지 주소를 받지 않는다(https가 아니거나 자리표시자가 남았다)");
+            return None;
+        }
+        let get = async {
+            let resp = self
+                .http
+                .get(url.clone())
+                .headers(http::headers(RequestKind::Image, None, false))
+                .send()
+                .await
+                .map_err(Error::network)?;
+            let status = resp.status();
+            if !status.is_success() {
+                return Err(Error::HttpStatus {
+                    status: status.as_u16(),
+                    kind: RequestKind::Image,
+                });
+            }
+            // 이동한 끝 주소도 같은 조건이어야 한다
+            if !image_url_allowed(resp.url(), allow) {
+                return Err(Error::Parse {
+                    what: "cover",
+                    detail: "이동한 주소가 https가 아닙니다".into(),
+                });
+            }
+            read_capped(resp, MAX_COVER_BYTES).await
+        };
+        match tokio::time::timeout(self.cfg.image_timeout, get).await {
+            Err(_) => {
+                tracing::warn!(url = %shown, "표지 받기 시간 초과");
+                None
+            }
+            Ok(Err(e)) => {
+                tracing::warn!(url = %shown, error = %e, "표지를 받지 못했다");
+                None
+            }
+            Ok(Ok(bytes)) => {
+                let cover = Cover::sniff(bytes.to_vec());
+                if cover.is_none() {
+                    tracing::warn!(url = %shown, bytes = bytes.len(), "표지가 JPEG·PNG가 아니다");
+                }
+                cover
+            }
+        }
+    }
+
     /// 미디어 GET 요청(`RequestKind::Media` 헤더). 상태 코드 해석은 다운로드 엔진이 한다.
     pub(crate) fn media_get(&self, url: &Url) -> reqwest::RequestBuilder {
         tracing::debug!(url = %http::redact_url(url), "GET media");
@@ -240,6 +323,32 @@ impl Chzzk {
             self.cfg.cookies_on_media,
         ))
     }
+}
+
+/// 표지 주소를 받아도 되는가. `https`만이고, 사용자 정보와 `{`·`}`(`{type}` 같은 틀 자리표시자)가 없어야 한다.
+/// `allow_loopback_http`(테스트·E2E)이면 `http://127.0.0.1`·`http://[::1]`도 받는다. 호스트는 제한하지 않는다.
+pub(crate) fn image_url_allowed(u: &Url, allow_loopback_http: bool) -> bool {
+    use ::url::Host;
+    let scheme_ok = match u.scheme() {
+        "https" => true,
+        "http" => {
+            allow_loopback_http
+                && match u.host() {
+                    Some(Host::Ipv4(a)) => a.is_loopback(),
+                    Some(Host::Ipv6(a)) => a.is_loopback(),
+                    _ => false,
+                }
+        }
+        _ => false,
+    };
+    // `Url`은 경로의 `{`·`}`를 `%7B`·`%7D`로 바꿔 직렬화한다
+    let s = u.as_str().to_ascii_lowercase();
+    scheme_ok
+        && u.username().is_empty()
+        && u.password().is_none()
+        && !s.contains(['{', '}'])
+        && !s.contains("%7b")
+        && !s.contains("%7d")
 }
 
 /// API·MPD 응답 크기 상한. 실물은 KB 단위다(fixture 100KB 미만).
@@ -351,6 +460,35 @@ mod tests {
             })
         ));
         server.join().unwrap();
+    }
+
+    /// 표지 주소 규칙: https만, 사용자 정보·틀 자리표시자 없음. 루프백 http는 허용 스위치가 있을 때만.
+    #[test]
+    fn image_url_rules() {
+        let ok = |s: &str, lo: bool| image_url_allowed(&Url::parse(s).unwrap(), lo);
+        assert!(ok("https://img.example.invalid/thumb/1.jpg", false));
+        assert!(ok("https://img.example.invalid/thumb/1.jpg?type=f", false));
+        // 틀 자리표시자(`{type}`)는 직렬화에서 `%7B`로 바뀐다
+        assert!(!ok("https://img.example.invalid/live/{type}.jpg", false));
+        assert!(!ok(
+            "https://img.example.invalid/live/%7btype%7D.jpg",
+            false
+        ));
+        assert!(!ok("https://img.example.invalid/a.jpg?w={w}", false));
+        assert!(!ok("https://user:pw@img.example.invalid/a.jpg", false));
+        assert!(!ok("https://user@img.example.invalid/a.jpg", false));
+        // http는 막고, 루프백만 스위치로 푼다
+        assert!(!ok("http://img.example.invalid/a.jpg", false));
+        assert!(!ok("http://img.example.invalid/a.jpg", true));
+        assert!(!ok("http://127.0.0.1:9/a.jpg", false));
+        assert!(ok("http://127.0.0.1:9/a.jpg", true));
+        assert!(ok("http://[::1]:9/a.jpg", true));
+        assert!(
+            !ok("http://10.0.0.1/a.jpg", true),
+            "루프백이 아닌 사설 주소는 막는다"
+        );
+        assert!(!ok("ftp://127.0.0.1/a.jpg", true));
+        assert!(!ok("file:///etc/passwd", true));
     }
 
     #[test]

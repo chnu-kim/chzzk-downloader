@@ -48,6 +48,7 @@ async fn live_record() {
         }
     };
     let req = DownloadRequest {
+        embed_metadata: false,
         content,
         quality_id: r
             .qualities()

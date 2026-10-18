@@ -369,6 +369,7 @@ fn resolved() -> Resolved {
         .unwrap(),
     };
     Resolved {
+        thumbnail_url: None,
         content: ContentRef::Video { video_no: 123 },
         meta: ContentMeta {
             kind: ContentKind::Video,

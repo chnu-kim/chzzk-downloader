@@ -124,6 +124,7 @@ impl JobRecord {
     /// 코어 다운로드 요청.
     pub fn to_request(&self) -> DownloadRequest {
         DownloadRequest {
+            embed_metadata: false,
             content: self.content.clone(),
             quality_id: self.quality_id.clone(),
             expected_kind: self.expected_kind,

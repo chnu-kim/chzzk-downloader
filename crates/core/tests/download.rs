@@ -13,6 +13,7 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 
 fn request(out: &Path, on_existing: DuplicatePolicy) -> DownloadRequest {
     DownloadRequest {
+        embed_metadata: false,
         content: ContentRef::Video { video_no: VOD_NO },
         quality_id: "PD_720P_TEST".into(),
         expected_kind: PlaybackKind::Progressive,

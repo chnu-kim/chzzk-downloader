@@ -93,6 +93,8 @@ impl Default for ClientConfig {
 #[derive(Clone, Debug)]
 pub struct Chzzk {
     http: reqwest::Client,
+    /// 표지 썸네일 전용(이동을 요청 전에 거른다, `http::build_image_client`)
+    image_http: reqwest::Client,
     cfg: ClientConfig,
     /// 미리 만든 `Cookie` 헤더 값(sensitive)
     cookie: Option<HeaderValue>,
@@ -116,7 +118,17 @@ impl Chzzk {
             .map(NaverCookies::header_value)
             .transpose()?;
         let http = http::build_client(cfg.connect_timeout, cfg.read_timeout)?;
-        Ok(Chzzk { http, cfg, cookie })
+        let image_http = http::build_image_client(
+            cfg.connect_timeout,
+            cfg.read_timeout,
+            cfg.allow_loopback_http_images,
+        )?;
+        Ok(Chzzk {
+            http,
+            image_http,
+            cfg,
+            cookie,
+        })
     }
 
     /// 설정.
@@ -260,7 +272,8 @@ impl Chzzk {
     ///
     /// - 쿠키는 `cookies_on_media`와 상관없이 늘 보내지 않는다(`RequestKind::Image`).
     /// - https만 받는다(테스트·E2E는 `allow_loopback_http_images`로 루프백 http). userinfo나 `{`·`}`(틀 자리표시자)가
-    ///   남은 주소와, 이동한 끝 주소가 그 조건을 어기면 버린다.
+    ///   남은 주소는 요청하지 않는다. 이동(redirect)은 표지 전용 클라이언트가 **요청 전에** 같은 조건으로 거른다(어기면
+    ///   따라가지 않고 3xx 응답을 받아 표지 없음이다).
     /// - 본문은 `MAX_COVER_BYTES`까지만 읽고, 전체 시간은 `image_timeout`이다. 재시도는 하지 않는다.
     /// - 형식은 앞 바이트(JPEG·PNG)로만 정한다. 2xx가 아니면(401/403 포함) 표지 없음이다.
     /// - 로그에는 `redact_url`을 거친 주소만 남긴다.
@@ -273,7 +286,7 @@ impl Chzzk {
         }
         let get = async {
             let resp = self
-                .http
+                .image_http
                 .get(url.clone())
                 .headers(http::headers(RequestKind::Image, None, false))
                 .send()
@@ -284,13 +297,6 @@ impl Chzzk {
                 return Err(Error::HttpStatus {
                     status: status.as_u16(),
                     kind: RequestKind::Image,
-                });
-            }
-            // 이동한 끝 주소도 같은 조건이어야 한다
-            if !image_url_allowed(resp.url(), allow) {
-                return Err(Error::Parse {
-                    what: "cover",
-                    detail: "이동한 주소가 https가 아닙니다".into(),
                 });
             }
             read_capped(resp, MAX_COVER_BYTES).await

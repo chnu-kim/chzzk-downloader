@@ -197,6 +197,34 @@ pub(crate) fn build_client(
         .map_err(Error::network)
 }
 
+/// 표지 썸네일 전용 HTTP 클라이언트. 이동(redirect)을 **요청을 보내기 전에** 거른다: 이동할 주소가 표지로 받아도 되는
+/// 주소(`image_url_allowed`, https이거나 허용 시 루프백 http)가 아니거나 10회를 넘으면 따라가지 않고 그 3xx 응답을
+/// 돌려주며, 호출한 쪽은 2xx가 아니라 표지 없음으로 본다. 그래서 https → http 강등 요청(Referer가 실린다)이 나가지 않는다.
+pub(crate) fn build_image_client(
+    connect_timeout: Duration,
+    read_timeout: Duration,
+    allow_loopback_http: bool,
+) -> Result<reqwest::Client, Error> {
+    reqwest::Client::builder()
+        .connect_timeout(connect_timeout)
+        .read_timeout(read_timeout)
+        .redirect(reqwest::redirect::Policy::custom(move |attempt| {
+            if attempt.previous().len() < 10
+                && crate::client::image_url_allowed(attempt.url(), allow_loopback_http)
+            {
+                attempt.follow()
+            } else {
+                attempt.stop()
+            }
+        }))
+        .no_gzip()
+        .no_brotli()
+        .no_deflate()
+        .no_zstd()
+        .build()
+        .map_err(Error::network)
+}
+
 /// 로그·오류용 주소. 쿼리·fragment·사용자 정보를 지우고, 경로의 `hdntl=...` 토큰을 가린다.
 pub fn redact_url(u: &Url) -> String {
     let mut u = u.clone();

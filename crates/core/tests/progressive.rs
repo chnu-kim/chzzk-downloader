@@ -1121,6 +1121,58 @@ async fn cover_failures_do_not_fail_the_download() {
     }
 }
 
+/// 표지 요청의 이동(redirect)은 **요청을 보내기 전에** 거른다(mp4-metadata.md §7). 호스트가 이름(`localhost`)이라
+/// 루프백 허용 스위치로도 받지 않는 주소로 보내면 따라가지 않아(그 주소로 요청이 나가지 않는다) 표지 없이 `Completed`로
+/// 끝난다. 대조로 허용되는 주소(`127.0.0.1`)로의 이동은 따라가 표지가 들어간다.
+#[tokio::test]
+async fn cover_redirect_is_filtered_before_the_request() {
+    const FINAL: &str = "/thumb/final.jpg";
+    for (allowed, host) in [(true, "127.0.0.1"), (false, "localhost")] {
+        let server = MockServer::start().await;
+        setup_meta(&server, Some(&format!("{}{COVER_PATH}", server.uri()))).await;
+        let port = server.address().port();
+        Mock::given(method("GET"))
+            .and(path(COVER_PATH))
+            .respond_with(
+                ResponseTemplate::new(302)
+                    .insert_header("location", format!("http://{host}:{port}{FINAL}")),
+            )
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(FINAL))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_bytes(fixture("testdata/synthetic/thumb.jpg")),
+            )
+            .mount(&server)
+            .await;
+        let dir = tempfile::tempdir().unwrap();
+        let out = out_path(&dir);
+        let r = Chzzk::new(meta_config(&server))
+            .unwrap()
+            .download(meta_request(&out), CancellationToken::new(), &|_| {})
+            .await;
+        assert!(
+            matches!(r, Ok(DownloadOutcome::Completed { .. })),
+            "{host}: {r:?}"
+        );
+        assert_eq!(media_requests(&server, COVER_PATH).await.len(), 1, "{host}");
+        assert_eq!(
+            media_requests(&server, FINAL).await.len(),
+            usize::from(allowed),
+            "{host}: 이동한 주소로 요청이 나갔는가"
+        );
+        let b = std::fs::read(&out).unwrap();
+        let want: &[&str] = if allowed {
+            &["©nam", "©ART", "©day", "©cmt", "covr"]
+        } else {
+            &["©nam", "©ART", "©day", "©cmt"]
+        };
+        assert_eq!(kinds(&ilst_of(&b)), want, "{host}");
+        assert_no_partial(&out);
+    }
+}
+
 /// 표지 주소의 서명 같은 쿼리는 태그·오류·`Debug`에 남지 않는다.
 #[tokio::test]
 async fn signed_thumbnail_query_stays_out_of_tags() {

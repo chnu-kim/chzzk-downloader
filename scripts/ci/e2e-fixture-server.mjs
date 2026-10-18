@@ -10,9 +10,12 @@
 //
 //   node scripts/ci/e2e-fixture-server.mjs [--port N]   # 직접 띄워 보기(주소를 출력하고 Ctrl+C까지 돈다)
 //
-// 결과 파일은 init‖seg0‖seg1을 마무리에서 일반 mp4로 바꾼 정적 golden `testdata/hls/full2_flat.mp4`와 바이트가 같아야 한다
-// (코어 segmented.rs fixture_concat_box_order가 같은 golden을 확인한다, core.md 구현 중 변경 71).
-// 판정용 sha256은 expectedOutput()이 그 golden에서 계산한다.
+// 앱은 기본으로 받은 mp4에 제목·채널·날짜·원본 주소와 표지를 넣는다(mp4-metadata.md). 표지 썸네일은 `/thumb/<영상 번호>.jpg`로
+// 서빙한다(`testdata/synthetic/thumb.jpg`). 결과 파일은 init‖seg0‖seg1을 마무리에서 일반 mp4로 바꾸고 태그를 넣은 정적 golden과
+// 바이트가 같아야 한다: 본인 채널은 `testdata/hls/full2_tagged_own.mp4`, 맡은 채널은 `full2_tagged_delegated.mp4`(`©ART`·`©cmt`가
+// 달라 golden이 둘이다). 코어 segmented.rs `fixture_tagged_goldens`가 같은 golden을 확인한다(`UPDATE_FLAT_GOLDEN=1`로 만든다).
+// 태그를 넣지 않은 `testdata/hls/full2_flat.mp4`는 코어 `fixture_concat_box_order`(core.md 구현 중 변경 71)가 쓴다.
+// 판정용 sha256은 expectedOutputs()가 그 golden들에서 계산한다.
 
 import { createHash } from 'node:crypto';
 import { readFileSync, realpathSync } from 'node:fs';
@@ -26,7 +29,8 @@ import { ROOT } from './gates.mjs';
 export const HLS_VIDEO_NO = 9000001;
 export const HLS_URL = `https://chzzk.naver.com/video/${HLS_VIDEO_NO}`;
 // fixture의 미디어 호스트(testdata/README.md). 서버 주소로 바꾼다(이중 인코딩 JSON 안에서도 단순 치환으로 된다)
-export const MEDIA_HOSTS = ['hls.example.invalid', 'clip.example.invalid', 'vod.example.invalid'];
+// img는 표지 썸네일(mp4 메타데이터, mp4-metadata.md §13.5)이다.
+export const MEDIA_HOSTS = ['hls.example.invalid', 'clip.example.invalid', 'vod.example.invalid', 'img.example.invalid'];
 // 남의 영상(A5): 같은 HLS info에서 영상 번호·채널 ID·채널 이름만 바꾼다. 본인 채널은 fixture의 채널(OWN_CHANNEL_ID)이다.
 export const OWN_CHANNEL_ID = '000000000000000000000000000000a1';
 export const OTHER_CHANNEL_ID = '000000000000000000000000000000c3';
@@ -87,9 +91,19 @@ export const otherVideoInfo = (text) =>
 export const delegatedVideoInfo = (text) =>
   variantVideoInfo(text, { videoNo: DELEGATED_VIDEO_NO, channelId: DELEGATED_CHANNEL_ID, channelName: DELEGATED_CHANNEL_NAME });
 
-export function expectedOutput(root = ROOT) {
-  const bytes = fixture(root, 'hls/full2_flat.mp4');
+const outputOf = (root, rel) => {
+  const bytes = fixture(root, rel);
   return { bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') };
+};
+
+// 태그를 넣지 않은 결과(코어 테스트의 golden)
+export function expectedOutput(root = ROOT) {
+  return outputOf(root, 'hls/full2_flat.mp4');
+}
+
+// 앱이 기본 설정으로 받은 결과: 본인 채널·맡은 채널 golden(채널 이름과 영상 번호가 태그에 들어가 둘이 다르다)
+export function expectedOutputs(root = ROOT) {
+  return { own: outputOf(root, 'hls/full2_tagged_own.mp4'), delegated: outputOf(root, 'hls/full2_tagged_delegated.mp4') };
 }
 
 // 경로 → [content-type, body] (없으면 null). origin은 http://127.0.0.1:<port>
@@ -109,13 +123,16 @@ export function route(root, path, origin) {
   if (path.endsWith('/vod_chunklist.m3u8')) {
     return ['application/vnd.apple.mpegurl', Buffer.from(truncateMedia(fixture(root, 'hls/media.m3u8').toString('utf8')))];
   }
+  // 표지 썸네일(영상 번호는 info의 `thumbnailImageUrl`에서 온다)
+  if (/^\/thumb\/\d+\.jpg$/.test(path)) return ['image/jpeg', fixture(root, 'synthetic/thumb.jpg')];
   if (/\/\d+p_0_0_0\.m4s$/.test(path)) return ['video/mp4', fixture(root, 'hls/init.mp4')];
   const seg = /\/\d+p_seg(\d+)\.m4v$/.exec(path);
   if (seg && Number(seg[1]) < KEEP_SEGMENTS) return ['video/mp4', fixture(root, `hls/seg${seg[1]}.m4v`)];
   return null;
 }
 
-// 서버를 띄운다 → { url(끝에 /), log: [{method, path, status}], close() }. 요청 기록은 판정에 쓴다(쿼리는 버린다).
+// 서버를 띄운다 → { url(끝에 /), log: [{method, path, status, cookie}], close() }. 요청 기록은 판정에 쓴다(쿼리는 버린다).
+// `cookie`는 요청에 Cookie 헤더가 있었는지다(표지 요청에는 늘 없어야 한다).
 export function start({ root = ROOT, port = 0 } = {}) {
   const log = [];
   return new Promise((resolve, reject) => {
@@ -123,7 +140,7 @@ export function start({ root = ROOT, port = 0 } = {}) {
       const u = new URL(req.url ?? '/', 'http://127.0.0.1');
       const origin = `http://127.0.0.1:${server.address().port}`;
       const hit = req.method === 'GET' ? route(root, u.pathname, origin) : null;
-      log.push({ method: req.method, path: u.pathname, status: hit ? 200 : 404 });
+      log.push({ method: req.method, path: u.pathname, status: hit ? 200 : 404, cookie: Boolean(req.headers.cookie) });
       if (!hit) {
         res.writeHead(404, { 'content-type': 'text/plain' }).end('not found');
         return;

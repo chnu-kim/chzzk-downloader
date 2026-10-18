@@ -5,7 +5,8 @@ import { test } from 'node:test';
 import { DELEGATED_VIDEO_NO, HLS_VIDEO_NO, OTHER_VIDEO_NO, STUB_HANDLE } from './e2e-fixture-server.mjs';
 import { isWindowVisible, judge, judgeWorker, pickWindowsDriver, until } from './e2e-native.mjs';
 
-const EXP = { sha256: 'a'.repeat(64), bytes: 10 };
+// golden이 둘이다: 본인 채널·맡은 채널(`©ART`·`©cmt`가 달라 바이트가 다르다)
+const EXP = { own: { sha256: 'a'.repeat(64), bytes: 10 }, delegated: { sha256: 'b'.repeat(64), bytes: 12 } };
 const LOG = [
   `/service/v2/videos/${HLS_VIDEO_NO}`,
   `/service/v2/videos/${OTHER_VIDEO_NO}`,
@@ -15,12 +16,15 @@ const LOG = [
   '/live_rewind/kr/streamkey0/144p/h/144p_0_0_0.m4s',
   '/live_rewind/kr/streamkey0/144p/h/144p_seg0.m4v',
   '/live_rewind/kr/streamkey0/144p/h/144p_seg1.m4v',
-].map((path) => ({ method: 'GET', path, status: 200 }));
+  `/thumb/${HLS_VIDEO_NO}.jpg`,
+  `/thumb/${DELEGATED_VIDEO_NO}.jpg`,
+].map((path) => ({ method: 'GET', path, status: 200, cookie: false }));
 const OWN_FILE = '[260102] 테스트채널 - 테스트 다시보기.mp4';
 const DEL_FILE = '[260102] 맡은채널 - 테스트 다시보기.mp4';
 const OTHER_FILE = '[260102] 다른채널 - 테스트 다시보기.mp4';
-const out = (over = {}) => ({ sha256: EXP.sha256, bytes: EXP.bytes, ...over });
-const OK = { files: [DEL_FILE, OWN_FILE], outputs: { [OWN_FILE]: out(), [DEL_FILE]: out() } };
+const out = (over = {}) => ({ ...EXP.own, ...over });
+const outDel = (over = {}) => ({ ...EXP.delegated, ...over });
+const OK = { files: [DEL_FILE, OWN_FILE], outputs: { [OWN_FILE]: out(), [DEL_FILE]: outDel() } };
 
 test('judge: 본인·맡은 채널 파일 하나씩·해시 같음·요청 모두 200이면 통과', () => {
   assert.deepEqual(judge(OK, LOG, EXP), []);
@@ -35,12 +39,17 @@ test('judge: 파일 수·채널·중간 파일·해시·크기·요청 누락·4
     '남의 영상 받힘': [{ files: [OWN_FILE, OTHER_FILE], outputs: { [OWN_FILE]: out(), [OTHER_FILE]: out() } }, LOG],
     '셋': [{ files: [...OK.files, OTHER_FILE], outputs: { ...OK.outputs, [OTHER_FILE]: out() } }, LOG],
     '.part 남음': [{ ...OK, files: [...OK.files, 'x.mp4.part', 'x.mp4.part.json'] }, LOG],
-    '해시 다름': [{ ...OK, outputs: { ...OK.outputs, [DEL_FILE]: out({ sha256: 'b'.repeat(64) }) } }, LOG],
+    '해시 다름': [{ ...OK, outputs: { ...OK.outputs, [DEL_FILE]: outDel({ sha256: 'c'.repeat(64) }) } }, LOG],
+    '맡은 채널 파일이 본인 golden': [{ ...OK, outputs: { ...OK.outputs, [DEL_FILE]: out() } }, LOG],
+    '본인 파일이 맡은 채널 golden': [{ ...OK, outputs: { ...OK.outputs, [OWN_FILE]: outDel() } }, LOG],
     '크기 다름': [{ ...OK, outputs: { ...OK.outputs, [OWN_FILE]: out({ bytes: 11 }) } }, LOG],
     '해시 없음': [{ ...OK, outputs: { [OWN_FILE]: out() } }, LOG],
     '남의 영상 info 요청 없음': [OK, LOG.filter((l) => !l.path.endsWith(`/${OTHER_VIDEO_NO}`))],
     '맡은 채널 영상 info 요청 없음': [OK, LOG.filter((l) => !l.path.endsWith(`/${DELEGATED_VIDEO_NO}`))],
     '조각 요청 없음': [OK, LOG.filter((l) => !l.path.endsWith('seg1.m4v'))],
+    '본인 표지 요청 없음': [OK, LOG.filter((l) => l.path !== `/thumb/${HLS_VIDEO_NO}.jpg`)],
+    '맡은 채널 표지 요청 없음': [OK, LOG.filter((l) => l.path !== `/thumb/${DELEGATED_VIDEO_NO}.jpg`)],
+    '표지 요청에 Cookie': [OK, LOG.map((l) => (l.path.startsWith('/thumb/') ? { ...l, cookie: true } : l))],
     '404 응답': [OK, [...LOG, { method: 'GET', path: '/x', status: 404 }]],
   };
   for (const [name, [r, log]] of Object.entries(cases)) assert.ok(judge(r, log, EXP).length > 0, name);

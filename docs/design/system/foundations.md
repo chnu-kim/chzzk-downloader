@@ -850,6 +850,7 @@ JS 타이머·Rust 셸이 쓰는 값이다. 이름과 값의 단일 원천은 �
 | `LOW_SPACE_FACTOR` | 1.05 | [취향] | Rust | 여유 공간 경고 | `G-SAVE-R9` |
 | `WINDOWS_PATH_MAX_UTF16` | 259 | 사실 | Rust | 경로 길이 차단 | `MAX_PATH` 260 − 널 |
 | `FILENAME_MAX_BYTES` / `SIDECAR_MAX_BYTES` | 200 / 221 | 기존 코드 / 유도 | Rust(core `naming`) | 파일 이름 길이 불변식 | `naming.rs`, `G-SAVE-R13` |
+| `MAX_TEMPLATE_BYTES` | 100 | [잠정] | Rust(core naming) | 파일 이름 규칙 템플릿 길이 상한(설정 입력 검증, 너무 길면 `tooLong`과 이 값을 함께 준다) | `filename-template.md` T4·§5.1, 근거: 가장 긴 고정 토큰 `{prefix}` 23바이트를 더해도 제목 몫 60바이트가 남는 여유. ADR-0009 묶음 |
 | `COMPLETED_FOLD_AT` / `STALE_DAYS` / `RECENT_MAX` | 11 / 30 / 5 | [취향] | `timing.ts` + Rust | 완료 접힘·멈춘 지 30일·최근 영상 개수(D39) | `G-REPEAT-R2`·`G-REPEAT-R3`·`G-REPEAT-R9` |
 | `NOTICE_TTL_H` / `NOTICE_CACHE_H` / `NOTICE_MAX_CHARS` / `CIRCUIT_FAILURES` | 72 / 24 / 80 / 3 | [잠정] | Worker + Rust | 서비스 공지(D41)·서킷(`patterns.md` §10.4) | `G-OUTAGE-R4`·`G-OUTAGE-R6`·`G-OUTAGE-R11`(측정 근거 없음) |
 | `INVITE_TTL_MS` / `EDITORS_MAX` / `DELEGATIONS_MAX` | 7일 / 10 / 20 | [잠정] | Worker(`worker/src/store/delegation.ts`) | 초대 주소 기한·채널 주인 한 명의 편집자 수(기다리는 중 포함)·편집자 한 명의 맡은 채널 수(`docs/design/features/delegation.md` §8) | 근거 없음. ADR-0009 묶음, ADR-0026 |

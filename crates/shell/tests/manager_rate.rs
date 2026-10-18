@@ -163,6 +163,7 @@ async fn initial_limits_come_from_config() {
         download_folder: dir.path().join("downloads"),
         segment_concurrency: 4,
         chat_subtitle: chzzk_core::chat::SubtitleFormat::Ass,
+        embed_metadata: false,
     };
     mgr.enqueue(request("a"), &defaults).unwrap();
     until("요청", || fake.download_requests().len() == 1).await;

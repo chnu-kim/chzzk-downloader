@@ -1013,3 +1013,97 @@ fn chat_settings_patch_round_trips() {
     assert!(d.save_chat);
     assert_eq!(d.chat_subtitle, SubtitleFormat::Srt);
 }
+
+/// 파일 이름 규칙(core.md 78, app.md 95): 패치로 바뀌고 저장된다. 기본 템플릿 문자열·`null`은 `None`,
+/// 읽을 수 없는 값은 `invalidInput`이고 저장된 값은 그대로다.
+#[test]
+fn file_name_template_patch_round_trips() {
+    use chzzk_core::naming::DEFAULT_TEMPLATE;
+    let t = TempDir::new().unwrap();
+    let svc = open(t.path());
+    assert_eq!(svc.get().file_name_template, None);
+
+    let set = |tpl: &str| SettingsPatch {
+        file_name_template: Nullable::Set(tpl.to_string()),
+        ..patch()
+    };
+    let d = svc.update(set("{date}_{channel}_{title}")).unwrap();
+    assert_eq!(
+        d.file_name_template.as_deref(),
+        Some("{date}_{channel}_{title}")
+    );
+
+    // 키 없음은 그대로, 다시 열어도 남는다
+    let d = svc.update(patch()).unwrap();
+    assert_eq!(
+        d.file_name_template.as_deref(),
+        Some("{date}_{channel}_{title}")
+    );
+    assert_eq!(
+        open(t.path()).get().file_name_template.as_deref(),
+        Some("{date}_{channel}_{title}")
+    );
+
+    // 읽을 수 없는 값은 거부하고 저장된 값을 건드리지 않는다
+    for bad in [
+        "{title",
+        "{foo}",
+        "{title}{title}",
+        "{date}/{title}",
+        "{date}",
+        "",
+        &format!("{{title}}{}", "a".repeat(100)),
+    ] {
+        let e = svc.update(set(bad)).unwrap_err();
+        assert_eq!(e.code, ErrorCode::InvalidInput, "{bad:?}");
+        assert_eq!(
+            svc.get().file_name_template.as_deref(),
+            Some("{date}_{channel}_{title}"),
+            "{bad:?}"
+        );
+    }
+
+    // 기본 템플릿 문자열은 `None`으로 저장한다(앞뒤 공백은 무시)
+    for same in [DEFAULT_TEMPLATE, "  {prefix} {channel} - {title} "] {
+        svc.update(set("{title}")).unwrap();
+        let d = svc.update(set(same)).unwrap();
+        assert_eq!(d.file_name_template, None, "{same:?}");
+    }
+
+    // null은 기본으로
+    svc.update(set("{title}")).unwrap();
+    let d = svc
+        .update(SettingsPatch {
+            file_name_template: Nullable::Clear,
+            ..patch()
+        })
+        .unwrap();
+    assert_eq!(d.file_name_template, None);
+    assert_eq!(open(t.path()).get().file_name_template, None);
+
+    // 다른 키를 패치해도 템플릿은 그대로다
+    svc.update(set("{title}")).unwrap();
+    let d = svc
+        .update(SettingsPatch {
+            save_chat: Some(true),
+            ..patch()
+        })
+        .unwrap();
+    assert_eq!(d.file_name_template.as_deref(), Some("{title}"));
+}
+
+/// 미리보기 command는 저장된 설정과 무관하게 입력 문자열만 본다.
+#[test]
+fn file_name_template_preview_ignores_stored_value() {
+    use chzzk_shell::dto::FileNameTemplatePreview;
+    let t = TempDir::new().unwrap();
+    let svc = open(t.path());
+    svc.update(SettingsPatch {
+        file_name_template: Nullable::Set("{no}".into()),
+        ..SettingsPatch::default()
+    })
+    .unwrap_err(); // `{title}`이 없어 거부된다
+    let p = svc.preview_file_name_template("{title}");
+    assert!(matches!(p, FileNameTemplatePreview::Ok { .. }), "{p:?}");
+    assert_eq!(svc.get().file_name_template, None);
+}

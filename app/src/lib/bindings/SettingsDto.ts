@@ -33,6 +33,10 @@ theme: Theme,
  */
 keepAwake: boolean, 
 /**
+ * 받은 mp4에 제목·채널·날짜·원본 주소와 표지를 넣는다(기본 켜짐, mp4-metadata.md §9). 작업을 추가할 때 값이 고정된다
+ */
+embedMetadata: boolean, 
+/**
  * 영상과 함께 채팅도 받기(기본 꺼짐, 마지막 선택, chat.md §4.4)
  */
 saveChat: boolean, 
@@ -40,6 +44,10 @@ saveChat: boolean,
  * 채팅 자막 형식(기본 [잠정] U2 결정 대기 `ass`)
  */
 chatSubtitle: SubtitleFormat, 
+/**
+ * 파일 이름 규칙(템플릿). `null`이면 기본 규칙이다(입력칸에는 `DEFAULT_TEMPLATE`을 보인다)
+ */
+fileNameTemplate: string | null, 
 /**
  * 전체 합계 받기 속도 상한(바이트/초). `null` = 제한 없음(기본). 생방송 녹화는 제외(rate-limit.md)
  */

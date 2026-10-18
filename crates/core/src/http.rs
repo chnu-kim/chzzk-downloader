@@ -22,6 +22,8 @@ pub enum RequestKind {
     Mpd,
     /// 미디어 CDN(PD mp4, HLS playlist·세그먼트)
     Media,
+    /// 표지 썸네일(mp4 메타데이터). 쿠키는 `cookies_on_media`와 상관없이 늘 보내지 않는다
+    Image,
 }
 
 /// `Debug`·`Display`에서 값을 `***`로 가리는 래퍼.
@@ -134,6 +136,8 @@ const REFERER_VALUE: &str = "https://chzzk.naver.com/";
 const ORIGIN_VALUE: &str = "https://chzzk.naver.com";
 const ACCEPT_JSON: &str = "application/json, */*";
 const ACCEPT_MPD: &str = "application/dash+xml, application/xml, */*";
+/// 이미지 CDN이 WebP를 협상해 주지 못하게 좁힌다(표지는 JPEG·PNG만 받는다).
+const ACCEPT_IMAGE: &str = "image/jpeg, image/png";
 
 /// 요청 종류별 헤더.
 ///
@@ -142,6 +146,7 @@ const ACCEPT_MPD: &str = "application/dash+xml, application/xml, */*";
 /// | Api | UA, Referer, Origin, `Accept: application/json, */*`, Cookie(있을 때) |
 /// | Mpd | Api와 같고 `Accept: application/dash+xml, application/xml, */*` |
 /// | Media | UA, Referer, Cookie(`cookies_on_media`일 때만) |
+/// | Image | UA, Referer, `Accept: image/jpeg, image/png`. Cookie는 늘 없다 |
 pub(crate) fn headers(
     kind: RequestKind,
     cookie: Option<&HeaderValue>,
@@ -162,6 +167,10 @@ pub(crate) fn headers(
             true
         }
         RequestKind::Media => cookies_on_media,
+        RequestKind::Image => {
+            h.insert(ACCEPT, HeaderValue::from_static(ACCEPT_IMAGE));
+            false
+        }
     };
     if send_cookie && let Some(c) = cookie {
         h.insert(COOKIE, c.clone());
@@ -180,6 +189,37 @@ pub(crate) fn build_client(
         .connect_timeout(connect_timeout)
         .read_timeout(read_timeout)
         // 다른 crate가 feature를 켜도(feature 통합) 압축 해제가 일어나지 않게 한다.
+        .no_gzip()
+        .no_brotli()
+        .no_deflate()
+        .no_zstd()
+        .build()
+        .map_err(Error::network)
+}
+
+/// 표지 썸네일 전용 HTTP 클라이언트. 이동(redirect)을 **요청을 보내기 전에** 거른다: 이동할 주소가 표지로 받아도 되는
+/// 주소(`image_url_allowed`, https이거나 허용 시 루프백 http)가 아니거나 10회를 넘으면 따라가지 않고 그 3xx 응답을
+/// 돌려주며, 호출한 쪽은 2xx가 아니라 표지 없음으로 본다. 그래서 https → http 강등 요청(Referer가 실린다)이 나가지 않는다.
+pub(crate) fn build_image_client(
+    connect_timeout: Duration,
+    read_timeout: Duration,
+    allow_loopback_http: bool,
+) -> Result<reqwest::Client, Error> {
+    reqwest::Client::builder()
+        .connect_timeout(connect_timeout)
+        .read_timeout(read_timeout)
+        // 이동할 때 reqwest가 앞 주소 전체(서명 쿼리 포함)를 `Referer`로 넣지 않게 한다. 처음 요청의 고정 `Referer`
+        // (`headers(RequestKind::Image)`)는 그대로 실린다(mp4-metadata.md §7, core.md 83)
+        .referer(false)
+        .redirect(reqwest::redirect::Policy::custom(move |attempt| {
+            if attempt.previous().len() < 10
+                && crate::client::image_url_allowed(attempt.url(), allow_loopback_http)
+            {
+                attempt.follow()
+            } else {
+                attempt.stop()
+            }
+        }))
         .no_gzip()
         .no_brotli()
         .no_deflate()
@@ -357,6 +397,7 @@ mod tests {
                 master_url: master_url.clone(),
                 tracks,
             },
+            thumbnail_url: None,
         };
         check(&format!("{resolved:?}"));
 
@@ -394,6 +435,7 @@ mod tests {
             content: ContentRef::Video { video_no: 1 },
             meta,
             source: Source::Progressive { reps: pd },
+            thumbnail_url: None,
         };
         check(&format!("{resolved:?}"));
     }
@@ -453,6 +495,9 @@ mod tests {
         let (_, v) = parse_video_info(&fixture("testdata/vod/video_info.json")).unwrap();
         let s = format!("{v:?}");
         assert!(s.contains("in_key: Some(***)"), "{s}");
+        // 표지 주소는 쿼리가 서명일 수 있어 가린다
+        assert!(s.contains("thumbnail_image_url: Some(***)"), "{s}");
+        assert!(!s.contains("img.example.invalid"), "{s}");
         let s = format!("{:?}", classify(&v).unwrap());
         assert!(s.starts_with("Dash {"), "{s}");
         assert!(s.contains("in_key: ***"), "{s}");
@@ -521,6 +566,17 @@ mod tests {
         assert_eq!(media_on[COOKIE], "NID_AUT=a; NID_SES=b");
 
         assert!(!headers(RequestKind::Api, None, true).contains_key(COOKIE));
+
+        // 표지 요청: 스위치가 켜져 있어도 쿠키·Origin이 없고 Accept는 JPEG·PNG로 좁다
+        for on in [false, true] {
+            let img = headers(RequestKind::Image, Some(&cookie), on);
+            assert!(!img.contains_key(COOKIE), "cookies_on_media={on}");
+            assert!(!img.contains_key(ORIGIN));
+            assert_eq!(img[ACCEPT], "image/jpeg, image/png");
+            assert_eq!(img[USER_AGENT], user_agent());
+            assert_eq!(img[REFERER], "https://chzzk.naver.com/");
+            assert_eq!(img.len(), 3);
+        }
     }
 
     #[test]

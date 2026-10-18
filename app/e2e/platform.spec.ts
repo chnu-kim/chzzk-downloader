@@ -66,6 +66,19 @@ test('잠자기 방지: 설정 토글은 keepAwake를 저장하고, keep-awake �
   await app.axe('설정 잠자기 방지');
 });
 
+test('제목과 표지 넣기: 설정 토글은 기본 켬이고 끄면 embedMetadata를 저장한다', async ({ app }) => {
+  const { page } = app;
+  await app.open();
+  await page.getByRole('button', { name: t('header.settings') }).click();
+  const sw = page.getByRole('switch', { name: t('settings.embedMetadata') });
+  await expect(sw).toBeChecked();
+  await expect(sw).toHaveAccessibleDescription(t('settings.embedMetadata.help'));
+  await sw.click();
+  await expect.poll(() => app.args('update_settings')).toEqual([{ patch: { embedMetadata: false } }]);
+  await expect(sw).not.toBeChecked();
+  await app.axe('설정 제목과 표지 넣기');
+});
+
 test('연결 대기: 줄무늬 막대·퍼센트 유지·경과 시간, 1분 넘겨 풀리면 회복 줄이 10초 보인다', async ({ app }) => {
   const { page } = app;
   await page.clock.install({ time: new Date('2026-03-01T00:00:00+09:00') });

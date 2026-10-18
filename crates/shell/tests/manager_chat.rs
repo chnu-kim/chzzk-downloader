@@ -72,6 +72,7 @@ fn record_sidecar(video: &Path) -> PathBuf {
 
 fn resolved_with_duration(secs: f64) -> Resolved {
     Resolved {
+        thumbnail_url: None,
         content: ContentRef::Video { video_no: VIDEO_NO },
         meta: ContentMeta {
             kind: ContentKind::Video,

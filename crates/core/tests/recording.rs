@@ -325,6 +325,7 @@ impl Stream {
 
 fn request(out: &Path, stop: Option<CancellationToken>) -> DownloadRequest {
     DownloadRequest {
+        embed_metadata: false,
         throttle: Default::default(),
         content: ContentRef::Live {
             channel_id: CHANNEL.into(),
@@ -1321,6 +1322,93 @@ async fn interrupted_real_recording_is_converted_when_finalized() {
         }
     );
     mp4::assert_flat_mp4(&std::fs::read(&out).unwrap());
+    no_part(&out);
+}
+
+// ---- mp4 메타데이터(`embed_metadata`, mp4-metadata.md §3·§13.4) ----
+
+async fn record_meta(s: &Stream, out: &Path) -> Result<DownloadOutcome, Error> {
+    let req = DownloadRequest {
+        embed_metadata: true,
+        ..request(out, None)
+    };
+    s.client()
+        .download(req, CancellationToken::new(), &|_| {})
+        .await
+}
+
+fn live_ilst(b: &[u8]) -> Option<Vec<(String, u32, Vec<u8>)>> {
+    mp4::find_path_last(b, &["moov", "udta", "meta", "ilst"]).map(|i| mp4::ilst_items(i).unwrap())
+}
+
+/// 생방송 정상 마무리: 변환이 만든 새 moov에 글자 태그가 들어간다. 표지는 없다(`liveImageUrl`은 틀이라 쓰지 않는다).
+#[tokio::test]
+async fn finished_live_recording_gets_text_tags_without_cover() {
+    let n = REAL.1.len() as u64;
+    let s = Stream::start_with(
+        Opts {
+            real_media: true,
+            ..Opts::default()
+        },
+        move |_| window(0, n, true),
+        |_| Detail::Open(1),
+    )
+    .await;
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_path(&dir);
+    let r = record_meta(&s, &out).await.unwrap();
+    assert!(matches!(r, DownloadOutcome::Completed { .. }), "{r:?}");
+    let b = std::fs::read(&out).unwrap();
+    mp4::assert_flat_mp4(&b);
+    let items = live_ilst(&b).expect("태그가 있어야 한다");
+    let kinds: Vec<&str> = items.iter().map(|i| i.0.as_str()).collect();
+    assert_eq!(kinds, ["©nam", "©ART", "©day", "©cmt"]);
+    assert_eq!(items[0].2, "테스트 생방송".as_bytes());
+    assert_eq!(items[1].2, "생방송채널".as_bytes());
+    assert_eq!(items[2].2, b"2026-01-02");
+    assert_eq!(
+        items[3].2,
+        format!("https://chzzk.naver.com/live/{CHANNEL}").as_bytes()
+    );
+    // 표지 요청은 없다
+    let reqs = s.server.received_requests().await.unwrap();
+    assert!(
+        reqs.iter()
+            .all(|q| !q.url.path().starts_with("/live/{") && !q.url.path().contains("%7B"))
+    );
+    no_part(&out);
+}
+
+/// 끊긴 `.part`를 다음 실행이 마무리할 때는(resolve 전이라 제목·채널을 모른다) 태그를 넣지 않는다.
+#[tokio::test]
+async fn interrupted_recording_finalized_without_tags() {
+    let s = Stream::start_with(
+        Opts {
+            real_media: true,
+            ..Opts::default()
+        },
+        |n| Pl::Window {
+            first: 0,
+            len: 3,
+            ended: false,
+            tail: if n >= 1 {
+                "#EXT-X-KEY:METHOD=AES-128,URI=\"k\"\n"
+            } else {
+                ""
+            },
+        },
+        |_| Detail::Open(1),
+    )
+    .await;
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_path(&dir);
+    let r = record_meta(&s, &out).await;
+    assert!(matches!(r, Err(Error::Unsupported(_))), "{r:?}");
+    let r = record_meta(&s, &out).await.unwrap();
+    assert!(matches!(r, DownloadOutcome::Completed { .. }), "{r:?}");
+    let b = std::fs::read(&out).unwrap();
+    mp4::assert_flat_mp4(&b);
+    assert!(live_ilst(&b).is_none(), "resolve 전 마무리에는 태그가 없다");
     no_part(&out);
 }
 

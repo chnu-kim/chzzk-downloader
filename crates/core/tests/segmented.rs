@@ -23,6 +23,7 @@ const INFO_PATH: &str = "/service/v2/videos/9000001";
 
 fn request(out: &Path, concurrency: u8) -> DownloadRequest {
     DownloadRequest {
+        embed_metadata: false,
         throttle: Default::default(),
         content: ContentRef::Video { video_no: HLS_NO },
         quality_id: "144p".into(),
@@ -1695,4 +1696,280 @@ async fn range_converted_then_skipped_resumes_without_refetch() {
     }
     assert_eq!(std::fs::read(&out).unwrap(), converted);
     assert!(!part.exists() && !sidecar.exists());
+}
+
+// ---- mp4 메타데이터(`embed_metadata`, mp4-metadata.md §6.1·§13.4) ----
+
+const COVER_PATH: &str = "/thumb/cover.jpg";
+
+/// info의 표지 주소를 mock 서버로 돌리고 표지를 mount한다.
+async fn mount_info_with_cover(server: &MockServer, prefix: &str) {
+    let master = format!("{}{prefix}/master.m3u8?hdnts=st=1~hmac=x", server.uri());
+    let body = common::with_thumbnail(
+        &hls_info(&master),
+        Some(&format!("{}{COVER_PATH}", server.uri())),
+    );
+    Mock::given(method("GET"))
+        .and(path(INFO_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
+        .mount(server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(COVER_PATH))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_bytes(fixture("testdata/synthetic/thumb.png")),
+        )
+        .mount(server)
+        .await;
+}
+
+fn meta_cfg(server: &MockServer) -> ClientConfig {
+    ClientConfig {
+        allow_loopback_http_images: true,
+        ..config(server)
+    }
+}
+
+fn ilst_last(b: &[u8]) -> Vec<(String, u32, Vec<u8>)> {
+    mp4::ilst_items(mp4::find_path_last(b, &["moov", "udta", "meta", "ilst"]).unwrap()).unwrap()
+}
+
+/// 전체 받기: 변환이 만든 새 moov에 태그와 표지가 함께 들어가고, moov는 하나뿐이다.
+#[tokio::test]
+async fn full_download_gets_tags_and_cover_in_the_converted_moov() {
+    let server = MockServer::start().await;
+    mount_info_with_cover(&server, "/g0").await;
+    mount_real_hls(&server, "/g0").await;
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_path(&dir);
+    let req = DownloadRequest {
+        embed_metadata: true,
+        ..request(&out, 2)
+    };
+    let r = run(meta_cfg(&server), req, CancellationToken::new(), &|_| {})
+        .await
+        .unwrap();
+    assert!(matches!(r, DownloadOutcome::Completed { .. }), "{r:?}");
+    let b = std::fs::read(&out).unwrap();
+    mp4::assert_flat_mp4(&b);
+    assert_eq!(mp4::top_moov_count(&b), 1);
+    let items = ilst_last(&b);
+    let kinds: Vec<&str> = items.iter().map(|i| i.0.as_str()).collect();
+    assert_eq!(kinds, ["©nam", "©ART", "©day", "©cmt", "covr"]);
+    assert_eq!(items[0].2, "테스트 다시보기".as_bytes());
+    assert_eq!(items[1].2, "테스트채널".as_bytes());
+    assert_eq!(items[2].2, b"2026-01-02");
+    assert_eq!(items[3].2, b"https://chzzk.naver.com/video/9000001");
+    assert_eq!(
+        (items[4].1, items[4].2.clone()),
+        (14, fixture("testdata/synthetic/thumb.png"))
+    );
+    // 표지 요청에는 쿠키가 없다
+    let cover = requests(&server, COVER_PATH).await;
+    assert_eq!(cover.len(), 1);
+    assert!(cover[0].headers.get("cookie").is_none());
+}
+
+/// 끄면 지금까지와 같다: 태그도 표지 요청도 없다.
+#[tokio::test]
+async fn full_download_with_metadata_off_has_no_udta() {
+    let server = MockServer::start().await;
+    mount_info_with_cover(&server, "/g0").await;
+    mount_real_hls(&server, "/g0").await;
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_path(&dir);
+    run(
+        meta_cfg(&server),
+        request(&out, 2),
+        CancellationToken::new(),
+        &|_| {},
+    )
+    .await
+    .unwrap();
+    let b = std::fs::read(&out).unwrap();
+    mp4::assert_flat_mp4(&b);
+    assert!(mp4::find_path_last(&b, &["moov", "udta"]).is_none());
+    assert!(requests(&server, COVER_PATH).await.is_empty());
+}
+
+/// 구간 받기: 제목 뒤에 파일 이름과 같은 접미사가 붙는다.
+#[tokio::test]
+async fn range_download_name_has_the_range_suffix() {
+    let server = MockServer::start().await;
+    mount_info_with_cover(&server, "/g0").await;
+    mount_real_hls(&server, "/g0").await;
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_path(&dir);
+    let req = DownloadRequest {
+        embed_metadata: true,
+        ..range_request(&out, 2, 4000, Some(10000))
+    };
+    run(meta_cfg(&server), req, CancellationToken::new(), &|_| {})
+        .await
+        .unwrap();
+    let b = std::fs::read(&out).unwrap();
+    mp4::assert_flat_mp4(&b);
+    let items = ilst_last(&b);
+    assert_eq!(items[0].0, "©nam");
+    assert_eq!(items[0].2, "테스트 다시보기 (0.00.04~0.00.10)".as_bytes());
+}
+
+/// 변환(+태그) 뒤 rename 전에 끊기면(`Skipped`) 다음 실행이 조각을 다시 받지 않고, 같은 결과로 마무리한다.
+#[tokio::test]
+async fn tagged_full_then_skipped_resumes_without_refetch() {
+    let server = MockServer::start().await;
+    mount_info_with_cover(&server, "/g0").await;
+    let n = mount_real_hls(&server, "/g0").await;
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_path(&dir);
+    let (part, sidecar) = part_files(&out);
+
+    let out2 = out.clone();
+    let cb = move |p: Progress| {
+        if p.phase == Phase::Finalizing {
+            std::fs::write(&out2, b"someone else").unwrap();
+        }
+    };
+    let req = DownloadRequest {
+        embed_metadata: true,
+        on_existing: DuplicatePolicy::Skip,
+        ..request(&out, 2)
+    };
+    let r = run(meta_cfg(&server), req, CancellationToken::new(), &cb)
+        .await
+        .unwrap();
+    assert!(matches!(r, DownloadOutcome::Skipped { .. }), "{r:?}");
+    let converted = std::fs::read(&part).unwrap();
+    mp4::assert_flat_mp4(&converted);
+    assert_eq!(ilst_last(&converted).len(), 5);
+    assert!(sidecar.exists());
+
+    std::fs::remove_file(&out).unwrap();
+    let req = DownloadRequest {
+        embed_metadata: true,
+        ..request(&out, 2)
+    };
+    let r = run(meta_cfg(&server), req, CancellationToken::new(), &|_| {})
+        .await
+        .unwrap();
+    assert!(matches!(r, DownloadOutcome::Completed { .. }), "{r:?}");
+    for i in 0..n {
+        assert_eq!(seg_count(&server, "/g0", i).await, 1, "seg{i}");
+    }
+    // 이미 일반 mp4라 다시 쓰지 않는다: 첫 실행이 넣은 태그가 그대로다
+    assert_eq!(std::fs::read(&out).unwrap(), converted);
+}
+
+/// 앱 기본 설정(메타데이터 켬)으로 합성 fixture를 받은 결과의 golden(네이티브 E2E가 같은 파일로 판정한다, mp4-metadata.md §13.5).
+/// `©ART`·`©cmt`(영상 번호)가 채널마다 달라 golden이 둘이다: 본인 채널, 맡은 채널(`scripts/ci/e2e-fixture-server.mjs`의 같은 변형 규칙).
+/// 태그는 info에서만 만들고 벽시계·버전을 넣지 않아 릴리스마다 바뀌지 않는다.
+/// 다시 만들기: `UPDATE_FLAT_GOLDEN=1 cargo test -p chzzk-core --test segmented fixture_tagged_goldens`
+#[tokio::test]
+async fn fixture_tagged_goldens() {
+    // (golden, 영상 번호, 채널 ID, 채널 이름, `©ART`)
+    let variants: [(&str, u64, &str, &str); 2] = [
+        (
+            "testdata/hls/full2_tagged_own.mp4",
+            9000001,
+            "000000000000000000000000000000a1",
+            "테스트채널",
+        ),
+        (
+            "testdata/hls/full2_tagged_delegated.mp4",
+            9000201,
+            "000000000000000000000000000000b2",
+            "맡은채널",
+        ),
+    ];
+    let mut outputs = Vec::new();
+    for (golden, video_no, channel_id, channel_name) in variants {
+        let server = MockServer::start().await;
+        // 영상 번호·채널 ID·채널 이름만 바꾼 info(표지 주소의 영상 번호도 따라 바뀐다)
+        let info = String::from_utf8(rewrite_hosts(
+            &fixture("testdata/hls/video_info.json"),
+            &server.uri(),
+        ))
+        .unwrap()
+        .replace("9000001", &video_no.to_string())
+        .replace("000000000000000000000000000000a1", channel_id)
+        .replace("테스트채널", channel_name);
+        Mock::given(method("GET"))
+            .and(path(format!("/service/v2/videos/{video_no}")))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(info, "application/json"))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(format!("/thumb/{video_no}.jpg")))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_bytes(fixture("testdata/synthetic/thumb.jpg")),
+            )
+            .mount(&server)
+            .await;
+        let media = String::from_utf8(fixture("testdata/hls/media.m3u8")).unwrap();
+        let mut kept = Vec::new();
+        let mut uris = 0;
+        for line in media.lines() {
+            if uris == 2 {
+                break;
+            }
+            if !line.is_empty() && !line.starts_with('#') {
+                uris += 1;
+            }
+            kept.push(line);
+        }
+        let media = format!("{}\n#EXT-X-ENDLIST\n", kept.join("\n"));
+        let mounts: [(&str, Vec<u8>); 5] = [
+            ("/vod_playlist.m3u8", fixture("testdata/hls/master.m3u8")),
+            ("/vod_chunklist.m3u8", media.into_bytes()),
+            ("/144p_0_0_0.m4s", fixture("testdata/hls/init.mp4")),
+            ("/144p_seg0.m4v", fixture("testdata/hls/seg0.m4v")),
+            ("/144p_seg1.m4v", fixture("testdata/hls/seg1.m4v")),
+        ];
+        for (s, body) in mounts {
+            Mock::given(method("GET"))
+                .and(suffix(s))
+                .respond_with(ResponseTemplate::new(200).set_body_bytes(body))
+                .mount(&server)
+                .await;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let out = out_path(&dir);
+        let req = DownloadRequest {
+            embed_metadata: true,
+            content: ContentRef::Video { video_no },
+            ..request(&out, 4)
+        };
+        run(meta_cfg(&server), req, CancellationToken::new(), &|_| {})
+            .await
+            .unwrap();
+        let got = std::fs::read(&out).unwrap();
+        mp4::assert_flat_mp4(&got);
+        let items = ilst_last(&got);
+        let kinds: Vec<&str> = items.iter().map(|i| i.0.as_str()).collect();
+        assert_eq!(kinds, ["©nam", "©ART", "©day", "©cmt", "covr"]);
+        assert_eq!(items[1].2, channel_name.as_bytes());
+        assert_eq!(
+            items[3].2,
+            format!("https://chzzk.naver.com/video/{video_no}").as_bytes()
+        );
+        if std::env::var_os("UPDATE_FLAT_GOLDEN").is_some() {
+            let p = format!("{}/../../{golden}", env!("CARGO_MANIFEST_DIR"));
+            std::fs::write(p, &got).unwrap();
+        }
+        assert_eq!(
+            got,
+            fixture(golden),
+            "다시 만들기: UPDATE_FLAT_GOLDEN=1 cargo test -p chzzk-core --test segmented fixture_tagged_goldens"
+        );
+        // 끈 결과(`full2_flat.mp4`)와 미디어 데이터는 같다(태그만 더해진다)
+        assert_eq!(
+            mp4::mdat_payloads(&got),
+            mp4::mdat_payloads(&fixture("testdata/hls/full2_flat.mp4"))
+        );
+        outputs.push(got);
+    }
+    assert_ne!(
+        outputs[0], outputs[1],
+        "채널마다 태그가 달라 golden이 둘이다"
+    );
 }

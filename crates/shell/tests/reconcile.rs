@@ -11,6 +11,7 @@ use chzzk_shell::jobs::{JobRecord, JobsFile, partial_bytes, reconcile};
 
 fn record(id: u64, status: JobStatus, output: PathBuf) -> JobRecord {
     JobRecord {
+        embed_metadata: true,
         id: JobId(id),
         url: "u".into(),
         content: ContentRef::Video { video_no: 1 },

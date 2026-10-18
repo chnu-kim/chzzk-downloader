@@ -34,6 +34,8 @@ pub struct VideoContent {
     /// 초
     pub duration: Option<f64>,
     pub channel: Option<ChannelRef>,
+    /// 표지로 쓸 썸네일 주소. 쿼리가 서명일 수 있어 `Debug`가 가린다.
+    pub thumbnail_image_url: Option<String>,
 }
 
 impl fmt::Debug for VideoContent {
@@ -53,7 +55,15 @@ impl fmt::Debug for VideoContent {
             .field("adult", &self.adult)
             .field("duration", &self.duration)
             .field("channel", &self.channel)
+            .field("thumbnail_image_url", &masked(&self.thumbnail_image_url))
             .finish()
+    }
+}
+
+impl VideoContent {
+    /// 표지 썸네일 주소. 비었거나 주소로 읽히지 않으면 `None`이다(`non_empty`와 같은 기준).
+    pub(crate) fn thumbnail_url(&self) -> Option<Url> {
+        Url::parse(non_empty(&self.thumbnail_image_url)?).ok()
     }
 }
 
@@ -417,6 +427,18 @@ fn parse_live_media(json: &str) -> Result<(Url, Vec<Quality>), Error> {
         .map(EncodingTrack::into_quality)
         .collect();
     Ok((master_url, tracks))
+}
+
+/// 응답 JSON 어디엔가 이름에 `thumb`가 든 키가 있는가(대소문자 무시). 값은 읽지 않는다.
+/// 클립 info에 표지로 쓸 썸네일 필드가 있는지 사용자가 직접 확인하는 실측 M-meta-3 도구가 쓴다.
+pub(crate) fn has_thumb_key(v: &Value) -> bool {
+    match v {
+        Value::Object(m) => m
+            .iter()
+            .any(|(k, v)| k.to_ascii_lowercase().contains("thumb") || has_thumb_key(v)),
+        Value::Array(a) => a.iter().any(has_thumb_key),
+        _ => false,
+    }
 }
 
 /// 클립 info(`/service/v1/play-info/clip/{id}`)의 `content`.
@@ -932,5 +954,51 @@ mod tests {
         body["content"]["channel"]["channelId"] = "ABCdef".into();
         let (meta, _) = parse_video_info(&serde_json::to_vec(&body).unwrap()).unwrap();
         assert_eq!(meta.channel_id.as_deref(), Some("abcdef"));
+    }
+
+    /// 썸네일 키 탐지: 클립 fixture에는 없고, 중첩·배열 안의 키도 대소문자 없이 잡는다. 값은 보지 않는다.
+    #[test]
+    fn thumb_key_probe() {
+        let clip: Value =
+            serde_json::from_slice(&fixture("testdata/clip/clip_playinfo.json")).unwrap();
+        assert!(!has_thumb_key(&clip));
+        let vod: Value = serde_json::from_slice(&fixture("testdata/vod/video_info.json")).unwrap();
+        assert!(has_thumb_key(&vod));
+        assert!(has_thumb_key(
+            &serde_json::json!({"a": [{"b": {"ThumbnailURL": "x"}}]})
+        ));
+        assert!(!has_thumb_key(
+            &serde_json::json!({"a": "thumb 값은 보지 않는다"})
+        ));
+    }
+
+    /// 표지 썸네일 주소: 두 VOD fixture에 있다. 비었거나 없거나 주소가 아니면 `None`이다.
+    #[test]
+    fn thumbnail_url_from_video_info() {
+        for (rel, no) in [
+            ("testdata/vod/video_info.json", "9000002"),
+            ("testdata/hls/video_info.json", "9000001"),
+        ] {
+            let (_, v) = video_content(rel);
+            let u = v.thumbnail_url().unwrap();
+            assert_eq!(
+                u.as_str(),
+                format!("https://img.example.invalid/thumb/{no}.jpg")
+            );
+        }
+        for edit in [
+            Some(serde_json::json!("")),
+            Some(serde_json::json!(null)),
+            Some(serde_json::json!("not a url")),
+            None,
+        ] {
+            let v = video_content_with("testdata/vod/video_info.json", |c| match &edit {
+                Some(x) => c["thumbnailImageUrl"] = x.clone(),
+                None => {
+                    c.as_object_mut().unwrap().remove("thumbnailImageUrl");
+                }
+            });
+            assert!(v.thumbnail_url().is_none(), "{edit:?}");
+        }
     }
 }

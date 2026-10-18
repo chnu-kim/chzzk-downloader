@@ -43,6 +43,18 @@ describe("allow·disallow", () => {
     expect(await query(stub, "SELECT count(*) AS n FROM audit WHERE action = 'disallow'")).toEqual([{ n: 1 }]);
   });
 
+  it("L2c 허가 행이 없는 채널(옛 관리자)을 차단해도 세션이 폐기된다: 차단 → 다시 허가해도 옛 토큰이 살아나지 않는다(Codex 리뷰)", async () => {
+    const stub = await closedStub();
+    // C3는 ADMIN_CHANNEL_IDS에 있어 허가 행 없이 로그인한다
+    const l = await appLogin(stub, { channelId: C3, admins: [A1, C3] });
+    expect(await query(stub, "SELECT status FROM session WHERE channel_id = ?", C3)).toEqual([{ status: "active" }]);
+    // 이후 C3가 관리자 목록에서 빠졌다. 다른 관리자가 차단했다가 다시 허가한다
+    expect(await stub.disallow(C3, A1, [A1], T0 + 1)).toEqual({ ok: true });
+    expect(await query(stub, "SELECT status, revoked_why FROM session WHERE channel_id = ?", C3)).toEqual([{ status: "revoked", revoked_why: "disallowed" }]);
+    expect(await stub.allow(C3, "", A1, T0 + 2, [A1])).toEqual({ ok: true });
+    expect(await stub.check(await sha(l.bundle.accessToken), [A1], T0 + 3)).toMatchObject({ ok: false, code: "not_allowed" });
+  });
+
   it("L2 관리자는 disallow 409(is_admin): 행이 있어도 없어도 아무것도 쓰지 않는다", async () => {
     const stub = await closedStub();
     await stub.allow(A1, "", A1, T0);

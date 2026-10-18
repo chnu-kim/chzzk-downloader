@@ -92,10 +92,10 @@ export function allowDenied(db: Db, channelId: string, by: string, now: number):
 }
 
 /**
- * 차단(예전의 "허가 빼기", allowlist-open.md §3.3): 허가 행이 있으면 지우고 그 채널의 세션 전부 revoked(disallowed) + 위임·초대 삭제,
+ * 차단(예전의 "허가 빼기", allowlist-open.md §3.3): 허가 행이 있으면 지우고, 행 유무와 무관하게 그 채널의 세션 전부 revoked(disallowed) + 위임·초대 삭제,
  * 그리고 blocked 행을 쓴다(자동 허가만 막는다). 허가 행이 없어도 차단 행만 쓴다(B3). 관리자는 행이 있어도 409(is_admin)이고 아무것도 쓰지 않는다.
  * 허가 행도 차단 행도 없는 쪽이 아니라 "이미 차단된 채널(허가 없음)"이 not_found이고 아무것도 쓰지 않는다(일어나지 않은 차단을 감사에 남기지 않는다).
- * 세션은 허용(또는 관리자)일 때만 생기고 매 요청 허용을 다시 보므로, 행이 없는 채널의 세션은 이미 쓸 수 없다
+ * 세션 폐기는 허가 행이 없어도 한다(관리자 목록에서 빠진 옛 관리자는 행 없이 세션이 있고, 차단 뒤 다시 허가하면 옛 세션이 살아나므로)
  */
 export function disallow(db: Db, channelId: string, by: string, admins: readonly string[], now: number): DisallowResult {
   if (!CHANNEL_ID.test(channelId)) return { ok: false, code: "bad_channel_id" };
@@ -104,13 +104,13 @@ export function disallow(db: Db, channelId: string, by: string, admins: readonly
   if (row === null && db.first("SELECT 1 AS x FROM blocked WHERE channel_id = ?", channelId) !== null) return { ok: false, code: "not_found" };
   // 이름은 지운 허가 행의 것, 없으면 거부 기록의 것
   const name = row !== null ? row.channel_name : (db.first<{ channel_name: string | null }>("SELECT channel_name FROM denied WHERE channel_id = ?", channelId)?.channel_name ?? null);
-  if (row !== null) {
-    db.run("DELETE FROM allowlist WHERE channel_id = ?", channelId);
-    db.run("UPDATE session SET status = 'revoked', revoked_at = ?, revoked_why = 'disallowed' WHERE channel_id = ? AND status <> 'revoked'", now, channelId);
-    // 위임·초대는 로그인 ID(허가 행의 키)로 지운다. 판정용 owner_channel_id로는 지우지 않는다(delegation.md §8.6)
-    db.run("DELETE FROM delegation WHERE owner_login_channel_id = ? OR editor_channel_id = ?", channelId, channelId);
-    db.run("DELETE FROM invite WHERE owner_login_channel_id = ? OR claimed_channel_id = ?", channelId, channelId);
-  }
+  if (row !== null) db.run("DELETE FROM allowlist WHERE channel_id = ?", channelId);
+  // 세션·위임·초대는 허가 행의 유무와 관계없이 지운다: 관리자 목록에서 빠진 옛 관리자처럼 행 없이 세션이 있는 채널이 있고,
+  // 남겨 두면 차단 뒤 다시 허가될 때 옛 토큰이 살아난다(sessions.ts 판정이 다시 생긴 행을 본다)
+  db.run("UPDATE session SET status = 'revoked', revoked_at = ?, revoked_why = 'disallowed' WHERE channel_id = ? AND status <> 'revoked'", now, channelId);
+  // 위임·초대는 로그인 ID(허가 행의 키)로 지운다. 판정용 owner_channel_id로는 지우지 않는다(delegation.md §8.6)
+  db.run("DELETE FROM delegation WHERE owner_login_channel_id = ? OR editor_channel_id = ?", channelId, channelId);
+  db.run("DELETE FROM invite WHERE owner_login_channel_id = ? OR claimed_channel_id = ?", channelId, channelId);
   db.run(
     "INSERT INTO blocked (channel_id, channel_name, blocked_by, blocked_at) VALUES (?, ?, ?, ?) ON CONFLICT(channel_id) DO UPDATE SET channel_name = excluded.channel_name, blocked_by = excluded.blocked_by, blocked_at = excluded.blocked_at",
     channelId,

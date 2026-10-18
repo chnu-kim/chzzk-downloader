@@ -611,6 +611,16 @@ impl PartFile {
         rewritten: bool,
         rename: impl FnOnce(&Path, &Path) -> Result<bool, Error> + Send + 'static,
     ) -> Result<Finalized, Error> {
+        self.finalize_on(cfg!(windows), rewritten, rename).await
+    }
+
+    /// `finalize_using`의 본체. `windows`를 주입받아 Windows 분기를 다른 OS에서도 테스트한다.
+    async fn finalize_on(
+        self,
+        windows: bool,
+        rewritten: bool,
+        rename: impl FnOnce(&Path, &Path) -> Result<bool, Error> + Send + 'static,
+    ) -> Result<Finalized, Error> {
         let PartFile {
             mut w,
             part,
@@ -627,12 +637,14 @@ impl PartFile {
         let target = final_path.clone();
         let moved = tokio::task::spawn_blocking(move || {
             f.sync_data().map_err(|e| map_io_error("sync", &part, e))?;
-            // Windows는 열린 파일을 옮길 수 없어 먼저 닫는다(잠금도 풀린다). Unix는 잠금을 쥔 채
-            // 옮겨, 그 사이에 같은 출력의 다른 작업이 `.part`를 잠그고 지우거나 자르지 못하게 한다.
-            // Windows의 이 틈에도 sidecar는 rename 뒤에야 지우므로, 잠금을 쥔 뒤 소유를 다시 보는 `resume`·`create`·
-            // `discard_partial`은 남의 녹화를 자르거나 지우지 않는다. rename 뒤의 틈에 새로 생긴 `.part`는 비어 있어 `create`가
-            // 남은 sidecar를 덮어쓰고, 그 sidecar는 `remove_own_sidecar`가 지우지 않는다.
-            let held = if cfg!(windows) {
+            // Windows는 열린 파일을 옮길 수 없어 `.part`를 옮길 때만 먼저 닫는다(잠금도 풀린다). 그 밖에는 잠금을 쥔
+            // 채 옮겨, 그 사이에 같은 출력의 다른 작업이 `.part`를 잠그고 지우거나 자르지 못하게 한다. 다시 쓴
+            // 파일은 옮기는 것이 `.part`가 아니라 `.part.tmp`라 Windows도 쥔다(rename과 `.part` 삭제가 끝날 때까지).
+            // 풀면 틈에 들어온 다른 작업의 새 `.part`를 잠금 없이 지운다.
+            // Windows의 `.part` 옮기기 틈에도 sidecar는 rename 뒤에야 지우므로, 잠금을 쥔 뒤 소유를 다시 보는 `resume`·
+            // `create`·`discard_partial`은 남의 녹화를 자르거나 지우지 않는다. rename 뒤의 틈에 새로 생긴 `.part`는 비어
+            // 있어 `create`가 남은 sidecar를 덮어쓰고, 그 sidecar는 `remove_own_sidecar`가 지우지 않는다.
+            let held = if releases_part_lock_before_rename(windows, rewritten) {
                 drop(f);
                 None
             } else {
@@ -686,6 +698,12 @@ impl PartFile {
         drop(w);
         res
     }
+}
+
+/// rename 전에 `.part` 잠금을 풀어야 하는지. Windows에서 `.part` 자체를 옮길 때만 그렇다(열린 파일은 옮길 수 없다).
+/// 다시 쓴 임시 파일을 옮길 때는 `.part`를 옮기지 않으므로 풀지 않는다(mp4-metadata.md §6.2).
+fn releases_part_lock_before_rename(windows: bool, rewritten: bool) -> bool {
+    windows && !rewritten
 }
 
 /// 완료 뒤 sidecar를 지운다. 옮긴 뒤 지우기 전 틈에 다른 작업이 새 `.part`를 만들고 자기 sidecar를 썼으면 그것은
@@ -1845,6 +1863,50 @@ mod tests {
         p.checkpoint(|_| {}).await.unwrap();
         let path = moved(p.finalize(DuplicatePolicy::Overwrite).await.unwrap());
         assert_eq!(std::fs::read(path).unwrap(), b"new");
+    }
+
+    #[test]
+    fn part_lock_is_released_only_when_moving_the_part_on_windows() {
+        assert!(releases_part_lock_before_rename(true, false));
+        assert!(
+            !releases_part_lock_before_rename(true, true),
+            "다시 쓰기는 Windows도 쥔다"
+        );
+        assert!(!releases_part_lock_before_rename(false, false));
+        assert!(!releases_part_lock_before_rename(false, true));
+    }
+
+    /// Windows 분기를 주입해, 다시 쓴 파일을 옮기는 동안 Windows도 `.part` 잠금을 쥐는지 본다.
+    /// 반대로 `.part`를 옮기는 Windows는 푼다.
+    #[tokio::test]
+    async fn rewritten_finalize_holds_part_lock_even_on_windows() {
+        for (rewritten, expect_locked) in [(true, true), (false, false)] {
+            let dir = tempfile::tempdir().unwrap();
+            let out = dir.path().join("a.mp4");
+            let mut p = PartFile::create(&out, sidecar()).unwrap();
+            p.write(b"orig").unwrap();
+            std::fs::write(tag_temp_path(&out), b"tagged").unwrap();
+            let seen = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let s2 = seen.clone();
+            let path = p
+                .finalize_on(true, rewritten, move |from, to| {
+                    let locked = matches!(
+                        open_locked(&part_path(to), false),
+                        Err(Error::FileLocked { .. })
+                    );
+                    s2.store(locked, std::sync::atomic::Ordering::SeqCst);
+                    rename_with_retry(from, to).map(|()| true)
+                })
+                .await
+                .unwrap();
+            moved(path);
+            assert_eq!(
+                seen.load(std::sync::atomic::Ordering::SeqCst),
+                expect_locked,
+                "rewritten={rewritten}"
+            );
+            assert!(!part_path(&out).exists());
+        }
     }
 
     /// Unix는 잠금을 쥔 채 rename한다. 그 순간 다른 작업은 `.part`를 잠글 수 없다.

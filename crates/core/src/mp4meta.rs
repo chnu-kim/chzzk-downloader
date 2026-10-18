@@ -404,7 +404,7 @@ fn shift_chunk_offsets(
 ///
 /// - 최상위 `moov`가 정확히 하나이고 `mvex`가 없어야 한다. 상자가 파일 끝을 넘거나 크기가 0(파일 끝까지)이면 거부.
 /// - 새 `moov` = 옛 자식(`udta` 빼고, 순서 그대로) + 새 `udta`. 옛 것과 같으면 `AlreadyTagged`.
-/// - 자리: 옛 `moov`와 바로 뒤 `free`/`skip`(있으면)을 합친 칸(`avail`)에 넣는다. 8바이트 이상 남으면 남는 만큼
+/// - 자리: 옛 `moov`와 바로 뒤 `free`/`skip`(있으면, `MAX_META_BOX` 이하일 때만)을 합친 칸(`avail`)에 넣는다. 8바이트 이상 남으면 남는 만큼
 ///   `free`로 채워 뒤 바이트가 움직이지 않는다. 아니면 그 `free`를 빼고 뒤를 `delta = 새 - avail`만큼 옮기고(꼭 맞으면
 ///   0, 1~7바이트 남으면 음수) `stco`/`co64`를 고친다(`shift_chunk_offsets`).
 pub(crate) fn plan_rewrite(src: &mut dyn Source, udta: &[u8]) -> Result<Plan, Fail> {
@@ -431,6 +431,13 @@ pub(crate) fn plan_rewrite(src: &mut dyn Source, udta: &[u8]) -> Result<Plan, Fa
         .get(idx + 1)
         .filter(|t| matches!(&t.kind, b"free" | b"skip"))
         .map_or(0, |t| t.size);
+    // 흡수한 free는 `moov`와 함께 메모리에서 `free` 상자로 채워진다. 상한을 넘는 free는 흡수하지 않고 다른
+    // 뒤 바이트처럼 `delta`만큼 옮긴다(복사는 스트리밍이라 메모리를 쓰지 않는다).
+    let free_after = if free_after > MAX_META_BOX {
+        0
+    } else {
+        free_after
+    };
     let avail = m.size + free_after;
     let new_len = moov.len() as u64;
     // 8바이트 이상 남으면 free로 채워 뒤를 그대로 두고, 아니면(꼭 맞음 포함) 뒤를 `delta`만큼 옮긴다

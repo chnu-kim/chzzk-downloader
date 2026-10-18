@@ -891,3 +891,37 @@ fn huge_moov_is_rejected_before_reading_its_body() {
     let e = plan_sparse(&mut f, &udta()).unwrap_err();
     assert!(format!("{e:?}").contains("너무 크다"), "{e:?}");
 }
+
+/// `moov` 뒤 `free`가 `MAX_META_BOX`를 넘으면 흡수하지 않는다: 새 `moov`가 `free` 크기만큼 메모리를 쓰지 않고, 뒤를
+/// `delta`만큼 옮긴다(Codex medium). 흡수하면 `moov`가 1 GiB가 된다.
+#[test]
+fn huge_free_after_moov_is_not_absorbed() {
+    const TOTAL: u64 = 1 << 30;
+    const CHUNK_OFFSET: u32 = 200;
+    let ftyp = ftyp();
+    let moov = synth_moov(&[stco(&[CHUNK_OFFSET])]);
+    let head_len = (ftyp.len() + moov.len()) as u64;
+    let free_len = TOTAL - head_len - 8;
+    let mut free_hdr = u32::try_from(free_len).unwrap().to_be_bytes().to_vec();
+    free_hdr.extend_from_slice(b"free");
+    let mut mdat = 8u32.to_be_bytes().to_vec();
+    mdat.extend_from_slice(b"mdat");
+    let mut f = SparseFile::new(&[ftyp.clone(), moov.clone(), free_hdr].concat(), TOTAL);
+    f.put(TOTAL - 8, &mdat);
+
+    let Plan::Rewrite(p) = plan_sparse(&mut f, &udta()).unwrap() else {
+        panic!("다시 써야 한다");
+    };
+    assert!(
+        p.moov.len() < 1 << 20,
+        "free를 메모리에 만들면 안 된다: {}",
+        p.moov.len()
+    );
+    assert_eq!(p.after, head_len, "free는 흡수하지 않고 뒤로 옮긴다");
+    let delta = p.moov.len() as i64 - moov.len() as i64;
+    assert_eq!(p.out_len() as i64 - TOTAL as i64, delta);
+    assert_eq!(
+        mp4::chunk_offsets(&p.moov[8..]).unwrap(),
+        [(i64::from(CHUNK_OFFSET) + delta) as u64]
+    );
+}

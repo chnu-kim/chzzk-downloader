@@ -4,7 +4,9 @@
 //! `naming`)이 해서 정리 규칙이 두 벌이 되지 않는다. 예시 값은 모두 가짜이고 날짜는 고정이다(골든이 날마다
 //! 바뀌면 안 된다). 같은 예시를 `design/naming/template.json`이 손으로 계산해 두었다.
 
-use chzzk_core::naming::{Platform, TemplateError, Token, parse_template, render_filename};
+use chzzk_core::naming::{
+    MAX_TEMPLATE_BYTES, Platform, TemplateError, Token, parse_template, render_filename,
+};
 use chzzk_core::{ContentKind, ContentMeta, ContentRef};
 
 use crate::dto::{
@@ -82,7 +84,9 @@ impl From<&TemplateError> for TemplateErrorDto {
             TemplateError::MissingTitle => (TemplateErrorKind::MissingTitle, None),
             TemplateError::TooLong => (TemplateErrorKind::TooLong, None),
         };
-        TemplateErrorDto { kind, token }
+        // 문구가 숫자를 따로 적지 않도록 상한을 같이 준다
+        let max = matches!(e, TemplateError::TooLong).then_some(MAX_TEMPLATE_BYTES as u32);
+        TemplateErrorDto { kind, token, max }
     }
 }
 

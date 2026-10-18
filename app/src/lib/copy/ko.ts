@@ -258,7 +258,7 @@ export const ko = {
   'settings.fileNameTemplate.error.duplicate': '한 번만 쓸 수 있는 말이 두 번 들어 있어요: {token}',
   'settings.fileNameTemplate.error.separator': '슬래시와 역슬래시는 쓸 수 없어요. 폴더는 만들지 않아요.',
   'settings.fileNameTemplate.error.noTitle': '제목 자리({title})가 있어야 해요.',
-  'settings.fileNameTemplate.error.tooLong': '규칙이 너무 길어요. 100바이트 안으로 줄여 주세요.',
+  'settings.fileNameTemplate.error.tooLong': '규칙이 너무 길어요. {max}바이트 안으로 줄여 주세요.',
   'settings.view': '보기',
   'settings.textScale': '글자 크기',
   'settings.textScale.default': '기본',

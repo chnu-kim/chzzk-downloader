@@ -75,3 +75,21 @@ fn preview_error_kinds_and_json_shape() {
         json!({"status": "invalid", "error": {"kind": "unbalancedBrace"}})
     );
 }
+
+/// 너무 긴 규칙의 오류는 상한(`MAX_TEMPLATE_BYTES`)을 함께 준다. 화면 문구가 숫자를 따로 적지 않고 이 값을 쓴다
+/// (코어 상수와 문구가 어긋나지 않게).
+#[test]
+fn too_long_error_carries_the_limit() {
+    let max = chzzk_core::naming::MAX_TEMPLATE_BYTES;
+    let ok = format!("{{title}}{}", "a".repeat(max - "{title}".len()));
+    assert!(matches!(
+        preview_file_name_template(&ok, Platform::Linux),
+        FileNameTemplatePreview::Ok { .. }
+    ));
+    let long = format!("{ok}a");
+    let v = serde_json::to_value(preview_file_name_template(&long, Platform::Linux)).unwrap();
+    assert_eq!(
+        v,
+        json!({"status": "invalid", "error": {"kind": "tooLong", "max": max}})
+    );
+}

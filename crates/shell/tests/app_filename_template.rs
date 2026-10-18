@@ -210,3 +210,48 @@ async fn existing_job_output_survives_template_change() {
     assert_eq!(jobs.len(), 1);
     assert_eq!(jobs[0].output, before);
 }
+
+/// 카드에 보인 제안 이름 + `.mp4`가 실제 저장 파일 이름이다(리뷰 지적). 셸은 `.mp4`를 뗀 이름을 다시 정리하므로
+/// 코어가 정리를 한 번에 끝낸 이름을 주어야 한다. 규칙 `{title} .{no}`는 마지막 `.` 앞 공백을 지우는 정리 규칙에 걸린다.
+#[tokio::test]
+async fn suggested_name_is_the_saved_name() {
+    let api = mock_api().await;
+    let t = TempDir::new().unwrap();
+    let app = open(t.path(), &api);
+    app.update_settings(set("{title} .{no}")).unwrap();
+    let r = app.resolve(&url()).await.unwrap();
+    assert_eq!(
+        r.suggested_file_name,
+        "가상 일반 VOD 제목 (괄호) 테스트.9000002"
+    );
+    let folder = t.path().join("out");
+    std::fs::create_dir_all(&folder).unwrap();
+    let job = app
+        .enqueue(EnqueueRequest {
+            url: url(),
+            content: r.content.clone(),
+            title: r.meta.title.clone(),
+            channel_name: r.meta.channel_name.clone(),
+            channel_id: r.meta.channel_id.clone(),
+            quality_id: QUALITY.into(),
+            quality_label: "720p".into(),
+            expected_kind: r.playback_kind,
+            folder: Some(folder.to_string_lossy().into_owned()),
+            file_name: r.suggested_file_name.clone(),
+            on_existing: OnExisting::Overwrite,
+            restart: false,
+            content_date: None,
+            range: None,
+            save_chat: false,
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        Path::new(&job.output)
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        format!("{}.mp4", r.suggested_file_name)
+    );
+}

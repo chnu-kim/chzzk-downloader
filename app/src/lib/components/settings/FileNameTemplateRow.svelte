@@ -73,7 +73,13 @@
   } as const satisfies Record<TemplateErrorDto['kind'], CopyKey>;
 
   const invalidText = $derived(
-    invalid ? t(ERROR_KEY[invalid.kind], { token: invalid.token === undefined ? '' : `{${invalid.token}}` }) : '',
+    invalid
+      ? t(ERROR_KEY[invalid.kind], {
+          token: invalid.token === undefined ? '' : `{${invalid.token}}`,
+          // 길이 상한은 코어 상수를 셸이 DTO로 준다(문구에 숫자를 박지 않는다)
+          max: invalid.max ?? '',
+        })
+      : '',
   );
 
   function fieldProps(helpId: string | undefined) {
@@ -104,6 +110,9 @@
     }
     failure = await settings.patch({ fileNameTemplate: draft });
     busy = false;
+    // 셸은 앞뒤 공백만 붙은 기본 규칙을 "규칙 없음"으로 저장한다. 저장된 값이 그대로면 위 동기화가 돌지 않으니
+    // 입력칸을 저장된 값으로 직접 맞춘다(안 그러면 [저장]이 남는다).
+    if (!failure) draft = saved;
   }
 
   async function reset() {

@@ -8,4 +8,8 @@ export type TemplateErrorDto = { kind: TemplateErrorKind,
 /**
  * `unknownToken`·`duplicateToken`일 때 그 토큰 이름
  */
-token?: string, };
+token?: string, 
+/**
+ * `tooLong`일 때 길이 상한(바이트, 코어 `MAX_TEMPLATE_BYTES`). 화면 문구가 이 값을 쓴다
+ */
+max?: number, };

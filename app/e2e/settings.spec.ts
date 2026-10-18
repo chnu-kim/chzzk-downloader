@@ -217,7 +217,7 @@ test('파일 이름 규칙: 기본 문자열 · 예시 · 저장 때만 오류 �
   await page.getByLabel(t('url.label')).fill(r.url);
   await page.getByRole('button', { name: t('common.load') }).click();
   const card = page.getByRole('region', { name: r.meta.title });
-  await expect(card.getByLabel(t('filename.label'))).toHaveValue('261018_채널이름_저녁 방송');
+  await expect(card.getByLabel(t('filename.label'))).toHaveValue('261003_채널이름_금요 노가리 방송 - 신작 게임 해보기');
 
   await page.getByRole('button', { name: t('header.settings') }).click();
   await reset.click();

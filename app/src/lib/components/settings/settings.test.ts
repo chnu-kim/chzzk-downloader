@@ -91,6 +91,8 @@ beforeEach(() => {
 function previewFor(tpl: string): FileNameTemplatePreview {
   if (tpl.includes('{foo}')) return { status: 'invalid', error: { kind: 'unknownToken', token: 'foo' } };
   if (tpl.endsWith('{')) return { status: 'invalid', error: { kind: 'unbalancedBrace' } };
+  // 상한은 셸이 DTO로 준다. 문구가 100을 박아 두지 않았는지 보려고 일부러 다른 값을 쓴다
+  if (tpl.includes('LONG')) return { status: 'invalid', error: { kind: 'tooLong', max: 64 } };
   const name = tpl === DEFAULT_FILE_NAME_TEMPLATE ? '[261018] 채널이름 - 저녁 방송.mp4' : `${tpl.replace('{date}', '261018').replace('{title}', '저녁 방송')}.mp4`;
   return {
     status: 'ok',
@@ -561,6 +563,29 @@ describe('설정: 파일 이름 규칙', () => {
     await user.click(resetButton()!);
     expect(field()).toHaveValue(DEFAULT_FILE_NAME_TEMPLATE);
     expect(api.updateSettings).not.toHaveBeenCalled();
+  });
+
+  it('기본 규칙에 앞 공백만 붙인 값을 저장하면 셸이 규칙 없음으로 돌려준다. 입력칸도 기본 템플릿으로 맞춰 [저장]이 남지 않는다', async () => {
+    // 셸 `normalize_template`: 앞뒤 공백을 뺀 값이 기본 템플릿이면 `null`로 저장한다
+    vi.mocked(api.updateSettings).mockImplementationOnce(async () => ({ ...base, fileNameTemplate: null }) as SettingsDto);
+    const user = userEvent.setup();
+    render(SettingsView);
+    await replace(user, ` ${DEFAULT_FILE_NAME_TEMPLATE}`);
+    await user.click(saveButton()!);
+    expect(api.updateSettings).toHaveBeenLastCalledWith({ fileNameTemplate: ` ${DEFAULT_FILE_NAME_TEMPLATE}` });
+    await waitFor(() => expect(field()).toHaveValue(DEFAULT_FILE_NAME_TEMPLATE));
+    expect(saveButton()).toBeNull();
+    expect(resetButton()).toBeNull();
+  });
+
+  it('너무 긴 규칙의 오류 문구는 셸이 준 상한을 쓴다', async () => {
+    const user = userEvent.setup();
+    render(SettingsView);
+    await replace(user, '{title}LONG');
+    await user.click(saveButton()!);
+    expect(await screen.findByRole('alert')).toHaveTextContent(t('settings.fileNameTemplate.error.tooLong', { max: 64 }));
+    expect(screen.getByRole('alert')).toHaveTextContent('64바이트');
+    expect(screen.getByRole('alert')).not.toHaveTextContent('100바이트');
   });
 
   it('저장이 거부되면 입력을 지우지 않고 칸 아래에 오류를 보인다', async () => {

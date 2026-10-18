@@ -38,7 +38,7 @@ impl Platform {
     }
 }
 
-/// 메타데이터로 기본 파일명을 만든다. 결과는 `sanitize_filename`을 거친 값이고 200바이트 이하다.
+/// 메타데이터로 기본 파일명을 만든다. 결과는 정리를 마친 값이고(`settle_filename`: 카드에 보인 이름 = 저장 이름) 200바이트 이하다.
 pub fn default_filename(meta: &ContentMeta, p: Platform) -> String {
     // "채널이 비었는가"는 문자 규칙을 적용하고 trim한 뒤의 값으로 판단한다.
     let channel = clean_component(&meta.channel_name, p);
@@ -63,7 +63,7 @@ pub fn default_filename(meta: &ContentMeta, p: Platform) -> String {
     // 자른 뒤 채널이 비었으면(Windows 끝 `.`/공백 제거) 구분자도 뺀다. 길이는 줄기만 한다.
     let sep = if channel.is_empty() { "" } else { sep };
 
-    sanitize_filename(&format!("{prefix}{channel}{sep}{title}{EXT}"), p)
+    settle_filename(&format!("{prefix}{channel}{sep}{title}{EXT}"), p)
 }
 
 /// 종류별 이름 머리(끝 공백 포함): `[YYMMDD] `·`[클립] `·`[생방송 YYMMDD-HHMM] `. 날짜 없는 영상은 빈 문자열이다.
@@ -233,6 +233,37 @@ pub fn output_path(folder: &Path, filename: &str, p: Platform) -> PathBuf {
         name = sanitize_filename(&format!("{base}{ext}"), p);
     }
     folder.join(name)
+}
+
+/// 카드 제안 이름: 만든 이름에서 `.mp4`를 뗀 것. 셸이 이 값을 입력칸에 넣고, 받을 때 `output_path`가 다시 정리해
+/// `.mp4`를 붙인다. 그래서 `default_filename`·`render_filename`은 이 왕복(`settle_filename`)을 거친 이름만 돌려준다.
+pub fn suggested_stem(name: &str) -> &str {
+    name.strip_suffix(EXT).unwrap_or(name)
+}
+
+/// 화면에 보이는 이름과 실제 저장 이름을 같게 만든다.
+///
+/// `sanitize_filename`은 마지막 `.`을 확장자 경계로 보고 그 앞의 공백(Windows는 `.`도)을 지운다. 그래서
+/// `sanitize(이름) + ".mp4"`와 `sanitize(이름 + ".mp4")`가 다르다(`Ep . 3` → `Ep. 3`). 받을 때는 뒤쪽 모양이므로
+/// `suggested_stem` → `output_path` 왕복을 이름이 변하지 않을 때까지 되풀이한다. 제목이 `.mp4`로 끝나면
+/// `output_path`가 확장자를 더 붙이지 않는 것(`x.mp4` → `x.mp4`)도 같은 왕복이 따라 정한다.
+/// 길이도 `output_path`가 자른 결과를 쓴다. 멱등이다.
+fn settle_filename(name: &str, p: Platform) -> String {
+    let mut cur = name.to_string();
+    // 두세 번이면 고정점에 닿는다(한 번 정리한 이름은 다시 정리해도 같다). 상한은 안전망이다.
+    for _ in 0..8 {
+        let saved = output_path(Path::new(""), suggested_stem(&cur), p);
+        let next = saved
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(&cur)
+            .to_string();
+        if next == cur {
+            break;
+        }
+        cur = next;
+    }
+    cur
 }
 
 /// 파일 이름에 쓸 수 있는 `H.MM.SS`(`:`는 Windows·macOS가 `_`로 바꾼다). 초 미만은 버린다.
@@ -614,11 +645,11 @@ impl FileNameTemplate {
     }
 }
 
-/// 템플릿으로 파일명을 만든다. 결과는 `sanitize_filename`을 거친 `….mp4`이고 200바이트 이하다
+/// 템플릿으로 파일명을 만든다. 결과는 정리를 마친 `….mp4`이고(`settle_filename`) 200바이트 이하다
 /// (`default_filename`과 같은 계약). 기본 템플릿의 결과는 `default_filename`과 같다.
 ///
 /// 순서: 토큰 값 → 빈 토큰 옆 구분 문자 제거 → 리터럴 문자 규칙 → 제목·채널 길이 맞추기(제목 먼저,
-/// `MIN_TITLE_BYTES` 바닥) → 채널이 비면 구분 문자 다시 제거 → `sanitize_filename`.
+/// `MIN_TITLE_BYTES` 바닥) → 채널이 비면 구분 문자 다시 제거 → `settle_filename`(정리·길이).
 pub fn render_filename(
     t: &FileNameTemplate,
     meta: &ContentMeta,
@@ -662,14 +693,8 @@ pub fn render_filename(
         }
     }
     name.push_str(EXT);
-    let mut name = sanitize_filename(&name, p);
-    // `{no}`(클립 ID)처럼 줄일 수 없는 값이 길면 `output_path`와 같이 끝을 자른다.
-    if name.len() > MAX_FILENAME_BYTES {
-        let (base, ext) = name.split_at(name.len() - EXT.len());
-        let base = trim_piece(truncate_utf8(base, MAX_FILENAME_BYTES - EXT.len()), p);
-        name = sanitize_filename(&format!("{base}{ext}"), p);
-    }
-    name
+    // 정리와 길이(`{no}`(클립 ID)처럼 줄일 수 없는 값이 길면 끝을 자른다)는 저장 때와 같은 `output_path` 왕복이 한다.
+    settle_filename(&name, p)
 }
 
 #[cfg(test)]
@@ -1578,6 +1603,64 @@ mod tests {
                             assert!(name.len() <= MAX_FILENAME_BYTES, "{tpl:?} {p:?}");
                             assert!(name.ends_with(".mp4"), "{name}");
                             assert_eq!(sanitize_filename(&name, p), name, "{tpl:?} {p:?}");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// 셸이 하는 일을 그대로 따라 한 저장 이름: 제안 이름(`.mp4`를 뗀 것)을 `output_path`에 넘긴다.
+    fn saved_name(shown: &str, p: Platform) -> String {
+        let path = super::output_path(Path::new(""), suggested_stem(shown), p);
+        path.file_name().unwrap().to_str().unwrap().to_string()
+    }
+
+    /// 화면에 보인 이름(미리보기·카드 제안 이름)과 실제 저장 이름이 같다. 리뷰 지적: `sanitize`는 마지막 `.`을
+    /// 확장자 경계로 보아서 `sanitize(이름) + ".mp4"`와 `sanitize(이름 + ".mp4")`가 다르다.
+    #[test]
+    fn shown_name_equals_saved_name() {
+        // 지적의 재현 둘
+        let m = meta(ContentKind::Video, "채널", "테스트", None);
+        let shown = render_with("{title} .{no}", &m, Linux);
+        assert_eq!(shown, "테스트.12345.mp4");
+        let m = meta(ContentKind::Video, "a.", "제목", None);
+        assert_eq!(render_with("{channel}.{title}", &m, Windows), "a.제목.mp4");
+        // 기본 규칙에 남아 있던 같은 문제
+        let m = meta(ContentKind::Video, "채널", "Ep . 3", None);
+        assert_eq!(default_filename(&m, Linux), "채널 - Ep. 3.mp4");
+        let m = meta(ContentKind::Video, "채널", "아 ... 진짜", None);
+        assert_eq!(default_filename(&m, Windows), "채널 - 아. 진짜.mp4");
+
+        let long = "a".repeat(300);
+        let vals: [&str; 11] = [
+            "", " ", ".", "..", "a.", " .b", "a .b", "x.mp4", "X.MP4", "con", &long,
+        ];
+        let tpls = [
+            DEFAULT_TEMPLATE,
+            "{title}",
+            "{title} .{no}",
+            "{channel}.{title}",
+            "{date} . {title}",
+            "{title}.mp4",
+            "{channel} .{title} .{no}",
+            "{title} {no}.",
+        ];
+        for tpl in tpls {
+            let t = parse_template(tpl).unwrap();
+            for kind in [ContentKind::Video, ContentKind::Clip, ContentKind::Live] {
+                for ch in vals {
+                    for title in vals {
+                        let m = meta(kind, ch, title, Some("2024-01-02 03:04:05"));
+                        for p in ALL {
+                            let shown = render_filename(&t, &m, &content_for(kind), p);
+                            assert_eq!(
+                                saved_name(&shown, p),
+                                shown,
+                                "{tpl:?} {p:?} {ch:?} {title:?}"
+                            );
+                            let d = default_filename(&m, p);
+                            assert_eq!(saved_name(&d, p), d, "default {p:?} {ch:?} {title:?}");
                         }
                     }
                 }

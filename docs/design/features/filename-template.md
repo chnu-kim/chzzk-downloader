@@ -153,7 +153,7 @@
 | `settings.fileNameTemplate.error.duplicate` | **{token}은 한 번만 쓸 수 있어요.** |
 | `settings.fileNameTemplate.error.separator` | **/ 와 \\ 는 쓸 수 없어요. 폴더는 만들지 않아요.** |
 | `settings.fileNameTemplate.error.title` | **{title}이 들어가야 해요.** |
-| `settings.fileNameTemplate.error.tooLong` | **규칙이 너무 길어요. 100바이트 안으로 줄여 주세요.** |
+| `settings.fileNameTemplate.error.tooLong` | **규칙이 너무 길어요. {max}바이트 안으로 줄여 주세요.** (`max`는 셸 DTO가 코어 `MAX_TEMPLATE_BYTES`를 준다, app.md 92) |
 
 - 문구는 `design-copy` 규칙(어미·마침표·금지어)을 통과해야 한다. "저장"은 영상에는 쓰지 않는 말이지만(content.md §4), 여기서는 설정에 쓰므로 쿠키 [저장]과 같다. 바이트라는 말은 [잠정]이다. 사용자에게 낯설면 글자 수로 바꾸는 것을 F(카피)가 정한다.
 - `{token}` 자리 치환은 `ko.ts`의 `t()` 인자 규칙을 따른다. 문구 안의 `{title}` 같은 리터럴 중괄호는 `t()`가 치환하지 않게 해야 한다. 구현 때 `t()`의 탈출 규칙을 확인하고, 없으면 인자로 넘긴다(`{example}`).
@@ -170,7 +170,7 @@
 
 ### 5.4 가짜 백엔드·E2E
 
-- `app/e2e/mock/backend.ts`: `preview_file_name_template`은 골든 `design/naming/template.json`의 `preview` 케이스를 표로 읽어 답한다. 표에 없는 입력은 기본 결과를 돌려준다. `update_settings`의 `fileNameTemplate`는 패치를 그대로 반영한다(`backend.ts:332`).
+- `app/e2e/mock/backend.ts`: `preview_file_name_template`은 골든 `design/naming/template.json`의 `preview` 케이스를 표로 읽어 답한다. 표에 없는 입력은 **실패한다**(기본 결과로 대신 답하면 E2E가 잘못된 값으로 오류 흐름을 시험해도 통과한다, app.md 92). 불러온 영상의 제안 이름은 같은 파일의 `cases` 중 규칙·영상 메타가 같은 linux 행에서 찾는다. `update_settings`의 `fileNameTemplate`는 패치를 그대로 반영한다(`backend.ts:332`).
 - Playwright `app/e2e/`: 설정 › 받기에서 ① 기본 문자열이 보이고 [기본값으로]가 없다 ② `{date}_{title}`을 치면 미리보기가 바뀐다 ③ `{foo}`로 [저장]하면 inline 오류가 뜨고 `aria-invalid`가 된다 ④ 올바른 값을 저장하면 [기본값으로]가 나타나고, 누르면 사라진다 ⑤ 저장 뒤 영상을 불러오면 카드 제안 이름이 새 규칙을 따른다. axe는 이 행에도 돈다.
 - 네이티브 E2E는 바꾸지 않는다(기본값 경로이고 결과가 같다).
 
@@ -222,8 +222,10 @@ N-1·N-2는 사용자에게 보이는 변화가 없다(설정 행이 없어 템�
 | 볼륨 OS와 미리보기 OS가 다르다(예: macOS에서 exFAT 외장 디스크) | (a) 미리보기 command가 저장 폴더 볼륨 기준이라 같다. 다만 카드에서 폴더를 바꾸면(`FolderField`) 실제 OS가 미리보기와 다를 수 있다. 카드의 "저장될 이름" 안내(`filename.willSaveAs`)가 이 경우를 보여 준다(`ResolveCard.svelte:316`) |
 | 생방송에서 `{prefix}`를 빼 같은 방송의 녹화 이름이 겹친다 | 번호 이름이 처리한다(`output.rs:58-69`). 녹화 `.part`도 번호 이름을 받는다(L7) |
 | `{no}` 값(영상 번호)이 파일 이름에 남는다 | 사용자가 고른 토큰이고 공개 저장소 규칙과는 무관하다(사용자 자기 파일이다). 문서·테스트에는 가짜 번호만 쓴다 |
+| 화면에 보인 이름과 실제 저장 이름이 다르다(`sanitize`가 마지막 `.` 앞 공백을 지운다. 셸은 `.mp4`를 뗀 이름을 받을 때 다시 정리한다) | 해결함(core.md 76). 코어가 `suggested_stem` → `output_path` 왕복을 이름이 안 변할 때까지 돌려 그 결과만 돌려준다. 기본 규칙(`default_filename`)에 전부터 있던 같은 문제도 함께 고쳤고, 저장되는 이름은 바뀌지 않는다(T1 유지) |
+| **알려진 한계**: 빈 토큰을 감싼 리터럴 괄호는 남는다. `[{date}] {title}`은 클립에서 `[] 웃긴 장면.mp4`, `{title} [{no}]`는 생방송에서 `오늘 방송 [].mp4`가 된다(T3은 구분 문자만으로 된 리터럴만 지운다, 골든 preview가 이 결과를 고정한다). 설정 화면은 영상 예시 한 줄만 보여 사용자가 미리 알기 어렵다. 같은 규칙이 OS마다 다르게 정리되기도 한다(`{date}: {title}`은 Windows·macOS에서 `:`가 `_`가 되어 구분 문자로 지워지고, Linux에서는 `: 웃긴 장면`으로 남는다) | v1은 받아들인다(app.md 92 ④). 고르는 길: (a) 클립·생방송 예시를 보조 줄이나 `Disclosure`로 보인다(command가 이미 셋을 돌려준다), (b) T3를 넓혀 빈 토큰을 감싼 `[]`·`()`도 지운다(기본 규칙 동등성에는 영향 없음, 골든 갱신), (c) 지금대로. 다시 열 조건: 사용자 보고 또는 T3 재선택 |
 | 옛 앱으로 되돌아갈 때(롤백) | 옛 앱은 모르는 키를 무시하므로(`deny_unknown_fields` 없음) 기본 이름으로 돌아간다. 다시 올리면 저장된 템플릿이 그대로 읽힌다. `!`가 아니다 |
 
 ## 10. 사용자 실측
 
-없다. 오프라인 테스트로 모두 정해진다. 머지 뒤 실기 확인 한 번만 한다. 설정에서 템플릿을 바꾼 뒤 영상 하나를 불러와 제안 이름을 보고, 받은 파일 이름이 Finder·탐색기에서 미리보기와 같은지 본다.
+없다. 오프라인 테스트로 모두 정해진다. 머지 뒤 실기 확인 한 번만 한다. 설정에서 템플릿을 바꾼 뒤 영상 하나를 불러와 제안 이름을 보고, 받은 파일 이름이 Finder·탐색기에서 미리보기와 같은지 본다. 클립·생방송에서 규칙 때문에 `[]` 같은 빈 괄호가 남는 규칙(§9 알려진 한계)도 한 번 써 보고 받아들일 만한지 정한다.

@@ -13,7 +13,7 @@
 use chzzk_core::{
     ContentKind, ContentMeta, ContentRef, DuplicatePolicy, LegacyImport, Phase, Platform,
     PlaybackKind, Progress, Quality, RecentKind, RecentVod, Resolved, TextScale, Theme, TimeRange,
-    naming::{FileNameTemplate, default_filename, render_filename},
+    naming::{FileNameTemplate, default_filename, render_filename, suggested_stem},
 };
 use serde::{Deserialize, Deserializer, Serialize};
 use ts_rs::TS;
@@ -506,10 +506,8 @@ impl ResolvedDto {
             Some(t) => render_filename(t, &r.meta, &r.content, platform),
             None => default_filename(&r.meta, platform),
         };
-        let suggested_file_name = match name.strip_suffix(".mp4") {
-            Some(base) => base.to_string(),
-            None => name,
-        };
+        // 코어가 `suggested_stem` → `output_path` 왕복을 거친 이름을 주므로, 받을 때 이름이 달라지지 않는다
+        let suggested_file_name = suggested_stem(&name).to_string();
         ResolvedDto {
             url,
             content: r.content.clone(),
@@ -557,6 +555,10 @@ pub struct TemplateErrorDto {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub token: Option<String>,
+    /// `tooLong`일 때 길이 상한(바이트, 코어 `MAX_TEMPLATE_BYTES`). 화면 문구가 이 값을 쓴다
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub max: Option<u32>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, TS)]

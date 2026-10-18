@@ -5,7 +5,7 @@ import { loopbackState } from "../../src/core/loopback";
 import { isSecret, isToken, newSecret, sha256B64url } from "../../src/core/token";
 import { FLOW_CAP, liveFlowCount, MEMORY_KEYS_MAX, throttle, type StartWindow } from "../../src/store/flows";
 import { sweep } from "../../src/store/sweep";
-import { A1, ADMINS, B2, C3, PORT, T0, appLogin, begin, freshStub, meter, query, sha, webLogin } from "./helpers";
+import { A1, ADMINS, B2, C3, PORT, T0, appLogin, begin, closedStub, freshStub, meter, query, sha, webLogin } from "./helpers";
 
 const start = (stub: ReturnType<typeof freshStub>, ip: string | null, limit: number, now: number) =>
   stub.startApp({ port: PORT, verifier: newSecret(), client: "c", ip, limit }, now);
@@ -42,7 +42,7 @@ describe("throttle(순수)", () => {
 
 describe("start 스로틀·상한", () => {
   it("스로틀 429는 읽기·쓰기 0이고 IP 키가 분리된다(IPv6는 /64)", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     for (let i = 0; i < 6; i++) expect((await start(stub, "203.0.113.1", 6, T0)).ok).toBe(true);
     const before = await meter(stub);
     expect(await start(stub, "203.0.113.1", 6, T0)).toEqual({ ok: false, code: "rate_limited", retryAfterSec: 600 });
@@ -56,13 +56,13 @@ describe("start 스로틀·상한", () => {
     // 앱·웹 start가 한 맵을 같이 쓴다
     expect(await stub.startWeb("203.0.113.1", 6, T0)).toMatchObject({ ok: false, code: "rate_limited" });
     // 한도가 정수가 아니면 기본값 6
-    const other = freshStub();
+    const other = await closedStub();
     for (let i = 0; i < 6; i++) expect((await start(other, "203.0.113.5", 0, T0)).ok).toBe(true);
     expect((await start(other, "203.0.113.5", Number.NaN, T0)).ok).toBe(false);
   });
 
   it("now가 뒤섞여 도착해도(동시 요청) 한 IP는 한도를 넘지 못한다", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     // T0는 UTC 일 경계라 그보다 이른 now는 다른 일 번호(다른 키)가 된다. 같은 날 안에서 1ms씩 거꾸로 보낸다
     const base = T0 + 3_600_000;
     for (let i = 0; i < 6; i++) expect((await start(stub, "203.0.113.7", 6, base - i)).ok).toBe(true);
@@ -71,7 +71,7 @@ describe("start 스로틀·상한", () => {
   });
 
   it("비만료 흐름 32개 상한: busy이고 쓰기 0, 만료되면 다시 열린다", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     for (let i = 0; i < FLOW_CAP - 1; i++) expect((await start(stub, "203.0.113.1", 1000, T0)).ok).toBe(true);
     expect((await stub.startWeb("203.0.113.1", 1000, T0)).ok).toBe(true);
     const before = await meter(stub);
@@ -82,7 +82,7 @@ describe("start 스로틀·상한", () => {
   });
 
   it("종결해도 흐름 만료를 앞당기지 않는다(슬롯 순환이 늘지 않는다)", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     const b = await begin(stub);
     expect(await stub.finish(b.flowId, { type: "cancelled" }, ADMINS, T0 + 60_000)).toMatchObject({ type: "loopback", result: "cancelled" });
     const rows = await query<{ expires_at: number }>(stub, "SELECT expires_at FROM flow WHERE id = ?", b.flowId);
@@ -90,7 +90,7 @@ describe("start 스로틀·상한", () => {
   });
 
   it("startApp 입력 검사: verifier 모양, 옛 위치 인자, 포트 범위, client 정리", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     const ok = { port: PORT, client: "c", ip: "203.0.113.1", limit: 6 };
     expect(await stub.startApp({ ...ok, verifier: "A".repeat(42) }, T0)).toEqual({ ok: false, code: "bad_request" });
     // 배포 중 옛 isolate의 위치 인자 호출은 객체 검사에서 bad_request
@@ -110,7 +110,7 @@ describe("start 스로틀·상한", () => {
     expect(await query(stub, "SELECT count(*) AS n FROM flow")).toEqual([{ n: 0 }]);
     expect((await stub.startApp({ ...ok, verifier: newSecret() }, T0)).ok).toBe(true);
     expect(await query(stub, "SELECT port, user_code, grant_hash, grant_exp FROM flow")).toEqual([{ port: PORT, user_code: null, grant_hash: null, grant_exp: null }]);
-    const other = freshStub();
+    const other = await closedStub();
     const r = await other.startApp({ ...ok, verifier: newSecret(), client: "x".repeat(60) + "\u0007\u0001" + "y".repeat(10) }, T0);
     expect(r.ok).toBe(true);
     const [row] = await query<{ client: string }>(other, "SELECT client FROM flow");
@@ -128,7 +128,7 @@ describe("행 수 상한(무료 한도 계산의 전제, 구현 중 변경 19 (�
   };
 
   it("공격자 흐름 한 순환(start·[계속]·가짜 콜백·청소) ≤ 12행", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     const verifier = newSecret();
     let handle = "";
     let state = "";
@@ -149,7 +149,7 @@ describe("행 수 상한(무료 한도 계산의 전제, 구현 중 변경 19 (�
   });
 
   it("앱 로그인 한 번(start·[계속]·consume·finish(ok)·redeem·청소) ≤ 31행", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await stub.allow(B2, "", A1, T0);
     const verifier = await sha256B64url(newSecret());
     let handle = "";
@@ -186,7 +186,7 @@ describe("행 수 상한(무료 한도 계산의 전제, 구현 중 변경 19 (�
   });
 
   it("회전 ≤ 8행, 응답 유실 복구 ≤ 10행", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     const l = await appLogin(stub, { channelId: A1 });
     let child = "";
     const rot = await delta(stub, async () => {
@@ -206,7 +206,7 @@ describe("행 수 상한(무료 한도 계산의 전제, 구현 중 변경 19 (�
 
 describe("흐름 전이", () => {
   it("continueApp: 정상, 두 번째는 already_used, 모르는 해시·만료는 not_found", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     const s = await stub.startApp({ port: PORT, verifier: newSecret(), client: "c", ip: "203.0.113.1", limit: 6 }, T0);
     if (!s.ok) throw new Error("start");
     const h = await sha(s.handle);
@@ -225,7 +225,7 @@ describe("흐름 전이", () => {
   });
 
   it("consume: 일회용, binder가 틀리거나 없으면 흐름이 failed/binder", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     const s = await stub.startApp({ port: PORT, verifier: newSecret(), client: "c", ip: "203.0.113.1", limit: 6 }, T0);
     if (!s.ok) throw new Error("start");
     const c = await stub.continueApp(await sha(s.handle), T0);
@@ -235,7 +235,7 @@ describe("흐름 전이", () => {
     expect(await stub.consume(sh, await sha(c.binder), T0)).toEqual({ ok: false, code: "not_found" });
 
     for (const bad of ["wrong", null] as const) {
-      const b = freshStub();
+      const b = await closedStub();
       const s2 = await b.startApp({ port: PORT, verifier: newSecret(), client: "c", ip: "203.0.113.1", limit: 6 }, T0);
       if (!s2.ok) throw new Error("start");
       const c2 = await b.continueApp(await sha(s2.handle), T0);
@@ -248,7 +248,7 @@ describe("흐름 전이", () => {
     }
 
     // 만료된 state
-    const e = freshStub();
+    const e = await closedStub();
     const s3 = await e.startApp({ port: PORT, verifier: newSecret(), client: "c", ip: "203.0.113.1", limit: 6 }, T0);
     if (!s3.ok) throw new Error("start");
     const c3 = await e.continueApp(await sha(s3.handle), T0);
@@ -257,7 +257,7 @@ describe("흐름 전이", () => {
   });
 
   it("binder 실패 흐름에는 grant가 없다", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     const s = await stub.startApp({ port: PORT, verifier: await sha256B64url(newSecret()), client: "c", ip: "203.0.113.1", limit: 6 }, T0);
     if (!s.ok) throw new Error("start");
     const c = await stub.continueApp(await sha(s.handle), T0);
@@ -268,7 +268,7 @@ describe("흐름 전이", () => {
 
   it("port NULL 흐름(배포 전 옛 흐름)", async () => {
     // (ㄱ) start 뒤에 port가 NULL이면 확인 페이지 조회·[계속]이 없는 흐름으로 본다
-    const a = freshStub();
+    const a = await closedStub();
     const s = await a.startApp({ port: PORT, verifier: newSecret(), client: "c", ip: "203.0.113.1", limit: 6 }, T0);
     if (!s.ok) throw new Error("start");
     const h = await sha(s.handle);
@@ -276,7 +276,7 @@ describe("흐름 전이", () => {
     expect(await a.loginPage(h, T0)).toBeNull();
     expect(await a.continueApp(h, T0)).toEqual({ ok: false, code: "not_found" });
     // (ㄴ) consume 뒤에 port가 NULL이면 finish는 outcome과 상관없이 failed
-    const stub = freshStub();
+    const stub = await closedStub();
     await stub.allow(B2, "", A1, T0);
     const b = await begin(stub);
     await runInDurableObject(stub, (i) => i.db.run("UPDATE flow SET port = NULL"));
@@ -288,7 +288,7 @@ describe("흐름 전이", () => {
 
 describe("finish·redeem 표", () => {
   it("허용된 채널: unclaimed 세션 → redeem으로 번들, 흐름은 verifier만 지우고 남는다, 다시 redeem은 not_found", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await stub.allow(B2, "", A1, T0);
     const b = await begin(stub);
     const f = await stub.finish(b.flowId, { type: "user", channelId: B2, channelName: "채널" }, ADMINS, T0);
@@ -307,7 +307,7 @@ describe("finish·redeem 표", () => {
     expect(await query(stub, "SELECT status, poll_verifier, session_id, grant_hash, expires_at FROM flow")).toEqual([
       { status: "ok", poll_verifier: null, session_id: null, grant_hash: null, expires_at: T0 + 120_000 },
     ]);
-    expect(await stub.doneView(await sha(b.binder), T0 + 1000)).toEqual({ kind: "app", status: "ok", channelName: null, channelId: null, inviteOwnerName: null });
+    expect(await stub.doneView(await sha(b.binder), T0 + 1000)).toEqual({ kind: "app", status: "ok", channelName: null, channelId: null, inviteOwnerName: null, denyReason: null });
     expect(await query(stub, "SELECT status FROM session")).toEqual([{ status: "active" }]);
     expect(await stub.redeem(gh, b.verifier, ADMINS, T0 + 1500)).toEqual({ status: "not_found" });
     expect(await stub.doneView(await sha(b.binder), T0 + 119_999)).not.toBeNull();
@@ -316,7 +316,7 @@ describe("finish·redeem 표", () => {
   });
 
   it("redeem은 만료를 늦추지 않는다(늦게 수령해도 start+10분 이하)", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await stub.allow(B2, "", A1, T0);
     const b = await begin(stub);
     const f = await stub.finish(b.flowId, { type: "user", channelId: B2, channelName: "채널" }, ADMINS, T0 + 480_000);
@@ -326,7 +326,7 @@ describe("finish·redeem 표", () => {
   });
 
   it("허용되지 않은 채널: denied + 거부 기록", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     const b = await begin(stub);
     const f = await stub.finish(b.flowId, { type: "user", channelId: C3, channelName: "남의 채널" }, ADMINS, T0);
     if (f.type !== "loopback") throw new Error(f.type);
@@ -346,7 +346,7 @@ describe("finish·redeem 표", () => {
       [{ type: "user", channelId: "not-a-channel", channelName: "x" }, "failed", { status: "failed", code: "user_format" }],
     ];
     for (const [outcome, result, want] of cases) {
-      const stub = freshStub();
+      const stub = await closedStub();
       const b = await begin(stub);
       const f = await stub.finish(b.flowId, outcome, ADMINS, T0);
       if (f.type !== "loopback") throw new Error(f.type);
@@ -356,7 +356,7 @@ describe("finish·redeem 표", () => {
   });
 
   it("두 번째 finish는 gone, 틀린 verifier는 not_found이고 쓰지 않는다", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     const b = await begin(stub);
     const f = await stub.finish(b.flowId, { type: "cancelled" }, ADMINS, T0);
     if (f.type !== "loopback") throw new Error(f.type);
@@ -372,7 +372,7 @@ describe("finish·redeem 표", () => {
   });
 
   it("grant 만료 경계: 119_999 안은 되고 120_000부터는 not_found", async () => {
-    const a = freshStub();
+    const a = await closedStub();
     await a.allow(B2, "", A1, T0);
     const x = await begin(a);
     const fx = await a.finish(x.flowId, { type: "user", channelId: B2, channelName: "채널" }, ADMINS, T0);
@@ -385,30 +385,30 @@ describe("finish·redeem 표", () => {
   });
 
   it("관리자 채널은 isAdmin, 부트스트랩(admins 빔)은 허용목록에 있어도 거부", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     const a = await appLogin(stub, { channelId: A1 });
     expect(a.bundle.isAdmin).toBe(true);
 
-    const boot = freshStub();
+    const boot = await closedStub();
     await boot.allow(B2, "", A1, T0);
     const b = await begin(boot);
     expect(await boot.finish(b.flowId, { type: "user", channelId: B2, channelName: "x" }, [], T0)).toMatchObject({ type: "loopback", result: "denied" });
   });
 
   it("redeem 전에 허용에서 빠지면 redeem은 denied이고 흐름 행이 사라진다", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await stub.allow(B2, "", A1, T0);
     const b = await begin(stub);
     const f = await stub.finish(b.flowId, { type: "user", channelId: B2, channelName: "채널" }, ADMINS, T0);
     if (f.type !== "loopback") throw new Error(f.type);
     expect(await stub.disallow(B2, A1, ADMINS, T0 + 10)).toEqual({ ok: true });
-    expect(await stub.redeem(await sha(f.grant), b.verifier, ADMINS, T0 + 20)).toEqual({ status: "denied", channelName: "채널" });
+    expect(await stub.redeem(await sha(f.grant), b.verifier, ADMINS, T0 + 20)).toEqual({ status: "denied", channelName: "채널", reason: "blocked" });
     expect(await query(stub, "SELECT count(*) AS n FROM flow")).toEqual([{ n: 0 }]);
     expect(await query(stub, "SELECT status, revoked_why FROM session")).toEqual([{ status: "revoked", revoked_why: "disallowed" }]);
   });
 
   it("redeem 때 세션이 없으면 failed/session이고 흐름 행이 사라진다", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await stub.allow(B2, "", A1, T0);
     const b = await begin(stub);
     const f = await stub.finish(b.flowId, { type: "user", channelId: B2, channelName: "채널" }, ADMINS, T0);
@@ -419,7 +419,7 @@ describe("finish·redeem 표", () => {
   });
 
   it("웹 흐름: 허용되면 쿠키·csrf, 흐름 행 삭제, webCheck 통과 / 거부는 doneView", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     const w = await webLogin(stub, { channelId: A1 });
     expect(isSecret(w.csrf)).toBe(true);
     expect(w.cookieToken.startsWith("cdw_")).toBe(true);
@@ -433,12 +433,12 @@ describe("finish·redeem 표", () => {
     if (!k.ok) throw new Error("consume");
     expect(await stub.finish(k.flowId, { type: "user", channelId: C3, channelName: "남" }, ADMINS, T0)).toEqual({ type: "denied" });
     const v = await stub.doneView(await sha(s.binder), T0 + 1);
-    expect(v).toEqual({ kind: "web", status: "denied", channelName: "남", channelId: C3, inviteOwnerName: null });
+    expect(v).toEqual({ kind: "web", status: "denied", channelName: "남", channelId: C3, inviteOwnerName: null, denyReason: null });
     expect(v).not.toHaveProperty("userCode");
   });
 
   it("loginPage·doneView", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     const s = await stub.startApp({ port: PORT, verifier: newSecret(), client: "c", ip: "203.0.113.1", limit: 6 }, T0);
     if (!s.ok) throw new Error("start");
     const h = await sha(s.handle);
@@ -453,14 +453,14 @@ describe("finish·redeem 표", () => {
     await stub.allow(B2, "", A1, T0);
     await stub.finish(k.flowId, { type: "user", channelId: B2, channelName: "채널" }, ADMINS, T0);
     const v = await stub.doneView(await sha(c.binder), T0);
-    expect(v).toEqual({ kind: "app", status: "ok", channelName: null, channelId: null, inviteOwnerName: null });
+    expect(v).toEqual({ kind: "app", status: "ok", channelName: null, channelId: null, inviteOwnerName: null, denyReason: null });
     expect(v).not.toHaveProperty("userCode");
     expect(await stub.doneView(await sha(c.binder), T0 + 600_000)).toBeNull();
     expect(await stub.doneView("x", T0)).toBeNull();
   });
 
   it("허용된 채널이 로그인하면 허용목록의 이름이 갱신된다", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await stub.allow(B2, "", A1, T0);
     await appLogin(stub, { name: "새 이름" });
     expect(await query(stub, "SELECT channel_name FROM allowlist WHERE channel_id = ?", B2)).toEqual([{ channel_name: "새 이름" }]);

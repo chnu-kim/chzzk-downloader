@@ -546,11 +546,14 @@ describe("관리 POST의 경계(구현 중 변경 38 (카))", () => {
     expect(reasons).toEqual(["is_admin"]);
   });
 
-  it("허용목록에 없는 채널 [빼기]: 멱등 303 + alreadyDone, 감사 행이 생기지 않는다", async () => {
+  it("허용목록에 없는 채널 [차단]은 차단 행을 쓰고 감사에 남기며, 이미 차단됐으면 멱등 303 + alreadyDone이고 감사 행이 늘지 않는다(allowlist-open.md §3.3)", async () => {
     const admin = await session("a1");
-    const before = await auditOf();
     const res = await post(admin, "/admin/disallow", { channelId: C3 });
-    expect([res.status, res.headers.get("Location"), res.headers.getSetCookie()]).toEqual([303, "/admin", [ALREADY_DONE]]);
+    expect([res.status, res.headers.get("Location"), res.headers.getSetCookie()]).toEqual([303, "/admin", []]);
+    expect((await auditOf()).filter(([action, target]) => action === "disallow" && target === C3)).toHaveLength(1);
+    const before = await auditOf();
+    const again = await post(admin, "/admin/disallow", { channelId: C3 });
+    expect([again.status, again.headers.get("Location"), again.headers.getSetCookie()]).toEqual([303, "/admin", [ALREADY_DONE]]);
     expect(await auditOf()).toEqual(before);
   });
 

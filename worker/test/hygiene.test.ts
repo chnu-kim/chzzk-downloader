@@ -5,7 +5,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createFakeChzzk, FAKE_ACCOUNTS, type FakeChzzk } from "./fake-chzzk.mjs";
 import { installFakeChzzk, type FakeNet } from "./network";
 import { A1, B2 } from "./store/helpers";
-import { advance, allowedChannel, AppClient, appFlow, Browser, parseLoopback, store, useClock, viaEnv, type Send } from "./http/harness";
+import { advance, allowedChannel, AppClient, appFlow, Browser, parseLoopback, store, useClock, viaEnv, type Send, closeAutoAllow } from "./http/harness";
 import { OUTDATED_HANDLE } from "../src/http/auth";
 import { newSecret, newToken } from "../src/core/token";
 
@@ -17,6 +17,7 @@ beforeEach(async () => {
   fake = createFakeChzzk({ clientSecret: SECRET });
   net = installFakeChzzk(fake);
   await allowedChannel(B2, A1);
+  await closeAutoAllow();
 });
 
 afterEach(() => {

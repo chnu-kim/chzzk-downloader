@@ -59,7 +59,16 @@ CREATE INDEX invite_expires ON invite(expires_at);
 ALTER TABLE flow ADD COLUMN invite_hash TEXT
 `;
 
-export const MIGRATIONS: readonly string[] = [V1, V2, V3];
+// 허용목록 자동 허가(docs/design/features/allowlist-open.md §4.1, worker.md 구현 중 변경 109): 더하기만 한다.
+// blocked: 관리자가 막은 채널. 자동 허가만 막고 허가 판정(admission)은 보지 않는다(허가 행이 있으면 허가가 이긴다, V3로 되돌려도 안전).
+// flow.deny_reason: 거부된 흐름의 이유(daily_limit·blocked·NULL). 쓰는 곳이 finish 하나라 CHECK는 두지 않는다
+const V4 = `
+CREATE TABLE blocked (channel_id TEXT PRIMARY KEY CHECK (length(channel_id) = 32), channel_name TEXT, blocked_by TEXT NOT NULL, blocked_at INTEGER NOT NULL);
+CREATE INDEX blocked_at ON blocked(blocked_at);
+ALTER TABLE flow ADD COLUMN deny_reason TEXT
+`;
+
+export const MIGRATIONS: readonly string[] = [V1, V2, V3, V4];
 export const SCHEMA_VERSION = MIGRATIONS.length;
 
 export type MigrateResult = { readonly from: number; readonly to: number; readonly ahead: boolean };

@@ -7,7 +7,7 @@ import type { AdminView } from "../../src/store/types";
 
 const CONFIG = { authorizeUrl: "https://chzzk.example.invalid/authorize", publicOrigin: "https://worker.test" } as unknown as Config;
 const CSRF = "C".repeat(43);
-const EMPTY: AdminView = { allowlist: [], denied: [], sessions: [], audit: [] };
+const EMPTY: AdminView = { allowlist: [], denied: [], sessions: [], audit: [], autoAllow: { cap: 20, today: 0, capBy: null, capAt: null }, blocked: [], allowlistTotal: 0, blockedTotal: 0 };
 const A1 = "0".repeat(30) + "a1";
 const B2 = "0".repeat(30) + "b2";
 const C3 = "0".repeat(30) + "c3";
@@ -29,9 +29,13 @@ describe("renderAdmin", () => {
       { channelId: A1, channelName: "관리자", ownerChannelId: null, note: null, addedBy: A1, addedAt: Date.UTC(2030, 0, 1), activeSessions: 1 },
       { channelId: B2, channelName: null, ownerChannelId: null, note: "<img src=x onerror=1>", addedBy: A1, addedAt: Date.UTC(2030, 0, 1), activeSessions: 0 },
     ],
-    denied: [{ channelId: C3, channelName: "<i>거부</i>", firstAt: Date.UTC(2030, 0, 1), lastAt: Date.UTC(2030, 0, 2), attempts: 2, invitedBy: null }],
+    denied: [{ channelId: C3, channelName: "<i>거부</i>", firstAt: Date.UTC(2030, 0, 1), lastAt: Date.UTC(2030, 0, 2), attempts: 2, invitedBy: null, blocked: false }],
     sessions: [{ id: "sid", kind: "app", channelId: B2, channelName: "허용", client: "<x>", createdAt: 0, lastSeenAt: 0, recovered: 1 }],
     audit: [{ at: 0, actor: A1, action: "allow", target: B2 }],
+    autoAllow: { cap: 20, today: 0, capBy: null, capAt: null },
+    blocked: [],
+    allowlistTotal: 2,
+    blockedTotal: 0,
   };
   const model = { view, admins: [A1], csrf: CSRF, nav: NAV };
   const render = async (o?: Parameters<typeof renderAdmin>[2]) => renderAdmin(CONFIG, model, o).text();
@@ -186,7 +190,7 @@ describe("renderDisallowConfirm", () => {
 describe("관리 꼬리표 invitedBy", () => {
   const row = (invitedBy: string | null) => ({
     ...EMPTY,
-    denied: [{ channelId: C3, channelName: "거부", firstAt: 0, lastAt: 0, attempts: 1, invitedBy }],
+    denied: [{ channelId: C3, channelName: "거부", firstAt: 0, lastAt: 0, attempts: 1, invitedBy, blocked: false }],
   });
   const render = (view: AdminView) => renderAdmin(CONFIG, { view, admins: [A1], csrf: CSRF, nav: NAV }).text();
 

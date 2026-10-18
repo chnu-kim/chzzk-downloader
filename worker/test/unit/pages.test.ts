@@ -16,7 +16,7 @@ import type { DoneView } from "../../src/store/types";
 const CONFIG = { authorizeUrl: "https://chzzk.example.invalid/authorize", publicOrigin: "https://worker.test" } as unknown as Config;
 const CH = "0".repeat(30) + "c3";
 const CSRF = "C".repeat(43);
-const view = (o: Partial<DoneView>): DoneView => ({ kind: "web", status: "denied", channelName: "합성채널", channelId: CH, inviteOwnerName: null, ...o });
+const view = (o: Partial<DoneView>): DoneView => ({ kind: "web", status: "denied", channelName: "합성채널", channelId: CH, inviteOwnerName: null, denyReason: null, ...o });
 const DESKTOP: EntryContext = { kind: "desktop", os: "mac", inApp: null };
 const KAKAO: EntryContext = { kind: "phone", os: null, inApp: "kakao" };
 

@@ -1,6 +1,6 @@
 # 속도 제한(전체 합계 + 작업마다): 설계 초안
 
-**상태(2026-10-18)**: **RL-1 코어(core.md 75)·RL-2 셸(core.md 76·app.md 91) 구현됨, RL-3 앱은 구현 전.** 아래 "구현 중 변경"이 본문보다 우선한다. 이 문서의 나머지 본문은 설계 시점 그대로다.
+**상태(2026-10-18)**: **RL-1 코어(core.md 75)·RL-2 셸(core.md 76·app.md 91)·RL-3 앱(app.md 92) 구현됨. 갤러리 기준선(design-shots)과 실측 M-RL-1·M-RL-2는 남았다.** 아래 "구현 중 변경"이 본문보다 우선한다. 이 문서의 나머지 본문은 설계 시점 그대로다.
 
 (설계 시점 상태: **설계됨(designed), 구현 전.** 문서만 있는 단계다. 기준 트리는 `origin/master` `55e0733`(v0.10.1 뒤)이고, 이 문서의 `파일:줄`은 모두 그 트리에서 연 줄이다(코드는 `90404f9`와 같다). 표기는 `README.md`의 규칙을 따른다. **[확인]**은 직접 연 줄, **[가정]**은 근거 문서가 없는 설계 판단, **[실측 필요]**는 실물로만 정할 수 있는 것, **[잠정]**은 출처 없는 수치다(ADR-0009 묶음, `docs/design/system/adr/0009-unsourced-numbers.md`).)
 
@@ -395,3 +395,5 @@ core dev-dependency tokio에 `test-util`이 없다(`crates/core/Cargo.toml:28`).
 3. **(RL-1) `Throttles::is_unlimited()`와 `Throttle::same_bucket()`·`rate()`를 공개로 더했다.** 셸 테스트(§10.4 2번)가 공유 bucket 동일성을 integration 테스트에서 봐야 해서 `#[cfg(test)]` helper 대신 쓴다.
 4. **(RL-2) `DownloadManager::rate_limits()` getter를 더했다**(§3.3은 `set_rate_limits`만 적었다). 셸 테스트가 매니저가 가진 값을 직접 확인하고, 설정과 매니저가 어긋났는지 점검할 때 쓴다. 최소값 올림(`normalize_rate_limit`)은 설정 읽기·패치 저장 두 곳이 같은 함수를 쓰고, 매니저는 최소를 모르는 채 받은 값을 그대로 쓴다(0만 끔으로 본다).
 5. **(RL-2) 설정 파일에 끈 상태는 `null`로 적는다**(`skip_serializing_if` 없음). `last_url` 등 다른 `Option` 필드와 같은 모양이고, 설정 JSON을 통째로 비교하는 golden이 없어 깨지는 것이 없다.
+6. **(RL-3) 프리셋·덧칸 로직은 `app/src/lib/rateLimit.ts`에 순수 함수로 뒀다**(`rateLimitOptions`·`rateLimitToStored`·`rateLimitFromStored`). §10.5의 vitest 세 가지를 컴포넌트 없이도 단위로 확인하기 위해서다. 낭독용 단위는 `Select` 옵션에 `label`만 있어 주지 못했다(§6.2가 허용한 "못 주면 그대로").
+

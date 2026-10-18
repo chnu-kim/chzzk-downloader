@@ -130,6 +130,72 @@ describe('설정: 즉시 저장', () => {
     expect(api.updateSettings).toHaveBeenLastCalledWith({ keepAwake: false });
   });
 
+  it('속도 상한: 합계·영상 하나 두 Select, 제한 없음 + 프리셋(OS 진법 MB), 도움말이 설명으로 이어진다', async () => {
+    render(SettingsView);
+    for (const key of ['totalRate', 'jobRate'] as const) {
+      const sel = screen.getByRole('combobox', { name: t(`settings.${key}`) });
+      expect(sel).toHaveAccessibleDescription(t(`settings.${key}.help`));
+      expect(sel).toHaveDisplayValue(t('settings.rateLimit.off'));
+      expect(within(sel).getAllByRole('option').map((o) => o.textContent)).toEqual([
+        t('settings.rateLimit.off'),
+        '1.0MB/s',
+        '2.0MB/s',
+        '5.0MB/s',
+        '10.0MB/s',
+        '20.0MB/s',
+        '50.0MB/s',
+        '100.0MB/s',
+      ]);
+    }
+  });
+
+  it('속도 상한을 고르면 바이트/초 패치를 바로 보내고, 제한 없음은 null이다', async () => {
+    const user = userEvent.setup();
+    render(SettingsView);
+    const total = screen.getByRole('combobox', { name: t('settings.totalRate') });
+    await user.selectOptions(total, '5000000');
+    expect(api.updateSettings).toHaveBeenLastCalledWith({ totalRateLimit: 5_000_000 });
+    expect(total).toHaveDisplayValue('5.0MB/s');
+    const job = screen.getByRole('combobox', { name: t('settings.jobRate') });
+    await user.selectOptions(job, '1000000');
+    expect(api.updateSettings).toHaveBeenLastCalledWith({ jobRateLimit: 1_000_000 });
+    await user.selectOptions(total, '0');
+    expect(api.updateSettings).toHaveBeenLastCalledWith({ totalRateLimit: null });
+    expect(total).toHaveDisplayValue(t('settings.rateLimit.off'));
+  });
+
+  it('프리셋은 OS 진법을 따른다(Windows 5 -> 5,242,880)', async () => {
+    platform.set('windows');
+    const user = userEvent.setup();
+    render(SettingsView);
+    const total = screen.getByRole('combobox', { name: t('settings.totalRate') });
+    expect(within(total).getByRole('option', { name: '5.0MB/s' })).toHaveValue('5242880');
+    await user.selectOptions(total, '5242880');
+    expect(api.updateSettings).toHaveBeenLastCalledWith({ totalRateLimit: 5_242_880 });
+  });
+
+  it('저장된 값이 프리셋에 없으면 크기 순 자리에 한 칸 더해 그 값으로 보인다', () => {
+    settings.dto = { ...base, totalRateLimit: 3_300_000, jobRateLimit: 5_000_000 };
+    render(SettingsView);
+    const total = screen.getByRole('combobox', { name: t('settings.totalRate') });
+    expect(total).toHaveDisplayValue('3.3MB/s');
+    expect(within(total).getAllByRole('option').map((o) => o.textContent)).toEqual([
+      t('settings.rateLimit.off'),
+      '1.0MB/s',
+      '2.0MB/s',
+      '3.3MB/s',
+      '5.0MB/s',
+      '10.0MB/s',
+      '20.0MB/s',
+      '50.0MB/s',
+      '100.0MB/s',
+    ]);
+    // 프리셋에 있는 값은 칸이 늘지 않는다
+    const job = screen.getByRole('combobox', { name: t('settings.jobRate') });
+    expect(job).toHaveDisplayValue('5.0MB/s');
+    expect(within(job).getAllByRole('option')).toHaveLength(8);
+  });
+
   it('설정 파일 저장 실패: B2 배너, 컨트롤은 저장된 값으로 돌아가고 [다시 시도]가 같은 패치를 보낸다', async () => {
     vi.mocked(api.updateSettings).mockRejectedValueOnce(appError('settings'));
     const user = userEvent.setup();

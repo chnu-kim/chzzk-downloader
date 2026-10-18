@@ -817,6 +817,8 @@ pub struct JobDto {
     #[ts(as = "PlaybackKindTs")]
     pub playback_kind: PlaybackKind,
     pub quality_label: String,
+    /// 오디오만 받는 작업(화질 키가 `audio`). 저장하지 않고 `qualityId`로 계산한다(audio-only.md A10)
+    pub audio_only: bool,
     pub output: String,
     pub status: JobStatus,
     /// 마지막 진행률(running·pausing·paused에서 표시)

@@ -197,6 +197,7 @@ fn job(status: JobStatus) -> JobDto {
         kind: ContentKindDto::Video,
         playback_kind: PlaybackKind::Progressive,
         quality_label: "720p".into(),
+        audio_only: false,
         output: "/v/[251005] 채널 - 제목.mp4".into(),
         status,
         progress: None,
@@ -211,6 +212,15 @@ fn job(status: JobStatus) -> JobDto {
         live_end: None,
         chat: None,
     }
+}
+
+/// `JobDto.audioOnly`는 늘 직렬화된다(오디오만 받기 작업만 true).
+#[test]
+fn job_dto_carries_audio_only() {
+    let mut j = job(JobStatus::Queued);
+    assert_eq!(to_json(&j)["audioOnly"], json!(false));
+    j.audio_only = true;
+    assert_eq!(to_json(&j)["audioOnly"], json!(true));
 }
 
 #[test]
@@ -244,6 +254,7 @@ fn job_event_status_snapshot() {
                 "kind": "video",
                 "playbackKind": "progressive",
                 "qualityLabel": "720p",
+                "audioOnly": false,
                 "output": "/v/[251005] 채널 - 제목.mp4",
                 "status": "failed",
                 "progress": null,

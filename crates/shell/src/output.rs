@@ -15,14 +15,11 @@ use chzzk_core::chat::SubtitleFormat;
 use chzzk_core::chat::collect::RECORD_EXT;
 use chzzk_core::download::part::part_path;
 use chzzk_core::naming::sibling_path;
-use chzzk_core::naming::{MAX_FILENAME_BYTES, output_path, range_stem, range_suffix};
+use chzzk_core::naming::{MAX_FILENAME_BYTES, MediaExt, output_path_ext, range_stem, range_suffix};
 use chzzk_core::{ContentRef, Platform, PlaybackKind, TimeRange};
 
 use crate::dto::{JobId, OutputCheck, PartialInfo};
 use crate::jobs::read_sidecar;
-
-/// 확장자(`output_path`가 붙이는 것).
-const EXT: &str = ".mp4";
 
 /// 번호 이름을 찾는 상한. 넘으면 `free_file_name = None`.
 pub const MAX_NUMBERED: u32 = 9999;
@@ -49,8 +46,10 @@ pub fn check_output(q: &OutputQuery<'_>, active: &dyn Fn(&Path) -> Option<JobId>
         Some(r) => range_stem(q.file_name, r, q.platform),
         None => q.file_name.to_string(),
     };
-    let path = output_path(q.folder, &named, q.platform);
-    let file_name = stem(&path);
+    // 확장자는 화질 키로 정한다(오디오만 받기 `.m4a`). 웹뷰가 따로 보낸 플래그는 믿지 않는다(audio-only.md A5)
+    let ext = MediaExt::for_quality(q.quality_id);
+    let path = output_path_ext(q.folder, &named, ext, q.platform);
+    let file_name = stem(&path, ext);
     let truncated = file_name != q.file_name;
     let conflict_names = conflict_names(&path, q.chat);
     let exists = !conflict_names.is_empty();
@@ -59,6 +58,7 @@ pub fn check_output(q: &OutputQuery<'_>, active: &dyn Fn(&Path) -> Option<JobId>
         free_name(
             q.folder,
             &file_name,
+            ext,
             q.range.as_ref(),
             q.chat,
             q.platform,
@@ -100,25 +100,27 @@ fn conflict_names(video: &Path, chat: Option<SubtitleFormat>) -> Vec<String> {
         .collect()
 }
 
-/// 최종 경로의 이름에서 `.mp4`(대소문자 무시)를 뗀 것.
-fn stem(path: &Path) -> String {
+/// 최종 경로의 이름에서 확장자(`.mp4`·`.m4a`, 대소문자 무시)를 뗀 것.
+fn stem(path: &Path, ext: MediaExt) -> String {
+    let ext = ext.as_str();
     let name = path
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
-    if name.len() >= EXT.len() && name[name.len() - EXT.len()..].eq_ignore_ascii_case(EXT) {
-        name[..name.len() - EXT.len()].to_string()
+    if name.len() >= ext.len() && name[name.len() - ext.len()..].eq_ignore_ascii_case(ext) {
+        name[..name.len() - ext.len()].to_string()
     } else {
         name
     }
 }
 
 /// `"{name} (2)"`, `(3)` … 중 완성 파일·`.part`·활성 작업(채팅을 함께 받으면 그 채팅 파일도) 어디에도 없는 첫 이름.
-/// 번호가 잘리지 않도록 이름을 먼저 줄여 `.mp4`까지 200바이트 안에 둔다.
+/// 번호가 잘리지 않도록 이름을 먼저 줄여 확장자까지 200바이트 안에 둔다.
 /// 구간 이름이면 `{제목을 줄인 것}{구간 접미사} ({n})`이다: 줄이는 쪽은 제목이고 접미사는 번호 앞에 그대로 남는다.
 fn free_name(
     folder: &Path,
     name: &str,
+    ext: MediaExt,
     range: Option<&TimeRange>,
     chat: Option<SubtitleFormat>,
     p: Platform,
@@ -128,14 +130,15 @@ fn free_name(
     let title = name.strip_suffix(range_tail.as_str()).unwrap_or(name);
     for n in 2..=MAX_NUMBERED {
         let number = format!(" ({n})");
-        let room = MAX_FILENAME_BYTES - EXT.len() - number.len() - range_tail.len();
+        let room = MAX_FILENAME_BYTES - ext.as_str().len() - number.len() - range_tail.len();
         let base = truncate_utf8(title, room);
         let base = if range.is_some() {
             base.trim_end()
         } else {
             base
         };
-        let candidate: PathBuf = output_path(folder, &format!("{base}{range_tail}{number}"), p);
+        let candidate: PathBuf =
+            output_path_ext(folder, &format!("{base}{range_tail}{number}"), ext, p);
         // 채팅을 함께 받으면 그 번호의 채팅 파일(과 받다 만 기록)도 비어 있어야 한다: 세 이름이 모두 빈 번호
         let chat_free = chat.is_none_or(|s| {
             chat_paths(&candidate, s)
@@ -147,7 +150,7 @@ fn free_name(
             && chat_free
             && active(&candidate).is_none()
         {
-            return Some(stem(&candidate));
+            return Some(stem(&candidate, ext));
         }
     }
     None

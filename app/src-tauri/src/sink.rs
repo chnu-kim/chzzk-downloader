@@ -209,6 +209,7 @@ mod tests {
             kind: ContentKindDto::Video,
             playback_kind: PlaybackKind::Progressive,
             quality_label: "720p".into(),
+            audio_only: false,
             output: "/v/제목.mp4".into(),
             status,
             progress: None,

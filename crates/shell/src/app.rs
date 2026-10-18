@@ -56,6 +56,31 @@ pub enum AuthSetup {
     },
 }
 
+/// `App`을 여는 방법의 선택. 기본값은 GUI가 쓰는 것이다.
+#[derive(Clone, Copy, Debug)]
+pub struct OpenOptions {
+    /// 설정이 켜져 있으면 재시작 후 멈춘 작업을 자동으로 이어받는다(GUI). 명령줄(CLI)은 끈다:
+    /// 사용자가 멈춘 작업을 명령 한 번에 되살리면 안 되고, 다음 GUI가 자기 첫 로그인 확인에서 한다(cli-mode.md §5.2).
+    pub auto_resume: bool,
+}
+
+impl Default for OpenOptions {
+    fn default() -> Self {
+        OpenOptions { auto_resume: true }
+    }
+}
+
+/// `auth_login_wait`의 결과.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LoginWait {
+    /// 로그인을 쓰지 않는 빌드
+    Disabled,
+    /// 로그인 주소를 브라우저로 열지 못해 로그인을 그만두었다
+    OpenFailed,
+    /// 로그인이 끝난 상태(성공·거부·시간 초과·오류, 시작 실패 포함, 이미 로그인된 경우)
+    Done(AuthStatusDto),
+}
+
 /// 앱이 Tauri `manage`로 들고 있는 상태.
 pub struct App {
     pub settings: SettingsService,
@@ -143,6 +168,25 @@ impl App {
         runtime: Handle,
         auth: AuthSetup,
     ) -> Result<Self, AppError> {
+        Self::open_with_options(
+            paths,
+            base,
+            legacy_dir,
+            runtime,
+            auth,
+            OpenOptions::default(),
+        )
+    }
+
+    /// `open_with_auth`와 같고 여는 방법을 고른다(명령줄은 자동 이어받기를 끈다).
+    pub fn open_with_options(
+        paths: AppPaths,
+        base: ClientConfig,
+        legacy_dir: Option<&Path>,
+        runtime: Handle,
+        auth: AuthSetup,
+        options: OpenOptions,
+    ) -> Result<Self, AppError> {
         let settings = SettingsService::open(&paths, base, legacy_dir)?;
         let s = settings.settings();
         let mut worker_base = None;
@@ -164,13 +208,14 @@ impl App {
                 )))
             }
         };
-        let defer = auth.is_some() && s.auto_resume_interrupted;
+        let resume = options.auto_resume && s.auto_resume_interrupted;
+        let defer = auth.is_some() && resume;
         let manager = DownloadManager::open(ManagerConfig {
             client: settings.client_fn(),
             store: JobStore::new(paths.data.clone()),
             runtime: runtime.clone(),
             max_parallel: s.max_parallel_downloads,
-            auto_resume: s.auto_resume_interrupted && auth.is_none(),
+            auto_resume: resume && auth.is_none(),
             total_rate_limit: s.total_rate_limit,
             job_rate_limit: s.job_rate_limit,
         })?;
@@ -560,6 +605,39 @@ impl App {
             }
         }
         AuthStatusDto::from_status(&auth.status())
+    }
+
+    /// 명령줄 `login`(cli-mode.md §5.3): `auth_login`과 같은 시작·수신기를 쓰되 끝날 때까지 기다려 끝 상태를 돌려준다.
+    ///
+    /// 순서는 `auth_login`과 같다: Started면 수령 대기를 **먼저** 띄운 뒤 `open(로그인 주소)`을 부른다(브라우저가 곧바로
+    /// 돌아와도 놓치지 않게). 주소는 `open`에만 넘기고 어디에도 기록하지 않는다. 열지 못하면 로그인을 그만두고
+    /// `OpenFailed`다. 이 함수는 GUI 쪽 부작용(자동 이어받기·업데이트 확인)을 일으키지 않는다(그것들은 앱 crate의
+    /// `spawn_auth_tasks`에 있다). 호출자가 이 future를 버리면(Ctrl+C) `auth_cancel`로 수신기를 닫는다.
+    pub async fn auth_login_wait(&self, open: impl FnOnce(&str) -> bool + Send) -> LoginWait {
+        let Some(auth) = self.auth.clone() else {
+            return LoginWait::Disabled;
+        };
+        let ticket = match auth.begin_login().await {
+            BeginLogin::Started(t) | BeginLogin::AlreadyPending(t) => t,
+            BeginLogin::AlreadySignedIn | BeginLogin::Failed | BeginLogin::Discarded => {
+                return LoginWait::Done(AuthStatusDto::from_status(&auth.status()));
+            }
+        };
+        let waiter = {
+            let a = auth.clone();
+            self.runtime.spawn(async move { a.run_login_wait().await })
+        };
+        if !open(ticket.login_url.expose()) {
+            tracing::warn!(result = "open_failed", "로그인 주소를 브라우저로 열지 못함");
+            auth.cancel_login();
+            waiter.abort();
+            return LoginWait::OpenFailed;
+        }
+        match waiter.await {
+            Ok(st) => LoginWait::Done(AuthStatusDto::from_status(&st)),
+            // 대기 태스크가 패닉했다: 현재 상태를 돌려준다(취소로 닫힌 경우도 같다)
+            Err(_) => LoginWait::Done(AuthStatusDto::from_status(&auth.status())),
+        }
     }
 
     /// `auth_reopen`: 대기 중이면 같은 주소를 다시 연다. 연 시도가 성공했으면 true

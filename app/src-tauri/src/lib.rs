@@ -3,6 +3,7 @@
 //! Dock·작업 표시줄 진행과 잠자기 방지(`status`), Windows WebView2 보강(`webview_win`).
 
 pub mod auth_io;
+mod cli_copy;
 pub mod commands;
 #[cfg(feature = "e2e")]
 pub mod e2e;

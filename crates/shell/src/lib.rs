@@ -9,6 +9,7 @@ pub mod auth;
 pub mod backend;
 pub mod bindings;
 pub mod chat;
+pub mod cli;
 pub mod consts;
 pub mod dock;
 pub mod dto;
@@ -28,7 +29,7 @@ pub mod update;
 pub mod volume;
 mod writer;
 
-pub use app::{AUTH_CLIENT_FAILED, App, AppAuth, AuthSetup};
+pub use app::{AUTH_CLIENT_FAILED, App, AppAuth, AuthSetup, LoginWait, OpenOptions};
 pub use auth::{AuthService, HttpWorkerApi, SessionStore, SystemClock, WorkerBase};
 pub use backend::Backend;
 pub use dto::JobId;

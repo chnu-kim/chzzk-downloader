@@ -42,3 +42,8 @@ pub const CIRCUIT_FAILURES: usize = 3;
 
 /// 맡은 채널 자동 확인 최소 간격(ms, delegation.md §9.4). [잠정]
 pub const DELEGATION_RECHECK_MIN_GAP_MS: u64 = 300_000;
+
+/// 명령줄 받기의 진행 줄 간격(비TTY): 이 퍼센트마다 한 줄(cli-mode.md §9.1). [잠정]
+pub const CLI_PROGRESS_STEP_PERCENT: u64 = 10;
+/// 명령줄 받기의 진행 줄 간격(비TTY): 이 초마다 한 줄. [잠정]
+pub const CLI_PROGRESS_STEP_SECS: u64 = 30;

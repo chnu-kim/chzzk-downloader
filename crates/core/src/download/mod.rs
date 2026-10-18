@@ -129,7 +129,7 @@ pub struct LiveEnd {
 pub enum DownloadOutcome {
     Completed {
         path: PathBuf,
-        /// 최종 파일 크기
+        /// 최종 파일 크기. PD 메타데이터로 붙인 새 moov와 죽은 옛 moov 자리까지 센 실제 길이라 받은 `total_len`보다 클 수 있다
         bytes: u64,
         /// 이어받기 시작 위치(새로 받았으면 0)
         resumed_from: u64,
@@ -508,6 +508,21 @@ fn tag_verdict(
     }
 }
 
+/// PD `.part`에 메타데이터 단계(`retag_in`·`repair_in`)를 돌리고 결과로 마무리를 이어 갈지 정한다. 실패(`tag_verdict`의
+/// `Err`)면 `drop_uncommitted_tail`로 쓴 길이를 마지막 checkpoint로 돌린다: 반쯤 바뀐 파일을 최종 파일로 옮기지 않고,
+/// 정리 checkpoint(`cleanup`)가 붙인 moov를 `committed_len`에 넣지 않으며(PD 전체 크기를 넘으면 다음 실행의 Range가
+/// 416을 받아 `SourceChanged`로 처음부터 받는다, core.md 55) 다음 `resume`이 그 꼬리를 자르게 한다.
+/// 파일 조작 `op`를 인자로 받는 것은 테스트가 도중 실패를 주입하려는 이음매다.
+async fn tag_pd_part(
+    p: &mut PartFile,
+    op: impl FnOnce(&mut std::fs::File) -> Result<Result<mp4meta::TagReport, mp4meta::TagError>, Error>
+    + Send
+    + 'static,
+) -> Result<(), Error> {
+    let r = p.with_file_blocking(op).await;
+    tag_verdict(r).inspect_err(|_| p.drop_uncommitted_tail())
+}
+
 /// 이 방식의 결과가 조각난 fMP4라 마무리에서 일반 mp4로 바꾸는가(core.md 구현 중 변경 60·64·71).
 ///
 /// `expected_kind`로 정해도 되는 것은 `Job::resolve`가 재조회 방식이 다르면 `PlaybackChanged`로 멈추기 때문이다(엔진은
@@ -606,16 +621,14 @@ pub(crate) async fn finish(
         // moov로 되돌리기만 한다(설정과 상관없이 늘 먼저 본다, 아니면 moov 없는 파일이 된다).
         // **checkpoint하지 않는다**: committed_len이 PD 전체 크기를 넘으면 다음 실행의 `Range` 요청이 416을 받고
         // `SourceChanged`로 처음부터 다시 받는다(core.md 55). 죽으면 resume이 붙인 moov를 자르고 다시 붙인다.
-        let r = p
-            .with_file_blocking(move |f| {
-                Ok(match &udta {
-                    Some(u) => mp4meta::retag_in(f, u),
-                    None => mp4meta::repair_in(f),
-                })
+        let r = tag_pd_part(&mut p, move |f| {
+            Ok(match &udta {
+                Some(u) => mp4meta::retag_in(f, u),
+                None => mp4meta::repair_in(f),
             })
-            .await;
-        if let Err(e) = tag_verdict(r) {
-            p.drop_uncommitted_tail();
+        })
+        .await;
+        if let Err(e) = r {
             *part = Some(p);
             return Err(e);
         }
@@ -718,5 +731,181 @@ mod tests {
             defrag_verdict(Err(Error::Cancelled)),
             Err(Error::Cancelled)
         ));
+    }
+
+    fn tag_ok(
+        rep: mp4meta::TagReport,
+    ) -> Result<Result<mp4meta::TagReport, mp4meta::TagError>, Error> {
+        Ok(Ok(rep))
+    }
+
+    /// PD 메타데이터 결과로 마무리를 이어 갈지 정하는 표(`defrag_verdict_table`과 같은 모양).
+    #[test]
+    fn tag_verdict_table() {
+        use mp4meta::{TagError, TagReport};
+        for rep in [
+            TagReport::Tagged,
+            TagReport::AlreadyTagged,
+            TagReport::Repaired,
+            TagReport::NotApplicable,
+        ] {
+            assert!(tag_verdict(tag_ok(rep)).is_ok(), "{rep:?}");
+        }
+        // 바꾸기 전 실패(또는 되돌렸다): 그대로 마무리한다
+        assert!(tag_verdict(Ok(Err(TagError::Unchanged(parse_err())))).is_ok());
+        // 바꾸는 도중 실패: 마무리하지 않는다
+        assert!(matches!(
+            tag_verdict(Ok(Err(TagError::Modified(parse_err())))),
+            Err(Error::Parse { .. })
+        ));
+        // 태스크·핸들 실패: 파일 상태를 모르니 마무리하지 않는다
+        assert!(matches!(
+            tag_verdict(Err(Error::Cancelled)),
+            Err(Error::Cancelled)
+        ));
+    }
+
+    const PD: &[u8] = include_bytes!("../../../../testdata/vod/pd_faststart.mp4");
+
+    /// 종류 패치(원래 길이 안쪽 쓰기)만 실패하는 파일. 새 moov를 붙인 뒤 옛 moov를 free로 바꾸는 도중 죽은 상황이다.
+    struct PatchFail<'a> {
+        f: &'a mut std::fs::File,
+        base: u64,
+    }
+    impl std::io::Read for PatchFail<'_> {
+        fn read(&mut self, b: &mut [u8]) -> std::io::Result<usize> {
+            self.f.read(b)
+        }
+    }
+    impl std::io::Seek for PatchFail<'_> {
+        fn seek(&mut self, p: std::io::SeekFrom) -> std::io::Result<u64> {
+            self.f.seek(p)
+        }
+    }
+    impl std::io::Write for PatchFail<'_> {
+        fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+            if std::io::Seek::stream_position(self.f)? < self.base {
+                return Err(std::io::Error::other("종류 패치 실패 주입"));
+            }
+            self.f.write(b)
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            self.f.flush()
+        }
+    }
+    impl defrag::DefragFile for PatchFail<'_> {
+        fn file_len(&mut self) -> std::io::Result<u64> {
+            defrag::DefragFile::file_len(self.f)
+        }
+        fn truncate_to(&mut self, len: u64) -> std::io::Result<()> {
+            defrag::DefragFile::truncate_to(self.f, len)
+        }
+        fn sync(&mut self) -> std::io::Result<()> {
+            defrag::DefragFile::sync(self.f)
+        }
+    }
+
+    fn top_kinds(b: &[u8]) -> Vec<String> {
+        let mut out = Vec::new();
+        let mut i = 0usize;
+        while i + 8 <= b.len() {
+            let size = u32::from_be_bytes(b[i..i + 4].try_into().unwrap()) as usize;
+            out.push(String::from_utf8_lossy(&b[i + 4..i + 8]).into_owned());
+            i += size;
+        }
+        out
+    }
+
+    /// PD 태그 단계가 도중에 실패하면(새 moov를 붙인 뒤 종류 패치 실패) 마무리하지 않고 `Err`로 끝낸다. 쓴 길이는
+    /// 마지막 checkpoint로 돌아가 정리 checkpoint가 붙은 moov를 `committed_len`에 넣지 않고(넣으면 다음 실행의 Range가
+    /// 416을 받아 처음부터 다시 받는다, core.md 55), 다음 `resume`이 꼬리를 잘라 원본 PD 바이트로 돌아간다.
+    #[tokio::test]
+    async fn pd_tag_failure_keeps_part_and_never_commits_the_tail() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("a.mp4");
+        let content = ContentRef::Video { video_no: 1 };
+        let sc = Sidecar::new(content.clone(), "720p", PlaybackKind::Progressive);
+        let mut p = PartFile::create(&out, sc).unwrap();
+        p.write(PD).unwrap();
+        p.checkpoint(|_| {}).await.unwrap();
+        let pd_len = PD.len() as u64;
+        assert_eq!(p.committed(), pd_len);
+
+        let udta = mp4meta::build_udta(
+            &mp4meta::Tags {
+                name: Some("T".into()),
+                ..Default::default()
+            },
+            None,
+        )
+        .unwrap();
+        let u = udta.clone();
+        let err = tag_pd_part(&mut p, move |f| {
+            let mut w = PatchFail { base: pd_len, f };
+            Ok(mp4meta::retag_in(&mut w, &u))
+        })
+        .await
+        .unwrap_err();
+        assert!(matches!(err, Error::Io { .. }), "{err:?}");
+        // 새 moov는 이미 붙었지만 쓴 길이는 checkpoint로 돌아갔다
+        assert!(std::fs::metadata(p.path()).unwrap().len() > pd_len);
+        assert_eq!(p.written(), pd_len);
+        // 정리 checkpoint(`cleanup`)가 붙은 moov를 committed_len에 넣지 않는다
+        p.checkpoint(|_| {}).await.unwrap();
+        assert_eq!(p.committed(), pd_len);
+        drop(p);
+
+        // 다음 실행: 꼬리를 잘라 원본 PD 바이트로 돌아가고, 다시 붙이면 끝난다
+        let owner = PartOwner {
+            content: &content,
+            quality_id: "720p",
+            kind: PlaybackKind::Progressive,
+            recording_id: None,
+            range: None,
+        };
+        let mut p = PartFile::resume(&out, &owner).unwrap().unwrap();
+        assert_eq!(p.written(), pd_len);
+        assert_eq!(std::fs::read(p.path()).unwrap(), PD);
+        tag_pd_part(&mut p, move |f| Ok(mp4meta::retag_in(f, &udta)))
+            .await
+            .unwrap();
+        let Finalized::Moved(path) = p.finalize(DuplicatePolicy::Overwrite).await.unwrap() else {
+            panic!("옮겨져야 한다");
+        };
+        let kinds = top_kinds(&std::fs::read(path).unwrap());
+        assert_eq!(
+            kinds.iter().filter(|k| *k == "moov").count(),
+            1,
+            "{kinds:?}"
+        );
+        assert!(kinds.iter().any(|k| k == "free"), "{kinds:?}");
+    }
+
+    /// 성공하면 쓴 길이를 돌리지 않는다(새 moov까지 최종 파일이다).
+    #[tokio::test]
+    async fn pd_tag_success_keeps_written_length() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("a.mp4");
+        let sc = Sidecar::new(
+            ContentRef::Video { video_no: 1 },
+            "720p",
+            PlaybackKind::Progressive,
+        );
+        let mut p = PartFile::create(&out, sc).unwrap();
+        p.write(PD).unwrap();
+        p.checkpoint(|_| {}).await.unwrap();
+        let udta = mp4meta::build_udta(
+            &mp4meta::Tags {
+                name: Some("T".into()),
+                ..Default::default()
+            },
+            None,
+        )
+        .unwrap();
+        tag_pd_part(&mut p, move |f| Ok(mp4meta::retag_in(f, &udta)))
+            .await
+            .unwrap();
+        assert!(p.written() > PD.len() as u64);
+        assert_eq!(p.committed(), PD.len() as u64);
     }
 }

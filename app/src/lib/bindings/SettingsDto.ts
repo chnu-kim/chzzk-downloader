@@ -39,4 +39,12 @@ saveChat: boolean,
 /**
  * 채팅 자막 형식(기본 [잠정] U2 결정 대기 `ass`)
  */
-chatSubtitle: SubtitleFormat, };
+chatSubtitle: SubtitleFormat, 
+/**
+ * 전체 합계 받기 속도 상한(바이트/초). `null` = 제한 없음(기본). 생방송 녹화는 제외(rate-limit.md)
+ */
+totalRateLimit: number | null, 
+/**
+ * 작업마다 받기 속도 상한(바이트/초). `null` = 제한 없음(기본)
+ */
+jobRateLimit: number | null, };

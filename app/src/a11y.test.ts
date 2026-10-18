@@ -27,6 +27,8 @@ const dto: SettingsDto = {
   keepAwake: true,
   saveChat: false,
   chatSubtitle: 'ass',
+  totalRateLimit: null,
+  jobRateLimit: null,
 };
 
 const disabled = {

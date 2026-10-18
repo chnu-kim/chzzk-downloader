@@ -370,6 +370,10 @@ pub struct SettingsDto {
     /// 채팅 자막 형식(기본 [잠정] U2 결정 대기 `ass`)
     #[ts(as = "SubtitleFormatTs")]
     pub chat_subtitle: SubtitleFormat,
+    /// 전체 합계 받기 속도 상한(바이트/초). `null` = 제한 없음(기본). 생방송 녹화는 제외(rate-limit.md)
+    pub total_rate_limit: Option<u64>,
+    /// 작업마다 받기 속도 상한(바이트/초). `null` = 제한 없음(기본)
+    pub job_rate_limit: Option<u64>,
 }
 
 /// 최근 VOD 한 항목.
@@ -434,6 +438,14 @@ pub struct SettingsPatch {
     #[serde(default)]
     #[ts(as = "Option<SubtitleFormatTs>", optional)]
     pub chat_subtitle: Option<SubtitleFormat>,
+    /// 키 없음 = 그대로, `null` = 제한 없음, 수 = 그 값(바이트/초). 0은 끔, 최소(`MIN_RATE_LIMIT_BPS`)보다 작은 값은 최소로 올린다
+    #[serde(default)]
+    #[ts(as = "Option<Option<u64>>", optional)]
+    pub total_rate_limit: Nullable<u64>,
+    /// 작업마다 상한. 규칙은 `total_rate_limit`과 같다
+    #[serde(default)]
+    #[ts(as = "Option<Option<u64>>", optional)]
+    pub job_rate_limit: Nullable<u64>,
 }
 
 /// 키 없음·`null`·값을 구분하는 패치 필드. `#[serde(default)]`와 함께 써야 키 없음이 `Keep`이 된다.

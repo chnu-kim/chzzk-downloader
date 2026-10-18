@@ -95,6 +95,13 @@ pub struct UserSettings {
     /// 채팅 자막 형식(기본 `DEFAULT_CHAT_SUBTITLE`, [잠정] U2 결정 대기). 없는 키·모르는 값은 기본값으로 읽는다.
     #[serde(deserialize_with = "subtitle_or_default")]
     pub chat_subtitle: SubtitleFormat,
+    /// 전체 합계 속도 상한(바이트/초, rate-limit.md). `None` = 끔(기본). 읽을 때 `MIN_RATE_LIMIT_BPS`보다 작은 양의
+    /// 정수는 그 값으로 올리고, 0·음수·소수·숫자 아님은 끔으로 읽는다. 생방송 녹화는 합계에 세지 않는다.
+    #[serde(deserialize_with = "rate_limit_or_off")]
+    pub total_rate_limit: Option<u64>,
+    /// 작업마다 속도 상한(바이트/초). 규칙은 `total_rate_limit`과 같다. 모든 작업이 같은 값을 쓴다(R4).
+    #[serde(deserialize_with = "rate_limit_or_off")]
+    pub job_rate_limit: Option<u64>,
 }
 
 /// 앱 안 글자 크기(×1 / ×1.3 / ×2.0, system/foundations.md §3.2). 직렬화 값은 `data-text-scale` 값과 같다
@@ -148,6 +155,8 @@ impl Default for UserSettings {
             keep_awake: true,
             save_chat: false,
             chat_subtitle: DEFAULT_CHAT_SUBTITLE,
+            total_rate_limit: None,
+            job_rate_limit: None,
         }
     }
 }
@@ -263,6 +272,24 @@ where
         .filter(|&n| n > 0)
         .map(|n| n.min(u64::from(MAX_PARALLEL_DOWNLOADS)) as u8)
         .unwrap_or(DEFAULT_PARALLEL_DOWNLOADS))
+}
+
+/// 속도 상한 값을 정리한다. 0은 끔(`None`), 최소(`MIN_RATE_LIMIT_BPS`)보다 작은 양의 값은 최소로 올린다.
+/// 설정을 읽을 때와 패치를 저장할 때 같은 규칙을 쓴다.
+pub fn normalize_rate_limit(bps: u64) -> Option<u64> {
+    (bps > 0).then(|| bps.max(MIN_RATE_LIMIT_BPS))
+}
+
+/// 속도 상한. 양의 정수는 `normalize_rate_limit`으로, 그 밖의 값(없음·`null`·0·음수·소수·문자열·불리언)은 끔으로 읽는다.
+/// 손으로 고친 값 하나 때문에 파일 전체가 깨진 것으로 처리되지 않게 어떤 JSON 값이든 받는다.
+fn rate_limit_or_off<'de, D>(d: D) -> Result<Option<u64>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let v = Option::<serde_json::Value>::deserialize(d)?;
+    Ok(v.as_ref()
+        .and_then(serde_json::Value::as_u64)
+        .and_then(normalize_rate_limit))
 }
 
 /// 최근 VOD에 넣는다. 같은 URL은 지우고 맨 앞에 넣은 뒤 5개로 자른다. `last_url`도 바꾼다.
@@ -652,6 +679,64 @@ mod tests {
                 .unwrap()
                 .auto_resume_interrupted
         );
+    }
+
+    /// 속도 상한 두 키(rate-limit.md §5.1): 없는 키는 끔(옛 설정 파일이 그대로 읽힌다), 양의 정수는 최소로 올려서 읽고,
+    /// 0·음수·소수·문자열·불리언은 끔이다. 나머지 키는 남는다.
+    #[test]
+    fn rate_limit_keys_default_off_and_lenient() {
+        let d = UserSettings::default();
+        assert_eq!((d.total_rate_limit, d.job_rate_limit), (None, None));
+        assert_eq!(MIN_RATE_LIMIT_BPS, 1_000_000);
+        for (raw, want) in [
+            ("", None),
+            (r#","totalRateLimit":null"#, None),
+            (r#","totalRateLimit":0"#, None),
+            (r#","totalRateLimit":-5"#, None),
+            (r#","totalRateLimit":1.5"#, None),
+            (r#","totalRateLimit":5e6"#, None),
+            (r#","totalRateLimit":"5000000""#, None),
+            (r#","totalRateLimit":true"#, None),
+            (r#","totalRateLimit":1"#, Some(MIN_RATE_LIMIT_BPS)),
+            (r#","totalRateLimit":999999"#, Some(MIN_RATE_LIMIT_BPS)),
+            (r#","totalRateLimit":1000000"#, Some(1_000_000)),
+            (r#","totalRateLimit":1048576"#, Some(1_048_576)),
+            (r#","totalRateLimit":5000000"#, Some(5_000_000)),
+            (r#","totalRateLimit":18446744073709551615"#, Some(u64::MAX)),
+        ] {
+            let s = parse(format!(r#"{{"downloadFolder":"/x"{raw}}}"#).as_bytes())
+                .unwrap_or_else(|e| panic!("{raw}: {e}"));
+            assert_eq!(s.total_rate_limit, want, "{raw}");
+            assert_eq!(s.job_rate_limit, None, "{raw}: 다른 키는 그대로 끔");
+            assert_eq!(s.download_folder.as_deref(), Some(Path::new("/x")), "{raw}");
+            // 작업마다 키도 같은 규칙이다.
+            let j = raw.replace("totalRateLimit", "jobRateLimit");
+            let s = parse(format!(r#"{{"downloadFolder":"/x"{j}}}"#).as_bytes()).unwrap();
+            assert_eq!(s.job_rate_limit, want, "{j}");
+            assert_eq!(s.total_rate_limit, None, "{j}");
+        }
+        // 저장했다 다시 읽어도 같다.
+        let on = UserSettings {
+            total_rate_limit: Some(5_000_000),
+            job_rate_limit: Some(2_000_000),
+            ..Default::default()
+        };
+        assert_eq!(parse(&serde_json::to_vec(&on).unwrap()).unwrap(), on);
+        // 옛 설정 파일(키 없음)은 그대로 읽힌다.
+        let old = parse(br#"{"schemaVersion":2,"keepAwake":false}"#).unwrap();
+        assert_eq!((old.total_rate_limit, old.job_rate_limit), (None, None));
+        assert!(!old.keep_awake);
+    }
+
+    #[test]
+    fn normalize_rate_limit_rules() {
+        assert_eq!(normalize_rate_limit(0), None);
+        assert_eq!(normalize_rate_limit(1), Some(MIN_RATE_LIMIT_BPS));
+        assert_eq!(
+            normalize_rate_limit(MIN_RATE_LIMIT_BPS),
+            Some(MIN_RATE_LIMIT_BPS)
+        );
+        assert_eq!(normalize_rate_limit(7_000_000), Some(7_000_000));
     }
 
     /// 잠자기 방지: 없는 키·모르는 값은 켜짐, `false`만 꺼짐. 나머지 키는 남는다.

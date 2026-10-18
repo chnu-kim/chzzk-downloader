@@ -30,6 +30,8 @@ const settingsDto: SettingsDto = {
   keepAwake: true,
   saveChat: false,
   chatSubtitle: 'ass',
+  totalRateLimit: null,
+  jobRateLimit: null,
 };
 
 let os: Os = 'windows';

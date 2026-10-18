@@ -18,7 +18,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock};
 use std::time::Duration;
 
 use chzzk_core::download::MAX_CONCURRENCY;
-use chzzk_core::settings::{MAX_RECENT_VODS, SETTINGS_FILE};
+use chzzk_core::settings::{MAX_RECENT_VODS, SETTINGS_FILE, normalize_rate_limit};
 use chzzk_core::{
     Chzzk, ClientConfig, ContentRef, CredentialStore, NaverCookies, PlaybackKind, RecentKind,
     SettingsStore, TextScale, Theme, UserSettings, add_recent_vod_with, parse_content_url,
@@ -325,6 +325,8 @@ impl SettingsService {
             if let Some(f) = patch.chat_subtitle {
                 s.chat_subtitle = f;
             }
+            apply_rate_limit(&mut s.total_rate_limit, &patch.total_rate_limit);
+            apply_rate_limit(&mut s.job_rate_limit, &patch.job_rate_limit);
         })?;
         if let Some(c) = new_client {
             self.swap(c);
@@ -344,6 +346,7 @@ impl SettingsService {
         let ops = lock(&self.ops);
         let dto = self.update_locked(&ops, patch)?;
         manager.set_max_parallel(dto.max_parallel_downloads);
+        manager.set_rate_limits(dto.total_rate_limit, dto.job_rate_limit);
         Ok(dto)
     }
 
@@ -562,6 +565,8 @@ impl SettingsService {
             keep_awake: s.keep_awake,
             save_chat: s.save_chat,
             chat_subtitle: s.chat_subtitle,
+            total_rate_limit: s.total_rate_limit,
+            job_rate_limit: s.job_rate_limit,
         }
     }
 
@@ -663,6 +668,15 @@ fn effective_folder(s: &UserSettings, default: &Path) -> PathBuf {
     s.download_folder
         .clone()
         .unwrap_or_else(|| default.to_path_buf())
+}
+
+/// 속도 상한 패치 한 칸: 키 없음 = 그대로, `null` = 끔, 수 = `normalize_rate_limit`(0은 끔, 최소 미만은 최소).
+fn apply_rate_limit(slot: &mut Option<u64>, patch: &Nullable<u64>) {
+    match patch {
+        Nullable::Keep => {}
+        Nullable::Clear => *slot = None,
+        Nullable::Set(n) => *slot = normalize_rate_limit(*n),
+    }
 }
 
 fn path_string(p: &Path) -> String {

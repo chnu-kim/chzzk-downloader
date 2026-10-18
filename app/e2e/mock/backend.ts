@@ -208,6 +208,8 @@ export const SETTINGS: SettingsDto = {
   keepAwake: true,
   saveChat: false,
   chatSubtitle: 'ass',
+  totalRateLimit: null,
+  jobRateLimit: null,
 };
 
 // 코어 Progress와 같은 모양: progressive는 바이트 총량, 빠른 다시보기(HLS)는 조각·미디어 초로 진행을 센다(app jobs.ts progressFraction)

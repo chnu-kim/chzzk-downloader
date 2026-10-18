@@ -307,6 +307,34 @@ async fn finished_job_does_not_block_same_output() {
     assert_ne!(again.id, a);
 }
 
+/// `embedMetadata`도 추가 당시 값으로 고정된다: 코어 요청과 저장 기록이 그 값을 따른다(mp4-metadata.md §9.2).
+#[tokio::test(start_paused = true)]
+async fn enqueue_freezes_embed_metadata() {
+    let h = Harness::new(1);
+    for (name, on) in [("on", true), ("off", false)] {
+        let defaults = JobDefaults {
+            embed_metadata: on,
+            ..h.defaults()
+        };
+        let dto = h.mgr.enqueue(request(name), &defaults).unwrap();
+        until("완료", || h.status(dto.id) == JobStatus::Completed).await;
+    }
+    let reqs = h.fake.download_requests();
+    assert_eq!(
+        reqs.iter().map(|r| r.embed_metadata).collect::<Vec<_>>(),
+        [true, false]
+    );
+    h.mgr.flush();
+    let json = h.jobs_json();
+    let flags: Vec<bool> = json["jobs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|j| j["embedMetadata"].as_bool().unwrap())
+        .collect();
+    assert_eq!(flags, [true, false], "{json}");
+}
+
 /// 요청 폴더 > 설정 폴더, 파일 이름은 정리·`.mp4`, `segmentConcurrency`는 추가 당시 값으로 고정된다.
 #[tokio::test(start_paused = true)]
 async fn enqueue_computes_output_and_freezes_concurrency() {
@@ -318,6 +346,7 @@ async fn enqueue_computes_output_and_freezes_concurrency() {
         download_folder: h.downloads(),
         segment_concurrency: 7,
         chat_subtitle: chzzk_core::chat::SubtitleFormat::Ass,
+        embed_metadata: true,
     };
     let dto = h.mgr.enqueue(r, &defaults).unwrap();
     let name = if cfg!(target_os = "linux") {
@@ -509,6 +538,7 @@ async fn dot_segments_in_folder_are_rejected() {
         download_folder: h.downloads().join("..").join(&name),
         segment_concurrency: 4,
         chat_subtitle: chzzk_core::chat::SubtitleFormat::Ass,
+        embed_metadata: true,
     };
     let e = h.mgr.enqueue(request("a"), &defaults).unwrap_err();
     assert_eq!(e.code, ErrorCode::InvalidInput);
@@ -627,6 +657,7 @@ async fn non_utf8_default_folder_is_rejected() {
         download_folder: bad.clone(),
         segment_concurrency: 4,
         chat_subtitle: chzzk_core::chat::SubtitleFormat::Ass,
+        embed_metadata: true,
     };
     let e = h.mgr.enqueue(request("a"), &defaults).unwrap_err();
     assert_eq!(e.code, ErrorCode::InvalidInput);

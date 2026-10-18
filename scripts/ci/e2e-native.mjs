@@ -13,8 +13,9 @@
 //   node scripts/ci/e2e-native.mjs [--exe <경로>]   # 기본 <target>/debug/chzzk-app[.exe] (gate가 먼저 빌드한다)
 //
 // 판정(결정적): 결과 폴더에 .mp4가 정확히 둘(본인 채널 이름·맡은 채널 이름이 든 것 하나씩, 남의 채널 이름이 든 것은 없음:
-// 남의 영상이 받히지 않았음도 증명한다), .part 없음, 둘 다 sha256이 golden `testdata/hls/full2_flat.mp4`(init‖seg0‖seg1의 일반 mp4 변환)와 같음, fixture 서버가 받은 요청이 모두 200이고
-// info·남의 영상 info·맡은 채널 영상 info·master·media·init·조각 둘을 모두 받음, Worker 스텁이 start 201·
+// 남의 영상이 받히지 않았음도 증명한다), .part 없음, 각 sha256이 그 채널의 golden(`testdata/hls/full2_tagged_own.mp4`·`full2_tagged_delegated.mp4`: init‖seg0‖seg1을 일반 mp4로 바꾸고
+// 제목·채널·날짜·원본 주소·표지를 넣은 것)와 같음, fixture 서버가 받은 요청이 모두 200이고
+// info·남의 영상 info·맡은 채널 영상 info·master·media·init·조각 둘·두 영상의 표지 썸네일(Cookie 없이)을 모두 받음, Worker 스텁이 start 201·
 // 확인 페이지 303·redeem 200을 각각 정확히 1번 받고 오류 응답이 없음. 화면 글자는 기다림의 신호로만 쓴다(판정은 파일이다).
 // 실패하면 target/ci/e2e-native/에 스크린샷·페이지 HTML·드라이버 로그·앱 로그를 남긴다(합성 fixture라 공개해도 된다).
 // macOS는 WebDriver가 없다(tauri-driver 미지원): 2로 끝난다. 종료 코드: 통과 0, 실패 1, 환경·사용법 2.
@@ -39,7 +40,7 @@ import {
   OWN_CHANNEL_ID,
   OWN_CHANNEL_NAME,
   STUB_HANDLE,
-  expectedOutput,
+  expectedOutputs,
   start,
   startWorker,
 } from './e2e-fixture-server.mjs';
@@ -144,6 +145,7 @@ export const isWindowVisible = (state) => state === 'visible';
 
 // 판정: 결과 폴더와 서버 요청 기록 → 문제 목록(빈 배열이면 통과).
 // files는 결과 폴더의 모든 파일(상대 경로), outputs는 .mp4마다 { sha256, bytes }다
+// expected = { own, delegated }(각 { sha256, bytes }): 본인·맡은 채널 golden(expectedOutputs)
 export function judge({ files, outputs }, serverLog, expected) {
   const bad = [];
   const mp4 = files.filter((f) => f.endsWith('.mp4'));
@@ -156,10 +158,12 @@ export function judge({ files, outputs }, serverLog, expected) {
   const other = mp4.filter((f) => f.includes(OTHER_CHANNEL_NAME));
   if (other.length) bad.push(`남의 채널 영상이 받혔다: ${other.join(', ')}`);
   if (partial.length) bad.push(`남은 중간 파일: ${partial.join(', ')}`);
+  // 파일 이름의 채널로 golden을 고른다(`©ART`·`©cmt`가 달라 golden이 둘이다). 남의 채널 파일은 위에서 이미 실패다
   for (const f of mp4) {
     const o = outputs?.[f];
-    if (!o || o.sha256 !== expected.sha256 || o.bytes !== expected.bytes) {
-      bad.push(`결과 파일 ${f}이(가) golden full2_flat.mp4와 다르다(sha256 ${o?.sha256 ?? '-'} ${o?.bytes ?? '-'}B ≠ ${expected.sha256} ${expected.bytes}B)`);
+    const [which, want] = f.includes(DELEGATED_CHANNEL_NAME) ? ['full2_tagged_delegated.mp4', expected.delegated] : ['full2_tagged_own.mp4', expected.own];
+    if (!o || o.sha256 !== want.sha256 || o.bytes !== want.bytes) {
+      bad.push(`결과 파일 ${f}이(가) golden ${which}와 다르다(sha256 ${o?.sha256 ?? '-'} ${o?.bytes ?? '-'}B ≠ ${want.sha256} ${want.bytes}B)`);
     }
   }
   const not200 = serverLog.filter((l) => l.status !== 200);
@@ -173,8 +177,13 @@ export function judge({ files, outputs }, serverLog, expected) {
     ['init', (p) => /_0_0_0\.m4s$/.test(p)],
     ['seg0', (p) => /_seg0\.m4v$/.test(p)],
     ['seg1', (p) => /_seg1\.m4v$/.test(p)],
+    ['본인 영상 표지 썸네일', (p) => p === `/thumb/${HLS_VIDEO_NO}.jpg`],
+    ['맡은 채널 영상 표지 썸네일', (p) => p === `/thumb/${DELEGATED_VIDEO_NO}.jpg`],
   ];
   for (const [name, test] of need) if (!serverLog.some((l) => test(l.path))) bad.push(`fixture 서버가 ${name} 요청을 받지 않았다`);
+  // 표지 요청에는 Cookie가 없다(미디어에 쿠키를 보내지 않는 결정 8, `cookies_on_media`와 상관없다)
+  const cookieThumbs = serverLog.filter((l) => l.path.startsWith('/thumb/') && l.cookie);
+  if (cookieThumbs.length) bad.push(`표지 요청에 Cookie가 실렸다: ${cookieThumbs.map((l) => l.path).join(', ')}`);
   return bad;
 }
 
@@ -509,13 +518,14 @@ export async function run(exe) {
       const buf = readFileSync(join(dl, f));
       outputs[f] = { sha256: createHash('sha256').update(buf).digest('hex'), bytes: buf.length };
     }
-    const bad = [...judge({ files, outputs }, server.log, expectedOutput()), ...judgeWorker(worker.log)];
+    const expected = expectedOutputs();
+    const bad = [...judge({ files, outputs }, server.log, expected), ...judgeWorker(worker.log)];
     const result = {
       ok: bad.length === 0,
       os: osKey(),
       files,
       outputs,
-      expected: expectedOutput(),
+      expected,
       requests: server.log,
       workerRequests: worker.log,
       problems: bad,
@@ -523,7 +533,7 @@ export async function run(exe) {
     mkdirSync(join(ROOT, OUT_DIR), { recursive: true });
     writeFileSync(join(ROOT, OUT_DIR, 'result.json'), JSON.stringify(result, null, 2) + '\n');
     for (const b of bad) console.error(`::error::e2e-native: ${b}`);
-    if (!bad.length) log(`통과: ${mp4.join(', ')} sha256 ${expectedOutput().sha256} (${expectedOutput().bytes}B), 요청 ${server.log.length}개 모두 200, Worker 스텁 요청 ${worker.log.length}개`);
+    if (!bad.length) log(`통과: ${mp4.join(', ')} sha256 ${Object.values(outputs).map((o) => o.sha256.slice(0, 12)).join(', ')}, 요청 ${server.log.length}개 모두 200, Worker 스텁 요청 ${worker.log.length}개`);
     ok = bad.length === 0;
   } catch (e) {
     console.error(`::error::e2e-native: ${e.message}`);

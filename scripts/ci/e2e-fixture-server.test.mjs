@@ -22,6 +22,7 @@ import {
   STUB_HANDLE,
   delegatedVideoInfo,
   expectedOutput,
+  expectedOutputs,
   loopbackState,
   otherVideoInfo,
   rewriteHosts,
@@ -83,6 +84,41 @@ test('서버: info → master → media → init·조각, 모르는 경로는 40
   } finally {
     await s.close();
   }
+});
+
+test('표지 썸네일: info의 주소가 서버로 치환되고, 영상 번호별 경로가 thumb.jpg를 내며, 요청의 Cookie 유무를 기록한다', async () => {
+  const s = await start();
+  try {
+    const info = JSON.parse((await (await fetch(new URL(`service/v2/videos/${HLS_VIDEO_NO}`, s.url))).text()));
+    const thumb = new URL(info.content.thumbnailImageUrl);
+    assert.equal(thumb.origin, s.url.replace(/\/$/, ''));
+    assert.equal(thumb.pathname, `/thumb/${HLS_VIDEO_NO}.jpg`);
+    const jpg = readFileSync(join(ROOT, 'testdata', 'synthetic', 'thumb.jpg'));
+    const r = await fetch(thumb);
+    assert.equal(r.headers.get('content-type'), 'image/jpeg');
+    assert.deepEqual(Buffer.from(await r.arrayBuffer()), jpg);
+    // 남의 영상 변형은 번호가 따라 바뀐다
+    const other = JSON.parse(otherVideoInfo(readFileSync(join(ROOT, 'testdata/hls/video_info.json'), 'utf8')));
+    assert.match(other.content.thumbnailImageUrl, new RegExp(`/thumb/${OTHER_VIDEO_NO}\\.jpg$`));
+    // 다른 확장자·문자가 든 경로는 404
+    assert.equal((await fetch(new URL('/thumb/1.png', s.url))).status, 404);
+    assert.equal((await fetch(new URL('/thumb/x.jpg', s.url))).status, 404);
+    await fetch(thumb, { headers: { cookie: 'NID_AUT=x' } });
+    const logs = s.log.filter((l) => l.path === thumb.pathname);
+    assert.deepEqual(logs.map((l) => l.cookie), [false, true]);
+  } finally {
+    await s.close();
+  }
+});
+
+test('expectedOutputs: 본인·맡은 채널 golden은 서로 다르고, 태그를 넣지 않은 golden과도 다르다', () => {
+  const { own, delegated } = expectedOutputs();
+  const sha = (rel) => createHash('sha256').update(readFileSync(join(ROOT, 'testdata', 'hls', rel))).digest('hex');
+  assert.equal(own.sha256, sha('full2_tagged_own.mp4'));
+  assert.equal(delegated.sha256, sha('full2_tagged_delegated.mp4'));
+  assert.notEqual(own.sha256, delegated.sha256);
+  assert.notEqual(own.sha256, expectedOutput().sha256);
+  assert.ok(own.bytes > expectedOutput().bytes, '태그와 표지가 더해져 더 크다');
 });
 
 test('다른 채널 영상 info: 번호·채널 ID·이름만 바뀌고, 바꿀 것이 없으면 throw', () => {

@@ -514,3 +514,55 @@ async fn live_smoke() {
     let r = c.resolve(&video(no.parse().unwrap())).await.unwrap();
     assert!(!r.qualities().is_empty());
 }
+
+/// 표지 썸네일 주소(mp4 메타데이터): 일반 VOD·빠른 다시보기만 채우고, 클립·생방송은 비운다.
+/// 주소가 없거나 비었거나 주소가 아니면 `None`이다. `Debug`는 서명 쿼리를 가린다.
+#[tokio::test]
+async fn thumbnail_url_only_for_videos() {
+    let server = MockServer::start().await;
+    // 일반 VOD(DASH): 쿼리가 서명일 수 있어 Debug가 가려야 한다
+    let vod = common::with_thumbnail(
+        &fixture("testdata/vod/video_info.json"),
+        Some("https://img.example.invalid/thumb/9000002.jpg?type=f&token=SECRET"),
+    );
+    mount_info(&server, &format!("/service/v2/videos/{VOD_NO}"), vod).await;
+    mount_mpd(&server, VOD_VIDEO_ID, "testdata/vod/playback.mpd").await;
+    let r = chzzk(&server).resolve(&video(VOD_NO)).await.unwrap();
+    let t = r.thumbnail_url.clone().unwrap();
+    assert_eq!(t.host_str(), Some("img.example.invalid"));
+    assert!(t.query().unwrap().contains("SECRET"));
+    assert!(
+        !format!("{r:?}").contains("SECRET"),
+        "Debug가 쿼리를 가려야 한다"
+    );
+    assert!(format!("{r:?}").contains("img.example.invalid/thumb/9000002.jpg"));
+
+    // 빠른 다시보기
+    let hls = rewrite_hosts(&fixture("testdata/hls/video_info.json"), &server.uri());
+    mount_info(&server, &format!("/service/v2/videos/{HLS_NO}"), hls).await;
+    let r = chzzk(&server).resolve(&video(HLS_NO)).await.unwrap();
+    assert!(r.thumbnail_url.is_some());
+    assert!(matches!(r.source, Source::LiveRewindHls { .. }));
+
+    // 주소가 비었거나 없으면 None
+    for edit in [Some(""), None] {
+        let body = common::with_thumbnail(&fixture("testdata/vod/video_info.json"), edit);
+        server.reset().await;
+        mount_info(&server, &format!("/service/v2/videos/{VOD_NO}"), body).await;
+        mount_mpd(&server, VOD_VIDEO_ID, "testdata/vod/playback.mpd").await;
+        let r = chzzk(&server).resolve(&video(VOD_NO)).await.unwrap();
+        assert_eq!(r.thumbnail_url, None, "{edit:?}");
+    }
+
+    // 클립은 썸네일 필드를 확인하지 못해 쓰지 않는다
+    server.reset().await;
+    mount_info(
+        &server,
+        &format!("/service/v1/play-info/clip/{CLIP_ID}"),
+        fixture("testdata/clip/clip_playinfo.json"),
+    )
+    .await;
+    mount_mpd(&server, CLIP_VIDEO_ID, "testdata/clip/clip_multi.mpd").await;
+    let r = chzzk(&server).resolve(&clip_ref(CLIP_ID)).await.unwrap();
+    assert_eq!(r.thumbnail_url, None);
+}

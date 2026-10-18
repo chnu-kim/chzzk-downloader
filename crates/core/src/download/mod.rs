@@ -13,7 +13,7 @@
 //!    지우지 않고 `PartialRecording`).
 //! 3. `Resolving`: `resolve`. 방식이 바뀌었으면 `PlaybackChanged`.
 //! 4. 엔진 실행. 403이면 `Reresolving` → 재조회(상한 8회).
-//! 5. `Finalizing`: checkpoint → `.part` → 최종 파일. `Skip`이면 덮어쓰지 않는 rename을 쓰고, 받는 동안
+//! 5. `Finalizing`: checkpoint → (표지 받기) → 변환·메타데이터 → `.part` → 최종 파일. `Skip`이면 덮어쓰지 않는 rename을 쓰고, 받는 동안
 //!    최종 파일이 생겼으면 `.part`를 남긴 채 `Skipped`다.
 //!
 //! 실패·취소 시 `.part`와 sidecar를 남긴다(checkpoint 후). `is_resumable() == false`인 오류만 지운다.
@@ -29,7 +29,7 @@ pub mod throttle;
 
 use std::future::Future;
 use std::num::NonZeroU8;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use tokio::time::Instant as TokioInstant;
@@ -39,6 +39,7 @@ use crate::client::Chzzk;
 use crate::error::{Error, Unsupported};
 use crate::fsutil::map_io_error;
 use crate::model::{ContentRef, PlaybackKind, Resolved, Source, TimeRange};
+use crate::mp4meta::{self, TagInput};
 use crate::mpd::AUDIO_QUALITY_ID;
 use crate::naming;
 use crate::progress::{Meter, Phase, Progress};
@@ -87,6 +88,9 @@ pub struct DownloadRequest {
     /// `Some`이면 `expected_kind`가 `LiveRewindHls`여야 하고, 아니면 `Unsupported(RangeNotHls)`다.
     /// 결과는 마무리 때 일반 mp4로 바꾼다(`finish`).
     pub range: Option<TimeRange>,
+    /// 마무리에서 제목·채널·날짜·원본 주소와 표지를 mp4에 넣는다(mp4-metadata.md). 셸이 설정에서 정한다. 코어 기본값은
+    /// 없다(모든 생성자가 값을 준다). 실패해도 받기는 성공이다(표지나 태그만 빠진다).
+    pub embed_metadata: bool,
     /// 속도 제한(rate-limit.md). 기본(`Default`)은 제한 없음. 생방송(`Live`)은 이 값을 무시한다.
     /// 런타임 값이라 `owner()`와 sidecar에 들어가지 않는다.
     pub throttle: Throttles,
@@ -132,7 +136,7 @@ pub struct LiveEnd {
 pub enum DownloadOutcome {
     Completed {
         path: PathBuf,
-        /// 최종 파일 크기
+        /// 최종 파일 크기. 메타데이터를 넣어 다시 쓴 PD는 새 moov만큼 받은 `total_len`과 다를 수 있다(옮긴 파일의 실제 길이)
         bytes: u64,
         /// 이어받기 시작 위치(새로 받았으면 0)
         resumed_from: u64,
@@ -225,6 +229,9 @@ pub(crate) struct Job<'a> {
     /// playlist의 지문 불일치는 이미 받은 바이트가 틀렸다는 증거가 아니다. 다음 실행의
     /// sidecar 동일성·지문 검사가 정말 낡은 `.part`를 거른다.
     pub(crate) keep_partial: bool,
+    /// 마무리에서 mp4에 넣을 태그의 재료. 첫 `resolve` 결과로 정한다(재조회로 바꾸지 않는다). `embed_metadata`가 꺼져
+    /// 있거나 resolve 전에 마무리하는 끊긴 생방송이면 `None`이다.
+    pub(crate) tags: Option<TagInput>,
 }
 
 impl Job<'_> {
@@ -379,6 +386,7 @@ impl Chzzk {
             report: Reporter::new(on_progress, self.config().progress_interval),
             refreshes: 0,
             keep_partial: false,
+            tags: None,
         };
         let resumed_from = part.as_ref().map_or(0, PartFile::written);
         job.report.p.resumed_from = resumed_from;
@@ -432,6 +440,15 @@ async fn run(job: &mut Job<'_>, part: &mut Option<PartFile>) -> Result<DownloadO
         job.resolve().await?
     };
     job.report.phase(Phase::Downloading);
+    // 태그 재료는 첫 조회 결과로 고정한다. 서명 주소는 들어오지 않는다(원본 주소는 `ContentRef`로만 만든다)
+    if job.req.embed_metadata {
+        job.tags = Some(TagInput {
+            meta: resolved.meta.clone(),
+            content: resolved.content.clone(),
+            range: job.req.range,
+            thumbnail_url: resolved.thumbnail_url.clone(),
+        });
+    }
     match resolved.source {
         Source::Progressive { reps } => progressive::run(job, reps, part).await,
         Source::LiveRewindHls { master_url, tracks } => {
@@ -482,6 +499,42 @@ fn defrag_verdict(
     }
 }
 
+/// PD `.part`를 새 `udta`로 다시 써 `tag_temp_path`에 둔다(mp4-metadata.md §6.2). 다 쓰고 sync했으면 그 길이를
+/// 돌려준다(`finalize_rewritten`으로 옮긴다). 이미 같은 태그거나 어떤 이유로든 쓰지 못했으면(구조를 모름·디스크 부족·
+/// 쓰기 실패·핸들 실패) 임시 파일을 지우고 `None`이다. `.part`는 바꾸지 않으므로 그대로 마무리하면 된다(받기 성공,
+/// 경고 로그). 임시 파일을 여는 `open`은 테스트가 쓰기 실패를 주입하는 이음매다.
+async fn tag_pd_part<W: mp4meta::SyncWrite + Send + 'static>(
+    p: &mut PartFile,
+    udta: Vec<u8>,
+    open: impl FnOnce(&Path) -> std::io::Result<W> + Send + 'static,
+) -> Option<u64> {
+    let tmp = part::tag_temp_path(p.final_path());
+    let t = tmp.clone();
+    let r = p
+        .with_file_blocking(move |f| {
+            let len = f.metadata().map_err(|e| map_io_error("stat", &t, e))?.len();
+            mp4meta::rewrite_to(f, len, &udta, &t, open)
+        })
+        .await;
+    match r {
+        Ok(mp4meta::Retagged::Written { len }) => {
+            tracing::info!(bytes = len, "mp4 메타데이터를 넣어 다시 썼다");
+            Some(len)
+        }
+        Ok(mp4meta::Retagged::AlreadyTagged) => {
+            tracing::info!("mp4 메타데이터가 이미 같다");
+            None
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "mp4 메타데이터를 넣지 못해 원본 그대로 마무리한다");
+            if let Err(re) = part::remove_if_exists(&tmp) {
+                tracing::warn!(error = %re, "메타데이터 임시 파일 삭제 실패");
+            }
+            None
+        }
+    }
+}
+
 /// 이 요청의 결과가 조각난 fMP4라 마무리에서 일반 mp4로 바꾸는가(core.md 구현 중 변경 60·64·71, audio-only.md §4.6).
 ///
 /// `expected_kind`로 정해도 되는 것은 `Job::resolve`가 재조회 방식이 다르면 `PlaybackChanged`로 멈추기 때문이다(엔진은
@@ -510,12 +563,40 @@ pub(crate) async fn finish(
         *part = Some(p);
         return Err(e);
     }
+    // 표지 받기는 파일을 바꾸기 **앞**에 한다. 받는 도중 취소되면 파일은 바뀌지 않은 채 `Cancelled`로 끝난다(이어받을 수 있다).
+    // 실패는 표지만 빼고 계속한다(`fetch_cover`가 경고를 남긴다).
+    let udta = match job.tags.clone() {
+        Some(t) => {
+            let cover = match &t.thumbnail_url {
+                Some(u) => match job.cancellable(job.chzzk.fetch_cover(u)).await {
+                    Ok(c) => c,
+                    Err(e) => {
+                        *part = Some(p);
+                        return Err(e);
+                    }
+                },
+                None => None,
+            };
+            let udta = mp4meta::build_udta(&t.tags(), cover.as_ref());
+            tracing::info!(
+                cover = cover.is_some(),
+                tags = udta.is_some(),
+                "mp4 메타데이터 준비"
+            );
+            udta
+        }
+        None => None,
+    };
     // 생방송과 빠른 다시보기(전체·구간) 결과는 조각 구조를 일반 mp4로 바꾼다(core.md 구현 중 변경 60·64·71). 바로 위
     // checkpoint로 받은 바이트가 모두 durable하므로, 변환 도중 죽어도 다음 실행의 `resume`이 붙인 moov만 잘라 내고 다시 변환한다.
     // 바꾸기 전 실패는 경고만 남기고 조각 구조로 마무리하고, 바꾸는 도중 실패는 `.part`로 남긴다(core.md 61).
+    // 메타데이터(`udta`)는 이 변환이 만드는 새 moov에 함께 넣는다(moov는 한 번만 덧붙인다, core.md 80).
+    let mut rewritten = None;
     if converts_on_finish(job.req) {
         // 파일 전체 훑기·fsync는 오래 걸릴 수 있어 blocking 스레드에서 한다.
-        let r = p.with_file_blocking(|f| Ok(defrag::defragment_in(f))).await;
+        let r = p
+            .with_file_blocking(move |f| Ok(defrag::defragment_in(f, udta.as_deref())))
+            .await;
         // 빠른 다시보기 조각의 시각이 이어지지 않으면 경고만 남긴다(판정이나 오류로 쓰지 않는다). 생방송은 놓친 조각을
         // 따로 센다(`LiveEnd::gaps`).
         if job.req.expected_kind == PlaybackKind::LiveRewindHls
@@ -547,9 +628,17 @@ pub(crate) async fn finish(
                 return Err(e);
             }
         }
+    } else if let Some(u) = udta {
+        // 일반 VOD·클립(PD mp4)은 변환하지 않는다. 메타데이터를 켰으면 `.part`는 그대로 두고 같은 폴더의 임시 파일에
+        // 새 moov를 넣어 다시 쓴 뒤(faststart 유지, 청크 위치를 고친다) 그것을 최종 파일로 옮긴다. 쓰지 못하면 태그 없이
+        // 원본 `.part`를 옮긴다. **checkpoint하지 않는다**: `.part`가 그대로라 죽어도 다음 실행의 416 → 마무리가 다시 한다.
+        rewritten = tag_pd_part(&mut p, u, |t| std::fs::File::create(t)).await;
     }
-    let bytes = p.written();
-    match p.finalize(job.req.on_existing).await? {
+    let (bytes, finalized) = match rewritten {
+        Some(len) => (len, p.finalize_rewritten(job.req.on_existing).await?),
+        None => (p.written(), p.finalize(job.req.on_existing).await?),
+    };
+    match finalized {
         Finalized::Moved(path) => Ok(DownloadOutcome::Completed {
             path,
             bytes,
@@ -611,6 +700,7 @@ mod tests {
     fn converts_on_finish_only_fragmented_kinds() {
         let req = |kind, quality: &str| DownloadRequest {
             throttle: Default::default(),
+            embed_metadata: false,
             content: ContentRef::Video { video_no: 1 },
             quality_id: quality.into(),
             expected_kind: kind,
@@ -669,5 +759,268 @@ mod tests {
             defrag_verdict(Err(Error::Cancelled)),
             Err(Error::Cancelled)
         ));
+    }
+
+    const PD: &[u8] = include_bytes!("../../../../testdata/vod/pd_faststart.mp4");
+
+    fn udta() -> Vec<u8> {
+        mp4meta::build_udta(
+            &mp4meta::Tags {
+                name: Some("T".into()),
+                ..Default::default()
+            },
+            None,
+        )
+        .unwrap()
+    }
+
+    /// 받은 PD를 checkpoint까지 마친 `.part`.
+    async fn pd_part(out: &Path) -> PartFile {
+        let sc = Sidecar::new(
+            ContentRef::Video { video_no: 1 },
+            "720p",
+            PlaybackKind::Progressive,
+        );
+        let mut p = PartFile::create(out, sc).unwrap();
+        p.write(PD).unwrap();
+        p.checkpoint(|_| {}).await.unwrap();
+        p
+    }
+
+    /// 잠금을 쥔 핸들(`with_file_blocking`의 복제 핸들)로 `.part` 전체를 읽는다. Windows의 `try_lock`(`LockFileEx`,
+    /// 파일 전체 범위)은 강제 잠금이라, 잠긴 동안 경로로 새로 열어 읽으면 `ERROR_LOCK_VIOLATION`(33)이 난다.
+    async fn read_locked_part(p: &mut PartFile) -> Vec<u8> {
+        p.with_file_blocking(|f| {
+            use std::io::{Read, Seek, SeekFrom};
+            let mut b = Vec::new();
+            f.seek(SeekFrom::Start(0))
+                .and_then(|_| f.read_to_end(&mut b))
+                .map_err(|e| Error::Io {
+                    op: "read",
+                    path: PathBuf::new(),
+                    source: e,
+                })?;
+            Ok(b)
+        })
+        .await
+        .unwrap()
+    }
+
+    /// Windows 강제 잠금 흉내(Unix): `.part`의 권한을 없애 경로로 새로 여는 핸들은 읽지 못하게 한다. 이미 열린
+    /// 잠금 핸들은 그대로 읽고 쓴다. 다시 쓰기가 `.part`를 새로 열어 읽으면 실패해 원본으로 마무리된다.
+    /// root처럼 권한을 무시하면 흉내가 되지 않아 `false`다.
+    #[cfg(unix)]
+    fn deny_other_opens(path: &Path) -> bool {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o000)).unwrap();
+        std::fs::File::open(path).is_err()
+    }
+
+    /// `n`바이트까지 쓰고 그다음 쓰기는 `fail`로 실패하는 임시 파일. `sync_fails`면 쓰기는 되고 sync가 실패한다.
+    struct FailingTemp {
+        f: std::fs::File,
+        left: usize,
+        fail: fn() -> std::io::Error,
+        sync_fails: bool,
+    }
+    impl std::io::Write for FailingTemp {
+        fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+            if self.left == 0 {
+                return Err((self.fail)());
+            }
+            let n = b.len().min(self.left);
+            self.left -= n;
+            self.f.write(&b[..n])
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            self.f.flush()
+        }
+    }
+    impl mp4meta::SyncWrite for FailingTemp {
+        fn sync(&mut self) -> std::io::Result<()> {
+            if self.sync_fails {
+                return Err((self.fail)());
+            }
+            self.f.sync_all()
+        }
+    }
+
+    fn files_in(dir: &Path) -> Vec<String> {
+        let mut v: Vec<String> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        v.sort();
+        v
+    }
+
+    /// 임시 파일을 쓰다 디스크 부족(ENOSPC·Windows 112·39)이나 다른 쓰기 오류가 나면 임시 파일을 지우고 태그 없이 원본
+    /// `.part`를 최종 파일로 옮긴다(받기 성공). `.part`·sidecar·임시 파일이 남지 않는다.
+    #[tokio::test]
+    async fn pd_temp_write_failure_finalizes_the_original_untagged() {
+        type Case = (&'static str, usize, fn() -> std::io::Error, bool);
+        let cases: [Case; 6] = [
+            (
+                "StorageFull 처음",
+                0,
+                || std::io::ErrorKind::StorageFull.into(),
+                false,
+            ),
+            (
+                "StorageFull 중간(부분 기록)",
+                100,
+                || std::io::ErrorKind::StorageFull.into(),
+                false,
+            ),
+            (
+                "ENOSPC raw",
+                50,
+                || std::io::Error::from_raw_os_error(28),
+                false,
+            ),
+            (
+                "기타 오류 중간",
+                30,
+                || std::io::Error::other("쓰기 실패 주입"),
+                false,
+            ),
+            (
+                "sync 실패",
+                usize::MAX,
+                || std::io::ErrorKind::StorageFull.into(),
+                true,
+            ),
+            (
+                "파일 크기 한도",
+                10,
+                || std::io::ErrorKind::FileTooLarge.into(),
+                false,
+            ),
+        ];
+        for (name, left, fail, sync_fails) in cases {
+            let dir = tempfile::tempdir().unwrap();
+            let out = dir.path().join("a.mp4");
+            let mut p = pd_part(&out).await;
+            let r = tag_pd_part(&mut p, udta(), move |t| {
+                Ok(FailingTemp {
+                    f: std::fs::File::create(t)?,
+                    left,
+                    fail,
+                    sync_fails,
+                })
+            })
+            .await;
+            assert_eq!(r, None, "{name}");
+            assert_eq!(read_locked_part(&mut p).await, PD, "{name}: .part는 그대로");
+            assert!(
+                !part::tag_temp_path(&out).exists(),
+                "{name}: 임시 파일을 지웠다"
+            );
+            let Finalized::Moved(path) = p.finalize(DuplicatePolicy::Overwrite).await.unwrap()
+            else {
+                panic!("{name}: 옮겨져야 한다");
+            };
+            assert_eq!(std::fs::read(path).unwrap(), PD, "{name}: 태그 없는 원본");
+            assert_eq!(files_in(dir.path()), ["a.mp4"], "{name}");
+        }
+    }
+
+    /// 임시 파일을 열지 못해도(폴더 권한 등) 같은 갈래다.
+    #[tokio::test]
+    async fn pd_temp_open_failure_finalizes_the_original_untagged() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("a.mp4");
+        let mut p = pd_part(&out).await;
+        let r = tag_pd_part(&mut p, udta(), |_| {
+            Err::<std::fs::File, _>(std::io::Error::from_raw_os_error(28))
+        })
+        .await;
+        assert_eq!(r, None);
+        p.finalize(DuplicatePolicy::Overwrite).await.unwrap();
+        assert_eq!(std::fs::read(&out).unwrap(), PD);
+        assert_eq!(files_in(dir.path()), ["a.mp4"]);
+    }
+
+    /// 성공: `.part`는 끝까지 원본이고, 최종 파일은 다시 쓴 임시 파일이다. 옮긴 뒤 `.part`·sidecar·임시 파일이 없다.
+    /// checkpoint는 하지 않는다(`committed_len`이 PD 크기 그대로).
+    #[tokio::test]
+    async fn pd_rewrite_success_moves_the_temp_and_removes_the_part() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("a.mp4");
+        let mut p = pd_part(&out).await;
+        // 다시 쓰기는 잠금 핸들로만 `.part`를 읽는다(Windows에서 다른 핸들은 잠긴 범위를 읽지 못한다)
+        #[cfg(unix)]
+        let denied = deny_other_opens(p.path());
+        let len = tag_pd_part(&mut p, udta(), |t| std::fs::File::create(t))
+            .await
+            .expect("잠금 핸들로 읽어 다시 쓴다");
+        #[cfg(unix)]
+        if denied {
+            assert!(std::fs::File::open(p.path()).is_err(), "흉내가 유지된다");
+        }
+        let tmp = part::tag_temp_path(&out);
+        assert_eq!(std::fs::metadata(&tmp).unwrap().len(), len);
+        assert_eq!(read_locked_part(&mut p).await, PD, ".part는 그대로");
+        assert_eq!(p.committed(), PD.len() as u64);
+        let Finalized::Moved(path) = p
+            .finalize_rewritten(DuplicatePolicy::Overwrite)
+            .await
+            .unwrap()
+        else {
+            panic!("옮겨져야 한다");
+        };
+        let b = std::fs::read(path).unwrap();
+        assert_eq!(b.len() as u64, len);
+        assert_ne!(b, PD);
+        assert_eq!(files_in(dir.path()), ["a.mp4"]);
+    }
+
+    /// `Skip`인데 최종 파일이 생겼으면 임시 파일만 지우고 원본 `.part`와 sidecar를 남긴다.
+    #[tokio::test]
+    async fn pd_rewrite_target_exists_keeps_the_original_part() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("a.mp4");
+        let mut p = pd_part(&out).await;
+        tag_pd_part(&mut p, udta(), |t| std::fs::File::create(t))
+            .await
+            .unwrap();
+        std::fs::write(&out, b"someone else").unwrap();
+        let r = p.finalize_rewritten(DuplicatePolicy::Skip).await.unwrap();
+        assert_eq!(r, Finalized::TargetExists);
+        assert_eq!(std::fs::read(&out).unwrap(), b"someone else");
+        assert_eq!(std::fs::read(part::part_path(&out)).unwrap(), PD);
+        assert!(part::sidecar_path(&out).exists());
+        assert!(!part::tag_temp_path(&out).exists());
+    }
+
+    /// 이미 같은 태그면 임시 파일을 만들지 않는다(`None`, 원본을 그대로 옮긴다).
+    #[tokio::test]
+    async fn pd_already_tagged_writes_no_temp() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("a.mp4");
+        let mut p = pd_part(&out).await;
+        tag_pd_part(&mut p, udta(), |t| std::fs::File::create(t))
+            .await
+            .unwrap();
+        p.finalize_rewritten(DuplicatePolicy::Overwrite)
+            .await
+            .unwrap();
+        let tagged = std::fs::read(&out).unwrap();
+
+        let out2 = dir.path().join("b.mp4");
+        let sc = Sidecar::new(
+            ContentRef::Video { video_no: 2 },
+            "720p",
+            PlaybackKind::Progressive,
+        );
+        let mut p = PartFile::create(&out2, sc).unwrap();
+        p.write(&tagged).unwrap();
+        p.checkpoint(|_| {}).await.unwrap();
+        let r = tag_pd_part(&mut p, udta(), |t| -> std::io::Result<std::fs::File> {
+            panic!("임시 파일을 만들면 안 된다: {}", t.display())
+        })
+        .await;
+        assert_eq!(r, None);
+        assert!(!part::tag_temp_path(&out2).exists());
     }
 }

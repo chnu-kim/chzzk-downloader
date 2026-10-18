@@ -19,6 +19,7 @@ import type {
   EditorsDto,
   EnqueueRequest,
   ErrorCode,
+  FileNameTemplatePreview,
   JobDto,
   JobEvent,
   LiveEndDto,
@@ -33,6 +34,43 @@ import type {
   UpdateCheckDto,
   UpdateInfoDto,
 } from '../../src/lib/bindings';
+import templateGolden from '../../../design/naming/template.json';
+
+/** 기본 파일 이름 규칙(코어 `naming::DEFAULT_TEMPLATE`) */
+const DEFAULT_TEMPLATE = '{prefix} {channel} - {title}';
+
+type TemplatePreviewRow = { template: string; linux?: { kind: string; name: string }[]; error?: Record<string, unknown> };
+type TemplateMeta = { kind: string; title: string; channelName: string; liveOpenDate?: string | null; publishDate?: string | null };
+type TemplateCase = { template: string; sample?: string; platform?: string; out?: string };
+
+/**
+ * 셸 `preview_file_name_template` 흉내. 템플릿 엔진을 다시 구현하지 않고 골든(design/naming/template.json)의
+ * `preview` 표를 읽는다(Rust 코어·셸 테스트가 같은 표를 읽어 맞춘다). **표에 없는 입력은 실패한다**: 모르는 규칙에
+ * 기본 결과를 돌려주면 E2E가 잘못된 값으로 오류 흐름을 시험해도 조용히 통과한다. 필요한 입력은 골든에 더한다.
+ */
+export function previewTemplate(template: string): FileNameTemplatePreview {
+  const rows = templateGolden.preview as TemplatePreviewRow[];
+  const row = rows.find((r) => r.template === template);
+  if (!row) throw new Error(`가짜 백엔드 골든(design/naming/template.json preview)에 없는 규칙: ${JSON.stringify(template)}`);
+  if (row.error) return { status: 'invalid', error: row.error } as FileNameTemplatePreview;
+  return { status: 'ok', names: row.linux } as FileNameTemplatePreview;
+}
+
+/**
+ * 셸이 불러온 영상에 규칙을 적용해 만드는 제안 이름(`.mp4` 뺌). 골든 `cases`(Rust 코어가 같은 표를 검사한다) 중
+ * 규칙과 영상 메타(종류·제목·채널·시작일·게시일)가 모두 같은 linux 행을 찾는다. 없으면 실패한다(다른 영상의 이름을
+ * 대신 돌려주지 않는다).
+ */
+export function suggestedNameFor(template: string, meta: TemplateMeta): string {
+  const samples = templateGolden.samples as Record<string, { meta: TemplateMeta }>;
+  const hit = (templateGolden.cases as TemplateCase[]).find((c) => {
+    if (c.platform !== 'linux' || c.out === undefined || c.sample === undefined || c.template !== template) return false;
+    const m = samples[c.sample].meta;
+    return m.kind === meta.kind && m.title === meta.title && m.channelName === meta.channelName && (m.liveOpenDate ?? null) === (meta.liveOpenDate ?? null) && (m.publishDate ?? null) === (meta.publishDate ?? null);
+  });
+  if (!hit) throw new Error(`가짜 백엔드 골든(design/naming/template.json cases)에 없는 규칙·영상: ${JSON.stringify(template)} ${meta.title}`);
+  return hit.out!.replace(/\.mp4$/, '');
+}
 
 /** 파일 이름에 쓰는 `H.MM.SS`(셸 `naming::range_suffix`와 같은 모양, 끝을 모르면 `~` 뒤가 빈다) */
 function rangeSuffix(r: TimeRangeDto): string {
@@ -209,8 +247,10 @@ export const SETTINGS: SettingsDto = {
   textScale: 'default',
   theme: 'system',
   keepAwake: true,
+  embedMetadata: true,
   saveChat: false,
   chatSubtitle: 'ass',
+  fileNameTemplate: null,
   totalRateLimit: null,
   jobRateLimit: null,
 };
@@ -315,6 +355,8 @@ export function install(scenario: Scenario = {}): E2EController {
     const r = resolveTable[a.url as string];
     if (!r) throw err('invalidUrl');
     if ('error' in r) throw r.error;
+    // 파일 이름 규칙이 있으면 카드의 제안 이름은 그 규칙을 불러온 영상의 메타에 적용한 이름이다(셸 `ResolvedDto::new` 흉내)
+    if (settings.fileNameTemplate) return { ...r, suggestedFileName: suggestedNameFor(settings.fileNameTemplate, r.meta) };
     return r;
   };
 
@@ -334,7 +376,14 @@ export function install(scenario: Scenario = {}): E2EController {
     },
     get_settings: () => settings,
     update_settings: (a) => {
-      settings = { ...settings, ...(a.patch as SettingsPatch) } as SettingsDto;
+      // 앱이 보낸 인자(calls에 기록됨)를 고치지 않도록 복사한다
+      const patch = { ...(a.patch as SettingsPatch) };
+      // 셸 흉내: 읽을 수 없는 규칙은 invalidInput, 기본 규칙 문자열은 null(기본)로 저장한다
+      if (typeof patch.fileNameTemplate === 'string') {
+        if (patch.fileNameTemplate.trim() === DEFAULT_TEMPLATE) patch.fileNameTemplate = null;
+        else if (previewTemplate(patch.fileNameTemplate).status === 'invalid') throw err('invalidInput');
+      }
+      settings = { ...settings, ...patch } as SettingsDto;
       if ('downloadFolder' in (a.patch as SettingsPatch)) {
         settings.effectiveDownloadFolder = settings.downloadFolder ?? INFO.defaultDownloadFolder;
       }
@@ -344,6 +393,7 @@ export function install(scenario: Scenario = {}): E2EController {
     clear_naver_cookies: () => (settings = { ...settings, naverCookiesSaved: false, useNaverCookies: false }),
     import_legacy: () => null,
     pick_folder: () => null,
+    preview_file_name_template: (a) => previewTemplate(a.template as string),
     auth_status: () => auth,
     auth_login: () =>
       auth.state === 'disabled' || auth.state === 'signedIn' || auth.state === 'pending'

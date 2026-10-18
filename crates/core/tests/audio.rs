@@ -28,6 +28,7 @@ fn content() -> ContentRef {
 fn request(out: &Path) -> DownloadRequest {
     DownloadRequest {
         throttle: Default::default(),
+        embed_metadata: false,
         content: content(),
         quality_id: "audio".into(),
         expected_kind: PlaybackKind::Progressive,

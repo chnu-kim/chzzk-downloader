@@ -15,6 +15,7 @@ import type {
   ChatOutputCheck,
   ContentRef,
   EnqueueRequest,
+  FileNameTemplatePreview,
   InviteDto,
   JobDto,
   JobEvent,
@@ -70,6 +71,9 @@ export const clearNaverCookies = () => call<SettingsDto>('clear_naver_cookies');
 export const importLegacy = (dir: string | null) => call<LegacyImportDto | null>('import_legacy', { dir });
 export const pickFolder = (initial?: string) =>
   call<string | null>('pick_folder', { initial: initial ?? null });
+/** 파일 이름 규칙 입력의 검증과 예시 이름(영상·클립·생방송). 읽을 수 없으면 오류가 아니라 `invalid` 데이터다 */
+export const previewFileNameTemplate = (template: string) =>
+  call<FileNameTemplatePreview>('preview_file_name_template', { template });
 export const resolve = (url: string) => call<ResolvedDto>('resolve', { url });
 export const checkOutput = (a: CheckOutputArgs) => call<OutputCheck>('check_output', { ...a });
 export const enqueue = (req: EnqueueRequest) => call<JobDto>('enqueue', { req });

@@ -113,6 +113,8 @@ pub struct JobDefaults {
     pub segment_concurrency: u8,
     /// 설정 `chat_subtitle`. 채팅을 함께 받는 작업에 고정된다(chat.md §4.1)
     pub chat_subtitle: SubtitleFormat,
+    /// 설정 `embed_metadata`. 이 작업에 고정된다(받는 도중 설정을 바꿔도 이어받기 때 같은 값을 쓴다, mp4-metadata.md §9.2)
+    pub embed_metadata: bool,
 }
 
 /// 세대와 그 태스크 핸들(`quit`이 기한을 넘긴 채팅 실행에 돌려준다).
@@ -614,6 +616,7 @@ impl<B: Backend> DownloadManager<B> {
             output,
             on_existing: req.on_existing,
             concurrency: crate::jobs::concurrency(defaults.segment_concurrency).get(),
+            embed_metadata: defaults.embed_metadata,
             status: JobStatus::Queued,
             created_at: now_secs(),
             finished_at: None,

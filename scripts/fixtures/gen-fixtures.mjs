@@ -824,6 +824,85 @@ const CHAT_ESCAPE_SRT = `1
 
 `;
 
+// ---- PD mp4와 표지 이미지(mp4 메타데이터, docs/design/features/mp4-metadata.md §13.1) ----
+// 일반 VOD·클립 PD mp4의 모양 `[ftyp, moov, free, mdat]`(core.md 74 실측)만 합성한다. 샘플 4개(16바이트씩)가 chunk 하나다.
+
+// `©`는 latin1 한 바이트(0xA9)다. 상자 종류 문자열은 `ascii()`가 latin1로 바꾼다.
+const ATOM_TOO = '©too';
+
+function pdMoov({ stcoOffset, co64, udta }) {
+  const mvhd = full('mvhd', 0, 0, zeros(8), be32(1000), be32(4000), be32(0x10000), be16(0x100), zeros(10), MATRIX, zeros(24), be32(2));
+  const tkhd = full('tkhd', 0, 7, zeros(8), be32(1), zeros(4), be32(4000), zeros(8), be16(0), be16(0), be16(0), zeros(2), MATRIX, be32(256 << 16), be32(144 << 16));
+  const mdhd = full('mdhd', 0, 0, zeros(8), be32(1000), be32(4000), be16(0x55c4), zeros(2));
+  const hdlr = full('hdlr', 0, 0, zeros(4), ascii('vide'), zeros(12), ascii('Video\0'));
+  const dinf = box('dinf', full('dref', 0, 0, be32(1), full('url ', 0, 1)));
+  const offsets = co64 ? full('co64', 0, 0, be32(1), be64(stcoOffset)) : full('stco', 0, 0, be32(1), be32(stcoOffset));
+  const stbl = box(
+    'stbl',
+    full('stsd', 0, 0, be32(0)),
+    full('stts', 0, 0, be32(1), be32(4), be32(1000)),
+    full('stsc', 0, 0, be32(1), be32(1), be32(4), be32(1)),
+    full('stsz', 0, 0, be32(0), be32(4), be32(16), be32(16), be32(16), be32(16)),
+    offsets,
+  );
+  const trak = box('trak', tkhd, box('mdia', mdhd, hdlr, box('minf', full('vmhd', 0, 1, zeros(8)), dinf, stbl)));
+  const old = udta
+    ? box('udta', full('meta', 0, 0, full('hdlr', 0, 0, zeros(4), ascii('mdir'), ascii('appl'), zeros(8), zeros(1)), box('ilst', box(ATOM_TOO, full('data', 0, 0, be32(0), ascii('old-encoder'))))))
+    : Buffer.alloc(0);
+  return box('moov', mvhd, trak, old);
+}
+
+function pdMp4({ co64 = false, udta = false } = {}) {
+  const ftyp = box('ftyp', ascii('isom'), be32(512), ascii('isom'), ascii('iso2'), ascii('mp41'));
+  const free = box('free');
+  const mdat = box('mdat', noise(64, 77));
+  const moovLen = pdMoov({ stcoOffset: 0, co64, udta }).length;
+  const stcoOffset = ftyp.length + moovLen + free.length + 8;
+  return cat(ftyp, pdMoov({ stcoOffset, co64, udta }), free, mdat);
+}
+
+// 유효한 1x1 JPEG(ffmpeg가 만든 222바이트, 한 번 base64로 고정)
+const THUMB_JPG = Buffer.from('/9j/4AAQSkZJRgABAgAAAQABAAD//gAQTGF2YzYyLjI4LjEwMgD/2wBDAAg+Pkk+SVVVVVVVVWRdZGhoaGRkZGRoaGhwcHCDg4NwcHBoaHBwfHyDg4+Tj4eHg4eTk5ubm7q6srLZ2eD/////xABLAAEBAAAAAAAAAAAAAAAAAAAABwEBAAAAAAAAAAAAAAAAAAAAABABAAAAAAAAAAAAAAAAAAAAABEBAAAAAAAAAAAAAAAAAAAAAP/AABEIAAEAAQMBIgACEQADEQD/2gAMAwEAAhEDEQA/AL+AD//Z', 'base64');
+
+function crc32(buf) {
+  let c;
+  let crc = 0xffffffff;
+  for (const b of buf) {
+    c = (crc ^ b) & 255;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    crc = (crc >>> 8) ^ c;
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+// 1x1 회색 PNG. 압축하지 않는 deflate(stored) 블록이라 zlib 버전과 무관하게 바이트가 같다.
+function thumbPng() {
+  const chunk = (type, data) => {
+    const t = ascii(type);
+    return cat(be32(data.length), t, data, be32(crc32(cat(t, data))));
+  };
+  const raw = Buffer.from([0, 0x80]); // 필터 0 + 회색 1픽셀
+  let a = 1;
+  let b = 0;
+  for (const v of raw) {
+    a = (a + v) % 65521;
+    b = (b + a) % 65521;
+  }
+  const adler = ((b << 16) | a) >>> 0;
+  const idat = cat(u8(0x78, 0x01, 0x01, raw.length, 0, ~raw.length & 255, 0xff), raw, be32(adler));
+  return cat(
+    u8(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a),
+    chunk('IHDR', cat(be32(1), be32(1), u8(8, 0, 0, 0, 0))),
+    chunk('IDAT', idat),
+    chunk('IEND', Buffer.alloc(0)),
+  );
+}
+
+// 거부 확인용: RIFF....WEBP 머리만 있는 가짜(실제 이미지가 아니다)
+function thumbWebp() {
+  return cat(ascii('RIFF'), u8(26, 0, 0, 0), ascii('WEBP'), ascii('VP8 '), u8(14, 0, 0, 0), zeros(14));
+}
+
 // ---- 출력 ----
 
 export function outputs() {
@@ -848,6 +927,12 @@ export function outputs() {
     'testdata/clip/clip_multi_playinfo.json': clipPlayinfo(FAKE.clipMulti),
     'testdata/clip/clip_multi.mpd': clipMultiMpd(),
     'testdata/synthetic/vod_info_aes.json': json(vodVideoInfo('AES')),
+    'testdata/vod/pd_faststart.mp4': pdMp4(),
+    'testdata/vod/pd_udta.mp4': pdMp4({ udta: true }),
+    'testdata/vod/pd_co64.mp4': pdMp4({ co64: true }),
+    'testdata/synthetic/thumb.jpg': THUMB_JPG,
+    'testdata/synthetic/thumb.png': thumbPng(),
+    'testdata/synthetic/thumb.webp': thumbWebp(),
   };
   for (const [name, body] of Object.entries(SYNTHETIC_MEDIA)) {
     files[`testdata/synthetic/${name}`] = body;

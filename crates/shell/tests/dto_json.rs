@@ -381,6 +381,7 @@ fn resolved() -> Resolved {
         .unwrap(),
     };
     Resolved {
+        thumbnail_url: None,
         content: ContentRef::Video { video_no: 123 },
         meta: ContentMeta {
             kind: ContentKind::Video,
@@ -408,6 +409,7 @@ fn resolved_dto_snapshot_without_signed_urls() {
         &resolved(),
         None,
         Platform::Linux,
+        None,
         Ownership::Unchecked,
     );
     let v = to_json(&dto);
@@ -453,9 +455,35 @@ fn resolved_dto_snapshot_without_signed_urls() {
         &resolved(),
         Some("480p"),
         Platform::Linux,
+        None,
         Ownership::Unchecked,
     );
     assert_eq!(dto.default_quality_index, 0);
+}
+
+/// 파일 이름 규칙이 있으면 제안 이름이 그 결과다(`.mp4` 없음). 없으면 위 스냅샷의 기본 이름 그대로다.
+#[test]
+fn resolved_dto_suggested_name_uses_template() {
+    let name = |tpl: Option<&str>| {
+        let t = tpl.map(|t| chzzk_core::naming::parse_template(t).unwrap());
+        ResolvedDto::new(
+            String::new(),
+            &resolved(),
+            None,
+            Platform::Linux,
+            t.as_ref(),
+            Ownership::Unchecked,
+        )
+        .suggested_file_name
+    };
+    assert_eq!(name(None), "[251005] 채널 - 제목");
+    // 기본 템플릿 문자열도 같은 결과다
+    assert_eq!(
+        name(Some(chzzk_core::naming::DEFAULT_TEMPLATE)),
+        "[251005] 채널 - 제목"
+    );
+    assert_eq!(name(Some("{date}_{title}")), "251005_제목");
+    assert_eq!(name(Some("{no}-{title}")), "123-제목");
 }
 
 #[test]
@@ -540,6 +568,14 @@ fn settings_patch_distinguishes_absent_null_value() {
     // 다른 필드의 null은 "바꾸지 않음"
     let p: SettingsPatch = serde_json::from_value(json!({"useNaverCookies": null})).unwrap();
     assert_eq!(p.use_naver_cookies, None);
+
+    // 파일 이름 규칙: 키 없음 = 그대로, null = 기본으로, 문자열 = 그 값
+    let p: SettingsPatch = serde_json::from_value(json!({})).unwrap();
+    assert_eq!(p.file_name_template, Nullable::Keep);
+    let p: SettingsPatch = serde_json::from_value(json!({"fileNameTemplate": null})).unwrap();
+    assert_eq!(p.file_name_template, Nullable::Clear);
+    let p: SettingsPatch = serde_json::from_value(json!({"fileNameTemplate": "{title}"})).unwrap();
+    assert_eq!(p.file_name_template, Nullable::Set("{title}".to_string()));
 }
 
 // ---------------------------------------------------------------------------

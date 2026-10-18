@@ -7,6 +7,7 @@
   import type { AppError, SettingsPatch } from '../bindings';
   import AboutSection from '../components/settings/AboutSection.svelte';
   import AccountSection from '../components/settings/AccountSection.svelte';
+  import FileNameTemplateRow from '../components/settings/FileNameTemplateRow.svelte';
   import CookieSection from '../components/settings/CookieSection.svelte';
   import LegacySection from '../components/settings/LegacySection.svelte';
   import SettingsSection from '../components/settings/SettingsSection.svelte';
@@ -183,7 +184,31 @@
           {/if}
         {/snippet}
       </SettingsRow>
+      <SettingsRow label={t('settings.embedMetadata')} help={t('settings.embedMetadata.help')}>
+        {#snippet control({ labelId, helpId })}
+          {#if dto}
+            <Switch
+              value={dto.embedMetadata}
+              labelledby={labelId}
+              aria-describedby={helpId}
+              onchange={(on) => save({ embedMetadata: on })}
+            />
+          {:else}
+            {@render pending()}
+          {/if}
+        {/snippet}
+      </SettingsRow>
     {/key}
+    <!-- 입력 중인 값을 저장 실패(revision)로 지우지 않으려고 위 {#key} 밖에 둔다 -->
+    {#if dto}
+      <FileNameTemplateRow />
+    {:else}
+      <SettingsRow label={t('settings.fileNameTemplate')} help={t('settings.fileNameTemplate.help')}>
+        {#snippet control()}
+          {@render pending()}
+        {/snippet}
+      </SettingsRow>
+    {/if}
   </SettingsSection>
 
   <ViewSection {save} />

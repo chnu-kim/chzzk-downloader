@@ -1,6 +1,6 @@
 # 오디오만 받기: 명세
 
-**상태·확정 결정(2026-10-18)**: **A-1 코어(core.md 78)·A-2 셸(app.md 95)·A-3 앱(app.md 96) 구현됨.** 갤러리 기준선(`card-vod-audio`, Linux CI)과 실측 M-A1~A3은 남았다. 이 문서 본문은 구현에 맞게 고쳤다. 설계 시점과 달라진 곳은 core.md 78 ⑤~⑦과 app.md 95-3(채팅 가드 문구)이다. 사용자 결정은 두 가지다. "오디오만 받기, 원본 m4a(변환 없음)"(ROADMAP "경쟁력 개선 착수" (마))와 **범위 C**다. 범위 C에서는 **일반 VOD의 MPD에 서버의 오디오 전용 트랙이 있을 때만** 화질 목록에 "오디오만"을 보인다. 오디오 전용 트랙이 없는 경우(클립, 빠른 다시보기, 오디오 set이 없는 일반 VOD)에는 숨긴다. 클립과 빠른 다시보기에서 비디오 트랙을 빼는 리먹스는 후속이다(§12).
+**상태·확정 결정(2026-10-18)**: **A-1 코어(core.md 84)·A-2 셸(app.md 99)·A-3 앱(app.md 100) 구현됨.** 갤러리 기준선(`card-vod-audio`, Linux CI)과 실측 M-A1~A3은 남았다. 이 문서 본문은 구현에 맞게 고쳤다. 설계 시점과 달라진 곳은 core.md 84 ⑤~⑦과 app.md 99-3(채팅 가드 문구)이다. 사용자 결정은 두 가지다. "오디오만 받기, 원본 m4a(변환 없음)"(ROADMAP "경쟁력 개선 착수" (마))와 **범위 C**다. 범위 C에서는 **일반 VOD의 MPD에 서버의 오디오 전용 트랙이 있을 때만** 화질 목록에 "오디오만"을 보인다. 오디오 전용 트랙이 없는 경우(클립, 빠른 다시보기, 오디오 set이 없는 일반 VOD)에는 숨긴다. 클립과 빠른 다시보기에서 비디오 트랙을 빼는 리먹스는 후속이다(§12).
 
 기준 트리는 `origin/master` `26ca67d`(#165 속도 제한 머지 뒤)다. 이 문서의 `파일:줄`은 모두 이 트리에서 연 줄이다. 형식과 근거 표기는 `range.md`를 따른다.
 - **[확인]**: 직접 연 줄이 받친다.
@@ -103,7 +103,7 @@
     - `resolution`·`width`·`height`·`frame_rate`는 `None`
     - `bandwidth`는 rep 값
     - `audio_only = true`(§4.2)
-  - BaseURL을 파싱하지 못하면 `pd_reps`처럼 `Error::Parse`를 낸다. 오류에 원문 URL을 넣지 않는다(`mpd.rs:140-142` 규칙). 호출하는 `Chzzk::progressive`는 이 오류를 경고 로그로 남기고 오디오 행만 뺀다(비디오 받기를 막지 않는다, core.md 78 ⑥).
+  - BaseURL을 파싱하지 못하면 `pd_reps`처럼 `Error::Parse`를 낸다. 오류에 원문 URL을 넣지 않는다(`mpd.rs:140-142` 규칙). 호출하는 `Chzzk::progressive`는 이 오류를 경고 로그로 남기고 오디오 행만 뺀다(비디오 받기를 막지 않는다, core.md 84 ⑥).
   - 없으면 `Ok(None)`이다.
 - `pd_reps`는 바꾸지 않는다. 비디오 PD가 하나도 없으면 오디오가 있어도 `NoQualities`다. 오디오만 있는 목록을 만들지 않는다. 생방송 `audioOnly` 선례(`recording.rs:1683`)와 같다.
 
@@ -127,7 +127,7 @@
   - `fn as_str()`: `.mp4`·`.m4a`
   - `pub fn for_quality(quality_id: &str) -> MediaExt`: `AUDIO_QUALITY_ID`면 `M4a`, 그 밖은 `Mp4`
 - 상수 `EXT`(`naming.rs:15`)는 `MediaExt::Mp4.as_str()` 자리로 남긴다. `range_stem`·`sibling_path`는 mp4 전용 그대로다. 구간과 채팅은 오디오와 같이 쓰지 않는다(A9).
-- `output_path(folder, filename, p)`는 **그대로 두고**(`MediaExt::Mp4`로 위임) 확장자를 받는 `output_path_ext(folder, filename, ext: MediaExt, p)`를 더한다(구현 중 확정, core.md 78 ⑤: 같은 날 미머지 #166이 `output_path` 호출처를 건드려 서명을 바꾸면 충돌이 커진다). 규칙은 지금과 같다(`naming.rs:219-230`).
+- `output_path(folder, filename, p)`는 **그대로 두고**(`MediaExt::Mp4`로 위임) 확장자를 받는 `output_path_ext(folder, filename, ext: MediaExt, p)`를 더한다(구현 중 확정, core.md 84 ⑤: 같은 날 미머지 #166이 `output_path` 호출처를 건드려 서명을 바꾸면 충돌이 커진다). 규칙은 지금과 같다(`naming.rs:219-230`).
   - 정리한 이름이 `ext`로 끝나지 않으면(대소문자 무시) 붙인다.
   - 200바이트를 넘으면 확장자 앞을 줄인다.
 
@@ -183,7 +183,7 @@
 
   웹뷰의 별도 플래그는 없다(A5).
 - **가드**(`manager.rs:558-566`):
-  - 오디오 + `save_chat`이면 `invalidInput`이다(A9). 문구는 채팅·영상 종류를 한 가드로 묶은 한 줄이다: "오디오만 받기는 채팅을 함께 받을 수 없고 일반 영상에서만 쓸 수 있습니다"(구현 중 확정, app.md 95-3. 기존 채팅 문구는 "영상 전체"를 말하는데 오디오는 영상이 아니라서 쓰지 않았다). 웹뷰는 이 오류를 정상 경로에서 보지 못한다(채팅 행이 없고 오디오 행은 일반 VOD 카드에만 있다).
+  - 오디오 + `save_chat`이면 `invalidInput`이다(A9). 문구는 채팅·영상 종류를 한 가드로 묶은 한 줄이다: "오디오만 받기는 채팅을 함께 받을 수 없고 일반 영상에서만 쓸 수 있습니다"(구현 중 확정, app.md 99-3. 기존 채팅 문구는 "영상 전체"를 말하는데 오디오는 영상이 아니라서 쓰지 않았다). 웹뷰는 이 오류를 정상 경로에서 보지 못한다(채팅 행이 없고 오디오 행은 일반 VOD 카드에만 있다).
   - 오디오인데 `expected_kind != Progressive`이거나 `content`가 `Video`가 아니면 `invalidInput`이다. 코어 검사(§4.5) 앞의 셸 방어선이다.
   - 구간은 `validated_range`가 이미 거부한다. 바꾸지 않는다.
   - 완료 뒤 채팅만 받기(`fetch_chat`·`check_chat_output`)도 같은 이유로 막는다. `chat_target`이 화질 키가 `audio`인 작업을 같은 문구의 `invalidInput`으로 거부한다(Codex 리뷰 지적, 시험 `chat_only_is_rejected_for_completed_audio_job`).
@@ -199,7 +199,7 @@
 - 기본 선택은 셸의 `defaultQualityIndex`다(§4.2). 웹뷰는 따로 정하지 않는다.
 
 ### 6.2 카드의 이름·충돌
-- 파일 이름 행 끝의 확장자 표시(`ResolveCard.svelte:366`, `FILE_EXT` = `.mp4`, `receive.ts:265`)를 고른 화질에 따라 `.m4a`로 바꾼다. `receive.ts`에 `fileExt(q: QualityDto)`를 둔다(구현 중 `FILE_EXT`는 없앴다, app.md 96-2). 문구가 아니라 코드 상수라서 deck 밖이다(`receive.ts:264` 주석 규칙).
+- 파일 이름 행 끝의 확장자 표시(`ResolveCard.svelte:366`, `FILE_EXT` = `.mp4`, `receive.ts:265`)를 고른 화질에 따라 `.m4a`로 바꾼다. `receive.ts`에 `fileExt(q: QualityDto)`를 둔다(구현 중 `FILE_EXT`는 없앴다, app.md 100-2). 문구가 아니라 코드 상수라서 deck 밖이다(`receive.ts:264` 주석 규칙).
 - `checkKey`는 이미 `qualityId`를 담는다(`receive.ts:108-115`). 그래서 오디오로 바꾸면 `check_output`을 다시 부르고, 충돌·번호 이름을 `.m4a` 기준으로 다시 본다.
 - 구간 줄은 빠른 다시보기 카드에만 있다(R3). 오디오 행은 일반 VOD 카드에만 있다. 그래서 둘이 한 카드에 같이 나오지 않는다. 지금 카드에는 채팅 행이 없다(④ 보류). 채팅 행을 다시 그리게 되면 오디오에서는 숨긴다.
 
@@ -337,7 +337,7 @@ A-1~A-3은 하나의 stacked 묶음이다. 한 브랜치(`feat/audio-only`)에�
 - **#167 mp4 메타데이터**: 마무리 단계(`finish`)에 메타데이터 쓰기를 더할 가능성이 크다. 오디오에는 이번 범위에서 메타데이터를 넣지 않는다. 그 PR이 먼저 머지되면, 메타데이터를 쓰는 조건에 `quality_id != AUDIO_QUALITY_ID`를 둔다(§12 후속).
 
 ### 11.4 번호 예약
-- 구현 PR은 `core.md`·`app.md`의 "구현 중 변경"에 머지 순으로 번호를 붙인다. 지금 마지막은 core.md 77·app.md 94다. 그래서 **core.md 78~·app.md 95~**다.
+- 구현 PR은 `core.md`·`app.md`의 "구현 중 변경"에 머지 순으로 번호를 붙인다. 구현 때는 core.md 77·app.md 94가 마지막이라 78·95~96을 잡았고, master에 #166·#167이 먼저 머지돼 **core.md 84·app.md 99~100**으로 옮겼다.
 - 같은 날 미머지인 #166·#167이 같은 번호를 잡을 수 있다. 겹치면 나중에 머지되는 쪽이 옮긴다.
 - 디자인 시스템 D 번호·ADR은 쓰지 않는다. 용어집 행과 문구 전표 행만 더한다.
 

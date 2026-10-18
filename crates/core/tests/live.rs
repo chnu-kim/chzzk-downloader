@@ -59,6 +59,7 @@ async fn download(
         }
     };
     let req = DownloadRequest {
+        embed_metadata: false,
         throttle: Default::default(),
         content,
         quality_id: lowest(&r),

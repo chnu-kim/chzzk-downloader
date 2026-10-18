@@ -22,7 +22,12 @@ maxParallelDownloads?: number, autoResumeInterrupted?: boolean, textScale?: Text
 /**
  * 다른 OS에서도 받아 저장한다(화면이 Linux에서만 보낸다)
  */
-theme?: Theme, keepAwake?: boolean, saveChat?: boolean, chatSubtitle?: SubtitleFormat, 
+theme?: Theme, keepAwake?: boolean, embedMetadata?: boolean, saveChat?: boolean, chatSubtitle?: SubtitleFormat, 
+/**
+ * 키 없음 = 그대로, `null` = 기본 규칙으로, 문자열 = 그 템플릿으로(읽을 수 없으면 `invalidInput`,
+ * 기본 템플릿 문자열과 같으면 `null`로 저장한다)
+ */
+fileNameTemplate?: string | null, 
 /**
  * 키 없음 = 그대로, `null` = 제한 없음, 수 = 그 값(바이트/초). 0은 끔, 최소(`MIN_RATE_LIMIT_BPS`)보다 작은 값은 최소로 올린다
  */

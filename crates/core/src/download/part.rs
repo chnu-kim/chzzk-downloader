@@ -200,6 +200,20 @@ pub fn sidecar_path(final_path: &Path) -> PathBuf {
     with_suffix(final_path, ".part.json")
 }
 
+/// `{final}.part.tmp`: PD 메타데이터를 다시 쓰는 임시 파일(mp4-metadata.md §6.2). `.part` 잠금을 쥔 작업만 만들고
+/// 지운다. 이름이 출력 경로마다 하나라 다른 작업의 파일과 겹치지 않는다.
+pub fn tag_temp_path(final_path: &Path) -> PathBuf {
+    with_suffix(final_path, ".part.tmp")
+}
+
+/// 죽은 작업이 남긴 메타데이터 임시 파일을 지운다(`.part` 잠금을 쥔 채 부른다). 실패는 기록만 한다.
+fn remove_tag_temp(final_path: &Path) {
+    let tmp = tag_temp_path(final_path);
+    if let Err(e) = remove_if_exists(&tmp) {
+        tracing::warn!(error = %e, "남은 메타데이터 임시 파일 삭제 실패");
+    }
+}
+
 fn with_suffix(p: &Path, suffix: &str) -> PathBuf {
     let mut s = p.as_os_str().to_owned();
     s.push(suffix);
@@ -304,6 +318,7 @@ impl PartFile {
         };
         // 잠금을 쥐었으니 이 sidecar를 쓰는 다른 작업은 없다. 죽은 작업이 남긴 임시 파일을 치운다.
         remove_stale_temps(&sc_path);
+        remove_tag_temp(final_path);
         let len = f
             .metadata()
             .map_err(|e| map_io_error("stat", &part, e))?
@@ -372,6 +387,7 @@ impl PartFile {
         let sc_path = sidecar_path(final_path);
         let f = open_locked_using(&part, true, before_lock)?;
         remove_stale_temps(&sc_path);
+        remove_tag_temp(final_path);
         let owner = sidecar.owner();
         if let Some(old) = read_sidecar(&sc_path)?
             && old.is_other_recording(&owner)
@@ -419,6 +435,11 @@ impl PartFile {
     /// `.part` 경로.
     pub fn path(&self) -> &Path {
         &self.part
+    }
+
+    /// 최종 파일 경로.
+    pub(crate) fn final_path(&self) -> &Path {
+        &self.final_path
     }
 
     /// 다음 checkpoint에 기록할 상태를 바꾼다(디스크에는 아직 쓰지 않는다).
@@ -547,19 +568,57 @@ impl PartFile {
     /// 최종 파일이 잠겨 있으면 `FileLocked`이고 `.part`는 남는다.
     /// 옮긴 뒤의 sidecar 삭제 실패는 경고만 남긴다(다운로드는 끝났다).
     pub async fn finalize(self, policy: DuplicatePolicy) -> Result<Finalized, Error> {
+        self.finalize_from(false, policy).await
+    }
+
+    /// `.part` 대신 메타데이터를 넣어 다시 쓴 임시 파일(`tag_temp_path`, 다 쓰고 sync한 것)을 최종 파일로 옮긴다.
+    /// `.part`는 끝까지 원본 그대로다(mp4-metadata.md §6.2).
+    ///
+    /// - 옮겼으면 잠금을 쥔 채(Unix) `.part`를 지우고 sidecar를 지운다. `.part` 삭제 실패는 경고만 남긴다.
+    /// - `Skip`인데 최종 파일이 있거나(`TargetExists`) 옮기지 못했으면(`FileLocked` 등) 임시 파일을 지우고 `.part`와
+    ///   sidecar는 남긴다. 다음 실행이 원본 `.part`로 다시 마무리한다.
+    /// - 옮긴 뒤 `.part`를 지우기 전에 죽으면 최종 파일과 `.part`가 함께 남는다. `Overwrite`면 다음 실행이 416으로
+    ///   다시 마무리해 같은 바이트로 덮고, `Skip`이면 시작 때 최종 파일이 있어 `Skipped`로 끝난다(`.part`는 남는다).
+    pub(crate) async fn finalize_rewritten(
+        self,
+        policy: DuplicatePolicy,
+    ) -> Result<Finalized, Error> {
+        self.finalize_from(true, policy).await
+    }
+
+    async fn finalize_from(
+        self,
+        rewritten: bool,
+        policy: DuplicatePolicy,
+    ) -> Result<Finalized, Error> {
         match policy {
             DuplicatePolicy::Overwrite => {
-                self.finalize_using(|a, b| rename_with_retry(a, b).map(|()| true))
+                self.finalize_using(rewritten, |a, b| rename_with_retry(a, b).map(|()| true))
                     .await
             }
-            DuplicatePolicy::Skip => self.finalize_using(rename_noclobber_with_retry).await,
+            DuplicatePolicy::Skip => {
+                self.finalize_using(rewritten, rename_noclobber_with_retry)
+                    .await
+            }
         }
     }
 
     /// `finalize`의 본체. rename을 주입받아 잠금을 쥔 채 옮기는지 테스트한다.
-    /// `rename`은 옮겼으면 `true`, 최종 파일이 있어 옮기지 않았으면 `false`다.
+    /// `rename`은 옮겼으면 `true`, 최종 파일이 있어 옮기지 않았으면 `false`다. `rewritten`이면 `.part` 대신
+    /// `tag_temp_path`를 옮긴다(`finalize_rewritten`).
     async fn finalize_using(
         self,
+        rewritten: bool,
+        rename: impl FnOnce(&Path, &Path) -> Result<bool, Error> + Send + 'static,
+    ) -> Result<Finalized, Error> {
+        self.finalize_on(cfg!(windows), rewritten, rename).await
+    }
+
+    /// `finalize_using`의 본체. `windows`를 주입받아 Windows 분기를 다른 OS에서도 테스트한다.
+    async fn finalize_on(
+        self,
+        windows: bool,
+        rewritten: bool,
         rename: impl FnOnce(&Path, &Path) -> Result<bool, Error> + Send + 'static,
     ) -> Result<Finalized, Error> {
         let PartFile {
@@ -578,20 +637,37 @@ impl PartFile {
         let target = final_path.clone();
         let moved = tokio::task::spawn_blocking(move || {
             f.sync_data().map_err(|e| map_io_error("sync", &part, e))?;
-            // Windows는 열린 파일을 옮길 수 없어 먼저 닫는다(잠금도 풀린다). Unix는 잠금을 쥔 채
-            // 옮겨, 그 사이에 같은 출력의 다른 작업이 `.part`를 잠그고 지우거나 자르지 못하게 한다.
-            // Windows의 이 틈에도 sidecar는 rename 뒤에야 지우므로, 잠금을 쥔 뒤 소유를 다시 보는 `resume`·`create`·
-            // `discard_partial`은 남의 녹화를 자르거나 지우지 않는다. rename 뒤의 틈에 새로 생긴 `.part`는 비어 있어 `create`가
-            // 남은 sidecar를 덮어쓰고, 그 sidecar는 `remove_own_sidecar`가 지우지 않는다.
-            let held = if cfg!(windows) {
+            // Windows는 열린 파일을 옮길 수 없어 `.part`를 옮길 때만 먼저 닫는다(잠금도 풀린다). 그 밖에는 잠금을 쥔
+            // 채 옮겨, 그 사이에 같은 출력의 다른 작업이 `.part`를 잠그고 지우거나 자르지 못하게 한다. 다시 쓴
+            // 파일은 옮기는 것이 `.part`가 아니라 `.part.tmp`라 Windows도 쥔다(rename과 `.part` 삭제가 끝날 때까지).
+            // 풀면 틈에 들어온 다른 작업의 새 `.part`를 잠금 없이 지운다.
+            // Windows의 `.part` 옮기기 틈에도 sidecar는 rename 뒤에야 지우므로, 잠금을 쥔 뒤 소유를 다시 보는 `resume`·
+            // `create`·`discard_partial`은 남의 녹화를 자르거나 지우지 않는다. rename 뒤의 틈에 새로 생긴 `.part`는 비어
+            // 있어 `create`가 남은 sidecar를 덮어쓰고, 그 sidecar는 `remove_own_sidecar`가 지우지 않는다.
+            let held = if releases_part_lock_before_rename(windows, rewritten) {
                 drop(f);
                 None
             } else {
                 Some(f)
             };
-            let moved = rename(&part, &target)?;
+            let tmp = tag_temp_path(&target);
+            let from = if rewritten { &tmp } else { &part };
+            let moved = match rename(from, &target) {
+                Ok(m) => m,
+                Err(e) => {
+                    if rewritten {
+                        remove_tag_temp(&target);
+                    }
+                    return Err(e);
+                }
+            };
             if moved {
+                if rewritten && let Err(e) = remove_if_exists(&part) {
+                    tracing::warn!(error = %e, "마무리 뒤 .part 삭제 실패");
+                }
                 remove_own_sidecar(&sidecar_path, &mine);
+            } else if rewritten {
+                remove_tag_temp(&target);
             }
             drop(held);
             Ok::<bool, Error>(moved)
@@ -622,6 +698,12 @@ impl PartFile {
         drop(w);
         res
     }
+}
+
+/// rename 전에 `.part` 잠금을 풀어야 하는지. Windows에서 `.part` 자체를 옮길 때만 그렇다(열린 파일은 옮길 수 없다).
+/// 다시 쓴 임시 파일을 옮길 때는 `.part`를 옮기지 않으므로 풀지 않는다(mp4-metadata.md §6.2).
+fn releases_part_lock_before_rename(windows: bool, rewritten: bool) -> bool {
+    windows && !rewritten
 }
 
 /// 완료 뒤 sidecar를 지운다. 옮긴 뒤 지우기 전 틈에 다른 작업이 새 `.part`를 만들고 자기 sidecar를 썼으면 그것은
@@ -677,6 +759,7 @@ pub fn discard_partial(final_path: &Path, owner: &PartOwner<'_>) -> Result<Disca
     match open_locked(&part, false) {
         Ok(f) => {
             remove_stale_temps(&sc);
+            remove_tag_temp(final_path);
             let sidecar = match read_sidecar(&sc) {
                 Ok(s) => s,
                 Err(e) => {
@@ -1085,6 +1168,59 @@ mod tests {
         assert_eq!(std::fs::read(&path).unwrap(), b"hello world");
         assert!(!part_path(&out).exists());
         assert!(!sidecar_path(&out).exists());
+    }
+
+    /// 메타데이터를 다시 쓰다 죽어 남은 `{final}.part.tmp`는 `.part` 잠금을 쥔 `resume`·`create`·`discard_partial`이
+    /// 지운다. 같은 폴더 다른 출력의 임시 파일과 비슷한 이름의 사용자 파일은 건드리지 않는다.
+    #[tokio::test]
+    async fn leftover_tag_temp_is_removed_under_the_part_lock() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("a.mp4");
+        let other_tmp = tag_temp_path(&dir.path().join("b.mp4"));
+        let lookalike = dir.path().join("a.mp4.part.tmp.keep");
+        assert_eq!(tag_temp_path(&out).file_name().unwrap(), "a.mp4.part.tmp");
+        for step in ["resume", "create", "discard"] {
+            std::fs::write(&other_tmp, b"other").unwrap();
+            std::fs::write(&lookalike, b"user").unwrap();
+            let mut p = PartFile::create(&out, sidecar()).unwrap();
+            p.write(b"hello").unwrap();
+            p.checkpoint(|_| {}).await.unwrap();
+            drop(p);
+            std::fs::write(tag_temp_path(&out), b"half written").unwrap();
+            match step {
+                "resume" => drop(resume(&out, "720p").unwrap().unwrap()),
+                "create" => drop(PartFile::create(&out, sidecar()).unwrap()),
+                _ => assert_eq!(discard(&out).unwrap(), Discarded::Removed),
+            }
+            assert!(!tag_temp_path(&out).exists(), "{step}");
+            assert!(other_tmp.exists(), "{step}: 다른 출력의 임시 파일");
+            assert!(lookalike.exists(), "{step}: 비슷한 이름의 파일");
+            let _ = discard(&out);
+        }
+    }
+
+    /// 다시 쓴 임시 파일을 옮기다 실패하면(최종 파일이 잠김 등) 임시 파일을 지우고 `.part`·sidecar를 남긴다.
+    #[tokio::test]
+    async fn rewritten_finalize_failure_removes_the_temp_and_keeps_the_part() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("a.mp4");
+        let mut p = PartFile::create(&out, sidecar()).unwrap();
+        p.write(b"hello").unwrap();
+        p.checkpoint(|_| {}).await.unwrap();
+        std::fs::write(tag_temp_path(&out), b"tagged").unwrap();
+        let e = p
+            .finalize_using(true, |_, to| {
+                Err(Error::FileLocked {
+                    path: to.to_path_buf(),
+                })
+            })
+            .await
+            .unwrap_err();
+        assert!(matches!(e, Error::FileLocked { .. }), "{e:?}");
+        assert!(!tag_temp_path(&out).exists());
+        assert_eq!(std::fs::read(part_path(&out)).unwrap(), b"hello");
+        assert!(sidecar_path(&out).exists());
+        assert!(!out.exists());
     }
 
     /// stage한 상태는 다음 checkpoint에 함께 기록된다.
@@ -1524,7 +1660,7 @@ mod tests {
         p.write(b"initMEDIAmed").unwrap();
         let o = out.clone();
         let path = p
-            .finalize_using(move |from, to| {
+            .finalize_using(false, move |from, to| {
                 rename_with_retry(from, to)?;
                 // 틈에 들어온 A의 `create`가 남긴 것
                 std::fs::write(part_path(&o), b"").unwrap();
@@ -1729,6 +1865,50 @@ mod tests {
         assert_eq!(std::fs::read(path).unwrap(), b"new");
     }
 
+    #[test]
+    fn part_lock_is_released_only_when_moving_the_part_on_windows() {
+        assert!(releases_part_lock_before_rename(true, false));
+        assert!(
+            !releases_part_lock_before_rename(true, true),
+            "다시 쓰기는 Windows도 쥔다"
+        );
+        assert!(!releases_part_lock_before_rename(false, false));
+        assert!(!releases_part_lock_before_rename(false, true));
+    }
+
+    /// Windows 분기를 주입해, 다시 쓴 파일을 옮기는 동안 Windows도 `.part` 잠금을 쥐는지 본다.
+    /// 반대로 `.part`를 옮기는 Windows는 푼다.
+    #[tokio::test]
+    async fn rewritten_finalize_holds_part_lock_even_on_windows() {
+        for (rewritten, expect_locked) in [(true, true), (false, false)] {
+            let dir = tempfile::tempdir().unwrap();
+            let out = dir.path().join("a.mp4");
+            let mut p = PartFile::create(&out, sidecar()).unwrap();
+            p.write(b"orig").unwrap();
+            std::fs::write(tag_temp_path(&out), b"tagged").unwrap();
+            let seen = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let s2 = seen.clone();
+            let path = p
+                .finalize_on(true, rewritten, move |from, to| {
+                    let locked = matches!(
+                        open_locked(&part_path(to), false),
+                        Err(Error::FileLocked { .. })
+                    );
+                    s2.store(locked, std::sync::atomic::Ordering::SeqCst);
+                    rename_with_retry(from, to).map(|()| true)
+                })
+                .await
+                .unwrap();
+            moved(path);
+            assert_eq!(
+                seen.load(std::sync::atomic::Ordering::SeqCst),
+                expect_locked,
+                "rewritten={rewritten}"
+            );
+            assert!(!part_path(&out).exists());
+        }
+    }
+
     /// Unix는 잠금을 쥔 채 rename한다. 그 순간 다른 작업은 `.part`를 잠글 수 없다.
     #[cfg(unix)]
     #[tokio::test]
@@ -1738,7 +1918,7 @@ mod tests {
         let mut p = PartFile::create(&out, sidecar()).unwrap();
         p.write(b"done").unwrap();
         let path = p
-            .finalize_using(|from, to| {
+            .finalize_using(false, |from, to| {
                 assert!(matches!(
                     open_locked(from, false),
                     Err(Error::FileLocked { .. })

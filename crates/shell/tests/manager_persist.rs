@@ -100,6 +100,7 @@ async fn blocked_jobs_json_write_does_not_hold_state_lock() {
                 download_folder: downloads,
                 segment_concurrency: 4,
                 chat_subtitle: chzzk_core::chat::SubtitleFormat::Ass,
+                embed_metadata: true,
             };
             let id = mgr.enqueue(request("a"), &defaults).unwrap().id;
             wait_std("진행률", || {
@@ -199,6 +200,7 @@ fn v070_live_record(out: &std::path::Path, status: JobStatus) -> chzzk_shell::jo
     use chzzk_core::{ContentRef, PlaybackKind};
     use chzzk_shell::dto::{ContentKindDto, OnExisting};
     chzzk_shell::jobs::JobRecord {
+        embed_metadata: true,
         id: chzzk_shell::JobId(1),
         url: "u".into(),
         content: ContentRef::Live {
@@ -229,6 +231,24 @@ fn v070_live_record(out: &std::path::Path, status: JobStatus) -> chzzk_shell::jo
         live_end: None,
         chat: None,
     }
+}
+
+/// 옛 `jobs.json` 기록에는 `embedMetadata`가 없다: 켜짐(설정 기본값과 같다)으로 읽고, 코어 요청도 그 값을 따른다.
+#[test]
+fn old_record_without_embed_metadata_reads_as_on() {
+    let out = std::path::Path::new("/d/a.mp4");
+    let rec = v070_live_record(out, JobStatus::Failed);
+    let mut v = serde_json::to_value(&rec).unwrap();
+    assert_eq!(v["embedMetadata"], serde_json::json!(true));
+    v.as_object_mut().unwrap().remove("embedMetadata");
+    let back: chzzk_shell::jobs::JobRecord = serde_json::from_value(v.clone()).unwrap();
+    assert!(back.embed_metadata);
+    assert!(back.to_request().embed_metadata);
+    // 끈 기록은 끈 채로 이어받는다
+    v["embedMetadata"] = serde_json::json!(false);
+    let off: chzzk_shell::jobs::JobRecord = serde_json::from_value(v).unwrap();
+    assert!(!off.embed_metadata);
+    assert!(!off.to_request().embed_metadata);
 }
 
 #[test]
@@ -292,6 +312,7 @@ async fn v070_failed_recording_upgrade() {
         download_folder: dir.path().join("downloads"),
         segment_concurrency: 4,
         chat_subtitle: chzzk_core::chat::SubtitleFormat::Ass,
+        embed_metadata: true,
     };
     let e = mgr.enqueue(live_request("a"), &defaults).unwrap_err();
     assert_eq!(e.code, chzzk_shell::ErrorCode::DuplicateOutput);
@@ -363,6 +384,7 @@ async fn v070_two_failed_records_do_not_block_each_other() {
             download_folder: dir.path().join("downloads"),
             segment_concurrency: 4,
             chat_subtitle: chzzk_core::chat::SubtitleFormat::Ass,
+            embed_metadata: true,
         };
         let e = mgr.enqueue(live_request("a"), &defaults).unwrap_err();
         assert_eq!(e.code, chzzk_shell::ErrorCode::DuplicateOutput);
@@ -458,6 +480,7 @@ async fn v070_sibling_keeps_partial_while_sidecar_is_unreadable() {
         download_folder: dir.path().join("downloads"),
         segment_concurrency: 4,
         chat_subtitle: chzzk_core::chat::SubtitleFormat::Ass,
+        embed_metadata: true,
     };
     let e = mgr.enqueue(live_request("a"), &defaults).unwrap_err();
     assert_eq!(e.code, chzzk_shell::ErrorCode::DuplicateOutput);
@@ -592,6 +615,7 @@ async fn live_does_not_start_until_owner_record_is_saved() {
         download_folder: dir.path().join("downloads"),
         segment_concurrency: 4,
         chat_subtitle: chzzk_core::chat::SubtitleFormat::Ass,
+        embed_metadata: true,
     };
     let out = dir.path().join("downloads").join("a.mp4");
     fake.script_for(&out, Script::new().wait_cancel());
@@ -628,6 +652,7 @@ async fn vod_starts_even_if_jobs_json_save_fails() {
         download_folder: dir.path().join("downloads"),
         segment_concurrency: 4,
         chat_subtitle: chzzk_core::chat::SubtitleFormat::Ass,
+        embed_metadata: true,
     };
     fake.script_for(
         dir.path().join("downloads").join("a.mp4"),
@@ -663,6 +688,7 @@ async fn live_starts_after_owner_record_write_lands() {
         download_folder: dir.path().join("downloads"),
         segment_concurrency: 4,
         chat_subtitle: chzzk_core::chat::SubtitleFormat::Ass,
+        embed_metadata: true,
     };
     mgr.enqueue(common::harness::live_request("a"), &defaults)
         .unwrap();

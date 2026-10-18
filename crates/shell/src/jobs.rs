@@ -61,6 +61,10 @@ pub struct JobRecord {
     pub on_existing: OnExisting,
     /// 추가 당시의 `segment_concurrency`. 설정을 바꿔도 이 작업에는 적용하지 않는다
     pub concurrency: u8,
+    /// 추가 당시의 `embed_metadata`(`concurrency`와 같은 규칙, 받은 mp4에 제목·표지를 넣을지). 옛 레코드에는 없다(켜짐,
+    /// 설정 기본값과 같다)
+    #[serde(default = "default_true")]
+    pub embed_metadata: bool,
     pub status: JobStatus,
     /// unix 초
     pub created_at: u64,
@@ -107,6 +111,10 @@ pub struct JobRecord {
     pub missing: bool,
 }
 
+fn default_true() -> bool {
+    true
+}
+
 /// `liveEnd`를 읽되 모르는 모양이면 `None`으로 둔다(앱을 옛 버전으로 되돌렸을 때 jobs.json을 지키려고).
 fn lenient_live_end<'de, D: serde::Deserializer<'de>>(
     d: D,
@@ -125,6 +133,7 @@ impl JobRecord {
     /// 코어 다운로드 요청.
     pub fn to_request(&self) -> DownloadRequest {
         DownloadRequest {
+            embed_metadata: self.embed_metadata,
             content: self.content.clone(),
             quality_id: self.quality_id.clone(),
             expected_kind: self.expected_kind,

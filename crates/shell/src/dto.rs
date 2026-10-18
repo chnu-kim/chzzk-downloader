@@ -13,7 +13,7 @@
 use chzzk_core::{
     ContentKind, ContentMeta, ContentRef, DuplicatePolicy, LegacyImport, Phase, Platform,
     PlaybackKind, Progress, Quality, RecentKind, RecentVod, Resolved, TextScale, Theme, TimeRange,
-    naming::default_filename,
+    naming::{FileNameTemplate, default_filename, render_filename, suggested_stem},
 };
 use serde::{Deserialize, Deserializer, Serialize};
 use ts_rs::TS;
@@ -368,11 +368,15 @@ pub struct SettingsDto {
     pub theme: Theme,
     /// 받는 동안 잠들지 않게 한다(기본 켜짐, platform §10)
     pub keep_awake: bool,
+    /// 받은 mp4에 제목·채널·날짜·원본 주소와 표지를 넣는다(기본 켜짐, mp4-metadata.md §9). 작업을 추가할 때 값이 고정된다
+    pub embed_metadata: bool,
     /// 영상과 함께 채팅도 받기(기본 꺼짐, 마지막 선택, chat.md §4.4)
     pub save_chat: bool,
     /// 채팅 자막 형식(기본 [잠정] U2 결정 대기 `ass`)
     #[ts(as = "SubtitleFormatTs")]
     pub chat_subtitle: SubtitleFormat,
+    /// 파일 이름 규칙(템플릿). `null`이면 기본 규칙이다(입력칸에는 `DEFAULT_TEMPLATE`을 보인다)
+    pub file_name_template: Option<String>,
     /// 전체 합계 받기 속도 상한(바이트/초). `null` = 제한 없음(기본). 생방송 녹화는 제외(rate-limit.md)
     pub total_rate_limit: Option<u64>,
     /// 작업마다 받기 속도 상한(바이트/초). `null` = 제한 없음(기본)
@@ -437,10 +441,18 @@ pub struct SettingsPatch {
     pub keep_awake: Option<bool>,
     #[serde(default)]
     #[ts(optional)]
+    pub embed_metadata: Option<bool>,
+    #[serde(default)]
+    #[ts(optional)]
     pub save_chat: Option<bool>,
     #[serde(default)]
     #[ts(as = "Option<SubtitleFormatTs>", optional)]
     pub chat_subtitle: Option<SubtitleFormat>,
+    /// 키 없음 = 그대로, `null` = 기본 규칙으로, 문자열 = 그 템플릿으로(읽을 수 없으면 `invalidInput`,
+    /// 기본 템플릿 문자열과 같으면 `null`로 저장한다)
+    #[serde(default)]
+    #[ts(as = "Option<Option<String>>", optional)]
+    pub file_name_template: Nullable<String>,
     /// 키 없음 = 그대로, `null` = 제한 없음, 수 = 그 값(바이트/초). 0은 끔, 최소(`MIN_RATE_LIMIT_BPS`)보다 작은 값은 최소로 올린다
     #[serde(default)]
     #[ts(as = "Option<Option<u64>>", optional)]
@@ -493,25 +505,29 @@ pub struct ResolvedDto {
     pub qualities: Vec<QualityDto>,
     /// `Resolved::default_quality(last_quality_label)`
     pub default_quality_index: u32,
-    /// `default_filename`에서 `.mp4`를 뗀 것
+    /// 파일 이름 규칙(기본은 `default_filename`)으로 만든 이름에서 `.mp4`를 뗀 것
     pub suggested_file_name: String,
     pub ownership: Ownership,
 }
 
 impl ResolvedDto {
     /// `Resolved`를 옮긴다. 화질의 서명 URL은 버린다.
+    ///
+    /// `template`이 없으면 기본 규칙(`default_filename`)을 그대로 쓴다.
     pub fn new(
         url: String,
         r: &Resolved,
         last_quality_label: Option<&str>,
         platform: Platform,
+        template: Option<&FileNameTemplate>,
         ownership: Ownership,
     ) -> Self {
-        let name = default_filename(&r.meta, platform);
-        let suggested_file_name = match name.strip_suffix(".mp4") {
-            Some(base) => base.to_string(),
-            None => name,
+        let name = match template {
+            Some(t) => render_filename(t, &r.meta, &r.content, platform),
+            None => default_filename(&r.meta, platform),
         };
+        // 코어가 `suggested_stem` → `output_path` 왕복을 거친 이름을 주므로, 받을 때 이름이 달라지지 않는다
+        let suggested_file_name = suggested_stem(&name).to_string();
         ResolvedDto {
             url,
             content: r.content.clone(),
@@ -523,6 +539,57 @@ impl ResolvedDto {
             ownership,
         }
     }
+}
+
+/// `preview_file_name_template` 결과. 읽을 수 없는 템플릿은 오류가 아니라 데이터다(입력 중 상태).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, TS)]
+#[serde(
+    tag = "status",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum FileNameTemplatePreview {
+    /// 영상·클립·생방송 예시 이름(`.mp4` 포함, 저장 폴더 볼륨의 규칙)
+    Ok {
+        names: Vec<PreviewName>,
+    },
+    Invalid {
+        error: TemplateErrorDto,
+    },
+}
+
+/// 예시 이름 하나.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviewName {
+    pub kind: ContentKindDto,
+    pub name: String,
+}
+
+/// 템플릿을 거부한 이유(코어 `TemplateError`의 TS 모양). 문구는 화면 copy deck이 정한다.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct TemplateErrorDto {
+    pub kind: TemplateErrorKind,
+    /// `unknownToken`·`duplicateToken`일 때 그 토큰 이름
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub token: Option<String>,
+    /// `tooLong`일 때 길이 상한(바이트, 코어 `MAX_TEMPLATE_BYTES`). 화면 문구가 이 값을 쓴다
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub max: Option<u32>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub enum TemplateErrorKind {
+    UnbalancedBrace,
+    UnknownToken,
+    DuplicateToken,
+    PathSeparator,
+    MissingTitle,
+    TooLong,
 }
 
 /// `ContentMeta` 미러.

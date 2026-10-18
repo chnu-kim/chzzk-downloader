@@ -170,11 +170,28 @@ impl fmt::Debug for Source {
 }
 
 /// `resolve` 결과.
-#[derive(Clone, Debug, PartialEq)]
+///
+/// `Debug`는 표지 주소를 `http::redact_url`로 가린다(쿼리가 서명일 수 있다).
+#[derive(Clone, PartialEq)]
 pub struct Resolved {
     pub content: ContentRef,
     pub meta: ContentMeta,
     pub source: Source,
+    /// 표지로 쓸 썸네일 주소. 일반 VOD·빠른 다시보기에서만 채운다(클립·생방송은 `None`, mp4-metadata.md §1.2).
+    /// 화면에는 쓰지 않는다(`ResolvedDto`가 옮기지 않는다). `ContentMeta`에 넣지 않는 이유는 셸이
+    /// `ContentMeta`를 `..` 없이 구조 분해하기 때문이다.
+    pub thumbnail_url: Option<Url>,
+}
+
+impl fmt::Debug for Resolved {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Resolved")
+            .field("content", &self.content)
+            .field("meta", &self.meta)
+            .field("source", &self.source)
+            .field("thumbnail_url", &self.thumbnail_url.as_ref().map(DebugUrl))
+            .finish()
+    }
 }
 
 impl Resolved {
@@ -247,6 +264,7 @@ mod tests {
             content: ContentRef::Video { video_no: 9000001 },
             meta,
             source: Source::LiveRewindHls { master_url, tracks },
+            thumbnail_url: None,
         }
     }
 
@@ -278,6 +296,7 @@ mod tests {
             source: Source::Progressive {
                 reps: crate::mpd::pd_reps(&reps).unwrap(),
             },
+            thumbnail_url: None,
         };
         assert_eq!(clip.kind(), PlaybackKind::Progressive);
         assert_eq!(clip.default_quality(None), 0);

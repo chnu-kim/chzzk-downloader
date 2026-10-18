@@ -213,6 +213,79 @@ async fn full_download_is_flat_m4a() {
     assert!(requests_to(&server, "/v/").await.is_empty());
 }
 
+/// 오디오도 progressive 경로라 속도 제한이 걸린다(rate-limit.md, 작업 상한). 4000B/s는 burst(0.25초 = 1000B)가
+/// 공짜이고 나머지 약 3.2KB가 0.8초다. 결과는 제한이 없을 때와 같다.
+#[tokio::test]
+async fn audio_download_is_throttled() {
+    use chzzk_core::download::{RateKnob, Throttle, Throttles};
+    let server = MockServer::start().await;
+    setup(&server, fixture(SRC)).await;
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_path(&dir);
+    let mut req = request(&out);
+    req.throttle = Throttles {
+        job: Some(Throttle::new(RateKnob::new(std::num::NonZeroU64::new(
+            4000,
+        )))),
+        shared: None,
+    };
+    let started = std::time::Instant::now();
+    let r = run_download(config(&server), req, &Events::default())
+        .await
+        .unwrap();
+    let took = started.elapsed();
+    assert!(matches!(r, DownloadOutcome::Completed { .. }), "{r:?}");
+    assert!(took >= std::time::Duration::from_millis(600), "{took:?}");
+    assert_eq!(std::fs::read(&out).unwrap(), golden());
+}
+
+/// 메타데이터를 켜도 오디오(m4a)는 이번엔 `udta`·`covr`를 쓰지 않고 표지도 요청하지 않는다(audio-only.md §11.3).
+/// 결과는 끄고 받은 golden과 바이트가 같다. 표지 주소가 info에 있고 쿠키·루프백 이미지가 열려 있어도 마찬가지다.
+#[tokio::test]
+async fn audio_ignores_embed_metadata_and_never_fetches_cover() {
+    const COVER: &str = "/cover/t.jpg";
+    let server = MockServer::start().await;
+    let info = common::with_thumbnail(
+        &fixture("testdata/vod/video_info.json"),
+        Some(&format!("{}{COVER}", server.uri())),
+    );
+    Mock::given(method("GET"))
+        .and(path(format!("/service/v2/videos/{VOD_NO}")))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(info, "application/json"))
+        .mount(&server)
+        .await;
+    mount_mpd(&server, AUDIO_PATH, None).await;
+    Mock::given(method("GET"))
+        .and(path(AUDIO_PATH))
+        .respond_with(RangeBody(fixture(SRC)))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(COVER))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_bytes(fixture("testdata/synthetic/thumb.jpg")),
+        )
+        .mount(&server)
+        .await;
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_path(&dir);
+    let mut req = request(&out);
+    req.embed_metadata = true;
+    let cfg = ClientConfig {
+        allow_loopback_http_images: true,
+        ..config(&server)
+    };
+    let r = run_download(cfg, req, &Events::default()).await.unwrap();
+    assert!(matches!(r, DownloadOutcome::Completed { .. }), "{r:?}");
+    let got = std::fs::read(&out).unwrap();
+    assert_eq!(got, golden(), "udta가 들어갔다");
+    assert!(mp4::find_path_last(&got, &["moov", "udta"]).is_none());
+    assert!(
+        requests_to(&server, COVER).await.is_empty(),
+        "표지를 요청했다"
+    );
+}
+
 /// 중간까지 받은 `.part`는 Range로 이어 받고, 결과는 끝까지 받은 것과 같다.
 #[tokio::test]
 async fn resume_with_range_gives_same_result() {

@@ -441,7 +441,8 @@ async fn run(job: &mut Job<'_>, part: &mut Option<PartFile>) -> Result<DownloadO
     };
     job.report.phase(Phase::Downloading);
     // 태그 재료는 첫 조회 결과로 고정한다. 서명 주소는 들어오지 않는다(원본 주소는 `ContentRef`로만 만든다)
-    if job.req.embed_metadata {
+    // 오디오(m4a)는 이번엔 메타데이터를 넣지 않는다: udta/covr도, 표지 요청도 없다(audio-only.md §11.3)
+    if job.req.embed_metadata && job.req.quality_id != AUDIO_QUALITY_ID {
         job.tags = Some(TagInput {
             meta: resolved.meta.clone(),
             content: resolved.content.clone(),

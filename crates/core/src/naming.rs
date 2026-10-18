@@ -1800,6 +1800,64 @@ mod tests {
         }
     }
 
+    /// 오디오(m4a): 카드의 제안 이름(`.mp4`를 뗀 것) + 화면의 `.m4a` 표시가 실제 저장 이름과 같다. 확장자는 템플릿
+    /// 밖에서 `MediaExt`로 붙인다(audio-only.md §11.3).
+    /// 유일한 예외는 제안 이름이 이미 `.m4a`로 끝나는 경우(제목이 `.m4a`로 끝남)다: 붙여 넣은 확장자를 받아들이는
+    /// 규칙(`output_path_ext`) 때문에 저장 이름이 `x.m4a`이고 화면은 `x.m4a.m4a`를 보인다(알고 있는 가장자리).
+    #[test]
+    fn shown_name_equals_saved_name_for_m4a() {
+        fn saved_m4a(shown: &str, p: Platform) -> String {
+            let path = output_path_ext(Path::new(""), suggested_stem(shown), MediaExt::M4a, p);
+            path.file_name().unwrap().to_str().unwrap().to_string()
+        }
+        let long = "a".repeat(300);
+        let vals: [&str; 12] = [
+            "", " ", ".", "a.", " .b", "a .b", "x.mp4", "X.MP4", "x.m4a", "con", "Ep . 3", &long,
+        ];
+        let tpls = [
+            DEFAULT_TEMPLATE,
+            "{title}",
+            "{title} .{no}",
+            "{channel}.{title}",
+            "{title}.mp4",
+            "{title}.m4a",
+            "{channel} .{title} .{no}",
+        ];
+        let mut edge = 0;
+        for tpl in tpls {
+            let t = parse_template(tpl).unwrap();
+            for kind in [ContentKind::Video, ContentKind::Clip, ContentKind::Live] {
+                for ch in vals {
+                    for title in vals {
+                        let m = meta(kind, ch, title, Some("2024-01-02 03:04:05"));
+                        for p in ALL {
+                            let shown = render_filename(&t, &m, &content_for(kind), p);
+                            let stem = suggested_stem(&shown);
+                            let saved = saved_m4a(&shown, p);
+                            if stem.to_ascii_lowercase().ends_with(".m4a") {
+                                edge += 1;
+                                assert_eq!(saved, stem, "edge {tpl:?} {p:?}");
+                                continue;
+                            }
+                            // 화면: 제안 이름 + `.m4a`
+                            assert_eq!(
+                                saved,
+                                format!("{stem}.m4a"),
+                                "{tpl:?} {p:?} {ch:?} {title:?}"
+                            );
+                            let d = default_filename(&m, p);
+                            let dstem = suggested_stem(&d);
+                            if !dstem.to_ascii_lowercase().ends_with(".m4a") {
+                                assert_eq!(saved_m4a(&d, p), format!("{dstem}.m4a"));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert!(edge > 0, "가장자리 입력이 없다");
+    }
+
     /// T1 보증: 기본 규칙의 **저장되는 파일 이름은 전과 바이트까지 같다**. 전에는 만든 이름 R = `sanitize(raw)`를 `.mp4`만
     /// 떼서 카드에 보였고, 받을 때 `output_path`가 한 번 정리했다. 그 옛 저장 이름(`stored_name(R)`)과 새 이름의 저장
     /// 이름을 작은 알파벳 전수로 비교한다. 아래 두 번째 묶음은 `.mp4`로 끝나는 제목처럼 확장자 경계가 겹치는 입력이다.

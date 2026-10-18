@@ -347,7 +347,8 @@ export async function authRedeem(req: Request, ctx: Ctx): Promise<Response> {
     case "ok":
       return json(200, tokenBundleJson(r.bundle, ctx.now));
     case "denied":
-      return json(200, { status: "denied", channelName: r.channelName });
+      // reason은 선택 키다(옛 앱은 모르는 키를 버린다, allowlist-open.md §4.5)
+      return json(200, r.reason === undefined ? { status: "denied", channelName: r.channelName } : { status: "denied", channelName: r.channelName, reason: r.reason });
     case "cancelled":
       return json(200, { status: "cancelled" });
     case "failed":

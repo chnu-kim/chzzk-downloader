@@ -90,6 +90,8 @@ async fn blocked_jobs_json_write_does_not_hold_state_lock() {
                 runtime: rt,
                 max_parallel: 1,
                 auto_resume: false,
+                total_rate_limit: None,
+                job_rate_limit: None,
             })
             .unwrap();
             let rec = Recorder::new();

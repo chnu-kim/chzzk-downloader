@@ -7,7 +7,7 @@ import { newSecret, sha256B64url, sha256Hex } from "../../src/core/token";
 import worker from "../../src/index";
 import { AUTH_STORE_NAME } from "../../src/store/AuthStore";
 import type { FakeAccountKey, FakeChzzk } from "../fake-chzzk.mjs";
-import { ADMINS } from "../store/helpers";
+import { A1, ADMINS } from "../store/helpers";
 
 export const ORIGIN = "http://localhost:8787";
 export const HOUR = 3_600_000;
@@ -40,8 +40,16 @@ export const store = () => env.AUTH.get(env.AUTH.idFromName(AUTH_STORE_NAME));
 /** 한 파일의 테스트는 같은 DO 저장소를 쓴다: 세션·허용목록·거부 기록을 세어 보는 테스트는 먼저 비운다(흐름 표는 건드리지 않는다) */
 export async function resetStore(): Promise<void> {
   await runInDurableObject(store(), (i) => {
-    for (const table of ["refresh", "session", "allowlist", "denied", "audit", "delegation", "invite"]) i.db.run(`DELETE FROM ${table}`);
+    for (const table of ["refresh", "session", "allowlist", "denied", "audit", "delegation", "invite", "blocked"]) i.db.run(`DELETE FROM ${table}`);
+    // 자동 허가의 상한·오늘 센 수도 비운다(앞 테스트의 수가 다음 테스트의 상한을 먹지 않게)
+    i.db.run("DELETE FROM meta WHERE k LIKE 'auto\\_allow\\_%' ESCAPE '\\'");
   });
+  await closeAutoAllow();
+}
+
+/** 자동 허가를 끈다(상한 0, allowlist-open.md §6.3): 모르는 채널이 거부되는 것을 전제로 한 파일의 beforeEach가 부른다. 이미 0이면 같은 값을 다시 쓴다 */
+export async function closeAutoAllow(): Promise<void> {
+  await store().setAutoAllowCap(0, A1, Date.now());
 }
 
 type HeaderPatch = Record<string, string | null>;

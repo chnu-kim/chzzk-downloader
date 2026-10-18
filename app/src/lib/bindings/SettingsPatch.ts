@@ -27,4 +27,12 @@ theme?: Theme, keepAwake?: boolean, saveChat?: boolean, chatSubtitle?: SubtitleF
  * 키 없음 = 그대로, `null` = 기본 규칙으로, 문자열 = 그 템플릿으로(읽을 수 없으면 `invalidInput`,
  * 기본 템플릿 문자열과 같으면 `null`로 저장한다)
  */
-fileNameTemplate?: string | null, };
+fileNameTemplate?: string | null, 
+/**
+ * 키 없음 = 그대로, `null` = 제한 없음, 수 = 그 값(바이트/초). 0은 끔, 최소(`MIN_RATE_LIMIT_BPS`)보다 작은 값은 최소로 올린다
+ */
+totalRateLimit?: number | null, 
+/**
+ * 작업마다 상한. 규칙은 `total_rate_limit`과 같다
+ */
+jobRateLimit?: number | null, };

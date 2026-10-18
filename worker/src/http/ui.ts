@@ -73,6 +73,8 @@ export function field(o: {
   maxlength?: number;
   pattern?: string;
   autocomplete?: string;
+  /** 숫자 입력(생략하면 글자 입력). min·max는 숫자일 때만 */
+  number?: { readonly min: number; readonly max: number };
 }): SafeHtml {
   const helpId = `${o.id}-help`;
   const errorId = `${o.id}-error`;
@@ -83,6 +85,7 @@ export function field(o: {
     o.required === true ? html` required` : "",
     o.maxlength === undefined ? "" : html` maxlength="${o.maxlength}"`,
     o.pattern === undefined ? "" : html` pattern="${o.pattern}"`,
+    o.number === undefined ? "" : html` min="${o.number.min}" max="${o.number.max}" step="1" inputmode="numeric"`,
     o.autocomplete === undefined ? "" : html` autocomplete="${o.autocomplete}"`,
     o.error === undefined ? "" : html` aria-invalid="true"`,
     described === "" ? "" : html` aria-describedby="${described}"`,
@@ -90,7 +93,7 @@ export function field(o: {
   const help = o.help === undefined ? "" : html`<p class="form-help" id="${helpId}">${o.help}</p>`;
   const error =
     o.error === undefined ? "" : html`<div class="notice notice-row tone-danger" id="${errorId}">${icon("circle-x")}<div class="notice-text">${o.error}</div></div>`;
-  return html`<div class="form-field"><label for="${o.id}">${o.label}</label>${help}<input class="field${o.mono === true ? " field-mono" : ""}" type="text" id="${o.id}" name="${o.name}"${attrs}>${error}</div>`;
+  return html`<div class="form-field"><label for="${o.id}">${o.label}</label>${help}<input class="field${o.mono === true ? " field-mono" : ""}" type="${o.number === undefined ? "text" : "number"}" id="${o.id}" name="${o.name}"${attrs}>${error}</div>`;
 }
 
 /** 오류 요약: main의 첫 자식. 필드로 가는 링크 목록(href="#필드 id")이다. 같은 화면에 flash와 함께 오지 않는다 */

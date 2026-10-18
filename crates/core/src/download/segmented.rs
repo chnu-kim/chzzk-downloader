@@ -22,8 +22,8 @@ use tokio::time::Instant as TokioInstant;
 
 use super::part::{HlsRange, HlsState, PartFile, SIDECAR_VERSION_RANGE, Sidecar};
 use super::retry::{Failure, Patience, RetryPolicy, classify_failure, is_connection_failure};
-use super::{DownloadOutcome, Job, MAX_CONCURRENCY, finish};
-use crate::client::{Chzzk, MAX_API_BODY, read_capped};
+use super::{DownloadOutcome, Job, MAX_CONCURRENCY, Throttles, finish};
+use crate::client::{Chzzk, MAX_API_BODY, read_capped_throttled};
 use crate::error::{Error, Unsupported};
 use crate::hls::{self, MediaPlaylist, Variant};
 use crate::model::{PlaybackKind, Quality, Source};
@@ -238,6 +238,8 @@ pub(crate) async fn run(
     let mut since_cp = 0u32;
     // 재조회한 뒤 아직 받지 못한 세그먼트 index. 그 세그먼트가 또 403이면 인증 문제다.
     let mut refreshed_at: Option<u32> = None;
+    // 속도 제한(rate-limit.md §3.4). 세그먼트 본문 읽기에서만 치른다.
+    let throttle: &Throttles = &job.req.throttle;
     // 빠른 재시도(`fetch`)를 다 쓴 연결 계열 실패의 인내 장부(core.md 구현 중 변경 56)
     let mut patience = Patience::default();
     // 마지막 진전(또는 스트림 시작) 이후 시각. 실패한 시도가 예산에서 차지하는 시간을 잰다.
@@ -249,7 +251,7 @@ pub(crate) async fn run(
             .collect();
         // `buffered`는 완료 순서와 무관하게 입력 순서대로 내놓는다. 그래서 첫 `Err`는 늘 `next`의 것이다.
         let mut segs = stream::iter(uris)
-            .map(|u| async move { fetch(chzzk, policy, &u, Body::Segment).await })
+            .map(|u| async move { fetch(chzzk, policy, &u, Body::Segment, Some(throttle)).await })
             .buffered(concurrency);
         while let Some(r) = job.cancellable(segs.next()).await? {
             let bytes = match r {
@@ -433,7 +435,7 @@ pub(super) async fn fetch_cancellable(
     url: &Url,
     body: Body,
 ) -> Result<Bytes, Failure> {
-    job.cancellable(fetch(job.chzzk, policy, url, body))
+    job.cancellable(fetch(job.chzzk, policy, url, body, None))
         .await
         .map_err(Failure::Fatal)?
 }
@@ -444,10 +446,11 @@ pub(super) async fn fetch(
     policy: RetryPolicy,
     url: &Url,
     body: Body,
+    throttle: Option<&Throttles>,
 ) -> Result<Bytes, Failure> {
     let mut attempts = 0u32;
     loop {
-        match fetch_once(chzzk, url, body).await {
+        match fetch_once(chzzk, url, body, throttle).await {
             Ok(b) => return Ok(b),
             Err(Failure::Retry(e)) => {
                 attempts += 1;
@@ -463,7 +466,12 @@ pub(super) async fn fetch(
 }
 
 /// GET 한 번과 본문 검사.
-async fn fetch_once(chzzk: &Chzzk, url: &Url, body: Body) -> Result<Bytes, Failure> {
+async fn fetch_once(
+    chzzk: &Chzzk,
+    url: &Url,
+    body: Body,
+    throttle: Option<&Throttles>,
+) -> Result<Bytes, Failure> {
     let resp = match chzzk.media_get(url).send().await {
         Ok(r) => r,
         Err(e) => return Err(classify_failure(None, Some(e))),
@@ -473,7 +481,7 @@ async fn fetch_once(chzzk: &Chzzk, url: &Url, body: Body) -> Result<Bytes, Failu
         return Err(classify_failure(Some(status.as_u16()), None));
     }
     let expected = resp.content_length();
-    let bytes = read_body(resp, body.limit()).await?;
+    let bytes = read_body(resp, body.limit(), throttle).await?;
     check_length(expected, &bytes, body)?;
     check_box(&bytes, body)?;
     Ok(bytes)
@@ -483,11 +491,17 @@ async fn fetch_once(chzzk: &Chzzk, url: &Url, body: Body) -> Result<Bytes, Failu
 ///
 /// `read_timeout`은 idle만 끊으므로, 길이 없이 계속 흘러오는 응답(잘못 연결된 라이브 등)은 이
 /// 상한이 막는다. 동시 요청 수만큼 본문을 메모리에 들고 있으므로 상한이 곧 메모리 상한이다.
-async fn read_body(resp: reqwest::Response, max: usize) -> Result<Bytes, Failure> {
-    read_capped(resp, max).await.map_err(|e| match e {
-        Error::Network(_) => Failure::Retry(e),
-        e => Failure::Fatal(e),
-    })
+async fn read_body(
+    resp: reqwest::Response,
+    max: usize,
+    throttle: Option<&Throttles>,
+) -> Result<Bytes, Failure> {
+    read_capped_throttled(resp, max, throttle)
+        .await
+        .map_err(|e| match e {
+            Error::Network(_) => Failure::Retry(e),
+            e => Failure::Fatal(e),
+        })
 }
 
 /// `Content-Length`와 받은 본문 길이가 같은지 검사한다. 다르면 재시도할 `Parse`.
@@ -545,10 +559,13 @@ mod tests {
         let http = reqwest::Client::new();
         let get = || http.get(server.uri()).send();
         assert_eq!(
-            read_body(get().await.unwrap(), 100).await.unwrap().len(),
+            read_body(get().await.unwrap(), 100, None)
+                .await
+                .unwrap()
+                .len(),
             100
         );
-        match read_body(get().await.unwrap(), 99).await {
+        match read_body(get().await.unwrap(), 99, None).await {
             Err(Failure::Fatal(e)) => {
                 assert!(matches!(e, Error::Parse { .. }), "{e:?}");
                 assert!(e.is_resumable());

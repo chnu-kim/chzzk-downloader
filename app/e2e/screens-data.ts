@@ -375,6 +375,18 @@ export const SCREENS: Screen[] = [
     ready: (p) => p.getByRole('heading', { name: t('auth.denied.title') }),
   },
   {
+    id: '로그인 거부(하루 상한)',
+    slug: 'login-daily-limit',
+    scenario: (_env, now) => ({ auth: auth({ state: 'denied', reason: 'dailyLimit', channelName: '테스트 채널' }) }),
+    ready: (p) => p.getByRole('heading', { name: t('auth.dailyLimit.title') }),
+  },
+  {
+    id: '로그인 거부(차단)',
+    slug: 'login-blocked',
+    scenario: (_env, now) => ({ auth: auth({ state: 'denied', reason: 'blocked', channelName: '테스트 채널' }) }),
+    ready: (p) => p.getByRole('heading', { name: t('auth.blocked.title') }),
+  },
+  {
     id: 'D1 닫기 확인',
     slug: 'dialog-d1',
     scenario: (_env, now) => ({}),

@@ -209,11 +209,12 @@ pub enum HelpId {
     Report,
     WindowsOldApp,
     Editors,
+    LoginDenied,
 }
 
 impl HelpId {
     /// 모든 주제(`ids.json` 대조용)
-    pub const ALL: [HelpId; 8] = [
+    pub const ALL: [HelpId; 9] = [
         HelpId::Cookie,
         HelpId::DiskFull,
         HelpId::InstallMac,
@@ -222,6 +223,7 @@ impl HelpId {
         HelpId::Report,
         HelpId::WindowsOldApp,
         HelpId::Editors,
+        HelpId::LoginDenied,
     ];
 
     /// 앵커 글자(= serde 값). 주소의 `#` 뒤에 그대로 붙는다
@@ -235,6 +237,7 @@ impl HelpId {
             HelpId::Report => "report",
             HelpId::WindowsOldApp => "windows-old-app",
             HelpId::Editors => "editors",
+            HelpId::LoginDenied => "login-denied",
         }
     }
 }
@@ -372,6 +375,10 @@ pub struct SettingsDto {
     pub chat_subtitle: SubtitleFormat,
     /// 파일 이름 규칙(템플릿). `null`이면 기본 규칙이다(입력칸에는 `DEFAULT_TEMPLATE`을 보인다)
     pub file_name_template: Option<String>,
+    /// 전체 합계 받기 속도 상한(바이트/초). `null` = 제한 없음(기본). 생방송 녹화는 제외(rate-limit.md)
+    pub total_rate_limit: Option<u64>,
+    /// 작업마다 받기 속도 상한(바이트/초). `null` = 제한 없음(기본)
+    pub job_rate_limit: Option<u64>,
 }
 
 /// 최근 VOD 한 항목.
@@ -441,6 +448,14 @@ pub struct SettingsPatch {
     #[serde(default)]
     #[ts(as = "Option<Option<String>>", optional)]
     pub file_name_template: Nullable<String>,
+    /// 키 없음 = 그대로, `null` = 제한 없음, 수 = 그 값(바이트/초). 0은 끔, 최소(`MIN_RATE_LIMIT_BPS`)보다 작은 값은 최소로 올린다
+    #[serde(default)]
+    #[ts(as = "Option<Option<u64>>", optional)]
+    pub total_rate_limit: Nullable<u64>,
+    /// 작업마다 상한. 규칙은 `total_rate_limit`과 같다
+    #[serde(default)]
+    #[ts(as = "Option<Option<u64>>", optional)]
+    pub job_rate_limit: Nullable<u64>,
 }
 
 /// 키 없음·`null`·값을 구분하는 패치 필드. `#[serde(default)]`와 함께 써야 키 없음이 `Keep`이 된다.
@@ -1277,7 +1292,7 @@ impl From<AuthPhase> for AuthState {
     }
 }
 
-/// 사유(worker.md §11.4의 10개). TS 이름은 `AuthReason`.
+/// 사유(worker.md §11.4의 10개 + 거부 이유 둘). TS 이름은 `AuthReason`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(rename = "AuthReason")]
@@ -1292,6 +1307,8 @@ pub enum AuthReasonDto {
     Server,
     LoginLost,
     Receiver,
+    DailyLimit,
+    Blocked,
 }
 
 impl From<AuthReason> for AuthReasonDto {
@@ -1307,6 +1324,8 @@ impl From<AuthReason> for AuthReasonDto {
             AuthReason::Server => AuthReasonDto::Server,
             AuthReason::LoginLost => AuthReasonDto::LoginLost,
             AuthReason::Receiver => AuthReasonDto::Receiver,
+            AuthReason::DailyLimit => AuthReasonDto::DailyLimit,
+            AuthReason::Blocked => AuthReasonDto::Blocked,
         }
     }
 }

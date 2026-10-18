@@ -53,6 +53,30 @@ test('설정: 값을 바꾸면 바로 저장하고, 쿠키는 저장 뒤 다시 
   await expect(page.getByLabel(t('url.label'))).toBeFocused();
 });
 
+test('속도 상한: 두 Select에서 고르면 바이트/초 패치를 보내고, 제한 없음으로 되돌리면 null을 보낸다', async ({ app }) => {
+  const { page } = app;
+  await app.open({ platform: 'macos' });
+  await page.getByRole('button', { name: t('header.settings') }).click();
+  const total = page.getByRole('combobox', { name: t('settings.totalRate') });
+  const job = page.getByRole('combobox', { name: t('settings.jobRate') });
+  await expect(total).toBeVisible();
+  await expect(job).toBeVisible();
+  await expect(total.locator('option:checked')).toHaveText(t('settings.rateLimit.off'));
+  await app.axe('설정 › 속도 상한');
+
+  await total.selectOption({ label: '5.0MB/s' });
+  await job.selectOption({ label: '2.0MB/s' });
+  await expect(total.locator('option:checked')).toHaveText('5.0MB/s');
+  await total.selectOption({ label: t('settings.rateLimit.off') });
+  await expect.poll(() => app.args('update_settings')).toEqual([
+    { patch: { totalRateLimit: 5_000_000 } },
+    { patch: { jobRateLimit: 2_000_000 } },
+    { patch: { totalRateLimit: null } },
+  ]);
+  await expect(total.locator('option:checked')).toHaveText(t('settings.rateLimit.off'));
+  await expect(job.locator('option:checked')).toHaveText('2.0MB/s');
+});
+
 test('글자 크기를 바꾸면 바로 적용·저장하고, 다시 열어도 유지한다', async ({ app }) => {
   const { page } = app;
   await app.open();

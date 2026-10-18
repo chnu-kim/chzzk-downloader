@@ -218,6 +218,10 @@ async fn attempt(
             since_cp = 0;
             last_cp = Instant::now();
         }
+        // 속도 제한(rate-limit.md §3.4): 받은 뒤에 치르고 다음 `chunk()`를 늦춘다. 취소는 대기를 곧바로 끊는다.
+        job.cancellable(job.req.throttle.consume(chunk.len() as u64))
+            .await
+            .map_err(Failure::Fatal)?;
     }
     let written = p.written();
     match total {

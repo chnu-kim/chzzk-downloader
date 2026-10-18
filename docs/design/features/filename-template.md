@@ -1,10 +1,10 @@
 # 파일명 토큰 템플릿: 설계 초안
 
-**상태(2026-10-18)**: **설계됨, 사용자 결정 필요**. 사용자 결정(2026-10-18)은 셋이다. 저장 파일명을 토큰 템플릿으로 정하고, 기본 템플릿의 결과는 지금 규칙과 바이트 단위로 같으며, 설정 화면에 입력칸·예시 값 미리보기·기본값으로 되돌리기를 둔다. 이 문서는 그 결정 안에서 고를 것을 §3 결정 표(T1~T8)로 정리한다. 각 행에는 선택지·추천·근거가 있다. 표의 추천은 **확정이 아니다**. 사용자가 고르면 이 머리와 표의 "상태" 열을 고친다. **구현(2026-10-18)**: 추천 안 그대로 구현했다(core.md 75, app.md 91). 사용자가 표를 확정하지 않았으므로 아래 "상태" 열은 그대로이고, 다르게 고르면 그 단계만 다시 고친다. 구현에서 명세와 달라진 곳은 core.md 75·app.md 91에 있다.
+**상태(2026-10-18)**: **설계됨, 사용자 결정 필요**. 사용자 결정(2026-10-18)은 셋이다. 저장 파일명을 토큰 템플릿으로 정하고, 기본 템플릿의 결과는 지금 규칙과 바이트 단위로 같으며, 설정 화면에 입력칸·예시 값 미리보기·기본값으로 되돌리기를 둔다. 이 문서는 그 결정 안에서 고를 것을 §3 결정 표(T1~T8)로 정리한다. 각 행에는 선택지·추천·근거가 있다. 표의 추천은 **확정이 아니다**. 사용자가 고르면 이 머리와 표의 "상태" 열을 고친다. **구현(2026-10-18)**: 추천 안 그대로 구현했다(core.md 78, app.md 95). 사용자가 표를 확정하지 않았으므로 아래 "상태" 열은 그대로이고, 다르게 고르면 그 단계만 다시 고친다. 구현에서 명세와 달라진 곳은 core.md 78·app.md 95에 있다.
 
 기준 트리는 `origin/master` `55e0733`(v0.10.1 뒤, ROADMAP "경쟁력 개선 착수"의 (사))이다. `파일:줄`은 그 트리에서 연 줄이다(`55e0733`은 `90404f9`에 문서·`LICENSE.md`만 더해 코드 줄은 같다). 표기는 `README.md`를 따른다: **[확인]** 직접 연 줄, **[가정]**, **[잠정]**(근거 없는 수치, ADR-0009 묶음). 예시 값(`채널이름`·`테스트채널`·`12345`)은 모두 가짜다.
 
-구현할 때는 이 문서를 `docs/design/core.md`·`app.md`의 "구현 중 변경"에 번호를 붙여 옮긴다. 지금 마지막 번호는 core.md 74, app.md 90이다. 그래서 **core.md 75**, **app.md 91**부터 쓰되, 번호는 머지 순으로 맞춘다. 같은 때 병렬로 가는 (나) 허용목록·(라) 속도 제한도 같은 번호대를 쓰므로 먼저 머지한 쪽 뒤로 다시 매긴다. 디자인 시스템 결정이 필요하면(T6) D64·ADR-0026 다음 빈 번호를 쓴다.
+구현할 때는 이 문서를 `docs/design/core.md`·`app.md`의 "구현 중 변경"에 번호를 붙여 옮긴다. master 합침 뒤 마지막 번호는 core.md 77, app.md 94다. 그래서 **core.md 78**, **app.md 95**부터 쓰되, 번호는 머지 순으로 맞춘다. 같은 때 병렬로 가는 (나) 허용목록·(라) 속도 제한도 같은 번호대를 쓰므로 먼저 머지한 쪽 뒤로 다시 매긴다. 디자인 시스템 결정이 필요하면(T6) D64·ADR-0026 다음 빈 번호를 쓴다.
 
 ---
 
@@ -153,7 +153,7 @@
 | `settings.fileNameTemplate.error.duplicate` | **{token}은 한 번만 쓸 수 있어요.** |
 | `settings.fileNameTemplate.error.separator` | **/ 와 \\ 는 쓸 수 없어요. 폴더는 만들지 않아요.** |
 | `settings.fileNameTemplate.error.title` | **{title}이 들어가야 해요.** |
-| `settings.fileNameTemplate.error.tooLong` | **규칙이 너무 길어요. {max}바이트 안으로 줄여 주세요.** (`max`는 셸 DTO가 코어 `MAX_TEMPLATE_BYTES`를 준다, app.md 92) |
+| `settings.fileNameTemplate.error.tooLong` | **규칙이 너무 길어요. {max}바이트 안으로 줄여 주세요.** (`max`는 셸 DTO가 코어 `MAX_TEMPLATE_BYTES`를 준다, app.md 96) |
 
 - 문구는 `design-copy` 규칙(어미·마침표·금지어)을 통과해야 한다. "저장"은 영상에는 쓰지 않는 말이지만(content.md §4), 여기서는 설정에 쓰므로 쿠키 [저장]과 같다. 바이트라는 말은 [잠정]이다. 사용자에게 낯설면 글자 수로 바꾸는 것을 F(카피)가 정한다.
 - `{token}` 자리 치환은 `ko.ts`의 `t()` 인자 규칙을 따른다. 문구 안의 `{title}` 같은 리터럴 중괄호는 `t()`가 치환하지 않게 해야 한다. 구현 때 `t()`의 탈출 규칙을 확인하고, 없으면 인자로 넘긴다(`{example}`).
@@ -170,7 +170,7 @@
 
 ### 5.4 가짜 백엔드·E2E
 
-- `app/e2e/mock/backend.ts`: `preview_file_name_template`은 골든 `design/naming/template.json`의 `preview` 케이스를 표로 읽어 답한다. 표에 없는 입력은 **실패한다**(기본 결과로 대신 답하면 E2E가 잘못된 값으로 오류 흐름을 시험해도 통과한다, app.md 92). 불러온 영상의 제안 이름은 같은 파일의 `cases` 중 규칙·영상 메타가 같은 linux 행에서 찾는다. `update_settings`의 `fileNameTemplate`는 패치를 그대로 반영한다(`backend.ts:332`).
+- `app/e2e/mock/backend.ts`: `preview_file_name_template`은 골든 `design/naming/template.json`의 `preview` 케이스를 표로 읽어 답한다. 표에 없는 입력은 **실패한다**(기본 결과로 대신 답하면 E2E가 잘못된 값으로 오류 흐름을 시험해도 통과한다, app.md 96). 불러온 영상의 제안 이름은 같은 파일의 `cases` 중 규칙·영상 메타가 같은 linux 행에서 찾는다. `update_settings`의 `fileNameTemplate`는 패치를 그대로 반영한다(`backend.ts:332`).
 - Playwright `app/e2e/`: 설정 › 받기에서 ① 기본 문자열이 보이고 [기본값으로]가 없다 ② `{date}_{title}`을 치면 미리보기가 바뀐다 ③ `{foo}`로 [저장]하면 inline 오류가 뜨고 `aria-invalid`가 된다 ④ 올바른 값을 저장하면 [기본값으로]가 나타나고, 누르면 사라진다 ⑤ 저장 뒤 영상을 불러오면 카드 제안 이름이 새 규칙을 따른다. axe는 이 행에도 돈다.
 - 네이티브 E2E는 바꾸지 않는다(기본값 경로이고 결과가 같다).
 
@@ -207,8 +207,8 @@
 
 | 단계 | 커밋 타입 | 내용 | gate |
 |---|---|---|---|
-| N-1 코어 | `refactor` | `naming.rs` `FileNameTemplate`·`parse_template`·`render_filename`·`DEFAULT_TEMPLATE`, 골든 `design/naming/template.json` + `crates/core/tests/naming_golden.rs`(`default_equivalence` 포함). `UserSettings.file_name_template`(관대한 읽기). core.md 75 | `fmt`·`rust`·`scan` |
-| N-2 셸 | `refactor` | `ResolvedDto::new` 템플릿 인자, `SettingsDto`·`SettingsPatch` 필드, `preview_file_name_template` command(앱 배선 `app/src-tauri` 포함), bindings 재생성, 가짜 백엔드 분기. app.md 91 | `rust`·`tauri-clippy`·`tauri`·`frontend` |
+| N-1 코어 | `refactor` | `naming.rs` `FileNameTemplate`·`parse_template`·`render_filename`·`DEFAULT_TEMPLATE`, 골든 `design/naming/template.json` + `crates/core/tests/naming_golden.rs`(`default_equivalence` 포함). `UserSettings.file_name_template`(관대한 읽기). core.md 78 | `fmt`·`rust`·`scan` |
+| N-2 셸 | `refactor` | `ResolvedDto::new` 템플릿 인자, `SettingsDto`·`SettingsPatch` 필드, `preview_file_name_template` command(앱 배선 `app/src-tauri` 포함), bindings 재생성, 가짜 백엔드 분기. app.md 95 | `rust`·`tauri-clippy`·`tauri`·`frontend` |
 | N-3 앱 | `feat` | `FileNameTemplateRow`, copy deck(content.md §15.1·patterns §14.4·T6 예외 행), Playwright, ROADMAP 체크 | `frontend`·`design-tokens`(design-copy 포함)·`e2e-web` |
 
 N-1·N-2는 사용자에게 보이는 변화가 없다(설정 행이 없어 템플릿이 늘 `None`). 그래서 `refactor`로 적고, 기능을 여는 N-3만 `feat`로 적는다(`docs/versioning.md`: 올림 자리는 사용자에게 보이는 기능이 정한다). 최종 판단은 구현 때 `release.mjs next-version`으로 확인한다.
@@ -222,8 +222,8 @@ N-1·N-2는 사용자에게 보이는 변화가 없다(설정 행이 없어 템�
 | 볼륨 OS와 미리보기 OS가 다르다(예: macOS에서 exFAT 외장 디스크) | (a) 미리보기 command가 저장 폴더 볼륨 기준이라 같다. 다만 카드에서 폴더를 바꾸면(`FolderField`) 실제 OS가 미리보기와 다를 수 있다. 카드의 "저장될 이름" 안내(`filename.willSaveAs`)가 이 경우를 보여 준다(`ResolveCard.svelte:316`) |
 | 생방송에서 `{prefix}`를 빼 같은 방송의 녹화 이름이 겹친다 | 번호 이름이 처리한다(`output.rs:58-69`). 녹화 `.part`도 번호 이름을 받는다(L7) |
 | `{no}` 값(영상 번호)이 파일 이름에 남는다 | 사용자가 고른 토큰이고 공개 저장소 규칙과는 무관하다(사용자 자기 파일이다). 문서·테스트에는 가짜 번호만 쓴다 |
-| 화면에 보인 이름과 실제 저장 이름이 다르다(`sanitize`가 마지막 `.` 앞 공백을 지운다. 셸은 `.mp4`를 뗀 이름을 받을 때 다시 정리한다) | 해결함(core.md 76). 코어가 `suggested_stem` → `output_path` 왕복을 이름이 안 변할 때까지 돌려 그 결과만 돌려준다. 기본 규칙(`default_filename`)에 전부터 있던 같은 문제도 함께 고쳤고, 저장되는 이름은 바뀌지 않는다(T1 유지, `default_rule_saved_name_is_unchanged`). 고르는 길: 위 그대로 / 템플릿 규칙에만 적용하고 기본 규칙의 카드 이름은 전 그대로 / 셸의 이름 전달 방식을 바꿈(기존 저장 이름이 달라져 T1과 부딪힘) |
-| **알려진 한계**: 빈 토큰을 감싼 리터럴 괄호는 남는다. `[{date}] {title}`은 클립에서 `[] 웃긴 장면.mp4`, `{title} [{no}]`는 생방송에서 `오늘 방송 [].mp4`가 된다(T3은 구분 문자만으로 된 리터럴만 지운다, 골든 preview가 이 결과를 고정한다). 설정 화면은 영상 예시 한 줄만 보여 사용자가 미리 알기 어렵다. 같은 규칙이 OS마다 다르게 정리되기도 한다(`{date}: {title}`은 Windows·macOS에서 `:`가 `_`가 되어 구분 문자로 지워지고, Linux에서는 `: 웃긴 장면`으로 남는다) | v1은 받아들인다(app.md 92 ④). 고르는 길: (a) 클립·생방송 예시를 보조 줄이나 `Disclosure`로 보인다(command가 이미 셋을 돌려준다), (b) T3를 넓혀 빈 토큰을 감싼 `[]`·`()`도 지운다(기본 규칙 동등성에는 영향 없음, 골든 갱신), (c) 지금대로. 다시 열 조건: 사용자 보고 또는 T3 재선택 |
+| 화면에 보인 이름과 실제 저장 이름이 다르다(`sanitize`가 마지막 `.` 앞 공백을 지운다. 셸은 `.mp4`를 뗀 이름을 받을 때 다시 정리한다) | 해결함(core.md 79). 코어가 `suggested_stem` → `output_path` 왕복을 이름이 안 변할 때까지 돌려 그 결과만 돌려준다. 기본 규칙(`default_filename`)에 전부터 있던 같은 문제도 함께 고쳤고, 저장되는 이름은 바뀌지 않는다(T1 유지, `default_rule_saved_name_is_unchanged`). 고르는 길: 위 그대로 / 템플릿 규칙에만 적용하고 기본 규칙의 카드 이름은 전 그대로 / 셸의 이름 전달 방식을 바꿈(기존 저장 이름이 달라져 T1과 부딪힘) |
+| **알려진 한계**: 빈 토큰을 감싼 리터럴 괄호는 남는다. `[{date}] {title}`은 클립에서 `[] 웃긴 장면.mp4`, `{title} [{no}]`는 생방송에서 `오늘 방송 [].mp4`가 된다(T3은 구분 문자만으로 된 리터럴만 지운다, 골든 preview가 이 결과를 고정한다). 설정 화면은 영상 예시 한 줄만 보여 사용자가 미리 알기 어렵다. 같은 규칙이 OS마다 다르게 정리되기도 한다(`{date}: {title}`은 Windows·macOS에서 `:`가 `_`가 되어 구분 문자로 지워지고, Linux에서는 `: 웃긴 장면`으로 남는다) | v1은 받아들인다(app.md 96 ④). 고르는 길: (a) 클립·생방송 예시를 보조 줄이나 `Disclosure`로 보인다(command가 이미 셋을 돌려준다), (b) T3를 넓혀 빈 토큰을 감싼 `[]`·`()`도 지운다(기본 규칙 동등성에는 영향 없음, 골든 갱신), (c) 지금대로. 다시 열 조건: 사용자 보고 또는 T3 재선택 |
 | 옛 앱으로 되돌아갈 때(롤백) | 옛 앱은 모르는 키를 무시하므로(`deny_unknown_fields` 없음) 기본 이름으로 돌아간다. 다시 올리면 저장된 템플릿이 그대로 읽힌다. `!`가 아니다 |
 
 ## 10. 사용자 실측

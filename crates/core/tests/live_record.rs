@@ -48,6 +48,7 @@ async fn live_record() {
         }
     };
     let req = DownloadRequest {
+        throttle: Default::default(),
         content,
         quality_id: r
             .qualities()

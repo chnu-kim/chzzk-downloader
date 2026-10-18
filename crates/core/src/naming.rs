@@ -393,7 +393,7 @@ pub fn sibling_path(video: &Path, ext: &str) -> PathBuf {
 }
 
 // ---------------------------------------------------------------------------
-// 파일명 템플릿(docs/design/features/filename-template.md, core.md 75)
+// 파일명 템플릿(docs/design/features/filename-template.md, core.md 78)
 // ---------------------------------------------------------------------------
 
 /// 템플릿 문자열 길이 상한(바이트). **[잠정]** 근거 없는 수치다(ADR-0009 묶음). 가장 긴 고정 토큰(`{prefix}`

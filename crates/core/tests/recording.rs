@@ -325,6 +325,7 @@ impl Stream {
 
 fn request(out: &Path, stop: Option<CancellationToken>) -> DownloadRequest {
     DownloadRequest {
+        throttle: Default::default(),
         content: ContentRef::Live {
             channel_id: CHANNEL.into(),
         },
@@ -471,6 +472,48 @@ async fn endlist_finishes_without_gaps() {
     let last = events.all().into_iter().rev().find_map(|p| p.live).unwrap();
     assert_eq!(last.gaps, 0);
     assert_eq!(last.recorded_secs, 16.0);
+}
+
+/// 속도 제한(rate-limit.md R3): 요청에 `Throttles`가 붙어 있어도 녹화는 늦춰지지 않는다(구멍도 없다).
+/// 1바이트/초면 세그먼트 하나(16바이트)를 치르는 데만 15초(빚 상한)가 걸리므로, 제한이 먹었다면 시간 안에 못 끝낸다.
+#[tokio::test]
+async fn live_recording_ignores_throttles() {
+    use chzzk_core::download::{RateKnob, Throttle, Throttles};
+    let end = 5usize;
+    let s = Stream::start(
+        move |n| Pl::Window {
+            first: n as u64,
+            len: 3,
+            ended: n >= end,
+            tail: "",
+        },
+        |_| Detail::Open(1),
+    )
+    .await;
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_path(&dir);
+    let slow = || Throttle::new(RateKnob::new(std::num::NonZeroU64::new(1)));
+    let mut req = request(&out, None);
+    req.throttle = Throttles {
+        job: Some(slow()),
+        shared: Some(slow()),
+    };
+    let r = tokio::time::timeout(
+        Duration::from_secs(10),
+        s.client().download(req, CancellationToken::new(), &|_| {}),
+    )
+    .await
+    .expect("제한이 녹화를 늦췄다")
+    .unwrap();
+    assert_eq!(
+        live_end(&r),
+        LiveEnd {
+            reason: LiveEndReason::Ended,
+            gaps: Some(0)
+        }
+    );
+    assert_eq!(recorded_msns(&out), (0..=7).collect::<Vec<_>>());
+    no_part(&out);
 }
 
 /// `live_stop`은 취소가 아니라 마무리다: 받은 만큼 최종 파일이 되고 `Completed`다.

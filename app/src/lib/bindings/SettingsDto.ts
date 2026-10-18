@@ -43,4 +43,12 @@ chatSubtitle: SubtitleFormat,
 /**
  * 파일 이름 규칙(템플릿). `null`이면 기본 규칙이다(입력칸에는 `DEFAULT_TEMPLATE`을 보인다)
  */
-fileNameTemplate: string | null, };
+fileNameTemplate: string | null, 
+/**
+ * 전체 합계 받기 속도 상한(바이트/초). `null` = 제한 없음(기본). 생방송 녹화는 제외(rate-limit.md)
+ */
+totalRateLimit: number | null, 
+/**
+ * 작업마다 받기 속도 상한(바이트/초). `null` = 제한 없음(기본)
+ */
+jobRateLimit: number | null, };

@@ -66,6 +66,11 @@ const IP_CANCEL = "198.51.100.40";
 const IP_DLG_B2 = "198.51.100.50";
 const IP_DLG_C3 = "198.51.100.60";
 const IP_DLG_C3B = "198.51.100.61";
+// 자동 허가(E20~E22, 허용목록 자동 허가 명세 §6.4): 시나리오마다 start 두 번 이하
+const IP_AUTO0 = "198.51.100.70";
+const IP_AUTO1 = "198.51.100.71";
+const IP_AUTO2 = "198.51.100.72";
+const IP_AUTO3 = "198.51.100.73";
 const IP_T4 = "203.0.113.7";
 const IP_T4B = "203.0.113.8";
 const IP_T6A = "2001:db8:7:7::1";
@@ -481,7 +486,7 @@ async function xtaskGet(path, token) {
 
 // ---- 시나리오 ----
 
-const S = { nonce: "", flowA: null, csrfA: null, b2: null, c3: null, jarA: new CookieJar(), dlg: { b2A: null, c3A: null, jarC: null } };
+const S = { nonce: "", flowA: null, csrfA: null, b2: null, c3: null, jarA: new CookieJar(), dlg: { b2A: null, c3A: null, jarC: null }, auto: { d4A: null }, jarAuto: null };
 
 // 초대 주소의 토큰(경로에 실려 wrangler 요청 줄에는 찍힌다: handle처럼 path 카나리다)
 const inviteToken = (url) => new URL(url).pathname.split("/").pop();
@@ -621,6 +626,10 @@ const scenarios = [
       isStatus(page, 200, "/admin");
       must(page.policy === "same-origin", "/admin의 Referrer-Policy가 same-origin이 아니다");
       const csrf = pageCsrf(page, "/admin");
+      // 첫 동작: 자동 허가를 끈다(하루 상한 0). 이 뒤의 시나리오(E09 c3 거부·E09b 초대 거부·E10 허가)는 관리자만 허가하던 때의 기대 그대로다.
+      // 새 채널을 자동 허가하는 시나리오는 끝(E20~E22)에서 연다
+      const closed = await browserPost(jar, page, "/admin/auto-allow", { csrf, cap: "0" });
+      isStatus(closed, 303, "자동 허가 끄기(상한 0)");
       const d4 = { csrf, channelId: ID("d4") };
       isStatus(await browserPost(jar, page, "/admin/allow", d4, { policy: "no-referrer" }), 403, "Origin: null");
       isStatus(await browserPost(jar, page, "/admin/allow", d4, { headers: { Origin: null } }), 403, "Origin 없음");
@@ -636,20 +645,19 @@ const scenarios = [
     },
   ],
   [
-    // 허가 빼기 확인 페이지(D54): 상태를 바꾸지 않는 GET. URL에 채널 ID가 실리는 quiet 경로라 Worker 로그는 0줄이다(E17이 확인한다)
+    // 차단 확인 페이지(예전의 허가 빼기, D54): 상태를 바꾸지 않는 GET. URL에 채널 ID가 실리는 quiet 경로라 Worker 로그는 0줄이다(E17이 확인한다)
     "E05b-disallow-confirm",
     async () => {
       const jar = S.jarA;
       const page = await browserGet(jar, `/admin/${ID("b2")}/disallow`);
-      isStatus(page, 200, "허가 빼기 확인 페이지");
+      isStatus(page, 200, "차단 확인 페이지");
       must(page.html.includes('action="/admin/disallow"'), "확인 페이지에 최종 POST 폼이 없다");
       must(page.html.includes(`name="channelId" value="${ID("b2")}"`), "확인 페이지의 채널 ID 숨은 입력이 없다");
       must(!page.html.includes("<script"), "확인 페이지에 <script가 있다");
       pageCsrf(page, "확인 페이지");
-      // 허가에 없는 채널은 오류가 아니라 /admin으로 가는 멱등 303이다
+      // 허가에도 차단에도 없는 채널도 연다(상한에 걸린 낯선 채널을 미리 막을 수 있다). 이미 차단된 채널의 멱등 303은 E21이 본다
       const none = await req("GET", `/admin/${ID("d4")}/disallow`, { jar });
-      isStatus(none, 303, "허가에 없는 채널의 확인 페이지");
-      must(new URL(none.headers.get("location") ?? "", E2E_ORIGIN).pathname === "/admin", "허가에 없는 채널이 /admin으로 보내지 않았다");
+      isStatus(none, 200, "허가에도 차단에도 없는 채널의 확인 페이지");
       // 로그인하지 않으면 처음 화면으로
       const anon = await req("GET", `/admin/${ID("b2")}/disallow`);
       isStatus(anon, 303, "비로그인의 확인 페이지");
@@ -1029,6 +1037,83 @@ const scenarios = [
       must((await meOf(S.dlg.c3A)).delegatedChannels.length === 0, "뺀 뒤에도 c3의 delegatedChannels가 남았다");
       const missing = await jsonPost("/api/editors/remove", { channelId: ID("c3") }, { headers: bearer(S.dlg.b2A) });
       isStatus(missing, 404, "주인이 빼기 다시");
+    },
+  ],
+  [
+    // 자동 허가(허용목록 자동 허가 명세 §6.4): 관리자가 상한을 1로 저장 → 새 채널 d4가 자동 허가(isAdmin false) → 둘째 새 채널 e5는 daily_limit 거부
+    "E20-auto-allow",
+    async () => {
+      // E13이 웹 세션을 로그아웃했으므로 관리자(a1)로 다시 로그인한다
+      fakeServer.fake.state.account = "a1";
+      const jar = new CookieJar();
+      S.jarAuto = jar;
+      const anon = await browserGet(jar, "/");
+      const start = await browserPost(jar, anon, "/auth/web/start", {}, { ip: IP_AUTO0 });
+      isStatus(await req("GET", await authorizeToCallback(start), { jar }), 303, "관리자 웹 콜백");
+      const page = await browserGet(jar, "/admin");
+      isStatus(page, 200, "/admin");
+      const csrf = pageCsrf(page, "/admin");
+      isStatus(await browserPost(jar, page, "/admin/auto-allow", { csrf, cap: "1" }), 303, "상한 1 저장");
+      const bad = await browserPost(jar, page, "/admin/auto-allow", { csrf, cap: "101" });
+      isStatus(bad, 400, "범위 밖 상한");
+      const after = await browserGet(jar, "/admin");
+      must(after.html.includes("오늘 자동 허가 0 / 1"), "/admin에 '오늘 자동 허가 0 / 1'이 없다");
+      const d = await appLogin("d4", IP_AUTO1);
+      must(d.redeem.status === "ok" && d.redeem.isAdmin === false, "새 채널 d4가 자동 허가돼 로그인하지 못했다");
+      S.auto = { d4A: d.redeem.accessToken };
+      const shown = await browserGet(jar, "/admin");
+      must(shown.html.includes("오늘 자동 허가 1 / 1"), "/admin에 '오늘 자동 허가 1 / 1'이 없다");
+      must(shown.html.includes(ID("d4")), "자동 허가된 d4가 /admin 허가 표에 없다");
+      const e = await appLogin("e5", IP_AUTO2);
+      must(e.redeem.status === "denied" && e.redeem.reason === "daily_limit", "둘째 새 채널 e5가 daily_limit로 거부되지 않았다");
+      must((await browserGet(jar, "/admin")).html.includes(ID("e5")), "거부된 e5가 /admin 거부 기록에 없다");
+    },
+  ],
+  [
+    // 차단: 확인 페이지 → POST → 그 채널의 access는 not_allowed → 다시 로그인하면 blocked, 웹 완료 페이지에 차단 문구
+    "E21-block",
+    async () => {
+      const jar = S.jarAuto;
+      const confirm = await browserGet(jar, `/admin/${ID("d4")}/disallow`);
+      isStatus(confirm, 200, "허가된 d4의 차단 확인 페이지");
+      const csrf = pageCsrf(confirm, "차단 확인 페이지");
+      isStatus(await browserPost(jar, confirm, "/admin/disallow", { csrf, channelId: ID("d4") }), 303, "차단");
+      const me = await req("GET", "/api/me", { headers: bearer(S.auto.d4A) });
+      isStatus(me, 403, "차단된 d4의 access");
+      must(json(me).code === "not_allowed", "차단된 access의 code가 not_allowed가 아니다");
+      const again = await req("GET", `/admin/${ID("d4")}/disallow`, { jar });
+      isStatus(again, 303, "이미 차단된 채널의 확인 페이지");
+      const d = await appLogin("d4", IP_AUTO3);
+      must(d.redeem.status === "denied" && d.redeem.reason === "blocked", "차단된 d4가 blocked로 거부되지 않았다");
+      // 웹 흐름의 완료 페이지
+      fakeServer.fake.state.account = "d4";
+      const wjar = new CookieJar();
+      const anon = await browserGet(wjar, "/");
+      const start = await browserPost(wjar, anon, "/auth/web/start", {}, { ip: IP_AUTO3 });
+      const cb = await authorizeToCallback(start);
+      const callback = await req("GET", cb, { jar: wjar });
+      isStatus(callback, 303, "차단된 d4의 웹 콜백");
+      const done = await browserGet(wjar, "/auth/done?r=denied");
+      isStatus(done, 200, "차단된 d4의 완료 페이지");
+      must(done.html.includes("사용이 막힌 채널이에요"), "완료 페이지에 차단 문구가 없다");
+      const adm = await browserGet(jar, "/admin");
+      must(adm.html.includes('id="tbl-blocked"') && adm.html.includes(ID("d4")), "/admin 차단한 채널 표에 d4가 없다");
+    },
+  ],
+  [
+    // 차단 풀기: 차단한 채널 표의 [허가] → d4 로그인 ok. 관리자가 넣은 허가라 오늘 센 수(1)는 그대로다. 마지막에 상한 0으로 되돌린다
+    "E22-unblock",
+    async () => {
+      const jar = S.jarAuto;
+      const page = await browserGet(jar, "/admin");
+      const csrf = pageCsrf(page, "/admin");
+      isStatus(await browserPost(jar, page, "/admin/allow", { csrf, channelId: ID("d4") }), 303, "차단한 채널 [허가]");
+      const d = await appLogin("d4", IP_AUTO1);
+      must(d.redeem.status === "ok", "차단을 푼 d4가 로그인하지 못했다");
+      const after = await browserGet(jar, "/admin");
+      must(after.html.includes("오늘 자동 허가 1 / 1"), "차단을 풀었는데 오늘 센 수가 바뀌었다");
+      must(!after.html.includes('id="tbl-blocked"'), "차단을 풀었는데 차단한 채널 표가 남았다");
+      isStatus(await browserPost(jar, after, "/admin/auto-allow", { csrf: pageCsrf(after, "/admin"), cap: "0" }), 303, "상한 0으로 되돌리기");
     },
   ],
   [

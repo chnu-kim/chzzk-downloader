@@ -69,6 +69,12 @@ function doneParts(r: DoneR, view: DoneView | null, entry: EntryContext): { read
         owner === null
           ? html``
           : html`<p>${COPY.doneDenied.invite(owner)}</p><p>${COPY.doneDenied.cancelHint}</p><div class="actions"><form method="post" action="${CLAIM_CANCEL_PATH}"><button type="submit" class="btn">${COPY.cancelInvite}</button></form></div>`;
+      // 거부 이유가 있으면 이유별 제목·본문이고 다음에 할 일은 본문에 들어 있다. ?? null이 옛 DO(필드 없음)의 응답을 받는다(allowlist-open.md §4.3)
+      const reason = view?.denyReason ?? null;
+      const d = reason === "daily_limit" ? COPY.doneDenied.dailyLimit : reason === "blocked" ? COPY.doneDenied.blocked : null;
+      if (d !== null) {
+        return { title: d.title, head: statusTitle("circle-x", "danger", d.title), body: html`${who}${inviteLine}<p>${d.body}</p>` };
+      }
       return {
         title: COPY.doneDenied.title,
         head: statusTitle("circle-x", "danger", COPY.doneDenied.title),

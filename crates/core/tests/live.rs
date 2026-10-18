@@ -59,6 +59,7 @@ async fn download(
         }
     };
     let req = DownloadRequest {
+        throttle: Default::default(),
         content,
         quality_id: lowest(&r),
         expected_kind: expect,

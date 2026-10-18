@@ -54,6 +54,8 @@ const baseSettings: SettingsDto = {
   saveChat: false,
   chatSubtitle: 'ass',
   fileNameTemplate: null,
+  totalRateLimit: null,
+  jobRateLimit: null,
 };
 
 let send: (e: JobEvent) => void = () => {};

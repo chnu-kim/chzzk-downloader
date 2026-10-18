@@ -12,6 +12,8 @@ export type LoginFailCode = "token" | "user" | "timeout" | "user_format";
  */
 export type LoginLogHint = Pick<LogFields, "level" | "flowKind" | "reason" | "stage" | "status" | "timedOut" | "chzzkCode" | "errorName">;
 export type RevokeWhy = "logout" | "admin" | "disallowed" | "reuse" | "user";
+/** 로그인 거부 이유(docs/design/features/allowlist-open.md §3.1). 이유가 없는 거부(부트스트랩·상한 0·옛 DO)는 필드가 없거나 null이다 */
+export type DenyReason = "daily_limit" | "blocked";
 export type AuditAction = "allow" | "disallow" | "revoke_session" | "reuse_detected" | "refresh_recovered" | "dismiss";
 /** 새로 만든 토큰: token은 호출자에게 돌려주고 hash만 저장한다 */
 export type Minted = { readonly token: string; readonly hash: string };
@@ -70,9 +72,15 @@ export type FinishResult =
   /** 흐름이 없거나 exchanging이 아니거나 만료: Worker는 r=failed */
   | { readonly type: "gone" };
 /** store finish(동기)의 결과: 앱 종결은 verifier를 담고 AuthStore가 트랜잭션 뒤 state로 바꾼다(verifier는 RPC 밖으로 나가지 않는다) */
-export type FinishSettled =
+export type FinishSettled = (
   | Exclude<FinishResult, { type: "loopback" }>
-  | { readonly type: "loopback"; readonly result: LoopbackResult; readonly port: number; readonly grant: string; readonly verifier: string };
+  | { readonly type: "loopback"; readonly result: LoopbackResult; readonly port: number; readonly grant: string; readonly verifier: string }
+) & {
+  /** 로그용(AuthStore가 읽고 떼어 낸다, FinishResult에는 없다): 거부 이유(daily_limit·blocked) 또는 자동 허가(auto_allowed), allowlist-open.md §3.8 */
+  readonly logReason?: DenyReason | "auto_allowed";
+  /** 상한 meta가 틀려 0으로 막았다(AuthStore가 경고 로그를 남긴다, 같은 문서 §3.4) */
+  readonly capInvalid?: true;
+};
 export type DoneView = {
   readonly kind: FlowKind;
   readonly status: "ok" | "denied" | "cancelled" | "failed";
@@ -80,11 +88,13 @@ export type DoneView = {
   readonly channelId: string | null;
   /** 거부된 웹 흐름이 유효한 초대를 청구했을 때만 그 주인 이름, 그 밖 null(구현 중 변경 106) */
   readonly inviteOwnerName: string | null;
+  /** 거부 이유(denied일 때만, 없으면 null, allowlist-open.md §4.3) */
+  readonly denyReason: DenyReason | null;
 };
 export type RedeemResult =
   | { readonly status: "not_found" }
   | { readonly status: "ok"; readonly bundle: TokenBundle }
-  | { readonly status: "denied"; readonly channelName: string }
+  | { readonly status: "denied"; readonly channelName: string; readonly reason?: DenyReason }
   | { readonly status: "cancelled" }
   | { readonly status: "failed"; readonly code: FailCode };
 
@@ -127,6 +137,7 @@ export type RotateResult =
   /** 채널별 회전 상한(구현 중 변경 24). Worker는 429 + Retry-After. 아무것도 쓰지 않았다 */
   | { readonly ok: false; readonly code: "rate_limited"; readonly retryAfterSec: number };
 
+export type SetAutoAllowCapResult = { readonly ok: true } | { readonly ok: false; readonly code: "bad_request" };
 export type AllowResult = { readonly ok: true } | { readonly ok: false; readonly code: "bad_channel_id" };
 export type DisallowResult = { readonly ok: true } | { readonly ok: false; readonly code: "bad_channel_id" | "is_admin" | "not_found" };
 export type MySessionView = {
@@ -154,6 +165,8 @@ export type AdminView = {
     readonly attempts: number;
     /** 유효한 청구 초대의 주인 이름(없으면 null, 구현 중 변경 106). AuthStore가 채운다 */
     readonly invitedBy: string | null;
+    /** 차단 행이 있는 채널(꼬리표, allowlist-open.md §3.7) */
+    readonly blocked: boolean;
   }[];
   readonly sessions: readonly {
     readonly id: string;
@@ -166,6 +179,13 @@ export type AdminView = {
     readonly recovered: number;
   }[];
   readonly audit: readonly { readonly at: number; readonly actor: string; readonly action: AuditAction; readonly target: string | null }[];
+  /** 자동 허가 설정과 오늘 센 수(allowlist-open.md §3.4). 옛 DO의 응답에는 없다 */
+  readonly autoAllow: { readonly cap: number; readonly today: number; readonly capBy: string | null; readonly capAt: number | null };
+  /** 차단한 채널(최근 BLOCKED_LIST_MAX행, §3.3) */
+  readonly blocked: readonly { readonly channelId: string; readonly channelName: string | null; readonly blockedBy: string; readonly blockedAt: number }[];
+  /** 허가·차단 표의 전체 행 수(표에는 최근 ADMIN_LIST_MAX행만 싣는다, §4.7) */
+  readonly allowlistTotal: number;
+  readonly blockedTotal: number;
 };
 
 // ---- 편집자 위임(docs/design/features/delegation.md §8, worker.md 구현 중 변경 105) ----

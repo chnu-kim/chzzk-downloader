@@ -365,6 +365,7 @@ async fn run(args: Args) -> Result<(), String> {
         }
     };
     let req = DownloadRequest {
+        throttle: Default::default(),
         content: r.content.clone(),
         quality_id: quality.id.clone(),
         expected_kind: r.kind(),

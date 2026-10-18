@@ -171,6 +171,8 @@ impl App {
             runtime: runtime.clone(),
             max_parallel: s.max_parallel_downloads,
             auto_resume: s.auto_resume_interrupted && auth.is_none(),
+            total_rate_limit: s.total_rate_limit,
+            job_rate_limit: s.job_rate_limit,
         })?;
         let gate = match &auth {
             Some(a) => {

@@ -1,4 +1,4 @@
-//! 파일 이름 규칙(템플릿) 미리보기와 오류 문구(docs/design/features/filename-template.md §4.3, app.md 91).
+//! 파일 이름 규칙(템플릿) 미리보기와 오류 문구(docs/design/features/filename-template.md §4.3, app.md 95).
 //!
 //! 설정 화면은 입력이 바뀔 때마다 `preview_file_name_template` command를 부른다. 검증과 미리보기를 한 곳(코어
 //! `naming`)이 해서 정리 규칙이 두 벌이 되지 않는다. 예시 값은 모두 가짜이고 날짜는 고정이다(골든이 날마다

@@ -179,6 +179,8 @@ pub fn open_store(
         runtime: tokio::runtime::Handle::current(),
         max_parallel: parallel,
         auto_resume,
+        total_rate_limit: None,
+        job_rate_limit: None,
     })
     .unwrap();
     mgr.flush();

@@ -2,10 +2,11 @@
 // 경로 값 검사는 늘 그 뒤다(세션이 없으면 매개변수와 상관없이 303 /). 신원은 로그인 채널이다.
 // /admin/sessions/:id/revoke·/admin/denied/:channelId/*·/admin/:channelId/disallow는 quiet 경로다(routes.ts): ctx.log가 아무것도 하지 않고 성공 이벤트는 DO가 남긴다.
 // 이미 처리된 대상(없는 세션·지운 거부 기록·허가에 없는 채널)은 오류가 아니라 303 /admin + flash alreadyDone이다(멱등, web.md §6.3). 404는 형식이 틀린 경로 값에만 쓴다.
+import { AUTO_ALLOW_CAP_MAX, CAP_FORMAT } from "../core/auto-allow";
 import { isId } from "../core/token";
 import type { Ctx } from "../routes";
 import { CHANNEL_ID } from "../store/allowlist";
-import { ALLOW_CHANNEL_FIELD, renderAdmin, renderDisallowConfirm } from "./admin-view";
+import { ALLOW_CHANNEL_FIELD, AUTO_CAP_FIELD, renderAdmin, renderDisallowConfirm } from "./admin-view";
 import { COPY } from "./copy";
 import { flashCookie, readFlash } from "./flash";
 import { noticePage } from "./pages";
@@ -62,9 +63,10 @@ export async function adminPage(req: Request, ctx: Ctx): Promise<Response> {
 }
 
 /**
- * GET /admin/:channelId/disallow: 허가 빼기 확인 페이지(D54, 계약 §2.5). 상태·감사 기록을 바꾸지 않는다(GET이라 Origin 검사가 없다, 크롤러가 불러도 불변).
- * 부트스트랩 403 → 세션 없음 303 / → 관리자 아님 403(adminPage와 같은 순서) → 경로 값 형식 404 → 관리자 채널 409 → 허가에 없음 303 /admin + alreadyDone → 200.
- * URL에 채널 id가 실리는 quiet 경로다
+ * GET /admin/:channelId/disallow: 차단 확인 페이지(예전의 허가 빼기, D54, 계약 §2.5). 상태·감사 기록을 바꾸지 않는다(GET이라 Origin 검사가 없다, 크롤러가 불러도 불변).
+ * 부트스트랩 403 → 세션 없음 303 / → 관리자 아님 403(adminPage와 같은 순서) → 경로 값 형식 404 → 관리자 채널 409 →
+ * 허가 행이 없고 이미 차단됨 303 /admin + alreadyDone → 200(허가에 없어도 차단 행이 없으면 연다: 상한에 걸린 낯선 채널을 미리 막는다, allowlist-open.md §3.7).
+ * 채널은 관리 화면의 200행 제한과 상관없이 그 채널만 읽는다(DO 1회). URL에 채널 id가 실리는 quiet 경로다
  */
 export async function adminDisallowConfirm(req: Request, ctx: Ctx): Promise<Response> {
   if (ctx.config.adminChannelIds.length === 0) {
@@ -80,9 +82,9 @@ export async function adminDisallowConfirm(req: Request, ctx: Ctx): Promise<Resp
   const id = ctx.params.channelId ?? "";
   if (!CHANNEL_ID.test(id)) return notFound(ctx);
   if (ctx.config.adminChannelIds.includes(id)) return isAdminRow(ctx, memberNav(r.s));
-  const row = (await ctx.store.adminView(ctx.now)).allowlist.find((a) => a.channelId === id);
-  if (row === undefined) return alreadyDone(ctx);
-  return renderDisallowConfirm(ctx.config, { channelId: id, channelName: row.channelName, activeSessions: row.activeSessions, csrf: r.s.csrf, nav: memberNav(r.s) });
+  const t = await ctx.store.disallowTarget(id, ctx.now);
+  if (t === null || (!t.allowed && t.blocked)) return alreadyDone(ctx);
+  return renderDisallowConfirm(ctx.config, { channelId: id, channelName: t.channelName, activeSessions: t.activeSessions, csrf: r.s.csrf, nav: memberNav(r.s) });
 }
 
 /** POST /admin/allow. 채널 ID 형식이 틀리면 400 + 관리 화면 다시 그리기(오류 요약·입력값 채움, web.md §6.3) */
@@ -130,9 +132,33 @@ export async function adminDisallow(req: Request, ctx: Ctx): Promise<Response> {
     return seeOther("/admin");
   }
   if (r.code === "is_admin") return isAdminRow(ctx, memberNav(g.s));
-  // 허용목록에 없는 채널(이미 뺐다): 아무것도 쓰지 않았다(감사 없음). 오류가 아니다
+  // 허가 행이 없고 이미 차단된 채널: 아무것도 쓰지 않았다(감사 없음). 오류가 아니다
   if (r.code === "not_found") return alreadyDone(ctx);
   return badChannel(ctx);
+}
+
+/**
+ * POST /admin/auto-allow: 하루 상한 저장(allowlist-open.md §4.4). 부트스트랩 403 → 세션 없음 303 → 비관리자 403 → guardWebPost(Origin·csrf) →
+ * cap 형식·범위 400(오류 요약·입력값 채움) → RPC → 303 /admin + flash autoAllowSaved
+ */
+export async function adminAutoAllow(req: Request, ctx: Ctx): Promise<Response> {
+  const g = await guardWebPost(req, ctx, { admin: true });
+  if (!g.ok) return g.response;
+  if (g.form.getAll("cap").length > 1) return badBody(ctx);
+  const capText = oneField(g.form, "cap");
+  if (capText === null || !CAP_FORMAT.test(capText) || Number(capText) > AUTO_ALLOW_CAP_MAX) {
+    ctx.log("admin.rejected", { route: ctx.route, reason: "bad_cap" });
+    const view = await ctx.store.adminView(ctx.now, ctx.config.adminChannelIds);
+    return renderAdmin(
+      ctx.config,
+      { view, admins: ctx.config.adminChannelIds, csrf: g.s.csrf, nav: memberNav(g.s) },
+      { status: 400, errors: [{ fieldId: AUTO_CAP_FIELD, message: COPY.badCap(AUTO_ALLOW_CAP_MAX) }], capValue: (capText ?? "").slice(0, 8) },
+    );
+  }
+  const r = await ctx.store.setAutoAllowCap(Number(capText), g.s.channelId, ctx.now);
+  if (!r.ok) return badBody(ctx);
+  ctx.log("admin.auto_allow_cap", { route: ctx.route });
+  return seeOther("/admin", [flashCookie(ctx.cookies, "autoAllowSaved")]);
 }
 
 /** POST /admin/sessions/:id/revoke */

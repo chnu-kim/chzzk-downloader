@@ -128,9 +128,9 @@
 </script>
 
 <div class="template">
-  <SettingsRow label={t('settings.fileNameTemplate')} help={t('settings.fileNameTemplate.help')}>
+  <SettingsRow class="row-stack" label={t('settings.fileNameTemplate')} help={t('settings.fileNameTemplate.help')}>
     {#snippet control({ labelId, helpId })}
-      <span class="field">
+      <span class="input">
         <TextField
           labelledby={labelId}
           bind:value={draft}
@@ -173,9 +173,10 @@
     border-top: 1px solid var(--separator);
     padding-bottom: var(--space-6);
   }
-  .field {
-    flex: 1 1 calc(16 * var(--text-body));
-    min-width: calc(10 * var(--text-body));
+  /* 전역 .field(ui.css)는 TextField의 테두리 클래스다. 감싸는 칸에 같은 이름을 쓰면 테두리가 겹으로 그려진다 */
+  .input {
+    flex: 1 1 100%;
+    min-width: 0;
   }
   .below {
     padding: 0 var(--space-12) var(--space-6);

@@ -37,7 +37,7 @@ use crate::fsutil::map_io_error;
 /// 오류 메시지의 대상 이름.
 const WHAT: &str = "fragmented mp4";
 /// 본문까지 읽는 상자(`moov`·`moof`)의 크기 상한. 이보다 크면 모르는 구조로 본다.
-const MAX_META_BOX: u64 = 64 << 20;
+pub(crate) const MAX_META_BOX: u64 = 64 << 20;
 /// `trun`·`tfhd` 플래그.
 /// 샘플별 필드가 없는 trun에서 기본 크기가 0일 때 받는 샘플 수 상한
 const MAX_EMPTY_SAMPLES: u32 = 1 << 16;
@@ -117,11 +117,17 @@ impl DefragError {
 /// `DiskFull`, 파일 크기 한도는 `FileTooLarge`)이고, 2단계 실패는 붙인 부분을 잘라 원래 길이로 되돌린다.
 /// 파일을 바꿨는지 구분이 필요하면 `defragment_in`을 쓴다.
 pub fn defragment(file: &mut File) -> Result<DefragReport, Error> {
-    defragment_in(file).map_err(DefragError::into_error)
+    defragment_in(file, None).map_err(DefragError::into_error)
 }
 
 /// `defragment`의 본체. 실패를 `DefragError`(파일이 원래 그대로인가)로 나눈다.
-pub(crate) fn defragment_in<F: DefragFile>(file: &mut F) -> Result<DefragReport, DefragError> {
+///
+/// `udta`는 새 `moov`의 마지막 자식으로 붙는 `udta` 상자 전체(헤더 포함, mp4 메타데이터, mp4-metadata.md §6.1)다.
+/// `None`이면 지금까지와 바이트가 같다. `moov`는 어느 쪽이든 한 번만 덧붙인다.
+pub(crate) fn defragment_in<F: DefragFile>(
+    file: &mut F,
+    udta: Option<&[u8]>,
+) -> Result<DefragReport, DefragError> {
     let io_err = |op: &'static str| move |e: io::Error| map_io_error(op, Path::new(WHAT), e);
     // 길이·구조를 읽다 입출력 오류가 나면 파일이 원래 조각 구조인지 확인하지 못한 것이다(앞선 시도가 init `moov`를 이미
     // `free`로 바꿔 둔 파일일 수 있다). 조각 구조로 마무리하지 않게 `Modified`로 알린다(core.md 61, Codex PR #113 2회차 ②).
@@ -131,7 +137,7 @@ pub(crate) fn defragment_in<F: DefragFile>(file: &mut F) -> Result<DefragReport,
         .map_err(|e| DefragError::Modified(io_err("stat")(e)))?;
     let outcome = {
         let mut src = FileSrc { f: file, len };
-        plan(&mut src).map_err(|f| match f {
+        plan(&mut src, udta).map_err(|f| match f {
             Fail::Io(e) if e.kind() != io::ErrorKind::UnexpectedEof => {
                 DefragError::Modified(map_io_error("read", Path::new(WHAT), e))
             }
@@ -180,7 +186,16 @@ pub(crate) fn defragment_in<F: DefragFile>(file: &mut F) -> Result<DefragReport,
 /// 테스트용: 바이트 위에서 1~3단계를 그대로 한다(`defragment`와 같은 결과).
 #[cfg(test)]
 pub(crate) fn defragment_bytes(b: &mut Vec<u8>) -> Result<DefragReport, Error> {
-    let outcome = plan(&mut SliceSrc(b)).map_err(Fail::into_error)?;
+    defragment_bytes_with(b, None)
+}
+
+/// 테스트용: `defragment_bytes`에 `udta`를 준 판.
+#[cfg(test)]
+pub(crate) fn defragment_bytes_with(
+    b: &mut Vec<u8>,
+    udta: Option<&[u8]>,
+) -> Result<DefragReport, Error> {
+    let outcome = plan(&mut SliceSrc(b), udta).map_err(Fail::into_error)?;
     let p = match outcome {
         Outcome::Flat => return Ok(DefragReport::AlreadyFlat),
         Outcome::NotFragmented => return Ok(DefragReport::NotFragmented),
@@ -205,7 +220,16 @@ pub(crate) type MoovAndPatches = (Vec<u8>, Vec<u64>);
 /// 테스트용 순수 함수: 바이트 → (새 `moov` 바이트, `free`로 바꿀 종류 오프셋 목록). 바꿀 것이 없으면 `None`.
 #[cfg(test)]
 pub(crate) fn plan_bytes(b: &[u8]) -> Result<Option<MoovAndPatches>, Error> {
-    match plan(&mut SliceSrc(b)).map_err(Fail::into_error)? {
+    plan_bytes_with(b, None)
+}
+
+/// 테스트용: `plan_bytes`에 `udta`를 준 판.
+#[cfg(test)]
+pub(crate) fn plan_bytes_with(
+    b: &[u8],
+    udta: Option<&[u8]>,
+) -> Result<Option<MoovAndPatches>, Error> {
+    match plan(&mut SliceSrc(b), udta).map_err(Fail::into_error)? {
         Outcome::Plan(p) => Ok(Some((p.moov, p.patches))),
         _ => Ok(None),
     }
@@ -216,7 +240,7 @@ pub(crate) fn plan_bytes(b: &[u8]) -> Result<Option<MoovAndPatches>, Error> {
 
 /// 변환 계획 단계의 실패.
 #[derive(Debug)]
-enum Fail {
+pub(crate) enum Fail {
     Io(io::Error),
     Bad(String),
 }
@@ -228,7 +252,7 @@ impl From<io::Error> for Fail {
 }
 
 impl Fail {
-    fn into_error(self) -> Error {
+    pub(crate) fn into_error(self) -> Error {
         match self {
             // 읽다가 파일 끝을 만났다: 구조 문제로 본다.
             Fail::Io(e) if e.kind() == io::ErrorKind::UnexpectedEof => Error::Parse {
@@ -241,19 +265,19 @@ impl Fail {
     }
 }
 
-fn bad(s: impl Into<String>) -> Fail {
+pub(crate) fn bad(s: impl Into<String>) -> Fail {
     Fail::Bad(s.into())
 }
 
 /// 위치를 주고 읽는 원본(파일 또는 바이트).
-trait Source {
+pub(crate) trait Source {
     fn len(&self) -> u64;
     fn read_at(&mut self, off: u64, buf: &mut [u8]) -> io::Result<()>;
 }
 
-struct FileSrc<'a, F> {
-    f: &'a mut F,
-    len: u64,
+pub(crate) struct FileSrc<'a, F> {
+    pub(crate) f: &'a mut F,
+    pub(crate) len: u64,
 }
 
 impl<F: Read + Seek> Source for FileSrc<'_, F> {
@@ -267,7 +291,7 @@ impl<F: Read + Seek> Source for FileSrc<'_, F> {
 }
 
 #[cfg(test)]
-struct SliceSrc<'a>(&'a [u8]);
+pub(crate) struct SliceSrc<'a>(pub(crate) &'a [u8]);
 
 #[cfg(test)]
 impl Source for SliceSrc<'_> {
@@ -284,7 +308,7 @@ impl Source for SliceSrc<'_> {
     }
 }
 
-fn read_vec(src: &mut dyn Source, off: u64, len: u64) -> Result<Vec<u8>, Fail> {
+pub(crate) fn read_vec(src: &mut dyn Source, off: u64, len: u64) -> Result<Vec<u8>, Fail> {
     if len > MAX_META_BOX {
         return Err(bad(format!("메타 상자가 너무 크다({len} B)")));
     }
@@ -293,24 +317,24 @@ fn read_vec(src: &mut dyn Source, off: u64, len: u64) -> Result<Vec<u8>, Fail> {
     Ok(v)
 }
 
-fn be32(b: &[u8]) -> u32 {
+pub(crate) fn be32(b: &[u8]) -> u32 {
     u32::from_be_bytes([b[0], b[1], b[2], b[3]])
 }
-fn be64(b: &[u8]) -> u64 {
+pub(crate) fn be64(b: &[u8]) -> u64 {
     u64::from_be_bytes(b[..8].try_into().unwrap_or([0; 8]))
 }
 
 /// 최상위 상자 하나(헤더만).
 #[derive(Clone, Copy, Debug)]
-struct Top {
-    off: u64,
-    hdr: u64,
-    size: u64,
-    kind: [u8; 4],
+pub(crate) struct Top {
+    pub(crate) off: u64,
+    pub(crate) hdr: u64,
+    pub(crate) size: u64,
+    pub(crate) kind: [u8; 4],
 }
 
 /// 최상위 상자를 헤더만 읽어 훑는다. 마지막 상자가 파일 끝을 넘으면(잘린 파일) 실패다.
-fn scan(src: &mut dyn Source) -> Result<Vec<Top>, Fail> {
+pub(crate) fn scan(src: &mut dyn Source) -> Result<Vec<Top>, Fail> {
     let len = src.len();
     let mut out = Vec::new();
     let mut off = 0u64;
@@ -358,15 +382,15 @@ fn scan(src: &mut dyn Source) -> Result<Vec<Top>, Fail> {
 
 /// 메모리 안의 자식 상자.
 #[derive(Clone, Copy)]
-struct Child<'a> {
-    kind: [u8; 4],
+pub(crate) struct Child<'a> {
+    pub(crate) kind: [u8; 4],
     /// 헤더 포함
-    full: &'a [u8],
-    body: &'a [u8],
+    pub(crate) full: &'a [u8],
+    pub(crate) body: &'a [u8],
 }
 
 /// `b`를 상자 목록으로 나눈다. 크기가 맞지 않으면 실패다.
-fn children(b: &[u8]) -> Result<Vec<Child<'_>>, Fail> {
+pub(crate) fn children(b: &[u8]) -> Result<Vec<Child<'_>>, Fail> {
     let mut out = Vec::new();
     let mut i = 0usize;
     while i < b.len() {
@@ -405,8 +429,20 @@ fn children(b: &[u8]) -> Result<Vec<Child<'_>>, Fail> {
     Ok(out)
 }
 
-fn find<'a>(cs: &[Child<'a>], kind: &[u8; 4]) -> Option<Child<'a>> {
+pub(crate) fn find<'a>(cs: &[Child<'a>], kind: &[u8; 4]) -> Option<Child<'a>> {
     cs.iter().find(|c| &c.kind == kind).copied()
+}
+
+/// 최상위 `free`/`skip`의 본문 첫 자식 상자 종류. 앞선 변환이 `free`로 바꿔 둔 `moov`·`moof`를 알아보는 데 쓴다
+/// (defrag 3단계, mp4 메타데이터 끝에 붙이기 4단계). 본문이 8바이트 미만이면 `None`이다.
+pub(crate) fn free_first_child(src: &mut dyn Source, t: &Top) -> Result<Option<[u8; 4]>, Fail> {
+    let body_len = t.size - t.hdr;
+    if body_len < 8 {
+        return Ok(None);
+    }
+    let mut h = [0u8; 8];
+    src.read_at(t.off + t.hdr, &mut h)?;
+    Ok(Some([h[4], h[5], h[6], h[7]]))
 }
 
 fn need<'a>(cs: &[Child<'a>], kind: &[u8; 4], within: &str) -> Result<Child<'a>, Fail> {
@@ -837,7 +873,7 @@ enum Outcome {
     Plan(Plan),
 }
 
-fn plan(src: &mut dyn Source) -> Result<Outcome, Fail> {
+fn plan(src: &mut dyn Source, udta: Option<&[u8]>) -> Result<Outcome, Fail> {
     let tops = scan(src)?;
     let mut init_body: Option<Vec<u8>> = None;
     let mut patches = Vec::new();
@@ -867,23 +903,19 @@ fn plan(src: &mut dyn Source) -> Result<Outcome, Fail> {
             }
             b"free" | b"skip" => {
                 // 앞선 변환이 3단계 도중 끊겨 이미 free로 바뀐 moof·init moov인지 첫 자식으로 알아본다.
-                if body_len >= 8 {
-                    let mut h = [0u8; 8];
-                    src.read_at(body_off, &mut h)?;
-                    match &h[4..8] {
-                        b"mfhd" => {
-                            moofs.push(*t);
+                match free_first_child(src, t)?.as_ref() {
+                    Some(b"mfhd") => {
+                        moofs.push(*t);
+                        resumed = true;
+                    }
+                    Some(b"mvhd") if init_body.is_none() => {
+                        let body = read_vec(src, body_off, body_len)?;
+                        if find(&children(&body)?, b"mvex").is_some() {
+                            init_body = Some(body);
                             resumed = true;
                         }
-                        b"mvhd" if init_body.is_none() => {
-                            let body = read_vec(src, body_off, body_len)?;
-                            if find(&children(&body)?, b"mvex").is_some() {
-                                init_body = Some(body);
-                                resumed = true;
-                            }
-                        }
-                        _ => {}
                     }
+                    _ => {}
                 }
             }
             // styp·emsg·sidx·mfra와 모르는 상자: 무시되게 free로 바꾼다.
@@ -899,7 +931,7 @@ fn plan(src: &mut dyn Source) -> Result<Outcome, Fail> {
         let body = read_vec(src, m.off + m.hdr, m.size - m.hdr)?;
         parse_moof(m.off, &body, &init, &mut tables, &mdats)?;
     }
-    let moov = build_moov(&init, &tables)?;
+    let moov = build_moov(&init, &tables, udta)?;
     patches.sort_unstable();
     patches.dedup();
     Ok(Outcome::Plan(Plan {
@@ -915,7 +947,7 @@ fn plan(src: &mut dyn Source) -> Result<Outcome, Fail> {
 // ---------------------------------------------------------------------------------------------
 // 쓰기
 
-fn put_box(
+pub(crate) fn put_box(
     out: &mut Vec<u8>,
     kind: &[u8; 4],
     f: impl FnOnce(&mut Vec<u8>) -> Result<(), Fail>,
@@ -988,7 +1020,7 @@ fn to_u64(v: i128) -> Result<u64, Fail> {
     u64::try_from(v).map_err(|_| bad("시간 값이 범위를 넘는다"))
 }
 
-fn build_moov(init: &Init, tables: &[Tables]) -> Result<Vec<u8>, Fail> {
+fn build_moov(init: &Init, tables: &[Tables], udta: Option<&[u8]>) -> Result<Vec<u8>, Fail> {
     let used: Vec<(&InitTrack, &Tables)> = init
         .tracks
         .iter()
@@ -1059,6 +1091,10 @@ fn build_moov(init: &Init, tables: &[Tables]) -> Result<Vec<u8>, Fail> {
                     })
                 })
             })?;
+        }
+        // 메타데이터는 마지막 `trak` 뒤에 붙인다(ffmpeg의 mp4 muxer와 같은 자리)
+        if let Some(udta) = udta {
+            o.extend_from_slice(udta);
         }
         Ok(())
     })?;

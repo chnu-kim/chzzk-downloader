@@ -1109,7 +1109,7 @@ impl DefragFile for FaultyFile {
 #[test]
 fn append_failure_restored_is_unchanged() {
     let mut f = FaultyFile::new(Fault::Append);
-    let r = defragment_in(&mut f);
+    let r = defragment_in(&mut f, None);
     assert!(matches!(r, Err(DefragError::Unchanged(_))), "{r:?}");
     assert_eq!(f.c.get_ref().as_slice(), FIXTURE);
 }
@@ -1118,7 +1118,7 @@ fn append_failure_restored_is_unchanged() {
 #[test]
 fn append_failure_not_restored_is_modified() {
     let mut f = FaultyFile::new(Fault::AppendAndTruncate);
-    let r = defragment_in(&mut f);
+    let r = defragment_in(&mut f, None);
     assert!(matches!(r, Err(DefragError::Modified(_))), "{r:?}");
 }
 
@@ -1127,7 +1127,7 @@ fn append_failure_not_restored_is_modified() {
 fn patch_failure_is_modified_and_reconverts_after_truncate() {
     let (clean, _) = convert(FIXTURE);
     let mut f = FaultyFile::new(Fault::Patch { after: 1 });
-    let r = defragment_in(&mut f);
+    let r = defragment_in(&mut f, None);
     assert!(matches!(r, Err(DefragError::Modified(_))), "{r:?}");
     let mut b = f.c.into_inner();
     assert!(b.len() > FIXTURE.len(), "붙인 moov가 남았다");
@@ -1151,7 +1151,7 @@ fn faulty_on(bytes: Vec<u8>, fault: Fault) -> FaultyFile {
 fn append_failure_after_earlier_patch_is_not_unchanged() {
     let (clean, _) = convert(FIXTURE);
     let mut first = FaultyFile::new(Fault::Patch { after: 1 });
-    let r = defragment_in(&mut first);
+    let r = defragment_in(&mut first, None);
     assert!(matches!(r, Err(DefragError::Modified(_))), "{r:?}");
     let mut b = first.c.into_inner();
     b.truncate(FIXTURE.len());
@@ -1163,7 +1163,7 @@ fn append_failure_after_earlier_patch_is_not_unchanged() {
     );
 
     let mut second = faulty_on(b, Fault::Append);
-    let r = defragment_in(&mut second);
+    let r = defragment_in(&mut second, None);
     assert!(matches!(r, Err(DefragError::Modified(_))), "{r:?}");
     // 그래도 다음 시도는 같은 결과로 변환한다
     let mut b = second.c.into_inner();
@@ -1177,13 +1177,13 @@ fn append_failure_after_earlier_patch_is_not_unchanged() {
 #[test]
 fn append_failure_after_patchless_attempt_is_unchanged() {
     let mut first = FaultyFile::new(Fault::Patch { after: 0 });
-    let r = defragment_in(&mut first);
+    let r = defragment_in(&mut first, None);
     assert!(matches!(r, Err(DefragError::Modified(_))), "{r:?}");
     let mut b = first.c.into_inner();
     b.truncate(FIXTURE.len());
     assert_eq!(b, FIXTURE);
     let mut second = faulty_on(b, Fault::Append);
-    let r = defragment_in(&mut second);
+    let r = defragment_in(&mut second, None);
     assert!(matches!(r, Err(DefragError::Unchanged(_))), "{r:?}");
 }
 
@@ -1194,7 +1194,7 @@ fn append_failure_after_patchless_attempt_is_unchanged() {
 fn plan_read_error_after_earlier_patch_is_not_unchanged() {
     let (clean, _) = convert(FIXTURE);
     let mut first = FaultyFile::new(Fault::Patch { after: 1 });
-    let r = defragment_in(&mut first);
+    let r = defragment_in(&mut first, None);
     assert!(matches!(r, Err(DefragError::Modified(_))), "{r:?}");
     let mut b = first.c.into_inner();
     b.truncate(FIXTURE.len());
@@ -1203,7 +1203,7 @@ fn plan_read_error_after_earlier_patch_is_not_unchanged() {
     let before = b.clone();
 
     let mut second = faulty_on(b, Fault::ReadOnce);
-    let r = defragment_in(&mut second);
+    let r = defragment_in(&mut second, None);
     assert!(
         matches!(r, Err(DefragError::Modified(Error::Io { .. }))),
         "{r:?}"
@@ -1224,7 +1224,7 @@ fn plan_read_error_after_earlier_patch_is_not_unchanged() {
 #[test]
 fn plan_read_error_is_not_unchanged() {
     let mut f = FaultyFile::new(Fault::ReadOnce);
-    let r = defragment_in(&mut f);
+    let r = defragment_in(&mut f, None);
     assert!(
         matches!(r, Err(DefragError::Modified(Error::Io { .. }))),
         "{r:?}"
@@ -1238,7 +1238,7 @@ fn plan_failure_is_unchanged() {
     let mut f = FaultyFile::new(Fault::Append);
     f.c = io::Cursor::new(FIXTURE[..FIXTURE.len() - 5].to_vec());
     f.base = f.c.get_ref().len() as u64;
-    let r = defragment_in(&mut f);
+    let r = defragment_in(&mut f, None);
     assert!(
         matches!(r, Err(DefragError::Unchanged(Error::Parse { .. }))),
         "{r:?}"
@@ -1788,7 +1788,10 @@ impl Source for FailingSrc {
 
 #[test]
 fn source_read_error_surfaces_as_io_error() {
-    let e = plan(&mut FailingSrc).map(|_| ()).unwrap_err().into_error();
+    let e = plan(&mut FailingSrc, None)
+        .map(|_| ())
+        .unwrap_err()
+        .into_error();
     assert!(matches!(e, Error::Io { op: "read", .. }), "{e:?}");
 }
 
@@ -1800,4 +1803,83 @@ fn file_api_reports_not_fragmented_without_changes() {
     f.write_all(&b).unwrap();
     assert_eq!(defragment(&mut f).unwrap(), DefragReport::NotFragmented);
     assert_eq!(f.metadata().unwrap().len(), b.len() as u64);
+}
+
+// ---------------------------------------------------------------------------------------------
+// mp4 메타데이터: 새 `moov`의 마지막 자식으로 붙는 `udta`(mp4-metadata.md §6.1)
+
+fn sample_udta() -> Vec<u8> {
+    use crate::mp4meta::{Tags, build_udta};
+    build_udta(
+        &Tags {
+            name: Some("제목".into()),
+            artist: Some("채널".into()),
+            day: Some("2026-01-02".into()),
+            comment: Some("https://chzzk.naver.com/video/1".into()),
+        },
+        None,
+    )
+    .unwrap()
+}
+
+/// `udta`를 주면 새 `moov`의 마지막 자식으로 붙고, 나머지 바이트와 `free` 패치 자리는 `None`일 때와 같다.
+#[test]
+fn udta_is_the_last_child_of_the_new_moov() {
+    let udta = sample_udta();
+    let (plain_moov, plain_patches) = plan_bytes(FIXTURE).unwrap().unwrap();
+    let (moov, patches) = plan_bytes_with(FIXTURE, Some(&udta)).unwrap().unwrap();
+    assert_eq!(patches, plain_patches);
+    assert_eq!(moov.len(), plain_moov.len() + udta.len());
+    let cs = kids(&moov[8..]);
+    assert_eq!(cs.last().unwrap().full, udta.as_slice());
+    assert_eq!(&cs.last().unwrap().kind, b"udta");
+    // 앞 자식들은 `None`일 때와 바이트까지 같다
+    let plain_cs = kids(&plain_moov[8..]);
+    assert_eq!(cs.len(), plain_cs.len() + 1);
+    for (a, b) in cs.iter().zip(&plain_cs) {
+        assert_eq!(a.full, b.full);
+    }
+}
+
+/// 변환 결과 파일에서도 `moov`는 하나이고 샘플 표는 `udta` 유무와 상관없이 같다.
+#[test]
+fn defragment_with_udta_keeps_samples_and_adds_tags() {
+    let udta = sample_udta();
+    let mut with = FIXTURE.to_vec();
+    let r = defragment_bytes_with(&mut with, Some(&udta)).unwrap();
+    assert!(matches!(r, DefragReport::Converted { .. }));
+    let (plain, _) = convert(FIXTURE);
+    assert_eq!(flat_samples(&with).len(), flat_samples(&plain).len());
+    for (a, b) in flat_samples(&with).iter().zip(&flat_samples(&plain)) {
+        assert_eq!(a.samples, b.samples);
+    }
+    assert_eq!(
+        top_boxes(&with).iter().filter(|t| t.0 == "moov").count(),
+        top_boxes(&plain).iter().filter(|t| t.0 == "moov").count()
+    );
+    // 이미 일반 mp4면 `udta`가 있어도 다시 쓰지 않는다
+    let mut again = with.clone();
+    assert_eq!(
+        defragment_bytes_with(&mut again, Some(&udta)).unwrap(),
+        DefragReport::AlreadyFlat
+    );
+    assert_eq!(again, with);
+}
+
+/// 실제 파일 위에서도 `udta`가 들어간 채 변환된다(`defragment_in`).
+#[test]
+fn defragment_in_writes_udta_to_the_file() {
+    let udta = sample_udta();
+    // 패치가 실패하지 않는 설정(= 실패 주입 없음)
+    let mut f = FaultyFile::new(Fault::Patch { after: usize::MAX });
+    let r = defragment_in(&mut f, Some(&udta));
+    assert!(matches!(r, Ok(DefragReport::Converted { .. })), "{r:?}");
+    let out = f.c.into_inner();
+    let tops = top_boxes(&out);
+    let (_, off, hdr, size) = tops.iter().rfind(|t| t.0 == "moov").unwrap().clone();
+    assert!(
+        out[off + hdr..off + size]
+            .windows(udta.len())
+            .any(|w| w == udta.as_slice())
+    );
 }

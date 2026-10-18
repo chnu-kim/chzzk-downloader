@@ -500,7 +500,9 @@ pub(crate) async fn finish(
     // 바꾸기 전 실패는 경고만 남기고 조각 구조로 마무리하고, 바꾸는 도중 실패는 `.part`로 남긴다(core.md 61).
     if converts_on_finish(job.req.expected_kind) {
         // 파일 전체 훑기·fsync는 오래 걸릴 수 있어 blocking 스레드에서 한다.
-        let r = p.with_file_blocking(|f| Ok(defrag::defragment_in(f))).await;
+        let r = p
+            .with_file_blocking(|f| Ok(defrag::defragment_in(f, None)))
+            .await;
         // 빠른 다시보기 조각의 시각이 이어지지 않으면 경고만 남긴다(판정이나 오류로 쓰지 않는다). 생방송은 놓친 조각을
         // 따로 센다(`LiveEnd::gaps`).
         if job.req.expected_kind == PlaybackKind::LiveRewindHls

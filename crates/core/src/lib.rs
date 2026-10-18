@@ -17,6 +17,9 @@ pub mod http;
 pub mod info;
 pub mod legacy;
 pub mod model;
+// M-1은 상자 쓰기까지만 있고 `download::finish`가 M-2에서 부른다
+#[allow(dead_code)]
+pub(crate) mod mp4meta;
 pub mod mpd;
 pub mod naming;
 pub mod ownership;

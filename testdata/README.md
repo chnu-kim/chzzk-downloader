@@ -16,9 +16,9 @@
 |---|---|---|
 | `hls/` | 빠른 다시보기(`inKey: null`) info, master(variant 5개), media(세그먼트 30개 × 2초), fMP4 | `liveRewindPlaybackJson`이 JSON이 든 **문자열**, variant URI 경로의 `hdntl=` 토큰, MAP URI 쿼리 보존 |
 | `live/` | 생방송 `live-detail` 응답 넷: 진행 중(HLS·LLHLS 순서 둘), 종료(`CLOSE`, 재생 정보 없음), 성인 차단(재생 정보 없음). 그리고 정적 합성 fMP4 `synthetic_frag.mp4`(위 예외) | `livePlaybackJson`이 JSON이 든 **문자열**, 같은 `protocol: "HLS"`인 media 둘을 `mediaId`로 구분, `audioOnly` 트랙 |
-| `vod/` | 일반 VOD(`inKey` 있음) info와 MPD | `video/mp4` PD 2개 + `video/mp2t` UUID 2개(mimeType 상속, PD와 같은 라벨·서명 BaseURL·SegmentTemplate을 가진 미끼) + `audio/mp4` 1개(라벨·SegmentList), `ContentProtection` 없음 |
+| `vod/` | 일반 VOD(`inKey` 있음) info와 MPD, 그리고 PD mp4 모양 셋(`pd_faststart.mp4` `[ftyp, moov, free, mdat]`, `pd_udta.mp4` 옛 `udta` 있음, `pd_co64.mp4` `stco` 대신 `co64`. 구조만 합성한 것이라 재생은 안 된다) | `video/mp4` PD 2개 + `video/mp2t` UUID 2개(mimeType 상속, PD와 같은 라벨·서명 BaseURL·SegmentTemplate을 가진 미끼) + `audio/mp4` 1개(라벨·SegmentList), `ContentProtection` 없음 |
 | `clip/` | 클립 play-info 2개와 MPD(세로 영상, PD 2개) | `%xx` 인코딩 서명 쿼리 보존, resolution 라벨 기준 선택 |
-| `synthetic/` | `vod_info_aes.json`(`encryptionType: "AES"`), `media_*.m3u8`(태그 하나씩 넣거나 뺀 변형) | 미지원 태그·암호화 거부와 허용 규칙 |
+| `synthetic/` | `vod_info_aes.json`(`encryptionType: "AES"`), `media_*.m3u8`(태그 하나씩 넣거나 뺀 변형), 표지 판정용 이미지 셋(`thumb.jpg` 1x1 JPEG, `thumb.png` 1x1 PNG, `thumb.webp` 거부 확인용 가짜 머리) | 미지원 태그·암호화 거부와 허용 규칙 |
 | `chat/` | 다시보기 채팅 페이지 응답 아홉(첫 페이지·경계 되풀이·경계 쌍둥이·끝 셋·종류·이스케이프·형식 오류)과 자막 골든 `expected/` | 앞쪽 묶음은 버리고 뒤쪽 묶음만 쓴다, profile·extras는 JSON이 든 **문자열**, 닉네임·본문·작성자 해시는 가짜(가상시청자N, user-hash-NN) |
 
 fixture를 바꾸면 생성기를 고치고 다시 만든다. 새 값도 가짜여야 하며 `node scripts/ci/public-scan.mjs`를 통과해야 한다.

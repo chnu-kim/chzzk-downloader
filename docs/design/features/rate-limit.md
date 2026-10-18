@@ -104,7 +104,7 @@ impl Bucket {
 
 - **빚 방식을 쓰는 이유**: reqwest는 조각 크기를 미리 알려 주지 않는다(`resp.chunk()`). 그래서 받은 뒤에 치르고, 남은 빚만큼 다음 읽기를 늦춘다. 기다리는 동안 다른 스트림이 치르면 빚이 더 깊어져 뒤에 온 쪽이 더 오래 기다린다. 그 결과 대략 도착 순서대로 공평하다. **[가정]** 엄격한 공평성은 요구하지 않는다.
 - **채우기 상한(burst)**: `capacity = rate × 0.25초`다. **[잠정] 근거 없음, ADR-0009 묶음 등록.** 작게 두는 이유는 §5.5(속도 창이 상한을 빨리 따라간다)다.
-- **빚 상한**: `tokens ≥ -(rate × THROTTLE_MAX_WAIT)`, `THROTTLE_MAX_WAIT = 15초`. 계산상 한 번의 대기가 이보다 길면 남는 빚을 버린다. 최소값(§4)이 지켜지면 닿지 않는 방어선이다. 이 값은 `read_timeout` 30초(`crates/core/src/client.rs:74`)의 절반이다.
+- **빚 상한**: `tokens ≥ -(rate × THROTTLE_MAX_WAIT)`, `THROTTLE_MAX_WAIT = 15초`. 계산상 한 번의 대기가 이보다 길면 남는 빚을 버린다. 작업·공유 bucket을 모두 거치는 `Throttles::consume` 한 번의 **전체** 대기도 이 길이로 묶는다(bucket마다 따로 재면 한 조각이 최대 30초 = `read_timeout`까지 기다린다, 구현 중 변경 7). 최소값(§4)이 지켜지면 닿지 않는 방어선이다. 이 값은 `read_timeout` 30초(`crates/core/src/client.rs:74`)의 절반이다.
 - **값 바뀜**: `take`는 매번 knob 값을 읽는다. 값이 바뀌었으면 지금 시각까지는 옛 값으로 채우고 새 값으로 바꾼다. 꺼지면 빚을 0으로 지우고 곧바로 돌려준다. 기다리는 `consume`은 `select!{ sleep, knob.notified() }`로 깨어나 다시 계산한다(R5).
 - **순서**: 작업 bucket을 먼저 치른다. 공유 bucket을 먼저 치르면, 작업 상한에 걸려 기다리는 동안 이미 가져간 공유 몫을 아무도 쓰지 못한다.
 
@@ -301,7 +301,7 @@ pub job_rate_limit: Option<u64>,
 ## 8. 비밀값·OS별 분기
 
 - 비밀값: 새로 다루는 값이 없다. `Throttle`의 `Debug`는 knob 값만 찍는다.
-- OS별: 저장은 바이트라 같다. 표시·프리셋만 OS 진법을 따른다(§6.1). Windows의 "1.0MB/s"는 1,048,576바이트/초이고 macOS·Linux는 1,000,000이다. 같은 `settings.json`을 다른 OS로 옮기면 값은 그대로이고 라벨만 다르게 보인다(예: 1,048,576 → macOS "1.0MB/s"). 프리셋에 없으면 §6.1의 덧칸으로 보인다.
+- OS별: 저장은 바이트라 같다. 표시·프리셋만 OS 진법을 따른다(§6.1). Windows의 "1.0MB/s"는 1,048,576바이트/초이고 macOS·Linux는 1,000,000이다. 같은 `settings.json`을 다른 OS로 옮기면 값은 그대로이고 라벨만 다르게 보인다(예: 1,048,576 → macOS 덧칸 "1.05MB/s". 프리셋 "1.0MB/s"와 라벨이 겹치면 유효숫자 3자리로 구별한다, 구현 중 변경 7). 프리셋에 없으면 §6.1의 덧칸으로 보인다.
 
 ## 9. 위험
 
@@ -396,4 +396,4 @@ core dev-dependency tokio에 `test-util`이 없다(`crates/core/Cargo.toml:28`).
 4. **(RL-2) `DownloadManager::rate_limits()` getter를 더했다**(§3.3은 `set_rate_limits`만 적었다). 셸 테스트가 매니저가 가진 값을 직접 확인하고, 설정과 매니저가 어긋났는지 점검할 때 쓴다. 최소값 올림(`normalize_rate_limit`)은 설정 읽기·패치 저장 두 곳이 같은 함수를 쓰고, 매니저는 최소를 모르는 채 받은 값을 그대로 쓴다(0만 끔으로 본다).
 5. **(RL-2) 설정 파일에 끈 상태는 `null`로 적는다**(`skip_serializing_if` 없음). `last_url` 등 다른 `Option` 필드와 같은 모양이고, 설정 JSON을 통째로 비교하는 golden이 없어 깨지는 것이 없다.
 6. **(RL-3) 프리셋·덧칸 로직은 `app/src/lib/rateLimit.ts`에 순수 함수로 뒀다**(`rateLimitOptions`·`rateLimitToStored`·`rateLimitFromStored`). §10.5의 vitest 세 가지를 컴포넌트 없이도 단위로 확인하기 위해서다. 낭독용 단위는 `Select` 옵션에 `label`만 있어 주지 못했다(§6.2가 허용한 "못 주면 그대로").
-
+7. **(리뷰 반영, 2026-10-18) 호출 전체 대기 상한과 덧칸 라벨.** ① `THROTTLE_MAX_WAIT`는 bucket 하나가 아니라 `Throttles::consume` 한 번의 전체 대기에 건다(§3.2·§9 "빚 상한"보다 우선). 두 bucket에 같은 마감 상한(`cap`)을 주고, 받는 중 값을 낮춰 다시 계산한 마감도 `cap`으로 자른다(core.md 77). ② 덧칸 라벨(§6.1)이 프리셋 라벨과 같아지면(1000 진법의 1,048,576이 둘 다 "1.0MB/s") 덧칸만 `formatFileSize` 표기(`1.05MB/s`)로 구별한다(app.md 93). 숫자·단위는 `bytes.ts`만 만든다는 규칙(content.md W5)은 그대로다. ③ 읽기 제한 증거 테스트를 원시 TCP 서버 기반으로 바꿨다(core.md 77).

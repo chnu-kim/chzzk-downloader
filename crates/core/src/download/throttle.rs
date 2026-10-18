@@ -21,8 +21,9 @@ use tokio::time::{Instant, sleep_until};
 /// 작게 두는 이유: 속도 창(`Meter`, 5초)이 상한을 빨리 따라가야 ETA가 낙관적이지 않다(rate-limit.md §5.5).
 pub const THROTTLE_BURST: Duration = Duration::from_millis(250);
 
-/// 빚 상한의 길이. 한 번의 대기가 이보다 길면 남는 빚을 버린다. reqwest `read_timeout` 30초의 절반이다
-/// (`client.rs`). 최소값(`settings::MIN_RATE_LIMIT_BPS`)이 지켜지면 닿지 않는 방어선이다.
+/// 한 번의 `consume`(작업 bucket과 공유 bucket을 모두 치르는 호출 전체)이 기다리는 시간의 상한. 넘는 빚은 버린다
+/// (bucket 안의 빚도 이 길이로 자른다). reqwest `read_timeout` 30초의 절반이다(`client.rs`).
+/// 최소값(`settings::MIN_RATE_LIMIT_BPS`)이 지켜지면 닿지 않는 방어선이다.
 pub const THROTTLE_MAX_WAIT: Duration = Duration::from_secs(15);
 
 /// 순수 토큰 버킷(빚 방식). `tokens`가 음수면 빚이다.
@@ -162,6 +163,12 @@ impl Throttle {
     /// 취소는 부르는 쪽이 future를 drop해서 한다. 빚은 남는다(받은 바이트는 실제로 쓴 대역폭이다).
     /// 기다리는 동안 knob 값이 바뀌면 남은 대기를 새 값으로 다시 계산한다(끄면 곧바로 돌아온다).
     pub async fn consume(&self, n: u64) {
+        self.consume_by(n, Instant::now() + THROTTLE_MAX_WAIT).await;
+    }
+
+    /// `consume`인데 대기가 `cap` 시각을 넘지 않는다(값이 바뀌어 마감을 다시 계산해도 마찬가지).
+    /// `Throttles`가 두 bucket에 같은 `cap`을 줘서 호출 전체의 대기를 `THROTTLE_MAX_WAIT`로 묶는다.
+    async fn consume_by(&self, n: u64, cap: Instant) {
         if n == 0 {
             return;
         }
@@ -175,7 +182,7 @@ impl Throttle {
         // 잠금은 이 문장 안에서만 잡는다(`.await` 너머로 들고 있지 않는다).
         let wait = self.bucket().take(Some(rate), n, now);
         // 이 호출의 몫이 끝나는 시각. 뒤에 온 호출이 빚을 더 쌓아도 이 시각은 늘지 않는다(도착 순서).
-        let mut deadline = now + wait;
+        let mut deadline = (now + wait).min(cap);
         loop {
             if Instant::now() >= deadline {
                 return;
@@ -192,7 +199,7 @@ impl Throttle {
                     };
                     // 내 앞에 남은 바이트는 그대로이고 갚는 속도만 달라진다.
                     let ahead = deadline.saturating_duration_since(now).as_secs_f64() * rate.get() as f64;
-                    deadline = now + Duration::from_secs_f64(ahead / new.get() as f64);
+                    deadline = (now + Duration::from_secs_f64(ahead / new.get() as f64)).min(cap);
                     rate = new;
                     // bucket도 옛 속도로 now까지 채우고 새 속도로 넘긴다(뒤에 오는 호출이 낡은 속도로 갚은 빚을 보지 않게).
                     self.bucket().take(Some(new), 0, now);
@@ -220,12 +227,16 @@ pub struct Throttles {
 impl Throttles {
     /// 작업 bucket을 먼저, 공유 bucket을 나중에 치른다. 공유를 먼저 치르면 작업 상한에 걸려 기다리는 동안
     /// 이미 가져간 공유 몫을 아무도 쓰지 못한다.
+    ///
+    /// 호출 전체의 대기는 `THROTTLE_MAX_WAIT`를 넘지 않는다. bucket마다 따로 재면 둘을 거치는 한 조각이
+    /// 최대 두 배(30초 = reqwest `read_timeout`)까지 걸려 가짜 시간 초과가 난다.
     pub async fn consume(&self, n: u64) {
+        let cap = Instant::now() + THROTTLE_MAX_WAIT;
         if let Some(job) = &self.job {
-            job.consume(n).await;
+            job.consume_by(n, cap).await;
         }
         if let Some(shared) = &self.shared {
-            shared.consume(n).await;
+            shared.consume_by(n, cap).await;
         }
     }
 
@@ -576,6 +587,36 @@ mod tests {
         t.consume(MB).await; // 앞의 2MB 뒤에 1MB → 합 3MB / 2MB/s = 1.5초
         near(start.elapsed(), 1500);
         h.await.unwrap();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn one_consume_through_both_buckets_waits_at_most_max_wait() {
+        // 둘 다 1KB/s에서 10MB를 치르면 bucket마다 15초 빚이다. 호출 전체는 15초로 묶인다(30초가 아니다).
+        let th = Throttles {
+            job: Some(throttle(1_000)),
+            shared: Some(throttle(1_000)),
+        };
+        let start = Instant::now();
+        th.consume(10 * MB).await;
+        near(start.elapsed(), 15_000);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn lowering_rate_while_waiting_never_exceeds_max_wait() {
+        // 10MB/s에서 100MB(약 10초)를 기다리다 1KB/s로 낮추면 다시 계산한 마감도 처음부터 15초 안이다.
+        let knob = RateKnob::new(nz(10 * MB));
+        let t = Throttle::new(knob.clone());
+        let t2 = t.clone();
+        let h = tokio::spawn(async move {
+            let s = Instant::now();
+            t2.consume(100 * MB).await;
+            s.elapsed()
+        });
+        tokio::task::yield_now().await;
+        tokio::time::advance(Duration::from_secs(1)).await;
+        tokio::task::yield_now().await;
+        knob.set(nz(1_000));
+        near(h.await.unwrap(), 15_000);
     }
 
     #[test]

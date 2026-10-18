@@ -20,7 +20,7 @@ use common::{
     synth_init, test_bytes,
 };
 use wiremock::matchers::{method, path};
-use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
+use wiremock::{Mock, MockServer, ResponseTemplate};
 
 const KB: u64 = 1_000;
 
@@ -223,7 +223,8 @@ async fn turning_the_limit_off_mid_download_speeds_it_up() {
 
 // ---- segmented ----
 
-const SEG_BYTES: usize = 50_000;
+const SEG_BYTES: usize = 4_000_000;
+const SEG_N: usize = 3;
 
 fn big_segment(i: usize) -> Vec<u8> {
     let mut v = vec![0, 0, 0, 8];
@@ -232,17 +233,69 @@ fn big_segment(i: usize) -> Vec<u8> {
     v
 }
 
-/// 요청이 닿은 시각을 적어 두는 응답기.
-struct Stamped {
-    body: Vec<u8>,
-    at: Arc<Mutex<Option<Instant>>>,
+/// 서버가 적은 시각. `first`는 첫 세그먼트 요청이 닿은 시각이고 `done[i]`는 i번째 본문을 다 보낸 시각이다.
+#[derive(Default)]
+struct Stamps {
+    first: Mutex<Option<Instant>>,
+    done: Mutex<Vec<Option<Instant>>>,
 }
 
-impl Respond for Stamped {
-    fn respond(&self, _: &Request) -> ResponseTemplate {
-        self.at.lock().unwrap().get_or_insert_with(Instant::now);
-        ResponseTemplate::new(200).set_body_bytes(self.body.clone())
-    }
+/// 세그먼트 본문을 조용히 보내고 **서버가 본문을 다 보낸 시각**을 적는 원시 TCP 서버.
+///
+/// 보내는 버퍼를 작게 줘서(`SO_SNDBUF`) 클라이언트가 읽어 주지 않으면 `write_all`이 끝나지 않는다.
+/// 그래서 서버가 다 보낸 시각은 클라이언트가 본문을 얼마나 빨리 읽었는지를 비춘다.
+/// 읽기를 제한하면 본문 전송이 시간에 걸쳐 퍼지고, 읽기는 곧바로 하고 쓰기 루프에서 늦추면 곧바로 끝난다.
+async fn serve_segments(stamps: Arc<Stamps>) -> std::net::SocketAddr {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let socket = tokio::net::TcpSocket::new_v4().unwrap();
+    socket.set_send_buffer_size(16 * 1024).unwrap();
+    socket.bind("127.0.0.1:0".parse().unwrap()).unwrap();
+    let listener = socket.listen(16).unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        loop {
+            let Ok((mut conn, _)) = listener.accept().await else {
+                return;
+            };
+            let stamps = stamps.clone();
+            tokio::spawn(async move {
+                let mut head = Vec::new();
+                let mut buf = [0u8; 1024];
+                while !head.windows(4).any(|w| w == b"\r\n\r\n") {
+                    match conn.read(&mut buf).await {
+                        Ok(0) | Err(_) => return,
+                        Ok(n) => head.extend_from_slice(&buf[..n]),
+                    }
+                }
+                stamps
+                    .first
+                    .lock()
+                    .unwrap()
+                    .get_or_insert_with(Instant::now);
+                let text = String::from_utf8_lossy(&head);
+                let i: usize = text
+                    .split_whitespace()
+                    .nth(1)
+                    .and_then(|p| p.strip_prefix("/seg"))
+                    .and_then(|p| p.strip_suffix(".m4v"))
+                    .and_then(|p| p.parse().ok())
+                    .expect("세그먼트 경로");
+                let body = big_segment(i);
+                let header = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                if conn.write_all(header.as_bytes()).await.is_err()
+                    || conn.write_all(&body).await.is_err()
+                {
+                    return;
+                }
+                stamps.done.lock().unwrap()[i] = Some(Instant::now());
+                let _ = conn.shutdown().await;
+            });
+        }
+    });
+    addr
 }
 
 fn hls_request(out: &Path, concurrency: u8, throttles: Throttles) -> DownloadRequest {
@@ -260,10 +313,21 @@ fn hls_request(out: &Path, concurrency: u8, throttles: Throttles) -> DownloadReq
     }
 }
 
+/// 제한이 쓰기 루프가 아니라 본문 읽기에 걸린다는 증거(rate-limit.md §3.2).
+///
+/// 동시 수를 세그먼트 수와 같게 두어 요청이 모두 곧바로 나가게 한다(`buffered`가 요청 시각을 늦추지 않는다).
+/// 읽기에서 늦추면 세 본문이 한 bucket을 나눠 읽으므로 **가장 먼저 끝나는** 서버 전송도 한참 뒤에야 끝난다.
+/// 읽기는 곧바로 하고 쓰기 루프에서 늦추면 첫 세그먼트는 제한 없이 읽혀 서버 전송이 곧바로 끝난다.
+/// (`buffered`는 폴링하지 않는 동안 읽지 않으므로 *마지막* 전송 시각은 두 경우 모두 늦다. 그래서 가장 이른 시각을 본다.
+/// 깨서 확인: `fetch`에 `None`을 넘기고 `segs.next()` 뒤에서 `consume`하면 이 테스트가 실패한다.)
 #[tokio::test]
 async fn segmented_throttles_the_body_read_not_the_write_loop() {
-    const N: usize = 6;
     let server = MockServer::start().await;
+    let stamps = Arc::new(Stamps {
+        done: Mutex::new(vec![None; SEG_N]),
+        ..Stamps::default()
+    });
+    let seg_addr = serve_segments(stamps.clone()).await;
     Mock::given(method("GET"))
         .and(path("/service/v2/videos/9000001"))
         .respond_with(ResponseTemplate::new(200).set_body_raw(
@@ -275,46 +339,69 @@ async fn segmented_throttles_the_body_read_not_the_write_loop() {
         ))
         .mount(&server)
         .await;
-    common::mount_synth_hls(&server, "/g0", N).await;
-    // 세그먼트를 50KB로 키운다(합성 기본은 1KB). 우선순위 1이 먼저 쓰인다.
-    let stamps: Vec<Arc<Mutex<Option<Instant>>>> = (0..N).map(|_| Arc::default()).collect();
-    for (i, at) in stamps.iter().enumerate() {
-        Mock::given(method("GET"))
-            .and(path(format!("/g0/144p/seg{i}.m4v")))
-            .respond_with(Stamped {
-                body: big_segment(i),
-                at: at.clone(),
-            })
-            .with_priority(1)
-            .mount(&server)
-            .await;
+    Mock::given(method("GET"))
+        .and(path("/g0/master.m3u8"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(common::SYNTH_MASTER))
+        .mount(&server)
+        .await;
+    // 세그먼트는 다른 출처(원시 서버)에 있다. 재생 목록에는 절대 주소로 적는다.
+    let mut media = format!(
+        "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:0\n\
+         #EXT-X-MAP:URI=\"{}/g0/144p/init.m4s?type=hls\"\n",
+        server.uri()
+    );
+    for i in 0..SEG_N {
+        media.push_str(&format!("#EXTINF:2.000,\nhttp://{seg_addr}/seg{i}.m4v\n"));
     }
+    media.push_str("#EXT-X-ENDLIST\n");
+    Mock::given(method("GET"))
+        .and(path("/g0/144p/media.m3u8"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(media))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/g0/144p/init.m4s"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(synth_init()))
+        .mount(&server)
+        .await;
     let dir = tempfile::tempdir().unwrap();
     let out = out_in(&dir, "[260102] 테스트채널 - 테스트 다시보기.mp4");
-    // 200KB/s: burst 50KB는 공짜, 300KB 중 250KB는 1.25초
+    // 6MB/s: burst 1.5MB는 공짜, 12MB 중 10.5MB는 1.75초
     let th = Throttles {
-        job: Some(throttle(200 * KB)),
+        job: Some(throttle(6 * 1_000 * KB)),
         shared: None,
     };
     let started = Instant::now();
     Chzzk::new(config(&server))
         .unwrap()
-        .download(hls_request(&out, 4, th), CancellationToken::new(), &|_| {})
+        .download(
+            hls_request(&out, SEG_N as u8, th),
+            CancellationToken::new(),
+            &|_| {},
+        )
         .await
         .unwrap();
     let took = started.elapsed();
-    assert!(took >= Duration::from_millis(1000), "{took:?}");
+    assert!(took >= Duration::from_millis(1400), "{took:?}");
     let mut expected = synth_init();
-    for i in 0..N {
+    for i in 0..SEG_N {
         expected.extend(big_segment(i));
     }
     assert_eq!(std::fs::read(&out).unwrap(), expected);
-    // 늦춰지는 곳이 본문 읽기라는 증거: 동시 4개가 모두 읽기를 시작해 제한에 막혀 있으면 6번째 요청은
-    // 앞 세그먼트가 읽힌 뒤에야 나간다. 쓰기 루프에서 늦췄다면 본문은 곧바로 다 읽혀 요청이 한꺼번에 나간다.
-    let sixth = stamps[5].lock().unwrap().expect("6번째 요청");
+    // 가장 먼저 끝난 서버 전송도 첫 요청이 닿고 한참 뒤에 끝난다(세 본문이 제한을 나눠 읽었다는 뜻).
+    // 커널 버퍼가 일부를 흡수하므로 실측은 1.2~1.7초(쓰기 루프 변형은 0.2~0.5초)라 그 사이의 하한을 단정한다.
+    let t0 = stamps.first.lock().unwrap().expect("요청이 닿았다");
+    let first = stamps
+        .done
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|t| t.expect("서버가 본문을 다 보냈다"))
+        .min()
+        .unwrap();
     assert!(
-        sixth.duration_since(started) >= Duration::from_millis(150),
-        "6번째 요청이 너무 일찍 나갔다: {:?}",
-        sixth.duration_since(started)
+        first.duration_since(t0) >= Duration::from_millis(800),
+        "서버 전송이 너무 일찍 끝났다(읽기가 제한되지 않았다): {:?}",
+        first.duration_since(t0)
     );
 }

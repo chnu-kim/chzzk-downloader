@@ -19,6 +19,20 @@ describe('rateLimitOptions', () => {
     expect(o).toHaveLength(RATE_LIMIT_PRESETS_MB.length + 1);
   });
 
+  it('덧칸 라벨이 프리셋 라벨과 겹치지 않는다(1000 진법의 1,048,576 -> 1.05MB/s)', () => {
+    const o = rateLimitOptions(1000, 1_048_576, '제한 없음');
+    expect(o.find((x) => x.value === 1_048_576)?.label).toBe('1.05MB/s');
+    // 프리셋 라벨은 그대로다
+    expect(o.find((x) => x.value === 1_000_000)?.label).toBe('1.0MB/s');
+    // 여러 저장값에서 라벨이 모두 다르다
+    for (const base of [1000, 1024] as const) {
+      for (const stored of [1_048_576, 1_000_000, 5_000_400, 5_242_880, 5_243_000, 10_485_760, 104_857_600, 100_000_100]) {
+        const labels = rateLimitOptions(base, stored, '제한 없음').map((x) => x.label);
+        expect(new Set(labels).size, `${base} ${stored}: ${labels.join(',')}`).toBe(labels.length);
+      }
+    }
+  });
+
   it('프리셋 맨 아래는 두 진법 모두 최소값 이상이다(최소를 구조로 지킨다)', () => {
     for (const base of [1000, 1024] as const) {
       expect(rateLimitOptions(base, null, '-')[1].value).toBeGreaterThanOrEqual(MIN_RATE_LIMIT_BPS);

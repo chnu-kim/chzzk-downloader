@@ -5,6 +5,7 @@
 //! - `progressive`: PD mp4 단일 GET + Range 이어받기
 //! - `segmented`: 빠른 다시보기 HLS fMP4, 순서 보장 동시 fetch
 //! - `live`: 진행 중인 생방송 HLS fMP4, playlist를 계속 읽어 새 세그먼트를 이어 받는다
+//! - `live_audit`: 생방송 녹화 실측용 사건 로그(target·필드)와 재조회 이어짐 판정
 //! - `defrag`: 생방송·빠른 다시보기 결과(조각난 fMP4, 전체·구간 모두)를 마무리 직전에 일반 mp4로 제자리 변환한다
 //!
 //! 공통 골격(`Chzzk::download`):
@@ -21,6 +22,7 @@
 
 pub mod defrag;
 pub(crate) mod live;
+pub mod live_audit;
 pub mod part;
 pub(crate) mod progressive;
 pub mod retry;

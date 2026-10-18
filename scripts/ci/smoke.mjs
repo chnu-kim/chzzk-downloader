@@ -96,9 +96,11 @@ export const WAIT_GONE_MS = 60_000;
 // OS별 설치 스모크의 바깥 명령(sh) 수와 앱 실행(runSmoke) 수. 함수를 고치면 같이 고친다.
 export const INSTALL_STEPS = {
   // sh: dpkg-deb, dpkg -L / pkg(PKG_TIMEOUT_MS, 실패마다 진단 PKG_DIAG개): apt-get install 두 번, 그 사이 dpkg --configure -a, apt-get purge
-  linux: { sh: 2, pkg: 4, smoke: 2, wait: 0 },
+  // cli: 설치본마다 명령줄 help·status(각 CLI_KILL_MS): deb 둘 + AppImage 둘
+  linux: { sh: 2, pkg: 4, smoke: 2, wait: 0, cli: 4 },
   // hdiutil attach, ditto, xattr, plutil, hdiutil detach + 릴리스의 .app.tar.gz: tar, xattr, plutil
-  darwin: { sh: 8, smoke: 2, wait: 0 },
+  // cli: dmg 둘 + 릴리스의 .app.tar.gz 둘
+  darwin: { sh: 8, smoke: 2, wait: 0, cli: 4 },
   // NSIS setup, uninstall, msiexec /i, /x + waitGone. cli: 설치본마다 chzzk-cli.exe help·status와 chzzk-app.exe의 하위 명령 거부(각 CLI_KILL_MS)
   windows: { sh: 4, smoke: 2, wait: 1, cli: 6 },
 };
@@ -264,7 +266,7 @@ export function runSmoke(exe, { env = {}, label = basename(exe), auth } = {}) {
 // ---- 명령줄 스모크(cli-mode.md §14.3) ----
 // 같은 바이너리가 `help`·`status`에서는 Tauri를 만들지 않고 끝난다. 화면이 없어도(Linux는 DISPLAY·WAYLAND_DISPLAY를 지운다) 돈다.
 // `status`는 로그인을 쓰는 빌드(릴리스·CHZZK_WORKER_BASE)면 로그인 없는 임시 데이터 폴더에서 코드 3, 쓰지 않는 debug 빌드면 코드 0이다.
-export const CLI_KILL_MS = 60_000;
+export const CLI_KILL_MS = 20_000; // help·status는 1초 안에 끝난다. 설치 스모크 예산(linux 30분 작업 제한)에 들어가는 최악 시간이라 짧게 둔다
 
 // help 출력 → { ok, why }
 export function checkCliHelp({ status, stdout }) {
@@ -286,9 +288,9 @@ export function checkCliStatus({ status, stdout }, version, { auth } = {}) {
   return { ok: true, why: null };
 }
 
-export function runCliSmoke(exe, { label = basename(exe), auth } = {}) {
+export function runCliSmoke(exe, { label = basename(exe), auth, env: extra = {} } = {}) {
   const work = mkdtempSync(join(tmpdir(), 'chzzk-cli-'));
-  const env = { ...process.env, CHZZK_SMOKE_DIR: join(work, 'data') };
+  const env = { ...process.env, ...extra, CHZZK_SMOKE_DIR: join(work, 'data') };
   delete env.DISPLAY;
   delete env.WAYLAND_DISPLAY;
   const run = (args) => {
@@ -370,6 +372,8 @@ function smokeDeb(deb) {
     const exe = one(bins, `deb ${name}의 /usr/bin 실행 파일`);
     const r = runSmoke(exe, { label: `deb ${basename(exe)}`, auth: true });
     if (!r.ok) throw new Error(r.why);
+    const c = runCliSmoke(exe, { label: `deb ${basename(exe)}`, auth: true });
+    if (!c.ok) throw new Error(c.why);
   } catch (e) {
     runErr = e;
   }
@@ -390,6 +394,8 @@ function smokeAppImage(file) {
     // FUSE 없이 풀어서 실행한다(러너·컨테이너에 libfuse2가 없을 수 있다)
     const r = runSmoke(copy, { env: { APPIMAGE_EXTRACT_AND_RUN: '1' }, label: 'AppImage', auth: true });
     if (!r.ok) throw new Error(r.why);
+    const c = runCliSmoke(copy, { env: { APPIMAGE_EXTRACT_AND_RUN: '1' }, label: 'AppImage', auth: true });
+    if (!c.ok) throw new Error(c.why);
   } finally {
     rmSync(work, { recursive: true, force: true });
   }
@@ -413,6 +419,8 @@ function smokeDmg(dmg) {
     if (!existsSync(exe)) throw new Error(`CFBundleExecutable ${exeName}이 ${app}에 없다`);
     const r = runSmoke(exe, { label: `dmg ${app}`, auth: true });
     if (!r.ok) throw new Error(r.why);
+    const c = runCliSmoke(exe, { label: `dmg ${app}`, auth: true });
+    if (!c.ok) throw new Error(c.why);
   } finally {
     sh('hdiutil', ['detach', mnt]);
     rmSync(work, { recursive: true, force: true });
@@ -432,6 +440,8 @@ function smokeAppTar(tgz) {
     if (!existsSync(exe)) throw new Error(`CFBundleExecutable ${exeName}이 ${app}에 없다`);
     const r = runSmoke(exe, { label: `app.tar.gz ${app}`, auth: true });
     if (!r.ok) throw new Error(r.why);
+    const c = runCliSmoke(exe, { label: `app.tar.gz ${app}`, auth: true });
+    if (!c.ok) throw new Error(c.why);
   } finally {
     rmSync(work, { recursive: true, force: true });
   }

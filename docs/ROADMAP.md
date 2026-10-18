@@ -4,6 +4,7 @@
 
 ## 현재 위치
 
+- **앱 CLI 모드 구현 CLI-3(2026-10-18, 브랜치 `feat/cli-mode`, cicd.md 119)**: `e2e-native`에 명령줄 단계(새 데이터 폴더: 로그인 전 3 → `login` → 본인·맡은 채널 받기 0 + golden 해시 → 남의 영상 4 → `status`), 설치 스모크에 설치본 `help`·`status`(Linux deb·AppImage, macOS dmg·.app.tar.gz). macOS에서 `cliPhase`를 로컬로 모의 실행하고 dmg 설치 스모크를 돌려 확인했다. Linux·Windows의 `e2e-native`는 CI 첫 실행이 확인한다.
 - **앱 CLI 모드 구현 CLI-5(2026-10-18, 브랜치 `feat/cli-mode`, app.md 101·cicd.md 118)**: Windows 콘솔 실행 파일 `chzzk-cli.exe`(둘째 `[[bin]]`, `tauri.windows.conf.json`), Windows GUI exe의 하위 명령 안내(코드 2), `expected-artifacts.json` `consoleExe`, 설치·bin 스모크, hygiene, `size.binary.windows-cli`($pending). 이 Windows 전용 코드는 로컬(macOS)에서 컴파일하지 못해 CI의 Windows 작업이 처음 확인한다. 남은 것: 첫 Windows 번들 실행 뒤 `size.binary.windows-cli` 채우기와 windows-setup·msi 기준 올리기(RATCHET_LOG).
 - **앱 CLI 모드 구현 CLI-2(2026-10-18, 브랜치 `feat/cli-mode`, app.md 100)**: 앱 crate에 `cli` 모듈(`main`의 `try_cli`, `cli_paths`와 Tauri 경로 대조 테스트, `cli.lock`→`app.lock` 잠금, 코드 5, GUI의 "명령줄에서 받는 중" 대화상자, 런타임·Ctrl+C·opener), `smoke-bin`에 `help`·`status` 단정. macOS·Linux에서 CLI가 돈다. Windows GUI exe는 CLI-5까지 인자를 무시한다.
 - **앱 CLI 모드 구현 CLI-1(2026-10-18, 브랜치 `feat/cli-mode`, app.md 99)**: 셸 `cli` 모듈(손 파서, `run`, 종료 코드, 진행률, 게이트 순서, 전원, `login`)과 `App::open_with_options`·`auth_login_wait`. 앱 crate는 아직 부르지 않는다(CLI-2). 순서는 CLI-1 → CLI-2 → CLI-5(필수, Windows `chzzk-cli.exe`) → CLI-3 → CLI-4, CLI-6(`--audio`)은 오디오 PR #168이 머지된 뒤에만(2026-10-18 기준 미머지라 건너뜀). 명세와 다른 점: 멈춘(`paused`) 작업은 `duplicateOutput`을 내서 같은 요청이면 `resume_job`으로 이어받는다.

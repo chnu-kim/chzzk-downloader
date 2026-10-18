@@ -486,12 +486,12 @@ pub(crate) fn e2e_override() -> Result<Override, String> {
 
 /// 격리 실행의 로그인 주소 열기·복사(`e2e.rs`): 브라우저를 띄우지 않는다. 보통 빌드는 늘 `None`
 #[cfg(feature = "e2e")]
-fn isolated_auth_io() -> Option<Arc<dyn auth_io::AuthIo>> {
+pub(crate) fn isolated_auth_io() -> Option<Arc<dyn auth_io::AuthIo>> {
     Some(Arc::new(e2e::E2eAuthIo::default()))
 }
 
 #[cfg(not(feature = "e2e"))]
-fn isolated_auth_io() -> Option<Arc<dyn auth_io::AuthIo>> {
+pub(crate) fn isolated_auth_io() -> Option<Arc<dyn auth_io::AuthIo>> {
     None
 }
 

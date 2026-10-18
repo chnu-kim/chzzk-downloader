@@ -161,6 +161,8 @@ struct Setup {
     e2e_worker: Option<Option<chzzk_shell::WorkerBase>>,
     /// 격리 실행(스모크·E2E): 전원·브라우저를 실제로 쓰지 않는다
     isolated: bool,
+    /// E2E 빌드가 E2E 환경 변수로 켜졌다(로그인 주소는 브라우저 대신 스텁 확인 페이지의 303을 따라 수신기에 건넨다)
+    e2e: bool,
 }
 
 fn setup() -> Result<Setup, String> {
@@ -176,6 +178,7 @@ fn setup() -> Result<Setup, String> {
             client: client(Some(c)),
             e2e_worker: Some(worker),
             isolated: true,
+            e2e: true,
         });
     }
     // 기동 스모크와 같은 격리 폴더(`CHZZK_SMOKE_DIR`): 사용자 데이터를 건드리지 않는다
@@ -193,6 +196,7 @@ fn setup() -> Result<Setup, String> {
             client: client(None),
             e2e_worker: None,
             isolated: true,
+            e2e: false,
         });
     }
     let paths = cli_paths().ok_or_else(|| "사용자 폴더를 찾지 못했어요".to_string())?;
@@ -201,6 +205,7 @@ fn setup() -> Result<Setup, String> {
         client: client(None),
         e2e_worker: None,
         isolated: false,
+        e2e: false,
     })
 }
 
@@ -290,6 +295,7 @@ pub fn cli_main(args: Vec<OsString>) -> ExitCode {
         }
     };
     let isolated = setup.isolated;
+    let e2e = setup.e2e;
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let mut stdout = std::io::stdout();
     let tty = stderr.is_terminal();
@@ -299,11 +305,17 @@ pub fn cli_main(args: Vec<OsString>) -> ExitCode {
         tty,
         cwd,
         version: version.to_string(),
-        // 격리 실행은 브라우저를 열지 않는다(로그인 주소는 어디에도 쓰지 않는다)
-        open_url: Some(if isolated {
-            Box::new(|_: &str| false)
-        } else {
-            Box::new(|url: &str| tauri_plugin_opener::open_url(url, None::<&str>).is_ok())
+        // 격리 실행은 브라우저를 열지 않는다. E2E는 GUI와 같이 `E2eAuthIo`가 스텁 확인 페이지의 303을 따라 수신기에 건넨다
+        // (로그인 주소는 어디에도 쓰지 않는다). 그 밖의 격리(스모크)는 열지 못한 것으로 돌려준다
+        open_url: Some(match (isolated, e2e) {
+            (true, true) => match crate::isolated_auth_io() {
+                Some(io) => Box::new(move |url: &str| io.open_url(url)),
+                None => Box::new(|_: &str| false),
+            },
+            (true, false) => Box::new(|_: &str| false),
+            (false, _) => {
+                Box::new(|url: &str| tauri_plugin_opener::open_url(url, None::<&str>).is_ok())
+            }
         }),
         power: (!isolated).then(|| {
             Box::new(chzzk_shell::power::SystemGuard::spawn())

@@ -237,7 +237,8 @@ test('combineSmokeErrors: 실행 오류만이면 그것, purge만이면 purge, �
 test('linux 설치 예산: 패키지 명령마다 바깥 제한 + 진단, 그 밖은 그대로', () => {
   const n = INSTALL_STEPS.linux;
   assert.equal(n.pkg, 4); // install 두 번, dpkg --configure -a, purge
-  assert.equal(installBudgetMs('linux'), n.sh * 240_000 + n.pkg * (PKG_TIMEOUT_MS + PKG_DIAG.length * DIAG_TIMEOUT_MS) + n.smoke * 120_000);
+  assert.equal(n.cli, 4); // deb·AppImage의 명령줄 help·status
+  assert.equal(installBudgetMs('linux'), n.sh * 240_000 + n.pkg * (PKG_TIMEOUT_MS + PKG_DIAG.length * DIAG_TIMEOUT_MS) + n.smoke * 120_000 + n.cli * CLI_KILL_MS);
 });
 
 test('명령줄 스모크: help는 0과 표의 말, status는 로그인 필요(3) 또는 로그인 안 씀(0)', () => {

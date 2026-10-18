@@ -169,7 +169,7 @@ finish:
 ## 7. 썸네일 받기
 
 - **요청 종류 `RequestKind::Image`를 새로 만든다**(`http.rs:18-25`). 헤더는 UA·Referer·`Accept: image/jpeg, image/png`이고, **Cookie는 `cookies_on_media`와 상관없이 늘 넣지 않는다**. `media_get`(`client.rs:235-243`)은 스위치가 켜지면 쿠키를 보내므로 쓰지 않는다. `Accept`를 좁히는 것은 이미지 CDN이 WebP를 협상해 줄 수 있어서다 **가정**.
-- 주소는 `https`만 받는다. userinfo가 있거나 `{`·`}`(틀 자리표시자)가 남은 주소는 받지 않는다. 호스트는 제한하지 않는다 **가정**. 실제 CDN 호스트 목록을 저장소에 두지 않고, 응답 크기·형식 검사로 충분하다고 본다. 테스트·E2E만 `ClientConfig.allow_loopback_http_images`(기본 false)로 `http://127.0.0.1`·`[::1]`을 허용한다.
+- 주소는 `https`만 받는다. userinfo가 있거나 `{`·`}`(틀 자리표시자)가 남은 주소는 받지 않는다. 호스트는 제한하지 않는다 **가정**. 실제 CDN 호스트 목록을 저장소에 두지 않고, 응답 크기·형식 검사로 충분하다고 본다. 테스트·E2E만 `ClientConfig.allow_loopback_http_images`(기본 false)로 `http://127.0.0.1`·`[::1]`을 허용한다. 이동(redirect)은 표지 전용 클라이언트가 **요청 전에** 같은 조건으로 거른다(어기면 따라가지 않는다, core.md 77).
 - 본문은 `read_capped`(`client.rs:251-268`)로 **2 MiB까지만** 읽는다 **[잠정]** 근거 없음, ADR-0009 묶음. 실물 썸네일은 수백 KB라고 **가정**한다.
 - 전체 시간 상한은 **15초**다 **[잠정]**(`tokio::time::timeout`). `build_client`에는 전체 timeout이 없어(`http.rs:174`) 연결 10초 + 읽기 idle 30초 그대로면 마무리가 40초 넘게 늘어질 수 있다. 재시도는 하지 않는다. 최선 노력이고, 연결 대기(인내 모드, core.md 56)도 타지 않는다.
 - **형식은 앞 바이트로만 정한다**: `FF D8 FF`면 JPEG(type 13), `89 50 4E 47 0D 0A 1A 0A`면 PNG(type 14), 그 밖은 버린다. `Content-Type`은 믿지 않는다. 디코드는 하지 않는다.

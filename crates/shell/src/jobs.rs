@@ -16,6 +16,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use chzzk_core::download::MAX_CONCURRENCY;
 use chzzk_core::download::part::{PartOwner, Sidecar, part_path, sidecar_path};
 use chzzk_core::fsutil::{atomic_write, map_io_error, rename_with_retry};
+use chzzk_core::mpd::AUDIO_QUALITY_ID;
 use chzzk_core::{ContentRef, DownloadRequest, Error, PlaybackKind, TimeRange};
 use serde::{Deserialize, Serialize};
 
@@ -169,6 +170,7 @@ impl JobRecord {
             kind: self.kind,
             playback_kind: self.expected_kind,
             quality_label: self.quality_label.clone(),
+            audio_only: self.quality_id == AUDIO_QUALITY_ID,
             output: self.output.to_string_lossy().into_owned(),
             status: self.status,
             progress,

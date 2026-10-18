@@ -3,7 +3,7 @@
 //! 파싱·crc32·바이트 비교 golden은 저장소에 커밋된 바이트(LF)를 전제로 한다.
 //! `.gitattributes`의 `-text`가 빠지거나 무시되면 Windows 클론에서 이 테스트가 먼저 실패한다.
 
-const TEXT_FIXTURES: [&str; 17] = [
+const TEXT_FIXTURES: [&str; 19] = [
     "testdata/clip/clip_multi.mpd",
     "testdata/clip/clip_multi_playinfo.json",
     "testdata/clip/clip_playinfo.json",
@@ -11,6 +11,8 @@ const TEXT_FIXTURES: [&str; 17] = [
     "testdata/hls/media.m3u8",
     "testdata/hls/video_info.json",
     "testdata/vod/playback.mpd",
+    "testdata/vod/playback_noaudio.mpd",
+    "testdata/vod/playback_audio2.mpd",
     "testdata/vod/video_info.json",
     "testdata/README.md",
     "testdata/synthetic/vod_info_aes.json",

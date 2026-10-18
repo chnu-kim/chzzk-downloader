@@ -646,6 +646,7 @@ mod tests {
             height: Some(h),
             bandwidth: None,
             frame_rate: None,
+            audio_only: false,
         };
         let tracks = [q("144p", 144), q("720p", 720)];
         assert_eq!(

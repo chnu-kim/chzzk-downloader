@@ -159,8 +159,9 @@ impl Chzzk {
                     Playback::Encrypted { method, .. } => {
                         return Err(Error::EncryptedVod { method });
                     }
+                    // 일반 VOD만 오디오만 받기를 보인다(audio-only.md A3)
                     Playback::Dash { video_id, in_key } => {
-                        self.progressive(&video_id, &in_key).await?
+                        self.progressive(&video_id, &in_key, true).await?
                     }
                     Playback::LiveRewind { master_url, tracks } => {
                         if tracks.is_empty() {
@@ -204,7 +205,8 @@ impl Chzzk {
                         detail: "DASH 재생 정보가 아닙니다".into(),
                     });
                 };
-                (meta, self.progressive(&video_id, &in_key).await?)
+                // 클립은 MPD에 오디오 set이 있어도 오디오 행을 만들지 않는다(실물 클립에는 오디오 set이 없었다, audio-only.md A3)
+                (meta, self.progressive(&video_id, &in_key, false).await?)
             }
         };
         Ok(Resolved {
@@ -227,8 +229,14 @@ impl Chzzk {
         Ok(info::has_thumb_key(&content))
     }
 
-    /// vodplay MPD를 받아 PD 화질 목록을 만든다.
-    async fn progressive(&self, video_id: &str, in_key: &str) -> Result<Source, Error> {
+    /// vodplay MPD를 받아 PD 화질 목록을 만든다. `with_audio`이면 서버의 오디오 전용 rep을 맨 끝에 붙인다
+    /// (`mpd::audio_rep`, 비디오 PD가 없으면 `NoQualities`이고 오디오만 있는 목록은 만들지 않는다).
+    async fn progressive(
+        &self,
+        video_id: &str,
+        in_key: &str,
+        with_audio: bool,
+    ) -> Result<Source, Error> {
         let mut url = api_url(
             &self.cfg.endpoints.vodplay_api,
             &["neonplayer", "vodplay", "v2", "playback", video_id],
@@ -239,7 +247,16 @@ impl Chzzk {
             what: "MPD",
             detail: e.to_string(),
         })?;
-        let reps = mpd::pd_reps(&mpd::parse_mpd(xml)?)?;
+        let parsed = mpd::parse_mpd(xml)?;
+        let mut reps = mpd::pd_reps(&parsed)?;
+        if with_audio {
+            // 덤인 오디오 행의 BaseURL이 깨졌다고 비디오 받기까지 막지 않는다. 오류에는 원문 URL이 없다(`audio_rep`).
+            match mpd::audio_rep(&parsed) {
+                Ok(Some(a)) => reps.push(a),
+                Ok(None) => {}
+                Err(e) => tracing::warn!(error = %e, "오디오 rep을 건너뛴다"),
+            }
+        }
         Ok(Source::Progressive { reps })
     }
 

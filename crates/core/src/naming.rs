@@ -11,8 +11,43 @@ use crate::model::{ContentKind, ContentMeta, ContentRef, TimeRange};
 /// 파일명 전체의 UTF-8 바이트 상한(확장자 포함).
 pub const MAX_FILENAME_BYTES: usize = 200;
 
-/// 출력 확장자. 코어가 정한다.
+/// 영상 출력 확장자(기본). 구간·채팅 이름 규칙은 mp4 전용이다.
 const EXT: &str = ".mp4";
+
+/// 출력 확장자. 코어가 정한다(`.m4a`는 이 한 곳에서만, audio-only.md A5).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MediaExt {
+    /// 영상(`.mp4`)
+    Mp4,
+    /// 오디오만 받기(`.m4a`)
+    M4a,
+}
+
+impl MediaExt {
+    /// 점을 포함한 확장자.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Mp4 => ".mp4",
+            Self::M4a => ".m4a",
+        }
+    }
+
+    /// 화질 키로 정한다. `AUDIO_QUALITY_ID`면 `.m4a`, 그 밖은 `.mp4`.
+    pub fn for_quality(quality_id: &str) -> Self {
+        if quality_id == crate::mpd::AUDIO_QUALITY_ID {
+            Self::M4a
+        } else {
+            Self::Mp4
+        }
+    }
+}
+
+/// 경로의 파일 이름이 `.m4a`(대소문자 무시)로 끝나는가. 코어가 화질과 확장자가 맞는지 보는 데 쓴다.
+pub fn is_audio_output(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|n| n.to_ascii_lowercase().ends_with(MediaExt::M4a.as_str()))
+}
 
 /// 길이를 줄여야 할 때 채널보다 먼저 자르되, 제목이 이 바이트 수보다 짧아지지는 않게 한다.
 const MIN_TITLE_BYTES: usize = 60;
@@ -223,16 +258,29 @@ pub fn sanitize_filename(name: &str, p: Platform) -> String {
 /// 파일명을 정리하고, 확장자가 `.mp4`(대소문자 무시)가 아니면 `.mp4`를 붙이고, 200바이트로 자른다.
 /// Go의 `__mp4` → `.mp4` 치환 규칙은 없앴다.
 pub fn output_path(folder: &Path, filename: &str, p: Platform) -> PathBuf {
+    output_path_ext(folder, filename, MediaExt::Mp4, p)
+}
+
+/// `output_path`의 확장자 지정판. 확장자는 `ext`(대소문자 무시)로 끝나지 않으면 붙인다. 규칙은 `output_path`와 같다.
+/// `"x.mp4"`를 `M4a`로 만들면 `x.mp4.m4a`다(UI는 확장자 없는 이름만 보낸다).
+pub fn output_path_ext(folder: &Path, filename: &str, ext: MediaExt, p: Platform) -> PathBuf {
+    folder.join(output_file_name_ext(filename, ext, p))
+}
+
+/// `output_path_ext`가 폴더에 붙이는 마지막 이름. 경로를 거치지 않는 문자열이라 호스트 경로 해석(Windows의 `a:` 드라이브
+/// 접두사 등)에 기대지 않고 이름만 비교할 수 있다.
+pub fn output_file_name_ext(filename: &str, ext: MediaExt, p: Platform) -> String {
+    let ext = ext.as_str();
     let mut name = sanitize_filename(filename, p);
-    if !name.to_ascii_lowercase().ends_with(EXT) {
-        name.push_str(EXT);
+    if !name.to_ascii_lowercase().ends_with(ext) {
+        name.push_str(ext);
     }
     if name.len() > MAX_FILENAME_BYTES {
-        let (base, ext) = name.split_at(name.len() - EXT.len());
-        let base = trim_piece(truncate_utf8(base, MAX_FILENAME_BYTES - EXT.len()), p);
-        name = sanitize_filename(&format!("{base}{ext}"), p);
+        let (base, tail) = name.split_at(name.len() - ext.len());
+        let base = trim_piece(truncate_utf8(base, MAX_FILENAME_BYTES - ext.len()), p);
+        name = sanitize_filename(&format!("{base}{tail}"), p);
     }
-    folder.join(name)
+    name
 }
 
 /// 카드 제안 이름: 만든 이름에서 `.mp4`를 뗀 것. 셸이 이 값을 입력칸에 넣고, 받을 때 `output_path`가 다시 정리해
@@ -1117,6 +1165,69 @@ mod tests {
     }
 
     #[test]
+    fn media_ext_for_quality_and_is_audio_output() {
+        assert_eq!(MediaExt::for_quality("audio"), MediaExt::M4a);
+        assert_eq!(
+            MediaExt::for_quality("PD_720P_1280_4000_192"),
+            MediaExt::Mp4
+        );
+        assert_eq!(MediaExt::for_quality("720p"), MediaExt::Mp4);
+        assert_eq!(MediaExt::for_quality(""), MediaExt::Mp4);
+        assert_eq!(MediaExt::M4a.as_str(), ".m4a");
+        assert_eq!(MediaExt::Mp4.as_str(), ".mp4");
+
+        assert!(is_audio_output(Path::new("dl/제목.m4a")));
+        assert!(is_audio_output(Path::new("dl/T.M4A")));
+        assert!(!is_audio_output(Path::new("dl/제목.mp4")));
+        assert!(!is_audio_output(Path::new("dl/제목.m4a.part")));
+        assert!(!is_audio_output(Path::new("dl/m4a")));
+        assert!(!is_audio_output(Path::new("")));
+    }
+
+    #[test]
+    fn output_path_m4a() {
+        use MediaExt::{M4a, Mp4};
+        let folder = Path::new("dl");
+        for p in ALL {
+            assert_eq!(
+                super::output_path_ext(folder, "[x] t", M4a, p),
+                folder.join("[x] t.m4a")
+            );
+            assert_eq!(
+                super::output_path_ext(folder, "", M4a, p),
+                folder.join("_.m4a")
+            );
+            // 이미 `.m4a`면(대소문자 무시) 그대로
+            assert_eq!(
+                super::output_path_ext(folder, "T.M4A", M4a, p),
+                folder.join("T.M4A")
+            );
+            // `.mp4` 입력은 mp4로 보지 않는다: 현재 규칙의 연장
+            assert_eq!(
+                super::output_path_ext(folder, "x.mp4", M4a, p),
+                folder.join("x.mp4.m4a")
+            );
+            // Mp4 지정은 기존 `output_path`와 같다
+            assert_eq!(
+                super::output_path_ext(folder, "t", Mp4, p),
+                super::output_path(folder, "t", p)
+            );
+        }
+        assert_eq!(
+            super::output_path_ext(folder, "CON", M4a, Windows),
+            folder.join("CON_.m4a")
+        );
+        // 길이 제한: 확장자를 보존하고 char 경계에서 자른다(세 OS)
+        let long = "가".repeat(100);
+        for p in ALL {
+            let out = super::output_path_ext(folder, &long, M4a, p);
+            let name = out.file_name().unwrap().to_str().unwrap();
+            assert!(name.len() <= MAX_FILENAME_BYTES);
+            assert_eq!(name, format!("{}.m4a", "가".repeat(65)));
+        }
+    }
+
+    #[test]
     fn platform_current_matches_target() {
         let p = Platform::current();
         if cfg!(windows) {
@@ -1693,6 +1804,64 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// 오디오(m4a): 카드의 제안 이름(`.mp4`를 뗀 것) + 화면의 `.m4a` 표시가 실제 저장 이름과 같다. 확장자는 템플릿
+    /// 밖에서 `MediaExt`로 붙인다(audio-only.md §11.3).
+    /// 유일한 예외는 제안 이름이 이미 `.m4a`로 끝나는 경우(제목이 `.m4a`로 끝남)다: 붙여 넣은 확장자를 받아들이는
+    /// 규칙(`output_path_ext`) 때문에 저장 이름이 `x.m4a`이고 화면은 `x.m4a.m4a`를 보인다(코어 규칙 그대로다. 셸 `check_output`이 이 어긋남을 메워 검사한 경로가 그대로 저장된다).
+    #[test]
+    fn shown_name_equals_saved_name_for_m4a() {
+        fn saved_m4a(shown: &str, p: Platform) -> String {
+            let path = output_path_ext(Path::new(""), suggested_stem(shown), MediaExt::M4a, p);
+            path.file_name().unwrap().to_str().unwrap().to_string()
+        }
+        let long = "a".repeat(300);
+        let vals: [&str; 12] = [
+            "", " ", ".", "a.", " .b", "a .b", "x.mp4", "X.MP4", "x.m4a", "con", "Ep . 3", &long,
+        ];
+        let tpls = [
+            DEFAULT_TEMPLATE,
+            "{title}",
+            "{title} .{no}",
+            "{channel}.{title}",
+            "{title}.mp4",
+            "{title}.m4a",
+            "{channel} .{title} .{no}",
+        ];
+        let mut edge = 0;
+        for tpl in tpls {
+            let t = parse_template(tpl).unwrap();
+            for kind in [ContentKind::Video, ContentKind::Clip, ContentKind::Live] {
+                for ch in vals {
+                    for title in vals {
+                        let m = meta(kind, ch, title, Some("2024-01-02 03:04:05"));
+                        for p in ALL {
+                            let shown = render_filename(&t, &m, &content_for(kind), p);
+                            let stem = suggested_stem(&shown);
+                            let saved = saved_m4a(&shown, p);
+                            if stem.to_ascii_lowercase().ends_with(".m4a") {
+                                edge += 1;
+                                assert_eq!(saved, stem, "edge {tpl:?} {p:?}");
+                                continue;
+                            }
+                            // 화면: 제안 이름 + `.m4a`
+                            assert_eq!(
+                                saved,
+                                format!("{stem}.m4a"),
+                                "{tpl:?} {p:?} {ch:?} {title:?}"
+                            );
+                            let d = default_filename(&m, p);
+                            let dstem = suggested_stem(&d);
+                            if !dstem.to_ascii_lowercase().ends_with(".m4a") {
+                                assert_eq!(saved_m4a(&d, p), format!("{dstem}.m4a"));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert!(edge > 0, "가장자리 입력이 없다");
     }
 
     /// T1 보증: 기본 규칙의 **저장되는 파일 이름은 전과 바이트까지 같다**. 전에는 만든 이름 R = `sanitize(raw)`를 `.mp4`만

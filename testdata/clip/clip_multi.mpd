@@ -10,7 +10,7 @@
 <Representation id="00000000-0000-0000-0000-0000000000c2" bandwidth="1000000" width="480" height="854" frameRate="30" codecs="avc1.4d401f,mp4a.40.2" nvod:m3u="https://clip.example.invalid/hls/00000000-0000-0000-0000-0000000000c2.m3u8?hdnts=exp%3D0%7Eacl%3D%2Fclip%2F*%7Ehmac%3D0000"><nvod:Label kind="qualityId">480P_854_1024_128</nvod:Label><nvod:Label kind="fps">30</nvod:Label><nvod:Label kind="resolution">480</nvod:Label><BaseURL>https://clip.example.invalid/hls/00000000-0000-0000-0000-0000000000c2/?hdnts=exp%3D0%7Eacl%3D%2Fclip%2F*%7Ehmac%3D0000</BaseURL><SegmentTemplate media="seg_$Number$.ts" initialization="init.ts" timescale="1000" duration="2000" startNumber="1"/></Representation>
 </AdaptationSet>
 <AdaptationSet mimeType="audio/mp4">
-<Representation id="00000000-0000-0000-0000-0000000000c3" bandwidth="128000" mimeType="audio/mp4" codecs="mp4a.40.2"><nvod:Label kind="qualityId">AUDIO_128</nvod:Label><BaseURL>https://clip.example.invalid/clip/000000000000000000000000000000000C04/audio/0.m4a?hdnts=exp%3D0%7Eacl%3D%2Fclip%2F*%7Ehmac%3D0000</BaseURL><SegmentList timescale="1000" duration="2000"><Initialization range="0-999"/><SegmentURL mediaRange="1000-1999"/></SegmentList></Representation>
+<Representation id="00000000-0000-0000-0000-0000000000c3" bandwidth="128000" mimeType="audio/mp4" codecs="mp4a.40.2" audioSamplingRate="48000"><nvod:Label kind="qualityId">AUDIO_128</nvod:Label><BaseURL>https://clip.example.invalid/clip/000000000000000000000000000000000C04/audio/0.m4a?hdnts=exp%3D0%7Eacl%3D%2Fclip%2F*%7Ehmac%3D0000</BaseURL><SegmentList timescale="1000" duration="2000"><Initialization range="0-999"/><SegmentURL mediaRange="1000-1999"/></SegmentList></Representation>
 </AdaptationSet>
 </Period>
 </MPD>

@@ -51,18 +51,25 @@ export function recentSecondLine(item: Pick<RecentVodDto, 'kind' | 'date'>): str
 /**
  * 꼬리표 `quality.best`가 붙을 가장 높은 화질 행의 위치(patterns.md §6.5). 기본 선택과 무관하다.
  * 해상도, 같으면 대역폭이 큰 쪽이고 그래도 같으면 앞쪽. 고를 것이 하나뿐이면 꼬리표가 뜻이 없어 null.
+ * 오디오만 행(`audioOnly`)은 화질이 아니라서 후보도 행 수 세기도 아니다(audio-only.md §6.1).
  */
 export function bestQualityIndex(qualities: readonly QualityDto[]): number | null {
-  if (qualities.length < 2) return null;
-  let best = 0;
-  for (let i = 1; i < qualities.length; i++) {
+  let best: number | null = null;
+  let rows = 0;
+  for (let i = 0; i < qualities.length; i++) {
     const a = qualities[i];
+    if (a.audioOnly) continue;
+    rows++;
+    if (best == null) {
+      best = i;
+      continue;
+    }
     const b = qualities[best];
     const ra = a.resolution ?? 0;
     const rb = b.resolution ?? 0;
     if (ra > rb || (ra === rb && (a.bandwidth ?? 0) > (b.bandwidth ?? 0))) best = i;
   }
-  return best;
+  return rows < 2 ? null : best;
 }
 
 /** 메타 줄 조각: 채널 · 날짜 · 길이. 없는 것은 뺀다. */
@@ -249,7 +256,7 @@ export function buildEnqueueRequest(
     channelName: r.meta.channelName,
     channelId: r.meta.channelId,
     qualityId: quality.id,
-    qualityLabel: quality.label,
+    qualityLabel: qualityRowLabel(quality),
     expectedKind: r.playbackKind,
     folder,
     fileName,
@@ -261,8 +268,27 @@ export function buildEnqueueRequest(
   };
 }
 
-/** 산출 파일 이름의 확장자(문구가 아니라 코드 상수, content.md §15 `filename.ext` 삭제) */
-export const FILE_EXT = '.mp4';
+/**
+ * 산출 파일 이름의 확장자(문구가 아니라 코드 값, content.md §15 `filename.ext` 삭제). 오디오만 행은 `.m4a`다.
+ * 셸은 화질 키만 보고 같은 확장자를 정한다(`MediaExt::for_quality`): 웹뷰는 표시만 맞춘다.
+ */
+export function fileExt(q: Pick<QualityDto, 'audioOnly'> | undefined): string {
+  return q?.audioOnly ? '.m4a' : '.mp4';
+}
+
+/**
+ * 이름 `fileName`으로 받으면 저장되는 파일 이름. 셸 `output_path_ext`와 같은 규칙이다: 이미 `ext`(대소문자 무시)로
+ * 끝나는 이름에는 확장자를 더 붙이지 않는다. `check_output`은 이 규칙으로 검사한 경로가 그대로 저장되는 이름을 돌려준다
+ * (`x.m4a.m4a`를 입력하면 `x.m4a.m4a`).
+ */
+export function savedFileName(fileName: string, ext: string): string {
+  return fileName.toLowerCase().endsWith(ext) ? fileName : `${fileName}${ext}`;
+}
+
+/** 화질 행·요청의 라벨: 오디오만 행은 코어 라벨("audio")이 아니라 문구 deck의 말이다 */
+export function qualityRowLabel(q: Pick<QualityDto, 'audioOnly' | 'label'>): string {
+  return q.audioOnly ? t('quality.audioOnly') : q.label;
+}
 
 /** [받기]를 막는 사유(patterns.md §6.4: 사유가 있는 비활성은 `aria-describedby`로 문장을 잇는다) */
 export type BlockReason = 'ownership' | 'duplicate';

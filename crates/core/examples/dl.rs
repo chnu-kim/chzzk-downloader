@@ -26,7 +26,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use chzzk_core::download::part::part_path;
-use chzzk_core::naming::{default_filename, output_path, range_stem};
+use chzzk_core::naming::{MediaExt, default_filename, output_path_ext, range_stem};
 use chzzk_core::progress::{format_bytes, format_hms};
 use chzzk_core::{
     CancellationToken, Chzzk, ClientConfig, DownloadOutcome, DownloadRequest, DuplicatePolicy,
@@ -372,6 +372,15 @@ async fn run(args: Args) -> Result<(), String> {
     );
     let qs = r.qualities();
     for (i, q) in qs.iter().enumerate() {
+        if q.audio_only {
+            // 오디오만 받기(일반 VOD에 서버 오디오 트랙이 있을 때). `--quality audio`로 고른다
+            println!(
+                "  [{i}] audio id={} {}bps (오디오만, .m4a)",
+                q.id,
+                q.bandwidth.map(|v| v.to_string()).unwrap_or_default(),
+            );
+            continue;
+        }
         println!(
             "  [{i}] {} id={} {}x{} {}bps {}fps",
             q.label,
@@ -406,6 +415,7 @@ async fn run(args: Args) -> Result<(), String> {
         (None, true) => qs
             .iter()
             .enumerate()
+            .filter(|(_, q)| !q.audio_only)
             .min_by_key(|(_, q)| q.resolution.or(q.height).unwrap_or(u32::MAX))
             .map(|(i, _)| i)
             .unwrap_or(0),
@@ -417,7 +427,13 @@ async fn run(args: Args) -> Result<(), String> {
     if let Some(range) = args.range {
         name = range_name(&name, range);
     }
-    let output = output_path(&args.out, &name, p);
+    // 오디오는 `.m4a`다. 기본 이름은 `.mp4`로 끝나므로 떼고 확장자를 지정한다(셸의 `suggestedFileName`과 같다)
+    let ext = MediaExt::for_quality(&quality.id);
+    let stem = match ext {
+        MediaExt::M4a => name.strip_suffix(".mp4").unwrap_or(&name),
+        MediaExt::Mp4 => name.as_str(),
+    };
+    let output = output_path_ext(&args.out, stem, ext, p);
     println!("화질 {} → {}", quality.label, output.display());
     if args.range.is_some() && matches!(r.source, Source::LiveRewindHls { .. }) {
         println!(
@@ -499,7 +515,7 @@ async fn run(args: Args) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chzzk_core::naming::MAX_FILENAME_BYTES;
+    use chzzk_core::naming::{MAX_FILENAME_BYTES, output_path};
 
     #[test]
     fn clock_table() {

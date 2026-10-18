@@ -190,7 +190,7 @@
 |---|---|---|---|
 | D52 Worker JS | **계속 없음.** 복사 버튼·테마 토글·QR 없음. xattr 명령은 선택 가능한 코드 블록 + "이 명령 말고 다른 명령을 붙여넣으라고 하지 않아요 … 사기예요" + "이 명령은 '인터넷에서 받은 파일' 표시만 지워요" | a-worker CSP, g-privacy G1(터미널 명령 안내와 사기 패턴 구별), `<details>`는 JS 없이 동작 | `worker`(CSP·인라인 금지) |
 | D53 랜딩 구조 | **내 OS 큰 버튼 하나**(36, 유일한 채움) + "다른 운영체제" 접힘 + 설치 안내 펼침 + "파일 확인(선택)" SHA-256 접힘 + 휴대폰 블록 먼저(UA `Mobi`·`Sec-CH-UA-Mobile`만, 숨기지 않음). "Apple Silicon(M1 이후) Mac만 지원해요"·최소 OS 한 줄 상시, "자동 업데이트" 약속 없음. macOS "그래도 열기" 경로 먼저 + xattr 폴백, Windows SAC·Linux libfuse2 안내, "처음 열면 로그인해요"·"막히면"(정보 복사 → 관리자) 절. OG 1200×630 PNG, 카카오 2:1 크롭 안전 영역, 로고·캡처·채널명 없음. `<table caption>` + `th scope`, skip link, `theme-color` 2종 | g-install·`G-WEB-R1`~`G-WEB-R16`, B 후보 골격(brief §6.13-2를 유일하게 다 지킴, judgment §2.2-6), C2(히어로 아래 고지) | `worker`(골격 테스트), `R8` |
-| D54 웹 폼 위험도 | **2단**: 차단(예전의 허가 빼기, 2026-10-18 허용목록 자동 허가)만 확인 페이지(`confirmDisallow.*`: "이 채널을 차단할까요?" / 왼쪽 [차단](빨간 글자) / 오른쪽 링크 "허가한 채널 목록으로"), 나머지 즉시 + 일회 알림. `tone=danger`는 되돌릴 수 없는 것에만(비파괴 "지우기"·대기 취소는 아님) | `G-WEB-R17`~`G-WEB-R24`(GOV.UK·MoJ confirm-an-action, WCAG 3.3.4), `A-WORKER-3.1`(danger 과용) | `worker`(폼 테스트) |
+| D54 웹 폼 위험도 | **2단**: 차단(예전의 허가 빼기, 2026-10-18 자동 허가 도입)만 확인 페이지(`confirmDisallow.*`: "이 채널을 차단할까요?" / 왼쪽 [차단](빨간 글자) / 오른쪽 링크 "허가한 채널 목록으로"), 나머지 즉시 + 일회 알림. `tone=danger`는 되돌릴 수 없는 것에만(비파괴 "지우기"·대기 취소는 아님) | `G-WEB-R17`~`G-WEB-R24`(GOV.UK·MoJ confirm-an-action, WCAG 3.3.4), `A-WORKER-3.1`(danger 과용) | `worker`(폼 테스트) |
 
 ### J. 설치·법
 

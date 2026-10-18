@@ -288,8 +288,9 @@ export const GATES = {
     needs: ['cargo', 'pnpm'],
     steps: [
       { cmd: ['pnpm', 'install', '--frozen-lockfile'], cwd: 'app' },
-      { cmd: ['cargo', 'test', '-p', 'chzzk-app', '--locked', ...featureArgs()] },
-      { cmd: ['cargo', 'test', '-p', 'chzzk-app', '--locked', ...featureArgs(['e2e']), '--lib', '--', 'e2e::'] },
+      // `--locked`를 맨 뒤(필터 앞)에 둔다: Windows는 featureArgs가 console-cli를 더한다(run.test.mjs 'gate 표')
+      { cmd: ['cargo', 'test', '-p', 'chzzk-app', ...featureArgs(), '--locked'] },
+      { cmd: ['cargo', 'test', '-p', 'chzzk-app', ...featureArgs(['e2e']), '--locked', '--lib', '--', 'e2e::'] },
     ],
   },
   'tauri-build': {

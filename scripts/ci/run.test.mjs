@@ -175,9 +175,11 @@ test('gate 표: 검사를 켜는 플래그', () => {
     assert.ok(cmds(g).some((c) => c.startsWith('cargo test') && c.endsWith('--locked')), g);
   }
   // chzzk-app clippy는 tauri-clippy(보통·e2e 둘 다 -D warnings), debug 빌드는 tauri-build(구현 중 변경 78)
+  // Windows는 featureArgs가 console-cli를 더한다(이 표를 읽는 OS 기준)
+  const feat = (names) => [...featureArgs(names), ''].join(' ');
   assert.deepEqual(cmds('tauri-clippy').filter((c) => c.startsWith('cargo clippy')), [
-    'cargo clippy -p chzzk-app --all-targets --locked -- -D warnings',
-    'cargo clippy -p chzzk-app --features e2e --all-targets --locked -- -D warnings',
+    `cargo clippy -p chzzk-app ${feat([])}--all-targets --locked -- -D warnings`,
+    `cargo clippy -p chzzk-app ${feat(['e2e'])}--all-targets --locked -- -D warnings`,
   ]);
   assert.equal(cmds('tauri-build').at(-1), 'pnpm tauri build --ci --debug --no-bundle');
   assert.ok(cmds('frontend').includes('pnpm install --frozen-lockfile'));

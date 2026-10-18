@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { newSecret } from "../../src/core/token";
 import type { Db } from "../../src/store/db";
 import { sweep } from "../../src/store/sweep";
-import { DAY, PORT, T0, dumpAll, freshStub } from "./helpers";
+import { DAY, PORT, T0, dumpAll, closedStub, freshStub } from "./helpers";
 
 afterEach(() => {
   vi.useRealTimers();
@@ -12,7 +12,7 @@ afterEach(() => {
 
 describe("setAlarm과 시계", () => {
   it("[확인 필요 해소] setAlarm 두 번 → getAlarm은 둘째 값(늦은 값 → 이른 값, 이른 값 → 늦은 값)", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await runInDurableObject(stub, async (_inst, state) => {
       await state.storage.setAlarm(T0 + 2000);
       await state.storage.setAlarm(T0 + 1000);
@@ -27,7 +27,7 @@ describe("setAlarm과 시계", () => {
   it("R6: vi.setSystemTime이 DO 안의 Date.now에 적용된다(Clock 주입이 필요 없다)", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(T0);
-    const stub = freshStub();
+    const stub = await closedStub();
     expect(await runInDurableObject(stub, () => Date.now())).toBe(T0);
     vi.setSystemTime(T0 + DAY);
     expect(await runInDurableObject(stub, () => Date.now())).toBe(T0 + DAY);
@@ -36,7 +36,7 @@ describe("setAlarm과 시계", () => {
   });
 
   it("첫 쓰기가 알람 하나를 예약하고 이후 쓰기는 바꾸지 않는다", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     const start = (now: number) => stub.startApp({ port: PORT, verifier: newSecret(), client: "c", ip: "203.0.113.1", limit: 6 }, now);
     expect((await start(T0)).ok).toBe(true);
     const alarm = () => runInDurableObject(stub, (_i, state) => state.storage.getAlarm());
@@ -170,7 +170,7 @@ function expectSwept(db: Db) {
 
 describe("sweep", () => {
   it("표대로 지운다", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await runInDurableObject(stub, (inst) => {
       seedAll(inst);
       const r = sweep(inst.db, NOW);
@@ -181,7 +181,7 @@ describe("sweep", () => {
   });
 
   it("멱등: 다시 불러도 지우는 것·쓰기·내용이 없다", async () => {
-    const stub = freshStub();
+    const stub = await closedStub();
     await runInDurableObject(stub, (inst) => {
       seedAll(inst);
       sweep(inst.db, NOW);
@@ -197,7 +197,7 @@ describe("sweep", () => {
   it("runDurableObjectAlarm: 알람이 청소하고 멱등이며 남은 행이 있으면 1시간 뒤로 다시 예약한다", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(NOW);
-    const stub = freshStub();
+    const stub = await closedStub();
     await runInDurableObject(stub, async (inst, state) => {
       seedAll(inst);
       await state.storage.setAlarm(NOW);
@@ -216,7 +216,7 @@ describe("sweep", () => {
   it("남은 행이 없으면 다음 알람을 예약하지 않는다", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(NOW);
-    const stub = freshStub();
+    const stub = await closedStub();
     await runInDurableObject(stub, async (inst, state) => {
       seedFlow(inst.db, "f-old", T0 + 60_000);
       await state.storage.setAlarm(NOW);
@@ -234,7 +234,7 @@ describe("sweep", () => {
   it("활성 위임만 남으면 다음 알람을 예약하지 않는다", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(NOW);
-    const stub = freshStub();
+    const stub = await closedStub();
     await runInDurableObject(stub, async (inst, state) => {
       const O = chan(2000);
       inst.db.run("INSERT INTO allowlist (channel_id, channel_name, owner_channel_id, note, added_by, added_at) VALUES (?, 'o', NULL, NULL, 'x', ?)", O, T0);
@@ -259,7 +259,7 @@ describe("sweep", () => {
   it("미만료 초대·회수된 위임 행이 남으면 다음 알람을 예약한다", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(NOW);
-    const stub = freshStub();
+    const stub = await closedStub();
     await runInDurableObject(stub, async (inst, state) => {
       inst.db.run(
         "INSERT INTO invite (token_hash, owner_channel_id, owner_login_channel_id, owner_allowed_at, created_at, expires_at) VALUES ('i', ?, ?, NULL, ?, ?)",

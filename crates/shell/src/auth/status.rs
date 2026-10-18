@@ -21,7 +21,7 @@ pub enum AuthPhase {
     Error,
 }
 
-/// §11.4 AuthReason과 같은 10개
+/// §11.4 AuthReason(10개)에 거부 이유 둘(허용목록 자동 허가 명세 §5.1)을 더한 12개
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AuthReason {
     /// 로그인 제한 시간 초과
@@ -44,4 +44,8 @@ pub enum AuthReason {
     LoginLost,
     /// 로그인 수신기를 열지 못했거나 잃음
     Receiver,
+    /// 오늘 새로 들어올 수 있는 채널 수를 다 써서 거부됨(`Denied` 단계)
+    DailyLimit,
+    /// 관리자가 막은 채널이라 거부됨(`Denied` 단계)
+    Blocked,
 }

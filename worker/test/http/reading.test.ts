@@ -133,12 +133,22 @@ describe("/privacy", () => {
       p.web(WEB_TTL_MS / HOUR),
       p.app(REFRESH_TTL_MS / DAY, SESSION_MAX_MS / DAY),
       p.revoked(REVOKED_KEEP_MS / DAY),
+      p.allowed,
+      p.blocked,
       p.denied(DENIED_KEEP_MS / DAY, DENIED_CAP),
       p.audit(AUDIT_CAP),
       p.flow(FLOW_TTL_MS / MIN),
     ]) {
       expect(t).toContain(`<li>${escapeHtml(line)}</li>`);
     }
+  });
+
+  it("받는 정보 절이 처음 로그인하면 허가 목록에 저장한다고 적고, 보관 기간 절이 허가·차단 목록을 말한다(allowlist-open.md §5.3)", async () => {
+    const t = await (await new Browser().get("/privacy")).text();
+    expect(t).toContain(escapeHtml(COPY.privacy.collect.body));
+    expect(t).toContain("처음 로그인하면 채널 이름과 채널 ID를 사용 허가 목록에 저장해요.");
+    expect(t).toContain("허가가 빠질 때까지 남아요.");
+    expect(t).toContain("막는 동안 남아요.");
   });
 
   it("상수는 모두 나누어떨어지는 값이다(소수점이 화면에 나오지 않는다)", () => {

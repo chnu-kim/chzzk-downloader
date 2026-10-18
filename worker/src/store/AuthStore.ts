@@ -11,7 +11,7 @@ import { ipBucket } from "../core/ip";
 import { isLoopbackPort, loopbackState } from "../core/loopback";
 import { log } from "../core/log";
 import { isHexHash, isId, isSecret, newId, newSecret, newToken, sha256Hex, type TokenKind } from "../core/token";
-import { CHANNEL_ID, adminView, allow, allowDenied, audit, clip, disallow, dismissDenied } from "./allowlist";
+import { CHANNEL_ID, adminView, allow, allowDenied, audit, clip, disallow, disallowTarget, dismissDenied, setAutoAllowCap } from "./allowlist";
 import { Db } from "./db";
 import { acceptInvite, completeClaimed, createInvite, delegationsOf, editorsOf, inviteOpen, invitedBy, inviteView, leaveDelegation, recentDelegationFor, removeEditor, tracedClaims } from "./delegation";
 import {
@@ -44,6 +44,7 @@ import type {
   ContinueResult,
   CreateInviteResult,
   DelegatedChannel,
+  DenyReason,
   DisallowResult,
   DoneView,
   FinishResult,
@@ -59,6 +60,7 @@ import type {
   RedeemResult,
   RemoveResult,
   RotateResult,
+  SetAutoAllowCapResult,
   StartAppInput,
   StartAppResult,
   StartWebInviteResult,
@@ -216,17 +218,22 @@ export class AuthStore extends DurableObject<Env> {
   /** hint: 콜백이 아는 흐름 종류·실패 사유(로그에만 쓴다, 구현 중 변경 43) */
   async finish(flowId: string, outcome: LoginOutcome, admins: readonly string[], now: number, hint?: LoginLogHint): Promise<FinishResult> {
     let r: FinishResult;
+    let logReason: DenyReason | "auto_allowed" | undefined;
     if (!isId(flowId)) r = { type: "gone" };
     else {
       const sessionId = newId();
       const cookie = await mint("web");
       const csrf = newSecret();
       const grant = await mint("grant");
-      const s: FinishSettled = await this.write(now, () => finish(this.db, flowId, outcome, { sessionId, cookie, csrf, grant }, admins, now));
+      const settled: FinishSettled = await this.write(now, () => finish(this.db, flowId, outcome, { sessionId, cookie, csrf, grant }, admins, now));
+      // 로그용 값은 여기서 읽고 떼어 낸다: FinishResult(RPC 응답)의 모양은 그대로다(allowlist-open.md §3.8)
+      const { logReason: lr, capInvalid, ...s } = settled;
+      logReason = lr;
+      if (capInvalid === true) log("store.auto_allow_cap_invalid", { level: "warn" });
       // verifier는 RPC 밖으로 나가지 않는다: 트랜잭션 뒤에 state로 바꾼다
       r = s.type === "loopback" ? { type: "loopback", result: s.result, port: s.port, grant: s.grant, state: await loopbackState(s.verifier) } : s;
     }
-    log(...finishEvent(outcome, r, hint));
+    log(...finishEvent(outcome, r, hint, logReason));
     return r;
   }
 
@@ -350,6 +357,17 @@ export class AuthStore extends DurableObject<Env> {
 
   async disallow(channelId: string, by: string, admins: readonly string[], now: number): Promise<DisallowResult> {
     return this.write(now, () => disallow(this.db, channelId, by, admins, now));
+  }
+
+  /** 하루 상한 저장(allowlist-open.md §3.4). 성공 이벤트는 Worker 핸들러가 남긴다(URL에 값이 없는 경로) */
+  async setAutoAllowCap(cap: number, by: string, now: number): Promise<SetAutoAllowCapResult> {
+    return this.write(now, () => setAutoAllowCap(this.db, cap, by, now));
+  }
+
+  /** 차단 확인 페이지가 보는 한 채널의 상태. 관리 화면의 200행 제한과 상관없이 그 채널만 읽는다(쓰기 0) */
+  async disallowTarget(channelId: string, now: number): Promise<{ allowed: boolean; blocked: boolean; channelName: string | null; activeSessions: number } | null> {
+    if (!CHANNEL_ID.test(channelId)) return null;
+    return this.write(now, () => disallowTarget(this.db, channelId, now));
   }
 
   async dismissDenied(channelId: string, by: string, now: number): Promise<boolean> {

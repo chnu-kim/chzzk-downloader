@@ -209,11 +209,12 @@ pub enum HelpId {
     Report,
     WindowsOldApp,
     Editors,
+    LoginDenied,
 }
 
 impl HelpId {
     /// 모든 주제(`ids.json` 대조용)
-    pub const ALL: [HelpId; 8] = [
+    pub const ALL: [HelpId; 9] = [
         HelpId::Cookie,
         HelpId::DiskFull,
         HelpId::InstallMac,
@@ -222,6 +223,7 @@ impl HelpId {
         HelpId::Report,
         HelpId::WindowsOldApp,
         HelpId::Editors,
+        HelpId::LoginDenied,
     ];
 
     /// 앵커 글자(= serde 값). 주소의 `#` 뒤에 그대로 붙는다
@@ -235,6 +237,7 @@ impl HelpId {
             HelpId::Report => "report",
             HelpId::WindowsOldApp => "windows-old-app",
             HelpId::Editors => "editors",
+            HelpId::LoginDenied => "login-denied",
         }
     }
 }
@@ -1215,7 +1218,7 @@ impl From<AuthPhase> for AuthState {
     }
 }
 
-/// 사유(worker.md §11.4의 10개). TS 이름은 `AuthReason`.
+/// 사유(worker.md §11.4의 10개 + 거부 이유 둘). TS 이름은 `AuthReason`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(rename = "AuthReason")]
@@ -1230,6 +1233,8 @@ pub enum AuthReasonDto {
     Server,
     LoginLost,
     Receiver,
+    DailyLimit,
+    Blocked,
 }
 
 impl From<AuthReason> for AuthReasonDto {
@@ -1245,6 +1250,8 @@ impl From<AuthReason> for AuthReasonDto {
             AuthReason::Server => AuthReasonDto::Server,
             AuthReason::LoginLost => AuthReasonDto::LoginLost,
             AuthReason::Receiver => AuthReasonDto::Receiver,
+            AuthReason::DailyLimit => AuthReasonDto::DailyLimit,
+            AuthReason::Blocked => AuthReasonDto::Blocked,
         }
     }
 }

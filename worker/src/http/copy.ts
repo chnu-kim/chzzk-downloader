@@ -27,6 +27,9 @@ export const COPY = {
     title: "이 채널은 사용 허가가 없어요",
     body: "관리자에게 채널 이름을 알려 주세요. 다른 계정으로 로그인하려면 네이버에서 먼저 로그아웃해 주세요.",
     next: "허가를 받은 뒤 다시 로그인해 주세요.",
+    // 거부 이유가 있을 때의 제목·본문(allowlist-open.md §5.3). 이유가 없을 때(부트스트랩·상한 0)는 위의 값을 쓴다
+    dailyLimit: { title: "오늘은 새로 시작할 수 없어요", body: "새로 쓰는 채널은 하루에 받는 수가 정해져 있어요. 한국 시간 자정이 지난 뒤 다시 로그인해 주세요." },
+    blocked: { title: "사용이 막힌 채널이에요", body: "관리자가 이 채널의 사용을 막았어요. 다른 계정으로 로그인하려면 네이버에서 먼저 로그아웃해 주세요." },
     invite: (owner: string): string => `초대는 기록해 뒀어요. 관리자가 허가하면 ‘${owner}’ 채널의 편집자가 돼요.`,
     // 초대 줄 아래 [초대 취소]의 안내(106 (차) ②). 잘못된 계정으로 들어온 사람이 스스로 끊는 길이다
     cancelHint: "다른 채널로 로그인했다면 초대를 취소해 주세요.",
@@ -41,7 +44,7 @@ export const COPY = {
   home: "처음으로",
   // csrf·Origin이 맞지 않은 관리 POST의 오류 페이지에서 원래 화면으로 가는 링크(web.md §6.2)
   reloadAdmin: "관리 화면 새로 열기",
-  anonLead: "허가받은 채널만 쓸 수 있어요.",
+  anonLead: "치지직으로 로그인하면 쓸 수 있어요.",
   // 단계 (e) 배선이 미리 넣은 키(content.md §15.3·§11 값 그대로). 참조는 각 묶음이 만든다(DC11은 그 뒤에 0이 된다)
   landing: {
     consent: {
@@ -86,7 +89,7 @@ export const COPY = {
     intro: { body: "이 사이트와 앱의 로그인 서버가 받는 정보와 그 쓰임을 적었어요." },
     collect: {
       title: "받는 정보",
-      body: "로그인하면 치지직이 알려 주는 채널 이름과 채널 ID를 받아요. 로그인한 기기를 구분하려고 앱 버전이나 브라우저 같은 기기 정보와 로그인한 시각도 적어 둬요.",
+      body: "로그인하면 치지직이 알려 주는 채널 이름과 채널 ID를 받아요. 로그인한 기기를 구분하려고 앱 버전이나 브라우저 같은 기기 정보와 로그인한 시각도 적어 둬요. 처음 로그인하면 채널 이름과 채널 ID를 사용 허가 목록에 저장해요.",
     },
     use: { title: "쓰는 곳", body: "허가받은 채널인지 확인하고 ‘내 기기’와 편집자 목록에 보여 주는 데만 써요. 광고나 통계에는 쓰지 않아요." },
     editors: {
@@ -105,6 +108,8 @@ export const COPY = {
       web: (hours: number): string => `웹 로그인은 ${hours}시간 동안 유지돼요.`,
       app: (idleDays: number, maxDays: number): string => `앱 로그인은 쓰지 않으면 ${idleDays}일 뒤에, 계속 써도 ${maxDays}일 뒤에는 끝나요.`,
       revoked: (days: number): string => `끊은 기기의 기록은 ${days}일 동안 남아요.`,
+      allowed: "사용 허가 목록의 채널 이름과 채널 ID는 허가가 빠질 때까지 남아요.",
+      blocked: "관리자가 막은 채널의 이름과 채널 ID는 막는 동안 남아요.",
       denied: (days: number, cap: number): string => `거부된 시도는 마지막 시도 뒤 ${days}일 동안, 채널 ${cap}개까지 남아요.`,
       audit: (cap: number): string => `관리자가 허가를 바꾼 기록은 기간이 아니라 최근 ${cap}건까지 남아요.`,
       flow: (minutes: number): string => `로그인을 진행하는 중의 정보는 ${minutes}분 안에 지워져요.`,
@@ -176,7 +181,7 @@ export const COPY = {
   fileCheckLead: "받은 파일이 올바른지 확인하려면 아래 SHA-256 값과 비교할 수 있어요.",
   installTitle: "설치하기",
   loginSectionTitle: "처음 열면 로그인해요",
-  loginSectionBody: "앱에서 [치지직으로 로그인]을 누르면 브라우저가 열려요. 받는 것은 채널 이름과 채널 ID뿐이고 네이버 비밀번호는 받지 않아요. 허가되지 않은 채널이면 이유와 다음에 할 일을 앱이 알려 줘요.",
+  loginSectionBody: "앱에서 [치지직으로 로그인]을 누르면 브라우저가 열려요. 받는 것은 채널 이름과 채널 ID뿐이고 네이버 비밀번호는 받지 않아요. 로그인할 수 없으면 이유와 다음에 할 일을 앱이 알려 줘요.",
   helpSectionTitle: "막히면",
   // content.md §11 "문제가 있을 때" 상수
   reportHelp: "앱에서 [문제 보고용 정보 복사]를 누른 뒤 관리자에게 보내 주세요. 복사한 내용에는 채널 이름이나 로그인 정보가 들어가지 않아요. 관리자는 쿠키나 비밀번호를 절대 묻지 않아요.",
@@ -232,13 +237,30 @@ export const COPY = {
   colAddedBy: "추가한 관리자",
   colAddedAt: "추가한 시각",
   colActive: "활성 로그인",
-  disallow: "허가 빼기…",
-  // 허가 빼기 확인 페이지(D54, web.md §7.3). 최종 버튼 라벨은 audit.disallow를 같이 쓴다
+  disallow: "차단…",
+  // 차단 확인 페이지(예전의 허가 빼기, D54, web.md §7.3). 최종 버튼 라벨은 audit.disallow를 같이 쓴다
   confirmDisallow: {
-    title: "이 채널의 허가를 뺄까요?",
-    body: (name: string, n: number): string => `‘${name}’ 채널의 허가를 빼면 로그인한 앱과 브라우저 ${n}개가 다음에 서버에 연결할 때 끊겨요. 다시 허가해도 끊긴 기기는 새로 로그인해야 해요.`,
+    title: "이 채널을 차단할까요?",
+    body: (name: string, n: number): string => `‘${name}’ 채널을 차단하면 로그인한 앱과 브라우저 ${n}개가 다음에 서버에 연결할 때 끊겨요. 차단한 채널은 자동으로 허가되지 않아요. 다시 허가해도 끊긴 기기는 새로 로그인해야 해요.`,
     back: "허가한 채널 목록으로",
   },
+  // 자동 허가 절(allowlist-open.md §3.7). 날짜는 한국 시간 자정에 바뀐다
+  autoTitle: "자동 허가",
+  autoToday: (n: number, cap: number): string => `오늘 자동 허가 ${n} / ${cap}`,
+  autoDayNote: "날짜는 한국 시간 자정에 바뀌어요.",
+  autoCapLabel: (max: number): string => `하루 상한(최대 ${max})`,
+  autoOff: "0이면 자동 허가를 끄고 관리자만 허가해요.",
+  save: "저장",
+  autoCapBy: (who: string, at: string): string => `마지막으로 바꾼 관리자 ${who} · ${at}`,
+  autoAllowSaved: "저장했어요.",
+  badCap: (max: number): string => `하루 상한은 0부터 ${max}까지의 정수예요.`,
+  // 표가 최근 행만 보일 때 위에 적는 한 줄
+  listTotal: (n: number, max: number): string => `전체 ${n}개 중 최근 ${max}개`,
+  blockedTitle: "차단한 채널",
+  blockedEmpty: "차단한 채널이 없어요.",
+  colBlockedBy: "차단한 관리자",
+  colBlockedAt: "차단한 시각",
+  blockedTag: "차단함",
   addTitle: "채널 ID로 추가",
   noteLabel: "메모(선택, 64자까지)",
   add: "추가",
@@ -260,7 +282,7 @@ export const COPY = {
   colTarget: "대상",
   audit: {
     allow: ALLOW_LABEL,
-    disallow: "허가 빼기",
+    disallow: "차단",
     revoke_session: "로그인 끊기",
     reuse_detected: "재사용 감지",
     refresh_recovered: "로그인 복구",
@@ -269,7 +291,7 @@ export const COPY = {
   bootstrapAdmin: { title: "아직 관리자가 정해지지 않았어요" },
   badBody: "요청을 읽지 못했어요.",
   badChannelId: "채널 ID는 영문 소문자와 숫자 32자리예요.",
-  isAdmin: { title: "관리자 채널은 뺄 수 없어요" },
+  isAdmin: { title: "관리자 채널은 차단할 수 없어요" },
   adminNoAllow: { title: "관리자 채널은 허가 목록에 넣지 않아요", body: "관리자 설정에서만 정해요." },
   notFound: { title: "대상을 찾지 못했어요", body: "이미 처리됐을 수 있어요." },
 } as const;

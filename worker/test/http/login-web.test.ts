@@ -4,15 +4,16 @@ import { sha256Hex } from "../../src/core/token";
 import { createFakeChzzk, FAKE_ACCOUNTS, type FakeChzzk } from "../fake-chzzk.mjs";
 import { installFakeChzzk, type FakeNet } from "../network";
 import { A1 } from "../store/helpers";
-import { AppClient, appFlow, Browser, h1Of, parseLoopback, store, useClock, viaEnv } from "./harness";
+import { AppClient, appFlow, Browser, h1Of, parseLoopback, store, useClock, viaEnv, closeAutoAllow } from "./harness";
 
 let fake: FakeChzzk;
 let net: FakeNet;
 
-beforeEach(() => {
+beforeEach(async () => {
   useClock();
   fake = createFakeChzzk();
   net = installFakeChzzk(fake);
+  await closeAutoAllow();
 });
 
 afterEach(() => {

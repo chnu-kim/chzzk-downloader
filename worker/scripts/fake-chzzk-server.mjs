@@ -89,12 +89,12 @@ export async function startFakeChzzkServer({ fake = createFakeChzzk(), host = FA
   };
 }
 
-// 수동 확인: node scripts/fake-chzzk-server.mjs [--account a1|b2|c3|d4]
+// 수동 확인: node scripts/fake-chzzk-server.mjs [--account a1|b2|c3|d4|e5]
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const i = process.argv.indexOf("--account");
   const account = i >= 0 ? process.argv[i + 1] : "b2";
   if (!Object.hasOwn(FAKE_ACCOUNTS, account ?? "")) {
-    console.error("사용법: node scripts/fake-chzzk-server.mjs [--account a1|b2|c3|d4]");
+    console.error("사용법: node scripts/fake-chzzk-server.mjs [--account a1|b2|c3|d4|e5]");
     process.exit(2);
   }
   const { fake, origin, close } = await startFakeChzzkServer();

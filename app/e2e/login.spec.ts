@@ -54,6 +54,19 @@ test('거부·유예 만료 화면과 다시 연결', async ({ app }) => {
   await expect(page.getByRole('button', { name: t('auth.otherAccount') })).toBeVisible();
   await app.axe('로그인 거부');
 
+  // 거부 이유별 화면(허용목록 자동 허가 명세 §5.1): 하루 상한은 자정 뒤 다시, 차단은 다른 채널이나 관리자에게
+  await app.ctl((c, s) => c.setAuth(s), auth({ state: 'denied', reason: 'dailyLimit', channelName: '테스트 채널' }));
+  await expect(page.getByRole('heading', { name: t('auth.dailyLimit.title') })).toBeVisible();
+  await expect(page.getByText(t('auth.dailyLimit.body'))).toBeVisible();
+  await expect(page.getByText(t('auth.dailyLimit.editorHint'))).toBeVisible();
+  await expect(page.getByRole('button', { name: t('action.retry') })).toBeVisible();
+  await app.axe('로그인 거부(하루 상한)');
+  await app.ctl((c, s) => c.setAuth(s), auth({ state: 'denied', reason: 'blocked', channelName: '테스트 채널' }));
+  await expect(page.getByRole('heading', { name: t('auth.blocked.title') })).toBeVisible();
+  await expect(page.getByText(t('auth.blocked.body'))).toBeVisible();
+  await expect(page.getByText(t('auth.dailyLimit.editorHint'))).toHaveCount(0);
+  await app.axe('로그인 거부(차단)');
+
   await app.ctl((c, s) => c.setAuth(s), auth({ state: 'expired', reason: 'graceExpired' }));
   await expect(page.getByRole('heading', { name: t('auth.graceExpired.title') })).toBeVisible();
   await page.getByRole('button', { name: t('auth.reconnect') }).click();

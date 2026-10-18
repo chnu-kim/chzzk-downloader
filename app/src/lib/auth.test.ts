@@ -35,6 +35,10 @@ const rows: Row[] = [
   [st('denied', 'removedFromAllowlist'), { kind: 'message', title: ko['auth.removed.title'], body: ko['auth.removed.body'], problem: true, buttons: [[L, ko['action.retry'], 'primary']], help: 'link', stuck: false }],
   [st('denied', null, '테스트 채널'), { kind: 'message', title: ko['auth.denied.title'], body: ko['auth.denied.body'], channelRow: `${ko['auth.channelLabel']}: ‘테스트 채널’`, problem: true, buttons: [[L, ko['action.retry'], 'primary']], help: 'link', stuck: false }],
   [st('denied'), { kind: 'message', title: ko['auth.denied.title'], body: ko['auth.denied.body'], problem: true, buttons: [[L, ko['action.retry'], 'primary']], help: 'link', stuck: false }],
+  // 거부 이유(허용목록 자동 허가 명세 §5.1): 하루 상한은 자정 뒤 다시, 차단은 다른 채널이나 관리자에게
+  [st('denied', 'dailyLimit', '테스트 채널'), { kind: 'message', title: ko['auth.dailyLimit.title'], body: ko['auth.dailyLimit.body'], channelRow: `${ko['auth.channelLabel']}: ‘테스트 채널’`, problem: true, buttons: [[L, ko['action.retry'], 'primary']], help: 'link', stuck: false }],
+  [st('denied', 'blocked', '테스트 채널'), { kind: 'message', title: ko['auth.blocked.title'], body: ko['auth.blocked.body'], channelRow: `${ko['auth.channelLabel']}: ‘테스트 채널’`, problem: true, buttons: [[L, ko['action.retry'], 'primary']], help: 'link', stuck: false }],
+  [st('denied', 'dailyLimit'), { kind: 'message', title: ko['auth.dailyLimit.title'], body: ko['auth.dailyLimit.body'], problem: true, buttons: [[L, ko['action.retry'], 'primary']], help: 'link', stuck: false }],
   [st('expired', 'loginTimeout'), { kind: 'message', title: ko['auth.loginTimeout.title'], body: t('auth.loginTimeout.body', { mins: 10 }), problem: true, buttons: [[L, ko['auth.relogin'], 'primary']], help: null, stuck: false }],
   [st('expired', 'revoked'), { kind: 'message', title: ko['auth.revoked.title'], body: ko['auth.revoked.body'], problem: true, buttons: [[L, ko['auth.relogin'], 'primary']], help: null, stuck: false }],
   [st('expired', 'reuseDetected'), { kind: 'message', title: ko['auth.revoked.title'], body: ko['auth.reuse.body'], problem: true, buttons: [[L, ko['auth.relogin'], 'primary']], help: null, stuck: false }],
@@ -130,6 +134,10 @@ describe('loginScreen: 거부 화면의 편집자 안내 한 줄(Z6)', () => {
   it('일반 거부에만 hint가 있다', () => {
     expect(loginScreen(st('denied'), 0)!.hint).toBe(t('auth.denied.editorHint'));
     expect(loginScreen(st('denied', null, '테스트 채널'), 0)!.hint).toBe(t('auth.denied.editorHint'));
+  });
+  it('하루 상한 거부에는 다음 로그인에 편집자가 된다는 hint가, 차단·허가에서 빠진 거부에는 없다', () => {
+    expect(loginScreen(st('denied', 'dailyLimit'), 0)!.hint).toBe(t('auth.dailyLimit.editorHint'));
+    expect(loginScreen(st('denied', 'blocked'), 0)!.hint).toBeNull();
   });
   it('허가에서 빠진 거부·그 밖의 화면은 hint가 null이다', () => {
     expect(loginScreen(st('denied', 'removedFromAllowlist'), 0)!.hint).toBeNull();

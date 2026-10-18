@@ -73,6 +73,8 @@ describe("renderAdmin", () => {
   it("버튼 의미: 채움 버튼은 [추가] 하나, 위험 표시 없음, 끊기·지우기·허가는 보조 버튼", async () => {
     const t = await render();
     expect(count(t, /btn-primary/g)).toBe(1);
+    // 상한 [저장]은 채움 버튼이 아니다(페이지의 유일한 채움 버튼은 [추가])
+    expect(t).toContain(`<button type="submit" class="btn">${COPY.save}</button>`);
     expect(t).toContain(`<button type="submit" class="btn btn-primary">${COPY.add}</button>`);
     expect(t).toContain(`<button type="submit" class="btn">${COPY.revoke}</button>`);
     expect(t).toContain(`<button type="submit" class="btn">${COPY.dismiss}</button>`);
@@ -212,5 +214,74 @@ describe("관리 꼬리표 invitedBy", () => {
     expect(t).toContain("&lt;b&gt;x&lt;/b&gt;");
     expect(t).not.toContain("<b>x");
     expect(await render(row(""))).toContain("초대 받음 · ‘’");
+  });
+});
+
+describe("자동 허가 절·차단 표(allowlist-open.md §3.7)", () => {
+  const render = (view: AdminView, o?: Parameters<typeof renderAdmin>[2]) => renderAdmin(CONFIG, { view, admins: [A1], csrf: CSRF, nav: NAV }, o).text();
+
+  it("절 순서: 관리자 · 자동 허가 · 허가한 채널 · 거부된 시도 · 차단한 채널 · 활성 로그인 · 감사 기록", async () => {
+    const t = await render(EMPTY);
+    const heads = [...t.matchAll(/<h2>([^<]*)<\/h2>/g)].map((m) => m[1]);
+    expect(heads).toEqual(["관리자", COPY.autoTitle, COPY.allowTitle, COPY.deniedTitle, COPY.blockedTitle, COPY.colActive, COPY.auditTitle]);
+  });
+
+  it("자동 허가 절: 오늘 센 수, 날짜 안내, 숫자 입력(0~100), 끄는 법 도움말, 바꾼 관리자와 시각", async () => {
+    const auto = { cap: 20, today: 3, capBy: A1, capAt: Date.UTC(2030, 0, 1, 15, 0, 0) };
+    const t = await render({ ...EMPTY, autoAllow: auto });
+    expect(t).toContain(`<p>${COPY.autoToday(3, 20)}</p>`);
+    expect(t).toContain(COPY.autoDayNote);
+    expect(t).toContain('action="/admin/auto-allow"');
+    expect(t).toContain('type="number" id="auto-allow-cap" name="cap"');
+    expect(t).toContain('min="0" max="100"');
+    expect(t).toContain('value="20"');
+    expect(t).toContain(COPY.autoOff);
+    expect(t).toContain(COPY.autoCapBy(A1, "2030. 1. 2. 오전 12:00"));
+    // 바꾼 적이 없으면 그 줄이 없다
+    expect(await render(EMPTY)).not.toContain("마지막으로 바꾼 관리자");
+  });
+
+  it("400: 오류 요약이 상한 칸으로 가고 입력값이 채워진다", async () => {
+    const t = await render(EMPTY, { status: 400, errors: [{ fieldId: "auto-allow-cap", message: COPY.badCap(100) }], capValue: "abc" });
+    expect(t).toContain('href="#auto-allow-cap"');
+    expect(t).toContain('value="abc"');
+    expect(t).toContain('aria-invalid="true"');
+  });
+
+  it("허가 행: 'auto'는 자동 허가로 보이고 버튼은 [차단…], 200행을 넘으면 전체 수를 적는다", async () => {
+    const row = { channelId: B2, channelName: "새", ownerChannelId: null, note: null, addedBy: "auto", addedAt: 0, activeSessions: 0 };
+    const t = await render({ ...EMPTY, allowlist: [row], allowlistTotal: 250 });
+    expect(t).toContain(`${COPY.colAddedBy} ${COPY.autoTitle}`);
+    expect(t).toContain(`>${COPY.disallow}</a>`);
+    expect(t).toContain(COPY.listTotal(250, 200));
+    expect(await render({ ...EMPTY, allowlist: [row], allowlistTotal: 1 })).not.toContain("중 최근");
+  });
+
+  it("거부된 시도: 차단된 채널은 꼬리표가 있고 [차단…]이 없다, 아니면 [허가]·[차단…]·[지우기]", async () => {
+    const d = (blocked: boolean) => ({ channelId: C3, channelName: "거부", firstAt: 0, lastAt: 0, attempts: 1, invitedBy: null, blocked });
+    const on = await render({ ...EMPTY, denied: [d(true)] });
+    expect(on).toContain(`<span class="meta">${COPY.blockedTag}</span>`);
+    expect(on).not.toContain(`href="/admin/${C3}/disallow"`);
+    const off = await render({ ...EMPTY, denied: [d(false)] });
+    expect(off).not.toContain(COPY.blockedTag);
+    expect(off).toContain(`href="/admin/${C3}/disallow"`);
+  });
+
+  it("차단한 채널 표: 이름·ID·차단한 관리자·시각과 [허가], 비어 있으면 안내", async () => {
+    expect(await render(EMPTY)).toContain(`<p>${COPY.blockedEmpty}</p>`);
+    const t = await render({ ...EMPTY, blocked: [{ channelId: C3, channelName: "막힘", blockedBy: A1, blockedAt: 0 }], blockedTotal: 1 });
+    expect(t).toContain('id="tbl-blocked"');
+    expect(t).toContain(COPY.colBlockedBy);
+    expect(t).toContain(COPY.colBlockedAt);
+    expect(t).toContain(`name="channelId" value="${C3}"`);
+    expect(t).toContain('action="/admin/allow"');
+  });
+
+  it("옛 DO의 응답(새 필드 없음)이어도 던지지 않고 새 절만 그리지 않는다", async () => {
+    const old = { allowlist: [], denied: [], sessions: [], audit: [] } as unknown as AdminView;
+    const t = await render(old);
+    expect(t).not.toContain(`<h2>${COPY.autoTitle}</h2>`);
+    expect(t).not.toContain(`<h2>${COPY.blockedTitle}</h2>`);
+    expect(t).toContain(`<h2>${COPY.allowTitle}</h2>`);
   });
 });

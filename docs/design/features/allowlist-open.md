@@ -1,6 +1,6 @@
 # 허용목록 자동 허가 + 하루 새 채널 상한: 명세(2026-10-18, 기준 origin/master `90404f9`)
 
-**상태**: 명세만 있다(코드 변경 없음). 구현은 §8의 stacked PR 순서로 한다. 구현이 이 문서와 달라지면 worker.md·app.md의 "구현 중 변경"이 이긴다(번호는 머지 순, 지금 마지막은 worker.md 108·app.md 90).
+**상태**: W1·W2·A1이 구현됐다(2026-10-18, 이 문서 끝 §10 "구현 중 변경"이 본문보다 우선한다). R(버전 PR·ROADMAP 결정 행·런북 마무리)과 태그·운영 배포는 사용자 승인 뒤다. 구현이 이 문서와 달라지면 worker.md 109·app.md 91의 "구현 중 변경"이 이긴다.
 **표기**: `파일:줄`은 기준 커밋 `90404f9`에서 연 줄이다. **[확인]** 직접 연 줄이 받침 / **[가정]** 설계 판단 / **[잠정]** 출처 없는 수치(ADR-0009 묶음에 올린다). 예시 채널 이름·ID는 전부 가짜다(`…a1`·`…e5`는 테스트 상수 꼴).
 **고르는 법**: §2.1은 지시서가 정한 것이고 §2.2는 **사용자가 고를 것**이다. §2.2의 각 행에는 선택지·차이·추천이 있다. 추천대로 고르면 §3 이하가 그대로 맞는다. 다른 선택지를 고르면 그 행의 "바뀌는 곳" 칸만 고친다.
 
@@ -401,3 +401,18 @@ ALTER TABLE flow ADD COLUMN deny_reason TEXT
 5. **배포 순간 열린다**(§2.2 A2 가). 되돌리기는 `/admin`에서 상한 0이고 재배포가 필요 없다.
 6. **본인 탈퇴·오래된 채널 정리가 없다**(§1.2). 요청이 오거나 위험 1의 재계산에서 문제가 되면 `added_by='auto'` 행 중 마지막 세션이 N일 전인 행을 정리하는 청소를 검토한다.
 7. **새 사용자가 상한을 처음 만나는 곳은 웹 완료 페이지다.** 설치 파일은 허가된 웹 세션에만 보인다(`copy.ts:59` "로그인하면 내 컴퓨터용 설치 파일이 보여요" [확인]). 그래서 처음 오는 사람은 대개 랜딩에서 웹 로그인을 하고, 상한에 걸리면 `doneDenied.dailyLimit`(§5.3)을 본다. 앱 거부 화면(§5.1)은 설치 파일을 다른 사람에게 받았거나 차단된 사람이 만난다. 옛 앱으로 상한에 걸리면 "허가가 없어요"를 본다(§4.5) [가정: 드문 경우].
+
+---
+
+## 10. 구현 중 변경(본문보다 우선, worker.md 109·app.md 91)
+
+1. **§2.2 선택은 추천대로 구현했다**: A1 가(한국 시간 자정)·A2 가(기본 20)·A3 가(0~100)·B1 가·B2 가·B3 가·C1 가·C2 가. 사용자가 다른 선택지를 고르면 §2.2 표의 "바꾸는 곳" 칸만 고친다: A1 `kstDay`(`store/allowlist.ts`), A2 `AUTO_ALLOW_DEFAULT_CAP`·A3 `AUTO_ALLOW_CAP_MAX`(`core/auto-allow.ts`), B2 `copy.ts` `disallow`·`confirmDisallow`·`audit.disallow`(+ `content.md` §15.3, `terms.json`), C1 redeem `reason`(`flows.ts`·`auth.ts`·`api.rs`), C2 `loopback.rs` 문장.
+2. **§3.1 "admins는 검증을 거친 값"은 사실이 아니었다**: `AuthStore.finish`는 `admins`를 검증 없이 넘긴다. `flows.finish`가 문자열 배열이 아니면 자동 허가를 하지 않는다(fail closed, S10b).
+3. **§3.8 로그의 이유는 `FinishResult`에 싣지 않는다**: 내부 `FinishSettled.logReason`·`capInvalid`로 나르고 AuthStore가 떼어 낸다(RPC 응답 모양 그대로). `finishEvent`는 네 번째 인자 `reason`을 받는다.
+4. **§3.7·§4.3 확인 페이지는 새 RPC `disallowTarget(channelId, now)`를 쓴다**: `adminView`가 200행으로 줄어 그 밖의 오래된 채널이 `alreadyDone`이 되는 모순(§9-3)을 피한다. 요청당 DO 호출 수는 그대로(2회).
+5. **§4.3 `AdminView`**: 거부 행에 `blocked`(꼬리표), 최상위에 `autoAllow`·`blocked`·`allowlistTotal`·`blockedTotal`. 렌더러는 새 필드가 없는 옛 DO 응답에도 던지지 않는다.
+6. **§5.3 문구**: `autoCapLabel`은 "하루 상한(최대 {max})"(DC9가 `~`를 막는다), `autoAddedBy`는 `autoTitle`과 값이 같아 합쳤다(DC11), `listTotal(n, max)`는 200을 상수로 받는다, `privacy.keep.allowed`·`blocked`는 문자열이다, 상한 [저장]은 보조 버튼, 이미 차단된 거부 행에는 [차단…]을 두지 않는다, flash `autoAllowSaved`는 아이콘을 따로 고르지 않는다(DI4: `circle-check`는 로그인 완료 뜻 하나).
+7. **§5.4 도움말**: `help/login-denied.md`와 짝으로 앱 셸에 `HelpId::LoginDenied`(9번째)를 더했다(`ids.json` 집합 일치 테스트).
+8. **§6.3 테스트 도우미**: store는 `closedStub()`/`closeAutoAllow(stub)`, HTTP는 `closeAutoAllow()`와 `resetStore()`(`meta`의 `auto_allow_*`도 비운다). 한 파일의 HTTP 테스트가 같은 DO를 쓰므로 오늘 센 수가 다음 테스트로 새지 않게 한다.
+9. **§6.4 worker-e2e**: E05 첫 동작이 상한 0, E05b `d4`는 200(미리 막기), E20~E22(E13이 관리자 웹 세션을 로그아웃하므로 E20이 새로 로그인한다). `admin.auto_allow_cap`이 필수 이벤트다. 가짜 계정 `e5`는 `worker/test/fake-chzzk.mjs`·`fake-chzzk-server.mjs`에 있다(`testdata/README.md`는 영상 fixture 문서라 계정 표가 없어 고치지 않았다).
+10. **하지 않은 것**: §8 R(버전 PR, ROADMAP 결정 행 취소선·`:269` 문장). `design-shots`·`design-worker` 기준선(Linux CI에서만 만든다)과 앱 `e2e-web` 실행은 로컬에서 하지 않았다.

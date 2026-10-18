@@ -5,4 +5,4 @@
  * `open_web_page(help, anchor)`가 `/help#<id>`로 연다(오류 L2 링크, app.md 구현 중 변경 84).
  * 닫힌 집합이라 모르는 id는 역직렬화에서 거부된다. `ids.json`과 같은지는 `tests/dto_json.rs`가 본다.
  */
-export type HelpId = "cookie" | "disk-full" | "install-mac" | "install-windows" | "login-browser" | "report" | "windows-old-app" | "editors";
+export type HelpId = "cookie" | "disk-full" | "install-mac" | "install-windows" | "login-browser" | "report" | "windows-old-app" | "editors" | "login-denied";

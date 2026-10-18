@@ -5,12 +5,13 @@
 
 export const FAKE_ORIGIN = "http://127.0.0.1:8788";
 
-// 합성 계정(testdata/README.md의 a1 관리자·b2 허용·c3 거부·d4 기타). c3의 이름은 HTML 이스케이프를 확인하는 입력이다
+// 합성 계정(testdata/README.md의 a1 관리자·b2 허용·c3 거부·d4 기타·e5 새 채널). c3의 이름은 HTML 이스케이프를 확인하는 입력이다
 export const FAKE_ACCOUNTS = {
   a1: { channelId: "a1".padStart(32, "0"), channelName: "합성관리자A1" },
   b2: { channelId: "b2".padStart(32, "0"), channelName: "합성허용B2" },
   c3: { channelId: "c3".padStart(32, "0"), channelName: `<script>alert(1)</script>"'&합성거부C3` },
   d4: { channelId: "d4".padStart(32, "0"), channelName: "합성기타D4" },
+  e5: { channelId: "e5".padStart(32, "0"), channelName: "합성새채널E5" },
 };
 
 const DEFAULT_OPTS = {

@@ -312,9 +312,9 @@ describe("웹: 콜백·내 기기·관리의 id 경로", () => {
     expect((await post(admin, `/admin/denied/${C3}/allow`)).status).toBe(303);
     expect((await post(admin, `/admin/denied/${C3}/allow`)).status).toBe(303);
     expect((await post(admin, `/admin/denied/${D4}/dismiss`)).status).toBe(303);
-    // 허가 빼기 확인 페이지(GET): 허가된 채널 200·허가에 없음 멱등 303·관리자 채널 409·형식 밖 404. 모두 Worker 로그 0
+    // 차단 확인 페이지(GET): 허가된 채널 200·허가에도 차단에도 없음 200(미리 막을 수 있다)·관리자 채널 409·형식 밖 404. 모두 Worker 로그 0
     expect((await admin.b.get(`/admin/${C3}/disallow`)).status).toBe(200);
-    expect((await admin.b.get(`/admin/${D4}/disallow`)).status).toBe(303);
+    expect((await admin.b.get(`/admin/${D4}/disallow`)).status).toBe(200);
     expect((await admin.b.get(`/admin/${A1}/disallow`)).status).toBe(409);
     expect((await admin.b.get("/admin/zz/disallow")).status).toBe(404);
     expect((await (await web("b2")).b.get(`/admin/${C3}/disallow`)).status).toBe(403);

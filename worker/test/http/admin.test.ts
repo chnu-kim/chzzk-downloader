@@ -93,14 +93,14 @@ describe("관리자 판정", () => {
     expect(h1Of(await res.text())).toBe("관리자만 볼 수 있어요");
   });
 
-  it("a1(관리자): 200, 섹션 제목 다섯 개, 허용목록의 관리자 행에는 [빼기]가 없다", async () => {
+  it("a1(관리자): 200, 섹션 제목 일곱 개, 허용목록의 관리자 행에는 [빼기]가 없다", async () => {
     // 관리자 채널의 허용목록 행(W6 전·store 직접)을 만들어 둔다: 화면은 "관리자" 표시만 보이고 [빼기] 폼은 B2 하나다
     await allowedChannel(A1, A1);
     const s = await session("a1");
     const res = await s.b.get("/admin");
     expect(res.status).toBe(200);
     const t = await res.text();
-    for (const h of ["관리자", "허가한 채널", "거부된 시도", "활성 로그인", "감사 기록"]) expect(t).toContain(`<h2>${h}</h2>`);
+    for (const h of ["관리자", "자동 허가", "허가한 채널", "거부된 시도", "차단한 채널", "활성 로그인", "감사 기록"]) expect(t).toContain(`<h2>${h}</h2>`);
     expect(t).toContain(`<span class="mono">${A1}</span>`);
     expect(t).toContain('<span class="muted">관리자</span>');
     // [허가 빼기…]는 확인 페이지로 가는 링크이고(D54) 관리자 채널 행에는 없다. 최종 폼은 목록 화면에 없다
@@ -356,7 +356,7 @@ describe("동작", () => {
     const s = await session("a1");
     const res = await post(s, "/admin/disallow", { channelId: A1 });
     expect(res.status).toBe(409);
-    expect(h1Of(await res.text())).toBe("관리자 채널은 뺄 수 없어요");
+    expect(h1Of(await res.text())).toBe("관리자 채널은 차단할 수 없어요");
     expect((await s.b.get("/admin")).status).toBe(200);
   });
 
@@ -400,7 +400,7 @@ describe("동작", () => {
   });
 });
 
-describe("허가 빼기 확인 페이지(D54)", () => {
+describe("차단 확인 페이지(예전의 허가 빼기, D54)", () => {
   const confirmPath = (id: string) => `/admin/${id}/disallow`;
 
   it("GET은 상태·감사 기록을 바꾸지 않고 200: 폼 1개·.tone-danger 1개·채움 버튼 0개·돌아가기는 a", async () => {
@@ -437,8 +437,12 @@ describe("허가 빼기 확인 페이지(D54)", () => {
     expect(t).toContain(COPY.confirmDisallow.body(row?.channelName ?? "—", row?.activeSessions ?? 0));
   });
 
-  it("허가에 없는 채널: 멱등 303 /admin + alreadyDone", async () => {
+  it("허가에도 차단에도 없는 채널은 200(미리 막는다), 이미 차단되고 허가가 없으면 멱등 303 /admin + alreadyDone(allowlist-open.md §3.7)", async () => {
     const s = await session("a1");
+    const open = await s.b.get(confirmPath(C3));
+    expect(open.status).toBe(200);
+    expect(h1Of(await open.text())).toBe(COPY.confirmDisallow.title);
+    expect((await post(s, "/admin/disallow", { channelId: C3 })).status).toBe(303);
     const res = await s.b.get(confirmPath(C3));
     expect([res.status, res.headers.get("Location"), res.headers.getSetCookie()]).toEqual([303, "/admin", [ALREADY_DONE]]);
     expect(await (await s.b.get("/admin")).text()).toContain(COPY.alreadyDone);

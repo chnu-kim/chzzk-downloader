@@ -2,6 +2,7 @@
 //
 // 허용 판정은 요청마다 한다: 관리자는 Worker가 넘긴 admins(secret)로, 그 밖은 allowlist 행으로. 부트스트랩(admins가 빔)에서는
 // 행이 있어도 아무도 허용하지 않는다. 공격자가 정하는 문자열(채널 이름·메모)은 clip을 거쳐 저장한다.
+import { ADMIN_LIST_MAX, AUTO_ALLOW_CAP_MAX, AUTO_ALLOW_DEFAULT_CAP, CAP_FORMAT } from "../core/auto-allow";
 import { sanitizeName } from "../core/chzzk";
 import type { Db } from "./db";
 import type { AdminView, AllowResult, AuditAction, DenyReason, DisallowResult, SetAutoAllowCapResult } from "./types";
@@ -13,15 +14,10 @@ export const DENIED_CAP = 200;
 export const DENIED_REFRESH_MS = 3_600_000;
 export const DENIED_KEEP_MS = 30 * 86_400_000;
 export const AUDIT_CAP = 500;
-/** 관리 화면의 허가·차단 표 행 수(전체는 count로 따로 읽는다, allowlist-open.md §4.7) */
-export const ADMIN_LIST_MAX = 200;
-/** 자동 허가: meta에 값이 없을 때의 하루 상한(§2.2 A2)·상한의 최대값(A3) */
-export const AUTO_ALLOW_DEFAULT_CAP = 20;
-export const AUTO_ALLOW_CAP_MAX = 100;
+export { ADMIN_LIST_MAX, AUTO_ALLOW_CAP_MAX, AUTO_ALLOW_DEFAULT_CAP };
 /** 한국 시간(UTC+9, 서머타임 없음)으로 하루를 가른다(§2.2 A1) */
 const KST_OFFSET_MS = 9 * 3_600_000;
 const DAY_MS = 86_400_000;
-const CAP_FORMAT = /^(0|[1-9][0-9]{0,2})$/;
 
 /** denied 상한: 최근 DENIED_CAP행만 남긴다(INSERT 때와 청소 때 같은 문장) */
 export const DENIED_CAP_SQL = `DELETE FROM denied WHERE channel_id IN (SELECT channel_id FROM denied ORDER BY last_at DESC, channel_id DESC LIMIT -1 OFFSET ${DENIED_CAP})`;

@@ -41,6 +41,8 @@ export const store = () => env.AUTH.get(env.AUTH.idFromName(AUTH_STORE_NAME));
 export async function resetStore(): Promise<void> {
   await runInDurableObject(store(), (i) => {
     for (const table of ["refresh", "session", "allowlist", "denied", "audit", "delegation", "invite", "blocked"]) i.db.run(`DELETE FROM ${table}`);
+    // 자동 허가의 상한·오늘 센 수도 비운다(앞 테스트의 수가 다음 테스트의 상한을 먹지 않게)
+    i.db.run("DELETE FROM meta WHERE k LIKE 'auto\\_allow\\_%' ESCAPE '\\'");
   });
   await closeAutoAllow();
 }

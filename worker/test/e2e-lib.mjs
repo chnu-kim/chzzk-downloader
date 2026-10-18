@@ -21,6 +21,7 @@ export const REQUIRED_EVENTS = {
   "auth.refresh.recovered": 1,
   "auth.refresh.reuse_detected": 1,
   "admin.allow": 1,
+  "admin.auto_allow_cap": 1,
   "admin.denied_allow": 1,
   "admin.revoke_session": 1,
   "web.post.rejected": 3,

@@ -16,8 +16,8 @@ use tokio::sync::{Mutex as AsyncMutex, watch};
 use tracing::{info, warn};
 
 use super::api::{
-    ApiError, DelegatedChannel, InviteResponse, LoginUrl, MeResponse, RedeemResponse, StartRequest,
-    TokenBundle, WorkerApi,
+    ApiError, DelegatedChannel, DenyReason, InviteResponse, LoginUrl, MeResponse, RedeemResponse,
+    StartRequest, TokenBundle, WorkerApi,
 };
 use super::clock::Clock;
 use super::loopback::{
@@ -192,7 +192,7 @@ pub const WALL_TICK: std::time::Duration = std::time::Duration::from_secs(5);
 /// 수령 응답에서 확정된 결과
 enum Final {
     Ok(TokenBundle),
-    Denied(String),
+    Denied(String, Option<DenyReason>),
     Cancelled,
     Failed(String),
     /// 서버가 이 로그인 흐름을 모른다(404)
@@ -210,7 +210,10 @@ enum Step {
 fn classify_redeem(res: Result<RedeemResponse, ApiError>) -> Step {
     match res {
         Ok(RedeemResponse::Ok(b)) => Step::Final(Final::Ok(b)),
-        Ok(RedeemResponse::Denied { channel_name }) => Step::Final(Final::Denied(channel_name)),
+        Ok(RedeemResponse::Denied {
+            channel_name,
+            reason,
+        }) => Step::Final(Final::Denied(channel_name, reason)),
         Ok(RedeemResponse::Cancelled) => Step::Final(Final::Cancelled),
         Ok(RedeemResponse::Failed { code }) => Step::Final(Final::Failed(code)),
         Err(ApiError::Worker { status: 404, .. }) => Step::Final(Final::Lost),
@@ -1059,9 +1062,14 @@ impl<A: WorkerApi, C: Clock> AuthService<A, C> {
                 info!(result = "ok", "로그인 끝");
                 ReceiverPage::SignedIn
             }
-            Final::Denied(name) => {
+            Final::Denied(name, why) => {
                 info!(result = "denied", "로그인 끝");
-                Self::end_login(&mut i, AuthPhase::Denied, None);
+                // 이유가 있으면 화면이 다음 행동을 가른다(상한: 자정 뒤 다시, 차단: 관리자에게). 없으면 지금 안내
+                let reason = why.map(|w| match w {
+                    DenyReason::DailyLimit => AuthReason::DailyLimit,
+                    DenyReason::Blocked => AuthReason::Blocked,
+                });
+                Self::end_login(&mut i, AuthPhase::Denied, reason);
                 i.denied_name = Some(name);
                 ReceiverPage::Denied
             }

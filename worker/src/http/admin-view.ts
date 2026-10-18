@@ -1,12 +1,13 @@
-// 관리 화면·허가 빼기 확인 페이지 렌더러(docs/design/worker.md §8.1, 구현 중 변경 38, docs/design/system/web.md §6.3·§7·§8).
+// 관리 화면·차단 확인 페이지 렌더러(docs/design/worker.md §8.1, 구현 중 변경 38, docs/design/system/web.md §6.3·§7·§8).
 // 순수 함수: 모든 출력은 HTML 태그드 템플릿을 거치고, 라우터·저장소·핸들러 파일을 값으로 가져오지 않는다(Node에서도 돈다, design-worker).
 // 채널 이름·메모·기기 정보는 공격자가 정하는 문자열이다: 값으로만 넣어 이스케이프된다(저장 때 store가 제어·bidi 문자를 지운다).
 import type { Config } from "../config";
+import { ADMIN_LIST_MAX, AUTO_ALLOW_CAP_MAX } from "../core/auto-allow";
 import { html, type SafeHtml } from "../core/html";
 import type { AdminView } from "../store/types";
 import { COPY } from "./copy";
 import type { FlashKind } from "./flash";
-import { auditLabel, kindLabel } from "./format";
+import { auditLabel, kindLabel, kst } from "./format";
 import { htmlPage, type Nav } from "./layout";
 import { csrfInput, dataTable, errorSummary, field, linkButton, postButton, rowHead, when } from "./ui";
 
@@ -14,6 +15,7 @@ type Allow = AdminView["allowlist"][number];
 type Denied = AdminView["denied"][number];
 type Session = AdminView["sessions"][number];
 type Audit = AdminView["audit"][number];
+type Blocked = AdminView["blocked"][number];
 
 /** 관리 화면이 읽는 것. 핸들러가 DO에서 읽어 채운다 */
 export interface AdminModel {
@@ -26,6 +28,8 @@ export interface AdminModel {
 /** 허가 추가 폼의 채널 ID 입력 칸 id. 오류 요약의 링크가 이 id로 간다 */
 export const ALLOW_CHANNEL_FIELD = "allow-channel-id";
 const ALLOW_NOTE_FIELD = "allow-note";
+/** 하루 상한 입력 칸 id. 오류 요약의 링크가 이 id로 간다 */
+export const AUTO_CAP_FIELD = "auto-allow-cap";
 
 export interface AdminOpts {
   /** 400이면 검증 오류를 다시 그린다. 오류와 flash는 함께 오지 않는다(오류가 있으면 flash를 그리지 않는다) */
@@ -33,6 +37,8 @@ export interface AdminOpts {
   readonly errors?: readonly { readonly fieldId: string; readonly message: string }[];
   /** 다시 채울 입력값 */
   readonly values?: { readonly channelId: string; readonly note: string };
+  /** 하루 상한 입력 칸에 다시 채울 값(저장 오류 때) */
+  readonly capValue?: string;
   readonly flash?: FlashKind | null;
   /** Set-Cookie(flash 지움 등) */
   readonly headers?: HeadersInit;
@@ -54,7 +60,9 @@ function allowRow(a: Allow, admins: readonly string[]): SafeHtml {
     ? html`<span class="muted">${COPY.adminsTitle}</span>`
     : html`<div class="actions">${linkButton(`/admin/${a.channelId}/disallow`, COPY.disallow)}</div>`;
   const note = a.note === null || a.note === "" ? "" : html`${a.note}<br>`;
-  return html`<tr>${rowHead(html`${dash(a.channelName)}${idLine(a.channelId)}`)}<td>${note}<span class="meta">${COPY.colAddedBy} <span class="mono num">${a.addedBy}</span></span></td><td>${when(a.addedAt)}</td><td><span class="num">${a.activeSessions}</span></td><td>${last}</td></tr>`;
+  // 자동 허가 행의 추가한 사람은 관리자 ID가 아니라 'auto'다(채널 ID 정규식과 겹치지 않는다, allowlist-open.md §3.7)
+  const by = a.addedBy === "auto" ? html`${COPY.autoTitle}` : html`<span class="mono num">${a.addedBy}</span>`;
+  return html`<tr>${rowHead(html`${dash(a.channelName)}${idLine(a.channelId)}`)}<td>${note}<span class="meta">${COPY.colAddedBy} ${by}</span></td><td>${when(a.addedAt)}</td><td><span class="num">${a.activeSessions}</span></td><td>${last}</td></tr>`;
 }
 
 /** 추가 폼. 페이지의 유일한 채움 버튼이다 */
@@ -83,7 +91,12 @@ function addForm(csrf: string, o: AdminOpts): SafeHtml {
   return html`<form method="post" action="/admin/allow">${csrfInput(csrf)}${channel}${note}<div class="actions"><button type="submit" class="btn btn-primary">${COPY.add}</button></div></form>`;
 }
 
-function allowSection(rows: readonly Allow[], admins: readonly string[], csrf: string, o: AdminOpts): SafeHtml {
+/** 표가 최근 행만 보일 때 위에 적는 한 줄. 옛 DO의 응답(전체 수 없음)이면 적지 않는다 */
+function totalLine(total: unknown, shown: number): SafeHtml {
+  return typeof total === "number" && total > shown ? html`<p class="meta">${COPY.listTotal(total, ADMIN_LIST_MAX)}</p>` : html``;
+}
+
+function allowSection(rows: readonly Allow[], total: number, admins: readonly string[], csrf: string, o: AdminOpts): SafeHtml {
   const table =
     rows.length === 0
       ? html`<p>${COPY.allowEmpty}</p>`
@@ -95,13 +108,17 @@ function allowSection(rows: readonly Allow[], admins: readonly string[], csrf: s
           actions: true,
           rows: rows.map((a) => allowRow(a, admins)),
         });
-  return html`<section><h2>${COPY.allowTitle}</h2>${table}<h3>${COPY.addTitle}</h3>${addForm(csrf, o)}</section>`;
+  return html`<section><h2>${COPY.allowTitle}</h2>${totalLine(total, rows.length)}${table}<h3>${COPY.addTitle}</h3>${addForm(csrf, o)}</section>`;
 }
 
 function deniedRow(d: Denied, csrf: string): SafeHtml {
   // 유효한 초대로 들어온 시도의 꼬리표(Badge가 아니라 .meta 글자). typeof가 옛 DO(필드 없음)의 응답을 받는다
   const tag = typeof d.invitedBy === "string" ? html`<br><span class="meta">${COPY.invitedBy(d.invitedBy)}</span>` : "";
-  return html`<tr>${rowHead(html`${dash(d.channelName)}${idLine(d.channelId)}${tag}`)}<td><span class="num">${d.attempts}</span></td><td>${when(d.firstAt)}</td><td>${when(d.lastAt)}</td><td><div class="actions">${postButton(`/admin/denied/${d.channelId}/allow`, csrf, COPY.allow)}${postButton(`/admin/denied/${d.channelId}/dismiss`, csrf, COPY.dismiss)}</div></td></tr>`;
+  // 차단된 채널의 꼬리표. 옛 DO의 응답(필드 없음)에는 없다. 이미 차단된 행에는 [차단…]을 두지 않는다
+  const blocked = d.blocked === true;
+  const blockTag = blocked ? html`<br><span class="meta">${COPY.blockedTag}</span>` : "";
+  const block = blocked ? "" : linkButton(`/admin/${d.channelId}/disallow`, COPY.disallow);
+  return html`<tr>${rowHead(html`${dash(d.channelName)}${idLine(d.channelId)}${tag}${blockTag}`)}<td><span class="num">${d.attempts}</span></td><td>${when(d.firstAt)}</td><td>${when(d.lastAt)}</td><td><div class="actions">${postButton(`/admin/denied/${d.channelId}/allow`, csrf, COPY.allow)}${block}${postButton(`/admin/denied/${d.channelId}/dismiss`, csrf, COPY.dismiss)}</div></td></tr>`;
 }
 
 function deniedSection(rows: readonly Denied[], csrf: string): SafeHtml {
@@ -116,6 +133,46 @@ function deniedSection(rows: readonly Denied[], csrf: string): SafeHtml {
           rows: rows.map((d) => deniedRow(d, csrf)),
         });
   return html`<section><h2>${COPY.deniedTitle}</h2>${table}</section>`;
+}
+
+/** 자동 허가 절(allowlist-open.md §3.7): 오늘 센 수, 날짜 안내, 하루 상한 폼, 마지막으로 바꾼 관리자 */
+function autoSection(auto: AdminView["autoAllow"] | undefined, csrf: string, o: AdminOpts): SafeHtml {
+  // 옛 DO의 응답에는 없다: 절 전체를 그리지 않는다
+  if (auto === undefined) return html``;
+  const error = o.errors?.find((e) => e.fieldId === AUTO_CAP_FIELD)?.message;
+  const cap = field({
+    id: AUTO_CAP_FIELD,
+    name: "cap",
+    label: COPY.autoCapLabel(AUTO_ALLOW_CAP_MAX),
+    help: COPY.autoOff,
+    required: true,
+    autocomplete: "off",
+    number: { min: 0, max: AUTO_ALLOW_CAP_MAX },
+    value: o.capValue ?? String(auto.cap),
+    ...(error === undefined ? {} : { error }),
+  });
+  const by = auto.capBy === null || auto.capAt === null ? "" : html`<p class="meta">${COPY.autoCapBy(auto.capBy, kst(auto.capAt))}</p>`;
+  return html`<section><h2>${COPY.autoTitle}</h2><p>${COPY.autoToday(auto.today, auto.cap)}</p><p class="meta">${COPY.autoDayNote}</p><form method="post" action="/admin/auto-allow">${csrfInput(csrf)}${cap}<div class="actions"><button type="submit" class="btn">${COPY.save}</button></div></form>${by}</section>`;
+}
+
+function blockedRow(b: Blocked, csrf: string): SafeHtml {
+  return html`<tr>${rowHead(html`${dash(b.channelName)}${idLine(b.channelId)}`)}<td><span class="mono num">${b.blockedBy}</span></td><td>${when(b.blockedAt)}</td><td><div class="actions">${postButton("/admin/allow", csrf, COPY.allow, { fields: { channelId: b.channelId } })}</div></td></tr>`;
+}
+
+function blockedSection(rows: readonly Blocked[] | undefined, total: number, csrf: string): SafeHtml {
+  // 옛 DO의 응답에는 없다: 절 전체를 그리지 않는다
+  if (rows === undefined) return html``;
+  const table =
+    rows.length === 0
+      ? html`<p>${COPY.blockedEmpty}</p>`
+      : dataTable({
+          id: "tbl-blocked",
+          caption: COPY.tableTimeNote,
+          head: [COPY.colName, COPY.colBlockedBy, COPY.colBlockedAt],
+          actions: true,
+          rows: rows.map((b) => blockedRow(b, csrf)),
+        });
+  return html`<section><h2>${COPY.blockedTitle}</h2>${totalLine(total, rows.length)}${table}</section>`;
 }
 
 function sessionRow(s: Session, csrf: string): SafeHtml {
@@ -150,12 +207,12 @@ function auditSection(rows: readonly Audit[]): SafeHtml {
 
 /**
  * 관리 화면. 400이면 오류 요약이 main의 첫 자식이고(flash는 그리지 않는다) 입력값을 채워 둔다.
- * 표 다섯: 관리자 · 허가한 채널 · 거부된 시도 · 활성 로그인 · 감사 기록
+ * 절 일곱: 관리자 · 자동 허가 · 허가한 채널 · 거부된 시도 · 차단한 채널 · 활성 로그인 · 감사 기록
  */
 export function renderAdmin(config: Config, m: AdminModel, o: AdminOpts = {}): Response {
   const errors = o.errors ?? [];
   const summary = errors.length === 0 ? "" : errorSummary(errors);
-  const body = html`${summary}<h1>${COPY.adminLink}</h1>${adminsSection(m.admins)}${allowSection(m.view.allowlist, m.admins, m.csrf, o)}${deniedSection(m.view.denied, m.csrf)}${sessionsSection(m.view.sessions, m.csrf)}${auditSection(m.view.audit)}`;
+  const body = html`${summary}<h1>${COPY.adminLink}</h1>${adminsSection(m.admins)}${autoSection(m.view.autoAllow, m.csrf, o)}${allowSection(m.view.allowlist, m.view.allowlistTotal, m.admins, m.csrf, o)}${deniedSection(m.view.denied, m.csrf)}${blockedSection(m.view.blocked, m.view.blockedTotal, m.csrf)}${sessionsSection(m.view.sessions, m.csrf)}${auditSection(m.view.audit)}`;
   return htmlPage(config, o.status ?? 200, COPY.adminLink, body, {
     scale: "app",
     nav: m.nav,
@@ -164,7 +221,7 @@ export function renderAdmin(config: Config, m: AdminModel, o: AdminOpts = {}): R
   });
 }
 
-/** 허가 빼기 확인 페이지(D54, web.md §7.3). 채움 버튼 없음, 폼은 최종 버튼의 것 하나, 돌아가기는 링크다 */
+/** 차단 확인 페이지(예전의 허가 빼기, D54, web.md §7.3). 채움 버튼 없음, 폼은 최종 버튼의 것 하나, 돌아가기는 링크다 */
 export function renderDisallowConfirm(
   config: Config,
   m: { readonly channelId: string; readonly channelName: string | null; readonly activeSessions: number; readonly csrf: string; readonly nav: Nav },

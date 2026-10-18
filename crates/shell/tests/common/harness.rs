@@ -110,6 +110,7 @@ impl Harness {
             download_folder: self.downloads(),
             segment_concurrency: 4,
             chat_subtitle: chzzk_core::chat::SubtitleFormat::Ass,
+            embed_metadata: true,
         }
     }
 

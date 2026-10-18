@@ -137,6 +137,8 @@ impl E2eConfig {
                 patience_cap: std::time::Duration::ZERO,
                 ..RetryPolicy::default()
             },
+            // fixture 서버가 표지 썸네일을 루프백 http로 내준다(mp4 메타데이터, 릴리스 빌드에는 이 코드가 없다)
+            allow_loopback_http_images: true,
             ..ClientConfig::default()
         }
     }
@@ -491,5 +493,10 @@ mod tests {
         assert_eq!(cl.endpoints.chzzk_api, c.api_base);
         assert_eq!(cl.endpoints.vodplay_api, c.api_base);
         assert_eq!(cl.progress_interval, PROGRESS_INTERVAL);
+        assert!(
+            cl.allow_loopback_http_images,
+            "E2E만 루프백 http 표지를 받는다"
+        );
+        assert!(!ClientConfig::default().allow_loopback_http_images);
     }
 }

@@ -365,6 +365,8 @@ pub struct SettingsDto {
     pub theme: Theme,
     /// 받는 동안 잠들지 않게 한다(기본 켜짐, platform §10)
     pub keep_awake: bool,
+    /// 받은 mp4에 제목·채널·날짜·원본 주소와 표지를 넣는다(기본 켜짐, mp4-metadata.md §9). 작업을 추가할 때 값이 고정된다
+    pub embed_metadata: bool,
     /// 영상과 함께 채팅도 받기(기본 꺼짐, 마지막 선택, chat.md §4.4)
     pub save_chat: bool,
     /// 채팅 자막 형식(기본 [잠정] U2 결정 대기 `ass`)
@@ -428,6 +430,9 @@ pub struct SettingsPatch {
     #[serde(default)]
     #[ts(optional)]
     pub keep_awake: Option<bool>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub embed_metadata: Option<bool>,
     #[serde(default)]
     #[ts(optional)]
     pub save_chat: Option<bool>,

@@ -84,6 +84,10 @@ pub struct UserSettings {
     /// 받는 동안 컴퓨터가 잠들지 않게 한다(system/platform.md §10, 기본 켜짐). 없는 키·모르는 값은 켜짐으로 읽는다.
     #[serde(deserialize_with = "bool_or_true")]
     pub keep_awake: bool,
+    /// 받은 mp4에 제목·채널·날짜·원본 주소와 표지를 넣는다(mp4-metadata.md §9, 기본 켜짐). 없는 키·모르는 값은 켜짐으로 읽는다.
+    /// 작업을 추가할 때 값이 그 작업에 고정된다(셸 `JobDefaults`·`JobRecord`).
+    #[serde(deserialize_with = "bool_or_true")]
+    pub embed_metadata: bool,
     /// 영상과 함께 채팅도 받기(chat.md §4.4, 기본 꺼짐. 카드에서 마지막으로 고른 값). 불리언이 아닌 값은 꺼짐으로 읽는다.
     #[serde(deserialize_with = "lenient_or_default")]
     pub save_chat: bool,
@@ -141,6 +145,7 @@ impl Default for UserSettings {
             text_scale: TextScale::Default,
             theme: Theme::System,
             keep_awake: true,
+            embed_metadata: true,
             save_chat: false,
             chat_subtitle: DEFAULT_CHAT_SUBTITLE,
         }
@@ -671,6 +676,36 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(parse(&serde_json::to_vec(&off).unwrap()).unwrap(), off);
+    }
+
+    /// mp4 메타데이터 넣기: `keep_awake`와 같은 규칙이다(없는 키·모르는 값은 켜짐, `false`만 꺼짐). 나머지 키는 남는다.
+    #[test]
+    fn embed_metadata_defaults_to_true() {
+        assert!(UserSettings::default().embed_metadata);
+        for (raw, want) in [
+            ("", true),
+            (r#","embedMetadata":true"#, true),
+            (r#","embedMetadata":false"#, false),
+            (r#","embedMetadata":null"#, true),
+            (r#","embedMetadata":"no""#, true),
+            (r#","embedMetadata":0"#, true),
+        ] {
+            let s = parse(format!(r#"{{"downloadFolder":"/x"{raw}}}"#).as_bytes())
+                .unwrap_or_else(|e| panic!("{raw}: {e}"));
+            assert_eq!(s.embed_metadata, want, "{raw}");
+            assert_eq!(s.download_folder.as_deref(), Some(Path::new("/x")), "{raw}");
+        }
+        let off = UserSettings {
+            embed_metadata: false,
+            ..Default::default()
+        };
+        assert_eq!(parse(&serde_json::to_vec(&off).unwrap()).unwrap(), off);
+        // 옛 설정 파일(이 키가 없다)을 읽어도 켜짐이다
+        assert!(
+            parse(&serde_json::to_vec(&serde_json::json!({"keepAwake": false})).unwrap())
+                .unwrap()
+                .embed_metadata
+        );
     }
 
     /// 채팅 두 키(chat.md §4.4): 없는 키·모르는 값은 기본값(채팅 꺼짐, 자막은 [잠정] U2 결정 대기 `.ass`). 나머지 키는 남는다.

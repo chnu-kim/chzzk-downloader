@@ -147,6 +147,20 @@
           {/if}
         {/snippet}
       </SettingsRow>
+      <SettingsRow label={t('settings.embedMetadata')} help={t('settings.embedMetadata.help')}>
+        {#snippet control({ labelId, helpId })}
+          {#if dto}
+            <Switch
+              value={dto.embedMetadata}
+              labelledby={labelId}
+              aria-describedby={helpId}
+              onchange={(on) => save({ embedMetadata: on })}
+            />
+          {:else}
+            {@render pending()}
+          {/if}
+        {/snippet}
+      </SettingsRow>
     {/key}
   </SettingsSection>
 

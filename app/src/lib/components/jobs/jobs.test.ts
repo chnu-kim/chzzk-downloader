@@ -51,6 +51,7 @@ const baseSettings: SettingsDto = {
   textScale: 'default',
   theme: 'system',
   keepAwake: true,
+  embedMetadata: true,
   saveChat: false,
   chatSubtitle: 'ass',
 };

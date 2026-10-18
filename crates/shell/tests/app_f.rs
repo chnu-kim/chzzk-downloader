@@ -118,6 +118,7 @@ async fn quit_interrupts_with_stopped_at() {
 
 fn record(id: u64, status: JobStatus, stopped_at: Option<u64>) -> JobRecord {
     JobRecord {
+        embed_metadata: true,
         id: JobId(id),
         url: "u".into(),
         content: ContentRef::Video { video_no: id },
@@ -254,6 +255,54 @@ fn keep_awake_setting_defaults_on_and_patches() {
     assert_eq!(p.keep_awake, Some(false));
     let json = serde_json::to_value(svc.get()).unwrap();
     assert_eq!(json["keepAwake"], json!(true));
+}
+
+/// embedMetadata: keepAwake와 같다. 기본 켜짐, 패치로 끄고 켜며 다른 키 패치는 건드리지 않고, 작업 기본값이 따라간다
+#[test]
+fn embed_metadata_setting_defaults_on_and_patches() {
+    let t = TempDir::new().unwrap();
+    let svc = open_settings(t.path());
+    assert!(svc.get().embed_metadata);
+    assert!(svc.job_defaults().embed_metadata);
+
+    let off = svc
+        .update(SettingsPatch {
+            embed_metadata: Some(false),
+            ..SettingsPatch::default()
+        })
+        .unwrap();
+    assert!(!off.embed_metadata);
+    assert!(
+        !svc.job_defaults().embed_metadata,
+        "작업 기본값이 설정을 따른다"
+    );
+    let other = svc
+        .update(SettingsPatch {
+            keep_awake: Some(false),
+            ..SettingsPatch::default()
+        })
+        .unwrap();
+    assert!(!other.embed_metadata, "다른 키 패치는 그대로 둔다");
+    assert!(!other.keep_awake);
+    drop(svc);
+
+    // 다시 열어도 유지
+    let svc = open_settings(t.path());
+    assert!(!svc.get().embed_metadata);
+    let on = svc
+        .update(SettingsPatch {
+            embed_metadata: Some(true),
+            ..SettingsPatch::default()
+        })
+        .unwrap();
+    assert!(on.embed_metadata);
+
+    let p: SettingsPatch = serde_json::from_value(json!({"embedMetadata": false})).unwrap();
+    assert_eq!(p.embed_metadata, Some(false));
+    let none: SettingsPatch = serde_json::from_value(json!({})).unwrap();
+    assert_eq!(none.embed_metadata, None);
+    let json = serde_json::to_value(svc.get()).unwrap();
+    assert_eq!(json["embedMetadata"], json!(true));
 }
 
 #[test]

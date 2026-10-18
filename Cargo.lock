@@ -575,6 +575,7 @@ version = "0.10.1"
 dependencies = [
  "chzzk-core",
  "chzzk-shell",
+ "dirs",
  "serde_json",
  "tauri",
  "tauri-build",
@@ -5148,6 +5149,7 @@ dependencies = [
  "libc",
  "mio",
  "pin-project-lite",
+ "signal-hook-registry",
  "socket2",
  "tokio-macros",
  "windows-sys 0.61.2",

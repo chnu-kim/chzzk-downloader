@@ -4,5 +4,6 @@
 #![allow(dead_code)]
 
 pub mod auth;
+pub mod cli_env;
 pub mod fake;
 pub mod harness;

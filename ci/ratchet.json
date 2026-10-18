@@ -26,15 +26,16 @@
     "dist_gz": 84986,
     "binary": {
       "linux": 36721064,
-      "darwin": 26112320,
-      "windows": 23037952
+      "darwin": 26916960,
+      "windows": 23037952,
+      "windows-cli": 10313728
     },
     "bundle": {
       "linux-AppImage": 86813176,
       "linux-deb": 10930230,
-      "darwin-dmg": 8473169,
-      "windows-setup": 5433698,
-      "windows-msi": 8069120
+      "darwin-dmg": 8746406,
+      "windows-setup": 8358832,
+      "windows-msi": 12386304
     },
     "tolerance_pct": 3
   },

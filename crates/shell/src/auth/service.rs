@@ -609,6 +609,36 @@ impl<A: WorkerApi, C: Clock> AuthService<A, C> {
         }
     }
 
+    /// 디스크 세션이 관리자라고 하지만 이번 실행에서 서버가 아직 확인하지 않았으면(유예 안의 낙관 시작은 refresh하지 않는다)
+    /// 한 번 갱신해 서버의 `isAdmin`으로 정한다. /api/me는 관리자 여부를 주지 않으므로 묶음을 받는 refresh만 확인이 된다.
+    /// 온라인 `SignedIn`일 때만 보낸다(오프라인은 driver의 재시도를 따른다). 판정이 관리자 예외를 필요로 할 때만 부른다
+    /// (남의 영상·채널 모름): 명령줄이 짧게 여러 번 불려도 내 영상에는 회전을 쓰지 않는다(cli-mode.md §5.2)
+    pub async fn confirm_admin(&self) -> AuthStatus {
+        let go = {
+            let i = self.lock();
+            i.phase == AuthPhase::SignedIn
+                && i.offline.is_none()
+                && !i.admin_verified
+                && i.held.as_ref().is_some_and(|h| h.is_admin)
+        };
+        if go {
+            self.refresh_inner().await
+        } else {
+            self.status()
+        }
+    }
+
+    /// 지금 refresh(회전) 요청이 진행 중인가. 명령줄의 Ctrl+C가 이것을 보고 회전 결과를 저장할 때까지 기다린다
+    pub fn refreshing(&self) -> bool {
+        self.refresh_lock.try_lock().is_err()
+    }
+
+    /// 진행 중인 refresh가 끝날(결과를 저장할) 때까지 기다린다. 없으면 바로 돌아온다.
+    /// refresh를 도는 future는 호출자가 계속 poll해야 한다(이 함수는 잠금 차례만 기다린다)
+    pub async fn refresh_settled(&self) {
+        drop(self.refresh_lock.lock().await);
+    }
+
     async fn refresh_inner(&self) -> AuthStatus {
         self.refresh_bound(None).await
     }
@@ -1742,6 +1772,7 @@ impl<A: WorkerApi, C: Clock> AuthService<A, C> {
             (AuthPhase::SignedIn, Some(h)) => Some(Signer {
                 channel_id: h.channel_id.clone(),
                 is_admin: admin_confirmed(&i),
+                admin_pending: h.is_admin && !i.admin_verified,
                 delegated: h
                     .delegated_channels
                     .iter()

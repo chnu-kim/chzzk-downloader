@@ -30,6 +30,11 @@ impl LogGuard {
 
 /// 전역 subscriber를 건다. 파일을 열지 못하면 stdout만(개발 빌드) 쓰고 `None`이다.
 pub fn init(dir: &Path) -> Option<LogGuard> {
+    init_with(dir, cfg!(debug_assertions))
+}
+
+/// `init`에서 stdout 로그를 고른다. 명령줄 모드는 stdout이 결과(경로 한 줄)의 채널이라 개발 빌드에서도 파일에만 쓴다.
+pub fn init_with(dir: &Path, stdout: bool) -> Option<LogGuard> {
     let filter =
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(DEFAULT_FILTER));
     // 폴더가 없으면 appender가 오래된 파일 정리 중 오류를 찍는다.
@@ -57,7 +62,7 @@ pub fn init(dir: &Path) -> Option<LogGuard> {
             (None, None)
         }
     };
-    let stdout_layer = cfg!(debug_assertions).then(fmt::layer);
+    let stdout_layer = stdout.then(fmt::layer);
     if tracing_subscriber::registry()
         .with(filter)
         .with(file_layer)

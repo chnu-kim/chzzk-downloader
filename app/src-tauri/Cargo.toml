@@ -5,6 +5,8 @@ description = "VOD 클립 다운로더 데스크톱 앱 (Tauri 셸)"
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
+# bin이 둘이면 `cargo run`·`tauri dev`가 어느 쪽인지 정해야 한다(Windows 콘솔 실행 파일 chzzk-cli 때문, cli-mode.md §7.1)
+default-run = "chzzk-app"
 
 # serde_json은 generate_context! 매크로 전개에서만 쓰여 cargo-machete가 보지 못한다
 [package.metadata.cargo-machete]
@@ -17,6 +19,14 @@ crate-type = ["rlib"]
 [features]
 # 네이티브 E2E 빌드 전용(src/e2e.rs, docs/design/cicd.md §6). 릴리스·번들 빌드는 켜지 않는다(release-hygiene가 확인한다).
 e2e = ["dep:url"]
+# Windows 콘솔 서브시스템 실행 파일 `chzzk-cli`(src/bin/chzzk-cli.rs)를 만든다. `tauri.windows.conf.json`의 `build.features`가 Windows 빌드에서만 켠다.
+# Tauri 번들러가 주 실행 파일이 아닌 bin을 NSIS·MSI 설치 폴더에 함께 넣는다(cli-mode.md §7.1). macOS·Linux 번들에는 들어가지 않는다
+console-cli = []
+
+[[bin]]
+name = "chzzk-cli"
+path = "src/bin/chzzk-cli.rs"
+required-features = ["console-cli"]
 
 [build-dependencies]
 tauri-build = { version = "2.7.1", features = [] }
@@ -29,9 +39,12 @@ tauri-plugin-notification = "2.5.1"
 tauri-plugin-clipboard-manager = "2.4.1"
 chzzk-core = { path = "../../crates/core" }
 chzzk-shell = { path = "../../crates/shell" }
+# 명령줄 모드가 Tauri 없이 같은 폴더를 찾는다(Tauri path 규칙과 같은 7.0, Cargo.lock에 이미 있다)
+dirs = "7.0.0"
 # tauri::generate_context!()가 tauri.conf.json의 plugins(updater pubkey)를 serde_json 값으로 펼친다
 serde_json = "1.0.151"
-tokio = { version = "1.53.2", default-features = false, features = ["rt", "sync", "time"] }
+# 명령줄 모드(cli.rs): 멀티 스레드 런타임·Ctrl+C. 새 crate는 없다(Tauri가 이미 같은 기능을 쓴다)
+tokio = { version = "1.53.2", default-features = false, features = ["rt", "rt-multi-thread", "signal", "sync", "time"] }
 tracing = "0.1.44"
 tracing-appender = "0.2.5"
 tracing-subscriber = { version = "0.3.23", default-features = false, features = ["ansi", "env-filter", "fmt", "registry", "std"] }
@@ -55,4 +68,5 @@ tauri-plugin-window-state = "=2.5.0"
 # Windows 릴리스 WebView2 보강(webview_win.rs). 버전은 wry와 같다
 [target.'cfg(windows)'.dependencies]
 webview2-com = "0.39.1"
-windows = "0.62.2"
+# Win32_System_Console: GUI exe가 명령줄 하위 명령을 받으면 부모 콘솔에 안내 한 줄을 쓴다(cli.rs `use_console_exe`)
+windows = { version = "0.62.2", features = ["Win32_System_Console"] }

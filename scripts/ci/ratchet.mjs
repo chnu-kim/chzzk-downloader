@@ -46,6 +46,8 @@ const SETTINGS = new Set(['tolerance_pp', 'tolerance_pct']);
 // tests.app_e2e.*는 G4 2차 리뷰에서 더해 실행 37334258200으로 채웠다. mutants_missed.chzzk-core는 G5에서 더해 nightly 실행
 // 37342266385(only=mutants, shard 4개)로 채웠다(100). tests.worker는 Phase 3 W1에서 더했다: worker gate(ci.yml worker 작업)의
 // 첫 master 실행 37434910274로 채우고 여기서 뺐다(57, worker.md §13.2).
+// size.binary.windows-cli는 Windows 콘솔 실행 파일(cli-mode.md §13)을 처음 싣는 PR에서 더했고, 그 브랜치의 dispatch 실행
+// 39137942258 bundle (windows-latest) 측정값으로 채워 여기서 뺐다(RATCHET_LOG 2026-10-19).
 export const PENDING_ALLOWED = [];
 
 // 객체 → { "a.b.c": 숫자 } (설정 키·$comment·null 제외)
@@ -78,7 +80,7 @@ const pendingOf = (ratchet) => (Array.isArray(ratchet.$pending) ? ratchet.$pendi
 // size 판정에서 이 OS가 반드시 내야 하는 키
 export function expectedSizeKeys(ratchet, os) {
   return Object.keys(flatten(ratchet))
-    .filter((k) => k === 'size.dist_gz' || k === `size.binary.${os}` || k.startsWith(`size.bundle.${os}-`))
+    .filter((k) => k === 'size.dist_gz' || k === `size.binary.${os}` || k.startsWith(`size.binary.${os}-`) || k.startsWith(`size.bundle.${os}-`))
     .sort();
 }
 

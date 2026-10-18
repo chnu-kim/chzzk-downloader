@@ -858,6 +858,8 @@ JS 타이머·Rust 셸이 쓰는 값이다. 이름과 값의 단일 원천은 �
 | `DONE_WINDOW_MS` | 2분 | [잠정] | Worker(`worker/src/store/delegation.ts`) | 완료 페이지가 방금 맺은 위임을 보이는 창 | 근거 없음. ADR-0009 묶음 |
 | `THROTTLE_BURST` | 0.25초 | [잠정] | Rust(core `download/throttle.rs`) | 속도 제한 토큰 버킷의 채우기 상한 길이(`docs/design/features/rate-limit.md` §3.2·§5.5) | 근거 없음. ADR-0009 묶음 |
 | `MIN_RATE_LIMIT_BPS` | 1,000,000 | [잠정] | Rust(core `settings.rs`) | 받기 속도 상한의 최소값, 바이트/초(`rate-limit.md` §4.1) | 가장 큰 영상 크기 가정에서 계산한 파생값. ADR-0009 묶음 |
+| `CLI_PROGRESS_STEP_PERCENT` / `CLI_PROGRESS_STEP_SECS` | 10 / 30 | [잠정] | Rust | 명령줄 받기의 진행 줄 간격(터미널이 아닐 때 10%마다 또는 30초마다 한 줄, 로그 파일이 부풀지 않게, `docs/design/features/cli-mode.md` §9.1) | 근거 없음. ADR-0009 묶음 |
+| `EXIT_OK` / `EXIT_FAILED` / `EXIT_USAGE` / `EXIT_LOGIN` / `EXIT_REJECTED` / `EXIT_BUSY` / `EXIT_INTERRUPTED` | 0 / 1 / 2 / 3 / 4 / 5 / 130 | 기존 코드 | Rust(`crates/shell/src/cli/mod.rs` `exit`, DT15 대조 밖) | 명령줄 종료 코드(성공 / 실패 / 사용법 / 로그인 필요 / 받을 수 없는 영상 / 앱이 열려 있음 / Ctrl+C). 130은 셸 관례(128 + SIGINT 2)다 | `cli-mode.md` §9.3. 스크립트가 읽는 계약이라 값을 바꾸지 않는다 |
 
 편집자 위임의 Worker 상수 여섯(위 세 행)은 DT15 대조 밖이다: `check-tokens.mjs`는 Worker 쪽으로 공지 상수 둘(`core/notice.ts`)만 읽는다(넓힐지는 `delegation.md` §18-4). 셸의 판정 직전 자동 확인 간격은 기능 ① 셸 단계(①-4)가 이 표에 행을 더한다.
 

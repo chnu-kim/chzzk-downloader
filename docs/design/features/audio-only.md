@@ -336,7 +336,7 @@ A-1~A-3은 하나의 stacked 묶음이다. 한 브랜치(`feat/audio-only`)에�
 - **#166 파일 이름 템플릿**: `naming::default_filename`·`output_path`와 셸 `output.rs`를 건드린다. 머지 순서와 관계없이 규칙은 하나다. "확장자는 템플릿 밖에서 `MediaExt`로 붙인다". 템플릿 결과는 확장자 없는 기본 이름이다. 나중에 머지되는 쪽이 `output_path`의 `ext` 인자를 맞춘다.
 - **#167 mp4 메타데이터**: 마무리 단계(`finish`)에 메타데이터 쓰기를 더할 가능성이 크다. 오디오에는 이번 범위에서 메타데이터를 넣지 않는다. 그 PR이 먼저 머지되면, 메타데이터를 쓰는 조건에 `quality_id != AUDIO_QUALITY_ID`를 둔다(§12 후속).
   - **구현(master 합친 뒤)**: `download::run`이 `embed_metadata && quality_id != AUDIO_QUALITY_ID`일 때만 태그 재료(`job.tags`)를 만든다. 오디오는 평탄화(defrag)에 `udta`를 넘기지 않고 표지 요청도 보내지 않는다(`tests/audio.rs` `audio_ignores_embed_metadata_and_never_fetches_cover`). 안 넣는 쪽이 작고 안전하다: 넣으려면 m4a용 `ilst` 항목·`covr` 정책이 따로 필요하고, 평탄화가 만드는 새 moov 크기가 달라져 A7 재시작 판정(`written() >= total_len`)과 golden이 모두 바뀐다.
-  - **#166 템플릿**: 확장자는 템플릿 밖에서 `MediaExt`로 붙는다. `naming::tests::shown_name_equals_saved_name_for_m4a`가 템플릿 여럿·세 종류·세 OS 전수로 "제안 이름 + `.m4a` = 저장 이름"을 고정한다. 알려진 가장자리 하나: 제안 이름이 이미 `.m4a`로 끝나면(제목이 `.m4a`로 끝남) 붙여 넣은 확장자를 받는 규칙 때문에 저장 이름이 `x.m4a`이고 화면은 `x.m4a.m4a`를 보인다.
+  - **#166 템플릿**: 확장자는 템플릿 밖에서 `MediaExt`로 붙는다. `naming::tests::shown_name_equals_saved_name_for_m4a`가 템플릿 여럿·세 종류·세 OS 전수로 "제안 이름 + `.m4a` = 저장 이름"을 고정한다. 가장자리 하나였던 것(제안 이름이 이미 `.m4a`로 끝나면 화면은 `x.m4a.m4a`, 저장은 `x.m4a`)은 `check_output`이 정한다: 붙여 넣은 확장자를 받는 규칙(`output_path_ext`)은 그대로이고, 검사가 돌려주는 `fileName`은 `enqueue`에 그대로 넣으면 검사한 경로가 나오는 이름이다(`x.m4a.m4a`를 입력하면 `x.m4a.m4a`, `x.M4A`는 `x.M4A`). 검사·표시·등록·저장이 한 경로이고(`manager_audio.rs` 왕복 테스트), 영상 `x.mp4.mp4`도 같다. 순수 naming 전수 테스트의 "가장자리" 분기는 이 붙여 넣기 규칙의 코어 동작을 고정할 뿐이다.
   - **#165 속도 제한**: 오디오도 `progressive::run` 경로라 `Throttles`가 걸린다(`tests/audio.rs` `audio_download_is_throttled`).
 
 ### 11.4 번호 예약

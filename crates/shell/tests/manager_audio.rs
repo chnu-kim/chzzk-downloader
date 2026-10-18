@@ -359,3 +359,90 @@ async fn audio_enqueue_does_not_change_last_quality_label() {
     assert_eq!(d.last_quality_label.as_deref(), Some("1080p"));
     assert_eq!(d.recent_vods[0].title, title);
 }
+
+// ---------------------------------------------------------------------------
+// 검사한 경로 = 등록하는 경로 = 저장하는 경로 (Codex P1: 확장자가 겹치는 이름)
+// ---------------------------------------------------------------------------
+
+/// 검사 → 등록 왕복. 화면이 보이는 이름(`fileName` + 확장자, 이미 확장자로 끝나면 그대로)과 검사 경로, 등록된 작업의
+/// 출력 경로가 모두 같아야 한다. `name`을 입력해 `check_output` → `enqueue(check.fileName)`을 거친다.
+fn roundtrip(h: &Harness, name: &str, quality_id: &str) -> (chzzk_shell::dto::OutputCheck, String) {
+    let ext = if quality_id == AUDIO_QUALITY_ID {
+        ".m4a"
+    } else {
+        ".mp4"
+    };
+    let c = h
+        .mgr
+        .check_output(
+            None,
+            &h.downloads(),
+            name,
+            &CONTENT,
+            quality_id,
+            PlaybackKind::Progressive,
+            None,
+            None,
+        )
+        .unwrap();
+    let mut r = request(&c.file_name);
+    r.quality_id = quality_id.into();
+    r.expected_kind = PlaybackKind::Progressive;
+    let job = h.mgr.enqueue(r, &h.defaults()).unwrap();
+    // 화면 이름: 확장자로 끝나면 그대로, 아니면 붙인다(`output_path_ext`와 같은 규칙)
+    let shown = if c.file_name.to_ascii_lowercase().ends_with(ext) {
+        c.file_name.clone()
+    } else {
+        format!("{}{ext}", c.file_name)
+    };
+    assert_eq!(
+        Path::new(&c.path).file_name().unwrap().to_string_lossy(),
+        shown,
+        "{name:?} {quality_id}: 화면 이름과 검사 경로"
+    );
+    (c, job.output)
+}
+
+/// 재현: 같은 폴더에 `x.m4a`와 `x.m4a.m4a`가 있고 이름 `x.m4a.m4a`를 입력해 덮어쓰기하면, 검사가 본 `x.m4a.m4a`가
+/// 덮어써져야 한다(전에는 등록이 `x.m4a`를 정해 다른 파일을 덮어썼다).
+#[tokio::test(start_paused = true)]
+async fn audio_double_extension_name_checks_and_saves_the_same_path() {
+    let h = Harness::new(1);
+    let d = h.downloads();
+    std::fs::create_dir_all(&d).unwrap();
+    touch(&d.join("x.m4a"));
+    touch(&d.join("x.m4a.m4a"));
+    let (c, output) = roundtrip(&h, "x.m4a.m4a", AUDIO_QUALITY_ID);
+    assert_eq!(Path::new(&c.path), d.join("x.m4a.m4a"));
+    assert_eq!(c.conflict_names, ["x.m4a.m4a"]);
+    assert_eq!(Path::new(&output), Path::new(&c.path));
+    // 번호 이름도 같은 규칙으로 등록된다
+    let free = c.free_file_name.unwrap();
+    let r = audio_request(&free);
+    let job = h.mgr.enqueue(r, &h.defaults()).unwrap();
+    assert_eq!(Path::new(&job.output), d.join(format!("{free}.m4a")));
+}
+
+/// 확장자가 하나만 겹치는 이름(`x.m4a`, 대소문자 무시)도 검사 경로로 등록된다.
+#[tokio::test(start_paused = true)]
+async fn audio_single_and_cased_extension_names_roundtrip() {
+    for name in ["x.m4a", "x.M4A", "x", "x.m4a.M4A", "x.m4a.m4a.m4a"] {
+        let h = Harness::new(1);
+        let (c, output) = roundtrip(&h, name, AUDIO_QUALITY_ID);
+        assert_eq!(Path::new(&output), Path::new(&c.path), "{name:?}");
+    }
+}
+
+/// 영상(`.mp4`)도 같은 종류의 어긋남이 없다: `x.mp4.mp4` 입력이 검사한 `x.mp4.mp4`로 등록된다.
+#[tokio::test(start_paused = true)]
+async fn video_double_extension_name_checks_and_saves_the_same_path() {
+    for name in ["x.mp4.mp4", "x.mp4", "X.MP4.mp4", "x.mp4.mp4.mp4"] {
+        let h = Harness::new(1);
+        let d = h.downloads();
+        std::fs::create_dir_all(&d).unwrap();
+        touch(&d.join("x.mp4"));
+        touch(&d.join("x.mp4.mp4"));
+        let (c, output) = roundtrip(&h, name, "PD_720P");
+        assert_eq!(Path::new(&output), Path::new(&c.path), "{name:?}");
+    }
+}

@@ -28,6 +28,7 @@
     notices,
     rangeError,
     rangeSecs,
+    savedFileName,
     usesFreeName,
     type CardChoices,
     type RangeError,
@@ -366,7 +367,7 @@
 
 <OverwriteDialog
   open={confirmOverwrite}
-  name={`${check?.fileName ?? fileName}${ext}`}
+  name={savedFileName(check?.fileName ?? fileName, ext)}
   {busy}
   onconfirm={() => void enqueueNow()}
   onclose={() => (confirmOverwrite = false)}

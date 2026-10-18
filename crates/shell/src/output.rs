@@ -49,7 +49,7 @@ pub fn check_output(q: &OutputQuery<'_>, active: &dyn Fn(&Path) -> Option<JobId>
     // 확장자는 화질 키로 정한다(오디오만 받기 `.m4a`). 웹뷰가 따로 보낸 플래그는 믿지 않는다(audio-only.md A5)
     let ext = MediaExt::for_quality(q.quality_id);
     let path = output_path_ext(q.folder, &named, ext, q.platform);
-    let file_name = stem(&path, ext);
+    let file_name = entered_name(q.folder, &path, ext, q.platform);
     let truncated = file_name != q.file_name;
     let conflict_names = conflict_names(&path, q.chat);
     let exists = !conflict_names.is_empty();
@@ -98,6 +98,22 @@ fn conflict_names(video: &Path, chat: Option<SubtitleFormat>) -> Vec<String> {
         .filter(|p| p.exists())
         .filter_map(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
         .collect()
+}
+
+/// 등록(`enqueue`)이 `output_path_ext`에 그대로 넣었을 때 `path`가 다시 나오는 이름. 검사·표시·등록·저장이 한 경로를 쓰게 한다.
+///
+/// 보통은 확장자를 뗀 이름이다. 그런데 `output_path_ext`는 이미 확장자로 끝나는 이름에 확장자를 더 붙이지 않으므로,
+/// 뗀 이름이 다시 확장자로 끝나거나(`x.m4a.m4a` → `x.m4a`) 대소문자가 다르면(`x.M4A` → `x.m4a`) 뗀 이름을 넣어서는
+/// 같은 경로가 나오지 않는다. 그때는 확장자까지 붙은 이름을 돌려준다(이미 확장자로 끝나 그대로 저장된다).
+fn entered_name(folder: &Path, path: &Path, ext: MediaExt, p: Platform) -> String {
+    let stem = stem(path, ext);
+    if output_path_ext(folder, &stem, ext, p) == path {
+        stem
+    } else {
+        path.file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default()
+    }
 }
 
 /// 최종 경로의 이름에서 확장자(`.mp4`·`.m4a`, 대소문자 무시)를 뗀 것.
@@ -150,7 +166,7 @@ fn free_name(
             && chat_free
             && active(&candidate).is_none()
         {
-            return Some(stem(&candidate, ext));
+            return Some(entered_name(folder, &candidate, ext, p));
         }
     }
     None

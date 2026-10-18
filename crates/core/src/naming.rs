@@ -1803,7 +1803,7 @@ mod tests {
     /// 오디오(m4a): 카드의 제안 이름(`.mp4`를 뗀 것) + 화면의 `.m4a` 표시가 실제 저장 이름과 같다. 확장자는 템플릿
     /// 밖에서 `MediaExt`로 붙인다(audio-only.md §11.3).
     /// 유일한 예외는 제안 이름이 이미 `.m4a`로 끝나는 경우(제목이 `.m4a`로 끝남)다: 붙여 넣은 확장자를 받아들이는
-    /// 규칙(`output_path_ext`) 때문에 저장 이름이 `x.m4a`이고 화면은 `x.m4a.m4a`를 보인다(알고 있는 가장자리).
+    /// 규칙(`output_path_ext`) 때문에 저장 이름이 `x.m4a`이고 화면은 `x.m4a.m4a`를 보인다(코어 규칙 그대로다. 셸 `check_output`이 이 어긋남을 메워 검사한 경로가 그대로 저장된다).
     #[test]
     fn shown_name_equals_saved_name_for_m4a() {
         fn saved_m4a(shown: &str, p: Platform) -> String {

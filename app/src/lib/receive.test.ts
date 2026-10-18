@@ -20,6 +20,7 @@ import {
   RANGE_FORMAT_EXAMPLE_SECS,
   effectiveRange,
   fileExt,
+  savedFileName,
   rangeChip,
   rangeError,
   rangeSecs,
@@ -464,5 +465,14 @@ describe('metaParts: 맡은 채널 조각(RV7)', () => {
   it('own·unchecked면 없다', () => {
     expect(metaParts(resolved({ ownership: 'own' }))).not.toContain(t('delegated.title'));
     expect(metaParts(resolved({ ownership: 'unchecked' }))).not.toContain(t('delegated.title'));
+  });
+});
+
+describe('savedFileName (저장되는 이름)', () => {
+  it('이미 확장자로 끝나면 더 붙이지 않는다(셸 output_path_ext와 같다)', () => {
+    expect(savedFileName('x', '.m4a')).toBe('x.m4a');
+    expect(savedFileName('x.m4a.m4a', '.m4a')).toBe('x.m4a.m4a');
+    expect(savedFileName('x.M4A', '.m4a')).toBe('x.M4A');
+    expect(savedFileName('x.mp4.mp4', '.mp4')).toBe('x.mp4.mp4');
   });
 });

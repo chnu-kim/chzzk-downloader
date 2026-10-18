@@ -276,6 +276,15 @@ export function fileExt(q: Pick<QualityDto, 'audioOnly'> | undefined): string {
   return q?.audioOnly ? '.m4a' : '.mp4';
 }
 
+/**
+ * 이름 `fileName`으로 받으면 저장되는 파일 이름. 셸 `output_path_ext`와 같은 규칙이다: 이미 `ext`(대소문자 무시)로
+ * 끝나는 이름에는 확장자를 더 붙이지 않는다. `check_output`은 이 규칙으로 검사한 경로가 그대로 저장되는 이름을 돌려준다
+ * (`x.m4a.m4a`를 입력하면 `x.m4a.m4a`).
+ */
+export function savedFileName(fileName: string, ext: string): string {
+  return fileName.toLowerCase().endsWith(ext) ? fileName : `${fileName}${ext}`;
+}
+
 /** 화질 행·요청의 라벨: 오디오만 행은 코어 라벨("audio")이 아니라 문구 deck의 말이다 */
 export function qualityRowLabel(q: Pick<QualityDto, 'audioOnly' | 'label'>): string {
   return q.audioOnly ? t('quality.audioOnly') : q.label;

@@ -30,6 +30,7 @@ use futures_util::stream;
 use tokio::time::Instant as TokioInstant;
 use tokio_util::sync::CancellationToken;
 
+use super::live_audit as audit;
 use super::part::{HlsState, PartFile, Sidecar};
 use super::retry::{Failure, Patience, is_connection_failure};
 use super::segmented::{Body, fetch, fetch_cancellable, pick_variant, utf8};
@@ -177,6 +178,7 @@ pub(crate) async fn run(
                         // 한참 아무것도 없다. 방송이 끝났는지 본다(403 재조회 예산은 쓰지 않는다).
                         if quiet.elapsed() >= idle_check {
                             quiet = TokioInstant::now();
+                            log_refresh(audit::CAUSE_IDLE);
                             match until_stop!(stop, refresh_free(job, &mut feed, &tracks)) {
                                 None => return Err(Error::NothingRecorded),
                                 Some(r) => {
@@ -188,6 +190,7 @@ pub(crate) async fn run(
                         }
                     }
                     Handled::Refresh => {
+                        log_refresh(audit::CAUSE_PLAYLIST_EXPIRED);
                         match until_stop!(stop, refresh(job, &mut feed, &tracks)) {
                             None => return Err(Error::NothingRecorded),
                             Some(r) => {
@@ -239,10 +242,18 @@ pub(crate) async fn run(
     let mut since_cp = 0u32;
     let mut idle_since = TokioInstant::now();
     let mut back_streak = 0u32;
+    // 같은 방송으로 재조회했고, 그 뒤 세그먼트가 있는 playlist를 아직 보지 못했다(실측 사건 `after_refresh`).
+    let mut after_refresh = false;
 
     let end = 'poll: loop {
         let first = snap.playlist.segments.first().map(|s| s.msn);
         let last = snap.playlist.segments.last().map(|s| s.msn);
+        if after_refresh
+            && let (Some(next_msn), Some(first), Some(last)) = (st.next_msn, first, last)
+        {
+            after_refresh = false;
+            tracing::info!(target: audit::LOG_TARGET, event = "after_refresh", next_msn, first, last);
+        }
         // 스트림이 다시 시작되었다: msn이 연달아 거꾸로 갔거나 init 파일이 바뀌었다.
         let went_back = matches!((st.next_msn, last), (Some(next), Some(last)) if last + 1 < next);
         back_streak = if went_back { back_streak + 1 } else { 0 };
@@ -257,6 +268,7 @@ pub(crate) async fn run(
         // 창이 우리를 지나갔다: 놓친 만큼 구멍으로 센다.
         match (st.next_msn, first) {
             (Some(next), Some(first)) if first > next => {
+                log_gap(audit::GAP_WINDOW, first - next);
                 st.gaps += u32::try_from(first - next).unwrap_or(u32::MAX);
                 st.next_msn = Some(first);
             }
@@ -333,6 +345,7 @@ pub(crate) async fn run(
                     Err(Failure::Fatal(Error::HttpStatus {
                         status: 404 | 410, ..
                     })) => {
+                        log_gap(audit::GAP_SEGMENT_GONE, 1);
                         st.gaps += 1;
                         st.next_msn = Some(msn + 1);
                         report(job, p.written(), &st);
@@ -361,6 +374,7 @@ pub(crate) async fn run(
                         if seg_flaky > MAX_FLAKY {
                             return Err(e);
                         }
+                        log_gap(audit::GAP_TRANSIENT, 1);
                         st.gaps += 1;
                         st.next_msn = Some(msn + 1);
                         report(job, p.written(), &st);
@@ -378,12 +392,14 @@ pub(crate) async fn run(
 
         if expired {
             // 서명 만료 뒤 재조회. 기다리는 동안 멈춤이 오면 받은 만큼 마무리한다(core.md 61)
+            log_refresh(audit::CAUSE_SEGMENT_EXPIRED);
             match until_stop!(stop, refresh(job, &mut feed, &tracks)) {
                 None => break 'poll LiveEndReason::Stopped,
                 Some(r) => {
                     if let Some(end) = r?.end() {
                         break 'poll end;
                     }
+                    after_refresh = true;
                 }
             }
         } else if snap.ended {
@@ -394,10 +410,14 @@ pub(crate) async fn run(
             };
         } else if !got_any && idle_since.elapsed() >= idle_check {
             // 한참 새 세그먼트가 없다. 방송이 끝났는지 본다(403 재조회 예산은 쓰지 않는다).
+            log_refresh(audit::CAUSE_IDLE);
             match until_stop!(stop, refresh_free(job, &mut feed, &tracks)) {
                 None => break 'poll LiveEndReason::Stopped,
                 Some(r) => match r?.end() {
-                    None => idle_since = TokioInstant::now(),
+                    None => {
+                        idle_since = TokioInstant::now();
+                        after_refresh = true;
+                    }
                     Some(end) => break 'poll end,
                 },
             }
@@ -429,13 +449,19 @@ pub(crate) async fn run(
                 {
                     Handled::Stopped => break 'poll LiveEndReason::Stopped,
                     Handled::Again => continue 'poll,
-                    Handled::Refresh => match until_stop!(stop, refresh(job, &mut feed, &tracks)) {
-                        None => break 'poll LiveEndReason::Stopped,
-                        Some(r) => match r?.end() {
-                            None => continue 'poll,
-                            Some(end) => break 'poll end,
-                        },
-                    },
+                    Handled::Refresh => {
+                        log_refresh(audit::CAUSE_PLAYLIST_EXPIRED);
+                        match until_stop!(stop, refresh(job, &mut feed, &tracks)) {
+                            None => break 'poll LiveEndReason::Stopped,
+                            Some(r) => match r?.end() {
+                                None => {
+                                    after_refresh = true;
+                                    continue 'poll;
+                                }
+                                Some(end) => break 'poll end,
+                            },
+                        }
+                    }
                 }
             }
         };
@@ -467,6 +493,16 @@ fn is_transient(e: &Error) -> bool {
         e,
         Error::HttpStatus { .. } | Error::Parse { .. } | Error::Network(_)
     )
+}
+
+/// 실측 사건: 재조회를 시작한다(`live_audit`).
+fn log_refresh(cause: &'static str) {
+    tracing::info!(target: audit::LOG_TARGET, event = "refresh", cause);
+}
+
+/// 실측 사건: 구멍을 센다(`live_audit`).
+fn log_gap(cause: &'static str, count: u64) {
+    tracing::info!(target: audit::LOG_TARGET, event = "gap", cause, count);
 }
 
 fn report(job: &mut Job<'_>, bytes: u64, st: &Recording) {

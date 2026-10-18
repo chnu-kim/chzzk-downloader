@@ -1976,3 +1976,106 @@ async fn own_recording_part_is_finalized_by_same_id() {
     assert_eq!(recorded_msns(&out), vec![0]);
     no_part(&out);
 }
+
+/// 사건 하나의 필드(이름, 값) 목록.
+type AuditFields = Vec<(String, String)>;
+
+/// 실측 사건(`live_audit`)을 모은다.
+#[derive(Clone, Default)]
+struct Audit(Arc<std::sync::Mutex<Vec<AuditFields>>>);
+
+impl Audit {
+    fn of(&self, event: &str) -> Vec<AuditFields> {
+        let all = self.0.lock().unwrap().clone();
+        all.into_iter()
+            .filter(|f| f.iter().any(|(k, v)| k == "event" && v == event))
+            .collect()
+    }
+}
+
+fn field<'a>(f: &'a [(String, String)], name: &str) -> &'a str {
+    f.iter()
+        .find(|(k, _)| k == name)
+        .map(|(_, v)| v.as_str())
+        .unwrap_or_else(|| panic!("{name} 없음: {f:?}"))
+}
+
+impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for Audit {
+    fn on_event(&self, e: &tracing::Event<'_>, _: tracing_subscriber::layer::Context<'_, S>) {
+        if e.metadata().target() != chzzk_core::download::live_audit::LOG_TARGET {
+            return;
+        }
+        struct V(Vec<(String, String)>);
+        impl tracing::field::Visit for V {
+            fn record_str(&mut self, f: &tracing::field::Field, v: &str) {
+                self.0.push((f.name().into(), v.into()));
+            }
+            fn record_debug(&mut self, f: &tracing::field::Field, v: &dyn std::fmt::Debug) {
+                self.0.push((f.name().into(), format!("{v:?}")));
+            }
+        }
+        let mut v = V(Vec::new());
+        e.record(&mut v);
+        self.0.lock().unwrap().push(v.0);
+    }
+}
+
+/// 사건을 모으며 녹화한다(현재 스레드 구독자: `#[tokio::test]`는 단일 스레드다).
+async fn record_audited(s: &Stream, out: &Path) -> (DownloadOutcome, Audit) {
+    use tracing_subscriber::layer::SubscriberExt;
+    let audit = Audit::default();
+    let _g = tracing::subscriber::set_default(tracing_subscriber::registry().with(audit.clone()));
+    let r = record(s, out, None).await.unwrap();
+    (r, audit)
+}
+
+/// 서명 만료 재조회는 `refresh`(segment_expired)와, 다음 playlist가 이어지는지 보는 `after_refresh`를 남긴다(M-⑤-A).
+#[tokio::test]
+async fn audit_logs_refresh_and_continuity() {
+    let s = Stream::start_with(
+        Opts {
+            expire_seg: Some(4),
+            ..Opts::default()
+        },
+        |n| window(n as u64, 3, n >= 8),
+        |_| Detail::Open(1),
+    )
+    .await;
+    let dir = tempfile::tempdir().unwrap();
+    let (r, audit) = record_audited(&s, &out_path(&dir)).await;
+    assert!(matches!(r, DownloadOutcome::Completed { .. }), "{r:?}");
+    let refreshes = audit.of("refresh");
+    assert_eq!(refreshes.len(), 1, "{refreshes:?}");
+    assert_eq!(field(&refreshes[0], "cause"), "segment_expired");
+    let after = audit.of("after_refresh");
+    assert_eq!(after.len(), 1, "{after:?}");
+    let n = |k: &str| field(&after[0], k).parse::<u64>().unwrap();
+    assert_eq!(n("next_msn"), 4);
+    assert!(
+        chzzk_core::download::live_audit::classify(n("next_msn"), n("first"), n("last"))
+            .continues(),
+        "{after:?}"
+    );
+    assert!(audit.of("gap").is_empty());
+}
+
+/// 세그먼트 404는 `gap`(segment_gone)으로 남는다(M-⑤-B).
+#[tokio::test]
+async fn audit_logs_gone_segment_gap() {
+    let s = Stream::start_with(
+        Opts {
+            gone_seg: Some(4),
+            ..Opts::default()
+        },
+        |n| window(n as u64, 3, n >= 8),
+        |_| Detail::Open(1),
+    )
+    .await;
+    let dir = tempfile::tempdir().unwrap();
+    let (_, audit) = record_audited(&s, &out_path(&dir)).await;
+    let gaps = audit.of("gap");
+    assert_eq!(gaps.len(), 1, "{gaps:?}");
+    assert_eq!(field(&gaps[0], "cause"), "segment_gone");
+    assert_eq!(field(&gaps[0], "count"), "1");
+    assert!(audit.of("refresh").is_empty());
+}

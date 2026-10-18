@@ -115,29 +115,68 @@ pub(crate) fn line(w: &mut dyn Write, s: &str) {
     let _ = writeln!(w, "{s}");
 }
 
-/// `fut`을 기다리되 Ctrl+C가 먼저 오면 버리고 `None`을 돌려준다(작업을 시작하기 전의 기다림 전부: 갱신·조회·판정).
+/// `interruptible`의 결과
+pub(crate) enum Waited<T> {
+    /// Ctrl+C 없이 끝났다
+    Done(T),
+    /// Ctrl+C가 왔고 `fut`은 버렸다
+    Stopped,
+    /// Ctrl+C가 왔지만 진행 중인 refresh를 끝내는 사이 `fut`도 끝났다. 호출자는 결과를 버리지 말고(작업이 이미 만들어졌을
+    /// 수 있다) 첫 Ctrl+C로 다룬다
+    DoneAfterPress(T),
+}
+
+impl<T> Waited<T> {
+    /// 결과가 남을 것이 없는 기다림(갱신·조회): 눌렀으면 끝난 결과도 버린다
+    pub(crate) fn unless_pressed(self) -> Option<T> {
+        match self {
+            Waited::Done(v) => Some(v),
+            Waited::Stopped | Waited::DoneAfterPress(_) => None,
+        }
+    }
+}
+
+/// `fut`을 기다리되 Ctrl+C가 먼저 오면 버린다(작업을 시작하기 전의 기다림 전부: 갱신·조회·판정).
 /// 신호 채널이 닫혔으면(`recv`가 `None`) 취소가 아니라 신호를 더 기다리지 않는 것이다. 받기가 시작된 뒤의 Ctrl+C 두 단계는
 /// `download::follow`가 따로 다룬다.
 ///
-/// 버려도 안전하다: `App::enqueue`·`resume_job`은 `.await`(판정)가 모두 매니저를 부르기 전에 있고, 그 뒤는 동기라 작업이 아예
-/// 없거나 이미 완전히 만들어진 둘 중 하나다. 갱신을 도중에 버리는 것은 이 신호를 받기 전의 기본 동작(프로세스 종료)과 같고,
-/// 응답을 잃은 회전은 서버의 60초 복구 창이 받는다(worker.md §5.2).
+/// **refresh(토큰 회전) 도중에는 버리지 않는다**(cli-mode.md §5.2): `fut` 안의 어디서든(시작 갱신·관리자 확인·주소마다의
+/// `tick`·/api/me의 invalid_token 뒤 갱신) 회전 요청이 나가 있으면, 서버가 회전을 커밋했는데 응답 처리·새 토큰 저장·응답 유실
+/// 재시도가 취소된다. 그러면 디스크에 옛 토큰이 남고 60초 복구 창 뒤 그것을 보내 재사용 감지로 GUI와 함께 쓰는 세션이
+/// 끊긴다. 그래서 Ctrl+C가 왔을 때 refresh가 진행 중이면 `fut`을 계속 poll하며 refresh가 결과를 저장할 때까지 기다린 뒤 버린다
+/// (요청 시간 상한·응답 유실 재시도 창 안에서 끝난다). 더 누른 Ctrl+C도 이 기다림을 끊지 않는다.
+///
+/// refresh가 아닌 곳에서 버려도 안전하다: `App::enqueue`·`resume_job`은 `.await`(판정)가 모두 매니저를 부르기 전에 있고,
+/// 그 뒤는 동기라 작업이 아예 없거나 이미 완전히 만들어진 둘 중 하나다(뒤의 경우가 `DoneAfterPress`).
 pub(crate) async fn interruptible<F: std::future::Future>(
+    app: &App,
+    env: &mut Env<'_>,
     ctrl_c: &mut CtrlC,
     fut: F,
-) -> Option<F::Output> {
+) -> Waited<F::Output> {
     tokio::pin!(fut);
     let mut closed = false;
     loop {
         tokio::select! {
-            out = &mut fut => return Some(out),
+            out = &mut fut => return Waited::Done(out),
             sig = ctrl_c.recv(), if !closed => {
                 if sig.is_some() {
-                    return None;
+                    break;
                 }
                 closed = true;
             }
         }
+    }
+    if !app.auth_refreshing() {
+        return Waited::Stopped;
+    }
+    line(env.err, copy::FINISHING_REFRESH);
+    let settled = app.auth_refresh_settled();
+    tokio::pin!(settled);
+    tokio::select! {
+        biased;
+        out = &mut fut => Waited::DoneAfterPress(out),
+        () = &mut settled => Waited::Stopped,
     }
 }
 
@@ -168,7 +207,10 @@ async fn run_with_app(app: &App, cmd: Command, env: &mut Env<'_>, ctrl_c: &mut C
     if let Err(e) = app.gate_command("auth_retry") {
         return report_error(env, app, &e);
     }
-    let Some(st) = interruptible(ctrl_c, app.auth_retry()).await else {
+    let Some(st) = interruptible(app, env, ctrl_c, app.auth_retry())
+        .await
+        .unless_pressed()
+    else {
         return stopped(env);
     };
     match cmd {
@@ -212,7 +254,10 @@ async fn info(app: &App, env: &mut Env<'_>, ctrl_c: &mut CtrlC, url: &str) -> u8
     if let Err(e) = app.gate_command("resolve") {
         return report_error(env, app, &e);
     }
-    let r = match interruptible(ctrl_c, app.resolve(url)).await {
+    let r = match interruptible(app, env, ctrl_c, app.resolve(url))
+        .await
+        .unless_pressed()
+    {
         None => return stopped(env),
         Some(Ok(r)) => r,
         Some(Err(e)) => return report_error(env, app, &e),

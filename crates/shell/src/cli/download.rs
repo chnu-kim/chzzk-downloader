@@ -11,7 +11,9 @@ use chzzk_core::parse_content_url;
 use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
 
 use super::progress::Reporter;
-use super::{CtrlC, DownloadArgs, Env, copy, exit, interruptible, line, report_error, stopped};
+use super::{
+    CtrlC, DownloadArgs, Env, Waited, copy, exit, interruptible, line, report_error, stopped,
+};
 use crate::JobId;
 use crate::app::{App, ChatCheck};
 use crate::dto::{EnqueueRequest, JobDto, JobEvent, JobStatus, OnExisting, ResolvedDto};
@@ -77,10 +79,25 @@ impl Run<'_, '_> {
     /// 주소 하나를 끝까지 받고 종료 코드를 돌려준다.
     async fn one(&mut self, url: &str) -> u8 {
         let app = self.app;
+        // 주소마다 GUI driver의 타이머와 같은 판정으로 세션을 본다: 갱신 예정이 지났으면 갱신하고, 오프라인 유예가 끝났으면
+        // 여기서 만료로 바뀌어 아래 게이트가 막는다. 시작 때 한 번만 보면 긴 배치가 유예를 넘겨도 다음 주소를 받는다(§5.2)
+        if let Err(e) = app.gate_command("auth_retry") {
+            return report_error(self.env, app, &e);
+        }
+        if interruptible(app, self.env, self.ctrl_c, app.auth_tick())
+            .await
+            .unless_pressed()
+            .is_none()
+        {
+            return stopped(self.env);
+        }
         if let Err(e) = app.gate_command("resolve") {
             return report_error(self.env, app, &e);
         }
-        let resolved = match interruptible(&mut *self.ctrl_c, app.resolve(url)).await {
+        let resolved = match interruptible(app, self.env, self.ctrl_c, app.resolve(url))
+            .await
+            .unless_pressed()
+        {
             None => return stopped(self.env),
             Some(Ok(r)) => r,
             Some(Err(e)) => return report_error(self.env, app, &e),
@@ -129,6 +146,7 @@ impl Run<'_, '_> {
             }
         }
 
+        let mut pressed = false;
         let id = if let Some(dup) = check.duplicate_job_id {
             // 같은 파일의 작업이 이미 목록에 있다. 멈춘 것(`paused`·`interrupted`)이 같은 요청이면 그것을 이어받는다
             // (새 기록을 만들면 `duplicateOutput`이다). 그 밖은 건드리지 않는다
@@ -139,10 +157,14 @@ impl Run<'_, '_> {
             if let Err(e) = app.gate_command("resume_job") {
                 return report_error(self.env, app, &e);
             }
-            match interruptible(&mut *self.ctrl_c, app.resume_job(dup, false)).await {
-                None => return stopped(self.env),
-                Some(Err(e)) => return report_error(self.env, app, &e),
-                Some(Ok(())) => {}
+            match interruptible(app, self.env, self.ctrl_c, app.resume_job(dup, false)).await {
+                Waited::Stopped => return stopped(self.env),
+                Waited::Done(Err(e)) | Waited::DoneAfterPress(Err(e)) => {
+                    return report_error(self.env, app, &e);
+                }
+                Waited::Done(Ok(())) => {}
+                // 다시 줄 세웠다: 첫 Ctrl+C처럼 멈춘다
+                Waited::DoneAfterPress(Ok(())) => pressed = true,
             }
             dup
         } else {
@@ -175,13 +197,20 @@ impl Run<'_, '_> {
             if let Err(e) = app.gate_command("enqueue") {
                 return report_error(self.env, app, &e);
             }
-            match interruptible(&mut *self.ctrl_c, app.enqueue(req)).await {
-                None => return stopped(self.env),
-                Some(Ok(job)) => job.id,
-                Some(Err(e)) => return report_error(self.env, app, &e),
+            match interruptible(app, self.env, self.ctrl_c, app.enqueue(req)).await {
+                Waited::Stopped => return stopped(self.env),
+                Waited::Done(Ok(job)) => job.id,
+                // 작업이 이미 만들어졌다: 첫 Ctrl+C처럼 멈춘다(줄에 남겨 두고 130으로 끝내지 않는다)
+                Waited::DoneAfterPress(Ok(job)) => {
+                    pressed = true;
+                    job.id
+                }
+                Waited::Done(Err(e)) | Waited::DoneAfterPress(Err(e)) => {
+                    return report_error(self.env, app, &e);
+                }
             }
         };
-        self.follow(id, &notes).await
+        self.follow(id, &notes, pressed).await
     }
 
     /// `--audio`면 오디오만 행, `--quality` 라벨(대소문자 무시)이면 그 화질, 없으면 기본 화질 → (id, label). 못 고르면 안내를
@@ -264,8 +293,8 @@ impl Run<'_, '_> {
     }
 
     /// 작업 `id`가 끝날 때까지 진행률을 쓰고 Ctrl+C를 다룬다. 첫 Ctrl+C는 일시정지(`.part`를 남기고 `paused`),
-    /// 두 번째는 바로 끝낸다(`interrupted`로 저장).
-    async fn follow(&mut self, id: JobId, notes: &[String]) -> u8 {
+    /// 두 번째는 바로 끝낸다(`interrupted`로 저장). `pressed`면 작업을 만들기 전에 이미 한 번 눌렀다(바로 일시정지).
+    async fn follow(&mut self, id: JobId, notes: &[String], pressed: bool) -> u8 {
         let app = self.app;
         let base = size_base_of(chzzk_core::Platform::current().into());
         let mut reporter = Reporter::new(self.env.tty, base);
@@ -274,6 +303,10 @@ impl Run<'_, '_> {
         }
         let started = Instant::now();
         let mut presses = 0u32;
+        if pressed {
+            presses = 1;
+            let _ = app.manager.pause(id);
+        }
         self.update_power();
         let last = loop {
             let Some(job) = self.job(id) else {

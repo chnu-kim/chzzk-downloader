@@ -34,6 +34,9 @@ pub struct Signer {
     pub channel_id: String,
     /// 관리자면 채널과 상관없이 허용
     pub is_admin: bool,
+    /// 디스크 세션은 관리자라고 하지만 이번 실행에서 서버가 아직 확인하지 않았다(`is_admin`은 false).
+    /// 남의 영상·채널 모름이면 판정 직전 확인(`recheck`)이 서버에 묻는다(cli-mode.md §5.2)
+    pub admin_pending: bool,
     /// 맡은 채널(주인의 판정용 채널 ID, 소문자 32 hex). SignedIn이면 오프라인 유예 중에도 디스크 목록 그대로(신뢰 수준 (b))
     pub delegated: Arc<[String]>,
 }
@@ -151,13 +154,18 @@ impl OwnershipGate {
         classify(content, meta.channel_id.as_deref(), &me)
     }
 
-    /// 판정 직전에 맡은 채널을 서버에서 다시 확인해야 하는가. Delegated(디스크 목록에만 남은 회수를 잡는다)와
-    /// NotOwn(방금 맡은 채널을 잡는다)만, 비관리자·생방송 아님·로그인 켜짐일 때
+    /// 판정 직전에 서버에서 다시 확인해야 하는가. 로그인 켜짐·비관리자일 때
+    /// - 맡은 채널: Delegated(디스크 목록에만 남은 회수를 잡는다)와 NotOwn(방금 맡은 채널을 잡는다), 생방송 아님
+    /// - 관리자 미확인(`admin_pending`): NotOwn·Unknown이면 관리자 예외가 판정을 바꿀 수 있다(생방송 포함)
     pub fn needs_recheck(&self, verdict: Ownership, content: &ContentRef) -> bool {
         self.auth.is_some()
-            && matches!(verdict, Ownership::Delegated | Ownership::NotOwn)
-            && !matches!(content, ContentRef::Live { .. })
-            && self.me().is_some_and(|m| !m.is_admin)
+            && self.me().is_some_and(|m| {
+                !m.is_admin
+                    && ((m.admin_pending
+                        && matches!(verdict, Ownership::NotOwn | Ownership::Unknown))
+                        || (matches!(verdict, Ownership::Delegated | Ownership::NotOwn)
+                            && !matches!(content, ContentRef::Live { .. })))
+            })
     }
 
     /// `enqueue` 앞의 판정(판정 직전 확인 없음). `admit_checked`에 빈 확인을 준 것과 같다
@@ -299,6 +307,7 @@ mod tests {
             *self.0.lock().unwrap() = v.map(|c| Signer {
                 channel_id: c.to_string(),
                 is_admin,
+                admin_pending: false,
                 delegated: Arc::from(Vec::<String>::new()),
             });
         }
@@ -645,6 +654,7 @@ mod tests {
         let mine = Signer {
             channel_id: A1.into(),
             is_admin: false,
+            admin_pending: false,
             delegated: Arc::from(vec![D4.to_string()]),
         };
         let admin = Signer {
@@ -676,6 +686,7 @@ mod tests {
         let mine = Signer {
             channel_id: A1.into(),
             is_admin: false,
+            admin_pending: false,
             delegated: Arc::from(vec![D4.to_string()]),
         };
         let admin = Signer {
@@ -841,6 +852,26 @@ mod tests {
         let out = Me::new(None);
         assert!(!OwnershipGate::enabled(out).needs_recheck(Ownership::NotOwn, &v));
         assert!(!OwnershipGate::disabled().needs_recheck(Ownership::NotOwn, &v));
+        // 관리자 미확인(디스크만 관리자): 남의 영상·채널 모름은 생방송이어도 서버에 묻는다. 내 영상·맡은 채널 생방송은 묻지 않는다
+        let pending = Me::new(Some(A1));
+        if let Some(s) = pending.0.lock().unwrap().as_mut() {
+            s.admin_pending = true;
+        }
+        let g = OwnershipGate::enabled(pending);
+        for (verdict, content, want) in [
+            (Ownership::NotOwn, video(1), true),
+            (Ownership::Unknown, video(1), true),
+            (Ownership::NotOwn, live(D4), true),
+            (Ownership::Unknown, live(D4), true),
+            (Ownership::Own, video(1), false),
+            (Ownership::Delegated, live(D4), false),
+        ] {
+            assert_eq!(
+                g.needs_recheck(verdict, &content),
+                want,
+                "{verdict:?} {content:?}"
+            );
+        }
     }
 
     #[test]

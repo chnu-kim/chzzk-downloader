@@ -17,7 +17,8 @@ use tokio::runtime::Handle;
 use crate::JobId;
 use crate::auth::{
     AuthPhase, AuthService, AuthStatus, BeginLogin, DelegatedChannel, DelegationCheck,
-    EditorsError, HttpWorkerApi, SessionStore, SystemClock, WorkerBase, client_label, token,
+    EditorsError, HttpWorkerApi, SessionStore, SystemClock, Trigger, WorkerBase, client_label,
+    token,
 };
 use crate::dto::{
     AppFolder, AppInfo, AuthStatusDto, EditorsDto, EnqueueRequest, Features,
@@ -393,8 +394,16 @@ impl App {
 
     /// 판정 직전 맡은 채널 자동 확인(간격 5분·오프라인이면 건너뛴다). 결과는 로그인 상태와 디스크 목록에 반영되고
     /// 호출자는 판정을 다시 한다. 서버에 닿지 못해도 판정은 디스크 목록으로 계속한다
+    ///
+    /// 디스크 세션은 관리자인데 이번 실행에서 서버가 확인하지 않았으면(`Signer::admin_pending`) 먼저 refresh로 관리자 여부를
+    /// 확인한다(/api/me는 관리자 여부를 주지 않는다). GUI는 시작 때 refresh하므로 보통 이미 확인돼 있고, 명령줄은
+    /// 갱신 예정 전이면 refresh하지 않으므로 여기서 처음 묻는다(cli-mode.md §5.2). 관리자로 확인되면 맡은 채널은 묻지 않는다
     async fn recheck(&self) {
         if let Some(a) = &self.auth {
+            a.confirm_admin().await;
+            if a.signer().is_some_and(|s| s.is_admin) {
+                return;
+            }
             let _ = a.check_delegations(false).await;
         }
     }
@@ -669,6 +678,28 @@ impl App {
         match self.auth.clone() {
             None => AuthStatusDto::disabled(),
             Some(a) => AuthStatusDto::from_status(&a.retry().await),
+        }
+    }
+
+    /// 명령줄이 주소마다 부르는 세션 확인: GUI driver의 타이머와 같은 판정(`AuthService::tick(Timer)`)이다. 온라인이면 갱신
+    /// 예정이 지났을 때만, 오프라인이면 재시도 시각이나 유예(72시간) 끝이 지났을 때만 refresh한다. 긴 배치가 유예를 넘기면
+    /// 여기서 만료로 바뀌어 다음 주소의 게이트가 막는다(cli-mode.md §5.2)
+    pub async fn auth_tick(&self) -> AuthStatusDto {
+        match self.auth.clone() {
+            None => AuthStatusDto::disabled(),
+            Some(a) => AuthStatusDto::from_status(&a.tick(Trigger::Timer).await),
+        }
+    }
+
+    /// refresh(토큰 회전)가 진행 중인가(명령줄 Ctrl+C가 결과 저장을 기다린다)
+    pub fn auth_refreshing(&self) -> bool {
+        self.auth.as_ref().is_some_and(|a| a.refreshing())
+    }
+
+    /// 진행 중인 refresh가 결과를 저장할 때까지 기다린다(없으면 바로)
+    pub async fn auth_refresh_settled(&self) {
+        if let Some(a) = &self.auth {
+            a.refresh_settled().await;
         }
     }
 

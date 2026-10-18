@@ -645,7 +645,7 @@ async fn hanging_server() -> MockServer {
     s
 }
 
-/// 받기를 시작하기 전의 기다림(갱신·조회·판정)에서도 Ctrl+C가 먹는다: 코드 130으로 곧 끝나고 작업·`.part`가 없다.
+/// 받기를 시작하기 전의 기다림(조회·판정)에서도 Ctrl+C가 먹는다: 코드 130으로 곧 끝나고 작업·`.part`가 없다.
 /// 신호 핸들러를 달면 기본 동작(종료)이 없어지므로 이 경로를 막으면 명령이 눌러도 멈추지 않는다
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn ctrl_c_works_before_a_job_starts() {
@@ -683,32 +683,8 @@ async fn ctrl_c_works_before_a_job_starts() {
         assert!(job_statuses(t.path()).is_empty());
         assert!(ls(std::path::Path::new(&out)).is_empty());
     }
-    // status: 유예를 넘긴 세션이라 열자마자 갱신하는데 Worker가 응답하지 않는다
-    let api = mock_api(None, false).await;
-    let worker = hanging_server().await;
-    let t = TempDir::new().unwrap();
-    save_session_at(
-        t.path(),
-        &worker,
-        OWN,
-        false,
-        &[],
-        time::Duration::hours(100),
-    );
-    let app = open_cli(t.path(), &api, Some(&worker));
-    let (tx, mut rx) = ctrl();
-    let started = std::time::Instant::now();
-    let fut = run_with(&app, &["status"], t.path(), &mut rx, None, None);
-    let press = async {
-        tokio::time::sleep(Duration::from_millis(300)).await;
-        tx.send(()).unwrap();
-    };
-    let (r, ()) = tokio::join!(fut, press);
-    assert_eq!(r.code, exit::INTERRUPTED, "{r:?}");
-    assert!(
-        started.elapsed() < Duration::from_secs(10),
-        "status가 멈추지 않았다"
-    );
+    // 갱신(토큰 회전) 도중의 Ctrl+C는 버리지 않고 결과를 저장한 뒤 멈춘다: `cli_auth.rs`
+    // `ctrl_c_during_refresh_saves_the_rotated_session`
 }
 
 // ---------------------------------------------------------------- 갱신·자동 이어받기·전원(§5.2·§9.2)

@@ -4,6 +4,7 @@
 
 ## 현재 위치
 
+- **앱 CLI 모드 구현 CLI-4(2026-10-18, 브랜치 `feat/cli-mode`, app.md 104)**: 웹 도움말 주제 `cli`(`help/cli.md`·`ids.json`·생성 모듈·`HelpId::Cli`·바인딩), content.md §15.1 문구 한 행, `cli.busy.body` 재검토(바꾸지 않음), 사용자 실측 M-CLI-1~5 요청(아래 "앱 CLI 모드 사용자 실측").
 - **앱 CLI 모드 구현 CLI-6(2026-10-18, 브랜치 `feat/cli-mode`, app.md 105)**: 오디오 PR #168이 머지되어 `download --audio`(오디오만 행, `.m4a`)를 더했다. master를 합쳐(app.md 99·100이 오디오라 CLI를 101~로 옮겼다) 이어서 구현했다.
 - **앱 CLI 모드 구현 CLI-3(2026-10-18, 브랜치 `feat/cli-mode`, cicd.md 119)**: `e2e-native`에 명령줄 단계(새 데이터 폴더: 로그인 전 3 → `login` → 본인·맡은 채널 받기 0 + golden 해시 → 남의 영상 4 → `status`), 설치 스모크에 설치본 `help`·`status`(Linux deb·AppImage, macOS dmg·.app.tar.gz). macOS에서 `cliPhase`를 로컬로 모의 실행하고 dmg 설치 스모크를 돌려 확인했다. Linux·Windows의 `e2e-native`는 CI 첫 실행이 확인한다.
 - **앱 CLI 모드 구현 CLI-5(2026-10-18, 브랜치 `feat/cli-mode`, app.md 103·cicd.md 118)**: Windows 콘솔 실행 파일 `chzzk-cli.exe`(둘째 `[[bin]]`, `tauri.windows.conf.json`), Windows GUI exe의 하위 명령 안내(코드 2), `expected-artifacts.json` `consoleExe`, 설치·bin 스모크, hygiene, `size.binary.windows-cli`($pending). 이 Windows 전용 코드는 로컬(macOS)에서 컴파일하지 못해 CI의 Windows 작업이 처음 확인한다. 남은 것: 첫 Windows 번들 실행 뒤 `size.binary.windows-cli` 채우기와 windows-setup·msi 기준 올리기(RATCHET_LOG).
@@ -164,6 +165,17 @@
 - R5 전체 받기 파일(조각 구조) macOS QuickTime 재생: **안 된다**(첫 조각만 재생, core.md 60과 같은 증상). 같은 파일을 `examples/defrag`로 바꾸면 끝까지 재생·끝 근처 탐색 **된다**, 길이 **같다** → R5 적용(core.md 71) → 운영 확인: v0.10.1 앱으로 전체 받기 한 파일이 QuickTime에서 끝까지 재생됨(2026-10-18)
 - 거의 전체 길이 파일의 마무리(변환) 시간: **10초 안** · 메모리: **늘지 않음**(`Finalizing` 하위 표시는 더하지 않는다)
 - 아직 안 한 관찰: 구간 파일 Windows 미디어 플레이어 재생(M-②-6은 macOS QuickTime으로만 봤다)
+
+### 앱 CLI 모드 사용자 실측(2026-10-18 요청, 설계 `docs/design/features/cli-mode.md` §13, 구현 CLI-1~6)
+
+결과는 된다/안 된다·일치/불일치만 적는다(계정·채널·영상 번호·주소 없음). 구현은 끝났고 아래는 **사용자가 해 줄 것**이다. 첫 CLI 릴리스는 CLI-5(Windows 콘솔 실행 파일)까지 머지된 뒤에 낸다.
+
+- M-CLI-1 (대기) Windows 10/11(`win10/` VM 가능) cmd·PowerShell 대화형에서 `chzzk-cli.exe`: 프롬프트가 받기가 끝날 때까지 돌아오지 않음, `%ERRORLEVEL%`·`$LASTEXITCODE`가 종료 코드, 한글 출력, Ctrl+C 한 번이 일시정지(`.part`가 남고 같은 명령이 이어받음). `chzzk-app.exe download …`가 안내 한 줄과 코드 2. PowerShell 5에서 파이프로 받을 때 한글이 깨지는지(도움말에 UTF-8 설정 한 줄을 둔 가정). 코드 서명이 없어 처음 실행 때 SmartScreen이 뜨는지
+- M-CLI-2 (대기) macOS 설치본(앱을 한 번 연 뒤)의 터미널 `status`·`download`·`login`: Dock 아이콘이 뜨지 않음, quarantine 때문에 막히지 않음, 브라우저가 열림
+- M-CLI-3 (대기) 실제 계정으로 `login` → 본인 영상 `download` + 남의 영상 거부(코드 4) → 그 뒤 GUI를 열면 로그인되어 있음(세션 공유)
+- M-CLI-4 (대기) GUI를 연 채로 CLI(코드 5와 안내), CLI가 받는 중·`login` 기다리는 중에 GUI를 열면 "명령줄에서 받는 중이에요" 대화상자(`login` 기다림에도 그 문구가 어색하지 않은지)
+- M-CLI-5 (대기) Windows에서 앞 버전 설치본을 GUI 업데이트로 올린 뒤 `chzzk-cli.exe status`의 버전이 새 버전(설치기가 콘솔 실행 파일도 바꾸는지). 업데이트 중 `chzzk-cli.exe`가 떠 있을 때 덮어쓰기에서 막히는지는 일부러 해 보지 않는다(잠금이 대부분 막는다)
+- 크기 기록(로컬 macOS 측정, CI 값이 아니다): CLI를 더하기 전 master(오디오 #168 포함, `e5645db`) 릴리스 빌드 `size.binary.darwin` 26,470,272 · dmg 8,625,954 → 이 브랜치(CLI-1~6 + master 합침) 값은 CI 첫 macOS 번들 실행에서 `ratchet.mjs write --from-run`으로 올린다(RATCHET_LOG에 키·이유). Windows는 `size.binary.windows-cli`를 채우고 windows-setup·msi를 올린다
 
 ### 기능 ③·④ 사용자 실측(**보류 2026-10-18**, 도구 2026-10-16, 도구 PR #114 머지. 두 기능을 보류해 아래 (대기)는 다시 시작할 때까지 하지 않는다)
 

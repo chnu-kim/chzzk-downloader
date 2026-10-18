@@ -210,11 +210,12 @@ pub enum HelpId {
     WindowsOldApp,
     Editors,
     LoginDenied,
+    Cli,
 }
 
 impl HelpId {
     /// 모든 주제(`ids.json` 대조용)
-    pub const ALL: [HelpId; 9] = [
+    pub const ALL: [HelpId; 10] = [
         HelpId::Cookie,
         HelpId::DiskFull,
         HelpId::InstallMac,
@@ -224,6 +225,7 @@ impl HelpId {
         HelpId::WindowsOldApp,
         HelpId::Editors,
         HelpId::LoginDenied,
+        HelpId::Cli,
     ];
 
     /// 앵커 글자(= serde 값). 주소의 `#` 뒤에 그대로 붙는다
@@ -238,6 +240,7 @@ impl HelpId {
             HelpId::WindowsOldApp => "windows-old-app",
             HelpId::Editors => "editors",
             HelpId::LoginDenied => "login-denied",
+            HelpId::Cli => "cli",
         }
     }
 }

@@ -320,6 +320,7 @@ fn playlist_encryption_maps_to_encrypted() {
         Unsupported::Gap,
         Unsupported::Skip,
         Unsupported::RangeNotHls,
+        Unsupported::AudioOutputMismatch,
     ] {
         let app = AppError::from(Error::Unsupported(u.clone()));
         assert_eq!(app.code, ErrorCode::Unsupported, "{u:?}");

@@ -72,6 +72,8 @@ pub struct Quality {
     pub bandwidth: Option<u64>,
     /// 실물이 문자열이다(`"60.0"`, `"30"`).
     pub frame_rate: Option<String>,
+    /// 영상 없이 오디오 트랙만 받는 선택지(`mpd::audio_rep`, audio-only.md). 저장하지 않고 목록으로만 보인다.
+    pub audio_only: bool,
 }
 
 impl Quality {
@@ -205,21 +207,29 @@ impl Resolved {
 }
 
 /// `Resolved::default_quality`의 본체. 목록만으로 계산한다.
+///
+/// 오디오만 받기 행(`audio_only`)은 두 단계 모두에서 건너뛴다(audio-only.md A8). 한 번 오디오를 골랐다고 모든 영상이
+/// 오디오로 시작하면 안 된다. 폴백(0)도 첫 비디오 행이다.
 pub(crate) fn default_quality_index(qs: &[&Quality], last_label: Option<&str>) -> usize {
     if let Some(last) = last_label
-        && let Some(i) = qs.iter().position(|q| q.label == last)
+        && let Some(i) = qs.iter().position(|q| !q.audio_only && q.label == last)
     {
         return i;
     }
     let mut best: Option<(usize, u32)> = None;
     for (i, q) in qs.iter().enumerate() {
-        if let Some(v) = q.resolution.or(q.height)
+        // 오디오 행은 resolution/height가 None이라 어차피 지나치지만 의도를 코드에 남긴다
+        if !q.audio_only
+            && let Some(v) = q.resolution.or(q.height)
             && best.is_none_or(|(_, b)| v > b)
         {
             best = Some((i, v));
         }
     }
-    best.map_or(0, |(i, _)| i)
+    best.map_or_else(
+        || qs.iter().position(|q| !q.audio_only).unwrap_or(0),
+        |(i, _)| i,
+    )
 }
 
 #[cfg(test)]
@@ -286,6 +296,7 @@ mod tests {
             height: None,
             bandwidth: None,
             frame_rate: None,
+            audio_only: false,
         };
         let a = q("a", None);
         let b = q("b", None);
@@ -295,6 +306,46 @@ mod tests {
         let c = q("c", Some(720));
         let d = q("d", Some(720));
         assert_eq!(default_quality_index(&[&a, &c, &d], None), 1);
+    }
+
+    /// 오디오 행은 기본 선택이 되지 않는다: 마지막 라벨이 `audio`여도, 해상도가 없어 0번이 되는 경우에도(audio-only.md A8).
+    #[test]
+    fn default_quality_skips_audio_only() {
+        let video = |id: &str, res: u32| Quality {
+            id: id.into(),
+            label: format!("{res}p"),
+            resolution: Some(res),
+            width: None,
+            height: None,
+            bandwidth: None,
+            frame_rate: None,
+            audio_only: false,
+        };
+        let audio = Quality {
+            id: "audio".into(),
+            label: "audio".into(),
+            resolution: None,
+            width: None,
+            height: None,
+            bandwidth: Some(128_000),
+            frame_rate: None,
+            audio_only: true,
+        };
+        let (a, b) = (video("a", 144), video("b", 720));
+        // 마지막 화질 라벨이 audio여도 오디오를 고르지 않고 최대 해상도로 폴백한다
+        assert_eq!(default_quality_index(&[&a, &b, &audio], Some("audio")), 1);
+        // 라벨이 비디오면 그대로 따른다
+        assert_eq!(default_quality_index(&[&a, &b, &audio], Some("144p")), 0);
+        // 오디오가 앞에 와도 건너뛴다(0번 폴백이 오디오를 가리키지 않는다)
+        assert_eq!(default_quality_index(&[&audio, &a, &b], Some("audio")), 2);
+        assert_eq!(default_quality_index(&[&audio, &a, &b], None), 2);
+        // 비디오가 해상도를 모를 때도 오디오 앞의 비디오(0번)를 고른다
+        let blind = Quality {
+            resolution: None,
+            ..video("c", 0)
+        };
+        assert_eq!(default_quality_index(&[&blind, &audio], Some("audio")), 0);
+        assert_eq!(default_quality_index(&[&audio, &blind], Some("audio")), 1);
     }
 
     #[test]

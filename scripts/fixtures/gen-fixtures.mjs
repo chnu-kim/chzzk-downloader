@@ -386,16 +386,17 @@ function hlsRep(uuid, { q, bandwidth, width, height, fps, host, sig }) {
   );
 }
 
-function audioRep(uuid, { bandwidth, url }) {
+function audioRep(uuid, { bandwidth, url, rate = 48000, codecs = 'mp4a.40.2' }) {
   return (
-    `<Representation id="${uuid}" bandwidth="${bandwidth}" mimeType="audio/mp4" codecs="mp4a.40.2">` +
+    `<Representation id="${uuid}" bandwidth="${bandwidth}" mimeType="audio/mp4" codecs="${codecs}" audioSamplingRate="${rate}">` +
     `<nvod:Label kind="qualityId">AUDIO_${bandwidth / 1000}</nvod:Label><BaseURL>${url}</BaseURL>` +
     '<SegmentList timescale="1000" duration="2000"><Initialization range="0-999"/><SegmentURL mediaRange="1000-1999"/></SegmentList>' +
     '</Representation>\n'
   );
 }
 
-function vodMpd() {
+// audio: 'one'(기본, 128kbps 하나) | 'none'(오디오 set 없음) | 'two'(96kbps가 앞, 128kbps가 뒤: 큰 쪽을 골라야 한다)
+function vodMpd(audio = 'one') {
   const v = FAKE.vod.videoId;
   const base = `${VOD_HOST}/vod/${v}/pd/1000`;
   const sig = '_lsu_sa_=0000';
@@ -442,10 +443,23 @@ function vodMpd() {
       sig,
     }) +
     '</AdaptationSet>\n' +
-    '<AdaptationSet mimeType="audio/mp4">\n' +
-    audioRep('00000000-0000-0000-0000-0000000000b3', { bandwidth: 128000, url: `${VOD_HOST}/vod/${v}/audio/0.m4a?${sig}` }) +
-    '</AdaptationSet>\n</Period>\n</MPD>\n'
+    vodAudioSet(audio, v, sig) +
+    '</Period>\n</MPD>\n'
   );
+}
+
+function vodAudioSet(audio, v, sig) {
+  if (audio === 'none') return '';
+  const lo = audioRep('00000000-0000-0000-0000-0000000000b4', {
+    bandwidth: 96000,
+    rate: 44100,
+    url: `${VOD_HOST}/vod/${v}/audio/1.m4a?${sig}`,
+  });
+  const hi = audioRep('00000000-0000-0000-0000-0000000000b3', {
+    bandwidth: 128000,
+    url: `${VOD_HOST}/vod/${v}/audio/0.m4a?${sig}`,
+  });
+  return `<AdaptationSet mimeType="audio/mp4">\n${audio === 'two' ? lo : ''}${hi}</AdaptationSet>\n`;
 }
 
 function clipMultiMpd() {
@@ -586,21 +600,24 @@ function trak(id, handler) {
   return box('trak', tkhd, box('mdia', mdhd, hdlr, box('minf', xmhd, dinf, stbl)));
 }
 
+const mvhdBox = (nextTrack) =>
+  full('mvhd', 0, 0, zeros(8), be32(1000), be32(0), be32(0x10000), be16(0x100), zeros(10), MATRIX, zeros(24), be32(nextTrack));
+
 function initMp4() {
   const ftyp = box('ftyp', ascii('iso6'), be32(0), ascii('iso6'));
-  const mvhd = full('mvhd', 0, 0, zeros(8), be32(1000), be32(0), be32(0x10000), be16(0x100), zeros(10), MATRIX, zeros(24), be32(3));
+  const mvhd = mvhdBox(3);
   const trex = (id) => full('trex', 0, 0, be32(id), be32(1), zeros(12));
   const mvex = box('mvex', trex(1), trex(2));
   return cat(ftyp, box('moov', mvhd, trak(1, 'vide'), trak(2, 'soun'), mvex));
 }
 
 // firstFlags가 있으면 trun에 first_sample_flags를 싣는다(flags 0x000305). 없으면 첫 샘플도 trex 기본값(0, 동기)이다.
-function fragment(seq, track, baseTime, payload, firstFlags) {
+function fragment(seq, track, baseTime, payload, firstFlags, sampleDur = 1000) {
   const samples = 4;
   const size = Math.floor(payload.length / samples);
   const first = firstFlags === undefined ? [] : [be32(firstFlags)];
   const trunBody = (offset) =>
-    cat(be32(samples), be32(offset), ...first, ...Array.from({ length: samples }, () => cat(be32(1000), be32(size))));
+    cat(be32(samples), be32(offset), ...first, ...Array.from({ length: samples }, () => cat(be32(sampleDur), be32(size))));
   const build = (offset) =>
     box(
       'moof',
@@ -614,6 +631,18 @@ function fragment(seq, track, baseTime, payload, firstFlags) {
     );
   const moof = build(build(0).length + 8);
   return cat(moof, box('mdat', payload));
+}
+
+// 일반 VOD의 오디오 rep 파일 모양(fMP4/CMAF): ftyp(dash·cmfc) → moov(soun 1, mvex·trex) → sidx → (moof+mdat) × 3.
+// 디코드되지 않는 가짜 바이트다. 프레임 4개짜리 조각 셋이고 샘플은 모두 trex 기본값(동기)이다(AAC).
+function audioCmaf() {
+  const ftyp = box('ftyp', ascii('mp41'), be32(0), ascii('iso8'), ascii('isom'), ascii('mp41'), ascii('dash'), ascii('cmfc'));
+  const trex = full('trex', 0, 0, be32(1), be32(1), zeros(12));
+  const moov = box('moov', mvhdBox(2), trak(1, 'soun'), box('mvex', trex));
+  const frags = [0, 1, 2].map((k) => fragment(k + 1, 1, k * 4096, noise(1024 + 64 * k, 0xa0 + k), undefined, 1024));
+  const ref = (f) => cat(be32(f.length), be32(4096), be32(0x90000000));
+  const sidx = full('sidx', 0, 0, be32(1), be32(48000), be32(0), be32(0), be16(0), be16(frags.length), ...frags.map(ref));
+  return cat(ftyp, moov, sidx, ...frags);
 }
 
 function emsg(id) {
@@ -812,6 +841,9 @@ export function outputs() {
     'testdata/live/live_detail_adult_blocked.json': json(liveDetail({ status: 'OPEN', playback: false, adult: true })),
     'testdata/vod/video_info.json': json(vodVideoInfo(null)),
     'testdata/vod/playback.mpd': vodMpd(),
+    'testdata/vod/playback_noaudio.mpd': vodMpd('none'),
+    'testdata/vod/playback_audio2.mpd': vodMpd('two'),
+    'testdata/vod/audio_cmaf.m4a': audioCmaf(),
     'testdata/clip/clip_playinfo.json': clipPlayinfo(FAKE.clip),
     'testdata/clip/clip_multi_playinfo.json': clipPlayinfo(FAKE.clipMulti),
     'testdata/clip/clip_multi.mpd': clipMultiMpd(),

@@ -21,6 +21,8 @@ pub struct Representation {
     pub id: String,
     /// Representation@mimeType, 없으면 AdaptationSet@mimeType
     pub mime: String,
+    /// Representation@codecs, 없으면 AdaptationSet@codecs. 오디오 판정(`mp4a.`)에 쓴다.
+    pub codecs: Option<String>,
     pub bandwidth: Option<u64>,
     pub width: Option<u32>,
     pub height: Option<u32>,
@@ -47,6 +49,7 @@ impl fmt::Debug for Representation {
         f.debug_struct("Representation")
             .field("id", &self.id)
             .field("mime", &self.mime)
+            .field("codecs", &self.codecs)
             .field("bandwidth", &self.bandwidth)
             .field("width", &self.width)
             .field("height", &self.height)
@@ -65,6 +68,19 @@ impl Representation {
             .iter()
             .find(|(k, _)| k == kind)
             .map(|(_, v)| v.as_str())
+    }
+
+    /// 오디오 판정: `audio/mp4`, codecs가 `mp4a.`(AAC)로 시작, 보호되지 않음, 첫 BaseURL이 있음.
+    ///
+    /// `PD_`·`/pd/` 조건은 두지 않는다. 실물 오디오 rep은 PD 경로가 아니다(audio-only.md §2·§4.1).
+    pub fn is_audio(&self) -> bool {
+        self.mime.contains("audio/mp4")
+            && self
+                .codecs
+                .as_deref()
+                .is_some_and(|c| c.starts_with("mp4a."))
+            && !self.protected
+            && !self.base_urls.is_empty()
     }
 
     /// PD 판정: `video/mp4`, id가 `PD_`로 시작, 첫 BaseURL에 `/pd/`, 보호되지 않음.
@@ -105,20 +121,27 @@ pub fn parse_mpd(xml: &str) -> Result<Vec<Representation>, Error> {
     for period in children(root, "Period") {
         for set in children(period, "AdaptationSet") {
             let set_mime = set.attribute("mimeType").unwrap_or("");
+            let set_codecs = set.attribute("codecs");
             let set_protected = children(set, "ContentProtection").next().is_some();
             for rep in children(set, "Representation") {
-                out.push(parse_rep(rep, set_mime, set_protected));
+                out.push(parse_rep(rep, set_mime, set_codecs, set_protected));
             }
         }
     }
     Ok(out)
 }
 
-fn parse_rep(rep: Node<'_, '_>, set_mime: &str, set_protected: bool) -> Representation {
+fn parse_rep(
+    rep: Node<'_, '_>,
+    set_mime: &str,
+    set_codecs: Option<&str>,
+    set_protected: bool,
+) -> Representation {
     let text = |n: Node<'_, '_>| n.text().unwrap_or("").trim().to_string();
     Representation {
         id: rep.attribute("id").unwrap_or("").to_string(),
         mime: rep.attribute("mimeType").unwrap_or(set_mime).to_string(),
+        codecs: rep.attribute("codecs").or(set_codecs).map(str::to_string),
         bandwidth: rep.attribute("bandwidth").and_then(|v| v.parse().ok()),
         width: rep.attribute("width").and_then(|v| v.parse().ok()),
         height: rep.attribute("height").and_then(|v| v.parse().ok()),
@@ -150,6 +173,7 @@ pub fn pd_reps(reps: &[Representation]) -> Result<Vec<PdRep>, Error> {
                 height: r.height,
                 bandwidth: r.bandwidth,
                 frame_rate: r.frame_rate.clone(),
+                audio_only: false,
             },
             url,
         });
@@ -158,6 +182,39 @@ pub fn pd_reps(reps: &[Representation]) -> Result<Vec<PdRep>, Error> {
         return Err(Error::NoQualities);
     }
     Ok(out)
+}
+
+/// 오디오만 받기의 화질 키. 서버가 준 rep@id는 재조회 사이에 같은지 확인하지 못해 쓰지 않고, 이 고정값으로 고른다
+/// (audio-only.md A2). `PD_` 접두가 아니라 비디오 PD id와 겹치지 않는다.
+pub const AUDIO_QUALITY_ID: &str = "audio";
+
+/// 오디오 rep(`Representation::is_audio`) 중 `bandwidth`가 가장 큰 하나를 `AUDIO_QUALITY_ID` 화질로 돌려준다.
+/// 같으면 문서 순서상 앞이다. 없으면 `Ok(None)`(오디오 set이 없는 영상, audio-only.md A4).
+pub fn audio_rep(reps: &[Representation]) -> Result<Option<PdRep>, Error> {
+    let mut best: Option<&Representation> = None;
+    for r in reps.iter().filter(|r| r.is_audio()) {
+        // 같으면 앞의 것을 지킨다(`>`). bandwidth가 없는 rep은 있는 rep보다 낮다(`None < Some`).
+        if best.is_none_or(|b| r.bandwidth > b.bandwidth) {
+            best = Some(r);
+        }
+    }
+    let Some(r) = best else { return Ok(None) };
+    // 서명 쿼리가 있으므로 원문 URL은 오류에 넣지 않는다.
+    let url = Url::parse(&r.base_urls[0])
+        .map_err(|e| parse_err(format!("{}의 BaseURL이 올바르지 않습니다: {e}", r.id)))?;
+    Ok(Some(PdRep {
+        quality: Quality {
+            id: AUDIO_QUALITY_ID.to_string(),
+            label: AUDIO_QUALITY_ID.to_string(),
+            resolution: None,
+            width: None,
+            height: None,
+            bandwidth: r.bandwidth,
+            frame_rate: None,
+            audio_only: true,
+        },
+        url,
+    }))
 }
 
 /// `quality.id`가 정확히 같은 rep를 고른다. 없으면 `QualityNotFound`(가능한 id 목록 포함).
@@ -350,5 +407,197 @@ mod tests {
         assert_eq!(pd[0].quality.label, "PD_X");
         assert_eq!(pd[0].quality.resolution, None);
         assert_eq!(pd[0].quality.height, Some(360));
+    }
+
+    // ---- 오디오 rep(audio-only.md §4.1) ----
+
+    fn audio_of(xml: &str) -> Option<PdRep> {
+        audio_rep(&parse_mpd(xml).unwrap()).unwrap()
+    }
+
+    /// 오디오 AdaptationSet 하나짜리 MPD. `body`가 Representation들이다.
+    fn audio_mpd(set_attrs: &str, body: &str) -> String {
+        format!(
+            r#"<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" xmlns:nvod="urn:naver:vod:2020"><Period><AdaptationSet {set_attrs}>{body}</AdaptationSet></Period></MPD>"#
+        )
+    }
+
+    fn audio_rep_xml(id: &str, bandwidth: u64, codecs: &str, url: &str) -> String {
+        format!(
+            r#"<Representation id="{id}" bandwidth="{bandwidth}" mimeType="audio/mp4" codecs="{codecs}" audioSamplingRate="48000"><BaseURL>{url}</BaseURL></Representation>"#
+        )
+    }
+
+    /// VOD fixture의 오디오 rep은 하나이고 합성 id `audio`, 128kbps, `audio_only`로 올라온다.
+    #[test]
+    fn audio_rep_from_vod_fixture() {
+        let a = audio_of(&vod_mpd()).expect("오디오 rep이 있다");
+        let q = &a.quality;
+        assert_eq!(q.id, AUDIO_QUALITY_ID);
+        assert_eq!(q.label, AUDIO_QUALITY_ID);
+        assert!(q.audio_only);
+        assert_eq!(q.bandwidth, Some(128_000));
+        assert_eq!((q.resolution, q.width, q.height), (None, None, None));
+        assert_eq!(q.frame_rate, None);
+        assert_eq!(a.url.host_str(), Some("vod.example.invalid"));
+        assert!(a.url.path().ends_with("/audio/0.m4a"));
+        assert_eq!(a.url.query(), Some("_lsu_sa_=0000"));
+        // 비디오 PD 화질은 audio_only가 아니다
+        let pd = pd_reps(&parse_mpd(&vod_mpd()).unwrap()).unwrap();
+        assert!(pd.iter().all(|r| !r.quality.audio_only));
+    }
+
+    /// `pd_reps`는 오디오를 보지 않는다(비디오 화질 목록과 선택 규칙은 그대로).
+    #[test]
+    fn pd_reps_ignores_audio() {
+        let pd = pd_reps(&parse_mpd(&vod_mpd()).unwrap()).unwrap();
+        assert!(pd.iter().all(|r| r.quality.id != AUDIO_QUALITY_ID));
+        // 오디오 rep만 있는 MPD는 비디오 화질이 없으므로 NoQualities다
+        let xml = audio_mpd(
+            r#"mimeType="audio/mp4""#,
+            &audio_rep_xml("a1", 128_000, "mp4a.40.2", "https://h/a/0.m4a?s=1"),
+        );
+        assert!(matches!(
+            pd_reps(&parse_mpd(&xml).unwrap()),
+            Err(Error::NoQualities)
+        ));
+    }
+
+    #[test]
+    fn audio_rep_absent_when_no_audio_set() {
+        let xml = fixture_str("testdata/vod/playback_noaudio.mpd");
+        assert!(audio_of(&xml).is_none());
+        // 비디오 PD는 그대로다
+        assert_eq!(pd_reps(&parse_mpd(&xml).unwrap()).unwrap().len(), 2);
+    }
+
+    /// A4: 오디오 rep이 둘이면 bandwidth가 큰 것 하나(fixture는 작은 쪽이 앞이다).
+    #[test]
+    fn audio_rep_picks_highest_bandwidth() {
+        let reps = parse_mpd(&fixture_str("testdata/vod/playback_audio2.mpd")).unwrap();
+        assert_eq!(reps.iter().filter(|r| r.is_audio()).count(), 2);
+        let a = audio_rep(&reps).unwrap().unwrap();
+        assert_eq!(a.quality.bandwidth, Some(128_000));
+        assert!(a.url.path().ends_with("/audio/0.m4a"));
+    }
+
+    /// 같은 bandwidth면 문서 순서상 앞이다. bandwidth 속성이 없으면 있는 쪽이 이긴다.
+    #[test]
+    fn audio_rep_tie_keeps_first_and_missing_bandwidth_loses() {
+        let tie = audio_mpd(
+            r#"mimeType="audio/mp4""#,
+            &format!(
+                "{}{}",
+                audio_rep_xml("a1", 128_000, "mp4a.40.2", "https://h/first.m4a?s=1"),
+                audio_rep_xml("a2", 128_000, "mp4a.40.2", "https://h/second.m4a?s=1"),
+            ),
+        );
+        assert!(audio_of(&tie).unwrap().url.path().ends_with("/first.m4a"));
+
+        let no_bw = audio_mpd(
+            r#"mimeType="audio/mp4""#,
+            r#"<Representation id="a0" codecs="mp4a.40.2"><BaseURL>https://h/nobw.m4a?s=1</BaseURL></Representation><Representation id="a1" bandwidth="64000" codecs="mp4a.40.2"><BaseURL>https://h/bw.m4a?s=1</BaseURL></Representation>"#,
+        );
+        assert!(audio_of(&no_bw).unwrap().url.path().ends_with("/bw.m4a"));
+    }
+
+    /// AAC가 아니거나 보호되었거나 BaseURL이 없으면 오디오로 보지 않는다. 비디오 mime은 오디오가 아니다.
+    #[test]
+    fn audio_rep_requires_aac_unprotected_with_url() {
+        let url = "https://h/a/0.m4a?s=1";
+        // codecs가 AAC(mp4a.)가 아니다
+        let opus = audio_mpd(
+            r#"mimeType="audio/mp4""#,
+            &audio_rep_xml("a1", 128_000, "opus", url),
+        );
+        assert!(audio_of(&opus).is_none());
+        // codecs 속성이 없다
+        let none = audio_mpd(
+            r#"mimeType="audio/mp4""#,
+            &format!(
+                r#"<Representation id="a1" bandwidth="1"><BaseURL>{url}</BaseURL></Representation>"#
+            ),
+        );
+        assert!(audio_of(&none).is_none());
+        // ContentProtection(AdaptationSet 수준, Representation 수준)
+        let cp = r#"<ContentProtection schemeIdUri="urn:mpeg:dash:sea:2012"/>"#;
+        let set_cp = audio_mpd(
+            r#"mimeType="audio/mp4""#,
+            &format!("{cp}{}", audio_rep_xml("a1", 128_000, "mp4a.40.2", url)),
+        );
+        assert!(audio_of(&set_cp).is_none());
+        let rep_cp = audio_mpd(
+            r#"mimeType="audio/mp4""#,
+            &format!(
+                r#"<Representation id="a1" bandwidth="1" codecs="mp4a.40.2">{cp}<BaseURL>{url}</BaseURL></Representation>"#
+            ),
+        );
+        assert!(audio_of(&rep_cp).is_none());
+        // BaseURL이 없다
+        let no_url = audio_mpd(
+            r#"mimeType="audio/mp4""#,
+            r#"<Representation id="a1" bandwidth="1" codecs="mp4a.40.2"/>"#,
+        );
+        assert!(audio_of(&no_url).is_none());
+        // 비디오 mime
+        let video = audio_mpd(
+            r#"mimeType="video/mp4""#,
+            &format!(
+                r#"<Representation id="a1" bandwidth="1" codecs="mp4a.40.2"><BaseURL>{url}</BaseURL></Representation>"#
+            ),
+        );
+        assert!(audio_of(&video).is_none());
+    }
+
+    /// codecs와 mime은 Representation에 없으면 AdaptationSet 값을 물려받는다.
+    #[test]
+    fn audio_codecs_inherited_from_set() {
+        let xml = audio_mpd(
+            r#"mimeType="audio/mp4" codecs="mp4a.40.5""#,
+            r#"<Representation id="a1" bandwidth="64000"><BaseURL>https://h/a/0.m4a?s=1</BaseURL></Representation>"#,
+        );
+        let reps = parse_mpd(&xml).unwrap();
+        assert_eq!(reps[0].codecs.as_deref(), Some("mp4a.40.5"));
+        assert!(audio_of(&xml).is_some());
+    }
+
+    /// BaseURL을 해석하지 못하면 `Parse`이고 원문(서명 쿼리)을 오류에 넣지 않는다.
+    #[test]
+    fn audio_rep_bad_base_url_error_has_no_url() {
+        let xml = audio_mpd(
+            r#"mimeType="audio/mp4""#,
+            &audio_rep_xml("a1", 128_000, "mp4a.40.2", "not a url?_lsu_sa_=SECRET"),
+        );
+        let Err(e) = audio_rep(&parse_mpd(&xml).unwrap()) else {
+            panic!("오류여야 한다")
+        };
+        assert!(matches!(e, Error::Parse { .. }));
+        assert!(!format!("{e} {e:?}").contains("SECRET"));
+    }
+
+    /// 서명 쿼리는 `Debug`에 나오지 않는다(Representation·PdRep 모두).
+    #[test]
+    fn audio_rep_debug_redacts_signature() {
+        let xml = audio_mpd(
+            r#"mimeType="audio/mp4""#,
+            &audio_rep_xml(
+                "a1",
+                128_000,
+                "mp4a.40.2",
+                "https://h/a/0.m4a?_lsu_sa_=SECRET",
+            ),
+        );
+        let reps = parse_mpd(&xml).unwrap();
+        let a = audio_rep(&reps).unwrap().unwrap();
+        for dbg in [format!("{reps:?}"), format!("{a:?}")] {
+            assert!(!dbg.contains("SECRET"), "{dbg}");
+        }
+        assert!(format!("{reps:?}").contains("mp4a.40.2"));
+    }
+
+    /// 합성 id `audio`는 PD id(`PD_` 접두)와 겹치지 않는다.
+    #[test]
+    fn audio_quality_id_is_not_pd_id() {
+        assert!(!AUDIO_QUALITY_ID.starts_with("PD_"));
     }
 }

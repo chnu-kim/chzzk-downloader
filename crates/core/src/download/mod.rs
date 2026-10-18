@@ -39,6 +39,8 @@ use crate::client::Chzzk;
 use crate::error::{Error, Unsupported};
 use crate::fsutil::map_io_error;
 use crate::model::{ContentRef, PlaybackKind, Resolved, Source, TimeRange};
+use crate::mpd::AUDIO_QUALITY_ID;
+use crate::naming;
 use crate::progress::{Meter, Phase, Progress};
 
 pub use part::{Discarded, Finalized, PartFile, PartOwner, Sidecar, discard_partial};
@@ -343,6 +345,14 @@ impl Chzzk {
     ) -> Result<DownloadOutcome, Error> {
         // 구간 요청의 검증은 맨 앞이다. `resume`보다 뒤면 같은 경로의 다른 작업 `.part`가 소유 불일치로
         // 지워지고, Skip보다 뒤면 잘못된 요청이 `Skipped`로 조용히 성공한다(core.md 64).
+        // 오디오만 받기는 화질 `"audio"` + `.m4a` 출력 + progressive가 한 벌이다. 어긋나면 m4a 바이트가 `.mp4`에 써지거나
+        // 그 반대가 되므로 같은 이유(`resume` 앞)로 맨 앞에서 거부한다(audio-only.md A5).
+        if (req.quality_id == AUDIO_QUALITY_ID) != naming::is_audio_output(&req.output)
+            || (req.quality_id == AUDIO_QUALITY_ID
+                && req.expected_kind != PlaybackKind::Progressive)
+        {
+            return Err(Error::Unsupported(Unsupported::AudioOutputMismatch));
+        }
         if let Some(r) = req.range {
             if req.expected_kind != PlaybackKind::LiveRewindHls {
                 return Err(Error::Unsupported(Unsupported::RangeNotHls));
@@ -472,16 +482,16 @@ fn defrag_verdict(
     }
 }
 
-/// 이 방식의 결과가 조각난 fMP4라 마무리에서 일반 mp4로 바꾸는가(core.md 구현 중 변경 60·64·71).
+/// 이 요청의 결과가 조각난 fMP4라 마무리에서 일반 mp4로 바꾸는가(core.md 구현 중 변경 60·64·71, audio-only.md §4.6).
 ///
 /// `expected_kind`로 정해도 되는 것은 `Job::resolve`가 재조회 방식이 다르면 `PlaybackChanged`로 멈추기 때문이다(엔진은
 /// 늘 `expected_kind`와 같은 `Source`로 돈다). 새 방식이 생기면 컴파일 오류로 여기서 정하게 `match`로 쓴다.
-fn converts_on_finish(kind: PlaybackKind) -> bool {
-    match kind {
+fn converts_on_finish(req: &DownloadRequest) -> bool {
+    match req.expected_kind {
         // HLS fMP4 조각을 받은 그대로 이어 붙인다(`segmented`·`live`). 전체·구간 받기 모두다
         PlaybackKind::LiveRewindHls | PlaybackKind::Live => true,
-        // MPD의 PD rep 하나를 통째로 받은 일반 mp4다(`progressive`). DASH 조각 경로는 없다(`mpd::pd_reps`)
-        PlaybackKind::Progressive => false,
+        // 비디오 PD rep은 통째로 받은 일반 mp4다(`progressive`). 오디오 rep만 CMAF 조각 구조라 일반 m4a로 바꾼다
+        PlaybackKind::Progressive => req.quality_id == AUDIO_QUALITY_ID,
     }
 }
 
@@ -503,7 +513,7 @@ pub(crate) async fn finish(
     // 생방송과 빠른 다시보기(전체·구간) 결과는 조각 구조를 일반 mp4로 바꾼다(core.md 구현 중 변경 60·64·71). 바로 위
     // checkpoint로 받은 바이트가 모두 durable하므로, 변환 도중 죽어도 다음 실행의 `resume`이 붙인 moov만 잘라 내고 다시 변환한다.
     // 바꾸기 전 실패는 경고만 남기고 조각 구조로 마무리하고, 바꾸는 도중 실패는 `.part`로 남긴다(core.md 61).
-    if converts_on_finish(job.req.expected_kind) {
+    if converts_on_finish(job.req) {
         // 파일 전체 훑기·fsync는 오래 걸릴 수 있어 blocking 스레드에서 한다.
         let r = p.with_file_blocking(|f| Ok(defrag::defragment_in(f))).await;
         // 빠른 다시보기 조각의 시각이 이어지지 않으면 경고만 남긴다(판정이나 오류로 쓰지 않는다). 생방송은 놓친 조각을
@@ -599,9 +609,32 @@ mod tests {
     /// 마무리 변환은 조각난 fMP4를 내놓는 방식만 한다(core.md 71). PD mp4는 건드리지 않는다.
     #[test]
     fn converts_on_finish_only_fragmented_kinds() {
-        assert!(converts_on_finish(PlaybackKind::LiveRewindHls));
-        assert!(converts_on_finish(PlaybackKind::Live));
-        assert!(!converts_on_finish(PlaybackKind::Progressive));
+        let req = |kind, quality: &str| DownloadRequest {
+            throttle: Default::default(),
+            content: ContentRef::Video { video_no: 1 },
+            quality_id: quality.into(),
+            expected_kind: kind,
+            output: PathBuf::from("a.mp4"),
+            on_existing: DuplicatePolicy::Overwrite,
+            concurrency: DEFAULT_CONCURRENCY,
+            live_stop: None,
+            recording_id: None,
+            range: None,
+        };
+        assert!(converts_on_finish(&req(
+            PlaybackKind::LiveRewindHls,
+            "144p"
+        )));
+        assert!(converts_on_finish(&req(PlaybackKind::Live, "144p")));
+        // 비디오 PD는 일반 mp4라 건드리지 않고, 오디오 rep(CMAF)만 바꾼다
+        assert!(!converts_on_finish(&req(
+            PlaybackKind::Progressive,
+            "PD_720P_1280_4000_192"
+        )));
+        assert!(converts_on_finish(&req(
+            PlaybackKind::Progressive,
+            AUDIO_QUALITY_ID
+        )));
     }
 
     /// 변환 결과로 마무리를 이어 갈지 정하는 표(core.md 61 M4).

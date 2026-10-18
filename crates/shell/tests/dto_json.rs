@@ -357,6 +357,7 @@ fn quality(id: &str, res: u32) -> Quality {
         height: Some(res),
         bandwidth: Some(2_048_000),
         frame_rate: Some("30".into()),
+        audio_only: false,
     }
 }
 
@@ -430,7 +431,8 @@ fn resolved_dto_snapshot_without_signed_urls() {
             "width": 1280,
             "height": 720,
             "bandwidth": 2_048_000,
-            "frameRate": "30"
+            "frameRate": "30",
+            "audioOnly": false
         })
     );
 
@@ -716,8 +718,23 @@ fn quality_dto_keeps_every_core_field() {
         height: Some(720),
         bandwidth: Some(2_048_000),
         frame_rate: Some("60.0".into()),
+        audio_only: false,
     };
     assert_eq!(to_json(&QualityDto::from(&q)), to_json(&q));
+    // 오디오만 행도 같은 이름(`audioOnly`)으로 간다
+    let audio = Quality {
+        id: "audio".into(),
+        label: "audio".into(),
+        resolution: None,
+        width: None,
+        height: None,
+        bandwidth: Some(128_000),
+        frame_rate: None,
+        audio_only: true,
+    };
+    let dto = to_json(&QualityDto::from(&audio));
+    assert_eq!(dto["audioOnly"], json!(true));
+    assert_eq!(dto, to_json(&audio));
 }
 
 /// `Progress`의 모든 필드가 DTO에 간다. 튜플 두 개만 `*Done`·`*Total`로 펼친다.

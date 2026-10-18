@@ -11,4 +11,8 @@ id: string,
 /**
  * 표시·"마지막 화질" 기억용
  */
-label: string, resolution: number | null, width: number | null, height: number | null, bandwidth: number | null, frameRate: string | null, };
+label: string, resolution: number | null, width: number | null, height: number | null, bandwidth: number | null, frameRate: string | null, 
+/**
+ * 영상 없이 오디오 트랙만 받는 선택지("오디오만", 일반 VOD에 서버 오디오 트랙이 있을 때만, audio-only.md)
+ */
+audioOnly: boolean, };

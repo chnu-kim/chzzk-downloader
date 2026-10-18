@@ -579,6 +579,8 @@ pub struct QualityDto {
     pub height: Option<u32>,
     pub bandwidth: Option<u64>,
     pub frame_rate: Option<String>,
+    /// 영상 없이 오디오 트랙만 받는 선택지("오디오만", 일반 VOD에 서버 오디오 트랙이 있을 때만, audio-only.md)
+    pub audio_only: bool,
 }
 
 impl From<&Quality> for QualityDto {
@@ -592,6 +594,7 @@ impl From<&Quality> for QualityDto {
             height,
             bandwidth,
             frame_rate,
+            audio_only,
         } = q;
         QualityDto {
             id: id.clone(),
@@ -601,6 +604,7 @@ impl From<&Quality> for QualityDto {
             height: *height,
             bandwidth: *bandwidth,
             frame_rate: frame_rate.clone(),
+            audio_only: *audio_only,
         }
     }
 }

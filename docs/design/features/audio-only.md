@@ -103,7 +103,7 @@
     - `resolution`·`width`·`height`·`frame_rate`는 `None`
     - `bandwidth`는 rep 값
     - `audio_only = true`(§4.2)
-  - BaseURL을 파싱하지 못하면 `pd_reps`처럼 `Error::Parse`를 낸다. 오류에 원문 URL을 넣지 않는다(`mpd.rs:140-142` 규칙).
+  - BaseURL을 파싱하지 못하면 `pd_reps`처럼 `Error::Parse`를 낸다. 오류에 원문 URL을 넣지 않는다(`mpd.rs:140-142` 규칙). 호출하는 `Chzzk::progressive`는 이 오류를 경고 로그로 남기고 오디오 행만 뺀다(비디오 받기를 막지 않는다, core.md 78 ⑥).
   - 없으면 `Ok(None)`이다.
 - `pd_reps`는 바꾸지 않는다. 비디오 PD가 하나도 없으면 오디오가 있어도 `NoQualities`다. 오디오만 있는 목록을 만들지 않는다. 생방송 `audioOnly` 선례(`recording.rs:1683`)와 같다.
 
@@ -127,11 +127,11 @@
   - `fn as_str()`: `.mp4`·`.m4a`
   - `pub fn for_quality(quality_id: &str) -> MediaExt`: `AUDIO_QUALITY_ID`면 `M4a`, 그 밖은 `Mp4`
 - 상수 `EXT`(`naming.rs:15`)는 `MediaExt::Mp4.as_str()` 자리로 남긴다. `range_stem`·`sibling_path`는 mp4 전용 그대로다. 구간과 채팅은 오디오와 같이 쓰지 않는다(A9).
-- `output_path(folder, filename, p)` → `output_path(folder, filename, ext: MediaExt, p)`. 규칙은 지금과 같다(`naming.rs:219-230`).
+- `output_path(folder, filename, p)`는 **그대로 두고**(`MediaExt::Mp4`로 위임) 확장자를 받는 `output_path_ext(folder, filename, ext: MediaExt, p)`를 더한다(구현 중 확정, core.md 78 ⑤: 같은 날 미머지 #166이 `output_path` 호출처를 건드려 서명을 바꾸면 충돌이 커진다). 규칙은 지금과 같다(`naming.rs:219-230`).
   - 정리한 이름이 `ext`로 끝나지 않으면(대소문자 무시) 붙인다.
   - 200바이트를 넘으면 확장자 앞을 줄인다.
 
-  인자가 늘어 호출처 네 곳이 컴파일 오류로 드러난다. `crates/shell/src/output.rs:52`·`:138`, `crates/shell/src/manager.rs:569`, `crates/core/examples/dl.rs:342` [확인]. 기존 호출은 `MediaExt::Mp4`다.
+  확장자를 받아야 하는 호출처는 셋이다. `crates/shell/src/output.rs:52`·`:138`, `crates/shell/src/manager.rs:569`, `crates/core/examples/dl.rs:342` [확인]. 나머지(테스트 포함)는 `output_path`를 그대로 쓴다.
 - `default_filename`(`naming.rs:42`)은 확장자 없는 "기본 이름"을 만드는 데에도 쓰인다(`ResolvedDto::suggested_file_name` = `.mp4`를 뗀 것, `dto.rs:496`). 오디오여도 같은 기본 이름을 쓴다. 확장자는 `output_path`가 붙인다. 접두(`[YYMMDD]`·`[클립]`)는 바꾸지 않는다. 그래서 같은 영상의 영상 파일과 오디오 파일은 이름이 같고 확장자만 다르다. 경로가 다르므로 충돌도 없다.
 - 공개 함수 `pub fn is_audio_output(path: &Path) -> bool`(파일 이름이 `.m4a`로 끝나는지, 대소문자 무시)를 둔다. §4.5의 검사가 쓴다.
 
@@ -266,7 +266,7 @@
   - `audioRep`에 `audioSamplingRate`를 더한다. 실물 모양에 맞춘다.
   - 오디오 set이 없는 일반 VOD MPD(`testdata/vod/playback_noaudio.mpd`)를 더한다.
   - 오디오 rep이 둘인 MPD를 더한다(A4).
-  - 합성 CMAF 오디오 파일 `testdata/vod/audio_cmaf.m4a`를 만든다. 구조는 `ftyp` → `moov`(trak 1, `soun`, `mvex`·`trex`) → `sidx` → (`moof`+`mdat`) × 3이다. 평탄화 golden `testdata/vod/audio_cmaf_flat.m4a`도 만든다.
+  - 합성 CMAF 오디오 파일 `testdata/vod/audio_cmaf.m4a`를 만든다. 구조는 `ftyp` → `moov`(trak 1, `soun`, `mvex`·`trex`) → `sidx` → (`moof`+`mdat`) × 3이다. 평탄화 golden `testdata/vod/audio_cmaf_flat.m4a`는 **생성기가 아니라 코어가 만든 정적 바이너리**다(`hls/full2_flat.mp4`와 같은 방식, `UPDATE_AUDIO_GOLDEN=1`). JS가 defrag를 다시 구현하면 같은 코드를 두 번 믿는 셈이라서다. 바이트 비교와 함께 구조(`moof`·`sidx` 없음, 트랙 1, 샘플 12, `stss` 없음, 미디어 데이터 순서 보존)를 단정한다.
 - **`mpd`**:
   - VOD fixture에서 `audio_rep`이 하나이고, `id == "audio"`, `bandwidth` 128000, `audio_only`이다.
   - 오디오 set이 없으면 `None`이다.

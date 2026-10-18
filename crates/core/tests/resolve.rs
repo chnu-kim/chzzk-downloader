@@ -54,6 +54,14 @@ async fn mount_mpd(server: &MockServer, video_id: &str, rel: &str) {
         .await;
 }
 
+async fn mount_mpd_str(server: &MockServer, video_id: &str, body: &str) {
+    Mock::given(method("GET"))
+        .and(path(format!("/neonplayer/vodplay/v2/playback/{video_id}")))
+        .respond_with(xml(body.as_bytes().to_vec()))
+        .mount(server)
+        .await;
+}
+
 fn chzzk(server: &MockServer) -> Chzzk {
     Chzzk::new(config(server)).unwrap()
 }
@@ -119,12 +127,95 @@ async fn dash() {
     assert_eq!(r.kind(), PlaybackKind::Progressive);
     assert_eq!(r.meta.channel_name, "가상채널");
     let ids: Vec<_> = r.qualities().iter().map(|q| q.id.as_str()).collect();
-    assert_eq!(ids, ["PD_144P_256_128_64", "PD_720P_1280_4000_192"]);
+    // 비디오 PD 화질들 다음 맨 끝에 오디오만 행이 붙는다(audio-only.md §4.3)
+    assert_eq!(
+        ids,
+        ["PD_144P_256_128_64", "PD_720P_1280_4000_192", "audio"]
+    );
+    let audio: Vec<_> = r.qualities().iter().map(|q| q.audio_only).collect();
+    assert_eq!(audio, [false, false, true]);
     let Source::Progressive { reps } = &r.source else {
         panic!()
     };
     assert_eq!(reps[1].url.host_str(), Some("vod.example.invalid"));
+    assert_eq!(
+        reps[2].url.path(),
+        format!("/vod/{VOD_VIDEO_ID}/audio/0.m4a")
+    );
+    // 기본 화질은 최대 해상도이고 오디오는 마지막 화질로 기억돼 있어도 기본이 되지 않는다
     assert_eq!(r.default_quality(None), 1);
+    assert_eq!(r.default_quality(Some("audio")), 1);
+}
+
+/// 일반 VOD에 오디오 set이 없으면 오디오 행도 없다(범위 C).
+#[tokio::test]
+async fn dash_without_audio_set_has_no_audio_row() {
+    let server = MockServer::start().await;
+    mount_info(
+        &server,
+        &format!("/service/v2/videos/{VOD_NO}"),
+        fixture("testdata/vod/video_info.json"),
+    )
+    .await;
+    mount_mpd(&server, VOD_VIDEO_ID, "testdata/vod/playback_noaudio.mpd").await;
+    let r = chzzk(&server).resolve(&video(VOD_NO)).await.unwrap();
+    let ids: Vec<_> = r.qualities().iter().map(|q| q.id.as_str()).collect();
+    assert_eq!(ids, ["PD_144P_256_128_64", "PD_720P_1280_4000_192"]);
+}
+
+/// 오디오 rep이 둘이어도 행은 하나이고 bandwidth가 큰 쪽이다(A4).
+#[tokio::test]
+async fn dash_with_two_audio_reps_has_one_row() {
+    let server = MockServer::start().await;
+    mount_info(
+        &server,
+        &format!("/service/v2/videos/{VOD_NO}"),
+        fixture("testdata/vod/video_info.json"),
+    )
+    .await;
+    mount_mpd(&server, VOD_VIDEO_ID, "testdata/vod/playback_audio2.mpd").await;
+    let r = chzzk(&server).resolve(&video(VOD_NO)).await.unwrap();
+    let audio: Vec<_> = r.qualities().into_iter().filter(|q| q.audio_only).collect();
+    assert_eq!(audio.len(), 1);
+    assert_eq!(audio[0].bandwidth, Some(128_000));
+}
+
+/// 오디오 rep의 BaseURL이 깨져도 비디오 화질은 그대로 나온다(오디오 행만 빠진다).
+#[tokio::test]
+async fn dash_bad_audio_url_keeps_video_qualities() {
+    let server = MockServer::start().await;
+    mount_info(
+        &server,
+        &format!("/service/v2/videos/{VOD_NO}"),
+        fixture("testdata/vod/video_info.json"),
+    )
+    .await;
+    let xml = String::from_utf8(fixture("testdata/vod/playback.mpd"))
+        .unwrap()
+        .replace(
+            "https://vod.example.invalid/vod/000000000000000000000000000000000B02/audio/0.m4a?_lsu_sa_=0000",
+            "not a url",
+        );
+    mount_mpd_str(&server, VOD_VIDEO_ID, &xml).await;
+    let r = chzzk(&server).resolve(&video(VOD_NO)).await.unwrap();
+    let ids: Vec<_> = r.qualities().iter().map(|q| q.id.as_str()).collect();
+    assert_eq!(ids, ["PD_144P_256_128_64", "PD_720P_1280_4000_192"]);
+}
+
+/// 비디오 PD가 하나도 없으면 오디오 rep이 있어도 `NoQualities`다(오디오만 있는 목록을 만들지 않는다).
+#[tokio::test]
+async fn dash_audio_only_mpd_is_no_qualities() {
+    let server = MockServer::start().await;
+    mount_info(
+        &server,
+        &format!("/service/v2/videos/{VOD_NO}"),
+        fixture("testdata/vod/video_info.json"),
+    )
+    .await;
+    let xml_only_audio = r#"<MPD xmlns="urn:mpeg:dash:schema:mpd:2011"><Period><AdaptationSet mimeType="audio/mp4"><Representation id="a" bandwidth="128000" codecs="mp4a.40.2"><BaseURL>https://h.example.invalid/a.m4a?_lsu_sa_=0000</BaseURL></Representation></AdaptationSet></Period></MPD>"#;
+    mount_mpd_str(&server, VOD_VIDEO_ID, xml_only_audio).await;
+    let err = chzzk(&server).resolve(&video(VOD_NO)).await.unwrap_err();
+    assert!(matches!(err, Error::NoQualities), "{err:?}");
 }
 
 #[tokio::test]
@@ -144,6 +235,12 @@ async fn clip() {
     assert_eq!(r.meta.title, "테스트 클립 하나");
     let labels: Vec<_> = r.qualities().iter().map(|q| q.label.as_str()).collect();
     assert_eq!(labels, ["720p", "480p"]);
+    // fixture MPD에 오디오 set이 있어도 클립은 오디오 행을 만들지 않는다(A3)
+    assert!(
+        r.qualities()
+            .iter()
+            .all(|q| !q.audio_only && q.id != "audio")
+    );
 
     let mpd = requests_to(&server, "/neonplayer/").await;
     assert_eq!(mpd.len(), 1);

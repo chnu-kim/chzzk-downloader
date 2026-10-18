@@ -5,7 +5,7 @@
     "clip": {"meta": {"kind": "clip", "title": "웃긴 장면", "channelName": "채널이름"}, "content": {"kind": "clip", "clipId": "abcDEF123"}},
     "live": {"meta": {"kind": "live", "title": "오늘 방송", "channelName": "채널이름", "liveOpenDate": "2026-10-18 20:30:00"}, "content": {"kind": "live", "channelId": "sample-channel"}},
     "noChannel": {"meta": {"kind": "video", "title": "제목", "channelName": "", "liveOpenDate": "2024-01-02"}, "content": {"kind": "video", "videoNo": 7}},
-    "e2eVideo": {"meta": {"kind": "video", "title": "금요 노가리 방송 - 신작 게임 해보기", "channelName": "채널이름", "liveOpenDate": "2026-10-03 21:00:00"}, "content": {"kind": "video", "videoNo": 1234567}},
+    "e2eVideo": {"meta": {"kind": "video", "title": "금요 노가리 방송 - 신작 게임 해보기", "channelName": "채널이름", "liveOpenDate": "2026-10-03 21:00:00", "publishDate": "2026-10-04 01:00:00"}, "content": {"kind": "video", "videoNo": 1234567}},
     "reserved": {"meta": {"kind": "video", "title": "con", "channelName": "", "liveOpenDate": null}, "content": {"kind": "video", "videoNo": 7}}
   },
   "cases": [

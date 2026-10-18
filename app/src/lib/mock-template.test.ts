@@ -24,5 +24,7 @@ describe('가짜 백엔드: 파일 이름 규칙', () => {
     const r = resolved();
     expect(() => suggestedNameFor('{title}', r.meta)).toThrow(/골든/);
     expect(() => suggestedNameFor('{date}_{channel}_{title}', { ...r.meta, title: '다른 제목' })).toThrow(/골든/);
+    // 날짜 둘 중 하나만 달라도 같은 영상이 아니다(게시일은 시작일이 없을 때만 쓰이지만 메타는 통째로 맞춘다)
+    expect(() => suggestedNameFor('{date}_{channel}_{title}', { ...r.meta, publishDate: null })).toThrow(/골든/);
   });
 });

@@ -63,7 +63,7 @@ pub fn default_filename(meta: &ContentMeta, p: Platform) -> String {
     // 자른 뒤 채널이 비었으면(Windows 끝 `.`/공백 제거) 구분자도 뺀다. 길이는 줄기만 한다.
     let sep = if channel.is_empty() { "" } else { sep };
 
-    settle_filename(&format!("{prefix}{channel}{sep}{title}{EXT}"), p)
+    settle_default_filename(&format!("{prefix}{channel}{sep}{title}{EXT}"), p)
 }
 
 /// 종류별 이름 머리(끝 공백 포함): `[YYMMDD] `·`[클립] `·`[생방송 YYMMDD-HHMM] `. 날짜 없는 영상은 빈 문자열이다.
@@ -252,18 +252,37 @@ fn settle_filename(name: &str, p: Platform) -> String {
     let mut cur = name.to_string();
     // 두세 번이면 고정점에 닿는다(한 번 정리한 이름은 다시 정리해도 같다). 상한은 안전망이다.
     for _ in 0..8 {
-        let saved = output_path(Path::new(""), suggested_stem(&cur), p);
-        let next = saved
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or(&cur)
-            .to_string();
+        let next = stored_name(&cur, p);
         if next == cur {
             break;
         }
         cur = next;
     }
     cur
+}
+
+/// 카드에 `shown`이 보일 때 받으면 실제로 저장되는 파일 이름: 셸이 하는 `suggested_stem` → `output_path` 그대로다.
+fn stored_name(shown: &str, p: Platform) -> String {
+    let saved = output_path(Path::new(""), suggested_stem(shown), p);
+    saved
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(shown)
+        .to_string()
+}
+
+/// `default_filename`의 마무리. 기본 규칙은 저장 이름이 전과 바이트까지 같아야 한다(T1). 전에는 `sanitize_filename`한
+/// 이름을 카드에 보였고 받을 때 한 번 정리했다. `settle_filename`은 그 저장 이름과 같은데, 제목이 `.mp4.mp4`로
+/// 끝나는 입력만 왕복이 `.mp4`를 하나 더 벗겨 저장 이름이 달라진다. 그때는 전의 이름을 그대로 두어 저장 이름을 지킨다
+/// (보인 이름과 저장 이름이 다른 것은 전과 같은 채로 남는다).
+fn settle_default_filename(raw: &str, p: Platform) -> String {
+    let settled = settle_filename(raw, p);
+    let legacy = sanitize_filename(raw, p);
+    if stored_name(&settled, p) == stored_name(&legacy, p) {
+        settled
+    } else {
+        legacy
+    }
 }
 
 /// 파일 이름에 쓸 수 있는 `H.MM.SS`(`:`는 Windows·macOS가 `_`로 바꾼다). 초 미만은 버린다.
@@ -1659,13 +1678,72 @@ mod tests {
                                 shown,
                                 "{tpl:?} {p:?} {ch:?} {title:?}"
                             );
+                            // 기본 규칙: 카드에는 `.mp4`를 뗀 이름 N이 보이고, 받은 파일은 N(+`.mp4`)이다. 제목이 `.mp4`로 끝나
+                            // 안쪽에 `.`도 있으면 전의 저장 이름을 지키려고(T1) 만든 이름이 아니라 N이 기준이다.
                             let d = default_filename(&m, p);
-                            assert_eq!(saved_name(&d, p), d, "default {p:?} {ch:?} {title:?}");
+                            let n = suggested_stem(&d);
+                            let want = if n.to_ascii_lowercase().ends_with(EXT) {
+                                n.to_string()
+                            } else {
+                                format!("{n}{EXT}")
+                            };
+                            assert_eq!(saved_name(&d, p), want, "default {p:?} {ch:?} {title:?}");
                         }
                     }
                 }
             }
         }
+    }
+
+    /// T1 보증: 기본 규칙의 **저장되는 파일 이름은 전과 바이트까지 같다**. 전에는 만든 이름 R = `sanitize(raw)`를 `.mp4`만
+    /// 떼서 카드에 보였고, 받을 때 `output_path`가 한 번 정리했다. 그 옛 저장 이름(`stored_name(R)`)과 새 이름의 저장
+    /// 이름을 작은 알파벳 전수로 비교한다. 아래 두 번째 묶음은 `.mp4`로 끝나는 제목처럼 확장자 경계가 겹치는 입력이다.
+    #[test]
+    fn default_rule_saved_name_is_unchanged() {
+        let alphabet = [' ', '.', 'a', 'c', 'n', 'm', 'p', '4', ':'];
+        let mut raws: Vec<String> = vec![String::new()];
+        let mut frontier: Vec<String> = vec![String::new()];
+        for _ in 0..5 {
+            let mut next = Vec::new();
+            for f in &frontier {
+                for c in alphabet {
+                    next.push(format!("{f}{c}"));
+                }
+            }
+            raws.extend(next.iter().cloned());
+            frontier = next;
+        }
+        for sp in [
+            "x.mp4",
+            "X.MP4",
+            " .mp4",
+            "a .mp4",
+            "a. .mp4",
+            "con",
+            "CON .x",
+            "con.mp4",
+            "Ep . 3",
+            "아 ... 진짜",
+            "a..mp4",
+            ".mp4.mp4",
+            "x.mp4.mp4",
+            "x .mp4.mp4",
+            "x.MP4.mp4",
+        ] {
+            raws.push(sp.to_string());
+        }
+        for p in ALL {
+            for raw in &raws {
+                let raw = format!("{raw}.mp4");
+                let old_saved = stored_name(&sanitize_filename(&raw, p), p);
+                let new_shown = settle_default_filename(&raw, p);
+                assert_eq!(stored_name(&new_shown, p), old_saved, "{p:?} {raw:?}");
+            }
+        }
+        // 보인 이름 = 저장 이름이 되는 입력이 대부분이다(예외는 `.mp4.mp4`로 끝나는 제목뿐이고 전과 같이 남는다)
+        let exotic = "x.mp4.mp4.mp4";
+        assert_eq!(settle_default_filename(exotic, Linux), exotic);
+        assert_eq!(settle_filename(exotic, Linux), "x.mp4");
     }
 
     /// 구간 접미사는 템플릿 결과 뒤에 붙는다(T8).

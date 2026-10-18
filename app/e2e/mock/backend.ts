@@ -40,7 +40,7 @@ import templateGolden from '../../../design/naming/template.json';
 const DEFAULT_TEMPLATE = '{prefix} {channel} - {title}';
 
 type TemplatePreviewRow = { template: string; linux?: { kind: string; name: string }[]; error?: Record<string, unknown> };
-type TemplateMeta = { kind: string; title: string; channelName: string; liveOpenDate?: string | null };
+type TemplateMeta = { kind: string; title: string; channelName: string; liveOpenDate?: string | null; publishDate?: string | null };
 type TemplateCase = { template: string; sample?: string; platform?: string; out?: string };
 
 /**
@@ -58,7 +58,7 @@ export function previewTemplate(template: string): FileNameTemplatePreview {
 
 /**
  * 셸이 불러온 영상에 규칙을 적용해 만드는 제안 이름(`.mp4` 뺌). 골든 `cases`(Rust 코어가 같은 표를 검사한다) 중
- * 규칙과 영상 메타(종류·제목·채널·날짜)가 모두 같은 linux 행을 찾는다. 없으면 실패한다(다른 영상의 이름을
+ * 규칙과 영상 메타(종류·제목·채널·시작일·게시일)가 모두 같은 linux 행을 찾는다. 없으면 실패한다(다른 영상의 이름을
  * 대신 돌려주지 않는다).
  */
 export function suggestedNameFor(template: string, meta: TemplateMeta): string {
@@ -66,7 +66,7 @@ export function suggestedNameFor(template: string, meta: TemplateMeta): string {
   const hit = (templateGolden.cases as TemplateCase[]).find((c) => {
     if (c.platform !== 'linux' || c.out === undefined || c.sample === undefined || c.template !== template) return false;
     const m = samples[c.sample].meta;
-    return m.kind === meta.kind && m.title === meta.title && m.channelName === meta.channelName && (m.liveOpenDate ?? null) === (meta.liveOpenDate ?? null);
+    return m.kind === meta.kind && m.title === meta.title && m.channelName === meta.channelName && (m.liveOpenDate ?? null) === (meta.liveOpenDate ?? null) && (m.publishDate ?? null) === (meta.publishDate ?? null);
   });
   if (!hit) throw new Error(`가짜 백엔드 골든(design/naming/template.json cases)에 없는 규칙·영상: ${JSON.stringify(template)} ${meta.title}`);
   return hit.out!.replace(/\.mp4$/, '');

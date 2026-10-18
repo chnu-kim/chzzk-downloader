@@ -17,7 +17,7 @@
     BLOCK_REASON_ID,
     CHECK_DEBOUNCE_MS,
     DEFAULT_CHOICES,
-    FILE_EXT,
+    fileExt,
     buildEnqueueRequest,
     canDownload,
     checkKey,
@@ -101,6 +101,8 @@
   }
 
   const quality = $derived(view.qualities[qualityIndex]);
+  /** 산출 파일 확장자: 오디오만 행은 `.m4a` */
+  const ext = $derived(fileExt(quality));
   const tone = $derived(kindTone(view.meta.kind, view.playbackKind));
   /** 구간은 빠른 다시보기에서 펼쳐져 있을 때만 적용된다(R3: 그 밖의 카드에는 줄이 없다) */
   const rangeInput = $derived({ open: rangeOpen && tone === 'rewind', start: rangeStart, end: rangeEnd });
@@ -315,6 +317,7 @@
       suggested={view.suggestedFileName}
       willSaveAs={fresh && check?.truncated ? check.fileName : null}
       disabled={busy}
+      {ext}
     />
   </div>
 
@@ -363,7 +366,7 @@
 
 <OverwriteDialog
   open={confirmOverwrite}
-  name={`${check?.fileName ?? fileName}${FILE_EXT}`}
+  name={`${check?.fileName ?? fileName}${ext}`}
   {busy}
   onconfirm={() => void enqueueNow()}
   onclose={() => (confirmOverwrite = false)}

@@ -198,7 +198,7 @@
 - 기본 선택은 셸의 `defaultQualityIndex`다(§4.2). 웹뷰는 따로 정하지 않는다.
 
 ### 6.2 카드의 이름·충돌
-- 파일 이름 행 끝의 확장자 표시(`ResolveCard.svelte:366`, `FILE_EXT` = `.mp4`, `receive.ts:265`)를 고른 화질에 따라 `.m4a`로 바꾼다. `receive.ts`에 `fileExt(q: QualityDto)`를 둔다. 문구가 아니라 코드 상수라서 deck 밖이다(`receive.ts:264` 주석 규칙).
+- 파일 이름 행 끝의 확장자 표시(`ResolveCard.svelte:366`, `FILE_EXT` = `.mp4`, `receive.ts:265`)를 고른 화질에 따라 `.m4a`로 바꾼다. `receive.ts`에 `fileExt(q: QualityDto)`를 둔다(구현 중 `FILE_EXT`는 없앴다, app.md 96-2). 문구가 아니라 코드 상수라서 deck 밖이다(`receive.ts:264` 주석 규칙).
 - `checkKey`는 이미 `qualityId`를 담는다(`receive.ts:108-115`). 그래서 오디오로 바꾸면 `check_output`을 다시 부르고, 충돌·번호 이름을 `.m4a` 기준으로 다시 본다.
 - 구간 줄은 빠른 다시보기 카드에만 있다(R3). 오디오 행은 일반 VOD 카드에만 있다. 그래서 둘이 한 카드에 같이 나오지 않는다. 지금 카드에는 채팅 행이 없다(④ 보류). 채팅 행을 다시 그리게 되면 오디오에서는 숨긴다.
 

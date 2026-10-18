@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { check, liveResolved, quality, resolved } from '../test/fixtures';
+import { audioQuality, check, liveResolved, quality, resolved, vodResolved } from '../test/fixtures';
 import { t } from './copy/ko';
 import { formatClock } from './format/duration';
 import {
@@ -19,6 +19,7 @@ import {
   qualitySize,
   RANGE_FORMAT_EXAMPLE_SECS,
   effectiveRange,
+  fileExt,
   rangeChip,
   rangeError,
   rangeSecs,
@@ -273,6 +274,48 @@ describe('bestQualityIndex', () => {
   it('고를 것이 하나뿐이면 꼬리표를 붙일 곳이 없다', () => {
     expect(bestQualityIndex([quality()])).toBeNull();
     expect(bestQualityIndex([])).toBeNull();
+  });
+
+  it('오디오만 행은 후보도 행 수 세기도 아니다(꼬리표는 비디오 행에만)', () => {
+    const q = [quality({ id: 'a', resolution: 480 }), quality({ id: 'b', resolution: 1080 }), audioQuality()];
+    expect(bestQualityIndex(q)).toBe(1);
+    // 오디오가 앞에 와도 비디오 위치를 가리킨다
+    expect(bestQualityIndex([audioQuality(), ...q.slice(0, 2)])).toBe(2);
+    // 비디오 행이 하나뿐이면 오디오가 있어도 꼬리표가 뜻이 없다
+    expect(bestQualityIndex([quality(), audioQuality()])).toBeNull();
+    // 오디오 대역폭이 커도 이기지 않는다
+    expect(bestQualityIndex([quality({ resolution: null, bandwidth: 1 }), quality({ id: 'c', resolution: null, bandwidth: 2 }), audioQuality({ bandwidth: 9_999_999 })])).toBe(1);
+  });
+});
+
+describe('fileExt (산출 파일 확장자)', () => {
+  it('오디오만 행은 .m4a, 그 밖은 .mp4', () => {
+    expect(fileExt(audioQuality())).toBe('.m4a');
+    expect(fileExt(quality())).toBe('.mp4');
+    // 화질이 아직 없으면(빈 목록) 영상 기본
+    expect(fileExt(undefined)).toBe('.mp4');
+  });
+});
+
+describe('오디오만 행', () => {
+  it('크기 예상은 대역폭 × 길이(128kbps, 1시간)', () => {
+    expect(qualitySize(audioQuality(), 3600)).toBe('약 57.6MB');
+    expect(qualitySize(audioQuality(), null)).toBeNull();
+    expect(qualityFps(audioQuality())).toBeNull();
+  });
+
+  it('요청은 화질 키 audio와 문구 deck의 라벨을 싣는다(코어 라벨 "audio"를 저장하지 않는다)', () => {
+    const r = vodResolved();
+    const a = r.qualities[2];
+    const req = buildEnqueueRequest(r, a, null, check({ fileName: '정리된 이름' }), DEFAULT_CHOICES);
+    expect(req.qualityId).toBe('audio');
+    expect(req.qualityLabel).toBe(t('quality.audioOnly'));
+    expect(req.expectedKind).toBe('progressive');
+    expect(req.fileName).toBe('정리된 이름');
+    expect('range' in req).toBe(false);
+    // 비디오 행은 코어가 준 라벨 그대로
+    const v = buildEnqueueRequest(r, r.qualities[0], null, check(), DEFAULT_CHOICES);
+    expect(v.qualityLabel).toBe('1080p');
   });
 });
 

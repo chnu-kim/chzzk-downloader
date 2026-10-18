@@ -2,7 +2,7 @@
 // 화면 글자는 모두 e2e/copy.ts(copy deck)에서 오고, 데이터는 합성이다(실제 채널·영상 값 아님).
 import type { Page, Locator } from '@playwright/test';
 import type { AuthStatusDto, ChannelRefDto, Os, RecentVodDto, UpdateInfoDto } from '../src/lib/bindings';
-import { check as outputCheck, resolved, worstCaseResolved, WORST_TITLE } from '../src/test/fixtures';
+import { check as outputCheck, resolved, vodResolved, worstCaseResolved, WORST_TITLE } from '../src/test/fixtures';
 import { finishedSet, job, jobStateSet, MY_CHANNEL_ID, prog, SAME_PREFIX_TITLES } from '../src/test/jobFixtures';
 import { CHECK_DEBOUNCE_MS, revealLabel, t } from './copy';
 import { expect, type App } from './fixtures';
@@ -70,6 +70,8 @@ const NOT_OWN = resolved({
   meta: { ...R.meta, title: '남의 방송', channelName: '다른 채널', channelId: DELEGATED_ID },
 });
 const WORST = worstCaseResolved();
+// 일반 VOD 카드: 맨 끝의 "오디오만" 행(audio-only.md §6.1)
+const VOD = vodResolved();
 const SLOW_URL = 'https://chzzk.naver.com/video/7777777';
 
 // ───────────────────────── 화면 목록 ─────────────────────────
@@ -166,6 +168,21 @@ export const SCREENS: Screen[] = [
     ready: (p) => p.getByRole('region', { name: WORST_TITLE }),
     settle: settleCardTop,
     aligned: ['입력줄 왼쪽', '배너 왼쪽', '배너 오른쪽', '카드 왼쪽', '카드 오른쪽'],
+    card: true,
+  },
+  {
+    id: '카드 일반 VOD 오디오만',
+    slug: 'card-vod-audio',
+    scenario: () => ({ resolve: { [VOD.url]: VOD } }),
+    drive: async (app, env) => {
+      await loadCard(app, VOD.url);
+      // 오디오만 행을 고른 모습: 이름 칸 확장자가 .m4a, 꼬리표는 비디오 행에만
+      await app.page.locator('label').filter({ hasText: t('quality.audioOnly') }).click();
+      await env.tick?.(CHECK_DEBOUNCE_MS + 50);
+    },
+    // 이름 칸 확장자가 바뀌고 검사가 끝나 [받기]가 켜진 뒤(비활성 면의 대비는 잴 대상이 아니다)
+    ready: (p) => p.locator('.card-footer button:not([aria-disabled="true"])', { hasText: t('card.download') }),
+    settle: settleCardTop,
     card: true,
   },
   {

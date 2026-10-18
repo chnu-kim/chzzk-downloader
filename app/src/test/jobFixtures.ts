@@ -60,6 +60,7 @@ export function job(id: number, over: Partial<JobDto> = {}): JobDto {
     kind: 'video',
     playbackKind: 'progressive',
     qualityLabel: '1080p',
+    audioOnly: false,
     output: `/v/${id}.mp4`,
     status: 'queued',
     progress: null,

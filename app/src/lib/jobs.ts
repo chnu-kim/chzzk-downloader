@@ -352,8 +352,10 @@ export function statusParts(job: JobDto, p: ProgressDto | null | undefined, ctx:
 }
 
 /** 작업 행 1줄 화질 칸(patterns.md §3.2): 구간 작업은 `1080p · 0:10:00~0:20:00`(조각 구분은 deck 함수가 잇는다, content.md §6.5) */
-export function qualityText(job: Pick<JobDto, 'qualityLabel' | 'range'>): string {
-  return job.range ? statusLine([job.qualityLabel, rangeChip(job.range)]) : job.qualityLabel;
+export function qualityText(job: Pick<JobDto, 'qualityLabel' | 'range' | 'audioOnly'>): string {
+  // 오디오만 작업은 저장된 라벨(옛 앱이 만든 것일 수 있다)이 아니라 deck 문구를 보인다
+  const label = job.audioOnly ? t('quality.audioOnly') : job.qualityLabel;
+  return job.range ? statusLine([label, rangeChip(job.range)]) : label;
 }
 
 /** 상태 줄 조각을 ` · `로 잇는다 */

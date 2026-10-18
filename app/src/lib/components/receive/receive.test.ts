@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/sve
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppError, OutputCheck, RecentVodDto, SettingsDto } from '../../bindings';
-import { check, liveResolved, quality, resolved } from '../../../test/fixtures';
+import { check, liveResolved, quality, resolved, vodResolved } from '../../../test/fixtures';
 import { signedInAs } from '../../../test/jobFixtures';
 import { errorCopy, helpLinkLabel } from '../../copy/errors';
 import { t } from '../../copy/ko';
@@ -401,6 +401,86 @@ describe('ResolveCard', () => {
     expect(screen.getAllByText(t('quality.best'))).toHaveLength(1);
     expect(radios[0].closest('label')).toHaveTextContent(t('quality.best'));
     expect(radios[1].closest('label')).not.toHaveTextContent(t('quality.best'));
+  });
+
+  describe('오디오만 행(일반 VOD에 서버 오디오 트랙이 있을 때)', () => {
+    /** 오디오 행: 라디오가 속한 라벨 */
+    const audioRow = () => screen.getAllByRole('radio')[2].closest('label') as HTMLElement;
+
+    it('맨 끝 행에 "오디오만"과 예상 크기, 꼬리표(fps·가장 좋은 화질)는 없다', async () => {
+      await openCard(vodResolved());
+      const radios = screen.getAllByRole('radio');
+      expect(radios).toHaveLength(3);
+      // 코어 라벨 "audio"가 아니라 deck 문구
+      expect(audioRow()).toHaveTextContent(t('quality.audioOnly'));
+      expect(audioRow()).not.toHaveTextContent('audio');
+      // 128kbps × 11565초 / 8
+      expect(audioRow()).toHaveTextContent('약 185.0MB');
+      expect(audioRow()).not.toHaveTextContent(t('quality.best'));
+      expect(audioRow()).not.toHaveTextContent('fps');
+      // 꼬리표는 비디오 행 하나에만, 기본 선택도 비디오다
+      expect(screen.getAllByText(t('quality.best'))).toHaveLength(1);
+      expect(radios[0].closest('label')).toHaveTextContent(t('quality.best'));
+      expect(radios[2]).not.toBeChecked();
+    });
+
+    it('고르면 이름 칸 확장자가 .m4a가 되고, 검사는 audio로 다시 부른다', async () => {
+      const user = await openCard(vodResolved());
+      const ext = () => document.querySelector('.ext') as HTMLElement;
+      expect(ext()).toHaveTextContent('.mp4');
+      await user.click(screen.getAllByRole('radio')[2]);
+      expect(ext()).toHaveTextContent('.m4a');
+      await waitFor(() => expect(vi.mocked(api.checkOutput).mock.lastCall?.[0]).toMatchObject({ qualityId: 'audio' }));
+      // 비디오로 돌아오면 다시 .mp4
+      await user.click(screen.getAllByRole('radio')[1]);
+      expect(ext()).toHaveTextContent('.mp4');
+    });
+
+    it('[받기]는 화질 키 audio와 문구 deck 라벨로 등록한다', async () => {
+      const user = await openCard(vodResolved());
+      await user.click(screen.getAllByRole('radio')[2]);
+      await user.click(await downloadButton());
+      expect(api.enqueue).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(api.enqueue).mock.lastCall?.[0]).toMatchObject({
+        qualityId: 'audio',
+        qualityLabel: t('quality.audioOnly'),
+        expectedKind: 'progressive',
+      });
+    });
+
+    it('덮어쓰기 확인의 이름도 .m4a다', async () => {
+      setCheck({ exists: true, freeFileName: 'x (2)' });
+      const user = await openCard(vodResolved());
+      await user.click(screen.getAllByRole('radio')[2]);
+      await user.click(await screen.findByLabelText(t('conflict.overwrite')));
+      await user.click(await downloadButton());
+      const dialog = await screen.findByRole('dialog', {
+        name: t('dialog.overwrite.title', { name: `${check().fileName}.m4a` }),
+      });
+      expect(dialog).toBeInTheDocument();
+    });
+
+    it('오디오 행이 없는 카드(빠른 다시보기)는 화질 3개, 확장자 .mp4 그대로', async () => {
+      await openCard();
+      expect(screen.getAllByRole('radio')).toHaveLength(3);
+      expect(screen.queryByText(t('quality.audioOnly'))).toBeNull();
+      expect(document.querySelector('.ext')).toHaveTextContent('.mp4');
+    });
+
+    it('오디오 행은 구간(빠른 다시보기만)과 한 카드에 나오지 않는다', async () => {
+      await openCard(vodResolved());
+      expect(screen.queryByText(t('range.toggle'))).toBeNull();
+    });
+
+    it('클립 카드는 오디오 행이 없다', async () => {
+      await openCard({
+        content: { kind: 'clip', clipId: 'abc' },
+        meta: { ...resolved().meta, kind: 'clip' },
+        playbackKind: 'progressive',
+        qualities: [quality(), quality({ id: 'q720', label: '720p', resolution: 720 })],
+      });
+      expect(screen.queryByText(t('quality.audioOnly'))).toBeNull();
+    });
   });
 
   it('꼬리표는 목록 순서가 아니라 해상도로 고른다', async () => {

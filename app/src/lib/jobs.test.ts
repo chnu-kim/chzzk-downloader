@@ -1073,6 +1073,12 @@ describe('qualityText (1줄 화질 칸, 구간 조각)', () => {
   it('구간이 없으면 화질 라벨 그대로', () => {
     expect(qualityText(job(1, { range: null }))).toBe(job(1).qualityLabel);
   });
+  it('오디오만 작업은 저장된 라벨이 아니라 deck 문구를 보인다', () => {
+    // 옛 라벨("audio" 등)이 저장돼 있어도 같은 글자다
+    expect(qualityText(job(1, { audioOnly: true, qualityLabel: 'audio' }))).toBe(t('quality.audioOnly'));
+    expect(qualityText(job(1, { audioOnly: true, qualityLabel: '오디오만' }))).toBe(t('quality.audioOnly'));
+    expect(qualityText(job(1, { audioOnly: false, qualityLabel: '720p' }))).toBe('720p');
+  });
   it('구간이 있으면 화질 · 조각', () => {
     const range = { startMs: 600000, endMs: 1200000 };
     expect(qualityText(job(1, { range }))).toBe(statusLine([job(1).qualityLabel, rangeChip(range)]));

@@ -350,6 +350,43 @@ mod tests {
         assert_eq!(p.eta_secs, None, "다 받았으면 ETA 없음");
     }
 
+    /// 속도 제한(rate-limit.md §5.5, §10.6): 상한이 걸려 일정한 속도로 늘면 속도 ≈ 상한, ETA ≈ 남은 / 상한이다.
+    /// 상한을 바꾸면 창(5초) 안에 새 속도로 수렴한다. `Meter`는 상한을 모르고 실제 증가만 본다.
+    #[test]
+    fn speed_and_eta_follow_a_changing_rate_limit() {
+        let t0 = Instant::now();
+        let mut m = Meter::new(Duration::ZERO);
+        let mut p = progress(Phase::Downloading, 0);
+        p.total_bytes = Some(100_000_000);
+        m.observe(&mut p, t0, false);
+        // 10초 동안 1,000,000B/s
+        let mut ms = 0u64;
+        let mut bytes = 0u64;
+        while ms < 10_000 {
+            ms += 100;
+            bytes += 100_000;
+            p.bytes = bytes;
+            m.observe(&mut p, t0 + Duration::from_millis(ms), false);
+        }
+        let speed = p.speed_bps.unwrap() as f64;
+        assert!((speed / 1_000_000.0 - 1.0).abs() < 0.02, "{speed}");
+        // 남은 90,000,000B / 1,000,000B/s ≈ 90초
+        let eta = p.eta_secs.unwrap();
+        assert!((88..=92).contains(&eta), "{eta}");
+        // 상한을 250,000B/s로 낮춘다. 창이 5초라 5초 뒤에는 새 속도만 남는다.
+        for _ in 0..50 {
+            ms += 100;
+            bytes += 25_000;
+            p.bytes = bytes;
+            m.observe(&mut p, t0 + Duration::from_millis(ms), false);
+        }
+        let speed = p.speed_bps.unwrap() as f64;
+        assert!((speed / 250_000.0 - 1.0).abs() < 0.05, "{speed}");
+        let eta = p.eta_secs.unwrap();
+        let want = (100_000_000 - bytes) as f64 / 250_000.0;
+        assert!((eta as f64 / want - 1.0).abs() < 0.05, "{eta} vs {want}");
+    }
+
     /// HLS ETA는 세그먼트 수가 아니라 미디어 시간 처리율로 계산한다.
     #[test]
     fn eta_by_media_time() {

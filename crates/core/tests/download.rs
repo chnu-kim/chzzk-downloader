@@ -13,6 +13,7 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 
 fn request(out: &Path, on_existing: DuplicatePolicy) -> DownloadRequest {
     DownloadRequest {
+        throttle: Default::default(),
         content: ContentRef::Video { video_no: VOD_NO },
         quality_id: "PD_720P_TEST".into(),
         expected_kind: PlaybackKind::Progressive,
@@ -192,6 +193,7 @@ async fn range_on_progressive_rejected_before_network() {
     let dir = tempfile::tempdir().unwrap();
     let out = dir.path().join("a.mp4");
     let req = DownloadRequest {
+        throttle: Default::default(),
         range: some_range(),
         ..request(&out, DuplicatePolicy::Overwrite)
     };
@@ -238,6 +240,7 @@ async fn range_on_live_rejected_before_touching_recording() {
         std::fs::read(&sidecar).unwrap(),
     );
     let req = DownloadRequest {
+        throttle: Default::default(),
         content,
         quality_id: "144p".into(),
         expected_kind: PlaybackKind::Live,
@@ -269,6 +272,7 @@ async fn range_on_skip_existing_final_is_error_not_skipped() {
     let out = dir.path().join("a.mp4");
     std::fs::write(&out, b"existing").unwrap();
     let req = DownloadRequest {
+        throttle: Default::default(),
         range: some_range(),
         ..request(&out, DuplicatePolicy::Skip)
     };
@@ -311,6 +315,7 @@ async fn range_start_not_before_end_rejected_before_resume() {
         std::fs::read(&sidecar).unwrap(),
     );
     let req = DownloadRequest {
+        throttle: Default::default(),
         content,
         quality_id: "144p".into(),
         expected_kind: PlaybackKind::LiveRewindHls,

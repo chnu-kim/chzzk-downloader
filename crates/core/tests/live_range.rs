@@ -47,6 +47,7 @@ async fn live_hls_range() {
         .clone();
     let output = dir.path().join("out.mp4");
     let req = DownloadRequest {
+        throttle: Default::default(),
         content,
         quality_id,
         expected_kind: PlaybackKind::LiveRewindHls,

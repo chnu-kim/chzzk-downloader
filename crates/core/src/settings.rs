@@ -36,6 +36,11 @@ pub const DEFAULT_PARALLEL_DOWNLOADS: u8 = 2;
 /// 동시에 받는 작업 수 상한. 더 큰 숫자는 이 값으로 읽는다.
 pub const MAX_PARALLEL_DOWNLOADS: u8 = 3;
 
+/// 속도 제한의 최소값(바이트/초, 1MB/s). 전체 합계·작업마다 두 상한에 같이 쓴다(rate-limit.md §4, R6).
+/// 서명 만료 재조회 예산과 읽기 idle timeout에서 계산한 하한 1.0MB/s를 넘는 가장 작은 둥근 값이다.
+/// 설정을 읽을 때·저장할 때 이보다 작은 값은 이 값으로 올린다. 바꿀 때는 이 상수 하나만 고친다.
+pub const MIN_RATE_LIMIT_BPS: u64 = 1_000_000;
+
 /// 채팅 자막 기본 형식. **[잠정] U2 결정 대기**: 사용자가 실측(M-④-8·9) 뒤 정한다(decisions.md U2). 그때까지는
 /// 설계 와이어프레임(chat.md §5.4)이 고른 값인 영상 플레이어용 `.ass`를 쓴다. 바꿀 때는 이 상수 하나만 고친다.
 pub const DEFAULT_CHAT_SUBTITLE: SubtitleFormat = SubtitleFormat::Ass;

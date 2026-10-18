@@ -25,6 +25,7 @@ pub mod part;
 pub(crate) mod progressive;
 pub mod retry;
 pub(crate) mod segmented;
+pub mod throttle;
 
 use std::future::Future;
 use std::num::NonZeroU8;
@@ -43,6 +44,7 @@ use crate::progress::{Meter, Phase, Progress};
 pub use part::{Discarded, Finalized, PartFile, PartOwner, Sidecar, discard_partial};
 pub use retry::{Failure, NETWORK_PATIENCE_MS, RETRY_BACKOFF_MAX_MS, RetryPolicy};
 use retry::{Patience, is_connection_failure};
+pub use throttle::{RateKnob, Throttle, Throttles};
 
 /// 작업당 재조회 상한.
 pub const MAX_REFRESHES: u32 = 8;
@@ -83,6 +85,9 @@ pub struct DownloadRequest {
     /// `Some`이면 `expected_kind`가 `LiveRewindHls`여야 하고, 아니면 `Unsupported(RangeNotHls)`다.
     /// 결과는 마무리 때 일반 mp4로 바꾼다(`finish`).
     pub range: Option<TimeRange>,
+    /// 속도 제한(rate-limit.md). 기본(`Default`)은 제한 없음. 생방송(`Live`)은 이 값을 무시한다.
+    /// 런타임 값이라 `owner()`와 sidecar에 들어가지 않는다.
+    pub throttle: Throttles,
 }
 
 impl DownloadRequest {

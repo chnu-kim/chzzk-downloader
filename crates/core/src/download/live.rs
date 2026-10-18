@@ -279,7 +279,11 @@ pub(crate) async fn run(
             // `buffered`는 입력 순서대로 내놓으므로 writer는 단일 루프다.
             let mut segs = stream::iter(todo)
                 .map(|(msn, dur, u)| async move {
-                    (msn, dur, fetch(chzzk, policy, &u, Body::Segment).await)
+                    (
+                        msn,
+                        dur,
+                        fetch(chzzk, policy, &u, Body::Segment, None).await,
+                    )
                 })
                 .buffered(concurrency);
             // 멈춤이 오면 이미 요청해 둔 세그먼트를 이 시각까지 마저 받아 쓴다.

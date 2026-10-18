@@ -23,6 +23,7 @@ const INFO_PATH: &str = "/service/v2/videos/9000001";
 
 fn request(out: &Path, concurrency: u8) -> DownloadRequest {
     DownloadRequest {
+        throttle: Default::default(),
         content: ContentRef::Video { video_no: HLS_NO },
         quality_id: "144p".into(),
         expected_kind: PlaybackKind::LiveRewindHls,
@@ -645,6 +646,7 @@ async fn quality_not_found() {
     let dir = tempfile::tempdir().unwrap();
     let out = out_path(&dir);
     let req = DownloadRequest {
+        throttle: Default::default(),
         quality_id: "1080p".into(),
         ..request(&out, 1)
     };
@@ -1040,6 +1042,7 @@ async fn refresh_exhausted() {
 
 fn range_request(out: &Path, conc: u8, start_ms: u64, end_ms: Option<u64>) -> DownloadRequest {
     DownloadRequest {
+        throttle: Default::default(),
         range: Some(TimeRange { start_ms, end_ms }),
         ..request(out, conc)
     }
@@ -1616,6 +1619,7 @@ async fn full_converted_then_skipped_resumes_without_refetch() {
         }
     };
     let req = DownloadRequest {
+        throttle: Default::default(),
         on_existing: DuplicatePolicy::Skip,
         ..request(&out, 2)
     };
@@ -1662,6 +1666,7 @@ async fn range_converted_then_skipped_resumes_without_refetch() {
         }
     };
     let req = DownloadRequest {
+        throttle: Default::default(),
         on_existing: DuplicatePolicy::Skip,
         ..range_request(&out, 2, 4000, Some(10000))
     };

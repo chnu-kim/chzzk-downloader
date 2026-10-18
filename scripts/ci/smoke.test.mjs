@@ -9,6 +9,9 @@ import { pick } from './bundle.mjs';
 import { ROOT } from './gates.mjs';
 import {
   APT_OPTS,
+  appExeIn,
+  CLI_KILL_MS,
+  consoleExeName,
   bundleSpec,
   checkCliHelp,
   checkCliStatus,
@@ -258,4 +261,23 @@ test('명령줄 스모크: help는 0과 표의 말, status는 로그인 필요(3
   assert.match(checkCliStatus({ status: 0, stdout: noAuth }, '1.2.3', { auth: true }).why, /로그인이 켜져/);
   assert.equal(checkCliStatus({ status: 3, stdout: signedOut }, '1.2.3', { auth: true }).ok, true);
   assert.equal(checkCliStatus({ status: 3, stdout: signedOut }, '1.2.3', { auth: false }).ok, false);
+});
+
+test('windows 설치 폴더: 앱 exe는 제거기·콘솔 실행 파일을 뺀 하나, 표의 consoleExe는 chzzk-cli.exe', () => {
+  assert.equal(consoleExeName(), 'chzzk-cli.exe');
+  const files = ['chzzk-app.exe', 'chzzk-cli.exe', 'uninstall.exe', 'resources.pak'];
+  assert.equal(appExeIn('d', files, 'chzzk-cli.exe'), 'chzzk-app.exe');
+  // 대소문자 무시
+  assert.equal(appExeIn('d', ['Chzzk-App.exe', 'CHZZK-CLI.EXE', 'Uninstall.exe'], 'chzzk-cli.exe'), 'Chzzk-App.exe');
+  // 콘솔 실행 파일을 모르면 exe가 둘이라 실패한다(예전 가정 "앱 exe 하나"가 깨졌다는 신호)
+  assert.throws(() => appExeIn('d', files, null), /정확히 하나/);
+  assert.throws(() => appExeIn('d', ['uninstall.exe', 'chzzk-cli.exe'], 'chzzk-cli.exe'), /정확히 하나/);
+});
+
+test('windows 설치 예산에 명령줄 스모크가 들어 있다', () => {
+  assert.equal(INSTALL_STEPS.windows.cli, 6); // NSIS·MSI 설치본마다 help·status·GUI exe 거부
+  assert.equal(
+    installBudgetMs('windows'),
+    INSTALL_STEPS.windows.sh * (240_000 + 2 * DIAG_TIMEOUT_MS) + INSTALL_STEPS.windows.smoke * (120_000 + 2 * DIAG_TIMEOUT_MS) + INSTALL_STEPS.windows.wait * 60_000 + 6 * CLI_KILL_MS,
+  );
 });

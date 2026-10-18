@@ -30,7 +30,7 @@ import {
   statSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { ROOT, workspaceVersion } from './gates.mjs';
@@ -99,14 +99,15 @@ export const INSTALL_STEPS = {
   linux: { sh: 2, pkg: 4, smoke: 2, wait: 0 },
   // hdiutil attach, ditto, xattr, plutil, hdiutil detach + 릴리스의 .app.tar.gz: tar, xattr, plutil
   darwin: { sh: 8, smoke: 2, wait: 0 },
-  windows: { sh: 4, smoke: 2, wait: 1 }, // NSIS setup, uninstall, msiexec /i, /x + waitGone
+  // NSIS setup, uninstall, msiexec /i, /x + waitGone. cli: 설치본마다 chzzk-cli.exe help·status와 chzzk-app.exe의 하위 명령 거부(각 CLI_KILL_MS)
+  windows: { sh: 4, smoke: 2, wait: 1, cli: 6 },
 };
 // 최악의 경우(모든 명령이 시간 제한까지 가고, Windows는 그때마다 진단 두 개도 시간 제한까지): ms
 export function installBudgetMs(os) {
   const n = INSTALL_STEPS[os];
   const diag = os === 'windows' ? 2 * DIAG_TIMEOUT_MS : 0;
   const pkg = (n.pkg ?? 0) * (PKG_TIMEOUT_MS + PKG_DIAG.length * DIAG_TIMEOUT_MS);
-  return n.sh * (SH_TIMEOUT_MS + diag) + pkg + n.smoke * (SMOKE_KILL_MS + diag) + n.wait * WAIT_GONE_MS;
+  return n.sh * (SH_TIMEOUT_MS + diag) + pkg + n.smoke * (SMOKE_KILL_MS + diag) + n.wait * WAIT_GONE_MS + (n.cli ?? 0) * CLI_KILL_MS;
 }
 
 // 시간 제한에 걸린 뒤(Windows): 남은 프로세스 목록을 남기고 그 pid의 트리를 끝까지 죽여 본다.
@@ -439,7 +440,44 @@ function smokeAppTar(tgz) {
 
 // ---- windows ----
 
-const exeIn = (dir) => one(readdirSync(dir).filter((n) => /\.exe$/i.test(n) && !/^uninstall\.exe$/i.test(n)), `${dir}의 앱 exe`);
+// 표의 windows.consoleExe(설치기가 앱 exe 옆에 놓는 콘솔 실행 파일). 없으면 null
+export const consoleExeName = (root = ROOT) => bundleSpec(root).windows?.consoleExe ?? null;
+
+// 설치 폴더의 앱 exe: 제거기와 콘솔 실행 파일을 뺀 .exe가 정확히 하나
+export function appExeIn(dir, files = readdirSync(dir), consoleExe = consoleExeName()) {
+  const skip = (n) => /^uninstall\.exe$/i.test(n) || (consoleExe && n.toLowerCase() === consoleExe.toLowerCase());
+  return one(files.filter((n) => /\.exe$/i.test(n) && !skip(n)), `${dir}의 앱 exe`);
+}
+const exeIn = (dir) => appExeIn(dir);
+
+// Windows GUI 실행 파일은 명령줄 하위 명령을 받으면 안내 한 줄을 쓰고 코드 2로 끝난다(받지도 창을 만들지도 않는다)
+export function guiRefusesCli(appExe, label = basename(appExe)) {
+  log(`${label}: ${basename(appExe)} help (GUI exe는 명령줄을 받지 않는다)`);
+  const work = mkdtempSync(join(tmpdir(), 'chzzk-gui-cli-'));
+  try {
+    const g = spawnSync(appExe, ['help'], { encoding: 'utf8', timeout: CLI_KILL_MS, killSignal: 'SIGKILL', env: { ...process.env, CHZZK_SMOKE_DIR: join(work, 'data') } });
+    if (g.error) return { ok: false, why: `${basename(appExe)} 실행 실패: ${g.error.message}` };
+    if (g.status !== 2) return { ok: false, why: `${basename(appExe)} help가 exit ${g.status}(GUI exe는 2여야 한다)` };
+    return { ok: true, why: null };
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+}
+
+// 설치된 콘솔 실행 파일로 명령줄 스모크 + GUI exe가 명령줄 하위 명령을 거부하는지(안내 뒤 코드 2, 창을 만들지 않는다).
+// 반환: { ok, why }. 설치 스모크는 이것을 제거 뒤에 판정한다
+export function smokeConsole(dir, label) {
+  const name = consoleExeName();
+  if (!name) return { ok: true, why: null };
+  const found = readdirSync(dir).find((n) => n.toLowerCase() === name.toLowerCase());
+  if (!found) return { ok: false, why: `${label}: 설치 폴더에 ${name}가 없다(${readdirSync(dir).join(', ')})` };
+  const c = runCliSmoke(join(dir, found), { label: `${label} ${found}`, auth: true });
+  if (!c.ok) return { ok: false, why: `${label}: ${c.why}` };
+  const app = appExeIn(dir);
+  const g = guiRefusesCli(join(dir, app), `${label} ${app}`);
+  if (!g.ok) return { ok: false, why: `${label}: ${g.why}` };
+  return { ok: true, why: null };
+}
 
 function installedDir(candidates, what) {
   return one(candidates.filter((d) => existsSync(d)), `${what} 설치 폴더(후보 ${candidates.join(', ')})`);
@@ -452,12 +490,14 @@ function smokeNsis(setup) {
   const dir = installedDir([join(local, name), join(local, 'Programs', name)], 'NSIS');
   const exe = join(dir, exeIn(dir));
   const r = runSmoke(exe, { label: `NSIS ${basename(exe)}`, auth: true });
+  const con = smokeConsole(dir, 'NSIS');
   const uninstall = join(dir, 'uninstall.exe');
   if (!existsSync(uninstall)) throw new Error(`${uninstall}가 없다`);
   sh(uninstall, ['/S']);
   // NSIS 제거기는 자신을 임시 폴더로 복사해 다시 띄우고 곧바로 끝난다. 폴더가 사라질 때까지 기다린다
   if (!waitGone(dir, WAIT_GONE_MS)) throw new Error(`제거 뒤 ${WAIT_GONE_MS / 1000}초가 지나도 ${dir}가 남아 있다: ${readdirSync(dir).join(', ')}`);
   if (!r.ok) throw new Error(r.why);
+  if (!con.ok) throw new Error(con.why);
   log('NSIS: 설치·실행·제거 통과');
 }
 
@@ -480,9 +520,11 @@ function smokeMsi(msi) {
     log(`MSI 설치 폴더: ${dir}`);
     const exe = join(dir, exeIn(dir));
     const r = runSmoke(exe, { label: `MSI ${basename(exe)}`, auth: true });
+    const con = smokeConsole(dir, 'MSI');
     sh('msiexec', ['/x', abs, '/qn', '/norestart', '/l*v', join(work, 'uninstall.log')], { ok: [0, 3010] });
     if (existsSync(exe)) throw new Error(`제거 뒤에도 ${exe}가 남아 있다`);
     if (!r.ok) throw new Error(r.why);
+    if (!con.ok) throw new Error(con.why);
   } catch (e) {
     for (const f of ['install.log', 'uninstall.log']) {
       const p = join(work, f);
@@ -537,9 +579,22 @@ function cmdBin(exe) {
     console.error(`::error::smoke bin: ${r.why}`);
     return r.env ? 2 : 1;
   }
-  // 명령줄 모드: macOS·Linux는 같은 실행 파일. Windows의 GUI exe는 명령줄을 받지 않는다(콘솔 실행 파일은 CLI-5)
+  // 명령줄 모드: macOS·Linux는 같은 실행 파일. Windows는 콘솔 실행 파일(chzzk-cli.exe)이 하고, GUI exe는 명령줄을 받지 않는다
   if (!IS_WIN) {
     const c = runCliSmoke(path, { label: 'debug 빌드' });
+    if (!c.ok) {
+      console.error(`::error::smoke bin(명령줄): ${c.why}`);
+      return 1;
+    }
+    return 0;
+  }
+  const name = consoleExeName();
+  const cli = name ? join(dirname(path), name) : null;
+  if (!cli || !existsSync(cli)) {
+    console.error(`smoke bin: ${cli ?? '콘솔 실행 파일'}가 없다(tauri-build gate의 debug 빌드가 tauri.windows.conf.json의 console-cli로 만든다)`);
+    return 2;
+  }
+  for (const c of [runCliSmoke(cli, { label: 'debug 빌드' }), guiRefusesCli(path, 'debug 빌드')]) {
     if (!c.ok) {
       console.error(`::error::smoke bin(명령줄): ${c.why}`);
       return 1;

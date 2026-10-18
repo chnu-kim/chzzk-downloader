@@ -6,7 +6,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { AREAS, CODE_GATED_JOBS, GATES, HOOK_ONLY, HOOKS, MASTER_ONLY_JOBS, msrv, testFiles } from './gates.mjs';
+import { AREAS, CODE_GATED_JOBS, featureArgs, GATES, HOOK_ONLY, HOOKS, MASTER_ONLY_JOBS, msrv, testFiles } from './gates.mjs';
 import { gitOk } from './test-git.mjs';
 import { changedFiles, classify, decideCiOk, firstSemver, forceFail, hookGates, runGate } from './run.mjs';
 
@@ -150,6 +150,13 @@ test('gate 표: 모든 단계가 명령을 갖고 scripts-test가 테스트 파�
 
 // 각 gate가 검사를 실제로 켜는 인자를 갖는지(빼면 gate가 조용히 통과한다). selftest가 씨앗으로 동작을 보고,
 // 여기서는 씨앗으로 드러나지 않는 플래그를 본다.
+test('Windows는 chzzk-app의 clippy·테스트에 console-cli feature를 더한다(cli-mode.md §7.1)', () => {
+  assert.deepEqual(featureArgs([], false), []);
+  assert.deepEqual(featureArgs(['e2e'], false), ['--features', 'e2e']);
+  assert.deepEqual(featureArgs([], true), ['--features', 'console-cli']);
+  assert.deepEqual(featureArgs(['e2e'], true), ['--features', 'e2e,console-cli']);
+});
+
 test('gate 표: 검사를 켜는 플래그', () => {
   const cmds = (g) => GATES[g].steps.map((s) => s.cmd.join(' '));
   assert.deepEqual(cmds('fmt'), ['cargo fmt --all --check']);

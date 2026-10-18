@@ -319,16 +319,55 @@ pub fn cli_main(args: Vec<OsString>) -> ExitCode {
 }
 
 /// `main`이 맨 처음 부른다: CLI 하위 명령이면 Tauri를 만들지 않고 끝낸 종료 코드를 돌려준다.
-/// Windows의 GUI 실행 파일은 CLI-5까지 인자를 무시하고 GUI를 띄운다(없는 `chzzk-cli.exe`를 가리키지 않게).
+/// Windows의 GUI 실행 파일(`chzzk-app.exe`)은 받기를 돌리지 않는다: cmd가 GUI 서브시스템 프로세스를 기다리지 않아 프롬프트가
+/// 먼저 돌아오고 `%ERRORLEVEL%`이 CLI의 종료 코드가 아니게 되므로(cli-mode.md §7.1) 같은 폴더의 `chzzk-cli.exe`를 가리키고 끝낸다.
 pub fn try_cli() -> Option<ExitCode> {
+    let args: Vec<OsString> = std::env::args_os().skip(1).collect();
+    if !wants_cli(&args) {
+        return None;
+    }
+    #[cfg(windows)]
+    {
+        Some(use_console_exe())
+    }
     #[cfg(not(windows))]
     {
-        let args: Vec<OsString> = std::env::args_os().skip(1).collect();
-        if wants_cli(&args) {
-            return Some(cli_main(args));
-        }
+        Some(cli_main(args))
     }
-    None
+}
+
+/// Windows 콘솔 실행 파일(`chzzk-cli.exe`)의 `main`. 몸통은 macOS·Linux의 `chzzk-app`과 같은 `cli_main`이다.
+/// 인자가 없거나 모르는 명령이면 GUI를 만들지 않고 사용법(`help` 출력)과 코드 2다.
+pub fn console_main() -> ExitCode {
+    let args: Vec<OsString> = std::env::args_os().skip(1).collect();
+    if wants_cli(&args) {
+        return cli_main(args);
+    }
+    let mut stderr = std::io::stderr();
+    if let Some(first) = args.first() {
+        say(
+            &mut stderr,
+            &copy::unknown_command(&first.to_string_lossy()),
+        );
+    } else {
+        say(&mut stderr, copy::USAGE_NO_COMMAND);
+    }
+    let _ = write!(stderr, "{}", copy::help(None));
+    ExitCode::from(exit::USAGE)
+}
+
+/// Windows `chzzk-app.exe`: 부모 콘솔이 있으면 안내 한 줄을 쓰고 코드 2로 끝난다(부모 콘솔이 없으면 쓰지 않고 끝난다).
+/// GUI 서브시스템 프로세스는 표준 핸들이 없어서 `AttachConsole` 뒤 `CONOUT$`를 직접 연다.
+#[cfg(windows)]
+fn use_console_exe() -> ExitCode {
+    use windows::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole};
+    // SAFETY: 인자가 상수이고 실패해도 오류 값만 돌려준다
+    if unsafe { AttachConsole(ATTACH_PARENT_PROCESS) }.is_ok()
+        && let Ok(mut out) = std::fs::OpenOptions::new().write(true).open("CONOUT$")
+    {
+        let _ = writeln!(out, "{}", copy::USE_CONSOLE_EXE);
+    }
+    ExitCode::from(exit::USAGE)
 }
 
 #[cfg(test)]

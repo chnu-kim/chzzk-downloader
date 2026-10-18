@@ -20,7 +20,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSyn
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { ROOT } from './gates.mjs';
+import { ROOT, featureArgs } from './gates.mjs';
 import { MEASURE_DIR } from './ratchet.mjs';
 import { spawnTool } from './run.mjs';
 import { osKey, targetDir } from './smoke.mjs';
@@ -137,8 +137,10 @@ function tests() {
 export const E2E_FILTER = 'e2e::';
 function testsApp() {
   const list = (feat, extra) => run('cargo', ['test', '-p', 'chzzk-app', '--locked', ...feat, '--', '--list', ...extra, '--format', 'terse'], { capture: true });
-  const app = countActive(list([], []), list([], ['--ignored']));
-  const e2eFeat = ['--features', 'e2e', '--lib'];
+  // Windows는 gate가 `--features console-cli`로 돌리므로 같은 인자로 센다(tauri gate의 테스트 빌드를 다시 쓴다)
+  const base = featureArgs();
+  const app = countActive(list(base, []), list(base, ['--ignored']));
+  const e2eFeat = [...featureArgs(['e2e']), '--lib'];
   const e2e = countActive(list(e2eFeat, [E2E_FILTER]), list(e2eFeat, ['--ignored', E2E_FILTER]));
   if (e2e === 0) throw new Error(`--features e2e --lib에서 ${E2E_FILTER} 테스트가 0개다(tauri gate의 cargo test 필터가 아무것도 돌리지 않는다)`);
   save('tests', { [`tests.app.${osKey()}`]: app, [`tests.app_e2e.${osKey()}`]: e2e });
@@ -165,6 +167,13 @@ function size() {
   const bin = join(targetDir(), 'release', `chzzk-app${os === 'windows' ? '.exe' : ''}`);
   if (!existsSync(bin)) throw new Error(`${bin}가 없다`);
   values[`size.binary.${os}`] = statSync(bin).size;
+  // Windows 콘솔 실행 파일(cli-mode.md §13): 표의 consoleExe가 있으면 따로 잰다
+  const consoleExe = JSON.parse(readFileSync(join(ROOT, 'release/expected-artifacts.json'), 'utf8'))[os]?.consoleExe;
+  if (consoleExe) {
+    const cli = join(targetDir(), 'release', consoleExe);
+    if (!existsSync(cli)) throw new Error(`${cli}가 없다(표의 consoleExe, tauri.windows.conf.json의 console-cli feature)`);
+    values[`size.binary.${os}-cli`] = statSync(cli).size;
+  }
   const manifest = join(ROOT, 'target/ci/bundle/bundles.json');
   if (!existsSync(manifest)) throw new Error(`${manifest}가 없다(bundle gate의 collect)`);
   // size가 null인 항목(release 전용 .app.tar.gz)은 재지 않는다

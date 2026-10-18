@@ -58,6 +58,16 @@ export function nightly(root = ROOT) {
 
 const CLIPPY = ['--all-targets', '--locked', '--', '-D', 'warnings'];
 
+// Windows는 콘솔 실행 파일 chzzk-cli(`console-cli` feature)도 clippy·테스트한다. `pnpm tauri build`는 `tauri.windows.conf.json`의
+// `build.features`로 켜지만 cargo를 직접 부르는 gate는 그 파일을 읽지 않는다(cli-mode.md §7.1). macOS·Linux는 켜지 않는다:
+// 켜도 bin이 만들어지기만 하고 번들에는 들어가지 않는다.
+export const CONSOLE_FEATURE = 'console-cli';
+// `--features a,b` 인자. 이 OS가 Windows면 console-cli를 더하고, 합치면 아무것도 없으면 빈 배열이다
+export function featureArgs(names = [], win = process.platform === 'win32') {
+  const all = [...names, ...(win ? [CONSOLE_FEATURE] : [])];
+  return all.length ? ['--features', all.join(',')] : [];
+}
+
 // 이 OS의 번들 종류(release/expected-artifacts.json). gate 표를 읽는 OS에서 정해진다.
 const OS_KEY = process.platform === 'win32' ? 'windows' : process.platform;
 // 표가 없는 사본(selftest의 최소 저장소 등)에서도 gate 표는 읽혀야 하므로 없으면 'none'이다(bundle.mjs collect가 실패한다).
@@ -267,10 +277,10 @@ export const GATES = {
     needs: ['cargo', 'pnpm'],
     steps: [
       { cmd: ['pnpm', 'install', '--frozen-lockfile'], cwd: 'app' },
-      { cmd: ['cargo', 'clippy', '-p', 'chzzk-app', ...CLIPPY] },
+      { cmd: ['cargo', 'clippy', '-p', 'chzzk-app', ...featureArgs(), ...CLIPPY] },
       // e2e feature 코드(Windows 전용 #[cfg] 블록 포함)도 3 OS의 모든 코드 PR에서 컴파일·lint·테스트한다(리뷰 G4: 보통
       // 빌드는 이 코드를 컴파일하지 않아 네이티브 E2E 작업에서만 깨짐이 드러났다). 테스트 수는 test-count-app이 센다.
-      { cmd: ['cargo', 'clippy', '-p', 'chzzk-app', '--features', 'e2e', ...CLIPPY] },
+      { cmd: ['cargo', 'clippy', '-p', 'chzzk-app', ...featureArgs(['e2e']), ...CLIPPY] },
     ],
   },
   tauri: {
@@ -278,8 +288,8 @@ export const GATES = {
     needs: ['cargo', 'pnpm'],
     steps: [
       { cmd: ['pnpm', 'install', '--frozen-lockfile'], cwd: 'app' },
-      { cmd: ['cargo', 'test', '-p', 'chzzk-app', '--locked'] },
-      { cmd: ['cargo', 'test', '-p', 'chzzk-app', '--locked', '--features', 'e2e', '--lib', '--', 'e2e::'] },
+      { cmd: ['cargo', 'test', '-p', 'chzzk-app', '--locked', ...featureArgs()] },
+      { cmd: ['cargo', 'test', '-p', 'chzzk-app', '--locked', ...featureArgs(['e2e']), '--lib', '--', 'e2e::'] },
     ],
   },
   'tauri-build': {

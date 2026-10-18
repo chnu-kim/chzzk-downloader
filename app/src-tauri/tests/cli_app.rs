@@ -1,8 +1,8 @@
 //! 명령줄 모드의 앱 쪽(cli-mode.md §7.4·§14.2): 경로가 Tauri와 한 글자도 다르지 않다, 게이트 이름이 실제 command다,
 //! 실행 파일을 직접 띄워 종료 코드와 잠금을 본다.
 
+use chzzk_app_lib::COMMANDS;
 use chzzk_app_lib::cli::{self, cli_paths};
-use chzzk_app_lib::{COMMANDS, InstanceLockState, acquire_instance_lock};
 use chzzk_shell::services::AppPaths;
 use tauri::Manager;
 use tauri::test::mock_builder;
@@ -43,7 +43,8 @@ mod process {
     use std::path::Path;
     use std::process::{Command, Output};
 
-    use super::*;
+    use chzzk_app_lib::cli;
+    use chzzk_app_lib::{InstanceLockState, acquire_instance_lock};
 
     fn bin() -> Command {
         let mut c = Command::new(env!("CARGO_BIN_EXE_chzzk-app"));

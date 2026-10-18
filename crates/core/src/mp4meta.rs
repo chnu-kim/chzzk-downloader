@@ -16,8 +16,8 @@ use std::io::{self, SeekFrom};
 use std::path::Path;
 
 use crate::download::defrag::{
-    DefragFile, Fail, FileSrc, MAX_META_BOX, Source, Top, bad, children, find, free_first_child,
-    read_vec, scan,
+    DefragFile, Fail, FileSrc, MAX_META_BOX, Source, Top, bad, be32, children, find,
+    free_first_child, read_vec, scan,
 };
 use crate::error::Error;
 use crate::fsutil::map_io_error;
@@ -301,21 +301,35 @@ fn recovery_candidates(src: &mut dyn Source, tops: &[Top]) -> Result<Vec<Recover
     Ok(out)
 }
 
+/// `moov` 상자 하나: 헤더(크기 4 + 종류 4)를 붙인다.
+fn moov_box(body: &[u8]) -> Result<Vec<u8>, Fail> {
+    let size = u32::try_from(body.len() + 8).map_err(|_| bad("moov가 4 GiB를 넘는다"))?;
+    let mut v = Vec::with_capacity(body.len() + 8);
+    v.extend_from_slice(&size.to_be_bytes());
+    v.extend_from_slice(b"moov");
+    v.extend_from_slice(body);
+    Ok(v)
+}
+
 /// 새 `moov` 바이트: 옛 본문의 자식에서 `udta`를 빼고 새 `udta`를 끝에 붙인다. 나머지는 바이트 그대로다.
+///
+/// 거부(`Fail`): 크기 칸이 0인 자식(부모 끝까지라는 뜻이라 뒤에 붙인 `udta`가 그 자식 안으로 먹힌다)이 있을 때,
+/// 새 `moov`가 `MAX_META_BOX`를 넘을 때(다시 마무리할 때 `read_vec`가 못 읽는 파일이 되지 않게).
 fn new_moov(old_body: &[u8], udta: &[u8]) -> Result<Vec<u8>, Fail> {
     let mut body = Vec::with_capacity(old_body.len() + udta.len());
     for c in children(old_body)? {
+        if be32(c.full) == 0 {
+            return Err(bad("크기가 0인 moov 자식이 있다"));
+        }
         if &c.kind != b"udta" {
             body.extend_from_slice(c.full);
         }
     }
     body.extend_from_slice(udta);
-    let size = u32::try_from(body.len() + 8).map_err(|_| bad("moov가 4 GiB를 넘는다"))?;
-    let mut v = Vec::with_capacity(body.len() + 8);
-    v.extend_from_slice(&size.to_be_bytes());
-    v.extend_from_slice(b"moov");
-    v.extend_from_slice(&body);
-    Ok(v)
+    if (body.len() as u64) + 8 > MAX_META_BOX {
+        return Err(bad("새 moov가 너무 크다"));
+    }
+    moov_box(&body)
 }
 
 enum Retag {
@@ -337,10 +351,13 @@ fn plan_retag(src: &mut dyn Source, udta: &[u8]) -> Result<Retag, Fail> {
                 0 => Err(bad("moov가 없다")),
                 1 => {
                     let c = cands.remove(0);
-                    Ok(Retag::Append {
-                        moov: new_moov(&c.body, udta)?,
-                        patch: None,
-                    })
+                    // 옛 moov는 이미 free라 파일에 moov가 없다. 새 moov를 만들 수 없어도(크기 0인 자식·크기 상한) 거부하지 않고
+                    // 옛 본문 그대로 되살린다(태그만 없다). 거부하면 moov 없는 파일로 마무리된다.
+                    let moov = match new_moov(&c.body, udta) {
+                        Ok(m) => m,
+                        Err(_) => moov_box(&c.body)?,
+                    };
+                    Ok(Retag::Append { moov, patch: None })
                 }
                 _ => Err(bad("moov로 보이는 free가 둘 이상이다")),
             }

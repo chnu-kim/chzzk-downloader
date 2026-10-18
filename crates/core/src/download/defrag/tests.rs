@@ -1841,6 +1841,16 @@ fn udta_is_the_last_child_of_the_new_moov() {
     }
 }
 
+/// `udta`가 새 `moov`를 `MAX_META_BOX` 밖으로 밀어내면 태그만 빼고 변환한다(mp4-metadata.md §6.2).
+#[test]
+fn oversized_udta_is_dropped_instead_of_producing_a_huge_moov() {
+    let huge = vec![0u8; MAX_META_BOX as usize];
+    let (moov, patches) = plan_bytes_with(FIXTURE, Some(&huge)).unwrap().unwrap();
+    let (plain_moov, plain_patches) = plan_bytes(FIXTURE).unwrap().unwrap();
+    assert_eq!(moov, plain_moov);
+    assert_eq!(patches, plain_patches);
+}
+
 /// 변환 결과 파일에서도 `moov`는 하나이고 샘플 표는 `udta` 유무와 상관없이 같다.
 #[test]
 fn defragment_with_udta_keeps_samples_and_adds_tags() {

@@ -575,6 +575,67 @@ fn retag_rejects_unknown_structures_without_touching_the_file() {
     unchanged(&frag);
 }
 
+/// `PD`의 `moov` 본문만 `body`로 바꾼 파일과, 그 `moov`의 종류 4바이트 자리.
+fn pd_with_moov_body(body: &[u8]) -> (Vec<u8>, usize) {
+    let moov = mp4::top_boxes(PD)[1].1.clone();
+    let mut b = PD[..moov.start - 8].to_vec();
+    b.extend(put(b"moov", body));
+    b.extend_from_slice(&PD[moov.end..]);
+    (b, moov.start - 4)
+}
+
+/// 마지막 자식의 크기 칸이 0(부모 끝까지)인 `moov` 본문.
+fn moov_body_with_zero_sized_child() -> Vec<u8> {
+    let mut body = mp4::find_path(PD, &["moov"]).unwrap().to_vec();
+    body.extend_from_slice(&0u32.to_be_bytes());
+    body.extend_from_slice(b"skip");
+    body.extend_from_slice(&[1, 2, 3]);
+    body
+}
+
+/// 크기 0인 자식이 있으면 뒤에 붙인 `udta`가 그 자식 안으로 먹혀 태그가 보이지 않는다. 계획 단계에서 거부한다.
+#[test]
+fn retag_rejects_a_moov_with_a_zero_sized_child() {
+    let (b, _) = pd_with_moov_body(&moov_body_with_zero_sized_child());
+    unchanged(&b);
+}
+
+/// 크래시 복구(옛 moov가 이미 free)는 거부하면 moov 없는 파일이 되므로, 새 moov를 만들 수 없을 때 옛 본문 그대로 되살린다.
+#[test]
+fn recovery_restores_the_old_moov_when_the_new_one_cannot_be_built() {
+    let body = moov_body_with_zero_sized_child();
+    let (mut b, kind_at) = pd_with_moov_body(&body);
+    b[kind_at..kind_at + 4].copy_from_slice(b"free");
+    let (r, out) = retag(&b, &udta());
+    assert_eq!(r.unwrap(), TagReport::Tagged);
+    assert_eq!(types(&out), ["ftyp", "free", "free", "mdat", "moov"]);
+    assert_eq!(
+        mp4::find_path_last(&out, &["moov"]).unwrap(),
+        body.as_slice()
+    );
+}
+
+/// 새 `moov`가 `MAX_META_BOX`를 넘으면 태그를 쓰지 않는다(`Unchanged`, mp4-metadata.md §6.2).
+#[test]
+fn retag_does_not_write_a_moov_over_the_size_limit() {
+    let huge = vec![0u8; MAX_META_BOX as usize];
+    let (r, out) = retag(PD, &huge);
+    assert!(matches!(r, Err(TagError::Unchanged(_))), "{r:?}");
+    assert_eq!(out, PD, "파일은 그대로여야 한다");
+}
+
+/// 크래시 복구 중이면 같은 경우에 옛 moov를 되살리고(태그 없음) moov 없는 파일로 두지 않는다.
+#[test]
+fn recovery_over_the_size_limit_restores_the_old_moov_without_tags() {
+    let huge = vec![0u8; MAX_META_BOX as usize];
+    let (r, out) = retag(&crashed_after_patch(), &huge);
+    assert_eq!(r.unwrap(), TagReport::Tagged);
+    assert_eq!(
+        mp4::find_path_last(&out, &["moov"]).unwrap(),
+        mp4::find_path(PD, &["moov"]).unwrap()
+    );
+}
+
 // ---------------------------------------------------------------------------------------------
 // retag_in: 쓰기 실패
 

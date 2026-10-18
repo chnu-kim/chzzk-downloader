@@ -931,7 +931,12 @@ fn plan(src: &mut dyn Source, udta: Option<&[u8]>) -> Result<Outcome, Fail> {
         let body = read_vec(src, m.off + m.hdr, m.size - m.hdr)?;
         parse_moof(m.off, &body, &init, &mut tables, &mdats)?;
     }
-    let moov = build_moov(&init, &tables, udta)?;
+    let mut moov = build_moov(&init, &tables, udta)?;
+    // 메타데이터 때문에 새 moov가 상한을 넘으면 태그만 뺀다(다시 마무리할 때 `read_vec`가 못 읽는 파일을 만들지 않는다,
+    // mp4-metadata.md §6.2). 태그가 없어도 넘는 moov는 이 변환이 새로 만드는 문제가 아니라 그대로 둔다.
+    if udta.is_some() && moov.len() as u64 > MAX_META_BOX {
+        moov = build_moov(&init, &tables, None)?;
+    }
     patches.sort_unstable();
     patches.dedup();
     Ok(Outcome::Plan(Plan {

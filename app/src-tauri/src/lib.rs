@@ -124,6 +124,7 @@ pub fn handler<R: Runtime>() -> impl Fn(Invoke<R>) -> bool + Send + Sync + 'stat
             commands::clear_naver_cookies,
             commands::import_legacy,
             commands::pick_folder,
+            commands::preview_file_name_template,
             commands::resolve,
             commands::check_output,
             commands::enqueue,

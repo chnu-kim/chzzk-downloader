@@ -13,7 +13,7 @@
 use chzzk_core::{
     ContentKind, ContentMeta, ContentRef, DuplicatePolicy, LegacyImport, Phase, Platform,
     PlaybackKind, Progress, Quality, RecentKind, RecentVod, Resolved, TextScale, Theme, TimeRange,
-    naming::default_filename,
+    naming::{FileNameTemplate, default_filename, render_filename},
 };
 use serde::{Deserialize, Deserializer, Serialize};
 use ts_rs::TS;
@@ -370,6 +370,8 @@ pub struct SettingsDto {
     /// 채팅 자막 형식(기본 [잠정] U2 결정 대기 `ass`)
     #[ts(as = "SubtitleFormatTs")]
     pub chat_subtitle: SubtitleFormat,
+    /// 파일 이름 규칙(템플릿). `null`이면 기본 규칙이다(입력칸에는 `DEFAULT_TEMPLATE`을 보인다)
+    pub file_name_template: Option<String>,
 }
 
 /// 최근 VOD 한 항목.
@@ -434,6 +436,11 @@ pub struct SettingsPatch {
     #[serde(default)]
     #[ts(as = "Option<SubtitleFormatTs>", optional)]
     pub chat_subtitle: Option<SubtitleFormat>,
+    /// 키 없음 = 그대로, `null` = 기본 규칙으로, 문자열 = 그 템플릿으로(읽을 수 없으면 `invalidInput`,
+    /// 기본 템플릿 문자열과 같으면 `null`로 저장한다)
+    #[serde(default)]
+    #[ts(as = "Option<Option<String>>", optional)]
+    pub file_name_template: Nullable<String>,
 }
 
 /// 키 없음·`null`·값을 구분하는 패치 필드. `#[serde(default)]`와 함께 써야 키 없음이 `Keep`이 된다.
@@ -478,21 +485,27 @@ pub struct ResolvedDto {
     pub qualities: Vec<QualityDto>,
     /// `Resolved::default_quality(last_quality_label)`
     pub default_quality_index: u32,
-    /// `default_filename`에서 `.mp4`를 뗀 것
+    /// 파일 이름 규칙(기본은 `default_filename`)으로 만든 이름에서 `.mp4`를 뗀 것
     pub suggested_file_name: String,
     pub ownership: Ownership,
 }
 
 impl ResolvedDto {
     /// `Resolved`를 옮긴다. 화질의 서명 URL은 버린다.
+    ///
+    /// `template`이 없으면 기본 규칙(`default_filename`)을 그대로 쓴다.
     pub fn new(
         url: String,
         r: &Resolved,
         last_quality_label: Option<&str>,
         platform: Platform,
+        template: Option<&FileNameTemplate>,
         ownership: Ownership,
     ) -> Self {
-        let name = default_filename(&r.meta, platform);
+        let name = match template {
+            Some(t) => render_filename(t, &r.meta, &r.content, platform),
+            None => default_filename(&r.meta, platform),
+        };
         let suggested_file_name = match name.strip_suffix(".mp4") {
             Some(base) => base.to_string(),
             None => name,
@@ -508,6 +521,53 @@ impl ResolvedDto {
             ownership,
         }
     }
+}
+
+/// `preview_file_name_template` 결과. 읽을 수 없는 템플릿은 오류가 아니라 데이터다(입력 중 상태).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, TS)]
+#[serde(
+    tag = "status",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum FileNameTemplatePreview {
+    /// 영상·클립·생방송 예시 이름(`.mp4` 포함, 저장 폴더 볼륨의 규칙)
+    Ok {
+        names: Vec<PreviewName>,
+    },
+    Invalid {
+        error: TemplateErrorDto,
+    },
+}
+
+/// 예시 이름 하나.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviewName {
+    pub kind: ContentKindDto,
+    pub name: String,
+}
+
+/// 템플릿을 거부한 이유(코어 `TemplateError`의 TS 모양). 문구는 화면 copy deck이 정한다.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct TemplateErrorDto {
+    pub kind: TemplateErrorKind,
+    /// `unknownToken`·`duplicateToken`일 때 그 토큰 이름
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub token: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub enum TemplateErrorKind {
+    UnbalancedBrace,
+    UnknownToken,
+    DuplicateToken,
+    PathSeparator,
+    MissingTitle,
+    TooLong,
 }
 
 /// `ContentMeta` 미러.

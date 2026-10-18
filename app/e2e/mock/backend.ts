@@ -19,6 +19,7 @@ import type {
   EditorsDto,
   EnqueueRequest,
   ErrorCode,
+  FileNameTemplatePreview,
   JobDto,
   JobEvent,
   LiveEndDto,
@@ -33,6 +34,23 @@ import type {
   UpdateCheckDto,
   UpdateInfoDto,
 } from '../../src/lib/bindings';
+import templateGolden from '../../../design/naming/template.json';
+
+/** 기본 파일 이름 규칙(코어 `naming::DEFAULT_TEMPLATE`) */
+const DEFAULT_TEMPLATE = '{prefix} {channel} - {title}';
+
+type TemplatePreviewRow = { template: string; linux?: { kind: string; name: string }[]; error?: Record<string, unknown> };
+
+/**
+ * 셸 `preview_file_name_template` 흉내. 템플릿 엔진을 다시 구현하지 않고 골든(design/naming/template.json)의
+ * `preview` 표를 읽는다(Rust 코어·셸 테스트가 같은 표를 읽어 맞춘다). 표에 없는 입력은 기본 템플릿 결과를 돌려준다.
+ */
+export function previewTemplate(template: string): FileNameTemplatePreview {
+  const rows = templateGolden.preview as TemplatePreviewRow[];
+  const row = rows.find((r) => r.template === template) ?? rows.find((r) => r.template === DEFAULT_TEMPLATE)!;
+  if (row.error) return { status: 'invalid', error: row.error } as FileNameTemplatePreview;
+  return { status: 'ok', names: row.linux } as FileNameTemplatePreview;
+}
 
 /** 파일 이름에 쓰는 `H.MM.SS`(셸 `naming::range_suffix`와 같은 모양, 끝을 모르면 `~` 뒤가 빈다) */
 function rangeSuffix(r: TimeRangeDto): string {
@@ -208,6 +226,7 @@ export const SETTINGS: SettingsDto = {
   keepAwake: true,
   saveChat: false,
   chatSubtitle: 'ass',
+  fileNameTemplate: null,
 };
 
 // 코어 Progress와 같은 모양: progressive는 바이트 총량, 빠른 다시보기(HLS)는 조각·미디어 초로 진행을 센다(app jobs.ts progressFraction)
@@ -310,6 +329,11 @@ export function install(scenario: Scenario = {}): E2EController {
     const r = resolveTable[a.url as string];
     if (!r) throw err('invalidUrl');
     if ('error' in r) throw r.error;
+    // 파일 이름 규칙이 있으면 카드의 제안 이름은 그 규칙의 영상 예시 이름이다(셸 `ResolvedDto::new` 흉내)
+    if (settings.fileNameTemplate) {
+      const p = previewTemplate(settings.fileNameTemplate);
+      if (p.status === 'ok') return { ...r, suggestedFileName: p.names[0].name.replace(/\.mp4$/, '') };
+    }
     return r;
   };
 
@@ -329,7 +353,13 @@ export function install(scenario: Scenario = {}): E2EController {
     },
     get_settings: () => settings,
     update_settings: (a) => {
-      settings = { ...settings, ...(a.patch as SettingsPatch) } as SettingsDto;
+      const patch = a.patch as SettingsPatch;
+      // 셸 흉내: 읽을 수 없는 규칙은 invalidInput, 기본 규칙 문자열은 null(기본)로 저장한다
+      if (typeof patch.fileNameTemplate === 'string') {
+        if (previewTemplate(patch.fileNameTemplate).status === 'invalid') throw err('invalidInput');
+        if (patch.fileNameTemplate.trim() === DEFAULT_TEMPLATE) patch.fileNameTemplate = null;
+      }
+      settings = { ...settings, ...patch } as SettingsDto;
       if ('downloadFolder' in (a.patch as SettingsPatch)) {
         settings.effectiveDownloadFolder = settings.downloadFolder ?? INFO.defaultDownloadFolder;
       }
@@ -339,6 +369,7 @@ export function install(scenario: Scenario = {}): E2EController {
     clear_naver_cookies: () => (settings = { ...settings, naverCookiesSaved: false, useNaverCookies: false }),
     import_legacy: () => null,
     pick_folder: () => null,
+    preview_file_name_template: (a) => previewTemplate(a.template as string),
     auth_status: () => auth,
     auth_login: () =>
       auth.state === 'disabled' || auth.state === 'signedIn' || auth.state === 'pending'

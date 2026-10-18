@@ -44,7 +44,7 @@ async function record(run: () => Promise<unknown>): Promise<Call[]> {
 
 describe('api.ts', () => {
   it('command 목록을 읽었다', () => {
-    expect(COMMANDS).toHaveLength(42);
+    expect(COMMANDS).toHaveLength(43);
   });
 
   // Channel은 생성 때 IPC 내부를 쓰므로 mockIPC 뒤(호출 안)에서 만든다.
@@ -57,6 +57,7 @@ describe('api.ts', () => {
     [() => api.clearNaverCookies(), 'clear_naver_cookies', {}],
     [() => api.importLegacy(null), 'import_legacy', { dir: null }],
     [() => api.pickFolder(), 'pick_folder', { initial: null }],
+    [() => api.previewFileNameTemplate('{title}'), 'preview_file_name_template', { template: '{title}' }],
     [() => api.resolve('u'), 'resolve', { url: 'u' }],
     [
       () => api.checkOutput({ folder: null, fileName: 'f', content, qualityId: 'q', expectedKind: 'liveRewindHls' }),

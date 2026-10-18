@@ -45,6 +45,7 @@ const base: SettingsDto = {
   keepAwake: true,
   saveChat: false,
   chatSubtitle: 'ass',
+  fileNameTemplate: null,
 };
 
 const info: AppInfo = {

@@ -66,6 +66,7 @@ const dto: SettingsDto = {
   keepAwake: true,
   saveChat: false,
   chatSubtitle: 'ass',
+  fileNameTemplate: null,
 };
 
 const appError = (code: AppError['code']): AppError => ({ code, message: code, stage: null, resumable: false, payload: null });

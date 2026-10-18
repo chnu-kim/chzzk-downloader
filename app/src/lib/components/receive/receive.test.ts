@@ -48,6 +48,7 @@ const settingsDto: SettingsDto = {
   keepAwake: true,
   saveChat: false,
   chatSubtitle: 'ass',
+  fileNameTemplate: null,
 };
 
 function appError(code: AppError['code'], over: Partial<AppError> = {}): AppError {

@@ -18,6 +18,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock};
 use std::time::Duration;
 
 use chzzk_core::download::MAX_CONCURRENCY;
+use chzzk_core::naming::{DEFAULT_TEMPLATE, parse_template};
 use chzzk_core::settings::{MAX_RECENT_VODS, SETTINGS_FILE};
 use chzzk_core::{
     Chzzk, ClientConfig, ContentRef, CredentialStore, NaverCookies, PlaybackKind, RecentKind,
@@ -26,11 +27,12 @@ use chzzk_core::{
 
 use crate::backend::Backend;
 use crate::dto::{
-    EnqueueRequest, JobDto, LegacyCandidate, LegacyImportDto, Nullable, RecentVodDto, ResolvedDto,
-    SettingsDto, SettingsPatch,
+    EnqueueRequest, FileNameTemplatePreview, JobDto, LegacyCandidate, LegacyImportDto, Nullable,
+    RecentVodDto, ResolvedDto, SettingsDto, SettingsPatch,
 };
 use crate::error::AppError;
 use crate::manager::{ClientFn, DownloadManager, JobDefaults, MAX_PARALLEL, MIN_PARALLEL};
+use crate::naming_preview::{self, error_message};
 use crate::ownership::OwnershipGate;
 use crate::volume;
 
@@ -272,6 +274,12 @@ impl SettingsService {
             Nullable::Clear => Some(None),
             Nullable::Set(s) => Some(Some(absolute_dir(&s, "저장 폴더")?)),
         };
+        // 템플릿은 저장 전에 한 번 더 읽는다(화면이 먼저 막으므로 가드다). 기본 템플릿 문자열은 `None`으로 저장한다.
+        let template = match patch.file_name_template {
+            Nullable::Keep => None,
+            Nullable::Clear => Some(None),
+            Nullable::Set(s) => Some(normalize_template(&s)?),
+        };
         let current = self.store.get();
         // 실제로 쿠키를 보내는지와 비교한다. 설정은 켜짐인데 저장 쿠키를 못 읽어 쿠키 없이 시작했으면
         // `true` 패치가 쿠키를 다시 읽어 바꿔 끼운다(조용한 무시가 되지 않게).
@@ -324,6 +332,9 @@ impl SettingsService {
             }
             if let Some(f) = patch.chat_subtitle {
                 s.chat_subtitle = f;
+            }
+            if let Some(t) = template {
+                s.file_name_template = t;
             }
         })?;
         if let Some(c) = new_client {
@@ -517,7 +528,13 @@ impl SettingsService {
         let content = parse_content_url(url)?;
         let client = self.client();
         let r = client.resolve(&content).await?;
-        let last = self.store.get().last_quality_label;
+        let settings = self.store.get();
+        let last = settings.last_quality_label;
+        // 저장할 때 검증하므로 읽지 못하면(손으로 고친 값) 기본 규칙이다.
+        let template = settings
+            .file_name_template
+            .as_deref()
+            .and_then(|t| parse_template(t).ok());
         let mut own = gate.on_resolved(&r.content, &r.meta);
         if gate.needs_recheck(own, &r.content) {
             recheck().await;
@@ -534,8 +551,17 @@ impl SettingsService {
             last.as_deref(),
             // 이름 규칙은 저장 폴더가 놓인 볼륨 기준이다(FAT·exFAT·NTFS·원격은 Windows 규칙, core.md 57).
             volume::platform_for_dir(&self.effective_download_folder()),
+            template.as_ref(),
             own,
         ))
+    }
+
+    /// `preview_file_name_template`: 템플릿 검증과 예시 이름. 규칙 OS는 `resolve`와 같이 저장 폴더가 놓인 볼륨 기준이다.
+    pub fn preview_file_name_template(&self, template: &str) -> FileNameTemplatePreview {
+        naming_preview::preview_file_name_template(
+            template,
+            volume::platform_for_dir(&self.effective_download_folder()),
+        )
     }
 
     /// 컨텐츠의 채널 ID를 다시 resolve해 얻는다(`OwnershipGate::admit`의 캐시 미스).
@@ -562,6 +588,7 @@ impl SettingsService {
             keep_awake: s.keep_awake,
             save_chat: s.save_chat,
             chat_subtitle: s.chat_subtitle,
+            file_name_template: s.file_name_template.clone(),
         }
     }
 
@@ -663,6 +690,13 @@ fn effective_folder(s: &UserSettings, default: &Path) -> PathBuf {
     s.download_folder
         .clone()
         .unwrap_or_else(|| default.to_path_buf())
+}
+
+/// 파일 이름 규칙 패치 값을 검증한다. 읽을 수 없으면 `invalidInput`이고, 기본 템플릿 문자열(앞뒤 공백 제외)은
+/// `None`(기본 규칙)으로 바꾼다. 그래야 기본 규칙이 나중에 바뀔 때 고치지 않은 사용자도 함께 따라간다.
+fn normalize_template(s: &str) -> Result<Option<String>, AppError> {
+    parse_template(s).map_err(|e| AppError::invalid_input(error_message(&e)))?;
+    Ok((s.trim() != DEFAULT_TEMPLATE).then(|| s.to_string()))
 }
 
 fn path_string(p: &Path) -> String {

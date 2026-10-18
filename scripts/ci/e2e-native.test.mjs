@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import { DELEGATED_VIDEO_NO, HLS_VIDEO_NO, OTHER_VIDEO_NO, STUB_HANDLE } from './e2e-fixture-server.mjs';
-import { isWindowVisible, judge, judgeWorker, pickWindowsDriver, until } from './e2e-native.mjs';
+import { cliExeFor, isWindowVisible, judge, judgeCli, judgeWorker, pickWindowsDriver, until } from './e2e-native.mjs';
 
 // golden이 둘이다: 본인 채널·맡은 채널(`©ART`·`©cmt`가 달라 바이트가 다르다)
 const EXP = { own: { sha256: 'a'.repeat(64), bytes: 10 }, delegated: { sha256: 'b'.repeat(64), bytes: 12 } };
@@ -146,4 +146,65 @@ test('창 보임 대기: hidden이 몇 번 지나간 뒤 visible이면 통과', 
   const r = await until('창 보임', async () => isWindowVisible(seq[i++]), 5_000);
   assert.equal(r, true);
   assert.equal(i, 3);
+});
+
+// ---- 명령줄 단계(cli-mode.md §14.3) ----
+const CLI_OUT = '/tmp/e2e/cli-out';
+const CLI_OWN = `${CLI_OUT}/${OWN_FILE}`;
+const CLI_DEL = `${CLI_OUT}/${DEL_FILE}`;
+const CLI_RUNS = {
+  locked: { code: 3, stdout: '', requests: 0 },
+  login: { code: 0, stdout: '' },
+  own: { code: 0, stdout: `${CLI_OWN}\n` },
+  delegated: { code: 0, stdout: `${CLI_DEL}\n` },
+  other: { code: 4, stdout: '' },
+  status: { code: 0, stdout: '버전: 1\n로그인: 로그인됨 · 채널\n' },
+  again: { code: 0, stdout: '' },
+};
+const CLI_OK = { runs: CLI_RUNS, files: [DEL_FILE, OWN_FILE], outputs: OK.outputs, out: CLI_OUT };
+const chain = (n) =>
+  ['POST /auth/start 201', `GET /auth/login/${STUB_HANDLE} 303`, 'POST /auth/redeem 200']
+    .flatMap((x) => Array.from({ length: n }, () => x))
+    .map((x) => {
+      const [method, path, status] = x.split(' ');
+      return { method, path, status: Number(status) };
+    });
+
+test('judgeCli: 로그인 전 3·login 0·받기 0·남의 영상 4·status 0, stdout 경로 한 줄, golden 해시, Worker 사슬 2번이면 통과', () => {
+  assert.deepEqual(judgeCli(CLI_OK, EXP, LOG, chain(2)), []);
+});
+
+test('judgeCli: 코드·stdout·파일·해시·서버 응답·Worker 사슬이 어긋나면 실패', () => {
+  const run = (k, v) => ({ ...CLI_OK, runs: { ...CLI_RUNS, [k]: { ...CLI_RUNS[k], ...v } } });
+  const cases = {
+    '로그인 전이 0으로 끝남': run('locked', { code: 0 }),
+    '로그인 전에 치지직 요청': run('locked', { requests: 1 }),
+    '로그인 전 stdout': run('locked', { stdout: 'x\n' }),
+    'login 실패': run('login', { code: 1 }),
+    '다시 login이 3': run('again', { code: 3 }),
+    '본인 영상 코드 1': run('own', { code: 1 }),
+    '맡은 채널 영상 코드 3': run('delegated', { code: 3 }),
+    '남의 영상이 0으로 끝남': run('other', { code: 0 }),
+    '남의 영상이 4가 아니라 1': run('other', { code: 1 }),
+    '남의 영상이 경로를 냄': run('other', { stdout: `${CLI_OUT}/x.mp4\n` }),
+    'status 코드 3': run('status', { code: 3 }),
+    'stdout이 두 줄': run('own', { stdout: `${CLI_OWN}\n받는 중\n` }),
+    'stdout 경로가 결과 폴더 밖': run('own', { stdout: `/elsewhere/${OWN_FILE}\n` }),
+    'stdout 경로가 맡은 채널 파일': run('own', { stdout: `${CLI_DEL}\n` }),
+    '파일이 하나': { ...CLI_OK, files: [OWN_FILE], outputs: { [OWN_FILE]: out() } },
+    '남의 영상 받힘': { ...CLI_OK, files: [...CLI_OK.files, OTHER_FILE], outputs: { ...OK.outputs, [OTHER_FILE]: out() } },
+    '.part 남음': { ...CLI_OK, files: [...CLI_OK.files, 'x.mp4.part'] },
+    '해시 다름': { ...CLI_OK, outputs: { ...OK.outputs, [OWN_FILE]: out({ sha256: 'c'.repeat(64) }) } },
+  };
+  for (const [name, r] of Object.entries(cases)) assert.ok(judgeCli(r, EXP, LOG, chain(2)).length > 0, name);
+  assert.ok(judgeCli(CLI_OK, EXP, [...LOG, { method: 'GET', path: '/x', status: 404 }], chain(2)).length > 0, '404 응답');
+  // Worker 사슬: 1번(명령줄이 로그인하지 않았다)·3번(이미 로그인인데 또 돌았다)·오류 응답
+  assert.ok(judgeCli(CLI_OK, EXP, LOG, chain(1)).length > 0, '사슬 1번');
+  assert.ok(judgeCli(CLI_OK, EXP, LOG, chain(3)).length > 0, '사슬 3번');
+  assert.ok(judgeCli(CLI_OK, EXP, LOG, [...chain(2), { method: 'GET', path: '/api/me', status: 500 }]).length > 0, 'Worker 오류');
+});
+
+test('cliExeFor: Linux는 앱 실행 파일 그대로, Windows는 같은 폴더의 콘솔 실행 파일', () => {
+  assert.equal(cliExeFor('/t/debug/chzzk-app', false, 'chzzk-cli.exe'), '/t/debug/chzzk-app');
+  assert.match(cliExeFor('/t/debug/chzzk-app.exe', true, 'chzzk-cli.exe'), /debug[\\/]chzzk-cli\.exe$/);
 });

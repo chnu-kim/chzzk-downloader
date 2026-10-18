@@ -6,7 +6,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { AREAS, CODE_GATED_JOBS, GATES, HOOK_ONLY, HOOKS, MASTER_ONLY_JOBS, msrv, testFiles } from './gates.mjs';
+import { AREAS, CODE_GATED_JOBS, featureArgs, GATES, HOOK_ONLY, HOOKS, MASTER_ONLY_JOBS, msrv, testFiles } from './gates.mjs';
 import { gitOk } from './test-git.mjs';
 import { changedFiles, classify, decideCiOk, firstSemver, forceFail, hookGates, runGate } from './run.mjs';
 
@@ -150,6 +150,13 @@ test('gate 표: 모든 단계가 명령을 갖고 scripts-test가 테스트 파�
 
 // 각 gate가 검사를 실제로 켜는 인자를 갖는지(빼면 gate가 조용히 통과한다). selftest가 씨앗으로 동작을 보고,
 // 여기서는 씨앗으로 드러나지 않는 플래그를 본다.
+test('Windows는 chzzk-app의 clippy·테스트에 console-cli feature를 더한다(cli-mode.md §7.1)', () => {
+  assert.deepEqual(featureArgs([], false), []);
+  assert.deepEqual(featureArgs(['e2e'], false), ['--features', 'e2e']);
+  assert.deepEqual(featureArgs([], true), ['--features', 'console-cli']);
+  assert.deepEqual(featureArgs(['e2e'], true), ['--features', 'e2e,console-cli']);
+});
+
 test('gate 표: 검사를 켜는 플래그', () => {
   const cmds = (g) => GATES[g].steps.map((s) => s.cmd.join(' '));
   assert.deepEqual(cmds('fmt'), ['cargo fmt --all --check']);
@@ -168,9 +175,11 @@ test('gate 표: 검사를 켜는 플래그', () => {
     assert.ok(cmds(g).some((c) => c.startsWith('cargo test') && c.endsWith('--locked')), g);
   }
   // chzzk-app clippy는 tauri-clippy(보통·e2e 둘 다 -D warnings), debug 빌드는 tauri-build(구현 중 변경 78)
+  // Windows는 featureArgs가 console-cli를 더한다(이 표를 읽는 OS 기준)
+  const feat = (names) => [...featureArgs(names), ''].join(' ');
   assert.deepEqual(cmds('tauri-clippy').filter((c) => c.startsWith('cargo clippy')), [
-    'cargo clippy -p chzzk-app --all-targets --locked -- -D warnings',
-    'cargo clippy -p chzzk-app --features e2e --all-targets --locked -- -D warnings',
+    `cargo clippy -p chzzk-app ${feat([])}--all-targets --locked -- -D warnings`,
+    `cargo clippy -p chzzk-app ${feat(['e2e'])}--all-targets --locked -- -D warnings`,
   ]);
   assert.equal(cmds('tauri-build').at(-1), 'pnpm tauri build --ci --debug --no-bundle');
   assert.ok(cmds('frontend').includes('pnpm install --frozen-lockfile'));

@@ -27,9 +27,10 @@ pub const SMOKE_OUT_ENV: &str = "CHZZK_SMOKE_OUT";
 pub const SMOKE_DIR_ENV: &str = "CHZZK_SMOKE_DIR";
 /// 프런트 `frontend_ready`를 기다리는 시간.
 pub const SMOKE_TIMEOUT: Duration = Duration::from_secs(60);
-/// 시간 초과 종료 코드.
+/// 시간 초과 종료 코드. 명령줄 모드의 종료 코드 표(`chzzk_shell::cli::exit`)와 숫자가 겹치지만 두 모드는 한 실행에서
+/// 함께 일어나지 않는다(`cli::try_cli`가 인자로 먼저 가른다. `download --smoke`는 CLI의 모르는 깃발이다).
 pub const EXIT_TIMEOUT: i32 = 2;
-/// 마커를 쓰지 못했을 때의 종료 코드.
+/// 마커를 쓰지 못했을 때의 종료 코드(위와 같이 명령줄 코드 3과 겹치지만 모드가 다르다).
 pub const EXIT_MARKER: i32 = 3;
 
 /// 명령행(프로그램 이름 제외)에 `--smoke`가 있는지.

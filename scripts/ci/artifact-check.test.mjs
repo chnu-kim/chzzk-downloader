@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
-import { E2E_MARK, GALLERY_MARK, GLIBC_MAX, e2eFeatureLines, galleryTraces, glibcOk, maxGlibc, scanSources, sourceFiles } from './artifact-check.mjs';
+import { E2E_MARK, GALLERY_MARK, GLIBC_MAX, consoleBin, e2eFeatureLines, galleryTraces, glibcOk, maxGlibc, scanSources, sourceFiles } from './artifact-check.mjs';
 import { ROOT } from './gates.mjs';
 
 const OBJDUMP = `
@@ -114,4 +114,11 @@ test('sourceFiles: 실제 저장소 소스는 위반 0(가드가 현재 트리�
   const files = sourceFiles(ROOT);
   assert.ok(files.length > 10);
   assert.deepEqual(scanSources(files), []);
+});
+
+test('콘솔 실행 파일: 표의 consoleExe가 있는 OS(Windows)만 hygiene 대상이 더해진다', () => {
+  assert.match(consoleBin('release', 'windows'), /release[\\/]chzzk-cli\.exe$/);
+  assert.match(consoleBin('debug', 'windows'), /debug[\\/]chzzk-cli\.exe$/);
+  assert.equal(consoleBin('release', 'linux'), null);
+  assert.equal(consoleBin('release', 'darwin'), null);
 });

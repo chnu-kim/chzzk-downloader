@@ -30,7 +30,7 @@ import {
   statSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { ROOT, workspaceVersion } from './gates.mjs';
@@ -96,17 +96,20 @@ export const WAIT_GONE_MS = 60_000;
 // OS별 설치 스모크의 바깥 명령(sh) 수와 앱 실행(runSmoke) 수. 함수를 고치면 같이 고친다.
 export const INSTALL_STEPS = {
   // sh: dpkg-deb, dpkg -L / pkg(PKG_TIMEOUT_MS, 실패마다 진단 PKG_DIAG개): apt-get install 두 번, 그 사이 dpkg --configure -a, apt-get purge
-  linux: { sh: 2, pkg: 4, smoke: 2, wait: 0 },
+  // cli: 설치본마다 명령줄 help·status(각 CLI_KILL_MS): deb 둘 + AppImage 둘
+  linux: { sh: 2, pkg: 4, smoke: 2, wait: 0, cli: 4 },
   // hdiutil attach, ditto, xattr, plutil, hdiutil detach + 릴리스의 .app.tar.gz: tar, xattr, plutil
-  darwin: { sh: 8, smoke: 2, wait: 0 },
-  windows: { sh: 4, smoke: 2, wait: 1 }, // NSIS setup, uninstall, msiexec /i, /x + waitGone
+  // cli: dmg 둘 + 릴리스의 .app.tar.gz 둘
+  darwin: { sh: 8, smoke: 2, wait: 0, cli: 4 },
+  // NSIS setup, uninstall, msiexec /i, /x + waitGone. cli: 설치본마다 chzzk-cli.exe help·status와 chzzk-app.exe의 하위 명령 거부(각 CLI_KILL_MS)
+  windows: { sh: 4, smoke: 2, wait: 1, cli: 6 },
 };
 // 최악의 경우(모든 명령이 시간 제한까지 가고, Windows는 그때마다 진단 두 개도 시간 제한까지): ms
 export function installBudgetMs(os) {
   const n = INSTALL_STEPS[os];
   const diag = os === 'windows' ? 2 * DIAG_TIMEOUT_MS : 0;
   const pkg = (n.pkg ?? 0) * (PKG_TIMEOUT_MS + PKG_DIAG.length * DIAG_TIMEOUT_MS);
-  return n.sh * (SH_TIMEOUT_MS + diag) + pkg + n.smoke * (SMOKE_KILL_MS + diag) + n.wait * WAIT_GONE_MS;
+  return n.sh * (SH_TIMEOUT_MS + diag) + pkg + n.smoke * (SMOKE_KILL_MS + diag) + n.wait * WAIT_GONE_MS + (n.cli ?? 0) * CLI_KILL_MS;
 }
 
 // 시간 제한에 걸린 뒤(Windows): 남은 프로세스 목록을 남기고 그 pid의 트리를 끝까지 죽여 본다.
@@ -260,6 +263,57 @@ export function runSmoke(exe, { env = {}, label = basename(exe), auth } = {}) {
   }
 }
 
+// ---- 명령줄 스모크(cli-mode.md §14.3) ----
+// 같은 바이너리가 `help`·`status`에서는 Tauri를 만들지 않고 끝난다. 화면이 없어도(Linux는 DISPLAY·WAYLAND_DISPLAY를 지운다) 돈다.
+// `status`는 로그인을 쓰는 빌드(릴리스·CHZZK_WORKER_BASE)면 로그인 없는 임시 데이터 폴더에서 코드 3, 쓰지 않는 debug 빌드면 코드 0이다.
+export const CLI_KILL_MS = 20_000; // help·status는 1초 안에 끝난다. 설치 스모크 예산(linux 30분 작업 제한)에 들어가는 최악 시간이라 짧게 둔다
+
+// help 출력 → { ok, why }
+export function checkCliHelp({ status, stdout }) {
+  if (status !== 0) return { ok: false, why: `help가 exit ${status}(0이어야 한다)` };
+  for (const w of ['download', 'login', '종료 코드']) {
+    if (!stdout.includes(w)) return { ok: false, why: `help 출력에 "${w}"가 없다` };
+  }
+  return { ok: true, why: null };
+}
+
+// status 출력 → { ok, why }. auth가 true면 로그인 필요(3), false면 로그인 안 씀(0), undefined면 둘 중 하나
+export function checkCliStatus({ status, stdout }, version, { auth } = {}) {
+  if (!stdout.includes(`버전: ${version}`)) return { ok: false, why: `status 출력에 "버전: ${version}"이 없다: ${JSON.stringify(stdout.slice(0, 200))}` };
+  const signedOut = status === 3 && stdout.includes('로그인 필요');
+  const noAuth = status === 0 && stdout.includes('로그인을 쓰지 않아요');
+  if (!signedOut && !noAuth) return { ok: false, why: `status가 exit ${status}: 로그인 필요(3) 또는 로그인을 쓰지 않음(0)이어야 한다: ${JSON.stringify(stdout.slice(0, 200))}` };
+  if (auth === true && !signedOut) return { ok: false, why: '릴리스 번들은 로그인이 켜져 있어야 한다(status가 로그인 필요를 말하지 않았다)' };
+  if (auth === false && !noAuth) return { ok: false, why: 'status가 로그인을 쓰지 않는 빌드를 말하지 않았다' };
+  return { ok: true, why: null };
+}
+
+export function runCliSmoke(exe, { label = basename(exe), auth, env: extra = {} } = {}) {
+  const work = mkdtempSync(join(tmpdir(), 'chzzk-cli-'));
+  const env = { ...process.env, ...extra, CHZZK_SMOKE_DIR: join(work, 'data') };
+  delete env.DISPLAY;
+  delete env.WAYLAND_DISPLAY;
+  const run = (args) => {
+    log(`${label}: ${basename(exe)} ${args.join(' ')}`);
+    const r = spawnSync(exe, args, { encoding: 'utf8', env, timeout: CLI_KILL_MS, killSignal: 'SIGKILL', maxBuffer: 1 << 24 });
+    return { status: r.status, stdout: r.stdout ?? '', stderr: r.stderr ?? '', error: r.error };
+  };
+  try {
+    const help = run(['help']);
+    if (help.error) return { ok: false, why: `명령줄 실행 실패: ${help.error.message}` };
+    const h = checkCliHelp(help);
+    if (!h.ok) return h;
+    const st = run(['status']);
+    if (st.error) return { ok: false, why: `명령줄 실행 실패: ${st.error.message}` };
+    const c = checkCliStatus(st, workspaceVersion(), { auth });
+    if (!c.ok) return c;
+    log(`${label}: 명령줄 help·status 통과`);
+    return { ok: true, why: null };
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+}
+
 // ---- 번들 표 ----
 
 export function bundleSpec(root = ROOT) {
@@ -318,6 +372,8 @@ function smokeDeb(deb) {
     const exe = one(bins, `deb ${name}의 /usr/bin 실행 파일`);
     const r = runSmoke(exe, { label: `deb ${basename(exe)}`, auth: true });
     if (!r.ok) throw new Error(r.why);
+    const c = runCliSmoke(exe, { label: `deb ${basename(exe)}`, auth: true });
+    if (!c.ok) throw new Error(c.why);
   } catch (e) {
     runErr = e;
   }
@@ -338,6 +394,8 @@ function smokeAppImage(file) {
     // FUSE 없이 풀어서 실행한다(러너·컨테이너에 libfuse2가 없을 수 있다)
     const r = runSmoke(copy, { env: { APPIMAGE_EXTRACT_AND_RUN: '1' }, label: 'AppImage', auth: true });
     if (!r.ok) throw new Error(r.why);
+    const c = runCliSmoke(copy, { env: { APPIMAGE_EXTRACT_AND_RUN: '1' }, label: 'AppImage', auth: true });
+    if (!c.ok) throw new Error(c.why);
   } finally {
     rmSync(work, { recursive: true, force: true });
   }
@@ -361,6 +419,8 @@ function smokeDmg(dmg) {
     if (!existsSync(exe)) throw new Error(`CFBundleExecutable ${exeName}이 ${app}에 없다`);
     const r = runSmoke(exe, { label: `dmg ${app}`, auth: true });
     if (!r.ok) throw new Error(r.why);
+    const c = runCliSmoke(exe, { label: `dmg ${app}`, auth: true });
+    if (!c.ok) throw new Error(c.why);
   } finally {
     sh('hdiutil', ['detach', mnt]);
     rmSync(work, { recursive: true, force: true });
@@ -380,6 +440,8 @@ function smokeAppTar(tgz) {
     if (!existsSync(exe)) throw new Error(`CFBundleExecutable ${exeName}이 ${app}에 없다`);
     const r = runSmoke(exe, { label: `app.tar.gz ${app}`, auth: true });
     if (!r.ok) throw new Error(r.why);
+    const c = runCliSmoke(exe, { label: `app.tar.gz ${app}`, auth: true });
+    if (!c.ok) throw new Error(c.why);
   } finally {
     rmSync(work, { recursive: true, force: true });
   }
@@ -388,7 +450,44 @@ function smokeAppTar(tgz) {
 
 // ---- windows ----
 
-const exeIn = (dir) => one(readdirSync(dir).filter((n) => /\.exe$/i.test(n) && !/^uninstall\.exe$/i.test(n)), `${dir}의 앱 exe`);
+// 표의 windows.consoleExe(설치기가 앱 exe 옆에 놓는 콘솔 실행 파일). 없으면 null
+export const consoleExeName = (root = ROOT) => bundleSpec(root).windows?.consoleExe ?? null;
+
+// 설치 폴더의 앱 exe: 제거기와 콘솔 실행 파일을 뺀 .exe가 정확히 하나
+export function appExeIn(dir, files = readdirSync(dir), consoleExe = consoleExeName()) {
+  const skip = (n) => /^uninstall\.exe$/i.test(n) || (consoleExe && n.toLowerCase() === consoleExe.toLowerCase());
+  return one(files.filter((n) => /\.exe$/i.test(n) && !skip(n)), `${dir}의 앱 exe`);
+}
+const exeIn = (dir) => appExeIn(dir);
+
+// Windows GUI 실행 파일은 명령줄 하위 명령을 받으면 안내 한 줄을 쓰고 코드 2로 끝난다(받지도 창을 만들지도 않는다)
+export function guiRefusesCli(appExe, label = basename(appExe)) {
+  log(`${label}: ${basename(appExe)} help (GUI exe는 명령줄을 받지 않는다)`);
+  const work = mkdtempSync(join(tmpdir(), 'chzzk-gui-cli-'));
+  try {
+    const g = spawnSync(appExe, ['help'], { encoding: 'utf8', timeout: CLI_KILL_MS, killSignal: 'SIGKILL', env: { ...process.env, CHZZK_SMOKE_DIR: join(work, 'data') } });
+    if (g.error) return { ok: false, why: `${basename(appExe)} 실행 실패: ${g.error.message}` };
+    if (g.status !== 2) return { ok: false, why: `${basename(appExe)} help가 exit ${g.status}(GUI exe는 2여야 한다)` };
+    return { ok: true, why: null };
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+}
+
+// 설치된 콘솔 실행 파일로 명령줄 스모크 + GUI exe가 명령줄 하위 명령을 거부하는지(안내 뒤 코드 2, 창을 만들지 않는다).
+// 반환: { ok, why }. 설치 스모크는 이것을 제거 뒤에 판정한다
+export function smokeConsole(dir, label) {
+  const name = consoleExeName();
+  if (!name) return { ok: true, why: null };
+  const found = readdirSync(dir).find((n) => n.toLowerCase() === name.toLowerCase());
+  if (!found) return { ok: false, why: `${label}: 설치 폴더에 ${name}가 없다(${readdirSync(dir).join(', ')})` };
+  const c = runCliSmoke(join(dir, found), { label: `${label} ${found}`, auth: true });
+  if (!c.ok) return { ok: false, why: `${label}: ${c.why}` };
+  const app = appExeIn(dir);
+  const g = guiRefusesCli(join(dir, app), `${label} ${app}`);
+  if (!g.ok) return { ok: false, why: `${label}: ${g.why}` };
+  return { ok: true, why: null };
+}
 
 function installedDir(candidates, what) {
   return one(candidates.filter((d) => existsSync(d)), `${what} 설치 폴더(후보 ${candidates.join(', ')})`);
@@ -401,12 +500,14 @@ function smokeNsis(setup) {
   const dir = installedDir([join(local, name), join(local, 'Programs', name)], 'NSIS');
   const exe = join(dir, exeIn(dir));
   const r = runSmoke(exe, { label: `NSIS ${basename(exe)}`, auth: true });
+  const con = smokeConsole(dir, 'NSIS');
   const uninstall = join(dir, 'uninstall.exe');
   if (!existsSync(uninstall)) throw new Error(`${uninstall}가 없다`);
   sh(uninstall, ['/S']);
   // NSIS 제거기는 자신을 임시 폴더로 복사해 다시 띄우고 곧바로 끝난다. 폴더가 사라질 때까지 기다린다
   if (!waitGone(dir, WAIT_GONE_MS)) throw new Error(`제거 뒤 ${WAIT_GONE_MS / 1000}초가 지나도 ${dir}가 남아 있다: ${readdirSync(dir).join(', ')}`);
   if (!r.ok) throw new Error(r.why);
+  if (!con.ok) throw new Error(con.why);
   log('NSIS: 설치·실행·제거 통과');
 }
 
@@ -429,9 +530,11 @@ function smokeMsi(msi) {
     log(`MSI 설치 폴더: ${dir}`);
     const exe = join(dir, exeIn(dir));
     const r = runSmoke(exe, { label: `MSI ${basename(exe)}`, auth: true });
+    const con = smokeConsole(dir, 'MSI');
     sh('msiexec', ['/x', abs, '/qn', '/norestart', '/l*v', join(work, 'uninstall.log')], { ok: [0, 3010] });
     if (existsSync(exe)) throw new Error(`제거 뒤에도 ${exe}가 남아 있다`);
     if (!r.ok) throw new Error(r.why);
+    if (!con.ok) throw new Error(con.why);
   } catch (e) {
     for (const f of ['install.log', 'uninstall.log']) {
       const p = join(work, f);
@@ -485,6 +588,27 @@ function cmdBin(exe) {
   if (!r.ok) {
     console.error(`::error::smoke bin: ${r.why}`);
     return r.env ? 2 : 1;
+  }
+  // 명령줄 모드: macOS·Linux는 같은 실행 파일. Windows는 콘솔 실행 파일(chzzk-cli.exe)이 하고, GUI exe는 명령줄을 받지 않는다
+  if (!IS_WIN) {
+    const c = runCliSmoke(path, { label: 'debug 빌드' });
+    if (!c.ok) {
+      console.error(`::error::smoke bin(명령줄): ${c.why}`);
+      return 1;
+    }
+    return 0;
+  }
+  const name = consoleExeName();
+  const cli = name ? join(dirname(path), name) : null;
+  if (!cli || !existsSync(cli)) {
+    console.error(`smoke bin: ${cli ?? '콘솔 실행 파일'}가 없다(tauri-build gate의 debug 빌드가 tauri.windows.conf.json의 console-cli로 만든다)`);
+    return 2;
+  }
+  for (const c of [runCliSmoke(cli, { label: 'debug 빌드' }), guiRefusesCli(path, 'debug 빌드')]) {
+    if (!c.ok) {
+      console.error(`::error::smoke bin(명령줄): ${c.why}`);
+      return 1;
+    }
   }
   return 0;
 }

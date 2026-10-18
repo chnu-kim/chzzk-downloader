@@ -410,6 +410,25 @@ export const ko = {
   'notify.stalled': '받기가 멈췄어요',
   'notify.many': '{title} 외 {n}개',
   'power.reason': '치지직 영상 {n}개 받는 중',
+
+  // 명령줄(cli-mode.md §11). Rust 상수(`crates/shell/src/cli/copy.rs`)와 같은 글자다. 대조는 `app/src-tauri/src/cli_copy.rs`.
+  // 로그인 거부·오류의 첫 줄은 기존 `auth.*.title`을, 진행 단계는 `job.*`를 Rust 상수가 그대로 쓴다(같은 테스트가 본다)
+  'cli.loginNeeded.body': '로그인이 필요해요. `login`으로 로그인한 뒤 다시 실행해 주세요.',
+  'cli.login.waiting': '브라우저에서 로그인해 주세요. 끝나면 여기로 돌아와요. 그만두려면 이 키를 눌러 주세요: {interrupt}',
+  'cli.login.done': '로그인했어요: {name}',
+  'cli.login.already': '이미 로그인되어 있어요: {name}',
+  'cli.login.cancelled': '로그인을 그만뒀어요.',
+  'cli.login.timeout': '로그인 시간이 지났어요. 다시 실행해 주세요.',
+  'cli.login.openFailed': '브라우저를 열지 못했어요. 기본 브라우저를 확인한 뒤 다시 실행해 주세요.',
+  'cli.login.deniedNext': '허가를 받은 뒤 다시 `login`을 실행해 주세요.',
+  'cli.login.dailyLimitNext': '다음 날 다시 `login`을 실행해 주세요.',
+  'cli.login.disabled': '이 빌드는 로그인을 쓰지 않아요.',
+  'cli.appOpen.body': '앱이 열려 있어요. 앱을 닫은 뒤 다시 실행해 주세요.',
+  'cli.useConsoleExe': '명령줄에서는 같은 폴더의 chzzk-cli.exe를 써 주세요.',
+  'cli.busy.body': '명령줄에서 받는 중이에요. 끝난 뒤 다시 열어 주세요.',
+  'cli.paused.body': '멈췄어요. 같은 명령을 다시 실행하면 이어받아요.',
+  'cli.exists.label': '이미 있어요: {path}',
+  'cli.liveUnsupported.body': '생방송은 앱에서 녹화해 주세요.',
 } as const;
 
 export type CopyKey = keyof typeof ko;

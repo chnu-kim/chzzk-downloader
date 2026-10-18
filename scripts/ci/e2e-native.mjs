@@ -7,6 +7,10 @@
 //     → [다운로드] → 목록 항목 둘이 모두 "완료"(편집자 위임 ①, app.md 구현 중 변경 83)
 //   → 남의 영상 주소 → 카드가 "내 채널이나 맡은 채널의 영상만 받을 수 있어요"로 막히고 [다운로드]가 꺼짐
 //   → WebDriver execute/async로 enqueue를 직접 불러(웹뷰의 channelId를 본인 채널로 속여) 셸이 notOwnContent로 거부함(A5).
+// 그 뒤 앱을 닫고 **새 데이터 폴더**로 명령줄을 돌린다(cli-mode.md §14.3, Linux는 같은 `chzzk-app`을 DISPLAY 없이, Windows는
+// 콘솔 실행 파일 `chzzk-cli.exe`): 로그인 전 `download` → 코드 3(치지직 요청 0회) → `login`(E2E는 브라우저 대신 스텁 확인 페이지의 303을
+// 따라 앱 수신기에 건넨다) → 0 → `download` 본인·맡은 채널 영상 → 종료 코드 0과 stdout 경로·golden 해시, 남의 영상 → 코드 4와
+// 파일·.part 없음 → `status` 0 → 다시 `login`은 이미 로그인(0, 확인 페이지 요청 늘지 않음).
 // 앱은 CHZZK_E2E_API_BASE로 로컬 fixture 서버(e2e-fixture-server.mjs, testdata/만 서빙)에, CHZZK_E2E_WORKER_BASE로 Worker 스텁에
 // 붙고, CHZZK_E2E_DIR 아래만 쓴다.
 //
@@ -24,7 +28,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
@@ -46,7 +50,7 @@ import {
 } from './e2e-fixture-server.mjs';
 import { ROOT } from './gates.mjs';
 import { which } from './run.mjs';
-import { osKey, targetDir } from './smoke.mjs';
+import { consoleExeName, osKey, targetDir } from './smoke.mjs';
 
 const IS_WIN = process.platform === 'win32';
 export const DRIVER_PORT = 4444;
@@ -200,6 +204,132 @@ export function judgeWorker(workerLog) {
   return bad;
 }
 
+// 명령줄 단계 판정(순수): 종료 코드·stdout 경로·결과 폴더·golden 해시 → 문제 목록(빈 배열이면 통과).
+// runs = { locked, login, own, delegated, other, status, again }(각 { code, stdout }, locked는 requests도: 그 실행이 fixture 서버에
+// 낸 요청 수), files는 명령줄 결과 폴더의 모든 파일(상대 경로), outputs는 .mp4마다 { sha256, bytes }, out은 결과 폴더 절대 경로
+// (stdout 경로의 접두), serverLog는 fixture 서버의 전체 요청 기록, workerLog는 Worker 스텁의 전체 요청 기록(앱 단계 1번 + 명령줄 login 1번)
+export function judgeCli({ runs, files, outputs, out }, expected, serverLog, workerLog = []) {
+  const bad = [];
+  const code = (name, want) => {
+    const got = runs[name]?.code;
+    if (got !== want) bad.push(`명령줄 ${name}의 종료 코드가 ${got}이다(${want}여야 한다)`);
+  };
+  code('locked', 3);
+  code('login', 0);
+  code('own', 0);
+  code('delegated', 0);
+  code('other', 4);
+  code('status', 0);
+  code('again', 0);
+  // 로그인 전에는 네트워크로 나가지 않는다(게이트가 네트워크 전에 막는다)
+  if (runs.locked?.requests !== 0) bad.push(`로그인 전 명령줄이 치지직 요청을 ${runs.locked?.requests}번 냈다(0이어야 한다)`);
+  if ((runs.locked?.stdout ?? '').trim()) bad.push(`로그인 전 명령줄이 stdout에 무언가 냈다: ${runs.locked.stdout.trim()}`);
+  // 받은 영상은 stdout에 경로 한 줄뿐이다(진행·안내는 stderr)
+  for (const [name, who] of [['own', OWN_CHANNEL_NAME], ['delegated', DELEGATED_CHANNEL_NAME]]) {
+    const lines = (runs[name]?.stdout ?? '').split(/\r?\n/).filter(Boolean);
+    if (lines.length !== 1) bad.push(`명령줄 ${name}의 stdout이 ${lines.length}줄이다(경로 한 줄이어야 한다): ${JSON.stringify(lines).slice(0, 200)}`);
+    else if (!lines[0].startsWith(out) || !lines[0].endsWith('.mp4') || !basename(lines[0]).includes(who)) bad.push(`명령줄 ${name}의 stdout 경로가 결과 폴더(${out})의 ${who} 파일이 아니다: ${lines[0]}`);
+  }
+  if ((runs.other?.stdout ?? '').trim()) bad.push(`남의 영상 명령줄이 stdout에 경로를 냈다: ${runs.other.stdout.trim()}`);
+  const mp4 = files.filter((f) => f.endsWith('.mp4'));
+  if (mp4.length !== 2) bad.push(`명령줄 결과 .mp4가 ${mp4.length}개다(본인·맡은 채널 하나씩, 정확히 2개여야 한다): ${files.join(', ') || '(없음)'}`);
+  if (mp4.some((f) => f.includes(OTHER_CHANNEL_NAME))) bad.push('명령줄이 남의 채널 영상을 받았다');
+  const partial = files.filter((f) => /\.part$|\.part\.json$/.test(f));
+  if (partial.length) bad.push(`명령줄 결과에 남은 중간 파일: ${partial.join(', ')}`);
+  for (const f of mp4) {
+    const o = outputs?.[f];
+    const [which, want] = f.includes(DELEGATED_CHANNEL_NAME) ? ['full2_tagged_delegated.mp4', expected.delegated] : ['full2_tagged_own.mp4', expected.own];
+    if (!o || o.sha256 !== want.sha256 || o.bytes !== want.bytes) bad.push(`명령줄 결과 ${f}이(가) golden ${which}와 다르다(sha256 ${o?.sha256 ?? '-'} ${o?.bytes ?? '-'}B ≠ ${want.sha256} ${want.bytes}B)`);
+  }
+  const not200 = serverLog.filter((l) => l.status !== 200);
+  if (not200.length) bad.push(`명령줄 단계 뒤 fixture 서버에 200이 아닌 응답이 있다: ${not200.map((l) => `${l.method} ${l.path} ${l.status}`).join(', ')}`);
+  // Worker 스텁: 로그인 사슬(start 201·확인 페이지 303·redeem 200)이 앱 단계 한 번 + 명령줄 `login` 한 번이다. 이미 로그인된 `login`은 사슬을 돌지 않는다
+  const n = (m, p, st) => workerLog.filter((l) => l.method === m && l.path === p && l.status === st).length;
+  for (const [m, p, st] of [['POST', '/auth/start', 201], ['GET', `/auth/login/${STUB_HANDLE}`, 303], ['POST', '/auth/redeem', 200]]) {
+    if (n(m, p, st) !== 2) bad.push(`Worker 스텁이 ${m} ${p} ${st}을 ${n(m, p, st)}번 받았다(앱 한 번 + 명령줄 login 한 번, 정확히 2번이어야 한다)`);
+  }
+  const errs = workerLog.filter((l) => l.status >= 400 && !l.path.startsWith('/update/'));
+  if (errs.length) bad.push(`명령줄 단계 뒤 Worker 스텁에 오류 응답이 있다: ${errs.map((l) => `${l.method} ${l.path} ${l.status}`).join(', ')}`);
+  return bad;
+}
+
+// 명령줄 실행 파일: Linux는 앱 실행 파일 자체, Windows는 같은 폴더의 콘솔 실행 파일(표의 consoleExe)
+export function cliExeFor(appExe, win = IS_WIN, consoleExe = consoleExeName()) {
+  return win ? join(dirname(appExe), consoleExe) : appExe;
+}
+
+// 프로세스 하나를 비동기로 돌린다. fixture 서버·Worker 스텁이 이 프로세스(node) 안에 있어서 `spawnSync`는 쓸 수 없다:
+// 이벤트 루프가 막혀 스텁이 응답하지 못하고 명령줄이 10초 시간 초과로 끝난다.
+export function runProcess(cmd, args, { env, timeoutMs = 120_000 } = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(cmd, args, { env, stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (d) => (stdout += d));
+    child.stderr.on('data', (d) => (stderr += d));
+    const timer = setTimeout(() => child.kill('SIGKILL'), timeoutMs);
+    child.on('error', (e) => {
+      clearTimeout(timer);
+      reject(e);
+    });
+    child.on('close', (status, signal) => {
+      clearTimeout(timer);
+      resolve({ status: status ?? (signal ? 128 : null), stdout, stderr });
+    });
+  });
+}
+
+// 앱을 닫은 뒤 새 데이터 폴더로 명령줄을 돌린다. 반환: 통과 여부
+export async function cliPhase({ exe, env, server, worker, expected }) {
+  const cli = cliExeFor(exe);
+  if (!existsSync(cli)) {
+    console.error(`::error::e2e-native: 명령줄 실행 파일 ${cli}가 없다(Windows는 tauri.windows.conf.json의 console-cli feature가 만든다)`);
+    return false;
+  }
+  // 앱 단계의 세션과 섞이지 않게 새 데이터 폴더를 쓴다(로그인부터 명령줄이 한다)
+  const cliDir = mkdtempSync(join(tmpdir(), 'chzzk-e2e-cli-'));
+  const out = join(cliDir, 'cli-out');
+  // 화면 없이 돈다: Tauri를 만들지 않는다
+  const cliEnv = { ...env, CHZZK_E2E_DIR: cliDir };
+  delete cliEnv.DISPLAY;
+  delete cliEnv.WAYLAND_DISPLAY;
+  // 닫은 앱이 잠금을 놓을 필요는 없다(데이터 폴더가 다르다). 그래도 코드 5가 나오면 그대로 판정에 실린다
+  const runCli = async (args) => {
+    const before = server.log.length;
+    const r = await runProcess(cli, args, { env: cliEnv }).catch((e) => {
+      throw new Error(`${basename(cli)} ${args.join(' ')} 실행 실패: ${e.message}`);
+    });
+    log(`$ ${basename(cli)} ${args.join(' ')} → ${r.status}\n${r.stderr.slice(-600)}`);
+    return { code: r.status, stdout: r.stdout, requests: server.log.length - before };
+  };
+  try {
+    const runs = {};
+    runs.locked = await runCli(['download', HLS_URL, '--out', out]);
+    runs.login = await runCli(['login']);
+    runs.own = await runCli(['download', HLS_URL, '--out', out]);
+    runs.delegated = await runCli(['download', DELEGATED_URL, '--out', out]);
+    runs.other = await runCli(['download', OTHER_URL, '--out', out]);
+    runs.status = await runCli(['status']);
+    runs.again = await runCli(['login']);
+    const files = listFiles(out);
+    const outputs = {};
+    for (const f of files.filter((x) => x.endsWith('.mp4'))) {
+      const buf = readFileSync(join(out, f));
+      outputs[f] = { sha256: createHash('sha256').update(buf).digest('hex'), bytes: buf.length };
+    }
+    const bad = judgeCli({ runs, files, outputs, out }, expected, server.log, worker.log);
+    const result = { ok: bad.length === 0, cli: basename(cli), runs, files, outputs, problems: bad };
+    mkdirSync(join(ROOT, OUT_DIR), { recursive: true });
+    writeFileSync(join(ROOT, OUT_DIR, 'cli-result.json'), JSON.stringify(result, null, 2) + '\n');
+    for (const b of bad) console.error(`::error::e2e-native: ${b}`);
+    if (!bad.length) log(`명령줄 통과: ${basename(cli)} 로그인 전 3, login 0, download 본인·맡은 채널 0, 남의 영상 4, status 0, golden 해시 일치`);
+    else if (existsSync(join(cliDir, 'logs'))) cpSync(join(cliDir, 'logs'), join(ROOT, OUT_DIR, 'cli-app-logs'), { recursive: true });
+    return bad.length === 0;
+  } finally {
+    rmSync(cliDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
+  }
+}
+
 // WebView2 런타임 버전: EdgeUpdate Clients 아래에서 이름이 "Microsoft Edge WebView2 Runtime"인 키의 pv(Windows 레지스트리).
 // 앱 GUID를 적지 않고 이름으로 찾는다. 없으면 null.
 export const EDGEUPDATE_CLIENTS = [
@@ -336,6 +466,7 @@ export async function run(exe) {
   const wd = client(`http://127.0.0.1:${DRIVER_PORT}/`);
   let sid = null;
   let ok = false;
+  const expected = expectedOutputs();
   try {
     await until('tauri-driver 준비', async () => {
       if (exited !== null) throw new Error(`tauri-driver가 끝났다(${exited}): ${driverLog.join('').slice(-2000)}`);
@@ -518,7 +649,6 @@ export async function run(exe) {
       const buf = readFileSync(join(dl, f));
       outputs[f] = { sha256: createHash('sha256').update(buf).digest('hex'), bytes: buf.length };
     }
-    const expected = expectedOutputs();
     const bad = [...judge({ files, outputs }, server.log, expected), ...judgeWorker(worker.log)];
     const result = {
       ok: bad.length === 0,
@@ -543,6 +673,16 @@ export async function run(exe) {
     if (exited === null) {
       if (IS_WIN) spawnSync('taskkill', ['/T', '/F', '/PID', String(proc.pid)], { stdio: 'ignore' });
       else proc.kill('SIGTERM');
+    }
+    // 앱 단계가 통과했으면 새 데이터 폴더로 명령줄을 돌린다(앱은 위에서 닫았다)
+    if (ok) {
+      try {
+        ok = await cliPhase({ exe, env, server, worker, expected });
+      } catch (e) {
+        console.error(`::error::e2e-native: 명령줄 단계: ${e.message}`);
+        ok = false;
+      }
+      if (!ok) await keepDiagnostics(wd, null, e2eDir, driverLog);
     }
     await server.close();
     await worker.close();

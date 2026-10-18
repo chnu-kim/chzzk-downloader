@@ -3,6 +3,8 @@
 //! Dock·작업 표시줄 진행과 잠자기 방지(`status`), Windows WebView2 보강(`webview_win`).
 
 pub mod auth_io;
+pub mod cli;
+mod cli_copy;
 pub mod commands;
 #[cfg(feature = "e2e")]
 pub mod e2e;
@@ -409,6 +411,21 @@ fn startup_failed<R: Runtime>(
         .show(move |_| handle.exit(1));
 }
 
+/// 명령줄이 받는 중이라 GUI를 열 수 없을 때: main 창을 숨기고 안내 창을 띄운 뒤, 닫으면 `exit(0)`.
+/// 시작 실패 안내(`startup_failed`)와 같은 대화상자지만 실패가 아니라서 제목은 앱 이름(`app.title`)이다. 조용히 끝나면 "아이콘을 눌렀는데 아무것도 안 뜬다"가 된다.
+fn cli_busy_notice<R: Runtime>(app: &AppHandle<R>) {
+    use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.hide();
+    }
+    let handle = app.clone();
+    app.dialog()
+        .message(chzzk_shell::cli::copy::BUSY)
+        .title(chzzk_shell::cli::copy::APP_TITLE)
+        .kind(MessageDialogKind::Info)
+        .show(move |_| handle.exit(0));
+}
+
 /// 데이터 폴더의 잠금 파일 이름.
 pub const INSTANCE_LOCK_FILE: &str = "app.lock";
 
@@ -455,26 +472,26 @@ pub fn acquire_instance_lock(data_dir: &Path) -> InstanceLockState {
 
 /// 격리 실행의 경로·클라이언트·Worker 설정(E2E 빌드에서 환경 변수가 있을 때, `e2e.rs`). 보통 빌드는 늘 `None`이고
 /// 이 함수 말고는 E2E 코드가 없다(`release-hygiene`가 릴리스 바이너리로 확인한다).
-type Override = Option<(AppPaths, chzzk_core::ClientConfig, Option<WorkerBase>)>;
+pub(crate) type Override = Option<(AppPaths, chzzk_core::ClientConfig, Option<WorkerBase>)>;
 
 #[cfg(feature = "e2e")]
-fn e2e_override() -> Result<Override, String> {
+pub(crate) fn e2e_override() -> Result<Override, String> {
     Ok(e2e::E2eConfig::from_env()?.map(|c| (c.paths(), c.client(), c.worker_base.clone())))
 }
 
 #[cfg(not(feature = "e2e"))]
-fn e2e_override() -> Result<Override, String> {
+pub(crate) fn e2e_override() -> Result<Override, String> {
     Ok(None)
 }
 
 /// 격리 실행의 로그인 주소 열기·복사(`e2e.rs`): 브라우저를 띄우지 않는다. 보통 빌드는 늘 `None`
 #[cfg(feature = "e2e")]
-fn isolated_auth_io() -> Option<Arc<dyn auth_io::AuthIo>> {
+pub(crate) fn isolated_auth_io() -> Option<Arc<dyn auth_io::AuthIo>> {
     Some(Arc::new(e2e::E2eAuthIo::default()))
 }
 
 #[cfg(not(feature = "e2e"))]
-fn isolated_auth_io() -> Option<Arc<dyn auth_io::AuthIo>> {
+pub(crate) fn isolated_auth_io() -> Option<Arc<dyn auth_io::AuthIo>> {
     None
 }
 
@@ -573,12 +590,18 @@ fn setup<R: Runtime>(
             .ok()
             .and_then(|e| e.parent().map(PathBuf::from))
     };
-    match acquire_instance_lock(&paths.data) {
-        InstanceLockState::Acquired(lock) => {
+    match cli::acquire_gui_lock(&paths.data) {
+        cli::GuiLock::Acquired(lock) => {
             app.manage(lock);
         }
-        InstanceLockState::HeldElsewhere => {
-            // 같은 순간에 뜬 다른 실행이 이미 상태를 열었다. 창을 보이지 않고 조용히 끝낸다.
+        cli::GuiLock::CliBusy => {
+            // 명령줄이 받는 중이면(`cli.lock`이 잠겨 있다) 안내를 보이고 끝낸다(cli-mode.md §6.2 O1 (a)).
+            tracing::warn!("명령줄이 데이터 폴더를 쓰는 중이라 이 실행을 끝냄");
+            cli_busy_notice(app.handle());
+            return Ok(());
+        }
+        cli::GuiLock::OtherGui => {
+            // 같은 순간에 뜬 다른 GUI 실행이 이미 상태를 열었다: 창을 보이지 않고 조용히 끝낸다
             tracing::warn!("다른 실행이 데이터 폴더를 쓰는 중이라 이 실행을 끝냄");
             if let Some(w) = app.get_webview_window("main") {
                 let _ = w.hide();
@@ -586,7 +609,7 @@ fn setup<R: Runtime>(
             app.handle().exit(0);
             return Ok(());
         }
-        InstanceLockState::Unavailable(e) => {
+        cli::GuiLock::Unavailable(e) => {
             tracing::warn!(error = %e, "데이터 폴더 잠금을 쥐지 못해 잠금 없이 계속함");
         }
     }

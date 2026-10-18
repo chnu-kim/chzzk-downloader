@@ -9,7 +9,12 @@ import { pick } from './bundle.mjs';
 import { ROOT } from './gates.mjs';
 import {
   APT_OPTS,
+  appExeIn,
+  CLI_KILL_MS,
+  consoleExeName,
   bundleSpec,
+  checkCliHelp,
+  checkCliStatus,
   checkMarker,
   DIAG_TIMEOUT_MS,
   failureText,
@@ -232,5 +237,48 @@ test('combineSmokeErrors: 실행 오류만이면 그것, purge만이면 purge, �
 test('linux 설치 예산: 패키지 명령마다 바깥 제한 + 진단, 그 밖은 그대로', () => {
   const n = INSTALL_STEPS.linux;
   assert.equal(n.pkg, 4); // install 두 번, dpkg --configure -a, purge
-  assert.equal(installBudgetMs('linux'), n.sh * 240_000 + n.pkg * (PKG_TIMEOUT_MS + PKG_DIAG.length * DIAG_TIMEOUT_MS) + n.smoke * 120_000);
+  assert.equal(n.cli, 4); // deb·AppImage의 명령줄 help·status
+  assert.equal(installBudgetMs('linux'), n.sh * 240_000 + n.pkg * (PKG_TIMEOUT_MS + PKG_DIAG.length * DIAG_TIMEOUT_MS) + n.smoke * 120_000 + n.cli * CLI_KILL_MS);
+});
+
+test('명령줄 스모크: help는 0과 표의 말, status는 로그인 필요(3) 또는 로그인 안 씀(0)', () => {
+  const help = 'VOD 클립 다운로더 명령줄\ndownload <주소>\nlogin\n종료 코드: 0 성공\n';
+  assert.equal(checkCliHelp({ status: 0, stdout: help }).ok, true);
+  assert.match(checkCliHelp({ status: 2, stdout: help }).why, /exit 2/);
+  assert.match(checkCliHelp({ status: 0, stdout: '아무 말' }).why, /download/);
+
+  const out = (line) => `버전: 1.2.3\n${line}\n`;
+  const signedOut = out('로그인: 로그인 필요');
+  const noAuth = out('이 빌드는 로그인을 쓰지 않아요.');
+  assert.equal(checkCliStatus({ status: 3, stdout: signedOut }, '1.2.3').ok, true);
+  assert.equal(checkCliStatus({ status: 0, stdout: noAuth }, '1.2.3').ok, true);
+  // 출력과 코드가 어긋나면 실패
+  assert.equal(checkCliStatus({ status: 0, stdout: signedOut }, '1.2.3').ok, false);
+  assert.equal(checkCliStatus({ status: 3, stdout: noAuth }, '1.2.3').ok, false);
+  assert.equal(checkCliStatus({ status: 5, stdout: signedOut }, '1.2.3').ok, false);
+  // 버전이 다르면 실패
+  assert.match(checkCliStatus({ status: 3, stdout: signedOut }, '9.9.9').why, /버전/);
+  // 릴리스(auth true)는 로그인 필요여야 하고, auth false는 로그인 안 씀이어야 한다
+  assert.match(checkCliStatus({ status: 0, stdout: noAuth }, '1.2.3', { auth: true }).why, /로그인이 켜져/);
+  assert.equal(checkCliStatus({ status: 3, stdout: signedOut }, '1.2.3', { auth: true }).ok, true);
+  assert.equal(checkCliStatus({ status: 3, stdout: signedOut }, '1.2.3', { auth: false }).ok, false);
+});
+
+test('windows 설치 폴더: 앱 exe는 제거기·콘솔 실행 파일을 뺀 하나, 표의 consoleExe는 chzzk-cli.exe', () => {
+  assert.equal(consoleExeName(), 'chzzk-cli.exe');
+  const files = ['chzzk-app.exe', 'chzzk-cli.exe', 'uninstall.exe', 'resources.pak'];
+  assert.equal(appExeIn('d', files, 'chzzk-cli.exe'), 'chzzk-app.exe');
+  // 대소문자 무시
+  assert.equal(appExeIn('d', ['Chzzk-App.exe', 'CHZZK-CLI.EXE', 'Uninstall.exe'], 'chzzk-cli.exe'), 'Chzzk-App.exe');
+  // 콘솔 실행 파일을 모르면 exe가 둘이라 실패한다(예전 가정 "앱 exe 하나"가 깨졌다는 신호)
+  assert.throws(() => appExeIn('d', files, null), /정확히 하나/);
+  assert.throws(() => appExeIn('d', ['uninstall.exe', 'chzzk-cli.exe'], 'chzzk-cli.exe'), /정확히 하나/);
+});
+
+test('windows 설치 예산에 명령줄 스모크가 들어 있다', () => {
+  assert.equal(INSTALL_STEPS.windows.cli, 6); // NSIS·MSI 설치본마다 help·status·GUI exe 거부
+  assert.equal(
+    installBudgetMs('windows'),
+    INSTALL_STEPS.windows.sh * (240_000 + 2 * DIAG_TIMEOUT_MS) + INSTALL_STEPS.windows.smoke * (120_000 + 2 * DIAG_TIMEOUT_MS) + INSTALL_STEPS.windows.wait * 60_000 + 6 * CLI_KILL_MS,
+  );
 });

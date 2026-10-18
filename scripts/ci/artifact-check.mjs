@@ -9,7 +9,8 @@
 //                                                                           # 표식이 있고 cargo tree --features e2e에 e2e가 보여야 한다.
 //                                                                           # hygiene 검사가 e2e 빌드를 실제로 알아보는지(씨앗) 증명한다
 //
-// 기본 파일은 <target>/release/chzzk-app[.exe]. 종료 코드: 통과 0, 위반 1, 사용법·도구 오류 2.
+// 기본 파일은 <target>/release/chzzk-app[.exe]이고, 표(release/expected-artifacts.json)의 consoleExe가 있는 OS(Windows)는 그 콘솔 실행
+// 파일(chzzk-cli.exe)도 E2E 표식을 본다(hygiene, cli-mode.md §13). 종료 코드: 통과 0, 위반 1, 사용법·도구 오류 2.
 
 import { spawnSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync, realpathSync } from 'node:fs';
@@ -66,6 +67,13 @@ export function e2eFeatureLines(text) {
 }
 
 const defaultBin = (profile = 'release') => join(targetDir(), profile, `chzzk-app${osKey() === 'windows' ? '.exe' : ''}`);
+
+// 이 OS의 콘솔 실행 파일 경로(표의 consoleExe, 없으면 null)
+export function consoleBin(profile = 'release', os = osKey(), root = ROOT) {
+  const p = join(root, 'release/expected-artifacts.json');
+  const name = existsSync(p) ? JSON.parse(readFileSync(p, 'utf8'))[os]?.consoleExe : null;
+  return name ? join(targetDir(), profile, name) : null;
+}
 
 function cmdGlibc(file, max) {
   if (!existsSync(file)) {
@@ -198,7 +206,7 @@ export function sourceFiles(root = ROOT) {
   return out;
 }
 
-function cmdHygiene(file, dist = join(ROOT, APP_DIST), root = ROOT) {
+function cmdHygiene(file, dist = join(ROOT, APP_DIST), root = ROOT, extra = []) {
   // 소스 훑기는 바이너리·dist 없이도 돈다. 위반이면 이 단계만으로도 1
   const src = scanSources(sourceFiles(root));
   if (src.length) {
@@ -224,6 +232,16 @@ function cmdHygiene(file, dist = join(ROOT, APP_DIST), root = ROOT) {
     console.error(`::error::release-hygiene: ${file}에 ${E2E_MARK} 글자가 있다(e2e 코드가 릴리스에 들어갔다)`);
     bad++;
   } else console.log(`hygiene: ${file}에 ${E2E_MARK} 없음`);
+  // 같은 crate의 둘째 실행 파일(Windows 콘솔 실행 파일). 같은 rlib을 링크하므로 e2e 코드가 들어가면 여기도 표식이 보인다
+  for (const f of extra) {
+    if (!existsSync(f)) {
+      console.error(`::error::release-hygiene: ${f}가 없다(표의 consoleExe, tauri.windows.conf.json의 console-cli feature)`);
+      bad++;
+    } else if (hasMark(f)) {
+      console.error(`::error::release-hygiene: ${f}에 ${E2E_MARK} 글자가 있다(e2e 코드가 릴리스에 들어갔다)`);
+      bad++;
+    } else console.log(`hygiene: ${f}에 ${E2E_MARK} 없음`);
+  }
   let tree;
   try {
     tree = cargoTreeFeatures([]);
@@ -250,7 +268,11 @@ export function main(argv) {
     opts[rest[i].slice(2)] = rest[i + 1];
   }
   if (!opts.bad && cmd === 'glibc') return cmdGlibc(resolve(opts.file ?? defaultBin()), opts.max ?? GLIBC_MAX);
-  if (!opts.bad && cmd === 'hygiene' && opts.max === undefined) return cmdHygiene(resolve(opts.file ?? defaultBin()));
+  if (!opts.bad && cmd === 'hygiene' && opts.max === undefined) {
+    // --file을 주면 그 파일만, 아니면 기본 파일과 이 OS의 콘솔 실행 파일
+    const cli = opts.file === undefined ? consoleBin() : null;
+    return cmdHygiene(resolve(opts.file ?? defaultBin()), join(ROOT, APP_DIST), ROOT, cli ? [cli] : []);
+  }
   if (!opts.bad && cmd === 'hygiene-seed' && opts.max === undefined) return cmdHygieneSeed(resolve(opts.file ?? defaultBin('debug')));
   console.error('사용법: artifact-check.mjs glibc [--max x.y] [--file <경로>] | hygiene [--file <경로>] | hygiene-seed [--file <경로>]');
   return 2;

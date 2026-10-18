@@ -5,10 +5,11 @@ mod common;
 
 use std::path::Path;
 
+use chzzk_core::chat::SubtitleFormat;
 use chzzk_core::download::part::{PartFile, ProgressiveState, Sidecar};
 use chzzk_core::mpd::AUDIO_QUALITY_ID;
 use chzzk_core::{ClientConfig, ContentRef, Platform, PlaybackKind, RecentKind};
-use chzzk_shell::dto::{EnqueueRequest, JobStatus, TimeRangeDto};
+use chzzk_shell::dto::{EnqueueRequest, JobStatus, OnExisting, TimeRangeDto};
 use chzzk_shell::output::{OutputQuery, check_output};
 use chzzk_shell::services::{AppPaths, SettingsService, enqueue};
 use chzzk_shell::{ErrorCode, JobId, OwnershipGate};
@@ -245,6 +246,47 @@ async fn video_job_never_gets_m4a_output() {
     let job = h.mgr.enqueue(r, &h.defaults()).unwrap();
     assert!(job.output.ends_with("x.m4a.mp4"), "{}", job.output);
     assert!(!job.audio_only);
+}
+
+/// 완료된 오디오 작업에는 채팅만 받기도 막힌다(A9): 옆 파일이 `x.m4a.ass`가 되기 때문이다. 영상 작업은 같은 길로 통과한다.
+#[tokio::test(start_paused = true)]
+async fn chat_only_is_rejected_for_completed_audio_job() {
+    let h = Harness::new(2);
+    let a = h.mgr.enqueue(audio_request("a"), &h.defaults()).unwrap();
+    let v = h.enqueue("v");
+    until("완료", || {
+        h.status(a.id) == JobStatus::Completed && h.status(v.id) == JobStatus::Completed
+    })
+    .await;
+    // 가짜 백엔드는 파일을 쓰지 않으므로 영상 파일 유무 검사까지 가도록 두 출력을 만든다
+    std::fs::create_dir_all(h.downloads()).unwrap();
+    touch(Path::new(&a.output));
+    touch(Path::new(&v.output));
+
+    let ok = |_: &ContentRef| Ok(None);
+    let e = h
+        .mgr
+        .start_chat(a.id, false, OnExisting::Skip, SubtitleFormat::Ass, ok)
+        .unwrap_err();
+    assert_eq!(e.code, ErrorCode::InvalidInput);
+    assert!(e.message.contains("오디오만 받기"), "{}", e.message);
+    assert_eq!(
+        h.mgr.chat_content(a.id).unwrap_err().code,
+        ErrorCode::InvalidInput
+    );
+    assert_eq!(
+        h.mgr
+            .check_chat_output(a.id, SubtitleFormat::Ass)
+            .unwrap_err()
+            .code,
+        ErrorCode::InvalidInput
+    );
+    // 거부는 상태를 바꾸지 않는다
+    assert_eq!(h.status(a.id), JobStatus::Completed);
+
+    // 같은 조건의 영상 작업은 가드에 걸리지 않는다(가드가 영상까지 막지 않는지 확인)
+    assert!(h.mgr.chat_content(v.id).is_ok());
+    assert!(h.mgr.check_chat_output(v.id, SubtitleFormat::Ass).is_ok());
 }
 
 // ---------------------------------------------------------------------------

@@ -186,6 +186,7 @@
   - 오디오 + `save_chat`이면 `invalidInput`이다(A9). 문구는 채팅·영상 종류를 한 가드로 묶은 한 줄이다: "오디오만 받기는 채팅을 함께 받을 수 없고 일반 영상에서만 쓸 수 있습니다"(구현 중 확정, app.md 95-3. 기존 채팅 문구는 "영상 전체"를 말하는데 오디오는 영상이 아니라서 쓰지 않았다). 웹뷰는 이 오류를 정상 경로에서 보지 못한다(채팅 행이 없고 오디오 행은 일반 VOD 카드에만 있다).
   - 오디오인데 `expected_kind != Progressive`이거나 `content`가 `Video`가 아니면 `invalidInput`이다. 코어 검사(§4.5) 앞의 셸 방어선이다.
   - 구간은 `validated_range`가 이미 거부한다. 바꾸지 않는다.
+  - 완료 뒤 채팅만 받기(`fetch_chat`·`check_chat_output`)도 같은 이유로 막는다. `chat_target`이 화질 키가 `audio`인 작업을 같은 문구의 `invalidInput`으로 거부한다(Codex 리뷰 지적, 시험 `chat_only_is_rejected_for_completed_audio_job`).
 - **마지막 화질(A8)**: `enqueue_checked`(`services.rs:640-650`)는 `req.quality_id == AUDIO_QUALITY_ID`이면 `record_enqueued`에 빈 라벨을 넘긴다. 이 함수는 빈 라벨을 저장하지 않는다(`services.rs:489`). 최근 영상 기록은 그대로 남긴다.
 - **최근 영상 배지**: `recent_kind`는 `Progressive`라 "일반 VOD"다(`services.rs:658-665`). 바꾸지 않는다.
 

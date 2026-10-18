@@ -1546,6 +1546,13 @@ fn chat_target(rec: &JobRecord) -> Result<u64, AppError> {
             "영상 파일이 다른 영상으로 바뀌어 채팅을 받을 수 없습니다",
         ));
     }
+    // 오디오 작업은 출력이 `x.m4a`라 옆 파일이 `x.m4a.ass`가 된다(`sibling_path`는 `.mp4`만 뗀다). 채팅을 받지 못하게
+    // 한 enqueue 가드(audio-only.md A9)를 완료 뒤 채팅만 받기 경로에서도 지킨다
+    if rec.quality_id == AUDIO_QUALITY_ID {
+        return Err(AppError::invalid_input(
+            "오디오만 받기는 채팅을 함께 받을 수 없고 일반 영상에서만 쓸 수 있습니다",
+        ));
+    }
     match (&rec.content, rec.range) {
         (ContentRef::Video { video_no }, None) => Ok(*video_no),
         _ => Err(AppError::invalid_input(

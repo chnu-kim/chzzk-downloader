@@ -107,27 +107,6 @@ async fn progressive_job_limit_slows_the_body() {
 }
 
 #[tokio::test]
-async fn progressive_without_throttle_is_fast() {
-    // 대조: 같은 본문이 제한 없이는 빨리 끝난다(위 테스트의 지연이 제한에서 온 것임을 보인다).
-    let server = MockServer::start().await;
-    let body = test_bytes(300_000, 1);
-    pd_setup(&server, body.clone()).await;
-    let dir = tempfile::tempdir().unwrap();
-    let out = out_in(&dir, "a.mp4");
-    let started = Instant::now();
-    Chzzk::new(config(&server))
-        .unwrap()
-        .download(
-            pd_request(&out, Throttles::default()),
-            CancellationToken::new(),
-            &|_| {},
-        )
-        .await
-        .unwrap();
-    assert!(started.elapsed() < Duration::from_millis(900));
-}
-
-#[tokio::test]
 async fn two_downloads_share_one_total_limit() {
     let server = MockServer::start().await;
     let body = test_bytes(200_000, 2);

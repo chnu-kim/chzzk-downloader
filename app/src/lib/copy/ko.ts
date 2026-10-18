@@ -423,6 +423,7 @@ export const ko = {
   'cli.login.dailyLimitNext': '다음 날 다시 `login`을 실행해 주세요.',
   'cli.login.disabled': '이 빌드는 로그인을 쓰지 않아요.',
   'cli.appOpen.body': '앱이 열려 있어요. 앱을 닫은 뒤 다시 실행해 주세요.',
+  'cli.busy.body': '명령줄에서 받는 중이에요. 끝난 뒤 다시 열어 주세요.',
   'cli.paused.body': '멈췄어요. 같은 명령을 다시 실행하면 이어받아요.',
   'cli.exists.label': '이미 있어요: {path}',
   'cli.liveUnsupported.body': '생방송은 앱에서 녹화해 주세요.',

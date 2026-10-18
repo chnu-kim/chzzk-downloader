@@ -30,7 +30,7 @@ use crate::power::SleepGuard;
 pub use args::{Command, DownloadArgs, UsageError, parse, wants_cli};
 
 /// 종료 코드(cli-mode.md §9.3). 0~255 밖은 쓰지 않는다. `--smoke`의 2·3과 숫자가 겹치지만 두 모드는 한 실행에서 함께
-/// 일어나지 않는다(argv 갈림이 가른다, `smoke.rs`에도 같은 주석이 있다).
+/// 일어나지 않는다(argv 갈림이 가른다, 앱 crate `smoke.rs`에도 같은 주석이 있다).
 pub mod exit {
     /// 모두 받았다(이미 있어서 건너뛴 것 포함). `info`·`status`·`help` 성공. `login`으로 로그인했거나 이미 로그인됨
     pub const OK: u8 = 0;

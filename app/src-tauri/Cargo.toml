@@ -29,9 +29,12 @@ tauri-plugin-notification = "2.5.1"
 tauri-plugin-clipboard-manager = "2.4.1"
 chzzk-core = { path = "../../crates/core" }
 chzzk-shell = { path = "../../crates/shell" }
+# 명령줄 모드가 Tauri 없이 같은 폴더를 찾는다(Tauri path 규칙과 같은 7.0, Cargo.lock에 이미 있다)
+dirs = "7.0.0"
 # tauri::generate_context!()가 tauri.conf.json의 plugins(updater pubkey)를 serde_json 값으로 펼친다
 serde_json = "1.0.151"
-tokio = { version = "1.53.2", default-features = false, features = ["rt", "sync", "time"] }
+# 명령줄 모드(cli.rs): 멀티 스레드 런타임·Ctrl+C. 새 crate는 없다(Tauri가 이미 같은 기능을 쓴다)
+tokio = { version = "1.53.2", default-features = false, features = ["rt", "rt-multi-thread", "signal", "sync", "time"] }
 tracing = "0.1.44"
 tracing-appender = "0.2.5"
 tracing-subscriber = { version = "0.3.23", default-features = false, features = ["ansi", "env-filter", "fmt", "registry", "std"] }

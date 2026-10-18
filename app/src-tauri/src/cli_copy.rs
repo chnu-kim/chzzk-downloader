@@ -48,6 +48,7 @@ mod tests {
             ("cli.login.dailyLimitNext", LOGIN_DAILY_LIMIT_NEXT),
             ("cli.login.disabled", LOGIN_DISABLED),
             ("cli.appOpen.body", APP_OPEN),
+            ("cli.busy.body", BUSY),
             ("cli.paused.body", PAUSED),
             ("cli.exists.label", EXISTS),
             ("cli.liveUnsupported.body", LIVE_UNSUPPORTED),

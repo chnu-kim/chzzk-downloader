@@ -10,6 +10,8 @@ import { ROOT } from './gates.mjs';
 import {
   APT_OPTS,
   bundleSpec,
+  checkCliHelp,
+  checkCliStatus,
   checkMarker,
   DIAG_TIMEOUT_MS,
   failureText,
@@ -233,4 +235,27 @@ test('linux 설치 예산: 패키지 명령마다 바깥 제한 + 진단, 그 �
   const n = INSTALL_STEPS.linux;
   assert.equal(n.pkg, 4); // install 두 번, dpkg --configure -a, purge
   assert.equal(installBudgetMs('linux'), n.sh * 240_000 + n.pkg * (PKG_TIMEOUT_MS + PKG_DIAG.length * DIAG_TIMEOUT_MS) + n.smoke * 120_000);
+});
+
+test('명령줄 스모크: help는 0과 표의 말, status는 로그인 필요(3) 또는 로그인 안 씀(0)', () => {
+  const help = 'VOD 클립 다운로더 명령줄\ndownload <주소>\nlogin\n종료 코드: 0 성공\n';
+  assert.equal(checkCliHelp({ status: 0, stdout: help }).ok, true);
+  assert.match(checkCliHelp({ status: 2, stdout: help }).why, /exit 2/);
+  assert.match(checkCliHelp({ status: 0, stdout: '아무 말' }).why, /download/);
+
+  const out = (line) => `버전: 1.2.3\n${line}\n`;
+  const signedOut = out('로그인: 로그인 필요');
+  const noAuth = out('이 빌드는 로그인을 쓰지 않아요.');
+  assert.equal(checkCliStatus({ status: 3, stdout: signedOut }, '1.2.3').ok, true);
+  assert.equal(checkCliStatus({ status: 0, stdout: noAuth }, '1.2.3').ok, true);
+  // 출력과 코드가 어긋나면 실패
+  assert.equal(checkCliStatus({ status: 0, stdout: signedOut }, '1.2.3').ok, false);
+  assert.equal(checkCliStatus({ status: 3, stdout: noAuth }, '1.2.3').ok, false);
+  assert.equal(checkCliStatus({ status: 5, stdout: signedOut }, '1.2.3').ok, false);
+  // 버전이 다르면 실패
+  assert.match(checkCliStatus({ status: 3, stdout: signedOut }, '9.9.9').why, /버전/);
+  // 릴리스(auth true)는 로그인 필요여야 하고, auth false는 로그인 안 씀이어야 한다
+  assert.match(checkCliStatus({ status: 0, stdout: noAuth }, '1.2.3', { auth: true }).why, /로그인이 켜져/);
+  assert.equal(checkCliStatus({ status: 3, stdout: signedOut }, '1.2.3', { auth: true }).ok, true);
+  assert.equal(checkCliStatus({ status: 3, stdout: signedOut }, '1.2.3', { auth: false }).ok, false);
 });

@@ -36,6 +36,8 @@ pub const LOGIN_DAILY_LIMIT_NEXT: &str = "다음 날 다시 `login`을 실행해
 pub const LOGIN_DISABLED: &str = "이 빌드는 로그인을 쓰지 않아요.";
 /// `cli.appOpen.body`
 pub const APP_OPEN: &str = "앱이 열려 있어요. 앱을 닫은 뒤 다시 실행해 주세요.";
+/// `cli.busy.body`(GUI가 명령줄이 쥔 데이터 폴더 때문에 열리지 못할 때의 대화상자)
+pub const BUSY: &str = "명령줄에서 받는 중이에요. 끝난 뒤 다시 열어 주세요.";
 /// `cli.paused.body`
 pub const PAUSED: &str = "멈췄어요. 같은 명령을 다시 실행하면 이어받아요.";
 /// `cli.exists.label`

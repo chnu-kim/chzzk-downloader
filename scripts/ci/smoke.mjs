@@ -260,6 +260,57 @@ export function runSmoke(exe, { env = {}, label = basename(exe), auth } = {}) {
   }
 }
 
+// ---- 명령줄 스모크(cli-mode.md §14.3) ----
+// 같은 바이너리가 `help`·`status`에서는 Tauri를 만들지 않고 끝난다. 화면이 없어도(Linux는 DISPLAY·WAYLAND_DISPLAY를 지운다) 돈다.
+// `status`는 로그인을 쓰는 빌드(릴리스·CHZZK_WORKER_BASE)면 로그인 없는 임시 데이터 폴더에서 코드 3, 쓰지 않는 debug 빌드면 코드 0이다.
+export const CLI_KILL_MS = 60_000;
+
+// help 출력 → { ok, why }
+export function checkCliHelp({ status, stdout }) {
+  if (status !== 0) return { ok: false, why: `help가 exit ${status}(0이어야 한다)` };
+  for (const w of ['download', 'login', '종료 코드']) {
+    if (!stdout.includes(w)) return { ok: false, why: `help 출력에 "${w}"가 없다` };
+  }
+  return { ok: true, why: null };
+}
+
+// status 출력 → { ok, why }. auth가 true면 로그인 필요(3), false면 로그인 안 씀(0), undefined면 둘 중 하나
+export function checkCliStatus({ status, stdout }, version, { auth } = {}) {
+  if (!stdout.includes(`버전: ${version}`)) return { ok: false, why: `status 출력에 "버전: ${version}"이 없다: ${JSON.stringify(stdout.slice(0, 200))}` };
+  const signedOut = status === 3 && stdout.includes('로그인 필요');
+  const noAuth = status === 0 && stdout.includes('로그인을 쓰지 않아요');
+  if (!signedOut && !noAuth) return { ok: false, why: `status가 exit ${status}: 로그인 필요(3) 또는 로그인을 쓰지 않음(0)이어야 한다: ${JSON.stringify(stdout.slice(0, 200))}` };
+  if (auth === true && !signedOut) return { ok: false, why: '릴리스 번들은 로그인이 켜져 있어야 한다(status가 로그인 필요를 말하지 않았다)' };
+  if (auth === false && !noAuth) return { ok: false, why: 'status가 로그인을 쓰지 않는 빌드를 말하지 않았다' };
+  return { ok: true, why: null };
+}
+
+export function runCliSmoke(exe, { label = basename(exe), auth } = {}) {
+  const work = mkdtempSync(join(tmpdir(), 'chzzk-cli-'));
+  const env = { ...process.env, CHZZK_SMOKE_DIR: join(work, 'data') };
+  delete env.DISPLAY;
+  delete env.WAYLAND_DISPLAY;
+  const run = (args) => {
+    log(`${label}: ${basename(exe)} ${args.join(' ')}`);
+    const r = spawnSync(exe, args, { encoding: 'utf8', env, timeout: CLI_KILL_MS, killSignal: 'SIGKILL', maxBuffer: 1 << 24 });
+    return { status: r.status, stdout: r.stdout ?? '', stderr: r.stderr ?? '', error: r.error };
+  };
+  try {
+    const help = run(['help']);
+    if (help.error) return { ok: false, why: `명령줄 실행 실패: ${help.error.message}` };
+    const h = checkCliHelp(help);
+    if (!h.ok) return h;
+    const st = run(['status']);
+    if (st.error) return { ok: false, why: `명령줄 실행 실패: ${st.error.message}` };
+    const c = checkCliStatus(st, workspaceVersion(), { auth });
+    if (!c.ok) return c;
+    log(`${label}: 명령줄 help·status 통과`);
+    return { ok: true, why: null };
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+}
+
 // ---- 번들 표 ----
 
 export function bundleSpec(root = ROOT) {
@@ -485,6 +536,14 @@ function cmdBin(exe) {
   if (!r.ok) {
     console.error(`::error::smoke bin: ${r.why}`);
     return r.env ? 2 : 1;
+  }
+  // 명령줄 모드: macOS·Linux는 같은 실행 파일. Windows의 GUI exe는 명령줄을 받지 않는다(콘솔 실행 파일은 CLI-5)
+  if (!IS_WIN) {
+    const c = runCliSmoke(path, { label: 'debug 빌드' });
+    if (!c.ok) {
+      console.error(`::error::smoke bin(명령줄): ${c.why}`);
+      return 1;
+    }
   }
   return 0;
 }

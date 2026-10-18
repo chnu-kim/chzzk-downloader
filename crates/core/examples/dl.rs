@@ -8,6 +8,9 @@
 //!   --out <dir>       저장 폴더(기본: 현재 폴더)
 //!   --limit-mb <n>    n MiB를 받으면 취소하고 `.part`를 검사한 뒤 지운다
 //!   --keep            --limit-mb로 멈춘 `.part`를 지우지 않는다(다시 실행하면 이어받는다)
+//!   --no-meta         받은 mp4에 제목·채널·날짜·원본 주소·표지를 넣지 않는다(기본은 넣는다, 앱의 설정 기본값과 같다).
+//!                     끝나면 들어간 원자 이름과 표지 형식·크기만 찍는다(값은 찍지 않는다).
+//!                     --list는 표지 썸네일이 있는지 "있음/없음"만 찍는다(클립은 응답에 썸네일로 보이는 키가 있는지, 값은 읽지 않는다).
 //!   --range <A~B>     빠른 다시보기의 시각 구간만 받는다(A·B는 H:MM:SS, M:SS, 초). B를 비우면(A~) 끝까지.
 //!                     결과는 코어 경로 그대로(마무리 때 일반 mp4로 변환). 이름 끝에 " (H.MM.SS~H.MM.SS)"를 붙인다.
 //!                     이름이 길면 제목 쪽을 줄여 접미사를 지킨다.
@@ -43,6 +46,7 @@ struct Args {
     limit_bytes: Option<u64>,
     keep: bool,
     range: Option<TimeRange>,
+    no_meta: bool,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -56,12 +60,14 @@ fn parse_args() -> Result<Args, String> {
         limit_bytes: None,
         keep: false,
         range: None,
+        no_meta: false,
     };
     while let Some(arg) = it.next() {
         match arg.as_str() {
             "--list" => a.list = true,
             "--lowest" => a.lowest = true,
             "--keep" => a.keep = true,
+            "--no-meta" => a.no_meta = true,
             "--quality" => a.quality = Some(it.next().ok_or("--quality 값이 없습니다")?),
             "--out" => a.out = it.next().ok_or("--out 값이 없습니다")?.into(),
             "--range" => {
@@ -267,6 +273,65 @@ fn check_mp4(path: &std::path::Path) -> Result<(), String> {
     Ok(())
 }
 
+/// 받은 파일의 마지막 `moov`에 들어간 메타데이터 원자 이름과 표지 형식·크기만 찍는다(값은 찍지 않는다).
+/// 큰 파일을 통째로 읽지 않도록 상자 머리만 훑고 `moov`만 읽는다(PD는 앞, 빠른 다시보기·생방송은 끝에 있다).
+fn tags_summary(path: &std::path::Path) {
+    use std::io::{Read, Seek, SeekFrom};
+    // 최상위 상자 머리만 훑어 마지막 `moov`의 위치를 찾고 그 상자만 읽는다
+    let Ok(mut f) = std::fs::File::open(path) else {
+        return;
+    };
+    let Ok(len) = f.metadata().map(|m| m.len()) else {
+        return;
+    };
+    let mut off = 0u64;
+    let mut last: Option<(u64, u64)> = None;
+    while off + 8 <= len {
+        let mut h = [0u8; 16];
+        let n = (len - off).min(16) as usize;
+        if f.seek(SeekFrom::Start(off)).is_err() || f.read_exact(&mut h[..n]).is_err() {
+            return;
+        }
+        let size = match u32::from_be_bytes(h[..4].try_into().unwrap()) {
+            1 if n == 16 => u64::from_be_bytes(h[8..16].try_into().unwrap()),
+            0 => len - off,
+            s => u64::from(s),
+        };
+        if size < 8 {
+            return;
+        }
+        if &h[4..8] == b"moov" {
+            last = Some((off, size));
+        }
+        off += size;
+    }
+    let Some((moov_off, moov_size)) = last.filter(|(_, s)| *s <= 64 << 20) else {
+        println!("메타데이터: moov 없음");
+        return;
+    };
+    let mut buf = vec![0u8; moov_size as usize];
+    if f.seek(SeekFrom::Start(moov_off)).is_err() || f.read_exact(&mut buf).is_err() {
+        return;
+    }
+    match mp4::find_path(&buf, &["moov", "udta", "meta", "ilst"]).map(mp4::ilst_items) {
+        Some(Ok(items)) => {
+            let names: Vec<String> = items
+                .iter()
+                .map(|(k, t, v)| {
+                    if k == "covr" {
+                        format!("covr(type {t}, {})", format_bytes(v.len() as u64))
+                    } else {
+                        k.clone()
+                    }
+                })
+                .collect();
+            println!("메타데이터: {}", names.join(" "));
+        }
+        Some(Err(e)) => println!("메타데이터: 읽지 못함({e})"),
+        None => println!("메타데이터: 없음"),
+    }
+}
+
 #[tokio::main]
 async fn main() {
     let args = match parse_args() {
@@ -318,6 +383,19 @@ async fn run(args: Args) -> Result<(), String> {
         );
     }
     if args.list {
+        // 표지 썸네일: 일반 VOD·빠른 다시보기는 info의 주소, 클립은 응답에 썸네일로 보이는 키가 있는지(실측 M-meta-3)
+        let thumb = match &r.content {
+            chzzk_core::ContentRef::Clip { clip_id } => {
+                match chzzk.clip_has_thumbnail_field(clip_id).await {
+                    Ok(true) => "있음(클립 응답에 thumb 키)",
+                    Ok(false) => "없음(클립 응답에 thumb 키 없음)",
+                    Err(_) => "확인 못 함",
+                }
+            }
+            _ if r.thumbnail_url.is_some() => "있음",
+            _ => "없음",
+        };
+        println!("썸네일: {thumb}");
         return Ok(());
     }
     let idx = match (&args.quality, args.lowest) {
@@ -365,6 +443,7 @@ async fn run(args: Args) -> Result<(), String> {
         }
     };
     let req = DownloadRequest {
+        embed_metadata: !args.no_meta,
         throttle: Default::default(),
         content: r.content.clone(),
         quality_id: quality.id.clone(),
@@ -396,6 +475,7 @@ async fn run(args: Args) -> Result<(), String> {
                 // 실측 M-⑤-A(재조회 뒤 msn)에서 끝난 이유를 바로 본다
                 println!("녹화 끝: {:?}, 놓친 조각 {:?}", end.reason, end.gaps);
             }
+            tags_summary(&path);
             check_mp4(&path)
         }
         Ok(DownloadOutcome::Skipped { path }) => {

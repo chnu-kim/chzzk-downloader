@@ -55,6 +55,7 @@ fn out_path(dir: &tempfile::TempDir) -> PathBuf {
 
 fn pd_request(out: &Path) -> DownloadRequest {
     DownloadRequest {
+        embed_metadata: false,
         throttle: Default::default(),
         content: ContentRef::Video { video_no: VOD_NO },
         quality_id: QUALITY.into(),
@@ -70,6 +71,7 @@ fn pd_request(out: &Path) -> DownloadRequest {
 
 fn hls_request(out: &Path) -> DownloadRequest {
     DownloadRequest {
+        embed_metadata: false,
         throttle: Default::default(),
         content: ContentRef::Video { video_no: HLS_NO },
         quality_id: "144p".into(),

@@ -269,6 +269,7 @@ fn request(folder: &Path, name: &str, channel_id: Option<&str>) -> EnqueueReques
 
 fn record(id: u64, channel: Option<&str>, out: &Path) -> JobRecord {
     JobRecord {
+        embed_metadata: true,
         id: JobId(id),
         url: format!("https://chzzk.naver.com/video/{id}"),
         content: ContentRef::Video { video_no: id },
@@ -420,6 +421,7 @@ async fn enqueue_signed_out_is_not_logged_in_without_network() {
 /// 픽스처 VOD(채널 b2 = OWN)를 받는 멈춘 작업. 기록의 채널 ID는 아무 값이나 넣을 수 있다(`jobs.json` 변조 흉내)
 fn vod_record(id: u64, channel: Option<&str>, out: &Path) -> JobRecord {
     JobRecord {
+        embed_metadata: true,
         url: url(),
         content: ContentRef::Video { video_no: VOD_NO },
         ..record(id, channel, out)

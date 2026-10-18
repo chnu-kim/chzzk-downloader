@@ -127,7 +127,7 @@ fn trim_piece(s: &str, p: Platform) -> String {
 }
 
 /// UTF-8 `max` 바이트 이하가 되도록 char 경계에서 자른다.
-fn truncate_utf8(s: &str, max: usize) -> &str {
+pub(crate) fn truncate_utf8(s: &str, max: usize) -> &str {
     if s.len() <= max {
         return s;
     }

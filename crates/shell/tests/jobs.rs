@@ -9,6 +9,7 @@ use chzzk_shell::{AppError, JobId};
 
 fn record(id: u64, status: JobStatus) -> JobRecord {
     JobRecord {
+        embed_metadata: true,
         id: JobId(id),
         url: format!("https://chzzk.naver.com/video/{id}"),
         content: ContentRef::Video { video_no: id },

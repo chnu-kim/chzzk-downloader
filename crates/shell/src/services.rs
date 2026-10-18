@@ -243,6 +243,7 @@ impl SettingsService {
             download_folder: effective_folder(&s, &self.default_download),
             segment_concurrency: s.segment_concurrency,
             chat_subtitle: s.chat_subtitle,
+            embed_metadata: s.embed_metadata,
         }
     }
 
@@ -328,6 +329,9 @@ impl SettingsService {
             }
             if let Some(on) = patch.keep_awake {
                 s.keep_awake = on;
+            }
+            if let Some(on) = patch.embed_metadata {
+                s.embed_metadata = on;
             }
             if let Some(on) = patch.save_chat {
                 s.save_chat = on;
@@ -591,6 +595,7 @@ impl SettingsService {
             text_scale: s.text_scale,
             theme: s.theme,
             keep_awake: s.keep_awake,
+            embed_metadata: s.embed_metadata,
             save_chat: s.save_chat,
             chat_subtitle: s.chat_subtitle,
             file_name_template: s.file_name_template.clone(),

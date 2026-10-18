@@ -253,6 +253,8 @@ export const ko = {
   'settings.autoResume.help': '꺼져 있으면 위쪽 안내 줄에서 직접 이어받아요.',
   'settings.keepAwake': '받는 동안 컴퓨터가 잠들지 않게 하기',
   'settings.keepAwake.help': '끄면 한동안 자리를 비울 때 받기가 멈출 수 있어요. 화면은 꺼져도 돼요.',
+  'settings.embedMetadata': '받은 영상에 제목과 표지 넣기',
+  'settings.embedMetadata.help': '파일 목록과 영상 보는 앱에서 제목·채널·날짜·표지가 보여요. 원본 주소도 함께 들어가요.',
   'settings.fileNameTemplate': '파일 이름 규칙',
   'settings.fileNameTemplate.help':
     '쓸 수 있는 말: {title} 제목 · {channel} 채널 · {date} 날짜 · {no} 영상 번호 · {prefix} 날짜나 종류 머리.',

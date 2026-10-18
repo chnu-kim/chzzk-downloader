@@ -17,6 +17,7 @@ pub mod http;
 pub mod info;
 pub mod legacy;
 pub mod model;
+pub(crate) mod mp4meta;
 pub mod mpd;
 pub mod naming;
 pub mod ownership;

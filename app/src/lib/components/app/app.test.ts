@@ -28,6 +28,7 @@ const settingsDto: SettingsDto = {
   textScale: 'default',
   theme: 'system',
   keepAwake: true,
+  embedMetadata: true,
   saveChat: false,
   chatSubtitle: 'ass',
   fileNameTemplate: null,

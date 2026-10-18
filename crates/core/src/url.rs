@@ -52,6 +52,24 @@ pub fn parse_content_url(s: &str) -> Result<ContentRef, Error> {
     }
 }
 
+/// 컨텐츠의 공개 페이지 주소(mp4 메타데이터의 원본 주소, mp4-metadata.md §4.1).
+///
+/// `ContentRef`만 받으므로 쿼리·fragment·서명 토큰이 들어올 길이 없다. 붙여 넣은 문자열은 쓰지 않는다.
+/// 세그먼트는 인코딩되므로 `/`·`?`가 섞인 ID도 경로를 벗어나지 못한다.
+pub fn public_page_url(c: &ContentRef) -> String {
+    let mut u = Url::parse("https://chzzk.naver.com/").expect("상수 URL");
+    {
+        let mut segs = u.path_segments_mut().expect("https 기본 주소");
+        segs.pop_if_empty();
+        match c {
+            ContentRef::Video { video_no } => segs.extend(["video", &video_no.to_string()]),
+            ContentRef::Clip { clip_id } => segs.extend(["clips", clip_id.as_str()]),
+            ContentRef::Live { channel_id } => segs.extend(["live", channel_id.as_str()]),
+        };
+    }
+    u.into()
+}
+
 /// ASCII 숫자만 받는다(`u64::from_str`는 `+`를 허용하므로 먼저 검사한다).
 fn parse_video_no(s: &str) -> Result<u64, Error> {
     if s.is_empty() || !s.bytes().all(|b| b.is_ascii_digit()) {
@@ -102,6 +120,41 @@ mod tests {
                 "{bad}"
             );
         }
+    }
+
+    /// 공개 페이지 주소는 세 종류의 정해진 모양이고, 다시 해석하면 같은 `ContentRef`다.
+    #[test]
+    fn public_page_url_shapes() {
+        let live_id = "000000000000000000000000000000e5";
+        for (c, want) in [
+            (video(9000002), "https://chzzk.naver.com/video/9000002"),
+            (clip("Ab_c-9"), "https://chzzk.naver.com/clips/Ab_c-9"),
+            (
+                ContentRef::Live {
+                    channel_id: live_id.into(),
+                },
+                "https://chzzk.naver.com/live/000000000000000000000000000000e5",
+            ),
+        ] {
+            let got = public_page_url(&c);
+            assert_eq!(got, want);
+            assert_eq!(parse_content_url(&got).unwrap(), c);
+        }
+    }
+
+    /// 쿼리·fragment·경로 문자가 섞인 ID도 주소의 경로 한 칸으로만 들어간다(서명 쿼리가 새지 않는다).
+    #[test]
+    fn public_page_url_never_carries_query() {
+        let got = public_page_url(&clip("a?hdnts=SECRET#f/../x"));
+        assert!(!got.contains('?') && !got.contains('#'), "{got}");
+        assert!(
+            !got.contains("hdnts=SECRET") || got.contains("%3F"),
+            "{got}"
+        );
+        let parsed = ::url::Url::parse(&got).unwrap();
+        assert_eq!(parsed.query(), None);
+        assert_eq!(parsed.fragment(), None);
+        assert_eq!(parsed.path_segments().unwrap().count(), 2);
     }
 
     #[test]

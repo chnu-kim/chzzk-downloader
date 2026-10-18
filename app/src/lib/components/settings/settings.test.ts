@@ -45,6 +45,7 @@ const base: SettingsDto = {
   textScale: 'default',
   theme: 'system',
   keepAwake: true,
+  embedMetadata: true,
   saveChat: false,
   chatSubtitle: 'ass',
   fileNameTemplate: null,
@@ -149,6 +150,18 @@ describe('설정: 즉시 저장', () => {
     expect(sw).toHaveAccessibleDescription(t('settings.keepAwake.help'));
     await user.click(sw);
     expect(api.updateSettings).toHaveBeenLastCalledWith({ keepAwake: false });
+  });
+
+  it('제목과 표지 넣기 토글: 기본 켬, 끄면 embedMetadata 패치를 바로 보낸다(도움말이 설명으로 이어진다)', async () => {
+    const user = userEvent.setup();
+    render(SettingsView);
+    const sw = screen.getByRole('switch', { name: t('settings.embedMetadata') });
+    expect(sw).toHaveAttribute('aria-checked', 'true');
+    expect(sw).toHaveAccessibleDescription(t('settings.embedMetadata.help'));
+    await user.click(sw);
+    expect(api.updateSettings).toHaveBeenLastCalledWith({ embedMetadata: false });
+    // 원본 주소가 따라간다는 사실을 도움말이 알린다
+    expect(t('settings.embedMetadata.help')).toContain('원본 주소');
   });
 
   it('속도 상한: 합계·영상 하나 두 Select, 제한 없음 + 프리셋(OS 진법 MB), 도움말이 설명으로 이어진다', async () => {

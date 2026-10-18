@@ -36,6 +36,7 @@ const PD_MEDIA: &str = "/m1/pd/a.mp4";
 fn pd_request(out: &Path, throttles: Throttles) -> DownloadRequest {
     DownloadRequest {
         throttle: throttles,
+        embed_metadata: false,
         content: ContentRef::Video { video_no: VOD_NO },
         quality_id: PD_QUALITY.into(),
         expected_kind: PlaybackKind::Progressive,
@@ -301,6 +302,7 @@ async fn serve_segments(stamps: Arc<Stamps>) -> std::net::SocketAddr {
 fn hls_request(out: &Path, concurrency: u8, throttles: Throttles) -> DownloadRequest {
     DownloadRequest {
         throttle: throttles,
+        embed_metadata: false,
         content: ContentRef::Video { video_no: HLS_NO },
         quality_id: "144p".into(),
         expected_kind: PlaybackKind::LiveRewindHls,

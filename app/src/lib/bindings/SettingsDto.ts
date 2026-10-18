@@ -33,6 +33,10 @@ theme: Theme,
  */
 keepAwake: boolean, 
 /**
+ * 받은 mp4에 제목·채널·날짜·원본 주소와 표지를 넣는다(기본 켜짐, mp4-metadata.md §9). 작업을 추가할 때 값이 고정된다
+ */
+embedMetadata: boolean, 
+/**
  * 영상과 함께 채팅도 받기(기본 꺼짐, 마지막 선택, chat.md §4.4)
  */
 saveChat: boolean, 

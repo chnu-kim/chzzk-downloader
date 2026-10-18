@@ -264,6 +264,12 @@ pub fn output_path(folder: &Path, filename: &str, p: Platform) -> PathBuf {
 /// `output_path`의 확장자 지정판. 확장자는 `ext`(대소문자 무시)로 끝나지 않으면 붙인다. 규칙은 `output_path`와 같다.
 /// `"x.mp4"`를 `M4a`로 만들면 `x.mp4.m4a`다(UI는 확장자 없는 이름만 보낸다).
 pub fn output_path_ext(folder: &Path, filename: &str, ext: MediaExt, p: Platform) -> PathBuf {
+    folder.join(output_file_name_ext(filename, ext, p))
+}
+
+/// `output_path_ext`가 폴더에 붙이는 마지막 이름. 경로를 거치지 않는 문자열이라 호스트 경로 해석(Windows의 `a:` 드라이브
+/// 접두사 등)에 기대지 않고 이름만 비교할 수 있다.
+pub fn output_file_name_ext(filename: &str, ext: MediaExt, p: Platform) -> String {
     let ext = ext.as_str();
     let mut name = sanitize_filename(filename, p);
     if !name.to_ascii_lowercase().ends_with(ext) {
@@ -274,7 +280,7 @@ pub fn output_path_ext(folder: &Path, filename: &str, ext: MediaExt, p: Platform
         let base = trim_piece(truncate_utf8(base, MAX_FILENAME_BYTES - ext.len()), p);
         name = sanitize_filename(&format!("{base}{tail}"), p);
     }
-    folder.join(name)
+    name
 }
 
 /// 카드 제안 이름: 만든 이름에서 `.mp4`를 뗀 것. 셸이 이 값을 입력칸에 넣고, 받을 때 `output_path`가 다시 정리해

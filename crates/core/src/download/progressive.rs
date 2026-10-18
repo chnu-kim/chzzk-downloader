@@ -25,7 +25,7 @@ use super::retry::{Failure, Patience, classify_failure};
 use super::{DownloadOutcome, Job, finish};
 use crate::error::Error;
 use crate::model::{PdRep, PlaybackKind, Source};
-use crate::mpd::select_pd;
+use crate::mpd::{AUDIO_QUALITY_ID, select_pd};
 
 /// 바이트 기준 checkpoint 주기.
 const CHECKPOINT_BYTES: u64 = 64 << 20;
@@ -40,6 +40,18 @@ pub(crate) async fn run(
 ) -> Result<DownloadOutcome, Error> {
     let mut url = select_pd(&reps, &job.req.quality_id)?.url.clone();
     let mut resumed_from = part.as_ref().map_or(0, PartFile::written);
+    // 오디오는 마무리가 받은 파일 뒤에 `moov`를 붙여 `.part`가 `total_len`보다 길어진다(audio-only.md A7). 마무리 직전에
+    // 죽었거나 `finalize`가 `TargetExists`로 끝나 그 상태가 남았다면 요청하지 않는다: 그대로 `Range: bytes={written}-`를
+    // 보내면 서버가 416을 주고 `total != offset`이라 이미 다 받은 작업이 `SourceChanged`로 실패한다. 마무리의 변환은
+    // 멱등이라(`AlreadyFlat`, 도중에 끊겼으면 `resume`이 꼬리를 자르고 다시 바꾼다) 바로 `finish`로 가면 된다.
+    // 비디오 PD에는 열지 않는다(`written > total`이 생길 경로가 없고, 지금의 416 확인 동작을 바꾸지 않는다).
+    if job.req.quality_id == AUDIO_QUALITY_ID
+        && let Some(p) = part.as_ref()
+        && let Some(total) = p.staged().progressive.and_then(|s| s.total_len)
+        && p.written() >= total
+    {
+        return finish(job, part, resumed_from).await;
+    }
     let policy = job.chzzk.config().retry;
     // 진전 없이 연달아 실패한 요청 수
     let mut attempts = 0u32;

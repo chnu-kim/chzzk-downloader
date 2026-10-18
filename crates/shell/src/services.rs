@@ -18,6 +18,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock};
 use std::time::Duration;
 
 use chzzk_core::download::MAX_CONCURRENCY;
+use chzzk_core::mpd::AUDIO_QUALITY_ID;
 use chzzk_core::naming::{DEFAULT_TEMPLATE, parse_template};
 use chzzk_core::settings::{MAX_RECENT_VODS, SETTINGS_FILE, normalize_rate_limit};
 use chzzk_core::{
@@ -671,11 +672,14 @@ where
     if gate.is_enabled() {
         req.channel_id = owner;
     }
-    let (url, title, label) = (
-        req.url.clone(),
-        req.title.clone(),
-        req.quality_label.clone(),
-    );
+    // 오디오만 받기는 마지막 화질로 기억하지 않는다: 기억하면 한 번 고른 뒤 모든 영상이 오디오로 시작한다(audio-only.md A8).
+    // 빈 라벨은 `record_enqueued`가 저장하지 않는다(최근 영상은 그대로 남긴다)
+    let label = if req.quality_id == AUDIO_QUALITY_ID {
+        String::new()
+    } else {
+        req.quality_label.clone()
+    };
+    let (url, title) = (req.url.clone(), req.title.clone());
     let kind = recent_kind(&req.content, req.expected_kind);
     let date = req.content_date.clone();
     let job = manager.enqueue(req, &settings.job_defaults())?;

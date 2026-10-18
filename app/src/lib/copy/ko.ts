@@ -66,6 +66,7 @@ export const ko = {
 
   'quality.title': '화질',
   'quality.best': '가장 좋은 화질',
+  'quality.audioOnly': '오디오만',
 
   'range.toggle': '일부만 받기',
   'range.label': '구간',

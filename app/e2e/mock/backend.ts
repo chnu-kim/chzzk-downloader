@@ -81,6 +81,9 @@ function rangeSuffix(r: TimeRangeDto): string {
   return ` (${dots(r.startMs)}~${r.endMs == null ? '' : dots(r.endMs)})`;
 }
 
+/** 셸 `MediaExt::for_quality` 흉내: 화질 키가 `audio`면 `.m4a`, 그 밖은 `.mp4` */
+const extFor = (qualityId: string): string => (qualityId === 'audio' ? '.m4a' : '.mp4');
+
 /** 로그인 없이 부를 수 있는 command(crates/shell/src/gate.rs OPEN_COMMANDS와 같다, src/lib/gate-sync.test.ts) */
 export const OPEN_COMMANDS = [
   'app_info',
@@ -473,7 +476,8 @@ export function install(scenario: Scenario = {}): E2EController {
       // 셸 흉내(range.md §4.2): 구간이 있으면 이름 끝에 ` (H.MM.SS~H.MM.SS)`를 붙이고 `truncated`가 true다(번호 이름은 흉내 내지 않는다)
       const range = a.range as TimeRangeDto | null | undefined;
       const finalName = range ? `${fileName}${rangeSuffix(range)}` : fileName;
-      const path = `${folder}/${finalName}.mp4`;
+      const ext = extFor(a.qualityId as string);
+      const path = `${folder}/${finalName}${ext}`;
       const dup = [...jobs.values()].find((j) => j.output === path && ['queued', 'running', 'pausing', 'paused'].includes(j.status));
       const over = outputs[fileName];
       const r: OutputCheck = {
@@ -488,7 +492,7 @@ export function install(scenario: Scenario = {}): E2EController {
         ...over,
       };
       // 셸 흉내(chat.md §4.4): 시나리오가 이름을 주지 않았으면 같은 이름의 영상 하나가 겹친다(채팅 파일은 흉내 내지 않는다)
-      if (r.exists && over?.conflictNames === undefined) r.conflictNames = [`${finalName}.mp4`];
+      if (r.exists && over?.conflictNames === undefined) r.conflictNames = [`${finalName}${ext}`];
       return r;
     },
     // 셸 흉내(chat.md §4.5): 채팅 파일 충돌은 흉내 내지 않는다(늘 없음). 완료가 아니면 invalidInput
@@ -533,7 +537,9 @@ export function install(scenario: Scenario = {}): E2EController {
         kind: req.content.kind,
         playbackKind: req.expectedKind,
         qualityLabel: req.qualityLabel,
-        output: `${req.folder ?? settings.effectiveDownloadFolder}/${req.fileName}.mp4`,
+        // 셸 흉내: 오디오만 작업은 화질 키(`audio`)로 정하고 저장하지 않는다
+        audioOnly: req.qualityId === 'audio',
+        output: `${req.folder ?? settings.effectiveDownloadFolder}/${req.fileName}${extFor(req.qualityId)}`,
         status: 'queued',
         progress: null,
         error: null,
@@ -549,6 +555,10 @@ export function install(scenario: Scenario = {}): E2EController {
         chat: req.saveChat ? waitingChat(settings.chatSubtitle, req.onExisting) : null,
       };
       if (req.saveChat && (req.content.kind !== 'video' || req.range)) throw err('invalidInput');
+      // 셸 흉내(audio-only.md A9): 오디오는 채팅·클립·생방송·빠른 다시보기와 함께 쓰지 못한다
+      if (req.qualityId === 'audio' && (req.saveChat || req.content.kind !== 'video' || req.expectedKind !== 'progressive')) {
+        throw err('invalidInput');
+      }
       put(job, 'added');
       return job;
     },

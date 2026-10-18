@@ -198,6 +198,7 @@ mod tests {
             kind: ContentKindDto::Video,
             playback_kind: PlaybackKind::Progressive,
             quality_label: String::new(),
+            audio_only: false,
             output: String::new(),
             status,
             progress: None,

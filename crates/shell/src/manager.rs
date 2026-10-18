@@ -35,7 +35,8 @@ use chzzk_core::chat::{
     ChatOutcome, ChatProgress, ChatRequest, SubtitleFormat, chat_partial_bytes,
     discard_chat_partial,
 };
-use chzzk_core::naming::output_path;
+use chzzk_core::mpd::AUDIO_QUALITY_ID;
+use chzzk_core::naming::{MediaExt, output_path_ext};
 use chzzk_core::{
     CancellationToken, ContentRef, Discarded, DownloadOutcome, DownloadRequest, Error, Phase,
     PlaybackKind, Progress, RateKnob, Throttle, Throttles, TimeRange, discard_partial,
@@ -566,9 +567,27 @@ impl<B: Backend> DownloadManager<B> {
                 "채팅은 영상 전체를 받을 때만 함께 받을 수 있습니다",
             ));
         }
+        // 오디오만 받기는 일반 VOD(progressive)만 된다. 화면은 일반 VOD 카드에서만 이 행을 보이므로 정상 경로에서는 오지
+        // 않고, 어긋난 요청을 조용히 받지 않으려는 방어선이다(코어 `AudioOutputMismatch`보다 앞, audio-only.md A9).
+        // 구간은 위 `validated_range`가 이미 거부한다(구간은 빠른 다시보기만). 채팅은 자막 이름이 `x.m4a.ass`가 되므로 막는다
+        if req.quality_id == AUDIO_QUALITY_ID
+            && (req.save_chat
+                || req.expected_kind != PlaybackKind::Progressive
+                || !matches!(req.content, ContentRef::Video { .. }))
+        {
+            return Err(AppError::invalid_input(
+                "오디오만 받기는 채팅을 함께 받을 수 없고 일반 영상에서만 쓸 수 있습니다",
+            ));
+        }
         let folder = resolve_folder(req.folder.as_deref(), &defaults.download_folder)?;
-        // 이름은 `check_output`이 접미사까지 붙여 돌려준 최종 이름이다. 여기서는 다시 붙이지 않는다(range.md §4.2)
-        let output = output_path(&folder, &req.file_name, volume::platform_for_dir(&folder));
+        // 이름은 `check_output`이 접미사까지 붙여 돌려준 최종 이름이다. 여기서는 다시 붙이지 않는다(range.md §4.2).
+        // 확장자는 화질 키로 정한다(`check_output`과 같은 규칙, 웹뷰가 따로 보낸 플래그는 없다)
+        let output = output_path_ext(
+            &folder,
+            &req.file_name,
+            MediaExt::for_quality(&req.quality_id),
+            volume::platform_for_dir(&folder),
+        );
 
         let mut st = self.inner.lock();
         if let Some(other) = st.active_with_output(&output, None) {
@@ -1528,6 +1547,13 @@ fn chat_target(rec: &JobRecord) -> Result<u64, AppError> {
     if rec.output_replaced {
         return Err(AppError::invalid_input(
             "영상 파일이 다른 영상으로 바뀌어 채팅을 받을 수 없습니다",
+        ));
+    }
+    // 오디오 작업은 출력이 `x.m4a`라 옆 파일이 `x.m4a.ass`가 된다(`sibling_path`는 `.mp4`만 뗀다). 채팅을 받지 못하게
+    // 한 enqueue 가드(audio-only.md A9)를 완료 뒤 채팅만 받기 경로에서도 지킨다
+    if rec.quality_id == AUDIO_QUALITY_ID {
+        return Err(AppError::invalid_input(
+            "오디오만 받기는 채팅을 함께 받을 수 없고 일반 영상에서만 쓸 수 있습니다",
         ));
     }
     match (&rec.content, rec.range) {

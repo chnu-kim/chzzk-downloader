@@ -15,14 +15,13 @@ use chzzk_core::chat::SubtitleFormat;
 use chzzk_core::chat::collect::RECORD_EXT;
 use chzzk_core::download::part::part_path;
 use chzzk_core::naming::sibling_path;
-use chzzk_core::naming::{MAX_FILENAME_BYTES, output_path, range_stem, range_suffix};
+use chzzk_core::naming::{
+    MAX_FILENAME_BYTES, MediaExt, output_file_name_ext, output_path_ext, range_stem, range_suffix,
+};
 use chzzk_core::{ContentRef, Platform, PlaybackKind, TimeRange};
 
 use crate::dto::{JobId, OutputCheck, PartialInfo};
 use crate::jobs::read_sidecar;
-
-/// 확장자(`output_path`가 붙이는 것).
-const EXT: &str = ".mp4";
 
 /// 번호 이름을 찾는 상한. 넘으면 `free_file_name = None`.
 pub const MAX_NUMBERED: u32 = 9999;
@@ -49,8 +48,10 @@ pub fn check_output(q: &OutputQuery<'_>, active: &dyn Fn(&Path) -> Option<JobId>
         Some(r) => range_stem(q.file_name, r, q.platform),
         None => q.file_name.to_string(),
     };
-    let path = output_path(q.folder, &named, q.platform);
-    let file_name = stem(&path);
+    // 확장자는 화질 키로 정한다(오디오만 받기 `.m4a`). 웹뷰가 따로 보낸 플래그는 믿지 않는다(audio-only.md A5)
+    let ext = MediaExt::for_quality(q.quality_id);
+    let path = output_path_ext(q.folder, &named, ext, q.platform);
+    let file_name = entered_name(&named, ext, q.platform);
     let truncated = file_name != q.file_name;
     let conflict_names = conflict_names(&path, q.chat);
     let exists = !conflict_names.is_empty();
@@ -59,6 +60,7 @@ pub fn check_output(q: &OutputQuery<'_>, active: &dyn Fn(&Path) -> Option<JobId>
         free_name(
             q.folder,
             &file_name,
+            ext,
             q.range.as_ref(),
             q.chat,
             q.platform,
@@ -100,25 +102,40 @@ fn conflict_names(video: &Path, chat: Option<SubtitleFormat>) -> Vec<String> {
         .collect()
 }
 
-/// 최종 경로의 이름에서 `.mp4`(대소문자 무시)를 뗀 것.
-fn stem(path: &Path) -> String {
-    let name = path
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    if name.len() >= EXT.len() && name[name.len() - EXT.len()..].eq_ignore_ascii_case(EXT) {
-        name[..name.len() - EXT.len()].to_string()
+/// 등록(`enqueue`)이 `output_path_ext`에 그대로 넣었을 때 `named`와 같은 최종 이름이 나오는 이름. 검사·표시·등록·저장이 한 경로를 쓰게 한다.
+///
+/// 보통은 확장자를 뗀 이름이다. 그런데 `output_path_ext`는 이미 확장자로 끝나는 이름에 확장자를 더 붙이지 않으므로,
+/// 뗀 이름이 다시 확장자로 끝나거나(`x.m4a.m4a` → `x.m4a`) 대소문자가 다르면(`x.M4A` → `x.m4a`) 뗀 이름을 넣어서는
+/// 같은 이름이 나오지 않는다. 그때는 확장자까지 붙은 이름을 돌려준다(이미 확장자로 끝나 그대로 저장된다).
+///
+/// 비교는 경로가 아니라 이름 문자열로 한다: 호스트가 Windows면 `a:b`의 `a:`를 경로가 드라이브 접두사로 떼기 때문이다.
+fn entered_name(named: &str, ext: MediaExt, p: Platform) -> String {
+    let full = output_file_name_ext(named, ext, p);
+    let stem = strip_ext(&full, ext);
+    if output_file_name_ext(&stem, ext, p) == full {
+        stem
     } else {
-        name
+        full
+    }
+}
+
+/// 최종 이름에서 확장자(`.mp4`·`.m4a`, 대소문자 무시)를 뗀 것.
+fn strip_ext(name: &str, ext: MediaExt) -> String {
+    let ext = ext.as_str();
+    if name.len() >= ext.len() && name[name.len() - ext.len()..].eq_ignore_ascii_case(ext) {
+        name[..name.len() - ext.len()].to_string()
+    } else {
+        name.to_string()
     }
 }
 
 /// `"{name} (2)"`, `(3)` … 중 완성 파일·`.part`·활성 작업(채팅을 함께 받으면 그 채팅 파일도) 어디에도 없는 첫 이름.
-/// 번호가 잘리지 않도록 이름을 먼저 줄여 `.mp4`까지 200바이트 안에 둔다.
+/// 번호가 잘리지 않도록 이름을 먼저 줄여 확장자까지 200바이트 안에 둔다.
 /// 구간 이름이면 `{제목을 줄인 것}{구간 접미사} ({n})`이다: 줄이는 쪽은 제목이고 접미사는 번호 앞에 그대로 남는다.
 fn free_name(
     folder: &Path,
     name: &str,
+    ext: MediaExt,
     range: Option<&TimeRange>,
     chat: Option<SubtitleFormat>,
     p: Platform,
@@ -128,14 +145,15 @@ fn free_name(
     let title = name.strip_suffix(range_tail.as_str()).unwrap_or(name);
     for n in 2..=MAX_NUMBERED {
         let number = format!(" ({n})");
-        let room = MAX_FILENAME_BYTES - EXT.len() - number.len() - range_tail.len();
+        let room = MAX_FILENAME_BYTES - ext.as_str().len() - number.len() - range_tail.len();
         let base = truncate_utf8(title, room);
         let base = if range.is_some() {
             base.trim_end()
         } else {
             base
         };
-        let candidate: PathBuf = output_path(folder, &format!("{base}{range_tail}{number}"), p);
+        let entered = format!("{base}{range_tail}{number}");
+        let candidate: PathBuf = output_path_ext(folder, &entered, ext, p);
         // 채팅을 함께 받으면 그 번호의 채팅 파일(과 받다 만 기록)도 비어 있어야 한다: 세 이름이 모두 빈 번호
         let chat_free = chat.is_none_or(|s| {
             chat_paths(&candidate, s)
@@ -147,7 +165,7 @@ fn free_name(
             && chat_free
             && active(&candidate).is_none()
         {
-            return Some(stem(&candidate));
+            return Some(entered_name(&entered, ext, p));
         }
     }
     None
@@ -191,4 +209,35 @@ fn partial_info(
             recording: false,
         },
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 이름 비교는 경로 해석(Windows 호스트의 `a:` 드라이브 접두사)에 기대지 않는다: 콜론이 든 이름도 호스트와 무관하게 같다.
+    #[test]
+    fn entered_name_keeps_colon_names_without_path_parsing() {
+        for p in [Platform::Linux, Platform::MacOs] {
+            for ext in [MediaExt::Mp4, MediaExt::M4a] {
+                let named = "a:b?c (1.02.03~2.00.00)";
+                let got = entered_name(named, ext, p);
+                assert!(got.ends_with(" (1.02.03~2.00.00)"), "{p:?} {got}");
+                assert!(got.starts_with("a"), "{p:?} {got}");
+                assert_eq!(
+                    output_file_name_ext(&got, ext, p),
+                    output_file_name_ext(named, ext, p)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn entered_name_falls_back_to_full_name_when_stem_is_not_stable() {
+        let got = entered_name("x.m4a.m4a", MediaExt::M4a, Platform::Linux);
+        assert_eq!(
+            output_file_name_ext(&got, MediaExt::M4a, Platform::Linux),
+            output_file_name_ext("x.m4a.m4a", MediaExt::M4a, Platform::Linux)
+        );
+    }
 }

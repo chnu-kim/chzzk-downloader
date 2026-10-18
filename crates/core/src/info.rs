@@ -263,6 +263,7 @@ impl EncodingTrack {
             height: self.video_height,
             bandwidth: self.video_bit_rate,
             frame_rate: self.video_frame_rate,
+            audio_only: false,
         }
     }
 }

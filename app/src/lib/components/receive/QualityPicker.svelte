@@ -1,10 +1,10 @@
 <script lang="ts">
   // 화질 라디오 행(system/patterns.md §6.5, components.md §2.7). 꼬리표 `quality.best`는 늘 가장 높은 화질 행에 붙고
-  // 기본 선택과 무관하다. 행의 면은 FieldRow 값 열 x에서 시작한다.
+  // 기본 선택과 무관하다. 맨 끝의 "오디오만" 행(`audioOnly`)은 꼬리표도 fps도 없다. 행의 면은 FieldRow 값 열 x에서 시작한다.
   import type { QualityDto } from '../../bindings';
   import { t } from '../../copy/ko';
   import { sizeBaseOf } from '../../format/bytes';
-  import { bestQualityIndex, qualityFps, qualitySize } from '../../receive';
+  import { bestQualityIndex, qualityFps, qualityRowLabel, qualitySize } from '../../receive';
   import { platform } from '../../stores/platform.svelte';
   import FieldRow from '../ui/FieldRow.svelte';
   import RadioGroup from '../ui/RadioGroup.svelte';
@@ -18,7 +18,7 @@
 
   let { qualities, durationSecs, selected = $bindable() }: Props = $props();
 
-  const options = $derived(qualities.map((q, i) => ({ id: q.id, value: i, label: q.label })));
+  const options = $derived(qualities.map((q, i) => ({ id: q.id, value: i, label: qualityRowLabel(q) })));
   const best = $derived(bestQualityIndex(qualities));
 </script>
 

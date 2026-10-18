@@ -16,7 +16,11 @@ export type JobDto = { id: JobId, url: string, title: string, channelName: strin
 /**
  * 작업의 컨텐츠 채널 ID(없으면 null). 로그인을 쓰는 빌드는 셸이 검증한 값, 쓰지 않는 빌드는 요청 값이다. 막힌 작업 안내에 쓴다
  */
-channelId: string | null, kind: ContentKind, playbackKind: PlaybackKind, qualityLabel: string, output: string, status: JobStatus, 
+channelId: string | null, kind: ContentKind, playbackKind: PlaybackKind, qualityLabel: string, 
+/**
+ * 오디오만 받는 작업(화질 키가 `audio`). 저장하지 않고 `qualityId`로 계산한다(audio-only.md A10)
+ */
+audioOnly: boolean, output: string, status: JobStatus, 
 /**
  * 마지막 진행률(running·pausing·paused에서 표시)
  */

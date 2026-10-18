@@ -10,8 +10,24 @@ export function quality(over: Partial<QualityDto> = {}): QualityDto {
     height: 1080,
     bandwidth: 8_000_000,
     frameRate: '60.0',
+    audioOnly: false,
     ...over,
   };
+}
+
+/** 오디오만 받기 행(일반 VOD에 서버 오디오 트랙이 있을 때만 맨 끝에 온다, 셸 `QualityDto`와 같은 모양) */
+export function audioQuality(over: Partial<QualityDto> = {}): QualityDto {
+  return quality({
+    id: 'audio',
+    label: 'audio',
+    resolution: null,
+    width: null,
+    height: null,
+    bandwidth: 128_000,
+    frameRate: null,
+    audioOnly: true,
+    ...over,
+  });
 }
 
 export function resolved(over: Partial<ResolvedDto> = {}): ResolvedDto {
@@ -39,6 +55,19 @@ export function resolved(over: Partial<ResolvedDto> = {}): ResolvedDto {
     ownership: 'unchecked',
     ...over,
   };
+}
+
+/** 일반 VOD(progressive) 카드: 비디오 화질 둘 + 맨 끝 "오디오만" 행 */
+export function vodResolved(over: Partial<ResolvedDto> = {}): ResolvedDto {
+  return resolved({
+    playbackKind: 'progressive',
+    qualities: [
+      quality(),
+      quality({ id: 'q720', label: '720p', resolution: 720, width: 1280, height: 720, bandwidth: 4_000_000 }),
+      audioQuality(),
+    ],
+    ...over,
+  });
 }
 
 /** 진행 중인 생방송 카드: 길이를 모르고(durationSecs 없음) 화질 크기 예상이 없다. 합성 채널 ID */

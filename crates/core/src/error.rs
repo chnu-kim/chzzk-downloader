@@ -101,6 +101,9 @@ pub enum Unsupported {
     Skip,
     /// 구간 받기는 빠른 다시보기(HLS)만 된다(클립·일반 VOD·생방송 요청에 구간)
     RangeNotHls,
+    /// 오디오만 받기의 화질(`"audio"`)과 출력 확장자(`.m4a`)가 맞지 않거나, 일반 VOD(progressive)가 아닌 요청이다
+    /// (audio-only.md A5). 정상 UI 흐름에서는 나오지 않는 방어선이다.
+    AudioOutputMismatch,
 }
 
 /// UI 분기용 오류 종류. `Error::kind()`로 얻는다.
@@ -239,6 +242,11 @@ mod tests {
             Error::Unsupported(Unsupported::RangeNotHls).kind(),
             ErrorKind::Unsupported
         );
+        assert_eq!(
+            Error::Unsupported(Unsupported::AudioOutputMismatch).kind(),
+            ErrorKind::Unsupported
+        );
+        assert!(!Error::Unsupported(Unsupported::AudioOutputMismatch).is_resumable());
     }
 
     #[test]

@@ -10,7 +10,7 @@
 <Representation id="00000000-0000-0000-0000-0000000000b2" bandwidth="200000" width="256" height="144" frameRate="30" codecs="avc1.4d401f,mp4a.40.2" nvod:m3u="https://vod.example.invalid/hls/00000000-0000-0000-0000-0000000000b2.m3u8?_lsu_sa_=0000"><nvod:Label kind="qualityId">144P_256_128_64</nvod:Label><nvod:Label kind="fps">30</nvod:Label><nvod:Label kind="resolution">144</nvod:Label><BaseURL>https://vod.example.invalid/hls/00000000-0000-0000-0000-0000000000b2/?_lsu_sa_=0000</BaseURL><SegmentTemplate media="seg_$Number$.ts" initialization="init.ts" timescale="1000" duration="2000" startNumber="1"/></Representation>
 </AdaptationSet>
 <AdaptationSet mimeType="audio/mp4">
-<Representation id="00000000-0000-0000-0000-0000000000b3" bandwidth="128000" mimeType="audio/mp4" codecs="mp4a.40.2"><nvod:Label kind="qualityId">AUDIO_128</nvod:Label><BaseURL>https://vod.example.invalid/vod/000000000000000000000000000000000B02/audio/0.m4a?_lsu_sa_=0000</BaseURL><SegmentList timescale="1000" duration="2000"><Initialization range="0-999"/><SegmentURL mediaRange="1000-1999"/></SegmentList></Representation>
+<Representation id="00000000-0000-0000-0000-0000000000b3" bandwidth="128000" mimeType="audio/mp4" codecs="mp4a.40.2" audioSamplingRate="48000"><nvod:Label kind="qualityId">AUDIO_128</nvod:Label><BaseURL>https://vod.example.invalid/vod/000000000000000000000000000000000B02/audio/0.m4a?_lsu_sa_=0000</BaseURL><SegmentList timescale="1000" duration="2000"><Initialization range="0-999"/><SegmentURL mediaRange="1000-1999"/></SegmentList></Representation>
 </AdaptationSet>
 </Period>
 </MPD>

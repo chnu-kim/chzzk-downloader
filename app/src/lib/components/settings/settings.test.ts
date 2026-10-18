@@ -1,7 +1,8 @@
 import { render, screen, waitFor, within } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AppError, AppInfo, AuthStatusDto, Os, SettingsDto } from '../../bindings';
+import type { AppError, AppInfo, AuthStatusDto, FileNameTemplatePreview, Os, SettingsDto } from '../../bindings';
+import { DEFAULT_FILE_NAME_TEMPLATE } from '../../fileNameTemplate';
 import { errorCopy } from '../../copy/errors';
 import { t } from '../../copy/ko';
 import { revealLabel } from '../../platform';
@@ -16,6 +17,7 @@ vi.mock('../../api', () => ({
   pickFolder: vi.fn(),
   openAppFolder: vi.fn(),
   openWebPage: vi.fn(),
+  previewFileNameTemplate: vi.fn(),
 }));
 
 const api = await import('../../api');
@@ -70,6 +72,7 @@ beforeEach(() => {
   for (const f of Object.values(api)) vi.mocked(f as () => unknown).mockReset();
   vi.mocked(api.updateSettings).mockImplementation(async (p) => ({ ...settings.dto!, ...(p as object) }) as SettingsDto);
   vi.mocked(api.openAppFolder).mockResolvedValue();
+  vi.mocked(api.previewFileNameTemplate).mockImplementation(async (tpl) => previewFor(tpl));
   settings.dto = { ...base };
   settings.info = { ...info };
   settings.saveError = null;
@@ -83,6 +86,21 @@ beforeEach(() => {
   document.documentElement.removeAttribute('data-theme');
   toasts.clear();
 });
+
+/** 셸 `preview_file_name_template` 흉내: `{foo}`는 모르는 토큰, `{`는 짝 오류, 나머지는 예시 이름 */
+function previewFor(tpl: string): FileNameTemplatePreview {
+  if (tpl.includes('{foo}')) return { status: 'invalid', error: { kind: 'unknownToken', token: 'foo' } };
+  if (tpl.endsWith('{')) return { status: 'invalid', error: { kind: 'unbalancedBrace' } };
+  const name = tpl === DEFAULT_FILE_NAME_TEMPLATE ? '[261018] 채널이름 - 저녁 방송.mp4' : `${tpl.replace('{date}', '261018').replace('{title}', '저녁 방송')}.mp4`;
+  return {
+    status: 'ok',
+    names: [
+      { kind: 'video', name },
+      { kind: 'clip', name: '클립.mp4' },
+      { kind: 'live', name: '생방송.mp4' },
+    ],
+  };
+}
 
 const signedIn: AuthStatusDto = {
   state: 'signedIn',
@@ -285,7 +303,7 @@ describe('설정: 네이버 로그인 정보', () => {
 
     await user.type(aut, 'AUTVALUE');
     await user.type(ses, 'SESVALUE');
-    await user.click(screen.getByRole('button', { name: t('settings.cookie.save') }));
+    await user.click(screen.getByRole('button', { name: t('common.save') }));
     expect(api.setNaverCookies).toHaveBeenCalledWith('AUTVALUE', 'SESVALUE');
     await waitFor(() => expect(aut).toHaveValue(''));
     expect(ses).toHaveValue('');
@@ -296,7 +314,7 @@ describe('설정: 네이버 로그인 정보', () => {
     render(SettingsView);
     await openCookies(user);
     await user.type(screen.getByLabelText('NID_AUT', { selector: 'input' }), 'A');
-    await user.click(screen.getByRole('button', { name: t('settings.cookie.save') }));
+    await user.click(screen.getByRole('button', { name: t('common.save') }));
     expect(api.setNaverCookies).not.toHaveBeenCalled();
     expect(screen.getByText(t('settings.cookie.bothRequired'))).toBeInTheDocument();
     expect(screen.getByLabelText('NID_SES', { selector: 'input' })).toHaveAttribute('aria-invalid', 'true');
@@ -451,5 +469,107 @@ describe('D3: 첫 실행에 이전 설정을 찾음', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     expect(api.importLegacy).not.toHaveBeenCalled();
     expect(settings.legacyPromptDone).toBe(true);
+  });
+});
+
+describe('설정: 파일 이름 규칙', () => {
+  const field = () => screen.getByRole('textbox', { name: t('settings.fileNameTemplate') });
+  const saveButton = () => screen.queryByRole('button', { name: t('common.save') });
+  const resetButton = () => screen.queryByRole('button', { name: t('settings.fileNameTemplate.reset') });
+
+  async function replace(user: ReturnType<typeof userEvent.setup>, value: string) {
+    await user.clear(field());
+    if (value) await user.paste(value);
+  }
+
+  it('규칙이 없으면 기본 템플릿을 보이고 [저장]·[기본값으로]는 없다. 예시 이름이 뜨고 도움말이 설명으로 이어진다', async () => {
+    render(SettingsView);
+    expect(field()).toHaveValue(DEFAULT_FILE_NAME_TEMPLATE);
+    expect(field()).toHaveAccessibleDescription(t('settings.fileNameTemplate.help'));
+    expect(saveButton()).toBeNull();
+    expect(resetButton()).toBeNull();
+    expect(await screen.findByText(t('settings.fileNameTemplate.preview', { name: '[261018] 채널이름 - 저녁 방송.mp4' }))).toBeInTheDocument();
+  });
+
+  it('치는 동안 예시 이름만 바뀐다. 읽을 수 없는 값이어도 오류는 보이지 않고 예시 줄만 빈다', async () => {
+    const user = userEvent.setup();
+    render(SettingsView);
+    await replace(user, '{date}_{title}');
+    expect(await screen.findByText(t('settings.fileNameTemplate.preview', { name: '261018_저녁 방송.mp4' }))).toBeInTheDocument();
+    expect(saveButton()).not.toBeNull();
+    expect(resetButton()).not.toBeNull();
+
+    await replace(user, '{foo}');
+    await waitFor(() => expect(screen.queryByText(/^예: /)).toBeNull());
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(field()).not.toHaveAttribute('aria-invalid');
+    expect(api.updateSettings).not.toHaveBeenCalled();
+  });
+
+  it('[저장]은 지금 값을 새로 검증한다. 읽을 수 없으면 저장하지 않고 칸 아래 오류·aria-invalid·포커스', async () => {
+    const user = userEvent.setup();
+    render(SettingsView);
+    await replace(user, '{foo}');
+    await user.click(saveButton()!);
+    expect(api.updateSettings).not.toHaveBeenCalled();
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(t('settings.fileNameTemplate.error.unknown', { token: '{foo}' }));
+    expect(field()).toHaveAttribute('aria-invalid', 'true');
+    expect(field()).toHaveAccessibleDescription(expect.stringContaining('{foo}'));
+    expect(field()).toHaveFocus();
+    // 입력은 지우지 않는다
+    expect(field()).toHaveValue('{foo}');
+
+    // 다시 고치기 시작하면 오류가 걷힌다
+    await user.paste('x');
+    expect(screen.queryByRole('alert')).toBeNull();
+
+    await replace(user, 'abc{');
+    await user.click(saveButton()!);
+    expect(await screen.findByRole('alert')).toHaveTextContent(t('settings.fileNameTemplate.error.brace'));
+  });
+
+  it('올바른 값은 저장하고, [기본값으로]는 확인 없이 규칙을 지워 기본 템플릿으로 돌린다', async () => {
+    const user = userEvent.setup();
+    render(SettingsView);
+    await replace(user, '{date}_{title}');
+    await user.click(saveButton()!);
+    expect(api.updateSettings).toHaveBeenLastCalledWith({ fileNameTemplate: '{date}_{title}' });
+    await waitFor(() => expect(saveButton()).toBeNull());
+    expect(field()).toHaveValue('{date}_{title}');
+    expect(resetButton()).not.toBeNull();
+
+    await user.click(resetButton()!);
+    expect(api.updateSettings).toHaveBeenLastCalledWith({ fileNameTemplate: null });
+    await waitFor(() => expect(field()).toHaveValue(DEFAULT_FILE_NAME_TEMPLATE));
+    expect(resetButton()).toBeNull();
+    expect(saveButton()).toBeNull();
+  });
+
+  it('저장된 규칙이 있으면 그 값을 보이고 [기본값으로]가 있다. 저장 전에 입력만 바꾼 값은 저장하지 않고 되돌릴 수 있다', async () => {
+    settings.dto = { ...base, fileNameTemplate: '{title}' };
+    const user = userEvent.setup();
+    render(SettingsView);
+    expect(field()).toHaveValue('{title}');
+    expect(saveButton()).toBeNull();
+    expect(resetButton()).not.toBeNull();
+
+    // 기본 규칙 상태에서 입력만 바꾸고 [기본값으로]: 저장된 규칙이 없으니 저장 요청 없이 입력만 돌아온다
+    settings.dto = { ...base };
+    await waitFor(() => expect(field()).toHaveValue(DEFAULT_FILE_NAME_TEMPLATE));
+    await replace(user, '{date}_{title}');
+    await user.click(resetButton()!);
+    expect(field()).toHaveValue(DEFAULT_FILE_NAME_TEMPLATE);
+    expect(api.updateSettings).not.toHaveBeenCalled();
+  });
+
+  it('저장이 거부되면 입력을 지우지 않고 칸 아래에 오류를 보인다', async () => {
+    vi.mocked(api.updateSettings).mockRejectedValueOnce(appError('invalidInput'));
+    const user = userEvent.setup();
+    render(SettingsView);
+    await replace(user, '{date}_{title}');
+    await user.click(saveButton()!);
+    expect(await screen.findByRole('alert')).toBeInTheDocument();
+    expect(field()).toHaveValue('{date}_{title}');
   });
 });

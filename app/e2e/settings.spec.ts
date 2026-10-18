@@ -1,5 +1,6 @@
 // 설정(S2), 글자 크기·모양, 비활성 창, 닫기 가드(D1).
 import type { AuthStatusDto } from '../src/lib/bindings';
+import { resolved } from '../src/test/fixtures';
 import { revealLabel, t } from './copy';
 import { expect, test } from './fixtures';
 
@@ -38,11 +39,11 @@ test('설정: 값을 바꾸면 바로 저장하고, 쿠키는 저장 뒤 다시 
   await expect(page.getByLabel('NID_AUT', { exact: true })).toHaveCount(0);
   await page.locator('summary', { hasText: t('settings.advanced') }).click();
   await app.axe('쿠키 섹션');
-  await page.getByRole('button', { name: t('settings.cookie.save'), exact: true }).click();
+  await page.getByRole('button', { name: t('common.save'), exact: true }).click();
   await expect(page.getByText(t('settings.cookie.bothRequired'))).toBeVisible();
   await page.getByLabel('NID_AUT', { exact: true }).fill('e2e-aut');
   await page.getByLabel('NID_SES', { exact: true }).fill('e2e-ses');
-  await page.getByRole('button', { name: t('settings.cookie.save'), exact: true }).click();
+  await page.getByRole('button', { name: t('common.save'), exact: true }).click();
   await expect(page.getByText(t('settings.cookie.saved'), { exact: true })).toBeVisible();
   expect(await app.args('set_naver_cookies')).toEqual([{ nidAut: 'e2e-aut', nidSes: 'e2e-ses' }]);
   await expect(page.getByLabel('NID_AUT', { exact: true })).toHaveValue('');
@@ -171,4 +172,56 @@ test('이전 설정을 찾았다는 확인(D3)에서 [나중에]는 가져오지
   await dialog.getByRole('button', { name: t('common.later') }).click();
   await expect(dialog).toBeHidden();
   expect(await app.cmds()).not.toContain('import_legacy');
+});
+
+test('파일 이름 규칙: 기본 문자열 · 예시 · 저장 때만 오류 · 저장 · 기본값으로 · 카드 제안 이름', async ({ app }) => {
+  const { page } = app;
+  const r = resolved();
+  await app.open({ resolve: { [r.url]: r } });
+  await page.getByRole('button', { name: t('header.settings') }).click();
+  const field = page.getByRole('textbox', { name: t('settings.fileNameTemplate') });
+  const save = page.getByRole('button', { name: t('common.save'), exact: true });
+  const reset = page.getByRole('button', { name: t('settings.fileNameTemplate.reset') });
+
+  // ① 기본 문자열이 보이고 [저장]·[기본값으로]는 없다
+  await expect(field).toHaveValue('{prefix} {channel} - {title}');
+  await expect(save).toHaveCount(0);
+  await expect(reset).toHaveCount(0);
+  await expect(page.getByText(t('settings.fileNameTemplate.preview', { name: '[261018] 채널이름 - 저녁 방송.mp4' }))).toBeVisible();
+  await app.axe('파일 이름 규칙');
+
+  // ② 치면 예시가 바뀐다
+  await field.fill('{date}_{channel}_{title}');
+  await expect(page.getByText(t('settings.fileNameTemplate.preview', { name: '261018_채널이름_저녁 방송.mp4' }))).toBeVisible();
+
+  // ③ 읽을 수 없는 값은 치는 동안 조용하고, [저장]을 누르면 칸 아래 오류가 뜬다
+  await field.fill('{foo}');
+  await expect(page.getByText(/^예: /)).toHaveCount(0);
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  await save.click();
+  await expect(page.getByRole('alert')).toContainText(t('settings.fileNameTemplate.error.unknown', { token: '{foo}' }));
+  await expect(field).toHaveAttribute('aria-invalid', 'true');
+  await expect(field).toBeFocused();
+  await app.axe('파일 이름 규칙 오류');
+  expect(await app.args('update_settings')).toEqual([]);
+
+  // ④ 올바른 값을 저장하면 [기본값으로]가 나타나고, 누르면 사라진다
+  await field.fill('{date}_{channel}_{title}');
+  await save.click();
+  await expect(reset).toBeVisible();
+  await expect(save).toHaveCount(0);
+  expect(await app.args('update_settings')).toEqual([{ patch: { fileNameTemplate: '{date}_{channel}_{title}' } }]);
+
+  // ⑤ 저장 뒤 영상을 불러오면 카드의 제안 이름이 새 규칙을 따른다
+  await page.getByRole('button', { name: t('header.back') }).click();
+  await page.getByLabel(t('url.label')).fill(r.url);
+  await page.getByRole('button', { name: t('common.load') }).click();
+  const card = page.getByRole('region', { name: r.meta.title });
+  await expect(card.getByLabel(t('filename.label'))).toHaveValue('261018_채널이름_저녁 방송');
+
+  await page.getByRole('button', { name: t('header.settings') }).click();
+  await reset.click();
+  await expect(field).toHaveValue('{prefix} {channel} - {title}');
+  await expect(reset).toHaveCount(0);
+  expect((await app.args('update_settings')).at(-1)).toEqual({ patch: { fileNameTemplate: null } });
 });

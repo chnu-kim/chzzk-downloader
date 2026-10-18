@@ -78,15 +78,41 @@ fn gui_exe_refuses_cli_subcommands_with_exit_2() {
     );
 }
 
-/// macOS·Linux의 `chzzk-app`은 같은 하위 명령을 받기까지 돌린다(콘솔 실행 파일이 따로 없다)
-#[cfg(not(windows))]
+/// GUI(또는 다른 CLI)가 `app.lock`을 쥐고 있으면 `chzzk-cli`도 받지 않고 코드 5로 끝나고 `jobs.json`을 열지 않는다.
+/// 잠금·코드 5의 프로세스 단위 검사(`cli_app.rs`의 `process`)는 `cfg(not(windows))`라 Windows는 이 테스트가 본다
 #[test]
-fn app_binary_runs_the_same_subcommands_off_windows() {
+fn exit_5_when_the_app_lock_is_held_and_jobs_are_untouched() {
+    use chzzk_app_lib::cli;
+    use chzzk_app_lib::{InstanceLockState, acquire_instance_lock};
+
     let t = tempfile::tempdir().unwrap();
-    let o = Command::new(env!("CARGO_BIN_EXE_chzzk-app"))
-        .env("CHZZK_SMOKE_DIR", t.path().join("iso"))
-        .args(["download", "not-a-url"])
-        .output()
-        .unwrap();
-    assert_eq!(code(&o), 2);
+    let dir = t.path().join("iso");
+    let data = dir.join("data");
+    let InstanceLockState::Acquired(gui) = acquire_instance_lock(&data) else {
+        panic!("잠금을 쥐지 못했다");
+    };
+    for args in [
+        &["status"][..],
+        &["login"],
+        &["download", "https://chzzk.naver.com/video/1"],
+    ] {
+        let o = run(&dir, args);
+        assert_eq!(
+            code(&o),
+            5,
+            "{args:?} {}",
+            String::from_utf8_lossy(&o.stderr)
+        );
+        assert!(String::from_utf8_lossy(&o.stderr).contains("앱이 열려 있어요"));
+    }
+    assert!(
+        !data.join("jobs.json").exists(),
+        "코드 5인데 jobs.json을 열었다"
+    );
+    // 코드 5로 끝난 CLI는 cli.lock을 쥐고 있지 않는다(GUI 대화상자가 거짓으로 뜨지 않는다)
+    assert!(!cli::cli_lock_held(&data));
+    drop(gui);
+    // 놓으면 돈다
+    let o = run(&dir, &["status"]);
+    assert_ne!(code(&o), 5);
 }

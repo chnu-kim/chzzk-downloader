@@ -2,6 +2,7 @@
 
 mod common;
 
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -503,6 +504,135 @@ async fn second_ctrl_c_quits_immediately() {
     assert_eq!(r.code, exit::INTERRUPTED, "{r:?}");
     let st = job_statuses(t.path());
     assert!(st == vec!["paused"] || st == vec!["interrupted"], "{st:?}");
+}
+
+/// 첫 연결에서 멈추는 서버로 `args`를 돌리다가 받기 시작하면 Ctrl+C를 한 번 눌러 `paused`를 만든다.
+async fn pause_first_run(app: &chzzk_shell::App, args: &[&str], cwd: &std::path::Path) -> Ran {
+    let (tx, mut rx) = ctrl();
+    let fut = run_with(app, args, cwd, &mut rx, None, None);
+    let press = async {
+        until("받기 시작", || {
+            app.manager
+                .list()
+                .iter()
+                .any(|j| j.status == JobStatus::Running)
+        })
+        .await;
+        // 본문 일부가 `.part`에 닿을 시간을 준다
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        tx.send(()).unwrap();
+    };
+    let (r, ()) = tokio::join!(fut, press);
+    r
+}
+
+/// 같은 출력의 멈춘 작업이 있어도 요청(화질)이 다르면 이어받지 않는다: 코드 1과 안내, 옛 작업은 `paused` 그대로,
+/// 새 연결 없음. `same_request`가 빠지면 `--quality 480p`가 720p로 멈춘 작업을 조용히 이어받아 고르지 않은 화질을 받는다
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn paused_job_of_another_quality_is_not_resumed() {
+    let raw = RawMedia::start(20_000).await;
+    let api = mock_api_full(Some(&raw.base()), false, false, true).await;
+    let t = TempDir::new().unwrap();
+    let app = open_cli(t.path(), &api, None);
+    let out = out_dir(&t);
+    let first = pause_first_run(
+        &app,
+        &["download", &url(), "--out", &out, "--quality", "720p"],
+        t.path(),
+    )
+    .await;
+    assert_eq!(first.code, exit::INTERRUPTED, "{first:?}");
+    assert_eq!(job_statuses(t.path()), vec!["paused"]);
+    assert_eq!(raw.accepted.load(Ordering::SeqCst), 1);
+
+    let second = run(
+        &app,
+        &["download", &url(), "--out", &out, "--quality", "480p"],
+        t.path(),
+    )
+    .await;
+    assert_eq!(second.code, exit::FAILED, "{second:?}");
+    assert!(
+        second.err.contains("같은 파일의 다른 작업이 목록에 있어요"),
+        "{second:?}"
+    );
+    assert!(second.out.is_empty(), "{second:?}");
+    assert_eq!(job_statuses(t.path()), vec!["paused"]);
+    assert_eq!(raw.accepted.load(Ordering::SeqCst), 1, "새 연결을 열었다");
+    let jobs = app.manager.list();
+    assert_eq!(jobs.len(), 1);
+    assert_eq!(jobs[0].quality_label, "720p");
+}
+
+/// 주소가 여럿일 때 첫 주소에서 Ctrl+C를 누르면 남은 주소는 시작하지 않는다: 코드 130, 둘째 주소에 대한 API 요청 0회,
+/// 기록은 `paused` 하나
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn ctrl_c_stops_the_remaining_urls() {
+    let raw = RawMedia::start(20_000).await;
+    let api = mock_api(Some(&raw.base()), false).await;
+    let t = TempDir::new().unwrap();
+    let app = open_cli(t.path(), &api, None);
+    let out = out_dir(&t);
+    let second = "https://chzzk.naver.com/video/9999999";
+    let r = pause_first_run(&app, &["download", &url(), second, "--out", &out], t.path()).await;
+    assert_eq!(r.code, exit::INTERRUPTED, "{r:?}");
+    assert_eq!(job_statuses(t.path()), vec!["paused"]);
+    assert_eq!(count(&api, "/service/v2/videos/9999999").await, 0);
+    assert_eq!(raw.accepted.load(Ordering::SeqCst), 1);
+}
+
+/// 로그인이 없으면(코드 3) 남은 주소도 시도하지 않는다: 안내는 한 번, API 요청 0회
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn signed_out_stops_the_remaining_urls() {
+    let api = mock_api(None, false).await;
+    let worker = MockServer::start().await;
+    let t = TempDir::new().unwrap();
+    let app = open_cli(t.path(), &api, Some(&worker));
+    let r = run(
+        &app,
+        &[
+            "download",
+            &url(),
+            "https://chzzk.naver.com/video/9999999",
+            "--out",
+            &out_dir(&t),
+        ],
+        t.path(),
+    )
+    .await;
+    assert_eq!(r.code, exit::LOGIN, "{r:?}");
+    assert_eq!(r.err.matches("`login`으로 로그인한 뒤").count(), 1, "{r:?}");
+    assert_eq!(total(&api).await, 0);
+}
+
+/// 멈춘 작업을 이어받을 때도 로그인한 채널로 다시 판정한다(기록의 channelId를 믿지 않는다): 멈춘 뒤 세션이 남의 채널로
+/// 바뀌었으면 같은 명령은 코드 4이고 새 연결도 없다
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn resuming_a_paused_job_is_judged_again() {
+    let raw = RawMedia::start(20_000).await;
+    let api = mock_api(Some(&raw.base()), false).await;
+    let worker = MockServer::start().await;
+    let t = TempDir::new().unwrap();
+    save_session(t.path(), &worker, OWN);
+    let out = out_dir(&t);
+    let args = ["download", &url(), "--out", &out];
+    {
+        let app = open_cli(t.path(), &api, Some(&worker));
+        let first = pause_first_run(&app, &args, t.path()).await;
+        assert_eq!(first.code, exit::INTERRUPTED, "{first:?}");
+    }
+    assert_eq!(job_statuses(t.path()), vec!["paused"]);
+    assert_eq!(raw.accepted.load(Ordering::SeqCst), 1);
+
+    // 세션이 남의 채널로 바뀐 뒤 같은 명령
+    save_session(t.path(), &worker, OTHER);
+    let app = open_cli(t.path(), &api, Some(&worker));
+    let r = run(&app, &args, t.path()).await;
+    assert_eq!(r.code, exit::REJECTED, "{r:?}");
+    assert!(r.err.contains("내 채널의 영상만 받을 수 있어요"), "{r:?}");
+    assert!(r.out.is_empty(), "{r:?}");
+    assert_eq!(job_statuses(t.path()), vec!["paused"]);
+    assert_eq!(raw.accepted.load(Ordering::SeqCst), 1, "새 연결을 열었다");
 }
 
 /// 60초 늦게 답하는 서버(응답이 오지 않는 네트워크)

@@ -1,6 +1,6 @@
 # 앱 CLI 모드: 설계 명세
 
-**상태·확정 결정(2026-10-18)**: **구현됨(CLI-1~6, 2026-10-18, app.md 구현 중 변경 101~105, cicd.md 118·119).** 명세와 달라진 곳은 그 번호들에 적었다: 멈춘 작업(`paused`)이 활성이라 같은 명령은 `duplicateOutput`이 되어 `resume_job`으로 이어받는다(§9.2 가정이 틀렸다), `main`이 `run()` 앞에서 갈린다(§3.1), 문구 키 `cli.login.waiting`의 `{interrupt}`·`cli.exists.label`(§11), `info`·`status`의 종료 코드(받을 수 없는 판정 4·로그인 필요 3), 사용자 결정 O3 (b)의 Windows 콘솔 실행 파일. **오디오 #168이 구현 중에 머지되어 CLI-6(`--audio`)도 했다.** 아래 본문은 설계 시점의 글이다(구현 중 변경이 우선). 사용자 결정(ROADMAP "경쟁력 개선 착수" (다), `docs/ROADMAP.md:9`): 사용자용 CLI는 **앱 실행 파일의 CLI 모드**다. 같은 설치물, 같은 로그인 세션, 소유 게이트가 켜진 채로 돈다. `crates/core/examples/dl.rs`는 게이트가 없어서 배포하지 않는다. 같은 줄의 순서는 "(바) → (마) → (다)"다. 그래서 CLI는 일곱 개선 가운데 마지막이고, `--audio`는 오디오만 받기((마), PR #168)가 머지된 뒤에 연다(§8). 인증·게이트를 건드리므로 구현 PR에 Codex 리뷰를 붙인다(같은 줄). §15의 열린 결정 O1~O11은 **2026-10-18 사용자가 모두 정했다.** 추천과 다르게 고른 것은 둘이다: **O2 (b) CLI `login` 명령**(§5.3)과 **O3 (b) 처음부터 Windows 콘솔용 실행 파일**(§7.1, §13, 단계 CLI-5가 필수가 된다). 본문은 결정에 맞춰 고쳤다.
+**상태·확정 결정(2026-10-18)**: **구현됨(CLI-1~6, 2026-10-18, app.md 구현 중 변경 101~106, cicd.md 118·119).** 명세와 달라진 곳은 그 번호들에 적었다: 멈춘 작업(`paused`)이 활성이라 같은 명령은 `duplicateOutput`이 되어 `resume_job`으로 이어받는다(§9.2 가정이 틀렸다), `main`이 `run()` 앞에서 갈린다(§3.1), 문구 키 `cli.login.waiting`의 `{interrupt}`·`cli.exists.label`(§11), `info`·`status`의 종료 코드(받을 수 없는 판정 4·로그인 필요 3), 사용자 결정 O3 (b)의 Windows 콘솔 실행 파일. **오디오 #168이 구현 중에 머지되어 CLI-6(`--audio`)도 했다.** 아래 본문은 설계 시점의 글이다(구현 중 변경이 우선). 사용자 결정(ROADMAP "경쟁력 개선 착수" (다), `docs/ROADMAP.md:9`): 사용자용 CLI는 **앱 실행 파일의 CLI 모드**다. 같은 설치물, 같은 로그인 세션, 소유 게이트가 켜진 채로 돈다. `crates/core/examples/dl.rs`는 게이트가 없어서 배포하지 않는다. 같은 줄의 순서는 "(바) → (마) → (다)"다. 그래서 CLI는 일곱 개선 가운데 마지막이고, `--audio`는 오디오만 받기((마), PR #168)가 머지된 뒤에 연다(§8). 인증·게이트를 건드리므로 구현 PR에 Codex 리뷰를 붙인다(같은 줄). §15의 열린 결정 O1~O11은 **2026-10-18 사용자가 모두 정했다.** 추천과 다르게 고른 것은 둘이다: **O2 (b) CLI `login` 명령**(§5.3)과 **O3 (b) 처음부터 Windows 콘솔용 실행 파일**(§7.1, §13, 단계 CLI-5가 필수가 된다). 본문은 결정에 맞춰 고쳤다.
 
 기준 트리는 처음엔 `origin/master` `26ca67d`(v0.10.1 뒤, 속도 제한 #165 머지)였다. 결정을 반영하면서 #164(허용목록)·#166(파일 이름 템플릿)·#167(mp4 메타데이터)이 머지된 `61fc2df`를 합쳤다. 이 판에서 새로 단 `파일:줄`(로그인·번들·스모크)은 `61fc2df`에서 연 줄이다. 나머지는 `26ca67d`의 줄이고, 구현 PR이 줄을 다시 확인한다. 표기는 `features/README.md`를 따른다. **[확인]**은 직접 연 줄이 받침이고, **[확인: 문서]**는 설계 문서 인용, **[확인: 상류]**는 Tauri 상류 소스(태그 `tauri-cli-v2.12.1`, 앱의 `@tauri-apps/cli` 2.12.1·`tauri-build` 2.7.1과 같은 판)에서 연 줄, **[가정]**은 근거 없는 설계 판단, **[실측 필요]**는 실기기로만 정할 수 있는 것이다. 근거 없는 수치에는 **[잠정]**을 붙인다(ADR-0009 묶음). 예시 주소·번호는 모두 가짜다.
 
@@ -203,6 +203,7 @@ Windows에서는 `chzzk-app` 자리에 `chzzk-cli`가 온다(§7.1). 아래 표�
 ### 6.2 CLI가 받는 중에 GUI를 열 때
 - 지금 GUI는 single-instance 확인을 통과한 뒤(CLI는 그 소켓이나 뮤텍스를 만들지 않으므로 통과한다) setup에서 잠금을 못 쥐면 **창을 숨기고 조용히 끝난다**(`lib.rs:579-588` [확인]). 이 동작은 macOS에서 거의 동시에 뜬 GUI 두 개의 경합을 위해 만든 것이다. 사용자 눈에는 "앱 아이콘을 눌렀는데 아무것도 안 뜬다"가 된다.
 - **결정(O1 (a))**: CLI는 같은 폴더의 `cli.lock`을 **먼저** 배타로 쥐고 그다음 `app.lock`을 쥔다(같은 `File::try_lock`). `app.lock`을 못 쥐면 `cli.lock`을 바로 놓는다. 순서가 반대면 CLI가 `app.lock`만 쥔 틈에 뜬 GUI가 `cli.lock`이 비어 있다고 보고 조용히 끝난다. GUI는 `HeldElsewhere`일 때만 `cli.lock`을 `try_lock`해 본다. 우연히 쥐게 되면 바로 놓는다.
+  - **놓는 순서는 잡는 순서의 반대**(`app.lock` 먼저, `cli.lock` 나중, `CliLocks`의 필드 순서). 반대로 놓으면 그 사이에 뜬 GUI가 `app.lock` 잡힘 + `cli.lock` 빔을 보고 조용히 끝난다(구현 후 리뷰 반영). 그리고 GUI는 `cli.lock`이 비어 있으면 `app.lock`을 **한 번 더** 시도한다(`acquire_gui_lock`): 첫 시도 뒤 CLI가 끝났다면 `app.lock`은 이미 풀려 있으므로 이 시도는 쥔다.
   - 잠겨 있으면(CLI가 쥐고 있으면) 시작 실패 안내와 같은 대화상자(`startup_failed`, `lib.rs:393-409`)로 "명령줄에서 받는 중이에요. 끝난 뒤 다시 열어 주세요."를 보이고 끝난다.
   - 잠겨 있지 않으면 지금처럼 조용히 끝난다(GUI 둘의 경합).
   - 잠금 파일에 내용을 적어 구분하지 않는 까닭: Windows의 `LockFileEx` 배타 잠금은 다른 프로세스의 읽기도 막는다 [가정: `File::try_lock`의 Windows 구현이 전체 범위를 잠근다, 구현 PR에서 확인].
@@ -261,6 +262,7 @@ Windows에서는 `chzzk-app` 자리에 `chzzk-cli`가 온다(§7.1). 아래 표�
   - `dirs`를 앱 crate의 직접 의존성으로 올리는 것은 새 crate가 아니다. 다만 버전은 Tauri가 쓰는 것과 같아야 한다(lock 하나).
 - **대조 테스트**: 앱 crate의 `tests/`에서 mock 런타임(`tauri` dev-dep `features = ["test"]`, `Cargo.toml:41` [확인])의 `app.path()` 값과 `cli_paths()` 값이 같은지 3 OS에서 본다(`tauri` gate). 다르면 CLI가 다른 세션·다른 `jobs.json`을 보게 되므로 이 테스트가 이 기능의 기둥 하나다.
 - 스모크·E2E 격리: `--features e2e` 빌드에서 `CHZZK_E2E_API_BASE`·`CHZZK_E2E_DIR`이 있으면 CLI도 그 경로·클라이언트·Worker 주소를 쓴다. 코드는 `e2e.rs`에만 둔다(`release-hygiene`, CLAUDE.md). `lib.rs`의 `e2e_override()`(`lib.rs:458-467` [확인])를 `cli_main`에서도 부른다. feature는 crate 단위라 Windows `chzzk-cli.exe`도 같은 격리를 쓴다.
+- **격리 폴더 `CHZZK_SMOKE_DIR`**: CLI는 `--smoke` 없이 이 환경 변수만 있어도 그 폴더를 데이터·설정·세션 폴더로 쓴다(GUI는 `--smoke`가 있어야 본다). 설치 스모크가 릴리스 빌드의 `chzzk-cli.exe status`를 격리해서 돌리는 데 필요해서 막지 않았다. 대가: 데이터 폴더가 달라 `app.lock`이 GUI와 겹치지 않으므로 GUI와 동시에 돌 수 있다. 사용자가 `session.json`을 그 폴더에 복사하면 두 프로세스가 같은 refresh 토큰을 회전시켜 재사용 감지로 세션이 끊길 수 있다(§5.1 위험 1). 게이트 우회는 아니다(세션 저장소가 따로고 로그인 게이트는 그대로). 사용자가 일부러 세션 파일을 옮겨야만 생기므로 이 환경 변수는 문서에 적지 않는다(도움말에도 없다).
 - 로그: GUI와 같은 `logging::init(log_dir)`. 첫 줄에 `mode = "cli"`를 남긴다. **잠금을 쥔 뒤에** 로그를 시작한다. 코드 5로 끝나는 CLI가 떠 있는 GUI의 로그 파일에 덧붙이지 않게 하려는 것이다(GUI는 잠금 전에 로그를 연다, `lib.rs:529-536`, 잠금은 `:575` [확인]).
 
 ## 8. 설정과 인자 덮어쓰기
@@ -299,6 +301,7 @@ Windows에서는 `chzzk-app` 자리에 `chzzk-cli`가 온다(§7.1). 아래 표�
 - **첫 Ctrl+C**: `manager.pause(id)`를 부른다. `running` → `pausing` → `paused`이고 `.part`가 남는다(`manager.rs:674-701` [확인]). 그다음 `paused` 상태 이벤트를 기다리고 `manager.flush()`를 부른 뒤 "멈췄어요. 같은 명령을 다시 실행하면 이어받아요."와 코드 130으로 끝난다.
   - `paused`로 남기는 까닭: GUI의 자동 이어받기는 `interrupted`만 대상이다(`app.rs:422-447` [확인]). 사용자가 멈춘 것을 GUI가 열리자마자 다시 받기 시작하면 안 된다.
 - **두 번째 Ctrl+C**(멈추는 중): `manager.quit(짧은 기한)`. 끝나지 않은 작업은 `interrupted`로 저장된다(`manager.rs:1385-1388` [확인]). 코드 130이다. 코어의 `committed_len` 불변식 덕에 다음에 이어받는다(core.md §5.1).
+- **그 밖의 종료 신호**(구현 후 리뷰 반영): SIGINT(Windows는 `CTRL_C`·`CTRL_BREAK`)만 한 번으로 센다. 사람이 한 번 더 누를 수 없는 종료 요청, 곧 unix SIGTERM·SIGHUP(`timeout`·`kill`·ssh 끊김·터미널 닫기)과 Windows `CTRL_CLOSE`(콘솔 창 닫기)는 **두 번 누른 것과 같다**: 바로 `quit`해 작업을 `interrupted`로 저장하고 `jobs.json`을 flush한 뒤 코드 130으로 끝난다. 받지 않으면 `running`이 남은 채 프로세스가 끝나 다음 실행의 reconcile에 맡겨진다. 다음 실행이 이어받는 것은 같다.
 - **다시 실행**: 같은 주소·화질·폴더로 `download`하면 `check_output`이 같은 작업의 `.part`(`same_job`)를 보고 `restart: false`로 이어받는다(§8 표). `jobs.json`에는 옛 `paused` 기록과 새 기록이 둘 다 남는다. 같은 출력의 **활성** 작업만 `duplicateOutput`이고(`manager.rs:571-573` [확인]) `paused`는 활성이 아니다 [가정: `active_with_output`이 paused를 활성으로 보지 않는다. CLI-2에서 테스트로 확인]. 옛 기록은 GUI 목록에 "받다 만"으로 보인다. 이것이 거슬리면 CLI가 새 작업을 만들기 전에 같은 출력의 `paused` 기록을 `resume_job`으로 다시 쓰는 안이 있다. 이 안은 게이트(`App::resume_job`, `app.rs:356-371`)를 지나므로 안전하지만 v1은 단순한 쪽(새 기록)을 고른다(O9 (a), 사용자 결정).
 - **잠자기 방지(O10 (b), 사용자 결정)**: GUI와 같은 `chzzk_shell::power::SystemGuard`(`lib.rs:637-642` [확인])를 같은 전이 함수 `PowerKeeper::update(설정 keepAwake, 실행 중 작업 수)`(`crates/shell/src/power.rs:205-260` [확인])로 쥐고 놓는다. GUI는 1Hz 상태 집계에서 부르고, CLI는 작업 상태 이벤트마다 부른다. 그래서 설정에서 잠자기 방지를 끈 사용자는 CLI에서도 꺼져 있다. 격리 실행(스모크·E2E)은 GUI와 같이 `NoopGuard`다. 셸에 이미 있는 것이라 의존성 변화가 없다.
 - 창 닫기 가드(D1)·Dock 진행은 CLI에 없다(창이 없다).
@@ -320,9 +323,9 @@ Windows에서는 `chzzk-app` 자리에 `chzzk-cli`가 온다(§7.1). 아래 표�
 
 ## 10. 업데이트
 - CLI 실행은 업데이트를 확인하지 않는다. GUI는 로그인 확인 직후 한 번 확인한다(`app.rs:740-745` [확인]). CLI만 쓰는 사용자는 GUI를 열 때 업데이트된다. `status`는 지금 버전만 출력한다.
-- GUI가 업데이트를 설치하는 동안 CLI는 잠금 때문에 시작하지 못한다(코드 5). 반대로 CLI가 도는 동안 GUI는 열리지 않으므로 바이너리를 바꾸는 일이 생기지 않는다.
+- 업데이트 **내려받기·설치 준비** 동안에는 GUI가 `app.lock`을 쥐고 있어 CLI가 시작하지 못한다(코드 5). 반대로 CLI가 도는 동안 GUI는 열리지 않으므로 바이너리를 바꾸는 일이 생기지 않는다. **Windows는 설치기가 도는 동안이 다르다**: 플러그인이 설치기를 띄우고 `std::process::exit(0)`로 GUI를 끝내므로(`update_io.rs` 머리 주석) 그 뒤 설치기가 도는 내내 `app.lock`이 풀려 있다.
 - **Windows `chzzk-cli.exe`도 함께 바뀐다.** Windows updater 키는 설치기 자체를 가리킨다(`windows-x86_64`·`-nsis` → `-setup.exe`, `-msi` → `.msi`, `release/expected-artifacts.json` [확인]). 업데이트는 그 설치기를 다시 돌리고, 설치기는 main이 아닌 bin을 설치 목록에 넣으므로(§7.1 [확인: 상류]) 두 exe가 같은 버전으로 바뀐다. 따로 받는 매니페스트·서명은 없다. 실제로 바뀌는지는 [가정]이고, CLI-5의 `smoke-install`이 설치본 `chzzk-cli.exe status`로 버전 줄을 확인하고 사용자 실측 M-CLI-5가 업데이트 한 번으로 확인한다.
-- 남는 틈: `help`는 잠금을 쥐지 않고, 잠금을 못 쥔 CLI도 끝나기까지 몇 밀리초 동안 떠 있다. 그 순간 설치기가 `chzzk-cli.exe`를 덮어쓰면 파일 잠금에 걸린다. NSIS의 실행 중 확인은 main exe만 본다(§7.1). 짧은 틈이라 v1은 막지 않는다 [가정]. 실제로 걸리면 설치기가 다시 시도·실패를 띄우고, 사용자가 다시 업데이트하면 된다(§17).
+- 남는 틈(Windows, **설치기가 도는 동안 전체**): 그 사이에 시작한 `chzzk-cli.exe download`(예: 예약 작업)는 잠금을 정상으로 쥐고 exe를 연 채 오래 돌 수 있다. NSIS의 실행 중 확인은 main exe만 본다(§7.1). 그러면 덮어쓰기가 실패하거나 GUI와 CLI의 버전이 섞일 수 있다. `help`·잠금을 못 쥔 CLI(끝나기까지 몇 밀리초)도 같은 틈이다. 업데이트는 사용자가 GUI에서 직접 누르는 것이라 설치기가 도는 몇 초에 맞춰 CLI가 시작되는 일은 드물다고 보고 v1은 막지 않는다 [가정]. 걸리면 설치기가 다시 시도·실패를 띄우고 사용자가 다시 업데이트하면 된다(§17). 막으려면 NSIS 훅(`installerHooks`의 PREINSTALL)에서 `chzzk-cli.exe` 실행 여부를 확인하는 방법이 있다. 설치기 템플릿을 건드리는 일이라 이번에는 하지 않았고, 사용자 실측 M-CLI-5에 "설치 중 CLI 실행"을 더해 실제로 어떻게 되는지 먼저 본다.
 
 ## 11. 문구·도움말
 - **CLI 문구의 원천**: 웹뷰 밖 Rust라 `ko.ts`를 읽을 수 없다. 알림처럼 `crates/shell/src/cli/copy.rs`에 상수로 두고, `ko.ts`에 같은 키(`cli.*`)를 두어 대조 테스트한다(`notify_copy.rs` 방식, content.md §14). 그러면 `design-copy`의 금지어·용어집 검사가 CLI 문구에도 걸린다.
@@ -392,7 +395,7 @@ O3 (b)로 Windows 배포물이 바뀐다. 아래는 CLI-5가 바꾸는 것과 �
 | M-CLI-2 | macOS 설치본에서 터미널 `status`·`download`·`login`: Dock 아이콘 없음, quarantine, 브라우저가 열림 | 사용자 | 된다/안 된다 |
 | M-CLI-3 | 실제 계정으로 `login` → 본인 영상 받기 + 남의 영상 거부(코드 4). 그 뒤 GUI를 열면 로그인되어 있음(세션 공유) | 사용자 | 일치/불일치 |
 | M-CLI-4 | GUI를 연 채로 CLI(코드 5), CLI가 받는 중·`login` 대기 중에 GUI 열기(대화상자) | 사용자 | 된다/안 된다 |
-| M-CLI-5 | Windows에서 앞 버전 설치본을 GUI 업데이트로 올린 뒤 `chzzk-cli.exe status`의 버전이 새 버전 | 사용자 | 된다/안 된다 |
+| M-CLI-5 | Windows에서 앞 버전 설치본을 GUI 업데이트로 올린 뒤 `chzzk-cli.exe status`의 버전이 새 버전. 그리고 업데이트 설치기가 도는 동안 `chzzk-cli.exe download`를 실행해 두었을 때(§10 남는 틈): 설치가 끝나는가, 두 exe의 버전이 같은가 | 사용자 | 된다/안 된다 |
 
 ## 14. 테스트 계획(TDD: 실패 테스트 먼저)
 
@@ -473,7 +476,7 @@ O3 (b)로 Windows 배포물이 바뀐다. 아래는 CLI-5가 바꾸는 것과 �
 | Windows cmd에서 출력이 섞이고 종료 코드가 사라짐 | 스크립트가 실패를 모른다 | O3 (b) 콘솔 실행 파일로 처음부터 피한다. `chzzk-app.exe`는 받지 않고 안내만 한다(§3.1). M-CLI-1로 확인 |
 | 콘솔 exe가 Tauri 코드를 끌고 와 커짐 | Windows 설치기 크기 증가 | `size.binary.windows-cli` ratchet. 크면 따로 crate로 옮긴다(§7.1) |
 | 설치 스모크가 exe 둘을 못 다룸 | CLI-5 PR의 `smoke-install` 실패 | §13 표: 이름으로 고른다 |
-| 업데이트 중 `chzzk-cli.exe`가 떠 있음 | 설치기의 파일 덮어쓰기 실패 | 잠금으로 대부분 막힌다. 남는 틈은 `help`·잠금 실패 순간뿐(§10) |
+| 업데이트 중 `chzzk-cli.exe`가 떠 있음 | 설치기의 파일 덮어쓰기 실패 | 내려받는 동안은 잠금이 막는다. Windows 설치기가 도는 동안은 `app.lock`이 풀려 막지 못한다(§10). M-CLI-5로 확인하고 필요하면 NSIS PREINSTALL 훅 |
 | `login`이 로그인 주소를 터미널·로그에 남김 | 로그인 흐름 탈취 | 주소는 `open` seam에만, 테스트로 출력 검사(§12·§14.1) |
 | `login`이 GUI 첫 로그인 부작용(자동 이어받기·업데이트 확인)을 일으킴 | 사용자가 멈춘 작업이 다시 시작 | `auth_login_wait`는 앱 crate의 `spawn_auth_tasks`를 거치지 않는다. 테스트(§14.1) |
 | `retry()` 대신 `startup()`을 씀 | 스크립트 반복에서 429 → 오프라인 유예 → 최악의 경우 재사용 폐기(worker.md 24 (다)) | §14.1 갱신 횟수 테스트 |

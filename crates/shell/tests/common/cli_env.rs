@@ -32,6 +32,7 @@ pub const EDITOR: &str = "000000000000000000000000000000c3";
 pub const VOD_NO: u64 = 9000002;
 pub const VOD_VIDEO_ID: &str = "000000000000000000000000000000000B02";
 pub const QUALITY: &str = "PD_720P_TEST";
+pub const QUALITY_LOW: &str = "PD_480P_TEST";
 pub const MEDIA_PATH: &str = "/m1/pd/a.mp4";
 /// 오디오 트랙 경로(`audio: true`일 때만 MPD에 있다)
 pub const AUDIO_PATH: &str = "/m1/audio/0.m4a";
@@ -49,7 +50,19 @@ fn fixture(rel: &str) -> Vec<u8> {
     std::fs::read(&p).unwrap_or_else(|e| panic!("{p}: {e}"))
 }
 
-fn pd_mpd(url: &str, audio_url: Option<&str>) -> String {
+fn pd_mpd(url: &str, audio_url: Option<&str>, second_quality: bool) -> String {
+    // 화질이 둘이면 480p도 같은 미디어 파일을 가리킨다(화질 라벨만 다른 요청을 만들 때 쓴다)
+    let low = if second_quality {
+        format!(
+            r#"
+      <Representation id="{QUALITY_LOW}" bandwidth="500" width="854" height="480">
+        <nvod:Label kind="resolution">480</nvod:Label>
+        <BaseURL>{url}</BaseURL>
+      </Representation>"#
+        )
+    } else {
+        String::new()
+    };
     let audio = audio_url.map_or_else(String::new, |u| {
         format!(
             r#"
@@ -69,7 +82,7 @@ fn pd_mpd(url: &str, audio_url: Option<&str>) -> String {
       <Representation id="{QUALITY}" bandwidth="1000" width="1280" height="720">
         <nvod:Label kind="resolution">720</nvod:Label>
         <BaseURL>{url}</BaseURL>
-      </Representation>
+      </Representation>{low}
     </AdaptationSet>{audio}
   </Period>
 </MPD>"#
@@ -84,6 +97,16 @@ pub async fn mock_api(media_base: Option<&str>, channelless: bool) -> MockServer
 
 /// `audio`가 true면 일반 VOD처럼 MPD에 서버 오디오 트랙(m4a 한 파일)도 있다.
 pub async fn mock_api_with(media_base: Option<&str>, channelless: bool, audio: bool) -> MockServer {
+    mock_api_full(media_base, channelless, audio, false).await
+}
+
+/// `second_quality`가 true면 720p 말고 480p도 있다(같은 미디어 파일).
+pub async fn mock_api_full(
+    media_base: Option<&str>,
+    channelless: bool,
+    audio: bool,
+    second_quality: bool,
+) -> MockServer {
     let server = MockServer::start().await;
     let info = if channelless {
         let mut v: serde_json::Value =
@@ -113,6 +136,7 @@ pub async fn mock_api_with(media_base: Option<&str>, channelless: bool, audio: b
                     audio
                         .then(|| format!("{base}{AUDIO_PATH}?_lsu_sa_=sig"))
                         .as_deref(),
+                    second_quality,
                 ),
                 "application/dash+xml",
             ),

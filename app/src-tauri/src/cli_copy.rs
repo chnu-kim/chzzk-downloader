@@ -62,6 +62,7 @@ mod tests {
     fn reused_gui_keys_match_the_deck() {
         let d = deck();
         for (key, rust) in [
+            ("app.title", APP_TITLE),
             ("auth.denied.title", AUTH_DENIED),
             ("auth.dailyLimit.title", AUTH_DAILY_LIMIT),
             ("auth.network.title", AUTH_NETWORK),

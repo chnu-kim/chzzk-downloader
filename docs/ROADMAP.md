@@ -4,6 +4,7 @@
 
 ## 현재 위치
 
+- **앱 CLI 모드 구현 후 리뷰 반영(2026-10-18, 브랜치 `feat/cli-mode`, app.md 106)**: 잠금 놓는 순서(`app.lock` 먼저)·GUI의 `app.lock` 재시도, SIGTERM·SIGHUP·`CTRL_CLOSE` 처리, 안내 대화상자 제목, 셸·앱 테스트 보강(다른 화질의 멈춘 작업·여러 주소 중단·이어받기 재판정), 설계 문서 §7.4·§10 보강. **남은 일(머지 전)**: macOS·Windows 번들 크기가 허용 3%를 넘어 master `bundle` 작업의 size ratchet이 빨개질 수 있다(구현자 측정 `darwin` +3.55%·`darwin-dmg` +4.04%, Windows setup·msi도 `chzzk-cli.exe`만큼 커진다). 브랜치를 push한 뒤 `gh workflow run ci.yml --ref feat/cli-mode`로 macOS·Windows bundle을 돌려 CI 측정값으로 `node scripts/ci/ratchet.mjs write --from-run <run id>`를 하고 `size.binary.darwin`·`darwin-dmg`·`windows-setup`·`windows-msi`·`windows-cli`를 올린다. 같은 PR에 `ci/RATCHET_LOG.md` 줄을 더하고 `$pending`·`PENDING_ALLOWED`를 비운다(값은 CI에서 잰 것만 쓰므로 이 커밋에서는 올리지 않았다).
 - **앱 CLI 모드 구현 CLI-4(2026-10-18, 브랜치 `feat/cli-mode`, app.md 104)**: 웹 도움말 주제 `cli`(`help/cli.md`·`ids.json`·생성 모듈·`HelpId::Cli`·바인딩), content.md §15.1 문구 한 행, `cli.busy.body` 재검토(바꾸지 않음), 사용자 실측 M-CLI-1~5 요청(아래 "앱 CLI 모드 사용자 실측").
 - **앱 CLI 모드 구현 CLI-6(2026-10-18, 브랜치 `feat/cli-mode`, app.md 105)**: 오디오 PR #168이 머지되어 `download --audio`(오디오만 행, `.m4a`)를 더했다. master를 합쳐(app.md 99·100이 오디오라 CLI를 101~로 옮겼다) 이어서 구현했다.
 - **앱 CLI 모드 구현 CLI-3(2026-10-18, 브랜치 `feat/cli-mode`, cicd.md 119)**: `e2e-native`에 명령줄 단계(새 데이터 폴더: 로그인 전 3 → `login` → 본인·맡은 채널 받기 0 + golden 해시 → 남의 영상 4 → `status`), 설치 스모크에 설치본 `help`·`status`(Linux deb·AppImage, macOS dmg·.app.tar.gz). macOS에서 `cliPhase`를 로컬로 모의 실행하고 dmg 설치 스모크를 돌려 확인했다. Linux·Windows의 `e2e-native`는 CI 첫 실행이 확인한다.

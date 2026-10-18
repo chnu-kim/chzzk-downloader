@@ -51,6 +51,8 @@ pub const LIVE_UNSUPPORTED: &str = "생방송은 앱에서 녹화해 주세요."
 // GUI와 같은 말(기존 deck 키의 값을 그대로 쓴다)
 // ---------------------------------------------------------------------------
 
+/// `app.title`(안내 대화상자 제목. 실패가 아닌 안내에 시작 실패 제목을 쓰지 않는다)
+pub const APP_TITLE: &str = "VOD 클립 다운로더";
 /// `auth.denied.title`
 pub const AUTH_DENIED: &str = "사용 허가가 없는 채널이에요";
 /// `auth.dailyLimit.title`

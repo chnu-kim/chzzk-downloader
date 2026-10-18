@@ -52,10 +52,14 @@ pub fn cli_paths() -> Option<AppPaths> {
 }
 
 /// CLI가 쥔 잠금 둘(프로세스가 끝날 때까지 쥔다).
+///
+/// 필드는 선언 순서대로 놓이므로 **`app.lock`을 먼저, `cli.lock`을 나중에** 놓는 순서다(잡는 순서의 반대). 그 사이에
+/// 뜬 GUI가 `app.lock`은 잡혀 있고 `cli.lock`은 비어 있는 상태를 보면 "다른 GUI"로 알고 아무것도 안 보이고 끝난다.
+/// 이 순서면 `cli.lock`이 비어 보일 때는 `app.lock`이 이미 풀려 있다(`acquire_gui_lock`의 재시도가 기대는 성질).
 #[derive(Debug)]
 pub struct CliLocks {
-    _cli: std::fs::File,
     _app: crate::InstanceLock,
+    _cli: std::fs::File,
 }
 
 /// 잠금 결과.
@@ -91,8 +95,8 @@ pub fn acquire_cli_locks(data_dir: &Path) -> CliLockState {
     }
     match acquire_instance_lock(data_dir) {
         InstanceLockState::Acquired(app) => CliLockState::Acquired(CliLocks {
-            _cli: cli_file,
             _app: app,
+            _cli: cli_file,
         }),
         InstanceLockState::HeldElsewhere => CliLockState::Busy,
         InstanceLockState::Unavailable(e) => CliLockState::Unavailable(e),
@@ -121,33 +125,95 @@ pub fn cli_lock_held(data_dir: &Path) -> bool {
     }
 }
 
-/// Ctrl+C 신호를 채널로 바꾼다. 누를 때마다 `()` 하나가 온다. 런타임 안에서 부른다(핸들러를 지금 건다).
-fn spawn_ctrl_c(rt: &tokio::runtime::Runtime) -> CtrlC {
+/// GUI가 `app.lock`을 잡으려 한 결과.
+#[derive(Debug)]
+pub enum GuiLock {
+    /// 쥐었다(`manage`해 둔다)
+    Acquired(crate::InstanceLock),
+    /// 명령줄이 받는 중이다(안내 대화상자를 보이고 끝낸다)
+    CliBusy,
+    /// 같은 순간에 뜬 다른 GUI 실행이 쥐고 있다(조용히 끝낸다)
+    OtherGui,
+    /// 잠금 파일을 열거나 잠그지 못했다(잠금 없이 계속한다)
+    Unavailable(std::io::Error),
+}
+
+/// GUI 쪽 잠금 판단. `app.lock`을 못 쥐었을 때 `cli.lock`을 보고 명령줄인지 다른 GUI인지 가른다. `cli.lock`이 비어
+/// 있으면 `app.lock`을 한 번 더 시도한다: 처음 시도 뒤 명령줄이 끝났다면 `CliLocks`가 `app.lock`을 먼저 놓았으므로
+/// (필드 순서) 이 시도는 반드시 쥔다. 이것이 없으면 그 틈에 아이콘을 눌러도 아무것도 안 뜬다.
+pub fn acquire_gui_lock(data_dir: &Path) -> GuiLock {
+    acquire_gui_lock_with(data_dir, || {})
+}
+
+/// `acquire_gui_lock`의 시험용 틈새: `between`은 첫 시도가 막힌 뒤, `cli.lock`을 보기 전에 불린다.
+fn acquire_gui_lock_with(data_dir: &Path, between: impl FnOnce()) -> GuiLock {
+    match acquire_instance_lock(data_dir) {
+        InstanceLockState::Acquired(l) => GuiLock::Acquired(l),
+        InstanceLockState::Unavailable(e) => GuiLock::Unavailable(e),
+        InstanceLockState::HeldElsewhere => {
+            between();
+            if cli_lock_held(data_dir) {
+                return GuiLock::CliBusy;
+            }
+            match acquire_instance_lock(data_dir) {
+                InstanceLockState::Acquired(l) => GuiLock::Acquired(l),
+                InstanceLockState::HeldElsewhere => GuiLock::OtherGui,
+                InstanceLockState::Unavailable(e) => GuiLock::Unavailable(e),
+            }
+        }
+    }
+}
+
+/// 신호 하나를 받을 때마다 `presses`개의 `()`를 채널에 넣는 작업을 띄운다(신호 타입이 OS마다 달라 매크로다).
+macro_rules! forward_signal {
+    ($rt:expr, $tx:expr, $presses:expr, $sig:ident) => {{
+        let tx = $tx;
+        let mut $sig = $sig;
+        $rt.spawn(async move {
+            while $sig.recv().await.is_some() {
+                for _ in 0..$presses {
+                    if tx.send(()).is_err() {
+                        return;
+                    }
+                }
+            }
+        });
+    }};
+}
+
+/// 종료 신호를 채널로 바꾼다. 누를 때마다 `()` 하나가 온다. 런타임 안에서 부른다(핸들러를 지금 건다).
+///
+/// - Ctrl+C(SIGINT·Windows `CTRL_C`)와 `CTRL_BREAK`: 한 번이다. 첫 번째는 일시정지, 두 번째는 바로 끝내기(§9.2).
+/// - 종료 요청(unix SIGTERM·SIGHUP, Windows `CTRL_CLOSE`)은 **둘을 한꺼번에** 넣는다. `timeout`·`kill`·ssh 끊김·창 닫기는
+///   사람이 한 번 더 누를 수 없고 곧 프로세스를 죽이므로, 두 번 누른 것과 같이 바로 `quit`(작업 `interrupted` 저장,
+///   `jobs.json` flush)한다. 다음 실행이 이어받는다. 이 신호를 받지 않으면 `running`이 남은 채 프로세스가 끝난다.
+pub fn spawn_ctrl_c(rt: &tokio::runtime::Runtime) -> CtrlC {
     let (tx, rx) = unbounded_channel();
     let _g = rt.enter();
     #[cfg(unix)]
     {
         use tokio::signal::unix::{SignalKind, signal};
-        if let Ok(mut sig) = signal(SignalKind::interrupt()) {
-            rt.spawn(async move {
-                while sig.recv().await.is_some() {
-                    if tx.send(()).is_err() {
-                        break;
-                    }
-                }
-            });
+        for (kind, presses) in [
+            (SignalKind::interrupt(), 1),
+            (SignalKind::terminate(), 2),
+            (SignalKind::hangup(), 2),
+        ] {
+            if let Ok(sig) = signal(kind) {
+                forward_signal!(rt, tx.clone(), presses, sig);
+            }
         }
     }
     #[cfg(windows)]
     {
-        if let Ok(mut sig) = tokio::signal::windows::ctrl_c() {
-            rt.spawn(async move {
-                while sig.recv().await.is_some() {
-                    if tx.send(()).is_err() {
-                        break;
-                    }
-                }
-            });
+        use tokio::signal::windows;
+        if let Ok(sig) = windows::ctrl_c() {
+            forward_signal!(rt, tx.clone(), 1, sig);
+        }
+        if let Ok(sig) = windows::ctrl_break() {
+            forward_signal!(rt, tx.clone(), 1, sig);
+        }
+        if let Ok(sig) = windows::ctrl_close() {
+            forward_signal!(rt, tx.clone(), 2, sig);
         }
     }
     rx
@@ -447,6 +513,52 @@ mod tests {
         // CLI가 돌지 않으니 GUI 둘의 경합으로 본다(대화상자 없이 조용히 끝낸다)
         assert!(!cli_lock_held(t.path()));
         drop(gui);
+    }
+
+    /// GUI의 잠금 판단 넷: 비어 있으면 쥔다 / 명령줄이 쥐면 안내 / 다른 GUI가 쥐면 조용히 / 첫 시도 뒤 명령줄이 끝났으면 쥔다
+    #[test]
+    fn gui_lock_decision_table() {
+        let t = tempfile::tempdir().unwrap();
+        let d = t.path();
+        let GuiLock::Acquired(free) = acquire_gui_lock(d) else {
+            panic!("비어 있으면 쥔다");
+        };
+        // 다른 GUI가 쥐고 있고 명령줄은 없다
+        assert!(matches!(acquire_gui_lock(d), GuiLock::OtherGui));
+        drop(free);
+        // 명령줄이 둘 다 쥐고 있다
+        let CliLockState::Acquired(cli) = acquire_cli_locks(d) else {
+            panic!();
+        };
+        assert!(matches!(acquire_gui_lock(d), GuiLock::CliBusy));
+        drop(cli);
+        assert!(matches!(acquire_gui_lock(d), GuiLock::Acquired(_)));
+    }
+
+    /// 첫 시도가 막힌 뒤 `cli.lock`을 보기 전에 명령줄이 끝난 틈: 바로 한 번 더 시도해 쥔다(아무것도 안 뜨는 일이 없다)
+    #[test]
+    fn gui_lock_retries_when_the_cli_ends_in_between() {
+        let t = tempfile::tempdir().unwrap();
+        let d = t.path();
+        let CliLockState::Acquired(cli) = acquire_cli_locks(d) else {
+            panic!();
+        };
+        let mut cli = Some(cli);
+        let got = acquire_gui_lock_with(d, || drop(cli.take()));
+        assert!(matches!(got, GuiLock::Acquired(_)), "{got:?}");
+    }
+
+    /// 놓는 순서: `app.lock`이 먼저다. `cli.lock`이 이미 비어 보일 때 `app.lock`이 잡혀 있는 순간이 없다
+    /// (필드 선언 순서가 순서를 정한다. 뒤집으면 이 소스 검사가 깨진다)
+    #[test]
+    fn cli_locks_release_app_lock_first() {
+        let src = include_str!("cli.rs");
+        let body = &src[src.find("pub struct CliLocks {").unwrap()..];
+        let body = &body[..body.find('}').unwrap()];
+        assert!(
+            body.find("_app").unwrap() < body.find("_cli").unwrap(),
+            "{body}"
+        );
     }
 
     #[test]

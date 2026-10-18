@@ -412,7 +412,7 @@ fn startup_failed<R: Runtime>(
 }
 
 /// 명령줄이 받는 중이라 GUI를 열 수 없을 때: main 창을 숨기고 안내 창을 띄운 뒤, 닫으면 `exit(0)`.
-/// 시작 실패 안내(`startup_failed`)와 같은 대화상자다. 조용히 끝나면 "아이콘을 눌렀는데 아무것도 안 뜬다"가 된다.
+/// 시작 실패 안내(`startup_failed`)와 같은 대화상자지만 실패가 아니라서 제목은 앱 이름(`app.title`)이다. 조용히 끝나면 "아이콘을 눌렀는데 아무것도 안 뜬다"가 된다.
 fn cli_busy_notice<R: Runtime>(app: &AppHandle<R>) {
     use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
     if let Some(w) = app.get_webview_window("main") {
@@ -421,7 +421,7 @@ fn cli_busy_notice<R: Runtime>(app: &AppHandle<R>) {
     let handle = app.clone();
     app.dialog()
         .message(chzzk_shell::cli::copy::BUSY)
-        .title(STARTUP_FAILED_TITLE)
+        .title(chzzk_shell::cli::copy::APP_TITLE)
         .kind(MessageDialogKind::Info)
         .show(move |_| handle.exit(0));
 }
@@ -590,18 +590,18 @@ fn setup<R: Runtime>(
             .ok()
             .and_then(|e| e.parent().map(PathBuf::from))
     };
-    match acquire_instance_lock(&paths.data) {
-        InstanceLockState::Acquired(lock) => {
+    match cli::acquire_gui_lock(&paths.data) {
+        cli::GuiLock::Acquired(lock) => {
             app.manage(lock);
         }
-        InstanceLockState::HeldElsewhere => {
+        cli::GuiLock::CliBusy => {
             // 명령줄이 받는 중이면(`cli.lock`이 잠겨 있다) 안내를 보이고 끝낸다(cli-mode.md §6.2 O1 (a)).
-            // 그 밖은 같은 순간에 뜬 다른 GUI 실행이 이미 상태를 열었다: 창을 보이지 않고 조용히 끝낸다.
-            if cli::cli_lock_held(&paths.data) {
-                tracing::warn!("명령줄이 데이터 폴더를 쓰는 중이라 이 실행을 끝냄");
-                cli_busy_notice(app.handle());
-                return Ok(());
-            }
+            tracing::warn!("명령줄이 데이터 폴더를 쓰는 중이라 이 실행을 끝냄");
+            cli_busy_notice(app.handle());
+            return Ok(());
+        }
+        cli::GuiLock::OtherGui => {
+            // 같은 순간에 뜬 다른 GUI 실행이 이미 상태를 열었다: 창을 보이지 않고 조용히 끝낸다
             tracing::warn!("다른 실행이 데이터 폴더를 쓰는 중이라 이 실행을 끝냄");
             if let Some(w) = app.get_webview_window("main") {
                 let _ = w.hide();
@@ -609,7 +609,7 @@ fn setup<R: Runtime>(
             app.handle().exit(0);
             return Ok(());
         }
-        InstanceLockState::Unavailable(e) => {
+        cli::GuiLock::Unavailable(e) => {
             tracing::warn!(error = %e, "데이터 폴더 잠금을 쥐지 못해 잠금 없이 계속함");
         }
     }

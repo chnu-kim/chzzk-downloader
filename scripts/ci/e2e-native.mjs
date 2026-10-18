@@ -674,7 +674,7 @@ export async function run(exe) {
       if (IS_WIN) spawnSync('taskkill', ['/T', '/F', '/PID', String(proc.pid)], { stdio: 'ignore' });
       else proc.kill('SIGTERM');
     }
-    // 앱 단계가 통과했으면 같은 데이터 폴더로 명령줄을 돌린다(앱은 위에서 닫았다)
+    // 앱 단계가 통과했으면 새 데이터 폴더로 명령줄을 돌린다(앱은 위에서 닫았다)
     if (ok) {
       try {
         ok = await cliPhase({ exe, env, server, worker, expected });

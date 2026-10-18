@@ -505,6 +505,82 @@ async fn second_ctrl_c_quits_immediately() {
     assert!(st == vec!["paused"] || st == vec!["interrupted"], "{st:?}");
 }
 
+/// 60초 늦게 답하는 서버(응답이 오지 않는 네트워크)
+async fn hanging_server() -> MockServer {
+    let s = MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::any())
+        .respond_with(wiremock::ResponseTemplate::new(200).set_delay(Duration::from_secs(60)))
+        .mount(&s)
+        .await;
+    s
+}
+
+/// 받기를 시작하기 전의 기다림(갱신·조회·판정)에서도 Ctrl+C가 먹는다: 코드 130으로 곧 끝나고 작업·`.part`가 없다.
+/// 신호 핸들러를 달면 기본 동작(종료)이 없어지므로 이 경로를 막으면 명령이 눌러도 멈추지 않는다
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn ctrl_c_works_before_a_job_starts() {
+    // download·info: 치지직 API가 응답하지 않는다
+    for args in [vec!["download", "URL", "--out", "OUT"], vec!["info", "URL"]] {
+        let api = hanging_server().await;
+        let worker = MockServer::start().await;
+        let t = TempDir::new().unwrap();
+        save_session(t.path(), &worker, OWN);
+        let app = open_cli(t.path(), &api, Some(&worker));
+        let out = out_dir(&t);
+        let u = url();
+        let argv: Vec<&str> = args
+            .iter()
+            .map(|a| match *a {
+                "URL" => u.as_str(),
+                "OUT" => out.as_str(),
+                other => other,
+            })
+            .collect();
+        let (tx, mut rx) = ctrl();
+        let started = std::time::Instant::now();
+        let fut = run_with(&app, &argv, t.path(), &mut rx, None, None);
+        let press = async {
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            tx.send(()).unwrap();
+        };
+        let (r, ()) = tokio::join!(fut, press);
+        assert_eq!(r.code, exit::INTERRUPTED, "{args:?} {r:?}");
+        assert!(r.err.contains("그만뒀어요"), "{r:?}");
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "{args:?} 멈추지 않았다"
+        );
+        assert!(job_statuses(t.path()).is_empty());
+        assert!(ls(std::path::Path::new(&out)).is_empty());
+    }
+    // status: 유예를 넘긴 세션이라 열자마자 갱신하는데 Worker가 응답하지 않는다
+    let api = mock_api(None, false).await;
+    let worker = hanging_server().await;
+    let t = TempDir::new().unwrap();
+    save_session_at(
+        t.path(),
+        &worker,
+        OWN,
+        false,
+        &[],
+        time::Duration::hours(100),
+    );
+    let app = open_cli(t.path(), &api, Some(&worker));
+    let (tx, mut rx) = ctrl();
+    let started = std::time::Instant::now();
+    let fut = run_with(&app, &["status"], t.path(), &mut rx, None, None);
+    let press = async {
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        tx.send(()).unwrap();
+    };
+    let (r, ()) = tokio::join!(fut, press);
+    assert_eq!(r.code, exit::INTERRUPTED, "{r:?}");
+    assert!(
+        started.elapsed() < Duration::from_secs(10),
+        "status가 멈추지 않았다"
+    );
+}
+
 // ---------------------------------------------------------------- 갱신·자동 이어받기·전원(§5.2·§9.2)
 
 /// 유예 안 `SignedIn`이면 Worker 요청 0회(`retry`), 유예 밖(`Checking`)이면 refresh 1회. `startup`이면 앞의 단정이 깨진다

@@ -172,6 +172,8 @@ pub const PARTIAL_OTHER: &str = "다른 화질의 받다 만 파일이 있어 �
 
 pub const AUDIO_WITH_QUALITY: &str = "`--audio`와 `--quality`는 함께 쓸 수 없어요.";
 pub const AUDIO_UNAVAILABLE: &str = "이 영상은 오디오만 받을 수 없어요. 일반 영상에만 있어요.";
+/// 받기를 시작하기 전에 Ctrl+C로 그만뒀다(조회·판정·갱신을 기다리던 중)
+pub const INTERRUPTED: &str = "그만뒀어요.";
 pub const NAME_UNAVAILABLE: &str = "새 파일 이름을 정하지 못했어요. 저장 폴더를 확인해 주세요.";
 pub const JOB_LOST: &str = "작업 상태를 읽지 못했어요.";
 pub const JOB_FAILED: &str = "받지 못했어요.";

@@ -115,6 +115,38 @@ pub(crate) fn line(w: &mut dyn Write, s: &str) {
     let _ = writeln!(w, "{s}");
 }
 
+/// `fut`을 기다리되 Ctrl+C가 먼저 오면 버리고 `None`을 돌려준다(작업을 시작하기 전의 기다림 전부: 갱신·조회·판정).
+/// 신호 채널이 닫혔으면(`recv`가 `None`) 취소가 아니라 신호를 더 기다리지 않는 것이다. 받기가 시작된 뒤의 Ctrl+C 두 단계는
+/// `download::follow`가 따로 다룬다.
+///
+/// 버려도 안전하다: `App::enqueue`·`resume_job`은 `.await`(판정)가 모두 매니저를 부르기 전에 있고, 그 뒤는 동기라 작업이 아예
+/// 없거나 이미 완전히 만들어진 둘 중 하나다. 갱신을 도중에 버리는 것은 이 신호를 받기 전의 기본 동작(프로세스 종료)과 같고,
+/// 응답을 잃은 회전은 서버의 60초 복구 창이 받는다(worker.md §5.2).
+pub(crate) async fn interruptible<F: std::future::Future>(
+    ctrl_c: &mut CtrlC,
+    fut: F,
+) -> Option<F::Output> {
+    tokio::pin!(fut);
+    let mut closed = false;
+    loop {
+        tokio::select! {
+            out = &mut fut => return Some(out),
+            sig = ctrl_c.recv(), if !closed => {
+                if sig.is_some() {
+                    return None;
+                }
+                closed = true;
+            }
+        }
+    }
+}
+
+/// Ctrl+C로 작업을 시작하기 전에 그만뒀다.
+pub(crate) fn stopped(env: &mut Env<'_>) -> u8 {
+    line(env.err, copy::INTERRUPTED);
+    exit::INTERRUPTED
+}
+
 /// 명령 하나를 실행하고 종료 코드를 돌려준다. 모든 끝에서 `jobs.json` 쓰기를 마친 뒤에 돌아온다(§3.1):
 /// 쓰기 스레드는 가장 최근 제출만 나중에 쓰므로 flush 없이 끝내면 `completed`가 디스크에 없을 수 있다.
 pub async fn run(app: &App, cmd: Command, env: &mut Env<'_>, ctrl_c: &mut CtrlC) -> u8 {
@@ -136,12 +168,14 @@ async fn run_with_app(app: &App, cmd: Command, env: &mut Env<'_>, ctrl_c: &mut C
     if let Err(e) = app.gate_command("auth_retry") {
         return report_error(env, app, &e);
     }
-    let st = app.auth_retry().await;
+    let Some(st) = interruptible(ctrl_c, app.auth_retry()).await else {
+        return stopped(env);
+    };
     match cmd {
         Command::Help { .. } => exit::OK,
         Command::Status => status(app, env, &st),
         Command::Login => login::run(app, env, ctrl_c, &st).await,
-        Command::Info { url } => info(app, env, &url).await,
+        Command::Info { url } => info(app, env, ctrl_c, &url).await,
         Command::Download(a) => download::run(app, env, ctrl_c, &a).await,
     }
 }
@@ -174,13 +208,14 @@ fn status(app: &App, env: &mut Env<'_>, st: &AuthStatusDto) -> u8 {
 }
 
 /// `info`: 받지 않고 제목·채널·종류·화질·판정을 보여 준다. 채널 ID는 출력하지 않는다(§12).
-async fn info(app: &App, env: &mut Env<'_>, url: &str) -> u8 {
+async fn info(app: &App, env: &mut Env<'_>, ctrl_c: &mut CtrlC, url: &str) -> u8 {
     if let Err(e) = app.gate_command("resolve") {
         return report_error(env, app, &e);
     }
-    let r = match app.resolve(url).await {
-        Ok(r) => r,
-        Err(e) => return report_error(env, app, &e),
+    let r = match interruptible(ctrl_c, app.resolve(url)).await {
+        None => return stopped(env),
+        Some(Ok(r)) => r,
+        Some(Err(e)) => return report_error(env, app, &e),
     };
     let kind = match r.meta.kind {
         ContentKindDto::Video => copy::KIND_VIDEO,

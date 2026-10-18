@@ -11,7 +11,7 @@ use chzzk_core::parse_content_url;
 use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
 
 use super::progress::Reporter;
-use super::{CtrlC, DownloadArgs, Env, copy, exit, line, report_error};
+use super::{CtrlC, DownloadArgs, Env, copy, exit, interruptible, line, report_error, stopped};
 use crate::JobId;
 use crate::app::{App, ChatCheck};
 use crate::dto::{EnqueueRequest, JobDto, JobEvent, JobStatus, OnExisting, ResolvedDto};
@@ -80,9 +80,10 @@ impl Run<'_, '_> {
         if let Err(e) = app.gate_command("resolve") {
             return report_error(self.env, app, &e);
         }
-        let resolved = match app.resolve(url).await {
-            Ok(r) => r,
-            Err(e) => return report_error(self.env, app, &e),
+        let resolved = match interruptible(&mut *self.ctrl_c, app.resolve(url)).await {
+            None => return stopped(self.env),
+            Some(Ok(r)) => r,
+            Some(Err(e)) => return report_error(self.env, app, &e),
         };
         let Some(quality) = self.pick_quality(&resolved) else {
             return exit::USAGE;
@@ -138,8 +139,10 @@ impl Run<'_, '_> {
             if let Err(e) = app.gate_command("resume_job") {
                 return report_error(self.env, app, &e);
             }
-            if let Err(e) = app.resume_job(dup, false).await {
-                return report_error(self.env, app, &e);
+            match interruptible(&mut *self.ctrl_c, app.resume_job(dup, false)).await {
+                None => return stopped(self.env),
+                Some(Err(e)) => return report_error(self.env, app, &e),
+                Some(Ok(())) => {}
             }
             dup
         } else {
@@ -172,9 +175,10 @@ impl Run<'_, '_> {
             if let Err(e) = app.gate_command("enqueue") {
                 return report_error(self.env, app, &e);
             }
-            match app.enqueue(req).await {
-                Ok(job) => job.id,
-                Err(e) => return report_error(self.env, app, &e),
+            match interruptible(&mut *self.ctrl_c, app.enqueue(req)).await {
+                None => return stopped(self.env),
+                Some(Ok(job)) => job.id,
+                Some(Err(e)) => return report_error(self.env, app, &e),
             }
         };
         self.follow(id, &notes).await

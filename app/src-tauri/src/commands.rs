@@ -11,9 +11,10 @@ use chzzk_core::{ContentRef, PlaybackKind};
 use chzzk_shell::app::{ChatCheck, Reveal, chzzk_link};
 use chzzk_shell::chat::ChatOutputCheck;
 use chzzk_shell::dto::{
-    AppFolder, AppInfo, AuthStatusDto, EditorsDto, EngineProbe, EnqueueRequest, HelpId, InviteDto,
-    JobDto, JobEvent, LegacyImportDto, OnExisting, OutputCheck, ResolvedDto, SettingsDto,
-    SettingsPatch, TimeRangeDto, UpdateCheckDto, UpdateInfoDto, UpdateInstallDto, WebPage,
+    AppFolder, AppInfo, AuthStatusDto, EditorsDto, EngineProbe, EnqueueRequest,
+    FileNameTemplatePreview, HelpId, InviteDto, JobDto, JobEvent, LegacyImportDto, OnExisting,
+    OutputCheck, ResolvedDto, SettingsDto, SettingsPatch, TimeRangeDto, UpdateCheckDto,
+    UpdateInfoDto, UpdateInstallDto, WebPage,
 };
 use chzzk_shell::manager::QUIT_TIMEOUT;
 use chzzk_shell::{App, AppError, JobId};
@@ -100,6 +101,16 @@ pub async fn pick_folder<R: Runtime>(
             path.to_string_lossy()
         ))),
     }
+}
+
+/// 설정 화면의 파일 이름 규칙 입력 검증과 예시 이름(docs/design/features/filename-template.md T7). 읽을 수 없는
+/// 템플릿은 오류가 아니라 `invalid` 데이터로 돌려준다.
+#[tauri::command]
+pub async fn preview_file_name_template(
+    state: State<'_, App>,
+    template: String,
+) -> Res<FileNameTemplatePreview> {
+    Ok(state.preview_file_name_template(&template))
 }
 
 #[tauri::command]

@@ -14,6 +14,7 @@
     "allow-clear-naver-cookies",
     "allow-import-legacy",
     "allow-pick-folder",
+    "allow-preview-file-name-template",
     "allow-resolve",
     "allow-check-output",
     "allow-enqueue",

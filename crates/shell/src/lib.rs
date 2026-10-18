@@ -18,6 +18,7 @@ pub mod format;
 pub mod gate;
 pub mod jobs;
 pub mod manager;
+pub mod naming_preview;
 pub mod output;
 pub mod ownership;
 pub mod pasteboard;

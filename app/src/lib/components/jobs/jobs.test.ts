@@ -53,6 +53,7 @@ const baseSettings: SettingsDto = {
   keepAwake: true,
   saveChat: false,
   chatSubtitle: 'ass',
+  fileNameTemplate: null,
   totalRateLimit: null,
   jobRateLimit: null,
 };

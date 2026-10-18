@@ -268,7 +268,7 @@
 | 대기 항목 취소 | 가역(다시 넣을 수 있음) | 즉시, 토스트 없음, 라벨 [취소](`neutral`) | `.part`가 없다 |
 | 받는 중·일시정지 항목 취소(`.part` 있음) | **비가역**(`.part` 폐기) | 대화상자 D2(§5.2), 라벨 [취소] | 크기와 무관하다(편집 전 512 MiB 미만 즉시 실행은 폐기 — 오누름이 손실로 직결된다, `app.md` 구현 중 변경 67 (나)) |
 | 같은 이름 파일 덮어쓰기(건너뜀 행 [덮어쓰고 받기…], 카드 라디오 "덮어쓰기" 뒤 [받기]) | **비가역**(기존 파일 삭제) | 대화상자 D7 | 앱은 사용자의 영상을 지우지 않는다는 원칙의 유일한 예외라 확인한다 |
-| 설정 변경 | 가역 | 즉시 저장, 확인 없음 | 쿠키만 [저장] 버튼(`A-DRIFT-K14`) |
+| 설정 변경 | 가역 | 즉시 저장, 확인 없음 | 쿠키와 파일 이름 규칙만 [저장] 버튼(`A-DRIFT-K14`). 파일 이름 규칙은 [저장]을 누를 때 검증하고, [기본값으로]는 확인 없이 즉시 저장한다(가역) |
 | 쿠키 지우기 | 재입력으로 복구 | 즉시 + 인라인 "저장된 값 없음" | 확인 없음 |
 | 로그아웃 | 재로그인으로 복구 | 대화상자 D4(받는 중인 다운로드의 운명을 말해야 해서) | README D36 "로그아웃도 같은 규칙" |
 | 앱 닫기(받는 중) | 일시정지로 보존 | 대화상자 D1 | — |
@@ -360,7 +360,7 @@ scrim(`--scrim`, `--z-dialog` 50) 위, 창 가운데
 | 오류 테두리 | `aria-invalid`면 `--danger-ink` 1px. hover가 덮지 않는다 | `A-PRIM-T1`(hover가 invalid를 덮던 특이도 버그), README D21 | `frontend`(hover + invalid → danger 테두리 유지), `design-gallery` |
 | 입력칸 속성 | `type="text" autocomplete="off" spellcheck="false" autocorrect="off" autocapitalize="off"`. `type="url"` 금지 | `G-IME-R10` | `frontend`(TextField 속성 단언) |
 | Enter | 텍스트 입력의 Enter는 `<form>` 제출에 맡긴다. 입력칸에 직접 Enter keydown을 달지 않는다 | 같은 문서 R3·R5(IME 옛 순서) | `design-lint`(입력칸 `onkeydown`에서 `Enter` 분기 금지 grep) |
-| 설정 저장 | 즉시 저장. 쿠키만 [저장] | K14, `app.md` §8.7 | `frontend` |
+| 설정 저장 | 즉시 저장. 쿠키와 파일 이름 규칙만 [저장](파일 이름 규칙은 입력 중 오류가 없고 [저장] 때 inline 오류) | K14, `app.md` §8.7·구현 중 변경 95 | `frontend` |
 
 ### 6.2 폼 행(FieldRow)
 
@@ -818,10 +818,11 @@ Worker 쪽 확인 페이지(`loginWarning` + [계속], 확인 코드 없음)와 
 |---|---|---|
 | 섹션 순서 | 저장 위치 · 받기 · 보기 · 계정 · 고급(접힘) · 이전 버전 · 정보(키 `settings.*`) | 자주 쓰는 것 → 드문 것. 고급은 접힘(UT6, NN/g 점진적 노출 2단) |
 | 행 | §6.2 FieldRow. 최소 36. 라벨 fg, 도움말 caption muted, 컨트롤 오른쪽 | foundations §5.1 `--row-h` |
-| 즉시 저장 | 바꾸는 순간 저장. 저장 실패는 B2 | K14 |
+| 즉시 저장 | 바꾸는 순간 저장. 저장 실패는 B2. 예외는 쿠키와 파일 이름 규칙 입력(입력칸 + [저장], 검증 오류는 칸 아래 inline) | K14 |
 | 고급 섹션 | `Disclosure` 제목 `settings.advanced`("고급")이 `h2`를 가진다. 펼치면 그룹 상자 안에 `settings.cookie.*`의 다섯 가지(이유 · 저장 위치 · 값의 힘 · 사칭 경고 · 끝내는 길) + `SecretField` 둘 + [저장](secondary) [값 지우기](ghost) + 상태 글 + "도움말 보기: 값을 찾는 방법" 링크. 개발자 도구 단축키는 `{devtools}`(`platform.md` §20). 쿠키 입력은 사용자가 펼쳤을 때만 DOM에 있다. 오류의 [네이버 로그인 정보 넣기…]는 설정을 열고 이 절을 펼친 뒤 첫 SecretField에 포커스한다 | `G-PRIVACY-R1`·`G-PRIVACY-R4`, `A-FEAT-D5` |
 | 계정 행 | 채널 이름(fg) / `account.scope`("허가받은 채널이에요") · `account.lastSeen`(caption muted) / [로그아웃…]. 오프라인이면 `account.offline` | judgment §2.2-7(B의 C8 행), `worker.md` 11.7 |
 | 편집자·맡은 채널 행 | 편집자 머리 행(상태 하나 + [초대 주소 만들기] secondary sm) · 편집자마다 행([편집자 빼기] ghost sm) · 맡은 채널이 있을 때만 머리 행 + 채널마다 행([편집자 그만두기]). 실패는 그 행 안 inline danger | delegation.md §4·§5.6, app.md 구현 중 변경 81 |
+| 파일 이름 규칙 행 | 받기 그룹의 마지막 행. `SettingsRow`(라벨 `settings.fileNameTemplate` + 도움말 `settings.fileNameTemplate.help`) + 입력칸 + [저장](secondary sm, 저장된 값과 다를 때만 그린다) + [기본값으로](ghost sm, 입력이 기본 템플릿이 아닐 때만). 칸 아래 caption muted `settings.fileNameTemplate.preview`(영상 예시 한 줄, 150ms 디바운스, 읽을 수 없으면 비운다. 타이핑 중 오류 없음). [저장] 때 새로 검증해 `Notice inline danger`(`role="alert"`) + `aria-invalid` + 포커스. Enter에 동작을 달지 않는다 | `filename-template.md` §5.1, `app.md` 구현 중 변경 95 |
 | 보기 | 글자 크기(RadioGroup 기본/크게/아주 크게, `data-text-scale`), Linux만 모양 RadioGroup. macOS·Windows에는 모양 행이 없다 | README D7·D28, §6.3 |
 | 정보 7요소 | 앱 이름 · 버전 · [정보 복사] · 비공식 고지(`NOTICE_UNOFFICIAL`) · 처리방침 · 오픈소스 라이선스 · 저작권 줄(`copyright`). [업데이트 확인] + 상태 줄 | brief §6.14-4, README D34·D57 |
 | 경로 | 가운데 말줄임, `.selectable`, 복사는 원문. 로그·설정 폴더는 버튼으로만 연다(경로 안내 문구 없음) | `platform.md`, `G-PRIVACY-R14` |

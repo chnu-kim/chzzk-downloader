@@ -148,7 +148,7 @@ node worker/scripts/code-binding-check.mjs
 ## 주의사항
 
 - **비밀값**: 네이버 쿠키(`NID_AUT`/`NID_SES`)와 서명 토큰(`hdnts`, `hdntl`, PD 쿼리)은 `Debug`·`Display`·오류·로그 어디에도 나오면 안 된다. URL은 `http::redact_url`, 쿠키는 `Secret`을 거친다. 서명 값을 품는 새 타입은 `Debug`를 손으로 구현한다.
-- **쿠키는 API·MPD 요청에만**, 사용자가 켰을 때만(`ClientConfig.cookies`) 보낸다. 미디어 CDN에는 보내지 않는다(성인 PD는 미실측, `cookies_on_media` 스위치).
+- **쿠키는 API·MPD 요청에만**, 사용자가 켰을 때만(`ClientConfig.cookies`) 보낸다. 미디어 CDN에는 보내지 않는다(성인 HLS·PD도 필요 없다고 2026-10-18 실측, core.md 구현 중 변경 73·74. `cookies_on_media` 스위치는 되돌릴 길로 남긴다).
 - **OS별 분기**: 파일명 규칙은 `naming::Platform` 인자로 받아 한 호스트에서 세 OS를 테스트한다. Windows는 rename 일시 잠금 재시도, 디스크 부족 코드(112·39), 예약어가 다르다. macOS/Linux에서 개발해도 Windows 동작을 깨지 않게 양쪽을 고려한다.
 - 설정·자격증명 위치는 셸이 주입한다(`SettingsStore::open(config_dir)`, `CredentialStore::new(config_dir)`). 코어는 실행 파일 폴더를 쓰지 않는다.
 - 루트 `settings.json`과 `dependent/`는 **실제 사용자 데이터**(옛 Go 런타임 파일, 평문 쿠키 포함)다. 읽거나 고치지 않는다. 테스트용 Go 형식 JSON은 테스트 안에서 만든다.

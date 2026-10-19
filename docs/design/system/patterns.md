@@ -829,7 +829,7 @@ Worker 쪽 확인 페이지(`loginWarning` + [계속], 확인 코드 없음)와 
 | 편집자·맡은 채널 행 | 편집자 머리 행(상태 하나 + [초대 주소 만들기] secondary sm) · 편집자마다 행([편집자 빼기] ghost sm) · 맡은 채널이 있을 때만 머리 행 + 채널마다 행([편집자 그만두기]). 실패는 그 행 안 inline danger | delegation.md §4·§5.6, app.md 구현 중 변경 81 |
 | 파일 이름 규칙 행 | 받기 그룹의 마지막 행. `SettingsRow`(라벨 `settings.fileNameTemplate` + 도움말 `settings.fileNameTemplate.help`) + 입력칸 + [저장](secondary sm, 저장된 값과 다를 때만 그린다) + [기본값으로](ghost sm, 입력이 기본 템플릿이 아닐 때만). 칸 아래 caption muted `settings.fileNameTemplate.preview`(영상 예시 한 줄, 150ms 디바운스, 읽을 수 없으면 비운다. 타이핑 중 오류 없음). [저장] 때 새로 검증해 `Notice inline danger`(`role="alert"`) + `aria-invalid` + 포커스. Enter에 동작을 달지 않는다 | `filename-template.md` §5.1, `app.md` 구현 중 변경 95 |
 | 보기 | 글자 크기(RadioGroup 기본/크게/아주 크게, `data-text-scale`), Linux만 모양 RadioGroup. macOS·Windows에는 모양 행이 없다 | README D7·D28, §6.3 |
-| 정보 7요소 | 앱 이름 · 버전 · [정보 복사] · 비공식 고지(`NOTICE_UNOFFICIAL`) · 처리방침 · 오픈소스 라이선스 · 저작권 줄(`copyright`). [업데이트 확인] + 상태 줄 | brief §6.14-4, README D34·D57 |
+| 정보 7요소 | 앱 이름 · 버전 · [정보 복사] · 비공식 고지(`NOTICE_UNOFFICIAL`) · 처리방침 · 오픈소스 라이선스(행 값은 사용하는 고지마다 `이름 버전 (라이선스)`를 ` · `로 잇는다: Lucide, PV-6L부터 hls.js) · 저작권 줄(`copyright`). [업데이트 확인] + 상태 줄 | brief §6.14-4, README D34·D57 |
 | 경로 | 가운데 말줄임, `.selectable`, 복사는 원문. 로그·설정 폴더는 버튼으로만 연다(경로 안내 문구 없음) | `platform.md`, `G-PRIVACY-R14` |
 
 강제: `frontend`(플랫폼별 행 노출: Linux 모양 행·macOS "Finder에서 보기"), `design-copy`(고지 문자열 동일, 금지어), `design-gallery`.

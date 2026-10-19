@@ -791,6 +791,32 @@ async fn range_invalid_forms_416() {
 }
 
 #[tokio::test]
+async fn range_non_ascii_header_416() {
+    let env = Env::disabled();
+    let id = open_total(&env, TOTAL).await;
+    let req = http::Request::builder()
+        .uri(format!("watch://localhost/{id}/v"))
+        .header(
+            "range",
+            http::HeaderValue::from_bytes(b"bytes=0-\x80").unwrap(),
+        )
+        .body(Vec::new())
+        .unwrap();
+    let r = env
+        .svc
+        .handle(
+            &req,
+            ReqCtx {
+                webview_label: "main",
+            },
+        )
+        .await;
+    assert_eq!(status(&r), 416);
+    assert_eq!(header(&r, "content-range"), Some("bytes */100"));
+    assert_eq!(env.fake.range_calls().len(), 1, "업스트림을 부르지 않는다");
+}
+
+#[tokio::test]
 async fn range_missing_treated_as_zero() {
     let env = Env::disabled();
     let id = open_total(&env, TOTAL).await;
@@ -1041,6 +1067,31 @@ async fn refresh_limit_8() {
 }
 
 #[tokio::test]
+async fn refresh_limit_counts_failed_resolves() {
+    let env = Env::disabled();
+    let id = env.open("t0").await;
+    // resolve가 계속 실패해도 시도 수로 센다: 8번 502, 9번째는 resolve 없이 403
+    for i in 1..=8 {
+        env.fake.push_range(RangeStep::fail(WatchFail::Expired));
+        env.fake.push_resolve(Err(Error::Cancelled));
+        assert_eq!(
+            status(&env.get(&id, "/v", Some("bytes=0-9")).await),
+            502,
+            "{i}"
+        );
+    }
+    let resolves = env.fake.resolve_count();
+    env.fake.push_range(RangeStep::fail(WatchFail::Expired));
+    assert_eq!(status(&env.get(&id, "/v", Some("bytes=0-9")).await), 403);
+    assert_eq!(
+        env.fake.resolve_count(),
+        resolves,
+        "9번째는 resolve하지 않는다"
+    );
+    assert!(env.svc.has_session(), "상한은 이 요청만 막는다");
+}
+
+#[tokio::test]
 async fn concurrent_expired_single_refresh() {
     let env = Env::disabled();
     let id = env.open("old").await;
@@ -1231,6 +1282,24 @@ async fn refresh_result_dropped_on_sign_out() {
 }
 
 #[tokio::test]
+async fn refresh_result_dropped_on_real_sign_out() {
+    let env = Env::signed_in();
+    env.fake.push_resolve(Ok(pd("old", Some(ME)))); // fetch
+    env.fake.push_resolve(Ok(pd("old", Some(ME)))); // 열기
+    env.fake.push_range(RangeStep::ok(chunk(0, 0, TOTAL)));
+    let id = env.open_script_ready().await;
+    // 재조회 중에 로그아웃: signer가 사라져 판정이 not_logged_in이어도 404다
+    let (svc, signer) = (env.svc.clone(), env.signer.clone().unwrap());
+    let r = refresh_disturbed(&env, &id, move || {
+        signer.set(None);
+        svc.on_signed_out();
+    })
+    .await;
+    assert_eq!(status(&r), 404);
+    assert!(!env.svc.has_session());
+}
+
+#[tokio::test]
 async fn refresh_gate_revoked_403() {
     let env = Env::signed_in();
     env.fake.push_resolve(Ok(pd("old", Some(ME)))); // fetch
@@ -1352,6 +1421,65 @@ impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for LogBuf {
 
     fn make_writer(&'a self) -> LogBuf {
         self.clone()
+    }
+}
+
+#[tokio::test]
+async fn misaligned_chunk_409_drops_session() {
+    // 요청 bytes=0-9에 어긋난 조각: 시작이 다르다 / 끝이 요청을 넘는다 / 본문 길이가 다르다
+    let short_body = RangeChunk {
+        body: vec![7; 5],
+        ..chunk(0, 9, TOTAL)
+    };
+    for (name, bad) in [
+        ("start", chunk(1, 9, TOTAL)),
+        ("end", chunk(0, 19, TOTAL)),
+        ("len", short_body),
+    ] {
+        let env = Env::disabled();
+        let id = env.open("t").await;
+        env.fake.push_range(RangeStep::ok(bad));
+        let r = env.get(&id, "/v", Some("bytes=0-9")).await;
+        assert_eq!(status(&r), 409, "{name}");
+        assert!(!env.svc.has_session(), "{name}");
+    }
+}
+
+#[tokio::test]
+async fn responses_carry_no_secret() {
+    let env = Env::disabled();
+    let id = env.open("leak").await;
+    let mut all = Vec::new();
+    // 206
+    env.fake.push_range(RangeStep::ok(chunk(0, 9, TOTAL)));
+    all.push(("206", env.get(&id, "/v", Some("bytes=0-9")).await));
+    // 416
+    all.push(("416", env.get(&id, "/v", Some("bytes=500-")).await));
+    // HEAD
+    all.push((
+        "head",
+        env.send(http::Method::HEAD, &id, "/v", None, None, "main")
+            .await,
+    ));
+    // 403(다른 웹뷰)
+    all.push((
+        "403",
+        env.send(http::Method::GET, &id, "/v", None, None, "other")
+            .await,
+    ));
+    // 409
+    env.fake
+        .push_range(RangeStep::fail(WatchFail::SourceChanged));
+    all.push(("409", env.get(&id, "/v", Some("bytes=0-9")).await));
+    for (name, r) in &all {
+        let mut text = String::from_utf8_lossy(r.body()).into_owned();
+        for (k, v) in r.headers() {
+            text.push_str(k.as_str());
+            text.push_str(&String::from_utf8_lossy(v.as_bytes()));
+        }
+        for needle in ["SIGNEDSECRET", "hdnts", "hdntl", "exp=", "media.example"] {
+            assert!(!text.contains(needle), "{name}: {needle}");
+        }
     }
 }
 

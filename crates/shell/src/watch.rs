@@ -68,7 +68,7 @@ struct Endpoints {
 struct SourceState {
     /// 재조회로 주소가 바뀔 때마다 1씩 는다
     generation: u64,
-    /// 서명 주소. `Debug`에는 `redact_url`만 쓴다
+    /// 서명 주소. 래퍼 없이 두고 `Debug`에는 `redact_url`만 쓴다(app.md 구현 중 변경에 적음)
     url: Url,
     /// 열 때 정한 전체 길이. 바뀌면 영상이 바뀐 것이다(`409`)
     total: u64,
@@ -389,8 +389,14 @@ impl<B: Backend> WatchService<B> {
                 Vec::new(),
             );
         }
-        let range = req.headers().get(RANGE).and_then(|v| v.to_str().ok());
-        let Some((start, end)) = resolve_range(parse_range(range), total) else {
+        // ASCII가 아닌 값은 문법 오류다(헤더가 없는 것과 다르다)
+        let range = match req.headers().get(RANGE) {
+            None => RangeReq::Absent,
+            Some(v) => v
+                .to_str()
+                .map_or(RangeReq::Invalid, |s| parse_range(Some(s))),
+        };
+        let Some((start, end)) = resolve_range(range, total) else {
             return reply(
                 cors,
                 416,
@@ -423,11 +429,11 @@ impl<B: Backend> WatchService<B> {
         let client = (self.client)();
         let (generation, url, total) = s.snapshot();
         match client.watch_range(&url, start, end, Some(total)).await {
-            Ok(c) => self.check_chunk(s, c, total),
+            Ok(c) => self.check_chunk(s, c, total, start, end),
             Err(WatchFail::Expired) => {
                 let url = self.refresh(s, generation).await?;
                 match client.watch_range(&url, start, end, Some(total)).await {
-                    Ok(c) => self.check_chunk(s, c, total),
+                    Ok(c) => self.check_chunk(s, c, total, start, end),
                     // 재조회 직후에도 403이면 더 하지 않는다
                     Err(WatchFail::Expired) => Err(403),
                     Err(f) => Err(self.fail_status(s, f, total)),
@@ -437,16 +443,25 @@ impl<B: Backend> WatchService<B> {
         }
     }
 
-    /// 코어가 이미 대조한 값을 셸이 한 번 더 본다: total이 다르면 영상이 바뀐 것이다(`409`, 세션 버림).
-    fn check_chunk(&self, s: &Arc<Session>, c: RangeChunk, total: u64) -> Result<RangeChunk, u16> {
-        if c.total != total {
-            tracing::warn!(session = short(&s.id), "조각의 전체 길이가 달라졌다");
+    /// 코어가 이미 대조한 값을 셸이 한 번 더 본다(§5.3). total이 다르거나, 시작이 요청과 다르거나,
+    /// 끝이 요청을 넘거나, 본문 길이가 Content-Range와 다르면 영상이 바뀐 것으로 본다(`409`, 세션 버림).
+    fn check_chunk(
+        &self,
+        s: &Arc<Session>,
+        c: RangeChunk,
+        total: u64,
+        start: u64,
+        end: u64,
+    ) -> Result<RangeChunk, u16> {
+        let len = c.end_incl.checked_sub(c.start).map(|d| d + 1);
+        if c.total != total
+            || c.start != start
+            || c.end_incl > end
+            || len != Some(c.body.len() as u64)
+        {
+            tracing::warn!(session = short(&s.id), "조각이 요청·전체 길이와 어긋난다");
             self.drop_if_current(s);
             return Err(409);
-        }
-        let len = c.end_incl.checked_sub(c.start).map(|d| d + 1);
-        if len != Some(c.body.len() as u64) {
-            return Err(502);
         }
         Ok(c)
     }
@@ -483,13 +498,15 @@ impl<B: Backend> WatchService<B> {
             return Err(404);
         }
         {
-            let st = s.state();
+            let mut st = s.state();
             if st.generation > used_gen {
                 return Ok(st.url.clone());
             }
             if st.refreshes >= MAX_REFRESHES {
                 return Err(403);
             }
+            // 성공 여부와 상관없이 resolve 시도마다 센다(PV7: 실패가 이어져도 끝없이 부르지 않는다)
+            st.refreshes += 1;
         }
         let client = (self.client)();
         let resolved = client.resolve(&s.content).await.map_err(|e| {
@@ -504,6 +521,10 @@ impl<B: Backend> WatchService<B> {
             .admit_checked(&s.content, || async { Ok(channel) }, || (self.recheck)())
             .await
         {
+            // 재조회 중에 닫힘·로그아웃이 먼저 있었으면 판정 실패가 아니라 없는 세션이다
+            if !self.is_current(s) {
+                return Err(404);
+            }
             tracing::debug!(session = short(&s.id), code = ?e.code, "재조회 뒤 판정에서 막혔다");
             self.drop_if_current(s);
             return Err(403);
@@ -530,7 +551,6 @@ impl<B: Backend> WatchService<B> {
         let mut st = s.state();
         st.url = new_url.clone();
         st.generation += 1;
-        st.refreshes += 1;
         Ok(new_url)
     }
 }

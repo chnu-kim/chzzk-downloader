@@ -38,6 +38,8 @@
 - 새 컴포넌트는 기능 컴포넌트 `receive/WatchPanel.svelte` 하나다. `ui/`는 바꾸지 않는다.
 - gate: `design-copy`(용어집 패리티), `design-tokens`·`design-lint`, `frontend`, `e2e-web`(`watch.spec.ts`), `design-gallery`/`design-shots`(장면 '카드 미리보기 펼침'·'카드 미리보기 실패').
 
+- **PV-8 확정(2026-10-20)**: 결정 다섯 줄은 구현(PV-4·PV-6·PV-7, app.md 110·113·114)과 같다. 구현이 바꾼 것은 줄의 대상(HLS 줄은 PV-6부터, 찍기 단추는 hls.js 경로만)뿐이고 모두 이 문서의 결정 안이다. 상태는 근거 등급이 E1이라 `채택(잠정)`을 유지하고, 높이 상수 360px는 M-PV-1 실측으로 조인다.
+
 ### 재검증 조건
 
 - **높이 상한**: `--watch-max-h` 360이 720×520에서 어색하면(펼친 화면이 [받기]를 오래 밀면) M-PV-1 실측 뒤 줄인다.

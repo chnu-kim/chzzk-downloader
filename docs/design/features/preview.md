@@ -1,6 +1,6 @@
 # 받기 전 미리보기: 명세
 
-**상태·확정 결정(2026-10-20)**: **설계. 구현 전.** 사용자 결정(2026-10-20)은 다음과 같다.
+**상태·확정 결정(2026-10-20)**: **구현 완료(PV-1~PV-8, 아래 §16 구현 결과).** 사용자 실측 M-PV-1~7이 남았고, 그중 M-PV-5가 PV-7 머지 조건이다. 본문은 설계 당시 그대로이고, 구현이 달라진 곳은 §16과 core.md 86·87, app.md 108~114가 우선한다. 사용자 결정(2026-10-20)은 다음과 같다.
 - **1번**: 일반 VOD와 클립(통짜 mp4, PD)을 앱 화면의 기본 `<video>`로 재생한다. Rust가 Tauri 사용자 정의 주소(URI scheme)로 중계한다. 그래서 서명 토큰이 프런트로 가지 않고 CORS도 피한다. 탐색(Range)을 지원한다.
 - **2번**: 빠른 다시보기(HLS fMP4)를 hls.js로 재생한다. 미리보기 재생기에서 시작·끝을 찍어 기존 구간 받기 입력에 넣는다.
 - 생방송 미리보기는 범위 밖이다.
@@ -264,7 +264,7 @@
 | PV-6L hls.js 고지 | `licenses/hlsjs.txt`, AboutSection 고지 행, `worker-gen.mjs` 라이선스 원천 여럿, `design-worker` 기준선. 운영 반영은 Worker 배포(별도 승인) | `feat` |
 | PV-6 hls.js | 의존성(light, 정확한 버전), 동적 import, CSP `blob:`·`connect-src`, 빠른 다시보기 카드에 줄 열기, `size.dist_gz` 손 갱신 | `feat` |
 | PV-7 구간 찍기 | [시작 찍기]·[끝 찍기] → RangeField 연결(빠른 다시보기·hls.js 경로만). M-PV-5 통과가 머지 조건 | `feat` |
-| PV-8 문서 마감 | D64·ADR-0027 확정, `features/README.md`, `plan.md`, ROADMAP, `tests.playwright` 기준 | `chore` |
+| PV-8 문서 마감 | D64·ADR-0027 확정, `features/README.md`, `plan.md`, ROADMAP, `tests.playwright` 기준(CI 녹색 실행 뒤 사람이 올린다, §16.4) | `chore` |
 
 각 PR은 앞 PR 위에 쌓는다. PV-5는 PV-2 위에 있으므로 PV-3·PV-4와 병렬로 갈 수 있다. PV-6L은 PV-6 앞이면 어디든 된다. 가짜 백엔드·spec·갤러리는 command·화면을 처음 바꾸는 PR에서 함께 고친다(CLAUDE.md, 검토 반영 P2).
 
@@ -540,3 +540,48 @@
 | P14 | 찍기 버튼과 카드 상태 관계 테스트 없음 | 반영 | `disabled={busy}`(`ResolveCard.svelte:309`), `rangeErr` 설정·해제(`:225`·`:311`) 확인. PV-7 8·9 |
 
 기각한 지적은 없다. S1의 조기 EOF 처리와 S5의 HEAD 처리는 검토의 고칠 방향과 다르게(더 단순하게) 반영했다.
+
+## 16. 구현 결과(PV-8, 2026-10-20)
+
+PV-1~PV-7이 `feat/preview-pv1`~`pv7` 브랜치(stacked)로 구현됐다. 아래는 명세와 달라진 점의 요약이고, 원문은 core.md 구현 중 변경 86·87, app.md 구현 중 변경 108~114다. 번호 예약(§11.4)은 PV-6L이 하나를 더 써서 app.md 112 이후가 한 칸씩 밀렸다.
+
+### 16.1 PR과 번호
+
+| PR | 브랜치 | 구현 중 변경 | 비고 |
+|---|---|---|---|
+| PV-1 코어 PD 중계 | `feat/preview-pv1` | core.md 86 | `watch_range`·`watch_bytes`, 끝값까지 읽는 `parse_content_range_full` |
+| PV-2 셸 세션 | `feat/preview-pv2` | app.md 108 | `WatchService<B>`, 리뷰 반영 ⑧~⑫ |
+| PV-3 Tauri 배선 | `feat/preview-pv3` | app.md 109 | scheme·command 셋·CSP·가짜 백엔드 command |
+| PV-4 프런트 PD 재생기 | `feat/preview-pv4` | app.md 110, D64·ADR-0027 | `WatchPanel`, 갤러리 장면, 높이 예산 506 → 542 |
+| PV-5 코어·셸 HLS | `feat/preview-pv5` | core.md 87, app.md 111 | `render_watch_playlist`, `/pl.m3u8`·`/init`·`/s/<i>` |
+| PV-6L hls.js 고지 | `feat/preview-pv6l` | app.md 112 | `licenses/hlsjs.txt`, 생성기 원천 여럿 |
+| PV-6 hls.js | `feat/preview-pv6` | app.md 113 | hls.js 1.7.3 light, CSP `blob:`·`connect-src` |
+| PV-7 구간 찍기 | `feat/preview-pv7` | app.md 114 | hls.js 경로만, **M-PV-5 통과가 머지 조건** |
+| PV-8 문서 마감 | `feat/preview-pv8` | (번호 없음) | 이 절, D64·ADR-0027 확정 표기, 기능 안내·계획·ROADMAP |
+
+### 16.2 명세와 달라진 점
+
+- **필드 이름 `gen` → `generation`**: `gen`이 edition 2024 예약어다(app.md 108).
+- **게이트·재판정 주입 위치**: `open`의 인자가 아니라 `WatchService::new(client_fn, Arc<OwnershipGate>, RecheckFn)`가 들고 있다. `handle`의 재판정도 같은 것을 써야 해서다. `App.gate`가 `Arc<OwnershipGate>`가 됐고 `recheck_auth(auth)` 한 곳을 App과 세션이 같이 쓴다(app.md 108).
+- **로그아웃 훅**: PV-3이 훅을 더하지 않았다. `App::on_auth_status`가 `SignedIn`이 아니면 `watch.on_signed_out()`을 이미 부른다(app.md 108·109).
+- **재조회 상한은 resolve 시도 수**로 센다(성공 수가 아니다). 재조회 중 세션이 사라지면 `404`, 비ASCII `Range`는 `416`이다(app.md 108).
+- **코어 재시도 규칙(명세는 "1회, 짧게")**: 5xx·408·429·전송 오류를 100ms [잠정] 뒤 한 번 더 한다. 그래도 상태 오류면 `Fatal`, 전송 오류면 `Retry`. `end_incl < start`는 요청 없이 `Fatal(Parse)`(core.md 86).
+- **`api.ts` 래퍼 시기**: command 목록과 1:1을 강제하는 `api.test.ts` 때문에 `watchOpen`·`watchClose`·`openContentPage`를 PV-4가 아니라 PV-3에서 더했다(app.md 109).
+- **`canPlayType` 확인 시점**: `watch_open` 뒤에 본다. 열기 전에 막으면 Playwright chromium(H.264 없음)에서 E2E가 `watch_open` 인자를 볼 수 없다. 읽지 못하면 받은 세션을 바로 닫는다(app.md 110).
+- **열리는 중 자리**: Skeleton 변형 대신 `--surface-2` 상자다(`ui/`는 바꾸지 않는다, app.md 110).
+- **HLS 재조회**: master·media를 다시 받아 조각 수와 `durations_crc`가 같으면 주소만 바꾸고 세대를 올린다. 다르면 `409`+세션 버림이다. `refresh`의 반환이 `()`가 되고 호출자가 세션에서 다시 읽는다(app.md 111).
+- **`pick_variant`**: 위치·시그니처는 그대로 두고 `pub(super)` → `pub`으로 넓혀 `download`에서 재공개했다(core.md 87).
+- **`watchable`의 갈래**: PV-4는 `progressive`만 그렸고, PV-6이 `liveRewindHls`를 더했다. 클립이라도 재생 방식이 HLS면 줄이 있다(PV-4 시험을 뒤집었다, app.md 113).
+- **hls.js 오류**: `data.fatal`만 본다. `details`는 화면·로그에 쓰지 않는다(S10의 핵심은 url 필드 금지이고 원인은 한 문구라는 Q2에 맞췄다, app.md 113).
+- **PV-7 찍기**: 새 DTO·command·`effectiveRange` 변경이 없다. 버튼은 hls.js로 붙었을 때(`usingHls`)만 그린다. 영상 끝을 찍으면 기존 규칙대로 끝까지 받기다(app.md 114).
+
+### 16.3 남은 것
+
+- **사용자 실측 M-PV-1~7**(§13). M-PV-5(hls.js 경로 시각 원점, 화질을 다르게 고른 경우 포함)는 PV-7 머지 조건이고, 불통과면 PV-7을 보류한다. 높이 상수 `--watch-max-h` 360px는 M-PV-1로 조인다.
+- **갤러리 기준선**: `design-shots`(미리보기 장면 다섯과 접힌 줄이 늘어난 기존 카드 장면)·`design-worker`(`/licenses`)의 `__shots__` 기준선은 Linux CI에서만 만든다. 실패한 실행의 artifact를 `node scripts/design/shots.mjs --accept <run id> [--target worker]`로 받는다.
+- **운영 `/licenses`**: hls.js 고지를 운영에 반영하려면 Worker 배포가 필요하고 사용자 승인을 따로 받는다(Q8).
+- **후속(§12)**: 생방송 미리보기, 화질 고르기, 썸네일 탐색 막대, 원인별 문구, 재생 위치 되살리기, main 창 내비게이션 가드, 일반 VOD 구간 받기.
+
+### 16.4 `tests.playwright` 기준
+
+PV-8은 `ci/ratchet.json`을 올리지 않았다. `ratchet.mjs write --from-run <run id>`는 **성공한** push·dispatch 실행만 받는다(`ratchet.json` `$comment`, 검토 반영 P8). 이 브랜치가 master에 머지돼 `e2e-web`이 녹색인 실행(또는 브랜치 dispatch 녹색 실행)이 나오면 그 run id로 올린다. 올리는 PR이 사람 손이면 `ci/RATCHET_LOG.md`에는 올리기이므로 줄이 필요 없다(느슨하게 할 때만 적는다).

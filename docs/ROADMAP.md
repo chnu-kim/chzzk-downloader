@@ -4,6 +4,7 @@
 
 ## 현재 위치
 
+- **받기 전 미리보기 PV-8 문서 마감(2026-10-20, 브랜치 `feat/preview-pv8`, 명세 `docs/design/features/preview.md` §11.2·§16, 구현 중 변경 번호 없음(core.md 86·87, app.md 108~114 사용), `chore`)**: D64·ADR-0027 확정 표기(결정 값은 구현과 같고 높이 상수 360px만 [잠정], ADR은 E1이라 `채택(잠정)` 유지), `features/README.md` 행, `plan.md` 트랙, 명세 §16 구현 결과(PV-1~PV-7이 명세와 달라진 점·번호 한 칸씩 밀림·남은 것). 코드 변경 없음. `tests.playwright` 기준은 올리지 않았다(성공한 CI 실행의 run id가 필요해 머지 뒤 사람이 `ratchet.mjs write --from-run`). **남은 것**: 사용자 실측 M-PV-1~7(M-PV-5가 PV-7 머지 조건), 갤러리·`design-worker` 기준선 받기(Linux CI artifact), 운영 `/licenses` 반영은 Worker 배포(별도 승인)
 - **받기 전 미리보기 PV-7 구간 찍기(2026-10-20, 브랜치 `feat/preview-pv7`, 명세 `docs/design/features/preview.md` §11.2, app.md 114, `feat`, M-PV-5 대기)**: 빠른 다시보기 카드의 hls.js 미리보기 아래 [시작 찍기]·[끝 찍기]가 `floor(currentTime)`을 구간 칸에 넣는다(`WatchPanel` `markable`·`onmark`, 네이티브 m3u8 경로에는 없음, 메타데이터 전·busy 중 비활성). 새 DTO·command 없음. 갤러리 장면 `card-watch-hls-marked`(기준선은 Linux CI에서만). **머지 조건: 사용자 실측 M-PV-5 통과**
 - **받기 전 미리보기 PV-6 hls.js(2026-10-20, 브랜치 `feat/preview-pv6`, 명세 `docs/design/features/preview.md` §11.2, app.md 113, `feat`)**: `hls.js` 1.7.3(light, 동적 import, `enableWorker: false`), WatchPanel HLS 경로(hls.js → 네이티브 m3u8 → 실패, 접기·실패에서 `destroy`, 오류는 `fatal`만 보고 url 필드는 쓰지 않음), `watchable`에 빠른 다시보기(`liveRewindHls`) 포함, CSP `media-src` `blob:`·`connect-src` `watch:`, 가짜 백엔드 hls 응답·`watch.spec.ts`·갤러리 장면 하나. 갤러리 기준선은 Linux CI에서 받는다. 남은 것: `size.dist_gz` 기준(`ci/ratchet.json`)을 CI 측정값으로 사람이 올리고 RATCHET_LOG 줄을 더한다. 다음은 PV-7(구간 찍기).
 - **받기 전 미리보기 PV-6L hls.js 고지(2026-10-20, 브랜치 `feat/preview-pv6l`, 명세 `docs/design/features/preview.md` §11.2, app.md 112, `feat`)**: `licenses/hlsjs.txt`(hls.js 1.7.3, Apache-2.0 원문), `worker-gen.mjs`가 고지 원천을 목록(`PATHS.licenses`)으로 받아 `/licenses`에 Lucide·hls.js 두 절을 낸다(`licenses.generated.ts` 다시 생성, worker-config 모양 검사·icons DI2 맞춤), 설정 › 정보의 라이선스 행에 hls.js를 더했다. 의존성은 PV-6에서 더한다. 남은 것: `design-worker`·`design-shots` 기준선은 Linux CI artifact로 받고, 운영 `/licenses` 반영은 Worker 배포(사용자 승인).
@@ -353,6 +354,7 @@
 기능별 브랜치의 stacked PR이다. 트랙 사이는 서로 기다리지 않는다(`plan.md` §5-A에 적힌 기능 선행 조건만). 실측 결과는 범주·된다/안 된다만 여기 "사전 조사로 확정된 사실"에 적는다(공개 저장소 규칙).
 
 - [x] 설계·결정 문서를 저장소로 옮김(`docs/design/features/`, 이 PR, 문서만)
+- [ ] (추가) 받기 전 미리보기(`docs/design/features/preview.md`): PV-1~PV-8 구현·문서 마감 완료(core.md 86·87, app.md 108~114, D64·ADR-0027). 남은 것: 사용자 실측 M-PV-1~7(M-PV-5는 PV-7 머지 조건)·머지 뒤 `tests.playwright` 기준 올리기·기준선 받기
 - [ ] ⑤ 생방송 사후 점검 fix: F1 멈춤 계약(`live.rs:360`·다음 playlist 읽기·첫 resolve) · F2 녹화 `.part` 보호(삭제 진입점 소유권 검사·계약 구분·자동 재개 조건) · F3 끝난 이유 표시(`feat`) (구현·리뷰 반영 완료, PR 대기) · F4 EFBIG·223 매핑과 defrag 실패 계약 · F5 누출 테스트·LL 태그 경고 · F6 문서. F2가 ②-1보다 먼저
 - [ ] ⑤-F3 후속(범위 밖, 명세 R14·§5.5): 낭독(`a11y.jobStatus`)에 `restarted`일 때만 끝난 이유(`job.live.end.restarted.body`)를 잇기 · 갤러리 작업 목록에 생방송 행(녹화 중·완료+restarted)을 더하고 Linux CI에서 기준선 받기 · 가짜 백엔드 `pause_job`이 생방송을 셸처럼 완료(`liveEnd` stopped)로 흉내 내게 맞추기
 - [ ] ⑤ 실측 M-⑤-A~D(F3 뒤가 좋다): A 이어짐(독립 비교)·B 없음(2026-10-19, 위 "현재 위치"). 남은 것: 실방송에서 엔진 403 재조회를 타는 긴 녹화(서명 만료보다 길게), 구멍이 생기면 C, D(4 GiB)

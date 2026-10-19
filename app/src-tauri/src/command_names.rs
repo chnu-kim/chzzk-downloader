@@ -45,4 +45,7 @@
     "check_chat_output",
     "fetch_chat",
     "pause_chat",
+    "watch_open",
+    "watch_close",
+    "open_content_page",
 ]

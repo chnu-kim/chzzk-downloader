@@ -13,6 +13,7 @@ use chzzk_app_lib::menu::{MENU_ABOUT, MENU_SETTINGS, on_menu_item};
 use chzzk_app_lib::show::{ShowGate, show_main};
 use chzzk_app_lib::sink::{ChannelSink, Notice, Notifier};
 use chzzk_app_lib::status::{BoxedGuard, KEEP_AWAKE, StatusState, tick_once};
+use chzzk_app_lib::watch_protocol::{app_origin, serve, watch_base_for};
 use chzzk_app_lib::{
     AUTH_CHANGED, COMMANDS, Quitting, UPDATE_AVAILABLE, WINDOW_FOCUS, auto_update_check,
     focus_main, guard_close, handler, on_run_event, on_window_focus, request_quit,
@@ -369,20 +370,21 @@ struct RangeBody(Vec<u8>);
 impl Respond for RangeBody {
     fn respond(&self, req: &Request) -> ResponseTemplate {
         let len = self.0.len();
-        let start: usize = req
+        let range = req
             .headers
             .get("range")
             .and_then(|v| v.to_str().ok())
             .and_then(|r| r.strip_prefix("bytes="))
-            .and_then(|r| r.strip_suffix('-'))
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(0);
-        if start == 0 && req.headers.get("range").is_none() {
+            .and_then(|r| r.split_once('-'));
+        let Some((a, b)) = range else {
             return ResponseTemplate::new(200).set_body_bytes(self.0.clone());
-        }
+        };
+        // `bytes=N-`은 끝까지, `bytes=a-b`(미리보기 조각)는 닫힌 구간이다
+        let start: usize = a.parse().unwrap_or(0);
+        let end: usize = b.parse().map_or(len - 1, |e: usize| e.min(len - 1));
         ResponseTemplate::new(206)
-            .insert_header("content-range", format!("bytes {start}-{}/{len}", len - 1))
-            .set_body_bytes(self.0[start..].to_vec())
+            .insert_header("content-range", format!("bytes {start}-{end}/{len}"))
+            .set_body_bytes(self.0[start..=end].to_vec())
     }
 }
 
@@ -1035,7 +1037,7 @@ fn gated_commands_reject_before_sign_in() {
         let e = invoke(&f.main, name, json!({})).unwrap_err();
         assert_eq!(e, want, "{name}");
     }
-    assert_eq!(n, 30); // 채팅 command 셋(④-4)과 파일 이름 규칙 미리보기도 허용 목록 밖이다
+    assert_eq!(n, 33); // 채팅 command 셋(④-4)·파일 이름 규칙 미리보기·미리보기 셋(PV-3)도 허용 목록 밖이다
 }
 
 /// 앱 상태가 없을 때(시작 실패, worker.md 구현 중 변경 55): 허용 목록 밖은 처리기 전에 notLoggedIn(fail closed)
@@ -1061,7 +1063,7 @@ fn gate_without_app_state_fails_closed() {
         n += 1;
         assert_eq!(invoke(&main, name, json!({})).unwrap_err(), want, "{name}");
     }
-    assert_eq!(n, 30); // 채팅 command 셋(④-4)과 파일 이름 규칙 미리보기도 허용 목록 밖이다
+    assert_eq!(n, 33); // 채팅 command 셋(④-4)·파일 이름 규칙 미리보기·미리보기 셋(PV-3)도 허용 목록 밖이다
     // 허용 목록은 게이트를 지나 처리기로 간다(상태가 없어 처리기 쪽 오류일 수는 있어도 notLoggedIn은 아니다)
     for name in ["app_info", "auth_status", "list_jobs"] {
         if let Err(e) = invoke(&main, name, json!({})) {
@@ -1806,4 +1808,307 @@ fn menu_help_opens_the_worker_help_page() {
     let g = fixture();
     on_menu_item(g.app.handle(), "help");
     assert!(g.io.opened.lock().unwrap().is_empty());
+}
+
+// ---------------------------------------------------------------------------
+// 받기 전 미리보기(preview.md PV-3): watch_* command·scheme 처리기 래퍼·열기 seam
+// ---------------------------------------------------------------------------
+
+const VOD_URL: &str = "https://chzzk.naver.com/video/9000002";
+
+fn video_content() -> Value {
+    json!({ "kind": "video", "videoNo": VOD_NO })
+}
+
+/// 미리보기 열기 본문
+fn watch_open_body() -> Value {
+    json!({ "url": VOD_URL, "content": video_content() })
+}
+
+/// `watch:` 주소로 가는 GET. `range`가 있으면 헤더를 붙인다
+fn watch_get(src: &str, range: Option<&str>) -> tauri::http::Request<Vec<u8>> {
+    let mut b = tauri::http::Request::builder().method("GET").uri(src);
+    if let Some(r) = range {
+        b = b.header("range", r);
+    }
+    b.body(Vec::new()).unwrap()
+}
+
+#[test]
+fn watch_open_over_ipc_returns_src_without_secret() {
+    let server = vod_server();
+    let f = fixture_on(&server);
+    chzzk_app_lib::watch_protocol::configure(&f.app.state::<App>(), None);
+    let dto = invoke(&f.main, "watch_open", watch_open_body()).unwrap();
+    assert_eq!(dto["kind"], json!("mp4"));
+    let id = dto["id"].as_str().unwrap();
+    assert_eq!(id.len(), 32);
+    let src = dto["src"].as_str().unwrap();
+    assert_eq!(src, format!("{}/{id}/v", watch_base_for(cfg!(windows))));
+    // 응답 JSON 어디에도 서명 값·업스트림 주소가 없다
+    let text = dto.to_string();
+    for needle in ["_lsu_sa_", "sig", MEDIA_PATH, "127.0.0.1"] {
+        assert!(!text.contains(needle), "{needle}: {text}");
+    }
+
+    // 같은 앱 상태로 scheme 요청을 받는다(래퍼 `serve`): 206 조각과 앱 출처 ACAO
+    let origin = app_origin(tauri::is_dev(), None, cfg!(windows));
+    let r = tauri::async_runtime::block_on(serve(
+        f.app.handle(),
+        "main",
+        &watch_get(src, Some("bytes=10-19")),
+    ));
+    assert_eq!(r.status().as_u16(), 206);
+    assert_eq!(
+        r.headers().get("content-range").unwrap(),
+        "bytes 10-19/50000"
+    );
+    assert_eq!(r.body(), &(10..=19).map(|i| i as u8).collect::<Vec<u8>>());
+    assert_eq!(
+        r.headers().get("access-control-allow-origin").unwrap(),
+        origin.as_str()
+    );
+    // 응답 머리에도 서명·업스트림 주소가 없다
+    let heads = format!("{:?}", r.headers());
+    for needle in ["_lsu_sa_", "127.0.0.1", MEDIA_PATH] {
+        assert!(!heads.contains(needle), "{needle}: {heads}");
+    }
+
+    // 닫으면 같은 주소는 404, 닫기는 멱등이다
+    assert_eq!(
+        invoke(&f.main, "watch_close", json!({ "id": id })).unwrap(),
+        Value::Null
+    );
+    invoke(&f.main, "watch_close", json!({ "id": id })).unwrap();
+    invoke(&f.main, "watch_close", json!({ "id": "없는 ID" })).unwrap();
+    let r = tauri::async_runtime::block_on(serve(f.app.handle(), "main", &watch_get(src, None)));
+    assert_eq!(r.status().as_u16(), 404);
+}
+
+#[test]
+fn watch_open_rejects_mismatched_url_and_live() {
+    let server = vod_server();
+    let f = fixture_on(&server);
+    let e = invoke(
+        &f.main,
+        "watch_open",
+        json!({ "url": "https://chzzk.naver.com/video/1", "content": video_content() }),
+    )
+    .unwrap_err();
+    assert_eq!(e["code"], json!("invalidInput"));
+    let live = json!({ "kind": "live", "channelId": CH });
+    let e = invoke(
+        &f.main,
+        "watch_open",
+        json!({ "url": format!("https://chzzk.naver.com/live/{CH}"), "content": live }),
+    )
+    .unwrap_err();
+    assert_eq!(e["code"], json!("invalidInput"));
+}
+
+#[test]
+fn watch_protocol_without_app_state_503() {
+    // 앱 상태(`App`)를 관리하지 않는 앱: 처리기 래퍼는 fail closed(503)이고 ACAO도 붙이지 않는다
+    let app = mock_builder()
+        .build(tauri::generate_context!(test = true))
+        .unwrap();
+    let id = "a".repeat(32);
+    let r = tauri::async_runtime::block_on(serve(
+        app.handle(),
+        "main",
+        &watch_get(&format!("watch://localhost/{id}/v"), None),
+    ));
+    assert_eq!(r.status().as_u16(), 503);
+    assert!(r.body().is_empty());
+    assert!(r.headers().get("access-control-allow-origin").is_none());
+}
+
+#[test]
+fn watch_protocol_denies_other_windows_with_state() {
+    // 앱 상태가 있으면 결정은 셸 `handle`이 한다: main이 아닌 창은 403
+    let f = fixture();
+    let id = "a".repeat(32);
+    let r = tauri::async_runtime::block_on(serve(
+        f.app.handle(),
+        "other",
+        &watch_get(&format!("watch://localhost/{id}/v"), None),
+    ));
+    assert_eq!(r.status().as_u16(), 403);
+}
+
+#[test]
+fn watch_base_per_os() {
+    assert_eq!(watch_base_for(false), "watch://localhost");
+    assert_eq!(watch_base_for(true), "http://watch.localhost");
+    assert_eq!(
+        chzzk_app_lib::watch_protocol::watch_base(),
+        watch_base_for(cfg!(windows))
+    );
+}
+
+#[test]
+fn app_origin_table() {
+    let dev: tauri::Url = "http://localhost:1420".parse().unwrap();
+    let dev_path: tauri::Url = "http://localhost:1420/index.html?x=1#y".parse().unwrap();
+    // dev 실행은 설정 devUrl의 출처다(경로·쿼리·fragment는 버린다)
+    assert_eq!(app_origin(true, Some(&dev), false), "http://localhost:1420");
+    assert_eq!(app_origin(true, Some(&dev), true), "http://localhost:1420");
+    assert_eq!(
+        app_origin(true, Some(&dev_path), false),
+        "http://localhost:1420"
+    );
+    // 릴리스는 OS별 앱 출처
+    assert_eq!(
+        app_origin(false, Some(&dev), true),
+        "http://tauri.localhost"
+    );
+    assert_eq!(app_origin(false, None, true), "http://tauri.localhost");
+    assert_eq!(app_origin(false, Some(&dev), false), "tauri://localhost");
+    assert_eq!(app_origin(false, None, false), "tauri://localhost");
+    // dev인데 devUrl이 없으면 릴리스 값으로 떨어진다
+    assert_eq!(app_origin(true, None, false), "tauri://localhost");
+}
+
+#[test]
+fn watch_configure_sets_base_and_origin_from_dev_url() {
+    // setup이 부르는 배선 함수: 열기 src의 base와 ACAO(앱 출처)가 그 값을 따른다
+    let server = vod_server();
+    let f = fixture_on(&server);
+    let dev: tauri::Url = "http://localhost:1420".parse().unwrap();
+    chzzk_app_lib::watch_protocol::configure(&f.app.state::<App>(), Some(&dev));
+    let dto = invoke(&f.main, "watch_open", watch_open_body()).unwrap();
+    let src = dto["src"].as_str().unwrap();
+    assert!(src.starts_with(chzzk_app_lib::watch_protocol::watch_base()));
+    let r = tauri::async_runtime::block_on(serve(f.app.handle(), "main", &watch_get(src, None)));
+    assert_eq!(r.status().as_u16(), 206);
+    // 테스트 빌드는 dev(custom-protocol 기능 없음)라 devUrl의 출처다
+    assert_eq!(
+        r.headers().get("access-control-allow-origin").unwrap(),
+        app_origin(tauri::is_dev(), Some(&dev), cfg!(windows)).as_str()
+    );
+}
+
+/// 로그인한 채널의 세션과 영상 서버를 함께 쓰는 앱(`save_session`의 채널이 영상의 채널과 같다)
+fn fixture_auth_on(vod: &MockServer, worker: &MockServer) -> Fixture {
+    let dir = TempDir::new().unwrap();
+    save_session(dir.path(), worker);
+    let state = App::open_with_auth(
+        paths(dir.path()),
+        client_config(vod),
+        None,
+        chzzk_app_lib::tokio_handle(),
+        AuthSetup::Enabled {
+            base: WorkerBase::parse(&worker.uri()).unwrap(),
+            app_version: "0.1.0".into(),
+        },
+    )
+    .unwrap();
+    fixture_with(dir, state)
+}
+
+#[test]
+fn sign_out_drops_watch_session() {
+    let vod = vod_server();
+    let worker = worker_server(None);
+    let f = fixture_auth_on(&vod, &worker);
+    let auth = f.app.state::<App>().auth.clone().unwrap();
+    spawn_auth_tasks(f.app.handle().clone(), auth);
+
+    let dto = invoke(&f.main, "watch_open", watch_open_body()).unwrap();
+    let src = dto["src"].as_str().unwrap().to_string();
+    assert!(f.app.state::<App>().watch.has_session());
+    let r = tauri::async_runtime::block_on(serve(f.app.handle(), "main", &watch_get(&src, None)));
+    assert_eq!(r.status().as_u16(), 206);
+
+    // 로그아웃: 상태 전달 태스크가 `on_auth_status`를 불러 세션을 버린다
+    invoke(&f.main, "auth_logout", json!({})).unwrap();
+    wait_until("로그아웃 -> 미리보기 세션 닫힘", 5, || {
+        !f.app.state::<App>().watch.has_session()
+    });
+    // 로그아웃 뒤 같은 주소는 쓸 수 없다(로그인 아님 403 또는 세션 없음 404)
+    let r = tauri::async_runtime::block_on(serve(f.app.handle(), "main", &watch_get(&src, None)));
+    assert!(matches!(r.status().as_u16(), 403 | 404), "{}", r.status());
+}
+
+fn opened(f: &Fixture) -> Vec<String> {
+    f.io.opened.lock().unwrap().clone()
+}
+
+#[test]
+fn open_content_page_builds_from_content_ref() {
+    let f = fixture();
+    // 웹뷰가 같이 보낸 다른 문자열은 쓰지 않는다: 주소는 `ContentRef`에서 Rust가 만든다
+    invoke(
+        &f.main,
+        "open_content_page",
+        json!({ "content": { "kind": "video", "videoNo": 1234567 }, "url": "https://evil.example/x" }),
+    )
+    .unwrap();
+    invoke(
+        &f.main,
+        "open_content_page",
+        json!({ "content": { "kind": "clip", "clipId": "Ab_c-9" } }),
+    )
+    .unwrap();
+    assert_eq!(
+        opened(&f),
+        vec![
+            "https://chzzk.naver.com/video/1234567".to_string(),
+            "https://chzzk.naver.com/clips/Ab_c-9".to_string(),
+        ]
+    );
+}
+
+#[test]
+fn open_content_page_rejects_crafted_clip_id() {
+    let f = fixture();
+    for bad in ["../x", "a?b", "a#b", "", "a/b", "a b", "한글"] {
+        let e = invoke(
+            &f.main,
+            "open_content_page",
+            json!({ "content": { "kind": "clip", "clipId": bad } }),
+        )
+        .unwrap_err();
+        assert_eq!(e["code"], json!("invalidInput"), "{bad:?}");
+    }
+    // 생방송은 미리보기 대상이 아니므로 페이지도 열지 않는다
+    let e = invoke(
+        &f.main,
+        "open_content_page",
+        json!({ "content": { "kind": "live", "channelId": CH } }),
+    )
+    .unwrap_err();
+    assert_eq!(e["code"], json!("invalidInput"));
+    assert!(opened(&f).is_empty());
+}
+
+#[test]
+fn open_content_page_reports_a_browser_that_would_not_open() {
+    struct Refusing;
+    impl AuthIo for Refusing {
+        fn open_url(&self, _: &str) -> bool {
+            false
+        }
+        fn copy_text(&self, _: &str) -> bool {
+            false
+        }
+    }
+    let dir = TempDir::new().unwrap();
+    let state = App::open(paths(dir.path()), None, chzzk_app_lib::tokio_handle()).unwrap();
+    let app = mock_builder()
+        .manage(state)
+        .manage(AuthIoState(Arc::new(Refusing)))
+        .invoke_handler(handler())
+        .build(tauri::generate_context!(test = true))
+        .unwrap();
+    let main = WebviewWindowBuilder::new(&app, "main", Default::default())
+        .build()
+        .unwrap();
+    let e = invoke(
+        &main,
+        "open_content_page",
+        json!({ "content": { "kind": "video", "videoNo": 7 } }),
+    )
+    .unwrap_err();
+    assert_eq!(e["code"], json!("internal"));
 }

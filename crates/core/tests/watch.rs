@@ -486,12 +486,88 @@ async fn watch_bytes_caps_size_without_content_length() {
 
 #[tokio::test]
 async fn watch_bytes_non_success_statuses() {
+    // 403은 만료, 206·204는 통짜 GET에서 받을 수 없는 상태, 404는 다시 하지 않고, 503은 한 번 더 한 뒤 Fatal
+    let table: [(u16, usize); 4] = [(403, 1), (206, 1), (404, 1), (503, 2)];
+    for (status, requests) in table {
+        let server = MockServer::start().await;
+        mount(
+            &server,
+            ResponseTemplate::new(status).set_body_bytes(vec![1u8; 10]),
+        )
+        .await;
+        let r = client(&server)
+            .watch_bytes(&media_url(&server.uri()), 100)
+            .await;
+        if status == 403 {
+            assert!(matches!(r, Err(WatchFail::Expired)), "{status}: {r:?}");
+        } else {
+            assert!(
+                matches!(&r, Err(WatchFail::Fatal(Error::HttpStatus { status: s, .. })) if *s == status),
+                "{status}: {r:?}"
+            );
+        }
+        assert_eq!(upstream_requests(&server).await.len(), requests, "{status}");
+    }
+    // 200이 아닌 2xx(204)도 본문으로 넘기지 않는다
     let server = MockServer::start().await;
-    mount(&server, ResponseTemplate::new(403)).await;
+    mount(&server, ResponseTemplate::new(204)).await;
     let r = client(&server)
         .watch_bytes(&media_url(&server.uri()), 100)
         .await;
-    assert!(matches!(r, Err(WatchFail::Expired)), "{r:?}");
+    assert!(
+        matches!(
+            r,
+            Err(WatchFail::Fatal(Error::HttpStatus { status: 204, .. }))
+        ),
+        "{r:?}"
+    );
+}
+
+#[tokio::test]
+async fn transport_error_is_retried_once() {
+    // 첫 연결은 응답 없이 닫고 둘째 연결에서 정상 206을 준다
+    let (base, h) = raw_server(vec![
+        Vec::new(),
+        raw_206("bytes 0-9/100", Some(10), &[7u8; 10]),
+    ]);
+    let c = Chzzk::new(ClientConfig::default())
+        .unwrap()
+        .watch_range(&media_url(&base), 0, 9, None)
+        .await
+        .unwrap();
+    assert_eq!(c.body, vec![7u8; 10]);
+    assert_eq!(h.join().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn transport_error_twice_is_retry() {
+    let (base, h) = raw_server(vec![Vec::new(), Vec::new()]);
+    let r = Chzzk::new(ClientConfig::default())
+        .unwrap()
+        .watch_range(&media_url(&base), 0, 9, None)
+        .await;
+    assert!(matches!(r, Err(WatchFail::Retry(_))), "{r:?}");
+    assert_eq!(h.join().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn retryable_statuses_429_and_408_then_ok() {
+    for status in [429u16, 408] {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path(MEDIA))
+            .respond_with(ResponseTemplate::new(status))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        mount(&server, Closed(test_bytes(100, 4))).await;
+        let c = client(&server)
+            .watch_range(&media_url(&server.uri()), 0, 9, None)
+            .await
+            .unwrap();
+        assert_eq!(c.body.len(), 10, "{status}");
+        assert_eq!(upstream_requests(&server).await.len(), 2, "{status}");
+    }
 }
 
 #[tokio::test]

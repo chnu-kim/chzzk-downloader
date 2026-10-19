@@ -115,6 +115,7 @@ export const SITE_CSS = `/* [root] 라이트 기본값. ref 팔레트와 sys 토
   --badge-h: 18px;
   --label-w: 80px;
   --pct-w: 40px;
+  --watch-max-h: 360px;
   --content-max: 800px;
   --reading-max: 680px;
   --dialog-w: 440px;
@@ -2147,4 +2148,4 @@ pre.license {
   }
 }
 `;
-export const SITE_CSS_HASH = "de571b8340987991";
+export const SITE_CSS_HASH = "b5345de5ffc7ecda";

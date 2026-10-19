@@ -21,6 +21,9 @@ vi.mock('../../api', () => ({
   getSettings: vi.fn(),
   appInfo: vi.fn(),
   openWebPage: vi.fn(),
+  watchOpen: vi.fn(),
+  watchClose: vi.fn(),
+  openContentPage: vi.fn(),
 }));
 
 const api = await import('../../api');
@@ -98,6 +101,11 @@ beforeEach(() => {
   vi.mocked(api.pickFolder).mockReset();
   vi.mocked(api.updateSettings).mockReset();
   vi.mocked(api.getSettings).mockReset().mockResolvedValue(settingsDto);
+  vi.mocked(api.watchOpen)
+    .mockReset()
+    .mockResolvedValue({ id: 'ab'.repeat(16), kind: 'mp4', src: `watch://localhost/${'ab'.repeat(16)}/v` });
+  vi.mocked(api.watchClose).mockReset().mockResolvedValue(undefined as never);
+  vi.mocked(api.openContentPage).mockReset().mockResolvedValue(undefined as never);
   resolver.finish();
   settings.dto = { ...settingsDto };
   setCheck();
@@ -1218,5 +1226,105 @@ describe('불러오는 중 한 줄', () => {
     expect(container.querySelector('.spinner')).toBeNull();
     // 카드가 열렸으니 검사 디바운스를 흘려 보낸다
     await vi.advanceTimersByTimeAsync(CHECK_DEBOUNCE_MS + 10);
+  });
+});
+
+describe('미리보기 줄(ResolveCard, preview.md PV14)', () => {
+  const toggleEl = () => screen.queryByText(t('watch.toggle'));
+
+  /** 일반 VOD 카드를 연다(openCard는 resolved를 쓰므로 vodResolved를 직접 부른다) */
+  async function openVod(over = {}) {
+    vi.mocked(api.resolve).mockResolvedValue(vodResolved(over));
+    const user = userEvent.setup();
+    render(InputPanel);
+    await user.type(urlInput(), 'https://chzzk.naver.com/video/1234567{Enter}');
+    await screen.findByRole('heading', { name: '금요 노가리 방송 - 신작 게임 해보기' });
+    return user;
+  }
+
+  it('일반 VOD 카드에는 접힌 미리보기 줄이 있고 watchOpen을 부르지 않는다', async () => {
+    await openVod();
+    expect(toggleEl()).toBeInTheDocument();
+    expect(toggleEl()!.closest('details')).not.toHaveAttribute('open');
+    expect(api.watchOpen).not.toHaveBeenCalled();
+  });
+
+  it('줄은 메타 줄 다음, 화질 앞에 있다', async () => {
+    await openVod();
+    const meta = document.querySelector('.meta') as HTMLElement;
+    const watch = toggleEl()!.closest('details') as HTMLElement;
+    const fields = document.querySelector('.fields') as HTMLElement;
+    expect(meta.compareDocumentPosition(watch) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(watch.compareDocumentPosition(fields) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('펼치면 카드의 주소·content로 watchOpen을 부르고 video src를 둔다', async () => {
+    const user = await openVod();
+    await user.click(toggleEl()!);
+    await waitFor(() => expect(document.querySelector('video')).not.toBeNull());
+    expect(api.watchOpen).toHaveBeenCalledWith('https://chzzk.naver.com/video/1234567', { kind: 'video', videoNo: 1234567 });
+    expect(document.querySelector('video')!.getAttribute('src')).toContain('watch://localhost/');
+  });
+
+  it('생방송 카드에는 줄이 없다', async () => {
+    vi.mocked(api.resolve).mockResolvedValue(liveResolved());
+    const user = userEvent.setup();
+    render(InputPanel);
+    await user.type(urlInput(), 'https://chzzk.naver.com/live/000000000000000000000000000000e5{Enter}');
+    await screen.findByRole('heading', { name: '오늘 저녁 생방송' });
+    expect(toggleEl()).toBeNull();
+  });
+
+  it('빠른 다시보기 카드에는 아직 줄이 없다(PV-6에서 뒤집는다)', async () => {
+    await openCard();
+    expect(screen.getByText(t('kind.liveRewind'))).toBeInTheDocument();
+    expect(toggleEl()).toBeNull();
+  });
+
+  it('클립이라도 재생 방식이 HLS면 줄이 없다(tone이 아니라 playbackKind로 판정)', async () => {
+    await openCard({
+      content: { kind: 'clip', clipId: 'clip0001' },
+      meta: { ...resolved().meta, kind: 'clip' },
+      playbackKind: 'liveRewindHls',
+    });
+    expect(screen.getByText(t('kind.clip'))).toBeInTheDocument();
+    expect(toggleEl()).toBeNull();
+  });
+
+  it('클립이 progressive면 줄이 있다', async () => {
+    vi.mocked(api.resolve).mockResolvedValue(
+      vodResolved({ content: { kind: 'clip', clipId: 'clip0001' }, meta: { ...vodResolved().meta, kind: 'clip' } }),
+    );
+    const user = userEvent.setup();
+    render(InputPanel);
+    await user.type(urlInput(), 'https://chzzk.naver.com/clips/clip0001{Enter}');
+    await screen.findByRole('heading', { name: '금요 노가리 방송 - 신작 게임 해보기' });
+    expect(toggleEl()).toBeInTheDocument();
+  });
+
+  it.each(['notOwn', 'unknown'] as const)('ownership %s이면 줄을 그리지 않는다', async (ownership) => {
+    await openVod({ ownership });
+    expect(toggleEl()).toBeNull();
+  });
+
+  it.each(['own', 'delegated', 'adminOverride', 'unchecked'] as const)('ownership %s이면 줄이 있다', async (ownership) => {
+    await openVod({ ownership });
+    expect(toggleEl()).toBeInTheDocument();
+  });
+
+  it('카드를 닫으면 펼친 미리보기 세션을 한 번 닫는다', async () => {
+    const user = await openVod();
+    await user.click(toggleEl()!);
+    await waitFor(() => expect(document.querySelector('video')).not.toBeNull());
+    await user.click(cardFooter().getByRole('button', { name: t('common.close') }));
+    await waitFor(() => expect(screen.queryByRole('heading', { name: /금요/ })).toBeNull());
+    expect(api.watchClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('접힌 채 닫으면 watchClose를 부르지 않는다', async () => {
+    const user = await openVod();
+    await user.click(cardFooter().getByRole('button', { name: t('common.close') }));
+    await waitFor(() => expect(screen.queryByRole('heading', { name: /금요/ })).toBeNull());
+    expect(api.watchClose).not.toHaveBeenCalled();
   });
 });

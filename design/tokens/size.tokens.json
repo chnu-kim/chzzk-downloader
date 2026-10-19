@@ -185,6 +185,14 @@
         "unit": "px"
       },
       "$description": "작업 행 퍼센트 칸 폭"
+    },
+    "watch-max-h": {
+      "$type": "dimension",
+      "$value": {
+        "value": 360,
+        "unit": "px"
+      },
+      "$description": "받기 전 미리보기 화면 최대 높이 [잠정] (D64)"
     }
   }
 }

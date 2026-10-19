@@ -80,6 +80,11 @@ export const ko = {
   'range.error.order': '끝 시각이 시작 시각보다 뒤여야 해요.',
   'range.error.beyond': '시작 시각이 영상 길이보다 뒤예요.',
 
+  'watch.toggle': '미리보기',
+  'watch.error.body': '미리보기를 열 수 없어요.',
+  'watch.openInChzzk.label': '치지직에서 보기',
+  'watch.player.a11y': '‘{title}’ 미리보기',
+
   'folder.change': '변경…',
 
   'filename.label': '파일 이름',

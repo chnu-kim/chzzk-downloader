@@ -186,6 +186,41 @@ export const SCREENS: Screen[] = [
     card: true,
   },
   {
+    id: '카드 미리보기 펼침',
+    slug: 'card-watch',
+    scenario: () => ({ resolve: { [VOD.url]: VOD }, watchSrc: 'data:video/mp4;base64,AAAA' }),
+    drive: async (app, env) => {
+      await loadCard(app, VOD.url);
+      // 실제 재생은 하지 않는다: 웹뷰가 mp4를 읽는다고 하고, 자리표시 주소의 media 오류를 앱이 보기 전에 삼킨다
+      await app.page.evaluate(() => {
+        HTMLMediaElement.prototype.canPlayType = () => 'maybe';
+        window.addEventListener('error', (e) => e.target instanceof HTMLMediaElement && e.stopImmediatePropagation(), true);
+      });
+      await env.tick?.(CHECK_DEBOUNCE_MS + 50);
+      // 검사가 끝나 [받기]가 켜진 뒤(비활성 면의 대비는 잴 대상이 아니다)
+      await expect(app.page.locator('.card-footer button:not([aria-disabled="true"])', { hasText: t('card.download') })).toBeVisible();
+      await app.page.getByText(t('watch.toggle')).click();
+    },
+    ready: (p) => p.locator('video'),
+    settle: settleCardTop,
+    card: true,
+  },
+  {
+    id: '카드 미리보기 실패',
+    slug: 'card-watch-failed',
+    scenario: () => ({ resolve: { [VOD.url]: VOD }, watch: 'error' }),
+    drive: async (app, env) => {
+      await loadCard(app, VOD.url);
+      await env.tick?.(CHECK_DEBOUNCE_MS + 50);
+      // 검사가 끝나 [받기]가 켜진 뒤(비활성 면의 대비는 잴 대상이 아니다)
+      await expect(app.page.locator('.card-footer button:not([aria-disabled="true"])', { hasText: t('card.download') })).toBeVisible();
+      await app.page.getByText(t('watch.toggle')).click();
+    },
+    ready: (p) => p.getByText(t('watch.error.body')),
+    settle: settleCardTop,
+    card: true,
+  },
+  {
     id: '카드 구간 펼침',
     slug: 'card-range',
     scenario: () => ({ resolve: { [R.url]: R } }),

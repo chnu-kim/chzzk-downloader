@@ -1,5 +1,5 @@
 import { fireEvent, render } from '@testing-library/svelte';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AUTH_DISABLED, auth } from '../../stores/auth.svelte';
 import { platform } from '../../stores/platform.svelte';
 import { ui } from '../../stores/ui.svelte';
@@ -61,5 +61,24 @@ describe('GlobalShortcuts', () => {
     ui.goHome();
     await fireEvent.keyDown(window, { key: ',', ctrlKey: true, isComposing: true });
     expect(ui.view).toBe('home');
+  });
+
+  it('<video> 위의 Esc는 카드를 닫지 않고, 카드 다른 곳의 Esc는 여전히 닫는다', async () => {
+    render(GlobalShortcuts);
+    const handler = vi.fn(() => true);
+    const off = ui.onEscape(handler);
+    const video = document.createElement('video');
+    const other = document.createElement('button');
+    document.body.append(video, other);
+    try {
+      await fireEvent.keyDown(video, { key: 'Escape' });
+      expect(handler).not.toHaveBeenCalled();
+      await fireEvent.keyDown(other, { key: 'Escape' });
+      expect(handler).toHaveBeenCalledTimes(1);
+    } finally {
+      off();
+      video.remove();
+      other.remove();
+    }
   });
 });

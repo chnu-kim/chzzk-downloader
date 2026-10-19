@@ -613,6 +613,20 @@ Worker: 없다(폼 라벨은 위, `web.md` §7.1).
 
 **해부**: 네이티브 타이틀바 아래 `--toolbar-h` 44 띠(`--bg`, 아래 1px `--separator`). 스크롤 영역 `.main` **밖**이라 층이 없다. 안쪽은 PageContainer와 같은 `.col`이라 왼쪽 글자 x·오른쪽 아이콘 상자 x가 열 안쪽 x와 같다(README D24). 왼쪽: `AppMark`? + 앱 이름(body 13 600 `--fg`) 또는 설정 화면의 [←](IconButton md, `.edge-start`) + 화면 제목(display 17 600, [←]와 `--gap-sibling`). 오른쪽: 계정 Menu(`trigger="text"`: `‘{channelName}’` ▾, 글자 `--fg`) + [⚙](IconButton md `settings`, `.edge-end`; 설정 화면에서는 `aria-current="page"`로 남아 자리가 흔들리지 않는다, `A-FEAT-A3`·`A6`). 로그인 화면에서는 오른쪽이 비어 있다. 강제: `frontend`(화면별 구성 표), `design-gallery`(툴바 첫·끝 요소 상자 x = 열 안쪽 x ± 2px).
 
+### 2.29 WatchPanel (기능 컴포넌트)
+
+**해부**: 영상 카드(`ResolveCard`)의 메타 줄과 화질 사이에 놓는 받기 전 미리보기 줄(`receive/WatchPanel.svelte`, 기능 컴포넌트라 `ui/` 갤러리 매트릭스 대상이 아니다. 화면 몫 갤러리 장면 '카드 미리보기 펼침'·'카드 미리보기 실패'가 본다). `Disclosure variant="inline"` 하나(제목 `watch.toggle`, 기본 접힘, 카드마다 새로 시작)와 안쪽 상태 넷: `closed`(아무것도 없음) · `opening`(자리 표시 상자) · `ready`(`<video>`) · `failed`(inline Notice 하나). 펼칠 때 `watch_open`을 부르고, 접거나 카드가 사라지면 `watch_close`를 부른다.
+
+```ts
+type WatchPanelProps = { view: ResolvedDto };
+```
+
+**규칙**: ① 자동재생 없음, `preload="metadata"`, 네이티브 `controls`·`playsinline`. 키 입력은 `<video>` 기본 동작에 맡기고 `GlobalShortcuts`의 Esc는 대상이 미디어 요소면 건너뛴다(카드를 닫지 않는다). ② 접근 이름은 `watch.player.a11y`(`‘{title}’ 미리보기`). ③ 줄은 `ownership`이 `notOwn`·`unknown`이 아니고 `playbackKind`가 통짜 mp4(`progressive`)인 카드에만 그린다(Disclosure에 비활성 상태가 없어 막힌 카드에는 줄 자체를 두지 않는다). 생방송은 늘 없다. 빠른 다시보기(HLS)는 PV-6부터. ④ 실패는 한 문구 `watch.error.body` + [다시 시도](`action.retry`) + [치지직에서 보기](`watch.openInChzzk.label`, 앱이 정식 주소를 만들어 연다). 게이트 거부(`notLoggedIn`·`notOwnContent`·`ownershipUnknown`)는 받기와 같은 오류 문구(`errorCopy`)를 쓰고 단추는 없다. 웹뷰가 mp4를 읽지 못하면(`canPlayType` 빈 문자열) `src`를 달지 않고 같은 실패로 간다. ⑤ 서명 주소·토큰은 화면에 오지 않는다: `src`는 Rust가 만든 `watch:` 주소뿐이다.
+
+**치수**: 줄은 Disclosure inline 24, 카드 메타 줄 아래 `--space-12`. 화면은 카드 열 폭에 `aspect-ratio: 16 / 9`, 최대 높이 `--watch-max-h` [잠정, D64], 모서리 `--radius-control`, 바탕 `--surface-2`(영상이 오기 전·가장자리). forced-colors: `1px solid CanvasText` 윤곽(§3 표). 움직임: 전환 없음.
+
+Worker: 없다.
+
 ---
 
 ## 3. forced-colors · 대비 증가 · 움직임 줄이기 종합표
@@ -631,6 +645,7 @@ Worker: 없다(폼 라벨은 위, `web.md` §7.1).
 | Badge·Kbd·FieldRow 라벨 | `1px solid CanvasText`(배지·kbd), 라벨은 `CanvasText` | — | — |
 | Spinner·Icon·DropOverlay | `currentColor`, 오버레이 `2px dashed CanvasText` | — | Spinner `animation: none`, 호 유지 |
 | Skeleton·Toolbar | `1px solid GrayText`(비활성 자리표시), 툴바 아래 `1px solid CanvasText` | — | 애니메이션이 없다 |
+| WatchPanel 화면 | `1px solid CanvasText` 윤곽(`<video>`·열리는 중 자리) | — | 애니메이션이 없다 |
 | 포커스 링 | UA가 outline을 시스템 색으로 그린다 | — | — |
 
 ---

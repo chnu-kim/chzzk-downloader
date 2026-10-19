@@ -14,6 +14,8 @@
   async function onkeydown(e: KeyboardEvent) {
     if (isImeKey(e)) return;
     if (e.key === 'Escape') {
+      // 미리보기 <video> 위의 Esc는 전체 화면 해제 등 재생기 몫이다: 카드를 닫지 않는다(preview.md 검토 반영 P9)
+      if (e.target instanceof HTMLMediaElement) return;
       // 대화상자·메뉴는 스스로 받아 멈춘다(defaultPrevented)
       if (!e.defaultPrevented && ui.escape()) e.preventDefault();
       return;

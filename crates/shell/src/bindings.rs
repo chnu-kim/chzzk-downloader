@@ -15,7 +15,8 @@ use crate::dto::{
     AppFolder, AppInfo, AuthStatusDto, CloseRequestedPayload, EditorsDto, EngineProbe,
     EnqueueRequest, FileNameTemplatePreview, HelpId, InviteDto, JobDto, JobEvent, KeepAwakePayload,
     LegacyImportDto, OutputCheck, ResolvedDto, SettingsDto, SettingsPatch, UpdateCheckDto,
-    UpdateInfoDto, UpdateInstallDto, UpdateProgressEvent, WebPage, WindowFocusPayload,
+    UpdateInfoDto, UpdateInstallDto, UpdateProgressEvent, WatchOpenDto, WebPage,
+    WindowFocusPayload,
 };
 use crate::error::AppError;
 
@@ -68,6 +69,7 @@ pub fn export(dir: &Path) -> io::Result<()> {
     KeepAwakePayload::export_all(&cfg).map_err(ts_err)?;
     ChatOutputCheck::export_all(&cfg).map_err(ts_err)?;
     FileNameTemplatePreview::export_all(&cfg).map_err(ts_err)?;
+    WatchOpenDto::export_all(&cfg).map_err(ts_err)?;
 
     let mut names: Vec<String> = std::fs::read_dir(dir)?
         .filter_map(|e| e.ok())

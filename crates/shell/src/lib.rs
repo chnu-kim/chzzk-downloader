@@ -27,6 +27,7 @@ pub mod power;
 pub mod services;
 pub mod update;
 pub mod volume;
+pub mod watch;
 mod writer;
 
 pub use app::{AUTH_CLIENT_FAILED, App, AppAuth, AuthSetup, LoginWait, OpenOptions};
@@ -39,4 +40,5 @@ pub use jobs::{JobRecord, JobStore, JobsFile, reconcile};
 pub use manager::{DownloadManager, JobDefaults, ManagerConfig};
 pub use ownership::{OwnershipGate, SignedInChannel, Signer};
 pub use services::{AppPaths, SettingsService};
+pub use watch::WatchService;
 pub mod notify;

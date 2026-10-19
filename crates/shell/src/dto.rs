@@ -183,6 +183,25 @@ impl From<Platform> for OsDto {
     }
 }
 
+/// 미리보기 재생 방식(preview.md §5.4). mp4는 `<video>`가 바로, hls는 hls.js가 읽는다(PV-5·PV-6).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub enum WatchKindDto {
+    Mp4,
+    Hls,
+}
+
+/// `watch_open` 결과. 서명 주소는 없다: 불투명 세션 ID와 `watch:` 주소뿐이다(preview.md §3).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct WatchOpenDto {
+    /// 128비트 난수의 hex 32자. 주소를 만드는 열쇠라 로그에는 앞 4자만 남긴다
+    pub id: String,
+    pub kind: WatchKindDto,
+    /// `<video>`가 읽을 scheme 주소
+    pub src: String,
+}
+
 /// `open_web_page`가 여는 Worker 페이지(로그인 서버 주소 아래 고정 경로, system/patterns.md §13·§14.4).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]

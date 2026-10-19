@@ -135,6 +135,11 @@ impl OwnershipGate {
         self.auth.as_ref().and_then(|a| a.signed_in())
     }
 
+    /// 지금 판정 주체(SignedIn). 꺼진 게이트나 로그인 아님은 `None`. 미리보기 scheme 요청이 요청마다 읽는다(preview.md PV6)
+    pub fn signer(&self) -> Option<Signer> {
+        self.me()
+    }
+
     fn recent_len(&self) -> usize {
         self.recent
             .lock()

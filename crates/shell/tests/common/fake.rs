@@ -24,10 +24,11 @@ use chzzk_core::fsutil::atomic_write;
 use chzzk_core::naming::sibling_path;
 use chzzk_core::{
     CancellationToken, ContentRef, DownloadOutcome, DownloadRequest, Error, Phase, Progress,
-    Resolved,
+    RangeChunk, Resolved, WatchFail,
 };
 use chzzk_shell::Backend;
 use tokio::sync::Notify;
+use url::Url;
 
 /// 대본 한 단계.
 pub enum Step {
@@ -253,6 +254,60 @@ pub fn write_chat_part(video: &Path, video_no: u64, lines: u64) {
     atomic_write(&sidecar_path(&record), &serde_json::to_vec(&sc).unwrap()).unwrap();
 }
 
+/// `resolve` 한 번의 대본. `started`는 호출이 들어왔음을, `hold`는 풀어 줄 때까지 기다림을 뜻한다.
+struct ResolveStep {
+    started: Option<Arc<Notify>>,
+    hold: Option<Arc<Notify>>,
+    result: Result<Resolved, Error>,
+}
+
+/// `watch_range` 한 번의 대본(미리보기 중계, preview.md §5). 코어와 달리 `expect_total`을 스스로 검사하지 않는다:
+/// 셸이 응답의 total을 직접 대조하는지도 보려고 대본이 준 값을 그대로 돌려준다.
+pub struct RangeStep {
+    started: Option<Arc<Notify>>,
+    hold: Option<Arc<Notify>>,
+    result: Result<RangeChunk, WatchFail>,
+}
+
+impl RangeStep {
+    pub fn ok(chunk: RangeChunk) -> Self {
+        RangeStep {
+            started: None,
+            hold: None,
+            result: Ok(chunk),
+        }
+    }
+
+    pub fn fail(f: WatchFail) -> Self {
+        RangeStep {
+            started: None,
+            hold: None,
+            result: Err(f),
+        }
+    }
+
+    /// 호출이 들어오면 `n.notify_one()`.
+    pub fn started(mut self, n: Arc<Notify>) -> Self {
+        self.started = Some(n);
+        self
+    }
+
+    /// `n`이 풀릴 때까지 결과를 돌려주지 않는다.
+    pub fn hold(mut self, n: Arc<Notify>) -> Self {
+        self.hold = Some(n);
+        self
+    }
+}
+
+/// `watch_range`가 받은 호출.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RangeCall {
+    pub url: String,
+    pub start: u64,
+    pub end_incl: u64,
+    pub expect_total: Option<u64>,
+}
+
 /// 가짜가 받은 호출.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Call {
@@ -265,7 +320,10 @@ pub enum Call {
 
 #[derive(Default)]
 pub struct FakeBackend {
-    resolves: Mutex<VecDeque<Result<Resolved, Error>>>,
+    resolves: Mutex<VecDeque<ResolveStep>>,
+    ranges: Mutex<VecDeque<RangeStep>>,
+    range_calls: Mutex<Vec<RangeCall>>,
+    byte_steps: Mutex<VecDeque<Result<Vec<u8>, WatchFail>>>,
     by_output: Mutex<HashMap<PathBuf, VecDeque<Script>>>,
     shared: Mutex<VecDeque<Script>>,
     calls: Mutex<Vec<Call>>,
@@ -285,7 +343,48 @@ impl FakeBackend {
 
     /// 다음 `resolve`의 결과.
     pub fn push_resolve(&self, r: Result<Resolved, Error>) {
-        self.resolves.lock().unwrap().push_back(r);
+        self.resolves.lock().unwrap().push_back(ResolveStep {
+            started: None,
+            hold: None,
+            result: r,
+        });
+    }
+
+    /// 다음 `resolve`를 `release`가 풀릴 때까지 붙든다. 호출이 들어오면 `started`가 알려 준다.
+    pub fn push_resolve_held(
+        &self,
+        started: Arc<Notify>,
+        release: Arc<Notify>,
+        r: Result<Resolved, Error>,
+    ) {
+        self.resolves.lock().unwrap().push_back(ResolveStep {
+            started: Some(started),
+            hold: Some(release),
+            result: r,
+        });
+    }
+
+    /// 다음 `watch_range`의 대본.
+    pub fn push_range(&self, step: RangeStep) {
+        self.ranges.lock().unwrap().push_back(step);
+    }
+
+    /// 다음 `watch_bytes`의 결과.
+    pub fn push_bytes(&self, r: Result<Vec<u8>, WatchFail>) {
+        self.byte_steps.lock().unwrap().push_back(r);
+    }
+
+    /// `watch_range`가 받은 호출(호출 순서).
+    pub fn range_calls(&self) -> Vec<RangeCall> {
+        self.range_calls.lock().unwrap().clone()
+    }
+
+    /// `resolve` 호출 수.
+    pub fn resolve_count(&self) -> usize {
+        self.calls()
+            .iter()
+            .filter(|c| matches!(c, Call::Resolve(_)))
+            .count()
     }
 
     /// `output`으로 가는 다음 `download`의 대본.
@@ -379,11 +478,61 @@ impl Backend for FakeBackend {
     async fn resolve(&self, c: &ContentRef) -> Result<Resolved, Error> {
         self.calls.lock().unwrap().push(Call::Resolve(c.clone()));
         let next = self.resolves.lock().unwrap().pop_front();
-        next.unwrap_or_else(|| {
-            Err(Error::Parse {
+        match next {
+            Some(step) => {
+                if let Some(n) = step.started {
+                    n.notify_one();
+                }
+                if let Some(n) = step.hold {
+                    n.notified().await;
+                }
+                step.result
+            }
+            None => Err(Error::Parse {
                 what: "fake",
                 detail: "대본에 없는 resolve".into(),
-            })
+            }),
+        }
+    }
+
+    async fn watch_range(
+        &self,
+        url: &Url,
+        start: u64,
+        end_incl: u64,
+        expect_total: Option<u64>,
+    ) -> Result<RangeChunk, WatchFail> {
+        self.range_calls.lock().unwrap().push(RangeCall {
+            url: url.to_string(),
+            start,
+            end_incl,
+            expect_total,
+        });
+        let next = self.ranges.lock().unwrap().pop_front();
+        match next {
+            Some(step) => {
+                if let Some(n) = step.started {
+                    n.notify_one();
+                }
+                if let Some(n) = step.hold {
+                    n.notified().await;
+                }
+                step.result
+            }
+            None => Err(WatchFail::Fatal(Error::Parse {
+                what: "fake",
+                detail: "대본에 없는 watch_range".into(),
+            })),
+        }
+    }
+
+    async fn watch_bytes(&self, _url: &Url, _cap: usize) -> Result<Vec<u8>, WatchFail> {
+        let next = self.byte_steps.lock().unwrap().pop_front();
+        next.unwrap_or_else(|| {
+            Err(WatchFail::Fatal(Error::Parse {
+                what: "fake",
+                detail: "대본에 없는 watch_bytes".into(),
+            }))
         })
     }
 

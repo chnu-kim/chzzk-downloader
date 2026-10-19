@@ -83,15 +83,45 @@ describe('WatchPanel', () => {
     expect(document.querySelector('.stage')).toBeNull();
   });
 
-  it('게이트 오류(notOwnContent)는 받기와 같은 오류 문구를 보이고 video가 없다', async () => {
-    vi.mocked(api.watchOpen).mockRejectedValue(appError('notOwnContent'));
+  it.each(['notLoggedIn', 'notOwnContent', 'ownershipUnknown'] as const)(
+    '게이트 오류(%s)는 받기와 같은 오류 문구를 보이고 재시도·치지직 버튼과 video가 없다',
+    async (code) => {
+      vi.mocked(api.watchOpen).mockRejectedValue(appError(code));
+      const user = userEvent.setup();
+      render(WatchPanel, { view });
+      await expand(user);
+      const alert = await screen.findByRole('alert');
+      expect(alert).toHaveTextContent(errorCopy(appError(code), { place: 'resolve' }).title);
+      expect(alert).not.toHaveTextContent(t('watch.error.body'));
+      expect(screen.queryByRole('button', { name: t('action.retry') })).toBeNull();
+      expect(screen.queryByRole('button', { name: t('watch.openInChzzk.label') })).toBeNull();
+      expect(videoEl()).toBeNull();
+      expect(api.watchClose).not.toHaveBeenCalled();
+    },
+  );
+
+  it('게이트가 아닌 코드(network)는 일반 문구와 두 버튼을 보인다', async () => {
+    vi.mocked(api.watchOpen).mockRejectedValue(appError('network'));
     const user = userEvent.setup();
     render(WatchPanel, { view });
     await expand(user);
-    const alert = await screen.findByRole('alert');
-    expect(alert).toHaveTextContent(errorCopy(appError('notOwnContent'), { place: 'resolve' }).title);
+    expect(await screen.findByRole('alert')).toHaveTextContent(t('watch.error.body'));
+    expect(screen.getByRole('button', { name: t('action.retry') })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: t('watch.openInChzzk.label') })).toBeInTheDocument();
+  });
+
+  it('접은 뒤에 늦게 온 거절은 버려지고 닫힌 채 알림이 없다', async () => {
+    let reject!: (e: AppError) => void;
+    vi.mocked(api.watchOpen).mockReturnValue(new Promise((_, rj) => (reject = rj)));
+    const user = userEvent.setup();
+    render(WatchPanel, { view });
+    await expand(user);
+    await user.click(toggle());
+    reject(appError('network'));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(toggle().closest('details')).not.toHaveAttribute('open');
     expect(videoEl()).toBeNull();
-    expect(api.watchClose).not.toHaveBeenCalled();
   });
 
   it('그 밖의 열기 실패는 한 문구와 [다시 시도]·[치지직에서 보기]를 보인다', async () => {

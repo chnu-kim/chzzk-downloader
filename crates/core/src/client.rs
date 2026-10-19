@@ -337,6 +337,11 @@ impl Chzzk {
         }
     }
 
+    /// 미리보기 중계(`watch.rs`)용 HTTP 클라이언트. 쿠키 헤더는 호출하는 쪽이 만들지 않는다(PV12).
+    pub(crate) fn http_client(&self) -> &reqwest::Client {
+        &self.http
+    }
+
     /// 미디어 GET 요청(`RequestKind::Media` 헤더). 상태 코드 해석은 다운로드 엔진이 한다.
     pub(crate) fn media_get(&self, url: &Url) -> reqwest::RequestBuilder {
         tracing::debug!(url = %http::redact_url(url), "GET media");

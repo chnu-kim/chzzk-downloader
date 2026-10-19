@@ -24,6 +24,7 @@ pub mod ownership;
 pub mod progress;
 pub mod settings;
 pub mod url;
+pub mod watch;
 
 #[cfg(test)]
 mod testutil;
@@ -50,3 +51,4 @@ pub use settings::{
 };
 pub use tokio_util::sync::CancellationToken;
 pub use url::parse_content_url;
+pub use watch::{RangeChunk, WatchFail};

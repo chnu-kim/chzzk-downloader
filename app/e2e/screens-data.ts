@@ -224,6 +224,35 @@ export const SCREENS: Screen[] = [
     card: true,
   },
   {
+    id: '카드 미리보기 찍기(빠른 다시보기)',
+    slug: 'card-watch-hls-marked',
+    scenario: () => ({ resolve: { [R.url]: R }, watchSrc: HLS_PLAYLIST }),
+    drive: async (app, env) => {
+      await app.page.route(HLS_PLAYLIST, () => new Promise<void>(() => {}));
+      await loadCard(app, R.url);
+      await env.tick?.(CHECK_DEBOUNCE_MS + 50);
+      await expect(app.page.locator('.card-footer button:not([aria-disabled="true"])', { hasText: t('card.download') })).toBeVisible();
+      await app.page.getByText(t('watch.toggle')).click();
+      // 메타데이터가 읽혔고 재생 위치가 있는 것처럼 만들어 찍는다(실제 재생은 하지 않는다)
+      const video = app.page.locator('video');
+      await expect(video).toBeVisible();
+      for (const [name, time] of [
+        [t('watch.mark.start'), 600],
+        [t('watch.mark.end'), 1200],
+      ] as const) {
+        await video.evaluate((v: HTMLVideoElement, tm: number) => {
+          Object.defineProperty(v, 'currentTime', { value: tm, configurable: true, writable: true });
+          v.dispatchEvent(new Event('loadedmetadata'));
+        }, time);
+        await app.page.getByRole('button', { name }).click();
+      }
+      await env.tick?.(CHECK_DEBOUNCE_MS + 50);
+    },
+    ready: (p) => p.getByText(t('filename.willSaveAs', { name: `${R.suggestedFileName} (0.10.00~0.20.00)` })),
+    settle: settleCardTop,
+    card: true,
+  },
+  {
     id: '카드 미리보기 실패',
     slug: 'card-watch-failed',
     scenario: () => ({ resolve: { [VOD.url]: VOD }, watch: 'error' }),

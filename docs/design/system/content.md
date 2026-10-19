@@ -464,6 +464,8 @@
 | (신설) `watch.error.body` | — | `watch.error.body` **미리보기를 열 수 없어요.** | 실패 Notice 본문 하나(원인은 가르지 않는다, preview.md Q2). 마침표(DC5). 게이트 거부는 `errors.*` 문구를 그대로 쓴다 |
 | (신설) `watch.openInChzzk.label` | — | `watch.openInChzzk.label` **치지직에서 보기** | 실패 Notice의 둘째 단추. 앱이 content에서 정식 주소를 만들어 연다(웹뷰 문자열을 쓰지 않는다). 첫째는 기존 `action.retry` |
 | (신설) `watch.player.a11y` | — | `watch.player.a11y` **‘{title}’ 미리보기** | `<video>` 접근 이름. `a11y.resolved`와 같은 ‘’ 인용 |
+| (신설) `watch.mark.start` | — | `watch.mark.start` **시작 찍기** | 빠른 다시보기 미리보기(hls.js 경로) 재생기 아래 단추. 누른 순간의 재생 위치를 구간 시작 칸에 넣는다(preview.md PV17). 용어집 "구간" |
+| (신설) `watch.mark.end` | — | `watch.mark.end` **끝 찍기** | 같은 자리 둘째 단추. 끝 칸에 넣는다 |
 | (신설) `range.toggle` | — | `range.toggle` **일부만 받기** | §5.1 기본형. 빠른 다시보기 카드 화질 아래 Disclosure(range.md §5) |
 | (신설) `range.label` | — | `range.label` **구간** | 명사 라벨(DC5) |
 | (신설) `range.start` / `range.end` | — | `range.start` **시작 시각** / `range.end` **끝 시각** | sr 접근 이름 |

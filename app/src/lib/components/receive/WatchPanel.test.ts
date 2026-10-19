@@ -464,4 +464,106 @@ describe('WatchPanel', () => {
       expect(hlsMock.instances[1].loadSource).toHaveBeenCalledWith(HLS_SRC);
     });
   });
+  describe('구간 찍기(PV-7)', () => {
+    const markStart = () => screen.queryByRole('button', { name: t('watch.mark.start') });
+    const markEnd = () => screen.queryByRole('button', { name: t('watch.mark.end') });
+
+    /** 빠른 다시보기로 연다. markable은 카드가 정한다(빠른 다시보기 tone) */
+    async function openHlsMarkable(onmark = vi.fn(), disabled = false) {
+      vi.mocked(api.watchOpen).mockResolvedValue(hlsOpened());
+      const user = userEvent.setup();
+      render(WatchPanel, { view, markable: true, onmark, disabled });
+      await expand(user);
+      await waitFor(() => expect(hlsMock.instances).toHaveLength(1));
+      return { user, onmark };
+    }
+    /** 메타데이터가 읽힌 것처럼 currentTime을 정해 이벤트를 쏜다 */
+    async function loaded(time: number) {
+      const v = videoEl()!;
+      Object.defineProperty(v, 'currentTime', { value: time, configurable: true, writable: true });
+      await fireEvent(v, new Event('loadedmetadata'));
+    }
+
+    it('markable이 아니면(일반 VOD·클립) 찍기 버튼이 없다', async () => {
+      vi.mocked(api.watchOpen).mockResolvedValue(hlsOpened());
+      const user = userEvent.setup();
+      render(WatchPanel, { view });
+      await expand(user);
+      await waitFor(() => expect(hlsMock.instances).toHaveLength(1));
+      await loaded(10);
+      expect(markStart()).toBeNull();
+      expect(markEnd()).toBeNull();
+    });
+
+    it('mp4 경로에는 markable이어도 버튼이 없다', async () => {
+      const user = userEvent.setup();
+      render(WatchPanel, { view, markable: true, onmark: vi.fn() });
+      await expand(user);
+      await waitFor(() => expect(videoEl()).not.toBeNull());
+      expect(markStart()).toBeNull();
+    });
+
+    it('메타데이터가 읽히기 전에는 비활성이다', async () => {
+      await openHlsMarkable();
+      expect(markStart()).toBeDisabled();
+      expect(markEnd()).toBeDisabled();
+      await loaded(0);
+      expect(markStart()).toBeEnabled();
+      expect(markEnd()).toBeEnabled();
+    });
+
+    it('[시작 찍기]는 floor(currentTime)을 onmark로 넘긴다', async () => {
+      const { user, onmark } = await openHlsMarkable();
+      await loaded(65.9);
+      await user.click(markStart()!);
+      expect(onmark).toHaveBeenCalledExactlyOnceWith('start', 65);
+    });
+
+    it('[끝 찍기]는 끝 칸으로 넘긴다', async () => {
+      const { user, onmark } = await openHlsMarkable();
+      await loaded(3599.99);
+      await user.click(markEnd()!);
+      expect(onmark).toHaveBeenCalledExactlyOnceWith('end', 3599);
+    });
+
+    it('찍는 순간의 currentTime을 읽는다(메타데이터 때가 아니다)', async () => {
+      const { user, onmark } = await openHlsMarkable();
+      await loaded(1);
+      Object.defineProperty(videoEl()!, 'currentTime', { value: 120.4, configurable: true, writable: true });
+      await user.click(markStart()!);
+      expect(onmark).toHaveBeenCalledWith('start', 120);
+    });
+
+    it('disabled(카드 busy)면 메타데이터가 읽혀도 비활성이다', async () => {
+      await openHlsMarkable(vi.fn(), true);
+      await loaded(5);
+      expect(markStart()).toBeDisabled();
+      expect(markEnd()).toBeDisabled();
+    });
+
+    it('hls.js를 못 쓰고 네이티브 m3u8로 재생하면 찍기 버튼이 없다', async () => {
+      hlsMock.FakeHls.supported = false;
+      vi.spyOn(HTMLMediaElement.prototype, 'canPlayType').mockImplementation((type) =>
+        type === 'application/vnd.apple.mpegurl' ? 'maybe' : '',
+      );
+      vi.mocked(api.watchOpen).mockResolvedValue(hlsOpened());
+      const user = userEvent.setup();
+      render(WatchPanel, { view, markable: true, onmark: vi.fn() });
+      await expand(user);
+      await waitFor(() => expect(videoEl()).not.toBeNull());
+      await loaded(10);
+      expect(markStart()).toBeNull();
+      expect(markEnd()).toBeNull();
+    });
+
+    it('다시 열면 메타데이터 준비가 다시 필요하다', async () => {
+      const { user } = await openHlsMarkable();
+      await loaded(5);
+      expect(markStart()).toBeEnabled();
+      await user.click(toggle());
+      await user.click(toggle());
+      await waitFor(() => expect(hlsMock.instances).toHaveLength(2));
+      expect(markStart()).toBeDisabled();
+    });
+  });
 });

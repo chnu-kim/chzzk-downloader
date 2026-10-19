@@ -14,7 +14,7 @@
 
 - **카드 메타 줄과 화질 사이에 `Disclosure variant="inline"` 한 줄 "미리보기"를 둔다. 기본 접힘, 카드마다 새로 시작한다.** 늘 보이되 카드의 흐름(화질 → 폴더 → 이름 → [받기])을 밀지 않는다. 펼칠 때만 `watch_open`을 부른다.
 - **자동재생 없음, `preload="metadata"`, 네이티브 `controls`.** 소리와 reduced-motion 문제를 피하고 키보드·접근성은 웹뷰가 맡는다. Esc가 `<video>` 위에서 카드를 닫지 않게 `GlobalShortcuts`가 미디어 요소 대상 Esc를 건너뛴다.
-- **줄은 받을 수 있는 통짜 mp4 카드에만 그린다.** `ownership`이 `notOwn`·`unknown`이면 줄 자체가 없다(Disclosure에 비활성 상태가 없다, preview.md P4). 생방송과 빠른 다시보기(HLS, PV-6 전)에도 없다. `tone`이 아니라 `playbackKind`로 판정한다(클립은 재생 방식과 무관하게 tone이 `clip`이다).
+- **줄은 받을 수 있는 통짜 mp4·빠른 다시보기 카드에만 그린다.** `ownership`이 `notOwn`·`unknown`이면 줄 자체가 없다(Disclosure에 비활성 상태가 없다, preview.md P4). 빠른 다시보기(HLS)는 PV-6부터 같은 줄을 둔다(hls.js light, 워커 없음). 생방송에는 없다. `tone`이 아니라 `playbackKind`로 판정한다(클립은 재생 방식과 무관하게 tone이 `clip`이다).
 - **실패는 inline Notice 하나**: "미리보기를 열 수 없어요." + [다시 시도] + [치지직에서 보기]. 원인을 가르지 않는다(preview.md Q2: 원인은 로그에 남긴다). 게이트 거부(`notLoggedIn`·`notOwnContent`·`ownershipUnknown`)는 받기와 같은 오류 문구를 쓰고 단추를 두지 않는다. [치지직에서 보기]는 앱이 content에서 정식 주소를 만들어 연다.
 - **화면 크기는 카드 열 폭에 16:9, 최대 높이 `--watch-max-h` 360px [잠정].** 새 토큰이라 foundations §1의 속성 자리에 `watch`를 더했다. 확인: 실측(M-PV-1)으로 조이고, 방법은 재검증 조건에 적었다.
 - **새 말은 용어집 행 하나**: "미리보기"(쓰지 않는 말 "프리뷰"). "재생"·"재생기"는 "완성 파일 열기" 행의 쓰지 않는 말이 문구 전체(copy deck·`help/*.md`·`patterns.md`·`web.md`)에서 막는다.

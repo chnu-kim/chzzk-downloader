@@ -679,6 +679,10 @@ impl<B: Backend> WatchService<B> {
                         if !self.is_current(s) {
                             return Err(404);
                         }
+                        // 막 얻은 주소가 곧바로 403이면 만료가 아니라 거부다(재시도 직후 403과 같다)
+                        if matches!(f, WatchFail::Expired) {
+                            return Err(403);
+                        }
                         return Err(self.fail_status(s, f, 0));
                     }
                     // playlist 모양이 달라졌거나 그 화질이 사라졌다

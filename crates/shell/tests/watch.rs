@@ -1610,17 +1610,19 @@ async fn hls_open_builds_session_from_fixture() {
 
 #[tokio::test]
 async fn hls_open_picks_lowest_quality_variant() {
-    // 가짜 백엔드는 주소를 보지 않으므로, 고른 화질은 세션이 들고 있는 이름으로 확인한다:
-    // 재조회가 같은 화질(144p)을 다시 고르지 못하면 409가 된다(tracks에 144p가 없으면 QualityNotFound)
+    // tracks 앞쪽은 1080p·720p다. 가짜 백엔드가 받은 주소로 144p variant를 받았는지 직접 본다
     let env = Env::disabled();
-    let id = env.open_hls().await;
-    env.fake.push_bytes(Err(WatchFail::Expired));
-    env.fake.push_resolve(Ok(hls_resolved(Some(ME))));
-    env.fake.push_bytes(Ok(hls_fixture("master.m3u8")));
-    env.fake.push_bytes(Ok(hls_fixture("media.m3u8")));
-    env.fake.push_bytes(Ok(vec![1, 2, 3]));
-    let r = env.get(&id, "/s/0", None).await;
-    assert_eq!(status(&r), 200, "{}", String::from_utf8_lossy(r.body()));
+    env.open_hls().await;
+    let calls = env.fake.byte_calls();
+    assert_eq!(calls.len(), 2, "master + media");
+    assert!(
+        calls[0].0.path().ends_with("/hls/master.m3u8"),
+        "{}",
+        calls[0].0.path()
+    );
+    let media = calls[1].0.path();
+    assert!(media.starts_with("/hls/144p/"), "{media}");
+    assert!(media.ends_with("/vod_chunklist.m3u8"), "{media}");
 }
 
 #[tokio::test]
@@ -1711,6 +1713,19 @@ async fn hls_init_and_segment_bodies() {
         (200, b"SEG29".as_slice())
     );
     assert_eq!(header(&r, "cache-control"), Some("no-store"));
+    // 경로 → 업스트림 주소 대응: /init은 MAP 주소, /s/<i>는 i번째 세그먼트 주소
+    let calls = env.fake.byte_calls();
+    assert_eq!(calls.len(), 4);
+    assert!(
+        calls[2].0.path().ends_with("/144p_0_0_0.m4s"),
+        "{}",
+        calls[2].0
+    );
+    assert!(
+        calls[3].0.path().ends_with("/144p_seg29.m4v"),
+        "{}",
+        calls[3].0
+    );
 }
 
 #[tokio::test]
@@ -1799,11 +1814,15 @@ async fn hls_requests_pass_the_same_gates() {
     assert!(!env.svc.has_session());
 }
 
-/// 403 재조회 한 번의 대본: 실패한 세그먼트 요청 + resolve + master + media + 재시도 본문
+/// 403 재조회 한 번의 대본: 실패한 세그먼트 요청 + resolve + master + media + 재시도 본문.
+/// 재조회로 받은 master는 variant 경로의 서명 조각이 `renewed`로 바뀐다(옛 주소와 구분하려고).
 fn script_hls_refresh(env: &Env, media: Vec<u8>, body: &[u8]) {
     env.fake.push_bytes(Err(WatchFail::Expired));
     env.fake.push_resolve(Ok(hls_resolved(Some(ME))));
-    env.fake.push_bytes(Ok(hls_fixture("master.m3u8")));
+    let master = String::from_utf8(hls_fixture("master.m3u8"))
+        .unwrap()
+        .replace("hmac=fakepath", "hmac=renewed");
+    env.fake.push_bytes(Ok(master.into_bytes()));
     env.fake.push_bytes(Ok(media));
     env.fake.push_bytes(Ok(body.to_vec()));
 }
@@ -1817,6 +1836,18 @@ async fn seg_403_refresh_same_crc_ok() {
     let r = env.get(&id, "/s/3", None).await;
     assert_eq!((status(&r), r.body().as_slice()), (200, b"SEG".as_slice()));
     assert_eq!(env.fake.resolve_count(), 2, "열기 1회 + 재조회 1회");
+    // 실패한 요청은 옛 주소, 재시도는 재조회로 받은 새 주소의 같은 세그먼트다
+    let calls = env.fake.byte_calls();
+    assert_eq!(calls.len(), 6);
+    let (old, new) = (&calls[2].0, &calls[5].0);
+    assert!(
+        old.path().contains("hmac=fakepath") && old.path().ends_with("/144p_seg3.m4v"),
+        "{old}"
+    );
+    assert!(
+        new.path().contains("hmac=renewed") && new.path().ends_with("/144p_seg3.m4v"),
+        "{new}"
+    );
     // 같은 지문이면 세션이 그대로 이어진다: playlist는 바뀌지 않는다
     let after = String::from_utf8(env.get(&id, "/pl.m3u8", None).await.body().clone()).unwrap();
     assert_eq!(before, after);
@@ -1824,6 +1855,12 @@ async fn seg_403_refresh_same_crc_ok() {
     script_hls_refresh(&env, hls_fixture("media.m3u8"), b"SEG2");
     assert_eq!(status(&env.get(&id, "/init", None).await), 200);
     assert_eq!(env.fake.resolve_count(), 3);
+    // 두 번째 재시도도 init 주소다(세그먼트나 옛 주소가 아니다)
+    let last = env.fake.byte_calls().pop().unwrap().0;
+    assert!(
+        last.path().contains("hmac=renewed") && last.path().ends_with("/144p_0_0_0.m4s"),
+        "{last}"
+    );
 }
 
 #[tokio::test]
@@ -1867,6 +1904,21 @@ async fn hls_refresh_reload_failure_502_keeps_session() {
 }
 
 #[tokio::test]
+async fn hls_refresh_reload_expired_403() {
+    // 막 resolve한 주소를 받다 403이면 만료가 아니라 거부다: 502(재시도 유도)가 아니라 403
+    let env = Env::disabled();
+    let id = env.open_hls().await;
+    env.fake.push_bytes(Err(WatchFail::Expired));
+    env.fake.push_resolve(Ok(hls_resolved(Some(ME))));
+    env.fake.push_bytes(Err(WatchFail::Expired));
+    assert_eq!(status(&env.get(&id, "/s/0", None).await), 403);
+    assert!(
+        env.svc.has_session(),
+        "재조회 직후 403은 이 요청만 실패시킨다"
+    );
+}
+
+#[tokio::test]
 async fn hls_expired_right_after_refresh_403() {
     let env = Env::disabled();
     let id = env.open_hls().await;
@@ -1893,11 +1945,28 @@ async fn seg_too_large_502() {
 }
 
 #[tokio::test]
-async fn hls_idle_expiry_and_close() {
+async fn hls_close_drops_session() {
     let env = Env::disabled();
     let id = env.open_hls().await;
     env.svc.close(&id);
     assert_eq!(status(&env.get(&id, "/pl.m3u8", None).await), 404);
+    assert!(!env.svc.has_session());
+}
+
+#[tokio::test(start_paused = true)]
+async fn hls_idle_expiry_and_playlist_touch() {
+    let env = Env::disabled();
+    let id = env.open_hls().await;
+    // /pl.m3u8 요청도 마지막 사용 시각을 갱신한다
+    tokio::time::advance(IDLE_TTL - Duration::from_secs(1)).await;
+    assert_eq!(status(&env.get(&id, "/pl.m3u8", None).await), 200);
+    tokio::time::advance(IDLE_TTL - Duration::from_secs(1)).await;
+    env.fake.push_bytes(Ok(b"S".to_vec()));
+    assert_eq!(status(&env.get(&id, "/s/0", None).await), 200);
+    tokio::time::advance(IDLE_TTL + Duration::from_secs(1)).await;
+    assert_eq!(status(&env.get(&id, "/pl.m3u8", None).await), 404);
+    assert!(!env.svc.has_session(), "만료된 세션은 버린다");
+    assert_eq!(status(&env.get(&id, "/s/0", None).await), 404);
 }
 
 #[tokio::test]

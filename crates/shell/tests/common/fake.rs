@@ -324,7 +324,7 @@ pub struct FakeBackend {
     ranges: Mutex<VecDeque<RangeStep>>,
     range_calls: Mutex<Vec<RangeCall>>,
     byte_steps: Mutex<VecDeque<Result<Vec<u8>, WatchFail>>>,
-    byte_caps: Mutex<Vec<usize>>,
+    byte_calls: Mutex<Vec<(Url, usize)>>,
     by_output: Mutex<HashMap<PathBuf, VecDeque<Script>>>,
     shared: Mutex<VecDeque<Script>>,
     calls: Mutex<Vec<Call>>,
@@ -377,7 +377,17 @@ impl FakeBackend {
 
     /// `watch_bytes`가 받은 `cap`들(호출 순서).
     pub fn byte_caps(&self) -> Vec<usize> {
-        self.byte_caps.lock().unwrap().clone()
+        self.byte_calls
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(_, cap)| *cap)
+            .collect()
+    }
+
+    /// `watch_bytes`가 받은 (주소, 상한)(호출 순서).
+    pub fn byte_calls(&self) -> Vec<(Url, usize)> {
+        self.byte_calls.lock().unwrap().clone()
     }
 
     /// `watch_range`가 받은 호출(호출 순서).
@@ -532,8 +542,8 @@ impl Backend for FakeBackend {
         }
     }
 
-    async fn watch_bytes(&self, _url: &Url, cap: usize) -> Result<Vec<u8>, WatchFail> {
-        self.byte_caps.lock().unwrap().push(cap);
+    async fn watch_bytes(&self, url: &Url, cap: usize) -> Result<Vec<u8>, WatchFail> {
+        self.byte_calls.lock().unwrap().push((url.clone(), cap));
         let next = self.byte_steps.lock().unwrap().pop_front();
         next.unwrap_or_else(|| {
             Err(WatchFail::Fatal(Error::Parse {

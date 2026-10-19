@@ -1940,6 +1940,10 @@ fn watch_protocol_denies_other_windows_with_state() {
 fn watch_base_per_os() {
     assert_eq!(watch_base_for(false), "watch://localhost");
     assert_eq!(watch_base_for(true), "http://watch.localhost");
+    // 등록 이름과 base가 같은 상수에서 나온다(갈라지면 src가 처리되지 않는 주소가 된다)
+    let scheme = chzzk_app_lib::watch_protocol::WATCH_SCHEME;
+    assert_eq!(watch_base_for(false), format!("{scheme}://localhost"));
+    assert_eq!(watch_base_for(true), format!("http://{scheme}.localhost"));
     assert_eq!(
         chzzk_app_lib::watch_protocol::watch_base(),
         watch_base_for(cfg!(windows))
@@ -1978,7 +1982,7 @@ fn watch_configure_sets_base_and_origin_from_dev_url() {
     chzzk_app_lib::watch_protocol::configure(&f.app.state::<App>(), Some(&dev));
     let dto = invoke(&f.main, "watch_open", watch_open_body()).unwrap();
     let src = dto["src"].as_str().unwrap();
-    assert!(src.starts_with(chzzk_app_lib::watch_protocol::watch_base()));
+    assert!(src.starts_with(&chzzk_app_lib::watch_protocol::watch_base()));
     let r = tauri::async_runtime::block_on(serve(f.app.handle(), "main", &watch_get(src, None)));
     assert_eq!(r.status().as_u16(), 206);
     // 테스트 빌드는 dev(custom-protocol 기능 없음)라 devUrl의 출처다

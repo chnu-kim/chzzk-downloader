@@ -9,17 +9,25 @@ use chzzk_shell::watch::ReqCtx;
 use tauri::http::{Request, Response};
 use tauri::{AppHandle, Manager, Runtime, UriSchemeContext, UriSchemeResponder, Url};
 
+/// 사용자 정의 scheme 이름. 등록(`register`)과 주소 base(`watch_base_for`)가 이 상수 하나를 쓴다
+pub const WATCH_SCHEME: &str = "watch";
+
 /// `watch:` 주소의 base(PV1). Windows(WebView2)는 사용자 정의 scheme을 `http://<scheme>.localhost`로 보인다
-pub fn watch_base_for(windows: bool) -> &'static str {
+pub fn watch_base_for(windows: bool) -> String {
     if windows {
-        "http://watch.localhost"
+        format!("http://{WATCH_SCHEME}.localhost")
     } else {
-        "watch://localhost"
+        format!("{WATCH_SCHEME}://localhost")
     }
 }
 
+/// `watch` scheme 처리기를 Builder에 등록한다(`run()`과 시험이 함께 쓴다)
+pub fn register<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
+    builder.register_asynchronous_uri_scheme_protocol(WATCH_SCHEME, protocol)
+}
+
 /// 이 빌드의 `watch:` 주소 base
-pub fn watch_base() -> &'static str {
+pub fn watch_base() -> String {
     watch_base_for(cfg!(windows))
 }
 
@@ -38,7 +46,7 @@ pub fn app_origin(is_dev: bool, dev_url: Option<&Url>, windows: bool) -> String 
 /// 셸에 주소 base와 앱 출처를 알려 준다(setup에서 `App`을 `manage`하기 전에 한 번).
 pub fn configure(app: &App, dev_url: Option<&Url>) {
     app.watch.set_endpoints(
-        watch_base(),
+        &watch_base(),
         &app_origin(tauri::is_dev(), dev_url, cfg!(windows)),
     );
 }

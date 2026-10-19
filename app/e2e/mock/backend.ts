@@ -149,7 +149,7 @@ export type Scenario = {
   fail?: Partial<Record<'editors_list' | 'editors_invite' | 'editors_remove' | 'delegations_leave' | 'ownership_recheck', AppError>>;
   /**
    * watch_open(받기 전 미리보기, preview.md PV-3) 결과. ok(기본)는 존재하지 않는 `watch:` 주소를 돌려주고,
-   * denied는 notOwnContent, error는 network로 실패한다. 게이트·total 탐색은 흉내 내지 않는다
+   * denied는 notOwnContent, error는 network로 실패한다. 게이트·total 탐색은 흉내 내지 않는다. 생방송·url≠content는 invalidInput
    */
   watch?: 'ok' | 'denied' | 'error';
   /** app_info의 OS(Windows 고정 데이터·단축키 표기·[Finder에서 보기] 분기). 없으면 linux */
@@ -380,12 +380,18 @@ export function install(scenario: Scenario = {}): E2EController {
       return null;
     },
     // 셸 흉내(preview.md §5.2·PV19): 주소는 존재하지 않는 경로다. 생방송 페이지는 열지 않는다(invalidInput)
-    watch_open: () => {
+    watch_open: (a) => {
+      // 셸 open 1·3단계 흉내: 생방송과 url≠content는 invalidInput(url이 resolve 표에 있을 때만 대조한다)
+      if ((a.content as ContentRef).kind === 'live') throw err('invalidInput');
+      const known = resolveTable[a.url as string];
+      if (known && resolvedByContent(a.content as ContentRef) !== known) throw err('invalidInput');
       const mode = scenario.watch ?? 'ok';
       if (mode === 'denied') throw err('notOwnContent');
       if (mode === 'error') throw err('network');
       const id = 'a'.repeat(32);
-      return { id, kind: 'mp4', src: `watch://localhost/${id}/v` };
+      // 실제 src base는 OS별이다(Windows는 http://watch.localhost)
+      const base = scenario.platform === 'windows' ? 'http://watch.localhost' : 'watch://localhost';
+      return { id, kind: 'mp4', src: `${base}/${id}/v` };
     },
     watch_close: () => null,
     open_content_page: (a) => {

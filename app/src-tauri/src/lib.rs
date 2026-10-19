@@ -744,10 +744,9 @@ pub fn run() {
         builder
     };
 
-    let app = builder
+    // 받기 전 미리보기 `<video>`가 읽는 사용자 정의 주소(preview.md PV2). 상태가 없으면 503(fail closed)
+    let app = watch_protocol::register(builder)
         .manage(ShowGate::default())
-        // 받기 전 미리보기 `<video>`가 읽는 사용자 정의 주소(preview.md PV2). 상태가 없으면 503(fail closed)
-        .register_asynchronous_uri_scheme_protocol("watch", watch_protocol::protocol)
         // 아래 플러그인은 Rust에서만 부른다. capabilities에 플러그인 권한을 주지 않는다.
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())

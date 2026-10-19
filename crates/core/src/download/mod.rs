@@ -49,6 +49,7 @@ use crate::progress::{Meter, Phase, Progress};
 pub use part::{Discarded, Finalized, PartFile, PartOwner, Sidecar, discard_partial};
 pub use retry::{Failure, NETWORK_PATIENCE_MS, RETRY_BACKOFF_MAX_MS, RetryPolicy};
 use retry::{Patience, is_connection_failure};
+pub use segmented::pick_variant;
 pub use throttle::{RateKnob, Throttle, Throttles};
 
 /// 작업당 재조회 상한.

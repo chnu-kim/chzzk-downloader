@@ -664,3 +664,82 @@ async fn reversed_range_is_rejected_without_request() {
     assert!(matches!(r, Err(WatchFail::Fatal(_))), "{r:?}");
     assert!(upstream_requests(&server).await.is_empty());
 }
+
+// ── PV-5: 미리보기용 HLS playlist(preview.md §4.1) ─────────────────
+
+mod render {
+    use chzzk_core::hls::{MediaPlaylist, Segment, render_watch_playlist};
+    use url::Url;
+
+    fn playlist(durations_ms: &[u32], init: bool) -> MediaPlaylist {
+        MediaPlaylist {
+            media_sequence: 42,
+            init: init.then(|| {
+                Url::parse("https://cdn.example.invalid/i/init.m4s?hdntl=SECRETINIT").unwrap()
+            }),
+            segments: durations_ms
+                .iter()
+                .enumerate()
+                .map(|(i, &duration_ms)| Segment {
+                    msn: 42 + i as u64,
+                    duration_ms,
+                    uri: Url::parse(&format!(
+                        "https://cdn.example.invalid/s/seg{i}.m4v?hdntl=SECRETSEG{i}"
+                    ))
+                    .unwrap(),
+                })
+                .collect(),
+            total_duration_ms: durations_ms.iter().map(|&d| u64::from(d)).sum(),
+        }
+    }
+
+    #[test]
+    fn render_watch_playlist_golden() {
+        // 가장 긴 조각 2.5초 -> TARGETDURATION은 올림 3, EXTINF는 소수 셋째 자리, 시퀀스는 0부터
+        let text = render_watch_playlist(&playlist(&[2000, 2500, 1], true));
+        let want = "#EXTM3U\n\
+#EXT-X-VERSION:7\n\
+#EXT-X-TARGETDURATION:3\n\
+#EXT-X-MEDIA-SEQUENCE:0\n\
+#EXT-X-PLAYLIST-TYPE:VOD\n\
+#EXT-X-INDEPENDENT-SEGMENTS\n\
+#EXT-X-MAP:URI=\"init\"\n\
+#EXTINF:2.000,\n\
+s/0\n\
+#EXTINF:2.500,\n\
+s/1\n\
+#EXTINF:0.001,\n\
+s/2\n\
+#EXT-X-ENDLIST\n";
+        assert_eq!(text, want);
+    }
+
+    #[test]
+    fn render_target_duration_rounds_up_exact_seconds() {
+        // 딱 떨어지는 3.000초는 3, 3.001초는 4
+        assert!(render_watch_playlist(&playlist(&[3000], true)).contains("TARGETDURATION:3\n"));
+        assert!(render_watch_playlist(&playlist(&[3001], true)).contains("TARGETDURATION:4\n"));
+    }
+
+    #[test]
+    fn render_has_no_input_uri() {
+        let text = render_watch_playlist(&playlist(&[2000, 2000], true));
+        for leak in [
+            "SECRET",
+            "cdn.example",
+            "hdntl",
+            "seg0.m4v",
+            "init.m4s",
+            "https:",
+        ] {
+            assert!(!text.contains(leak), "{leak} 가 출력에 있다:\n{text}");
+        }
+    }
+
+    #[test]
+    fn render_without_init_has_no_map() {
+        let text = render_watch_playlist(&playlist(&[2000], false));
+        assert!(!text.contains("EXT-X-MAP"), "{text}");
+        assert!(text.contains("s/0\n") && text.ends_with("#EXT-X-ENDLIST\n"));
+    }
+}

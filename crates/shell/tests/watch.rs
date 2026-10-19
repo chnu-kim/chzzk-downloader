@@ -13,6 +13,7 @@ use chzzk_core::{
     ContentKind, ContentMeta, ContentRef, Error, PdRep, Quality, RangeChunk, Resolved, Source,
     WatchFail,
 };
+use chzzk_shell::dto::WatchKindDto;
 use chzzk_shell::ownership::{SignedInChannel, Signer};
 use chzzk_shell::watch::{CHUNK, IDLE_TTL, RecheckFn, ReqCtx, WatchService};
 use chzzk_shell::{ErrorCode, OwnershipGate};
@@ -406,21 +407,6 @@ async fn open_rejects_live() {
         .unwrap_err();
     assert_eq!(err.code, ErrorCode::InvalidInput);
     assert!(env.fake.calls().is_empty());
-}
-
-#[tokio::test]
-async fn open_rejects_hls_until_pv5() {
-    let env = Env::disabled();
-    env.fake.push_resolve(Ok(resolved_with(
-        Source::LiveRewindHls {
-            master_url: pd_url("m"),
-            tracks: vec![quality("720p", Some(720), false)],
-        },
-        Some(ME),
-    )));
-    let err = env.svc.open(VIDEO_URL, &content()).await.unwrap_err();
-    assert_eq!(err.code, ErrorCode::InvalidInput);
-    assert!(!env.svc.has_session());
 }
 
 #[tokio::test]
@@ -1535,4 +1521,422 @@ async fn kind_mismatch_paths_are_404() {
     for p in ["/pl.m3u8", "/init", "/s/0", "/s/12"] {
         assert_eq!(status(&env.get(&id, p, None).await), 404, "{p}");
     }
+}
+
+// ── PV-5: 빠른 다시보기 HLS ────────────────────────────────
+
+/// 합성 fixture(`testdata/hls/`)를 바이트 그대로 읽는다.
+fn hls_fixture(name: &str) -> Vec<u8> {
+    let p = format!("{}/../../testdata/hls/{name}", env!("CARGO_MANIFEST_DIR"));
+    std::fs::read(&p).unwrap_or_else(|e| panic!("{p}: {e}"))
+}
+
+fn hls_resolved(channel: Option<&str>) -> Resolved {
+    resolved_with(
+        Source::LiveRewindHls {
+            master_url: Url::parse(
+                "https://media.example.invalid/hls/master.m3u8?hdntl=SIGNEDSECRET_m",
+            )
+            .unwrap(),
+            // 일부러 높은 화질을 앞에 둔다: 가장 낮은 것은 144p(fixture의 media playlist)
+            tracks: vec![
+                quality("1080p", Some(1080), false),
+                quality("720p", Some(720), false),
+                quality("144p", Some(144), false),
+            ],
+        },
+        channel,
+    )
+}
+
+impl Env {
+    /// HLS 열기 대본: resolve 하나 + master + media(바이트 그대로)
+    fn script_hls_open(&self, media: Vec<u8>) {
+        self.fake.push_resolve(Ok(hls_resolved(Some(ME))));
+        self.fake.push_bytes(Ok(hls_fixture("master.m3u8")));
+        self.fake.push_bytes(Ok(media));
+    }
+
+    async fn open_hls(&self) -> String {
+        self.script_hls_open(hls_fixture("media.m3u8"));
+        self.open_script_ready().await
+    }
+}
+
+#[tokio::test]
+async fn hls_open_ok() {
+    // 옛 `open_rejects_hls_until_pv5`: 이제 열린다
+    let env = Env::disabled();
+    env.script_hls_open(hls_fixture("media.m3u8"));
+    let dto = env.svc.open(VIDEO_URL, &content()).await.unwrap();
+    assert_eq!(dto.kind, WatchKindDto::Hls);
+    assert_eq!(dto.src, format!("watch://localhost/{}/pl.m3u8", dto.id));
+    assert!(env.svc.has_session());
+    // 열기에서 total 탐색(watch_range)은 없다
+    assert!(env.fake.range_calls().is_empty());
+}
+
+#[tokio::test]
+async fn hls_open_builds_session_from_fixture() {
+    let env = Env::disabled();
+    let id = env.open_hls().await;
+    let r = env.get(&id, "/pl.m3u8", None).await;
+    assert_eq!(status(&r), 200);
+    assert_eq!(
+        header(&r, "content-type"),
+        Some("application/vnd.apple.mpegurl")
+    );
+    assert_eq!(header(&r, "cache-control"), Some("no-store"));
+    assert_eq!(header(&r, "access-control-allow-origin"), Some(APP_ORIGIN));
+    let text = String::from_utf8(r.body().clone()).unwrap();
+    assert!(text.starts_with("#EXTM3U\n#EXT-X-VERSION:7\n"), "{text}");
+    assert!(text.contains("#EXT-X-MAP:URI=\"init\"\n"));
+    assert_eq!(text.matches("#EXTINF:2.000,\n").count(), 30);
+    assert!(text.contains("\ns/0\n") && text.contains("\ns/29\n"));
+    assert!(!text.contains("s/30"));
+    assert!(text.ends_with("#EXT-X-ENDLIST\n"));
+    // 서명 주소·원래 파일 이름은 한 글자도 나가지 않는다
+    for needle in [
+        "SIGNED",
+        "hdntl",
+        "media.example",
+        "seg0.m4v",
+        "m4s",
+        "http",
+    ] {
+        assert!(!text.contains(needle), "{needle}\n{text}");
+    }
+}
+
+#[tokio::test]
+async fn hls_open_picks_lowest_quality_variant() {
+    // 가짜 백엔드는 주소를 보지 않으므로, 고른 화질은 세션이 들고 있는 이름으로 확인한다:
+    // 재조회가 같은 화질(144p)을 다시 고르지 못하면 409가 된다(tracks에 144p가 없으면 QualityNotFound)
+    let env = Env::disabled();
+    let id = env.open_hls().await;
+    env.fake.push_bytes(Err(WatchFail::Expired));
+    env.fake.push_resolve(Ok(hls_resolved(Some(ME))));
+    env.fake.push_bytes(Ok(hls_fixture("master.m3u8")));
+    env.fake.push_bytes(Ok(hls_fixture("media.m3u8")));
+    env.fake.push_bytes(Ok(vec![1, 2, 3]));
+    let r = env.get(&id, "/s/0", None).await;
+    assert_eq!(status(&r), 200, "{}", String::from_utf8_lossy(r.body()));
+}
+
+#[tokio::test]
+async fn hls_open_rejects_what_download_rejects() {
+    let media = String::from_utf8(hls_fixture("media.m3u8")).unwrap();
+    let broken = [
+        (
+            "discontinuity",
+            media.replacen("#EXTINF", "#EXT-X-DISCONTINUITY\n#EXTINF", 1),
+        ),
+        ("noEndlist", media.replace("#EXT-X-ENDLIST\n", "")),
+        ("noMap", {
+            let mut out = String::new();
+            for l in media.lines().filter(|l| !l.starts_with("#EXT-X-MAP")) {
+                out.push_str(l);
+                out.push('\n');
+            }
+            out
+        }),
+        ("empty", String::new()),
+    ];
+    for (name, text) in broken {
+        let env = Env::disabled();
+        env.script_hls_open(text.into_bytes());
+        let err = env.svc.open(VIDEO_URL, &content()).await.unwrap_err();
+        assert!(!env.svc.has_session(), "{name}");
+        assert_ne!(err.code, ErrorCode::Internal, "{name}: {}", err.message);
+    }
+    // 이전 세션이 있으면 실패한 열기는 그것을 건드리지 않는다
+    let env = Env::disabled();
+    let old = env.open("keep").await;
+    env.script_hls_open(b"#EXTM3U\n".to_vec());
+    assert!(env.svc.open(VIDEO_URL, &content()).await.is_err());
+    env.fake.push_range(RangeStep::ok(chunk(0, 9, TOTAL)));
+    assert_eq!(status(&env.get(&old, "/v", Some("bytes=0-9")).await), 206);
+}
+
+#[tokio::test]
+async fn hls_open_failures_map_like_download() {
+    // master 받기 403은 받기와 같은 미디어 HTTP 오류
+    let env = Env::disabled();
+    env.fake.push_resolve(Ok(hls_resolved(Some(ME))));
+    env.fake.push_bytes(Err(WatchFail::Expired));
+    let err = env.svc.open(VIDEO_URL, &content()).await.unwrap_err();
+    assert_eq!(err.code, ErrorCode::Http);
+    assert!(!env.svc.has_session());
+
+    // tracks에 없는 화질(비디오가 하나도 없음)
+    let env = Env::disabled();
+    env.fake.push_resolve(Ok(resolved_with(
+        Source::LiveRewindHls {
+            master_url: pd_url("m"),
+            tracks: vec![quality("audio", None, true)],
+        },
+        Some(ME),
+    )));
+    let err = env.svc.open(VIDEO_URL, &content()).await.unwrap_err();
+    assert_eq!(err.code, ErrorCode::InvalidInput);
+
+    // master에 고른 화질이 없음
+    let env = Env::disabled();
+    env.fake.push_resolve(Ok(resolved_with(
+        Source::LiveRewindHls {
+            master_url: pd_url("m"),
+            tracks: vec![quality("2160p", Some(2160), false)],
+        },
+        Some(ME),
+    )));
+    env.fake.push_bytes(Ok(hls_fixture("master.m3u8")));
+    assert!(env.svc.open(VIDEO_URL, &content()).await.is_err());
+    assert!(!env.svc.has_session());
+}
+
+#[tokio::test]
+async fn hls_init_and_segment_bodies() {
+    let env = Env::disabled();
+    let id = env.open_hls().await;
+    env.fake.push_bytes(Ok(b"INITBYTES".to_vec()));
+    let r = env.get(&id, "/init", None).await;
+    assert_eq!(status(&r), 200);
+    assert_eq!(header(&r, "content-type"), Some("video/mp4"));
+    assert_eq!(header(&r, "access-control-allow-origin"), Some(APP_ORIGIN));
+    assert_eq!(r.body().as_slice(), b"INITBYTES");
+    env.fake.push_bytes(Ok(b"SEG29".to_vec()));
+    let r = env.get(&id, "/s/29", None).await;
+    assert_eq!(
+        (status(&r), r.body().as_slice()),
+        (200, b"SEG29".as_slice())
+    );
+    assert_eq!(header(&r, "cache-control"), Some("no-store"));
+}
+
+#[tokio::test]
+async fn seg_index_out_of_range_404() {
+    let env = Env::disabled();
+    let id = env.open_hls().await;
+    // 대본이 없어 업스트림을 부르면 502가 된다: 404이면 부르지 않은 것이다
+    assert_eq!(status(&env.get(&id, "/s/30", None).await), 404);
+    assert_eq!(status(&env.get(&id, "/s/4294967295", None).await), 404);
+    assert!(env.svc.has_session(), "범위 밖 번호는 세션을 버리지 않는다");
+}
+
+#[tokio::test]
+async fn seg_index_leading_zero_404() {
+    let env = Env::disabled();
+    let id = env.open_hls().await;
+    env.fake.push_bytes(Ok(b"S".to_vec()));
+    for bad in [
+        "/s/00",
+        "/s/01",
+        "/s/-1",
+        "/s/+1",
+        "/s/",
+        "/s/1.5",
+        "/s/12345678901",
+    ] {
+        assert_eq!(status(&env.get(&id, bad, None).await), 404, "{bad}");
+    }
+    // 위 요청이 대본(바이트)을 먹지 않았다
+    assert_eq!(status(&env.get(&id, "/s/1", None).await), 200);
+}
+
+#[tokio::test]
+async fn init_on_mp4_session_404() {
+    let env = Env::disabled();
+    let id = env.open("a").await;
+    for p in ["/init", "/pl.m3u8", "/s/0"] {
+        assert_eq!(status(&env.get(&id, p, None).await), 404, "{p}");
+    }
+    assert!(env.svc.has_session());
+}
+
+#[tokio::test]
+async fn v_on_hls_session_404() {
+    let env = Env::disabled();
+    let id = env.open_hls().await;
+    assert_eq!(status(&env.get(&id, "/v", Some("bytes=0-9")).await), 404);
+    // HEAD /v도 mp4 세션 것이다
+    let r = env
+        .send(http::Method::HEAD, &id, "/v", None, None, "main")
+        .await;
+    assert_eq!(status(&r), 404);
+    // HEAD는 /v에만 받는다
+    let r = env
+        .send(http::Method::HEAD, &id, "/pl.m3u8", None, None, "main")
+        .await;
+    assert_eq!(status(&r), 405);
+}
+
+#[tokio::test]
+async fn hls_requests_pass_the_same_gates() {
+    // 창 라벨·로그인·채널 일치는 mp4와 같은 표를 지난다
+    let env = Env::signed_in();
+    env.fake.push_resolve(Ok(hls_resolved(Some(ME)))); // fetch
+    env.script_hls_open(hls_fixture("media.m3u8"));
+    let id = env.open_script_ready().await;
+    let r = env
+        .send(http::Method::GET, &id, "/pl.m3u8", None, None, "other")
+        .await;
+    assert_eq!(status(&r), 403);
+    let r = env
+        .send(
+            http::Method::GET,
+            &id,
+            "/pl.m3u8",
+            None,
+            Some("https://evil.example"),
+            "main",
+        )
+        .await;
+    assert_eq!(status(&r), 403);
+    assert_eq!(header(&r, "access-control-allow-origin"), None);
+    assert_eq!(status(&env.get(&id, "/pl.m3u8", None).await), 200);
+    env.signer.as_ref().unwrap().set(Some(OTHER_CH));
+    assert_eq!(status(&env.get(&id, "/init", None).await), 403);
+    assert!(!env.svc.has_session());
+}
+
+/// 403 재조회 한 번의 대본: 실패한 세그먼트 요청 + resolve + master + media + 재시도 본문
+fn script_hls_refresh(env: &Env, media: Vec<u8>, body: &[u8]) {
+    env.fake.push_bytes(Err(WatchFail::Expired));
+    env.fake.push_resolve(Ok(hls_resolved(Some(ME))));
+    env.fake.push_bytes(Ok(hls_fixture("master.m3u8")));
+    env.fake.push_bytes(Ok(media));
+    env.fake.push_bytes(Ok(body.to_vec()));
+}
+
+#[tokio::test]
+async fn seg_403_refresh_same_crc_ok() {
+    let env = Env::disabled();
+    let id = env.open_hls().await;
+    let before = String::from_utf8(env.get(&id, "/pl.m3u8", None).await.body().clone()).unwrap();
+    script_hls_refresh(&env, hls_fixture("media.m3u8"), b"SEG");
+    let r = env.get(&id, "/s/3", None).await;
+    assert_eq!((status(&r), r.body().as_slice()), (200, b"SEG".as_slice()));
+    assert_eq!(env.fake.resolve_count(), 2, "열기 1회 + 재조회 1회");
+    // 같은 지문이면 세션이 그대로 이어진다: playlist는 바뀌지 않는다
+    let after = String::from_utf8(env.get(&id, "/pl.m3u8", None).await.body().clone()).unwrap();
+    assert_eq!(before, after);
+    // 두 번째 403은 세션 안에서 다시 재조회할 수 있다(상한 안)
+    script_hls_refresh(&env, hls_fixture("media.m3u8"), b"SEG2");
+    assert_eq!(status(&env.get(&id, "/init", None).await), 200);
+    assert_eq!(env.fake.resolve_count(), 3);
+}
+
+#[tokio::test]
+async fn seg_403_refresh_crc_changed_409() {
+    let env = Env::disabled();
+    let id = env.open_hls().await;
+    // 조각 하나의 길이가 달라진 playlist
+    let changed = String::from_utf8(hls_fixture("media.m3u8"))
+        .unwrap()
+        .replacen("#EXTINF:2.000000,", "#EXTINF:2.500000,", 1);
+    script_hls_refresh(&env, changed.into_bytes(), b"UNUSED");
+    let r = env.get(&id, "/s/3", None).await;
+    assert_eq!(status(&r), 409);
+    assert!(!env.svc.has_session(), "지문이 바뀌면 세션을 버린다");
+    assert_eq!(status(&env.get(&id, "/pl.m3u8", None).await), 404);
+}
+
+#[tokio::test]
+async fn hls_refresh_playback_changed_409() {
+    let env = Env::disabled();
+    let id = env.open_hls().await;
+    env.fake.push_bytes(Err(WatchFail::Expired));
+    env.fake.push_resolve(Ok(pd("a", Some(ME))));
+    assert_eq!(status(&env.get(&id, "/s/0", None).await), 409);
+    assert!(!env.svc.has_session());
+}
+
+#[tokio::test]
+async fn hls_refresh_reload_failure_502_keeps_session() {
+    let env = Env::disabled();
+    let id = env.open_hls().await;
+    env.fake.push_bytes(Err(WatchFail::Expired));
+    env.fake.push_resolve(Ok(hls_resolved(Some(ME))));
+    env.fake
+        .push_bytes(Err(WatchFail::Retry(Error::LengthMismatch {
+            expected: 2,
+            actual: 1,
+        })));
+    assert_eq!(status(&env.get(&id, "/s/0", None).await), 502);
+    assert!(env.svc.has_session());
+}
+
+#[tokio::test]
+async fn hls_expired_right_after_refresh_403() {
+    let env = Env::disabled();
+    let id = env.open_hls().await;
+    env.fake.push_bytes(Err(WatchFail::Expired));
+    env.fake.push_resolve(Ok(hls_resolved(Some(ME))));
+    env.fake.push_bytes(Ok(hls_fixture("master.m3u8")));
+    env.fake.push_bytes(Ok(hls_fixture("media.m3u8")));
+    env.fake.push_bytes(Err(WatchFail::Expired));
+    assert_eq!(status(&env.get(&id, "/s/0", None).await), 403);
+}
+
+#[tokio::test]
+async fn seg_too_large_502() {
+    let env = Env::disabled();
+    let id = env.open_hls().await;
+    env.fake.push_bytes(Err(WatchFail::TooLarge));
+    assert_eq!(status(&env.get(&id, "/s/0", None).await), 502);
+    assert!(env.svc.has_session(), "상한 초과는 이 요청만 실패시킨다");
+    env.fake.push_bytes(Err(WatchFail::Fatal(Error::HttpStatus {
+        status: 404,
+        kind: chzzk_core::RequestKind::Media,
+    })));
+    assert_eq!(status(&env.get(&id, "/init", None).await), 502);
+}
+
+#[tokio::test]
+async fn hls_idle_expiry_and_close() {
+    let env = Env::disabled();
+    let id = env.open_hls().await;
+    env.svc.close(&id);
+    assert_eq!(status(&env.get(&id, "/pl.m3u8", None).await), 404);
+}
+
+#[tokio::test]
+async fn hls_open_replaces_previous_session() {
+    let env = Env::disabled();
+    let first = env.open("a").await;
+    let second = env.open_hls().await;
+    assert_ne!(first, second);
+    assert_eq!(status(&env.get(&first, "/v", Some("bytes=0-9")).await), 404);
+    assert_eq!(status(&env.get(&second, "/pl.m3u8", None).await), 200);
+}
+
+#[test]
+fn pick_variant_visibility_only() {
+    // 셸에서 코어의 `pick_variant`를 부를 수 있다(시그니처·동작은 받기와 같다)
+    let base = Url::parse("https://media.example.invalid/m/master.m3u8").unwrap();
+    let variants = chzzk_core::hls::parse_master(
+        &String::from_utf8(hls_fixture("master.m3u8")).unwrap(),
+        &base,
+    )
+    .unwrap();
+    let tracks = [quality("144p", Some(144), false)];
+    let v = chzzk_core::download::pick_variant(&variants, "144p", &tracks).unwrap();
+    assert_eq!(v.track_id, "144p");
+    assert!(matches!(
+        chzzk_core::download::pick_variant(&variants, "9999p", &tracks),
+        Err(Error::QualityNotFound { .. })
+    ));
+}
+
+#[tokio::test]
+async fn hls_fetch_caps() {
+    // 텍스트(master·media)는 1 MiB, init·세그먼트는 32 MiB
+    let env = Env::disabled();
+    let id = env.open_hls().await;
+    assert_eq!(env.fake.byte_caps(), [1 << 20, 1 << 20]);
+    env.fake.push_bytes(Ok(vec![1]));
+    env.get(&id, "/init", None).await;
+    env.fake.push_bytes(Ok(vec![1]));
+    env.get(&id, "/s/1", None).await;
+    assert_eq!(env.fake.byte_caps()[2..], [32 << 20, 32 << 20]);
 }

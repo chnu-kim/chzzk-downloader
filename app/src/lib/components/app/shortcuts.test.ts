@@ -37,6 +37,26 @@ describe('GlobalShortcuts', () => {
     expect(await fireEvent.drop(input, { dataTransfer })).toBe(false);
   });
 
+  it('Esc: 대상이 [data-local-keys] 안이면 ui.escape를 부르지 않고, 밖이면 부른다', async () => {
+    const { container } = render(GlobalShortcuts);
+    const area = document.createElement('div');
+    area.setAttribute('data-local-keys', '');
+    const inner = document.createElement('button');
+    area.appendChild(inner);
+    const outside = document.createElement('button');
+    container.append(area, outside);
+    const spy = vi.spyOn(ui, 'escape').mockReturnValue(true);
+    try {
+      await fireEvent.keyDown(inner, { key: 'Escape' });
+      await fireEvent.keyDown(area, { key: 'Escape' });
+      expect(spy).not.toHaveBeenCalled();
+      await fireEvent.keyDown(outside, { key: 'Escape' });
+      expect(spy).toHaveBeenCalledTimes(1);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it('Esc는 ui.escape로, Mod+,는 설정으로', async () => {
     render(GlobalShortcuts);
     platform.set('macos');

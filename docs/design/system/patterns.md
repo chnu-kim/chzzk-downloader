@@ -452,6 +452,10 @@ scrim(`--scrim`, `--z-dialog` 50) 위, 창 가운데
 | 목록: Space | 일시정지 ↔ 이어받기 | |
 | 목록: Enter | 완료 항목은 [열기], 그 밖은 첫 동작 버튼 | |
 | 목록: Delete | 종료 항목은 목록에서 지우기(되돌리기 토스트), 진행 항목은 취소(D2) | |
+| 미리보기 편집 영역: I / O | 영상 보기 위치를 시작·끝으로 찍기 | 영상·손잡이·편집 영역·[시작 찍기]·[끝 찍기]에서만. 수식 키가 있거나 입력칸·다른 단추·스위치 위면 처리하지 않는다. 받는 중에는 무시 |
+| 미리보기 편집 영역: Space | 영상 보기 ↔ 일시정지 | 손잡이·편집 영역에서만(영상 위는 재생기 몫, 단추·스위치는 자기를 누른다) |
+| 미리보기 편집 영역: ←/→ | 손잡이 위: 손잡이 이동(Shift ×10, ↑↓·PageUp/Down·Home/End 포함). 그 밖: 영상 보기 위치 ∓5초 | Alt·Ctrl·Meta 조합은 처리하지 않는다(창·OS 몫) |
+| 미리보기 편집 영역: Esc | 카드를 닫지 않는다 | 찍는 중에 편집 내용을 잃지 않게. 구간 칸 등 편집 영역 밖의 Esc는 그대로 카드를 닫는다 |
 | Tab / Shift+Tab | 시각 순서대로. 양수 `tabindex` 금지 | `G-INTER-FC1` |
 | ⌘W·⌘M·⌘Q / Alt+F4 | OS 창 동작. ⌘Q는 `request_quit` 가드 | `platform.md` NS-14 |
 
@@ -460,6 +464,7 @@ scrim(`--scrim`, `--z-dialog` 50) 위, 창 가운데
 2. **창·문서 수준 keydown은 첫 줄에서 `isImeKey(e)`(`isComposing || keyCode === 229`)를 거른다**(`G-IME-R4`). 강제: `design-lint` DX(keydown 핸들러 파일이 `isImeKey`를 import하는지 grep), `frontend`(옛 순서 합성 테스트).
 3. 브라우저 키(F5·Ctrl+R·Ctrl+F·Ctrl+P·F12·Alt+←→, macOS ⌘R·⌘P·⌘F·⌘[ ])는 막는다. 편집 키는 절대 막지 않는다. 목록은 `platform.md`(NS-2). 강제: `e2e-web`.
 4. 메뉴(`Menu`)는 ↑↓·Home·End·Enter·Space·Esc, 글자 타이핑 점프 없음. 비활성 항목은 `aria-disabled`로 닿을 수 있다(`A-PRIM-X4` 해소). 강제: `frontend`.
+5. 미리보기 편집 영역(`data-local-keys`)의 키는 그 영역 안에서만 받고(창 전체 한 글자 단축키는 만들지 않는다), 도움말 문서는 두지 않는다(후속). 찍기 단추의 `aria-keyshortcuts`는 `I`·`O`. 강제: `frontend`(`WatchPanel.test.ts`·`shortcuts.test.ts`), `e2e-web`(`watch.spec.ts`). 근거 `preview-ux.md` §5.4·PVU12·PVU13.
 
 ---
 

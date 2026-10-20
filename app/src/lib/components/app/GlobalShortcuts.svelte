@@ -4,18 +4,14 @@
   import { isInPageDrag, trackInPageDrags } from '../../inPageDrag';
   import { auth } from '../../stores/auth.svelte';
   import { modKey, ui } from '../../stores/ui.svelte';
-  import { isImeKey } from '../ui/focus';
-
-  function editable(t: EventTarget | null): boolean {
-    if (!(t instanceof HTMLElement)) return false;
-    return t.isContentEditable || t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement;
-  }
+  import { editable, isImeKey } from '../ui/focus';
 
   async function onkeydown(e: KeyboardEvent) {
     if (isImeKey(e)) return;
     if (e.key === 'Escape') {
-      // 미리보기 <video> 위의 Esc는 전체 화면 해제 등 재생기 몫이다: 카드를 닫지 않는다(preview.md 검토 반영 P9)
-      if (e.target instanceof HTMLMediaElement) return;
+      // 미리보기 <video> 위의 Esc는 전체 화면 해제 등 재생기 몫이다: 카드를 닫지 않는다(preview.md 검토 반영 P9).
+      // 구간 편집 영역(`data-local-keys`) 안의 Esc도 카드를 닫지 않는다: 찍는 중에 실수로 편집 내용을 잃지 않게(preview-ux PVU12)
+      if (e.target instanceof HTMLMediaElement || (e.target instanceof Element && e.target.closest('[data-local-keys]'))) return;
       // 대화상자·메뉴는 스스로 받아 멈춘다(defaultPrevented)
       if (!e.defaultPrevented && ui.escape()) e.preventDefault();
       return;

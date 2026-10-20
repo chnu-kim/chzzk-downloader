@@ -19,6 +19,7 @@
     moveHandle,
     playStep,
     reachesEnd,
+    seekKey,
     selection,
     type BarLength,
     type Fields,
@@ -27,6 +28,7 @@
   } from '../../rangeEdit';
   import Button from '../ui/Button.svelte';
   import Disclosure from '../ui/Disclosure.svelte';
+  import { editable, isImeKey } from '../ui/focus';
   import Notice from '../ui/Notice.svelte';
   import Switch from '../ui/Switch.svelte';
   import RangeTimeline from './RangeTimeline.svelte';
@@ -248,7 +250,7 @@
   }
 
   function mark(field: 'start' | 'end') {
-    if (!videoEl || !metaReady) return;
+    if (!videoEl || !metaReady || disabled) return;
     onmark?.(field, Math.floor(videoEl.currentTime));
   }
 
@@ -374,6 +376,46 @@
     if (r.action === 'restart') startPlay();
   }
 
+  /**
+   * 편집 영역 키(preview-ux §5.4). 손잡이가 이미 처리한 키(defaultPrevented)와 입력칸·IME 조합은 거른다.
+   * I/O는 찍기 단추·영상·손잡이·컨테이너에서만(구간 보기·시작부터 보기·스위치 위에서는 글자 그대로),
+   * Space는 손잡이·컨테이너에서 재생 ↔ 일시정지(단추·스위치는 자기가 누른다), ←/→는 단추·스위치·컨테이너에서 재생 위치 ∓5초.
+   * 영상 위의 나머지 키는 네이티브 몫이고, Alt·Ctrl·Meta 조합은 창·OS 몫이다. Esc는 아무것도 하지 않는다(창 처리기가 카드를 닫지 않는다)
+   */
+  function onEditorKey(e: KeyboardEvent) {
+    if (isImeKey(e) || e.defaultPrevented || editable(e.target)) return;
+    if (e.altKey || e.ctrlKey || e.metaKey) return;
+    const v = videoEl;
+    if (!v || !metaReady || !(e.target instanceof Element)) return;
+    const el = e.target;
+    const command = el.closest('button, [role="switch"]');
+    const slider = el.closest('[role="slider"]');
+    if (e.code === 'KeyI' || e.code === 'KeyO') {
+      if (e.shiftKey) return;
+      // 찍기 단추만 이 키를 받는다(aria-keyshortcuts가 달린 단추)
+      if (command && !command.hasAttribute('aria-keyshortcuts')) return;
+      if (disabled) return;
+      e.preventDefault();
+      mark(e.code === 'KeyI' ? 'start' : 'end');
+      return;
+    }
+    if (el === v || command) {
+      // 영상 위는 네이티브 몫. 단추·스위치에서는 화살표만 우리 몫이다
+      if (el === v || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight')) return;
+    }
+    if (e.key === ' ' && !e.shiftKey) {
+      e.preventDefault();
+      if (v.paused) startPlay();
+      else v.pause();
+      return;
+    }
+    const step = slider ? null : seekKey(e.key, { shift: e.shiftKey, alt: false, ctrl: false, meta: false });
+    if (step != null) {
+      e.preventDefault();
+      seek(v.currentTime + step);
+    }
+  }
+
   function openInChzzk() {
     void api.openContentPage(view.content).catch(() => {});
   }
@@ -391,13 +433,14 @@
     {:else if phase === 'ready'}
       <!-- 편집 영역: 영상 + 막대 + 조작 줄. 영상은 hls.js가 붙기 전후에 같은 요소여야 해서(usingHls가 늦게 켜진다) 감싸는 요소를
            늘 두고 편집 영역의 이름·역할만 조건으로 붙인다. 포커스 링은 전역 규칙을 그대로 받는다(data-focus-container 없음, V8) -->
-      <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+      <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
       <div
         class="editor"
         role={editing ? 'group' : undefined}
         aria-label={editing ? t('watch.editor.a11y', { title: view.meta.title }) : undefined}
         tabindex={editing ? -1 : undefined}
         data-local-keys={editing ? '' : undefined}
+        onkeydown={editing ? onEditorKey : undefined}
       >
         <!-- svelte-ignore a11y_media_has_caption -->
         <video
@@ -432,8 +475,8 @@
             </div>
           {/if}
           <div class="controls">
-            <Button size="sm" disabled={disabled || !metaReady} onclick={() => mark('start')}>{t('watch.mark.start')}</Button>
-            <Button size="sm" disabled={disabled || !metaReady} onclick={() => mark('end')}>{t('watch.mark.end')}</Button>
+            <Button size="sm" aria-keyshortcuts="I" disabled={disabled || !metaReady} onclick={() => mark('start')}>{t('watch.mark.start')}</Button>
+            <Button size="sm" aria-keyshortcuts="O" disabled={disabled || !metaReady} onclick={() => mark('end')}>{t('watch.mark.end')}</Button>
             <Button size="sm" disabled={disabled || !metaReady || !len || !sel?.band} onclick={playRange}>
               {t('watch.range.play.label')}
             </Button>

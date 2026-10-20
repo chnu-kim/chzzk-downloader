@@ -52,7 +52,7 @@ const tokenDefs = new Map();
 for (const m of block.matchAll(/(--[a-z][a-z0-9-]*):\s*([^;]+);/g)) if (!tokenDefs.has(m[1])) tokenDefs.set(m[1], m[2].trim());
 // 문서가 이력·비교로 언급하는 이름(옛 별칭은 단계 (c)에서 사라졌다)
 const legacyOk = new Set(['--p', '--success', '--success-ink', '--success-soft', '--icon-stroke-sm', '--fg-tertiary', '--bg-dark', '--muted', '--line', '--warn', '--box', '--ref-black-a8', '--bw-1', '--bw-2', '--hit-floor', '--action-gap', '--overlay-line', '--space-4', '--switch-travel', '--scroll-padding', '--text-hero', '--leading-hero', '--shadow-', '--z-', '--space-', '--text-', '--leading-', '--motion-', '--ref-', '--radius-', '--control-h', '--control-h-sm', '--control-h-lg', '--ref-gray-', '--ref-black-', '--ref-white-', '--', '--accent-', '--danger-', '--ref-white', '--control-', '--ref-blue-', '--ref-red-', '--ref-amber-', '--weight-', '--font-', '--icon-', '--switch-', '--gap-', '--row-h', '--x']);
-const tokenPrefix = /^--(bg|surface|raised|track|fg|separator|border|accent|danger|warning|on|focus|scrim|shadow|font|weight|text|leading|space|edge|gap|radius|control|row|toolbar|hit|icon|switch|radio|progress|badge|content|reading|dialog|label|pct|motion|ease|z|ref|p|success|dur|line|muted|warn|box|bw|action|overlay|scroll|x)(-|$)/;
+const tokenPrefix = /^--(bg|surface|raised|track|fg|separator|border|accent|danger|warning|on|focus|scrim|shadow|font|weight|text|leading|space|edge|gap|radius|control|row|toolbar|hit|icon|switch|radio|progress|badge|content|reading|dialog|label|pct|watch|motion|ease|z|ref|p|success|dur|line|muted|warn|box|bw|action|overlay|scroll|x)(-|$)/;
 const numeric = (v) => { const m = v.match(/^(\d+(?:\.\d+)?)(px|ms)$/); return m ? m[1] : null; };
 for (const [file, text] of docs) {
   lines(text).forEach((l, i) => {
@@ -92,7 +92,7 @@ const ranges = { DT: 17, DL: 14, DS: 9, DP: 5, DX: 23, DC: 12, DI: 7, DA: 11 };
 for (const [file, text] of docs) {
   lines(stripCode(text)).forEach((l, i) => {
     for (const m of l.matchAll(/ADR-(\d{4})/g)) if (!adrs.has('ADR-' + m[1])) warn(file, i + 1, `없는 ADR-${m[1]}`);
-    for (const m of l.matchAll(/(?<![A-Za-z-])D(\d{1,2})\b(?!\.|~|-)/g)) { const n = +m[1]; if (n > 63 && !/D(1|2|3|4|5|6|7)\b/.test(m[0])) warn(file, i + 1, `D${n} 범위 밖`); }
+    for (const m of l.matchAll(/(?<![A-Za-z-])D(\d{1,2})\b(?!\.|~|-)/g)) { const n = +m[1]; if (n > 64 && !/D(1|2|3|4|5|6|7)\b/.test(m[0])) warn(file, i + 1, `D${n} 범위 밖`); }
     for (const m of l.matchAll(/(?<![A-Za-z-])R(\d{1,2})\b(?![-.])/g)) { const n = +m[1]; if (n > 10 && !/g-(web|privacy|shell|install|save|outage|power|launch|ime|repeat|engine|id|evid|legal|ugt) [A-Z]*\d/.test(l)) warn(file, i + 1, `R${n} 범위 밖(리뷰 항목은 R1~R10)`); }
     for (const m of l.matchAll(/\b(D[TLSPXCIA])(\d{1,2})\b/g)) { const fam = m[1], n = +m[2]; if (n > ranges[fam] || n < 1) warn(file, i + 1, `${fam}${n} 범위 밖`); }
     for (const m of l.matchAll(/\bUT(\d{1,2})\b/g)) if (+m[1] < 1 || +m[1] > 9) warn(file, i + 1, `UT${m[1]} 범위 밖`);

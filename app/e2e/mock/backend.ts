@@ -152,6 +152,8 @@ export type Scenario = {
    * denied는 notOwnContent, error는 network로 실패한다. 게이트·total 탐색은 흉내 내지 않는다. 생방송·url≠content는 invalidInput
    */
   watch?: 'ok' | 'denied' | 'error';
+  /** watch_open이 돌려줄 src 덮어쓰기(PV-4). 기본 `watch:` 주소는 브라우저가 못 읽어 console.error가 남으므로, 재생기를 펼친 모습을 보는 장면은 data: 주소를 준다 */
+  watchSrc?: string;
   /** app_info의 OS(Windows 고정 데이터·단축키 표기·[Finder에서 보기] 분기). 없으면 linux */
   platform?: Os;
   /** app_info의 나머지 필드 덮어쓰기(D3 이전 설정 찾음 `legacyCandidate` 등). `platform`·`textScale`·`theme`은 위 필드와 설정이 이긴다 */
@@ -391,7 +393,7 @@ export function install(scenario: Scenario = {}): E2EController {
       const id = 'a'.repeat(32);
       // 실제 src base는 OS별이다(Windows는 http://watch.localhost)
       const base = scenario.platform === 'windows' ? 'http://watch.localhost' : 'watch://localhost';
-      return { id, kind: 'mp4', src: `${base}/${id}/v` };
+      return { id, kind: 'mp4', src: scenario.watchSrc ?? `${base}/${id}/v` };
     },
     watch_close: () => null,
     open_content_page: (a) => {

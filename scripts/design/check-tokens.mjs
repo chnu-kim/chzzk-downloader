@@ -408,7 +408,7 @@ export function dt6(ctx) {
 // ───────────────────────── DT7 이름 ─────────────────────────
 
 const COLOR_PROPS = ['bg', 'surface', 'raised', 'track', 'fg', 'separator', 'border', 'accent', 'danger', 'warning', 'on', 'focus', 'scrim', 'ref'];
-const DIMENSION_PROPS = ['text', 'leading', 'space', 'edge', 'gap', 'radius', 'control', 'row', 'toolbar', 'hit', 'icon', 'switch', 'radio', 'progress', 'badge', 'content', 'reading', 'dialog', 'label', 'pct'];
+const DIMENSION_PROPS = ['text', 'leading', 'space', 'edge', 'gap', 'radius', 'control', 'row', 'toolbar', 'hit', 'icon', 'switch', 'radio', 'progress', 'badge', 'content', 'reading', 'dialog', 'label', 'pct', 'watch'];
 export const PROP_TYPE = Object.fromEntries([
   ...COLOR_PROPS.map((p) => [p, 'color']),
   ...DIMENSION_PROPS.map((p) => [p, 'dimension']),

@@ -123,6 +123,12 @@ const settleCardTop = async (page: Page, env: Env) => {
   if (env.vp.height < 400) await page.locator('.video-card').evaluate((el) => el.scrollIntoView({ block: 'start' }));
 };
 
+// 구간 칸을 채운 카드(빠른 다시보기)는 칸·단추 줄이 둘이라 포커스 스크롤이 「미리보기」 줄을 sticky 입력줄 밑에 반쯤 걸치게 한다(PVU-5):
+// 미리보기 줄을 입력줄 바로 아래에 두고 잰다(card-range-error와 같은 까닭)
+const settleWatchTop = async (page: Page, env: Env) => {
+  if (env.vp.height < 600) await page.getByText(t('watch.toggle')).evaluate((el) => el.scrollIntoView({ block: 'start' }));
+};
+
 export const SCREENS: Screen[] = [
   {
     id: '홈 빈 상태(첫 실행)',
@@ -249,7 +255,7 @@ export const SCREENS: Screen[] = [
       await env.tick?.(CHECK_DEBOUNCE_MS + 50);
     },
     ready: (p) => p.getByText(t('filename.willSaveAs', { name: `${R.suggestedFileName} (0.10.00~2.30.00)` })),
-    settle: settleCardTop,
+    settle: settleWatchTop,
     card: true,
   },
   {
@@ -284,7 +290,7 @@ export const SCREENS: Screen[] = [
       await expect(open(app.page, t('card.download'))).not.toHaveAttribute('aria-disabled', 'true');
     },
     ready: (p) => p.getByRole('slider', { name: t('range.end') }),
-    settle: settleCardTop,
+    settle: settleWatchTop,
     card: true,
   },
   {
@@ -309,11 +315,12 @@ export const SCREENS: Screen[] = [
     drive: async (app, env) => {
       await loadCard(app, R.url);
       await app.page.getByText(t('range.toggle')).click();
-      await app.page.getByLabel(t('range.start')).fill('0:10:00');
-      await app.page.getByLabel(t('range.end')).fill('0:20:00');
+      await app.page.getByRole('textbox', { name: t('range.start') }).fill('0:10:00');
+      await app.page.getByRole('textbox', { name: t('range.end') }).fill('0:20:00');
       await env.tick?.(CHECK_DEBOUNCE_MS + 50);
     },
     ready: (p) => p.getByText(t('filename.willSaveAs', { name: `${R.suggestedFileName} (0.10.00~0.20.00)` })),
+    settle: settleWatchTop,
     card: true,
   },
   {
@@ -323,8 +330,8 @@ export const SCREENS: Screen[] = [
     drive: async (app, env) => {
       await loadCard(app, R.url);
       await app.page.getByText(t('range.toggle')).click();
-      await app.page.getByLabel(t('range.start')).fill('0:30:00');
-      await app.page.getByLabel(t('range.end')).fill('0:20:00');
+      await app.page.getByRole('textbox', { name: t('range.start') }).fill('0:30:00');
+      await app.page.getByRole('textbox', { name: t('range.end') }).fill('0:20:00');
       await env.tick?.(CHECK_DEBOUNCE_MS + 50);
       await open(app.page, t('card.download')).click();
     },
@@ -350,7 +357,8 @@ export const SCREENS: Screen[] = [
       await env.tick?.(CHECK_DEBOUNCE_MS + 50);
       await expect(open(app.page, t('card.download'))).not.toHaveAttribute('aria-disabled', 'true');
     },
-    ready: (p) => p.getByLabel(t('range.end')),
+    ready: (p) => p.getByRole('textbox', { name: t('range.end') }),
+    settle: settleWatchTop,
     card: true,
   },
   {

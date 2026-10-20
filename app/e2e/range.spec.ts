@@ -6,8 +6,8 @@ import { errorCopy, rangeChip, t } from './copy';
 import { expect, test, type App } from './fixtures';
 
 const toggle = (card: Locator) => card.getByText(t('range.toggle'));
-const start = (card: Locator) => card.getByLabel(t('range.start'));
-const end = (card: Locator) => card.getByLabel(t('range.end'));
+const start = (card: Locator) => card.getByRole('textbox', { name: t('range.start') });
+const end = (card: Locator) => card.getByRole('textbox', { name: t('range.end') });
 const enqReqs = async (app: App) => ((await app.args('enqueue')) as { req: Record<string, unknown> }[]).map((e) => e.req);
 
 async function openCard(app: App, r = resolved()) {

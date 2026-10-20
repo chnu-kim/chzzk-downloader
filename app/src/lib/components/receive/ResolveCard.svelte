@@ -11,6 +11,7 @@
   import type { AppError, OutputCheck, ResolvedDto } from '../../bindings';
   import { actionLabel, errorCopy, type ActionId } from '../../copy/errors';
   import { t } from '../../copy/ko';
+  import { sizeBaseOf } from '../../format/bytes';
   import { formatClock } from '../../format/duration';
   import { noticeHelp } from '../../help';
   import { shortcutText } from '../../platform';
@@ -29,6 +30,7 @@
     notices,
     rangeError,
     rangeSecs,
+    qualitySize,
     savedFileName,
     usesFreeName,
     type CardChoices,
@@ -36,7 +38,7 @@
   } from '../../receive';
   import { announcer } from '../../stores/announce.svelte';
   import { auth } from '../../stores/auth.svelte';
-  import { mark as markFields, timelineLength, type Fields } from '../../rangeEdit';
+  import { mark as markFields, nudge as nudgeFields, seekTargetOf, timelineLength, type Fields } from '../../rangeEdit';
   import { platform } from '../../stores/platform.svelte';
   import { resolver } from '../../stores/resolve.svelte';
   import { settings } from '../../stores/settings.svelte';
@@ -180,6 +182,55 @@
     setFields(next);
     rangeErr = null;
   }
+
+  /** 칸에 포커스가 들어올 때의 글자(PVU10: 바뀌었는지 비교) */
+  let focusText: string | null = null;
+  const fieldText = (f: 'start' | 'end') => (f === 'start' ? rangeStart : rangeEnd);
+
+  function focusField(f: 'start' | 'end') {
+    focusText = fieldText(f);
+  }
+
+  /**
+   * 칸 → 영상(PVU10): 값이 바뀌었고, 포커스가 편집 영역 컨테이너·손잡이로 가는 게 아니고(막대를 누른 쪽이 이긴다),
+   * 읽히면 영상을 그 시각으로 보낸다. 미리보기가 닫혀 있거나 메타데이터 전이면 watchPanel.seek이 아무것도 하지 않는다
+   */
+  function blurField(f: 'start' | 'end', to: EventTarget | null) {
+    const before = focusText;
+    focusText = null;
+    const text = fieldText(f);
+    if (before == null || before === text) return;
+    if (to instanceof Element && (to.hasAttribute('data-local-keys') || to.getAttribute('role') === 'slider')) return;
+    if (!barLen) return;
+    const secs = seekTargetOf(text, barLen.secs);
+    if (secs != null) watchPanel?.seek(secs);
+  }
+
+  /** 칸을 못 읽으면 ±1초 단추를 막는다 */
+  function canNudge(f: 'start' | 'end'): boolean {
+    return nudgeFields({ open: rangeOpen, start: rangeStart, end: rangeEnd }, f, 1, barLen, initialEnd) != null;
+  }
+
+  /** ±1초: 칸을 고치고 앞 [받기]의 구간 오류를 지운다. 미리보기가 열려 있으면 영상도 그 시각으로 */
+  function nudgeRange(f: 'start' | 'end', delta: -1 | 1) {
+    const next = nudgeFields({ open: rangeOpen, start: rangeStart, end: rangeEnd }, f, delta, barLen, initialEnd);
+    if (!next) return;
+    handleFields(next);
+    if (!barLen) return;
+    // 끝 칸이 빈칸("끝까지")이 되었으면 맨 끝(floor(길이))으로 보낸다
+    const secs = f === 'end' && next.end.trim() === '' ? Math.floor(barLen.secs) : seekTargetOf(next[f], barLen.secs);
+    if (secs != null) watchPanel?.seek(secs);
+  }
+
+  /** 구간 길이 줄: 구간이 읽히면 구간, 아니면 영상 길이. 끝을 모르면 줄이 없다. 고른 화질의 예상 크기가 있으면 곁들인다 */
+  const lengthText = $derived.by(() => {
+    if (tone !== 'rewind') return null;
+    const secs = rangeSecs(range, view.meta.durationSecs);
+    if (secs == null || !(secs > 0)) return null;
+    const length = formatClock(secs);
+    const size = quality ? qualitySize(quality, secs, sizeBaseOf(platform.os)) : null;
+    return size ? t('range.lengthSize.label', { length, size }) : t('range.length.label', { length });
+  });
 
   /** 소유권으로 막힌 카드: 생방송 안내("받기를 누르면 녹화가 시작돼요")가 막힘 안내와 반대 말을 하지 않게 그리지 않는다 */
   const ownershipBlocked = $derived(view.ownership === 'notOwn' || view.ownership === 'unknown');
@@ -353,6 +404,11 @@
       error={rangeErr}
       lengthUnknown={view.meta.durationSecs == null || view.meta.durationSecs <= 0}
       disabled={busy}
+      onfocusfield={focusField}
+      onblurfield={blurField}
+      onnudge={nudgeRange}
+      {canNudge}
+      {lengthText}
       ontoggle={(o) => {
         if (!o) rangeErr = null;
       }}

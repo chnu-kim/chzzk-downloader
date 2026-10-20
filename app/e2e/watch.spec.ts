@@ -32,9 +32,8 @@ async function openCard(app: App, r = VOD, extra: Scenario = {}) {
   const card = app.page.getByRole('region', { name: r.meta.title });
   await expect(card).toBeVisible();
   // 검사가 끝나 [받기]가 켜진 뒤에 잰다(비활성 면의 대비는 잴 대상이 아니다)
-  if (r.playbackKind !== 'live') {
-    await expect(card.getByRole('button', { name: t('card.download') })).not.toHaveAttribute('aria-disabled', 'true');
-  }
+  // (생방송 카드도 같다: live.spec.ts와 같은 방식으로 켜질 때까지 기다린다)
+  await expect(card.getByRole('button', { name: t('card.download') })).not.toHaveAttribute('aria-disabled', 'true');
   return card;
 }
 

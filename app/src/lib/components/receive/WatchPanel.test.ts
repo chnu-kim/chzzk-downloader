@@ -941,4 +941,224 @@ describe('구간 편집(PVU-3)', () => {
     const pos = document.querySelector('.position') as HTMLElement;
     expect(pos.style.getPropertyValue('--p')).toBe('0.25');
   });
+
+  describe('키보드(PVU-4)', () => {
+    const group = () => screen.getByRole('group', { name: t('watch.editor.a11y', { title: view.meta.title }) });
+    const markS = () => screen.getByRole('button', { name: t('watch.mark.start') });
+    const markE = () => screen.getByRole('button', { name: t('watch.mark.end') });
+    const keyI = { key: 'i', code: 'KeyI' };
+    const keyO = { key: 'o', code: 'KeyO' };
+    const space = { key: ' ', code: 'Space' };
+
+    /** paused를 바꿀 수 있게 한다(jsdom의 paused는 늘 true) */
+    function pausedState(v: HTMLVideoElement, initial = true) {
+      let paused = initial;
+      Object.defineProperty(v, 'paused', { configurable: true, get: () => paused });
+      return (x: boolean) => (paused = x);
+    }
+    async function setup(over: Record<string, unknown> = {}, time = 100) {
+      const onmark = vi.fn();
+      const utils = await openEditor({ onmark, ...over });
+      const m = await ready(600, time);
+      return { onmark, m, ...utils };
+    }
+
+    it('I는 시작, O는 끝을 찍는다(컨테이너·찍기 단추·손잡이·영상)', async () => {
+      const { onmark } = await setup();
+      const targets = [group(), markS(), markE(), slider(t('range.start')), slider(t('range.end')), videoEl()!];
+      for (const el of targets) {
+        onmark.mockClear();
+        const noDefault = await fireEvent.keyDown(el, keyI);
+        expect(onmark).toHaveBeenLastCalledWith('start', 100);
+        expect(noDefault).toBe(false);
+        await fireEvent.keyDown(el, keyO);
+        expect(onmark).toHaveBeenLastCalledWith('end', 100);
+        expect(onmark).toHaveBeenCalledTimes(2);
+      }
+    });
+
+    it('한글 자판(key가 ㅑ)에서도 물리 키(KeyI)로 동작한다', async () => {
+      const { onmark } = await setup();
+      await fireEvent.keyDown(group(), { key: 'ㅑ', code: 'KeyI' });
+      await fireEvent.keyDown(group(), { key: 'ㅐ', code: 'KeyO' });
+      expect(onmark.mock.calls).toEqual([['start', 100], ['end', 100]]);
+    });
+
+    it('구간 보기·시작부터 보기 단추와 스위치 위의 I/O는 처리하지 않는다', async () => {
+      const { onmark } = await setup({ fields: { open: true, start: '0:01:00', end: '0:01:30' } });
+      for (const el of [playBtn()!, fromStartBtn()!, loopSwitch()!]) {
+        expect(await fireEvent.keyDown(el, keyI)).toBe(true);
+        expect(await fireEvent.keyDown(el, keyO)).toBe(true);
+      }
+      expect(onmark).not.toHaveBeenCalled();
+    });
+
+    it('수식 키가 있는 I는 무시하고, 영역 안 입력칸에서는 글자가 입력된다', async () => {
+      const { onmark } = await setup();
+      for (const mod of [{ ctrlKey: true }, { metaKey: true }, { altKey: true }, { shiftKey: true }]) {
+        expect(await fireEvent.keyDown(group(), { ...keyI, ...mod })).toBe(true);
+      }
+      const input = document.createElement('input');
+      group().appendChild(input);
+      expect(await fireEvent.keyDown(input, keyI)).toBe(true);
+      expect(onmark).not.toHaveBeenCalled();
+    });
+
+    it('이미 처리된 키(defaultPrevented)는 무시한다', async () => {
+      const { onmark } = await setup();
+      const el = group();
+      el.addEventListener('keydown', (e) => e.preventDefault(), { capture: true });
+      await fireEvent.keyDown(el, keyI);
+      expect(onmark).not.toHaveBeenCalled();
+    });
+
+    it('IME 조합 중의 키는 무시한다', async () => {
+      const { onmark } = await setup();
+      await fireEvent.keyDown(group(), { ...keyI, isComposing: true });
+      await fireEvent.keyDown(group(), { ...keyI, keyCode: 229 });
+      await fireEvent.keyDown(group(), { ...space, isComposing: true });
+      expect(onmark).not.toHaveBeenCalled();
+    });
+
+    it('Space는 손잡이·컨테이너에서 재생 ↔ 일시정지를 바꾸고 스크롤을 막는다', async () => {
+      await setup();
+      const m = mockVideo(600, 100);
+      const setPaused = pausedState(m.v, true);
+      for (const el of [group(), slider(t('range.start'))]) {
+        setPaused(true);
+        expect(await fireEvent.keyDown(el, space)).toBe(false);
+        expect(m.play).toHaveBeenCalledTimes(1);
+        m.play.mockClear();
+        setPaused(false);
+        await fireEvent.keyDown(el, space);
+        expect(m.pause).toHaveBeenCalledTimes(1);
+        expect(m.play).not.toHaveBeenCalled();
+        m.pause.mockClear();
+      }
+    });
+
+    it('Space·Enter는 단추·스위치에서 재생을 바꾸지 않는다', async () => {
+      await setup();
+      const m = mockVideo(600, 100);
+      pausedState(m.v, true);
+      for (const el of [markS(), markE(), playBtn()!, loopSwitch()!]) {
+        expect(await fireEvent.keyDown(el, space)).toBe(true);
+        expect(await fireEvent.keyDown(el, { key: 'Enter', code: 'Enter' })).toBe(true);
+      }
+      expect(m.play).not.toHaveBeenCalled();
+      expect(m.pause).not.toHaveBeenCalled();
+    });
+
+    it('영상 위의 Space·화살표는 우리가 처리하지 않는다(네이티브 몫)', async () => {
+      await setup();
+      const m = mockVideo(600, 100);
+      pausedState(m.v, true);
+      expect(await fireEvent.keyDown(m.v, space)).toBe(true);
+      expect(await fireEvent.keyDown(m.v, { key: 'ArrowRight' })).toBe(true);
+      expect(await fireEvent.keyDown(m.v, { key: 'ArrowLeft' })).toBe(true);
+      expect(m.play).not.toHaveBeenCalled();
+      expect(m.writes).toEqual([]);
+    });
+
+    it('컨테이너·단추·스위치의 ←/→는 재생 위치를 5초씩 옮긴다(0과 길이로 자름)', async () => {
+      await setup({ fields: { open: true, start: '0:01:00', end: '0:01:30' } });
+      const m = mockVideo(600, 100);
+      for (const el of [group(), markS(), loopSwitch()!]) {
+        m.writes.length = 0;
+        m.setTime(100);
+        expect(await fireEvent.keyDown(el, { key: 'ArrowRight' })).toBe(false);
+        await fireEvent.keyDown(el, { key: 'ArrowLeft' });
+        expect(m.writes).toEqual([105, 100]);
+      }
+      m.writes.length = 0;
+      m.setTime(2);
+      await fireEvent.keyDown(group(), { key: 'ArrowLeft' });
+      m.setTime(598);
+      await fireEvent.keyDown(group(), { key: 'ArrowRight' });
+      expect(m.writes).toEqual([0, 600]);
+    });
+
+    it('손잡이 위의 화살표는 손잡이를 옮기고 재생 위치는 5초 이동하지 않는다', async () => {
+      const { onfields } = await setup({ fields: { open: true, start: '0:01:00', end: '0:05:00' } });
+      const m = mockVideo(600, 100);
+      await fireEvent.keyDown(slider(t('range.start')), { key: 'ArrowRight' });
+      expect(onfields).toHaveBeenLastCalledWith({ open: true, start: '0:01:01', end: '0:05:00' }, 'handle');
+      expect(m.writes).toEqual([61]);
+    });
+
+    it('구간 보기 중 화살표로 옮기면 구간 보기가 꺼진다', async () => {
+      const { user } = await setup({ fields: { open: true, start: '0:01:00', end: '0:01:30' } });
+      const m = mockVideo(600, 100);
+      await user.click(playBtn()!);
+      await fireEvent.keyDown(group(), { key: 'ArrowRight' });
+      m.setTime(95);
+      await fireEvent(m.v, new Event('timeupdate'));
+      expect(m.pause).not.toHaveBeenCalled();
+    });
+
+    it('Ctrl/Meta/Alt + 화살표·Space는 처리하지 않는다', async () => {
+      await setup();
+      const m = mockVideo(600, 100);
+      pausedState(m.v, true);
+      for (const mod of [{ ctrlKey: true }, { metaKey: true }, { altKey: true }]) {
+        for (const el of [group(), slider(t('range.start')), markS()]) {
+          expect(await fireEvent.keyDown(el, { key: 'ArrowRight', ...mod })).toBe(true);
+          expect(await fireEvent.keyDown(el, { ...space, ...mod })).toBe(true);
+        }
+      }
+      expect(m.writes).toEqual([]);
+      expect(m.play).not.toHaveBeenCalled();
+    });
+
+    it('Shift+화살표는 컨테이너에서 처리하지 않는다', async () => {
+      const { m } = await setup();
+      expect(await fireEvent.keyDown(group(), { key: 'ArrowRight', shiftKey: true })).toBe(true);
+      expect(m.writes).toEqual([]);
+    });
+
+    it('Esc는 편집 영역이 처리하지 않는다(창으로 그대로 올라간다)', async () => {
+      await setup();
+      for (const el of [group(), markS(), slider(t('range.end'))]) {
+        expect(await fireEvent.keyDown(el, { key: 'Escape' })).toBe(true);
+      }
+    });
+
+    it('받는 중(disabled)에는 I/O를 무시하고 손잡이 키는 값을 바꾸지 않으며, Space와 재생 위치 이동은 된다', async () => {
+      const { onmark, onfields } = await setup({ disabled: true, fields: { open: true, start: '0:01:00', end: '0:05:00' } });
+      const m = mockVideo(600, 100);
+      const setPaused = pausedState(m.v, true);
+      await fireEvent.keyDown(group(), keyI);
+      await fireEvent.keyDown(markS(), keyO);
+      await fireEvent.keyDown(slider(t('range.start')), { key: 'ArrowRight' });
+      expect(onmark).not.toHaveBeenCalled();
+      expect(onfields).not.toHaveBeenCalled();
+      await fireEvent.keyDown(group(), space);
+      expect(m.play).toHaveBeenCalledTimes(1);
+      setPaused(true);
+      await fireEvent.keyDown(group(), { key: 'ArrowRight' });
+      expect(m.writes).toEqual([105]);
+    });
+
+    it('메타데이터 전에는 찍기를 하지 않는다', async () => {
+      const onmark = vi.fn();
+      await openEditor({ onmark });
+      await fireEvent.keyDown(group(), keyI);
+      expect(onmark).not.toHaveBeenCalled();
+    });
+
+    it('키를 누르고 있으면(자동 반복) 마지막 값이 남는다', async () => {
+      const { onmark, m } = await setup();
+      for (const t0 of [100, 101, 102]) {
+        m.setTime(t0);
+        await fireEvent.keyDown(group(), { ...keyI, repeat: true });
+      }
+      expect(onmark.mock.calls.at(-1)).toEqual(['start', 102]);
+    });
+
+    it('찍기 단추에 aria-keyshortcuts가 있다', async () => {
+      await setup();
+      expect(markS()).toHaveAttribute('aria-keyshortcuts', 'I');
+      expect(markE()).toHaveAttribute('aria-keyshortcuts', 'O');
+    });
+  });
 });

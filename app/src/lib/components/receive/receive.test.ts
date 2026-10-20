@@ -45,6 +45,7 @@ const { ui } = await import('../../stores/ui.svelte');
 const { auth } = await import('../../stores/auth.svelte');
 const { platform } = await import('../../stores/platform.svelte');
 const { default: InputPanel } = await import('./InputPanel.svelte');
+const { default: GlobalShortcuts } = await import('../app/GlobalShortcuts.svelte');
 
 const settingsDto: SettingsDto = {
   downloadFolder: null,
@@ -1648,5 +1649,39 @@ describe('구간 편집 배치(ResolveCard, preview-ux PVU-3)', () => {
     await user.click(await downloadButton());
     await waitFor(() => expect(api.enqueue).toHaveBeenCalledTimes(1));
     expect(lastEnqueueArg().range).toEqual({ startMs: 3000, endMs: 11564000 });
+  });
+});
+
+describe('구간 편집 영역의 Esc(ResolveCard + GlobalShortcuts, preview-ux PVU-4 5c)', () => {
+  const SID = 'ab'.repeat(16);
+
+  it('편집 영역 밖의 구간 칸에서는 Esc가 카드를 닫고, 영역 안의 [시작 찍기]에서는 닫지 않는다', async () => {
+    render(GlobalShortcuts);
+    vi.mocked(api.watchOpen).mockResolvedValue({ id: SID, kind: 'hls', src: `watch://localhost/${SID}/pl.m3u8` });
+    const user = await openCard();
+    await user.click(screen.getByText(t('watch.toggle')));
+    await waitFor(() => expect(document.querySelector('video')).not.toBeNull());
+    // 영상 메타가 읽혀야 편집 영역(막대·조작 줄)이 선다
+    const v = document.querySelector('video') as HTMLVideoElement;
+    Object.defineProperty(v, 'duration', { configurable: true, get: () => 11565 });
+    await fireEvent(v, new Event('loadedmetadata'));
+    await user.click(screen.getByText(t('range.toggle')));
+    const field = screen.getByRole('textbox', { name: t('range.start') });
+    const mark = screen.getByRole('button', { name: t('watch.mark.start') });
+    // 구간 칸은 편집 영역(.editor) 밖이어야 한다
+    expect(field.closest('[data-local-keys]')).toBeNull();
+    expect(mark.closest('[data-local-keys]')).not.toBeNull();
+
+    const spy = vi.spyOn(ui, 'escape');
+    try {
+      await fireEvent.keyDown(mark, { key: 'Escape' });
+      expect(spy).not.toHaveBeenCalled();
+      expect(screen.queryByRole('heading', { name: /금요/ })).not.toBeNull();
+      await fireEvent.keyDown(field, { key: 'Escape' });
+      expect(spy).toHaveBeenCalledTimes(1);
+      await waitFor(() => expect(screen.queryByRole('heading', { name: /금요/ })).toBeNull());
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

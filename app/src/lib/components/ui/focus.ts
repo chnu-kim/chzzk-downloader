@@ -19,6 +19,12 @@ export function isImeKey(e: KeyboardEvent): boolean {
   return e.isComposing || e.keyCode === 229;
 }
 
+/** 글자를 치는 요소(입력칸·textarea·contenteditable)인가. 한 글자 단축키는 이런 대상에서 거른다 */
+export function editable(t: EventTarget | null): boolean {
+  if (!(t instanceof HTMLElement)) return false;
+  return t.isContentEditable || t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement;
+}
+
 /**
  * Tab·Shift+Tab을 `root` 안에서 돌린다. 처리했으면 true.
  */

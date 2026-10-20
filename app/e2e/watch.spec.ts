@@ -249,3 +249,43 @@ test('구간 막대의 손잡이를 끌거나 키로 옮기면 칸이 바뀌고 
   const [h, m, sec] = startValue.split(':').map(Number);
   expect(req.range).toEqual({ startMs: (h * 3600 + m * 60 + sec) * 1000, endMs: 11545000 });
 });
+
+test('막대를 누른 뒤 I·O 키로 시작·끝을 찍으면 칸이 채워지고 받기 요청의 range가 된다', async ({ app }) => {
+  holdPlaylist(app.page);
+  const REWIND = resolved();
+  const card = await openCard(app, REWIND, { watchSrc: HLS_SRC });
+  await toggle(card).click();
+  await expect(card.locator('video')).toBeVisible();
+  await loadedAt(card, 0, REWIND.meta.durationSecs ?? 0);
+  const track = card.locator('.track');
+  await track.evaluate((el) => el.scrollIntoView({ block: 'center' }));
+  const tb = (await track.boundingBox())!;
+  const y = tb.y + tb.height / 2;
+  const clock = (s: number) => `${Math.floor(s / 3600)}:${String(Math.floor((s % 3600) / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+  const now = () => card.locator('video').evaluate((v: HTMLVideoElement) => Math.floor(v.currentTime));
+
+  // 막대를 누르면 그 시각으로 가고, 포커스는 편집 영역 컨테이너가 받아 I가 바로 동작한다(V8)
+  await app.page.mouse.click(tb.x + tb.width * 0.25, y);
+  const a = await now();
+  expect(a).toBeGreaterThan(0);
+  await app.page.keyboard.press('i');
+  const startText = card.getByRole('textbox', { name: t('range.start') });
+  const endText = card.getByRole('textbox', { name: t('range.end') });
+  await expect(startText).toHaveValue(clock(a));
+
+  await app.page.mouse.click(tb.x + tb.width * 0.5, y);
+  const b = await now();
+  expect(b).toBeGreaterThan(a);
+  await app.page.keyboard.press('o');
+  await expect(endText).toHaveValue(clock(b));
+
+  // 편집 영역 안의 Esc는 카드를 닫지 않는다
+  await app.page.keyboard.press('Escape');
+  await expect(track).toBeVisible();
+
+  await expect(card.getByRole('button', { name: t('card.download') })).not.toHaveAttribute('aria-disabled', 'true');
+  await card.getByRole('button', { name: t('card.download') }).click();
+  await expect.poll(async () => (await app.args('enqueue')).length).toBe(1);
+  const [{ req }] = (await app.args('enqueue')) as Array<{ req: { range?: unknown } }>;
+  expect(req.range).toEqual({ startMs: a * 1000, endMs: b * 1000 });
+});

@@ -17,25 +17,25 @@
     "e2e": "playwright test"
   },
   "dependencies": {
-    "@tauri-apps/api": "2.12.2",
+    "@tauri-apps/api": "2.12.3",
     "hls.js": "1.7.3"
   },
   "devDependencies": {
     "@playwright/test": "1.64.0",
     "@sveltejs/vite-plugin-svelte": "7.3.1",
-    "@tauri-apps/cli": "2.12.1",
+    "@tauri-apps/cli": "2.12.2",
     "@testing-library/jest-dom": "7.0.1",
     "@testing-library/svelte": "5.4.2",
-    "@testing-library/user-event": "14.6.7",
+    "@testing-library/user-event": "14.6.8",
     "@tsconfig/svelte": "5.0.8",
     "@types/node": "24.19.2",
-    "@vitest/coverage-v8": "5.0.3",
+    "@vitest/coverage-v8": "5.0.4",
     "axe-core": "4.14.0",
     "jsdom": "30.1.2",
     "svelte": "5.57.2",
     "svelte-check": "4.7.6",
     "typescript": "~6.0.0",
     "vite": "8.3.4",
-    "vitest": "5.0.3"
+    "vitest": "5.0.4"
   }
 }

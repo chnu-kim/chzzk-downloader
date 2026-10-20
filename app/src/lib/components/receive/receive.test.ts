@@ -1652,6 +1652,239 @@ describe('구간 편집 배치(ResolveCard, preview-ux PVU-3)', () => {
   });
 });
 
+describe('양방향·미세 조정·길이(ResolveCard + RangeField, preview-ux PVU-5)', () => {
+  const SID = 'ab'.repeat(16);
+  const startEl = () => screen.getByRole('textbox', { name: t('range.start') }) as HTMLInputElement;
+  const endEl = () => screen.getByRole('textbox', { name: t('range.end') }) as HTMLInputElement;
+  const rangeDetails = () => screen.getByText(t('range.toggle')).closest('details') as HTMLDetailsElement;
+  const settle = () => new Promise((r) => setTimeout(r, CHECK_DEBOUNCE_MS + 60));
+  const nudgeBtn = (name: string) => screen.getByRole('button', { name }) as HTMLButtonElement;
+  const N = { startEarlier: t('range.nudge.startEarlier.label', { n: 1 }), startLater: t('range.nudge.startLater.label', { n: 1 }), endEarlier: t('range.nudge.endEarlier.label', { n: 1 }), endLater: t('range.nudge.endLater.label', { n: 1 }) };
+
+  async function openRewindPlayer(over = {}) {
+    vi.mocked(api.watchOpen).mockResolvedValue({ id: SID, kind: 'hls', src: `watch://localhost/${SID}/pl.m3u8` });
+    const user = await openCard(over);
+    await user.click(screen.getByText(t('watch.toggle')));
+    await waitFor(() => expect(document.querySelector('video')).not.toBeNull());
+    return user;
+  }
+  async function loadMeta(duration = 11565, time = 0) {
+    const v = document.querySelector('video') as HTMLVideoElement;
+    let ct = time;
+    const writes: number[] = [];
+    Object.defineProperty(v, 'currentTime', { configurable: true, get: () => ct, set: (x: number) => { ct = x; writes.push(x); } });
+    Object.defineProperty(v, 'duration', { configurable: true, get: () => duration });
+    await fireEvent(v, new Event('loadedmetadata'));
+    return { v, writes };
+  }
+  async function openRange(user: ReturnType<typeof userEvent.setup>) {
+    await user.click(screen.getByText(t('range.toggle')));
+    await waitFor(() => expect(rangeDetails()).toHaveAttribute('open'));
+  }
+  async function typeInto(user: ReturnType<typeof userEvent.setup>, el: HTMLInputElement, text: string) {
+    await user.clear(el);
+    await user.type(el, text);
+  }
+
+  describe('칸 → 영상(blur)', () => {
+    it('blur on parsed start seeks video', async () => {
+      const user = await openRewindPlayer();
+      const { writes } = await loadMeta();
+      await openRange(user);
+      await typeInto(user, startEl(), '0:10:00');
+      expect(writes).toEqual([]); // typing does not seek
+      await user.tab();
+      expect(writes).toEqual([600]);
+    });
+
+    it('blur on invalid does not seek', async () => {
+      const user = await openRewindPlayer();
+      const { writes } = await loadMeta();
+      await openRange(user);
+      await typeInto(user, startEl(), '0:1x');
+      await user.tab();
+      expect(writes).toEqual([]);
+    });
+
+    it('blur with preview closed does nothing', async () => {
+      const user = await openCard();
+      await openRange(user);
+      await typeInto(user, startEl(), '0:10:00');
+      await user.tab();
+      expect(document.querySelector('video')).toBeNull();
+      expect(api.watchOpen).not.toHaveBeenCalled();
+    });
+
+    it('blur without change does not seek (Tab으로 지나가기)', async () => {
+      const user = await openRewindPlayer();
+      const { writes } = await loadMeta();
+      await openRange(user);
+      startEl().focus();
+      await user.tab();
+      expect(writes).toEqual([]);
+    });
+
+    it('blur into editor (track press) does not override track seek', async () => {
+      const user = await openRewindPlayer();
+      const { writes } = await loadMeta();
+      await openRange(user);
+      await typeInto(user, startEl(), '0:10:00');
+      const editor = document.querySelector('[data-local-keys]') as HTMLElement;
+      await fireEvent.blur(startEl(), { relatedTarget: editor });
+      expect(writes).toEqual([]);
+      await typeInto(user, endEl(), '1:00:00');
+      await fireEvent.blur(endEl(), { relatedTarget: screen.getByRole('slider', { name: t('range.start') }) });
+      expect(writes).toEqual([]);
+    });
+
+    it('shift+tab from field into editor controls still seeks', async () => {
+      const user = await openRewindPlayer();
+      const { writes } = await loadMeta();
+      await openRange(user);
+      await typeInto(user, startEl(), '0:10:00');
+      await fireEvent.blur(startEl(), { relatedTarget: screen.getByRole('switch', { name: t('watch.range.loop.label') }) });
+      expect(writes).toEqual([600]);
+    });
+  });
+
+  describe('±1초 단추', () => {
+    it('accessible names include visible text', async () => {
+      const user = await openRewindPlayer();
+      await openRange(user);
+      for (const [name, visible] of [
+        [N.startEarlier, t('range.nudge.earlier.label', { n: 1 })],
+        [N.startLater, t('range.nudge.later.label', { n: 1 })],
+        [N.endEarlier, t('range.nudge.earlier.label', { n: 1 })],
+        [N.endLater, t('range.nudge.later.label', { n: 1 })],
+      ]) {
+        const b = nudgeBtn(name);
+        expect(b).toHaveTextContent(visible);
+        expect(name).toContain(visible);
+      }
+    });
+
+    it('nudge buttons: earlier/later change field, clamp', async () => {
+      const user = await openRewindPlayer();
+      await openRange(user);
+      await user.click(nudgeBtn(N.startLater));
+      expect(startEl()).toHaveValue('0:00:01');
+      await user.click(nudgeBtn(N.startEarlier));
+      await user.click(nudgeBtn(N.startEarlier));
+      expect(startEl()).toHaveValue('0:00:00');
+      await user.click(nudgeBtn(N.endEarlier));
+      expect(endEl()).toHaveValue('3:12:44');
+      await user.click(nudgeBtn(N.endLater));
+      await user.click(nudgeBtn(N.endLater));
+      expect(endEl()).toHaveValue('3:12:45');
+    });
+
+    it('nudge buttons: disabled when field invalid or busy', async () => {
+      const user = await openRewindPlayer();
+      await openRange(user);
+      await typeInto(user, startEl(), 'abc');
+      expect(nudgeBtn(N.startEarlier)).toBeDisabled();
+      expect(nudgeBtn(N.startLater)).toBeDisabled();
+      expect(nudgeBtn(N.endLater)).not.toBeDisabled();
+      await typeInto(user, startEl(), '0:00:05');
+      expect(nudgeBtn(N.startLater)).not.toBeDisabled();
+      setCheck();
+      vi.mocked(api.enqueue).mockImplementation(() => new Promise(() => {}));
+      await settle();
+      await user.click(await downloadButton());
+      await waitFor(() => expect(api.enqueue).toHaveBeenCalled());
+      await waitFor(() => expect(nudgeBtn(N.startLater)).toBeDisabled());
+      expect(nudgeBtn(N.endEarlier)).toBeDisabled();
+    });
+
+    it('nudge clears previous range error', async () => {
+      const user = await openRewindPlayer();
+      await openRange(user);
+      await typeInto(user, endEl(), '0:00:00');
+      await settle();
+      await user.click(await downloadButton());
+      expect(await screen.findByRole('alert')).toHaveTextContent(t('range.error.order'));
+      await user.click(nudgeBtn(N.endLater));
+      expect(screen.queryByRole('alert')).toBeNull();
+    });
+
+    it('nudge buttons hidden while collapsed', async () => {
+      await openRewindPlayer();
+      expect(rangeDetails()).not.toHaveAttribute('open');
+      // 접힌 <details> 안에 있어 보이지 않는다(열기 전에는 사용할 수 없다)
+      expect(nudgeBtn(N.startLater).closest('details')).toBe(rangeDetails());
+    });
+
+    it('nudge seeks video when preview open', async () => {
+      const user = await openRewindPlayer();
+      const { writes } = await loadMeta();
+      await openRange(user);
+      await user.click(nudgeBtn(N.startLater));
+      expect(writes).toEqual([1]);
+      await user.click(nudgeBtn(N.endEarlier));
+      expect(writes).toEqual([1, 11564]);
+    });
+
+    it('nudge with preview closed only changes the field', async () => {
+      const user = await openCard();
+      await openRange(user);
+      await user.click(nudgeBtn(N.startLater));
+      expect(startEl()).toHaveValue('0:00:01');
+      expect(api.watchOpen).not.toHaveBeenCalled();
+    });
+
+    it('nudge feeds enqueue range', async () => {
+      const user = await openRewindPlayer();
+      await openRange(user);
+      await user.click(nudgeBtn(N.startLater));
+      await user.click(nudgeBtn(N.endEarlier));
+      setCheck();
+      await settle();
+      await user.click(await downloadButton());
+      await waitFor(() => expect(api.enqueue).toHaveBeenCalledTimes(1));
+      const arg = vi.mocked(api.enqueue).mock.lastCall?.[0] as unknown as Record<string, unknown>;
+      expect(arg.range).toEqual({ startMs: 1000, endMs: 11564000 });
+    });
+  });
+
+  describe('구간 길이 줄', () => {
+    const lengthLine = (text: string) => screen.queryByText(text);
+
+    it('length line: 전체는 영상 길이, 구간이면 구간 길이, 크기 있음 → 길이 · 크기', async () => {
+      const user = await openRewindPlayer();
+      await openRange(user);
+      const q0 = resolved().qualities[0];
+      expect(lengthLine(t('range.lengthSize.label', { length: '3:12:45', size: qualitySize(q0, 11565) as string }))).not.toBeNull();
+      await typeInto(user, endEl(), '1:00:00');
+      await waitFor(() =>
+        expect(lengthLine(t('range.lengthSize.label', { length: '1:00:00', size: qualitySize(q0, 3600) as string }))).not.toBeNull(),
+      );
+    });
+
+    it('length line: 칸이 틀리면 영상 길이로 돌아간다', async () => {
+      const user = await openRewindPlayer();
+      await openRange(user);
+      const q0 = resolved().qualities[0];
+      await typeInto(user, endEl(), '1:00:0');
+      await waitFor(() =>
+        expect(lengthLine(t('range.lengthSize.label', { length: '3:12:45', size: qualitySize(q0, 11565) as string }))).not.toBeNull(),
+      );
+    });
+
+    it('length line: 크기를 모르는 화질이면 길이만', async () => {
+      const user = await openRewindPlayer();
+      await openRange(user);
+      await user.click(screen.getAllByRole('radio')[2]);
+      await waitFor(() => expect(lengthLine(t('range.length.label', { length: '3:12:45' }))).not.toBeNull());
+    });
+
+    it('length line: 끝을 모르면 줄이 없다', async () => {
+      const user = await openCard({ meta: { ...resolved().meta, durationSecs: null } });
+      await openRange(user);
+      expect(screen.queryByText(/구간 길이/)).toBeNull();
+    });
+  });
+});
+
 describe('구간 편집 영역의 Esc(ResolveCard + GlobalShortcuts, preview-ux PVU-4 5c)', () => {
   const SID = 'ab'.repeat(16);
 

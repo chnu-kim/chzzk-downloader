@@ -371,6 +371,9 @@ describe('WatchPanel', () => {
       await waitFor(() => expect(document.activeElement).toBe(videoEl()));
       expect(play).toHaveBeenCalledTimes(1);
       expect(lastHls().attachMedia).toHaveBeenCalledTimes(1);
+      // 순서: 붙이기 → 재생 시도(play가 먼저면 아직 소스가 없는 video를 재생하려는 것이다)
+      expect(lastHls().attachMedia.mock.invocationCallOrder[0]).toBeLessThan(play.mock.invocationCallOrder[0]);
+      expect(lastHls().loadSource.mock.invocationCallOrder[0]).toBeLessThan(play.mock.invocationCallOrder[0]);
     });
 
     it('focus moved away during opening stays put on ready', async () => {
@@ -428,31 +431,31 @@ describe('WatchPanel', () => {
       expect(api.watchOpen).toHaveBeenCalledTimes(1);
     });
 
-    it('failure moves focus to summary and announces; retry opens again', async () => {
+    it('failure moves focus to summary and leaves the announcing to the alert Notice; retry opens again', async () => {
       vi.mocked(api.watchOpen).mockRejectedValueOnce(appError('network'));
       const user = userEvent.setup();
       render(WatchPanel, { view });
       await expand(user);
       expect(await screen.findByRole('alert')).toHaveTextContent(t('watch.error.body'));
-      expect(announcer.say).toHaveBeenCalledWith(t('watch.error.body'));
+      expect(announcer.say).not.toHaveBeenCalled();
       await waitFor(() => expect(document.activeElement).toBe(toggle().closest('summary')));
       await user.click(screen.getByRole('button', { name: t('action.retry') }));
       await waitFor(() => expect(videoEl()).not.toBeNull());
       expect(api.watchOpen).toHaveBeenCalledTimes(2);
     });
 
-    it('gate denial announces the same copy as 받기 and moves focus to summary', async () => {
+    it('gate denial shows the same copy as 받기 in the alert and moves focus to summary', async () => {
       vi.mocked(api.watchOpen).mockRejectedValue(appError('notLoggedIn'));
       const user = userEvent.setup();
       render(WatchPanel, { view });
       await expand(user);
       const title = errorCopy(appError('notLoggedIn'), { place: 'resolve' }).title;
       expect(await screen.findByRole('alert')).toHaveTextContent(title);
-      expect(announcer.say).toHaveBeenCalledWith(title);
+      expect(announcer.say).not.toHaveBeenCalled();
       await waitFor(() => expect(document.activeElement).toBe(toggle().closest('summary')));
     });
 
-    it('mid-play error announces without moving focus', async () => {
+    it('mid-play error leaves focus elsewhere alone and does not announce twice', async () => {
       const user = userEvent.setup();
       render(WatchPanel, { view });
       const field = externalField();
@@ -462,8 +465,61 @@ describe('WatchPanel', () => {
       field.focus();
       await fireEvent.error(videoEl()!);
       expect(await screen.findByRole('alert')).toBeInTheDocument();
-      expect(announcer.say).toHaveBeenCalledTimes(1);
+      expect(announcer.say).not.toHaveBeenCalled();
       expect(field).toHaveFocus();
+    });
+
+    it('mid-play error with focus on the video moves focus to summary', async () => {
+      const user = userEvent.setup();
+      render(WatchPanel, { view });
+      await expand(user);
+      await waitFor(() => expect(document.activeElement).toBe(videoEl()));
+      await fireEvent.error(videoEl()!);
+      expect(await screen.findByRole('alert')).toBeInTheDocument();
+      await waitFor(() => expect(document.activeElement).toBe(toggle().closest('summary')));
+      expect(announcer.say).not.toHaveBeenCalled();
+    });
+
+    it('hls fatal mid-play fails, moves focus from the video to summary and does not announce', async () => {
+      vi.mocked(api.watchOpen).mockResolvedValue(hlsOpened());
+      const user = userEvent.setup();
+      render(WatchPanel, { view, markable: true });
+      await expand(user);
+      await waitFor(() => expect(hlsMock.instances).toHaveLength(1));
+      await waitFor(() => expect(document.activeElement).toBe(videoEl()));
+      hlsError({ fatal: true });
+      expect(await screen.findByRole('alert')).toHaveTextContent(t('watch.error.body'));
+      await waitFor(() => expect(document.activeElement).toBe(toggle().closest('summary')));
+      expect(lastHls().destroy).toHaveBeenCalledTimes(1);
+      expect(api.watchClose).toHaveBeenCalledTimes(1);
+      expect(announcer.say).not.toHaveBeenCalled();
+    });
+
+    it('native m3u8 path (hls.js unsupported) also focuses the video and plays once', async () => {
+      hlsMock.FakeHls.supported = false;
+      vi.spyOn(HTMLMediaElement.prototype, 'canPlayType').mockImplementation((type) => (type === 'application/vnd.apple.mpegurl' ? 'maybe' : ''));
+      vi.mocked(api.watchOpen).mockResolvedValue(hlsOpened());
+      const user = userEvent.setup();
+      render(WatchPanel, { view, markable: true });
+      await expand(user);
+      await waitFor(() => expect(videoEl()).not.toBeNull());
+      expect(videoEl()!.getAttribute('src')).toBe(HLS_SRC);
+      await waitFor(() => expect(document.activeElement).toBe(videoEl()));
+      expect(play).toHaveBeenCalledTimes(1);
+      expect(hlsMock.instances).toHaveLength(0);
+    });
+
+    it('card closed (destroy) while opening closes the late session', async () => {
+      let resolve!: (d: WatchOpenDto) => void;
+      vi.mocked(api.watchOpen).mockReturnValue(new Promise((r) => (resolve = r)));
+      const user = userEvent.setup();
+      const { unmount } = render(WatchPanel, { view });
+      await expand(user);
+      unmount();
+      expect(api.watchClose).not.toHaveBeenCalled();
+      resolve(opened());
+      await waitFor(() => expect(api.watchClose).toHaveBeenCalledWith(SID));
+      expect(api.watchClose).toHaveBeenCalledTimes(1);
     });
 
     it('rewind (markable) card also starts idle without editor', async () => {

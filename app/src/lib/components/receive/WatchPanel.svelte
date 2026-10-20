@@ -15,7 +15,6 @@
   import type { AppError, ResolvedDto, WatchOpenDto } from '../../bindings';
   import { errorCopy } from '../../copy/errors';
   import { t } from '../../copy/ko';
-  import { announcer } from '../../stores/announce.svelte';
   import {
     consumeOwnSeek,
     moveHandle,
@@ -159,12 +158,19 @@
     startPlay();
   }
 
-  /** 열기 실패: 알리고, 포커스가 비어 있었으면 줄 머리(summary)로 옮긴다(단추가 사라져 body로 떨어지지 않게) */
+  /** 줄 머리(summary)로 포커스를 옮긴다(포커스 있던 요소가 사라져 body로 떨어지지 않게) */
+  function focusSummary() {
+    rootEl?.querySelector<HTMLElement>('summary')?.focus();
+  }
+
+  /**
+   * 열기 실패: 포커스가 비어 있었으면 줄 머리로 옮긴다. 알림은 같은 순간 그려지는 Notice(role=alert)가 맡는다
+   * (announcer로 또 알리면 같은 말이 두 번 들린다)
+   */
   async function afterFailed(mine: number) {
-    announcer.say(gateCopy ? gateCopy.title : t('watch.error.body'));
     await tick();
     if (mine !== attempt) return;
-    if (focusIsFree()) rootEl?.querySelector<HTMLElement>('summary')?.focus();
+    if (focusIsFree()) focusSummary();
   }
 
   function closeSession() {
@@ -278,12 +284,18 @@
 
   function onvideoerror() {
     // 서명 만료·세션 만료 등. 원인 구분 없이 한 Notice(Q2). 낡은 세션은 닫는다
+    // 포커스가 영상에 있었을 때만 줄 머리로 옮긴다(영상이 사라져 body로 떨어지는 것을 막는다). 칸 등 다른 곳은 그대로 둔다
+    const onVideo = !!videoEl && document.activeElement === videoEl;
     attempt += 1;
+    const mine = attempt;
     closeSession();
     src = '';
     phase = 'failed';
-    // 재생 중 오류는 알리기만 하고 포커스는 옮기지 않는다
-    announcer.say(t('watch.error.body'));
+    if (onVideo) {
+      void tick().then(() => {
+        if (mine === attempt) focusSummary();
+      });
+    }
   }
 
   function mark(field: 'start' | 'end') {

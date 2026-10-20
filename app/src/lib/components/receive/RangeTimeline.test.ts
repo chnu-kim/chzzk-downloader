@@ -14,7 +14,7 @@ type Over = Partial<{
   start: number;
   end: number;
   band: boolean;
-  position: number;
+  position: number | null;
   disabled: boolean;
 }>;
 
@@ -293,6 +293,12 @@ describe('RangeTimeline (PVU-2)', () => {
   it('position marker reflects position', () => {
     const { container } = setup({ position: 300 });
     expect((container.querySelector('.position') as HTMLElement).style.getPropertyValue('--p')).toBe('0.5');
+  });
+
+  it('position null draws no marker (before play)', () => {
+    const { container } = setup({ position: null });
+    expect(container.querySelector('.position')).toBeNull();
+    expect(screen.getAllByRole('slider')).toHaveLength(2);
   });
 
   it('position is clamped to the bar', () => {

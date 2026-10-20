@@ -352,9 +352,15 @@ describe('구간 받기 순수 함수(range.md §5)', () => {
     it('접혀 있으면 검증하지 않는다', () => {
       expect(rangeError({ open: false, start: 'abc', end: 'x' }, D)).toBeNull();
     });
-    it('시작이 틀리거나 비면 start/format', () => {
+    it('시작이 틀리면 start/format', () => {
       expect(rangeError(open('abc', ''), D)).toEqual({ field: 'start', kind: 'format' });
-      expect(rangeError(open('', ''), D)).toEqual({ field: 'start', kind: 'format' });
+    });
+    it('빈 시작 칸은 0초라 오류가 아니다(PS10)', () => {
+      expect(rangeError(open('', ''), D)).toBeNull();
+      expect(rangeError(open('   ', '0:10:00'), D)).toBeNull();
+    });
+    it('빈 시작(0초)에 끝이 0이면 end/order', () => {
+      expect(rangeError(open('  ', '0:00:00'), D)).toEqual({ field: 'end', kind: 'order' });
     });
     it('끝이 틀리면 end/format, 둘 다 틀리면 앞 칸 먼저', () => {
       expect(rangeError(open('0:00:00', 'x'), D)).toEqual({ field: 'end', kind: 'format' });
@@ -384,6 +390,12 @@ describe('구간 받기 순수 함수(range.md §5)', () => {
       expect(effectiveRange(open('0:30:00', '0:20:00'), D)).toBeNull();
       expect(effectiveRange(open('abc', ''), D)).toBeNull();
       expect(effectiveRange(open(formatClock(0), formatClock(D)), D)).toBeNull();
+    });
+    it('빈 시작 칸은 0초: 끝만 적으면 처음부터, 둘 다 비면 전체(PS10)', () => {
+      expect(effectiveRange(open('', '0:10:00'), D)).toEqual({ startMs: 0, endMs: 600000 });
+      expect(effectiveRange(open('  ', '0:10:00'), null)).toEqual({ startMs: 0, endMs: 600000 });
+      expect(effectiveRange(open('', ''), D)).toBeNull();
+      expect(effectiveRange(open('', ''), null)).toBeNull();
     });
     it('내림 길이 이상이면 끝까지(11565.4 초깃값 = 전체)', () => {
       expect(effectiveRange(open('0:00:00', formatClock(11565.4)), 11565.4)).toBeNull();

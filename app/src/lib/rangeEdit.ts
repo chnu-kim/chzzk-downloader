@@ -31,6 +31,11 @@ function readSecs(text: string): number | null {
   return ms == null ? null : Math.floor(ms / 1000);
 }
 
+/** 시작 칸 글자 → 정수 초. 빈칸은 0초("처음부터", PS10). 못 읽으면 null */
+function readStart(text: string): number | null {
+  return text.trim() === '' ? 0 : readSecs(text);
+}
+
 /** floor(len). 길이가 이상하면 0 */
 function top(len: number): number {
   return Number.isFinite(len) && len > 0 ? Math.floor(len) : 0;
@@ -155,7 +160,7 @@ export function nudge(f: Fields, h: Handle, delta: number, len: BarLength | null
   if (len != null && !(len.secs >= 2)) return null;
   const next = begin(f, initialEnd);
   const max = len == null ? Number.POSITIVE_INFINITY : top(len.secs);
-  const sRaw = readSecs(next.start);
+  const sRaw = readStart(next.start);
   // 빈 끝 칸은 "끝까지": 길이를 알면 그 값, 모르면 값이 없다(끝 칸은 고칠 수 없고 시작 상한은 없다)
   const blankEnd = next.end.trim() === '';
   const eRaw = blankEnd ? (len == null ? Number.POSITIVE_INFINITY : max) : readSecs(next.end);
@@ -186,9 +191,9 @@ export function mark(f: Fields, h: Handle, t: number, initialEnd: string): Field
   return next;
 }
 
-/** 칸 → 영상(PVU10): 읽히면 그 초(floor(len)로 자름), 아니면 null. 빈 끝 칸은 null(이동 없음) */
-export function seekTargetOf(text: string, len: number): number | null {
-  const s = readSecs(text);
+/** 칸 → 영상(PVU10): 읽히면 그 초(floor(len)로 자름), 아니면 null. 빈 끝 칸은 null(이동 없음), 빈 시작 칸은 0초(PS10) */
+export function seekTargetOf(text: string, len: number, h: Handle = 'end'): number | null {
+  const s = h === 'start' ? readStart(text) : readSecs(text);
   return s == null ? null : Math.min(s, top(len));
 }
 

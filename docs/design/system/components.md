@@ -615,7 +615,7 @@ Worker: 없다(폼 라벨은 위, `web.md` §7.1).
 
 ### 2.29 WatchPanel (기능 컴포넌트)
 
-**해부**: 영상 카드(`ResolveCard`)의 메타 줄과 화질 사이에 놓는 받기 전 미리보기 줄(`receive/WatchPanel.svelte`, 기능 컴포넌트라 `ui/` 갤러리 매트릭스 대상이 아니다. 화면 몫 갤러리 장면 '카드 미리보기 표지 자리'·'카드 미리보기 펼침'·'카드 미리보기 실패'가 본다). `Disclosure variant="inline"` 하나(제목 `watch.toggle`, 기본 접힘, 카드마다 새로 시작)와 안쪽 상태 다섯(D66, ADR-0029): `closed`(아무것도 없음) · `idle`(표지 자리) · `opening`(표지 자리 + 불러오는 중 단추) · `ready`(`<video>`) · `failed`(inline Notice 하나). **펴기만으로는 아무것도 열지 않는다**: 표지 자리(`.stage`, 이미지 없는 16:9 장식 상자) 가운데 [영상 보기](`watch.start.label`, 아이콘 `play`, 접근 이름 `watch.start.a11y`)를 눌렀을 때 `watch_open`을 부르고, 접거나 카드가 사라지면 `watch_close`를 부른다. 접으면 `idle`로 돌아가며 다시 펴도 자동으로 열지 않는다. 준비되면 `play()`를 한 번 시도하고(거절은 조용히) 포커스가 [영상 보기] 단추나 `body`에 있을 때만 `<video>`로 옮긴다. 열기 실패는 같은 조건에서만 섹션 머리로 옮기고 `announcer`로 알린다. 재생 중 오류는 알리기만 한다.
+**해부**: 영상 카드(`ResolveCard`)의 메타 줄과 화질 사이에 놓는 받기 전 미리보기 줄(`receive/WatchPanel.svelte`, 기능 컴포넌트라 `ui/` 갤러리 매트릭스 대상이 아니다. 화면 몫 갤러리 장면 '카드 미리보기 표지 자리'·'카드 미리보기 펼침'·'카드 미리보기 실패'가 본다). `Disclosure variant="inline"` 하나(제목 `watch.toggle`(일반 VOD·클립) 또는 `watch.toggle.range`(빠른 다시보기, 영상 자리 아래 구간 막대와 `below` 스니펫의 구간 칸 줄이 같은 섹션), **기본 펼침**, 열림은 앱 메모리의 `ui.previewOpen`이 기억한다. 마운트 때 펼쳐져 있으면 `idle`로 시작한다)와 안쪽 상태 다섯(D66, ADR-0029): `closed`(아무것도 없음) · `idle`(표지 자리) · `opening`(표지 자리 + 불러오는 중 단추) · `ready`(`<video>`) · `failed`(inline Notice 하나). **펴기만으로는 아무것도 열지 않는다**: 표지 자리(`.stage`, 이미지 없는 16:9 장식 상자) 가운데 [영상 보기](`watch.start.label`, 아이콘 `play`, 접근 이름 `watch.start.a11y`)를 눌렀을 때 `watch_open`을 부르고, 접거나 카드가 사라지면 `watch_close`를 부른다. 접으면 `idle`로 돌아가며 다시 펴도 자동으로 열지 않는다. 준비되면 `play()`를 한 번 시도하고(거절은 조용히) 포커스가 [영상 보기] 단추나 `body`에 있을 때만 `<video>`로 옮긴다. 열기 실패는 같은 조건에서만 섹션 머리로 옮긴다. 알림은 같은 순간 그려지는 Notice의 `role="alert"`가 맡는다(`announcer`는 부르지 않는다). 재생 중 오류도 같고, 포커스가 `<video>`에 있었을 때만 섹션 머리로 옮긴다. **막대는 재생 전에도 그린다**(빠른 다시보기, meta 길이): 영상과의 결합(`coupled` = hls.js로 붙고 메타데이터를 읽음, PS12) 전에는 손잡이가 칸만 고치고 재생 위치·조작 줄·영상 탐색이 없다. 편집 영역은 막대가 있을 때부터 `role="group"`·`data-local-keys`다(PS14).
 
 ```ts
 type WatchPanelProps = {
@@ -623,6 +623,7 @@ type WatchPanelProps = {
   markable?: boolean; // 빠른 다시보기 카드: hls.js 경로에서 찍기 단추
   disabled?: boolean; // 카드 busy
   onmark?: (field: 'start' | 'end', secs: number) => void;
+  below?: Snippet; // 섹션 맨 아래(빠른 다시보기의 구간 칸 줄, 칸의 주인은 카드)
 };
 ```
 
@@ -641,7 +642,7 @@ type RangeTimelineProps = {
   length: number;                 // 막대 길이(초)
   start: number; end: number;     // 손잡이 값(초, rangeEdit.selection)
   band: boolean;                  // 선택 띠를 그리는가
-  position: number;               // 재생 위치(초)
+  position: number | null;        // 재생 위치(초). 영상이 결합되기 전(재생 전)에는 null이라 위치 선을 그리지 않는다(PS11)
   disabled?: boolean;             // 카드 busy
   onmove: (h: 'start' | 'end', secs: number, phase: 'drag' | 'commit') => void;
   onseek: (secs: number) => void; // 막대(손잡이 밖)를 눌렀을 때

@@ -462,7 +462,8 @@
 | `job.pausing` | 멈추는 중… | **일시정지하는 중** | §4, §6.3 |
 | `kind.live` | — | **생방송** | ADR-0025(D63) |
 | `card.live.body` | — | **지금 방송 중이에요. 받기를 누르면 녹화가 시작돼요. 방송이 끝나거나 녹화 마치기를 누를 때까지 받아요.** | ADR-0025. 카드 안 정보 안내 |
-| (신설) `watch.toggle` | — | `watch.toggle` **미리보기** | §5.1 기본형. 통짜 mp4·빠른 다시보기 카드의 메타 줄 아래 Disclosure inline(preview.md PV14, D64). 용어집 "미리보기" |
+| (신설) `watch.toggle` | — | `watch.toggle` **미리보기** | §5.1 기본형. 통짜 mp4 카드(일반 VOD·클립)의 메타 줄 아래 Disclosure inline 섹션 머리(preview.md PV14, D64, 기본 펼침은 D66). 용어집 "미리보기" |
+| (신설, PS-3) `watch.toggle.range` | — | `watch.toggle.range` **미리보기·구간** | 빠른 다시보기 카드의 섹션 머리. 열거 `·`(붙임, §6.5). 영상 자리와 구간 막대·칸이 한 섹션이다(D66) |
 | (신설, preview-ux2 PS-2) `watch.start.label` | — | `watch.start.label` **영상 보기** | 표지 자리 가운데 단추(아이콘 `play` + 글자). 누르면 미리보기 세션을 연다. 버튼 "동사 어간 + 기"(§5.1). "재생" 금지(PS16) |
 | (신설, PS-2) `watch.start.a11y` | — | `watch.start.a11y` **‘{title}’ 영상 보기** | [영상 보기]의 접근 이름. 보이는 글자를 포함한다(WCAG 2.5.3). DC12(‘{…}’로 시작), `watch.player.a11y`와 같은 꼴 |
 | (신설) `watch.error.body` | — | `watch.error.body` **미리보기를 열 수 없어요.** | 실패 Notice 본문 하나(원인은 가르지 않는다, preview.md Q2). 마침표(DC5). 게이트 거부는 `errors.*` 문구를 그대로 쓴다 |
@@ -475,10 +476,13 @@
 | (신설, PVU-3) `watch.range.fromStart.label` | — | `watch.range.fromStart.label` **시작부터 보기** | 조작 줄 단추. 시작으로 가서 보기만 하고 끝에서 멈추지 않는다 |
 | (신설, PVU-3) `watch.range.loop.label` | — | `watch.range.loop.label` **구간 반복하기** | 조작 줄 Switch 이름. 켜면 구간 끝에서 시작으로 돌아가 이어 본다. "`-기`로 끝나는 명사구"(§5.1 스위치 행) |
 | (신설, PVU-5) `range.length.label` / `range.lengthSize.label` | — | `range.length.label` **구간 길이: {length}** / `range.lengthSize.label` **구간 길이: {length} · {size}** | 구간 줄 안 caption 한 줄. `{size}`는 "약 7.8GB"처럼 "약"을 품는다. `·` 결합은 deck 문자열 하나로(DS6). `aria-live` 없음 |
-| (신설) `range.toggle` | — | `range.toggle` **일부만 받기** | §5.1 기본형. 빠른 다시보기 카드 화질 아래 Disclosure(range.md §5) |
+| (삭제, preview-ux2 PS-3) `range.toggle` | `range.toggle` 일부만 받기 | — | "일부만 받기" 줄이 없어지고 구간 칸 줄이 "미리보기·구간" 섹션 안으로 들어갔다(PS7) |
 | (신설) `range.label` | — | `range.label` **구간** | 명사 라벨(DC5) |
 | (신설) `range.start` / `range.end` | — | `range.start` **시작 시각** / `range.end` **끝 시각** | sr 접근 이름 |
-| (신설) `range.toEnd` | — | `range.toEnd` **끝까지** | 길이를 모를 때 끝 칸 placeholder |
+| (신설) `range.toEnd` | — | `range.toEnd` **끝까지** | 끝 칸 placeholder. 칸이 비면 끝까지 받는다(preview-ux2 PS10부터 길이를 알 때도 늘 보인다) |
+| (신설, PS-3) `range.fromBegin` | — | `range.fromBegin` **처음부터** | 시작 칸 placeholder. 칸이 비면 0초부터 받는다(PS10). 쓰지 않는 말 "처음부터 받기"는 문구 전체가 대상이라 부딪히지 않는다 |
+| (신설, PS-3) `range.wholeLength.label` / `range.wholeLengthSize.label` | — | `range.wholeLength.label` **전체 길이: {length}** / `range.wholeLengthSize.label` **전체 길이: {length} · {size}** | 받을 구간이 전체일 때 구간 줄 안 길이 줄(칸이 비었거나 전체를 덮을 때). `{size}`는 "약"을 품는다. `·` 결합은 deck 문자열 하나로(DS6). `range.length.*`와 짝 |
+| (신설, PS-3) `range.whole.label` | — | `range.whole.label` **전체 구간** | 전체를 받는데 영상 길이를 모를 때 길이 줄 |
 | (신설) `range.help` | — | `range.help` **앞뒤로 몇 초 더 받을 수 있어요.** | 도움말 마침표(DC5). 조각 경계로 넓힌다(range.md §1.2) |
 | (신설) `range.chip` / `range.chipToEnd` | — | `range.chip` **{start}~{end}** / `range.chipToEnd` **{start}~** | 작업 행 1줄 조각, §6.5 범위 기호 |
 | (신설) `range.error.format` | — | `range.error.format` **시각은 {example}처럼 적어 주세요.** | 인라인 오류. `{example}`은 `formatClock`(W5) |

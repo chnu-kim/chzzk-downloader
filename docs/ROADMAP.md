@@ -4,6 +4,7 @@
 
 ## 현재 위치
 
+- **미리보기·구간 개편 PS-3 한 섹션·기본 펼침·빈칸 = 전체(2026-10-21, 브랜치 `feat/preview-ux2-section`, 명세 `docs/design/features/preview-ux2.md` PS7~PS15·§11.2 PS-3, app.md 122, `feat`)**: 미리보기와 구간을 "미리보기·구간"(일반 VOD·클립은 "미리보기") 한 섹션으로 묶고 기본 펼침(`ui.previewOpen` 앱 메모리 기억)으로 바꿨다. 접히면 구간은 적용되지 않고(값은 남음), 칸이 비면 전체(안내 글자 "처음부터"·"끝까지", 빈 시작 = 0초, 길이 줄 "전체 길이"·"전체 구간")다. 막대는 재생 전에도 meta 길이로 그리고 hls.js 결합 뒤에야 조작 줄·재생 위치가 켜진다. `notOwn`·`unknown`·생방송에는 섹션이 없다. 가짜 백엔드·e2e·갤러리 장면·copy deck·디자인 시스템 문서를 함께 고쳤다(갤러리 기준선은 Linux CI 몫).
 - **미리보기·구간 개편 PS-2 표지 자리·지연 세션(2026-10-21, 브랜치 `feat/preview-ux2-lazy-session`, 명세 `docs/design/features/preview-ux2.md` PS5·PS6·PS16·PS17·§11.2 PS-2, app.md 121, `feat`)**: 미리보기 줄을 펴도 `watch_open`을 부르지 않고 표지 자리와 [영상 보기]만 보인다. 단추를 누르면 세션을 열고 `play()`를 한 번 시도하며 포커스는 비어 있을 때만 옮긴다. D66·ADR-0029(ADR-0027 `폐기(→ 0029)`)·`spec-check` 상한 66. 섹션은 아직 기본 접힘·두 줄(PS-3이 한 섹션·기본 펼침). 갤러리 기준선은 Linux CI 몫.
 - **미리보기·구간 개편 PS-1 구간 칸 ↑/↓(2026-10-21, 브랜치 `feat/preview-ux2-arrow-keys`, 명세 `docs/design/features/preview-ux2.md` PS1~PS4·§11.2 PS-1, app.md 120, `feat`)**: ±1초 단추 네 개와 문구 키 여섯·용어집 행을 없애고, 시작·끝 칸의 ↑/↓가 1초씩 바꾸며(`rangeEdit.nudge`) 영상이 따라간다(IME·수식 키는 처리 안 함, 길게 누르면 뗄 때·blur에서 한 번 탐색). 갤러리 기준선은 Linux CI 몫.
 - **PVU-6 리뷰 반영(2026-10-21)**: ADR 요약의 장 수를 열여덟로, §16.4 번들 증가가 PVU-3 시점 값임을 명시했다.

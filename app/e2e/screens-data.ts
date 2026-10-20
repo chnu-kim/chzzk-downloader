@@ -123,10 +123,24 @@ const settleCardTop = async (page: Page, env: Env) => {
   if (env.vp.height < 400) await page.locator('.video-card').evaluate((el) => el.scrollIntoView({ block: 'start' }));
 };
 
-// 구간 칸을 채운 카드(빠른 다시보기)는 칸·단추 줄이 둘이라 포커스 스크롤이 「미리보기」 줄을 sticky 입력줄 밑에 반쯤 걸치게 한다(PVU-5):
-// 미리보기 줄을 입력줄 바로 아래에 두고 잰다(card-range-error와 같은 까닭)
+// 구간 칸을 채운 카드(빠른 다시보기)는 칸·단추 줄이 둘이라 포커스 스크롤이 섹션 머리를 sticky 입력줄 밑에 반쯤 걸치게 한다(PVU-5):
+// 섹션 머리를 입력줄 바로 아래에 두고 잰다(card-range-error와 같은 까닭)
 const settleWatchTop = async (page: Page, env: Env) => {
-  if (env.vp.height < 600) await page.getByText(t('watch.toggle')).evaluate((el) => el.scrollIntoView({ block: 'start' }));
+  if (env.vp.height < 600) await page.locator('.watch summary').evaluate((el) => el.scrollIntoView({ block: 'start' }));
+};
+
+// 구간 칸을 채운 장면(기본 펼침, preview-ux2): 칸을 채우며 생긴 포커스 스크롤로 카드 머리가 입력줄 밑에 반쯤 걸린다.
+// 작은 창은 시작 칸을 sticky 입력줄과 바닥 줄 사이 한가운데에 두고(막대와 표지 자리는 입력줄 밑으로 숨는다), 그 밖은 카드를 입력줄 바로 아래에 둔다
+const settleFields = async (page: Page, env: Env) => {
+  if (env.vp.height < 600) {
+    await page.getByRole('textbox', { name: t('range.start') }).evaluate((el) => el.scrollIntoView({ block: 'center' }));
+    // 막대 전체가 입력줄(높이 36 안쪽)에 가려지게 막대 윗변을 입력줄 안쪽에 맞춘다: 반쯤 걸치면 axe가 가림(대상 크기)으로 본다
+    await page.evaluate(() => {
+      const main = document.querySelector<HTMLElement>('.main');
+      const track = document.querySelector('.track');
+      if (main && track) main.scrollTop += track.getBoundingClientRect().top - 48;
+    });
+  } else await page.locator('.video-card').evaluate((el) => el.scrollIntoView({ block: 'start' }));
 };
 
 export const SCREENS: Screen[] = [
@@ -202,10 +216,38 @@ export const SCREENS: Screen[] = [
       await env.tick?.(CHECK_DEBOUNCE_MS + 50);
       // 검사가 끝나 [받기]가 켜진 뒤(비활성 면의 대비는 잴 대상이 아니다)
       await expect(app.page.locator('.card-footer button:not([aria-disabled="true"])', { hasText: t('card.download') })).toBeVisible();
-      // 펼치기만 한다: [영상 보기]를 누르기 전에는 watch_open이 없다(PS6)
-      await app.page.getByText(t('watch.toggle')).click();
+      // 기본 펼침 그대로다: [영상 보기]를 누르기 전에는 watch_open이 없다(PS6·PS8)
     },
     ready: (p) => p.getByRole('button', { name: t('watch.start.label') }),
+    settle: settleCardTop,
+    card: true,
+  },
+  {
+    id: '카드 미리보기·구간 기본 펼침(빠른 다시보기, 재생 전)',
+    slug: 'card-rewind-default',
+    scenario: () => ({ resolve: { [R.url]: R } }),
+    drive: async (app, env) => {
+      await loadCard(app, R.url);
+      await env.tick?.(CHECK_DEBOUNCE_MS + 50);
+      // 검사가 끝나 [받기]가 켜진 뒤(비활성 면의 대비는 잴 대상이 아니다)
+      await expect(open(app.page, t('card.download'))).not.toHaveAttribute('aria-disabled', 'true');
+    },
+    // 표지 자리 → 막대(meta 길이) → 빈 칸 줄과 "전체 길이" 줄이 모두 보이는 모습
+    ready: (p) => p.getByText(/^전체 길이: /),
+    settle: settleFields,
+    card: true,
+  },
+  {
+    id: '카드 미리보기·구간 접힘(기억한 상태)',
+    slug: 'card-section-collapsed',
+    scenario: () => ({ resolve: { [R.url]: R } }),
+    drive: async (app, env) => {
+      await loadCard(app, R.url);
+      await env.tick?.(CHECK_DEBOUNCE_MS + 50);
+      await app.page.locator('.watch summary').click();
+      await expect(open(app.page, t('card.download'))).not.toHaveAttribute('aria-disabled', 'true');
+    },
+    ready: (p) => p.locator('.watch summary'),
     settle: settleCardTop,
     card: true,
   },
@@ -223,7 +265,6 @@ export const SCREENS: Screen[] = [
       await env.tick?.(CHECK_DEBOUNCE_MS + 50);
       // 검사가 끝나 [받기]가 켜진 뒤(비활성 면의 대비는 잴 대상이 아니다)
       await expect(app.page.locator('.card-footer button:not([aria-disabled="true"])', { hasText: t('card.download') })).toBeVisible();
-      await app.page.getByText(t('watch.toggle')).click();
       await app.page.getByRole('button', { name: t('watch.start.label') }).click();
     },
     ready: (p) => p.locator('video'),
@@ -240,7 +281,6 @@ export const SCREENS: Screen[] = [
       await loadCard(app, R.url);
       await env.tick?.(CHECK_DEBOUNCE_MS + 50);
       await expect(app.page.locator('.card-footer button:not([aria-disabled="true"])', { hasText: t('card.download') })).toBeVisible();
-      await app.page.getByText(t('watch.toggle')).click();
       await app.page.getByRole('button', { name: t('watch.start.label') }).click();
     },
     ready: (p) => p.locator('video'),
@@ -256,7 +296,6 @@ export const SCREENS: Screen[] = [
       await loadCard(app, R.url);
       await env.tick?.(CHECK_DEBOUNCE_MS + 50);
       await expect(app.page.locator('.card-footer button:not([aria-disabled="true"])', { hasText: t('card.download') })).toBeVisible();
-      await app.page.getByText(t('watch.toggle')).click();
       await app.page.getByRole('button', { name: t('watch.start.label') }).click();
       // 메타데이터가 읽혔고 재생 위치가 있는 것처럼 만들어 찍는다(실제 재생은 하지 않는다)
       const video = app.page.locator('video');
@@ -286,7 +325,6 @@ export const SCREENS: Screen[] = [
       await loadCard(app, R.url);
       await env.tick?.(CHECK_DEBOUNCE_MS + 50);
       await expect(app.page.locator('.card-footer button:not([aria-disabled="true"])', { hasText: t('card.download') })).toBeVisible();
-      await app.page.getByText(t('watch.toggle')).click();
       await app.page.getByRole('button', { name: t('watch.start.label') }).click();
       // 메타데이터가 읽혔고 길이·재생 위치가 있는 것처럼 만들어 시작·끝을 찍는다(실제 재생은 하지 않는다)
       const video = app.page.locator('video');
@@ -322,7 +360,6 @@ export const SCREENS: Screen[] = [
       await env.tick?.(CHECK_DEBOUNCE_MS + 50);
       // 검사가 끝나 [받기]가 켜진 뒤(비활성 면의 대비는 잴 대상이 아니다)
       await expect(app.page.locator('.card-footer button:not([aria-disabled="true"])', { hasText: t('card.download') })).toBeVisible();
-      await app.page.getByText(t('watch.toggle')).click();
       await app.page.getByRole('button', { name: t('watch.start.label') }).click();
     },
     ready: (p) => p.getByText(t('watch.error.body')),
@@ -335,13 +372,13 @@ export const SCREENS: Screen[] = [
     scenario: () => ({ resolve: { [R.url]: R } }),
     drive: async (app, env) => {
       await loadCard(app, R.url);
-      await app.page.getByText(t('range.toggle')).click();
+      // 두 손잡이가 막대에서 떨어져 있게 넓은 구간을 고른다(붙은 손잡이는 axe 대상 크기 간격에 걸린다)
       await app.page.getByRole('textbox', { name: t('range.start') }).fill('0:10:00');
-      await app.page.getByRole('textbox', { name: t('range.end') }).fill('0:20:00');
+      await app.page.getByRole('textbox', { name: t('range.end') }).fill('2:30:00');
       await env.tick?.(CHECK_DEBOUNCE_MS + 50);
     },
-    ready: (p) => p.getByText(t('filename.willSaveAs', { name: `${R.suggestedFileName} (0.10.00~0.20.00)` })),
-    settle: settleWatchTop,
+    ready: (p) => p.getByText(t('filename.willSaveAs', { name: `${R.suggestedFileName} (0.10.00~2.30.00)` })),
+    settle: settleFields,
     card: true,
   },
   {
@@ -350,17 +387,16 @@ export const SCREENS: Screen[] = [
     scenario: () => ({ resolve: { [R.url]: R } }),
     drive: async (app, env) => {
       await loadCard(app, R.url);
-      await app.page.getByText(t('range.toggle')).click();
-      await app.page.getByRole('textbox', { name: t('range.start') }).fill('0:30:00');
+      await app.page.getByRole('textbox', { name: t('range.start') }).fill('2:00:00');
       await app.page.getByRole('textbox', { name: t('range.end') }).fill('0:20:00');
       await env.tick?.(CHECK_DEBOUNCE_MS + 50);
       await open(app.page, t('card.download')).click();
     },
     ready: (p) => p.getByRole('alert').filter({ hasText: t('range.error.order') }),
-    // 높이 231·520에서는 [받기] 클릭·오류 포커스로 스크롤이 내려가 「미리보기」·「일부만 받기」 줄이 sticky 입력줄 밑에 반쯤 걸린다
-    // (axe target-size, 빠른 다시보기 카드에 미리보기 줄이 생긴 PV-6부터 520도). 구간 줄은 미리보기 줄 바로 아래라 미리보기 줄을 입력줄 바로 아래에 두고 잰다(card-worst와 같은 까닭)
+    // 높이 231·520에서는 [받기] 클릭·오류 포커스로 스크롤이 내려가 섹션 머리(「미리보기·구간」)가 sticky 입력줄 밑에 반쯤 걸린다
+    // (axe target-size). 섹션 머리를 입력줄 바로 아래에 두고 잰다(card-worst와 같은 까닭)
     settle: async (page, env) => {
-      if (env.vp.height < 600) await page.getByText(t('watch.toggle')).evaluate((el) => el.scrollIntoView({ block: 'start' }));
+      if (env.vp.height < 600) await page.locator('.watch summary').evaluate((el) => el.scrollIntoView({ block: 'start' }));
     },
     card: true,
   },
@@ -373,7 +409,6 @@ export const SCREENS: Screen[] = [
     },
     drive: async (app, env) => {
       await loadCard(app, R.url);
-      await app.page.getByText(t('range.toggle')).click();
       // 검사가 끝나 [받기]가 활성이 된 뒤의 모습(전환 중 색 대비를 피한다)
       await env.tick?.(CHECK_DEBOUNCE_MS + 50);
       await expect(open(app.page, t('card.download'))).not.toHaveAttribute('aria-disabled', 'true');

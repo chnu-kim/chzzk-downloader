@@ -6,6 +6,7 @@ import { vodResolved } from '../../../test/fixtures';
 import { errorCopy } from '../../copy/errors';
 import { t } from '../../copy/ko';
 import { announcer } from '../../stores/announce.svelte';
+import { ui } from '../../stores/ui.svelte';
 
 vi.mock('../../api', () => ({
   watchOpen: vi.fn(),
@@ -55,7 +56,8 @@ const opened = (over: Partial<WatchOpenDto> = {}): WatchOpenDto => ({ id: SID, k
 const appError = (code: AppError['code']): AppError => ({ code, message: code, stage: null, resumable: false, payload: null });
 
 const view = vodResolved();
-const toggle = () => screen.getByText(t('watch.toggle'));
+/** 섹션 머리(빠른 다시보기는 "미리보기·구간", 일반 VOD·클립은 "미리보기") */
+const toggle = () => document.querySelector('summary') as HTMLElement;
 const videoEl = () => document.querySelector('video') as HTMLVideoElement | null;
 
 const startBtn = () => screen.getByRole('button', { name: t('watch.start.a11y', { title: view.meta.title }) });
@@ -78,6 +80,8 @@ const lastHls = () => hlsMock.instances[hlsMock.instances.length - 1];
 const hlsError = (data: Record<string, unknown>) => (lastHls() as unknown as { emit(e: string, d: unknown): void }).emit('hlsError', data);
 
 beforeEach(() => {
+  // 이 파일의 흐름은 접힌 줄에서 시작한다(기본 펼침은 아래 '기본 펼침(PS-3)'과 receive.test.ts가 본다)
+  ui.previewOpen = false;
   hlsMock.instances.length = 0;
   hlsMock.FakeHls.supported = true;
   vi.mocked(api.watchOpen).mockReset().mockResolvedValue(opened());
@@ -749,10 +753,10 @@ describe('WatchPanel', () => {
       expect(markStart()).toBeNull();
     });
 
-    it('메타데이터가 읽히기 전에는 비활성이다', async () => {
+    it('메타데이터가 읽히기 전에는 찍기 버튼을 그리지 않는다(PS12: 결합 전)', async () => {
       await openHlsMarkable();
-      expect(markStart()).toBeDisabled();
-      expect(markEnd()).toBeDisabled();
+      expect(markStart()).toBeNull();
+      expect(markEnd()).toBeNull();
       await loaded(0);
       expect(markStart()).toBeEnabled();
       expect(markEnd()).toBeEnabled();
@@ -809,7 +813,7 @@ describe('WatchPanel', () => {
       await user.click(toggle());
       await expand(user);
       await waitFor(() => expect(hlsMock.instances).toHaveLength(2));
-      expect(markStart()).toBeDisabled();
+      expect(markStart()).toBeNull();
     });
   });
 });
@@ -872,16 +876,18 @@ describe('구간 편집(PVU-3)', () => {
     return m;
   }
 
-  it('hls.js 경로에서 메타데이터를 읽은 뒤에만 막대가 있다(조작 줄 찍기는 그 전에도 비활성으로 있다)', async () => {
+  it('막대는 메타데이터 전에도 있고, 조작 줄은 hls.js로 붙고 메타데이터를 읽은 뒤에만 있다(PS11·PS12)', async () => {
     await openEditor();
-    expect(sliders()).toHaveLength(0);
-    expect(screen.getByRole('button', { name: t('watch.mark.start') })).toBeDisabled();
+    expect(sliders()).toHaveLength(2);
+    expect(screen.queryByRole('button', { name: t('watch.mark.start') })).toBeNull();
+    expect(playBtn()).toBeNull();
     await ready();
     expect(sliders()).toHaveLength(2);
+    expect(screen.getByRole('button', { name: t('watch.mark.start') })).toBeEnabled();
     expect(screen.getByRole('group', { name: t('watch.editor.a11y', { title: view.meta.title }) })).toHaveAttribute('data-local-keys');
   });
 
-  it('길이(len)를 모르면 막대는 없고 찍기·조작 줄은 있다', async () => {
+  it('길이(len)를 모르면 막대는 없고 찍기·조작 줄은 결합 뒤에 있다', async () => {
     await openEditor({ len: null });
     await ready();
     expect(sliders()).toHaveLength(0);
@@ -889,15 +895,139 @@ describe('구간 편집(PVU-3)', () => {
     expect(playBtn()).toBeDisabled();
   });
 
-  it('mp4 경로·네이티브 m3u8·markable 아님에는 편집 영역이 없다', async () => {
+  it('mp4 경로·네이티브 m3u8에서는 막대·칸만 쓰고 조작 줄·재생 위치·영상 탐색이 없다(PS12)', async () => {
     const user = userEvent.setup();
-    render(WatchPanel, { view, markable: true, fields: CLOSED, len: LEN, initialEnd: '0:10:00' } as never);
+    const onfields = vi.fn();
+    render(WatchPanel, { view, markable: true, fields: CLOSED, len: LEN, initialEnd: '0:10:00', onfields } as never);
     await expand(user);
     await waitFor(() => expect(videoEl()).not.toBeNull());
-    await fireEvent(videoEl()!, new Event('loadedmetadata'));
+    const m = mockVideo();
+    await fireEvent(m.v, new Event('loadedmetadata'));
+    expect(sliders()).toHaveLength(2);
+    expect(playBtn()).toBeNull();
+    expect(screen.queryByRole('button', { name: t('watch.mark.start') })).toBeNull();
+    expect(document.querySelector('.position')).toBeNull();
+    await fireEvent.keyDown(slider(t('range.start')), { key: 'ArrowRight' });
+    expect(onfields).toHaveBeenLastCalledWith({ open: true, start: '0:00:01', end: '0:10:00' }, 'handle');
+    expect(m.writes).toEqual([]);
+  });
+
+  it('markable이 아니면(일반 VOD·클립) 막대도 편집 영역도 없다', async () => {
+    vi.mocked(api.watchOpen).mockResolvedValue(hlsOpened());
+    const user = userEvent.setup();
+    render(WatchPanel, { view, fields: CLOSED, len: LEN, initialEnd: '0:10:00' } as never);
+    await expand(user);
+    await waitFor(() => expect(hlsMock.instances).toHaveLength(1));
+    await ready();
     expect(sliders()).toHaveLength(0);
     expect(screen.queryByRole('group', { name: /구간 고르기/ })).toBeNull();
     expect(playBtn()).toBeNull();
+  });
+
+  describe('재생 전 막대·섹션(PS-3)', () => {
+    it('빠른 다시보기 섹션의 이름은 "미리보기·구간", 일반 VOD·클립은 "미리보기"', () => {
+      const a = render(WatchPanel, { view, markable: true } as never);
+      expect(toggle()).toHaveTextContent(t('watch.toggle.range'));
+      a.unmount();
+      render(WatchPanel, { view });
+      expect(toggle()).toHaveTextContent(t('watch.toggle'));
+      expect(toggle()).not.toHaveTextContent(t('watch.toggle.range'));
+    });
+
+    it('기본은 펼쳐져 있고 표지 자리부터 시작한다: 마운트에서 watch_open도 쓰기도 없다', () => {
+      ui.previewOpen = true;
+      render(WatchPanel, { view });
+      expect(toggle().closest('details')).toHaveAttribute('open');
+      expect(startBtn()).toBeInTheDocument();
+      expect(api.watchOpen).not.toHaveBeenCalled();
+      expect(ui.previewOpen).toBe(true);
+    });
+
+    it('머리를 눌러 접고 펴면 ui.previewOpen이 바뀐다', async () => {
+      ui.previewOpen = true;
+      const user = userEvent.setup();
+      render(WatchPanel, { view });
+      await user.click(toggle());
+      expect(ui.previewOpen).toBe(false);
+      await user.click(toggle());
+      expect(ui.previewOpen).toBe(true);
+      expect(startBtn()).toBeInTheDocument();
+    });
+
+    it('펼쳐진 details가 마운트 때 쏘는 toggle 사건(값이 같다)은 열린 세션을 건드리지 않는다', async () => {
+      ui.previewOpen = true;
+      const user = userEvent.setup();
+      render(WatchPanel, { view });
+      await user.click(startBtn());
+      await waitFor(() => expect(videoEl()).not.toBeNull());
+      await fireEvent(toggle().closest('details') as HTMLDetailsElement, new Event('toggle'));
+      expect(videoEl()).not.toBeNull();
+      expect(api.watchClose).not.toHaveBeenCalled();
+      expect(ui.previewOpen).toBe(true);
+    });
+
+    it('접힌 채 마운트하면 펼칠 때 표지 자리가 된다', async () => {
+      ui.previewOpen = false;
+      const user = userEvent.setup();
+      render(WatchPanel, { view });
+      expect(toggle().closest('details')).not.toHaveAttribute('open');
+      await user.click(toggle());
+      expect(startBtn()).toBeInTheDocument();
+      expect(api.watchOpen).not.toHaveBeenCalled();
+    });
+
+    it('재생 전에도 막대가 meta 길이로 있고 손잡이는 칸만 고친다(재생 위치·조작 줄·영상 없음)', async () => {
+      ui.previewOpen = true;
+      const onfields = vi.fn();
+      render(WatchPanel, { view, markable: true, fields: CLOSED, len: LEN, initialEnd: '0:10:00', onfields } as never);
+      expect(sliders()).toHaveLength(2);
+      expect(videoEl()).toBeNull();
+      expect(document.querySelector('.position')).toBeNull();
+      expect(playBtn()).toBeNull();
+      expect(screen.getByRole('group', { name: t('watch.editor.a11y', { title: view.meta.title }) })).toHaveAttribute('data-local-keys');
+      await fireEvent.keyDown(slider(t('range.end')), { key: 'ArrowLeft' });
+      expect(onfields).toHaveBeenLastCalledWith({ open: true, start: '0:00:00', end: '0:09:59' }, 'handle');
+    });
+
+    it('길이를 모르면 재생 전에는 막대도 편집 영역도 없다', () => {
+      ui.previewOpen = true;
+      render(WatchPanel, { view, markable: true, fields: CLOSED, len: null } as never);
+      expect(sliders()).toHaveLength(0);
+      expect(screen.queryByRole('group', { name: /구간 고르기/ })).toBeNull();
+    });
+
+    it('미리보기가 실패해도 막대는 남는다', async () => {
+      ui.previewOpen = true;
+      vi.mocked(api.watchOpen).mockRejectedValue(appError('network'));
+      const user = userEvent.setup();
+      render(WatchPanel, { view, markable: true, fields: CLOSED, len: LEN, initialEnd: '0:10:00' } as never);
+      await user.click(startBtn());
+      expect(await screen.findByRole('alert')).toBeInTheDocument();
+      expect(sliders()).toHaveLength(2);
+    });
+
+    it('재생 전 막대를 눌러도 아무것도 하지 않는다(영상이 없다)', async () => {
+      ui.previewOpen = true;
+      const onfields = vi.fn();
+      render(WatchPanel, { view, markable: true, fields: CLOSED, len: LEN, initialEnd: '0:10:00', onfields } as never);
+      const track = document.querySelector('.track') as HTMLElement;
+      track.getBoundingClientRect = () => ({ left: 0, top: 0, right: 600, bottom: 24, width: 600, height: 24, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect;
+      await fireEvent.pointerDown(track, { button: 0, clientX: 300, pointerId: 1 });
+      expect(onfields).not.toHaveBeenCalled();
+    });
+
+    it('접으면 세션이 닫혀도 막대는 meta 길이로 그대로 있다', async () => {
+      ui.previewOpen = true;
+      vi.mocked(api.watchOpen).mockResolvedValue(hlsOpened());
+      const user = userEvent.setup();
+      render(WatchPanel, { view, markable: true, fields: CLOSED, len: LEN, initialEnd: '0:10:00' } as never);
+      await user.click(startBtn());
+      await waitFor(() => expect(hlsMock.instances).toHaveLength(1));
+      await user.click(toggle());
+      await waitFor(() => expect(api.watchClose).toHaveBeenCalledTimes(1));
+      expect(videoEl()).toBeNull();
+      expect(sliders()).toHaveLength(2);
+    });
   });
 
   it('손잡이를 끌면 칸 값만 바꾸고(영상은 그대로), 놓으면 한 번 탐색한다', async () => {
@@ -1095,13 +1225,13 @@ describe('구간 편집(PVU-3)', () => {
       expect(m.writes).toEqual([60]);
     });
 
-    it('메타데이터 전에 durationchange만 와도 막대·찍기는 켜지지 않는다', async () => {
+    it('메타데이터 전에 durationchange만 와도 조작 줄·찍기는 켜지지 않는다', async () => {
       await openEditor();
       const m = mockVideo();
       await fireEvent(m.v, new Event('durationchange'));
-      expect(sliders()).toHaveLength(0);
-      expect(screen.getByRole('button', { name: t('watch.mark.start') })).toBeDisabled();
+      expect(screen.queryByRole('button', { name: t('watch.mark.start') })).toBeNull();
       await fireEvent(m.v, new Event('loadedmetadata'));
+      expect(screen.getByRole('button', { name: t('watch.mark.start') })).toBeEnabled();
       expect(sliders()).toHaveLength(2);
     });
 

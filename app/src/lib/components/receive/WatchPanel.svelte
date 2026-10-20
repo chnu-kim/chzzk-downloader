@@ -1,20 +1,22 @@
 <script lang="ts">
-  // 받기 전 미리보기 줄(preview.md PV14, preview-ux2 PS5·PS6, system/components.md WatchPanel). 카드 안 `Disclosure inline`이고 기본 접힘이다.
-  // 펼치면 표지 자리(.stage)와 [영상 보기]만 보이고 요청은 없다. 그 단추를 눌렀을 때 `watch_open`을 부르고(preload=metadata, 네이티브 controls,
+  // 받기 전 미리보기 섹션(preview.md PV14, preview-ux2 PS5~PS12, system/components.md WatchPanel). 카드 안 `Disclosure inline` 하나이고 기본 펼침이다.
+  // 열림은 앱 메모리 `ui.previewOpen`이 기억한다(PS8). 펼쳐도 표지 자리(.stage)와 [영상 보기]만 보이고 요청은 없다. 그 단추를 눌렀을 때 `watch_open`을 부르고(preload=metadata, 네이티브 controls,
   // 준비되면 `play()`를 한 번 시도), 접거나 카드가 사라지면 `watch_close`를 부른다.
   // `src`는 Rust가 만든 `watch:` 주소뿐이고 서명 주소·토큰은 프런트에 오지 않는다. 상태는 closed·idle·opening·ready·failed 다섯.
   // 빠른 다시보기(HLS)는 hls.js light를 동적으로 불러(PV9) MSE로 붙인다. 못 쓰면 네이티브 m3u8, 그것도 없으면 실패(PV16).
   // 구간 찍기(PV17): `markable`(빠른 다시보기 카드)이고 hls.js로 붙었을 때만 재생기 아래 [시작 찍기]·[끝 찍기]를 보인다.
   // 네이티브 m3u8 대체 경로는 시간축이 다를 수 있어 그리지 않는다. 누른 순간의 floor(currentTime)초를 `onmark`로 넘길 뿐이다.
-  // 구간 편집(preview-ux PVU-3): 같은 조건에서 영상 아래에 구간 막대(RangeTimeline)와 조작 줄(찍기·구간 보기·시작부터 보기·구간 반복하기)을
-  // 한 편집 영역(role=group)으로 묶는다. 칸 문자열의 원천은 카드이고(`fields`), 손잡이는 `rangeEdit.moveHandle`이 만든 새 칸을 `onfields`로
+  // 빠른 다시보기(`markable`)는 섹션 이름이 "미리보기·구간"이고, 영상 자리 아래에 구간 막대(RangeTimeline)를 재생 전에도 meta 길이로 그린다(PS11).
+  // 영상과 구간의 결합(`coupled` = hls.js로 붙고 메타데이터를 읽음, PS12)이 되면 조작 줄(찍기·구간 보기·시작부터 보기·구간 반복하기)과 재생 위치가 더해진다.
+  // 막대와 조작 줄은 한 편집 영역(role=group)으로 묶는다. 구간 칸 줄은 카드가 `below` 스니펫으로 섹션 맨 아래에 그린다(칸의 주인은 카드, PS7). 칸 문자열의 원천은 카드이고(`fields`), 손잡이는 `rangeEdit.moveHandle`이 만든 새 칸을 `onfields`로
   // 돌려줄 뿐이다. 영상 탐색은 `seek()` 하나를 거치고 그 앞에서 구간 보기를 끈다(§6.3: restart·pause가 손잡이 조작에 끼어들지 않게).
-  import { onDestroy, tick } from 'svelte';
+  import { onDestroy, tick, type Snippet } from 'svelte';
   import type Hls from 'hls.js/light';
   import * as api from '../../api';
   import type { AppError, ResolvedDto, WatchOpenDto } from '../../bindings';
   import { errorCopy } from '../../copy/errors';
   import { t } from '../../copy/ko';
+  import { ui } from '../../stores/ui.svelte';
   import {
     consumeOwnSeek,
     moveHandle,
@@ -52,6 +54,8 @@
     onfields?: (next: Fields, cause: 'handle') => void;
     /** 영상이 알려 준 길이(유한할 때, 접기·실패면 null) */
     onduration?: (secs: number | null) => void;
+    /** 섹션 맨 아래에 그릴 것(빠른 다시보기의 구간 칸 줄, PS7) */
+    below?: Snippet;
   }
 
   let {
@@ -64,17 +68,18 @@
     initialEnd = '',
     onfields,
     onduration,
+    below,
   }: Props = $props();
 
   type Phase = 'closed' | 'idle' | 'opening' | 'ready' | 'failed';
   /** 받기와 같은 문구로 알리는 게이트 거부(그 밖의 실패는 한 문구, preview.md Q2) */
   const GATE_CODES: ReadonlySet<AppError['code']> = new Set(['notLoggedIn', 'notOwnContent', 'ownershipUnknown']);
 
-  let open = $state(false);
-  /** 이 줄의 뿌리와 [영상 보기] 단추(포커스 판단용) */
+  /** 이 섹션의 뿌리와 [영상 보기] 단추(포커스 판단용) */
   let rootEl: HTMLDivElement | null = $state(null);
   let startEl: HTMLButtonElement | null = $state(null);
-  let phase: Phase = $state('closed');
+  // 마운트 때 이미 펼쳐져 있으면 표지 자리부터다(Disclosure의 onchange는 사용자가 바꿀 때만 불린다)
+  let phase: Phase = $state(ui.previewOpen ? 'idle' : 'closed');
   let src = $state('');
   /** 게이트 거부로 실패했을 때의 오류(없으면 한 문구) */
   let gateError: AppError | null = $state(null);
@@ -103,8 +108,8 @@
 
   const uid = $props.id();
   const loopId = `${uid}-loop`;
-  /** 구간 편집 영역을 그리는가: 빠른 다시보기 카드이고 hls.js로 붙었을 때만(PV17·PVU2) */
-  const editing = $derived(markable && usingHls);
+  /** 영상과 구간의 결합(PS12): hls.js로 붙었고 메타데이터를 읽었을 때만. 찍기·조작 줄·재생 위치·영상 탐색이 모두 이 조건이다(PV17: 네이티브 m3u8은 제외) */
+  const coupled = $derived(usingHls && metaReady);
   const gateCopy = $derived(gateError ? errorCopy(gateError, { place: 'resolve' }) : null);
 
   /** 이 웹뷰가 mp4를 읽을 수 있는가(없으면 src를 달지 않고 곧바로 실패) */
@@ -305,6 +310,10 @@
 
   /** 막대에 그릴 값(접힘이면 전체). 길이를 모르면 null */
   const sel = $derived(len ? selection(fields, len.secs) : null);
+  /** 구간 막대를 그리는가: 빠른 다시보기이고 길이를 알 때(재생 전에도, PS11) */
+  const barShown = $derived(markable && !!len && !!sel);
+  /** 편집 영역(role=group)의 이름·키 처리: 막대가 있거나 결합됐을 때(PS14) */
+  const region = $derived(markable && (barShown || coupled));
 
   /**
    * 영상을 secs초로 옮긴다(손잡이·키·막대·칸). 먼저 구간 보기를 끈다(§6.3): 그래서 이 탐색은 playStep에 닿지 않는다.
@@ -313,7 +322,7 @@
   export function seek(secs: number) {
     playMode = 'off';
     const v = videoEl;
-    if (!v || !metaReady || Number.isNaN(secs)) return;
+    if (!v || !coupled || Number.isNaN(secs)) return;
     const d = v.duration;
     const hi = Number.isFinite(d) && d > 0 ? d : Number.POSITIVE_INFINITY;
     const target = Math.min(Math.max(secs, 0), hi);
@@ -435,7 +444,7 @@
     if (isImeKey(e) || e.defaultPrevented || editable(e.target)) return;
     if (e.altKey || e.ctrlKey || e.metaKey) return;
     const v = videoEl;
-    if (!v || !metaReady || !(e.target instanceof Element)) return;
+    if (!v || !coupled || !(e.target instanceof Element)) return;
     const el = e.target;
     const command = el.closest('button, [role="switch"]');
     const slider = el.closest('[role="slider"]');
@@ -476,74 +485,13 @@
 </script>
 
 <div class="watch" bind:this={rootEl}>
-  <Disclosure variant="inline" title={t('watch.toggle')} bind:open {onchange}>
+  <Disclosure variant="inline" title={markable ? t('watch.toggle.range') : t('watch.toggle')} bind:open={ui.previewOpen} {onchange}>
     {#if phase === 'idle' || phase === 'opening'}
       <!-- 표지 자리: 이미지 없는 장식 상자(PS5). 재생기와 같은 16:9라 눌러도 배치가 밀리지 않는다 -->
       <div class="stage">
         <Button icon="play" loading={phase === 'opening'} bind:el={startEl} aria-label={t('watch.start.a11y', { title: view.meta.title })} onclick={() => void openSession()}>
           {t('watch.start.label')}
         </Button>
-      </div>
-    {:else if phase === 'ready'}
-      <!-- 편집 영역: 영상 + 막대 + 조작 줄. 영상은 hls.js가 붙기 전후에 같은 요소여야 해서(usingHls가 늦게 켜진다) 감싸는 요소를
-           늘 두고 편집 영역의 이름·역할만 조건으로 붙인다. 포커스 링은 전역 규칙을 그대로 받는다(data-focus-container 없음, V8) -->
-      <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
-      <div
-        class="editor"
-        role={editing ? 'group' : undefined}
-        aria-label={editing ? t('watch.editor.a11y', { title: view.meta.title }) : undefined}
-        tabindex={editing ? -1 : undefined}
-        data-local-keys={editing ? '' : undefined}
-        onkeydown={editing ? onEditorKey : undefined}
-      >
-        <!-- svelte-ignore a11y_media_has_caption -->
-        <video
-          class="player"
-          controls
-          tabindex="0"
-          preload="metadata"
-          playsinline
-          bind:this={videoEl}
-          src={src || undefined}
-          aria-label={t('watch.player.a11y', { title: view.meta.title })}
-          onerror={onvideoerror}
-          onloadedmetadata={onmeta}
-          ondurationchange={ondur}
-          ontimeupdate={ontimeupdate}
-          onseeked={onseeked}
-          onpause={onpause}
-          onended={onended}
-        ></video>
-        {#if editing}
-          {#if metaReady && len && sel}
-            <div class="timeline">
-              <RangeTimeline
-                length={len.secs}
-                start={sel.start}
-                end={sel.end}
-                band={sel.band}
-                {position}
-                {disabled}
-                onmove={moveTo}
-                onseek={seek}
-              />
-            </div>
-          {/if}
-          <div class="controls">
-            <Button size="sm" aria-keyshortcuts="I" disabled={disabled || !metaReady} onclick={() => mark('start')}>{t('watch.mark.start')}</Button>
-            <Button size="sm" aria-keyshortcuts="O" disabled={disabled || !metaReady} onclick={() => mark('end')}>{t('watch.mark.end')}</Button>
-            <Button size="sm" disabled={disabled || !metaReady || !len || !sel?.band} onclick={playRange}>
-              {t('watch.range.play.label')}
-            </Button>
-            <Button size="sm" disabled={disabled || !metaReady || !len} onclick={playFromStart}>
-              {t('watch.range.fromStart.label')}
-            </Button>
-            <span class="loop">
-              <span id={loopId}>{t('watch.range.loop.label')}</span>
-              <Switch bind:value={loop} labelledby={loopId} onchange={onloop} />
-            </span>
-          </div>
-        {/if}
       </div>
     {:else if phase === 'failed'}
       {#if gateCopy}
@@ -563,6 +511,70 @@
         </Notice>
       {/if}
     {/if}
+    <!-- 편집 영역: 영상 + 막대 + 조작 줄. 영상은 hls.js가 붙기 전후에 같은 요소여야 해서(coupled가 늦게 켜진다) 감싸는 요소를
+         늘 두고 편집 영역의 이름·역할만 조건으로 붙인다. 표지 자리·실패 Notice는 이 영역 밖이라 그 위의 Esc는 카드를 닫는다.
+         포커스 링은 전역 규칙을 그대로 받는다(data-focus-container 없음, V8) -->
+    <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
+    <div
+      class="editor"
+      role={region ? 'group' : undefined}
+      aria-label={region ? t('watch.editor.a11y', { title: view.meta.title }) : undefined}
+      tabindex={region ? -1 : undefined}
+      data-local-keys={region ? '' : undefined}
+      onkeydown={region ? onEditorKey : undefined}
+    >
+      {#if phase === 'ready'}
+        <!-- svelte-ignore a11y_media_has_caption -->
+        <video
+          class="player"
+          controls
+          tabindex="0"
+          preload="metadata"
+          playsinline
+          bind:this={videoEl}
+          src={src || undefined}
+          aria-label={t('watch.player.a11y', { title: view.meta.title })}
+          onerror={onvideoerror}
+          onloadedmetadata={onmeta}
+          ondurationchange={ondur}
+          ontimeupdate={ontimeupdate}
+          onseeked={onseeked}
+          onpause={onpause}
+          onended={onended}
+        ></video>
+      {/if}
+      {#if barShown && len && sel}
+        <div class="timeline">
+          <RangeTimeline
+            length={len.secs}
+            start={sel.start}
+            end={sel.end}
+            band={sel.band}
+            position={coupled ? position : null}
+            {disabled}
+            onmove={moveTo}
+            onseek={seek}
+          />
+        </div>
+      {/if}
+      {#if markable && coupled}
+        <div class="controls">
+          <Button size="sm" aria-keyshortcuts="I" {disabled} onclick={() => mark('start')}>{t('watch.mark.start')}</Button>
+          <Button size="sm" aria-keyshortcuts="O" {disabled} onclick={() => mark('end')}>{t('watch.mark.end')}</Button>
+          <Button size="sm" disabled={disabled || !len || !sel?.band} onclick={playRange}>
+            {t('watch.range.play.label')}
+          </Button>
+          <Button size="sm" disabled={disabled || !len} onclick={playFromStart}>
+            {t('watch.range.fromStart.label')}
+          </Button>
+          <span class="loop">
+            <span id={loopId}>{t('watch.range.loop.label')}</span>
+            <Switch bind:value={loop} labelledby={loopId} onchange={onloop} />
+          </span>
+        </div>
+      {/if}
+    </div>
+    {#if below}{@render below()}{/if}
   </Disclosure>
 </div>
 

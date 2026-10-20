@@ -1005,6 +1005,59 @@ fn reply(
 mod tests {
     use super::*;
 
+    /// Debug는 서명 주소를 찍지 않는다(비밀값 규칙): mp4는 `redact_url`을 거치고 HLS는 조각 수·지문만 보인다.
+    #[test]
+    fn origin_and_state_debug_hide_signed_urls() {
+        let signed = Url::parse("https://media.example.invalid/a.mp4?hdnts=SIGNEDSECRET").unwrap();
+        let mp4 = Origin::Mp4 {
+            url: signed.clone(),
+            total: 100,
+        };
+        let hls = Origin::Hls(Arc::new(HlsOrigin {
+            init: signed.clone(),
+            segments: vec![signed.clone(), signed],
+            crc: 7,
+            playlist: String::new(),
+        }));
+        let mp4_text = format!("{mp4:?}");
+        assert!(
+            mp4_text.contains("Mp4") && mp4_text.contains("100"),
+            "{mp4_text}"
+        );
+        let hls_text = format!("{hls:?}");
+        assert!(
+            hls_text.contains("Hls")
+                && hls_text.contains("segments: 2")
+                && hls_text.contains("crc: 7"),
+            "{hls_text}"
+        );
+        let state = SourceState {
+            generation: 3,
+            origin: mp4,
+            refreshes: 2,
+            last_used: tokio::time::Instant::now(),
+        };
+        let state_text = format!("{state:?}");
+        assert!(
+            state_text.contains("generation: 3") && state_text.contains("refreshes: 2"),
+            "{state_text}"
+        );
+        for text in [mp4_text, hls_text, state_text] {
+            assert!(
+                !text.contains("SIGNEDSECRET") && !text.contains("hdnts"),
+                "{text}"
+            );
+        }
+    }
+
+    /// 응답을 만들 수 없는 헤더 값이 오면 빈 500으로 떨어진다(패닉 없이).
+    #[test]
+    fn reply_falls_back_to_500_on_bad_header() {
+        let r = reply(None, 200, &[("x-bad", "줄바꿈\n".into())], b"x".to_vec());
+        assert_eq!(r.status().as_u16(), 500);
+        assert!(r.body().is_empty());
+    }
+
     #[test]
     fn path_forms() {
         let id = "ab".repeat(16);

@@ -2,17 +2,18 @@
 // 임시 저장소에 가짜 진입점 scripts/ci/run.mjs(gate `chk`: state.txt가 bad면 1)를 커밋하고, 인덱스·커밋·작업 트리를
 // 서로 다르게 만든 뒤 runHookGates의 종료 코드로 어느 트리를 봤는지 확인한다.
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { after, before, test } from 'node:test';
 
-import { headIsCleanAt, indexMatchesWorktree, runHookGates } from './snapshot.mjs';
+import { headIsCleanAt, hookWorktreePath, indexMatchesWorktree, runHookGates } from './snapshot.mjs';
 import { gitEnv, gitOk } from './test-git.mjs';
 
 const FAKE = `import { readFileSync, appendFileSync } from 'node:fs';
 const [gate] = process.argv.slice(2);
 appendFileSync(process.env.SNAP_LOG, process.cwd() + '\\n');
+appendFileSync(process.env.SNAP_LOG + '.tgt', (process.env.CARGO_TARGET_DIR ?? '') + '\\n');
 if (gate !== 'chk') process.exit(2);
 process.exit(readFileSync('state.txt', 'utf8').trim() === 'bad' ? 1 : 0);
 `;
@@ -101,4 +102,75 @@ test('pre-push: 커밋 bad·작업 트리 good(더러움)이면 커밋을 본다
 
 test('gate 목록이 비면 아무것도 돌리지 않는다', () => {
   assert.equal(runHookGates(repo, { index: true }, [], env(), quiet), 0);
+});
+
+// 임시 worktree 경로가 실행마다 다르면 공유 CARGO_TARGET_DIR의 테스트 바이너리가 지워진 경로의 CARGO_MANIFEST_DIR을 품은 채 재사용된다.
+// 지워진 폴더는 realpath를 못 하므로 tmpdir만 풀어 비교한다
+const fixedPath = () => join(realpathSync(tmpdir()), basename(hookWorktreePath(repo)));
+const lastTarget = () => readFileSync(logFile + '.tgt', 'utf8').split('\n').filter((l) => l !== '').at(-1) ?? '';
+const withStale = (fn) => {
+  const lock = hookWorktreePath(repo) + '.lock';
+  rmSync(lock, { recursive: true, force: true });
+  try {
+    fn(lock);
+  } finally {
+    rmSync(lock, { recursive: true, force: true });
+  }
+};
+
+test('임시 worktree는 실행마다 같은 경로를 쓴다(cargo 캐시의 CARGO_MANIFEST_DIR 재사용 방지)', () => {
+  write('good');
+  g('commit', '-q', '--allow-empty', '-m', 'chore: 경로 시험');
+  const a = g('rev-parse', 'HEAD~2'); // bad
+  const b = g('rev-parse', 'HEAD~1'); // good
+  assert.equal(run({ sha: a }), 1); // HEAD가 아니라 임시 worktree
+  const first = lastCwd();
+  assert.equal(run({ sha: b }), 0);
+  assert.equal(lastCwd(), first);
+  assert.equal(first, fixedPath());
+  assert.equal(existsSync(first), false, '끝나면 지운다');
+  assert.equal(worktrees(), 1);
+});
+
+test('경로를 다른 실행이 쓰고 있으면 유일한 경로로 비켜서 공유 target을 쓰지 않는다', () => {
+  withStale((lock) => {
+    mkdirSync(lock);
+    writeFileSync(join(lock, 'pid'), String(process.pid)); // 살아 있는 소유자
+    const sha = g('rev-parse', 'HEAD~2'); // bad
+    assert.equal(runHookGates(repo, { sha }, ['chk'], env(), { ...quiet, targetDir: join(d, 'tgt') }), 1);
+    assert.notEqual(lastCwd(), fixedPath());
+    assert.equal(basename(lastTarget()), 'target'); // 공유 target(d/tgt)이 아니라 그 worktree 안
+    assert.notEqual(lastTarget(), join(d, 'tgt'));
+    assert.equal(existsSync(lock), true, '남의 잠금은 건드리지 않는다');
+    assert.equal(worktrees(), 1);
+  });
+});
+
+test('비켜 도는 worktree는 물려받은 CARGO_TARGET_DIR도 자기 안의 target으로 덮어쓴다', () => {
+  withStale((lock) => {
+    mkdirSync(lock);
+    writeFileSync(join(lock, 'pid'), String(process.pid)); // 살아 있는 소유자
+    const sha = g('rev-parse', 'HEAD~2'); // bad
+    const inherited = join(d, 'inherited-tgt');
+    const e = { ...env(), CARGO_TARGET_DIR: inherited };
+    assert.equal(runHookGates(repo, { sha }, ['chk'], e, { ...quiet, targetDir: join(d, 'tgt') }), 1);
+    const cwd = lastCwd();
+    assert.notEqual(cwd, fixedPath());
+    const t = lastTarget();
+    assert.notEqual(t, inherited);
+    assert.equal(basename(t), 'target');
+    assert.equal(basename(join(t, '..')), basename(cwd), '비켜 쓴 임시 worktree 안의 경로');
+  });
+});
+
+test('소유자가 죽은 잠금은 넘겨받아 고정 경로와 공유 target을 쓴다', () => {
+  withStale((lock) => {
+    mkdirSync(lock);
+    writeFileSync(join(lock, 'pid'), '2147483646');
+    const sha = g('rev-parse', 'HEAD~2'); // bad
+    assert.equal(runHookGates(repo, { sha }, ['chk'], env(), { ...quiet, targetDir: join(d, 'tgt') }), 1);
+    assert.equal(lastCwd(), fixedPath());
+    assert.equal(lastTarget(), join(d, 'tgt'));
+    assert.equal(existsSync(lock), false);
+  });
 });

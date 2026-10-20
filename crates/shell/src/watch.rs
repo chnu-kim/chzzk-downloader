@@ -8,7 +8,8 @@
 //! - 게이트는 두 지점이다(PV6). 열 때는 받기와 같은 `admit_checked`, 요청마다는 창 라벨·로그인·채널 일치다.
 //! - 403(서명 만료)은 세션 안에서 재조회한다(PV7). 세션은 `Arc<Session>`이고 원천 상태에 세대 번호(`generation`)가 있어,
 //!   같은 만료로 몰린 요청들이 재조회를 한 번만 하고 닫힌 세션의 결과는 쓰지 않는다.
-//! - 이 단계(PV-2)는 mp4(PD)만 중계한다. HLS 경로는 PV-5에서 더한다.
+//! - mp4(PD)는 `/v`의 Range 조각 중계(PV-2), 빠른 다시보기 HLS는 `/pl.m3u8`(우리가 만든 VOD playlist)·`/init`·`/s/<i>`(통짜
+//!   GET 중계)다(PV-5). playlist에는 서명 주소가 한 글자도 없고, 세그먼트 주소는 세션에만 있다.
 //!
 //! `handle`은 Tauri에 의존하지 않는 결정 함수라 셸 테스트가 직접 부른다. 앱 크레이트(`watch_protocol`)가 얇게 감싼다.
 
@@ -19,10 +20,13 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
+use chzzk_core::download::pick_variant;
+use chzzk_core::hls;
 use chzzk_core::http::redact_url;
 use chzzk_core::mpd::select_pd;
 use chzzk_core::{
-    ContentRef, Error, PdRep, RangeChunk, RequestKind, Source, WatchFail, parse_content_url,
+    ContentRef, Error, PdRep, Quality, RangeChunk, RequestKind, Source, Unsupported, WatchFail,
+    parse_content_url,
 };
 use http::header::{ORIGIN, RANGE};
 use http::{Method, Request, Response};
@@ -42,6 +46,12 @@ pub const IDLE_TTL: Duration = Duration::from_secs(10 * 60);
 
 /// 세션당 재조회(실제 resolve) 상한(PV7). 받기의 `MAX_REFRESHES`와 같은 값이다.
 pub const MAX_REFRESHES: u8 = 8;
+
+/// playlist(master·media) 한 장의 상한 **[잠정]**(preview.md §4.1).
+const TEXT_CAP: usize = 1024 * 1024;
+
+/// init·세그먼트 하나의 상한 **[잠정]**(preview.md §4.1).
+const SEGMENT_CAP: usize = 32 * 1024 * 1024;
 
 /// 허용하는 창 라벨(PV6).
 const MAIN_LABEL: &str = "main";
@@ -65,14 +75,56 @@ struct Endpoints {
     app_origin: String,
 }
 
+/// 세션이 중계하는 원천(서명 주소가 든다). 래퍼 없이 두고 `Debug`에는 `redact_url`·개수만 쓴다(app.md 구현 중 변경에 적음).
+#[derive(Clone)]
+enum Origin {
+    /// PD mp4: 서명 주소와 열 때 정한 전체 길이(바뀌면 영상이 바뀐 것이다, `409`)
+    Mp4 { url: Url, total: u64 },
+    /// 빠른 다시보기 HLS. 조각 목록이 커서 `Arc`로 나눠 쥔다
+    Hls(Arc<HlsOrigin>),
+}
+
+/// HLS 원천: init·세그먼트의 서명 주소와, 재조회 전후가 같은 playlist인지 보는 지문.
+struct HlsOrigin {
+    init: Url,
+    segments: Vec<Url>,
+    /// `hls::durations_crc`
+    crc: u32,
+    /// 웹뷰에 내보내는 VOD playlist(주소 없음). 열 때 한 번 만들고 재조회로 바꾸지 않는다(같은 지문이므로 같다)
+    playlist: String,
+}
+
+impl Origin {
+    fn mp4(&self) -> Option<(Url, u64)> {
+        match self {
+            Origin::Mp4 { url, total } => Some((url.clone(), *total)),
+            Origin::Hls(_) => None,
+        }
+    }
+}
+
+impl fmt::Debug for Origin {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Origin::Mp4 { url, total } => f
+                .debug_struct("Mp4")
+                .field("url", &redact_url(url))
+                .field("total", total)
+                .finish(),
+            Origin::Hls(h) => f
+                .debug_struct("Hls")
+                .field("segments", &h.segments.len())
+                .field("crc", &h.crc)
+                .finish(),
+        }
+    }
+}
+
 /// 원천 상태: 재조회가 바꾸는 것들.
 struct SourceState {
     /// 재조회로 주소가 바뀔 때마다 1씩 는다
     generation: u64,
-    /// 서명 주소. 래퍼 없이 두고 `Debug`에는 `redact_url`만 쓴다(app.md 구현 중 변경에 적음)
-    url: Url,
-    /// 열 때 정한 전체 길이. 바뀌면 영상이 바뀐 것이다(`409`)
-    total: u64,
+    origin: Origin,
     refreshes: u8,
     last_used: tokio::time::Instant,
 }
@@ -81,8 +133,7 @@ impl fmt::Debug for SourceState {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("SourceState")
             .field("generation", &self.generation)
-            .field("url", &redact_url(&self.url))
-            .field("total", &self.total)
+            .field("origin", &self.origin)
             .field("refreshes", &self.refreshes)
             .finish()
     }
@@ -117,10 +168,10 @@ impl Session {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// `(세대, 주소, total)`
-    fn snapshot(&self) -> (u64, Url, u64) {
+    /// `(세대, 원천)`
+    fn snapshot(&self) -> (u64, Origin) {
         let s = self.state();
-        (s.generation, s.url.clone(), s.total)
+        (s.generation, s.origin.clone())
     }
 }
 
@@ -264,36 +315,52 @@ impl<B: Backend> WatchService<B> {
         };
 
         let resolved = client.resolve(content).await?;
-        let reps = match resolved.source {
-            Source::Progressive { reps } => reps,
-            // 빠른 다시보기는 PV-5부터다
-            Source::LiveRewindHls { .. } => {
-                return Err(AppError::invalid_input("이 영상은 아직 미리볼 수 없습니다"));
+        let (kind, origin, quality_id) = match resolved.source {
+            Source::Progressive { reps } => {
+                let rep = pick_lowest(&reps)
+                    .ok_or_else(|| AppError::invalid_input("미리볼 수 있는 화질이 없습니다"))?;
+                // total은 열 때 한 번 정한다(PV3). 이후 조각은 이 값과 같아야 한다
+                let probe = client
+                    .watch_range(&rep.url, 0, 0, None)
+                    .await
+                    .map_err(open_error)?;
+                (
+                    WatchKindDto::Mp4,
+                    Origin::Mp4 {
+                        url: rep.url.clone(),
+                        total: probe.total,
+                    },
+                    rep.quality.id.clone(),
+                )
+            }
+            Source::LiveRewindHls { master_url, tracks } => {
+                let quality = lowest_by(&tracks, |q| q)
+                    .ok_or_else(|| AppError::invalid_input("미리볼 수 있는 화질이 없습니다"))?;
+                // 받기와 같은 거절(DISCONTINUITY·ENDLIST 없음·MAP 없음 등)과 같은 오류 변환을 쓴다
+                let loaded = load_hls(&*client, &master_url, &quality.id, &tracks)
+                    .await
+                    .map_err(LoadError::into_open_error)?;
+                (
+                    WatchKindDto::Hls,
+                    Origin::Hls(Arc::new(loaded)),
+                    quality.id.clone(),
+                )
             }
             Source::Live { .. } => {
                 return Err(AppError::invalid_input("생방송은 미리볼 수 없습니다"));
             }
         };
-        let rep = pick_lowest(&reps)
-            .ok_or_else(|| AppError::invalid_input("미리볼 수 있는 화질이 없습니다"))?;
-
-        // total은 열 때 한 번 정한다(PV3). 이후 조각은 이 값과 같아야 한다
-        let probe = client
-            .watch_range(&rep.url, 0, 0, None)
-            .await
-            .map_err(open_error)?;
 
         let id = new_id();
         let session = Arc::new(Session {
             id: id.clone(),
             content: content.clone(),
             me,
-            quality_id: rep.quality.id.clone(),
-            kind: WatchKindDto::Mp4,
+            quality_id: quality_id.clone(),
+            kind,
             state: Mutex::new(SourceState {
                 generation: 0,
-                url: rep.url.clone(),
-                total: probe.total,
+                origin,
                 refreshes: 0,
                 last_used: tokio::time::Instant::now(),
             }),
@@ -307,11 +374,15 @@ impl<B: Backend> WatchService<B> {
             // 이전 세션은 이 교체로 버려진다(PV5, 나중 열기가 이긴다)
             *cur = Some(session);
         }
-        tracing::debug!(session = short(&id), quality = %rep.quality.id, "미리보기 세션을 열었다");
+        tracing::debug!(session = short(&id), quality = %quality_id, "미리보기 세션을 열었다");
+        let entry = match kind {
+            WatchKindDto::Mp4 => "v",
+            WatchKindDto::Hls => "pl.m3u8",
+        };
         Ok(WatchOpenDto {
-            src: format!("{}/{id}/v", self.endpoints().base),
+            src: format!("{}/{id}/{entry}", self.endpoints().base),
             id,
-            kind: WatchKindDto::Mp4,
+            kind,
         })
     }
 
@@ -386,12 +457,42 @@ impl<B: Backend> WatchService<B> {
                 return plain(403);
             }
         }
-        // PV-2는 mp4 세션만 있다: 다른 경로는 모두 없는 주소다
-        if session.kind != WatchKindDto::Mp4 || target != Target::Video {
-            return plain(404);
+        // 세션 방식과 경로 종류가 맞지 않으면(mp4 세션에 `/s/0`, HLS 세션에 `/v` 등) 없는 주소다
+        let (_, origin) = session.snapshot();
+        match (origin, target) {
+            (Origin::Mp4 { total, .. }, Target::Video) => {
+                self.serve_video(&session, req, head, total, cors).await
+            }
+            (Origin::Hls(h), Target::Playlist) => reply(
+                cors,
+                200,
+                &[("content-type", "application/vnd.apple.mpegurl".into())],
+                h.playlist.clone().into_bytes(),
+            ),
+            (Origin::Hls(_), Target::Init) => self.serve_part(&session, Part::Init, cors).await,
+            (Origin::Hls(h), Target::Segment(i)) => {
+                // 범위 밖 번호는 업스트림을 부르지 않는다
+                if usize::try_from(i).is_ok_and(|i| i < h.segments.len()) {
+                    self.serve_part(&session, Part::Segment(i as usize), cors)
+                        .await
+                } else {
+                    plain(404)
+                }
+            }
+            _ => plain(404),
         }
+    }
 
-        let (_, _, total) = session.snapshot();
+    /// `/v`(mp4): HEAD 또는 Range 조각.
+    async fn serve_video(
+        &self,
+        session: &Arc<Session>,
+        req: &Request<Vec<u8>>,
+        head: bool,
+        total: u64,
+        cors: Option<&str>,
+    ) -> Response<Vec<u8>> {
+        let plain = |status: u16| reply(cors, status, &[], Vec::new());
         if head {
             return reply(
                 cors,
@@ -419,7 +520,7 @@ impl<B: Backend> WatchService<B> {
                 Vec::new(),
             );
         };
-        match self.fetch_chunk(&session, start, end).await {
+        match self.fetch_chunk(session, start, end).await {
             Ok(c) => reply(
                 cors,
                 206,
@@ -438,15 +539,51 @@ impl<B: Backend> WatchService<B> {
         }
     }
 
+    /// `/init`·`/s/<i>`(HLS): 통짜 본문.
+    async fn serve_part(
+        &self,
+        session: &Arc<Session>,
+        part: Part,
+        cors: Option<&str>,
+    ) -> Response<Vec<u8>> {
+        match self.fetch_part(session, part).await {
+            Ok(body) => reply(cors, 200, &[("content-type", "video/mp4".into())], body),
+            Err(status) => reply(cors, status, &[], Vec::new()),
+        }
+    }
+
+    /// init·세그먼트 하나를 받는다. 403이면 세션 안에서 한 번 재조회하고 1회 다시 보낸다(PV7).
+    async fn fetch_part(&self, s: &Arc<Session>, part: Part) -> Result<Vec<u8>, u16> {
+        let client = (self.client)();
+        let (generation, origin) = s.snapshot();
+        let url = part.url(&origin).ok_or(404u16)?;
+        match client.watch_bytes(&url, SEGMENT_CAP).await {
+            Ok(b) => Ok(b),
+            Err(WatchFail::Expired) => {
+                self.refresh(s, generation).await?;
+                let url = part.url(&s.snapshot().1).ok_or(404u16)?;
+                match client.watch_bytes(&url, SEGMENT_CAP).await {
+                    Ok(b) => Ok(b),
+                    // 재조회 직후에도 403이면 더 하지 않는다
+                    Err(WatchFail::Expired) => Err(403),
+                    Err(f) => Err(self.fail_status(s, f, 0)),
+                }
+            }
+            Err(f) => Err(self.fail_status(s, f, 0)),
+        }
+    }
+
     /// 업스트림에서 한 조각을 받는다. 403이면 세션 안에서 한 번 재조회하고 같은 요청을 1회 다시 보낸다(PV7).
     /// 실패는 응답 상태 코드로 돌려준다.
     async fn fetch_chunk(&self, s: &Arc<Session>, start: u64, end: u64) -> Result<RangeChunk, u16> {
         let client = (self.client)();
-        let (generation, url, total) = s.snapshot();
+        let (generation, origin) = s.snapshot();
+        let (url, total) = origin.mp4().ok_or(404u16)?;
         match client.watch_range(&url, start, end, Some(total)).await {
             Ok(c) => self.check_chunk(s, c, total, start, end),
             Err(WatchFail::Expired) => {
-                let url = self.refresh(s, generation).await?;
+                self.refresh(s, generation).await?;
+                let (url, _) = s.snapshot().1.mp4().ok_or(404u16)?;
                 match client.watch_range(&url, start, end, Some(total)).await {
                     Ok(c) => self.check_chunk(s, c, total, start, end),
                     // 재조회 직후에도 403이면 더 하지 않는다
@@ -507,7 +644,7 @@ impl<B: Backend> WatchService<B> {
     /// 재조회 잠금을 잡은 뒤 현재 세대가 더 크면 다른 요청이 이미 끝낸 것이라 resolve 없이 새 주소를 쓴다.
     /// resolve 결과는 세션이 그대로(`Arc::ptr_eq`)일 때만 쓴다(닫힘·교체·로그아웃이면 `404`).
     /// 세대는 이 잠금 안에서만 바뀌므로 resolve 사이에 달라지지 않는다.
-    async fn refresh(&self, s: &Arc<Session>, used_gen: u64) -> Result<Url, u16> {
+    async fn refresh(&self, s: &Arc<Session>, used_gen: u64) -> Result<(), u16> {
         let _one_at_a_time = s.refresh.lock().await;
         if !self.is_current(s) {
             return Err(404);
@@ -515,7 +652,7 @@ impl<B: Backend> WatchService<B> {
         {
             let mut st = s.state();
             if st.generation > used_gen {
-                return Ok(st.url.clone());
+                return Ok(());
             }
             if st.refreshes >= MAX_REFRESHES {
                 return Err(403);
@@ -544,42 +681,161 @@ impl<B: Backend> WatchService<B> {
             self.drop_if_current(s);
             return Err(403);
         }
+        // 새 원천. HLS는 master·media를 다시 받는 await이 있으므로 그 뒤에 세션이 그대로인지 본다
+        let renewed = match (s.kind, resolved.source) {
+            (WatchKindDto::Mp4, Source::Progressive { reps }) => select_pd(&reps, &s.quality_id)
+                .map(|rep| Renewed::Mp4(rep.url.clone()))
+                .map_err(|_| ()),
+            (WatchKindDto::Hls, Source::LiveRewindHls { master_url, tracks }) => {
+                match load_hls(&*client, &master_url, &s.quality_id, &tracks).await {
+                    Ok(h) => Ok(Renewed::Hls(h)),
+                    // 받는 쪽 문제(전송·상한)는 이 요청만 실패시킨다. 세션은 둔다
+                    Err(LoadError::Watch(f)) => {
+                        if !self.is_current(s) {
+                            return Err(404);
+                        }
+                        // 막 얻은 주소가 곧바로 403이면 만료가 아니라 거부다(재시도 직후 403과 같다)
+                        if matches!(f, WatchFail::Expired) {
+                            return Err(403);
+                        }
+                        return Err(self.fail_status(s, f, 0));
+                    }
+                    // playlist 모양이 달라졌거나 그 화질이 사라졌다
+                    Err(LoadError::Core(_)) => Err(()),
+                }
+            }
+            // 재생 방식이 바뀌었다
+            _ => Err(()),
+        };
         // 재조회 중에 닫힘·새 open·로그아웃이 있었으면 결과를 버린다
         if !self.is_current(s) {
             return Err(404);
         }
-        let new_url = match resolved.source {
-            Source::Progressive { reps } => match select_pd(&reps, &s.quality_id) {
-                Ok(rep) => rep.url.clone(),
-                Err(_) => {
-                    self.drop_if_current(s);
-                    return Err(409);
-                }
-            },
-            // 재생 방식이 바뀌었다
-            _ => {
-                self.drop_if_current(s);
-                return Err(409);
-            }
+        let Ok(renewed) = renewed else {
+            self.drop_if_current(s);
+            return Err(409);
         };
         // 세대를 바꾸는 곳은 여기뿐이고 재조회 잠금을 쥐고 있으므로 세대는 `used_gen`에서 그대로다
         let mut st = s.state();
-        st.url = new_url.clone();
+        match (&st.origin, renewed) {
+            (Origin::Mp4 { total, .. }, Renewed::Mp4(url)) => {
+                st.origin = Origin::Mp4 { url, total: *total };
+            }
+            (Origin::Hls(old), Renewed::Hls(new))
+                if new.crc == old.crc && new.segments.len() == old.segments.len() =>
+            {
+                // 같은 playlist다: 웹뷰가 이미 가진 playlist를 그대로 두고 주소만 바꾼다
+                let playlist = old.playlist.clone();
+                st.origin = Origin::Hls(Arc::new(HlsOrigin { playlist, ..new }));
+            }
+            // 지문이 바뀌었다(조각 수·길이): 이어 볼 수 없다
+            _ => {
+                drop(st);
+                self.drop_if_current(s);
+                return Err(409);
+            }
+        }
         st.generation += 1;
-        Ok(new_url)
+        Ok(())
     }
 }
 
-/// 가장 낮은 비디오 화질(PV13). 오디오만 행은 뺀다. 짧은 변을 모르면 가장 높은 것으로 본다. 같으면 앞의 것.
-fn pick_lowest(reps: &[PdRep]) -> Option<&PdRep> {
-    reps.iter()
-        .filter(|r| !r.quality.audio_only)
-        .min_by_key(|r| {
-            r.quality
-                .resolution
-                .or(r.quality.height)
-                .unwrap_or(u32::MAX)
+/// 재조회로 새로 얻은 원천.
+enum Renewed {
+    Mp4(Url),
+    Hls(HlsOrigin),
+}
+
+/// `/init`·`/s/<i>`가 가리키는 업스트림 파일.
+#[derive(Clone, Copy)]
+enum Part {
+    Init,
+    Segment(usize),
+}
+
+impl Part {
+    /// 그 원천에서의 서명 주소. mp4 원천이거나 번호가 범위 밖이면 `None`.
+    fn url(self, origin: &Origin) -> Option<Url> {
+        match (self, origin) {
+            (Part::Init, Origin::Hls(h)) => Some(h.init.clone()),
+            (Part::Segment(i), Origin::Hls(h)) => h.segments.get(i).cloned(),
+            (_, Origin::Mp4 { .. }) => None,
+        }
+    }
+}
+
+/// HLS 불러오기 실패: 받는 중 문제(`WatchFail`)와 playlist 내용 문제(`Error`).
+enum LoadError {
+    Watch(WatchFail),
+    Core(Error),
+}
+
+impl LoadError {
+    /// 열기: 받기와 같은 오류 변환.
+    fn into_open_error(self) -> AppError {
+        match self {
+            LoadError::Watch(f) => open_error(f),
+            LoadError::Core(e) => AppError::from(e),
+        }
+    }
+}
+
+/// master → variant → media playlist까지 받아 세션 원천과 웹뷰 playlist를 만든다.
+/// init·세그먼트 본문은 받지 않는다(요청이 올 때 받는다). 거절 규칙은 `parse_media`(받기와 같다)이고,
+/// TS playlist(MAP 없음)도 받기처럼 거절한다.
+async fn load_hls<B: Backend>(
+    client: &B,
+    master_url: &Url,
+    quality_id: &str,
+    tracks: &[Quality],
+) -> Result<HlsOrigin, LoadError> {
+    let master = client
+        .watch_bytes(master_url, TEXT_CAP)
+        .await
+        .map_err(LoadError::Watch)?;
+    let master = utf8(&master, "master playlist")?;
+    let variants = hls::parse_master(master, master_url).map_err(LoadError::Core)?;
+    let variant = pick_variant(&variants, quality_id, tracks).map_err(LoadError::Core)?;
+    let media = client
+        .watch_bytes(&variant.uri, TEXT_CAP)
+        .await
+        .map_err(LoadError::Watch)?;
+    let media = utf8(&media, "media playlist")?;
+    let playlist = hls::parse_media(media, &variant.uri).map_err(LoadError::Core)?;
+    let init = playlist
+        .init
+        .clone()
+        .ok_or(LoadError::Core(Error::Unsupported(Unsupported::MissingMap)))?;
+    Ok(HlsOrigin {
+        init,
+        crc: hls::durations_crc(&playlist),
+        playlist: hls::render_watch_playlist(&playlist),
+        segments: playlist.segments.into_iter().map(|s| s.uri).collect(),
+    })
+}
+
+fn utf8<'a>(b: &'a [u8], what: &'static str) -> Result<&'a str, LoadError> {
+    std::str::from_utf8(b).map_err(|e| {
+        LoadError::Core(Error::Parse {
+            what,
+            detail: e.to_string(),
         })
+    })
+}
+
+/// 가장 낮은 비디오 화질(PV13). 오디오만 행은 뺀다. 짧은 변을 모르면 가장 높은 것으로 본다. 같으면 앞의 것.
+fn lowest_by<T>(items: &[T], quality: impl Fn(&T) -> &Quality) -> Option<&T> {
+    items
+        .iter()
+        .filter(|r| !quality(r).audio_only)
+        .min_by_key(|r| {
+            let q = quality(r);
+            q.resolution.or(q.height).unwrap_or(u32::MAX)
+        })
+}
+
+fn pick_lowest(reps: &[PdRep]) -> Option<&PdRep> {
+    lowest_by(reps, |r| &r.quality)
 }
 
 /// 열기 때 total 탐색 실패 → 사용자에게 갈 오류. 403은 받기와 같은 미디어 HTTP 오류로 바꾼다.
@@ -763,6 +1019,59 @@ fn reply(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Debug는 서명 주소를 찍지 않는다(비밀값 규칙): mp4는 `redact_url`을 거치고 HLS는 조각 수·지문만 보인다.
+    #[test]
+    fn origin_and_state_debug_hide_signed_urls() {
+        let signed = Url::parse("https://media.example.invalid/a.mp4?hdnts=SIGNEDSECRET").unwrap();
+        let mp4 = Origin::Mp4 {
+            url: signed.clone(),
+            total: 100,
+        };
+        let hls = Origin::Hls(Arc::new(HlsOrigin {
+            init: signed.clone(),
+            segments: vec![signed.clone(), signed],
+            crc: 7,
+            playlist: String::new(),
+        }));
+        let mp4_text = format!("{mp4:?}");
+        assert!(
+            mp4_text.contains("Mp4") && mp4_text.contains("100"),
+            "{mp4_text}"
+        );
+        let hls_text = format!("{hls:?}");
+        assert!(
+            hls_text.contains("Hls")
+                && hls_text.contains("segments: 2")
+                && hls_text.contains("crc: 7"),
+            "{hls_text}"
+        );
+        let state = SourceState {
+            generation: 3,
+            origin: mp4,
+            refreshes: 2,
+            last_used: tokio::time::Instant::now(),
+        };
+        let state_text = format!("{state:?}");
+        assert!(
+            state_text.contains("generation: 3") && state_text.contains("refreshes: 2"),
+            "{state_text}"
+        );
+        for text in [mp4_text, hls_text, state_text] {
+            assert!(
+                !text.contains("SIGNEDSECRET") && !text.contains("hdnts"),
+                "{text}"
+            );
+        }
+    }
+
+    /// 응답을 만들 수 없는 헤더 값이 오면 빈 500으로 떨어진다(패닉 없이).
+    #[test]
+    fn reply_falls_back_to_500_on_bad_header() {
+        let r = reply(None, 200, &[("x-bad", "줄바꿈\n".into())], b"x".to_vec());
+        assert_eq!(r.status().as_u16(), 500);
+        assert!(r.body().is_empty());
+    }
 
     #[test]
     fn path_forms() {

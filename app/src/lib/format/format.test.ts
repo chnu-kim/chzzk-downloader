@@ -26,6 +26,7 @@ import {
 } from './date';
 import {
   formatClock,
+  formatClockLong,
   formatCount,
   formatDaysAgo,
   formatElapsed,
@@ -184,6 +185,25 @@ describe('formatClock', () => {
     [360000, '100:00:00'],
   ] as [number, string][])('%d → %s', (s, want) => {
     expect(formatClock(s)).toBe(want);
+  });
+});
+
+describe('formatClockLong: 손잡이 낭독용(0인 단위는 뗀다)', () => {
+  it.each([
+    [0, '0초'],
+    [5, '5초'],
+    [65, '1분 5초'],
+    [120, '2분'],
+    [3600, '1시간'],
+    [3603, '1시간 3초'],
+    [3660, '1시간 1분'],
+    [3723, '1시간 2분 3초'],
+    [65.9, '1분 5초'],
+    [-5, '0초'],
+    [Number.NaN, '0초'],
+    [Number.POSITIVE_INFINITY, '0초'],
+  ] as [number, string][])('%d → %s', (s, want) => {
+    expect(formatClockLong(s)).toBe(want);
   });
 });
 

@@ -535,6 +535,28 @@ async fn second_open_replaces_first() {
     assert_eq!(status(&env.get(&second, "/v", None).await), 206);
 }
 
+/// 열기 도중(길이 탐색 대기 중) 로그아웃이 지나가면 늦게 끝난 열기가 세션을 되살리지 못한다(PV5).
+#[tokio::test]
+async fn open_in_flight_signed_out_does_not_register_session() {
+    let env = Env::signed_in();
+    env.fake.push_resolve(Ok(pd("a", Some(ME)))); // 게이트 fetch
+    env.fake.push_resolve(Ok(pd("a", Some(ME)))); // 열기
+    let (started, release) = (Arc::new(Notify::new()), Arc::new(Notify::new()));
+    env.fake.push_range(
+        RangeStep::ok(chunk(0, 0, TOTAL))
+            .started(started.clone())
+            .hold(release.clone()),
+    );
+    let svc = env.svc.clone();
+    let task = tokio::spawn(async move { svc.open(VIDEO_URL, &content()).await });
+    started.notified().await;
+    env.svc.on_signed_out();
+    release.notify_one();
+    let err = task.await.unwrap().unwrap_err();
+    assert_eq!(err.code, ErrorCode::NotLoggedIn);
+    assert!(!env.svc.has_session());
+}
+
 #[tokio::test]
 async fn close_is_idempotent() {
     let env = Env::disabled();

@@ -21,7 +21,7 @@
 | 속성 | `shadow` | `shadow` | `--shadow-menu` |
 | 속성 | `font` | `fontFamily` | `--font-sans` |
 | 속성 | `weight` | `fontWeight` | `--weight-strong` |
-| 속성 | `text` `leading` `space` `edge` `gap` `radius` `control` `row` `toolbar` `hit` `icon` `switch` `radio` `progress` `badge` `content` `reading` `dialog` `label` `pct` | `dimension` | `--space-8`, `--label-w` |
+| 속성 | `text` `leading` `space` `edge` `gap` `radius` `control` `row` `toolbar` `hit` `icon` `switch` `radio` `progress` `badge` `content` `reading` `dialog` `label` `pct` `watch` | `dimension` | `--space-8`, `--label-w` |
 | 속성 | `motion` `progress-tween` | `duration` | `--motion-fast` |
 | 속성 | `ease` | `cubicBezier` | `--ease-out` |
 | 속성 | `z` | `number` | `--z-menu` |
@@ -301,6 +301,7 @@ macOS "대비 증가"와 GNOME 고대비는 `forced-colors`가 아니라 이 쿼
 | Spinner | `currentColor` 호 | — |
 | Kbd·Badge | `1px solid CanvasText` | — |
 | 드롭 오버레이 | `2px dashed CanvasText` | gradient·색이 사라진다 |
+| WatchPanel 화면(`<video>`·열리는 중 자리) | `1px solid CanvasText` 윤곽(바탕색 `--surface-2`는 시스템 색으로 바뀐다) | 영상 자리의 경계를 잃지 않게 |
 
 강제: `design-gallery`가 `emulateMedia({ forcedColors: 'active' })`로 네 화면과 실패·일시정지 행을 찍고 axe를 돈다. 새 컴포넌트는 이 표에 행을 더한다(`R9`). 컴포넌트별 세부는 `components.md` §3.
 
@@ -454,8 +455,9 @@ AppKit Tahoe 실측 regular 24 · large 28 · extraLarge 36(`E-APPLE-19`, `E-DES
 | `--dialog-w` | 440px | **[취향]**(A, ADR-0009). 대화상자와 로그인 패널. 720 창에서 좌우 140(열 안쪽 680 기준 120) |
 | `--label-w` | 80px | 카드 폼(FieldRow)의 라벨 열 폭 **[취향]**(A, ADR-0009). 4글자 라벨 + 여유. 좁은 레이아웃에서는 1열이라 쓰이지 않는다 |
 | `--pct-w` | 40px | 작업 행 퍼센트 칸 폭 **[취향]**(A, ADR-0009). "100%" 네 글자 tabular 13px이 글꼴마다 달라 토큰으로 고정한다 |
+| `--watch-max-h` | 360px | 카드 안 미리보기 화면의 최대 높이 **[잠정]**(D64). 폭은 카드 열을 채우고 16:9이며 이 높이에서 멈춘다(넘치는 폭은 검은 여백이 아니라 `--surface-2` 바탕). 실측(M-PV-1)으로 조인다 |
 
-컴포넌트 전용 치수도 여기 토큰(`--label-w`·`--pct-w`)이다. 그 밖의 치수는 위 토큰의 조합이고 산술은 §4의 `calc()` 정책 안에서만 한다(comp 층을 비운다는 원칙).
+컴포넌트 전용 치수도 여기 토큰(`--label-w`·`--pct-w`·`--watch-max-h`)이다. 그 밖의 치수는 위 토큰의 조합이고 산술은 §4의 `calc()` 정책 안에서만 한다(comp 층을 비운다는 원칙).
 
 ---
 
@@ -740,7 +742,7 @@ AppKit Tahoe 실측 regular 24 · large 28 · extraLarge 36(`E-APPLE-19`, `E-DES
   --control-h-sm: 24px; --control-h: 28px; --control-h-lg: 36px; --row-h: 36px; --toolbar-h: 44px; --hit-min: 24px;
   --icon-sm: 16px; --icon-md: 20px; --icon-stroke: 1.5px;
   --switch-w: 54px; --switch-h: 24px; --switch-knob: 20px; --radio-size: 16px;
-  --progress-h: 6px; --badge-h: 18px; --label-w: 80px; --pct-w: 40px;
+  --progress-h: 6px; --badge-h: 18px; --label-w: 80px; --pct-w: 40px; --watch-max-h: 360px;
 
   /* 레이아웃 */
   --content-max: 800px; --reading-max: 680px; --dialog-w: 440px;

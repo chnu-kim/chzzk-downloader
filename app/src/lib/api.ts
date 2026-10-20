@@ -33,6 +33,7 @@ import type {
   UpdateInfoDto,
   UpdateInstallDto,
   UpdateProgressEvent,
+  WatchOpenDto,
   WebPage,
   WindowFocusPayload,
 } from './bindings';
@@ -153,6 +154,13 @@ export const editorsRemove = (channelId: string) => call<void>('editors_remove',
 export const delegationsLeave = (channelId: string) => call<void>('delegations_leave', { channelId });
 /** 막힌 카드의 [다시 불러오기]: 간격 없는 서버 확인 뒤 같은 주소를 다시 resolve */
 export const ownershipRecheck = (url: string) => call<ResolvedDto>('ownership_recheck', { url });
+
+/** 받기 전 미리보기를 연다(`src`는 Rust가 만든 `watch:` 주소, 서명 주소는 오지 않는다). 화면은 PV-4 */
+export const watchOpen = (url: string, content: ContentRef) => call<WatchOpenDto>('watch_open', { url, content });
+/** 미리보기를 닫는다(없거나 다른 ID여도 성공) */
+export const watchClose = (id: string) => call<void>('watch_close', { id });
+/** [치지직에서 보기]: Rust가 `content`에서 정식 주소를 만들어 기본 브라우저로 연다(웹뷰의 URL 문자열은 열지 않는다) */
+export const openContentPage = (content: ContentRef) => call<void>('open_content_page', { content });
 
 /** 자동 확인이 새 버전을 찾았다는 이벤트(UpdateInfoDto) */
 /** main 창 포커스가 바뀔 때(비활성 창, platform.md §3) */

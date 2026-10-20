@@ -72,6 +72,8 @@ const NOT_OWN = resolved({
 const WORST = worstCaseResolved();
 // 일반 VOD 카드: 맨 끝의 "오디오만" 행(audio-only.md §6.1)
 const VOD = vodResolved();
+/** 빠른 다시보기 미리보기 장면의 자리표시 playlist 주소(응답은 오지 않는다) */
+const HLS_PLAYLIST = 'http://watch.example.invalid/pl.m3u8';
 const SLOW_URL = 'https://chzzk.naver.com/video/7777777';
 
 // ───────────────────────── 화면 목록 ─────────────────────────
@@ -186,6 +188,86 @@ export const SCREENS: Screen[] = [
     card: true,
   },
   {
+    id: '카드 미리보기 펼침',
+    slug: 'card-watch',
+    scenario: () => ({ resolve: { [VOD.url]: VOD }, watchSrc: 'data:video/mp4;base64,AAAA' }),
+    drive: async (app, env) => {
+      await loadCard(app, VOD.url);
+      // 실제 재생은 하지 않는다: 웹뷰가 mp4를 읽는다고 하고, 자리표시 주소의 media 오류를 앱이 보기 전에 삼킨다
+      await app.page.evaluate(() => {
+        HTMLMediaElement.prototype.canPlayType = () => 'maybe';
+        window.addEventListener('error', (e) => e.target instanceof HTMLMediaElement && e.stopImmediatePropagation(), true);
+      });
+      await env.tick?.(CHECK_DEBOUNCE_MS + 50);
+      // 검사가 끝나 [받기]가 켜진 뒤(비활성 면의 대비는 잴 대상이 아니다)
+      await expect(app.page.locator('.card-footer button:not([aria-disabled="true"])', { hasText: t('card.download') })).toBeVisible();
+      await app.page.getByText(t('watch.toggle')).click();
+    },
+    ready: (p) => p.locator('video'),
+    settle: settleCardTop,
+    card: true,
+  },
+  {
+    id: '카드 미리보기 펼침(빠른 다시보기)',
+    slug: 'card-watch-hls',
+    scenario: () => ({ resolve: { [R.url]: R }, watchSrc: HLS_PLAYLIST }),
+    drive: async (app, env) => {
+      // hls.js가 읽는 동안의 모습: playlist 응답을 끝내 쥐고 있는다(페이지가 닫히면 버려진다)
+      await app.page.route(HLS_PLAYLIST, () => new Promise<void>(() => {}));
+      await loadCard(app, R.url);
+      await env.tick?.(CHECK_DEBOUNCE_MS + 50);
+      await expect(app.page.locator('.card-footer button:not([aria-disabled="true"])', { hasText: t('card.download') })).toBeVisible();
+      await app.page.getByText(t('watch.toggle')).click();
+    },
+    ready: (p) => p.locator('video'),
+    settle: settleCardTop,
+    card: true,
+  },
+  {
+    id: '카드 미리보기 찍기(빠른 다시보기)',
+    slug: 'card-watch-hls-marked',
+    scenario: () => ({ resolve: { [R.url]: R }, watchSrc: HLS_PLAYLIST }),
+    drive: async (app, env) => {
+      await app.page.route(HLS_PLAYLIST, () => new Promise<void>(() => {}));
+      await loadCard(app, R.url);
+      await env.tick?.(CHECK_DEBOUNCE_MS + 50);
+      await expect(app.page.locator('.card-footer button:not([aria-disabled="true"])', { hasText: t('card.download') })).toBeVisible();
+      await app.page.getByText(t('watch.toggle')).click();
+      // 메타데이터가 읽혔고 재생 위치가 있는 것처럼 만들어 찍는다(실제 재생은 하지 않는다)
+      const video = app.page.locator('video');
+      await expect(video).toBeVisible();
+      for (const [name, time] of [
+        [t('watch.mark.start'), 600],
+        [t('watch.mark.end'), 1200],
+      ] as const) {
+        await video.evaluate((v: HTMLVideoElement, tm: number) => {
+          Object.defineProperty(v, 'currentTime', { value: tm, configurable: true, writable: true });
+          v.dispatchEvent(new Event('loadedmetadata'));
+        }, time);
+        await app.page.getByRole('button', { name }).click();
+      }
+      await env.tick?.(CHECK_DEBOUNCE_MS + 50);
+    },
+    ready: (p) => p.getByText(t('filename.willSaveAs', { name: `${R.suggestedFileName} (0.10.00~0.20.00)` })),
+    settle: settleCardTop,
+    card: true,
+  },
+  {
+    id: '카드 미리보기 실패',
+    slug: 'card-watch-failed',
+    scenario: () => ({ resolve: { [VOD.url]: VOD }, watch: 'error' }),
+    drive: async (app, env) => {
+      await loadCard(app, VOD.url);
+      await env.tick?.(CHECK_DEBOUNCE_MS + 50);
+      // 검사가 끝나 [받기]가 켜진 뒤(비활성 면의 대비는 잴 대상이 아니다)
+      await expect(app.page.locator('.card-footer button:not([aria-disabled="true"])', { hasText: t('card.download') })).toBeVisible();
+      await app.page.getByText(t('watch.toggle')).click();
+    },
+    ready: (p) => p.getByText(t('watch.error.body')),
+    settle: settleCardTop,
+    card: true,
+  },
+  {
     id: '카드 구간 펼침',
     slug: 'card-range',
     scenario: () => ({ resolve: { [R.url]: R } }),
@@ -212,10 +294,10 @@ export const SCREENS: Screen[] = [
       await open(app.page, t('card.download')).click();
     },
     ready: (p) => p.getByRole('alert').filter({ hasText: t('range.error.order') }),
-    // 높이 231에서는 [받기] 클릭·오류 포커스로 스크롤이 내려가 「일부만 받기」 줄이 sticky 입력줄 밑에 반쯤 걸린다
-    // (axe target-size). 구간 줄을 입력줄 바로 아래에 두고 잰다(card-worst와 같은 까닭)
+    // 높이 231·520에서는 [받기] 클릭·오류 포커스로 스크롤이 내려가 「미리보기」·「일부만 받기」 줄이 sticky 입력줄 밑에 반쯤 걸린다
+    // (axe target-size, 빠른 다시보기 카드에 미리보기 줄이 생긴 PV-6부터 520도). 구간 줄을 입력줄 바로 아래에 두고 잰다(card-worst와 같은 까닭)
     settle: async (page, env) => {
-      if (env.vp.height < 400) await page.getByText(t('range.toggle')).evaluate((el) => el.scrollIntoView({ block: 'start' }));
+      if (env.vp.height < 600) await page.getByText(t('range.toggle')).evaluate((el) => el.scrollIntoView({ block: 'start' }));
     },
     card: true,
   },

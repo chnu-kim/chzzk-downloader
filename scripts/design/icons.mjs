@@ -210,10 +210,12 @@ function di2(root, v, version) {
   // Worker /licenses의 생성 모듈은 고지 파일과 같은 글이어야 한다(worker-gen --check licenses의 같은 비교, 없으면 단계 (e) 전이라 건너뜀)
   const gen = readText(root, PATHS.workerLicenses);
   if (gen !== null) {
-    const m = /^\/\/ [^\n]*\nexport const LICENSES = \[\{ name: "[^"\n]*", text: ("(?:[^"\\\n]|\\.)*") \}\] as const;\n$/.exec(gen);
+    // 절이 여럿이다(Lucide, hls.js …). 이 규칙은 Lucide 절만 고지 파일과 비교한다(다른 절은 worker-gen --check가 본다)
+    const m = /^\/\/ [^\n]*\nexport const LICENSES = \[(.*)\] as const;\n$/.exec(gen);
+    const first = m ? /^\{ name: "Lucide", text: ("(?:[^"\\\n]|\\.)*") \}(?:, \{ name: "[^"\n]*", text: "(?:[^"\\\n]|\\.)*" \})*$/.exec(m[1]) : null;
     let body = null;
     try {
-      body = m ? JSON.parse(m[1]) : null;
+      body = first ? JSON.parse(first[1]) : null;
     } catch {
       body = null;
     }

@@ -453,6 +453,34 @@ pub fn select_range(pl: &MediaPlaylist, r: TimeRange) -> Result<SegmentSpan, Err
     })
 }
 
+/// 미리보기용 VOD playlist 텍스트(preview.md §4.1). 입력의 URI는 하나도 넣지 않는다:
+/// init은 `init`, 세그먼트는 `s/<i>`라는 상대 주소만 쓰고, 셸이 그 주소를 세션에 든 서명 주소로 이어 준다.
+pub fn render_watch_playlist(p: &MediaPlaylist) -> String {
+    use std::fmt::Write as _;
+
+    let max_ms = p.segments.iter().map(|s| s.duration_ms).max().unwrap_or(0);
+    let mut out = String::new();
+    out.push_str("#EXTM3U\n#EXT-X-VERSION:7\n");
+    // TARGETDURATION은 가장 긴 조각의 올림(초)
+    let _ = writeln!(out, "#EXT-X-TARGETDURATION:{}", max_ms.div_ceil(1000));
+    out.push_str(
+        "#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-PLAYLIST-TYPE:VOD\n#EXT-X-INDEPENDENT-SEGMENTS\n",
+    );
+    if p.init.is_some() {
+        out.push_str("#EXT-X-MAP:URI=\"init\"\n");
+    }
+    for (i, s) in p.segments.iter().enumerate() {
+        let _ = writeln!(
+            out,
+            "#EXTINF:{}.{:03},\ns/{i}",
+            s.duration_ms / 1000,
+            s.duration_ms % 1000
+        );
+    }
+    out.push_str("#EXT-X-ENDLIST\n");
+    out
+}
+
 /// EXTINF(ms) 시퀀스의 crc32. sidecar 지문으로 재조회 전후 playlist가 같은지 본다.
 ///
 /// 각 값을 u32 little-endian 4바이트로 이어 붙인 바이트열의 crc32다.

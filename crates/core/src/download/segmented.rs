@@ -405,7 +405,7 @@ pub(super) fn utf8<'a>(b: &'a [u8], what: &'static str) -> Result<&'a str, Failu
 
 /// `track_id == quality_id`인 variant. 없으면 `tracks`에서 그 화질의 높이를 찾아 `height`로 고른다
 /// (설계 §4.1). 그래도 없으면 `QualityNotFound`.
-pub(super) fn pick_variant<'a>(
+pub fn pick_variant<'a>(
     variants: &'a [Variant],
     quality_id: &str,
     tracks: &[Quality],

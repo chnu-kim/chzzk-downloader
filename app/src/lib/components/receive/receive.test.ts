@@ -21,6 +21,21 @@ vi.mock('../../api', () => ({
   getSettings: vi.fn(),
   appInfo: vi.fn(),
   openWebPage: vi.fn(),
+  watchOpen: vi.fn(),
+  watchClose: vi.fn(),
+  openContentPage: vi.fn(),
+}));
+
+// hls.js/light 흉내(PV-7 찍기 테스트용): 실제 MSE 없이 붙고 떼는 것만 받는다
+vi.mock('hls.js/light', () => ({
+  default: class FakeHls {
+    static isSupported = () => true;
+    static Events = { ERROR: 'hlsError' };
+    on() {}
+    loadSource() {}
+    attachMedia() {}
+    destroy() {}
+  },
 }));
 
 const api = await import('../../api');
@@ -98,6 +113,11 @@ beforeEach(() => {
   vi.mocked(api.pickFolder).mockReset();
   vi.mocked(api.updateSettings).mockReset();
   vi.mocked(api.getSettings).mockReset().mockResolvedValue(settingsDto);
+  vi.mocked(api.watchOpen)
+    .mockReset()
+    .mockResolvedValue({ id: 'ab'.repeat(16), kind: 'mp4', src: `watch://localhost/${'ab'.repeat(16)}/v` });
+  vi.mocked(api.watchClose).mockReset().mockResolvedValue(undefined as never);
+  vi.mocked(api.openContentPage).mockReset().mockResolvedValue(undefined as never);
   resolver.finish();
   settings.dto = { ...settingsDto };
   setCheck();
@@ -1218,5 +1238,248 @@ describe('불러오는 중 한 줄', () => {
     expect(container.querySelector('.spinner')).toBeNull();
     // 카드가 열렸으니 검사 디바운스를 흘려 보낸다
     await vi.advanceTimersByTimeAsync(CHECK_DEBOUNCE_MS + 10);
+  });
+});
+
+describe('미리보기 줄(ResolveCard, preview.md PV14)', () => {
+  const toggleEl = () => screen.queryByText(t('watch.toggle'));
+
+  /** 일반 VOD 카드를 연다(openCard는 resolved를 쓰므로 vodResolved를 직접 부른다) */
+  async function openVod(over = {}) {
+    vi.mocked(api.resolve).mockResolvedValue(vodResolved(over));
+    const user = userEvent.setup();
+    render(InputPanel);
+    await user.type(urlInput(), 'https://chzzk.naver.com/video/1234567{Enter}');
+    await screen.findByRole('heading', { name: '금요 노가리 방송 - 신작 게임 해보기' });
+    return user;
+  }
+
+  it('일반 VOD 카드에는 접힌 미리보기 줄이 있고 watchOpen을 부르지 않는다', async () => {
+    await openVod();
+    expect(toggleEl()).toBeInTheDocument();
+    expect(toggleEl()!.closest('details')).not.toHaveAttribute('open');
+    expect(api.watchOpen).not.toHaveBeenCalled();
+  });
+
+  it('줄은 메타 줄 다음, 화질 앞에 있다', async () => {
+    await openVod();
+    const meta = document.querySelector('.meta') as HTMLElement;
+    const watch = toggleEl()!.closest('details') as HTMLElement;
+    const fields = document.querySelector('.fields') as HTMLElement;
+    expect(meta.compareDocumentPosition(watch) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(watch.compareDocumentPosition(fields) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('펼치면 카드의 주소·content로 watchOpen을 부르고 video src를 둔다', async () => {
+    const user = await openVod();
+    await user.click(toggleEl()!);
+    await waitFor(() => expect(document.querySelector('video')).not.toBeNull());
+    expect(api.watchOpen).toHaveBeenCalledWith('https://chzzk.naver.com/video/1234567', { kind: 'video', videoNo: 1234567 });
+    expect(document.querySelector('video')!.getAttribute('src')).toContain('watch://localhost/');
+  });
+
+  it('생방송 카드에는 줄이 없다', async () => {
+    vi.mocked(api.resolve).mockResolvedValue(liveResolved());
+    const user = userEvent.setup();
+    render(InputPanel);
+    await user.type(urlInput(), 'https://chzzk.naver.com/live/000000000000000000000000000000e5{Enter}');
+    await screen.findByRole('heading', { name: '오늘 저녁 생방송' });
+    expect(toggleEl()).toBeNull();
+  });
+
+  it('빠른 다시보기 카드에도 줄이 있다(PV-6부터 HLS도 연다)', async () => {
+    await openCard();
+    expect(screen.getByText(t('kind.liveRewind'))).toBeInTheDocument();
+    expect(toggleEl()).not.toBeNull();
+  });
+
+  it('소유권이 notOwn·unknown인 빠른 다시보기 카드에는 줄이 없다', async () => {
+    await openCard({ ownership: 'notOwn' });
+    expect(screen.getByText(t('kind.liveRewind'))).toBeInTheDocument();
+    expect(toggleEl()).toBeNull();
+  });
+
+  it('클립이라도 재생 방식이 HLS면 줄이 있다(tone이 아니라 playbackKind로 판정)', async () => {
+    await openCard({
+      content: { kind: 'clip', clipId: 'clip0001' },
+      meta: { ...resolved().meta, kind: 'clip' },
+      playbackKind: 'liveRewindHls',
+    });
+    expect(screen.getByText(t('kind.clip'))).toBeInTheDocument();
+    expect(toggleEl()).not.toBeNull();
+  });
+
+  it('클립이 progressive면 줄이 있다', async () => {
+    vi.mocked(api.resolve).mockResolvedValue(
+      vodResolved({ content: { kind: 'clip', clipId: 'clip0001' }, meta: { ...vodResolved().meta, kind: 'clip' } }),
+    );
+    const user = userEvent.setup();
+    render(InputPanel);
+    await user.type(urlInput(), 'https://chzzk.naver.com/clips/clip0001{Enter}');
+    await screen.findByRole('heading', { name: '금요 노가리 방송 - 신작 게임 해보기' });
+    expect(toggleEl()).toBeInTheDocument();
+  });
+
+  it.each(['notOwn', 'unknown'] as const)('ownership %s이면 줄을 그리지 않는다', async (ownership) => {
+    await openVod({ ownership });
+    expect(toggleEl()).toBeNull();
+  });
+
+  it.each(['own', 'delegated', 'adminOverride', 'unchecked'] as const)('ownership %s이면 줄이 있다', async (ownership) => {
+    await openVod({ ownership });
+    expect(toggleEl()).toBeInTheDocument();
+  });
+
+  it('카드를 닫으면 펼친 미리보기 세션을 한 번 닫는다', async () => {
+    const user = await openVod();
+    await user.click(toggleEl()!);
+    await waitFor(() => expect(document.querySelector('video')).not.toBeNull());
+    await user.click(cardFooter().getByRole('button', { name: t('common.close') }));
+    await waitFor(() => expect(screen.queryByRole('heading', { name: /금요/ })).toBeNull());
+    expect(api.watchClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('접힌 채 닫으면 watchClose를 부르지 않는다', async () => {
+    const user = await openVod();
+    await user.click(cardFooter().getByRole('button', { name: t('common.close') }));
+    await waitFor(() => expect(screen.queryByRole('heading', { name: /금요/ })).toBeNull());
+    expect(api.watchClose).not.toHaveBeenCalled();
+  });
+});
+
+describe('구간 찍기(ResolveCard, preview.md PV17)', () => {
+  const SID = 'ab'.repeat(16);
+  const markStart = () => screen.queryByRole('button', { name: t('watch.mark.start') });
+  const markEnd = () => screen.queryByRole('button', { name: t('watch.mark.end') });
+  const startEl = () => screen.getByLabelText(t('range.start')) as HTMLInputElement;
+  const endEl = () => screen.getByLabelText(t('range.end')) as HTMLInputElement;
+  const rangeDetails = () => screen.getByText(t('range.toggle')).closest('details') as HTMLDetailsElement;
+  const settle = () => new Promise((r) => setTimeout(r, CHECK_DEBOUNCE_MS + 60));
+  const lastEnqueueArg = () => vi.mocked(api.enqueue).mock.lastCall?.[0] as unknown as Record<string, unknown>;
+
+  /** 빠른 다시보기 카드를 열고 미리보기를 hls.js 경로로 펼친다 */
+  async function openRewindPlayer(over = {}) {
+    vi.mocked(api.watchOpen).mockResolvedValue({ id: SID, kind: 'hls', src: `watch://localhost/${SID}/pl.m3u8` });
+    const user = await openCard(over);
+    await user.click(screen.getByText(t('watch.toggle')));
+    await waitFor(() => expect(document.querySelector('video')).not.toBeNull());
+    return user;
+  }
+  /** 메타데이터가 읽힌 재생기의 currentTime을 정한다 */
+  async function setTime(time: number) {
+    const v = document.querySelector('video')!;
+    Object.defineProperty(v, 'currentTime', { value: time, configurable: true, writable: true });
+    await fireEvent(v, new Event('loadedmetadata'));
+  }
+
+  it('빠른 다시보기 카드에만 찍기 버튼이 있다(일반 VOD·클립에는 없다)', async () => {
+    const user = await openRewindPlayer();
+    expect(markStart()).not.toBeNull();
+    expect(markEnd()).not.toBeNull();
+    await user.click(cardFooter().getByRole('button', { name: t('common.close') }));
+    await waitFor(() => expect(screen.queryByRole('heading', { name: /금요/ })).toBeNull());
+
+    vi.mocked(api.resolve).mockResolvedValue(vodResolved());
+    const user2 = userEvent.setup();
+    await user2.clear(urlInput());
+    await user2.type(urlInput(), 'https://chzzk.naver.com/video/1234567{Enter}');
+    await screen.findByRole('heading', { name: /금요/ });
+    vi.mocked(api.watchOpen).mockResolvedValue({ id: SID, kind: 'mp4', src: `watch://localhost/${SID}/v` });
+    await user2.click(screen.getByText(t('watch.toggle')));
+    await waitFor(() => expect(document.querySelector('video')).not.toBeNull());
+    expect(markStart()).toBeNull();
+    expect(markEnd()).toBeNull();
+  });
+
+  it('클립(progressive)에는 찍기 버튼이 없다', async () => {
+    vi.mocked(api.resolve).mockResolvedValue(
+      vodResolved({ content: { kind: 'clip', clipId: 'clip0001' }, meta: { ...vodResolved().meta, kind: 'clip' } }),
+    );
+    const user = userEvent.setup();
+    render(InputPanel);
+    await user.type(urlInput(), 'https://chzzk.naver.com/clips/clip0001{Enter}');
+    await screen.findByRole('heading', { name: /금요/ });
+    vi.mocked(api.watchOpen).mockResolvedValue({ id: SID, kind: 'mp4', src: `watch://localhost/${SID}/v` });
+    await user.click(screen.getByText(t('watch.toggle')));
+    await waitFor(() => expect(document.querySelector('video')).not.toBeNull());
+    expect(markStart()).toBeNull();
+  });
+
+  it('[시작 찍기]는 구간 줄을 펼치고 시작 칸에 floor(currentTime)을 넣는다', async () => {
+    const user = await openRewindPlayer();
+    expect(rangeDetails()).not.toHaveAttribute('open');
+    await setTime(65.9);
+    await user.click(markStart()!);
+    expect(rangeDetails()).toHaveAttribute('open');
+    expect(startEl()).toHaveValue('0:01:05');
+  });
+
+  it('[끝 찍기]는 끝 칸을 채운다', async () => {
+    const user = await openRewindPlayer();
+    await setTime(3725.2);
+    await user.click(markEnd()!);
+    expect(rangeDetails()).toHaveAttribute('open');
+    expect(endEl()).toHaveValue('1:02:05');
+    expect(startEl()).toHaveValue('0:00:00');
+  });
+
+  it('찍은 시각이 영상 끝이면 끝까지 받기(전체)로 남는다', async () => {
+    const user = await openRewindPlayer();
+    await setTime(11565);
+    await user.click(markEnd()!);
+    await settle();
+    await user.click(await downloadButton());
+    await waitFor(() => expect(api.enqueue).toHaveBeenCalledTimes(1));
+    expect('range' in lastEnqueueArg()).toBe(false);
+  });
+
+  it('찍은 값이 enqueue의 range로 간다', async () => {
+    const user = await openRewindPlayer();
+    await setTime(600.7);
+    await user.click(markStart()!);
+    await setTime(1200.1);
+    await user.click(markEnd()!);
+    await settle();
+    await user.click(await downloadButton());
+    await waitFor(() => expect(api.enqueue).toHaveBeenCalledTimes(1));
+    expect(lastEnqueueArg().range).toEqual({ startMs: 600000, endMs: 1200000 });
+  });
+
+  it('끝을 시작보다 앞에 찍으면 [받기]에서 순서 오류가 난다', async () => {
+    const user = await openRewindPlayer();
+    await setTime(1800);
+    await user.click(markStart()!);
+    await setTime(1200);
+    await user.click(markEnd()!);
+    await settle();
+    await user.click(await downloadButton());
+    expect(await screen.findByRole('alert')).toHaveTextContent(t('range.error.order'));
+    expect(api.enqueue).not.toHaveBeenCalled();
+  });
+
+  it('찍어도 앞 [받기]가 남긴 구간 오류는 지워지지 않는다(손으로 칠 때와 같다)', async () => {
+    const user = await openRewindPlayer();
+    await user.click(screen.getByText(t('range.toggle')));
+    await user.clear(startEl());
+    await user.type(startEl(), 'abc');
+    await settle();
+    await user.click(await downloadButton());
+    expect(await screen.findByRole('alert')).toHaveTextContent(t('range.error.format', { example: '0:10:00' }));
+    await setTime(30);
+    await user.click(markEnd()!);
+    expect(screen.getByRole('alert')).toHaveTextContent(t('range.error.format', { example: '0:10:00' }));
+    expect(endEl()).toHaveValue('0:00:30');
+  });
+
+  it('카드가 busy(받기 요청 중)면 찍기 버튼이 비활성이다', async () => {
+    let release!: (v: never) => void;
+    vi.mocked(api.enqueue).mockReset().mockReturnValue(new Promise((r) => (release = r as never)));
+    const user = await openRewindPlayer();
+    await setTime(5);
+    await settle();
+    await user.click(await downloadButton());
+    await waitFor(() => expect(markStart()).toBeDisabled());
+    expect(markEnd()).toBeDisabled();
+    release({} as never);
   });
 });

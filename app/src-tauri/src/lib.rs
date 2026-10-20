@@ -16,6 +16,7 @@ pub mod sink;
 pub mod smoke;
 pub mod status;
 pub mod update_io;
+pub mod watch_protocol;
 pub mod webview_win;
 
 use std::path::{Path, PathBuf};
@@ -162,6 +163,9 @@ pub fn handler<R: Runtime>() -> impl Fn(Invoke<R>) -> bool + Send + Sync + 'stat
             commands::check_chat_output,
             commands::fetch_chat,
             commands::pause_chat,
+            commands::watch_open,
+            commands::watch_close,
+            commands::open_content_page,
         ]);
     move |invoke: Invoke<R>| {
         let verdict = {
@@ -643,6 +647,8 @@ fn setup<R: Runtime>(
         }
     };
     let auth_arc = state.auth.clone();
+    // 미리보기 주소 base·앱 출처(ACAO)는 OS·dev 여부로 정한다(PV1·PV11)
+    watch_protocol::configure(&state, app.config().build.dev_url.as_ref());
     app.manage(state);
     let io = if isolated { isolated_auth_io() } else { None }
         .unwrap_or_else(|| Arc::new(auth_io::PluginAuthIo(app.handle().clone())));
@@ -738,7 +744,8 @@ pub fn run() {
         builder
     };
 
-    let app = builder
+    // 받기 전 미리보기 `<video>`가 읽는 사용자 정의 주소(preview.md PV2). 상태가 없으면 503(fail closed)
+    let app = watch_protocol::register(builder)
         .manage(ShowGate::default())
         // 아래 플러그인은 Rust에서만 부른다. capabilities에 플러그인 권한을 주지 않는다.
         .plugin(tauri_plugin_dialog::init())

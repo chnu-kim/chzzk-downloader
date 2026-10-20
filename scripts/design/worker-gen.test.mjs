@@ -20,6 +20,8 @@ ${WORKER_ICONS.map((n) => `  '${n}': { set: 'lucide', name: '${n}', version: '9.
 } as const;
 `;
 const LICENSE = 'Lucide icons (fake 9.9.9)\n\nISC License\n\nPermission to use, copy, modify, and/or distribute this software.\n';
+const LICENSE_HLS = 'hls.js (fake 8.8.8)\n\nApache License, Version 2.0\n\nLicensed under the Apache License, Version 2.0 (the "License").\n';
+const [LUCIDE_SRC, HLS_SRC] = PATHS.licenses.map((l) => l.file);
 
 /** 머리만 맞는 PNG 조각(생성기는 IHDR 크기만 읽는다) */
 function png(w, h) {
@@ -57,7 +59,8 @@ function mk(files = {}, { gen = true } = {}) {
   const d = join(tmp, `r${seq++}`);
   const all = {
     [PATHS.appIcons]: ICONS_TS,
-    [PATHS.license]: LICENSE,
+    [LUCIDE_SRC]: LICENSE,
+    [HLS_SRC]: LICENSE_HLS,
     [`${PATHS.assetsDir}/icon.svg`]: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>\n',
     [`${PATHS.assetsDir}/favicon.ico`]: ico([16, 32]),
     [`${PATHS.assetsDir}/apple-touch-icon.png`]: png(180, 180),
@@ -87,7 +90,7 @@ test('깨끗한 씨앗: --check는 0, 생성물은 원천에서 나온다', () =
   for (const n of WORKER_ICONS) assert.ok(icons.includes(`name: '${n}'`), n);
   assert.ok(!icons.includes("name: 'x'"), 'Worker가 쓰는 아이콘만 옮긴다');
   assert.match(readFileSync(join(d, PATHS.out.assets), 'utf8'), /"og\.png": \{ type: "image\/png", hash: "[0-9a-f]{16}", b64: "[A-Za-z0-9+/=]+" \}/);
-  assert.match(readFileSync(join(d, PATHS.out.licenses), 'utf8'), /^\/\/ [^\n]*\nexport const LICENSES = \[\{ name: "Lucide", text: "Lucide icons/);
+  assert.match(readFileSync(join(d, PATHS.out.licenses), 'utf8'), /^\/\/ [^\n]*\nexport const LICENSES = \[\{ name: "Lucide", text: "Lucide icons[^\n]*\}, \{ name: "hls\.js", text: "hls\.js \(fake 8\.8\.8\)[^\n]*\}\] as const;\n$/);
   assert.match(readFileSync(join(d, PATHS.out.help), 'utf8'), /\{ id: "a-one", title: "첫 도움말", blocks: \[/);
 });
 
@@ -118,8 +121,11 @@ test('생성물을 손으로 고치면 --check는 1(대상마다)', () => {
 
 test('원천이 바뀌고 생성물을 다시 쓰지 않으면 1', () => {
   const d = mk();
-  writeFileSync(join(d, PATHS.license), `${LICENSE}추가 줄\n`);
+  writeFileSync(join(d, LUCIDE_SRC), `${LICENSE}추가 줄\n`);
   assert.equal(cli(d, '--check', 'licenses').status, 1);
+  const d2 = mk();
+  writeFileSync(join(d2, HLS_SRC), `${LICENSE_HLS}추가 줄\n`);
+  assert.equal(cli(d2, '--check', 'licenses').status, 1, '둘째 원천만 바뀌어도 잡는다');
   writeFileSync(join(d, `${PATHS.assetsDir}/og.png`), png(1200, 630).fill(7, 28));
   assert.equal(cli(d, '--check', 'assets').status, 1);
 });
@@ -250,10 +256,29 @@ test('svg는 줄끝을 LF로 맞춘다(CRLF 체크아웃에서도 해시가 같�
 
 // ── 원천 오류·사용법 ──
 test('licenses 원천에 생성 모듈로 옮길 수 없는 글자(<, 백틱)가 있으면 1', () => {
-  for (const bad of ['<b>', '`x`', '${x}']) {
-    const d = mk({ [PATHS.license]: `${LICENSE}${bad}\n` }, { gen: false });
-    assert.equal(cli(d, '--write', 'licenses').status, 1, bad);
+  for (const src of [LUCIDE_SRC, HLS_SRC]) {
+    for (const bad of ['<b>', '`x`', '${x}']) {
+      const d = mk({ [src]: `${src === HLS_SRC ? LICENSE_HLS : LICENSE}${bad}\n` }, { gen: false });
+      assert.equal(cli(d, '--write', 'licenses').status, 1, `${src} ${bad}`);
+    }
   }
+});
+
+test('licenses 원천이 하나라도 없으면 1(없는 파일을 건너뛰지 않는다)', () => {
+  const d = mk({ [HLS_SRC]: null }, { gen: false });
+  const r = cli(d, '--write', 'licenses');
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /hlsjs\.txt/);
+});
+
+test('실제 licenses/: Lucide와 hls.js 두 절이 순서대로 있고 hls.js 고지는 Apache-2.0 원문과 버전을 담는다', () => {
+  assert.deepEqual(PATHS.licenses.map((l) => l.name), ['Lucide', 'hls.js']);
+  const hls = readFileSync(join(ROOT, 'licenses/hlsjs.txt'), 'utf8');
+  assert.match(hls, /^hls\.js \(hls\.js 1\.7\.3\)\n/);
+  assert.match(hls, /Licensed under the Apache License, Version 2\.0/);
+  assert.match(hls, /Copyright \(c\) 2017 Dailymotion/);
+  assert.match(hls, /Copyright \(c\) 2013-2015 Brightcove/);
+  assert.deepEqual(check(ROOT, ['licenses']), [], '생성물이 원천과 같다');
 });
 
 test('Worker 아이콘이 앱 icons.ts에 없으면 1', () => {

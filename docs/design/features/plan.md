@@ -236,6 +236,15 @@ Codex 2회차 N1~N9는 각 설계가 3차·4차 개정에서 처리했다(N1·N2
 
 ---
 
+### 트랙 (추가) 받기 전 미리보기(`preview.md` §11) — 구현 완료(2026-10-20), 실측 대기
+다섯 기능 밖의 추가 명세다. 번호는 core.md 86·87, app.md 108~114, D64, ADR-0027을 썼다(위 §1의 "다음" 번호 가운데 D64·ADR 0027이 여기로 갔으므로 이후 새 D는 D65, 새 ADR은 0028부터다).
+
+| 브랜치 | PR | 의존 | 완료 조건 |
+|---|---|---|---|
+| `feat/preview-pv1`~`pv7` | PV-1 코어 PD 중계 · PV-2 셸 세션 · PV-3 Tauri 배선 · PV-4 프런트 PD 재생기 · PV-5 코어·셸 HLS · PV-6L hls.js 고지 · PV-6 hls.js · PV-7 구간 찍기 | stacked(PV-5는 PV-2 위, PV-6L은 PV-6 앞) | `rust`·`tauri*`·`frontend`·`design-*`·`e2e-web`·`scan` 녹색. **PV-7은 M-PV-5 통과가 머지 조건** |
+| `feat/preview-pv8` | PV-8 `chore:` 문서 마감(D64·ADR-0027 확정 표기, `features/README.md`, 이 표, ROADMAP, 명세 §16 구현 결과) | PV-7 | `scan`. `tests.playwright` 기준은 CI 녹색 실행 뒤 사람이 올린다 |
+| ⏸ | 실측 M-PV-1~7(`preview.md` §13) | 사람(본인 영상, 3 OS) | 결과 범주만 ROADMAP. 불통과 처리는 명세 §13·Q10 |
+
 ## 5. 의존 그래프(N6: "기능 선행 조건"과 "둘 다 진행하면 머지 순서"를 가른다)
 
 ### A. 기능 선행 조건(이것이 없으면 그 PR을 **시작·머지할 수 없다**)

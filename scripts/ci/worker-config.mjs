@@ -212,11 +212,12 @@ export function checkGeneratedAssets(text) {
   return errs;
 }
 
-// licenses.generated.ts: 머리 주석 한 줄 + 한 줄 `export const LICENSES = [{ name: "Lucide", text: "<JSON 문자열>" }] as const;`
+// licenses.generated.ts: 머리 주석 한 줄 + 한 줄 `export const LICENSES = [{ name: "Lucide", text: "<JSON 문자열>" }, { name: "hls.js", text: … }] as const;`(절 하나 이상)
 export function checkGeneratedLicenses(text) {
   const file = GENERATED_LICENSES_FILE;
   const errs = generatedCommon(file, text);
-  const shape = new RegExp(String.raw`^// [^\n]*\nexport const LICENSES = \[\{ name: "[A-Za-z ]+", text: ${JSON_STR} \}\] as const;\n$`);
+  const entry = String.raw`\{ name: "[A-Za-z][A-Za-z. ]*", text: ${JSON_STR} \}`;
+  const shape = new RegExp(String.raw`^// [^\n]*\nexport const LICENSES = \[${entry}(?:, ${entry})*\] as const;\n$`);
   if (!shape.test(text)) errs.push(`${file}: 생성물 모양이 아니다(머리 주석 한 줄 + export const LICENSES = [{ name, text: JSON 문자열 }] as const; 만). node scripts/design/worker-gen.mjs --write licenses로 다시 만든다`);
   return errs;
 }

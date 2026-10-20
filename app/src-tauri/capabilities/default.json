@@ -49,6 +49,9 @@
     "allow-ownership-recheck",
     "allow-check-chat-output",
     "allow-fetch-chat",
-    "allow-pause-chat"
+    "allow-pause-chat",
+    "allow-watch-open",
+    "allow-watch-close",
+    "allow-open-content-page"
   ]
 }

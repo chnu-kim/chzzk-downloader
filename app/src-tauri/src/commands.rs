@@ -8,13 +8,13 @@ use std::sync::atomic::Ordering;
 
 use chzzk_core::chat::SubtitleFormat;
 use chzzk_core::{ContentRef, PlaybackKind};
-use chzzk_shell::app::{ChatCheck, Reveal, chzzk_link};
+use chzzk_shell::app::{ChatCheck, Reveal, chzzk_link, content_page_url};
 use chzzk_shell::chat::ChatOutputCheck;
 use chzzk_shell::dto::{
     AppFolder, AppInfo, AuthStatusDto, EditorsDto, EngineProbe, EnqueueRequest,
     FileNameTemplatePreview, HelpId, InviteDto, JobDto, JobEvent, LegacyImportDto, OnExisting,
     OutputCheck, ResolvedDto, SettingsDto, SettingsPatch, TimeRangeDto, UpdateCheckDto,
-    UpdateInfoDto, UpdateInstallDto, WebPage,
+    UpdateInfoDto, UpdateInstallDto, WatchOpenDto, WebPage,
 };
 use chzzk_shell::manager::QUIT_TIMEOUT;
 use chzzk_shell::{App, AppError, JobId};
@@ -297,6 +297,34 @@ pub async fn open_web_page(
     anchor: Option<HelpId>,
 ) -> Res<()> {
     let url = state.web_page_url(page, anchor)?;
+    if io.0.open_url(&url) {
+        Ok(())
+    } else {
+        Err(AppError::internal("브라우저를 열지 못했습니다"))
+    }
+}
+
+/// 받기 전 미리보기를 연다(preview.md §5.2). 게이트·total 탐색은 셸이 하고, `src`는 `watch:` 주소다(서명 주소는 Rust 밖으로 나가지 않는다)
+#[tauri::command]
+pub async fn watch_open(
+    state: State<'_, App>,
+    url: String,
+    content: ContentRef,
+) -> Res<WatchOpenDto> {
+    state.watch.open(&url, &content).await
+}
+
+/// 미리보기 세션을 닫는다. 없거나 다른 ID여도 `Ok`(멱등)다
+#[tauri::command]
+pub async fn watch_close(state: State<'_, App>, id: String) -> Res<()> {
+    state.watch.close(&id);
+    Ok(())
+}
+
+/// [치지직에서 보기]: 카드의 `ContentRef`에서 만든 정식 주소를 기본 브라우저로 연다(PV19). 웹뷰가 준 URL 문자열은 열지 않는다
+#[tauri::command]
+pub async fn open_content_page(io: State<'_, AuthIoState>, content: ContentRef) -> Res<()> {
+    let url = content_page_url(&content)?;
     if io.0.open_url(&url) {
         Ok(())
     } else {

@@ -909,6 +909,22 @@ pub fn chzzk_link(text: &str) -> Option<String> {
         .map(str::to_string)
 }
 
+/// `open_content_page`: 컨텐츠의 공개 페이지 주소를 `ContentRef`에서 만든다(preview.md PV19).
+///
+/// 웹뷰가 준 URL 문자열은 쓰지 않는다. `clip_id`는 웹뷰가 보낸 문자열이므로 만든 주소를 `parse_content_url`로 다시 읽어
+/// 같은 `ContentRef`가 나올 때만 돌려준다(경로 벗어남·쿼리·fragment가 든 ID 거부). 생방송은 `invalidInput`이다.
+pub fn content_page_url(content: &ContentRef) -> Result<String, AppError> {
+    if matches!(content, ContentRef::Live { .. }) {
+        return Err(AppError::invalid_input("생방송은 미리볼 수 없습니다"));
+    }
+    let url = chzzk_core::url::public_page_url(content);
+    if parse_content_url(&url).is_ok_and(|c| &c == content) {
+        Ok(url)
+    } else {
+        Err(AppError::invalid_input("영상 주소가 올바르지 않습니다"))
+    }
+}
+
 /// 잠금 안 재확인: 판정한 컨텐츠와 같을 때만 검증한 채널 ID로 고쳐 쓰게 한다(`resume_checked`·`start_chat`의 `check`)
 fn same_content(
     content: ContentRef,

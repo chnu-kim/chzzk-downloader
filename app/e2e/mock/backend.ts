@@ -147,6 +147,13 @@ export type Scenario = {
   editors?: EditorsDto;
   /** 다음 한 번의 호출을 이 오류로 실패시킨다(command 이름 → 오류). editors_*·delegations_leave·ownership_recheck */
   fail?: Partial<Record<'editors_list' | 'editors_invite' | 'editors_remove' | 'delegations_leave' | 'ownership_recheck', AppError>>;
+  /**
+   * watch_open(받기 전 미리보기, preview.md PV-3) 결과. ok(기본)는 존재하지 않는 `watch:` 주소를 돌려주고,
+   * denied는 notOwnContent, error는 network로 실패한다. 게이트·total 탐색은 흉내 내지 않는다. 생방송·url≠content는 invalidInput
+   */
+  watch?: 'ok' | 'denied' | 'error';
+  /** watch_open이 돌려줄 src 덮어쓰기(PV-4, HLS는 PV-6: playlist 주소를 `page.route`로 받을 수 있게 http 주소를 준다). 기본 `watch:` 주소는 브라우저가 못 읽어 console.error가 남으므로, 재생기를 펼친 모습을 보는 장면은 data: 주소를 준다 */
+  watchSrc?: string;
   /** app_info의 OS(Windows 고정 데이터·단축키 표기·[Finder에서 보기] 분기). 없으면 linux */
   platform?: Os;
   /** app_info의 나머지 필드 덮어쓰기(D3 이전 설정 찾음 `legacyCandidate` 등). `platform`·`textScale`·`theme`은 위 필드와 설정이 이긴다 */
@@ -372,6 +379,29 @@ export function install(scenario: Scenario = {}): E2EController {
     // 셸 흉내(App::web_page_url): 앵커는 도움말에만 붙는다. 다른 페이지에 붙이면 invalidInput
     open_web_page: (a) => {
       if (a.anchor != null && a.page !== 'help') throw err('invalidInput');
+      return null;
+    },
+    // 셸 흉내(preview.md §5.2·PV19): 주소는 존재하지 않는 경로다. 생방송 페이지는 열지 않는다(invalidInput)
+    watch_open: (a) => {
+      // 셸 open 1·3단계 흉내: 생방송과 url≠content는 invalidInput(url이 resolve 표에 있을 때만 대조한다)
+      if ((a.content as ContentRef).kind === 'live') throw err('invalidInput');
+      const known = resolveTable[a.url as string];
+      if (known && resolvedByContent(a.content as ContentRef) !== known) throw err('invalidInput');
+      const mode = scenario.watch ?? 'ok';
+      if (mode === 'denied') throw err('notOwnContent');
+      if (mode === 'error') throw err('network');
+      const id = 'a'.repeat(32);
+      // 실제 src base는 OS별이다(Windows는 http://watch.localhost)
+      const base = scenario.platform === 'windows' ? 'http://watch.localhost' : 'watch://localhost';
+      // 빠른 다시보기(HLS)는 kind hls와 playlist 주소를 준다(셸 PV-5 흉내, 재생 방식은 resolve 표의 playbackKind)
+      if (known?.playbackKind === 'liveRewindHls') {
+        return { id, kind: 'hls', src: scenario.watchSrc ?? `${base}/${id}/pl.m3u8` };
+      }
+      return { id, kind: 'mp4', src: scenario.watchSrc ?? `${base}/${id}/v` };
+    },
+    watch_close: () => null,
+    open_content_page: (a) => {
+      if ((a.content as ContentRef).kind === 'live') throw err('invalidInput');
       return null;
     },
     get_settings: () => settings,

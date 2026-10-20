@@ -64,5 +64,7 @@ export type * from "./UpdateCheckDto";
 export type * from "./UpdateInfoDto";
 export type * from "./UpdateInstallDto";
 export type * from "./UpdateProgressEvent";
+export type * from "./WatchKindDto";
+export type * from "./WatchOpenDto";
 export type * from "./WebPage";
 export type * from "./WindowFocusPayload";

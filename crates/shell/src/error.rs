@@ -262,6 +262,11 @@ impl AppError {
         Self::shell(ErrorCode::InvalidInput, message, None)
     }
 
+    /// 지금 쓸 수 없는 방식이다(예: 서버가 구간 요청을 지원하지 않아 미리보기를 못 연다).
+    pub fn unsupported(message: impl Into<String>) -> Self {
+        Self::shell(ErrorCode::Unsupported, message, None)
+    }
+
     /// 열려는 파일이 없다.
     pub fn file_missing(path: &Path) -> Self {
         Self::shell(

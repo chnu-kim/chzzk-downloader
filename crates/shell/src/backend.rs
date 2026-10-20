@@ -12,10 +12,11 @@ use std::future::Future;
 use chzzk_core::chat::{ChatOutcome, ChatProgress, ChatRequest};
 use chzzk_core::{
     CancellationToken, Chzzk, ContentRef, DownloadOutcome, DownloadRequest, Error, Progress,
-    Resolved,
+    RangeChunk, Resolved, WatchFail,
 };
+use url::Url;
 
-/// 셸이 쓰는 코어 동작 세 가지.
+/// 셸이 쓰는 코어 동작. 받기 셋(조회·받기·채팅)과 미리보기 중계 둘.
 pub trait Backend: Send + Sync + 'static {
     /// 컨텐츠 정보와 화질 목록을 가져온다.
     fn resolve(&self, c: &ContentRef) -> impl Future<Output = Result<Resolved, Error>> + Send;
@@ -35,6 +36,22 @@ pub trait Backend: Send + Sync + 'static {
         cancel: CancellationToken,
         on_progress: &(dyn Fn(ChatProgress) + Send + Sync),
     ) -> impl Future<Output = Result<ChatOutcome, Error>> + Send;
+
+    /// 미리보기: 업스트림에 닫힌 구간 하나를 요청한다(쿠키 없음, preview.md §4.1).
+    fn watch_range(
+        &self,
+        url: &Url,
+        start: u64,
+        end_incl: u64,
+        expect_total: Option<u64>,
+    ) -> impl Future<Output = Result<RangeChunk, WatchFail>> + Send;
+
+    /// 미리보기: playlist·init·세그먼트처럼 통째로 받는 GET(상한 `cap`, PV-5).
+    fn watch_bytes(
+        &self,
+        url: &Url,
+        cap: usize,
+    ) -> impl Future<Output = Result<Vec<u8>, WatchFail>> + Send;
 }
 
 impl Backend for Chzzk {
@@ -58,5 +75,23 @@ impl Backend for Chzzk {
         on_progress: &(dyn Fn(ChatProgress) + Send + Sync),
     ) -> impl Future<Output = Result<ChatOutcome, Error>> + Send {
         Chzzk::collect_chat(self, req, cancel, on_progress)
+    }
+
+    fn watch_range(
+        &self,
+        url: &Url,
+        start: u64,
+        end_incl: u64,
+        expect_total: Option<u64>,
+    ) -> impl Future<Output = Result<RangeChunk, WatchFail>> + Send {
+        Chzzk::watch_range(self, url, start, end_incl, expect_total)
+    }
+
+    fn watch_bytes(
+        &self,
+        url: &Url,
+        cap: usize,
+    ) -> impl Future<Output = Result<Vec<u8>, WatchFail>> + Send {
+        Chzzk::watch_bytes(self, url, cap)
     }
 }

@@ -33,6 +33,7 @@ use crate::manager::{DownloadManager, ManagerConfig};
 use crate::ownership::{OwnershipGate, SignedInChannel};
 use crate::services::{self, AppPaths, PROGRESS_INTERVAL, SettingsService};
 use crate::update::{InstallHost, UpdateSource, Updates, auto_check_due};
+use crate::watch::{RecheckFn, WatchService};
 
 /// 클립보드에서 치지직 주소를 찾을 때 보는 최대 길이(바이트). 이보다 길면 주소를 붙여 둔 것으로 보지 않는다.
 pub const MAX_CLIPBOARD_SCAN: usize = 4096;
@@ -44,6 +45,17 @@ pub const AUTH_CLIENT_FAILED: &str = "로그인 서버 클라이언트를 만들
 
 /// 앱이 쓰는 로그인 서비스
 pub type AppAuth = AuthService<HttpWorkerApi, SystemClock>;
+
+/// 판정 직전 맡은 채널 자동 확인(`App::recheck`의 본체). 미리보기 세션도 같은 확인을 거친다.
+async fn recheck_auth(auth: Option<&AppAuth>) {
+    if let Some(a) = auth {
+        a.confirm_admin().await;
+        if a.signer().is_some_and(|s| s.is_admin) {
+            return;
+        }
+        let _ = a.check_delegations(false).await;
+    }
+}
 
 /// 로그인 설정. 릴리스는 늘 Enabled(build.rs), debug는 주소가 있을 때만
 #[derive(Clone, Debug)]
@@ -87,7 +99,9 @@ pub struct App {
     pub settings: SettingsService,
     pub manager: DownloadManager<Chzzk>,
     pub paths: AppPaths,
-    pub gate: OwnershipGate,
+    pub gate: Arc<OwnershipGate>,
+    /// 받기 전 미리보기 세션(preview.md PV5). 게이트는 받기와 같은 것을 쓴다
+    pub watch: WatchService<Chzzk>,
     /// 로그인 서비스. `None`이면 로그인을 쓰지 않는 빌드
     pub auth: Option<Arc<AppAuth>>,
     /// 로그인에 쓰는 Worker 출처(`auth`와 함께 `Some`). 업데이트 주소·출처 대조에 쓴다(A4)
@@ -220,18 +234,28 @@ impl App {
             total_rate_limit: s.total_rate_limit,
             job_rate_limit: s.job_rate_limit,
         })?;
-        let gate = match &auth {
+        let gate = Arc::new(match &auth {
             Some(a) => {
                 let a: Arc<dyn SignedInChannel> = a.clone();
                 OwnershipGate::enabled(a)
             }
             None => OwnershipGate::disabled(),
+        });
+        // 미리보기 세션이 재조회 뒤 재판정에서 부르는 확인: `App::recheck`와 같은 일을 `auth`만 들고 한다
+        let recheck: RecheckFn = {
+            let auth = auth.clone();
+            Arc::new(move || {
+                let auth = auth.clone();
+                Box::pin(async move { recheck_auth(auth.as_deref()).await })
+            })
         };
+        let watch = WatchService::new(settings.client_fn(), gate.clone(), recheck);
         Ok(App {
             settings,
             manager,
             paths,
             gate,
+            watch,
             auth,
             worker_base,
             updates: Updates::default(),
@@ -399,13 +423,7 @@ impl App {
     /// 확인한다(/api/me는 관리자 여부를 주지 않는다). GUI는 시작 때 refresh하므로 보통 이미 확인돼 있고, 명령줄은
     /// 갱신 예정 전이면 refresh하지 않으므로 여기서 처음 묻는다(cli-mode.md §5.2). 관리자로 확인되면 맡은 채널은 묻지 않는다
     async fn recheck(&self) {
-        if let Some(a) = &self.auth {
-            a.confirm_admin().await;
-            if a.signer().is_some_and(|s| s.is_admin) {
-                return;
-            }
-            let _ = a.check_delegations(false).await;
-        }
+        recheck_auth(self.auth.as_deref()).await;
     }
 
     /// `resume_job`(이어받기·다시 시도·처음부터·덮어쓰고 받기): 로그인한 채널의 영상만(A5).
@@ -481,6 +499,8 @@ impl App {
     /// 맡은 채널 작업(둘째 깃발)은 여기서 하지 않는다: `take_delegated_resume` → `resume_delegated_interrupted`(79 (아))
     pub fn on_auth_status(&self, st: &AuthStatus) -> usize {
         if st.phase != AuthPhase::SignedIn {
+            // 로그아웃·세션 만료: 열린 미리보기를 닫는다(preview.md PV5)
+            self.watch.on_signed_out();
             return 0;
         }
         // 채널을 모르면 깃발을 쓰지 않는다(다음 채널 있는 SignedIn에서 한다)

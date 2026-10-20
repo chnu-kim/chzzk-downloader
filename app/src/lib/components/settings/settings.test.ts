@@ -4,6 +4,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppError, AppInfo, AuthStatusDto, FileNameTemplatePreview, Os, SettingsDto } from '../../bindings';
 import { DEFAULT_FILE_NAME_TEMPLATE } from '../../fileNameTemplate';
 import { errorCopy } from '../../copy/errors';
+import { HLSJS_VERSION } from '../../licenses';
+import { ICON_SET_VERSION } from '../ui/icons';
 import { t } from '../../copy/ko';
 import { revealLabel } from '../../platform';
 
@@ -341,6 +343,13 @@ describe('설정: 보기·계정·정보', () => {
     render(SettingsView);
     await user.click(screen.getByRole('button', { name: t('auth.privacy') }));
     expect(api.openWebPage).toHaveBeenCalledWith('privacy');
+  });
+
+  it('정보: 오픈소스 라이선스 행이 Lucide와 hls.js(Apache-2.0)를 함께 보인다', () => {
+    render(SettingsView);
+    const row = screen.getByText(t('settings.about.licenses')).closest('.row') as HTMLElement;
+    expect(row).toHaveTextContent(`Lucide ${ICON_SET_VERSION} (ISC)`);
+    expect(row).toHaveTextContent(`hls.js ${HLSJS_VERSION} (Apache-2.0)`);
   });
 
   it('정보: 비공식 고지가 있고 저작권 줄은 없다', () => {

@@ -929,6 +929,11 @@ test('checkGeneratedAssets: 항목 줄 문법과 hash(바이트의 SHA-256 앞 1
 test('checkGeneratedLicenses: 한 줄 LICENSES 상수와 JSON 문자열만', () => {
   const ok = '// 생성물\nexport const LICENSES = [{ name: "Lucide", text: "ISC License\\nCopyright" }] as const;\n';
   assert.deepEqual(checkGeneratedLicenses(ok), []);
+  // 여러 절(Lucide + hls.js): 이름에 점이 있어도 된다
+  const two = '// 생성물\nexport const LICENSES = [{ name: "Lucide", text: "ISC" }, { name: "hls.js", text: "Apache\\nLicense" }] as const;\n';
+  assert.deepEqual(checkGeneratedLicenses(two), []);
+  assert.ok(checkGeneratedLicenses(two.replace('}, {', '}, { name: "x", text: "<b>" }, {')).length > 0, '절 사이에 끼운 <');
+  assert.ok(checkGeneratedLicenses(two.replace(' }, { name: "hls.js"', ' },{ name: "hls.js"')).length > 0, '구분자 모양');
   const bad = [
     ['본문에 <', ok.replace('ISC', '<b>')],
     ['따옴표 탈출', ok.replace('ISC License', 'a" }]; fetch(1); [{ x: "')],

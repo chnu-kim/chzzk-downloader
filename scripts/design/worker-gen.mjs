@@ -2,7 +2,7 @@
 // Worker 생성 모듈 넷의 생성기·검사기(docs/design/system/web.md §9·governance.md §12 (e), 계약 §2.2). 의존성 0.
 //   icons     app/src/lib/components/ui/icons.ts → worker/src/http/icons.generated.ts (Worker가 쓰는 여섯 개만)
 //   assets    worker/assets/{icon.svg,favicon.ico,apple-touch-icon.png,og.png} → worker/src/http/assets.generated.ts (base64 + 해시)
-//   licenses  licenses/lucide.txt → worker/src/http/licenses.generated.ts
+//   licenses  licenses/{lucide,hlsjs}.txt → worker/src/http/licenses.generated.ts (절 순서 = PATHS.licenses 순서)
 //   help      help/*.md(+ help/ids.json) → worker/src/http/help.generated.ts
 // 사용: node scripts/design/worker-gen.mjs --write|--check [icons assets licenses help …] [--root <dir>]   (대상이 없으면 전부)
 //   --write  생성물을 다시 쓴다. help는 help/ids.json에 새 id를 덧붙인다(지우지 않는다: 추가만).
@@ -32,7 +32,11 @@ export const ASSET_FILES = [
 export const PATHS = {
   appIcons: 'app/src/lib/components/ui/icons.ts',
   assetsDir: 'worker/assets',
-  license: 'licenses/lucide.txt',
+  /** /licenses에 나오는 고지 절. 순서가 곧 화면 순서다 */
+  licenses: [
+    { name: 'Lucide', file: 'licenses/lucide.txt' },
+    { name: 'hls.js', file: 'licenses/hlsjs.txt' },
+  ],
   helpDir: 'help',
   ids: 'help/ids.json',
   out: {
@@ -160,10 +164,14 @@ function bannedIn(text) {
 }
 
 export function buildLicenses(root) {
-  const text = readText(root, PATHS.license);
-  const bad = [...bannedIn(text), ...(text.includes('<') ? ['<'] : [])];
-  if (bad.length) throw new GenError(`${PATHS.license}: 생성 모듈에 옮길 수 없는 글자가 있다: ${bad.join(', ')}`);
-  return { file: PATHS.out.licenses, text: `${HEADER('licenses', PATHS.license)}export const LICENSES = [{ name: "Lucide", text: ${JSON.stringify(text)} }] as const;\n` };
+  const entries = PATHS.licenses.map(({ name, file }) => {
+    const text = readText(root, file);
+    const bad = [...bannedIn(text), ...(text.includes('<') ? ['<'] : [])];
+    if (bad.length) throw new GenError(`${file}: 생성 모듈에 옮길 수 없는 글자가 있다: ${bad.join(', ')}`);
+    return `{ name: ${JSON.stringify(name)}, text: ${JSON.stringify(text)} }`;
+  });
+  const sources = PATHS.licenses.map((l) => l.file).join(' ');
+  return { file: PATHS.out.licenses, text: `${HEADER('licenses', sources)}export const LICENSES = [${entries.join(', ')}] as const;\n` };
 }
 
 // ───────────────────────── help ─────────────────────────

@@ -139,6 +139,15 @@ test('DI2: Worker 라이선스 생성 모듈이 있으면 고지 파일과 같�
   assert.deepEqual(run({ [PATHS.license]: LICENSE_OK.replace(/\n/g, '\r\n'), [PATHS.workerLicenses]: mod(LICENSE_OK) }), []);
 });
 
+test('DI2: 생성 모듈에 다른 고지(hls.js)가 더 있어도 Lucide 절만 고지 파일과 비교한다', () => {
+  const two = (lucide) => `// 생성물\nexport const LICENSES = [{ name: "Lucide", text: ${JSON.stringify(lucide)} }, { name: "hls.js", text: "hls.js (hls.js 1.7.3)\\nApache" }] as const;\n`;
+  assert.deepEqual(run({ [PATHS.workerLicenses]: two(LICENSE_OK) }), []);
+  assert.ok(has(run({ [PATHS.workerLicenses]: two(`${LICENSE_OK}손 수정`) }), 'DI2', 'licenses.generated.ts'));
+  // Lucide 절이 없으면 같은 글이 아니다
+  const noLucide = '// 생성물\nexport const LICENSES = [{ name: "hls.js", text: "x" }] as const;\n';
+  assert.ok(has(run({ [PATHS.workerLicenses]: noLucide }), 'DI2', 'licenses.generated.ts'));
+});
+
 test('DI3: path 문자열에 fill·stroke-width·색이 있으면 위반', () => {
   const v = run({ [PATHS.icons]: `export const ICONS = {\n  x: { set: 'lucide', name: 'x', version: '${VERSION}', paths: ['<path fill="red" d="M1"/>'] },\n} as const;\n` });
   assert.ok(has(v, 'DI3', 'x'));

@@ -12,6 +12,7 @@
   import { update } from '../../stores/update.svelte';
   import { useDelayedLoading } from '../../useDelayedLoading.svelte';
   import Button from '../ui/Button.svelte';
+  import { HLSJS_VERSION } from '../../licenses';
   import { ICON_SET_VERSION } from '../ui/icons';
   import SettingsRow from '../ui/SettingsRow.svelte';
   import Skeleton from '../ui/Skeleton.svelte';
@@ -113,7 +114,7 @@
     <Button variant="ghost" size="sm" onclick={() => void openFolder('logs')}>{t('settings.about.openLogs')}</Button>
   </div>
 
-  <SettingsRow label={t('settings.about.licenses')} value={`Lucide ${ICON_SET_VERSION} (ISC)`} class="num" />
+  <SettingsRow label={t('settings.about.licenses')} value={`Lucide ${ICON_SET_VERSION} (ISC) · hls.js ${HLSJS_VERSION} (Apache-2.0)`} class="num" />
 
   <div class="row">
     <p class="read">{t('notice.unofficial')}</p>

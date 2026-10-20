@@ -203,4 +203,12 @@ describe("/licenses", () => {
     }
     expect(t).toContain("ISC License");
   });
+
+  it("Lucide와 hls.js 두 절이 순서대로 나오고 hls.js는 Apache-2.0 원문이다", async () => {
+    const t = await (await new Browser().get("/licenses")).text();
+    expect(LICENSES.map((l) => l.name)).toEqual(["Lucide", "hls.js"]);
+    expect(t.indexOf("<h2>Lucide</h2>")).toBeGreaterThan(-1);
+    expect(t.indexOf("<h2>hls.js</h2>")).toBeGreaterThan(t.indexOf("<h2>Lucide</h2>"));
+    expect(t).toContain("Apache License, Version 2.0");
+  });
 });

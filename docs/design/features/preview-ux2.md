@@ -1,6 +1,6 @@
 # 미리보기·구간 섹션 개편(구간 편집 UX 2단계): 명세
 
-**상태·확정 결정(2026-10-21)**: **설계. 열린 질문 없음(§14, 사용자 위임으로 추천안 확정). 적대적 재검토 반영(§15).** 사용자가 PVU-1~6(`preview-ux.md`)을 직접 써 본 뒤 내린 결정(2026-10-21)은 둘이다.
+**상태·확정 결정(2026-10-21)**: **구현 완료(PS-1~PS-4, §16), 실측 대기. 열린 질문 없음(§14, 사용자 위임으로 추천안 확정). 적대적 재검토 반영(§15).** 사용자가 PVU-1~6(`preview-ux.md`)을 직접 써 본 뒤 내린 결정(2026-10-21)은 둘이다.
 - (1) 시작·끝 ±1초 단추 네 개([1초 당기기]·[1초 미루기])를 없앤다. 대신 시작·끝 시각 칸에 포커스가 있을 때 ↑/↓ 키로 1초씩 바꾸고, 영상도 그 시각으로 따라간다. 순수 모델 `rangeEdit.nudge`를 그대로 쓴다.
 - (2) 미리보기와 일부만 받기를 눌러야 보이던 것을 기본으로 보여 준다.
   - 미리보기 영역은 처음부터 펼쳐져 있다. 영상 자리에는 표지 자리와 [영상 보기] 단추만 있다.
@@ -463,3 +463,39 @@
 | A19 | 길게 누른 뒤 keyup 없이 포커스가 떠나면 마지막 탐색을 잃는다 | 수용 | PS2, §4.1, PS-1 시험 8a |
 | A20 | 열림 깃발이 종류 사이에 공유된다는 것을 적지 않았다 | 수용 | §5.1, Q2 |
 | A21 | ADR·`spec-check` 변경은 `scripts-test` gate가 본다(PR 표에 없었다) | 수용 | §11.1 표, §11.3 |
+
+## 16. 구현 결과(PS-4, 2026-10-21)
+
+PS-1~PS-3이 `feat/preview-ux2-arrow-keys`·`-lazy-session`·`-section` 브랜치(stacked)로 구현됐다. 아래는 명세와 달라진 점의 요약이고, 원문은 app.md 구현 중 변경 120~122다. 번호 예약(§11.4)은 어긋나지 않았다(120~122, D66·ADR-0029 그대로, core.md 변경 없음).
+
+### 16.1 PR과 번호
+
+| PR | 브랜치 | 구현 중 변경 | 비고 |
+|---|---|---|---|
+| PS-1 구간 칸 ↑/↓ | `feat/preview-ux2-arrow-keys` | app.md 120 | ±1초 단추·문구 여섯 키 삭제, `RangeField` `onfieldkey` |
+| PS-2 표지 자리·지연 세션 | `feat/preview-ux2-lazy-session` | app.md 121, D66·ADR-0029 | 단계 `idle`, [영상 보기], ADR-0027 `폐기(→ 0029)` |
+| PS-3 한 섹션·기본 펼침·빈칸 = 전체 | `feat/preview-ux2-section` | app.md 122 | `ui.previewOpen`, `coupled`·`barShown`·`region`, 길이 줄 "전체 길이" |
+| PS-4 문서 마감 | `chore/preview-ux2-docs` | (번호 없음) | 이 절, 기능 안내·계획·ROADMAP |
+
+PR 번호는 머지 때 ROADMAP에 채운다.
+
+### 16.2 명세와 달라진 점
+
+- **IME 거름 위치(PS-1)**: 조합 중 키 거름(`isImeKey`)은 카드가 아니라 `RangeField` 안에 둔다. DX6이 keydown 리스너가 있는 파일에 `isImeKey`를 요구해서다(app.md 120).
+- **`<video>`의 `tabindex="0"`(PS-2)**: 이미 탭 순서에 있는 요소의 명시다. jsdom·일부 웹뷰에서 `focus()`가 먹게 한다(app.md 121).
+- **announcer 대신 Notice alert(PS-2)**: 열기 실패 알림은 같은 순간 그려지는 Notice(`role=alert`)가 맡고 `announcer`는 부르지 않는다. 두 번 들리지 않게 한 선택이다. 포커스 이동은 포커스가 [영상 보기]·`body`(또는 재생 중 오류는 `<video>`)에 있을 때만 한다(app.md 121).
+- **표지 자리 위치(PS-3)**: 표지 자리와 실패 Notice는 `.editor` 감싸개 밖(위)에 둔다. 그래서 [영상 보기] 위의 Esc는 카드를 닫는다(app.md 122).
+- **비활성 찍기 단추는 그리지 않음(PS-3)**: 메타데이터 전에는 조작 줄 자체를 그리지 않는다(명세 Q6의 "비활성 단추 소음" 판단을 결합 전 전체로 넓힘, app.md 122).
+- **`notOwn`·`unknown` 빠른 다시보기 카드는 칸 줄도 사라짐(PS15)**: 동작 변경이다(app.md 122).
+- **PS-3 리뷰 반영**: 칸이 틀리면(틀린 글자·시작 ≥ 끝) 길이 줄을 숨긴다(content.md 정의에 맞춤). 갤러리 `settleFields`는 작은 창에서 섹션 머리를 입력줄 바로 아래에 두고 잰다. `WatchPanel` 시험은 실제 앱 경로(`{ open: true, start: '', end: '' }`, `initialEnd ''`)와 mp4·네이티브 m3u8 경로를 따로 탄다.
+- **붙은 손잡이 `target-size`**: 기본 펼침으로 구간 막대가 첫 화면에 늘 노출돼 preview-ux.md:636의 한계도 노출이 늘었다. 알려진 한계로 두고 갤러리는 손잡이를 띄워 잰다(ADR-0029, app.md 122).
+
+### 16.3 남은 것
+
+- **사용자 실측 M-PVU2-1~6**(§13). 특히 M-PVU2-2(자동재생 정책)·M-PVU2-3(720×520 첫 화면에서 [받기]·화질)·M-PVU2-6(사용자 시험)이 D66·ADR-0029를 `확정`으로 바꿀 조건이다.
+- **갤러리 기준선**: `card-range`·`card-range-error`·`card-watch-idle`·`card-rewind-default`·`card-section-collapsed` 등은 Linux CI에서만 만든다(`node scripts/design/shots.mjs --accept <run id>`).
+- **후속(§12)**: 실제 표지 이미지(새 command `watch_cover`, 누르기 전 이미지 CDN 요청 1개라 사용자 확인 필요), 열림을 `settings.json`에 기억해 재시작 뒤까지 잇기, 칸 옆 ↑/↓ 힌트(Q9), 재생 전 상자 높이(Q10).
+
+### 16.4 ratchet(사람)
+
+CI 녹색 실행이 생기기 전이라 `ci/ratchet.json`은 건드리지 않았다. 이 트리의 로컬 측정은 Playwright 508개(`chromium`+`gallery`)이고 기준 `tests.playwright` 63은 옛 값이라 `ratchet.mjs write --from-run <run id>`가 CI 측정값으로 올린다(`tests.vitest`·`size.dist_gz`도 같다).

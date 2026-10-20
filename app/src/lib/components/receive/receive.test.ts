@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { tick } from 'svelte';
 import type { AppError, OutputCheck, RecentVodDto, SettingsDto } from '../../bindings';
 import { check, liveResolved, quality, resolved, vodResolved } from '../../../test/fixtures';
 import { signedInAs } from '../../../test/jobFixtures';
@@ -1658,8 +1659,6 @@ describe('양방향·미세 조정·길이(ResolveCard + RangeField, preview-ux 
   const endEl = () => screen.getByRole('textbox', { name: t('range.end') }) as HTMLInputElement;
   const rangeDetails = () => screen.getByText(t('range.toggle')).closest('details') as HTMLDetailsElement;
   const settle = () => new Promise((r) => setTimeout(r, CHECK_DEBOUNCE_MS + 60));
-  const nudgeBtn = (name: string) => screen.getByRole('button', { name }) as HTMLButtonElement;
-  const N = { startEarlier: t('range.nudge.startEarlier.label', { n: 1 }), startLater: t('range.nudge.startLater.label', { n: 1 }), endEarlier: t('range.nudge.endEarlier.label', { n: 1 }), endLater: t('range.nudge.endLater.label', { n: 1 }) };
 
   async function openRewindPlayer(over = {}) {
     vi.mocked(api.watchOpen).mockResolvedValue({ id: SID, kind: 'hls', src: `watch://localhost/${SID}/pl.m3u8` });
@@ -1768,108 +1767,197 @@ describe('양방향·미세 조정·길이(ResolveCard + RangeField, preview-ux 
     });
   });
 
-  describe('±1초 단추', () => {
-    it('accessible names include visible text', async () => {
+  describe('칸 ↑/↓(PS-1)', () => {
+    // 기본 동작이 막히지 않았으면 true(fireEvent와 같은 뜻). Svelte 갱신이 끝난 뒤 돌려준다
+    const arrow = async (el: Element, k: string, extra: Record<string, unknown> = {}) => {
+      const ev = new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true, ...extra });
+      if (typeof extra.keyCode === 'number') Object.defineProperty(ev, 'keyCode', { value: extra.keyCode });
+      const ok = el.dispatchEvent(ev);
+      await tick();
+      return ok;
+    };
+    const hasNudgeButton = () =>
+      screen.queryAllByRole('button').filter((b) => /당기기|미루기/.test(b.getAttribute('aria-label') ?? b.textContent ?? ''));
+
+    it('no nudge buttons', async () => {
       const user = await openRewindPlayer();
       await openRange(user);
-      for (const [name, visible] of [
-        [N.startEarlier, t('range.nudge.earlier.label', { n: 1 })],
-        [N.startLater, t('range.nudge.later.label', { n: 1 })],
-        [N.endEarlier, t('range.nudge.earlier.label', { n: 1 })],
-        [N.endLater, t('range.nudge.later.label', { n: 1 })],
-      ]) {
-        const b = nudgeBtn(name);
-        expect(b).toHaveTextContent(visible);
-        expect(name).toContain(visible);
-      }
+      expect(hasNudgeButton()).toHaveLength(0);
     });
 
-    it('nudge buttons: earlier/later change field, clamp', async () => {
+    it('ArrowUp on start field adds one second, ArrowDown subtracts; default prevented', async () => {
       const user = await openRewindPlayer();
       await openRange(user);
-      await user.click(nudgeBtn(N.startLater));
-      expect(startEl()).toHaveValue('0:00:01');
-      await user.click(nudgeBtn(N.startEarlier));
-      await user.click(nudgeBtn(N.startEarlier));
+      await typeInto(user, startEl(), '0:01:00');
+      expect(await arrow(startEl(), 'ArrowUp')).toBe(false);
+      expect(startEl()).toHaveValue('0:01:01');
+      expect(await arrow(startEl(), 'ArrowDown')).toBe(false);
+      expect(await arrow(startEl(), 'ArrowDown')).toBe(false);
+      expect(startEl()).toHaveValue('0:00:59');
+    });
+
+    it('ArrowUp/Down clamps at the ends', async () => {
+      const user = await openRewindPlayer();
+      await openRange(user);
+      await typeInto(user, startEl(), '0:00:00');
+      await arrow(startEl(), 'ArrowDown');
       expect(startEl()).toHaveValue('0:00:00');
-      await user.click(nudgeBtn(N.endEarlier));
+      await arrow(endEl(), 'ArrowDown');
       expect(endEl()).toHaveValue('3:12:44');
-      await user.click(nudgeBtn(N.endLater));
-      await user.click(nudgeBtn(N.endLater));
+      await arrow(endEl(), 'ArrowUp');
+      await arrow(endEl(), 'ArrowUp');
       expect(endEl()).toHaveValue('3:12:45');
+      await typeInto(user, startEl(), '3:12:44');
+      await arrow(endEl(), 'ArrowDown');
+      expect(endEl()).toHaveValue('3:12:45'); // 끝 = 시작+1에서 ↓ → 그대로
     });
 
-    it('nudge buttons: disabled when field invalid or busy', async () => {
+    it('unreadable field: arrow blocked, value unchanged', async () => {
       const user = await openRewindPlayer();
       await openRange(user);
       await typeInto(user, startEl(), 'abc');
-      expect(nudgeBtn(N.startEarlier)).toBeDisabled();
-      expect(nudgeBtn(N.startLater)).toBeDisabled();
-      expect(nudgeBtn(N.endLater)).not.toBeDisabled();
-      await typeInto(user, startEl(), '0:00:05');
-      expect(nudgeBtn(N.startLater)).not.toBeDisabled();
-      setCheck();
-      vi.mocked(api.enqueue).mockImplementation(() => new Promise(() => {}));
-      await settle();
-      await user.click(await downloadButton());
-      await waitFor(() => expect(api.enqueue).toHaveBeenCalled());
-      await waitFor(() => expect(nudgeBtn(N.startLater)).toBeDisabled());
-      expect(nudgeBtn(N.endEarlier)).toBeDisabled();
+      expect(await arrow(startEl(), 'ArrowUp')).toBe(false);
+      expect(startEl()).toHaveValue('abc');
     });
 
-    it('nudge clears previous range error', async () => {
+    it('modifier arrows not handled', async () => {
+      const user = await openRewindPlayer();
+      await openRange(user);
+      await typeInto(user, startEl(), '0:01:00');
+      for (const m of ['shiftKey', 'altKey', 'ctrlKey', 'metaKey']) {
+        expect(await arrow(startEl(), 'ArrowUp', { [m]: true })).toBe(true);
+      }
+      expect(startEl()).toHaveValue('0:01:00');
+    });
+
+    it('IME composing arrow ignored', async () => {
+      const user = await openRewindPlayer();
+      await openRange(user);
+      await typeInto(user, startEl(), '0:01:00');
+      expect(await arrow(startEl(), 'ArrowUp', { isComposing: true })).toBe(true);
+      expect(await arrow(startEl(), 'ArrowUp', { keyCode: 229 })).toBe(true);
+      expect(startEl()).toHaveValue('0:01:00');
+    });
+
+    it('arrow seeks video when coupled', async () => {
+      const user = await openRewindPlayer();
+      const { writes } = await loadMeta();
+      await openRange(user);
+      startEl().focus();
+      await arrow(startEl(), 'ArrowUp');
+      expect(writes).toEqual([1]);
+      endEl().focus();
+      await arrow(endEl(), 'ArrowDown');
+      expect(writes).toEqual([1, 11564]);
+    });
+
+    it('arrow to the very end of a blank end field still seeks (영상 길이로 막대를 쓸 때)', async () => {
+      const base = resolved();
+      const user = await openRewindPlayer({ meta: { ...base.meta, durationSecs: null } });
+      const { writes } = await loadMeta(11565.7);
+      await openRange(user);
+      await arrow(endEl(), 'ArrowDown');
+      expect(writes.at(-1)).toBe(11564);
+      await arrow(endEl(), 'ArrowUp');
+      expect(endEl()).toHaveValue('');
+      expect(writes.at(-1)).toBe(11565);
+    });
+
+    it('no seek when preview closed', async () => {
+      const user = await openRewindPlayer();
+      const { writes } = await loadMeta();
+      await user.click(screen.getByText(t('watch.toggle'))); // 접으면 세션이 닫히고 video가 사라진다
+      await waitFor(() => expect(document.querySelector('video')).toBeNull());
+      await openRange(user);
+      await arrow(startEl(), 'ArrowUp');
+      expect(startEl()).toHaveValue('0:00:01');
+      expect(writes).toEqual([]);
+    });
+
+    it('non-repeat keydown after repeats drops the pending seek: keyup does not write twice', async () => {
+      const user = await openRewindPlayer();
+      const { writes } = await loadMeta();
+      await openRange(user);
+      startEl().focus();
+      await arrow(startEl(), 'ArrowUp');
+      for (let i = 0; i < 3; i++) await arrow(startEl(), 'ArrowUp', { repeat: true });
+      expect(writes).toEqual([1]);
+      await arrow(startEl(), 'ArrowUp'); // keyup 없이 새 누름 → 바로 탐색
+      expect(writes).toEqual([1, 5]);
+      await fireEvent.keyUp(startEl(), { key: 'ArrowUp' });
+      expect(writes).toEqual([1, 5]);
+    });
+
+    it('held key changes field each repeat but seeks once on keyup', async () => {
+      const user = await openRewindPlayer();
+      const { writes } = await loadMeta();
+      await openRange(user);
+      startEl().focus();
+      await arrow(startEl(), 'ArrowUp');
+      for (let i = 0; i < 4; i++) await arrow(startEl(), 'ArrowUp', { repeat: true });
+      expect(startEl()).toHaveValue('0:00:05');
+      expect(writes).toEqual([1]);
+      await fireEvent.keyUp(startEl(), { key: 'ArrowUp' });
+      expect(writes).toEqual([1, 5]);
+    });
+
+    it('held key then blur without keyup flushes final seek', async () => {
+      const user = await openRewindPlayer();
+      const { writes } = await loadMeta();
+      await openRange(user);
+      startEl().focus();
+      await arrow(startEl(), 'ArrowUp');
+      for (let i = 0; i < 3; i++) await arrow(startEl(), 'ArrowUp', { repeat: true });
+      await fireEvent.blur(startEl(), { relatedTarget: screen.getByRole('switch', { name: t('watch.range.loop.label') }) });
+      expect(writes).toEqual([1, 4]);
+    });
+
+    it('blur after arrow does not seek again', async () => {
+      const user = await openRewindPlayer();
+      const { writes } = await loadMeta();
+      await openRange(user);
+      startEl().focus();
+      await arrow(startEl(), 'ArrowUp');
+      expect(writes).toEqual([1]);
+      await fireEvent.blur(startEl(), { relatedTarget: null });
+      expect(writes).toEqual([1]);
+    });
+
+    it('arrow clears previous range error', async () => {
       const user = await openRewindPlayer();
       await openRange(user);
       await typeInto(user, endEl(), '0:00:00');
       await settle();
       await user.click(await downloadButton());
       expect(await screen.findByRole('alert')).toHaveTextContent(t('range.error.order'));
-      await user.click(nudgeBtn(N.endLater));
+      await arrow(endEl(), 'ArrowUp');
       expect(screen.queryByRole('alert')).toBeNull();
     });
 
-    it('nudge buttons hidden while collapsed', async () => {
-      await openRewindPlayer();
-      expect(rangeDetails()).not.toHaveAttribute('open');
-      // 접힌 <details> 안에 있어 보이지 않는다(열기 전에는 사용할 수 없다)
-      expect(nudgeBtn(N.startLater).closest('details')).toBe(rangeDetails());
-    });
-
-    it('nudge seeks video when preview open', async () => {
-      const user = await openRewindPlayer();
-      const { writes } = await loadMeta();
-      await openRange(user);
-      await user.click(nudgeBtn(N.startLater));
-      expect(writes).toEqual([1]);
-      await user.click(nudgeBtn(N.endEarlier));
-      expect(writes).toEqual([1, 11564]);
-    });
-
-    it('nudge end later to the very end still seeks (영상 길이로 막대를 쓸 때)', async () => {
-      const base = resolved();
-      const user = await openRewindPlayer({ meta: { ...base.meta, durationSecs: null } });
-      const { writes } = await loadMeta(11565.7);
-      await openRange(user);
-      await user.click(nudgeBtn(N.endEarlier));
-      expect(writes.at(-1)).toBe(11564);
-      await user.click(nudgeBtn(N.endLater));
-      expect(endEl()).toHaveValue('');
-      expect(writes.at(-1)).toBe(11565);
-    });
-
-    it('nudge with preview closed only changes the field', async () => {
-      const user = await openCard();
-      await openRange(user);
-      await user.click(nudgeBtn(N.startLater));
-      expect(startEl()).toHaveValue('0:00:01');
-      expect(api.watchOpen).not.toHaveBeenCalled();
-    });
-
-    it('nudge feeds enqueue range', async () => {
+    it('busy: arrow does nothing', async () => {
       const user = await openRewindPlayer();
       await openRange(user);
-      await user.click(nudgeBtn(N.startLater));
-      await user.click(nudgeBtn(N.endEarlier));
+      setCheck();
+      vi.mocked(api.enqueue).mockImplementation(() => new Promise(() => {}));
+      await settle();
+      await user.click(await downloadButton());
+      await waitFor(() => expect(startEl()).toBeDisabled());
+      await arrow(startEl(), 'ArrowUp');
+      expect(startEl()).toHaveValue('0:00:00');
+    });
+
+    it('aria-keyshortcuts on both fields', async () => {
+      const user = await openRewindPlayer();
+      await openRange(user);
+      expect(startEl()).toHaveAttribute('aria-keyshortcuts', 'ArrowUp ArrowDown');
+      expect(endEl()).toHaveAttribute('aria-keyshortcuts', 'ArrowUp ArrowDown');
+    });
+
+    it('arrow feeds enqueue range', async () => {
+      const user = await openRewindPlayer();
+      await openRange(user);
+      await arrow(startEl(), 'ArrowUp');
+      await arrow(endEl(), 'ArrowDown');
       setCheck();
       await settle();
       await user.click(await downloadButton());

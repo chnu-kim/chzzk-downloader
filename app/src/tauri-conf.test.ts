@@ -77,8 +77,9 @@ describe('tauri.conf.json 불변식', () => {
       'style-src': "'self'",
       'img-src': "'self' data:",
       // 미리보기 <video>가 watch: 주소(Windows는 http://watch.localhost)를 읽는다(preview.md PV10)
-      'media-src': "'self' watch: http://watch.localhost",
-      'connect-src': 'ipc: http://ipc.localhost',
+      // 빠른 다시보기(HLS)는 hls.js가 MediaSource blob을 video에 붙이고 watch: 주소를 fetch로 읽는다(PV10). worker-src는 더하지 않는다(enableWorker false)
+      'media-src': "'self' watch: http://watch.localhost blob:",
+      'connect-src': 'ipc: http://ipc.localhost watch: http://watch.localhost',
       'object-src': "'none'",
       'base-uri': "'none'",
       'frame-ancestors': "'none'",

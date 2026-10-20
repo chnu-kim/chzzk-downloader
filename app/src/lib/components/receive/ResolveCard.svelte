@@ -151,11 +151,11 @@
     return f.code === 'network' ? t('receive.recheck.offline') : errorCopy(f, { place: 'other' }).title;
   });
   /**
-   * 받기 전 미리보기 줄(preview.md PV14): 받을 수 있는 영상의 통짜 mp4(progressive)만. tone이 아니라 재생 방식으로 판정한다
-   * (클립은 재생 방식과 무관하게 tone이 clip이다). 빠른 다시보기는 PV-6에서 더한다
+   * 받기 전 미리보기 줄(preview.md PV14): 받을 수 있는 영상의 통짜 mp4(progressive)와 빠른 다시보기(liveRewindHls, PV-6).
+   * tone이 아니라 재생 방식으로 판정한다(클립은 재생 방식과 무관하게 tone이 clip이다). 생방송은 늘 없다
    */
   const watchable = $derived(
-    view.playbackKind === 'progressive' && view.ownership !== 'notOwn' && view.ownership !== 'unknown',
+    (view.playbackKind === 'progressive' || view.playbackKind === 'liveRewindHls') && view.ownership !== 'notOwn' && view.ownership !== 'unknown',
   );
   /** 소유권으로 막힌 카드: 생방송 안내("받기를 누르면 녹화가 시작돼요")가 막힘 안내와 반대 말을 하지 않게 그리지 않는다 */
   const ownershipBlocked = $derived(view.ownership === 'notOwn' || view.ownership === 'unknown');

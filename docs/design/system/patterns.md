@@ -711,7 +711,7 @@ Worker 쪽 확인 페이지(`loginWarning` + [계속], 확인 코드 없음)와 
 │ 4                                                                    │
 │ 채널이름 · 10월 3일 오후 9:00 방송 · 3:12:45                           │ body 13 muted tabular(올해는 연도 생략, D49), 720에서 두 줄
 │ 12                                                                   │
-│ ▸ 미리보기                                                            │ Disclosure inline 24(통짜 mp4 카드만, 기본 접힘, 빠른 다시보기는 PV-6부터). 펼치면 `<video controls>` 16:9, 최대 `--watch-max-h`, 실패는 inline Notice 하나(D64)
+│ ▸ 미리보기                                                            │ Disclosure inline 24(통짜 mp4·빠른 다시보기 카드, 기본 접힘, 생방송은 없음). 펼치면 `<video controls>` 16:9, 최대 `--watch-max-h`, 실패는 inline Notice 하나(D64)
 │ 16                                                                   │
 │ 화질      (●) 1080p  60fps  가장 좋은 화질               약 10.8GB     │ 라디오 행 28, 선택 `--accent-soft`(면은 값 열 x부터), 꼬리표 quality.best
 │           ( ) 720p   60fps                               약 5.4GB     │

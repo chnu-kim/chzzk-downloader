@@ -1275,20 +1275,26 @@ describe('미리보기 줄(ResolveCard, preview.md PV14)', () => {
     expect(toggleEl()).toBeNull();
   });
 
-  it('빠른 다시보기 카드에는 아직 줄이 없다(PV-6에서 뒤집는다)', async () => {
+  it('빠른 다시보기 카드에도 줄이 있다(PV-6부터 HLS도 연다)', async () => {
     await openCard();
+    expect(screen.getByText(t('kind.liveRewind'))).toBeInTheDocument();
+    expect(toggleEl()).not.toBeNull();
+  });
+
+  it('소유권이 notOwn·unknown인 빠른 다시보기 카드에는 줄이 없다', async () => {
+    await openCard({ ownership: 'notOwn' });
     expect(screen.getByText(t('kind.liveRewind'))).toBeInTheDocument();
     expect(toggleEl()).toBeNull();
   });
 
-  it('클립이라도 재생 방식이 HLS면 줄이 없다(tone이 아니라 playbackKind로 판정)', async () => {
+  it('클립이라도 재생 방식이 HLS면 줄이 있다(tone이 아니라 playbackKind로 판정)', async () => {
     await openCard({
       content: { kind: 'clip', clipId: 'clip0001' },
       meta: { ...resolved().meta, kind: 'clip' },
       playbackKind: 'liveRewindHls',
     });
     expect(screen.getByText(t('kind.clip'))).toBeInTheDocument();
-    expect(toggleEl()).toBeNull();
+    expect(toggleEl()).not.toBeNull();
   });
 
   it('클립이 progressive면 줄이 있다', async () => {

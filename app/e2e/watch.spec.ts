@@ -102,7 +102,51 @@ test('생방송 카드에는 줄이 없다', async ({ app }) => {
   await app.axe('생방송 카드(미리보기 줄 없음)');
 });
 
-test('빠른 다시보기 카드에는 아직 줄이 없다(PV-6에서 뒤집는다)', async ({ app }) => {
-  const card = await openCard(app, resolved());
-  await expect(toggle(card)).toHaveCount(0);
+/** HLS 장면용 자리표시 playlist 주소. 응답은 test가 쥐고 있다가 놓는다(hls.js가 읽는 동안의 모습을 안정적으로 본다) */
+const HLS_SRC = 'http://watch.example.invalid/pl.m3u8';
+function holdPlaylist(page: Page) {
+  let release!: () => void;
+  const gate = new Promise<void>((r) => (release = r));
+  const seen: string[] = [];
+  void page.route(HLS_SRC, async (route) => {
+    seen.push(route.request().url());
+    await gate;
+    // 200이지만 playlist가 아니다: 브라우저 console.error 없이 hls.js만 치명 오류(manifestParsingError)로 간다
+    await route.fulfill({ status: 200, contentType: 'application/vnd.apple.mpegurl', body: 'not a playlist' });
+  });
+  return { release, seen };
+}
+
+test('빠른 다시보기 카드에도 줄이 있고, 펼치면 hls.js가 playlist를 읽는다', async ({ app }) => {
+  const held = holdPlaylist(app.page);
+  const REWIND = resolved();
+  const card = await openCard(app, REWIND, { watchSrc: HLS_SRC });
+  await expect(toggle(card)).toBeVisible();
+  await toggle(card).click();
+  const video = card.locator('video');
+  await expect(video).toBeVisible();
+  await expect(video).toHaveAttribute('aria-label', t('watch.player.a11y', { title: REWIND.meta.title }));
+  // MSE로 붙이므로 video의 src는 playlist 주소가 아니라 hls.js가 만든 blob 주소다(CSP media-src blob:)
+  const videoSrc = await video.getAttribute('src');
+  expect(videoSrc === null || videoSrc.startsWith('blob:')).toBe(true);
+  expect(await app.args('watch_open')).toEqual([{ url: REWIND.url, content: REWIND.content }]);
+  await expect.poll(() => held.seen.length).toBeGreaterThan(0);
+  await app.axe('미리보기 펼침(빠른 다시보기)');
+
+  // playlist가 깨져 있으면(치명 오류) 한 문구의 실패 Notice와 세션 닫기
+  held.release();
+  await expect(card.getByRole('alert')).toContainText(t('watch.error.body'), { timeout: 15_000 });
+  await expect(video).toHaveCount(0);
+  await expect.poll(() => app.args('watch_close')).toEqual([{ id: 'a'.repeat(32) }]);
+  await app.axe('미리보기 실패(빠른 다시보기)');
+});
+
+test('빠른 다시보기 카드를 펼쳤다 접으면 세션을 닫는다', async ({ app }) => {
+  holdPlaylist(app.page);
+  const card = await openCard(app, resolved(), { watchSrc: HLS_SRC });
+  await toggle(card).click();
+  await expect(card.locator('video')).toBeVisible();
+  await toggle(card).click();
+  await expect(card.locator('video')).toBeHidden();
+  await expect.poll(() => app.args('watch_close')).toEqual([{ id: 'a'.repeat(32) }]);
 });

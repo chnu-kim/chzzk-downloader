@@ -24,6 +24,8 @@ trun = "trun"
 truns = "truns"
 # MP4 메타데이터 '©nam'(제목) 상자 흉내
 nam = "nam"
+# HTMLMediaElement 사건 이름 `seeked`(HTML 표준, 미리보기 구간 편집 preview-ux.md §6.3)
+seeked = "seeked"
 
 [default]
 # 생성된 CSS 해시(SITE_CSS_HASH): 16진수 열이 우연히 낱말처럼 읽힌다. CSS가 바뀔 때마다 값이 달라진다

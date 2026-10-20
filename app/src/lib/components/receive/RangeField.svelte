@@ -5,7 +5,6 @@
   import { t, type CopyKey } from '../../copy/ko';
   import { formatClock } from '../../format/duration';
   import { RANGE_FORMAT_EXAMPLE_SECS, type RangeError } from '../../receive';
-  import Button from '../ui/Button.svelte';
   import Disclosure from '../ui/Disclosure.svelte';
   import FieldRow from '../ui/FieldRow.svelte';
   import { isImeKey } from '../ui/focus';
@@ -54,12 +53,16 @@
     beyond: 'range.error.beyond',
   } as const satisfies Record<RangeError['kind'], CopyKey>;
 
-  // 조합 중 ↑/↓는 IME 후보 이동이라 거른다(PS2). 칸의 ↑/↓ 처리는 카드가 한다
   const uid = $props.id();
   const errorId = `${uid}-error`;
   let startEl: HTMLInputElement | null = $state(null);
   let endEl: HTMLInputElement | null = $state(null);
   let composing = false;
+
+  // 조합 중 ↑/↓는 IME 후보 이동이라 거른다(PS2). 칸의 ↑/↓ 처리는 카드가 한다
+  function keydown(f: 'start' | 'end', e: KeyboardEvent) {
+    if (!isImeKey(e)) onfieldkey?.(f, e);
+  }
 
   const errorText = $derived(
     error
@@ -104,9 +107,7 @@
                 oncompositionend={() => (composing = false)}
                 onfocus={() => onfocusfield?.('start')}
                 onblur={(e) => onblurfield?.('start', e.relatedTarget)}
-                onkeydown={(e) => {
-                  if (!isImeKey(e)) onfieldkey?.('start', e);
-                }}
+                onkeydown={(e) => keydown('start', e)}
                 onkeyup={(e) => onfieldkeyup?.('start', e)}
                 aria-keyshortcuts="ArrowUp ArrowDown"
               />
@@ -126,9 +127,7 @@
                 oncompositionend={() => (composing = false)}
                 onfocus={() => onfocusfield?.('end')}
                 onblur={(e) => onblurfield?.('end', e.relatedTarget)}
-                onkeydown={(e) => {
-                  if (!isImeKey(e)) onfieldkey?.('end', e);
-                }}
+                onkeydown={(e) => keydown('end', e)}
                 onkeyup={(e) => onfieldkeyup?.('end', e)}
                 aria-keyshortcuts="ArrowUp ArrowDown"
               />

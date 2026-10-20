@@ -1839,7 +1839,7 @@ describe('양방향·미세 조정·길이(ResolveCard + RangeField, preview-ux 
       expect(startEl()).toHaveValue('0:01:00');
     });
 
-    it('arrow seeks video when coupled; closed preview only changes the field', async () => {
+    it('arrow seeks video when coupled', async () => {
       const user = await openRewindPlayer();
       const { writes } = await loadMeta();
       await openRange(user);
@@ -1864,11 +1864,28 @@ describe('양방향·미세 조정·길이(ResolveCard + RangeField, preview-ux 
     });
 
     it('no seek when preview closed', async () => {
-      const user = await openCard();
+      const user = await openRewindPlayer();
+      const { writes } = await loadMeta();
+      await user.click(screen.getByText(t('watch.toggle'))); // 접으면 세션이 닫히고 video가 사라진다
+      await waitFor(() => expect(document.querySelector('video')).toBeNull());
       await openRange(user);
       await arrow(startEl(), 'ArrowUp');
       expect(startEl()).toHaveValue('0:00:01');
-      expect(api.watchOpen).not.toHaveBeenCalled();
+      expect(writes).toEqual([]);
+    });
+
+    it('non-repeat keydown after repeats drops the pending seek: keyup does not write twice', async () => {
+      const user = await openRewindPlayer();
+      const { writes } = await loadMeta();
+      await openRange(user);
+      startEl().focus();
+      await arrow(startEl(), 'ArrowUp');
+      for (let i = 0; i < 3; i++) await arrow(startEl(), 'ArrowUp', { repeat: true });
+      expect(writes).toEqual([1]);
+      await arrow(startEl(), 'ArrowUp'); // keyup 없이 새 누름 → 바로 탐색
+      expect(writes).toEqual([1, 5]);
+      await fireEvent.keyUp(startEl(), { key: 'ArrowUp' });
+      expect(writes).toEqual([1, 5]);
     });
 
     it('held key changes field each repeat but seeks once on keyup', async () => {

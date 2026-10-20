@@ -28,7 +28,7 @@
 
   let trackEl: HTMLDivElement | null = $state(null);
   /** 끌고 있는 손잡이와 마지막으로 낸 값(놓을 때 commit으로 다시 낸다) */
-  let drag: { h: Handle; last: number | null } | null = null;
+  let drag: { h: Handle; last: number | null; offset: number } | null = null;
 
   const bounds = $derived({
     start: handleBounds('start', { start, end, band }, length),
@@ -53,7 +53,11 @@
     e.preventDefault();
     (e.currentTarget as HTMLElement).focus();
     if (disabled) return;
-    drag = { h, last: null };
+    // 누른 지점과 앵커의 거리: 끌 때 빼서, 눌렀을 뿐인데 값이 튀지 않게 한다
+    const r = trackEl?.getBoundingClientRect();
+    const cur = h === 'start' ? start : end;
+    const anchorX = r ? r.left + fractionOf(cur, length) * r.width : e.clientX;
+    drag = { h, last: null, offset: e.clientX - anchorX };
     try {
       (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
     } catch {
@@ -63,14 +67,19 @@
 
   function move(h: Handle, e: PointerEvent) {
     if (!drag || drag.h !== h) return;
-    const v = secsFromX(e.clientX);
+    if (disabled) {
+      drag = null;
+      return;
+    }
+    const v = secsFromX(e.clientX - drag.offset);
     drag.last = v;
     onmove(h, v, 'drag');
   }
 
   function up(h: Handle, e: PointerEvent) {
     if (!drag || drag.h !== h) return;
-    const v = e.type === 'pointercancel' ? drag.last : secsFromX(e.clientX);
+    // 움직이지 않았으면(last == null) commit하지 않는다. 끌던 중 disabled가 되어도 마찬가지
+    const v = disabled ? null : e.type === 'pointercancel' ? drag.last : drag.last == null ? null : secsFromX(e.clientX - drag.offset);
     drag = null;
     if (v != null) onmove(h, v, 'commit');
   }
@@ -187,12 +196,15 @@
     box-sizing: border-box;
     width: var(--space-4);
     height: var(--control-h-sm);
+    /* 몸통 자체는 누르지 않는다: 누름은 바깥쪽 절반(::before)만 받아 붙은 상대 손잡이를 가리지 않는다 */
+    pointer-events: none;
     background: var(--accent);
     border: 1px solid var(--surface);
   }
   /* 대괄호 턱: 시작은 [ (구간 쪽인 오른쪽), 끝은 ] (왼쪽)으로 위·아래 끝에서 나온다 */
   .thumb::after {
     content: '';
+    pointer-events: none;
     position: absolute;
     top: 0;
     bottom: 0;
@@ -213,6 +225,7 @@
     top: 0;
     bottom: 0;
     width: var(--hit-min);
+    pointer-events: auto;
   }
   .thumb[data-side='start']::before {
     right: 50%;
@@ -221,10 +234,10 @@
     left: 50%;
   }
   /* 눌림은 채움(foundations §1 규칙 6): 포인터를 쥔 동안만의 일시 상태 */
-  .thumb:active {
+  .thumb:not([aria-disabled='true']):active {
     background: var(--accent-pressed);
   }
-  .thumb:active::after {
+  .thumb:not([aria-disabled='true']):active::after {
     border-color: var(--accent-pressed);
   }
   @media (forced-colors: active) {
@@ -244,8 +257,12 @@
       background: Highlight;
       border-color: CanvasText;
     }
-    .thumb::after {
+    .thumb::after,
+    .thumb:not([aria-disabled='true']):active::after {
       border-color: Highlight;
+    }
+    .thumb:not([aria-disabled='true']):active {
+      background: Highlight;
     }
   }
 </style>

@@ -148,9 +148,55 @@ describe('RangeTimeline (PVU-2)', () => {
       await fireEvent.pointerMove(startThumb(), { clientX: 300, pointerId: 1 });
       expect(onmove).not.toHaveBeenCalled();
       await fireEvent.pointerDown(startThumb(), { clientX: 60, pointerId: 1 });
+      await fireEvent.pointerMove(startThumb(), { clientX: 100, pointerId: 1 });
       await fireEvent.pointerUp(startThumb(), { clientX: 120, pointerId: 1 });
       await fireEvent.pointerMove(startThumb(), { clientX: 300, pointerId: 1 });
-      expect(onmove.mock.calls.map((c) => c[2])).toEqual(['commit']);
+      expect(onmove.mock.calls.map((c) => c[2])).toEqual(['drag', 'commit']);
+    });
+
+    it('a press and release without moving commits nothing, even off the anchor', async () => {
+      const { onmove } = setup();
+      await fireEvent.pointerDown(startThumb(), { clientX: 40, pointerId: 1 });
+      await fireEvent.pointerUp(startThumb(), { clientX: 40, pointerId: 1 });
+      expect(onmove).not.toHaveBeenCalled();
+    });
+
+    it('dragging keeps the grab offset: +30px moves the value by exactly +30', async () => {
+      const { onmove } = setup();
+      await fireEvent.pointerDown(startThumb(), { clientX: 40, pointerId: 1 });
+      await fireEvent.pointerMove(startThumb(), { clientX: 70, pointerId: 1 });
+      expect(onmove).toHaveBeenLastCalledWith('start', 90, 'drag');
+      await fireEvent.pointerUp(startThumb(), { clientX: 70, pointerId: 1 });
+      expect(onmove).toHaveBeenLastCalledWith('start', 90, 'commit');
+    });
+
+    it('pressing a thumb focuses it and prevents default', async () => {
+      setup();
+      const ev = new PointerEvent('pointerdown', { cancelable: true, bubbles: true, button: 0, pointerId: 1 });
+      startThumb().dispatchEvent(ev);
+      expect(ev.defaultPrevented).toBe(true);
+      expect(document.activeElement).toBe(startThumb());
+    });
+
+    it('disabled thumbs still take focus on press but never emit', async () => {
+      const { onmove } = setup({ disabled: true });
+      const ev = new PointerEvent('pointerdown', { cancelable: true, bubbles: true, button: 0, pointerId: 1 });
+      endThumb().dispatchEvent(ev);
+      expect(document.activeElement).toBe(endThumb());
+      await fireEvent.pointerMove(endThumb(), { clientX: 200, pointerId: 1 });
+      await fireEvent.pointerUp(endThumb(), { clientX: 200, pointerId: 1 });
+      expect(onmove).not.toHaveBeenCalled();
+    });
+
+    it('becoming disabled mid-drag stops emitting', async () => {
+      const { onmove, rerender } = setup();
+      await fireEvent.pointerDown(startThumb(), { clientX: 60, pointerId: 1 });
+      await fireEvent.pointerMove(startThumb(), { clientX: 100, pointerId: 1 });
+      onmove.mockClear();
+      await rerender({ disabled: true });
+      await fireEvent.pointerMove(startThumb(), { clientX: 200, pointerId: 1 });
+      await fireEvent.pointerUp(startThumb(), { clientX: 200, pointerId: 1 });
+      expect(onmove).not.toHaveBeenCalled();
     });
 
     it('pointercancel commits the last dragged value once', async () => {
@@ -300,11 +346,11 @@ describe('RangeTimeline (PVU-2)', () => {
       const { onmove } = setup({ start: 100, end: 101 });
       await fireEvent.pointerDown(startThumb(), { clientX: 99, pointerId: 1 });
       await fireEvent.pointerMove(startThumb(), { clientX: 50, pointerId: 1 });
-      expect(onmove).toHaveBeenLastCalledWith('start', 50, 'drag');
+      expect(onmove).toHaveBeenLastCalledWith('start', 51, 'drag');
       await fireEvent.pointerUp(startThumb(), { clientX: 50, pointerId: 1 });
       await fireEvent.pointerDown(endThumb(), { clientX: 102, pointerId: 1 });
       await fireEvent.pointerMove(endThumb(), { clientX: 300, pointerId: 1 });
-      expect(onmove).toHaveBeenLastCalledWith('end', 300, 'drag');
+      expect(onmove).toHaveBeenLastCalledWith('end', 299, 'drag');
     });
 
     it('start=end-1: values stay valid and the keys respect min gap', async () => {

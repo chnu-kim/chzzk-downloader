@@ -1,4 +1,6 @@
 // App 뼈대(system/patterns.md §14.1·§1.3·§1.4·§13-7, platform.md §3): 열·툴바 구성 표·토스트 여백·로그인 성공 토스트·비활성 창.
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { render, screen, waitFor, within } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -183,6 +185,27 @@ describe('열과 스크롤 영역', () => {
     await waitFor(() => expect(main).toHaveClass('has-toast'));
     toasts.clear();
     await waitFor(() => expect(main).not.toHaveClass('has-toast'));
+  });
+
+  it('카드가 열려 있는 동안에만 .main에 has-card(스크롤 바닥 여백) 표시가 붙는다(preview-ux V3)', async () => {
+    start(dto({ state: 'disabled' }));
+    const { resolver } = await import('../../stores/resolve.svelte');
+    const { resolved } = await import('../../../test/fixtures');
+    render(App);
+    await screen.findByLabelText(t('url.label'));
+    const main = screen.getByRole('main');
+    expect(main).not.toHaveClass('has-card');
+    resolver.state = { kind: 'ready', gen: 1, view: resolved() };
+    await waitFor(() => expect(main).toHaveClass('has-card'));
+    resolver.finish();
+    await waitFor(() => expect(main).not.toHaveClass('has-card'));
+  });
+
+  it('has-card의 scroll-padding-bottom은 sticky 바닥 줄 높이이고 토스트와는 더한다(덮어쓰지 않는다)', () => {
+    const css = readFileSync(resolve(__dirname, '../../../App.svelte'), 'utf8');
+    const footer = 'var(--control-h) + 2 * var(--space-12) + var(--space-4)';
+    expect(css).toMatch(new RegExp(String.raw`\.main\.has-card\s*\{[^}]*scroll-padding-bottom:\s*calc\(${footer.replace(/[()+*]/g, '\\$&')}\)`));
+    expect(css).toMatch(/\.main\.has-card\.has-toast\s*\{[^}]*scroll-padding-bottom:\s*calc\([^;]*var\(--row-h\)[^;]*var\(--control-h\)/);
   });
 });
 

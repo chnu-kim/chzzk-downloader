@@ -5,15 +5,31 @@
   // 빠른 다시보기(HLS)는 hls.js light를 동적으로 불러(PV9) MSE로 붙인다. 못 쓰면 네이티브 m3u8, 그것도 없으면 실패(PV16).
   // 구간 찍기(PV17): `markable`(빠른 다시보기 카드)이고 hls.js로 붙었을 때만 재생기 아래 [시작 찍기]·[끝 찍기]를 보인다.
   // 네이티브 m3u8 대체 경로는 시간축이 다를 수 있어 그리지 않는다. 누른 순간의 floor(currentTime)초를 `onmark`로 넘길 뿐이다.
+  // 구간 편집(preview-ux PVU-3): 같은 조건에서 영상 아래에 구간 막대(RangeTimeline)와 조작 줄(찍기·구간 보기·시작부터 보기·구간 반복하기)을
+  // 한 편집 영역(role=group)으로 묶는다. 칸 문자열의 원천은 카드이고(`fields`), 손잡이는 `rangeEdit.moveHandle`이 만든 새 칸을 `onfields`로
+  // 돌려줄 뿐이다. 영상 탐색은 `seek()` 하나를 거치고 그 앞에서 구간 보기를 끈다(§6.3: restart·pause가 손잡이 조작에 끼어들지 않게).
   import { onDestroy, tick } from 'svelte';
   import type Hls from 'hls.js/light';
   import * as api from '../../api';
   import type { AppError, ResolvedDto, WatchOpenDto } from '../../bindings';
   import { errorCopy } from '../../copy/errors';
   import { t } from '../../copy/ko';
+  import {
+    consumeOwnSeek,
+    moveHandle,
+    playStep,
+    reachesEnd,
+    selection,
+    type BarLength,
+    type Fields,
+    type Handle,
+    type PlayMode,
+  } from '../../rangeEdit';
   import Button from '../ui/Button.svelte';
   import Disclosure from '../ui/Disclosure.svelte';
   import Notice from '../ui/Notice.svelte';
+  import Switch from '../ui/Switch.svelte';
+  import RangeTimeline from './RangeTimeline.svelte';
 
   interface Props {
     view: ResolvedDto;
@@ -23,9 +39,29 @@
     disabled?: boolean;
     /** 찍은 시각(초, 내림)을 카드의 구간 칸으로 보낸다 */
     onmark?: (field: 'start' | 'end', secs: number) => void;
+    /** 카드의 구간 칸 상태(막대가 그리는 값의 원천) */
+    fields?: Fields;
+    /** 막대 길이(카드가 meta와 영상 길이로 만든다). 없으면 막대와 구간 보기를 그리지 않는다 */
+    len?: BarLength | null;
+    /** 접힌 구간 줄을 처음 고칠 때 끝 칸에 되돌려 넣는 전체 값 */
+    initialEnd?: string;
+    /** 손잡이로 고친 새 칸. 'handle'이면 카드가 앞 [받기]의 구간 오류도 지운다 */
+    onfields?: (next: Fields, cause: 'handle') => void;
+    /** 영상이 알려 준 길이(유한할 때, 접기·실패면 null) */
+    onduration?: (secs: number | null) => void;
   }
 
-  let { view, markable = false, disabled = false, onmark }: Props = $props();
+  let {
+    view,
+    markable = false,
+    disabled = false,
+    onmark,
+    fields = { open: false, start: '', end: '' },
+    len = null,
+    initialEnd = '',
+    onfields,
+    onduration,
+  }: Props = $props();
 
   type Phase = 'closed' | 'opening' | 'ready' | 'failed';
   /** 받기와 같은 문구로 알리는 게이트 거부(그 밖의 실패는 한 문구, preview.md Q2) */
@@ -47,7 +83,22 @@
   let usingHls = $state(false);
   /** video의 메타데이터를 읽었는가(그 전의 currentTime은 믿지 않는다) */
   let metaReady = $state(false);
+  /** 재생 위치(초). timeupdate·seeked에서 읽는다 */
+  let position = $state(0);
+  /** 구간 보기 모드(§6.3). 접기·실패·다시 열기·seek()에서 'off' */
+  let playMode: PlayMode = $state('off');
+  /** 구간 반복하기 스위치(카드마다 새로 시작, 기억하지 않는다) */
+  let loop = $state(false);
+  /** 우리가 currentTime을 쓴 목표(다음 seeked가 byUs인지 가린다)와 우리가 부른 pause 깃발. 둘 다 한 번 쓰고 버린다 */
+  let pendingSeek: number | null = null;
+  let pausedByUs = false;
+  /** 마지막으로 알린 영상 길이(같은 값을 거듭 알리지 않는다) */
+  let reportedSecs: number | null | undefined;
 
+  const uid = $props.id();
+  const loopId = `${uid}-loop`;
+  /** 구간 편집 영역을 그리는가: 빠른 다시보기 카드이고 hls.js로 붙었을 때만(PV17·PVU2) */
+  const editing = $derived(markable && usingHls);
   const gateCopy = $derived(gateError ? errorCopy(gateError, { place: 'resolve' }) : null);
 
   /** 이 웹뷰가 mp4를 읽을 수 있는가(없으면 src를 달지 않고 곧바로 실패) */
@@ -60,12 +111,35 @@
     return document.createElement('video').canPlayType('application/vnd.apple.mpegurl') !== '';
   }
 
+  function resetPlay() {
+    playMode = 'off';
+    pendingSeek = null;
+    pausedByUs = false;
+    position = 0;
+  }
+
+  function reportDuration(secs: number | null) {
+    if (secs === reportedSecs) return;
+    reportedSecs = secs;
+    onduration?.(secs);
+  }
+
+  /** loadedmetadata·durationchange: 유한한 양수 길이만 알린다 */
+  function onmeta() {
+    metaReady = true;
+    const d = videoEl?.duration;
+    reportDuration(d != null && Number.isFinite(d) && d > 0 ? d : null);
+    if (videoEl) position = videoEl.currentTime || 0;
+  }
+
   function closeSession() {
     // 재생기를 먼저 떼야 세션을 닫은 뒤 세그먼트를 더 요청하지 않는다
     hls?.destroy();
     hls = null;
     usingHls = false;
     metaReady = false;
+    resetPlay();
+    reportDuration(null);
     const id = sessionId;
     sessionId = null;
     if (id) void api.watchClose(id).catch(() => {});
@@ -173,6 +247,124 @@
     onmark?.(field, Math.floor(videoEl.currentTime));
   }
 
+  /** 막대에 그릴 값(접힘이면 전체). 길이를 모르면 null */
+  const sel = $derived(len ? selection(fields, len.secs) : null);
+
+  /**
+   * 영상을 secs초로 옮긴다(손잡이·키·막대·칸). 먼저 구간 보기를 끈다(§6.3): 그래서 이 탐색은 playStep에 닿지 않는다.
+   * 목표는 [0, video.duration]으로 한 번 더 자른다(meta 길이가 실제 영상보다 길 수 있다, 검토 반영 V11)
+   */
+  export function seek(secs: number) {
+    playMode = 'off';
+    const v = videoEl;
+    if (!v || !metaReady || Number.isNaN(secs)) return;
+    const d = v.duration;
+    const hi = Number.isFinite(d) && d > 0 ? d : Number.POSITIVE_INFINITY;
+    const target = Math.min(Math.max(secs, 0), hi);
+    v.currentTime = target;
+    position = target;
+  }
+
+  /** 손잡이 이동. 끌기 중에는 칸만 바꾸고, 놓을 때·키에서는 영상도 그 손잡이 시각으로 간다 */
+  function moveTo(h: Handle, secs: number, phase: 'drag' | 'commit') {
+    if (!len || disabled) return;
+    const next = moveHandle(fields, h, secs, len, initialEnd);
+    if (!next) return;
+    onfields?.(next, 'handle');
+    if (phase === 'commit') seek(selection(next, len.secs)[h]);
+  }
+
+  /** 시작 칸 값(초) 쪽 선택. 길이를 모르면 구간 보기는 없다 */
+  function stepSel() {
+    if (!sel || !len) return null;
+    return { start: sel.start, end: sel.end, toEnd: reachesEnd(sel, fields.open ? fields.end : '', len.secs) };
+  }
+
+  /** 우리가 currentTime을 쓴다: 다음 seeked를 byUs로 알아볼 수 있게 목표를 남긴다 */
+  function ownSeek(secs: number) {
+    if (!videoEl) return;
+    pendingSeek = secs;
+    videoEl.currentTime = secs;
+  }
+
+  function startPlay() {
+    const v = videoEl;
+    if (!v) return;
+    try {
+      void Promise.resolve(v.play()).catch(() => {
+        // 웹뷰가 재생을 거부했다: 구간 보기는 켜지지 않은 것으로 되돌린다
+        playMode = 'off';
+      });
+    } catch {
+      playMode = 'off';
+    }
+  }
+
+  function playRange() {
+    const g = stepSel();
+    if (!g || !sel?.band) return;
+    playMode = loop ? 'loop' : 'range';
+    ownSeek(g.start);
+    startPlay();
+  }
+
+  function playFromStart() {
+    if (!sel) return;
+    playMode = 'off';
+    ownSeek(sel.start);
+    startPlay();
+  }
+
+  function onloop(next: boolean) {
+    // 구간 보기 중에 스위치를 바꾸면 그 자리에서 range ↔ loop
+    if (playMode !== 'off') playMode = next ? 'loop' : 'range';
+  }
+
+  function apply(r: { mode: PlayMode; action: 'none' | 'pause' | 'restart' }, start: number) {
+    playMode = r.mode;
+    if (r.action === 'pause') {
+      pausedByUs = true;
+      videoEl?.pause();
+    } else if (r.action === 'restart') {
+      ownSeek(start);
+    }
+  }
+
+  function ontimeupdate() {
+    if (!videoEl) return;
+    position = videoEl.currentTime;
+    const g = stepSel();
+    if (!g) return;
+    apply(playStep(playMode, { kind: 'time', t: position, byUs: false }, g), g.start);
+  }
+
+  function onseeked() {
+    if (!videoEl) return;
+    position = videoEl.currentTime;
+    const c = consumeOwnSeek(pendingSeek, position);
+    pendingSeek = null;
+    const g = stepSel();
+    if (!g) return void (playMode = 'off');
+    apply(playStep(playMode, { kind: 'seeked', t: position, byUs: c.byUs }, g), g.start);
+  }
+
+  function onpause() {
+    const byUs = pausedByUs;
+    pausedByUs = false;
+    const g = stepSel();
+    if (!g) return void (playMode = 'off');
+    apply(playStep(playMode, { kind: 'pause', t: position, byUs }, g), g.start);
+  }
+
+  function onended() {
+    const g = stepSel();
+    if (!g) return void (playMode = 'off');
+    const r = playStep(playMode, { kind: 'ended', t: position, byUs: false }, g);
+    apply(r, g.start);
+    // 끝에서 멈춘 영상은 처음으로 돌아간 뒤 다시 재생해야 이어진다
+    if (r.action === 'restart') startPlay();
+  }
+
   function openInChzzk() {
     void api.openContentPage(view.content).catch(() => {});
   }
@@ -188,24 +380,64 @@
     {#if phase === 'opening'}
       <div class="stage" aria-hidden="true"></div>
     {:else if phase === 'ready'}
-      <!-- svelte-ignore a11y_media_has_caption -->
-      <video
-        class="player"
-        controls
-        preload="metadata"
-        playsinline
-        bind:this={videoEl}
-        src={src || undefined}
-        aria-label={t('watch.player.a11y', { title: view.meta.title })}
-        onerror={onvideoerror}
-        onloadedmetadata={() => (metaReady = true)}
-      ></video>
-      {#if markable && usingHls}
-        <div class="marks">
-          <Button size="sm" disabled={disabled || !metaReady} onclick={() => mark('start')}>{t('watch.mark.start')}</Button>
-          <Button size="sm" disabled={disabled || !metaReady} onclick={() => mark('end')}>{t('watch.mark.end')}</Button>
-        </div>
-      {/if}
+      <!-- 편집 영역: 영상 + 막대 + 조작 줄. 영상은 hls.js가 붙기 전후에 같은 요소여야 해서(usingHls가 늦게 켜진다) 감싸는 요소를
+           늘 두고 편집 영역의 이름·역할만 조건으로 붙인다. 포커스 링은 전역 규칙을 그대로 받는다(data-focus-container 없음, V8) -->
+      <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+      <div
+        class="editor"
+        role={editing ? 'group' : undefined}
+        aria-label={editing ? t('watch.editor.a11y', { title: view.meta.title }) : undefined}
+        tabindex={editing ? -1 : undefined}
+        data-local-keys={editing ? '' : undefined}
+      >
+        <!-- svelte-ignore a11y_media_has_caption -->
+        <video
+          class="player"
+          controls
+          preload="metadata"
+          playsinline
+          bind:this={videoEl}
+          src={src || undefined}
+          aria-label={t('watch.player.a11y', { title: view.meta.title })}
+          onerror={onvideoerror}
+          onloadedmetadata={onmeta}
+          ondurationchange={onmeta}
+          ontimeupdate={ontimeupdate}
+          onseeked={onseeked}
+          onpause={onpause}
+          onended={onended}
+        ></video>
+        {#if editing}
+          {#if metaReady && len && sel}
+            <div class="timeline">
+              <RangeTimeline
+                length={len.secs}
+                start={sel.start}
+                end={sel.end}
+                band={sel.band}
+                {position}
+                {disabled}
+                onmove={moveTo}
+                onseek={seek}
+              />
+            </div>
+          {/if}
+          <div class="controls">
+            <Button size="sm" disabled={disabled || !metaReady} onclick={() => mark('start')}>{t('watch.mark.start')}</Button>
+            <Button size="sm" disabled={disabled || !metaReady} onclick={() => mark('end')}>{t('watch.mark.end')}</Button>
+            <Button size="sm" disabled={disabled || !metaReady || !len || !sel?.band} onclick={playRange}>
+              {t('watch.range.play.label')}
+            </Button>
+            <Button size="sm" disabled={disabled || !metaReady || !len} onclick={playFromStart}>
+              {t('watch.range.fromStart.label')}
+            </Button>
+            <span class="loop">
+              <span id={loopId}>{t('watch.range.loop.label')}</span>
+              <Switch bind:value={loop} labelledby={loopId} onchange={onloop} />
+            </span>
+          </div>
+        {/if}
+      </div>
     {:else if phase === 'failed'}
       {#if gateCopy}
         <Notice variant="inline" tone="danger" title={gateCopy.title}>
@@ -243,10 +475,21 @@
   .player {
     object-fit: contain;
   }
-  .marks {
+  /* 편집 영역 컨테이너(tabindex -1)는 키를 받는 조작 대상이라 포커스 링을 숨기지 않는다 */
+  .timeline {
+    margin-top: var(--space-8);
+  }
+  .controls {
     display: flex;
+    flex-wrap: wrap;
+    align-items: center;
     gap: var(--space-8);
     margin-top: var(--space-8);
+  }
+  .loop {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-8);
   }
   .line {
     margin: 0;

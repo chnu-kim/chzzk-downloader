@@ -86,6 +86,10 @@ export const ko = {
   'watch.mark.start': '시작 찍기',
   'watch.mark.end': '끝 찍기',
   'watch.player.a11y': '‘{title}’ 미리보기',
+  'watch.editor.a11y': '‘{title}’ 구간 고르기',
+  'watch.range.play.label': '구간 보기',
+  'watch.range.fromStart.label': '시작부터 보기',
+  'watch.range.loop.label': '구간 반복하기',
 
   'folder.change': '변경…',
 

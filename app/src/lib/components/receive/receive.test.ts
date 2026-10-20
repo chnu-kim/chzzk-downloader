@@ -1715,6 +1715,27 @@ describe('양방향·미세 조정·길이(ResolveCard + RangeField, preview-ux 
       expect(api.watchOpen).not.toHaveBeenCalled();
     });
 
+    it('blur on parsed end seeks video', async () => {
+      const user = await openRewindPlayer();
+      const { writes } = await loadMeta();
+      await openRange(user);
+      await typeInto(user, endEl(), '1:00:00');
+      expect(writes).toEqual([]);
+      await fireEvent.blur(endEl(), { relatedTarget: screen.getByRole('switch', { name: t('watch.range.loop.label') }) });
+      expect(writes).toEqual([3600]);
+    });
+
+    it('blur before metadata does nothing', async () => {
+      const user = await openRewindPlayer();
+      const v = document.querySelector('video') as HTMLVideoElement;
+      const writes: number[] = [];
+      Object.defineProperty(v, 'currentTime', { configurable: true, get: () => 0, set: (x: number) => { writes.push(x); } });
+      await openRange(user);
+      await typeInto(user, startEl(), '0:10:00');
+      await user.tab();
+      expect(writes).toEqual([]);
+    });
+
     it('blur without change does not seek (Tab으로 지나가기)', async () => {
       const user = await openRewindPlayer();
       const { writes } = await loadMeta();
@@ -1822,6 +1843,18 @@ describe('양방향·미세 조정·길이(ResolveCard + RangeField, preview-ux 
       expect(writes).toEqual([1]);
       await user.click(nudgeBtn(N.endEarlier));
       expect(writes).toEqual([1, 11564]);
+    });
+
+    it('nudge end later to the very end still seeks (영상 길이로 막대를 쓸 때)', async () => {
+      const base = resolved();
+      const user = await openRewindPlayer({ meta: { ...base.meta, durationSecs: null } });
+      const { writes } = await loadMeta(11565.7);
+      await openRange(user);
+      await user.click(nudgeBtn(N.endEarlier));
+      expect(writes.at(-1)).toBe(11564);
+      await user.click(nudgeBtn(N.endLater));
+      expect(endEl()).toHaveValue('');
+      expect(writes.at(-1)).toBe(11565);
     });
 
     it('nudge with preview closed only changes the field', async () => {

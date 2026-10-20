@@ -217,7 +217,8 @@
     if (!next) return;
     handleFields(next);
     if (!barLen) return;
-    const secs = seekTargetOf(next[f], barLen.secs);
+    // 끝 칸이 빈칸("끝까지")이 되었으면 맨 끝(floor(길이))으로 보낸다
+    const secs = f === 'end' && next.end.trim() === '' ? Math.floor(barLen.secs) : seekTargetOf(next[f], barLen.secs);
     if (secs != null) watchPanel?.seek(secs);
   }
 

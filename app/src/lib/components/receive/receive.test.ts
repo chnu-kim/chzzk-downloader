@@ -1586,6 +1586,11 @@ describe('구간 편집 배치(ResolveCard, preview-ux PVU-3)', () => {
     expect(screen.queryAllByRole('slider')).toHaveLength(0);
     await user.click(screen.getByText(t('range.toggle')));
     expect(endEl()).toHaveValue('3:12:45');
+    // 다시 펼쳐 새 영상이 더 짧아도 막대 길이는 여전히 카드의 meta 길이다
+    await user.click(screen.getByText(t('watch.toggle')));
+    await waitFor(() => expect(document.querySelector('video')).not.toBeNull());
+    await loadMeta(300);
+    expect(thumb(t('range.end'))).toHaveAttribute('aria-valuemax', '11565');
   });
 
   it('meta 길이가 없고 접었다 다시 열면 영상 길이도 사라진다', async () => {
@@ -1597,6 +1602,9 @@ describe('구간 편집 배치(ResolveCard, preview-ux PVU-3)', () => {
     await user.click(screen.getByText(t('watch.toggle')));
     await waitFor(() => expect(document.querySelector('video')).not.toBeNull());
     expect(screen.queryAllByRole('slider')).toHaveLength(0);
+    // 새 loadedmetadata의 길이가 새 막대 길이다(앞 영상의 599.6이 아니다)
+    await loadMeta(300);
+    expect(thumb(t('range.end'))).toHaveAttribute('aria-valuemax', '300');
   });
 
   it('손잡이 이동은 앞 [받기]가 남긴 구간 오류를 지우고, 찍기는 지우지 않는다', async () => {

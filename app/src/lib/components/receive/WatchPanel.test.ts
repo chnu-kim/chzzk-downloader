@@ -578,14 +578,21 @@ describe('구간 편집(PVU-3)', () => {
   const fromStartBtn = () => screen.queryByRole('button', { name: t('watch.range.fromStart.label') });
   const loopSwitch = () => screen.queryByRole('switch', { name: t('watch.range.loop.label') });
 
+  /** jsdom은 배치를 하지 않으므로 막대의 좌표를 흉내 낸다(왼쪽 0, 폭 600) */
+  function rectOf(el: Element) {
+    el.getBoundingClientRect = () => ({ left: 0, top: 0, right: 600, bottom: 24, width: 600, height: 24, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect;
+  }
+
   /** currentTime 쓰기를 세는 video 흉내(jsdom은 재생·탐색을 하지 않는다) */
   function mockVideo(duration = 600, time = 0) {
     const v = videoEl()!;
     let ct = time;
     let dur = duration;
+    let ended = false;
     const writes: number[] = [];
     Object.defineProperty(v, 'currentTime', { configurable: true, get: () => ct, set: (x: number) => { ct = x; writes.push(x); } });
     Object.defineProperty(v, 'duration', { configurable: true, get: () => dur });
+    Object.defineProperty(v, 'ended', { configurable: true, get: () => ended });
     const play = vi.fn(() => Promise.resolve());
     const pause = vi.fn();
     v.play = play as never;
@@ -597,6 +604,7 @@ describe('구간 편집(PVU-3)', () => {
       pause,
       setTime: (x: number) => (ct = x),
       setDuration: (x: number) => (dur = x),
+      setEnded: (x: boolean) => (ended = x),
     };
   }
 
@@ -800,6 +808,57 @@ describe('구간 편집(PVU-3)', () => {
       expect(m.play).toHaveBeenCalledTimes(2);
     });
 
+    it('실제 브라우저 순서(timeupdate → pause → ended)에서도 끝(toEnd) 반복은 이어진다', async () => {
+      // 끝 칸이 빈칸이고 영상이 meta보다 짧다: 브라우저는 끝에서 pause를 건 뒤 ended를 보낸다
+      const { user } = await openEditor({ fields: { open: true, start: '0:01:00', end: '' } });
+      const m = await ready(599.6);
+      await user.click(loopSwitch()!);
+      await user.click(playBtn()!);
+      m.setTime(599.6);
+      m.setEnded(true);
+      await fireEvent(m.v, new Event('timeupdate'));
+      await fireEvent(m.v, new Event('pause'));
+      await fireEvent(m.v, new Event('ended'));
+      expect(m.writes).toEqual([60, 60]);
+      expect(m.play).toHaveBeenCalledTimes(2);
+    });
+
+    it('반복을 끈 채 ended가 오면 처음으로 돌아가지도 다시 재생하지도 않는다', async () => {
+      const { user } = await openEditor({ fields: { open: true, start: '0:01:00', end: '' } });
+      const m = await ready();
+      await user.click(playBtn()!);
+      m.setEnded(true);
+      await fireEvent(m.v, new Event('pause'));
+      await fireEvent(m.v, new Event('ended'));
+      expect(m.writes).toEqual([60]);
+      expect(m.play).toHaveBeenCalledTimes(1);
+    });
+
+    it('끝 손잡이를 끄는 동안(drag)에도 구간 보기가 꺼진다: pause·restart가 끼어들지 않는다', async () => {
+      const { user, container } = await openEditor({ fields: RANGE });
+      const m = await ready();
+      rectOf(container.querySelector('.track')!);
+      await user.click(loopSwitch()!);
+      await user.click(playBtn()!);
+      const thumb = slider(t('range.end'));
+      await fireEvent.pointerDown(thumb, { clientX: 90, pointerId: 1 });
+      await fireEvent.pointerMove(thumb, { clientX: 70, pointerId: 1 });
+      m.setTime(100);
+      await fireEvent(m.v, new Event('timeupdate'));
+      expect(m.pause).not.toHaveBeenCalled();
+      expect(m.writes).toEqual([60]);
+    });
+
+    it('메타데이터 전에 durationchange만 와도 막대·찍기는 켜지지 않는다', async () => {
+      await openEditor();
+      const m = mockVideo();
+      await fireEvent(m.v, new Event('durationchange'));
+      expect(sliders()).toHaveLength(0);
+      expect(screen.getByRole('button', { name: t('watch.mark.start') })).toBeDisabled();
+      await fireEvent(m.v, new Event('loadedmetadata'));
+      expect(sliders()).toHaveLength(2);
+    });
+
     it('끝이 영상 끝이 아닌데 ended가 오면(meta가 더 길다) 반복도 끝낸다', async () => {
       const { user } = await openEditor({ fields: RANGE });
       const m = await ready();
@@ -871,7 +930,6 @@ describe('구간 편집(PVU-3)', () => {
       await fireEvent(m2.v, new Event('timeupdate'));
       expect(m2.pause).not.toHaveBeenCalled();
       expect(m.pause).not.toHaveBeenCalled();
-      expect(loopSwitch()).toHaveAttribute('aria-checked', 'false');
     });
   });
 

@@ -124,12 +124,17 @@
     onduration?.(secs);
   }
 
-  /** loadedmetadata·durationchange: 유한한 양수 길이만 알린다 */
+  /** loadedmetadata: 이제부터 currentTime을 믿는다 */
   function onmeta() {
     metaReady = true;
+    ondur();
+  }
+
+  /** durationchange: 길이만 알린다(MSE는 loadedmetadata 전에도 쏠 수 있어 metaReady는 세우지 않는다). 유한한 양수만 */
+  function ondur() {
     const d = videoEl?.duration;
     reportDuration(d != null && Number.isFinite(d) && d > 0 ? d : null);
-    if (videoEl) position = videoEl.currentTime || 0;
+    if (videoEl && metaReady) position = videoEl.currentTime || 0;
   }
 
   function closeSession() {
@@ -268,6 +273,8 @@
   /** 손잡이 이동. 끌기 중에는 칸만 바꾸고, 놓을 때·키에서는 영상도 그 손잡이 시각으로 간다 */
   function moveTo(h: Handle, secs: number, phase: 'drag' | 'commit') {
     if (!len || disabled) return;
+    // 구간을 고치는 동안에는 끌기 중에도 restart·pause가 끼어들지 않는다(§6.3·V6)
+    playMode = 'off';
     const next = moveHandle(fields, h, secs, len, initialEnd);
     if (!next) return;
     onfields?.(next, 'handle');
@@ -351,6 +358,8 @@
   function onpause() {
     const byUs = pausedByUs;
     pausedByUs = false;
+    // 끝에 닿아 브라우저가 건 일시정지는 사용자 일시정지가 아니다: 곧 오는 ended가 이어받는다
+    if (videoEl?.ended) return;
     const g = stepSel();
     if (!g) return void (playMode = 'off');
     apply(playStep(playMode, { kind: 'pause', t: position, byUs }, g), g.start);
@@ -401,7 +410,7 @@
           aria-label={t('watch.player.a11y', { title: view.meta.title })}
           onerror={onvideoerror}
           onloadedmetadata={onmeta}
-          ondurationchange={onmeta}
+          ondurationchange={ondur}
           ontimeupdate={ontimeupdate}
           onseeked={onseeked}
           onpause={onpause}

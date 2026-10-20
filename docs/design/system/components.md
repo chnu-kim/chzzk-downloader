@@ -529,7 +529,7 @@ type BadgeProps = { kind: 'vod' | 'clip' | 'rewind' | 'adult' };
 
 ### 2.20 ProgressBar
 
-**앱 전용**이다(Worker 페이지에는 진행 표시가 없다). **해부**: 트랙 `<div role="progressbar">` + 채움 `.fill`. 채움은 `width: 100%; transform-origin: left; transform: scaleX(var(--p))`, `--p`는 컴포넌트가 Svelte `style:--p={value / 100}` **디렉티브**(CSSOM 설정, CSP `style-src 'self'`에 걸리지 않는다. 속성 문자열 `style="--p: …"`는 CSP가 막으므로 쓰지 않는다)로 쓰는 **유일하게 허용된 컴포넌트 커스텀 프로퍼티**(foundations 머리글, `design-lint` DL7·DS2). 막대는 `--surface` 위에만 놓는다(다크 `--bg` 위에서는 트랙 `--track`이 보이지 않는다, foundations §2.3).
+**앱 전용**이다(Worker 페이지에는 진행 표시가 없다). **해부**: 트랙 `<div role="progressbar">` + 채움 `.fill`. 채움은 `width: 100%; transform-origin: left; transform: scaleX(var(--p))`, `--p`는 컴포넌트가 Svelte `style:--p={value / 100}` **디렉티브**(CSSOM 설정, CSP `style-src 'self'`에 걸리지 않는다. 속성 문자열 `style="--p: …"`는 CSP가 막으므로 쓰지 않는다)로 쓰는 **허용된 컴포넌트 커스텀 프로퍼티**(foundations 머리글, `design-lint` DL7·DS2. 구간 막대 §2.30도 같은 이름·방식으로 쓴다, ADR-0028). 막대는 `--surface` 위에만 놓는다(다크 `--bg` 위에서는 트랙 `--track`이 보이지 않는다, foundations §2.3).
 
 **API**
 ```ts
@@ -632,6 +632,28 @@ type WatchPanelProps = {
 
 Worker: 없다.
 
+### 2.30 RangeTimeline (기능 컴포넌트)
+
+**해부**: 빠른 다시보기 카드의 미리보기 `<video>` 바로 아래에 놓는 구간 막대(`receive/RangeTimeline.svelte`, 기능 컴포넌트라 `ui/` 갤러리 매트릭스 대상이 아니다. 화면 몫 갤러리 장면이 본다). 네이티브 `controls`는 그대로 두고(ADR-0028이 ADR-0027 결정 2·§2.29 규칙 ①에 덧붙이기만 한다) 막대를 따로 둔다. 막대(`.track`, 누름 영역 높이 `--hit-min`, 보이는 두께 `--progress-h`, 바탕 `--track`) 안에 선택 띠 두 겹(`.upto-end` `--accent` → `.before-start` `--track`), 재생 위치(`.position`, 너비 0 앵커 + `border-inline-start: 2px solid var(--fg)`, 높이는 트랙 두께만), 손잡이 둘(`.thumb`, 너비 0 앵커 안에 폭 `--space-4`·높이 `--control-h-sm`, 면 `--accent`, 테두리 1px `--surface`)을 둔다. 손잡이는 **대괄호 모양**이다: 시작은 `[`(세로 막대 위·아래 끝의 짧은 턱이 구간 쪽인 오른쪽으로), 끝은 `]`(턱이 왼쪽으로). 위치는 손잡이 앵커·띠·재생 위치가 각자 가진 `style:--p`(0~1) 디렉티브뿐이고 `translate(-50%)`는 없다(DL11, 앵커 안 flex 가운데).
+
+```ts
+type RangeTimelineProps = {
+  length: number;                 // 막대 길이(초)
+  start: number; end: number;     // 손잡이 값(초, rangeEdit.selection)
+  band: boolean;                  // 선택 띠를 그리는가
+  position: number;               // 재생 위치(초)
+  disabled?: boolean;             // 카드 busy
+  onmove: (h: 'start' | 'end', secs: number, phase: 'drag' | 'commit') => void;
+  onseek: (secs: number) => void; // 막대(손잡이 밖)를 눌렀을 때
+};
+```
+
+**규칙**: ① 손잡이는 `role="slider"`·`tabindex="0"`·`aria-label`(`range.start`·`range.end`)·`aria-valuemin`/`max`(`rangeEdit.handleBounds`: band면 서로를 제한, 아니면 둘 다 `[0, floor(길이)]`)·`aria-valuenow`(정수 초, 경계 안으로 자름)·`aria-valuetext`(`formatClockLong`)다. Tab 순서는 DOM 순서(시작 → 끝) 고정이고 뒤집혀 끝이 왼쪽에 그려져도 바뀌지 않는다. ② 키는 `handleKey`(←/↓ −1, →/↑ +1, Shift ×10, PageUp/PageDown ±60, Home/End)를 `clampHandle`로 자른 값을 `onmove(h, v, 'commit')`로 보내고 처리한 키만 `preventDefault`한다. 첫 줄 `isImeKey`. Alt·Ctrl·Meta가 있으면 처리하지 않는다. ③ 끌기는 `pointerdown`(`setPointerCapture`) → `pointermove`마다 `'drag'` → `pointerup`에 `'commit'` 한 번이다(`pointercancel`은 마지막 끌기 값을 `'commit'`으로, 움직인 적 없으면 아무것도 내지 않는다). 컴포넌트는 값을 자르지 않고 부모(`rangeEdit.moveHandle`)가 자른다. 막대에 `touch-action: none`, `wheel`·`contextmenu` 리스너 없음. ④ 막대(손잡이 밖) 누름은 `onseek`만 부르고 손잡이 값은 바꾸지 않으며 **포커스를 코드로 옮기지 않는다**(막대는 포커스를 받지 않으므로 브라우저가 가장 가까운 포커스 가능 조상인 편집 영역 컨테이너로 준다). ⑤ 누름 영역은 앵커에서 **바깥쪽으로만** 편다(시작은 왼쪽, 끝은 오른쪽, `::before` 폭 `--hit-min`). 붙은 손잡이도 겹치지 않는다. ⑥ `disabled`면 `aria-disabled="true"`이고 손잡이 조작을 무시한다(포커스는 닿는다, 막대 누름 탐색은 칸을 바꾸지 않아 그대로 둔다). ⑦ 눌림은 손잡이 `:active`에서 면을 `--accent-pressed`로 채운다(foundations §1 규칙 6). 호버 효과 없음(D21), 전환 없음(값은 데이터다, P5), `cursor`·`user-select` 없음(D25).
+
+**치수**: foundations §2.4 `accent / track`·`accent / surface`(손잡이가 트랙 밖으로 튀어나온 부분)·`fg / accent`(띠 위 재생 위치) 쌍이 판정이다. 새 토큰은 없다(`--progress-h`·`--hit-min`·`--control-h-sm`·`--space-4`의 조합, PVU16). 띠를 `--accent-soft`로 칠하지 않는 이유: 트랙 대비가 라이트 1.06·다크 1.35라 1.4.11(3:1)에 못 미친다. forced-colors는 §3 표.
+
+Worker: 없다.
+
 ---
 
 ## 3. forced-colors · 대비 증가 · 움직임 줄이기 종합표
@@ -651,6 +673,7 @@ Worker: 없다.
 | Spinner·Icon·DropOverlay | `currentColor`, 오버레이 `2px dashed CanvasText` | — | Spinner `animation: none`, 호 유지 |
 | Skeleton·Toolbar | `1px solid GrayText`(비활성 자리표시), 툴바 아래 `1px solid CanvasText` | — | 애니메이션이 없다 |
 | WatchPanel 화면 | `1px solid CanvasText` 윤곽(`<video>`·열리는 중 자리) | — | 애니메이션이 없다 |
+| RangeTimeline | 트랙 `1px solid CanvasText`, 띠 `Highlight`, 시작 앞 가림 `Canvas`, 재생 위치 `CanvasText`, 손잡이 `Highlight` + `1px CanvasText` | — | 애니메이션이 없다 |
 | 포커스 링 | UA가 outline을 시스템 색으로 그린다 | — | — |
 
 ---

@@ -133,13 +133,14 @@ OKLCH로 설계하고 sRGB hex로 커밋한다(brief §6.1-3, `G-ENGINE-R4`). he
 
 ### 2.4 대비 계산값
 
-편집 때 쓴 대조 스크립트(단계 (a)에서 `scripts/design/contrast.mjs`)가 WCAG 2.x 상대 휘도로 계산했다(라이트 46쌍·다크 46쌍 판정 모두 PASS, 테마마다 참고값 3행). `design-tokens` DT8은 같은 쌍 목록을 `design/tokens/contrast.tokens.json`에서 읽어 다시 계산한다. 쌍 목록을 줄이는 변경은 ADR이 필요하다.
+편집 때 쓴 대조 스크립트(단계 (a)에서 `scripts/design/contrast.mjs`)가 WCAG 2.x 상대 휘도로 계산했다(라이트 47쌍·다크 47쌍 판정 모두 PASS, 테마마다 참고값 4행). `design-tokens` DT8은 같은 쌍 목록을 `design/tokens/contrast.tokens.json`에서 읽어 다시 계산한다. 쌍 목록을 줄이는 변경은 ADR이 필요하다.
 
 주석:
 - 채움 `--accent`·`--danger`를 **상태 표시**(진행 채움·스위치 트랙)로 쓰는 바탕은 `bg`·`surface`·`track`뿐이다. `surface-2`·`raised`·`accent-soft` 위의 작은 표시(라디오 점·선택 ✓)는 `--accent-ink`로 그린다(다크 `accent / surface-2` 2.48, `/ raised` 2.76이라 3:1 미달). 강제 `design-gallery`(forced·다크 axe) + `R1`.
 - 채움 **버튼**의 윤곽에는 대비 요구가 없다. WCAG 1.4.11 Understanding: 글자로 식별되는 컴포넌트의 경계는 예외다. 글자 대비(`on-accent / accent`)만 본다.
 - 선택된 라디오의 상태 표시는 점(`--accent-ink`) ↔ 안쪽 고리(`--surface`)다(라이트 6.18·다크 6.11, `accent-ink / surface` 행). 고리 바깥 테두리 ↔ `--accent-soft` 면은 윤곽이라 요구가 없다.
 - 눌림 면(`--surface-pressed`) 위에는 `--fg` 글자와 `--fg-muted` 아이콘만 놓인다(위험 톤의 눌림 면은 `--danger-soft`라 기존 쌍이 덮는다).
+- 구간 막대(`receive/RangeTimeline.svelte`, D65)의 재생 위치 `--fg`는 선택 띠 `--accent` 위에 놓인다. 3:1 쌍(`fg / accent`)이 없으면 띠 위에서 선이 사라진다. 재생 위치는 트랙 두께 안에만 있고 손잡이는 트랙 밖으로 튀어나오므로 둘은 색만이 아니라 높이·턱 모양으로도 가른다(WCAG 1.4.1). 손잡이 눌림 면 `--accent-pressed`는 다크에서 `--surface` 위 2.29라 눌린 순간 튀어나온 부분의 대비가 3:1 아래다. 눌림은 포인터를 쥔 동안만의 일시 상태이고 위치는 턱 모양·테두리로 남으므로 참고값 행으로만 적는다.
 - `--fg-disabled`는 1.4.3 비활성 예외라 참고값만 적었다. 면 단계(`surface / bg`, `surface-2 / surface`)는 장식이고 의미를 싣지 않는다.
 
 #### 라이트
@@ -173,6 +174,7 @@ OKLCH로 설계하고 sRGB hex로 커밋한다(brief §6.1-3, `G-ENGINE-R4`). he
 | `--accent` #0067DF | `--bg` #F3F3F3 | 4.72 | 3 | PASS | 상태 표시 채움 |
 | `--accent` #0067DF | `--surface` #FFFFFF | 5.24 | 3 | PASS | 상태 표시 채움 |
 | `--accent` #0067DF | `--track` #E8E8E8 | 4.28 | 3 | PASS | 상태 표시 채움 |
+| `--fg` #1B1B1B | `--accent` #0067DF | 3.29 | 3 | PASS | 상태 표시(구간 막대 띠 위 재생 위치) |
 | `--fg` #1B1B1B | `--accent-soft` #E2F0FF | 14.88 | 4.5 | PASS | 글자(면 위) |
 | `--fg-muted` #5D5D5D | `--accent-soft` #E2F0FF | 5.69 | 4.5 | PASS | 글자(면 위) |
 | `--accent-ink` #085DC7 | `--accent-soft` #E2F0FF | 5.33 | 4.5 | PASS | 글자(면 위) |
@@ -195,6 +197,7 @@ OKLCH로 설계하고 sRGB hex로 커밋한다(brief §6.1-3, `G-ENGINE-R4`). he
 | `--fg-disabled` #9E9E9E | `--surface` #FFFFFF | 2.68 | — | — | 비활성(예외, 참고값) |
 | `--surface` #FFFFFF | `--bg` #F3F3F3 | 1.11 | — | — | 면 단계(장식, 참고값) |
 | `--surface-2` #E8E8E8 | `--surface` #FFFFFF | 1.23 | — | — | 면 단계(장식, 참고값) |
+| `--accent-pressed` #0056C5 | `--surface` #FFFFFF | 6.69 | — | — | 구간 막대 손잡이 눌림(참고값) |
 
 separator `rgba(0,0,0,.10)` 합성값: bg 위 `#DBDBDB`(1.25:1), surface 위 `#E6E6E6`(1.25:1). 장식이라 요구가 없고, 선 하나로 의미를 전하지 않는다(brief §6.3-3).
 `--focus` / bg 5.57 · / surface 6.18 · / surface-2 5.04. 채움 버튼 위 포커스 링은 `outline-offset: 2px`의 틈으로 바탕이 보이므로 링의 인접 색은 바탕이다(§6.4).
@@ -230,6 +233,7 @@ separator `rgba(0,0,0,.10)` 합성값: bg 위 `#DBDBDB`(1.25:1), surface 위 `#E
 | `--accent` #1E72E4 | `--bg` #1F1F1F | 3.60 | 3 | PASS | 상태 표시 채움 |
 | `--accent` #1E72E4 | `--surface` #2B2B2B | 3.09 | 3 | PASS | 상태 표시 채움 |
 | `--accent` #1E72E4 | `--track` #1F1F1F | 3.60 | 3 | PASS | 상태 표시 채움 |
+| `--fg` #E8E8E8 | `--accent` #1E72E4 | 3.74 | 3 | PASS | 상태 표시(구간 막대 띠 위 재생 위치) |
 | `--fg` #E8E8E8 | `--accent-soft` #233651 | 9.98 | 4.5 | PASS | 글자(면 위) |
 | `--fg-muted` #A4A4A4 | `--accent-soft` #233651 | 4.90 | 4.5 | PASS | 글자(면 위) |
 | `--accent-ink` #70ADFB | `--accent-soft` #233651 | 5.27 | 4.5 | PASS | 글자(면 위) |
@@ -252,6 +256,7 @@ separator `rgba(0,0,0,.10)` 합성값: bg 위 `#DBDBDB`(1.25:1), surface 위 `#E
 | `--fg-disabled` #6F6F6F | `--surface` #2B2B2B | 2.82 | — | — | 비활성(예외, 참고값) |
 | `--surface` #2B2B2B | `--bg` #1F1F1F | 1.16 | — | — | 면 단계(장식, 참고값) |
 | `--surface-2` #3A3A3A | `--surface` #2B2B2B | 1.24 | — | — | 면 단계(장식, 참고값) |
+| `--accent-pressed` #085DC7 | `--surface` #2B2B2B | 2.29 | — | — | 구간 막대 손잡이 눌림(참고값, 아래 주석) |
 
 separator `rgba(255,255,255,.10)` 합성값: bg 위 `#353535`(1.34:1), surface 위 `#404040`(1.37:1).
 `--focus` / bg 7.11 · / surface 6.11 · / surface-2 4.91.
@@ -301,6 +306,7 @@ macOS "대비 증가"와 GNOME 고대비는 `forced-colors`가 아니라 이 쿼
 | Spinner | `currentColor` 호 | — |
 | Kbd·Badge | `1px solid CanvasText` | — |
 | 드롭 오버레이 | `2px dashed CanvasText` | gradient·색이 사라진다 |
+| 구간 막대(`RangeTimeline`, D65) | 트랙 `1px solid CanvasText`, 선택 띠 `Highlight`, 시작 앞 가림 `Canvas`, 재생 위치 선 `CanvasText`, 손잡이 면 `Highlight` + `1px CanvasText` 테두리 | 손잡이 모양(대괄호)·높이가 위치를 말한다 |
 | WatchPanel 화면(`<video>`·열리는 중 자리) | `1px solid CanvasText` 윤곽(바탕색 `--surface-2`는 시스템 색으로 바뀐다) | 영상 자리의 경계를 잃지 않게 |
 
 강제: `design-gallery`가 `emulateMedia({ forcedColors: 'active' })`로 네 화면과 실패·일시정지 행을 찍고 axe를 돈다. 새 컴포넌트는 이 표에 행을 더한다(`R9`). 컴포넌트별 세부는 `components.md` §3.

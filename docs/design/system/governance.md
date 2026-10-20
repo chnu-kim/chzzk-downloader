@@ -41,7 +41,7 @@ W3C Design Tokens Community Group Format Module **2025.10**(https://www.designto
 | 테마 | 다크 값은 같은 토큰의 `$extensions["io.github.chnu-kim.chzzk"].dark`에 `{…}` 참조로. 생성기가 다크 두 selector 블록을 **같은 내용으로** 쓴다(foundations §10) | Resolver 모듈(2025.10의 세 모듈 중 하나. 생성기 하나에 과하다) |
 | 미디어 블록 | `prefers-contrast: more`·`any-pointer: coarse`·`prefers-reduced-motion: reduce`·`data-text-scale`(배율 1.3·2.0에서 foundations §3.2 유도 규칙으로 생성)·`data-scale="reading"`·`data-window-active` 재정의는 같은 확장 키 아래 `overrides.<블록 이름>`에. selector는 전부 `:root:where(…)`(foundations §10)이고 블록 이름과 selector 표·순서는 생성기 상수 | 토큰 파일에 selector 문자열 직접 쓰기 |
 | 상수 | `BREAKPOINT_NARROW`(600, foundations §14)는 `layout.tokens.json`의 `$type: "number"` 토큰이되 CSS 변수로 **내보내지 않고** 생성기가 `@media (max-width: 599px)` 글자를 만드는 데만 쓴다. 그 밖의 §14 상수는 `design/tokens/`가 아니라 `app/src/lib/timing.ts`·Rust `consts.rs`에 있고 DT15가 표와 대조한다 | — |
-| 대비 쌍 | `contrast.tokens.json`: `[전경, 바탕, 최소]` 목록(foundations §2.4의 라이트 46쌍·다크 46쌍). 토큰은 아니지만 같은 폴더에 두어 `design-tokens`가 한 곳에서 읽는다 | 테스트 코드에 쌍 목록 하드코딩(기존 `tokens.test.ts` 방식) |
+| 대비 쌍 | `contrast.tokens.json`: `[전경, 바탕, 최소]` 목록(foundations §2.4의 라이트 47쌍·다크 47쌍). 토큰은 아니지만 같은 폴더에 두어 `design-tokens`가 한 곳에서 읽는다 | 테스트 코드에 쌍 목록 하드코딩(기존 `tokens.test.ts` 방식) |
 
 이름은 foundations §1의 정규식을 따른다. JSON 경로 `sys.color.fg-muted` → CSS `--fg-muted`, `ref.gray.965` → `--ref-gray-965`. 생성기가 경로 → CSS 이름 변환 규칙 하나를 갖고, 바꾸면 ADR이다(§4.1 조건 1).
 
@@ -109,7 +109,7 @@ W3C Design Tokens Community Group Format Module **2025.10**(https://www.designto
 | # | 검사 | 판정 | 근거 |
 |---|---|---|---|
 | DT1 | 생성물 셋 바이트 동일, 앱·Worker 토큰 구간의 공통 부분 동일, ui 구간 동일 | `--check` 1 | §1.3 |
-| DT2 | 미정의 토큰 0: `app/src/**/*.{svelte,css}`·`design/ui.css`·`worker/src/http/*.{ts,css}`의 모든 `var(--x)`의 `x`가 생성물에 정의됨(예외: 컴포넌트 상태 변수 `--p` 하나, components.md) | 목록 출력, 1 | brief §6.2-3, foundations 머리 "여기 없는 값을 쓰면 막는다" |
+| DT2 | 미정의 토큰 0: `app/src/**/*.{svelte,css}`·`design/ui.css`·`worker/src/http/*.{ts,css}`의 모든 `var(--x)`의 `x`가 생성물에 정의됨(예외: 컴포넌트 상태 변수 `--p` 하나, components.md §2.20·§2.30) | 목록 출력, 1 | brief §6.2-3, foundations 머리 "여기 없는 값을 쓰면 막는다" |
 | DT3 | 미사용 토큰 0: 생성물의 모든 `--x`가 소스 어디선가 `var(--x)`로 쓰임(ref 토큰은 sys 별칭으로 쓰이면 사용으로 센다. `--text-hero`는 Worker 생성물에만 있으므로 Worker 소스에서 찾는다. 앱 생성물 끝의 `/* legacy */` 별칭 블록은 단계 (c)까지 검사에서 뺀다, foundations §12-18) | 1 | brief §6.2-3, foundations §4 "미사용 토큰 0개 원칙" |
 | DT4 | 단위: 모든 `dimension`이 `px`, `rem`·`em` 0개, `html { font-size: 16px }`가 `app/src/app.css`·Worker `site.css`에 있음(DL5의 예외로 등록) | 1 | D4, `A-VIS-01`, ADR-0002 |
 | DT5 | 글자: 모든 `--text-*` ≥ 12, 모든 `--leading-*` 정수 px, `--weight-*`는 400·600 둘뿐 | 1 | foundations §3.2·§3.4 |
@@ -142,7 +142,7 @@ W3C Design Tokens Community Group Format Module **2025.10**(https://www.designto
 | DL4 | `z-index` 값은 `var(--z-*)`만 | — | foundations §7.2 |
 | DL5 | `font-size`·`font-weight`·`line-height`·`border-radius`·`letter-spacing`·`font-family` 값은 `var(--…)`만. `letter-spacing`·`-webkit-font-smoothing` 선언 자체 금지. `line-height: normal` 금지(네이티브 `<select>`도 `var(--leading-body)`) | `font-family`는 `var(--font-sans)`·`var(--font-mono)`, `html { font-size: 16px }`(`app.css`·`site.css`, DT4) | foundations §3.4·§3.5(`E-KO-B7`, `E-DESK-E33`) |
 | DL6 | `--ref-*` 직접 사용 금지(컴포넌트는 sys만) | 생성물 | foundations §1 규칙 3 |
-| DL7 | 컴포넌트 안 `--` 선언 금지 | `--p` 하나(components.md §2.20) | foundations 머리(comp 층 비움) |
+| DL7 | 컴포넌트 안 `--` 선언 금지 | `--p` 하나(components.md §2.20·§2.30) | foundations 머리(comp 층 비움) |
 | DL8 | `!important`, `transition: all`, `outline: none`·`outline: 0`(예외 `[data-focus-container]:focus-visible` 한 규칙), `forced-color-adjust`, `backdrop-filter`, `text-wrap`, `break-word`, `text-align: justify`, `cursor: pointer`(앱 소스만. Worker `site.css`는 허용) | — | foundations §11 표, D25, components §0.3 |
 | DL9 | `:focus-visible`·`:focus` 규칙 안의 `box-shadow` 금지, `box-shadow` 값은 `var(--shadow-*)` 또는 `inset 0 0 0 4px var(--surface)`(라디오 고리)만 | — | foundations §6.2·§6.4, D20 |
 | DL10 | 하한 밖 기능: `light-dark(`, `linear(`, `@starting-style`, `view-transition`, `scrollbar-gutter`, `scrollbar-width`, `accent-color`, `field-sizing`, `popover`(속성), `from ` 상대 색 문법, `@scope`, `anchor-name`, `interpolate-size`, `corner-shape`, `::-webkit-scrollbar`, `AccentColor` 키워드 | — | foundations §11, D1·D8 |
@@ -156,7 +156,7 @@ W3C Design Tokens Community Group Format Module **2025.10**(https://www.designto
 | # | 규칙 | 허용 | 근거 |
 |---|---|---|---|
 | DS1 | 원시 요소 금지: `app/src/lib/components/ui/` 밖에서 `<button`·`<input`·`<select`·`<textarea`·`<dialog`·`<progress`·`role="dialog"`·`role="switch"`·`role="menu"`·`role="alert"`. Spinner에 `role`·`aria-label` 금지 | `ui/` 안, 허용 목록(이유 필수) | gov §8.5, README §4.1, components §2.12·§2.21 |
-| DS2 | 인라인 `style=` 속성 금지(`.svelte`·Worker HTML 템플릿 둘 다). 진행 막대는 Svelte `style:--p={…}` **디렉티브**만 허용(속성 문자열 `style="--p: …"`는 앱 CSP `style-src 'self'`에 막힌다) | `style:--p` 디렉티브 하나(components.md §2.20) | Worker CSP(brief §2.2), `J-F-A3`·`J-F-C4` |
+| DS2 | 인라인 `style=` 속성 금지(`.svelte`·Worker HTML 템플릿 둘 다). 진행 막대는 Svelte `style:--p={…}` **디렉티브**만 허용(속성 문자열 `style="--p: …"`는 앱 CSP `style-src 'self'`에 막힌다) | `style:--p` 디렉티브 하나(components.md §2.20·§2.30) | Worker CSP(brief §2.2), `J-F-A3`·`J-F-C4` |
 | DS3 | `:global(` 금지 | `app/src/app.css`(전역 리셋 한 파일) | 컴포넌트 스타일이 밖으로 새지 않게(gov §8.5의 "컴포넌트 우회"). `app.css`만 전역이다 |
 | DS4 | `{@html` 금지 | — | foundations §3.5(`G-UGT-R7`) |
 | DS5 | `<svg` 직접 사용 금지(아이콘은 `<Icon name>`) | `ui/Icon.svelte` | foundations §9, `design-icons`와 짝 |

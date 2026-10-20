@@ -151,12 +151,16 @@ test('빠른 다시보기 카드를 펼쳤다 접으면 세션을 닫는다', as
   await expect.poll(() => app.args('watch_close')).toEqual([{ id: 'a'.repeat(32) }]);
 });
 
-/** 메타데이터가 읽혔고 재생 위치가 `time`초인 것처럼 만든다(chromium은 존재하지 않는 주소를 재생하지 못한다) */
-async function loadedAt(card: Locator, time: number) {
-  await card.locator('video').evaluate((v: HTMLVideoElement, tm: number) => {
-    Object.defineProperty(v, 'currentTime', { value: tm, configurable: true, writable: true });
-    v.dispatchEvent(new Event('loadedmetadata'));
-  }, time);
+/** 메타데이터가 읽혔고 재생 위치가 `time`초(영상 길이가 `duration`초)인 것처럼 만든다(chromium은 존재하지 않는 주소를 재생하지 못한다) */
+async function loadedAt(card: Locator, time: number, duration?: number) {
+  await card.locator('video').evaluate(
+    (v: HTMLVideoElement, [tm, dur]: [number, number | undefined]) => {
+      Object.defineProperty(v, 'currentTime', { value: tm, configurable: true, writable: true });
+      if (dur != null) Object.defineProperty(v, 'duration', { value: dur, configurable: true });
+      v.dispatchEvent(new Event('loadedmetadata'));
+    },
+    [time, duration] as [number, number | undefined],
+  );
 }
 
 test('빠른 다시보기에서 찍은 시각이 구간 칸을 채우고 받기 요청의 range가 된다', async ({ app }) => {
@@ -176,11 +180,12 @@ test('빠른 다시보기에서 찍은 시각이 구간 칸을 채우고 받기 
   await markStart.click();
   await loadedAt(card, 1200.1);
   await markEnd.click();
-  await expect(card.getByLabel(t('range.start'))).toHaveValue('0:10:00');
-  await expect(card.getByLabel(t('range.end'))).toHaveValue('0:20:00');
+  await expect(card.getByRole('textbox', { name: t('range.start') })).toHaveValue('0:10:00');
+  await expect(card.getByRole('textbox', { name: t('range.end') })).toHaveValue('0:20:00');
+  // 검사가 끝나 [받기]가 켜진 뒤에 잰다(비활성 면의 대비는 잴 대상이 아니다)
+  await expect(card.getByRole('button', { name: t('card.download') })).not.toHaveAttribute('aria-disabled', 'true');
   await app.axe('찍은 구간(빠른 다시보기)');
 
-  await expect(card.getByRole('button', { name: t('card.download') })).not.toHaveAttribute('aria-disabled', 'true');
   await card.getByRole('button', { name: t('card.download') }).click();
   await expect.poll(async () => (await app.args('enqueue')).length).toBe(1);
   const [{ req }] = (await app.args('enqueue')) as Array<{ req: { range?: unknown } }>;
@@ -195,4 +200,52 @@ test('일반 VOD 카드에는 찍기 버튼이 없다', async ({ app }) => {
   await expect(card.locator('video')).toBeVisible();
   await expect(card.getByRole('button', { name: t('watch.mark.start') })).toHaveCount(0);
   await expect(card.getByRole('button', { name: t('watch.mark.end') })).toHaveCount(0);
+});
+
+test('구간 막대의 손잡이를 끌거나 키로 옮기면 칸이 바뀌고 받기 요청의 range가 된다', async ({ app }) => {
+  holdPlaylist(app.page);
+  const REWIND = resolved();
+  const card = await openCard(app, REWIND, { watchSrc: HLS_SRC });
+  await toggle(card).click();
+  await expect(card.locator('video')).toBeVisible();
+  // 메타데이터 전에는 막대가 없다
+  await expect(card.getByRole('slider')).toHaveCount(0);
+  await loadedAt(card, 0, REWIND.meta.durationSecs ?? 0);
+  const startThumb = card.getByRole('slider', { name: t('range.start') });
+  const endThumb = card.getByRole('slider', { name: t('range.end') });
+  await expect(startThumb).toBeVisible();
+  await app.axe('구간 막대(빠른 다시보기)');
+
+  // 시작 손잡이를 마우스로 막대 가운데까지 끈다(pointer capture가 실제 브라우저에서 도는지 본다).
+  // 손잡이의 누름 영역은 앵커에서 바깥쪽(시작은 왼쪽)으로만 펴지므로 몸통 왼쪽 가장자리 밖을 누른다
+  const track = card.locator('.track');
+  // 마우스는 화면 좌표라 막대가 sticky 바닥 줄 밑에 있으면 안 된다: 가운데로 스크롤한다
+  await track.evaluate((el) => el.scrollIntoView({ block: 'center' }));
+  const tb = (await track.boundingBox())!;
+  const sb = (await startThumb.boundingBox())!;
+  const y = sb.y + sb.height / 2;
+  await app.page.mouse.move(sb.x - 4, y);
+  await app.page.mouse.down();
+  await app.page.mouse.move(tb.x + tb.width / 2, y, { steps: 6 });
+  await app.page.mouse.up();
+  const startText = card.getByRole('textbox', { name: t('range.start') });
+  const endText = card.getByRole('textbox', { name: t('range.end') });
+  await expect(card.getByText(t('range.toggle')).locator('xpath=ancestor::details')).toHaveAttribute('open', '');
+  await expect(startText).not.toHaveValue('0:00:00');
+  await expect(endText).toHaveValue('3:12:45');
+  const startValue = await startText.inputValue();
+
+  // 끝 손잡이: Shift+←(−10초) 두 번
+  await endThumb.focus();
+  await endThumb.press('Shift+ArrowLeft');
+  await endThumb.press('Shift+ArrowLeft');
+  await expect(endText).toHaveValue('3:12:25');
+  await expect(card.getByRole('button', { name: t('card.download') })).not.toHaveAttribute('aria-disabled', 'true');
+  await app.axe('손잡이로 고친 구간(빠른 다시보기)');
+
+  await card.getByRole('button', { name: t('card.download') }).click();
+  await expect.poll(async () => (await app.args('enqueue')).length).toBe(1);
+  const [{ req }] = (await app.args('enqueue')) as Array<{ req: { range?: unknown } }>;
+  const [h, m, sec] = startValue.split(':').map(Number);
+  expect(req.range).toEqual({ startMs: (h * 3600 + m * 60 + sec) * 1000, endMs: 11545000 });
 });

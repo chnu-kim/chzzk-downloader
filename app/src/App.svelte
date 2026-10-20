@@ -18,6 +18,7 @@
   import { jobs } from './lib/stores/jobs.svelte';
   import { platform } from './lib/stores/platform.svelte';
   import { power } from './lib/stores/power.svelte';
+  import { resolver } from './lib/stores/resolve.svelte';
   import { settings } from './lib/stores/settings.svelte';
   import { toasts } from './lib/stores/toast.svelte';
   import { ui } from './lib/stores/ui.svelte';
@@ -155,7 +156,7 @@
   <AppHeader view={ui.view} locked={!auth.unlocked} onsettings={() => ui.goSettings()} onback={() => ui.goHome()} />
   <!-- .main이 스크롤 영역이고 열(PageContainer)은 App이 소유한다: 뷰는 자기 열·좌우 패딩을 두지 않는다.
        카드까지 이 사이 어떤 조상에도 overflow를 두지 않는다(sticky 입력줄·카드 바닥이 깨진다, patterns.md §9 F-7) -->
-  <main class="main" class:has-toast={toasts.current !== null}>
+  <main class="main" class:has-toast={toasts.current !== null} class:has-card={ui.view === 'home' && resolver.state.kind === 'ready'}>
     <PageContainer>
       <!-- 배너는 열의 첫 요소. 로그인 화면이 열린 동안은 꺼진다(patterns.md §1.4) -->
       {#if auth.unlocked}<AppBanners />{/if}
@@ -193,9 +194,18 @@
     /* sticky 입력줄이 포커스를 가리지 않게(툴바는 이 영역 밖이라 계산에 없다) */
     scroll-padding-top: calc(var(--control-h) + var(--space-8));
   }
+  /* 영상 카드가 열려 있는 동안 sticky 바닥 줄(.card-footer: 버튼 + 위아래 패딩 + 윗줄 1px)이 Tab으로 닿는 포커스를 가리지 않게.
+     1px 계산은 DL11이 막아 윗줄과 포커스 링 몫을 --space-4로 잡는다 */
+  .main.has-card {
+    scroll-padding-bottom: calc(var(--control-h) + 2 * var(--space-12) + var(--space-4));
+  }
   /* 토스트가 떠 있는 동안 마지막 행의 버튼이 가려지지 않게 바닥 여백(시각·포커스 모두) */
   .main.has-toast {
     padding-bottom: calc(var(--row-h) + 2 * var(--edge));
     scroll-padding-bottom: calc(var(--row-h) + 2 * var(--edge));
+  }
+  /* 둘이 함께면 더한다(has-toast의 값을 덮어쓰지 않는다) */
+  .main.has-card.has-toast {
+    scroll-padding-bottom: calc(var(--row-h) + 2 * var(--edge) + var(--control-h) + 2 * var(--space-12) + var(--space-4));
   }
 </style>

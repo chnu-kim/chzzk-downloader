@@ -567,3 +567,378 @@ describe('WatchPanel', () => {
     });
   });
 });
+
+// 구간 편집 배치(preview-ux PVU-3): 막대·조작 줄·구간 보기
+describe('구간 편집(PVU-3)', () => {
+  const LEN = { secs: 600, source: 'meta' as const };
+  const CLOSED = { open: false, start: '0:00:00', end: '0:10:00' };
+  const sliders = () => screen.queryAllByRole('slider');
+  const slider = (name: string) => screen.getByRole('slider', { name });
+  const playBtn = () => screen.queryByRole('button', { name: t('watch.range.play.label') });
+  const fromStartBtn = () => screen.queryByRole('button', { name: t('watch.range.fromStart.label') });
+  const loopSwitch = () => screen.queryByRole('switch', { name: t('watch.range.loop.label') });
+
+  /** jsdom은 배치를 하지 않으므로 막대의 좌표를 흉내 낸다(왼쪽 0, 폭 600) */
+  function rectOf(el: Element) {
+    el.getBoundingClientRect = () => ({ left: 0, top: 0, right: 600, bottom: 24, width: 600, height: 24, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect;
+  }
+
+  /** currentTime 쓰기를 세는 video 흉내(jsdom은 재생·탐색을 하지 않는다) */
+  function mockVideo(duration = 600, time = 0) {
+    const v = videoEl()!;
+    let ct = time;
+    let dur = duration;
+    let ended = false;
+    const writes: number[] = [];
+    Object.defineProperty(v, 'currentTime', { configurable: true, get: () => ct, set: (x: number) => { ct = x; writes.push(x); } });
+    Object.defineProperty(v, 'duration', { configurable: true, get: () => dur });
+    Object.defineProperty(v, 'ended', { configurable: true, get: () => ended });
+    const play = vi.fn(() => Promise.resolve());
+    const pause = vi.fn();
+    v.play = play as never;
+    v.pause = pause as never;
+    return {
+      v,
+      writes,
+      play,
+      pause,
+      setTime: (x: number) => (ct = x),
+      setDuration: (x: number) => (dur = x),
+      setEnded: (x: boolean) => (ended = x),
+    };
+  }
+
+  async function openEditor(over: Record<string, unknown> = {}) {
+    vi.mocked(api.watchOpen).mockResolvedValue(hlsOpened());
+    const user = userEvent.setup();
+    const onfields = vi.fn();
+    const onduration = vi.fn();
+    const props = { view, markable: true, fields: CLOSED, len: LEN, initialEnd: '0:10:00', onfields, onduration, ...over };
+    const utils = render(WatchPanel, props as never);
+    await expand(user);
+    await waitFor(() => expect(hlsMock.instances).toHaveLength(1));
+    return { user, onfields, onduration, ...utils };
+  }
+  /** 메타데이터를 읽은 것처럼 만든다 */
+  async function ready(duration = 600, time = 0) {
+    const m = mockVideo(duration, time);
+    await fireEvent(m.v, new Event('loadedmetadata'));
+    return m;
+  }
+
+  it('hls.js 경로에서 메타데이터를 읽은 뒤에만 막대가 있다(조작 줄 찍기는 그 전에도 비활성으로 있다)', async () => {
+    await openEditor();
+    expect(sliders()).toHaveLength(0);
+    expect(screen.getByRole('button', { name: t('watch.mark.start') })).toBeDisabled();
+    await ready();
+    expect(sliders()).toHaveLength(2);
+    expect(screen.getByRole('group', { name: t('watch.editor.a11y', { title: view.meta.title }) })).toHaveAttribute('data-local-keys');
+  });
+
+  it('길이(len)를 모르면 막대는 없고 찍기·조작 줄은 있다', async () => {
+    await openEditor({ len: null });
+    await ready();
+    expect(sliders()).toHaveLength(0);
+    expect(screen.getByRole('button', { name: t('watch.mark.start') })).toBeEnabled();
+    expect(playBtn()).toBeDisabled();
+  });
+
+  it('mp4 경로·네이티브 m3u8·markable 아님에는 편집 영역이 없다', async () => {
+    const user = userEvent.setup();
+    render(WatchPanel, { view, markable: true, fields: CLOSED, len: LEN, initialEnd: '0:10:00' } as never);
+    await expand(user);
+    await waitFor(() => expect(videoEl()).not.toBeNull());
+    await fireEvent(videoEl()!, new Event('loadedmetadata'));
+    expect(sliders()).toHaveLength(0);
+    expect(screen.queryByRole('group', { name: /구간 고르기/ })).toBeNull();
+    expect(playBtn()).toBeNull();
+  });
+
+  it('손잡이를 끌면 칸 값만 바꾸고(영상은 그대로), 놓으면 한 번 탐색한다', async () => {
+    const { onfields } = await openEditor();
+    const m = await ready();
+    const track = document.querySelector('.track') as HTMLElement;
+    track.getBoundingClientRect = () => ({ left: 0, top: 0, right: 600, bottom: 24, width: 600, height: 24, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect;
+    const thumb = slider(t('range.start'));
+    await fireEvent.pointerDown(thumb, { button: 0, clientX: 0, pointerId: 1 });
+    await fireEvent.pointerMove(thumb, { clientX: 120, pointerId: 1 });
+    expect(onfields).toHaveBeenLastCalledWith({ open: true, start: '0:02:00', end: '0:10:00' }, 'handle');
+    expect(m.writes).toEqual([]);
+    await fireEvent.pointerUp(thumb, { clientX: 120, pointerId: 1 });
+    expect(onfields).toHaveBeenLastCalledWith({ open: true, start: '0:02:00', end: '0:10:00' }, 'handle');
+    expect(m.writes).toEqual([120]);
+  });
+
+  it('키로 손잡이를 옮기면 누를 때마다 탐색한다', async () => {
+    const { onfields } = await openEditor({ fields: { open: true, start: '0:01:00', end: '0:05:00' } });
+    const m = await ready();
+    await fireEvent.keyDown(slider(t('range.start')), { key: 'ArrowRight' });
+    expect(onfields).toHaveBeenLastCalledWith({ open: true, start: '0:01:01', end: '0:05:00' }, 'handle');
+    expect(m.writes).toEqual([61]);
+  });
+
+  it('막대(손잡이 밖)를 누르면 그 시각으로 탐색하고 칸은 바꾸지 않는다', async () => {
+    const { onfields } = await openEditor();
+    const m = await ready();
+    const track = document.querySelector('.track') as HTMLElement;
+    track.getBoundingClientRect = () => ({ left: 0, top: 0, right: 600, bottom: 24, width: 600, height: 24, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect;
+    await fireEvent.pointerDown(track, { button: 0, clientX: 300, pointerId: 1 });
+    expect(m.writes).toEqual([300]);
+    expect(onfields).not.toHaveBeenCalled();
+  });
+
+  it('seek는 [0, video.duration]으로 자른다(meta가 실제 영상보다 길 때)', async () => {
+    const { component } = await openEditor();
+    const m = await ready(590);
+    (component as unknown as { seek(s: number): void }).seek(600);
+    (component as unknown as { seek(s: number): void }).seek(-4);
+    expect(m.writes).toEqual([590, 0]);
+  });
+
+  it('길이를 알리는 onduration: 메타데이터에서 유한한 길이, 접으면 null', async () => {
+    const { user, onduration } = await openEditor();
+    await ready(599.6);
+    expect(onduration).toHaveBeenLastCalledWith(599.6);
+    await user.click(toggle());
+    expect(onduration).toHaveBeenLastCalledWith(null);
+  });
+
+  it('유한하지 않은 길이는 null로 알린다', async () => {
+    const { onduration } = await openEditor();
+    await ready(Number.POSITIVE_INFINITY);
+    expect(onduration).toHaveBeenLastCalledWith(null);
+  });
+
+  describe('구간 보기', () => {
+    const RANGE = { open: true, start: '0:01:00', end: '0:01:30' };
+
+    it('[구간 보기]는 시작으로 가서 재생하고 끝에서 일시정지한다', async () => {
+      const { user } = await openEditor({ fields: RANGE });
+      const m = await ready();
+      await user.click(playBtn()!);
+      expect(m.writes).toEqual([60]);
+      expect(m.play).toHaveBeenCalledTimes(1);
+      m.setTime(89.8);
+      await fireEvent(m.v, new Event('timeupdate'));
+      expect(m.pause).not.toHaveBeenCalled();
+      m.setTime(90);
+      await fireEvent(m.v, new Event('timeupdate'));
+      expect(m.pause).toHaveBeenCalledTimes(1);
+      // 우리가 건 일시정지가 구간 보기를 다시 끄는 일은 없다(이미 꺼졌다). 더는 아무 일도 없다
+      await fireEvent(m.v, new Event('pause'));
+      m.setTime(95);
+      await fireEvent(m.v, new Event('timeupdate'));
+      expect(m.pause).toHaveBeenCalledTimes(1);
+    });
+
+    it('구간 반복하기가 켜져 있으면 끝에서 시작으로 돌아가고 일시정지하지 않는다', async () => {
+      const { user } = await openEditor({ fields: RANGE });
+      const m = await ready();
+      await user.click(loopSwitch()!);
+      await user.click(playBtn()!);
+      m.setTime(90.1);
+      await fireEvent(m.v, new Event('timeupdate'));
+      expect(m.writes).toEqual([60, 60]);
+      expect(m.pause).not.toHaveBeenCalled();
+    });
+
+    it('우리 탐색(시작·restart)이 만든 seeked는 구간 보기를 끄지 않는다', async () => {
+      const { user } = await openEditor({ fields: RANGE });
+      const m = await ready();
+      await user.click(playBtn()!);
+      m.setTime(60);
+      await fireEvent(m.v, new Event('seeked'));
+      m.setTime(100);
+      await fireEvent(m.v, new Event('timeupdate'));
+      expect(m.pause).toHaveBeenCalledTimes(1);
+    });
+
+    it('우리 탐색이 키프레임 때문에 시작 조금 앞에 닿아도(0.5초 안) 구간 보기를 끄지 않는다', async () => {
+      const { user } = await openEditor({ fields: RANGE });
+      const m = await ready();
+      await user.click(playBtn()!);
+      m.setTime(59.8);
+      await fireEvent(m.v, new Event('seeked'));
+      m.setTime(100);
+      await fireEvent(m.v, new Event('timeupdate'));
+      expect(m.pause).toHaveBeenCalledTimes(1);
+    });
+
+    it('우리 것이 아닌 탐색은 시작 조금 앞이어도 구간 보기를 끈다', async () => {
+      const { user } = await openEditor({ fields: RANGE });
+      const m = await ready();
+      await user.click(playBtn()!);
+      m.setTime(60);
+      await fireEvent(m.v, new Event('seeked')); // 시작 탐색 표시를 먼저 쓴다
+      m.setTime(59.8);
+      await fireEvent(m.v, new Event('seeked'));
+      m.setTime(100);
+      await fireEvent(m.v, new Event('timeupdate'));
+      expect(m.pause).not.toHaveBeenCalled();
+    });
+
+    it('사용자가 일시정지하면 구간 보기에서 빠진다', async () => {
+      const { user } = await openEditor({ fields: RANGE });
+      const m = await ready();
+      await user.click(playBtn()!);
+      await fireEvent(m.v, new Event('pause'));
+      m.setTime(100);
+      await fireEvent(m.v, new Event('timeupdate'));
+      expect(m.pause).not.toHaveBeenCalled();
+    });
+
+    it('구간 밖으로 사용자가 탐색하면 빠진다', async () => {
+      const { user } = await openEditor({ fields: RANGE });
+      const m = await ready();
+      await user.click(playBtn()!);
+      m.setTime(300);
+      await fireEvent(m.v, new Event('seeked'));
+      m.setTime(301);
+      await fireEvent(m.v, new Event('timeupdate'));
+      expect(m.pause).not.toHaveBeenCalled();
+    });
+
+    it('끝이 영상 끝이면 ended에서 반복은 처음으로 돌아가고 한 번뿐이면 끝낸다', async () => {
+      const { user } = await openEditor({ fields: { open: true, start: '0:01:00', end: '' } });
+      const m = await ready();
+      await user.click(loopSwitch()!);
+      await user.click(playBtn()!);
+      await fireEvent(m.v, new Event('ended'));
+      expect(m.writes).toEqual([60, 60]);
+      expect(m.play).toHaveBeenCalledTimes(2);
+    });
+
+    it('실제 브라우저 순서(timeupdate → pause → ended)에서도 끝(toEnd) 반복은 이어진다', async () => {
+      // 끝 칸이 빈칸이고 영상이 meta보다 짧다: 브라우저는 끝에서 pause를 건 뒤 ended를 보낸다
+      const { user } = await openEditor({ fields: { open: true, start: '0:01:00', end: '' } });
+      const m = await ready(599.6);
+      await user.click(loopSwitch()!);
+      await user.click(playBtn()!);
+      m.setTime(599.6);
+      m.setEnded(true);
+      await fireEvent(m.v, new Event('timeupdate'));
+      await fireEvent(m.v, new Event('pause'));
+      await fireEvent(m.v, new Event('ended'));
+      expect(m.writes).toEqual([60, 60]);
+      expect(m.play).toHaveBeenCalledTimes(2);
+    });
+
+    it('반복을 끈 채 ended가 오면 처음으로 돌아가지도 다시 재생하지도 않는다', async () => {
+      const { user } = await openEditor({ fields: { open: true, start: '0:01:00', end: '' } });
+      const m = await ready();
+      await user.click(playBtn()!);
+      m.setEnded(true);
+      await fireEvent(m.v, new Event('pause'));
+      await fireEvent(m.v, new Event('ended'));
+      expect(m.writes).toEqual([60]);
+      expect(m.play).toHaveBeenCalledTimes(1);
+    });
+
+    it('끝 손잡이를 끄는 동안(drag)에도 구간 보기가 꺼진다: pause·restart가 끼어들지 않는다', async () => {
+      const { user, container } = await openEditor({ fields: RANGE });
+      const m = await ready();
+      rectOf(container.querySelector('.track')!);
+      await user.click(loopSwitch()!);
+      await user.click(playBtn()!);
+      const thumb = slider(t('range.end'));
+      await fireEvent.pointerDown(thumb, { clientX: 90, pointerId: 1 });
+      await fireEvent.pointerMove(thumb, { clientX: 70, pointerId: 1 });
+      m.setTime(100);
+      await fireEvent(m.v, new Event('timeupdate'));
+      expect(m.pause).not.toHaveBeenCalled();
+      expect(m.writes).toEqual([60]);
+    });
+
+    it('메타데이터 전에 durationchange만 와도 막대·찍기는 켜지지 않는다', async () => {
+      await openEditor();
+      const m = mockVideo();
+      await fireEvent(m.v, new Event('durationchange'));
+      expect(sliders()).toHaveLength(0);
+      expect(screen.getByRole('button', { name: t('watch.mark.start') })).toBeDisabled();
+      await fireEvent(m.v, new Event('loadedmetadata'));
+      expect(sliders()).toHaveLength(2);
+    });
+
+    it('끝이 영상 끝이 아닌데 ended가 오면(meta가 더 길다) 반복도 끝낸다', async () => {
+      const { user } = await openEditor({ fields: RANGE });
+      const m = await ready();
+      await user.click(loopSwitch()!);
+      await user.click(playBtn()!);
+      await fireEvent(m.v, new Event('ended'));
+      expect(m.writes).toEqual([60]);
+    });
+
+    it('손잡이를 고치면(keydown commit) 구간 보기를 끈다: restart·pause가 끼어들지 않는다', async () => {
+      const { user } = await openEditor({ fields: RANGE });
+      const m = await ready();
+      await user.click(loopSwitch()!);
+      await user.click(playBtn()!);
+      await fireEvent.keyDown(slider(t('range.end')), { key: 'ArrowLeft' });
+      m.setTime(100);
+      await fireEvent(m.v, new Event('timeupdate'));
+      await fireEvent(m.v, new Event('seeked'));
+      await fireEvent(m.v, new Event('pause'));
+      expect(m.pause).not.toHaveBeenCalled();
+      expect(m.writes).toEqual([60, 89]);
+    });
+
+    it('순서가 뒤집혔으면 [구간 보기]는 비활성이다', async () => {
+      await openEditor({ fields: { open: true, start: '0:05:00', end: '0:01:00' } });
+      await ready();
+      expect(playBtn()).toBeDisabled();
+      expect(fromStartBtn()).toBeEnabled();
+    });
+
+    it('카드가 busy면 보기 단추도 비활성이다', async () => {
+      await openEditor({ fields: RANGE, disabled: true });
+      await ready();
+      expect(playBtn()).toBeDisabled();
+    });
+
+    it('play()가 거부되면 구간 보기를 끈다', async () => {
+      const { user } = await openEditor({ fields: RANGE });
+      const m = await ready();
+      m.play.mockRejectedValueOnce(new Error('NotAllowed'));
+      await user.click(playBtn()!);
+      await Promise.resolve();
+      await Promise.resolve();
+      m.setTime(100);
+      await fireEvent(m.v, new Event('timeupdate'));
+      expect(m.pause).not.toHaveBeenCalled();
+    });
+
+    it('[시작부터 보기]는 시작으로 가서 재생만 하고 끝에서 멈추지 않는다', async () => {
+      const { user } = await openEditor({ fields: RANGE });
+      const m = await ready();
+      await user.click(fromStartBtn()!);
+      expect(m.writes).toEqual([60]);
+      expect(m.play).toHaveBeenCalledTimes(1);
+      m.setTime(120);
+      await fireEvent(m.v, new Event('timeupdate'));
+      expect(m.pause).not.toHaveBeenCalled();
+    });
+
+    it('접으면 구간 보기가 꺼지고 다시 열어도 이어지지 않는다', async () => {
+      const { user } = await openEditor({ fields: RANGE });
+      const m = await ready();
+      await user.click(playBtn()!);
+      await user.click(toggle());
+      await user.click(toggle());
+      await waitFor(() => expect(hlsMock.instances).toHaveLength(2));
+      const m2 = await ready();
+      m2.setTime(100);
+      await fireEvent(m2.v, new Event('timeupdate'));
+      expect(m2.pause).not.toHaveBeenCalled();
+      expect(m.pause).not.toHaveBeenCalled();
+    });
+  });
+
+  it('재생 위치를 막대에 알린다(timeupdate)', async () => {
+    await openEditor();
+    const m = await ready();
+    m.setTime(150);
+    await fireEvent(m.v, new Event('timeupdate'));
+    const pos = document.querySelector('.position') as HTMLElement;
+    expect(pos.style.getPropertyValue('--p')).toBe('0.25');
+  });
+});

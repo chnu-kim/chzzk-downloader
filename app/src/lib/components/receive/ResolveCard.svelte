@@ -2,7 +2,8 @@
   // 영상 카드(system/patterns.md §6.5·§14.2 (c)). 화질·폴더·파일 이름을 고르고 `enqueue`한다.
   // 파일 이름·화질·폴더가 바뀔 때마다 CHECK_DEBOUNCE_MS 뒤 `check_output`을 부르고, 지금 입력의 결과가 올 때까지
   // [받기]를 막는다(낡은 결과로 충돌 안내를 건너뛰지 않게). 같은 이름 파일을 "덮어쓰기"로 골랐으면 [받기]가 D7을 연다.
-  // 빠른 다시보기는 화질 아래 구간 줄(RangeField)이 있고, 펼쳐져 있으면 검사 열쇠·요청·크기 미리보기가 effectiveRange 하나를 쓴다.
+  // 빠른 다시보기는 미리보기 줄 바로 아래에 구간 줄(RangeField)이 있고(preview-ux PVU3), 펼쳐져 있으면 검사 열쇠·요청·크기 미리보기가 effectiveRange 하나를 쓴다.
+  // 구간 막대의 길이(`len`)의 주인은 이 카드다: meta 길이가 우선이고 없으면 WatchPanel이 알려 준 영상 길이(PVU7).
   // 영역(region)의 이름은 영상 제목이다(h3). 머리 h2는 섹션 제목 급의 `card.title`.
   // 카드와 `.main` 사이 어떤 조상에도 overflow를 두지 않는다: 바닥 줄(.card-footer)이 sticky라서다.
   import { onMount, untrack } from 'svelte';
@@ -35,6 +36,7 @@
   } from '../../receive';
   import { announcer } from '../../stores/announce.svelte';
   import { auth } from '../../stores/auth.svelte';
+  import { mark as markFields, timelineLength, type Fields } from '../../rangeEdit';
   import { platform } from '../../stores/platform.svelte';
   import { resolver } from '../../stores/resolve.svelte';
   import { settings } from '../../stores/settings.svelte';
@@ -81,6 +83,11 @@
   let rangeStart = $state(formatClock(0));
   let rangeEnd = $state(initialEnd);
   let rangeErr: RangeError | null = $state(null);
+  /** WatchPanel이 알려 준 영상 길이(미리보기가 닫히면 null) */
+  let videoSecs: number | null = $state(null);
+  const barLen = $derived(timelineLength(view.meta.durationSecs, videoSecs));
+  /** 미리보기 편집 영역에 seek()를 부탁할 때 쓴다(PVU-5의 칸 → 영상) */
+  let watchPanel: ReturnType<typeof WatchPanel> | null = $state(null);
 
   let qualityIndex = $state(initial.quality);
   /** null = 설정의 저장 폴더 */
@@ -157,11 +164,21 @@
   const watchable = $derived(
     (view.playbackKind === 'progressive' || view.playbackKind === 'liveRewindHls') && view.ownership !== 'notOwn' && view.ownership !== 'unknown',
   );
-  /** 찍기는 손으로 칠 때와 같다: 구간 줄을 펼치고 칸만 채운다(앞 [받기]의 rangeErr는 건드리지 않는다) */
+  function setFields(f: Fields) {
+    rangeOpen = f.open;
+    rangeStart = f.start;
+    rangeEnd = f.end;
+  }
+
+  /** 찍기: 구간 줄을 펼치고 그 칸만 채운다(접혀 있었다면 다른 칸은 전체 값으로, PVU8). 앞 [받기]의 rangeErr는 건드리지 않는다 */
   function markRange(field: 'start' | 'end', secs: number) {
-    rangeOpen = true;
-    if (field === 'start') rangeStart = formatClock(secs);
-    else rangeEnd = formatClock(secs);
+    setFields(markFields({ open: rangeOpen, start: rangeStart, end: rangeEnd }, field, secs, initialEnd));
+  }
+
+  /** 손잡이로 고친 칸. 손잡이는 늘 바로 선 값을 만드니 앞 [받기]의 구간 오류는 이제 맞지 않다(검토 반영 V14) */
+  function handleFields(next: Fields) {
+    setFields(next);
+    rangeErr = null;
   }
 
   /** 소유권으로 막힌 카드: 생방송 안내("받기를 누르면 녹화가 시작돼요")가 막힘 안내와 반대 말을 하지 않게 그리지 않는다 */
@@ -314,28 +331,36 @@
 
   {#if watchable}
     <WatchPanel
+      bind:this={watchPanel}
       {view}
       markable={tone === 'rewind'}
       disabled={busy}
       onmark={markRange}
+      fields={{ open: rangeOpen, start: rangeStart, end: rangeEnd }}
+      len={barLen}
+      {initialEnd}
+      onfields={(next) => handleFields(next)}
+      onduration={(secs) => (videoSecs = secs)}
+    />
+  {/if}
+
+  <!-- 구간 줄은 미리보기 줄 바로 아래(접혀 있을 때도 같은 자리): 영상과 시각 칸 사이에 화질 행이 끼지 않게 한다 -->
+  {#if tone === 'rewind'}
+    <RangeField
+      bind:open={rangeOpen}
+      bind:start={rangeStart}
+      bind:end={rangeEnd}
+      error={rangeErr}
+      lengthUnknown={view.meta.durationSecs == null || view.meta.durationSecs <= 0}
+      disabled={busy}
+      ontoggle={(o) => {
+        if (!o) rangeErr = null;
+      }}
     />
   {/if}
 
   <div class="fields">
     <QualityPicker qualities={view.qualities} durationSecs={sizeSecs} bind:selected={qualityIndex} />
-    {#if tone === 'rewind'}
-      <RangeField
-        bind:open={rangeOpen}
-        bind:start={rangeStart}
-        bind:end={rangeEnd}
-        error={rangeErr}
-        lengthUnknown={view.meta.durationSecs == null || view.meta.durationSecs <= 0}
-        disabled={busy}
-        ontoggle={(o) => {
-          if (!o) rangeErr = null;
-        }}
-      />
-    {/if}
     <FolderField path={folderPath} onchange={changeFolder} disabled={busy} />
     <FilenameField
       bind:value={fileName}

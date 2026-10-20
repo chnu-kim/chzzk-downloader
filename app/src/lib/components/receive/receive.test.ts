@@ -564,8 +564,8 @@ describe('구간 받기(ResolveCard)', () => {
   type User = ReturnType<typeof userEvent.setup>;
   const toggleEl = () => screen.getByText(t('range.toggle'));
   const detailsEl = () => toggleEl().closest('details') as HTMLDetailsElement;
-  const startEl = () => screen.getByLabelText(t('range.start')) as HTMLInputElement;
-  const endEl = () => screen.getByLabelText(t('range.end')) as HTMLInputElement;
+  const startEl = () => screen.getByRole('textbox', { name: t('range.start') }) as HTMLInputElement;
+  const endEl = () => screen.getByRole('textbox', { name: t('range.end') }) as HTMLInputElement;
   const settle = () => new Promise((r) => setTimeout(r, CHECK_DEBOUNCE_MS + 60));
 
   async function openRange(user: User) {
@@ -1351,8 +1351,8 @@ describe('구간 찍기(ResolveCard, preview.md PV17)', () => {
   const SID = 'ab'.repeat(16);
   const markStart = () => screen.queryByRole('button', { name: t('watch.mark.start') });
   const markEnd = () => screen.queryByRole('button', { name: t('watch.mark.end') });
-  const startEl = () => screen.getByLabelText(t('range.start')) as HTMLInputElement;
-  const endEl = () => screen.getByLabelText(t('range.end')) as HTMLInputElement;
+  const startEl = () => screen.getByRole('textbox', { name: t('range.start') }) as HTMLInputElement;
+  const endEl = () => screen.getByRole('textbox', { name: t('range.end') }) as HTMLInputElement;
   const rangeDetails = () => screen.getByText(t('range.toggle')).closest('details') as HTMLDetailsElement;
   const settle = () => new Promise((r) => setTimeout(r, CHECK_DEBOUNCE_MS + 60));
   const lastEnqueueArg = () => vi.mocked(api.enqueue).mock.lastCall?.[0] as unknown as Record<string, unknown>;
@@ -1481,5 +1481,172 @@ describe('구간 찍기(ResolveCard, preview.md PV17)', () => {
     await waitFor(() => expect(markStart()).toBeDisabled());
     expect(markEnd()).toBeDisabled();
     release({} as never);
+  });
+});
+
+describe('구간 편집 배치(ResolveCard, preview-ux PVU-3)', () => {
+  const SID = 'ab'.repeat(16);
+  const startEl = () => screen.getByRole('textbox', { name: t('range.start') }) as HTMLInputElement;
+  const endEl = () => screen.getByRole('textbox', { name: t('range.end') }) as HTMLInputElement;
+  const rangeDetails = () => screen.getByText(t('range.toggle')).closest('details') as HTMLDetailsElement;
+  const thumb = (name: string) => screen.getByRole('slider', { name });
+  const settle = () => new Promise((r) => setTimeout(r, CHECK_DEBOUNCE_MS + 60));
+  const lastEnqueueArg = () => vi.mocked(api.enqueue).mock.lastCall?.[0] as unknown as Record<string, unknown>;
+
+  async function openRewindPlayer(over = {}) {
+    vi.mocked(api.watchOpen).mockResolvedValue({ id: SID, kind: 'hls', src: `watch://localhost/${SID}/pl.m3u8` });
+    const user = await openCard(over);
+    await user.click(screen.getByText(t('watch.toggle')));
+    await waitFor(() => expect(document.querySelector('video')).not.toBeNull());
+    return user;
+  }
+  /** 메타데이터가 읽힌 재생기: currentTime 쓰기를 세고 길이를 정한다 */
+  async function loadMeta(duration = 11565, time = 0) {
+    const v = document.querySelector('video') as HTMLVideoElement;
+    let ct = time;
+    const writes: number[] = [];
+    Object.defineProperty(v, 'currentTime', { configurable: true, get: () => ct, set: (x: number) => { ct = x; writes.push(x); } });
+    Object.defineProperty(v, 'duration', { configurable: true, get: () => duration });
+    await fireEvent(v, new Event('loadedmetadata'));
+    return { v, writes };
+  }
+  const key = (el: Element, k: string) => fireEvent.keyDown(el, { key: k });
+
+  it('빠른 다시보기 카드의 순서: 메타 → 미리보기 → 일부만 받기 → 화질', async () => {
+    await openCard();
+    const watch = screen.getByText(t('watch.toggle'));
+    const range = screen.getByText(t('range.toggle'));
+    const quality = screen.getByRole('radiogroup');
+    const after = (a: Node, b: Node) => !!(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(after(watch, range)).toBe(true);
+    expect(after(range, quality)).toBe(true);
+  });
+
+  it('미리보기를 펼치고 접어도 구간 줄은 같은 요소다(다시 마운트되지 않는다)', async () => {
+    const user = await openRewindPlayer();
+    const before = rangeDetails();
+    await user.click(screen.getByText(t('watch.toggle')));
+    expect(rangeDetails()).toBe(before);
+    await user.click(screen.getByText(t('watch.toggle')));
+    expect(rangeDetails()).toBe(before);
+  });
+
+  it('일반 VOD 카드에는 구간 줄도 편집 영역도 없다', async () => {
+    vi.mocked(api.resolve).mockResolvedValue(vodResolved());
+    vi.mocked(api.watchOpen).mockResolvedValue({ id: SID, kind: 'mp4', src: `watch://localhost/${SID}/v` });
+    const user = userEvent.setup();
+    render(InputPanel);
+    await user.type(urlInput(), 'https://chzzk.naver.com/video/1234567{Enter}');
+    await screen.findByRole('heading', { name: /금요/ });
+    await user.click(screen.getByText(t('watch.toggle')));
+    await waitFor(() => expect(document.querySelector('video')).not.toBeNull());
+    expect(screen.queryByText(t('range.toggle'))).toBeNull();
+    expect(screen.queryByRole('group', { name: /구간 고르기/ })).toBeNull();
+    expect(screen.queryAllByRole('slider')).toHaveLength(0);
+  });
+
+  it('시작 손잡이를 옮기면 구간 줄이 펼쳐지고 시작 칸이 바뀐다(끝 칸은 전체 값)', async () => {
+    const user = await openRewindPlayer();
+    await loadMeta();
+    expect(rangeDetails()).not.toHaveAttribute('open');
+    await key(thumb(t('range.start')), 'ArrowRight');
+    expect(rangeDetails()).toHaveAttribute('open');
+    expect(startEl()).toHaveValue('0:00:01');
+    expect(endEl()).toHaveValue('3:12:45');
+    void user;
+  });
+
+  it('끝 손잡이를 끝까지 보내면 끝 칸에 floor(길이)가 들어가고 받기 요청에는 range가 없다', async () => {
+    const user = await openRewindPlayer();
+    await loadMeta();
+    await key(thumb(t('range.end')), 'End');
+    expect(endEl()).toHaveValue('3:12:45');
+    await settle();
+    await user.click(await downloadButton());
+    await waitFor(() => expect(api.enqueue).toHaveBeenCalledTimes(1));
+    expect('range' in lastEnqueueArg()).toBe(false);
+  });
+
+  it('meta 길이가 없고 영상 길이로 막대를 그리면 끝 손잡이가 끝일 때 끝 칸은 빈칸(끝까지)이다', async () => {
+    const base = resolved();
+    await openRewindPlayer({ meta: { ...base.meta, durationSecs: null } });
+    await loadMeta(599.6);
+    expect(screen.getAllByRole('slider')).toHaveLength(2);
+    await key(thumb(t('range.start')), 'ArrowRight');
+    await key(thumb(t('range.end')), 'End');
+    expect(endEl()).toHaveValue('');
+    expect(startEl()).toHaveValue('0:00:01');
+  });
+
+  it('미리보기를 접어도 meta 길이는 남는다: 막대 길이의 주인은 카드다', async () => {
+    const user = await openRewindPlayer();
+    await loadMeta(300); // 영상이 meta(11565)보다 짧다: 길이는 meta가 우선
+    expect(thumb(t('range.end'))).toHaveAttribute('aria-valuemax', '11565');
+    await user.click(screen.getByText(t('watch.toggle')));
+    expect(screen.queryAllByRole('slider')).toHaveLength(0);
+    await user.click(screen.getByText(t('range.toggle')));
+    expect(endEl()).toHaveValue('3:12:45');
+    // 다시 펼쳐 새 영상이 더 짧아도 막대 길이는 여전히 카드의 meta 길이다
+    await user.click(screen.getByText(t('watch.toggle')));
+    await waitFor(() => expect(document.querySelector('video')).not.toBeNull());
+    await loadMeta(300);
+    expect(thumb(t('range.end'))).toHaveAttribute('aria-valuemax', '11565');
+  });
+
+  it('meta 길이가 없고 접었다 다시 열면 영상 길이도 사라진다', async () => {
+    const base = resolved();
+    const user = await openRewindPlayer({ meta: { ...base.meta, durationSecs: null } });
+    await loadMeta(599.6);
+    expect(screen.getAllByRole('slider')).toHaveLength(2);
+    await user.click(screen.getByText(t('watch.toggle')));
+    await user.click(screen.getByText(t('watch.toggle')));
+    await waitFor(() => expect(document.querySelector('video')).not.toBeNull());
+    expect(screen.queryAllByRole('slider')).toHaveLength(0);
+    // 새 loadedmetadata의 길이가 새 막대 길이다(앞 영상의 599.6이 아니다)
+    await loadMeta(300);
+    expect(thumb(t('range.end'))).toHaveAttribute('aria-valuemax', '300');
+  });
+
+  it('손잡이 이동은 앞 [받기]가 남긴 구간 오류를 지우고, 찍기는 지우지 않는다', async () => {
+    const user = await openRewindPlayer();
+    await user.click(screen.getByText(t('range.toggle')));
+    await user.clear(startEl());
+    await user.type(startEl(), 'abc');
+    await settle();
+    await user.click(await downloadButton());
+    expect(await screen.findByRole('alert')).toHaveTextContent(t('range.error.format', { example: '0:10:00' }));
+    const { v } = await loadMeta();
+    Object.defineProperty(v, 'currentTime', { configurable: true, writable: true, value: 30 });
+    await user.click(screen.getByRole('button', { name: t('watch.mark.end') }));
+    expect(screen.getByRole('alert')).toHaveTextContent(t('range.error.format', { example: '0:10:00' }));
+    await key(thumb(t('range.start')), 'ArrowRight');
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('접힌 채 끝을 찍으면 시작 칸은 전체 값(0:00:00)으로 돌아간다(PVU9)', async () => {
+    const user = await openRewindPlayer();
+    // 접힌 동안 옛 값이 남아 있게 한다
+    await user.click(screen.getByText(t('range.toggle')));
+    await user.clear(startEl());
+    await user.type(startEl(), '0:03:00');
+    await user.click(screen.getByText(t('range.toggle')));
+    expect(rangeDetails()).not.toHaveAttribute('open');
+    const { v } = await loadMeta();
+    Object.defineProperty(v, 'currentTime', { configurable: true, writable: true, value: 65.4 });
+    await user.click(screen.getByRole('button', { name: t('watch.mark.end') }));
+    expect(rangeDetails()).toHaveAttribute('open');
+    expect(startEl()).toHaveValue('0:00:00');
+    expect(endEl()).toHaveValue('0:01:05');
+  });
+
+  it('손잡이로 고친 값이 enqueue의 range가 된다', async () => {
+    const user = await openRewindPlayer();
+    await loadMeta();
+    for (let i = 0; i < 3; i++) await key(thumb(t('range.start')), 'ArrowRight');
+    await key(thumb(t('range.end')), 'ArrowLeft');
+    await settle();
+    await user.click(await downloadButton());
+    await waitFor(() => expect(api.enqueue).toHaveBeenCalledTimes(1));
+    expect(lastEnqueueArg().range).toEqual({ startMs: 3000, endMs: 11564000 });
   });
 });

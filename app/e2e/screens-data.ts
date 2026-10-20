@@ -238,7 +238,7 @@ export const SCREENS: Screen[] = [
       await expect(video).toBeVisible();
       for (const [name, time] of [
         [t('watch.mark.start'), 600],
-        [t('watch.mark.end'), 1200],
+        [t('watch.mark.end'), 9000],
       ] as const) {
         await video.evaluate((v: HTMLVideoElement, tm: number) => {
           Object.defineProperty(v, 'currentTime', { value: tm, configurable: true, writable: true });
@@ -248,7 +248,42 @@ export const SCREENS: Screen[] = [
       }
       await env.tick?.(CHECK_DEBOUNCE_MS + 50);
     },
-    ready: (p) => p.getByText(t('filename.willSaveAs', { name: `${R.suggestedFileName} (0.10.00~0.20.00)` })),
+    ready: (p) => p.getByText(t('filename.willSaveAs', { name: `${R.suggestedFileName} (0.10.00~2.30.00)` })),
+    settle: settleCardTop,
+    card: true,
+  },
+  {
+    id: '카드 구간 편집(빠른 다시보기)',
+    slug: 'card-watch-hls-edit',
+    scenario: () => ({ resolve: { [R.url]: R }, watchSrc: HLS_PLAYLIST }),
+    drive: async (app, env) => {
+      await app.page.route(HLS_PLAYLIST, () => new Promise<void>(() => {}));
+      await loadCard(app, R.url);
+      await env.tick?.(CHECK_DEBOUNCE_MS + 50);
+      await expect(app.page.locator('.card-footer button:not([aria-disabled="true"])', { hasText: t('card.download') })).toBeVisible();
+      await app.page.getByText(t('watch.toggle')).click();
+      // 메타데이터가 읽혔고 길이·재생 위치가 있는 것처럼 만들어 시작·끝을 찍는다(실제 재생은 하지 않는다)
+      const video = app.page.locator('video');
+      await expect(video).toBeVisible();
+      await video.evaluate((v: HTMLVideoElement) => {
+        Object.defineProperty(v, 'duration', { value: 11565, configurable: true });
+        Object.defineProperty(v, 'currentTime', { value: 3000, configurable: true, writable: true });
+        v.dispatchEvent(new Event('loadedmetadata'));
+      });
+      await app.page.getByRole('button', { name: t('watch.mark.start') }).click();
+      await video.evaluate((v: HTMLVideoElement) => {
+        (v as unknown as { currentTime: number }).currentTime = 8400;
+      });
+      await app.page.getByRole('button', { name: t('watch.mark.end') }).click();
+      await video.evaluate((v: HTMLVideoElement) => {
+        (v as unknown as { currentTime: number }).currentTime = 5400;
+        v.dispatchEvent(new Event('timeupdate'));
+      });
+      await env.tick?.(CHECK_DEBOUNCE_MS + 50);
+      // 검사가 끝나 [받기]가 켜진 뒤(비활성 면의 대비는 잴 대상이 아니다)
+      await expect(open(app.page, t('card.download'))).not.toHaveAttribute('aria-disabled', 'true');
+    },
+    ready: (p) => p.getByRole('slider', { name: t('range.end') }),
     settle: settleCardTop,
     card: true,
   },
@@ -295,9 +330,9 @@ export const SCREENS: Screen[] = [
     },
     ready: (p) => p.getByRole('alert').filter({ hasText: t('range.error.order') }),
     // 높이 231·520에서는 [받기] 클릭·오류 포커스로 스크롤이 내려가 「미리보기」·「일부만 받기」 줄이 sticky 입력줄 밑에 반쯤 걸린다
-    // (axe target-size, 빠른 다시보기 카드에 미리보기 줄이 생긴 PV-6부터 520도). 구간 줄을 입력줄 바로 아래에 두고 잰다(card-worst와 같은 까닭)
+    // (axe target-size, 빠른 다시보기 카드에 미리보기 줄이 생긴 PV-6부터 520도). 구간 줄은 미리보기 줄 바로 아래라 미리보기 줄을 입력줄 바로 아래에 두고 잰다(card-worst와 같은 까닭)
     settle: async (page, env) => {
-      if (env.vp.height < 600) await page.getByText(t('range.toggle')).evaluate((el) => el.scrollIntoView({ block: 'start' }));
+      if (env.vp.height < 600) await page.getByText(t('watch.toggle')).evaluate((el) => el.scrollIntoView({ block: 'start' }));
     },
     card: true,
   },

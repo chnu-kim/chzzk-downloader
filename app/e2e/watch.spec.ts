@@ -290,7 +290,7 @@ test('막대를 누른 뒤 I·O 키로 시작·끝을 찍으면 칸이 채워지
   expect(req.range).toEqual({ startMs: a * 1000, endMs: b * 1000 });
 });
 
-test('±1초 단추가 칸을 고치고, 칸을 고친 뒤 빠져나가면 영상이 그 시각으로 가고, 받기 요청의 range가 된다', async ({ app }) => {
+test('칸 ↑/↓가 칸을 고치고, 칸을 고친 뒤 빠져나가면 영상이 그 시각으로 가고, 받기 요청의 range가 된다', async ({ app }) => {
   holdPlaylist(app.page);
   const REWIND = resolved();
   const card = await openCard(app, REWIND, { watchSrc: HLS_SRC });
@@ -307,16 +307,16 @@ test('±1초 단추가 칸을 고치고, 칸을 고친 뒤 빠져나가면 영�
   await startText.press('Tab');
   await expect.poll(now).toBe(600);
 
-  // ±1초: 칸이 바뀌고 영상도 따라간다
-  await card.getByRole('button', { name: t('range.nudge.startLater.label', { n: 1 }) }).click();
+  // ↑/↓: 칸이 1초씩 바뀌고 영상도 따라간다
+  await startText.press('ArrowUp');
   await expect(startText).toHaveValue('0:10:01');
   await expect.poll(now).toBe(601);
-  await card.getByRole('button', { name: t('range.nudge.endEarlier.label', { n: 1 }) }).click();
+  await endText.press('ArrowDown');
   await expect(endText).toHaveValue('3:12:44');
   await expect(card.getByText(t('range.lengthSize.label', { length: '3:02:43', size: '' }).split(' · ')[0])).toBeVisible();
   // 검사가 끝나 [받기]가 켜진 뒤에 잰다(비활성 면의 대비는 잴 대상이 아니다)
   await expect(card.getByRole('button', { name: t('card.download') })).not.toHaveAttribute('aria-disabled', 'true');
-  await app.axe('±1초 단추와 구간 길이(빠른 다시보기)');
+  await app.axe('칸 ↑/↓와 구간 길이(빠른 다시보기)');
 
   await card.getByRole('button', { name: t('card.download') }).click();
   await expect.poll(async () => (await app.args('enqueue')).length).toBe(1);

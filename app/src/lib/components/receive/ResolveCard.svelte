@@ -196,6 +196,7 @@
    * 읽히면 영상을 그 시각으로 보낸다. 미리보기가 닫혀 있거나 메타데이터 전이면 watchPanel.seek이 아무것도 하지 않는다
    */
   function blurField(f: 'start' | 'end', to: EventTarget | null) {
+    flushSeek(f); // keyup 없이 포커스가 떠나도 길게 누른 마지막 탐색은 보낸다(PS2)
     const before = focusText;
     focusText = null;
     const text = fieldText(f);
@@ -206,20 +207,48 @@
     if (secs != null) watchPanel?.seek(secs);
   }
 
-  /** 칸을 못 읽으면 ±1초 단추를 막는다 */
-  function canNudge(f: 'start' | 'end'): boolean {
-    return nudgeFields({ open: rangeOpen, start: rangeStart, end: rangeEnd }, f, 1, barLen, initialEnd) != null;
+  /** 칸 → 영상 탐색 목표(초). 끝 칸이 빈칸("끝까지")이면 맨 끝(floor(길이)). 못 정하면 null */
+  function seekSecsOf(f: 'start' | 'end', text: string): number | null {
+    if (!barLen) return null;
+    return f === 'end' && text.trim() === '' ? Math.floor(barLen.secs) : seekTargetOf(text, barLen.secs);
   }
 
-  /** ±1초: 칸을 고치고 앞 [받기]의 구간 오류를 지운다. 미리보기가 열려 있으면 영상도 그 시각으로 */
-  function nudgeRange(f: 'start' | 'end', delta: -1 | 1) {
-    const next = nudgeFields({ open: rangeOpen, start: rangeStart, end: rangeEnd }, f, delta, barLen, initialEnd);
+  /** 길게 누르는 동안 미룬 마지막 탐색이 있는 칸(PS2). keyup이나 blur에서 한 번 보낸다 */
+  let pendingSeek: 'start' | 'end' | null = null;
+
+  function flushSeek(f: 'start' | 'end') {
+    if (pendingSeek !== f) return;
+    pendingSeek = null;
+    const secs = seekSecsOf(f, fieldText(f));
+    if (secs != null) watchPanel?.seek(secs);
+  }
+
+  /**
+   * 칸의 ↑/↓(PS1~PS3): ±1초. 수식 키 조합은 처리하지 않는다(IME 조합 중 거름은 RangeField)(칸의 기본 편집 동작을 남긴다).
+   * 그 밖의 ↑/↓는 늘 기본 동작(캐럿 이동)을 막는다. 칸을 못 읽으면 값은 그대로다.
+   * 칸을 고치고 앞 [받기]의 구간 오류를 지운다. 영상은 첫 keydown에만 따라가고 길게 누른 뒤에는 keyup·blur에서 한 번이다
+   */
+  function fieldKey(f: 'start' | 'end', e: KeyboardEvent) {
+    if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+    if (e.shiftKey || e.altKey || e.ctrlKey || e.metaKey) return;
+    e.preventDefault();
+    if (busy) return;
+    const next = nudgeFields({ open: rangeOpen, start: rangeStart, end: rangeEnd }, f, e.key === 'ArrowUp' ? 1 : -1, barLen, initialEnd);
     if (!next) return;
     handleFields(next);
-    if (!barLen) return;
-    // 끝 칸이 빈칸("끝까지")이 되었으면 맨 끝(floor(길이))으로 보낸다
-    const secs = f === 'end' && next.end.trim() === '' ? Math.floor(barLen.secs) : seekTargetOf(next[f], barLen.secs);
+    // 포커스 때 글자를 새 값으로 바꿔 blur가 같은 시각으로 한 번 더 탐색하지 않게 한다(PS3)
+    focusText = next[f];
+    if (e.repeat) {
+      pendingSeek = f;
+      return;
+    }
+    pendingSeek = null;
+    const secs = seekSecsOf(f, next[f]);
     if (secs != null) watchPanel?.seek(secs);
+  }
+
+  function fieldKeyUp(f: 'start' | 'end', e: KeyboardEvent) {
+    if (e.key === 'ArrowUp' || e.key === 'ArrowDown') flushSeek(f);
   }
 
   /** 구간 길이 줄: 구간이 읽히면 구간, 아니면 영상 길이. 끝을 모르면 줄이 없다. 고른 화질의 예상 크기가 있으면 곁들인다 */
@@ -406,8 +435,8 @@
       disabled={busy}
       onfocusfield={focusField}
       onblurfield={blurField}
-      onnudge={nudgeRange}
-      {canNudge}
+      onfieldkey={fieldKey}
+      onfieldkeyup={fieldKeyUp}
       {lengthText}
       ontoggle={(o) => {
         if (!o) rangeErr = null;

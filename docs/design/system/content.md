@@ -109,7 +109,6 @@
 | 완성 파일 열기 | **열기** | 파일 열기, 재생 | D39, `G-HANDOFF-H1`(순서는 D39가 뒤집음) |
 | 받기 전에 영상을 미리 보는 일 | **미리보기**: 카드의 접힌 줄 "미리보기", 접근 이름 "‘{title}’ 미리보기", 실패 때 [치지직에서 보기] | 프리뷰 | D64, preview.md. "재생"·"재생기"는 위 "완성 파일 열기" 행이 이미 금지한다(DC1은 문구 전체에 건다: copy deck·`help/*.md`·`patterns.md`·`web.md`). 높이 예산 표도 "미리보기 줄"로 적는다 |
 | 받기 전에 고른 구간을 영상으로 확인하는 일 | **구간 보기**·**시작부터 보기**·**구간 반복하기**: 편집 영역 조작 줄의 단추 둘과 스위치 | 루프 | preview-ux.md PVU14. "재생"은 문구 전체 금지어라 "보기" 계열로 쓴다. 스위치는 "`-기`로 끝나는 명사구"(§5.1), 단추는 "동사 어간 + 기"다 |
-| 시각을 조금 앞·뒤로 옮기는 일 | **당기기**·**미루기**: 칸 오른쪽 [1초 당기기]·[1초 미루기](접근 이름은 "시작 시각 1초 당기기" 꼴로 보이는 글자를 포함한다) | 증가·감소, 플러스·마이너스 | preview-ux.md PVU-5·V10. 단추는 "동사 어간 + 기"(§5.1). 숫자는 코드 상수 `n`을 자리표시로 넣는다 |
 | 파일 위치 보기 | macOS **Finder에서 보기** / 그 외 **폴더에서 보기** | 폴더 열기, 탐색기에서 보기, 파일 위치 | D39·D43, `G-HANDOFF-H1`. 문자열은 `platform.md` 분기 표에만(D2) |
 | `.part` | 파일을 가리키면 **받다 만 파일**, 양을 가리키면 **받은 부분** | 받던 부분, 임시 파일, 조각 파일, `.part`(문구에) | D43 + judgment §2.3-1("받은 부분은 그대로 있어요"). a-copy §2.7(4종). 두 말은 뜻이 다르다(파일/양) |
 | 네이버 쿠키 | **네이버 로그인 정보**(늘 "네이버"를 붙인다) | 로그인 정보(단독), 쿠키(두 곳 밖), 값(단독, 입력칸 라벨 밖) | `G-PRIVACY-R22`. "쿠키"는 설정의 도움말 본문과 처리방침 두 곳에서만(`G-PRIVACY-R23`) |
@@ -473,8 +472,6 @@
 | (신설, PVU-3) `watch.range.play.label` | — | `watch.range.play.label` **구간 보기** | 조작 줄 단추. 고른 구간의 시작으로 가서 보고 끝에서 멈춘다. 용어집 새 행 |
 | (신설, PVU-3) `watch.range.fromStart.label` | — | `watch.range.fromStart.label` **시작부터 보기** | 조작 줄 단추. 시작으로 가서 보기만 하고 끝에서 멈추지 않는다 |
 | (신설, PVU-3) `watch.range.loop.label` | — | `watch.range.loop.label` **구간 반복하기** | 조작 줄 Switch 이름. 켜면 구간 끝에서 시작으로 돌아가 이어 본다. "`-기`로 끝나는 명사구"(§5.1 스위치 행) |
-| (신설, preview-ux PVU-5) `range.nudge.earlier.label` / `range.nudge.later.label` | — | `range.nudge.earlier.label` **{n}초 당기기** / `range.nudge.later.label` **{n}초 미루기** | 칸 오른쪽 ±1초 단추의 보이는 글자(`Button size=sm`). `n`은 코드 상수 1 |
-| (신설, PVU-5) `range.nudge.{start,end}{Earlier,Later}.label` | — | **시작 시각 {n}초 당기기** / **시작 시각 {n}초 미루기** / **끝 시각 {n}초 당기기** / **끝 시각 {n}초 미루기** | 단추의 접근 이름. 보이는 글자를 포함한다(WCAG 2.5.3) |
 | (신설, PVU-5) `range.length.label` / `range.lengthSize.label` | — | `range.length.label` **구간 길이: {length}** / `range.lengthSize.label` **구간 길이: {length} · {size}** | 구간 줄 안 caption 한 줄. `{size}`는 "약 7.8GB"처럼 "약"을 품는다. `·` 결합은 deck 문자열 하나로(DS6). `aria-live` 없음 |
 | (신설) `range.toggle` | — | `range.toggle` **일부만 받기** | §5.1 기본형. 빠른 다시보기 카드 화질 아래 Disclosure(range.md §5) |
 | (신설) `range.label` | — | `range.label` **구간** | 명사 라벨(DC5) |

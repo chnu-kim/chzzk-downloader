@@ -4,6 +4,7 @@
 
 ## 현재 위치
 
+- **미리보기·구간 개편 PS-1 구간 칸 ↑/↓(2026-10-21, 브랜치 `feat/preview-ux2-arrow-keys`, 명세 `docs/design/features/preview-ux2.md` PS1~PS4·§11.2 PS-1, app.md 120, `feat`)**: ±1초 단추 네 개와 문구 키 여섯·용어집 행을 없애고, 시작·끝 칸의 ↑/↓가 1초씩 바꾸며(`rangeEdit.nudge`) 영상이 따라간다(IME·수식 키는 처리 안 함, 길게 누르면 뗄 때·blur에서 한 번 탐색). 갤러리 기준선은 Linux CI 몫.
 - **PVU-6 리뷰 반영(2026-10-21)**: ADR 요약의 장 수를 열여덟로, §16.4 번들 증가가 PVU-3 시점 값임을 명시했다.
 - **미리보기 구간 편집 UX PVU-6 문서 마감(2026-10-21, 브랜치 `feat/preview-ux-range-docs`, 명세 `docs/design/features/preview-ux.md` §11.2 PVU-6·§16, 구현 중 변경 번호 없음(app.md 115~119 사용), `chore`)**: D65·ADR-0028 `채택(잠정)` 유지, 디자인 README 열린 항목 16(M-PVU), 명세 §16 구현 결과, `features/README.md`·`plan.md` 트랙. 남은 것: 사용자 실측 M-PVU-1~7, 머지 뒤 `tests.vitest`·`tests.playwright` 기준 올리기·갤러리 기준선 받기.
 - **PVU-5 리뷰 반영(2026-10-20)**: [끝 시각 1초 미루기]로 끝 칸이 빈칸(끝까지)이 되어도 영상이 맨 끝(floor(길이))으로 따라가게 고쳤다. 끝 칸 blur 탐색·메타데이터 전 blur 시험을 더했다(`receive.test.ts` +3, 변형 3곳 확인).

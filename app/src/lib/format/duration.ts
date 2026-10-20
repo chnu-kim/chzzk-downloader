@@ -27,6 +27,19 @@ export function formatClock(secs: number): string {
   return `${h}:${String(m).padStart(2, '0')}:${String(r).padStart(2, '0')}`;
 }
 
+/**
+ * 낭독용 정확한 시각(손잡이 `aria-valuetext`): `1시간 2분 3초`. 0인 단위는 떼고(`2분`, `1시간 3초`), 전부 0이면 `0초`.
+ * `formatSpan`은 한 시간이 넘으면 초를 버려 손잡이 값을 정확히 읽지 못한다.
+ */
+export function formatClockLong(secs: number): string {
+  const s = whole(secs);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const r = s % 60;
+  const parts = [h > 0 ? `${h}시간` : '', m > 0 ? `${m}분` : '', r > 0 ? `${r}초` : ''].filter(Boolean);
+  return parts.length > 0 ? parts.join(' ') : '0초';
+}
+
 /** 남은 시간 `m:ss`(분은 자리 맞춤 없음): 600 → `10:00`, 59 → `0:59`, 음수·NaN → `0:00` */
 export function formatMmss(secs: number): string {
   const s = whole(secs);

@@ -525,6 +525,8 @@ sel = {start 60, end 90, toEnd false}. 구간은 `60 ≤ t < 90`(끝 제외). `t
 
 완료 조건: `scan`, `design-*` 녹색.
 
+**PVU-6 결과(2026-10-21)**: 1은 `채택(잠정)` 유지로 닫았다(E1, 실기 M-PVU-1~7이 전부 남았다). README 열린 항목 16에 M-PVU를 올렸다. 2는 §16과 각 문서 행으로 채웠다. 3은 CI 녹색 실행이 없어 올리지 않았다(§16.4에 로컬 측정값).
+
 ### 11.3 gate
 `frontend`, `design-tokens`·`design-lint`·`design-copy`·`design-icons`, `e2e-web`, `design-shots`(관찰), `scan`, `coverage`. 크기는 CI `bundle (linux)`의 `size`(ci-ok 안)가 master 기준 202460 ±3%로 본다. Rust·`.github/`·`worker/`·`help/`는 바꾸지 않는다.
 
@@ -607,6 +609,41 @@ sel = {start 60, end 90, toEnd false}. 구간은 `60 ≤ t < 90`(끝 제외). `t
 
 문제없음으로 판단한 것(plan-tdd 마지막 절): 상태의 한 방향 흐름(무한 루프 없음), hls.js 경로 한정(PV17), Esc 확장 근거 인용, 가짜 백엔드 무변경. 이 판단에는 반대하지 않았고 본문을 바꾸지 않았다.
 
-## 16. 구현 결과
+## 16. 구현 결과(PVU-6, 2026-10-21)
 
-(PVU-6에서 채운다.)
+PVU-1~PVU-5가 `feat/preview-ux-range-model`·`-timeline`·`-layout`·`-keys`·`-nudge` 브랜치(stacked)로 구현됐다. 아래는 명세와 달라진 점의 요약이고, 원문은 app.md 구현 중 변경 115~119다. 번호 예약(§11.4)은 어긋나지 않았다(115~119 그대로, D65·ADR-0028 그대로, core.md 변경 없음).
+
+### 16.1 PR과 번호
+
+| PR | 브랜치 | 구현 중 변경 | 비고 |
+|---|---|---|---|
+| PVU-1 순수 모델 | `feat/preview-ux-range-model` | app.md 115 | `rangeEdit.ts`, `formatClockLong` |
+| PVU-2 구간 막대 컴포넌트 | `feat/preview-ux-range-timeline` | app.md 116, D65·ADR-0028 | `RangeTimeline.svelte`, `--p` 예외를 막대로 넓힘, 대비 쌍 둘 |
+| PVU-3 편집 배치 | `feat/preview-ux-range-layout` | app.md 117 | 편집 영역·구간 보기·`scroll-padding-bottom`, 갤러리 `card-watch-hls-edit` |
+| PVU-4 키보드 | `feat/preview-ux-range-keys` | app.md 118 | I/O·Space·←/→, `GlobalShortcuts` Esc 넓힘 |
+| PVU-5 양방향·미세 조정·길이 | `feat/preview-ux-range-nudge` | app.md 119 | 칸 blur 탐색, ±1초 단추, 길이 줄 |
+| PVU-6 문서 마감 | `feat/preview-ux-range-docs` | (번호 없음) | 이 절, 기능 안내·계획·ROADMAP, 열린 항목 16 |
+
+### 16.2 명세와 달라진 점
+
+- **`nudge`의 경계**: 길이가 2초 미만이면 `null`, 못 읽는 다른 칸은 `selection`처럼 본다(app.md 115 ①~⑥).
+- **막대 누름은 `disabled`에서도 동작**: 칸을 바꾸지 않는 영상 탐색이라서다. 손잡이 끌기·키만 막는다. 오른쪽 버튼은 무시, 경계에서 한 걸음 더도 `commit`을 보낸다(app.md 116).
+- **손잡이 턱**: DL2·DL11이 `-1px` 보정을 막아 테두리 안쪽 안에 그린다(명세보다 테두리 두께만큼 짧다, app.md 116).
+- **`onfields`의 cause는 `'handle'`만**: 찍기는 기존 `onmark`를 두고 카드가 `rangeEdit.mark`로 처리한다(app.md 117).
+- **접근 이름 겹침**: 구간 칸과 손잡이가 둘 다 "시작 시각"·"끝 시각"이라 PV-7 시험·`watch.spec.ts`는 `getByRole('textbox', { name })`으로 좁혔다(app.md 117, 119).
+- **`scroll-padding-bottom`의 `+ 1px`** 는 DL11이 막아 `+ var(--space-4)`다(app.md 117).
+- **편집 영역 요소는 늘 둔다**: hls.js가 붙은 뒤 영상 요소가 새로 만들어지지 않도록 `.editor`를 항상 두고 `role` 등만 조건부로 붙인다(app.md 117).
+- **좁은 폭 손잡이 `target-size`**: 두 손잡이가 24px 안에 붙으면 axe에 걸린다. 갤러리 장면은 멀리 떨어지게 잡았고 한계는 M-PVU-2·후속으로 남겼다(app.md 117).
+- **±1초 묶음은 `nowrap`이 아니라 `wrap`**: 아주 크게 320에서 `nowrap`은 가로 스크롤을 만들었다. 칸은 `min-width`로 24px 아래로 줄지 않는다(app.md 119).
+- **PVU-4**: 명세와 달라진 점 없음(app.md 118).
+
+### 16.3 남은 것
+
+- **사용자 실측 M-PVU-1~7**(§13). 특히 M-PVU-4(막대 길이 축, 메타 길이와 `video.duration` 차이)·M-PVU-7(영상 위 I/O와 Space·←/→가 네이티브 컨트롤과 겹치는지)이 화면 낭독기 M-PVU-2와 함께 D65·ADR-0028을 `확정`으로 바꿀 조건이다. 안 되면 후속(§12)으로 간다.
+- **빠른 다시보기 카드 높이 578**: 계산값 [잠정]이다. 갤러리 측정으로 조인다(patterns 높이 예산 행).
+- **갤러리 기준선**: `design-shots`의 `card-watch-hls-edit`·`card-watch-hls-marked`·`card-range`·`card-range-unknown` 기준선은 Linux CI에서만 만든다. 실패한 실행의 artifact를 `node scripts/design/shots.mjs --accept <run id>`로 받는다.
+- **후속(§12)**: 썸네일 줄, 자체 재생 막대, 끌기 중 스크러빙, 도움말 단락 등.
+
+### 16.4 ratchet(사람)
+
+CI 녹색 실행이 생기기 전이라 `ci/ratchet.json`은 건드리지 않았다. 이 트리의 로컬 측정은 vitest 2017개(50 파일), Playwright `chromium` 프로젝트 91개와 `gallery` 프로젝트 385개다(기준 `tests.vitest` 692·`tests.playwright` 63은 이 트리에서 옛 값이라 비교하지 않는다. 기준은 `ratchet.mjs write --from-run <run id>`가 CI 측정값으로 올린다). 로컬 `dist` gzip 증가는 PVU-3에서 JS +3.06 kB, CSS +0.37 kB였다. 번들 크기는 master 기준 202460 ±3% 안인지 CI `bundle (linux)`의 `size`가 본다.

@@ -123,7 +123,7 @@ test('CLI: 저장소 원천을 임시 루트로 복사해 표를 찍고 0', asyn
     const out = logs.join('\n');
     assert.match(out, /### 라이트/);
     assert.match(out, /### 다크/);
-    assert.equal((out.match(/PASS/g) ?? []).length, 92);
+    assert.equal((out.match(/PASS/g) ?? []).length, 94);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

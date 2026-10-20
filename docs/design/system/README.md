@@ -26,7 +26,7 @@
 
 | 문서 | 내용 | 소유하는 결정 |
 |---|---|---|
-| `README.md`(이 문서) | 이름·원칙·우선순위·결정 표 D1~D64·열린 항목·변경 규칙 | 전부의 색인 |
+| `README.md`(이 문서) | 이름·원칙·우선순위·결정 표 D1~D65·열린 항목·변경 규칙 | 전부의 색인 |
 | `foundations.md` | 토큰 전부(이름·값). 색·대비·forced-colors, 글자·척도·글꼴 스택, 간격, 크기, 반경·선·면·그림자, 모션·z-index, 레이아웃, 아이콘, 테마, CSS 하한, 생성물 기대 모양 | D1 D3 D4 D5 D6 D8 D9 D11~D20 D22 D23 D24 D27 D31 D32 |
 | `components.md` | 컴포넌트 명세: API 어휘(`variant`·`tone`·`size`·`kind`·`state`), 상태(hover·pressed·disabled·focus), 치수 조합, forced-colors 행, 접근 이름 강제. Button·IconButton·TextField·SecretField·Select·Switch·RadioGroup·Disclosure·Menu·Dialog·ConfirmDialog·Notice·Toast·ErrorAlert·EmptyState·Surface·SettingsRow·FieldRow·PageContainer·Badge·ProgressBar·Spinner·Skeleton·Kbd·Icon·AppMark·DropOverlay·Toolbar | D21 D35 D37(해부) |
 | `patterns.md` | 화면 패턴: 홈(빈 상태 3단계·최근 영상·붙여넣기 힌트), 영상 카드, 작업 행과 상태 어휘, 설정, 로그인·거부, 대화상자 배치, 알림 위계와 상태 6종, 진행 표시, 완료 후 동작, 연결 대기, 공지. 문구 예시는 두지 않고 `content.md`의 키를 가리킨다 | D36 D37 D38 D39 D40 D41 D56 D57 |
@@ -34,7 +34,7 @@
 | `platform.md` | 앱 셸: 커서, 타이틀바, 스크롤바, 줌·글자 크기 설정, Dock·작업 표시줄, 창 복원, 테마 선택(Linux), 메뉴 용어, 단축키 표기, 브라우저 키 차단, 클립보드, 잠자기 방지, 저장 위치·경로, OS별 분기 표(진법·라벨·경로) | D2 D7 D25~D30 D47(OS 분기) D55 D56 |
 | `web.md` | Worker 페이지: CSP 안에서의 골격(`theme-color`·skip link·heading·`caption`·`th scope`), 읽기 척도 적용 범위, 랜딩 구조·휴대폰 진입·OG, 무스크립트 폼(PRG·flash·오류 요약·멱등), 위험도 2단, 봇·인앱, `/help`·`/privacy`·`/licenses` | D52 D53 D54 |
 | `governance.md` | 강제 장치 구현(§4의 gate 일곱 개 명세 `DT*`·`DL*`·`DS*`·`DP*`·`DC*`·`DI*`, 확장 검사 표, 리뷰 체크리스트 R1~R10 본문), 토큰·UI CSS 파이프라인(`design/tokens/*.tokens.json`·`design/ui.css` → 생성기 → `--check`), 근거 등급 E0~E4와 운영(시험 기록 규칙, 텔레메트리 없음), 변경 흐름, 적용 계획 (a)~(f) | D33(과제 등록) D58~D62 |
-| `adr/NNNN-slug.md` | 결정 기록(0001~0027). 템플릿과 쓰는 때는 §7 | 개별 결정 |
+| `adr/NNNN-slug.md` | 결정 기록(0001~0028). 템플릿과 쓰는 때는 §7 | 개별 결정 |
 | `docs/research/design-system.md` | 근거 문서: 약칭 표, 브리프 요약, 검증 결과(confirmed/refuted 목록), 후보 세 개와 판정 요약, 감사 결함 색인(파일:줄). 설계 문서가 인용하는 ID의 원천 | — |
 
 소유권 규칙: 한 결정은 한 문서에만 적는다. 다른 문서는 "`foundations.md` §5.1"처럼 가리키기만 한다. 수치는 `foundations.md`에만 있고(§13 생성물 블록과 §14 상수 표), 다른 문서는 토큰·상수 **이름**을 쓴다. 이름 옆에 값을 함께 적을 때는 `` `--dialog-w` 440``처럼 쓰고, `design-tokens`(DT14)가 §13과 생성물의 패리티를, `scripts-test`의 `spec-check.mjs`(governance §2.9)가 다른 문서의 "이름 + 값" 쌍이 §13·§14와 같은지를 본다. 문구는 `content.md`에만 있고 다른 문서는 copy deck 키를 가리킨다(`design-copy` DC10 문서 패리티).
@@ -211,6 +211,7 @@
 | D62 첫 사용자 시험 | **둘 다**(적용 전 현재 앱 기준선 + 적용 뒤). 회당 3명(스트리머·지인 각 1명 이상), 두 회 이상, 과업 UT1~UT7(`governance.md` §6.2. 편집자 위임 과업 UT8·UT9는 기능이 들어간 뒤의 회차끼리만 합산한다, ADR-0026), 판정은 관찰 횟수+심각도, "N명 중 M명"으로만. 시험 기록에 채널명·제목 금지. 확인 과업 V1~V10(`governance.md` §6.4): 완료를 색 없이 알아보는가 / 오른쪽 파랑을 안전으로 읽는가 / 왼쪽 빨간 글자를 파괴로 읽는가 / 13px이 작게 느껴지는가 / 헤더 이름만으로 무엇인지 아는가 / 툴바 톱니를 찾는가 / 연결 대기를 오류로 읽는가 / 토스트 6초를 다 읽는가 / 편집자 행이 숨겨지지 않으면서 튀지 않는가 / 로그인 = 수락에 놀라는가(V9·V10, ADR-0026) | `G-EVID-R1`~`G-EVID-R10`, `J-Q1`~`J-Q5` | `R10`, `governance.md` 시험 항목 목록 |
 | D63 생방송 녹화 | **종류 배지 "생방송"**, 진행 중인 방송을 받을 때만 명사 **"녹화"**(상태 줄 "녹화 중 · 1시간 2분 · 3.4GB"), 끝내는 버튼 **[녹화 마치기]**(받은 만큼 최종 파일로 마무리). 일시정지·진행 막대·남은 시간 없음. 본인 채널 게이트 그대로 | 사용자 결정(2026-10-16). 길이를 모르는 대상은 퍼센트를 만들지 않는다(D40·patterns §3.2). ADR-0025 | `design-copy`, `frontend` |
 | D64 받기 전 미리보기 | 카드 안 `Disclosure variant="inline"` **"미리보기"**, **기본 접힘**, 펼칠 때 `watch_open`·접거나 카드가 사라지면 `watch_close`. 자동재생 없음(`preload="metadata"`), 네이티브 `controls`, 화면은 16:9에 최대 높이 토큰 `--watch-max-h` **360px** [잠정]. 실패는 inline Notice 하나("미리보기를 열 수 없어요." + [다시 시도] + [치지직에서 보기]), 게이트 거부는 받기와 같은 오류 문구. 줄은 받을 수 있는 통짜 mp4 카드와 빠른 다시보기 카드(`ownership`이 `notOwn`·`unknown`이 아니고 재생 방식이 `progressive`·`liveRewindHls`, 후자는 PV-6부터)에만 있고 생방송에는 없다. 새 말은 용어집 "미리보기"(쓰지 않는 말 "프리뷰")이며 "재생"·"재생기"는 DC1이 문구 전체에서 막는다 | 사용자 결정(2026-10-20), `docs/design/features/preview.md` PV14, 검토 반영 P3·P4·P9. `--watch-max-h`는 실측(M-PV-1)으로 조인다. ADR-0027. **확정(2026-10-20, PV-8)**: 결정 값은 구현(app.md 110·113·114)과 같다. 확정이 아닌 것은 높이 상수 360px 하나뿐이다. ADR-0027은 근거 등급 E1이라 `채택(잠정)`을 유지한다(DA6: E3 미만은 `채택`이 안 된다) | `frontend`, `design-copy`, `design-tokens`, `design-gallery`(카드 미리보기 펼침·실패 장면) |
+| D65 구간 막대(미리보기 구간 편집) | 빠른 다시보기 미리보기의 `<video>` 아래에 기능 컴포넌트 `receive/RangeTimeline.svelte`를 둔다. 네이티브 `controls`는 그대로다(ADR-0027 결정 2 위에 덧붙임, 뒤집지 않는다). 막대 안에 선택 띠(`--accent`)·재생 위치(`--fg` 2px 선, 높이는 트랙 두께만)·손잡이 둘(`role="slider"`, 면 `--accent`, 대괄호 `[`·`]` 모양, 트랙 밖으로 튀어나옴)을 그린다. 색만이 아니라 높이와 턱 모양이 재생 위치와 손잡이를 가른다(WCAG 1.4.1). 누름 영역은 앵커에서 바깥쪽으로만 펴 붙은 손잡이가 겹치지 않는다. 눌림은 면을 `--accent-pressed`로 채운다. 위치는 `style:--p`(0~1)뿐이고 새 토큰은 없다. 순서가 뒤집히면 띠를 그리지 않고 두 손잡이의 경계는 모두 `[0, floor(길이)]`다 | 사용자 결정(2026-10-20), `docs/design/features/preview-ux.md` PVU1·PVU4·PVU9·PVU15·PVU16, 검토 반영. `--p` 예외 범위를 ProgressBar 하나에서 막대 둘로 넓힌다(DL7·DS2·DT2). 막대 실기(M-PVU-2) 전이라 [잠정]. ADR-0028 | `frontend`(`RangeTimeline.test.ts`), `design-lint`, `design-tokens`(DT8 `fg / accent` 쌍) |
 
 ---
 
@@ -283,7 +284,7 @@
 - 예시 값은 가짜만 쓴다(`scan`).
 ### 7.3 처음에 쓴 ADR
 
-판정과 이 문서가 내린 결정의 기록으로 열 장을 썼다(`adr/`). 모두 E0~E1 근거라 `채택(잠정)`이다. 0011~0016은 적용 단계 (b)의 새 컴포넌트 여섯 장, 0017~0019는 (c)의 기능 화면 결정 셋, 0020·0021은 (e)의 Worker 결정 둘(서비스 공지 D41, 웹 폼 위험도 D54), 0022~0024는 (f)의 셸 결정 셋(Dock 집계 D29, 클립보드 제안 D56, 연결 대기 D40), 0025는 생방송 녹화(D63), 0026은 편집자 위임(맡기기, 새 D 없음), 0027은 받기 전 미리보기(D64)다.
+판정과 이 문서가 내린 결정의 기록으로 열 장을 썼다(`adr/`). 모두 E0~E1 근거라 `채택(잠정)`이다. 0011~0016은 적용 단계 (b)의 새 컴포넌트 여섯 장, 0017~0019는 (c)의 기능 화면 결정 셋, 0020·0021은 (e)의 Worker 결정 둘(서비스 공지 D41, 웹 폼 위험도 D54), 0022~0024는 (f)의 셸 결정 셋(Dock 집계 D29, 클립보드 제안 D56, 연결 대기 D40), 0025는 생방송 녹화(D63), 0026은 편집자 위임(맡기기, 새 D 없음), 0027은 받기 전 미리보기(D64), 0028은 미리보기 구간 막대(D65)다.
 
 | 번호 | 제목 | 관련 |
 |---|---|---|
@@ -314,5 +315,6 @@
 | 0025 | 생방송 녹화: 종류 배지 "생방송", 동사 "녹화", 끝내는 버튼 "녹화 마치기" | D43·D63, content.md §4·§15.2, core.md 58 |
 | 0026 | 맡기기: 본인 영상 제한을 채널 주인이 맡긴 채널로 넓힌다 | D37·D43·D52·D63, content.md §4, ADR-0009·ADR-0025, worker.md 105·106 |
 | 0027 | 받기 전 미리보기: 카드 안 접힌 줄, 자동재생 없음, 실패는 한 Notice | D64, content.md §4·§15, components.md §2.29, app.md 110 |
+| 0028 | 미리보기 구간 막대: 네이티브 컨트롤 아래 따로 둔 슬라이더 둘, `--p` 예외를 막대로 넓힘 | D65, components.md §2.30, foundations §2.4·§2.7, app.md 116 |
 
 그 뒤 D33(앱 마크)·D58·D59·D60(사람 결정)·D55(실기 결과)·§6-1(Windows 실기)이 각각 ADR을 받는다(§6-1은 실기 결과가 나온 뒤).

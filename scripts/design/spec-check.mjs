@@ -92,7 +92,7 @@ const ranges = { DT: 17, DL: 14, DS: 9, DP: 5, DX: 23, DC: 12, DI: 7, DA: 11 };
 for (const [file, text] of docs) {
   lines(stripCode(text)).forEach((l, i) => {
     for (const m of l.matchAll(/ADR-(\d{4})/g)) if (!adrs.has('ADR-' + m[1])) warn(file, i + 1, `없는 ADR-${m[1]}`);
-    for (const m of l.matchAll(/(?<![A-Za-z-])D(\d{1,2})\b(?!\.|~|-)/g)) { const n = +m[1]; if (n > 64 && !/D(1|2|3|4|5|6|7)\b/.test(m[0])) warn(file, i + 1, `D${n} 범위 밖`); }
+    for (const m of l.matchAll(/(?<![A-Za-z-])D(\d{1,2})\b(?!\.|~|-)/g)) { const n = +m[1]; if (n > 65 && !/D(1|2|3|4|5|6|7)\b/.test(m[0])) warn(file, i + 1, `D${n} 범위 밖`); }
     for (const m of l.matchAll(/(?<![A-Za-z-])R(\d{1,2})\b(?![-.])/g)) { const n = +m[1]; if (n > 10 && !/g-(web|privacy|shell|install|save|outage|power|launch|ime|repeat|engine|id|evid|legal|ugt) [A-Z]*\d/.test(l)) warn(file, i + 1, `R${n} 범위 밖(리뷰 항목은 R1~R10)`); }
     for (const m of l.matchAll(/\b(D[TLSPXCIA])(\d{1,2})\b/g)) { const fam = m[1], n = +m[2]; if (n > ranges[fam] || n < 1) warn(file, i + 1, `${fam}${n} 범위 밖`); }
     for (const m of l.matchAll(/\bUT(\d{1,2})\b/g)) if (+m[1] < 1 || +m[1] > 9) warn(file, i + 1, `UT${m[1]} 범위 밖`);

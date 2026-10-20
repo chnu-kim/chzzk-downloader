@@ -96,8 +96,8 @@ test('이름 규칙: ref는 --ref-경로, 그 밖은 잎 키', () => {
 // ---- 모델 ----
 test('모델: 토큰 수·확장 키·대비 쌍 수', () => {
   const m = loadModel(ROOT);
-  assert.equal(m.contrast.light.length, 46);
-  assert.equal(m.contrast.dark.length, 46);
+  assert.equal(m.contrast.light.length, 47);
+  assert.equal(m.contrast.dark.length, 47);
   assert.equal(m.breakpointNarrow, 600);
   assert.deepEqual(m.textScale, { large: 1.3, 'x-large': 2 });
   assert.equal(m.byName.get('--text-hero').rootless, true);

@@ -1,4 +1,4 @@
-// 받기 전 미리보기(preview.md PV14, PD 재생기, preview-ux2 PS6): 접힌 줄 → 펼치기(표지 자리, 요청 없음) → [영상 보기] → watch_open 인자 → 실패 Notice·[치지직에서 보기].
+// 받기 전 미리보기(preview.md PV14, PD 재생기, preview-ux2 PS6·PS8): 기본 펼친 섹션(표지 자리, 요청 없음) → [영상 보기] → watch_open 인자 → 실패 Notice·[치지직에서 보기].
 // Playwright chromium은 실제 재생을 하지 않는다(§10): 가짜 백엔드의 `watch:` 주소는 존재하지 않는다. 그래서 웹뷰의 mp4 지원 여부는
 // 스크립트로 고정하고(canPlayType), 재생기 화면은 media 오류 이벤트를 막아 펼친 모습만 확인한다. 매 단계 axe 위반 0.
 // 화면 글자는 모두 e2e/copy.ts(copy deck)에서 가져온다.
@@ -8,12 +8,12 @@ import { errorCopy, t } from './copy';
 import { expect, test, type App } from './fixtures';
 import type { Scenario } from './mock/backend';
 
-const toggle = (card: Locator) => card.getByText(t('watch.toggle'));
+/** 섹션 머리: 빠른 다시보기는 "미리보기·구간", 일반 VOD·클립은 "미리보기". 기본 펼침이라 접을 때만 누른다(PS8) */
+const toggle = (card: Locator) => card.locator('.watch summary');
 /** 표지 자리의 [영상 보기](PS6: 펼치기만으로는 세션을 열지 않는다) */
 const startButton = (card: Locator) => card.getByRole('button', { name: t('watch.start.label') });
-/** 줄을 펼치고 [영상 보기]를 눌러 세션을 연다 */
+/** [영상 보기]를 눌러 세션을 연다(섹션은 이미 펼쳐져 있다) */
 async function openWatch(card: Locator) {
-  await toggle(card).click();
   await startButton(card).click();
 }
 const VOD = vodResolved();
@@ -44,24 +44,21 @@ async function openCard(app: App, r = VOD, extra: Scenario = {}) {
   return card;
 }
 
-test('접힌 줄이 기본이고 펼치기 전에는 watch_open을 부르지 않는다', async ({ app }) => {
-  await canPlay(app.page, 'maybe');
-  const card = await openCard(app);
-  await expect(toggle(card)).toBeVisible();
-  await expect(toggle(card).locator('xpath=ancestor::details')).not.toHaveAttribute('open', '');
-  expect(await app.args('watch_open')).toEqual([]);
-  await app.axe('미리보기 줄 접힘');
-});
-
-test('펼쳐도 watch_open은 없고 표지 자리와 [영상 보기]만 보이며, 누르면 한 번 부른다', async ({ app }) => {
+test('섹션은 기본 펼침이고 표지 자리와 [영상 보기]만 보이며 watch_open은 없다', async ({ app }) => {
   await canPlay(app.page, 'maybe');
   await swallowMediaErrors(app.page);
   const card = await openCard(app, VOD, { watchSrc: DUMMY_SRC });
-  await toggle(card).click();
+  await expect(toggle(card)).toBeVisible();
+  await expect(toggle(card)).toHaveText(t('watch.toggle'));
+  await expect(toggle(card).locator('xpath=ancestor::details')).toHaveAttribute('open', '');
   await expect(startButton(card)).toBeVisible();
   await expect(card.locator('video')).toHaveCount(0);
   expect(await app.args('watch_open')).toEqual([]);
   await app.axe('미리보기 표지 자리');
+  // 접었다 펴도 요청은 없다
+  await toggle(card).click();
+  await toggle(card).click();
+  expect(await app.args('watch_open')).toEqual([]);
   await startButton(card).click();
   await expect(card.locator('video')).toBeVisible();
   expect(await app.args('watch_open')).toEqual([{ url: VOD.url, content: VOD.content }]);
@@ -138,11 +135,11 @@ function holdPlaylist(page: Page) {
   return { release, seen };
 }
 
-test('빠른 다시보기 카드에도 줄이 있고, 펼치면 hls.js가 playlist를 읽는다', async ({ app }) => {
+test('빠른 다시보기 카드에도 섹션이 있고("미리보기·구간"), [영상 보기]를 누르면 hls.js가 playlist를 읽는다', async ({ app }) => {
   const held = holdPlaylist(app.page);
   const REWIND = resolved();
   const card = await openCard(app, REWIND, { watchSrc: HLS_SRC });
-  await expect(toggle(card)).toBeVisible();
+  await expect(toggle(card)).toHaveText(t('watch.toggle.range'));
   await openWatch(card);
   const video = card.locator('video');
   await expect(video).toBeVisible();
@@ -162,7 +159,7 @@ test('빠른 다시보기 카드에도 줄이 있고, 펼치면 hls.js가 playli
   await app.axe('미리보기 실패(빠른 다시보기)');
 });
 
-test('빠른 다시보기 카드를 펼쳤다 접으면 세션을 닫는다', async ({ app }) => {
+test('빠른 다시보기 카드의 섹션을 접으면 세션을 닫는다', async ({ app }) => {
   holdPlaylist(app.page);
   const card = await openCard(app, resolved(), { watchSrc: HLS_SRC });
   await openWatch(card);
@@ -192,9 +189,9 @@ test('빠른 다시보기에서 찍은 시각이 구간 칸을 채우고 받기 
   await expect(card.locator('video')).toBeVisible();
   const markStart = card.getByRole('button', { name: t('watch.mark.start') });
   const markEnd = card.getByRole('button', { name: t('watch.mark.end') });
-  // 메타데이터가 읽히기 전에는 비활성이다
-  await expect(markStart).toBeDisabled();
-  await app.axe('찍기 버튼 비활성(빠른 다시보기)');
+  // 메타데이터가 읽히기 전에는 영상과 구간이 결합되지 않아 조작 줄이 없다(PS12)
+  await expect(markStart).toHaveCount(0);
+  await app.axe('조작 줄 없음(빠른 다시보기, 결합 전)');
 
   await loadedAt(card, 600.7);
   await expect(markStart).toBeEnabled();
@@ -229,8 +226,8 @@ test('구간 막대의 손잡이를 끌거나 키로 옮기면 칸이 바뀌고 
   const card = await openCard(app, REWIND, { watchSrc: HLS_SRC });
   await openWatch(card);
   await expect(card.locator('video')).toBeVisible();
-  // 메타데이터 전에는 막대가 없다
-  await expect(card.getByRole('slider')).toHaveCount(0);
+  // 막대는 재생 전에도 meta 길이로 있다(PS11)
+  await expect(card.getByRole('slider')).toHaveCount(2);
   await loadedAt(card, 0, REWIND.meta.durationSecs ?? 0);
   const startThumb = card.getByRole('slider', { name: t('range.start') });
   const endThumb = card.getByRole('slider', { name: t('range.end') });
@@ -251,9 +248,8 @@ test('구간 막대의 손잡이를 끌거나 키로 옮기면 칸이 바뀌고 
   await app.page.mouse.up();
   const startText = card.getByRole('textbox', { name: t('range.start') });
   const endText = card.getByRole('textbox', { name: t('range.end') });
-  await expect(card.getByText(t('range.toggle')).locator('xpath=ancestor::details')).toHaveAttribute('open', '');
-  await expect(startText).not.toHaveValue('0:00:00');
-  await expect(endText).toHaveValue('3:12:45');
+  await expect(startText).not.toHaveValue('');
+  await expect(endText).toHaveValue('');
   const startValue = await startText.inputValue();
 
   // 끝 손잡이: Shift+←(−10초) 두 번
@@ -318,7 +314,6 @@ test('칸 ↑/↓가 칸을 고치고, 칸을 고친 뒤 빠져나가면 영상�
   await openWatch(card);
   await expect(card.locator('video')).toBeVisible();
   await loadedAt(card, 0, REWIND.meta.durationSecs ?? 0);
-  await card.getByText(t('range.toggle')).click();
   const startText = card.getByRole('textbox', { name: t('range.start') });
   const endText = card.getByRole('textbox', { name: t('range.end') });
   const now = () => card.locator('video').evaluate((v: HTMLVideoElement) => Math.floor(v.currentTime));
@@ -337,10 +332,39 @@ test('칸 ↑/↓가 칸을 고치고, 칸을 고친 뒤 빠져나가면 영상�
   await expect(card.getByText(t('range.lengthSize.label', { length: '3:02:43', size: '' }).split(' · ')[0])).toBeVisible();
   // 검사가 끝나 [받기]가 켜진 뒤에 잰다(비활성 면의 대비는 잴 대상이 아니다)
   await expect(card.getByRole('button', { name: t('card.download') })).not.toHaveAttribute('aria-disabled', 'true');
+  // 카드가 길어져 머리·바닥 줄이 가리지 않게 구간 칸을 화면 가운데에 두고 잰다
+  await startText.evaluate((el) => el.scrollIntoView({ block: 'center' }));
   await app.axe('칸 ↑/↓와 구간 길이(빠른 다시보기)');
 
   await card.getByRole('button', { name: t('card.download') }).click();
   await expect.poll(async () => (await app.args('enqueue')).length).toBe(1);
   const [{ req }] = (await app.args('enqueue')) as Array<{ req: { range?: unknown } }>;
   expect(req.range).toEqual({ startMs: 601000, endMs: 11564000 });
+});
+
+test('재생 전에도 막대와 칸이 있고 칸이 비면 전체라는 줄이 보인다. 손잡이는 칸만 고친다', async ({ app }) => {
+  const REWIND = resolved();
+  const card = await openCard(app, REWIND, { watchSrc: HLS_SRC });
+  await expect(toggle(card)).toHaveText(t('watch.toggle.range'));
+  await expect(card.getByRole('slider')).toHaveCount(2);
+  const startText = card.getByRole('textbox', { name: t('range.start') });
+  const endText = card.getByRole('textbox', { name: t('range.end') });
+  await expect(startText).toHaveValue('');
+  await expect(startText).toHaveAttribute('placeholder', t('range.fromBegin'));
+  await expect(endText).toHaveAttribute('placeholder', t('range.toEnd'));
+  await expect(card.getByText(/^전체 길이: 3:12:45/)).toBeVisible();
+  expect(await app.args('watch_open')).toEqual([]);
+  await app.axe('미리보기·구간(재생 전)');
+  await card.getByRole('slider', { name: t('range.start') }).press('ArrowRight');
+  await expect(startText).toHaveValue('0:00:01');
+  await expect(card.getByText(/^구간 길이:/)).toBeVisible();
+  expect(await app.args('watch_open')).toEqual([]);
+  await toggle(card).click();
+  await expect(startText).toBeHidden();
+});
+
+test('720×520 기본 펼침에서도 [받기]는 뷰포트 안에 있다(sticky 바닥 줄)', async ({ app }) => {
+  await app.page.setViewportSize({ width: 720, height: 520 });
+  const card = await openCard(app, resolved(), { watchSrc: HLS_SRC });
+  await expect(card.getByRole('button', { name: t('card.download') })).toBeInViewport();
 });

@@ -95,9 +95,14 @@ async function openCard(over = {}) {
   return user;
 }
 
+/** 섹션 머리: 빠른 다시보기는 "미리보기·구간", 일반 VOD·클립은 "미리보기" */
+const sectionHead = () => document.querySelector('.watch summary') as HTMLElement;
+
 /** 미리보기를 펼치고 [영상 보기]를 눌러 세션을 연다(PS-2: 펼치기만으로는 watch_open을 부르지 않는다). video가 뜰 때까지 기다린다 */
 async function startWatch(user: ReturnType<typeof userEvent.setup>, toggle?: HTMLElement) {
-  await user.click(toggle ?? screen.getByText(t('watch.toggle')));
+  // 섹션은 기본 펼침이다(PS8): 접혀 있을 때만 머리를 눌러 편다
+  const head = toggle ?? sectionHead();
+  if (!head.closest('details')!.hasAttribute('open')) await user.click(head);
   await user.click(screen.getByRole('button', { name: /영상 보기/ }));
   await waitFor(() => expect(document.querySelector('video')).not.toBeNull());
 }
@@ -114,6 +119,7 @@ async function downloadButton() {
 }
 
 beforeEach(() => {
+  ui.previewOpen = true; // 섹션 열림은 앱 메모리에 남으니 시험마다 기본(펼침)으로 되돌린다
   vi.mocked(api.resolve).mockReset();
   vi.mocked(api.ownershipRecheck).mockReset();
   vi.mocked(api.checkOutput).mockReset();
@@ -500,7 +506,7 @@ describe('ResolveCard', () => {
 
     it('오디오 행은 구간(빠른 다시보기만)과 한 카드에 나오지 않는다', async () => {
       await openCard(vodResolved());
-      expect(screen.queryByText(t('range.toggle'))).toBeNull();
+      expect(screen.queryByRole('textbox', { name: t('range.start') })).toBeNull();
     });
 
     it('클립 카드는 오디오 행이 없다', async () => {
@@ -571,15 +577,15 @@ describe('ResolveCard', () => {
 
 describe('구간 받기(ResolveCard)', () => {
   type User = ReturnType<typeof userEvent.setup>;
-  const toggleEl = () => screen.getByText(t('range.toggle'));
+  const toggleEl = () => sectionHead();
   const detailsEl = () => toggleEl().closest('details') as HTMLDetailsElement;
   const startEl = () => screen.getByRole('textbox', { name: t('range.start') }) as HTMLInputElement;
   const endEl = () => screen.getByRole('textbox', { name: t('range.end') }) as HTMLInputElement;
   const settle = () => new Promise((r) => setTimeout(r, CHECK_DEBOUNCE_MS + 60));
 
-  async function openRange(user: User) {
-    await user.click(toggleEl());
-    await waitFor(() => expect(detailsEl()).toHaveAttribute('open'));
+  /** 섹션은 기본 펼침이다(PS8): 열 일이 없고 칸이 보이는지만 확인한다 */
+  async function openRange(_user: User) {
+    expect(detailsEl()).toHaveAttribute('open');
   }
   async function fill(user: User, el: HTMLInputElement, text: string) {
     await user.clear(el);
@@ -589,22 +595,18 @@ describe('구간 받기(ResolveCard)', () => {
   const lastCheckArg = () => vi.mocked(api.checkOutput).mock.lastCall?.[0] as unknown as Record<string, unknown>;
   const lastEnqueueArg = () => vi.mocked(api.enqueue).mock.lastCall?.[0] as unknown as Record<string, unknown>;
 
-  it('접힘이 기본이다', async () => {
+  it('섹션은 기본 펼침이고 칸은 빈칸이며 안내 글자가 처음부터·끝까지다', async () => {
     await openCard();
-    expect(detailsEl()).not.toHaveAttribute('open');
+    expect(detailsEl()).toHaveAttribute('open');
+    expect(toggleEl()).toHaveTextContent(t('watch.toggle.range'));
+    expect(startEl()).toHaveValue('');
+    expect(endEl()).toHaveValue('');
+    expect(startEl()).toHaveAttribute('placeholder', t('range.fromBegin'));
+    expect(endEl()).toHaveAttribute('placeholder', t('range.toEnd'));
   });
 
-  it('접힌 채 받으면 요청에 range가 없다', async () => {
+  it('접힌 채 받으면 요청에 range가 없다(값은 남는다)', async () => {
     const user = await openCard();
-    await user.click(await downloadButton());
-    await waitFor(() => expect(api.enqueue).toHaveBeenCalledTimes(1));
-    expect('range' in lastEnqueueArg()).toBe(false);
-    expect('range' in lastCheckArg()).toBe(false);
-  });
-
-  it('펼쳤다 접고 받으면 range가 없다', async () => {
-    const user = await openCard();
-    await openRange(user);
     await fill(user, startEl(), '0:10:00');
     await user.click(toggleEl());
     await waitFor(() => expect(detailsEl()).not.toHaveAttribute('open'));
@@ -612,17 +614,41 @@ describe('구간 받기(ResolveCard)', () => {
     await user.click(await downloadButton());
     await waitFor(() => expect(api.enqueue).toHaveBeenCalledTimes(1));
     expect('range' in lastEnqueueArg()).toBe(false);
+    expect('range' in lastCheckArg()).toBe(false);
   });
 
-  it('펼치기만 하면 초깃값(전체)이라 range가 없다', async () => {
+  it('접었다 다시 펴면 칸 값이 그대로 남아 다시 적용된다(PS9)', async () => {
+    const user = await openCard();
+    await fill(user, startEl(), '0:10:00');
+    await user.click(toggleEl());
+    await user.click(toggleEl());
+    expect(startEl()).toHaveValue('0:10:00');
+    await waitFor(() => expect(lastCheckArg().range).toEqual({ startMs: 600000, endMs: 11565000 }));
+    await settle();
+    await user.click(await downloadButton());
+    await waitFor(() => expect(api.enqueue).toHaveBeenCalledTimes(1));
+    expect(lastEnqueueArg().range).toEqual({ startMs: 600000, endMs: 11565000 });
+  });
+
+  it('칸이 모두 비어 있으면 전체라 range가 없다', async () => {
     const user = await openCard();
     await openRange(user);
-    expect(startEl()).toHaveValue('0:00:00');
-    expect(endEl()).toHaveValue('3:12:45');
+    expect(startEl()).toHaveValue('');
+    expect(endEl()).toHaveValue('');
     await settle();
     await user.click(await downloadButton());
     await waitFor(() => expect(api.enqueue).toHaveBeenCalledTimes(1));
     expect('range' in lastEnqueueArg()).toBe(false);
+  });
+
+  it('빈 시작 칸은 0초라 끝만 적으면 처음부터 그 끝까지다(PS10)', async () => {
+    const user = await openCard();
+    await fill(user, endEl(), '0:20:00');
+    await waitFor(() => expect(lastCheckArg().range).toEqual({ startMs: 0, endMs: 1200000 }));
+    await settle();
+    await user.click(await downloadButton());
+    await waitFor(() => expect(api.enqueue).toHaveBeenCalledTimes(1));
+    expect(lastEnqueueArg().range).toEqual({ startMs: 0, endMs: 1200000 });
   });
 
   it('구간을 고르면 checkOutput과 enqueue가 같은 range를 쓴다', async () => {
@@ -688,7 +714,7 @@ describe('구간 받기(ResolveCard)', () => {
     expect(startEl()).toHaveFocus();
   });
 
-  it('접으면 오류가 사라진다', async () => {
+  it('섹션을 접으면 앞 [받기]의 구간 오류가 사라진다', async () => {
     const user = await openCard();
     await openRange(user);
     await fill(user, startEl(), 'abc');
@@ -746,12 +772,12 @@ describe('구간 받기(ResolveCard)', () => {
 
   it('일반 VOD·클립·생방송 카드에는 구간 줄이 없다', async () => {
     await openCard({ playbackKind: 'progressive' });
-    expect(screen.queryByText(t('range.toggle'))).toBeNull();
+    expect(screen.queryByRole('textbox', { name: t('range.start') })).toBeNull();
   });
 
   it('클립 카드에는 구간 줄이 없다', async () => {
     await openCard({ meta: { ...resolved().meta, kind: 'clip' }, playbackKind: 'progressive' });
-    expect(screen.queryByText(t('range.toggle'))).toBeNull();
+    expect(screen.queryByRole('textbox', { name: t('range.start') })).toBeNull();
   });
 
   it('생방송 카드에는 구간 줄이 없다', async () => {
@@ -760,10 +786,10 @@ describe('구간 받기(ResolveCard)', () => {
     render(InputPanel);
     await user.type(urlInput(), 'https://chzzk.naver.com/live/abcd{Enter}');
     await screen.findByRole('heading', { name: liveResolved().meta.title });
-    expect(screen.queryByText(t('range.toggle'))).toBeNull();
+    expect(screen.queryByRole('textbox', { name: t('range.start') })).toBeNull();
   });
 
-  it('길이를 모르면 끝 칸이 비고 placeholder가 끝까지다', async () => {
+  it('길이를 모르면 끝 칸은 비어 있고(끝까지) 시작만 적으면 끝 없는 구간이다', async () => {
     const user = await openCard({ meta: { ...resolved().meta, durationSecs: null } });
     await openRange(user);
     expect(endEl()).toHaveValue('');
@@ -1251,7 +1277,7 @@ describe('불러오는 중 한 줄', () => {
 });
 
 describe('미리보기 줄(ResolveCard, preview.md PV14)', () => {
-  const toggleEl = () => screen.queryByText(t('watch.toggle'));
+  const toggleEl = () => document.querySelector('.watch summary') as HTMLElement | null;
 
   /** 일반 VOD 카드를 연다(openCard는 resolved를 쓰므로 vodResolved를 직접 부른다) */
   async function openVod(over = {}) {
@@ -1263,10 +1289,12 @@ describe('미리보기 줄(ResolveCard, preview.md PV14)', () => {
     return user;
   }
 
-  it('일반 VOD 카드에는 접힌 미리보기 줄이 있고 watchOpen을 부르지 않는다', async () => {
+  it('일반 VOD 카드에는 기본 펼침의 "미리보기" 섹션이 있고 표지 자리만 보이며 watchOpen을 부르지 않는다', async () => {
     await openVod();
-    expect(toggleEl()).toBeInTheDocument();
-    expect(toggleEl()!.closest('details')).not.toHaveAttribute('open');
+    expect(toggleEl()).toHaveTextContent(t('watch.toggle'));
+    expect(toggleEl()).not.toHaveTextContent(t('watch.toggle.range'));
+    expect(toggleEl()!.closest('details')).toHaveAttribute('open');
+    expect(screen.getByRole('button', { name: /영상 보기/ })).toBeInTheDocument();
     expect(api.watchOpen).not.toHaveBeenCalled();
   });
 
@@ -1279,8 +1307,9 @@ describe('미리보기 줄(ResolveCard, preview.md PV14)', () => {
     expect(watch.compareDocumentPosition(fields) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
-  it('펼쳐도 watchOpen은 없고 [영상 보기]를 누르면 카드의 주소·content로 부르고 video src를 둔다', async () => {
+  it('접었다 펴도 watchOpen은 없고 [영상 보기]를 누르면 카드의 주소·content로 부르고 video src를 둔다', async () => {
     const user = await openVod();
+    await user.click(toggleEl()!);
     await user.click(toggleEl()!);
     expect(api.watchOpen).not.toHaveBeenCalled();
     await user.click(screen.getByRole('button', { name: /영상 보기/ }));
@@ -1298,10 +1327,10 @@ describe('미리보기 줄(ResolveCard, preview.md PV14)', () => {
     expect(toggleEl()).toBeNull();
   });
 
-  it('빠른 다시보기 카드에도 줄이 있다(PV-6부터 HLS도 연다)', async () => {
+  it('빠른 다시보기 카드에도 섹션이 있고 이름이 "미리보기·구간"이다(PV-6부터 HLS도 연다)', async () => {
     await openCard();
     expect(screen.getByText(t('kind.liveRewind'))).toBeInTheDocument();
-    expect(toggleEl()).not.toBeNull();
+    expect(toggleEl()).toHaveTextContent(t('watch.toggle.range'));
   });
 
   it('소유권이 notOwn·unknown인 빠른 다시보기 카드에는 줄이 없다', async () => {
@@ -1363,7 +1392,6 @@ describe('구간 찍기(ResolveCard, preview.md PV17)', () => {
   const markEnd = () => screen.queryByRole('button', { name: t('watch.mark.end') });
   const startEl = () => screen.getByRole('textbox', { name: t('range.start') }) as HTMLInputElement;
   const endEl = () => screen.getByRole('textbox', { name: t('range.end') }) as HTMLInputElement;
-  const rangeDetails = () => screen.getByText(t('range.toggle')).closest('details') as HTMLDetailsElement;
   const settle = () => new Promise((r) => setTimeout(r, CHECK_DEBOUNCE_MS + 60));
   const lastEnqueueArg = () => vi.mocked(api.enqueue).mock.lastCall?.[0] as unknown as Record<string, unknown>;
 
@@ -1383,6 +1411,8 @@ describe('구간 찍기(ResolveCard, preview.md PV17)', () => {
 
   it('빠른 다시보기 카드에만 찍기 버튼이 있다(일반 VOD·클립에는 없다)', async () => {
     const user = await openRewindPlayer();
+    expect(markStart()).toBeNull(); // 메타데이터를 읽기 전에는 결합 전이라 조작 줄이 없다(PS12)
+    await setTime(0);
     expect(markStart()).not.toBeNull();
     expect(markEnd()).not.toBeNull();
     await user.click(cardFooter().getByRole('button', { name: t('common.close') }));
@@ -1412,22 +1442,21 @@ describe('구간 찍기(ResolveCard, preview.md PV17)', () => {
     expect(markStart()).toBeNull();
   });
 
-  it('[시작 찍기]는 구간 줄을 펼치고 시작 칸에 floor(currentTime)을 넣는다', async () => {
+  it('[시작 찍기]는 시작 칸에 floor(currentTime)을 넣는다', async () => {
     const user = await openRewindPlayer();
-    expect(rangeDetails()).not.toHaveAttribute('open');
+    expect(startEl()).toHaveValue('');
     await setTime(65.9);
     await user.click(markStart()!);
-    expect(rangeDetails()).toHaveAttribute('open');
     expect(startEl()).toHaveValue('0:01:05');
+    expect(endEl()).toHaveValue('');
   });
 
-  it('[끝 찍기]는 끝 칸을 채운다', async () => {
+  it('[끝 찍기]는 끝 칸만 채운다(시작 칸은 빈칸 그대로)', async () => {
     const user = await openRewindPlayer();
     await setTime(3725.2);
     await user.click(markEnd()!);
-    expect(rangeDetails()).toHaveAttribute('open');
     expect(endEl()).toHaveValue('1:02:05');
-    expect(startEl()).toHaveValue('0:00:00');
+    expect(startEl()).toHaveValue('');
   });
 
   it('찍은 시각이 영상 끝이면 끝까지 받기(전체)로 남는다', async () => {
@@ -1466,7 +1495,6 @@ describe('구간 찍기(ResolveCard, preview.md PV17)', () => {
 
   it('찍어도 앞 [받기]가 남긴 구간 오류는 지워지지 않는다(손으로 칠 때와 같다)', async () => {
     const user = await openRewindPlayer();
-    await user.click(screen.getByText(t('range.toggle')));
     await user.clear(startEl());
     await user.type(startEl(), 'abc');
     await settle();
@@ -1495,7 +1523,6 @@ describe('구간 편집 배치(ResolveCard, preview-ux PVU-3)', () => {
   const SID = 'ab'.repeat(16);
   const startEl = () => screen.getByRole('textbox', { name: t('range.start') }) as HTMLInputElement;
   const endEl = () => screen.getByRole('textbox', { name: t('range.end') }) as HTMLInputElement;
-  const rangeDetails = () => screen.getByText(t('range.toggle')).closest('details') as HTMLDetailsElement;
   const thumb = (name: string) => screen.getByRole('slider', { name });
   const settle = () => new Promise((r) => setTimeout(r, CHECK_DEBOUNCE_MS + 60));
   const lastEnqueueArg = () => vi.mocked(api.enqueue).mock.lastCall?.[0] as unknown as Record<string, unknown>;
@@ -1518,23 +1545,30 @@ describe('구간 편집 배치(ResolveCard, preview-ux PVU-3)', () => {
   }
   const key = (el: Element, k: string) => fireEvent.keyDown(el, { key: k });
 
-  it('빠른 다시보기 카드의 순서: 메타 → 미리보기 → 일부만 받기 → 화질', async () => {
+  it('빠른 다시보기 카드의 순서: 메타 → 섹션 머리 → 표지 자리 → 막대 → 구간 칸 → 화질', async () => {
     await openCard();
-    const watch = screen.getByText(t('watch.toggle'));
-    const range = screen.getByText(t('range.toggle'));
+    const head = sectionHead();
+    const stage = document.querySelector('.stage') as HTMLElement;
+    const bar = thumb(t('range.start'));
+    const field = startEl();
     const quality = screen.getByRole('radiogroup');
     const after = (a: Node, b: Node) => !!(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
-    expect(after(watch, range)).toBe(true);
-    expect(after(range, quality)).toBe(true);
+    expect(after(document.querySelector('.meta')!, head)).toBe(true);
+    expect(after(head, stage)).toBe(true);
+    expect(after(stage, bar)).toBe(true);
+    expect(after(bar, field)).toBe(true);
+    expect(after(field, quality)).toBe(true);
+    // 칸 줄은 섹션 패널 안이다(접으면 함께 접힌다)
+    expect(field.closest('.disclosure-panel')).toBe(head.closest('details')!.querySelector('.disclosure-panel'));
   });
 
-  it('미리보기를 펼치고 접어도 구간 줄은 같은 요소다(다시 마운트되지 않는다)', async () => {
+  it('섹션을 접고 펴도 구간 칸은 같은 요소다(다시 마운트되지 않는다)', async () => {
     const user = await openRewindPlayer();
-    const before = rangeDetails();
-    await user.click(screen.getByText(t('watch.toggle')));
-    expect(rangeDetails()).toBe(before);
-    await user.click(screen.getByText(t('watch.toggle')));
-    expect(rangeDetails()).toBe(before);
+    const before = startEl();
+    await user.click(sectionHead());
+    expect(startEl()).toBe(before);
+    await user.click(sectionHead());
+    expect(startEl()).toBe(before);
   });
 
   it('일반 VOD 카드에는 구간 줄도 편집 영역도 없다', async () => {
@@ -1545,20 +1579,17 @@ describe('구간 편집 배치(ResolveCard, preview-ux PVU-3)', () => {
     await user.type(urlInput(), 'https://chzzk.naver.com/video/1234567{Enter}');
     await screen.findByRole('heading', { name: /금요/ });
     await startWatch(user);
-    expect(screen.queryByText(t('range.toggle'))).toBeNull();
+    expect(screen.queryByRole('textbox', { name: t('range.start') })).toBeNull();
     expect(screen.queryByRole('group', { name: /구간 고르기/ })).toBeNull();
     expect(screen.queryAllByRole('slider')).toHaveLength(0);
   });
 
-  it('시작 손잡이를 옮기면 구간 줄이 펼쳐지고 시작 칸이 바뀐다(끝 칸은 전체 값)', async () => {
-    const user = await openRewindPlayer();
+  it('시작 손잡이를 옮기면 시작 칸이 바뀐다(끝 칸은 빈칸 그대로)', async () => {
+    await openRewindPlayer();
     await loadMeta();
-    expect(rangeDetails()).not.toHaveAttribute('open');
     await key(thumb(t('range.start')), 'ArrowRight');
-    expect(rangeDetails()).toHaveAttribute('open');
     expect(startEl()).toHaveValue('0:00:01');
-    expect(endEl()).toHaveValue('3:12:45');
-    void user;
+    expect(endEl()).toHaveValue('');
   });
 
   it('끝 손잡이를 끝까지 보내면 끝 칸에 floor(길이)가 들어가고 받기 요청에는 range가 없다', async () => {
@@ -1583,14 +1614,15 @@ describe('구간 편집 배치(ResolveCard, preview-ux PVU-3)', () => {
     expect(startEl()).toHaveValue('0:00:01');
   });
 
-  it('미리보기를 접어도 meta 길이는 남는다: 막대 길이의 주인은 카드다', async () => {
+  it('섹션을 접어도 meta 길이는 남는다: 막대 길이의 주인은 카드다', async () => {
     const user = await openRewindPlayer();
     await loadMeta(300); // 영상이 meta(11565)보다 짧다: 길이는 meta가 우선
     expect(thumb(t('range.end'))).toHaveAttribute('aria-valuemax', '11565');
-    await user.click(screen.getByText(t('watch.toggle')));
-    expect(screen.queryAllByRole('slider')).toHaveLength(0);
-    await user.click(screen.getByText(t('range.toggle')));
-    expect(endEl()).toHaveValue('3:12:45');
+    await user.click(sectionHead());
+    await waitFor(() => expect(document.querySelector('video')).toBeNull());
+    expect(thumb(t('range.end'))).toHaveAttribute('aria-valuemax', '11565');
+    await user.click(sectionHead());
+    expect(endEl()).toHaveValue('');
     // 다시 펼쳐 새 영상이 더 짧아도 막대 길이는 여전히 카드의 meta 길이다
     await startWatch(user);
     await loadMeta(300);
@@ -1602,7 +1634,7 @@ describe('구간 편집 배치(ResolveCard, preview-ux PVU-3)', () => {
     const user = await openRewindPlayer({ meta: { ...base.meta, durationSecs: null } });
     await loadMeta(599.6);
     expect(screen.getAllByRole('slider')).toHaveLength(2);
-    await user.click(screen.getByText(t('watch.toggle')));
+    await user.click(sectionHead());
     await startWatch(user);
     expect(screen.queryAllByRole('slider')).toHaveLength(0);
     // 새 loadedmetadata의 길이가 새 막대 길이다(앞 영상의 599.6이 아니다)
@@ -1612,7 +1644,6 @@ describe('구간 편집 배치(ResolveCard, preview-ux PVU-3)', () => {
 
   it('손잡이 이동은 앞 [받기]가 남긴 구간 오류를 지우고, 찍기는 지우지 않는다', async () => {
     const user = await openRewindPlayer();
-    await user.click(screen.getByText(t('range.toggle')));
     await user.clear(startEl());
     await user.type(startEl(), 'abc');
     await settle();
@@ -1626,20 +1657,17 @@ describe('구간 편집 배치(ResolveCard, preview-ux PVU-3)', () => {
     expect(screen.queryByRole('alert')).toBeNull();
   });
 
-  it('접힌 채 끝을 찍으면 시작 칸은 전체 값(0:00:00)으로 돌아간다(PVU9)', async () => {
+  it('끝만 찍으면 시작 칸은 빈칸 그대로이고 받기 요청은 0초부터다(PS10)', async () => {
     const user = await openRewindPlayer();
-    // 접힌 동안 옛 값이 남아 있게 한다
-    await user.click(screen.getByText(t('range.toggle')));
-    await user.clear(startEl());
-    await user.type(startEl(), '0:03:00');
-    await user.click(screen.getByText(t('range.toggle')));
-    expect(rangeDetails()).not.toHaveAttribute('open');
     const { v } = await loadMeta();
     Object.defineProperty(v, 'currentTime', { configurable: true, writable: true, value: 65.4 });
     await user.click(screen.getByRole('button', { name: t('watch.mark.end') }));
-    expect(rangeDetails()).toHaveAttribute('open');
-    expect(startEl()).toHaveValue('0:00:00');
+    expect(startEl()).toHaveValue('');
     expect(endEl()).toHaveValue('0:01:05');
+    await settle();
+    await user.click(await downloadButton());
+    await waitFor(() => expect(api.enqueue).toHaveBeenCalledTimes(1));
+    expect(lastEnqueueArg().range).toEqual({ startMs: 0, endMs: 65000 });
   });
 
   it('손잡이로 고친 값이 enqueue의 range가 된다', async () => {
@@ -1658,7 +1686,6 @@ describe('양방향·미세 조정·길이(ResolveCard + RangeField, preview-ux 
   const SID = 'ab'.repeat(16);
   const startEl = () => screen.getByRole('textbox', { name: t('range.start') }) as HTMLInputElement;
   const endEl = () => screen.getByRole('textbox', { name: t('range.end') }) as HTMLInputElement;
-  const rangeDetails = () => screen.getByText(t('range.toggle')).closest('details') as HTMLDetailsElement;
   const settle = () => new Promise((r) => setTimeout(r, CHECK_DEBOUNCE_MS + 60));
 
   async function openRewindPlayer(over = {}) {
@@ -1676,10 +1703,6 @@ describe('양방향·미세 조정·길이(ResolveCard + RangeField, preview-ux 
     await fireEvent(v, new Event('loadedmetadata'));
     return { v, writes };
   }
-  async function openRange(user: ReturnType<typeof userEvent.setup>) {
-    await user.click(screen.getByText(t('range.toggle')));
-    await waitFor(() => expect(rangeDetails()).toHaveAttribute('open'));
-  }
   async function typeInto(user: ReturnType<typeof userEvent.setup>, el: HTMLInputElement, text: string) {
     await user.clear(el);
     await user.type(el, text);
@@ -1689,7 +1712,6 @@ describe('양방향·미세 조정·길이(ResolveCard + RangeField, preview-ux 
     it('blur on parsed start seeks video', async () => {
       const user = await openRewindPlayer();
       const { writes } = await loadMeta();
-      await openRange(user);
       await typeInto(user, startEl(), '0:10:00');
       expect(writes).toEqual([]); // typing does not seek
       await user.tab();
@@ -1699,7 +1721,6 @@ describe('양방향·미세 조정·길이(ResolveCard + RangeField, preview-ux 
     it('blur on invalid does not seek', async () => {
       const user = await openRewindPlayer();
       const { writes } = await loadMeta();
-      await openRange(user);
       await typeInto(user, startEl(), '0:1x');
       await user.tab();
       expect(writes).toEqual([]);
@@ -1707,7 +1728,6 @@ describe('양방향·미세 조정·길이(ResolveCard + RangeField, preview-ux 
 
     it('blur with preview closed does nothing', async () => {
       const user = await openCard();
-      await openRange(user);
       await typeInto(user, startEl(), '0:10:00');
       await user.tab();
       expect(document.querySelector('video')).toBeNull();
@@ -1717,7 +1737,6 @@ describe('양방향·미세 조정·길이(ResolveCard + RangeField, preview-ux 
     it('blur on parsed end seeks video', async () => {
       const user = await openRewindPlayer();
       const { writes } = await loadMeta();
-      await openRange(user);
       await typeInto(user, endEl(), '1:00:00');
       expect(writes).toEqual([]);
       await fireEvent.blur(endEl(), { relatedTarget: screen.getByRole('switch', { name: t('watch.range.loop.label') }) });
@@ -1729,7 +1748,6 @@ describe('양방향·미세 조정·길이(ResolveCard + RangeField, preview-ux 
       const v = document.querySelector('video') as HTMLVideoElement;
       const writes: number[] = [];
       Object.defineProperty(v, 'currentTime', { configurable: true, get: () => 0, set: (x: number) => { writes.push(x); } });
-      await openRange(user);
       await typeInto(user, startEl(), '0:10:00');
       await user.tab();
       expect(writes).toEqual([]);
@@ -1738,7 +1756,6 @@ describe('양방향·미세 조정·길이(ResolveCard + RangeField, preview-ux 
     it('blur without change does not seek (Tab으로 지나가기)', async () => {
       const user = await openRewindPlayer();
       const { writes } = await loadMeta();
-      await openRange(user);
       startEl().focus();
       await user.tab();
       expect(writes).toEqual([]);
@@ -1747,7 +1764,6 @@ describe('양방향·미세 조정·길이(ResolveCard + RangeField, preview-ux 
     it('blur into editor (track press) does not override track seek', async () => {
       const user = await openRewindPlayer();
       const { writes } = await loadMeta();
-      await openRange(user);
       await typeInto(user, startEl(), '0:10:00');
       const editor = document.querySelector('[data-local-keys]') as HTMLElement;
       await fireEvent.blur(startEl(), { relatedTarget: editor });
@@ -1760,7 +1776,6 @@ describe('양방향·미세 조정·길이(ResolveCard + RangeField, preview-ux 
     it('shift+tab from field into editor controls still seeks', async () => {
       const user = await openRewindPlayer();
       const { writes } = await loadMeta();
-      await openRange(user);
       await typeInto(user, startEl(), '0:10:00');
       await fireEvent.blur(startEl(), { relatedTarget: screen.getByRole('switch', { name: t('watch.range.loop.label') }) });
       expect(writes).toEqual([600]);
@@ -1781,13 +1796,11 @@ describe('양방향·미세 조정·길이(ResolveCard + RangeField, preview-ux 
 
     it('no nudge buttons', async () => {
       const user = await openRewindPlayer();
-      await openRange(user);
       expect(hasNudgeButton()).toHaveLength(0);
     });
 
     it('ArrowUp on start field adds one second, ArrowDown subtracts; default prevented', async () => {
       const user = await openRewindPlayer();
-      await openRange(user);
       await typeInto(user, startEl(), '0:01:00');
       expect(await arrow(startEl(), 'ArrowUp')).toBe(false);
       expect(startEl()).toHaveValue('0:01:01');
@@ -1798,7 +1811,6 @@ describe('양방향·미세 조정·길이(ResolveCard + RangeField, preview-ux 
 
     it('ArrowUp/Down clamps at the ends', async () => {
       const user = await openRewindPlayer();
-      await openRange(user);
       await typeInto(user, startEl(), '0:00:00');
       await arrow(startEl(), 'ArrowDown');
       expect(startEl()).toHaveValue('0:00:00');
@@ -1814,7 +1826,6 @@ describe('양방향·미세 조정·길이(ResolveCard + RangeField, preview-ux 
 
     it('unreadable field: arrow blocked, value unchanged', async () => {
       const user = await openRewindPlayer();
-      await openRange(user);
       await typeInto(user, startEl(), 'abc');
       expect(await arrow(startEl(), 'ArrowUp')).toBe(false);
       expect(startEl()).toHaveValue('abc');
@@ -1822,7 +1833,6 @@ describe('양방향·미세 조정·길이(ResolveCard + RangeField, preview-ux 
 
     it('modifier arrows not handled', async () => {
       const user = await openRewindPlayer();
-      await openRange(user);
       await typeInto(user, startEl(), '0:01:00');
       for (const m of ['shiftKey', 'altKey', 'ctrlKey', 'metaKey']) {
         expect(await arrow(startEl(), 'ArrowUp', { [m]: true })).toBe(true);
@@ -1832,7 +1842,6 @@ describe('양방향·미세 조정·길이(ResolveCard + RangeField, preview-ux 
 
     it('IME composing arrow ignored', async () => {
       const user = await openRewindPlayer();
-      await openRange(user);
       await typeInto(user, startEl(), '0:01:00');
       expect(await arrow(startEl(), 'ArrowUp', { isComposing: true })).toBe(true);
       expect(await arrow(startEl(), 'ArrowUp', { keyCode: 229 })).toBe(true);
@@ -1842,7 +1851,6 @@ describe('양방향·미세 조정·길이(ResolveCard + RangeField, preview-ux 
     it('arrow seeks video when coupled', async () => {
       const user = await openRewindPlayer();
       const { writes } = await loadMeta();
-      await openRange(user);
       startEl().focus();
       await arrow(startEl(), 'ArrowUp');
       expect(writes).toEqual([1]);
@@ -1855,7 +1863,6 @@ describe('양방향·미세 조정·길이(ResolveCard + RangeField, preview-ux 
       const base = resolved();
       const user = await openRewindPlayer({ meta: { ...base.meta, durationSecs: null } });
       const { writes } = await loadMeta(11565.7);
-      await openRange(user);
       await arrow(endEl(), 'ArrowDown');
       expect(writes.at(-1)).toBe(11564);
       await arrow(endEl(), 'ArrowUp');
@@ -1863,21 +1870,17 @@ describe('양방향·미세 조정·길이(ResolveCard + RangeField, preview-ux 
       expect(writes.at(-1)).toBe(11565);
     });
 
-    it('no seek when preview closed', async () => {
-      const user = await openRewindPlayer();
-      const { writes } = await loadMeta();
-      await user.click(screen.getByText(t('watch.toggle'))); // 접으면 세션이 닫히고 video가 사라진다
-      await waitFor(() => expect(document.querySelector('video')).toBeNull());
-      await openRange(user);
+    it('no seek when there is no video yet (before 영상 보기)', async () => {
+      await openCard();
       await arrow(startEl(), 'ArrowUp');
       expect(startEl()).toHaveValue('0:00:01');
-      expect(writes).toEqual([]);
+      expect(document.querySelector('video')).toBeNull();
+      expect(api.watchOpen).not.toHaveBeenCalled();
     });
 
     it('non-repeat keydown after repeats drops the pending seek: keyup does not write twice', async () => {
       const user = await openRewindPlayer();
       const { writes } = await loadMeta();
-      await openRange(user);
       startEl().focus();
       await arrow(startEl(), 'ArrowUp');
       for (let i = 0; i < 3; i++) await arrow(startEl(), 'ArrowUp', { repeat: true });
@@ -1891,7 +1894,6 @@ describe('양방향·미세 조정·길이(ResolveCard + RangeField, preview-ux 
     it('held key changes field each repeat but seeks once on keyup', async () => {
       const user = await openRewindPlayer();
       const { writes } = await loadMeta();
-      await openRange(user);
       startEl().focus();
       await arrow(startEl(), 'ArrowUp');
       for (let i = 0; i < 4; i++) await arrow(startEl(), 'ArrowUp', { repeat: true });
@@ -1904,7 +1906,6 @@ describe('양방향·미세 조정·길이(ResolveCard + RangeField, preview-ux 
     it('held key then blur without keyup flushes final seek', async () => {
       const user = await openRewindPlayer();
       const { writes } = await loadMeta();
-      await openRange(user);
       startEl().focus();
       await arrow(startEl(), 'ArrowUp');
       for (let i = 0; i < 3; i++) await arrow(startEl(), 'ArrowUp', { repeat: true });
@@ -1915,7 +1916,6 @@ describe('양방향·미세 조정·길이(ResolveCard + RangeField, preview-ux 
     it('blur after arrow does not seek again', async () => {
       const user = await openRewindPlayer();
       const { writes } = await loadMeta();
-      await openRange(user);
       startEl().focus();
       await arrow(startEl(), 'ArrowUp');
       expect(writes).toEqual([1]);
@@ -1925,7 +1925,6 @@ describe('양방향·미세 조정·길이(ResolveCard + RangeField, preview-ux 
 
     it('arrow clears previous range error', async () => {
       const user = await openRewindPlayer();
-      await openRange(user);
       await typeInto(user, endEl(), '0:00:00');
       await settle();
       await user.click(await downloadButton());
@@ -1936,26 +1935,23 @@ describe('양방향·미세 조정·길이(ResolveCard + RangeField, preview-ux 
 
     it('busy: arrow does nothing', async () => {
       const user = await openRewindPlayer();
-      await openRange(user);
       setCheck();
       vi.mocked(api.enqueue).mockImplementation(() => new Promise(() => {}));
       await settle();
       await user.click(await downloadButton());
       await waitFor(() => expect(startEl()).toBeDisabled());
       await arrow(startEl(), 'ArrowUp');
-      expect(startEl()).toHaveValue('0:00:00');
+      expect(startEl()).toHaveValue('');
     });
 
     it('aria-keyshortcuts on both fields', async () => {
       const user = await openRewindPlayer();
-      await openRange(user);
       expect(startEl()).toHaveAttribute('aria-keyshortcuts', 'ArrowUp ArrowDown');
       expect(endEl()).toHaveAttribute('aria-keyshortcuts', 'ArrowUp ArrowDown');
     });
 
     it('arrow feeds enqueue range', async () => {
       const user = await openRewindPlayer();
-      await openRange(user);
       await arrow(startEl(), 'ArrowUp');
       await arrow(endEl(), 'ArrowDown');
       setCheck();
@@ -1970,38 +1966,48 @@ describe('양방향·미세 조정·길이(ResolveCard + RangeField, preview-ux 
   describe('구간 길이 줄', () => {
     const lengthLine = (text: string) => screen.queryByText(text);
 
-    it('length line: 전체는 영상 길이, 구간이면 구간 길이, 크기 있음 → 길이 · 크기', async () => {
+    it('length line: 전체는 전체 길이, 구간이면 구간 길이, 크기 있음 → 길이 · 크기', async () => {
       const user = await openRewindPlayer();
-      await openRange(user);
       const q0 = resolved().qualities[0];
-      expect(lengthLine(t('range.lengthSize.label', { length: '3:12:45', size: qualitySize(q0, 11565) as string }))).not.toBeNull();
+      expect(lengthLine(t('range.wholeLengthSize.label', { length: '3:12:45', size: qualitySize(q0, 11565) as string }))).not.toBeNull();
       await typeInto(user, endEl(), '1:00:00');
       await waitFor(() =>
         expect(lengthLine(t('range.lengthSize.label', { length: '1:00:00', size: qualitySize(q0, 3600) as string }))).not.toBeNull(),
       );
     });
 
-    it('length line: 칸이 틀리면 영상 길이로 돌아간다', async () => {
+    it('length line: 칸이 틀리면(틀린 글자·순서 뒤집힘) 길이 줄이 없다', async () => {
       const user = await openRewindPlayer();
-      await openRange(user);
-      const q0 = resolved().qualities[0];
       await typeInto(user, endEl(), '1:00:0');
-      await waitFor(() =>
-        expect(lengthLine(t('range.lengthSize.label', { length: '3:12:45', size: qualitySize(q0, 11565) as string }))).not.toBeNull(),
-      );
+      await waitFor(() => expect(screen.queryByText(/구간 길이|전체 길이|전체 구간/)).toBeNull());
+      await user.clear(endEl());
+      await typeInto(user, startEl(), '0:20:00');
+      await typeInto(user, endEl(), '0:10:00');
+      await waitFor(() => expect(screen.queryByText(/구간 길이|전체 길이|전체 구간/)).toBeNull());
     });
 
     it('length line: 크기를 모르는 화질이면 길이만', async () => {
       const user = await openRewindPlayer();
-      await openRange(user);
       await user.click(screen.getAllByRole('radio')[2]);
-      await waitFor(() => expect(lengthLine(t('range.length.label', { length: '3:12:45' }))).not.toBeNull());
+      await waitFor(() => expect(lengthLine(t('range.wholeLength.label', { length: '3:12:45' }))).not.toBeNull());
     });
 
-    it('length line: 끝을 모르면 줄이 없다', async () => {
+    it('length line: 시작 칸을 비우면 다시 전체 길이다', async () => {
+      const user = await openRewindPlayer();
+      await loadMeta();
+      await user.clear(startEl());
+      await user.type(startEl(), '0:10:00');
+      expect(screen.queryByText(/^구간 길이/)).not.toBeNull();
+      await user.clear(startEl());
+      expect(screen.queryByText(/^전체 길이/)).not.toBeNull();
+    });
+
+    it('length line: 길이를 모르면 "전체 구간", 시작만 적으면 줄이 없다', async () => {
       const user = await openCard({ meta: { ...resolved().meta, durationSecs: null } });
-      await openRange(user);
-      expect(screen.queryByText(/구간 길이/)).toBeNull();
+      expect(lengthLine(t('range.whole.label'))).not.toBeNull();
+      await typeInto(user, startEl(), '0:10:00');
+      expect(lengthLine(t('range.whole.label'))).toBeNull();
+      expect(screen.queryByText(/구간 길이|전체 길이/)).toBeNull();
     });
   });
 });
@@ -2018,7 +2024,6 @@ describe('구간 편집 영역의 Esc(ResolveCard + GlobalShortcuts, preview-ux 
     const v = document.querySelector('video') as HTMLVideoElement;
     Object.defineProperty(v, 'duration', { configurable: true, get: () => 11565 });
     await fireEvent(v, new Event('loadedmetadata'));
-    await user.click(screen.getByText(t('range.toggle')));
     const field = screen.getByRole('textbox', { name: t('range.start') });
     const mark = screen.getByRole('button', { name: t('watch.mark.start') });
     // 구간 칸은 편집 영역(.editor) 밖이어야 한다
@@ -2033,6 +2038,151 @@ describe('구간 편집 영역의 Esc(ResolveCard + GlobalShortcuts, preview-ux 
       await fireEvent.keyDown(field, { key: 'Escape' });
       expect(spy).toHaveBeenCalledTimes(1);
       await waitFor(() => expect(screen.queryByRole('heading', { name: /금요/ })).toBeNull());
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
+describe('미리보기·구간 한 섹션(ResolveCard, preview-ux2 PS-3)', () => {
+  const SID = 'ab'.repeat(16);
+  const startEl = () => screen.getByRole('textbox', { name: t('range.start') }) as HTMLInputElement;
+  const endEl = () => screen.getByRole('textbox', { name: t('range.end') }) as HTMLInputElement;
+  const thumb = (name: string) => screen.getByRole('slider', { name });
+  const settle = () => new Promise((r) => setTimeout(r, CHECK_DEBOUNCE_MS + 60));
+
+  it('섹션은 기본 펼침이고 머리는 "미리보기·구간", "일부만 받기" 줄은 없다', async () => {
+    await openCard();
+    expect(sectionHead().closest('details')).toHaveAttribute('open');
+    expect(sectionHead()).toHaveTextContent(t('watch.toggle.range'));
+    expect(screen.queryByText('일부만 받기')).toBeNull();
+    expect(document.querySelectorAll('.watch details')).toHaveLength(1);
+  });
+
+  it('접으면 다음 카드도 접힌 채 열리고, 펴면 다음 카드도 펼쳐 열린다', async () => {
+    const user = await openCard();
+    await user.click(sectionHead());
+    expect(ui.previewOpen).toBe(false);
+    await user.click(cardFooter().getByRole('button', { name: t('common.close') }));
+    await waitFor(() => expect(screen.queryByRole('heading', { name: /금요/ })).toBeNull());
+
+    vi.mocked(api.resolve).mockResolvedValue(resolved());
+    const user2 = userEvent.setup();
+    await user2.clear(urlInput());
+    await user2.type(urlInput(), 'https://chzzk.naver.com/video/1234567{Enter}');
+    await screen.findByRole('heading', { name: /금요/ });
+    expect(sectionHead().closest('details')).not.toHaveAttribute('open');
+    await user2.click(sectionHead());
+    expect(ui.previewOpen).toBe(true);
+    expect(sectionHead().closest('details')).toHaveAttribute('open');
+  });
+
+  it('마운트 때 펼쳐진 details가 쏘는 toggle 사건은 ui.previewOpen을 쓰지 않는다', async () => {
+    await openCard();
+    const details = sectionHead().closest('details') as HTMLDetailsElement;
+    await fireEvent(details, new Event('toggle'));
+    expect(ui.previewOpen).toBe(true);
+    ui.previewOpen = false;
+    await tick();
+    await fireEvent(details, new Event('toggle'));
+    // 속성이 이미 닫힘으로 반영된 뒤의 사건은 같은 값이라 되쓰지 않는다
+    expect(ui.previewOpen).toBe(false);
+  });
+
+  it('칸은 카드마다 빈칸으로 시작한다(앞 카드에서 적은 값을 이어받지 않는다)', async () => {
+    const user = await openCard();
+    await user.type(startEl(), '0:10:00');
+    await user.click(cardFooter().getByRole('button', { name: t('common.close') }));
+    await waitFor(() => expect(screen.queryByRole('heading', { name: /금요/ })).toBeNull());
+    vi.mocked(api.resolve).mockResolvedValue(resolved());
+    const user2 = userEvent.setup();
+    await user2.clear(urlInput());
+    await user2.type(urlInput(), 'https://chzzk.naver.com/video/1234567{Enter}');
+    await screen.findByRole('heading', { name: /금요/ });
+    expect(startEl()).toHaveValue('');
+    expect(endEl()).toHaveValue('');
+  });
+
+  it('재생 전에도 막대가 meta 길이로 있고 손잡이는 칸만 고친다(영상·재생 위치·조작 줄 없음)', async () => {
+    await openCard();
+    expect(document.querySelector('video')).toBeNull();
+    expect(screen.getAllByRole('slider')).toHaveLength(2);
+    expect(thumb(t('range.end'))).toHaveAttribute('aria-valuemax', '11565');
+    expect(document.querySelector('.position')).toBeNull();
+    expect(screen.queryByRole('button', { name: t('watch.mark.start') })).toBeNull();
+    await fireEvent.keyDown(thumb(t('range.start')), { key: 'ArrowRight' });
+    expect(startEl()).toHaveValue('0:00:01');
+    expect(api.watchOpen).not.toHaveBeenCalled();
+    await settle();
+  });
+
+  it('meta 길이가 없으면 재생 전에는 막대가 없고 칸 줄은 "전체 구간"이다', async () => {
+    await openCard({ meta: { ...resolved().meta, durationSecs: null } });
+    expect(screen.queryAllByRole('slider')).toHaveLength(0);
+    expect(startEl()).toBeInTheDocument();
+    expect(screen.getByText(t('range.whole.label'))).toBeInTheDocument();
+  });
+
+  it('편집 영역 밖(카드 다른 곳)에서 I/O를 눌러도 칸은 바뀌지 않는다', async () => {
+    await openCard();
+    await fireEvent.keyDown(document.body, { key: 'i', code: 'KeyI' });
+    await fireEvent.keyDown(screen.getByRole('radiogroup'), { key: 'o', code: 'KeyO' });
+    expect(startEl()).toHaveValue('');
+    expect(endEl()).toHaveValue('');
+  });
+
+  it('미리보기가 실패해도 막대와 칸으로 구간을 골라 받을 수 있다', async () => {
+    vi.mocked(api.watchOpen).mockRejectedValue(appError('network'));
+    const user = await openCard();
+    await user.click(screen.getByRole('button', { name: /영상 보기/ }));
+    expect(await screen.findByText(t('watch.error.body'))).toBeInTheDocument();
+    expect(screen.getAllByRole('slider')).toHaveLength(2);
+    await user.type(startEl(), '0:10:00');
+    await user.type(endEl(), '0:20:00');
+    await settle();
+    await user.click(await downloadButton());
+    await waitFor(() => expect(api.enqueue).toHaveBeenCalledTimes(1));
+    expect((vi.mocked(api.enqueue).mock.lastCall?.[0] as unknown as Record<string, unknown>).range).toEqual({ startMs: 600000, endMs: 1200000 });
+  });
+
+  it('재생 중 섹션을 접으면 세션을 한 번 닫고, 다시 펴면 요청 없이 표지 자리다', async () => {
+    vi.mocked(api.watchOpen).mockResolvedValue({ id: SID, kind: 'hls', src: `watch://localhost/${SID}/pl.m3u8` });
+    const user = await openCard();
+    await startWatch(user);
+    await user.click(sectionHead());
+    await waitFor(() => expect(api.watchClose).toHaveBeenCalledTimes(1));
+    await user.click(sectionHead());
+    expect(document.querySelector('video')).toBeNull();
+    expect(screen.getByRole('button', { name: /영상 보기/ })).toBeInTheDocument();
+    expect(api.watchOpen).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['notOwn', 'unknown'] as const)('소유 판정 %s인 빠른 다시보기 카드에는 섹션도 구간 칸도 없다(PS15)', async (ownership) => {
+    await openCard({ ownership });
+    expect(document.querySelector('.watch')).toBeNull();
+    expect(screen.queryByRole('textbox', { name: t('range.start') })).toBeNull();
+    expect(screen.queryAllByRole('slider')).toHaveLength(0);
+  });
+
+  it('생방송 카드에는 섹션이 없다', async () => {
+    vi.mocked(api.resolve).mockResolvedValue(liveResolved());
+    const user = userEvent.setup();
+    render(InputPanel);
+    await user.type(urlInput(), 'https://chzzk.naver.com/live/abcd{Enter}');
+    await screen.findByRole('heading', { name: liveResolved().meta.title });
+    expect(document.querySelector('.watch')).toBeNull();
+  });
+
+  it('재생 전 손잡이 위의 Esc는 카드를 닫지 않고, 구간 칸의 Esc는 닫는다', async () => {
+    render(GlobalShortcuts);
+    await openCard();
+    const spy = vi.spyOn(ui, 'escape');
+    try {
+      await fireEvent.keyDown(thumb(t('range.start')), { key: 'Escape' });
+      expect(spy).not.toHaveBeenCalled();
+      expect(screen.queryByRole('heading', { name: /금요/ })).not.toBeNull();
+      await fireEvent.keyDown(startEl(), { key: 'Escape' });
+      expect(spy).toHaveBeenCalledTimes(1);
     } finally {
       spy.mockRestore();
     }

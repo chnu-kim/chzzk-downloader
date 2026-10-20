@@ -306,7 +306,13 @@ describe('nudge', () => {
   it('고칠 칸을 못 읽으면 null (단추 비활성)', () => {
     expect(nudge(open('abc', '0:05:00'), 'start', 1, META, INIT_END)).toBeNull();
     expect(nudge(open('0:01:00', 'abc'), 'end', 1, META, INIT_END)).toBeNull();
-    expect(nudge(open('', '0:05:00'), 'start', 1, META, INIT_END)).toBeNull();
+  });
+
+  it('빈 시작 칸은 0초로 읽는다(PS10)', () => {
+    expect(nudge(open('', '0:05:00'), 'start', 1, META, INIT_END)).toEqual(open('0:00:01', '0:05:00'));
+    expect(nudge(open('  ', '0:05:00'), 'start', -1, META, INIT_END)).toEqual(open('0:00:00', '0:05:00'));
+    expect(nudge(open('', ''), 'start', 1, META, '')).toEqual(open('0:00:01', ''));
+    expect(nudge(open('', ''), 'end', -1, META, '')).toEqual(open('', '0:09:59'));
   });
 
   it('다른 칸을 못 읽어도 이 칸은 [0, 길이]로 고친다', () => {
@@ -389,8 +395,6 @@ describe('seekTargetOf', () => {
     ['0：01：05', 600, 65],
     ['  0:01:05  ', 600, 65],
     ['0:00:00', 600, 0],
-    ['', 600, null],
-    ['   ', 600, null],
     ['abc', 600, null],
     ['1:5', 600, null],
     ['0:99:00', 600, null],
@@ -400,6 +404,14 @@ describe('seekTargetOf', () => {
     ['1:00:00', 599.6, 599],
   ] as [string, number, number | null][])('%j (len %s) → %s', (text, len, want) => {
     expect(seekTargetOf(text, len)).toBe(want);
+  });
+
+  it('빈칸: 끝 칸은 null(이동 없음), 시작 칸은 0초(PS10)', () => {
+    expect(seekTargetOf('', 600)).toBeNull();
+    expect(seekTargetOf('   ', 600, 'end')).toBeNull();
+    expect(seekTargetOf('', 600, 'start')).toBe(0);
+    expect(seekTargetOf('   ', 600, 'start')).toBe(0);
+    expect(seekTargetOf('abc', 600, 'start')).toBeNull();
   });
 });
 

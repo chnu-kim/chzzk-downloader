@@ -15,8 +15,8 @@
     end: number;
     /** 선택 띠를 그리는가. false면(순서가 뒤집힘) 손잡이 둘만 그린다 */
     band: boolean;
-    /** 재생 위치(초) */
-    position: number;
+    /** 재생 위치(초). 영상이 결합되기 전(재생 전)에는 null이라 위치 선을 그리지 않는다(preview-ux2 PS11) */
+    position: number | null;
     /** 카드 busy: 손잡이 조작을 무시한다(포커스는 닿는다) */
     disabled?: boolean;
     onmove: (h: Handle, secs: number, phase: 'drag' | 'commit') => void;
@@ -111,7 +111,9 @@
       <div class="upto-end" style:--p={fractionOf(end, length)}></div>
       <div class="before-start" style:--p={fractionOf(start, length)}></div>
     {/if}
-    <div class="position" style:--p={fractionOf(position, length)}></div>
+    {#if position != null}
+      <div class="position" style:--p={fractionOf(position, length)}></div>
+    {/if}
   </div>
   {#each ['start', 'end'] as const as h (h)}
     <div class="anchor anchor-{h}" style:--p={fractionOf(h === 'start' ? start : end, length)}>

@@ -147,10 +147,15 @@ function floorMs(d: number | null): number | null {
   return d != null && Number.isFinite(d) && d > 0 ? Math.floor(d) * 1000 : null;
 }
 
+/** 시작 칸 → ms. 빈칸은 0초다("처음부터", preview-ux2 PS10). 못 읽으면 null */
+function parseStart(text: string): number | null {
+  return text.trim() === '' ? 0 : parseClock(text);
+}
+
 /** [받기] 때의 구간 검증(range.md §5.2). 처음 걸린 오류 하나만 돌려준다. 끝이 길이를 넘는 것은 오류가 아니다(자른다) */
 export function rangeError(input: RangeInput, durationSecs: number | null): RangeError | null {
   if (!input.open) return null;
-  const s = parseClock(input.start);
+  const s = parseStart(input.start);
   if (s == null) return { field: 'start', kind: 'format' };
   const endBlank = input.end.trim() === '';
   const e = endBlank ? null : parseClock(input.end);
@@ -167,7 +172,7 @@ export function rangeError(input: RangeInput, durationSecs: number | null): Rang
  */
 export function effectiveRange(input: RangeInput, durationSecs: number | null): TimeRangeDto | null {
   if (!input.open || rangeError(input, durationSecs) != null) return null;
-  const s = parseClock(input.start) as number;
+  const s = parseStart(input.start) as number;
   const e = input.end.trim() === '' ? null : parseClock(input.end);
   const d = knownMs(durationSecs);
   const f = floorMs(durationSecs);

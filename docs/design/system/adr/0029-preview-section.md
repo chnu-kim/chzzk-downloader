@@ -1,6 +1,6 @@
 # 0029 미리보기·구간 섹션: 표지 자리 + [영상 보기]를 누를 때 세션을 연다
 
-상태: 채택(잠정)   날짜: 2026-10-21   관련: D66, D64, D65, ADR-0027, ADR-0028, `docs/design/features/preview-ux2.md` PS5·PS6·PS16·PS17, components.md §2.29, app.md 121
+상태: 채택(잠정)   날짜: 2026-10-21   관련: D66, D64, D65, ADR-0027, ADR-0028, `docs/design/features/preview-ux2.md` PS5~PS12·PS15~PS17, components.md §2.29·§2.30, app.md 121·122
 
 ## 맥락
 
@@ -16,10 +16,13 @@ ADR-0027은 미리보기를 카드 안 접힌 줄로 두고 펼칠 때 `watch_op
 - **세션은 [영상 보기]를 눌렀을 때 연다.** 펼치기만으로는 `watch_open`을 부르지 않는다. 단계는 `closed`·`opening`·`ready`·`failed`에 `idle`(표지 자리)을 더한 다섯이다. 접으면 세션을 닫고 `idle`로 돌아가며, 다시 펴도 자동으로 열지 않는다.
 - **열리는 동안 단추는 `loading`으로 그대로 둔다.** 포커스를 잃지 않고 연타는 무시된다.
 - **준비되면 `play()`를 한 번 시도하고 거절은 조용히 넘긴다.** 사용자가 누른 것은 "보기"이므로 자동재생이 아니다. 거절되면(웹뷰의 자동재생 정책) 일시정지로 두고 오류로 보지 않으며 네이티브 controls로 다시 누를 수 있다.
-- **포커스는 비어 있을 때만 옮긴다.** 준비되면 포커스가 [영상 보기] 단추나 `body`에 있을 때만 `<video>`로, 열기 실패면 같은 조건에서만 섹션 머리(`<summary>`)로 옮기고 오류 문구를 `announcer`로 알린다. 그 사이 칸·손잡이로 옮겨 간 사용자는 끌어내지 않는다. 재생 중 오류(`ready → failed`)는 알리기만 한다.
+- **포커스는 비어 있을 때만 옮긴다.** 준비되면 포커스가 [영상 보기] 단추나 `body`에 있을 때만 `<video>`로, 열기 실패면 같은 조건에서만 섹션 머리(`<summary>`)로 옮긴다. 오류 문구는 같은 순간 그려지는 Notice의 `role="alert"`가 한 번 알린다(`announcer`를 또 부르면 두 번 들린다). 그 사이 칸·손잡이로 옮겨 간 사용자는 끌어내지 않는다. 재생 중 오류(`ready → failed`)는 알리기만 한다.
 - **단추 이름은 "영상 보기"다.** "재생"은 문구 전체 금지어다. 접근 이름은 `‘{title}’ 영상 보기`이고 보이는 글자를 포함한다(WCAG 2.5.3).
 - **ADR-0027에서 이어지는 결정을 다시 적는다**: 네이티브 `controls`·`playsinline`·`preload="metadata"`, 실패는 한 Notice(게이트 거부는 받기와 같은 오류 문구), 화면은 16:9에 `--watch-max-h`, 소유 판정 `notOwn`·`unknown`과 생방송에는 줄이 없다. "자동재생 없음"은 "누른 뒤 한 번 시도"로 좁혀진다.
-- **한 섹션·기본 펼침은 PS-3에서 들어간다.** 섹션은 `Disclosure variant="inline"` 하나(빠른 다시보기 "미리보기·구간", 일반 VOD·클립 "미리보기"), 기본 펼침, 열림은 앱 메모리(`ui.previewOpen`)에 기억한다. 구간은 섹션이 펼쳐진 동안만 적용되고 칸의 빈칸은 "전체"다(preview-ux2 PS7~PS12).
+- **한 섹션, 기본 펼침(PS-3).** 섹션은 `Disclosure variant="inline"` 하나(빠른 다시보기 "미리보기·구간", 일반 VOD·클립 "미리보기")이고 영상 자리 → 구간 막대 → 칸 줄 순서다. 칸 줄은 카드가 스니펫으로 그려 칸의 주인이 카드다(PS7). 기본 펼침이고 열림은 앱 메모리(`ui.previewOpen`)에 기억한다. 앱을 다시 켜면 펼침이고 카드 종류와 무관하게 하나다(PS8).
+- **구간은 섹션이 펼쳐진 동안만 적용된다.** 접으면 전체를 받고 칸 값은 남는다(PS9). 칸은 카드마다 빈칸으로 시작하고 **빈칸은 전체**다: 안내 글자는 "처음부터"·"끝까지"이고 빈 시작 칸은 0초다. 길이 줄은 전체이면 "전체 길이"(모르면 "전체 구간")다(PS10).
+- **막대는 재생 전에도 meta 길이로 그린다.** 영상과의 결합(`coupled` = hls.js로 붙고 메타데이터를 읽음)이 되어야 조작 줄·재생 위치·영상 탐색이 켜진다. 재생 전·네이티브 m3u8·실패에서는 막대·칸이 칸 편집기로만 동작한다(PS11·PS12). 편집 영역(`data-local-keys`)은 막대가 있을 때부터 붙는다(PS14).
+- **`notOwn`·`unknown`·생방송에는 섹션도 구간 칸도 없다**(PS15).
 
 ## 근거
 
@@ -37,9 +40,10 @@ ADR-0027은 미리보기를 카드 안 접힌 줄로 두고 펼칠 때 `watch_op
 
 ## 결과
 
-- 바뀌는 문서: README D66·ADR 목록(D64 행 끝에 "→ D66"), components.md §2.29, content.md §15 두 행(`watch.start.label`·`watch.start.a11y`), ADR-0027 상태 `폐기(→ 0029)`, `scripts/design/spec-check.mjs` D 번호 상한 66. 한 섹션·기본 펼침의 문서(components §2.30 인접, patterns §6.5·§15, D65 한 문장)는 PS-3이 쓴다.
+- 바뀌는 문서: README D66·ADR 목록(D64 행 끝에 "→ D66"), components.md §2.29, content.md §15 두 행(`watch.start.label`·`watch.start.a11y`), ADR-0027 상태 `폐기(→ 0029)`, `scripts/design/spec-check.mjs` D 번호 상한 66. 한 섹션·기본 펼침의 문서(components §2.29·§2.30, patterns §6.5·§8·§15, D65 한 문장, content.md §15 새 행)는 PS-3이 썼다.
+- 알려진 한계: 기본 펼침으로 구간 막대가 첫 화면에 늘 노출돼, 두 손잡이가 24px 안에 붙은 장면의 `target-size` 한계(preview-ux.md:636)도 함께 노출이 늘었다. 갤러리는 손잡이를 띄운 값으로 잰다.
 - 코드: `WatchPanel.svelte`(단계 `idle`, 표지 자리, 포커스·`play()` 시도), copy deck `watch.start.*`. command·DTO는 바뀌지 않는다.
-- 카드 높이: PS-3에서 기본 펼침이 되면 카드가 길어지고 갤러리 기준선이 다수 바뀐다. 이 단계(PS-2)는 기본 접힘이라 새 장면 `card-watch-idle`과 기존 장면의 [영상 보기] 클릭만 더한다.
+- 카드 높이: 기본 펼침으로 카드가 길어진다(일반 VOD·클립 약 910, 빠른 다시보기 약 1000, patterns §15). [받기]는 sticky 바닥 줄이라 늘 보이고, 갤러리 기준선이 다수 바뀐다(Linux CI 몫). PS-2는 기본 접힘이라 새 장면 `card-watch-idle`과 [영상 보기] 클릭만 더했고, PS-3은 새 장면 `card-rewind-default`·`card-section-collapsed`를 더했다.
 - gate: `frontend`, `e2e-web`, `design-copy`, `design-lint`, `scripts-test`(`spec-check.test.mjs`·`adr.test.mjs`), `design-shots`(관찰).
 
 ### 재검증 조건

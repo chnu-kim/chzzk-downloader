@@ -4,6 +4,7 @@
 
 ## 현재 위치
 
+- **PVU-6 리뷰 반영(2026-10-21)**: ADR 요약의 장 수를 열여덟로, §16.4 번들 증가가 PVU-3 시점 값임을 명시했다.
 - **미리보기 구간 편집 UX PVU-6 문서 마감(2026-10-21, 브랜치 `feat/preview-ux-range-docs`, 명세 `docs/design/features/preview-ux.md` §11.2 PVU-6·§16, 구현 중 변경 번호 없음(app.md 115~119 사용), `chore`)**: D65·ADR-0028 `채택(잠정)` 유지, 디자인 README 열린 항목 16(M-PVU), 명세 §16 구현 결과, `features/README.md`·`plan.md` 트랙. 남은 것: 사용자 실측 M-PVU-1~7, 머지 뒤 `tests.vitest`·`tests.playwright` 기준 올리기·갤러리 기준선 받기.
 - **PVU-5 리뷰 반영(2026-10-20)**: [끝 시각 1초 미루기]로 끝 칸이 빈칸(끝까지)이 되어도 영상이 맨 끝(floor(길이))으로 따라가게 고쳤다. 끝 칸 blur 탐색·메타데이터 전 blur 시험을 더했다(`receive.test.ts` +3, 변형 3곳 확인).
 - **미리보기 구간 편집 PVU-5 양방향·미세 조정·길이(2026-10-20, 브랜치 `feat/preview-ux-range-nudge`, 명세 `docs/design/features/preview-ux.md` §5.5·§11.2 PVU-5, app.md 119, `feat`)**: 구간 칸을 고치고 빠져나가면 영상이 그 시각으로 가고(바뀐 값·막대/손잡이로 가는 blur는 제외), 각 칸에 [1초 당기기]·[1초 미루기](칸+단추 한 묶음)와 구간 길이·예상 크기 줄을 더했다. copy deck·용어집 갱신, `receive.test.ts` 18개(변형 5곳 확인)·`watch.spec.ts` 1개. 다음은 PVU-6(문서 마감).

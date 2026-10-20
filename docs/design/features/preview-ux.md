@@ -646,4 +646,4 @@ PVU-1~PVU-5가 `feat/preview-ux-range-model`·`-timeline`·`-layout`·`-keys`·`
 
 ### 16.4 ratchet(사람)
 
-CI 녹색 실행이 생기기 전이라 `ci/ratchet.json`은 건드리지 않았다. 이 트리의 로컬 측정은 vitest 2017개(50 파일), Playwright `chromium` 프로젝트 91개와 `gallery` 프로젝트 385개다(기준 `tests.vitest` 692·`tests.playwright` 63은 이 트리에서 옛 값이라 비교하지 않는다. 기준은 `ratchet.mjs write --from-run <run id>`가 CI 측정값으로 올린다). 로컬 `dist` gzip 증가는 PVU-3에서 JS +3.06 kB, CSS +0.37 kB였다. 번들 크기는 master 기준 202460 ±3% 안인지 CI `bundle (linux)`의 `size`가 본다.
+CI 녹색 실행이 생기기 전이라 `ci/ratchet.json`은 건드리지 않았다. 이 트리의 로컬 측정은 vitest 2017개(50 파일), Playwright `chromium` 프로젝트 91개와 `gallery` 프로젝트 385개다(기준 `tests.vitest` 692·`tests.playwright` 63은 이 트리에서 옛 값이라 비교하지 않는다. 기준은 `ratchet.mjs write --from-run <run id>`가 CI 측정값으로 올린다). 로컬 `dist` gzip 증가는 PVU-3 시점 한 PR의 값(JS +3.06 kB, CSS +0.37 kB)이고 PVU-1~5 누적은 재지 않았다. 누적 번들 크기는 master 기준 202460 ±3% 안인지 CI `bundle (linux)`의 `size`가 본다.

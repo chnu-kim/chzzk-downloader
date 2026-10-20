@@ -194,6 +194,22 @@ export const SCREENS: Screen[] = [
     card: true,
   },
   {
+    id: '카드 미리보기 표지 자리',
+    slug: 'card-watch-idle',
+    scenario: () => ({ resolve: { [VOD.url]: VOD } }),
+    drive: async (app, env) => {
+      await loadCard(app, VOD.url);
+      await env.tick?.(CHECK_DEBOUNCE_MS + 50);
+      // 검사가 끝나 [받기]가 켜진 뒤(비활성 면의 대비는 잴 대상이 아니다)
+      await expect(app.page.locator('.card-footer button:not([aria-disabled="true"])', { hasText: t('card.download') })).toBeVisible();
+      // 펼치기만 한다: [영상 보기]를 누르기 전에는 watch_open이 없다(PS6)
+      await app.page.getByText(t('watch.toggle')).click();
+    },
+    ready: (p) => p.getByRole('button', { name: t('watch.start.label') }),
+    settle: settleCardTop,
+    card: true,
+  },
+  {
     id: '카드 미리보기 펼침',
     slug: 'card-watch',
     scenario: () => ({ resolve: { [VOD.url]: VOD }, watchSrc: 'data:video/mp4;base64,AAAA' }),
@@ -208,6 +224,7 @@ export const SCREENS: Screen[] = [
       // 검사가 끝나 [받기]가 켜진 뒤(비활성 면의 대비는 잴 대상이 아니다)
       await expect(app.page.locator('.card-footer button:not([aria-disabled="true"])', { hasText: t('card.download') })).toBeVisible();
       await app.page.getByText(t('watch.toggle')).click();
+      await app.page.getByRole('button', { name: t('watch.start.label') }).click();
     },
     ready: (p) => p.locator('video'),
     settle: settleCardTop,
@@ -224,6 +241,7 @@ export const SCREENS: Screen[] = [
       await env.tick?.(CHECK_DEBOUNCE_MS + 50);
       await expect(app.page.locator('.card-footer button:not([aria-disabled="true"])', { hasText: t('card.download') })).toBeVisible();
       await app.page.getByText(t('watch.toggle')).click();
+      await app.page.getByRole('button', { name: t('watch.start.label') }).click();
     },
     ready: (p) => p.locator('video'),
     settle: settleCardTop,
@@ -239,6 +257,7 @@ export const SCREENS: Screen[] = [
       await env.tick?.(CHECK_DEBOUNCE_MS + 50);
       await expect(app.page.locator('.card-footer button:not([aria-disabled="true"])', { hasText: t('card.download') })).toBeVisible();
       await app.page.getByText(t('watch.toggle')).click();
+      await app.page.getByRole('button', { name: t('watch.start.label') }).click();
       // 메타데이터가 읽혔고 재생 위치가 있는 것처럼 만들어 찍는다(실제 재생은 하지 않는다)
       const video = app.page.locator('video');
       await expect(video).toBeVisible();
@@ -268,6 +287,7 @@ export const SCREENS: Screen[] = [
       await env.tick?.(CHECK_DEBOUNCE_MS + 50);
       await expect(app.page.locator('.card-footer button:not([aria-disabled="true"])', { hasText: t('card.download') })).toBeVisible();
       await app.page.getByText(t('watch.toggle')).click();
+      await app.page.getByRole('button', { name: t('watch.start.label') }).click();
       // 메타데이터가 읽혔고 길이·재생 위치가 있는 것처럼 만들어 시작·끝을 찍는다(실제 재생은 하지 않는다)
       const video = app.page.locator('video');
       await expect(video).toBeVisible();
@@ -303,6 +323,7 @@ export const SCREENS: Screen[] = [
       // 검사가 끝나 [받기]가 켜진 뒤(비활성 면의 대비는 잴 대상이 아니다)
       await expect(app.page.locator('.card-footer button:not([aria-disabled="true"])', { hasText: t('card.download') })).toBeVisible();
       await app.page.getByText(t('watch.toggle')).click();
+      await app.page.getByRole('button', { name: t('watch.start.label') }).click();
     },
     ready: (p) => p.getByText(t('watch.error.body')),
     settle: settleCardTop,

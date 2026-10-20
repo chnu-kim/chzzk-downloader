@@ -116,7 +116,7 @@
   - 단계에 `idle`을 더한다. 펼치면(`onchange(true)`) `phase = 'idle'`만 한다. 접으면 지금처럼 `attempt += 1; closeSession()` 뒤 `phase = 'idle'`이다(`closed`는 처음 마운트 전 값으로만 남는다).
   - `idle`과 `opening`은 같은 `.stage` 상자를 그린다. 상자 안 가운데에 `Button icon="play"` [영상 보기](`watch.start.label`, 접근 이름 `watch.start.a11y`)를 둔다. `opening` 동안 단추는 `loading`이다. 지금 `opening`의 `aria-hidden` 빈 상자는 단추가 들어가므로 `aria-hidden`을 뗀다.
   - 단추 클릭 → `openSession()`. `ready`가 되면 `startPlay()`를 부르고, `await tick()` 뒤 **포커스가 [영상 보기] 단추나 `body`에 있을 때만** `videoEl.focus()`(PS6). hls.js 경로는 `attachMedia` 뒤에 부른다.
-  - `opening → failed`이면 오류 문구를 `announcer.say`로 알리고, 포커스가 [영상 보기] 단추나 `body`에 있을 때만 섹션 머리(`<summary>`)로 옮긴다(단추가 사라져 포커스가 `body`로 떨어지는 것을 막는다). `ready → failed`(재생 중 `<video>` 오류·hls fatal·유휴 10분 세션 만료, PV5)는 알리기만 하고 **포커스를 옮기지 않는다**. Notice의 [다시 시도]는 지금처럼 `openSession()`이다.
+  - `opening → failed`이면 포커스가 [영상 보기] 단추나 `body`에 있을 때만 섹션 머리(`<summary>`)로 옮긴다(단추가 사라져 포커스가 `body`로 떨어지는 것을 막는다). 알림은 같은 순간 그려지는 Notice의 `role="alert"`가 한 번 알린다(`announcer`를 또 부르면 같은 말이 두 번 들린다). `ready → failed`(재생 중 `<video>` 오류·hls fatal·유휴 10분 세션 만료, PV5)도 같고, 포커스는 **`<video>`에 있을 때만** `<summary>`로 옮긴다(영상이 사라져 `body`로 떨어지는 것을 막는다. 칸 등 다른 곳에 있으면 그대로 둔다). Notice의 [다시 시도]는 지금처럼 `openSession()`이다.
   - 표지 자리 상자는 `role`이 없는 장식이다. 이미지가 없으므로 `alt` 규칙은 후속(§12)에서 적용한다.
 - 이 PR에서는 아직 섹션이 기본 접힘이고(D64 값 그대로) "미리보기"·"일부만 받기" 두 줄이다. 그래서 master 어느 시점에서도 "카드를 열면 세션이 열린다"는 상태가 없다(PR 순서의 이유, §11.1).
 
@@ -170,10 +170,10 @@
 | `opening` | 성공(mp4) | `ready` | `src`, `play()` 시도, 포커스 `<video>`(단추·`body`에 있을 때만) |
 | `opening` | 성공(hls, hls.js 지원) | `ready` | `attachMedia`, `usingHls`, `play()` 시도, 포커스(같은 조건) |
 | `opening` | 성공(hls, 네이티브 m3u8) | `ready` | `src`, `usingHls = false`(결합 없음), `play()` 시도, 포커스(같은 조건) |
-| `opening` | 실패·게이트 거부 | `failed` | `announcer.say`, 포커스 `<summary>`(단추·`body`에 있을 때만) |
+| `opening` | 실패·게이트 거부 | `failed` | Notice의 alert가 알림, 포커스 `<summary>`(단추·`body`에 있을 때만) |
 | `opening` | 접음 | `idle` | `attempt += 1`, 늦게 온 세션은 바로 `watch_close` |
 | `ready` | 접음 | `idle` | `hls.destroy` → `watch_close` 1회, `videoSecs = null`, 구간 보기 끔 |
-| `ready` | `<video>` 오류·hls fatal·세션 만료 | `failed` | 세션 닫음(지금과 같다), `announcer.say`, 포커스는 옮기지 않음 |
+| `ready` | `<video>` 오류·hls fatal·세션 만료 | `failed` | 세션 닫음(지금과 같다), Notice의 alert가 알림, 포커스는 `<video>`에 있었을 때만 `<summary>` |
 | `failed` | [다시 시도] | `opening` | `watch_open` 1회 |
 | `failed` | 접음 | `idle` | 오류 지움 |
 | `idle`·`failed` | 폄(다시) | `idle` | 없음(자동으로 열지 않는다) |
@@ -231,7 +231,7 @@
 
 - **섹션 머리**: 네이티브 `<summary>`라 펼침 상태(expanded)를 브라우저가 알린다. `aria-expanded`를 손으로 달지 않는다(`Disclosure.svelte:57-65`). 이름은 "미리보기·구간" 또는 "미리보기"다.
 - **[영상 보기]**: 보이는 글자 "영상 보기" + 아이콘(장식). 접근 이름 `‘{title}’ 영상 보기`는 보이는 글자를 품는다(2.5.3). `opening` 동안 `loading`(`aria-disabled`, 포커스 유지). 대상 크기는 `Button` md(28/40)다.
-- **포커스 이동**: `opening → ready`는 `<video>`로, `opening → failed`는 `<summary>`로 옮기고 오류 문구를 알린다. 둘 다 포커스가 아직 [영상 보기] 단추나 `body`에 있을 때만이다(2.4.3: 사용자가 옮겨 간 포커스를 빼앗지 않는다). `ready → failed`는 알리기만 한다. 접으면 포커스는 누른 `<summary>`에 있다.
+- **포커스 이동**: `opening → ready`는 `<video>`로, `opening → failed`는 `<summary>`로 옮긴다. 둘 다 포커스가 아직 [영상 보기] 단추나 `body`에 있을 때만이다(2.4.3: 사용자가 옮겨 간 포커스를 빼앗지 않는다). 오류 문구는 Notice의 alert가 알린다(`announcer`를 따로 부르지 않는다). `ready → failed`는 포커스가 `<video>`에 있을 때만 `<summary>`로 옮긴다. 접으면 포커스는 누른 `<summary>`에 있다.
 - **표지 자리**: 이미지가 없는 장식 상자다. 이름·역할을 주지 않는다. 후속에서 이미지를 넣으면 `alt=""`(장식, 영상 제목은 카드 h3가 이미 말한다)과 `draggable="false"`(DX3)다.
 - **구간 칸 ↑/↓**: `aria-keyshortcuts="ArrowUp ArrowDown"`. 값 변화는 따로 알리지 않는다(칸 값이 그 자리에 있다). 화면 낭독기가 스크립트로 바뀐 칸 값을 읽는지는 M-PVU2-4다.
 - **빈칸 = 전체**: placeholder는 접근 이름이 아니다. 이름은 그대로 "시작 시각"·"끝 시각"(`range.start`·`range.end`)이다. "전체"는 길이 줄 글자로도 보인다(placeholder만으로 뜻을 전하지 않는다).
@@ -346,8 +346,8 @@
 3a. `focus moved away during opening stays put on ready`: `opening` 동안 구간 칸에 포커스 → `ready` 뒤에도 칸에 그대로. 같은 조건으로 `failed`도 포커스를 옮기지 않는다.
 4. `collapse while opening closes late session`: 접음 → 늦게 온 dto에 `watch_close` 1회, 단계 `idle`.
 5. `collapse while ready closes session once and returns to idle`, `re-expand shows idle and makes no watch_open`.
-6. `failure moves focus to summary and announces`: `announcer.say(watch.error.body)`, [다시 시도] → `watch_open` 1회 더.
-6a. `mid-play error announces without moving focus`: `ready`에서 칸에 포커스 → `<video>` `error` → `failed`, 포커스는 칸 그대로, `announcer.say` 1회.
+6. `failure moves focus to summary and leaves the announcing to the alert`: `announcer.say` 호출 없음, `role=alert` 존재, [다시 시도] → `watch_open` 1회 더.
+6a. `mid-play error leaves focus elsewhere alone`: `ready`에서 칸에 포커스 → `<video>` `error` → `failed`, 포커스는 칸 그대로, `announcer.say` 없음. 6b. 포커스가 `<video>`에 있으면 `<summary>`로 옮긴다(`<video>` 오류·hls fatal 둘).
 7. `gate denial keeps same copy without buttons`(기존 유지) + 포커스 `<summary>`.
 8. `vod and rewind both start idle`, `notOwn/unknown/live: no watch row`(기존 유지).
 9. `editor area appears only after play on hls`(PS-2 시점에는 지금 조건 그대로).
@@ -357,7 +357,7 @@
 
 엣지: [영상 보기] 연타(두 번째 클릭은 `loading`이라 무시), 열기 도중 카드 닫기(`onDestroy`), 네이티브 m3u8 대체 경로에서도 포커스·`play()` 시도.
 
-변이 확인: 펼침에서 `openSession` 호출 남기기(시험 1), 포커스 이동 제거(3), 포커스 조건 제거(3a·6a), 접을 때 `idle` 대신 `closed`(5의 재펼침), `attempt` 올림 제거(4).
+변이 확인: 펼침에서 `openSession` 호출 남기기(시험 1), 포커스 이동 제거(3), 포커스 조건 제거(3a·6a), `attempt` 올림 제거(4). ("접을 때 `idle` 대신 `closed`"는 화면에서 관찰할 수 없어 뺐다.)
 
 바뀌는 파일: `WatchPanel.svelte`, 테스트, `ko.ts`(`watch.start.*`), `content.md` §15, `docs/design/system/{README.md,components.md}`, `adr/0029-preview-section.md`(새), `adr/0027-watch-preview.md`(상태 줄만), `scripts/design/spec-check.mjs`·테스트, `app/e2e/{watch.spec.ts,screens-data.ts}`. 문서: app.md **121**.
 

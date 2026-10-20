@@ -95,6 +95,13 @@ async function openCard(over = {}) {
   return user;
 }
 
+/** 미리보기를 펼치고 [영상 보기]를 눌러 세션을 연다(PS-2: 펼치기만으로는 watch_open을 부르지 않는다). video가 뜰 때까지 기다린다 */
+async function startWatch(user: ReturnType<typeof userEvent.setup>, toggle?: HTMLElement) {
+  await user.click(toggle ?? screen.getByText(t('watch.toggle')));
+  await user.click(screen.getByRole('button', { name: /영상 보기/ }));
+  await waitFor(() => expect(document.querySelector('video')).not.toBeNull());
+}
+
 /** primary 버튼에는 disabled가 없다(Button 타입). 못 받는 동안은 aria-disabled="true"다 */
 function expectBlocked(btn: HTMLElement) {
   expect(btn).toHaveAttribute('aria-disabled', 'true');
@@ -1272,9 +1279,11 @@ describe('미리보기 줄(ResolveCard, preview.md PV14)', () => {
     expect(watch.compareDocumentPosition(fields) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
-  it('펼치면 카드의 주소·content로 watchOpen을 부르고 video src를 둔다', async () => {
+  it('펼쳐도 watchOpen은 없고 [영상 보기]를 누르면 카드의 주소·content로 부르고 video src를 둔다', async () => {
     const user = await openVod();
     await user.click(toggleEl()!);
+    expect(api.watchOpen).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: /영상 보기/ }));
     await waitFor(() => expect(document.querySelector('video')).not.toBeNull());
     expect(api.watchOpen).toHaveBeenCalledWith('https://chzzk.naver.com/video/1234567', { kind: 'video', videoNo: 1234567 });
     expect(document.querySelector('video')!.getAttribute('src')).toContain('watch://localhost/');
@@ -1334,8 +1343,7 @@ describe('미리보기 줄(ResolveCard, preview.md PV14)', () => {
 
   it('카드를 닫으면 펼친 미리보기 세션을 한 번 닫는다', async () => {
     const user = await openVod();
-    await user.click(toggleEl()!);
-    await waitFor(() => expect(document.querySelector('video')).not.toBeNull());
+    await startWatch(user, toggleEl()!);
     await user.click(cardFooter().getByRole('button', { name: t('common.close') }));
     await waitFor(() => expect(screen.queryByRole('heading', { name: /금요/ })).toBeNull());
     expect(api.watchClose).toHaveBeenCalledTimes(1);
@@ -1363,8 +1371,7 @@ describe('구간 찍기(ResolveCard, preview.md PV17)', () => {
   async function openRewindPlayer(over = {}) {
     vi.mocked(api.watchOpen).mockResolvedValue({ id: SID, kind: 'hls', src: `watch://localhost/${SID}/pl.m3u8` });
     const user = await openCard(over);
-    await user.click(screen.getByText(t('watch.toggle')));
-    await waitFor(() => expect(document.querySelector('video')).not.toBeNull());
+    await startWatch(user);
     return user;
   }
   /** 메타데이터가 읽힌 재생기의 currentTime을 정한다 */
@@ -1387,8 +1394,7 @@ describe('구간 찍기(ResolveCard, preview.md PV17)', () => {
     await user2.type(urlInput(), 'https://chzzk.naver.com/video/1234567{Enter}');
     await screen.findByRole('heading', { name: /금요/ });
     vi.mocked(api.watchOpen).mockResolvedValue({ id: SID, kind: 'mp4', src: `watch://localhost/${SID}/v` });
-    await user2.click(screen.getByText(t('watch.toggle')));
-    await waitFor(() => expect(document.querySelector('video')).not.toBeNull());
+    await startWatch(user2);
     expect(markStart()).toBeNull();
     expect(markEnd()).toBeNull();
   });
@@ -1402,8 +1408,7 @@ describe('구간 찍기(ResolveCard, preview.md PV17)', () => {
     await user.type(urlInput(), 'https://chzzk.naver.com/clips/clip0001{Enter}');
     await screen.findByRole('heading', { name: /금요/ });
     vi.mocked(api.watchOpen).mockResolvedValue({ id: SID, kind: 'mp4', src: `watch://localhost/${SID}/v` });
-    await user.click(screen.getByText(t('watch.toggle')));
-    await waitFor(() => expect(document.querySelector('video')).not.toBeNull());
+    await startWatch(user);
     expect(markStart()).toBeNull();
   });
 
@@ -1498,8 +1503,7 @@ describe('구간 편집 배치(ResolveCard, preview-ux PVU-3)', () => {
   async function openRewindPlayer(over = {}) {
     vi.mocked(api.watchOpen).mockResolvedValue({ id: SID, kind: 'hls', src: `watch://localhost/${SID}/pl.m3u8` });
     const user = await openCard(over);
-    await user.click(screen.getByText(t('watch.toggle')));
-    await waitFor(() => expect(document.querySelector('video')).not.toBeNull());
+    await startWatch(user);
     return user;
   }
   /** 메타데이터가 읽힌 재생기: currentTime 쓰기를 세고 길이를 정한다 */
@@ -1540,8 +1544,7 @@ describe('구간 편집 배치(ResolveCard, preview-ux PVU-3)', () => {
     render(InputPanel);
     await user.type(urlInput(), 'https://chzzk.naver.com/video/1234567{Enter}');
     await screen.findByRole('heading', { name: /금요/ });
-    await user.click(screen.getByText(t('watch.toggle')));
-    await waitFor(() => expect(document.querySelector('video')).not.toBeNull());
+    await startWatch(user);
     expect(screen.queryByText(t('range.toggle'))).toBeNull();
     expect(screen.queryByRole('group', { name: /구간 고르기/ })).toBeNull();
     expect(screen.queryAllByRole('slider')).toHaveLength(0);
@@ -1589,8 +1592,7 @@ describe('구간 편집 배치(ResolveCard, preview-ux PVU-3)', () => {
     await user.click(screen.getByText(t('range.toggle')));
     expect(endEl()).toHaveValue('3:12:45');
     // 다시 펼쳐 새 영상이 더 짧아도 막대 길이는 여전히 카드의 meta 길이다
-    await user.click(screen.getByText(t('watch.toggle')));
-    await waitFor(() => expect(document.querySelector('video')).not.toBeNull());
+    await startWatch(user);
     await loadMeta(300);
     expect(thumb(t('range.end'))).toHaveAttribute('aria-valuemax', '11565');
   });
@@ -1601,8 +1603,7 @@ describe('구간 편집 배치(ResolveCard, preview-ux PVU-3)', () => {
     await loadMeta(599.6);
     expect(screen.getAllByRole('slider')).toHaveLength(2);
     await user.click(screen.getByText(t('watch.toggle')));
-    await user.click(screen.getByText(t('watch.toggle')));
-    await waitFor(() => expect(document.querySelector('video')).not.toBeNull());
+    await startWatch(user);
     expect(screen.queryAllByRole('slider')).toHaveLength(0);
     // 새 loadedmetadata의 길이가 새 막대 길이다(앞 영상의 599.6이 아니다)
     await loadMeta(300);
@@ -1663,8 +1664,7 @@ describe('양방향·미세 조정·길이(ResolveCard + RangeField, preview-ux 
   async function openRewindPlayer(over = {}) {
     vi.mocked(api.watchOpen).mockResolvedValue({ id: SID, kind: 'hls', src: `watch://localhost/${SID}/pl.m3u8` });
     const user = await openCard(over);
-    await user.click(screen.getByText(t('watch.toggle')));
-    await waitFor(() => expect(document.querySelector('video')).not.toBeNull());
+    await startWatch(user);
     return user;
   }
   async function loadMeta(duration = 11565, time = 0) {
@@ -2013,8 +2013,7 @@ describe('구간 편집 영역의 Esc(ResolveCard + GlobalShortcuts, preview-ux 
     render(GlobalShortcuts);
     vi.mocked(api.watchOpen).mockResolvedValue({ id: SID, kind: 'hls', src: `watch://localhost/${SID}/pl.m3u8` });
     const user = await openCard();
-    await user.click(screen.getByText(t('watch.toggle')));
-    await waitFor(() => expect(document.querySelector('video')).not.toBeNull());
+    await startWatch(user);
     // 영상 메타가 읽혀야 편집 영역(막대·조작 줄)이 선다
     const v = document.querySelector('video') as HTMLVideoElement;
     Object.defineProperty(v, 'duration', { configurable: true, get: () => 11565 });

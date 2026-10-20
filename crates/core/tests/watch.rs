@@ -392,6 +392,28 @@ async fn upstream_416_without_total_is_fatal() {
 }
 
 #[tokio::test]
+async fn other_2xx_status_is_fatal() {
+    // 204처럼 206도 200도 아닌 성공 응답은 구간 응답으로 볼 수 없다(다시 해도 같다)
+    let server = MockServer::start().await;
+    mount(&server, ResponseTemplate::new(204)).await;
+    let r = client(&server)
+        .watch_range(&media_url(&server.uri()), 0, 9, None)
+        .await;
+    assert!(
+        matches!(
+            r,
+            Err(WatchFail::Fatal(Error::HttpStatus { status: 204, .. }))
+        ),
+        "{r:?}"
+    );
+    assert_eq!(
+        upstream_requests(&server).await.len(),
+        1,
+        "다시 보내지 않는다"
+    );
+}
+
+#[tokio::test]
 async fn upstream_403_is_expired() {
     let server = MockServer::start().await;
     mount(&server, ResponseTemplate::new(403)).await;

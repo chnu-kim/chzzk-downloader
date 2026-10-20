@@ -7,9 +7,10 @@
 // 어느 쪽이든 그 트리의 진입점 `node <트리>/scripts/ci/run.mjs <gate>`를 부른다(CI가 체크아웃한 커밋에서 하는 것과 같다).
 
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { delimiter, join } from 'node:path';
+import { delimiter, join, resolve } from 'node:path';
 
 // 훅 안에서 git이 넘기는 변수. 임시 worktree와 그 안의 gate가 바깥 저장소·인덱스를 가리키지 않게 지운다.
 const GIT_LOCAL = /^GIT_(DIR|WORK_TREE|INDEX_FILE|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES|PREFIX|COMMON_DIR|NAMESPACE)$/;
@@ -47,17 +48,67 @@ export function indexCommit(root, env) {
   return git(root, ['commit-tree', '--no-gpg-sign', tree, '-m', 'pre-commit snapshot'], { ...cleanGitEnv(env), ...id }).trim();
 }
 
-/** sha의 임시 worktree에서 fn(dir)을 부르고 지운다 */
+/**
+ * 임시 worktree의 고정 경로(저장소마다 하나). 경로가 실행마다 다르면 공유 CARGO_TARGET_DIR에 남은 테스트 바이너리가
+ * 이미 지워진 경로의 `env!("CARGO_MANIFEST_DIR")`을 품은 채 재사용된다(cargo는 이 값이 바뀌었다고 다시 빌드하지 않는다).
+ */
+export function hookWorktreePath(root) {
+  const h = createHash('sha256').update(resolve(root)).digest('hex').slice(0, 10);
+  return join(tmpdir(), `chzzk-hook-${h}`);
+}
+
+const alive = (pid) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return e.code === 'EPERM';
+  }
+};
+
+/** 고정 경로의 잠금(<경로>.lock/pid)을 잡는다. 살아 있는 소유자가 있으면 false, 죽은 소유자의 잠금은 넘겨받는다. */
+function acquire(lock) {
+  for (let i = 0; i < 2; i++) {
+    try {
+      mkdirSync(lock);
+      writeFileSync(join(lock, 'pid'), String(process.pid));
+      return true;
+    } catch (e) {
+      if (e.code !== 'EEXIST') throw e;
+      let pid = NaN;
+      try {
+        pid = Number(readFileSync(join(lock, 'pid'), 'utf8'));
+      } catch {}
+      if (Number.isInteger(pid) && pid > 0 && alive(pid)) return false;
+      rmSync(lock, { recursive: true, force: true });
+    }
+  }
+  return false;
+}
+
+/**
+ * sha의 임시 worktree에서 fn(dir, shared)을 부르고 지운다. 보통 고정 경로(hookWorktreePath)를 쓰고 shared=true다.
+ * 다른 훅이 그 경로를 쓰는 중이면 유일한 경로로 비켜서 shared=false로 부른다(그 worktree는 공유 target을 쓰면 안 된다).
+ */
 export function withWorktree(root, sha, env, fn) {
   const e = cleanGitEnv(env);
-  const dir = mkdtempSync(join(tmpdir(), 'chzzk-hook-'));
-  git(root, ['worktree', 'add', '--detach', '--quiet', dir, sha], e);
-  try {
-    return fn(dir);
-  } finally {
+  const fixed = hookWorktreePath(root);
+  const lock = `${fixed}.lock`;
+  const shared = acquire(lock);
+  const dir = shared ? fixed : mkdtempSync(join(tmpdir(), 'chzzk-hook-x-'));
+  const remove = () => {
     spawnSync('git', ['worktree', 'remove', '--force', dir], { cwd: root, env: e });
     rmSync(dir, { recursive: true, force: true });
     spawnSync('git', ['worktree', 'prune'], { cwd: root, env: e });
+  };
+  try {
+    if (shared) remove(); // 앞 실행이 죽어 남긴 것
+    else rmSync(dir, { recursive: true, force: true });
+    git(root, ['worktree', 'add', '--detach', '--quiet', dir, sha], e);
+    return fn(dir, shared);
+  } finally {
+    remove();
+    if (shared) rmSync(lock, { recursive: true, force: true });
   }
 }
 
@@ -65,13 +116,14 @@ export function withWorktree(root, sha, env, fn) {
  * dir의 진입점으로 gate들을 차례로 돌린다. 첫 0이 아닌 코드에서 멈춘다.
  * extraPath: 바깥 저장소의 install-tool 폴더(임시 worktree에는 없다). targetDir: cargo 빌드 캐시를 나눠 쓴다.
  */
-export function runGatesIn(dir, gates, env, { extraPath, targetDir, log = console.log } = {}) {
+export function runGatesIn(dir, gates, env, { extraPath, targetDir, forceTargetDir, log = console.log } = {}) {
   const e = cleanGitEnv(env);
   if (extraPath) {
     const key = Object.keys(e).find((k) => k.toUpperCase() === 'PATH') ?? 'PATH';
     e[key] = [e[key], extraPath].filter(Boolean).join(delimiter);
   }
-  if (targetDir && !e.CARGO_TARGET_DIR) e.CARGO_TARGET_DIR = targetDir;
+  if (forceTargetDir) e.CARGO_TARGET_DIR = forceTargetDir; // 비켜 도는 worktree: 물려받은 값도 덮어쓴다
+  else if (targetDir && !e.CARGO_TARGET_DIR) e.CARGO_TARGET_DIR = targetDir;
   for (const g of gates) {
     const r = spawnSync(process.execPath, [join(dir, 'scripts', 'ci', 'run.mjs'), g], { cwd: dir, env: e, stdio: 'inherit' });
     if (r.error) {
@@ -94,5 +146,5 @@ export function runHookGates(root, target, gates, env, opts = {}) {
   if (inPlace) return runGatesIn(root, gates, env, opts);
   const sha = target.index ? indexCommit(root, env) : target.sha;
   log(`${target.index ? '인덱스' : `커밋 ${sha.slice(0, 12)}`}가 작업 트리와 달라 임시 worktree에서 돌린다: ${gates.join(', ')}`);
-  return withWorktree(root, sha, env, (dir) => runGatesIn(dir, gates, env, opts));
+  return withWorktree(root, sha, env, (dir, shared) => runGatesIn(dir, gates, env, shared ? opts : { ...opts, targetDir: undefined, forceTargetDir: join(dir, 'target') }));
 }

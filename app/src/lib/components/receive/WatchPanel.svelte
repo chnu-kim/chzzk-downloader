@@ -1,7 +1,8 @@
 <script lang="ts">
-  // 받기 전 미리보기 줄(preview.md PV14, system/components.md WatchPanel). 카드 안 `Disclosure inline`이고 기본 접힘이다.
-  // 펼칠 때 `watch_open`을 부르고(자동재생 없음, preload=metadata, 네이티브 controls), 접거나 카드가 사라지면 `watch_close`를 부른다.
-  // `src`는 Rust가 만든 `watch:` 주소뿐이고 서명 주소·토큰은 프런트에 오지 않는다. 상태는 closed·opening·ready·failed 넷.
+  // 받기 전 미리보기 줄(preview.md PV14, preview-ux2 PS5·PS6, system/components.md WatchPanel). 카드 안 `Disclosure inline`이고 기본 접힘이다.
+  // 펼치면 표지 자리(.stage)와 [영상 보기]만 보이고 요청은 없다. 그 단추를 눌렀을 때 `watch_open`을 부르고(preload=metadata, 네이티브 controls,
+  // 준비되면 `play()`를 한 번 시도), 접거나 카드가 사라지면 `watch_close`를 부른다.
+  // `src`는 Rust가 만든 `watch:` 주소뿐이고 서명 주소·토큰은 프런트에 오지 않는다. 상태는 closed·idle·opening·ready·failed 다섯.
   // 빠른 다시보기(HLS)는 hls.js light를 동적으로 불러(PV9) MSE로 붙인다. 못 쓰면 네이티브 m3u8, 그것도 없으면 실패(PV16).
   // 구간 찍기(PV17): `markable`(빠른 다시보기 카드)이고 hls.js로 붙었을 때만 재생기 아래 [시작 찍기]·[끝 찍기]를 보인다.
   // 네이티브 m3u8 대체 경로는 시간축이 다를 수 있어 그리지 않는다. 누른 순간의 floor(currentTime)초를 `onmark`로 넘길 뿐이다.
@@ -14,6 +15,7 @@
   import type { AppError, ResolvedDto, WatchOpenDto } from '../../bindings';
   import { errorCopy } from '../../copy/errors';
   import { t } from '../../copy/ko';
+  import { announcer } from '../../stores/announce.svelte';
   import {
     consumeOwnSeek,
     moveHandle,
@@ -65,11 +67,14 @@
     onduration,
   }: Props = $props();
 
-  type Phase = 'closed' | 'opening' | 'ready' | 'failed';
+  type Phase = 'closed' | 'idle' | 'opening' | 'ready' | 'failed';
   /** 받기와 같은 문구로 알리는 게이트 거부(그 밖의 실패는 한 문구, preview.md Q2) */
   const GATE_CODES: ReadonlySet<AppError['code']> = new Set(['notLoggedIn', 'notOwnContent', 'ownershipUnknown']);
 
   let open = $state(false);
+  /** 이 줄의 뿌리와 [영상 보기] 단추(포커스 판단용) */
+  let rootEl: HTMLDivElement | null = $state(null);
+  let startEl: HTMLButtonElement | null = $state(null);
   let phase: Phase = $state('closed');
   let src = $state('');
   /** 게이트 거부로 실패했을 때의 오류(없으면 한 문구) */
@@ -139,6 +144,29 @@
     if (videoEl && metaReady) position = videoEl.currentTime || 0;
   }
 
+  /** 포커스가 [영상 보기] 단추나 body에 있는가(그 사이 다른 곳으로 옮겨 간 사용자를 끌어내지 않는다, PS6) */
+  function focusIsFree(): boolean {
+    const a = document.activeElement;
+    return !a || a === document.body || a === startEl;
+  }
+
+  /** 열기 성공: 포커스가 비어 있었으면 video로 옮기고 재생을 한 번 시도한다(거절은 조용히, controls가 남는다) */
+  async function afterReady(mine: number) {
+    // 단추가 사라진 뒤의 포커스를 본다(단추에 있었으면 body로 떨어져 있다)
+    await tick();
+    if (mine !== attempt || !videoEl) return;
+    if (focusIsFree()) videoEl.focus();
+    startPlay();
+  }
+
+  /** 열기 실패: 알리고, 포커스가 비어 있었으면 줄 머리(summary)로 옮긴다(단추가 사라져 body로 떨어지지 않게) */
+  async function afterFailed(mine: number) {
+    announcer.say(gateCopy ? gateCopy.title : t('watch.error.body'));
+    await tick();
+    if (mine !== attempt) return;
+    if (focusIsFree()) rootEl?.querySelector<HTMLElement>('summary')?.focus();
+  }
+
   function closeSession() {
     // 재생기를 먼저 떼야 세션을 닫은 뒤 세그먼트를 더 요청하지 않는다
     hls?.destroy();
@@ -174,16 +202,19 @@
         // 낯선 종류나 mp4를 읽을 수 없는 웹뷰면 src를 달지 않고 세션을 닫는다
         void api.watchClose(dto.id).catch(() => {});
         phase = 'failed';
+        void afterFailed(mine);
         return;
       }
       sessionId = dto.id;
       src = dto.src;
       phase = 'ready';
+      void afterReady(mine);
     } catch (e) {
       if (mine !== attempt) return;
       const err = e as AppError;
       gateError = GATE_CODES.has(err.code) ? err : null;
       phase = 'failed';
+      void afterFailed(mine);
     }
   }
 
@@ -192,6 +223,7 @@
     const fail = () => {
       void api.watchClose(dto.id).catch(() => {});
       phase = 'failed';
+      void afterFailed(mine);
     };
     let Ctor: typeof Hls;
     try {
@@ -210,6 +242,7 @@
       sessionId = dto.id;
       src = dto.src;
       phase = 'ready';
+      void afterReady(mine);
       return;
     }
     sessionId = dto.id;
@@ -227,17 +260,19 @@
     });
     player.loadSource(dto.src);
     player.attachMedia(videoEl);
+    void afterReady(mine);
   }
 
   function onchange(next: boolean) {
     if (next) {
-      void openSession();
+      // 펴기만으로는 아무것도 열지 않는다(PS6). [영상 보기]를 눌러야 세션을 연다
+      phase = 'idle';
     } else {
       attempt += 1;
       closeSession();
       src = '';
       gateError = null;
-      phase = 'closed';
+      phase = 'idle';
     }
   }
 
@@ -247,6 +282,8 @@
     closeSession();
     src = '';
     phase = 'failed';
+    // 재생 중 오류는 알리기만 하고 포커스는 옮기지 않는다
+    announcer.say(t('watch.error.body'));
   }
 
   function mark(field: 'start' | 'end') {
@@ -426,10 +463,15 @@
   });
 </script>
 
-<div class="watch">
+<div class="watch" bind:this={rootEl}>
   <Disclosure variant="inline" title={t('watch.toggle')} bind:open {onchange}>
-    {#if phase === 'opening'}
-      <div class="stage" aria-hidden="true"></div>
+    {#if phase === 'idle' || phase === 'opening'}
+      <!-- 표지 자리: 이미지 없는 장식 상자(PS5). 재생기와 같은 16:9라 눌러도 배치가 밀리지 않는다 -->
+      <div class="stage">
+        <Button icon="play" loading={phase === 'opening'} bind:el={startEl} aria-label={t('watch.start.a11y', { title: view.meta.title })} onclick={() => void openSession()}>
+          {t('watch.start.label')}
+        </Button>
+      </div>
     {:else if phase === 'ready'}
       <!-- 편집 영역: 영상 + 막대 + 조작 줄. 영상은 hls.js가 붙기 전후에 같은 요소여야 해서(usingHls가 늦게 켜진다) 감싸는 요소를
            늘 두고 편집 영역의 이름·역할만 조건으로 붙인다. 포커스 링은 전역 규칙을 그대로 받는다(data-focus-container 없음, V8) -->
@@ -446,6 +488,7 @@
         <video
           class="player"
           controls
+          tabindex="0"
           preload="metadata"
           playsinline
           bind:this={videoEl}
@@ -523,6 +566,11 @@
     max-height: var(--watch-max-h);
     border-radius: var(--radius-control);
     background: var(--surface-2);
+  }
+  .stage {
+    display: flex;
+    align-items: center;
+    justify-content: center;
   }
   .player {
     object-fit: contain;

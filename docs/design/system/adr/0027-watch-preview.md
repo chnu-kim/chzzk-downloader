@@ -1,6 +1,6 @@
 # 0027 받기 전 미리보기: 카드 안 접힌 줄, 자동재생 없음, 실패는 한 Notice
 
-상태: 채택(잠정)   날짜: 2026-10-20   관련: D14·D37·D43·D64, W1·W5, ADR-0009·ADR-0026, `docs/design/features/preview.md` PV14·PV17·P3·P4·P9, app.md 구현 중 변경 110
+상태: 폐기(→ 0029)   날짜: 2026-10-20   관련: D14·D37·D43·D64, W1·W5, ADR-0009·ADR-0026, `docs/design/features/preview.md` PV14·PV17·P3·P4·P9, app.md 구현 중 변경 110
 
 ## 맥락
 

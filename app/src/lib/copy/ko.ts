@@ -83,6 +83,8 @@ export const ko = {
   'range.error.beyond': '시작 시각이 영상 길이보다 뒤예요.',
 
   'watch.toggle': '미리보기',
+  'watch.start.label': '영상 보기',
+  'watch.start.a11y': '‘{title}’ 영상 보기',
   'watch.error.body': '미리보기를 열 수 없어요.',
   'watch.openInChzzk.label': '치지직에서 보기',
   'watch.mark.start': '시작 찍기',

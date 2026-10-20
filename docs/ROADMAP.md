@@ -4,6 +4,7 @@
 
 ## 현재 위치
 
+- **미리보기·구간 개편 PS-2 표지 자리·지연 세션(2026-10-21, 브랜치 `feat/preview-ux2-lazy-session`, 명세 `docs/design/features/preview-ux2.md` PS5·PS6·PS16·PS17·§11.2 PS-2, app.md 121, `feat`)**: 미리보기 줄을 펴도 `watch_open`을 부르지 않고 표지 자리와 [영상 보기]만 보인다. 단추를 누르면 세션을 열고 `play()`를 한 번 시도하며 포커스는 비어 있을 때만 옮긴다. D66·ADR-0029(ADR-0027 `폐기(→ 0029)`)·`spec-check` 상한 66. 섹션은 아직 기본 접힘·두 줄(PS-3이 한 섹션·기본 펼침). 갤러리 기준선은 Linux CI 몫.
 - **미리보기·구간 개편 PS-1 구간 칸 ↑/↓(2026-10-21, 브랜치 `feat/preview-ux2-arrow-keys`, 명세 `docs/design/features/preview-ux2.md` PS1~PS4·§11.2 PS-1, app.md 120, `feat`)**: ±1초 단추 네 개와 문구 키 여섯·용어집 행을 없애고, 시작·끝 칸의 ↑/↓가 1초씩 바꾸며(`rangeEdit.nudge`) 영상이 따라간다(IME·수식 키는 처리 안 함, 길게 누르면 뗄 때·blur에서 한 번 탐색). 갤러리 기준선은 Linux CI 몫.
 - **PVU-6 리뷰 반영(2026-10-21)**: ADR 요약의 장 수를 열여덟로, §16.4 번들 증가가 PVU-3 시점 값임을 명시했다.
 - **미리보기 구간 편집 UX PVU-6 문서 마감(2026-10-21, 브랜치 `feat/preview-ux-range-docs`, 명세 `docs/design/features/preview-ux.md` §11.2 PVU-6·§16, 구현 중 변경 번호 없음(app.md 115~119 사용), `chore`)**: D65·ADR-0028 `채택(잠정)` 유지, 디자인 README 열린 항목 16(M-PVU), 명세 §16 구현 결과, `features/README.md`·`plan.md` 트랙. 남은 것: 사용자 실측 M-PVU-1~7, 머지 뒤 `tests.vitest`·`tests.playwright` 기준 올리기·갤러리 기준선 받기.

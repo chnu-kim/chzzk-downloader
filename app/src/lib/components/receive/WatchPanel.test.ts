@@ -5,6 +5,7 @@ import type { AppError, WatchOpenDto } from '../../bindings';
 import { vodResolved } from '../../../test/fixtures';
 import { errorCopy } from '../../copy/errors';
 import { t } from '../../copy/ko';
+import { announcer } from '../../stores/announce.svelte';
 
 vi.mock('../../api', () => ({
   watchOpen: vi.fn(),
@@ -57,8 +58,17 @@ const view = vodResolved();
 const toggle = () => screen.getByText(t('watch.toggle'));
 const videoEl = () => document.querySelector('video') as HTMLVideoElement | null;
 
-async function expand(user: ReturnType<typeof userEvent.setup>) {
+const startBtn = () => screen.getByRole('button', { name: t('watch.start.a11y', { title: view.meta.title }) });
+
+/** 줄만 펼친다(PS-2: 이것만으로는 watch_open을 부르지 않는다) */
+async function expandOnly(user: ReturnType<typeof userEvent.setup>) {
   await user.click(toggle());
+}
+
+/** 펼치고 [영상 보기]를 눌러 세션을 연다 */
+async function expand(user: ReturnType<typeof userEvent.setup>) {
+  await expandOnly(user);
+  await user.click(startBtn());
 }
 
 const HLS_SRC = `watch://localhost/${SID}/pl.m3u8`;
@@ -273,7 +283,7 @@ describe('WatchPanel', () => {
     expect(api.watchClose).not.toHaveBeenCalled();
   });
 
-  it('접었다 다시 펼치면 새 세션을 연다', async () => {
+  it('접었다 다시 펼치면 표지 자리로 돌아가 있고 자동으로 열지 않는다, [영상 보기]를 누르면 새 세션을 연다', async () => {
     const user = userEvent.setup();
     render(WatchPanel, { view });
     await expand(user);
@@ -281,9 +291,189 @@ describe('WatchPanel', () => {
     await user.click(toggle());
     await waitFor(() => expect(videoEl()).toBeNull());
     vi.mocked(api.watchOpen).mockResolvedValue(opened({ id: 'ef'.repeat(16) }));
-    await expand(user);
+    await expandOnly(user);
+    expect(videoEl()).toBeNull();
+    expect(api.watchOpen).toHaveBeenCalledTimes(1);
+    await user.click(startBtn());
     await waitFor(() => expect(videoEl()).not.toBeNull());
     expect(api.watchOpen).toHaveBeenCalledTimes(2);
+  });
+
+  describe('표지 자리·지연 세션(PS-2)', () => {
+    const externalField = () => {
+      const input = document.createElement('input');
+      document.body.appendChild(input);
+      return input;
+    };
+    let play: ReturnType<typeof vi.spyOn>;
+    beforeEach(() => {
+      play = vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined);
+      vi.spyOn(announcer, 'say').mockImplementation(() => {});
+    });
+    afterEach(() => {
+      document.querySelectorAll('body > input').forEach((el) => el.remove());
+    });
+
+    it('expand shows stage with 영상 보기 and makes no watch_open', async () => {
+      const user = userEvent.setup();
+      render(WatchPanel, { view });
+      await expandOnly(user);
+      expect(startBtn()).toBeInTheDocument();
+      expect(startBtn()).toHaveTextContent(t('watch.start.label'));
+      expect(document.querySelector('.stage')).not.toBeNull();
+      expect(videoEl()).toBeNull();
+      expect(api.watchOpen).not.toHaveBeenCalled();
+    });
+
+    it('clicking 영상 보기 opens session once and shows loading with focus kept', async () => {
+      let resolve!: (d: WatchOpenDto) => void;
+      vi.mocked(api.watchOpen).mockReturnValue(new Promise((r) => (resolve = r)));
+      const user = userEvent.setup();
+      render(WatchPanel, { view });
+      await expandOnly(user);
+      await user.click(startBtn());
+      await user.click(startBtn()); // 연타: 두 번째는 loading이라 무시
+      expect(api.watchOpen).toHaveBeenCalledTimes(1);
+      expect(startBtn()).toHaveAttribute('aria-disabled', 'true');
+      expect(startBtn()).toHaveFocus();
+      resolve(opened());
+      await waitFor(() => expect(videoEl()).not.toBeNull());
+    });
+
+    it('ready moves focus to video and tries play once', async () => {
+      const user = userEvent.setup();
+      render(WatchPanel, { view });
+      await expand(user);
+      await waitFor(() => expect(videoEl()).not.toBeNull());
+      await waitFor(() => expect(document.activeElement).toBe(videoEl()));
+      expect(play).toHaveBeenCalledTimes(1);
+    });
+
+    it('play rejection keeps ready without notice', async () => {
+      play.mockRejectedValue(new DOMException('NotAllowedError'));
+      const user = userEvent.setup();
+      render(WatchPanel, { view });
+      await expand(user);
+      await waitFor(() => expect(videoEl()).not.toBeNull());
+      await waitFor(() => expect(play).toHaveBeenCalledTimes(1));
+      await new Promise((r) => setTimeout(r, 0));
+      expect(videoEl()).not.toBeNull();
+      expect(screen.queryByRole('alert')).toBeNull();
+      expect(announcer.say).not.toHaveBeenCalled();
+    });
+
+    it('hls: focus and play come after attachMedia', async () => {
+      vi.mocked(api.watchOpen).mockResolvedValue(hlsOpened());
+      const user = userEvent.setup();
+      render(WatchPanel, { view, markable: true });
+      await expand(user);
+      await waitFor(() => expect(hlsMock.instances).toHaveLength(1));
+      await waitFor(() => expect(document.activeElement).toBe(videoEl()));
+      expect(play).toHaveBeenCalledTimes(1);
+      expect(lastHls().attachMedia).toHaveBeenCalledTimes(1);
+    });
+
+    it('focus moved away during opening stays put on ready', async () => {
+      let resolve!: (d: WatchOpenDto) => void;
+      vi.mocked(api.watchOpen).mockReturnValue(new Promise((r) => (resolve = r)));
+      const user = userEvent.setup();
+      render(WatchPanel, { view });
+      const field = externalField();
+      await expand(user);
+      field.focus();
+      resolve(opened());
+      await waitFor(() => expect(videoEl()).not.toBeNull());
+      await waitFor(() => expect(play).toHaveBeenCalledTimes(1));
+      expect(field).toHaveFocus();
+    });
+
+    it('focus moved away during opening stays put on failed too', async () => {
+      let reject!: (e: AppError) => void;
+      vi.mocked(api.watchOpen).mockReturnValue(new Promise((_, rj) => (reject = rj)));
+      const user = userEvent.setup();
+      render(WatchPanel, { view });
+      const field = externalField();
+      await expand(user);
+      field.focus();
+      reject(appError('network'));
+      expect(await screen.findByRole('alert')).toBeInTheDocument();
+      expect(field).toHaveFocus();
+    });
+
+    it('collapse while opening closes late session and returns to idle', async () => {
+      let resolve!: (d: WatchOpenDto) => void;
+      vi.mocked(api.watchOpen).mockReturnValue(new Promise((r) => (resolve = r)));
+      const user = userEvent.setup();
+      render(WatchPanel, { view });
+      await expand(user);
+      await user.click(toggle());
+      resolve(opened());
+      await waitFor(() => expect(api.watchClose).toHaveBeenCalledWith(SID));
+      expect(api.watchClose).toHaveBeenCalledTimes(1);
+      expect(videoEl()).toBeNull();
+      await expandOnly(user);
+      expect(startBtn()).not.toHaveAttribute('aria-disabled', 'true');
+    });
+
+    it('collapse while ready closes session once and returns to idle; re-expand makes no watch_open', async () => {
+      const user = userEvent.setup();
+      render(WatchPanel, { view });
+      await expand(user);
+      await waitFor(() => expect(videoEl()).not.toBeNull());
+      await user.click(toggle());
+      await waitFor(() => expect(api.watchClose).toHaveBeenCalledTimes(1));
+      await expandOnly(user);
+      expect(videoEl()).toBeNull();
+      expect(startBtn()).toBeInTheDocument();
+      expect(api.watchOpen).toHaveBeenCalledTimes(1);
+    });
+
+    it('failure moves focus to summary and announces; retry opens again', async () => {
+      vi.mocked(api.watchOpen).mockRejectedValueOnce(appError('network'));
+      const user = userEvent.setup();
+      render(WatchPanel, { view });
+      await expand(user);
+      expect(await screen.findByRole('alert')).toHaveTextContent(t('watch.error.body'));
+      expect(announcer.say).toHaveBeenCalledWith(t('watch.error.body'));
+      await waitFor(() => expect(document.activeElement).toBe(toggle().closest('summary')));
+      await user.click(screen.getByRole('button', { name: t('action.retry') }));
+      await waitFor(() => expect(videoEl()).not.toBeNull());
+      expect(api.watchOpen).toHaveBeenCalledTimes(2);
+    });
+
+    it('gate denial announces the same copy as 받기 and moves focus to summary', async () => {
+      vi.mocked(api.watchOpen).mockRejectedValue(appError('notLoggedIn'));
+      const user = userEvent.setup();
+      render(WatchPanel, { view });
+      await expand(user);
+      const title = errorCopy(appError('notLoggedIn'), { place: 'resolve' }).title;
+      expect(await screen.findByRole('alert')).toHaveTextContent(title);
+      expect(announcer.say).toHaveBeenCalledWith(title);
+      await waitFor(() => expect(document.activeElement).toBe(toggle().closest('summary')));
+    });
+
+    it('mid-play error announces without moving focus', async () => {
+      const user = userEvent.setup();
+      render(WatchPanel, { view });
+      const field = externalField();
+      await expand(user);
+      await waitFor(() => expect(videoEl()).not.toBeNull());
+      await waitFor(() => expect(play).toHaveBeenCalledTimes(1));
+      field.focus();
+      await fireEvent.error(videoEl()!);
+      expect(await screen.findByRole('alert')).toBeInTheDocument();
+      expect(announcer.say).toHaveBeenCalledTimes(1);
+      expect(field).toHaveFocus();
+    });
+
+    it('rewind (markable) card also starts idle without editor', async () => {
+      const user = userEvent.setup();
+      render(WatchPanel, { view, markable: true });
+      await expandOnly(user);
+      expect(startBtn()).toBeInTheDocument();
+      expect(screen.queryByRole('group', { name: /구간 고르기/ })).toBeNull();
+      expect(api.watchOpen).not.toHaveBeenCalled();
+    });
   });
 
   describe('HLS(hls.js light)', () => {
@@ -561,7 +751,7 @@ describe('WatchPanel', () => {
       await loaded(5);
       expect(markStart()).toBeEnabled();
       await user.click(toggle());
-      await user.click(toggle());
+      await expand(user);
       await waitFor(() => expect(hlsMock.instances).toHaveLength(2));
       expect(markStart()).toBeDisabled();
     });
@@ -923,7 +1113,7 @@ describe('구간 편집(PVU-3)', () => {
       const m = await ready();
       await user.click(playBtn()!);
       await user.click(toggle());
-      await user.click(toggle());
+      await expand(user);
       await waitFor(() => expect(hlsMock.instances).toHaveLength(2));
       const m2 = await ready();
       m2.setTime(100);

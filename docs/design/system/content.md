@@ -463,6 +463,8 @@
 | `kind.live` | — | **생방송** | ADR-0025(D63) |
 | `card.live.body` | — | **지금 방송 중이에요. 받기를 누르면 녹화가 시작돼요. 방송이 끝나거나 녹화 마치기를 누를 때까지 받아요.** | ADR-0025. 카드 안 정보 안내 |
 | (신설) `watch.toggle` | — | `watch.toggle` **미리보기** | §5.1 기본형. 통짜 mp4·빠른 다시보기 카드의 메타 줄 아래 Disclosure inline(preview.md PV14, D64). 용어집 "미리보기" |
+| (신설, preview-ux2 PS-2) `watch.start.label` | — | `watch.start.label` **영상 보기** | 표지 자리 가운데 단추(아이콘 `play` + 글자). 누르면 미리보기 세션을 연다. 버튼 "동사 어간 + 기"(§5.1). "재생" 금지(PS16) |
+| (신설, PS-2) `watch.start.a11y` | — | `watch.start.a11y` **‘{title}’ 영상 보기** | [영상 보기]의 접근 이름. 보이는 글자를 포함한다(WCAG 2.5.3). DC12(‘{…}’로 시작), `watch.player.a11y`와 같은 꼴 |
 | (신설) `watch.error.body` | — | `watch.error.body` **미리보기를 열 수 없어요.** | 실패 Notice 본문 하나(원인은 가르지 않는다, preview.md Q2). 마침표(DC5). 게이트 거부는 `errors.*` 문구를 그대로 쓴다 |
 | (신설) `watch.openInChzzk.label` | — | `watch.openInChzzk.label` **치지직에서 보기** | 실패 Notice의 둘째 단추. 앱이 content에서 정식 주소를 만들어 연다(웹뷰 문자열을 쓰지 않는다). 첫째는 기존 `action.retry` |
 | (신설) `watch.player.a11y` | — | `watch.player.a11y` **‘{title}’ 미리보기** | `<video>` 접근 이름. `a11y.resolved`와 같은 ‘’ 인용 |

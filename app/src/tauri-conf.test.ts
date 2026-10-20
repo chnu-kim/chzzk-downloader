@@ -76,6 +76,8 @@ describe('tauri.conf.json 불변식', () => {
       'script-src': "'self'",
       'style-src': "'self'",
       'img-src': "'self' data:",
+      // 미리보기 <video>가 watch: 주소(Windows는 http://watch.localhost)를 읽는다(preview.md PV10)
+      'media-src': "'self' watch: http://watch.localhost",
       'connect-src': 'ipc: http://ipc.localhost',
       'object-src': "'none'",
       'base-uri': "'none'",

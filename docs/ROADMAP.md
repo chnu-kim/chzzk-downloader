@@ -4,6 +4,8 @@
 
 ## 현재 위치
 
+- **PVU-6 리뷰 반영(2026-10-21)**: ADR 요약의 장 수를 열여덟로, §16.4 번들 증가가 PVU-3 시점 값임을 명시했다.
+- **미리보기 구간 편집 UX PVU-6 문서 마감(2026-10-21, 브랜치 `feat/preview-ux-range-docs`, 명세 `docs/design/features/preview-ux.md` §11.2 PVU-6·§16, 구현 중 변경 번호 없음(app.md 115~119 사용), `chore`)**: D65·ADR-0028 `채택(잠정)` 유지, 디자인 README 열린 항목 16(M-PVU), 명세 §16 구현 결과, `features/README.md`·`plan.md` 트랙. 남은 것: 사용자 실측 M-PVU-1~7, 머지 뒤 `tests.vitest`·`tests.playwright` 기준 올리기·갤러리 기준선 받기.
 - **PVU-5 리뷰 반영(2026-10-20)**: [끝 시각 1초 미루기]로 끝 칸이 빈칸(끝까지)이 되어도 영상이 맨 끝(floor(길이))으로 따라가게 고쳤다. 끝 칸 blur 탐색·메타데이터 전 blur 시험을 더했다(`receive.test.ts` +3, 변형 3곳 확인).
 - **미리보기 구간 편집 PVU-5 양방향·미세 조정·길이(2026-10-20, 브랜치 `feat/preview-ux-range-nudge`, 명세 `docs/design/features/preview-ux.md` §5.5·§11.2 PVU-5, app.md 119, `feat`)**: 구간 칸을 고치고 빠져나가면 영상이 그 시각으로 가고(바뀐 값·막대/손잡이로 가는 blur는 제외), 각 칸에 [1초 당기기]·[1초 미루기](칸+단추 한 묶음)와 구간 길이·예상 크기 줄을 더했다. copy deck·용어집 갱신, `receive.test.ts` 18개(변형 5곳 확인)·`watch.spec.ts` 1개. 다음은 PVU-6(문서 마감).
 - **미리보기 구간 편집 PVU-4 키보드(2026-10-20, 브랜치 `feat/preview-ux-range-keys`, 명세 `docs/design/features/preview-ux.md` §5.4·§11.2 PVU-4, app.md 118, `feat`)**: 편집 영역 키(I/O 찍기·Space 영상 보기 토글·←/→ 5초·손잡이 키와 겹치지 않게 defaultPrevented 존중·받는 중 규칙·IME), 찍기 단추 `aria-keyshortcuts`, `GlobalShortcuts` Esc를 `[data-local-keys]`로 넓힘, `editable()`을 `ui/focus.ts`로 이동, patterns §8. 영상 위 I/O 버블 여부는 M-PVU-7 실기. 리뷰 반영: patterns.md의 "재생기" 낱말 제거, 구간 칸 Esc 시험(receive.test.ts 5c) 추가.
@@ -362,6 +364,7 @@
 
 - [x] 설계·결정 문서를 저장소로 옮김(`docs/design/features/`, 이 PR, 문서만)
 - [ ] (추가) 받기 전 미리보기(`docs/design/features/preview.md`): PV-1~PV-8 구현·문서 마감 완료(core.md 86·87, app.md 108~114, D64·ADR-0027). M-PV-5 통과(2026-10-20, 사용자: hls.js 경로에서 찍은 구간으로 가장 높은 화질을 받아 시작·중간·끝이 찍은 장면과 맞음). 남은 것: 사용자 실측 M-PV-1~4·6·7·머지 뒤 `tests.playwright` 기준 올리기·기준선 받기
+- [ ] (추가) 미리보기 구간 편집 UX(`docs/design/features/preview-ux.md`): PVU-1~PVU-6 구현·문서 마감 완료(app.md 115~119, D65·ADR-0028 잠정). 남은 것: 사용자 실측 M-PVU-1~7·머지 뒤 ratchet 올리기·기준선 받기
 - [ ] ⑤ 생방송 사후 점검 fix: F1 멈춤 계약(`live.rs:360`·다음 playlist 읽기·첫 resolve) · F2 녹화 `.part` 보호(삭제 진입점 소유권 검사·계약 구분·자동 재개 조건) · F3 끝난 이유 표시(`feat`) (구현·리뷰 반영 완료, PR 대기) · F4 EFBIG·223 매핑과 defrag 실패 계약 · F5 누출 테스트·LL 태그 경고 · F6 문서. F2가 ②-1보다 먼저
 - [ ] ⑤-F3 후속(범위 밖, 명세 R14·§5.5): 낭독(`a11y.jobStatus`)에 `restarted`일 때만 끝난 이유(`job.live.end.restarted.body`)를 잇기 · 갤러리 작업 목록에 생방송 행(녹화 중·완료+restarted)을 더하고 Linux CI에서 기준선 받기 · 가짜 백엔드 `pause_job`이 생방송을 셸처럼 완료(`liveEnd` stopped)로 흉내 내게 맞추기
 - [ ] ⑤ 실측 M-⑤-A~D(F3 뒤가 좋다): A 이어짐(독립 비교)·B 없음(2026-10-19, 위 "현재 위치"). 남은 것: 실방송에서 엔진 403 재조회를 타는 긴 녹화(서명 만료보다 길게), 구멍이 생기면 C, D(4 GiB)

@@ -150,3 +150,49 @@ test('빠른 다시보기 카드를 펼쳤다 접으면 세션을 닫는다', as
   await expect(card.locator('video')).toBeHidden();
   await expect.poll(() => app.args('watch_close')).toEqual([{ id: 'a'.repeat(32) }]);
 });
+
+/** 메타데이터가 읽혔고 재생 위치가 `time`초인 것처럼 만든다(chromium은 존재하지 않는 주소를 재생하지 못한다) */
+async function loadedAt(card: Locator, time: number) {
+  await card.locator('video').evaluate((v: HTMLVideoElement, tm: number) => {
+    Object.defineProperty(v, 'currentTime', { value: tm, configurable: true, writable: true });
+    v.dispatchEvent(new Event('loadedmetadata'));
+  }, time);
+}
+
+test('빠른 다시보기에서 찍은 시각이 구간 칸을 채우고 받기 요청의 range가 된다', async ({ app }) => {
+  holdPlaylist(app.page);
+  const REWIND = resolved();
+  const card = await openCard(app, REWIND, { watchSrc: HLS_SRC });
+  await toggle(card).click();
+  await expect(card.locator('video')).toBeVisible();
+  const markStart = card.getByRole('button', { name: t('watch.mark.start') });
+  const markEnd = card.getByRole('button', { name: t('watch.mark.end') });
+  // 메타데이터가 읽히기 전에는 비활성이다
+  await expect(markStart).toBeDisabled();
+  await app.axe('찍기 버튼 비활성(빠른 다시보기)');
+
+  await loadedAt(card, 600.7);
+  await expect(markStart).toBeEnabled();
+  await markStart.click();
+  await loadedAt(card, 1200.1);
+  await markEnd.click();
+  await expect(card.getByLabel(t('range.start'))).toHaveValue('0:10:00');
+  await expect(card.getByLabel(t('range.end'))).toHaveValue('0:20:00');
+  await app.axe('찍은 구간(빠른 다시보기)');
+
+  await expect(card.getByRole('button', { name: t('card.download') })).not.toHaveAttribute('aria-disabled', 'true');
+  await card.getByRole('button', { name: t('card.download') }).click();
+  await expect.poll(async () => (await app.args('enqueue')).length).toBe(1);
+  const [{ req }] = (await app.args('enqueue')) as Array<{ req: { range?: unknown } }>;
+  expect(req.range).toEqual({ startMs: 600000, endMs: 1200000 });
+});
+
+test('일반 VOD 카드에는 찍기 버튼이 없다', async ({ app }) => {
+  await canPlay(app.page, 'maybe');
+  await swallowMediaErrors(app.page);
+  const card = await openCard(app, VOD, { watchSrc: DUMMY_SRC });
+  await toggle(card).click();
+  await expect(card.locator('video')).toBeVisible();
+  await expect(card.getByRole('button', { name: t('watch.mark.start') })).toHaveCount(0);
+  await expect(card.getByRole('button', { name: t('watch.mark.end') })).toHaveCount(0);
+});

@@ -618,10 +618,15 @@ Worker: 없다(폼 라벨은 위, `web.md` §7.1).
 **해부**: 영상 카드(`ResolveCard`)의 메타 줄과 화질 사이에 놓는 받기 전 미리보기 줄(`receive/WatchPanel.svelte`, 기능 컴포넌트라 `ui/` 갤러리 매트릭스 대상이 아니다. 화면 몫 갤러리 장면 '카드 미리보기 펼침'·'카드 미리보기 실패'가 본다). `Disclosure variant="inline"` 하나(제목 `watch.toggle`, 기본 접힘, 카드마다 새로 시작)와 안쪽 상태 넷: `closed`(아무것도 없음) · `opening`(자리 표시 상자) · `ready`(`<video>`) · `failed`(inline Notice 하나). 펼칠 때 `watch_open`을 부르고, 접거나 카드가 사라지면 `watch_close`를 부른다.
 
 ```ts
-type WatchPanelProps = { view: ResolvedDto };
+type WatchPanelProps = {
+  view: ResolvedDto;
+  markable?: boolean; // 빠른 다시보기 카드: hls.js 경로에서 찍기 단추
+  disabled?: boolean; // 카드 busy
+  onmark?: (field: 'start' | 'end', secs: number) => void;
+};
 ```
 
-**규칙**: ① 자동재생 없음, `preload="metadata"`, 네이티브 `controls`·`playsinline`. 키 입력은 `<video>` 기본 동작에 맡기고 `GlobalShortcuts`의 Esc는 대상이 미디어 요소면 건너뛴다(카드를 닫지 않는다). ② 접근 이름은 `watch.player.a11y`(`‘{title}’ 미리보기`). ③ 줄은 `ownership`이 `notOwn`·`unknown`이 아니고 `playbackKind`가 통짜 mp4(`progressive`)이거나 빠른 다시보기(`liveRewindHls`, PV-6부터)인 카드에만 그린다(Disclosure에 비활성 상태가 없어 막힌 카드에는 줄 자체를 두지 않는다). 생방송은 늘 없다. 빠른 다시보기(HLS)는 hls.js light를 동적으로 불러 붙이고(워커 없음), 못 쓰면 네이티브 m3u8, 그것도 없으면 같은 실패로 간다. hls.js 오류는 `fatal`만 보고 오류 객체의 주소 필드는 쓰지 않는다. ④ 실패는 한 문구 `watch.error.body` + [다시 시도](`action.retry`) + [치지직에서 보기](`watch.openInChzzk.label`, 앱이 정식 주소를 만들어 연다). 게이트 거부(`notLoggedIn`·`notOwnContent`·`ownershipUnknown`)는 받기와 같은 오류 문구(`errorCopy`)를 쓰고 단추는 없다. 웹뷰가 mp4를 읽지 못하면(`canPlayType` 빈 문자열) `src`를 달지 않고 같은 실패로 간다. ⑤ 서명 주소·토큰은 화면에 오지 않는다: `src`는 Rust가 만든 `watch:` 주소뿐이다.
+**규칙**: ① 자동재생 없음, `preload="metadata"`, 네이티브 `controls`·`playsinline`. 키 입력은 `<video>` 기본 동작에 맡기고 `GlobalShortcuts`의 Esc는 대상이 미디어 요소면 건너뛴다(카드를 닫지 않는다). ② 접근 이름은 `watch.player.a11y`(`‘{title}’ 미리보기`). ③ 줄은 `ownership`이 `notOwn`·`unknown`이 아니고 `playbackKind`가 통짜 mp4(`progressive`)이거나 빠른 다시보기(`liveRewindHls`, PV-6부터)인 카드에만 그린다(Disclosure에 비활성 상태가 없어 막힌 카드에는 줄 자체를 두지 않는다). 생방송은 늘 없다. 빠른 다시보기(HLS)는 hls.js light를 동적으로 불러 붙이고(워커 없음), 못 쓰면 네이티브 m3u8, 그것도 없으면 같은 실패로 간다. hls.js 오류는 `fatal`만 보고 오류 객체의 주소 필드는 쓰지 않는다. ④ 실패는 한 문구 `watch.error.body` + [다시 시도](`action.retry`) + [치지직에서 보기](`watch.openInChzzk.label`, 앱이 정식 주소를 만들어 연다). 게이트 거부(`notLoggedIn`·`notOwnContent`·`ownershipUnknown`)는 받기와 같은 오류 문구(`errorCopy`)를 쓰고 단추는 없다. 웹뷰가 mp4를 읽지 못하면(`canPlayType` 빈 문자열) `src`를 달지 않고 같은 실패로 간다. ⑤ 서명 주소·토큰은 화면에 오지 않는다: `src`는 Rust가 만든 `watch:` 주소뿐이다. ⑥ **구간 찍기(PV17)**: 빠른 다시보기 카드(`markable`)이고 hls.js로 붙었을 때만 재생기 아래에 [시작 찍기]·[끝 찍기](`Button size=sm`, 가로 한 줄, 위 간격 `--space-8`)를 둔다. 네이티브 m3u8 대체 경로·mp4에는 두지 않는다. `loadedmetadata` 전과 카드 `busy` 중에는 비활성이다. 누르면 `floor(currentTime)`을 카드로 보내 구간 줄을 펼치고 칸을 채운다(새 DTO 없음). 접힌 카드의 높이는 바뀌지 않는다.
 
 **치수**: 줄은 Disclosure inline 24, 카드 메타 줄 아래 `--space-12`. 화면은 카드 열 폭에 `aspect-ratio: 16 / 9`, 최대 높이 `--watch-max-h` [잠정, D64], 모서리 `--radius-control`, 바탕 `--surface-2`(영상이 오기 전·가장자리). forced-colors: `1px solid CanvasText` 윤곽(§3 표). 움직임: 전환 없음.
 

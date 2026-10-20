@@ -3,6 +3,8 @@
   // 펼칠 때 `watch_open`을 부르고(자동재생 없음, preload=metadata, 네이티브 controls), 접거나 카드가 사라지면 `watch_close`를 부른다.
   // `src`는 Rust가 만든 `watch:` 주소뿐이고 서명 주소·토큰은 프런트에 오지 않는다. 상태는 closed·opening·ready·failed 넷.
   // 빠른 다시보기(HLS)는 hls.js light를 동적으로 불러(PV9) MSE로 붙인다. 못 쓰면 네이티브 m3u8, 그것도 없으면 실패(PV16).
+  // 구간 찍기(PV17): `markable`(빠른 다시보기 카드)이고 hls.js로 붙었을 때만 재생기 아래 [시작 찍기]·[끝 찍기]를 보인다.
+  // 네이티브 m3u8 대체 경로는 시간축이 다를 수 있어 그리지 않는다. 누른 순간의 floor(currentTime)초를 `onmark`로 넘길 뿐이다.
   import { onDestroy, tick } from 'svelte';
   import type Hls from 'hls.js/light';
   import * as api from '../../api';
@@ -15,9 +17,15 @@
 
   interface Props {
     view: ResolvedDto;
+    /** 빠른 다시보기 카드: hls.js 경로에서 찍기 버튼을 보인다 */
+    markable?: boolean;
+    /** 카드가 받기 요청 중이면 찍기를 막는다 */
+    disabled?: boolean;
+    /** 찍은 시각(초, 내림)을 카드의 구간 칸으로 보낸다 */
+    onmark?: (field: 'start' | 'end', secs: number) => void;
   }
 
-  let { view }: Props = $props();
+  let { view, markable = false, disabled = false, onmark }: Props = $props();
 
   type Phase = 'closed' | 'opening' | 'ready' | 'failed';
   /** 받기와 같은 문구로 알리는 게이트 거부(그 밖의 실패는 한 문구, preview.md Q2) */
@@ -35,6 +43,10 @@
   /** hls.js가 붙은 video(HLS 종류만). 접거나 실패하면 destroy하고 비운다 */
   let hls: Hls | null = null;
   let videoEl: HTMLVideoElement | null = $state(null);
+  /** hls.js로 붙었는가(찍기 버튼의 조건). 접거나 실패하면 내린다 */
+  let usingHls = $state(false);
+  /** video의 메타데이터를 읽었는가(그 전의 currentTime은 믿지 않는다) */
+  let metaReady = $state(false);
 
   const gateCopy = $derived(gateError ? errorCopy(gateError, { place: 'resolve' }) : null);
 
@@ -52,6 +64,8 @@
     // 재생기를 먼저 떼야 세션을 닫은 뒤 세그먼트를 더 요청하지 않는다
     hls?.destroy();
     hls = null;
+    usingHls = false;
+    metaReady = false;
     const id = sessionId;
     sessionId = null;
     if (id) void api.watchClose(id).catch(() => {});
@@ -62,6 +76,7 @@
     closeSession();
     gateError = null;
     src = '';
+    metaReady = false;
     phase = 'opening';
     try {
       const dto = await api.watchOpen(view.url, view.content);
@@ -124,6 +139,7 @@
     // 워커 없음(CSP worker-src를 더하지 않는다), 저지연 끔, 자격 증명 없음(PV9)
     const player = new Ctor({ enableWorker: false, lowLatencyMode: false });
     hls = player;
+    usingHls = true;
     // 오류는 fatal만 본다: 오류 객체의 url 필드에는 전체 세션 ID가 든 주소가 있어 화면·로그·IPC 어디에도 쓰지 않는다
     player.on(Ctor.Events.ERROR, (_event, data) => {
       if (data.fatal) onvideoerror();
@@ -152,6 +168,11 @@
     phase = 'failed';
   }
 
+  function mark(field: 'start' | 'end') {
+    if (!videoEl || !metaReady) return;
+    onmark?.(field, Math.floor(videoEl.currentTime));
+  }
+
   function openInChzzk() {
     void api.openContentPage(view.content).catch(() => {});
   }
@@ -177,7 +198,14 @@
         src={src || undefined}
         aria-label={t('watch.player.a11y', { title: view.meta.title })}
         onerror={onvideoerror}
+        onloadedmetadata={() => (metaReady = true)}
       ></video>
+      {#if markable && usingHls}
+        <div class="marks">
+          <Button size="sm" disabled={disabled || !metaReady} onclick={() => mark('start')}>{t('watch.mark.start')}</Button>
+          <Button size="sm" disabled={disabled || !metaReady} onclick={() => mark('end')}>{t('watch.mark.end')}</Button>
+        </div>
+      {/if}
     {:else if phase === 'failed'}
       {#if gateCopy}
         <Notice variant="inline" tone="danger" title={gateCopy.title}>
@@ -214,6 +242,11 @@
   }
   .player {
     object-fit: contain;
+  }
+  .marks {
+    display: flex;
+    gap: var(--space-8);
+    margin-top: var(--space-8);
   }
   .line {
     margin: 0;

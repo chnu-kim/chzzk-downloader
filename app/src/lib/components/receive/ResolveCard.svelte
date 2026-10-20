@@ -157,6 +157,13 @@
   const watchable = $derived(
     (view.playbackKind === 'progressive' || view.playbackKind === 'liveRewindHls') && view.ownership !== 'notOwn' && view.ownership !== 'unknown',
   );
+  /** 찍기는 손으로 칠 때와 같다: 구간 줄을 펼치고 칸만 채운다(앞 [받기]의 rangeErr는 건드리지 않는다) */
+  function markRange(field: 'start' | 'end', secs: number) {
+    rangeOpen = true;
+    if (field === 'start') rangeStart = formatClock(secs);
+    else rangeEnd = formatClock(secs);
+  }
+
   /** 소유권으로 막힌 카드: 생방송 안내("받기를 누르면 녹화가 시작돼요")가 막힘 안내와 반대 말을 하지 않게 그리지 않는다 */
   const ownershipBlocked = $derived(view.ownership === 'notOwn' || view.ownership === 'unknown');
 
@@ -306,7 +313,12 @@
   </p>
 
   {#if watchable}
-    <WatchPanel {view} />
+    <WatchPanel
+      {view}
+      markable={tone === 'rewind'}
+      disabled={busy}
+      onmark={markRange}
+    />
   {/if}
 
   <div class="fields">

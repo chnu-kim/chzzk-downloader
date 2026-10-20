@@ -895,10 +895,10 @@ describe('구간 편집(PVU-3)', () => {
     expect(playBtn()).toBeDisabled();
   });
 
-  it('mp4 경로·네이티브 m3u8에서는 막대·칸만 쓰고 조작 줄·재생 위치·영상 탐색이 없다(PS12)', async () => {
+  it('mp4 경로에서는 막대·칸만 쓰고 조작 줄·재생 위치·영상 탐색이 없다(PS12)', async () => {
     const user = userEvent.setup();
     const onfields = vi.fn();
-    render(WatchPanel, { view, markable: true, fields: CLOSED, len: LEN, initialEnd: '0:10:00', onfields } as never);
+    render(WatchPanel, { view, markable: true, fields: { open: true, start: '', end: '' }, len: LEN, initialEnd: '', onfields } as never);
     await expand(user);
     await waitFor(() => expect(videoEl()).not.toBeNull());
     const m = mockVideo();
@@ -907,8 +907,32 @@ describe('구간 편집(PVU-3)', () => {
     expect(playBtn()).toBeNull();
     expect(screen.queryByRole('button', { name: t('watch.mark.start') })).toBeNull();
     expect(document.querySelector('.position')).toBeNull();
-    await fireEvent.keyDown(slider(t('range.start')), { key: 'ArrowRight' });
-    expect(onfields).toHaveBeenLastCalledWith({ open: true, start: '0:00:01', end: '0:10:00' }, 'handle');
+    await fireEvent.keyDown(slider(t('range.end')), { key: 'ArrowLeft' });
+    expect(onfields).toHaveBeenLastCalledWith({ open: true, start: '', end: '0:09:59' }, 'handle');
+    expect(m.writes).toEqual([]);
+  });
+
+  it('네이티브 m3u8 경로(hls.js 없음)에서도 막대·칸만 쓰고 조작 줄·영상 탐색이 없다(PS12)', async () => {
+    hlsMock.FakeHls.supported = false;
+    vi.spyOn(HTMLMediaElement.prototype, 'canPlayType').mockImplementation((type) =>
+      type === 'application/vnd.apple.mpegurl' ? 'maybe' : '',
+    );
+    vi.mocked(api.watchOpen).mockResolvedValue(hlsOpened());
+    const user = userEvent.setup();
+    const onfields = vi.fn();
+    render(WatchPanel, { view, markable: true, fields: { open: true, start: '', end: '' }, len: LEN, initialEnd: '', onfields } as never);
+    await expand(user);
+    await waitFor(() => expect(videoEl()).not.toBeNull());
+    expect(videoEl()!.getAttribute('src')).toBe(HLS_SRC);
+    expect(hlsMock.instances).toHaveLength(0);
+    const m = mockVideo();
+    await fireEvent(m.v, new Event('loadedmetadata'));
+    expect(sliders()).toHaveLength(2);
+    expect(playBtn()).toBeNull();
+    expect(screen.queryByRole('button', { name: t('watch.mark.start') })).toBeNull();
+    expect(document.querySelector('.position')).toBeNull();
+    await fireEvent.keyDown(slider(t('range.end')), { key: 'ArrowLeft' });
+    expect(onfields).toHaveBeenLastCalledWith({ open: true, start: '', end: '0:09:59' }, 'handle');
     expect(m.writes).toEqual([]);
   });
 
@@ -979,14 +1003,16 @@ describe('구간 편집(PVU-3)', () => {
     it('재생 전에도 막대가 meta 길이로 있고 손잡이는 칸만 고친다(재생 위치·조작 줄·영상 없음)', async () => {
       ui.previewOpen = true;
       const onfields = vi.fn();
-      render(WatchPanel, { view, markable: true, fields: CLOSED, len: LEN, initialEnd: '0:10:00', onfields } as never);
+      // 실제 앱 경로: 기본 펼침 + 빈 칸(전체), 끝 칸의 초깃값도 빈칸이다
+      render(WatchPanel, { view, markable: true, fields: { open: true, start: '', end: '' }, len: LEN, initialEnd: '', onfields } as never);
       expect(sliders()).toHaveLength(2);
       expect(videoEl()).toBeNull();
       expect(document.querySelector('.position')).toBeNull();
       expect(playBtn()).toBeNull();
       expect(screen.getByRole('group', { name: t('watch.editor.a11y', { title: view.meta.title }) })).toHaveAttribute('data-local-keys');
       await fireEvent.keyDown(slider(t('range.end')), { key: 'ArrowLeft' });
-      expect(onfields).toHaveBeenLastCalledWith({ open: true, start: '0:00:00', end: '0:09:59' }, 'handle');
+      // 끝 손잡이만 옮긴다: 시작 칸은 빈칸('')으로 남는다
+      expect(onfields).toHaveBeenLastCalledWith({ open: true, start: '', end: '0:09:59' }, 'handle');
     });
 
     it('길이를 모르면 재생 전에는 막대도 편집 영역도 없다', () => {

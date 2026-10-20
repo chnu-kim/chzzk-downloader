@@ -1976,13 +1976,14 @@ describe('양방향·미세 조정·길이(ResolveCard + RangeField, preview-ux 
       );
     });
 
-    it('length line: 칸이 틀리면 전체 길이로 돌아간다', async () => {
+    it('length line: 칸이 틀리면(틀린 글자·순서 뒤집힘) 길이 줄이 없다', async () => {
       const user = await openRewindPlayer();
-      const q0 = resolved().qualities[0];
       await typeInto(user, endEl(), '1:00:0');
-      await waitFor(() =>
-        expect(lengthLine(t('range.wholeLengthSize.label', { length: '3:12:45', size: qualitySize(q0, 11565) as string }))).not.toBeNull(),
-      );
+      await waitFor(() => expect(screen.queryByText(/구간 길이|전체 길이|전체 구간/)).toBeNull());
+      await user.clear(endEl());
+      await typeInto(user, startEl(), '0:20:00');
+      await typeInto(user, endEl(), '0:10:00');
+      await waitFor(() => expect(screen.queryByText(/구간 길이|전체 길이|전체 구간/)).toBeNull());
     });
 
     it('length line: 크기를 모르는 화질이면 길이만', async () => {

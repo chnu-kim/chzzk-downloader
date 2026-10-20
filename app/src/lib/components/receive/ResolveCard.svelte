@@ -79,7 +79,7 @@
   }));
 
   // 구간(range.md §5, preview-ux2 PS9·PS10): 칸은 카드마다 빈칸으로 시작한다(다음 영상에서 실수로 구간을 받지 않게). 빈칸은 전체다.
-  // 섹션 열림(`ui.previewOpen`)은 기억하지만 칸 값은 기억하지 않는다. 접힌 칸을 처음 고칠 때 되돌려 넣는 값도 빈칸이다.
+  // 섹션 열림(`ui.previewOpen`)은 기억하지만 칸 값은 기억하지 않는다. 접힌 칸을 처음 고칠 때(rangeEdit.begin) 시작 칸은 0:00:00, 끝 칸은 이 빈칸으로 되돌려 넣는다.
   const initialEnd = '';
   let rangeStart = $state('');
   let rangeEnd = $state(initialEnd);
@@ -251,11 +251,13 @@
   }
 
   /**
-   * 길이 줄(PS10): 받을 구간이 전체이면 "전체 길이"(길이를 모르면 "전체 구간"), 구간이 읽히면 "구간 길이". 끝을 모르는 구간이면 줄이 없다.
+   * 길이 줄(PS10): 받을 구간이 전체이면 "전체 길이"(길이를 모르면 "전체 구간"), 구간이 읽히면 "구간 길이". 끝을 모르는 구간이거나 칸이 틀렸으면 줄이 없다.
    * 고른 화질의 예상 크기가 있으면 곁들인다
    */
   const lengthText = $derived.by(() => {
     if (tone !== 'rewind') return null;
+    // 칸이 틀렸으면 줄을 숨긴다: 오류 칸에 "전체 길이"를 말하면 받는 범위를 잘못 알린다(content.md 정의)
+    if (rangeError(rangeInput, view.meta.durationSecs) != null) return null;
     const secs = rangeSecs(range, view.meta.durationSecs);
     if (range == null && !(secs != null && secs > 0)) return t('range.whole.label');
     if (secs == null || !(secs > 0)) return null;

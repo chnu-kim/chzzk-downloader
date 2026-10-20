@@ -130,17 +130,10 @@ const settleWatchTop = async (page: Page, env: Env) => {
 };
 
 // 구간 칸을 채운 장면(기본 펼침, preview-ux2): 칸을 채우며 생긴 포커스 스크롤로 카드 머리가 입력줄 밑에 반쯤 걸린다.
-// 작은 창은 시작 칸을 sticky 입력줄과 바닥 줄 사이 한가운데에 두고(막대와 표지 자리는 입력줄 밑으로 숨는다), 그 밖은 카드를 입력줄 바로 아래에 둔다
+// 작은 창은 settleWatchTop 선례처럼 섹션 머리를 입력줄 바로 아래에 둬서 막대가 입력줄 밑으로 숨지 않고 보이게 잰다. 그 밖은 카드를 입력줄 바로 아래에 둔다
 const settleFields = async (page: Page, env: Env) => {
-  if (env.vp.height < 600) {
-    await page.getByRole('textbox', { name: t('range.start') }).evaluate((el) => el.scrollIntoView({ block: 'center' }));
-    // 막대 전체가 입력줄(높이 36 안쪽)에 가려지게 막대 윗변을 입력줄 안쪽에 맞춘다: 반쯤 걸치면 axe가 가림(대상 크기)으로 본다
-    await page.evaluate(() => {
-      const main = document.querySelector<HTMLElement>('.main');
-      const track = document.querySelector('.track');
-      if (main && track) main.scrollTop += track.getBoundingClientRect().top - 48;
-    });
-  } else await page.locator('.video-card').evaluate((el) => el.scrollIntoView({ block: 'start' }));
+  if (env.vp.height < 600) await page.locator('.watch summary').evaluate((el) => el.scrollIntoView({ block: 'start' }));
+  else await page.locator('.video-card').evaluate((el) => el.scrollIntoView({ block: 'start' }));
 };
 
 export const SCREENS: Screen[] = [

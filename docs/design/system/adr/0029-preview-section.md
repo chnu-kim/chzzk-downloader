@@ -41,6 +41,7 @@ ADR-0027은 미리보기를 카드 안 접힌 줄로 두고 펼칠 때 `watch_op
 ## 결과
 
 - 바뀌는 문서: README D66·ADR 목록(D64 행 끝에 "→ D66"), components.md §2.29, content.md §15 두 행(`watch.start.label`·`watch.start.a11y`), ADR-0027 상태 `폐기(→ 0029)`, `scripts/design/spec-check.mjs` D 번호 상한 66. 한 섹션·기본 펼침의 문서(components §2.29·§2.30, patterns §6.5·§8·§15, D65 한 문장, content.md §15 새 행)는 PS-3이 썼다.
+- 알려진 한계: 기본 펼침으로 구간 막대가 첫 화면에 늘 노출돼, 두 손잡이가 24px 안에 붙은 장면의 `target-size` 한계(preview-ux.md:636)도 함께 노출이 늘었다. 갤러리는 손잡이를 띄운 값으로 잰다.
 - 코드: `WatchPanel.svelte`(단계 `idle`, 표지 자리, 포커스·`play()` 시도), copy deck `watch.start.*`. command·DTO는 바뀌지 않는다.
 - 카드 높이: 기본 펼침으로 카드가 길어진다(일반 VOD·클립 약 910, 빠른 다시보기 약 1000, patterns §15). [받기]는 sticky 바닥 줄이라 늘 보이고, 갤러리 기준선이 다수 바뀐다(Linux CI 몫). PS-2는 기본 접힘이라 새 장면 `card-watch-idle`과 [영상 보기] 클릭만 더했고, PS-3은 새 장면 `card-rewind-default`·`card-section-collapsed`를 더했다.
 - gate: `frontend`, `e2e-web`, `design-copy`, `design-lint`, `scripts-test`(`spec-check.test.mjs`·`adr.test.mjs`), `design-shots`(관찰).

@@ -97,6 +97,7 @@ describe('fractionOf · secsAt', () => {
     [9999, 600, 1],
     [5, 0, 0],
     [5, Number.NaN, 0],
+    [Number.NaN, 600, 0],
   ] as [number, number, number][])('fractionOf(%s, %s) = %s', (s, len, want) => {
     expect(fractionOf(s, len)).toBe(want);
   });
@@ -310,6 +311,11 @@ describe('nudge', () => {
 
   it('다른 칸을 못 읽어도 이 칸은 [0, 길이]로 고친다', () => {
     expect(nudge(open('0:01:00', 'abc'), 'start', 1, META, INIT_END)).toEqual(open('0:01:01', 'abc'));
+  });
+
+  it('못 읽는 다른 칸은 selection처럼 본다 (시작 0, 끝 길이): moveHandle과 같은 경계', () => {
+    expect(nudge(open('0:09:59', 'abc'), 'start', 1, META, INIT_END)).toEqual(open('0:09:59', 'abc'));
+    expect(nudge(open('abc', '0:00:01'), 'end', -1, META, INIT_END)).toEqual(open('abc', '0:00:01'));
   });
 
   it('입력 칸을 바꾸지 않는다', () => {

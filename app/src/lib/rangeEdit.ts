@@ -155,15 +155,18 @@ export function nudge(f: Fields, h: Handle, delta: number, len: BarLength | null
   if (len != null && !(len.secs >= 2)) return null;
   const next = begin(f, initialEnd);
   const max = len == null ? Number.POSITIVE_INFINITY : top(len.secs);
-  const s = readSecs(next.start);
+  const sRaw = readSecs(next.start);
   // 빈 끝 칸은 "끝까지": 길이를 알면 그 값, 모르면 값이 없다(끝 칸은 고칠 수 없고 시작 상한은 없다)
   const blankEnd = next.end.trim() === '';
-  const e = blankEnd ? (len == null ? Number.POSITIVE_INFINITY : max) : readSecs(next.end);
-  const cur = h === 'start' ? s : e;
+  const eRaw = blankEnd ? (len == null ? Number.POSITIVE_INFINITY : max) : readSecs(next.end);
+  const cur = h === 'start' ? sRaw : eRaw;
   if (cur == null || !Number.isFinite(cur)) return null;
-  const sc = s == null ? null : Math.min(s, max);
-  const ec = e == null ? null : Math.min(e, max);
-  const band = sc != null && ec != null && sc < ec;
+  // 못 읽는 다른 칸은 selection과 같게 본다: 시작은 0, 끝은 길이(길이 모르면 ∞). 그래서 moveHandle과 경계가 같다
+  const s = sRaw ?? 0;
+  const e = eRaw ?? max;
+  const sc = Math.min(s, max);
+  const ec = Math.min(e, max);
+  const band = sc < ec;
   let lo = 0;
   let hi = max;
   if (band) {

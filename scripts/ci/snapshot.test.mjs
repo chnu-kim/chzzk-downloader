@@ -139,9 +139,27 @@ test('경로를 다른 실행이 쓰고 있으면 유일한 경로로 비켜서 
     const sha = g('rev-parse', 'HEAD~2'); // bad
     assert.equal(runHookGates(repo, { sha }, ['chk'], env(), { ...quiet, targetDir: join(d, 'tgt') }), 1);
     assert.notEqual(lastCwd(), fixedPath());
-    assert.equal(lastTarget(), '');
+    assert.equal(basename(lastTarget()), 'target'); // 공유 target(d/tgt)이 아니라 그 worktree 안
+    assert.notEqual(lastTarget(), join(d, 'tgt'));
     assert.equal(existsSync(lock), true, '남의 잠금은 건드리지 않는다');
     assert.equal(worktrees(), 1);
+  });
+});
+
+test('비켜 도는 worktree는 물려받은 CARGO_TARGET_DIR도 자기 안의 target으로 덮어쓴다', () => {
+  withStale((lock) => {
+    mkdirSync(lock);
+    writeFileSync(join(lock, 'pid'), String(process.pid)); // 살아 있는 소유자
+    const sha = g('rev-parse', 'HEAD~2'); // bad
+    const inherited = join(d, 'inherited-tgt');
+    const e = { ...env(), CARGO_TARGET_DIR: inherited };
+    assert.equal(runHookGates(repo, { sha }, ['chk'], e, { ...quiet, targetDir: join(d, 'tgt') }), 1);
+    const cwd = lastCwd();
+    assert.notEqual(cwd, fixedPath());
+    const t = lastTarget();
+    assert.notEqual(t, inherited);
+    assert.equal(basename(t), 'target');
+    assert.equal(basename(join(t, '..')), basename(cwd), '비켜 쓴 임시 worktree 안의 경로');
   });
 });
 

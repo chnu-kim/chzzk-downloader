@@ -116,13 +116,14 @@ export function withWorktree(root, sha, env, fn) {
  * dir의 진입점으로 gate들을 차례로 돌린다. 첫 0이 아닌 코드에서 멈춘다.
  * extraPath: 바깥 저장소의 install-tool 폴더(임시 worktree에는 없다). targetDir: cargo 빌드 캐시를 나눠 쓴다.
  */
-export function runGatesIn(dir, gates, env, { extraPath, targetDir, log = console.log } = {}) {
+export function runGatesIn(dir, gates, env, { extraPath, targetDir, forceTargetDir, log = console.log } = {}) {
   const e = cleanGitEnv(env);
   if (extraPath) {
     const key = Object.keys(e).find((k) => k.toUpperCase() === 'PATH') ?? 'PATH';
     e[key] = [e[key], extraPath].filter(Boolean).join(delimiter);
   }
-  if (targetDir && !e.CARGO_TARGET_DIR) e.CARGO_TARGET_DIR = targetDir;
+  if (forceTargetDir) e.CARGO_TARGET_DIR = forceTargetDir; // 비켜 도는 worktree: 물려받은 값도 덮어쓴다
+  else if (targetDir && !e.CARGO_TARGET_DIR) e.CARGO_TARGET_DIR = targetDir;
   for (const g of gates) {
     const r = spawnSync(process.execPath, [join(dir, 'scripts', 'ci', 'run.mjs'), g], { cwd: dir, env: e, stdio: 'inherit' });
     if (r.error) {
@@ -145,5 +146,5 @@ export function runHookGates(root, target, gates, env, opts = {}) {
   if (inPlace) return runGatesIn(root, gates, env, opts);
   const sha = target.index ? indexCommit(root, env) : target.sha;
   log(`${target.index ? '인덱스' : `커밋 ${sha.slice(0, 12)}`}가 작업 트리와 달라 임시 worktree에서 돌린다: ${gates.join(', ')}`);
-  return withWorktree(root, sha, env, (dir, shared) => runGatesIn(dir, gates, env, shared ? opts : { ...opts, targetDir: undefined }));
+  return withWorktree(root, sha, env, (dir, shared) => runGatesIn(dir, gates, env, shared ? opts : { ...opts, targetDir: undefined, forceTargetDir: join(dir, 'target') }));
 }

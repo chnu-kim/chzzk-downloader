@@ -254,6 +254,15 @@ Codex 2회차 N1~N9는 각 설계가 3차·4차 개정에서 처리했다(N1·N2
 | `feat/preview-ux-range-docs` | PVU-6 `chore:` 문서 마감(§16, `features/README.md`, 이 표, ROADMAP, 디자인 README 열린 항목 16) | PVU-5 | `scan`, `design-*`. `tests.vitest`·`tests.playwright` 기준은 CI 녹색 실행 뒤 사람이 올린다 |
 | ⏸ | 실측 M-PVU-1~7(`preview-ux.md` §13) | 사람(본인 빠른 다시보기, 3 OS) | 결과 범주만 ROADMAP |
 
+### 트랙 (추가) 미리보기·구간 섹션 개편(`preview-ux2.md` §11) — 구현 완료(2026-10-21), 실측 대기
+번호는 app.md 120~122, D66, ADR-0029를 썼다(이후 새 D는 D67, 새 ADR은 0030부터다). core.md는 바뀌지 않았다.
+
+| 브랜치 | PR | 의존 | 완료 조건 |
+|---|---|---|---|
+| `feat/preview-ux2-arrow-keys`~`-section` | PS-1 칸 ↑/↓ · PS-2 표지 자리·지연 세션 · PS-3 한 섹션·기본 펼침·빈칸 = 전체 | 직렬 stacked(PS-1은 master에서) | `frontend`·`design-*`·`e2e-web`·`scan` 녹색 |
+| `chore/preview-ux2-docs` | PS-4 `chore:` 문서 마감(§16, `features/README.md`, 이 표, ROADMAP) | PS-3 | `scan`, `scripts-test`, `design-copy`. `tests.vitest`·`tests.playwright` 기준은 CI 녹색 실행 뒤 사람이 올린다 |
+| ⏸ | 실측 M-PVU2-1~6(`preview-ux2.md` §13) | 사람(본인 빠른 다시보기, 3 OS) | 결과 범주만 ROADMAP |
+
 ## 5. 의존 그래프(N6: "기능 선행 조건"과 "둘 다 진행하면 머지 순서"를 가른다)
 
 ### A. 기능 선행 조건(이것이 없으면 그 PR을 **시작·머지할 수 없다**)

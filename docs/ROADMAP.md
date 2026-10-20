@@ -4,6 +4,7 @@
 
 ## 현재 위치
 
+- **미리보기·구간 개편 PS-4 문서 마감(2026-10-21, 브랜치 `chore/preview-ux2-docs`, 명세 `docs/design/features/preview-ux2.md` §11.2 PS-4·§16, 구현 중 변경 번호 없음(app.md 120~122 사용), `chore`)**: 명세 §16 구현 결과(PR·번호·명세와 달라진 점·남은 것), 디자인 README 열린 항목 17(M-PVU2), `features/README.md`·`plan.md` 트랙. PS-3 리뷰 반영(틀린 칸이면 길이 줄 숨김·갤러리 측정·시험 경로)은 PS-3 브랜치에 들어 있다. 남은 것: 사용자 실측 M-PVU2-1~6, 머지 뒤 `tests.vitest`·`tests.playwright`·`size.dist_gz` 기준 올리기·갤러리 기준선 받기, 후속(실제 표지 이미지 command, 재시작 뒤 열림 기억).
 - **미리보기·구간 개편 PS-3 한 섹션·기본 펼침·빈칸 = 전체(2026-10-21, 브랜치 `feat/preview-ux2-section`, 명세 `docs/design/features/preview-ux2.md` PS7~PS15·§11.2 PS-3, app.md 122, `feat`)**: 미리보기와 구간을 "미리보기·구간"(일반 VOD·클립은 "미리보기") 한 섹션으로 묶고 기본 펼침(`ui.previewOpen` 앱 메모리 기억)으로 바꿨다. 접히면 구간은 적용되지 않고(값은 남음), 칸이 비면 전체(안내 글자 "처음부터"·"끝까지", 빈 시작 = 0초, 길이 줄 "전체 길이"·"전체 구간")다. 막대는 재생 전에도 meta 길이로 그리고 hls.js 결합 뒤에야 조작 줄·재생 위치가 켜진다. `notOwn`·`unknown`·생방송에는 섹션이 없다. 가짜 백엔드·e2e·갤러리 장면·copy deck·디자인 시스템 문서를 함께 고쳤다(갤러리 기준선은 Linux CI 몫).
 - **미리보기·구간 개편 PS-2 표지 자리·지연 세션(2026-10-21, 브랜치 `feat/preview-ux2-lazy-session`, 명세 `docs/design/features/preview-ux2.md` PS5·PS6·PS16·PS17·§11.2 PS-2, app.md 121, `feat`)**: 미리보기 줄을 펴도 `watch_open`을 부르지 않고 표지 자리와 [영상 보기]만 보인다. 단추를 누르면 세션을 열고 `play()`를 한 번 시도하며 포커스는 비어 있을 때만 옮긴다. D66·ADR-0029(ADR-0027 `폐기(→ 0029)`)·`spec-check` 상한 66. 섹션은 아직 기본 접힘·두 줄(PS-3이 한 섹션·기본 펼침). 갤러리 기준선은 Linux CI 몫.
 - **미리보기·구간 개편 PS-1 구간 칸 ↑/↓(2026-10-21, 브랜치 `feat/preview-ux2-arrow-keys`, 명세 `docs/design/features/preview-ux2.md` PS1~PS4·§11.2 PS-1, app.md 120, `feat`)**: ±1초 단추 네 개와 문구 키 여섯·용어집 행을 없애고, 시작·끝 칸의 ↑/↓가 1초씩 바꾸며(`rangeEdit.nudge`) 영상이 따라간다(IME·수식 키는 처리 안 함, 길게 누르면 뗄 때·blur에서 한 번 탐색). 갤러리 기준선은 Linux CI 몫.
@@ -368,6 +369,7 @@
 - [x] 설계·결정 문서를 저장소로 옮김(`docs/design/features/`, 이 PR, 문서만)
 - [ ] (추가) 받기 전 미리보기(`docs/design/features/preview.md`): PV-1~PV-8 구현·문서 마감 완료(core.md 86·87, app.md 108~114, D64·ADR-0027). M-PV-5 통과(2026-10-20, 사용자: hls.js 경로에서 찍은 구간으로 가장 높은 화질을 받아 시작·중간·끝이 찍은 장면과 맞음). 남은 것: 사용자 실측 M-PV-1~4·6·7·머지 뒤 `tests.playwright` 기준 올리기·기준선 받기
 - [ ] (추가) 미리보기 구간 편집 UX(`docs/design/features/preview-ux.md`): PVU-1~PVU-6 구현·문서 마감 완료(app.md 115~119, D65·ADR-0028 잠정). 남은 것: 사용자 실측 M-PVU-1~7·머지 뒤 ratchet 올리기·기준선 받기
+- [ ] (추가) 미리보기·구간 섹션 개편(`docs/design/features/preview-ux2.md`): PS-1~PS-4 구현·문서 마감 완료(app.md 120~122, D66·ADR-0029 잠정). 남은 것: 사용자 실측 M-PVU2-1~6·머지 뒤 ratchet 올리기·기준선 받기·후속(실제 표지 이미지, 재시작 뒤 기억)
 - [ ] ⑤ 생방송 사후 점검 fix: F1 멈춤 계약(`live.rs:360`·다음 playlist 읽기·첫 resolve) · F2 녹화 `.part` 보호(삭제 진입점 소유권 검사·계약 구분·자동 재개 조건) · F3 끝난 이유 표시(`feat`) (구현·리뷰 반영 완료, PR 대기) · F4 EFBIG·223 매핑과 defrag 실패 계약 · F5 누출 테스트·LL 태그 경고 · F6 문서. F2가 ②-1보다 먼저
 - [ ] ⑤-F3 후속(범위 밖, 명세 R14·§5.5): 낭독(`a11y.jobStatus`)에 `restarted`일 때만 끝난 이유(`job.live.end.restarted.body`)를 잇기 · 갤러리 작업 목록에 생방송 행(녹화 중·완료+restarted)을 더하고 Linux CI에서 기준선 받기 · 가짜 백엔드 `pause_job`이 생방송을 셸처럼 완료(`liveEnd` stopped)로 흉내 내게 맞추기
 - [ ] ⑤ 실측 M-⑤-A~D(F3 뒤가 좋다): A 이어짐(독립 비교)·B 없음(2026-10-19, 위 "현재 위치"). 남은 것: 실방송에서 엔진 403 재조회를 타는 긴 녹화(서명 만료보다 길게), 구멍이 생기면 C, D(4 GiB)

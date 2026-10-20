@@ -16,6 +16,7 @@
 use std::fmt;
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
@@ -187,6 +188,9 @@ pub struct WatchService<B: Backend> {
     endpoints: Mutex<Endpoints>,
     /// 지금 열린 세션(최대 1개). 잠금은 `Arc`를 꺼내는 동안만 잡고 await 너머로 들고 가지 않는다
     current: Mutex<Option<Arc<Session>>>,
+    /// 로그아웃마다 올리는 무효화 세대. `current` 잠금 안에서만 바꾸고 읽는다.
+    /// 열기가 시작할 때 값을 읽어 두었다가 세션을 등록할 때 같은지 본다(열기 도중 로그아웃이면 등록하지 않는다, PV5)
+    signout_epoch: AtomicU64,
 }
 
 impl<B: Backend> fmt::Debug for WatchService<B> {
@@ -210,6 +214,7 @@ impl<B: Backend> WatchService<B> {
                 app_origin: "tauri://localhost".into(),
             }),
             current: Mutex::new(None),
+            signout_epoch: AtomicU64::new(0),
         }
     }
 
@@ -265,7 +270,9 @@ impl<B: Backend> WatchService<B> {
 
     /// 로그아웃(또는 로그인 상태가 풀림): 모두 버린다(PV5).
     pub fn on_signed_out(&self) {
-        *self.current.lock().unwrap_or_else(PoisonError::into_inner) = None;
+        let mut cur = self.current.lock().unwrap_or_else(PoisonError::into_inner);
+        self.signout_epoch.fetch_add(1, Ordering::SeqCst);
+        *cur = None;
     }
 
     /// `watch_open`. 게이트 → 재생 방식·화질 고르기 → total 탐색(1회) → 세션 교체.
@@ -279,6 +286,8 @@ impl<B: Backend> WatchService<B> {
         if matches!(content, ContentRef::Live { .. }) {
             return Err(AppError::invalid_input("생방송은 미리볼 수 없습니다"));
         }
+        // 이 세대 뒤에 로그아웃이 지나가면 세션을 등록하지 않는다(await 사이에 `on_signed_out`이 돌 수 있다)
+        let epoch = self.signout_epoch.load(Ordering::SeqCst);
         let client = (self.client)();
         self.gate
             .admit_checked(
@@ -357,8 +366,14 @@ impl<B: Backend> WatchService<B> {
             }),
             refresh: tokio::sync::Mutex::new(()),
         });
-        // 이전 세션은 이 교체로 버려진다(PV5)
-        *self.current.lock().unwrap_or_else(PoisonError::into_inner) = Some(session);
+        {
+            let mut cur = self.current.lock().unwrap_or_else(PoisonError::into_inner);
+            if self.signout_epoch.load(Ordering::SeqCst) != epoch {
+                return Err(AppError::not_logged_in());
+            }
+            // 이전 세션은 이 교체로 버려진다(PV5, 나중 열기가 이긴다)
+            *cur = Some(session);
+        }
         tracing::debug!(session = short(&id), quality = %quality_id, "미리보기 세션을 열었다");
         let entry = match kind {
             WatchKindDto::Mp4 => "v",
@@ -1004,6 +1019,59 @@ fn reply(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Debug는 서명 주소를 찍지 않는다(비밀값 규칙): mp4는 `redact_url`을 거치고 HLS는 조각 수·지문만 보인다.
+    #[test]
+    fn origin_and_state_debug_hide_signed_urls() {
+        let signed = Url::parse("https://media.example.invalid/a.mp4?hdnts=SIGNEDSECRET").unwrap();
+        let mp4 = Origin::Mp4 {
+            url: signed.clone(),
+            total: 100,
+        };
+        let hls = Origin::Hls(Arc::new(HlsOrigin {
+            init: signed.clone(),
+            segments: vec![signed.clone(), signed],
+            crc: 7,
+            playlist: String::new(),
+        }));
+        let mp4_text = format!("{mp4:?}");
+        assert!(
+            mp4_text.contains("Mp4") && mp4_text.contains("100"),
+            "{mp4_text}"
+        );
+        let hls_text = format!("{hls:?}");
+        assert!(
+            hls_text.contains("Hls")
+                && hls_text.contains("segments: 2")
+                && hls_text.contains("crc: 7"),
+            "{hls_text}"
+        );
+        let state = SourceState {
+            generation: 3,
+            origin: mp4,
+            refreshes: 2,
+            last_used: tokio::time::Instant::now(),
+        };
+        let state_text = format!("{state:?}");
+        assert!(
+            state_text.contains("generation: 3") && state_text.contains("refreshes: 2"),
+            "{state_text}"
+        );
+        for text in [mp4_text, hls_text, state_text] {
+            assert!(
+                !text.contains("SIGNEDSECRET") && !text.contains("hdnts"),
+                "{text}"
+            );
+        }
+    }
+
+    /// 응답을 만들 수 없는 헤더 값이 오면 빈 500으로 떨어진다(패닉 없이).
+    #[test]
+    fn reply_falls_back_to_500_on_bad_header() {
+        let r = reply(None, 200, &[("x-bad", "줄바꿈\n".into())], b"x".to_vec());
+        assert_eq!(r.status().as_u16(), 500);
+        assert!(r.body().is_empty());
+    }
 
     #[test]
     fn path_forms() {

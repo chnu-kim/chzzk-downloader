@@ -16,6 +16,8 @@ export const SNAP_SECS = 0.5;
 export const LINE_PX = 16;
 /** 눈금 사이 최소 px */
 export const TICK_MIN_PX = 80;
+/** 눈금 글자(`formatClock` 7자 12px 고정폭)가 차지하는 폭(px) [잠정]. 눈금 선 오른쪽에 붙으므로 이 폭이 트랙 안에 들어야 그린다 */
+export const TICK_LABEL_PX = 56;
 /** 키 `+`·`-` 배율 */
 export const KEY_ZOOM_FACTOR = 2;
 /** 영상 상자의 최소 높이(px) [잠정]. 토큰이 아니라 코드 상수다(토큰 어휘 밖의 레이아웃 계산값, range-editor.md §6.2) */
@@ -126,6 +128,11 @@ export function ticks(v: View, w: number): number[] {
   return out;
 }
 
+/** 눈금 중 글자가 트랙 오른쪽 밖으로 넘치지 않는 것만(작은 폭에서 몸통이 가로로 스크롤되지 않게) */
+export function visibleTicks(v: View, w: number): number[] {
+  return ticks(v, w).filter((s) => xOfSecs(s, w, v) + TICK_LABEL_PX <= w);
+}
+
 export interface WheelEventLike {
   deltaX: number;
   deltaY: number;
@@ -213,4 +220,31 @@ export function dragViewEdge(v: View, edge: 'start' | 'end', secs: number, L: nu
   }
   const span = Math.min(L - v.start, Math.max(lo, secs - v.start));
   return clampView({ start: v.start, span }, L, minSpan);
+}
+
+/**
+ * 길이가 바뀌었을 때 보이는 범위(§5.5·RE-4 시험 12): 없음 → 있음은 전체 보기, 있음 → 없음은 빈 보기,
+ * 확대 중이면 새 길이 안으로 자르고, 전체 보기면 새 전체 보기. 같은 길이는 그대로(같은 객체)
+ */
+export function retargetView(v: View, prevL: number | null, L: number | null, minSpan: number): View {
+  if (L == null || !validLength(L)) return fullView(0);
+  if (prevL == null || !validLength(prevL)) return fullView(L);
+  if (prevL === L) return v;
+  return zoomed(v, prevL) ? clampView(v, L, minSpan) : fullView(L);
+}
+
+export type ZoomKey = 'in' | 'out' | 'fit';
+
+/** 확대 키(`e.key`): `+`·`=` 확대, `-`·`_` 축소, `0` 전체 보기. 수식 키 판정은 호출부 몫 */
+export function zoomKey(key: string): ZoomKey | null {
+  if (key === '+' || key === '=') return 'in';
+  if (key === '-' || key === '_') return 'out';
+  if (key === '0') return 'fit';
+  return null;
+}
+
+/** 키 확대의 중심: 지금 위치선이 보이면 그 시각, 아니면 보이는 범위 가운데 */
+export function zoomAnchor(v: View, pos: number | null): number {
+  if (pos != null && Number.isFinite(pos) && pos >= v.start && pos <= v.start + v.span) return pos;
+  return v.start + v.span / 2;
 }

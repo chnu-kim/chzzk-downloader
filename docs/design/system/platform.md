@@ -555,6 +555,7 @@ OS별로 **달라지는 모든 것**은 이 표에 있다. 여기 없는 것은 
 | 설정·자격증명 폴더(정보 화면 표시) | `~/Library/Application Support/io.github.chnu-kim.chzzk-downloader` | `%APPDATA%\io.github.chnu-kim.chzzk-downloader` [잠정] | `~/.local/share/io.github.chnu-kim.chzzk-downloader` [잠정] | CLAUDE.md(macOS 실측), 그 외는 Tauri `PathResolver` 규칙(`G-INSTALL-R9`) | `rust`(경로 함수 골든 3 OS) |
 | 로그 폴더 | `~/Library/Logs/io.github.chnu-kim.chzzk-downloader` | `%LOCALAPPDATA%\…\logs` [잠정] | `~/.local/share/…/logs` [잠정] | app.md 구현 중 변경 10(macOS 실측) | `rust` |
 | `Mod` 키·표기, `{paste}` | ⌘, 기호 표기(`⌘V`) | Ctrl, `Ctrl+V` | Ctrl, `Ctrl+V` | §6 | `frontend` 골든 |
+| 타임라인 확대 수식 키 `{mod}`(구간 편집 화면 안내 줄, RE-4) | `⌘`(⌘+휠) | `Ctrl`(Ctrl+휠) | `Ctrl` | §20, range-editor.md §7.3 | `frontend` 골든(`platform.test.ts`) |
 | `{devtools}`(쿠키 안내) | `⌥⌘I` | `F12` | `F12` | `content.md` §15.1 `settings.cookie.howto.step2` | `frontend` 골든, `design-copy` DC9 |
 | 메뉴 막대 | 있음, Apple 한국어 용어(§7) | 없음 | 없음 | §7 | `tauri` |
 | 메뉴 용어 vs 본문 용어 | 메뉴만 "윈도우"·"오려두기" | — | — | §7.1 | `tauri`, `design-copy`(본문에 "윈도우" 금지) |

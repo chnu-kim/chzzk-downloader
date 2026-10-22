@@ -10,7 +10,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { oklchToSrgb, toHex } from './contrast.mjs';
+import { composite, oklchToSrgb, toHex } from './contrast.mjs';
 
 export const ROOT = join(fileURLToPath(import.meta.url), '..', '..', '..');
 export const HEADER = '/* 생성물. 원천 design/tokens/·design/ui.css, 생성기 scripts/design/tokens.mjs. 손으로 고치지 않는다 */';
@@ -253,11 +253,14 @@ export function loadModel(root) {
       if (!Array.isArray(row) || row.length !== 3 || typeof row[0] !== 'string' || typeof row[1] !== 'string') throw new Error(`${where}: [전경, 바탕, 최소] 모양이 아니다`);
       checkNum(row[2], `${where}[2]`);
       if (row[2] <= 0) throw new Error(`${where}: 최소 대비는 0보다 크다`);
-      for (const n of [row[0], row[1]]) {
+      // 바탕은 "바탕+덮개"로 알파 색 덮개를 바탕 위에 합성한 색을 쓸 수 있다(예: surface-pressed+range-dim)
+      const names = [row[0], ...row[1].split('+')];
+      if (names.length > 3) throw new Error(`${where}: 바탕 합성은 "바탕+덮개" 둘뿐이다`);
+      for (const n of names) {
         const t = byName.get(`--${n}`);
         if (!t || t.file !== 'sys' || t.type !== 'color') throw new Error(`${where}: sys 색 토큰 ${n}이 없다`);
       }
-      return { fg: `--${row[0]}`, bg: `--${row[1]}`, min: row[2] };
+      return { fg: `--${row[0]}`, bg: row[1].split('+').map((n) => `--${n}`).join('+'), min: row[2] };
     });
   }
 
@@ -316,6 +319,15 @@ function pickValue(t, theme, block) {
 
 // 별칭을 ref까지 따라가 그 테마의 색을 낸다
 export function resolveColor(model, name, theme, block) {
+  // "--바탕+--덮개": 알파 색 덮개를 바탕 위에 합성한 불투명 색(대비 쌍의 바탕 전용)
+  if (name.includes('+')) {
+    const parts = name.split('+');
+    if (parts.length !== 2) throw new Error(`${name}: 합성은 "바탕+덮개" 둘뿐이다`);
+    const base = resolveColor(model, parts[0], theme, block);
+    const over = resolveColor(model, parts[1], theme, block);
+    if (base.alpha < 1) throw new Error(`${parts[0]}: 합성 바탕이 알파 색이다`);
+    return { hex: over.alpha < 1 ? composite(over.hex, over.alpha, base.hex) : over.hex, alpha: 1, oklch: null };
+  }
   const t = model.byName.get(name);
   if (!t || t.type !== 'color') throw new Error(`${name}: 색 토큰이 아니다`);
   let raw = pickValue(t, theme, block);

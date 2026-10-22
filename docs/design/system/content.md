@@ -499,6 +499,13 @@
 | (신설, RE-3) `rangeEditor.timeline.title` | — | `rangeEditor.timeline.title` **타임라인** | 패널 제목·시간 영역 group 이름. 용어집 "타임라인" |
 | (신설, RE-3) `rangeEditor.uncoupled.body` | — | `rangeEditor.uncoupled.body` **이 영상은 타임라인과 칸으로만 구간을 고를 수 있어요.** | 네이티브 m3u8·mp4 대체 경로 안내(안내 줄 자리). W1: 화면의 이름은 "타임라인"이고 "막대"는 쓰지 않는다 |
 | (신설, RE-3) `rangeEditor.noLength.body` | — | `rangeEditor.noLength.body` **영상 길이를 몰라 타임라인을 그릴 수 없어요. 영상을 보면 타임라인이 나와요.** | meta 길이를 모르고 영상이 아직 붙기 전의 한 줄 |
+| (신설, RE-4) `rangeEditor.timeline.help` | — | `rangeEditor.timeline.help` **휠로 앞뒤로 움직이고 {mod}+휠로 확대해요.** | 타임라인 안내 줄 첫 문장. `{mod}`는 `shortcutText(os, 'zoomMod')`(macOS ⌘, 그 밖 Ctrl, DC9: 기호를 deck에 박지 않는다). 둘째 문장은 기존 `range.help`를 따로 붙인다(조각 결합이 아니라 두 문장) |
+| (신설, RE-4) `rangeEditor.timeline.keys` | — | `rangeEditor.timeline.keys` **{zoomIn}·{zoomOut} 키나 눈금 두 번 누르기로 확대·축소하고 {fit} 키로 전체를 봐요.** | 안내 줄 셋째 문장(확대 키를 찾을 길). 키 글자는 `platform.ts` `EDITOR_KEYS` 상수를 자리표시로 넣는다(DC9). 좁은 레이아웃에서도 숨기지 않는다 |
+| (신설, RE-4) `rangeEditor.track.video.label` / `rangeEditor.track.audio.label` | — | **영상** / **소리** | 타임라인 이름 칸(장식, `aria-hidden`) |
+| (신설, RE-4) `rangeEditor.fit.label` | — | `rangeEditor.fit.label` **전체 보기** | 확대했을 때만 있는 아이콘 단추의 이름. 툴팁은 `shortcut.hint.label`로 "전체 보기(0)" |
+| (신설, RE-4) `rangeEditor.viewport.label` / `rangeEditor.viewport.value.label` | — | **보이는 범위** / **{from}부터 {to}까지** | 범위 막대(`role="scrollbar"`)의 이름과 `aria-valuetext` |
+| (신설, RE-4) `rangeEditor.offscreen.label` | — | `rangeEditor.offscreen.label` **{time} · 보이는 범위 밖** | 화면 밖 손잡이의 `aria-valuetext`. `·` 결합은 deck 문자열 하나로(DS6) |
+| (신설, RE-4) `shortcut.hint.label` | — | `shortcut.hint.label` **{label}({key})** | 단축키가 있는 아이콘 단추의 툴팁. 괄호는 앞말에 붙인다(§6.5) |
 | `job.phase.recording` | — | **녹화 중** | ADR-0025. 낭독용 낱말(`statusWord`) |
 | `job.live.running` | — | **녹화 중 · {span} · {received}** | ADR-0025. 길이를 모르므로 막대·퍼센트·남은 시간이 없다. `{span}`은 `formatSpan` |
 | `job.live.gaps` | — | **놓친 조각 {n}** | ADR-0025. 있을 때만 상태 줄 끝에 |

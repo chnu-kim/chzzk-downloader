@@ -17,11 +17,11 @@
 
 | 자리 | 허용 값 | DTCG `$type` | 예 |
 |---|---|---|---|
-| 속성 | `bg` `surface` `raised` `track` `fg` `separator` `border` `accent` `danger` `warning` `on` `focus` `scrim` | `color` | `--fg` |
+| 속성 | `bg` `surface` `raised` `track` `fg` `separator` `border` `accent` `danger` `warning` `on` `focus` `scrim` `range` | `color` | `--fg` |
 | 속성 | `shadow` | `shadow` | `--shadow-menu` |
 | 속성 | `font` | `fontFamily` | `--font-sans` |
 | 속성 | `weight` | `fontWeight` | `--weight-strong` |
-| 속성 | `text` `leading` `space` `edge` `gap` `radius` `control` `row` `toolbar` `hit` `icon` `switch` `radio` `progress` `badge` `content` `reading` `dialog` `label` `pct` `watch` | `dimension` | `--space-8`, `--label-w` |
+| 속성 | `text` `leading` `space` `edge` `gap` `radius` `control` `row` `toolbar` `hit` `icon` `switch` `radio` `progress` `badge` `content` `reading` `dialog` `label` `pct` `watch` `timeline` | `dimension` | `--space-8`, `--label-w` |
 | 속성 | `motion` `progress-tween` | `duration` | `--motion-fast` |
 | 속성 | `ease` | `cubicBezier` | `--ease-out` |
 | 속성 | `z` | `number` | `--z-menu` |
@@ -96,8 +96,10 @@ OKLCH로 설계하고 sRGB hex로 커밋한다(brief §6.1-3, `G-ENGINE-R4`). he
 | `--ref-black-a50` | 고정 | `rgba(0,0,0,.50)` | 다크 scrim |
 | `--ref-white-a10` | 고정 | `rgba(255,255,255,.10)` | 다크 separator·다크 대화상자 안쪽 선 |
 | `--ref-white-a8` | 고정 | `rgba(255,255,255,.08)` | 다크 메뉴·토스트 안쪽 선 |
+| `--ref-white-a60` | 고정 | `rgba(255,255,255,.60)` | 라이트 구간 편집 흐림(`--range-dim`, D67) |
+| `--ref-black-a45` | 고정 | `rgba(0,0,0,.45)` | 다크 구간 편집 흐림(`--range-dim`, D67) |
 
-전부 38개다(무채색 16, 파랑 7, 빨강 6, 호박 4, 알파 5). 성공 초록·종류 색(호박·파랑·보라 배지)·청록은 없다. 변환 골든(`scripts-test`)은 알파를 뺀 33색이다.
+전부 40개다(무채색 16, 파랑 7, 빨강 6, 호박 4, 알파 7). 성공 초록·종류 색(호박·파랑·보라 배지)·청록은 없다. 변환 골든(`scripts-test`)은 알파를 뺀 33색이다.
 
 ### 2.3 sys 색 토큰
 
@@ -126,6 +128,7 @@ OKLCH로 설계하고 sRGB hex로 커밋한다(brief §6.1-3, `G-ENGINE-R4`). he
 | `--warning-soft` | `#FFF0D4` | `#433215` | 경고 안내 면, 서비스 공지 배너(block) | — |
 | `--focus` | = `--accent-ink` | = `--accent-ink` | `outline` 색 | — |
 | `--scrim` | `rgba(0,0,0,.30)` | `rgba(0,0,0,.50)` | 대화상자 뒤 | — |
+| `--range-dim` | `rgba(255,255,255,.60)` | `rgba(0,0,0,.45)` | 구간 편집 타임라인 **트랙 줄**(영상·소리)의 구간 밖 흐림 **[잠정]**(D67). 눈금 줄·범위 막대 줄은 덮지 않는다(눈금 글자 대비). 대비 증가에서도 α를 줄이지 않고 띠 두께로 구분한다(§2.5) | 글자 |
 
 성공색이 없는 이유와 재검토 조건은 §2.1. 정보 톤은 `--surface-2` + ⓘ 아이콘(`--fg-muted`)이다(D10=C. `A-VIS-41`: 정보 = 브랜드 = CTA가 구별되지 않던 결함). 종류 배지(일반 VOD·빠른 다시보기·클립)와 성인 "19"는 `--surface-2` 면 + **`--fg`** 12px 600 글자다(D10=B, `A-VIS-31`, `G-ICON-2` "종류 배지에 아이콘 불필요". 글자가 `--fg`인 이유: 배지는 종류·연령의 유일한 신호라 12px `--fg-muted` 단독 금지(§3.2)에 걸린다).
 
@@ -133,14 +136,14 @@ OKLCH로 설계하고 sRGB hex로 커밋한다(brief §6.1-3, `G-ENGINE-R4`). he
 
 ### 2.4 대비 계산값
 
-편집 때 쓴 대조 스크립트(단계 (a)에서 `scripts/design/contrast.mjs`)가 WCAG 2.x 상대 휘도로 계산했다(라이트 47쌍·다크 47쌍 판정 모두 PASS, 테마마다 참고값 4행). `design-tokens` DT8은 같은 쌍 목록을 `design/tokens/contrast.tokens.json`에서 읽어 다시 계산한다. 쌍 목록을 줄이는 변경은 ADR이 필요하다.
+편집 때 쓴 대조 스크립트(단계 (a)에서 `scripts/design/contrast.mjs`)가 WCAG 2.x 상대 휘도로 계산했다(라이트 52쌍·다크 52쌍 판정 모두 PASS, 테마마다 참고값 4행. 바탕 이름 `a+b`는 알파 색 b를 a 위에 합성한 불투명 색이다). `design-tokens` DT8은 같은 쌍 목록을 `design/tokens/contrast.tokens.json`에서 읽어 다시 계산한다. 쌍 목록을 줄이는 변경은 ADR이 필요하다.
 
 주석:
 - 채움 `--accent`·`--danger`를 **상태 표시**(진행 채움·스위치 트랙)로 쓰는 바탕은 `bg`·`surface`·`track`뿐이다. `surface-2`·`raised`·`accent-soft` 위의 작은 표시(라디오 점·선택 ✓)는 `--accent-ink`로 그린다(다크 `accent / surface-2` 2.48, `/ raised` 2.76이라 3:1 미달). 강제 `design-gallery`(forced·다크 axe) + `R1`.
 - 채움 **버튼**의 윤곽에는 대비 요구가 없다. WCAG 1.4.11 Understanding: 글자로 식별되는 컴포넌트의 경계는 예외다. 글자 대비(`on-accent / accent`)만 본다.
 - 선택된 라디오의 상태 표시는 점(`--accent-ink`) ↔ 안쪽 고리(`--surface`)다(라이트 6.18·다크 6.11, `accent-ink / surface` 행). 고리 바깥 테두리 ↔ `--accent-soft` 면은 윤곽이라 요구가 없다.
 - 눌림 면(`--surface-pressed`) 위에는 `--fg` 글자와 `--fg-muted` 아이콘만 놓인다(위험 톤의 눌림 면은 `--danger-soft`라 기존 쌍이 덮는다).
-- 구간 막대(`receive/RangeTimeline.svelte`, D65)의 재생 위치 `--fg`는 선택 띠 `--accent` 위에 놓인다. 3:1 쌍(`fg / accent`)이 없으면 띠 위에서 선이 사라진다. 재생 위치는 트랙 두께 안에만 있고 손잡이는 트랙 밖으로 튀어나오므로 둘은 색만이 아니라 높이·턱 모양으로도 가른다(WCAG 1.4.1). 손잡이 눌림 면 `--accent-pressed`는 다크에서 `--surface` 위 2.29라 눌린 순간 튀어나온 부분의 대비가 3:1 아래다. 눌림은 포인터를 쥔 동안만의 일시 상태이고 위치는 턱 모양·테두리로 남으므로 참고값 행으로만 적는다.
+- 구간 편집 타임라인(`receive/EditorTimeline.svelte`, D67, 이전 구간 막대 D65를 대체)의 손잡이·띠는 `--accent-ink`다(`--accent`는 다크 회색 트랙 위 3:1 미달). 트랙 면 `surface-pressed`·`surface-2`와 그 위 흐림(`surface-pressed+range-dim`·`surface-2+range-dim`) 위에서 모두 3:1이다. 손잡이 테두리·그립 `--surface`는 `accent-ink` 면 위 3:1 쌍이다. 지금 위치선 `--fg`는 트랙·흐림 위 쌍이 판정하고, 띠 위 2px 교차점과 손잡이 위에는 쌍을 요구하지 않는다(라이트 2.79·다크 1.89라 3:1에 못 미친다): 선은 손잡이보다 아래에 그려 겹치지 않고, 띠 줄(2px 높이)은 선이 가로지르는 장식 경계라 선의 식별은 트랙 위 대비와 눈금 줄 위 머리(12×8) 모양이 맡는다(WCAG 1.4.1: 색만이 아니다). 손잡이 눌림 면 `--accent-pressed`는 다크에서 `--surface` 위 2.29라 눌린 순간의 대비가 3:1 아래다. 눌림은 포인터를 쥔 동안만의 일시 상태이고 위치는 모양·테두리로 남으므로 참고값 행으로만 적는다.
 - `--fg-disabled`는 1.4.3 비활성 예외라 참고값만 적었다. 면 단계(`surface / bg`, `surface-2 / surface`)는 장식이고 의미를 싣지 않는다.
 
 #### 라이트
@@ -174,7 +177,7 @@ OKLCH로 설계하고 sRGB hex로 커밋한다(brief §6.1-3, `G-ENGINE-R4`). he
 | `--accent` #0067DF | `--bg` #F3F3F3 | 4.72 | 3 | PASS | 상태 표시 채움 |
 | `--accent` #0067DF | `--surface` #FFFFFF | 5.24 | 3 | PASS | 상태 표시 채움 |
 | `--accent` #0067DF | `--track` #E8E8E8 | 4.28 | 3 | PASS | 상태 표시 채움 |
-| `--fg` #1B1B1B | `--accent` #0067DF | 3.29 | 3 | PASS | 상태 표시(구간 막대 띠 위 재생 위치) |
+| `--fg` #1B1B1B | `--accent` #0067DF | 3.29 | 3 | PASS | 상태 표시(옛 구간 막대 D65 띠 위 재생 위치. 쌍 목록은 줄이지 않는다) |
 | `--fg` #1B1B1B | `--accent-soft` #E2F0FF | 14.88 | 4.5 | PASS | 글자(면 위) |
 | `--fg-muted` #5D5D5D | `--accent-soft` #E2F0FF | 5.69 | 4.5 | PASS | 글자(면 위) |
 | `--accent-ink` #085DC7 | `--accent-soft` #E2F0FF | 5.33 | 4.5 | PASS | 글자(면 위) |
@@ -197,7 +200,12 @@ OKLCH로 설계하고 sRGB hex로 커밋한다(brief §6.1-3, `G-ENGINE-R4`). he
 | `--fg-disabled` #9E9E9E | `--surface` #FFFFFF | 2.68 | — | — | 비활성(예외, 참고값) |
 | `--surface` #FFFFFF | `--bg` #F3F3F3 | 1.11 | — | — | 면 단계(장식, 참고값) |
 | `--surface-2` #E8E8E8 | `--surface` #FFFFFF | 1.23 | — | — | 면 단계(장식, 참고값) |
-| `--accent-pressed` #0056C5 | `--surface` #FFFFFF | 6.69 | — | — | 구간 막대 손잡이 눌림(참고값) |
+| `--accent-pressed` #0056C5 | `--surface` #FFFFFF | 6.69 | — | — | 옛 구간 막대·타임라인 손잡이 눌림(참고값) |
+| `--accent-ink` #085DC7 | `--surface-pressed` #DBDBDB | 4.46 | 3 | PASS | 상태 표시(타임라인 영상 트랙 위 손잡이·띠) |
+| `--accent-ink` #085DC7 | `--surface-pressed+--range-dim` #F1F1F1 | 5.47 | 3 | PASS | 상태 표시(흐림 위 손잡이) |
+| `--accent-ink` #085DC7 | `--surface-2+--range-dim` #F6F6F6 | 5.71 | 3 | PASS | 상태 표시(흐림 위 손잡이) |
+| `--surface` #FFFFFF | `--accent-ink` #085DC7 | 6.18 | 3 | PASS | 손잡이 테두리·그립 |
+| `--fg` #1B1B1B | `--surface-pressed+--range-dim` #F1F1F1 | 15.25 | 3 | PASS | 지금 위치선 |
 
 separator `rgba(0,0,0,.10)` 합성값: bg 위 `#DBDBDB`(1.25:1), surface 위 `#E6E6E6`(1.25:1). 장식이라 요구가 없고, 선 하나로 의미를 전하지 않는다(brief §6.3-3).
 `--focus` / bg 5.57 · / surface 6.18 · / surface-2 5.04. 채움 버튼 위 포커스 링은 `outline-offset: 2px`의 틈으로 바탕이 보이므로 링의 인접 색은 바탕이다(§6.4).
@@ -233,7 +241,7 @@ separator `rgba(0,0,0,.10)` 합성값: bg 위 `#DBDBDB`(1.25:1), surface 위 `#E
 | `--accent` #1E72E4 | `--bg` #1F1F1F | 3.60 | 3 | PASS | 상태 표시 채움 |
 | `--accent` #1E72E4 | `--surface` #2B2B2B | 3.09 | 3 | PASS | 상태 표시 채움 |
 | `--accent` #1E72E4 | `--track` #1F1F1F | 3.60 | 3 | PASS | 상태 표시 채움 |
-| `--fg` #E8E8E8 | `--accent` #1E72E4 | 3.74 | 3 | PASS | 상태 표시(구간 막대 띠 위 재생 위치) |
+| `--fg` #E8E8E8 | `--accent` #1E72E4 | 3.74 | 3 | PASS | 상태 표시(옛 구간 막대 D65 띠 위 재생 위치. 쌍 목록은 줄이지 않는다) |
 | `--fg` #E8E8E8 | `--accent-soft` #233651 | 9.98 | 4.5 | PASS | 글자(면 위) |
 | `--fg-muted` #A4A4A4 | `--accent-soft` #233651 | 4.90 | 4.5 | PASS | 글자(면 위) |
 | `--accent-ink` #70ADFB | `--accent-soft` #233651 | 5.27 | 4.5 | PASS | 글자(면 위) |
@@ -256,7 +264,12 @@ separator `rgba(0,0,0,.10)` 합성값: bg 위 `#DBDBDB`(1.25:1), surface 위 `#E
 | `--fg-disabled` #6F6F6F | `--surface` #2B2B2B | 2.82 | — | — | 비활성(예외, 참고값) |
 | `--surface` #2B2B2B | `--bg` #1F1F1F | 1.16 | — | — | 면 단계(장식, 참고값) |
 | `--surface-2` #3A3A3A | `--surface` #2B2B2B | 1.24 | — | — | 면 단계(장식, 참고값) |
-| `--accent-pressed` #085DC7 | `--surface` #2B2B2B | 2.29 | — | — | 구간 막대 손잡이 눌림(참고값, 아래 주석) |
+| `--accent-pressed` #085DC7 | `--surface` #2B2B2B | 2.29 | — | — | 옛 구간 막대·타임라인 손잡이 눌림(참고값, 아래 주석) |
+| `--accent-ink` #70ADFB | `--surface-pressed` #484848 | 3.95 | 3 | PASS | 상태 표시(타임라인 영상 트랙 위 손잡이·띠) |
+| `--accent-ink` #70ADFB | `--surface-pressed+--range-dim` #282828 | 6.36 | 3 | PASS | 상태 표시(흐림 위 손잡이) |
+| `--accent-ink` #70ADFB | `--surface-2+--range-dim` #202020 | 7.03 | 3 | PASS | 상태 표시(흐림 위 손잡이) |
+| `--surface` #2B2B2B | `--accent-ink` #70ADFB | 6.11 | 3 | PASS | 손잡이 테두리·그립 |
+| `--fg` #E8E8E8 | `--surface-pressed+--range-dim` #282828 | 12.03 | 3 | PASS | 지금 위치선 |
 
 separator `rgba(255,255,255,.10)` 합성값: bg 위 `#353535`(1.34:1), surface 위 `#404040`(1.37:1).
 `--focus` / bg 7.11 · / surface 6.11 · / surface-2 4.91.
@@ -306,7 +319,7 @@ macOS "대비 증가"와 GNOME 고대비는 `forced-colors`가 아니라 이 쿼
 | Spinner | `currentColor` 호 | — |
 | Kbd·Badge | `1px solid CanvasText` | — |
 | 드롭 오버레이 | `2px dashed CanvasText` | gradient·색이 사라진다 |
-| 구간 막대(`RangeTimeline`, D65) | 트랙 `1px solid CanvasText`, 선택 띠 `Highlight`, 시작 앞 가림 `Canvas`, 재생 위치 선 `CanvasText`, 손잡이 면 `Highlight` + `1px CanvasText` 테두리 | 손잡이 모양(대괄호)·높이가 위치를 말한다 |
+| 구간 편집 화면(`EditorTimeline`·`RangeEditor`, D67; 옛 구간 막대 D65를 대체) | 트랙 `Canvas` + `1px solid CanvasText`(흐림은 그리지 않는다: `background` 무시), 띠·손잡이·범위 막대 구간 위치 `Highlight`, 손잡이 테두리 `CanvasText`, 지금 위치선·범위 막대 엄지 `CanvasText`, 화면 밖 손잡이는 `Highlight` 면 + 안의 chevron `HighlightText`(`currentColor`를 두면 Highlight 면 위 대비를 잃는다), 반복 토글 켜짐은 `Highlight` 면 + `HighlightText` 글자·아이콘(2px 윤곽은 포커스 outline과 같아 구별되지 않는다, RE-5) | 손잡이 모양(대괄호)·높이·가장자리 chevron이 위치를 말한다 |
 | WatchPanel 화면(`<video>`·열리는 중 자리) | `1px solid CanvasText` 윤곽(바탕색 `--surface-2`는 시스템 색으로 바뀐다) | 영상 자리의 경계를 잃지 않게 |
 
 강제: `design-gallery`가 `emulateMedia({ forcedColors: 'active' })`로 네 화면과 실패·일시정지 행을 찍고 axe를 돈다. 새 컴포넌트는 이 표에 행을 더한다(`R9`). 컴포넌트별 세부는 `components.md` §3.
@@ -349,7 +362,7 @@ macOS 텍스트 스타일 표를 그대로 가져왔다(`E-APPLE-02`: 17/22, 15/
 | display | **17px** | 22px | 600 | 화면 제목(설정), 빈 상태 머리 |
 | read(행간만) | — | `--leading-read` 20px | — | 두 줄 넘는 문단(안내·오류 본문·대화상자 본문). 13px × 1.54. WCAG 1.4.12(1.5배 덮어쓰기)에 대비 |
 
-- 최소 글자 크기는 **12px**이다. 11px은 쓰지 않는다(`G-SCALE-7`: Windows 캡션 12와 같은 하한, 100% 배율 Linux가 가장 취약. 강제 `design-tokens` DT5: 모든 `--text-*` ≥ 12, `design-lint` DL5: `font-size` 리터럴 금지). **12px `--fg-muted` 글자 하나만으로 의미를 전하지 않는다**(brief §6.4-3. 리뷰 `R1`). 허용 목록(다른 단서와 겹치거나 보조이기 때문): 그룹 머리의 개수(행이 셀 수 있다), 설정·입력 도움말(라벨이 뜻을 가진다), 붙여넣기 힌트, Worker 표 둘째 줄, kbd. 배지는 글자가 `--fg`이고(§2.3), "가장 좋은 화질" 꼬리표는 13px `--fg-muted`다.
+- 최소 글자 크기는 **12px**이다. 11px은 쓰지 않는다(`G-SCALE-7`: Windows 캡션 12와 같은 하한, 100% 배율 Linux가 가장 취약. 강제 `design-tokens` DT5: 모든 `--text-*` ≥ 12, `design-lint` DL5: `font-size` 리터럴 금지). **12px `--fg-muted` 글자 하나만으로 의미를 전하지 않는다**(brief §6.4-3. 리뷰 `R1`). 허용 목록(다른 단서와 겹치거나 보조이기 때문): 그룹 머리의 개수(행이 셀 수 있다), 설정·입력 도움말(라벨이 뜻을 가진다), 붙여넣기 힌트, Worker 표 둘째 줄, kbd, 구간 편집 타임라인의 눈금 글자와 트랙 이름(시각은 손잡이 `aria-valuetext`·시각 칸·조작 줄의 시각이 전하고, 트랙 이름은 `aria-hidden` 장식이라 정보가 아니다, D67). 배지는 글자가 `--fg`이고(§2.3), "가장 좋은 화질" 꼬리표는 13px `--fg-muted`다.
 - 섹션 제목(13/600) < 카드 제목(15) < 화면 제목(17)으로 역전이 없다(`A-VIS-17` 해소).
 - 본문 13은 **[잠정]**이다(사용자 결정 4). 근거는 macOS 기본 13(`E-APPLE-01`), C3 "12~14", 치지직 웹 12~14(비공식). 반례는 데스크톱 수렴 14(bigtech confirmed). **Windows 실기(맑은 고딕 13px 판독, 600 렌더, tnum)에서 작으면 `--text-body`·`--leading-body` 두 줄을 14/18로 바꾼다.** 컨트롤 28은 14/18에서도 상하 5px 여유가 있어 연쇄 변경이 없다. 그 외 토큰은 건드리지 않는다. 확인 방법은 README §6-1.
 - 앱 안 "글자 크기" 설정(D28)은 `:root[data-text-scale]`가 글자·행간 토큰만 재정의한다. 컨트롤 높이는 `min-height`라 따라 늘어난다(g-input: 크기 토큰은 글자와 분리).
@@ -461,9 +474,11 @@ AppKit Tahoe 실측 regular 24 · large 28 · extraLarge 36(`E-APPLE-19`, `E-DES
 | `--dialog-w` | 440px | **[취향]**(A, ADR-0009). 대화상자와 로그인 패널. 720 창에서 좌우 140(열 안쪽 680 기준 120) |
 | `--label-w` | 80px | 카드 폼(FieldRow)의 라벨 열 폭 **[취향]**(A, ADR-0009). 4글자 라벨 + 여유. 좁은 레이아웃에서는 1열이라 쓰이지 않는다 |
 | `--pct-w` | 40px | 작업 행 퍼센트 칸 폭 **[취향]**(A, ADR-0009). "100%" 네 글자 tabular 13px이 글꼴마다 달라 토큰으로 고정한다 |
+| `--timeline-label-w` / `--timeline-lane-h` / `--timeline-lane-sm-h` | 64px / 48px / 32px | 구간 편집 타임라인의 이름 칸 폭, 영상 트랙·소리 트랙 높이 **[잠정]**(D67). 이름 칸은 좁은 레이아웃에서 접힌다(트랙 이름은 장식) |
+| `--timeline-handle-w` / `--timeline-band-w` | 12px / 2px | 손잡이의 보이는 폭(누름 폭은 `--hit-min`), 구간 띠 두께 **[잠정]**(D67). 대비 증가에서는 띠가 ×1.5(3px)로 굵어진다(`--range-dim`의 α는 그대로) |
 | `--watch-max-h` | 360px | 카드 안 미리보기 화면의 최대 높이 **[잠정]**(D64). 폭은 카드 열을 채우고 16:9이며 이 높이에서 멈춘다(넘치는 폭은 검은 여백이 아니라 `--surface-2` 바탕). 실측(M-PV-1)으로 조인다 |
 
-컴포넌트 전용 치수도 여기 토큰(`--label-w`·`--pct-w`·`--watch-max-h`)이다. 그 밖의 치수는 위 토큰의 조합이고 산술은 §4의 `calc()` 정책 안에서만 한다(comp 층을 비운다는 원칙).
+컴포넌트 전용 치수도 여기 토큰(`--label-w`·`--pct-w`·`--watch-max-h`·`--timeline-*`)이다. 그 밖의 치수는 위 토큰의 조합이고 산술은 §4의 `calc()` 정책 안에서만 한다(comp 층을 비운다는 원칙).
 
 ---
 
@@ -573,7 +588,7 @@ AppKit Tahoe 실측 regular 24 · large 28 · extraLarge 36(`E-APPLE-19`, `E-DES
 | 선 굵기 | `--icon-stroke: 1.5px`를 CSS `stroke-width: var(--icon-stroke)` + `vector-effect: non-scaling-stroke`(path마다)로 화면 px 고정(16·20 공통) **[잠정]**. SVG 속성 `stroke-width="1.5"` 리터럴은 쓰지 않는다(앱·Worker 모두 CSS) | HIG "옆 글자 굵기에 맞춘다"(`E-APPLE-31`). 13px 400 한글 줄기 ≈ 1.1px, 600은 WKWebView 1.24px(`E-ID-K28b`). `G-ICON-4` 범위 16px 1.2 / 20px 1.25~1.5의 위쪽(뒤집음: 한 값). 16px·DPR1 번짐이 알려진 한계(`G-ICON-5`). 확인: `icons-blur.mjs` 측정("16·20px 수평선 최대 농도 ≥ .5, 두께합 ≥ 1.0")을 `design-gallery`에 넣고, 실패하면 16px만 1.25로 내린다 | `design-icons` DI3(stroke가 CSS 토큰이고 `size/24` 비례가 아님), `design-lint` DL14 예외(`--icon-stroke` 정의) |
 | 색 | `currentColor`만. fill 없음 | `G-A11Y-OS5` | `design-icons` |
 | 광학 보정 | 에셋 좌표 안에서(`download`·`play`·`chevron-*`). CSS `translate` 금지 | HIG icons(`E-APPLE-31`), g-icon §8.3 | `design-lint` + 리뷰 `R5` |
-| 글자 없는 아이콘 버튼 | 허용 목록(10개, 이 표가 유일한 원천): `x`(닫기) · `ellipsis`(더 보기) · `chevron-down` `chevron-up` `chevron-left` `chevron-right`(펼침·방향) · `eye` `eye-off`(값 보기 토글) · `arrow-left`(뒤로) · `settings`(툴바 톱니). 모두 `aria-label` + 툴팁 | NN/g icon usability, Lucide 접근성 문서(`G-ICON-6`) | `design-icons` DI7(IconButton `icon` prop 허용 목록) |
+| 글자 없는 아이콘 버튼 | 허용 목록(11개, 이 표가 유일한 원천): `x`(닫기) · `ellipsis`(더 보기) · `chevron-down` `chevron-up` `chevron-left` `chevron-right`(펼침·방향) · `eye` `eye-off`(값 보기 토글) · `arrow-left`(뒤로) · `settings`(툴바 톱니) · `scan`(구간 편집 타임라인 [전체 보기], D67). 구간 편집 화면의 미디어 조작 묶음(시작·끝 표시, 구간 처음·끝, N초 뒤·앞, 보기·일시정지)은 RE-5가 같은 표에 더한다. 모두 `aria-label` + 툴팁 | NN/g icon usability, Lucide 접근성 문서(`G-ICON-6`) | `design-icons` DI7(IconButton `icon` prop 허용 목록) |
 
 ### 9.1 은유 표
 
@@ -588,6 +603,7 @@ AppKit Tahoe 실측 regular 24 · large 28 · extraLarge 36(`E-APPLE-19`, `E-DES
 | 처음부터 다시 받기 | 없음 | [처음부터 다시 받기] | 드물고 무거운 동작. `rotate-ccw` 금지 |
 | 작업 취소 | 없음(쓰면 `circle-x`) | [취소] 글자 **필수** | 데이터를 지울 수 있다. 닫기 `x`와 겸용 금지 |
 | 닫기 | `x` | `aria-label` | 허용 목록 |
+| 전체 보기(타임라인 확대 해제) | `scan` | `aria-label` + 툴팁 "전체 보기(0)" | 허용 목록(D67). 확대했을 때만 있다 |
 | 목록에서 지우기 | `trash-2` | [목록에서 지우기] | 파일을 지우지 않는다는 라벨 |
 | 파일 열기 | `file-video` | [열기] | `play` 재사용 금지 |
 | 폴더에서 보기 | `folder` | macOS [Finder에서 보기] / 그 외 [폴더에서 보기] | 아이콘은 OS 공통, 라벨만 분기(`platform.md` §20). Finder·탐색기 로고 금지. `G-HANDOFF-H1`(먼저 두기)은 D39가 뒤집음([열기] 다음) |
@@ -709,6 +725,7 @@ AppKit Tahoe 실측 regular 24 · large 28 · extraLarge 36(`E-APPLE-19`, `E-DES
   --ref-black-a8: rgba(0, 0, 0, 0.08);
   --ref-black-a10: rgba(0, 0, 0, 0.10); --ref-black-a30: rgba(0, 0, 0, 0.30); --ref-black-a50: rgba(0, 0, 0, 0.50);
   --ref-white-a8: rgba(255, 255, 255, 0.08); --ref-white-a10: rgba(255, 255, 255, 0.10);
+  --ref-white-a60: rgba(255, 255, 255, 0.60); --ref-black-a45: rgba(0, 0, 0, 0.45);
 
   /* sys: 색(라이트) */
   --bg: var(--ref-gray-965);        --surface: var(--ref-white);      --surface-2: var(--ref-gray-930);
@@ -721,6 +738,7 @@ AppKit Tahoe 실측 regular 24 · large 28 · extraLarge 36(`E-APPLE-19`, `E-DES
   --danger: var(--ref-red-53);      --danger-ink: var(--ref-red-52);  --danger-soft: var(--ref-red-95);
   --warning-ink: var(--ref-amber-51); --warning-soft: var(--ref-amber-96);
   --focus: var(--accent-ink);       --scrim: var(--ref-black-a30);
+  --range-dim: var(--ref-white-a60);
   --shadow-menu:   0 0 0 1px var(--ref-black-a8), 0 4px 12px rgba(0, 0, 0, 0.14);
   --shadow-toast:  0 0 0 1px var(--ref-black-a8), 0 6px 20px rgba(0, 0, 0, 0.16);
   --shadow-dialog: 0 0 0 1px var(--ref-black-a10), 0 16px 40px rgba(0, 0, 0, 0.22);
@@ -749,6 +767,7 @@ AppKit Tahoe 실측 regular 24 · large 28 · extraLarge 36(`E-APPLE-19`, `E-DES
   --icon-sm: 16px; --icon-md: 20px; --icon-stroke: 1.5px;
   --switch-w: 54px; --switch-h: 24px; --switch-knob: 20px; --radio-size: 16px;
   --progress-h: 6px; --badge-h: 18px; --label-w: 80px; --pct-w: 40px; --watch-max-h: 360px;
+  --timeline-label-w: 64px; --timeline-lane-h: 48px; --timeline-lane-sm-h: 32px; --timeline-handle-w: 12px; --timeline-band-w: 2px;
 
   /* 레이아웃 */
   --content-max: 800px; --reading-max: 680px; --dialog-w: 440px;
@@ -776,6 +795,7 @@ AppKit Tahoe 실측 regular 24 · large 28 · extraLarge 36(`E-APPLE-19`, `E-DES
   --danger: var(--ref-red-56);      --danger-ink: var(--ref-red-75);  --danger-soft: var(--ref-red-33);
   --warning-ink: var(--ref-amber-78); --warning-soft: var(--ref-amber-33);
   --scrim: var(--ref-black-a50);
+  --range-dim: var(--ref-black-a45);
   --shadow-menu:   inset 0 0 0 1px var(--ref-white-a8), 0 4px 12px rgba(0, 0, 0, 0.40);
   --shadow-toast:  inset 0 0 0 1px var(--ref-white-a8), 0 6px 20px rgba(0, 0, 0, 0.45);
   --shadow-dialog: inset 0 0 0 1px var(--ref-white-a10), 0 16px 40px rgba(0, 0, 0, 0.55);
@@ -838,6 +858,10 @@ JS 타이머·Rust 셸이 쓰는 값이다. 이름과 값의 단일 원천은 �
 | `BREAKPOINT_NARROW` | 600 | [잠정] | 생성기 상수(`tokens.mjs`) | §8 분기(`max-width: 599px`) | Windows 텍스트 225% 리플로우(`platform.md` §21 M16) |
 | `LOADER_DELAY_MS` / `LOADER_MIN_MS` | 300 / 400 | [제안] | `app/src/lib/timing.ts` | 로딩 표시 지연·최소 유지(`patterns.md` §2.2) | 디자인 시스템 수렴값(`E-DESK-L*`), 표준 아님. `G-LAUNCH-R4` |
 | `VIDEO_MIN_H` | 90 | [잠정] | `app/src/lib/rangeView.ts` | 구간 편집 화면 영상 상자의 최소 높이(px, range-editor.md §6.2 `monitorSize`). 조작 줄 최소 폭은 `controlsMinW(--control-h)` = 7×`--control-h` + 184(28 → 380, coarse 40 → 464)로 같은 파일에서 계산한다 | D67, M-RE-9(갤러리 측정으로 조인다) |
+| `MIN_VIEW_SECS` / `SNAP_SECS` | 20 / 0.5 | [잠정] | `app/src/lib/rangeView.ts` | 구간 편집 타임라인 확대 하한(초)과 "거의 전체"를 전체로 맞추는 허용치(`clampView`) | D67, range-editor.md §7.1·§7.2. 960 창 트랙 856px에서 1초 ≈ 43px, 12px 손잡이로 1초를 맞출 수 있다. M-RE-2로 조인다 |
+| `TICK_MIN_PX` / `TICK_LABEL_PX` | 80 / 56 | [잠정] | `rangeView.ts` | 눈금 사이 최소 px, 눈금 글자(`formatClock` 7자 12px 고정폭)의 폭. 글자가 트랙 오른쪽 밖으로 넘치는 눈금은 그리지 않는다(`visibleTicks`) | D67, §7.6 |
+| `LINE_PX` / `KEY_ZOOM_FACTOR` | 16 / 2 | [잠정] | `rangeView.ts` | 휠 `deltaMode` 줄 단위의 px 환산, 키 `+`·`-`의 확대 배율(휠은 `exp(−dy × 0.002)`, 한 이벤트당 [0.5, 2]) | D67, §7.2·§7.3. M-RE-3(트랙패드 연속 이벤트) |
+| `EDITOR_KEYS` | `+` `-` `0` | 고정 | `app/src/lib/platform.ts` | 구간 편집 화면 확대·축소·전체 보기 키 글자. OS와 무관한 코드 상수라 deck 문자열이 아니다(DC9는 deck만 본다). 문구는 `{zoomIn}`·`{zoomOut}`·`{fit}` 자리표시로 받는다 | D67, range-editor.md §11. RE-5가 나머지 키(I·O·Space·←·→)를 더한다 |
 | `TOAST_MS` | 6000 | [취향] | `timing.ts` | 정보 토스트 수명 = [되돌리기] 지연 삭제 창(README D37) | D62 V8 |
 | `HIGHLIGHT_MS` | 1000 | [취향] | `timing.ts` | 새 항목 `--accent-soft` 강조(`patterns.md` §1.2) | app.md §8.10 |
 | `COPIED_LABEL_MS` | 2000 | [취향] | `timing.ts` | "복사했어요" 라벨 전환 | D37 |

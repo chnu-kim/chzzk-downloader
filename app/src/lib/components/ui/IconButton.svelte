@@ -10,6 +10,8 @@
     size?: 'sm' | 'md';
     disabled?: boolean;
     el?: HTMLButtonElement | null;
+    /** 툴팁(`title`)만 덮어쓴다(예: "전체 보기(0)"). 이름(aria-label)은 label 그대로이고, 이름과 다른 title은 접근 가능한 설명으로 계산된다 */
+    hint?: string;
   };
 
   let {
@@ -18,6 +20,7 @@
     size = 'md',
     disabled = false,
     el = $bindable(null),
+    hint,
     class: klass = '',
     ...rest
   }: Props = $props();
@@ -29,7 +32,7 @@
   {...rest}
   class={['icon-btn', size === 'sm' && 'icon-btn-sm', klass]}
   aria-label={label}
-  title={label}
+  title={hint ?? label}
   {disabled}
 >
   <Icon name={icon} {size} />

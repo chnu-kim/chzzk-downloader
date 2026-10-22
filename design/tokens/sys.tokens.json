@@ -232,6 +232,16 @@
             "dark": "{ref.black.a50}"
           }
         }
+      },
+      "range-dim": {
+        "$type": "color",
+        "$value": "{ref.white-a60}",
+        "$description": "구간 편집 타임라인 트랙 줄의 구간 밖 흐림 [잠정] (D67). 눈금 줄은 덮지 않는다",
+        "$extensions": {
+          "io.github.chnu-kim.chzzk": {
+            "dark": "{ref.black.a45}"
+          }
+        }
       }
     },
     "shadow": {

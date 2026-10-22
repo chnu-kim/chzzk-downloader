@@ -141,8 +141,9 @@ Worker: `<a class="btn btn-primary btn-lg" href="…">macOS용 받기</a>`, `<bu
 ```ts
 type IconButtonProps = HTMLButtonAttributes & {
   icon: 'x' | 'ellipsis' | 'chevron-down' | 'chevron-up' | 'chevron-left' | 'chevron-right'
-      | 'eye' | 'eye-off' | 'arrow-left' | 'settings';   // 허용 목록(foundations §9)
-  label: string;                                          // 필수. aria-label이자 title
+      | 'eye' | 'eye-off' | 'arrow-left' | 'settings' | 'scan';   // 허용 목록(foundations §9)
+  label: string;                                          // 필수. aria-label이자 기본 title
+  hint?: string;                                          // 툴팁(title)만 덮어쓴다. 단축키를 말할 때: "전체 보기(0)" (RE-4)
   size?: 'sm' | 'md';                                     // 기본 md. lg 없음
   disabled?: boolean;
   el?: HTMLButtonElement | null;
@@ -158,7 +159,7 @@ type IconButtonProps = HTMLButtonAttributes & {
 
 **치수**: sm 24×24(아이콘 16), md 28×28(아이콘 20). 반경 `--radius-control`. 정사각은 `width = height`로 고정한다(SecretField의 22.9×24.5 결함, `A-VIS-07`). **끝자리 보정**: 열·행 끝에 오는 아이콘 버튼은 `.edge-end { margin-inline-end: calc(0px - var(--space-4)) }`(`.edge-start`도 같다)로 아이콘 상자 가장자리를 정렬선에 맞춘다(상자 28 − 아이콘 20 = 양쪽 4). 글리프 안쪽 여백(톱니 약 2px)은 보정하지 않는다 [잠정] — 확인: `design-gallery` 잉크 경계 측정(governance §2.6)에서 ±2px 넘게 어긋나면 `foundations.md` §9.1에 "시각 경계 상자" 열을 더한다.
 
-**접근성**: `aria-label={label}`과 `title={label}`을 같은 값으로 준다. 이름과 같은 `title`은 접근 가능한 설명으로 중복 계산되지 않는다(accname 알고리즘: 이름과 같은 설명은 비운다). `title=` 허용 목록에 IconButton이 있다(`G-INPUT-IN2`). 글자 없는 아이콘 버튼은 foundations §9 허용 목록의 10개 모양만이다(`G-ICON-6`, NN/g). 강제: `design-icons` DI7(`icon` prop 리터럴이 허용 목록 밖이면 실패), `frontend`.
+**접근성**: `aria-label={label}`과 `title={hint ?? label}`을 준다. 이름과 같은 `title`은 접근 가능한 설명으로 중복 계산되지 않는다(accname 알고리즘: 이름과 같은 설명은 비운다). `hint`로 이름과 다른 `title`(예: "전체 보기(0)", 문구는 `shortcut.hint.label` "{label}({key})")을 주면 그 글자는 접근 가능한 **설명**으로 계산된다. 단축키가 있는 단추는 `aria-keyshortcuts`도 단다. `title=` 허용 목록에 IconButton이 있다(`G-INPUT-IN2`). 글자 없는 아이콘 버튼은 foundations §9 허용 목록의 11개 모양만이다(`G-ICON-6`, NN/g). 강제: `design-icons` DI7(`icon` prop 리터럴이 허용 목록 밖이면 실패), `frontend`.
 
 - Do: 행의 취소는 `<Button variant="ghost" tone="danger">취소</Button>` / Don't: `<IconButton icon="x" label="취소">`(닫기 `x`와 겸용 금지, `foundations.md §9.1`, `A-FEAT-G6`).
 
@@ -633,25 +634,40 @@ type WatchPanelProps = {
 
 Worker: 없다.
 
-### 2.30 RangeTimeline (기능 컴포넌트)
+### 2.30 EditorTimeline (기능 컴포넌트, 구간 편집 타임라인)
 
-**해부**: 빠른 다시보기 카드의 미리보기 `<video>` 바로 아래에 놓는 구간 막대(`receive/RangeTimeline.svelte`, 기능 컴포넌트라 `ui/` 갤러리 매트릭스 대상이 아니다. 화면 몫 갤러리 장면이 본다). 네이티브 `controls`는 그대로 두고(ADR-0028이 ADR-0027 결정 2·§2.29 규칙 ①에 덧붙이기만 한다) 막대를 따로 둔다. 막대(`.track`, 누름 영역 높이 `--hit-min`, 보이는 두께 `--progress-h`, 바탕 `--track`) 안에 선택 띠 두 겹(`.upto-end` `--accent` → `.before-start` `--track`), 재생 위치(`.position`, 너비 0 앵커 + `border-inline-start: 2px solid var(--fg)`, 높이는 트랙 두께만), 손잡이 둘(`.thumb`, 너비 0 앵커 안에 폭 `--space-4`·높이 `--control-h-sm`, 면 `--accent`, 테두리 1px `--surface`)을 둔다. 손잡이는 **대괄호 모양**이다: 시작은 `[`(세로 막대 위·아래 끝의 짧은 턱이 구간 쪽인 오른쪽으로), 끝은 `]`(턱이 왼쪽으로). 위치는 손잡이 앵커·띠·재생 위치가 각자 가진 `style:--p`(0~1) 디렉티브뿐이고 `translate(-50%)`는 없다(DL11, 앵커 안 flex 가운데).
+옛 구간 막대(`RangeTimeline`, D65·ADR-0028)를 RE-4에서 대체했다(D67·ADR-0030, range-editor.md §6~§7·§10). 기능 컴포넌트라 `ui/` 갤러리 매트릭스 대상이 아니고 화면 몫 갤러리 장면(`editor-zoomed`·`editor-offscreen-end`·`editor-offscreen-both`와 환경 행렬)이 본다.
+
+**해부**: 시간 영역 하나(`role="group"`, 이름 `rangeEditor.timeline.title`, `tabindex="-1"`, `data-timeline`, `aria-describedby` = 안내 줄, `aria-keyshortcuts="Plus Minus 0"`)가 두 칸 격자다. 왼쪽은 이름 칸(`--timeline-label-w` 64, "영상"·"소리", `aria-hidden`, 좁은 레이아웃에서는 접힌다), 오른쪽은 트랙 칸(`.track`)이다. **좌표의 기준은 트랙 칸의 rect 하나**다(범위 막대·눈금·트랙이 같은 칸을 쓴다). 트랙 칸 위에서 아래로: (확대했을 때만) 범위 막대 24(`--hit-min`) → 눈금 24 → 영상 트랙 `--timeline-lane-h` 48(면 `--surface-pressed`) → 소리 트랙 `--timeline-lane-sm-h` 32(면 `--surface-2`). 구간 밖 흐림(`--range-dim`)과 위아래 띠(`--timeline-band-w` 2px, `--accent-ink`)는 **트랙 줄에만** 그린다(눈금 글자 대비). 지금 위치선(`--fg` 2px, 눈금 줄 위 머리 12×8)은 결합 중이고 보이는 범위 안일 때만 있고 손잡이보다 아래다. 모든 장식(눈금·트랙·흐림·띠·위치선)은 `aria-hidden`이다.
 
 ```ts
-type RangeTimelineProps = {
-  length: number;                 // 막대 길이(초)
-  start: number; end: number;     // 손잡이 값(초, rangeEdit.selection)
-  band: boolean;                  // 선택 띠를 그리는가
-  position: number | null;        // 재생 위치(초). 영상이 결합되기 전(재생 전)에는 null이라 위치 선을 그리지 않는다(PS11)
-  disabled?: boolean;             // 카드 busy
+type EditorTimelineProps = {
+  length: number;                  // 타임라인 길이(초)
+  start: number; end: number;      // 손잡이 값(초, rangeEdit.selection)
+  band: boolean;                   // 띠를 그리는가(순서가 뒤집히면 false)
+  position: number | null;         // 지금 위치(초). 결합 전에는 null
+  coupled: boolean;                // 영상과 결합: 눈금·트랙 누름 탐색은 결합 중에만
+  view: { start: number; span: number };   // 보이는 범위(부모가 가진다, rangeView)
+  describedby?: string;            // 안내 줄 id
+  narrow?: boolean;                // 좁은 레이아웃: 이름 칸을 접는다(신호는 부모가 .fullsheet-probe로 읽는다, DL13)
+  el?: HTMLElement | null;         // 시간 영역 group
   onmove: (h: 'start' | 'end', secs: number, phase: 'drag' | 'commit') => void;
-  onseek: (secs: number) => void; // 막대(손잡이 밖)를 눌렀을 때
+  onseek: (secs: number) => void;
+  onview: (v: View) => void;       // 휠·범위 막대·눈금 두 번 누르기·화면 밖 손잡이가 보이는 범위를 바꿀 때
+  onfollow?: (following: boolean) => void;  // 따라가기를 끌 때
+  ondrag?: (active: boolean) => void;       // 손잡이 끌기 시작·끝(끌기 중에는 확대 키·범위 조작을 막는다, RE13)
+  oncancel?: () => void;           // 끌기를 Esc로 취소(부모가 누르기 전 초안으로 되돌린다)
 };
+// export function cancelDrag(): boolean  — Esc 사다리 처리기가 부른다(끌기 중이었으면 true)
 ```
 
-**규칙**: ① 손잡이는 `role="slider"`·`tabindex="0"`·`aria-label`(`range.start`·`range.end`)·`aria-valuemin`/`max`(`rangeEdit.handleBounds`: band면 서로를 제한, 아니면 둘 다 `[0, floor(길이)]`)·`aria-valuenow`(정수 초, 경계 안으로 자름)·`aria-valuetext`(`formatClockLong`)다. Tab 순서는 DOM 순서(시작 → 끝) 고정이고 뒤집혀 끝이 왼쪽에 그려져도 바뀌지 않는다. ② 키는 `handleKey`(←/↓ −1, →/↑ +1, Shift ×10, PageUp/PageDown ±60, Home/End)를 `clampHandle`로 자른 값을 `onmove(h, v, 'commit')`로 보내고 처리한 키만 `preventDefault`한다. 첫 줄 `isImeKey`. Alt·Ctrl·Meta가 있으면 처리하지 않는다. ③ 끌기는 `pointerdown`(`setPointerCapture`) → `pointermove`마다 `'drag'` → `pointerup`에 `'commit'` 한 번이다(`pointercancel`은 마지막 끌기 값을 `'commit'`으로, 움직인 적 없으면 아무것도 내지 않는다). 컴포넌트는 값을 자르지 않고 부모(`rangeEdit.moveHandle`)가 자른다. 막대에 `touch-action: none`, `wheel`·`contextmenu` 리스너 없음. ④ 막대(손잡이 밖) 누름은 `onseek`만 부르고 손잡이 값은 바꾸지 않으며 **포커스를 코드로 옮기지 않는다**(막대는 포커스를 받지 않으므로 브라우저가 가장 가까운 포커스 가능 조상인 편집 영역 컨테이너로 준다). ⑤ 누름 영역은 앵커에서 **바깥쪽으로만** 편다(시작은 왼쪽, 끝은 오른쪽, `::before` 폭 `--hit-min`). 붙은 손잡이도 겹치지 않는다. ⑥ `disabled`면 `aria-disabled="true"`이고 손잡이 조작을 무시한다(포커스는 닿는다, 막대 누름 탐색은 칸을 바꾸지 않아 그대로 둔다). ⑦ 눌림은 손잡이 `:active`에서 면을 `--accent-pressed`로 채운다(foundations §1 규칙 6). 호버 효과 없음(D21), 전환 없음(값은 데이터다, P5), `cursor`·`user-select` 없음(D25).
+**손잡이 꼴 셋**: ① 보통 — 보이는 폭 `--timeline-handle-w` 12, 누름 폭 `--hit-min`(24, coarse 40)을 앵커에서 구간 **바깥쪽으로만** 편다(붙은 손잡이가 겹치지 않는다). 면 `--accent-ink`, 테두리 1px `--surface`, 가운데 세로 그립. 시작은 오른쪽이 열린 `[`, 끝은 왼쪽이 열린 `]` 모서리. ② 화면 밖 — DOM에서 빼지 않는다(`role="slider"`·값·Tab 순서 그대로). 보이는 범위 밖이면 트랙 칸 왼쪽·오른쪽 가장자리에 붙인 32×64 꼴이고 안에 `chevron-left`·`chevron-right`가 있다. `aria-valuetext`는 `rangeEditor.offscreen.label`("{time} · 보이는 범위 밖"). 누르면 끌기를 시작하지 않고 값은 그대로 둔 채 보이는 범위만 그 손잡이로 옮긴다(`reveal`). 키로 값을 바꾸면 바뀐 값이 보이게 범위를 옮긴다. 포커스만으로는 옮기지 않는다. ③ 같은 쪽 밖 둘 — 세로로 반씩 쌓는다(32×32, 시작이 위, `data-stack`).
 
-**치수**: foundations §2.4 `accent / track`·`accent / surface`(손잡이가 트랙 밖으로 튀어나온 부분)·`fg / accent`(띠 위 재생 위치) 쌍이 판정이다. 새 토큰은 없다(`--progress-h`·`--hit-min`·`--control-h-sm`·`--space-4`의 조합, PVU16). 띠를 `--accent-soft`로 칠하지 않는 이유: 트랙 대비가 라이트 1.06·다크 1.35라 1.4.11(3:1)에 못 미친다. forced-colors는 §3 표.
+**범위 막대**(`role="scrollbar"`, 확대했을 때만): `aria-controls` = 시간 영역 group id, 방향 horizontal, 값 0~100(`start / (L − span)`), `aria-valuetext` `rangeEditor.viewport.value.label`. 엄지 최소 폭 `--hit-min`(`scrollThumb`: 20초 창 / 10800초 / 800px의 비례 폭 1.5px에서도 잡힌다). 엄지 몸통 끌기 = 이동(오프셋 유지), 양 끝 8px 끌기 = 반대쪽 끝을 고정하고 폭 조절(포인터 하나로 하는 확대·축소, WCAG 2.5.1), 엄지 밖 누름 = 그쪽으로 1 span. 키는 ←/→ ∓10% span, Shift+←/→·PageUp/PageDown ∓1 span, Home/End.
+
+**입력**: 휠은 시간 영역에 `addEventListener('wheel', h, { passive: false })`로 직접 단다(Svelte `onwheel`은 passive라 안 된다. 그래서 design-lint DX4가 이 파일을 `guards.ts`와 함께 허용한다). Ctrl(macOS는 ⌘도)+휠은 커서 중심 확대, 그 밖의 휠·Shift+휠·트랙패드 좌우는 이동이다. `preventDefault`는 처리한 이벤트에만 한다(전체 보기이거나 끝에 닿은 이동은 바깥 스크롤로 넘긴다). 끌기 중에는 휠도 `preventDefault`만 하고 보이는 범위를 고정한다. 눈금 줄 두 번 누르기는 그 자리 중심 ×2 확대. 눈금·트랙 누름은 결합 중이면 `onseek` 한 번(포커스를 코드로 옮기지 않는다). 끌기 중 Esc는 취소(손잡이에서 전파를 멈춘다). 첫 줄 `isImeKey`.
+
+**forced-colors**: foundations §2.7. **치수**: foundations §13 `--timeline-*`, 대비 쌍은 §2.4. **움직임**: 쪽 넘김·`reveal`은 전환 없이 바로 옮긴다.
 
 Worker: 없다.
 
@@ -659,7 +675,7 @@ Worker: 없다.
 
 ### 2.31 RangeEditor (기능 컴포넌트, 구간 편집 화면)
 
-**해부**: 빠른 다시보기 카드(`ResolveCard`)가 소유하는 창 전체 시트(`receive/RangeEditor.svelte`, 뿌리는 §2.33 Sheet, D67·ADR-0030·range-editor.md). 위에서부터 머리 줄(h1 "구간 편집"(`rangeEditor.title`, `tabindex=-1`·`data-focus-container`) · 부제(`rangeEditor.context.label`, `--fg`, 레이어의 `aria-describedby`) · [닫기] · [구간 적용하기](primary, kbd `submit`)) → 몸통(머리 줄 밑에서 스크롤): 모니터(영상 자리 + 조작 줄) → 타임라인 패널(제목 `rangeEditor.timeline.title` · 타임라인 · 구간 줄(FieldRow + 칸 둘 + 길이 줄 + [구간 지우기] + 오류 Notice)). RE-3에서 타임라인은 옛 막대(`RangeTimeline`), 조작 줄은 옛 글자 단추([시작 찍기]·[끝 찍기]·[구간 보기]·[시작부터 보기]·Switch 구간 반복하기)다. RE-4가 타임라인을, RE-5가 조작 줄을 바꾼다.
+**해부**: 빠른 다시보기 카드(`ResolveCard`)가 소유하는 창 전체 시트(`receive/RangeEditor.svelte`, 뿌리는 §2.33 Sheet, D67·ADR-0030·range-editor.md). 위에서부터 머리 줄(h1 "구간 편집"(`rangeEditor.title`, `tabindex=-1`·`data-focus-container`) · 부제(`rangeEditor.context.label`, `--fg`, 레이어의 `aria-describedby`) · [닫기] · [구간 적용하기](primary, kbd `submit`)) → 몸통(머리 줄 밑에서 스크롤): 모니터(영상 자리 + 조작 줄) → 타임라인 패널(제목 `rangeEditor.timeline.title` · 타임라인 · 구간 줄(FieldRow + 칸 둘 + 길이 줄 + [구간 지우기] + 오류 Notice)). 타임라인 패널은 RE-4부터 §2.30 EditorTimeline이다(패널 머리: 제목 · 안내 줄 세 문장 · 확대했을 때만 [전체 보기] `scan`. 보이는 범위 `view`와 따라가기 `following`은 이 화면이 갖는다). 조작 줄은 아직 RE-3의 옛 글자 단추([시작 찍기]·[끝 찍기]·[구간 보기]·[시작부터 보기]·Switch 구간 반복하기)이고 RE-5가 바꾼다.
 
 ```ts
 type RangeEditorProps = {
@@ -735,7 +751,7 @@ Worker: 없다.
 | Spinner·Icon·DropOverlay | `currentColor`, 오버레이 `2px dashed CanvasText` | — | Spinner `animation: none`, 호 유지 |
 | Skeleton·Toolbar | `1px solid GrayText`(비활성 자리표시), 툴바 아래 `1px solid CanvasText` | — | 애니메이션이 없다 |
 | WatchPanel 화면 | `1px solid CanvasText` 윤곽(`<video>`·열리는 중 자리) | — | 애니메이션이 없다 |
-| RangeTimeline | 트랙 `1px solid CanvasText`, 띠 `Highlight`, 시작 앞 가림 `Canvas`, 재생 위치 `CanvasText`, 손잡이 `Highlight` + `1px CanvasText` | — | 애니메이션이 없다 |
+| EditorTimeline | 트랙 `Canvas` + `1px solid CanvasText`(흐림은 그리지 않는다), 띠·손잡이·범위 막대 구간 위치 `Highlight`, 손잡이 테두리 `CanvasText`, 지금 위치선·범위 막대 엄지 `CanvasText`, 화면 밖 손잡이 `Highlight` 면 + chevron `HighlightText` | 손잡이 모양·가장자리 chevron이 위치를 말한다(foundations §2.7) |
 | 포커스 링 | UA가 outline을 시스템 색으로 그린다 | — | — |
 
 ---

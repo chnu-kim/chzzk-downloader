@@ -99,6 +99,14 @@ describe('IconButton', () => {
     expect(btn).toHaveAttribute('aria-pressed', 'true');
     expect(container.querySelector('svg')).not.toHaveClass('icon-md');
   });
+
+  it('hint가 있으면 title만 바꾸고 이름(aria-label)은 label 그대로다(RE-4)', () => {
+    render(IconButton, { icon: 'scan', label: '전체 보기', hint: '전체 보기(0)' });
+    const btn = screen.getByRole('button', { name: '전체 보기' });
+    expect(btn).toHaveAttribute('title', '전체 보기(0)');
+    expect(btn).toHaveAttribute('aria-label', '전체 보기');
+    expect(btn).not.toHaveAttribute('hint');
+  });
 });
 
 describe('Kbd·Spinner', () => {

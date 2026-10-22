@@ -193,6 +193,46 @@
         "unit": "px"
       },
       "$description": "받기 전 미리보기 화면 최대 높이 [잠정] (D64)"
+    },
+    "timeline-label-w": {
+      "$type": "dimension",
+      "$value": {
+        "value": 64,
+        "unit": "px"
+      },
+      "$description": "구간 편집 타임라인 이름 칸 폭(좁은 레이아웃은 layout.css가 0) [잠정] (D67)"
+    },
+    "timeline-lane-h": {
+      "$type": "dimension",
+      "$value": {
+        "value": 48,
+        "unit": "px"
+      },
+      "$description": "구간 편집 타임라인 영상 트랙 높이 [잠정] (D67)"
+    },
+    "timeline-lane-sm-h": {
+      "$type": "dimension",
+      "$value": {
+        "value": 32,
+        "unit": "px"
+      },
+      "$description": "구간 편집 타임라인 소리 트랙 높이 [잠정] (D67)"
+    },
+    "timeline-handle-w": {
+      "$type": "dimension",
+      "$value": {
+        "value": 12,
+        "unit": "px"
+      },
+      "$description": "구간 편집 타임라인 손잡이 보이는 폭(누름 폭은 --hit-min) [잠정] (D67)"
+    },
+    "timeline-band-w": {
+      "$type": "dimension",
+      "$value": {
+        "value": 2,
+        "unit": "px"
+      },
+      "$description": "구간 편집 타임라인 구간 띠 두께. 대비 증가에서는 컴포넌트가 ×1.5 [잠정] (D67)"
     }
   }
 }

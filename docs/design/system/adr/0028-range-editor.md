@@ -1,6 +1,6 @@
 # 0028 미리보기 구간 막대: 네이티브 컨트롤 아래 따로 둔 슬라이더 둘, `--p` 예외를 막대로 넓힘
 
-상태: 채택(잠정)   날짜: 2026-10-20   관련: D65, D64, ADR-0027, `docs/design/features/preview-ux.md` PVU1·PVU4·PVU9·PVU15·PVU16, components.md §2.30, foundations §2.4·§2.7, app.md 116
+상태: 폐기(→ 0030)   날짜: 2026-10-20   관련: D65, D64, ADR-0027, `docs/design/features/preview-ux.md` PVU1·PVU4·PVU9·PVU15·PVU16, components.md §2.30, foundations §2.4·§2.7, app.md 116
 
 ## 맥락
 

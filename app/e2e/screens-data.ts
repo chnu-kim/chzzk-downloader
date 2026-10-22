@@ -147,6 +147,20 @@ const loadEditorMeta = (page: Page, time: number) =>
       v.dispatchEvent(new Event('loadedmetadata'));
     }, time);
 
+/** 타임라인을 Ctrl+휠로 확대한다(트랙 칸의 `at` 비율 x가 중심). 실제 휠 대신 이벤트를 쏜다: 스냅샷이 마우스 위치에 기대지 않게 */
+const zoomEditor = (page: Page, at: number, deltaY = -900) =>
+  editorDialog(page)
+    .locator('.track')
+    .evaluate(
+      (el, [ratio, dy]: readonly [number, number]) => {
+        const r = el.getBoundingClientRect();
+        el.closest('[data-timeline]')!.dispatchEvent(
+          new WheelEvent('wheel', { deltaY: dy, ctrlKey: true, clientX: r.left + r.width * ratio, clientY: r.top + 10, bubbles: true, cancelable: true }),
+        );
+      },
+      [at, deltaY] as const,
+    );
+
 export const SCREENS: Screen[] = [
   {
     id: '홈 빈 상태(첫 실행)',
@@ -334,6 +348,45 @@ export const SCREENS: Screen[] = [
       });
     },
     ready: (p) => editorDialog(p).getByRole('slider', { name: t('range.end') }),
+  },
+  {
+    id: '구간 편집 화면(타임라인 확대)',
+    slug: 'editor-zoomed',
+    scenario: () => ({ resolve: { [R.url]: R } }),
+    drive: async (app, env) => {
+      await openEditorScene(app, env, R.url);
+      await app.page.getByRole('textbox', { name: t('range.start') }).fill('1:00:00');
+      await app.page.getByRole('textbox', { name: t('range.end') }).fill('2:00:00');
+      // 구간 가운데(전체의 약 47%)를 중심으로 확대: 범위 막대와 [전체 보기]가 나오고 두 손잡이가 보이는 범위 안에 있다
+      await zoomEditor(app.page, 0.47, -700);
+    },
+    ready: (p) => editorDialog(p).getByRole('scrollbar'),
+  },
+  {
+    id: '구간 편집 화면(손잡이 하나가 화면 밖)',
+    slug: 'editor-offscreen-end',
+    scenario: () => ({ resolve: { [R.url]: R } }),
+    drive: async (app, env) => {
+      await openEditorScene(app, env, R.url);
+      await app.page.getByRole('textbox', { name: t('range.start') }).fill('0:05:00');
+      await app.page.getByRole('textbox', { name: t('range.end') }).fill('2:30:00');
+      // 왼쪽 끝을 중심으로 확대하면 끝 손잡이(2:30:00)는 보이는 범위 오른쪽 밖에서 가장자리에 붙는다
+      await zoomEditor(app.page, 0.02, -1200);
+    },
+    ready: (p) => editorDialog(p).getByRole('slider', { name: t('range.end') }).and(p.locator('[data-placement="after"]')),
+  },
+  {
+    id: '구간 편집 화면(손잡이 둘이 같은 쪽 밖)',
+    slug: 'editor-offscreen-both',
+    scenario: () => ({ resolve: { [R.url]: R } }),
+    drive: async (app, env) => {
+      await openEditorScene(app, env, R.url);
+      await app.page.getByRole('textbox', { name: t('range.start') }).fill('0:10:00');
+      await app.page.getByRole('textbox', { name: t('range.end') }).fill('0:40:00');
+      // 오른쪽 끝을 중심으로 확대하면 두 손잡이가 모두 왼쪽 밖이라 세로로 반씩 쌓인다
+      await zoomEditor(app.page, 0.98, -1200);
+    },
+    ready: (p) => editorDialog(p).getByRole('slider', { name: t('range.start') }).and(p.locator('[data-stack="top"]')),
   },
   {
     id: '구간 편집 화면(적용 오류)',

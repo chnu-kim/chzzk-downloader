@@ -137,6 +137,12 @@ export const ICONS = {
     'M10 14 21 3',
     'M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6',
   ] },
+  scan: { set: 'lucide', name: 'scan', version: '1.48.0', paths: [
+    'M3 7V5a2 2 0 0 1 2-2h2',
+    'M17 3h2a2 2 0 0 1 2 2v2',
+    'M21 17v2a2 2 0 0 1-2 2h-2',
+    'M7 21H5a2 2 0 0 1-2-2v-2',
+  ] },
 } as const satisfies Record<string, IconDef>;
 
 export type IconName = keyof typeof ICONS;

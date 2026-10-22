@@ -42,7 +42,7 @@
 
 - 바뀌는 문서: README D66 행 끝("→ D67")·D67·ADR 목록·열린 항목 18, components.md §2.29(WatchPanel은 일반 VOD·클립 전용)·RangeEditor·RangeSummary·Sheet·modalLayer, patterns.md §6.5·§8(Esc·키)·§9 F-10·§15, content.md §4·§5.1·§5.2·§15, ADR-0029 상태 `폐기(→ 0030)`, `scripts/design/spec-check.mjs` D 번호 상한 67, `design/copy/terms.json`(`opensWindow` "구간 편집", 용어집 둘).
 - 코드: `ui/modalLayer.ts`·`ui/Sheet.svelte`(새), `Dialog.svelte`(`modalLayer` 사용·`e.repeat` Esc), `receive/RangeEditor.svelte`·`RangeSummary.svelte`(새), `ResolveCard.svelte`(`applied`·`editorOpen`), `WatchPanel.svelte`(일반 VOD·클립 전용), `RangeField.svelte`(삭제), `rangeEdit.ts`(`open`·`begin`·`initialEnd` 삭제), `stores/ui.svelte.ts`(`rangeEditorOpen`), `GlobalShortcuts`·`InputPanel`·`App`(거름), `layout.css`(`.fullsheet-probe`), `ui.css`(`.fullsheet`). command·DTO·bindings는 바뀌지 않는다.
-- 알려진 한계(RE-3): 타임라인은 옛 막대(`RangeTimeline`), 조작 줄은 옛 글자 단추다. RE-4가 타임라인을, RE-5가 조작 줄·키·아이콘 단추를 바꾼다. 갤러리 기준선은 Linux CI에서 받는다.
+- 알려진 한계: RE-3은 타임라인이 옛 막대(`RangeTimeline`), 조작 줄이 옛 글자 단추였다. RE-4가 타임라인(`EditorTimeline`, ADR-0028 폐기)을 바꿨고, RE-5가 조작 줄·키·아이콘 단추를 바꾼다. 갤러리 기준선은 Linux CI에서 받는다.
 - 카드 높이: 빠른 다시보기 카드는 섹션이 없어져 약 1000 → 약 546이 된다(patterns §15).
 - gate: `frontend`, `e2e-web`, `design-tokens`, `design-copy`, `design-lint`, `design-icons`, `scripts-test`(`spec-check.test.mjs`·`adr.test.mjs`), `design-shots`(관찰), `coverage`, `scan`.
 

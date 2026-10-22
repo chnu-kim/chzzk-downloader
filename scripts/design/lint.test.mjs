@@ -460,7 +460,11 @@ test('DX3: <img·<a 에는 draggable="false"', () => {
   assert.deepEqual(got(COMP, svelte('<img src="a" draggable="false" /><a href="b" draggable={false}>x</a>')), []);
 });
 
-test('DX4: wheel·gesture·contextmenu 리스너는 guards.ts에만', () => {
+test('DX4: wheel·gesture·contextmenu 리스너는 guards.ts와 EditorTimeline.svelte(passive:false 확대·이동)에만', () => {
+  // 구간 편집 타임라인은 { passive: false }로 휠을 직접 단다(range-editor.md RE11). 다른 컴포넌트는 안 된다
+  assert.deepEqual(got('app/src/lib/components/receive/EditorTimeline.svelte', svelte("<script>node.addEventListener('wheel', f, { passive: false });</script>")), []);
+  assert.deepEqual(got('app/src/lib/components/receive/EditorTimeline.svelte', svelte("<script>node.addEventListener('contextmenu', f);</script>")), []);
+  assert.deepEqual(got('app/src/lib/components/receive/RangeEditor.svelte', svelte("<script>node.addEventListener('wheel', f);</script>")), ['DX4 wheel']);
   assert.deepEqual(got('app/src/lib/x.ts', "window.addEventListener('wheel', f);"), ['DX4 wheel']);
   assert.deepEqual(got('app/src/lib/x.ts', 'document.addEventListener("contextmenu", f);'), ['DX4 contextmenu']);
   assert.deepEqual(got(COMP, svelte('<div onwheel={f}></div>')), ['DX4 wheel']);

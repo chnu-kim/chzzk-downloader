@@ -47,7 +47,12 @@
     ["fg-muted", "surface-pressed", 3],
     ["border-strong", "track", 3],
     ["danger-ink", "surface", 3],
-    ["danger-ink", "bg", 3]
+    ["danger-ink", "bg", 3],
+    ["accent-ink", "surface-pressed", 3],
+    ["accent-ink", "surface-pressed+range-dim", 3],
+    ["accent-ink", "surface-2+range-dim", 3],
+    ["surface", "accent-ink", 3],
+    ["fg", "surface-pressed+range-dim", 3]
   ],
   "dark": [
     ["fg", "bg", 4.5],
@@ -96,6 +101,11 @@
     ["fg-muted", "surface-pressed", 3],
     ["border-strong", "track", 3],
     ["danger-ink", "surface", 3],
-    ["danger-ink", "bg", 3]
+    ["danger-ink", "bg", 3],
+    ["accent-ink", "surface-pressed", 3],
+    ["accent-ink", "surface-pressed+range-dim", 3],
+    ["accent-ink", "surface-2+range-dim", 3],
+    ["surface", "accent-ink", 3],
+    ["fg", "surface-pressed+range-dim", 3]
   ]
 }

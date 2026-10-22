@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   MIN_VIEW_SECS,
   SNAP_SECS,
+  TICK_LABEL_PX,
   clampView,
   dragViewEdge,
   follow,
@@ -11,16 +12,20 @@ import {
   VIDEO_MIN_H,
   panBy,
   placement,
+  retargetView,
   reveal,
   scrollThumb,
   secsAtX,
   startAtThumbX,
   ticks,
+  visibleTicks,
   wheelIntent,
   wheelPanSecs,
   xOfSecs,
+  zoomAnchor,
   zoomAt,
   zoomFactor,
+  zoomKey,
   zoomed,
   type View,
   type WheelEventLike,
@@ -360,5 +365,68 @@ describe('scrollThumb (§7.5)', () => {
     expect(dragViewEdge(view, 'start', 1599, L, 20).span).toBe(20);
     expect(dragViewEdge(view, 'end', 1001, L, 20).span).toBe(20);
     expect(dragViewEdge(view, 'end', 99999, L, 20)).toEqual({ start: 1000, span: 4400 });
+  });
+});
+
+describe('retargetView (RE-4 시험 12: 길이가 바뀔 때)', () => {
+  it('길이 없음 → 있음: 전체 보기', () => {
+    expect(retargetView(v(0, 0), null, 600, MIN_VIEW_SECS)).toEqual({ start: 0, span: 600 });
+  });
+  it('있음 → 없음: 빈 보기', () => {
+    expect(retargetView(v(100, 200), 600, null, MIN_VIEW_SECS)).toEqual({ start: 0, span: 0 });
+  });
+  it('확대 중이면 새 길이 안으로 자른다', () => {
+    expect(retargetView(v(500, 100), 600, 560, MIN_VIEW_SECS)).toEqual({ start: 460, span: 100 });
+  });
+  it('전체 보기면 새 전체 보기', () => {
+    expect(retargetView(v(0, 600), 600, 300, MIN_VIEW_SECS)).toEqual({ start: 0, span: 300 });
+  });
+  it('같은 길이는 그대로', () => {
+    const view = v(100, 200);
+    expect(retargetView(view, 600, 600, MIN_VIEW_SECS)).toBe(view);
+  });
+});
+
+describe('zoomKey (§9.1 + - 0)', () => {
+  it('+·=는 확대, -·_는 축소, 0은 전체(Shift 허용은 호출부가 수식 키를 거른다)', () => {
+    expect(zoomKey('+')).toBe('in');
+    expect(zoomKey('=')).toBe('in');
+    expect(zoomKey('-')).toBe('out');
+    expect(zoomKey('_')).toBe('out');
+    expect(zoomKey('0')).toBe('fit');
+  });
+  it('그 밖은 null', () => {
+    for (const k of ['1', 'a', 'Enter', ' ', 'ArrowLeft', '']) expect(zoomKey(k)).toBeNull();
+  });
+});
+
+describe('zoomAnchor (키 확대 중심, §7.2)', () => {
+  it('지금 위치선이 보이면 그 시각', () => {
+    expect(zoomAnchor(v(100, 200), 150)).toBe(150);
+  });
+  it('위치가 없거나 범위 밖이면 보이는 범위 가운데', () => {
+    expect(zoomAnchor(v(100, 200), null)).toBe(200);
+    expect(zoomAnchor(v(100, 200), 50)).toBe(200);
+    expect(zoomAnchor(v(100, 200), 301)).toBe(200);
+  });
+});
+
+describe('visibleTicks (눈금 글자가 트랙 오른쪽 밖으로 나가지 않는다)', () => {
+  it('눈금 시작 x + 글자 폭이 트랙 폭을 넘는 눈금은 뺀다', () => {
+    const all = ticks(v(0, 600), 600);
+    expect(all.at(-1)).toBe(600);
+    const got = visibleTicks(v(0, 600), 600);
+    expect(got).toEqual(all.filter((s) => (s / 600) * 600 + TICK_LABEL_PX <= 600));
+    expect(got).not.toContain(600);
+    expect(got).toContain(480);
+  });
+  it('폭이 모자라 하나도 못 들어가면 빈 배열이고, 폭 0이면 빈 배열이다', () => {
+    expect(visibleTicks(v(0, 600), 0)).toEqual([]);
+    expect(visibleTicks(v(1, 20), 50)).toEqual([]);
+  });
+  it('확대한 범위에도 같은 규칙이다', () => {
+    const got = visibleTicks(v(200, 100), 600);
+    for (const s of got) expect(((s - 200) / 100) * 600 + TICK_LABEL_PX).toBeLessThanOrEqual(600);
+    expect(got.at(-1)).toBeLessThan(300);
   });
 });

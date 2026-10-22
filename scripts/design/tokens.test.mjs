@@ -6,7 +6,7 @@ import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } f
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { oklchToSrgb, parseHex, toHex } from './contrast.mjs';
+import { composite, oklchToSrgb, parseHex, toHex } from './contrast.mjs';
 import { HEADER, OUTPUTS, ROOT, SECTIONS, cssName, cssValue, generate, loadModel, main, resolveColor, siteCssOf, splitSections, textScaleValues } from './tokens.mjs';
 
 // CI(GITHUB_ACTIONS=true)에서도 기본 출력 형식(file:line: DT1:)을 보도록 끈다. ::error 형식은 그 테스트가 직접 켠다.
@@ -80,7 +80,7 @@ test('원천 ref hex가 골든 표와 같고 변환값과 1/255 안이다', () =
     assert.ok(t, `${name}: ref 토큰이 없다`);
     assert.equal(t.value.hex, hex, name);
   }
-  assert.equal(model.tokens.filter((t) => t.file === 'ref').length, 39);
+  assert.equal(model.tokens.filter((t) => t.file === 'ref').length, 41);
 });
 
 test('이름 규칙: ref는 --ref-경로, 그 밖은 잎 키', () => {
@@ -96,8 +96,8 @@ test('이름 규칙: ref는 --ref-경로, 그 밖은 잎 키', () => {
 // ---- 모델 ----
 test('모델: 토큰 수·확장 키·대비 쌍 수', () => {
   const m = loadModel(ROOT);
-  assert.equal(m.contrast.light.length, 47);
-  assert.equal(m.contrast.dark.length, 47);
+  assert.equal(m.contrast.light.length, 52);
+  assert.equal(m.contrast.dark.length, 52);
   assert.equal(m.breakpointNarrow, 600);
   assert.deepEqual(m.textScale, { large: 1.3, 'x-large': 2 });
   assert.equal(m.byName.get('--text-hero').rootless, true);
@@ -123,6 +123,24 @@ test('resolveColor: 별칭을 ref까지 따라가고 테마·블록 값을 낸�
   assert.equal(resolveColor(m, '--fg-muted', 'dark', 'contrast').hex, '#E8E8E8');
   assert.equal(resolveColor(m, '--fg-muted', 'light', 'contrast').hex, '#1B1B1B');
   assert.throws(() => resolveColor(m, '--space-8', 'light'), /색 토큰/);
+});
+
+test('resolveColor: "바탕+덮개"는 덮개(알파 색)를 바탕 위에 합성한 불투명 색이다(구간 편집 흐림 위 트랙)', () => {
+  const m = loadModel(ROOT);
+  for (const theme of ['light', 'dark']) {
+    const base = resolveColor(m, '--surface-pressed', theme);
+    const dim = resolveColor(m, '--range-dim', theme);
+    assert.ok(dim.alpha < 1);
+    const got = resolveColor(m, '--surface-pressed+--range-dim', theme);
+    assert.equal(got.alpha, 1);
+    assert.equal(got.hex, composite(dim.hex, dim.alpha, base.hex));
+  }
+  assert.equal(resolveColor(m, '--range-dim', 'light').hex, '#FFFFFF');
+  assert.equal(resolveColor(m, '--range-dim', 'light').alpha, 0.6);
+  assert.equal(resolveColor(m, '--range-dim', 'dark').hex, '#000000');
+  assert.equal(resolveColor(m, '--range-dim', 'dark').alpha, 0.45);
+  assert.throws(() => resolveColor(m, '--surface-pressed+--space-8', 'light'), /색 토큰/);
+  assert.throws(() => resolveColor(m, '--surface-pressed+--surface-2+--scrim', 'light'), /합성/);
 });
 
 // ---- (라) text-scale 유도 ----
@@ -319,6 +337,7 @@ const BAD = [
   ['rootless에 reading 없음', 'type', (j) => { delete j.type.text['text-hero'].$extensions['io.github.chnu-kim.chzzk'].overrides; }, /rootless/],
   ['textScale 없음', 'type', (j) => { delete j.type.$extensions; }, /textScale/],
   ['대비 쌍의 없는 토큰', 'contrast', (j) => { j.light[0] = ['nope', 'bg', 4.5]; }, /sys 색 토큰 nope/],
+  ['대비 쌍 합성 바탕의 없는 토큰', 'contrast', (j) => { j.light[0] = ['fg', 'bg+nope', 4.5]; }, /sys 색 토큰 nope/],
   ['대비 쌍 모양', 'contrast', (j) => { j.light[0] = ['fg', 'bg']; }, /모양/],
   ['폰트 이름 주입', 'type', (j) => { j.type.font['font-sans'].$value[1] = "x'; } body { display:none"; }, /안전하지 않다/],
 ];

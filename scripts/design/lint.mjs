@@ -41,8 +41,8 @@ const WIDTH_QUERY_FILES = new Set([TOKENS_CSS, LAYOUT_CSS, SITE_CSS]);
 const GLOBAL_FILES = new Set([APP_CSS]);
 /** DL5·DT4: `html { font-size: 16px }` 를 둘 수 있는 파일. */
 const HTML_FONT_FILES = new Set([APP_CSS, SITE_CSS]);
-/** DX4: 휠·제스처·컨텍스트 메뉴 리스너를 둘 수 있는 파일 이름. */
-const GUARDS_BASENAME = 'guards.ts';
+/** DX4: 휠·제스처·컨텍스트 메뉴 리스너를 둘 수 있는 파일 이름. guards.ts 말고 구간 편집 타임라인만 휠을 직접 단다({ passive: false }, range-editor.md RE11). */
+const GUARDS_BASENAMES = new Set(['guards.ts', 'EditorTimeline.svelte']);
 /** DX2: `cursor`·`user-select` 선언을 둘 수 있는 전역 CSS. */
 const POINTER_STYLE_FILES = new Set([APP_CSS, SITE_CSS]);
 
@@ -83,7 +83,7 @@ const MSG = {
   DX1: 'data-tauri-drag-region·titleBarStyle·hiddenTitle 금지',
   DX2: 'cursor: not-allowed 금지, cursor·user-select 선언은 전역 CSS에만',
   DX3: '<img·<a 에는 draggable="false"가 필요하다',
-  DX4: 'wheel·gesture·webkitmouseforce·contextmenu 리스너는 guards.ts에만',
+  DX4: 'wheel·gesture·webkitmouseforce·contextmenu 리스너는 guards.ts(와 구간 편집 EditorTimeline.svelte)에만',
   DX5: 'pointer 미디어 쿼리·maxTouchPoints·navigator.platform·userAgent 금지(플랫폼은 Rust가 준다)',
   DX6: 'IME 조합 입력 처리 규칙 위반(isImeKey, Enter 분기, compositionend + setTimeout)',
   DX7: 'navigator.clipboard.readText( 금지',
@@ -657,7 +657,7 @@ function checkSource(rel, src, add, { vocab }) {
     scan(p.text, p.startLine, /matchMedia\(\s*['"`]\s*\((?:any-)?pointer/, (m, ln) => add('DX5', ln, 'matchMedia((pointer'));
     scan(p.text, p.startLine, /maxTouchPoints|navigator\s*\.\s*platform|navigator\s*\.\s*userAgent/, (m, ln) => add('DX5', ln, m[0].replace(/\s+/g, '')));
     scan(p.text, p.startLine, /\b(\w*(?:josa|particle)\w*)\s*\(/i, (m, ln) => add('DX11', ln, m[1]));
-    if (base !== GUARDS_BASENAME) {
+    if (!GUARDS_BASENAMES.has(base)) {
       scan(p.text, p.startLine, /addEventListener\(\s*['"`](wheel|gesturestart|gesturechange|webkitmouseforce\w*|contextmenu)['"`]/, (m, ln) => add('DX4', ln, m[1]));
       scan(p.text, p.startLine, /(?<![\w$.])on:?(wheel|gesturestart|gesturechange|webkitmouseforce\w*|contextmenu)\b/, (m, ln) => add('DX4', ln, m[1]));
     }

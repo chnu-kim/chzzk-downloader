@@ -2,11 +2,13 @@
 // 예시 값(시각·길이·제목)은 모두 가짜다.
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
+import { tick } from 'svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppError, TimeRangeDto, WatchOpenDto } from '../../bindings';
 import { resolved } from '../../../test/fixtures';
 import { t } from '../../copy/ko';
 import { kindLabel } from '../../receive';
+import { platform } from '../../stores/platform.svelte';
 import { ui } from '../../stores/ui.svelte';
 
 vi.mock('../../api', () => ({
@@ -1568,5 +1570,474 @@ describe('영상 크기(monitorSize, RE-3)', () => {
     mount();
     expect(box().style.width).toBe('');
     expect(box().style.height).toBe('');
+  });
+});
+
+// ---- RE-4: 타임라인 패널(확대·이동·안내 줄·전체 보기·키·따라가기·끌기 취소) ----
+describe('타임라인 패널(RE-4)', () => {
+  const group = () => screen.getByRole('group', { name: t('rangeEditor.timeline.title') });
+  const fitBtn = () => screen.queryByRole('button', { name: t('rangeEditor.fit.label') });
+  const sbar = () => screen.queryByRole('scrollbar');
+  const wheelOn = (el: Element, init: WheelEventInit) => {
+    const ev = new WheelEvent('wheel', { cancelable: true, bubbles: true, ...init });
+    el.dispatchEvent(ev);
+    return ev;
+  };
+  /** 휠로 확대한다(Ctrl+위로 굴림). 트랙 폭 600 */
+  async function zoomIn(clientX = 300) {
+    rectOf(track());
+    wheelOn(group(), { deltaY: -300, ctrlKey: true, clientX });
+    await tick();
+  }
+  const pressKey = async (key: string, init: KeyboardEventInit = {}) => {
+    const ev = new KeyboardEvent('keydown', { key, cancelable: true, bubbles: true, ...init });
+    layer().dispatchEvent(ev);
+    await tick();
+    return ev;
+  };
+  const sbNow = () => Number(sbar()!.getAttribute('aria-valuenow'));
+  const setPlaying = (m: ReturnType<typeof mockVideo>) => Object.defineProperty(m.v, 'paused', { configurable: true, value: false });
+
+  afterEach(() => platform.set('linux'));
+
+  it('안내 줄은 세 문장(휠·확대 방법, 앞뒤 도움말, 확대 키)이고 시간 영역의 설명이다. range.help는 한 곳에만 있다', () => {
+    mount();
+    const g = group();
+    const help = document.getElementById(g.getAttribute('aria-describedby') ?? '')!;
+    expect(help).not.toBeNull();
+    expect(help).toHaveTextContent(t('rangeEditor.timeline.help', { mod: 'Ctrl' }));
+    expect(help).toHaveTextContent(t('range.help'));
+    expect(help).toHaveTextContent(t('rangeEditor.timeline.keys', { zoomIn: '+', zoomOut: '-', fit: '0' }));
+    expect(screen.getAllByText(t('range.help'))).toHaveLength(1);
+    // 시각 칸은 이 안내 줄 안의 range.help 문장을 가리킨다
+    const rangeHelp = screen.getByText(t('range.help'));
+    expect(help).toContainElement(rangeHelp);
+    expect((startInput().getAttribute('aria-describedby') ?? '').split(' ')).toContain(rangeHelp.id);
+  });
+
+  it('모니터 영역은 "영상"이라는 이름의 영역이고 패널은 "타임라인"이다', () => {
+    mount();
+    expect(screen.getByRole('region', { name: t('rangeEditor.track.video.label') })).toHaveClass('monitor');
+    expect(screen.getByRole('region', { name: t('rangeEditor.timeline.title') })).toHaveClass('panel');
+  });
+
+  it('macOS는 수식 키가 ⌘로 나온다', () => {
+    platform.set('macos');
+    mount();
+    const help = document.getElementById(group().getAttribute('aria-describedby') ?? '')!;
+    expect(help).toHaveTextContent(t('rangeEditor.timeline.help', { mod: '⌘' }));
+  });
+
+  it('전체 보기에서는 [전체 보기]·범위 막대가 없고, 휠로 확대하면 나타난다. 툴팁은 "전체 보기(0)"', async () => {
+    mount();
+    expect(fitBtn()).toBeNull();
+    expect(sbar()).toBeNull();
+    await zoomIn();
+    const fit = fitBtn()!;
+    expect(fit).not.toBeNull();
+    expect(fit).toHaveAttribute('title', t('shortcut.hint.label', { label: t('rangeEditor.fit.label'), key: '0' }));
+    expect(sbar()).not.toBeNull();
+    fit.click();
+    await waitFor(() => {
+      expect(fitBtn()).toBeNull();
+      expect(sbar()).toBeNull();
+    });
+  });
+
+  it('+ - 0 키: Shift+=도 확대, 결합 전에도 동작, 처리한 키만 preventDefault', async () => {
+    mount();
+    const press = (init: KeyboardEventInit) => {
+      const ev = new KeyboardEvent('keydown', { cancelable: true, bubbles: true, ...init });
+      layer().dispatchEvent(ev);
+      return ev;
+    };
+    expect(press({ key: '+', shiftKey: true }).defaultPrevented).toBe(true);
+    await waitFor(() => expect(sbar()).not.toBeNull());
+    const before = sbar()!.getAttribute('aria-valuetext');
+    expect(press({ key: '-' }).defaultPrevented).toBe(true);
+    await waitFor(() => expect(sbar()).toBeNull());
+    expect(before).toBe(t('rangeEditor.viewport.value.label', { from: '2분 30초', to: '7분 30초' }));
+    press({ key: '=' });
+    await waitFor(() => expect(sbar()).not.toBeNull());
+    expect(press({ key: '0' }).defaultPrevented).toBe(true);
+    await waitFor(() => expect(sbar()).toBeNull());
+  });
+
+  it('Ctrl·Alt·Meta와 함께인 +는 처리하지 않고, 입력칸 안에서는 글자 그대로다', async () => {
+    mount();
+    for (const init of [{ ctrlKey: true }, { altKey: true }, { metaKey: true }]) {
+      const ev = new KeyboardEvent('keydown', { key: '+', cancelable: true, bubbles: true, ...init });
+      layer().dispatchEvent(ev);
+      expect(ev.defaultPrevented).toBe(false);
+    }
+    expect(sbar()).toBeNull();
+    const ev = new KeyboardEvent('keydown', { key: '+', cancelable: true, bubbles: true });
+    startInput().dispatchEvent(ev);
+    expect(ev.defaultPrevented).toBe(false);
+    expect(sbar()).toBeNull();
+  });
+
+  it('IME 조합 중에는 + 를 처리하지 않는다', async () => {
+    mount();
+    const ev = new KeyboardEvent('keydown', { key: '+', isComposing: true, cancelable: true, bubbles: true });
+    layer().dispatchEvent(ev);
+    expect(ev.defaultPrevented).toBe(false);
+    expect(sbar()).toBeNull();
+  });
+
+  it('길이가 20초 미만이면 확대 키가 아무 일도 하지 않는다', () => {
+    mount({ view: resolved({ meta: { ...resolved().meta, durationSecs: 15 } }) });
+    const ev = new KeyboardEvent('keydown', { key: '+', cancelable: true, bubbles: true });
+    layer().dispatchEvent(ev);
+    expect(sbar()).toBeNull();
+  });
+
+  it('키 확대의 중심: 지금 위치선이 보이면 그 시각, 아니면 가운데', async () => {
+    await openEditor();
+    const m = await ready();
+    m.setTime(0);
+    await fireEvent(m.v, new Event('timeupdate'));
+    layer().dispatchEvent(new KeyboardEvent('keydown', { key: '+', cancelable: true, bubbles: true }));
+    // 위치 0이 보이면 0을 중심으로: 보이는 범위는 0부터 300초
+    await waitFor(() => expect(sbar()).toHaveAttribute('aria-valuetext', t('rangeEditor.viewport.value.label', { from: '0초', to: '5분' })));
+  });
+
+  it('끌기 중에는 확대 키도 휠 확대도 무시한다(RE13)', async () => {
+    mount({ applied: range(60000, 300000) });
+    rectOf(track());
+    const thumb = slider(t('range.start'));
+    await fireEvent.pointerDown(thumb, { button: 0, clientX: 60, pointerId: 1 });
+    const ev = new KeyboardEvent('keydown', { key: '+', cancelable: true, bubbles: true });
+    thumb.dispatchEvent(ev);
+    expect(ev.defaultPrevented).toBe(false);
+    expect(wheelOn(group(), { deltaY: -300, ctrlKey: true, clientX: 300 }).defaultPrevented).toBe(true);
+    expect(sbar()).toBeNull();
+    await fireEvent.pointerUp(thumb, { clientX: 60, pointerId: 1 });
+  });
+
+  it('손잡이를 끄는 값은 보이는 범위의 좌표다(확대 뒤)', async () => {
+    mount({ applied: range(300000, 450000) });
+    await zoomIn(); // 가운데(300초) 기준 확대
+    const text = sbar()!.getAttribute('aria-valuetext')!;
+    expect(text).not.toBe('');
+    const thumb = slider(t('range.start'));
+    await fireEvent.pointerDown(thumb, { button: 0, clientX: 300, pointerId: 1 });
+    await fireEvent.pointerMove(thumb, { clientX: 330, pointerId: 1 });
+    await fireEvent.pointerUp(thumb, { clientX: 330, pointerId: 1 });
+    // 확대했으므로 30px는 600초 폭 전체 기준의 30초보다 훨씬 작다
+    const secs = Number(startInput().value.split(':').reduce((a, p) => a * 60 + Number(p), 0));
+    expect(secs).toBeGreaterThan(300);
+    expect(secs).toBeLessThan(330);
+  });
+
+  it('트랙 누름 탐색은 확대한 보이는 범위의 시각이다', async () => {
+    await openEditor();
+    const m = await ready();
+    zoomIn();
+    await fireEvent.pointerDown(track(), { button: 0, clientX: 300, pointerId: 1 });
+    expect(m.writes).toHaveLength(1);
+    expect(m.writes[0]).toBeGreaterThan(200);
+    expect(m.writes[0]).toBeLessThan(400);
+  });
+
+  it('상대 손잡이가 끌기를 제한한다(시작은 끝−1까지)', async () => {
+    mount({ applied: range(60000, 90000) });
+    rectOf(track());
+    const thumb = slider(t('range.start'));
+    await fireEvent.pointerDown(thumb, { button: 0, clientX: 60, pointerId: 1 });
+    await fireEvent.pointerMove(thumb, { clientX: 400, pointerId: 1 });
+    expect(startInput()).toHaveValue('0:01:29');
+  });
+
+  it('끌기 중 Esc는 누르기 전 초안(원래 글자 그대로)으로 되돌리고 편집 화면은 닫지 않는다. 반복 Esc도 닫지 않는다', async () => {
+    const { onclose } = mount({ applied: null });
+    rectOf(track());
+    await user_type_start('0:01:05');
+    const thumb = slider(t('range.start'));
+    await fireEvent.pointerDown(thumb, { button: 0, clientX: 75, pointerId: 1 });
+    await fireEvent.pointerMove(thumb, { clientX: 210, pointerId: 1 });
+    expect(startInput()).toHaveValue('0:03:20');
+    const esc = new KeyboardEvent('keydown', { key: 'Escape', cancelable: true, bubbles: true });
+    thumb.dispatchEvent(esc);
+    await tick();
+    expect(esc.defaultPrevented).toBe(true);
+    expect(startInput()).toHaveValue('0:01:05');
+    expect(onclose).not.toHaveBeenCalled();
+    layer().dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', repeat: true, cancelable: true, bubbles: true }));
+    expect(onclose).not.toHaveBeenCalled();
+    // 놓아도 commit이 없다
+    await fireEvent.pointerUp(thumb, { clientX: 200, pointerId: 1 });
+    expect(startInput()).toHaveValue('0:01:05');
+    // 끌기가 끝났으니 다음 Esc는 닫는다
+    await fireEvent.keyDown(layer(), { key: 'Escape' });
+    expect(onclose).toHaveBeenCalledOnce();
+  });
+
+  async function user_type_start(text: string) {
+    await userEvent.setup().type(startInput(), text);
+  }
+
+  it('Esc 사다리 처리기(포커스가 body일 때)도 끌기 중이면 취소만 하고 닫지 않는다', async () => {
+    const { onclose } = mount({ applied: range(60000, 90000) });
+    rectOf(track());
+    const thumb = slider(t('range.start'));
+    await fireEvent.pointerDown(thumb, { button: 0, clientX: 60, pointerId: 1 });
+    await fireEvent.pointerMove(thumb, { clientX: 20, pointerId: 1 });
+    expect(startInput()).toHaveValue('0:00:20');
+    expect(ui.escape()).toBe(true);
+    await tick();
+    expect(startInput()).toHaveValue('0:01:00');
+    expect(onclose).not.toHaveBeenCalled();
+    expect(ui.escape()).toBe(true);
+    expect(onclose).toHaveBeenCalledOnce();
+  });
+
+  it('화면 밖 손잡이를 누르면 칸 값은 그대로이고 보이는 범위만 옮겨 간다', async () => {
+    mount({ applied: range(10000, 20000) });
+    await zoomIn(600); // 오른쪽 끝을 중심으로 확대: 10~20초 손잡이는 왼쪽 밖
+    const thumb = slider(t('range.start'));
+    expect(thumb).toHaveAttribute('data-placement', 'before');
+    const before = sbNow();
+    await fireEvent.pointerDown(thumb, { button: 0, clientX: 5, pointerId: 1 });
+    expect(startInput()).toHaveValue('0:00:10');
+    expect(sbNow()).toBeLessThan(before);
+    expect(thumb).toHaveAttribute('data-placement', 'inside');
+  });
+
+  it('따라가기: 보는 중 위치선이 범위를 벗어나면 쪽을 넘기고, 휠로 움직이면 멈추고, 다시 보기 시작하면 이어진다', async () => {
+    await openEditor();
+    const m = await ready();
+    setPlaying(m);
+    m.setTime(300);
+    await fireEvent(m.v, new Event('timeupdate'));
+    await pressKey('+');
+    // 지금 위치(300초) 기준 ×2 → {150, 300}
+    expect(sbNow()).toBe(50);
+    // 확대는 따라가기를 끈다: 보기가 시작(play)되면 다시 켜진다
+    await fireEvent(m.v, new Event('play'));
+    m.setTime(580);
+    await fireEvent(m.v, new Event('timeupdate'));
+    await waitFor(() => expect(sbNow()).toBe(100));
+    // 휠로 앞으로 가면 따라가기가 꺼진다
+    rectOf(track());
+    wheelOn(group(), { deltaY: -600 });
+    await waitFor(() => expect(sbNow()).toBeLessThan(100));
+    const kept = sbNow();
+    m.setTime(10);
+    await fireEvent(m.v, new Event('timeupdate'));
+    expect(sbNow()).toBe(kept);
+    // 보기 시작(play 이벤트)에서 다시 켜진다
+    await fireEvent(m.v, new Event('play'));
+    m.setTime(580);
+    await fireEvent(m.v, new Event('timeupdate'));
+    await waitFor(() => expect(sbNow()).toBe(100));
+  });
+
+  it('따라가기는 일시정지 중에는 쪽을 넘기지 않는다', async () => {
+    await openEditor();
+    const m = await ready();
+    m.setTime(300);
+    await fireEvent(m.v, new Event('timeupdate'));
+    await pressKey('+');
+    expect(sbNow()).toBe(50);
+    m.setTime(580);
+    await fireEvent(m.v, new Event('timeupdate'));
+    expect(sbNow()).toBe(50);
+  });
+
+  it('seeked에서도 따라간다', async () => {
+    await openEditor();
+    const m = await ready();
+    setPlaying(m);
+    m.setTime(300);
+    await fireEvent(m.v, new Event('timeupdate'));
+    await pressKey('+');
+    await fireEvent(m.v, new Event('play'));
+    m.setTime(590);
+    await fireEvent(m.v, new Event('seeked'));
+    await waitFor(() => expect(sbNow()).toBe(100));
+  });
+
+  it('+ - 키가 따라가기를 끈다', async () => {
+    await openEditor();
+    const m = await ready();
+    setPlaying(m);
+    m.setTime(300);
+    await fireEvent(m.v, new Event('timeupdate'));
+    await pressKey('+');
+    await pressKey('+');
+    expect(sbNow()).toBe(50);
+    m.setTime(590);
+    await fireEvent(m.v, new Event('timeupdate'));
+    expect(sbNow()).toBe(50);
+    await pressKey('-');
+    m.setTime(5);
+    await fireEvent(m.v, new Event('timeupdate'));
+    const kept = sbNow();
+    await fireEvent(m.v, new Event('timeupdate'));
+    expect(sbNow()).toBe(kept);
+  });
+
+  it('끌기 중에는 따라가기를 적용하지 않는다(범위 고정)', async () => {
+    await openEditor({ applied: range(300000, 400000) });
+    const m = await ready();
+    setPlaying(m);
+    m.setTime(300);
+    await fireEvent(m.v, new Event('timeupdate'));
+    await pressKey('+');
+    const before = sbNow();
+    rectOf(track());
+    const thumb = slider(t('range.end'));
+    await fireEvent.pointerDown(thumb, { button: 0, clientX: 380, pointerId: 1 });
+    m.setTime(590);
+    await fireEvent(m.v, new Event('timeupdate'));
+    expect(sbNow()).toBe(before);
+    await fireEvent.pointerUp(thumb, { clientX: 380, pointerId: 1 });
+  });
+
+  it('길이 변화: 길이를 모르다가 영상이 알려 주면 전체 보기로 나온다. 영상이 닫히면 사라지고 다시 오면 전체 보기다', async () => {
+    vi.mocked(api.watchOpen).mockResolvedValue(hlsOpened());
+    const user = userEvent.setup();
+    render(RangeEditor, { view: noLengthView, applied: null, sizeOf: () => null, onapply: vi.fn(), onclose: vi.fn() } as never);
+    await user.click(screen.getByRole('button', { name: t('watch.start.a11y', { title: noLengthView.meta.title }) }));
+    await waitFor(() => expect(hlsMock.instances).toHaveLength(1));
+    await ready(599.6);
+    expect(sbar()).toBeNull();
+    layer().dispatchEvent(new KeyboardEvent('keydown', { key: '+', cancelable: true, bubbles: true }));
+    await waitFor(() => expect(sbar()).not.toBeNull());
+    hlsError({ fatal: true });
+    await screen.findByRole('alert');
+    expect(sliders()).toHaveLength(0);
+    await user.click(screen.getByRole('button', { name: t('action.retry') }));
+    await waitFor(() => expect(hlsMock.instances).toHaveLength(2));
+    await ready(300);
+    expect(sliders()).toHaveLength(2);
+    expect(sbar()).toBeNull();
+  });
+
+  it('구간 줄·패널 머리에서 굴린 휠은 시간 영역이 처리하지 않는다', () => {
+    mount();
+    rectOf(track());
+    const ev = wheelOn(startInput(), { deltaY: -300, ctrlKey: true, clientX: 300 });
+    expect(ev.defaultPrevented).toBe(false);
+    expect(sbar()).toBeNull();
+  });
+});
+
+// ---- RE-4 리뷰 반영 ----
+describe('리뷰 반영(RE-4)', () => {
+  const group = () => screen.getByRole('group', { name: t('rangeEditor.timeline.title') });
+  const sbar = () => screen.queryByRole('scrollbar');
+  const fitBtn = () => screen.queryByRole('button', { name: t('rangeEditor.fit.label') });
+  const press = async (target: Element, key: string, init: KeyboardEventInit = {}) => {
+    target.dispatchEvent(new KeyboardEvent('keydown', { key, cancelable: true, bubbles: true, ...init }));
+    await tick();
+  };
+  async function zoomed() {
+    await press(layer(), '+');
+    await waitFor(() => expect(sbar()).not.toBeNull());
+  }
+  const helpEl = () => screen.getByText(t('range.help'));
+
+  it('[전체 보기]를 누르면 단추가 사라져도 포커스가 시간 영역으로 간다(body로 떨어지지 않는다)', async () => {
+    mount();
+    await zoomed();
+    fitBtn()!.focus();
+    fitBtn()!.click();
+    await waitFor(() => expect(fitBtn()).toBeNull());
+    expect(document.activeElement).toBe(group());
+  });
+
+  it('범위 막대에서 0을 눌러 전체 보기로 가도 포커스는 시간 영역에 남는다', async () => {
+    mount();
+    await zoomed();
+    sbar()!.focus();
+    await press(sbar()!, '0');
+    await waitFor(() => expect(sbar()).toBeNull());
+    expect(document.activeElement).toBe(group());
+  });
+
+  it('범위 막대에서 -로 전체까지 줄여도 같다', async () => {
+    mount();
+    await zoomed();
+    sbar()!.focus();
+    await press(sbar()!, '-');
+    await waitFor(() => expect(sbar()).toBeNull());
+    expect(document.activeElement).toBe(group());
+  });
+
+  it('다른 곳에 포커스가 있으면 전체 보기가 포커스를 끌어오지 않는다', async () => {
+    mount();
+    await zoomed();
+    h1().focus();
+    await press(layer(), '0');
+    await waitFor(() => expect(sbar()).toBeNull());
+    expect(document.activeElement).toBe(h1());
+  });
+
+  it('길이를 모르는 영상에도 앞뒤 도움말(range.help)이 구간 줄에 남고 시각 칸이 가리킨다', () => {
+    mount({ view: noLengthView });
+    expect(screen.getAllByText(t('range.help'))).toHaveLength(1);
+    expect((startInput().getAttribute('aria-describedby') ?? '').split(' ')).toContain(helpEl().id);
+  });
+
+  it('시각 칸은 안내 줄 전체가 아니라 range.help 문장만 설명으로 가리킨다', () => {
+    mount();
+    const ids = (startInput().getAttribute('aria-describedby') ?? '').split(' ');
+    expect(ids).toContain(helpEl().id);
+    const whole = document.getElementById(group().getAttribute('aria-describedby') ?? '')!;
+    expect(ids).not.toContain(whole.id);
+  });
+
+  it('대체 경로(네이티브 m3u8)에서도 range.help가 한 번 나온다', async () => {
+    hlsMock.FakeHls.supported = false;
+    vi.spyOn(HTMLMediaElement.prototype, 'canPlayType').mockImplementation((type) =>
+      type === 'application/vnd.apple.mpegurl' ? 'maybe' : '',
+    );
+    vi.mocked(api.watchOpen).mockResolvedValue(hlsOpened());
+    const { user } = mount();
+    await user.click(startBtn());
+    const m = mockVideo();
+    await fireEvent(m.v, new Event('loadedmetadata'));
+    await screen.findByText(t('rangeEditor.uncoupled.body'));
+    expect(screen.getAllByText(t('range.help'))).toHaveLength(1);
+  });
+
+  it('끌기 중 타임라인이 사라져도(치명 오류로 길이를 잃음) 확대 키가 영구히 꺼지지 않는다', async () => {
+    vi.mocked(api.watchOpen).mockResolvedValue(hlsOpened());
+    const user = userEvent.setup();
+    render(RangeEditor, { view: noLengthView, applied: null, sizeOf: () => null, onapply: vi.fn(), onclose: vi.fn() } as never);
+    await user.click(screen.getByRole('button', { name: t('watch.start.a11y', { title: noLengthView.meta.title }) }));
+    await waitFor(() => expect(hlsMock.instances).toHaveLength(1));
+    await ready(599.6);
+    rectOf(track());
+    await fireEvent.pointerDown(slider(t('range.start')), { button: 0, clientX: 0, pointerId: 1 });
+    hlsError({ fatal: true });
+    await screen.findByRole('alert');
+    expect(sliders()).toHaveLength(0);
+    await user.click(screen.getByRole('button', { name: t('action.retry') }));
+    await waitFor(() => expect(hlsMock.instances).toHaveLength(2));
+    await ready(300);
+    await press(layer(), '+');
+    await waitFor(() => expect(sbar()).not.toBeNull());
+  });
+
+  it('끌기 중에는 I/O·Space·←/→가 아무것도 바꾸지 않는다(RE13)', async () => {
+    await openEditor({ applied: range(60000, 90000) });
+    const m = await ready();
+    rectOf(track());
+    const thumb = slider(t('range.start'));
+    await fireEvent.pointerDown(thumb, { button: 0, clientX: 60, pointerId: 1 });
+    const before = [startInput().value, endInput().value];
+    const writes = m.writes.length;
+    for (const [k, code] of [['i', 'KeyI'], ['o', 'KeyO'], [' ', 'Space'], ['ArrowRight', 'ArrowRight'], ['ArrowLeft', 'ArrowLeft']]) {
+      layer().dispatchEvent(new KeyboardEvent('keydown', { key: k, code, cancelable: true, bubbles: true }));
+    }
+    thumb.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', cancelable: true, bubbles: true }));
+    await tick();
+    expect([startInput().value, endInput().value]).toEqual(before);
+    expect(m.writes).toHaveLength(writes);
+    expect(m.play).not.toHaveBeenCalledTimes(2);
+    await fireEvent.pointerUp(thumb, { clientX: 60, pointerId: 1 });
   });
 });

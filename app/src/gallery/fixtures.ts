@@ -202,6 +202,7 @@ export const ICON_LABELS: Record<(typeof ICON_BUTTON_ICONS)[number], string> = {
   'eye-off': '값 가리기',
   'arrow-left': '뒤로 가기',
   settings: '설정 열기',
+  scan: '전체 보기',
 };
 
 export const KBD = 'Esc';

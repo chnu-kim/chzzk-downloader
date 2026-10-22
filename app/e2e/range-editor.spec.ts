@@ -331,3 +331,151 @@ test('320×231에서 Shift+Tab으로 거꾸로 돌 때 포커스된 요소가 �
     if (!rect.inHead) expect(rect.top).toBeGreaterThanOrEqual((await headBottom()) - 1);
   }
 });
+
+// ---- RE-4: 타임라인 패널(확대·이동·범위 막대·눈금 두 번 누르기·화면 밖 손잡이·키) ----
+const timeGroup = (app: App) => dialog(app).getByRole('group', { name: t('rangeEditor.timeline.title') });
+const scrollbar = (app: App) => dialog(app).getByRole('scrollbar', { name: t('rangeEditor.viewport.label') });
+const fitBtn = (app: App) => dialog(app).getByRole('button', { name: t('rangeEditor.fit.label') });
+
+/** 트랙 칸 한가운데로 마우스를 옮기고 Ctrl+휠로 확대한다(휠 리스너가 passive:false라 페이지 확대로 새지 않는다) */
+async function ctrlWheel(app: App, deltaY: number, at = 0.5) {
+  const track = dialog(app).locator('.track');
+  await track.evaluate((el) => el.scrollIntoView({ block: 'center' }));
+  const tb = (await track.boundingBox())!;
+  await app.page.mouse.move(tb.x + tb.width * at, tb.y + tb.height / 2);
+  await app.page.keyboard.down('Control');
+  await app.page.mouse.wheel(0, deltaY);
+  await app.page.keyboard.up('Control');
+}
+
+test('Ctrl+휠로 커서를 중심으로 확대하면 범위 막대와 [전체 보기]가 나오고, 휠로 이동하며, [전체 보기]·0 키로 돌아온다', async ({ app }) => {
+  const card = await openCard(app);
+  await editBtn(card).click();
+  await expect(dialog(app)).toBeVisible();
+  await expect(scrollbar(app)).toHaveCount(0);
+  await expect(fitBtn(app)).toHaveCount(0);
+
+  await ctrlWheel(app, -300);
+  await expect(scrollbar(app)).toBeVisible();
+  await expect(fitBtn(app)).toBeVisible();
+  await expect(fitBtn(app)).toHaveAttribute('title', t('shortcut.hint.label', { label: t('rangeEditor.fit.label'), key: '0' }));
+  const text0 = await scrollbar(app).getAttribute('aria-valuetext');
+
+  // 휠(수식 키 없음)은 이동이다
+  await app.page.mouse.wheel(0, 200);
+  await expect.poll(() => scrollbar(app).getAttribute('aria-valuetext')).not.toBe(text0);
+  await app.axe('구간 편집(확대)');
+
+  await fitBtn(app).click();
+  await expect(scrollbar(app)).toHaveCount(0);
+
+  // 키: 시간 영역을 눌러 포커스를 두고 + 로 확대, 0 으로 전체
+  await timeGroup(app).locator('.lane').first().click();
+  await app.page.keyboard.press('+');
+  await expect(scrollbar(app)).toBeVisible();
+  await app.page.keyboard.press('0');
+  await expect(scrollbar(app)).toHaveCount(0);
+});
+
+test('눈금 줄을 두 번 누르면 그 자리를 중심으로 확대한다', async ({ app }) => {
+  const card = await openCard(app);
+  await editBtn(card).click();
+  await expect(dialog(app)).toBeVisible();
+  await dialog(app).locator('.ruler').dblclick({ position: { x: 100, y: 10 } });
+  await expect(scrollbar(app)).toBeVisible();
+});
+
+test('범위 막대: 엄지를 끌어 이동하고, 키로 움직이며, 가장자리를 끌어 폭을 바꾼다', async ({ app }) => {
+  const card = await openCard(app);
+  await editBtn(card).click();
+  await expect(dialog(app)).toBeVisible();
+  await ctrlWheel(app, -600);
+  const sb = scrollbar(app);
+  await expect(sb).toBeVisible();
+  const start0 = Number(await sb.getAttribute('aria-valuenow'));
+
+  const thumb = dialog(app).locator('.sb-thumb');
+  const tb = (await thumb.boundingBox())!;
+  const y = tb.y + tb.height / 2;
+  await app.page.mouse.move(tb.x + tb.width / 2, y);
+  await app.page.mouse.down();
+  await app.page.mouse.move(tb.x + tb.width / 2 + 120, y, { steps: 6 });
+  await app.page.mouse.up();
+  await expect.poll(async () => Number(await sb.getAttribute('aria-valuenow'))).toBeGreaterThan(start0);
+
+  await sb.focus();
+  const before = Number(await sb.getAttribute('aria-valuenow'));
+  await sb.press('Home');
+  await expect(sb).toHaveAttribute('aria-valuenow', '0');
+  expect(before).toBeGreaterThan(0);
+  await sb.press('End');
+  await expect(sb).toHaveAttribute('aria-valuenow', '100');
+
+  // 왼쪽 가장자리를 끌어 폭을 넓힌다: 엄지가 길어지고 반대(오른쪽) 끝 시각은 그대로다
+  const endOf = async () => ((await sb.getAttribute('aria-valuetext')) ?? '').split('부터 ')[1];
+  const end0 = await endOf();
+  const w0 = (await thumb.boundingBox())!.width;
+  const eb = (await dialog(app).locator('.sb-edge[data-edge="start"]').boundingBox())!;
+  await app.page.mouse.move(eb.x + eb.width / 2, eb.y + eb.height / 2);
+  await app.page.mouse.down();
+  await app.page.mouse.move(eb.x + eb.width / 2 - 60, eb.y + eb.height / 2, { steps: 6 });
+  await app.page.mouse.up();
+  await expect.poll(async () => (await thumb.boundingBox())!.width).toBeGreaterThan(w0);
+  expect(await endOf()).toBe(end0);
+});
+
+test('범위 막대: 깊게 확대해도 가장자리를 끌면 반대 끝이 고정이다(엄지 최소 폭)', async ({ app }) => {
+  const card = await openCard(app);
+  await editBtn(card).click();
+  await expect(dialog(app)).toBeVisible();
+  for (let i = 0; i < 4; i++) await ctrlWheel(app, -600);
+  const sb = scrollbar(app);
+  await expect(sb).toBeVisible();
+  const endOf = async () => ((await sb.getAttribute('aria-valuetext')) ?? '').split('부터 ')[1];
+  const end0 = await endOf();
+  const eb = (await dialog(app).locator('.sb-edge[data-edge="start"]').boundingBox())!;
+  await app.page.mouse.move(eb.x + eb.width / 2, eb.y + eb.height / 2);
+  await app.page.mouse.down();
+  await app.page.mouse.move(eb.x + eb.width / 2 - 2, eb.y + eb.height / 2, { steps: 2 });
+  await app.page.mouse.up();
+  expect(await endOf()).toBe(end0);
+});
+
+test('화면 밖 손잡이는 DOM에 남아 있고, 누르면 값은 그대로 두고 보이는 범위만 옮겨 간다', async ({ app }) => {
+  const card = await openCard(app);
+  await editBtn(card).click();
+  await expect(dialog(app)).toBeVisible();
+  await start(app).fill('0:10:00');
+  await end(app).fill('0:20:00');
+  // 오른쪽 끝(영상 뒤쪽)을 중심으로 확대하면 10~20분 손잡이는 왼쪽 밖이다
+  await ctrlWheel(app, -900, 0.98);
+  const startThumb = dialog(app).getByRole('slider', { name: t('range.start') });
+  await expect(startThumb).toHaveAttribute('data-placement', 'before');
+  await app.axe('구간 편집(화면 밖 손잡이)');
+  await startThumb.click();
+  await expect(startThumb).toHaveAttribute('data-placement', 'inside');
+  await expect(start(app)).toHaveValue('0:10:00');
+  await expect(end(app)).toHaveValue('0:20:00');
+});
+
+for (const [label, size] of [
+  ['720×520', { width: 720, height: 520 }],
+  ['320×231', { width: 320, height: 231 }],
+] as const) {
+  test(`${label}에서 확대해도 가로 스크롤이 없다. 좁은 폭은 이름 칸을 접는다`, async ({ app }) => {
+    await app.page.setViewportSize(size);
+    const card = await openCard(app);
+    await editBtn(card).scrollIntoViewIfNeeded();
+    await editBtn(card).click();
+    await expect(dialog(app)).toBeVisible();
+    await start(app).fill('0:10:00');
+    await end(app).fill('0:20:00');
+    await timeGroup(app).locator('.lane').first().scrollIntoViewIfNeeded();
+    await timeGroup(app).locator('.lane').first().click();
+    await app.page.keyboard.press('+');
+    await expect(scrollbar(app)).toBeVisible();
+    await noHorizontalScroll(app);
+    if (size.width < 600) await expect(timeGroup(app)).toHaveClass(/narrow/);
+    await app.axe(`구간 편집(확대 ${label})`);
+  });
+}

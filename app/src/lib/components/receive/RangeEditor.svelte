@@ -5,14 +5,15 @@
   // 레이어는 공용 `modalLayer`로 body 직속에 붙고 다른 층은 inert다(RE1). 붙는 동안 `ui.rangeEditorOpen`이 true라 창 수준 처리기가 거른다(RE15).
   // 세션은 [영상 보기]를 눌렀을 때 연다(RE7, watchSession). 영상과 구간의 결합(`coupled` = hls.js로 붙고 메타데이터를 읽음, PS12/RE8)이 되면
   // 조작 줄·재생 위치·영상 탐색이 켜진다. 그 전에는 타임라인과 칸이 칸 편집기로만 동작한다(손잡이는 초안만 고친다).
-  // RE-3 범위: 타임라인(막대)과 조작 줄은 옛 모양 그대로 이 화면으로 옮겼다(RE-4가 타임라인을, RE-5가 조작 줄을 바꾼다).
+  // 타임라인 패널(RE-4)은 EditorTimeline이 그린다: 보이는 범위 `tview`(확대·이동)와 따라가기 `following`은 이 화면이 갖고,
+  // 컴포넌트는 휠·눈금·범위 막대 조작을 `onview`로 알린다. 조작 줄은 RE-3 모양 그대로다(RE-5가 바꾼다).
   import { onDestroy, onMount, tick, untrack } from 'svelte';
   import * as api from '../../api';
   import type { ResolvedDto, TimeRangeDto } from '../../bindings';
   import { errorCopy } from '../../copy/errors';
   import { t, type CopyKey } from '../../copy/ko';
   import { formatClock } from '../../format/duration';
-  import { shortcutText } from '../../platform';
+  import { EDITOR_KEYS, shortcutText } from '../../platform';
   import {
     consumeOwnSeek,
     mark as markFields,
@@ -28,7 +29,22 @@
     type Handle,
     type PlayMode,
   } from '../../rangeEdit';
-  import { VIDEO_MIN_H, controlsMinW, monitorSize } from '../../rangeView';
+  import {
+    KEY_ZOOM_FACTOR,
+    MIN_VIEW_SECS,
+    VIDEO_MIN_H,
+    controlsMinW,
+    follow,
+    fullView,
+    monitorSize,
+    retargetView,
+    zoomAnchor,
+    zoomAt,
+    zoomKey,
+    zoomed,
+    type View,
+    type ZoomKey,
+  } from '../../rangeView';
   import {
     RANGE_FORMAT_EXAMPLE_SECS,
     applyDraft,
@@ -43,12 +59,13 @@
   import { modKey, ui } from '../../stores/ui.svelte';
   import Button from '../ui/Button.svelte';
   import FieldRow from '../ui/FieldRow.svelte';
+  import IconButton from '../ui/IconButton.svelte';
   import { editable, focusables, isImeKey, trapTab } from '../ui/focus';
   import Notice from '../ui/Notice.svelte';
   import Sheet from '../ui/Sheet.svelte';
   import Switch from '../ui/Switch.svelte';
   import TextField from '../ui/TextField.svelte';
-  import RangeTimeline from './RangeTimeline.svelte';
+  import EditorTimeline from './EditorTimeline.svelte';
   import { WatchSession } from './watchSession.svelte';
 
   interface Props {
@@ -78,6 +95,11 @@
   const subId = `${uid}-sub`;
   const panelTitleId = `${uid}-panel`;
   const errorId = `${uid}-error`;
+  const helpId = `${uid}-help`;
+  /** 안내 줄 안의 range.help 문장 id: 시각 칸이 이 문장만 설명으로 가리킨다 */
+  const rangeHelpId = `${uid}-range-help`;
+  const startFieldId = `${uid}-start`;
+  const endFieldId = `${uid}-end`;
 
   let rootEl: HTMLDivElement | null = $state(null);
   let probeEl: HTMLElement | null = $state(null);
@@ -87,6 +109,7 @@
   let controlsEl: HTMLDivElement | null = $state(null);
   let startEl: HTMLButtonElement | null = $state(null);
   let timelineEl: HTMLElement | null = $state(null);
+  let tl: EditorTimeline | null = $state(null);
   let videoEl: HTMLVideoElement | null = $state(null);
   let startField: HTMLInputElement | null = $state(null);
   let endField: HTMLInputElement | null = $state(null);
@@ -192,6 +215,89 @@
   const len = $derived(timelineLength(durationSecs, videoSecs));
   const sel = $derived(len ? selection(draft, len.secs) : null);
   const barShown = $derived(!!len && !!sel);
+
+  // ---- 보이는 범위·따라가기(RE-4, §7.2·§7.7) ----
+  /** 보이는 범위(초 단위라 창 크기가 바뀌어도 유지된다). 길이가 바뀌면 `retargetView`가 맞춘다(§5.5) */
+  let tview: View = $state(untrack(() => fullView(len?.secs ?? 0)));
+  let lastLen: number | null = untrack(() => len?.secs ?? null);
+  $effect.pre(() => {
+    const L = len?.secs ?? null;
+    untrack(() => {
+      if (L === lastLen) return;
+      tview = retargetView(tview, lastLen, L, MIN_VIEW_SECS);
+      lastLen = L;
+    });
+  });
+  /** 따라가기: 확대돼 있고 보는 중이면 지금 위치선이 보이는 범위를 벗어날 때 쪽을 넘긴다 */
+  let following = $state(true);
+  /** 손잡이를 끄는 중(RE13: 확대 키·범위 조작을 무시한다) */
+  let dragging = $state(false);
+  /** 끌기 시작 때의 초안(Esc 취소로 되돌릴 글자 그대로의 값) */
+  let dragSnap: Fields | null = null;
+  /** 네이티브 m3u8·mp4 대체 경로: 영상 탐색 없이 타임라인과 칸만 쓴다 */
+  const uncoupledNote = $derived(session.phase === 'ready' && !session.usingHls);
+  /**
+   * 안내 줄 문장들(§11): 휠·확대 방법 + 앞뒤 도움말 + 확대 키. 대체 경로는 첫 문장 대신 안내 하나.
+   * 앞뒤 도움말(`range.help`)은 타임라인이 없거나 대체 경로여도 늘 있다(RE-3까지 칸 도움말이었다)
+   */
+  const helpLines = $derived.by((): { text: string; id?: string }[] => {
+    const rangeHelp = { text: t('range.help'), id: rangeHelpId };
+    const keys = { text: t('rangeEditor.timeline.keys', EDITOR_KEYS) };
+    const lead = {
+      text: uncoupledNote ? t('rangeEditor.uncoupled.body') : t('rangeEditor.timeline.help', { mod: shortcutText(platform.os, 'zoomMod') }),
+    };
+    if (!barShown) return uncoupledNote ? [lead, rangeHelp] : [rangeHelp];
+    return [lead, rangeHelp, keys];
+  });
+  /** 시각 칸이 가리키는 설명: range.help 문장만 */
+  const fieldHelpId = rangeHelpId;
+  const fitShown = $derived(barShown && !!len && zoomed(tview, len.secs));
+
+  function fit() {
+    if (!len) return;
+    tview = fullView(len.secs);
+    following = true;
+  }
+
+  // [전체 보기] 단추·범위 막대는 전체 보기가 되면 DOM에서 빠진다: 포커스가 거기 있었으면 시간 영역으로 옮겨
+  // body로 떨어지지 않게 한다(떨어지면 + - 0·I/O·Space 같은 뿌리 키가 모두 먹지 않는다, §9.1·F-4)
+  let fitEl: HTMLElement | null = $state(null);
+  let wasFitShown = false;
+  $effect.pre(() => {
+    const shown = fitShown;
+    untrack(() => {
+      const a = document.activeElement;
+      if (wasFitShown && !shown && a && (fitEl?.contains(a) || a.closest('[role="scrollbar"]'))) {
+        void tick().then(() => {
+          if (focusIsFree() || document.activeElement === document.body) timelineEl?.focus();
+        });
+      }
+      wasFitShown = shown;
+    });
+  });
+
+  /** `+`·`-`·`0`(§9.1): 결합 전에도 동작한다. 끌기 중에는 무시한다 */
+  function zoomByKey(k: ZoomKey) {
+    if (!len || dragging) return;
+    if (k === 'fit') return fit();
+    if (len.secs < MIN_VIEW_SECS) return;
+    const factor = k === 'in' ? KEY_ZOOM_FACTOR : 1 / KEY_ZOOM_FACTOR;
+    tview = zoomAt(tview, factor, zoomAnchor(tview, coupled ? position : null), len.secs, MIN_VIEW_SECS);
+    following = false;
+  }
+
+  /** timeupdate·seeked마다: 켜져 있고 보는 중일 때만 쪽을 넘긴다(끌기 중에는 범위 고정) */
+  function followPosition() {
+    if (!following || dragging || !len || !coupled) return;
+    if (!videoEl || videoEl.paused) return;
+    const next = follow(tview, position, len.secs);
+    if (next !== tview) tview = next;
+  }
+
+  /** 끌기 취소(Esc): 누르기 전 초안으로 되돌린다. commit도 탐색도 없다 */
+  function restoreDrag() {
+    if (dragSnap) changeDraft({ ...dragSnap });
+  }
 
   // ---- 초안 ----
   function setDraft(next: Fields) {
@@ -351,6 +457,7 @@
   function ontimeupdate() {
     if (!videoEl) return;
     position = videoEl.currentTime;
+    followPosition();
     const g = stepSel();
     if (!g) return;
     apply(playStep(playMode, { kind: 'time', t: position, byUs: false }, g), g.start);
@@ -359,11 +466,17 @@
   function onseeked() {
     if (!videoEl) return;
     position = videoEl.currentTime;
+    followPosition();
     const c = consumeOwnSeek(pendingSeek, position);
     pendingSeek = null;
     const g = stepSel();
     if (!g) return void (playMode = 'off');
     apply(playStep(playMode, { kind: 'seeked', t: position, byUs: c.byUs }, g), g.start);
+  }
+
+  /** 보기가 시작되면(어떤 경로든) 따라가기를 다시 켠다(§7.7). 반복 규칙은 RE-5가 같은 처리기에서 맡는다 */
+  function onplay() {
+    following = true;
   }
 
   function onpause() {
@@ -464,10 +577,16 @@
   /**
    * Esc 순서(RE16, 첫 줄은 isImeKey). (0) 길게 누른 Esc는 거르기만 하고 아무것도 닫지 않는다. (2) 영상이 전체 화면이면 preventDefault 없이
    * 전파만 막는다(웹뷰가 전체 화면을 풀고, 창 처리기가 카드를 닫지 않게). (3) 편집 화면을 닫는다(초안을 버린다).
-   * (1) 손잡이 끌기 취소는 새 손잡이가 오는 RE-4가 맡는다(옛 막대에서는 닫으면 끌기도 끝난다)
+   * (1) 손잡이 끌기 취소는 EditorTimeline이 손잡이에서 먼저 받고(전파를 멈춘다), 여기서는 둘째 경로를 맡는다
    */
   function onEscape(e: KeyboardEvent) {
     if (e.repeat) {
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+    // (1) 손잡이 끌기 취소: 손잡이가 먼저 받지만, 포커스가 다른 곳에 있어도 같은 규칙이다
+    if (tl?.cancelDrag()) {
       e.preventDefault();
       e.stopPropagation();
       return;
@@ -511,6 +630,17 @@
     if (rootEl && trapTab(e, rootEl)) return;
     if (e.defaultPrevented || editable(e.target)) return;
     if (e.altKey || e.ctrlKey || e.metaKey) return;
+    // 손잡이를 끄는 동안에는 Esc·Mod+Enter 말고 처리하지 않는다(RE13: 보이는 범위·값·재생이 고정이다)
+    if (dragging) return;
+    // 확대 키는 결합 전에도 쓴다. 끌기 중·타임라인이 없을 때·길이가 모자랄 때는 처리하지 않아 글자 그대로 둔다
+    const zk = zoomKey(e.key);
+    if (zk && barShown && len) {
+      if (zk === 'fit' || len.secs >= MIN_VIEW_SECS) {
+        e.preventDefault();
+        zoomByKey(zk);
+      }
+      return;
+    }
     const v = videoEl;
     if (!v || !coupled || !(e.target instanceof Element)) return;
     const el = e.target;
@@ -554,6 +684,8 @@
   onMount(() => {
     ui.rangeEditorOpen = true;
     const offEscape = ui.onEscape(() => {
+      // 끌기 중이면 취소만 하고 닫지 않는다(받은 것으로 친다)
+      if (tl?.cancelDrag()) return true;
       if (!inFullscreen()) onclose();
       return true;
     });
@@ -568,6 +700,8 @@
   // 영상 상자·조작 줄 폭은 모니터 크기에서 JS 한 곳이 계산한다(CSS만으로는 조작 줄 폭이 영상 폭과 최소 380에 묶이는 것을 못 쓴다).
   // 인라인 style 디렉티브는 쓰지 않는다(DS2): 계산값을 DOM에 직접 쓴다. ResizeObserver가 없으면(jsdom) 쓰지 않아 CSS가 폭 100%·16:9로 둔다
   let sizes: { videoW: number; videoH: number; rowW: number; floor: number } | null = $state(null);
+  /** 좁은 레이아웃인가(표지 신호). 타임라인의 이름 칸을 접는다(§6.3) */
+  let narrowNow = $state(false);
 
   function px(v: string, fallback: number): number {
     const n = Number.parseFloat(v);
@@ -585,6 +719,7 @@
     const controlsH = controlsEl?.offsetHeight ?? 0;
     // 좁은 레이아웃 신호는 layout.css가 표지(.fullsheet-probe)를 block으로 바꾸는 것이다(폭 쿼리는 layout.css에만, DL13)
     const narrow = !!probeEl && getComputedStyle(probeEl).display === 'block';
+    narrowNow = narrow;
     const controlH = px(ss.getPropertyValue('--control-h'), 28);
     const m = monitorSize({ stageW, stageH, controlsH, padTop, narrow, videoMinH: VIDEO_MIN_H, controlsMinW: controlsMinW(controlH) });
     // 좁은 레이아웃은 폭에서 정한 영상 높이를 바닥으로, 그 밖은 하한만 바닥으로 둔다: 이보다 모자라면 몸통이 스크롤된다
@@ -628,7 +763,7 @@
   <div class="body">
     <span class="fullsheet-probe" aria-hidden="true" bind:this={probeEl}></span>
 
-  <section class="monitor" bind:this={monitorEl}>
+  <section class="monitor" aria-label={t('rangeEditor.track.video.label')} bind:this={monitorEl}>
     <!-- 영상 자리: 표지 자리+[영상 보기] | <video controls> | 실패 Notice. 크기는 monitorSize가 정한다 -->
     <div class="videobox" bind:this={videoboxEl}>
       {#if session.phase === 'idle' || session.phase === 'opening'}
@@ -672,6 +807,7 @@
           ondurationchange={ondur}
           {ontimeupdate}
           {onseeked}
+          {onplay}
           {onpause}
           {onended}
         ></video>
@@ -693,22 +829,48 @@
   <section class="panel" aria-labelledby={panelTitleId}>
     <div class="panel-head">
       <h2 id={panelTitleId} class="panel-title">{t('rangeEditor.timeline.title')}</h2>
-      {#if session.phase === 'ready' && !session.usingHls}
-        <p class="note">{t('rangeEditor.uncoupled.body')}</p>
+      {#if helpLines.length > 0}
+        <!-- 안내 줄: 시간 영역의 설명이다. 문장마다 따로 둔다(조각 결합이 아니라 deck 문장 셋) -->
+        <p id={helpId} class="note">
+          {#each helpLines as line (line.text)}<span id={line.id}>{line.text}</span>{' '}{/each}
+        </p>
+      {/if}
+      {#if fitShown}
+        <span class="fit" bind:this={fitEl}>
+          <IconButton
+            icon="scan"
+            label={t('rangeEditor.fit.label')}
+            hint={t('shortcut.hint.label', { label: t('rangeEditor.fit.label'), key: EDITOR_KEYS.fit })}
+            aria-keyshortcuts="0"
+            onclick={fit}
+          />
+        </span>
       {/if}
     </div>
     {#if barShown && len && sel}
-      <!-- 시간 영역: 눌러도 포커스는 이 그룹이 받아 키가 뿌리로 올라간다. 칸 blur 탐색은 이 속성으로 알아본다 -->
-      <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
-      <div class="timeline" role="group" aria-label={t('rangeEditor.timeline.title')} tabindex="-1" data-timeline bind:this={timelineEl}>
-        <RangeTimeline
+      <div class="timeline">
+        <EditorTimeline
+          bind:this={tl}
+          bind:el={timelineEl}
           length={len.secs}
           start={sel.start}
           end={sel.end}
           band={sel.band}
           position={coupled ? position : null}
+          {coupled}
+          narrow={narrowNow}
+          view={tview}
+          describedby={helpId}
+          fieldIds={{ start: startFieldId, end: endFieldId }}
           onmove={moveTo}
           onseek={seek}
+          onview={(v) => (tview = v)}
+          onfollow={(f) => (following = f)}
+          ondrag={(active) => {
+            dragging = active;
+            if (active) dragSnap = { start: draft.start, end: draft.end };
+          }}
+          oncancel={restoreDrag}
         />
       </div>
     {:else}
@@ -716,18 +878,19 @@
     {/if}
 
     <div class="range" role="group" aria-label={t('range.label')}>
-      <FieldRow label={t('range.label')} help={t('range.help')}>
-        {#snippet control({ helpId })}
+      <FieldRow label={t('range.label')}>
+        {#snippet control()}
           <span class="groups">
             <!-- 시작 칸과 `~`는 한 묶음이라 좁은 폭에서도 떨어지지 않는다(PVU-5 V23) -->
             <span class="group">
               <span class="clock">
                 <TextField
+                  id={startFieldId}
                   label={t('range.start')}
                   bind:value={draft.start}
                   bind:el={startField}
                   placeholder={t('range.fromBegin')}
-                  {...fieldProps('start', helpId)}
+                  {...fieldProps('start', fieldHelpId)}
                   oncompositionstart={() => (composingNow = true)}
                   oncompositionend={() => (composingNow = false)}
                   onfocus={() => focusField('start')}
@@ -742,11 +905,12 @@
             <span class="group">
               <span class="clock">
                 <TextField
+                  id={endFieldId}
                   label={t('range.end')}
                   bind:value={draft.end}
                   bind:el={endField}
                   placeholder={t('range.toEnd')}
-                  {...fieldProps('end', helpId)}
+                  {...fieldProps('end', fieldHelpId)}
                   oncompositionstart={() => (composingNow = true)}
                   oncompositionend={() => (composingNow = false)}
                   onfocus={() => focusField('end')}
@@ -870,8 +1034,12 @@
   .panel-head {
     display: flex;
     flex-wrap: wrap;
-    align-items: baseline;
+    align-items: center;
     gap: var(--space-8);
+  }
+  /* 확대했을 때만 있는 [전체 보기]는 머리 오른쪽 끝에 둔다 */
+  .fit {
+    margin-inline-start: auto;
   }
   .panel-title {
     margin: 0;
@@ -887,15 +1055,16 @@
     color: var(--fg);
   }
   .note {
+    flex: 1 1 auto;
+    min-width: 0;
     margin: 0;
     font-size: var(--text-caption);
     line-height: var(--leading-caption);
     color: var(--fg-muted);
   }
-  /* 손잡이의 누름 영역(::before, --hit-min)이 막대 가장자리 밖으로 반쯤 나온다: 몸통이 가로로 스크롤되지 않게 가장자리에서 안쪽으로 들인다 */
+  /* 손잡이의 누름 영역은 EditorTimeline 안에서 안쪽으로 들였다(몸통이 가로로 스크롤되지 않게) */
   .timeline {
     margin-top: var(--space-8);
-    padding-inline: var(--space-8);
   }
   .range {
     margin-top: var(--space-12);

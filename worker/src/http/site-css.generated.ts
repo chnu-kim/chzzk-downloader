@@ -39,8 +39,10 @@ export const SITE_CSS = `/* [root] 라이트 기본값. ref 팔레트와 sys 토
   --ref-black-a10: rgba(0, 0, 0, 0.10);
   --ref-black-a30: rgba(0, 0, 0, 0.30);
   --ref-black-a50: rgba(0, 0, 0, 0.50);
+  --ref-black-a45: rgba(0, 0, 0, 0.45);
   --ref-white-a8: rgba(255, 255, 255, 0.08);
   --ref-white-a10: rgba(255, 255, 255, 0.10);
+  --ref-white-a60: rgba(255, 255, 255, 0.60);
   --bg: var(--ref-gray-965);
   --surface: var(--ref-white);
   --surface-2: var(--ref-gray-930);
@@ -64,6 +66,7 @@ export const SITE_CSS = `/* [root] 라이트 기본값. ref 팔레트와 sys 토
   --warning-soft: var(--ref-amber-96);
   --focus: var(--accent-ink);
   --scrim: var(--ref-black-a30);
+  --range-dim: var(--ref-white-a60);
   --shadow-menu: 0 0 0 1px var(--ref-black-a8), 0 4px 12px rgba(0, 0, 0, 0.14);
   --shadow-toast: 0 0 0 1px var(--ref-black-a8), 0 6px 20px rgba(0, 0, 0, 0.16);
   --shadow-dialog: 0 0 0 1px var(--ref-black-a10), 0 16px 40px rgba(0, 0, 0, 0.22);
@@ -116,6 +119,11 @@ export const SITE_CSS = `/* [root] 라이트 기본값. ref 팔레트와 sys 토
   --label-w: 80px;
   --pct-w: 40px;
   --watch-max-h: 360px;
+  --timeline-label-w: 64px;
+  --timeline-lane-h: 48px;
+  --timeline-lane-sm-h: 32px;
+  --timeline-handle-w: 12px;
+  --timeline-band-w: 2px;
   --content-max: 800px;
   --reading-max: 680px;
   --dialog-w: 440px;
@@ -157,6 +165,7 @@ export const SITE_CSS = `/* [root] 라이트 기본값. ref 팔레트와 sys 토
     --warning-ink: var(--ref-amber-78);
     --warning-soft: var(--ref-amber-33);
     --scrim: var(--ref-black-a50);
+    --range-dim: var(--ref-black-a45);
     --shadow-menu: inset 0 0 0 1px var(--ref-white-a8), 0 4px 12px rgba(0, 0, 0, 0.40);
     --shadow-toast: inset 0 0 0 1px var(--ref-white-a8), 0 6px 20px rgba(0, 0, 0, 0.45);
     --shadow-dialog: inset 0 0 0 1px var(--ref-white-a10), 0 16px 40px rgba(0, 0, 0, 0.55);
@@ -186,6 +195,7 @@ export const SITE_CSS = `/* [root] 라이트 기본값. ref 팔레트와 sys 토
   --warning-ink: var(--ref-amber-78);
   --warning-soft: var(--ref-amber-33);
   --scrim: var(--ref-black-a50);
+  --range-dim: var(--ref-black-a45);
   --shadow-menu: inset 0 0 0 1px var(--ref-white-a8), 0 4px 12px rgba(0, 0, 0, 0.40);
   --shadow-toast: inset 0 0 0 1px var(--ref-white-a8), 0 6px 20px rgba(0, 0, 0, 0.45);
   --shadow-dialog: inset 0 0 0 1px var(--ref-white-a10), 0 16px 40px rgba(0, 0, 0, 0.55);
@@ -2173,4 +2183,4 @@ pre.license {
   }
 }
 `;
-export const SITE_CSS_HASH = "8859ac076bb4262d";
+export const SITE_CSS_HASH = "c64b8154eacca133";

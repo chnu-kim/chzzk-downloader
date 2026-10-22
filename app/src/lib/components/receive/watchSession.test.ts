@@ -1,4 +1,4 @@
-import { type Mock, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { type Mock, afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from 'vitest';
 import type { AppError, WatchOpenDto } from '../../bindings';
 
 vi.mock('../../api', () => ({
@@ -104,12 +104,18 @@ describe('WatchSession', () => {
 
   it('open → ready(hls.js): usingHls, attachMedia 뒤 onready', async () => {
     vi.mocked(api.watchOpen).mockResolvedValue(opened({ kind: 'hls', src: HLS_SRC }));
-    onready.mockImplementation(() => hlsMock.log.push('ready'));
+    // onready가 불린 순간 attachMedia가 이미 끝나 있어야 한다(상태로 본다)
+    let attachedAtReady = false;
+    onready.mockImplementation(() => {
+      attachedAtReady = hlsMock.instances[0]?.attachMedia.mock.calls.length === 1;
+      hlsMock.log.push('ready');
+    });
     const s = make();
     await s.start();
     await settle();
     expect(s.phase).toBe('ready');
     expect(s.usingHls).toBe(true);
+    expect(attachedAtReady).toBe(true);
     expect(hlsMock.instances[0].attachMedia).toHaveBeenCalledWith(video);
     expect(hlsMock.instances[0].loadSource).toHaveBeenCalledWith(HLS_SRC);
     expect(hlsMock.log).toEqual(['attach', 'ready']);
@@ -290,19 +296,41 @@ describe('WatchSession', () => {
     expect(api.watchClose).toHaveBeenCalledTimes(1);
   });
 
+  it('destroy 뒤에 도착한 열기 결과는 바로 닫고 ready로 가지 않는다', async () => {
+    let resolve!: (d: WatchOpenDto) => void;
+    vi.mocked(api.watchOpen).mockReturnValue(new Promise((r) => (resolve = r)));
+    const s = make();
+    const p = s.start();
+    s.destroy();
+    resolve(opened());
+    await p;
+    await settle();
+    expect(api.watchClose).toHaveBeenCalledTimes(1);
+    expect(api.watchClose).toHaveBeenCalledWith(SID);
+    expect(s.phase).toBe('opening');
+    expect(onready).not.toHaveBeenCalled();
+  });
+
   it('no signed URL leaves the controller: 노출 값은 src·phase 등 화면 상태뿐', async () => {
     vi.mocked(api.watchOpen).mockResolvedValue(opened({ kind: 'hls', src: HLS_SRC }));
     const s = make();
     await s.start();
     await settle();
-    // 세션 ID는 어떤 열거 가능한 속성에도 없다(src의 watch: 주소 안에만 있다)
-    const seen = JSON.stringify(Object.fromEntries(Object.keys(s).map((k) => [k, (s as unknown as Record<string, unknown>)[k]])));
-    expect(seen).not.toContain(SID);
-    expect(s.src).toBe('');
-    // 프로토타입의 읽기 값도 마찬가지
+    // 세션 ID는 어떤 열거 가능한 속성에도 없다(Svelte 5 $state 필드는 프로토타입 접근자라 keys로는 비어 있다)
+    const own = Object.keys(s);
+    expect(JSON.stringify(Object.fromEntries(own.map((k) => [k, (s as unknown as Record<string, unknown>)[k]])))).not.toContain(SID);
+    // 공개 이름은 허용 목록과 정확히 같다(새 공개 필드는 이 시험을 고쳐야 들어온다)
     const proto = Object.getOwnPropertyNames(Object.getPrototypeOf(s)).filter((k) => k !== 'constructor');
-    expect(proto).not.toContain('sessionId');
-    expect(proto).not.toContain('id');
-    expect(proto).not.toContain('hls');
+    expect([...proto].sort()).toEqual(
+      ['collapse', 'destroy', 'expand', 'gateError', 'phase', 'src', 'start', 'usingHls', 'videoFailed'].sort(),
+    );
+    // 읽기 값(getter)을 문자열로 만들어도 src 밖에는 세션 ID가 없다
+    for (const k of ['phase', 'gateError', 'usingHls']) {
+      expect(JSON.stringify((s as unknown as Record<string, unknown>)[k] ?? null)).not.toContain(SID);
+    }
+    // 타입 수준: 공개 키 집합 고정
+    expectTypeOf<keyof InstanceType<typeof WatchSession>>().toEqualTypeOf<
+      'phase' | 'src' | 'gateError' | 'usingHls' | 'start' | 'expand' | 'collapse' | 'videoFailed' | 'destroy'
+    >();
   });
 });

@@ -91,7 +91,6 @@
 
   const uid = $props.id();
   const loopId = `${uid}-loop`;
-  /** 영상과 구간의 결합(PS12): hls.js로 붙었고 메타데이터를 읽었을 때만. 찍기·조작 줄·재생 위치·영상 탐색이 모두 이 조건이다(PV17: 네이티브 m3u8은 제외) */
   function resetPlay() {
     playMode = 'off';
     pendingSeek = null;
@@ -151,6 +150,7 @@
     },
   });
 
+  /** 영상과 구간의 결합(PS12): hls.js로 붙었고 메타데이터를 읽었을 때만. 찍기·조작 줄·재생 위치·영상 탐색이 모두 이 조건이다(PV17: 네이티브 m3u8은 제외) */
   const coupled = $derived(session.usingHls && metaReady);
   const gateCopy = $derived(session.gateError ? errorCopy(session.gateError, { place: 'resolve' }) : null);
 

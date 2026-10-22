@@ -714,6 +714,16 @@ describe('트랙 누름·지금 위치선(시험 10)', () => {
     expect(setup({ position: null }).container.querySelector('.position')).toBeNull();
   });
 
+  it('쌓임 순서: 위치선은 흐림·띠 뒤(위)이고 손잡이 앞(아래)이다(DOM 순서)', () => {
+    const { container } = setup({ position: 150 });
+    const after = (a: Node, b: Node) => !!(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+    const shade = container.querySelector('.shade')!;
+    const position = container.querySelector('.position')!;
+    expect(after(shade, position)).toBe(true);
+    expect(after(position, startThumb())).toBe(true);
+    expect(after(position, endThumb())).toBe(true);
+  });
+
   it('확대하면 위치선도 보이는 범위 기준이고, 범위 밖이면 그리지 않는다', () => {
     const a = setup({ view: ZOOMED, position: 250 });
     expect((a.container.querySelector('.position') as HTMLElement).style.getPropertyValue('--p')).toBe('0.5');

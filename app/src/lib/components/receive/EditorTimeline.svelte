@@ -477,6 +477,10 @@
             <span class="band band-bottom" style:--p={bandA}><span class="band-in" style:--p={bandW}></span></span>
           </div>
         {/if}
+        <!-- 지금 위치선: 흐림·띠 위, 손잡이 아래(DOM 순서가 쌓임 순서다). 눈금 줄까지 닿도록 위로 --hit-min만큼 뻗는다 -->
+        {#if coupled && position != null && placement(position, view) === 'inside'}
+          <div class="position" aria-hidden="true" style:--p={xOfSecs(position, 1, view)}></div>
+        {/if}
         {#each ['start', 'end'] as const as h (h)}
           {@const place = placeOf(h)}
           {@const stack = stackOf(h)}
@@ -506,9 +510,6 @@
           </div>
         {/each}
       </div>
-      {#if coupled && position != null && placement(position, view) === 'inside'}
-        <div class="position" aria-hidden="true" style:--p={xOfSecs(position, 1, view)}></div>
-      {/if}
     </div>
   </div>
 </div>
@@ -696,7 +697,7 @@
   /* 지금 위치선: 눈금 줄 위 머리 + 시간 영역 전체 높이. 손잡이보다 아래, 흐림·띠보다 위 */
   .position {
     position: absolute;
-    top: 0;
+    top: calc(0px - var(--hit-min));
     bottom: 0;
     left: calc(var(--p) * 100%);
     width: 0;

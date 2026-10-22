@@ -1,6 +1,6 @@
 # 창 전체 구간 편집 화면(구간 편집 UX 3단계): 명세
 
-**상태·확정 결정(2026-10-22)**: **명세 확정, 구현 전. 열린 질문 없음(§18, 사용자 위임으로 추천안 확정). 적대적 재검토 반영(§19). 외부 검토 두 건(UX·접근성, 계획 정합) 반영(§20).**
+**상태·확정 결정(2026-10-22)**: **구현 완료(RE-1~RE-6, §21), 실측 M-RE-1~9 대기.** 명세 확정 당시 상태: 열린 질문 없음(§18, 사용자 위임으로 추천안 확정). 적대적 재검토 반영(§19). 외부 검토 두 건(UX·접근성, 계획 정합) 반영(§20).**
 
 사용자는 카드 안 "미리보기·구간" 섹션(`preview-ux2.md`, D66)을 써 본 뒤 UI가 별로라고 했다. 그리고 프리미어 프로 Source Monitor처럼 **창 전체를 쓰는 구간 편집 화면**을 원했다. 시안 여럿을 거쳐 **시안 7**로 확정했다. 시안 파일은 저장소 밖 작업 폴더의 `Editor7.dc.html`(보드 `V7Light`·`V7Zoom`·`V7ZoomDark`·`V7SmallZoom`)이다. 진입점 카드는 `V1Card.dc.html`·`Card.dc.html`을 참고하되 문구는 아래 규칙대로 고친다.
 
@@ -971,4 +971,39 @@ UX·접근성·디자인 시스템 렌즈 검토(ux, 22건)와 계획 정합 검
 | L4 | `L = Infinity`·`L < minSpan` 경계가 불변식과 충돌한다 | RE10, §7.1 | 수용 | RE10 불변식 `min(minSpan, L)`, §7.1 유한하지 않은 L → `{0, 0}`, RE-1 시험 1 |
 | L5 | RE-1 gate 열과 완료 조건이 맞지 않는다 | §14.1, RE-1 완료 조건 | 수용 | RE-1 gate에 `e2e-web`·`design-shots` |
 
-- 구현 결과는 RE-6에서 §21로 적는다.
+- 구현 결과는 §21이다.
+
+---
+
+## 21. 구현 결과(RE-6, 2026-10-22)
+
+RE-1~RE-5가 stacked 브랜치로 구현됐다. 아래는 명세와 달라진 점의 요약이고 원문은 app.md 구현 중 변경 123~126이다. 번호 예약(§15)은 어긋나지 않았다(123~126, D67·ADR-0030 그대로, core.md·command·DTO·bindings 변경 없음).
+
+### 21.1 PR과 번호
+
+| PR | 브랜치 | 구현 중 변경 | 비고 |
+|---|---|---|---|
+| RE-1 순수 모델 | `refactor/range-editor-model` | (번호 없음) | `rangeView.ts`, `applyDraft`·`draftOf`·`rangeSummary`·`lengthLine`. 화면 무변경 |
+| RE-2 세션 수명 추출 | `refactor/watch-session` | app.md 123 | `WatchSession`(`watchSession.svelte.ts`). 동작 무변경 |
+| RE-3 셸·상태·진입 | `feat/range-editor-shell` | app.md 124, D67·ADR-0030 | `modalLayer`·`Sheet`·`RangeEditor`·`RangeSummary`, ADR-0029 `폐기(→ 0030)` |
+| RE-4 타임라인 | `feat/range-editor-timeline` | app.md 125 | `EditorTimeline`, `RangeTimeline` 삭제, ADR-0028 `폐기(→ 0030)` |
+| RE-5 조작 줄·반복·키 | `feat/range-editor-controls` | app.md 126 | 아이콘 단추 일곱, `onplay` 한 곳의 반복 규칙, 키 우선순위 |
+| RE-6 문서 마감 | `chore/range-editor-docs` | (번호 없음) | 이 절, 기능 안내·계획·ROADMAP |
+
+PR 번호는 머지 때 ROADMAP에 채운다.
+
+### 21.2 명세와 달라진 점(가장 작은 타당한 선택, 원문은 app.md 124~126)
+
+- **RE-3**: 새 CSS 토큰 대신 코드 상수(`VIDEO_MIN_H` 90, `controlsMinW` = 7×`--control-h` + 184, 28 → 380·coarse 40 → 464). 좁은 레이아웃 신호는 `--layout-narrow`(DL7 위반) 대신 보이지 않는 표지 `.fullsheet-probe`를 `getComputedStyle`로 읽는다. 레이어 뿌리는 `ui/Sheet.svelte`로 뽑았다(`role="dialog"`는 `ui/` 안만, `--z-dialog` 한 파일). 머리 줄은 sticky가 아니라 고정 줄이고 몸통만 스크롤된다.
+- **RE-4**: 대비 쌍 `fg / accent-ink`(§7.8)는 라이트 2.79·다크 1.89라 3:1을 못 넘어 넣지 않았다(지금 위치선은 손잡이 아래라 겹치지 않는다). 합성 바탕 쌍 이름 `a+b`를 `tokens.mjs`에 더했다. 눈금 글자가 트랙 밖으로 넘치면 그리지 않는다(`visibleTicks`). 휠 리스너 허용(DX4)을 `EditorTimeline.svelte`까지 넓혔다. 토큰 생성이 `worker/src/http/site-css.generated.ts`를 바꿔 CI `worker` 작업이 돈다(손으로 고친 Worker 코드는 없다). 범위 막대 가장자리 끌기는 누른 점의 이동량으로 계산한다(엄지 최소 폭 튐 방지).
+- **RE-5**: 반복 토글은 `Button` ghost + `aria-pressed`(secondary는 늘 테두리가 있어 "꺼짐은 테두리 없음"이 성립하지 않는다). 토글은 결합 전에도 켤 수 있다. 시작 ≥ 끝이면 반복이 걸리지 않는다. 조작 줄은 `EditorControls.svelte`로 뽑지 않고 `RangeEditor` 안에 두었다(상태 여럿을 공유해 얕은 컴포넌트가 되는 것을 피함). 결합 전에는 `<video>` 처리기가 반복 규칙을 돌리지 않는다. `playByUs` 표식은 두지 않았다.
+
+### 21.3 남은 것
+
+- **사용자 실측 M-RE-1~9**(§17). 특히 M-RE-1(핀치 전달 방식), M-RE-2(휠 단위·한글 입력 `keyCode` 229), M-RE-6(화면 낭독기), M-RE-8(초안을 잃고 놀라는지)이 D67·ADR-0030을 `확정`으로 바꿀 조건이다. 그때까지 `채택(잠정)`을 유지한다(E0~E1).
+- **갤러리 기준선**: `editor-*`·`card-range*` 등 새 장면은 Linux CI에서만 만든다(`node scripts/design/shots.mjs --accept <run id>`).
+- **후속(§16)**: 트랙패드 `gesture*` 핀치, 스타일 툴팁, 확대 배율·최소 구간 조정, 닫기 확인 대화상자, 가장자리 자동 이동.
+
+### 21.4 ratchet(사람)
+
+`tests.vitest`·`tests.playwright`·`size.dist_gz` 기준은 CI 녹색 실행 뒤 사람이 올린다(`node scripts/ci/ratchet.mjs write --from-run <run id>`). 로컬 측정(macOS)의 `coverage_lines.rust` 차이는 기준에 반영하지 않는다.

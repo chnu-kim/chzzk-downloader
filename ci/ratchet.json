@@ -32,10 +32,10 @@
     },
     "bundle": {
       "linux-AppImage": 88558072,
-      "linux-deb": 11210568,
-      "darwin-dmg": 8746406,
-      "windows-setup": 8358832,
-      "windows-msi": 12386304
+      "linux-deb": 11465658,
+      "darwin-dmg": 8975427,
+      "windows-setup": 8575995,
+      "windows-msi": 12689408
     },
     "tolerance_pct": 3
   },

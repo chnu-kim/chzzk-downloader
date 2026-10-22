@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import {
   clampHandle,
   consumeOwnSeek,
-  fractionOf,
   handleBounds,
   handleKey,
   mark,
@@ -10,7 +9,6 @@ import {
   nudge,
   playStep,
   reachesEnd,
-  secsAt,
   seekKey,
   seekTargetOf,
   selection,
@@ -80,35 +78,6 @@ describe('handleBounds (모든 행에서 min ≤ now ≤ max)', () => {
   it('소수 길이는 내림', () => {
     const sel = selection(open('0:00:10', ''), 599.6);
     expect(handleBounds('end', sel, 599.6)).toEqual({ min: 11, max: 599 });
-  });
-});
-
-describe('fractionOf · secsAt', () => {
-  it.each([
-    [0, 600, 0],
-    [600, 600, 1],
-    [300, 600, 0.5],
-    [-5, 600, 0],
-    [9999, 600, 1],
-    [5, 0, 0],
-    [5, Number.NaN, 0],
-    [Number.NaN, 600, 0],
-  ] as [number, number, number][])('fractionOf(%s, %s) = %s', (s, len, want) => {
-    expect(fractionOf(s, len)).toBe(want);
-  });
-
-  it.each([
-    [0, 600, 0],
-    [1, 600, 600],
-    [0.5, 600, 300],
-    [-0.2, 600, 0],
-    [1.5, 600, 600],
-    [0.9998, 600, 599],
-    [1, 599.6, 599],
-    [0.5, 0, 0],
-    [Number.NaN, 600, 0],
-  ] as [number, number, number][])('secsAt(%s, %s) = %s (내림)', (f, len, want) => {
-    expect(secsAt(f, len)).toBe(want);
   });
 });
 

@@ -4,6 +4,7 @@
   // x와 폭은 트랙 칸(.track)의 rect에서 잰다(이름 칸을 뺀 시간 축. group의 rect를 쓰면 이름 칸만큼 어긋난다, §7.4).
   // 이 컴포넌트는 값을 고치지 않는다: 손잡이는 `onmove`(초안 쪽 계산은 부모), 보이는 범위는 `onview`, 탐색은 `onseek`으로 알린다.
   // 끌기 중에는 보이는 범위가 고정이다(RE13): 휠은 `preventDefault`만 하고 범위 막대·눈금 조작은 부모가 `dragging`으로 막는다.
+  import { onDestroy } from 'svelte';
   import { t } from '../../copy/ko';
   import { formatClock, formatClockLong } from '../../format/duration';
   import { clampHandle, handleBounds, handleKey, type Handle } from '../../rangeEdit';
@@ -47,6 +48,8 @@
     describedby?: string;
     /** 좁은 레이아웃: 이름 칸을 접는다(트랙 이름은 장식이라 정보 손실이 없다, §6.3). 신호는 부모가 읽는다(DL13) */
     narrow?: boolean;
+    /** 구간 줄 칸의 id: 손잡이 slider의 `aria-controls`(같은 쪽 칸, §7.4) */
+    fieldIds?: { start: string; end: string };
     /** 시간 영역 group 요소(칸 blur 탐색의 예외 판정·포커스 보관용) */
     el?: HTMLElement | null;
     onmove: (h: Handle, secs: number, phase: 'drag' | 'commit') => void;
@@ -70,6 +73,7 @@
     view,
     describedby,
     narrow = false,
+    fieldIds,
     el = $bindable(null),
     onmove,
     onseek,
@@ -164,6 +168,11 @@
     ondrag?.(false);
   }
 
+  // 끌기 중에 사라지면(길이를 잃는 등) 부모의 `dragging`이 남지 않게 끝났다고 알린다
+  onDestroy(() => {
+    if (drag) endDrag();
+  });
+
   /** 끌기를 취소한다. 끌고 있지 않았으면 false (Esc 사다리 처리기가 받은 것으로 칠지 정한다) */
   export function cancelDrag(): boolean {
     const d = drag;
@@ -197,11 +206,20 @@
     }
   }
 
+  /**
+   * 끌기 값: 보이는 범위 안으로 자른다(RE13: 끌기 중에는 범위가 고정이고 가장자리 자동 이동은 없다).
+   * 부모가 값을 내림하므로 보이는 범위가 실수여도(휠 확대 뒤) 안쪽 정수가 되게 하한은 올림, 상한은 내림으로 자른다
+   */
+  function dragSecs(x: number): number {
+    const v = secsAtX(x, trackRect().width, view);
+    const lo = Math.ceil(view.start);
+    const hi = Math.floor(view.start + view.span);
+    return lo > hi ? v : Math.min(hi, Math.max(lo, v));
+  }
+
   function move(h: Handle, e: PointerEvent) {
     if (!drag || drag.h !== h) return;
-    const r = trackRect();
-    // 보이는 범위 밖은 자른다(RE13: 끌기 중에는 범위가 고정이고 가장자리 자동 이동은 없다)
-    const v = secsAtX(e.clientX - drag.offset - r.left, r.width, view);
+    const v = dragSecs(e.clientX - drag.offset - trackRect().left);
     drag.last = v;
     onmove(h, v, 'drag');
   }
@@ -213,8 +231,7 @@
     let v: number | null = null;
     if (e.type === 'pointercancel') v = d.last;
     else if (d.last != null) {
-      const r = trackRect();
-      v = secsAtX(e.clientX - d.offset - r.left, r.width, view);
+      v = dragSecs(e.clientX - d.offset - trackRect().left);
     }
     endDrag();
     if (v != null) onmove(h, v, 'commit');
@@ -230,6 +247,8 @@
       cancelDrag();
       return;
     }
+    // 끌기 중에는 Esc 말고 값도 보이는 범위도 바꾸지 않는다(RE13)
+    if (drag) return;
     const step = handleKey(e.key, { shift: e.shiftKey, alt: e.altKey, ctrl: e.ctrlKey, meta: e.metaKey });
     if (step == null) return;
     e.preventDefault();
@@ -317,7 +336,8 @@
     }),
   );
 
-  type SbDrag = { kind: 'move' | 'start' | 'end'; offset: number; node: HTMLElement; pointerId: number };
+  /** base = 누를 때의 보이는 범위, x0 = 누른 clientX. 가장자리 끌기는 누른 점에서의 이동량(px)만 시간으로 바꾼다 */
+  type SbDrag = { kind: 'move' | 'start' | 'end'; offset: number; node: HTMLElement; pointerId: number; base: View; x0: number };
   let sbDrag: SbDrag | null = null;
   let sbEl: HTMLDivElement | null = $state(null);
 
@@ -335,7 +355,7 @@
     const th = scrollThumb(view, length, bar.width, hitMin());
     const anchor = kind === 'move' ? th.x : kind === 'start' ? th.x : th.x + th.w;
     const node = e.currentTarget as HTMLElement;
-    sbDrag = { kind, offset: e.clientX - bar.left - anchor, node, pointerId: e.pointerId };
+    sbDrag = { kind, offset: e.clientX - bar.left - anchor, node, pointerId: e.pointerId, base: view, x0: e.clientX };
     onfollow?.(false);
     try {
       node.setPointerCapture?.(e.pointerId);
@@ -346,20 +366,33 @@
 
   function sbMove(kind: SbDrag['kind'], e: PointerEvent) {
     if (!sbDrag || sbDrag.kind !== kind) return;
+    // 다른 포인터의 움직임이거나 누르지 않은 마우스 움직임이면 낡은 끌기 상태다(놓음을 못 받은 경우): 지우고 무시한다
+    if (e.pointerId !== sbDrag.pointerId || (e.pointerType === 'mouse' && e.buttons === 0)) {
+      sbDrag = null;
+      return;
+    }
     const bar = barRect();
-    const x = e.clientX - bar.left - sbDrag.offset;
     if (kind === 'move') {
+      const x = e.clientX - bar.left - sbDrag.offset;
       setView({ start: startAtThumbX(x, view, length, bar.width, hitMin()), span: view.span });
       return;
     }
-    // 가장자리 끌기: 반대쪽 끝을 고정하고 span을 바꾼다. 막대 x를 시간으로 옮긴다(엄지가 비례 폭일 때 정확하다)
+    // 가장자리 끌기: 반대쪽 끝을 고정하고 움직인 끝만 옮긴다. 엄지 폭은 최소 폭 때문에 시간에 비례하지 않으므로
+    // 엄지 위치가 아니라 누른 점에서의 이동량(px)을 막대 비율(길이/폭)로 시간에 옮긴다
     if (!(bar.width > 0)) return;
-    setView(dragViewEdge(view, kind, (x / bar.width) * length, length, MIN_VIEW_SECS));
+    const b = sbDrag.base;
+    const dSecs = ((e.clientX - sbDrag.x0) / bar.width) * length;
+    setView(dragViewEdge(b, kind, (kind === 'start' ? b.start : b.start + b.span) + dSecs, length, MIN_VIEW_SECS));
   }
 
   function sbUp() {
     sbDrag = null;
   }
+
+  // 가장자리 끌기로 전체 보기에 닿으면 막대가 끌기 도중 사라져 놓음이 오지 않는다: 낡은 끌기 상태를 지운다
+  $effect.pre(() => {
+    if (!isZoomed) sbDrag = null;
+  });
 
   /** 엄지 밖 막대를 누르면 그쪽으로 1 span 옮긴다 */
   function sbDown(e: PointerEvent) {
@@ -493,6 +526,7 @@
               data-placement={place}
               data-stack={stack ?? undefined}
               aria-label={t(h === 'start' ? 'range.start' : 'range.end')}
+              aria-controls={fieldIds?.[h]}
               aria-valuemin={bounds[h].min}
               aria-valuemax={bounds[h].max}
               aria-valuenow={valueNow(h)}

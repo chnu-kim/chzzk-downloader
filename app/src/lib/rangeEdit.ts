@@ -64,18 +64,6 @@ export function handleBounds(h: Handle, sel: Selection, len: number): { min: num
   return h === 'start' ? { min: 0, max: sel.end - 1 } : { min: sel.start + 1, max };
 }
 
-/** 막대 위 비율. 0..1로 자른다. 길이가 이상하면 0 */
-export function fractionOf(secs: number, len: number): number {
-  if (!(Number.isFinite(len) && len > 0) || Number.isNaN(secs)) return 0;
-  return Math.min(1, Math.max(0, secs / len));
-}
-
-/** 막대 위 비율 → 초. 0..1로 자르고 내림 */
-export function secsAt(fraction: number, len: number): number {
-  if (!(Number.isFinite(len) && len > 0) || Number.isNaN(fraction)) return 0;
-  return Math.floor(Math.min(1, Math.max(0, fraction)) * len);
-}
-
 /**
  * 손잡이 값 자르기(PVU6): other가 수면 start ∈ [0, other−1], end ∈ [other+1, floor(len)].
  * other가 null이면(band=false, PVU9) [0, floor(len)]만. len < 2면 null(고칠 수 없음). 소수 secs는 내림.

@@ -1609,8 +1609,10 @@ describe('타임라인 패널(RE-4)', () => {
     expect(help).toHaveTextContent(t('range.help'));
     expect(help).toHaveTextContent(t('rangeEditor.timeline.keys', { zoomIn: '+', zoomOut: '-', fit: '0' }));
     expect(screen.getAllByText(t('range.help'))).toHaveLength(1);
-    // 시각 칸도 이 설명을 가리킨다
-    expect((startInput().getAttribute('aria-describedby') ?? '').split(' ')).toContain(help.id);
+    // 시각 칸은 이 안내 줄 안의 range.help 문장을 가리킨다
+    const rangeHelp = screen.getByText(t('range.help'));
+    expect(help).toContainElement(rangeHelp);
+    expect((startInput().getAttribute('aria-describedby') ?? '').split(' ')).toContain(rangeHelp.id);
   });
 
   it('모니터 영역은 "영상"이라는 이름의 영역이고 패널은 "타임라인"이다', () => {
@@ -1919,5 +1921,123 @@ describe('타임라인 패널(RE-4)', () => {
     const ev = wheelOn(startInput(), { deltaY: -300, ctrlKey: true, clientX: 300 });
     expect(ev.defaultPrevented).toBe(false);
     expect(sbar()).toBeNull();
+  });
+});
+
+// ---- RE-4 리뷰 반영 ----
+describe('리뷰 반영(RE-4)', () => {
+  const group = () => screen.getByRole('group', { name: t('rangeEditor.timeline.title') });
+  const sbar = () => screen.queryByRole('scrollbar');
+  const fitBtn = () => screen.queryByRole('button', { name: t('rangeEditor.fit.label') });
+  const press = async (target: Element, key: string, init: KeyboardEventInit = {}) => {
+    target.dispatchEvent(new KeyboardEvent('keydown', { key, cancelable: true, bubbles: true, ...init }));
+    await tick();
+  };
+  async function zoomed() {
+    await press(layer(), '+');
+    await waitFor(() => expect(sbar()).not.toBeNull());
+  }
+  const helpEl = () => screen.getByText(t('range.help'));
+
+  it('[전체 보기]를 누르면 단추가 사라져도 포커스가 시간 영역으로 간다(body로 떨어지지 않는다)', async () => {
+    mount();
+    await zoomed();
+    fitBtn()!.focus();
+    fitBtn()!.click();
+    await waitFor(() => expect(fitBtn()).toBeNull());
+    expect(document.activeElement).toBe(group());
+  });
+
+  it('범위 막대에서 0을 눌러 전체 보기로 가도 포커스는 시간 영역에 남는다', async () => {
+    mount();
+    await zoomed();
+    sbar()!.focus();
+    await press(sbar()!, '0');
+    await waitFor(() => expect(sbar()).toBeNull());
+    expect(document.activeElement).toBe(group());
+  });
+
+  it('범위 막대에서 -로 전체까지 줄여도 같다', async () => {
+    mount();
+    await zoomed();
+    sbar()!.focus();
+    await press(sbar()!, '-');
+    await waitFor(() => expect(sbar()).toBeNull());
+    expect(document.activeElement).toBe(group());
+  });
+
+  it('다른 곳에 포커스가 있으면 전체 보기가 포커스를 끌어오지 않는다', async () => {
+    mount();
+    await zoomed();
+    h1().focus();
+    await press(layer(), '0');
+    await waitFor(() => expect(sbar()).toBeNull());
+    expect(document.activeElement).toBe(h1());
+  });
+
+  it('길이를 모르는 영상에도 앞뒤 도움말(range.help)이 구간 줄에 남고 시각 칸이 가리킨다', () => {
+    mount({ view: noLengthView });
+    expect(screen.getAllByText(t('range.help'))).toHaveLength(1);
+    expect((startInput().getAttribute('aria-describedby') ?? '').split(' ')).toContain(helpEl().id);
+  });
+
+  it('시각 칸은 안내 줄 전체가 아니라 range.help 문장만 설명으로 가리킨다', () => {
+    mount();
+    const ids = (startInput().getAttribute('aria-describedby') ?? '').split(' ');
+    expect(ids).toContain(helpEl().id);
+    const whole = document.getElementById(group().getAttribute('aria-describedby') ?? '')!;
+    expect(ids).not.toContain(whole.id);
+  });
+
+  it('대체 경로(네이티브 m3u8)에서도 range.help가 한 번 나온다', async () => {
+    hlsMock.FakeHls.supported = false;
+    vi.spyOn(HTMLMediaElement.prototype, 'canPlayType').mockImplementation((type) =>
+      type === 'application/vnd.apple.mpegurl' ? 'maybe' : '',
+    );
+    vi.mocked(api.watchOpen).mockResolvedValue(hlsOpened());
+    const { user } = mount();
+    await user.click(startBtn());
+    const m = mockVideo();
+    await fireEvent(m.v, new Event('loadedmetadata'));
+    await screen.findByText(t('rangeEditor.uncoupled.body'));
+    expect(screen.getAllByText(t('range.help'))).toHaveLength(1);
+  });
+
+  it('끌기 중 타임라인이 사라져도(치명 오류로 길이를 잃음) 확대 키가 영구히 꺼지지 않는다', async () => {
+    vi.mocked(api.watchOpen).mockResolvedValue(hlsOpened());
+    const user = userEvent.setup();
+    render(RangeEditor, { view: noLengthView, applied: null, sizeOf: () => null, onapply: vi.fn(), onclose: vi.fn() } as never);
+    await user.click(screen.getByRole('button', { name: t('watch.start.a11y', { title: noLengthView.meta.title }) }));
+    await waitFor(() => expect(hlsMock.instances).toHaveLength(1));
+    await ready(599.6);
+    rectOf(track());
+    await fireEvent.pointerDown(slider(t('range.start')), { button: 0, clientX: 0, pointerId: 1 });
+    hlsError({ fatal: true });
+    await screen.findByRole('alert');
+    expect(sliders()).toHaveLength(0);
+    await user.click(screen.getByRole('button', { name: t('action.retry') }));
+    await waitFor(() => expect(hlsMock.instances).toHaveLength(2));
+    await ready(300);
+    await press(layer(), '+');
+    await waitFor(() => expect(sbar()).not.toBeNull());
+  });
+
+  it('끌기 중에는 I/O·Space·←/→가 아무것도 바꾸지 않는다(RE13)', async () => {
+    await openEditor({ applied: range(60000, 90000) });
+    const m = await ready();
+    rectOf(track());
+    const thumb = slider(t('range.start'));
+    await fireEvent.pointerDown(thumb, { button: 0, clientX: 60, pointerId: 1 });
+    const before = [startInput().value, endInput().value];
+    const writes = m.writes.length;
+    for (const [k, code] of [['i', 'KeyI'], ['o', 'KeyO'], [' ', 'Space'], ['ArrowRight', 'ArrowRight'], ['ArrowLeft', 'ArrowLeft']]) {
+      layer().dispatchEvent(new KeyboardEvent('keydown', { key: k, code, cancelable: true, bubbles: true }));
+    }
+    thumb.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', cancelable: true, bubbles: true }));
+    await tick();
+    expect([startInput().value, endInput().value]).toEqual(before);
+    expect(m.writes).toHaveLength(writes);
+    expect(m.play).not.toHaveBeenCalledTimes(2);
+    await fireEvent.pointerUp(thumb, { clientX: 60, pointerId: 1 });
   });
 });

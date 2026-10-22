@@ -96,6 +96,10 @@
   const panelTitleId = `${uid}-panel`;
   const errorId = `${uid}-error`;
   const helpId = `${uid}-help`;
+  /** 안내 줄 안의 range.help 문장 id: 시각 칸이 이 문장만 설명으로 가리킨다 */
+  const rangeHelpId = `${uid}-range-help`;
+  const startFieldId = `${uid}-start`;
+  const endFieldId = `${uid}-end`;
 
   let rootEl: HTMLDivElement | null = $state(null);
   let probeEl: HTMLElement | null = $state(null);
@@ -232,16 +236,21 @@
   let dragSnap: Fields | null = null;
   /** 네이티브 m3u8·mp4 대체 경로: 영상 탐색 없이 타임라인과 칸만 쓴다 */
   const uncoupledNote = $derived(session.phase === 'ready' && !session.usingHls);
-  /** 안내 줄 문장들(§11): 휠·확대 방법 + 앞뒤 도움말 + 확대 키. 대체 경로는 첫 두 문장 대신 안내 하나 */
-  const helpLines = $derived.by(() => {
-    const keys = t('rangeEditor.timeline.keys', EDITOR_KEYS);
-    if (!barShown) return uncoupledNote ? [t('rangeEditor.uncoupled.body')] : [];
-    return uncoupledNote
-      ? [t('rangeEditor.uncoupled.body'), keys]
-      : [t('rangeEditor.timeline.help', { mod: shortcutText(platform.os, 'zoomMod') }), t('range.help'), keys];
+  /**
+   * 안내 줄 문장들(§11): 휠·확대 방법 + 앞뒤 도움말 + 확대 키. 대체 경로는 첫 문장 대신 안내 하나.
+   * 앞뒤 도움말(`range.help`)은 타임라인이 없거나 대체 경로여도 늘 있다(RE-3까지 칸 도움말이었다)
+   */
+  const helpLines = $derived.by((): { text: string; id?: string }[] => {
+    const rangeHelp = { text: t('range.help'), id: rangeHelpId };
+    const keys = { text: t('rangeEditor.timeline.keys', EDITOR_KEYS) };
+    const lead = {
+      text: uncoupledNote ? t('rangeEditor.uncoupled.body') : t('rangeEditor.timeline.help', { mod: shortcutText(platform.os, 'zoomMod') }),
+    };
+    if (!barShown) return uncoupledNote ? [lead, rangeHelp] : [rangeHelp];
+    return [lead, rangeHelp, keys];
   });
-  /** 시각 칸이 가리키는 설명(안내 줄이 있을 때) */
-  const fieldHelpId = $derived(helpLines.length > 0 ? helpId : undefined);
+  /** 시각 칸이 가리키는 설명: range.help 문장만 */
+  const fieldHelpId = rangeHelpId;
   const fitShown = $derived(barShown && !!len && zoomed(tview, len.secs));
 
   function fit() {
@@ -249,6 +258,23 @@
     tview = fullView(len.secs);
     following = true;
   }
+
+  // [전체 보기] 단추·범위 막대는 전체 보기가 되면 DOM에서 빠진다: 포커스가 거기 있었으면 시간 영역으로 옮겨
+  // body로 떨어지지 않게 한다(떨어지면 + - 0·I/O·Space 같은 뿌리 키가 모두 먹지 않는다, §9.1·F-4)
+  let fitEl: HTMLElement | null = $state(null);
+  let wasFitShown = false;
+  $effect.pre(() => {
+    const shown = fitShown;
+    untrack(() => {
+      const a = document.activeElement;
+      if (wasFitShown && !shown && a && (fitEl?.contains(a) || a.closest('[role="scrollbar"]'))) {
+        void tick().then(() => {
+          if (focusIsFree() || document.activeElement === document.body) timelineEl?.focus();
+        });
+      }
+      wasFitShown = shown;
+    });
+  });
 
   /** `+`·`-`·`0`(§9.1): 결합 전에도 동작한다. 끌기 중에는 무시한다 */
   function zoomByKey(k: ZoomKey) {
@@ -604,9 +630,11 @@
     if (rootEl && trapTab(e, rootEl)) return;
     if (e.defaultPrevented || editable(e.target)) return;
     if (e.altKey || e.ctrlKey || e.metaKey) return;
+    // 손잡이를 끄는 동안에는 Esc·Mod+Enter 말고 처리하지 않는다(RE13: 보이는 범위·값·재생이 고정이다)
+    if (dragging) return;
     // 확대 키는 결합 전에도 쓴다. 끌기 중·타임라인이 없을 때·길이가 모자랄 때는 처리하지 않아 글자 그대로 둔다
     const zk = zoomKey(e.key);
-    if (zk && barShown && len && !dragging) {
+    if (zk && barShown && len) {
       if (zk === 'fit' || len.secs >= MIN_VIEW_SECS) {
         e.preventDefault();
         zoomByKey(zk);
@@ -804,11 +832,11 @@
       {#if helpLines.length > 0}
         <!-- 안내 줄: 시간 영역의 설명이다. 문장마다 따로 둔다(조각 결합이 아니라 deck 문장 셋) -->
         <p id={helpId} class="note">
-          {#each helpLines as line (line)}<span>{line}</span>{' '}{/each}
+          {#each helpLines as line (line.text)}<span id={line.id}>{line.text}</span>{' '}{/each}
         </p>
       {/if}
       {#if fitShown}
-        <span class="fit">
+        <span class="fit" bind:this={fitEl}>
           <IconButton
             icon="scan"
             label={t('rangeEditor.fit.label')}
@@ -832,7 +860,8 @@
           {coupled}
           narrow={narrowNow}
           view={tview}
-          describedby={helpLines.length > 0 ? helpId : undefined}
+          describedby={helpId}
+          fieldIds={{ start: startFieldId, end: endFieldId }}
           onmove={moveTo}
           onseek={seek}
           onview={(v) => (tview = v)}
@@ -856,6 +885,7 @@
             <span class="group">
               <span class="clock">
                 <TextField
+                  id={startFieldId}
                   label={t('range.start')}
                   bind:value={draft.start}
                   bind:el={startField}
@@ -875,6 +905,7 @@
             <span class="group">
               <span class="clock">
                 <TextField
+                  id={endFieldId}
                   label={t('range.end')}
                   bind:value={draft.end}
                   bind:el={endField}

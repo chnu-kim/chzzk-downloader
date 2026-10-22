@@ -411,7 +411,9 @@ test('범위 막대: 엄지를 끌어 이동하고, 키로 움직이며, 가장�
   await sb.press('End');
   await expect(sb).toHaveAttribute('aria-valuenow', '100');
 
-  // 오른쪽 가장자리를 끌어 폭을 넓힌다: 엄지가 길어진다
+  // 왼쪽 가장자리를 끌어 폭을 넓힌다: 엄지가 길어지고 반대(오른쪽) 끝 시각은 그대로다
+  const endOf = async () => ((await sb.getAttribute('aria-valuetext')) ?? '').split('부터 ')[1];
+  const end0 = await endOf();
   const w0 = (await thumb.boundingBox())!.width;
   const eb = (await dialog(app).locator('.sb-edge[data-edge="start"]').boundingBox())!;
   await app.page.mouse.move(eb.x + eb.width / 2, eb.y + eb.height / 2);
@@ -419,6 +421,24 @@ test('범위 막대: 엄지를 끌어 이동하고, 키로 움직이며, 가장�
   await app.page.mouse.move(eb.x + eb.width / 2 - 60, eb.y + eb.height / 2, { steps: 6 });
   await app.page.mouse.up();
   await expect.poll(async () => (await thumb.boundingBox())!.width).toBeGreaterThan(w0);
+  expect(await endOf()).toBe(end0);
+});
+
+test('범위 막대: 깊게 확대해도 가장자리를 끌면 반대 끝이 고정이다(엄지 최소 폭)', async ({ app }) => {
+  const card = await openCard(app);
+  await editBtn(card).click();
+  await expect(dialog(app)).toBeVisible();
+  for (let i = 0; i < 4; i++) await ctrlWheel(app, -600);
+  const sb = scrollbar(app);
+  await expect(sb).toBeVisible();
+  const endOf = async () => ((await sb.getAttribute('aria-valuetext')) ?? '').split('부터 ')[1];
+  const end0 = await endOf();
+  const eb = (await dialog(app).locator('.sb-edge[data-edge="start"]').boundingBox())!;
+  await app.page.mouse.move(eb.x + eb.width / 2, eb.y + eb.height / 2);
+  await app.page.mouse.down();
+  await app.page.mouse.move(eb.x + eb.width / 2 - 2, eb.y + eb.height / 2, { steps: 2 });
+  await app.page.mouse.up();
+  expect(await endOf()).toBe(end0);
 });
 
 test('화면 밖 손잡이는 DOM에 남아 있고, 누르면 값은 그대로 두고 보이는 범위만 옮겨 간다', async ({ app }) => {

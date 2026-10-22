@@ -23,6 +23,7 @@ type Over = Partial<{
   coupled: boolean;
   view: View;
   narrow: boolean;
+  fieldIds: { start: string; end: string };
 }>;
 
 function setup(over: Over = {}) {
@@ -729,5 +730,114 @@ describe('트랙 누름·지금 위치선(시험 10)', () => {
     expect((a.container.querySelector('.position') as HTMLElement).style.getPropertyValue('--p')).toBe('0.5');
     a.unmount();
     expect(setup({ view: ZOOMED, position: 50 }).container.querySelector('.position')).toBeNull();
+  });
+});
+
+// ---- RE-4 리뷰 반영 ----
+describe('리뷰 반영', () => {
+  const edge = (c: HTMLElement, which: 'start' | 'end') => c.querySelector(`.sb-edge[data-edge="${which}"]`) as HTMLElement;
+
+  it('엄지가 최소 폭이어도 가장자리 1px 끌기는 span을 크게 튀게 하지 않고 반대 끝을 고정한다', async () => {
+    // L=43200, span=20, 막대 600px → 1px = 72초. 엄지는 24px(최소 폭)이라 비례식과 다르다
+    const view = { start: 2690, span: 20 };
+    const { container, onview } = setup({ length: 43200, start: 2700, end: 2705, view });
+    rect(container.querySelector('.sb'));
+    const left = edge(container, 'start');
+    const th = scrollThumb(view, 43200, 600, 24);
+    await fireEvent.pointerDown(left, { clientX: th.x, pointerId: 1 });
+    await fireEvent.pointerMove(left, { clientX: th.x - 1, pointerId: 1 });
+    const v = lastView(onview);
+    expect(v.start + v.span).toBeCloseTo(2710, 6); // 반대(끝) 고정
+    expect(v.span).toBeGreaterThan(20);
+    expect(v.span).toBeLessThanOrEqual(20 + 72 + 1e-6); // 1px = 72초
+  });
+
+  it('오른쪽 가장자리도 같다: 시작이 고정이고 1px에 한 픽셀치만 늘어난다', async () => {
+    const view = { start: 2690, span: 20 };
+    const { container, onview } = setup({ length: 43200, start: 2700, end: 2705, view });
+    rect(container.querySelector('.sb'));
+    const right = edge(container, 'end');
+    const th = scrollThumb(view, 43200, 600, 24);
+    await fireEvent.pointerDown(right, { clientX: th.x + th.w, pointerId: 1 });
+    await fireEvent.pointerMove(right, { clientX: th.x + th.w + 1, pointerId: 1 });
+    const v = lastView(onview);
+    expect(v.start).toBeCloseTo(2690, 6);
+    expect(v.span).toBeLessThanOrEqual(20 + 72 + 1e-6);
+  });
+
+  it('가장자리 끌기로 막대가 사라진 뒤 다시 확대해도, 누르지 않은 움직임은 보이는 범위를 바꾸지 않는다', async () => {
+    const { container, onview, rerender } = setup({ view: { start: 0, span: 599 } });
+    rect(container.querySelector('.sb'));
+    const right = edge(container, 'end');
+    await fireEvent.pointerDown(right, { clientX: 599, pointerId: 2 });
+    await fireEvent.pointerMove(right, { clientX: 599.9, pointerId: 2 });
+    expect(scrollbar()).toBeNull();
+    await rerender({ view: { start: 0, span: 300 } });
+    const calls = onview.mock.calls.length;
+    const again = edge(container, 'end');
+    rect(container.querySelector('.sb'));
+    await fireEvent.pointerMove(again, { clientX: 400, pointerId: 2 });
+    expect(onview.mock.calls.length).toBe(calls);
+  });
+
+  it('보이는 범위의 시작이 실수여도 시작 손잡이를 왼쪽 끝까지 끌면 보이는 안쪽 정수다', async () => {
+    const view = { start: 200.4, span: 100 };
+    const { onmove } = setup({ view, start: 250, end: 280 });
+    await fireEvent.pointerDown(startThumb(), { clientX: 300, pointerId: 1 });
+    await fireEvent.pointerMove(startThumb(), { clientX: -50, pointerId: 1 });
+    expect(onmove).toHaveBeenLastCalledWith('start', 201, 'drag');
+    await fireEvent.pointerUp(startThumb(), { clientX: -50, pointerId: 1 });
+    expect(onmove).toHaveBeenLastCalledWith('start', 201, 'commit');
+  });
+
+  it('끝 손잡이는 보이는 범위 끝의 내림 정수까지다', async () => {
+    const view = { start: 200.4, span: 100 }; // 끝 300.4
+    const { onmove } = setup({ view, start: 250, end: 280 });
+    await fireEvent.pointerDown(endThumb(), { clientX: 400, pointerId: 1 });
+    await fireEvent.pointerMove(endThumb(), { clientX: 9999, pointerId: 1 });
+    expect(onmove).toHaveBeenLastCalledWith('end', 300, 'drag');
+  });
+
+  it('끌기 중에는 Esc 말고 손잡이 키가 값을 바꾸지 않는다(RE13)', async () => {
+    const { onmove, onview } = setup({ view: ZOOMED, start: 250, end: 280 });
+    await fireEvent.pointerDown(startThumb(), { clientX: 300, pointerId: 1 });
+    for (const k of ['ArrowRight', 'ArrowLeft', 'Home', 'End', 'PageUp']) key(startThumb(), k);
+    expect(onmove).not.toHaveBeenCalled();
+    expect(onview).not.toHaveBeenCalled();
+    key(startThumb(), 'Escape');
+    expect(screen.getByRole('slider', { name: t('range.start') })).toBeInTheDocument();
+  });
+
+  it('끌기 중에 언마운트되면 ondrag(false)를 알린다', async () => {
+    const { ondrag, unmount } = setup();
+    await fireEvent.pointerDown(startThumb(), { clientX: 60, pointerId: 1 });
+    expect(ondrag).toHaveBeenLastCalledWith(true);
+    unmount();
+    expect(ondrag).toHaveBeenLastCalledWith(false);
+  });
+
+  it('끌지 않았으면 언마운트해도 ondrag를 부르지 않는다', () => {
+    const { ondrag, unmount } = setup();
+    unmount();
+    expect(ondrag).not.toHaveBeenCalled();
+  });
+
+  it('엄지 밖 막대를 누르면 따라가기를 끈다', async () => {
+    const { container, onfollow } = setup({ view: ZOOMED });
+    const sb = container.querySelector('.sb') as HTMLElement;
+    rect(sb);
+    await fireEvent.pointerDown(sb, { clientX: 50, pointerId: 1 });
+    expect(onfollow).toHaveBeenCalledWith(false);
+  });
+
+  it('손잡이는 같은 쪽 칸을 aria-controls로 가리킨다', () => {
+    setup({ fieldIds: { start: 'f-start', end: 'f-end' } });
+    expect(startThumb()).toHaveAttribute('aria-controls', 'f-start');
+    expect(endThumb()).toHaveAttribute('aria-controls', 'f-end');
+  });
+
+  it('칸 id가 없으면 aria-controls도 없다', () => {
+    setup();
+    expect(startThumb()).not.toHaveAttribute('aria-controls');
   });
 });

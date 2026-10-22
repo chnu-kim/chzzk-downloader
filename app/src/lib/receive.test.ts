@@ -553,6 +553,10 @@ describe('구간 편집 모델(range-editor.md §5.2·§5.3, RE-1)', () => {
   it('rangeSummary: 올림 끝은 내림 길이로 보인다', () => {
     expect(rangeSummary({ startMs: 600000, endMs: 5401000 }, 5400.4)).toEqual({ range: '0:10:00~1:30:00', length: '1:20:00' });
   });
+  it('rangeSummary: 시작이 내림·올림 길이 사이이면 길이 0 대신 올림 끝을 보인다', () => {
+    // 시작이 내림 길이와 올림 길이 사이이면 길이 0 구간 대신 올림 끝을 그대로 보인다
+    expect(rangeSummary({ startMs: 5400000, endMs: 5401000 }, 5400.4)).toEqual({ range: '1:30:00~1:30:01', length: '0:00:01' });
+  });
   it('rangeSummary: 길이를 몰라도 끝이 있으면 그대로', () => {
     expect(rangeSummary({ startMs: 600000, endMs: 1200000 }, null)).toEqual({ range: '0:10:00~0:20:00', length: '0:10:00' });
   });

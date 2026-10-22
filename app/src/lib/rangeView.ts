@@ -36,8 +36,10 @@ export function clampView(v: View, L: number, minSpan: number): View {
   if (!Number.isFinite(v.start) || !Number.isFinite(v.span)) return fullView(L);
   const lo = Math.min(minSpan, L);
   const span = Math.min(L, Math.max(lo, v.span));
-  // 휠 배율이 확대·축소를 정확히 상쇄하지 않아 `L − ε`가 남는 것을 전체로 맞춘다
-  if (span >= L - SNAP_SECS) return { start: 0, span: L };
+  // 휠 배율이 확대·축소를 정확히 상쇄하지 않아 `L − ε`가 남는 것을 전체로 맞춘다.
+  // 하한 `lo`가 스냅 구간에 들어가면 확대가 막히므로 맞춤 폭은 (L − lo)/2 이하로 줄인다
+  const snap = Math.min(SNAP_SECS, (L - lo) / 2);
+  if (span >= L - snap) return { start: 0, span: L };
   return { start: Math.min(L - span, Math.max(0, v.start)), span };
 }
 
@@ -78,6 +80,7 @@ export function zoomAt(v: View, factor: number, anchor: number, L: number, minSp
 
 /** `dSecs`만큼 옮긴다. 실제로 움직였는지 함께 돌려준다(휠 `preventDefault` 판단) */
 export function panBy(v: View, dSecs: number, L: number): { view: View; moved: boolean } {
+  if (!Number.isFinite(dSecs)) return { view: v, moved: false };
   const start = Math.min(Math.max(0, L - v.span), Math.max(0, v.start + dSecs));
   return { view: { start, span: v.span }, moved: start !== v.start };
 }
@@ -159,6 +162,8 @@ export interface MonitorInput {
 
 /** 영상 상자와 조작 줄 폭(§6.2). 좁은 레이아웃은 `stageH`를 쓰지 않는다 */
 export function monitorSize(i: MonitorInput): { videoW: number; videoH: number; rowW: number } {
+  // 첫 측정 전(0)이나 이상한 폭은 영상 폭 0, 높이 하한, 조작 줄 0
+  if (!(i.stageW > 0)) return { videoW: 0, videoH: i.videoMinH, rowW: 0 };
   if (i.narrow) {
     return {
       videoW: i.stageW,

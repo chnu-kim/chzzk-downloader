@@ -228,7 +228,9 @@ export function rangeSummary(
   if (applied == null) return null;
   if (applied.endMs == null) return { range: rangeChip(applied), length: null };
   const f = floorMs(durationSecs);
-  const shownEnd = Math.floor((f != null ? Math.min(applied.endMs, f) : applied.endMs) / 1000) * 1000;
+  let shownEnd = Math.floor((f != null ? Math.min(applied.endMs, f) : applied.endMs) / 1000) * 1000;
+  // 시작이 내림 길이와 올림 길이 사이이면 길이 0 구간이 되므로 올림 끝을 그대로 보인다
+  if (shownEnd <= applied.startMs) shownEnd = applied.endMs;
   return {
     range: rangeChip({ startMs: applied.startMs, endMs: shownEnd }),
     length: formatClock(Math.max(0, shownEnd - applied.startMs) / 1000),

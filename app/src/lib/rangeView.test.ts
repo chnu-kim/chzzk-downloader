@@ -137,6 +137,16 @@ describe('zoomAt / panBy (§7.2)', () => {
     expect(panBy(v(0, 600), -5, L).moved).toBe(false);
     expect(panBy(fullView(L), 100, L).moved).toBe(false);
   });
+  it('panBy: NaN·Infinity는 움직이지 않는다', () => {
+    for (const d of [NaN, Infinity, -Infinity]) {
+      expect(panBy(v(100, 600), d, L)).toEqual({ view: v(100, 600), moved: false });
+    }
+  });
+  it('작은 L: 확대 하한이 L - 0.5 이상이어도 L - lo의 절반 안에서만 맞춘다', () => {
+    const tiny = zoomAt(fullView(20.5), 100, 10, 20.5, 20);
+    expect(tiny.span).toBe(20);
+    expect(zoomed(tiny, 20.5)).toBe(true);
+  });
   it('wheelPanSecs = px / trackW × span', () => {
     expect(wheelPanSecs(100, 616, 600)).toBeCloseTo(97.4, 1);
     expect(wheelPanSecs(100, 0, 600)).toBe(0);
@@ -157,6 +167,12 @@ describe('reveal / follow', () => {
   it('reveal: margin 경계 바로 밖', () => {
     expect(reveal(view, 1099, L).start).toBeCloseTo(999, 9);
     expect(reveal(view, 1901, L).start).toBeCloseTo(1001, 9);
+  });
+  it('reveal: 0·L 근처는 start를 [0, L - span]으로 자른다', () => {
+    expect(reveal(view, 1, L)).toEqual(v(0, 1000));
+    const end = reveal(view, L, L);
+    expect(end.span).toBe(1000);
+    expect(end.start).toBeCloseTo(L - 1000, 9);
   });
   it('follow: 안은 그대로, 끝을 넘으면 pos - 0.1 span', () => {
     expect(follow(view, 1500, L)).toEqual(view);
@@ -283,8 +299,16 @@ describe('monitorSize (§6.2)', () => {
   });
   it('좁은 레이아웃에서 영상이 VIDEO_MIN_H보다 낮아지지 않는다', () => {
     const r = monitorSize({ ...base, narrow: true, stageW: 100, stageH: 0, controlsH: 44 });
-    expect(r.videoH).toBeGreaterThanOrEqual(56);
+    expect(r.videoH).toBe(90);
     expect(r.videoW).toBe(100);
+  });
+  it('폭·높이가 0·음수·NaN이면 영상 폭 0, 높이 VIDEO_MIN_H, 조작 줄 0', () => {
+    for (const narrow of [true, false]) {
+      for (const w of [0, -5, NaN]) {
+        const r = monitorSize({ ...base, narrow, stageW: w, stageH: 300, controlsH: 44 });
+        expect(r).toEqual({ videoW: 0, videoH: 90, rowW: 0 });
+      }
+    }
   });
   it('stageH가 작으면 VIDEO_MIN_H', () => {
     const r = monitorSize({ ...base, stageW: 960, stageH: 100, controlsH: 44 });

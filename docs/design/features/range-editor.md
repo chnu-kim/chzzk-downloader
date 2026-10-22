@@ -247,6 +247,8 @@
 
 ### 5.3 카드 구간 줄(`rangeSummary`, RE5)
 
+> 경계: 시작이 내림 길이와 올림 길이 사이이면(예: 길이 5400.4초, 시작 1:30:00) 내림 끝이 시작 이하라 길이 0이 되므로 올림 끝을 그대로 보인다(`lengthLine`과 같은 1초).
+
 | `applied` | meta 길이 | 값 글자 | 단추 |
 |---|---|---|---|
 | `null` | 무엇이든 | 전체 | [구간 편집…] |
@@ -371,7 +373,7 @@ narrow:  videoW = stageW;  videoH = max(VIDEO_MIN_H, round(stageW × 9 / 16))   
 | 함수 | 정의 | 경계 |
 |---|---|---|
 | `fullView(L)` | `{start: 0, span: L}` | `L ≤ 0`이거나 유한하지 않으면(`Infinity`·NaN) `{0, 0}` |
-| `clampView(v, L, minSpan)` | `span ∈ [min(minSpan, L), L]`, `start ∈ [0, L − span]`. **`span ≥ L − SNAP_SECS`(0.5초)면 `span = L`, `start = 0`으로 맞춘다**(휠 배율 `exp`가 확대·축소를 정확히 상쇄하지 않아 `L − ε`가 남으면 범위 막대·[전체 보기]가 사라지지 않는다) | NaN → `fullView`, 유한하지 않은 L → `{0, 0}` |
+| `clampView(v, L, minSpan)` | `span ∈ [min(minSpan, L), L]`, `start ∈ [0, L − span]`. **`span ≥ L − SNAP_SECS`(0.5초)면 `span = L`, `start = 0`으로 맞춘다**(휠 배율 `exp`가 확대·축소를 정확히 상쇄하지 않아 `L − ε`가 남으면 범위 막대·[전체 보기]가 사라지지 않는다). 맞춤 폭은 `min(SNAP_SECS, (L − 하한)/2)`라 L이 20.5초 이하여도 확대가 막히지 않는다. 한계: 작은 L에서 휠 한 번의 확대량이 맞춤 폭보다 작으면 전체로 돌아간다(이벤트마다 맞추므로 누적되지 않는다) | NaN → `fullView`, 유한하지 않은 L → `{0, 0}` |
 | `secsAtX(x, w, v)` | `v.start + clamp(x / w, 0, 1) × v.span`(내리지 않는다) | `w ≤ 0` → `v.start` |
 | `xOfSecs(secs, w, v)` | `(secs − v.start) / v.span × w`(자르지 않는다) | `span = 0` → 0 |
 | `placement(secs, v)` | `< start` → `'before'`, `> start + span` → `'after'`, 그 밖 `'inside'`(양 끝 포함) | — |

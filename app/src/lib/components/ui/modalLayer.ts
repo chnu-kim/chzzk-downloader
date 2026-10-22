@@ -40,8 +40,8 @@ export interface ModalLayerOptions {
 
 /**
  * `el`을 모달 층으로 올린다. `{@attach modalLayer}`나 `{@attach (el) => modalLayer(el, opts)}`로 쓴다.
- * 정리 함수는 순서대로 한다: 스택에서 빼고 inert를 다시 계산 → 요소를 떼기 → 연 요소로 포커스 복귀
- * (inert가 남은 곳으로 포커스를 주면 조용히 실패하므로 계산이 먼저다).
+ * 정리 함수는 순서대로 한다: 스택에서 빼기 → 요소를 떼기 → inert를 다시 계산 → 연 요소로 포커스 복귀
+ * (inert가 남은 곳으로 포커스를 주면 조용히 실패하므로 복귀는 계산 뒤다).
  */
 export function modalLayer(el: HTMLElement, opts: ModalLayerOptions = {}): () => void {
   const opener = opts.opener !== undefined ? opts.opener : document.activeElement instanceof HTMLElement ? document.activeElement : null;

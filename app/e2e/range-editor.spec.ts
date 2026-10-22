@@ -27,6 +27,19 @@ const editBtn = (card: Locator) => card.getByRole('button', { name: t('range.edi
 const start = (app: App) => dialog(app).getByRole('textbox', { name: t('range.start') });
 const end = (app: App) => dialog(app).getByRole('textbox', { name: t('range.end') });
 const applyBtn = (app: App) => dialog(app).getByRole('button', { name: new RegExp(t('rangeEditor.apply.label')) });
+/** 제목에서 시작해 Tab을 눌러 `target`에 닿는지 본다(Tab 순서·trapTab을 거친다). 닿으면 보이는지도 본다 */
+async function tabTo(app: App, target: Locator) {
+  await dialog(app).getByRole('heading', { name: t('rangeEditor.title') }).focus();
+  for (let i = 0; i < 60; i += 1) {
+    await app.page.keyboard.press('Tab');
+    if (await target.evaluate((el) => el === document.activeElement)) {
+      await expect(target).toBeInViewport();
+      return;
+    }
+  }
+  throw new Error('Tab으로 닿지 않았다');
+}
+
 const closeBtn = (app: App) => dialog(app).getByRole('button', { name: t('common.close') });
 const markStart = (app: App) => dialog(app).getByRole('button', { name: t('watch.mark.start') });
 const markEnd = (app: App) => dialog(app).getByRole('button', { name: t('watch.mark.end') });
@@ -296,10 +309,8 @@ for (const [label, size, xlarge] of [
     await expect(applyBtn(app)).toBeInViewport();
     await noHorizontalScroll(app);
     // 구간 줄의 두 칸에 Tab으로 닿고 보인다
-    await start(app).focus();
-    await expect(start(app)).toBeInViewport();
-    await end(app).focus();
-    await expect(end(app)).toBeInViewport();
+    await tabTo(app, start(app));
+    await tabTo(app, end(app));
     await app.axe(`구간 편집(${label})`);
   });
 }

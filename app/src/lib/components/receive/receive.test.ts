@@ -908,6 +908,18 @@ describe('구간 받기(ResolveCard, range-editor.md)', () => {
     void user;
   });
 
+  it('길게 눌러 반복되는 Mod+Enter(repeat)는 적용 직후에도 카드가 받기로 받지 않는다', async () => {
+    const user = await openCard();
+    await settle();
+    await openEditor(user);
+    await user.keyboard('{Control>}{Enter}{/Control}'); // 첫 keydown이 적용하고 층이 떨어진다
+    await waitFor(() => expect(editorDialog()).toBeNull());
+    expect(ui.rangeEditorOpen).toBe(false);
+    await fireEvent.keyDown(editButton(), { key: 'Enter', ctrlKey: true, repeat: true });
+    await fireEvent.keyDown(window, { key: 'Enter', ctrlKey: true, repeat: true });
+    expect(api.enqueue).not.toHaveBeenCalled();
+  });
+
   it('깃발이 켜져 있으면 포커스가 body에 떨어져 뿌리를 지나지 않은 Mod+Enter도 카드가 받지 않는다', async () => {
     const user = await openCard();
     await settle();

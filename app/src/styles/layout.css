@@ -43,6 +43,13 @@
   .card-footer {
     flex-wrap: wrap;
   }
+  .fullsheet-context {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    white-space: normal;
+  }
 }
 
 :root[data-text-scale="x-large"] .fullsheet-probe {
@@ -72,4 +79,12 @@
 }
 :root[data-text-scale="x-large"] .card-footer {
   flex-wrap: wrap;
+}
+
+:root[data-text-scale="x-large"] .fullsheet-context {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  white-space: normal;
 }

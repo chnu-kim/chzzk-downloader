@@ -6,7 +6,7 @@
   // 세션은 [영상 보기]를 눌렀을 때 연다(RE7, watchSession). 영상과 구간의 결합(`coupled` = hls.js로 붙고 메타데이터를 읽음, PS12/RE8)이 되면
   // 조작 줄·재생 위치·영상 탐색이 켜진다. 그 전에는 타임라인과 칸이 칸 편집기로만 동작한다(손잡이는 초안만 고친다).
   // RE-3 범위: 타임라인(막대)과 조작 줄은 옛 모양 그대로 이 화면으로 옮겼다(RE-4가 타임라인을, RE-5가 조작 줄을 바꾼다).
-  import { onDestroy, onMount, untrack } from 'svelte';
+  import { onDestroy, onMount, tick, untrack } from 'svelte';
   import * as api from '../../api';
   import type { ResolvedDto, TimeRangeDto } from '../../bindings';
   import { errorCopy } from '../../copy/errors';
@@ -86,6 +86,7 @@
   let monitorEl: HTMLElement | null = $state(null);
   let controlsEl: HTMLDivElement | null = $state(null);
   let startEl: HTMLButtonElement | null = $state(null);
+  let timelineEl: HTMLElement | null = $state(null);
   let videoEl: HTMLVideoElement | null = $state(null);
   let startField: HTMLInputElement | null = $state(null);
   let endField: HTMLInputElement | null = $state(null);
@@ -140,6 +141,20 @@
     return !a || a === document.body || a === startEl;
   }
 
+  /** 이 세션 닫힘으로 타임라인이 사라지는가(meta 길이가 없어 영상 길이에만 기대는 영상) */
+  function timelineLost(): boolean {
+    return durationSecs == null;
+  }
+
+  /** [다시 시도]: 누른 단추가 사라지고 [영상 보기]가 그려지므로, 포커스가 거기 있었으면 새 단추로 옮긴다(F-4) */
+  async function retry() {
+    const had = document.activeElement?.closest('[data-retry-stage]') != null;
+    void session.start();
+    if (!had) return;
+    await tick();
+    if (focusIsFree()) startEl?.focus();
+  }
+
   function focusTitle() {
     h1El?.focus();
   }
@@ -159,7 +174,10 @@
     },
     onclosed: () => {
       // 결합이 풀려 조작 줄이 disabled가 될 때 포커스가 그 줄에 있었으면 제목으로(포커스를 잃으면 키가 뿌리를 지나지 않는다)
-      if (controlsEl?.contains(document.activeElement)) queueMicrotask(focusTitle);
+      // 길이를 모르는 영상이면 타임라인도 안내 줄로 바뀐다: 그 안(손잡이)에 있던 포커스도 같다
+      if (controlsEl?.contains(document.activeElement) || (timelineLost() && timelineEl?.contains(document.activeElement))) {
+        queueMicrotask(focusTitle);
+      }
       metaReady = false;
       resetPlay();
       reportDuration(null);
@@ -473,11 +491,12 @@
   function onkeydown(e: KeyboardEvent) {
     if (isImeKey(e)) return;
     if (e.key === 'Escape') return onEscape(e);
-    // Mod+Enter는 적용의 성공·실패와 관계없이 막고 전파를 끊는다: 카드의 창 Mod+Enter가 [받기]로 받지 않게(RE15)
+    // Mod+Enter는 적용의 성공·실패·반복과 관계없이 막고 전파를 끊는다: 카드의 창 Mod+Enter가 [받기]로 받지 않게(RE15)
     if (e.key === 'Enter' && modKey(e)) {
       e.preventDefault();
       e.stopPropagation();
-      applyNow();
+      // 길게 눌러 반복되는 키는 막기만 한다: 첫 keydown이 적용한 뒤 반복이 다시 적용하거나 아래 층으로 새지 않게(RE16)
+      if (!e.repeat) applyNow();
       return;
     }
     // 제목(h1, tabindex -1)에서 Shift+Tab은 마지막 요소로 돈다(trapTab은 제목을 화면 밖 요소로 본다)
@@ -598,7 +617,7 @@
   <header class="head">
     <div class="titles">
       <h1 id={titleId} class="title" tabindex="-1" data-focus-container bind:this={h1El}>{t('rangeEditor.title')}</h1>
-      <p id={subId} class="context">{t('rangeEditor.context.label', { kind: kindLabel('rewind'), title: view.meta.title })}</p>
+      <p id={subId} class="fullsheet-context">{t('rangeEditor.context.label', { kind: kindLabel('rewind'), title: view.meta.title })}</p>
     </div>
     <div class="acts">
       <Button onclick={onclose}>{t('common.close')}</Button>
@@ -619,7 +638,7 @@
           </Button>
         </div>
       {:else if session.phase === 'failed'}
-        <div class="stage">
+        <div class="stage" data-retry-stage>
           {#if gateCopy}
             <Notice variant="inline" tone="danger" title={gateCopy.title}>
               {#if gateCopy.body}<p class="line">{gateCopy.body}</p>{/if}
@@ -629,7 +648,7 @@
               variant="inline"
               tone="danger"
               actions={[
-                { id: 'retry', label: t('action.retry'), onclick: () => void session.start() },
+                { id: 'retry', label: t('action.retry'), onclick: () => void retry() },
                 { id: 'open', label: t('watch.openInChzzk.label'), onclick: openInChzzk },
               ]}
             >
@@ -681,7 +700,7 @@
     {#if barShown && len && sel}
       <!-- 시간 영역: 눌러도 포커스는 이 그룹이 받아 키가 뿌리로 올라간다. 칸 blur 탐색은 이 속성으로 알아본다 -->
       <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
-      <div class="timeline" role="group" aria-label={t('rangeEditor.timeline.title')} tabindex="-1" data-timeline>
+      <div class="timeline" role="group" aria-label={t('rangeEditor.timeline.title')} tabindex="-1" data-timeline bind:this={timelineEl}>
         <RangeTimeline
           length={len.secs}
           start={sel.start}
@@ -693,7 +712,7 @@
         />
       </div>
     {:else}
-      <p class="note">{t('rangeEditor.noLength.body')}</p>
+      <p class="lack">{t('rangeEditor.noLength.body')}</p>
     {/if}
 
     <div class="range" role="group" aria-label={t('range.label')}>
@@ -789,15 +808,6 @@
     line-height: var(--leading-title);
     font-weight: var(--weight-strong);
   }
-  /* 부제는 어느 영상인지 말하는 유일한 글자라 --fg-muted가 아니다(foundations §3). 한 줄 말줄임, 좁으면 두 줄까지 */
-  .context {
-    margin: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-size: var(--text-caption);
-    line-height: var(--leading-caption);
-  }
   .acts {
     display: flex;
     flex-wrap: wrap;
@@ -868,6 +878,13 @@
     font-size: var(--text-body);
     line-height: var(--leading-body);
     font-weight: var(--weight-strong);
+  }
+  /* 타임라인이 없는 까닭을 말하는 유일한 글자라 12px --fg-muted가 아니라 본문 크기 --fg다(foundations §3) */
+  .lack {
+    margin: 0;
+    font-size: var(--text-body);
+    line-height: var(--leading-body);
+    color: var(--fg);
   }
   .note {
     margin: 0;

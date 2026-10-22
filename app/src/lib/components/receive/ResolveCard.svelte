@@ -295,7 +295,8 @@
     if (isImeKey(e)) return;
     // 확인 대화상자가 열려 있으면 그 대화상자의 Enter가 맡는다. 구간 편집 화면이 열려 있으면 그 화면이 받는다:
     // 화면 뿌리가 늘 preventDefault하므로 주 근거는 defaultPrevented이고, 깃발은 포커스가 body에 떨어진 경우의 둘째 거름이다(RE15)
-    if (e.key === 'Enter' && modKey(e) && !e.defaultPrevented && !ui.rangeEditorOpen && !confirmOverwrite) {
+    // 길게 눌러 반복되는 키(repeat)는 받지 않는다: 적용 직후 레이어가 떨어진 뒤 이어지는 반복이 [받기]가 되지 않게(RE16)
+    if (e.key === 'Enter' && modKey(e) && !e.repeat && !e.defaultPrevented && !ui.rangeEditorOpen && !confirmOverwrite) {
       e.preventDefault();
       download();
     }

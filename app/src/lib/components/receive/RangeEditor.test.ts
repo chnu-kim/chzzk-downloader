@@ -193,6 +193,7 @@ describe('레이어(RE1)', () => {
     opener.focus();
     const { container, unmount } = mount({ opener });
     expect(container).toHaveAttribute('inert');
+    await waitFor(() => expect(h1()).toHaveFocus()); // 포커스가 연 단추를 떠난 뒤에 닫는다
     unmount();
     expect(container).not.toHaveAttribute('inert');
     expect(ui.rangeEditorOpen).toBe(false);
@@ -434,6 +435,19 @@ describe('키: Esc·Mod+Enter·Tab(RE15·RE16)', () => {
     Object.defineProperty(document, 'fullscreenElement', { value: layer(), configurable: true });
     expect(ui.escape()).toBe(true);
     expect(onclose).not.toHaveBeenCalled();
+  });
+
+  it('길게 누른 Mod+Enter(repeat)는 적용하지 않고 막기만 한다. 전파도 막는다(RE16)', async () => {
+    const { onapply } = mount();
+    const reached = vi.fn();
+    window.addEventListener('keydown', reached);
+    try {
+      expect(await fireEvent.keyDown(startInput(), { key: 'Enter', ctrlKey: true, repeat: true })).toBe(false);
+      expect(onapply).not.toHaveBeenCalled();
+      expect(reached).not.toHaveBeenCalled();
+    } finally {
+      window.removeEventListener('keydown', reached);
+    }
   });
 
   it('Mod+Enter는 [구간 적용하기]다: 성공이든 실패든 preventDefault + stopPropagation', async () => {
@@ -711,6 +725,35 @@ describe('결합(RE8)', () => {
     expect(markS()).toBeDisabled();
   });
 
+  it('[다시 시도]를 누르면 사라지는 단추 대신 새로 그려진 [영상 보기]가 포커스를 받는다(F-4)', async () => {
+    vi.mocked(api.watchOpen).mockRejectedValueOnce(appError('network'));
+    const { user } = mount();
+    await user.click(startBtn());
+    await screen.findByRole('alert');
+    await waitFor(() => expect(h1()).toHaveFocus());
+    let resolve!: (d: WatchOpenDto) => void;
+    vi.mocked(api.watchOpen).mockReturnValue(new Promise((r) => (resolve = r)));
+    const retry = screen.getByRole('button', { name: t('action.retry') });
+    retry.focus();
+    await user.click(retry);
+    await waitFor(() => expect(startBtn()).toHaveFocus());
+    resolve(hlsOpened());
+  });
+
+  it('길이를 모르는 영상에서 세션이 닫혀 타임라인이 사라질 때 손잡이에 있던 포커스는 제목으로 간다(F-4)', async () => {
+    vi.mocked(api.watchOpen).mockResolvedValue(hlsOpened());
+    const user = userEvent.setup();
+    render(RangeEditor, { view: noLengthView, applied: null, sizeOf: () => null, onapply: vi.fn(), onclose: vi.fn() } as never);
+    await user.click(screen.getByRole('button', { name: t('watch.start.a11y', { title: noLengthView.meta.title }) }));
+    await waitFor(() => expect(hlsMock.instances).toHaveLength(1));
+    await ready(600);
+    slider(t('range.end')).focus();
+    expect(slider(t('range.end'))).toHaveFocus();
+    hlsError({ fatal: true });
+    await waitFor(() => expect(sliders()).toHaveLength(0));
+    await waitFor(() => expect(h1()).toHaveFocus());
+  });
+
   it('미리보기가 실패해도 막대는 남는다', async () => {
     vi.mocked(api.watchOpen).mockRejectedValue(appError('network'));
     const { user } = mount();
@@ -944,7 +987,7 @@ describe('칸 ↔ 영상(PVU-5, 카드에서 옮겨 왔다)', () => {
       expect(startInput()).toHaveValue('0:00:00');
       for (let i = 0; i < 400; i++) await fireEvent.keyDown(endInput(), { key: 'ArrowUp' });
       expect(endInput()).toHaveValue('0:10:00');
-    });
+    }, 20_000); // 키를 400번 누른다: 커버리지 측정 중에는 기본 5초를 넘길 수 있다
 
     it('unreadable field: arrow blocked, value unchanged', async () => {
       const { user } = await openEditor();

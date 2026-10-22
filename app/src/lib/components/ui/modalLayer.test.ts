@@ -93,8 +93,10 @@ describe('modalLayer', () => {
     app.append(opener);
     opener.focus();
     const a = layer('a');
+    a.tabIndex = -1;
     const off = modalLayer(a);
     a.focus();
+    expect(document.activeElement).toBe(a); // 포커스가 층 안으로 옮겨 갔다
     off();
     expect(document.activeElement).toBe(opener);
   });

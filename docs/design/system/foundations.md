@@ -588,7 +588,7 @@ AppKit Tahoe 실측 regular 24 · large 28 · extraLarge 36(`E-APPLE-19`, `E-DES
 | 선 굵기 | `--icon-stroke: 1.5px`를 CSS `stroke-width: var(--icon-stroke)` + `vector-effect: non-scaling-stroke`(path마다)로 화면 px 고정(16·20 공통) **[잠정]**. SVG 속성 `stroke-width="1.5"` 리터럴은 쓰지 않는다(앱·Worker 모두 CSS) | HIG "옆 글자 굵기에 맞춘다"(`E-APPLE-31`). 13px 400 한글 줄기 ≈ 1.1px, 600은 WKWebView 1.24px(`E-ID-K28b`). `G-ICON-4` 범위 16px 1.2 / 20px 1.25~1.5의 위쪽(뒤집음: 한 값). 16px·DPR1 번짐이 알려진 한계(`G-ICON-5`). 확인: `icons-blur.mjs` 측정("16·20px 수평선 최대 농도 ≥ .5, 두께합 ≥ 1.0")을 `design-gallery`에 넣고, 실패하면 16px만 1.25로 내린다 | `design-icons` DI3(stroke가 CSS 토큰이고 `size/24` 비례가 아님), `design-lint` DL14 예외(`--icon-stroke` 정의) |
 | 색 | `currentColor`만. fill 없음 | `G-A11Y-OS5` | `design-icons` |
 | 광학 보정 | 에셋 좌표 안에서(`download`·`play`·`chevron-*`). CSS `translate` 금지 | HIG icons(`E-APPLE-31`), g-icon §8.3 | `design-lint` + 리뷰 `R5` |
-| 글자 없는 아이콘 버튼 | 허용 목록(11개, 이 표가 유일한 원천): `x`(닫기) · `ellipsis`(더 보기) · `chevron-down` `chevron-up` `chevron-left` `chevron-right`(펼침·방향) · `eye` `eye-off`(값 보기 토글) · `arrow-left`(뒤로) · `settings`(툴바 톱니) · `scan`(구간 편집 타임라인 [전체 보기], D67). 구간 편집 화면의 미디어 조작 묶음(시작·끝 표시, 구간 처음·끝, N초 뒤·앞, 보기·일시정지)은 RE-5가 같은 표에 더한다. 모두 `aria-label` + 툴팁 | NN/g icon usability, Lucide 접근성 문서(`G-ICON-6`) | `design-icons` DI7(IconButton `icon` prop 허용 목록) |
+| 글자 없는 아이콘 버튼 | 허용 목록(19개, 이 표가 유일한 원천): `x`(닫기) · `ellipsis`(더 보기) · `chevron-down` `chevron-up` `chevron-left` `chevron-right`(펼침·방향) · `eye` `eye-off`(값 보기 토글) · `arrow-left`(뒤로) · `settings`(툴바 톱니) · `scan`(구간 편집 타임라인 [전체 보기], D67). 구간 편집 화면의 미디어 조작 묶음(RE-5, D67): `flag-triangle-left` `flag-triangle-right`(시작 찍기·끝 찍기, In/Out 표시) · `skip-back` `skip-forward`(구간 처음으로·구간 끝으로 가기) · `rewind` `fast-forward`(N초 뒤로·앞으로 가기) · `play` `pause`(영상 보기 ↔ 일시정지, 한 단추에서 바뀐다). 반복 토글의 반복 아이콘은 글자가 있는 Button의 아이콘이라 이 목록에 없다(아래 은유 표). 모두 `aria-label` + 툴팁 | NN/g icon usability, Lucide 접근성 문서(`G-ICON-6`) | `design-icons` DI7(IconButton `icon` prop 허용 목록) |
 
 ### 9.1 은유 표
 
@@ -604,6 +604,11 @@ AppKit Tahoe 실측 regular 24 · large 28 · extraLarge 36(`E-APPLE-19`, `E-DES
 | 작업 취소 | 없음(쓰면 `circle-x`) | [취소] 글자 **필수** | 데이터를 지울 수 있다. 닫기 `x`와 겸용 금지 |
 | 닫기 | `x` | `aria-label` | 허용 목록 |
 | 전체 보기(타임라인 확대 해제) | `scan` | `aria-label` + 툴팁 "전체 보기(0)" | 허용 목록(D67). 확대했을 때만 있다 |
+| 시작 찍기 · 끝 찍기 | `flag-triangle-left` · `flag-triangle-right` | `aria-label` + 툴팁 "시작 찍기(I)" · "끝 찍기(O)" | 허용 목록(D67, RE-5). 구간 편집 화면 조작 줄, In/Out 표시 |
+| 구간 처음으로 가기 · 구간 끝으로 가기 | `skip-back` · `skip-forward` | `aria-label` + 툴팁(키 없음) | 허용 목록(D67, RE-5). 막대+삼각 |
+| N초 뒤로 가기 · N초 앞으로 가기 | `rewind` · `fast-forward` | `aria-label` + 툴팁 "5초 뒤로 가기(←)" · "5초 앞으로 가기(→)" | 허용 목록(D67, RE-5). 이중 삼각 |
+| 영상 보기 ↔ 일시정지 | `play` ↔ `pause` | `aria-label` + 툴팁 "영상 보기(Space)" ↔ "일시정지(Space)" | 허용 목록(D67, RE-5). 한 단추에서 아이콘과 이름이 함께 바뀐다. `play`는 [이어받기]에도 쓰이지만 같은 "이어서 보기·받기"의 뜻이다 |
+| 구간 반복하기(토글) | `repeat` | [구간 반복하기] 글자 + `aria-pressed` | Button 아이콘(허용 목록 밖). 켜짐은 중립 눌림 면 + 1px `--border-strong` 테두리(D67) |
 | 목록에서 지우기 | `trash-2` | [목록에서 지우기] | 파일을 지우지 않는다는 라벨 |
 | 파일 열기 | `file-video` | [열기] | `play` 재사용 금지 |
 | 폴더에서 보기 | `folder` | macOS [Finder에서 보기] / 그 외 [폴더에서 보기] | 아이콘은 OS 공통, 라벨만 분기(`platform.md` §20). Finder·탐색기 로고 금지. `G-HANDOFF-H1`(먼저 두기)은 D39가 뒤집음([열기] 다음) |
@@ -859,6 +864,7 @@ JS 타이머·Rust 셸이 쓰는 값이다. 이름과 값의 단일 원천은 �
 | `LOADER_DELAY_MS` / `LOADER_MIN_MS` | 300 / 400 | [제안] | `app/src/lib/timing.ts` | 로딩 표시 지연·최소 유지(`patterns.md` §2.2) | 디자인 시스템 수렴값(`E-DESK-L*`), 표준 아님. `G-LAUNCH-R4` |
 | `VIDEO_MIN_H` | 90 | [잠정] | `app/src/lib/rangeView.ts` | 구간 편집 화면 영상 상자의 최소 높이(px, range-editor.md §6.2 `monitorSize`). 조작 줄 최소 폭은 `controlsMinW(--control-h)` = 7×`--control-h` + 184(28 → 380, coarse 40 → 464)로 같은 파일에서 계산한다 | D67, M-RE-9(갤러리 측정으로 조인다) |
 | `MIN_VIEW_SECS` / `SNAP_SECS` | 20 / 0.5 | [잠정] | `app/src/lib/rangeView.ts` | 구간 편집 타임라인 확대 하한(초)과 "거의 전체"를 전체로 맞추는 허용치(`clampView`) | D67, range-editor.md §7.1·§7.2. 960 창 트랙 856px에서 1초 ≈ 43px, 12px 손잡이로 1초를 맞출 수 있다. M-RE-2로 조인다 |
+| `SEEK_STEP_SECS` | 5 | [잠정] | `app/src/lib/rangeEdit.ts` | 구간 편집 조작 줄 [N초 뒤로·앞으로 가기]와 ←/→ 한 번의 이동량(초). 문구는 `{n}` 자리표시로 받는다 | D67, range-editor.md §8.1. 영상 컨트롤의 기본 이동량과 맞췄다. M-RE로 조인다 |
 | `TICK_MIN_PX` / `TICK_LABEL_PX` | 80 / 56 | [잠정] | `rangeView.ts` | 눈금 사이 최소 px, 눈금 글자(`formatClock` 7자 12px 고정폭)의 폭. 글자가 트랙 오른쪽 밖으로 넘치는 눈금은 그리지 않는다(`visibleTicks`) | D67, §7.6 |
 | `LINE_PX` / `KEY_ZOOM_FACTOR` | 16 / 2 | [잠정] | `rangeView.ts` | 휠 `deltaMode` 줄 단위의 px 환산, 키 `+`·`-`의 확대 배율(휠은 `exp(−dy × 0.002)`, 한 이벤트당 [0.5, 2]) | D67, §7.2·§7.3. M-RE-3(트랙패드 연속 이벤트) |
 | `EDITOR_KEYS` | `+` `-` `0` | 고정 | `app/src/lib/platform.ts` | 구간 편집 화면 확대·축소·전체 보기 키 글자. OS와 무관한 코드 상수라 deck 문자열이 아니다(DC9는 deck만 본다). 문구는 `{zoomIn}`·`{zoomOut}`·`{fit}` 자리표시로 받는다 | D67, range-editor.md §11. RE-5가 나머지 키(I·O·Space·←·→)를 더한다 |

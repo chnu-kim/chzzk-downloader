@@ -363,7 +363,7 @@ describe('seekTargetOf', () => {
   });
 });
 
-describe('playStep (§6.3 표)', () => {
+describe('playStep (range-editor.md §8.2 표)', () => {
   const sel = { start: 60, end: 90, toEnd: false };
   const selEnd = { start: 60, end: 600, toEnd: true };
   type Ev = Parameters<typeof playStep>[1];
@@ -371,40 +371,60 @@ describe('playStep (§6.3 표)', () => {
   const seeked = (t: number, byUs: boolean): Ev => ({ kind: 'seeked', t, byUs });
   const pause = (byUs: boolean): Ev => ({ kind: 'pause', t: 75, byUs });
   const ended = (): Ev => ({ kind: 'ended', t: 600, byUs: false });
+  const play = (t: number, loop: boolean): Ev => ({ kind: 'play', t, loop });
+  const toggle = (on: boolean): Ev => ({ kind: 'toggle', on });
 
   it.each([
-    ['range', 'time 89.8', time(89.8), sel, 'range', 'none'],
-    ['range', 'time 60(시작)', time(60), sel, 'range', 'none'],
-    ['range', 'time 90(= end)', time(90), sel, 'off', 'pause'],
-    ['range', 'time 90.1', time(90.1), sel, 'off', 'pause'],
+    // 보기 시작(play 이벤트): 반복 꺼짐은 지금 자리부터, 켜짐은 구간 밖이면 시작으로
+    ['off', '보기 시작 · 반복 꺼짐 · 구간 안', play(75, false), sel, 'off', 'none'],
+    ['off', '보기 시작 · 반복 꺼짐 · 구간 뒤(끝을 지나 계속 본다)', play(200, false), sel, 'off', 'none'],
+    ['off', '보기 시작 · 반복 켜짐 · 구간 안', play(75, true), sel, 'loop', 'none'],
+    ['off', '보기 시작 · 반복 켜짐 · 시작 경계(60)', play(60, true), sel, 'loop', 'none'],
+    ['off', '보기 시작 · 반복 켜짐 · 구간 앞(30)', play(30, true), sel, 'loop', 'restart'],
+    ['off', '보기 시작 · 반복 켜짐 · 끝 경계(90)', play(90, true), sel, 'loop', 'restart'],
+    ['off', '보기 시작 · 반복 켜짐 · 구간 뒤(영상 끝에서 다시 보기)', play(600, true), sel, 'loop', 'restart'],
+    ['loop', '보기 시작 · 반복 꺼짐(켜져 있던 모드는 꺼진다)', play(75, false), sel, 'off', 'none'],
+    // 보는 중 t ≥ end
+    ['off', 'time 지남 · 반복 꺼짐은 계속 본다', time(95), sel, 'off', 'none'],
     ['loop', 'time 89.8', time(89.8), sel, 'loop', 'none'],
-    ['loop', 'time 90', time(90), sel, 'loop', 'restart'],
+    ['loop', 'time 90(= end)', time(90), sel, 'loop', 'restart'],
     ['loop', 'time 90.1', time(90.1), sel, 'loop', 'restart'],
-    ['range', 'time 59.9(시작 앞)', time(59.9), sel, 'range', 'none'],
-    ['loop', 'time 59.9(시작 앞)', time(59.9), sel, 'loop', 'none'],
-    ['range', 'pause 사용자', pause(false), sel, 'off', 'none'],
-    ['loop', 'pause 사용자', pause(false), sel, 'off', 'none'],
-    ['range', 'pause 우리', pause(true), sel, 'range', 'none'],
-    ['range', 'seeked 30 사용자', seeked(30, false), sel, 'off', 'none'],
-    ['loop', 'seeked 30 사용자', seeked(30, false), sel, 'off', 'none'],
-    ['range', 'seeked 90(= end) 사용자', seeked(90, false), sel, 'off', 'none'],
-    ['loop', 'seeked 90(= end) 사용자', seeked(90, false), sel, 'off', 'none'],
-    ['range', 'seeked 75 구간 안 사용자', seeked(75, false), sel, 'range', 'none'],
-    ['loop', 'seeked 75 구간 안 사용자', seeked(75, false), sel, 'loop', 'none'],
-    ['range', 'seeked 60 우리', seeked(60, true), sel, 'range', 'none'],
-    ['loop', 'seeked 60 우리', seeked(60, true), sel, 'loop', 'none'],
-    ['range', 'seeked 60(시작 경계) 사용자', seeked(60, false), sel, 'range', 'none'],
-    ['range', 'ended toEnd=true', ended(), selEnd, 'off', 'none'],
-    ['loop', 'ended toEnd=true', ended(), selEnd, 'loop', 'restart'],
-    ['range', 'ended toEnd=false', ended(), sel, 'off', 'none'],
-    ['loop', 'ended toEnd=false', ended(), sel, 'off', 'none'],
-    ['off', 'time 지남', time(95), sel, 'off', 'none'],
-    ['off', 'seeked 30', seeked(30, false), sel, 'off', 'none'],
-    ['off', 'pause 우리(끝에서 부른 pause)', pause(true), sel, 'off', 'none'],
-    ['off', 'pause 사용자', pause(false), sel, 'off', 'none'],
+    ['loop', 'time 59.9(시작 앞, 들어가는 중)', time(59.9), sel, 'loop', 'none'],
+    // 영상 끝
     ['off', 'ended', ended(), selEnd, 'off', 'none'],
+    ['loop', 'ended 끝까지(toEnd)', ended(), selEnd, 'loop', 'restart'],
+    ['loop', 'ended 끝까지가 아니다(이미 restart했어야 한다)', ended(), sel, 'off', 'none'],
+    // 사용자 탐색
+    ['off', 'seeked 30', seeked(30, false), sel, 'off', 'none'],
+    ['loop', 'seeked 30 사용자(구간 앞) → off', seeked(30, false), sel, 'off', 'none'],
+    ['loop', 'seeked 90(= end) 사용자 → off', seeked(90, false), sel, 'off', 'none'],
+    ['loop', 'seeked 75 구간 안 사용자 → 유지', seeked(75, false), sel, 'loop', 'none'],
+    ['loop', 'seeked 60(시작 경계) 사용자 → 유지', seeked(60, false), sel, 'loop', 'none'],
+    ['loop', 'seeked 60 우리 → 유지', seeked(60, true), sel, 'loop', 'none'],
+    ['loop', 'seeked 30 우리(키프레임) → 유지', seeked(30, true), sel, 'loop', 'none'],
+    // 일시정지
+    ['loop', 'pause 사용자 → off', pause(false), sel, 'off', 'none'],
+    ['loop', 'pause 우리 → 유지', pause(true), sel, 'loop', 'none'],
+    ['off', 'pause 우리(구간 끝으로 가기)', pause(true), sel, 'off', 'none'],
+    ['off', 'pause 사용자', pause(false), sel, 'off', 'none'],
+    // 보는 중 토글
+    ['off', '토글 켬(위치와 무관: 구간 뒤 되돌림은 아래 별도 it이 고정)', toggle(true), sel, 'loop', 'none'],
+    ['loop', '토글 끔', toggle(false), sel, 'off', 'none'],
+    ['off', '토글 끔(이미 꺼짐)', toggle(false), sel, 'off', 'none'],
   ] as [PlayMode, string, Ev, typeof sel, PlayMode, string][])('%s · %s', (mode, _n, ev, s, wantMode, wantAction) => {
     expect(playStep(mode, ev, s)).toEqual({ mode: wantMode, action: wantAction });
+  });
+
+  it('토글을 켠 뒤 구간 뒤에서 오는 time은 시작으로 되돌린다(구간 뒤에서 켠 경우)', () => {
+    const on = playStep('off', toggle(true), sel);
+    expect(playStep(on.mode, time(120), sel)).toEqual({ mode: 'loop', action: 'restart' });
+  });
+
+  it('PlayMode에는 range가 없다(RE21)', () => {
+    // @ts-expect-error 'range' 모드는 지웠다
+    const dead: PlayMode = 'range';
+    expect(playStep('off', time(95), sel).action).toBe('none');
+    void dead;
   });
 });
 

@@ -134,7 +134,7 @@ const openEditorScene = async (app: App, env: Env, url: string) => {
 /** 편집 화면에서 [영상 보기]를 눌러 hls.js 경로로 붙인다(playlist 응답은 끝내 쥐고 있는다) */
 const startEditorWatch = async (app: App) => {
   await app.page.route(HLS_PLAYLIST, () => new Promise<void>(() => {}));
-  await editorDialog(app.page).getByRole('button', { name: t('watch.start.label') }).click();
+  await editorDialog(app.page).locator('.stage').getByRole('button', { name: t('watch.start.label') }).click();
   await expect(editorDialog(app.page).locator('video')).toBeVisible();
 };
 /** 메타데이터가 읽혔고 길이·재생 위치가 있는 것처럼 만든다(실제 재생은 하지 않는다) */
@@ -327,7 +327,7 @@ export const SCREENS: Screen[] = [
     scenario: () => ({ resolve: { [R.url]: R }, watchSrc: HLS_PLAYLIST }),
     drive: (app, env) => openEditorScene(app, env, R.url),
     // 표지 자리와 [영상 보기], meta 길이로 그린 타임라인, 빈 두 칸과 "전체 길이" 줄
-    ready: (p) => editorDialog(p).getByText(/^전체 길이: /),
+    ready: (p) => editorDialog(p).locator('.range-length').filter({ hasText: /^전체 길이: / }),
   },
   {
     id: '구간 편집 화면(영상과 결합)',
@@ -348,6 +348,45 @@ export const SCREENS: Screen[] = [
       });
     },
     ready: (p) => editorDialog(p).getByRole('slider', { name: t('range.end') }),
+  },
+  {
+    id: '구간 편집 화면(조작 줄·반복 켜짐)',
+    slug: 'editor-loop-on',
+    scenario: () => ({ resolve: { [R.url]: R }, watchSrc: HLS_PLAYLIST }),
+    drive: async (app, env) => {
+      await openEditorScene(app, env, R.url);
+      await startEditorWatch(app);
+      await loadEditorMeta(app.page, 3000);
+      await app.page.getByRole('textbox', { name: t('range.start') }).fill('0:50:00');
+      await app.page.getByRole('textbox', { name: t('range.end') }).fill('1:20:00');
+      await editorDialog(app.page).getByRole('button', { name: t('watch.range.loop.label') }).click();
+    },
+    // 아이콘 조작 줄 일곱과 반복 토글 켜짐(중립 눌림 면 + 1px 테두리, forced는 Highlight 면). 960·720·320(좁은 레이아웃: 시각 둘이 첫 줄)
+    ready: (p) => editorDialog(p).getByRole('button', { name: t('watch.range.loop.label') }).and(p.locator('[aria-pressed="true"]')),
+    only: ['라이트 960', '다크 720', 'forced-colors 960', '라이트 320', '아주 크게 320 다크'],
+  },
+  {
+    id: '구간 편집 화면(조작 줄 coarse, 720×520 확대)',
+    slug: 'editor-controls-coarse',
+    scenario: () => ({ resolve: { [R.url]: R }, watchSrc: HLS_PLAYLIST }),
+    drive: async (app, env) => {
+      await openEditorScene(app, env, R.url);
+      await startEditorWatch(app);
+      await loadEditorMeta(app.page, 3000);
+      // 이 Chromium 컨텍스트는 any-pointer: coarse를 켜지 않는다: tokens.css [coarse] 블록과 같은 값을 직접 건다
+      await app.page.evaluate(() => {
+        const r = document.documentElement.style;
+        r.setProperty('--control-h', '40px');
+        r.setProperty('--control-h-sm', '40px');
+        r.setProperty('--hit-min', '40px');
+      });
+      await app.page.getByRole('textbox', { name: t('range.start') }).fill('1:00:00');
+      await app.page.getByRole('textbox', { name: t('range.end') }).fill('2:00:00');
+      await zoomEditor(app.page, 0.47, -700);
+    },
+    // 조작 줄 최소 폭 464가 넘치지 않는지(가로 스크롤 0은 screens.spec의 공통 검사가 본다)
+    ready: (p) => editorDialog(p).getByRole('scrollbar'),
+    only: ['라이트 720'],
   },
   {
     id: '구간 편집 화면(타임라인 확대)',
@@ -414,7 +453,7 @@ export const SCREENS: Screen[] = [
         HTMLMediaElement.prototype.canPlayType = (type: string) => (type === 'application/vnd.apple.mpegurl' ? 'maybe' : '');
         window.addEventListener('error', (e) => e.target instanceof HTMLMediaElement && e.stopImmediatePropagation(), true);
       });
-      await editorDialog(app.page).getByRole('button', { name: t('watch.start.label') }).click();
+      await editorDialog(app.page).locator('.stage').getByRole('button', { name: t('watch.start.label') }).click();
     },
     ready: (p) => editorDialog(p).getByText(t('rangeEditor.uncoupled.body')),
   },
@@ -424,7 +463,7 @@ export const SCREENS: Screen[] = [
     scenario: () => ({ resolve: { [R.url]: R }, watch: 'error' }),
     drive: async (app, env) => {
       await openEditorScene(app, env, R.url);
-      await editorDialog(app.page).getByRole('button', { name: t('watch.start.label') }).click();
+      await editorDialog(app.page).locator('.stage').getByRole('button', { name: t('watch.start.label') }).click();
     },
     ready: (p) => editorDialog(p).getByText(t('watch.error.body')),
   },

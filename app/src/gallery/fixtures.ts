@@ -203,6 +203,14 @@ export const ICON_LABELS: Record<(typeof ICON_BUTTON_ICONS)[number], string> = {
   'arrow-left': '뒤로 가기',
   settings: '설정 열기',
   scan: '전체 보기',
+  'flag-triangle-left': '시작 찍기',
+  'flag-triangle-right': '끝 찍기',
+  'skip-back': '구간 처음으로 가기',
+  'skip-forward': '구간 끝으로 가기',
+  rewind: '5초 뒤로 가기',
+  'fast-forward': '5초 앞으로 가기',
+  play: '영상 보기',
+  pause: '일시정지',
 };
 
 export const KBD = 'Esc';

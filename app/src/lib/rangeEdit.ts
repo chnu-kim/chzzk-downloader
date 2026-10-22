@@ -105,11 +105,11 @@ export function handleKey(key: string, mods: Mods): number | 'min' | 'max' | nul
   }
 }
 
-/** 키 → 재생 위치 이동(편집 영역, 손잡이 밖): ←/→ ∓5. 수식 키가 하나라도 있으면 null */
+/** 키 → 재생 위치 이동(편집 영역, 손잡이 밖): ←/→ ∓SEEK_STEP_SECS. 수식 키가 하나라도 있으면 null */
 export function seekKey(key: string, mods: Mods): number | null {
   if (mods.shift || mods.alt || mods.ctrl || mods.meta) return null;
-  if (key === 'ArrowLeft') return -5;
-  if (key === 'ArrowRight') return 5;
+  if (key === 'ArrowLeft') return -SEEK_STEP_SECS;
+  if (key === 'ArrowRight') return SEEK_STEP_SECS;
   return null;
 }
 
@@ -178,26 +178,47 @@ export function seekTargetOf(text: string, len: number, h: Handle = 'end'): numb
   return s == null ? null : Math.min(s, top(len));
 }
 
-/** 구간 보기 한 걸음(PVU11, §6.3 표) */
-export type PlayMode = 'off' | 'range' | 'loop';
+/**
+ * 구간 반복 모드(range-editor.md §8.2, RE20·RE21). 'range'(구간 끝에서 일시정지) 모드는 없다:
+ * 반복을 끈 보기는 구간 끝을 지나 계속 가고, 켠 보기만 끝에서 시작으로 돌아간다.
+ */
+export type PlayMode = 'off' | 'loop';
+
+/** 조작 줄 ←/→ 한 번의 이동량(초). 문구는 `{n}` 자리표시로 받는다(content W5) */
+export const SEEK_STEP_SECS = 5;
+
+/** `playStep`이 받는 사건. `byUs`는 우리가 낸 pause·seek인가 */
+export type PlayEvent =
+  | { kind: 'time' | 'ended' | 'pause' | 'seeked'; t: number; byUs: boolean }
+  /** `<video>`의 play 이벤트(어느 경로든): 반복 토글이 켜져 있는가를 같이 받는다 */
+  | { kind: 'play'; t: number; loop: boolean }
+  /** 보는 중에 반복 토글을 바꿨다 */
+  | { kind: 'toggle'; on: boolean };
+
+/** 구간 반복 한 걸음(§8.2 표). 'restart'는 호출한 쪽이 시작으로 가는 것이다 */
 export function playStep(
   mode: PlayMode,
-  ev: { kind: 'time' | 'ended' | 'pause' | 'seeked'; t: number; byUs: boolean },
+  ev: PlayEvent,
   sel: { start: number; end: number; toEnd: boolean },
-): { mode: PlayMode; action: 'none' | 'pause' | 'restart' } {
+): { mode: PlayMode; action: 'none' | 'restart' } {
   const stay = { mode, action: 'none' as const };
   const off = { mode: 'off' as const, action: 'none' as const };
+  // 보기 시작과 토글은 모드와 무관하게 판단한다(다른 사건은 모드가 꺼져 있으면 아무 일도 없다)
+  if (ev.kind === 'play') {
+    if (!ev.loop) return off;
+    return ev.t >= sel.start && ev.t < sel.end ? { mode: 'loop', action: 'none' } : { mode: 'loop', action: 'restart' };
+  }
+  if (ev.kind === 'toggle') return ev.on ? { mode: 'loop', action: 'none' } : off;
   if (mode === 'off') return off;
   switch (ev.kind) {
     case 'time':
-      if (ev.t < sel.end) return stay;
-      return mode === 'loop' ? { mode, action: 'restart' } : { mode: 'off', action: 'pause' };
+      return ev.t < sel.end ? stay : { mode, action: 'restart' };
     case 'pause':
       return ev.byUs ? stay : off;
     case 'seeked':
       return ev.byUs || (ev.t >= sel.start && ev.t < sel.end) ? stay : off;
     case 'ended':
-      return mode === 'loop' && sel.toEnd ? { mode, action: 'restart' } : off;
+      return sel.toEnd ? { mode, action: 'restart' } : off;
   }
 }
 

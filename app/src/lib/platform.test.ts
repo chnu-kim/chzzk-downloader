@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { applyAppearance, applyWindowActive } from './appearance';
 import { t } from './copy/ko';
-import { EDITOR_KEYS, engineFixText, modPressed, osFamily, revealLabel, shortcutText } from './platform';
+import { EDITOR_ARIA_KEYS, EDITOR_KEYS, engineFixText, modPressed, osFamily, revealLabel, shortcutText } from './platform';
 
 describe('OS 분기(platform.md §20)', () => {
   it('macOS와 그 밖 두 갈래: 단축키 표기·폴더 보기 라벨', () => {
@@ -23,6 +23,11 @@ describe('OS 분기(platform.md §20)', () => {
     expect(shortcutText('windows', 'zoomMod')).toBe(t('platform.other.zoomMod'));
     expect(shortcutText('linux', 'zoomMod')).toBe(t('platform.other.zoomMod'));
     expect(EDITOR_KEYS).toMatchObject({ zoomIn: '+', zoomOut: '-', fit: '0' });
+  });
+
+  it('조작 줄 단축키 글자(RE-5)는 OS와 무관한 코드 상수고, aria-keyshortcuts는 ARIA 키 이름이다', () => {
+    expect(EDITOR_KEYS).toMatchObject({ markIn: 'I', markOut: 'O', play: 'Space', back: '←', forward: '→' });
+    expect(EDITOR_ARIA_KEYS).toEqual({ markIn: 'I', markOut: 'O', play: 'Space', back: 'ArrowLeft', forward: 'ArrowRight' });
   });
 
   it('웹 구성요소를 고치는 법만 OS마다 세 갈래다', () => {

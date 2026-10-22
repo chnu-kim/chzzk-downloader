@@ -26,7 +26,7 @@ export const PROGRESS_STATE = ['active', 'paused', 'failed', 'waiting'] as const
 export const BOOLEAN_PROPS = ['disabled', 'open', 'loading', 'required', 'readonly', 'invalid'] as const;
 
 /** 글자 없는 아이콘 버튼에 쓸 수 있는 모양(foundations §9 표가 원천, DX23·DI7·DP5) */
-export const ICON_BUTTON_ICONS = ['x', 'ellipsis', 'chevron-down', 'chevron-up', 'chevron-left', 'chevron-right', 'eye', 'eye-off', 'arrow-left', 'settings', 'scan'] as const;
+export const ICON_BUTTON_ICONS = ['x', 'ellipsis', 'chevron-down', 'chevron-up', 'chevron-left', 'chevron-right', 'eye', 'eye-off', 'arrow-left', 'settings', 'scan', 'flag-triangle-left', 'flag-triangle-right', 'skip-back', 'skip-forward', 'rewind', 'fast-forward', 'play', 'pause'] as const;
 
 export type ButtonVariant = (typeof BUTTON_VARIANT)[number];
 export type NoticeVariant = (typeof NOTICE_VARIANT)[number];

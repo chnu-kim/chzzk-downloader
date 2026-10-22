@@ -452,9 +452,9 @@ scrim(`--scrim`, `--z-dialog` 50) 위, 창 가운데
 | 목록: Space | 일시정지 ↔ 이어받기 | |
 | 목록: Enter | 완료 항목은 [열기], 그 밖은 첫 동작 버튼 | |
 | 목록: Delete | 종료 항목은 목록에서 지우기(되돌리기 토스트), 진행 항목은 취소(D2) | |
-| 구간 편집 화면: I / O | 영상 보기 위치를 시작·끝으로 찍기 | 화면 안 영상·손잡이·뿌리·[시작 찍기]·[끝 찍기]에서만(영상과 결합한 뒤). 수식 키가 있거나 입력칸·다른 단추·스위치 위면 처리하지 않는다. 키를 누르고 있을 때(반복)는 거른다 |
-| 구간 편집 화면: Space | 영상 보기 ↔ 일시정지 | 손잡이·뿌리에서만(영상 위는 영상 컨트롤 몫, 단추·스위치는 자기를 누른다) |
-| 구간 편집 화면: ←/→ | 손잡이 위: 손잡이 이동(Shift ×10, ↑↓·PageUp/Down·Home/End 포함). 그 밖: 영상 보기 위치 ∓5초 | Alt·Ctrl·Meta 조합은 처리하지 않는다(창·OS 몫) |
+| 구간 편집 화면: I / O | 영상 보기 위치를 시작·끝으로 찍기 | 칸 밖 어디서나(영상·손잡이·뿌리·조작 줄과 머리의 모든 단추·반복 토글·범위 막대, 영상과 결합한 뒤). 수식 키가 있거나 입력칸 위(글자 입력)면 처리하지 않는다. 키를 누르고 있을 때(반복)는 거른다. `e.code`로 판정해 한글 자판에서도 동작한다 |
+| 구간 편집 화면: Space | 영상 보기 ↔ 일시정지 | 손잡이·시간 영역·범위 막대·뿌리에서(영상 위는 영상 컨트롤 몫, 단추·반복 토글은 자기를 누른다) |
+| 구간 편집 화면: ←/→ | 손잡이 위: 손잡이 이동(Shift ×10, ↑↓·PageUp/Down·Home/End 포함). 범위 막대 위: 보이는 범위 이동. 칸 위: 캐럿. 그 밖(단추·반복 토글·시간 영역·뿌리): 영상 보기 위치 ∓5초 | 영상 위는 네이티브. Alt·Ctrl·Meta 조합은 처리하지 않는다(창·OS 몫) |
 | 구간 편집 화면: Esc | 편집 화면을 닫는다(초안을 버린다, 확인 없음). 카드는 닫지 않는다 | 순서(첫 줄 `isImeKey`): 길게 누른 Esc는 거르기만 → 영상이 전체 화면이면 웹뷰 몫(전파만 막는다) → 화면 닫기. 포커스가 `body`에 떨어져도 Esc 사다리 맨 안쪽 처리기가 같은 규칙으로 받는다 |
 | 구간 편집 화면: ⌘↩ / Ctrl+Enter | [구간 적용하기] | 성공·실패와 관계없이 `preventDefault` + `stopPropagation`(카드의 [받기]가 같은 키로 받지 않게). 열려 있는 동안 ⌘L·⌘,·붙여넣기·드롭·macOS 메뉴 "설정…"은 무시한다 |
 | 구간 편집 화면의 시각 칸: ↑ / ↓ | 그 칸 시각을 1초 미루기 / 당기기. 미리보기가 붙어 있으면 영상도 그 시각으로(길게 누르면 뗄 때 한 번) | 수식 키·IME 조합 중에는 처리하지 않는다. 칸을 못 읽으면 값만 그대로(캐럿은 튀지 않는다). 칸 값 편집의 가속기라 규칙 1(모든 동작에 버튼)을 깨지 않는다(preview-ux2 PS4) |
@@ -466,7 +466,7 @@ scrim(`--scrim`, `--z-dialog` 50) 위, 창 가운데
 2. **창·문서 수준 keydown은 첫 줄에서 `isImeKey(e)`(`isComposing || keyCode === 229`)를 거른다**(`G-IME-R4`). 강제: `design-lint` DX(keydown 핸들러 파일이 `isImeKey`를 import하는지 grep), `frontend`(옛 순서 합성 테스트).
 3. 브라우저 키(F5·Ctrl+R·Ctrl+F·Ctrl+P·F12·Alt+←→, macOS ⌘R·⌘P·⌘F·⌘[ ])는 막는다. 편집 키는 절대 막지 않는다. 목록은 `platform.md`(NS-2). 강제: `e2e-web`.
 4. 메뉴(`Menu`)는 ↑↓·Home·End·Enter·Space·Esc, 글자 타이핑 점프 없음. 비활성 항목은 `aria-disabled`로 닿을 수 있다(`A-PRIM-X4` 해소). 강제: `frontend`.
-5. 구간 편집 화면의 키(I/O·Space·←/→)는 그 화면 안에서만 받고(창 전체 한 글자 단축키는 만들지 않는다. 화면이 창 전체이므로 영역은 화면 전체다), 도움말 문서는 두지 않는다(후속). 찍기 단추의 `aria-keyshortcuts`는 `I`·`O`. 강제: `frontend`(`RangeEditor.test.ts`·`shortcuts.test.ts`), `e2e-web`(`range-editor.spec.ts`). 근거 `range-editor.md` §9.1, `preview-ux.md` §5.4·PVU12·PVU13.
+5. 구간 편집 화면의 키(I/O·Space·←/→)는 그 화면 안에서만 받고(창 전체 한 글자 단축키는 만들지 않는다. 화면이 창 전체이므로 영역은 화면 전체다), 도움말 문서는 두지 않는다(후속). 조작 줄 단추의 `aria-keyshortcuts`는 `I`·`O`·`Space`·`ArrowLeft`·`ArrowRight`(툴팁은 `{이름}({키})`). 강제: `frontend`(`RangeEditor.test.ts`·`shortcuts.test.ts`), `e2e-web`(`range-editor.spec.ts`). 근거 `range-editor.md` §9.1, `preview-ux.md` §5.4·PVU12·PVU13.
 6. **길게 누른 Esc(`e.repeat`)는 한 층만 닫는다**: 편집 화면 뿌리·Esc 사다리 처리기·대화상자(Dialog)·창 처리기(GlobalShortcuts) 모두 반복 keydown으로는 아무것도 닫지 않는다. Mod+Enter도 같다: 편집 화면 뿌리는 반복 Mod+Enter를 막기만 하고 적용하지 않으며, 카드의 창 Mod+Enter는 반복이면 [받기]로 받지 않는다. 앞 Esc가 층 하나를 닫은 뒤 포커스가 돌아간 아래 층(편집 화면·카드)을 반복 keydown이 이어서 닫아 초안을 잃는 일을 막는다. 강제: `frontend`(`feedback.test.ts`·`shortcuts.test.ts`·`RangeEditor.test.ts`).
 
 ---

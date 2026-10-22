@@ -1,7 +1,7 @@
 <svelte:options runes />
 
 <script lang="ts">
-  // 아이콘 버튼 매트릭스: 허용 모양 10 × 크기 2 × (기본·꺼짐·aria-disabled)(docs/design/system/components.md §2.2)
+  // 아이콘 버튼 매트릭스: 허용 모양 전부 × 크기 2 × (기본·꺼짐·aria-disabled)(docs/design/system/components.md §2.2)
   import IconButton from '../../lib/components/ui/IconButton.svelte';
   import { ICON_BUTTON_ICONS } from '../../lib/components/ui/vocab';
   import { ICON_LABELS, STATE_LABEL, TITLE, WHY, pair } from '../fixtures';

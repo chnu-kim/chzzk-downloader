@@ -108,7 +108,7 @@
 | 값·기록 지우기 | **지우기** + 대상("값 지우기", "거부 기록 지우기") | 삭제, 초기화, 리셋 | a-copy §3(대상 없는 `지우기`) |
 | 완성 파일 열기 | **열기** | 파일 열기, 재생 | D39, `G-HANDOFF-H1`(순서는 D39가 뒤집음) |
 | 받기 전에 영상을 미리 보는 일 | **미리보기**: 카드의 접힌 줄 "미리보기", 접근 이름 "‘{title}’ 미리보기", 실패 때 [치지직에서 보기] | 프리뷰 | D64, preview.md. "재생"·"재생기"는 위 "완성 파일 열기" 행이 이미 금지한다(DC1은 문구 전체에 건다: copy deck·`help/*.md`·`patterns.md`·`web.md`). 높이 예산 표도 "미리보기 줄"로 적는다 |
-| 받기 전에 고른 구간을 영상으로 확인하는 일 | **구간 보기**·**시작부터 보기**·**구간 반복하기**: 편집 영역 조작 줄의 단추 둘과 스위치 | 루프 | preview-ux.md PVU14. "재생"은 문구 전체 금지어라 "보기" 계열로 쓴다. 스위치는 "`-기`로 끝나는 명사구"(§5.1), 단추는 "동사 어간 + 기"다 |
+| 받기 전에 고른 구간을 영상으로 확인하는 일 | **구간 반복하기**(토글 단추 하나) | 루프 | preview-ux.md PVU14, range-editor.md RE20·RE21(구간 보기·시작부터 보기 단추를 지우고 반복 토글 하나로). "재생"은 문구 전체 금지어라 "보기" 계열로 쓴다. "`-기`로 끝나는 명사구"(§5.1) |
 | 시간 순서로 구간을 보고 고르는 영역(화면) | **타임라인**: 구간 편집 화면의 패널 제목·시간 영역 이름 | 타임 라인, 시간 막대, 막대 | D67, range-editor.md §11. 화면의 이름은 "타임라인"이고 "막대"는 쓰지 않는다(W1: 한 낱말 두 뜻 금지) |
 | 빠른 다시보기의 받을 구간을 고르는 화면 | **구간 편집**: 화면 제목 "구간 편집", 진입 단추 [구간 편집…] | 트리밍, 자르기, 잘라내기 | D67. "자르기·잘라내기"는 파일을 자르는 것으로 읽힌다(앱은 받을 범위를 정할 뿐 받은 파일을 자르지 않는다). 다른 화면을 여는 단추라 말줄임(§5.2) |
 | 파일 위치 보기 | macOS **Finder에서 보기** / 그 외 **폴더에서 보기** | 폴더 열기, 탐색기에서 보기, 파일 위치 | D39·D43, `G-HANDOFF-H1`. 문자열은 `platform.md` 분기 표에만(D2) |
@@ -474,9 +474,8 @@
 | (신설) `watch.mark.start` | — | `watch.mark.start` **시작 찍기** | 빠른 다시보기 미리보기(hls.js 경로) 재생기 아래 단추. 누른 순간의 재생 위치를 구간 시작 칸에 넣는다(preview.md PV17). 용어집 "구간" |
 | (신설) `watch.mark.end` | — | `watch.mark.end` **끝 찍기** | 같은 자리 둘째 단추. 끝 칸에 넣는다 |
 | (삭제, 구간 편집 화면 RE-3) `watch.editor.a11y` | `watch.editor.a11y` ‘{title}’ 구간 고르기 | — | 편집 영역 group 이름. 편집 화면에서는 dialog·group 이름이 대신한다(D67) |
-| (신설, PVU-3) `watch.range.play.label` | — | `watch.range.play.label` **구간 보기** | 조작 줄 단추. 고른 구간의 시작으로 가서 보고 끝에서 멈춘다. 용어집 새 행 |
-| (신설, PVU-3) `watch.range.fromStart.label` | — | `watch.range.fromStart.label` **시작부터 보기** | 조작 줄 단추. 시작으로 가서 보기만 하고 끝에서 멈추지 않는다 |
-| (신설, PVU-3) `watch.range.loop.label` | — | `watch.range.loop.label` **구간 반복하기** | 조작 줄 Switch 이름. 켜면 구간 끝에서 시작으로 돌아가 이어 본다. "`-기`로 끝나는 명사구"(§5.1 스위치 행) |
+| (삭제, 구간 편집 화면 RE-5) `watch.range.play.label` · `watch.range.fromStart.label` | `watch.range.play.label` 구간 보기 · `watch.range.fromStart.label` 시작부터 보기 | — | 단추 둘이 없어지고 [구간 처음으로 가기] + 보기에 반복을 켜서 확인한다(RE21) |
+| (신설, PVU-3) `watch.range.loop.label` | — | `watch.range.loop.label` **구간 반복하기** | 패널 머리 토글 단추(`aria-pressed`, RE-5)의 글자. 켜면 구간 끝에서 시작으로 돌아가 이어 본다. "`-기`로 끝나는 명사구"(§5.1) |
 | (신설, PVU-5) `range.length.label` / `range.lengthSize.label` | — | `range.length.label` **구간 길이: {length}** / `range.lengthSize.label` **구간 길이: {length} · {size}** | 구간 줄 안 caption 한 줄. `{size}`는 "약 7.8GB"처럼 "약"을 품는다. `·` 결합은 deck 문자열 하나로(DS6). `aria-live` 없음 |
 | (삭제, preview-ux2 PS-3) `range.toggle` | `range.toggle` 일부만 받기 | — | "일부만 받기" 줄이 없어지고 구간 칸 줄이 "미리보기·구간" 섹션 안으로 들어갔다(PS7) |
 | (신설) `range.label` | — | `range.label` **구간** | 명사 라벨(DC5) |
@@ -505,6 +504,10 @@
 | (신설, RE-4) `rangeEditor.fit.label` | — | `rangeEditor.fit.label` **전체 보기** | 확대했을 때만 있는 아이콘 단추의 이름. 툴팁은 `shortcut.hint.label`로 "전체 보기(0)" |
 | (신설, RE-4) `rangeEditor.viewport.label` / `rangeEditor.viewport.value.label` | — | **보이는 범위** / **{from}부터 {to}까지** | 범위 막대(`role="scrollbar"`)의 이름과 `aria-valuetext` |
 | (신설, RE-4) `rangeEditor.offscreen.label` | — | `rangeEditor.offscreen.label` **{time} · 보이는 범위 밖** | 화면 밖 손잡이의 `aria-valuetext`. `·` 결합은 deck 문자열 하나로(DS6) |
+| (신설, RE-5) `rangeEditor.controls.label` | — | `rangeEditor.controls.label` **영상 조작** | 조작 줄 `role="group"`의 이름(toolbar가 아니다, RE18) |
+| (신설, RE-5) `rangeEditor.toStart.label` / `rangeEditor.toEnd.label` | — | **구간 처음으로 가기** / **구간 끝으로 가기** | 아이콘 단추의 이름·툴팁. 기본형 "-기"(§5.1, 시안의 "구간 처음으로"를 고침). 단축키 없음 |
+| (신설, RE-5) `rangeEditor.back.label` / `rangeEditor.forward.label` | — | **{n}초 뒤로 가기** / **{n}초 앞으로 가기** | 아이콘 단추. 숫자는 `{n}`(W5, `SEEK_STEP_SECS` 5). 툴팁은 `shortcut.hint.label`로 "5초 뒤로 가기(←)" |
+| (신설, RE-5) `rangeEditor.now.label` | — | `rangeEditor.now.label` **지금 위치: {time}** | 조작 줄 왼쪽 칸의 숨은 글자(`.sr-only`). 보이는 시각은 `aria-hidden`이다 |
 | (신설, RE-4) `shortcut.hint.label` | — | `shortcut.hint.label` **{label}({key})** | 단축키가 있는 아이콘 단추의 툴팁. 괄호는 앞말에 붙인다(§6.5) |
 | `job.phase.recording` | — | **녹화 중** | ADR-0025. 낭독용 낱말(`statusWord`) |
 | `job.live.running` | — | **녹화 중 · {span} · {received}** | ADR-0025. 길이를 모르므로 막대·퍼센트·남은 시간이 없다. `{span}`은 `formatSpan` |

@@ -13,7 +13,6 @@
   import { actionLabel, errorCopy, type ActionId } from '../../copy/errors';
   import { t } from '../../copy/ko';
   import { sizeBaseOf } from '../../format/bytes';
-  import { formatClock } from '../../format/duration';
   import { noticeHelp } from '../../help';
   import { shortcutText } from '../../platform';
   import {
@@ -26,6 +25,7 @@
     checkKey,
     downloadBlock,
     effectiveRange,
+    lengthLine,
     kindTone,
     metaParts,
     notices,
@@ -254,20 +254,16 @@
    * 길이 줄(PS10): 받을 구간이 전체이면 "전체 길이"(길이를 모르면 "전체 구간"), 구간이 읽히면 "구간 길이". 끝을 모르는 구간이거나 칸이 틀렸으면 줄이 없다.
    * 고른 화질의 예상 크기가 있으면 곁들인다
    */
-  const lengthText = $derived.by(() => {
-    if (tone !== 'rewind') return null;
-    // 칸이 틀렸으면 줄을 숨긴다: 오류 칸에 "전체 길이"를 말하면 받는 범위를 잘못 알린다(content.md 정의)
-    if (rangeError(rangeInput, view.meta.durationSecs) != null) return null;
-    const secs = rangeSecs(range, view.meta.durationSecs);
-    if (range == null && !(secs != null && secs > 0)) return t('range.whole.label');
-    if (secs == null || !(secs > 0)) return null;
-    const length = formatClock(secs);
-    const size = quality ? qualitySize(quality, secs, sizeBaseOf(platform.os)) : null;
-    if (range == null) {
-      return size ? t('range.wholeLengthSize.label', { length, size }) : t('range.wholeLength.label', { length });
-    }
-    return size ? t('range.lengthSize.label', { length, size }) : t('range.length.label', { length });
-  });
+  const lengthText = $derived(
+    tone !== 'rewind'
+      ? null
+      : lengthLine({
+          error: rangeError(rangeInput, view.meta.durationSecs),
+          range,
+          durationSecs: view.meta.durationSecs,
+          size: (secs) => (quality ? qualitySize(quality, secs, sizeBaseOf(platform.os)) : null),
+        }),
+  );
 
   // 섹션을 접으면 앞 [받기]의 구간 오류는 지운다(접힌 동안은 적용되지 않으므로)
   $effect(() => {

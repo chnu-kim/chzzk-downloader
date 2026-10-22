@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { audioQuality, check, liveResolved, quality, resolved, vodResolved } from '../test/fixtures';
+import type { TimeRangeDto } from './bindings';
 import { t } from './copy/ko';
 import { formatClock } from './format/duration';
 import {
@@ -18,6 +19,10 @@ import {
   qualityFps,
   qualitySize,
   RANGE_FORMAT_EXAMPLE_SECS,
+  applyDraft,
+  draftOf,
+  lengthLine,
+  rangeSummary,
   effectiveRange,
   fileExt,
   savedFileName,
@@ -486,5 +491,107 @@ describe('savedFileName (저장되는 이름)', () => {
     expect(savedFileName('x.m4a.m4a', '.m4a')).toBe('x.m4a.m4a');
     expect(savedFileName('x.M4A', '.m4a')).toBe('x.M4A');
     expect(savedFileName('x.mp4.mp4', '.mp4')).toBe('x.mp4.mp4');
+  });
+});
+
+describe('구간 편집 모델(range-editor.md §5.2·§5.3, RE-1)', () => {
+  const D = 5400;
+  const ok = (applied: unknown) => ({ ok: true, applied });
+  it('applyDraft §5.2 표', () => {
+    const a = (s: string, e: string, d: number | null) => applyDraft({ start: s, end: e }, d);
+    expect(a('', '', D)).toEqual(ok(null));
+    expect(a('', '', null)).toEqual(ok(null));
+    expect(a('0:10:00', '0:40:00', D)).toEqual(ok({ startMs: 600000, endMs: 2400000 }));
+    expect(a('', '0:40:00', D)).toEqual(ok({ startMs: 0, endMs: 2400000 }));
+    expect(a('0:00:00', '1:30:00', D)).toEqual(ok(null));
+    expect(a('0:10:00', '', D)).toEqual(ok({ startMs: 600000, endMs: 5400000 }));
+    expect(a('0:10:00', '2:00:00', D)).toEqual(ok({ startMs: 600000, endMs: 5400000 }));
+    expect(a('0:10:00', '', null)).toEqual(ok({ startMs: 600000, endMs: null }));
+    expect(a('abc', '', D)).toEqual({ ok: false, error: { field: 'start', kind: 'format' } });
+    expect(a('0:10:00', 'xyz', D)).toEqual({ ok: false, error: { field: 'end', kind: 'format' } });
+    expect(a('0:40:00', '0:10:00', D)).toEqual({ ok: false, error: { field: 'end', kind: 'order' } });
+    expect(a('0:10:00', '0:10:00', D)).toEqual({ ok: false, error: { field: 'end', kind: 'order' } });
+    expect(a('2:00:00', '', D)).toEqual({ ok: false, error: { field: 'start', kind: 'beyond' } });
+    expect(a('2:00:00', '', null)).toEqual(ok({ startMs: 7200000, endMs: null }));
+  });
+  it('applyDraft: 오류는 앞 칸이 먼저', () => {
+    expect(applyDraft({ start: 'abc', end: 'xyz' }, D)).toEqual({ ok: false, error: { field: 'start', kind: 'format' } });
+  });
+  it('applyDraft: 올림 길이(5400.4)에서 끝 칸이 내림 길이이면 영상 끝까지', () => {
+    expect(applyDraft({ start: '0:10:00', end: '1:30:00' }, 5400.4)).toEqual(ok({ startMs: 600000, endMs: 5401000 }));
+  });
+
+  it('draftOf: null → 빈 두 칸, 시작 0 → 빈칸, 끝 없음 → 빈칸', () => {
+    expect(draftOf(null, D)).toEqual({ start: '', end: '' });
+    expect(draftOf({ startMs: 0, endMs: 2400000 }, D)).toEqual({ start: '', end: '0:40:00' });
+    expect(draftOf({ startMs: 600000, endMs: null }, null)).toEqual({ start: '0:10:00', end: '' });
+    expect(draftOf({ startMs: 600000, endMs: 2400000 }, D)).toEqual({ start: '0:10:00', end: '0:40:00' });
+  });
+  it('draftOf: 끝 = 올림 길이이면 빈칸(A21)', () => {
+    expect(draftOf({ startMs: 600000, endMs: 5401000 }, 5400.4)).toEqual({ start: '0:10:00', end: '' });
+    expect(draftOf({ startMs: 600000, endMs: 5400000 }, D)).toEqual({ start: '0:10:00', end: '' });
+  });
+  it('draftOf → applyDraft 왕복이 같은 applied', () => {
+    const cases: Array<[TimeRangeDto | null, number | null]> = [
+      [null, D],
+      [{ startMs: 600000, endMs: 2400000 }, D],
+      [{ startMs: 0, endMs: 2400000 }, D],
+      [{ startMs: 600000, endMs: 5400000 }, D],
+      [{ startMs: 600000, endMs: 5401000 }, 5400.4],
+      [{ startMs: 600000, endMs: null }, null],
+      [{ startMs: 7200000, endMs: null }, null],
+    ];
+    for (const [applied, d] of cases) expect(applyDraft(draftOf(applied, d), d)).toEqual({ ok: true, applied });
+  });
+
+  it('rangeSummary §5.3 표', () => {
+    expect(rangeSummary(null, D)).toBeNull();
+    expect(rangeSummary({ startMs: 600000, endMs: 2400000 }, D)).toEqual({ range: '0:10:00~0:40:00', length: '0:30:00' });
+    expect(rangeSummary({ startMs: 600000, endMs: 5400000 }, D)).toEqual({ range: '0:10:00~1:30:00', length: '1:20:00' });
+    expect(rangeSummary({ startMs: 600000, endMs: null }, null)).toEqual({ range: '0:10:00~', length: null });
+  });
+  it('rangeSummary: 올림 끝은 내림 길이로 보인다', () => {
+    expect(rangeSummary({ startMs: 600000, endMs: 5401000 }, 5400.4)).toEqual({ range: '0:10:00~1:30:00', length: '1:20:00' });
+  });
+  it('rangeSummary: 시작이 내림·올림 길이 사이이면 길이 0 대신 올림 끝을 보인다', () => {
+    // 시작이 내림 길이와 올림 길이 사이이면 길이 0 구간 대신 올림 끝을 그대로 보인다
+    expect(rangeSummary({ startMs: 5400000, endMs: 5401000 }, 5400.4)).toEqual({ range: '1:30:00~1:30:01', length: '0:00:01' });
+  });
+  it('rangeSummary: 길이를 몰라도 끝이 있으면 그대로', () => {
+    expect(rangeSummary({ startMs: 600000, endMs: 1200000 }, null)).toEqual({ range: '0:10:00~0:20:00', length: '0:10:00' });
+  });
+
+  describe('lengthLine (옛 카드 lengthText 분기)', () => {
+    const size = (secs: number) => `${secs}s크기`;
+    const noSize = () => null;
+    it('전체 + 크기', () => {
+      expect(lengthLine({ error: null, range: null, durationSecs: 600, size })).toBe(
+        t('range.wholeLengthSize.label', { length: formatClock(600), size: '600s크기' }),
+      );
+    });
+    it('전체, 크기 없음', () => {
+      expect(lengthLine({ error: null, range: null, durationSecs: 600, size: noSize })).toBe(
+        t('range.wholeLength.label', { length: formatClock(600) }),
+      );
+    });
+    it('전체 길이 미상 → range.whole.label', () => {
+      expect(lengthLine({ error: null, range: null, durationSecs: null, size })).toBe(t('range.whole.label'));
+      expect(lengthLine({ error: null, range: null, durationSecs: 0, size })).toBe(t('range.whole.label'));
+    });
+    it('구간 + 크기 / 크기 없음', () => {
+      const range = { startMs: 600000, endMs: 1200000 };
+      expect(lengthLine({ error: null, range, durationSecs: 5400, size })).toBe(
+        t('range.lengthSize.label', { length: formatClock(600), size: '600s크기' }),
+      );
+      expect(lengthLine({ error: null, range, durationSecs: 5400, size: noSize })).toBe(
+        t('range.length.label', { length: formatClock(600) }),
+      );
+    });
+    it('끝 미상 구간 → null', () => {
+      expect(lengthLine({ error: null, range: { startMs: 600000, endMs: null }, durationSecs: null, size })).toBeNull();
+    });
+    it('오류 → null (오류 칸에 전체 길이를 말하지 않는다)', () => {
+      expect(lengthLine({ error: { field: 'start', kind: 'format' }, range: null, durationSecs: 600, size })).toBeNull();
+    });
   });
 });

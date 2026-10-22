@@ -724,6 +724,22 @@ describe('결합(RE8)', () => {
     expect(m.writes).toEqual([]);
   });
 
+  it('결합 전(mp4)에는 반복을 켜 두고 네이티브 controls로 보아도 영상을 옮기지 않는다', async () => {
+    vi.mocked(api.watchOpen).mockResolvedValue({ id: SID, kind: 'mp4', src: `watch://localhost/${SID}/v` });
+    const { user } = mount();
+    await user.click(startBtn());
+    await waitFor(() => expect(videoEl()).not.toBeNull());
+    const m = mockVideo(600, 650);
+    await fireEvent(m.v, new Event('loadedmetadata'));
+    await user.click(loopSwitch());
+    m.setPaused(false);
+    await fireEvent(m.v, new Event('play'));
+    m.setTime(700);
+    await fireEvent(m.v, new Event('timeupdate'));
+    await fireEvent(m.v, new Event('ended'));
+    expect(m.writes).toEqual([]);
+  });
+
   it('네이티브 m3u8 경로(hls.js 없음)에서도 막대·칸만 쓰고, 안내 줄이 나온다', async () => {
     hlsMock.FakeHls.supported = false;
     vi.spyOn(HTMLMediaElement.prototype, 'canPlayType').mockImplementation((type) =>
@@ -1455,7 +1471,21 @@ describe('조작 줄(RE-5, §8.1)', () => {
     expect(controls()).toHaveTextContent(t('rangeEditor.now.label', { time: '0:01:41' }));
   });
 
-  it('N초 뒤로·앞으로: ±5초이고 [0, 길이]로 자른다. 반복 모드는 끈다', async () => {
+  it('N초 뒤로·앞으로 단추: 보는 중 구간 밖으로 나가면 반복 모드가 꺼져 끝을 지나도 되돌리지 않는다', async () => {
+    const { user, m } = await setup();
+    m.live();
+    await user.click(loopSwitch());
+    m.setPaused(false);
+    m.setTime(88);
+    await fireEvent(m.v, new Event('seeked'));
+    await user.click(fwdBtn()); // 93: 구간(60~90) 밖
+    m.writes.length = 0;
+    m.setTime(95);
+    await fireEvent(m.v, new Event('timeupdate'));
+    expect(m.writes).toEqual([]);
+  });
+
+  it('N초 뒤로·앞으로: ±5초이고 [0, 길이]로 자른다.', async () => {
     const { user, m } = await setup();
     await user.click(fwdBtn());
     await user.click(backBtn());
@@ -1488,6 +1518,7 @@ describe('조작 줄(RE-5, §8.1)', () => {
     m.setTime(90);
     await fireEvent(m.v, new Event('timeupdate'));
     expect(m.writes).toEqual([60, 60]);
+    expect(m.pause).not.toHaveBeenCalled();
   });
 
   it('구간 끝으로: 보는 중이면 일시정지하고 끝으로 간다. 멈춰 있으면 일시정지 없이 간다', async () => {

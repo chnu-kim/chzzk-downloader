@@ -591,7 +591,7 @@ for (const [label, coarse] of [
     await expect(scrollbar(app)).toBeVisible();
     await noHorizontalScroll(app);
     const row = (await controls(app).boundingBox())!;
-    expect(row.width).toBeGreaterThanOrEqual(coarse ? 440 : 364);
+    expect(row.width).toBeGreaterThanOrEqual(coarse ? 463 : 379); // controlsMinW = 7×--control-h + 184 (464·380), ±1
     const cluster = (await controls(app).locator('.editor-cluster').boundingBox())!;
     expect(cluster.x).toBeGreaterThanOrEqual(row.x);
     expect(cluster.x + cluster.width).toBeLessThanOrEqual(row.x + row.width + 1);

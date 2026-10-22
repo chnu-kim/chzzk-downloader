@@ -513,6 +513,7 @@
     if (!videoEl) return;
     position = videoEl.currentTime;
     followPosition();
+    if (!coupled) return void (playMode = 'off'); // 결합 전에는 영상 탐색이 없다(RE8·§5.5)
     const g = stepSel();
     if (!g) return;
     apply(playStep(playMode, { kind: 'time', t: position, byUs: false }, g), g.start);
@@ -524,6 +525,7 @@
     followPosition();
     const c = consumeOwnSeek(pendingSeek, position);
     pendingSeek = null;
+    if (!coupled) return void (playMode = 'off');
     const g = stepSel();
     if (!g) return void (playMode = 'off');
     apply(playStep(playMode, { kind: 'seeked', t: position, byUs: c.byUs }, g), g.start);
@@ -537,7 +539,7 @@
     playing = true;
     following = true;
     const v = videoEl;
-    const g = stepSel();
+    const g = coupled ? stepSel() : null; // 결합 전에는 반복 규칙을 걸지 않는다(RE8·§5.5)
     if (!v || !g) {
       playMode = 'off';
       return;
@@ -551,6 +553,7 @@
     pausedByUs = false;
     // 끝에 닿아 브라우저가 건 일시정지는 사용자 일시정지가 아니다: 곧 오는 ended가 이어받는다
     if (videoEl?.ended) return;
+    if (!coupled) return void (playMode = 'off');
     const g = stepSel();
     if (!g) return void (playMode = 'off');
     apply(playStep(playMode, { kind: 'pause', t: position, byUs }, g), g.start);
@@ -558,6 +561,7 @@
 
   function onended() {
     playing = false;
+    if (!coupled) return void (playMode = 'off');
     const g = stepSel();
     if (!g) return void (playMode = 'off');
     const r = playStep(playMode, { kind: 'ended', t: position, byUs: false }, g);

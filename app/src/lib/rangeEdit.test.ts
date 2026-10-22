@@ -408,8 +408,7 @@ describe('playStep (range-editor.md §8.2 표)', () => {
     ['off', 'pause 우리(구간 끝으로 가기)', pause(true), sel, 'off', 'none'],
     ['off', 'pause 사용자', pause(false), sel, 'off', 'none'],
     // 보는 중 토글
-    ['off', '토글 켬 · 구간 안', toggle(true), sel, 'loop', 'none'],
-    ['off', '토글 켬(어느 자리든 모드만 건다, 구간 뒤면 다음 time이 되돌린다)', toggle(true), sel, 'loop', 'none'],
+    ['off', '토글 켬(위치와 무관: 구간 뒤 되돌림은 아래 별도 it이 고정)', toggle(true), sel, 'loop', 'none'],
     ['loop', '토글 끔', toggle(false), sel, 'off', 'none'],
     ['off', '토글 끔(이미 꺼짐)', toggle(false), sel, 'off', 'none'],
   ] as [PlayMode, string, Ev, typeof sel, PlayMode, string][])('%s · %s', (mode, _n, ev, s, wantMode, wantAction) => {

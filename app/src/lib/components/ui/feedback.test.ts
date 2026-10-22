@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/svelte';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { TOAST_MS } from '../../timing';
@@ -118,6 +118,26 @@ describe('Dialog', () => {
     expect(container.hasAttribute('inert')).toBe(false);
     expect(sibling.getAttribute('inert')).toBe('prev');
     sibling.remove();
+  });
+
+  it('길게 누른 Esc(repeat)는 닫지 않는다. 전파도 막아 아래 층이 이어서 닫히지 않는다(RE16)', async () => {
+    const user = userEvent.setup();
+    render(DialogHarness);
+    await user.click(screen.getByRole('button', { name: '열기' }));
+    const dialog = screen.getByRole('dialog');
+    const reached = vi.fn();
+    window.addEventListener('keydown', reached);
+    // fireEvent는 취소되지 않은 이벤트에 true를 돌려준다
+    const notPrevented = await fireEvent.keyDown(dialog, { key: 'Escape', repeat: true });
+    window.removeEventListener('keydown', reached);
+    expect(notPrevented).toBe(false);
+    expect(reached).not.toHaveBeenCalled();
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(screen.getByTestId('closed')).toHaveTextContent('0');
+    // 처음 누른 Esc는 그대로 닫는다
+    await fireEvent.keyDown(dialog, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(screen.getByTestId('closed')).toHaveTextContent('1');
   });
 
   it('버튼으로 닫아도 연 요소로 포커스가 돌아간다', async () => {

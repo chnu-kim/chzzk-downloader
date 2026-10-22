@@ -1,6 +1,6 @@
 # 0029 미리보기·구간 섹션: 표지 자리 + [영상 보기]를 누를 때 세션을 연다
 
-상태: 채택(잠정)   날짜: 2026-10-21   관련: D66, D64, D65, ADR-0027, ADR-0028, `docs/design/features/preview-ux2.md` PS5~PS12·PS15~PS17, components.md §2.29·§2.30, app.md 121·122
+상태: 폐기(→ 0030)   날짜: 2026-10-21   관련: D66, D64, D65, ADR-0027, ADR-0028, `docs/design/features/preview-ux2.md` PS5~PS12·PS15~PS17, components.md §2.29·§2.30, app.md 121·122
 
 ## 맥락
 

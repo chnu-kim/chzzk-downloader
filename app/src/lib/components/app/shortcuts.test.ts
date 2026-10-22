@@ -37,23 +37,71 @@ describe('GlobalShortcuts', () => {
     expect(await fireEvent.drop(input, { dataTransfer })).toBe(false);
   });
 
-  it('Esc: 대상이 [data-local-keys] 안이면 ui.escape를 부르지 않고, 밖이면 부른다', async () => {
-    const { container } = render(GlobalShortcuts);
-    const area = document.createElement('div');
-    area.setAttribute('data-local-keys', '');
-    const inner = document.createElement('button');
-    area.appendChild(inner);
-    const outside = document.createElement('button');
-    container.append(area, outside);
+  it('길게 누른(repeat) Esc는 아무것도 닫지 않는다. 처음 누른 Esc는 닫는다(RE16)', async () => {
+    render(GlobalShortcuts);
     const spy = vi.spyOn(ui, 'escape').mockReturnValue(true);
     try {
-      await fireEvent.keyDown(inner, { key: 'Escape' });
-      await fireEvent.keyDown(area, { key: 'Escape' });
+      await fireEvent.keyDown(window, { key: 'Escape', repeat: true });
       expect(spy).not.toHaveBeenCalled();
-      await fireEvent.keyDown(outside, { key: 'Escape' });
+      await fireEvent.keyDown(window, { key: 'Escape' });
       expect(spy).toHaveBeenCalledTimes(1);
     } finally {
       spy.mockRestore();
+    }
+  });
+
+  it('[data-local-keys] 안의 Esc도 이제 예외가 아니다(편집 화면이 생겨 쓰는 곳이 없다)', async () => {
+    const { container } = render(GlobalShortcuts);
+    const area = document.createElement('div');
+    area.setAttribute('data-local-keys', '');
+    container.appendChild(area);
+    const spy = vi.spyOn(ui, 'escape').mockReturnValue(true);
+    try {
+      await fireEvent.keyDown(area, { key: 'Escape' });
+      expect(spy).toHaveBeenCalledTimes(1);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('구간 편집 화면이 열린 동안 Mod+L·Mod+,는 무시한다(설정으로 가면 카드가 언마운트된다, RE15)', async () => {
+    render(GlobalShortcuts);
+    platform.set('windows');
+    const focus = vi.fn();
+    ui.urlTarget = { focus, paste: vi.fn() };
+    ui.rangeEditorOpen = true;
+    try {
+      const l = await fireEvent.keyDown(window, { key: 'l', ctrlKey: true });
+      const comma = await fireEvent.keyDown(window, { key: ',', ctrlKey: true });
+      expect(ui.view).toBe('home');
+      expect(focus).not.toHaveBeenCalled();
+      // 처리하지 않았으니 기본 동작을 막지 않는다
+      expect(l).toBe(true);
+      expect(comma).toBe(true);
+      ui.rangeEditorOpen = false;
+      await fireEvent.keyDown(window, { key: ',', ctrlKey: true });
+      expect(ui.view).toBe('settings');
+    } finally {
+      ui.rangeEditorOpen = false;
+      ui.urlTarget = null;
+    }
+  });
+
+  it('구간 편집 화면이 열린 동안 입력칸 밖 붙여넣기는 무시하고, 닫히면 입력줄로 보낸다(RE15)', async () => {
+    render(GlobalShortcuts);
+    const paste = vi.fn();
+    ui.urlTarget = { focus: vi.fn(), paste };
+    const event = () => ({ clipboardData: { getData: () => 'https://chzzk.naver.com/video/1' } });
+    try {
+      ui.rangeEditorOpen = true;
+      expect(await fireEvent.paste(document.body, event())).toBe(true);
+      expect(paste).not.toHaveBeenCalled();
+      ui.rangeEditorOpen = false;
+      expect(await fireEvent.paste(document.body, event())).toBe(false);
+      expect(paste).toHaveBeenCalledTimes(1);
+    } finally {
+      ui.rangeEditorOpen = false;
+      ui.urlTarget = null;
     }
   });
 

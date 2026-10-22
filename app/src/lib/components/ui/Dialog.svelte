@@ -44,6 +44,7 @@
   import { untrack } from 'svelte';
   import Button from './Button.svelte';
   import { enterMotion, isImeKey, leaveMotion, trapTab } from './focus';
+  import { modalLayer } from './modalLayer';
 
   let { open, title, primary, secondary, onclose, children }: DialogProps = $props();
 
@@ -120,33 +121,21 @@
   });
 
   /**
-   * `.scrim`을 body 직속으로 옮기고 열린 동안 body의 다른 자식을 inert로 만든다.
-   * 정리: inert 복원 → 연 요소로 포커스 복귀 → 슬롯 반납(다음 대기 대화상자가 뜬다).
+   * `.scrim`을 모달 층으로 올린다(body 직속으로 옮기고 맨 위 층 말고는 inert, 공용 `modalLayer`).
+   * 정리: 층 내리기(inert 다시 계산 → 요소 떼기 → 연 요소로 포커스 복귀) → 슬롯 반납(다음 대기 대화상자가 뜬다).
    */
   function layer(el: HTMLElement) {
     scrimEl = el;
     attached = true;
-    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    document.body.append(el);
-    const others: Array<[Element, string | null]> = [];
-    for (const child of document.body.children) {
-      if (child === el) continue;
-      others.push([child, child.getAttribute('inert')]);
-      child.setAttribute('inert', '');
-    }
+    const stopLayer = modalLayer(el);
     const stopEnter = enterMotion(el);
     // 열리면 늘 primary에 포커스(:focus-visible 휴리스틱에 맡긴다)
     queueMicrotask(() => (primaryEl ?? box)?.focus());
     return () => {
       stopEnter();
-      for (const [child, prev] of others) {
-        if (prev === null) child.removeAttribute('inert');
-        else child.setAttribute('inert', prev);
-      }
-      el.remove();
+      stopLayer();
       scrimEl = null;
       attached = false;
-      if (opener?.isConnected) opener.focus();
       held = false;
       release(slot);
     };
@@ -157,7 +146,8 @@
     if (e.key === 'Escape') {
       e.preventDefault();
       e.stopPropagation();
-      onclose();
+      // 길게 누른 Esc는 한 층만 닫는다: 대화상자가 닫힌 뒤 포커스가 돌아간 아래 층(편집 화면)을 반복 keydown이 닫지 않게 한다(RE16)
+      if (!e.repeat) onclose();
       return;
     }
     // 포커스가 버튼이 아닐 때 Enter는 아무것도 하지 않는다(버튼 위 Enter는 네이티브 클릭)

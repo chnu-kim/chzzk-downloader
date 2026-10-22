@@ -9,15 +9,19 @@
   async function onkeydown(e: KeyboardEvent) {
     if (isImeKey(e)) return;
     if (e.key === 'Escape') {
+      // 길게 누른 Esc는 한 층만 닫는다: 앞 Esc가 닫은 층 아래의 카드까지 반복 keydown이 닫지 않게 한다(range-editor.md RE16)
+      if (e.repeat) return;
       // 미리보기 <video> 위의 Esc는 전체 화면 해제 등 재생기 몫이다: 카드를 닫지 않는다(preview.md 검토 반영 P9).
-      // 구간 편집 영역(`data-local-keys`) 안의 Esc도 카드를 닫지 않는다: 찍는 중에 실수로 편집 내용을 잃지 않게(preview-ux PVU12)
-      if (e.target instanceof HTMLMediaElement || (e.target instanceof Element && e.target.closest('[data-local-keys]'))) return;
+      // 구간 편집 화면의 Esc는 화면 뿌리가 먼저 받아 멈춘다(defaultPrevented·stopPropagation, RE16)
+      if (e.target instanceof HTMLMediaElement) return;
       // 대화상자·메뉴는 스스로 받아 멈춘다(defaultPrevented)
       if (!e.defaultPrevented && ui.escape()) e.preventDefault();
       return;
     }
     // 로그인 화면 뒤에서는 설정·입력줄로 둘러 가지 못하게 한다(셸 게이트가 권위, 화면은 어긋나지 않게)
     if (!auth.unlocked || !modKey(e)) return;
+    // 구간 편집 화면이 열린 동안 Mod+L·Mod+,는 무시한다: 설정으로 가면 카드가 언마운트되어 초안이 사라진다(RE15)
+    if (ui.rangeEditorOpen) return;
     const k = e.key.toLowerCase();
     if (k === 'l') {
       e.preventDefault();
@@ -35,7 +39,8 @@
   // 입력칸 밖 Mod+V: 입력줄에 붙여넣고 바로 불러온다(§8.10). 클립보드 API 대신 paste 이벤트의 글을 쓴다
   // (사용자 제스처 안이라 권한이 필요 없고, 웹뷰에 클립보드 읽기 권한을 주지 않는다).
   function onpaste(e: ClipboardEvent) {
-    if (!auth.unlocked || editable(e.target) || ui.view !== 'home' || !ui.urlTarget) return;
+    // 구간 편집 화면이 열린 동안에는 새 주소를 불러오지 않는다(카드가 바뀐다, RE15)
+    if (!auth.unlocked || ui.rangeEditorOpen || editable(e.target) || ui.view !== 'home' || !ui.urlTarget) return;
     const text = e.clipboardData?.getData('text/plain')?.trim();
     if (!text) return;
     e.preventDefault();

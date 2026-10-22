@@ -2,14 +2,14 @@
   // 영상 카드(system/patterns.md §6.5·§14.2 (c)). 화질·폴더·파일 이름을 고르고 `enqueue`한다.
   // 파일 이름·화질·폴더가 바뀔 때마다 CHECK_DEBOUNCE_MS 뒤 `check_output`을 부르고, 지금 입력의 결과가 올 때까지
   // [받기]를 막는다(낡은 결과로 충돌 안내를 건너뛰지 않게). 같은 이름 파일을 "덮어쓰기"로 골랐으면 [받기]가 D7을 연다.
-  // 빠른 다시보기는 "미리보기·구간" 섹션 맨 아래에 구간 칸 줄(RangeField)이 있고(preview-ux2 PS7), 섹션이 펼쳐져 있으면 검사 열쇠·요청·크기 미리보기가 effectiveRange 하나를 쓴다.
-  // 섹션이 접히면 구간은 적용되지 않고(칸 값은 남는다) 칸이 비면 전체다(PS9·PS10).
-  // 구간 막대의 길이(`len`)의 주인은 이 카드다: meta 길이가 우선이고 없으면 WatchPanel이 알려 준 영상 길이(PVU7).
+  // 빠른 다시보기는 구간 줄 하나(RangeSummary)만 두고, 구간은 창 전체 편집 화면(RangeEditor, range-editor.md D67)에서 고른다.
+  // 카드가 가진 상태는 확정 구간 `applied`(처음은 null = 전체)와 편집 화면 열림 `editorOpen`이고, 검사 열쇠·요청·크기 미리보기는 `applied` 하나만 읽는다(RE2).
+  // 일반 VOD·클립은 지금처럼 "미리보기" 섹션(WatchPanel)이 있다(RE14).
   // 영역(region)의 이름은 영상 제목이다(h3). 머리 h2는 섹션 제목 급의 `card.title`.
   // 카드와 `.main` 사이 어떤 조상에도 overflow를 두지 않는다: 바닥 줄(.card-footer)이 sticky라서다.
-  import { onMount, untrack } from 'svelte';
+  import { onMount, tick, untrack } from 'svelte';
   import * as api from '../../api';
-  import type { AppError, OutputCheck, ResolvedDto } from '../../bindings';
+  import type { AppError, OutputCheck, ResolvedDto, TimeRangeDto } from '../../bindings';
   import { actionLabel, errorCopy, type ActionId } from '../../copy/errors';
   import { t } from '../../copy/ko';
   import { sizeBaseOf } from '../../format/bytes';
@@ -24,22 +24,17 @@
     canDownload,
     checkKey,
     downloadBlock,
-    effectiveRange,
-    lengthLine,
     kindTone,
     metaParts,
     notices,
-    rangeError,
     rangeSecs,
     qualitySize,
     savedFileName,
     usesFreeName,
     type CardChoices,
-    type RangeError,
   } from '../../receive';
   import { announcer } from '../../stores/announce.svelte';
   import { auth } from '../../stores/auth.svelte';
-  import { mark as markFields, nudge as nudgeFields, seekTargetOf, timelineLength, type Fields } from '../../rangeEdit';
   import { platform } from '../../stores/platform.svelte';
   import { resolver } from '../../stores/resolve.svelte';
   import { settings } from '../../stores/settings.svelte';
@@ -56,7 +51,8 @@
   import FolderField from './FolderField.svelte';
   import OwnershipNotice from './OwnershipNotice.svelte';
   import QualityPicker from './QualityPicker.svelte';
-  import RangeField from './RangeField.svelte';
+  import RangeEditor from './RangeEditor.svelte';
+  import RangeSummary from './RangeSummary.svelte';
   import WatchPanel from './WatchPanel.svelte';
 
   interface Props {
@@ -78,17 +74,13 @@
     fileName: view.suggestedFileName,
   }));
 
-  // 구간(range.md §5, preview-ux2 PS9·PS10): 칸은 카드마다 빈칸으로 시작한다(다음 영상에서 실수로 구간을 받지 않게). 빈칸은 전체다.
-  // 섹션 열림(`ui.previewOpen`)은 기억하지만 칸 값은 기억하지 않는다. 접힌 칸을 처음 고칠 때(rangeEdit.begin) 시작 칸은 0:00:00, 끝 칸은 이 빈칸으로 되돌려 넣는다.
-  const initialEnd = '';
-  let rangeStart = $state('');
-  let rangeEnd = $state(initialEnd);
-  let rangeErr: RangeError | null = $state(null);
-  /** WatchPanel이 알려 준 영상 길이(미리보기가 닫히면 null) */
-  let videoSecs: number | null = $state(null);
-  const barLen = $derived(timelineLength(view.meta.durationSecs, videoSecs));
-  /** 미리보기 편집 영역에 seek()를 부탁할 때 쓴다(PVU-5의 칸 → 영상) */
-  let watchPanel: ReturnType<typeof WatchPanel> | null = $state(null);
+  // 구간(range.md §5, range-editor.md RE2): 확정 구간은 카드마다 null(전체)로 시작한다(다음 영상에서 실수로 구간을 받지 않게, R62).
+  // 편집 화면의 초안은 [구간 적용하기]가 검증을 통과할 때만 여기로 온다. [닫기]·Esc는 이 값을 건드리지 않는다.
+  let applied: TimeRangeDto | null = $state(null);
+  /** 구간 편집 화면이 열려 있는가(열려 있는 동안 이 카드는 inert 층 아래다) */
+  let editorOpen = $state(false);
+  /** [구간 편집…] 단추: 편집 화면이 닫힐 때 포커스를 돌려받는다 */
+  let editBtn: HTMLButtonElement | null = $state(null);
 
   let qualityIndex = $state(initial.quality);
   /** null = 설정의 저장 폴더 */
@@ -121,10 +113,9 @@
   const watchable = $derived(
     (view.playbackKind === 'progressive' || view.playbackKind === 'liveRewindHls') && view.ownership !== 'notOwn' && view.ownership !== 'unknown',
   );
-  /** 구간은 섹션이 펼쳐진 빠른 다시보기에서만 적용된다(R3·PS9·PS15: 그 밖의 카드에는 칸 줄이 없다) */
-  const sectionOpen = $derived(ui.previewOpen && tone === 'rewind' && watchable);
-  const rangeInput = $derived({ open: sectionOpen, start: rangeStart, end: rangeEnd });
-  const range = $derived(effectiveRange(rangeInput, view.meta.durationSecs));
+  /** 구간은 받을 수 있는 빠른 다시보기에서만 고른다(R3·PS15: 그 밖의 카드에는 구간 줄이 없다) */
+  const rangeApplies = $derived(tone === 'rewind' && watchable);
+  const range = $derived(rangeApplies ? applied : null);
   const key = $derived(checkKey(folder, fileName, quality?.id ?? '', range));
   /** 화질 행 "약 N GB"의 길이: 칸이 파싱될 때만 구간 기준(조용한 미리보기) */
   const sizeSecs = $derived(rangeSecs(range, view.meta.durationSecs));
@@ -166,109 +157,24 @@
     if (!f || !errCopy?.actions.includes('recheck') || view.ownership === 'notOwn' || view.ownership === 'unknown') return null;
     return f.code === 'network' ? t('receive.recheck.offline') : errorCopy(f, { place: 'other' }).title;
   });
-  function setFields(f: Fields) {
-    rangeStart = f.start;
-    rangeEnd = f.end;
+  /** 편집 화면 길이 줄의 예상 크기: 고른 화질로(열린 동안 화질은 고정이다) */
+  const sizeOf = (secs: number) => (quality ? qualitySize(quality, secs, sizeBaseOf(platform.os)) : null);
+
+  /** [구간 적용하기] 통과: 확정값을 바꾸고 화면을 닫는다. 알림은 레이어가 떨어진 뒤 한다(LiveAnnouncer가 inert 아래에 있어서다, §6.1). 바뀐 것이 없으면 알리지 않는다 */
+  async function applyRange(next: TimeRangeDto | null) {
+    const changed = JSON.stringify(next) !== JSON.stringify(applied);
+    applied = next;
+    editorOpen = false;
+    if (!changed) return;
+    await tick();
+    announcer.say(next ? t('range.applied.body') : t('range.appliedWhole.body'));
   }
 
-  /** 찍기: 그 칸만 채운다. 앞 [받기]의 rangeErr는 건드리지 않는다 */
-  function markRange(field: 'start' | 'end', secs: number) {
-    setFields(markFields({ open: sectionOpen, start: rangeStart, end: rangeEnd }, field, secs, initialEnd));
+  /** 카드의 [구간 지우기]는 확정값을 곧바로 지운다(초안이 아니다, RE5) */
+  function clearRange() {
+    applied = null;
+    announcer.say(t('range.cleared.body'));
   }
-
-  /** 손잡이로 고친 칸. 손잡이는 늘 바로 선 값을 만드니 앞 [받기]의 구간 오류는 이제 맞지 않다(검토 반영 V14) */
-  function handleFields(next: Fields) {
-    setFields(next);
-    rangeErr = null;
-  }
-
-  /** 칸에 포커스가 들어올 때의 글자(PVU10: 바뀌었는지 비교) */
-  let focusText: string | null = null;
-  const fieldText = (f: 'start' | 'end') => (f === 'start' ? rangeStart : rangeEnd);
-
-  function focusField(f: 'start' | 'end') {
-    focusText = fieldText(f);
-  }
-
-  /**
-   * 칸 → 영상(PVU10): 값이 바뀌었고, 포커스가 편집 영역 컨테이너·손잡이로 가는 게 아니고(막대를 누른 쪽이 이긴다),
-   * 읽히면 영상을 그 시각으로 보낸다. 미리보기가 닫혀 있거나 메타데이터 전이면 watchPanel.seek이 아무것도 하지 않는다
-   */
-  function blurField(f: 'start' | 'end', to: EventTarget | null) {
-    flushSeek(f); // keyup 없이 포커스가 떠나도 길게 누른 마지막 탐색은 보낸다(PS2)
-    const before = focusText;
-    focusText = null;
-    const text = fieldText(f);
-    if (before == null || before === text) return;
-    if (to instanceof Element && (to.hasAttribute('data-local-keys') || to.getAttribute('role') === 'slider')) return;
-    if (!barLen) return;
-    const secs = seekTargetOf(text, barLen.secs, f);
-    if (secs != null) watchPanel?.seek(secs);
-  }
-
-  /** 칸 → 영상 탐색 목표(초). 끝 칸이 빈칸("끝까지")이면 맨 끝(floor(길이)). 못 정하면 null */
-  function seekSecsOf(f: 'start' | 'end', text: string): number | null {
-    if (!barLen) return null;
-    return f === 'end' && text.trim() === '' ? Math.floor(barLen.secs) : seekTargetOf(text, barLen.secs, f);
-  }
-
-  /** 길게 누르는 동안 미룬 마지막 탐색이 있는 칸(PS2). keyup이나 blur에서 한 번 보낸다 */
-  let pendingSeek: 'start' | 'end' | null = null;
-
-  function flushSeek(f: 'start' | 'end') {
-    if (pendingSeek !== f) return;
-    pendingSeek = null;
-    const secs = seekSecsOf(f, fieldText(f));
-    if (secs != null) watchPanel?.seek(secs);
-  }
-
-  /**
-   * 칸의 ↑/↓(PS1~PS3): ±1초. 수식 키 조합은 처리하지 않아 칸의 기본 편집 동작을 남긴다(IME 조합 중 거름은 RangeField).
-   * 그 밖의 ↑/↓는 늘 기본 동작(캐럿 이동)을 막는다. 칸을 못 읽으면 값은 그대로다.
-   * 칸을 고치고 앞 [받기]의 구간 오류를 지운다. 영상은 첫 keydown에만 따라가고 길게 누른 뒤에는 keyup·blur에서 한 번이다
-   */
-  function fieldKey(f: 'start' | 'end', e: KeyboardEvent) {
-    if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
-    if (e.shiftKey || e.altKey || e.ctrlKey || e.metaKey) return;
-    e.preventDefault();
-    if (busy) return;
-    const next = nudgeFields({ open: sectionOpen, start: rangeStart, end: rangeEnd }, f, e.key === 'ArrowUp' ? 1 : -1, barLen, initialEnd);
-    if (!next) return;
-    handleFields(next);
-    // 포커스 때 글자를 새 값으로 바꿔 blur가 같은 시각으로 한 번 더 탐색하지 않게 한다(PS3)
-    focusText = next[f];
-    if (e.repeat) {
-      pendingSeek = f;
-      return;
-    }
-    pendingSeek = null;
-    const secs = seekSecsOf(f, next[f]);
-    if (secs != null) watchPanel?.seek(secs);
-  }
-
-  function fieldKeyUp(f: 'start' | 'end', e: KeyboardEvent) {
-    if (e.key === 'ArrowUp' || e.key === 'ArrowDown') flushSeek(f);
-  }
-
-  /**
-   * 길이 줄(PS10): 받을 구간이 전체이면 "전체 길이"(길이를 모르면 "전체 구간"), 구간이 읽히면 "구간 길이". 끝을 모르는 구간이거나 칸이 틀렸으면 줄이 없다.
-   * 고른 화질의 예상 크기가 있으면 곁들인다
-   */
-  const lengthText = $derived(
-    tone !== 'rewind'
-      ? null
-      : lengthLine({
-          error: rangeError(rangeInput, view.meta.durationSecs),
-          range,
-          durationSecs: view.meta.durationSecs,
-          size: (secs) => (quality ? qualitySize(quality, secs, sizeBaseOf(platform.os)) : null),
-        }),
-  );
-
-  // 섹션을 접으면 앞 [받기]의 구간 오류는 지운다(접힌 동안은 적용되지 않으므로)
-  $effect(() => {
-    if (!ui.previewOpen) rangeErr = null;
-  });
 
   /** 소유권으로 막힌 카드: 생방송 안내("받기를 누르면 녹화가 시작돼요")가 막힘 안내와 반대 말을 하지 않게 그리지 않는다 */
   const ownershipBlocked = $derived(view.ownership === 'notOwn' || view.ownership === 'unknown');
@@ -342,9 +248,7 @@
   /** [받기]·Mod+Enter: 덮어쓰기면 확인을 먼저 묻고, 아니면 곧바로 등록한다 */
   function download() {
     if (!quality) return;
-    // 구간 검증은 [받기] 때만(patterns.md §6.1). 틀리면 그 칸 아래 오류를 보이고 받지 않는다
-    rangeErr = rangeError(rangeInput, view.meta.durationSecs);
-    if (rangeErr) return;
+    // 구간은 적용할 때 검증됐다(`applied`). 편집 화면이 열려 있는 동안은 Mod+Enter가 그쪽 [구간 적용하기]다
     if (!ready || !check) return;
     if (overwriting) confirmOverwrite = true;
     else void enqueueNow();
@@ -389,8 +293,9 @@
 
   function onwindowkeydown(e: KeyboardEvent) {
     if (isImeKey(e)) return;
-    // 확인 대화상자가 열려 있으면 그 대화상자의 Enter가 맡는다
-    if (e.key === 'Enter' && modKey(e) && !e.defaultPrevented && !confirmOverwrite) {
+    // 확인 대화상자가 열려 있으면 그 대화상자의 Enter가 맡는다. 구간 편집 화면이 열려 있으면 그 화면이 받는다:
+    // 화면 뿌리가 늘 preventDefault하므로 주 근거는 defaultPrevented이고, 깃발은 포커스가 body에 떨어진 경우의 둘째 거름이다(RE15)
+    if (e.key === 'Enter' && modKey(e) && !e.defaultPrevented && !ui.rangeEditorOpen && !confirmOverwrite) {
       e.preventDefault();
       download();
     }
@@ -398,22 +303,6 @@
 </script>
 
 <svelte:window onkeydown={onwindowkeydown} />
-
-<!-- 구간 칸 줄: 섹션 맨 아래(영상 자리 → 막대 → 칸 줄). 접고 펴도 같은 요소다(<details>는 접혀도 자식을 둔다). 칸 상태의 주인은 이 카드다 -->
-{#snippet rangeLine()}
-  <RangeField
-    open={sectionOpen}
-    bind:start={rangeStart}
-    bind:end={rangeEnd}
-    error={rangeErr}
-    disabled={busy}
-    onfocusfield={focusField}
-    onblurfield={blurField}
-    onfieldkey={fieldKey}
-    onfieldkeyup={fieldKeyUp}
-    {lengthText}
-  />
-{/snippet}
 
 <Surface variant="card" class="card video-card" aria-labelledby="card-title">
   {#snippet header()}
@@ -434,20 +323,18 @@
     {/each}
   </p>
 
-  {#if watchable}
-    <WatchPanel
-      bind:this={watchPanel}
-      {view}
-      markable={tone === 'rewind'}
-      disabled={busy}
-      onmark={markRange}
-      fields={{ open: sectionOpen, start: rangeStart, end: rangeEnd }}
-      len={barLen}
-      {initialEnd}
-      onfields={(next) => handleFields(next)}
-      onduration={(secs) => (videoSecs = secs)}
-      below={tone === 'rewind' ? rangeLine : undefined}
+  {#if rangeApplies}
+    <!-- 빠른 다시보기: 구간 줄 하나. 구간은 창 전체 편집 화면에서 고른다 -->
+    <RangeSummary
+      {applied}
+      durationSecs={view.meta.durationSecs}
+      busy={busy}
+      onedit={() => (editorOpen = true)}
+      onclear={clearRange}
+      bind:editEl={editBtn}
     />
+  {:else if watchable}
+    <WatchPanel {view} />
   {/if}
 
   <div class="fields">
@@ -504,6 +391,10 @@
     </Button>
   {/snippet}
 </Surface>
+
+{#if editorOpen}
+  <RangeEditor {view} {applied} {sizeOf} opener={editBtn} onapply={applyRange} onclose={() => (editorOpen = false)} />
+{/if}
 
 <OverwriteDialog
   open={confirmOverwrite}

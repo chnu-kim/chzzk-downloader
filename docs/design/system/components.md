@@ -377,6 +377,8 @@ type DialogProps = {
 
 **접근성**: 열리면 **늘** `primary`에 프로그램 포커스(`:focus-visible` 휴리스틱에 맡겨 포인터로 열면 링이 안 보이고 키보드로 열면 보인다, `A-VIS-26`), Tab 가둠(`focus.ts` 하나), 닫으면 연 요소로 복귀, scrim 클릭으로 닫지 않는다(brief §6.7-2, `A-DRIFT-K15`), 모달 둘 겹침 금지(런타임 assert + `frontend`, 뒤에 온 요청은 대기열). Esc keydown은 `isComposing || keyCode === 229`면 무시(`G-IME-R4`). `aria-labelledby` 제목, `aria-describedby`는 본문이 있을 때만.
 
+**모달 층(D67, RE-3)**: body 직속 이동·나머지 inert·연 요소로 포커스 복귀는 공용 `ui/modalLayer.ts`가 한다(구간 편집 화면 §2.33 Sheet도 같은 것을 쓴다). 열린 층의 스택을 갖고 층이 붙거나 떨어질 때마다 "맨 위 층 말고 body의 모든 자식은 inert"를 처음부터 다시 계산하므로 층이 생긴 역순으로 닫히지 않아도 앱이 inert로 남지 않는다(층이 붙기 전부터 있던 inert는 기억해 되돌린다). 길게 누른 Esc(`e.repeat`)는 `preventDefault`·`stopPropagation`만 하고 닫지 않는다(한 층만 닫는다, RE16).
+
 Worker: 없다. 되돌릴 수 없는 동작은 확인 페이지(README D54, web.md §7.3: 왼쪽 빨간 글자 폼 버튼, 오른쪽 링크. 웹에는 Enter 기본 버튼이 없어 채움이 없다).
 ### 2.11 ConfirmDialog
 
@@ -615,19 +617,17 @@ Worker: 없다(폼 라벨은 위, `web.md` §7.1).
 
 ### 2.29 WatchPanel (기능 컴포넌트)
 
-**해부**: 영상 카드(`ResolveCard`)의 메타 줄과 화질 사이에 놓는 받기 전 미리보기 줄(`receive/WatchPanel.svelte`, 기능 컴포넌트라 `ui/` 갤러리 매트릭스 대상이 아니다. 화면 몫 갤러리 장면 '카드 미리보기 표지 자리'·'카드 미리보기 펼침'·'카드 미리보기 실패'가 본다). `Disclosure variant="inline"` 하나(제목 `watch.toggle`(일반 VOD·클립) 또는 `watch.toggle.range`(빠른 다시보기, 영상 자리 아래 구간 막대와 `below` 스니펫의 구간 칸 줄이 같은 섹션), **기본 펼침**, 열림은 앱 메모리의 `ui.previewOpen`이 기억한다. 마운트 때 펼쳐져 있으면 `idle`로 시작한다)와 안쪽 상태 다섯(D66, ADR-0029): `closed`(아무것도 없음) · `idle`(표지 자리) · `opening`(표지 자리 + 불러오는 중 단추) · `ready`(`<video>`) · `failed`(inline Notice 하나). **펴기만으로는 아무것도 열지 않는다**: 표지 자리(`.stage`, 이미지 없는 16:9 장식 상자) 가운데 [영상 보기](`watch.start.label`, 아이콘 `play`, 접근 이름 `watch.start.a11y`)를 눌렀을 때 `watch_open`을 부르고, 접거나 카드가 사라지면 `watch_close`를 부른다. 접으면 `idle`로 돌아가며 다시 펴도 자동으로 열지 않는다. 준비되면 `play()`를 한 번 시도하고(거절은 조용히) 포커스가 [영상 보기] 단추나 `body`에 있을 때만 `<video>`로 옮긴다. 열기 실패는 같은 조건에서만 섹션 머리로 옮긴다. 알림은 같은 순간 그려지는 Notice의 `role="alert"`가 맡는다(`announcer`는 부르지 않는다). 재생 중 오류도 같고, 포커스가 `<video>`에 있었을 때만 섹션 머리로 옮긴다. **막대는 재생 전에도 그린다**(빠른 다시보기, meta 길이): 영상과의 결합(`coupled` = hls.js로 붙고 메타데이터를 읽음, PS12) 전에는 손잡이가 칸만 고치고 재생 위치·조작 줄·영상 탐색이 없다. 편집 영역은 막대가 있을 때부터 `role="group"`·`data-local-keys`다(PS14).
+**일반 VOD·클립 전용이다**(range-editor.md RE14, D67). 빠른 다시보기의 구간 기능(막대·조작 줄·찍기·구간 칸·`markable`·`fields`·`below` 등 props)은 구간 편집 화면 §2.31로 옮겼고, 빠른 다시보기 카드에는 이 섹션이 없다(구간 줄 §2.32가 그 자리에 든다).
+
+**해부**: 영상 카드(`ResolveCard`)의 메타 줄과 화질 사이에 놓는 받기 전 미리보기 줄(`receive/WatchPanel.svelte`, 기능 컴포넌트라 `ui/` 갤러리 매트릭스 대상이 아니다. 화면 몫 갤러리 장면 '카드 미리보기 표지 자리'·'카드 미리보기 펼침'·'카드 미리보기 접힘'·'카드 미리보기 실패'가 본다). `Disclosure variant="inline"` 하나(제목 `watch.toggle`, **기본 펼침**, 열림은 앱 메모리의 `ui.previewOpen`이 기억한다. 마운트 때 펼쳐져 있으면 `idle`로 시작한다)와 안쪽 상태 다섯(D66, ADR-0029·0030): `closed`(아무것도 없음) · `idle`(표지 자리) · `opening`(표지 자리 + 불러오는 중 단추) · `ready`(`<video>`) · `failed`(inline Notice 하나). **펴기만으로는 아무것도 열지 않는다**: 표지 자리(`.stage`, 이미지 없는 16:9 장식 상자) 가운데 [영상 보기](`watch.start.label`, 아이콘 `play`, 접근 이름 `watch.start.a11y`)를 눌렀을 때 `watch_open`을 부르고, 접거나 카드가 사라지면 `watch_close`를 부른다. 접으면 `idle`로 돌아가며 다시 펴도 자동으로 열지 않는다. 준비되면 `play()`를 한 번 시도하고(거절은 조용히) 포커스가 [영상 보기] 단추나 `body`에 있을 때만 `<video>`로 옮긴다. 열기 실패는 같은 조건에서만 섹션 머리로 옮긴다. 알림은 같은 순간 그려지는 Notice의 `role="alert"`가 맡는다(`announcer`는 부르지 않는다). 재생 중 오류도 같고, 포커스가 `<video>`에 있었을 때만 섹션 머리로 옮긴다. 세션 수명은 `watchSession.svelte.ts`(구간 편집 화면과 공용)가 맡는다.
 
 ```ts
 type WatchPanelProps = {
   view: ResolvedDto;
-  markable?: boolean; // 빠른 다시보기 카드: hls.js 경로에서 찍기 단추
-  disabled?: boolean; // 카드 busy
-  onmark?: (field: 'start' | 'end', secs: number) => void;
-  below?: Snippet; // 섹션 맨 아래(빠른 다시보기의 구간 칸 줄, 칸의 주인은 카드)
 };
 ```
 
-**규칙**: ① 펴기만으로는 자동재생도 요청도 없고([영상 보기]를 누른 뒤 `play()` 한 번 시도), `preload="metadata"`, 네이티브 `controls`·`playsinline`. 키 입력은 `<video>` 기본 동작에 맡기고 `GlobalShortcuts`의 Esc는 대상이 미디어 요소면 건너뛴다(카드를 닫지 않는다). ② 접근 이름은 `watch.player.a11y`(`‘{title}’ 미리보기`). ③ 줄은 `ownership`이 `notOwn`·`unknown`이 아니고 `playbackKind`가 통짜 mp4(`progressive`)이거나 빠른 다시보기(`liveRewindHls`, PV-6부터)인 카드에만 그린다(Disclosure에 비활성 상태가 없어 막힌 카드에는 줄 자체를 두지 않는다). 생방송은 늘 없다. 빠른 다시보기(HLS)는 hls.js light를 동적으로 불러 붙이고(워커 없음), 못 쓰면 네이티브 m3u8, 그것도 없으면 같은 실패로 간다. hls.js 오류는 `fatal`만 보고 오류 객체의 주소 필드는 쓰지 않는다. ④ 실패는 한 문구 `watch.error.body` + [다시 시도](`action.retry`) + [치지직에서 보기](`watch.openInChzzk.label`, 앱이 정식 주소를 만들어 연다). 게이트 거부(`notLoggedIn`·`notOwnContent`·`ownershipUnknown`)는 받기와 같은 오류 문구(`errorCopy`)를 쓰고 단추는 없다. 웹뷰가 mp4를 읽지 못하면(`canPlayType` 빈 문자열) `src`를 달지 않고 같은 실패로 간다. ⑤ 서명 주소·토큰은 화면에 오지 않는다: `src`는 Rust가 만든 `watch:` 주소뿐이다. ⑥ **구간 찍기(PV17)**: 빠른 다시보기 카드(`markable`)이고 hls.js로 붙었을 때만 재생기 아래에 [시작 찍기]·[끝 찍기](`Button size=sm`, 가로 한 줄, 위 간격 `--space-8`)를 둔다. 네이티브 m3u8 대체 경로·mp4에는 두지 않는다. `loadedmetadata` 전과 카드 `busy` 중에는 비활성이다. 누르면 `floor(currentTime)`을 카드로 보내 구간 줄을 펼치고 칸을 채운다(새 DTO 없음). 접힌 카드의 높이는 바뀌지 않는다. ⑦ **구간 편집 배치(preview-ux PVU3·PVU-3)**: 같은 조건(`markable` + hls.js)에서 영상·구간 막대(`RangeTimeline`)·조작 줄을 한 편집 영역(`role="group"`, 이름 `watch.editor.a11y`, `tabindex="-1"`, `data-local-keys`, `data-focus-container` 없음)으로 묶는다. 조작 줄은 [시작 찍기]·[끝 찍기]·[구간 보기]·[시작부터 보기]·Switch 구간 반복하기(`Button size=sm`, `flex-wrap: wrap`, 간격 `--space-8`)다. 막대는 메타데이터를 읽었고 카드가 막대 길이(`len`)를 줄 때만 그린다. 영상 탐색은 `seek()` 하나를 거치며 그 앞에서 구간 보기를 끈다. 칸의 원천은 카드이고 컴포넌트는 `rangeEdit`가 만든 새 칸을 `onfields`로 돌려줄 뿐이다. 구간 줄(`RangeField`)은 미리보기 줄 바로 아래로 옮겼다.
+**규칙**: ① 펴기만으로는 자동재생도 요청도 없고([영상 보기]를 누른 뒤 `play()` 한 번 시도), `preload="metadata"`, 네이티브 `controls`·`playsinline`. 키 입력은 `<video>` 기본 동작에 맡기고 `GlobalShortcuts`의 Esc는 대상이 미디어 요소면 건너뛴다(카드를 닫지 않는다). ② 접근 이름은 `watch.player.a11y`(`‘{title}’ 미리보기`). ③ 줄은 `ownership`이 `notOwn`·`unknown`이 아니고 `playbackKind`가 통짜 mp4(`progressive`)이거나 HLS(`liveRewindHls`)인 **빠른 다시보기가 아닌** 카드에만 그린다(Disclosure에 비활성 상태가 없어 막힌 카드에는 줄 자체를 두지 않는다). 생방송은 늘 없다. HLS가 오면 hls.js light를 동적으로 불러 붙이고(워커 없음), 못 쓰면 네이티브 m3u8, 그것도 없으면 같은 실패로 간다. hls.js 오류는 `fatal`만 보고 오류 객체의 주소 필드는 쓰지 않는다. ④ 실패는 한 문구 `watch.error.body` + [다시 시도](`action.retry`) + [치지직에서 보기](`watch.openInChzzk.label`, 앱이 정식 주소를 만들어 연다). 게이트 거부(`notLoggedIn`·`notOwnContent`·`ownershipUnknown`)는 받기와 같은 오류 문구(`errorCopy`)를 쓰고 단추는 없다. 웹뷰가 mp4를 읽지 못하면(`canPlayType` 빈 문자열) `src`를 달지 않고 같은 실패로 간다. ⑤ 서명 주소·토큰은 화면에 오지 않는다: `src`는 Rust가 만든 `watch:` 주소뿐이다.
 
 **치수**: 줄은 Disclosure inline 24, 카드 메타 줄 아래 `--space-12`. 화면은 카드 열 폭에 `aspect-ratio: 16 / 9`, 최대 높이 `--watch-max-h` [잠정, D64], 모서리 `--radius-control`, 바탕 `--surface-2`(영상이 오기 전·가장자리). forced-colors: `1px solid CanvasText` 윤곽(§3 표). 움직임: 전환 없음.
 
@@ -656,6 +656,67 @@ type RangeTimelineProps = {
 Worker: 없다.
 
 ---
+
+### 2.31 RangeEditor (기능 컴포넌트, 구간 편집 화면)
+
+**해부**: 빠른 다시보기 카드(`ResolveCard`)가 소유하는 창 전체 시트(`receive/RangeEditor.svelte`, 뿌리는 §2.33 Sheet, D67·ADR-0030·range-editor.md). 위에서부터 머리 줄(h1 "구간 편집"(`rangeEditor.title`, `tabindex=-1`·`data-focus-container`) · 부제(`rangeEditor.context.label`, `--fg`, 레이어의 `aria-describedby`) · [닫기] · [구간 적용하기](primary, kbd `submit`)) → 몸통(머리 줄 밑에서 스크롤): 모니터(영상 자리 + 조작 줄) → 타임라인 패널(제목 `rangeEditor.timeline.title` · 타임라인 · 구간 줄(FieldRow + 칸 둘 + 길이 줄 + [구간 지우기] + 오류 Notice)). RE-3에서 타임라인은 옛 막대(`RangeTimeline`), 조작 줄은 옛 글자 단추([시작 찍기]·[끝 찍기]·[구간 보기]·[시작부터 보기]·Switch 구간 반복하기)다. RE-4가 타임라인을, RE-5가 조작 줄을 바꾼다.
+
+```ts
+type RangeEditorProps = {
+  view: ResolvedDto;
+  applied: TimeRangeDto | null;      // 카드의 확정 구간. 열 때 초안의 출발점(draftOf)
+  sizeOf: (secs: number) => string | null;  // 길이 줄의 예상 크기(고른 화질)
+  opener?: HTMLElement | null;       // [구간 편집…]. 닫을 때 포커스 복귀
+  onapply: (applied: TimeRangeDto | null) => void; // 검증을 통과한 확정값(카드가 applied를 바꾸고 닫는다)
+  onclose: () => void;               // [닫기]·Esc: 초안을 버린다
+};
+```
+
+**상태**: 초안 `draft`(칸 두 글자) · 적용 오류 `draftErr` · 세션 단계(`idle`·`opening`·`ready`·`failed`, `watchSession`) · `coupled`(hls.js로 붙고 메타데이터를 읽음) · 반복 · 지금 위치. 결합 전에는 조작 줄이 모두 `disabled`이고 손잡이는 초안만 고친다(RE8). 길이를 모르고 결합 전이면 타임라인 자리에 `rangeEditor.noLength.body` 한 줄, 네이티브 m3u8·mp4 대체 경로에는 패널 머리에 `rangeEditor.uncoupled.body`.
+
+**규칙**: ① [구간 적용하기]·Mod+Enter는 `applyDraft`로 검증한다. 통과하면 `onapply`, 실패하면 화면은 열린 채 그 칸 아래 오류(Notice `role=alert`)·`aria-invalid`·`aria-describedby`·포커스(IME 조합이 아니면 전체 선택)이고 초안은 지우지 않는다. ② [닫기]·Esc는 확인 없이 초안을 버린다. ③ 편집 화면 [구간 지우기]는 초안만 지우고 단추는 늘 있다(포커스가 그 자리에 남는다). ④ 열면 포커스는 h1, 닫으면 [구간 편집…]이다(연 단추가 사라졌으면 입력줄). ⑤ 세션은 [영상 보기]를 눌렀을 때만 연다(열기만으로는 요청 0). ⑥ 열린 동안 `ui.rangeEditorOpen`이 true라 창 수준 처리기가 거른다. ⑦ Esc 순서(첫 줄 `isImeKey`): `e.repeat`면 거르기만, 영상이 전체 화면이면 전파만 막고, 아니면 닫는다. 포커스가 body로 떨어져도 Esc 사다리 맨 안쪽 처리기가 같은 규칙으로 받는다. ⑧ 키는 뿌리 하나가 받는다: Esc → Mod+Enter → Tab 순환(`trapTab`) → 편집 키(I/O·Space·←/→, 손잡이·입력칸이 먼저 처리한 키와 IME는 거른다). ⑨ 칸 ↑/↓ ±1초, 칸을 고치고 빠져나가면 영상 탐색(PVU10, 포커스가 타임라인 영역 `data-timeline`·손잡이로 가면 탐색하지 않는다). ⑩ 알림(적용·지우기)은 레이어가 떨어진 뒤 카드가 announcer로 한다(시트 안은 LiveAnnouncer가 inert 아래다).
+
+**치수**: 영상 상자는 `--watch-max-h`를 쓰지 않고 `monitorSize`(`rangeView.ts`)가 모니터 크기에서 16:9로 계산한다(`ResizeObserver`가 없으면 CSS가 폭 100%·16:9). 조작 줄 폭 = 영상 폭과 `controlsMinW(--control-h)`(7×`--control-h` + 184 = 380, coarse 464) 중 큰 쪽(좁은 레이아웃은 모니터 폭). 영상 최소 높이 `VIDEO_MIN_H` 90. 모자라면 몸통이 세로 스크롤된다. 좁은 레이아웃 신호는 `layout.css`가 `block`으로 바꾸는 보이지 않는 표지 `.fullsheet-probe`다(폭 쿼리는 `layout.css`에만, DL13). 머리 줄은 스크롤 밖의 고정 줄이다(sticky 아님). 움직임: 전환 없음.
+
+Worker: 없다.
+
+### 2.32 RangeSummary (기능 컴포넌트, 카드 구간 줄)
+
+**해부**: 빠른 다시보기이고 `watchable`인 카드에만 그리는 구간 줄(`receive/RangeSummary.svelte`). `FieldRow`(라벨 `range.label` "구간") + 값 글자 + [구간 편집…](`range.edit.label`) + 구간이 있을 때만 [구간 지우기](`range.clear.label`), 둘 다 `Button size=sm`. 값은 `rangeSummary(applied, 길이)`: 확정값이 없으면 "전체", 끝을 모르면 `0:10:00~`, 그 밖에는 "0:10:00~0:40:00 · 길이 0:30:00"(`range.summary.label`). 생방송·`notOwn`·`unknown`에는 그리지 않는다(PS15).
+
+```ts
+type RangeSummaryProps = {
+  applied: TimeRangeDto | null;
+  durationSecs: number | null;
+  busy?: boolean;          // 받기 요청 중이면 두 단추를 막는다
+  onedit: () => void;
+  onclear: () => void;     // 확정값을 곧바로 지운다(초안이 아니다)
+  editEl?: HTMLButtonElement | null; // 편집 화면이 닫힐 때 포커스를 돌려받는다
+};
+```
+
+**규칙**: [구간 지우기]는 단추가 사라지므로 포커스를 [구간 편집…]으로 옮긴다(`body`로 떨어지지 않게, F-4). 줄에는 `aria-live`가 없다. 지우기 알림은 카드가 announcer로 한 번 한다.
+
+Worker: 없다.
+
+### 2.33 Sheet (`ui/Sheet.svelte`, 창 전체 시트)
+
+**해부**: `div.fullsheet`(fixed, `inset: 0`, `--z-dialog`, `--bg`, 세로 flex, `design/ui.css`) 안에 `role="dialog" aria-modal="true" aria-labelledby aria-describedby tabindex="-1"`. 구간 편집 화면의 뿌리다. 붙으면 공용 `modalLayer`로 body 직속으로 옮겨지고 맨 위 층 말고 body의 모든 자식이 `inert`가 된다. 안은 소비자가 나눈다(머리 줄 + 스크롤되는 몸통).
+
+```ts
+type SheetProps = HTMLAttributes<HTMLDivElement> & {
+  labelledby: string;        // h1 id
+  describedby?: string;
+  opener?: HTMLElement | null;      // 떨어질 때 포커스를 돌려줄 요소(기본: 붙을 때의 포커스 요소)
+  returnFocus?: () => void;  // 연 요소가 사라졌을 때
+  el?: HTMLDivElement | null;
+  children: Snippet;
+};
+```
+
+**규칙**: ADR-0005(대화상자 버튼 배치)의 범위 밖이다. 확인을 묻는 작은 상자가 아니라 창 전체 편집기이고 버튼 줄 규칙이 없다. 키 처리·Esc·Tab 순환은 쓰는 쪽이 한다. 움직임 없음.
+
+Worker: 없다.
 
 ## 3. forced-colors · 대비 증가 · 움직임 줄이기 종합표
 

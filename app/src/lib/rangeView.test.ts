@@ -6,7 +6,9 @@ import {
   dragViewEdge,
   follow,
   fullView,
+  controlsMinW,
   monitorSize,
+  VIDEO_MIN_H,
   panBy,
   placement,
   reveal,
@@ -266,6 +268,21 @@ describe('wheelIntent / zoomFactor (§7.3)', () => {
     expect(zoomFactor(100)).toBeLessThan(1);
     expect(zoomFactor(-1e6)).toBe(2);
     expect(zoomFactor(1e6)).toBe(0.5);
+  });
+});
+
+describe('controlsMinW (§6.2: 7 × --control-h + 184)', () => {
+  it.each([
+    [28, 380],
+    [40, 464],
+    [0, 380],
+    [Number.NaN, 380],
+    [-5, 380],
+  ])('control-h %s → %s', (h, want) => {
+    expect(controlsMinW(h)).toBe(want);
+  });
+  it('영상 상자 최소 높이는 90', () => {
+    expect(VIDEO_MIN_H).toBe(90);
   });
 });
 

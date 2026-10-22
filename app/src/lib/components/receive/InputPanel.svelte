@@ -115,6 +115,8 @@
   // 창 밖에서 끌어다 놓은 글. 카드·오류·불러오기가 열려 있으면 진짜 치지직 주소일 때만 바꾼다
   // (주소가 아닌 글로 고르던 카드를 버리지 않는다).
   function ondropurl(text: string) {
+    // 구간 편집 화면이 열려 있으면 받지 않는다(새 주소가 카드를 바꾼다, range-editor.md RE15)
+    if (ui.rangeEditorOpen) return;
     if (!resolver.idle && !pickChzzkLink(text)) return;
     void resolver.load(text);
   }

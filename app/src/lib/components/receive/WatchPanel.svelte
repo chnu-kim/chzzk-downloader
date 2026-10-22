@@ -10,10 +10,9 @@
   // 영상과 구간의 결합(`coupled` = hls.js로 붙고 메타데이터를 읽음, PS12)이 되면 조작 줄(찍기·구간 보기·시작부터 보기·구간 반복하기)과 재생 위치가 더해진다.
   // 막대와 조작 줄은 한 편집 영역(role=group)으로 묶는다. 구간 칸 줄은 카드가 `below` 스니펫으로 섹션 맨 아래에 그린다(칸의 주인은 카드, PS7). 칸 문자열의 원천은 카드이고(`fields`), 손잡이는 `rangeEdit.moveHandle`이 만든 새 칸을 `onfields`로
   // 돌려줄 뿐이다. 영상 탐색은 `seek()` 하나를 거치고 그 앞에서 구간 보기를 끈다(§6.3: restart·pause가 손잡이 조작에 끼어들지 않게).
-  import { onDestroy, tick, type Snippet } from 'svelte';
-  import type Hls from 'hls.js/light';
+  import { onDestroy, type Snippet } from 'svelte';
   import * as api from '../../api';
-  import type { AppError, ResolvedDto, WatchOpenDto } from '../../bindings';
+  import type { ResolvedDto } from '../../bindings';
   import { errorCopy } from '../../copy/errors';
   import { t } from '../../copy/ko';
   import { ui } from '../../stores/ui.svelte';
@@ -35,6 +34,7 @@
   import Notice from '../ui/Notice.svelte';
   import Switch from '../ui/Switch.svelte';
   import RangeTimeline from './RangeTimeline.svelte';
+  import { WatchSession } from './watchSession.svelte';
 
   interface Props {
     view: ResolvedDto;
@@ -71,27 +71,10 @@
     below,
   }: Props = $props();
 
-  type Phase = 'closed' | 'idle' | 'opening' | 'ready' | 'failed';
-  /** 받기와 같은 문구로 알리는 게이트 거부(그 밖의 실패는 한 문구, preview.md Q2) */
-  const GATE_CODES: ReadonlySet<AppError['code']> = new Set(['notLoggedIn', 'notOwnContent', 'ownershipUnknown']);
-
   /** 이 섹션의 뿌리와 [영상 보기] 단추(포커스 판단용) */
   let rootEl: HTMLDivElement | null = $state(null);
   let startEl: HTMLButtonElement | null = $state(null);
-  // 마운트 때 이미 펼쳐져 있으면 표지 자리부터다(Disclosure의 onchange는 사용자가 바꿀 때만 불린다)
-  let phase: Phase = $state(ui.previewOpen ? 'idle' : 'closed');
-  let src = $state('');
-  /** 게이트 거부로 실패했을 때의 오류(없으면 한 문구) */
-  let gateError: AppError | null = $state(null);
-  /** 지금 열려 있는 세션 ID. 닫을 때 한 번만 쓰고 비운다 */
-  let sessionId: string | null = null;
-  /** 열기 요청마다 올린다: 접거나 다시 열면 늦게 온 결과를 버린다 */
-  let attempt = 0;
-  /** hls.js가 붙은 video(HLS 종류만). 접거나 실패하면 destroy하고 비운다 */
-  let hls: Hls | null = null;
   let videoEl: HTMLVideoElement | null = $state(null);
-  /** hls.js로 붙었는가(찍기 버튼의 조건). 접거나 실패하면 내린다 */
-  let usingHls = $state(false);
   /** video의 메타데이터를 읽었는가(그 전의 currentTime은 믿지 않는다) */
   let metaReady = $state(false);
   /** 재생 위치(초). timeupdate·seeked에서 읽는다 */
@@ -109,19 +92,6 @@
   const uid = $props.id();
   const loopId = `${uid}-loop`;
   /** 영상과 구간의 결합(PS12): hls.js로 붙었고 메타데이터를 읽었을 때만. 찍기·조작 줄·재생 위치·영상 탐색이 모두 이 조건이다(PV17: 네이티브 m3u8은 제외) */
-  const coupled = $derived(usingHls && metaReady);
-  const gateCopy = $derived(gateError ? errorCopy(gateError, { place: 'resolve' }) : null);
-
-  /** 이 웹뷰가 mp4를 읽을 수 있는가(없으면 src를 달지 않고 곧바로 실패) */
-  function canPlayMp4(): boolean {
-    return document.createElement('video').canPlayType('video/mp4') !== '';
-  }
-
-  /** 이 웹뷰가 m3u8을 네이티브로 읽을 수 있는가(Safari 계열) */
-  function canPlayNativeHls(): boolean {
-    return document.createElement('video').canPlayType('application/vnd.apple.mpegurl') !== '';
-  }
-
   function resetPlay() {
     playMode = 'off';
     pendingSeek = null;
@@ -154,153 +124,39 @@
     return !a || a === document.body || a === startEl;
   }
 
-  /** 열기 성공: 포커스가 비어 있었으면 video로 옮기고 재생을 한 번 시도한다(거절은 조용히, controls가 남는다) */
-  async function afterReady(mine: number) {
-    // 단추가 사라진 뒤의 포커스를 본다(단추에 있었으면 body로 떨어져 있다)
-    await tick();
-    if (mine !== attempt || !videoEl) return;
-    if (focusIsFree()) videoEl.focus();
-    startPlay();
-  }
-
   /** 줄 머리(summary)로 포커스를 옮긴다(포커스 있던 요소가 사라져 body로 떨어지지 않게) */
   function focusSummary() {
     rootEl?.querySelector<HTMLElement>('summary')?.focus();
   }
 
-  /**
-   * 열기 실패: 포커스가 비어 있었으면 줄 머리로 옮긴다. 알림은 같은 순간 그려지는 Notice(role=alert)가 맡는다
-   * (announcer로 또 알리면 같은 말이 두 번 들린다)
-   */
-  async function afterFailed(mine: number) {
-    await tick();
-    if (mine !== attempt) return;
-    if (focusIsFree()) focusSummary();
-  }
+  // 세션 수명은 watchSession이 맡는다. 여기서는 포커스 판단과 재생 상태 되돌리기만 콜백으로 준다
+  const session = new WatchSession({
+    // 마운트 때 이미 펼쳐져 있으면 표지 자리부터다(Disclosure의 onchange는 사용자가 바꿀 때만 불린다)
+    initialOpen: ui.previewOpen,
+    target: () => ({ url: view.url, content: view.content }),
+    video: () => videoEl,
+    // 열기 성공: 포커스가 비어 있었으면 video로 옮기고 재생을 한 번 시도한다(거절은 조용히, controls가 남는다)
+    onready: () => {
+      if (focusIsFree()) videoEl?.focus();
+      startPlay();
+    },
+    // 열기 실패: 포커스가 비어 있었으면 줄 머리로. 재생 중 오류: 포커스가 영상에 있었을 때만 줄 머리로(다른 곳은 그대로)
+    onfailed: (videoFocused, cause) => {
+      if (cause === 'video' ? videoFocused : focusIsFree()) focusSummary();
+    },
+    onclosed: () => {
+      metaReady = false;
+      resetPlay();
+      reportDuration(null);
+    },
+  });
 
-  function closeSession() {
-    // 재생기를 먼저 떼야 세션을 닫은 뒤 세그먼트를 더 요청하지 않는다
-    hls?.destroy();
-    hls = null;
-    usingHls = false;
-    metaReady = false;
-    resetPlay();
-    reportDuration(null);
-    const id = sessionId;
-    sessionId = null;
-    if (id) void api.watchClose(id).catch(() => {});
-  }
-
-  async function openSession() {
-    const mine = ++attempt;
-    closeSession();
-    gateError = null;
-    src = '';
-    metaReady = false;
-    phase = 'opening';
-    try {
-      const dto = await api.watchOpen(view.url, view.content);
-      if (mine !== attempt) {
-        // 그 사이 접었거나 다시 열었다: 늦게 온 세션은 바로 닫는다
-        void api.watchClose(dto.id).catch(() => {});
-        return;
-      }
-      if (dto.kind === 'hls') {
-        await openHls(dto, mine);
-        return;
-      }
-      if (dto.kind !== 'mp4' || !canPlayMp4()) {
-        // 낯선 종류나 mp4를 읽을 수 없는 웹뷰면 src를 달지 않고 세션을 닫는다
-        void api.watchClose(dto.id).catch(() => {});
-        phase = 'failed';
-        void afterFailed(mine);
-        return;
-      }
-      sessionId = dto.id;
-      src = dto.src;
-      phase = 'ready';
-      void afterReady(mine);
-    } catch (e) {
-      if (mine !== attempt) return;
-      const err = e as AppError;
-      gateError = GATE_CODES.has(err.code) ? err : null;
-      phase = 'failed';
-      void afterFailed(mine);
-    }
-  }
-
-  /** HLS 종류: hls.js(MSE) → 네이티브 m3u8 → 실패 순. 중간에 접거나 다시 열면(`attempt`가 바뀜) 그 자리에서 손을 뗀다 */
-  async function openHls(dto: WatchOpenDto, mine: number) {
-    const fail = () => {
-      void api.watchClose(dto.id).catch(() => {});
-      phase = 'failed';
-      void afterFailed(mine);
-    };
-    let Ctor: typeof Hls;
-    try {
-      Ctor = (await import('hls.js/light')).default;
-    } catch {
-      if (mine === attempt) fail();
-      else void api.watchClose(dto.id).catch(() => {});
-      return;
-    }
-    if (mine !== attempt) {
-      void api.watchClose(dto.id).catch(() => {});
-      return;
-    }
-    if (!Ctor.isSupported()) {
-      if (!canPlayNativeHls()) return fail();
-      sessionId = dto.id;
-      src = dto.src;
-      phase = 'ready';
-      void afterReady(mine);
-      return;
-    }
-    sessionId = dto.id;
-    phase = 'ready';
-    // video가 그려진 뒤에 붙인다
-    await tick();
-    if (mine !== attempt || !videoEl) return;
-    // 워커 없음(CSP worker-src를 더하지 않는다), 저지연 끔, 자격 증명 없음(PV9)
-    const player = new Ctor({ enableWorker: false, lowLatencyMode: false });
-    hls = player;
-    usingHls = true;
-    // 오류는 fatal만 본다: 오류 객체의 url 필드에는 전체 세션 ID가 든 주소가 있어 화면·로그·IPC 어디에도 쓰지 않는다
-    player.on(Ctor.Events.ERROR, (_event, data) => {
-      if (data.fatal) onvideoerror();
-    });
-    player.loadSource(dto.src);
-    player.attachMedia(videoEl);
-    void afterReady(mine);
-  }
+  const coupled = $derived(session.usingHls && metaReady);
+  const gateCopy = $derived(session.gateError ? errorCopy(session.gateError, { place: 'resolve' }) : null);
 
   function onchange(next: boolean) {
-    if (next) {
-      // 펴기만으로는 아무것도 열지 않는다(PS6). [영상 보기]를 눌러야 세션을 연다
-      phase = 'idle';
-    } else {
-      attempt += 1;
-      closeSession();
-      src = '';
-      gateError = null;
-      phase = 'idle';
-    }
-  }
-
-  function onvideoerror() {
-    // 서명 만료·세션 만료 등. 원인 구분 없이 한 Notice(Q2). 낡은 세션은 닫는다
-    // 포커스가 영상에 있었을 때만 줄 머리로 옮긴다(영상이 사라져 body로 떨어지는 것을 막는다). 칸 등 다른 곳은 그대로 둔다
-    const onVideo = !!videoEl && document.activeElement === videoEl;
-    attempt += 1;
-    const mine = attempt;
-    closeSession();
-    src = '';
-    phase = 'failed';
-    if (onVideo) {
-      void tick().then(() => {
-        if (mine === attempt) focusSummary();
-      });
-    }
+    if (next) session.expand();
+    else session.collapse();
   }
 
   function mark(field: 'start' | 'end') {
@@ -478,22 +334,19 @@
     void api.openContentPage(view.content).catch(() => {});
   }
 
-  onDestroy(() => {
-    attempt += 1;
-    closeSession();
-  });
+  onDestroy(() => session.destroy());
 </script>
 
 <div class="watch" bind:this={rootEl}>
   <Disclosure variant="inline" title={markable ? t('watch.toggle.range') : t('watch.toggle')} bind:open={ui.previewOpen} {onchange}>
-    {#if phase === 'idle' || phase === 'opening'}
+    {#if session.phase === 'idle' || session.phase === 'opening'}
       <!-- 표지 자리: 이미지 없는 장식 상자(PS5). 재생기와 같은 16:9라 눌러도 배치가 밀리지 않는다 -->
       <div class="stage">
-        <Button icon="play" loading={phase === 'opening'} bind:el={startEl} aria-label={t('watch.start.a11y', { title: view.meta.title })} onclick={() => void openSession()}>
+        <Button icon="play" loading={session.phase === 'opening'} bind:el={startEl} aria-label={t('watch.start.a11y', { title: view.meta.title })} onclick={() => void session.start()}>
           {t('watch.start.label')}
         </Button>
       </div>
-    {:else if phase === 'failed'}
+    {:else if session.phase === 'failed'}
       {#if gateCopy}
         <Notice variant="inline" tone="danger" title={gateCopy.title}>
           {#if gateCopy.body}<p class="line">{gateCopy.body}</p>{/if}
@@ -503,7 +356,7 @@
           variant="inline"
           tone="danger"
           actions={[
-            { id: 'retry', label: t('action.retry'), onclick: () => void openSession() },
+            { id: 'retry', label: t('action.retry'), onclick: () => void session.start() },
             { id: 'open', label: t('watch.openInChzzk.label'), onclick: openInChzzk },
           ]}
         >
@@ -523,7 +376,7 @@
       data-local-keys={region ? '' : undefined}
       onkeydown={region ? onEditorKey : undefined}
     >
-      {#if phase === 'ready'}
+      {#if session.phase === 'ready'}
         <!-- svelte-ignore a11y_media_has_caption -->
         <video
           class="player"
@@ -532,9 +385,9 @@
           preload="metadata"
           playsinline
           bind:this={videoEl}
-          src={src || undefined}
+          src={session.src || undefined}
           aria-label={t('watch.player.a11y', { title: view.meta.title })}
-          onerror={onvideoerror}
+          onerror={() => session.videoFailed()}
           onloadedmetadata={onmeta}
           ondurationchange={ondur}
           ontimeupdate={ontimeupdate}

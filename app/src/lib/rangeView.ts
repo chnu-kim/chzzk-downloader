@@ -18,6 +18,11 @@ export const LINE_PX = 16;
 export const TICK_MIN_PX = 80;
 /** 키 `+`·`-` 배율 */
 export const KEY_ZOOM_FACTOR = 2;
+/** 영상 상자의 최소 높이(px) [잠정]. 토큰이 아니라 코드 상수다(토큰 어휘 밖의 레이아웃 계산값, range-editor.md §6.2) */
+export const VIDEO_MIN_H = 90;
+/** 조작 줄 최소 폭 = 일곱 단추(`--control-h`) + 간격·양쪽 칸·여유 184px. 380(coarse 464) */
+export const CONTROLS_EXTRA_W = 184;
+export const CONTROLS_BUTTONS = 7;
 
 const WHEEL_ZOOM_RATE = 0.002;
 
@@ -146,6 +151,11 @@ export function wheelIntent(e: WheelEventLike, ctx: { mac: boolean; trackW: numb
 /** 휠 dy(px) → 확대 배율. 위로 굴리면(dy < 0) 확대. 한 이벤트당 [0.5, 2] */
 export function zoomFactor(dyPx: number): number {
   return Math.min(2, Math.max(0.5, Math.exp(-dyPx * WHEEL_ZOOM_RATE)));
+}
+
+/** 조작 줄 최소 폭(px). 단추 높이 `--control-h`를 따라가 coarse에서 커진다(28 → 380, 40 → 464) */
+export function controlsMinW(controlH: number): number {
+  return CONTROLS_BUTTONS * (controlH > 0 && Number.isFinite(controlH) ? controlH : 28) + CONTROLS_EXTRA_W;
 }
 
 export interface MonitorInput {

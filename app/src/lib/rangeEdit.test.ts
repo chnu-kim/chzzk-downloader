@@ -23,9 +23,7 @@ import { effectiveRange } from './receive';
 // 명세 docs/design/features/preview-ux.md §5.1·§6.2·§6.3·§11.2 PVU-1. 예시 값은 모두 가짜다.
 
 const META = { secs: 600, source: 'meta' } as const;
-const INIT_END = '0:10:00';
-const open = (start: string, end: string): Fields => ({ open: true, start, end });
-const closed = (start: string, end: string): Fields => ({ open: false, start, end });
+const open = (start: string, end: string): Fields => ({ start, end });
 const NONE = { shift: false, alt: false, ctrl: false, meta: false };
 
 describe('timelineLength', () => {
@@ -47,7 +45,6 @@ describe('timelineLength', () => {
 
 describe('selection', () => {
   it.each([
-    ['접힘은 칸 값을 무시하고 전체', closed('0:03:00', '0:04:00'), 600, { start: 0, end: 600, band: true }],
     ['열림 정상', open('0:01:00', '0:05:00'), 600, { start: 60, end: 300, band: true }],
     ['못 읽는 시작은 0', open('abc', '0:05:00'), 600, { start: 0, end: 300, band: true }],
     ['못 읽는 끝은 길이', open('0:01:00', 'abc'), 600, { start: 60, end: 600, band: true }],
@@ -57,7 +54,6 @@ describe('selection', () => {
     ['둘 다 길이 넘음', open('0:12:00', '0:13:00'), 600, { start: 600, end: 600, band: false }],
     ['시작이 길이와 같음', open('0:10:00', ''), 600, { start: 600, end: 600, band: false }],
     ['소수 길이는 내림', open('0:00:10', ''), 599.6, { start: 10, end: 599, band: true }],
-    ['접힘 + 소수 길이', closed('0:00:10', '0:00:20'), 599.6, { start: 0, end: 599, band: true }],
   ] as [string, Fields, number, ReturnType<typeof selection>][])('%s', (_n, f, len, want) => {
     expect(selection(f, len)).toEqual(want);
   });
@@ -69,7 +65,6 @@ describe('handleBounds (모든 행에서 min ≤ now ≤ max)', () => {
     ['뒤집힘', open('0:05:30', '0:01:05'), { s: [0, 600], e: [0, 600] }],
     ['둘 다 길이 넘음', open('0:12:00', '0:13:00'), { s: [0, 600], e: [0, 600] }],
     ['빈 끝', open('0:01:00', ''), { s: [0, 599], e: [61, 600] }],
-    ['접힘', closed('0:09:00', '0:09:30'), { s: [0, 599], e: [1, 600] }],
   ] as [string, Fields, { s: [number, number]; e: [number, number] }][])('%s', (_n, f, want) => {
     const sel = selection(f, 600);
     const s = handleBounds('start', sel, 600);
@@ -207,8 +202,6 @@ describe('moveHandle (§6.2 손잡이 규칙 표)', () => {
     ['end → 30은 시작+1', open('0:01:00', '0:05:00'), 'end', 30, '0:01:00', '0:01:01'],
     ['end → 9999는 영상 끝', open('0:01:00', '0:05:00'), 'end', 9999, '0:01:00', '0:10:00'],
     ['start → −5는 0', open('0:01:00', '0:05:00'), 'start', -5, '0:00:00', '0:05:00'],
-    ['접힘은 옛 값을 버리고 전체로 되돌린다', closed('0:03:00', '0:04:00'), 'start', 60, '0:01:00', '0:10:00'],
-    ['접힌 채 끝을 옮겨도 시작은 0', closed('0:03:00', '0:04:00'), 'end', 300, '0:00:00', '0:05:00'],
     ['못 읽은 시작은 0으로 보고 자른다', open('abc', '0:05:00'), 'start', 60, '0:01:00', '0:05:00'],
     ['못 읽은 끝은 길이로 보고 끝 칸은 그대로', open('0:01:00', 'abc'), 'start', 60, '0:01:00', 'abc'],
     ['뒤집힘: 시작은 다른 손잡이로 자르지 않는다', open('0:05:30', '0:01:05'), 'start', 331, '0:05:31', '0:01:05'],
@@ -218,63 +211,60 @@ describe('moveHandle (§6.2 손잡이 규칙 표)', () => {
     ['둘 다 길이 넘음: band 없음', open('0:12:00', '0:13:00'), 'end', 30, '0:12:00', '0:00:30'],
     ['소수 초는 내림', open('0:01:00', '0:05:00'), 'start', 120.9, '0:02:00', '0:05:00'],
   ] as [string, Fields, 'start' | 'end', number, string, string][])('%s', (_n, f, h, secs, start, end) => {
-    expect(moveHandle(f, h, secs, META, INIT_END)).toEqual({ open: true, start, end });
+    expect(moveHandle(f, h, secs, META)).toEqual({ start, end });
   });
 
-  it('돌려주는 칸은 늘 열려 있다 (접힘 되돌림)', () => {
-    expect(moveHandle(closed('x', 'y'), 'end', 100, META, INIT_END)?.open).toBe(true);
+  it('읽지 못하는 다른 칸 글자는 그대로 두고 옮긴 칸만 바꾼다(접힘 되돌림은 없다)', () => {
+    expect(moveHandle(open('x', 'y'), 'end', 100, META)).toEqual(open('x', '0:01:40'));
   });
 
   it('입력 칸을 바꾸지 않는다', () => {
     const f = open('0:01:00', '0:05:00');
-    moveHandle(f, 'start', 120, META, INIT_END);
+    moveHandle(f, 'start', 120, META);
     expect(f).toEqual(open('0:01:00', '0:05:00'));
   });
 
   it('길이 1초 영상은 고칠 수 없다', () => {
-    expect(moveHandle(open('0:00:00', ''), 'end', 1, { secs: 1, source: 'meta' }, '0:00:01')).toBeNull();
-    expect(moveHandle(open('0:00:00', ''), 'start', 0, { secs: 1.9, source: 'video' }, '')).toBeNull();
+    expect(moveHandle(open('0:00:00', ''), 'end', 1, { secs: 1, source: 'meta' })).toBeNull();
+    expect(moveHandle(open('0:00:00', ''), 'start', 0, { secs: 1.9, source: 'video' })).toBeNull();
   });
 
   it('길이 2초 영상: 시작은 0~1, 끝은 1~2', () => {
     const len = { secs: 2, source: 'meta' } as const;
-    expect(moveHandle(open('0:00:00', '0:00:02'), 'start', 9, len, '0:00:02')).toEqual(open('0:00:01', '0:00:02'));
-    expect(moveHandle(open('0:00:00', '0:00:02'), 'end', 0, len, '0:00:02')).toEqual(open('0:00:00', '0:00:01'));
+    expect(moveHandle(open('0:00:00', '0:00:02'), 'start', 9, len)).toEqual(open('0:00:01', '0:00:02'));
+    expect(moveHandle(open('0:00:00', '0:00:02'), 'end', 0, len)).toEqual(open('0:00:00', '0:00:01'));
   });
 
   describe('meta가 없고 video 길이만 있을 때(source video)', () => {
     const VIDEO = { secs: 599.6, source: 'video' } as const;
     it('끝 손잡이를 맨 끝까지 옮기면 끝 칸은 빈 문자열(끝까지)', () => {
-      expect(moveHandle(open('0:01:00', '0:05:00'), 'end', 9999, VIDEO, '')).toEqual(open('0:01:00', ''));
+      expect(moveHandle(open('0:01:00', '0:05:00'), 'end', 9999, VIDEO)).toEqual(open('0:01:00', ''));
     });
     it('맨 끝이 아니면 시각', () => {
-      expect(moveHandle(open('0:01:00', ''), 'end', 300, VIDEO, '')).toEqual(open('0:01:00', '0:05:00'));
+      expect(moveHandle(open('0:01:00', ''), 'end', 300, VIDEO)).toEqual(open('0:01:00', '0:05:00'));
     });
     it('floor(길이) 바로 아래는 시각 그대로', () => {
-      expect(moveHandle(open('0:01:00', ''), 'end', 598, VIDEO, '')?.end).toBe('0:09:58');
-    });
-    it('접힘이면 initialEnd(빈 문자열)로 되돌린다', () => {
-      expect(moveHandle(closed('0:03:00', '0:04:00'), 'start', 60, VIDEO, '')).toEqual(open('0:01:00', ''));
+      expect(moveHandle(open('0:01:00', ''), 'end', 598, VIDEO)?.end).toBe('0:09:58');
     });
   });
 
   describe('receive.effectiveRange와 묶음', () => {
     it('meta: 끝 손잡이를 맨 끝으로 + 시작 0이면 전체 받기(null)', () => {
-      const next = moveHandle(open('0:00:00', '0:05:00'), 'end', 9999, META, INIT_END) as Fields;
-      expect(effectiveRange(next, 600)).toBeNull();
+      const next = moveHandle(open('0:00:00', '0:05:00'), 'end', 9999, META) as Fields;
+      expect(effectiveRange({ open: true, ...next }, 600)).toBeNull();
     });
     it('meta: 시작을 옮기면 [시작, 영상 끝]', () => {
-      const next = moveHandle(closed('', ''), 'start', 60, META, INIT_END) as Fields;
-      expect(effectiveRange(next, 600)).toEqual({ startMs: 60000, endMs: 600000 });
+      const next = moveHandle(open('', ''), 'start', 60, META) as Fields;
+      expect(effectiveRange({ open: true, ...next }, 600)).toEqual({ startMs: 60000, endMs: 600000 });
     });
     it('video(meta 없음): 끝까지(빈 끝 칸)는 끝 없음', () => {
-      const next = moveHandle(open('0:01:00', '0:05:00'), 'end', 9999, { secs: 599.6, source: 'video' }, '') as Fields;
-      expect(effectiveRange(next, null)).toEqual({ startMs: 60000, endMs: null });
+      const next = moveHandle(open('0:01:00', '0:05:00'), 'end', 9999, { secs: 599.6, source: 'video' }) as Fields;
+      expect(effectiveRange({ open: true, ...next }, null)).toEqual({ startMs: 60000, endMs: null });
     });
     it('손잡이가 만든 칸은 늘 순서가 선 구간이 된다', () => {
       for (const v of [0, 1, 59, 300, 599, 600, 9999]) {
-        const a = effectiveRange(moveHandle(open('0:01:00', '0:05:00'), 'start', v, META, INIT_END) as Fields, 600);
-        const b = effectiveRange(moveHandle(open('0:01:00', '0:05:00'), 'end', v, META, INIT_END) as Fields, 600);
+        const a = effectiveRange({ open: true, ...(moveHandle(open('0:01:00', '0:05:00'), 'start', v, META) as Fields) }, 600);
+        const b = effectiveRange({ open: true, ...(moveHandle(open('0:01:00', '0:05:00'), 'end', v, META) as Fields) }, 600);
         expect(a!.endMs!).toBeGreaterThan(a!.startMs);
         expect(b!.endMs!).toBeGreaterThan(b!.startMs);
       }
@@ -292,99 +282,88 @@ describe('nudge', () => {
     ['시작은 끝−1까지', open('0:04:59', '0:05:00'), 'start', 1, '0:04:59', '0:05:00'],
     ['끝은 시작+1까지', open('0:04:59', '0:05:00'), 'end', -1, '0:04:59', '0:05:00'],
     ['끝은 길이까지', open('0:01:00', '0:10:00'), 'end', 1, '0:01:00', '0:10:00'],
-    ['접힘이면 전체로 되돌린 뒤 한 칸만', closed('0:03:00', '0:04:00'), 'start', 1, '0:00:01', '0:10:00'],
-    ['접힘: 끝 −1', closed('0:03:00', '0:04:00'), 'end', -1, '0:00:00', '0:09:59'],
     ['빈 끝 칸은 길이로 본다', open('0:01:00', ''), 'end', -1, '0:01:00', '0:09:59'],
     ['뒤집힘: 시작은 [0, 길이]만', open('0:05:30', '0:01:05'), 'start', 1, '0:05:31', '0:01:05'],
     ['뒤집힘: 끝 +1도 다른 칸으로 자르지 않는다', open('0:05:30', '0:01:05'), 'end', 1, '0:05:30', '0:01:06'],
     ['뒤집힘: 길이 넘는 시작은 길이로 자른다', open('0:12:00', '0:13:00'), 'start', 1, '0:10:00', '0:13:00'],
     ['뒤집힘: 길이 넘는 끝은 길이로 자른다', open('0:12:00', '0:13:00'), 'end', -1, '0:12:00', '0:10:00'],
   ] as [string, Fields, 'start' | 'end', number, string, string][])('%s', (_n, f, h, d, start, end) => {
-    expect(nudge(f, h, d, META, INIT_END)).toEqual({ open: true, start, end });
+    expect(nudge(f, h, d, META)).toEqual({ start, end });
   });
 
   it('고칠 칸을 못 읽으면 null (단추 비활성)', () => {
-    expect(nudge(open('abc', '0:05:00'), 'start', 1, META, INIT_END)).toBeNull();
-    expect(nudge(open('0:01:00', 'abc'), 'end', 1, META, INIT_END)).toBeNull();
+    expect(nudge(open('abc', '0:05:00'), 'start', 1, META)).toBeNull();
+    expect(nudge(open('0:01:00', 'abc'), 'end', 1, META)).toBeNull();
   });
 
   it('빈 시작 칸은 0초로 읽는다(PS10)', () => {
-    expect(nudge(open('', '0:05:00'), 'start', 1, META, INIT_END)).toEqual(open('0:00:01', '0:05:00'));
-    expect(nudge(open('  ', '0:05:00'), 'start', -1, META, INIT_END)).toEqual(open('0:00:00', '0:05:00'));
-    expect(nudge(open('', ''), 'start', 1, META, '')).toEqual(open('0:00:01', ''));
-    expect(nudge(open('', ''), 'end', -1, META, '')).toEqual(open('', '0:09:59'));
+    expect(nudge(open('', '0:05:00'), 'start', 1, META)).toEqual(open('0:00:01', '0:05:00'));
+    expect(nudge(open('  ', '0:05:00'), 'start', -1, META)).toEqual(open('0:00:00', '0:05:00'));
+    expect(nudge(open('', ''), 'start', 1, META)).toEqual(open('0:00:01', ''));
+    expect(nudge(open('', ''), 'end', -1, META)).toEqual(open('', '0:09:59'));
   });
 
   it('다른 칸을 못 읽어도 이 칸은 [0, 길이]로 고친다', () => {
-    expect(nudge(open('0:01:00', 'abc'), 'start', 1, META, INIT_END)).toEqual(open('0:01:01', 'abc'));
+    expect(nudge(open('0:01:00', 'abc'), 'start', 1, META)).toEqual(open('0:01:01', 'abc'));
   });
 
   it('못 읽는 다른 칸은 selection처럼 본다 (시작 0, 끝 길이): moveHandle과 같은 경계', () => {
-    expect(nudge(open('0:09:59', 'abc'), 'start', 1, META, INIT_END)).toEqual(open('0:09:59', 'abc'));
-    expect(nudge(open('abc', '0:00:01'), 'end', -1, META, INIT_END)).toEqual(open('abc', '0:00:01'));
+    expect(nudge(open('0:09:59', 'abc'), 'start', 1, META)).toEqual(open('0:09:59', 'abc'));
+    expect(nudge(open('abc', '0:00:01'), 'end', -1, META)).toEqual(open('abc', '0:00:01'));
   });
 
   it('입력 칸을 바꾸지 않는다', () => {
-    const f = closed('0:03:00', '0:04:00');
-    nudge(f, 'start', 1, META, INIT_END);
-    expect(f).toEqual(closed('0:03:00', '0:04:00'));
+    const f = open('0:03:00', '0:04:00');
+    nudge(f, 'start', 1, META);
+    expect(f).toEqual(open('0:03:00', '0:04:00'));
   });
 
   describe('len = null (meta 없음, 미리보기 닫힘)', () => {
     it('끝 상한이 없다', () => {
-      expect(nudge(open('0:01:00', '0:05:00'), 'end', 1, null, '')).toEqual(open('0:01:00', '0:05:01'));
-      expect(nudge(open('0:01:00', '0:05:00'), 'end', 100000, null, '')).toEqual(open('0:01:00', '27:51:40'));
+      expect(nudge(open('0:01:00', '0:05:00'), 'end', 1, null)).toEqual(open('0:01:00', '0:05:01'));
+      expect(nudge(open('0:01:00', '0:05:00'), 'end', 100000, null)).toEqual(open('0:01:00', '27:51:40'));
     });
     it('시작은 끝−1까지', () => {
-      expect(nudge(open('0:04:59', '0:05:00'), 'start', 1, null, '')).toEqual(open('0:04:59', '0:05:00'));
+      expect(nudge(open('0:04:59', '0:05:00'), 'start', 1, null)).toEqual(open('0:04:59', '0:05:00'));
     });
     it('빈 끝 칸이면 시작 상한이 없다', () => {
-      expect(nudge(open('0:01:00', ''), 'start', 1, null, '')).toEqual(open('0:01:01', ''));
+      expect(nudge(open('0:01:00', ''), 'start', 1, null)).toEqual(open('0:01:01', ''));
     });
     it('빈 끝 칸의 끝은 값을 몰라 고칠 수 없다', () => {
-      expect(nudge(open('0:01:00', ''), 'end', 1, null, '')).toBeNull();
-    });
-    it('접힘이면 전체(0 ~ initialEnd 빈칸)로 되돌린다', () => {
-      expect(nudge(closed('0:03:00', '0:04:00'), 'start', 1, null, '')).toEqual(open('0:00:01', ''));
+      expect(nudge(open('0:01:00', ''), 'end', 1, null)).toBeNull();
     });
     it('뒤집힘이면 그 칸만 [0, ∞)', () => {
-      expect(nudge(open('0:05:30', '0:01:05'), 'start', 1, null, '')).toEqual(open('0:05:31', '0:01:05'));
-      expect(nudge(open('0:05:30', '0:01:05'), 'end', -100000, null, '')).toEqual(open('0:05:30', '0:00:00'));
+      expect(nudge(open('0:05:30', '0:01:05'), 'start', 1, null)).toEqual(open('0:05:31', '0:01:05'));
+      expect(nudge(open('0:05:30', '0:01:05'), 'end', -100000, null)).toEqual(open('0:05:30', '0:00:00'));
     });
   });
 
   it('video 길이에서 끝을 맨 끝으로 밀면 끝 칸은 빈 문자열', () => {
     const VIDEO = { secs: 599.6, source: 'video' } as const;
-    expect(nudge(open('0:01:00', '0:09:58'), 'end', 1, VIDEO, '')).toEqual(open('0:01:00', ''));
-    expect(nudge(open('0:01:00', '0:09:57'), 'end', 1, VIDEO, '')).toEqual(open('0:01:00', '0:09:58'));
+    expect(nudge(open('0:01:00', '0:09:58'), 'end', 1, VIDEO)).toEqual(open('0:01:00', ''));
+    expect(nudge(open('0:01:00', '0:09:57'), 'end', 1, VIDEO)).toEqual(open('0:01:00', '0:09:58'));
   });
 
   it('길이 1초 영상은 고칠 수 없다', () => {
-    expect(nudge(open('0:00:00', ''), 'end', 1, { secs: 1, source: 'meta' }, '0:00:01')).toBeNull();
+    expect(nudge(open('0:00:00', ''), 'end', 1, { secs: 1, source: 'meta' })).toBeNull();
   });
 });
 
 describe('mark (찍기)', () => {
   it.each([
     ['열림 끝: 자르지 않고 뒤집힘을 허용', open('0:05:00', '0:06:00'), 'end', 65.9, '0:05:00', '0:01:05'],
-    ['접힘 시작: 다른 칸을 전체 값으로', closed('0:03:00', '0:04:00'), 'start', 10.2, '0:00:10', '0:10:00'],
-    ['접힘 끝', closed('0:03:00', '0:04:00'), 'end', 100, '0:00:00', '0:01:40'],
     ['열림 시작: 끝 칸을 건드리지 않는다', open('0:01:00', 'abc'), 'start', 30, '0:00:30', 'abc'],
     ['내림', open('0:01:00', '0:02:00'), 'start', 59.99, '0:00:59', '0:02:00'],
     ['길이 넘는 시각도 자르지 않는다', open('0:01:00', '0:02:00'), 'end', 99999, '0:01:00', '27:46:39'],
     ['음수·NaN은 0', open('0:01:00', '0:02:00'), 'start', Number.NaN, '0:00:00', '0:02:00'],
   ] as [string, Fields, 'start' | 'end', number, string, string][])('%s', (_n, f, h, t, start, end) => {
-    expect(mark(f, h, t, INIT_END)).toEqual({ open: true, start, end });
-  });
-
-  it('접히고 meta가 없으면 initialEnd(빈 문자열)로 되돌린다', () => {
-    expect(mark(closed('0:03:00', '0:04:00'), 'start', 10, '')).toEqual(open('0:00:10', ''));
+    expect(mark(f, h, t)).toEqual({ start, end });
   });
 
   it('입력 칸을 바꾸지 않는다', () => {
-    const f = closed('0:03:00', '0:04:00');
-    mark(f, 'start', 10, INIT_END);
-    expect(f).toEqual(closed('0:03:00', '0:04:00'));
+    const f = open('0:03:00', '0:04:00');
+    mark(f, 'start', 10);
+    expect(f).toEqual(open('0:03:00', '0:04:00'));
   });
 });
 

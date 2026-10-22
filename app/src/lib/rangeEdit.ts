@@ -4,9 +4,8 @@
 import { formatClock, parseClock } from './format/duration';
 
 export type Handle = 'start' | 'end';
-/** `receive.ts`의 `RangeInput`과 같은 모양(카드의 구간 칸 상태) */
+/** 구간 편집 화면의 초안 칸(`receive.ts`의 `Draft`와 같은 모양). 초안은 늘 "열려" 있다(접힘 되돌림은 없다, range-editor.md §3.1) */
 export interface Fields {
-  open: boolean;
   start: string;
   end: string;
 }
@@ -48,12 +47,11 @@ export interface Selection {
 }
 
 /**
- * 막대에 그릴 선택(PVU8·PVU9). 접힘이면 전체. 칸을 못 읽으면 그 손잡이는 끝값(0 또는 길이).
+ * 막대에 그릴 선택(PVU9). 칸을 못 읽으면 그 손잡이는 끝값(0 또는 길이).
  * 두 값은 [0, floor(len)]로 자른다. 순서가 뒤집혔거나(start ≥ end) 시작이 길이 이상이면 band=false.
  */
 export function selection(f: Fields, len: number): Selection {
   const max = top(len);
-  if (!f.open) return { start: 0, end: max, band: max > 0 };
   const s = Math.min(readSecs(f.start) ?? 0, max);
   const e = f.end.trim() === '' ? max : Math.min(readSecs(f.end) ?? max, max);
   return { start: s, end: e, band: s < e };
@@ -127,38 +125,33 @@ export function seekKey(key: string, mods: Mods): number | null {
   return null;
 }
 
-/** 접힘(PVU8)이면 두 칸을 전체 값으로 되돌리고 연다. 열려 있으면 그대로(복사본) */
-function begin(f: Fields, initialEnd: string): Fields {
-  return f.open ? { ...f } : { open: true, start: formatClock(0), end: initialEnd };
-}
-
 /** 끝 칸 글자: video 길이를 쓰는 중이고 끝이 floor(len) 이상이면 '' (끝까지, PVU7), 아니면 시각 */
 function endText(v: number, len: BarLength): string {
   return len.source === 'video' && v >= top(len.secs) ? '' : formatClock(v);
 }
 
 /**
- * 손잡이 하나를 secs로 옮긴 뒤의 새 칸(PVU6·PVU7·PVU8·PVU9). 접힘이면 다른 칸을 전체 값으로 되돌리고 open=true.
+ * 손잡이 하나를 secs로 옮긴 뒤의 새 칸(PVU6·PVU7·PVU9).
  * 자르기는 selection(f).band가 참이면 다른 손잡이로, 거짓이면 [0, floor(len)]만. 고칠 수 없으면(len < 2) null.
  */
-export function moveHandle(f: Fields, h: Handle, secs: number, len: BarLength, initialEnd: string): Fields | null {
+export function moveHandle(f: Fields, h: Handle, secs: number, len: BarLength): Fields | null {
   const sel = selection(f, len.secs);
   const other = sel.band ? (h === 'start' ? sel.end : sel.start) : null;
   const v = clampHandle(h, secs, other, len.secs);
   if (v == null) return null;
-  const next = begin(f, initialEnd);
+  const next = { ...f };
   if (h === 'start') next.start = formatClock(v);
   else next.end = endText(v, len);
   return next;
 }
 
 /**
- * ±n초(PVU6). len은 카드의 막대 길이(없으면 null: 끝 상한 없이 시작만 끝−1로 묶는다).
+ * ±n초(PVU6). len은 막대 길이(없으면 null: 끝 상한 없이 시작만 끝−1로 묶는다).
  * 고칠 칸을 못 읽으면 null(단추 비활성). 순서가 뒤집혔으면 그 칸만 [0, floor(len)](len null이면 [0, ∞))로 자른다.
  */
-export function nudge(f: Fields, h: Handle, delta: number, len: BarLength | null, initialEnd: string): Fields | null {
+export function nudge(f: Fields, h: Handle, delta: number, len: BarLength | null): Fields | null {
   if (len != null && !(len.secs >= 2)) return null;
-  const next = begin(f, initialEnd);
+  const next = { ...f };
   const max = len == null ? Number.POSITIVE_INFINITY : top(len.secs);
   const sRaw = readStart(next.start);
   // 빈 끝 칸은 "끝까지": 길이를 알면 그 값, 모르면 값이 없다(끝 칸은 고칠 수 없고 시작 상한은 없다)
@@ -184,9 +177,9 @@ export function nudge(f: Fields, h: Handle, delta: number, len: BarLength | null
   return next;
 }
 
-/** 찍기(PVU9): 그 칸에 formatClock(floor(t))만 넣는다(자르지 않음). 접힘이면 다른 칸을 전체 값으로 */
-export function mark(f: Fields, h: Handle, t: number, initialEnd: string): Fields {
-  const next = begin(f, initialEnd);
+/** 찍기(PVU9): 그 칸에 formatClock(floor(t))만 넣는다(자르지 않음). 다른 칸은 그대로 */
+export function mark(f: Fields, h: Handle, t: number): Fields {
+  const next = { ...f };
   next[h] = formatClock(t);
   return next;
 }

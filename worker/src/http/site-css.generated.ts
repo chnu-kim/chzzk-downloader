@@ -935,6 +935,31 @@ export const SITE_CSS = `/* [root] 라이트 기본값. ref 팔레트와 sys 토
   border-top: 1px solid var(--separator);
 }
 
+/* ---------- 창 전체 시트(구간 편집 화면, components.md Sheet) ---------- */
+
+/* 구간 편집 화면 부제: 어느 영상인지 말하는 유일한 글자라 --fg-muted가 아니다(foundations §3). 한 줄 말줄임,
+   좁은 레이아웃은 layout.css가 두 줄까지로 푼다(range-editor.md §6.3) */
+.fullsheet-context {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-caption);
+  line-height: var(--leading-caption);
+}
+
+/* 열린 동안 body 직속 모달 층이다(modalLayer). 안은 세로 flex: 머리 줄(고정)과 스크롤되는 몸통을 소비자가 나눈다 */
+.fullsheet {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-dialog);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--fg);
+}
+
 /* ---------- 대화상자 ---------- */
 
 .scrim {
@@ -2148,4 +2173,4 @@ pre.license {
   }
 }
 `;
-export const SITE_CSS_HASH = "b5345de5ffc7ecda";
+export const SITE_CSS_HASH = "8859ac076bb4262d";

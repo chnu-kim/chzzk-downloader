@@ -26,11 +26,16 @@ export class UiStore {
   /** main 창에 포커스가 있는가(Rust `window-focus`). 완료 토스트는 창이 활성이고 홈이 아닐 때만(patterns §1.1-1) */
   windowFocused = $state(true);
   /**
-   * 카드의 "미리보기"·"미리보기·구간" 섹션이 펼쳐져 있는가(preview-ux2 PS8). 기본은 펼침이다.
+   * 일반 VOD·클립 카드의 "미리보기" 섹션이 펼쳐져 있는가(preview-ux2 PS8, range-editor.md RE14). 기본은 펼침이다.
    * 사용자가 머리를 눌러 바꾼 값이 다음 카드에도 이어진다(완료 그룹 접힘 `jobs.finishedOpen`과 같은 앱 메모리 상태, ADR-0018).
-   * 설정 파일에 쓰지 않아 앱을 다시 켜면 펼침으로 돌아간다. 카드 종류와 무관하게 하나다
+   * 설정 파일에 쓰지 않아 앱을 다시 켜면 펼침으로 돌아간다. 빠른 다시보기 카드는 섹션이 없어 읽지도 쓰지도 않는다(구간 편집 화면, D67)
    */
   previewOpen = $state(true);
+  /**
+   * 구간 편집 화면(창 전체 레이어)이 열려 있는가(range-editor.md RE15). 레이어가 붙을 때 true, 떨어질 때 false로 쓴다
+   * (카드가 갑자기 사라져도 false로 돌아온다). 창 수준 처리기(Mod+L·Mod+,·붙여넣기·드롭·메뉴·카드의 Mod+Enter)가 이것을 보고 거른다
+   */
+  rangeEditorOpen = $state(false);
   #escape: EscapeHandler[] = [];
 
   /**

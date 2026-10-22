@@ -344,6 +344,24 @@ describe('macOS 메뉴 이벤트(platform.md §7)', () => {
     expect(ui.view).toBe('settings');
     expect(ui.focusAbout).toBe(false);
   });
+
+  it('구간 편집 화면이 열려 있는 동안 "설정…"·"…에 관하여"는 무시한다(카드가 언마운트되어 초안이 사라지지 않게, RE15)', async () => {
+    start(dto({ state: 'disabled' }));
+    render(App);
+    await screen.findByLabelText(t('url.label'));
+    ui.rangeEditorOpen = true;
+    try {
+      menuSettingsCb();
+      menuAboutCb();
+      await Promise.resolve();
+      expect(ui.view).toBe('home');
+      expect(ui.focusAbout).toBe(false);
+    } finally {
+      ui.rangeEditorOpen = false;
+    }
+    menuSettingsCb();
+    await waitFor(() => expect(ui.view).toBe('settings'));
+  });
 });
 
 describe('잠자기 방지 표시(platform.md §15)', () => {

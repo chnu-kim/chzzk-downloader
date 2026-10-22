@@ -5,7 +5,16 @@
    대상은 ui.css의 클래스뿐이다(기능 컴포넌트는 폭 쿼리를 쓰지 않고 flex-wrap·min-width: 0으로 접는다).
    main.ts가 ui.css 다음에 import하므로 같은 특이도에서는 여기가 이긴다. */
 
+/* 좁은 레이아웃 신호(range-editor.md §6.2): 구간 편집 화면이 읽는 보이지 않는 표지다. 좁은 레이아웃이면 block이 된다.
+   컴포넌트는 폭 쿼리·matchMedia 대신 getComputedStyle(표지).display로 읽는다(DL13) */
+.fullsheet-probe {
+  display: none;
+}
+
 @media (max-width: 599px) {
+  .fullsheet-probe {
+    display: block;
+  }
   /* FieldRow: 라벨이 컨트롤 위로(1열). 도움말·동작 칸도 같은 열 */
   .fieldrow {
     grid-template-columns: minmax(0, 1fr);
@@ -34,8 +43,18 @@
   .card-footer {
     flex-wrap: wrap;
   }
+  .fullsheet-context {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    white-space: normal;
+  }
 }
 
+:root[data-text-scale="x-large"] .fullsheet-probe {
+  display: block;
+}
 :root[data-text-scale="x-large"] .fieldrow {
   grid-template-columns: minmax(0, 1fr);
   row-gap: var(--gap-label);
@@ -60,4 +79,12 @@
 }
 :root[data-text-scale="x-large"] .card-footer {
   flex-wrap: wrap;
+}
+
+:root[data-text-scale="x-large"] .fullsheet-context {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  white-space: normal;
 }

@@ -837,6 +837,7 @@ JS 타이머·Rust 셸이 쓰는 값이다. 이름과 값의 단일 원천은 �
 |---|---|---|---|---|---|
 | `BREAKPOINT_NARROW` | 600 | [잠정] | 생성기 상수(`tokens.mjs`) | §8 분기(`max-width: 599px`) | Windows 텍스트 225% 리플로우(`platform.md` §21 M16) |
 | `LOADER_DELAY_MS` / `LOADER_MIN_MS` | 300 / 400 | [제안] | `app/src/lib/timing.ts` | 로딩 표시 지연·최소 유지(`patterns.md` §2.2) | 디자인 시스템 수렴값(`E-DESK-L*`), 표준 아님. `G-LAUNCH-R4` |
+| `VIDEO_MIN_H` | 90 | [잠정] | `app/src/lib/rangeView.ts` | 구간 편집 화면 영상 상자의 최소 높이(px, range-editor.md §6.2 `monitorSize`). 조작 줄 최소 폭은 `controlsMinW(--control-h)` = 7×`--control-h` + 184(28 → 380, coarse 40 → 464)로 같은 파일에서 계산한다 | D67, M-RE-9(갤러리 측정으로 조인다) |
 | `TOAST_MS` | 6000 | [취향] | `timing.ts` | 정보 토스트 수명 = [되돌리기] 지연 삭제 창(README D37) | D62 V8 |
 | `HIGHLIGHT_MS` | 1000 | [취향] | `timing.ts` | 새 항목 `--accent-soft` 강조(`patterns.md` §1.2) | app.md §8.10 |
 | `COPIED_LABEL_MS` | 2000 | [취향] | `timing.ts` | "복사했어요" 라벨 전환 | D37 |

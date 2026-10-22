@@ -68,6 +68,18 @@ test('없는 ADR 번호와 범위 밖 검사 번호를 잡는다', () => {
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test('결정 번호 상한은 D67이다(D66·D67은 통과, D68은 범위 밖)', () => {
+  const ok = mkRoot({ patterns: '# p\nD66과 D67을 본다.\n' });
+  const bad = mkRoot({ patterns: '# p\nD68을 본다.\n' });
+  try {
+    assert.deepEqual(check(ok), []);
+    assert.match(check(bad).join('\n'), /D68 범위 밖/);
+  } finally {
+    rmSync(ok, { recursive: true, force: true });
+    rmSync(bad, { recursive: true, force: true });
+  }
+});
+
 test('토큰 값이 §13과 다르면 잡는다', () => {
   const root = mkRoot({ components: '# c\n`--space-8` 9px 간격.\n' });
   try { assert.match(check(root).join('\n'), /토큰 값 불일치 --space-8: 문서 9, §13 8/); } finally { rmSync(root, { recursive: true, force: true }); }

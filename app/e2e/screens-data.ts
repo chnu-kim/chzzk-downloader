@@ -123,18 +123,29 @@ const settleCardTop = async (page: Page, env: Env) => {
   if (env.vp.height < 400) await page.locator('.video-card').evaluate((el) => el.scrollIntoView({ block: 'start' }));
 };
 
-// 구간 칸을 채운 카드(빠른 다시보기)는 칸·단추 줄이 둘이라 포커스 스크롤이 섹션 머리를 sticky 입력줄 밑에 반쯤 걸치게 한다(PVU-5):
-// 섹션 머리를 입력줄 바로 아래에 두고 잰다(card-range-error와 같은 까닭)
-const settleWatchTop = async (page: Page, env: Env) => {
-  if (env.vp.height < 600) await page.locator('.watch summary').evaluate((el) => el.scrollIntoView({ block: 'start' }));
+/** 구간 편집 화면(range-editor.md, D67): 카드를 불러와 [구간 편집…]을 눌러 연다. 편집 화면은 body 직속 모달 층이다 */
+const editorDialog = (page: Page) => page.getByRole('dialog', { name: t('rangeEditor.title') });
+const openEditorScene = async (app: App, env: Env, url: string) => {
+  await loadCard(app, url);
+  await env.tick?.(CHECK_DEBOUNCE_MS + 50);
+  await open(app.page, t('range.edit.label')).click();
+  await editorDialog(app.page).waitFor();
 };
-
-// 구간 칸을 채운 장면(기본 펼침, preview-ux2): 칸을 채우며 생긴 포커스 스크롤로 카드 머리가 입력줄 밑에 반쯤 걸린다.
-// 작은 창은 settleWatchTop 선례처럼 섹션 머리를 입력줄 바로 아래에 둬서 막대가 입력줄 밑으로 숨지 않고 보이게 잰다. 그 밖은 카드를 입력줄 바로 아래에 둔다
-const settleFields = async (page: Page, env: Env) => {
-  if (env.vp.height < 600) await page.locator('.watch summary').evaluate((el) => el.scrollIntoView({ block: 'start' }));
-  else await page.locator('.video-card').evaluate((el) => el.scrollIntoView({ block: 'start' }));
+/** 편집 화면에서 [영상 보기]를 눌러 hls.js 경로로 붙인다(playlist 응답은 끝내 쥐고 있는다) */
+const startEditorWatch = async (app: App) => {
+  await app.page.route(HLS_PLAYLIST, () => new Promise<void>(() => {}));
+  await editorDialog(app.page).getByRole('button', { name: t('watch.start.label') }).click();
+  await expect(editorDialog(app.page).locator('video')).toBeVisible();
 };
+/** 메타데이터가 읽혔고 길이·재생 위치가 있는 것처럼 만든다(실제 재생은 하지 않는다) */
+const loadEditorMeta = (page: Page, time: number) =>
+  editorDialog(page)
+    .locator('video')
+    .evaluate((v: HTMLVideoElement, tm: number) => {
+      Object.defineProperty(v, 'duration', { value: 11565, configurable: true });
+      Object.defineProperty(v, 'currentTime', { value: tm, configurable: true, writable: true });
+      v.dispatchEvent(new Event('loadedmetadata'));
+    }, time);
 
 export const SCREENS: Screen[] = [
   {
@@ -216,7 +227,7 @@ export const SCREENS: Screen[] = [
     card: true,
   },
   {
-    id: '카드 미리보기·구간 기본 펼침(빠른 다시보기, 재생 전)',
+    id: '카드 구간 줄 전체(빠른 다시보기)',
     slug: 'card-rewind-default',
     scenario: () => ({ resolve: { [R.url]: R } }),
     drive: async (app, env) => {
@@ -225,17 +236,17 @@ export const SCREENS: Screen[] = [
       // 검사가 끝나 [받기]가 켜진 뒤(비활성 면의 대비는 잴 대상이 아니다)
       await expect(open(app.page, t('card.download'))).not.toHaveAttribute('aria-disabled', 'true');
     },
-    // 표지 자리 → 막대(meta 길이) → 빈 칸 줄과 "전체 길이" 줄이 모두 보이는 모습
-    ready: (p) => p.getByText(/^전체 길이: /),
-    settle: settleFields,
+    // 미리보기 섹션 없이 구간 줄 하나("구간 · 전체 [구간 편집…]")만 있다
+    ready: (p) => p.getByRole('button', { name: t('range.edit.label') }),
+    settle: settleCardTop,
     card: true,
   },
   {
-    id: '카드 미리보기·구간 접힘(기억한 상태)',
+    id: '카드 미리보기 접힘(기억한 상태, 일반 VOD)',
     slug: 'card-section-collapsed',
-    scenario: () => ({ resolve: { [R.url]: R } }),
+    scenario: () => ({ resolve: { [VOD.url]: VOD } }),
     drive: async (app, env) => {
-      await loadCard(app, R.url);
+      await loadCard(app, VOD.url);
       await env.tick?.(CHECK_DEBOUNCE_MS + 50);
       await app.page.locator('.watch summary').click();
       await expect(open(app.page, t('card.download'))).not.toHaveAttribute('aria-disabled', 'true');
@@ -265,86 +276,6 @@ export const SCREENS: Screen[] = [
     card: true,
   },
   {
-    id: '카드 미리보기 펼침(빠른 다시보기)',
-    slug: 'card-watch-hls',
-    scenario: () => ({ resolve: { [R.url]: R }, watchSrc: HLS_PLAYLIST }),
-    drive: async (app, env) => {
-      // hls.js가 읽는 동안의 모습: playlist 응답을 끝내 쥐고 있는다(페이지가 닫히면 버려진다)
-      await app.page.route(HLS_PLAYLIST, () => new Promise<void>(() => {}));
-      await loadCard(app, R.url);
-      await env.tick?.(CHECK_DEBOUNCE_MS + 50);
-      await expect(app.page.locator('.card-footer button:not([aria-disabled="true"])', { hasText: t('card.download') })).toBeVisible();
-      await app.page.getByRole('button', { name: t('watch.start.label') }).click();
-    },
-    ready: (p) => p.locator('video'),
-    settle: settleCardTop,
-    card: true,
-  },
-  {
-    id: '카드 미리보기 찍기(빠른 다시보기)',
-    slug: 'card-watch-hls-marked',
-    scenario: () => ({ resolve: { [R.url]: R }, watchSrc: HLS_PLAYLIST }),
-    drive: async (app, env) => {
-      await app.page.route(HLS_PLAYLIST, () => new Promise<void>(() => {}));
-      await loadCard(app, R.url);
-      await env.tick?.(CHECK_DEBOUNCE_MS + 50);
-      await expect(app.page.locator('.card-footer button:not([aria-disabled="true"])', { hasText: t('card.download') })).toBeVisible();
-      await app.page.getByRole('button', { name: t('watch.start.label') }).click();
-      // 메타데이터가 읽혔고 재생 위치가 있는 것처럼 만들어 찍는다(실제 재생은 하지 않는다)
-      const video = app.page.locator('video');
-      await expect(video).toBeVisible();
-      for (const [name, time] of [
-        [t('watch.mark.start'), 600],
-        [t('watch.mark.end'), 9000],
-      ] as const) {
-        await video.evaluate((v: HTMLVideoElement, tm: number) => {
-          Object.defineProperty(v, 'currentTime', { value: tm, configurable: true, writable: true });
-          v.dispatchEvent(new Event('loadedmetadata'));
-        }, time);
-        await app.page.getByRole('button', { name }).click();
-      }
-      await env.tick?.(CHECK_DEBOUNCE_MS + 50);
-    },
-    ready: (p) => p.getByText(t('filename.willSaveAs', { name: `${R.suggestedFileName} (0.10.00~2.30.00)` })),
-    settle: settleWatchTop,
-    card: true,
-  },
-  {
-    id: '카드 구간 편집(빠른 다시보기)',
-    slug: 'card-watch-hls-edit',
-    scenario: () => ({ resolve: { [R.url]: R }, watchSrc: HLS_PLAYLIST }),
-    drive: async (app, env) => {
-      await app.page.route(HLS_PLAYLIST, () => new Promise<void>(() => {}));
-      await loadCard(app, R.url);
-      await env.tick?.(CHECK_DEBOUNCE_MS + 50);
-      await expect(app.page.locator('.card-footer button:not([aria-disabled="true"])', { hasText: t('card.download') })).toBeVisible();
-      await app.page.getByRole('button', { name: t('watch.start.label') }).click();
-      // 메타데이터가 읽혔고 길이·재생 위치가 있는 것처럼 만들어 시작·끝을 찍는다(실제 재생은 하지 않는다)
-      const video = app.page.locator('video');
-      await expect(video).toBeVisible();
-      await video.evaluate((v: HTMLVideoElement) => {
-        Object.defineProperty(v, 'duration', { value: 11565, configurable: true });
-        Object.defineProperty(v, 'currentTime', { value: 3000, configurable: true, writable: true });
-        v.dispatchEvent(new Event('loadedmetadata'));
-      });
-      await app.page.getByRole('button', { name: t('watch.mark.start') }).click();
-      await video.evaluate((v: HTMLVideoElement) => {
-        (v as unknown as { currentTime: number }).currentTime = 8400;
-      });
-      await app.page.getByRole('button', { name: t('watch.mark.end') }).click();
-      await video.evaluate((v: HTMLVideoElement) => {
-        (v as unknown as { currentTime: number }).currentTime = 5400;
-        v.dispatchEvent(new Event('timeupdate'));
-      });
-      await env.tick?.(CHECK_DEBOUNCE_MS + 50);
-      // 검사가 끝나 [받기]가 켜진 뒤(비활성 면의 대비는 잴 대상이 아니다)
-      await expect(open(app.page, t('card.download'))).not.toHaveAttribute('aria-disabled', 'true');
-    },
-    ready: (p) => p.getByRole('slider', { name: t('range.end') }),
-    settle: settleWatchTop,
-    card: true,
-  },
-  {
     id: '카드 미리보기 실패',
     slug: 'card-watch-failed',
     scenario: () => ({ resolve: { [VOD.url]: VOD }, watch: 'error' }),
@@ -360,41 +291,102 @@ export const SCREENS: Screen[] = [
     card: true,
   },
   {
-    id: '카드 구간 펼침',
+    id: '카드 구간 줄(확정 구간)',
     slug: 'card-range',
     scenario: () => ({ resolve: { [R.url]: R } }),
     drive: async (app, env) => {
-      await loadCard(app, R.url);
-      // 두 손잡이가 막대에서 떨어져 있게 넓은 구간을 고른다(붙은 손잡이는 axe 대상 크기 간격에 걸린다)
+      await openEditorScene(app, env, R.url);
+      // 두 손잡이가 떨어져 있게 넓은 구간을 고른다(붙은 손잡이는 axe 대상 크기 간격에 걸린다)
       await app.page.getByRole('textbox', { name: t('range.start') }).fill('0:10:00');
       await app.page.getByRole('textbox', { name: t('range.end') }).fill('2:30:00');
+      await app.page.getByRole('button', { name: new RegExp(t('rangeEditor.apply.label')) }).click();
+      await editorDialog(app.page).waitFor({ state: 'hidden' });
       await env.tick?.(CHECK_DEBOUNCE_MS + 50);
     },
     ready: (p) => p.getByText(t('filename.willSaveAs', { name: `${R.suggestedFileName} (0.10.00~2.30.00)` })),
-    settle: settleFields,
+    settle: settleCardTop,
     card: true,
   },
   {
-    id: '카드 구간 오류',
-    slug: 'card-range-error',
+    id: '구간 편집 화면(재생 전)',
+    slug: 'editor-idle',
+    scenario: () => ({ resolve: { [R.url]: R }, watchSrc: HLS_PLAYLIST }),
+    drive: (app, env) => openEditorScene(app, env, R.url),
+    // 표지 자리와 [영상 보기], meta 길이로 그린 타임라인, 빈 두 칸과 "전체 길이" 줄
+    ready: (p) => editorDialog(p).getByText(/^전체 길이: /),
+  },
+  {
+    id: '구간 편집 화면(영상과 결합)',
+    slug: 'editor-coupled',
+    scenario: () => ({ resolve: { [R.url]: R }, watchSrc: HLS_PLAYLIST }),
+    drive: async (app, env) => {
+      await openEditorScene(app, env, R.url);
+      await startEditorWatch(app);
+      await loadEditorMeta(app.page, 3000);
+      await editorDialog(app.page).getByRole('button', { name: t('watch.mark.start') }).click();
+      await editorDialog(app.page).locator('video').evaluate((v: HTMLVideoElement) => {
+        (v as unknown as { currentTime: number }).currentTime = 8400;
+      });
+      await editorDialog(app.page).getByRole('button', { name: t('watch.mark.end') }).click();
+      await editorDialog(app.page).locator('video').evaluate((v: HTMLVideoElement) => {
+        (v as unknown as { currentTime: number }).currentTime = 5400;
+        v.dispatchEvent(new Event('timeupdate'));
+      });
+    },
+    ready: (p) => editorDialog(p).getByRole('slider', { name: t('range.end') }),
+  },
+  {
+    id: '구간 편집 화면(적용 오류)',
+    slug: 'editor-error',
     scenario: () => ({ resolve: { [R.url]: R } }),
     drive: async (app, env) => {
-      await loadCard(app, R.url);
+      await openEditorScene(app, env, R.url);
       await app.page.getByRole('textbox', { name: t('range.start') }).fill('2:00:00');
       await app.page.getByRole('textbox', { name: t('range.end') }).fill('0:20:00');
-      await env.tick?.(CHECK_DEBOUNCE_MS + 50);
-      await open(app.page, t('card.download')).click();
+      await app.page.getByRole('button', { name: new RegExp(t('rangeEditor.apply.label')) }).click();
     },
-    ready: (p) => p.getByRole('alert').filter({ hasText: t('range.error.order') }),
-    // 높이 231·520에서는 [받기] 클릭·오류 포커스로 스크롤이 내려가 섹션 머리(「미리보기·구간」)가 sticky 입력줄 밑에 반쯤 걸린다
-    // (axe target-size). 섹션 머리를 입력줄 바로 아래에 두고 잰다(card-worst와 같은 까닭)
-    settle: async (page, env) => {
-      if (env.vp.height < 600) await page.locator('.watch summary').evaluate((el) => el.scrollIntoView({ block: 'start' }));
-    },
-    card: true,
+    ready: (p) => editorDialog(p).getByRole('alert').filter({ hasText: t('range.error.order') }),
   },
   {
-    id: '카드 구간 길이 모름',
+    id: '구간 편집 화면(네이티브 m3u8 대체)',
+    slug: 'editor-native',
+    scenario: () => ({ resolve: { [R.url]: R }, watchSrc: HLS_PLAYLIST }),
+    drive: async (app, env) => {
+      await openEditorScene(app, env, R.url);
+      // 네이티브 경로는 playlist 주소를 video src로 쓴다: 응답을 끝내 쥐고 있어 이름 풀이 실패가 console.error로 남지 않게 한다
+      await app.page.route(HLS_PLAYLIST, () => new Promise<void>(() => {}));
+      // hls.js를 못 쓰고 네이티브 m3u8을 읽는 웹뷰를 흉내 낸다(media 오류는 앱이 보기 전에 삼킨다)
+      await app.page.evaluate(() => {
+        (window as unknown as { MediaSource?: unknown }).MediaSource = undefined;
+        HTMLMediaElement.prototype.canPlayType = (type: string) => (type === 'application/vnd.apple.mpegurl' ? 'maybe' : '');
+        window.addEventListener('error', (e) => e.target instanceof HTMLMediaElement && e.stopImmediatePropagation(), true);
+      });
+      await editorDialog(app.page).getByRole('button', { name: t('watch.start.label') }).click();
+    },
+    ready: (p) => editorDialog(p).getByText(t('rangeEditor.uncoupled.body')),
+  },
+  {
+    id: '구간 편집 화면(미리보기 실패)',
+    slug: 'editor-failed',
+    scenario: () => ({ resolve: { [R.url]: R }, watch: 'error' }),
+    drive: async (app, env) => {
+      await openEditorScene(app, env, R.url);
+      await editorDialog(app.page).getByRole('button', { name: t('watch.start.label') }).click();
+    },
+    ready: (p) => editorDialog(p).getByText(t('watch.error.body')),
+  },
+  {
+    id: '구간 편집 화면(길이 모름)',
+    slug: 'editor-no-length',
+    scenario: () => {
+      const r = resolved({ meta: { ...R.meta, durationSecs: null } });
+      return { resolve: { [r.url]: r } };
+    },
+    drive: (app, env) => openEditorScene(app, env, R.url),
+    ready: (p) => editorDialog(p).getByText(t('rangeEditor.noLength.body')),
+  },
+  {
+    id: '카드 구간 줄(길이 모름)',
     slug: 'card-range-unknown',
     scenario: () => {
       const r = resolved({ meta: { ...R.meta, durationSecs: null } });
@@ -406,8 +398,8 @@ export const SCREENS: Screen[] = [
       await env.tick?.(CHECK_DEBOUNCE_MS + 50);
       await expect(open(app.page, t('card.download'))).not.toHaveAttribute('aria-disabled', 'true');
     },
-    ready: (p) => p.getByRole('textbox', { name: t('range.end') }),
-    settle: settleWatchTop,
+    ready: (p) => p.getByRole('button', { name: t('range.edit.label') }),
+    settle: settleCardTop,
     card: true,
   },
   {

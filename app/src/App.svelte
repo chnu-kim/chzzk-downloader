@@ -71,8 +71,9 @@
         if (gone) f();
         else offs.push(f);
       });
-    listen(onMenuSettings(() => ui.goSettings()));
-    listen(onMenuAbout(() => ui.goSettings({ about: true })));
+    // 구간 편집 화면이 열려 있는 동안은 무시한다: 설정으로 가면 카드가 언마운트되어 초안이 사라진다(range-editor.md RE15)
+    listen(onMenuSettings(() => !ui.rangeEditorOpen && ui.goSettings()));
+    listen(onMenuAbout(() => !ui.rangeEditorOpen && ui.goSettings({ about: true })));
     // 잠자기 방지 표시(platform.md §15): 보호를 실제로 얻었을 때만 true
     listen(power.start());
     void auth.start().then((f) => {

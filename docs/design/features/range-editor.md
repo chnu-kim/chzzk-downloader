@@ -445,7 +445,7 @@ wheelIntent(e: { deltaX; deltaY; deltaMode; ctrlKey; metaKey; shiftKey }, ctx: {
 
 - 간격은 `NICE = [1, 2, 5, 10, 15, 30초, 1, 2, 5, 10, 15, 30분, 1, 2시간]` 중 한 칸의 px이 `TICK_MIN_PX` 80 [잠정] 이상인 가장 작은 값이다(`formatClock` 7자 12px 고정폭 ≈ 56 + 여백). 목록을 다 써도 모자라면(예: 43200초를 약 300px에) 2시간의 정수배 중 80px 이상인 가장 작은 값을 쓴다(43200초·300px → 4시간 ≈ 100px).
 - 첫 눈금은 `ceil(start / step) × step`이다. 글자는 `formatClock`(`--text-caption`, 고정폭, `--fg-muted`), 선은 1px `--border-strong`이다.
-- 표 테스트: 5400초·전체·860px → 30분 간격. 20초 창 → 2초 또는 5초. 320 폭 → 간격이 넓어진다.
+- 표 테스트: 5400초·전체·860px → 10분 간격(600초 ≈ 95px ≥ 80, 5분은 47px라 모자란다. RE-1에서 앞 문구 "30분"을 식에 맞게 고쳤다). 20초 창 → 2초 또는 5초. 320 폭 → 간격이 넓어진다.
 
 ### 7.7 지금 위치선과 따라가기
 
@@ -712,7 +712,7 @@ wheelIntent(e: { deltaX; deltaY; deltaMode; ctrlKey; metaKey; shiftKey }, ctx: {
 6. `panBy`: `moved` 참/거짓(끝에 닿음), 전체 보기 → `moved` 거짓. `wheelPanSecs(px, trackW, span)` = `px / trackW × span`(100px·616px·span 600 → 약 97초).
 7. `reveal`: 안(그대로)·왼쪽 밖·오른쪽 밖·margin 경계.
 8. `follow`: 안 → 그대로, 끝 넘김 → `pos − 0.1 span`, 앞(반복 restart) → 같은 규칙, 전체 보기 → 그대로, 끝 근처 자르기.
-9. `ticks`: 5400·860px → 30분 간격 첫 눈금 0, 20초 창 → 5초 이하 간격, 320px → 간격 넓어짐, 첫 눈금 `ceil`, 43200·300px → 4시간(목록을 넘으면 2시간의 정수배).
+9. `ticks`: 5400·860px → 10분 간격 첫 눈금 0, 20초 창 → 5초 이하 간격, 320px → 간격 넓어짐, 첫 눈금 `ceil`, 43200·300px → 4시간(목록을 넘으면 2시간의 정수배).
 10. `wheelIntent`
     - `deltaMode` 0·1·2 정규화.
     - `ctrlKey` → zoom, mac `metaKey` → zoom, 비mac `metaKey` → pan.

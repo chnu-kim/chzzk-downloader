@@ -184,6 +184,81 @@ export function effectiveRange(input: RangeInput, durationSecs: number | null): 
   return s === 0 && e == null ? null : { startMs: s, endMs: e };
 }
 
+/** 편집 화면의 초안: 시작·끝 칸의 글자 */
+export interface Draft {
+  start: string;
+  end: string;
+}
+
+/**
+ * 적용 검증(range-editor.md §5.2). 초안을 `applied`로 바꾼다.
+ * 검증과 값은 `rangeError`·`effectiveRange`와 같은 규칙이다(전체를 덮으면 `null`).
+ */
+export function applyDraft(
+  draft: Draft,
+  durationSecs: number | null,
+): { ok: true; applied: TimeRangeDto | null } | { ok: false; error: RangeError } {
+  const input: RangeInput = { open: true, ...draft };
+  const error = rangeError(input, durationSecs);
+  if (error) return { ok: false, error };
+  return { ok: true, applied: effectiveRange(input, durationSecs) };
+}
+
+/**
+ * 확정값 → 편집 화면 초안(§5.2·A21). 시작 0과 올림 길이 이상의 끝은 빈칸이다
+ * (그래야 `applyDraft`로 되돌려도 같은 값이고, 칸에 meta 줄보다 1초 긴 시각이 뜨지 않는다).
+ */
+export function draftOf(applied: TimeRangeDto | null, durationSecs: number | null): Draft {
+  if (applied == null) return { start: '', end: '' };
+  const d = knownMs(durationSecs);
+  return {
+    start: applied.startMs === 0 ? '' : formatClock(applied.startMs / 1000),
+    end: applied.endMs == null || (d != null && applied.endMs >= d) ? '' : formatClock(applied.endMs / 1000),
+  };
+}
+
+/**
+ * 카드 구간 줄의 값(§5.3). 전체이면 `null`. 끝은 `min(endMs, 영상 길이)`를 내려 보인다
+ * (`effectiveRange`의 올림 끝이 meta 줄보다 1초 길어 보이지 않게). 길이는 끝을 알 때만 있다.
+ */
+export function rangeSummary(
+  applied: TimeRangeDto | null,
+  durationSecs: number | null,
+): { range: string; length: string | null } | null {
+  if (applied == null) return null;
+  if (applied.endMs == null) return { range: rangeChip(applied), length: null };
+  const f = floorMs(durationSecs);
+  const shownEnd = Math.floor((f != null ? Math.min(applied.endMs, f) : applied.endMs) / 1000) * 1000;
+  return {
+    range: rangeChip({ startMs: applied.startMs, endMs: shownEnd }),
+    length: formatClock(Math.max(0, shownEnd - applied.startMs) / 1000),
+  };
+}
+
+/**
+ * 길이 줄(PS10): 받을 구간이 전체이면 "전체 길이"(길이를 모르면 "전체 구간"), 구간이 읽히면 "구간 길이".
+ * 끝을 모르는 구간이거나 칸이 틀렸으면 줄이 없다. `size`는 고른 화질의 예상 크기(없으면 null).
+ * 빠른 다시보기 카드인지는 호출자가 판단한다.
+ */
+export function lengthLine(a: {
+  error: RangeError | null;
+  range: TimeRangeDto | null;
+  durationSecs: number | null;
+  size: (secs: number) => string | null;
+}): string | null {
+  // 칸이 틀렸으면 줄을 숨긴다: 오류 칸에 "전체 길이"를 말하면 받는 범위를 잘못 알린다
+  if (a.error != null) return null;
+  const secs = rangeSecs(a.range, a.durationSecs);
+  if (a.range == null && !(secs != null && secs > 0)) return t('range.whole.label');
+  if (secs == null || !(secs > 0)) return null;
+  const length = formatClock(secs);
+  const size = a.size(secs);
+  if (a.range == null) {
+    return size ? t('range.wholeLengthSize.label', { length, size }) : t('range.wholeLength.label', { length });
+  }
+  return size ? t('range.lengthSize.label', { length, size }) : t('range.length.label', { length });
+}
+
 /** 크기 미리보기에 쓸 길이(초). 구간이 없으면 영상 길이 그대로, 끝을 모르면 null(크기 예상 없음) */
 export function rangeSecs(range: TimeRangeDto | null, durationSecs: number | null): number | null {
   if (!range) return durationSecs;

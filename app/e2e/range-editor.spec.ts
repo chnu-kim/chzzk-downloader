@@ -60,7 +60,7 @@ async function openCard(app: App, extra: Record<string, unknown> = {}) {
 async function openPlayer(app: App, card: Locator) {
   await editBtn(card).click();
   await expect(dialog(app)).toBeVisible();
-  await dialog(app).getByRole('button', { name: t('watch.start.label') }).click();
+  await dialog(app).locator('.stage').getByRole('button', { name: t('watch.start.label') }).click();
   await expect(videoOf(app)).toBeVisible();
 }
 
@@ -86,7 +86,7 @@ test('편집 화면을 열기만 해서는 요청이 없고, [영상 보기]를 
   expect(await app.args('watch_open')).toEqual([]);
   await app.axe('구간 편집(열기 직후)');
 
-  await dialog(app).getByRole('button', { name: t('watch.start.label') }).click();
+  await dialog(app).locator('.stage').getByRole('button', { name: t('watch.start.label') }).click();
   const video = videoOf(app);
   await expect(video).toBeVisible();
   await expect(video).toHaveAttribute('aria-label', t('watch.player.a11y', { title: REWIND.meta.title }));
@@ -151,11 +151,11 @@ test('재생 전에도 타임라인과 칸이 있고 칸이 비면 전체라는 
   await expect(start(app)).toHaveValue('');
   await expect(start(app)).toHaveAttribute('placeholder', t('range.fromBegin'));
   await expect(end(app)).toHaveAttribute('placeholder', t('range.toEnd'));
-  await expect(dialog(app).getByText(/^전체 길이: 3:12:45/)).toBeVisible();
+  await expect(dialog(app).locator('.range-length')).toHaveText(/^전체 길이: 3:12:45/);
   expect(await app.args('watch_open')).toEqual([]);
   await dialog(app).getByRole('slider', { name: t('range.start') }).press('ArrowRight');
   await expect(start(app)).toHaveValue('0:00:01');
-  await expect(dialog(app).getByText(/^구간 길이:/)).toBeVisible();
+  await expect(dialog(app).locator('.range-length')).toHaveText(/^구간 길이:/);
   expect(await app.args('watch_open')).toEqual([]);
   await app.axe('구간 편집(재생 전)');
   // 편집 화면 [구간 지우기]는 초안만 지운다
@@ -477,5 +477,124 @@ for (const [label, size] of [
     await noHorizontalScroll(app);
     if (size.width < 600) await expect(timeGroup(app)).toHaveClass(/narrow/);
     await app.axe(`구간 편집(확대 ${label})`);
+  });
+}
+
+// ---- RE-5: 조작 줄(아이콘 단추 일곱)·반복 토글·키 우선순위 ----
+const controls = (app: App) => dialog(app).getByRole('group', { name: t('rangeEditor.controls.label') });
+const ctl = (app: App, name: string) => controls(app).getByRole('button', { name });
+const playCtl = (app: App) => controls(app).getByRole('button', { name: new RegExp(`^(${t('watch.start.label')}|${t('action.pause')})`) });
+const loopBtn = (app: App) => dialog(app).getByRole('button', { name: t('watch.range.loop.label') });
+const nowOf = (app: App) => videoOf(app).evaluate((v: HTMLVideoElement) => v.currentTime);
+const DURATION = REWIND.meta.durationSecs ?? 0;
+
+test('조작 줄: 툴팁 "{이름}({키})", Space·I·O·←·→·+ 한 흐름, 보기 단추의 이름이 바뀐다', async ({ app }) => {
+  holdPlaylist(app.page);
+  const card = await openCard(app);
+  await openPlayer(app, card);
+  await expect(controls(app).getByRole('button')).toHaveCount(7);
+  await loadedAt(app, 600.7, DURATION);
+
+  await expect(markStart(app)).toHaveAttribute('title', t('shortcut.hint.label', { label: t('watch.mark.start'), key: 'I' }));
+  await expect(markEnd(app)).toHaveAttribute('title', t('shortcut.hint.label', { label: t('watch.mark.end'), key: 'O' }));
+  await expect(ctl(app, t('rangeEditor.back.label', { n: 5 }))).toHaveAttribute('title', t('shortcut.hint.label', { label: t('rangeEditor.back.label', { n: 5 }), key: '←' }));
+  await expect(playCtl(app)).toHaveAttribute('title', t('shortcut.hint.label', { label: t('action.pause'), key: 'Space' }));
+  await expect(ctl(app, t('rangeEditor.toStart.label'))).toHaveAttribute('title', t('rangeEditor.toStart.label'));
+  await app.axe('구간 편집(조작 줄)');
+
+  // 영상에 포커스가 있을 때 I/O는 찍기다(영상 위의 Space·←/→는 네이티브 몫이라 여기서는 누르지 않는다)
+  await videoOf(app).focus();
+  await app.page.keyboard.press('i');
+  await expect(start(app)).toHaveValue('0:10:00');
+
+  // 단추 위 →/←는 5초 이동
+  await ctl(app, t('rangeEditor.forward.label', { n: 5 })).focus();
+  await app.page.keyboard.press('ArrowRight');
+  expect(await nowOf(app)).toBeCloseTo(605.7, 1);
+  await app.page.keyboard.press('ArrowLeft');
+  expect(await nowOf(app)).toBeCloseTo(600.7, 1);
+  await app.page.keyboard.press('o');
+  await expect(end(app)).toHaveValue('0:10:00');
+
+  // 영상이 열리면 곧바로 보기가 시작되므로(play 이벤트) 단추는 일시정지다. 시간 영역에서 Space: 일시정지 ↔ 보기, 같은 단추의 이름이 바뀐다
+  await expect(playCtl(app)).toHaveAccessibleName(t('action.pause'));
+  await timeGroup(app).focus();
+  await app.page.keyboard.press('Space');
+  await expect(playCtl(app)).toHaveAccessibleName(t('watch.start.label'));
+  await app.page.keyboard.press('Space');
+  await expect(playCtl(app)).toHaveAccessibleName(t('action.pause'));
+
+  // + 는 시간 영역·단추 어디서든 확대
+  await app.page.keyboard.press('+');
+  await expect(scrollbar(app)).toBeVisible();
+  await app.page.keyboard.press('0');
+  await expect(scrollbar(app)).toHaveCount(0);
+});
+
+test('반복을 켜고 구간 처음으로 → 보기: 구간 끝을 넘기지 않고 시작으로 되돌아온다. 끄면 넘어간다', async ({ app }) => {
+  holdPlaylist(app.page);
+  const card = await openCard(app);
+  await openPlayer(app, card);
+  await loadedAt(app, 0, DURATION);
+  // 열리면 곧바로 보기가 시작된다: 일시정지해 둔다(멈춘 채 반복을 켜고 구간 처음으로 간 뒤 보기를 누르는 흐름)
+  await expect(playCtl(app)).toHaveAccessibleName(t('action.pause'));
+  await playCtl(app).click();
+  await expect(playCtl(app)).toHaveAccessibleName(t('watch.start.label'));
+  await expect(loopBtn(app)).toHaveAttribute('aria-pressed', 'false');
+  await loopBtn(app).click();
+  await expect(loopBtn(app)).toHaveAttribute('aria-pressed', 'true');
+  await app.axe('구간 편집(반복 켜짐)'); // 구간이 좁으면 두 손잡이가 붙어 axe 대상 크기에 걸리므로 구간은 그 뒤에 좁힌다
+  await start(app).fill('0:10:00');
+  await end(app).fill('0:10:30');
+
+  await ctl(app, t('rangeEditor.toStart.label')).click();
+  expect(await nowOf(app)).toBe(600);
+  await playCtl(app).click(); // play 이벤트: 지금 자리가 구간 안이라 그대로 반복 모드
+  expect(await nowOf(app)).toBe(600);
+  const tick = (secs: number) =>
+    videoOf(app).evaluate((v: HTMLVideoElement, s: number) => {
+      (v as unknown as { currentTime: number }).currentTime = s;
+      v.dispatchEvent(new Event('timeupdate'));
+    }, secs);
+  await tick(629.8);
+  expect(await nowOf(app)).toBeCloseTo(629.8, 1);
+  await tick(630.3); // 끝을 넘으면 시작으로
+  expect(await nowOf(app)).toBe(600);
+
+  // 반복을 끄면(보는 중이라 모드도 풀린다) 끝을 넘어 계속 간다
+  await loopBtn(app).click();
+  await tick(631);
+  expect(await nowOf(app)).toBeCloseTo(631, 1);
+});
+
+for (const [label, coarse] of [
+  ['720×520 확대', false],
+  ['720×520 확대 coarse(40px)', true],
+] as const) {
+  test(`${label}에서 조작 줄이 넘치지 않는다(최소 폭 380·464)`, async ({ app }) => {
+    await app.page.setViewportSize({ width: 720, height: 520 });
+    const card = await openCard(app);
+    await editBtn(card).scrollIntoViewIfNeeded();
+    await editBtn(card).click();
+    await expect(dialog(app)).toBeVisible();
+    if (coarse) {
+      // 이 Chromium 컨텍스트는 any-pointer: coarse를 켜지 않는다: 토큰 블록(tokens.css [coarse])과 같은 값을 직접 건다
+      await app.page.evaluate(() => {
+        const r = document.documentElement.style;
+        r.setProperty('--control-h', '40px');
+        r.setProperty('--control-h-sm', '40px');
+        r.setProperty('--hit-min', '40px');
+      });
+    }
+    await timeGroup(app).locator('.lane').first().click();
+    await app.page.keyboard.press('+');
+    await expect(scrollbar(app)).toBeVisible();
+    await noHorizontalScroll(app);
+    const row = (await controls(app).boundingBox())!;
+    expect(row.width).toBeGreaterThanOrEqual(coarse ? 440 : 364);
+    const cluster = (await controls(app).locator('.editor-cluster').boundingBox())!;
+    expect(cluster.x).toBeGreaterThanOrEqual(row.x);
+    expect(cluster.x + cluster.width).toBeLessThanOrEqual(row.x + row.width + 1);
+    await app.axe(`구간 편집(조작 줄 ${label})`);
   });
 }

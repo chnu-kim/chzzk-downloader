@@ -43,6 +43,21 @@
   .card-footer {
     flex-wrap: wrap;
   }
+  /* 구간 편집 조작 줄: 첫 줄은 지금 시각 ↔ 전체 길이, 둘째 줄은 단추 일곱(coarse 40이면 두 줄로 접힌다) */
+  .editor-controls {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    row-gap: var(--space-4);
+  }
+  .editor-controls .editor-cluster {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+  .editor-controls .editor-total {
+    grid-column: 2;
+    grid-row: 1;
+  }
   .fullsheet-context {
     display: -webkit-box;
     -webkit-box-orient: vertical;
@@ -87,4 +102,19 @@
   -webkit-line-clamp: 2;
   line-clamp: 2;
   white-space: normal;
+}
+
+:root[data-text-scale="x-large"] .editor-controls {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  row-gap: var(--space-4);
+}
+:root[data-text-scale="x-large"] .editor-controls .editor-cluster {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+:root[data-text-scale="x-large"] .editor-controls .editor-total {
+  grid-column: 2;
+  grid-row: 1;
 }

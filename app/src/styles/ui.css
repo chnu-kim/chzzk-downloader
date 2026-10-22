@@ -126,6 +126,17 @@
   text-decoration: underline;
 }
 
+/* 토글 단추(aria-pressed, components.md §2.1): 켜짐은 중립 눌림 면 + 1px 테두리. 면 차이(약 1.24:1)만으로는 상태가 안 보여
+   색이 아닌 둘째 단서로 테두리를 더한다(RE20, D67). 파란 면은 쓰지 않는다. 꺼짐 유령 단추는 테두리가 없다 */
+.btn[aria-pressed="true"] {
+  background: var(--surface-2);
+  border-color: var(--border-strong);
+  color: var(--fg);
+}
+.btn-ghost[aria-pressed="true"] .icon {
+  color: var(--fg);
+}
+
 /* hover는 유령 버튼만, 눌림은 모든 버튼에 있다. 비활성은 둘 다 받지 않는다 */
 .btn-ghost:not([disabled], [aria-disabled="true"]):hover {
   background: var(--surface-2);
@@ -1263,6 +1274,43 @@
   box-shadow: var(--shadow-toast);
 }
 
+/* ---------- 구간 편집 조작 줄(range-editor.md §8.1) ----------
+   3칸 격자: 지금 시각 · 단추 일곱 · 전체 길이. 좁은 레이아웃은 layout.css가 첫 줄 시각 둘, 둘째 줄 단추로 접는다 */
+
+.editor-controls {
+  flex: none;
+  width: 100%;
+  max-width: 100%;
+  display: grid;
+  grid-template-columns: minmax(var(--timeline-label-w), 1fr) auto minmax(var(--timeline-label-w), 1fr);
+  align-items: center;
+  column-gap: var(--space-8);
+  padding: var(--space-8) 0;
+}
+.editor-cluster {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+.editor-now,
+.editor-total {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: var(--text-caption);
+  line-height: var(--leading-caption);
+  font-variant-numeric: tabular-nums;
+}
+.editor-now {
+  color: var(--accent-ink);
+  font-weight: var(--weight-strong);
+  text-align: start;
+}
+.editor-total {
+  color: var(--fg-muted);
+  text-align: end;
+}
+
 /* ---------- forced-colors(Windows 고대비). components.md 3 · foundations 2.7 ---------- */
 
 @media (forced-colors: active) {
@@ -1288,6 +1336,15 @@
   .btn-ghost.edge-start,
   .icon-btn.edge-start {
     margin-inline-start: 0;
+  }
+  /* 토글 켜짐: Highlight 면 + HighlightText(2px Highlight 윤곽은 포커스 outline과 구별되지 않는다) */
+  .btn[aria-pressed="true"] {
+    background: Highlight;
+    color: HighlightText;
+  }
+  .btn[aria-pressed="true"] .icon,
+  .btn-ghost[aria-pressed="true"] .icon {
+    color: HighlightText;
   }
   .btn-primary {
     background: Highlight;

@@ -26,7 +26,25 @@ export type Shortcut = keyof typeof SHORTCUT;
  * 구간 편집 화면의 단축키 글자(range-editor.md §11). OS와 무관한 코드 상수라 `platform.*` deck 키가 아니다(DC9는 deck 문자열만 본다).
  * 문구는 `{zoomIn}`·`{zoomOut}`·`{fit}` 자리표시로 받는다
  */
-export const EDITOR_KEYS = { zoomIn: '+', zoomOut: '-', fit: '0' } as const;
+export const EDITOR_KEYS = {
+  zoomIn: '+',
+  zoomOut: '-',
+  fit: '0',
+  markIn: 'I',
+  markOut: 'O',
+  play: 'Space',
+  back: '←',
+  forward: '→',
+} as const;
+
+/** 조작 줄 단추의 `aria-keyshortcuts` 값(ARIA 키 이름). 툴팁의 글자(`EDITOR_KEYS`)와 같은 키다 */
+export const EDITOR_ARIA_KEYS = {
+  markIn: 'I',
+  markOut: 'O',
+  play: 'Space',
+  back: 'ArrowLeft',
+  forward: 'ArrowRight',
+} as const;
 
 export function shortcutText(os: Os, s: Shortcut): string {
   return t(SHORTCUT[s][osFamily(os)]);

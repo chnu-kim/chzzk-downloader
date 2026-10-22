@@ -878,7 +878,7 @@ describe('구간 받기(ResolveCard, range-editor.md)', () => {
     const user = await openCard();
     await openEditor(user);
     expect(api.watchOpen).not.toHaveBeenCalled();
-    await user.click(screen.getByRole('button', { name: /영상 보기/ }));
+    await user.click(screen.getByRole('button', { name: /^‘.+’ 영상 보기$/ }));
     await waitFor(() => expect(api.watchOpen).toHaveBeenCalledTimes(1));
     expect(api.watchOpen).toHaveBeenCalledWith('https://chzzk.naver.com/video/1234567', { kind: 'video', videoNo: 1234567 });
   });
@@ -1561,7 +1561,7 @@ describe('구간 편집 흐름(ResolveCard + RangeEditor 통합, range-editor.md
     vi.mocked(api.watchOpen).mockResolvedValue({ id: SID, kind: 'hls', src: `watch://localhost/${SID}/pl.m3u8` });
     const user = await openCard(over);
     await openEditor(user);
-    await user.click(screen.getByRole('button', { name: /영상 보기/ }));
+    await user.click(screen.getByRole('button', { name: /^‘.+’ 영상 보기$/ }));
     await waitFor(() => expect(document.querySelector('video')).not.toBeNull());
     return user;
   }
@@ -1687,7 +1687,7 @@ describe('구간 편집 흐름(ResolveCard + RangeEditor 통합, range-editor.md
     vi.mocked(api.watchOpen).mockRejectedValue(appError('network'));
     const user = await openCard();
     await openEditor(user);
-    await user.click(screen.getByRole('button', { name: /영상 보기/ }));
+    await user.click(screen.getByRole('button', { name: /^‘.+’ 영상 보기$/ }));
     expect(await screen.findByRole('alert')).toHaveTextContent(t('watch.error.body'));
     await key(thumb(t('range.start')), 'ArrowRight');
     await applyAndDownload(user);
@@ -1732,7 +1732,7 @@ describe('구간 편집 흐름(ResolveCard + RangeEditor 통합, range-editor.md
         await waitFor(() => expect(editorDialog()).toBeNull());
         expect(screen.getByRole('heading', { name: /금요/ })).toBeInTheDocument();
         await openEditor(user);
-        await user.click(screen.getByRole('button', { name: /영상 보기/ }));
+        await user.click(screen.getByRole('button', { name: /^‘.+’ 영상 보기$/ }));
         await waitFor(() => expect(document.querySelector('video')).not.toBeNull());
         await loadMeta();
       }

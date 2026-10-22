@@ -143,6 +143,34 @@ export const ICONS = {
     'M21 17v2a2 2 0 0 1-2 2h-2',
     'M7 21H5a2 2 0 0 1-2-2v-2',
   ] },
+  'skip-back': { set: 'lucide', name: 'skip-back', version: '1.48.0', paths: [
+    'M17.971 4.285A2 2 0 0 1 21 6v12a2 2 0 0 1-3.029 1.715l-9.997-5.998a2 2 0 0 1-.003-3.432z',
+    'M3 20V4',
+  ] },
+  'skip-forward': { set: 'lucide', name: 'skip-forward', version: '1.48.0', paths: [
+    'M21 4v16',
+    'M6.029 4.285A2 2 0 0 0 3 6v12a2 2 0 0 0 3.029 1.715l9.997-5.998a2 2 0 0 0 .003-3.432z',
+  ] },
+  rewind: { set: 'lucide', name: 'rewind', version: '1.48.0', paths: [
+    'M12 6a2 2 0 0 0-3.414-1.414l-6 6a2 2 0 0 0 0 2.828l6 6A2 2 0 0 0 12 18z',
+    'M22 6a2 2 0 0 0-3.414-1.414l-6 6a2 2 0 0 0 0 2.828l6 6A2 2 0 0 0 22 18z',
+  ] },
+  'fast-forward': { set: 'lucide', name: 'fast-forward', version: '1.48.0', paths: [
+    'M12 6a2 2 0 0 1 3.414-1.414l6 6a2 2 0 0 1 0 2.828l-6 6A2 2 0 0 1 12 18z',
+    'M2 6a2 2 0 0 1 3.414-1.414l6 6a2 2 0 0 1 0 2.828l-6 6A2 2 0 0 1 2 18z',
+  ] },
+  'flag-triangle-left': { set: 'lucide', name: 'flag-triangle-left', version: '1.48.0', paths: [
+    'M18 22V2.8a.8.8 0 0 0-1.17-.71L5.45 7.78a.8.8 0 0 0 0 1.44L18 15.5',
+  ] },
+  'flag-triangle-right': { set: 'lucide', name: 'flag-triangle-right', version: '1.48.0', paths: [
+    'M6 22V2.8a.8.8 0 0 1 1.17-.71l11.38 5.69a.8.8 0 0 1 0 1.44L6 15.5',
+  ] },
+  repeat: { set: 'lucide', name: 'repeat', version: '1.48.0', paths: [
+    'm17 2 4 4-4 4',
+    'M3 11v-1a4 4 0 0 1 4-4h14',
+    'm7 22-4-4 4-4',
+    'M21 13v1a4 4 0 0 1-4 4H3',
+  ] },
 } as const satisfies Record<string, IconDef>;
 
 export type IconName = keyof typeof ICONS;

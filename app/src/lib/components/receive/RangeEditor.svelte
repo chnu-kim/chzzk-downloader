@@ -6,14 +6,14 @@
   // 세션은 [영상 보기]를 눌렀을 때 연다(RE7, watchSession). 영상과 구간의 결합(`coupled` = hls.js로 붙고 메타데이터를 읽음, PS12/RE8)이 되면
   // 조작 줄·재생 위치·영상 탐색이 켜진다. 그 전에는 타임라인과 칸이 칸 편집기로만 동작한다(손잡이는 초안만 고친다).
   // 타임라인 패널(RE-4)은 EditorTimeline이 그린다: 보이는 범위 `tview`(확대·이동)와 따라가기 `following`은 이 화면이 갖고,
-  // 컴포넌트는 휠·눈금·범위 막대 조작을 `onview`로 알린다. 조작 줄은 RE-3 모양 그대로다(RE-5가 바꾼다).
+  // 컴포넌트는 휠·눈금·범위 막대 조작을 `onview`로 알린다. 조작 줄(RE-5)은 3칸 격자의 아이콘 단추 일곱이고, 보기·반복 규칙은 `<video>`의 play 이벤트 한 곳이 판단한다(§8.2).
   import { onDestroy, onMount, tick, untrack } from 'svelte';
   import * as api from '../../api';
   import type { ResolvedDto, TimeRangeDto } from '../../bindings';
   import { errorCopy } from '../../copy/errors';
   import { t, type CopyKey } from '../../copy/ko';
   import { formatClock } from '../../format/duration';
-  import { EDITOR_KEYS, shortcutText } from '../../platform';
+  import { EDITOR_ARIA_KEYS, EDITOR_KEYS, shortcutText } from '../../platform';
   import {
     consumeOwnSeek,
     mark as markFields,
@@ -21,6 +21,7 @@
     nudge as nudgeFields,
     playStep,
     reachesEnd,
+    SEEK_STEP_SECS,
     seekKey,
     seekTargetOf,
     selection,
@@ -38,6 +39,7 @@
     fullView,
     monitorSize,
     retargetView,
+    reveal,
     zoomAnchor,
     zoomAt,
     zoomKey,
@@ -63,7 +65,6 @@
   import { editable, focusables, isImeKey, trapTab } from '../ui/focus';
   import Notice from '../ui/Notice.svelte';
   import Sheet from '../ui/Sheet.svelte';
-  import Switch from '../ui/Switch.svelte';
   import TextField from '../ui/TextField.svelte';
   import EditorTimeline from './EditorTimeline.svelte';
   import { WatchSession } from './watchSession.svelte';
@@ -119,10 +120,12 @@
   let position = $state(0);
   /** 영상이 알려 준 길이(meta가 없을 때만 막대 길이가 된다, PVU7) */
   let videoSecs: number | null = $state(null);
-  /** 구간 보기 모드(§6.3). 탐색·손잡이 조작에서 'off' (RE-5가 지운다) */
+  /** 구간 반복 모드(§8.2). 사용자 탐색·일시정지·손잡이 조작에서 'off' */
   let playMode: PlayMode = $state('off');
-  /** 구간 반복하기 스위치(열 때마다 새로 시작한다) */
+  /** 구간 반복하기 토글(열 때마다 새로 시작한다). 보기 시작(play 이벤트)에서 모드를 건다 */
   let loop = $state(false);
+  /** 지금 보는 중인가(play/pause/ended 이벤트로 따라간다). 보기 ↔ 일시정지 단추의 아이콘·이름을 정한다 */
+  let playing = $state(false);
   /** 우리가 currentTime을 쓴 목표(다음 seeked가 byUs인지 가린다)와 우리가 부른 pause 깃발. 한 번 쓰고 버린다 */
   let pendingSeek: number | null = null;
   let pausedByUs = false;
@@ -130,10 +133,9 @@
   /** 칸에서 IME 조합 중인가(오류 포커스가 전체 선택을 하지 않는다) */
   let composingNow = false;
 
-  const loopId = `${uid}-loop`;
-
   function resetPlay() {
     playMode = 'off';
+    playing = false;
     pendingSeek = null;
     pausedByUs = false;
     position = 0;
@@ -206,6 +208,16 @@
       reportDuration(null);
     },
   });
+
+  // ---- 조작 줄 문구(§8.1): 보기 ↔ 일시정지는 한 단추에서 아이콘과 이름이 함께 바뀐다 ----
+  const backLabel = $derived(t('rangeEditor.back.label', { n: SEEK_STEP_SECS }));
+  const forwardLabel = $derived(t('rangeEditor.forward.label', { n: SEEK_STEP_SECS }));
+  const playLabel = $derived(playing ? t('action.pause') : t('watch.start.label'));
+  const playIcon = $derived(playing ? ('pause' as const) : ('play' as const));
+  /** 툴팁 "{이름}({키})": 키가 있는 단추만(괄호는 앞말에 붙인다, content §6.5) */
+  function shortcutHint(label: string, key: string): string {
+    return t('shortcut.hint.label', { label, key });
+  }
 
   /** 영상과 구간의 결합(PS12/RE8): hls.js로 붙었고 메타데이터를 읽었을 때만 */
   const coupled = $derived(session.usingHls && metaReady);
@@ -398,25 +410,33 @@
     if (phase === 'commit') seek(selection(next, len.secs)[h]);
   }
 
-  /** 시작 칸 값(초) 쪽 선택. 길이를 모르면 구간 보기는 없다 */
+  /** 반복 규칙이 읽는 구간. 길이를 모르거나 구간이 비었으면(순서가 뒤집힘) 반복은 없다 */
   function stepSel() {
-    if (!sel || !len) return null;
+    if (!sel || !len || !sel.band) return null;
     return { start: sel.start, end: sel.end, toEnd: reachesEnd(sel, draft.end, len.secs) };
   }
 
-  /** 우리가 currentTime을 쓴다: 다음 seeked를 byUs로 알아볼 수 있게 목표를 남긴다 */
+  /** 우리가 currentTime을 쓴다: 다음 seeked를 byUs로 알아볼 수 있게 목표를 남긴다. 목표는 [0, video.duration]으로 자른다 */
   function ownSeek(secs: number) {
-    if (!videoEl) return;
-    pendingSeek = secs;
-    videoEl.currentTime = secs;
+    const v = videoEl;
+    if (!v) return;
+    const d = v.duration;
+    const hi = Number.isFinite(d) && d > 0 ? d : Number.POSITIVE_INFINITY;
+    const target = Math.min(Math.max(secs, 0), hi);
+    pendingSeek = target;
+    v.currentTime = target;
+    position = target;
   }
 
+  /**
+   * 보기를 시작한다. 규칙은 여기 없다: 어느 경로(이 단추·Space·네이티브 controls)로 시작하든 `play` 이벤트
+   * 한 곳(onplay)이 판단한다(§8.2). 웹뷰가 거부하면 반복 모드는 걸리지 않은 것으로 되돌린다
+   */
   function startPlay() {
     const v = videoEl;
     if (!v) return;
     try {
       void Promise.resolve(v.play()).catch(() => {
-        // 웹뷰가 재생을 거부했다: 구간 보기는 켜지지 않은 것으로 되돌린다
         playMode = 'off';
       });
     } catch {
@@ -424,34 +444,69 @@
     }
   }
 
-  function playRange() {
+  /** 보기 ↔ 일시정지(Space·단추). 멈춰 있으면 보기 시작, 보는 중이면 사용자 일시정지(모드 off) */
+  function togglePlay() {
+    const v = videoEl;
+    if (!v || !coupled) return;
+    if (v.paused) startPlay();
+    else v.pause();
+  }
+
+  /** 반복 토글을 바꾼다. 보는 중이면 그 자리에서 모드를 걸거나 풀고, 멈춰 있으면 다음 보기 시작에서 건다 */
+  function toggleLoop() {
+    loop = !loop;
+    const v = videoEl;
+    if (!v || !coupled || v.paused) return;
     const g = stepSel();
-    if (!g || !sel?.band) return;
-    playMode = loop ? 'loop' : 'range';
-    ownSeek(g.start);
-    startPlay();
-  }
-
-  function playFromStart() {
-    if (!sel) return;
-    playMode = 'off';
-    ownSeek(sel.start);
-    startPlay();
-  }
-
-  function onloop(next: boolean) {
-    // 구간 보기 중에 스위치를 바꾸면 그 자리에서 range ↔ loop
-    if (playMode !== 'off') playMode = next ? 'loop' : 'range';
-  }
-
-  function apply(r: { mode: PlayMode; action: 'none' | 'pause' | 'restart' }, start: number) {
-    playMode = r.mode;
-    if (r.action === 'pause') {
-      pausedByUs = true;
-      videoEl?.pause();
-    } else if (r.action === 'restart') {
-      ownSeek(start);
+    if (!g) {
+      playMode = 'off';
+      return;
     }
+    apply(playStep(playMode, { kind: 'toggle', on: loop }, g), g.start);
+  }
+
+  /** 지금 위치가 보이는 범위를 벗어났으면 한 번 보이게 옮긴다(확대했을 때만, 조작 줄 단추 뒤) */
+  function revealPosition(secs: number) {
+    if (len && zoomed(tview, len.secs)) tview = reveal(tview, secs, len.secs);
+  }
+
+  /** [N초 뒤로·앞으로] · ←/→. 사용자 탐색이라 반복 모드를 끈다(seek). 따라가기를 켠다 */
+  function stepBy(delta: number) {
+    const v = videoEl;
+    if (!v || !coupled) return;
+    seek(v.currentTime + delta);
+    following = true;
+    revealPosition(position);
+  }
+
+  /** [구간 처음으로 가기]: 보던 상태를 그대로 두고 시작으로 간다. 반복이 켜져 있고 보는 중이면 반복 모드 */
+  function toStart() {
+    const v = videoEl;
+    if (!v || !coupled || !sel) return;
+    playMode = loop && !v.paused && stepSel() ? 'loop' : 'off';
+    ownSeek(sel.start);
+    following = true;
+    revealPosition(position);
+  }
+
+  /** [구간 끝으로 가기]: 보는 중이면 먼저 일시정지(우리가 건 것)하고 끝으로 간다. 끝이 "끝까지"면 floor(길이) */
+  function toEnd() {
+    const v = videoEl;
+    if (!v || !coupled || !sel || !len) return;
+    const toEnd = reachesEnd(sel, draft.end, len.secs);
+    playMode = 'off';
+    if (!v.paused) {
+      pausedByUs = true;
+      v.pause();
+    }
+    ownSeek(toEnd ? Math.floor(len.secs) : sel.end);
+    following = true;
+    revealPosition(position);
+  }
+
+  function apply(r: { mode: PlayMode; action: 'none' | 'restart' }, start: number) {
+    playMode = r.mode;
+    if (r.action === 'restart') ownSeek(start);
   }
 
   function ontimeupdate() {
@@ -474,12 +529,24 @@
     apply(playStep(playMode, { kind: 'seeked', t: position, byUs: c.byUs }, g), g.start);
   }
 
-  /** 보기가 시작되면(어떤 경로든) 따라가기를 다시 켠다(§7.7). 반복 규칙은 RE-5가 같은 처리기에서 맡는다 */
+  /**
+   * 보기가 시작되면(어떤 경로든) 따라가기를 켜고 반복 규칙을 판단한다(§7.7·§8.2): 조작 줄 단추·Space·네이티브 controls·
+   * [영상 보기] 뒤 `play()` 모두 같은 처리기다. 반복이 켜져 있고 지금 자리가 구간 밖이면 시작으로 가서 본다
+   */
   function onplay() {
+    playing = true;
     following = true;
+    const v = videoEl;
+    const g = stepSel();
+    if (!v || !g) {
+      playMode = 'off';
+      return;
+    }
+    apply(playStep(playMode, { kind: 'play', t: v.currentTime, loop }, g), g.start);
   }
 
   function onpause() {
+    playing = false;
     const byUs = pausedByUs;
     pausedByUs = false;
     // 끝에 닿아 브라우저가 건 일시정지는 사용자 일시정지가 아니다: 곧 오는 ended가 이어받는다
@@ -490,6 +557,7 @@
   }
 
   function onended() {
+    playing = false;
     const g = stepSel();
     if (!g) return void (playMode = 'off');
     const r = playStep(playMode, { kind: 'ended', t: position, byUs: false }, g);
@@ -603,8 +671,8 @@
   /**
    * 뿌리 keydown 하나가 받는다(§9.1). Esc·Mod+Enter·Tab 순환을 먼저 처리하고, 나머지는 편집 키다.
    * 손잡이가 이미 처리한 키(defaultPrevented)와 입력칸·IME 조합은 거른다.
-   * I/O는 찍기 단추·영상·손잡이·뿌리에서만(다른 단추·스위치 위에서는 글자 그대로),
-   * Space는 손잡이·뿌리에서 재생 ↔ 일시정지(단추·스위치는 자기가 누른다), ←/→는 단추·스위치·뿌리에서 재생 위치 ∓5초.
+   * I/O는 칸 밖 어디서나(결합 뒤) 찍고, Space는 손잡이·뿌리·범위 막대에서 보기 ↔ 일시정지(단추는 자기가 누른다),
+   * ←/→는 단추·뿌리에서 지금 위치 ∓5초(손잡이·범위 막대는 자기 몫).
    * 영상 위의 나머지 키는 네이티브 몫이고, Alt·Ctrl·Meta 조합은 창·OS 몫이다
    */
   function onkeydown(e: KeyboardEvent) {
@@ -648,26 +716,24 @@
     const slider = el.closest('[role="slider"]');
     if (e.code === 'KeyI' || e.code === 'KeyO') {
       if (e.shiftKey || e.repeat) return;
-      // 찍기 단추만 이 키를 받는다(aria-keyshortcuts가 달린 단추)
-      if (command && !command.hasAttribute('aria-keyshortcuts')) return;
+      // 편집 화면은 창 전체가 편집 영역이라 어느 단추 위에서도 찍는다(§9.1). 칸 위의 글자는 위에서 이미 걸렀다
       e.preventDefault();
       mark(e.code === 'KeyI' ? 'start' : 'end');
       return;
     }
     if (el === v || command) {
-      // 영상 위는 네이티브 몫. 단추·스위치에서는 화살표만 우리 몫이다
+      // 영상 위는 네이티브 몫. 단추(반복 토글 포함)에서는 화살표만 우리 몫이다
       if (el === v || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight')) return;
     }
     if (e.key === ' ' && !e.shiftKey) {
       e.preventDefault();
-      if (v.paused) startPlay();
-      else v.pause();
+      togglePlay();
       return;
     }
     const step = slider ? null : seekKey(e.key, { shift: e.shiftKey, alt: false, ctrl: false, meta: false });
     if (step != null) {
       e.preventDefault();
-      seek(v.currentTime + step);
+      stepBy(step);
     }
   }
 
@@ -813,15 +879,63 @@
         ></video>
       {/if}
     </div>
-    <!-- 조작 줄: 늘 그린다(배치가 흔들리지 않게, RE8). 결합 전에는 모두 disabled다 -->
-    <div class="controls" bind:this={controlsEl}>
-      <Button size="sm" aria-keyshortcuts="I" disabled={!coupled} onclick={() => mark('start')}>{t('watch.mark.start')}</Button>
-      <Button size="sm" aria-keyshortcuts="O" disabled={!coupled} onclick={() => mark('end')}>{t('watch.mark.end')}</Button>
-      <Button size="sm" disabled={!coupled || !len || !sel?.band} onclick={playRange}>{t('watch.range.play.label')}</Button>
-      <Button size="sm" disabled={!coupled || !len} onclick={playFromStart}>{t('watch.range.fromStart.label')}</Button>
-      <span class="loop">
-        <span id={loopId}>{t('watch.range.loop.label')}</span>
-        <Switch bind:value={loop} labelledby={loopId} disabled={!coupled} onchange={onloop} />
+    <!-- 조작 줄(role=group, RE18): 늘 그린다(배치가 흔들리지 않게). 결합 전에는 모두 disabled다. 3칸: 지금 시각 · 단추 일곱 · 전체 길이 -->
+    <div class="editor-controls" role="group" aria-label={t('rangeEditor.controls.label')} bind:this={controlsEl}>
+      <span class="editor-now">
+        {#if coupled}
+          <span aria-hidden="true">{formatClock(Math.floor(position))}</span>
+          <span class="sr-only">{t('rangeEditor.now.label', { time: formatClock(Math.floor(position)) })}</span>
+        {/if}
+      </span>
+      <span class="editor-cluster">
+        <IconButton
+          icon="flag-triangle-left"
+          label={t('watch.mark.start')}
+          hint={shortcutHint(t('watch.mark.start'), EDITOR_KEYS.markIn)}
+          aria-keyshortcuts={EDITOR_ARIA_KEYS.markIn}
+          disabled={!coupled}
+          onclick={() => mark('start')}
+        />
+        <IconButton icon="skip-back" label={t('rangeEditor.toStart.label')} disabled={!coupled || !sel} onclick={toStart} />
+        <IconButton
+          icon="rewind"
+          label={backLabel}
+          hint={shortcutHint(backLabel, EDITOR_KEYS.back)}
+          aria-keyshortcuts={EDITOR_ARIA_KEYS.back}
+          disabled={!coupled}
+          onclick={() => stepBy(-SEEK_STEP_SECS)}
+        />
+        <IconButton
+          icon={playIcon}
+          label={playLabel}
+          hint={shortcutHint(playLabel, EDITOR_KEYS.play)}
+          aria-keyshortcuts={EDITOR_ARIA_KEYS.play}
+          disabled={!coupled}
+          onclick={togglePlay}
+        />
+        <IconButton
+          icon="fast-forward"
+          label={forwardLabel}
+          hint={shortcutHint(forwardLabel, EDITOR_KEYS.forward)}
+          aria-keyshortcuts={EDITOR_ARIA_KEYS.forward}
+          disabled={!coupled}
+          onclick={() => stepBy(SEEK_STEP_SECS)}
+        />
+        <IconButton icon="skip-forward" label={t('rangeEditor.toEnd.label')} disabled={!coupled || !sel} onclick={toEnd} />
+        <IconButton
+          icon="flag-triangle-right"
+          label={t('watch.mark.end')}
+          hint={shortcutHint(t('watch.mark.end'), EDITOR_KEYS.markOut)}
+          aria-keyshortcuts={EDITOR_ARIA_KEYS.markOut}
+          disabled={!coupled}
+          onclick={() => mark('end')}
+        />
+      </span>
+      <span class="editor-total">
+        {#if len}
+          <span aria-hidden="true">{formatClock(Math.floor(len.secs))}</span>
+          <span class="sr-only">{t('range.wholeLength.label', { length: formatClock(Math.floor(len.secs)) })}</span>
+        {/if}
       </span>
     </div>
   </section>
@@ -846,6 +960,10 @@
           />
         </span>
       {/if}
+      <!-- 구간 반복하기: 토글 단추 하나(RE20). 켜짐은 중립 눌림 면 + 1px 테두리. 영상이 없어도 켜 둘 수 있다(다음 보기 시작에서 건다) -->
+      <span class="loop">
+        <Button variant="ghost" size="sm" icon="repeat" aria-pressed={loop} onclick={toggleLoop}>{t('watch.range.loop.label')}</Button>
+      </span>
     </div>
     {#if barShown && len && sel}
       <div class="timeline">
@@ -1010,20 +1128,12 @@
     object-fit: contain;
     background: var(--surface-2);
   }
-  .controls {
-    flex: none;
-    max-width: 100%;
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: center;
-    gap: var(--space-8);
-    padding: var(--space-8) 0;
-  }
+  /* 반복 토글은 패널 머리 오른쪽 끝에 둔다([전체 보기]가 있으면 그 오른쪽) */
   .loop {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--space-8);
+    margin-inline-start: auto;
+  }
+  .fit + .loop {
+    margin-inline-start: 0;
   }
   .panel {
     flex: none;

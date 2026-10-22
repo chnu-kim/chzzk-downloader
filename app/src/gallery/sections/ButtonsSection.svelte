@@ -65,6 +65,14 @@
     </Row>
   </Row>
 
+  <!-- 토글 단추(aria-pressed): 꺼짐은 테두리 없는 유령 단추, 켜짐은 중립 눌림 면 + 1px 테두리(RE20) -->
+  <Row label="aria-pressed" stack>
+    <Row>
+      <Button variant="ghost" size="sm" icon="repeat" aria-pressed={false}>{TEXT.short}</Button>
+      <Button variant="ghost" size="sm" icon="repeat" aria-pressed={true}>{TEXT.short}</Button>
+    </Row>
+  </Row>
+
   <Row label={STATE_LABEL.samples} stack>
     <!-- 버튼 글자는 줄바꿈하지 않는다(components.md §2.1: 라벨은 copy deck의 짧은 말). 짧은 한글과 큰 숫자만 견본으로 둔다 -->
     {#each TEXT_SAMPLES.filter((x) => x.id === 'short' || x.id === 'number') as sample (sample.id)}

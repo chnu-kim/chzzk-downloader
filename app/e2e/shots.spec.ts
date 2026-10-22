@@ -156,7 +156,9 @@ for (const theme of THEMES) {
       }
       await screen.settle?.(page, env);
       await page.clock.runFor(500);
-      await expect(page).toHaveScreenshot(`screen-${screen.slug}-${theme.name}.png`);
+      // video 영역은 가린다: Chromium 기본 controls의 로딩 원이 실제 시간으로 돌아(가짜 시계 밖, 멈춰도 네트워크가 로딩이면 남는다) 두 장이 같지 않다.
+      // 그 영역은 브라우저가 그리는 UI라 앱 시각 회귀와 무관하다
+      await expect(page).toHaveScreenshot(`screen-${screen.slug}-${theme.name}.png`, { mask: [page.locator('video')] });
     });
   }
 }

@@ -263,6 +263,16 @@ Codex 2회차 N1~N9는 각 설계가 3차·4차 개정에서 처리했다(N1·N2
 | `chore/preview-ux2-docs` | PS-4 `chore:` 문서 마감(§16, `features/README.md`, 이 표, ROADMAP) | PS-3 | `scan`, `scripts-test`, `design-copy`. `tests.vitest`·`tests.playwright` 기준은 CI 녹색 실행 뒤 사람이 올린다 |
 | ⏸ | 실측 M-PVU2-1~6(`preview-ux2.md` §13) | 사람(본인 빠른 다시보기, 3 OS) | 결과 범주만 ROADMAP |
 
+### 트랙 (추가) 창 전체 구간 편집 화면(`range-editor.md` §14) — 구현 완료(2026-10-22), 실측 대기
+번호는 app.md 123~126, D67, ADR-0030을 썼다(이후 새 D는 D68, 새 ADR은 0031부터다). core.md는 바뀌지 않았다.
+
+| 브랜치 | PR | 의존 | 완료 조건 |
+|---|---|---|---|
+| `refactor/range-editor-model`·`refactor/watch-session` | RE-1 순수 모델 · RE-2 세션 수명 추출(화면 무변경) | 직렬 stacked(RE-1은 master에서) | `frontend`·`e2e-web`·`scan` 녹색 |
+| `feat/range-editor-shell`~`-controls` | RE-3 셸·상태·진입 · RE-4 타임라인 · RE-5 조작 줄·반복·키 우선순위 | 직렬 stacked | `frontend`·`design-*`·`e2e-web`·`scan` 녹색 |
+| `chore/range-editor-docs` | RE-6 `chore:` 문서 마감(§21, `features/README.md`, 이 표, ROADMAP) | RE-5 | `scan`, `scripts-test`, `design-copy`. `tests.vitest`·`tests.playwright`·`size.dist_gz` 기준은 CI 녹색 실행 뒤 사람이 올린다 |
+| ⏸ | 실측 M-RE-1~9(`range-editor.md` §17) | 사람(본인 빠른 다시보기, 3 OS) | 결과 범주만 ROADMAP |
+
 ## 5. 의존 그래프(N6: "기능 선행 조건"과 "둘 다 진행하면 머지 순서"를 가른다)
 
 ### A. 기능 선행 조건(이것이 없으면 그 PR을 **시작·머지할 수 없다**)

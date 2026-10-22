@@ -26,7 +26,7 @@
 
 | 문서 | 내용 | 소유하는 결정 |
 |---|---|---|
-| `README.md`(이 문서) | 이름·원칙·우선순위·결정 표 D1~D66·열린 항목·변경 규칙 | 전부의 색인 |
+| `README.md`(이 문서) | 이름·원칙·우선순위·결정 표 D1~D67·열린 항목·변경 규칙 | 전부의 색인 |
 | `foundations.md` | 토큰 전부(이름·값). 색·대비·forced-colors, 글자·척도·글꼴 스택, 간격, 크기, 반경·선·면·그림자, 모션·z-index, 레이아웃, 아이콘, 테마, CSS 하한, 생성물 기대 모양 | D1 D3 D4 D5 D6 D8 D9 D11~D20 D22 D23 D24 D27 D31 D32 |
 | `components.md` | 컴포넌트 명세: API 어휘(`variant`·`tone`·`size`·`kind`·`state`), 상태(hover·pressed·disabled·focus), 치수 조합, forced-colors 행, 접근 이름 강제. Button·IconButton·TextField·SecretField·Select·Switch·RadioGroup·Disclosure·Menu·Dialog·ConfirmDialog·Notice·Toast·ErrorAlert·EmptyState·Surface·SettingsRow·FieldRow·PageContainer·Badge·ProgressBar·Spinner·Skeleton·Kbd·Icon·AppMark·DropOverlay·Toolbar | D21 D35 D37(해부) |
 | `patterns.md` | 화면 패턴: 홈(빈 상태 3단계·최근 영상·붙여넣기 힌트), 영상 카드, 작업 행과 상태 어휘, 설정, 로그인·거부, 대화상자 배치, 알림 위계와 상태 6종, 진행 표시, 완료 후 동작, 연결 대기, 공지. 문구 예시는 두지 않고 `content.md`의 키를 가리킨다 | D36 D37 D38 D39 D40 D41 D56 D57 |

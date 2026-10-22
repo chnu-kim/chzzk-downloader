@@ -4,6 +4,7 @@
 
 ## 현재 위치
 
+- **구간 편집 화면 RE-6 문서 마감(2026-10-22, 브랜치 `chore/range-editor-docs`, 명세 `docs/design/features/range-editor.md` §14.2 RE-6·§21, 구현 중 변경 번호 없음, `chore`)**: 명세 §21 구현 결과(PR·번호 123~126·명세와 달라진 점·남은 것), `features/README.md`·`plan.md` 트랙. D67·ADR-0030은 `채택(잠정)` 유지(실측 M-RE-1~9 전). 남은 것: 사용자 실측 M-RE-1~9, 머지 뒤 `tests.vitest`·`tests.playwright`·`size.dist_gz` 기준 올리기·갤러리 기준선 받기(Linux CI), 후속(§16).
 - **구간 편집 화면 RE-5 리뷰 반영(2026-10-22, 브랜치 `feat/range-editor-controls`, `feat`)**: 결합 전(mp4·네이티브 m3u8)에는 `<video>` 처리기가 반복 규칙을 돌리지 않는다(RE8·§5.5, app.md 126 ⓗ), 조작 줄 분리 안 한 결정 ⓖ, 시험 보강(보는 중 구간 처음으로의 pause 없음·단추 경로 반복 해제·playStep 중복 행 정리)·e2e 확대 폭을 380/464로 조임.
 - **구간 편집 화면 RE-5 조작 줄·반복 토글·키 우선순위(2026-10-22, 브랜치 `feat/range-editor-controls`, 명세 `docs/design/features/range-editor.md` §14.2 RE-5, app.md 구현 중 변경 126, `feat`)**: 조작 줄을 아이콘 단추 일곱(`flag-triangle-left`·`skip-back`·`rewind`·`play`↔`pause`·`fast-forward`·`skip-forward`·`flag-triangle-right`)의 3칸 격자로 바꾸고 툴팁 `{이름}({키})`·`aria-keyshortcuts`를 달았다. [구간 보기]·[시작부터 보기]·`'range'` 모드를 지우고 구간 반복하기는 `Button aria-pressed` 토글 하나(켜짐 = 중립 면 + 1px 테두리, forced `Highlight`)로, 반복 규칙은 `play` 이벤트 한 곳에서 판단한다(`playStep` 좁힘). 키 우선순위 표(§9.1) 전체, 아이콘 허용 목록 11 → 19개·은유 표·icons.ts 벤더링, `EDITOR_KEYS` 나머지. 갤러리 기준선(`editor-loop-on`·`editor-controls-coarse`)은 Linux CI에서 받는다.
 - **RE-4 리뷰 반영(2026-10-22, 브랜치 `feat/range-editor-timeline`, app.md 구현 중 변경 125 끝)**: 범위 막대 가장자리 끌기 튐(엄지 최소 폭), 전체 보기로 막대·단추가 사라질 때 포커스 유지, 낡은 막대 끌기 상태, 실수 `view.start`의 끌기 자르기, 끌기 중 키 차단·언마운트 시 `ondrag(false)`, `range.help` 유지·`aria-controls`, `fractionOf`·`secsAt` 삭제.
@@ -378,6 +379,7 @@
 - [ ] (추가) 받기 전 미리보기(`docs/design/features/preview.md`): PV-1~PV-8 구현·문서 마감 완료(core.md 86·87, app.md 108~114, D64·ADR-0027). M-PV-5 통과(2026-10-20, 사용자: hls.js 경로에서 찍은 구간으로 가장 높은 화질을 받아 시작·중간·끝이 찍은 장면과 맞음). 남은 것: 사용자 실측 M-PV-1~4·6·7·머지 뒤 `tests.playwright` 기준 올리기·기준선 받기
 - [ ] (추가) 미리보기 구간 편집 UX(`docs/design/features/preview-ux.md`): PVU-1~PVU-6 구현·문서 마감 완료(app.md 115~119, D65·ADR-0028 잠정). 남은 것: 사용자 실측 M-PVU-1~7·머지 뒤 ratchet 올리기·기준선 받기
 - [ ] (추가) 미리보기·구간 섹션 개편(`docs/design/features/preview-ux2.md`): PS-1~PS-4 구현·문서 마감 완료(app.md 120~122, D66·ADR-0029 잠정). 남은 것: 사용자 실측 M-PVU2-1~6·머지 뒤 ratchet 올리기·기준선 받기·후속(실제 표지 이미지, 재시작 뒤 기억)
+- [ ] (추가) 창 전체 구간 편집 화면(`docs/design/features/range-editor.md`): RE-1~RE-6 구현·문서 마감 완료(app.md 123~126, D67·ADR-0030 잠정). 남은 것: 사용자 실측 M-RE-1~9·머지 뒤 ratchet 올리기·기준선 받기·후속(`gesture*` 핀치, 스타일 툴팁, 닫기 확인)
 - [ ] ⑤ 생방송 사후 점검 fix: F1 멈춤 계약(`live.rs:360`·다음 playlist 읽기·첫 resolve) · F2 녹화 `.part` 보호(삭제 진입점 소유권 검사·계약 구분·자동 재개 조건) · F3 끝난 이유 표시(`feat`) (구현·리뷰 반영 완료, PR 대기) · F4 EFBIG·223 매핑과 defrag 실패 계약 · F5 누출 테스트·LL 태그 경고 · F6 문서. F2가 ②-1보다 먼저
 - [ ] ⑤-F3 후속(범위 밖, 명세 R14·§5.5): 낭독(`a11y.jobStatus`)에 `restarted`일 때만 끝난 이유(`job.live.end.restarted.body`)를 잇기 · 갤러리 작업 목록에 생방송 행(녹화 중·완료+restarted)을 더하고 Linux CI에서 기준선 받기 · 가짜 백엔드 `pause_job`이 생방송을 셸처럼 완료(`liveEnd` stopped)로 흉내 내게 맞추기
 - [ ] ⑤ 실측 M-⑤-A~D(F3 뒤가 좋다): A 이어짐(독립 비교)·B 없음(2026-10-19, 위 "현재 위치"). 남은 것: 실방송에서 엔진 403 재조회를 타는 긴 녹화(서명 만료보다 길게), 구멍이 생기면 C, D(4 GiB)

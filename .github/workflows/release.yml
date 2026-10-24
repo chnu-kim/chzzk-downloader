@@ -177,8 +177,8 @@ jobs:
     name: release smoke (linux)
     needs: [gate, build-linux]
     runs-on: ubuntu-24.04
-    # smoke.mjs installBudgetMs('linux')(약 27분) + 준비
-    timeout-minutes: 30
+    # smoke.mjs installBudgetMs('linux')(약 43분, 의존성 받기 두 번 포함) + 준비
+    timeout-minutes: 45
     permissions:
       contents: read # checkout
     steps:

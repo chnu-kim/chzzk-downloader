@@ -38,6 +38,28 @@ test('acceptPairs: 실패한 스냅샷의 actual → 기준선(app/e2e/__shots__
   ]);
 });
 
+test('acceptPairs: 기준선이 없어 통과로 남은 새 장면(updateSnapshots missing)도 옮긴다, 기준선이 있는 통과는 뺀다', () => {
+  const r = report([
+    {
+      projectName: 'dpr1-720',
+      results: [
+        res('passed', [
+          { name: 'new-light-expected.png', path: `${W}/app/e2e/__shots__/dpr1-720/new-light.png` },
+          { name: 'new-light-actual.png', path: `${W}/target/design-shots/results/shots-new-dpr1-720/new-light-actual.png` },
+        ]),
+        res('passed', [
+          { name: 'old-light-expected.png', path: `${W}/app/e2e/__shots__/dpr1-720/old-light.png` },
+          { name: 'old-light-actual.png', path: `${W}/target/design-shots/results/shots-old-dpr1-720/old-light-actual.png` },
+        ]),
+      ],
+    },
+  ]);
+  const has = (to) => to.endsWith('/old-light.png');
+  assert.deepEqual(acceptPairs(r, '/dl', 'app', has), [
+    { from: join('/dl', 'results/shots-new-dpr1-720/new-light-actual.png'), to: 'app/e2e/__shots__/dpr1-720/new-light.png' },
+  ]);
+});
+
 test('acceptPairs: Windows 경로 구분자와 저장소 밖 경로', () => {
   const r = report([
     {

@@ -96,8 +96,9 @@ export const WAIT_GONE_MS = 60_000;
 // OS별 설치 스모크의 바깥 명령(sh) 수와 앱 실행(runSmoke) 수. 함수를 고치면 같이 고친다.
 export const INSTALL_STEPS = {
   // sh: dpkg-deb, dpkg -L / pkg(PKG_TIMEOUT_MS, 실패마다 진단 PKG_DIAG개): apt-get install 두 번, 그 사이 dpkg --configure -a, apt-get purge
+  // fetch: 의존성 받기 apt-get install --download-only 두 번(PKG_FETCH_TIMEOUT_MS, 실패마다 진단)
   // cli: 설치본마다 명령줄 help·status(각 CLI_KILL_MS): deb 둘 + AppImage 둘
-  linux: { sh: 2, pkg: 4, smoke: 2, wait: 0, cli: 4 },
+  linux: { sh: 2, pkg: 4, fetch: 2, smoke: 2, wait: 0, cli: 4 },
   // hdiutil attach, ditto, xattr, plutil, hdiutil detach + 릴리스의 .app.tar.gz: tar, xattr, plutil
   // cli: dmg 둘 + 릴리스의 .app.tar.gz 둘
   darwin: { sh: 8, smoke: 2, wait: 0, cli: 4 },
@@ -108,7 +109,7 @@ export const INSTALL_STEPS = {
 export function installBudgetMs(os) {
   const n = INSTALL_STEPS[os];
   const diag = os === 'windows' ? 2 * DIAG_TIMEOUT_MS : 0;
-  const pkg = (n.pkg ?? 0) * (PKG_TIMEOUT_MS + PKG_DIAG.length * DIAG_TIMEOUT_MS);
+  const pkg = (n.pkg ?? 0) * (PKG_TIMEOUT_MS + PKG_DIAG.length * DIAG_TIMEOUT_MS) + (n.fetch ?? 0) * (PKG_FETCH_TIMEOUT_MS + PKG_DIAG.length * DIAG_TIMEOUT_MS);
   return n.sh * (SH_TIMEOUT_MS + diag) + pkg + n.smoke * (SMOKE_KILL_MS + diag) + n.wait * WAIT_GONE_MS + (n.cli ?? 0) * CLI_KILL_MS;
 }
 
@@ -163,9 +164,14 @@ const asRoot = () => IS_WIN || !process.getuid || process.getuid() === 0;
 //  - `env DEBIAN_FRONTEND=noninteractive`: sudo의 env_reset을 지나 부모 환경 변수가 닿는다는 보장이 없다.
 //  - 잠금은 명시적으로 기다리고(DPkg::Lock::Timeout) 미러는 다시 받고 연결 대기를 줄인다(Acquire::Retries·http::Timeout).
 //  - 실패하면 PKG_DIAG(apt·dpkg 프로세스, 잠금 파일 보유자)를 남긴다. 설치는 dpkg --configure -a 뒤 한 번 더 한다.
+//  - 2026-10-22~23 Azure 미러가 느려 의존성(webkit·gstreamer 약 50개)을 받다가 150초 제한에 세 번 걸렸다. 그래서 의존성은 설치 전에
+//    --download-only로 따로, 더 긴 제한(PKG_FETCH_S)으로 받는다. 두 번째 시도는 partial/에 남은 파일을 이어 받는다.
+//    설치는 캐시에서 풀기만 해 원래 제한(PKG_ATTEMPT_S) 그대로다.
 export const PKG_ATTEMPT_S = 150; // 안쪽 timeout. 녹색 실행의 설치는 11~15초
 export const PKG_KILL_GRACE_S = 10; // TERM 뒤 KILL까지
 export const PKG_TIMEOUT_MS = (PKG_ATTEMPT_S + PKG_KILL_GRACE_S + 10) * 1000; // 바깥 제한: 안쪽이 늘 먼저 걸린다
+export const PKG_FETCH_S = 360; // 의존성 받기의 안쪽 timeout. 녹색 실행은 수 초
+export const PKG_FETCH_TIMEOUT_MS = (PKG_FETCH_S + PKG_KILL_GRACE_S + 10) * 1000;
 export const APT_OPTS = ['-o', 'DPkg::Lock::Timeout=60', '-o', 'Acquire::Retries=3', '-o', 'Acquire::http::Timeout=30', '-o', 'Dpkg::Use-Pty=0'];
 const DPKG_LOCKS = ['/var/lib/dpkg/lock-frontend', '/var/lib/dpkg/lock', '/var/cache/apt/archives/lock'];
 export const PKG_DIAG = [
@@ -174,8 +180,8 @@ export const PKG_DIAG = [
 ];
 
 // 패키지 명령 하나의 실제 argv. root가 아니면 sudo로 감싼다.
-export function pkgArgv(bin, args, { root = asRoot() } = {}) {
-  const inner = ['env', 'DEBIAN_FRONTEND=noninteractive', 'stdbuf', '-oL', '-eL', 'timeout', '-k', `${PKG_KILL_GRACE_S}s`, `${PKG_ATTEMPT_S}s`, bin, ...args];
+export function pkgArgv(bin, args, { root = asRoot(), attemptS = PKG_ATTEMPT_S } = {}) {
+  const inner = ['env', 'DEBIAN_FRONTEND=noninteractive', 'stdbuf', '-oL', '-eL', 'timeout', '-k', `${PKG_KILL_GRACE_S}s`, `${attemptS}s`, bin, ...args];
   return root ? inner : ['sudo', ...inner];
 }
 
@@ -189,16 +195,16 @@ function pkgDiag() {
 }
 
 // 패키지 명령 하나. 반환: { ok, why }. 실패면 진단을 남긴다.
-function pkg(bin, args) {
-  const argv = pkgArgv(bin, args);
+function pkg(bin, args, { attemptS = PKG_ATTEMPT_S, outerMs = PKG_TIMEOUT_MS } = {}) {
+  const argv = pkgArgv(bin, args, { attemptS });
   log(`$ ${argv.join(' ')}`);
   const started = Date.now();
-  const r = spawnSync(argv[0], argv.slice(1), { stdio: ['ignore', 'inherit', 'inherit'], timeout: PKG_TIMEOUT_MS, killSignal: 'SIGKILL' });
+  const r = spawnSync(argv[0], argv.slice(1), { stdio: ['ignore', 'inherit', 'inherit'], timeout: outerMs, killSignal: 'SIGKILL' });
   const secs = ((Date.now() - started) / 1000).toFixed(1);
   if (!r.error && r.status === 0) return { ok: true, why: null };
   const why = r.error
-    ? `${bin}: ${r.error.code === 'ETIMEDOUT' ? `바깥 제한 ${PKG_TIMEOUT_MS / 1000}초에 죽였다` : r.error.message}`
-    : `${bin} → exit ${r.status ?? r.signal}${r.status === 124 || r.status === 137 ? `(안쪽 제한 ${PKG_ATTEMPT_S}초)` : ''}`;
+    ? `${bin}: ${r.error.code === 'ETIMEDOUT' ? `바깥 제한 ${outerMs / 1000}초에 죽였다` : r.error.message}`
+    : `${bin} → exit ${r.status ?? r.signal}${r.status === 124 || r.status === 137 ? `(안쪽 제한 ${attemptS}초)` : ''}`;
   console.error(`smoke: ${why}, ${secs}초`);
   pkgDiag();
   return { ok: false, why };
@@ -351,8 +357,19 @@ function waitGone(path, ms) {
 
 // ---- linux ----
 
+// deb의 의존성만 받는 apt-get 인자(설치는 하지 않는다)
+export function debFetchArgs(deb) {
+  return [...APT_OPTS, 'install', '-y', '--no-install-recommends', '--download-only', deb];
+}
+
 function smokeDeb(deb) {
   const name = sh('dpkg-deb', ['-f', deb, 'Package'], { quiet: true }).trim();
+  const fetch = retryOnce(
+    () => pkg('apt-get', debFetchArgs(resolve(deb)), { attemptS: PKG_FETCH_S, outerMs: PKG_FETCH_TIMEOUT_MS }),
+    () => {},
+  );
+  if (!fetch.ok) throw new Error(`deb 의존성 받기: ${fetch.why}`);
+  if (fetch.attempts > 1) console.log(`::warning::deb 의존성 받기 1차 실패(재시도로 통과): ${String(fetch.firstWhy ?? '').split('\n')[0]}`);
   const inst = retryOnce(
     () => pkg('apt-get', [...APT_OPTS, 'install', '-y', '--no-install-recommends', resolve(deb)]),
     // 끊긴 dpkg를 마저 설정한다(안 하면 다음 apt-get이 "dpkg was interrupted"로 멈춘다). 받아 둔 .deb는 캐시에 남는다

@@ -8,7 +8,7 @@
 //   node scripts/design/shots.mjs --accept <run id> [--target worker] [--repo <owner/name>]
 //     그 CI 실행의 artifact(app: design-shots-actual = target/design-shots/, worker: design-worker-actual = target/design-worker/:
 //     results/ + report.json)를 받아, 실패한 스냅샷마다 *-actual.png를 기준선 자리(<대상>/e2e/__shots__/<프로젝트>/<이름>.png)에
-//     복사한다. 기준선이 없던 첫 실행도 같다(updateSnapshots 'missing'이 expected 첨부를 기준선 경로로 남긴다). 복사한 뒤 diff를 보고 커밋한다.
+//     복사한다. 기준선이 없던 새 장면은 updateSnapshots 'missing'으로 통과로 남지만 같은 첨부가 있어, 저장소에 기준선이 없으면 함께 옮긴다. 복사한 뒤 diff를 보고 커밋한다.
 //
 // 종료 코드: 0 성공, 1 받을 그림이 없음, 2 사용법·도구 오류.
 import { spawnSync } from 'node:child_process';
@@ -46,13 +46,15 @@ function* results(report) {
 /**
  * Playwright JSON 보고서 → 옮길 쌍 [{ from, to }]. from은 받은 artifact 폴더(dl) 안의 actual 그림, to는 저장소 상대 기준선 경로.
  * 짝은 같은 결과의 `<이름>-actual.png`와 `<이름>-expected.png` 첨부다(expected 경로에서 app/e2e/__shots__/ 아래만 쓴다).
+ * 통과한 결과는 저장소에 기준선이 없을 때만 옮긴다(hasBaseline(to)가 거짓): 기준선이 없으면 updateSnapshots 'missing'이
+ * actual을 쓰고 통과로 남겨, 실패만 보면 새 장면을 놓친다(2026-10-23, 새 장면 192장).
  */
-export function acceptPairs(report, dl, target = 'app') {
+export function acceptPairs(report, dl, target = 'app', hasBaseline = () => true) {
   const { shots: SHOTS, out: OUT_MARK } = TARGETS[target];
   const out = [];
   const seen = new Set();
   for (const { result } of results(report)) {
-    if (result.status === 'passed') continue;
+    const passed = result.status === 'passed';
     const att = result.attachments ?? [];
     for (const a of att) {
       if (!a.path || !a.name?.endsWith('-actual.png')) continue;
@@ -66,6 +68,7 @@ export function acceptPairs(report, dl, target = 'app') {
       if (at < 0 || ao < 0) continue;
       const to = ep.slice(at);
       if (to.includes('..') || seen.has(to)) continue;
+      if (passed && hasBaseline(to)) continue;
       seen.add(to);
       out.push({ from: join(dl, ap.slice(ao + OUT_MARK.length)), to });
     }
@@ -128,9 +131,9 @@ function cmdAccept(runId, repo, target) {
       console.error(`shots --accept: artifact에 report.json이 없다`);
       return 2;
     }
-    const pairs = acceptPairs(JSON.parse(readFileSync(rp, 'utf8')), tmp, target).filter((p) => existsSync(p.from));
+    const pairs = acceptPairs(JSON.parse(readFileSync(rp, 'utf8')), tmp, target, (to) => existsSync(join(ROOT, to))).filter((p) => existsSync(p.from));
     if (pairs.length === 0) {
-      console.error('shots --accept: 받을 그림이 없다(그 실행에 실패한 스냅샷이 없다)');
+      console.error('shots --accept: 받을 그림이 없다(그 실행에 실패한 스냅샷도, 기준선이 없던 새 장면도 없다)');
       return 1;
     }
     for (const p of pairs) {

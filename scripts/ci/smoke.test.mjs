@@ -24,7 +24,10 @@ import {
   msiInstallDir,
   PKG_ATTEMPT_S,
   PKG_DIAG,
+  PKG_FETCH_S,
+  PKG_FETCH_TIMEOUT_MS,
   PKG_KILL_GRACE_S,
+  debFetchArgs,
   PKG_TIMEOUT_MS,
   pkgArgv,
   combineSmokeErrors,
@@ -176,6 +179,19 @@ test('pkgArgv: sudo 안쪽에 env·timeout을 두고, 안쪽 제한이 바깥 �
   assert.ok((PKG_ATTEMPT_S + PKG_KILL_GRACE_S) * 1000 < PKG_TIMEOUT_MS);
 });
 
+test('deb 의존성 받기: 설치와 따로 --download-only로, 설치보다 긴 안쪽 제한(느린 미러, cicd.md 구현 중 변경 113)', () => {
+  const args = debFetchArgs('/x.deb');
+  assert.ok(args.includes('--download-only'));
+  assert.deepEqual(args.slice(0, APT_OPTS.length), APT_OPTS);
+  assert.equal(args.at(-1), '/x.deb');
+  const a = pkgArgv('apt-get', args, { root: true, attemptS: PKG_FETCH_S });
+  assert.equal(a[a.indexOf('timeout') + 3], `${PKG_FETCH_S}s`);
+  assert.ok(PKG_FETCH_S > PKG_ATTEMPT_S);
+  assert.ok((PKG_FETCH_S + PKG_KILL_GRACE_S) * 1000 < PKG_FETCH_TIMEOUT_MS);
+  // 받기 두 번이 linux 예산에 들어 있다
+  assert.equal(INSTALL_STEPS.linux.fetch, 2);
+});
+
 test('APT_OPTS: 잠금 대기·다시 받기·연결 대기가 명시되고 한 시도 안에 끝난다', () => {
   const o = Object.fromEntries(APT_OPTS.filter((_, i) => i % 2 === 1).map((kv) => kv.split('=')));
   assert.ok(APT_OPTS.every((x, i) => (i % 2 === 0 ? x === '-o' : /^[\w:-]+=\d+$/.test(x))));
@@ -238,7 +254,9 @@ test('linux 설치 예산: 패키지 명령마다 바깥 제한 + 진단, 그 �
   const n = INSTALL_STEPS.linux;
   assert.equal(n.pkg, 4); // install 두 번, dpkg --configure -a, purge
   assert.equal(n.cli, 4); // deb·AppImage의 명령줄 help·status
-  assert.equal(installBudgetMs('linux'), n.sh * 240_000 + n.pkg * (PKG_TIMEOUT_MS + PKG_DIAG.length * DIAG_TIMEOUT_MS) + n.smoke * 120_000 + n.cli * CLI_KILL_MS);
+  assert.equal(n.fetch, 2); // 의존성 받기 두 번
+  const diag = PKG_DIAG.length * DIAG_TIMEOUT_MS;
+  assert.equal(installBudgetMs('linux'), n.sh * 240_000 + n.pkg * (PKG_TIMEOUT_MS + diag) + n.fetch * (PKG_FETCH_TIMEOUT_MS + diag) + n.smoke * 120_000 + n.cli * CLI_KILL_MS);
 });
 
 test('명령줄 스모크: help는 0과 표의 말, status는 로그인 필요(3) 또는 로그인 안 씀(0)', () => {

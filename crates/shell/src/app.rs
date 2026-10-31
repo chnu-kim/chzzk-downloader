@@ -379,16 +379,31 @@ impl App {
 
     /// 작업 `id`의 컨텐츠를 잠금 밖에서 판정한다(`resume_job`·`fetch_chat`·맡은 채널 자동 이어받기가 같이 쓴다). 허용이면 검증한
     /// 채널 ID. 남의 영상이면 기록을 실제 채널로 고친다: 화면이 막힌 작업으로 보이고 B1이 다시 세지 않는다
+    ///
+    /// 생방송 컨텐츠는 채널 그 자체라(코어가 `Live { channel_id }`로 live-detail을 부른다) 채널을 따로 조회하지 않는다.
+    /// 방송이 끝났다고 조회가 `NotLive`로 막히면 받은 만큼 저장하는 마무리 길(조회 없음)에 닿지 못한다(app.md 127)
     async fn admit_job(&self, id: JobId, content: &ContentRef) -> Result<Option<String>, AppError> {
-        match self
-            .gate
-            .admit_checked(
-                content,
-                || self.settings.content_channel(content),
-                || self.recheck(),
-            )
-            .await
-        {
+        let verdict = match content {
+            ContentRef::Live { channel_id } => {
+                self.gate
+                    .admit_checked(
+                        content,
+                        || async { Ok(Some(channel_id.clone())) },
+                        || self.recheck(),
+                    )
+                    .await
+            }
+            _ => {
+                self.gate
+                    .admit_checked(
+                        content,
+                        || self.settings.content_channel(content),
+                        || self.recheck(),
+                    )
+                    .await
+            }
+        };
+        match verdict {
             Ok(o) => Ok(o),
             Err(e) => {
                 if e.code == ErrorCode::NotOwnContent

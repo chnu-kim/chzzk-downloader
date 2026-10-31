@@ -429,6 +429,23 @@ async fn failed_recording_holds_its_path() {
     h.mgr.stop_job(id).unwrap();
 }
 
+/// 받은 영상이 있는 실패 녹화를 수동으로 이어받으면 다시 resolve하지 않고 마무리 길로 간다(방송이 끝났어도 막히지 않는다).
+#[tokio::test(start_paused = true)]
+async fn manual_resume_live_with_media_does_not_resolve() {
+    let h = Harness::new(2);
+    h.fake.script_for(
+        h.output("a"),
+        Script::new().live_part(16, 32).fails(http_503()),
+    );
+    let id = h.enqueue_live("a").id;
+    until("실패", || h.status(id) == JobStatus::Failed).await;
+    let before = h.fake.resolve_count();
+
+    h.mgr.resume(id, false).unwrap();
+    until("마무리", || h.status(id) == JobStatus::Completed).await;
+    assert_eq!(h.fake.resolve_count(), before);
+}
+
 /// 끝난 녹화는 `check_output`의 중복이 아니다(`partial.recording`으로 알린다).
 #[tokio::test(start_paused = true)]
 async fn failed_recording_is_not_a_duplicate_in_check_output() {

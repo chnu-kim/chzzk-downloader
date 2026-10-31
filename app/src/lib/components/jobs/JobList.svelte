@@ -237,6 +237,15 @@
   secondary={{ id: 'confirm', label: t('dialog.cancel.confirm'), tone: 'danger', onclick: () => void jobs.confirmRemove() }}
 />
 
+<ConfirmDialog
+  open={jobs.stopConfirm != null}
+  title={t('dialog.stopLive.title', { title: jobs.stopConfirm?.title ?? '' })}
+  body={t('dialog.stopLive.body', { size: jobs.stopConfirmSize })}
+  onclose={() => jobs.cancelStopConfirm()}
+  primary={{ id: 'keep', label: t('dialog.cancel.keepRunning'), onclick: () => jobs.cancelStopConfirm() }}
+  secondary={{ id: 'confirm', label: t('action.stopRecording'), onclick: () => void jobs.confirmStop() }}
+/>
+
 <OverwriteDialog
   open={jobs.overwrite != null}
   name={jobs.overwrite?.name ?? ''}

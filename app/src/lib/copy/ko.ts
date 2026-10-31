@@ -265,6 +265,8 @@ export const ko = {
   'dialog.cancel.confirm': '취소하고 지우기',
   'dialog.cancel.live.body': '{size}까지 녹화했어요. 취소하면 녹화한 부분이 지워지고 되돌릴 수 없어요.',
   'dialog.cancel.keepRunning': '계속 받기',
+  'dialog.stopLive.title': '‘{title}’ 녹화를 마칠까요?',
+  'dialog.stopLive.body': '{size}까지 받았어요. 받은 만큼 저장하고 녹화를 끝내요. 되돌릴 수 없어요.',
   'dialog.cancel.keepPaused': '그대로 두기',
   'dialog.legacy.title': '예전 설정을 가져올까요?',
   'dialog.legacy.body': '예전 명령줄 버전에서 찾은 것이에요.',

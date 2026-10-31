@@ -3,7 +3,7 @@
 import type { Page, Locator } from '@playwright/test';
 import type { AuthStatusDto, ChannelRefDto, Os, RecentVodDto, UpdateInfoDto } from '../src/lib/bindings';
 import { check as outputCheck, resolved, vodResolved, worstCaseResolved, WORST_TITLE } from '../src/test/fixtures';
-import { finishedSet, job, jobStateSet, MY_CHANNEL_ID, prog, SAME_PREFIX_TITLES } from '../src/test/jobFixtures';
+import { finishedSet, job, jobStateSet, liveProg, MY_CHANNEL_ID, prog, SAME_PREFIX_TITLES } from '../src/test/jobFixtures';
 import { CHECK_DEBOUNCE_MS, revealLabel, t } from './copy';
 import { expect, type App } from './fixtures';
 import type { Scenario } from './mock/backend';
@@ -679,6 +679,18 @@ export const SCREENS: Screen[] = [
       await open(app.page, t('a11y.cancelJob', { title: '받는 중인 영상' })).click();
     },
     ready: (p) => p.getByRole('dialog', { name: t('dialog.cancel.title', { title: '받는 중인 영상' }) }),
+    dialog: true,
+  },
+  {
+    id: 'D8 녹화 마치기 확인',
+    slug: 'dialog-d8',
+    scenario: (_env, now) => ({
+      jobs: [job(1, { title: '녹화 중인 방송', kind: 'live', playbackKind: 'live', status: 'running', progress: liveProg() })],
+    }),
+    drive: async (app) => {
+      await open(app.page, t('action.stopRecording')).click();
+    },
+    ready: (p) => p.getByRole('dialog', { name: t('dialog.stopLive.title', { title: '녹화 중인 방송' }) }),
     dialog: true,
   },
   {

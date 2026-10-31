@@ -44,6 +44,15 @@ test('생방송 주소를 불러와 녹화하고 [녹화 마치기]로 마친다
 
   // [녹화 마치기]: 취소가 아니라 stop_job → 완료(받은 만큼 저장)
   await item.getByRole('button', { name: t('action.stopRecording') }).click();
+  // 되돌릴 수 없어 D8로 먼저 묻는다. [계속 받기]는 아무것도 하지 않는다
+  const d8 = page.getByRole('dialog', { name: t('dialog.stopLive.title', { title: r.meta.title }) });
+  await expect(d8).toBeVisible();
+  await app.axe('녹화 마치기 확인');
+  await d8.getByRole('button', { name: t('dialog.cancel.keepRunning') }).click();
+  await expect(d8).toHaveCount(0);
+  expect(await app.cmds()).not.toContain('stop_job');
+  await item.getByRole('button', { name: t('action.stopRecording') }).click();
+  await d8.getByRole('button', { name: t('action.stopRecording') }).click();
   await expect(item).toContainText(tRegex('job.completed'));
   // 끝난 이유와 놓친 조각(앞에서 2를 보냈다)이 남는다
   await expect(item).toContainText(t('job.live.end.stopped.body'));

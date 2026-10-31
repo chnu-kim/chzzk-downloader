@@ -662,6 +662,14 @@ export function needsCancelConfirm(job: JobDto, p: ProgressDto | null | undefine
   return receivedBytes(job, p) > 0;
 }
 
+/**
+ * 녹화 마치기(생방송 `stop`)를 D8로 묻는가. 받은 만큼 저장하고 끝내며 이어 붙일 수 없다(ADR-0025).
+ * 받은 바이트가 0이면 잃을 것이 없어 바로 마친다(D2의 0바이트 규칙과 같은 기준, 결과는 NothingRecorded 실패 + [다시 시도]).
+ */
+export function needsStopConfirm(job: JobDto, p: ProgressDto | null | undefined): boolean {
+  return receivedBytes(job, p) > 0;
+}
+
 /** 취소 버튼: 라벨은 늘 [취소]다. D2를 여는 쪽은 danger 글자, 즉시 지우는 쪽은 neutral로만 갈린다 */
 export function cancelLabel(job: JobDto, p: ProgressDto | null | undefined): { label: string; tone: 'danger' | 'neutral' } {
   return needsCancelConfirm(job, p)

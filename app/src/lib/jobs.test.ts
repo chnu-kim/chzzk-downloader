@@ -26,6 +26,7 @@ import {
   jobBlock,
   jobButtons,
   needsCancelConfirm,
+  needsStopConfirm,
   nextQueueOrder,
   outputFileName,
   queueAhead,
@@ -544,6 +545,15 @@ describe('진행 막대', () => {
       expect(barView(j, j.progress)).toBeNull();
     }
     expect(barView(job(1, { status: 'failed' }), prog())).toBeNull();
+  });
+});
+
+describe('녹화 마치기 확인(D8): 받은 것이 있으면', () => {
+  const live = (over: Partial<JobDto> = {}) =>
+    job(1, { kind: 'live', playbackKind: 'live', status: 'running', progress: liveProg(), ...over });
+  it('받는 중 bytes>0은 D8, 대기 중 bytes 0은 바로', () => {
+    expect(needsStopConfirm(live(), liveProg())).toBe(true);
+    expect(needsStopConfirm(live(), liveProg({ bytes: 0, phase: 'waitingNetwork' }))).toBe(false);
   });
 });
 

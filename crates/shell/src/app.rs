@@ -379,16 +379,31 @@ impl App {
 
     /// 작업 `id`의 컨텐츠를 잠금 밖에서 판정한다(`resume_job`·`fetch_chat`·맡은 채널 자동 이어받기가 같이 쓴다). 허용이면 검증한
     /// 채널 ID. 남의 영상이면 기록을 실제 채널로 고친다: 화면이 막힌 작업으로 보이고 B1이 다시 세지 않는다
+    ///
+    /// 생방송 컨텐츠는 채널 그 자체라(코어가 `Live { channel_id }`로 live-detail을 부른다) 채널을 따로 조회하지 않는다.
+    /// 방송이 끝났다고 조회가 `NotLive`로 막히면 받은 만큼 저장하는 마무리 길(조회 없음)에 닿지 못한다(app.md 127)
     async fn admit_job(&self, id: JobId, content: &ContentRef) -> Result<Option<String>, AppError> {
-        match self
-            .gate
-            .admit_checked(
-                content,
-                || self.settings.content_channel(content),
-                || self.recheck(),
-            )
-            .await
-        {
+        let verdict = match content {
+            ContentRef::Live { channel_id } => {
+                self.gate
+                    .admit_checked(
+                        content,
+                        || async { Ok(Some(channel_id.clone())) },
+                        || self.recheck(),
+                    )
+                    .await
+            }
+            _ => {
+                self.gate
+                    .admit_checked(
+                        content,
+                        || self.settings.content_channel(content),
+                        || self.recheck(),
+                    )
+                    .await
+            }
+        };
+        match verdict {
             Ok(o) => Ok(o),
             Err(e) => {
                 if e.code == ErrorCode::NotOwnContent
@@ -430,7 +445,8 @@ impl App {
     ///
     /// 기록의 `channel_id`는 믿지 않는다(`jobs.json` 변조, worker.md 86). 다시 줄 세울 작업이면 enqueue와 같은
     /// `OwnershipGate::admit`으로 작업 컨텐츠를 판정하고(최근 resolve 캐시, 없으면 다시 resolve), 통과한 채널 ID를
-    /// 기록에 고쳐 쓴다. 판정(네트워크)은 매니저 잠금 밖에서 하고, 잠금 안에서는 같은 컨텐츠인지만 다시 본다.
+    /// 기록에 고쳐 쓴다. 생방송은 예외로 다시 resolve하지 않고 컨텐츠의 채널(`Live { channel_id }`)로 판정한다
+    /// (`admit_job`, app.md 127). 판정(네트워크)은 매니저 잠금 밖에서 하고, 잠금 안에서는 같은 컨텐츠인지만 다시 본다.
     pub async fn resume_job(&self, id: JobId, restart: bool) -> Result<(), AppError> {
         if !self.gate.is_enabled() {
             return self.manager.resume(id, restart);

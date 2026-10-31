@@ -17,6 +17,8 @@ use url::Url;
 use wiremock::matchers::{any, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
+mod common;
+
 const OWN: &str = "000000000000000000000000000000b2";
 const OTHER: &str = "000000000000000000000000000000a1";
 const VOD_NO: u64 = 9000002;
@@ -76,6 +78,15 @@ async fn mock_api_with(media_delay: Option<Duration>, channelless: bool) -> Mock
         .respond_with(ResponseTemplate::new(200).set_body_raw(
             pd_mpd(&format!("{}{MEDIA_PATH}?_lsu_sa_=sig", server.uri())),
             "application/dash+xml",
+        ))
+        .mount(&server)
+        .await;
+    // 방송이 끝난 live-detail(내 채널). 생방송 마무리 길이 이 조회를 하는지 요청 수로 본다
+    Mock::given(method("GET"))
+        .and(path(format!("/service/v3/channels/{OWN}/live-detail")))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            fixture("testdata/live/live_detail_closed.json"),
+            "application/json",
         ))
         .mount(&server)
         .await;
@@ -1725,5 +1736,196 @@ async fn delegated_auto_resume_skips_video_paused_by_user_during_judging() {
     );
     assert_eq!(n, 0, "사용자가 손댄 후보는 건너뛴다");
     assert_eq!(status_of(&app, 2), JobStatus::Paused);
+    app.manager.quit(Duration::from_secs(3)).await;
+}
+
+const LIVE_RECORDING_ID: &str = "000000000000000000000000000000c3";
+
+/// 생방송 기록(`jobs.json`). 출력은 `out/live.mp4`
+fn live_record(id: u64, channel: &str, status: JobStatus, out: &Path) -> JobRecord {
+    let mut r = record(id, None, out);
+    r.url = format!("https://chzzk.naver.com/live/{channel}");
+    r.content = ContentRef::Live {
+        channel_id: channel.into(),
+    };
+    r.kind = ContentKindDto::Live;
+    r.quality_id = "720p".into();
+    r.expected_kind = PlaybackKind::Live;
+    r.recording_id = Some(LIVE_RECORDING_ID.into());
+    r.output = out.join("live.mp4");
+    r.status = status;
+    r
+}
+
+/// `synthetic_frag.mp4`의 init 길이(앞 두 상자 ftyp+moov). 상자 머리의 big-endian 길이를 읽는다(fixture를 다시 만들어도 맞다)
+fn frag_init_len(bytes: &[u8]) -> u32 {
+    let size = |at: usize| u32::from_be_bytes(bytes[at..at + 4].try_into().unwrap());
+    let ftyp = size(0);
+    assert_eq!(&bytes[4..8], b"ftyp");
+    let at = ftyp as usize;
+    assert_eq!(&bytes[at + 4..at + 8], b"moov");
+    ftyp + size(at)
+}
+
+/// 재시작 뒤 상태를 재현한다: 영상 조각까지 받은 `.part`+sidecar(`synthetic_frag.mp4`의 ftyp+moov가 init)
+fn write_recorded_part(rec: &JobRecord) {
+    write_live_part_bytes(rec, false);
+}
+
+/// `init_only`면 init(ftyp+moov)만 든 `.part`(세그먼트를 하나도 받기 전에 끊겼다)
+fn write_live_part_bytes(rec: &JobRecord, init_only: bool) {
+    let bytes = fixture("testdata/live/synthetic_frag.mp4");
+    let init_len = frag_init_len(&bytes);
+    let body = if init_only {
+        &bytes[..init_len as usize]
+    } else {
+        &bytes[..]
+    };
+    common::write_live_part(
+        &rec.output,
+        &rec.content,
+        &rec.quality_id,
+        rec.expected_kind,
+        rec.recording_id.as_deref(),
+        init_len,
+        body,
+    );
+}
+
+fn live_detail_requests(reqs: &[wiremock::Request]) -> usize {
+    reqs.iter()
+        .filter(|r| r.url.path().ends_with("/live-detail"))
+        .count()
+}
+
+/// 방송이 끝난 뒤 앱을 다시 열어도 멈춘 생방송 녹화는 live-detail 조회 없이 받은 만큼 저장된다(막다른 길 회귀).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn resume_job_finishes_live_recording_after_broadcast_ended() {
+    for status in [JobStatus::Paused, JobStatus::Interrupted, JobStatus::Failed] {
+        let api = mock_api(None).await;
+        let worker = MockServer::start().await;
+        let t = TempDir::new().unwrap();
+        let out = t.path().join("out");
+        let mut rec = live_record(1, OWN, status, &out);
+        if status == JobStatus::Failed {
+            rec.last_error = Some(chzzk_shell::AppError::from(chzzk_core::Error::NotLive));
+        }
+        write_recorded_part(&rec);
+        write_jobs(t.path(), vec![rec]);
+        save_session(t.path(), &worker, OWN);
+        let app = open_auth(t.path(), &api, &worker);
+
+        app.resume_job(JobId(1), false).await.unwrap();
+        wait_for(&app, 1, JobStatus::Completed).await;
+        assert_eq!(
+            live_detail_requests(&api.received_requests().await.unwrap()),
+            0,
+            "{status:?}: 끝난 방송을 조회하지 않는다"
+        );
+        assert_eq!(channel_of(&app, 1).as_deref(), Some(OWN));
+        app.manager.quit(Duration::from_secs(3)).await;
+    }
+}
+
+/// 받은 영상이 없으면(`.part` 없음, init만 든 `.part`) 코어가 조회하고 방송이 꺼져 있으니 카드에서 `NotLive`로 실패한다.
+/// init만 든 `.part`는 코어가 지운다(download/mod.rs `run`)
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn resume_job_live_without_media_fails_on_card() {
+    for init_only in [false, true] {
+        let api = mock_api(None).await;
+        let worker = MockServer::start().await;
+        let t = TempDir::new().unwrap();
+        let out = t.path().join("out");
+        let rec = live_record(1, OWN, JobStatus::Interrupted, &out);
+        let part = chzzk_core::download::part::part_path(&rec.output);
+        if init_only {
+            write_live_part_bytes(&rec, true);
+            assert!(part.is_file());
+        }
+        write_jobs(t.path(), vec![rec]);
+        save_session(t.path(), &worker, OWN);
+        let app = open_auth(t.path(), &api, &worker);
+
+        app.resume_job(JobId(1), false).await.unwrap();
+        wait_for(&app, 1, JobStatus::Failed).await;
+        let job = app
+            .manager
+            .list()
+            .into_iter()
+            .find(|j| j.id == JobId(1))
+            .unwrap();
+        assert_eq!(
+            job.error.unwrap().code,
+            ErrorCode::NotLive,
+            "init_only={init_only}"
+        );
+        assert!(live_detail_requests(&api.received_requests().await.unwrap()) >= 1);
+        assert!(
+            !part.exists(),
+            "init_only={init_only}: init만 든 .part는 남지 않는다"
+        );
+        app.manager.quit(Duration::from_secs(3)).await;
+    }
+}
+
+/// 남의 채널 생방송 기록은 조회 없이 거부하고 기록 채널을 남긴다
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn resume_job_rejects_other_channel_live_without_request() {
+    let api = mock_api(None).await;
+    let worker = MockServer::start().await;
+    let t = TempDir::new().unwrap();
+    let out = t.path().join("out");
+    let rec = live_record(1, OTHER, JobStatus::Interrupted, &out);
+    write_recorded_part(&rec);
+    write_jobs(t.path(), vec![rec]);
+    save_session(t.path(), &worker, OWN);
+    let app = open_auth(t.path(), &api, &worker);
+
+    let e = app.resume_job(JobId(1), false).await.unwrap_err();
+    assert_eq!(e.code, ErrorCode::NotOwnContent);
+    assert!(api.received_requests().await.unwrap().is_empty());
+    assert_eq!(status_of(&app, 1), JobStatus::Interrupted);
+    assert_eq!(channel_of(&app, 1).as_deref(), Some(OTHER));
+    app.manager.quit(Duration::from_secs(3)).await;
+}
+
+/// 로그아웃 상태에서는 생방송도 조회 없이 `NotLoggedIn`
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn resume_job_live_signed_out_is_not_logged_in() {
+    let api = mock_api(None).await;
+    let worker = MockServer::start().await;
+    let t = TempDir::new().unwrap();
+    let out = t.path().join("out");
+    let rec = live_record(1, OWN, JobStatus::Interrupted, &out);
+    write_recorded_part(&rec);
+    write_jobs(t.path(), vec![rec]);
+    let app = open_auth(t.path(), &api, &worker);
+
+    let e = app.resume_job(JobId(1), false).await.unwrap_err();
+    assert_eq!(e.code, ErrorCode::NotLoggedIn);
+    assert!(api.received_requests().await.unwrap().is_empty());
+    app.manager.quit(Duration::from_secs(3)).await;
+}
+
+/// 관리자는 남의 채널 생방송도 조회 없이 마무리할 수 있다(방송이 끝났어도)
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn admin_resume_job_finishes_live_after_end() {
+    let api = mock_api(None).await;
+    let worker = MockServer::start().await;
+    let t = TempDir::new().unwrap();
+    let out = t.path().join("out");
+    let rec = live_record(1, OTHER, JobStatus::Interrupted, &out);
+    write_recorded_part(&rec);
+    write_jobs(t.path(), vec![rec]);
+    save_session_as(t.path(), &worker, OWN, true);
+    let app = open_auth(t.path(), &api, &worker);
+    refresh_as(&app, &worker, OWN, true).await;
+
+    app.resume_job(JobId(1), false).await.unwrap();
+    wait_for(&app, 1, JobStatus::Completed).await;
+    assert_eq!(
+        live_detail_requests(&api.received_requests().await.unwrap()),
+        0
+    );
     app.manager.quit(Duration::from_secs(3)).await;
 }

@@ -15,6 +15,7 @@ export type ActionId =
   | 'openCookieSettings' // 설정의 고급 섹션을 펼쳐 연다
   | 'reenterCookies' // 같은 곳, 문구만 다르다
   | 'reresolve' // 그 작업의 주소를 입력줄에 넣고 다시 불러온다(D)
+  | 'recordAgain' // 그 작업의 주소를 다시 불러와 카드의 [받기]로 새 녹화를 시작한다(D, 생방송)
   | 'recheck' // 맡은 채널을 로그인 서버에 묻고 같은 주소를 다시 불러온다(R, ownership_recheck)
   | 'copyReport'
   | 'openFolder'
@@ -354,7 +355,11 @@ function codeCopy(raw: AppError, ctx: ErrorContext): ErrorCopy {
 
     case 'notLive':
       // 생방송 주소인데 방송 중이 아니다(ADR-0025). 방송이 시작된 뒤 다시 시도하면 된다
-      return copy('지금 방송 중이 아니에요', '방송이 시작된 뒤 다시 시도해 주세요.', [again]);
+      // job 자리의 [다시 시도]는 방송이 꺼진 동안 늘 같은 오류이고, 켜지면 다른 방송을 옛 제목·시각 파일로 녹화한다.
+      // 그래서 주소를 다시 불러와 카드의 [받기]로 새로 시작하는 [다시 녹화]를 준다(받다 만 조각은 jobs.ts가 [이어받기]를 앞에 둔다)
+      return job
+        ? copy('지금 방송 중이 아니에요', '방송이 다시 시작되면 [다시 녹화]로 새로 받을 수 있어요.', ['recordAgain'])
+        : copy('지금 방송 중이 아니에요', '방송이 시작된 뒤 다시 시도해 주세요.', [again]);
 
     case 'nothingRecorded':
       // 받기 시작했지만 영상 조각이 하나도 오기 전에 마쳤다. 저장할 것이 없어 파일이 남지 않았다
@@ -589,6 +594,7 @@ const ACTION_LABEL: Record<Exclude<ActionId, 'openFolder'>, CopyKey> = {
   openCookieSettings: 'action.openCookieSettings',
   reenterCookies: 'action.reenterCookies',
   reresolve: 'action.reresolve',
+  recordAgain: 'action.recordAgain',
   recheck: 'action.reresolve',
   copyReport: 'action.copyReport',
   openConfigFolder: 'common.openConfigFolder',

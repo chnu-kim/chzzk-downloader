@@ -200,9 +200,9 @@ async fn stop_job_rejects_non_live() {
     h.mgr.pause(v).unwrap();
 }
 
-/// 줄 서 있던 생방송을 멈추면 `paused`(받은 것이 없다).
+/// 줄 서 있던 생방송의 `stop_job`은 아무것도 하지 않는다(받은 것이 없어 마칠 것이 없고, 생방송은 `paused`가 되지 않는다).
 #[tokio::test(start_paused = true)]
-async fn stop_queued_live_pauses() {
+async fn stop_queued_live_is_noop() {
     let h = Harness::new(1);
     for i in 0..=MAX_LIVE {
         h.fake.script_for(h.output(&format!("l{i}")), recording(1));
@@ -216,18 +216,59 @@ async fn stop_queued_live_pauses() {
     .await;
     assert_eq!(h.status(ids[MAX_LIVE]), JobStatus::Queued);
     h.mgr.stop_job(ids[MAX_LIVE]).unwrap();
-    assert_eq!(h.status(ids[MAX_LIVE]), JobStatus::Paused);
+    assert_eq!(h.status(ids[MAX_LIVE]), JobStatus::Queued);
+    // 앞 녹화가 끝나 자리가 나면 그대로 시작한다
+    h.mgr.stop_job(ids[0]).unwrap();
+    until("대기 중이던 녹화 시작", || {
+        h.status(ids[MAX_LIVE]) == JobStatus::Running
+    })
+    .await;
 }
 
-/// 일시정지는 생방송에서 "마무리"와 같다(`.part`를 남기는 일시정지는 이어 붙일 수 없어 없다).
+/// 생방송은 일시정지할 수 없다: 거부하고 상태를 바꾸지 않는다(마무리는 `stop_job`만).
 #[tokio::test(start_paused = true)]
-async fn pause_on_live_finalizes() {
+async fn pause_rejects_live() {
     let h = Harness::new(2);
     h.fake.script_for(h.output("l"), recording(77));
     let id = h.enqueue_live("l").id;
     until("진행", || h.job(id).progress.is_some()).await;
-    h.mgr.pause(id).unwrap();
+    let e = h.mgr.pause(id).unwrap_err();
+    assert_eq!(e.code, ErrorCode::InvalidInput);
+    assert_eq!(h.status(id), JobStatus::Running);
+    h.mgr.stop_job(id).unwrap();
     until("완료", || h.status(id) == JobStatus::Completed).await;
+}
+
+/// 줄 서 있는 생방송도 일시정지할 수 없다.
+#[tokio::test(start_paused = true)]
+async fn pause_rejects_queued_live() {
+    let h = Harness::new(1);
+    for i in 0..=MAX_LIVE {
+        h.fake.script_for(h.output(&format!("l{i}")), recording(1));
+    }
+    let ids: Vec<_> = (0..=MAX_LIVE)
+        .map(|i| h.enqueue_live(&format!("l{i}")).id)
+        .collect();
+    until("상한까지 시작", || {
+        h.status(ids[MAX_LIVE - 1]) == JobStatus::Running
+    })
+    .await;
+    assert_eq!(h.status(ids[MAX_LIVE]), JobStatus::Queued);
+    let e = h.mgr.pause(ids[MAX_LIVE]).unwrap_err();
+    assert_eq!(e.code, ErrorCode::InvalidInput);
+    assert_eq!(h.status(ids[MAX_LIVE]), JobStatus::Queued);
+}
+
+/// 방어: 마무리(`stop_job`) 중 코어가 `Cancelled`로 끝나도 생방송은 `paused`가 아니라 `interrupted`가 된다.
+#[tokio::test(start_paused = true)]
+async fn finish_then_cancelled_live_is_interrupted_not_paused() {
+    let h = Harness::new(2);
+    h.fake
+        .script_for(h.output("l"), recording(5).fails(Error::Cancelled));
+    let id = h.enqueue_live("l").id;
+    until("시작", || h.status(id) == JobStatus::Running).await;
+    h.mgr.stop_job(id).unwrap();
+    until("끊김", || h.status(id) == JobStatus::Interrupted).await;
 }
 
 /// 아무것도 받지 못하고 멈추면 코어가 `NothingRecorded`를 낸다 → 실패 + 코드.
@@ -427,6 +468,25 @@ async fn failed_recording_holds_its_path() {
     h.mgr.resume(id, false).unwrap();
     until("다시 시작", || h.status(id) == JobStatus::Running).await;
     h.mgr.stop_job(id).unwrap();
+}
+
+/// 받은 영상이 있는 실패 녹화를 수동으로 이어받으면 매니저는 `Backend::resolve`를 부르지 않고 다시 받기로 넘긴다.
+/// 매니저는 원래 받기 경로에서 조회하지 않는다: 이 테스트는 그 성질을 고정할 뿐이고, 방송이 끝난 뒤 이어받기가
+/// 게이트 조회로 막히던 회귀(app.md 127)는 `app_ownership.rs`의 `resume_job_*live*` 테스트가 잡는다.
+#[tokio::test(start_paused = true)]
+async fn manual_resume_live_with_media_does_not_resolve() {
+    let h = Harness::new(2);
+    h.fake.script_for(
+        h.output("a"),
+        Script::new().live_part(16, 32).fails(http_503()),
+    );
+    let id = h.enqueue_live("a").id;
+    until("실패", || h.status(id) == JobStatus::Failed).await;
+    let before = h.fake.resolve_count();
+
+    h.mgr.resume(id, false).unwrap();
+    until("마무리", || h.status(id) == JobStatus::Completed).await;
+    assert_eq!(h.fake.resolve_count(), before);
 }
 
 /// 끝난 녹화는 `check_output`의 중복이 아니다(`partial.recording`으로 알린다).

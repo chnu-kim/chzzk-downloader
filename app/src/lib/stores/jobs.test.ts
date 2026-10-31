@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { JobDto, JobEvent } from '../bindings';
-import { err, job, prog, signedInAs } from '../../test/jobFixtures';
+import { err, job, liveProg, prog, signedInAs } from '../../test/jobFixtures';
 import { errorCopy } from '../copy/errors';
 import { t } from '../copy/ko';
 import { formatFileSize } from '../format/bytes';
@@ -16,6 +16,7 @@ vi.mock('../api', () => ({
   resumeJob: vi.fn(),
   removeJob: vi.fn(),
   pauseJob: vi.fn(),
+  stopJob: vi.fn(),
   openOutput: vi.fn(),
   revealOutput: vi.fn(),
   clearFinished: vi.fn(),
@@ -273,6 +274,54 @@ describe('JobsStore 동작', () => {
     await s.act(2, 'remove');
     await s.confirmRemove();
     expect(api.removeJob).toHaveBeenLastCalledWith(2);
+  });
+
+  it('녹화 마치기: 받은 것이 있으면 D8을 열고 확인 뒤에만 stop_job을 부른다', async () => {
+    const { s } = await loaded([
+      job(1, { title: '오늘 방송', kind: 'live', playbackKind: 'live', status: 'running', progress: liveProg() }),
+    ]);
+    await s.act(1, 'stop');
+    expect(api.stopJob).not.toHaveBeenCalled();
+    expect(s.stopConfirm).toMatchObject({ id: 1, title: '오늘 방송', bytes: 3_650_722_201 });
+    expect(s.stopConfirmSize).toBe(formatFileSize(3_650_722_201, 1000));
+    s.cancelStopConfirm();
+    expect(s.stopConfirm).toBeNull();
+    expect(api.stopJob).not.toHaveBeenCalled();
+    await s.act(1, 'stop');
+    await s.confirmStop();
+    expect(api.stopJob).toHaveBeenCalledTimes(1);
+    expect(api.stopJob).toHaveBeenCalledWith(1);
+    expect(s.stopConfirm).toBeNull();
+  });
+
+  it('녹화 마치기 D8은 그 녹화가 받는 중이 아니게 되거나 사라지면 닫힌다', async () => {
+    const live = (over: Partial<JobDto> = {}) =>
+      job(1, { title: '오늘 방송', kind: 'live', playbackKind: 'live', status: 'running', progress: liveProg(), ...over });
+    const { s, send } = await loaded([live(), job(2, { status: 'running' })]);
+    await s.act(1, 'stop');
+    // 다른 작업의 변화와 같은 작업의 마치는 중(pausing)은 닫지 않는다
+    send({ type: 'status', job: job(2, { status: 'completed' }) });
+    send({ type: 'status', job: live({ status: 'pausing' }) });
+    expect(s.stopConfirm).toMatchObject({ id: 1 });
+    // 방송이 스스로 끝나 완료되면 닫는다
+    send({ type: 'status', job: live({ status: 'completed', progress: null }) });
+    expect(s.stopConfirm).toBeNull();
+    // 사라져도 닫는다
+    send({ type: 'status', job: live() });
+    await s.act(1, 'stop');
+    expect(s.stopConfirm).not.toBeNull();
+    send({ type: 'removed', id: 1 });
+    expect(s.stopConfirm).toBeNull();
+    expect(api.stopJob).not.toHaveBeenCalled();
+  });
+
+  it('녹화 마치기: 받은 것이 없으면 묻지 않고 바로 마친다', async () => {
+    const { s } = await loaded([
+      job(1, { kind: 'live', playbackKind: 'live', status: 'running', progress: liveProg({ bytes: 0 }) }),
+    ]);
+    await s.act(1, 'stop');
+    expect(api.stopJob).toHaveBeenCalledWith(1);
+    expect(s.stopConfirm).toBeNull();
   });
 
   it('받는 중인 작업의 D2는 running=true라 안전 쪽이 [계속 받기]다', async () => {

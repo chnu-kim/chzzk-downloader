@@ -15,12 +15,15 @@
   let open = $state(false);
   let running = $state(0);
   let quitting = $state(false);
-  /** 녹화 중인 생방송이 섞여 있는가: 닫으면 그 녹화는 일시정지가 아니라 받은 만큼 저장하고 끝난다(ADR-0025) */
-  const hasLive = $derived(
-    [...jobs.state.jobs.values()].some(
+  /** 받는 중인 생방송 수: 있으면 닫을 때 그 녹화는 일시정지가 아니라 받은 만큼 저장하고 끝난다(ADR-0025) */
+  const liveCount = $derived(
+    [...jobs.state.jobs.values()].filter(
       (j) => j.playbackKind === 'live' && (j.status === 'running' || j.status === 'pausing'),
-    ),
+    ).length,
   );
+  const hasLive = $derived(liveCount > 0);
+  /** 받는 중인 것이 전부 생방송이면 "나머지는 일시정지돼요"가 거짓이다. 프런트 상태가 셸 수보다 늦을 수 있어 `>=`(D5와 같은 셈) */
+  const allLive = $derived(liveCount > 0 && liveCount >= running);
 
   onMount(() => {
     let off: (() => void) | null = null;
@@ -64,7 +67,7 @@
 <ConfirmDialog
   {open}
   title={t(hasLive ? 'dialog.closeLive.title' : 'dialog.close.title')}
-  body={t(hasLive ? 'dialog.closeLive.body' : 'dialog.close.body', { n: running })}
+  body={t(allLive ? 'dialog.closeLive.allBody' : hasLive ? 'dialog.closeLive.body' : 'dialog.close.body', { n: running })}
   onclose={keep}
   primary={{ id: 'keep', label: t('dialog.cancel.keepRunning'), onclick: keep }}
   secondary={{ id: 'confirm', label: t(hasLive ? 'dialog.closeLive.confirm' : 'dialog.close.confirm'), loading: quitting, onclick: () => void quit() }}

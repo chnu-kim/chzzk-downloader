@@ -16,10 +16,11 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use super::write_live_part;
 use chzzk_core::chat::collect::RECORD_EXT;
 use chzzk_core::chat::part::{ChatSidecar, SIDECAR_VERSION};
 use chzzk_core::chat::{ChatEnd, ChatOutcome, ChatProgress, ChatRequest};
-use chzzk_core::download::part::{HlsState, Sidecar, part_path, sidecar_path};
+use chzzk_core::download::part::{part_path, sidecar_path};
 use chzzk_core::fsutil::atomic_write;
 use chzzk_core::naming::sibling_path;
 use chzzk_core::{
@@ -605,27 +606,15 @@ impl Backend for FakeBackend {
                     init_len,
                     media_len,
                 } => {
-                    if let Some(dir) = req.output.parent() {
-                        std::fs::create_dir_all(dir).unwrap();
-                    }
-                    let total = u64::from(init_len) + media_len;
-                    std::fs::write(part_path(&req.output), vec![0u8; total as usize]).unwrap();
-                    let mut sc = Sidecar::new(
-                        req.content.clone(),
-                        req.quality_id.clone(),
+                    write_live_part(
+                        &req.output,
+                        &req.content,
+                        &req.quality_id,
                         req.expected_kind,
-                    );
-                    sc.recording_id = req.recording_id.clone();
-                    sc.committed_len = total;
-                    sc.hls = Some(HlsState {
+                        req.recording_id.as_deref(),
                         init_len,
-                        ..HlsState::default()
-                    });
-                    atomic_write(
-                        &sidecar_path(&req.output),
-                        &serde_json::to_vec(&sc).unwrap(),
-                    )
-                    .unwrap();
+                        &vec![0u8; (u64::from(init_len) + media_len) as usize],
+                    );
                 }
                 Step::UntilStopped => {
                     let stop = req.live_stop.clone().unwrap_or_default();

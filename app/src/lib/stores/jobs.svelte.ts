@@ -13,6 +13,7 @@ import {
   isWaitingNetwork,
   nextQueueOrder,
   outputFileName,
+  needsStopConfirm,
   receivedBytes,
   removeRoute,
   resumableInterrupted,
@@ -35,6 +36,13 @@ import { ui } from './ui.svelte';
 
 // 새로 추가된 항목 강조 시간의 원천은 timing.ts다(patterns.md §1.2)
 export { HIGHLIGHT_MS };
+
+/** D8: 녹화 마치기 전 확인. 받은 만큼 저장하고 끝내며 되돌릴 수 없다(지우는 것은 없다) */
+export interface StopConfirm {
+  id: JobId;
+  title: string;
+  bytes: number;
+}
 
 export interface CancelConfirm {
   id: JobId;
@@ -64,6 +72,8 @@ export class JobsStore {
   runStartedAt = new Map<JobId, number>();
   /** D2: 받은 부분을 지우기 전 확인 */
   confirm: CancelConfirm | null = $state(null);
+  /** D8: 녹화 마치기 확인 */
+  stopConfirm: StopConfirm | null = $state(null);
   /** D7: 덮어쓰고 받기 확인 */
   overwrite: OverwriteConfirm | null = $state(null);
   /**
@@ -142,6 +152,7 @@ export class JobsStore {
     const prev = e.type === 'added' || e.type === 'status' ? this.state.jobs.get(e.job.id) : undefined;
     this.state = applyEvent(this.state, e);
     this.queueOrder = nextQueueOrder(this.queueOrder, this.state.jobs);
+    this.#dropStaleStopConfirm();
     if (e.type === 'removed') {
       this.#forgetPhase(e.id);
       this.runStartedAt.delete(e.id);
@@ -266,8 +277,12 @@ export class JobsStore {
           await api.pauseJob(id);
           break;
         case 'stop':
-          // 생방송: 취소가 아니라 받은 만큼 마무리한다
-          await api.stopJob(id);
+          // 생방송: 취소가 아니라 받은 만큼 마무리한다. 받은 것이 있으면 되돌릴 수 없어 D8로 먼저 묻는다
+          if (needsStopConfirm(job, this.state.progress.get(id))) {
+            this.stopConfirm = { id, title: job.title, bytes: receivedBytes(job, this.state.progress.get(id)) };
+          } else {
+            await api.stopJob(id);
+          }
           break;
         case 'resume':
         case 'retry':
@@ -352,6 +367,34 @@ export class JobsStore {
 
   cancelConfirm() {
     this.confirm = null;
+  }
+
+  async confirmStop() {
+    const c = this.stopConfirm;
+    this.stopConfirm = null;
+    if (!c) return;
+    try {
+      await api.stopJob(c.id);
+    } catch (e) {
+      this.#toastError(e as AppError);
+    }
+  }
+
+  cancelStopConfirm() {
+    this.stopConfirm = null;
+  }
+
+  /** D8이 열린 사이 그 녹화가 받는 중이 아니게 됐거나(방송이 끝나 완료·끊김) 사라지면 닫는다: 확인해도 마칠 것이 없다 */
+  #dropStaleStopConfirm() {
+    const c = this.stopConfirm;
+    if (!c) return;
+    const status = this.state.jobs.get(c.id)?.status;
+    if (status !== 'running' && status !== 'pausing') this.stopConfirm = null;
+  }
+
+  /** D8 본문의 크기 */
+  get stopConfirmSize(): string {
+    return this.stopConfirm ? formatFileSize(this.stopConfirm.bytes, sizeBaseOf(platform.os)) : '';
   }
 
   /** D2 본문의 크기 */

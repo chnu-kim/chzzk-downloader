@@ -207,7 +207,8 @@ export function statusWord(job: JobDto, p: ProgressDto | null | undefined): stri
     // 중단(앱 종료·치지직 끊김)도 사용자가 멈춘 것과 같은 말이다: 다시 받으면 이어 받는다
     case 'paused':
     case 'interrupted':
-      return t('job.status.paused');
+      // 생방송은 일시정지가 없다: 끊겨 멈춘 녹화다(옛 기록의 paused도 같은 말)
+      return t(job.playbackKind === 'live' ? 'job.live.interrupted' : 'job.status.paused');
     case 'completed':
       return t('job.status.completed');
     case 'skipped':
@@ -326,6 +327,9 @@ export function statusParts(job: JobDto, p: ProgressDto | null | undefined, ctx:
     case 'paused':
     case 'interrupted': {
       const bytes = receivedBytes(job, p);
+      if (job.playbackKind === 'live') {
+        return [bytes <= 0 ? t('job.live.interrupted') : t('job.live.interruptedBytes', { bytes: formatFileSize(bytes, base) })];
+      }
       return [bytes <= 0 ? t('job.status.paused') : t('job.paused', { bytes: formatFileSize(bytes, base) })];
     }
     case 'completed': {
@@ -477,6 +481,7 @@ const FROM_ERROR: Partial<Record<ActionId, JobAction>> = {
   openCookieSettings: 'openCookieSettings',
   reenterCookies: 'reenterCookies',
   reresolve: 'reresolve',
+  recordAgain: 'recordAgain',
   copyReport: 'copyReport',
   openFolder: 'openFolder',
 };
@@ -501,7 +506,7 @@ function keepsRecording(job: JobDto): boolean {
 /**
  * 상태별 버튼(patterns.md §3.2 표가 app.md §8.5보다 우선한다).
  * - 받는 중: [일시정지][취소] / 준비 중: [취소] / 마무리 중·멈추는 중: 없음
- * - 대기: [취소] / 일시정지·중단: [이어받기][취소]
+ * - 대기: [취소] / 일시정지·중단: [이어받기][취소](영상 조각이 없는 생방송은 [다시 녹화][취소])
  * - 실패: 오류 표(§9)의 동작 / 완료: [파일 열기][폴더에서 보기](파일이 없으면 [폴더에서 보기]), 재시작으로 끝난 녹화는 끝에 [다시 녹화] / 건너뜀: [파일 열기][덮어쓰고 받기…]
  * 메뉴: 제목 전체 보기(늘), 주소 복사(늘), 처음부터 다시 받기(`.part`가 있을 때, 받다 만 녹화는 빼고), 문제 보고용 정보 복사(실패),
  * 목록에서 지우기(끝난 항목). 기본 버튼에 이미 있는 동작은 메뉴에 다시 넣지 않는다.
@@ -534,7 +539,9 @@ export function jobButtons(
       break;
     case 'paused':
     case 'interrupted':
-      primary = ['resume'];
+      // 영상 조각이 없는 생방송은 이어받을 녹화가 없다: [이어받기]는 지금 켜진(다른) 방송을 옛 제목·시각의 파일로
+      // 녹화한다(셸 자동 이어받기가 같은 이유로 뺀다, manager `auto_resume_video`). 새 녹화는 [다시 녹화]로 카드를 거친다(ADR-0031)
+      primary = job.playbackKind === 'live' && !kept ? ['recordAgain'] : ['resume'];
       cancel = true;
       break;
     case 'failed': {
@@ -596,7 +603,8 @@ export function jobBlock(job: JobDto, me: AuthStatusDto | null): JobBlock | null
 /** B1이 이어받을 interrupted 작업 id(오름차순). 막힌 작업은 뺀다 */
 export function resumableInterrupted(jobs: Iterable<JobDto>, me: AuthStatusDto | null): JobId[] {
   return [...jobs]
-    .filter((j) => j.status === 'interrupted' && jobBlock(j, me) === null)
+    // 영상 조각이 없는 생방송은 이어받지 않는다(`jobButtons`의 [다시 녹화]와 같은 이유, 셸 `auto_resume_video`)
+    .filter((j) => j.status === 'interrupted' && jobBlock(j, me) === null && (j.playbackKind !== 'live' || keepsRecording(j)))
     .map((j) => j.id)
     .sort((a, b) => a - b);
 }
@@ -655,6 +663,16 @@ export function jobActionIcon(a: JobAction): IconName | undefined {
 export function needsCancelConfirm(job: JobDto, p: ProgressDto | null | undefined): boolean {
   if (job.status === 'queued') return false;
   return receivedBytes(job, p) > 0;
+}
+
+/**
+ * 녹화 마치기(생방송 `stop`)를 대화상자 D8(patterns.md §5.2)로 묻는가. 받은 만큼 저장하고 끝내며 이어 붙일 수 없다(ADR-0025).
+ * 받은 영상이 없으면 잃을 것이 없어 바로 마친다(D2의 0바이트 규칙과 같은 기준, 결과는 NothingRecorded 실패 + [다시 시도]).
+ */
+export function needsStopConfirm(job: JobDto, p: ProgressDto | null | undefined): boolean {
+  // 받는 중이면 녹화 길이로 본다: 코어는 영상 조각 없이 구멍만 셌을 때도 init 길이를 bytes로 알린다(core live.rs `report`).
+  // 녹화 길이는 영상 조각을 쓸 때만 는다. 그 경우 결과는 NothingRecorded라 저장할 것이 없다
+  return receivedBytes(job, p) > 0 && (p?.liveRecordedSecs == null || p.liveRecordedSecs > 0);
 }
 
 /** 취소 버튼: 라벨은 늘 [취소]다. D2를 여는 쪽은 danger 글자, 즉시 지우는 쪽은 neutral로만 갈린다 */

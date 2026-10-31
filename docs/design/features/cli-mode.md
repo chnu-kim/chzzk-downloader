@@ -20,7 +20,7 @@
 | 업데이트 | CLI는 업데이트를 확인하지 않는다. Windows 콘솔 실행 파일은 GUI의 업데이트(설치기 재실행)가 함께 바꾼다 | 가장 작은 범위. GUI가 로그인 직후 한 번 확인한다 `crates/shell/src/app.rs:740` [확인]. §10 |
 | 인자 파서(O5 (a)) | 손으로 짠 파서. 새 의존성 없음 | `Cargo.lock`에 clap·lexopt가 없다 [확인]. `dl.rs:48`도 손 파서다 |
 | Windows 콘솔(O3 (b)) | **처음부터 콘솔 서브시스템 실행 파일 `chzzk-cli.exe`를 더한다.** `chzzk-app` crate의 둘째 `[[bin]]`(`required-features = ["console-cli"]`)이고, 새 `tauri.windows.conf.json`의 `build.features`로 Windows 빌드에서만 켠다. Tauri 번들러가 주 실행 파일이 아닌 bin을 NSIS·MSI 설치 폴더에 함께 넣는다. `chzzk-app.exe`에 CLI 하위 명령을 주면 GUI를 띄우지 않고 "`chzzk-cli.exe`를 써 주세요" 한 줄과 코드 2로 끝난다(둘 다 CLI-5) | `main.rs:2` `windows_subsystem = "windows"` [확인]. 상류 `get_binaries`·NSIS·WiX 템플릿 [확인: 상류], §7.1 |
-| Ctrl+C | 첫 번째는 일시정지(`.part`를 남기고 `paused`로 저장), 두 번째는 바로 끝낸다(`interrupted`). 다음 `download`나 GUI가 이어받는다. `login` 기다림 중이면 로그인을 취소한다 | `DownloadManager::pause` `crates/shell/src/manager.rs:674-701`, `quit` `:1385-1389` [확인] |
+| Ctrl+C | 첫 번째는 일시정지(`.part`를 남기고 `paused`로 저장. 생방송 주소는 받지 않으므로 해당 없고, 셸 `pause`는 생방송을 거부한다: app.md 127), 두 번째는 바로 끝낸다(`interrupted`). 다음 `download`나 GUI가 이어받는다. `login` 기다림 중이면 로그인을 취소한다 | `DownloadManager::pause` `crates/shell/src/manager.rs:674-701`, `quit` `:1385-1389` [확인] |
 | 종료 코드 | 0 완료·이미 있음·로그인함 / 1 받기·로그인 실패 / 2 사용법 / 3 로그인 필요·로그인 거부·시간 초과 / 4 받을 수 없는 영상 / 5 앱이 열려 있음 / 130 Ctrl+C로 멈춤 | §9.3 |
 | 범위 밖(v1) | 생방송 녹화(O8), 채팅 함께 받기, 로그아웃 명령, 화면 없는 기기의 로그인(O2 (c)), 작업 목록 관리, JSON 출력(O6), PATH 등록(O7) | §1.2 |
 | 배포물 | `expected-artifacts.json`의 설치기 산출물·updater 키는 그대로다. Windows 설치기 안에 `chzzk-cli.exe`가 하나 늘어 설치 스모크·release-hygiene·크기 ratchet(새 키 `size.binary.windows-cli`)이 바뀐다 | `release/expected-artifacts.json` [확인], §13 |

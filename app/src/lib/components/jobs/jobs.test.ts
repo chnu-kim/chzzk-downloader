@@ -756,9 +756,37 @@ describe('생방송 행(ADR-0025)', () => {
     // 일시정지는 없다
     expect(within(row).queryByRole('button', { name: t('action.pause') })).toBeNull();
     await user.click(within(row).getByRole('button', { name: t('action.stopRecording') }));
+    // 되돌릴 수 없어 D8로 먼저 묻는다(저장만 하므로 지우는 동작이 아니다 = danger 없음)
+    const dialog = await screen.findByRole('dialog', { name: t('dialog.stopLive.title', { title: '오늘 방송' }) });
+    expect(within(dialog).getByText(t('dialog.stopLive.body', { size: '3.65GB' }))).toBeInTheDocument();
+    const buttons = within(dialog).getAllByRole('button');
+    expect(buttons.map((b) => b.textContent?.trim())).toEqual([t('action.stopRecording'), t('dialog.cancel.keepRunning')]);
+    await waitFor(() => expect(buttons[1]).toHaveFocus());
+    expect(buttons[0]).not.toHaveClass('btn-danger');
+    // [계속 받기]는 아무것도 하지 않는다
+    await user.click(buttons[1]);
+    expect(api.stopJob).not.toHaveBeenCalled();
+    await user.click(within(row).getByRole('button', { name: t('action.stopRecording') }));
+    const again = await screen.findByRole('dialog', { name: t('dialog.stopLive.title', { title: '오늘 방송' }) });
+    await user.click(within(again).getByRole('button', { name: t('action.stopRecording') }));
+    expect(api.stopJob).toHaveBeenCalledTimes(1);
     expect(api.stopJob).toHaveBeenCalledWith(1);
     expect(api.pauseJob).not.toHaveBeenCalled();
     expect(api.removeJob).not.toHaveBeenCalled();
+  });
+
+  it('D8을 연 채 목록을 떠나면 확인을 버린다(돌아와도 다시 열리지 않는다)', async () => {
+    const user = userEvent.setup();
+    await load([liveJob()]);
+    const first = render(JobList);
+    const row = screen.getByRole('article', { name: '오늘 방송' });
+    await user.click(within(row).getByRole('button', { name: t('action.stopRecording') }));
+    await screen.findByRole('dialog', { name: t('dialog.stopLive.title', { title: '오늘 방송' }) });
+    first.unmount();
+    render(JobList);
+    await tick();
+    expect(screen.queryByRole('dialog', { name: t('dialog.stopLive.title', { title: '오늘 방송' }) })).toBeNull();
+    expect(api.stopJob).not.toHaveBeenCalled();
   });
 
   it('놓친 조각이 있으면 상태 줄 끝에 보인다', async () => {

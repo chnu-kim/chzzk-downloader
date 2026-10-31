@@ -96,9 +96,10 @@
     void tick().then(() => focusItem(req.id));
   });
 
-  // D2·D7은 이 목록 안에 있다. 열린 채 뷰가 바뀌면(Mod+,) 돌아왔을 때 다시 뜨지 않게 닫는다.
+  // D2·D7·D8은 이 목록 안에 있다. 열린 채 뷰가 바뀌면(Mod+,) 돌아왔을 때 다시 뜨지 않게 닫는다.
   onDestroy(() => {
     jobs.cancelConfirm();
+    jobs.cancelStopConfirm();
     jobs.cancelOverwrite();
   });
 
@@ -235,6 +236,15 @@
     onclick: () => jobs.cancelConfirm(),
   }}
   secondary={{ id: 'confirm', label: t('dialog.cancel.confirm'), tone: 'danger', onclick: () => void jobs.confirmRemove() }}
+/>
+
+<ConfirmDialog
+  open={jobs.stopConfirm != null}
+  title={t('dialog.stopLive.title', { title: jobs.stopConfirm?.title ?? '' })}
+  body={t('dialog.stopLive.body', { size: jobs.stopConfirmSize })}
+  onclose={() => jobs.cancelStopConfirm()}
+  primary={{ id: 'keep', label: t('dialog.cancel.keepRunning'), onclick: () => jobs.cancelStopConfirm() }}
+  secondary={{ id: 'confirm', label: t('action.stopRecording'), onclick: () => void jobs.confirmStop() }}
 />
 
 <OverwriteDialog

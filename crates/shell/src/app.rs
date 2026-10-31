@@ -445,7 +445,8 @@ impl App {
     ///
     /// 기록의 `channel_id`는 믿지 않는다(`jobs.json` 변조, worker.md 86). 다시 줄 세울 작업이면 enqueue와 같은
     /// `OwnershipGate::admit`으로 작업 컨텐츠를 판정하고(최근 resolve 캐시, 없으면 다시 resolve), 통과한 채널 ID를
-    /// 기록에 고쳐 쓴다. 판정(네트워크)은 매니저 잠금 밖에서 하고, 잠금 안에서는 같은 컨텐츠인지만 다시 본다.
+    /// 기록에 고쳐 쓴다. 생방송은 예외로 다시 resolve하지 않고 컨텐츠의 채널(`Live { channel_id }`)로 판정한다
+    /// (`admit_job`, app.md 127). 판정(네트워크)은 매니저 잠금 밖에서 하고, 잠금 안에서는 같은 컨텐츠인지만 다시 본다.
     pub async fn resume_job(&self, id: JobId, restart: bool) -> Result<(), AppError> {
         if !self.gate.is_enabled() {
             return self.manager.resume(id, restart);

@@ -1757,17 +1757,38 @@ fn live_record(id: u64, channel: &str, status: JobStatus, out: &Path) -> JobReco
     r
 }
 
+/// `synthetic_frag.mp4`의 init 길이(앞 두 상자 ftyp+moov). 상자 머리의 big-endian 길이를 읽는다(fixture를 다시 만들어도 맞다)
+fn frag_init_len(bytes: &[u8]) -> u32 {
+    let size = |at: usize| u32::from_be_bytes(bytes[at..at + 4].try_into().unwrap());
+    let ftyp = size(0);
+    assert_eq!(&bytes[4..8], b"ftyp");
+    let at = ftyp as usize;
+    assert_eq!(&bytes[at + 4..at + 8], b"moov");
+    ftyp + size(at)
+}
+
 /// 재시작 뒤 상태를 재현한다: 영상 조각까지 받은 `.part`+sidecar(`synthetic_frag.mp4`의 ftyp+moov가 init)
 fn write_recorded_part(rec: &JobRecord) {
+    write_live_part_bytes(rec, false);
+}
+
+/// `init_only`면 init(ftyp+moov)만 든 `.part`(세그먼트를 하나도 받기 전에 끊겼다)
+fn write_live_part_bytes(rec: &JobRecord, init_only: bool) {
     let bytes = fixture("testdata/live/synthetic_frag.mp4");
+    let init_len = frag_init_len(&bytes);
+    let body = if init_only {
+        &bytes[..init_len as usize]
+    } else {
+        &bytes[..]
+    };
     common::write_live_part(
         &rec.output,
         &rec.content,
         &rec.quality_id,
         rec.expected_kind,
         rec.recording_id.as_deref(),
-        28 + 1190,
-        &bytes,
+        init_len,
+        body,
     );
 }
 
@@ -1806,31 +1827,45 @@ async fn resume_job_finishes_live_recording_after_broadcast_ended() {
     }
 }
 
-/// 받은 영상이 없으면(`.part` 없음) 코어가 조회하고 방송이 꺼져 있으니 카드에서 `NotLive`로 실패한다
+/// 받은 영상이 없으면(`.part` 없음, init만 든 `.part`) 코어가 조회하고 방송이 꺼져 있으니 카드에서 `NotLive`로 실패한다.
+/// init만 든 `.part`는 코어가 지운다(download/mod.rs `run`)
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn resume_job_live_without_media_fails_on_card() {
-    let api = mock_api(None).await;
-    let worker = MockServer::start().await;
-    let t = TempDir::new().unwrap();
-    let out = t.path().join("out");
-    write_jobs(
-        t.path(),
-        vec![live_record(1, OWN, JobStatus::Interrupted, &out)],
-    );
-    save_session(t.path(), &worker, OWN);
-    let app = open_auth(t.path(), &api, &worker);
+    for init_only in [false, true] {
+        let api = mock_api(None).await;
+        let worker = MockServer::start().await;
+        let t = TempDir::new().unwrap();
+        let out = t.path().join("out");
+        let rec = live_record(1, OWN, JobStatus::Interrupted, &out);
+        let part = chzzk_core::download::part::part_path(&rec.output);
+        if init_only {
+            write_live_part_bytes(&rec, true);
+            assert!(part.is_file());
+        }
+        write_jobs(t.path(), vec![rec]);
+        save_session(t.path(), &worker, OWN);
+        let app = open_auth(t.path(), &api, &worker);
 
-    app.resume_job(JobId(1), false).await.unwrap();
-    wait_for(&app, 1, JobStatus::Failed).await;
-    let job = app
-        .manager
-        .list()
-        .into_iter()
-        .find(|j| j.id == JobId(1))
-        .unwrap();
-    assert_eq!(job.error.unwrap().code, ErrorCode::NotLive);
-    assert!(live_detail_requests(&api.received_requests().await.unwrap()) >= 1);
-    app.manager.quit(Duration::from_secs(3)).await;
+        app.resume_job(JobId(1), false).await.unwrap();
+        wait_for(&app, 1, JobStatus::Failed).await;
+        let job = app
+            .manager
+            .list()
+            .into_iter()
+            .find(|j| j.id == JobId(1))
+            .unwrap();
+        assert_eq!(
+            job.error.unwrap().code,
+            ErrorCode::NotLive,
+            "init_only={init_only}"
+        );
+        assert!(live_detail_requests(&api.received_requests().await.unwrap()) >= 1);
+        assert!(
+            !part.exists(),
+            "init_only={init_only}: init만 든 .part는 남지 않는다"
+        );
+        app.manager.quit(Duration::from_secs(3)).await;
+    }
 }
 
 /// 남의 채널 생방송 기록은 조회 없이 거부하고 기록 채널을 남긴다

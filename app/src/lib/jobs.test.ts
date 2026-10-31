@@ -555,6 +555,11 @@ describe('녹화 마치기 확인(D8): 받은 것이 있으면', () => {
     expect(needsStopConfirm(live(), liveProg())).toBe(true);
     expect(needsStopConfirm(live(), liveProg({ bytes: 0, phase: 'waitingNetwork' }))).toBe(false);
   });
+  it('init만 받았으면(영상 조각 0, 녹화 길이 0) 저장할 것이 없어 바로 마친다', () => {
+    // 구멍(404·일시 오류)이 먼저 오면 코어가 init 길이만큼 bytes를 알린다. 결과는 NothingRecorded다
+    expect(needsStopConfirm(live(), liveProg({ bytes: 1218, liveRecordedSecs: 0, liveGaps: 2 }))).toBe(false);
+    expect(needsStopConfirm(live(), liveProg({ bytes: 1218, liveRecordedSecs: 2 }))).toBe(true);
+  });
 });
 
 describe('취소 확인(D2): .part가 있으면 크기와 무관하게', () => {
@@ -997,6 +1002,28 @@ describe('생방송 녹화(ADR-0025): 막대·남은 시간 없이 글자만', (
     // 받은 것이 없으면 줄이 없다. 일반 작업에는 이 줄이 없다
     expect(bodyLine(live({ status: 'paused', partialBytes: 0, progress: null }), null)).toBeNull();
     expect(bodyLine(job(2, { status: 'paused', partialBytes: 1000 }), null)).toBeNull();
+  });
+
+  it('영상 조각이 없는 끊긴 생방송은 [이어받기]가 아니라 [다시 녹화]다(지금 켜진 다른 방송을 옛 이름으로 녹화하지 않는다)', () => {
+    for (const status of ['paused', 'interrupted'] as const) {
+      for (const partialBytes of [null, 0]) {
+        const j = live({ status, partialBytes, progress: null });
+        const b = jobButtons(j, null);
+        expect(b.primary, `${status} ${partialBytes}`).toEqual(['recordAgain']);
+        expect(b.cancel).toBe(true);
+      }
+    }
+    // 일반 작업은 그대로 [이어받기]
+    expect(jobButtons(job(2, { status: 'interrupted', partialBytes: null }), null).primary).toEqual(['resume']);
+  });
+
+  it('B1 모두 이어받기는 영상 조각이 없는 생방송을 빼고, 조각이 있으면 넣는다', () => {
+    const list = [
+      live({ id: 1, status: 'interrupted', partialBytes: null, progress: null }),
+      live({ id: 2, status: 'interrupted', partialBytes: 1000, progress: null }),
+      job(3, { status: 'interrupted' }),
+    ];
+    expect(resumableInterrupted(list, null)).toEqual([2, 3]);
   });
 
   it('끊긴 녹화는 일시정지 어휘를 쓰지 않는다', () => {

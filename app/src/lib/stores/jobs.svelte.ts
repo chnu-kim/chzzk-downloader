@@ -152,6 +152,7 @@ export class JobsStore {
     const prev = e.type === 'added' || e.type === 'status' ? this.state.jobs.get(e.job.id) : undefined;
     this.state = applyEvent(this.state, e);
     this.queueOrder = nextQueueOrder(this.queueOrder, this.state.jobs);
+    this.#dropStaleStopConfirm();
     if (e.type === 'removed') {
       this.#forgetPhase(e.id);
       this.runStartedAt.delete(e.id);
@@ -381,6 +382,14 @@ export class JobsStore {
 
   cancelStopConfirm() {
     this.stopConfirm = null;
+  }
+
+  /** D8이 열린 사이 그 녹화가 받는 중이 아니게 됐거나(방송이 끝나 완료·끊김) 사라지면 닫는다: 확인해도 마칠 것이 없다 */
+  #dropStaleStopConfirm() {
+    const c = this.stopConfirm;
+    if (!c) return;
+    const status = this.state.jobs.get(c.id)?.status;
+    if (status !== 'running' && status !== 'pausing') this.stopConfirm = null;
   }
 
   /** D8 본문의 크기 */

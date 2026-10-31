@@ -22,8 +22,8 @@
     ).length,
   );
   const hasLive = $derived(liveCount > 0);
-  /** 받는 중인 것이 전부 생방송이면 "나머지는 일시정지돼요"가 거짓이다 */
-  const allLive = $derived(liveCount > 0 && liveCount === running);
+  /** 받는 중인 것이 전부 생방송이면 "나머지는 일시정지돼요"가 거짓이다. 프런트 상태가 셸 수보다 늦을 수 있어 `>=`(D5와 같은 셈) */
+  const allLive = $derived(liveCount > 0 && liveCount >= running);
 
   onMount(() => {
     let off: (() => void) | null = null;

@@ -141,6 +141,31 @@ test('방송 중이 아니라 실패한 녹화는 [다시 시도] 대신 [다시
   expect(await app.cmds()).not.toContain('resume_job');
 });
 
+test('영상 조각 없이 끊긴 녹화는 [이어받기] 대신 [다시 녹화]이고 모두 이어받기에서 빠진다', async ({ app }) => {
+  const r = liveResolved();
+  const { page } = app;
+  const j = job(1, {
+    url: r.url,
+    title: r.meta.title,
+    kind: 'live',
+    playbackKind: 'live',
+    status: 'interrupted',
+    partialBytes: null,
+  });
+  await app.open({ jobs: [j], resolve: { [r.url]: r } });
+  const item = page.getByRole('article', { name: r.meta.title });
+  await expect(item).toContainText(t('job.live.interrupted'));
+  await expect(item.getByRole('button', { name: t('action.recordAgain') })).toBeVisible();
+  await expect(item.getByRole('button', { name: t('action.resume') })).toHaveCount(0);
+  // 이어받을 녹화가 없으니 B1(모두 이어받기)도 뜨지 않는다
+  await expect(page.getByRole('button', { name: t('banner.resumeAll') })).toHaveCount(0);
+  await app.axe('조각 없이 끊긴 녹화');
+
+  await item.getByRole('button', { name: t('action.recordAgain') }).click();
+  await expect(page.getByLabel(t('url.label'))).toHaveValue(r.url);
+  expect(await app.cmds()).not.toContain('resume_job');
+});
+
 test('녹화 중인 작업을 취소하면 녹화한 부분이 지워진다고 묻는다', async ({ app }) => {
   const r = liveResolved();
   const { page } = app;

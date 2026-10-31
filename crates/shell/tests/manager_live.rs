@@ -470,7 +470,9 @@ async fn failed_recording_holds_its_path() {
     h.mgr.stop_job(id).unwrap();
 }
 
-/// 받은 영상이 있는 실패 녹화를 수동으로 이어받으면 다시 resolve하지 않고 마무리 길로 간다(방송이 끝났어도 막히지 않는다).
+/// 받은 영상이 있는 실패 녹화를 수동으로 이어받으면 매니저는 `Backend::resolve`를 부르지 않고 다시 받기로 넘긴다.
+/// 매니저는 원래 받기 경로에서 조회하지 않는다: 이 테스트는 그 성질을 고정할 뿐이고, 방송이 끝난 뒤 이어받기가
+/// 게이트 조회로 막히던 회귀(app.md 127)는 `app_ownership.rs`의 `resume_job_*live*` 테스트가 잡는다.
 #[tokio::test(start_paused = true)]
 async fn manual_resume_live_with_media_does_not_resolve() {
     let h = Harness::new(2);

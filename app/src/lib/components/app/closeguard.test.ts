@@ -149,6 +149,22 @@ describe('D1 창 닫기 확인: 녹화 중인 생방송이 섞였을 때(ADR-002
     }
   });
 
+  it('셸이 센 수보다 프런트의 받는 중 생방송이 많아도(상태가 늦게 옴) 전부 생방송 문구다(D5와 같은 셈)', async () => {
+    jobs.state = fromSnapshot([
+      job(1, { kind: 'live', playbackKind: 'live', status: 'running', progress: liveProg() }),
+      job(2, { kind: 'live', playbackKind: 'live', status: 'running', progress: liveProg() }),
+    ]);
+    try {
+      await mounted();
+      fire(1);
+      const d = await screen.findByRole('dialog', { name: t('dialog.closeLive.title') });
+      expect(within(d).getByText(t('dialog.closeLive.allBody', { n: 1 }))).toBeInTheDocument();
+      expect(d.textContent).not.toContain('일시정지');
+    } finally {
+      jobs.state = fromSnapshot([]);
+    }
+  });
+
   it('생방송이 없거나 이미 끝났으면 일반 문구다', async () => {
     jobs.state = fromSnapshot([job(1, { kind: 'live', playbackKind: 'live', status: 'completed' })]);
     try {

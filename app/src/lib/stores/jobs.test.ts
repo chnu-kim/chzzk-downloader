@@ -294,6 +294,27 @@ describe('JobsStore 동작', () => {
     expect(s.stopConfirm).toBeNull();
   });
 
+  it('녹화 마치기 D8은 그 녹화가 받는 중이 아니게 되거나 사라지면 닫힌다', async () => {
+    const live = (over: Partial<JobDto> = {}) =>
+      job(1, { title: '오늘 방송', kind: 'live', playbackKind: 'live', status: 'running', progress: liveProg(), ...over });
+    const { s, send } = await loaded([live(), job(2, { status: 'running' })]);
+    await s.act(1, 'stop');
+    // 다른 작업의 변화와 같은 작업의 마치는 중(pausing)은 닫지 않는다
+    send({ type: 'status', job: job(2, { status: 'completed' }) });
+    send({ type: 'status', job: live({ status: 'pausing' }) });
+    expect(s.stopConfirm).toMatchObject({ id: 1 });
+    // 방송이 스스로 끝나 완료되면 닫는다
+    send({ type: 'status', job: live({ status: 'completed', progress: null }) });
+    expect(s.stopConfirm).toBeNull();
+    // 사라져도 닫는다
+    send({ type: 'status', job: live() });
+    await s.act(1, 'stop');
+    expect(s.stopConfirm).not.toBeNull();
+    send({ type: 'removed', id: 1 });
+    expect(s.stopConfirm).toBeNull();
+    expect(api.stopJob).not.toHaveBeenCalled();
+  });
+
   it('녹화 마치기: 받은 것이 없으면 묻지 않고 바로 마친다', async () => {
     const { s } = await loaded([
       job(1, { kind: 'live', playbackKind: 'live', status: 'running', progress: liveProg({ bytes: 0 }) }),

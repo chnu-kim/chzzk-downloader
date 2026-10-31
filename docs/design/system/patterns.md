@@ -292,14 +292,14 @@
 |---|---|---|
 | 자리 | 버튼 줄은 오른쪽 정렬. **오른쪽 끝 = 안전한 쪽 = 채움(`primary`) = Enter = 기본 포커스**. 그 왼쪽에 실행 쪽 하나 | README D36(사용자 결정 3), HIG 기본 trailing(`E-APPLE-22`), NN/g "위험한 쪽을 기본으로 두지 않는다" |
 | 안전한 쪽의 정의 | **대화상자를 연 뒤 아무것도 하지 않은 것과 같은 결과**(현 상태 유지). 보조 규칙 없음 — D3 가져오기도 [나중에]가 오른쪽이다 | README D36. 편집 전 "둘 다 안전하면 연 목적" 보조 규칙은 D3·D5에서 문서마다 다른 답을 냈다(§17-8) |
-| 실행 쪽 | 왼쪽. 되돌릴 수 없으면 `secondary tone=danger`(빨간 글자 테두리, 버튼 줄 **왼쪽 끝**으로 띄움), 되돌릴 수 있으면 `secondary neutral`(채움 옆, gap 8) | HIG 파괴적 동작에 Primary 금지(`E-APPLE-21`), README P2, 오누름 거리 |
+| 실행 쪽 | 왼쪽. 되돌릴 수 없고 무언가를 지우면 `secondary tone=danger`(빨간 글자 테두리, 버튼 줄 **왼쪽 끝**으로 띄움), 그 밖(되돌릴 수 있거나, 되돌릴 수 없어도 지우지 않으면, ADR-0031)은 `secondary neutral`(채움 옆, gap 8) | HIG 파괴적 동작에 Primary 금지(`E-APPLE-21`), README P2, 오누름 거리 |
 | 개수 | 2개 | 8종 모두 2개. 3개는 새 패턴(ADR) |
 | 라벨 | 결과를 말하는 동사. "예/아니오/확인" 금지. 안전 쪽은 상태를 이어 가는 말(계속 받기·그대로 두기·나중에·로그인 유지), 다른 창을 여는 버튼은 말줄임(…) | `content.md` §5.3(라벨 표의 원천), README D45 |
 | Esc | **닫기**(`onclose`). 어떤 버튼도 실행하지 않는다 = 안전한 쪽과 같은 결과 | HIG(취소 대체 수단 Esc, `E-APPLE-22`), `A-DRIFT-K15` |
 | 채움 개수 | 포커스할 수 있는 층마다 하나. 대화상자가 열리면 뒤(`inert`)의 [받기]는 셈에서 빠진다 | README P3 |
 | OS 분기 | 없다. Windows 관례 [미확인] | README D2·D36 |
 
-강제: `frontend`(Dialog 테스트, `components.md` §2.10: 채움 1개·DOM 마지막·열리면 포커스가 오른쪽·Enter → 오른쪽·Esc → `onclose`만·`tone=danger`면 왼쪽 끝·8종 표의 오른쪽 키 = 호출부 `primary`), `design-gallery`(대화상자 7종 스냅), `R6`, D62 확인 과업 V2·V3.
+강제: `frontend`(Dialog 테스트, `components.md` §2.10: 채움 1개·DOM 마지막·열리면 포커스가 오른쪽·Enter → 오른쪽·Esc → `onclose`만·`tone=danger`면 왼쪽 끝·8종 표의 오른쪽 키 = 호출부 `primary`), `design-gallery`(대화상자 8종 스냅, v1.1인 D6은 뺀다), `R6`, D62 확인 과업 V2·V3.
 
 ### 5.2 대화상자 8종
 
@@ -894,8 +894,8 @@ Worker는 JS가 없다(README D52). 이 문서의 패턴은 다음으로 대응�
 
 | 수단 | 이 문서에서 거는 것 |
 |---|---|
-| `frontend` | Notice 하나(`tone × variant`), role 매핑, Toaster(하나·대기열·타이머·비대체), AppBanners 우선순위 표, 상태 6종 × 화면 표, 로딩 훅 가짜 타이머(`LOADER_*`), ProgressBar(퍼센트 상시·scaleX·단조·100% 금지·`aria-valuetext`), `jobs.ts` 상태 → 조각·버튼 표, 지연 삭제 되돌리기(닫힘 시점), Dialog(채움 1·순서·Enter·Esc·포커스·7종 표 대조), FieldRow 색 클래스, 검증 시점, 비활성 사유, URL 추출 골든, IME 옛 순서, 포커스 이동(F-4·F-5·F-6), `errorCopy`(버튼 열 1:1·helpId 전수), AuthReason 전수(버튼 하나·계속 문구), 로그인 뷰 네 키, 플랫폼별 설정 행, 헤더 구성 표(⚙ 자리 유지), 업데이트 상태 표, 취소 라벨·확인 조건 |
-| `design-gallery` | 네 화면 + 로그인 × 720×520·960×700·320×231 × 라이트·다크·forced·reduce·contrast·coarse·x-large × 플랫폼 고정 데이터(macOS·Windows), axe, 가로 스크롤 0, 정렬선 x(툴바 첫·끝 요소 포함), 고지 요소·[받기] 뷰포트 안(기본 조합), 토스트·배너 x = 열 x, 토스트 중 마지막 행 가림 없음, 상태 6종·행 상태 전부·대화상자 7종·빈 상태 2종 |
+| `frontend` | Notice 하나(`tone × variant`), role 매핑, Toaster(하나·대기열·타이머·비대체), AppBanners 우선순위 표, 상태 6종 × 화면 표, 로딩 훅 가짜 타이머(`LOADER_*`), ProgressBar(퍼센트 상시·scaleX·단조·100% 금지·`aria-valuetext`), `jobs.ts` 상태 → 조각·버튼 표, 지연 삭제 되돌리기(닫힘 시점), Dialog(채움 1·순서·Enter·Esc·포커스·8종 표 대조), FieldRow 색 클래스, 검증 시점, 비활성 사유, URL 추출 골든, IME 옛 순서, 포커스 이동(F-4·F-5·F-6), `errorCopy`(버튼 열 1:1·helpId 전수), AuthReason 전수(버튼 하나·계속 문구), 로그인 뷰 네 키, 플랫폼별 설정 행, 헤더 구성 표(⚙ 자리 유지), 업데이트 상태 표, 취소 라벨·확인 조건 |
+| `design-gallery` | 네 화면 + 로그인 × 720×520·960×700·320×231 × 라이트·다크·forced·reduce·contrast·coarse·x-large × 플랫폼 고정 데이터(macOS·Windows), axe, 가로 스크롤 0, 정렬선 x(툴바 첫·끝 요소 포함), 고지 요소·[받기] 뷰포트 안(기본 조합), 토스트·배너 x = 열 x, 토스트 중 마지막 행 가림 없음, 상태 6종·행 상태 전부·대화상자 8종(D6 제외)·빈 상태 2종 |
 | `design-copy` | 상태 조각 명사형, 숫자+단위 format만, 코드·HTTP 금지, `ol` 번호, 고지 동일, 단축키 기호 직접 금지, `v\d`·"자동으로 업데이트" 금지, 이 문서의 키 인용 ↔ deck 패리티(DC10) |
 | `design-lint` | ms·px 리터럴, `setTimeout(…, 숫자)`, 입력칸 Enter keydown, `isImeKey` import, `accent-color`, `translate(-50%`, `outline: none`, hover 노출(`G-INPUT-IN1`), `title=` 허용 목록(`G-INPUT-IN2`), 오버레이 `backdrop-filter`, 폭 쿼리 파일·두 블록 동일 |
 | `design-icons` | 톤 아이콘 고정, 은유 유일성 |

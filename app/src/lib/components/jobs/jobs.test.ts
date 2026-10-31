@@ -775,6 +775,20 @@ describe('생방송 행(ADR-0025)', () => {
     expect(api.removeJob).not.toHaveBeenCalled();
   });
 
+  it('D8을 연 채 목록을 떠나면 확인을 버린다(돌아와도 다시 열리지 않는다)', async () => {
+    const user = userEvent.setup();
+    await load([liveJob()]);
+    const first = render(JobList);
+    const row = screen.getByRole('article', { name: '오늘 방송' });
+    await user.click(within(row).getByRole('button', { name: t('action.stopRecording') }));
+    await screen.findByRole('dialog', { name: t('dialog.stopLive.title', { title: '오늘 방송' }) });
+    first.unmount();
+    render(JobList);
+    await tick();
+    expect(screen.queryByRole('dialog', { name: t('dialog.stopLive.title', { title: '오늘 방송' }) })).toBeNull();
+    expect(api.stopJob).not.toHaveBeenCalled();
+  });
+
   it('놓친 조각이 있으면 상태 줄 끝에 보인다', async () => {
     await load([liveJob({ progress: liveProg({ liveGaps: 2 }) })]);
     render(JobList);

@@ -130,6 +130,25 @@ describe('D1 창 닫기 확인: 녹화 중인 생방송이 섞였을 때(ADR-002
     }
   });
 
+  it('받는 중인 것이 전부 생방송이면 본문에 일시정지가 없다', async () => {
+    jobs.state = fromSnapshot([
+      job(1, { kind: 'live', playbackKind: 'live', status: 'running', progress: liveProg() }),
+    ]);
+    try {
+      await mounted();
+      fire(1);
+      const d = await screen.findByRole('dialog', { name: t('dialog.closeLive.title') });
+      expect(within(d).getByText(t('dialog.closeLive.allBody', { n: 1 }))).toBeInTheDocument();
+      expect(d.textContent).not.toContain('일시정지');
+      expect(within(d).getAllByRole('button').map((b) => b.textContent?.trim())).toEqual([
+        t('dialog.closeLive.confirm'),
+        t('dialog.cancel.keepRunning'),
+      ]);
+    } finally {
+      jobs.state = fromSnapshot([]);
+    }
+  });
+
   it('생방송이 없거나 이미 끝났으면 일반 문구다', async () => {
     jobs.state = fromSnapshot([job(1, { kind: 'live', playbackKind: 'live', status: 'completed' })]);
     try {

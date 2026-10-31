@@ -20,8 +20,8 @@
 //!   끝나므로 `stop`으로 구분한다: `Pause` → `paused`, `Quit` → `interrupted`(다음 시작 때 이어받을 대상),
 //!   `Remove` → 지운다. 이유 없이 `Cancelled`가 오면 `failed{internal}`이다.
 //!   **생방송의 "중지"는 취소가 아니다**(`stop_job`, `StopReason::Finish`): 코어의 `live_stop`을 취소해 받은 만큼
-//!   최종 파일로 마무리하고 `completed`가 된다(아무것도 받지 못했으면 `failed{nothingRecorded}`). `pause`는 생방송에서
-//!   같은 뜻이고(`.part`를 남기는 일시정지는 이어 붙일 수 없어 없다), `quit`도 생방송은 마무리한다.
+//!   최종 파일로 마무리하고 `completed`가 된다(아무것도 받지 못했으면 `failed{nothingRecorded}`). `pause`는 생방송을
+//!   거부하고(`invalidInput`, `.part`를 남기는 일시정지는 이어 붙일 수 없어 없다), `quit`은 생방송을 마무리한다.
 //! - **`remove`의 순서**: 태스크의 `JoinHandle`을 꺼내 **잠금을 놓은 뒤** 기다리고, 그다음 `discard_partial`을
 //!   부른다. 끝나는 태스크가 같은 잠금을 잡으므로 잡은 채 기다리면 교착이고, 먼저 지우면 `.part` 잠금 때문에
 //!   `FileLocked`다(코어가 취소 뒤 체크포인트를 쓰는 중일 수도 있다).
@@ -695,19 +695,20 @@ impl<B: Backend> DownloadManager<B> {
 
     /// 일시정지. `running` → `pausing` → (태스크가 끝나면) `paused`, `queued` → `paused`. `.part`는 남는다.
     /// 이미 멈춘 작업에는 아무것도 하지 않는다.
+    /// 생방송은 일시정지가 없다(이어 붙일 수 없다): 상태와 무관하게 `invalidInput`(마무리는 `stop_job`).
     pub fn pause(&self, id: JobId) -> Result<(), AppError> {
         let mut st = self.inner.lock();
         let Some(job) = st.target(id)? else {
             return Ok(());
         };
+        if job.is_live() {
+            return Err(AppError::invalid_input(
+                "생방송 녹화는 일시정지할 수 없습니다",
+            ));
+        }
         match job.rec.status {
             JobStatus::Running => {
-                // 생방송은 `.part`를 남기는 일시정지가 없다: 받은 만큼 마무리한다
-                job.stop = Some(if job.is_live() {
-                    StopReason::Finish
-                } else {
-                    StopReason::Pause
-                });
+                job.stop = Some(StopReason::Pause);
                 job.rec.status = JobStatus::Pausing;
                 job.signal_stop();
             }
@@ -724,7 +725,8 @@ impl<B: Backend> DownloadManager<B> {
     }
 
     /// 생방송 녹화를 멈추고 받은 만큼 최종 파일로 마무리한다. `running` → `pausing` → `completed`.
-    /// 줄 서 있던(`queued`) 작업은 `paused`가 된다. 이미 멈추는 중이거나 끝난 작업에는 아무것도 하지 않는다.
+    /// 줄 서 있던(`queued`) 작업은 받은 것이 없어 마칠 것이 없으므로 아무것도 하지 않는다(생방송은 `paused`가 되지 않는다).
+    /// 이미 멈추는 중이거나 끝난 작업에도 아무것도 하지 않는다.
     /// 생방송이 아닌 작업은 `invalidInput`(그쪽은 `pause`·`remove`다).
     pub fn stop_job(&self, id: JobId) -> Result<(), AppError> {
         let mut st = self.inner.lock();
@@ -741,10 +743,6 @@ impl<B: Backend> DownloadManager<B> {
                 job.stop = Some(StopReason::Finish);
                 job.rec.status = JobStatus::Pausing;
                 job.signal_stop();
-            }
-            JobStatus::Queued => {
-                job.rec.set_status(JobStatus::Paused, now_secs());
-                job.rec.partial_bytes = partial_bytes(&job.rec);
             }
             _ => return Ok(()),
         }
@@ -1861,7 +1859,16 @@ impl<B: Backend> Inner<B> {
                 }
                 End::Cancelled => match stop {
                     Some(StopReason::Pause | StopReason::Finish) => {
-                        r.set_status(JobStatus::Paused, now);
+                        // 생방송 `Paused`는 만들지 않는다. `Finish`는 코어에서 `Done`·`NothingRecorded`로 끝나 여기 오지 않는다(방어)
+                        let live = matches!(r.content, ContentRef::Live { .. });
+                        r.set_status(
+                            if live {
+                                JobStatus::Interrupted
+                            } else {
+                                JobStatus::Paused
+                            },
+                            now,
+                        );
                         r.partial_bytes = partial_bytes(r);
                     }
                     Some(StopReason::Quit) => {

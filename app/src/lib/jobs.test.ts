@@ -989,6 +989,32 @@ describe('생방송 녹화(ADR-0025): 막대·남은 시간 없이 글자만', (
     expect(bodyLine(job(2, { status: 'paused', partialBytes: 1000 }), null)).toBeNull();
   });
 
+  it('끊긴 녹화는 일시정지 어휘를 쓰지 않는다', () => {
+    for (const status of ['paused', 'interrupted'] as const) {
+      const j = live({ status, partialBytes: 5, progress: null });
+      expect(statusWord(j, null), status).toBe(t('job.live.interrupted'));
+      expect(statusParts(j, null, { base: 1024 }), status).toEqual([
+        t('job.live.interruptedBytes', { bytes: '5B' }),
+      ]);
+      const empty = live({ status, partialBytes: null, progress: null });
+      expect(statusParts(empty, null, { base: 1024 }), status).toEqual([t('job.live.interrupted')]);
+      expect(bodyLine(j, null, { base: 1024 }), status).toBe(t('job.live.partial.body'));
+    }
+    // 일반 작업은 그대로 일시정지다
+    const vod = job(2, { status: 'paused', partialBytes: 5 });
+    expect(statusWord(vod, null)).toBe(t('job.status.paused'));
+  });
+
+  it('.part 없는 notLive 실패는 [다시 녹화], 조각이 있으면 [이어받기] 뒤에 [다시 녹화]', () => {
+    const bare = live({ status: 'failed', error: err('notLive'), partialBytes: null, progress: null });
+    const b = jobButtons(bare, null);
+    expect(b.primary).toEqual(['recordAgain']);
+    expect(b.menu).toContain('remove');
+    expect(jobButtons(bare, null).primary).not.toContain('retry');
+    const kept = live({ status: 'failed', error: err('notLive'), partialBytes: 1000, progress: null });
+    expect(jobButtons(kept, null).primary).toEqual(['resume', 'recordAgain']);
+  });
+
   it('받다 만 녹화에는 처음부터 다시 받기가 없다(core.md 61)', () => {
     // 기본 버튼에도 메뉴에도 없다
     for (const status of ['paused', 'interrupted'] as const) {
@@ -1061,11 +1087,11 @@ describe('생방송 녹화(ADR-0025): 막대·남은 시간 없이 글자만', (
     }
   });
 
-  it('오류 코드 notLive·nothingRecorded는 다시 시도 하나', () => {
-    for (const code of ['notLive', 'nothingRecorded'] as const) {
-      const j = live({ status: 'failed', progress: null, error: err(code) });
-      expect(jobButtons(j, null).primary, code).toEqual(['retry']);
-    }
+  it('오류 코드 nothingRecorded는 다시 시도 하나, notLive는 다시 녹화 하나', () => {
+    const none = live({ status: 'failed', progress: null, error: err('nothingRecorded') });
+    expect(jobButtons(none, null).primary).toEqual(['retry']);
+    const off = live({ status: 'failed', progress: null, error: err('notLive') });
+    expect(jobButtons(off, null).primary).toEqual(['recordAgain']);
   });
 });
 

@@ -3,7 +3,8 @@ import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppError, AuthStatusDto, JobDto, SettingsDto, UpdateInfoDto } from '../../bindings';
 import { t } from '../../copy/ko';
-import { job } from '../../../test/jobFixtures';
+import { job, liveProg } from '../../../test/jobFixtures';
+import { fromSnapshot } from '../../stores/jobs.apply';
 
 class FakeChannel {
   onmessage: (e: unknown) => void = () => {};
@@ -336,6 +337,30 @@ describe('UpdateDialog', () => {
     expect(api.updateInstall).not.toHaveBeenCalled();
     await user.click(within(d).getByRole('button', { name: '업데이트하고 다시 시작' }));
     expect(api.updateInstall).toHaveBeenCalledWith(true);
+  });
+
+  it('생방송이 섞이면 둘째 본문, 전부 생방송이면 셋째 본문, 없으면 기존 본문이다', async () => {
+    const live = (id: number) =>
+      job(id, { kind: 'live', playbackKind: 'live', status: 'running', progress: liveProg() });
+    const body = async (jobsList: JobDto[], n: number) => {
+      jobs.state = fromSnapshot(jobsList);
+      update.confirmRunning = n;
+      update.phase = 'confirm';
+      const r = render(UpdateDialog);
+      const d = await screen.findByRole('dialog');
+      const text = d.textContent ?? '';
+      r.unmount();
+      return text;
+    };
+    try {
+      expect(await body([live(1), job(2, { status: 'running' })], 2)).toContain(t('dialog.updateLive.body', { n: 2 }));
+      const all = await body([live(1)], 1);
+      expect(all).toContain(t('dialog.updateLive.allBody', { n: 1 }));
+      expect(all).not.toContain('일시정지');
+      expect(await body([job(2, { status: 'running' })], 1)).toContain(t('dialog.update.body', { n: 1 }));
+    } finally {
+      jobs.state = fromSnapshot([]);
+    }
   });
 
   it('Esc는 닫기(onclose)만 하고 설치하지 않는다', async () => {

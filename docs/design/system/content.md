@@ -514,6 +514,8 @@
 | `job.live.gaps` | — | **놓친 조각 {n}** | ADR-0025. 있을 때만 상태 줄 끝에 |
 | `job.live.stopping` | — | **녹화를 마치는 중** | ADR-0025 |
 | `job.live.partial.body` | — | **방송이 끊겨 이어 붙일 수 없어요. 이어받기를 누르면 받은 부분까지 저장해요.** | ADR-0025. 받다 만 생방송의 본문 줄 |
+| `job.live.interrupted` | — | **녹화 끊김** | 생방송에는 일시정지가 없다. 끊겨 멈춘(paused·interrupted) 녹화의 상태 조각, 받은 것 없음 |
+| `job.live.interruptedBytes` | — | **녹화 끊김 · {bytes} 받음** | 같은 자리, 받은 것 있음(`job.paused` 꼴) |
 | `action.stopRecording` | — | **녹화 마치기** | ADR-0025. 받은 만큼 최종 파일로 마무리 |
 | `job.live.end.ended.body` | — | **방송이 끝나 녹화를 마쳤어요.** | L8·app.md 82. 끝난 생방송 녹화의 본문 줄(방송 종료) |
 | `job.live.end.stopped.body` | — | **직접 녹화를 마쳤어요.** | L8·app.md 82. 본문 줄([녹화 마치기]·창 닫기 확인의 [녹화를 마치고 닫기]) |
@@ -523,7 +525,10 @@
 | `dialog.cancel.live.body` | — | **{size}까지 녹화했어요. 취소하면 녹화한 부분이 지워지고 되돌릴 수 없어요.** | ADR-0025. 생방송 취소 확인 |
 | `dialog.closeLive.title` | — | **녹화를 마치고 닫을까요?** | ADR-0025. 창 닫기 확인(생방송이 섞였을 때) |
 | `dialog.closeLive.body` | — | **받는 중인 영상이 {n}개 있어요. 닫으면 녹화 중인 방송은 지금까지 받은 만큼 저장하고, 나머지는 일시정지돼요.** | ADR-0025 |
+| `dialog.closeLive.allBody` | — | **녹화 중인 방송이 {n}개 있어요. 닫으면 지금까지 받은 만큼 저장하고 녹화를 마쳐요.** | D1, 받는 중인 것이 전부 생방송일 때 |
 | `dialog.closeLive.confirm` | — | **녹화를 마치고 닫기** | ADR-0025 |
+| `dialog.updateLive.body` | — | **받는 중인 영상이 {n}개 있어요. 녹화 중인 방송은 지금까지 받은 만큼 저장하고, 나머지는 일시정지돼요. 다시 시작한 뒤 [이어받기]로 이어받을 수 있어요.** | D5, 생방송이 섞였을 때 |
+| `dialog.updateLive.allBody` | — | **녹화 중인 방송이 {n}개 있어요. 업데이트하면 지금까지 받은 만큼 저장하고 녹화를 마쳐요.** | D5, 받는 중인 것이 전부 생방송일 때 |
 | `job.interrupted` | 중단됨 · {bytes} 받음 | 삭제 → `job.paused` **일시정지됨 · {bytes} 받음** | §4 |
 | `job.completed` | 완료 · {size} · {time} | 유지 + `job.completedNoTime` **완료 · {size}**(정규식 꼬리 제거 삭제) | §2 조각 |
 | `job.completedMissing` | 완료 · 파일을 찾을 수 없어요 | **완료 · 파일 없음** + 본문 `job.completedMissing.body` **파일을 옮기거나 지웠을 수 있어요.** | §3.1-2 |

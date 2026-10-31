@@ -602,6 +602,8 @@ export function install(scenario: Scenario = {}): E2EController {
     stop_job: (a) => {
       const j = must(a.id as number);
       if (j.playbackKind !== 'live') throw err('invalidInput');
+      // 셸 흉내: 줄 서 있는 생방송은 받은 것이 없어 마칠 것이 없다(상태 그대로)
+      if (j.status === 'queued') return null;
       put({ ...j, status: 'pausing' });
       put({
         ...j,
@@ -616,6 +618,8 @@ export function install(scenario: Scenario = {}): E2EController {
     },
     pause_job: (a) => {
       const j = must(a.id as number);
+      // 셸 흉내: 생방송은 일시정지가 없다(상태와 무관하게 invalidInput, 마무리는 stop_job)
+      if (j.playbackKind === 'live') throw err('invalidInput');
       // 실제 매니저는 pausing을 거쳐 paused가 된다(코어가 `.part`를 정리할 때까지)
       put({ ...j, status: 'pausing' });
       put({ ...j, status: 'paused', partialBytes: j.progress?.bytes ?? 0 });

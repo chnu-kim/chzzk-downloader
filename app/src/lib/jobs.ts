@@ -207,7 +207,8 @@ export function statusWord(job: JobDto, p: ProgressDto | null | undefined): stri
     // 중단(앱 종료·치지직 끊김)도 사용자가 멈춘 것과 같은 말이다: 다시 받으면 이어 받는다
     case 'paused':
     case 'interrupted':
-      return t('job.status.paused');
+      // 생방송은 일시정지가 없다: 끊겨 멈춘 녹화다(옛 기록의 paused도 같은 말)
+      return t(job.playbackKind === 'live' ? 'job.live.interrupted' : 'job.status.paused');
     case 'completed':
       return t('job.status.completed');
     case 'skipped':
@@ -326,6 +327,9 @@ export function statusParts(job: JobDto, p: ProgressDto | null | undefined, ctx:
     case 'paused':
     case 'interrupted': {
       const bytes = receivedBytes(job, p);
+      if (job.playbackKind === 'live') {
+        return [bytes <= 0 ? t('job.live.interrupted') : t('job.live.interruptedBytes', { bytes: formatFileSize(bytes, base) })];
+      }
       return [bytes <= 0 ? t('job.status.paused') : t('job.paused', { bytes: formatFileSize(bytes, base) })];
     }
     case 'completed': {
@@ -477,6 +481,7 @@ const FROM_ERROR: Partial<Record<ActionId, JobAction>> = {
   openCookieSettings: 'openCookieSettings',
   reenterCookies: 'reenterCookies',
   reresolve: 'reresolve',
+  recordAgain: 'recordAgain',
   copyReport: 'copyReport',
   openFolder: 'openFolder',
 };

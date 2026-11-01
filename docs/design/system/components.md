@@ -409,6 +409,7 @@ type NoticeProps = {
   actions?: NoticeAction[];                           // ≤ 3, 전부 Button secondary sm(C6·C7 통일)
   onclose?: () => void;                               // inline·banner·toast(타입). 있으면 IconButton x sm. row에는 없다
   help?: { label: string; onclick: () => void };      // 오류 L2 도움말 링크(§2.14). 동작 줄 뒤 자기 줄(.notice-help), 라이브 영역 밖. row에는 없다(타입)
+  details?: Snippet;                                  // 접는 보충 줄(D69). 동작 줄 뒤·help 앞의 자기 줄(.notice-details), 라이브 영역 밖. row에는 없다(타입)
 };
 ```
 
@@ -417,7 +418,7 @@ type NoticeProps = {
 | variant | 면·테두리 | 아이콘 | 글자 행간 | 패딩 | 쓰는 곳 |
 |---|---|---|---|---|---|
 | `inline` | tone 면(`info`·`neutral` `--surface-2`, `warning` `--warning-soft`, `danger` `--danger-soft`), 반경 `--radius-control` | `--icon-md` 20 | `--leading-read` 20(아이콘 20과 첫 줄이 보정 없이 맞는다, `A-PRIM-A7`의 마법 숫자 제거) | `var(--space-8) var(--space-12)`(이 값이 원천. patterns·web은 가리키기만) | 카드 안 안내(충돌·"받다 만 파일"·내 영상 아님), 설정 절 경고, 불러오기 실패, 클립보드 제안([×] 있음) |
-| `banner` | inline과 같다. 본문 열 안, h1 앞 한 장 | 20 | 20 | 같음 + 닫기 24 | 중단 안내·저장 실패·새 버전·서비스 공지(README D37·D41), Worker flash |
+| `banner` | inline과 같다. 본문 열 안, h1 앞 한 장 | 20 | 20 | 같음 + 닫기 24 | 중단 안내·저장 실패·새 버전(notes가 있으면 `details`에 `Disclosure inline` "이번 버전에서 바뀐 점", D69)·서비스 공지(README D37·D41), Worker flash |
 | `row` | 면 없음, 패딩 0 | `--icon-sm` 16 | `--leading-body` 16 | 0 | 작업 행의 오류·막힘 줄, 입력칸 아래 오류 한 줄 |
 | `toast` | `--raised`, `--shadow-toast`, 반경 `--radius-overlay` | 20 | 20 | `var(--space-8) var(--space-8) var(--space-8) var(--space-16)`(닫기 쪽 8) | Toast가 쓴다(§2.13) |
 
@@ -966,3 +967,4 @@ Worker: 없다.
 36. **(c) 최종 시각 판정 보정 6건.** (가) `Disclosure`에 `variant="group"`을 더했다(`vocab.ts`): 목록 그룹 머리용이다. 네이티브 `<details>`가 아니라 `<h3><button aria-expanded aria-controls>`(삼각형 왼쪽, caption 12/600 `--fg-muted`, 상자 없음, 머리 줄 전체가 토글)이고, 접힌 동안에도 `children`을 그린다(완료 그룹의 최신 5개 미리보기는 펼침과 같은 그룹 `Surface` 안이라 호출부가 `open`으로 개수를 정한다). `.disclosure-group`·`.disclosure-toggle`. 완료 그룹은 이것으로 바꿨고 `.preview`·`.in-fold` 지역 CSS(이월 34의 음수 margin)는 없어졌다. (나) `RadioGroup`에 `variant="list"|"inline"`을 더했다(`vocab.ts`, 갤러리 inline 줄): inline은 `.radiogroup-inline`(행 방향, 간격 `--gap-sibling`, 좁으면 줄바꿈)이고 설정 › 보기의 글자 크기·모양(Linux)이 쓴다(patterns §14.4 한 줄). (다) 로그인 화면의 링크형 버튼(처음 로그인 [개인정보 처리방침], pending·stuck [로그인 주소 복사], 표의 `link` 변형)은 `.btn-inline`(밑줄)을 받는다(§7-35 (나)와 같은 규칙, WCAG 1.4.1). (라) [받기]는 글자만이고(download 아이콘 제거), 작업 행 [취소…]·[취소]에도 x 아이콘이 없다(작업 동작 아이콘 표에서 `cancel` 삭제. foundations §9.1: download 모티프는 앱 마크·드롭 오버레이만, 취소는 글자). (마) 작업 행 퍼센트 칸은 400이다(§3.2에 굵기 지정이 없고 목업이 400). (바) forced-colors에서 `summary`가 LinkText로 나오지 않게 `.disclosure > summary`·`.disclosure-toggle`을 `ButtonText`로 고정했다.
 37. **(d) 컴포넌트 구조는 바뀌지 않았다.** 문구 단계가 `ui/`와 `ui.css`를 건드린 곳은 없다. `DropOverlay`의 라벨은 `url.dropHere`(옛 drop.hint 이름은 content §15.1이 정정했다). 작업 행 접근 이름은 `aria-label={job.title}` 그대로다(`content.md` §19-20).
 38. **(①-6, 앱 app.md 구현 중 변경 84) ErrorAlert의 L2를 Notice `help` prop으로 그린다.** 따로 `ErrorAlert` 컴포넌트를 두지 않은 지금 구조에서 L2 "도움말 보기: {주제}"를 그리는 가장 작은 자리다. `help`가 있으면 Notice 루트의 마지막 자식 `div.notice-help`(`flex: 1 0 100%`, 본문 열에 맞춰 `padding-inline-start: calc(var(--icon-md) + var(--space-8))`) 안에 Button `ghost sm` + `edge-start btn-inline`(로그인 화면 [개인정보 처리방침]과 같은 링크형) 하나를 둔다. 동작 버튼 줄(`.notice-actions`)과 라이브 영역(`.notice-text`) 밖이라 버튼 수(≤ 3)에 들지 않고 낭독에 섞이지 않는다. `row`에는 타입으로 없다.
+39. **(D69, 앱 app.md 구현 중 변경 128) Notice에 `details` 슬롯을 더했다.** 새 버전 배너가 "이번 버전에서 바뀐 점" 접는 목록을 동작 줄 아래에 두는 자리다. `details`가 있으면 Notice 루트의 `.notice-actions` 뒤·`.notice-help` 앞 자식 `div.notice-details`(`flex: 1 0 100%`, `help`와 같이 본문 열에 맞춘 `padding-inline-start`)에 그린다. 라이브 영역(`.notice-text`) 밖이라 펼치고 접어도 알림이 다시 읽히지 않고, `row`에는 타입으로 없다. 원천은 `design/ui.css`의 `.notice-details`다. forced-colors는 기존 Disclosure 행(§3)이 덮는다.

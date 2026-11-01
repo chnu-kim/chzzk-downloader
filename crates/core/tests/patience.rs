@@ -455,10 +455,12 @@ async fn resolve_first_quick_retry_waits_base_delay() {
     let dir = tempfile::tempdir().unwrap();
     let out = out_path(&dir);
     let mut cfg = cfg(&proxy.url(), 0);
-    // 빠른 재시도 한 번(시도 2회), 인내 없음. delay(0) = 600~1000ms, delay(1) = 1200~2000ms(느린 러너에도 여유)
+    // 빠른 재시도 한 번(시도 2회), 인내 없음. 지터가 0.75~1.25배라 delay(0) = 3000~5000ms,
+    // delay(1) = 6000ms 이상이다(`-`→`/`는 delay(1), `-`→`+`는 delay(2)). 상한 5900ms는 delay(0) 최대보다
+    // 약 900ms 여유라 느린 러너(coverage 계측 등)의 연결·accept 지연을 견딘다.
     cfg.retry = RetryPolicy {
         max_attempts: 2,
-        base: Duration::from_millis(800),
+        base: Duration::from_millis(4000),
         cap: Duration::from_secs(10),
         patience: Duration::ZERO,
         patience_cap: Duration::from_millis(150),
@@ -475,8 +477,8 @@ async fn resolve_first_quick_retry_waits_base_delay() {
     let e = r.unwrap_err();
     assert!(matches!(e, Error::Network(_)), "{e:?}");
     assert_eq!(proxy.refused(), 2);
-    assert!(took >= Duration::from_millis(590), "{took:?}");
-    assert!(took < Duration::from_millis(1190), "{took:?}");
+    assert!(took >= Duration::from_millis(2950), "{took:?}");
+    assert!(took < Duration::from_millis(5900), "{took:?}");
 }
 
 /// HLS playlist·init 단계(`acquire`의 `load`)의 단절도 인내로 기다렸다가 같은 주소로 다시 받아 끝낸다.

@@ -27,12 +27,8 @@ updates:
     cooldown:
       default-days: 7
     open-pull-requests-limit: 3
-    # minisign-verify는 tauri-plugin-updater(^0.2)와 같은 버전이어야 한다. xtask verify-sig가 updater 검증기와 같은 crate·같은
-    # 버전이라는 불변식(xtask/src/sig.rs, cicd.md 구현 중 변경 65)이 깨지기 때문이다. updater가 0.3을 요구하면 이 항목을 지우고 함께 올린다
-    # (version-check.mjs가 Cargo.lock의 minisign-verify가 하나뿐인지 본다).
-    ignore:
-      - dependency-name: minisign-verify
-        versions: [">=0.3"]
+    # minisign-verify는 tauri-plugin-updater와 같은 버전이어야 한다(xtask verify-sig = updater 검증기, cicd.md 구현 중 변경 65·123).
+    # updater가 다음 메이저를 요구하면 xtask/Cargo.toml도 같은 PR에서 올린다(version-check.mjs가 Cargo.lock의 minisign-verify가 하나뿐인지 본다).
     groups:
       # hmac·sha2·digest는 같은 digest 메이저를 공유해야 해서 하나만 올리면 빌드가 깨진다(2026-10-06 #9·#11). 메이저도 함께 묶는다.
       rustcrypto:

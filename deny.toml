@@ -17,6 +17,13 @@ ignore = [
   { id = "RUSTSEC-2026-0367", reason = "zip 4.x(updater 전이), Windows zip 분기는 서명 확인 뒤·우리 산출물은 exe/msi라 닿지 않음" },
   { id = "RUSTSEC-2026-0368", reason = "zip 4.x(updater 전이), Windows zip 분기는 서명 확인 뒤·우리 산출물은 exe/msi라 닿지 않음" },
   { id = "RUSTSEC-2026-0369", reason = "zip 4.x(updater 전이), Windows zip 분기는 서명 확인 뒤·우리 산출물은 exe/msi라 닿지 않음" },
+  # zvariant·zbus_names·zvariant_derive(unmaintained): zbus 6이 세 crate를 흡수해 단독 crate가 관리 중단됐다(고칠 버전 없음).
+  # 모두 zbus 5의 전이 의존성이고 Linux(·BSD)에서만 들어간다: keepawake(chzzk-shell), tauri-plugin-notification·notify-rust,
+  # tauri-plugin-opener, tauri-plugin-single-instance가 모두 zbus ^5를 요구해 6으로 갈 수 없다. 취약점이 아니라 관리 중단 알림이다.
+  # 위 상위 crate가 모두 zbus 6으로 옮겨 Cargo.lock에서 zbus 5가 사라지면 지운다(cicd.md 구현 중 변경 123).
+  { id = "RUSTSEC-2026-0370", reason = "unmaintained zvariant, zbus 5 전이(keepawake·notification·opener·single-instance), Linux 전용" },
+  { id = "RUSTSEC-2026-0371", reason = "unmaintained zbus_names, zbus 5 전이(keepawake·notification·opener·single-instance), Linux 전용" },
+  { id = "RUSTSEC-2026-0372", reason = "unmaintained zvariant_derive, zbus 5 전이(keepawake·notification·opener·single-instance), Linux 전용" },
 ]
 
 [licenses]

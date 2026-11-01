@@ -121,3 +121,44 @@ describe("decideUpdate: url 출처를 응답하는 Worker에 맞춘다", () => {
     expect(body(decideUpdate(m, cur("1.0.0"), ORIGIN)).platforms.a?.url).toBe(`${OLD}/elsewhere/x.exe`);
   });
 });
+
+// 업데이트 바뀐 점(latest.json notes, docs/design/worker.md 구현 중 변경 111): Worker는 notes를 통과시키고 변환하지 않는다.
+// 서명되지 않는 일반 텍스트라서 정리·상한은 앱이 맡는다(셸 clean_notes)
+describe("decideUpdate: notes는 그대로 통과한다", () => {
+  const NOTES = "구간을 고르는 화면이 빨라졌어요\n받기가 멈추면 알려 줘요";
+  const withNotes = (notes: unknown, url = "https://old.example.test/releases/2.0.0/a.AppImage") =>
+    enc(JSON.stringify({ version: "2.0.0", pub_date: "2026-01-01T00:00:00Z", notes, platforms: { "linux-x86_64": { signature: "s", url } } }));
+  const body = (b: Uint8Array) => JSON.parse(new TextDecoder().decode(b)) as { notes?: unknown; platforms: Record<string, { url: string }> };
+
+  it("출처가 이미 같으면 원본 바이트 그대로(한글과 \\n 포함)", () => {
+    const bytes = withNotes(NOTES, `${ORIGIN}/releases/2.0.0/a.AppImage`);
+    const d = decideUpdate(bytes, cur("1.0.0"), ORIGIN);
+    expect(d.kind).toBe("update");
+    if (d.kind === "update") {
+      expect(d.body).toBe(bytes);
+      expect(body(d.body).notes).toBe(NOTES);
+    }
+  });
+
+  it("url을 다시 직렬화해도 notes 값은 같다", () => {
+    const d = decideUpdate(withNotes(NOTES), cur("1.0.0"), ORIGIN);
+    expect(d.kind).toBe("update");
+    if (d.kind === "update") {
+      const out = body(d.body);
+      expect(out.platforms["linux-x86_64"].url.startsWith(ORIGIN)).toBe(true);
+      expect(out.notes).toBe(NOTES);
+    }
+  });
+
+  it("꺾쇠가 든 notes도 변환하지 않는다(해석은 앱의 텍스트 렌더가 막는다)", () => {
+    const hostile = "<b>x</b>\n[a](https://x.invalid)";
+    const d = decideUpdate(withNotes(hostile), cur("1.0.0"), ORIGIN);
+    expect(d.kind).toBe("update");
+    if (d.kind === "update") expect(body(d.body).notes).toBe(hostile);
+  });
+
+  it("notes가 없는 과거 매니페스트도 그대로 update", () => {
+    const d = decideUpdate(latest("2.0.0"), cur("1.0.0"), ORIGIN);
+    expect(d.kind).toBe("update");
+  });
+});

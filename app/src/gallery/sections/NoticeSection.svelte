@@ -3,6 +3,7 @@
 <script lang="ts">
   // 알림 매트릭스: variant(inline·banner·row·toast) × tone(neutral·info·warning·danger) × (제목만·동작·닫기)
   // (docs/design/system/components.md §2.12). row는 동작·닫기가 없다. 토스트는 갤러리에서는 흐름 안에 그린다.
+  import UpdateNotes from '../../lib/components/app/UpdateNotes.svelte';
   import Notice from '../../lib/components/ui/Notice.svelte';
   import { NOTICE_VARIANT, TONE, type NoticeVariant, type Tone } from '../../lib/components/ui/vocab';
   import { NOTICE, STATE_LABEL, TEXT, TITLE } from '../fixtures';
@@ -49,6 +50,10 @@
     <Notice {...noticeProps('inline', 'warning', 'many')}>{NOTICE.body}</Notice>
   </Row>
 
+  <Row label={STATE_LABEL.withDetails} stack>
+    <Notice variant="banner" tone="info" actions={one} onclose={noop} {details}>{NOTICE.body}</Notice>
+  </Row>
+
   <Row label={STATE_LABEL.samples} stack>
     <Notice variant="inline" tone="info" {...samples.short}>{TEXT.long}</Notice>
     <Notice variant="inline" tone="danger" {...samples.unbroken}>{TEXT.unbroken}</Notice>
@@ -56,3 +61,7 @@
     <Notice variant="row" tone="warning">{TEXT.long}</Notice>
   </Row>
 </Section>
+
+{#snippet details()}
+  <UpdateNotes notes={NOTICE.notes} />
+{/snippet}

@@ -1083,6 +1083,12 @@ export const SITE_CSS = `/* [root] 라이트 기본값. ref 팔레트와 sys 토
   min-width: 0;
   padding-inline-start: calc(var(--icon-md) + var(--space-8));
 }
+/* 접는 보충 줄(Notice details, D69): help 줄과 같이 본문 열(아이콘 + gap 뒤)에 맞춘 자기 줄. 라이브 영역 밖 */
+.notice-details {
+  flex: 1 0 100%;
+  min-width: 0;
+  padding-inline-start: calc(var(--icon-md) + var(--space-8));
+}
 /* 링크 글자가 길어(주제 이름) 좁은 창·큰 글자에서 줄을 바꾼다(가로 스크롤 0) */
 .notice-help > .btn {
   max-width: 100%;
@@ -2240,4 +2246,4 @@ pre.license {
   }
 }
 `;
-export const SITE_CSS_HASH = "40a9c35a94dc4dec";
+export const SITE_CSS_HASH = "86bbf904f56e903a";

@@ -455,6 +455,7 @@ export const ko = {
   'update.installing': '설치하고 다시 시작하는 중',
   'update.failed': '업데이트하지 못했어요',
   'update.untrusted': '업데이트 파일을 확인할 수 없어 받지 않았어요',
+  'update.notes.title': '이번 버전에서 바뀐 점',
 
   // OS 알림·전원 사유(content.md §14). Rust 상수(`crates/shell/src/notify.rs`)와 같은 글자다. 제목에 앱 이름을 넣지 않는다.
   // `notify.many`는 완료·실패 묶음 알림 둘의 본문 `many_body`다(제목은 `completed`·`failed`가 다르다)

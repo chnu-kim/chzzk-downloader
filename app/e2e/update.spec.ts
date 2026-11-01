@@ -35,6 +35,34 @@ test('배너와 [×], 설정의 확인', async ({ app }) => {
   expect(await app.cmds()).toContain('update_check');
 });
 
+const withNotes: UpdateInfoDto = { ...available, notes: '구간을 고르는 화면이 빨라졌어요\n받기가 멈추면 바로 알려 줘요\n<b>글자</b> 그대로 보여요' };
+
+test('바뀐 점이 있으면 배너에서 접어 두었다가 펼쳐 읽고, 이어서 설치한다(D69)', async ({ app }) => {
+  const { page } = app;
+  await app.open({ auth: signedIn, update: { available: withNotes } });
+  const banner = page.getByRole('region', { name: t('update.banner', { version: withNotes.version }) });
+  const summary = banner.getByText(t('update.notes.title'));
+  await expect(summary).toBeVisible();
+  // 기본은 접힘이라 항목이 보이지 않는다
+  await expect(banner.getByRole('listitem')).toHaveCount(0);
+  await summary.click();
+  await expect(banner.getByRole('listitem')).toHaveCount(3);
+  // HTML은 해석하지 않고 글자 그대로 보인다
+  await expect(banner.getByRole('listitem').nth(2)).toHaveText('<b>글자</b> 그대로 보여요');
+  await app.axe('업데이트 바뀐 점 펼침');
+  // 기존 흐름: [지금 업데이트]로 바로 설치한다
+  await banner.getByRole('button', { name: t('update.install') }).click();
+  await expect(page.getByText(t('update.installing'))).toBeVisible();
+});
+
+test('바뀐 점이 없으면 접는 줄이 없다(D69)', async ({ app }) => {
+  const { page } = app;
+  await app.open({ auth: signedIn, update: { available } });
+  const banner = page.getByRole('region', { name: t('update.banner', { version: available.version }) });
+  await expect(banner).toBeVisible();
+  await expect(banner.getByText(t('update.notes.title'))).toHaveCount(0);
+});
+
 test('받는 중이면 확인(D5) 뒤 설치한다', async ({ app }) => {
   const { page } = app;
   await app.open({ auth: signedIn, update: { available, running: 1 } });

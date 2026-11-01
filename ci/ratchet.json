@@ -27,7 +27,7 @@
     "binary": {
       "linux": 39119336,
       "darwin": 27820176,
-      "windows": 23805440,
+      "windows": 24357888,
       "windows-cli": 10313728
     },
     "bundle": {

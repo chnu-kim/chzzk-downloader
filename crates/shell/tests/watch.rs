@@ -1491,10 +1491,37 @@ async fn responses_carry_no_secret() {
     }
 }
 
+/// 로그 대조 시험을 하위 프로세스에서 혼자 돌린다는 표시.
+const LOG_CHILD: &str = "CHZZK_WATCH_LOG_CHILD";
+
 #[tokio::test]
 async fn debug_and_logs_have_no_secret() {
     use tracing_subscriber::Layer;
     use tracing_subscriber::layer::SubscriberExt;
+
+    // 등록된 dispatcher가 이 시험의 scoped subscriber 하나뿐이면 tracing-core는 콜사이트를 처음 등록하는 스레드의
+    // 기본 subscriber로 interest를 정한다. 같은 바이너리의 다른 시험 스레드가 watch.rs 콜사이트를 먼저 밟으면 그
+    // 콜사이트가 전역으로 never에 묶여 이 시험의 로그가 버려진다(간헐 실패). 그래서 자기 바이너리를 이 시험 하나만으로
+    // 다시 띄워 다른 스레드가 없는 프로세스에서 돌린다
+    if std::env::var_os(LOG_CHILD).is_none() {
+        let out = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "debug_and_logs_have_no_secret",
+                "--test-threads=1",
+            ])
+            .env(LOG_CHILD, "1")
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(out.status.success(), "{stdout}{stderr}");
+        assert!(
+            stdout.contains("1 passed"),
+            "하위 프로세스가 시험을 돌려야 한다: {stdout}"
+        );
+        return;
+    }
 
     let buf = LogBuf::default();
     let layer = tracing_subscriber::fmt::layer()

@@ -352,12 +352,12 @@ async function cmdGate(env) {
     }
   } else if (versionCheck([]) !== 0) bad++;
   // 1-1. 이번 버전의 바뀐 점 파일: tag는 필수, 리허설은 없으면 건너뛰고 있으면 형식을 본다(3 OS 빌드 전에 시크릿 없이 빨리 실패)
-  const np = notesPlan({ RELEASE_MODE: mode }, version);
-  for (const p of np.problems) {
+  const gn = gateNotes(mode, version);
+  for (const p of gn.problems) {
     err(`gate: ${p}`);
     bad++;
   }
-  if (!np.problems.length) log(np.file ? `gate: release/notes/${version}.md 형식 통과` : `gate: release/notes/${version}.md 없음(리허설이라 건너뜀)`);
+  if (gn.message) log(gn.message);
   if (mode === 'tag') {
     // 2. 단조 증가: 저장소의 다른 v* 태그보다 커야 한다
     const others = git(['tag', '-l', 'v*']).out.split('\n').filter((t) => t && t !== tag);
@@ -455,27 +455,55 @@ export function parseNotes(raw) {
 
 export const notesProblems = (raw) => parseNotes(raw).problems;
 
-// 노트 파일 경로. dry만 RELEASE_NOTES_FILE로 덮어쓴다(tag는 DRY_OVERRIDES가 막고, 리허설은 gate가 기본 경로만 본다)
-export function notesPath(env, version) {
-  if (env.RELEASE_MODE === 'dry' && env.RELEASE_NOTES_FILE) return resolve(env.RELEASE_NOTES_FILE);
-  return join(ROOT, 'release/notes', `${version}.md`);
-}
-
 // 필수 여부 표(cicd.md 구현 중 변경): tag는 파일이 없으면 실패, 리허설·dry는 없으면 생략(file null), 있으면 형식을 본다.
-// dry의 RELEASE_NOTES_FILE을 명시했는데 없으면 실패. → { file: 경로 | null, problems: string[] }
+// dry의 RELEASE_NOTES_FILE을 명시했는데 없으면 실패. dry만 RELEASE_NOTES_DIR로 노트 폴더를 바꾼다(selftest가 합성 버전으로 실제
+// 노트 폴더를 보지 않게, tag는 DRY_OVERRIDES가 막는다). root는 시험이 임시 저장소를 주입하는 seam이다. → { file: 경로 | null, problems: string[] }
 export function notesPlan(env, version, root = ROOT) {
   const mode = env.RELEASE_MODE;
   const explicit = mode === 'dry' && env.RELEASE_NOTES_FILE;
-  const file = explicit ? resolve(env.RELEASE_NOTES_FILE) : join(root, 'release/notes', `${version}.md`);
+  const dir = mode === 'dry' && env.RELEASE_NOTES_DIR ? resolve(env.RELEASE_NOTES_DIR) : join(root, 'release/notes');
+  const file = explicit ? resolve(env.RELEASE_NOTES_FILE) : join(dir, `${version}.md`);
   if (!existsSync(file)) {
     if (mode === 'tag' || explicit) {
       const shown = explicit ? '--notes 파일' : `release/notes/${version}.md`;
-      return { file: null, problems: [`${shown}가 없다(태그 릴리스는 이번 버전에서 바뀐 점을 3~5줄 해요체로 적은 파일이 필요하다)`] };
+      // 조사가 받침에 따라 달라지지 않게 "없다" 앞에 쉼표 문장으로 쓴다
+      return { file: null, problems: [`${shown}을(를) 찾을 수 없다(태그 릴리스는 이번 버전에서 바뀐 점을 1~${NOTES_MAX_ITEMS}줄 해요체로 적은 파일이 필요하다, 3~${NOTES_MAX_ITEMS}줄을 권장한다)`] };
     }
     return { file: null, problems: [] };
   }
   const problems = notesProblems(readFileSync(file, 'utf8'));
   return problems.length ? { file: null, problems } : { file, problems };
+}
+
+// gate의 노트 판정(시험이 cmdGate 배선을 이 함수로 본다) → { problems, message }
+export function gateNotes(mode, version, root = ROOT) {
+  const np = notesPlan({ RELEASE_MODE: mode }, version, root);
+  const message = np.problems.length ? '' : np.file ? `gate: release/notes/${version}.md 형식 통과` : `gate: release/notes/${version}.md 없음(리허설이라 건너뜀)`;
+  return { problems: np.problems, message };
+}
+
+// release/notes/*.md 전부의 이름(X.Y.Z.md)과 형식. 태그 전에 PR에서 형식 실수를 잡는다(파일이 있는지는 태그 gate만 본다) → string[]
+export function allNotesProblems(root = ROOT) {
+  const dir = join(root, 'release/notes');
+  if (!existsSync(dir)) return [];
+  const out = [];
+  for (const f of readdirSync(dir).sort()) {
+    if (f === '.gitkeep') continue;
+    const m = /^(.+)\.md$/.exec(f);
+    if (!m || !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(m[1])) {
+      out.push(`release/notes/${f}: 파일 이름은 X.Y.Z.md 여야 한다`);
+      continue;
+    }
+    for (const p of notesProblems(readFileSync(join(dir, f), 'utf8'))) out.push(`release/notes/${f}: ${p.replace(/^release\/notes: /, '')}`);
+  }
+  return out;
+}
+
+function cmdNotesCheck() {
+  const problems = allNotesProblems();
+  for (const p of problems) err(`notes-check: ${p}`);
+  if (!problems.length) log('notes-check: release/notes/*.md 이름·형식 통과');
+  return problems.length ? 1 : 0;
 }
 
 // ---- xtask 바이너리 ----
@@ -638,7 +666,7 @@ function cmdBuild(env) {
 //   dry: 가짜 S3(release.yml stage 작업과 selftest). R2_ENDPOINT가 루프백이어야 하고 위 덮어쓰기를 받는다.
 // 같은 publish·verify 코드가 두 모드에서 돈다(selftest·stage가 배포하는 코드를 그대로 부른다, 리뷰 G6).
 export const LOOPBACK = /^http:\/\/(?:127\.0\.0\.1|localhost|\[::1\]):\d{1,5}$/;
-export const DRY_OVERRIDES = ['R2_ENDPOINT', 'RELEASE_PUBKEY', 'RELEASE_VERSION', 'RELEASE_STAGE_DIR', 'WORKER_BUNDLE', 'WORKER_SECRET_LIST', 'XTASK_LIST_MAX_KEYS', 'RELEASE_NOTES_FILE'];
+export const DRY_OVERRIDES = ['R2_ENDPOINT', 'RELEASE_PUBKEY', 'RELEASE_VERSION', 'RELEASE_STAGE_DIR', 'WORKER_BUNDLE', 'WORKER_SECRET_LIST', 'XTASK_LIST_MAX_KEYS', 'RELEASE_NOTES_FILE', 'RELEASE_NOTES_DIR'];
 export function boundaryProblems(env) {
   const mode = env.RELEASE_MODE;
   if (mode === 'tag') return DRY_OVERRIDES.filter((n) => env[n]).map((n) => `tag 모드는 ${n}를 받지 않는다(진짜 릴리스를 다른 곳·키·버전으로 돌리지 못하게)`);
@@ -1129,6 +1157,9 @@ async function cmdSelftest(env) {
     if (x(['keygen', '--out', key], { XTASK_KEY_PASSWORD: 'selftest-pw' }) !== 0) throw new Error('keygen 실패');
     const pub = `${key}.pub`;
     const S = dryEnv(base0, creds, fake.port, { key, pw: 'selftest-pw', pub });
+    // 합성 버전(1.0.0…)이 실제 release/notes/를 보지 않게 빈 임시 폴더를 쓴다(저장소가 실제 1.0.0 노트를 가져도 (n1)·(n3)이 그대로다)
+    S.RELEASE_NOTES_DIR = join(work, 'notes-empty');
+    mkdirSync(S.RELEASE_NOTES_DIR, { recursive: true });
     let n = 0;
     const publish = (v, pubDate, extra = {}) => {
       const inDir = join(work, `in-${v}`);
@@ -1215,9 +1246,9 @@ async function cmdSelftest(env) {
     expect('(e) preflight 프로세스: exit 1 + 정확한 줄', 0, r.status === 1 && r.stderr.split('\n').includes(`::error::${preflightMessage(RELEASE_SECRETS)}`) ? 0 : 1);
     const latestE = get(LATEST_KEY);
     const TAG_OK = { VERIFY_VIA: TAG_VERIFY_VIA, CI_VERIFY_TOKEN: 'selftest-token' };
-    const pe = publish('1.5.0', '2026-10-08T00:00:00Z', { RELEASE_MODE: 'tag', RELEASE_VERSION: '', RELEASE_STAGE_DIR: '', RELEASE_PUBKEY: '', ...TAG_OK });
+    const pe = publish('1.5.0', '2026-10-08T00:00:00Z', { RELEASE_MODE: 'tag', RELEASE_VERSION: '', RELEASE_STAGE_DIR: '', RELEASE_PUBKEY: '', RELEASE_NOTES_DIR: '', ...TAG_OK });
     expect('(e) tag 모드 publish는 R2_ENDPOINT 덮어쓰기 거부(exit 2)', 0, pe.code === 2 && last.includes('tag 모드는 R2_ENDPOINT를 받지 않는다') ? 0 : 1);
-    const pv = publish('1.5.0', '2026-10-08T00:00:00Z', { RELEASE_MODE: 'tag', RELEASE_VERSION: '', RELEASE_STAGE_DIR: '', RELEASE_PUBKEY: '', ...TAG_OK, VERIFY_VIA: 's3' });
+    const pv = publish('1.5.0', '2026-10-08T00:00:00Z', { RELEASE_MODE: 'tag', RELEASE_VERSION: '', RELEASE_STAGE_DIR: '', RELEASE_PUBKEY: '', RELEASE_NOTES_DIR: '', ...TAG_OK, VERIFY_VIA: 's3' });
     expect('(e) tag 모드 publish는 VERIFY_VIA=s3면 preflight에서 1(업로드 전)', 0, pv.code === 1 && last.includes(`::error::${tagVerifyViaMessage('s3')}. 업로드하지 않음`) ? 0 : 1);
     const pe2 = publish('1.5.0', '2026-10-08T00:00:00Z', { R2_ENDPOINT: 'https://example.r2.cloudflarestorage.com' });
     expect('(e) dry 모드 publish는 루프백이 아닌 엔드포인트 거부(exit 2)', 2, pe2.code);
@@ -1259,8 +1290,11 @@ async function cmdSelftest(env) {
     expect('(n2) 명시한 노트 파일이 없어도 exit 1', 1, publish('1.2.5', '2026-10-09T01:00:00Z', { RELEASE_NOTES_FILE: join(work, '없음.md') }).code);
     expect('(n2) 거부 뒤 latest.json 그대로, 1.2.5 객체 없음', 0, same(get(LATEST_KEY), latestN) === 0 && get('releases/1.2.5/manifest.json') === null ? 0 : 1);
     const xbin = xtaskBin(base0);
-    const pt = publish('1.2.5', '2026-10-09T01:00:00Z', { RELEASE_MODE: 'tag', RELEASE_VERSION: '', RELEASE_STAGE_DIR: '', RELEASE_PUBKEY: '', R2_ENDPOINT: '', ...TAG_OK, XTASK_BIN: xbin, XTASK_SHA256: sha256hex(readFileSync(xbin)) });
-    expect('(n4) tag 모드 publish는 노트 파일이 없으면 exit 1(업로드 전)', 0, pt.code === 1 && last.includes(`release/notes/${workspaceVersion()}.md가 없다`) && last.includes('업로드하지 않음') ? 0 : 1);
+    const pt = publish('1.2.5', '2026-10-09T01:00:00Z', { RELEASE_MODE: 'tag', RELEASE_VERSION: '', RELEASE_STAGE_DIR: '', RELEASE_PUBKEY: '', RELEASE_NOTES_DIR: '', R2_ENDPOINT: '', ...TAG_OK, XTASK_BIN: xbin, XTASK_SHA256: sha256hex(readFileSync(xbin)) });
+    // 저장소에 이번 버전 노트가 이미 있으면(버전 PR) 노트 단계를 지나 프로브에서 멈춘다. 없을 때만 "없음" 문구를 기대한다(저장소 상태에 따라 단언이 깨지지 않게)
+    const realNote = existsSync(join(ROOT, 'release/notes', `${workspaceVersion()}.md`));
+    if (realNote) log(`selftest (n4): release/notes/${workspaceVersion()}.md가 있어 "노트 없음" 단언을 건너뜀(노트 없는 tag는 release.test.mjs notesPlan이 본다)`);
+    expect('(n4) tag 모드 publish는 노트 파일이 없으면 exit 1(업로드 전)', 0, pt.code === 1 && (realNote || (last.includes(`release/notes/${workspaceVersion()}.md을(를) 찾을 수 없다`) && last.includes('업로드하지 않음'))) ? 0 : 1);
     expect('(n4) 거부 뒤 latest.json 그대로', 0, same(get(LATEST_KEY), latestN));
     // (i) verify 결정표의 나머지: 나중 태그가 승격(superseded), 승격 전에 실패(not-promoted)
     const vs = verify('1.0.0');
@@ -1978,12 +2012,14 @@ async function cmdWorker(env, argv) {
 export function main(argv, env = process.env) {
   const [cmd, ...rest] = argv;
   if (rest.length && cmd !== 'worker') {
-    console.error('사용법: release.mjs <pubkey|gate|next-version|build|xtask|preflight|publish|verify|rollback|prune|stage|selftest|worker-bundle|worker>');
+    console.error('사용법: release.mjs <pubkey|notes-check|gate|next-version|build|xtask|preflight|publish|verify|rollback|prune|stage|selftest|worker-bundle|worker>');
     return 2;
   }
   switch (cmd) {
     case 'pubkey':
       return cmdPubkey();
+    case 'notes-check':
+      return cmdNotesCheck();
     case 'gate':
       return cmdGate(env);
     case 'next-version':
@@ -2011,7 +2047,7 @@ export function main(argv, env = process.env) {
     case 'worker-bundle':
       return cmdWorkerBundle(env);
     default:
-      console.error('사용법: release.mjs <pubkey|gate|next-version|build|xtask|preflight|publish|verify|rollback|prune|stage|selftest|worker-bundle|worker>');
+      console.error('사용법: release.mjs <pubkey|notes-check|gate|next-version|build|xtask|preflight|publish|verify|rollback|prune|stage|selftest|worker-bundle|worker>');
       return 2;
   }
 }

@@ -16,7 +16,7 @@ export function clipGraphemes(s: string, max: number): string {
   return seg.length <= max ? s : seg.slice(0, max - 1).join('') + '…';
 }
 
-// 업데이트 "이번 버전에서 바뀐 점"(latest.json notes, 서명되지 않는 일반 텍스트, D69). 셸 `clean_notes`와 같은 순서와 표를 쓰는 이중 방어다
+// 업데이트 "이번 버전에서 바뀐 점"(latest.json notes, 서명되지 않는 일반 텍스트, D69). 셸 `clean_notes`와 같은 순서(줄로 먼저 나눔)를 쓰는 이중 방어다. 정리 문자 집합은 각 구현의 위생 함수를 따른다(여기는 ZWNJ·ZWJ·U+2065도 지우고 셸은 남긴다)
 // (mock·e2e는 셸을 거치지 않는다). 줄로 먼저 나눈 뒤 줄마다 정리한다: cleanDisplayText는 `\n`도 공백으로 바꿔 전체에 쓰면 줄이 합쳐진다.
 // HTML·마크다운은 해석하지도 지우지도 않는다(호출부가 텍스트 노드로만 그린다).
 export function updateNoteLines(notes: string | null): string[] {

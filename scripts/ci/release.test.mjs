@@ -29,7 +29,8 @@ import {
   judgeCheck,
   maskValues,
   minNextVersion,
-  notesPath,
+  allNotesProblems,
+  gateNotes,
   notesPlan,
   notesProblems,
   parseNotes,
@@ -1144,12 +1145,64 @@ test('notes 공유 벡터(xtask/testdata/notes-vectors.json): xtask parse_notes�
   }
 });
 
-test('notesPath: dry만 RELEASE_NOTES_FILE로 덮어쓴다(tag·리허설은 늘 release/notes/<버전>.md)', () => {
-  assert.equal(notesPath({ RELEASE_MODE: 'tag' }, '1.2.3'), join(ROOT, 'release/notes/1.2.3.md'));
-  assert.equal(notesPath({ RELEASE_MODE: 'tag', RELEASE_NOTES_FILE: '/x/n.md' }, '1.2.3'), join(ROOT, 'release/notes/1.2.3.md'));
-  assert.equal(notesPath({ RELEASE_MODE: 'dry' }, '1.2.3'), join(ROOT, 'release/notes/1.2.3.md'));
-  assert.equal(notesPath({ RELEASE_MODE: 'dry', RELEASE_NOTES_FILE: '/x/n.md' }, '1.2.3'), resolve('/x/n.md'));
-  assert.ok(DRY_OVERRIDES.includes('RELEASE_NOTES_FILE'), 'tag 모드는 덮어쓰기를 받지 않는다');
+test('RELEASE_NOTES_FILE·RELEASE_NOTES_DIR는 dry 전용이다(tag는 덮어쓰기를 받지 않는다)', () => {
+  assert.ok(DRY_OVERRIDES.includes('RELEASE_NOTES_FILE'));
+  assert.ok(DRY_OVERRIDES.includes('RELEASE_NOTES_DIR'));
+  const dir = mkdtempSync(join(tmpdir(), 'notes-dir-'));
+  try {
+    writeFileSync(join(dir, '1.2.3.md'), '- 하나\n');
+    // dry는 DIR의 파일을 보고, tag·리허설은 DIR을 무시한다(root의 release/notes를 본다)
+    assert.equal(notesPlan({ RELEASE_MODE: 'dry', RELEASE_NOTES_DIR: dir }, '1.2.3', '/없는/루트').file, join(dir, '1.2.3.md'));
+    assert.deepEqual(notesPlan({ RELEASE_MODE: 'dry', RELEASE_NOTES_DIR: dir }, '9.9.9', '/없는/루트'), { file: null, problems: [] });
+    for (const m of ['tag', 'rehearsal']) assert.equal(notesPlan({ RELEASE_MODE: m, RELEASE_NOTES_DIR: dir }, '1.2.3', '/없는/루트').file, null, m);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('gateNotes: cmdGate가 쓰는 노트 판정(tag는 필수, 리허설은 건너뜀, 형식 위반은 실패)', () => {
+  const root = mkdtempSync(join(tmpdir(), 'gate-notes-'));
+  try {
+    mkdirSync(join(root, 'release/notes'), { recursive: true });
+    assert.ok(gateNotes('tag', '1.0.0', root).problems.length > 0);
+    assert.deepEqual(gateNotes('rehearsal', '1.0.0', root).problems, []);
+    assert.match(gateNotes('rehearsal', '1.0.0', root).message, /없음\(리허설이라 건너뜀\)/);
+    writeFileSync(join(root, 'release/notes/1.0.0.md'), '- 좋아요\n');
+    assert.deepEqual(gateNotes('tag', '1.0.0', root).problems, []);
+    assert.match(gateNotes('tag', '1.0.0', root).message, /형식 통과/);
+    writeFileSync(join(root, 'release/notes/1.0.0.md'), 'v0.14 나왔어요\n');
+    assert.ok(gateNotes('tag', '1.0.0', root).problems.length > 0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('gate 소스가 gateNotes를 부른다(배선이 지워지면 실패)', () => {
+  const src = readFileSync(join(ROOT, 'scripts/ci/release.mjs'), 'utf8');
+  const body = src.slice(src.indexOf('function cmdGate'), src.indexOf('function cmdGate') + 3000);
+  assert.match(body, /gateNotes\(mode, version\)/);
+  assert.match(body, /bad\+\+/);
+});
+
+test('allNotesProblems: 파일 이름은 X.Y.Z.md, 형식 위반은 PR에서 잡는다', () => {
+  const root = mkdtempSync(join(tmpdir(), 'all-notes-'));
+  try {
+    assert.deepEqual(allNotesProblems(root), []); // 폴더가 없어도 통과
+    mkdirSync(join(root, 'release/notes'), { recursive: true });
+    const put = (f, t) => writeFileSync(join(root, 'release/notes', f), t);
+    put('0.14.0.md', '- 좋아요\n- 둘이에요\n');
+    assert.deepEqual(allNotesProblems(root), []);
+    put('v0.14.1.md', '- 좋아요\n');
+    put('notes.txt', 'x');
+    put('0.14.2.md', '- 하나\n  - 들여 쓴 목록\n');
+    const out = allNotesProblems(root);
+    assert.equal(out.length, 3, out.join('\n'));
+    assert.ok(out.some((m) => m.startsWith('release/notes/v0.14.1.md: 파일 이름')));
+    assert.ok(out.some((m) => m.startsWith('release/notes/notes.txt: 파일 이름')));
+    assert.ok(out.some((m) => m.startsWith('release/notes/0.14.2.md: ')));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('notesPlan: tag는 파일이 필수, 리허설·dry는 없으면 생략, 있으면 형식을 본다', () => {
@@ -1162,7 +1215,7 @@ test('notesPlan: tag는 파일이 필수, 리허설·dry는 없으면 생략, �
     // 파일 없음
     let r = plan('tag', '1.0.0');
     assert.equal(r.file, null);
-    assert.match(r.problems.join('\n'), /release\/notes\/1\.0\.0\.md가 없다/);
+    assert.match(r.problems.join('\n'), /release\/notes\/1\.0\.0\.md을\(를\) 찾을 수 없다.*1~5줄/);
     for (const m of ['rehearsal', 'dry']) {
       r = plan(m, '1.0.0');
       assert.deepEqual(r, { file: null, problems: [] }, m);

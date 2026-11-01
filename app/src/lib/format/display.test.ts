@@ -27,7 +27,7 @@ describe('clipGraphemes: 자소 경계로 자른다', () => {
   });
 });
 
-describe('updateNoteLines: 업데이트 바뀐 점(셸 clean_notes와 같은 표)', () => {
+describe('updateNoteLines: 업데이트 바뀐 점(셸 clean_notes와 같은 순서, 정리 집합은 각 위생 함수를 따른다)', () => {
   it('없거나 비면 빈 목록이다', () => {
     expect(updateNoteLines(null)).toEqual([]);
     expect(updateNoteLines('')).toEqual([]);

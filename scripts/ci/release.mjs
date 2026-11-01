@@ -351,6 +351,13 @@ async function cmdGate(env) {
       bad++;
     }
   } else if (versionCheck([]) !== 0) bad++;
+  // 1-1. 이번 버전의 바뀐 점 파일: tag는 필수, 리허설은 없으면 건너뛰고 있으면 형식을 본다(3 OS 빌드 전에 시크릿 없이 빨리 실패)
+  const np = notesPlan({ RELEASE_MODE: mode }, version);
+  for (const p of np.problems) {
+    err(`gate: ${p}`);
+    bad++;
+  }
+  if (!np.problems.length) log(np.file ? `gate: release/notes/${version}.md 형식 통과` : `gate: release/notes/${version}.md 없음(리허설이라 건너뜀)`);
   if (mode === 'tag') {
     // 2. 단조 증가: 저장소의 다른 v* 태그보다 커야 한다
     const others = git(['tag', '-l', 'v*']).out.split('\n').filter((t) => t && t !== tag);
@@ -401,6 +408,74 @@ async function cmdGate(env) {
   ghOutput(env, { version, pub_date: pubDate });
   log(`gate: mode=${mode} version=${version} pub_date=${pubDate}`);
   return bad ? 1 : 0;
+}
+
+// ---- 업데이트 바뀐 점(release/notes/<버전>.md) ----
+// xtask manifest.rs parse_notes·check_notes와 같은 규칙이다(공유 벡터 xtask/testdata/notes-vectors.json을 둘 다 읽는다, 한쪽만 고치지 않는다).
+// 이 파일의 검사는 3 OS 빌드 전에 시크릿 없이 빨리 실패하려는 것이고, latest.json에 들어가는 값과 최종 판정은 xtask가 한다.
+// 필수 여부는 여기서만 정한다: tag는 파일이 필수, 리허설·dry(stage·selftest)는 없으면 생략하고 있으면 형식을 본다.
+export const NOTES_MAX_ITEMS = 5;
+export const NOTES_ITEM_MAX_CHARS = 80;
+// C0·C1·DEL, BIDI 제어, ZWSP, WJ·보이지 않는 연산자, BOM, 소프트하이픈, U+2028/2029
+const NOTES_BAD_CHARS = /[\u0000-\u001f\u007f-\u009f\u061c\u200b\u200e\u200f\u2028\u2029\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff\u00ad]/u;
+const NOTES_VERSION_LIKE = /(^|[^0-9A-Za-z])v[0-9]/;
+
+function notesItemProblem(body) {
+  const n = [...body].length;
+  if (n === 0) return '본문이 비었다';
+  if (n > NOTES_ITEM_MAX_CHARS) return `한 줄이 ${NOTES_ITEM_MAX_CHARS}자를 넘는다`;
+  if (NOTES_BAD_CHARS.test(body)) return '제어·보이지 않는 문자가 있다';
+  if (/[<>`]/.test(body) || body.includes('](')) return 'HTML·마크다운 표시(< > ` ]()는 쓸 수 없다';
+  if (body.includes('http://') || body.includes('https://')) return '주소는 쓸 수 없다';
+  if (NOTES_VERSION_LIKE.test(body)) return '버전 표기(v숫자)는 쓸 수 없다';
+  return null;
+}
+
+// → { notes: latest.json notes 값 | null, problems: string[] }
+export function parseNotes(raw) {
+  let text = raw.startsWith('\ufeff') ? raw.slice(1) : raw;
+  text = text.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
+  const items = [];
+  const lines = text.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].replace(/ +$/, '');
+    if (line === '') continue;
+    const at = (why) => ({ notes: null, problems: [`release/notes: ${i + 1}번째 줄: ${why}`] });
+    if (!line.startsWith('- ')) return at('0열의 `- `로 시작하는 목록 줄만 쓸 수 있다');
+    const body = line.slice(2).replace(/^ +| +$/g, '');
+    const why = notesItemProblem(body);
+    if (why) return at(why);
+    items.push(body);
+  }
+  if (items.length < 1 || items.length > NOTES_MAX_ITEMS) {
+    return { notes: null, problems: [`release/notes: 항목은 1~${NOTES_MAX_ITEMS}개여야 한다(지금 ${items.length}개)`] };
+  }
+  return { notes: items.join('\n'), problems: [] };
+}
+
+export const notesProblems = (raw) => parseNotes(raw).problems;
+
+// 노트 파일 경로. dry만 RELEASE_NOTES_FILE로 덮어쓴다(tag는 DRY_OVERRIDES가 막고, 리허설은 gate가 기본 경로만 본다)
+export function notesPath(env, version) {
+  if (env.RELEASE_MODE === 'dry' && env.RELEASE_NOTES_FILE) return resolve(env.RELEASE_NOTES_FILE);
+  return join(ROOT, 'release/notes', `${version}.md`);
+}
+
+// 필수 여부 표(cicd.md 구현 중 변경): tag는 파일이 없으면 실패, 리허설·dry는 없으면 생략(file null), 있으면 형식을 본다.
+// dry의 RELEASE_NOTES_FILE을 명시했는데 없으면 실패. → { file: 경로 | null, problems: string[] }
+export function notesPlan(env, version, root = ROOT) {
+  const mode = env.RELEASE_MODE;
+  const explicit = mode === 'dry' && env.RELEASE_NOTES_FILE;
+  const file = explicit ? resolve(env.RELEASE_NOTES_FILE) : join(root, 'release/notes', `${version}.md`);
+  if (!existsSync(file)) {
+    if (mode === 'tag' || explicit) {
+      const shown = explicit ? '--notes 파일' : `release/notes/${version}.md`;
+      return { file: null, problems: [`${shown}가 없다(태그 릴리스는 이번 버전에서 바뀐 점을 3~5줄 해요체로 적은 파일이 필요하다)`] };
+    }
+    return { file: null, problems: [] };
+  }
+  const problems = notesProblems(readFileSync(file, 'utf8'));
+  return problems.length ? { file: null, problems } : { file, problems };
 }
 
 // ---- xtask 바이너리 ----
@@ -563,7 +638,7 @@ function cmdBuild(env) {
 //   dry: 가짜 S3(release.yml stage 작업과 selftest). R2_ENDPOINT가 루프백이어야 하고 위 덮어쓰기를 받는다.
 // 같은 publish·verify 코드가 두 모드에서 돈다(selftest·stage가 배포하는 코드를 그대로 부른다, 리뷰 G6).
 export const LOOPBACK = /^http:\/\/(?:127\.0\.0\.1|localhost|\[::1\]):\d{1,5}$/;
-export const DRY_OVERRIDES = ['R2_ENDPOINT', 'RELEASE_PUBKEY', 'RELEASE_VERSION', 'RELEASE_STAGE_DIR', 'WORKER_BUNDLE', 'WORKER_SECRET_LIST', 'XTASK_LIST_MAX_KEYS'];
+export const DRY_OVERRIDES = ['R2_ENDPOINT', 'RELEASE_PUBKEY', 'RELEASE_VERSION', 'RELEASE_STAGE_DIR', 'WORKER_BUNDLE', 'WORKER_SECRET_LIST', 'XTASK_LIST_MAX_KEYS', 'RELEASE_NOTES_FILE'];
 export function boundaryProblems(env) {
   const mode = env.RELEASE_MODE;
   if (mode === 'tag') return DRY_OVERRIDES.filter((n) => env[n]).map((n) => `tag 모드는 ${n}를 받지 않는다(진짜 릴리스를 다른 곳·키·버전으로 돌리지 못하게)`);
@@ -653,9 +728,15 @@ async function cmdPublish(env) {
     return 1;
   }
   if (begin('publish', env)) return 2;
+  const version = releaseVersion(env);
+  // 바뀐 점 파일(tag는 필수, dry는 있으면): 노트 오류와 시크릿·프로브 오류가 섞이지 않게 프로브보다 먼저, 업로드 전에 본다
+  const np = notesPlan(env, version);
+  if (np.problems.length) {
+    for (const m of np.problems) err(`publish: ${m}. 업로드하지 않음`);
+    return 1;
+  }
   // 업로드 직전 마지막 검사(경계·xtask 뒤): preflight 단계와 같은 프로브를 다시 본다
   if (await tagProbe(env, 'publish')) return 1;
-  const version = releaseVersion(env);
   const stage = stageDir(env);
   rmSync(stage, { recursive: true, force: true });
   const from = resolve(env.RELEASE_IN || join(ROOT, 'target/ci/release-in'));
@@ -666,7 +747,7 @@ async function cmdPublish(env) {
     // 시크릿의 개인 키가 커밋된 공개 키와 짝인지(아니면 아무것도 올리지 않는다)
     'verify-sig': ['verify-sig', '--dir', stage, '--pubkey', pub],
     sums: ['sums', '--dir', stage],
-    manifest: ['manifest', '--dir', stage, '--version', version, '--pub-date', env.RELEASE_PUB_DATE ?? '', '--base-url', env.DIST_BASE_URL],
+    manifest: ['manifest', '--dir', stage, '--version', version, '--pub-date', env.RELEASE_PUB_DATE ?? '', '--base-url', env.DIST_BASE_URL, ...(np.file ? ['--notes', np.file] : [])],
     put: ['put', '--dir', stage, '--version', version],
     // 마지막: releases/latest.json(CAS)
     promote: ['promote', '--dir', stage, '--version', version],
@@ -1160,10 +1241,27 @@ async function cmdSelftest(env) {
     expect('(h) 계속된 503: 되돌리지 않음', 0, vh.rolled_back === 'no' ? 0 : 1);
     expect('(h) 계속된 503 뒤 latest.json 그대로(1.0.0)', 0, same(get(LATEST_KEY), before));
     expect('(h) 장애 주입 PUT latest.json 적용 뒤 500×1', 204, await fake.fault({ method: 'PUT', key: LATEST_KEY, mode: 'after', status: 500, times: 1 }));
-    const p3 = publish('1.2.0', '2026-10-09T00:00:00Z');
+    // (n) 바뀐 점(notes): 1.0.0·1.1.0은 notes 없는 과거 매니페스트, 1.2.0부터 notes가 든다. (f)의 rollback이 둘을 오간다(n3)
+    const notesOk = join(work, 'notes-ok.md');
+    writeFileSync(notesOk, '\ufeff- 구간을 고르는 화면이 빨라졌어요\r\n\r\n- 받기가 멈추면 알려 줘요\r\n');
+    const p3 = publish('1.2.0', '2026-10-09T00:00:00Z', { RELEASE_NOTES_FILE: notesOk });
     expect('(h) 응답 잃은 CAS: publish 1.2.0 성공', 0, p3.code);
+    expect('(n1) 1.2.0 manifest.json에 정규화된 notes', 0, JSON.parse(readFileSync(join(p3.st, 'manifest.json'), 'utf8')).notes === '구간을 고르는 화면이 빨라졌어요\n받기가 멈추면 알려 줘요' ? 0 : 1);
+    expect('(n1) notes 없는 1.0.0 manifest.json에는 notes 키가 없다', 0, 'notes' in JSON.parse(readFileSync(join(p1.st, 'manifest.json'), 'utf8')) ? 1 : 0);
     expect('(h) latest.json = 1.2.0 manifest.json', 0, same(get(LATEST_KEY), readFileSync(join(p3.st, 'manifest.json'))));
     expect('(h) verify 1.2.0', 0, verify('1.2.0', p3.prev).code);
+    // (n) 형식이 틀린 노트·없는 노트는 업로드 전에 멈추고 latest.json은 그대로다
+    const notesBad = join(work, 'notes-bad.md');
+    writeFileSync(notesBad, '- 좋아요\n- <b>x</b>\n');
+    const latestN = get(LATEST_KEY);
+    const pBad = publish('1.2.5', '2026-10-09T01:00:00Z', { RELEASE_NOTES_FILE: notesBad });
+    expect('(n2) 형식이 틀린 노트 publish는 exit 1(줄 번호를 말한다)', 0, pBad.code === 1 && last.includes('2번째 줄') ? 0 : 1);
+    expect('(n2) 명시한 노트 파일이 없어도 exit 1', 1, publish('1.2.5', '2026-10-09T01:00:00Z', { RELEASE_NOTES_FILE: join(work, '없음.md') }).code);
+    expect('(n2) 거부 뒤 latest.json 그대로, 1.2.5 객체 없음', 0, same(get(LATEST_KEY), latestN) === 0 && get('releases/1.2.5/manifest.json') === null ? 0 : 1);
+    const xbin = xtaskBin(base0);
+    const pt = publish('1.2.5', '2026-10-09T01:00:00Z', { RELEASE_MODE: 'tag', RELEASE_VERSION: '', RELEASE_STAGE_DIR: '', RELEASE_PUBKEY: '', R2_ENDPOINT: '', ...TAG_OK, XTASK_BIN: xbin, XTASK_SHA256: sha256hex(readFileSync(xbin)) });
+    expect('(n4) tag 모드 publish는 노트 파일이 없으면 exit 1(업로드 전)', 0, pt.code === 1 && last.includes(`release/notes/${workspaceVersion()}.md가 없다`) && last.includes('업로드하지 않음') ? 0 : 1);
+    expect('(n4) 거부 뒤 latest.json 그대로', 0, same(get(LATEST_KEY), latestN));
     // (i) verify 결정표의 나머지: 나중 태그가 승격(superseded), 승격 전에 실패(not-promoted)
     const vs = verify('1.0.0');
     expect('(i) latest가 더 높으면 objects-only로 통과(superseded)', 0, vs.code === 0 && vs.plan === 'superseded' ? 0 : 1);
@@ -1171,9 +1269,9 @@ async function cmdSelftest(env) {
     expect('(i) 승격되지 않은 버전: exit 1, 되돌리지 않음(not-promoted)', 0, vn.code === 1 && vn.plan === 'not-promoted' && vn.rolled_back === undefined ? 0 : 1);
     expect('(i) latest.json = 1.2.0 그대로', 0, same(get(LATEST_KEY), readFileSync(join(p3.st, 'manifest.json'))));
     // (f) rollback.yml 경로: 잘못 되돌린 뒤 다시 올리기(낮은 → 높은 버전), 첫 릴리스 전으로 되돌리기(latest.json 지움)
-    expect('(f) rollback.yml 1.0.0', 0, rollback('1.0.0'));
+    expect('(f)(n3) rollback.yml 1.0.0(notes 없는 과거 매니페스트)', 0, rollback('1.0.0'));
     expect('(f) latest.json = 1.0.0', 0, same(get(LATEST_KEY), before));
-    expect('(f) rollback.yml 1.2.0(다시 올리기)', 0, rollback('1.2.0'));
+    expect('(f)(n3) rollback.yml 1.2.0(notes 있는 매니페스트로 다시 올리기)', 0, rollback('1.2.0'));
     expect('(f) latest.json = 1.2.0', 0, same(get(LATEST_KEY), readFileSync(join(p3.st, 'manifest.json'))));
     expect('(f) rollback --to none --from 9.9.9 거부(지금 latest와 다름)', 'nonzero', x(['rollback', '--to', 'none', '--from', '9.9.9', '--pubkey', pub]));
     expect('(f) rollback.yml none', 0, rollback('none'));

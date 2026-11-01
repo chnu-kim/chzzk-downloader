@@ -8,7 +8,8 @@
 //!                                                         모든 .sig 검증 + 버전 = inventory + 1바이트 변조 사본은 반드시 실패
 //!                                                         (--allow-unversioned: 버전 필드 없는 Tauri CLI 임시 서명 형식 확인 전용)
 //!   sums       --dir <폴더>                               SHA256SUMS
-//!   manifest   --dir <폴더> --version <v> --pub-date <RFC3339> --base-url <URL>   manifest.json(Tauri 정적 스키마) + 스키마 검증
+//!   manifest   --dir <폴더> --version <v> --pub-date <RFC3339> --base-url <URL> [--notes <파일>]
+//!                                                         manifest.json(Tauri 정적 스키마) + 스키마 검증. --notes는 release/notes/<v>.md를 검사해 notes로 넣는다
 //!   put        --dir <폴더> --version <v>                 releases/<v>/…를 덮어쓰기 없이(If-None-Match: *) 올린다
 //!   promote    --dir <폴더> --version <v>                 releases/latest.json을 CAS로 바꾼다(마지막에). prev를 GITHUB_OUTPUT에
 //!   verify     --version <v> --pubkey <파일> [--objects-only]   다시 받아 해시·서명·스키마·버전 확인

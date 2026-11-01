@@ -89,12 +89,13 @@ pub fn dispatch(cmd: &str, a: &Args) -> Res<()> {
             sums(Path::new(&a.req("dir")?))
         }
         "manifest" => {
-            a.only(&["dir", "version", "pub-date", "base-url"])?;
+            a.only(&["dir", "version", "pub-date", "base-url", "notes"])?;
             make_manifest(
                 Path::new(&a.req("dir")?),
                 &version_arg(a)?,
                 &a.req("pub-date")?,
                 &a.req("base-url")?,
+                a.opt("notes").as_deref().map(Path::new),
             )
         }
         "put" => {
@@ -407,7 +408,18 @@ pub fn sums(dir: &Path) -> Res<()> {
     Ok(())
 }
 
-pub fn make_manifest(dir: &Path, version: &str, pub_date: &str, base_url: &str) -> Res<()> {
+/// notes: release/notes/<버전>.md 경로. 주면 읽어 형식을 검사하고 latest.json의 notes로 넣는다(없거나 읽지 못하면 실패)
+pub fn make_manifest(
+    dir: &Path,
+    version: &str,
+    pub_date: &str,
+    base_url: &str,
+    notes: Option<&Path>,
+) -> Res<()> {
+    let notes = match notes {
+        Some(p) => Some(manifest::parse_notes(&text("notes 파일", read(p)?)?)?),
+        None => None,
+    };
     let (inv_v, items) = manifest::read_inventory(dir)?;
     if inv_v != version {
         return fail(format!("inventory.json version {inv_v} ≠ {version}"));
@@ -419,7 +431,7 @@ pub fn make_manifest(dir: &Path, version: &str, pub_date: &str, base_url: &str) 
             text("서명", read(&dir.join(format!("{}.sig", i.file)))?)?,
         );
     }
-    let m = manifest::build(&items, version, pub_date, base_url, &sigs)?;
+    let m = manifest::build(&items, version, pub_date, base_url, &sigs, notes.as_deref())?;
     manifest::check_manifest(&m, &manifest::expected()?, version, Some(base_url))?;
     write(&dir.join("manifest.json"), &manifest::to_bytes(&m))?;
     println!(
@@ -798,4 +810,86 @@ pub fn rollback(
     verify(src, to, pubkey, base_url, true)?;
     println!("rollback: latest.json = {to}");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::manifest::Item;
+
+    /// 산출물 inventory·서명을 만든 임시 폴더(manifest 명령의 입력)
+    fn staged(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("xtask-notes-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        let items: Vec<Item> = manifest::expected()
+            .unwrap()
+            .into_iter()
+            .map(|e| Item {
+                file: e.file("1.2.3"),
+                os: e.os,
+                kind: e.kind,
+                bytes: 1,
+                sha256: "0".repeat(64),
+                updater: e.updater,
+            })
+            .collect();
+        for i in items.iter().filter(|i| !i.updater.is_empty()) {
+            std::fs::write(d.join(format!("{}.sig", i.file)), "QUJD".repeat(40)).unwrap();
+        }
+        manifest::write_inventory(&d, "1.2.3", &items).unwrap();
+        d
+    }
+
+    fn run_manifest(dir: &Path, extra: &[&str]) -> Res<()> {
+        let mut raw: Vec<String> = [
+            "--dir",
+            dir.to_str().unwrap(),
+            "--version",
+            "1.2.3",
+            "--pub-date",
+            "2026-10-06T00:00:00Z",
+            "--base-url",
+            "https://d.example.invalid",
+        ]
+        .map(String::from)
+        .into();
+        raw.extend(extra.iter().map(|s| s.to_string()));
+        dispatch("manifest", &Args::parse(&raw)?)
+    }
+
+    fn manifest_json(dir: &Path) -> Value {
+        manifest::read_json(&dir.join("manifest.json")).unwrap()
+    }
+
+    #[test]
+    fn manifest_without_notes_flag_has_no_notes() {
+        let d = staged("none");
+        run_manifest(&d, &[]).unwrap();
+        assert!(manifest_json(&d).get("notes").is_none());
+    }
+
+    #[test]
+    fn manifest_notes_file_is_normalized_into_manifest() {
+        let d = staged("ok");
+        let f = d.join("n.md");
+        std::fs::write(&f, "\u{FEFF}- 첫째 줄이에요\r\n\r\n- 둘째 줄이에요\r\n").unwrap();
+        run_manifest(&d, &["--notes", f.to_str().unwrap()]).unwrap();
+        assert_eq!(
+            manifest_json(&d)["notes"],
+            serde_json::json!("첫째 줄이에요\n둘째 줄이에요")
+        );
+    }
+
+    #[test]
+    fn manifest_notes_missing_or_invalid_file_fails_without_writing() {
+        let d = staged("bad");
+        let e = run_manifest(&d, &["--notes", d.join("없음.md").to_str().unwrap()]).unwrap_err();
+        assert_eq!(e.code, 2, "읽지 못함: {}", e.msg);
+        let f = d.join("bad.md");
+        std::fs::write(&f, "# 제목\n").unwrap();
+        let e = run_manifest(&d, &["--notes", f.to_str().unwrap()]).unwrap_err();
+        assert_eq!(e.code, 1, "{}", e.msg);
+        assert!(!d.join("manifest.json").exists());
+    }
 }

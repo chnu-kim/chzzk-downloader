@@ -1,0 +1,167 @@
+{
+ "_설명": "release/notes/<버전>.md 형식 검사 벡터. xtask manifest.rs parse_notes 테스트와 scripts/ci/release.test.mjs notesProblems 테스트가 함께 읽는다(한쪽만 고치지 않는다). accept의 output은 latest.json notes 값, reject의 line은 오류가 가리키는 1부터의 줄 번호(항목 수 오류는 null).",
+ "accept": [
+  {
+   "name": "한 줄",
+   "input": "- 구간 화면이 빨라졌어요\n",
+   "output": "구간 화면이 빨라졌어요"
+  },
+  {
+   "name": "80자 통과",
+   "input": "- 가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가",
+   "output": "가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가"
+  },
+  {
+   "name": "다섯 항목",
+   "input": "- a\n- b\n- c\n- d\n- e\n",
+   "output": "a\nb\nc\nd\ne"
+  },
+  {
+   "name": "CRLF와 BOM",
+   "input": "\ufeff- 첫째 \r\n- 둘째\r\n",
+   "output": "첫째\n둘째"
+  },
+  {
+   "name": "CR만",
+   "input": "- 첫째\r- 둘째",
+   "output": "첫째\n둘째"
+  },
+  {
+   "name": "항목 사이 빈 줄과 공백 줄",
+   "input": "- 첫째\n\n   \n- 둘째  \n\n",
+   "output": "첫째\n둘째"
+  },
+  {
+   "name": "본문 앞뒤 공백",
+   "input": "-   앞뒤 공백   \n",
+   "output": "앞뒤 공백"
+  },
+  {
+   "name": "ASCII 기호",
+   "input": "- 한글 abc ~ !\"#$%&'()*+,-./:;=?@[\\]^_{|}",
+   "output": "한글 abc ~ !\"#$%&'()*+,-./:;=?@[\\]^_{|}"
+  }
+ ],
+ "reject": [
+  {
+   "name": "빈 파일",
+   "input": "",
+   "line": null
+  },
+  {
+   "name": "공백과 빈 줄만",
+   "input": "\n  \n\n",
+   "line": null
+  },
+  {
+   "name": "여섯 항목",
+   "input": "- a\n- b\n- c\n- d\n- e\n- f\n",
+   "line": null
+  },
+  {
+   "name": "81자",
+   "input": "- 가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가",
+   "line": 1
+  },
+  {
+   "name": "HTML",
+   "input": "- 좋아요\n- <b>x</b>",
+   "line": 2
+  },
+  {
+   "name": "꺾쇠 닫기만",
+   "input": "- a>b",
+   "line": 1
+  },
+  {
+   "name": "마크다운 링크",
+   "input": "- [a](b)",
+   "line": 1
+  },
+  {
+   "name": "백틱",
+   "input": "- `코드`",
+   "line": 1
+  },
+  {
+   "name": "http",
+   "input": "- http://x.invalid",
+   "line": 1
+  },
+  {
+   "name": "https",
+   "input": "- https://x.invalid",
+   "line": 1
+  },
+  {
+   "name": "들여쓴 줄",
+   "input": "- 첫째\n  - 들여쓴 줄",
+   "line": 2
+  },
+  {
+   "name": "제목",
+   "input": "# 제목\n- a",
+   "line": 1
+  },
+  {
+   "name": "문단",
+   "input": "- a\n그냥 문장",
+   "line": 2
+  },
+  {
+   "name": "본문 없음",
+   "input": "- a\n- \n",
+   "line": 2
+  },
+  {
+   "name": "탭",
+   "input": "- a\tb",
+   "line": 1
+  },
+  {
+   "name": "줄 끝 탭",
+   "input": "- a\t",
+   "line": 1
+  },
+  {
+   "name": "U+202E",
+   "input": "- a\u202eb",
+   "line": 1
+  },
+  {
+   "name": "ZWSP",
+   "input": "- a\u200bb",
+   "line": 1
+  },
+  {
+   "name": "소프트하이픈",
+   "input": "- a\u00adb",
+   "line": 1
+  },
+  {
+   "name": "U+2028",
+   "input": "- a\u2028b",
+   "line": 1
+  },
+  {
+   "name": "C1 제어 문자",
+   "input": "- a\u0085b",
+   "line": 1
+  },
+  {
+   "name": "v1.2 버전 표기",
+   "input": "- v1.2에서 고쳤어요",
+   "line": 1
+  },
+  {
+   "name": "글자 뒤 v1",
+   "input": "- 지금 (v1) 이에요",
+   "line": 1
+  },
+  {
+   "name": "별표 목록",
+   "input": "* a",
+   "line": 1
+  }
+ ]
+}

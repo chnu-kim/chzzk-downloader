@@ -21,7 +21,12 @@ process.exit(readFileSync('state.txt', 'utf8').trim() === 'bad' ? 1 : 0);
 let d;
 let repo;
 let logFile;
-const env = () => gitEnv({ extra: { SNAP_LOG: logFile } });
+// 훅(runGatesIn)이 scripts-test를 돌릴 때 물려준 CARGO_TARGET_DIR을 지운다. 남으면 targetDir보다 먼저 쓰여 target 단언이 깨진다
+const env = () => {
+  const e = gitEnv({ extra: { SNAP_LOG: logFile } });
+  delete e.CARGO_TARGET_DIR;
+  return e;
+};
 const g = (...a) => gitOk(repo, a);
 const quiet = { log: () => {} };
 const run = (target) => runHookGates(repo, target, ['chk'], env(), quiet);

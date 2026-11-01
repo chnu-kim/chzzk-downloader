@@ -11,6 +11,10 @@ pub const DOCK_PROGRESS_MIN_INTERVAL_MS: u64 = 1_000;
 pub const NOTIFY_BATCH_MS: u64 = 3_000;
 /// OS 알림 본문·대화상자 제목 안 외부 문자열 절단 길이(자소 수)
 pub const NOTIFY_TITLE_MAX_GRAPHEMES: usize = 40;
+/// 업데이트 노트(바뀐 점) 줄 수 상한(D69)
+pub const UPDATE_NOTES_MAX_LINES: usize = 5;
+/// 업데이트 노트 한 줄의 자소 수 상한(D69)
+pub const UPDATE_NOTES_LINE_MAX_GRAPHEMES: usize = 80;
 /// 회복 알림 기준(ms)
 pub const RECOVERY_SILENT_MS: u64 = 60_000;
 /// 회복 알림 표시 시간(ms)

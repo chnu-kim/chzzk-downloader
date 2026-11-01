@@ -9,7 +9,9 @@ use std::time::Duration;
 use chzzk_core::Secret;
 
 use crate::auth::{AuthPhase, AuthService, AuthStatus, Clock, WorkerApi, WorkerBase};
+use crate::consts::{UPDATE_NOTES_LINE_MAX_GRAPHEMES, UPDATE_NOTES_MAX_LINES};
 use crate::dto::{UpdateCheckDto, UpdateInfoDto, UpdateInstallDto, UpdateProgressEvent};
+use crate::notify::{clean_display_text, clip_graphemes};
 
 /// 확인 요청 시간 제한(D10). 다운로드 전체에는 걸지 않는다(크기에 따라 길다)
 pub const CHECK_TIMEOUT: Duration = Duration::from_secs(10);
@@ -157,12 +159,44 @@ impl ProgressThrottle {
     }
 }
 
+/// latest.json의 `notes`(서명되지 않는 일반 텍스트, D69)를 화면에 줄 줄 목록으로 정리한다. 신뢰 경계이므로 순서를 지킨다:
+/// 줄로 먼저 나눈 뒤 줄마다 정리한다(`clean_display_text`는 C0인 `\n`도 공백으로 바꿔 문자열 전체에 쓰면 줄이 합쳐진다).
+/// 앞의 `- `·`* `·`• ` 표시 하나는 떼고(받는 쪽은 관대하다), 빈 줄은 버리고, 줄마다 자소 상한으로 자르고, 앞 5줄만 남긴다
+/// ("외 n개" 같은 표시는 만들지 않는다). HTML·마크다운은 해석하지도 지우지도 않는다: 화면이 텍스트 노드로만 그린다.
+/// 남은 줄이 없으면 `None`이다(배너에 접는 줄 자체를 그리지 않는다).
+pub fn clean_notes(raw: Option<&str>) -> Option<String> {
+    let text = raw?.replace("\r\n", "\n").replace('\r', "\n");
+    let lines: Vec<String> = text
+        .split('\n')
+        .filter_map(|line| {
+            let cleaned = clean_display_text(line);
+            let t = cleaned.trim();
+            let body = ["- ", "* ", "\u{2022} "]
+                .iter()
+                .find_map(|m| t.strip_prefix(m))
+                .unwrap_or(t);
+            let body = body.trim();
+            // 표시만 남은 줄("-"·"*"·"•")도 빈 줄이다
+            if body.is_empty() || matches!(body, "-" | "*" | "\u{2022}") {
+                return None;
+            }
+            Some(clip_graphemes(body, UPDATE_NOTES_LINE_MAX_GRAPHEMES))
+        })
+        .take(UPDATE_NOTES_MAX_LINES)
+        .collect();
+    if lines.is_empty() {
+        None
+    } else {
+        Some(lines.join("\n"))
+    }
+}
+
 /// FoundUpdate → DTO(download_url은 넘기지 않는다)
 pub fn info_of(f: &FoundUpdate) -> UpdateInfoDto {
     UpdateInfoDto {
         version: f.version.clone(),
         current: f.current.clone(),
-        notes: f.notes.clone(),
+        notes: clean_notes(f.notes.as_deref()),
         pub_date: f.pub_date,
     }
 }

@@ -880,6 +880,7 @@ JS 타이머·Rust 셸이 쓰는 값이다. 이름과 값의 단일 원천은 �
 | `DOCK_PROGRESS_MIN_INTERVAL_MS` | 1000 | [취향] | Rust | Dock·작업 표시줄 호출 빈도(`platform.md` §8) | g-shell G13 |
 | `NOTIFY_BATCH_MS` | 3000 | [취향] | Rust | OS 알림 묶음 창(`platform.md` §9) | 보고서 3초는 근거 없음(`X-DESK-N45`) → 취향으로 같은 값을 채택 |
 | `NOTIFY_TITLE_MAX_GRAPHEMES` | 40 | [취향] | Rust + `timing.ts`(`clipGraphemes`) | OS 알림 본문·대화상자 제목·토스트 안 외부 문자열 절단(`content.md` §13) | README D38 |
+| `UPDATE_NOTES_MAX_LINES` / `UPDATE_NOTES_LINE_MAX_GRAPHEMES` | 5 / 80 | [잠정] | Rust + `timing.ts` + xtask 작성 검사(`manifest.rs`) | 업데이트 노트(바뀐 점) 줄 수·줄당 자소 수 상한(D69) | 근거 없음. ADR-0032 |
 | `NETWORK_PATIENCE_MS` / `RETRY_BACKOFF_MAX_MS` | 1800000 / 30000 | [잠정] | Rust(core) | 재시도 인내(`platform.md` §15) | `G-POWER-R8`, `platform.md` §21 M23 |
 | `RECOVERY_SILENT_MS` / `RECOVERY_NOTICE_MS` | 60000 / 10000 | [취향] | Rust + `timing.ts` | 회복 알림 기준·표시(`platform.md` §15) | `G-POWER-R11` |
 | `SLEEP_REASON_MAX` | 128 | 사실 | Rust | 전원 사유 문자열 길이 | Apple QA1340 |

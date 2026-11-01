@@ -4,6 +4,7 @@
 
 ## 현재 위치
 
+- **툴체인 1.99.1·dependabot 둘(2026-11-01, 브랜치 `chore/deps-toolchain`, 이슈 #177, PR #235·#234, cicd.md 구현 중 변경 124)**: `rust-toolchain.toml` 1.99.1(x86_64 FFI bool 오컴파일 수정), install-action 2.87.31·rust-cache 2.9.3, workers-types 5.20261025.1(전이 의존성을 내린 dependabot lock 대신 다시 만든 lock).
 - **v0.14.1 릴리스(2026-11-01)**: 태그 `f50dac4`(버전 PR #237), release 실행 41287620156 한 번에 전 단계 성공(gate·xtask·build 3 OS·smoke·stage·sign-publish·verify·prune·deploy-worker·report). master 실행 41287040814의 `ci-ok`·`e2e-native` 둘 녹색. 이슈 #37은 다음 정기 nightly advisories 녹색에 고리가 닫는다.
 - **v0.14.1 버전 PR(2026-11-01, 브랜치 `release/v0.14.1`)**: v0.14.0 뒤 의존성·보안 권고 정리(#233, 이슈 #37, dependabot 넷)와 간헐 실패 시험 둘(#236)을 담는다(`fix`라 patch, `release.mjs next-version` 최소 0.14.1). 노트 `release/notes/0.14.1.md`. master 실행 41285750895(머지 커밋 b6fa78b)의 크기 키는 모두 3% 안이고, +2.86%로 붙은 `size.bundle.linux-deb`만 태그 빌드 여유를 두려고 미리 올렸다(RATCHET_LOG).
 - **간헐 실패 시험 둘(2026-11-01, 브랜치 `fix/flaky-tests`, `test`)**: ① `crates/shell/tests/watch.rs` `debug_and_logs_have_no_secret`(master에서 30회 중 7회 실패): 등록된 dispatcher가 scoped 하나뿐이면 tracing-core가 콜사이트를 처음 밟는 다른 시험 스레드의 기본 subscriber(없음)로 interest를 never에 묶는다. 자기 바이너리를 `--exact`·`--test-threads=1` 하위 프로세스로 다시 띄워 혼자 돌린다(40회 통과, 하위 실패가 바깥으로 전해짐을 깨서 확인). ② `scripts/ci/snapshot.test.mjs` "소유자가 죽은 잠금": pre-push 훅이 물려준 `CARGO_TARGET_DIR`이 `targetDir`보다 먼저 쓰여 훅 안에서만 실패 → 시험 env에서 지운다.

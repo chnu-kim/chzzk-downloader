@@ -145,7 +145,7 @@ describe("decideUpdate: notes는 그대로 통과한다", () => {
     expect(d.kind).toBe("update");
     if (d.kind === "update") {
       const out = body(d.body);
-      expect(out.platforms["linux-x86_64"].url.startsWith(ORIGIN)).toBe(true);
+      expect(out.platforms["linux-x86_64"]?.url.startsWith(ORIGIN)).toBe(true);
       expect(out.notes).toBe(NOTES);
     }
   });

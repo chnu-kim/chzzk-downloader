@@ -92,7 +92,7 @@
 | `e2e-native` | tauri-driver 2.1 + WebdriverIO(Linux WebKitWebDriver + xvfb), `--features e2e` 빌드 + 로컬 fixture 서버 | M·N(Linux), W(Windows) | exit |
 | `drift` | §4.3 | N | 일반화된 kind |
 | `fuzz` | `cargo +nightly-<날짜> fuzz run <t> -- -max_total_time=300`(url·info·mpd·hls) | N(ubuntu) | exit, crash 파일 |
-| `mutants` | `cargo mutants -p chzzk-core --shard k/8`(테스트 바이너리 메모리 상한, 구현 중 변경 124) → `mutants_missed` ratchet | W | ratchet |
+| `mutants` | `cargo mutants -p chzzk-core --shard k/8`(테스트 바이너리 메모리 상한, 구현 중 변경 125) → `mutants_missed` ratchet | W | ratchet |
 | `ruleset-drift` | `gh api …/rulesets` ↔ `.github/rulesets/*.json`, `repo-settings.json` | N | JSON 동일 |
 | `nightly-stale` | nightly 마지막 성공이 72h보다 오래됨 → 이슈; `disabled_inactivity`면 재활성화 | M | 시각 비교 |
 | `release-selftest` | MinIO(digest 고정) 대상 §5.8 리허설 | PR(xtask·release 변경)·W | exit + 상태 단언 |

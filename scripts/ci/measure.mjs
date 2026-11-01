@@ -220,7 +220,7 @@ export function sumShards(list) {
   return { shards: n, total: sum('total_mutants'), missed: sum('missed'), caught: sum('caught'), timeout: sum('timeout'), unviable: sum('unviable') };
 }
 
-// 테스트 바이너리의 가상 메모리 상한(바이트, cicd.md 구현 중 변경 124). 진척을 멈춘 채 Vec에 계속 넣는 mutant
+// 테스트 바이너리의 가상 메모리 상한(바이트, cicd.md 구현 중 변경 125). 진척을 멈춘 채 Vec에 계속 넣는 mutant
 // (예: `i += 1 → i *= 1`)가 러너 메모리를 다 써 러너 에이전트가 죽는 것을 막는다: 할당 실패로 테스트 바이너리가
 // abort하면 cargo-mutants는 잡힌 것으로 센다. 작업 2개 × 상한이 러너(16GB) 안에 든다. cargo의 target runner는
 // 테스트 바이너리에만 걸리므로 rustc·build script는 제한받지 않는다. 상한이 정상 테스트를 깨면 기준선이 exit 4라

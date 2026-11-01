@@ -78,7 +78,7 @@ test('mutants: shard 표기, outcomes 요약, shard 합(빠지거나 겹치면 �
   assert.deepEqual(MUTANTS_OK_CODES, [0, 2, 3]);
 });
 
-test('mutants: 테스트 바이너리 메모리 상한(Linux runner, cicd.md 구현 중 변경 124)', () => {
+test('mutants: 테스트 바이너리 메모리 상한(Linux runner, cicd.md 구현 중 변경 125)', () => {
   const base = { PATH: '/usr/bin', HOME: '/home/x' };
   const e = mutantsEnv('linux', 'x64', base);
   // 나머지 env(PATH·HOME)를 지우지 않는다

@@ -380,7 +380,7 @@ jobs:
         run: node scripts/ci/run.mjs toolchain
 
   # 살아남은 mutant(§2 mutants, 매주): chzzk-core를 shard 8개로 나눠 돌리고(약 275개씩,
-  # 작업 제한 180분 안) 합을 ratchet mutants_missed와 비교한다. 테스트 바이너리 메모리 상한은 measure.mjs(cicd.md 구현 중 변경 124).
+  # 작업 제한 180분 안) 합을 ratchet mutants_missed와 비교한다. 테스트 바이너리 메모리 상한은 measure.mjs(cicd.md 구현 중 변경 125).
   mutants-shard:
     name: nightly mutants shard (${{ matrix.shard }})
     if: github.event.schedule == '47 18 * * 0' || (github.event_name == 'workflow_dispatch' && ((inputs.only == 'all' && inputs.weekly) || inputs.only == 'mutants'))

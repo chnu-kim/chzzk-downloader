@@ -56,6 +56,7 @@ export const STATE_LABEL = {
   tone: '의미',
   size: '크기',
   withActions: '동작 있음',
+  withDetails: '접는 보충 줄',
   samples: '글자 견본',
 } as const;
 
@@ -106,6 +107,8 @@ export const NOTICE = {
   action1: '다시 시도',
   action2: '자세히',
   action3: '닫기 전에 보기',
+  /** 업데이트 배너의 바뀐 점 견본(줄마다 항목, 합성 문구) */
+  notes: '첫째 바뀐 점이에요\n둘째 바뀐 점이에요\n셋째 바뀐 점이에요',
 } as const;
 
 export const DIALOG = {

@@ -21,3 +21,6 @@ worker/e2e/__shots__/** -text
 
 # 누출 검사기 고정 오라클(origin/master public-scan.mjs 사본, blob 해시를 테스트가 확인한다)
 scripts/ci/testdata/** text eol=lf
+
+# 릴리스 노트(latest.json notes의 원천): CRLF·BOM 없이 LF로 둔다(xtask parse_notes도 정규화한다)
+release/notes/** text eol=lf

@@ -171,8 +171,8 @@ export const GATES = {
     steps: [{ cmd: ['node', S('version-check.mjs')] }],
   },
   pubkey: {
-    desc: 'release/updater.pub == tauri.conf.json plugins.updater.pubkey(바이트 동일, minisign 공개 키 형식, 플랫폼 conf도 같거나 없음), requireSignedVersion = true',
-    steps: [{ cmd: ['node', S('release.mjs'), 'pubkey'] }],
+    desc: 'release/notes/*.md 이름·형식(notes-check) + release/updater.pub == tauri.conf.json plugins.updater.pubkey(바이트 동일, minisign 공개 키 형식, 플랫폼 conf도 같거나 없음), requireSignedVersion = true',
+    steps: [{ cmd: ['node', S('release.mjs'), 'pubkey'] }, { cmd: ['node', S('release.mjs'), 'notes-check'] }],
   },
   parity: {
     desc: '훅·워크플로·tools.json이 같은 진입점·버전을 쓰는지',
@@ -552,7 +552,7 @@ export const COMMANDS = ['changes', 'ci-ok', 'doctor', 'drift-log-check', 'hook'
 // parity가 보는 훅·워크플로·진입점 표(빠르다)
 const HOOK_FILES = [/^\.githooks\//, /^\.gitattributes$/, /^\.github\//, /^scripts\/ci\/(?:gates\.mjs|tools\.json)$/];
 // pubkey gate(release.mjs checkPubkey)가 읽는 파일. release.test.mjs가 checkPubkey가 읽는 경로와 맞춘다
-export const PUBKEY_FILES = [/^release\/updater\.pub$/, /^release\/tauri\.release\.json$/, /^app\/src-tauri\/tauri(\.[a-z0-9-]+)?\.conf\.json$/];
+export const PUBKEY_FILES = [/^release\/notes\//, /^release\/updater\.pub$/, /^release\/tauri\.release\.json$/, /^app\/src-tauri\/tauri(\.[a-z0-9-]+)?\.conf\.json$/];
 // release-selftest가 기대는 파일: xtask, release/ 표, release.mjs와 그 상대 import 전부, 배포 설정 원본(worker/wrangler.jsonc, tools.json의 wrangler 버전)(release.test.mjs가 import 그래프로
 // 이 목록이 빠짐없는지 확인한다, 리뷰 G6), Cargo.lock(xtask 의존성)
 export const RELEASE_SELFTEST_FILES = [/^xtask\//, /^release\//, /^scripts\/ci\/(release|s3-fake|bundle|smoke|version-check|gates|run|push-guard|snapshot|public-scan|worker-deploy|worker-stub)\.mjs$/, /^scripts\/ci\/tools\.json$/, /^worker\/wrangler\.jsonc$/, /^Cargo\.lock$/];

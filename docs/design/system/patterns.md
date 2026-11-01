@@ -563,7 +563,7 @@ scrim(`--scrim`, `--z-dialog` 50) 위, 창 가운데
 
 | 순간 | 수단 | 모양 | 근거 |
 |---|---|---|---|
-| 새 버전 발견 | 배너 B4(neutral) | ⓘ `update.banner`("새 버전이 있어요: {version}") [지금 업데이트](secondary sm) [×](이번 실행 동안 숨김. [나중에]는 [×]와 같은 일이라 두지 않는다) | README D46(조사 재구성), D57 |
+| 새 버전 발견 | 배너 B4(neutral) | ⓘ `update.banner`("새 버전이 있어요: {version}") [지금 업데이트](secondary sm) [×](이번 실행 동안 숨김. [나중에]는 [×]와 같은 일이라 두지 않는다). notes가 있으면 동작 줄 아래 `Disclosure inline` `update.notes.title`("이번 버전에서 바뀐 점", 기본 접힘, 일반 텍스트 목록, notes가 없으면 접는 줄 자체가 없다, 받는 중·설치 중·실패 배너에는 없다, D69) | README D46(조사 재구성), D57, D69 |
 | 받는 중 | 같은 배너, 닫기 없음 | `update.downloading`("업데이트 받는 중 · {percent}", 막대 없음) | `worker.md` 구현 중 변경 77 |
 | 설치 직전, 받는 작업 있음 | 대화상자 D5 | §5.2 | README D36 |
 | 설치 | 배너 `update.installing`("설치하고 다시 시작하는 중") | Windows는 앱이 종료된다(`passive`) | Tauri updater 문서(`G-INSTALL-R10`) |

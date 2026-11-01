@@ -353,6 +353,26 @@ describe('Notice', () => {
     expect(plain.container.querySelector('.notice-help')).toBeNull();
   });
 
+  it('details는 동작 줄 뒤·help 앞의 자기 줄이고 라이브 영역 밖이다. 없으면 그 줄도 없다(D69)', () => {
+    const { container } = render(NoticeHarness, {
+      variant: 'banner',
+      actions: [{ id: 'install', label: '지금 업데이트', onclick: () => {} }],
+      help: { label: '도움말', onclick: () => {} },
+      detailsText: '바뀐 점 글',
+    });
+    const line = container.querySelector('.notice > .notice-details') as HTMLElement;
+    expect(line).toHaveTextContent('바뀐 점 글');
+    expect(container.querySelector('.notice-text')?.contains(line)).toBe(false);
+    expect(container.querySelector('.notice-actions')?.contains(line)).toBe(false);
+    const kids = [...(container.querySelector('.notice') as HTMLElement).children];
+    expect(kids.indexOf(line)).toBeGreaterThan(kids.indexOf(container.querySelector('.notice-actions') as HTMLElement));
+    expect(kids.indexOf(line)).toBeLessThan(kids.indexOf(container.querySelector('.notice-help') as HTMLElement));
+    // 이름은 본문 요소가 맡고 details 글은 섞이지 않는다
+    expect(screen.getByRole('region', { name: '본문 글' })).toBeInTheDocument();
+    const plain = render(NoticeHarness, { variant: 'banner' });
+    expect(plain.container.querySelector('.notice-details')).toBeNull();
+  });
+
   it('동작이 3개를 넘으면 앞 3개만 보인다', () => {
     const actions = ['a', 'b', 'c', 'd'].map((id) => ({ id, label: id, onclick: () => {} }));
     const { container } = render(NoticeHarness, { actions });

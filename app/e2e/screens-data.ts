@@ -50,6 +50,11 @@ const EMPTY_AUTH = { channelId: null, channelName: null, reason: null, pending: 
 const auth = (over: Partial<AuthStatusDto> & Pick<AuthStatusDto, 'state'>): AuthStatusDto => ({ ...EMPTY_AUTH, ...over });
 const SIGNED_IN = auth({ state: 'signedIn', channelId: MY_CHANNEL_ID, channelName: '테스트 채널', verifiedAt: 1_767_322_800 });
 const AVAILABLE: UpdateInfoDto = { version: '9.9.9', current: '0.0.0-e2e', notes: null, pubDate: null };
+// 합성 문구(실제 채널·영상·시각 없음). 공유 AVAILABLE은 바꾸지 않는다: 설정 장면과 D5 기준선을 지키려는 것
+const AVAILABLE_NOTES: UpdateInfoDto = {
+  ...AVAILABLE,
+  notes: '구간을 고르는 화면이 빨라졌어요\n받기가 멈추면 바로 알려 줘요\n목록에서 파일 이름이 잘리지 않아요',
+};
 
 const RECENT: RecentVodDto[] = [
   { url: 'https://chzzk.naver.com/video/1111111', title: SAME_PREFIX_TITLES[0], kind: 'rewind', date: '2026-10-03 21:00:00' },
@@ -720,6 +725,16 @@ export const SCREENS: Screen[] = [
     },
     ready: (p) => p.getByRole('dialog', { name: t('dialog.update.title') }),
     dialog: true,
+  },
+  {
+    id: '업데이트 바뀐 점 펼침',
+    slug: 'update-notes',
+    scenario: (_env, now) => ({ auth: SIGNED_IN, update: { available: AVAILABLE_NOTES } }),
+    drive: async (app) => {
+      // 접는 줄은 네이티브 <summary>라 버튼 역할이 아니다
+      await app.page.getByText(t('update.notes.title'), { exact: true }).click();
+    },
+    ready: (p) => p.getByRole('listitem').filter({ hasText: '구간을 고르는 화면이 빨라졌어요' }),
   },
   {
     id: 'D7 덮어쓰기 확인',

@@ -6,7 +6,9 @@
   // 받는 중 문구는 진행 정도까지 deck 한 줄이다(`update.downloading`, content.md §15.1). 화면에는 정확한 퍼센트(`shown`)가
   // 보이고(스크린 리더에게는 숨김), 라이브 영역이 읽는 `status`는 25% 단위로만 바뀐다(1%마다 다시 읽지 않게, content.md §10).
   import { t } from '../../copy/ko';
+  import { updateNoteLines } from '../../format/display';
   import Notice from '../ui/Notice.svelte';
+  import UpdateNotes from './UpdateNotes.svelte';
 
   interface Props {
     version: string;
@@ -16,13 +18,17 @@
     status?: string | null;
     /** 화면에 보이는 정확한 진행 문구. 있으면 `aria-hidden`으로 보이고 `status`는 읽기 전용(sr-only)으로 둔다 */
     shown?: string | null;
+    /** latest.json의 바뀐 점(서명되지 않는 일반 텍스트). 새 버전을 알릴 때(`status === null`)만 접는 줄로 보인다 */
+    notes?: string | null;
     oninstall: () => void;
     onlater: () => void;
   }
 
-  let { version, busy = false, status = null, shown = null, oninstall, onlater }: Props = $props();
+  let { version, busy = false, status = null, shown = null, notes = null, oninstall, onlater }: Props = $props();
 
   const off = $derived(busy || status !== null);
+  // 정리 뒤 남는 줄이 있을 때만 슬롯을 넘긴다(빈 자기 줄이 생기지 않게)
+  const hasNotes = $derived(updateNoteLines(notes).length > 0);
 </script>
 
 <Notice
@@ -30,6 +36,7 @@
   tone="info"
   actions={[{ id: 'install', label: t('update.install'), loading: off, onclick: oninstall }]}
   onclose={status === null ? onlater : undefined}
+  details={status === null && hasNotes ? details : undefined}
 >
   {#if status !== null}
     {#if shown}
@@ -41,3 +48,7 @@
     {t('update.banner', { version })}
   {/if}
 </Notice>
+
+{#snippet details()}
+  <UpdateNotes {notes} />
+{/snippet}

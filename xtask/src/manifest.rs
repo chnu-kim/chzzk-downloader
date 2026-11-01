@@ -203,6 +203,7 @@ pub fn build(
     pub_date: &str,
     base_url: &str,
     sigs: &BTreeMap<String, String>,
+    notes: Option<&str>,
 ) -> Res<Value> {
     let mut platforms = serde_json::Map::new();
     for i in items {
@@ -216,7 +217,100 @@ pub fn build(
             }
         }
     }
-    Ok(json!({ "version": version, "pub_date": pub_date, "platforms": platforms }))
+    let mut m = json!({ "version": version, "pub_date": pub_date, "platforms": platforms });
+    if let Some(n) = notes {
+        m["notes"] = json!(n);
+    }
+    Ok(m)
+}
+
+/// 업데이트 노트 항목 수 상한(foundations §14 `UPDATE_NOTES_MAX_LINES`와 같은 값, 셸 consts.rs·앱 timing.ts)
+pub const NOTES_MAX_ITEMS: usize = 5;
+/// 항목 하나의 글자(Unicode scalar) 상한(`UPDATE_NOTES_LINE_MAX_GRAPHEMES`와 같은 값)
+pub const NOTES_ITEM_MAX_CHARS: usize = 80;
+
+/// 노트 한 줄 본문에서 거부할 것의 사유. 화면에 그대로 그려도 되는 일반 텍스트만 남기려는 작성 쪽 검사다
+fn notes_item_problem(body: &str) -> Option<&'static str> {
+    let n = body.chars().count();
+    if n == 0 {
+        return Some("본문이 비었다");
+    }
+    if n > NOTES_ITEM_MAX_CHARS {
+        return Some("한 줄이 80자를 넘는다");
+    }
+    for c in body.chars() {
+        let bad = c.is_control()
+            || matches!(c,
+                '\u{061C}' | '\u{200B}' | '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}'
+                | '\u{2028}' | '\u{2029}' | '\u{2060}'..='\u{2064}' | '\u{2066}'..='\u{2069}'
+                | '\u{FEFF}' | '\u{00AD}');
+        if bad {
+            return Some("제어·보이지 않는 문자가 있다");
+        }
+    }
+    if body.contains(['<', '>', '`']) || body.contains("](") {
+        return Some("HTML·마크다운 표시(< > ` ]()는 쓸 수 없다");
+    }
+    if body.contains("http://") || body.contains("https://") {
+        return Some("주소는 쓸 수 없다");
+    }
+    // content.md의 v0.1.2 금지: 영숫자가 아닌 글자(또는 줄 처음) 뒤의 v+숫자
+    let cs: Vec<char> = body.chars().collect();
+    for i in 0..cs.len().saturating_sub(1) {
+        if cs[i] == 'v'
+            && cs[i + 1].is_ascii_digit()
+            && (i == 0 || !cs[i - 1].is_ascii_alphanumeric())
+        {
+            return Some("버전 표기(v숫자)는 쓸 수 없다");
+        }
+    }
+    None
+}
+
+/// release/notes/<버전>.md → latest.json `notes`(항목 본문을 \n으로 이은 일반 텍스트).
+/// 형식: 비어 있지 않은 줄은 모두 0열의 `- `로 시작(빈 줄은 무시), 항목 1~5개, 본문 1~80자.
+pub fn parse_notes(raw: &str) -> Res<String> {
+    let text = raw.strip_prefix('\u{FEFF}').unwrap_or(raw);
+    let text = text.replace("\r\n", "\n").replace('\r', "\n");
+    let mut items: Vec<String> = Vec::new();
+    for (i, line) in text.split('\n').enumerate() {
+        let line = line.trim_end_matches(' ');
+        if line.is_empty() {
+            continue;
+        }
+        let at = |why: &str| check(format!("release/notes: {}번째 줄: {why}", i + 1));
+        let Some(rest) = line.strip_prefix("- ") else {
+            return Err(at("0열의 `- `로 시작하는 목록 줄만 쓸 수 있다"));
+        };
+        let body = rest.trim_matches(' ');
+        if let Some(why) = notes_item_problem(body) {
+            return Err(at(why));
+        }
+        items.push(body.to_string());
+    }
+    if items.is_empty() || items.len() > NOTES_MAX_ITEMS {
+        return Err(check(format!(
+            "release/notes: 항목은 1~{NOTES_MAX_ITEMS}개여야 한다(지금 {}개)",
+            items.len()
+        )));
+    }
+    Ok(items.join("\n"))
+}
+
+/// 이미 이어진 notes 검사(업로드 뒤 verify·rollback에도 걸린다). 사유 목록, 비면 통과.
+/// 과거 매니페스트의 rollback을 깨지 않도록 이 규칙은 느슨하게만 바꾼다.
+pub fn check_notes(s: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let lines: Vec<&str> = s.split('\n').collect();
+    if lines.len() > NOTES_MAX_ITEMS {
+        out.push(format!("notes: 줄이 {NOTES_MAX_ITEMS}개를 넘는다"));
+    }
+    for (i, l) in lines.iter().enumerate() {
+        if let Some(why) = notes_item_problem(l) {
+            out.push(format!("notes: {}번째 줄: {why}", i + 1));
+        }
+    }
+    out
 }
 
 pub fn to_bytes(v: &Value) -> Vec<u8> {
@@ -249,6 +343,11 @@ pub fn check_manifest(
             v["version"]
         )));
     }
+    if let Some(n) = v.get("notes").and_then(Value::as_str)
+        && let Some(p) = check_notes(n).first()
+    {
+        return Err(check(format!("매니페스트 {p}")));
+    }
     let want: BTreeSet<String> = exp.iter().flat_map(|e| e.updater.clone()).collect();
     let got: BTreeSet<String> = v["platforms"]
         .as_object()
@@ -275,6 +374,94 @@ pub fn check_manifest(
 
 #[cfg(test)]
 mod tests {
+    fn vectors() -> Value {
+        read_json(&root().join("xtask/testdata/notes-vectors.json")).unwrap()
+    }
+
+    /// 공유 벡터(scripts/ci/release.test.mjs와 같은 파일): 받아들이는 입력은 정규화 결과가 같고, 거부하는 입력은 줄 번호를 말한다
+    #[test]
+    fn parse_notes_shared_vectors() {
+        let v = vectors();
+        for c in v["accept"].as_array().unwrap() {
+            let name = c["name"].as_str().unwrap();
+            let got = parse_notes(c["input"].as_str().unwrap())
+                .unwrap_or_else(|e| panic!("{name}: {}", e.msg));
+            assert_eq!(got, c["output"].as_str().unwrap(), "{name}");
+            assert!(
+                check_notes(&got).is_empty(),
+                "{name}: 정규화 결과는 check_notes를 통과한다"
+            );
+        }
+        for c in v["reject"].as_array().unwrap() {
+            let name = c["name"].as_str().unwrap();
+            let e = parse_notes(c["input"].as_str().unwrap())
+                .expect_err(&format!("{name}: 거부해야 한다"));
+            assert_eq!(e.code, 1, "{name}");
+            assert!(e.msg.starts_with("release/notes: "), "{name}: {}", e.msg);
+            if let Some(n) = c["line"].as_u64() {
+                assert!(e.msg.contains(&format!("{n}번째 줄")), "{name}: {}", e.msg);
+            }
+        }
+    }
+
+    #[test]
+    fn check_notes_rules() {
+        assert!(check_notes("a\nb").is_empty());
+        assert!(!check_notes("").is_empty());
+        assert!(!check_notes("a\n\nb").is_empty(), "빈 줄");
+        assert!(!check_notes("a\nb\nc\nd\ne\nf").is_empty(), "여섯 줄");
+        assert!(!check_notes(&"가".repeat(81)).is_empty(), "81자");
+        assert!(check_notes(&"가".repeat(80)).is_empty());
+        assert!(!check_notes("<b>").is_empty());
+        assert!(!check_notes("a\u{202e}b").is_empty());
+        assert!(!check_notes("a\tb").is_empty());
+    }
+
+    fn base_manifest(notes: Option<&str>) -> Value {
+        let it = items("1.2.3");
+        build(
+            &it,
+            "1.2.3",
+            "2026-10-06T00:00:00Z",
+            "https://d.example.invalid",
+            &sigs(&it),
+            notes,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn build_with_and_without_notes() {
+        let with = base_manifest(Some("첫째\n둘째"));
+        check_manifest(&with, &exp(), "1.2.3", Some("https://d.example.invalid")).unwrap();
+        assert_eq!(with["notes"], json!("첫째\n둘째"));
+        let without = base_manifest(None);
+        check_manifest(&without, &exp(), "1.2.3", Some("https://d.example.invalid")).unwrap();
+        assert!(without.get("notes").is_none(), "과거 호환: 키 자체가 없다");
+        // 결정적 바이트, notes는 정렬된 키 순서(BTreeMap)로 platforms 앞
+        let a = String::from_utf8(to_bytes(&with)).unwrap();
+        assert_eq!(
+            a.as_bytes(),
+            to_bytes(&base_manifest(Some("첫째\n둘째"))).as_slice()
+        );
+        assert!(a.find("\"notes\"").unwrap() < a.find("\"platforms\"").unwrap());
+    }
+
+    #[test]
+    fn check_manifest_notes_negative() {
+        let chk = |n: Value| {
+            let mut m = base_manifest(None);
+            m.as_object_mut().unwrap().insert("notes".into(), n);
+            check_manifest(&m, &exp(), "1.2.3", Some("https://d.example.invalid"))
+        };
+        chk(json!("정상\n두 줄")).unwrap();
+        assert!(chk(json!("")).is_err(), "minLength");
+        assert!(chk(json!("가".repeat(513))).is_err(), "maxLength");
+        assert!(chk(json!("a\nb\nc\nd\ne\nf")).is_err(), "여섯 줄");
+        assert!(chk(json!("a\n\nb")).is_err(), "빈 줄");
+        assert!(chk(json!(5)).is_err(), "문자열이 아님");
+    }
+
     use super::*;
 
     fn exp() -> Vec<Expected> {
@@ -313,6 +500,7 @@ mod tests {
             "2026-10-06T00:00:00Z",
             "https://dist.example.invalid",
             &sigs(&it),
+            None,
         )
         .unwrap();
         check_manifest(&m, &exp(), "1.2.3", Some("https://dist.example.invalid")).unwrap();
@@ -334,7 +522,8 @@ mod tests {
                     "1.2.3",
                     "2026-10-06T00:00:00Z",
                     "https://dist.example.invalid",
-                    &sigs(&it)
+                    &sigs(&it),
+                    None
                 )
                 .unwrap()
             )
@@ -350,6 +539,7 @@ mod tests {
             "2026-10-06T00:00:00+09:00",
             "https://d.example.invalid/",
             &sigs(&it),
+            None,
         )
         .unwrap();
         check_manifest(&good, &exp(), "1.2.3", Some("https://d.example.invalid")).unwrap();
@@ -406,7 +596,8 @@ mod tests {
                 "1.2.3",
                 "2026-10-06T00:00:00Z",
                 "https://d.example.invalid",
-                &s
+                &s,
+                None
             )
             .is_err()
         );

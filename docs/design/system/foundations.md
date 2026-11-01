@@ -1,6 +1,6 @@
 # 기반 토큰 (foundations.md)
 
-디자인 시스템 「무색」의 모든 토큰을 이름과 값으로 확정한다. `README.md`의 결정 표(D1~D62)가 "무엇을" 정했고, 이 문서는 그것을 "어떤 이름의 어떤 값"으로 코드에 내리는 단일 원천이다. 토큰은 여기 적힌 것만 존재한다. 여기 없는 값을 컴포넌트가 쓰면 `design-lint`가 막고, 여기 있는데 쓰지 않는 토큰은 `design-tokens`가 막는다.
+디자인 시스템 「무색」의 모든 토큰을 이름과 값으로 확정한다. `README.md`의 결정 표(D1~D69)가 "무엇을" 정했고, 이 문서는 그것을 "어떤 이름의 어떤 값"으로 코드에 내리는 단일 원천이다. 토큰은 여기 적힌 것만 존재한다. 여기 없는 값을 컴포넌트가 쓰면 `design-lint`가 막고, 여기 있는데 쓰지 않는 토큰은 `design-tokens`가 막는다.
 
 읽는 법:
 - 모든 길이는 **px**이고 루트 글자 크기는 **16px**이다. 어떤 토큰도 rem이 아니다. 문서의 숫자가 곧 화면의 숫자다(`A-VIS-01`, brief §6.2-4, ADR-0002. 강제 `design-tokens` DT4: rem 단위 0개, `html { font-size: 16px }` 고정).
@@ -880,6 +880,7 @@ JS 타이머·Rust 셸이 쓰는 값이다. 이름과 값의 단일 원천은 �
 | `DOCK_PROGRESS_MIN_INTERVAL_MS` | 1000 | [취향] | Rust | Dock·작업 표시줄 호출 빈도(`platform.md` §8) | g-shell G13 |
 | `NOTIFY_BATCH_MS` | 3000 | [취향] | Rust | OS 알림 묶음 창(`platform.md` §9) | 보고서 3초는 근거 없음(`X-DESK-N45`) → 취향으로 같은 값을 채택 |
 | `NOTIFY_TITLE_MAX_GRAPHEMES` | 40 | [취향] | Rust + `timing.ts`(`clipGraphemes`) | OS 알림 본문·대화상자 제목·토스트 안 외부 문자열 절단(`content.md` §13) | README D38 |
+| `UPDATE_NOTES_MAX_LINES` / `UPDATE_NOTES_LINE_MAX_GRAPHEMES` | 5 / 80 | [잠정] | Rust + `timing.ts` + xtask 작성 검사(`manifest.rs`) | 업데이트 노트(바뀐 점) 줄 수·줄당 자소 수 상한(D69) | 근거 없음. ADR-0032 |
 | `NETWORK_PATIENCE_MS` / `RETRY_BACKOFF_MAX_MS` | 1800000 / 30000 | [잠정] | Rust(core) | 재시도 인내(`platform.md` §15) | `G-POWER-R8`, `platform.md` §21 M23 |
 | `RECOVERY_SILENT_MS` / `RECOVERY_NOTICE_MS` | 60000 / 10000 | [취향] | Rust + `timing.ts` | 회복 알림 기준·표시(`platform.md` §15) | `G-POWER-R11` |
 | `SLEEP_REASON_MAX` | 128 | 사실 | Rust | 전원 사유 문자열 길이 | Apple QA1340 |

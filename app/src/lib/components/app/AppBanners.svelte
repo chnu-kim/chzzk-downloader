@@ -106,6 +106,7 @@
     busy={update.busy || update.pending}
     status={updateStatus}
     shown={updateShown}
+    notes={update.available?.notes ?? null}
     oninstall={() => void update.install()}
     onlater={() => update.later()}
   />

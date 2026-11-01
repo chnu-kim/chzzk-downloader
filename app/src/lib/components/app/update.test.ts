@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/svelte';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppError, AuthStatusDto, JobDto, SettingsDto, UpdateInfoDto } from '../../bindings';
@@ -35,7 +35,7 @@ const { default: UpdateDialog } = await import('./UpdateDialog.svelte');
 const { default: AppBanners, pickBanner } = await import('./AppBanners.svelte');
 const { default: SettingsView } = await import('../../views/SettingsView.svelte');
 
-const info = (version: string): UpdateInfoDto => ({ version, current: '0.1.0', notes: null, pubDate: null });
+const info = (version: string, notes: string | null = null): UpdateInfoDto => ({ version, current: '0.1.0', notes, pubDate: null });
 const authDto = (state: AuthStatusDto['state']): AuthStatusDto => ({
   state,
   channelId: null,
@@ -318,6 +318,81 @@ describe('AppBanners 순서', () => {
     render(AppBanners);
     update.available = null;
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(t('update.downloading', { percent: '0B' })));
+  });
+});
+
+describe('UpdateBanner: 이번 버전에서 바뀐 점(D69)', () => {
+  const title = () => t('update.notes.title');
+
+  it('notes가 있으면 기본 접힘 펼침이 있고 펼치면 줄마다 li > bdi다. 이름·낭독은 배너 본문이 맡는다', async () => {
+    const user = userEvent.setup();
+    update.available = info('0.2.0', '- 하나\n- 둘\n- 셋');
+    render(AppBanners);
+    const summary = screen.getByText(title());
+    const details = summary.closest('details') as HTMLDetailsElement;
+    expect(details.open).toBe(false);
+    // 라이브 영역(.notice-text) 밖이라 펼치고 접어도 배너가 다시 읽히지 않는다
+    expect(document.querySelector('.notice-text')?.contains(details)).toBe(false);
+    expect(screen.getByRole('region', { name: t('update.banner', { version: '0.2.0' }) })).toBeInTheDocument();
+    await user.click(summary);
+    expect(details.open).toBe(true);
+    const items = within(details).getAllByRole('listitem');
+    expect(items.map((li) => li.textContent)).toEqual(['하나', '둘', '셋']);
+    for (const li of items) expect(li.querySelector('bdi')).not.toBeNull();
+  });
+
+  it('notes가 null·빈 문자열·정리 뒤 0줄이면 접는 줄 자체가 없다', () => {
+    for (const notes of [null, '', '  \n- \n']) {
+      update.available = info('0.2.0', notes);
+      const { unmount } = render(AppBanners);
+      expect(screen.queryByText(title())).toBeNull();
+      expect(document.querySelector('details')).toBeNull();
+      unmount();
+    }
+  });
+
+  it('HTML·마크다운은 해석하지 않고 글자 그대로 그린다', async () => {
+    const user = userEvent.setup();
+    update.available = info('0.2.0', '<b>x</b>\n[a](https://x.invalid)');
+    render(AppBanners);
+    await user.click(screen.getByText(title()));
+    const details = document.querySelector('details') as HTMLElement;
+    expect(within(details).getAllByRole('listitem').map((li) => li.textContent)).toEqual(['<b>x</b>', '[a](https://x.invalid)']);
+    expect(details.querySelector('b, a, img')).toBeNull();
+  });
+
+  it('6줄이면 5개만, 긴 줄은 …로 끝난다', async () => {
+    const user = userEvent.setup();
+    update.available = info('0.2.0', `1\n2\n3\n4\n5\n6\n${'가'.repeat(200)}`);
+    render(AppBanners);
+    await user.click(screen.getByText(title()));
+    expect(within(document.querySelector('details') as HTMLElement).getAllByRole('listitem')).toHaveLength(5);
+    cleanup();
+    update.available = info('0.2.0', '가'.repeat(200));
+    render(AppBanners);
+    await user.click(screen.getByText(title()));
+    const only = within(document.querySelector('details') as HTMLElement).getByRole('listitem');
+    expect([...(only.textContent ?? '')]).toHaveLength(80);
+    expect(only.textContent?.endsWith('…')).toBe(true);
+  });
+
+  it('받는 중·설치 중·실패 상태에서는 접는 줄이 없다', async () => {
+    update.available = info('0.2.0', '하나');
+    update.installVersion = '0.2.0';
+    update.phase = 'downloading';
+    render(AppBanners);
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(t('update.downloading', { percent: '0B' })));
+    expect(screen.queryByText(title())).toBeNull();
+    cleanup();
+    update.phase = 'installing';
+    render(AppBanners);
+    expect(screen.queryByText(title())).toBeNull();
+    cleanup();
+    update.phase = 'idle';
+    update.failure = 'failed';
+    render(AppBanners);
+    expect(screen.getByText(t('update.failed'))).toBeInTheDocument();
+    expect(screen.queryByText(title())).toBeNull();
   });
 });
 

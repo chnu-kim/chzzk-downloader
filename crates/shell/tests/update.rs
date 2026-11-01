@@ -13,7 +13,7 @@ use chzzk_shell::auth::{AuthPhase, AuthService, AuthStatus, WorkerBase};
 use chzzk_shell::dto::{UpdateCheckDto, UpdateInstallDto, UpdateProgressEvent};
 use chzzk_shell::update::{
     DOWNLOAD_STALL, FoundUpdate, InstallHost, PROGRESS_STEP_UNKNOWN, ProgressThrottle, SourceError,
-    UpdateSource, Updates, auto_check_due, bearer_value, update_endpoint,
+    UpdateSource, Updates, auto_check_due, bearer_value, clean_notes, update_endpoint,
 };
 use common::auth::*;
 use time::Duration;
@@ -771,4 +771,93 @@ fn source_error_display_is_fixed_words() {
     ] {
         assert_eq!(e.to_string(), want);
     }
+}
+
+// ---- 바뀐 점(notes): latest.json은 서명되지 않으므로 줄로 먼저 나눈 뒤 줄마다 정리하고 자른다(D69) ----
+
+#[test]
+fn clean_notes_empty_inputs_are_none() {
+    assert_eq!(clean_notes(None), None);
+    assert_eq!(clean_notes(Some("")), None);
+    assert_eq!(clean_notes(Some("  \n\t\r\n \n")), None);
+    assert_eq!(
+        clean_notes(Some("-\n- \n* \n")),
+        None,
+        "표시만 있는 줄은 빈 줄이다"
+    );
+}
+
+#[test]
+fn clean_notes_splits_lines_before_cleaning() {
+    // \n은 C0라 문자열 전체를 정리하면 한 줄로 합쳐진다. 줄 구분은 살아야 한다
+    assert_eq!(
+        clean_notes(Some("- a\r\n* b\n\n\u{2022} c")).as_deref(),
+        Some("a\nb\nc")
+    );
+    assert_eq!(
+        clean_notes(Some("a\rb")).as_deref(),
+        Some("a\nb"),
+        "CR만도 줄바꿈"
+    );
+    assert_eq!(clean_notes(Some("메모")).as_deref(), Some("메모"));
+}
+
+#[test]
+fn clean_notes_keeps_at_most_five_lines() {
+    let raw = (1..=7)
+        .map(|i| format!("줄{i}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert_eq!(
+        clean_notes(Some(&raw)).as_deref(),
+        Some("줄1\n줄2\n줄3\n줄4\n줄5"),
+        "나머지는 버리고 '외 n개' 같은 표시는 만들지 않는다"
+    );
+    // 빈 줄은 세지 않는다
+    let gappy = "a\n\nb\n\nc\n\nd\n\ne\n\nf";
+    assert_eq!(clean_notes(Some(gappy)).as_deref(), Some("a\nb\nc\nd\ne"));
+}
+
+#[test]
+fn clean_notes_clips_each_line_by_grapheme() {
+    let long = "가".repeat(200);
+    let out = clean_notes(Some(&long)).unwrap();
+    assert_eq!(out.chars().count(), 80);
+    assert!(out.ends_with('…'));
+    let exact = "나".repeat(80);
+    assert_eq!(clean_notes(Some(&exact)).as_deref(), Some(exact.as_str()));
+    // 결합 이모지(가족)는 자소 경계에서만 자른다: 깨진 조각이 남지 않는다
+    let family = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}";
+    let line = format!("{}{}", family.repeat(100), "끝");
+    let out = clean_notes(Some(&line)).unwrap();
+    let body = out.strip_suffix('…').unwrap();
+    assert_eq!(body, family.repeat(79), "79자소 + …");
+}
+
+#[test]
+fn clean_notes_sanitizes_but_does_not_interpret() {
+    // BIDI·ZWSP·소프트하이픈·BOM은 지우고, 탭은 공백이 된 뒤 trim된다
+    assert_eq!(
+        clean_notes(Some("\u{FEFF}a\u{202E}b\u{200B}c\u{00AD}d\t")).as_deref(),
+        Some("abcd")
+    );
+    assert_eq!(clean_notes(Some("a\tb")).as_deref(), Some("a b"));
+    // HTML·마크다운은 지우지도 해석하지도 않는다(화면이 텍스트 노드로만 그린다)
+    assert_eq!(
+        clean_notes(Some("<b>x</b>\n[a](https://x.invalid)")).as_deref(),
+        Some("<b>x</b>\n[a](https://x.invalid)")
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn check_available_cleans_notes_into_dto() {
+    let e = Env::signed_in();
+    e.src.push_check(Ok(Some(FoundUpdate {
+        notes: Some("- 하나\r\n- <i>둘</i>\n\n".into()),
+        ..found(ORIGIN)
+    })));
+    let UpdateCheckDto::Available { info } = e.check().await else {
+        panic!("available이어야 한다");
+    };
+    assert_eq!(info.notes.as_deref(), Some("하나\n<i>둘</i>"));
 }

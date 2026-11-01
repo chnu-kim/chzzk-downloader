@@ -29,3 +29,7 @@ export const COMPLETED_FOLD_AT = 11;
 export const STALE_DAYS = 30;
 /** 최근 영상 목록 개수 */
 export const RECENT_MAX = 5;
+/** 업데이트 노트(바뀐 점) 줄 수 상한. 셸 consts.rs·xtask 작성 검사와 같은 값(D69) */
+export const UPDATE_NOTES_MAX_LINES = 5;
+/** 업데이트 노트 한 줄의 자소 수 상한(clipGraphemes) */
+export const UPDATE_NOTES_LINE_MAX_GRAPHEMES = 80;

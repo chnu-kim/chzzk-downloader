@@ -34,3 +34,4 @@
 
 ## 변경 요약
 
+버전 PR이면 `release/notes/<버전>.md`(해요체 1~5줄, 실제 채널·영상 ID·시각 금지)를 함께 커밋했는지 적는다(`docs/versioning.md`).

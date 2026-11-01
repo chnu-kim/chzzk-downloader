@@ -26,7 +26,7 @@
 
 | 문서 | 내용 | 소유하는 결정 |
 |---|---|---|
-| `README.md`(이 문서) | 이름·원칙·우선순위·결정 표 D1~D67·열린 항목·변경 규칙 | 전부의 색인 |
+| `README.md`(이 문서) | 이름·원칙·우선순위·결정 표 D1~D69·열린 항목·변경 규칙 | 전부의 색인 |
 | `foundations.md` | 토큰 전부(이름·값). 색·대비·forced-colors, 글자·척도·글꼴 스택, 간격, 크기, 반경·선·면·그림자, 모션·z-index, 레이아웃, 아이콘, 테마, CSS 하한, 생성물 기대 모양 | D1 D3 D4 D5 D6 D8 D9 D11~D20 D22 D23 D24 D27 D31 D32 |
 | `components.md` | 컴포넌트 명세: API 어휘(`variant`·`tone`·`size`·`kind`·`state`), 상태(hover·pressed·disabled·focus), 치수 조합, forced-colors 행, 접근 이름 강제. Button·IconButton·TextField·SecretField·Select·Switch·RadioGroup·Disclosure·Menu·Dialog·ConfirmDialog·Notice·Toast·ErrorAlert·EmptyState·Surface·SettingsRow·FieldRow·PageContainer·Badge·ProgressBar·Spinner·Skeleton·Kbd·Icon·AppMark·DropOverlay·Toolbar | D21 D35 D37(해부) |
 | `patterns.md` | 화면 패턴: 홈(빈 상태 3단계·최근 영상·붙여넣기 힌트), 영상 카드, 작업 행과 상태 어휘, 설정, 로그인·거부, 대화상자 배치, 알림 위계와 상태 6종, 진행 표시, 완료 후 동작, 연결 대기, 공지. 문구 예시는 두지 않고 `content.md`의 키를 가리킨다 | D36 D37 D38 D39 D40 D41 D56 D57 |
@@ -34,7 +34,7 @@
 | `platform.md` | 앱 셸: 커서, 타이틀바, 스크롤바, 줌·글자 크기 설정, Dock·작업 표시줄, 창 복원, 테마 선택(Linux), 메뉴 용어, 단축키 표기, 브라우저 키 차단, 클립보드, 잠자기 방지, 저장 위치·경로, OS별 분기 표(진법·라벨·경로) | D2 D7 D25~D30 D47(OS 분기) D55 D56 |
 | `web.md` | Worker 페이지: CSP 안에서의 골격(`theme-color`·skip link·heading·`caption`·`th scope`), 읽기 척도 적용 범위, 랜딩 구조·휴대폰 진입·OG, 무스크립트 폼(PRG·flash·오류 요약·멱등), 위험도 2단, 봇·인앱, `/help`·`/privacy`·`/licenses` | D52 D53 D54 |
 | `governance.md` | 강제 장치 구현(§4의 gate 일곱 개 명세 `DT*`·`DL*`·`DS*`·`DP*`·`DC*`·`DI*`, 확장 검사 표, 리뷰 체크리스트 R1~R10 본문), 토큰·UI CSS 파이프라인(`design/tokens/*.tokens.json`·`design/ui.css` → 생성기 → `--check`), 근거 등급 E0~E4와 운영(시험 기록 규칙, 텔레메트리 없음), 변경 흐름, 적용 계획 (a)~(f) | D33(과제 등록) D58~D62 |
-| `adr/NNNN-slug.md` | 결정 기록(0001~0031). 템플릿과 쓰는 때는 §7 | 개별 결정 |
+| `adr/NNNN-slug.md` | 결정 기록(0001~0032). 템플릿과 쓰는 때는 §7 | 개별 결정 |
 | `docs/research/design-system.md` | 근거 문서: 약칭 표, 브리프 요약, 검증 결과(confirmed/refuted 목록), 후보 세 개와 판정 요약, 감사 결함 색인(파일:줄). 설계 문서가 인용하는 ID의 원천 | — |
 
 소유권 규칙: 한 결정은 한 문서에만 적는다. 다른 문서는 "`foundations.md` §5.1"처럼 가리키기만 한다. 수치는 `foundations.md`에만 있고(§13 생성물 블록과 §14 상수 표), 다른 문서는 토큰·상수 **이름**을 쓴다. 이름 옆에 값을 함께 적을 때는 `` `--dialog-w` 440``처럼 쓰고, `design-tokens`(DT14)가 §13과 생성물의 패리티를, `scripts-test`의 `spec-check.mjs`(governance §2.9)가 다른 문서의 "이름 + 값" 쌍이 §13·§14와 같은지를 본다. 문구는 `content.md`에만 있고 다른 문서는 copy deck 키를 가리킨다(`design-copy` DC10 문서 패리티).
@@ -89,7 +89,7 @@
 
 ---
 
-## 5. 결정 표 D1~D62
+## 5. 결정 표 D1~D69
 
 열은 최종 값 · 근거 · 강제 수단이다. 근거 끝의 `[잠정]`·`[취향]`은 §6에 확인 방법이 있다. 값의 상세는 "→ 문서 §절"이 가리키는 곳에 있다.
 
@@ -215,6 +215,7 @@
 | D66 미리보기·구간 섹션 | 카드 안 `Disclosure variant="inline"` 한 섹션. 빠른 다시보기는 "미리보기·구간"(영상 자리 → 구간 막대 → 조작 줄(결합 때) → 구간 칸 줄), 일반 VOD·클립은 "미리보기"(영상 자리). 기본 펼침이고 열림은 앱 메모리에 기억(앱 재시작 때 펼침). 영상 자리는 처음에 **표지 자리**(16:9 `--surface-2` 상자 + [영상 보기])이고 **[영상 보기]를 누를 때 `watch_open`**, 누르기 전 요청 0. 누른 뒤 `play()`는 한 번 시도하고 거절은 조용히 넘긴다. 섹션이 접히면 구간은 적용되지 않는다. 칸 빈칸 = 전체. `notOwn`·`unknown`·생방송에는 섹션이 없다. **적용 단계**: PS-2(표지 자리·누를 때 세션)가 먼저 들어갔고(그 사이 master는 기본 접힘이었다, PVU-2가 D65를 마운트 전에 쓴 선례), PS-3(한 섹션·기본 펼침·기억·빈칸 = 전체·재생 전 막대)이 이어서 들어갔다. 카드가 길어져 높이 예산은 patterns §15에 다시 적었다 | 사용자 결정(2026-10-21), `docs/design/features/preview-ux2.md` PS5~PS12·PS15~PS17. 근거 등급 E0(사용자 결정)·E1이라 `채택(잠정)`. 실제 표지 이미지는 새 command와 누르기 전 요청이 필요해 후속(§12). ADR-0029가 ADR-0027을 폐기한다 **→ 빠른 다시보기는 D67로 바뀜(2026-10-22). 일반 VOD·클립 "미리보기" 섹션은 그대로** | `frontend`, `e2e-web`, `design-copy`, `design-lint`, `design-shots`(관찰) |
 | D67 구간 편집 화면 | 빠른 다시보기의 구간은 **창 전체 편집 화면**(`receive/RangeEditor.svelte`, 레이어는 `ui/Sheet.svelte`)에서 고르고, 카드에는 구간 줄 하나(`RangeSummary`: "구간 · 전체" 또는 "0:10:00~0:40:00 · 길이 0:30:00" + [구간 편집…] + 있으면 [구간 지우기])만 둔다. 상태는 셋이다: 카드의 확정 구간 `applied`, 편집 화면의 초안 `draft`, 열림 `editorOpen`. [구간 적용하기](⌘↩/Ctrl+Enter)가 검증을 통과해야만 초안이 `applied`가 되고, [닫기]·Esc는 초안만 버린다(확인 없음). 레이어는 공용 `modalLayer`(층 스택, 맨 위 층 말고 body의 모든 자식을 inert로 다시 계산)로 body 직속에 붙고 Dialog도 같은 것을 쓴다. 세션은 편집 화면 안 [영상 보기]를 눌렀을 때 연다(D66 그대로). 영상과의 결합(`coupled` = hls.js로 붙고 메타데이터를 읽음)이 되기 전에는 조작 줄이 모두 disabled이고 타임라인·칸이 칸 편집기로만 동작한다. 열린 동안 창 수준 처리기(Mod+L·Mod+,·붙여넣기·드롭·macOS 메뉴·카드의 Mod+Enter)를 거르고 길게 누른 Esc는 한 층만 닫는다. 글자 있는 "편집"을 굳은 한자어 허용 목록에 더하고, 용어집에 "타임라인"(쓰지 않는 말: 막대)·"구간 편집"을 더한다. **ADR-0005(대화상자 버튼 배치)의 범위 밖이다**: 이 화면은 `role="dialog"`지만 확인·선택을 묻는 대화상자가 아니라 창 전체 시트형 편집기라 오른쪽 끝 primary가 상태를 바꾸는 [구간 적용하기]이고 [닫기]가 단독 라벨이다. 안전은 "닫기 = 초안만 버림, 확정값 그대로"로 지킨다. 반복 토글 켜짐은 중립 눌림 면 + 1px `--border-strong`(RE-5), 아이콘 단추 허용 목록 확장(RE-5), 포인터 하나로 하는 확대(RE-4). **적용 단계**: RE-3 셸·상태·진입(타임라인은 옛 막대, 조작 줄은 옛 글자 단추) / RE-4 타임라인(눈금·단색 트랙·흐림 `--range-dim`·띠·`--accent-ink` 손잡이·확대·이동·범위 막대·화면 밖 손잡이·[전체 보기] `scan`, 새 토큰 `--range-dim`·`--timeline-*`와 대비 쌍, 구간 편집 타임라인만 휠 리스너를 직접 단다 DX4) / RE-5 조작 줄·키(D66이 PS-2·PS-3을 나눠 적은 선례). RE-3은 새 토큰 없이 `--z-dialog`를 쓰는 `.fullsheet`(ui.css)와 코드 상수(`VIDEO_MIN_H`·`controlsMinW`)로 구현했다 | 사용자 결정(2026-10-22), `docs/design/features/range-editor.md` RE1~RE21. 근거 등급 E0(사용자 결정, 등급은 쓰지 않는다)·E1이라 `채택(잠정)`. 실기(M-RE-1~9) 전이다. ADR-0030이 ADR-0029를 폐기한다(일반 VOD·클립 섹션 결정은 다시 적는다) | `frontend`(`RangeEditor.test.ts`·`modalLayer.test.ts`), `e2e-web`, `design-copy`, `design-lint`, `design-tokens`, `design-shots`(관찰) |
 | D68 생방송 녹화 마치기 확인 | **생방송에는 어느 경로에서도 일시정지가 없다**(셸 `pause` 거부, 끊긴 녹화는 상태 줄 "녹화 끊김", D1·D5 본문은 전부 생방송이면 "일시정지"를 말하지 않는다). 작업 행의 [녹화 마치기]는 **받은 바이트가 있을 때 대화상자 D8**을 연다: 왼쪽 [녹화 마치기](`neutral`, 받은 만큼 저장하므로 지우는 것이 없다), 오른쪽 [계속 받기](채움·Enter·첫 포커스), Esc = 닫기, "다시 묻지 않기" 없음. D36 정밀화: 빨간 글자(`danger`)는 **지우는** 동작(D2·D7)에만 둔다. 방송이 끝난 뒤 [이어받기]는 조회 없이 받은 부분까지 저장하고, `.part`가 없는 `NotLive` 실패와 영상 조각 없이 끊긴 녹화는 [다시 녹화]를 준다 | 사용자 지적(2026-11-01). 근거 E0(HIG 파괴적 동작)·E1(`manager.rs`·`app.rs` 시험)이라 `채택(잠정)`. D62 과업에서 [녹화 마치기]·[계속 받기]를 읽고 고르는지 본다. ADR-0031이 ADR-0025를 보충한다 | `frontend`(`jobs.test.ts`·`closeguard.test.ts`·`update.test.ts`), `rust`(`manager_live.rs`·`app_ownership.rs`), `e2e-web`(`live.spec.ts`), `design-copy`, `design-shots`(관찰) |
+| D69 업데이트 바뀐 점 | **새 버전 배너 B4 안 `Disclosure variant="inline"` "이번 버전에서 바뀐 점"(`update.notes.title`), 기본 접힘, 항목은 일반 텍스트 목록**(최대 `UPDATE_NOTES_MAX_LINES`줄, 줄당 `UPDATE_NOTES_LINE_MAX_GRAPHEMES`자소, 넘치면 버리고 `…`, 줄마다 `<bdi>`). notes가 없거나 정리 뒤 0줄이면 접는 줄 자체가 없다("바뀐 점이 없어요" 같은 빈 문구 없음). **HTML·마크다운은 해석하지도 지우지도 않는다**(latest.json은 서명되지 않는다): 셸이 줄로 먼저 나눈 뒤 줄마다 정리하고 프런트가 한 번 더 막는다. 받는 중·설치 중·실패 배너에는 없다. `Notice`의 `details` 슬롯은 동작 줄 뒤·`help` 앞의 자기 줄이고 라이브 영역 밖이다. D5·`ConfirmDialog`는 바꾸지 않는다 | 2026-11-01 채택(잠정: 자리·최소 항목 수는 사용자 확인 완료, 실기 확인 전), ADR-0032 | `frontend`·`design-lint`·`design-copy`·`rust`·`e2e-web`·`design-shots` |
 
 ---
 
@@ -242,6 +243,7 @@
 | 16 | **미리보기 구간 막대(D65, ADR-0028)**: 3 OS 웹뷰 끌기·키, 화면 낭독기 읽기, 구간 보기 정확도, 길이 축, 네이티브 탐색 막대와의 혼동(M-PVU-1~7) | [잠정] | `docs/design/features/preview-ux.md` §13의 사용자 실기 7항목과 D62 시험(M-PVU-6). 손잡이 모양·치수 조합, 재생 위치 선은 갤러리 측정 | 손잡이 치수·모양 조정(ADR), 혼동이 크면 자체 재생 막대를 후속 ADR로 |
 | 17 | **미리보기·구간 한 섹션·표지 자리(D66, ADR-0029)**: 칸 ↑/↓ 3 OS 웹뷰·IME, [영상 보기] 뒤 자동재생 정책, 720×520 기본 펼침 첫 화면, 화면 낭독기, 누르기 전 요청 0, 사용자 시험(M-PVU2-1~6) | [잠정] | `docs/design/features/preview-ux2.md` §13의 사용자 실기 6항목과 D62 시험(M-PVU2-6). 붙은 손잡이 `target-size`는 알려진 한계 | 재생 전 상자 높이 조정(ADR), 열림을 설정 파일에 기억, 실제 표지 이미지 command를 후속으로 |
 | 18 | **구간 편집 화면(D67, ADR-0030)**: 트랙패드 핀치·휠 단위·한글 입력 상태의 키(`keyCode` 229), 확대 체감, 영상 전체 화면 Esc, 자동재생 정책, 화면 낭독기, 큰 창·작은 창 배치, 초안을 잃고 놀라는지(M-RE-1~9) | [잠정] | `docs/design/features/range-editor.md` §17의 사용자 실기 항목과 D62 시험. 영상 높이 계산은 갤러리 측정으로 조인다 | 확대 배율·최소 구간 조정(ADR), 닫기 확인 대화상자(초안이 바뀌었을 때), 가장자리 자동 이동을 후속으로 |
+| 19 | **업데이트 바뀐 점(D69, ADR-0032)**: 새 버전 배너의 접는 줄이 3 OS에서 눈에 띄는지·펼친 목록이 큰 글자(아주 크게)·forced-colors·화면 낭독기에서 읽히는지, 접힌 줄을 찾는지(V11) | [잠정] | 3 OS 실기에서 새 버전 배너를 띄워 펼침·접힘, D62 시험(V11, governance §6.4) | 못 찾으면 기본 펼침 또는 D5 쪽 자리를 다시 본다 → ADR |
 
 ---
 
@@ -325,5 +327,6 @@
 | 0029 | 미리보기·구간 섹션: 표지 자리 + [영상 보기]를 누를 때 세션, 한 섹션·기본 펼침(폐기 → 0030) | D66, components.md §2.29, preview-ux2.md, app.md 121 |
 | 0030 | 구간 편집 화면: 창 전체 레이어, 상태 셋(확정·초안·열림), 공용 modalLayer, 닫기 = 초안 버림 | D67, components.md §2.31·§2.33, range-editor.md, app.md 124 |
 | 0031 | 생방송 녹화 마치기 확인(D8): 비가역이지만 지우지 않으면 neutral, 생방송에 일시정지 없음 | D68, D63, D36, content.md §5.3, app.md 127 |
+| 0032 | 업데이트 바뀐 점: 배너 B4 안 접는 목록(대화상자 아님), 서명되지 않는 일반 텍스트라 줄·길이를 셸과 프런트가 막음 | D69, D5, D36, D57, patterns.md §12, content.md §13, app.md 128 |
 
 그 뒤 D33(앱 마크)·D58·D59·D60(사람 결정)·D55(실기 결과)·§6-1(Windows 실기)이 각각 ADR을 받는다(§6-1은 실기 결과가 나온 뒤).

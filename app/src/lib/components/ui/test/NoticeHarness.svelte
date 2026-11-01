@@ -11,8 +11,10 @@
     actions?: NoticeAction[];
     onclose?: () => void;
     help?: NoticeHelp;
+    /** 본문 아래 자기 줄에 그릴 글(details 슬롯 시험) */
+    detailsText?: string;
   }
-  let { tone = 'info', variant = 'inline', icon, title, actions, onclose, help }: Props = $props();
+  let { tone = 'info', variant = 'inline', icon, title, actions, onclose, help, detailsText }: Props = $props();
 </script>
 
 {#if variant === 'row'}
@@ -21,6 +23,11 @@
   {:else}
     <Notice variant="row" {tone} {title}>본문 글</Notice>
   {/if}
+{:else if detailsText !== undefined}
+  <Notice {variant} tone="info" {title} {actions} {onclose} {help}>
+    본문 글
+    {#snippet details()}<span class="probe-details">{detailsText}</span>{/snippet}
+  </Notice>
 {:else if tone === 'neutral'}
   <Notice {variant} tone="neutral" {icon} {title} {actions} {onclose} {help}>본문 글</Notice>
 {:else}

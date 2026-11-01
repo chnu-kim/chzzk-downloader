@@ -445,3 +445,75 @@ async fn segmented_reresolve_during_outage_recovers() {
     assert_eq!(order[i + 1], Phase::WaitingNetwork, "{order:?}");
     assert_eq!(order[i + 2], Phase::Downloading, "{order:?}");
 }
+
+/// 작업 안의 `Job::resolve`: 첫 빠른 재시도는 `delay(0)`(base의 ±25%)만 기다린다(지수가 하나 밀리지 않는다).
+#[tokio::test]
+async fn resolve_first_quick_retry_waits_base_delay() {
+    let server = MockServer::start().await;
+    let proxy = GateProxy::start(*server.address());
+    proxy.gate().down_for(Duration::from_secs(30));
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_path(&dir);
+    let mut cfg = cfg(&proxy.url(), 0);
+    // 빠른 재시도 한 번(시도 2회), 인내 없음. 지터가 0.75~1.25배라 delay(0) = 3000~5000ms,
+    // delay(1) = 6000ms 이상이다(`-`→`/`는 delay(1), `-`→`+`는 delay(2)). 상한 5900ms는 delay(0) 최대보다
+    // 약 900ms 여유라 느린 러너(coverage 계측 등)의 연결·accept 지연을 견딘다.
+    cfg.retry = RetryPolicy {
+        max_attempts: 2,
+        base: Duration::from_millis(4000),
+        cap: Duration::from_secs(10),
+        patience: Duration::ZERO,
+        patience_cap: Duration::from_millis(150),
+    };
+    let t0 = Instant::now();
+    let r = run(
+        cfg,
+        hls_request(&out),
+        CancellationToken::new(),
+        &Events::default(),
+    )
+    .await;
+    let took = t0.elapsed();
+    let e = r.unwrap_err();
+    assert!(matches!(e, Error::Network(_)), "{e:?}");
+    assert_eq!(proxy.refused(), 2);
+    assert!(took >= Duration::from_millis(2950), "{took:?}");
+    assert!(took < Duration::from_millis(5900), "{took:?}");
+}
+
+/// HLS playlist·init 단계(`acquire`의 `load`)의 단절도 인내로 기다렸다가 같은 주소로 다시 받아 끝낸다.
+#[tokio::test]
+async fn segmented_playlist_outage_recovers() {
+    const N: usize = 3;
+    let server = MockServer::start().await;
+    let proxy = GateProxy::start(*server.address());
+    // 정보를 주면서 단절을 건다: 이어지는 master playlist 요청이 단절 중에 일어난다.
+    Mock::given(method("GET"))
+        .and(path("/service/v2/videos/9000001"))
+        .respond_with(ThenOutage {
+            gate: proxy.gate(),
+            outage: Duration::from_millis(900),
+            template: ResponseTemplate::new(200).set_body_raw(
+                hls_info(&format!("{}/g0/master.m3u8?hdnts=st=1~hmac=x", proxy.url())),
+                "application/json",
+            ),
+        })
+        .mount(&server)
+        .await;
+    mount_synth_hls(&server, "/g0", N).await;
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_path(&dir);
+    let events = Events::default();
+    let r = run(
+        cfg(&proxy.url(), 1500),
+        hls_request(&out),
+        CancellationToken::new(),
+        &events,
+    )
+    .await;
+    assert_eq!(completed_bytes(r, &out), synth_expected(N));
+    let order = phase_order(&events);
+    assert!(order.contains(&Phase::WaitingNetwork), "{order:?}");
+    // 단절 중 빠른 5회 + 인내 재시도가 있었다.
+    assert!(proxy.refused() >= 6, "{}", proxy.refused());
+}

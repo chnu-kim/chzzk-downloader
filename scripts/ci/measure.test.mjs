@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { gzipSync } from 'node:zlib';
 import { test } from 'node:test';
 
-import { allowEntryCount, countActive, countListed, gzipTotal, llvmLinesPct, MUTANTS_OK_CODES, parseShard, playwrightCount, shardSummary, sumShards, vitestCount, vitestLinesPct } from './measure.mjs';
+import { allowEntryCount, countActive, countListed, gzipTotal, llvmLinesPct, MUTANTS_AS_LIMIT, MUTANTS_OK_CODES, missedList, mutantsEnv, parseShard, playwrightCount, shardSummary, sumShards, vitestCount, vitestLinesPct } from './measure.mjs';
 
 test('llvm-cov·vitest 커버리지 JSON', () => {
   assert.equal(llvmLinesPct({ data: [{ totals: { lines: { count: 3, covered: 2, percent: 66.666666 } } }] }), 66.67);
@@ -76,6 +76,30 @@ test('mutants: shard 표기, outcomes 요약, shard 합(빠지거나 겹치면 �
   assert.throws(() => sumShards([s0, { ...s1, cargo_mutants_version: '26.0.0' }]), /버전/);
   assert.throws(() => sumShards([]), /없다/);
   assert.deepEqual(MUTANTS_OK_CODES, [0, 2, 3]);
+});
+
+test('mutants: 테스트 바이너리 메모리 상한(Linux runner, cicd.md 구현 중 변경 125)', () => {
+  const base = { PATH: '/usr/bin', HOME: '/home/x' };
+  const e = mutantsEnv('linux', 'x64', base);
+  // 나머지 env(PATH·HOME)를 지우지 않는다
+  assert.equal(e.PATH, '/usr/bin');
+  assert.equal(e.HOME, '/home/x');
+  assert.equal(e.CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER, `prlimit --as=${MUTANTS_AS_LIMIT} --`);
+  assert.equal(e.MALLOC_ARENA_MAX, '2');
+  assert.equal(base.MALLOC_ARENA_MAX, undefined, '입력 env를 바꾸지 않는다');
+  assert.equal(mutantsEnv('linux', 'arm64', base).CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUNNER, `prlimit --as=${MUTANTS_AS_LIMIT} --`);
+  assert.throws(() => mutantsEnv('linux', 'ia32', base), /arch/);
+  // 작업 2개 × 상한이 러너 16GB 안에 들고, 정상 테스트에 넉넉하다(1GiB 이상)
+  assert.ok(Number.isInteger(MUTANTS_AS_LIMIT) && 2 * MUTANTS_AS_LIMIT < 16e9 && MUTANTS_AS_LIMIT >= 2 ** 30);
+  // Linux가 아니면(prlimit 없음) 그대로
+  for (const os of ['darwin', 'win32']) assert.deepEqual(mutantsEnv(os, 'x64', base), base);
+});
+
+test('mutants: survivor 목록(missed.txt)은 줄:열을 빼고 정렬한다', () => {
+  const txt = 'crates/core/src/http.rs:254:15: replace += with *= in redact_url\n\ncrates/core/src/a.rs:9:1: replace f -> bool with true\r\n';
+  assert.deepEqual(missedList(txt), ['crates/core/src/a.rs: replace f -> bool with true', 'crates/core/src/http.rs: replace += with *= in redact_url']);
+  assert.deepEqual(missedList(''), []);
+  assert.deepEqual(missedList(undefined), []);
 });
 
 test('design: 허용 목록 entries 배열의 길이, 모양이 틀리면 오류', () => {

@@ -220,29 +220,68 @@ export function sumShards(list) {
   return { shards: n, total: sum('total_mutants'), missed: sum('missed'), caught: sum('caught'), timeout: sum('timeout'), unviable: sum('unviable') };
 }
 
+// 테스트 바이너리의 가상 메모리 상한(바이트, cicd.md 구현 중 변경 125). 진척을 멈춘 채 Vec에 계속 넣는 mutant
+// (예: `i += 1 → i *= 1`)가 러너 메모리를 다 써 러너 에이전트가 죽는 것을 막는다: 할당 실패로 테스트 바이너리가
+// abort하면 cargo-mutants는 잡힌 것으로 센다. 작업 2개 × 상한이 러너(16GB) 안에 든다. cargo의 target runner는
+// 테스트 바이너리에만 걸리므로 rustc·build script는 제한받지 않는다. 상한이 정상 테스트를 깨면 기준선이 exit 4라
+// MUTANTS_OK_CODES가 측정 실패로 드러낸다.
+export const MUTANTS_AS_LIMIT = 6 * 2 ** 30;
+const LINUX_TRIPLE = { x64: 'X86_64_UNKNOWN_LINUX_GNU', arm64: 'AARCH64_UNKNOWN_LINUX_GNU' };
+
+// cargo mutants에 넘길 env. Linux에서만 prlimit runner를 붙이고(MALLOC_ARENA_MAX=2: glibc가 스레드 arena마다
+// 주소 공간을 크게 잡아 상한에 먼저 닿지 않게), 다른 OS는 그대로 둔다(로컬 macOS에는 prlimit가 없다).
+export function mutantsEnv(platform, arch, env) {
+  if (platform !== 'linux') return env;
+  const triple = LINUX_TRIPLE[arch];
+  if (!triple) throw new Error(`mutants 메모리 상한: 모르는 Linux arch ${arch}`);
+  return { ...env, [`CARGO_TARGET_${triple}_RUNNER`]: `prlimit --as=${MUTANTS_AS_LIMIT} --`, MALLOC_ARENA_MAX: '2' };
+}
+
+// mutants.out/missed.txt → 살아남은 mutant 목록(줄:열을 빼 코드가 밀려도 비교되게, 정렬). 무엇이 늘었는지 로그로 남긴다
+export function missedList(txt) {
+  return String(txt ?? '')
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .map((l) => l.replace(/^([^:]+):\d+:\d+:/, '$1:'))
+    .sort();
+}
+
+function readMissed(dir) {
+  const p = join(dir, 'mutants.out', 'missed.txt');
+  return existsSync(p) ? missedList(readFileSync(p, 'utf8')) : [];
+}
+
+function printMissed(title, list) {
+  console.log(`${title}: 살아남은 mutant ${list.length}개`);
+  for (const l of list) console.log(`  ${l}`);
+}
+
 function mutantsShard() {
   const shard = parseShard(process.env.MUTANTS_SHARD);
   const out = join(ROOT, MUTANTS_DIR, `shard-${shard.k}`);
   mkdirSync(out, { recursive: true });
   // 순서 고정(--no-shuffle), 작업 2개(러너 4 vCPU). 기준(baseline) 테스트는 shard마다 돈다
   const args = ['mutants', '-p', MUTANTS_PKG, '--shard', `${shard.k}/${shard.n}`, '--no-shuffle', '--jobs', '2', '--output', out];
-  const r = spawnTool('cargo', args, { cwd: ROOT, stdio: 'inherit' });
+  const r = spawnTool('cargo', args, { cwd: ROOT, stdio: 'inherit', env: mutantsEnv(process.platform, process.arch, process.env) });
   if (r.error) throw new Error(`cargo: ${r.error.message}`);
   if (!MUTANTS_OK_CODES.includes(r.status)) throw new Error(`cargo ${args.join(' ')} → exit ${r.status ?? r.signal}(측정 실패)`);
   const summary = shardSummary(JSON.parse(readFileSync(join(out, 'mutants.out', 'outcomes.json'), 'utf8')), shard);
   writeFileSync(join(out, 'summary.json'), JSON.stringify(summary, null, 2) + '\n');
   console.log(`mutants shard ${shard.k}/${shard.n}: ${JSON.stringify(summary)}`);
+  printMissed(`mutants shard ${shard.k}/${shard.n}`, readMissed(out));
 }
 
 function mutants() {
   const dir = join(ROOT, MUTANTS_DIR);
   if (!existsSync(dir)) throw new Error(`${dir}가 없다(mutants-shard 작업의 artifact를 받아야 한다)`);
-  const list = readdirSync(dir)
+  const shards = readdirSync(dir)
     .filter((d) => /^shard-\d+$/.test(d) && existsSync(join(dir, d, 'summary.json')))
-    .sort()
-    .map((d) => JSON.parse(readFileSync(join(dir, d, 'summary.json'), 'utf8')));
+    .sort();
+  const list = shards.map((d) => JSON.parse(readFileSync(join(dir, d, 'summary.json'), 'utf8')));
   const s = sumShards(list);
   console.log(`mutants: shard ${s.shards}개, mutant ${s.total}개(잡힘 ${s.caught}, 살아남음 ${s.missed}, 시간 초과 ${s.timeout}, 빌드 안 됨 ${s.unviable})`);
+  printMissed('mutants', shards.flatMap((d) => readMissed(join(dir, d))).sort());
   save('mutants', { [`mutants_missed.${MUTANTS_PKG}`]: s.missed });
 }
 

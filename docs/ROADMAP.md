@@ -4,6 +4,7 @@
 
 ## 현재 위치
 
+- **주간 mutants 복구(2026-11-01, 브랜치 `fix/mutants-loop`, 이슈 #97, cicd.md 구현 중 변경 125)**: 원인 셋. ① 진척을 멈추고 Vec에 계속 넣는 mutant(`redact_url` `i *= 1` 등)가 자동 timeout이 73~93초로 늘자 러너 메모리를 다 써 shard 0·2가 죽었고 ② 코어가 약 3배(mutant 약 2,186개)가 되어 shard 1·3이 180분을 넘겼으며 ③ 10-11은 살아남음 104 > 기준 100이었다. 수정: `measure.mjs`가 Linux 테스트 바이너리에 `prlimit --as=6GiB` runner·`MALLOC_ARENA_MAX=2`를 주고, shard를 8개로 늘리고, shard·집계 로그에 survivor 목록을 찍는다. 동치가 아닌 survivor 둘을 `patience.rs` 테스트로 잡았다. 첫 완주 측정 뒤 기준을 다시 정한다(넘으면 RATCHET_LOG).
 - **툴체인 1.99.1·dependabot 둘(2026-11-01, 브랜치 `chore/deps-toolchain`, 이슈 #177, PR #235·#234, cicd.md 구현 중 변경 124)**: `rust-toolchain.toml` 1.99.1(x86_64 FFI bool 오컴파일 수정), install-action 2.87.31·rust-cache 2.9.3, workers-types 5.20261025.1(전이 의존성을 내린 dependabot lock 대신 다시 만든 lock).
 - **v0.14.1 릴리스(2026-11-01)**: 태그 `f50dac4`(버전 PR #237), release 실행 41287620156 한 번에 전 단계 성공(gate·xtask·build 3 OS·smoke·stage·sign-publish·verify·prune·deploy-worker·report). master 실행 41287040814의 `ci-ok`·`e2e-native` 둘 녹색. 이슈 #37은 다음 정기 nightly advisories 녹색에 고리가 닫는다.
 - **v0.14.1 버전 PR(2026-11-01, 브랜치 `release/v0.14.1`)**: v0.14.0 뒤 의존성·보안 권고 정리(#233, 이슈 #37, dependabot 넷)와 간헐 실패 시험 둘(#236)을 담는다(`fix`라 patch, `release.mjs next-version` 최소 0.14.1). 노트 `release/notes/0.14.1.md`. master 실행 41285750895(머지 커밋 b6fa78b)의 크기 키는 모두 3% 안이고, +2.86%로 붙은 `size.bundle.linux-deb`만 태그 빌드 여유를 두려고 미리 올렸다(RATCHET_LOG).

@@ -5,7 +5,7 @@ name: nightly
 #   매일(17 18 * * *): nightly e2e-native (linux), nightly drift, nightly advisories, nightly pins, nightly ruleset-drift,
 #                       nightly private-scan(환경 audit의 비공개 denylist),
 #                       nightly fuzz
-#   매주(47 18 * * 0): nightly e2e-native (windows), nightly toolchain, nightly mutants(shard 4개 → 합 → ratchet)
+#   매주(47 18 * * 0): nightly e2e-native (windows), nightly toolchain, nightly mutants(shard 8개 → 합 → ratchet)
 #   - e2e-native (linux): ci.yml e2e-native(코드 PR·master)와 같은 gate다(러너 이미지가 바뀌어도 매일 확인한다).
 #     PR에서는 ci.yml이 돌리므로 여기서는 돌지 않는다.
 #   - e2e-native (windows): ci.yml e2e-native-windows(코드 PR·master, 구현 중 변경 79)와 같은 gate다. 여기서는 매주와
@@ -379,7 +379,8 @@ jobs:
         name: toolchain
         run: node scripts/ci/run.mjs toolchain
 
-  # 살아남은 mutant(§2 mutants, 매주): chzzk-core를 shard 4개로 나눠 돌리고(약 190개씩) 합을 ratchet mutants_missed와 비교한다.
+  # 살아남은 mutant(§2 mutants, 매주): chzzk-core를 shard 8개로 나눠 돌리고(약 275개씩,
+  # 작업 제한 180분 안) 합을 ratchet mutants_missed와 비교한다. 테스트 바이너리 메모리 상한은 measure.mjs(cicd.md 구현 중 변경 125).
   mutants-shard:
     name: nightly mutants shard (${{ matrix.shard }})
     if: github.event.schedule == '47 18 * * 0' || (github.event_name == 'workflow_dispatch' && ((inputs.only == 'all' && inputs.weekly) || inputs.only == 'mutants'))
@@ -390,7 +391,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: ["0/4", "1/4", "2/4", "3/4"]
+        shard: ["0/8", "1/8", "2/8", "3/8", "4/8", "5/8", "6/8", "7/8"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

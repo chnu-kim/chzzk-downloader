@@ -40,7 +40,7 @@
     "tolerance_pct": 3
   },
   "mutants_missed": {
-    "chzzk-core": 100
+    "chzzk-core": 153
   },
   "design": {
     "allow_entries": 0

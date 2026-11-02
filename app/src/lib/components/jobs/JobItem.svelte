@@ -15,9 +15,12 @@
     jobActionLabel,
     jobButtons,
     isWaitingNetwork,
+    jobSpeech,
     qualityText,
+    spokenPercent,
     statusLine,
     statusParts,
+    statusWord,
     type JobAction,
     type JobBlock,
   } from '../../jobs';
@@ -99,6 +102,10 @@
   );
   const body = $derived(bodyLine(job, progress, { base, recovered }));
   const missing = $derived(job.status === 'completed' && job.missing);
+  // 행 접근 이름(patterns.md §14.3, content.md §10): 상태 줄 전체가 아니라 **바뀌지 않는 조각**만 쓴다.
+  // 상태 줄의 속도·남은 시간(`runningLine`)·상대 시각(`whenText`)은 매초 바뀌어 포커스 둔 행의 이름이 계속 바뀐다(K6, ADR-0033)
+  const rowStatus = $derived(err ? err.title : missing ? t('job.completedMissing') : statusWord(job, progress));
+  const rowLabel = $derived(jobSpeech(job.title, rowStatus, spokenPercent(bar?.value)));
   /** 제목 전체 보기(행 아래 인라인 펼침). 잘린 제목에 키보드·터치로 닿는 길이다 */
   let titleOpen = $state(false);
 
@@ -127,8 +134,9 @@
   <span class="job-status num">{text}</span>
 {/snippet}
 
-<!-- 항목은 버튼이 아니라 키보드 이동 대상이다(patterns.md §8 roving tabindex: 위·아래·Space·Enter·Delete).
-     role="group"은 비대화형이라 tabindex·keydown에 a11y 경고가 나지만, 안쪽 버튼과 따로 항목 자체가 포커스를 받아야 한다. -->
+<!-- 항목은 버튼이 아니라 키보드 이동 대상이다(roving tabindex: 위·아래·Space·Enter·Delete).
+     포커스 모드 role(listbox·grid)이 없는 예외다: 행 안에 버튼이 있어 listbox는 axe nested-interactive 위반이고
+     grid 전환은 실기(platform.md §21 M26) 뒤 ADR로 정한다(platform.md §12.2). 비대화형 요소의 tabindex·keydown 경고는 그래서 끈다. -->
 <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
 <article
   bind:this={el}
@@ -136,7 +144,7 @@
   class:new={highlighted}
   class:failed={job.status === 'failed'}
   data-job-id={job.id}
-  aria-label={job.title}
+  aria-label={rowLabel}
   aria-describedby={block ? `${uid}-blocked` : undefined}
   tabindex={tabbable ? 0 : -1}
   onkeydown={handleKeydown}

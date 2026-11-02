@@ -4,6 +4,7 @@
 import { resolved } from '../src/test/fixtures';
 import { t, tRegex } from './copy';
 import { expect, test } from './fixtures';
+import { jobRowName } from '../src/test/jobRow';
 
 const GB = 1024 ** 3;
 
@@ -52,7 +53,7 @@ test('주소를 불러와 받고, 멈췄다 이어받아 끝까지 받는다', a
       },
     },
   ]);
-  const item = page.getByRole('article', { name: r.meta.title });
+  const item = page.getByRole('article', { name: jobRowName(r.meta.title) });
   await expect(item).toBeVisible();
   await expect(item).toContainText(t('job.queuedNext'));
 
@@ -103,7 +104,7 @@ test('지운 항목은 [되돌리기]로 돌아오고 그때는 remove_job을 �
   await page.getByRole('button', { name: t('common.load') }).click();
   await page.getByRole('button', { name: t('card.download') }).click();
   await app.ctl((c, gb) => c.complete(1, 4 * gb), GB);
-  const item = page.getByRole('article', { name: r.meta.title });
+  const item = page.getByRole('article', { name: jobRowName(r.meta.title) });
   await expect(item).toContainText(tRegex('job.completed'));
 
   await page.getByRole('button', { name: t('list.clearFinished') }).click();
@@ -122,7 +123,7 @@ test('받는 중인 작업을 취소하면 확인(D2)을 거쳐 목록에서 지
   await page.getByRole('button', { name: t('common.load') }).click();
   await page.getByRole('button', { name: t('card.download') }).click();
   await app.ctl((c, gb) => c.progress(1, 1 * gb, 4 * gb), GB);
-  const item = page.getByRole('article', { name: r.meta.title });
+  const item = page.getByRole('article', { name: jobRowName(r.meta.title) });
   // 받은 부분(.part)이 있으면 크기와 무관하게 danger [취소]가 확인을 연다
   await item.getByRole('button', { name: t('a11y.cancelJob', { title: r.meta.title }), exact: true }).click();
   const dialog = page.getByRole('dialog', { name: t('dialog.cancel.title', { title: r.meta.title }) });
@@ -142,7 +143,7 @@ test('받은 바이트가 없는 작업은 확인 없이 바로 취소한다', a
   await page.getByLabel(t('url.label')).fill(r.url);
   await page.getByRole('button', { name: t('common.load') }).click();
   await page.getByRole('button', { name: t('card.download') }).click();
-  const item = page.getByRole('article', { name: r.meta.title });
+  const item = page.getByRole('article', { name: jobRowName(r.meta.title) });
   await item.getByRole('button', { name: t('a11y.cancelJob', { title: r.meta.title }), exact: true }).click();
   await expect(item).toBeHidden();
   await expect(page.getByRole('dialog')).toHaveCount(0);

@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SettingsDto } from './lib/bindings';
 import { t } from './lib/copy/ko';
 import { job, prog } from './test/jobFixtures';
+import { jobRowName } from './test/jobRow';
 
 class FakeChannel {
   onmessage: (e: unknown) => void = () => {};
@@ -105,7 +106,7 @@ describe('접근성', () => {
   it('랜드마크와 목록 구획, 모든 버튼·스위치·진행 막대에 이름이 있다', async () => {
     const user = userEvent.setup();
     render(App);
-    await screen.findByRole('article', { name: '영상 1' });
+    await screen.findByRole('article', { name: jobRowName('영상 1') });
     expect(screen.getByRole('banner')).toBeInTheDocument();
     expect(screen.getByRole('main')).toBeInTheDocument();
     expect(screen.getByRole('region', { name: t('list.title') })).toBeInTheDocument();
@@ -144,9 +145,9 @@ describe('접근성', () => {
   it('[목록에서 보기] 요청은 한 번만 쓰이고, D2는 뷰를 떠나면 닫힌다', async () => {
     const user = userEvent.setup();
     render(App);
-    await screen.findByRole('article', { name: '영상 1' });
+    await screen.findByRole('article', { name: jobRowName('영상 1') });
     jobs.reveal(2);
-    await waitFor(() => expect(screen.getByRole('article', { name: '영상 2' })).toHaveFocus());
+    await waitFor(() => expect(screen.getByRole('article', { name: jobRowName('영상 2') })).toHaveFocus());
     await user.click(screen.getByRole('button', { name: '설정' }));
     await user.click(await screen.findByRole('button', { name: '뒤로' }));
     await waitFor(() => expect(screen.getByLabelText('영상 주소')).toHaveFocus());
@@ -156,16 +157,16 @@ describe('접근성', () => {
     ui.goSettings();
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     ui.goHome();
-    await screen.findByRole('article', { name: '영상 1' });
+    await screen.findByRole('article', { name: jobRowName('영상 1') });
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 
   it('상태는 색만으로 말하지 않는다: 멈춤·완료 항목에 상태 문구가 글자로 있다', async () => {
     render(App);
     // 아이콘·막대 구성은 작업 행 테스트(jobs.test.ts, patterns.md §3.2 표)가 소유한다. 여기서는 글자가 있음을 본다
-    const paused = await screen.findByRole('article', { name: '영상 2' });
+    const paused = await screen.findByRole('article', { name: jobRowName('영상 2') });
     expect(within(paused).getByText(t('job.status.paused'), { exact: false })).toBeInTheDocument();
-    const done = screen.getByRole('article', { name: '영상 3' });
+    const done = screen.getByRole('article', { name: jobRowName('영상 3') });
     expect(within(done).getByText(t('job.status.completed'), { exact: false })).toBeInTheDocument();
     // 재시작 직후 배너(B1)는 열의 첫 요소
     expect(screen.getByText(t('banner.interrupted', { n: 1 }))).toBeInTheDocument();

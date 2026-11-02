@@ -7,6 +7,7 @@ import { finishedSet, job, jobStateSet, liveProg, MY_CHANNEL_ID, prog, SAME_PREF
 import { CHECK_DEBOUNCE_MS, revealLabel, t } from './copy';
 import { expect, type App } from './fixtures';
 import type { Scenario } from './mock/backend';
+import { jobRowName } from '../src/test/jobRow';
 
 export type { App };
 
@@ -508,13 +509,13 @@ export const SCREENS: Screen[] = [
         job(2, { title: '끝까지 받은 구간', status: 'completed', range: { startMs: 600000, endMs: null } }),
       ],
     }),
-    ready: (p) => p.getByRole('article', { name: '구간 받는 영상' }),
+    ready: (p) => p.getByRole('article', { name: jobRowName('구간 받는 영상') }),
   },
   {
     id: '작업 목록(상태 전부)',
     slug: 'jobs-all',
     scenario: (_env, now) => ({ auth: SIGNED_IN, jobs: jobStateSet(true, now) }),
-    ready: (p) => p.getByRole('article', { name: SAME_PREFIX_TITLES[0] }),
+    ready: (p) => p.getByRole('article', { name: jobRowName(SAME_PREFIX_TITLES[0]) }),
     aligned: ['배너 왼쪽', '배너 오른쪽', '툴바 끝 요소'],
   },
   {
@@ -530,13 +531,13 @@ export const SCREENS: Screen[] = [
     drive: async (app) => {
       await app.page.getByRole('button', { name: t('list.group.finished', { n: 12 }) }).click();
     },
-    ready: (p) => p.getByRole('article', { name: '완료한 영상 1', exact: true }),
+    ready: (p) => p.getByRole('article', { name: jobRowName('완료한 영상 1') }),
   },
   {
     id: '작업 목록(토스트)',
     slug: 'jobs-toast',
     scenario: (_env, now) => ({ jobs: jobStateSet(false, now) }),
-    ready: (p) => p.getByRole('article', { name: SAME_PREFIX_TITLES[0] }),
+    ready: (p) => p.getByRole('article', { name: jobRowName(SAME_PREFIX_TITLES[0]) }),
     // 첫 행의 [⋯] › 주소 복사 → 토스트 하나(목록을 지우지 않는다)
     toastAction: async (app) => {
       // 클립보드 권한은 러너마다 달라 성공·실패 토스트가 갈린다: 쓰기를 늘 성공으로 고정해 촬영을 결정적으로 만든다

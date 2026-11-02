@@ -8,6 +8,7 @@ import { job } from '../src/test/jobFixtures';
 import { resolved } from '../src/test/fixtures';
 import { actionLabel, errorCopy, t } from './copy';
 import { expect, test } from './fixtures';
+import { jobRowName } from '../src/test/jobRow';
 
 const err = (code: ErrorCode, stage: AppError['stage']): AppError => ({ code, message: `e2e ${code}`, stage, resumable: false, payload: null });
 const urlFor = (i: number) => `https://chzzk.naver.com/video/${9_100_000 + i}`;
@@ -39,7 +40,7 @@ test('작업 오류: 모든 코드의 실패 항목이 copy deck대로 그려진
   );
   await app.open({ jobs });
   for (const j of jobs) {
-    const item = page.getByRole('article', { name: j.title, exact: true });
+    const item = page.getByRole('article', { name: jobRowName(j.title) });
     const want = errorCopy(j.error as AppError, { place: 'job', partialBytes: j.partialBytes, cookiesEnabled: false });
     await expect(item, j.title).toContainText(want.title);
     if (want.body) await expect(item, j.title).toContainText(want.body);

@@ -212,6 +212,7 @@ export const ko = {
   'a11y.progress': '{percent}퍼센트 받았어요. {remaining}',
   'a11y.more': '‘{title}’ 더 보기',
   'a11y.jobStatus': '‘{title}’: {status}',
+  'a11y.jobProgress': '‘{title}’: {status}, {percent}퍼센트',
   'a11y.cancelJob': '‘{title}’ 받기 취소',
   'a11y.reopen': '‘{title}’ 다시 열기',
   'a11y.resolved': '‘{title}’ 영상 정보를 불러왔어요',

@@ -3,6 +3,7 @@
 import { job, prog } from '../src/test/jobFixtures';
 import { engineFixText, formatFileSize, RECOVERY_NOTICE_MS, RECOVERY_SILENT_MS, STALE_DAYS, t } from './copy';
 import { expect, test } from './fixtures';
+import { jobRowName } from '../src/test/jobRow';
 
 const GB = 1024 ** 3;
 
@@ -48,7 +49,7 @@ test('macOS 메뉴: menu-settings는 설정 화면, menu-about은 설정의 정�
 test('잠자기 방지: 설정 토글은 keepAwake를 저장하고, keep-awake 이벤트가 받는 중 그룹 옆 한 줄을 켜고 끈다', async ({ app }) => {
   const { page } = app;
   await app.open({ jobs: [job(1, { title: '받는 영상', status: 'running', progress: prog() })] });
-  await expect(page.getByRole('article', { name: '받는 영상' })).toBeVisible();
+  await expect(page.getByRole('article', { name: jobRowName('받는 영상') })).toBeVisible();
   await expect(page.getByText(t('power.keepingAwake'))).toHaveCount(0);
   await app.ctl((c) => c.emit('keep-awake', { active: true }), null);
   await expect(page.getByText(t('power.keepingAwake'))).toBeVisible();
@@ -83,7 +84,7 @@ test('연결 대기: 줄무늬 막대·퍼센트 유지·경과 시간, 1분 넘
   const { page } = app;
   await page.clock.install({ time: new Date('2026-03-01T00:00:00+09:00') });
   await app.open({ jobs: [job(1, { title: '끊기는 영상', status: 'running', progress: prog() })] });
-  const item = page.getByRole('article', { name: '끊기는 영상' });
+  const item = page.getByRole('article', { name: jobRowName('끊기는 영상') });
   await expect(item).toBeVisible();
 
   await app.ctl((c, gb) => c.progress(1, 2 * gb, 4 * gb, 'waitingNetwork'), GB);
@@ -109,7 +110,7 @@ test('1분 안에 풀린 단절은 회복 줄 없이 조용히 넘어간다', as
   const { page } = app;
   await page.clock.install({ time: new Date('2026-03-01T00:00:00+09:00') });
   await app.open({ jobs: [job(1, { title: '잠깐 끊긴 영상', status: 'running', progress: prog() })] });
-  const item = page.getByRole('article', { name: '잠깐 끊긴 영상' });
+  const item = page.getByRole('article', { name: jobRowName('잠깐 끊긴 영상') });
   await app.ctl((c, gb) => c.progress(1, 2 * gb, 4 * gb, 'waitingNetwork'), GB);
   await expect(item.getByText(t('job.waitingNetwork.body'))).toBeVisible();
   await page.clock.runFor(RECOVERY_SILENT_MS - 5000);
@@ -129,9 +130,9 @@ test('멈춘 지 30일: 31일 전에 멈춘 행에만 본문 줄, 29일 전·옛
       job(3, { title: '옛 기록 영상', status: 'paused', partialBytes: 1_288_490_189, stoppedAt: null }),
     ],
   });
-  const old = page.getByRole('article', { name: '오래 멈춘 영상' });
+  const old = page.getByRole('article', { name: jobRowName('오래 멈춘 영상') });
   await expect(old.getByText(t('job.stale.body', { days: STALE_DAYS + 1, size: formatFileSize(1_288_490_189, 1000) }))).toBeVisible();
-  await expect(page.getByRole('article', { name: '며칠 전 영상' })).toBeVisible();
+  await expect(page.getByRole('article', { name: jobRowName('며칠 전 영상') })).toBeVisible();
   await expect(page.getByText(/일 전에 멈췄어요/)).toHaveCount(1);
   await app.axe('멈춘 지 30일 행');
 });

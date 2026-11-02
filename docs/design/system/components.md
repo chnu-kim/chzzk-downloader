@@ -424,7 +424,7 @@ type NoticeProps = {
 
 내부 gap `--space-8`, 동작 버튼은 전부 `Button secondary sm`이고 글자 뒤 같은 flex 줄에서 `flex: none`으로 오른쪽, 좁으면 `flex-wrap`으로 아래 줄(규칙 하나, `A-FEAT-C6`의 4종 → 1종). "좁으면"의 기준은 **최소 본문 폭**이다: 동작 버튼이 있는 Notice의 본문 열은 `min-width: min(calc(100% - var(--icon-md) - var(--space-8)), calc(12 * var(--text-body)))`(약 12글자, 글자 크기를 따라 커지고 아이콘과 한 줄에 남도록 열 폭에서 아이콘·gap을 뺀 값을 넘지 않는다)라서, 본문이 이보다 좁아지기 전에 버튼이 아래 줄로 간다(320폭·아주 크게 글자에서 본문이 한 글자씩 쪼개지지 않는다, app.md 구현 중 변경 81 (하) ⑤). 원천은 `design/ui.css`의 `.notice:has(> .notice-actions) > .notice-text`이고 앱·Worker 생성물이 따른다. `row`에는 `actions`·`onclose`가 없다(행의 동작 열이 맡는다).
 
-**role**: `inline`·`banner`·`toast`에서 `danger` → `role="alert"`, 그 밖 → `role="status"`(`E-KO-22`, brief §6.9-4, `A-FEAT-C2` ConflictNotice warn alert 위반 해소). `row`에는 role이 없다: 작업 행의 실패 줄은 앱 시작 때 수십 개가 한꺼번에 그려질 수 있고 새 실패는 라이브 루트 하나가 알린다(`patterns.md` §1.5). `banner`는 `<section aria-labelledby={titleId}>`로 감싸고 role은 **안쪽 글자 요소**에 둔다(GOV.UK 배너·JAWS). `aria-atomic="true"`. 강제: `frontend`(tone×variant→role 테스트), `design-lint` DS1(`role="alert"` 리터럴은 `Notice.svelte`에만).
+**role**: 앱에서는 `inline`만 라이브 영역이다: `danger` → `role="alert"`, 그 밖 → `role="status"`(`E-KO-22`, brief §6.9-4, `A-FEAT-C2` ConflictNotice warn alert 위반 해소). 앱의 `toast`·`banner`는 role이 없는 시각 요소이고 낭독은 상주 LiveAnnouncer(polite + 오류용 assertive)가 한다(D70, ADR-0033). Worker 페이지(정적 HTML, 라이브 루트 없음)의 `banner`·flash는 지금처럼 안쪽 글자 요소에 role을 둔다. `row`에는 role이 없다: 작업 행의 실패 줄은 앱 시작 때 수십 개가 한꺼번에 그려질 수 있고 새 실패는 라이브 루트 하나가 알린다(`patterns.md` §1.5). `banner`는 `<section aria-labelledby={titleId}>`로 감싼다(Worker 배너는 role을 **안쪽 글자 요소**에 둔다, GOV.UK 배너·JAWS). role이 있을 때 `aria-atomic="true"`. 강제: `frontend`(tone×variant→role 테스트: 앱은 inline만 role, toast·banner·row 없음), `design-lint` DS1(`role="alert"` 리터럴은 `Notice.svelte`에만).
 
 **tone 사용 기준**(`A-FEAT-C3`): 되돌릴 수 없거나 막힌 것 = `danger`, 되돌릴 수 있는 주의 = `warning`, 알려 주기 = `info`, 제안·완료 = `neutral`. "확인하지 못함"은 `warning`, "내 영상이 아님"은 `danger`. 서비스 공지 block은 `warning`(사용자 잘못도 손실도 아니다, README D10). 강제: 리뷰 `R7`.
 
@@ -438,10 +438,10 @@ Worker: `<div class="notice tone-warning" role="status"><svg class="icon icon-md
 
 **API**
 ```ts
-interface ToastItem { id: string; tone: 'neutral' | 'info' | 'warning' | 'danger'; icon?: IconName; message: string; action?: NoticeAction; sticky?: boolean; }
+interface ToastItem { id: string; tone: 'neutral' | 'info' | 'warning' | 'danger'; icon?: IconName; message: string; action?: NoticeAction; sticky?: boolean; undo?: boolean; }
 type ToastProps = { item: ToastItem; onclose: () => void; };
 ```
-지속: `danger` 또는 `sticky`면 닫을 때까지. 그 밖은 `TOAST_MS`(6초 [취향], foundations §14, ADR-0009) + hover·키보드 포커스 동안 정지, 떠나면 처음부터 다시(`G-INTER-NT5`·`G-INTER-NT6`, Carbon). [되돌리기] 토스트는 `action`이 있지만 `sticky`가 아니다: 6초 뒤 닫히고 지연 삭제는 토스트가 닫힐 때(타이머·[×]·대기열 교체 모두) 확정된다(`patterns.md` §4). 포커스를 가져가지 않는다. `action`의 동작은 다른 곳(행 버튼·메뉴)에서도 할 수 있어야 한다(`G-INTER-NT7`, 리뷰 `R7`). 복사 확인은 토스트가 아니라 버튼 라벨 전환 "복사했어요"다(D37). 메시지 안 외부 문자열은 `clipGraphemes`로 자른다(`content.md` §13).
+지속: `danger` 또는 `sticky`면 닫을 때까지. 그 밖은 `TOAST_MS`(6초 [취향], foundations §14, ADR-0009) + hover·키보드 포커스 동안 정지, 떠나면 처음부터 다시(`G-INTER-NT5`·`G-INTER-NT6`, Carbon). [되돌리기] 토스트(`undo`)는 포인터로 지웠으면 6초 + 정지, **키보드(또는 보조 기술 클릭)로 지웠으면 `sticky`**다. 어느 쪽이든 지연 삭제는 토스트가 닫힐 때(타이머·[×]·[되돌리기]·Mod+Z·비움) 확정된다(`patterns.md` §4, D70). 포커스를 가져가지 않는다. `action`의 동작은 다른 곳(행 버튼·메뉴)에서도 할 수 있어야 한다(`G-INTER-NT7`, 리뷰 `R7`). 되돌리기는 창 단축키 Mod+Z(가장 최근에 올린 되돌리기 토스트)가 다른 길이다. 토스트는 보이게 될 때 한 번 상주 영역으로 읽는다. 동작이 있으면 그 이름을 함께 읽는다(`a11y.noticeAction`·`a11y.noticeUndo`). 복사 확인은 토스트가 아니라 버튼 라벨 전환 "복사했어요"다(D37). 메시지 안 외부 문자열은 `clipGraphemes`로 자른다(`content.md` §13).
 
 **치수**: Toaster는 `position: fixed; bottom: var(--edge); left: 0; right: 0; z-index: var(--z-toast)`인 띠이고 그 안에 `.col`(PageContainer와 같은 클래스: `max-width: var(--content-max); margin: 0 auto; padding: 0 var(--edge)`)을 두어 토스트 폭이 **열 안쪽 폭**(`--content-max` − 2·`--edge`, 960 창에서 760, 720 창에서 680)이 된다(`A-VIS-32` 해소. `--content-max`의 사용처는 여전히 `.col`뿐이다, §2.18). `min-height: var(--row-h)`. 등장 `opacity 0→1` + `translateY(var(--space-8))→0` `--motion-base var(--ease-out)`, 퇴장 `opacity` `--motion-base var(--ease-in)`(foundations §7.1). 토스트가 떠 있는 동안 `.main`에 `padding-bottom`·`scroll-padding-bottom: calc(var(--row-h) + 2 * var(--edge))`를 더해 마지막 행의 버튼이 가려지지 않는다(WCAG 2.4.11, `E-KO-19`; 시각 가림도 함께 푼다).
 

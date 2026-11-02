@@ -79,12 +79,13 @@
 | 위치 | 본문 열 기준 **하단**, 열 안쪽 폭 전체(Toaster 안의 `.col`, `components.md` §2.13. 960 창에서 760, 720 창에서 680). 바닥에서 `--edge` 위 | README D37(창 기준 토스트가 목록을 가리던 `A-VIS-32` 해소). 열 기준이라 좌우 정렬선이 행과 같다 |
 | 모양 | `components.md` §2.12 `toast` 행(면·그림자·반경·패딩·아이콘)이 원천 | foundations §6.4 그림자 3단, §6.1 오버레이 반경 |
 | 개수 | **한 번에 하나 보이고 나머지는 대기열.** 정보·완료 토스트는 새 것이 오면 즉시 바뀌고, 오류·동작 있는 토스트는 바뀌지 않고 줄을 세운다 | README D37. `G-INTER-NT8`(3개 이하)은 README가 대체(§17-1) |
-| 지속 | 정보·완료 `TOAST_MS`(6초 [취향], foundations §14, ADR-0009), hover와 키보드 포커스 동안 멈추고 떠나면 처음부터 다시 센다. 오류·`sticky` 토스트는 닫을 때까지. [되돌리기] 토스트는 6초 + 정지이고 닫힐 때 지연 삭제가 확정된다(§4) | README D37; Carbon "위급 메시지에 시간 제한 금지"; WCAG 2.2.2 |
+| 지속 | 정보·완료 `TOAST_MS`(6초 [취향], foundations §14, ADR-0009), hover와 키보드 포커스 동안 멈추고 떠나면 처음부터 다시 센다. 오류·`sticky` 토스트는 닫을 때까지. [되돌리기] 토스트는 6초 + 정지이고, 키보드로 지운 것은 닫을 때까지(D70). 닫힐 때 지연 삭제가 확정된다(§4) | README D37; Carbon "위급 메시지에 시간 제한 금지"; WCAG 2.2.2 |
 | 닫기 | 모든 토스트에 [×](`IconButton`) | `G-INTER-NT5` |
 | 길이 | 제목 한 문장, 동작 하나, 동작 라벨 2단어 이하. 외부 문자열은 `clipGraphemes` | Carbon(`E-KO-31`), `content.md` §3.2·§13 |
 | 모션 | 등장 `--motion-base` `--ease-out`(opacity + 아래에서 `--space-8` 이동), 퇴장 `--motion-base` `--ease-in`(opacity만). reduce: 이동 없이 opacity만 | foundations §7.1 |
 | 층 | `--z-toast` 40. 모달이 열리면 scrim 뒤에 남고 오류 토스트는 닫을 때까지 남는다 | foundations §7.2 |
-| 포커스 | 가져가지 않는다 | `G-INTER-FC3` |
+| 포커스 | 가져가지 않는다. 되돌리기는 Mod+Z로도 닿는다(D70) | `G-INTER-FC3` |
+| 낭독 | 보이게 될 때 한 번 상주 LiveAnnouncer(오류는 assertive). 토스트 요소에는 role이 없다 | MDN live regions, WCAG 4.1.3, ADR-0033 |
 | 목록 가림 | 토스트가 떠 있는 동안 `.main` 바닥에 `calc(var(--row-h) + 2 * var(--edge))` 여백(시각·포커스 모두) | `A-VIS-32`, WCAG 2.4.11 |
 
 강제: `frontend`(Toaster 단위 테스트: 하나만 보임, 대기열 순서, 타이머 정지·재시작, 오류 토스트 비대체, [×] 존재, 지연 삭제가 닫힘 시점에 확정), `design-gallery`(720·960에서 토스트 좌우가 행 가장자리와 같은 x, 토스트 중 마지막 행 버튼이 가려지지 않음), `design-lint`(ms 리터럴 금지).
@@ -112,6 +113,7 @@
 | 면 | 정보 `--surface-2` + `info` `--fg-muted`, 경고·공지 block `--warning-soft` + `--warning-ink`, 오류 `--danger-soft` + `--danger-ink` | README D10(정보 = 중립, `A-VIS-41` 해소), D37, D41(block은 danger가 아니다) |
 | 개수 | **한 번에 하나.** 오류 먼저(README D37): ① B2 설정 저장 실패(danger) ② B4 업데이트 실패(warning: "지금 버전은 계속 쓸 수 있어요") ③ B4 진행(받는 중·설치 중, 닫기 없음) ④ 엔진 경고(`engine.old.*`, warning, 이번 실행만 닫음, 단계 (f)) ⑤ B5 `block`·`warn` ⑥ B1 받다 만 영상 ⑦ B4 새 버전 ⑧ B5 `info`. B4와 B5의 `fixedIn`이 같은 버전이면 한 장으로 합친다 | `G-OUTAGE-B1`·`G-OUTAGE-B5`(info 면은 D10이 뒤집음), README D37·D41, `app.md` 구현 중 변경 62·73 |
 | 닫기 | B1·B4·B5 `info`·`warn`은 [×]로 이번 실행 동안 숨김(B5는 같은 `id`). B2는 해결될 때까지. B4 진행은 닫기 없음 | 같은 문서 §4.4-7 |
+| 낭독 | 배너가 나타나거나 바뀔 때 한 번, 업데이트 진행은 25% 단위 문구가 바뀔 때 상주 영역으로. B1 개수가 줄어드는 것은 다시 읽지 않는다. 동작이 하나면 그 이름을 함께 | ADR-0033 |
 | 로그인 화면 | 로그인 화면이 열린 동안 배너는 꺼진다. 대신 로그인 패널 안에 B5 한 줄을 둔다(§13) | `worker.md` 구현 중 변경 62 (가), g-outage §8.2 |
 
 강제: `frontend`(`AppBanners` 표 테스트: 활성 상태 조합 전부 → 보이는 배너 하나, 순서), `design-gallery`(배너 좌우 x = 입력줄 x), `R7`.
@@ -120,13 +122,13 @@
 
 | 내용 | role | 금지 |
 |---|---|---|
-| 작업 결과, 대기, 복사됨, 설정 저장됨 | `status` | — |
+| 작업 결과, 대기, 복사됨, 설정 저장됨 | `status` | 앱의 토스트·배너는 role 없이 상주 영역이 읽는다(D70) |
 | 오류(입력·카드·설정 저장 실패·오류 토스트) | `alert` | 경고·정보에 `alert` 금지(`A-FEAT-C2` ConflictNotice 위반 해소). 작업 행의 실패 줄(`variant=row`)은 role 없음 — 새 실패는 라이브 루트가 알린다 |
 | 순차 진행 기록 | `log` | 진행 틱을 읽히지 않는다 |
 | 진행 막대 | `progressbar` + `aria-valuenow`(정수 %) + `aria-valuetext`(완결 문장 `a11y.progress`, `content.md` §10) | 총량 모르면 `aria-valuenow` 생략 |
-| 상태 전이·25% 단위만 라이브 영역에 | `aria-live="polite"` 루트 하나 | 틱마다 읽기 금지 |
+| 상태 전이·25% 단위만 라이브 영역에 | `aria-live="polite"` 루트 하나 + 오류 토스트·배너용 `aria-live="assertive"` 하나(둘 다 상주) | 틱마다 읽기 금지 |
 
-근거: WCAG 4.1.3(`E-KO-B3`), `G-INTER-DL11`, brief §6.9-4. 강제: `frontend`(Notice `tone=warning`·`neutral`에 `role="alert"`가 없음을 단언, ProgressBar `aria-valuetext` 골든), `design-gallery`(axe).
+근거: WCAG 4.1.3(`E-KO-B3`), `G-INTER-DL11`, brief §6.9-4. 강제: `frontend`(Notice `tone=warning`·`neutral`에 `role="alert"`가 없음을 단언, Notice는 inline만 role이고 toast·banner에는 없음, ProgressBar `aria-valuetext` 골든), `design-gallery`(axe).
 
 ---
 
@@ -202,7 +204,7 @@
 | P-6 | 완료 전에 100%를 보이지 않는다. 마무리 단계(`finalizing`)는 마지막 퍼센트를 유지하고 상태 줄이 "마무리 중"으로 바뀐다. 100%는 완료 행에서만(막대는 숨김) | brief §6.9-6, `G-INTER-DL5` | `frontend` |
 | P-7 | 진행 중 항목에는 [일시정지]와 [취소]를 함께 둔다(생방송은 예외: 일시정지가 없고 [녹화 마치기]와 [취소]를 둔다. [녹화 마치기]는 받은 것이 있으면 D8을 연다, ADR-0031). 일시정지는 즉시 반영(낙관적), 취소는 `.part`가 있으면 크기와 무관하게 확인(§5). 두 버튼 사이는 `--gap-sibling` 8(오누름 방지) | HIG "부분 손실이 있으면 일시정지도"(`E-APPLE-24`), `G-INTER-DL7`, WCAG 2.5.8 | `frontend`(버튼 구성 표, `.part` > 0이면 취소가 Dialog를 연다) |
 | P-8 | 스피너와 막대를 서로 바꾸지 않는다. 한 자리에는 한 종류 | HIG(확정 24) | `frontend` |
-| P-9 | 진행 틱은 라이브 영역에 읽히지 않는다. 상태 전이와 25% 단위만 | `G-INTER-DL11`, brief §6.9-4 | `frontend`(announce 테스트) |
+| P-9 | 진행 틱은 라이브 영역에 읽히지 않는다. 상태 전이와 25% 단위만 | `G-INTER-DL11`, brief §6.9-4 | `frontend`(`stores/jobs.test.ts` 25% 틱, 행 이름과 같은 단위) |
 | P-10 | 코어 이벤트 250ms 간격, 화면 갱신은 프레임당 최대 1회 | `G-LAUNCH-R7` | `rust`(`Meter`), `frontend`(폭주 테스트) |
 | P-11 | Dock·작업 표시줄 진행은 배치 합계로 초당 1회 이하. 규칙은 `platform.md`(README D29) | g-shell §5.2 | `tauri` |
 
@@ -279,9 +281,9 @@
 
 규칙:
 - "다시 묻지 않기"는 두지 않는다. 확인이 남은 것은 모두 비가역이라 허용 대상이 아니다(`G-INTER-CF5`). 단어 입력 확인도 쓰지 않는다(`G-INTER-CF7`).
-- 되돌리기 토스트의 [되돌리기]는 같은 동작을 다른 곳에서도 할 수 있어야 한다. 지운 항목이 돌아올 곳은 목록이고 다른 경로는 없으므로, 토스트가 사는 동안은 지연 삭제로 **구조적으로** 복구를 보장한다(`G-INTER-NT7`·`G-INTER-CF6`). 되돌리기 토스트는 대기열에서 교체되지 않는다(`components.md` §2.13).
+- 되돌리기 토스트의 [되돌리기]는 같은 동작을 다른 곳에서도 할 수 있어야 한다. 지운 항목이 돌아올 곳은 목록이고 다른 경로는 창 단축키 Mod+Z(가장 최근에 올린 되돌리기 토스트, D70)뿐이므로, 키보드로 지웠으면 토스트는 닫을 때까지 남고 토스트가 사는 동안은 지연 삭제로 **구조적으로** 복구를 보장한다(`G-INTER-NT7`·`G-INTER-CF6`). 되돌리기 토스트는 대기열에서 교체되지 않는다(`components.md` §2.13).
 
-강제: `frontend`(지연 삭제 테스트: 토스트가 살아 있는 동안 [되돌리기] → 항목 복귀, 닫히면 `remove_job` 호출, 둘째 지우기 토스트가 와도 첫 삭제가 먼저 확정되지 않음; `.part` > 0이면 취소가 Dialog를 연다), `rust`(`clear_finished` 전후 파일 존재), `R6`(확인 흐름을 바꾸면 이 표와 대조).
+강제: `frontend`(지연 삭제 테스트: 토스트가 살아 있는 동안 [되돌리기] → 항목 복귀, 닫히면 `remove_job` 호출, 둘째 지우기 토스트가 와도 첫 삭제가 먼저 확정되지 않음, 키보드로 지운 토스트는 `TOAST_MS`가 지나도 확정되지 않고 Mod+Z가 가장 최근 것부터 되돌림; `.part` > 0이면 취소가 Dialog를 연다), `rust`(`clear_finished` 전후 파일 존재), `R6`(확인 흐름을 바꾸면 이 표와 대조).
 
 ---
 ## 5. 대화상자
@@ -752,7 +754,7 @@ Worker 쪽 확인 페이지(`loginWarning` + [계속], 확인 코드 없음)와 
 
 | 항목 | 값 | 근거 |
 |---|---|---|
-| 행 | `article` `tabindex=0`(roving), `aria-label` = `a11y.jobStatus`(‘{제목}’: {상태 줄}). 패딩 `--space-12` 상하 · `--space-16` 좌우. 행 사이 separator | `A-DRIFT-K16`, foundations §4 |
+| 행 | `article` `tabindex=0`(roving), `aria-label` = `a11y.jobStatus`(‘{제목}’: {상태}) 또는 `a11y.jobProgress`(… , {N}퍼센트, 25% 단위). 상태는 상태 줄 전체가 아니라 바뀌지 않는 낱말(실패는 오류 제목)이다. roving이지만 포커스 모드 role이 없는 예외(`platform.md` §12.2, M26). 패딩 `--space-12` 상하 · `--space-16` 좌우. 행 사이 separator | `A-DRIFT-K16`, foundations §4 |
 | 제목 | body 13 `--fg`, **2줄까지**(`-webkit-line-clamp: 2`) + 끝 말줄임. 전체 제목에 닿는 경로는 [⋯] › "제목 전체 보기"(행 아래 인라인 펼침, 키보드·터치로 닿는다)와 행 포커스 시 `aria-label`. `title=`은 보조. 종류 배지는 제목 **뒤** | foundations §3.5, `G-INPUT-IN2`, `G-UGT-R*` |
 | 동작 버튼 | 글자 버튼(ghost 24, 글자 `--fg`) + 아이콘(16, 은유 표). 사이 `--gap-sibling` 8. 취소는 글자 필수. [⋯]는 IconButton 24(`.edge-end`). 자기 줄(상태 줄 아래)이라 폭이 좁아도 접히지 않는다 | README D32, `G-INPUT-IN1`(항상 보이기, hover 노출 없음), WCAG 2.5.8 |
 | hover | 작업 행에는 없다. 최근 영상 행·메뉴 항목·유령 버튼만 | README D21 |

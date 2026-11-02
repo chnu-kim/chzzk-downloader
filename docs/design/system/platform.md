@@ -324,11 +324,11 @@ app.md 52행 "작업 표시줄 진행률은 없다"를 바꾸는 결정이다(ap
 
 | 규칙 | 근거 | 강제 |
 |---|---|---|
-| `progressbar`는 live region이 아니다. 진행 틱을 `aria-live`로 말하지 않는다. 상태 전이(시작·완료·실패·연결 대기 진입)와 25% 단위만 `polite` 한 영역에서 한 번 알린다 | W3C ARIA25(g-a11y §5.2), 현행 `announce.svelte.ts` 결정, brief §6.9-4 | `frontend`(틱마다 호출 안 됨) |
+| `progressbar`는 live region이 아니다. 진행 틱을 `aria-live`로 말하지 않는다. 상태 전이(시작·완료·실패·연결 대기 진입)와 25% 단위만 `polite` 한 영역에서 한 번 알린다 | W3C ARIA25(g-a11y §5.2), 현행 `announce.svelte.ts` 결정, brief §6.9-4 | `frontend`(틱마다 호출 안 됨, `stores/jobs.test.ts` 25% 틱) |
 | 진행 막대는 이름(`aria-label`)과 `aria-valuetext`(완결 문장)를 항상 가진다. 총량을 모르면 `aria-valuenow` 생략 | 일부 스크린리더는 `valuetext`가 있으면 숫자를 읽지 않는다(g-a11y §5.2) | `frontend`(필수 prop 타입), `design-gallery`(axe `aria-progressbar-name`) |
 | 보조기술용 문장의 단위는 한글: `58퍼센트`, `7.8기가바이트`. 골든 문장은 `content.md` §10 `a11y.progress`("{percent}퍼센트 받았어요. {remaining}") 하나 | 한국어 TTS 단위 읽기 사례(`G-A11Y-OS16`) | `frontend`(골든), `design-copy` |
 | 대화상자: `role=dialog` + 배경 `inert` + 닫으면 여는 요소로 포커스 복귀. `<dialog>`+`showModal()` 전환은 `components.md`가 정한다 | `G-A11Y-OS15` | `frontend`(`inert` 상태 테스트), `design-gallery`(axe) |
-| roving tabindex 위젯은 포커스 모드로 전환되는 role(`radiogroup`·`listbox`·`toolbar`)을 가진다 | NVDA·JAWS 브라우즈 모드가 방향키를 가로챈다(g-a11y §5.4 [추정]) | `frontend`(role 테스트) |
+| roving tabindex 위젯은 포커스 모드로 전환되는 role(`radiogroup`·`listbox`·`toolbar`)을 가진다. **예외: 작업 목록**(`ul > li > article` roving, patterns §14.3). 행 안에 버튼이 있어 `listbox`는 axe nested-interactive·aria-required-children 위반이고, `grid`/`row`/`gridcell`은 2차원 탐색 기대를 만들어 ↑↓만 있는 지금 모델과 어긋날 수 있어 §21 M26 실측 뒤 ADR로 정한다. 그동안 브라우즈 모드 사용자는 가상 커서로 행·버튼에 닿고 지름길(↑↓·Space·Enter·Delete)만 막힌다(D70) | NVDA·JAWS 브라우즈 모드가 방향키를 가로챈다(g-a11y §5.4 [추정]) | `frontend`(role 테스트, 작업 목록은 포커스 모드 role이 없음을 고정) |
 | 세 엔진에서 따로 확인한다. 한 엔진의 합격은 다른 엔진의 합격이 아니다 | `G-A11Y-OS16` | §21 M18(7단계 시나리오) |
 
 ---
@@ -607,6 +607,9 @@ OS별로 **달라지는 모든 것**은 이 표에 있다. 여기 없는 것은 
 | M23 | Wi-Fi 끄기 5초/30초/2분/10분/31분: 모두 자동 이어짐, 31분은 실패. 31분 넘게 잠재운 뒤 Wi-Fi가 10초 늦게 붙어도 이어짐 | ○ | ○ | ○ | §15 |
 | M24 | FAT32 USB에 4GiB 영상 시작 시 사전 차단, `? : "` 포함 제목이 Windows에서 열림, exFAT에서 강제 종료 뒤 임시 파일 정리 | ○ | ○ | — | §16 |
 | M25 | 배율 행렬: Windows 100·125·150%, macOS 2x, Ubuntu 100%에서 1px 선·포커스 링·아이콘 | ○ | ○ | ○ | foundations §6.2, g-scale §6 |
+| M26 | NVDA·JAWS(+ 센스리더 가능하면) 브라우즈 모드에서 작업 목록 행 ↑↓·Space·Enter·Delete가 roving 처리기에 닿는지, 포커스 모드로 바꿨을 때는 닿는지. 행 이름 "‘제목’: 상태, N퍼센트"가 읽히는지. grid 전환이 필요한지 기록 | — | ○ | — | §12.2, D70 |
+| M27 | 화면 낭독기(VoiceOver / NVDA·Narrator + WebView2 / Orca)로 설정 화면에 있는 동안 완료 토스트, 키보드 Delete 뒤 되돌리기 토스트(‘되돌리기’ 버튼·Ctrl+Z 안내), 새 버전 배너·업데이트 받는 중(25% 단위), 설정 저장 실패(assertive)가 한 번씩 읽히는지. Delete 뒤 6초가 지나도 토스트가 남는지, 입력칸 밖 Mod+Z가 되돌리는지, 입력칸 안 Mod+Z는 글 되돌리기인지. **macOS: 기본 메뉴 "실행 취소"(⌘Z)가 있는 상태에서 입력칸 밖 ⌘Z가 웹뷰 keydown에 닿는지**(닿으면 macOS도 `a11y.noticeUndo`를 켠다) | ○ | ○ | ○ | §4.3·§12, D70 |
+| M28 | 포커스를 둔 받는 중 행이 25%·50%를 넘을 때 행 이름 변경과 25% 틱 낭독이 두 번 들리는지(VoiceOver·NVDA). 두 번이면 README §6-20의 조치 | ○ | ○ | △ | §12.2, D70 |
 
 ---
 

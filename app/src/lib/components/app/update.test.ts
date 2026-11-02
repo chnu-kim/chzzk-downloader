@@ -92,6 +92,9 @@ beforeEach(async () => {
   await loadJobs([]);
 });
 
+/** 배너 글자 요소(role은 없다: 낭독은 상주 LiveAnnouncer가 한다, ADR-0033) */
+const bannerText = () => document.querySelector('.notice-banner .notice-text') as HTMLElement;
+
 describe('UpdateBanner status', () => {
   it('status가 있으면 그 문구와 눌리지 않는 [지금 업데이트], [나중에]·닫기는 없다. 정확한 퍼센트는 읽히지 않는다', async () => {
     const user = userEvent.setup();
@@ -103,7 +106,7 @@ describe('UpdateBanner status', () => {
       oninstall,
       onlater: vi.fn(),
     });
-    const status = screen.getByRole('status');
+    const status = bannerText();
     // 화면에는 정확한 값이 보이고(aria-hidden), 라이브로 읽히는 글은 25% 단위다
     expect(screen.getByText(t('update.downloading', { percent: '42%' }))).toHaveAttribute('aria-hidden', 'true');
     expect(status).toHaveTextContent(t('update.downloading', { percent: '25%' }));
@@ -287,12 +290,12 @@ describe('AppBanners 순서', () => {
     update.received = 90;
     render(AppBanners);
     // 화면은 정확한 45%, 읽히는 글은 25% 단위
-    expect(screen.getByRole('status')).toHaveTextContent(t('update.downloading', { percent: '45%' }));
-    expect(screen.getByRole('status').querySelector('.sr-only')).toHaveTextContent(t('update.downloading', { percent: '25%' }));
+    expect(bannerText()).toHaveTextContent(t('update.downloading', { percent: '45%' }));
+    expect(bannerText().querySelector('.sr-only')).toHaveTextContent(t('update.downloading', { percent: '25%' }));
     expect(screen.queryByRole('button', { name: '모두 이어받기' })).toBeNull();
     update.total = null;
     update.received = 2048;
-    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(t('update.downloading', { percent: '2.05KB' })));
+    await waitFor(() => expect(bannerText()).toHaveTextContent(t('update.downloading', { percent: '2.05KB' })));
   });
 
   it('[지금 업데이트]를 누른 뒤 받는 중이 되어도 같은 버튼에 포커스가 남는다', async () => {
@@ -306,7 +309,7 @@ describe('AppBanners 순서', () => {
     await user.click(btn);
     expect(api.updateInstall).toHaveBeenCalledTimes(1);
     update.phase = 'downloading';
-    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(t('update.downloading', { percent: '0B' })));
+    await waitFor(() => expect(bannerText()).toHaveTextContent(t('update.downloading', { percent: '0B' })));
     expect(screen.getByRole('button', { name: '지금 업데이트' })).toBe(btn);
     expect(btn).toHaveFocus();
   });
@@ -317,7 +320,7 @@ describe('AppBanners 순서', () => {
     update.phase = 'downloading';
     render(AppBanners);
     update.available = null;
-    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(t('update.downloading', { percent: '0B' })));
+    await waitFor(() => expect(bannerText()).toHaveTextContent(t('update.downloading', { percent: '0B' })));
   });
 });
 
@@ -381,7 +384,7 @@ describe('UpdateBanner: 이번 버전에서 바뀐 점(D69)', () => {
     update.installVersion = '0.2.0';
     update.phase = 'downloading';
     render(AppBanners);
-    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(t('update.downloading', { percent: '0B' })));
+    await waitFor(() => expect(bannerText()).toHaveTextContent(t('update.downloading', { percent: '0B' })));
     expect(screen.queryByText(title())).toBeNull();
     cleanup();
     update.phase = 'installing';

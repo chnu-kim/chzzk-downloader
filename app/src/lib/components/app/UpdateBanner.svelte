@@ -4,7 +4,7 @@
   // `status`가 있으면(받는 중·설치 중) 본문이 그 문구로 바뀌고 [×]가 없어진다. 배너와 [지금 업데이트]는 같은 노드로 남는다
   // (누른 버튼의 포커스와 라이브 영역이 끊기지 않게, worker.md 77). 이때 버튼은 `loading`(aria-disabled·aria-busy)이다.
   // 받는 중 문구는 진행 정도까지 deck 한 줄이다(`update.downloading`, content.md §15.1). 화면에는 정확한 퍼센트(`shown`)가
-  // 보이고(스크린 리더에게는 숨김), 라이브 영역이 읽는 `status`는 25% 단위로만 바뀐다(1%마다 다시 읽지 않게, content.md §10).
+  // 보이고(스크린 리더에게는 숨김), AppBanners가 LiveAnnouncer로 읽는 `status`는 25% 단위로만 바뀐다(1%마다 다시 읽지 않게, content.md §10).
   import { t } from '../../copy/ko';
   import { updateNoteLines } from '../../format/display';
   import Notice from '../ui/Notice.svelte';

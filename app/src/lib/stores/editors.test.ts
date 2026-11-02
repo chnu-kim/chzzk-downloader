@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppError, EditorDto, EditorsDto } from '../bindings';
 import { signedInAs } from '../../test/jobFixtures';
 import { t } from '../copy/ko';
+import { setInputModality } from '../inputModality';
 import { TOAST_MS } from '../timing';
 
 vi.mock('../api', () => ({
@@ -60,11 +61,34 @@ beforeEach(() => {
   auth.reset();
   editors.reset();
   signIn(A);
+  setInputModality('pointer');
 });
 
 afterEach(() => {
   toasts.clear();
   vi.useRealTimers();
+});
+
+describe('키보드로 뺀 토스트(ADR-0033)', () => {
+  it('키보드로 빼면 sticky·undo라 TOAST_MS 뒤에도 보내지 않고, 포인터면 기존대로 보낸다', async () => {
+    setInputModality('keyboard');
+    await open();
+    editors.remove(editors.editors[0]);
+    expect(toasts.current).toMatchObject({ sticky: true, undo: true });
+    await vi.advanceTimersByTimeAsync(TOAST_MS + 10);
+    expect(api.editorsRemove).not.toHaveBeenCalled();
+    toasts.dismiss(toasts.current!.id);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(api.editorsRemove).toHaveBeenCalledWith(B);
+
+    vi.mocked(api.editorsRemove).mockClear();
+    setInputModality('pointer');
+    editors.remove(editors.editors[0]);
+    expect(toasts.current?.sticky).toBeUndefined();
+    expect(toasts.current?.undo).toBe(true);
+    await vi.advanceTimersByTimeAsync(TOAST_MS + 10);
+    expect(api.editorsRemove).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('지연 빼기(EZ1~EZ4)', () => {

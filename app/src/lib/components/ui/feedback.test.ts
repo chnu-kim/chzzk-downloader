@@ -237,17 +237,21 @@ describe('leaveMotion', () => {
 });
 
 describe('Notice', () => {
-  // tone × variant → role (row는 role 없음)
+  // tone × variant → role (라이브 영역은 inline에만, 나머지는 role 없음: 낭독은 상주 LiveAnnouncer, ADR-0033)
   const tones = ['neutral', 'info', 'warning', 'danger'] as const;
   const variants = ['inline', 'banner', 'toast', 'row'] as const;
   const cases = tones.flatMap((tone) => variants.map((variant) => [tone, variant] as const));
 
-  it.each(cases)('tone=%s variant=%s의 role', (tone, variant) => {
+  it.each(cases)('tone=%s variant=%s의 role(라이브 영역은 inline에만, ADR-0033)', (tone, variant) => {
     const { container } = render(NoticeHarness, { tone, variant });
     const text = container.querySelector('.notice-text') as HTMLElement;
-    expect(text).toHaveAttribute('aria-atomic', 'true');
-    if (variant === 'row') expect(text.hasAttribute('role')).toBe(false);
-    else expect(text).toHaveAttribute('role', tone === 'danger' ? 'alert' : 'status');
+    if (variant === 'inline') {
+      expect(text).toHaveAttribute('aria-atomic', 'true');
+      expect(text).toHaveAttribute('role', tone === 'danger' ? 'alert' : 'status');
+    } else {
+      expect(text.hasAttribute('role')).toBe(false);
+      expect(text.hasAttribute('aria-atomic')).toBe(false);
+    }
     expect(container.querySelector('.notice')).toHaveClass(`notice-${variant}`, `tone-${tone}`);
   });
 
@@ -381,7 +385,7 @@ describe('Notice', () => {
 });
 
 describe('Toast', () => {
-  it('실패는 role=alert, 나머지는 role=status. 동작 버튼은 실행하고 닫는다', async () => {
+  it('Toast에는 role이 없다(낭독은 토스트 store가 상주 영역으로). 동작 버튼은 실행하고 닫는다', async () => {
     const user = userEvent.setup();
     const run = vi.fn();
     const onclose = vi.fn();
@@ -389,15 +393,16 @@ describe('Toast', () => {
       item: { id: 1, kind: 'danger', message: '파일을 찾을 수 없어요', action: { label: '폴더 열기', run } },
       onclose,
     });
-    expect(screen.getByRole('alert')).toHaveTextContent('파일을 찾을 수 없어요');
+    expect(document.querySelector('.notice-toast')).toHaveTextContent('파일을 찾을 수 없어요');
+    expect(document.querySelector('.notice-toast')).toHaveClass('tone-danger');
     await user.click(screen.getByRole('button', { name: '폴더 열기' }));
     expect(run).toHaveBeenCalledOnce();
     expect(onclose).toHaveBeenCalledOnce();
     unmount();
 
     render(Toast, { item: { id: 2, kind: 'success', message: '완료' }, onclose });
-    expect(screen.getByRole('status')).toHaveTextContent('완료');
-    expect(screen.queryByRole('alert')).toBeNull();
+    expect(document.querySelector('.notice-toast')).toHaveTextContent('완료');
+    expect(document.querySelector('[role="alert"],[role="status"]')).toBeNull();
     expect(document.querySelector('.notice-toast')).toHaveClass('tone-neutral');
   });
 
@@ -436,9 +441,9 @@ describe('Toaster', () => {
     const { container } = render(Toaster);
     expect(container.querySelector('.toaster > .col')).not.toBeNull();
     expect(container.querySelectorAll('.notice-toast')).toHaveLength(1);
-    expect(screen.getByRole('alert')).toHaveTextContent('첫째 오류');
+    expect(container.querySelector('.notice-toast')).toHaveTextContent('첫째 오류');
     await user.click(screen.getByRole('button', { name: '닫기' }));
-    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('둘째 오류'));
+    await waitFor(() => expect(container.querySelector('.notice-toast')).toHaveTextContent('둘째 오류'));
     expect(container.querySelectorAll('.notice-toast')).toHaveLength(1);
     await user.click(screen.getByRole('button', { name: '닫기' }));
     await waitFor(() => expect(container.querySelector('.notice-toast')).toBeNull());

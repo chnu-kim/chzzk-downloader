@@ -2,6 +2,7 @@
   // 창 전체 단축키(§10). macOS는 Cmd, 그 밖은 Ctrl.
   import { tick } from 'svelte';
   import { isInPageDrag, trackInPageDrags } from '../../inPageDrag';
+  import { trackInputModality } from '../../inputModality';
   import { auth } from '../../stores/auth.svelte';
   import { modKey, ui } from '../../stores/ui.svelte';
   import { editable, isImeKey } from '../ui/focus';
@@ -51,6 +52,8 @@
   // (tauri.conf `dragDropEnabled: false`) 막지 않으면 웹뷰의 기본 동작이 돈다. 홈의 DropOverlay가 받는 주소 글은
   // 그쪽이 먼저 막고 dropEffect를 정한다. 창 안에서 시작한 끌기를 입력칸에 놓는 것(글 옮기기)만 기본 동작에 맡긴다.
   trackInPageDrags();
+  // 마지막 입력이 키보드였는가(키보드로 지운 되돌리기 토스트는 닫을 때까지 둔다, ADR-0033)
+  trackInputModality();
 
   function inPageEdit(e: DragEvent): boolean {
     return isInPageDrag() && editable(e.target);

@@ -918,8 +918,8 @@ describe('행 접근 이름(‘제목’: 상태, 25% 단위 퍼센트)', () => 
     const noPart = job(2, { title: '실패 둘', status: 'failed', error: err('network'), progress: null, partialBytes: null });
     await load([withPart, noPart]);
     render(JobList);
-    expect(screen.getByRole('article', { name: name('실패 하나', failedCopy(withPart, false, 0).title, 50) })).toBeInTheDocument();
-    expect(screen.getByRole('article', { name: name('실패 둘', failedCopy(noPart, false, 0).title) })).toBeInTheDocument();
+    expect(screen.getByRole('article', { name: name('실패 하나', failedCopy(withPart, false, 0)!.title, 50) })).toBeInTheDocument();
+    expect(screen.getByRole('article', { name: name('실패 둘', failedCopy(noPart, false, 0)!.title) })).toBeInTheDocument();
   });
 
   it('생방송 받는 중은 퍼센트 없이 녹화 중', async () => {

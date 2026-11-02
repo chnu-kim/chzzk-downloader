@@ -7,6 +7,7 @@ import { actionLabel, errorCopy } from '../copy/errors';
 import { t } from '../copy/ko';
 import { formatFileSize, sizeBaseOf } from '../format/bytes';
 import { formatCount } from '../format/duration';
+import { lastInputWasKeyboard } from '../inputModality';
 import {
   groupJobs,
   isClearable,
@@ -449,11 +450,14 @@ export class JobsStore {
   /**
    * 지연 삭제(patterns.md §4): `ids`를 숨기고 [되돌리기] 토스트를 올린다. 토스트가 동작 버튼 말고 어떤 까닭으로든
    * (타이머·[×]·비움) 닫히면 숨긴 id마다 `remove_job`을 부른다. 동작 있는 토스트는 대체되지 않고 줄을 서므로
-   * 둘째 지우기가 와도 첫 삭제는 먼저 확정되지 않는다.
+   * 둘째 지우기가 와도 첫 삭제는 먼저 확정되지 않는다. 마지막 입력이 키보드였으면 토스트를 닫을 때까지 둔다
+   * (WCAG 2.2.1·2.1.1, ADR-0033): 닫힐 때 확정하는 규칙은 같고, [되돌리기]·Mod+Z·[×]가 닫는 길이다.
    */
   #deferRemove(ids: readonly JobId[], message: string) {
     for (const id of ids) this.hidden.add(id);
     toasts.push(message, 'info', {
+      undo: true,
+      sticky: lastInputWasKeyboard(),
       action: {
         label: t('action.undo'),
         run: () => {

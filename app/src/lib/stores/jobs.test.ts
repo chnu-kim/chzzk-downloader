@@ -30,6 +30,8 @@ const { toasts } = await import('./toast.svelte');
 const { auth } = await import('./auth.svelte');
 const { announcer } = await import('./announce.svelte');
 const { ui } = await import('./ui.svelte');
+const { setInputModality } = await import('../inputModality');
+const { TOAST_MS } = await import('../timing');
 
 function deferred<T>() {
   let resolve!: (v: T) => void;
@@ -59,6 +61,7 @@ beforeEach(() => {
   vi.mocked(api.revealOutput).mockReset().mockResolvedValue();
   ui.view = 'settings';
   ui.windowFocused = true;
+  setInputModality('pointer');
 });
 
 afterEach(() => {
@@ -639,7 +642,7 @@ describe('25% 낭독(patterns.md P-9)', () => {
     await b.started;
     return { s, send: b.send };
   }
-  const calls = (spy: ReturnType<typeof vi.spyOn>) => spy.mock.calls.map((c) => c[0]);
+  const calls = (spy: { mock: { calls: unknown[][] } }) => spy.mock.calls.map((c) => c[0]);
 
   it('25·50·75%를 처음 넘을 때만 한 번씩 읽는다', async () => {
     const spy = vi.spyOn(announcer, 'say').mockImplementation(() => {});
@@ -716,5 +719,80 @@ describe('25% 낭독(patterns.md P-9)', () => {
     send({ type: 'progress', id: 1, progress: at(25) });
     expect(calls(spy)).toEqual([tick('영상', 25)]);
     spy.mockRestore();
+  });
+});
+
+describe('키보드로 지운 되돌리기 토스트는 닫을 때까지 둔다(ADR-0033)', () => {
+  async function loaded(list: JobDto[]) {
+    const s = new JobsStore();
+    const b = begin(s);
+    b.snapshot(list);
+    await b.started;
+    return s;
+  }
+
+  it('키보드면 sticky·undo: TOAST_MS가 지나도 확정되지 않고 dismiss로만 확정한다', async () => {
+    vi.useFakeTimers();
+    const s = await loaded([job(1, { status: 'completed' })]);
+    setInputModality('keyboard');
+    await s.act(1, 'remove');
+    expect(toasts.current).toMatchObject({ sticky: true, undo: true });
+    vi.advanceTimersByTime(TOAST_MS * 3);
+    expect(api.removeJob).not.toHaveBeenCalled();
+    expect(s.hidden.has(1)).toBe(true);
+    toasts.dismiss(toasts.current!.id);
+    expect(api.removeJob).toHaveBeenCalledExactlyOnceWith(1);
+  });
+
+  it('포인터면 undo만이고 TOAST_MS 뒤에 확정한다', async () => {
+    vi.useFakeTimers();
+    const s = await loaded([job(1, { status: 'completed' })]);
+    await s.act(1, 'remove');
+    expect(toasts.current?.undo).toBe(true);
+    expect(toasts.current?.sticky).toBeUndefined();
+    vi.advanceTimersByTime(TOAST_MS);
+    expect(api.removeJob).toHaveBeenCalledExactlyOnceWith(1);
+  });
+
+  it('키보드로 연달아 지워도 첫 삭제가 먼저 확정되지 않고, undoLatest는 나중 것부터 되돌린다', async () => {
+    vi.useFakeTimers();
+    const s = await loaded([job(1, { status: 'completed' }), job(2, { status: 'completed' })]);
+    setInputModality('keyboard');
+    await s.act(1, 'remove');
+    await s.act(2, 'remove');
+    vi.advanceTimersByTime(TOAST_MS * 3);
+    expect(api.removeJob).not.toHaveBeenCalled();
+    expect(toasts.undoLatest()).toBe(true);
+    expect(s.hidden.has(2)).toBe(false);
+    expect(s.hidden.has(1)).toBe(true);
+    expect(toasts.current?.message).toBe(t('toast.removed'));
+    expect(api.removeJob).not.toHaveBeenCalled();
+  });
+
+  it('완료 전이(홈 아님)는 토스트 하나만 읽는다. 홈이면 토스트 없이 a11y.jobStatus 한 번', async () => {
+    const say = vi.spyOn(announcer, 'say');
+    const done = job(1, { title: '영상', status: 'completed', finalBytes: 10 });
+    ui.view = 'settings';
+    // 이벤트는 begin이 만든 Channel로 들어온다: 다시 구독해 send를 얻는다
+    const s2 = new JobsStore();
+    const h = begin(s2);
+    h.snapshot([job(1, { title: '영상', status: 'running', progress: prog() })]);
+    await h.started;
+    say.mockClear();
+    h.send({ type: 'status', job: done });
+    expect(toasts.current?.message).toBe(t('toast.completed', { title: '영상' }));
+    expect(say.mock.calls.map((c) => c[0])).toEqual([t('toast.completed', { title: '영상' })]);
+
+    toasts.clear();
+    say.mockClear();
+    ui.view = 'home';
+    const s3 = new JobsStore();
+    const h3 = begin(s3);
+    h3.snapshot([job(1, { title: '영상', status: 'running', progress: prog() })]);
+    await h3.started;
+    h3.send({ type: 'status', job: done });
+    expect(toasts.items).toHaveLength(0);
+    expect(say.mock.calls.map((c) => c[0])).toEqual([t('a11y.jobStatus', { title: '영상', status: t('job.status.completed') })]);
+    say.mockRestore();
   });
 });

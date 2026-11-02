@@ -7,6 +7,7 @@ import type { AppError, AuthStatusDto, ChannelRefDto, DelegatedChannelDto, Edito
 import { toAppError } from '../copy/errors';
 import { t, type CopyKey } from '../copy/ko';
 import { cleanDisplayText, clipGraphemes } from '../format/display';
+import { lastInputWasKeyboard } from '../inputModality';
 import { NOTIFY_TITLE_MAX_GRAPHEMES } from '../timing';
 import { announcer } from './announce.svelte';
 import { auth } from './auth.svelte';
@@ -181,6 +182,8 @@ export class EditorsStore {
     if (ed.status === 'pending') return this.#removeNow(ed, owner);
     this.hidden.add(id);
     const toastId = toasts.push(t('toast.editorRemoved', { name: shownName(ed.channelName) }), 'info', {
+      undo: true,
+      sticky: lastInputWasKeyboard(),
       action: {
         label: t('action.undo'),
         run: () => {

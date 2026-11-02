@@ -1,5 +1,5 @@
 <script lang="ts">
-  // 토스트 하나(components.md §2.13): Notice variant="toast". 오류는 alert, 나머지는 status(Notice가 정한다).
+  // 토스트 하나(components.md §2.13): Notice variant="toast". role은 없다. 낭독은 토스트 store가 상주 LiveAnnouncer로 한다(ADR-0033).
   // 마우스·키보드 포커스가 안에 있는 동안은 수명 타이머를 멈추고, 떠나면 처음부터 다시 센다.
   import { toasts, type ToastCloseReason, type ToastItem } from '../../stores/toast.svelte';
   import Notice from './Notice.svelte';

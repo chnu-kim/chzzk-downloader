@@ -8,9 +8,9 @@
 <script lang="ts">
   import Dialog from './Dialog.svelte';
 
-  let { body, open, title, primary, secondary, onclose }: ConfirmDialogProps = $props();
+  let { body, open, title, primary, secondary, onclose, returnFocus }: ConfirmDialogProps = $props();
 </script>
 
-<Dialog {open} {title} {primary} {secondary} {onclose}>
+<Dialog {open} {title} {primary} {secondary} {onclose} {returnFocus}>
   {body}
 </Dialog>

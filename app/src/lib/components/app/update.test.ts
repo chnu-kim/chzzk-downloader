@@ -217,12 +217,110 @@ describe('B4 실패 배너', () => {
     expect(screen.getByText(t('update.banner', { version: '0.2.0' }))).toBeInTheDocument();
   });
 
+  it('failed: 제목 update.failed와 본문 common.keepUsing 두 문장, 영역 이름은 update.failed', () => {
+    update.available = info('0.2.0');
+    update.failure = 'failed';
+    const { container } = render(AppBanners);
+    const region = screen.getByRole('region', { name: t('update.failed') });
+    expect(within(region).getByText(t('common.keepUsing'))).toBeInTheDocument();
+    expect(region.querySelector('.notice-title')?.textContent).toBe(t('update.failed'));
+    expect(container.querySelector('.notice-banner')).toHaveClass('tone-warning');
+  });
+
+  it('[다시 시도]를 누르면 같은 버튼 노드가 요청 중 [지금 업데이트]가 되고 포커스가 남는다', async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.updateInstall).mockReturnValue(new Promise(() => {}));
+    update.available = info('0.2.0');
+    update.failure = 'failed';
+    render(AppBanners);
+    const btn = screen.getByRole('button', { name: t('action.retry') });
+    await user.click(btn);
+    // 요청 중에는 이름이 [다시 시도] 그대로다(진행 문구가 오면 [지금 업데이트]로 바뀐다)
+    expect(screen.getByRole('button', { name: t('action.retry') })).toBe(btn);
+    expect(btn).toHaveFocus();
+    expect(btn).toHaveAttribute('aria-disabled', 'true');
+    update.phase = 'downloading';
+    await waitFor(() => expect(screen.getAllByText(/받는 중/).length).toBeGreaterThan(0));
+    expect(btn.isConnected).toBe(true);
+    expect(btn).toHaveFocus();
+  });
+
+  it('[다시 시도] 요청 중(진행 문구 전)에는 라이브 영역이 새 버전 문장으로 바뀌지 않고 [×]·바뀐 점이 없다', async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.updateInstall).mockReturnValue(new Promise(() => {}));
+    update.available = info('0.2.0', '고친 점');
+    update.failure = 'failed';
+    render(AppBanners);
+    const btn = screen.getByRole('button', { name: t('action.retry') });
+    await user.click(btn);
+    expect(update.pending).toBe(true);
+    const region = screen.getByRole('region', { name: t('update.failed') });
+    expect(within(region).getByText(t('common.keepUsing'))).toBeInTheDocument();
+    expect(screen.queryByText(t('update.banner', { version: '0.2.0' }))).toBeNull();
+    expect(screen.queryByRole('button', { name: t('common.close') })).toBeNull();
+    expect(region.querySelector('details')).toBeNull();
+    expect(screen.getByRole('button', { name: t('action.retry') })).toBe(btn);
+    expect(btn).toHaveAttribute('aria-disabled', 'true');
+    expect(btn).toHaveFocus();
+  });
+
+  it('B1이 있어도 [다시 시도] 뒤 요청 중에는 진행 배너 자리가 남는다', async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.updateInstall).mockReturnValue(new Promise(() => {}));
+    await loadJobs([job(1, { status: 'interrupted' })]);
+    update.available = info('0.2.0');
+    update.failure = 'failed';
+    render(AppBanners);
+    const btn = screen.getByRole('button', { name: t('action.retry') });
+    await user.click(btn);
+    expect(screen.queryByRole('button', { name: '모두 이어받기' })).toBeNull();
+    expect(screen.getByRole('button', { name: t('action.retry') })).toBe(btn);
+    expect(btn).toHaveFocus();
+  });
+
+  it('[다시 시도]가 다시 실패하면 같은 버튼이 [다시 시도]로 돌아오고 포커스가 남는다', async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.updateInstall).mockResolvedValue({ result: 'failed' });
+    update.available = info('0.2.0');
+    update.failure = 'failed';
+    render(AppBanners);
+    const btn = screen.getByRole('button', { name: t('action.retry') });
+    await user.click(btn);
+    await waitFor(() => expect(update.failure).toBe('failed'));
+    await waitFor(() => expect(screen.getByRole('button', { name: t('action.retry') })).toBe(btn));
+    expect(btn).toHaveFocus();
+    expect(screen.getByText(t('common.keepUsing'))).toBeInTheDocument();
+  });
+
+  it('[지금 업데이트]가 실패로 끝나도 같은 버튼이 [다시 시도]가 되고 포커스가 남는다', async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.updateInstall).mockResolvedValue({ result: 'failed' });
+    update.available = info('0.2.0');
+    update.failure = null;
+    render(AppBanners);
+    const btn = screen.getByRole('button', { name: t('update.install') });
+    await user.click(btn);
+    await waitFor(() => expect(screen.getByRole('button', { name: t('action.retry') })).toBe(btn));
+    expect(btn).toHaveFocus();
+  });
+
+  it('failed인데 다시 받을 새 버전이 없으면 [다시 시도] 없이 두 문장만', () => {
+    update.available = null;
+    update.failure = 'failed';
+    render(AppBanners);
+    expect(screen.getByText(t('update.failed'))).toBeInTheDocument();
+    expect(screen.getByText(t('common.keepUsing'))).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: t('action.retry') })).toBeNull();
+    expect(screen.getByRole('button', { name: t('common.close') })).toBeInTheDocument();
+  });
+
   it('untrusted: danger, 다시 시도 없음', () => {
     update.failure = 'untrusted';
     const { container } = render(AppBanners);
     expect(screen.getByText(t('update.untrusted'))).toBeInTheDocument();
     expect(container.querySelector('.notice-banner')).toHaveClass('tone-danger');
     expect(screen.queryByRole('button', { name: t('action.retry') })).toBeNull();
+    expect(screen.queryByText(t('common.keepUsing'))).toBeNull();
   });
 
   it('B2가 실패 배너보다 앞이고, 실패 배너가 진행·B1·새 버전보다 앞이다', async () => {

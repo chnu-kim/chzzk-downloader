@@ -39,11 +39,13 @@ export class ResolveStore {
     if (!trimmed) return;
     const gen = ++this.#gen;
     this.state = { kind: 'loading', gen, url: trimmed };
+    // 셸은 요청을 받은 그때의 클라이언트로 보낸다(services.rs `resolve_checked`). 도는 동안 켜고 꺼도 이 요청과 상관없다
+    const sent = settings.cookiesEnabled;
     try {
       const view = await api.resolve(trimmed);
       if (gen === this.#gen) this.state = { kind: 'ready', gen, view };
     } catch (e) {
-      if (gen === this.#gen) this.state = { kind: 'error', gen, url: trimmed, error: e as AppError, cookiesAtFailure: settings.cookiesEnabled };
+      if (gen === this.#gen) this.state = { kind: 'error', gen, url: trimmed, error: e as AppError, cookiesAtFailure: sent };
     }
   }
 

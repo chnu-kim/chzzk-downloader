@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ResolvedDto } from '../bindings';
 import { resolved } from '../../test/fixtures';
+import { errorCopy } from '../copy/errors';
 
 vi.mock('../api', () => ({ resolve: vi.fn(), ownershipRecheck: vi.fn() }));
 const api = await import('../api');
@@ -119,6 +120,33 @@ describe('ResolveStore 오류 상태의 쿠키 기록', () => {
     settings.dto = { useNaverCookies: true, naverCookiesSaved: true } as never;
     await s.load('https://chzzk.naver.com/video/1');
     expect(s.state.kind === 'error' && s.state.cookiesAtFailure).toBe(true);
+    settings.dto = null;
+  });
+});
+
+describe('ResolveStore 쿠키 기록은 요청을 보낸 때의 값', () => {
+  it('꺼진 채 보낸 요청이 도는 동안 켜도 실패는 "안 보냈다"로 적고 다시 시도 길을 보인다', async () => {
+    const { settings } = await import('./settings.svelte');
+    const d = deferred<ResolvedDto>();
+    vi.mocked(api.resolve).mockReset().mockReturnValueOnce(d.promise);
+    settings.dto = { useNaverCookies: false, naverCookiesSaved: true } as never;
+    const s = new ResolveStore();
+    const p = s.load('https://chzzk.naver.com/video/1');
+    // 요청이 도는 동안 켠다(셸은 이미 쿠키 없는 클라이언트로 보냈다)
+    settings.dto = { useNaverCookies: true, naverCookiesSaved: true } as never;
+    d.reject({ code: 'authRequired' });
+    await p;
+    expect(s.state.kind).toBe('error');
+    if (s.state.kind !== 'error') return;
+    expect(s.state.cookiesAtFailure).toBe(false);
+    const c = errorCopy(s.state.error, {
+      place: 'resolve',
+      cookiesEnabled: settings.cookiesEnabled,
+      naverCookiesSaved: settings.naverCookiesSaved,
+      cookiesAtFailure: s.state.cookiesAtFailure,
+    });
+    expect(c.actions).toContain('retry');
+    expect(c.actions).not.toContain('reenterCookies');
     settings.dto = null;
   });
 });

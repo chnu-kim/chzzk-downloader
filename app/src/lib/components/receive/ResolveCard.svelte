@@ -206,6 +206,8 @@
       return;
     }
     const handle = setTimeout(async () => {
+      // 요청을 보낸 때의 값(도는 동안 설정을 바꿔도 이 요청과 상관없다, 구현 중 변경 130 리뷰 반영)
+      const sent = settings.cookiesEnabled;
       try {
         const c = await api.checkOutput({
           folder: f,
@@ -224,7 +226,7 @@
         check = null;
         checkedKey = null;
         checkError = e as AppError;
-        errorSent = settings.cookiesEnabled;
+        errorSent = sent;
       }
     }, CHECK_DEBOUNCE_MS);
     return () => clearTimeout(handle);
@@ -264,6 +266,7 @@
     if (!ready || !check || !quality) return;
     busy = true;
     enqueueError = null;
+    const sent = settings.cookiesEnabled;
     try {
       await api.enqueue(buildEnqueueRequest(view, quality, folder, check, choices, range));
       announcer.say(t('card.added'));
@@ -271,7 +274,7 @@
       onadded();
     } catch (e) {
       enqueueError = e as AppError;
-      errorSent = settings.cookiesEnabled;
+      errorSent = sent;
       // 그 사이 목록이나 파일이 바뀌었을 수 있다. 같은 입력으로 다시 검사한다.
       checkedKey = null;
       recheck += 1;

@@ -73,6 +73,46 @@ describe('실패한 때의 쿠키 사용 기록', () => {
   });
 });
 
+describe('실패 기록은 그 실행을 시작한 때의 쿠키 사용 여부', () => {
+  it('꺼진 채 시작한 작업이 도는 동안 켜도 실패는 "안 보냈다"로 적고 다시 시도 길을 보인다', async () => {
+    const { settings } = await import('./settings.svelte');
+    const { jobButtons } = await import('../jobs');
+    settings.dto = { useNaverCookies: false, naverCookiesSaved: true } as never;
+    const store = new JobsStore();
+    const b = begin(store);
+    b.snapshot([job(1, { status: 'queued' })]);
+    await b.started;
+    // 셸이 queued → running에서 클라이언트를 잡는다(쿠키 없음)
+    b.send({ type: 'status', job: job(1, { status: 'running' }) });
+    settings.dto = { useNaverCookies: true, naverCookiesSaved: true } as never;
+    const failed = job(1, { status: 'failed', error: err('authRequired', { stage: 'resolve' }) });
+    b.send({ type: 'status', job: failed });
+    expect(store.cookiesAtFailure.get(1)).toBe(false);
+    const btn = jobButtons(failed, null, settings.cookiesEnabled, null, settings.naverCookiesSaved, store.cookiesAtFailure.get(1));
+    expect(btn.primary).toEqual(['reresolve']); // 작업 자리의 다시 시도 길(막 켠 갈래)
+    expect(btn.primary).not.toContain('reenterCookies');
+    settings.dto = null;
+  });
+
+  it('다시 시작한 실행은 그때의 값을 새로 적고, 구독 전에 이미 돌던 작업은 스냅샷 때의 값을 쓴다', async () => {
+    const { settings } = await import('./settings.svelte');
+    settings.dto = { useNaverCookies: true, naverCookiesSaved: true } as never;
+    const store = new JobsStore();
+    const b = begin(store);
+    b.snapshot([job(1, { status: 'running' }), job(2, { status: 'failed', error: err('authRequired', { stage: 'resolve' }) })]);
+    await b.started;
+    settings.dto = { useNaverCookies: false, naverCookiesSaved: true } as never;
+    b.send({ type: 'status', job: job(1, { status: 'failed', error: err('authRequired', { stage: 'resolve' }) }) });
+    expect(store.cookiesAtFailure.get(1)).toBe(true);
+    // 꺼진 채 다시 시작 → 그 사이 켬 → 실패: 이번 실행은 안 보냈다
+    b.send({ type: 'status', job: job(2, { status: 'running' }) });
+    settings.dto = { useNaverCookies: true, naverCookiesSaved: true } as never;
+    b.send({ type: 'status', job: job(2, { status: 'failed', error: err('authRequired', { stage: 'resolve' }) }) });
+    expect(store.cookiesAtFailure.get(2)).toBe(false);
+    settings.dto = null;
+  });
+});
+
 beforeEach(() => {
   // 앞 테스트가 남긴 되돌리기 토스트가 닫히며 remove_job을 부르므로 목을 비우기 전에 먼저 치운다
   toasts.clear();

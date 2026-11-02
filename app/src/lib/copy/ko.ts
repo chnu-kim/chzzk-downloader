@@ -131,6 +131,7 @@ export const ko = {
   'filename.label': '파일 이름',
   'filename.reset': '원래 이름으로',
   'filename.willSaveAs': '저장될 이름: {name}',
+  'filename.empty.help': '파일 이름을 넣으면 받을 수 있어요.',
 
   'conflict.exists': '같은 이름의 파일이 이미 있어요',
   'conflict.number': '번호를 붙여 받기',
@@ -141,6 +142,7 @@ export const ko = {
   'conflict.partialOther': '조건이 다른 받다 만 파일이 있어요. 지우고 처음부터 받아요.',
   'conflict.partialRecording.title': '같은 이름으로 받다 만 녹화가 있어요',
   'conflict.partialRecording.body': '녹화는 다시 받을 수 없어 그 파일은 그대로 두고, 이번에는 ‘{name}’ 이름으로 받아요.',
+  'conflict.noFreeName.body': '번호를 붙일 수 있는 이름이 남아 있지 않아요. 파일 이름을 바꿔 주세요.',
   'conflict.inQueue': '이미 다운로드 목록에 있는 영상이에요',
 
   'list.title': '다운로드',

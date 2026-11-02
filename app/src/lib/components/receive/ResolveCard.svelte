@@ -129,7 +129,7 @@
   /** 이 검사 결과가 지금 입력의 것인가(낡은 결과의 충돌 안내·사유를 보이지 않는다) */
   const fresh = $derived(check != null && checkedKey === key);
   /** [받기]를 막는 사유(없으면 null). 사유가 있으면 그 문장 요소를 aria-describedby로 잇는다 */
-  const blocked = $derived(downloadBlock(view.ownership, fresh ? check : null));
+  const blocked = $derived(downloadBlock({ ownership: view.ownership, fileName, check: fresh ? check : null, choices }));
   /** 같은 이름의 파일을 지우고 받는다: 확인(D7)을 거친다. 저장될 이름은 검사가 정리한 이름이다 */
   const overwriting = $derived(fresh && wantsOverwrite(check, choices));
   const shownError: AppError | null = $derived<AppError | null>(enqueueError ?? checkError);
@@ -380,7 +380,7 @@
   {#snippet footer()}
     <Button onclick={onclose}>{t('common.close')}</Button>
     <!-- primary에는 disabled가 없다(타입). 못 받는 동안은 aria-disabled이고 download()가 ready를 다시 본다.
-         사유가 있으면(목록에 있음·본인 영상 아님) 그 문장을 aria-describedby로 잇는다(patterns.md §6.4) -->
+         사유가 있으면(본인 영상 아님·빈 이름·목록에 있음·빈 번호 이름 없음) 그 문장을 aria-describedby로 잇는다(patterns.md §6.4) -->
     <Button
       variant="primary"
       kbd={shortcutText(platform.os, 'submit')}

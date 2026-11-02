@@ -1,6 +1,7 @@
 <script lang="ts">
   // 카드 안 충돌 안내(system/patterns.md §6.5). 완성 파일 / 같은 작업의 .part / 다른 .part / 받다 만 녹화 / 목록 중복은 서로 독립이다.
   // 모두 Notice 하나씩이고 선택은 RadioGroup이다. 목록 중복은 [받기]를 막으므로 id(BLOCK_REASON_ID)로 사유를 잇는다.
+  // 빈 번호 이름이 없으면 그 문장을 BLOCK_REASON_ID.noFreeName으로 잇는다.
   import type { OutputCheck } from '../../bindings';
   import { t } from '../../copy/ko';
   import { formatFileSize, sizeBaseOf } from '../../format/bytes';
@@ -39,6 +40,9 @@
   <Notice variant="inline" tone="warning">
     <p id="exists-title" class="line">{t('conflict.exists')}</p>
     <RadioGroup name="existing" labelledby="exists-title" options={existingOptions} bind:value={choices.existing} />
+    {#if check.freeFileName == null && choices.existing === 'number'}
+      <p id={BLOCK_REASON_ID.noFreeName} class="line">{t('conflict.noFreeName.body')}</p>
+    {/if}
   </Notice>
 {/if}
 
@@ -65,7 +69,7 @@
 
 {#if n.partialRecording}
   <Notice variant="inline" tone="neutral" title={t('conflict.partialRecording.title')}>
-    {#if check.freeFileName}{t('conflict.partialRecording.body', { name: check.freeFileName })}{/if}
+    {#if check.freeFileName}{t('conflict.partialRecording.body', { name: check.freeFileName })}{:else}<span id={BLOCK_REASON_ID.noFreeName}>{t('conflict.noFreeName.body')}</span>{/if}
   </Notice>
 {/if}
 

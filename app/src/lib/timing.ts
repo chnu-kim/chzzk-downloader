@@ -7,6 +7,8 @@ export const LOADER_DELAY_MS = 300;
 export const LOADER_MIN_MS = 400;
 /** 정보 토스트 수명이자 [되돌리기] 지연 삭제 창 */
 export const TOAST_MS = 6000;
+/** 종료 전 남은 토스트의 지연 삭제 확정을 기다리는 상한(CloseGuard [닫기], ADR-0033) */
+export const QUIT_FLUSH_MS = 5000;
 /** 새 항목의 --accent-soft 강조 시간 */
 export const HIGHLIGHT_MS = 1000;
 /** "복사했어요" 라벨이 원래 글자로 돌아오는 시간 */

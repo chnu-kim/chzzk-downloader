@@ -31,6 +31,26 @@ describe('토스트 닫힘 알림(지연 삭제, patterns.md §4)', () => {
     expect(seen).toEqual(['run', 'a:action', 'b:dismiss', 'c:timeout', 'd:replaced', 'e:clear']);
   });
 
+  it('clear()는 onclose가 돌려준 확정이 모두 끝나야 풀리고, 하나가 실패해도 거부하지 않는다', async () => {
+    const s = new ToastStore();
+    const undo = { label: '되돌리기', run: () => {} };
+    let ok!: () => void;
+    let bad!: (e: unknown) => void;
+    s.push('하나', 'info', { action: undo, onclose: () => new Promise<void>((r) => (ok = r)) });
+    s.push('둘', 'info', { action: undo, onclose: () => new Promise<void>((_, j) => (bad = j)) });
+    s.push('셋', 'info', { action: undo, onclose: () => {} });
+    let settled = false;
+    const p = s.clear().then(() => (settled = true));
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    bad(new Error('x'));
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    ok();
+    await p;
+    expect(settled).toBe(true);
+  });
+
   it('동작이 있는 토스트는 대체되지 않고 줄을 선다', () => {
     const s = new ToastStore();
     const closed: string[] = [];

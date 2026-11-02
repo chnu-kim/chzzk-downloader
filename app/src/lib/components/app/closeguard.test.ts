@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppError } from '../../bindings';
 import { t } from '../../copy/ko';
+import { QUIT_FLUSH_MS } from '../../timing';
 
 vi.mock('../../api', () => ({
   onCloseRequested: vi.fn(),
@@ -100,6 +101,38 @@ describe('D1 창 닫기 확인', () => {
     await user.click(within(d).getByRole('button', { name: t('dialog.close.confirm') }));
     await waitFor(() => expect(api.quit).toHaveBeenCalledTimes(1));
     expect(closed).toEqual(['clear']);
+  });
+
+  it('[닫기]는 지연 삭제의 확정이 끝나기 전에는 quit을 부르지 않는다(실패해도 종료한다)', async () => {
+    let finish!: (e: unknown) => void;
+    toasts.push('지웠어요', 'info', { sticky: true, onclose: () => new Promise((_, j) => (finish = j)) });
+    const user = userEvent.setup();
+    await mounted();
+    fire(1);
+    const d = await screen.findByRole('dialog');
+    await user.click(within(d).getByRole('button', { name: t('dialog.close.confirm') }));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(api.quit).not.toHaveBeenCalled();
+    finish(new Error('x'));
+    await waitFor(() => expect(api.quit).toHaveBeenCalledTimes(1));
+  });
+
+  it('확정이 끝나지 않으면 QUIT_FLUSH_MS 뒤에 quit한다', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      toasts.push('지웠어요', 'info', { sticky: true, onclose: () => new Promise(() => {}) });
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      await mounted();
+      fire(1);
+      const d = await screen.findByRole('dialog');
+      await user.click(within(d).getByRole('button', { name: t('dialog.close.confirm') }));
+      await vi.advanceTimersByTimeAsync(QUIT_FLUSH_MS - 10);
+      expect(api.quit).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(20);
+      expect(api.quit).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('quit이 실패하면 알리고 다시 누를 수 있다', async () => {

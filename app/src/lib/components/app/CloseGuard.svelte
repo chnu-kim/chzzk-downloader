@@ -10,6 +10,7 @@
   import { t } from '../../copy/ko';
   import { jobs } from '../../stores/jobs.svelte';
   import { toasts } from '../../stores/toast.svelte';
+  import { QUIT_FLUSH_MS } from '../../timing';
   import ConfirmDialog from '../ui/ConfirmDialog.svelte';
 
   let open = $state(false);
@@ -50,12 +51,24 @@
     open = false;
   }
 
+  async function flushToasts() {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const cap = new Promise<void>((r) => (timer = setTimeout(r, QUIT_FLUSH_MS)));
+    try {
+      await Promise.race([toasts.clear(), cap]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   async function quit() {
     if (quitting) return;
     quitting = true;
     try {
-      // 닫을 때까지 남는 되돌리기 토스트(sticky)의 지연 삭제를 먼저 확정한다(아니면 지운 항목이 다시 나온다, ADR-0033)
-      toasts.clear();
+      // 남은 되돌리기 토스트(작업 목록의 sticky, 아직 시간이 남은 편집자 내보내기 등)의 지연 삭제를 먼저 확정하고
+      // 그 요청이 끝날 때까지 기다린다(아니면 종료가 요청보다 먼저라 지운 항목이 다시 나온다, ADR-0033).
+      // 실패해도 종료는 한다. 끝나지 않는 요청(네트워크)에 종료가 묶이지 않게 QUIT_FLUSH_MS를 넘기면 그냥 간다
+      await flushToasts();
       await api.quit();
       // 정상이면 Rust가 앱을 끝낸다. 이미 종료 중이었으면 아무 일도 없이 돌아온다(그쪽이 끝낸다).
     } catch (e) {

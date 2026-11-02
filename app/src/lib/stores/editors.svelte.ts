@@ -7,7 +7,6 @@ import type { AppError, AuthStatusDto, ChannelRefDto, DelegatedChannelDto, Edito
 import { toAppError } from '../copy/errors';
 import { t, type CopyKey } from '../copy/ko';
 import { cleanDisplayText, clipGraphemes } from '../format/display';
-import { lastInputWasKeyboard } from '../inputModality';
 import { NOTIFY_TITLE_MAX_GRAPHEMES } from '../timing';
 import { announcer } from './announce.svelte';
 import { auth } from './auth.svelte';
@@ -181,9 +180,10 @@ export class EditorsStore {
     this.rowError.delete(id);
     if (ed.status === 'pending') return this.#removeNow(ed, owner);
     this.hidden.add(id);
+    // 입력 방식과 무관하게 시간 제한 되돌리기다(sticky가 아니다, ADR-0033): 권한 회수가 닫을 때까지 밀리면
+    // 화면에서는 빠졌는데 서버에서는 아직 권한이 있어 보안 상태가 사용자 인식과 어긋난다
     const toastId = toasts.push(t('toast.editorRemoved', { name: shownName(ed.channelName) }), 'info', {
       undo: true,
-      sticky: lastInputWasKeyboard(),
       action: {
         label: t('action.undo'),
         run: () => {
@@ -196,7 +196,8 @@ export class EditorsStore {
         const p = this.#pending.get(id);
         if (!p) return; // 계정 전환으로 취소됐다
         this.#pending.delete(id);
-        void this.#send(ed, p.owner);
+        // 종료 전 비움(CloseGuard)이 보내기가 끝날 때까지 기다릴 수 있게 Promise를 돌려준다
+        return this.#send(ed, p.owner);
       },
     });
     this.#pending.set(id, { toastId, owner });

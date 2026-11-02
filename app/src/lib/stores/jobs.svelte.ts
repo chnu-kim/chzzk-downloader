@@ -219,11 +219,12 @@ export class JobsStore {
   #tickPercent(job: JobDto) {
     const p = this.state.progress.get(job.id);
     if (job.status !== 'running' || p?.phase !== 'downloading') return;
-    // 포커스를 둔 행은 25%마다 접근 이름이 같은 문장으로 바뀌어 보조 기술이 알리므로 틱은 건너뛴다(이중 낭독 방지, ADR-0033)
-    const focused = document.activeElement?.closest('[data-job-id]');
-    const skipSay = focused?.getAttribute('data-job-id') === String(job.id);
+    // 포커스가 행(article) 자체에 있으면 25%마다 그 접근 이름이 같은 문장으로 바뀌어 보조 기술이 알리므로 틱은 건너뛴다
+    // (이중 낭독 방지, ADR-0033). 행 안의 버튼에 포커스가 있으면 바뀌는 것은 조상의 이름뿐이라 알리지 않으므로 읽는다
+    const skipSay = document.activeElement?.getAttribute('data-job-id') === String(job.id);
     const step = spokenPercent(this.state.percent.get(job.id));
     if (step == null || step <= (this.#spokenStep.get(job.id) ?? 0)) return;
+    // 건너뛴 경우에도 단위를 올린다: 그 단위는 행 이름이 이미 알렸고, 올리지 않으면 포커스가 떠난 뒤 지난 단위를 늦게 읽는다
     this.#spokenStep.set(job.id, step);
     if (skipSay) return;
     announcer.say(jobSpeech(job.title, statusWord(job, p), step));
@@ -474,7 +475,8 @@ export class JobsStore {
       },
       onclose: (reason) => {
         if (reason === 'action') return;
-        for (const id of ids) void this.#remove(id);
+        // 종료 전 비움(CloseGuard)이 기다릴 수 있게 Promise를 돌려준다(`#remove`는 실패를 스스로 처리해 거부하지 않는다)
+        return Promise.all(ids.map((id) => this.#remove(id)));
       },
     });
   }

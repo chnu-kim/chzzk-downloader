@@ -706,7 +706,7 @@ describe('25% 낭독(patterns.md P-9)', () => {
     spy.mockRestore();
   });
 
-  it('포커스가 그 행 안에 있으면 틱은 읽지 않는다(행 이름이 같은 문장으로 바뀐다)', async () => {
+  it('포커스가 행 자체에 있으면 틱은 읽지 않는다(행 이름이 같은 문장으로 바뀐다)', async () => {
     const spy = vi.spyOn(announcer, 'say').mockImplementation(() => {});
     const row = document.createElement('div');
     row.setAttribute('data-job-id', '1');
@@ -722,6 +722,31 @@ describe('25% 낭독(patterns.md P-9)', () => {
     expect(spy).not.toHaveBeenCalled();
     send({ type: 'progress', id: 1, progress: at(50) });
     expect(calls(spy)).toEqual([tick('영상', 50)]);
+    row.remove();
+    spy.mockRestore();
+  });
+
+  it('포커스가 행 안의 버튼에 있으면 틱을 읽는다(바뀌는 것은 조상 행의 이름뿐이라 보조 기술이 알리지 않는다)', async () => {
+    const spy = vi.spyOn(announcer, 'say').mockImplementation(() => {});
+    const row = document.createElement('article');
+    row.setAttribute('data-job-id', '1');
+    row.tabIndex = 0;
+    const btn = document.createElement('button');
+    row.append(btn);
+    document.body.append(row);
+    btn.focus();
+    const { send } = await running();
+    send({ type: 'progress', id: 1, progress: at(25) });
+    expect(calls(spy)).toEqual([tick('영상', 25)]);
+    // 행 자체로 옮기면 그다음 단위는 행 이름이 대신 알린다
+    spy.mockClear();
+    row.focus();
+    send({ type: 'progress', id: 1, progress: at(50) });
+    expect(spy).not.toHaveBeenCalled();
+    // 다시 버튼으로 와도 행 이름으로 이미 알린 50은 다시 읽지 않는다
+    btn.focus();
+    send({ type: 'progress', id: 1, progress: at(55) });
+    expect(spy).not.toHaveBeenCalled();
     row.remove();
     spy.mockRestore();
   });
@@ -777,6 +802,25 @@ describe('키보드로 지운 되돌리기 토스트는 닫을 때까지 둔다(
     expect(s.hidden.has(1)).toBe(true);
     toasts.dismiss(toasts.current!.id);
     expect(api.removeJob).toHaveBeenCalledExactlyOnceWith(1);
+  });
+
+  it('clear()는 숨긴 작업의 remove_job이 모두 끝날 때까지 기다린다(종료 전 비움)', async () => {
+    const s = await loaded([job(1, { status: 'completed' }), job(2, { status: 'completed' })]);
+    setInputModality('keyboard');
+    const done: Array<() => void> = [];
+    vi.mocked(api.removeJob).mockImplementation(() => new Promise<void>((r) => done.push(r)));
+    s.clearFinished();
+    let settled = false;
+    const p = toasts.clear().then(() => (settled = true));
+    await Promise.resolve();
+    expect(api.removeJob).toHaveBeenCalledTimes(2);
+    done[0]();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    done[1]();
+    await p;
+    expect(settled).toBe(true);
   });
 
   it('포인터면 undo만이고 TOAST_MS 뒤에 확정한다', async () => {

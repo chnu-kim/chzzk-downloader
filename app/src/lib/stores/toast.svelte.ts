@@ -2,7 +2,9 @@
 // - 정보·완료 토스트(danger 아님, action 없음)는 새 토스트가 오면 즉시 대체된다(대기열의 것도 같다).
 // - danger 또는 action이 있는 토스트는 대체되지 않고 닫힐 때까지 남고, 뒤에 온 것은 FIFO로 기다린다.
 // - 수명: danger와 `sticky`는 타이머 없음(닫을 때까지), 그 밖은 TOAST_MS. 올려 둔 동안 멈추고 떠나면 처음부터 다시 센다.
-// - `sticky`: 키보드(또는 보조 기술 클릭)로 지운 되돌리기 토스트는 닫을 때까지 둔다(WCAG 2.2.1·2.1.1, ADR-0033).
+// - `sticky`: 키보드(또는 보조 기술 클릭)로 지운 작업 목록 되돌리기 토스트는 닫을 때까지 둔다(WCAG 2.2.1·2.1.1, ADR-0033).
+//   편집자 내보내기(권한 회수)는 쓰지 않는다: 회수가 닫을 때까지 밀리면 안 된다.
+// - 지연 삭제의 확정(`onclose`)은 Promise를 돌려줄 수 있고 `clear()`가 그것들을 모아 기다린다(종료 전 비움, CloseGuard).
 // - `undo`: 이 동작이 방금 한 일을 되돌린다. 창 단축키 Mod+Z의 대상이고 낭독에 단축키를 안내한다.
 // - 낭독: 토스트는 role 없이 그려지고, 보이게 될 때 한 번 상주 LiveAnnouncer로 읽는다(오류는 assertive).
 import { toastSpeech } from '../spoken';
@@ -35,15 +37,16 @@ export type ToastCloseReason = 'action' | 'dismiss' | 'timeout' | 'replaced' | '
 export interface ToastOptions {
   timeout?: number;
   action?: ToastAction;
-  /** 닫을 때까지 둔다(타이머 없음). 키보드로 지운 되돌리기 토스트가 쓴다 */
+  /** 닫을 때까지 둔다(타이머 없음). 키보드로 지운 작업 목록 되돌리기 토스트가 쓴다 */
   sticky?: boolean;
   /** 이 동작이 방금 한 일을 되돌린다(Mod+Z 대상·낭독 안내) */
   undo?: boolean;
   /**
    * 목록에서 빠질 때 한 번 부른다(어떤 까닭이든). 지연 삭제(patterns.md §4)는 `reason !== 'action'`일 때
-   * 실제로 지운다: 토스트가 사는 동안은 숨기기만 하고 닫힐 때 확정한다
+   * 실제로 지운다: 토스트가 사는 동안은 숨기기만 하고 닫힐 때 확정한다. 확정이 비동기면 그 Promise를 돌려준다(그 밖의 반환값은 무시)
+   * (`clear()`가 기다린다)
    */
-  onclose?: (reason: ToastCloseReason) => void;
+  onclose?: (reason: ToastCloseReason) => unknown;
 }
 
 /** 대체되지 않는 토스트 */
@@ -56,7 +59,7 @@ export class ToastStore {
   items: ToastItem[] = $state([]);
   #next = 1;
   #timeouts = new Map<number, number>();
-  #onclose = new Map<number, (reason: ToastCloseReason) => void>();
+  #onclose = new Map<number, (reason: ToastCloseReason) => unknown>();
   /** 타이머가 걸린 토스트 id */
   #armed: number | null = null;
   /** 마지막으로 읽은 토스트 id */
@@ -135,20 +138,25 @@ export class ToastStore {
     this.#arm();
   }
 
-  clear() {
+  /**
+   * 모두 닫는다(`onclose('clear')`). 돌려준 Promise는 각 `onclose`가 돌려준 확정(지연 삭제)이 모두 끝나면 풀린다.
+   * 실패한 것이 있어도 거부하지 않는다(종료는 그래도 진행한다). 시간 상한은 기다리는 쪽(CloseGuard)이 둔다
+   */
+  clear(): Promise<void> {
     this.#disarm();
     const ids = this.items.map((i) => i.id);
     this.items = [];
-    for (const id of ids) this.#closed(id, 'clear');
+    const pending = ids.map((id) => this.#closed(id, 'clear'));
     this.#timeouts.clear();
+    return Promise.allSettled(pending).then(() => {});
   }
 
-  #closed(id: number, reason: ToastCloseReason) {
+  #closed(id: number, reason: ToastCloseReason): unknown {
     this.#timeouts.delete(id);
     this.#spokenEarly.delete(id);
     const cb = this.#onclose.get(id);
     this.#onclose.delete(id);
-    cb?.(reason);
+    return cb?.(reason);
   }
 
   #disarm() {

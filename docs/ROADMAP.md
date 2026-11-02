@@ -4,6 +4,7 @@
 
 ## 현재 위치
 
+- **포커스 낙하 세 경로·업데이트 실패 배너(2026-11-02, 브랜치 `fix/ux-focus-recovery`, UX 감사 §1.1·§1.8, app.md 구현 중 변경 129)**: 작업 행이 상태 변화로 그룹을 옮기거나 누른 버튼이 사라지면 포커스가 그 행 article로 돌아온다(빈 곳을 눌러 떠났으면 빼앗지 않는다). 업데이트 실패 ↔ 진행 배너가 같은 노드라 [다시 시도] 뒤에도 포커스가 남고, 실패 배너는 `update.failed` + `common.keepUsing` 두 문장이다. D8이 방송 종료로 저절로 닫히면 그 녹화 행으로 포커스를 돌린다(`Dialog` `returnFocus`). 남은 것: VoiceOver·NVDA 실기, D5·D2 `returnFocus`.
 - **주간 mutants 복구(2026-11-01, 브랜치 `fix/mutants-loop`, 이슈 #97, cicd.md 구현 중 변경 125)**: 원인 셋. ① 진척을 멈추고 Vec에 계속 넣는 mutant(`redact_url` `i *= 1` 등)가 자동 timeout이 73~93초로 늘자 러너 메모리를 다 써 shard 0·2가 죽었고 ② 코어가 약 3배(mutant 약 2,186개)가 되어 shard 1·3이 180분을 넘겼으며 ③ 10-11은 살아남음 104 > 기준 100이었다. 수정: `measure.mjs`가 Linux 테스트 바이너리에 `prlimit --as=6GiB` runner·`MALLOC_ARENA_MAX=2`를 주고, shard를 8개로 늘리고, shard·집계 로그에 survivor 목록을 찍는다. 동치가 아닌 survivor 둘을 `patience.rs` 테스트로 잡았다. 첫 완주 측정 뒤 기준을 다시 정한다(넘으면 RATCHET_LOG).
 - **툴체인 1.99.1·dependabot 둘(2026-11-01, 브랜치 `chore/deps-toolchain`, 이슈 #177, PR #235·#234, cicd.md 구현 중 변경 124)**: `rust-toolchain.toml` 1.99.1(x86_64 FFI bool 오컴파일 수정), install-action 2.87.31·rust-cache 2.9.3, workers-types 5.20261025.1(전이 의존성을 내린 dependabot lock 대신 다시 만든 lock).
 - **v0.14.2 릴리스(2026-11-02)**: 태그 `df32514`(버전 PR #242), release 실행 41307113000 한 번에 전 단계 성공(gate·xtask·build 3 OS·smoke·stage·sign-publish·verify·prune·deploy-worker·report). master 실행 41306169569의 `ci-ok`·`e2e-native` 둘 녹색. 주간 mutants는 기준 153 뒤 확인 dispatch run 41304188876에서 shard 8개·집계 모두 녹색(측정 153), 이슈 #97 닫힘.

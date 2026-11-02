@@ -96,7 +96,7 @@ test('브라우저를 다시 열지 못하면 알리고 포커스를 로그인 �
   });
   await page.getByRole('button', { name: t('auth.reopen') }).focus();
   await page.keyboard.press('Enter');
-  await expect(page.getByText(t('toast.browserOpenFailed'))).toBeVisible();
+  await expect(page.locator('.notice-toast').getByText(t('toast.browserOpenFailed'))).toBeVisible();
   await expect(page.getByRole('button', { name: t('auth.copyLoginUrl') })).toBeFocused();
   await app.axe('다시 열기 실패');
 });

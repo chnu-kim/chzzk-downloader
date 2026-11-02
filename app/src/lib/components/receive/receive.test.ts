@@ -170,6 +170,51 @@ describe('UrlBar', () => {
     expect(screen.queryByRole('button', { name: t('action.retry') })).toBeNull();
   });
 
+  it('불러오기 오류의 detail은 자세히 안에 접혀 있고 알림 낭독에 섞이지 않는다', async () => {
+    const e = appError('http', { payload: { type: 'http', status: 404, requestKind: 'api' } });
+    vi.mocked(api.resolve).mockRejectedValue(e);
+    const detail = errorCopy(e, { place: 'resolve', cookiesEnabled: false }).detail as string;
+    expect(detail).toBeTruthy();
+    const user = userEvent.setup();
+    render(InputPanel);
+    await user.type(urlInput(), 'https://chzzk.naver.com/video/1234567{Enter}');
+    const alert = await screen.findByRole('alert');
+    expect(alert).not.toHaveTextContent(detail);
+    const box = document.getElementById('resolve-error') as HTMLElement;
+    expect(within(box).getByText(t('common.details'))).toBeInTheDocument();
+    const raw = within(box).getByText(detail);
+    expect(raw).not.toBeVisible();
+    await user.click(within(box).getByText(t('common.details')));
+    expect(raw).toBeVisible();
+  });
+
+  it('detail이 없는 오류에는 자세히 줄이 없다', async () => {
+    const e = appError('invalidUrl');
+    expect(errorCopy(e, { place: 'resolve', cookiesEnabled: false }).detail).toBeNull();
+    vi.mocked(api.resolve).mockRejectedValue(e);
+    const user = userEvent.setup();
+    render(InputPanel);
+    await user.type(urlInput(), 'https://chzzk.naver.com/live/abcd{Enter}');
+    await screen.findByRole('alert');
+    expect(screen.queryByText(t('common.details'))).toBeNull();
+    expect(document.querySelector('.notice-details')).toBeNull();
+  });
+
+  it('카드 안 등록 실패의 detail도 자세히 안이다', async () => {
+    const e = appError('internal', { message: '셸 원문' });
+    const detail = errorCopy(e, { place: 'resolve', cookiesEnabled: false }).detail;
+    expect(detail).toContain('셸 원문');
+    vi.mocked(api.enqueue).mockRejectedValue(e);
+    const user = await openCard();
+    await user.click(await downloadButton());
+    const alert = await screen.findByRole('alert');
+    expect(alert).not.toHaveTextContent('셸 원문');
+    const raw = screen.getByText(/셸 원문/);
+    expect(raw).not.toBeVisible();
+    await user.click(within(raw.closest('.notice') as HTMLElement).getByText(t('common.details')));
+    expect(raw).toBeVisible();
+  });
+
   it('요청이 몰린 오류의 [다시 시도]는 같은 주소로 다시 부른다', async () => {
     vi.mocked(api.resolve).mockRejectedValue(
       appError('http', { payload: { type: 'http', status: 429, requestKind: 'api' } }),

@@ -1,6 +1,7 @@
 // copy deck의 오류 카드 전부(docs/design/system/content.md §15.2 표): 모든 ErrorCode를 불러오기(R)와 목록 항목(D)에 띄워 제목·본문·행·동작
 // 버튼이 copy deck(errorCopy)과 같은지 본다. 기대값은 앱과 같은 errorCopy가 만든다(문구가 바뀌어도 이 파일은 고치지 않는다):
 // 이 테스트는 문구 표 자체가 아니라 표가 화면에 실제로 그려지는지(그리고 접근성 위반이 없는지)를 본다.
+// L1(detail)은 "자세히" 안에 접혀 있다(D51): 알림 낭독에 섞이지 않고, 작업 행은 [⋯] › 자세히로 펼친다.
 // 표의 내용(코드 28개 골든)은 vitest(errors.test.ts)가 본다. 연결 진단은 앱이 넘기지 않으므로 기본값(unknown)이다.
 import type { AppError, ErrorCode, JobDto } from '../src/lib/bindings';
 import { ERROR_CODES } from '../src/lib/copy/errors';
@@ -26,6 +27,11 @@ test('불러오기 오류: 모든 코드의 Notice가 copy deck대로 그려진�
     if (want.body) await expect(alert, code).toContainText(want.body);
     // role=alert는 .notice-text에만 있고 동작 버튼은 그 바깥(.notice-actions)이다: 알림 전체는 alert를 품은 .notice
     const notice = page.locator('.notice').filter({ has: alert });
+    if (want.detail) {
+      await expect(notice.getByText(t('common.details'), { exact: true }), `${code} 자세히`).toBeVisible();
+      await expect(notice.getByText(want.detail.split('\n')[0], { exact: false }), `${code} 원문 접힘`).toBeHidden();
+      await expect(alert, `${code} 낭독`).not.toContainText(want.detail.split('\n')[0]);
+    }
     for (const a of want.actions) await expect(notice.getByRole('button', { name: actionLabel(a), exact: true }), `${code} ${a}`).toBeVisible();
     if (i === 0) await app.axe(`불러오기 오류 ${code}`);
   }
@@ -44,8 +50,20 @@ test('작업 오류: 모든 코드의 실패 항목이 copy deck대로 그려진
     await expect(item, j.title).toContainText(want.title);
     if (want.body) await expect(item, j.title).toContainText(want.body);
     for (const row of want.rows) await expect(item, `${j.title} ${row}`).toContainText(row);
+    // L1은 행에 DOM이 없다([⋯] › 자세히로 펼칠 때만)
+    if (want.detail) await expect(item, `${j.title} 원문`).not.toContainText(want.detail.split('\n')[0]);
   }
   await app.axe('실패 항목 전부');
+
+  // [⋯] › 자세히: 원문이 있는 한 행만 펼쳐 본다
+  const target = jobs.find((j) => errorCopy(j.error as AppError, { place: 'job', partialBytes: j.partialBytes, cookiesEnabled: false }).detail);
+  if (target) {
+    const detail = errorCopy(target.error as AppError, { place: 'job', partialBytes: target.partialBytes, cookiesEnabled: false }).detail as string;
+    const item = page.getByRole('article', { name: target.title, exact: true });
+    await item.getByRole('button', { name: t('a11y.more', { title: target.title }) }).click();
+    await page.getByRole('menuitem', { name: t('common.details') }).click();
+    await expect(item.locator('.job-detail')).toContainText(detail.split('\n')[0]);
+  }
 });
 
 test('불러오기 오류의 [다시 시도]는 같은 주소로 다시 부르고, 성공하면 카드가 뜬다', async ({ app }) => {

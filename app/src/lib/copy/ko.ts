@@ -17,6 +17,7 @@ export const ko = {
   'common.showInList': '목록에서 보기',
   'common.openConfigFolder': '설정 폴더 열기',
   'common.keepUsing': '지금 버전은 계속 쓸 수 있어요.',
+  'common.details': '자세히',
 
   // OS 분기(platform.md §20, design-copy DC9: OS별 글자는 이 `platform.*` 키에만). `lib/platform.ts`가 고른다
   'platform.mac.paste': '⌘V',

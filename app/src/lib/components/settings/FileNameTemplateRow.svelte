@@ -13,6 +13,7 @@
   import { CHECK_DEBOUNCE_MS } from '../../receive';
   import { settings } from '../../stores/settings.svelte';
   import Button from '../ui/Button.svelte';
+  import ErrorDetails from '../app/ErrorDetails.svelte';
   import Notice from '../ui/Notice.svelte';
   import SettingsRow from '../ui/SettingsRow.svelte';
   import TextField from '../ui/TextField.svelte';
@@ -156,9 +157,8 @@
     </div>
   {:else if failCopy}
     <div class="below">
-      <Notice variant="inline" tone="danger" title={failCopy.title}>
+      <Notice variant="inline" tone="danger" title={failCopy.title} details={failCopy.detail ? errorDetails : undefined}>
         {#if failCopy.body}<p class="line">{failCopy.body}</p>{/if}
-        {#if failCopy.detail}<p class="line detail">{failCopy.detail}</p>{/if}
       </Notice>
     </div>
   {/if}
@@ -166,6 +166,8 @@
     <p class="preview selectable">{t('settings.fileNameTemplate.preview', { name: preview })}</p>
   {/if}
 </div>
+
+{#snippet errorDetails()}<ErrorDetails detail={failCopy?.detail ?? ''} />{/snippet}
 
 <style>
   /* 설정 그룹의 행 사이 선(.surface-group > .row + .row)은 직계 자식 행에만 걸려 여기서 직접 긋는다 */
@@ -193,9 +195,5 @@
     margin: 0;
     font-size: var(--text-caption);
     line-height: var(--leading-caption);
-  }
-  .detail {
-    color: var(--fg-muted);
-    overflow-wrap: anywhere;
   }
 </style>

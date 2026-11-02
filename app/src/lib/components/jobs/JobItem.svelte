@@ -101,6 +101,8 @@
   const missing = $derived(job.status === 'completed' && job.missing);
   /** 제목 전체 보기(행 아래 인라인 펼침). 잘린 제목에 키보드·터치로 닿는 길이다 */
   let titleOpen = $state(false);
+  /** 오류 원문(L1 "자세히", 행 아래 인라인 펼침). 재시도로 실패를 벗어나면 err가 null이라 사라진다 */
+  let detailOpen = $state(false);
 
   const menuItems = $derived(
     buttons.menu.map((a) => ({
@@ -108,7 +110,8 @@
       label: jobActionLabel(a, platform.os),
       icon: jobActionIcon(a),
       tone: a === 'remove' ? ('danger' as const) : ('neutral' as const),
-      onclick: () => (a === 'showTitle' ? (titleOpen = !titleOpen) : onaction(a)),
+      onclick: () =>
+        a === 'showTitle' ? (titleOpen = !titleOpen) : a === 'showDetail' ? (detailOpen = !detailOpen) : onaction(a),
     })),
   );
   // barView는 tone·striped로 말한다. ProgressBar는 state 넷이다.
@@ -169,7 +172,6 @@
   {#if err && !block}
     <!-- 막힌 작업은 다시 시도할 버튼이 없으므로 '다시 시도해 주세요' 같은 본문을 숨기고 막힌 이유만 둔다(app.md 구현 중 변경 63) -->
     {#if err.body}<p class="job-body indent">{err.body}</p>{/if}
-    {#if err.detail}<p class="job-body indent detail selectable">{err.detail}</p>{/if}
   {/if}
   <!-- 본문 줄: 연결 대기 · 회복 직후 · 멈춘 지 30일 · 완료(파일 없음) · 끝난 생방송 녹화(끝난 이유) · 건너뜀. 실패 작업은 위 오류 본문 아래에 멈춘 지 30일 줄만 더한다.
        완료 행은 상태 줄에 늘 아이콘(✓ 또는 ⚠)이 있으므로 들여쓴다 -->
@@ -205,6 +207,9 @@
 
   {#if titleOpen}
     <p class="job-fulltitle selectable">{job.title}</p>
+  {/if}
+  {#if detailOpen && err?.detail}
+    <p class="job-detail selectable"><bdi>{err.detail}</bdi></p>
   {/if}
 </article>
 
@@ -282,9 +287,6 @@
   .job-body.indent {
     padding-inline-start: calc(var(--icon-sm) + var(--space-8));
   }
-  .job-body.detail {
-    overflow-wrap: anywhere;
-  }
 
   /* 동작 줄: 자기 줄이라 폭이 좁아도 접히지 않는다. [⋯]는 오른쪽 끝(edge-end 보정) */
   .job-actions {
@@ -299,6 +301,15 @@
     margin-inline-end: calc(0px - var(--space-4));
   }
 
+  .job-detail {
+    margin: 0;
+    font-family: var(--font-mono);
+    font-size: var(--text-caption);
+    line-height: var(--leading-caption);
+    color: var(--fg-muted);
+    white-space: pre-line;
+    overflow-wrap: anywhere;
+  }
   .job-fulltitle {
     margin: 0;
     overflow-wrap: anywhere;

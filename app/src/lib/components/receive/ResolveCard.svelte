@@ -44,6 +44,7 @@
   import Button from '../ui/Button.svelte';
   import { isImeKey } from '../ui/focus';
   import IconButton from '../ui/IconButton.svelte';
+  import ErrorDetails from '../app/ErrorDetails.svelte';
   import Notice from '../ui/Notice.svelte';
   import Surface from '../ui/Surface.svelte';
   import ConflictNotice from './ConflictNotice.svelte';
@@ -368,9 +369,8 @@
         channelKnown={!!view.meta.channelId}
       />
       {#if errCopy}
-        <Notice variant="inline" tone="danger" title={errCopy.title} actions={errActions} help={noticeHelp(errCopy.helpId)}>
+        <Notice variant="inline" tone="danger" title={errCopy.title} actions={errActions} help={noticeHelp(errCopy.helpId)} details={errCopy.detail ? errorDetails : undefined}>
           {#if errCopy.body}<p class="line">{errCopy.body}</p>{/if}
-          {#if errCopy.detail}<p class="line detail">{errCopy.detail}</p>{/if}
           {#if recheckFailLine}<p class="line">{recheckFailLine}</p>{/if}
         </Notice>
       {/if}
@@ -404,6 +404,8 @@
   onconfirm={() => void enqueueNow()}
   onclose={() => (confirmOverwrite = false)}
 />
+
+{#snippet errorDetails()}<ErrorDetails detail={errCopy?.detail ?? ''} />{/snippet}
 
 <style>
   .badges {
@@ -440,8 +442,5 @@
   }
   .line {
     margin: 0;
-  }
-  .detail {
-    color: var(--fg-muted);
   }
 </style>

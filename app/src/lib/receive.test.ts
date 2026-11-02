@@ -236,6 +236,25 @@ describe('canDownload', () => {
     expect(canDownload({ ...base, ownership: 'unknown' })).toBe(false);
   });
 
+  it('사유가 있으면 늘 받을 수 없다(downloadBlock과 어긋나지 않는다)', () => {
+    const overwrite = { existing: 'overwrite', partialFresh: false } as const;
+    const rec = { bytes: 10, sameJob: false, recording: true };
+    const cases = [
+      { ownership: 'notOwn' as const, fileName: 'a', check: check(), choices: DEFAULT_CHOICES },
+      { ownership: 'unchecked' as const, fileName: ' ', check: check(), choices: DEFAULT_CHOICES },
+      { ownership: 'unchecked' as const, fileName: 'a', check: check({ duplicateJobId: 3 }), choices: DEFAULT_CHOICES },
+      { ownership: 'unchecked' as const, fileName: 'a', check: check({ exists: true, freeFileName: null }), choices: DEFAULT_CHOICES },
+      { ownership: 'unchecked' as const, fileName: 'a', check: check({ partial: rec, freeFileName: null }), choices: overwrite },
+      { ownership: 'unchecked' as const, fileName: 'a', check: check({ exists: true, freeFileName: null }), choices: overwrite },
+      { ownership: 'unchecked' as const, fileName: 'a', check: check(), choices: DEFAULT_CHOICES },
+    ];
+    for (const c of cases) {
+      const key = checkKey(null, c.fileName, 'q');
+      const ok = canDownload({ ...c, checkedKey: key, currentKey: key, busy: false });
+      expect(ok).toBe(downloadBlock(c) == null);
+    }
+  });
+
   it('adminOverride는 받을 수 있고 중복은 여전히 막는다', () => {
     expect(canDownload({ ...base, ownership: 'adminOverride' })).toBe(true);
     expect(canDownload({ ...base, ownership: 'adminOverride', check: check({ duplicateJobId: 4 }) })).toBe(false);
@@ -326,20 +345,50 @@ describe('오디오만 행', () => {
 });
 
 describe('downloadBlock', () => {
+  const blk = (
+    ownership: Parameters<typeof downloadBlock>[0]['ownership'],
+    fileName: string,
+    c: ReturnType<typeof check> | null,
+    choices = DEFAULT_CHOICES,
+  ) => downloadBlock({ ownership, fileName, check: c, choices });
+
   it('본인 영상이 아니거나 모르면 ownership, 목록에 있으면 duplicate, 먼저 맞는 쪽', () => {
-    expect(downloadBlock('own', check())).toBeNull();
-    expect(downloadBlock('unchecked', null)).toBeNull();
-    expect(downloadBlock('notOwn', null)).toBe('ownership');
-    expect(downloadBlock('unknown', check())).toBe('ownership');
-    expect(downloadBlock('own', check({ duplicateJobId: 3 }))).toBe('duplicate');
-    expect(downloadBlock('notOwn', check({ duplicateJobId: 3 }))).toBe('ownership');
-    expect(BLOCK_REASON_ID.duplicate).not.toBe(BLOCK_REASON_ID.ownership);
+    expect(blk('own', 'a', check())).toBeNull();
+    expect(blk('unchecked', 'a', null)).toBeNull();
+    expect(blk('notOwn', 'a', null)).toBe('ownership');
+    expect(blk('unknown', 'a', check())).toBe('ownership');
+    expect(blk('own', 'a', check({ duplicateJobId: 3 }))).toBe('duplicate');
+    expect(blk('notOwn', 'a', check({ duplicateJobId: 3 }))).toBe('ownership');
   });
 
   it('adminOverride는 소유권으로 막지 않지만 중복은 관리자도 막는다', () => {
-    expect(downloadBlock('adminOverride', null)).toBeNull();
-    expect(downloadBlock('adminOverride', check())).toBeNull();
-    expect(downloadBlock('adminOverride', check({ duplicateJobId: 3 }))).toBe('duplicate');
+    expect(blk('adminOverride', 'a', null)).toBeNull();
+    expect(blk('adminOverride', 'a', check())).toBeNull();
+    expect(blk('adminOverride', 'a', check({ duplicateJobId: 3 }))).toBe('duplicate');
+  });
+
+  it('빈 이름은 emptyName: 공백만 있어도, 소유권 다음·중복 앞', () => {
+    expect(blk('own', '  ', null)).toBe('emptyName');
+    expect(blk('own', '', check({ duplicateJobId: 3 }))).toBe('emptyName');
+    expect(blk('notOwn', '', null)).toBe('ownership');
+    expect(blk('adminOverride', '', null)).toBe('emptyName');
+  });
+
+  it('빈 번호 이름이 없으면 noFreeName: 번호를 골랐을 때와 받다 만 녹화', () => {
+    const overwrite = { existing: 'overwrite', partialFresh: false } as const;
+    const noFree = check({ exists: true, freeFileName: null });
+    expect(blk('own', 'a', noFree)).toBe('noFreeName');
+    expect(blk('own', 'a', noFree, overwrite)).toBeNull();
+    expect(blk('own', 'a', check({ exists: true, freeFileName: 'a (2)' }))).toBeNull();
+    const rec = check({ partial: { bytes: 10, sameJob: false, recording: true }, freeFileName: null });
+    expect(blk('own', 'a', rec, overwrite)).toBe('noFreeName');
+    expect(blk('own', 'a', check({ partial: { bytes: 10, sameJob: false, recording: true }, freeFileName: 'a (2)' }))).toBeNull();
+    expect(blk('own', 'a', check({ duplicateJobId: 3, exists: true, freeFileName: null }))).toBe('duplicate');
+    expect(blk('notOwn', 'a', noFree)).toBe('ownership');
+  });
+
+  it('BLOCK_REASON_ID는 넷 모두 다른 id', () => {
+    expect(new Set(Object.values(BLOCK_REASON_ID)).size).toBe(4);
   });
 });
 

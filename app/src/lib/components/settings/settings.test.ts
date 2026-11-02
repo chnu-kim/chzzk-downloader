@@ -233,6 +233,34 @@ describe('설정: 즉시 저장', () => {
     expect(within(job).getAllByRole('option')).toHaveLength(8);
   });
 
+  it('설정 저장 실패의 detail은 자세히 안이다', async () => {
+    vi.mocked(api.pickFolder).mockResolvedValue('/x');
+    vi.mocked(api.updateSettings).mockRejectedValueOnce(appError('invalidInput', { message: '절대 경로가 아닙니다' }));
+    const user = userEvent.setup();
+    render(SettingsView);
+    await user.click(screen.getByRole('button', { name: t('folder.change') }));
+    const alert = await screen.findByRole('alert');
+    expect(alert).not.toHaveTextContent('절대 경로가 아닙니다');
+    const raw = screen.getByText('절대 경로가 아닙니다');
+    expect(raw).not.toBeVisible();
+    await user.click(screen.getByText(t('common.details')));
+    expect(raw).toBeVisible();
+  });
+
+  it('쿠키 저장 실패의 detail도 자세히 안이다', async () => {
+    settings.dto = { ...base, naverCookiesSaved: false, useNaverCookies: true };
+    vi.mocked(api.setNaverCookies).mockRejectedValueOnce(appError('parse', { message: '쿠키 원문 오류' }));
+    const user = userEvent.setup();
+    render(SettingsView);
+    await openCookies(user);
+    await user.type(screen.getByLabelText('NID_AUT', { selector: 'input' }), 'A');
+    await user.type(screen.getByLabelText('NID_SES', { selector: 'input' }), 'B');
+    await user.click(screen.getByRole('button', { name: t('common.save') }));
+    const raw = await screen.findByText(/쿠키 원문 오류/);
+    expect(raw).not.toBeVisible();
+    expect(raw.closest('[role="alert"]')).toBeNull();
+  });
+
   it('설정 파일 저장 실패: B2 배너, 컨트롤은 저장된 값으로 돌아가고 [다시 시도]가 같은 패치를 보낸다', async () => {
     vi.mocked(api.updateSettings).mockRejectedValueOnce(appError('settings'));
     const user = userEvent.setup();

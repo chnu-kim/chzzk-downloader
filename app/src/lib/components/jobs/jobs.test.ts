@@ -544,6 +544,81 @@ describe('[⋯] › 제목 전체 보기', () => {
   });
 });
 
+describe('[⋯] › 자세히', () => {
+  it('실패 행은 원문을 바로 보이지 않고, [⋯] › 자세히로 행 아래에 펼친다(다시 누르면 접힌다)', async () => {
+    await load([job(1, { status: 'failed', title: '실패', error: err('unsupported', { message: '코어 원문 한 줄' }) })]);
+    const user = userEvent.setup();
+    render(JobList);
+    const item = screen.getByRole('article', { name: '실패' });
+    expect(within(item).queryByText('코어 원문 한 줄')).toBeNull();
+    expect(item.querySelector('.job-detail')).toBeNull();
+    await pickMenu(user, item, '실패', t('common.details'));
+    expect(item.querySelector('.job-detail')).toHaveTextContent('코어 원문 한 줄');
+    await pickMenu(user, item, '실패', t('common.details'));
+    expect(item.querySelector('.job-detail')).toBeNull();
+  });
+
+  it('detail이 없는 실패와 실패가 아닌 행의 메뉴에는 자세히가 없다', async () => {
+    await load([
+      job(1, { status: 'failed', title: '네트워크', error: err('network') }),
+      job(2, { status: 'completed', title: '완료', finalBytes: 1 }),
+    ]);
+    const user = userEvent.setup();
+    render(JobList);
+    for (const title of ['네트워크', '완료']) {
+      await user.click(screen.getByRole('button', { name: t('a11y.more', { title }) }));
+      const labels = (await screen.findAllByRole('menuitem')).map((m) => m.textContent?.trim());
+      expect(labels).not.toContain(t('common.details'));
+      await user.keyboard('{Escape}');
+    }
+  });
+
+  it('메뉴 순서: 제목 전체 보기 · 주소 복사 · 처음부터 다시 받기 · 자세히 · 문제 보고용 정보 복사 · 목록에서 지우기', async () => {
+    await load([
+      job(1, { status: 'failed', title: '디스크', partialBytes: 5, error: err('diskFull', { payload: { type: 'path', path: '/v' } }) }),
+    ]);
+    const user = userEvent.setup();
+    render(JobList);
+    await user.click(screen.getByRole('button', { name: t('a11y.more', { title: '디스크' }) }));
+    expect((await screen.findAllByRole('menuitem')).map((m) => m.textContent?.trim())).toEqual([
+      t('action.showTitle'),
+      t('action.copyUrl'),
+      t('action.restartFresh'),
+      t('common.details'),
+      t('action.copyReport'),
+      t('action.remove'),
+    ]);
+  });
+
+  it('재시도로 실패를 벗어나면 펼친 자세히가 사라진다', async () => {
+    const failed = job(1, { status: 'failed', title: '실패', error: err('unsupported', { message: '원문' }) });
+    await load([failed]);
+    const user = userEvent.setup();
+    render(JobList);
+    const item = screen.getByRole('article', { name: '실패' });
+    await pickMenu(user, item, '실패', t('common.details'));
+    expect(item.querySelector('.job-detail')).not.toBeNull();
+    send({ type: 'status', job: { ...failed, status: 'queued', error: null } });
+    await waitFor(() => expect(screen.getByRole('article', { name: '실패' }).querySelector('.job-detail')).toBeNull());
+  });
+
+  it('실패 → 재시도 → 다시 실패하면 새 원문은 접힌 채 나온다', async () => {
+    const failed = job(1, { status: 'failed', title: '실패', error: err('unsupported', { message: '첫 원문' }) });
+    await load([failed]);
+    const user = userEvent.setup();
+    render(JobList);
+    const item = screen.getByRole('article', { name: '실패' });
+    await pickMenu(user, item, '실패', t('common.details'));
+    expect(item.querySelector('.job-detail')).not.toBeNull();
+    send({ type: 'status', job: { ...failed, status: 'queued', error: null } });
+    await waitFor(() => expect(screen.getByRole('article', { name: '실패' }).querySelector('.job-detail')).toBeNull());
+    send({ type: 'status', job: { ...failed, status: 'failed', error: err('unsupported', { message: '새 원문' }) } });
+    await waitFor(() => expect(screen.getByRole('article', { name: '실패' })).toHaveTextContent(/./));
+    expect(screen.getByRole('article', { name: '실패' }).querySelector('.job-detail')).toBeNull();
+    expect(screen.getByRole('article', { name: '실패' })).not.toHaveTextContent('새 원문');
+  });
+});
+
 describe('완료 그룹 접힘', () => {
   const finished = (n: number) => Array.from({ length: n }, (_, i) => job(i + 1, { status: 'completed', createdAt: i + 1 }));
 
@@ -629,6 +704,140 @@ describe('키보드', () => {
     await waitFor(() => expect(screen.getByRole('article', { name: '영상 2' })).toHaveFocus());
     send({ type: 'removed', id: 2 });
     await waitFor(() => expect(screen.getByRole('heading', { name: t('list.title') })).toHaveFocus());
+  });
+
+  describe('그룹 이동·버튼 소멸 뒤 포커스(F-4, app.md 129)', () => {
+    const running = (over: Partial<JobDto> = {}) => job(1, { status: 'running', progress: prog(), title: '영상 1', ...over });
+
+    it('받는 중 행에서 Space로 일시정지해 멈춘 그룹으로 옮겨도 포커스가 그 행에 남는다', async () => {
+      await load([running(), job(2, { status: 'queued', title: '영상 2' })]);
+      render(JobList);
+      const a = screen.getByRole('article', { name: '영상 1' });
+      a.focus();
+      await fireEvent.keyDown(a, { key: ' ' });
+      expect(api.pauseJob).toHaveBeenCalledTimes(1);
+      send({ type: 'status', job: running({ status: 'pausing' }) });
+      await tick();
+      expect(a).toHaveFocus();
+      send({ type: 'status', job: running({ status: 'paused', partialBytes: 5 }) });
+      await tick();
+      expect(a.isConnected).toBe(false);
+      await waitFor(() => expect(screen.getByRole('article', { name: '영상 1' })).toHaveFocus());
+      expect(screen.getByRole('article', { name: '영상 1' })).toHaveAttribute('tabindex', '0');
+    });
+
+    it('실패 행에서 Enter(다시 시도)로 대기 그룹으로 옮겨도 포커스가 그 행에 남는다', async () => {
+      await load([
+        job(1, { status: 'failed', error: err('network', { resumable: true }), partialBytes: 5, title: '영상 1' }),
+        job(2, { status: 'completed', title: '영상 2', createdAt: 0 }),
+      ]);
+      render(JobList);
+      const a = screen.getByRole('article', { name: '영상 1' });
+      // 받은 부분이 있으면 첫 동작은 [이어받기]다(jobButtons, D8)
+      expect(within(a).getByRole('button', { name: t('action.resume') })).toBeInTheDocument();
+      a.focus();
+      await fireEvent.keyDown(a, { key: 'Enter' });
+      expect(api.resumeJob).toHaveBeenCalledWith(1, false);
+      send({ type: 'status', job: job(1, { status: 'queued', error: null, partialBytes: 5, title: '영상 1' }) });
+      await tick();
+      expect(a.isConnected).toBe(false);
+      await waitFor(() => expect(screen.getByRole('article', { name: '영상 1' })).toHaveFocus());
+    });
+
+    it('멈춘 행에서 Space(이어받기)로 대기 그룹으로 옮겨도 포커스가 그 행에 남는다', async () => {
+      await load([job(1, { status: 'paused', partialBytes: 5, title: '영상 1' }), job(2, { status: 'completed', title: '영상 2', createdAt: 0 })]);
+      render(JobList);
+      const a = screen.getByRole('article', { name: '영상 1' });
+      a.focus();
+      await fireEvent.keyDown(a, { key: ' ' });
+      expect(api.resumeJob).toHaveBeenCalledWith(1, false);
+      send({ type: 'status', job: job(1, { status: 'queued', partialBytes: 5, title: '영상 1' }) });
+      await tick();
+      expect(a.isConnected).toBe(false);
+      await waitFor(() => expect(screen.getByRole('article', { name: '영상 1' })).toHaveFocus());
+    });
+
+    it('행 안 [일시정지]를 눌러 버튼이 사라지면 포커스는 그 행 article로', async () => {
+      await load([running()]);
+      render(JobList);
+      const a = screen.getByRole('article', { name: '영상 1' });
+      const pause = within(a).getByRole('button', { name: t('action.pause') });
+      pause.focus();
+      await fireEvent.click(pause);
+      send({ type: 'status', job: running({ status: 'pausing' }) });
+      await tick();
+      expect(pause.isConnected).toBe(false);
+      await waitFor(() => expect(a).toHaveFocus());
+    });
+
+    it('진행 단계만 바뀌어(status 그대로 finalizing) 버튼이 사라져도 포커스는 그 행 article로', async () => {
+      await load([running()]);
+      render(JobList);
+      const a = screen.getByRole('article', { name: '영상 1' });
+      const pause = within(a).getByRole('button', { name: t('action.pause') });
+      pause.focus();
+      send({ type: 'progress', id: 1, progress: prog({ phase: 'finalizing' }) });
+      await tick();
+      expect(pause.isConnected).toBe(false);
+      await waitFor(() => expect(screen.getByRole('article', { name: '영상 1' })).toHaveFocus());
+    });
+
+    it('빈 곳을 눌러 목록을 떠났으면 그룹이 바뀌어도 포커스를 빼앗지 않는다', async () => {
+      await load([running(), job(2, { status: 'queued', title: '영상 2' })]);
+      render(JobList);
+      const a = screen.getByRole('article', { name: '영상 1' });
+      a.focus();
+      a.blur();
+      await Promise.resolve();
+      send({ type: 'status', job: running({ status: 'paused', partialBytes: 5 }) });
+      await tick();
+      await tick();
+      expect(document.activeElement).toBe(document.body);
+    });
+
+    it('목록 밖 입력칸으로 옮긴 포커스는 그룹이 바뀌어도 그대로다', async () => {
+      await load([running(), job(2, { status: 'queued', title: '영상 2' })]);
+      render(JobList);
+      const input = document.createElement('input');
+      document.body.append(input);
+      const a = screen.getByRole('article', { name: '영상 1' });
+      a.focus();
+      input.focus();
+      send({ type: 'status', job: running({ status: 'paused', partialBytes: 5 }) });
+      await tick();
+      await tick();
+      expect(input).toHaveFocus();
+      input.remove();
+    });
+
+    it('빈 곳을 눌러 떠난 뒤 그 행이 지워져도 이웃 행으로 포커스를 빼앗지 않는다', async () => {
+      await load([job(1, { status: 'completed', createdAt: 2 }), job(2, { status: 'completed', createdAt: 1 })]);
+      render(JobList);
+      const [a] = screen.getAllByRole('article');
+      a.focus();
+      a.blur();
+      await Promise.resolve();
+      send({ type: 'removed', id: 1 });
+      await tick();
+      await tick();
+      expect(document.activeElement).toBe(document.body);
+    });
+
+    it('대화상자가 열려 있으면 행으로 포커스를 옮기지 않는다', async () => {
+      const user = userEvent.setup();
+      await load([running({ partialBytes: 5 }), job(2, { status: 'queued', title: '영상 2' })]);
+      render(JobList);
+      const a = screen.getByRole('article', { name: '영상 1' });
+      await user.click(within(a).getByRole('button', { name: t('a11y.cancelJob', { title: '영상 1' }) }));
+      const dialog = await screen.findByRole('dialog');
+      const keep = within(dialog).getByRole('button', { name: t('dialog.cancel.keepRunning') });
+      await waitFor(() => expect(keep).toHaveFocus());
+      // 그룹이 바뀌어 연 버튼 노드가 사라져도 대화상자의 포커스를 빼앗지 않는다
+      send({ type: 'status', job: running({ status: 'paused', partialBytes: 6 }) });
+      await tick();
+      await tick();
+      expect(keep).toHaveFocus();
+    });
   });
 
   it('[목록에서 보기]: 그 행으로 포커스', async () => {
@@ -814,6 +1023,69 @@ describe('생방송 행(ADR-0025)', () => {
     await tick();
     expect(screen.queryByRole('dialog', { name: t('dialog.stopLive.title', { title: '오늘 방송' }) })).toBeNull();
     expect(api.stopJob).not.toHaveBeenCalled();
+  });
+
+  describe('D8 자동 닫힘 뒤 포커스(F-4, app.md 129)', () => {
+    async function openD8(user: ReturnType<typeof userEvent.setup>) {
+      const row = screen.getByRole('article', { name: '오늘 방송' });
+      await user.click(within(row).getByRole('button', { name: t('action.stopRecording') }));
+      await screen.findByRole('dialog', { name: t('dialog.stopLive.title', { title: '오늘 방송' }) });
+    }
+
+    it('D8을 연 사이 방송이 끝나 닫히면 포커스는 그 녹화의 행으로', async () => {
+      const user = userEvent.setup();
+      await load([liveJob()]);
+      render(JobList);
+      await openD8(user);
+      send({ type: 'status', job: liveJob({ status: 'completed', progress: null }) });
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+      await waitFor(() => expect(screen.getByRole('article', { name: '오늘 방송' })).toHaveFocus());
+      expect(api.stopJob).not.toHaveBeenCalled();
+    });
+
+    it('마우스로 눌러도 버튼이 포커스를 받지 않는 엔진(opener가 body)에서도 포커스는 그 녹화의 행으로', async () => {
+      await load([liveJob()]);
+      render(JobList);
+      const row = screen.getByRole('article', { name: '오늘 방송' });
+      (document.activeElement as HTMLElement | null)?.blur();
+      // fireEvent.click은 포커스를 옮기지 않는다(WKWebView의 마우스 클릭과 같다)
+      await fireEvent.click(within(row).getByRole('button', { name: t('action.stopRecording') }));
+      await screen.findByRole('dialog', { name: t('dialog.stopLive.title', { title: '오늘 방송' }) });
+      send({ type: 'status', job: liveJob({ status: 'completed', progress: null }) });
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+      await waitFor(() => expect(screen.getByRole('article', { name: '오늘 방송' })).toHaveFocus());
+    });
+
+    it('D8을 연 사이 그 녹화가 사라지면 이웃 행, 없으면 목록 제목으로', async () => {
+      const user = userEvent.setup();
+      await load([liveJob(), job(2, { status: 'completed', title: '영상 2', createdAt: 0 })]);
+      render(JobList);
+      await openD8(user);
+      send({ type: 'removed', id: 1 });
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+      await waitFor(() => expect(screen.getByRole('article', { name: '영상 2' })).toHaveFocus());
+    });
+
+    it('D8을 연 사이 하나뿐인 녹화가 사라지면 목록 제목으로', async () => {
+      const user = userEvent.setup();
+      await load([liveJob()]);
+      render(JobList);
+      await openD8(user);
+      send({ type: 'removed', id: 1 });
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+      await waitFor(() => expect(screen.getByRole('heading', { name: t('list.title') })).toHaveFocus());
+    });
+
+    it('[계속 받기]로 닫으면 [녹화 마치기]로 돌아간다', async () => {
+      const user = userEvent.setup();
+      await load([liveJob()]);
+      render(JobList);
+      await openD8(user);
+      const dialog = screen.getByRole('dialog');
+      await user.click(within(dialog).getByRole('button', { name: t('dialog.cancel.keepRunning') }));
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+      expect(screen.getByRole('button', { name: t('action.stopRecording') })).toHaveFocus();
+    });
   });
 
   it('놓친 조각이 있으면 상태 줄 끝에 보인다', async () => {

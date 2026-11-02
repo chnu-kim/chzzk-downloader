@@ -2,6 +2,7 @@
 // 가짜 백엔드는 시간을 쓰지 않으므로 상태 변화는 테스트가 window.__e2e로 하나씩 일으킨다.
 // 화면 글자는 모두 e2e/copy.ts(copy deck)에서 가져온다: 리터럴은 고정 데이터의 제목뿐이다.
 import { resolved } from '../src/test/fixtures';
+import { job, prog } from '../src/test/jobFixtures';
 import { t, tRegex } from './copy';
 import { expect, test } from './fixtures';
 
@@ -114,6 +115,21 @@ test('지운 항목은 [되돌리기]로 돌아오고 그때는 remove_job을 �
   expect(await app.args('remove_job')).toEqual([]);
 });
 
+test('파일 이름을 비우면 받기의 설명이 이름 칸 안내 문장이다', async ({ app }) => {
+  const r = resolved();
+  const { page } = app;
+  await app.open({ resolve: { [r.url]: r } });
+  await page.getByLabel(t('url.label')).fill(r.url);
+  await page.getByRole('button', { name: t('common.load') }).click();
+  const card = page.getByRole('region', { name: r.meta.title });
+  const download = card.getByRole('button', { name: t('card.download') });
+  await expect(download).not.toHaveAttribute('aria-disabled', 'true');
+  await card.getByLabel(t('filename.label')).fill('');
+  await expect(download).toHaveAttribute('aria-disabled', 'true');
+  await expect(download).toHaveAccessibleDescription(t('filename.empty.help'));
+  await app.axe('빈 파일 이름');
+});
+
 test('받는 중인 작업을 취소하면 확인(D2)을 거쳐 목록에서 지운다', async ({ app }) => {
   const r = resolved();
   const { page } = app;
@@ -193,4 +209,19 @@ test('설정에 있는 동안 끝난 작업은 완료 토스트로 알린다', a
   await page.getByRole('button', { name: t('header.settings') }).click();
   await app.ctl((c, gb) => c.complete(1, 4 * gb), GB);
   await expect(page.getByText(t('toast.completed', { title: r.meta.title }))).toBeVisible();
+});
+
+test('키보드로 일시정지·이어받기해도 포커스가 그 행에 남는다', async ({ app }) => {
+  const { page } = app;
+  await app.open({ jobs: [job(1, { status: 'running', progress: prog(), title: '키보드 영상', partialBytes: 5 })] });
+  const item = page.getByRole('article', { name: '키보드 영상' });
+  await item.focus();
+  await page.keyboard.press('Space');
+  await expect(item).toContainText(t('job.status.paused'));
+  await expect(item).toBeFocused();
+  await app.axe('키보드 일시정지 뒤');
+  await page.keyboard.press('Space');
+  await expect(item).toContainText(t('job.queuedNext'));
+  await expect(item).toBeFocused();
+  expect(await app.cmds()).toEqual(expect.arrayContaining(['pause_job', 'resume_job']));
 });

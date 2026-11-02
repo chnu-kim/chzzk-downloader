@@ -1200,3 +1200,18 @@ fn help_id_set_matches_help_ids_json() {
     got.sort();
     assert_eq!(got, want);
 }
+
+/// 옛 설정 후보 JSON은 `cookiesOff`를 싣는다(app.md 구현 중 변경 130).
+#[test]
+fn legacy_candidate_json_carries_cookies_off() {
+    let v = to_json(&chzzk_shell::dto::LegacyCandidate {
+        dir: "d".into(),
+        recent_count: 2,
+        has_cookies: true,
+        cookies_off: true,
+    });
+    assert_eq!(
+        v,
+        json!({"dir":"d","recentCount":2,"hasCookies":true,"cookiesOff":true})
+    );
+}

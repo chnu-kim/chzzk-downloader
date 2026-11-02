@@ -12,6 +12,7 @@
   import Button from '../ui/Button.svelte';
   import Disclosure from '../ui/Disclosure.svelte';
   import FieldRow from '../ui/FieldRow.svelte';
+  import ErrorDetails from '../app/ErrorDetails.svelte';
   import Notice from '../ui/Notice.svelte';
   import SecretField from '../ui/SecretField.svelte';
   import Switch from '../ui/Switch.svelte';
@@ -27,6 +28,7 @@
   let error = $state<AppError | null>(null);
   let missing = $state(false);
   let root: HTMLElement | null = $state(null);
+  let switchEl: HTMLButtonElement | null = $state(null);
 
   /** 입력칸 오류 표시는 설명 요소(`cookie-missing`)가 반드시 있어야 한다(InvalidProps) */
   function invalidProps(bad: boolean): { invalid: true; 'aria-describedby': string } | { invalid?: false } {
@@ -44,7 +46,7 @@
     t('settings.cookie.howto.step4', { cookieA: COOKIE_A, cookieB: COOKIE_B }),
   ]);
 
-  // 오류 동작 [네이버 로그인 정보 설정]·[로그인 정보 다시 넣기]로 들어오면 펼치고 그 자리로 간다
+  // 오류 동작으로 들어오면 펼치고 그 자리로 간다: [네이버 로그인 정보 넣기…]·[다시 넣기…]는 첫 입력칸, [켜기…]는 사용 스위치
   $effect(() => {
     if (open) return;
     // 접으면 입력 중이던 값도 버린다(비밀값을 화면 밖에 남기지 않는다)
@@ -55,11 +57,15 @@
 
   $effect(() => {
     if (!ui.openCookieSection) return;
+    const target = ui.cookieFocus;
     ui.openCookieSection = false;
+    ui.cookieFocus = 'input';
     open = true;
     void tick().then(() => {
       root?.scrollIntoView?.({ block: 'start' });
-      root?.querySelector<HTMLElement>('input')?.focus();
+      // [켜기…]로 왔으면 사용 스위치로. 그사이 값이 지워져 스위치가 비활성이면 첫 입력칸으로(넣는 길)
+      if (target === 'switch' && switchEl && !switchEl.disabled) switchEl.focus();
+      else root?.querySelector<HTMLElement>('input')?.focus();
     });
   });
 
@@ -70,7 +76,8 @@
     busy = true;
     error = await settings.setCookies(nidAut, nidSes);
     busy = false;
-    if (!error) {
+    // `settings` 오류는 쿠키가 저장된 뒤 자동 켜기를 못 쓴 것이다(B2 배너가 알린다). 값은 이미 저장됐으니 비운다
+    if (!error || error.code === 'settings') {
       nidAut = '';
       nidSes = '';
     }
@@ -101,8 +108,8 @@
         {#key settings.revision}
           <div class="use">
             <span class="use-label" id="l-cookie-use">{t('settings.cookie.use')}</span>
-            <span class="use-state">{saved ? t('settings.cookie.saved') : t('settings.cookie.notSaved')}</span>
-            <Switch value={enabled && saved} labelledby="l-cookie-use" disabled={!saved || busy} onchange={toggle} />
+            <span class="use-state" id="cookie-use-state">{saved ? t('settings.cookie.saved') : t('settings.cookie.notSaved')}</span>
+            <Switch value={enabled && saved} labelledby="l-cookie-use" aria-describedby="cookie-use-state" disabled={!saved || busy} onchange={toggle} bind:el={switchEl} />
           </div>
         {/key}
 
@@ -122,9 +129,8 @@
         {#if missing}
           <Notice id="cookie-missing" tone="danger">{t('settings.cookie.bothRequired')}</Notice>
         {:else if errCopy}
-          <Notice tone="danger" title={errCopy.title}>
+          <Notice tone="danger" title={errCopy.title} details={errCopy.detail ? errorDetails : undefined}>
             {#if errCopy.body}<p class="line">{errCopy.body}</p>{/if}
-            {#if errCopy.detail}<p class="line detail">{errCopy.detail}</p>{/if}
           </Notice>
         {/if}
 
@@ -143,6 +149,8 @@
     {/if}
   </Disclosure>
 </div>
+
+{#snippet errorDetails()}<ErrorDetails detail={errCopy?.detail ?? ''} />{/snippet}
 
 <style>
   .cookie {
@@ -193,9 +201,5 @@
     margin: 0;
     font-size: var(--text-caption);
     line-height: var(--leading-caption);
-  }
-  .detail {
-    color: var(--fg-muted);
-    overflow-wrap: anywhere;
   }
 </style>

@@ -88,6 +88,19 @@ test('저장 세션이 있으면 로그인을 취소해도 유예 만료 화면�
   expect(await page.evaluate(() => window.__e2e.authEvents)).toEqual(['expired', 'checking', 'expired']);
 });
 
+test('브라우저를 다시 열지 못하면 알리고 포커스를 로그인 주소 복사로 옮긴다', async ({ app }) => {
+  const { page } = app;
+  await app.open({
+    auth: auth({ state: 'pending', pending: { expiresAt: Math.floor(Date.now() / 1000) + 600 } }),
+    authOpenFails: true,
+  });
+  await page.getByRole('button', { name: t('auth.reopen') }).focus();
+  await page.keyboard.press('Enter');
+  await expect(page.getByText(t('toast.browserOpenFailed'))).toBeVisible();
+  await expect(page.getByRole('button', { name: t('auth.copyLoginUrl') })).toBeFocused();
+  await app.axe('다시 열기 실패');
+});
+
 test('대기 90초가 지나면 연결 오류 안내와 [다시 로그인]이 보이고, 누르면 취소 뒤 새로 시작한다', async ({ app }) => {
   const { page } = app;
   await app.open({ auth: auth({ state: 'pending', pending: { expiresAt: Math.floor(Date.now() / 1000) + 500 } }) });

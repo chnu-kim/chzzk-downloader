@@ -5,10 +5,10 @@ import { tick } from 'svelte';
 import type { AppError, OutputCheck, RecentVodDto, SettingsDto } from '../../bindings';
 import { check, liveResolved, quality, resolved, vodResolved } from '../../../test/fixtures';
 import { signedInAs } from '../../../test/jobFixtures';
-import { errorCopy, helpLinkLabel } from '../../copy/errors';
+import { actionLabel, errorCopy, helpLinkLabel } from '../../copy/errors';
 import { t } from '../../copy/ko';
 import { shortcutText } from '../../platform';
-import { CHECK_DEBOUNCE_MS, qualitySize } from '../../receive';
+import { BLOCK_REASON_ID, CHECK_DEBOUNCE_MS, qualitySize } from '../../receive';
 import { LOADER_DELAY_MS } from '../../timing';
 
 vi.mock('../../api', () => ({
@@ -168,6 +168,100 @@ describe('UrlBar', () => {
 
     // 입력칸이 행동이라 버튼이 없다(content.md §15.2 `invalidUrl`: 유일한 예외)
     expect(screen.queryByRole('button', { name: t('action.retry') })).toBeNull();
+  });
+
+  it('불러오기 오류(저장됨·꺼짐)의 [켜기]는 설정의 사용 스위치로 보낸다', async () => {
+    settings.dto = { ...settingsDto, naverCookiesSaved: true, useNaverCookies: false };
+    vi.mocked(api.resolve).mockRejectedValue(appError('authRequired', { stage: 'resolve' }));
+    const user = userEvent.setup();
+    render(InputPanel);
+    await user.type(urlInput(), 'https://chzzk.naver.com/video/1234567{Enter}');
+    await screen.findByRole('alert');
+    await user.click(screen.getByRole('button', { name: actionLabel('enableCookies') }));
+    expect(ui.view).toBe('settings');
+    expect(ui.openCookieSection).toBe(true);
+    expect(ui.cookieFocus).toBe('switch');
+  });
+
+  it('카드의 받기 실패(저장됨·꺼짐)는 "켜기" 안내와 [켜기]를 보이고 설정으로 보낸다', async () => {
+    settings.dto = { ...settingsDto, naverCookiesSaved: true, useNaverCookies: false };
+    const user = await openCard();
+    vi.mocked(api.enqueue).mockRejectedValue(appError('authRequired', { stage: 'resolve' }));
+    await user.click(await downloadButton());
+    const alert = await screen.findByRole('alert');
+    expect(within(alert).getByText(/켜면 받을 수 있어요/)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: actionLabel('enableCookies') }));
+    expect(ui.view).toBe('settings');
+    expect(ui.cookieFocus).toBe('switch');
+  });
+
+  it('카드 오류는 꺼진 채 실패한 뒤 켜도 만료됐다고 하지 않는다', async () => {
+    settings.dto = { ...settingsDto, naverCookiesSaved: true, useNaverCookies: false };
+    const user = await openCard();
+    vi.mocked(api.enqueue).mockRejectedValue(appError('authRequired', { stage: 'resolve' }));
+    await user.click(await downloadButton());
+    const alert = await screen.findByRole('alert');
+    expect(within(alert).getByText(/켜면 받을 수 있어요/)).toBeInTheDocument();
+    settings.dto = { ...settingsDto, naverCookiesSaved: true, useNaverCookies: true };
+    await waitFor(() => expect(within(screen.getByRole('alert')).getByText(/켰어요/)).toBeInTheDocument());
+    expect(screen.queryByText(/만료됐어요/)).toBeNull();
+  });
+
+  it('불러오기 오류는 꺼진 채 실패한 뒤 켜도 만료됐다고 하지 않고 [다시 시도]를 낸다', async () => {
+    settings.dto = { ...settingsDto, naverCookiesSaved: true, useNaverCookies: false };
+    vi.mocked(api.resolve).mockRejectedValue(appError('authRequired', { stage: 'resolve' }));
+    const user = userEvent.setup();
+    render(InputPanel);
+    await user.type(urlInput(), 'https://chzzk.naver.com/video/1234567{Enter}');
+    await screen.findByRole('alert');
+    settings.dto = { ...settingsDto, naverCookiesSaved: true, useNaverCookies: true };
+    await waitFor(() => expect(screen.getByRole('button', { name: t('action.retry') })).toBeInTheDocument());
+    expect(screen.queryByText(/만료됐어요/)).toBeNull();
+  });
+
+  it('불러오기 오류의 detail은 자세히 안에 접혀 있고 알림 낭독에 섞이지 않는다', async () => {
+    const e = appError('http', { payload: { type: 'http', status: 404, requestKind: 'api' } });
+    vi.mocked(api.resolve).mockRejectedValue(e);
+    const detail = errorCopy(e, { place: 'resolve', cookiesEnabled: false }).detail as string;
+    expect(detail).toBeTruthy();
+    const user = userEvent.setup();
+    render(InputPanel);
+    await user.type(urlInput(), 'https://chzzk.naver.com/video/1234567{Enter}');
+    const alert = await screen.findByRole('alert');
+    expect(alert).not.toHaveTextContent(detail);
+    const box = document.getElementById('resolve-error') as HTMLElement;
+    expect(within(box).getByText(t('common.details'))).toBeInTheDocument();
+    const raw = within(box).getByText(detail);
+    expect(raw).not.toBeVisible();
+    await user.click(within(box).getByText(t('common.details')));
+    expect(raw).toBeVisible();
+  });
+
+  it('detail이 없는 오류에는 자세히 줄이 없다', async () => {
+    const e = appError('invalidUrl');
+    expect(errorCopy(e, { place: 'resolve', cookiesEnabled: false }).detail).toBeNull();
+    vi.mocked(api.resolve).mockRejectedValue(e);
+    const user = userEvent.setup();
+    render(InputPanel);
+    await user.type(urlInput(), 'https://chzzk.naver.com/live/abcd{Enter}');
+    await screen.findByRole('alert');
+    expect(screen.queryByText(t('common.details'))).toBeNull();
+    expect(document.querySelector('.notice-details')).toBeNull();
+  });
+
+  it('카드 안 등록 실패의 detail도 자세히 안이다', async () => {
+    const e = appError('internal', { message: '셸 원문' });
+    const detail = errorCopy(e, { place: 'resolve', cookiesEnabled: false }).detail;
+    expect(detail).toContain('셸 원문');
+    vi.mocked(api.enqueue).mockRejectedValue(e);
+    const user = await openCard();
+    await user.click(await downloadButton());
+    const alert = await screen.findByRole('alert');
+    expect(alert).not.toHaveTextContent('셸 원문');
+    const raw = screen.getByText(/셸 원문/);
+    expect(raw).not.toBeVisible();
+    await user.click(within(raw.closest('.notice') as HTMLElement).getByText(t('common.details')));
+    expect(raw).toBeVisible();
   });
 
   it('요청이 몰린 오류의 [다시 시도]는 같은 주소로 다시 부른다', async () => {
@@ -419,6 +513,70 @@ describe('ResolveCard', () => {
     // 막힌 동안 눌러도 등록하지 않고, [목록에서 보기]는 그 작업으로 안내한다
     await user.click(btn);
     expect(api.enqueue).not.toHaveBeenCalled();
+  });
+
+  it('파일 이름을 비우면 [받기]는 막히고 사유는 이름 칸 아래 help 문장이다(오류 표시는 없다)', async () => {
+    const user = await openCard();
+    await downloadButton();
+    const input = screen.getByRole('textbox', { name: t('filename.label') });
+    await user.clear(input);
+    const btn = screen.getByRole('button', { name: downloadName() });
+    await waitFor(() => expectBlocked(btn));
+    expect(screen.getByText(t('filename.empty.help'), { selector: '.help, .caption, p, span:not([hidden])' })).toBeVisible();
+    expect(btn).toHaveAccessibleDescription(t('filename.empty.help'));
+    expect(document.getElementById(btn.getAttribute('aria-describedby') as string)).not.toBeNull();
+    expect(input).toHaveAccessibleDescription(t('filename.empty.help'));
+    expect(input).not.toHaveAttribute('aria-invalid');
+    expect(document.querySelector('.card [role="alert"]')).toBeNull();
+    await user.click(btn);
+    await user.keyboard('{Control>}{Enter}{/Control}');
+    expect(api.enqueue).not.toHaveBeenCalled();
+    // 회복
+    await user.type(input, 'x');
+    await waitFor(() => expect(btn).not.toHaveAttribute('aria-disabled', 'true'), { timeout: 2000 });
+    expect(screen.queryByText(t('filename.empty.help'))).toBeNull();
+    expect(btn).not.toHaveAttribute('aria-describedby');
+  });
+
+  it('공백만 넣어도 빈 이름이다', async () => {
+    const user = await openCard();
+    await downloadButton();
+    const input = screen.getByRole('textbox', { name: t('filename.label') });
+    await user.clear(input);
+    await user.type(input, '   ');
+    const btn = screen.getByRole('button', { name: downloadName() });
+    await waitFor(() => expectBlocked(btn));
+    expect(btn).toHaveAccessibleDescription(t('filename.empty.help'));
+  });
+
+  it('같은 이름 파일 + 번호 붙이기인데 빈 번호 이름이 없으면 사유 문장을 잇고, 덮어쓰기를 고르면 풀린다', async () => {
+    setCheck({ exists: true, freeFileName: null });
+    const user = await openCard();
+    await screen.findByText(t('conflict.noFreeName.body'));
+    const btn = screen.getByRole('button', { name: downloadName() });
+    expectBlocked(btn);
+    expect(btn).toHaveAccessibleDescription(t('conflict.noFreeName.body'));
+    await user.click(screen.getByRole('radio', { name: t('conflict.overwrite') }));
+    expect(screen.queryByText(t('conflict.noFreeName.body'))).toBeNull();
+    expect(btn).not.toHaveAttribute('aria-disabled', 'true');
+  });
+
+  it('번호 이름 없음 사유 문장은 낭독 영역(role=status) 밖에 있다', async () => {
+    setCheck({ exists: true, freeFileName: null });
+    await openCard();
+    const sentence = await screen.findByText(t('conflict.noFreeName.body'));
+    expect(sentence.closest('[role="status"]')).toBeNull();
+    expect(screen.getByRole('radio', { name: t('conflict.number') }).closest('[role="status"]')).not.toBeNull();
+  });
+
+  it('받다 만 녹화인데 빈 번호 이름이 없으면 녹화 안내 안에 사유 문장', async () => {
+    setCheck({ partial: { bytes: 10, sameJob: false, recording: true }, freeFileName: null });
+    await openCard();
+    expect(await screen.findByText(t('conflict.partialRecording.title'))).toBeInTheDocument();
+    const btn = screen.getByRole('button', { name: downloadName() });
+    expect(btn).toHaveAccessibleDescription(t('conflict.noFreeName.body'));
+    expect(screen.getByText(t('conflict.noFreeName.body'))).toBeInTheDocument();
+    expect(screen.queryByText(/이번에는 ‘/)).toBeNull();
   });
 
   it('[받기]에는 Mod+Enter가 같은 길이다(조합 중이면 무시)', async () => {
@@ -1102,6 +1260,14 @@ describe('남의 영상 안내(A5)', () => {
     expect(document.getElementById(btn.getAttribute('aria-describedby') as string)).toHaveTextContent(copy.title);
     // 본인 영상이 아님은 막힌 것이라 danger다
     expect(screen.getByText(copy.title).closest('.notice')).toHaveClass('tone-danger');
+  });
+
+  it('본인 영상이 아니고 이름도 비면 [받기]는 소유권 사유를 잇고 이름 칸 help는 그대로 보인다', async () => {
+    const user = await openCard({ ownership: 'notOwn' });
+    await user.clear(screen.getByRole('textbox', { name: t('filename.label') }));
+    const btn = screen.getByRole('button', { name: downloadName() });
+    expect(btn).toHaveAttribute('aria-describedby', BLOCK_REASON_ID.ownership);
+    expect(await screen.findByText(t('filename.empty.help'), { selector: 'p, span:not([hidden]), .help' })).toBeVisible();
   });
 
   it('로그인한 채널 이름을 모르면 이름 없는 문장이다', async () => {

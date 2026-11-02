@@ -44,6 +44,7 @@
   import Button from '../ui/Button.svelte';
   import { isImeKey } from '../ui/focus';
   import IconButton from '../ui/IconButton.svelte';
+  import ErrorDetails from '../app/ErrorDetails.svelte';
   import Notice from '../ui/Notice.svelte';
   import Surface from '../ui/Surface.svelte';
   import ConflictNotice from './ConflictNotice.svelte';
@@ -91,6 +92,8 @@
   let checkedKey: string | null = $state(null);
   let checkError: AppError | null = $state(null);
   let enqueueError: AppError | null = $state(null);
+  /** 보이는 오류가 생긴 그때 네이버 로그인 정보를 보냈는가(켜고 돌아와도 '만료됐어요'로 바뀌지 않게) */
+  let errorSent: boolean | undefined = $state(undefined);
   let busy = $state(false);
   let titleEl: HTMLHeadingElement | null = $state(null);
   /** D7: 덮어쓰기를 고르고 [받기]를 눌렀을 때의 확인 대화상자 */
@@ -129,7 +132,7 @@
   /** 이 검사 결과가 지금 입력의 것인가(낡은 결과의 충돌 안내·사유를 보이지 않는다) */
   const fresh = $derived(check != null && checkedKey === key);
   /** [받기]를 막는 사유(없으면 null). 사유가 있으면 그 문장 요소를 aria-describedby로 잇는다 */
-  const blocked = $derived(downloadBlock(view.ownership, fresh ? check : null));
+  const blocked = $derived(downloadBlock({ ownership: view.ownership, fileName, check: fresh ? check : null, choices }));
   /** 같은 이름의 파일을 지우고 받는다: 확인(D7)을 거친다. 저장될 이름은 검사가 정리한 이름이다 */
   const overwriting = $derived(fresh && wantsOverwrite(check, choices));
   const shownError: AppError | null = $derived<AppError | null>(enqueueError ?? checkError);
@@ -138,6 +141,8 @@
       ? errorCopy(shownError, {
           place: 'resolve',
           cookiesEnabled: settings.cookiesEnabled,
+          naverCookiesSaved: settings.naverCookiesSaved,
+          cookiesAtFailure: errorSent,
           // notOwnContent 제목은 막힌 카드 Notice와 같은 규칙으로 맡은 채널 수를 본다(content.md §15.2)
           delegatedCount: auth.status?.delegatedChannels.length ?? 0,
         })
@@ -202,6 +207,8 @@
       return;
     }
     const handle = setTimeout(async () => {
+      // 요청을 보낸 때의 값(도는 동안 설정을 바꿔도 이 요청과 상관없다, 구현 중 변경 130 리뷰 반영)
+      const sent = settings.cookiesEnabled;
       try {
         const c = await api.checkOutput({
           folder: f,
@@ -220,6 +227,7 @@
         check = null;
         checkedKey = null;
         checkError = e as AppError;
+        errorSent = sent;
       }
     }, CHECK_DEBOUNCE_MS);
     return () => clearTimeout(handle);
@@ -237,6 +245,7 @@
       picked = await api.pickFolder(folderPath || undefined);
     } catch (e) {
       checkError = e as AppError;
+      errorSent = settings.cookiesEnabled;
       return;
     }
     if (!picked) return;
@@ -258,6 +267,7 @@
     if (!ready || !check || !quality) return;
     busy = true;
     enqueueError = null;
+    const sent = settings.cookiesEnabled;
     try {
       await api.enqueue(buildEnqueueRequest(view, quality, folder, check, choices, range));
       announcer.say(t('card.added'));
@@ -265,6 +275,7 @@
       onadded();
     } catch (e) {
       enqueueError = e as AppError;
+      errorSent = sent;
       // 그 사이 목록이나 파일이 바뀌었을 수 있다. 같은 입력으로 다시 검사한다.
       checkedKey = null;
       recheck += 1;
@@ -368,9 +379,8 @@
         channelKnown={!!view.meta.channelId}
       />
       {#if errCopy}
-        <Notice variant="inline" tone="danger" title={errCopy.title} actions={errActions} help={noticeHelp(errCopy.helpId)}>
+        <Notice variant="inline" tone="danger" title={errCopy.title} actions={errActions} help={noticeHelp(errCopy.helpId)} details={errCopy.detail ? errorDetails : undefined}>
           {#if errCopy.body}<p class="line">{errCopy.body}</p>{/if}
-          {#if errCopy.detail}<p class="line detail">{errCopy.detail}</p>{/if}
           {#if recheckFailLine}<p class="line">{recheckFailLine}</p>{/if}
         </Notice>
       {/if}
@@ -380,7 +390,7 @@
   {#snippet footer()}
     <Button onclick={onclose}>{t('common.close')}</Button>
     <!-- primary에는 disabled가 없다(타입). 못 받는 동안은 aria-disabled이고 download()가 ready를 다시 본다.
-         사유가 있으면(목록에 있음·본인 영상 아님) 그 문장을 aria-describedby로 잇는다(patterns.md §6.4) -->
+         사유가 있으면(본인 영상 아님·빈 이름·목록에 있음·빈 번호 이름 없음) 그 문장을 aria-describedby로 잇는다(patterns.md §6.4) -->
     <Button
       variant="primary"
       kbd={shortcutText(platform.os, 'submit')}
@@ -404,6 +414,8 @@
   onconfirm={() => void enqueueNow()}
   onclose={() => (confirmOverwrite = false)}
 />
+
+{#snippet errorDetails()}<ErrorDetails detail={errCopy?.detail ?? ''} />{/snippet}
 
 <style>
   .badges {
@@ -440,8 +452,5 @@
   }
   .line {
     margin: 0;
-  }
-  .detail {
-    color: var(--fg-muted);
   }
 </style>

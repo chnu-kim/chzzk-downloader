@@ -17,6 +17,7 @@ export const ko = {
   'common.showInList': '목록에서 보기',
   'common.openConfigFolder': '설정 폴더 열기',
   'common.keepUsing': '지금 버전은 계속 쓸 수 있어요.',
+  'common.details': '자세히',
 
   // OS 분기(platform.md §20, design-copy DC9: OS별 글자는 이 `platform.*` 키에만). `lib/platform.ts`가 고른다
   'platform.mac.paste': '⌘V',
@@ -133,6 +134,7 @@ export const ko = {
   'filename.label': '파일 이름',
   'filename.reset': '원래 이름으로',
   'filename.willSaveAs': '저장될 이름: {name}',
+  'filename.empty.help': '파일 이름을 넣으면 받을 수 있어요.',
 
   'conflict.exists': '같은 이름의 파일이 이미 있어요',
   'conflict.number': '번호를 붙여 받기',
@@ -143,6 +145,7 @@ export const ko = {
   'conflict.partialOther': '조건이 다른 받다 만 파일이 있어요. 지우고 처음부터 받아요.',
   'conflict.partialRecording.title': '같은 이름으로 받다 만 녹화가 있어요',
   'conflict.partialRecording.body': '녹화는 다시 받을 수 없어 그 파일은 그대로 두고, 이번에는 ‘{name}’ 이름으로 받아요.',
+  'conflict.noFreeName.body': '번호를 붙일 수 있는 이름이 남아 있지 않아요. 파일 이름을 바꿔 주세요.',
   'conflict.inQueue': '이미 다운로드 목록에 있는 영상이에요',
 
   'list.title': '다운로드',
@@ -241,6 +244,7 @@ export const ko = {
   'action.overwriteAndDownload': '덮어쓰고 받기…',
   'action.openCookieSettings': '네이버 로그인 정보 넣기…',
   'action.reenterCookies': '네이버 로그인 정보 다시 넣기…',
+  'action.enableCookies': '네이버 로그인 정보 켜기…',
   'action.copied': '복사했어요',
 
   'toast.completed': '‘{title}’ 다운로드를 마쳤어요',
@@ -248,6 +252,7 @@ export const ko = {
   'toast.removedMany': '완료 항목 {n}개를 목록에서 지웠어요',
   'toast.signedIn': '‘{channelName}’ 채널로 로그인했어요',
   'toast.copyFailed': '복사하지 못했어요',
+  'toast.browserOpenFailed': '브라우저를 열지 못했어요',
   'toast.reportHasPath': '복사한 정보에 파일 경로가 들어 있어요',
   'toast.editorRemoved': '‘{name}’ 편집자를 뺐어요',
   'toast.delegationLeft': '‘{name}’ 채널의 편집자를 그만뒀어요',
@@ -281,6 +286,7 @@ export const ko = {
   'dialog.legacy.item.folder': '저장 폴더',
   'dialog.legacy.item.recent': '최근 영상 {n}개',
   'dialog.legacy.item.cookies': '네이버 로그인 정보',
+  'dialog.legacy.cookiesOff.help': '네이버 로그인 정보는 꺼진 채로 가져와요. 설정의 고급에서 켤 수 있어요.',
   'dialog.legacy.import': '가져오기',
   'dialog.overwrite.title': '‘{name}’ 파일을 덮어쓸까요?',
   'dialog.overwrite.body': '지금 있는 파일을 지우고 새로 받아요. 되돌릴 수 없어요.',

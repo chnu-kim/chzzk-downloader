@@ -86,6 +86,13 @@ test('설치에 실패하면 토스트가 아니라 배너로 알리고, [다시
   const banner = page.getByRole('region', { name: t('update.failed') });
   await expect(banner).toBeVisible();
   await expect(page.locator('.notice-toast')).toHaveCount(0);
-  await expect(banner.getByRole('button', { name: t('action.retry') })).toBeVisible();
+  await expect(banner).toContainText(t('common.keepUsing'));
+  const retry = banner.getByRole('button', { name: t('action.retry') });
+  await expect(retry).toBeVisible();
   await app.axe('업데이트 실패 배너');
+  // [다시 시도]가 다시 실패해도 같은 버튼 노드라 포커스가 남는다
+  await retry.focus();
+  await page.keyboard.press('Enter');
+  await expect.poll(async () => (await app.args('update_install')).length).toBe(2);
+  await expect(banner.getByRole('button', { name: t('action.retry') })).toBeFocused();
 });

@@ -24,6 +24,7 @@
   import Disclosure from '../ui/Disclosure.svelte';
   import EmptyState from '../ui/EmptyState.svelte';
   import { isImeKey } from '../ui/focus';
+  import { modalLayerDepth } from '../ui/modalLayer';
   import Surface from '../ui/Surface.svelte';
   import JobItem from './JobItem.svelte';
 
@@ -34,6 +35,12 @@
   /** 목록 안에서 마지막으로 포커스를 가진 행과 그 자리(지워지면 이웃으로 옮긴다) */
   let focusedId: JobId | null = $state(null);
   let focusedIndex = 0;
+  /** 행 안에서 마지막으로 포커스를 받은 실제 요소(article 또는 안쪽 버튼). 이것이 DOM에서 빠졌는지로 "다시 그려져 잃음"을 안다 */
+  let lastFocusedEl: Element | null = null;
+  /** 사용자가 목록을 스스로 떠났다(포인터로 빈 곳을 눌러 body로 갔다). 다음 행 포커스 때 지운다. 이때는 포커스를 되돌리지 않는다 */
+  let leftList = false;
+  /** D8이 열려 있는 동안의 작업과 그 자리. 자동으로 닫힐 때는 store가 stopConfirm을 먼저 비우므로 열려 있을 때 잡아 둔다 */
+  let stopFocus: { id: JobId; index: number } | null = null;
 
   const tabbableId = $derived(
     focusedId != null && jobs.order.includes(focusedId) ? focusedId : (jobs.order[0] ?? null),
@@ -63,13 +70,26 @@
   function onfocus(job: JobDto) {
     focusedId = job.id;
     focusedIndex = jobs.order.indexOf(job.id);
+    lastFocusedEl = document.activeElement;
+    leftList = false;
   }
 
-  // 목록 밖으로 포커스가 나가면 잊는다(나중에 그 행이 지워져도 포커스를 빼앗지 않게)
+  // 목록 밖 요소로 포커스가 나가면 잊는다(나중에 그 행이 지워져도 포커스를 빼앗지 않게).
+  // relatedTarget이 없으면 셋 중 하나다: ① 포커스를 가진 노드가 다시 그려져 DOM에서 빠졌다(기억한다, 아래 effect가 되돌린다)
+  // ② 창이 포커스를 잃었다(activeElement는 그대로라 아무것도 하지 않는다) ③ 포인터로 빈 곳을 눌러 body로 갔다(떠났다고 적는다).
+  // 엔진마다 노드 제거 때 focusout을 내는지가 달라 ①을 이 이벤트에 기대지 않는다: 셋은 이벤트 직후에야 구별된다.
   function onfocusout(e: FocusEvent) {
     const next = e.relatedTarget as Node | null;
     if (next && listEl?.contains(next)) return;
-    if (next) focusedId = null;
+    if (next) {
+      focusedId = null;
+      return;
+    }
+    const from = e.target as Element;
+    queueMicrotask(() => {
+      const active = document.activeElement;
+      if (from.isConnected && active !== from && !(active && listEl?.contains(active))) leftList = true;
+    });
   }
 
   // 포커스를 가진 행이 사라지면(취소·지우기·숨김·접힘) 포커스가 body로 떨어진다. 다음 행 → 이전 행 → 목록 제목으로 옮긴다(F-4).
@@ -77,6 +97,7 @@
     const order = jobs.order;
     const id = focusedId;
     if (id == null || order.includes(id)) return;
+    if (leftList) return;
     const active = document.activeElement;
     if (active && active !== document.body && !listEl?.contains(active)) return;
     focusedId = null;
@@ -86,6 +107,44 @@
       else headingEl?.focus();
     });
   });
+
+  // 포커스를 가진 행이 그룹을 옮겨(상태가 바뀌어 다른 {#each}에서 다시 그려짐) article이 새로 생기거나, 행 안에서 누른 버튼이
+  // 상태에 따라 사라지면 포커스가 body로 떨어진다. 그 작업이 아직 목록에 있으면 그 행 article로 되돌린다(F-4, app.md 구현 중 변경 129).
+  // 사용자가 다른 곳으로 옮긴 포커스(입력줄·대화상자)와 스스로 떠난 경우(leftList)는 빼앗지 않는다.
+  $effect(() => {
+    void jobs.groups; // 상태 이벤트마다 다시 돈다(groups는 jobs 값이 바뀔 때마다 새 배열)
+    const id = focusedId;
+    if (id == null) return;
+    void jobs.state.progress.get(id); // 진행 단계만 바뀌어 버튼이 사라지는 경우(state가 이벤트마다 통째로 바뀌어 groups·order로도 다시 돌지만 의존을 글로 남긴다)
+    if (!jobs.order.includes(id)) return; // 행이 사라진 경우는 위 effect 몫
+    void tick().then(() => {
+      if (focusedId !== id || leftList) return;
+      if (!lastFocusedEl || lastFocusedEl.isConnected) return; // 누른 노드가 그대로면 할 일 없음
+      const active = document.activeElement;
+      if (active && active !== document.body) return;
+      if (modalLayerDepth() > 0) return;
+      if (!jobs.order.includes(id)) return;
+      focusItem(id);
+    });
+  });
+
+  $effect(() => {
+    const c = jobs.stopConfirm;
+    if (c) stopFocus = { id: c.id, index: jobs.order.indexOf(c.id) };
+  });
+  /** D8을 연 버튼이 사라졌을 때(방송이 끝나 완료 그룹으로 옮김·사라짐): 그 행 → 다음 행 → 이전 행 → 목록 제목(F-4) */
+  function returnFromStopConfirm() {
+    const s = stopFocus;
+    stopFocus = null;
+    if (!s) return;
+    void tick().then(() => {
+      const order = jobs.order;
+      if (order.includes(s.id)) return focusItem(s.id);
+      const next = order[Math.min(Math.max(s.index, 0), order.length - 1)];
+      if (next != null) focusItem(next);
+      else headingEl?.focus();
+    });
+  }
 
   // [목록에서 보기]·다른 곳에서 행을 보여 달라고 할 때. 요청은 한 번 쓰고 비운다(남겨 두면 설정에서 돌아와
   // 목록이 다시 그려질 때 옛 행으로 포커스를 빼앗는다).
@@ -109,7 +168,7 @@
     if (e.target !== e.currentTarget) return;
     const order = jobs.order;
     const i = order.indexOf(job.id);
-    const b = jobButtons(job, jobs.state.progress.get(job.id), settings.cookiesEnabled, jobBlock(job, auth.status));
+    const b = jobButtons(job, jobs.state.progress.get(job.id), settings.cookiesEnabled, jobBlock(job, auth.status), settings.naverCookiesSaved, jobs.cookiesAtFailure.get(job.id));
     let action: JobAction | null = null;
     switch (e.key) {
       case 'ArrowDown':
@@ -159,6 +218,8 @@
           waitingSince={jobs.waitingSince.get(job.id) ?? null}
           recovered={jobs.recovered.has(job.id)}
           cookiesEnabled={settings.cookiesEnabled}
+          naverCookiesSaved={settings.naverCookiesSaved}
+          cookiesAtFailure={jobs.cookiesAtFailure.get(job.id)}
           block={jobBlock(job, auth.status)}
           highlighted={jobs.highlight.has(job.id)}
           tabbable={tabbableId === job.id}
@@ -243,6 +304,7 @@
   title={t('dialog.stopLive.title', { title: jobs.stopConfirm?.title ?? '' })}
   body={t('dialog.stopLive.body', { size: jobs.stopConfirmSize })}
   onclose={() => jobs.cancelStopConfirm()}
+  returnFocus={returnFromStopConfirm}
   primary={{ id: 'keep', label: t('dialog.cancel.keepRunning'), onclick: () => jobs.cancelStopConfirm() }}
   secondary={{ id: 'confirm', label: t('action.stopRecording'), onclick: () => void jobs.confirmStop() }}
 />

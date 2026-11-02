@@ -8,6 +8,7 @@
   import { settings } from '../../stores/settings.svelte';
   import { toasts } from '../../stores/toast.svelte';
   import Button from '../ui/Button.svelte';
+  import ErrorDetails from '../app/ErrorDetails.svelte';
   import Notice from '../ui/Notice.svelte';
   import SettingsRow from '../ui/SettingsRow.svelte';
   import SettingsSection from './SettingsSection.svelte';
@@ -48,14 +49,15 @@
   {#if errCopy}
     <div class="row">
       <div class="slot">
-        <Notice tone="danger" title={errCopy.title}>
+        <Notice tone="danger" title={errCopy.title} details={errCopy.detail ? errorDetails : undefined}>
           {#if errCopy.body}<p class="msg">{errCopy.body}</p>{/if}
-          {#if errCopy.detail}<p class="msg detail">{errCopy.detail}</p>{/if}
         </Notice>
       </div>
     </div>
   {/if}
 </SettingsSection>
+
+{#snippet errorDetails()}<ErrorDetails detail={errCopy?.detail ?? ''} />{/snippet}
 
 <style>
   .slot {
@@ -66,9 +68,5 @@
     margin: 0;
     font-size: var(--text-caption);
     line-height: var(--leading-caption);
-  }
-  .detail {
-    color: var(--fg-muted);
-    overflow-wrap: anywhere;
   }
 </style>

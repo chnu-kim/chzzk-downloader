@@ -5,7 +5,7 @@
   //   ① B2 설정 저장 실패 → ② B4 업데이트 실패 → ③ B4 진행(받는 중·설치 중) → (④ B5 서비스 공지 block·warn: 자리만) →
   //   ⑤ 웹 구성요소 미달 경고(platform.md §5, 이번 실행만 닫을 수 있다) → ⑥ B1 받다 만 영상 → ⑦ B4 새 버전 → (⑧ B5 info: 자리만)
   // B5(서비스 공지)는 Worker `/notice`가 생기는 단계(e)에서 이 표에 들어온다(앱에 공지 데이터가 아직 없다).
-  // B4 진행과 B4 새 버전은 같은 배너 노드('update')로 그려진다: 버튼을 눌러도 포커스·라이브 영역이 끊기지 않게(worker.md 77).
+  // B4 진행·새 버전·실패(다시 받을 새 버전이 있을 때)는 같은 배너 노드('update' 분기)로 그려진다: 버튼을 눌러도 포커스·라이브 영역이 끊기지 않게(worker.md 77, app.md 129).
   export type BannerKind = 'settings' | 'updateFailed' | 'update' | 'engine' | 'interrupted';
 
   export interface BannerState {
@@ -45,9 +45,9 @@
     resumableCount: number;
   }
 
-  /** 업데이트 실패 배너의 본문 글(화면과 낭독이 같은 글을 쓴다) */
+  /** 업데이트 실패 배너를 읽을 글. 서명 확인 실패는 본문 한 문장, 그 밖은 제목 `update.failed` + 본문 `common.keepUsing`(화면과 같은 두 문장) */
   export function updateFailedText(failure: 'failed' | 'untrusted' | null): string {
-    return failure === 'untrusted' ? t('update.untrusted') : t('update.failed');
+    return failure === 'untrusted' ? t('update.untrusted') : `${t('update.failed')}. ${t('common.keepUsing')}`;
   }
 
   /**
@@ -103,6 +103,13 @@
   import UpdateBanner from './UpdateBanner.svelte';
 
   let resuming = $state(false);
+  /** [다시 시도]로 시작한 설치 요청 중(첫 진행 이벤트·결과 전) */
+  let retrying = $state(false);
+
+  function install() {
+    retrying = update.failure === 'failed';
+    void update.install().finally(() => (retrying = false));
+  }
 
   async function resumeAll() {
     resuming = true;
@@ -117,7 +124,9 @@
     pickBanner({
       settingsError: settings.saveError !== null,
       updateFailure: update.failure !== null,
-      updateBusy: update.busy,
+      // 설치 요청 중(`pending`, 첫 진행 이벤트·결과 전)도 B4 진행 자리다: [다시 시도] 뒤 B1·엔진 배너로 갈아타 누른 버튼을 잃지 않게(app.md 129).
+      // phase는 바꾸지 않으므로 worker.md 77 (라)는 그대로다.
+      updateBusy: update.busy || update.pending,
       engineOld: engine.showBanner,
       interrupted: jobs.showInterruptedBanner,
       updateAvailable: update.showBanner,
@@ -182,27 +191,30 @@
 
 {#if which !== null}
 <div class="banner-slot">
-{#if which === 'update'}
+{#if which === 'update' || (which === 'updateFailed' && update.failure === 'failed' && update.available !== null)}
+  <!-- B4 새 버전·진행·실패(다시 받을 새 버전이 있을 때)는 같은 노드다: 누른 버튼의 포커스와 라이브 영역이 끊기지 않게(worker.md 77 (가), app.md 129) -->
   <UpdateBanner
     version={updateVersion}
     busy={update.busy || update.pending}
     status={updateStatus}
     shown={updateShown}
     notes={update.available?.notes ?? null}
-    oninstall={() => void update.install()}
+    failed={which === 'updateFailed'}
+    oninstall={install}
+    {retrying}
     onlater={() => update.later()}
+    ondismiss={() => update.dismissFailure()}
   />
 {:else if which === 'updateFailed'}
-  <!-- 실패해도 지금 버전은 계속 쓸 수 있어 warning(서명 확인 실패만 danger). 다시 받을 새 버전이 있을 때만 [다시 시도] -->
+  <!-- 서명 확인 실패(danger, role=alert, 버튼 없음)와 다시 받을 새 버전이 없는 실패(warning, 버튼 없음).
+       alert↔status를 살아 있는 노드에서 바꾸지 않으려고 따로 그린다 -->
   <Notice
     variant="banner"
     tone={update.failure === 'untrusted' ? 'danger' : 'warning'}
-    actions={update.failure === 'failed' && update.available
-      ? [{ id: 'retry', label: t('action.retry'), loading: update.pending, onclick: () => void update.install() }]
-      : []}
+    title={update.failure === 'untrusted' ? undefined : t('update.failed')}
     onclose={() => update.dismissFailure()}
   >
-    {updateFailedText(update.failure)}
+    {update.failure === 'untrusted' ? t('update.untrusted') : t('common.keepUsing')}
   </Notice>
 {:else if which === 'settings'}
   <Notice

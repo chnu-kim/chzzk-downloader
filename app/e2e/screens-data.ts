@@ -702,7 +702,7 @@ export const SCREENS: Screen[] = [
   {
     id: 'D3 이전 설정 찾음',
     slug: 'dialog-d3',
-    scenario: (_env, now) => ({ info: { legacyCandidate: { dir: '/e2e/legacy', recentCount: 3, hasCookies: true } } }),
+    scenario: (_env, now) => ({ info: { legacyCandidate: { dir: '/e2e/legacy', recentCount: 3, hasCookies: true, cookiesOff: false } } }),
     ready: (p) => p.getByRole('dialog', { name: t('dialog.legacy.title') }),
     dialog: true,
   },

@@ -33,6 +33,8 @@ export class AuthStore {
   #failedAt: string | null = $state(null);
   /** 상태가 바뀐 횟수(이벤트·응답). 동작은 시작 때 값을 기억했다가 그사이 바뀌었으면 응답을 버린다(늦게 온 응답이 새 상태를 덮지 않게) */
   #seq = 0;
+  /** [브라우저 다시 열기] 실패 토스트 id(하나만 띄운다) */
+  #reopenToast: number | null = null;
 
   ready = $derived(this.status !== null);
   locked = $derived(this.status !== null && this.status.state !== 'disabled' && this.status.state !== 'signedIn');
@@ -42,6 +44,11 @@ export class AuthStore {
   busy = $derived(Object.values(this.#busy).some(Boolean));
   /** 직전 [다시 연결]이 상태를 바꾸지 못했고 지금도 그 상태다 */
   reconnectFailed = $derived(this.#failedAt !== null && key(this.status) === this.#failedAt);
+
+  /** [브라우저 다시 열기] 실패 토스트가 지금 화면에 보인다(대기열에 밀려 있지 않다) */
+  reopenFailureShown(): boolean {
+    return this.#reopenToast != null && toasts.current?.id === this.#reopenToast;
+  }
 
   isBusy(a: AuthAction): boolean {
     return this.#busy[a];
@@ -72,6 +79,11 @@ export class AuthStore {
   /** 새 상태를 받는다(이벤트·응답 모두). Checking은 지나가는 상태라 [다시 연결] 실패 표시를 지우지 않는다 */
   apply(s: AuthStatusDto): void {
     this.#seq += 1;
+    // 로그인을 마치거나 취소한 뒤 "열지 못했어요"가 남지 않게 한다
+    if (this.#reopenToast != null && s.state !== 'pending') {
+      toasts.dismiss(this.#reopenToast);
+      this.#reopenToast = null;
+    }
     const k = key(s);
     if (this.#failedAt !== null && k !== this.#failedAt && s.state !== 'checking') this.#failedAt = null;
     this.status = s;
@@ -83,6 +95,7 @@ export class AuthStore {
     for (const a of Object.keys(this.#busy) as AuthAction[]) this.#busy[a] = false;
     this.#failedAt = null;
     this.#seq = 0;
+    this.#reopenToast = null;
   }
 
   async #run(a: AuthAction, f: () => Promise<void>): Promise<void> {
@@ -140,10 +153,24 @@ export class AuthStore {
     });
   }
 
-  reopen(): Promise<void> {
-    return this.#run('reopen', async () => {
-      await api.authReopen().catch(() => false);
+  /**
+   * [브라우저 다시 열기]. 열지 못했고(셸 false·실패) 응답 때도 같은 pending이면 danger 토스트로 알리고 true를 돌려준다
+   * (LoginView가 포커스를 [로그인 주소 복사]로 옮긴다). false는 "티켓 없음"(그사이 취소·만료)일 수도 있어 상태가 바뀌었으면 알리지 않는다.
+   * 같은 토스트가 떠 있으면 더하지 않는다(danger는 sticky라 쌓인다). 이미 진행 중이면 아무것도 하지 않고 false
+   */
+  async reopen(): Promise<boolean> {
+    let failed = false;
+    await this.#run('reopen', async () => {
+      // 같은 대기(티켓)인지는 기한으로 본다. #seq는 같은 pending을 다시 받기만 해도 오르므로 쓰지 않는다
+      const ticket = this.status?.state === 'pending' ? (this.status.pending?.expiresAt ?? null) : null;
+      const ok = await api.authReopen().catch(() => false);
+      if (ok || ticket == null || this.status?.state !== 'pending' || (this.status.pending?.expiresAt ?? null) !== ticket) return;
+      failed = true;
+      if (this.#reopenToast == null || !toasts.items.some((i) => i.id === this.#reopenToast)) {
+        this.#reopenToast = toasts.push(t('toast.browserOpenFailed'), 'danger');
+      }
     });
+    return failed;
   }
 
   copyLoginUrl(): Promise<void> {

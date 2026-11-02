@@ -11,6 +11,8 @@
     secondary?: DialogAction & { tone?: 'neutral' | 'danger'; loading?: boolean };
     /** Esc·닫기: 어떤 동작도 부르지 않고 닫기만 한다(결과는 primary와 같다) */
     onclose: () => void;
+    /** 연 요소가 닫힐 때 사라졌으면 포커스를 둘 곳(F-4). 없으면 그대로 둔다(공용 modalLayer의 `returnFocus`) */
+    returnFocus?: () => void;
     children?: Snippet;
   }
 
@@ -46,7 +48,7 @@
   import { enterMotion, isImeKey, leaveMotion, trapTab } from './focus';
   import { modalLayer } from './modalLayer';
 
-  let { open, title, primary, secondary, onclose, children }: DialogProps = $props();
+  let { open, title, primary, secondary, onclose, returnFocus, children }: DialogProps = $props();
 
   const uid = $props.id();
   const titleId = `${uid}-title`;
@@ -127,7 +129,8 @@
   function layer(el: HTMLElement) {
     scrimEl = el;
     attached = true;
-    const stopLayer = modalLayer(el);
+    // opener는 넘기지 않는다(기본 = 붙을 때의 activeElement). returnFocus는 닫힐 때의 최신 prop을 읽는다
+    const stopLayer = modalLayer(el, { returnFocus: () => returnFocus?.() });
     const stopEnter = enterMotion(el);
     // 열리면 늘 primary에 포커스(:focus-visible 휴리스틱에 맡긴다)
     queueMicrotask(() => (primaryEl ?? box)?.focus());

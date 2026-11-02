@@ -84,6 +84,7 @@ beforeEach(() => {
   settings.legacyWarnings = [];
   settings.legacyPromptDone = false;
   ui.openCookieSection = false;
+  ui.cookieFocus = 'input';
   ui.logoutConfirm = false;
   auth.reset();
   platform.set('macos');
@@ -230,6 +231,34 @@ describe('설정: 즉시 저장', () => {
     const job = screen.getByRole('combobox', { name: t('settings.jobRate') });
     expect(job).toHaveDisplayValue('5.0MB/s');
     expect(within(job).getAllByRole('option')).toHaveLength(8);
+  });
+
+  it('설정 저장 실패의 detail은 자세히 안이다', async () => {
+    vi.mocked(api.pickFolder).mockResolvedValue('/x');
+    vi.mocked(api.updateSettings).mockRejectedValueOnce(appError('invalidInput', { message: '절대 경로가 아닙니다' }));
+    const user = userEvent.setup();
+    render(SettingsView);
+    await user.click(screen.getByRole('button', { name: t('folder.change') }));
+    const alert = await screen.findByRole('alert');
+    expect(alert).not.toHaveTextContent('절대 경로가 아닙니다');
+    const raw = screen.getByText('절대 경로가 아닙니다');
+    expect(raw).not.toBeVisible();
+    await user.click(screen.getByText(t('common.details')));
+    expect(raw).toBeVisible();
+  });
+
+  it('쿠키 저장 실패의 detail도 자세히 안이다', async () => {
+    settings.dto = { ...base, naverCookiesSaved: false, useNaverCookies: true };
+    vi.mocked(api.setNaverCookies).mockRejectedValueOnce(appError('parse', { message: '쿠키 원문 오류' }));
+    const user = userEvent.setup();
+    render(SettingsView);
+    await openCookies(user);
+    await user.type(screen.getByLabelText('NID_AUT', { selector: 'input' }), 'A');
+    await user.type(screen.getByLabelText('NID_SES', { selector: 'input' }), 'B');
+    await user.click(screen.getByRole('button', { name: t('common.save') }));
+    const raw = await screen.findByText(/쿠키 원문 오류/);
+    expect(raw).not.toBeVisible();
+    expect(raw.closest('[role="alert"]')).toBeNull();
   });
 
   it('설정 파일 저장 실패: B2 배너, 컨트롤은 저장된 값으로 돌아가고 [다시 시도]가 같은 패치를 보낸다', async () => {
@@ -401,6 +430,32 @@ describe('설정: 네이버 로그인 정보', () => {
     expect(ses).toHaveValue('');
   });
 
+  it('처음 저장한 뒤 자동 켜기의 설정 저장이 실패하면 B2에 올리고 저장됨·꺼짐으로 다시 읽는다', async () => {
+    vi.mocked(api.setNaverCookies).mockRejectedValue(appError('settings'));
+    vi.mocked(api.getSettings).mockResolvedValue({ ...base, naverCookiesSaved: true, useNaverCookies: false });
+    vi.mocked(api.updateSettings).mockImplementation(async (p) => ({ ...base, naverCookiesSaved: true, ...(p as object) }) as SettingsDto);
+    const user = userEvent.setup();
+    render(SettingsView);
+    await openCookies(user);
+    const aut = screen.getByLabelText('NID_AUT', { selector: 'input' });
+    const ses = screen.getByLabelText('NID_SES', { selector: 'input' });
+    await user.type(aut, 'AUTVALUE');
+    await user.type(ses, 'SESVALUE');
+    await user.click(screen.getByRole('button', { name: t('common.save') }));
+    // 쿠키는 저장됐으니 입력칸을 비우고, 다시 읽은 설정은 저장됨·꺼짐이다
+    await waitFor(() => expect(aut).toHaveValue(''));
+    expect(ses).toHaveValue('');
+    expect(settings.saveError?.code).toBe('settings');
+    expect(settings.dto?.naverCookiesSaved).toBe(true);
+    expect(screen.getByText(t('settings.cookie.saved'))).toBeInTheDocument();
+    // 쿠키 섹션에는 같은 오류를 또 보이지 않는다
+    expect(screen.queryByRole('alert')).toBeNull();
+    // B2 [다시 시도]는 켜기 패치를 다시 보낸다
+    await settings.retrySave();
+    expect(api.updateSettings).toHaveBeenLastCalledWith({ useNaverCookies: true });
+    expect(settings.saveError).toBeNull();
+  });
+
   it('하나라도 비면 보내지 않고 두 값을 모두 넣으라고 한다', async () => {
     const user = userEvent.setup();
     render(SettingsView);
@@ -466,6 +521,51 @@ describe('설정: 네이버 로그인 정보', () => {
     expect(ui.openCookieSection).toBe(false);
   });
 
+  it('[켜기]로 들어오면 펼쳐지고 사용 스위치에 포커스가 간다', async () => {
+    settings.dto = { ...base, naverCookiesSaved: true };
+    ui.openCookieSection = true;
+    ui.cookieFocus = 'switch';
+    render(SettingsView);
+    await waitFor(() =>
+      expect(screen.getByRole('heading', { name: t('settings.advanced') }).closest('details')).toHaveAttribute('open'),
+    );
+    await waitFor(() => expect(screen.getByRole('switch', { name: t('settings.cookie.use') })).toHaveFocus());
+    expect(ui.openCookieSection).toBe(false);
+    expect(ui.cookieFocus).toBe('input');
+  });
+
+  it('[켜기] 요청이어도 저장된 값이 없으면(스위치 비활성) 첫 입력칸으로', async () => {
+    ui.openCookieSection = true;
+    ui.cookieFocus = 'switch';
+    render(SettingsView);
+    await waitFor(() => expect(screen.getByLabelText('NID_AUT', { selector: 'input' })).toHaveFocus());
+  });
+
+  it('사용 스위치는 저장 상태 글을 설명으로 갖는다', async () => {
+    const user = userEvent.setup();
+    settings.dto = { ...base, naverCookiesSaved: true };
+    render(SettingsView);
+    await openCookies(user);
+    expect(screen.getByRole('switch', { name: t('settings.cookie.use') })).toHaveAccessibleDescription(t('settings.cookie.saved'));
+    settings.dto = { ...base };
+    await waitFor(() =>
+      expect(screen.getByRole('switch', { name: t('settings.cookie.use') })).toHaveAccessibleDescription(t('settings.cookie.notSaved')),
+    );
+  });
+
+  it('처음 저장하면 스위치가 켜진 채 보인다', async () => {
+    vi.mocked(api.setNaverCookies).mockResolvedValue({ ...base, naverCookiesSaved: true, useNaverCookies: true });
+    const user = userEvent.setup();
+    render(SettingsView);
+    await openCookies(user);
+    await user.type(screen.getByLabelText('NID_AUT', { selector: 'input' }), 'a');
+    await user.type(screen.getByLabelText('NID_SES', { selector: 'input' }), 'b');
+    await user.click(screen.getByRole('button', { name: t('common.save') }));
+    const sw = await screen.findByRole('switch', { name: t('settings.cookie.use') });
+    await waitFor(() => expect(sw).toHaveAttribute('aria-checked', 'true'));
+    expect(sw).toBeEnabled();
+  });
+
   it('사용 스위치 저장이 설정 파일 오류로 실패하면 B2에만 보이고, B2 [다시 시도] 뒤 남는 알림이 없다', async () => {
     settings.dto = { ...base, naverCookiesSaved: true };
     vi.mocked(api.updateSettings).mockRejectedValueOnce(appError('settings'));
@@ -515,7 +615,7 @@ describe('이전 버전 가져오기', () => {
 
 describe('D3: 첫 실행에 이전 설정을 찾음', () => {
   it('가져오기는 후보를 적용하고, 경고는 설정 화면에 남는다', async () => {
-    settings.info = { ...info, legacyCandidate: { dir: '/old', recentCount: 3, hasCookies: true } };
+    settings.info = { ...info, legacyCandidate: { dir: '/old', recentCount: 3, hasCookies: true, cookiesOff: false } };
     vi.mocked(api.importLegacy).mockResolvedValue({ recentCount: 3, hasCookies: true, warnings: ['경고'] });
     vi.mocked(api.getSettings).mockResolvedValue({ ...base });
     const user = userEvent.setup();
@@ -538,8 +638,19 @@ describe('D3: 첫 실행에 이전 설정을 찾음', () => {
     expect(settings.legacyWarnings).toEqual(['경고']);
   });
 
+  it('옛 쿠키가 꺼진 채 들어오면 안내 한 줄, 아니면 없다', async () => {
+    settings.info = { ...info, legacyCandidate: { dir: '/old', recentCount: 3, hasCookies: true, cookiesOff: true } };
+    const view = render(LegacyFound);
+    expect(await screen.findByText(t('dialog.legacy.cookiesOff.help'))).toBeInTheDocument();
+    view.unmount();
+    settings.info = { ...info, legacyCandidate: { dir: '/old', recentCount: 3, hasCookies: true, cookiesOff: false } };
+    render(LegacyFound);
+    await screen.findByRole('dialog');
+    expect(screen.queryByText(t('dialog.legacy.cookiesOff.help'))).toBeNull();
+  });
+
   it('나중에는 아무것도 바꾸지 않고 닫는다', async () => {
-    settings.info = { ...info, legacyCandidate: { dir: '/old', recentCount: 1, hasCookies: false } };
+    settings.info = { ...info, legacyCandidate: { dir: '/old', recentCount: 1, hasCookies: false, cookiesOff: false } };
     const user = userEvent.setup();
     render(LegacyFound);
     const dialog = await screen.findByRole('dialog');
@@ -553,7 +664,7 @@ describe('D3: 첫 실행에 이전 설정을 찾음', () => {
   });
 
   it('Esc는 onclose(나중에)만 하고 가져오지 않는다', async () => {
-    settings.info = { ...info, legacyCandidate: { dir: '/old', recentCount: 1, hasCookies: false } };
+    settings.info = { ...info, legacyCandidate: { dir: '/old', recentCount: 1, hasCookies: false, cookiesOff: false } };
     const user = userEvent.setup();
     render(LegacyFound);
     await screen.findByRole('dialog');

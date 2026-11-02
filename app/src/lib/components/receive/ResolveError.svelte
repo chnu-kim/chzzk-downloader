@@ -2,16 +2,20 @@
   // 불러오기 실패. 문구와 동작은 errorCopy. 알림은 Notice 하나(components.md §2.12), 입력줄 바로 아래(patterns.md §6.1).
   import type { AppError } from '../../bindings';
   import { actionLabel, errorCopy, type ActionId } from '../../copy/errors';
+  import ErrorDetails from '../app/ErrorDetails.svelte';
   import Notice from '../ui/Notice.svelte';
 
   interface Props {
     error: AppError;
     cookiesEnabled: boolean;
+    naverCookiesSaved?: boolean;
+    /** 실패했을 때 쿠키를 보냈는가(없으면 지금 설정) */
+    cookiesAtFailure?: boolean;
     onaction: (a: ActionId) => void;
   }
 
-  let { error, cookiesEnabled, onaction }: Props = $props();
-  const copy = $derived(errorCopy(error, { place: 'resolve', cookiesEnabled }));
+  let { error, cookiesEnabled, naverCookiesSaved = false, cookiesAtFailure, onaction }: Props = $props();
+  const copy = $derived(errorCopy(error, { place: 'resolve', cookiesEnabled, naverCookiesSaved, cookiesAtFailure }));
   const actions = $derived(
     copy.actions.map((a) => ({ id: a, label: actionLabel(a), onclick: () => onaction(a) })),
   );
@@ -19,17 +23,15 @@
 
 <!-- UrlBar의 입력칸이 aria-describedby로 이 id를 가리킨다(invalid 입력은 오류 설명 요소가 필수) -->
 <div id="resolve-error">
-  <Notice tone="danger" title={copy.title} {actions}>
+  <Notice tone="danger" title={copy.title} {actions} details={copy.detail ? errorDetails : undefined}>
     {#if copy.body}<p class="line">{copy.body}</p>{/if}
-    {#if copy.detail}<p class="line detail">{copy.detail}</p>{/if}
   </Notice>
 </div>
+
+{#snippet errorDetails()}<ErrorDetails detail={copy.detail ?? ''} />{/snippet}
 
 <style>
   .line {
     margin: 0;
-  }
-  .detail {
-    color: var(--fg-muted);
   }
 </style>

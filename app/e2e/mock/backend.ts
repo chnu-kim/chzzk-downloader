@@ -141,6 +141,8 @@ export type Scenario = {
    * 없으면 저장 세션이 없는 것으로 보고 취소는 `signedOut`이다(셸 `cancel_login`)
    */
   authHeld?: AuthStatusDto;
+  /** auth_reopen이 열지 못한다(false). 기본은 대기 중이면 true(브라우저 다시 열기 실패 알림 확인용) */
+  authOpenFails?: boolean;
   /** 업데이트(update_* command). 없으면 새 버전 없음 */
   update?: UpdateScenario;
   /** editors_list 결과. 없으면 편집자 없음·맡은 채널은 auth.delegatedChannels(since 없음)·한도 10/20 */
@@ -419,7 +421,9 @@ export function install(scenario: Scenario = {}): E2EController {
       }
       return settings;
     },
-    set_naver_cookies: () => (settings = { ...settings, naverCookiesSaved: true, useNaverCookies: true }),
+    // 셸과 같게: 저장된 값이 없던 상태의 처음 저장만 사용도 켠다(app.md 구현 중 변경 130)
+    set_naver_cookies: () =>
+      (settings = { ...settings, naverCookiesSaved: true, useNaverCookies: settings.naverCookiesSaved ? settings.useNaverCookies : true }),
     clear_naver_cookies: () => (settings = { ...settings, naverCookiesSaved: false, useNaverCookies: false }),
     import_legacy: () => null,
     pick_folder: () => null,
@@ -429,7 +433,7 @@ export function install(scenario: Scenario = {}): E2EController {
       auth.state === 'disabled' || auth.state === 'signedIn' || auth.state === 'pending'
         ? auth
         : setAuth({ ...AUTH_DISABLED, state: 'pending', pending: { expiresAt: Math.floor(Date.now() / 1000) + 600 } }),
-    auth_reopen: () => auth.state === 'pending',
+    auth_reopen: () => auth.state === 'pending' && !scenario.authOpenFails,
     auth_copy_login_url: () => auth.state === 'pending',
     auth_cancel: () => (auth.state === 'pending' ? setAuth(scenario.authHeld ?? { ...AUTH_DISABLED, state: 'signedOut' }) : auth),
     // 실물(AuthService::retry)처럼: 저장 세션이 없거나 온라인 signedIn이면 네트워크 없이 지금 상태, 그 밖에는 Checking을 먼저

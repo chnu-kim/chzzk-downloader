@@ -339,6 +339,9 @@ pub struct LegacyCandidate {
     pub dir: String,
     pub recent_count: u32,
     pub has_cookies: bool,
+    /// 옛 쿠키가 있지만 옛 설정의 '성인 컨텐츠'가 꺼져 있어 가져오면 사용이 꺼진 채 들어온다.
+    /// 매핑은 core.md 결정 그대로이고 안내용 읽기 전용 표시다(app.md 구현 중 변경 130).
+    pub cookies_off: bool,
 }
 
 /// `import_legacy` 적용 결과. 쿠키 값은 없다.

@@ -60,7 +60,8 @@ export function modalLayer(el: HTMLElement, opts: ModalLayerOptions = {}): () =>
     touched.delete(el);
     el.remove();
     recompute();
-    if (opener?.isConnected) opener.focus();
+    // opener가 body면 연 요소가 없는 것과 같다: WKWebView는 마우스로 누른 버튼이 포커스를 받지 않아 activeElement가 body로 남는다
+    if (opener?.isConnected && (opener !== document.body || !opts.returnFocus)) opener.focus();
     else opts.returnFocus?.();
   };
 }

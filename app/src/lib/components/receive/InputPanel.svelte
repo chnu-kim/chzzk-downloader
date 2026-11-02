@@ -135,6 +135,9 @@
       case 'reenterCookies':
         ui.goSettings({ cookies: true });
         break;
+      case 'enableCookies':
+        ui.goSettings({ cookies: 'switch' });
+        break;
       case 'copyReport':
         void copyReport(err, settings.info);
         break;
@@ -175,6 +178,8 @@
     <ResolveError
       error={resolver.state.error}
       cookiesEnabled={settings.cookiesEnabled}
+      naverCookiesSaved={settings.naverCookiesSaved}
+      cookiesAtFailure={resolver.state.cookiesAtFailure}
       onaction={(a) => resolver.state.kind === 'error' && onaction(a, resolver.state.error)}
     />
   {/if}

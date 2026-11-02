@@ -373,23 +373,41 @@ export function qualityRowLabel(q: Pick<QualityDto, 'audioOnly' | 'label'>): str
 }
 
 /** [받기]를 막는 사유(patterns.md §6.4: 사유가 있는 비활성은 `aria-describedby`로 문장을 잇는다) */
-export type BlockReason = 'ownership' | 'duplicate';
+export type BlockReason = 'ownership' | 'emptyName' | 'duplicate' | 'noFreeName';
 
-/** 사유 문장 요소의 id. ConflictNotice·OwnershipNotice가 달고 [받기]의 aria-describedby가 가리킨다 */
+/** 사유 문장 요소의 id. ConflictNotice·OwnershipNotice·FilenameField가 달고 [받기]의 aria-describedby가 가리킨다 */
 export const BLOCK_REASON_ID = {
   ownership: 'ownership-notice',
+  emptyName: 'filename-empty',
   duplicate: 'conflict-in-queue',
+  noFreeName: 'conflict-no-free-name',
 } as const satisfies Record<BlockReason, string>;
 
-/** 본인 영상이 아니거나 모르면 ownership, 같은 경로의 활성 작업이 있으면 duplicate. 먼저 맞는 쪽 */
-export function downloadBlock(ownership: ResolvedDto['ownership'], check: OutputCheck | null): BlockReason | null {
+/**
+ * [받기]를 막는 사유 하나. 먼저 맞는 쪽: ownership → emptyName → duplicate → noFreeName.
+ * 이름이 비면 check가 없으므로(디바운스 전) emptyName은 check 없이 정해진다.
+ * noFreeName은 빈 번호 이름이 없는 두 경우(번호를 골랐는데 같은 이름 파일이 있음, 받다 만 녹화)를 합친 것이다.
+ */
+export function downloadBlock(a: {
+  ownership: ResolvedDto['ownership'];
+  fileName: string;
+  check: OutputCheck | null;
+  choices: CardChoices;
+}): BlockReason | null {
   // Phase 3: 본인 영상이 아니거나 모르면 막는다(§12). Phase 2는 늘 unchecked.
-  if (ownership === 'notOwn' || ownership === 'unknown') return 'ownership';
-  if (check && check.duplicateJobId != null) return 'duplicate';
+  if (a.ownership === 'notOwn' || a.ownership === 'unknown') return 'ownership';
+  if (!a.fileName.trim()) return 'emptyName';
+  const c = a.check;
+  if (!c) return null;
+  if (c.duplicateJobId != null) return 'duplicate';
+  // 번호를 골랐는데 빈 이름이 없으면 덮어쓰게 되고(셸은 exists면 늘 채운다), 받다 만 녹화 이름은 쓸 수 없다
+  if (c.freeFileName == null && (c.partial?.recording === true || (c.exists && a.choices.existing === 'number'))) {
+    return 'noFreeName';
+  }
   return null;
 }
 
-/** 다운로드 버튼을 누를 수 있는가: 지금 입력의 검사 결과가 있고, 같은 경로의 활성 작업이 없다. */
+/** 다운로드 버튼을 누를 수 있는가: 지금 입력의 검사 결과가 있고, 막는 사유가 없다. */
 export function canDownload(args: {
   fileName: string;
   check: OutputCheck | null;
@@ -400,13 +418,9 @@ export function canDownload(args: {
   choices: CardChoices;
 }): boolean {
   const { fileName, check, checkedKey, currentKey, busy, ownership, choices } = args;
-  if (busy || !fileName.trim() || !check || checkedKey !== currentKey) return false;
-  if (downloadBlock(ownership, check) != null) return false;
-  // 번호를 골랐는데 빈 이름이 없으면 덮어쓰게 되므로 막는다(셸은 exists면 늘 채운다).
-  if (check.exists && choices.existing === 'number' && check.freeFileName == null) return false;
-  // 받다 만 녹화가 있는 이름은 쓸 수 없는데 빈 번호 이름도 없다
-  if (check.partial?.recording && check.freeFileName == null) return false;
-  return true;
+  // 사유 없는 일시 비활성(디바운스 중·검사 전·busy)
+  if (busy || !check || checkedKey !== currentKey) return false;
+  return downloadBlock({ ownership, fileName, check, choices }) == null;
 }
 
 /**

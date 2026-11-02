@@ -180,6 +180,8 @@ export class JobsStore {
     }
     if (e.type !== 'added' && e.type !== 'status') return;
     const job = e.job;
+    // 끝난 작업은 기준을 버린다: 다시 받으면 25%부터 다시 읽는다
+    if (job.status === 'completed' || job.status === 'skipped') this.#spokenStep.delete(job.id);
     this.#trackPhase(this.state.jobs.get(job.id) ?? job, e.type === 'status');
     if (job.status === 'running' && prev?.status !== 'running') {
       this.runStartedAt.set(job.id, Date.now());
@@ -204,7 +206,9 @@ export class JobsStore {
 
   /** 25% 틱의 기준을 지금 바닥으로 둔다(읽지 않는다) */
   #seedStep(id: JobId) {
-    this.#spokenStep.set(id, spokenPercent(this.state.percent.get(id)) ?? 0);
+    // 이어받기는 셸이 queued(퍼센트 바닥을 지운다)를 거쳐 running으로 오므로 이미 읽은 단위를 낮추지 않는다
+    const floor = spokenPercent(this.state.percent.get(id)) ?? 0;
+    this.#spokenStep.set(id, Math.max(floor, this.#spokenStep.get(id) ?? 0));
   }
 
   /**
@@ -215,9 +219,13 @@ export class JobsStore {
   #tickPercent(job: JobDto) {
     const p = this.state.progress.get(job.id);
     if (job.status !== 'running' || p?.phase !== 'downloading') return;
+    // 포커스를 둔 행은 25%마다 접근 이름이 같은 문장으로 바뀌어 보조 기술이 알리므로 틱은 건너뛴다(이중 낭독 방지, ADR-0033)
+    const focused = document.activeElement?.closest('[data-job-id]');
+    const skipSay = focused?.getAttribute('data-job-id') === String(job.id);
     const step = spokenPercent(this.state.percent.get(job.id));
     if (step == null || step <= (this.#spokenStep.get(job.id) ?? 0)) return;
     this.#spokenStep.set(job.id, step);
+    if (skipSay) return;
     announcer.say(jobSpeech(job.title, statusWord(job, p), step));
   }
 

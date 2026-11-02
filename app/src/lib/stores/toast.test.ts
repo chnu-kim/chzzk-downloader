@@ -151,4 +151,33 @@ describe('토스트 낭독·sticky·undo(ADR-0033)', () => {
     expect(s.current?.id).toBe(a);
     s.clear();
   });
+
+  it('sticky 토스트 뒤에 온 copied·info는 대체되기 전에 바로 읽고 보일 때 다시 읽지 않는다', () => {
+    const s = new ToastStore();
+    s.push('지웠어요', 'info', { sticky: true, undo: true, action: undoAction() });
+    say.mockClear();
+    s.push('복사했어요', 'copied');
+    expect(say).toHaveBeenCalledExactlyOnceWith('복사했어요');
+    s.clear();
+  });
+
+  it('sticky 토스트 뒤에 온 danger는 줄을 서도 바로 assertive로 읽고 보일 때 다시 읽지 않는다', () => {
+    const s = new ToastStore();
+    const sticky = s.push('지웠어요', 'info', { sticky: true, undo: true, action: undoAction() });
+    s.push('실패했어요', 'danger');
+    expect(alert).toHaveBeenCalledExactlyOnceWith('실패했어요');
+    s.dismiss(sticky);
+    expect(s.current?.message).toBe('실패했어요');
+    expect(alert).toHaveBeenCalledTimes(1);
+    s.clear();
+  });
+
+  it('sticky가 아닌 토스트 뒤의 대기열은 보일 때 읽는다(미리 읽지 않는다)', () => {
+    const s = new ToastStore();
+    s.push('하나', 'info', { undo: true, action: undoAction() });
+    say.mockClear();
+    s.push('둘', 'info', { undo: true, action: undoAction() });
+    expect(say).not.toHaveBeenCalled();
+    s.clear();
+  });
 });

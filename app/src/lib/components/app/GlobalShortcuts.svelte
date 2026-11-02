@@ -35,7 +35,8 @@
       if (editable(e.target) || modalLayerDepth() > 0) return;
       if (toasts.undoLatest()) {
         e.preventDefault();
-        announcer.say(t('a11y.undone'));
+        // undoLatest가 대기열의 다음 토스트를 같은 프레임에 읽게 했을 수 있어 덮어쓰지 않고 앞에 붙인다
+        announcer.lead(t('a11y.undone'));
       }
       return;
     }

@@ -61,6 +61,8 @@ export class ToastStore {
   #armed: number | null = null;
   /** 마지막으로 읽은 토스트 id */
   #announced: number | null = null;
+  /** sticky 토스트 뒤에 올라와 보이기 전에 미리 읽은 토스트 id(보일 때 다시 읽지 않는다) */
+  #spokenEarly = new Set<number>();
   #handle: ReturnType<typeof setTimeout> | null = null;
 
   /** 지금 보이는 토스트 */
@@ -87,6 +89,7 @@ export class ToastStore {
     for (const i of replaced) this.#closed(i.id, 'replaced');
     this.#arm();
     this.#speak();
+    this.#speakBehindSticky(item);
     return id;
   }
 
@@ -142,6 +145,7 @@ export class ToastStore {
 
   #closed(id: number, reason: ToastCloseReason) {
     this.#timeouts.delete(id);
+    this.#spokenEarly.delete(id);
     const cb = this.#onclose.get(id);
     this.#onclose.delete(id);
     cb?.(reason);
@@ -158,8 +162,23 @@ export class ToastStore {
     const cur = this.current;
     if (!cur || cur.id === this.#announced) return;
     this.#announced = cur.id;
+    // sticky 뒤에서 이미 읽은 토스트는 보일 때 다시 읽지 않는다
+    if (this.#spokenEarly.delete(cur.id)) return;
     const text = toastSpeech(cur, platform.os);
     if (cur.kind === 'danger') announcer.alert(text);
+    else announcer.say(text);
+  }
+
+  /**
+   * 닫을 때까지 남는 sticky 토스트가 맨 앞이면 그 뒤에 온 토스트는 오래 보이지 않는다(정보·완료는 다음 토스트에 대체되고, 오류는 줄을 선다).
+   * 그래서 보이기 전에 바로 읽는다(오류는 assertive). 보일 때 다시 읽지 않는다(ADR-0033)
+   */
+  #speakBehindSticky(item: ToastItem) {
+    const cur = this.current;
+    if (!cur || cur.id === item.id || !cur.sticky) return;
+    this.#spokenEarly.add(item.id);
+    const text = toastSpeech(item, platform.os);
+    if (item.kind === 'danger') announcer.alert(text);
     else announcer.say(text);
   }
 

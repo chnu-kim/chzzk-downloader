@@ -7,6 +7,8 @@ class Announcer {
   /** 오류 토스트·오류 배너용(assertive) */
   urgent = $state('');
   #frame: number | null = null;
+  /** 다음 프레임에 넣으려고 기다리는 문장 */
+  #pending = '';
   #urgentFrame: number | null = null;
 
   /**
@@ -15,9 +17,23 @@ class Announcer {
    */
   say(text: string) {
     this.message = '';
+    this.#pending = text;
+    this.#schedule();
+  }
+
+  /**
+   * 같은 프레임에 기다리는 문장이 있으면 그 앞에 붙여 한 번에 읽는다(`say`는 마지막 문장만 남기므로 덮어써 사라지는 것을 막는다).
+   * 기다리는 문장이 없으면 `say`와 같다.
+   */
+  lead(text: string) {
+    this.say(this.#frame !== null && this.#pending ? `${text}. ${this.#pending}` : text);
+  }
+
+  #schedule() {
     if (this.#frame !== null) cancelAnimationFrame(this.#frame);
     this.#frame = requestAnimationFrame(() => {
-      this.message = text;
+      this.message = this.#pending;
+      this.#pending = '';
       this.#frame = null;
     });
   }

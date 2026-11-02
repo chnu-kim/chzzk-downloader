@@ -105,7 +105,7 @@
   // 행 접근 이름(patterns.md §14.3, content.md §10): 상태 줄 전체가 아니라 **바뀌지 않는 조각**만 쓴다.
   // 상태 줄의 속도·남은 시간(`runningLine`)·상대 시각(`whenText`)은 매초 바뀌어 포커스 둔 행의 이름이 계속 바뀐다(K6, ADR-0033)
   const rowStatus = $derived(err ? err.title : missing ? t('job.completedMissing') : statusWord(job, progress));
-  const rowLabel = $derived(jobSpeech(job.title, rowStatus, spokenPercent(bar?.value)));
+  const rowLabel = $derived(jobSpeech(job.title, rowStatus, bar && bar.value != null ? spokenPercent(Math.min(99, floor)) : null));
   /** 제목 전체 보기(행 아래 인라인 펼침). 잘린 제목에 키보드·터치로 닿는 길이다 */
   let titleOpen = $state(false);
 

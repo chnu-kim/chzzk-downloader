@@ -87,6 +87,21 @@ describe('D1 창 닫기 확인', () => {
     done();
   });
 
+  it('[닫기]는 quit 전에 남은 토스트를 비워 지연 삭제를 확정한다(ADR-0033)', async () => {
+    const closed: string[] = [];
+    toasts.push('지웠어요', 'info', { sticky: true, onclose: (r) => closed.push(r) });
+    vi.mocked(api.quit).mockImplementation(async () => {
+      expect(closed).toEqual(['clear']);
+    });
+    const user = userEvent.setup();
+    await mounted();
+    fire(1);
+    const d = await screen.findByRole('dialog');
+    await user.click(within(d).getByRole('button', { name: t('dialog.close.confirm') }));
+    await waitFor(() => expect(api.quit).toHaveBeenCalledTimes(1));
+    expect(closed).toEqual(['clear']);
+  });
+
   it('quit이 실패하면 알리고 다시 누를 수 있다', async () => {
     const e: AppError = { code: 'internal', message: 'x', stage: null, resumable: false, payload: null };
     vi.mocked(api.quit).mockRejectedValueOnce(e);

@@ -26,6 +26,18 @@ afterEach(() => {
 });
 
 describe('modalLayer', () => {
+  it('상주 낭독 영역(data-live-announcer)은 층이 열려도 inert가 되지 않는다(ADR-0033)', () => {
+    const live = document.createElement('div');
+    live.setAttribute('data-live-announcer', '');
+    document.body.append(live);
+    const a = layer('a');
+    const off = modalLayer(a);
+    expect(app).toHaveAttribute('inert');
+    expect(live).not.toHaveAttribute('inert');
+    off();
+    expect(live).not.toHaveAttribute('inert');
+  });
+
   it('붙으면 body 직속으로 옮기고 다른 자식은 inert로 만든다', () => {
     const a = layer('a');
     const off = modalLayer(a);

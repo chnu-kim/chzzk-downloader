@@ -26,7 +26,12 @@
 ## 결과
 - 문서: README D70·D37 덧붙임·§6-20·§7.3, components.md §2.12 role 문단·§2.13 API·지속, patterns.md §1.3·§1.5·§4·§14.3, content.md §10·§15.1·§19-27, platform.md §12.2·§21 M26~M28, app.md 132.
 - 코드: `Notice.svelte`·`Toast.svelte`·`LiveAnnouncer.svelte`·`announce.svelte.ts`·`toast.svelte.ts`·`spoken.ts`·`inputModality.ts`·`GlobalShortcuts.svelte`·`AppBanners.svelte`·`JobItem.svelte`·`jobs.ts`·`jobs.svelte.ts`·`editors.svelte.ts`·`platform.ts`·`ko.ts`·`design/copy/terms.json`. DTO·command·bindings·가짜 백엔드는 그대로.
-- 알려진 한계: sticky 토스트 뒤 토스트는 줄을 선다. 프레임 안 마지막 낭독만 남는다. macOS ⌘Z [잠정]
+- 상주 영역은 body 직속으로 옮겨 `data-live-announcer`로 두고 `modalLayer`가 inert 대상에서 뺀다. 대화상자·구간 편집 화면이 열린 동안에도 25% 틱·배너·토스트 낭독이 막히지 않는다.
+- sticky 토스트가 맨 앞이면 그 뒤에 온 토스트(정보·완료는 다음 토스트에 대체되고 오류는 줄을 선다)는 보이기 전에 바로 읽는다(오류는 assertive). 보일 때 다시 읽지 않는다.
+- Mod+Z의 "되돌렸어요"는 같은 프레임에 기다리는 낭독 앞에 붙여 한 문장으로 읽는다(`announcer.lead`).
+- 포커스가 그 행 안에 있으면 25% 틱을 읽지 않는다(행 이름이 같은 문장으로 바뀌어 보조 기술이 알린다). 행 이름의 퍼센트도 틱과 같은 바닥(`state.percent`)에서 낸다.
+- D1 [닫기]는 `quit` 전에 토스트를 비워 sticky 지연 삭제를 확정한다.
+- 알려진 한계: sticky 토스트 뒤에 온 정보·완료 토스트는 읽히지만 화면에는 보이지 않을 수 있다. 앱 종료(D1 없이 닫히는 길, Cmd+Q)와 웹뷰 새로고침 때는 남은 sticky 토스트의 지연 삭제가 확정되지 않아 지운 항목이 다시 나올 수 있다. 프레임 안 마지막 낭독만 남는다(Mod+Z는 예외). macOS ⌘Z [잠정]
   확인: §21 M27.
 - gate: `frontend`, `e2e-web`, `design-tokens`(design-lint·design-copy), `scripts-test`, `scan`. `design-shots`는 픽셀 변화 없음.
 ### 재검증 조건

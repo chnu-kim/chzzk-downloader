@@ -185,6 +185,27 @@ describe('Mod+Z: 가장 최근 되돌리기 토스트(ADR-0033)', () => {
     expect(say).toHaveBeenLastCalledWith(t('a11y.undone'));
   });
 
+  it('다음 토스트가 있으면 "되돌렸어요"가 다음 토스트의 낭독을 덮어쓰지 않고 한 문장으로 읽는다', async () => {
+    say.mockRestore();
+    vi.useFakeTimers({ toFake: ['requestAnimationFrame', 'cancelAnimationFrame'] });
+    try {
+      toasts.clear();
+      toasts.push('A를 지웠어요', 'info', { undo: true, action: { label: t('action.undo'), run } });
+      // 되돌리기 토스트 뒤에 줄을 선 다른 토스트: A가 닫히면 보여 읽힌다
+      toasts.push('복사했어요', 'copied');
+      vi.advanceTimersToNextFrame();
+      render(GlobalShortcuts);
+      // A를 되돌리면 대기열의 토스트가 보이게 되어 읽힌다
+      await fireEvent.keyDown(document.body, { key: 'z', ctrlKey: true });
+      vi.advanceTimersToNextFrame();
+      expect(announcer.message).toContain(t('a11y.undone'));
+      expect(announcer.message).toContain('복사했어요');
+    } finally {
+      vi.useRealTimers();
+      say = vi.spyOn(announcer, 'say').mockImplementation(() => {});
+    }
+  });
+
   it('macOS는 Meta+Z만 받는다', async () => {
     platform.set('macos');
     render(GlobalShortcuts);

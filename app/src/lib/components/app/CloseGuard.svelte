@@ -54,6 +54,8 @@
     if (quitting) return;
     quitting = true;
     try {
+      // 닫을 때까지 남는 되돌리기 토스트(sticky)의 지연 삭제를 먼저 확정한다(아니면 지운 항목이 다시 나온다, ADR-0033)
+      toasts.clear();
       await api.quit();
       // 정상이면 Rust가 앱을 끝낸다. 이미 종료 중이었으면 아무 일도 없이 돌아온다(그쪽이 끝낸다).
     } catch (e) {

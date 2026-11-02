@@ -682,12 +682,47 @@ describe('25% 낭독(patterns.md P-9)', () => {
   it('이어받기: 55%에서 멈췄다 다시 받으면 50은 다시 읽지 않고 75만 읽는다', async () => {
     const spy = vi.spyOn(announcer, 'say').mockImplementation(() => {});
     const { send } = await running({ status: 'paused' }, 55);
+    // 실제 셸은 requeue가 queued(퍼센트 바닥을 지운다)를 보낸 뒤 running으로 올린다
+    send({ type: 'status', job: job(1, { title: '영상', status: 'queued' }) });
     send({ type: 'status', job: job(1, { title: '영상', status: 'running', progress: at(55) }) });
     spy.mockClear();
+    send({ type: 'progress', id: 1, progress: at(55) });
     send({ type: 'progress', id: 1, progress: at(60) });
     expect(spy).not.toHaveBeenCalled();
     send({ type: 'progress', id: 1, progress: at(75) });
     expect(calls(spy)).toEqual([tick('영상', 75)]);
+    spy.mockRestore();
+  });
+
+  it('완료한 작업을 다시 받으면 25%부터 다시 읽는다', async () => {
+    const spy = vi.spyOn(announcer, 'say').mockImplementation(() => {});
+    const { send } = await running();
+    send({ type: 'progress', id: 1, progress: at(75) });
+    send({ type: 'status', job: job(1, { title: '영상', status: 'completed' }) });
+    send({ type: 'status', job: job(1, { title: '영상', status: 'running', progress: at(0) }) });
+    spy.mockClear();
+    send({ type: 'progress', id: 1, progress: at(25) });
+    expect(calls(spy)).toEqual([tick('영상', 25)]);
+    spy.mockRestore();
+  });
+
+  it('포커스가 그 행 안에 있으면 틱은 읽지 않는다(행 이름이 같은 문장으로 바뀐다)', async () => {
+    const spy = vi.spyOn(announcer, 'say').mockImplementation(() => {});
+    const row = document.createElement('div');
+    row.setAttribute('data-job-id', '1');
+    row.tabIndex = 0;
+    document.body.append(row);
+    row.focus();
+    const { send } = await running();
+    send({ type: 'progress', id: 1, progress: at(25) });
+    expect(spy).not.toHaveBeenCalled();
+    // 기준은 올라가 있으므로 포커스를 떠난 뒤에도 같은 단위를 다시 읽지 않는다
+    row.blur();
+    send({ type: 'progress', id: 1, progress: at(30) });
+    expect(spy).not.toHaveBeenCalled();
+    send({ type: 'progress', id: 1, progress: at(50) });
+    expect(calls(spy)).toEqual([tick('영상', 50)]);
+    row.remove();
     spy.mockRestore();
   });
 

@@ -19,6 +19,16 @@ describe('Announcer', () => {
     expect(announcer.message).toBe('완료');
   });
 
+  it('lead는 기다리는 문장 앞에 붙여 한 번에 읽는다. 기다리는 문장이 없으면 say와 같다', () => {
+    announcer.lead('혼자');
+    vi.advanceTimersToNextFrame();
+    expect(announcer.message).toBe('혼자');
+    announcer.say('다음');
+    announcer.lead('되돌렸어요');
+    vi.advanceTimersToNextFrame();
+    expect(announcer.message).toBe('되돌렸어요. 다음');
+  });
+
   it('프레임 안에 연달아 부르면 마지막 문장만 남는다', () => {
     announcer.say('하나');
     announcer.say('둘');

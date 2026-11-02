@@ -13,7 +13,7 @@
         actions?: NoticeAction[];
         onclose?: () => void;
         help?: NoticeHelp;
-        /** 동작 줄 뒤·help 앞의 자기 줄(라이브 영역 밖: 펼치고 접어도 알림이 다시 읽히지 않는다, D69) */
+        /** 동작 줄 뒤·help 앞의 자기 줄(inline이면 라이브 영역 밖: 펼치고 접어도 알림이 다시 읽히지 않는다, D69) */
         details?: Snippet;
       }
     | { variant: 'row'; actions?: never; onclose?: never; help?: never; details?: never };
@@ -68,8 +68,9 @@
   const iconName = $derived<IconName | undefined>(tone === 'neutral' ? icon : TONE_ICON[tone]);
   // 동작 버튼은 최대 3개(components.md §2.12)
   const shownActions = $derived((actions ?? []).slice(0, 3));
-  // 라이브 영역은 글자 요소에만 둔다(동작 버튼이 들어가지 않게). row는 role이 없다(patterns.md §1.5)
-  const role = $derived(variant === 'row' ? undefined : tone === 'danger' ? 'alert' : 'status');
+  // 라이브 영역은 inline에만 둔다(글자 요소에만, 동작 버튼은 밖). toast·banner는 시각용이고 낭독은 상주 LiveAnnouncer가 한다:
+  // 그때그때 끼워 넣는 영역은 일부 조합에서 읽히지 않는다(ADR-0033). row는 원래 role이 없다(patterns.md §1.5)
+  const role = $derived(variant === 'inline' ? (tone === 'danger' ? 'alert' : 'status') : undefined);
 </script>
 
 {#snippet box()}
@@ -81,7 +82,7 @@
     {#if iconName}
       {#if variant === 'row'}<Icon name={iconName} size="sm" />{:else}<Icon name={iconName} size="md" />{/if}
     {/if}
-    <div class="notice-text" {role} aria-atomic="true">
+    <div class="notice-text" {role} aria-atomic={role ? 'true' : undefined}>
       {#if title}<p class="notice-title" id={titleId}>{title}</p>{/if}
       <div id={bodyId}>{@render children()}</div>
     </div>
@@ -94,11 +95,11 @@
       </div>
     {/if}
     {#if details}
-      <!-- 접는 보충 줄(업데이트 바뀐 점 등). 라이브 영역(notice-text) 밖이라 낭독에 섞이지 않는다 -->
+      <!-- 접는 보충 줄(업데이트 바뀐 점 등). inline이면 라이브 영역(notice-text) 밖이라 낭독에 섞이지 않는다 -->
       <div class="notice-details">{@render details()}</div>
     {/if}
     {#if help}
-      <!-- L2: 동작 버튼 줄과 분리된 줄의 링크 하나(patterns.md §10.1). 라이브 영역(notice-text) 밖이라 낭독에 섞이지 않는다 -->
+      <!-- L2: 동작 버튼 줄과 분리된 줄의 링크 하나(patterns.md §10.1). inline이면 라이브 영역(notice-text) 밖이라 낭독에 섞이지 않는다 -->
       <div class="notice-help">
         <Button variant="ghost" size="sm" class="edge-start btn-inline" onclick={help.onclick}>{help.label}</Button>
       </div>

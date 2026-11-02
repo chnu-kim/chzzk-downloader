@@ -5,6 +5,7 @@ import { err, job } from '../src/test/jobFixtures';
 import { resolved } from '../src/test/fixtures';
 import { errorCopy, helpLinkLabel, t } from './copy';
 import { expect, test } from './fixtures';
+import { jobRowName } from '../src/test/jobRow';
 
 const A1 = '000000000000000000000000000000a1';
 const C3 = '000000000000000000000000000000c3';
@@ -67,7 +68,7 @@ test('남의 영상은 카드에서 막히고, 본인 영상은 받는다', asyn
   await mine.getByRole('button', { name: t('card.download'), exact: true }).click();
   await expect(mine).toBeHidden();
   await expect(page.getByRole('article')).toHaveCount(1);
-  await expect(page.getByRole('article', { name: '내 방송' })).toBeVisible();
+  await expect(page.getByRole('article', { name: jobRowName('내 방송') })).toBeVisible();
 });
 
 test('다른 채널의 멈춘 작업은 이어받을 수 없고 B1이 세지 않는다', async ({ app }) => {
@@ -79,8 +80,8 @@ test('다른 채널의 멈춘 작업은 이어받을 수 없고 B1이 세지 않
       job(2, { status: 'interrupted', title: '남의 작업', channelId: C3 }),
     ],
   });
-  await expect(page.getByText(t('banner.interrupted', { n: 1 }))).toBeVisible();
-  const other = page.getByRole('article', { name: '남의 작업' });
+  await expect(page.locator('.notice-banner').getByText(t('banner.interrupted', { n: 1 }))).toBeVisible();
+  const other = page.getByRole('article', { name: jobRowName('남의 작업') });
   await expect(other.getByText(t('job.otherChannel.body'))).toBeVisible();
   await expect(other.getByRole('button', { name: t('action.resume') })).toHaveCount(0);
   await app.axe('다른 채널 작업');
@@ -96,7 +97,7 @@ test('실패한 다른 채널 작업은 다시 시도 안내 없이 막힌 이�
     auth: me,
     jobs: [job(3, { status: 'failed', title: '남의 실패', channelId: C3, error: err('network', { resumable: true }), partialBytes: 1024 })],
   });
-  const item = page.getByRole('article', { name: '남의 실패' });
+  const item = page.getByRole('article', { name: jobRowName('남의 실패') });
   const netCopy = errorCopy(err('network', { resumable: true }), { place: 'job', partialBytes: 1024, cookiesEnabled: false });
   await expect(item.getByText(netCopy.title)).toBeVisible();
   await expect(item.getByText(netCopy.body as string, { exact: false })).toHaveCount(0);
@@ -120,7 +121,7 @@ test('관리자는 남의 영상을 안내와 함께 받고, 다른 채널의 �
   });
 
   // 막힌 작업이 아니라서 이어받기 버튼이 보이고 B1도 센다
-  const stopped = page.getByRole('article', { name: '남의 작업' });
+  const stopped = page.getByRole('article', { name: jobRowName('남의 작업') });
   await expect(stopped.getByRole('button', { name: t('action.resume') })).toBeVisible();
   await expect(stopped.getByText(t('job.otherChannel.body'))).toHaveCount(0);
 

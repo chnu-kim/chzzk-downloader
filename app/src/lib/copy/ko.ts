@@ -30,6 +30,8 @@ export const ko = {
   'platform.other.reveal': '폴더에서 보기',
   'platform.mac.devtools': '⌥⌘I',
   'platform.other.devtools': 'F12',
+  'platform.mac.undo': '⌘Z',
+  'platform.other.undo': 'Ctrl+Z',
   // 웹 구성요소(엔진)가 오래됐을 때 고치는 법(platform.md §5): OS마다 방법이 달라 이 문구만 세 갈래다(`lib/platform.ts` `engineFixText`)
   'platform.mac.engineFix': 'macOS를 최신 버전으로 업데이트해 주세요.',
   'platform.windows.engineFix': 'Windows 업데이트에서 Microsoft Edge WebView2를 업데이트해 주세요.',
@@ -215,11 +217,16 @@ export const ko = {
   'a11y.progress': '{percent}퍼센트 받았어요. {remaining}',
   'a11y.more': '‘{title}’ 더 보기',
   'a11y.jobStatus': '‘{title}’: {status}',
+  'a11y.jobProgress': '‘{title}’: {status}, {percent}퍼센트',
   'a11y.cancelJob': '‘{title}’ 받기 취소',
   'a11y.reopen': '‘{title}’ 다시 열기',
   'a11y.resolved': '‘{title}’ 영상 정보를 불러왔어요',
   'a11y.removeEditor': '‘{name}’ 편집자 빼기',
   'a11y.leaveDelegation': '‘{name}’ 채널의 편집자 그만두기',
+  // 알림(토스트·배너) 낭독(content.md §10, ADR-0033): 알림 글 끝 마침표는 떼고 `. `로 잇는다
+  'a11y.noticeAction': '{message}. ‘{action}’ 버튼이 있어요',
+  'a11y.noticeUndo': '{message}. {shortcut} 키로 되돌릴 수 있어요',
+  'a11y.undone': '되돌렸어요',
 
   'action.pause': '일시정지',
   'action.stopRecording': '녹화 마치기',

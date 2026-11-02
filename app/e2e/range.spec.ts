@@ -4,6 +4,7 @@ import type { Locator } from '@playwright/test';
 import { liveResolved, resolved } from '../src/test/fixtures';
 import { errorCopy, rangeChip, t } from './copy';
 import { expect, test, type App } from './fixtures';
+import { jobRowName } from '../src/test/jobRow';
 
 const editBtn = (card: Locator) => card.getByRole('button', { name: t('range.edit.label') });
 const clearBtn = (card: Locator) => card.getByRole('button', { name: t('range.clear.label') });
@@ -53,7 +54,7 @@ test('구간을 골라 받으면 이름에 구간이 한 번 붙고 작업 행�
   expect(reqs[0].range).toEqual({ startMs: 600000, endMs: 1200000 });
   expect(reqs[0].fileName).toBe(`${r.suggestedFileName} (0.10.00~0.20.00)`);
   expect((reqs[0].fileName as string).split('(0.10.00~')).toHaveLength(2);
-  const item = app.page.getByRole('article', { name: r.meta.title });
+  const item = app.page.getByRole('article', { name: jobRowName(r.meta.title) });
   await expect(item.locator('.job-quality')).toHaveText(`1080p · ${rangeChip({ startMs: 600000, endMs: 1200000 })}`);
 });
 
@@ -162,7 +163,7 @@ test('길이를 모르면 끝 칸을 비워 끝까지 받는다', async ({ app }
   await expect(card).toBeHidden();
   const reqs = await enqReqs(app);
   expect(reqs[0].range).toEqual({ startMs: 600000, endMs: null });
-  const item = app.page.getByRole('article', { name: r.meta.title });
+  const item = app.page.getByRole('article', { name: jobRowName(r.meta.title) });
   await expect(item.locator('.job-quality')).toHaveText(`1080p · ${rangeChip({ startMs: 600000, endMs: null })}`);
 });
 
@@ -182,6 +183,6 @@ test('구간을 찾지 못하면 작업 행이 알린다', async ({ app }) => {
   await expect(card).toBeHidden();
   const e = { code: 'rangeOutOfBounds', message: 'x', stage: null, resumable: false, payload: null } as const;
   await app.ctl((c, error) => c.fail(1, error), e);
-  const item = app.page.getByRole('article', { name: r.meta.title });
+  const item = app.page.getByRole('article', { name: jobRowName(r.meta.title) });
   await expect(item).toContainText(errorCopy(e, { place: 'job' }).title);
 });

@@ -5,6 +5,7 @@ import { resolved } from '../src/test/fixtures';
 import { job, prog } from '../src/test/jobFixtures';
 import { t, tRegex } from './copy';
 import { expect, test } from './fixtures';
+import { jobRowName } from '../src/test/jobRow';
 
 const GB = 1024 ** 3;
 
@@ -53,7 +54,7 @@ test('주소를 불러와 받고, 멈췄다 이어받아 끝까지 받는다', a
       },
     },
   ]);
-  const item = page.getByRole('article', { name: r.meta.title });
+  const item = page.getByRole('article', { name: jobRowName(r.meta.title) });
   await expect(item).toBeVisible();
   await expect(item).toContainText(t('job.queuedNext'));
 
@@ -78,7 +79,7 @@ test('주소를 불러와 받고, 멈췄다 이어받아 끝까지 받는다', a
   await app.ctl((c, gb) => c.progress(1, 3 * gb, 4 * gb), GB);
   await app.ctl((c, gb) => c.complete(1, 4 * gb), GB);
   await expect(item).toContainText(tRegex('job.completed'));
-  await expect(page.getByText(t('toast.completed', { title: r.meta.title }))).toHaveCount(0);
+  await expect(page.locator('.notice-toast').getByText(t('toast.completed', { title: r.meta.title }))).toHaveCount(0);
   await app.axe('완료');
 
   // [완료 항목 지우기]는 숨기고 되돌리기 토스트를 준다. 지금 지우지 않는다(clear_finished도 부르지 않는다)
@@ -104,7 +105,7 @@ test('지운 항목은 [되돌리기]로 돌아오고 그때는 remove_job을 �
   await page.getByRole('button', { name: t('common.load') }).click();
   await page.getByRole('button', { name: t('card.download') }).click();
   await app.ctl((c, gb) => c.complete(1, 4 * gb), GB);
-  const item = page.getByRole('article', { name: r.meta.title });
+  const item = page.getByRole('article', { name: jobRowName(r.meta.title) });
   await expect(item).toContainText(tRegex('job.completed'));
 
   await page.getByRole('button', { name: t('list.clearFinished') }).click();
@@ -138,7 +139,7 @@ test('받는 중인 작업을 취소하면 확인(D2)을 거쳐 목록에서 지
   await page.getByRole('button', { name: t('common.load') }).click();
   await page.getByRole('button', { name: t('card.download') }).click();
   await app.ctl((c, gb) => c.progress(1, 1 * gb, 4 * gb), GB);
-  const item = page.getByRole('article', { name: r.meta.title });
+  const item = page.getByRole('article', { name: jobRowName(r.meta.title) });
   // 받은 부분(.part)이 있으면 크기와 무관하게 danger [취소]가 확인을 연다
   await item.getByRole('button', { name: t('a11y.cancelJob', { title: r.meta.title }), exact: true }).click();
   const dialog = page.getByRole('dialog', { name: t('dialog.cancel.title', { title: r.meta.title }) });
@@ -158,7 +159,7 @@ test('받은 바이트가 없는 작업은 확인 없이 바로 취소한다', a
   await page.getByLabel(t('url.label')).fill(r.url);
   await page.getByRole('button', { name: t('common.load') }).click();
   await page.getByRole('button', { name: t('card.download') }).click();
-  const item = page.getByRole('article', { name: r.meta.title });
+  const item = page.getByRole('article', { name: jobRowName(r.meta.title) });
   await item.getByRole('button', { name: t('a11y.cancelJob', { title: r.meta.title }), exact: true }).click();
   await expect(item).toBeHidden();
   await expect(page.getByRole('dialog')).toHaveCount(0);
@@ -208,13 +209,13 @@ test('설정에 있는 동안 끝난 작업은 완료 토스트로 알린다', a
   await page.getByRole('button', { name: t('card.download') }).click();
   await page.getByRole('button', { name: t('header.settings') }).click();
   await app.ctl((c, gb) => c.complete(1, 4 * gb), GB);
-  await expect(page.getByText(t('toast.completed', { title: r.meta.title }))).toBeVisible();
+  await expect(page.locator('.notice-toast').getByText(t('toast.completed', { title: r.meta.title }))).toBeVisible();
 });
 
 test('키보드로 일시정지·이어받기해도 포커스가 그 행에 남는다', async ({ app }) => {
   const { page } = app;
   await app.open({ jobs: [job(1, { status: 'running', progress: prog(), title: '키보드 영상', partialBytes: 5 })] });
-  const item = page.getByRole('article', { name: '키보드 영상' });
+  const item = page.getByRole('article', { name: jobRowName('키보드 영상') });
   await item.focus();
   await page.keyboard.press('Space');
   await expect(item).toContainText(t('job.status.paused'));

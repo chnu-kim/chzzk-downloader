@@ -22,6 +22,8 @@ function recompute() {
   for (const el of [...touched.keys()]) if (!el.isConnected || el.parentElement !== document.body) touched.delete(el);
   const top = stack[stack.length - 1] ?? null;
   for (const child of document.body.children) {
+    // 상주 낭독 영역(LiveAnnouncer)은 모달 층 아래에서도 읽혀야 하므로 늘 제외한다(ADR-0033)
+    if (child.hasAttribute('data-live-announcer')) continue;
     if (top === null || child === top) {
       restore(child);
     } else if (!touched.has(child)) {

@@ -41,6 +41,8 @@ import {
   statusLine,
   statusParts,
   statusWord,
+  jobSpeech,
+  spokenPercent,
   transitionAnnouncement,
   visibleOrder,
 } from './jobs';
@@ -681,6 +683,21 @@ describe('키보드 동작(§10)', () => {
     expect(deleteAction(fin, jobButtons(fin, fin.progress))).toBeNull();
     const pausing = job(1, { status: 'pausing' });
     expect(deleteAction(pausing, jobButtons(pausing, null))).toBeNull();
+  });
+});
+
+describe('spokenPercent·jobSpeech', () => {
+  it('25% 단위로 내리고 25 미만은 읽지 않는다', () => {
+    expect(spokenPercent(null)).toBeNull();
+    expect(spokenPercent(undefined)).toBeNull();
+    for (const [v, want] of [[0, null], [24, null], [25, 25], [49, 25], [50, 50], [74, 50], [75, 75], [99, 75]] as const) {
+      expect(spokenPercent(v), String(v)).toBe(want);
+    }
+  });
+
+  it('퍼센트가 없으면 a11y.jobStatus, 있으면 a11y.jobProgress', () => {
+    expect(jobSpeech('영상', '받는 중', null)).toBe('‘영상’: 받는 중');
+    expect(jobSpeech('영상', '받는 중', 50)).toBe('‘영상’: 받는 중, 50퍼센트');
   });
 });
 

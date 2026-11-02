@@ -30,7 +30,7 @@ test('로그인하면 브라우저 안내와 남은 시간을 보이고, 끝나�
   await expect(page.getByText(t('auth.pending.stuck'))).toHaveCount(0);
   await expect(page.getByText(tRegex('auth.pending.remaining'))).toContainText(/(10:00|9:\d\d)/);
   await page.getByRole('button', { name: t('auth.copyLoginUrl') }).click();
-  await expect(page.getByText(t('action.copied'))).toBeVisible();
+  await expect(page.locator('.notice-toast').getByText(t('action.copied'))).toBeVisible();
   expect(await app.cmds()).toContain('auth_copy_login_url');
   await app.axe('로그인 대기');
 
@@ -38,7 +38,7 @@ test('로그인하면 브라우저 안내와 남은 시간을 보이고, 끝나�
   await expect(page.getByLabel(t('url.label'))).toBeVisible();
   // 계정 메뉴 트리거는 채널 이름이고, 로그인 성공은 토스트 한 번으로 알린다
   await expect(page.getByRole('button', { name: '테스트 채널' })).toBeVisible();
-  await expect(page.getByText(t('toast.signedIn', { channelName: '테스트 채널' }))).toBeVisible();
+  await expect(page.locator('.notice-toast').getByText(t('toast.signedIn', { channelName: '테스트 채널' }))).toBeVisible();
   const cmds = await app.cmds();
   expect(cmds.indexOf('get_settings')).toBeGreaterThan(cmds.indexOf('auth_login'));
 });
@@ -96,7 +96,7 @@ test('브라우저를 다시 열지 못하면 알리고 포커스를 로그인 �
   });
   await page.getByRole('button', { name: t('auth.reopen') }).focus();
   await page.keyboard.press('Enter');
-  await expect(page.getByText(t('toast.browserOpenFailed'))).toBeVisible();
+  await expect(page.locator('.notice-toast').getByText(t('toast.browserOpenFailed'))).toBeVisible();
   await expect(page.getByRole('button', { name: t('auth.copyLoginUrl') })).toBeFocused();
   await app.axe('다시 열기 실패');
 });

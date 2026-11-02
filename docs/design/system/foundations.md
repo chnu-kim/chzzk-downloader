@@ -1,6 +1,6 @@
 # 기반 토큰 (foundations.md)
 
-디자인 시스템 「무색」의 모든 토큰을 이름과 값으로 확정한다. `README.md`의 결정 표(D1~D69)가 "무엇을" 정했고, 이 문서는 그것을 "어떤 이름의 어떤 값"으로 코드에 내리는 단일 원천이다. 토큰은 여기 적힌 것만 존재한다. 여기 없는 값을 컴포넌트가 쓰면 `design-lint`가 막고, 여기 있는데 쓰지 않는 토큰은 `design-tokens`가 막는다.
+디자인 시스템 「무색」의 모든 토큰을 이름과 값으로 확정한다. `README.md`의 결정 표(D1~D70)가 "무엇을" 정했고, 이 문서는 그것을 "어떤 이름의 어떤 값"으로 코드에 내리는 단일 원천이다. 토큰은 여기 적힌 것만 존재한다. 여기 없는 값을 컴포넌트가 쓰면 `design-lint`가 막고, 여기 있는데 쓰지 않는 토큰은 `design-tokens`가 막는다.
 
 읽는 법:
 - 모든 길이는 **px**이고 루트 글자 크기는 **16px**이다. 어떤 토큰도 rem이 아니다. 문서의 숫자가 곧 화면의 숫자다(`A-VIS-01`, brief §6.2-4, ADR-0002. 강제 `design-tokens` DT4: rem 단위 0개, `html { font-size: 16px }` 고정).
@@ -869,6 +869,7 @@ JS 타이머·Rust 셸이 쓰는 값이다. 이름과 값의 단일 원천은 �
 | `LINE_PX` / `KEY_ZOOM_FACTOR` | 16 / 2 | [잠정] | `rangeView.ts` | 휠 `deltaMode` 줄 단위의 px 환산, 키 `+`·`-`의 확대 배율(휠은 `exp(−dy × 0.002)`, 한 이벤트당 [0.5, 2]) | D67, §7.2·§7.3. M-RE-3(트랙패드 연속 이벤트) |
 | `EDITOR_KEYS` | `+` `-` `0` | 고정 | `app/src/lib/platform.ts` | 구간 편집 화면 확대·축소·전체 보기 키 글자. OS와 무관한 코드 상수라 deck 문자열이 아니다(DC9는 deck만 본다). 문구는 `{zoomIn}`·`{zoomOut}`·`{fit}` 자리표시로 받는다 | D67, range-editor.md §11. RE-5가 나머지 키(I·O·Space·←·→)를 더한다 |
 | `TOAST_MS` | 6000 | [취향] | `timing.ts` | 정보 토스트 수명 = [되돌리기] 지연 삭제 창(README D37) | D62 V8 |
+| `QUIT_FLUSH_MS` | 5000 | [잠정] | `timing.ts` | D1 [닫기]가 남은 토스트의 지연 삭제 요청(작업 `remove_job`·편집자 `editors_remove`)을 기다리는 상한. 넘기면 기다리지 않고 종료한다(D70, ADR-0033) | 근거 없음. Worker 요청이 멈춰도 종료가 묶이지 않게. ADR-0009 묶음 |
 | `HIGHLIGHT_MS` | 1000 | [취향] | `timing.ts` | 새 항목 `--accent-soft` 강조(`patterns.md` §1.2) | app.md §8.10 |
 | `COPIED_LABEL_MS` | 2000 | [취향] | `timing.ts` | "복사했어요" 라벨 전환 | D37 |
 | `ETA_REFRESH_MS` | 1000 | [취향] | `timing.ts` | 속도·남은 시간 갱신 | D50 |

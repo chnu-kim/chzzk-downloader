@@ -748,8 +748,26 @@ export function deleteAction(job: JobDto, b: JobButtons): JobAction | null {
 
 // ───────────────────────── 읽어 주기 ─────────────────────────
 
+/** 낭독 퍼센트 단위(patterns.md P-9 "25% 단위"). 업데이트 배너(`AppBanners.svelte`)와 같은 값이다 */
+const SPOKEN_PERCENT_STEP = 25;
+
 /**
- * 상태 전이 때 LiveAnnouncer가 읽을 문장. 진행률 틱과 완료(토스트가 role=status로 읽는다)는 읽지 않는다.
+ * 낭독용 퍼센트(25% 단위로 내림). 행 접근 이름과 25% 틱이 같이 쓴다(둘의 단위가 같아야 한다, ADR-0033).
+ * 모르거나 25 미만이면 `null`("0퍼센트"를 읽지 않는다). 표시 퍼센트가 99에서 멈추므로(P-6) 최대 75다.
+ */
+export function spokenPercent(value: number | null | undefined): number | null {
+  if (value == null) return null;
+  const step = Math.floor(value / SPOKEN_PERCENT_STEP) * SPOKEN_PERCENT_STEP;
+  return step >= SPOKEN_PERCENT_STEP ? step : null;
+}
+
+/** 작업 하나를 읽는 문장: `‘제목’: 상태` 또는 `‘제목’: 상태, N퍼센트`(content.md §10 작업 행) */
+export function jobSpeech(title: string, status: string, percent: number | null): string {
+  return percent == null ? t('a11y.jobStatus', { title, status }) : t('a11y.jobProgress', { title, status, percent });
+}
+
+/**
+ * 상태 전이 때 LiveAnnouncer가 읽을 문장. 진행률 틱(스토어가 25% 단위로 따로 읽는다)과 완료(토스트는 토스트 store가 LiveAnnouncer로 읽는다, ADR-0033)는 여기서 읽지 않는다.
  */
 export function transitionAnnouncement(prev: JobDto | undefined, next: JobDto): string | null {
   if (prev && prev.status === next.status) return null;

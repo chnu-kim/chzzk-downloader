@@ -5,10 +5,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { JobDto, JobEvent, SettingsDto } from '../../bindings';
 import { err, job, liveProg, prog, signedInAs } from '../../../test/jobFixtures';
 import { t } from '../../copy/ko';
-import { qualityText } from '../../jobs';
+import { failedCopy, qualityText } from '../../jobs';
 import { errorCopy } from '../../copy/errors';
 import { formatFileSize } from '../../format/bytes';
 import { COMPLETED_FOLD_AT, RECOVERY_NOTICE_MS, RECOVERY_SILENT_MS } from '../../timing';
+import { jobRowName } from '../../../test/jobRow';
 
 class FakeChannel {
   onmessage: (e: JobEvent) => void = () => {};
@@ -35,6 +36,9 @@ const { platform } = await import('../../stores/platform.svelte');
 const { ui } = await import('../../stores/ui.svelte');
 const { toasts } = await import('../../stores/toast.svelte');
 const { default: JobList } = await import('./JobList.svelte');
+const { default: GlobalShortcuts } = await import('../app/GlobalShortcuts.svelte');
+const { AUTH_DISABLED } = await import('../../stores/auth.svelte');
+const { setInputModality } = await import('../../inputModality');
 const { default: AppBanners } = await import('../app/AppBanners.svelte');
 
 const baseSettings: SettingsDto = {
@@ -172,7 +176,7 @@ describe('JobList', () => {
     render(JobList);
     expect(screen.getByRole('heading', { name: t('list.group.running', { n: 1 }) })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: t('list.group.finished', { n: 1 }) })).toBeInTheDocument();
-    const running = screen.getByRole('article', { name: '금요 방송' });
+    const running = screen.getByRole('article', { name: jobRowName('금요 방송') });
     // 접근 이름 필수(제목), 값은 0~100 정수(내림)
     const bar = within(running).getByRole('progressbar', { name: '금요 방송' });
     expect(bar).toHaveAttribute('aria-valuemax', '100');
@@ -188,7 +192,7 @@ describe('JobList', () => {
     await user.click(within(running).getByRole('button', { name: t('action.pause') }));
     expect(api.pauseJob).toHaveBeenCalledWith(1);
 
-    const done = screen.getByRole('article', { name: '클립' });
+    const done = screen.getByRole('article', { name: jobRowName('클립') });
     await user.click(within(done).getByRole('button', { name: t('action.openFile') }));
     await user.click(within(done).getByRole('button', { name: t('platform.other.reveal') }));
     expect(api.openOutput).toHaveBeenCalledWith(2);
@@ -199,14 +203,14 @@ describe('JobList', () => {
     platform.set('macos');
     await load([job(2, { status: 'completed', finalBytes: 10, title: '클립' })]);
     render(JobList);
-    const done = screen.getByRole('article', { name: '클립' });
+    const done = screen.getByRole('article', { name: jobRowName('클립') });
     expect(within(done).getByRole('button', { name: t('platform.mac.reveal') })).toBeInTheDocument();
   });
 
   it('동작 줄은 자기 줄이고 버튼은 글자(취소는 글자뿐) ghost sm, [⋯]는 오른쪽 끝', async () => {
     await load([job(1, { status: 'running', progress: prog(), title: '금요 방송' })]);
     render(JobList);
-    const row = screen.getByRole('article', { name: '금요 방송' });
+    const row = screen.getByRole('article', { name: jobRowName('금요 방송') });
     const acts = row.querySelector('.job-actions') as HTMLElement;
     expect(acts).not.toBeNull();
     const buttons = within(acts).getAllByRole('button');
@@ -227,7 +231,7 @@ describe('JobList', () => {
   it('준비 중: value=null 막대(aria-valuenow 없음), 퍼센트 칸은 비고 스피너가 없다', async () => {
     await load([job(1, { status: 'running', title: '준비' })]);
     render(JobList);
-    const row = screen.getByRole('article', { name: '준비' });
+    const row = screen.getByRole('article', { name: jobRowName('준비') });
     const bar = within(row).getByRole('progressbar');
     expect(bar).not.toHaveAttribute('aria-valuenow');
     expect(row.querySelector('.job-pct')).toHaveTextContent('');
@@ -238,7 +242,7 @@ describe('JobList', () => {
   it('퍼센트는 뒤로 가지 않고 100%는 완료에서만 보인다(P-4·P-6)', async () => {
     await load([job(1, { status: 'running', progress: prog({ bytes: 3_000_000_000 }), title: '단조' })]);
     render(JobList);
-    const row = () => screen.getByRole('article', { name: '단조' });
+    const row = () => screen.getByRole('article', { name: jobRowName('단조') });
     expect(row().querySelector('.job-pct')).toHaveTextContent('69%');
     // 코어 값이 줄어도 표시는 69%
     send({ type: 'progress', id: 1, progress: prog({ bytes: 1_000_000_000 }) });
@@ -255,7 +259,7 @@ describe('JobList', () => {
     await load([job(3, { status: 'failed', partialBytes: 100, error: e })]);
     const user = userEvent.setup();
     render(JobList);
-    const item = screen.getByRole('article', { name: '영상 3' });
+    const item = screen.getByRole('article', { name: jobRowName('영상 3') });
     const copy = errorCopy(e, { place: 'job', partialBytes: 100 });
     expect(within(item).getByText(copy.title)).toBeInTheDocument();
     expect(within(item).getByText(copy.body)).toBeInTheDocument();
@@ -270,7 +274,7 @@ describe('JobList', () => {
     await load([job(3, { status: 'failed', error: err('authRequired', { stage: 'resolve' }) })]);
     const user = userEvent.setup();
     render(JobList);
-    const item = screen.getByRole('article', { name: '영상 3' });
+    const item = screen.getByRole('article', { name: jobRowName('영상 3') });
     await user.click(within(item).getByRole('button', { name: t('action.enableCookies') }));
     expect(ui.view).toBe('settings');
     expect(ui.cookieFocus).toBe('switch');
@@ -285,7 +289,7 @@ describe('JobList', () => {
     send({ type: 'status', job: job(3, { status: 'failed', error: err('authRequired', { stage: 'resolve' }) }) });
     settings.dto = { ...baseSettings, naverCookiesSaved: true, useNaverCookies: true };
     render(JobList);
-    const item = screen.getByRole('article', { name: '영상 3' });
+    const item = screen.getByRole('article', { name: jobRowName('영상 3') });
     expect(within(item).queryByText(/만료됐어요/)).toBeNull();
     expect(within(item).getByRole('button', { name: t('action.reresolve') })).toBeInTheDocument();
   });
@@ -293,7 +297,7 @@ describe('JobList', () => {
   it('완료 · 파일 없음: 경고 아이콘 + 상태 조각 + 본문 줄 + [폴더에서 보기]만', async () => {
     await load([job(1, { status: 'completed', missing: true, title: '없는 파일' })]);
     render(JobList);
-    const item = screen.getByRole('article', { name: '없는 파일' });
+    const item = screen.getByRole('article', { name: jobRowName('없는 파일') });
     expect(within(item).getByText(t('job.completedMissing'))).toBeInTheDocument();
     expect(within(item).getByText(t('job.completedMissing.body'))).toBeInTheDocument();
     expect(item.querySelector('.notice-row.tone-warning svg')).not.toBeNull();
@@ -304,14 +308,14 @@ describe('JobList', () => {
   it('완료 시각이 없는 완료 행: 끝에 · 가 남지 않는다', async () => {
     await load([job(1, { status: 'completed', finalBytes: 1024, title: '시각 없음' })]);
     render(JobList);
-    const status = screen.getByRole('article', { name: '시각 없음' }).querySelector('.job-status')?.textContent;
+    const status = screen.getByRole('article', { name: jobRowName('시각 없음') }).querySelector('.job-status')?.textContent;
     expect(status).toBe(t('job.completedNoTime', { size: '1.02KB' }));
   });
 
   it('완료 행에는 막대와 퍼센트가 없다', async () => {
     await load([job(1, { status: 'completed', finalBytes: 10, title: '끝' })]);
     render(JobList);
-    const item = screen.getByRole('article', { name: '끝' });
+    const item = screen.getByRole('article', { name: jobRowName('끝') });
     expect(within(item).queryByRole('progressbar')).toBeNull();
     expect(item.querySelector('.job-pct')).toBeNull();
   });
@@ -331,8 +335,8 @@ describe('작업 행 1줄 화질 칸(구간)', () => {
     const plain = job(2, { title: '전체 영상', range: null });
     await load([withRange, plain]);
     render(JobList);
-    const a = screen.getByRole('article', { name: '구간 영상' });
-    const b = screen.getByRole('article', { name: '전체 영상' });
+    const a = screen.getByRole('article', { name: jobRowName('구간 영상') });
+    const b = screen.getByRole('article', { name: jobRowName('전체 영상') });
     expect(a.querySelector('.job-quality')).toHaveTextContent(qualityText(withRange));
     expect(a.querySelector('.job-quality')!.textContent).toContain('0:10:00~0:20:00');
     expect(b.querySelector('.job-quality')!.textContent).toBe(plain.qualityLabel);
@@ -349,7 +353,7 @@ describe('취소(D2): .part가 있으면 크기와 무관하게 묻는다', () =
     const user = userEvent.setup();
     render(JobList);
 
-    const waiting = screen.getByRole('article', { name: '대기' });
+    const waiting = screen.getByRole('article', { name: jobRowName('대기') });
     const plain = within(waiting).getByRole('button', { name: t('a11y.cancelJob', { title: '대기' }) });
     expect(plain).toHaveTextContent(t('common.cancel'));
     expect(plain).not.toHaveClass('tone-danger');
@@ -357,12 +361,12 @@ describe('취소(D2): .part가 있으면 크기와 무관하게 묻는다', () =
     expect(api.removeJob).toHaveBeenCalledWith(3);
     expect(toasts.items).toHaveLength(0);
 
-    const empty = screen.getByRole('article', { name: '빈 것' });
+    const empty = screen.getByRole('article', { name: jobRowName('빈 것') });
     await user.click(within(empty).getByRole('button', { name: t('a11y.cancelJob', { title: '빈 것' }) }));
     expect(api.removeJob).toHaveBeenLastCalledWith(1);
     expect(screen.queryByRole('dialog')).toBeNull();
 
-    const some = screen.getByRole('article', { name: '한 바이트' });
+    const some = screen.getByRole('article', { name: jobRowName('한 바이트') });
     const danger = within(some).getByRole('button', { name: t('a11y.cancelJob', { title: '한 바이트' }) });
     expect(danger).toHaveTextContent(t('common.cancel'));
     expect(danger).toHaveClass('tone-danger');
@@ -407,13 +411,13 @@ describe('취소(D2): .part가 있으면 크기와 무관하게 묻는다', () =
       job(3, { status: 'failed', partialBytes: 5, progress: prog(), title: '실패' }),
     ]);
     render(JobList);
-    const state = (name: string) => within(screen.getByRole('article', { name })).getByRole('progressbar').getAttribute('data-state');
+    const state = (name: string) => within(screen.getByRole('article', { name: jobRowName(name) })).getByRole('progressbar').getAttribute('data-state');
     expect(state('갱신')).toBe('waiting');
     expect(state('멈춤')).toBe('paused');
     expect(state('실패')).toBe('failed');
     // 멈춤·실패에도 퍼센트가 남는다(P-2)
     for (const name of ['멈춤', '실패']) {
-      expect(screen.getByRole('article', { name }).querySelector('.job-pct')).toHaveTextContent('57%');
+      expect(screen.getByRole('article', { name: jobRowName(name) }).querySelector('.job-pct')).toHaveTextContent('57%');
     }
   });
 });
@@ -423,13 +427,13 @@ describe('지우기와 되돌리기(지연 삭제)', () => {
     await load([job(1, { status: 'completed', title: '완료 하나' }), job(2, { status: 'completed', title: '완료 둘' })]);
     const user = userEvent.setup();
     render(JobList);
-    const item = screen.getByRole('article', { name: '완료 하나' });
+    const item = screen.getByRole('article', { name: jobRowName('완료 하나') });
     await pickMenu(user, item, '완료 하나', t('action.remove'));
-    expect(screen.queryByRole('article', { name: '완료 하나' })).toBeNull();
+    expect(screen.queryByRole('article', { name: jobRowName('완료 하나') })).toBeNull();
     expect(api.removeJob).not.toHaveBeenCalled();
     expect(toasts.items.map((i) => [i.message, i.action?.label])).toEqual([[t('toast.removed'), t('action.undo')]]);
     toasts.runAction(toasts.items[0].id);
-    expect(await screen.findByRole('article', { name: '완료 하나' })).toBeInTheDocument();
+    expect(await screen.findByRole('article', { name: jobRowName('완료 하나') })).toBeInTheDocument();
     expect(api.removeJob).not.toHaveBeenCalled();
   });
 
@@ -437,7 +441,7 @@ describe('지우기와 되돌리기(지연 삭제)', () => {
     await load([job(1, { status: 'skipped', title: '건너뜀' })]);
     const user = userEvent.setup();
     render(JobList);
-    await pickMenu(user, screen.getByRole('article', { name: '건너뜀' }), '건너뜀', t('action.remove'));
+    await pickMenu(user, screen.getByRole('article', { name: jobRowName('건너뜀') }), '건너뜀', t('action.remove'));
     toasts.dismiss(toasts.items[0].id);
     expect(api.removeJob).toHaveBeenCalledExactlyOnceWith(1);
   });
@@ -449,7 +453,7 @@ describe('지우기와 되돌리기(지연 삭제)', () => {
     a.focus();
     await fireEvent.keyDown(a, { key: 'Delete' });
     expect(api.removeJob).not.toHaveBeenCalled();
-    await waitFor(() => expect(screen.getByRole('article', { name: '영상 2' })).toHaveFocus());
+    await waitFor(() => expect(screen.getByRole('article', { name: jobRowName('영상 2') })).toHaveFocus());
     expect(toasts.items).toHaveLength(1);
   });
 
@@ -457,8 +461,8 @@ describe('지우기와 되돌리기(지연 삭제)', () => {
     await load([job(1, { status: 'completed' }), job(2, { status: 'completed' })]);
     const user = userEvent.setup();
     render(JobList);
-    await pickMenu(user, screen.getByRole('article', { name: '영상 1' }), '영상 1', t('action.remove'));
-    await pickMenu(user, screen.getByRole('article', { name: '영상 2' }), '영상 2', t('action.remove'));
+    await pickMenu(user, screen.getByRole('article', { name: jobRowName('영상 1') }), '영상 1', t('action.remove'));
+    await pickMenu(user, screen.getByRole('article', { name: jobRowName('영상 2') }), '영상 2', t('action.remove'));
     expect(toasts.items).toHaveLength(2);
     expect(api.removeJob).not.toHaveBeenCalled();
   });
@@ -476,11 +480,11 @@ describe('지우기와 되돌리기(지연 삭제)', () => {
     expect(button).toHaveAccessibleDescription(t('list.clearFinished.help'));
     expect(button).toHaveClass('edge-end');
     await user.click(button);
-    expect(screen.queryByRole('article', { name: '영상 1' })).toBeNull();
-    expect(screen.queryByRole('article', { name: '영상 2' })).toBeNull();
+    expect(screen.queryByRole('article', { name: jobRowName('영상 1') })).toBeNull();
+    expect(screen.queryByRole('article', { name: jobRowName('영상 2') })).toBeNull();
     // 받은 .part가 남은 건너뜀과 받는 중인 항목은 그대로
-    expect(screen.getByRole('article', { name: '영상 3' })).toBeInTheDocument();
-    expect(screen.getByRole('article', { name: '영상 4' })).toBeInTheDocument();
+    expect(screen.getByRole('article', { name: jobRowName('영상 3') })).toBeInTheDocument();
+    expect(screen.getByRole('article', { name: jobRowName('영상 4') })).toBeInTheDocument();
     expect(toasts.items.map((i) => i.message)).toEqual([t('toast.removedMany', { n: 2 })]);
     // 더 지울 것이 없으니 버튼이 사라진다
     expect(screen.queryByRole('button', { name: t('list.clearFinished') })).toBeNull();
@@ -495,7 +499,7 @@ describe('건너뜀 행의 [덮어쓰고 받기…](D7)', () => {
     await load([job(5, { status: 'skipped', output: '/v/내 영상.mp4', title: '건너뜀' })]);
     const user = userEvent.setup();
     render(JobList);
-    const item = screen.getByRole('article', { name: '건너뜀' });
+    const item = screen.getByRole('article', { name: jobRowName('건너뜀') });
     expect(within(item).getByText(t('job.status.skipped'))).toBeInTheDocument();
     expect(within(item).getByText(t('job.skipped.body'))).toBeInTheDocument();
     await user.click(within(item).getByRole('button', { name: t('action.overwriteAndDownload') }));
@@ -513,7 +517,7 @@ describe('건너뜀 행의 [덮어쓰고 받기…](D7)', () => {
   it('받는 동안 생긴 건너뜀은 본문이 다르다', async () => {
     await load([job(5, { status: 'skipped', partialBytes: 10, title: '받는 동안' })]);
     render(JobList);
-    const item = screen.getByRole('article', { name: '받는 동안' });
+    const item = screen.getByRole('article', { name: jobRowName('받는 동안') });
     expect(within(item).getByText(t('job.skippedMeanwhile.body'))).toBeInTheDocument();
   });
 });
@@ -524,7 +528,7 @@ describe('[⋯] › 제목 전체 보기', () => {
     await load([job(1, { status: 'completed', title })]);
     const user = userEvent.setup();
     render(JobList);
-    const item = screen.getByRole('article', { name: title });
+    const item = screen.getByRole('article', { name: jobRowName(title) });
     expect(item.querySelector('.job-fulltitle')).toBeNull();
     await pickMenu(user, item, title, t('action.showTitle'));
     expect(item.querySelector('.job-fulltitle')).toHaveTextContent(title);
@@ -549,7 +553,7 @@ describe('[⋯] › 자세히', () => {
     await load([job(1, { status: 'failed', title: '실패', error: err('unsupported', { message: '코어 원문 한 줄' }) })]);
     const user = userEvent.setup();
     render(JobList);
-    const item = screen.getByRole('article', { name: '실패' });
+    const item = screen.getByRole('article', { name: jobRowName('실패') });
     expect(within(item).queryByText('코어 원문 한 줄')).toBeNull();
     expect(item.querySelector('.job-detail')).toBeNull();
     await pickMenu(user, item, '실패', t('common.details'));
@@ -595,11 +599,11 @@ describe('[⋯] › 자세히', () => {
     await load([failed]);
     const user = userEvent.setup();
     render(JobList);
-    const item = screen.getByRole('article', { name: '실패' });
+    const item = screen.getByRole('article', { name: jobRowName('실패') });
     await pickMenu(user, item, '실패', t('common.details'));
     expect(item.querySelector('.job-detail')).not.toBeNull();
     send({ type: 'status', job: { ...failed, status: 'queued', error: null } });
-    await waitFor(() => expect(screen.getByRole('article', { name: '실패' }).querySelector('.job-detail')).toBeNull());
+    await waitFor(() => expect(screen.getByRole('article', { name: jobRowName('실패') }).querySelector('.job-detail')).toBeNull());
   });
 
   it('실패 → 재시도 → 다시 실패하면 새 원문은 접힌 채 나온다', async () => {
@@ -607,15 +611,15 @@ describe('[⋯] › 자세히', () => {
     await load([failed]);
     const user = userEvent.setup();
     render(JobList);
-    const item = screen.getByRole('article', { name: '실패' });
+    const item = screen.getByRole('article', { name: jobRowName('실패') });
     await pickMenu(user, item, '실패', t('common.details'));
     expect(item.querySelector('.job-detail')).not.toBeNull();
     send({ type: 'status', job: { ...failed, status: 'queued', error: null } });
-    await waitFor(() => expect(screen.getByRole('article', { name: '실패' }).querySelector('.job-detail')).toBeNull());
+    await waitFor(() => expect(screen.getByRole('article', { name: jobRowName('실패') }).querySelector('.job-detail')).toBeNull());
     send({ type: 'status', job: { ...failed, status: 'failed', error: err('unsupported', { message: '새 원문' }) } });
-    await waitFor(() => expect(screen.getByRole('article', { name: '실패' })).toHaveTextContent(/./));
-    expect(screen.getByRole('article', { name: '실패' }).querySelector('.job-detail')).toBeNull();
-    expect(screen.getByRole('article', { name: '실패' })).not.toHaveTextContent('새 원문');
+    await waitFor(() => expect(screen.getByRole('article', { name: jobRowName('실패') })).toHaveTextContent(/./));
+    expect(screen.getByRole('article', { name: jobRowName('실패') }).querySelector('.job-detail')).toBeNull();
+    expect(screen.getByRole('article', { name: jobRowName('실패') })).not.toHaveTextContent('새 원문');
   });
 });
 
@@ -638,7 +642,7 @@ describe('완료 그룹 접힘', () => {
     expect(toggle).toHaveAttribute('aria-expanded', 'false');
     // 머리 줄 자체가 토글이고 미리보기는 같은 그룹 상자 안이다(details 상자 없음)
     expect(head.closest('details')).toBeNull();
-    expect(screen.getAllByRole('article').map((a) => a.getAttribute('aria-label'))).toEqual([
+    expect(screen.getAllByRole('article').map((a) => a.getAttribute('aria-label')?.replace(/^‘(.*)’: .*$/, '$1'))).toEqual([
       '영상 11',
       '영상 10',
       '영상 9',
@@ -701,7 +705,7 @@ describe('키보드', () => {
     const [a] = screen.getAllByRole('article');
     a.focus();
     send({ type: 'removed', id: 1 });
-    await waitFor(() => expect(screen.getByRole('article', { name: '영상 2' })).toHaveFocus());
+    await waitFor(() => expect(screen.getByRole('article', { name: jobRowName('영상 2') })).toHaveFocus());
     send({ type: 'removed', id: 2 });
     await waitFor(() => expect(screen.getByRole('heading', { name: t('list.title') })).toHaveFocus());
   });
@@ -712,7 +716,7 @@ describe('키보드', () => {
     it('받는 중 행에서 Space로 일시정지해 멈춘 그룹으로 옮겨도 포커스가 그 행에 남는다', async () => {
       await load([running(), job(2, { status: 'queued', title: '영상 2' })]);
       render(JobList);
-      const a = screen.getByRole('article', { name: '영상 1' });
+      const a = screen.getByRole('article', { name: jobRowName('영상 1') });
       a.focus();
       await fireEvent.keyDown(a, { key: ' ' });
       expect(api.pauseJob).toHaveBeenCalledTimes(1);
@@ -722,8 +726,8 @@ describe('키보드', () => {
       send({ type: 'status', job: running({ status: 'paused', partialBytes: 5 }) });
       await tick();
       expect(a.isConnected).toBe(false);
-      await waitFor(() => expect(screen.getByRole('article', { name: '영상 1' })).toHaveFocus());
-      expect(screen.getByRole('article', { name: '영상 1' })).toHaveAttribute('tabindex', '0');
+      await waitFor(() => expect(screen.getByRole('article', { name: jobRowName('영상 1') })).toHaveFocus());
+      expect(screen.getByRole('article', { name: jobRowName('영상 1') })).toHaveAttribute('tabindex', '0');
     });
 
     it('실패 행에서 Enter(다시 시도)로 대기 그룹으로 옮겨도 포커스가 그 행에 남는다', async () => {
@@ -732,7 +736,7 @@ describe('키보드', () => {
         job(2, { status: 'completed', title: '영상 2', createdAt: 0 }),
       ]);
       render(JobList);
-      const a = screen.getByRole('article', { name: '영상 1' });
+      const a = screen.getByRole('article', { name: jobRowName('영상 1') });
       // 받은 부분이 있으면 첫 동작은 [이어받기]다(jobButtons, D8)
       expect(within(a).getByRole('button', { name: t('action.resume') })).toBeInTheDocument();
       a.focus();
@@ -741,26 +745,26 @@ describe('키보드', () => {
       send({ type: 'status', job: job(1, { status: 'queued', error: null, partialBytes: 5, title: '영상 1' }) });
       await tick();
       expect(a.isConnected).toBe(false);
-      await waitFor(() => expect(screen.getByRole('article', { name: '영상 1' })).toHaveFocus());
+      await waitFor(() => expect(screen.getByRole('article', { name: jobRowName('영상 1') })).toHaveFocus());
     });
 
     it('멈춘 행에서 Space(이어받기)로 대기 그룹으로 옮겨도 포커스가 그 행에 남는다', async () => {
       await load([job(1, { status: 'paused', partialBytes: 5, title: '영상 1' }), job(2, { status: 'completed', title: '영상 2', createdAt: 0 })]);
       render(JobList);
-      const a = screen.getByRole('article', { name: '영상 1' });
+      const a = screen.getByRole('article', { name: jobRowName('영상 1') });
       a.focus();
       await fireEvent.keyDown(a, { key: ' ' });
       expect(api.resumeJob).toHaveBeenCalledWith(1, false);
       send({ type: 'status', job: job(1, { status: 'queued', partialBytes: 5, title: '영상 1' }) });
       await tick();
       expect(a.isConnected).toBe(false);
-      await waitFor(() => expect(screen.getByRole('article', { name: '영상 1' })).toHaveFocus());
+      await waitFor(() => expect(screen.getByRole('article', { name: jobRowName('영상 1') })).toHaveFocus());
     });
 
     it('행 안 [일시정지]를 눌러 버튼이 사라지면 포커스는 그 행 article로', async () => {
       await load([running()]);
       render(JobList);
-      const a = screen.getByRole('article', { name: '영상 1' });
+      const a = screen.getByRole('article', { name: jobRowName('영상 1') });
       const pause = within(a).getByRole('button', { name: t('action.pause') });
       pause.focus();
       await fireEvent.click(pause);
@@ -773,19 +777,19 @@ describe('키보드', () => {
     it('진행 단계만 바뀌어(status 그대로 finalizing) 버튼이 사라져도 포커스는 그 행 article로', async () => {
       await load([running()]);
       render(JobList);
-      const a = screen.getByRole('article', { name: '영상 1' });
+      const a = screen.getByRole('article', { name: jobRowName('영상 1') });
       const pause = within(a).getByRole('button', { name: t('action.pause') });
       pause.focus();
       send({ type: 'progress', id: 1, progress: prog({ phase: 'finalizing' }) });
       await tick();
       expect(pause.isConnected).toBe(false);
-      await waitFor(() => expect(screen.getByRole('article', { name: '영상 1' })).toHaveFocus());
+      await waitFor(() => expect(screen.getByRole('article', { name: jobRowName('영상 1') })).toHaveFocus());
     });
 
     it('빈 곳을 눌러 목록을 떠났으면 그룹이 바뀌어도 포커스를 빼앗지 않는다', async () => {
       await load([running(), job(2, { status: 'queued', title: '영상 2' })]);
       render(JobList);
-      const a = screen.getByRole('article', { name: '영상 1' });
+      const a = screen.getByRole('article', { name: jobRowName('영상 1') });
       a.focus();
       a.blur();
       await Promise.resolve();
@@ -800,7 +804,7 @@ describe('키보드', () => {
       render(JobList);
       const input = document.createElement('input');
       document.body.append(input);
-      const a = screen.getByRole('article', { name: '영상 1' });
+      const a = screen.getByRole('article', { name: jobRowName('영상 1') });
       a.focus();
       input.focus();
       send({ type: 'status', job: running({ status: 'paused', partialBytes: 5 }) });
@@ -827,7 +831,7 @@ describe('키보드', () => {
       const user = userEvent.setup();
       await load([running({ partialBytes: 5 }), job(2, { status: 'queued', title: '영상 2' })]);
       render(JobList);
-      const a = screen.getByRole('article', { name: '영상 1' });
+      const a = screen.getByRole('article', { name: jobRowName('영상 1') });
       await user.click(within(a).getByRole('button', { name: t('a11y.cancelJob', { title: '영상 1' }) }));
       const dialog = await screen.findByRole('dialog');
       const keep = within(dialog).getByRole('button', { name: t('dialog.cancel.keepRunning') });
@@ -844,7 +848,7 @@ describe('키보드', () => {
     await load([job(1), job(2)]);
     render(JobList);
     jobs.reveal(1);
-    await waitFor(() => expect(screen.getByRole('article', { name: '영상 1' })).toHaveFocus());
+    await waitFor(() => expect(screen.getByRole('article', { name: jobRowName('영상 1') })).toHaveFocus());
   });
 });
 
@@ -874,7 +878,7 @@ describe('막힌 작업(A5)', () => {
     await load([job(1, { status: 'running', progress: prog({ bytes: 5 }), title: '받는 중' })]);
     const user = userEvent.setup();
     render(JobList);
-    const item = screen.getByRole('article', { name: '받는 중' });
+    const item = screen.getByRole('article', { name: jobRowName('받는 중') });
     await user.click(within(item).getByRole('button', { name: t('a11y.cancelJob', { title: '받는 중' }) }));
     const dialog = await screen.findByRole('dialog', { name: t('dialog.cancel.title', { title: '받는 중' }) });
     expect(within(dialog).getByRole('button', { name: t('dialog.cancel.keepRunning') })).toHaveClass('btn-primary');
@@ -886,7 +890,7 @@ describe('막힌 작업(A5)', () => {
     await load([job(1, { status: 'interrupted', channelId: C3, partialBytes: 100, title: '남의 영상' })]);
     const user = userEvent.setup();
     render(JobList);
-    const item = screen.getByRole('article', { name: '남의 영상' });
+    const item = screen.getByRole('article', { name: jobRowName('남의 영상') });
     expect(within(item).getByText(t('job.otherChannel.body'))).toBeInTheDocument();
     expect(item).toHaveAccessibleDescription(t('job.otherChannel.body'));
     expect(within(item).queryByRole('button', { name: t('action.resume') })).toBeNull();
@@ -901,7 +905,7 @@ describe('막힌 작업(A5)', () => {
     auth.status = signedInAs(A1);
     await load([job(1, { status: 'interrupted', channelId: null, title: '옛 작업' })]);
     render(JobList);
-    const item = screen.getByRole('article', { name: '옛 작업' });
+    const item = screen.getByRole('article', { name: jobRowName('옛 작업') });
     expect(within(item).queryByText(t('job.otherChannel.body'))).toBeNull();
     expect(within(item).getByRole('button', { name: t('action.resume') })).toBeInTheDocument();
   });
@@ -910,7 +914,7 @@ describe('막힌 작업(A5)', () => {
     auth.status = signedInAs(A1);
     await load([job(1, { status: 'interrupted', channelId: A1, title: '내 영상' })]);
     render(JobList);
-    const item = screen.getByRole('article', { name: '내 영상' });
+    const item = screen.getByRole('article', { name: jobRowName('내 영상') });
     expect(within(item).getByRole('button', { name: t('action.resume') })).toBeInTheDocument();
     expect(within(item).queryByText(t('job.otherChannel.body'))).toBeNull();
   });
@@ -922,7 +926,7 @@ describe('연결 대기·회복·멈춘 지 30일 행(patterns.md §3.2)', () =>
   it('연결 대기: 줄무늬 막대·퍼센트 유지, 속도·남은 시간 없음, 본문 한 줄, [일시정지]danger [취소], 오류 모양 없음', async () => {
     await load([job(1, { title: '끊긴 영상', status: 'running', progress: WAIT })]);
     render(JobList);
-    const item = screen.getByRole('article', { name: '끊긴 영상' });
+    const item = screen.getByRole('article', { name: jobRowName('끊긴 영상') });
     expect(within(item).getByText(/^연결 대기 중 · 1분째 · /)).toBeInTheDocument();
     expect(within(item).queryByText(/\/s|남음/)).toBeNull();
     expect(within(item).getByText(t('job.waitingNetwork.body'))).toBeInTheDocument();
@@ -939,7 +943,7 @@ describe('연결 대기·회복·멈춘 지 30일 행(patterns.md §3.2)', () =>
     try {
       await load([job(1, { title: '끊긴 영상', status: 'running', progress: prog() })]);
       render(JobList);
-      const item = screen.getByRole('article', { name: '끊긴 영상' });
+      const item = screen.getByRole('article', { name: jobRowName('끊긴 영상') });
       send({ type: 'progress', id: 1, progress: WAIT });
       await tick();
       expect(within(item).getByText(t('job.waitingNetwork.body'))).toBeInTheDocument();
@@ -966,11 +970,11 @@ describe('연결 대기·회복·멈춘 지 30일 행(patterns.md §3.2)', () =>
     ]);
     render(JobList);
     const sized = formatFileSize(5_000_000, 1000);
-    expect(within(screen.getByRole('article', { name: '오래 멈춘 영상' })).getByText(t('job.stale.body', { days: 31, size: sized }))).toBeInTheDocument();
-    expect(within(screen.getByRole('article', { name: '얼마 안 된 영상' })).queryByText(/전에 멈췄어요/)).toBeNull();
-    const failed = within(screen.getByRole('article', { name: '오래 전에 실패한 영상' }));
+    expect(within(screen.getByRole('article', { name: jobRowName('오래 멈춘 영상') })).getByText(t('job.stale.body', { days: 31, size: sized }))).toBeInTheDocument();
+    expect(within(screen.getByRole('article', { name: jobRowName('얼마 안 된 영상') })).queryByText(/전에 멈췄어요/)).toBeNull();
+    const failed = within(screen.getByRole('article', { name: jobRowName('오래 전에 실패한 영상') }));
     expect(failed.getByText(t('job.stale.body', { days: 40, size: sized }))).toBeInTheDocument();
-    expect(within(screen.getByRole('article', { name: '옛 기록' })).queryByText(/전에 멈췄어요/)).toBeNull();
+    expect(within(screen.getByRole('article', { name: jobRowName('옛 기록') })).queryByText(/전에 멈췄어요/)).toBeNull();
   });
 });
 
@@ -983,7 +987,7 @@ describe('생방송 행(ADR-0025)', () => {
     const user = userEvent.setup();
     await load([liveJob()]);
     render(JobList);
-    const row = screen.getByRole('article', { name: '오늘 방송' });
+    const row = screen.getByRole('article', { name: jobRowName('오늘 방송') });
     expect(within(row).getByText(t('kind.live'))).toBeInTheDocument();
     // 길이를 모르므로 막대·퍼센트가 없다
     expect(within(row).queryByRole('progressbar')).toBeNull();
@@ -1015,7 +1019,7 @@ describe('생방송 행(ADR-0025)', () => {
     const user = userEvent.setup();
     await load([liveJob()]);
     const first = render(JobList);
-    const row = screen.getByRole('article', { name: '오늘 방송' });
+    const row = screen.getByRole('article', { name: jobRowName('오늘 방송') });
     await user.click(within(row).getByRole('button', { name: t('action.stopRecording') }));
     await screen.findByRole('dialog', { name: t('dialog.stopLive.title', { title: '오늘 방송' }) });
     first.unmount();
@@ -1027,7 +1031,7 @@ describe('생방송 행(ADR-0025)', () => {
 
   describe('D8 자동 닫힘 뒤 포커스(F-4, app.md 129)', () => {
     async function openD8(user: ReturnType<typeof userEvent.setup>) {
-      const row = screen.getByRole('article', { name: '오늘 방송' });
+      const row = screen.getByRole('article', { name: jobRowName('오늘 방송') });
       await user.click(within(row).getByRole('button', { name: t('action.stopRecording') }));
       await screen.findByRole('dialog', { name: t('dialog.stopLive.title', { title: '오늘 방송' }) });
     }
@@ -1039,21 +1043,21 @@ describe('생방송 행(ADR-0025)', () => {
       await openD8(user);
       send({ type: 'status', job: liveJob({ status: 'completed', progress: null }) });
       await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-      await waitFor(() => expect(screen.getByRole('article', { name: '오늘 방송' })).toHaveFocus());
+      await waitFor(() => expect(screen.getByRole('article', { name: jobRowName('오늘 방송') })).toHaveFocus());
       expect(api.stopJob).not.toHaveBeenCalled();
     });
 
     it('마우스로 눌러도 버튼이 포커스를 받지 않는 엔진(opener가 body)에서도 포커스는 그 녹화의 행으로', async () => {
       await load([liveJob()]);
       render(JobList);
-      const row = screen.getByRole('article', { name: '오늘 방송' });
+      const row = screen.getByRole('article', { name: jobRowName('오늘 방송') });
       (document.activeElement as HTMLElement | null)?.blur();
       // fireEvent.click은 포커스를 옮기지 않는다(WKWebView의 마우스 클릭과 같다)
       await fireEvent.click(within(row).getByRole('button', { name: t('action.stopRecording') }));
       await screen.findByRole('dialog', { name: t('dialog.stopLive.title', { title: '오늘 방송' }) });
       send({ type: 'status', job: liveJob({ status: 'completed', progress: null }) });
       await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-      await waitFor(() => expect(screen.getByRole('article', { name: '오늘 방송' })).toHaveFocus());
+      await waitFor(() => expect(screen.getByRole('article', { name: jobRowName('오늘 방송') })).toHaveFocus());
     });
 
     it('D8을 연 사이 그 녹화가 사라지면 이웃 행, 없으면 목록 제목으로', async () => {
@@ -1063,7 +1067,7 @@ describe('생방송 행(ADR-0025)', () => {
       await openD8(user);
       send({ type: 'removed', id: 1 });
       await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-      await waitFor(() => expect(screen.getByRole('article', { name: '영상 2' })).toHaveFocus());
+      await waitFor(() => expect(screen.getByRole('article', { name: jobRowName('영상 2') })).toHaveFocus());
     });
 
     it('D8을 연 사이 하나뿐인 녹화가 사라지면 목록 제목으로', async () => {
@@ -1091,7 +1095,7 @@ describe('생방송 행(ADR-0025)', () => {
   it('놓친 조각이 있으면 상태 줄 끝에 보인다', async () => {
     await load([liveJob({ progress: liveProg({ liveGaps: 2 }) })]);
     render(JobList);
-    const row = screen.getByRole('article', { name: '오늘 방송' });
+    const row = screen.getByRole('article', { name: jobRowName('오늘 방송') });
     expect(row.querySelector('.job-status')?.textContent).toBe(`녹화 중 · 1시간 2분 · 3.65GB · ${t('job.live.gaps', { n: 2 })}`);
   });
 
@@ -1099,7 +1103,7 @@ describe('생방송 행(ADR-0025)', () => {
     const user = userEvent.setup();
     await load([liveJob()]);
     render(JobList);
-    const row = screen.getByRole('article', { name: '오늘 방송' });
+    const row = screen.getByRole('article', { name: jobRowName('오늘 방송') });
     await user.click(within(row).getByRole('button', { name: t('a11y.cancelJob', { title: '오늘 방송' }) }));
     const dialog = await screen.findByRole('dialog', { name: t('dialog.cancel.title', { title: '오늘 방송' }) });
     expect(within(dialog).getByText(t('dialog.cancel.live.body', { size: '3.65GB' }))).toBeInTheDocument();
@@ -1122,7 +1126,7 @@ describe('생방송 행(ADR-0025)', () => {
       }),
     ]);
     render(JobList);
-    const row = screen.getByRole('article', { name: '오늘 방송' });
+    const row = screen.getByRole('article', { name: jobRowName('오늘 방송') });
     expect(within(row).getByText(t('job.live.end.restarted.body'))).toBeInTheDocument();
     expect(row.querySelector('.job-status')?.textContent?.endsWith(` · ${t('job.live.gaps', { n: 2 })}`)).toBe(true);
     await user.click(within(row).getByRole('button', { name: t('action.recordAgain') }));
@@ -1141,7 +1145,7 @@ describe('생방송 행(ADR-0025)', () => {
       }),
     ]);
     render(JobList);
-    const row = screen.getByRole('article', { name: '오늘 방송' });
+    const row = screen.getByRole('article', { name: jobRowName('오늘 방송') });
     const body = within(row).getByText(t('job.live.end.ended.body'));
     expect(body.classList.contains('job-body')).toBe(true);
     expect(body.classList.contains('indent')).toBe(true);
@@ -1150,8 +1154,110 @@ describe('생방송 행(ADR-0025)', () => {
   it('끝난 생방송은 일반 완료 행과 같다', async () => {
     await load([liveJob({ status: 'completed', progress: null, finalBytes: 3_650_722_201, finishedAt: 1_759_668_060 })]);
     render(JobList);
-    const row = screen.getByRole('article', { name: '오늘 방송' });
+    const row = screen.getByRole('article', { name: jobRowName('오늘 방송') });
     expect(within(row).getByRole('button', { name: t('action.openFile') })).toBeInTheDocument();
     expect(within(row).queryByRole('button', { name: t('action.stopRecording') })).toBeNull();
+  });
+});
+
+describe('행 접근 이름(‘제목’: 상태, 25% 단위 퍼센트)', () => {
+  const bytesAt = (pct: number) => Math.round((4_294_967_296 * pct) / 100);
+  const name = (title: string, status: string, percent?: number) =>
+    percent == null ? t('a11y.jobStatus', { title, status }) : t('a11y.jobProgress', { title, status, percent });
+
+  it('받는 중 58%는 50퍼센트로 내려 읽는다', async () => {
+    await load([job(1, { title: '금요 방송', status: 'running', progress: prog({ bytes: bytesAt(58) }) })]);
+    render(JobList);
+    expect(screen.getByRole('article', { name: name('금요 방송', t('job.phase.downloading'), 50) })).toBeInTheDocument();
+  });
+
+  it('진행률이 51%에서 60%로 바뀌어도 이름이 같다(속도·남은 시간이 이름에 없다)', async () => {
+    await load([job(1, { title: '단조', status: 'running', progress: prog({ bytes: bytesAt(51) }) })]);
+    render(JobList);
+    const before = screen.getByRole('article', { name: jobRowName('단조') }).getAttribute('aria-label');
+    send({ type: 'progress', id: 1, progress: prog({ bytes: bytesAt(60), speedBps: 1, etaSecs: 9999 }) });
+    await tick();
+    const after = screen.getByRole('article', { name: jobRowName('단조') }).getAttribute('aria-label');
+    expect(after).toBe(before);
+    expect(after).toBe(name('단조', t('job.phase.downloading'), 50));
+    expect(after).not.toMatch(/\/s|남음/);
+  });
+
+  it('25% 미만이면 퍼센트를 읽지 않는다', async () => {
+    await load([job(1, { title: '막 시작', status: 'running', progress: prog({ bytes: bytesAt(10) }) })]);
+    render(JobList);
+    expect(screen.getByRole('article', { name: name('막 시작', t('job.phase.downloading')) })).toBeInTheDocument();
+  });
+
+  it('준비 중·대기·완료·파일 없음', async () => {
+    await load([
+      job(1, { title: '준비', status: 'running', progress: prog({ phase: 'resolving' }) }),
+      job(2, { title: '대기', status: 'queued' }),
+      job(3, { title: '끝', status: 'completed', finalBytes: 10 }),
+      job(4, { title: '없는 파일', status: 'completed', finalBytes: 10, missing: true }),
+    ]);
+    render(JobList);
+    expect(screen.getByRole('article', { name: name('준비', t('job.status.resolving')) })).toBeInTheDocument();
+    expect(screen.getByRole('article', { name: name('대기', t('job.status.queued')) })).toBeInTheDocument();
+    expect(screen.getByRole('article', { name: name('끝', t('job.status.completed')) })).toBeInTheDocument();
+    expect(screen.getByRole('article', { name: name('없는 파일', t('job.completedMissing')) })).toBeInTheDocument();
+  });
+
+  it('일시정지 30%는 25퍼센트다', async () => {
+    await load([job(1, { title: '멈춤', status: 'paused', progress: prog({ bytes: bytesAt(30) }), partialBytes: bytesAt(30) })]);
+    render(JobList);
+    expect(screen.getByRole('article', { name: name('멈춤', t('job.status.paused'), 25) })).toBeInTheDocument();
+  });
+
+  it('실패는 화면에 보이는 오류 제목을 쓴다(.part가 있으면 퍼센트, 없으면 제목만)', async () => {
+    const withPart = job(1, {
+      title: '실패 하나',
+      status: 'failed',
+      error: err('network'),
+      progress: prog({ bytes: bytesAt(60) }),
+      partialBytes: bytesAt(60),
+    });
+    const noPart = job(2, { title: '실패 둘', status: 'failed', error: err('network'), progress: null, partialBytes: null });
+    await load([withPart, noPart]);
+    render(JobList);
+    expect(screen.getByRole('article', { name: name('실패 하나', failedCopy(withPart, false, 0)!.title, 50) })).toBeInTheDocument();
+    expect(screen.getByRole('article', { name: name('실패 둘', failedCopy(noPart, false, 0)!.title) })).toBeInTheDocument();
+  });
+
+  it('생방송 받는 중은 퍼센트 없이 녹화 중', async () => {
+    await load([job(1, { title: '라이브', kind: 'live', playbackKind: 'live', status: 'running', progress: liveProg() })]);
+    render(JobList);
+    expect(screen.getByRole('article', { name: name('라이브', t('job.phase.recording')) })).toBeInTheDocument();
+  });
+
+  it('K7: 작업 목록은 ul > li > article이고 포커스 모드 role이 없다(platform.md §12.2 예외)', async () => {
+    await load([job(1, { status: 'queued' })]);
+    const { container } = render(JobList);
+    expect(container.querySelector('ul > li > article')).not.toBeNull();
+    expect(container.querySelector('[role="listbox"],[role="grid"],[role="toolbar"],[role="application"]')).toBeNull();
+  });
+});
+
+describe('키보드로 지우고 Mod+Z로 되돌린다(ADR-0033)', () => {
+  afterEach(() => {
+    setInputModality('pointer');
+    auth.reset();
+  });
+
+  it('직전 입력이 포인터여도 행에서 Delete를 누르면 sticky(capture 리스너가 먼저 돈다), Ctrl+Z로 행이 돌아온다', async () => {
+    auth.apply(AUTH_DISABLED);
+    await load([job(1, { title: '완료 하나', status: 'completed', finalBytes: 10 })]);
+    render(GlobalShortcuts);
+    render(JobList);
+    const row = screen.getByRole('article', { name: jobRowName('완료 하나') });
+    await fireEvent.pointerDown(document.body);
+    row.focus();
+    await fireEvent.keyDown(row, { key: 'Delete' });
+    expect(screen.queryByRole('article', { name: jobRowName('완료 하나') })).toBeNull();
+    expect(toasts.current).toMatchObject({ sticky: true, undo: true });
+    await fireEvent.keyDown(document.body, { key: 'z', ctrlKey: true });
+    expect(await screen.findByRole('article', { name: jobRowName('완료 하나') })).toBeInTheDocument();
+    expect(api.removeJob).not.toHaveBeenCalled();
+    expect(toasts.items).toHaveLength(0);
   });
 });

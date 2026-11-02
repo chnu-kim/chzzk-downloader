@@ -16,6 +16,8 @@ const SHORTCUT = {
   submit: { mac: 'platform.mac.submit', other: 'platform.other.submit' },
   /** 쿠키 안내 둘째 단계의 `{devtools}`(개발자 도구를 여는 키) */
   devtools: { mac: 'platform.mac.devtools', other: 'platform.other.devtools' },
+  /** 되돌리기 토스트 낭독의 `{shortcut}`, Mod+Z(ADR-0033) */
+  undo: { mac: 'platform.mac.undo', other: 'platform.other.undo' },
   /** 구간 편집 타임라인 확대 수식 키(휠과 함께, range-editor.md §7.3): macOS ⌘, 그 밖 Ctrl */
   zoomMod: { mac: 'platform.mac.zoomMod', other: 'platform.other.zoomMod' },
 } as const satisfies Record<string, Record<OsFamily, CopyKey>>;

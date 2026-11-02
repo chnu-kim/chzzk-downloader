@@ -6,7 +6,7 @@
   // 실패(`failed`)도 같은 노드다: tone warning·제목 `update.failed`·본문 `common.keepUsing`, 버튼은 [다시 시도](같은 id라 같은 노드),
   // [×]는 실패만 닫는다(app.md 129).
   // 받는 중 문구는 진행 정도까지 deck 한 줄이다(`update.downloading`, content.md §15.1). 화면에는 정확한 퍼센트(`shown`)가
-  // 보이고(스크린 리더에게는 숨김), 라이브 영역이 읽는 `status`는 25% 단위로만 바뀐다(1%마다 다시 읽지 않게, content.md §10).
+  // 보이고(스크린 리더에게는 숨김), AppBanners가 LiveAnnouncer로 읽는 `status`는 25% 단위로만 바뀐다(1%마다 다시 읽지 않게, content.md §10).
   import { t } from '../../copy/ko';
   import { updateNoteLines } from '../../format/display';
   import Notice from '../ui/Notice.svelte';

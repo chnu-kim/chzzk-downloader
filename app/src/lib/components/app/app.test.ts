@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AuthStatusDto, ChannelRefDto, Os, SettingsDto } from '../../bindings';
 import { t } from '../../copy/ko';
 import { job, prog } from '../../../test/jobFixtures';
+import { jobRowName } from '../../../test/jobRow';
 
 class FakeChannel {
   onmessage: (e: unknown) => void = () => {};
@@ -369,7 +370,7 @@ describe('잠자기 방지 표시(platform.md §15)', () => {
     start(dto({ state: 'disabled' }));
     vi.mocked(api.subscribeJobs).mockResolvedValue([job(1, { status: 'running', progress: prog() })]);
     render(App);
-    await screen.findByRole('article', { name: '영상 1' });
+    await screen.findByRole('article', { name: jobRowName('영상 1') });
     expect(screen.queryByText(t('power.keepingAwake'))).toBeNull();
     keepAwakeCb(true);
     expect(await screen.findByText(t('power.keepingAwake'))).toBeInTheDocument();
@@ -381,7 +382,7 @@ describe('잠자기 방지 표시(platform.md §15)', () => {
     start(dto({ state: 'disabled' }));
     vi.mocked(api.subscribeJobs).mockResolvedValue([job(1, { status: 'paused', partialBytes: 5 })]);
     render(App);
-    await screen.findByRole('article', { name: '영상 1' });
+    await screen.findByRole('article', { name: jobRowName('영상 1') });
     keepAwakeCb(true);
     await new Promise((r) => setTimeout(r, 0));
     expect(screen.queryByText(t('power.keepingAwake'))).toBeNull();

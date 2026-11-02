@@ -970,6 +970,21 @@
       "reason": "상태 낭독 문장 하나라 대상 먼저 어순이 아니다(content.md §10 낭독 골든)"
     },
     {
+      "key": "a11y.noticeAction",
+      "word": "{message}.",
+      "reason": "알림(토스트·배너) 글 + 동작 이름을 읽는 낭독 문장이라 대상 먼저 어순이 아니다(content.md §10, 구현 기록 27, ADR-0033)"
+    },
+    {
+      "key": "a11y.noticeUndo",
+      "word": "{message}.",
+      "reason": "되돌리기 토스트 글 + 단축키 안내를 읽는 낭독 문장이다(content.md §10, 구현 기록 27, ADR-0033)"
+    },
+    {
+      "key": "a11y.undone",
+      "word": "되돌렸어요",
+      "reason": "Mod+Z 결과를 읽는 대상 없는 낭독 문장이다(content.md §10, 구현 기록 27, ADR-0033)"
+    },
+    {
       "key": "settings.cookie.howto.step3",
       "word": "애플리케이션",
       "reason": "다른 프로그램(브라우저 개발자 도구)의 탭 이름을 ‘ ’로 인용한 것이다(content.md §12-5, §15.1)"

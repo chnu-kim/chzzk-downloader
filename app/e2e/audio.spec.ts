@@ -4,6 +4,7 @@ import type { Locator } from '@playwright/test';
 import { quality, resolved, vodResolved } from '../src/test/fixtures';
 import { t } from './copy';
 import { expect, test, type App } from './fixtures';
+import { jobRowName } from '../src/test/jobRow';
 
 const enqReqs = async (app: App) => ((await app.args('enqueue')) as { req: Record<string, unknown> }[]).map((e) => e.req);
 const downloadBtn = (card: Locator) => card.getByRole('button', { name: t('card.download') });
@@ -45,7 +46,7 @@ test('"오디오만"을 고르면 확장자가 .m4a가 되고, 받으면 작업 
   expect(reqs).toHaveLength(1);
   expect(reqs[0]).toMatchObject({ qualityId: 'audio', qualityLabel: t('quality.audioOnly'), expectedKind: 'progressive' });
   expect('range' in reqs[0]).toBe(false);
-  const item = app.page.getByRole('article', { name: r.meta.title });
+  const item = app.page.getByRole('article', { name: jobRowName(r.meta.title) });
   await expect(item.locator('.job-quality')).toHaveText(t('quality.audioOnly'));
   // 작업의 산출 경로는 .m4a(가짜 백엔드가 셸처럼 화질 키로 정한다)
   const job = await app.ctl((c) => c.job(1), null);

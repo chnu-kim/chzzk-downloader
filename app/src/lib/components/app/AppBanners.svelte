@@ -1,4 +1,6 @@
 <script lang="ts" module>
+  import { t } from '../../copy/ko';
+  import { noticeSpeech } from '../../spoken';
   // 배너 우선순위(system/patterns.md §1.4): 한 번에 하나만 보이고 오류가 먼저다.
   //   ① B2 설정 저장 실패 → ② B4 업데이트 실패 → ③ B4 진행(받는 중·설치 중) → (④ B5 서비스 공지 block·warn: 자리만) →
   //   ⑤ 웹 구성요소 미달 경고(platform.md §5, 이번 실행만 닫을 수 있다) → ⑥ B1 받다 만 영상 → ⑦ B4 새 버전 → (⑧ B5 info: 자리만)
@@ -31,15 +33,69 @@
     if (s.updateAvailable) return 'update';
     return null;
   }
+
+  export interface BannerSpeechInput {
+    which: BannerKind | null;
+    updateVersion: string;
+    /** 받는 중·설치 중 낭독 문구(25% 단위). 없으면 null */
+    updateStatus: string | null;
+    updateFailure: 'failed' | 'untrusted' | null;
+    /** 실패 배너에 [다시 시도]가 있는가 */
+    updateRetry: boolean;
+    resumableCount: number;
+  }
+
+  /** 업데이트 실패 배너를 읽을 글. 서명 확인 실패는 본문 한 문장, 그 밖은 제목 `update.failed` + 본문 `common.keepUsing`(화면과 같은 두 문장) */
+  export function updateFailedText(failure: 'failed' | 'untrusted' | null): string {
+    return failure === 'untrusted' ? t('update.untrusted') : `${t('update.failed')}. ${t('common.keepUsing')}`;
+  }
+
+  /**
+   * 배너를 읽을 문장(ADR-0033). `key`가 바뀔 때만 읽는다: 배너가 처음 보이거나 다른 배너로 바뀔 때, 업데이트 진행 문구가 바뀔 때.
+   * B1의 개수가 줄어드는 것(모두 이어받기 중)은 다시 읽지 않는다. 동작이 하나면 그 이름을 함께 읽고, 둘 이상(B2)이면 글만 읽는다
+   */
+  export function bannerSpeech(s: BannerSpeechInput): { key: string; text: string; urgent: boolean } | null {
+    switch (s.which) {
+      case null:
+        return null;
+      case 'update':
+        return s.updateStatus !== null
+          ? { key: `update:${s.updateStatus}`, text: s.updateStatus, urgent: false }
+          : {
+              key: 'update',
+              text: noticeSpeech(t('update.banner', { version: s.updateVersion }), t('update.install')),
+              urgent: false,
+            };
+      case 'updateFailed': {
+        const text = updateFailedText(s.updateFailure);
+        return {
+          key: `updateFailed:${s.updateFailure}`,
+          text: s.updateRetry ? noticeSpeech(text, t('action.retry')) : text,
+          urgent: s.updateFailure === 'untrusted',
+        };
+      }
+      case 'settings':
+        return { key: 'settings', text: t('banner.settingsError'), urgent: true };
+      case 'engine':
+        return { key: 'engine', text: t('engine.old.title'), urgent: false };
+      case 'interrupted':
+        return {
+          key: 'interrupted',
+          text: noticeSpeech(t('banner.interrupted', { n: s.resumableCount }), t('banner.resumeAll')),
+          urgent: false,
+        };
+    }
+  }
 </script>
 
 <script lang="ts">
+  import { untrack } from 'svelte';
   import * as api from '../../api';
-  import { t } from '../../copy/ko';
   import { formatFileSize, formatPercent, sizeBaseOf } from '../../format/bytes';
   import { engineFixText } from '../../platform';
   import { engine } from '../../stores/engine.svelte';
   import { jobs } from '../../stores/jobs.svelte';
+  import { announcer } from '../../stores/announce.svelte';
   import { platform } from '../../stores/platform.svelte';
   import { settings } from '../../stores/settings.svelte';
   import { update } from '../../stores/update.svelte';
@@ -105,6 +161,32 @@
         ? t('update.installing')
         : null,
   );
+
+  // 배너 낭독(ADR-0033): `key`가 바뀔 때만 상주 LiveAnnouncer로 읽는다. 배너 요소 자체는 role이 없다
+  const speech = $derived(
+    bannerSpeech({
+      which,
+      updateVersion,
+      updateStatus,
+      updateFailure: update.failure,
+      updateRetry: update.failure === 'failed' && !!update.available,
+      resumableCount: jobs.resumableCount,
+    }),
+  );
+  let spokenKey: string | null = null;
+  $effect(() => {
+    const s = speech;
+    untrack(() => {
+      if (!s) {
+        spokenKey = null;
+        return;
+      }
+      if (s.key === spokenKey) return;
+      spokenKey = s.key;
+      if (s.urgent) announcer.alert(s.text);
+      else announcer.say(s.text);
+    });
+  });
 </script>
 
 {#if which !== null}

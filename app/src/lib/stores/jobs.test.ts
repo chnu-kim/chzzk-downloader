@@ -4,6 +4,7 @@ import { err, job, liveProg, prog, signedInAs } from '../../test/jobFixtures';
 import { errorCopy } from '../copy/errors';
 import { t } from '../copy/ko';
 import { formatFileSize } from '../format/bytes';
+import { jobSpeech } from '../jobs';
 import { RECOVERY_NOTICE_MS, RECOVERY_SILENT_MS } from '../timing';
 
 class FakeChannel {
@@ -29,6 +30,8 @@ const { toasts } = await import('./toast.svelte');
 const { auth } = await import('./auth.svelte');
 const { announcer } = await import('./announce.svelte');
 const { ui } = await import('./ui.svelte');
+const { setInputModality } = await import('../inputModality');
+const { TOAST_MS } = await import('../timing');
 
 function deferred<T>() {
   let resolve!: (v: T) => void;
@@ -123,6 +126,7 @@ beforeEach(() => {
   vi.mocked(api.revealOutput).mockReset().mockResolvedValue();
   ui.view = 'settings';
   ui.windowFocused = true;
+  setInputModality('pointer');
 });
 
 afterEach(() => {
@@ -688,5 +692,251 @@ describe('연결 대기·회복 추적(patterns.md §3.2·§1.2)', () => {
     expect(s.recovered.has(1)).toBe(true);
     b.send({ type: 'status', job: job(1, { status: 'paused', partialBytes: 5 }) });
     expect(s.recovered.has(1)).toBe(false);
+  });
+});
+
+describe('25% 낭독(patterns.md P-9)', () => {
+  const TOTAL = 4_294_967_296;
+  const at = (pct: number, over: Partial<ReturnType<typeof prog>> = {}) => prog({ bytes: Math.round((TOTAL * pct) / 100), ...over });
+  const tick = (title: string, pct: number) => jobSpeech(title, t('job.phase.downloading'), pct);
+
+  async function running(over: Partial<JobDto> = {}, pct = 0) {
+    const s = new JobsStore();
+    const b = begin(s);
+    b.snapshot([job(1, { title: '영상', status: 'running', progress: at(pct), ...over })]);
+    await b.started;
+    return { s, send: b.send };
+  }
+  const calls = (spy: { mock: { calls: unknown[][] } }) => spy.mock.calls.map((c) => c[0]);
+
+  it('25·50·75%를 처음 넘을 때만 한 번씩 읽는다', async () => {
+    const spy = vi.spyOn(announcer, 'say').mockImplementation(() => {});
+    const { send } = await running();
+    for (const p of [10, 24]) send({ type: 'progress', id: 1, progress: at(p) });
+    expect(spy).not.toHaveBeenCalled();
+    send({ type: 'progress', id: 1, progress: at(25) });
+    expect(calls(spy)).toEqual([tick('영상', 25)]);
+    for (const p of [30, 40]) send({ type: 'progress', id: 1, progress: at(p) });
+    expect(spy).toHaveBeenCalledTimes(1);
+    send({ type: 'progress', id: 1, progress: at(50) });
+    send({ type: 'progress', id: 1, progress: at(75) });
+    send({ type: 'progress', id: 1, progress: at(99) });
+    expect(calls(spy)).toEqual([tick('영상', 25), tick('영상', 50), tick('영상', 75)]);
+    spy.mockRestore();
+  });
+
+  it('P-4: 값이 줄었다 다시 올라도 같은 단위를 다시 읽지 않는다', async () => {
+    const spy = vi.spyOn(announcer, 'say').mockImplementation(() => {});
+    const { send } = await running();
+    for (const p of [52, 48, 51]) send({ type: 'progress', id: 1, progress: at(p) });
+    // 52에서 50 하나만 읽는다(25는 건너뛰었으므로 가장 큰 단위 하나)
+    expect(calls(spy)).toEqual([tick('영상', 50)]);
+    spy.mockRestore();
+  });
+
+  it('finalizing·reresolving·waitingNetwork 단계의 진행은 읽지 않는다', async () => {
+    const spy = vi.spyOn(announcer, 'say').mockImplementation(() => {});
+    const { send } = await running();
+    for (const phase of ['finalizing', 'reresolving', 'waitingNetwork'] as const) {
+      send({ type: 'progress', id: 1, progress: at(80, { phase }) });
+    }
+    expect(spy.mock.calls.filter((c) => String(c[0]).includes('퍼센트'))).toEqual([]);
+    spy.mockRestore();
+  });
+
+  it('이어받기: 55%에서 멈췄다 다시 받으면 50은 다시 읽지 않고 75만 읽는다', async () => {
+    const spy = vi.spyOn(announcer, 'say').mockImplementation(() => {});
+    const { send } = await running({ status: 'paused' }, 55);
+    // 실제 셸은 requeue가 queued(퍼센트 바닥을 지운다)를 보낸 뒤 running으로 올린다
+    send({ type: 'status', job: job(1, { title: '영상', status: 'queued' }) });
+    send({ type: 'status', job: job(1, { title: '영상', status: 'running', progress: at(55) }) });
+    spy.mockClear();
+    send({ type: 'progress', id: 1, progress: at(55) });
+    send({ type: 'progress', id: 1, progress: at(60) });
+    expect(spy).not.toHaveBeenCalled();
+    send({ type: 'progress', id: 1, progress: at(75) });
+    expect(calls(spy)).toEqual([tick('영상', 75)]);
+    spy.mockRestore();
+  });
+
+  it('완료한 작업을 다시 받으면 25%부터 다시 읽는다', async () => {
+    const spy = vi.spyOn(announcer, 'say').mockImplementation(() => {});
+    const { send } = await running();
+    send({ type: 'progress', id: 1, progress: at(75) });
+    send({ type: 'status', job: job(1, { title: '영상', status: 'completed' }) });
+    send({ type: 'status', job: job(1, { title: '영상', status: 'running', progress: at(0) }) });
+    spy.mockClear();
+    send({ type: 'progress', id: 1, progress: at(25) });
+    expect(calls(spy)).toEqual([tick('영상', 25)]);
+    spy.mockRestore();
+  });
+
+  it('포커스가 행 자체에 있으면 틱은 읽지 않는다(행 이름이 같은 문장으로 바뀐다)', async () => {
+    const spy = vi.spyOn(announcer, 'say').mockImplementation(() => {});
+    const row = document.createElement('div');
+    row.setAttribute('data-job-id', '1');
+    row.tabIndex = 0;
+    document.body.append(row);
+    row.focus();
+    const { send } = await running();
+    send({ type: 'progress', id: 1, progress: at(25) });
+    expect(spy).not.toHaveBeenCalled();
+    // 기준은 올라가 있으므로 포커스를 떠난 뒤에도 같은 단위를 다시 읽지 않는다
+    row.blur();
+    send({ type: 'progress', id: 1, progress: at(30) });
+    expect(spy).not.toHaveBeenCalled();
+    send({ type: 'progress', id: 1, progress: at(50) });
+    expect(calls(spy)).toEqual([tick('영상', 50)]);
+    row.remove();
+    spy.mockRestore();
+  });
+
+  it('포커스가 행 안의 버튼에 있으면 틱을 읽는다(바뀌는 것은 조상 행의 이름뿐이라 보조 기술이 알리지 않는다)', async () => {
+    const spy = vi.spyOn(announcer, 'say').mockImplementation(() => {});
+    const row = document.createElement('article');
+    row.setAttribute('data-job-id', '1');
+    row.tabIndex = 0;
+    const btn = document.createElement('button');
+    row.append(btn);
+    document.body.append(row);
+    btn.focus();
+    const { send } = await running();
+    send({ type: 'progress', id: 1, progress: at(25) });
+    expect(calls(spy)).toEqual([tick('영상', 25)]);
+    // 행 자체로 옮기면 그다음 단위는 행 이름이 대신 알린다
+    spy.mockClear();
+    row.focus();
+    send({ type: 'progress', id: 1, progress: at(50) });
+    expect(spy).not.toHaveBeenCalled();
+    // 다시 버튼으로 와도 행 이름으로 이미 알린 50은 다시 읽지 않는다
+    btn.focus();
+    send({ type: 'progress', id: 1, progress: at(55) });
+    expect(spy).not.toHaveBeenCalled();
+    row.remove();
+    spy.mockRestore();
+  });
+
+  it('다시 구독한 스냅샷이 60%면 첫 진행 70%는 읽지 않고 75%에서 읽는다', async () => {
+    const spy = vi.spyOn(announcer, 'say').mockImplementation(() => {});
+    const { send } = await running({}, 60);
+    send({ type: 'progress', id: 1, progress: at(70) });
+    expect(spy).not.toHaveBeenCalled();
+    send({ type: 'progress', id: 1, progress: at(75) });
+    expect(calls(spy)).toEqual([tick('영상', 75)]);
+    spy.mockRestore();
+  });
+
+  it('생방송은 진행 이벤트를 여러 번 보내도 읽지 않는다', async () => {
+    const spy = vi.spyOn(announcer, 'say').mockImplementation(() => {});
+    const { send } = await running({ kind: 'live', playbackKind: 'live', progress: liveProg() });
+    for (let i = 0; i < 3; i++) send({ type: 'progress', id: 1, progress: liveProg({ bytes: 9_000_000_000 * (i + 1) }) });
+    expect(spy).not.toHaveBeenCalled();
+    spy.mockRestore();
+  });
+
+  it('지운 작업의 기준은 남지 않는다: 같은 id의 새 작업은 25%에서 읽는다', async () => {
+    const spy = vi.spyOn(announcer, 'say').mockImplementation(() => {});
+    const { send } = await running();
+    send({ type: 'progress', id: 1, progress: at(50) });
+    send({ type: 'removed', id: 1 });
+    send({ type: 'added', job: job(1, { title: '영상', status: 'running', progress: at(0) }) });
+    spy.mockClear();
+    send({ type: 'progress', id: 1, progress: at(25) });
+    expect(calls(spy)).toEqual([tick('영상', 25)]);
+    spy.mockRestore();
+  });
+});
+
+describe('키보드로 지운 되돌리기 토스트는 닫을 때까지 둔다(ADR-0033)', () => {
+  async function loaded(list: JobDto[]) {
+    const s = new JobsStore();
+    const b = begin(s);
+    b.snapshot(list);
+    await b.started;
+    return s;
+  }
+
+  it('키보드면 sticky·undo: TOAST_MS가 지나도 확정되지 않고 dismiss로만 확정한다', async () => {
+    vi.useFakeTimers();
+    const s = await loaded([job(1, { status: 'completed' })]);
+    setInputModality('keyboard');
+    await s.act(1, 'remove');
+    expect(toasts.current).toMatchObject({ sticky: true, undo: true });
+    vi.advanceTimersByTime(TOAST_MS * 3);
+    expect(api.removeJob).not.toHaveBeenCalled();
+    expect(s.hidden.has(1)).toBe(true);
+    toasts.dismiss(toasts.current!.id);
+    expect(api.removeJob).toHaveBeenCalledExactlyOnceWith(1);
+  });
+
+  it('clear()는 숨긴 작업의 remove_job이 모두 끝날 때까지 기다린다(종료 전 비움)', async () => {
+    const s = await loaded([job(1, { status: 'completed' }), job(2, { status: 'completed' })]);
+    setInputModality('keyboard');
+    const done: Array<() => void> = [];
+    vi.mocked(api.removeJob).mockImplementation(() => new Promise<void>((r) => done.push(r)));
+    s.clearFinished();
+    let settled = false;
+    const p = toasts.clear().then(() => (settled = true));
+    await Promise.resolve();
+    expect(api.removeJob).toHaveBeenCalledTimes(2);
+    done[0]();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    done[1]();
+    await p;
+    expect(settled).toBe(true);
+  });
+
+  it('포인터면 undo만이고 TOAST_MS 뒤에 확정한다', async () => {
+    vi.useFakeTimers();
+    const s = await loaded([job(1, { status: 'completed' })]);
+    await s.act(1, 'remove');
+    expect(toasts.current?.undo).toBe(true);
+    expect(toasts.current?.sticky).toBeUndefined();
+    vi.advanceTimersByTime(TOAST_MS);
+    expect(api.removeJob).toHaveBeenCalledExactlyOnceWith(1);
+  });
+
+  it('키보드로 연달아 지워도 첫 삭제가 먼저 확정되지 않고, undoLatest는 나중 것부터 되돌린다', async () => {
+    vi.useFakeTimers();
+    const s = await loaded([job(1, { status: 'completed' }), job(2, { status: 'completed' })]);
+    setInputModality('keyboard');
+    await s.act(1, 'remove');
+    await s.act(2, 'remove');
+    vi.advanceTimersByTime(TOAST_MS * 3);
+    expect(api.removeJob).not.toHaveBeenCalled();
+    expect(toasts.undoLatest()).toBe(true);
+    expect(s.hidden.has(2)).toBe(false);
+    expect(s.hidden.has(1)).toBe(true);
+    expect(toasts.current?.message).toBe(t('toast.removed'));
+    expect(api.removeJob).not.toHaveBeenCalled();
+  });
+
+  it('완료 전이(홈 아님)는 토스트 하나만 읽는다. 홈이면 토스트 없이 a11y.jobStatus 한 번', async () => {
+    const say = vi.spyOn(announcer, 'say');
+    const done = job(1, { title: '영상', status: 'completed', finalBytes: 10 });
+    ui.view = 'settings';
+    // 이벤트는 begin이 만든 Channel로 들어온다: 다시 구독해 send를 얻는다
+    const s2 = new JobsStore();
+    const h = begin(s2);
+    h.snapshot([job(1, { title: '영상', status: 'running', progress: prog() })]);
+    await h.started;
+    say.mockClear();
+    h.send({ type: 'status', job: done });
+    expect(toasts.current?.message).toBe(t('toast.completed', { title: '영상' }));
+    expect(say.mock.calls.map((c) => c[0])).toEqual([t('toast.completed', { title: '영상' })]);
+
+    toasts.clear();
+    say.mockClear();
+    ui.view = 'home';
+    const s3 = new JobsStore();
+    const h3 = begin(s3);
+    h3.snapshot([job(1, { title: '영상', status: 'running', progress: prog() })]);
+    await h3.started;
+    h3.send({ type: 'status', job: done });
+    expect(toasts.items).toHaveLength(0);
+    expect(say.mock.calls.map((c) => c[0])).toEqual([t('a11y.jobStatus', { title: '영상', status: t('job.status.completed') })]);
+    say.mockRestore();
   });
 });

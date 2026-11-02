@@ -109,7 +109,7 @@
     if (e.target !== e.currentTarget) return;
     const order = jobs.order;
     const i = order.indexOf(job.id);
-    const b = jobButtons(job, jobs.state.progress.get(job.id), settings.cookiesEnabled, jobBlock(job, auth.status));
+    const b = jobButtons(job, jobs.state.progress.get(job.id), settings.cookiesEnabled, jobBlock(job, auth.status), settings.naverCookiesSaved, jobs.cookiesAtFailure.get(job.id));
     let action: JobAction | null = null;
     switch (e.key) {
       case 'ArrowDown':
@@ -159,6 +159,8 @@
           waitingSince={jobs.waitingSince.get(job.id) ?? null}
           recovered={jobs.recovered.has(job.id)}
           cookiesEnabled={settings.cookiesEnabled}
+          naverCookiesSaved={settings.naverCookiesSaved}
+          cookiesAtFailure={jobs.cookiesAtFailure.get(job.id)}
           block={jobBlock(job, auth.status)}
           highlighted={jobs.highlight.has(job.id)}
           tabbable={tabbableId === job.id}

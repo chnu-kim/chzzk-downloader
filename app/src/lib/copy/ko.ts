@@ -234,6 +234,7 @@ export const ko = {
   'action.overwriteAndDownload': '덮어쓰고 받기…',
   'action.openCookieSettings': '네이버 로그인 정보 넣기…',
   'action.reenterCookies': '네이버 로그인 정보 다시 넣기…',
+  'action.enableCookies': '네이버 로그인 정보 켜기…',
   'action.copied': '복사했어요',
 
   'toast.completed': '‘{title}’ 다운로드를 마쳤어요',
@@ -274,6 +275,7 @@ export const ko = {
   'dialog.legacy.item.folder': '저장 폴더',
   'dialog.legacy.item.recent': '최근 영상 {n}개',
   'dialog.legacy.item.cookies': '네이버 로그인 정보',
+  'dialog.legacy.cookiesOff.help': '네이버 로그인 정보는 꺼진 채로 가져와요. 설정의 고급에서 켤 수 있어요.',
   'dialog.legacy.import': '가져오기',
   'dialog.overwrite.title': '‘{name}’ 파일을 덮어쓸까요?',
   'dialog.overwrite.body': '지금 있는 파일을 지우고 새로 받아요. 되돌릴 수 없어요.',

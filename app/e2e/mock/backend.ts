@@ -419,7 +419,9 @@ export function install(scenario: Scenario = {}): E2EController {
       }
       return settings;
     },
-    set_naver_cookies: () => (settings = { ...settings, naverCookiesSaved: true, useNaverCookies: true }),
+    // 셸과 같게: 저장된 값이 없던 상태의 처음 저장만 사용도 켠다(app.md 구현 중 변경 130)
+    set_naver_cookies: () =>
+      (settings = { ...settings, naverCookiesSaved: true, useNaverCookies: settings.naverCookiesSaved ? settings.useNaverCookies : true }),
     clear_naver_cookies: () => (settings = { ...settings, naverCookiesSaved: false, useNaverCookies: false }),
     import_legacy: () => null,
     pick_folder: () => null,

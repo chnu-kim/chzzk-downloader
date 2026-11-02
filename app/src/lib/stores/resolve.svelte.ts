@@ -3,12 +3,20 @@
 import * as api from '../api';
 import type { AppError, ResolvedDto } from '../bindings';
 import { toAppError } from '../copy/errors';
+import { settings } from './settings.svelte';
 
 export type ResolveState =
   | { kind: 'idle' }
   | { kind: 'loading'; gen: number; url: string }
   | { kind: 'ready'; gen: number; view: ResolvedDto }
-  | { kind: 'error'; gen: number; url: string; error: AppError };
+  | {
+      kind: 'error';
+      gen: number;
+      url: string;
+      error: AppError;
+      /** 실패했을 때 네이버 로그인 정보를 보냈는가(오류 문구의 갈래를 그때 상태로 정한다) */
+      cookiesAtFailure: boolean;
+    };
 
 export class ResolveStore {
   /** URL 입력줄의 글. 최근 VOD·드롭·클립보드 제안·붙여넣기가 함께 쓴다 */
@@ -35,7 +43,7 @@ export class ResolveStore {
       const view = await api.resolve(trimmed);
       if (gen === this.#gen) this.state = { kind: 'ready', gen, view };
     } catch (e) {
-      if (gen === this.#gen) this.state = { kind: 'error', gen, url: trimmed, error: e as AppError };
+      if (gen === this.#gen) this.state = { kind: 'error', gen, url: trimmed, error: e as AppError, cookiesAtFailure: settings.cookiesEnabled };
     }
   }
 

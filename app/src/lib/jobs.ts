@@ -461,6 +461,7 @@ export type JobAction =
   | 'overwrite'
   | 'openCookieSettings'
   | 'reenterCookies'
+  | 'enableCookies'
   /** 제목 전체를 행 아래에 펼친다(화면 안의 일이라 셸 command가 없다) */
   | 'showTitle';
 
@@ -480,6 +481,7 @@ const FROM_ERROR: Partial<Record<ActionId, JobAction>> = {
   remove: 'remove',
   openCookieSettings: 'openCookieSettings',
   reenterCookies: 'reenterCookies',
+  enableCookies: 'enableCookies',
   reresolve: 'reresolve',
   recordAgain: 'recordAgain',
   copyReport: 'copyReport',
@@ -487,12 +489,20 @@ const FROM_ERROR: Partial<Record<ActionId, JobAction>> = {
 };
 
 /** 실패 항목의 오류 줄과 버튼(§9 D 열) */
-export function failedCopy(job: JobDto, cookiesEnabled: boolean, delegatedCount = 0) {
+export function failedCopy(
+  job: JobDto,
+  cookiesEnabled: boolean,
+  delegatedCount = 0,
+  naverCookiesSaved = false,
+  cookiesAtFailure?: boolean,
+) {
   if (!job.error) return null;
   return errorCopy(job.error, {
     place: 'job',
     partialBytes: job.partialBytes,
     cookiesEnabled,
+    naverCookiesSaved,
+    cookiesAtFailure,
     delegatedCount,
     keptRecording: keepsRecording(job),
   });
@@ -516,6 +526,8 @@ export function jobButtons(
   p: ProgressDto | null | undefined,
   cookiesEnabled = false,
   block: JobBlock | null = null,
+  naverCookiesSaved = false,
+  cookiesAtFailure?: boolean,
 ): JobButtons {
   let primary: JobAction[] = [];
   let cancel = false;
@@ -545,7 +557,7 @@ export function jobButtons(
       cancel = true;
       break;
     case 'failed': {
-      const c = failedCopy(job, cookiesEnabled);
+      const c = failedCopy(job, cookiesEnabled, 0, naverCookiesSaved, cookiesAtFailure);
       primary = (c?.actions ?? ['retry'])
         .map((a) => FROM_ERROR[a])
         .filter((a): a is JobAction => !!a);
@@ -630,6 +642,7 @@ const ACTION_LABEL: Record<Exclude<JobAction, 'openFolder'>, CopyKey> = {
   overwrite: 'action.overwriteAndDownload',
   openCookieSettings: 'action.openCookieSettings',
   reenterCookies: 'action.reenterCookies',
+  enableCookies: 'action.enableCookies',
   showTitle: 'action.showTitle',
 };
 

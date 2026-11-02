@@ -107,3 +107,18 @@ describe('ResolveStore.recheck single-flight는 카드마다', () => {
     expect(s.rechecking).toBe(false);
   });
 });
+
+describe('ResolveStore 오류 상태의 쿠키 기록', () => {
+  it('실패한 그때 네이버 로그인 정보를 보냈는지 적는다', async () => {
+    const { settings } = await import('./settings.svelte');
+    vi.mocked(api.resolve).mockRejectedValue({ code: 'authRequired' });
+    settings.dto = { useNaverCookies: false, naverCookiesSaved: true } as never;
+    const s = new ResolveStore();
+    await s.load('https://chzzk.naver.com/video/1');
+    expect(s.state.kind === 'error' && s.state.cookiesAtFailure).toBe(false);
+    settings.dto = { useNaverCookies: true, naverCookiesSaved: true } as never;
+    await s.load('https://chzzk.naver.com/video/1');
+    expect(s.state.kind === 'error' && s.state.cookiesAtFailure).toBe(true);
+    settings.dto = null;
+  });
+});

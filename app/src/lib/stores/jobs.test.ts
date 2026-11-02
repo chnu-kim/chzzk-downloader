@@ -48,6 +48,31 @@ function begin(store: InstanceType<typeof JobsStore>) {
   return { send: (e: JobEvent) => channel.onmessage(e), snapshot: snap.resolve, started };
 }
 
+describe('실패한 때의 쿠키 사용 기록', () => {
+  it('실패 이벤트가 올 때 사용 여부를 적고, 상태가 바뀌거나 지우면 잊는다', async () => {
+    const { settings } = await import('./settings.svelte');
+    settings.dto = { useNaverCookies: true, naverCookiesSaved: true } as never;
+    const store = new JobsStore();
+    const b = begin(store);
+    b.snapshot([job(1, { status: 'running' })]);
+    await b.started;
+    b.send({ type: 'status', job: job(1, { status: 'failed', error: err('authRequired', { stage: 'resolve' }) }) });
+    expect(store.cookiesAtFailure.get(1)).toBe(true);
+    // 설정이 바뀌어도 이미 적은 값은 그대로(같은 실패의 다른 이벤트)
+    settings.dto = { useNaverCookies: false, naverCookiesSaved: true } as never;
+    b.send({ type: 'status', job: job(1, { status: 'failed', error: err('authRequired', { stage: 'resolve' }) }) });
+    expect(store.cookiesAtFailure.get(1)).toBe(true);
+    // 다시 받다 실패하면 새로 적는다
+    b.send({ type: 'status', job: job(1, { status: 'queued' }) });
+    expect(store.cookiesAtFailure.has(1)).toBe(false);
+    b.send({ type: 'status', job: job(1, { status: 'failed', error: err('authRequired', { stage: 'resolve' }) }) });
+    expect(store.cookiesAtFailure.get(1)).toBe(false);
+    b.send({ type: 'removed', id: 1 });
+    expect(store.cookiesAtFailure.has(1)).toBe(false);
+    settings.dto = null;
+  });
+});
+
 beforeEach(() => {
   // 앞 테스트가 남긴 되돌리기 토스트가 닫히며 remove_job을 부르므로 목을 비우기 전에 먼저 치운다
   toasts.clear();

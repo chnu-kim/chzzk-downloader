@@ -5,7 +5,7 @@ import { tick } from 'svelte';
 import type { AppError, OutputCheck, RecentVodDto, SettingsDto } from '../../bindings';
 import { check, liveResolved, quality, resolved, vodResolved } from '../../../test/fixtures';
 import { signedInAs } from '../../../test/jobFixtures';
-import { errorCopy, helpLinkLabel } from '../../copy/errors';
+import { actionLabel, errorCopy, helpLinkLabel } from '../../copy/errors';
 import { t } from '../../copy/ko';
 import { shortcutText } from '../../platform';
 import { CHECK_DEBOUNCE_MS, qualitySize } from '../../receive';
@@ -168,6 +168,55 @@ describe('UrlBar', () => {
 
     // 입력칸이 행동이라 버튼이 없다(content.md §15.2 `invalidUrl`: 유일한 예외)
     expect(screen.queryByRole('button', { name: t('action.retry') })).toBeNull();
+  });
+
+  it('불러오기 오류(저장됨·꺼짐)의 [켜기]는 설정의 사용 스위치로 보낸다', async () => {
+    settings.dto = { ...settingsDto, naverCookiesSaved: true, useNaverCookies: false };
+    vi.mocked(api.resolve).mockRejectedValue(appError('authRequired', { stage: 'resolve' }));
+    const user = userEvent.setup();
+    render(InputPanel);
+    await user.type(urlInput(), 'https://chzzk.naver.com/video/1234567{Enter}');
+    await screen.findByRole('alert');
+    await user.click(screen.getByRole('button', { name: actionLabel('enableCookies') }));
+    expect(ui.view).toBe('settings');
+    expect(ui.openCookieSection).toBe(true);
+    expect(ui.cookieFocus).toBe('switch');
+  });
+
+  it('카드의 받기 실패(저장됨·꺼짐)는 "켜기" 안내와 [켜기]를 보이고 설정으로 보낸다', async () => {
+    settings.dto = { ...settingsDto, naverCookiesSaved: true, useNaverCookies: false };
+    const user = await openCard();
+    vi.mocked(api.enqueue).mockRejectedValue(appError('authRequired', { stage: 'resolve' }));
+    await user.click(await downloadButton());
+    const alert = await screen.findByRole('alert');
+    expect(within(alert).getByText(/켜면 받을 수 있어요/)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: actionLabel('enableCookies') }));
+    expect(ui.view).toBe('settings');
+    expect(ui.cookieFocus).toBe('switch');
+  });
+
+  it('카드 오류는 꺼진 채 실패한 뒤 켜도 만료됐다고 하지 않는다', async () => {
+    settings.dto = { ...settingsDto, naverCookiesSaved: true, useNaverCookies: false };
+    const user = await openCard();
+    vi.mocked(api.enqueue).mockRejectedValue(appError('authRequired', { stage: 'resolve' }));
+    await user.click(await downloadButton());
+    const alert = await screen.findByRole('alert');
+    expect(within(alert).getByText(/켜면 받을 수 있어요/)).toBeInTheDocument();
+    settings.dto = { ...settingsDto, naverCookiesSaved: true, useNaverCookies: true };
+    await waitFor(() => expect(within(screen.getByRole('alert')).getByText(/켰어요/)).toBeInTheDocument());
+    expect(screen.queryByText(/만료됐어요/)).toBeNull();
+  });
+
+  it('불러오기 오류는 꺼진 채 실패한 뒤 켜도 만료됐다고 하지 않고 [다시 시도]를 낸다', async () => {
+    settings.dto = { ...settingsDto, naverCookiesSaved: true, useNaverCookies: false };
+    vi.mocked(api.resolve).mockRejectedValue(appError('authRequired', { stage: 'resolve' }));
+    const user = userEvent.setup();
+    render(InputPanel);
+    await user.type(urlInput(), 'https://chzzk.naver.com/video/1234567{Enter}');
+    await screen.findByRole('alert');
+    settings.dto = { ...settingsDto, naverCookiesSaved: true, useNaverCookies: true };
+    await waitFor(() => expect(screen.getByRole('button', { name: t('action.retry') })).toBeInTheDocument());
+    expect(screen.queryByText(/만료됐어요/)).toBeNull();
   });
 
   it('요청이 몰린 오류의 [다시 시도]는 같은 주소로 다시 부른다', async () => {

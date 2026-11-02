@@ -32,6 +32,7 @@ const { jobs } = await import('../../stores/jobs.svelte');
 const { auth } = await import('../../stores/auth.svelte');
 const { settings } = await import('../../stores/settings.svelte');
 const { platform } = await import('../../stores/platform.svelte');
+const { ui } = await import('../../stores/ui.svelte');
 const { toasts } = await import('../../stores/toast.svelte');
 const { default: JobList } = await import('./JobList.svelte');
 const { default: AppBanners } = await import('../app/AppBanners.svelte');
@@ -261,6 +262,32 @@ describe('JobList', () => {
     expect(item.querySelector('.notice-row.tone-danger svg')).not.toBeNull();
     await user.click(within(item).getByRole('button', { name: t('action.resume') }));
     expect(api.resumeJob).toHaveBeenCalledWith(3, false);
+  });
+
+  it('authRequired(저장됨·꺼짐) 실패 행의 [켜기]는 설정의 사용 스위치로 보낸다', async () => {
+    settings.dto = { ...baseSettings, naverCookiesSaved: true, useNaverCookies: false };
+    ui.cookieFocus = 'input';
+    await load([job(3, { status: 'failed', error: err('authRequired', { stage: 'resolve' }) })]);
+    const user = userEvent.setup();
+    render(JobList);
+    const item = screen.getByRole('article', { name: '영상 3' });
+    await user.click(within(item).getByRole('button', { name: t('action.enableCookies') }));
+    expect(ui.view).toBe('settings');
+    expect(ui.cookieFocus).toBe('switch');
+    // 행 본문도 같은 갈래다(JobItem이 저장됨 여부를 failedCopy에 넘긴다)
+    expect(within(item).getByText(/켜면 받을 수 있어요/)).toBeInTheDocument();
+  });
+
+  it('꺼진 채 실패한 행은 켜고 돌아와도 만료됐다고 하지 않는다', async () => {
+    settings.dto = { ...baseSettings, naverCookiesSaved: true, useNaverCookies: false };
+    await load([job(3, { status: 'queued' })]);
+    // 실패 이벤트는 스토어를 거쳐 그때의 쿠키 사용 여부(꺼짐)를 기록한다
+    send({ type: 'status', job: job(3, { status: 'failed', error: err('authRequired', { stage: 'resolve' }) }) });
+    settings.dto = { ...baseSettings, naverCookiesSaved: true, useNaverCookies: true };
+    render(JobList);
+    const item = screen.getByRole('article', { name: '영상 3' });
+    expect(within(item).queryByText(/만료됐어요/)).toBeNull();
+    expect(within(item).getByRole('button', { name: t('action.reresolve') })).toBeInTheDocument();
   });
 
   it('완료 · 파일 없음: 경고 아이콘 + 상태 조각 + 본문 줄 + [폴더에서 보기]만', async () => {

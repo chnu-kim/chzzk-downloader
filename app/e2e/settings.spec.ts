@@ -1,7 +1,7 @@
 // 설정(S2), 글자 크기·모양, 비활성 창, 닫기 가드(D1).
 import type { AuthStatusDto } from '../src/lib/bindings';
 import { resolved } from '../src/test/fixtures';
-import { revealLabel, t } from './copy';
+import { actionLabel, errorCopy, revealLabel, t } from './copy';
 import { expect, test } from './fixtures';
 
 const signedIn: AuthStatusDto = {
@@ -46,11 +46,41 @@ test('설정: 값을 바꾸면 바로 저장하고, 쿠키는 저장 뒤 다시 
   await page.getByRole('button', { name: t('common.save'), exact: true }).click();
   await expect(page.getByText(t('settings.cookie.saved'), { exact: true })).toBeVisible();
   expect(await app.args('set_naver_cookies')).toEqual([{ nidAut: 'e2e-aut', nidSes: 'e2e-ses' }]);
+  // 처음 저장하면 사용도 켜진다
+  await expect(page.getByRole('switch', { name: t('settings.cookie.use') })).toHaveAttribute('aria-checked', 'true');
   await expect(page.getByLabel('NID_AUT', { exact: true })).toHaveValue('');
 
   // 뒤로 → 홈, 입력줄로 포커스
   await page.getByRole('button', { name: t('header.back') }).click();
   await expect(page.getByLabel(t('url.label'))).toBeFocused();
+});
+
+test('저장됨·꺼짐: 불러오기 오류의 [켜기]는 사용 스위치로 가고, Space로 켜면 저장한다', async ({ app }) => {
+  const { page } = app;
+  const url = 'https://chzzk.naver.com/video/9200001';
+  const error = { code: 'authRequired', message: 'e2e', stage: 'resolve', resumable: false, payload: null } as const;
+  await app.open({
+    settings: { naverCookiesSaved: true, useNaverCookies: false },
+    resolve: { [url]: { error } },
+  });
+  const input = page.getByLabel(t('url.label'));
+  await input.fill(url);
+  await input.press('Enter');
+  const want = errorCopy(error, { place: 'resolve', cookiesEnabled: false, naverCookiesSaved: true });
+  await expect(page.getByRole('alert')).toContainText(want.body);
+  await page.getByRole('button', { name: actionLabel('enableCookies'), exact: true }).click();
+  const sw = page.getByRole('switch', { name: t('settings.cookie.use') });
+  await expect(sw).toBeFocused();
+  await app.axe('쿠키 켜기 진입');
+  await page.keyboard.press('Space');
+  await expect.poll(() => app.args('update_settings')).toContainEqual({ patch: { useNaverCookies: true } });
+});
+
+test('D3: 옛 쿠키가 꺼진 채 들어오면 안내 한 줄을 보인다', async ({ app }) => {
+  const { page } = app;
+  await app.open({ info: { legacyCandidate: { dir: '/e2e/legacy', recentCount: 3, hasCookies: true, cookiesOff: true } } });
+  const dialog = page.getByRole('dialog', { name: t('dialog.legacy.title') });
+  await expect(dialog.getByText(t('dialog.legacy.cookiesOff.help'))).toBeVisible();
 });
 
 test('속도 상한: 두 Select에서 고르면 바이트/초 패치를 보내고, 제한 없음으로 되돌리면 null을 보낸다', async ({ app }) => {
@@ -188,7 +218,7 @@ test('닫기 가드: [계속 받기]는 닫지 않고, [닫기]는 quit을 한 �
 
 test('이전 설정을 찾았다는 확인(D3)에서 [나중에]는 가져오지 않는다', async ({ app }) => {
   const { page } = app;
-  await app.open({ info: { legacyCandidate: { dir: '/e2e/legacy', recentCount: 3, hasCookies: false } } });
+  await app.open({ info: { legacyCandidate: { dir: '/e2e/legacy', recentCount: 3, hasCookies: false, cookiesOff: false } } });
   const dialog = page.getByRole('dialog', { name: t('dialog.legacy.title') });
   await expect(dialog).toBeVisible();
   // 안전한 쪽([나중에])이 오른쪽 끝·첫 포커스다

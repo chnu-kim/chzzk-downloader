@@ -92,6 +92,8 @@
   let checkedKey: string | null = $state(null);
   let checkError: AppError | null = $state(null);
   let enqueueError: AppError | null = $state(null);
+  /** 보이는 오류가 생긴 그때 네이버 로그인 정보를 보냈는가(켜고 돌아와도 '만료됐어요'로 바뀌지 않게) */
+  let errorSent: boolean | undefined = $state(undefined);
   let busy = $state(false);
   let titleEl: HTMLHeadingElement | null = $state(null);
   /** D7: 덮어쓰기를 고르고 [받기]를 눌렀을 때의 확인 대화상자 */
@@ -139,6 +141,8 @@
       ? errorCopy(shownError, {
           place: 'resolve',
           cookiesEnabled: settings.cookiesEnabled,
+          naverCookiesSaved: settings.naverCookiesSaved,
+          cookiesAtFailure: errorSent,
           // notOwnContent 제목은 막힌 카드 Notice와 같은 규칙으로 맡은 채널 수를 본다(content.md §15.2)
           delegatedCount: auth.status?.delegatedChannels.length ?? 0,
         })
@@ -203,6 +207,8 @@
       return;
     }
     const handle = setTimeout(async () => {
+      // 요청을 보낸 때의 값(도는 동안 설정을 바꿔도 이 요청과 상관없다, 구현 중 변경 130 리뷰 반영)
+      const sent = settings.cookiesEnabled;
       try {
         const c = await api.checkOutput({
           folder: f,
@@ -221,6 +227,7 @@
         check = null;
         checkedKey = null;
         checkError = e as AppError;
+        errorSent = sent;
       }
     }, CHECK_DEBOUNCE_MS);
     return () => clearTimeout(handle);
@@ -238,6 +245,7 @@
       picked = await api.pickFolder(folderPath || undefined);
     } catch (e) {
       checkError = e as AppError;
+      errorSent = settings.cookiesEnabled;
       return;
     }
     if (!picked) return;
@@ -259,6 +267,7 @@
     if (!ready || !check || !quality) return;
     busy = true;
     enqueueError = null;
+    const sent = settings.cookiesEnabled;
     try {
       await api.enqueue(buildEnqueueRequest(view, quality, folder, check, choices, range));
       announcer.say(t('card.added'));
@@ -266,6 +275,7 @@
       onadded();
     } catch (e) {
       enqueueError = e as AppError;
+      errorSent = sent;
       // 그 사이 목록이나 파일이 바뀌었을 수 있다. 같은 입력으로 다시 검사한다.
       checkedKey = null;
       recheck += 1;

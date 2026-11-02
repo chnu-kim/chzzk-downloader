@@ -2,6 +2,7 @@
   // D3: 첫 실행에 옛 설정을 찾았을 때 한 번 묻는다(system/patterns.md §5.2 D3). 쿠키가 들어 있을 수 있어 자동으로 적용하지 않는다.
   // "나중에"를 고르면 이번 실행에서는 다시 묻지 않고, 셸은 이미 settings.json을 만들어 다음 실행에도 묻지 않는다
   // (구현 중 변경 34). 그 뒤에는 설정 > 이전 버전에서 폴더를 골라 가져온다.
+  // 옛 쿠키가 꺼진 채 들어오면(`cookiesOff`, 옛 '성인 컨텐츠' 꺼짐) 목록 아래 안내 한 줄(구현 중 변경 130).
   import type { AppError } from '../../bindings';
   import { errorCopy } from '../../copy/errors';
   import { t } from '../../copy/ko';
@@ -46,11 +47,16 @@
     {#if c && c.recentCount > 0}<li>{t('dialog.legacy.item.recent', { n: formatCount(c.recentCount) })}</li>{/if}
     {#if c?.hasCookies}<li>{t('dialog.legacy.item.cookies')}</li>{/if}
   </ul>
+  {#if c?.hasCookies && c.cookiesOff}<p class="note">{t('dialog.legacy.cookiesOff.help')}</p>{/if}
 </Dialog>
 
 <style>
   .lead {
     margin: 0;
+  }
+  .note {
+    margin: var(--space-8) 0 0;
+    color: var(--fg-muted);
   }
   .items {
     margin: var(--space-8) 0 0;

@@ -19,6 +19,8 @@ export class UiStore {
   urlTarget: UrlTarget | null = null;
   /** 설정의 쿠키 섹션을 펼쳐 열어 달라는 요청(오류 동작 `openCookieSettings`) */
   openCookieSection = $state(false);
+  /** 쿠키 섹션을 연 뒤 포커스할 곳. 'switch'는 오류 동작 `enableCookies`(사용 스위치), 그 밖은 첫 입력칸. 쿠키 섹션이 한 번 읽고 'input'으로 되돌린다 */
+  cookieFocus: 'input' | 'switch' = $state('input');
   /** 설정의 정보 절 제목으로 포커스를 옮겨 달라는 요청(macOS 메뉴 "…에 관하여", `menu-about`). 정보 절이 한 번 받고 비운다 */
   focusAbout = $state(false);
   /** D4 로그아웃 확인을 띄워 달라는 요청(계정 메뉴·설정 계정 행이 올리고, App의 대화상자 하나가 받는다) */
@@ -62,8 +64,11 @@ export class UiStore {
     return false;
   }
 
-  goSettings(opts: { cookies?: boolean; about?: boolean } = {}) {
-    if (opts.cookies) this.openCookieSection = true;
+  goSettings(opts: { cookies?: boolean | 'switch'; about?: boolean } = {}) {
+    if (opts.cookies) {
+      this.openCookieSection = true;
+      this.cookieFocus = opts.cookies === 'switch' ? 'switch' : 'input';
+    }
     if (opts.about) this.focusAbout = true;
     this.view = 'settings';
   }

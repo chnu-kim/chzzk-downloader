@@ -145,6 +145,22 @@ describe('jobButtons: 상태별 버튼 표(patterns.md §2·§14.3)', () => {
     expect(jobButtons(j, null, false).primary).toEqual(['openCookieSettings']);
   });
 
+  it('authRequired(저장됨·꺼짐)은 켜기', () => {
+    const j = job(1, { status: 'failed', partialBytes: 9, error: err('authRequired', { stage: 'resolve' }) });
+    expect(jobButtons(j, null, false, null, true).primary).toEqual(['enableCookies']);
+    expect(jobButtons(j, null, true, null, true).primary).toEqual(['reenterCookies']);
+    expect(jobButtons(j, null, false, null, false).primary).toEqual(['openCookieSettings']);
+    expect(failedCopy(j, false, 0, true)?.body).toContain('켜면 받을 수 있어요');
+  });
+
+  it('authRequired: 꺼진 채 실패한 뒤 켜도 만료가 아니라 다시 불러오기를 낸다', () => {
+    const j = job(1, { status: 'failed', error: err('authRequired', { stage: 'resolve' }) });
+    expect(jobButtons(j, null, true, null, true, false).primary).toEqual(['reresolve']);
+    expect(failedCopy(j, true, 0, true, false)?.title).not.toContain('만료');
+    // 보낸 채 실패했으면 지금 꺼져 있어도 만료다
+    expect(jobButtons(j, null, false, null, true, true).primary).toEqual(['reenterCookies']);
+  });
+
   it('모든 상태에 주소 복사가 있다', () => {
     const all: JobStatus[] = ['queued', 'running', 'pausing', 'paused', 'interrupted', 'completed', 'skipped', 'failed'];
     for (const status of all) {

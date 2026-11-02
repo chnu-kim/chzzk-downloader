@@ -14,6 +14,7 @@ export type ActionId =
   | 'remove' // 목록에서 지운다(D)
   | 'openCookieSettings' // 설정의 고급 섹션을 펼쳐 연다
   | 'reenterCookies' // 같은 곳, 문구만 다르다
+  | 'enableCookies' // 설정의 고급 섹션을 펼치고 사용 스위치에 포커스한다(저장됨·꺼짐)
   | 'reresolve' // 그 작업의 주소를 입력줄에 넣고 다시 불러온다(D)
   | 'recordAgain' // 그 작업의 주소를 다시 불러와 카드의 [받기]로 새 녹화를 시작한다(D, 생방송)
   | 'recheck' // 맡은 채널을 로그인 서버에 묻고 같은 주소를 다시 불러온다(R, ownership_recheck)
@@ -39,6 +40,13 @@ export interface ErrorContext {
   partialBytes?: number | null;
   /** 지금 네이버 로그인 정보를 쓰고 있는가(설정 `useNaverCookies && naverCookiesSaved`) */
   cookiesEnabled?: boolean;
+  /** 네이버 로그인 정보가 저장돼 있는가(설정 `naverCookiesSaved`). `cookiesEnabled`가 거짓이고 이것이 참이면 "켜면 받을 수 있어요" 갈래 */
+  naverCookiesSaved?: boolean;
+  /**
+   * 실패했을 때 네이버 로그인 정보를 보냈는가. 없으면 `cookiesEnabled`를 그대로 쓴다. 꺼진 채 실패한 뒤 사용자가
+   * 켜고 돌아와도 "만료됐어요"로 바뀌지 않게, 갈래는 실패한 그때의 상태로 정한다(app.md 구현 중 변경 130)
+   */
+  cookiesAtFailure?: boolean;
   /** `network`·`http`의 진단. 없으면 `unknown` */
   diagnosis?: ErrorDiagnosis;
   /** (Phase 3) 영상의 채널 이름과 로그인한 채널 이름 */
@@ -254,6 +262,22 @@ export function errorCopy(raw: AppError, ctx: ErrorContext): ErrorCopy {
   return c;
 }
 
+/** 꺼진 채 실패한 뒤 사용자가 켜고 돌아온 행의 본문. 같은 값을 다시 넣으라고 하지 않고 다시 시도하게 한다 */
+const JUST_ENABLED_BODY = '네이버 로그인 정보를 켰어요. 다시 시도해 주세요.';
+
+type CookieMode = 'expired' | 'justEnabled' | 'savedOff' | 'none';
+
+/**
+ * 로그인 오류의 쿠키 갈래. 실패한 그때 쿠키를 보냈으면 만료(expired), 안 보냈는데 지금 켜져 있으면 막 켠 것(justEnabled),
+ * 꺼져 있고 저장돼 있으면 켜기(savedOff), 저장도 없으면 넣기(none)다.
+ */
+function cookieMode(ctx: ErrorContext): CookieMode {
+  const now = ctx.cookiesEnabled ?? false;
+  if (ctx.cookiesAtFailure ?? now) return 'expired';
+  if (now) return 'justEnabled';
+  return ctx.naverCookiesSaved ? 'savedOff' : 'none';
+}
+
 function codeCopy(raw: AppError, ctx: ErrorContext): ErrorCopy {
   const e = raw.code === 'cancelled' ? { ...raw, code: 'internal' as const } : raw;
   const job = ctx.place === 'job';
@@ -321,31 +345,45 @@ function codeCopy(raw: AppError, ctx: ErrorContext): ErrorCopy {
           ? copy('영상 서버가 접근을 막았어요', withKept('주소를 새로 받아도 계속 거절돼요.'), ['resume'])
           : copy('영상 서버가 접근을 막았어요', '주소를 새로 받아도 계속 거절돼요. 받다 만 파일은 지웠어요.', [fresh]);
       }
-      return ctx.cookiesEnabled
-        ? copy(
+      switch (cookieMode(ctx)) {
+        case 'expired':
+          return copy(
             '네이버 로그인 정보가 만료됐어요',
             '브라우저에서 네이버에 다시 로그인한 뒤 새 값을 넣어 주세요.',
             ['reenterCookies'],
-          )
-        : copy(
+          );
+        case 'justEnabled':
+          return copy('네이버 로그인이 필요한 영상이에요', JUST_ENABLED_BODY, [reload]);
+        case 'savedOff':
+          return copy(
+            '네이버 로그인이 필요한 영상이에요',
+            '연령 제한이나 구독자 전용 영상이에요. 저장한 네이버 로그인 정보를 켜면 받을 수 있어요.',
+            ['enableCookies'],
+          );
+        default:
+          return copy(
             '네이버 로그인이 필요한 영상이에요',
             '연령 제한이나 구독자 전용 영상이에요. 설정에서 네이버 로그인 정보를 넣으면 받을 수 있어요.',
             ['openCookieSettings'],
           );
+      }
 
     case 'noPlayback':
       if (payload(e, 'noPlayback')?.adult) {
-        return ctx.cookiesEnabled
-          ? copy(
+        switch (cookieMode(ctx)) {
+          case 'expired':
+            return copy(
               '성인 인증이 필요한 영상이에요',
               '성인 인증한 계정의 네이버 로그인 정보인지 확인해 주세요.',
               ['reenterCookies'],
-            )
-          : copy(
-              '성인 인증이 필요한 영상이에요',
-              '네이버 로그인 정보가 있어야 받을 수 있어요.',
-              ['openCookieSettings'],
             );
+          case 'justEnabled':
+            return copy('성인 인증이 필요한 영상이에요', JUST_ENABLED_BODY, [reload]);
+          case 'savedOff':
+            return copy('성인 인증이 필요한 영상이에요', '저장한 네이버 로그인 정보를 켜면 받을 수 있어요.', ['enableCookies']);
+          default:
+            return copy('성인 인증이 필요한 영상이에요', '네이버 로그인 정보가 있어야 받을 수 있어요.', ['openCookieSettings']);
+        }
       }
       return copy(
         '아직 받을 수 없는 영상이에요',
@@ -593,6 +631,7 @@ const ACTION_LABEL: Record<Exclude<ActionId, 'openFolder'>, CopyKey> = {
   remove: 'action.remove',
   openCookieSettings: 'action.openCookieSettings',
   reenterCookies: 'action.reenterCookies',
+  enableCookies: 'action.enableCookies',
   reresolve: 'action.reresolve',
   recordAgain: 'action.recordAgain',
   recheck: 'action.reresolve',

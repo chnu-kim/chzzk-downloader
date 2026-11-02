@@ -45,6 +45,19 @@ describe('UiStore Esc', () => {
 });
 
 describe('UiStore 요청 플래그', () => {
+  it('goSettings({ cookies: "switch" })는 사용 스위치 포커스를 요청한다', () => {
+    const ui = new UiStore();
+    expect(ui.cookieFocus).toBe('input');
+    ui.goSettings({ cookies: 'switch' });
+    expect(ui.openCookieSection).toBe(true);
+    expect(ui.cookieFocus).toBe('switch');
+    ui.goSettings({ cookies: true });
+    expect(ui.cookieFocus).toBe('input');
+    ui.goSettings({ cookies: 'switch' });
+    ui.goSettings();
+    expect(ui.cookieFocus).toBe('switch');
+  });
+
   it('D4 로그아웃 요청과 창 포커스의 처음 값', () => {
     const ui = new UiStore();
     expect(ui.logoutConfirm).toBe(false);

@@ -399,19 +399,9 @@ fn cookie_toggle_swaps_client() {
     }
     assert!(!svc.get().naver_cookies_saved);
 
-    // 저장만 하면 사용 여부는 그대로고 클라이언트도 그대로
+    // 처음 저장하면 사용도 켜지고 새 클라이언트. 이미 받은 클라이언트(실행 중 작업)는 그대로
     let d = svc.set_naver_cookies(" aut ", " ses ").unwrap();
-    assert!(d.naver_cookies_saved && !d.use_naver_cookies);
-    assert!(Arc::ptr_eq(&first, &svc.client()));
-
-    // 켜면 새 클라이언트. 이미 받은 클라이언트(실행 중 작업)는 그대로
-    let d = svc
-        .update(SettingsPatch {
-            use_naver_cookies: Some(true),
-            ..patch()
-        })
-        .unwrap();
-    assert!(d.use_naver_cookies);
+    assert!(d.naver_cookies_saved && d.use_naver_cookies);
     let on = svc.client();
     assert!(!Arc::ptr_eq(&first, &on));
     let c = on.config().cookies.as_ref().unwrap();
@@ -420,6 +410,25 @@ fn cookie_toggle_swaps_client() {
         ("aut", "ses")
     );
     assert!(first.config().cookies.is_none());
+
+    // 끈 뒤 다시 켜면 새 클라이언트
+    let d = svc
+        .update(SettingsPatch {
+            use_naver_cookies: Some(false),
+            ..patch()
+        })
+        .unwrap();
+    assert!(!d.use_naver_cookies);
+    assert!(!has_cookies(&svc));
+    let d = svc
+        .update(SettingsPatch {
+            use_naver_cookies: Some(true),
+            ..patch()
+        })
+        .unwrap();
+    assert!(d.use_naver_cookies);
+    let on = svc.client();
+    assert!(on.config().cookies.is_some());
 
     // 같은 값으로 다시 켜면 바꾸지 않는다
     svc.update(SettingsPatch {
@@ -460,6 +469,81 @@ fn cookie_toggle_swaps_client() {
     assert!(!d.use_naver_cookies && !d.naver_cookies_saved);
     assert!(!has_cookies(&svc));
     assert!(!t.path().join("config/credentials.json").exists());
+}
+
+/// 저장된 값이 없던 상태에서 처음 저장하면 사용도 켜고, 설정 파일에도 남는다(app.md 구현 중 변경 130).
+#[test]
+fn first_cookie_save_turns_on_use() {
+    let t = TempDir::new().unwrap();
+    let svc = open(t.path());
+    let d = svc.set_naver_cookies(" aut ", " ses ").unwrap();
+    assert!(d.naver_cookies_saved && d.use_naver_cookies);
+    assert!(has_cookies(&svc));
+    let c = svc.client().config().cookies.clone().unwrap();
+    assert_eq!(
+        (c.nid_aut.expose().as_str(), c.nid_ses.expose().as_str()),
+        ("aut", "ses")
+    );
+    drop(svc);
+    let svc = open(t.path());
+    assert!(has_cookies(&svc), "켜짐이 설정 파일에 저장돼야 한다");
+}
+
+/// 일부러 끈 사용자는 다시 저장해도 켜지 않는다.
+#[test]
+fn resave_keeps_user_off() {
+    let t = TempDir::new().unwrap();
+    let svc = open(t.path());
+    svc.set_naver_cookies("aut", "ses").unwrap();
+    svc.update(SettingsPatch {
+        use_naver_cookies: Some(false),
+        ..patch()
+    })
+    .unwrap();
+    let d = svc.set_naver_cookies("a2", "s2").unwrap();
+    assert!(!d.use_naver_cookies && d.naver_cookies_saved);
+    assert!(!has_cookies(&svc));
+}
+
+/// 값을 지운 뒤 저장하면 다시 "처음 저장"이다.
+#[test]
+fn save_after_clear_is_first_again() {
+    let t = TempDir::new().unwrap();
+    let svc = open(t.path());
+    svc.set_naver_cookies("aut", "ses").unwrap();
+    svc.clear_naver_cookies().unwrap();
+    let d = svc.set_naver_cookies("aut", "ses").unwrap();
+    assert!(d.use_naver_cookies && d.naver_cookies_saved);
+    assert!(has_cookies(&svc));
+}
+
+/// 깨진 credentials.json은 저장된 값이 없는 것으로 본다.
+#[test]
+fn corrupt_credentials_count_as_first_save() {
+    let t = TempDir::new().unwrap();
+    let svc = open(t.path());
+    std::fs::create_dir_all(t.path().join("config")).unwrap();
+    std::fs::write(t.path().join("config/credentials.json"), b"{not json").unwrap();
+    let d = svc.set_naver_cookies("aut", "ses").unwrap();
+    assert!(d.use_naver_cookies && d.naver_cookies_saved);
+    assert!(has_cookies(&svc));
+}
+
+/// 처음 저장인데 설정 저장이 실패하면 쿠키는 저장된 채 꺼져 있고, 설정 오류를 올려 B2 배너가 알리게 한다.
+#[test]
+fn first_save_settings_failure_keeps_saved_off() {
+    let t = TempDir::new().unwrap();
+    let svc = open(t.path());
+    let settings = t.path().join("config/settings.json");
+    let _ = std::fs::remove_file(&settings);
+    std::fs::create_dir_all(settings.join("x")).unwrap();
+
+    let e = svc.set_naver_cookies("a", "b").unwrap_err();
+    assert_eq!(e.code, ErrorCode::Settings);
+    let d = svc.get();
+    assert!(d.naver_cookies_saved && !d.use_naver_cookies);
+    assert!(!has_cookies(&svc));
+    assert!(t.path().join("config/credentials.json").exists());
 }
 
 /// 헤더로 보낼 수 없는 쿠키는 저장하지 않고, 오류에 값을 넣지 않는다.
@@ -554,6 +638,7 @@ fn legacy_candidate_is_offered_once() {
     assert_eq!(c.dir, old.to_string_lossy());
     assert_eq!(c.recent_count, 2);
     assert!(c.has_cookies);
+    assert!(!c.cookies_off);
     // 적용하지 않았다
     let d = svc.get();
     assert!(d.recent_vods.is_empty() && !d.naver_cookies_saved && d.imported_from.is_none());
@@ -681,6 +766,76 @@ fn import_from_picked_folder() {
         .unwrap();
     assert_eq!(r.recent_count, 2);
     assert_eq!(svc.get().recent_vods.len(), 2);
+}
+
+/// 옛 "성인 컨텐츠"가 꺼져 있으면 후보가 쿠키 꺼짐 표시를 달고, 쿠키가 없으면 달지 않는다.
+#[test]
+fn legacy_candidate_marks_cookies_off() {
+    let t = TempDir::new().unwrap();
+    let old = legacy_dir(&t);
+    let raw = std::fs::read_to_string(old.join("settings.json")).unwrap();
+    std::fs::write(
+        old.join("settings.json"),
+        raw.replace(r#""isAdultContent":true"#, r#""isAdultContent":false"#),
+    )
+    .unwrap();
+    let svc = open_with_legacy(t.path(), &old);
+    let c = svc.legacy_candidate().unwrap();
+    assert!(c.has_cookies && c.cookies_off);
+    drop(svc);
+
+    let t = TempDir::new().unwrap();
+    let old = legacy_dir(&t);
+    let raw = std::fs::read_to_string(old.join("settings.json")).unwrap();
+    std::fs::write(
+        old.join("settings.json"),
+        raw.replace(r#""isAdultContent":true"#, r#""isAdultContent":false"#),
+    )
+    .unwrap();
+    std::fs::remove_file(old.join("dependent/cookie.json")).unwrap();
+    let svc = open_with_legacy(t.path(), &old);
+    let c = svc.legacy_candidate().unwrap();
+    assert!(!c.has_cookies && !c.cookies_off);
+}
+
+/// 이미 저장된 쿠키가 있으면 가져오기가 옛 쿠키를 건너뛰므로 후보도 쿠키 항목·꺼짐 안내를 달지 않는다.
+#[test]
+fn legacy_candidate_without_import_has_no_cookie_flags() {
+    let t = TempDir::new().unwrap();
+    let old = legacy_dir(&t);
+    let raw = std::fs::read_to_string(old.join("settings.json")).unwrap();
+    std::fs::write(
+        old.join("settings.json"),
+        raw.replace(r#""isAdultContent":true"#, r#""isAdultContent":false"#),
+    )
+    .unwrap();
+    let svc = open_with_legacy(t.path(), &old);
+    let c = svc.legacy_candidate().unwrap();
+    assert!(c.has_cookies && c.cookies_off);
+    // 후보를 찾은 뒤 쿠키가 저장되면(설정 파일만 지워져 후보가 다시 뜬 경우 등) 가져오기는 옛 쿠키를 건너뛴다
+    svc.set_naver_cookies("a", "b").unwrap();
+    let c = svc.legacy_candidate().unwrap();
+    assert!(!c.has_cookies && !c.cookies_off);
+}
+
+/// 가져오기 매핑 고정: 옛 성인 꺼짐 + 쿠키 있음이면 저장됨·꺼짐으로 들어온다.
+#[test]
+fn import_adult_off_keeps_cookies_off() {
+    let t = TempDir::new().unwrap();
+    let old = legacy_dir(&t);
+    let raw = std::fs::read_to_string(old.join("settings.json")).unwrap();
+    std::fs::write(
+        old.join("settings.json"),
+        raw.replace(r#""isAdultContent":true"#, r#""isAdultContent":false"#),
+    )
+    .unwrap();
+    let svc = open(t.path());
+    let r = svc
+        .import_legacy(Some(&*old.to_string_lossy()))
+        .unwrap()
+        .unwrap();
+    let d = svc.get();
+    assert!(r.has_cookies && d.naver_cookies_saved && !d.use_naver_cookies);
 }
 
 /// 이미 저장한 쿠키·사용 여부는 옛 cookie.json이 덮지 않는다(가져오기는 병합).

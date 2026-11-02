@@ -8,11 +8,14 @@
   interface Props {
     error: AppError;
     cookiesEnabled: boolean;
+    naverCookiesSaved?: boolean;
+    /** 실패했을 때 쿠키를 보냈는가(없으면 지금 설정) */
+    cookiesAtFailure?: boolean;
     onaction: (a: ActionId) => void;
   }
 
-  let { error, cookiesEnabled, onaction }: Props = $props();
-  const copy = $derived(errorCopy(error, { place: 'resolve', cookiesEnabled }));
+  let { error, cookiesEnabled, naverCookiesSaved = false, cookiesAtFailure, onaction }: Props = $props();
+  const copy = $derived(errorCopy(error, { place: 'resolve', cookiesEnabled, naverCookiesSaved, cookiesAtFailure }));
   const actions = $derived(
     copy.actions.map((a) => ({ id: a, label: actionLabel(a), onclick: () => onaction(a) })),
   );

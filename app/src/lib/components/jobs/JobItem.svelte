@@ -46,6 +46,10 @@
     /** 연결 대기에서 막 풀려 회복 줄을 보이는 동안 */
     recovered?: boolean;
     cookiesEnabled: boolean;
+    /** 네이버 로그인 정보가 저장돼 있는가(오류 문구의 "켜면 받을 수 있어요" 갈래) */
+    naverCookiesSaved?: boolean;
+    /** 실패했을 때 쿠키를 보냈는가(없으면 지금 설정). 꺼진 채 실패한 행이 켠 뒤 '만료됐어요'로 바뀌지 않게 한다 */
+    cookiesAtFailure?: boolean;
     /** 이어받기를 셸이 거부할 작업이면 이유(A5). 안내를 보이고 이어받기 계열 버튼을 뺀다 */
     block: JobBlock | null;
     highlighted: boolean;
@@ -66,6 +70,8 @@
     waitingSince = null,
     recovered = false,
     cookiesEnabled,
+    naverCookiesSaved = false,
+    cookiesAtFailure,
     block,
     highlighted,
     tabbable,
@@ -91,11 +97,11 @@
   const parts = $derived(
     statusParts(job, progress, { ahead, runStartedAt, base, waitingSince, now: waiting ? now : undefined }),
   );
-  const buttons = $derived(jobButtons(job, progress, cookiesEnabled, block));
+  const buttons = $derived(jobButtons(job, progress, cookiesEnabled, block, naverCookiesSaved, cookiesAtFailure));
   const cancel = $derived(cancelLabel(job, progress));
   // notOwnContent 제목은 맡은 채널 수로 넓어진다(카드와 같은 규칙, content.md §15.2)
   const err = $derived(
-    job.status === 'failed' ? failedCopy(job, cookiesEnabled, auth.status?.delegatedChannels.length ?? 0) : null,
+    job.status === 'failed' ? failedCopy(job, cookiesEnabled, auth.status?.delegatedChannels.length ?? 0, naverCookiesSaved, cookiesAtFailure) : null,
   );
   const body = $derived(bodyLine(job, progress, { base, recovered }));
   const missing = $derived(job.status === 'completed' && job.missing);

@@ -120,7 +120,11 @@ pub fn default_download_folder(
 #[derive(Clone, Debug)]
 struct Candidate {
     dir: PathBuf,
+    /// 쿠키 두 필드는 `legacy_candidate()`가 지금 저장 상태와 맞춰 다시 계산한다(가져오기와 같은 조건)
     dto: LegacyCandidate,
+    cookies: Option<NaverCookies>,
+    /// 옛 설정의 "성인 컨텐츠"(= 옛 쿠키 사용 여부)
+    old_use_cookies: bool,
 }
 
 /// 설정·자격증명·코어 클라이언트.
@@ -250,7 +254,18 @@ impl SettingsService {
 
     /// 첫 실행에 찾은 옛 설정(적용 전). 가져오기를 적용하면 사라진다.
     pub fn legacy_candidate(&self) -> Option<LegacyCandidate> {
-        lock(&self.legacy).as_ref().map(|c| c.dto.clone())
+        let guard = lock(&self.legacy);
+        let c = guard.as_ref()?;
+        let mut dto = c.dto.clone();
+        // `import_legacy`가 실제로 옛 쿠키를 가져올 때만 쿠키 항목을 보인다: 이미 저장된 쿠키가 있거나
+        // 헤더로 쓸 수 없는 값이면 건너뛴다(그때 지금 쿠키·사용 여부가 그대로다)
+        let imports = c.cookies.as_ref().is_some_and(|k| {
+            !matches!(self.creds.load(), Ok(Some(_)))
+                && matches!(self.try_build(Some(k.clone())), Ok(Ok(_)))
+        });
+        dto.has_cookies = imports;
+        dto.cookies_off = imports && !c.old_use_cookies;
+        Some(dto)
     }
 
     /// `update_settings`. 없는 키는 그대로 둔다.
@@ -368,8 +383,10 @@ impl SettingsService {
         Ok(dto)
     }
 
-    /// `set_naver_cookies`. 앞뒤 공백을 지우고 둘 다 있어야 한다. 사용 여부는 바꾸지 않으며,
-    /// 켜져 있으면 새 쿠키로 클라이언트를 바꾼다.
+    /// `set_naver_cookies`. 앞뒤 공백을 지우고 둘 다 있어야 한다. 저장된 쿠키가 없던 상태(깨진 파일 포함)에서
+    /// 처음 저장하면 사용도 켠다(app.md 구현 중 변경 130, 34의 부분 개정). 이미 저장된 값이 있으면
+    /// 사용 여부는 바꾸지 않으며, 켜져 있으면 새 쿠키로 클라이언트를 바꾼다. 처음 저장인데 설정 저장이
+    /// 실패하면 쿠키는 저장된 채 꺼져 있고 설정 오류(`settings`)를 올린다.
     pub fn set_naver_cookies(&self, nid_aut: &str, nid_ses: &str) -> Result<SettingsDto, AppError> {
         let (aut, ses) = (nid_aut.trim(), nid_ses.trim());
         if aut.is_empty() || ses.is_empty() {
@@ -388,8 +405,24 @@ impl SettingsService {
                 ));
             }
         };
+        // 저장하기 전에 읽는다: 저장 뒤에는 늘 "있음"이다
+        let first = !matches!(self.creds.load(), Ok(Some(_)));
         self.creds.save(&cookies)?;
-        let s = self.store.get();
+        let mut s = self.store.get();
+        if first && !s.use_naver_cookies {
+            match self.store.update(|s| s.use_naver_cookies = true) {
+                Ok(updated) => s = updated,
+                Err(e) => {
+                    // 쿠키는 저장된 채 꺼져 있다. 설정 오류로 올려 B2 배너가 [다시 시도]로 알리게 한다
+                    // (프런트가 이 코드면 입력칸을 비우고 설정을 다시 읽는다)
+                    tracing::warn!(error = %e, "처음 저장한 쿠키의 사용을 켜지 못함");
+                    return Err(chzzk_core::Error::Settings(
+                        "네이버 로그인 정보의 사용을 켜지 못했습니다".to_string(),
+                    )
+                    .into());
+                }
+            }
+        }
         if s.use_naver_cookies {
             self.swap(with_cookies);
         }
@@ -782,8 +815,12 @@ fn find_candidate(dir: &Path) -> Option<Candidate> {
             dto: LegacyCandidate {
                 dir: path_string(dir),
                 recent_count: u32::try_from(li.settings.recent_vods.len()).unwrap_or(u32::MAX),
+                // 아래 두 값은 `legacy_candidate()`가 저장 상태에 맞춰 다시 정한다
                 has_cookies: li.cookies.is_some(),
+                cookies_off: li.cookies.is_some() && !li.settings.use_naver_cookies,
             },
+            cookies: li.cookies.clone(),
+            old_use_cookies: li.settings.use_naver_cookies,
         }),
         Ok(None) => None,
         Err(e) => {

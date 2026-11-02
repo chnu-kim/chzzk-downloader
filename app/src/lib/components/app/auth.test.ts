@@ -49,7 +49,7 @@ const info = (legacy: boolean) => ({
   platform: 'windows',
   textScale: 'default',
   theme: 'system',
-  legacyCandidate: legacy ? { dir: '/old', vodCount: 2, hasCookies: false } : null,
+  legacyCandidate: legacy ? { dir: '/old', recentCount: 2, hasCookies: false, cookiesOff: false } : null,
 });
 
 vi.mock('../../api', () => ({

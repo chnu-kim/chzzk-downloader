@@ -25,6 +25,11 @@ export class SettingsStore {
     return !!this.dto && this.dto.useNaverCookies && this.dto.naverCookiesSaved;
   }
 
+  /** 네이버 로그인 정보가 저장돼 있는가(켜져 있는지와 따로, 오류 문구의 "켜면 받을 수 있어요" 갈래) */
+  get naverCookiesSaved(): boolean {
+    return !!this.dto?.naverCookiesSaved;
+  }
+
   /** D3를 띄울 첫 실행 후보 */
   get legacyCandidate() {
     return this.legacyPromptDone ? null : (this.info?.legacyCandidate ?? null);
@@ -107,9 +112,19 @@ export class SettingsStore {
     this.saveError = null;
   }
 
-  /** 쿠키 저장. 값은 돌려받지 않는다(`naverCookiesSaved`만 바뀐다) */
+  /**
+   * 쿠키 저장. 값은 돌려받지 않는다(처음 저장하면 `useNaverCookies`도 켜진다, 구현 중 변경 130).
+   * 쿠키는 저장됐는데 자동 켜기의 설정 저장이 실패하면 `settings` 오류가 온다: B2 배너에 올리고(다시 시도는 켜기 패치),
+   * 저장 상태를 다시 읽는다. 입력칸은 부른 쪽이 비운다.
+   */
   async setCookies(nidAut: string, nidSes: string): Promise<AppError | null> {
-    return this.#run(() => api.setNaverCookies(nidAut, nidSes));
+    const err = await this.#run(() => api.setNaverCookies(nidAut, nidSes));
+    if (err?.code === 'settings') {
+      this.saveError = err;
+      this.#failedPatch = { useNaverCookies: true };
+      await this.refresh();
+    }
+    return err;
   }
 
   async clearCookies(): Promise<AppError | null> {

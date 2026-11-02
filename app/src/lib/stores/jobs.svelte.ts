@@ -89,6 +89,13 @@ export class JobsStore {
   waitingSince = new SvelteMap<JobId, number>();
   /** 연결 대기에서 막 풀려 회복 줄(`job.recovered.body`)을 `RECOVERY_NOTICE_MS` 동안 보이는 작업 */
   recovered = new SvelteSet<JobId>();
+  /** 실패한 작업이 실패한 그때 네이버 로그인 정보를 보냈는가(이 실행에서 실패를 본 작업만). 문구 갈래를 실패 때의 상태로 정한다 */
+  cookiesAtFailure = new Map<JobId, boolean>();
+  /**
+   * 지금 실행이 시작된 그때 네이버 로그인 정보를 보냈는가. 셸은 `queued → running`(manager `start`)에서 클라이언트를 잡아
+   * 그 실행 내내 쓰므로 running으로 바뀐 것을 처음 본 때의 설정을 적는다. 실패를 적을 때 이 값을 쓰고, 없으면 지금 설정이다
+   */
+  #cookiesAtStart = new Map<JobId, boolean>();
   #recoveredTimers = new Map<JobId, ReturnType<typeof setTimeout>>();
   /** [목록에서 보기]·추가 뒤 그 항목으로 포커스를 옮겨 달라는 요청. `n`은 같은 id를 다시 부를 때 바뀐다 */
   focusRequest: { id: JobId; n: number } | null = $state(null);
@@ -139,6 +146,11 @@ export class JobsStore {
     this.state = fromSnapshot(snapshot);
     this.queueOrder = nextQueueOrder([], this.state.jobs);
     this.#resetPhase();
+    // 구독 전에 이미 돌던 실행: 시작한 때를 모르니 지금 설정으로 둔다(다시 구독이면 앞서 적은 값을 남긴다)
+    for (const id of [...this.#cookiesAtStart.keys()]) if (!this.state.jobs.has(id)) this.#cookiesAtStart.delete(id);
+    for (const j of this.state.jobs.values()) {
+      if (j.status === 'running' && !this.#cookiesAtStart.has(j.id)) this.#cookiesAtStart.set(j.id, settings.cookiesEnabled);
+    }
     // 다시 맞춘 스냅샷: 이미 연결 대기인 작업은 지금부터 센다(알림은 없다)
     for (const j of this.state.jobs.values()) this.#trackPhase(j, false);
     this.ready = true;
@@ -158,6 +170,8 @@ export class JobsStore {
       this.runStartedAt.delete(e.id);
       this.highlight.delete(e.id);
       this.hidden.delete(e.id);
+      this.cookiesAtFailure.delete(e.id);
+      this.#cookiesAtStart.delete(e.id);
       return;
     }
     if (e.type === 'progress') {
@@ -167,6 +181,13 @@ export class JobsStore {
     }
     if (e.type !== 'added' && e.type !== 'status') return;
     const job = e.job;
+    if (job.status === 'running' && prev?.status !== 'running') this.#cookiesAtStart.set(job.id, settings.cookiesEnabled);
+    else if (job.status === 'queued') this.#cookiesAtStart.delete(job.id); // 다음 실행은 새로 잡는다
+    if (job.status === 'failed') {
+      if (prev?.status !== 'failed') {
+        this.cookiesAtFailure.set(job.id, this.#cookiesAtStart.get(job.id) ?? settings.cookiesEnabled);
+      }
+    } else this.cookiesAtFailure.delete(job.id);
     this.#trackPhase(this.state.jobs.get(job.id) ?? job, e.type === 'status');
     if (job.status === 'running' && prev?.status !== 'running') this.runStartedAt.set(job.id, Date.now());
     if (e.type === 'added') {
@@ -326,6 +347,9 @@ export class JobsStore {
         case 'reenterCookies':
           ui.goSettings({ cookies: true });
           break;
+        case 'enableCookies':
+          ui.goSettings({ cookies: 'switch' });
+          break;
         case 'showTitle':
         case 'showDetail':
           // 행이 스스로 펼친다(셸에 보낼 일이 없다)
@@ -476,7 +500,7 @@ export class JobsStore {
    * 토스트에는 오류 제목만 보인다: 코어 원문·경로(`detail`)는 L1 "자세히"에서만 보이고 토스트에는 없다(content.md §2·§9).
    */
   #toastError(err: AppError, jobId?: JobId) {
-    const c = errorCopy(err, { place: 'other', cookiesEnabled: settings.cookiesEnabled });
+    const c = errorCopy(err, { place: 'other', cookiesEnabled: settings.cookiesEnabled, naverCookiesSaved: settings.naverCookiesSaved });
     const text = c.title;
     const action =
       jobId != null && c.actions.includes('openFolder')

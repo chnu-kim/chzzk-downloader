@@ -77,11 +77,12 @@ describe('errorCopy 전체 표', () => {
       it(`${code} @ ${place}`, () => {
         for (const partialBytes of [null, 1024]) {
           for (const cookiesEnabled of [false, true]) {
+           for (const naverCookiesSaved of [false, true]) {
             for (const diagnosis of DIAGNOSES) {
-              const ctx: ErrorContext = { place, partialBytes, cookiesEnabled, diagnosis, channelName: '가짜 채널', myChannel: '내 가짜 채널' };
+              const ctx: ErrorContext = { place, partialBytes, cookiesEnabled, naverCookiesSaved, diagnosis, channelName: '가짜 채널', myChannel: '내 가짜 채널' };
               for (const stage of [null, 'resolve', 'download'] as (Stage | null)[]) {
                 const c = errorCopy(sample(code, stage), ctx);
-                const label = `${code} ${place} part=${partialBytes} cookies=${cookiesEnabled} ${diagnosis} ${stage}`;
+                const label = `${code} ${place} part=${partialBytes} cookies=${cookiesEnabled} saved=${naverCookiesSaved} ${diagnosis} ${stage}`;
                 // 제목: 사건 한 문장, 마침표 없음, 비어 있지 않다
                 expect(c.title.length, label).toBeGreaterThan(0);
                 expect(c.title, label).not.toMatch(/[.?!]$/);
@@ -114,6 +115,7 @@ describe('errorCopy 전체 표', () => {
                 }
               }
             }
+           }
           }
         }
       });
@@ -270,6 +272,87 @@ const GOLDEN: Row[] = [
     title: '네이버 로그인이 필요한 영상이에요',
     body: '연령 제한이나 구독자 전용 영상이에요. 설정에서 네이버 로그인 정보를 넣으면 받을 수 있어요.',
     actions: ['openCookieSettings'],
+    detail: null,
+  },
+  {
+    name: 'authRequired 저장됨·꺼짐',
+    error: AUTH(null),
+    ctx: { ...R, cookiesEnabled: false, naverCookiesSaved: true },
+    title: '네이버 로그인이 필요한 영상이에요',
+    body: '연령 제한이나 구독자 전용 영상이에요. 저장한 네이버 로그인 정보를 켜면 받을 수 있어요.',
+    actions: ['enableCookies'],
+    detail: null,
+  },
+  {
+    name: 'authRequired 저장됨·꺼짐 D',
+    error: AUTH('resolve'),
+    ctx: { ...D, naverCookiesSaved: true },
+    title: '네이버 로그인이 필요한 영상이에요',
+    body: '연령 제한이나 구독자 전용 영상이에요. 저장한 네이버 로그인 정보를 켜면 받을 수 있어요.',
+    actions: ['enableCookies'],
+    detail: null,
+  },
+  {
+    name: 'authRequired 켜짐이 저장됨보다 먼저',
+    error: AUTH(null),
+    ctx: { ...R, cookiesEnabled: true, naverCookiesSaved: true },
+    title: '네이버 로그인 정보가 만료됐어요',
+    body: '브라우저에서 네이버에 다시 로그인한 뒤 새 값을 넣어 주세요.',
+    actions: ['reenterCookies'],
+    detail: null,
+  },
+  {
+    name: 'authRequired 꺼진 채 실패한 뒤 켬 R',
+    error: AUTH(null),
+    ctx: { ...R, cookiesEnabled: true, naverCookiesSaved: true, cookiesAtFailure: false },
+    title: '네이버 로그인이 필요한 영상이에요',
+    body: '네이버 로그인 정보를 켰어요. 다시 시도해 주세요.',
+    actions: ['retry'],
+    detail: null,
+  },
+  {
+    name: 'authRequired 꺼진 채 실패한 뒤 켬 D',
+    error: AUTH('resolve'),
+    ctx: { ...D, cookiesEnabled: true, naverCookiesSaved: true, cookiesAtFailure: false },
+    title: '네이버 로그인이 필요한 영상이에요',
+    body: '네이버 로그인 정보를 켰어요. 다시 시도해 주세요.',
+    actions: ['reresolve'],
+    detail: null,
+  },
+  {
+    name: 'authRequired 보낸 채 실패하면 지금 꺼져도 만료',
+    error: AUTH(null),
+    ctx: { ...R, cookiesEnabled: false, naverCookiesSaved: true, cookiesAtFailure: true },
+    title: '네이버 로그인 정보가 만료됐어요',
+    body: '브라우저에서 네이버에 다시 로그인한 뒤 새 값을 넣어 주세요.',
+    actions: ['reenterCookies'],
+    detail: null,
+  },
+  {
+    name: 'noPlayback adult 꺼진 채 실패한 뒤 켬',
+    error: ADULT,
+    ctx: { ...R, cookiesEnabled: true, naverCookiesSaved: true, cookiesAtFailure: false },
+    title: '성인 인증이 필요한 영상이에요',
+    body: '네이버 로그인 정보를 켰어요. 다시 시도해 주세요.',
+    actions: ['retry'],
+    detail: null,
+  },
+  {
+    name: 'noPlayback adult 저장됨·꺼짐',
+    error: ADULT,
+    ctx: { ...R, cookiesEnabled: false, naverCookiesSaved: true },
+    title: '성인 인증이 필요한 영상이에요',
+    body: '저장한 네이버 로그인 정보를 켜면 받을 수 있어요.',
+    actions: ['enableCookies'],
+    detail: null,
+  },
+  {
+    name: 'noPlayback adult 켜짐이 저장됨보다 먼저',
+    error: ADULT,
+    ctx: { ...R, cookiesEnabled: true, naverCookiesSaved: true },
+    title: '성인 인증이 필요한 영상이에요',
+    body: '성인 인증한 계정의 네이버 로그인 정보인지 확인해 주세요.',
+    actions: ['reenterCookies'],
     detail: null,
   },
   {
@@ -808,6 +891,14 @@ describe('errorCopy 규칙', () => {
     expect(r.actions).toEqual(['close']);
   });
 
+  it('encrypted와 authRequired download는 저장됨이어도 쿠키 갈래로 새지 않는다', () => {
+    const ctx = { ...D, cookiesEnabled: false, naverCookiesSaved: true };
+    expect(errorCopy(err('encrypted'), { ...R, naverCookiesSaved: true }).actions).toEqual(['close']);
+    expect(errorCopy(err('encrypted'), ctx).actions).toEqual(['remove']);
+    expect(errorCopy(AUTH('download'), ctx).actions).toEqual(['restartFresh']);
+    expect(errorCopy(AUTH('download'), { ...ctx, partialBytes: 1024 }).actions).toEqual(['resume']);
+  });
+
   it('http 429의 분은 변수 하나에서 온다(문구에 숫자+단위를 박지 않는다)', () => {
     expect(errorCopy(http(429), R).body).toMatch(/^\d+분쯤 뒤 다시 시도해 주세요\.$/);
   });
@@ -829,6 +920,7 @@ describe('actionLabel(용어집 라벨, 창을 여는 버튼은 …)', () => {
     ['remove', '목록에서 지우기'],
     ['openCookieSettings', '네이버 로그인 정보 넣기…'],
     ['reenterCookies', '네이버 로그인 정보 다시 넣기…'],
+    ['enableCookies', '네이버 로그인 정보 켜기…'],
     ['reresolve', '다시 불러오기'],
     ['recordAgain', '다시 녹화'],
     ['copyReport', '문제 보고용 정보 복사'],
@@ -850,7 +942,7 @@ describe('actionLabel(용어집 라벨, 창을 여는 버튼은 …)', () => {
   });
 
   it('창을 여는 버튼 라벨만 …로 끝난다', () => {
-    const opens: ActionId[] = ['openCookieSettings', 'reenterCookies', 'changeFolder'];
+    const opens: ActionId[] = ['openCookieSettings', 'reenterCookies', 'enableCookies', 'changeFolder'];
     for (const [id, label] of LABELS) expect(label.endsWith('…'), id).toBe(opens.includes(id));
   });
 });

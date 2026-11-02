@@ -3,4 +3,9 @@
 /**
  * 첫 실행에 찾은 옛 설정 폴더(적용 전).
  */
-export type LegacyCandidate = { dir: string, recentCount: number, hasCookies: boolean, };
+export type LegacyCandidate = { dir: string, recentCount: number, hasCookies: boolean, 
+/**
+ * 옛 쿠키가 있지만 옛 설정의 '성인 컨텐츠'가 꺼져 있어 가져오면 사용이 꺼진 채 들어온다.
+ * 매핑은 core.md 결정 그대로이고 안내용 읽기 전용 표시다(app.md 구현 중 변경 130).
+ */
+cookiesOff: boolean, };

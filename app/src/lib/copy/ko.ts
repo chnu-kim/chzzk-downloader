@@ -244,6 +244,7 @@ export const ko = {
   'toast.removedMany': '완료 항목 {n}개를 목록에서 지웠어요',
   'toast.signedIn': '‘{channelName}’ 채널로 로그인했어요',
   'toast.copyFailed': '복사하지 못했어요',
+  'toast.browserOpenFailed': '브라우저를 열지 못했어요',
   'toast.reportHasPath': '복사한 정보에 파일 경로가 들어 있어요',
   'toast.editorRemoved': '‘{name}’ 편집자를 뺐어요',
   'toast.delegationLeft': '‘{name}’ 채널의 편집자를 그만뒀어요',

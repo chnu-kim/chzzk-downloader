@@ -34,6 +34,15 @@
     return () => clearInterval(h);
   });
 
+  let reopenEl: HTMLButtonElement | null = $state(null);
+  let copyEl: HTMLButtonElement | null = $state(null);
+
+  /** 열지 못하면 다음 길([로그인 주소 복사])로 포커스를 옮긴다. 그사이 사용자가 포커스를 다른 곳에 두었으면 빼앗지 않는다 */
+  async function reopen() {
+    const failed = await auth.reopen();
+    if (failed && reopenEl && document.activeElement === reopenEl) copyEl?.focus();
+  }
+
   function run(action: 'login' | 'reconnect') {
     if (action === 'login') void auth.login();
     else void auth.reconnect();
@@ -74,13 +83,13 @@
         <p class="body">{t('auth.pending.body')}</p>
         <p class="help num">{t('auth.pending.remaining', { mmss: formatMmss(remainingSecs(pending.expiresAt, now)) })}</p>
         <div class="buttons">
-          <Button variant="primary" loading={auth.isBusy('reopen')} onclick={() => void auth.reopen()}>{t('auth.reopen')}</Button>
+          <Button variant="primary" bind:el={reopenEl} loading={auth.isBusy('reopen')} onclick={() => void reopen()}>{t('auth.reopen')}</Button>
           <Button disabled={auth.isBusy('cancel')} onclick={() => void auth.cancel()}>{t('common.cancel')}</Button>
         </div>
         <div class="help-block">
           <p class="help">{t('auth.browserHelp')}</p>
           <div class="link">
-            <Button class="edge-start btn-inline" variant="ghost" size="sm" disabled={auth.isBusy('copy')} onclick={() => void auth.copyLoginUrl()}>
+            <Button class="edge-start btn-inline" variant="ghost" size="sm" bind:el={copyEl} disabled={auth.isBusy('copy')} onclick={() => void auth.copyLoginUrl()}>
               {t('auth.copyLoginUrl')}
             </Button>
           </div>

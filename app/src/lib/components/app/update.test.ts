@@ -1,10 +1,12 @@
 import { cleanup, render, screen, waitFor, within } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { tick } from 'svelte';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppError, AuthStatusDto, JobDto, SettingsDto, UpdateInfoDto } from '../../bindings';
 import { t } from '../../copy/ko';
 import { job, liveProg } from '../../../test/jobFixtures';
 import { fromSnapshot } from '../../stores/jobs.apply';
+import { noticeSpeech } from '../../spoken';
 
 class FakeChannel {
   onmessage: (e: unknown) => void = () => {};
@@ -32,7 +34,8 @@ const { update } = await import('../../stores/update.svelte');
 const { toasts } = await import('../../stores/toast.svelte');
 const { default: UpdateBanner } = await import('./UpdateBanner.svelte');
 const { default: UpdateDialog } = await import('./UpdateDialog.svelte');
-const { default: AppBanners, pickBanner } = await import('./AppBanners.svelte');
+const { default: AppBanners, pickBanner, bannerSpeech } = await import('./AppBanners.svelte');
+const { announcer } = await import('../../stores/announce.svelte');
 const { default: SettingsView } = await import('../../views/SettingsView.svelte');
 
 const info = (version: string, notes: string | null = null): UpdateInfoDto => ({ version, current: '0.1.0', notes, pubDate: null });
@@ -519,5 +522,140 @@ describe('SettingsView 업데이트 확인', () => {
     expect(screen.getByRole('button', { name: '업데이트 확인' })).toBeDisabled();
     resolve({ result: 'upToDate' });
     expect(await screen.findByText('최신 버전이에요')).toBeInTheDocument();
+  });
+});
+
+describe('bannerSpeech(ADR-0033)', () => {
+  const base = {
+    which: null,
+    updateVersion: '0.2.0',
+    updateStatus: null,
+    updateFailure: null,
+    updateRetry: false,
+    resumableCount: 0,
+  } as const;
+  type In = Parameters<typeof bannerSpeech>[0];
+  const speech = (over: Partial<In>) => bannerSpeech({ ...base, ...over } as In);
+
+  it('배너가 없으면 null', () => {
+    expect(speech({})).toBeNull();
+  });
+
+  it('새 버전: 글 + 동작 이름', () => {
+    expect(speech({ which: 'update' })).toEqual({
+      key: 'update',
+      text: noticeSpeech(t('update.banner', { version: '0.2.0' }), t('update.install')),
+      urgent: false,
+    });
+  });
+
+  it('업데이트 진행: 25% 단위 문구가 key이고 퍼센트 정확값은 key를 바꾸지 않는다', () => {
+    const s25 = t('update.downloading', { percent: '25%' });
+    const s50 = t('update.downloading', { percent: '50%' });
+    const a = speech({ which: 'update', updateStatus: s25 });
+    const b = speech({ which: 'update', updateStatus: s25 });
+    const c = speech({ which: 'update', updateStatus: s50 });
+    expect(a).toEqual({ key: `update:${s25}`, text: s25, urgent: false });
+    expect(b?.key).toBe(a?.key);
+    expect(c?.key).not.toBe(a?.key);
+  });
+
+  it('업데이트 실패: 서명 확인 실패는 urgent, 그 밖은 아니고 [다시 시도]가 있으면 동작 이름을 읽는다', () => {
+    expect(speech({ which: 'updateFailed', updateFailure: 'untrusted' })).toEqual({
+      key: 'updateFailed:untrusted',
+      text: t('update.untrusted'),
+      urgent: true,
+    });
+    expect(speech({ which: 'updateFailed', updateFailure: 'failed' })).toEqual({
+      key: 'updateFailed:failed',
+      text: t('update.failed'),
+      urgent: false,
+    });
+    expect(speech({ which: 'updateFailed', updateFailure: 'failed', updateRetry: true })?.text).toBe(
+      noticeSpeech(t('update.failed'), t('action.retry')),
+    );
+  });
+
+  it('설정 저장 실패는 동작이 둘이라 글만, urgent', () => {
+    expect(speech({ which: 'settings' })).toEqual({ key: 'settings', text: t('banner.settingsError'), urgent: true });
+  });
+
+  it('웹 구성요소 미달은 제목만', () => {
+    expect(speech({ which: 'engine' })).toEqual({ key: 'engine', text: t('engine.old.title'), urgent: false });
+  });
+
+  it('B1: 개수가 줄어도 key가 같아 다시 읽지 않는다', () => {
+    const a = speech({ which: 'interrupted', resumableCount: 3 });
+    const b = speech({ which: 'interrupted', resumableCount: 2 });
+    expect(a?.key).toBe('interrupted');
+    expect(b?.key).toBe(a?.key);
+    expect(a).toMatchObject({
+      text: noticeSpeech(t('banner.interrupted', { n: 3 }), t('banner.resumeAll')),
+      urgent: false,
+    });
+  });
+});
+
+describe('AppBanners 낭독(ADR-0033)', () => {
+  let say: ReturnType<typeof vi.spyOn>;
+  let alert: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    say = vi.spyOn(announcer, 'say').mockImplementation(() => {});
+    alert = vi.spyOn(announcer, 'alert').mockImplementation(() => {});
+  });
+  afterEach(() => {
+    say.mockRestore();
+    alert.mockRestore();
+    cleanup();
+  });
+
+  it('B1: 뜰 때 한 번 읽고(‘모두 이어받기’ 포함) 개수가 줄어도 다시 읽지 않는다', async () => {
+    await loadJobs([job(1, { status: 'interrupted' }), job(2, { status: 'interrupted' })]);
+    render(AppBanners);
+    await tick();
+    expect(say).toHaveBeenCalledTimes(1);
+    expect(say.mock.calls[0][0]).toContain('‘모두 이어받기’');
+    await loadJobs([job(1, { status: 'interrupted' })]);
+    await tick();
+    expect(say).toHaveBeenCalledTimes(1);
+  });
+
+  it('설정 저장 실패는 assertive로 읽는다', async () => {
+    settings.saveError = appError('io');
+    render(AppBanners);
+    await tick();
+    expect(alert).toHaveBeenCalledExactlyOnceWith(t('banner.settingsError'));
+    expect(say).not.toHaveBeenCalled();
+  });
+
+  it('배너가 사라졌다 같은 배너가 다시 뜨면 다시 읽는다', async () => {
+    settings.saveError = appError('io');
+    render(AppBanners);
+    await tick();
+    settings.saveError = null;
+    await tick();
+    settings.saveError = appError('io');
+    await tick();
+    expect(alert).toHaveBeenCalledTimes(2);
+  });
+
+  it('업데이트 받는 중: 25% 단위 문구가 바뀔 때만 읽는다', async () => {
+    update.available = info('0.2.0');
+    update.installVersion = '0.2.0';
+    update.phase = 'downloading';
+    update.total = 100;
+    update.received = 45;
+    render(AppBanners);
+    await tick();
+    const calls = () => say.mock.calls.map((c) => c[0]);
+    expect(calls()).toEqual([t('update.downloading', { percent: '25%' })]);
+    update.received = 49;
+    await tick();
+    expect(say).toHaveBeenCalledTimes(1);
+    update.received = 60;
+    await tick();
+    update.received = 70;
+    await tick();
+    expect(calls()).toEqual([t('update.downloading', { percent: '25%' }), t('update.downloading', { percent: '50%' })]);
   });
 });

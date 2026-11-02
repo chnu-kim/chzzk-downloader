@@ -668,6 +668,18 @@ describe('키보드', () => {
       await waitFor(() => expect(a).toHaveFocus());
     });
 
+    it('진행 단계만 바뀌어(status 그대로 finalizing) 버튼이 사라져도 포커스는 그 행 article로', async () => {
+      await load([running()]);
+      render(JobList);
+      const a = screen.getByRole('article', { name: '영상 1' });
+      const pause = within(a).getByRole('button', { name: t('action.pause') });
+      pause.focus();
+      send({ type: 'progress', id: 1, progress: prog({ phase: 'finalizing' }) });
+      await tick();
+      expect(pause.isConnected).toBe(false);
+      await waitFor(() => expect(screen.getByRole('article', { name: '영상 1' })).toHaveFocus());
+    });
+
     it('빈 곳을 눌러 목록을 떠났으면 그룹이 바뀌어도 포커스를 빼앗지 않는다', async () => {
       await load([running(), job(2, { status: 'queued', title: '영상 2' })]);
       render(JobList);
@@ -927,6 +939,19 @@ describe('생방송 행(ADR-0025)', () => {
       await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
       await waitFor(() => expect(screen.getByRole('article', { name: '오늘 방송' })).toHaveFocus());
       expect(api.stopJob).not.toHaveBeenCalled();
+    });
+
+    it('마우스로 눌러도 버튼이 포커스를 받지 않는 엔진(opener가 body)에서도 포커스는 그 녹화의 행으로', async () => {
+      await load([liveJob()]);
+      render(JobList);
+      const row = screen.getByRole('article', { name: '오늘 방송' });
+      (document.activeElement as HTMLElement | null)?.blur();
+      // fireEvent.click은 포커스를 옮기지 않는다(WKWebView의 마우스 클릭과 같다)
+      await fireEvent.click(within(row).getByRole('button', { name: t('action.stopRecording') }));
+      await screen.findByRole('dialog', { name: t('dialog.stopLive.title', { title: '오늘 방송' }) });
+      send({ type: 'status', job: liveJob({ status: 'completed', progress: null }) });
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+      await waitFor(() => expect(screen.getByRole('article', { name: '오늘 방송' })).toHaveFocus());
     });
 
     it('D8을 연 사이 그 녹화가 사라지면 이웃 행, 없으면 목록 제목으로', async () => {

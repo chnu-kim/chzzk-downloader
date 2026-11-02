@@ -115,7 +115,7 @@
     void jobs.groups; // 상태 이벤트마다 다시 돈다(groups는 jobs 값이 바뀔 때마다 새 배열)
     const id = focusedId;
     if (id == null) return;
-    void jobs.state.progress.get(id); // 진행 단계만 바뀌어 버튼이 사라지는 경우
+    void jobs.state.progress.get(id); // 진행 단계만 바뀌어 버튼이 사라지는 경우(state가 이벤트마다 통째로 바뀌어 groups·order로도 다시 돌지만 의존을 글로 남긴다)
     if (!jobs.order.includes(id)) return; // 행이 사라진 경우는 위 effect 몫
     void tick().then(() => {
       if (focusedId !== id || leftList) return;

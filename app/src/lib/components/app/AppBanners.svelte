@@ -47,6 +47,13 @@
   import UpdateBanner from './UpdateBanner.svelte';
 
   let resuming = $state(false);
+  /** [다시 시도]로 시작한 설치 요청 중(첫 진행 이벤트·결과 전) */
+  let retrying = $state(false);
+
+  function install() {
+    retrying = update.failure === 'failed';
+    void update.install().finally(() => (retrying = false));
+  }
 
   async function resumeAll() {
     resuming = true;
@@ -111,7 +118,8 @@
     shown={updateShown}
     notes={update.available?.notes ?? null}
     failed={which === 'updateFailed'}
-    oninstall={() => void update.install()}
+    oninstall={install}
+    {retrying}
     onlater={() => update.later()}
     ondismiss={() => update.dismissFailure()}
   />

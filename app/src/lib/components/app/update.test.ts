@@ -235,12 +235,32 @@ describe('B4 실패 배너', () => {
     render(AppBanners);
     const btn = screen.getByRole('button', { name: t('action.retry') });
     await user.click(btn);
-    expect(screen.getByRole('button', { name: t('update.install') })).toBe(btn);
+    // 요청 중에는 이름이 [다시 시도] 그대로다(진행 문구가 오면 [지금 업데이트]로 바뀐다)
+    expect(screen.getByRole('button', { name: t('action.retry') })).toBe(btn);
     expect(btn).toHaveFocus();
     expect(btn).toHaveAttribute('aria-disabled', 'true');
     update.phase = 'downloading';
     await waitFor(() => expect(screen.getAllByText(/받는 중/).length).toBeGreaterThan(0));
     expect(btn.isConnected).toBe(true);
+    expect(btn).toHaveFocus();
+  });
+
+  it('[다시 시도] 요청 중(진행 문구 전)에는 라이브 영역이 새 버전 문장으로 바뀌지 않고 [×]·바뀐 점이 없다', async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.updateInstall).mockReturnValue(new Promise(() => {}));
+    update.available = info('0.2.0', '고친 점');
+    update.failure = 'failed';
+    render(AppBanners);
+    const btn = screen.getByRole('button', { name: t('action.retry') });
+    await user.click(btn);
+    expect(update.pending).toBe(true);
+    const region = screen.getByRole('region', { name: t('update.failed') });
+    expect(within(region).getByText(t('common.keepUsing'))).toBeInTheDocument();
+    expect(screen.queryByText(t('update.banner', { version: '0.2.0' }))).toBeNull();
+    expect(screen.queryByRole('button', { name: t('common.close') })).toBeNull();
+    expect(region.querySelector('details')).toBeNull();
+    expect(screen.getByRole('button', { name: t('action.retry') })).toBe(btn);
+    expect(btn).toHaveAttribute('aria-disabled', 'true');
     expect(btn).toHaveFocus();
   });
 
@@ -254,7 +274,7 @@ describe('B4 실패 배너', () => {
     const btn = screen.getByRole('button', { name: t('action.retry') });
     await user.click(btn);
     expect(screen.queryByRole('button', { name: '모두 이어받기' })).toBeNull();
-    expect(screen.getByRole('button', { name: t('update.install') })).toBe(btn);
+    expect(screen.getByRole('button', { name: t('action.retry') })).toBe(btn);
     expect(btn).toHaveFocus();
   });
 

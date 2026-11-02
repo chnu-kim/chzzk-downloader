@@ -28,10 +28,14 @@
     failed?: boolean;
     /** 실패 배너 [×]: 실패만 닫는다(새 버전 배너가 같은 노드로 뒤를 잇는다) */
     ondismiss?: () => void;
+    /** [다시 시도]로 시작한 요청이 첫 진행 이벤트·결과 전이다: 실패 배너의 글·제목을 그대로 두고 [×]·바뀐 점만 감춘다(라이브 영역에 엉뚱한 문장이 읽히지 않게, app.md 129) */
+    retrying?: boolean;
   }
 
-  let { version, busy = false, status = null, shown = null, notes = null, oninstall, onlater, failed = false, ondismiss }: Props = $props();
+  let { version, busy = false, status = null, shown = null, notes = null, oninstall, onlater, failed = false, ondismiss, retrying = false }: Props = $props();
 
+  // 다시 시도 요청 중(진행 문구가 아직 없을 때)은 실패 모양을 유지한다
+  const asFailed = $derived(failed || (retrying && status === null));
   const off = $derived(busy || status !== null);
   // 정리 뒤 남는 줄이 있을 때만 슬롯을 넘긴다(빈 자기 줄이 생기지 않게)
   const hasNotes = $derived(updateNoteLines(notes).length > 0);
@@ -39,13 +43,13 @@
 
 <Notice
   variant="banner"
-  tone={failed ? 'warning' : 'info'}
-  title={failed ? t('update.failed') : undefined}
-  actions={[{ id: 'install', label: failed ? t('action.retry') : t('update.install'), loading: off, onclick: oninstall }]}
-  onclose={failed ? ondismiss : status === null ? onlater : undefined}
-  details={!failed && status === null && hasNotes ? details : undefined}
+  tone={asFailed ? 'warning' : 'info'}
+  title={asFailed ? t('update.failed') : undefined}
+  actions={[{ id: 'install', label: asFailed ? t('action.retry') : t('update.install'), loading: off, onclick: oninstall }]}
+  onclose={failed ? ondismiss : retrying || status !== null ? undefined : onlater}
+  details={!asFailed && status === null && hasNotes ? details : undefined}
 >
-  {#if failed}
+  {#if asFailed}
     {t('common.keepUsing')}
   {:else if status !== null}
     {#if shown}

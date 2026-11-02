@@ -13,7 +13,7 @@ test('frontend_ready에 엔진 프로브 다섯 키를 실어 보내고, 모두 
   const [{ probe }] = (await app.args('frontend_ready')) as { probe: Record<string, boolean> }[];
   expect(Object.keys(probe).sort()).toEqual(['colorMix', 'containerQuery', 'has', 'inert', 'oklch']);
   expect(Object.values(probe)).toEqual([true, true, true, true, true]);
-  await expect(app.page.getByText(t('engine.old.title'))).toHaveCount(0);
+  await expect(app.page.locator('.notice-banner').getByText(t('engine.old.title'))).toHaveCount(0);
 });
 
 test('프로브가 하나라도 false면 경고 배너(OS별 고치는 법), 닫을 수 있고 앱은 그대로 쓴다', async ({ app }) => {
@@ -24,15 +24,15 @@ test('프로브가 하나라도 false면 경고 배너(OS별 고치는 법), 닫
     CSS.supports = ((a: string, b?: string) => (String(b ?? a).includes('oklch') ? false : b === undefined ? supports(a) : supports(a, b))) as typeof CSS.supports;
   });
   await app.open({ platform: 'windows' });
-  await expect(page.getByText(t('engine.old.title'))).toBeVisible();
-  await expect(page.getByText(t('engine.old.body', { fix: engineFixText('windows') }))).toBeVisible();
+  await expect(page.locator('.notice-banner').getByText(t('engine.old.title'))).toBeVisible();
+  await expect(page.locator('.notice-banner').getByText(t('engine.old.body', { fix: engineFixText('windows') }))).toBeVisible();
   const [{ probe }] = (await app.args('frontend_ready')) as { probe: Record<string, boolean> }[];
   expect(probe).toMatchObject({ oklch: false, colorMix: true });
   await app.axe('엔진 경고 배너');
   // 앱은 막히지 않는다
   await expect(page.getByLabel(t('url.label'))).toBeEnabled();
   await page.getByRole('button', { name: t('common.close') }).click();
-  await expect(page.getByText(t('engine.old.title'))).toHaveCount(0);
+  await expect(page.locator('.notice-banner').getByText(t('engine.old.title'))).toHaveCount(0);
 });
 
 test('macOS 메뉴: menu-settings는 설정 화면, menu-about은 설정의 정보 절 제목으로 포커스', async ({ app }) => {

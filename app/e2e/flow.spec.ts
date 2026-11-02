@@ -78,7 +78,7 @@ test('주소를 불러와 받고, 멈췄다 이어받아 끝까지 받는다', a
   await app.ctl((c, gb) => c.progress(1, 3 * gb, 4 * gb), GB);
   await app.ctl((c, gb) => c.complete(1, 4 * gb), GB);
   await expect(item).toContainText(tRegex('job.completed'));
-  await expect(page.getByText(t('toast.completed', { title: r.meta.title }))).toHaveCount(0);
+  await expect(page.locator('.notice-toast').getByText(t('toast.completed', { title: r.meta.title }))).toHaveCount(0);
   await app.axe('완료');
 
   // [완료 항목 지우기]는 숨기고 되돌리기 토스트를 준다. 지금 지우지 않는다(clear_finished도 부르지 않는다)
@@ -193,5 +193,5 @@ test('설정에 있는 동안 끝난 작업은 완료 토스트로 알린다', a
   await page.getByRole('button', { name: t('card.download') }).click();
   await page.getByRole('button', { name: t('header.settings') }).click();
   await app.ctl((c, gb) => c.complete(1, 4 * gb), GB);
-  await expect(page.getByText(t('toast.completed', { title: r.meta.title }))).toBeVisible();
+  await expect(page.locator('.notice-toast').getByText(t('toast.completed', { title: r.meta.title }))).toBeVisible();
 });

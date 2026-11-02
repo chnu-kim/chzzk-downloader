@@ -223,6 +223,7 @@ export const ko = {
   // 알림(토스트·배너) 낭독(content.md §10, ADR-0033): 알림 글 끝 마침표는 떼고 `. `로 잇는다
   'a11y.noticeAction': '{message}. ‘{action}’ 버튼이 있어요',
   'a11y.noticeUndo': '{message}. {shortcut} 키로 되돌릴 수 있어요',
+  'a11y.undone': '되돌렸어요',
 
   'action.pause': '일시정지',
   'action.stopRecording': '녹화 마치기',

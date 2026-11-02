@@ -52,7 +52,7 @@ test('바뀐 점이 있으면 배너에서 접어 두었다가 펼쳐 읽고, �
   await app.axe('업데이트 바뀐 점 펼침');
   // 기존 흐름: [지금 업데이트]로 바로 설치한다
   await banner.getByRole('button', { name: t('update.install') }).click();
-  await expect(page.getByText(t('update.installing'))).toBeVisible();
+  await expect(page.locator('.notice-banner').getByText(t('update.installing'))).toBeVisible();
 });
 
 test('바뀐 점이 없으면 접는 줄이 없다(D69)', async ({ app }) => {
@@ -75,7 +75,7 @@ test('받는 중이면 확인(D5) 뒤 설치한다', async ({ app }) => {
   await app.axe('업데이트 확인 대화상자');
 
   await dialog.getByRole('button', { name: t('dialog.update.confirm') }).click();
-  await expect(page.getByText(t('update.installing'))).toBeVisible();
+  await expect(page.locator('.notice-banner').getByText(t('update.installing'))).toBeVisible();
   expect(await app.args('update_install')).toEqual([{ confirmPause: false }, { confirmPause: true }]);
 });
 

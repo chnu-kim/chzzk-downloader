@@ -35,6 +35,9 @@ const { settings } = await import('../../stores/settings.svelte');
 const { platform } = await import('../../stores/platform.svelte');
 const { toasts } = await import('../../stores/toast.svelte');
 const { default: JobList } = await import('./JobList.svelte');
+const { default: GlobalShortcuts } = await import('../app/GlobalShortcuts.svelte');
+const { AUTH_DISABLED } = await import('../../stores/auth.svelte');
+const { setInputModality } = await import('../../inputModality');
 const { default: AppBanners } = await import('../app/AppBanners.svelte');
 
 const baseSettings: SettingsDto = {
@@ -933,5 +936,29 @@ describe('행 접근 이름(‘제목’: 상태, 25% 단위 퍼센트)', () => 
     const { container } = render(JobList);
     expect(container.querySelector('ul > li > article')).not.toBeNull();
     expect(container.querySelector('[role="listbox"],[role="grid"],[role="toolbar"],[role="application"]')).toBeNull();
+  });
+});
+
+describe('키보드로 지우고 Mod+Z로 되돌린다(ADR-0033)', () => {
+  afterEach(() => {
+    setInputModality('pointer');
+    auth.reset();
+  });
+
+  it('직전 입력이 포인터여도 행에서 Delete를 누르면 sticky(capture 리스너가 먼저 돈다), Ctrl+Z로 행이 돌아온다', async () => {
+    auth.apply(AUTH_DISABLED);
+    await load([job(1, { title: '완료 하나', status: 'completed', finalBytes: 10 })]);
+    render(GlobalShortcuts);
+    render(JobList);
+    const row = screen.getByRole('article', { name: jobRowName('완료 하나') });
+    await fireEvent.pointerDown(document.body);
+    row.focus();
+    await fireEvent.keyDown(row, { key: 'Delete' });
+    expect(screen.queryByRole('article', { name: jobRowName('완료 하나') })).toBeNull();
+    expect(toasts.current).toMatchObject({ sticky: true, undo: true });
+    await fireEvent.keyDown(document.body, { key: 'z', ctrlKey: true });
+    expect(await screen.findByRole('article', { name: jobRowName('완료 하나') })).toBeInTheDocument();
+    expect(api.removeJob).not.toHaveBeenCalled();
+    expect(toasts.items).toHaveLength(0);
   });
 });

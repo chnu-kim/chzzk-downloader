@@ -647,7 +647,7 @@ describe('AppBanners 낭독(ADR-0033)', () => {
     update.received = 45;
     render(AppBanners);
     await tick();
-    const calls = () => say.mock.calls.map((c) => c[0]);
+    const calls = () => say.mock.calls.map((c: unknown[]) => c[0]);
     expect(calls()).toEqual([t('update.downloading', { percent: '25%' })]);
     update.received = 49;
     await tick();

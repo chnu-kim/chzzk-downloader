@@ -3,9 +3,13 @@
   import { tick } from 'svelte';
   import { isInPageDrag, trackInPageDrags } from '../../inPageDrag';
   import { trackInputModality } from '../../inputModality';
+  import { t } from '../../copy/ko';
+  import { announcer } from '../../stores/announce.svelte';
   import { auth } from '../../stores/auth.svelte';
+  import { toasts } from '../../stores/toast.svelte';
   import { modKey, ui } from '../../stores/ui.svelte';
   import { editable, isImeKey } from '../ui/focus';
+  import { modalLayerDepth } from '../ui/modalLayer';
 
   async function onkeydown(e: KeyboardEvent) {
     if (isImeKey(e)) return;
@@ -24,6 +28,17 @@
     // 구간 편집 화면이 열린 동안 Mod+L·Mod+,는 무시한다: 설정으로 가면 카드가 언마운트되어 초안이 사라진다(RE15)
     if (ui.rangeEditorOpen) return;
     const k = e.key.toLowerCase();
+    // Mod+Z: 가장 최근 되돌리기 토스트의 [되돌리기](ADR-0033). 글을 치는 칸 안에서는 브라우저의 글 되돌리기다(가로채지 않는다).
+    // 대화상자·구간 편집 화면이 열린 동안은 받지 않는다(RE15: 위 rangeEditorOpen, 모달 층은 modalLayerDepth).
+    // 되돌릴 것이 없으면 기본 동작을 막지 않는다
+    if (k === 'z' && !e.shiftKey && !e.altKey && !e.repeat) {
+      if (editable(e.target) || modalLayerDepth() > 0) return;
+      if (toasts.undoLatest()) {
+        e.preventDefault();
+        announcer.say(t('a11y.undone'));
+      }
+      return;
+    }
     if (k === 'l') {
       e.preventDefault();
       if (ui.view !== 'home') {

@@ -80,7 +80,7 @@ test('다른 채널의 멈춘 작업은 이어받을 수 없고 B1이 세지 않
       job(2, { status: 'interrupted', title: '남의 작업', channelId: C3 }),
     ],
   });
-  await expect(page.getByText(t('banner.interrupted', { n: 1 }))).toBeVisible();
+  await expect(page.locator('.notice-banner').getByText(t('banner.interrupted', { n: 1 }))).toBeVisible();
   const other = page.getByRole('article', { name: jobRowName('남의 작업') });
   await expect(other.getByText(t('job.otherChannel.body'))).toBeVisible();
   await expect(other.getByRole('button', { name: t('action.resume') })).toHaveCount(0);

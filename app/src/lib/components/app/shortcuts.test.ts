@@ -1,8 +1,12 @@
 import { fireEvent, render } from '@testing-library/svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { t } from '../../copy/ko';
+import { announcer } from '../../stores/announce.svelte';
 import { AUTH_DISABLED, auth } from '../../stores/auth.svelte';
 import { platform } from '../../stores/platform.svelte';
+import { toasts } from '../../stores/toast.svelte';
 import { ui } from '../../stores/ui.svelte';
+import { modalLayer } from '../ui/modalLayer';
 import GlobalShortcuts from './GlobalShortcuts.svelte';
 
 describe('GlobalShortcuts', () => {
@@ -148,5 +152,119 @@ describe('GlobalShortcuts', () => {
       video.remove();
       other.remove();
     }
+  });
+});
+
+describe('Mod+Z: 가장 최근 되돌리기 토스트(ADR-0033)', () => {
+  let say: ReturnType<typeof vi.spyOn>;
+  let run: ReturnType<typeof vi.fn<() => void>>;
+  beforeEach(() => {
+    auth.apply(AUTH_DISABLED);
+    platform.set('linux');
+    toasts.clear();
+    say = vi.spyOn(announcer, 'say').mockImplementation(() => {});
+    run = vi.fn<() => void>();
+    toasts.push('목록에서 지웠어요', 'info', { undo: true, action: { label: t('action.undo'), run } });
+    say.mockClear();
+  });
+  afterEach(() => {
+    say.mockRestore();
+    toasts.clear();
+    ui.rangeEditorOpen = false;
+    ui.goHome();
+    auth.reset();
+    platform.set('linux');
+  });
+
+  it('Ctrl+Z가 되돌리기를 실행하고 토스트를 닫고 "되돌렸어요"를 읽는다', async () => {
+    render(GlobalShortcuts);
+    const notPrevented = await fireEvent.keyDown(document.body, { key: 'z', ctrlKey: true });
+    expect(notPrevented).toBe(false);
+    expect(run).toHaveBeenCalledOnce();
+    expect(toasts.items).toHaveLength(0);
+    expect(say).toHaveBeenLastCalledWith(t('a11y.undone'));
+  });
+
+  it('macOS는 Meta+Z만 받는다', async () => {
+    platform.set('macos');
+    render(GlobalShortcuts);
+    await fireEvent.keyDown(document.body, { key: 'z', ctrlKey: true });
+    expect(run).not.toHaveBeenCalled();
+    await fireEvent.keyDown(document.body, { key: 'z', metaKey: true });
+    expect(run).toHaveBeenCalledOnce();
+  });
+
+  it('입력칸·textarea·contenteditable 안에서는 가로채지 않는다(글 되돌리기)', async () => {
+    const { container } = render(GlobalShortcuts);
+    const input = document.createElement('input');
+    const area = document.createElement('textarea');
+    const rich = document.createElement('div');
+    rich.contentEditable = 'true';
+    // jsdom은 isContentEditable을 구현하지 않는다
+    Object.defineProperty(rich, 'isContentEditable', { value: true });
+    container.append(input, area, rich);
+    for (const el of [input, area, rich]) {
+      expect(await fireEvent.keyDown(el, { key: 'z', ctrlKey: true })).toBe(true);
+    }
+    expect(run).not.toHaveBeenCalled();
+    expect(toasts.items).toHaveLength(1);
+  });
+
+  it('되돌릴 것이 없으면 기본 동작을 막지 않는다(정보 토스트만, 또는 undo 아닌 동작 토스트)', async () => {
+    toasts.clear();
+    toasts.push('저장했어요', 'info');
+    render(GlobalShortcuts);
+    expect(await fireEvent.keyDown(document.body, { key: 'z', ctrlKey: true })).toBe(true);
+    const other = vi.fn();
+    toasts.clear();
+    toasts.push('찾을 수 없어요', 'danger', { action: { label: '폴더 열기', run: other } });
+    expect(await fireEvent.keyDown(document.body, { key: 'z', ctrlKey: true })).toBe(true);
+    expect(other).not.toHaveBeenCalled();
+    expect(toasts.items).toHaveLength(1);
+  });
+
+  it('Shift(다시 실행)·Alt·repeat는 무시한다', async () => {
+    render(GlobalShortcuts);
+    await fireEvent.keyDown(document.body, { key: 'z', ctrlKey: true, shiftKey: true });
+    await fireEvent.keyDown(document.body, { key: 'z', ctrlKey: true, altKey: true });
+    await fireEvent.keyDown(document.body, { key: 'z', ctrlKey: true, repeat: true });
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it('구간 편집 화면이 열린 동안은 받지 않는다(RE15)', async () => {
+    render(GlobalShortcuts);
+    ui.rangeEditorOpen = true;
+    await fireEvent.keyDown(document.body, { key: 'z', ctrlKey: true });
+    expect(run).not.toHaveBeenCalled();
+    ui.rangeEditorOpen = false;
+    await fireEvent.keyDown(document.body, { key: 'z', ctrlKey: true });
+    expect(run).toHaveBeenCalledOnce();
+  });
+
+  it('모달 층이 열린 동안은 받지 않고, 닫히면 다시 받는다', async () => {
+    render(GlobalShortcuts);
+    const layer = document.createElement('div');
+    const release = modalLayer(layer);
+    try {
+      await fireEvent.keyDown(layer, { key: 'z', ctrlKey: true });
+      expect(run).not.toHaveBeenCalled();
+    } finally {
+      release();
+    }
+    await fireEvent.keyDown(document.body, { key: 'z', ctrlKey: true });
+    expect(run).toHaveBeenCalledOnce();
+  });
+
+  it('로그인 화면(잠금)에서는 받지 않는다', async () => {
+    auth.reset();
+    render(GlobalShortcuts);
+    await fireEvent.keyDown(document.body, { key: 'z', ctrlKey: true });
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it('IME 조합 중에는 받지 않는다', async () => {
+    render(GlobalShortcuts);
+    await fireEvent.keyDown(document.body, { key: 'z', ctrlKey: true, isComposing: true });
+    expect(run).not.toHaveBeenCalled();
   });
 });

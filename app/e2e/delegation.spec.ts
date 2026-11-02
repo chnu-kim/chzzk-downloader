@@ -175,7 +175,7 @@ test('D6 편집자 빼기는 [되돌리기]가 되고, 토스트가 닫힐 때�
   const remove = page.getByRole('button', { name: t('a11y.removeEditor', { name: '편집자 하나' }) });
   await remove.click();
   await expect(page.locator('[data-editor]')).toHaveCount(0);
-  await expect(page.getByText(t('toast.editorRemoved', { name: '편집자 하나' }))).toBeVisible();
+  await expect(page.locator('.notice-toast').getByText(t('toast.editorRemoved', { name: '편집자 하나' }))).toBeVisible();
   await app.axe('빼기 토스트', '.toaster');
   await page.getByRole('button', { name: t('action.undo') }).click();
   await expect(page.locator('[data-editor]')).toHaveCount(1);
@@ -194,9 +194,9 @@ test('D7 토스트가 사는 동안 계정이 바뀌면 보내지 않는다', as
   await app.open({ auth: me, editors: editorsDto() });
   await openSettings(page);
   await page.getByRole('button', { name: t('a11y.removeEditor', { name: '편집자 하나' }) }).click();
-  await expect(page.getByText(t('toast.editorRemoved', { name: '편집자 하나' }))).toBeVisible();
+  await expect(page.locator('.notice-toast').getByText(t('toast.editorRemoved', { name: '편집자 하나' }))).toBeVisible();
   await app.ctl((c, s) => c.setAuth(s), { ...me, channelId: '000000000000000000000000000000d4', channelName: '다른 계정' });
-  await expect(page.getByText(t('toast.editorRemoved', { name: '편집자 하나' }))).toHaveCount(0);
+  await expect(page.locator('.notice-toast').getByText(t('toast.editorRemoved', { name: '편집자 하나' }))).toHaveCount(0);
   await page.clock.runFor(TOAST_MS + 100);
   expect(await cmdCount(app, 'editors_remove')).toBe(0);
 });
@@ -211,7 +211,7 @@ test('D8 편집자 그만두기: 보내고 토스트, 행과 머리 행이 사�
   await expect(page.getByText(t('delegated.title'), { exact: true })).toBeVisible();
   await page.getByRole('button', { name: t('a11y.leaveDelegation', { name: '맡긴 채널' }) }).click();
   await expect.poll(async () => app.args('delegations_leave')).toEqual([{ channelId: C3 }]);
-  await expect(page.getByText(t('toast.delegationLeft', { name: '맡긴 채널' }))).toBeVisible();
+  await expect(page.locator('.notice-toast').getByText(t('toast.delegationLeft', { name: '맡긴 채널' }))).toBeVisible();
   await expect(page.locator('[data-delegated]')).toHaveCount(0);
   await expect(page.getByText(t('delegated.title'), { exact: true })).toHaveCount(0);
 });

@@ -4,6 +4,7 @@ import { err, job, liveProg, prog, signedInAs } from '../../test/jobFixtures';
 import { errorCopy } from '../copy/errors';
 import { t } from '../copy/ko';
 import { formatFileSize } from '../format/bytes';
+import { jobSpeech } from '../jobs';
 import { RECOVERY_NOTICE_MS, RECOVERY_SILENT_MS } from '../timing';
 
 class FakeChannel {
@@ -623,5 +624,97 @@ describe('연결 대기·회복 추적(patterns.md §3.2·§1.2)', () => {
     expect(s.recovered.has(1)).toBe(true);
     b.send({ type: 'status', job: job(1, { status: 'paused', partialBytes: 5 }) });
     expect(s.recovered.has(1)).toBe(false);
+  });
+});
+
+describe('25% 낭독(patterns.md P-9)', () => {
+  const TOTAL = 4_294_967_296;
+  const at = (pct: number, over: Partial<ReturnType<typeof prog>> = {}) => prog({ bytes: Math.round((TOTAL * pct) / 100), ...over });
+  const tick = (title: string, pct: number) => jobSpeech(title, t('job.phase.downloading'), pct);
+
+  async function running(over: Partial<JobDto> = {}, pct = 0) {
+    const s = new JobsStore();
+    const b = begin(s);
+    b.snapshot([job(1, { title: '영상', status: 'running', progress: at(pct), ...over })]);
+    await b.started;
+    return { s, send: b.send };
+  }
+  const calls = (spy: ReturnType<typeof vi.spyOn>) => spy.mock.calls.map((c) => c[0]);
+
+  it('25·50·75%를 처음 넘을 때만 한 번씩 읽는다', async () => {
+    const spy = vi.spyOn(announcer, 'say').mockImplementation(() => {});
+    const { send } = await running();
+    for (const p of [10, 24]) send({ type: 'progress', id: 1, progress: at(p) });
+    expect(spy).not.toHaveBeenCalled();
+    send({ type: 'progress', id: 1, progress: at(25) });
+    expect(calls(spy)).toEqual([tick('영상', 25)]);
+    for (const p of [30, 40]) send({ type: 'progress', id: 1, progress: at(p) });
+    expect(spy).toHaveBeenCalledTimes(1);
+    send({ type: 'progress', id: 1, progress: at(50) });
+    send({ type: 'progress', id: 1, progress: at(75) });
+    send({ type: 'progress', id: 1, progress: at(99) });
+    expect(calls(spy)).toEqual([tick('영상', 25), tick('영상', 50), tick('영상', 75)]);
+    spy.mockRestore();
+  });
+
+  it('P-4: 값이 줄었다 다시 올라도 같은 단위를 다시 읽지 않는다', async () => {
+    const spy = vi.spyOn(announcer, 'say').mockImplementation(() => {});
+    const { send } = await running();
+    for (const p of [52, 48, 51]) send({ type: 'progress', id: 1, progress: at(p) });
+    // 52에서 50 하나만 읽는다(25는 건너뛰었으므로 가장 큰 단위 하나)
+    expect(calls(spy)).toEqual([tick('영상', 50)]);
+    spy.mockRestore();
+  });
+
+  it('finalizing·reresolving·waitingNetwork 단계의 진행은 읽지 않는다', async () => {
+    const spy = vi.spyOn(announcer, 'say').mockImplementation(() => {});
+    const { send } = await running();
+    for (const phase of ['finalizing', 'reresolving', 'waitingNetwork'] as const) {
+      send({ type: 'progress', id: 1, progress: at(80, { phase }) });
+    }
+    expect(spy.mock.calls.filter((c) => String(c[0]).includes('퍼센트'))).toEqual([]);
+    spy.mockRestore();
+  });
+
+  it('이어받기: 55%에서 멈췄다 다시 받으면 50은 다시 읽지 않고 75만 읽는다', async () => {
+    const spy = vi.spyOn(announcer, 'say').mockImplementation(() => {});
+    const { send } = await running({ status: 'paused' }, 55);
+    send({ type: 'status', job: job(1, { title: '영상', status: 'running', progress: at(55) }) });
+    spy.mockClear();
+    send({ type: 'progress', id: 1, progress: at(60) });
+    expect(spy).not.toHaveBeenCalled();
+    send({ type: 'progress', id: 1, progress: at(75) });
+    expect(calls(spy)).toEqual([tick('영상', 75)]);
+    spy.mockRestore();
+  });
+
+  it('다시 구독한 스냅샷이 60%면 첫 진행 70%는 읽지 않고 75%에서 읽는다', async () => {
+    const spy = vi.spyOn(announcer, 'say').mockImplementation(() => {});
+    const { send } = await running({}, 60);
+    send({ type: 'progress', id: 1, progress: at(70) });
+    expect(spy).not.toHaveBeenCalled();
+    send({ type: 'progress', id: 1, progress: at(75) });
+    expect(calls(spy)).toEqual([tick('영상', 75)]);
+    spy.mockRestore();
+  });
+
+  it('생방송은 진행 이벤트를 여러 번 보내도 읽지 않는다', async () => {
+    const spy = vi.spyOn(announcer, 'say').mockImplementation(() => {});
+    const { send } = await running({ kind: 'live', playbackKind: 'live', progress: liveProg() });
+    for (let i = 0; i < 3; i++) send({ type: 'progress', id: 1, progress: liveProg({ bytes: 9_000_000_000 * (i + 1) }) });
+    expect(spy).not.toHaveBeenCalled();
+    spy.mockRestore();
+  });
+
+  it('지운 작업의 기준은 남지 않는다: 같은 id의 새 작업은 25%에서 읽는다', async () => {
+    const spy = vi.spyOn(announcer, 'say').mockImplementation(() => {});
+    const { send } = await running();
+    send({ type: 'progress', id: 1, progress: at(50) });
+    send({ type: 'removed', id: 1 });
+    send({ type: 'added', job: job(1, { title: '영상', status: 'running', progress: at(0) }) });
+    spy.mockClear();
+    send({ type: 'progress', id: 1, progress: at(25) });
+    expect(calls(spy)).toEqual([tick('영상', 25)]);
+    spy.mockRestore();
   });
 });

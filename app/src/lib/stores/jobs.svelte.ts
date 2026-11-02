@@ -11,6 +11,7 @@ import {
   groupJobs,
   isClearable,
   isWaitingNetwork,
+  jobSpeech,
   nextQueueOrder,
   outputFileName,
   needsStopConfirm,
@@ -18,6 +19,7 @@ import {
   removeRoute,
   resumableInterrupted,
   shouldNoticeRecovery,
+  spokenPercent,
   statusWord,
   transitionAnnouncement,
   visibleOrder,
@@ -90,6 +92,8 @@ export class JobsStore {
   /** 연결 대기에서 막 풀려 회복 줄(`job.recovered.body`)을 `RECOVERY_NOTICE_MS` 동안 보이는 작업 */
   recovered = new SvelteSet<JobId>();
   #recoveredTimers = new Map<JobId, ReturnType<typeof setTimeout>>();
+  /** 작업마다 마지막으로 읽은(또는 기준으로 둔) 25% 단위. 반응형일 필요가 없다 */
+  #spokenStep = new Map<JobId, number>();
   /** [목록에서 보기]·추가 뒤 그 항목으로 포커스를 옮겨 달라는 요청. `n`은 같은 id를 다시 부를 때 바뀐다 */
   focusRequest: { id: JobId; n: number } | null = $state(null);
 
@@ -140,7 +144,11 @@ export class JobsStore {
     this.queueOrder = nextQueueOrder([], this.state.jobs);
     this.#resetPhase();
     // 다시 맞춘 스냅샷: 이미 연결 대기인 작업은 지금부터 센다(알림은 없다)
-    for (const j of this.state.jobs.values()) this.#trackPhase(j, false);
+    this.#spokenStep.clear();
+    for (const j of this.state.jobs.values()) {
+      this.#trackPhase(j, false);
+      this.#seedStep(j.id);
+    }
     this.ready = true;
     const pending = early;
     early = null;
@@ -155,6 +163,7 @@ export class JobsStore {
     this.#dropStaleStopConfirm();
     if (e.type === 'removed') {
       this.#forgetPhase(e.id);
+      this.#spokenStep.delete(e.id);
       this.runStartedAt.delete(e.id);
       this.highlight.delete(e.id);
       this.hidden.delete(e.id);
@@ -162,20 +171,26 @@ export class JobsStore {
     }
     if (e.type === 'progress') {
       const j = this.state.jobs.get(e.id);
-      if (j) this.#trackPhase(j, true);
+      if (j) {
+        this.#trackPhase(j, true);
+        this.#tickPercent(j);
+      }
       return;
     }
     if (e.type !== 'added' && e.type !== 'status') return;
     const job = e.job;
     this.#trackPhase(this.state.jobs.get(job.id) ?? job, e.type === 'status');
-    if (job.status === 'running' && prev?.status !== 'running') this.runStartedAt.set(job.id, Date.now());
+    if (job.status === 'running' && prev?.status !== 'running') {
+      this.runStartedAt.set(job.id, Date.now());
+      this.#seedStep(job.id);
+    }
     if (e.type === 'added') {
       this.highlight.add(job.id);
       setTimeout(() => this.highlight.delete(job.id), HIGHLIGHT_MS);
       return;
     }
     // 완료는 상태가 완료로 바뀌는 순간만(복원된 완료 항목·스냅샷은 알리지 않는다, Rust `completed_title`과 같다).
-    // 1차 표시는 행 상태이고, 토스트는 홈이 아닌 화면에서 창이 활성일 때만이다. 창이 비활성이면 OS 알림이 알린다
+    // 1차 표시는 행 상태이고(토스트는 토스트 store가 상주 영역으로 읽는다, ADR-0033), 토스트는 홈이 아닌 화면에서 창이 활성일 때만이다. 창이 비활성이면 OS 알림이 알린다
     // (Rust `should_notify`). 홈에서는 토스트가 없는 대신 라이브 영역이 한 줄 읽는다(patterns.md §1.1-1).
     if (job.status === 'completed' && prev?.status !== 'completed') {
       if (ui.view !== 'home' && ui.windowFocused) toasts.push(t('toast.completed', { title: job.title }), 'success');
@@ -184,6 +199,25 @@ export class JobsStore {
     }
     const say = transitionAnnouncement(prev, job);
     if (say) announcer.say(say);
+  }
+
+  /** 25% 틱의 기준을 지금 바닥으로 둔다(읽지 않는다) */
+  #seedStep(id: JobId) {
+    this.#spokenStep.set(id, spokenPercent(this.state.percent.get(id)) ?? 0);
+  }
+
+  /**
+   * 진행 25% 단위 낭독(patterns.md P-9, platform.md §12.2). 받는 중(`downloading`)일 때 단위를 처음 넘으면 polite 한 번.
+   * 문장은 행 접근 이름과 같다(`jobSpeech`). 바닥(`state.percent`, P-4)을 쓰므로 값이 줄었다 다시 올라도 다시 읽지 않는다.
+   * 한계: `announcer.say`는 프레임 안 마지막 문장만 남아 같은 프레임의 다른 polite 낭독과 겹치면 하나가 빠진다
+   */
+  #tickPercent(job: JobDto) {
+    const p = this.state.progress.get(job.id);
+    if (job.status !== 'running' || p?.phase !== 'downloading') return;
+    const step = spokenPercent(this.state.percent.get(job.id));
+    if (step == null || step <= (this.#spokenStep.get(job.id) ?? 0)) return;
+    this.#spokenStep.set(job.id, step);
+    announcer.say(jobSpeech(job.title, statusWord(job, p), step));
   }
 
   /**

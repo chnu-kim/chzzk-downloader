@@ -2,6 +2,7 @@
 // 가짜 백엔드는 시간을 쓰지 않으므로 상태 변화는 테스트가 window.__e2e로 하나씩 일으킨다.
 // 화면 글자는 모두 e2e/copy.ts(copy deck)에서 가져온다: 리터럴은 고정 데이터의 제목뿐이다.
 import { resolved } from '../src/test/fixtures';
+import { job, prog } from '../src/test/jobFixtures';
 import { t, tRegex } from './copy';
 import { expect, test } from './fixtures';
 
@@ -193,4 +194,19 @@ test('설정에 있는 동안 끝난 작업은 완료 토스트로 알린다', a
   await page.getByRole('button', { name: t('header.settings') }).click();
   await app.ctl((c, gb) => c.complete(1, 4 * gb), GB);
   await expect(page.getByText(t('toast.completed', { title: r.meta.title }))).toBeVisible();
+});
+
+test('키보드로 일시정지·이어받기해도 포커스가 그 행에 남는다', async ({ app }) => {
+  const { page } = app;
+  await app.open({ jobs: [job(1, { status: 'running', progress: prog(), title: '키보드 영상', partialBytes: 5 })] });
+  const item = page.getByRole('article', { name: '키보드 영상' });
+  await item.focus();
+  await page.keyboard.press('Space');
+  await expect(item).toContainText(t('job.status.paused'));
+  await expect(item).toBeFocused();
+  await app.axe('키보드 일시정지 뒤');
+  await page.keyboard.press('Space');
+  await expect(item).toContainText(t('job.queuedNext'));
+  await expect(item).toBeFocused();
+  expect(await app.cmds()).toEqual(expect.arrayContaining(['pause_job', 'resume_job']));
 });

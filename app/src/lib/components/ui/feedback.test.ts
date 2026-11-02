@@ -46,6 +46,32 @@ describe('Dialog', () => {
     expect(opener).toHaveFocus();
   });
 
+  it('연 요소가 닫힐 때 사라졌으면 returnFocus를 부르고, 남아 있으면 부르지 않는다', async () => {
+    const returnFocus = vi.fn();
+    const base = { title: '확인', body: '본문', primary: { id: 'ok', label: '확인', onclick: () => {} }, onclose: () => {} };
+    const opener = document.createElement('button');
+    document.body.append(opener);
+    opener.focus();
+    const view = render(ConfirmDialog, { ...base, open: true, returnFocus });
+    await waitFor(() => expect(screen.getByRole('button', { name: '확인' })).toHaveFocus());
+    opener.remove();
+    await view.rerender({ ...base, open: false, returnFocus });
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(returnFocus).toHaveBeenCalledTimes(1);
+    view.unmount();
+
+    const stay = document.createElement('button');
+    document.body.append(stay);
+    stay.focus();
+    const again = render(ConfirmDialog, { ...base, open: true, returnFocus });
+    await waitFor(() => expect(screen.getByRole('button', { name: '확인' })).toHaveFocus());
+    await again.rerender({ ...base, open: false, returnFocus });
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(returnFocus).toHaveBeenCalledTimes(1);
+    expect(stay).toHaveFocus();
+    stay.remove();
+  });
+
   it('inert 아닌 층에 .btn-primary가 정확히 1개이고 DOM 마지막 버튼이다', async () => {
     const user = userEvent.setup();
     render(DialogHarness);

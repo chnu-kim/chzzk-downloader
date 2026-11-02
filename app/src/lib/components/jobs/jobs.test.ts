@@ -604,6 +604,128 @@ describe('키보드', () => {
     await waitFor(() => expect(screen.getByRole('heading', { name: t('list.title') })).toHaveFocus());
   });
 
+  describe('그룹 이동·버튼 소멸 뒤 포커스(F-4, app.md 129)', () => {
+    const running = (over: Partial<JobDto> = {}) => job(1, { status: 'running', progress: prog(), title: '영상 1', ...over });
+
+    it('받는 중 행에서 Space로 일시정지해 멈춘 그룹으로 옮겨도 포커스가 그 행에 남는다', async () => {
+      await load([running(), job(2, { status: 'queued', title: '영상 2' })]);
+      render(JobList);
+      const a = screen.getByRole('article', { name: '영상 1' });
+      a.focus();
+      await fireEvent.keyDown(a, { key: ' ' });
+      expect(api.pauseJob).toHaveBeenCalledTimes(1);
+      send({ type: 'status', job: running({ status: 'pausing' }) });
+      await tick();
+      expect(a).toHaveFocus();
+      send({ type: 'status', job: running({ status: 'paused', partialBytes: 5 }) });
+      await tick();
+      expect(a.isConnected).toBe(false);
+      await waitFor(() => expect(screen.getByRole('article', { name: '영상 1' })).toHaveFocus());
+      expect(screen.getByRole('article', { name: '영상 1' })).toHaveAttribute('tabindex', '0');
+    });
+
+    it('실패 행에서 Enter(다시 시도)로 대기 그룹으로 옮겨도 포커스가 그 행에 남는다', async () => {
+      await load([
+        job(1, { status: 'failed', error: err('network', { resumable: true }), partialBytes: 5, title: '영상 1' }),
+        job(2, { status: 'completed', title: '영상 2', createdAt: 0 }),
+      ]);
+      render(JobList);
+      const a = screen.getByRole('article', { name: '영상 1' });
+      // 받은 부분이 있으면 첫 동작은 [이어받기]다(jobButtons, D8)
+      expect(within(a).getByRole('button', { name: t('action.resume') })).toBeInTheDocument();
+      a.focus();
+      await fireEvent.keyDown(a, { key: 'Enter' });
+      expect(api.resumeJob).toHaveBeenCalledWith(1, false);
+      send({ type: 'status', job: job(1, { status: 'queued', error: null, partialBytes: 5, title: '영상 1' }) });
+      await tick();
+      expect(a.isConnected).toBe(false);
+      await waitFor(() => expect(screen.getByRole('article', { name: '영상 1' })).toHaveFocus());
+    });
+
+    it('멈춘 행에서 Space(이어받기)로 대기 그룹으로 옮겨도 포커스가 그 행에 남는다', async () => {
+      await load([job(1, { status: 'paused', partialBytes: 5, title: '영상 1' }), job(2, { status: 'completed', title: '영상 2', createdAt: 0 })]);
+      render(JobList);
+      const a = screen.getByRole('article', { name: '영상 1' });
+      a.focus();
+      await fireEvent.keyDown(a, { key: ' ' });
+      expect(api.resumeJob).toHaveBeenCalledWith(1, false);
+      send({ type: 'status', job: job(1, { status: 'queued', partialBytes: 5, title: '영상 1' }) });
+      await tick();
+      expect(a.isConnected).toBe(false);
+      await waitFor(() => expect(screen.getByRole('article', { name: '영상 1' })).toHaveFocus());
+    });
+
+    it('행 안 [일시정지]를 눌러 버튼이 사라지면 포커스는 그 행 article로', async () => {
+      await load([running()]);
+      render(JobList);
+      const a = screen.getByRole('article', { name: '영상 1' });
+      const pause = within(a).getByRole('button', { name: t('action.pause') });
+      pause.focus();
+      await fireEvent.click(pause);
+      send({ type: 'status', job: running({ status: 'pausing' }) });
+      await tick();
+      expect(pause.isConnected).toBe(false);
+      await waitFor(() => expect(a).toHaveFocus());
+    });
+
+    it('빈 곳을 눌러 목록을 떠났으면 그룹이 바뀌어도 포커스를 빼앗지 않는다', async () => {
+      await load([running(), job(2, { status: 'queued', title: '영상 2' })]);
+      render(JobList);
+      const a = screen.getByRole('article', { name: '영상 1' });
+      a.focus();
+      a.blur();
+      await Promise.resolve();
+      send({ type: 'status', job: running({ status: 'paused', partialBytes: 5 }) });
+      await tick();
+      await tick();
+      expect(document.activeElement).toBe(document.body);
+    });
+
+    it('목록 밖 입력칸으로 옮긴 포커스는 그룹이 바뀌어도 그대로다', async () => {
+      await load([running(), job(2, { status: 'queued', title: '영상 2' })]);
+      render(JobList);
+      const input = document.createElement('input');
+      document.body.append(input);
+      const a = screen.getByRole('article', { name: '영상 1' });
+      a.focus();
+      input.focus();
+      send({ type: 'status', job: running({ status: 'paused', partialBytes: 5 }) });
+      await tick();
+      await tick();
+      expect(input).toHaveFocus();
+      input.remove();
+    });
+
+    it('빈 곳을 눌러 떠난 뒤 그 행이 지워져도 이웃 행으로 포커스를 빼앗지 않는다', async () => {
+      await load([job(1, { status: 'completed', createdAt: 2 }), job(2, { status: 'completed', createdAt: 1 })]);
+      render(JobList);
+      const [a] = screen.getAllByRole('article');
+      a.focus();
+      a.blur();
+      await Promise.resolve();
+      send({ type: 'removed', id: 1 });
+      await tick();
+      await tick();
+      expect(document.activeElement).toBe(document.body);
+    });
+
+    it('대화상자가 열려 있으면 행으로 포커스를 옮기지 않는다', async () => {
+      const user = userEvent.setup();
+      await load([running({ partialBytes: 5 }), job(2, { status: 'queued', title: '영상 2' })]);
+      render(JobList);
+      const a = screen.getByRole('article', { name: '영상 1' });
+      await user.click(within(a).getByRole('button', { name: t('a11y.cancelJob', { title: '영상 1' }) }));
+      const dialog = await screen.findByRole('dialog');
+      const keep = within(dialog).getByRole('button', { name: t('dialog.cancel.keepRunning') });
+      await waitFor(() => expect(keep).toHaveFocus());
+      // 그룹이 바뀌어 연 버튼 노드가 사라져도 대화상자의 포커스를 빼앗지 않는다
+      send({ type: 'status', job: running({ status: 'paused', partialBytes: 6 }) });
+      await tick();
+      await tick();
+      expect(keep).toHaveFocus();
+    });
+  });
+
   it('[목록에서 보기]: 그 행으로 포커스', async () => {
     await load([job(1), job(2)]);
     render(JobList);
@@ -787,6 +909,56 @@ describe('생방송 행(ADR-0025)', () => {
     await tick();
     expect(screen.queryByRole('dialog', { name: t('dialog.stopLive.title', { title: '오늘 방송' }) })).toBeNull();
     expect(api.stopJob).not.toHaveBeenCalled();
+  });
+
+  describe('D8 자동 닫힘 뒤 포커스(F-4, app.md 129)', () => {
+    async function openD8(user: ReturnType<typeof userEvent.setup>) {
+      const row = screen.getByRole('article', { name: '오늘 방송' });
+      await user.click(within(row).getByRole('button', { name: t('action.stopRecording') }));
+      await screen.findByRole('dialog', { name: t('dialog.stopLive.title', { title: '오늘 방송' }) });
+    }
+
+    it('D8을 연 사이 방송이 끝나 닫히면 포커스는 그 녹화의 행으로', async () => {
+      const user = userEvent.setup();
+      await load([liveJob()]);
+      render(JobList);
+      await openD8(user);
+      send({ type: 'status', job: liveJob({ status: 'completed', progress: null }) });
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+      await waitFor(() => expect(screen.getByRole('article', { name: '오늘 방송' })).toHaveFocus());
+      expect(api.stopJob).not.toHaveBeenCalled();
+    });
+
+    it('D8을 연 사이 그 녹화가 사라지면 이웃 행, 없으면 목록 제목으로', async () => {
+      const user = userEvent.setup();
+      await load([liveJob(), job(2, { status: 'completed', title: '영상 2', createdAt: 0 })]);
+      render(JobList);
+      await openD8(user);
+      send({ type: 'removed', id: 1 });
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+      await waitFor(() => expect(screen.getByRole('article', { name: '영상 2' })).toHaveFocus());
+    });
+
+    it('D8을 연 사이 하나뿐인 녹화가 사라지면 목록 제목으로', async () => {
+      const user = userEvent.setup();
+      await load([liveJob()]);
+      render(JobList);
+      await openD8(user);
+      send({ type: 'removed', id: 1 });
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+      await waitFor(() => expect(screen.getByRole('heading', { name: t('list.title') })).toHaveFocus());
+    });
+
+    it('[계속 받기]로 닫으면 [녹화 마치기]로 돌아간다', async () => {
+      const user = userEvent.setup();
+      await load([liveJob()]);
+      render(JobList);
+      await openD8(user);
+      const dialog = screen.getByRole('dialog');
+      await user.click(within(dialog).getByRole('button', { name: t('dialog.cancel.keepRunning') }));
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+      expect(screen.getByRole('button', { name: t('action.stopRecording') })).toHaveFocus();
+    });
   });
 
   it('놓친 조각이 있으면 상태 줄 끝에 보인다', async () => {

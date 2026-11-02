@@ -574,6 +574,22 @@ describe('[⋯] › 자세히', () => {
     send({ type: 'status', job: { ...failed, status: 'queued', error: null } });
     await waitFor(() => expect(screen.getByRole('article', { name: '실패' }).querySelector('.job-detail')).toBeNull());
   });
+
+  it('실패 → 재시도 → 다시 실패하면 새 원문은 접힌 채 나온다', async () => {
+    const failed = job(1, { status: 'failed', title: '실패', error: err('unsupported', { message: '첫 원문' }) });
+    await load([failed]);
+    const user = userEvent.setup();
+    render(JobList);
+    const item = screen.getByRole('article', { name: '실패' });
+    await pickMenu(user, item, '실패', t('common.details'));
+    expect(item.querySelector('.job-detail')).not.toBeNull();
+    send({ type: 'status', job: { ...failed, status: 'queued', error: null } });
+    await waitFor(() => expect(screen.getByRole('article', { name: '실패' }).querySelector('.job-detail')).toBeNull());
+    send({ type: 'status', job: { ...failed, status: 'failed', error: err('unsupported', { message: '새 원문' }) } });
+    await waitFor(() => expect(screen.getByRole('article', { name: '실패' })).toHaveTextContent(/./));
+    expect(screen.getByRole('article', { name: '실패' }).querySelector('.job-detail')).toBeNull();
+    expect(screen.getByRole('article', { name: '실패' })).not.toHaveTextContent('새 원문');
+  });
 });
 
 describe('완료 그룹 접힘', () => {

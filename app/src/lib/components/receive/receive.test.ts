@@ -512,6 +512,14 @@ describe('ResolveCard', () => {
     expect(btn).not.toHaveAttribute('aria-disabled', 'true');
   });
 
+  it('번호 이름 없음 사유 문장은 낭독 영역(role=status) 밖에 있다', async () => {
+    setCheck({ exists: true, freeFileName: null });
+    await openCard();
+    const sentence = await screen.findByText(t('conflict.noFreeName.body'));
+    expect(sentence.closest('[role="status"]')).toBeNull();
+    expect(screen.getByRole('radio', { name: t('conflict.number') }).closest('[role="status"]')).not.toBeNull();
+  });
+
   it('받다 만 녹화인데 빈 번호 이름이 없으면 녹화 안내 안에 사유 문장', async () => {
     setCheck({ partial: { bytes: 10, sameJob: false, recording: true }, freeFileName: null });
     await openCard();

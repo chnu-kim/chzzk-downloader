@@ -103,6 +103,10 @@
   let titleOpen = $state(false);
   /** 오류 원문(L1 "자세히", 행 아래 인라인 펼침). 재시도로 실패를 벗어나면 err가 null이라 사라진다 */
   let detailOpen = $state(false);
+  // 실패를 벗어나면(재시도 등) 접는다: 다시 실패했을 때 새 원문이 열린 채 나오지 않게 한다
+  $effect(() => {
+    if (!err) detailOpen = false;
+  });
 
   const menuItems = $derived(
     buttons.menu.map((a) => ({

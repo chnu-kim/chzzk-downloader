@@ -29,7 +29,10 @@ test('불러오기 오류: 모든 코드의 Notice가 copy deck대로 그려진�
     const notice = page.locator('.notice').filter({ has: alert });
     if (want.detail) {
       await expect(notice.getByText(t('common.details'), { exact: true }), `${code} 자세히`).toBeVisible();
-      await expect(notice.getByText(want.detail.split('\n')[0], { exact: false }), `${code} 원문 접힘`).toBeHidden();
+      const raw = notice.getByText(want.detail.split('\n')[0], { exact: false });
+      // 원문이 DOM에 실제로 있어야 "접힘"이 뜻을 가진다(0개여도 통과하는 거짓 녹색 방지)
+      await expect(raw, `${code} 원문 있음`).toHaveCount(1);
+      await expect(raw, `${code} 원문 접힘`).toBeHidden();
       await expect(alert, `${code} 낭독`).not.toContainText(want.detail.split('\n')[0]);
     }
     for (const a of want.actions) await expect(notice.getByRole('button', { name: actionLabel(a), exact: true }), `${code} ${a}`).toBeVisible();

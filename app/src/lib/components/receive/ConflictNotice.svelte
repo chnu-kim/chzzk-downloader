@@ -23,7 +23,14 @@
     { id: 'number', value: 'number', label: t('conflict.number') },
     { id: 'overwrite', value: 'overwrite', label: t('conflict.overwrite') },
   ];
+  /** 같은 이름 파일 + 번호 붙이기인데 빈 번호 이름이 없다. 사유 문장은 라이브 영역 밖(details 줄)에 둔다:
+   *  라디오를 바꿀 때 알림 전체(제목·라디오)가 다시 낭독되지 않게 한다 */
+  const noFree = $derived(check.freeFileName == null && choices.existing === 'number');
 </script>
+
+{#snippet noFreeDetails()}
+  <p id={BLOCK_REASON_ID.noFreeName} class="line">{t('conflict.noFreeName.body')}</p>
+{/snippet}
 
 {#if n.duplicate}
   <Notice
@@ -37,12 +44,9 @@
 {/if}
 
 {#if n.exists}
-  <Notice variant="inline" tone="warning">
+  <Notice variant="inline" tone="warning" details={noFree ? noFreeDetails : undefined}>
     <p id="exists-title" class="line">{t('conflict.exists')}</p>
     <RadioGroup name="existing" labelledby="exists-title" options={existingOptions} bind:value={choices.existing} />
-    {#if check.freeFileName == null && choices.existing === 'number'}
-      <p id={BLOCK_REASON_ID.noFreeName} class="line">{t('conflict.noFreeName.body')}</p>
-    {/if}
   </Notice>
 {/if}
 

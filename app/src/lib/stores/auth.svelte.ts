@@ -45,6 +45,11 @@ export class AuthStore {
   /** 직전 [다시 연결]이 상태를 바꾸지 못했고 지금도 그 상태다 */
   reconnectFailed = $derived(this.#failedAt !== null && key(this.status) === this.#failedAt);
 
+  /** [브라우저 다시 열기] 실패 토스트가 지금 화면에 보인다(대기열에 밀려 있지 않다) */
+  reopenFailureShown(): boolean {
+    return this.#reopenToast != null && toasts.current?.id === this.#reopenToast;
+  }
+
   isBusy(a: AuthAction): boolean {
     return this.#busy[a];
   }

@@ -457,7 +457,28 @@ describe('로그인 대기 화면', () => {
       reopenBtn().focus();
       await user.keyboard('{Enter}');
       await waitFor(() => expect(toasts.items).toContainEqual(expect.objectContaining({ kind: 'danger', message: t('toast.browserOpenFailed') })));
-      await waitFor(() => expect(document.activeElement).toBe(copyBtn()));
+      await waitFor(() => expect(document.activeElement).toBe(copyBtn()), { timeout: 3000 });
+    });
+
+    it('포커스는 알림이 뜬 직후가 아니라 낭독할 틈을 둔 뒤에 옮긴다', async () => {
+      const { user } = await pendingScreen();
+      vi.mocked(api.authReopen).mockResolvedValue(false);
+      reopenBtn().focus();
+      await user.keyboard('{Enter}');
+      await waitFor(() => expect(openFailed()).toHaveLength(1));
+      expect(document.activeElement).toBe(reopenBtn());
+      await waitFor(() => expect(document.activeElement).toBe(copyBtn()), { timeout: 3000 });
+    });
+
+    it('실패 알림이 대기열에 밀려 보이지 않으면 포커스를 옮기지 않는다', async () => {
+      const { user } = await pendingScreen();
+      toasts.push('앞선 오류', 'danger');
+      vi.mocked(api.authReopen).mockResolvedValue(false);
+      reopenBtn().focus();
+      await user.keyboard('{Enter}');
+      await waitFor(() => expect(openFailed()).toHaveLength(1));
+      await new Promise((r) => setTimeout(r, 1800));
+      expect(document.activeElement).toBe(reopenBtn());
     });
 
     it('command가 실패(reject)해도 같다', async () => {
@@ -466,7 +487,7 @@ describe('로그인 대기 화면', () => {
       reopenBtn().focus();
       await user.keyboard('{Enter}');
       await waitFor(() => expect(openFailed()).toHaveLength(1));
-      await waitFor(() => expect(document.activeElement).toBe(copyBtn()));
+      await waitFor(() => expect(document.activeElement).toBe(copyBtn()), { timeout: 3000 });
     });
 
     it('열었으면(true) 토스트도 포커스 이동도 없다', async () => {
@@ -519,7 +540,7 @@ describe('로그인 대기 화면', () => {
       emit(authDto({ state: 'pending', pending: { expiresAt: at } }));
       resolve(false);
       await waitFor(() => expect(openFailed()).toHaveLength(1));
-      await waitFor(() => expect(document.activeElement).toBe(copyBtn()));
+      await waitFor(() => expect(document.activeElement).toBe(copyBtn()), { timeout: 3000 });
     });
 
     it('응답 전에 새 로그인으로 기한이 바뀌었으면 알리지 않는다', async () => {

@@ -218,3 +218,21 @@ test('받다 만 녹화가 있는 이름이면 번호 이름으로 녹화한다'
   expect(enq[0].req.fileName).toBe(free);
   expect(enq[0].req.restart).toBe(false);
 });
+
+test('녹화 마치기 확인을 연 사이 방송이 끝나면 그 녹화 행으로 포커스가 돌아온다', async ({ app }) => {
+  const r = liveResolved();
+  const { page } = app;
+  await app.open({ resolve: { [r.url]: r } });
+  await page.getByLabel(t('url.label')).fill(r.url);
+  await page.getByRole('button', { name: t('common.load') }).click();
+  await page.getByRole('button', { name: t('card.download') }).click();
+  await app.ctl((c, gb) => c.liveProgress(1, 1 * gb, 600), GB);
+  const item = page.getByRole('article', { name: r.meta.title });
+  await item.getByRole('button', { name: t('action.stopRecording') }).click();
+  const d8 = page.getByRole('dialog', { name: t('dialog.stopLive.title', { title: r.meta.title }) });
+  await expect(d8).toBeVisible();
+  await app.ctl((c, gb) => c.complete(1, 3 * gb, { reason: 'other', gaps: 0 }), GB);
+  await expect(d8).toHaveCount(0);
+  await expect(page.getByRole('article', { name: r.meta.title })).toBeFocused();
+  expect(await app.cmds()).not.toContain('stop_job');
+});

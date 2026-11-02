@@ -480,7 +480,7 @@ scrim(`--scrim`, `--z-dialog` 50) 위, 창 가운데
 | F-1 | 포커스 순서 = 시각·읽는 순서 | `G-INTER-FC1` | `design-gallery`(axe tabindex) |
 | F-2 | 대화상자: §5.3(늘 오른쪽 버튼). 메뉴: 열면 첫 항목(키보드) 또는 메뉴 컨테이너(포인터), 닫으면 트리거로 복귀 | `G-INTER-FC2` | `frontend` |
 | F-3 | 토스트·배너는 포커스를 가져가지 않는다. 제출 직후 사용자가 반드시 읽어야 하는 오류(입력줄 오류)만 **첫 오류 Notice**로 옮긴다 | `G-INTER-FC3`, GOV.UK | `frontend` |
-| F-4 | 항목이 사라지면 다음 항목 → 없으면 이전 → 목록이 비면 입력줄. `body`로 떨어지지 않는다 | `G-INTER-FC4` | `frontend`(지우기·취소 뒤 `document.activeElement`) |
+| F-4 | 항목이 사라지면 다음 항목 → 없으면 이전 → 목록이 비면 입력줄. `body`로 떨어지지 않는다 | `G-INTER-FC4` | `frontend`(지우기·취소·그룹 이동·누른 버튼 소멸·D8 자동 닫힘 뒤 `document.activeElement`), `e2e-web`(키보드 일시정지·이어받기) |
 | F-5 | 화면 전환(홈 ↔ 설정 ↔ 로그인) 뒤 포커스는 새 화면 제목(`h1`, `tabindex=-1`, 링 숨김) | `G-INTER-FC5` | `frontend` |
 | F-6 | 불러오기가 끝나면 카드 제목(`tabindex=-1`)으로, [받기] 뒤에는 입력줄로 | `app.md` §8.10 | `frontend` |
 | F-7 | sticky 입력줄(`--control-h` + `--space-8`)이 포커스를 가리지 않게 스크롤 영역 `.main`에 `scroll-padding-top: calc(var(--control-h) + var(--space-8))`을 둔다. 툴바는 스크롤 영역 밖이라 계산에 없다(`platform.md` §5) | WCAG 2.4.11(`E-KO-B3`), `G-INTER-FC6` | `design-gallery`(마지막 보이는 행에서 ↑로 올라갈 때 가려짐 없음) |

@@ -12,6 +12,7 @@
   import Button from '../ui/Button.svelte';
   import Disclosure from '../ui/Disclosure.svelte';
   import FieldRow from '../ui/FieldRow.svelte';
+  import ErrorDetails from '../app/ErrorDetails.svelte';
   import Notice from '../ui/Notice.svelte';
   import SecretField from '../ui/SecretField.svelte';
   import Switch from '../ui/Switch.svelte';
@@ -122,9 +123,8 @@
         {#if missing}
           <Notice id="cookie-missing" tone="danger">{t('settings.cookie.bothRequired')}</Notice>
         {:else if errCopy}
-          <Notice tone="danger" title={errCopy.title}>
+          <Notice tone="danger" title={errCopy.title} details={errCopy.detail ? errorDetails : undefined}>
             {#if errCopy.body}<p class="line">{errCopy.body}</p>{/if}
-            {#if errCopy.detail}<p class="line detail">{errCopy.detail}</p>{/if}
           </Notice>
         {/if}
 
@@ -143,6 +143,8 @@
     {/if}
   </Disclosure>
 </div>
+
+{#snippet errorDetails()}<ErrorDetails detail={errCopy?.detail ?? ''} />{/snippet}
 
 <style>
   .cookie {
@@ -193,9 +195,5 @@
     margin: 0;
     font-size: var(--text-caption);
     line-height: var(--leading-caption);
-  }
-  .detail {
-    color: var(--fg-muted);
-    overflow-wrap: anywhere;
   }
 </style>

@@ -363,6 +363,10 @@ async fn auth_login_opens_the_ticket_only_when_started() {
 
     assert!(app.auth_reopen(rec(&opened)));
     assert_eq!(*opened.lock().unwrap(), vec![url.clone(), url.clone()]);
+    assert!(
+        !app.auth_reopen(|_| false),
+        "대기 중이라도 열기가 실패하면 false"
+    );
     let copied: Arc<Mutex<Vec<String>>> = Arc::default();
     assert!(app.auth_copy_login_url(rec(&copied)));
     assert_eq!(*copied.lock().unwrap(), vec![url.clone()]);

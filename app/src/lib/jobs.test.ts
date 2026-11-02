@@ -97,7 +97,7 @@ describe('jobButtons: 상태별 버튼 표(patterns.md §2·§14.3)', () => {
     [
       '실패: 디스크 부족(.part 있음)',
       job(1, { status: 'failed', partialBytes: 5 * MiB, error: err('diskFull', { payload: { type: 'path', path: '/v' } }) }),
-      { primary: ['resume', 'openFolder'], cancel: false, menu: ['showTitle', 'copyUrl', 'restartFresh', 'copyReport', 'remove'] },
+      { primary: ['resume', 'openFolder'], cancel: false, menu: ['showTitle', 'copyUrl', 'restartFresh', 'showDetail', 'copyReport', 'remove'] },
     ],
     [
       '실패: 원본 바뀜(.part 없음)',
@@ -117,7 +117,7 @@ describe('jobButtons: 상태별 버튼 표(patterns.md §2·§14.3)', () => {
     [
       '실패: 지원하지 않음 → 보고 복사가 기본',
       job(1, { status: 'failed', error: err('unsupported') }),
-      { primary: ['copyReport'], cancel: false, menu: ['showTitle', 'copyUrl', 'remove'] },
+      { primary: ['copyReport'], cancel: false, menu: ['showTitle', 'copyUrl', 'showDetail', 'remove'] },
     ],
     [
       '완료',
@@ -772,6 +772,26 @@ describe('막힌 작업(A5)', () => {
   it('copy deck 키', () => {
     expect(blockCopyKey('otherChannel')).toBe('job.otherChannel.body');
     expect(t('job.otherChannel.body')).toContain('이어받을 수 없는 영상이에요');
+  });
+});
+
+describe('jobButtons: 자세히(L1, D51)', () => {
+  it('자세히는 실패이고 detail이 있을 때만, 처음부터 다시 받기 뒤·보고 복사 앞', () => {
+    const q = job(1, { status: 'failed', error: err('qualityNotFound', { payload: { type: 'qualityNotFound', requested: '1080p', available: ['720p'] } }) });
+    expect(jobButtons(q, null).menu).toContain('showDetail');
+    const none = job(1, { status: 'failed', error: err('qualityNotFound') });
+    expect(jobButtons(none, null).menu).not.toContain('showDetail');
+    expect(jobButtons(job(1, { status: 'completed', finalBytes: 10 }), null).menu).not.toContain('showDetail');
+    expect(jobButtons(job(1, { status: 'paused' }), null).menu).not.toContain('showDetail');
+    expect(jobButtons(q, null, false, 'otherChannel').menu).toContain('showDetail');
+    const disk = job(1, { status: 'failed', partialBytes: 5, error: err('diskFull', { payload: { type: 'path', path: '/v' } }) });
+    const m = jobButtons(disk, null).menu;
+    expect(m.indexOf('restartFresh')).toBeLessThan(m.indexOf('showDetail'));
+    expect(m.indexOf('showDetail')).toBeLessThan(m.indexOf('copyReport'));
+  });
+
+  it('jobActionLabel(showDetail)은 common.details', () => {
+    expect(jobActionLabel('showDetail', 'linux')).toBe(t('common.details'));
   });
 });
 

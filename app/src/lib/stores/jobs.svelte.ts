@@ -327,6 +327,7 @@ export class JobsStore {
           ui.goSettings({ cookies: true });
           break;
         case 'showTitle':
+        case 'showDetail':
           // 행이 스스로 펼친다(셸에 보낼 일이 없다)
           break;
       }

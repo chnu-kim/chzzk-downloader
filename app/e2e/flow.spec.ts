@@ -115,6 +115,21 @@ test('지운 항목은 [되돌리기]로 돌아오고 그때는 remove_job을 �
   expect(await app.args('remove_job')).toEqual([]);
 });
 
+test('파일 이름을 비우면 받기의 설명이 이름 칸 안내 문장이다', async ({ app }) => {
+  const r = resolved();
+  const { page } = app;
+  await app.open({ resolve: { [r.url]: r } });
+  await page.getByLabel(t('url.label')).fill(r.url);
+  await page.getByRole('button', { name: t('common.load') }).click();
+  const card = page.getByRole('region', { name: r.meta.title });
+  const download = card.getByRole('button', { name: t('card.download') });
+  await expect(download).not.toHaveAttribute('aria-disabled', 'true');
+  await card.getByLabel(t('filename.label')).fill('');
+  await expect(download).toHaveAttribute('aria-disabled', 'true');
+  await expect(download).toHaveAccessibleDescription(t('filename.empty.help'));
+  await app.axe('빈 파일 이름');
+});
+
 test('받는 중인 작업을 취소하면 확인(D2)을 거쳐 목록에서 지운다', async ({ app }) => {
   const r = resolved();
   const { page } = app;

@@ -13,6 +13,7 @@
   import SettingsSection from '../components/settings/SettingsSection.svelte';
   import ViewSection from '../components/settings/ViewSection.svelte';
   import Button from '../components/ui/Button.svelte';
+  import ErrorDetails from '../components/app/ErrorDetails.svelte';
   import Notice from '../components/ui/Notice.svelte';
   import Select from '../components/ui/Select.svelte';
   import SettingsRow from '../components/ui/SettingsRow.svelte';
@@ -70,9 +71,8 @@
 
 <div class="settings">
   {#if errCopy}
-    <Notice tone="danger" title={errCopy.title}>
+    <Notice tone="danger" title={errCopy.title} details={errCopy.detail ? errorDetails : undefined}>
       {#if errCopy.body}<p class="line">{errCopy.body}</p>{/if}
-      {#if errCopy.detail}<p class="line detail">{errCopy.detail}</p>{/if}
     </Notice>
   {/if}
 
@@ -222,6 +222,8 @@
   <AboutSection onerror={(e) => (error = e)} />
 </div>
 
+{#snippet errorDetails()}<ErrorDetails detail={errCopy?.detail ?? ''} />{/snippet}
+
 <style>
   .settings {
     display: flex;
@@ -238,9 +240,5 @@
     margin: 0;
     font-size: var(--text-caption);
     line-height: var(--leading-caption);
-  }
-  .detail {
-    color: var(--fg-muted);
-    overflow-wrap: anywhere;
   }
 </style>

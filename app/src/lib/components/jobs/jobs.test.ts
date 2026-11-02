@@ -517,6 +517,81 @@ describe('[⋯] › 제목 전체 보기', () => {
   });
 });
 
+describe('[⋯] › 자세히', () => {
+  it('실패 행은 원문을 바로 보이지 않고, [⋯] › 자세히로 행 아래에 펼친다(다시 누르면 접힌다)', async () => {
+    await load([job(1, { status: 'failed', title: '실패', error: err('unsupported', { message: '코어 원문 한 줄' }) })]);
+    const user = userEvent.setup();
+    render(JobList);
+    const item = screen.getByRole('article', { name: '실패' });
+    expect(within(item).queryByText('코어 원문 한 줄')).toBeNull();
+    expect(item.querySelector('.job-detail')).toBeNull();
+    await pickMenu(user, item, '실패', t('common.details'));
+    expect(item.querySelector('.job-detail')).toHaveTextContent('코어 원문 한 줄');
+    await pickMenu(user, item, '실패', t('common.details'));
+    expect(item.querySelector('.job-detail')).toBeNull();
+  });
+
+  it('detail이 없는 실패와 실패가 아닌 행의 메뉴에는 자세히가 없다', async () => {
+    await load([
+      job(1, { status: 'failed', title: '네트워크', error: err('network') }),
+      job(2, { status: 'completed', title: '완료', finalBytes: 1 }),
+    ]);
+    const user = userEvent.setup();
+    render(JobList);
+    for (const title of ['네트워크', '완료']) {
+      await user.click(screen.getByRole('button', { name: t('a11y.more', { title }) }));
+      const labels = (await screen.findAllByRole('menuitem')).map((m) => m.textContent?.trim());
+      expect(labels).not.toContain(t('common.details'));
+      await user.keyboard('{Escape}');
+    }
+  });
+
+  it('메뉴 순서: 제목 전체 보기 · 주소 복사 · 처음부터 다시 받기 · 자세히 · 문제 보고용 정보 복사 · 목록에서 지우기', async () => {
+    await load([
+      job(1, { status: 'failed', title: '디스크', partialBytes: 5, error: err('diskFull', { payload: { type: 'path', path: '/v' } }) }),
+    ]);
+    const user = userEvent.setup();
+    render(JobList);
+    await user.click(screen.getByRole('button', { name: t('a11y.more', { title: '디스크' }) }));
+    expect((await screen.findAllByRole('menuitem')).map((m) => m.textContent?.trim())).toEqual([
+      t('action.showTitle'),
+      t('action.copyUrl'),
+      t('action.restartFresh'),
+      t('common.details'),
+      t('action.copyReport'),
+      t('action.remove'),
+    ]);
+  });
+
+  it('재시도로 실패를 벗어나면 펼친 자세히가 사라진다', async () => {
+    const failed = job(1, { status: 'failed', title: '실패', error: err('unsupported', { message: '원문' }) });
+    await load([failed]);
+    const user = userEvent.setup();
+    render(JobList);
+    const item = screen.getByRole('article', { name: '실패' });
+    await pickMenu(user, item, '실패', t('common.details'));
+    expect(item.querySelector('.job-detail')).not.toBeNull();
+    send({ type: 'status', job: { ...failed, status: 'queued', error: null } });
+    await waitFor(() => expect(screen.getByRole('article', { name: '실패' }).querySelector('.job-detail')).toBeNull());
+  });
+
+  it('실패 → 재시도 → 다시 실패하면 새 원문은 접힌 채 나온다', async () => {
+    const failed = job(1, { status: 'failed', title: '실패', error: err('unsupported', { message: '첫 원문' }) });
+    await load([failed]);
+    const user = userEvent.setup();
+    render(JobList);
+    const item = screen.getByRole('article', { name: '실패' });
+    await pickMenu(user, item, '실패', t('common.details'));
+    expect(item.querySelector('.job-detail')).not.toBeNull();
+    send({ type: 'status', job: { ...failed, status: 'queued', error: null } });
+    await waitFor(() => expect(screen.getByRole('article', { name: '실패' }).querySelector('.job-detail')).toBeNull());
+    send({ type: 'status', job: { ...failed, status: 'failed', error: err('unsupported', { message: '새 원문' }) } });
+    await waitFor(() => expect(screen.getByRole('article', { name: '실패' })).toHaveTextContent(/./));
+    expect(screen.getByRole('article', { name: '실패' }).querySelector('.job-detail')).toBeNull();
+    expect(screen.getByRole('article', { name: '실패' })).not.toHaveTextContent('새 원문');
+  });
+});
+
 describe('완료 그룹 접힘', () => {
   const finished = (n: number) => Array.from({ length: n }, (_, i) => job(i + 1, { status: 'completed', createdAt: i + 1 }));
 

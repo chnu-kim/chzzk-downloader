@@ -433,6 +433,137 @@ describe('로그인 대기 화면', () => {
     await screen.findByRole('heading', { name: '로그인이 필요해요' });
   });
 
+  describe('[브라우저 다시 열기] 실패', () => {
+    const expiresAt = () => Math.floor(Date.now() / 1000) + 600;
+    const openFailed = () => toasts.items.filter((i) => i.message === t('toast.browserOpenFailed'));
+    const reopenBtn = () => screen.getByRole('button', { name: t('auth.reopen') });
+    const copyBtn = () => screen.getByRole('button', { name: t('auth.copyLoginUrl') });
+
+    async function pendingScreen(at = expiresAt()) {
+      start(authDto({ state: 'pending', pending: { expiresAt: at } }));
+      render(App);
+      await screen.findByRole('heading', { name: '브라우저에서 로그인해 주세요' });
+      return { user: userEvent.setup(), at };
+    }
+    const deferred = () => {
+      let resolve!: (v: boolean) => void;
+      vi.mocked(api.authReopen).mockReturnValue(new Promise<boolean>((r) => (resolve = r)));
+      return (v: boolean) => resolve(v);
+    };
+
+    it('열지 못하면 danger 토스트를 띄우고 포커스를 [로그인 주소 복사]로 옮긴다', async () => {
+      const { user } = await pendingScreen();
+      vi.mocked(api.authReopen).mockResolvedValue(false);
+      reopenBtn().focus();
+      await user.keyboard('{Enter}');
+      await waitFor(() => expect(toasts.items).toContainEqual(expect.objectContaining({ kind: 'danger', message: t('toast.browserOpenFailed') })));
+      await waitFor(() => expect(document.activeElement).toBe(copyBtn()), { timeout: 3000 });
+    });
+
+    it('포커스는 알림이 뜬 직후가 아니라 낭독할 틈을 둔 뒤에 옮긴다', async () => {
+      const { user } = await pendingScreen();
+      vi.mocked(api.authReopen).mockResolvedValue(false);
+      reopenBtn().focus();
+      await user.keyboard('{Enter}');
+      await waitFor(() => expect(openFailed()).toHaveLength(1));
+      expect(document.activeElement).toBe(reopenBtn());
+      await waitFor(() => expect(document.activeElement).toBe(copyBtn()), { timeout: 3000 });
+    });
+
+    it('실패 알림이 대기열에 밀려 보이지 않으면 포커스를 옮기지 않는다', async () => {
+      const { user } = await pendingScreen();
+      toasts.push('앞선 오류', 'danger');
+      vi.mocked(api.authReopen).mockResolvedValue(false);
+      reopenBtn().focus();
+      await user.keyboard('{Enter}');
+      await waitFor(() => expect(openFailed()).toHaveLength(1));
+      await new Promise((r) => setTimeout(r, 1800));
+      expect(document.activeElement).toBe(reopenBtn());
+    });
+
+    it('command가 실패(reject)해도 같다', async () => {
+      const { user } = await pendingScreen();
+      vi.mocked(api.authReopen).mockRejectedValue(new Error('x'));
+      reopenBtn().focus();
+      await user.keyboard('{Enter}');
+      await waitFor(() => expect(openFailed()).toHaveLength(1));
+      await waitFor(() => expect(document.activeElement).toBe(copyBtn()), { timeout: 3000 });
+    });
+
+    it('열었으면(true) 토스트도 포커스 이동도 없다', async () => {
+      const { user } = await pendingScreen();
+      reopenBtn().focus();
+      await user.keyboard('{Enter}');
+      await waitFor(() => expect(api.authReopen).toHaveBeenCalled());
+      expect(openFailed()).toHaveLength(0);
+      expect(document.activeElement).toBe(reopenBtn());
+    });
+
+    it('두 번 실패해도 토스트는 하나다', async () => {
+      const { user } = await pendingScreen();
+      vi.mocked(api.authReopen).mockResolvedValue(false);
+      await user.click(reopenBtn());
+      await waitFor(() => expect(openFailed()).toHaveLength(1));
+      await user.click(reopenBtn());
+      await waitFor(() => expect(api.authReopen).toHaveBeenCalledTimes(2));
+      expect(openFailed()).toHaveLength(1);
+    });
+
+    it('응답 전에 포커스를 다른 곳으로 옮겼으면 빼앗지 않는다', async () => {
+      const { user } = await pendingScreen();
+      const resolve = deferred();
+      reopenBtn().focus();
+      await user.keyboard('{Enter}');
+      const cancel = screen.getByRole('button', { name: t('common.cancel') });
+      cancel.focus();
+      resolve(false);
+      await waitFor(() => expect(openFailed()).toHaveLength(1));
+      expect(document.activeElement).toBe(cancel);
+    });
+
+    it('응답 전에 상태가 바뀌었으면(취소·만료) 알리지 않는다', async () => {
+      const { user } = await pendingScreen();
+      const resolve = deferred();
+      reopenBtn().focus();
+      await user.keyboard('{Enter}');
+      emit(authDto({ state: 'signedOut' }));
+      resolve(false);
+      await new Promise((r) => setTimeout(r, 50));
+      expect(openFailed()).toHaveLength(0);
+    });
+
+    it('응답 전에 같은 pending을 다시 받아도(이벤트 재전송) 실패를 알린다', async () => {
+      const { user, at } = await pendingScreen();
+      const resolve = deferred();
+      reopenBtn().focus();
+      await user.keyboard('{Enter}');
+      emit(authDto({ state: 'pending', pending: { expiresAt: at } }));
+      resolve(false);
+      await waitFor(() => expect(openFailed()).toHaveLength(1));
+      await waitFor(() => expect(document.activeElement).toBe(copyBtn()), { timeout: 3000 });
+    });
+
+    it('응답 전에 새 로그인으로 기한이 바뀌었으면 알리지 않는다', async () => {
+      const { user, at } = await pendingScreen();
+      const resolve = deferred();
+      reopenBtn().focus();
+      await user.keyboard('{Enter}');
+      emit(authDto({ state: 'pending', pending: { expiresAt: at + 600 } }));
+      resolve(false);
+      await new Promise((r) => setTimeout(r, 50));
+      expect(openFailed()).toHaveLength(0);
+    });
+
+    it('실패 토스트는 대기를 벗어나면 닫힌다', async () => {
+      const { user } = await pendingScreen();
+      vi.mocked(api.authReopen).mockResolvedValue(false);
+      await user.click(reopenBtn());
+      await waitFor(() => expect(openFailed()).toHaveLength(1));
+      emit(authDto({ state: 'signedIn', channelName: '테스트 채널' }));
+      await waitFor(() => expect(openFailed()).toHaveLength(0));
+    });
+  });
+
   it('pending 화면에는 확인 코드가 없고 같은 컴퓨터 안내가 있다', async () => {
     start(authDto({ state: 'pending', pending: { expiresAt: Math.floor(Date.now() / 1000) + 600 } }));
     render(App);
